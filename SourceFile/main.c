@@ -1,5 +1,6 @@
 ﻿#include"list.h"
 #include"vector.h"
+#include"stack.h"
 struct people
 {
 	int age;
@@ -114,10 +115,33 @@ VectorTest()
 	}
 		
 }
+stackTest()
+{
+	stack* sInt = NewStack("int");
+	sInt->push(sInt, 1);
+	sInt->push(sInt, 100);
+	sInt->push(sInt, 65);
+	sInt->push(sInt, 77);
+	while (!sInt->empty(sInt))
+	{
+		printf("%d\n",sInt->top(sInt));
+		sInt->pop(sInt);
+	}
+	stack* string = NewStack("char[100]");
+	string->push(string, "琦神");
+	string->push(string, "小白");
+	string->push(string, "皮皮");
+	string->push(string, "蛇蛇");
+	while (!string->empty(string))
+	{
+		printf("%s\n", string->top(string));
+		string->pop(string);
+	}
+}
 int main()
 {
 	//ListTest();
-	VectorTest();
-
+	//VectorTest();
+	stackTest();
 	return 0;
 }
