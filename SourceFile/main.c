@@ -1,6 +1,7 @@
 ﻿#include"list.h"
 #include"vector.h"
 #include"stack.h"
+#include"algorithm.h"
 struct people
 {
 	int age;
@@ -138,10 +139,13 @@ stackTest()
 		string->pop(string);
 	}
 }
-int main()
+int main(int argc, char* args[])
 {
 	//ListTest();
-	//VectorTest();
+	VectorTest();
 	stackTest();
+	const char* str = "sSDSA564DSA";
+	const char* fchar = "1234";
+	printf("%s", string_find_last_of(str, fchar));
 	return 0;
 }

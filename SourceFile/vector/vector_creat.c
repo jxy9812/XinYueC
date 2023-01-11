@@ -61,6 +61,6 @@ vector* NewVector(const char* arr, ...)
 	//this_vector->_type = n;
 	this_vector->_current = 0;
 	this_vector->_size = 0;
-	this_vector->_date = NULL;
+	this_vector->_data = NULL;
 	return this_vector;
 }

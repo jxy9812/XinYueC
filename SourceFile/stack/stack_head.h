@@ -13,7 +13,7 @@ typedef  struct STACK
 	void (*copy)(struct stack* st1, const struct stack* st2);//将st2拷贝到st1
 	void (*rcopy)(struct stack* st1, const struct stack* st2);//将st2逆序拷贝到st1
 	void (*swap)(struct stack* st1, struct stack* st2);//交换两个栈
-	void* _date;//指向自定义数组类型
+	void* _data;//指向自定义数组类型
 	int  _current;//当前元素个数
 	int _size;//元素最大个数
 	int _type;//类型占用字节数

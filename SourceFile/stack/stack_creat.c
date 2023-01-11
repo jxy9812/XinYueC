@@ -94,8 +94,8 @@ stack* NewStack(const char* arr, ...)
 	st->copy = Stack_Copy;
 	st->rcopy = Stack_Rcopy;
 	st->swap = Stack_Swap;
-	st->_date = malloc(st->_type * MAXNUM);
-	if (st->_date == NULL)
+	st->_data = malloc(st->_type * MAXNUM);
+	if (st->_data == NULL)
 	{
 		perror("初始化sttor失败");
 		exit(-1);

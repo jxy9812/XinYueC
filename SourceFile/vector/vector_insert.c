@@ -6,7 +6,7 @@ void Vector_Push_Back(struct vector* this_vector, void* x)// 向量尾部增加�
 {
 	VECTOR* v=(VECTOR*)this_vector;
 	VectorEnlargeCapacity(v);
-	char* str1 = (char*)v->_date + v->_type * v->_current;
+	char* str1 = (char*)v->_data + v->_type * v->_current;
 	memcpy(str1, x, v->_type);
 	v->_current++;
 }

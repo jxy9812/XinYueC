@@ -7,10 +7,10 @@
 //开辟队列数组
 static void open(QUEUE* que)
 {
-	if (que->_date == NULL && que->_size == 0)//无元素
+	if (que->_data == NULL && que->_size == 0)//无元素
 	{
-		que->_date = malloc(que->_type * VECTORNUM);
-		if (que->_date == NULL)
+		que->_data = malloc(que->_type * VECTORNUM);
+		if (que->_data == NULL)
 		{
 			perror("初始化queue失败");
 			exit(-1);
@@ -22,25 +22,25 @@ static void open(QUEUE* que)
 	}
 	else if (que->_size == que->_current)//空间已满需要扩容
 	{
-		void* _date = realloc(que->_date, que->_size * que->_type * 2);
-		if (_date == NULL)
+		void* _data = realloc(que->_data, que->_size * que->_type * 2);
+		if (_data == NULL)
 		{
 			perror("扩容失败queue");
 			exit(-1);
 		}
 		else
 		{
-			que->_date = _date;
+			que->_data = _data;
 			que->_size *= 2;
 		}
 	}
 }
 void Queue_clear(QUEUE* que)//清空queue的队列，释放内存
 {
-	if (que->_date != NULL && que->_size != 0)//无元素
+	if (que->_data != NULL && que->_size != 0)//无元素
 	{
-		free(que->_date);
-		que->_date = NULL;
+		free(que->_data);
+		que->_data = NULL;
 		que->_current = 0;
 		que->_size = 0;
 	}
@@ -49,7 +49,7 @@ void Queue_clear(QUEUE* que)//清空queue的队列，释放内存
 void Queue_Push(QUEUE* que, void* x)//插入到队列的队尾
 {
 	open(que);
-	char* str1 = (char*)que->_date + que->_type * que->_current;
+	char* str1 = (char*)que->_data + que->_type * que->_current;
 	memcpy(str1, x, que->_type);
 	que->_current++;
 }
@@ -57,8 +57,8 @@ void Queue_pop(struct QUEUE* que)//删除queue的队头元素
 {
 	if (que->_current > 1)
 	{
-		char* str1 = (char*)que->_date;
-		char* str2 = (char*)que->_date + que->_type * 1;
+		char* str1 = (char*)que->_data;
+		char* str2 = (char*)que->_data + que->_type * 1;
 		for (size_t i = 0; i < que->_current - 1; i++)
 		{
 			memcpy(str1, str2, que->_type);
@@ -74,12 +74,12 @@ void Queue_pop(struct QUEUE* que)//删除queue的队头元素
 }
 void* Queue_front(struct QUEUE* que)// 返回队列的队头元素指针，但不删除该元素
 {
-	return que->_date;
+	return que->_data;
 }
 void* Queue_back(struct QUEUE* que)// 返回队列的队尾元素指针，但不删除该元素
 {
-	char* _date = (char*)que->_date + que->_type * (que->_current - 1);
-	return _date;
+	char* _data = (char*)que->_data + que->_type * (que->_current - 1);
+	return _data;
 }
 bool Queue_empty(struct QUEUE* que)//检测队内是否为空，空为真 O(1)
 {

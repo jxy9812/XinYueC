@@ -14,7 +14,7 @@ queue* NewQueue(int sizeType)
 	que->size = Queue_size;////返回队列中元素的个数
 	que->_type = sizeType;
 	que->_size = 0;
-	que->_date = NULL;
+	que->_data = NULL;
 	que->_current = 0;
 	return que;
 }

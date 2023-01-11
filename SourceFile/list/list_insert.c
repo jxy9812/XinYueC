@@ -10,7 +10,7 @@ Node* List_push_front(list* li, void* x)
 	Node* p = List_push_back(li, x);
 	if (list->_current != 0)
 	{
-		list->_date = p;
+		list->_data = p;
 	}
 	return p;
 }
@@ -28,13 +28,13 @@ Node* List_push_back(list* li, void* x)
 	memcpy(p->date, x, list->_type);//拷贝数据
 	if (list->_current == 0)
 	{
-		list->_date = p;
+		list->_data = p;
 		p->next = p;
 		p->prev = p;
 	}
 	else
 	{
-		Node* pfront = list->_date;//原头节点
+		Node* pfront = list->_data;//原头节点
 		Node* pback = pfront->prev;//原尾节点
 		p->next = pfront;
 		p->prev = pback;
@@ -83,9 +83,9 @@ void List_insert_front_p(list* li, Node* pval, ...)
 			left->next = pk;
 			pval->prev = pk;
 
-			if (pval == list->_date)
+			if (pval == list->_data)
 			{
-				list->_date = pk;
+				list->_data = pk;
 			}
 			list->_current++;
 		}

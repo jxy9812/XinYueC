@@ -27,7 +27,7 @@ typedef struct VECTOR
 	//其他函数
 	void (*sort)(struct VECTOR*, int (*Sort)(void*, void*));//排序
 	void (*swap)(struct VECTOR*, struct VECTOR*);//交换两个同类型向量的数据
-	void* _date;//指向自定义数组类型
+	void* _data;//指向自定义数组类型
 	int  _current;//当前元素个数
 	int _size;//元素最大个数
 	int _type;//类型占用字节数

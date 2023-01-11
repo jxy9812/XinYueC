@@ -9,7 +9,7 @@ typedef struct QUEUE
 	void* (*back)(struct QUEUE*);// 返回队列的队尾元素指针，但不删除该元素
 	bool (*empty)(struct QUEUE*);// 当队列为空时返回true，否则返回false
 	int (*size)(struct QUEUE*);//返回队列中元素的个数
-	void* _date;//指向自定义数组类型
+	void* _data;//指向自定义数组类型
 	int  _current;//当前元素个数
 	int _size;//元素最大个数
 	int _type;//类型占用字节数

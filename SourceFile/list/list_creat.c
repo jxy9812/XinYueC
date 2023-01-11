@@ -26,6 +26,6 @@ list* Newlist(int size)
 	li->swap = List_swap;
 	li->_type = size;
 	li->_current = 0;
-	li->_date = NULL;
+	li->_data = NULL;
 	return li;
 }

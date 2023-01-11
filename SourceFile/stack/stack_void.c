@@ -12,6 +12,6 @@ void Stack_Push(stack* st,const void* x)// 压栈，增加元素 O(1)
 void* Stack_top(stack* st)// 取得栈顶元素（但不删除）O(1)
 {
 	STACK* stack=(STACK*)st;
-	char* _date = (char*)stack->_date + stack->_type * (stack->_current - 1);
-	return _date;
+	char* _data = (char*)stack->_data + stack->_type * (stack->_current - 1);
+	return _data;
 }

@@ -1,26 +1,27 @@
 ﻿#include"list.h"
 #include"list_head.h"
 #include<stdlib.h>
+//struct list;
 //删除
-void  List_pop_front(list* li)
+void  List_pop_front(struct list* li)
 {
 	LIST* list=(LIST*)li;
 	if (list->_current == 1)
 	{
-		Node* head = list->_date;
+		Node* head = list->_data;
 		free(head->date);
 		free(head);
-		list->_date = NULL;
+		list->_data = NULL;
 		list->_current--;
 	}
 	else if (list->_current > 1)
 	{
-		Node* pfront = list->_date;//原头节点
+		Node* pfront = list->_data;//原头节点
 		Node* pback = pfront->prev;//原尾节点
 		Node* pnfront = pfront->next;//新头节点
 		pnfront->prev = pback;
 		pback->next = pnfront;
-		list->_date = pnfront;
+		list->_data = pnfront;
 		free(pfront->date);
 		free(pfront);
 		list->_current--;
@@ -32,15 +33,15 @@ void List_pop_back(list* li)
 	LIST* list=(LIST*)li;
 	if (list->_current == 1)
 	{
-		Node* head = list->_date;
+		Node* head = list->_data;
 		free(head->date);
 		free(head);
-		list->_date = NULL;
+		list->_data = NULL;
 		list->_current--;
 	}
 	else if (list->_current > 1)
 	{
-		Node* pfront = list->_date;//原头节点
+		Node* pfront = list->_data;//原头节点
 		Node* pback = pfront->prev;//原尾节点
 		Node* pnback = pback->prev;//新尾节点
 		pnback->next = pfront;
@@ -68,9 +69,9 @@ void List_erase_p(list* li, const Node* p1, const Node* p2)
 	list->_current--;
 	left->next = right;
 	right->prev = left;
-	if (p1 == list->_date)
+	if (p1 == list->_data)
 	{
-		list->_date = right;
+		list->_data = right;
 	}
 }
 
@@ -99,7 +100,7 @@ void List_erase_int(list* li, const int left, const int right)
 void List_clear(list* li)
 {
 	LIST* list=(LIST*)li;
-	Node* p = list->_date;
+	Node* p = list->_data;
 	Node* pnext = p->next;
 	for (size_t i = 0; i < list->_current; i++)
 	{
@@ -109,5 +110,5 @@ void List_clear(list* li)
 		p = pnext;
 	}
 	list->_current = 0;
-	list->_date = NULL;
+	list->_data = NULL;
 }

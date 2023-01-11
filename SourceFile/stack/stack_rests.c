@@ -5,10 +5,10 @@
 void Stack_clear(stack* st)
 {
 	STACK* stack=(STACK*)st;
-	if (stack->_date != NULL)
+	if (stack->_data != NULL)
 	{
-		free(stack->_date);
-		stack->_date = NULL;
+		free(stack->_data);
+		stack->_data = NULL;
 		stack->_current = 0;
 		stack->_size = 0;
 	}
@@ -37,9 +37,9 @@ void Stack_Copy(stack* st1, const stack* st2)//将st2拷贝到st1
 {
 	STACK* stack1=(STACK*)st1;
 	STACK* stack2=(STACK*)st2;
-	free(stack1->_date);
-	stack1->_date = malloc(stack2->_current * stack2->_type);
-	memcpy(stack1->_date, stack2->_date, stack2->_current * stack2->_type);
+	free(stack1->_data);
+	stack1->_data = malloc(stack2->_current * stack2->_type);
+	memcpy(stack1->_data, stack2->_data, stack2->_current * stack2->_type);
 	stack1->_size = stack2->_current;
 	stack1->_current = stack2->_current;
 	stack1->_type = stack2->_type;
@@ -50,12 +50,12 @@ void Stack_Rcopy(stack* st1, const stack* st2)//将st2逆序拷贝到st1
 	STACK* stack2=(STACK*)st2;
 	if (stack2->_current == 0)
 		return;
-	free(stack1->_date);
-	stack1->_date = malloc(stack2->_current * stack2->_type);
+	free(stack1->_data);
+	stack1->_data = malloc(stack2->_current * stack2->_type);
 	stack1->_size = stack2->_current;
 	stack1->_current = stack2->_current;
 	stack1->_type = stack2->_type;
-	for (char* pst2 = (char*)stack2->_date + (stack2->_current - 1) * stack2->_type, *pst1 = stack1->_date; pst2 >= stack2->_date; pst2 -= stack2->_type, pst1 += stack2->_type)
+	for (char* pst2 = (char*)stack2->_data + (stack2->_current - 1) * stack2->_type, *pst1 = stack1->_data; pst2 >= stack2->_data; pst2 -= stack2->_type, pst1 += stack2->_type)
 	{
 		memcpy(pst1, pst2, stack2->_type);
 	}
@@ -64,9 +64,9 @@ void Stack_Swap(stack* st1, stack* st2)//交换两个栈
 {
 	STACK* stack1=(STACK*)st1;
 	STACK* stack2=(STACK*)st2;
-	void* p = stack1->_date;
-	stack1->_date = stack2->_date;
-	stack2->_date = p;
+	void* p = stack1->_data;
+	stack1->_data = stack2->_data;
+	stack2->_data = p;
 	int n = stack1->_current;
 	stack1->_current = stack2->_current;
 	stack2->_current = n;
