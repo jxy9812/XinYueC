@@ -1,5 +1,6 @@
 ﻿#include"queue.h"
 #include"queue_head.h"
+#include<stdlib.h>
 //初始化函数
 queue* NewQueue(int sizeType)
 {

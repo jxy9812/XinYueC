@@ -1,6 +1,7 @@
 ﻿#include"list.h"
 #include"list_head.h"
 #include<string.h>
+#include<stdlib.h>
 list* Newlist(int size)
 {
 	LIST* li = malloc(sizeof(LIST));

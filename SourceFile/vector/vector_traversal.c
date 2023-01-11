@@ -1,7 +1,7 @@
-﻿#include"vector.h"
-#include"vector_head.h"
+﻿#include"vector_head.h"
 #include<stdlib.h>
 #include<string.h>
+struct vector;
 void* Vector_at(const struct vector* vec, int i)// 返回元素的指针
 {
 	VECTOR* vector=(VECTOR*)vec;

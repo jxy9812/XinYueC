@@ -1,24 +1,25 @@
 ﻿#include"vector_head.h"
 #include<stdio.h>
+#include<stdlib.h>
 //检测是否需要扩容
-void VectorEnlargeCapacity(VECTOR* vec)
+void VectorEnlargeCapacity(VECTOR* this_vector)
 {
-	if (vec->_size == 0)
+	if (this_vector->_size == 0)
 	{
-		vec->_date = malloc(vec->_type * VECTORNUM);
-		if (vec->_date == NULL)
+		this_vector->_date = malloc(this_vector->_type * VECTORNUM);
+		if (this_vector->_date == NULL)
 		{
 			perror("初始化vector失败");
 			exit(-1);
 		}
 		else
 		{
-			vec->_size = VECTORNUM;
+			this_vector->_size = VECTORNUM;
 		}
 	}
-	else if (vec->_size == vec->_current)//空间已满需要扩容
+	else if (this_vector->_size == this_vector->_current)//空间已满需要扩容
 	{
-		void* _date = realloc(vec->_date, vec->_size * vec->_type * 2);
+		void* _date = realloc(this_vector->_date, this_vector->_size * this_vector->_type * 2);
 		if (_date == NULL)
 		{
 			perror("扩容失败vector");
@@ -26,8 +27,8 @@ void VectorEnlargeCapacity(VECTOR* vec)
 		}
 		else
 		{
-			vec->_date = _date;
-			vec->_size *= 2;
+			this_vector->_date = _date;
+			this_vector->_size *= 2;
 		}
 	}
 }

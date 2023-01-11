@@ -18,7 +18,7 @@ typedef struct VECTOR
 	void* (*at)(const struct VECTOR*, int);// 返回第0-n个元素的指针
 	void* (*front)(const struct VECTOR*);// 返回向量头指针，指向第一个元素
 	void* (*back)(const struct VECTOR*);//返回向量尾指针，指向向量最后一个元素
-	void* (*find)(const struct VECTOR* vec, const void* val, bool(*fi)(const void* val1, const void* val2));//查找数据，返回找到的指针，没有返回NULL
+	void* (*find)(const struct VECTOR* this_vector, const void* val, bool(*fi)(const void* val1, const void* val2));//查找数据，返回找到的指针，没有返回NULL
 	//判断函数
 	bool (*empty)(const struct VECTOR*);// 检测vector内是否为空，空为真 O(1)
 	//大小函数
@@ -33,7 +33,7 @@ typedef struct VECTOR
 	int _type;//类型占用字节数
 }VECTOR;
 //检测是否需要扩容
-void VectorEnlargeCapacity(VECTOR* vec);
+void VectorEnlargeCapacity(VECTOR* this_vector);
 #endif // ! VECTOR_HEAD
 
 
