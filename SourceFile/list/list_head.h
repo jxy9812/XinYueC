@@ -1,7 +1,9 @@
 ﻿#ifndef LIST_HEAD_H
 #define LIST_HEAD_H
+#include<stdio.h>
+struct Node;
 //真实的结构体
-static struct LIST
+struct LIST
 {
 	//插入函数
 	Node* (*push_front)(struct LIST* li, void* x);//头插

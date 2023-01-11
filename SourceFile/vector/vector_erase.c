@@ -4,23 +4,26 @@
 #include<string.h>
 
 
-void Vector_pop_back(struct VECTOR* vec)//删除向量中最后一个元素
+void Vector_pop_back(struct vector* vec)//删除向量中最后一个元素
 {
-	vec->_current--;
+	VECTOR* vector=(VECTOR*)vec;
+	vector->_current--;
 }
-void Vector_erase_p(struct VECTOR* vec, const void* p1, const void* p2)//删除指针区间内的数据
+void Vector_erase_p(struct vector* vec, const void* p1, const void* p2)//删除指针区间内的数据
 {
-	if (p1 <= p2 && vec->front(vec) <= p1 && p2 <= vec->back(vec))
+	VECTOR* vector=(VECTOR*)vec;
+	if (p1 <= p2 && vector->front(vec) <= p1 && p2 <= vector->back(vec))
 	{
-		memcpy(p1, (char*)p2 + vec->_type, (int)((char*)vec->back(vec) - (char*)p2));
-		vec->_current -= (((int)((char*)p2 - (char*)p1)) / vec->_type + 1);
+		memcpy(p1, (char*)p2 + vector->_type, (int)((char*)vector->back(vec) - (char*)p2));
+		vector->_current -= (((int)((char*)p2 - (char*)p1)) / vector->_type + 1);
 	}
 }
-void Vector_erase_int(struct VECTOR* vec, const int left, const int right)//删除区间内的数据
+void Vector_erase_int(struct vector* vec, const int left, const int right)//删除区间内的数据
 {
-	if (left <= right && left >= 0 && right < vec->_current)
+	VECTOR* vector=(VECTOR*)vec;
+	if (left <= right && left >= 0 && right < vector->_current)
 	{
-		memcpy(vec->at(vec, left), vec->at(vec, right + 1), (vec->_current - 1 - right) * vec->_type);
-		vec->_current -= (right - left + 1);
+		memcpy(vector->at(vec, left), vector->at(vec, right + 1), (vector->_current - 1 - right) * vector->_type);
+		vector->_current -= (right - left + 1);
 	}
 }

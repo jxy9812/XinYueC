@@ -1,11 +1,13 @@
 ﻿#include"list.h"
 #include"list_head.h"
+#include<string.h>
 //遍历
-Node* List_at(const LIST* li, int n)
+Node* List_at(const list* li, int n)
 {
-	if (n >= 0 && n <= (li->_current / 2))//向后找
+	LIST* list=(LIST*)li;
+	if (n >= 0 && n <= (list->_current / 2))//向后找
 	{
-		Node* p = li->_date;
+		Node* p = list->_date;
 		if (n == 0)
 		{
 			return p;
@@ -16,10 +18,10 @@ Node* List_at(const LIST* li, int n)
 		}
 		return p;
 	}
-	else if (n > (li->_current / 2) && n < li->_current)//向前找
+	else if (n > (list->_current / 2) && n < list->_current)//向前找
 	{
-		Node* p = li->_date;
-		for (size_t i = 0; i < li->_current - n; i++)
+		Node* p = list->_date;
+		for (size_t i = 0; i < list->_current - n; i++)
 		{
 			p = p->prev;
 		}
@@ -28,22 +30,25 @@ Node* List_at(const LIST* li, int n)
 	return NULL;
 }
 
-Node* List_front(LIST* li)
+Node* List_front(list* li)
 {
-	return li->_date;
+	LIST* list=(LIST*)li;
+	return list->_date;
 }
 
-Node* List_back(LIST* li)
+Node* List_back(list* li)
 {
-	return li->_date->prev;
+	LIST* list=(LIST*)li;
+	return list->_date->prev;
 }
 
-Node* List_find(const LIST* li, const void* val)
+Node* List_find(const list* li, const void* val)
 {
-	Node* p = li->_date;
-	for (size_t i = 0; i < li->_current; i++)
+	LIST* list=(LIST*)li;
+	Node* p = list->_date;
+	for (size_t i = 0; i < list->_current; i++)
 	{
-		if (memcmp(p->date, val, li->_type) == 0)
+		if (memcmp(p->date, val, list->_type) == 0)
 		{
 			return p;
 		}

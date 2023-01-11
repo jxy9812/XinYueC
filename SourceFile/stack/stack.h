@@ -37,8 +37,7 @@ void Stack_Copy(stack* st1, const stack* st2);//将st2拷贝到st1
 void Stack_Rcopy(stack* st1, const stack* st2);//将st2逆序拷贝到st1
 void Stack_Swap(stack* st1, stack* st2);//交换两个栈
 //创建一个stack容器并返回其指针
-stack* NewStack(char* arr, ...);
-
+stack* NewStack(const char* arr, ...);
 #endif // !STACK_H
 
 
