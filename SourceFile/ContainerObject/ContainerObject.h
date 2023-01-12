@@ -12,8 +12,8 @@ struct ContainerObject
 	const size_t(*capacity)(const struct ContainerObject*); //返回当前容器所能容纳的最大元素值
 	//其他函数
 	void (*swap)(struct ContainerObject*, struct ContainerObject*);//交换两个同类型容器的数据
-	void* _data;//指向自定义数组类型
-	size_t  _currentSize;//当前容器能容纳的最大元素数量
+	void* _data;//指向容器数据的指针
+	size_t  _capacity;//当前容器能容纳的最大元素数量
 	size_t _size;//当前容器内的元素个数
 	size_t _type;//类型占用字节数
 };

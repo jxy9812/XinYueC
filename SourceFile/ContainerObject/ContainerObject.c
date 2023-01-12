@@ -26,7 +26,7 @@ const size_t ContainerObject_size(const struct ContainerObject* Object)
 const size_t ContainerObject_capacity(const struct ContainerObject* Object)
 {
 	if (!isObjectNULL(Object, "capacity"))
-		return Object->_currentSize;
+		return Object->_capacity;
 	return 0;
 }
 
@@ -37,7 +37,7 @@ void ContainerObject_swap(struct ContainerObject* ObjectOne, struct ContainerObj
 	if (!(one || two))
 	{
 		swap(&ObjectOne->_data, &ObjectTwo->_data, sizeof(void*));
-		swap(&ObjectOne->_currentSize, &ObjectTwo->_currentSize, sizeof(size_t));
+		swap(&ObjectOne->_capacity, &ObjectTwo->_capacity, sizeof(size_t));
 		swap(&ObjectOne->_size, &ObjectTwo->_size, sizeof(size_t));
 	}
 }
