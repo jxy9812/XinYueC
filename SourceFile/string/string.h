@@ -11,7 +11,7 @@ struct string
 	//删除函数
 	void (*pop_back)(struct string* this_string);//尾删
 	void (*erase)(struct string* this_string, const int nSel, const int str);//删除索引处开始的n个字符
-	void (*clear) (struct string* this_string);//清空，释放内存
+	void (*clear) (struct string* this_string);//清空字符串
 	//遍历函数
 	char (*at)(const struct string* this_string, int);// 返回索引处字符
 	char* (*data)(const struct string* this_string);// 返回字符串
