@@ -15,6 +15,8 @@ typedef struct stack
 	void (*copy)(struct stack* st1, const struct stack* st2);//将st2拷贝到st1
 	void (*rcopy)(struct stack* st1, const struct stack* st2);//将st2逆序拷贝到st1
 	void (*swap)(struct stack* st1, struct stack* st2);//交换两个栈
+	//释放
+	void (*free)(struct stack* this_stack);//释放内存
 }stack;
 void Stack_clear(stack* st);//清空stack的队列，释放内存
 void Stack_Push(stack* st, const void* x);// 压栈，增加元素 O(1)
@@ -36,8 +38,9 @@ int Stack_Capacity(stack* st);//返回当前stack所能容纳的最大元素值
 void Stack_Copy(stack* st1, const stack* st2);//将st2拷贝到st1
 void Stack_Rcopy(stack* st1, const stack* st2);//将st2逆序拷贝到st1
 void Stack_Swap(stack* st1, stack* st2);//交换两个栈
+void Stact_free(stack* this_stack);
 //创建一个stack容器并返回其指针
-stack* NewStack(const char* arr, ...);
+stack* Stack_init(const char* arr, ...);
 #endif // !STACK_H
 
 

@@ -4,10 +4,10 @@
 #include<string.h>
 #include <stdarg.h> 
 //插入
-Node* List_push_front(list* this_list, void* x)
+Node* List_push_back(list* this_list, void* x)
 {
 	LIST* list=(LIST*)this_list;
-	Node* NewNode = List_push_back(this_list, x);
+	Node* NewNode = List_push_front(this_list, x);
 	if (list->object._size != 0)
 	{
 		list->object._data = NewNode;
@@ -15,7 +15,7 @@ Node* List_push_front(list* this_list, void* x)
 	return NewNode;
 }
 
-Node* List_push_back(list* this_list, void* x)
+Node* List_push_front(list* this_list, void* x)
 {
 	LIST* list=(LIST*)this_list;
 	Node* NewNode = malloc(sizeof(Node));//新节点

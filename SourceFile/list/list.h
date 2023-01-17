@@ -27,13 +27,13 @@ typedef struct list
 	Node* (*at)(const struct list*, int);// 想象成数组，输入下标返回元素节点的指针
 	Node* (*front)(const struct list*);// 返回链表头指针，指向第一个元素
 	Node* (*back)(const struct list*);//返回链表尾指针，指向链表最后一个元素
-	Node* (*find)(const struct list*, const void*);//查找数据，返回找到的节点指针，没有返回NULL
+	Node* (*find)(const struct list* this_list, bool (*find)(const struct Node* node, const void* val),const void* findVal);//查找数据，返回找到的节点指针，没有返回NULL
 	//判断函数
 	bool (*empty)(const struct list*);// 检测list内是否为空，空为真 O(1)
 	//大小函数
 	size_t(*size)(const struct list*);//返回list内元素的个数 O(1)
 	//其他函数
-	void (*sort)(struct list*, bool (*Sort)(void*, void*));//排序
+	void (*sort)(struct list* this_list, bool (*Sort)(void* x, void* y));//排序
 	void (*swap)(struct list*, struct list*);//交换两个同类型链表的数据
 	//释放
 	void (*free)(struct list* this_list);//释放内存
@@ -61,18 +61,27 @@ void  List_erase_int(list* this_list, const int left, const int right);
 //清空list的队列，释放内存
 void  List_clear(list* this_list);
 //遍历函数
-Node* List_at(const list* this_list, int i);// 想象成数组，输入下标返回元素节点的指针
-Node* List_front(list* this_list);//返回链表头指针，指向第一个节点指针
-Node* List_back(list* this_list);//返回链表尾指针，指向链表最后一个节点指针
-Node* List_find(const list* this_list, const void* val);//查找数据，返回找到的指针，没有返回NULL
+// 想象成数组，输入下标返回元素节点的指针
+Node* List_at(const list* this_list, int i);
+//返回链表头指针，指向第一个节点指针
+Node* List_front(list* this_list);
+//返回链表尾指针，指向链表最后一个节点指针
+Node* List_back(list* this_list);
+//查找数据，返回找到的指针，没有返回NULL
+Node* List_find(const list* this_list, bool (*find)(const struct Node* node, const void* val),const void* findVal);
 //判断函数
-bool  List_empty(const list* this_list);//检测list内是否为空，空为真 O(1)
+//检测list内是否为空，空为真 O(1)
+bool  List_empty(const list* this_list);
 //大小函数
-size_t   List_size(const  list* this_list);//返回list内元素的个数 O(1)
+//返回list内元素的个数 O(1)
+size_t   List_size(const  list* this_list);
 //其他函数
-void  List_sort(list* this_list, bool (*Sort)(void* x, void* y));//排序
-void  List_swap(list* this_list1, list* this_list2);//交换两个同类型链表的数据
-void  List_free(list* this_list);//释放内存
+//排序
+void  List_sort(list* this_list, bool (*Sort)(void* x, void* y));
+//交换两个同类型链表的数据
+void  List_swap(list* this_list1, list* this_list2);
+//释放内存
+void  List_free(list* this_list);
 //创建链表
 list* List_init(int size);
 #endif // 

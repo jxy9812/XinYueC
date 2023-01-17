@@ -13,10 +13,14 @@ bool mysort(void* x, void* y)//自定义的排序回调函数
 {
 	return  *(int*)x < *(int*)y;
 }
+bool findListInt(const struct Node* node, const void* val)
+{
+	return (*(int*)node->date) == (*(int*)val);
+}
 ListTest()
 {
 	list* li = List_init(sizeof(int));
-	int num[] = {1,5,7,9,10,100,456,97,123,45,12,34,56};
+	int num[] = {90,5,7,9,10,100,456,97,123,45,12,34,56};
 	for (size_t i = 0; i <sizeof(num)/sizeof(num[0]); i++)
 	{
 		li->push_front(li,num+i);//头插
@@ -32,12 +36,16 @@ ListTest()
 	{
 		printf("%d\n", *(int*)li->at(li, i)->date);
 	}
-	printf("头元素为：%d\n", *(int*)li->front(li)->date);
-	printf("尾元素为：%d\n", *(int*)li->back(li)->date);
+	/*printf("头元素为：%d\n", *(int*)li->front(li)->date);
+	printf("尾元素为：%d\n", *(int*)li->back(li)->date);*/
+
+	/*struct Node*findNode=List_find(li, findListInt, num + 5);
+	printf("找到的数字%d\n", *(int*)findNode->date);*/
+
 	/*int findn = 10;
 	printf("找到的元素为：%d\n", *(int*)li->find(li,&findn)->date);*/
 	
-	//li->sort(li, mysort);
+	List_sort(li, mysort);
 	printf("排序后元素后遍历\n");
 	for (size_t i = 0; i < li->size(li); i++)
 	{
@@ -118,7 +126,7 @@ VectorTest()
 }
 stackTest()
 {
-	stack* sInt = NewStack("int");
+	stack* sInt = Stack_init("int");
 	sInt->push(sInt, 1);
 	sInt->push(sInt, 100);
 	sInt->push(sInt, 65);
@@ -128,7 +136,7 @@ stackTest()
 		printf("%d\n",sInt->top(sInt));
 		sInt->pop(sInt);
 	}
-	stack* string = NewStack("char[100]");
+	stack* string = Stack_init("char[100]");
 	string->push(string, "琦神");
 	string->push(string, "小白");
 	string->push(string, "皮皮");
@@ -141,9 +149,9 @@ stackTest()
 }
 int main(int argc, char* args[])
 {
-	ListTest();
+	//ListTest();
 	//VectorTest();
-	//stackTest();
+	stackTest();
 	/*const char* str = "sSDSA564DSA";
 	const char* fchar = "1234";
 	printf("%s\n", string_find_last_of(str, fchar));

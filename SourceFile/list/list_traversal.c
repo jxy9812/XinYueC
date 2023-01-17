@@ -42,17 +42,17 @@ Node* List_back(list* this_list)
 	return ((Node*)(list->object._data))->prev;
 }
 
-Node* List_find(const list* this_list, const void* val)
+Node* List_find(const list* this_list, bool (*find)(const struct Node* node, const void* val), const void* findVal)
 {
 	LIST* list=(LIST*)this_list;
-	Node* p = list->object._data;
+	Node* pNode = list->object._data;
 	for (size_t i = 0; i < list->object._size; i++)
 	{
-		if (memcmp(p->date, val, list->object._type) == 0)
+		if (find(pNode, findVal))
 		{
-			return p;
+			return pNode;
 		}
-		p = p->next;
+		pNode = pNode->next;
 	}
 	return NULL;
 }

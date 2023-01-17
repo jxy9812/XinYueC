@@ -1,39 +1,30 @@
 ﻿#include"stack.h"
 #include"stack_head.h"
+#include"algorithm.h"
 #include<stdlib.h>
 #include <stdarg.h> 
 #include<string.h>
 //初始化函数
-stack* NewStack(const char* arr, ...)
+stack* Stack_init(const char* arr, ...)
 {
-	STACK* st = malloc(sizeof(STACK));
+	STACK* this_stack = malloc(sizeof(STACK));
 	char buf[20];
 	strcpy(buf, arr);
 	size_t len = strlen(buf);
-	//printf("去空格前：%s\n", buf);
 	//去掉字符串空格
-	for (size_t i = 0; i < len; i++)
-	{
-		if (buf[len - 1 - i] == ' ')
-		{
-			for (size_t j = 0; j < i + 1; j++)
-			{
-				buf[len - 1 - i + j] = buf[len - i + j];
-			}
-		}
-	}
-	//printf("去空格后：%s  长度：%d\n", buf,strlen(buf));
+	Unblank(buf, middle | left | right);
+	ContainerObject_init(&this_stack->object,0);
 	if (strcmp(buf, "char") == 0)
 	{
-		st->_type = sizeof(char);
-		st->push = Stack_Push_char;//入栈
-		st->top = Stack_top_char;//取得栈顶元素（但不删除）O(1)
+		this_stack->object._type = sizeof(char);
+		this_stack->push = Stack_Push_char;//入栈
+		this_stack->top = Stack_top_char;//取得栈顶元素（但不删除）O(1)
 	}
 	else if (strcmp(buf, "char*") == 0)
 	{
-		st->_type = sizeof(char*);
-		st->push = Stack_Push_Char;//入栈
-		st->top = Stack_top_Char;//取得栈顶元素（但不删除）O(1)
+		this_stack->object._type = sizeof(char*);
+		this_stack->push = Stack_Push_Char;//入栈
+		this_stack->top = Stack_top_Char;//取得栈顶元素（但不删除）O(1)
 	}
 	else if (strncmp(buf, "char[", 5) == 0 && buf[strlen(buf) - 1])
 	{
@@ -41,22 +32,22 @@ stack* NewStack(const char* arr, ...)
 		size_t n = strlen(buf) - 6;
 		strncpy(num, &buf[5], n);
 		num[n] = '\0';
-		st->_type = sizeof(char) * atoi(num);
-		st->push = Stack_Push_charArray;//入栈
-		st->top = Stack_top_charArray;//取得栈顶元素（但不删除）O(1)
+		this_stack->object._type = sizeof(char) * atoi(num);
+		this_stack->push = Stack_Push_charArray;//入栈
+		this_stack->top = Stack_top_charArray;//取得栈顶元素（但不删除）O(1)
 		//printf("%d\n", st->_type);
 	}
 	else if (strcmp(buf, "int") == 0)
 	{
-		st->_type = sizeof(int);
-		st->push = Stack_Push_int;//入栈
-		st->top = Stack_top_int;//取得栈顶元素（但不删除）O(1)
+		this_stack->object._type = sizeof(int);
+		this_stack->push = Stack_Push_int;//入栈
+		this_stack->top = Stack_top_int;//取得栈顶元素（但不删除）O(1)
 	}
 	else if (strcmp(buf, "int*") == 0)
 	{
-		st->_type = sizeof(int*);
-		st->push = Stack_Push_Int;//入栈
-		st->top = Stack_top_Int;//取得栈顶元素（但不删除）O(1)
+		this_stack->object._type = sizeof(int*);
+		this_stack->push = Stack_Push_Int;//入栈
+		this_stack->top = Stack_top_Int;//取得栈顶元素（但不删除）O(1)
 	}
 	//else if (strncmp(buf, "int[", 4) == 0 && buf[strlen(buf) - 1])
 	//{
@@ -80,29 +71,31 @@ stack* NewStack(const char* arr, ...)
 			exit(-1);
 		}
 		va_end(args);//参数使用结束  
-		st->_type = n;
-		st->push = Stack_Push;//入栈
-		st->top = Stack_top;//取得栈顶元素（但不删除）O(1)
+		this_stack->object._type = n;
+		this_stack->push = Stack_Push;//入栈
+		this_stack->top = Stack_top;//取得栈顶元素（但不删除）O(1)
 	}
 
-	st->clear = Stack_clear;//清空stack的队列，释放内存
-	st->pop = Stack_pop;//出栈
-	st->empty = Stack_empty;//检测栈内是否为空，空为真 O(1)
-	st->size = Stack_size;//返回stack内元素的个数 O(1)
-	st->capacity = Stack_Capacity;//返回当前stack所能容纳的最大元素值
-	st->_current = 0;
-	st->copy = Stack_Copy;
-	st->rcopy = Stack_Rcopy;
-	st->swap = Stack_Swap;
-	st->_data = malloc(st->_type * MAXNUM);
-	if (st->_data == NULL)
+	this_stack->clear = Stack_clear;//清空stack的队列，释放内存
+	this_stack->pop = Stack_pop;//出栈
+	this_stack->empty = Stack_empty;//检测栈内是否为空，空为真 O(1)
+	this_stack->size = Stack_size;//返回stack内元素的个数 O(1)
+	this_stack->capacity = Stack_Capacity;//返回当前stack所能容纳的最大元素值
+	//st->_current = 0;
+	this_stack->copy = Stack_Copy;
+	this_stack->rcopy = Stack_Rcopy;
+	this_stack->swap = Stack_Swap;
+	this_stack->free = Stact_free;
+	//开辟初始空间
+	this_stack->object._data = malloc(this_stack->object._type * MAXNUM);
+	if (this_stack->object._data == NULL)
 	{
 		perror("初始化sttor失败");
 		exit(-1);
 	}
 	else
 	{
-		st->_size = MAXNUM;
+		this_stack->object._capacity = MAXNUM;
 	}
-	return st;
+	return this_stack;
 }

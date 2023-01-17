@@ -2,11 +2,11 @@
 #include<stdio.h>
 #include<stdlib.h>
 //检测是否扩容,并返回需要插入的指针
-void* StacketEnlargeCapacity(STACK* st)
+void* StacketEnlargeCapacity(STACK* this_stack)
 {
-	if (st->_size == st->_current)//空间已满需要扩容
+	if (this_stack->object._size == this_stack->object._capacity)//空间已满需要扩容
 	{
-		void* _data = realloc(st->_data, st->_size * st->_type * 2);
+		void* _data = realloc(this_stack->object._data, this_stack->object._capacity * this_stack->object._type * 2);
 		if (_data == NULL)
 		{
 			perror("扩容失败sttor");
@@ -14,11 +14,11 @@ void* StacketEnlargeCapacity(STACK* st)
 		}
 		else
 		{
-			st->_data = _data;
-			st->_size *= 2;
+			this_stack->object._data = _data;
+			this_stack->object._capacity *= 2;
 		}
 	}
-	char* str1 = (char*)st->_data + st->_type * st->_current;
-	st->_current++;
+	char* str1 = (char*)this_stack->object._data + this_stack->object._type * this_stack->object._size;
+	this_stack->object._size++;
 	return str1;
 }
