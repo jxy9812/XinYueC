@@ -2,30 +2,29 @@
 #include"list_head.h"
 #include<string.h>
 #include<stdlib.h>
-list* Newlist(int size)
+list* List_init(int TypeSize)
 {
-	LIST* li = malloc(sizeof(LIST));
-	li->push_front = List_push_front;
-	li->push_back = List_push_back;
-	li->insert_front_p = List_insert_front_p;
-	li->insert_front_int = List_insert_front_int;
-	li->insert = List_insert;
-	li->at = List_at;
-	li->pop_front = List_pop_front;
-	li->pop_back = List_pop_back;
-	li->erase_p = List_erase_p;
-	li->erase_int = List_erase_int;
-	li->clear = List_clear;
-	li->at = List_at;
-	li->front = List_front;
-	li->back = List_back;
-	li->find = List_find;
-	li->empty = List_empty;
-	li->size = List_size;
-	li->sort = List_sort;
-	li->swap = List_swap;
-	li->_type = size;
-	li->_current = 0;
-	li->_data = NULL;
-	return li;
+	LIST* this_list = malloc(sizeof(LIST));
+	this_list->push_front = List_push_front;
+	this_list->push_back = List_push_back;
+	this_list->insert_front_p = List_insert_front_p;
+	this_list->insert_front_int = List_insert_front_int;
+	this_list->insert = List_insert;
+	this_list->at = List_at;
+	this_list->pop_front = List_pop_front;
+	this_list->pop_back = List_pop_back;
+	this_list->erase_p = List_erase_p;
+	this_list->erase_int = List_erase_int;
+	this_list->clear = List_clear;
+	this_list->at = List_at;
+	this_list->front = List_front;
+	this_list->back = List_back;
+	this_list->find = List_find;
+	this_list->empty = List_empty;
+	this_list->size = List_size;
+	this_list->sort = List_sort;
+	this_list->swap = List_swap;
+	this_list->free = List_free;
+	ContainerObject_init(&this_list->object, TypeSize);
+	return this_list;
 }

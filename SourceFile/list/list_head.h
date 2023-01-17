@@ -1,6 +1,7 @@
 ﻿#ifndef LIST_HEAD_H
 #define LIST_HEAD_H
 #include<stdio.h>
+#include"ContainerObject.h"
 struct Node;
 //真实的结构体
 struct LIST
@@ -29,9 +30,13 @@ struct LIST
 	//其他函数
 	void (*sort)(struct LIST*, bool (*Sort)(void*, void*));//排序
 	void (*swap)(struct LIST*, struct LIST*);//交换两个同类型链表的数据
-	struct Node* _data;//指向链表的头节点
-	size_t  _current;//当前元素个数
-	size_t _type;//类型占用字节数
+	//释放
+	void (*free)(struct LIST* this_list);//释放内存
+	struct ContainerObject object;
+	//struct Node* _data;//指向链表的头节点
+
+	//size_t  _current;//当前元素个数
+	//size_t _type;//类型占用字节数
 };
 typedef struct LIST LIST;
 #endif // !LIST_HEAD_H

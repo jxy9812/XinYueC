@@ -4,22 +4,22 @@
 //检测是否需要扩容
 void VectorEnlargeCapacity(VECTOR* this_vector)
 {
-	if (this_vector->_size == 0)
+	if (this_vector->object._capacity == 0)
 	{
-		this_vector->_data = malloc(this_vector->_type * VECTORNUM);
-		if (this_vector->_data == NULL)
+		this_vector->object._data = malloc(this_vector->object._type * VECTORNUM);
+		if (this_vector->object._data == NULL)
 		{
 			perror("初始化vector失败");
 			exit(-1);
 		}
 		else
 		{
-			this_vector->_size = VECTORNUM;
+			this_vector->object._capacity = VECTORNUM;
 		}
 	}
-	else if (this_vector->_size == this_vector->_current)//空间已满需要扩容
+	else if (this_vector->object._capacity == this_vector->object._size)//空间已满需要扩容
 	{
-		void* _data = realloc(this_vector->_data, this_vector->_size * this_vector->_type * 2);
+		void* _data = realloc(this_vector->object._data, this_vector->object._capacity * this_vector->object._type * 1.5);
 		if (_data == NULL)
 		{
 			perror("扩容失败vector");
@@ -27,8 +27,8 @@ void VectorEnlargeCapacity(VECTOR* this_vector)
 		}
 		else
 		{
-			this_vector->_data = _data;
-			this_vector->_size *= 2;
+			this_vector->object._data = _data;
+			this_vector->object._capacity *= 1.5;
 		}
 	}
 }

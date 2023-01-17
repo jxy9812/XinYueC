@@ -6,9 +6,9 @@ void Vector_Push_Back(struct vector* this_vector, void* x)// 向量尾部增加�
 {
 	VECTOR* v=(VECTOR*)this_vector;
 	VectorEnlargeCapacity(v);
-	char* str1 = (char*)v->_data + v->_type * v->_current;
-	memcpy(str1, x, v->_type);
-	v->_current++;
+	char* str1 = (char*)v->object._data + v->object._type * v->object._size;
+	memcpy(str1, x, v->object._type);
+	v->object._size++;
 }
 void Vector_insert_front(struct vector* this_vector, const void* p, const void* x)// 向量中指向元素p前增加一个元素x
 {
@@ -16,12 +16,12 @@ void Vector_insert_front(struct vector* this_vector, const void* p, const void* 
 	VectorEnlargeCapacity(v);
 	if (p >= v->front(v) && p <= v->back(v))
 	{
-		int size = (char*)v->back(v)-(char*)p + v->_type;
+		int size = (char*)v->back(v)-(char*)p + v->object._type;
 		void* ptr = malloc(size);
 		memcpy(ptr, p, size);
-		memcpy(p, x, v->_type);
-		memcpy((char*)p + v->_type, ptr, size);
-		v->_current++;
+		memcpy(p, x, v->object._type);
+		memcpy((char*)p + v->object._type, ptr, size);
+		v->object._size++;
 		free(ptr);
 	}
 }
@@ -31,16 +31,16 @@ void Vector_insert_nfront(struct vector* this_vector, const void* p, const int n
 	if (p >= v->front(v) && p <= v->back(v))
 	{
 		VectorEnlargeCapacity(v);
-		int size = (char*)v->back(v) -(char*)p + v->_type;
+		int size = (char*)v->back(v) -(char*)p + v->object._type;
 		void* ptr = malloc(size);
 		memcpy(ptr, p, size);
-		int sizen = ((char*)p - (char*)v->front(v)) / v->_type;
+		int sizen = ((char*)p - (char*)v->front(v)) / v->object._type;
 		for (size_t i = 0; i < n; i++)
 		{
 			VectorEnlargeCapacity(v);
-			memcpy((char*)v->at(v, sizen), x, v->_type);
+			memcpy((char*)v->at(v, sizen), x, v->object._type);
 			sizen++;
-			v->_current++;
+			v->object._size++;
 		}
 		memcpy((char*)v->at(v, sizen), ptr, size);
 		free(ptr);
@@ -52,17 +52,17 @@ void Vector_insert(struct vector* this_vector, const void* p, const void* p1, co
 	if (p >= v->front(v) && p <= v->back(v))
 	{
 		VectorEnlargeCapacity(v);
-		int size = (char*)v->back(v) -(char*)p + v->_type;
+		int size = (char*)v->back(v) -(char*)p + v->object._type;
 		void* ptr = malloc(size);
 		memcpy(ptr, p, size);
-		int sizen = ((char*)p - (char*)v->front(v)) / v->_type;
-		int push_n = ((char*)p2 - (char*)p1) / v->_type + 1;
+		int sizen = ((char*)p - (char*)v->front(v)) / v->object._type;
+		int push_n = ((char*)p2 - (char*)p1) / v->object._type + 1;
 		for (size_t i = 0; i < push_n; i++)
 		{
 			VectorEnlargeCapacity(v);
-			memcpy((char*)v->at(v, sizen), (char*)p1 + i * v->_type, v->_type);
+			memcpy((char*)v->at(v, sizen), (char*)p1 + i * v->object._type, v->object._type);
 			sizen++;
-			v->_current++;
+			v->object._size++;
 		}
 		memcpy((char*)v->at(v, sizen), ptr, size);
 		free(ptr);

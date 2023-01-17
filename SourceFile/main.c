@@ -15,7 +15,7 @@ bool mysort(void* x, void* y)//自定义的排序回调函数
 }
 ListTest()
 {
-	list* li = Newlist(sizeof(int));
+	list* li = List_init(sizeof(int));
 	int num[] = {1,5,7,9,10,100,456,97,123,45,12,34,56};
 	for (size_t i = 0; i <sizeof(num)/sizeof(num[0]); i++)
 	{
@@ -37,7 +37,7 @@ ListTest()
 	/*int findn = 10;
 	printf("找到的元素为：%d\n", *(int*)li->find(li,&findn)->date);*/
 	
-	li->sort(li, mysort);
+	//li->sort(li, mysort);
 	printf("排序后元素后遍历\n");
 	for (size_t i = 0; i < li->size(li); i++)
 	{
@@ -54,12 +54,11 @@ ListTest()
 	//{
 	//	printf("%d\n", *(int*)li->at(li, i)->date);
 	//}
-	li->clear(li);
-	free(li);
+	li->free(li);
 }
 test02()//交换函数测试
 {
-	list* li1 = Newlist(sizeof(int));
+	list* li1 = List_init(sizeof(int));
 	int num;
 	
 	for (size_t i = 0; i < 10; i++)
@@ -73,7 +72,7 @@ test02()//交换函数测试
 		printf("%d\n", *(int*)li1->at(li1, i));
 	}
 
-	list* li2 = Newlist(sizeof(int));
+	list* li2 = List_init(sizeof(int));
 
 	for (size_t i = 0; i < 20; i++)
 	{
@@ -104,17 +103,18 @@ test02()//交换函数测试
 }
 VectorTest()
 {
-	vector* v=NewVector("people",sizeof(struct people));
+	vector* v=Vector_init(" people ",sizeof(struct people));
 	struct people p1 ={22, "男", "琦神","大佬"};
 	Vector_Push_Back(v, &p1);
 	struct people p2 = {19, "男", "小白","大佬"};
 	Vector_Push_Back(v, &p2);
-	for (size_t i = 0; i < Vector_size(v); i++)
+	int n = v->size(v);
+	for (size_t i = 0; i <v->size(v); i++)
 	{
 		struct people* p = Vector_at(v,i);
 		printf("%s %s %d岁 是%s\n", p->name, p->gender, p->age,p->achievement);
 	}
-		
+	v->free(v);
 }
 stackTest()
 {
@@ -141,11 +141,14 @@ stackTest()
 }
 int main(int argc, char* args[])
 {
-	//ListTest();
-	VectorTest();
-	stackTest();
-	const char* str = "sSDSA564DSA";
+	ListTest();
+	//VectorTest();
+	//stackTest();
+	/*const char* str = "sSDSA564DSA";
 	const char* fchar = "1234";
-	printf("%s", string_find_last_of(str, fchar));
+	printf("%s\n", string_find_last_of(str, fchar));
+	char buf[100] = " 12113 1131 13 ";
+	Unblank(buf, right);
+	printf("%s\n", buf);*/
 	return 0;
 }

@@ -4,50 +4,51 @@
 #include<string.h>
 #include <stdarg.h> 
 //插入
-Node* List_push_front(list* li, void* x)
+Node* List_push_front(list* this_list, void* x)
 {
-	LIST* list=(LIST*)li;
-	Node* p = List_push_back(li, x);
-	if (list->_current != 0)
+	LIST* list=(LIST*)this_list;
+	Node* NewNode = List_push_back(this_list, x);
+	if (list->object._size != 0)
 	{
-		list->_data = p;
+		list->object._data = NewNode;
 	}
-	return p;
+	return NewNode;
 }
 
-Node* List_push_back(list* li, void* x)
+Node* List_push_back(list* this_list, void* x)
 {
-	LIST* list=(LIST*)li;
-	Node* p = malloc(sizeof(Node));//开辟节点
-	if (p == NULL)
+	LIST* list=(LIST*)this_list;
+	Node* NewNode = malloc(sizeof(Node));//新节点
+	if (NewNode == NULL)
 	{
 		perror("开辟节点失败");
 		exit(-1);
 	}
-	p->date = malloc(list->_type);//开辟节点内储存数据的空间
-	memcpy(p->date, x, list->_type);//拷贝数据
-	if (list->_current == 0)
+	NewNode->date = malloc(list->object._type);//开辟节点内储存数据的空间
+	memcpy(NewNode->date, x, list->object._type);//拷贝数据
+	if (list->object._size == 0)
 	{
-		list->_data = p;
-		p->next = p;
-		p->prev = p;
+		list->object._data = NewNode;
+		NewNode->next = NewNode;
+		NewNode->prev = NewNode;
 	}
 	else
 	{
-		Node* pfront = list->_data;//原头节点
+		Node* pfront = list->object._data;//原头节点
 		Node* pback = pfront->prev;//原尾节点
-		p->next = pfront;
-		p->prev = pback;
-		pfront->prev = p;
-		pback->next = p;
+		NewNode->next = pfront;
+		NewNode->prev = pback;
+		pfront->prev = NewNode;
+		pback->next = NewNode;
 	}
-	list->_current++;
-	return p;
+	list->object._size++;
+	list->object._capacity++;
+	return NewNode;
 }
 
-void List_insert_front_p(list* li, Node* pval, ...)
+void List_insert_front_p(list* this_list, Node* pval, ...)
 {
-	LIST* list=(LIST*)li;
+	LIST* list=(LIST*)this_list;
 	if (pval == NULL)
 	{
 		printf("节点指针不能为空\n");
@@ -75,19 +76,20 @@ void List_insert_front_p(list* li, Node* pval, ...)
 				perror("开辟节点失败");
 				exit(-1);
 			}
-			pk->date = malloc(list->_type);//开辟节点内储存数据的空间
-			memcpy(pk->date, x, list->_type);//拷贝数据
+			pk->date = malloc(list->object._type);//开辟节点内储存数据的空间
+			memcpy(pk->date, x, list->object._type);//拷贝数据
 
 			pk->prev = left;
 			pk->next = pval;
 			left->next = pk;
 			pval->prev = pk;
 
-			if (pval == list->_data)
+			if (pval == list->object._data)
 			{
-				list->_data = pk;
+				list->object._data = pk;
 			}
-			list->_current++;
+			list->object._size++;
+			list->object._capacity++;
 		}
 		else
 		{
@@ -96,10 +98,10 @@ void List_insert_front_p(list* li, Node* pval, ...)
 	}
 }
 
-void List_insert_front_int(list* li, int i, ...)
+void List_insert_front_int(list* this_list, int i, ...)
 {
-	LIST* list=(LIST*)li;
-	if ((i < 0) && (list->_current <= i))
+	LIST* list=(LIST*)this_list;
+	if ((i < 0) && (list->object._size <= i))
 	{
 		printf("输入的下标不在范围内\n");
 		return ;
@@ -111,20 +113,20 @@ void List_insert_front_int(list* li, int i, ...)
 	va_end(args);//参数使用结束  
 	if (n > 1000 || n <= 0)//一次调用最多插入1000个
 		n = 1;
-	Node* p = list->at(li, i);
-	list->insert_front_p(li, p, x, n);
+	Node* p = list->at(this_list, i);
+	list->insert_front_p(this_list, p, x, n);
 }
 
-void List_insert(list* li, Node* pval, const void* p1, const void* p2)
+void List_insert(list* this_list, Node* pval, const void* p1, const void* p2)
 {
-	LIST* list=(LIST*)li;
+	LIST* list=(LIST*)this_list;
 	if (pval == NULL)
 	{
 		printf("节点指针不能为空\n");
 		return ;
 	}
-	for (size_t i = 0; i < ((char*)p2 - (char*)p1) / list->_type + 1; i++)
+	for (size_t i = 0; i < ((char*)p2 - (char*)p1) / list->object._type + 1; i++)
 	{
-		List_insert_front_p(li, pval, (char*)p1 + i * list->_type);
+		List_insert_front_p(this_list, pval, (char*)p1 + i * list->object._type);
 	}
 }

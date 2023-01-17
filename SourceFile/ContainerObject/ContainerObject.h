@@ -21,4 +21,5 @@ const bool ContainerObject_empty(const struct ContainerObject* Object);
 const size_t ContainerObject_size(const struct ContainerObject* Object);
 const size_t ContainerObject_capacity(const struct ContainerObject* Object);
 void ContainerObject_swap(struct ContainerObject* ObjectOne, struct ContainerObject* ObjectTwo);
+void ContainerObject_init( struct ContainerObject* Object,size_t type);
 #endif // !ContainerObject_h

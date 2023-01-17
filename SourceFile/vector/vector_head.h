@@ -1,6 +1,6 @@
 ﻿#ifndef  VECTOR_HEAD
 #define VECTOR_HEAD
-#include<stdbool.h>
+#include"ContainerObject.h"
 #define VECTORNUM 4//初始数组大小
 typedef struct VECTOR
 {
@@ -27,10 +27,13 @@ typedef struct VECTOR
 	//其他函数
 	void (*sort)(struct VECTOR*, int (*Sort)(void*, void*));//排序
 	void (*swap)(struct VECTOR*, struct VECTOR*);//交换两个同类型向量的数据
-	void* _data;//指向自定义数组类型
-	int  _current;//当前元素个数
-	int _size;//元素最大个数
-	int _type;//类型占用字节数
+	//释放
+	void (*free)(const struct VECTOR* this_vector);//释放内存
+	struct ContainerObject object;
+	//void* _data;//指向自定义数组类型
+	//int  _current;//当前元素个数
+	//int _size;//元素最大个数
+	//int _type;//类型占用字节数
 }VECTOR;
 //检测是否需要扩容
 void VectorEnlargeCapacity(VECTOR* this_vector);

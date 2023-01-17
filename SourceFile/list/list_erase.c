@@ -3,82 +3,88 @@
 #include<stdlib.h>
 //struct list;
 //删除
-void  List_pop_front(struct list* li)
+void  List_pop_front(struct list* this_list)
 {
-	LIST* list=(LIST*)li;
-	if (list->_current == 1)
+	LIST* list=(LIST*)this_list;
+	if (list->object._size == 1)
 	{
-		Node* head = list->_data;
+		Node* head = list->object._data;
 		free(head->date);
 		free(head);
-		list->_data = NULL;
-		list->_current--;
+		list->object._data = NULL;
+		list->object._size--;
+		list->object._capacity--;
 	}
-	else if (list->_current > 1)
+	else if (list->object._size > 1)
 	{
-		Node* pfront = list->_data;//原头节点
+		Node* pfront = list->object._data;//原头节点
 		Node* pback = pfront->prev;//原尾节点
 		Node* pnfront = pfront->next;//新头节点
 		pnfront->prev = pback;
 		pback->next = pnfront;
-		list->_data = pnfront;
+		list->object._data = pnfront;
 		free(pfront->date);
 		free(pfront);
-		list->_current--;
+		list->object._size--;
+		list->object._capacity--;
 	}
 }
 
-void List_pop_back(list* li)
+void List_pop_back(list* this_list)
 {
-	LIST* list=(LIST*)li;
-	if (list->_current == 1)
+	LIST* list=(LIST*)this_list;
+	if (list->object._size == 1)
 	{
-		Node* head = list->_data;
-		free(head->date);
-		free(head);
-		list->_data = NULL;
-		list->_current--;
+		List_pop_front(this_list);
 	}
-	else if (list->_current > 1)
+	else if (list->object._size > 1)
 	{
-		Node* pfront = list->_data;//原头节点
+		Node* pfront = list->object._data;//原头节点
 		Node* pback = pfront->prev;//原尾节点
 		Node* pnback = pback->prev;//新尾节点
 		pnback->next = pfront;
 		pfront->prev = pnback;
 		free(pback->date);
 		free(pback);//释放尾节点
-		list->_current--;
+		list->object._size--;
+		list->object._capacity--;
 	}
 }
 
-void List_erase_p(list* li, const Node* p1, const Node* p2)
+void List_erase_p(list* this_list, const Node* pNodeOne, const Node* NodeTwo)
 {
-	LIST* list=(LIST*)li;
-	Node* pp = p1;
-	Node* left = p1->prev;
-	Node* right = p2->next;
-	for (; pp != p2; )
+	if (this_list==NULL||pNodeOne == NULL)
+		return;
+	Node* pNodeTwo = NodeTwo;
+	if (pNodeTwo == NULL)
+		pNodeTwo = pNodeOne;
+	LIST* list=(LIST*)this_list;
+	Node* pp = pNodeOne;
+	Node* left = pNodeOne->prev;
+	Node* right = pNodeTwo->next;
+	for (pp = pp->next; pp != pNodeTwo; pp = pp->next )
 	{
-		pp = pp->next;
 		free(pp->prev->date);
 		free(pp->prev);
-		list->_current--;
+		list->object._size--;
+		list->object._capacity--;
 	}
-	free(pp);//释放p2O
-	list->_current--;
+	free(pNodeTwo->date);//
+	free(pNodeTwo);//
+	list->object._size--;
+	list->object._capacity--;
 	left->next = right;
 	right->prev = left;
-	if (p1 == list->_data)
+	if (pNodeOne == list->object._data)
 	{
-		list->_data = right;
+		list->object._data = right;
 	}
 }
 
-void List_erase_int(list* li, const int left, const int right)
+void List_erase_int(list* this_list, const int left, const int right)
 {
-	LIST* list=(LIST*)li;
-	if (right < list->_current && left <= right && left >= 0)
+	LIST* list=(LIST*)this_list;
+	if (right < list->object._size && left <= right && left >= 0)
 	{
 		Node* p = List_at(list, left);//left的节点指针
 		Node* prev = p->prev;//上一个节点
@@ -93,22 +99,24 @@ void List_erase_int(list* li, const int left, const int right)
 		Node* pnext = p;//right的下一个节点
 		prev->next = pnext;
 		pnext->prev = prev;
-		list->_current -= right - left + 1;
+		list->object._size -= right - left + 1;
+		list->object._capacity = list->object._size;
 	}
 }
 
-void List_clear(list* li)
+void List_clear(list* this_list)
 {
-	LIST* list=(LIST*)li;
-	Node* p = list->_data;
+	LIST* list=(LIST*)this_list;
+	Node* p = list->object._data;
 	Node* pnext = p->next;
-	for (size_t i = 0; i < list->_current; i++)
+	for (size_t i = 0; i < list->object._size; i++)
 	{
 		pnext = p->next;
 		free(p->date);
 		free(p);
 		p = pnext;
 	}
-	list->_current = 0;
-	list->_data = NULL;
+	list->object._size = 0;
+	list->object._capacity = 0;
+	list->object._data = NULL;
 }
