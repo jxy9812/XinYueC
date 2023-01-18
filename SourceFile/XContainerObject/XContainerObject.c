@@ -1,6 +1,6 @@
 ﻿#include "XContainerObject.h"
 #include"XAlgorithm.h"
-static bool isObjectNULL(const struct XContainerObject* Object,const char* str)
+ bool isObjectNULL(const struct XContainerObject* Object,const char* str)
 {
 	if (Object == NULL)
 	{

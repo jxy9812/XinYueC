@@ -4,6 +4,8 @@
 //检测是否需要扩容
 void VectorEnlargeCapacity(XVECTOR* this_vector)
 {
+	if (isObjectNULL(this_vector, "VectorEnlargeCapacity"))
+		return;
 	if (this_vector->object._capacity == 0)
 	{
 		this_vector->object._data = malloc(this_vector->object._type * VECTORNUM);

@@ -4,6 +4,8 @@
 //检测是否扩容,并返回需要插入的指针
 void* StacketEnlargeCapacity(XSTACK* this_stack)
 {
+	if (isObjectNULL(this_stack, "StacketEnlargeCapacity"))
+		return NULL;
 	if (this_stack->object._size == this_stack->object._capacity)//空间已满需要扩容
 	{
 		void* _data = realloc(this_stack->object._data, this_stack->object._capacity * this_stack->object._type * 2);

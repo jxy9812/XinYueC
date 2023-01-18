@@ -5,6 +5,8 @@
 //删除
 void  List_pop_front(struct XList* this_list)
 {
+	if (isObjectNULL(this_list, "List_pop_front"))
+		return;
 	XLIST* list=(XLIST*)this_list;
 	if (list->object._size == 1)
 	{
@@ -32,6 +34,8 @@ void  List_pop_front(struct XList* this_list)
 
 void List_pop_back(XList* this_list)
 {
+	if (isObjectNULL(this_list, "List_pop_back"))
+		return;
 	XLIST* list=(XLIST*)this_list;
 	if (list->object._size == 1)
 	{
@@ -53,7 +57,7 @@ void List_pop_back(XList* this_list)
 
 void List_erase_p(XList* this_list, const Node* pNodeOne, const Node* NodeTwo)
 {
-	if (this_list==NULL||pNodeOne == NULL)
+	if (isObjectNULL(this_list, "List_erase_p-this_list")|| isObjectNULL(pNodeOne, "List_erase_p-pNodeOne"))
 		return;
 	Node* pNodeTwo = NodeTwo;
 	if (pNodeTwo == NULL)
@@ -83,6 +87,8 @@ void List_erase_p(XList* this_list, const Node* pNodeOne, const Node* NodeTwo)
 
 void List_erase_int(XList* this_list, const int left, const int right)
 {
+	if (isObjectNULL(this_list, "List_erase_int"))
+		return;
 	XLIST* list=(XLIST*)this_list;
 	if (right < list->object._size && left <= right && left >= 0)
 	{
@@ -106,6 +112,8 @@ void List_erase_int(XList* this_list, const int left, const int right)
 
 void List_clear(XList* this_list)
 {
+	if (isObjectNULL(this_list, "List_clear"))
+		return;
 	XLIST* list=(XLIST*)this_list;
 	Node* p = list->object._data;
 	Node* pnext = p->next;
