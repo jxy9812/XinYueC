@@ -1,7 +1,9 @@
-﻿#include"list.h"
-#include"vector.h"
-#include"stack.h"
-#include"algorithm.h"
+﻿#include"XList.h"
+#include"XVector.h"
+#include"XStack.h"
+#include"XAlgorithm.h"
+#include<stdlib.h>
+#include<time.h>
 struct people
 {
 	int age;
@@ -19,11 +21,18 @@ bool findListInt(const struct Node* node, const void* val)
 }
 ListTest()
 {
-	list* li = List_init(sizeof(int));
-	int num[] = {90,5,7,9,10,100,456,97,123,45,12,34,56};
-	for (size_t i = 0; i <sizeof(num)/sizeof(num[0]); i++)
+	XList* li = List_init(sizeof(int));
+	int size = 1000000;
+	srand((unsigned int)time(NULL));
+	int* p1 = malloc(sizeof(int) * size);
+	for (size_t i = 0; i < size; i++)
 	{
-		li->push_front(li,num+i);//头插
+		int num = rand()%1000;
+		p1[i] = num;
+	}
+	for (size_t i = 0; i < size; i++)
+	{
+		li->push_front(li,p1+i);//头插
 	}
 	/*int x = 100;
 	li->insert_front_int(li,0, &x,10);*/
@@ -31,11 +40,11 @@ ListTest()
 	li->insert_front_p(li, li->find(li,num+2), &x, 4);*/
 	/*int arr[5] = { 123,12,1,4,9 };
 	li->insert(li,li->find(li,num+10), &arr[0], &arr[4]);*/
-	printf("元素遍历\n");
+	/*printf("元素遍历\n");
 	for (size_t i = 0; i < li->size(li); i++)
 	{
 		printf("%d\n", *(int*)li->at(li, i)->date);
-	}
+	}*/
 	/*printf("头元素为：%d\n", *(int*)li->front(li)->date);
 	printf("尾元素为：%d\n", *(int*)li->back(li)->date);*/
 
@@ -44,13 +53,16 @@ ListTest()
 
 	/*int findn = 10;
 	printf("找到的元素为：%d\n", *(int*)li->find(li,&findn)->date);*/
-	
+	clock_t  time_front = clock();
 	List_sort(li, mysort);
-	printf("排序后元素后遍历\n");
+	clock_t time_after = clock();
+	printf("%d随机数，链表排序运行了%dms\n",size, time_after - time_front);
+	/*printf("排序后元素后遍历\n");
 	for (size_t i = 0; i < li->size(li); i++)
 	{
 		printf("%d\n", *(int*)li->at(li, i)->date);
-	}
+	}*/
+
 	/*li->pop_back(li);
 	li->pop_back(li);
 	li->pop_front(li);
@@ -66,7 +78,7 @@ ListTest()
 }
 test02()//交换函数测试
 {
-	list* li1 = List_init(sizeof(int));
+	XList* li1 = List_init(sizeof(int));
 	int num;
 	
 	for (size_t i = 0; i < 10; i++)
@@ -80,7 +92,7 @@ test02()//交换函数测试
 		printf("%d\n", *(int*)li1->at(li1, i));
 	}
 
-	list* li2 = List_init(sizeof(int));
+	XList* li2 = List_init(sizeof(int));
 
 	for (size_t i = 0; i < 20; i++)
 	{
@@ -111,22 +123,22 @@ test02()//交换函数测试
 }
 VectorTest()
 {
-	vector* v=Vector_init(" people ",sizeof(struct people));
+	XVector* v=XVector_init(" people ",sizeof(struct people));
 	struct people p1 ={22, "男", "琦神","大佬"};
-	Vector_Push_Back(v, &p1);
+	XVector_Push_Back(v, &p1);
 	struct people p2 = {19, "男", "小白","大佬"};
-	Vector_Push_Back(v, &p2);
+	XVector_Push_Back(v, &p2);
 	int n = v->size(v);
 	for (size_t i = 0; i <v->size(v); i++)
 	{
-		struct people* p = Vector_at(v,i);
+		struct people* p = XVector_at(v,i);
 		printf("%s %s %d岁 是%s\n", p->name, p->gender, p->age,p->achievement);
 	}
 	v->free(v);
 }
 stackTest()
 {
-	stack* sInt = Stack_init("int");
+	XStack* sInt = XStack_init("int");
 	sInt->push(sInt, 1);
 	sInt->push(sInt, 100);
 	sInt->push(sInt, 65);
@@ -136,7 +148,7 @@ stackTest()
 		printf("%d\n",sInt->top(sInt));
 		sInt->pop(sInt);
 	}
-	stack* string = Stack_init("char[100]");
+	XStack* string = XStack_init("char[100]");
 	string->push(string, "琦神");
 	string->push(string, "小白");
 	string->push(string, "皮皮");
