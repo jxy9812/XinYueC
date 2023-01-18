@@ -2,14 +2,14 @@
 #include"stack_head.h"
 #include<string.h>
 //int型入栈
-void Stack_Push_int(stack* st, const int x)
+void Stack_Push_int(stack* this_stack, const int val)
 {
-	STACK* stack=(STACK*)st;
-	*(int*)StacketEnlargeCapacity(stack) = x;
+	STACK* stack=(STACK*)this_stack;
+	*(int*)StacketEnlargeCapacity(stack) = val;
 }
 //int型取元素
-int Stack_top_int(stack* st)
+int Stack_top_int(stack* this_stack)
 {
-	STACK* stack=(STACK*)st;
+	STACK* stack=(STACK*)this_stack;
 	return *(int*)Stack_top(stack);
 }

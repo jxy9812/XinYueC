@@ -149,9 +149,9 @@ stackTest()
 }
 int main(int argc, char* args[])
 {
-	//ListTest();
+	ListTest();
 	//VectorTest();
-	stackTest();
+	//stackTest();
 	/*const char* str = "sSDSA564DSA";
 	const char* fchar = "1234";
 	printf("%s\n", string_find_last_of(str, fchar));

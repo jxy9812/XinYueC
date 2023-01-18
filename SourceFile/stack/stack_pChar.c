@@ -2,14 +2,14 @@
 #include"stack_head.h"
 #include<string.h>
 //char*型入栈
-void Stack_Push_Char(stack* st, const char* x)
+void Stack_Push_Char(stack* this_stack, const char* val)
 {
-	STACK* stack=(STACK*)st;
-	*(char**)StacketEnlargeCapacity(stack) = x;
+	STACK* stack=(STACK*)this_stack;
+	*(char**)StacketEnlargeCapacity(stack) = val;
 	//memcpy(Capacity(st), &x, st->_type);
 }
 //char*型取元素
-char* Stack_top_Char(stack* st)
+char* Stack_top_Char(stack* this_stack)
 {
-	return *(char**)Stack_top(st);
+	return *(char**)Stack_top(this_stack);
 }

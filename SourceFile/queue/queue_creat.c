@@ -2,7 +2,7 @@
 #include"queue_head.h"
 #include<stdlib.h>
 //初始化函数
-queue* NewQueue(int sizeType)
+queue* Queue_init(int sizeType)
 {
 	QUEUE* que = malloc(sizeof(QUEUE));
 	que->clear = Queue_clear;//清空queue的队列，释放内存
