@@ -1,6 +1,7 @@
 ﻿#include"XList.h"
 #include"XVector.h"
 #include"XStack.h"
+#include"XString.h"
 #include"XAlgorithm.h"
 #include<stdlib.h>
 #include<time.h>
@@ -159,9 +160,22 @@ stackTest()
 		string->pop(string);
 	}
 }
+
+XStringTest()
+{
+	XString* str = XString_init();
+	XString_append(str, " ");
+	XString_clear(str);
+	XString_append(str, "  666\r\n");
+	XString_assign(str, "草泥马");
+	XString_append(str, "你好呀1");
+	XString_pop_back(str);
+	//XString_erase(str, 0, 4);
+	printf("%s", XString_data(str));
+}
 int main(int argc, char* args[])
 {
-	ListTest();
+	//ListTest();
 	//VectorTest();
 	//stackTest();
 	/*const char* str = "sSDSA564DSA";
@@ -170,5 +184,6 @@ int main(int argc, char* args[])
 	char buf[100] = " 12113 1131 13 ";
 	Unblank(buf, right);
 	printf("%s\n", buf);*/
+	XStringTest();
 	return 0;
 }
