@@ -4,6 +4,8 @@
 //遍历
 Node* List_at(const XList* this_list, int n)
 {
+	if (isObjectNULL(this_list, "List_at"))
+		return NULL;
 	XLIST* list=(XLIST*)this_list;
 	if (n >= 0 && n <= (list->object._size / 2))//向后找
 	{
@@ -32,18 +34,24 @@ Node* List_at(const XList* this_list, int n)
 
 Node* List_front(XList* this_list)
 {
+	if (isObjectNULL(this_list, "List_front"))
+		return NULL;
 	XLIST* list=(XLIST*)this_list;
 	return list->object._data;
 }
 
 Node* List_back(XList* this_list)
 {
+	if (isObjectNULL(this_list, "List_back"))
+		return NULL;
 	XLIST* list=(XLIST*)this_list;
 	return ((Node*)(list->object._data))->prev;
 }
 
 Node* List_find(const XList* this_list, bool (*find)(const struct Node* node, const void* val), const void* findVal)
 {
+	if (isObjectNULL(this_list, "List_find"))
+		return NULL;
 	XLIST* list=(XLIST*)this_list;
 	Node* pNode = list->object._data;
 	for (size_t i = 0; i < list->object._size; i++)

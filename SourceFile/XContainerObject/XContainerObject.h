@@ -17,6 +17,7 @@ struct XContainerObject
 	size_t _size;//当前容器内的元素个数
 	size_t _type;//类型占用字节数
 };
+bool isObjectNULL(const struct XContainerObject* Object, const char* str);
 const bool XContainerObject_empty(const struct XContainerObject* Object);
 const size_t XContainerObject_size(const struct XContainerObject* Object);
 const size_t XContainerObject_capacity(const struct XContainerObject* Object);

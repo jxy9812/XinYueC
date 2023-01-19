@@ -1,6 +1,7 @@
 ﻿#include"XVector.h"
 #include"XVector_head.h"
 #include"XAlgorithm.h"
+#include"XContainerObject.h"
 #include<stdlib.h>
 #include<string.h>
 #include <stdarg.h> 
@@ -8,6 +9,8 @@
 XVector* XVector_init(const char* arr, ...)
 {
 	XVECTOR* this_vector = malloc(sizeof(XVECTOR));
+	if (isObjectNULL(this_vector, "XVector_init-malloc"))
+		return NULL;
 	char buf[100];
 	strcpy(buf, arr);
 	size_t len = strlen(buf);

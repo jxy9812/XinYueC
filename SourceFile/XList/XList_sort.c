@@ -49,6 +49,8 @@ static struct Node* List_OneSort(struct Node* ListHead, struct Node* ListTail,co
 
 void List_sort(struct XList* this_list, bool(*Sort)(void* x, void* y))
 {
+	if (isObjectNULL(this_list, "List_sort"))
+		return ;
 	struct XLIST* list = (XLIST*)this_list;
 	struct Node* ListHead = List_front(this_list);//链表第一个节点
 	struct Node* ListTail = List_back(this_list);//链表最后一个节点

@@ -5,11 +5,15 @@
 struct XVector;
 void XVector_pop_back(struct XVector* this_vector)//删除向量中最后一个元素
 {
+	if (isObjectNULL(this_vector, "XVector_pop_back"))
+		return;
 	XVECTOR* v=(XVECTOR*)this_vector;
 	v->object._size--;
 }
 void XVector_erase_p(struct XVector* this_vector, const void* p1, const void* p2)//删除指针区间内的数据
 {
+	if (isObjectNULL(this_vector, "XVector_erase_p"))
+		return;
 	XVECTOR* v=(XVECTOR*)this_vector;
 	if (p1 <= p2 && v->front(v) <= p1 && p2 <= v->back(v))
 	{
@@ -19,6 +23,8 @@ void XVector_erase_p(struct XVector* this_vector, const void* p1, const void* p2
 }
 void XVector_erase_int(struct XVector* this_vector, const int left, const int right)//删除区间内的数据
 {
+	if (isObjectNULL(this_vector, "XVector_erase_int"))
+		return;
 	XVECTOR* v=(XVECTOR*)this_vector;
 	if (left <= right && left >= 0 && right < v->object._size)
 	{
