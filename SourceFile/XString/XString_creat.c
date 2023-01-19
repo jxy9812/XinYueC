@@ -17,10 +17,11 @@ struct XString* XString_init()
 	//初始化数组为0;
 	char zero = '\0';
 	XVector_Push_Back(vector, &zero);
+	this_XString->_size = 0;
 	this_XString->append = XString_append;
 	this_XString->assign = XString_assign;
 	this_XString->at = XString_at;
-	this_XString->capacity = XString_capacity;
+	/*this_XString->capacity = XString_capacity;*/
 	this_XString->clear = XString_clear;
 	this_XString->data = XString_data;
 	this_XString->empty = XString_empty;

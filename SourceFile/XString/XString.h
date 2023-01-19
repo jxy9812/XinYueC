@@ -24,7 +24,7 @@ typedef struct XString
 	bool (*empty)(const struct XString* this_XString);// 
 	//大小函数
 	int (*size)(const struct XString* this_XString);//
-	int (*capacity)(const struct XString* this_XString); //
+	//int (*capacity)(const struct XString* this_XString); //
 	//其他函数
 	void (*swap)(struct XString* this_XStringOne, struct XString* this_XStringTwo);//交换
 	//释放容器
@@ -57,8 +57,8 @@ int XString_find_last_not_of(const struct XString* this_XString, const char* fin
 bool XString_empty(const struct XString* this_XString);// 
 //返回当前元素大小
 int XString_size(const struct XString* this_XString);//
-//返回当前容器的最大容量
-int XString_capacity(const struct XString* this_XString); //
+////返回当前容器的最大容量
+//int XString_capacity(const struct XString* this_XString); //
 //交换
 void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringTwo);
 //释放容器

@@ -1,5 +1,7 @@
 ﻿#ifndef STRING_HEAD
 #define STRING_HEAD
+#include<stdio.h>
+#include<stdbool.h>
 struct XVECTOR;
 struct XSTRING
 {
@@ -23,11 +25,18 @@ struct XSTRING
 	bool (*empty)(const struct XSTRING* this_XString);// 
 	//大小函数
 	int (*size)(const struct XSTRING* this_XString);//
-	int (*capacity)(const struct XSTRING* this_XString); //
+	//int (*capacity)(const struct XSTRING* this_XString); //
 	//其他函数
 	void (*swap)(struct XSTRING* this_XStringOne, struct XSTRING* this_XStringTwo);//交换
 	//释放容器
 	void (*free)(const struct XSTRING* this_XString);
 	struct XVECTOR* _data;
+	size_t _size;//当前容器内的字符个数
 };
+//判断是中文
+bool XString_isChinese(const char c);
+//返回字符串中字符数量，中文算一个
+size_t XString_charNumber(const char* str);
+//返回对应XVector的索引
+size_t XString_XVectorNsel(const struct XSTRING* this_XString,const size_t nSel);
 #endif 
