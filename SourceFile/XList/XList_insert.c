@@ -4,12 +4,12 @@
 #include<string.h>
 #include <stdarg.h> 
 //插入
-Node* List_push_back(XList* this_list, void* x)
+Node* List_push_back(XList* this_list, void*LValue)
 {
 	if (isObjectNULL(this_list, "List_push_back"))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
-	Node* NewNode = List_push_front(this_list, x);
+	Node* NewNode = List_push_front(this_list, LValue);
 	if (list->object._size != 0)
 	{
 		list->object._data = NewNode;
@@ -17,7 +17,7 @@ Node* List_push_back(XList* this_list, void* x)
 	return NewNode;
 }
 
-Node* List_push_front(XList* this_list, void* x)
+Node* List_push_front(XList* this_list, void*LValue)
 {
 	if (isObjectNULL(this_list, "List_push_front"))
 		return NULL;
@@ -29,7 +29,7 @@ Node* List_push_front(XList* this_list, void* x)
 		exit(-1);
 	}
 	NewNode->date = malloc(list->object._type);//开辟节点内储存数据的空间
-	memcpy(NewNode->date, x, list->object._type);//拷贝数据
+	memcpy(NewNode->date, LValue, list->object._type);//拷贝数据
 	if (list->object._size == 0)
 	{
 		list->object._data = NewNode;

@@ -12,10 +12,10 @@ typedef struct Node
 typedef struct XList
 {
 	//插入函数
-	Node* (*push_front)(struct XList* this_list, void* x);//头插
-	Node* (*push_back)(struct XList* this_list, void* x);//尾插
-	void (*insert_front_p)(struct XList*, Node* pval, ...);//list*li, const void* p, const void* x, const int n 链表中指向节点前增加元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
-	void (*insert_front_int)(struct XList*, int n, ...);//(list*li, int n, const void* x, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+	Node* (*push_front)(struct XList* this_list, void* LValue);//头插
+	Node* (*push_back)(struct XList* this_list, void*LValue);//尾插
+	void (*insert_front_p)(struct XList*, Node* pval, ...);//list*li, const void* p, const void*LValue, const int n 链表中指向节点前增加元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+	void (*insert_front_int)(struct XList*, int n, ...);//(list*li, int n, const void*LValue, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
 	void (*insert)(struct XList*, Node* pval, const void* p1, const void* p2);// 链表中指向节点前插入另一个相同类型数组[p1,p2]间的数据，数组传递用指针
 	//删除函数
 	void (*pop_front)(void*);//头删
@@ -33,19 +33,19 @@ typedef struct XList
 	//大小函数
 	size_t(*size)(const struct XList*);//返回list内元素的个数 O(1)
 	//其他函数
-	void (*sort)(struct XList* this_list, bool (*Sort)(void* x, void* y));//排序
+	void (*sort)(struct XList* this_list, bool(*Sort)(const void* LPrevValue, const void* LNextValue));//排序
 	void (*swap)(struct XList*, struct XList*);//交换两个同类型链表的数据
 	//释放
 	void (*free)(struct XList* this_list);//释放内存
 }XList;
 //插入函数
 // 链表头部增加一个元素X
-Node* List_push_front(XList* this_list, void* x);
+Node* List_push_front(XList* this_list, void*LValue);
 // 链表尾部增加一个元素X
-Node* List_push_back(XList* this_list, void* x);
-//(list*li, const void* p, const void* x, const int n) 链表中指向元素p前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+Node* List_push_back(XList* this_list, void*LValue);
+//(list*li, const void* p, const void*LValue, const int n) 链表中指向元素p前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
 void  List_insert_front_p(XList* this_list, Node* pval, ...);
-//(list*li, int n, const void* x, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+//(list*li, int n, const void*LValue, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
 void List_insert_front_int(XList* this_list, int n, ...);
 // 链表中指向元素p前插入另一个相同类型数组[p1,p2]间的数据，数组传递用指针
 void  List_insert(XList* this_list, Node* pval, const void* p1, const void* p2);
@@ -77,7 +77,7 @@ bool  List_empty(const XList* this_list);
 size_t   List_size(const  XList* this_list);
 //其他函数
 //排序
-void  List_sort(XList* this_list, bool (*Sort)(void* x, void* y));
+void  List_sort(XList* this_list, bool(*Sort)(const void* LPrevValue, const void* LNextValue));
 //交换两个同类型链表的数据
 void  List_swap(XList* this_list1, XList* this_list2);
 //释放内存

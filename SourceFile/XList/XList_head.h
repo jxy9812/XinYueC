@@ -7,10 +7,10 @@ struct Node;
 struct XLIST
 {
 	//插入函数
-	Node* (*push_front)(struct XLIST* li, void* x);//头插
-	Node* (*push_back)(struct XLIST* li, void* x);//尾插
-	void (*insert_front_p)(struct XLIST*, Node* pval, ...);//list*li, const void* p, const void* x, const int n 链表中指向节点前增加元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
-	void (*insert_front_int)(struct XLIST*, int n, ...);//(list*li, int n, const void* x, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+	Node* (*push_front)(struct XLIST* li, void*LValue);//头插
+	Node* (*push_back)(struct XLIST* li, void*LValue);//尾插
+	void (*insert_front_p)(struct XLIST*, Node* pval, ...);//list*li, const void* p, const void*LValue, const int n 链表中指向节点前增加元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+	void (*insert_front_int)(struct XLIST*, int n, ...);//(list*li, int n, const void*LValue, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
 	void (*insert)(struct XLIST*, Node* pval, const void* p1, const void* p2);// 链表中指向节点前插入另一个相同类型数组[p1,p2]间的数据，数组传递用指针
 	//删除函数
 	void (*pop_front)(void*);//头删
@@ -28,7 +28,7 @@ struct XLIST
 	//大小函数
 	size_t(*size)(const struct XLIST*);//返回list内元素的个数 O(1)
 	//其他函数
-	void (*sort)(struct XLIST*, bool (*Sort)(void*, void*));//排序
+	void (*sort)(struct XLIST*, bool(*Sort)(const void* LPrevValue, const void* LNextValue));//排序
 	void (*swap)(struct XLIST*, struct XLIST*);//交换两个同类型链表的数据
 	//释放
 	void (*free)(struct XLIST* this_list);//释放内存

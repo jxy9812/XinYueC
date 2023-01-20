@@ -6,8 +6,8 @@ typedef struct XVECTOR
 {
 	//插入函数
 	void(*push_back)(void*);//尾插
-	void (*insert_front)(struct XVECTOR*, const void* p, const void* x);// 向量中指向元素p前增加一个元素x
-	void (*insert_nfront)(struct XVECTOR*, const void* p, const int n, const void* x);// 向量中指向元素p前增加n个相同的元素x
+	void (*insert_front)(struct XVECTOR*, const void* p, const void*LValue);// 向量中指向元素p前增加一个元素x
+	void (*insert_nfront)(struct XVECTOR*, const void* p, const int n, const void*LValue);// 向量中指向元素p前增加n个相同的元素x
 	void (*insert)(struct XVECTOR*, const void* p, const void* p1, const void* p2);// 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2)间的数据
 	//删除函数
 	void (*pop_back)(struct XVECTOR*);//尾删
@@ -25,7 +25,7 @@ typedef struct XVECTOR
 	int (*size)(const struct XVECTOR*);//返回vector内元素的个数 O(1)
 	int (*capacity)(const struct XVECTOR*); //返回当前向量所能容纳的最大元素值
 	//其他函数
-	void (*sort)(struct XVECTOR*, int (*Sort)(void*, void*));//排序
+	void (*sort)(struct XVECTOR*, int (*Sort)(const void* LPrevValue, const void* LNextValue));//排序
 	void (*swap)(struct XVECTOR*, struct XVECTOR*);//交换两个同类型向量的数据
 	//释放
 	void (*free)(const struct XVECTOR* this_vector);//释放内存

@@ -6,7 +6,7 @@
 #include<stdlib.h>
 #include"XAlgorithm.h"
 //一次快排
-static struct Node* List_OneSort(struct Node* ListHead, struct Node* ListTail,const size_t type, bool(*Sort)(void* x, void* y))
+static struct Node* List_OneSort(struct Node* ListHead, struct Node* ListTail,const size_t type, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
 {
 	
 	char* compareVal = malloc(type);
@@ -47,7 +47,7 @@ static struct Node* List_OneSort(struct Node* ListHead, struct Node* ListTail,co
 
 }
 
-void List_sort(struct XList* this_list, bool(*Sort)(void* x, void* y))
+void List_sort(struct XList* this_list, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
 {
 	if (isObjectNULL(this_list, "List_sort"))
 		return ;

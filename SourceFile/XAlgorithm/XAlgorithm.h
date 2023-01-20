@@ -1,4 +1,4 @@
-﻿#include<stdbool.h>
+﻿#include"XSort.h"
 //交换任意数据类型的函数
 void swap(void* valOne, void* valTwo, const int typeSize);
 //在该字符串str中查找第一个属于字符串sfchar中的字符返回其指针，失败为NULL
