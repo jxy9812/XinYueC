@@ -4,7 +4,7 @@
 {
 	if (Object == NULL)
 	{
-		perror("%s成员函数调用的对象为NULL",str);
+		printf("%s成员函数调用的对象为NULL",str);
 		return true;
 	}
 	return false;
