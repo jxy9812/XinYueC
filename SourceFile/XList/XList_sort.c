@@ -47,13 +47,13 @@ static struct Node* List_OneSort(struct Node* ListHead, struct Node* ListTail,co
 
 }
 
-void List_sort(struct XList* this_list, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
+void XList_sort(struct XList* this_list, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
 {
 	if (isObjectNULL(this_list, "List_sort"))
 		return ;
 	struct XLIST* list = (XLIST*)this_list;
-	struct Node* ListHead = List_front(this_list);//链表第一个节点
-	struct Node* ListTail = List_back(this_list);//链表最后一个节点
+	struct Node* ListHead = XList_front(this_list);//链表第一个节点
+	struct Node* ListTail = XList_back(this_list);//链表最后一个节点
 	struct XStack* stack = XStack_init("struct Node*",sizeof(struct Node*));
 	XStack_Push(stack, &ListTail);
 	XStack_Push(stack, &ListHead);

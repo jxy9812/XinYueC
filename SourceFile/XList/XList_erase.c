@@ -3,7 +3,7 @@
 #include<stdlib.h>
 //struct list;
 //删除
-void  List_pop_front(struct XList* this_list)
+void  XList_pop_front(struct XList* this_list)
 {
 	if (isObjectNULL(this_list, "List_pop_front"))
 		return;
@@ -32,14 +32,14 @@ void  List_pop_front(struct XList* this_list)
 	}
 }
 
-void List_pop_back(XList* this_list)
+void XList_pop_back(XList* this_list)
 {
 	if (isObjectNULL(this_list, "List_pop_back"))
 		return;
 	XLIST* list=(XLIST*)this_list;
 	if (list->object._size == 1)
 	{
-		List_pop_front(this_list);
+		XList_pop_front(this_list);
 	}
 	else if (list->object._size > 1)
 	{
@@ -55,7 +55,7 @@ void List_pop_back(XList* this_list)
 	}
 }
 
-void List_erase_p(XList* this_list, const Node* pNodeOne, const Node* NodeTwo)
+void XList_erase_p(XList* this_list, const Node* pNodeOne, const Node* NodeTwo)
 {
 	if (isObjectNULL(this_list, "List_erase_p-this_list")|| isObjectNULL(pNodeOne, "List_erase_p-pNodeOne"))
 		return;
@@ -85,14 +85,14 @@ void List_erase_p(XList* this_list, const Node* pNodeOne, const Node* NodeTwo)
 	}
 }
 
-void List_erase_int(XList* this_list, const int left, const int right)
+void XList_erase_int(XList* this_list, const int left, const int right)
 {
 	if (isObjectNULL(this_list, "List_erase_int"))
 		return;
 	XLIST* list=(XLIST*)this_list;
 	if (right < list->object._size && left <= right && left >= 0)
 	{
-		Node* p = List_at(list, left);//left的节点指针
+		Node* p = XList_at(list, left);//left的节点指针
 		Node* prev = p->prev;//上一个节点
 		Node* pleft = p;
 		for (size_t i = 0; i <= right - left; i++)
@@ -110,7 +110,7 @@ void List_erase_int(XList* this_list, const int left, const int right)
 	}
 }
 
-void List_clear(XList* this_list)
+void XList_clear(XList* this_list)
 {
 	if (isObjectNULL(this_list, "List_clear"))
 		return;

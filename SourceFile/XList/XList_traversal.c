@@ -2,7 +2,7 @@
 #include"XList_head.h"
 #include<string.h>
 //遍历
-Node* List_at(const XList* this_list, int n)
+Node* XList_at(const XList* this_list, int n)
 {
 	if (isObjectNULL(this_list, "List_at"))
 		return NULL;
@@ -32,7 +32,7 @@ Node* List_at(const XList* this_list, int n)
 	return NULL;
 }
 
-Node* List_front(XList* this_list)
+Node* XList_front(XList* this_list)
 {
 	if (isObjectNULL(this_list, "List_front"))
 		return NULL;
@@ -40,7 +40,7 @@ Node* List_front(XList* this_list)
 	return list->object._data;
 }
 
-Node* List_back(XList* this_list)
+Node* XList_back(XList* this_list)
 {
 	if (isObjectNULL(this_list, "List_back"))
 		return NULL;
@@ -48,7 +48,7 @@ Node* List_back(XList* this_list)
 	return ((Node*)(list->object._data))->prev;
 }
 
-Node* List_find(const XList* this_list, bool (*find)(const struct Node* node, const void* val), const void* findVal)
+Node* XList_find(const XList* this_list, bool (*find)(const struct Node* node, const void* val), const void* findVal)
 {
 	if (isObjectNULL(this_list, "List_find"))
 		return NULL;

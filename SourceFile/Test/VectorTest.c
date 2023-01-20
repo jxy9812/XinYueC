@@ -15,9 +15,16 @@ void VectorTest()
 	struct people p2 = { 19, "男", "小白","大佬" };
 	XVector_Push_Back(v, &p2);
 	int n = v->size(v);
-	for (size_t i = 0; i < v->size(v); i++)
+	printf("开始正向遍历\n");
+	for (XVector_iterator* it=XVector_begin(v);it!= XVector_end(v);it=XVector_iterator_add(v,it))
 	{
-		struct people* p = XVector_at(v, i);
+		struct people* p = it;
+		printf("%s %s %d岁 是%s\n", p->name, p->gender, p->age, p->achievement);
+	}
+	printf("开始反向遍历\n");
+	for (XVector_reverse_iterator* it = XVector_rbegin(v); it != XVector_rend(v); it = XVector_reverse_iterator_add(v, it))
+	{
+		struct people* p = it;
 		printf("%s %s %d岁 是%s\n", p->name, p->gender, p->age, p->achievement);
 	}
 	v->free(v);

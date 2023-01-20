@@ -13,7 +13,7 @@ bool findListInt(const struct Node* node, const void* val)
 }
 void ListSortTest()
 {
-	XList* li = List_init(sizeof(int));
+	XList* li = XList_init(sizeof(int));
 	int size = 1000000;
 	srand((unsigned int)time(NULL));
 	int* p1 = malloc(sizeof(int) * size);
@@ -23,25 +23,44 @@ void ListSortTest()
 		li->push_back(li,&num);//尾插
 	}
 	clock_t  time_front = clock();
-	List_sort(li, mysort);
+	XList_sort(li, mysort);
 	clock_t time_after = clock();
 	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
 	li->free(li);
 }
-
+void ListIterator()
+{
+	XList* li = XList_init(sizeof(int));
+	int arr[] = { 123,12,1,4,9 };
+	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
+	{
+		XList_push_back(li, arr + i);
+	}
+	printf("开始正向遍历\n");
+	for (XList_iterator* it = XList_begin(li); it != XList_end(li); it = XList_iterator_add(li, it))
+	{
+		printf("%d\n", *(int*)((Node*)it)->date);
+	}
+	printf("开始反向遍历\n");
+	for (XList_reverse_iterator* it = XList_rbegin(li); it != XList_rend(li); it = XList_reverse_iterator_add(li, it))
+	{
+		printf("%d\n", *(int*)((Node*)it)->date);
+	}
+	XList_free(li);
+}
 
 void ListTest()
 {
-	XList* li = List_init(sizeof(int));
+	XList* li = XList_init(sizeof(int));
 
 	
 	int arr[] = { 123,12,1,4,9 };
 	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
 	{
-		List_push_back(li,arr+i);
+		XList_push_back(li,arr+i);
 	}
 	int x = 100;
-	li->insert_front_int(li, 0, &x, 10);
+	//li->insert_front_int(li, 0, &x, 10);
 	printf("元素遍历\n");
 	for (size_t i = 0; i < li->size(li); i++)
 	{
@@ -50,7 +69,7 @@ void ListTest()
 	printf("头元素为：%d\n", *(int*)li->front(li)->date);
 	printf("尾元素为：%d\n", *(int*)li->back(li)->date);
 
-	struct Node*findNode=List_find(li, findListInt, arr +2);
+	struct Node*findNode=XList_find(li, findListInt, arr +2);
 	printf("找到的数字%d\n", *(int*)findNode->date);
 
 
@@ -70,7 +89,7 @@ void ListTest()
 
 void ListSwapTest()//交换函数测试
 {
-	XList* li1 = List_init(sizeof(int));
+	XList* li1 = XList_init(sizeof(int));
 	int num;
 
 	for (size_t i = 0; i < 10; i++)
@@ -84,7 +103,7 @@ void ListSwapTest()//交换函数测试
 		printf("%d\n", *(int*)li1->at(li1, i));
 	}
 
-	XList* li2 = List_init(sizeof(int));
+	XList* li2 = XList_init(sizeof(int));
 
 	for (size_t i = 0; i < 20; i++)
 	{

@@ -4,12 +4,12 @@
 #include<string.h>
 #include <stdarg.h> 
 //插入
-Node* List_push_back(XList* this_list, void*LValue)
+Node* XList_push_front(XList* this_list, void*LValue)
 {
 	if (isObjectNULL(this_list, "List_push_back"))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
-	Node* NewNode = List_push_front(this_list, LValue);
+	Node* NewNode = XList_push_back(this_list, LValue);
 	if (list->object._size != 0)
 	{
 		list->object._data = NewNode;
@@ -17,7 +17,7 @@ Node* List_push_back(XList* this_list, void*LValue)
 	return NewNode;
 }
 
-Node* List_push_front(XList* this_list, void*LValue)
+Node* XList_push_back (XList* this_list, void*LValue)
 {
 	if (isObjectNULL(this_list, "List_push_front"))
 		return NULL;
@@ -50,7 +50,7 @@ Node* List_push_front(XList* this_list, void*LValue)
 	return NewNode;
 }
 
-void List_insert_front_p(XList* this_list, Node* pval, ...)
+void XList_insert_front_p(XList* this_list, Node* pval, ...)
 {
 	if (isObjectNULL(this_list, "List_insert_front_p"))
 		return ;
@@ -104,7 +104,7 @@ void List_insert_front_p(XList* this_list, Node* pval, ...)
 	}
 }
 
-void List_insert_front_int(XList* this_list, int i, ...)
+void XList_insert_front_int(XList* this_list, int i, ...)
 {
 	if (isObjectNULL(this_list, "List_insert_front_int"))
 		return;
@@ -125,7 +125,7 @@ void List_insert_front_int(XList* this_list, int i, ...)
 	list->insert_front_p(this_list, p, x, n);
 }
 
-void List_insert(XList* this_list, Node* pval, const void* p1, const void* p2)
+void XList_insert(XList* this_list, Node* pval, const void* p1, const void* p2)
 {
 	if (isObjectNULL(this_list, "List_insert"))
 		return;
@@ -137,6 +137,6 @@ void List_insert(XList* this_list, Node* pval, const void* p1, const void* p2)
 	}
 	for (size_t i = 0; i < ((char*)p2 - (char*)p1) / list->object._type + 1; i++)
 	{
-		List_insert_front_p(this_list, pval, (char*)p1 + i * list->object._type);
+		XList_insert_front_p(this_list, pval, (char*)p1 + i * list->object._type);
 	}
 }

@@ -5,7 +5,7 @@
 #include<stdlib.h>
 #include"XAlgorithm.h"
 //其他
-bool List_empty(const XList* this_list)
+bool XList_empty(const XList* this_list)
 {
 	XLIST* list=(XLIST*)this_list;
 	if(!isObjectNULL(list,"List_empty"))
@@ -13,7 +13,7 @@ bool List_empty(const XList* this_list)
 	return true;
 }
 
-size_t List_size(const XList* this_list)
+size_t XList_size(const XList* this_list)
 {
 	XLIST* list=(XLIST*)this_list;
 	if (!isObjectNULL(list, "List_size"))
@@ -21,7 +21,7 @@ size_t List_size(const XList* this_list)
 	return 0;
 }
 
-void List_swap(XList* this_ListOne, XList* this_ListTwo)
+void XList_swap(XList* this_ListOne, XList* this_ListTwo)
 {
 	XLIST* list1=(XLIST*)this_ListOne;
 	XLIST* list2=(XLIST*)this_ListTwo;
@@ -29,11 +29,11 @@ void List_swap(XList* this_ListOne, XList* this_ListTwo)
 		return XContainerObject_swap(&list1->object,&list2->object);
 }
 
-void List_free(XList* this_list)
+void XList_free(XList* this_list)
 {
 	if (isObjectNULL(this_list, "List_free"))
 		return;
-	List_clear(this_list);
+	XList_clear(this_list);
 	free(this_list);
 }
 
