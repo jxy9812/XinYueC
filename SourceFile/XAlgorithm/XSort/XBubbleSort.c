@@ -6,7 +6,7 @@ void XBubbleSort(void* LArray, const size_t nSize, const size_t TypeSize, bool(*
 		bool flag = true;//判断是否已经有序
 		for (char* Lp = LArray; Lp < (char*)LArray + TypeSize * (nSize - 1 - i); Lp += TypeSize)//一趟冒泡
 		{
-			if (Sort(Lp, Lp + TypeSize) > 0)
+			if (!Sort(Lp, Lp + TypeSize))
 			{
 				swap(Lp, Lp + TypeSize, TypeSize);//交换函数
 				flag = false;

@@ -11,7 +11,7 @@ bool findListInt(const struct Node* node, const void* val)
 {
 	return (*(int*)node->date) == (*(int*)val);
 }
-ListSortTest()
+void ListSortTest()
 {
 	XList* li = List_init(sizeof(int));
 	int size = 1000000;
@@ -30,7 +30,7 @@ ListSortTest()
 }
 
 
-ListTest()
+void ListTest()
 {
 	XList* li = List_init(sizeof(int));
 
@@ -68,7 +68,7 @@ ListTest()
 	li->free(li);
 }
 
-ListSwapTest()//交换函数测试
+void ListSwapTest()//交换函数测试
 {
 	XList* li1 = List_init(sizeof(int));
 	int num;

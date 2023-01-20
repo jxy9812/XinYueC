@@ -23,7 +23,7 @@ static void* QuicPitSort_One(void const* LpLeft, void const* LpRight, const size
 	{
 		//flag = true;
 		//右边找放左边
-		while (begin < end && Sort(end, pivit) >= 0)
+		while (begin < end && !Sort(end, pivit))
 		{
 			end -= TypeSize;
 		}
@@ -33,7 +33,7 @@ static void* QuicPitSort_One(void const* LpLeft, void const* LpRight, const size
 			pivit = end;//新的坑位
 		}
 		//左边找放右边
-		while (begin < end && Sort(begin, pivit) <= 0)
+		while (begin < end && Sort(begin, pivit) )
 		{
 			begin += TypeSize;
 		}
@@ -92,7 +92,7 @@ static void QuicPitSort_Recur(void* LArray, void const* LpLeft, void const* LpRi
 	size_t nSize = ((char*)LpRight - (char*)LpLeft) / TypeSize + 1;
 	if (nSize <= 13 && nSize > 1)//优化最后几层的递归次数，调用直接插入排序
 	{
-		XInsertSort(LpLeft, nSize, TypeSize, 1, Sort);
+		XInsertSort(LpLeft, nSize, TypeSize, Sort);
 		return;
 	}
 	char* pivit = QuicPitSort_One(LpLeft, LpRight, TypeSize, Sort);

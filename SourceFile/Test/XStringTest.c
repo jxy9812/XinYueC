@@ -1,6 +1,6 @@
 ﻿#include"Test.h"
 #include"XString.h"
-XStringTest()
+void XStringTest()
 {
 	XString* str = XString_init();
 	XString_append(str, " ");

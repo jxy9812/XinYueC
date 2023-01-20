@@ -9,7 +9,7 @@ void XSelectSort(void* LArray, const size_t nSize, const size_t TypeSize, bool(*
 	char* p_val_right;//选出最值右元素
 	for (; p_left < p_right; p_left += TypeSize, p_right -= TypeSize)
 	{
-		if (Sort(p_left, p_right) > 0)//排序比较左右是否需要交换
+		if (!Sort(p_left, p_right))//排序比较左右是否需要交换
 		{
 			swap(p_left, p_right, TypeSize);//交换函数
 		}
@@ -17,19 +17,19 @@ void XSelectSort(void* LArray, const size_t nSize, const size_t TypeSize, bool(*
 		p_val_right = p_right;
 		for (p_move_left = p_left + TypeSize, p_move_right = p_right - TypeSize; p_move_left < p_move_right; p_move_left += TypeSize, p_move_right -= TypeSize)
 		{
-			if (Sort(p_val_left, p_move_left) > 0)//排序比较函数
+			if (!Sort(p_val_left, p_move_left))//排序比较函数
 			{
 				p_val_left = p_move_left;//更新左边最小值
 			}
-			if (Sort(p_val_right, p_move_left) < 0)//排序比较函数
+			if (Sort(p_val_right, p_move_left))//排序比较函数
 			{
 				p_val_right = p_move_left;//更新右边最大值
 			}
-			if (Sort(p_val_left, p_move_right) > 0)//排序比较函数
+			if (!Sort(p_val_left, p_move_right))//排序比较函数
 			{
 				p_val_left = p_move_right;//更新左边最小值
 			}
-			if (Sort(p_val_right, p_move_right) < 0)//排序比较函数
+			if (Sort(p_val_right, p_move_right))//排序比较函数
 			{
 				p_val_right = p_move_right;//更新右边最大值
 			}

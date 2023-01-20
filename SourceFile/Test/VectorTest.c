@@ -7,7 +7,7 @@ struct people
 	char name[20];
 	char achievement[20];
 };
-VectorTest()
+void VectorTest()
 {
 	XVector* v = XVector_init(" people ", sizeof(struct people));
 	struct people p1 = { 22, "男", "琦神","大佬" };

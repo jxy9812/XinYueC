@@ -11,14 +11,14 @@ static void AdjustDwon(void* LArray, const size_t nSize, const size_t TypeSize, 
 		if (child + 1 < nSize)
 		{
 			char* p_right = p_left + TypeSize;//右孩子指针
-			if (Sort(p_left, p_right) < 0)//排序比较函数，选出大的那个
+			if (Sort(p_left, p_right))//排序比较函数，选出大的那个
 			{
 				++child;//右孩子大默认孩子+1
 			}
 		}
 
 		char* p_child = (char*)LArray + child * TypeSize;//选出的默认孩子指针
-		if (Sort(p_child, p_parent) > 0)//排序比较函数
+		if (!Sort(p_child, p_parent))//排序比较函数
 		{
 			swap(p_child, p_parent, TypeSize);//交换函数
 			parent = child;//父亲节点更新

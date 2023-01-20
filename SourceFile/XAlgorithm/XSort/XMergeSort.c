@@ -48,7 +48,7 @@ void XMergeSort(void* LArray, const size_t nSize, const size_t TypeSize, bool(*S
 			{
 				if (LpOne <= righta && LpTwo <= rightb)//两个数组均有数的时候
 				{
-					if (Sort(LpOne, LpTwo) <= 0)//比较的数符合排序标准
+					if (Sort(LpOne, LpTwo))//比较的数符合排序标准
 					{
 						swap(LpOne, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素

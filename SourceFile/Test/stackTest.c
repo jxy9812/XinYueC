@@ -1,6 +1,6 @@
 ﻿#include"Test.h"
 #include"XStack.h"
-stackTest()
+void stackTest()
 {
 	XStack* sInt = XStack_init("int");
 	sInt->push(sInt, 1);
