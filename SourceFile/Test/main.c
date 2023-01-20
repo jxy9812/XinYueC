@@ -5,7 +5,7 @@ int main(int argc, char* args[])
 	//ListTest();
 	//VectorTest();
 	//stackTest();
-	//XStringTest();
+	XStringTest();
 	SortTest();
 	return 0;
 }

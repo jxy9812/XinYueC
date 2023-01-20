@@ -11,7 +11,7 @@ void XStringTest()
 	printf("字符数量%d\n", XString_size(str));
 	XString_append(str, "你好呀");
 
-	XString_erase(str, 3, 4);
+	XString_erase(str, 3, 3);
 	printf("字符数量%d\n", XString_size(str));
 	//XString_erase(str, 0, 4);
 	printf("%s", XString_data(str));

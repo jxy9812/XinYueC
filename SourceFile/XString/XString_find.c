@@ -8,7 +8,7 @@ int XString_find_first_of(const struct XString* this_XString, const char* find)
 	if (isObjectNULL(this_XString, "XString_find_first_of"))
 		return NULL;
 	char* str = XString_data(this_XString);
-	size_t sLen = strlen();
+	size_t sLen = strlen(str);
 	size_t fLen = strlen(find);
 	for (size_t i = 0; i < sLen; i++)
 	{
