@@ -16,10 +16,10 @@ XList_reverse_iterator* XList_rend(XList* this_list)
 
 XList_reverse_iterator* XList_reverse_iterator_add(XList* this_list, XList_reverse_iterator* it)
 {
-	if (isObjectNULL(this_list, "XList_reverse_iterator_add"))
+	if (isObjectNULL(this_list, "XList_iterator_add  struct XList*"))
 		return NULL;
-	if (it == NULL)
-		return;
+	if (isObjectNULL(it, "XList_iterator_add  Xstruct XList_iterator*"))
+		return NULL;
 	XList_reverse_iterator* front = XList_front(this_list);
 	if (it == front)//如果是第一个元素则返回空表示遍历完成了
 		return NULL;

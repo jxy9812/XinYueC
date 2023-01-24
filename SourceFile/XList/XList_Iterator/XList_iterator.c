@@ -16,10 +16,10 @@ struct XList_iterator* XList_end(struct XList* this_list)
 
 struct XList_iterator* XList_iterator_add(struct XList* this_list, struct XList_iterator* it)
 {
-	if (isObjectNULL(this_list, "XList_iterator_add"))
+	if (isObjectNULL(this_list, "XList_iterator_add  struct XList*"))
 		return NULL;
-	if (it == NULL)
-		return;
+	if (isObjectNULL(it, "XList_iterator_add  Xstruct XList_iterator*"))
+		return NULL;
 	XList_iterator*  back= XList_back(this_list);
 	if(it== back)//如果是最后一个元素则返回空表示遍历完成了
 	return NULL;

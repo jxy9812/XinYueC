@@ -16,10 +16,10 @@ XVector_iterator* XVector_end(struct XVector* this_vector)
 
 XVector_iterator* XVector_iterator_add(struct XVector* this_vector, XVector_iterator* it)
 {
-	if (isObjectNULL(this_vector, "XVector_iterator_add"))
+	if (isObjectNULL(this_vector, "XVector_iterator_add  struct XVector*"))
 		return NULL;
-	if (it == NULL)
-		return;
+	if (isObjectNULL(it, "XVector_iterator_add  XVector_iterator*"))
+		return NULL;
 	XVector_iterator*  back= XVector_back(this_vector);
 	if(it== back)//如果是最后一个元素则返回空表示遍历完成了
 	return NULL;
