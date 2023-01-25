@@ -1,0 +1,28 @@
+﻿#ifndef XMAZE_H
+#define XMAZE_H
+#include"XVector.h"
+//迷宫地图元素
+enum XMazeSign
+{
+	XMazeWall,//迷宫墙壁
+	XMazeRoute,//迷宫道路
+};
+//方向
+enum XMazeDirection
+{
+	Up,//上
+	Right,//右
+	Down,//下
+	Left//左
+};
+//初始化迷宫
+struct XVector* XMaze_init(const size_t r, const size_t l);
+//打印迷宫 wall墙(替换的字符) Route道路(替换的字符)
+void XMazePrint(const struct XVector* maze, const char* Wall, const char* Route);
+//释放迷宫
+void XMazeFree(const struct XVector* maze);
+//返回迷宫行数
+const int XMazeRow(const struct XVector* maze);
+//返回迷宫列数
+const int XMazeList(const struct XVector* maze);
+#endif // !XMAZE_H

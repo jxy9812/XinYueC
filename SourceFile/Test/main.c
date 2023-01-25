@@ -5,10 +5,11 @@ int main(int argc, char* args[])
 {
 	//ListSortTest();
 	//ListTest();
-	ListIterator();
+	//ListIterator();
 	//VectorTest();
 	//stackTest();
 	//XStringTest();
 	//SortTest();
+	XMazeGeneratedTest();
 	return 0;
 }
