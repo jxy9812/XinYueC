@@ -36,6 +36,8 @@ char* XStack_top_Char(struct XStack* this_stack);
 char* XStack_top_charArray(struct XStack* this_stack);
 int XStack_top_int(struct XStack* this_stack);
 int* XStack_top_Int(struct XStack* this_stack);
+//返回元素类型字节大小
+size_t XStack_TypeSize(struct XStack* this_stack);
 //检测栈内是否为空，空为真 O(1)
 bool XStack_empty(struct XStack* this_stack);
 //返回stack内元素的个数 O(1)

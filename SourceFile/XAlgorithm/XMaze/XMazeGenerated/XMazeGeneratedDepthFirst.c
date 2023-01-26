@@ -165,7 +165,8 @@ static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y
 //生成迷宫r行l列
 struct XVector* XMazeGenerated(const size_t r, const size_t l)
 {
-	struct XVector* maze = XMaze_init(r, l);
+	int sign = XMazeWall;
+	struct XVector* maze = XVectorTwoMatrix_init(sizeof(int),r, l,&sign);
 	srand((unsigned)time(NULL));
 	XMazeOpenCircuitStack(maze,1, 1);
 	return maze;

@@ -38,6 +38,8 @@ int XVector_size(const  struct XVector* this_vector);
 int  XVector_capacity(const  struct XVector* this_vector);
 //交换两个同类型向量的数据
 void XVector_swap(struct XVector* this_vectorOne, struct XVector* this_vectorTwo);
+//返回元素类型字节大小
+size_t XVector_TypeSize(struct XVector* this_vector);
 //开辟一个动态数组,初始化
 struct XVector* XVector_init(const char* arr, ...);
 

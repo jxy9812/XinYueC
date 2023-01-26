@@ -53,6 +53,13 @@ void XVector_swap(struct XVector* this_vectorOne, struct XVector* this_vectorTwo
 	XVECTOR* vector2=(XVECTOR*)this_vectorTwo;
 	XContainerObject_swap(&vector1->object, &vector2->object);
 }
+size_t XVector_TypeSize(struct XVector* this_vector)
+{
+	if (isObjectNULL(this_vector, "XVector_TypeSize"))
+		return 0;
+	XVECTOR* vector = (XVECTOR*)this_vector;
+	return vector->object._type;
+}
 void  XVector_sort(struct XVector* this_vector, int (*Sort)(const void* LPrevValue, const void* LNextValue))//排序
 {
 	if (isObjectNULL(this_vector, "XVector_sort"))

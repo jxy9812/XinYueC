@@ -1,46 +1,70 @@
-#include"XMazePathfindingDepthFirst.h"
+﻿#include"XMazePathfindingDepthFirst.h"
 #include"XStack.h"
-//���̽·�ĸ�����-ջ
-static void Pathfinder(struct XStack* stack, struct XVector* maze, XPoint CurPoint)
+#include"XAlgorithm.h"
+#include<math.h>
+
+//判断当前点周围是否还有通道可以经过
+bool isPass(const XVector* maze, XPoint CurPoint)
 {
-	int row = XMazeRow(maze);//��
-	int list = XMazeList(maze);//��
+	int row = XVectorTwo_Row(maze);//行
+	int list = XVectorTwo_List(maze,0);//列
+	if (CurPoint.x >= 0 && CurPoint.x < list && CurPoint.y >= 0 && CurPoint.y < row)
+	{
+		//获取当前位置
+		int Sign = *((int*)XVectorTwo_at_XPoint(maze, CurPoint));
+		if (Sign == XMazeRoute)
+			return true;
+	}	
+	return false;
+}
+//探路四个方向-栈(周围是否已经无路可走了)
+static bool Pathfinder(struct XStack* stack, struct XVector* maze, XPointStep CurPoint)
+{
+	int sum = 0;
 	for (size_t i = 0; i < 4; i++) 
 	{
 		switch (i) {
 		case Left:
 		{
-			if (CurPoint.x >0)
+			XPoint Point = { CurPoint.x - 1,CurPoint.y };
+			if (isPass(maze, Point))
 			{
-				XPoint Point = { CurPoint.x-1,CurPoint .y};
-				stack->push(stack,&Point);
+				XPointStep p = { CurPoint.x - 1,CurPoint.y,CurPoint.cur+1};
+				stack->push(stack, &p);
+				++sum;
 			}
 			break;
 		}
 		case Right:
 		{
-			if (CurPoint.x + 1 < list)
+			XPoint Point = { CurPoint.x + 1,CurPoint.y };
+			if (isPass(maze, Point))
 			{
-				XPoint Point = { CurPoint.x + 1,CurPoint.y };
-				stack->push(stack, &Point);
+				XPointStep p = { CurPoint.x + 1,CurPoint.y,CurPoint.cur + 1 };
+				stack->push(stack, &p);
+				++sum;
 			}
 			break;
 		}
 		case Up:
 		{
-			if (CurPoint.y > 0)
+			XPoint Point = { CurPoint.x,CurPoint.y - 1 };
+			if (isPass(maze, Point))
 			{
-				XPoint Point = { CurPoint.x,CurPoint.y-1 };
-				stack->push(stack, &Point);
+				XPointStep p = { CurPoint.x,CurPoint.y - 1 ,CurPoint.cur + 1 };
+				stack->push(stack, &p);
+				++sum;
 			}
 			break;
 		}
 		case Down:
 		{
-			if (CurPoint.y + 1 < row)
+			XPoint Point = { CurPoint.x,CurPoint.y + 1 };
+			if (isPass(maze, Point))
 			{
-				XPoint Point = { CurPoint.x,CurPoint.y + 1 };
-				stack->push(stack, &Point);
+				XPointStep p = { CurPoint.x,CurPoint.y + 1,CurPoint.cur + 1 };
+				stack->push(stack, &p);
+				++sum;
 			}
 			break;
 		}
@@ -48,65 +72,123 @@ static void Pathfinder(struct XStack* stack, struct XVector* maze, XPoint CurPoi
 			break;
 		}
 	}
+	return sum == 0 ? true : false;
+}
+//回撤记录的点
+void XMazeRetracement(const XVector* maze, XStack* StackAll, XStack* StackPath)
+{
+	XPointStep CurPoint = *(XPointStep*)XStack_top(StackAll);//获取栈顶保存的点
+	while (!XStack_empty(StackPath))
+	{
+		XPointStep PathCurPoint = *(XPointStep*)XStack_top(StackPath);//获取栈顶保存的点
+		if (PathCurPoint.cur < CurPoint.cur)
+		{
+			break;
+		}
+		else
+		{
+			int* pSign = ((int*)XVectorTwo_at(maze, PathCurPoint.y, PathCurPoint.x));
+			*pSign = XMazeRoute;//回撤
+			XStack_pop(StackPath);
+		}
+	}
+}
+XVector* XMazePathfindingOne(const XVector* maze, const XPoint start, const XPoint dest)
+{
+	XVector* tempMaze = XVectorTwo_copy(maze);//备份
+	XStack* stack = XStack_init("XPointStep", sizeof(XPointStep));//记录所有的点
+	XStack* SPath = XStack_init("XPointStep", sizeof(XPointStep));//记录路径
+	XPointStep p = { start.x,start.y,1 };
+	XStack_Push(stack, &p);
+	while (!XStack_empty(stack))
+	{
+		XPointStep CurPoint = *(XPointStep*)XStack_top(stack);//获取栈顶保存的点
+		XStack_pop(stack);
+		//printf("%d\n", XStack_size(stack));
+		//获取当前位置
+		int* pSign = ((int*)XVectorTwo_at(tempMaze, CurPoint.y, CurPoint.x));
+
+		if (*pSign == XMazeRoute)
+		{
+			*pSign = XMazePath;//标记当前位置
+			XStack_Push(SPath, &CurPoint);//保存坐标
+			if (CurPoint.x == dest.x && CurPoint.y == dest.y)//找到终点了
+			{
+				break;
+			}
+			if (Pathfinder(stack, tempMaze, CurPoint))
+			{
+				XMazeRetracement(tempMaze, stack, SPath);
+			}
+		}
+
+	}
+	XStack_free(stack);
+	XVector* vector = XVector_init("XPoint", sizeof(XPoint));
+	XStackRCopyXVector(SPath, vector);//将栈内的数据逆序拷贝到数组
+	XStack_free(SPath);
+	XVectorTwo_free(tempMaze);
+	return vector;
 }
 
 XVector* XMazePathfindingShort(const XVector* maze, const XPoint start, const XPoint dest)
 {
-	XStack* stack = XStack_init("XPoint", sizeof(XPoint));
-
-	return stack;
+	XVector* PathAll = XMazePathfindingAll(maze, start, dest);
+	XVector* PathShort = XVector_init("XPoint",sizeof(XPoint));
+	for (XVector_iterator* itAll = XVector_begin(PathAll); itAll != XVector_end(PathAll); itAll = XVector_iterator_add(PathAll, itAll))
+	{
+		XVector* CurPath = *(XVector**)itAll;//获取路径
+		size_t PathShortSize = XVector_size(PathShort);//当前最短路径数量
+		size_t CurPathSize = XVector_size(CurPath);//当前路径数量
+		if (PathShortSize == 0 || PathShortSize > CurPathSize)
+		{
+			XVector_swap(PathShort, CurPath);
+		}
+	}
+	XVectorTwo_free(PathAll);
+	return PathShort;
 }
 
 XVector* XMazePathfindingAll(const XVector* maze, const XPoint start, const XPoint dest)
 {
-	XStack* stack = XStack_init("XPoint", sizeof(XPoint));
-	XStack* SPath = XStack_init("XPoint", sizeof(XPoint));
-	XStack_Push(stack, &start);
+	XVector* PathAll = XVector_init("XVector*", sizeof(XVector*));//返回的二维数组保存所有的可行路径
+	XVector* tempMaze = XVectorTwo_copy(maze);//备份
+	XStack* stack = XStack_init("XPointStep", sizeof(XPointStep));//记录所有的点
+	XStack* SPath = XStack_init("XPointStep", sizeof(XPointStep));//记录路径
+	XPointStep p = {start.x,start.y,1};
+	XStack_Push(stack, &p);
 	while (!XStack_empty(stack))
 	{
-		//printf("ջ��Ԫ��%d\n", XStack_size(stack));
-		XPoint CurPoint = *(XPoint*)XStack_top(stack);//��ȡջ������ĵ�
-		
-		//��ȡ��ǰλ��
-		struct XVector* LMaze = *(struct XVector**)XVector_at(maze, CurPoint.y);
-		int Sign = *((int*)XVector_at(LMaze, CurPoint.x));
+		XPointStep CurPoint = *(XPointStep*)XStack_top(stack);//获取栈顶保存的点
+		XStack_pop(stack);
+		//printf("%d\n", XStack_size(stack));
+		//获取当前位置
+		int* pSign = ((int*)XVectorTwo_at(tempMaze, CurPoint.y, CurPoint.x));
 
-		//�����ǰ��ǽ������
-		if (Sign == XMazeWall)
+		if (*pSign == XMazeRoute)
 		{
-			XStack_pop(stack);
-			continue;
-		}
-		else if (Sign == XMazePath)//����ǲȹ���
-		{
-			while (1)
+			*pSign = XMazePath;//标记当前位置
+			XStack_Push(SPath, &CurPoint);//保存坐标
+			if (CurPoint.x == dest.x && CurPoint.y == dest.y)//找到终点了
 			{
-				XPoint PathPoint = *(XPoint*)XStack_top(SPath);//��ȡջ������ĵ�
-				if (PathPoint.x != CurPoint.x || PathPoint.y != CurPoint.y)
-				{
-					//struct XVector* LMaze = *(struct XVector**)XVector_at(maze, PathPoint.y);
-					//*((int*)XVector_at(LMaze, PathPoint.x)) = XMazeRoute;//����
-					XStack_pop(SPath);
-				}
-				else
-				{
-					break;
-				}
+				XVector* path = XVector_init("XPoint", sizeof(XPoint));
+				XStackRCopyXVector(SPath, path);//将栈内的数据逆序拷贝到数组,获得一条路径
+				XVector_Push_Back(PathAll, &path);
+				/*printf("走到终点\n");
+				XMazePrint(tempMaze, "■", "  ", "★");*/
+				//开始回撤
+				XMazeRetracement(tempMaze, stack, SPath);
+				continue;
 			}
-			XStack_pop(stack);
-			continue;
-		}
-		if (Sign == XMazeRoute)
-		{
-			*((int*)XVector_at(LMaze, CurPoint.x)) = XMazePath;//��ǵ�ǰλ��
-			XStack_Push(SPath, &CurPoint);//��������
-			if (CurPoint.x == dest.x && CurPoint.y == dest.y)//�ҵ��յ���
+			if (Pathfinder(stack, tempMaze, CurPoint))
 			{
-				return stack;
+				XMazeRetracement(tempMaze,stack, SPath);
 			}
-			Pathfinder(stack, maze, CurPoint);
 		}
-		
+
 	}
-	return stack;
+	XStack_free(stack);
+	XStack_free(SPath);
+	XVectorTwo_free(tempMaze);
+	return PathAll;
 }

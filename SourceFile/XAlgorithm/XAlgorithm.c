@@ -1,7 +1,10 @@
 ﻿#include"XAlgorithm.h"
+#include"XStack.h"
+#include"XVector.h"
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
+#include<time.h>
 void swap(void* valOne, void* valTwo, const int typeSize)//交换任意数据类型的函数
 {
 	if (valOne == NULL || valTwo == NULL || typeSize <= 0)
@@ -48,6 +51,32 @@ void swap(void* valOne, void* valTwo, const int typeSize)//交换任意数据类
 			memcpy(valTwo, valMiddle, typeSize);
 			free(valMiddle);
 		}
+	}
+}
+
+void XStackRCopyXVector(const XStack* stack, XVector* vector)
+{
+	size_t Size = XStack_size(stack);
+	if (Size == 0)
+		return;
+	XVector_clear(vector);
+	size_t TypeSize = XStack_TypeSize(stack);
+	char* pTail = XStack_top(stack);//数组末尾元素
+	char* pHead = pTail- TypeSize*(Size-1);//数组头元素
+	for (size_t i = 0; i < Size; i++)
+	{
+		XVector_Push_Back(vector,pHead+i* TypeSize);
+	}
+}
+
+void XDelay(const size_t msec)
+{
+	clock_t  time_front = clock();
+	while (true)
+	{
+		clock_t time_after = clock();
+		if (time_after - time_front > msec)
+			break;
 	}
 }
 

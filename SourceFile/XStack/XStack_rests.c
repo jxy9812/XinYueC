@@ -40,6 +40,13 @@ int XStack_Capacity(XStack* this_stack)
 		return 0;
 	return XContainerObject_capacity(&stack->object);
 }
+size_t XStack_TypeSize(struct XStack* this_stack)
+{
+	XSTACK* stack = (XSTACK*)this_stack;
+	if (isObjectNULL(this_stack, "Stack_Capacity"))
+		return 0;
+	return stack->object._type;
+}
 //将st2拷贝到st1
 void XStack_Copy(XStack* this_stackOne, const XStack* this_stackTwo)
 {

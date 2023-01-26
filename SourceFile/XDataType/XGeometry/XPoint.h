@@ -1,4 +1,4 @@
-#ifndef  XPOINT_H
+﻿#ifndef  XPOINT_H
 #define XPOINT_H
 typedef struct XPoint
 {
