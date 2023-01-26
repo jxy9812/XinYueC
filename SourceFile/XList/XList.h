@@ -3,8 +3,8 @@
 #include<stdbool.h>
 #include<stdio.h>
 #include"XList_func.h"
-#include"XList_iterator.h"
-#include"XList_reverse_iterator.h"
+#include"XList_Iterator/XList_iterator.h"
+#include"XList_Iterator/XList_reverse_iterator.h"
 //一个节点
 typedef struct Node
 {

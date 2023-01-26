@@ -3,8 +3,8 @@
 #include<stdio.h>
 #include<stdbool.h>
 #include"XVector_func.h"
-#include"XVector_iterator.h"
-#include"XVector_reverse_iterator.h"
+#include"XVector_Iterator/XVector_iterator.h"
+#include"XVector_Iterator/XVector_reverse_iterator.h"
 typedef struct XVector
 {
 	//插入函数

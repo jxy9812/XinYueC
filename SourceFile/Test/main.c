@@ -10,6 +10,7 @@ int main(int argc, char* args[])
 	//stackTest();
 	//XStringTest();
 	//SortTest();
-	XMazeGeneratedTest();
+	//XMazeGeneratedTest();
+	queueTest();
 	return 0;
 }

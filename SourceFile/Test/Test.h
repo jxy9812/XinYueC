@@ -5,6 +5,7 @@ void ListSortTest();
 void ListTest();
 void ListSwapTest();
 void stackTest();
+void queueTest();
 void VectorTest();
 void XStringTest();
 void SortTest();

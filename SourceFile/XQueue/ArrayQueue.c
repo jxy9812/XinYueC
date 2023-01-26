@@ -50,7 +50,7 @@ void XQueue_Push(XQUEUE* que, void*LValue)//插入到队列的队尾
 {
 	open(que);
 	char* str1 = (char*)que->_data + que->_type * que->_current;
-	memcpy(str1, x, que->_type);
+	memcpy(str1, LValue, que->_type);
 	que->_current++;
 }
 void XQueue_pop(struct XQUEUE* que)//删除queue的队头元素
@@ -88,5 +88,11 @@ bool XQueue_empty(struct XQUEUE* que)//检测队内是否为空，空为真 O(1)
 int XQueue_size(struct XQUEUE* que)//返回queue内元素的个数 O(1)
 {
 	return que->_current;
+}
+//释放队列
+void XQueue_free(struct XQueue* this_queue)
+{
+	XQueue_clear(this_queue);
+	free(this_queue);
 }
 #endif
