@@ -11,6 +11,7 @@ int main(int argc, char* args[])
 	//XStringTest();
 	//SortTest();
 	//XMazeGeneratedTest();
-	queueTest();
+	XMazePathfinding();
+	//queueTest();
 	return 0;
 }

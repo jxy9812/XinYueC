@@ -11,4 +11,6 @@ void XStringTest();
 void SortTest();
 //随机迷宫生成算法——深度优先算法
 void XMazeGeneratedTest();
+//深度寻路算法
+void XMazePathfinding();
 #endif

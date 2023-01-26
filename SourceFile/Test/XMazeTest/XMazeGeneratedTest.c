@@ -3,6 +3,6 @@
 void XMazeGeneratedTest()
 {
 	struct XVector* maze= XMazeGenerated(50, 50);
-	XMazePrint(maze,"■","  ");
+	XMazePrint(maze,"■","  ","*");
 	XMazeFree(maze);
 }

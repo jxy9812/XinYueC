@@ -1,4 +1,4 @@
-﻿#include"XMaze.h"
+﻿#include"XMazeGenerated.h"
 #include<string.h>
 //初始化迷宫
 struct XVector* XMaze_init(const size_t r, const size_t l)
@@ -16,8 +16,8 @@ struct XVector* XMaze_init(const size_t r, const size_t l)
 	}
 	return maze;
 }
-//打印迷宫 wall墙(替换的字符) Route道路(替换的字符)  Path路径(替换的字符) 
-void XMazePrint(const struct XVector* maze, const char* Wall, const char* Route, const char* Path)
+//打印迷宫 wall墙(替换的字符) Route道路(替换的字符)
+void XMazePrint(const struct XVector* maze, const char* Wall, const char* Route)
 {
 	//int r = XVector_size(maze);//行
 	//int l = XVector_size(*(struct XVector**)XVector_begin(maze));//列
@@ -35,9 +35,6 @@ void XMazePrint(const struct XVector* maze, const char* Wall, const char* Route,
 				break;
 			case XMazeRoute:
 				strcpy(str, Route);
-				break;
-			case XMazePath:
-				strcpy(str, Path);
 				break;
 			default:
 				strcpy(str, " ");
