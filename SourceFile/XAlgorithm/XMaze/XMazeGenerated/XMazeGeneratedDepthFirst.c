@@ -72,7 +72,6 @@ static void XMazeOpenCircuitRecursion(struct XVector* maze, const int x, const i
 	}
 }
 
-
 //随机探路四个方向-栈
 static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, const int x, const int y)
 {
@@ -126,7 +125,7 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 	}
 }
 //砸墙开路-栈
-static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y)
+static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y, bool oneExit)
 {
 	XStack* stack=XStack_init("int");
 	stack->push(stack, y);
@@ -154,7 +153,7 @@ static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y
 				SignSum += TSign;
 			}
 		}
-		if (SignSum <= XMazeRoute) //如果周围道路不超过一个，避免回到原点
+		if (SignSum <= (XMazeRoute+ !oneExit)) //如果周围道路不超过一个，避免回到原点
 		{
 			*((int*)XVector_at(LMaze, x)) = XMazeRoute;
 			RandomOpenCircuitStack(stack,maze, x, y);
@@ -163,11 +162,11 @@ static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y
 	XStack_free(stack);
 }
 //生成迷宫r行l列
-struct XVector* XMazeGenerated(const size_t r, const size_t l)
+struct XVector* XMazeGenerated(const size_t r, const size_t l, const int x, const int y, bool oneExit)
 {
 	int sign = XMazeWall;
 	struct XVector* maze = XVectorTwoMatrix_init(sizeof(int),r, l,&sign);
 	srand((unsigned)time(NULL));
-	XMazeOpenCircuitStack(maze,1, 1);
+	XMazeOpenCircuitStack(maze,x, y,oneExit);
 	return maze;
 }

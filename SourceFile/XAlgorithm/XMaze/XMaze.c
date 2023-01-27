@@ -2,16 +2,6 @@
 #include"XPoint.h"
 #include"XAlgorithm.h"
 #include<string.h>
-#ifdef _WIN32
-#include<Windows.h>
-void gotoxy(short x, short y) {
-	COORD coord = { x, y };
-	SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
-}
-#endif // _Win32
-
-
-
 //打印路径点
 void XMazePathPrintPoint(XVector* Path)
 {
@@ -88,7 +78,7 @@ void XMazePathPrint(const XVector* maze, XVector* mazePath, const char* Wall, co
 
 void XMazePathPrintSleep(const XVector* maze, XVector* mazePath, const char* Wall, const char* Route, const char* Path, const size_t msec)
 {
-	system("mode con cols=110 lines=55"); //cols为控制台的宽度，lines则代表控制台的高度。
+	//system("mode con cols=110 lines=55"); //cols为控制台的宽度，lines则代表控制台的高度。
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	for (XVector_iterator* it = XVector_begin(mazePath); it != XVector_end(mazePath); it = XVector_iterator_add(mazePath, it))
 	{
