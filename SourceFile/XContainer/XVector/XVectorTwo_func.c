@@ -17,11 +17,11 @@ XVector* XVectorTwoMatrix_init(const size_t TypeSize, const size_t row, const si
 	return VTwo;
 }
 
-//XVector* XVectorTwo_init(const size_t TypeSize)
-//{
-//	struct XVector* VTwo = XVector_init("struct XVector*", sizeof(struct XVector*));//二维数组
-//	return VTwo;
-//}
+XVector* XVectorTwo_init()
+{
+	struct XVector* VTwo = XVector_init("struct XVector*", sizeof(struct XVector*));//二维数组
+	return VTwo;
+}
 
 XVector* XVectorTwo_copy(const XVector* this_vector)
 {
@@ -70,12 +70,18 @@ size_t XVectorTwo_TypeSize(XVector* this_vector)
 	return XVector_TypeSize(*(struct XVector**)XVector_begin(this_vector));
 }
 
-void XVectorTwo_free(const XVector* this_vector)
+void XVectorTwo_clear(const XVector* this_vector)
 {
 	for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
 	{
 		struct XVector* RowVector = *(struct XVector**)it;
 		XVector_free(RowVector);
 	}
+	XVector_clear(this_vector);
+}
+
+void XVectorTwo_free(const XVector* this_vector)
+{
+	XVectorTwo_clear(this_vector);
 	XVector_free(this_vector);
 }
