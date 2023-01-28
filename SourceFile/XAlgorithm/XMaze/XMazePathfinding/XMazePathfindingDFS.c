@@ -1,4 +1,4 @@
-﻿#include"XMazePathfindingDepthFirst.h"
+﻿#include"XMazePathfindingDFS.h"
 #include"XAlgorithm.h"
 #include"XStack.h"
 #include"XAlgorithm.h"
@@ -94,7 +94,7 @@ static void XMazeRetracement(const XVector* maze, XStack* StackPointAll, XStack*
 		}
 	}
 }
-XVector* XMazePathfindingOne(const XVector* maze, const XPoint start, const XPoint dest)
+XVector* XMazePathfindingOneDFS(const XVector* maze, const XPoint start, const XPoint dest)
 {
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	XStack* StackPointAll = XStack_init("XPointStep", sizeof(XPointStep));//记录所有的点
@@ -132,9 +132,9 @@ XVector* XMazePathfindingOne(const XVector* maze, const XPoint start, const XPoi
 	return vector;
 }
 
-XVector* XMazePathfindingShort(const XVector* maze, const XPoint start, const XPoint dest)
+XVector* XMazePathfindingShortDFS(const XVector* maze, const XPoint start, const XPoint dest)
 {
-	XVector* PathAll = XMazePathfindingAll(maze, start, dest);
+	XVector* PathAll = XMazePathfindingAllDFS(maze, start, dest);
 	XVector* PathShort = XVector_init("XPoint",sizeof(XPoint));
 	for (XVector_iterator* itAll = XVector_begin(PathAll); itAll != XVector_end(PathAll); itAll = XVector_iterator_add(PathAll, itAll))
 	{
@@ -150,7 +150,7 @@ XVector* XMazePathfindingShort(const XVector* maze, const XPoint start, const XP
 	return PathShort;
 }
 
-XVector* XMazePathfindingAll(const XVector* maze, const XPoint start, const XPoint dest)
+XVector* XMazePathfindingAllDFS(const XVector* maze, const XPoint start, const XPoint dest)
 {
 	XVector* PathAll = XVector_init("XVector*", sizeof(XVector*));//返回的二维数组保存所有的可行路径
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份

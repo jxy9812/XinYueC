@@ -1,5 +1,5 @@
 ﻿#include"Test.h"
-#include"XMazePathfindingDepthFirst.h"
+#include"XMazePathfindingDFS.h"
 #include"XMazeGeneratedDepthFirst.h"
 #include"XStack.h"
 #include"XAlgorithm.h"
@@ -25,7 +25,7 @@ void XMazePathfinding()
 	
 	XMazePrint(maze, "■", "  ");
 
-	XVector* Path = XMazePathfindingOne(maze, start, dest);
+	XVector* Path = XMazePathfindingOneDFS(maze, start, dest);
 	printf("测试迷宫寻路-程序时间最少不保证最短-有%d个点\n", XVector_size(Path));
 	system("pause");
 	system("cls");
@@ -33,7 +33,7 @@ void XMazePathfinding()
 	XVector_free(Path);
 	system("pause");
 	system("cls");
-	XVector* PathAll = XMazePathfindingAll(maze, start, dest);
+	XVector* PathAll = XMazePathfindingAllDFS(maze, start, dest);
 	printf("测试迷宫寻路-全部方案一共找到%d种方案\n",XVector_size(PathAll));
 	system("pause");
 	system("cls");
@@ -47,7 +47,7 @@ void XMazePathfinding()
 	XVectorTwo_free(PathAll);
 	system("pause");
 	system("cls");
-	Path = XMazePathfindingShort(maze, start, dest);
+	Path = XMazePathfindingShortDFS(maze, start, dest);
 	printf("测试迷宫寻路-最短路径-单条-有%d个点\n", XVector_size(Path));
 	system("pause");
 	system("cls");
