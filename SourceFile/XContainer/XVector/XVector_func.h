@@ -4,9 +4,11 @@
 struct XVector;
 //清空vector的队列，释放内存v
 void XVector_clear(struct XVector* this_vector);
-// 向量尾部增加一个元素X
-void XVector_Push_Back(struct XVector* this_vector, void* LValue);
-// 向量中指向元素p前增加一个元素x
+// 向量头部增加一个元素
+void XVector_push_front(struct XVector* this_vector, void* LValue);
+// 向量尾部增加一个元素
+void XVector_push_back(struct XVector* this_vector, void* LValue);
+// 向量中指向元素p前增加一个元素
 void XVector_insert_front(struct XVector* this_vector, const void* p, const void* LValue);
 // 向量中指向元素p前增加n个相同的元素x
 void XVector_insert_nfront(struct XVector* this_vector, const void* p, const int n, const void* LValue);

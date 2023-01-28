@@ -10,9 +10,9 @@ XVector* XVectorTwoMatrix_init(const size_t TypeSize, const size_t row, const si
 		struct XVector* RowVector = XVector_init("Type", TypeSize);//每一行的一维数组
 		for (size_t j = 0; j < list; j++)
 		{
-			XVector_Push_Back(RowVector, initVal);
+			XVector_push_back(RowVector, initVal);
 		}
-		XVector_Push_Back(VTwo, &RowVector);
+		XVector_push_back(VTwo, &RowVector);
 	}
 	return VTwo;
 }
@@ -36,9 +36,9 @@ XVector* XVectorTwo_copy(const XVector* this_vector)
 		XVector*LTemp= XVector_init("Type", TypeSize);
 		for (size_t j = 0; j < List; j++) 
 		{
-			XVector_Push_Back(LTemp,XVectorTwo_at(this_vector, i, j));
+			XVector_push_back(LTemp,XVectorTwo_at(this_vector, i, j));
 		}
-		XVector_Push_Back(temp, &LTemp);
+		XVector_push_back(temp, &LTemp);
 	}
 	return temp;
 }

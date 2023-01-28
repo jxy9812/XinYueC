@@ -52,9 +52,9 @@ struct XVector* XMaze_init(const size_t r, const size_t l)
 		for (size_t j = 0; j < l; j++)
 		{
 			int Sign = XMazeWall;
-			XVector_Push_Back(Lmaze, &Sign);
+			XVector_push_back(Lmaze, &Sign);
 		}
-		XVector_Push_Back(maze, &Lmaze);
+		XVector_push_back(maze, &Lmaze);
 	}
 	return maze;
 }

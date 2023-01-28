@@ -73,7 +73,7 @@ void XStackRCopyXVector(const XStack* stack, XVector* vector)
 	char* pHead = pTail- TypeSize*(Size-1);//数组头元素
 	for (size_t i = 0; i < Size; i++)
 	{
-		XVector_Push_Back(vector,pHead+i* TypeSize);
+		XVector_push_back(vector,pHead+i* TypeSize);
 	}
 }
 

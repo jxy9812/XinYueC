@@ -92,7 +92,7 @@ XVector* XMazePathfindingShortDFS(const XVector* maze, const XPoint start, const
 					CurSize = XStack_size(StackPath);
 					XVector* path = XVector_init("XPoint", sizeof(XPoint));
 					XStackRCopyXVector(StackPath, path);//将栈内的数据逆序拷贝到数组,获得一条路径
-					XVector_Push_Back(PathShortAll, &path);
+					XVector_push_back(PathShortAll, &path);
 				}
 
 				//开始回撤
@@ -137,7 +137,7 @@ XVector* XMazePathfindingAllDFS(const XVector* maze, const XPoint start, const X
 			{
 				XVector* path = XVector_init("XPoint", sizeof(XPoint));
 				XStackRCopyXVector(StackPath, path);//将栈内的数据逆序拷贝到数组,获得一条路径
-				XVector_Push_Back(PathAll, &path);
+				XVector_push_back(PathAll, &path);
 				/*printf("走到终点\n");
 				XMazePrint(tempMaze, "■", "  ", "★");*/
 				//开始回撤

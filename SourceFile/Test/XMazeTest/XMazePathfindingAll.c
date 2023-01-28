@@ -69,7 +69,9 @@ void XMazePathfinding()
 	//}
 	//XVectorTwo_free(PathAll);
 	
-	XMazePathfindingBFS(maze, start, dest);
-	
+	XVector* Path = XMazePathfindingBFS(maze, start, dest);
+	system("pause");
+	XMazePathPrintSleep(maze, Path, "■", "  ", "★", 100);
+	XVector_free(Path);
 	XMazeFree(maze);
 }

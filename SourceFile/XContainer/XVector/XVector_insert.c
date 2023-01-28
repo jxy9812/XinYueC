@@ -1,8 +1,16 @@
 ﻿#include"XVector_head.h"
+#include"XVector_func.h"
 #include<stdlib.h>
 #include<string.h>
 struct XVector;
-void XVector_Push_Back(struct XVector* this_vector, void* val)
+void XVector_push_front(struct XVector* this_vector, void* LValue)
+{
+	if (XVector_empty(this_vector))
+		XVector_push_back(this_vector, LValue);
+	else
+		XVector_insert_front(this_vector, XVector_front(this_vector), LValue);
+}
+void XVector_push_back(struct XVector* this_vector, void* val)
 {
 	if (isObjectNULL(this_vector, "XVector_Push_Back"))
 		return;
@@ -17,16 +25,25 @@ void XVector_insert_front(struct XVector* this_vector, const void* pSel, const v
 	if (isObjectNULL(this_vector, "XVector_insert_front"))
 		return;
 	XVECTOR* v=(XVECTOR*)this_vector;
-	VectorEnlargeCapacity(v);
-	if (pSel >= v->front(v) && pSel <= v->back(v))
+	size_t TypeSize = XVector_TypeSize(this_vector);//数据类型的大小
+	char* pfront = XVector_front(this_vector);//头指针
+	char* pback = XVector_back(this_vector);//尾指针
+	if (pSel >= pfront && pSel <= pback)
 	{
-		int size = (char*)v->back(v)-(char*)pSel + v->object._type;
+		int size = pback -(char*)pSel + TypeSize;//后半段数据的大小
+		size_t nSel = ((char*)pSel - (char*)XVector_front(this_vector)) / (TypeSize);//当前数据在数组中的索引号
 		void* ptr = malloc(size);
-		memcpy(ptr, pSel, size);
-		memcpy(pSel, val, v->object._type);
-		memcpy((char*)pSel + v->object._type, ptr, size);
-		v->object._size++;
+		if (ptr == NULL)
+			return;
+		VectorEnlargeCapacity(v);
+		char* UpData_pSel = XVector_at(this_vector,nSel);//扩容后需要重新定位指针
+		//将后半段数据往后挪一下位置
+		memcpy(ptr, UpData_pSel, size);
+		memcpy(UpData_pSel + TypeSize, ptr, size);
 		free(ptr);
+		//插入新数据
+		memcpy(UpData_pSel, val, TypeSize);
+		v->object._size++;
 	}
 }
 void XVector_insert_nfront(struct XVector* this_vector, const void* pSel, const int n, const void* val)// 向量中指向元素p前增加n个相同的元素x

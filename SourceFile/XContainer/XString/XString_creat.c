@@ -16,7 +16,7 @@ struct XString* XString_init()
 	this_XString->_data = vector;
 	//初始化数组为0;
 	char zero = '\0';
-	XVector_Push_Back(vector, &zero);
+	XVector_push_back(vector, &zero);
 	this_XString->_size = 0;
 	this_XString->append = XString_append;
 	this_XString->assign = XString_assign;

@@ -31,7 +31,7 @@ XVector* XVector_init(const char* arr, ...)
 		//this_vector->object._type = n;
 	}
 	this_vector->clear = XVector_clear;//清空vector的队列，释放内存
-	this_vector->push_back = XVector_Push_Back;//尾插
+	this_vector->push_back = XVector_push_back;//尾插
 	this_vector->insert_front = XVector_insert_front;// 向量中指向元素p前增加一个元素x
 	this_vector->insert_nfront = XVector_insert_nfront;// 向量中指向元素p前增加n个相同的元素x
 	this_vector->insert = XVector_insert;// 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2)间的数据
