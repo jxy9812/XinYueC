@@ -2,4 +2,13 @@
 #ifndef XMAZEPATHFINDINGBFS_H
 #define XMAZEPATHFINDINGBFS_H
 #include"XMaze.h"
+#include"XPoint.h"
+typedef struct BFSNode 
+{
+	XPoint pos;//坐标
+	struct BFSNode* parent;//父节点
+	XVector* child;//子节点
+}BFSNode;
+//迷宫寻路-程序时间最少不保证最短，找到一条返回
+XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoint dest);
 #endif // !XMAZEPATHFINDINGBFS_H

@@ -1,5 +1,6 @@
 ﻿#include"Test.h"
 #include"XMazePathfindingDFS.h"
+#include"XMazePathfindingBFS.h"
 #include"XMazeGeneratedDepthFirst.h"
 #include"XStack.h"
 #include"XAlgorithm.h"
@@ -34,41 +35,41 @@ void XMazePathfinding()
 	system("pause");
 	system("cls");*/
 
-	XVector* PathAll = XMazePathfindingShortDFS(maze, start, dest);
-	printf("测试迷宫寻路-最短路径-单条-有%d个方案\n", XVector_size(PathAll));
-	system("pause");
-	system("cls");
+	//XVector* PathAll = XMazePathfindingShortDFS(maze, start, dest);
+	//printf("测试迷宫寻路-最短路径-单条-有%d个方案\n", XVector_size(PathAll));
+	//system("pause");
+	//system("cls");
 
-	for (XVector_iterator* itAll = XVector_begin(PathAll); itAll != XVector_end(PathAll); itAll = XVector_iterator_add(PathAll, itAll))
-	{
-		XVector* path = *(XVector**)itAll;//获取路径
-		gotoxy(0, 0);
-		XMazePrint(maze, "■", "  ");
-		printf("当前方案有%d个点\n", XVector_size(path));
-		XDelay(1000);
-		XMazePathPrintSleep(maze, path, "■", "  ", "★", 100);
-		//printf("当前方案有%d个点\n", XVector_size(path));
-	}
-	XVectorTwo_free(PathAll);
-	system("pause");
-	system("cls");
+	//for (XVector_iterator* itAll = XVector_begin(PathAll); itAll != XVector_end(PathAll); itAll = XVector_iterator_add(PathAll, itAll))
+	//{
+	//	XVector* path = *(XVector**)itAll;//获取路径
+	//	gotoxy(0, 0);
+	//	XMazePrint(maze, "■", "  ");
+	//	printf("当前方案有%d个点\n", XVector_size(path));
+	//	XDelay(1000);
+	//	XMazePathPrintSleep(maze, path, "■", "  ", "★", 100);
+	//	//printf("当前方案有%d个点\n", XVector_size(path));
+	//}
+	//XVectorTwo_free(PathAll);
+	//system("pause");
+	//system("cls");
 
-	 PathAll = XMazePathfindingAllDFS(maze, start, dest);
-	printf("测试迷宫寻路-全部方案一共找到%d种方案\n",XVector_size(PathAll));
-	system("pause");
-	system("cls");
-	for (XVector_iterator* itAll = XVector_begin(PathAll); itAll != XVector_end(PathAll); itAll = XVector_iterator_add(PathAll, itAll))
-	{
-		XVector* path = *(XVector**)itAll;//获取路径
-		gotoxy(0, 0);
-		XMazePrint(maze, "■", "  ");
-		printf("当前方案有%d个点\n", XVector_size(path));
-		XDelay(1000);
-		XMazePathPrintSleep(maze, path, "■", "  ", "★", 100);
-	}
-	XVectorTwo_free(PathAll);
+	// PathAll = XMazePathfindingAllDFS(maze, start, dest);
+	//printf("测试迷宫寻路-全部方案一共找到%d种方案\n",XVector_size(PathAll));
+	//system("pause");
+	//system("cls");
+	//for (XVector_iterator* itAll = XVector_begin(PathAll); itAll != XVector_end(PathAll); itAll = XVector_iterator_add(PathAll, itAll))
+	//{
+	//	XVector* path = *(XVector**)itAll;//获取路径
+	//	gotoxy(0, 0);
+	//	XMazePrint(maze, "■", "  ");
+	//	printf("当前方案有%d个点\n", XVector_size(path));
+	//	XDelay(1000);
+	//	XMazePathPrintSleep(maze, path, "■", "  ", "★", 100);
+	//}
+	//XVectorTwo_free(PathAll);
 	
-
+	XMazePathfindingBFS(maze, start, dest);
 	
 	XMazeFree(maze);
 }
