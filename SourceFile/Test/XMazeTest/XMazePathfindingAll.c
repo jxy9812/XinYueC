@@ -1,6 +1,7 @@
 ﻿#include"Test.h"
 #include"XMazePathfindingDFS.h"
 #include"XMazePathfindingBFS.h"
+#include"XMazePathfindingAStar.h"
 #include"XMazeGeneratedDepthFirst.h"
 #include"XStack.h"
 #include"XAlgorithm.h"
@@ -69,7 +70,8 @@ void XMazePathfinding()
 	//}
 	//XVectorTwo_free(PathAll);
 	
-	XVector* Path = XMazePathfindingBFS(maze, start, dest);
+	//XVector* Path = XMazePathfindingBFS(maze, start, dest);
+	XVector* Path = XMazePathfindingAStar(maze, start, dest);
 	system("pause");
 	XMazePathPrintSleep(maze, Path, "■", "  ", "★", 100);
 	XVector_free(Path);

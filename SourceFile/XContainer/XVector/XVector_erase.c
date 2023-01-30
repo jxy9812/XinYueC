@@ -1,4 +1,5 @@
 ﻿#include"XVector_head.h"
+#include"XVector_func.h"
 #include<stdlib.h>
 #include<string.h>
 
@@ -28,7 +29,19 @@ void XVector_erase_int(struct XVector* this_vector, const int left, const int ri
 	XVECTOR* v=(XVECTOR*)this_vector;
 	if (left <= right && left >= 0 && right < v->object._size)
 	{
-		memcpy(v->at(v, left), v->at(v, right + 1), (v->object._size - 1 - right) * v->object._type);
-		v->object._size -= (right - left + 1);
+		if (XVector_size(this_vector) == 0)
+		{
+			return;
+		}
+		else if (XVector_size(this_vector) == 1)
+		{
+			v->object._size =0;
+		}
+		else
+		{
+			memcpy(v->at(v, left), v->at(v, right + 1), (v->object._size - 1 - right) * v->object._type);
+			v->object._size -= (right - left + 1);
+		}
 	}
+	
 }

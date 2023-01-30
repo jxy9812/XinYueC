@@ -9,6 +9,6 @@ typedef struct BFSNode
 	struct BFSNode* parent;//父节点
 	XVector* child;//子节点
 }BFSNode;
-//迷宫寻路-程序时间最少不保证最短，找到一条返回
+//迷宫寻路-广度优先搜索寻路
 XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoint dest);
 #endif // !XMAZEPATHFINDINGBFS_H
