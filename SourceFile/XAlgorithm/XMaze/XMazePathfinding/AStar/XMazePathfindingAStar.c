@@ -52,7 +52,7 @@ static XVector* GetXMazePath(const XVector* child)
 	return Path;
 }
 //插入孩子
-static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* node, const XVector* CurrentNodeArray)
+static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* node, const XVector* NodeArray, bool Oblique)
 {
 	int* pMazePos = (int*)XVectorTwo_at_XPoint(maze, node->pos);
 	if (*pMazePos != XMazeRoute)
@@ -62,6 +62,8 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 	XPointStep pos = { node->pos.x,node->pos.y,1 };
 	XStack* ChildAll = XStack_init("XPointStep", sizeof(XPointStep));
 	Pathfinder(ChildAll, maze, pos);//获取周围能走的点位
+	if(Oblique)//能斜着走
+		PathfinderOblique(ChildAll, maze, pos);//获取周围能走的点位，斜的
 	while (!XStack_empty(ChildAll))
 	{
 		XPointStep* pCurrentPos = (XPointStep*)XStack_top(ChildAll);
@@ -69,7 +71,7 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 		childAStarNode->parent = node;//设置父节点
 		setCosts(maze, dest, childAStarNode, node);//设置代价
 		XVector_push_back(node->child, &childAStarNode);//将创建的孩子绑定到父节点下
-		XVector_push_back(CurrentNodeArray, &childAStarNode);
+		XVector_push_back(NodeArray, &childAStarNode);
 		XStack_pop(ChildAll);
 	}
 	XStack_free(ChildAll);
@@ -99,7 +101,7 @@ static void TreeNode_free(AStarNode* root)
 		free(current);
 	}
 }
-XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XPoint dest)
+XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XPoint dest, bool Oblique)
 {
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	AStarNode* root = CreationAStarNode_XPoint(start);//根节点
@@ -119,7 +121,7 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 			isFindEnd = true;
 			break;
 		}
-		size_t n = insertChild(tempMaze, dest, CurrentNode, CurrentNodeArray);
+		size_t n = insertChild(tempMaze, dest, CurrentNode, CurrentNodeArray,Oblique);
 		XVector_erase_int(CurrentNodeArray, nSel, nSel);
 	}
 	XVector* Path = NULL;

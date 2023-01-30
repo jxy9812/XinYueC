@@ -13,5 +13,5 @@ typedef struct AStarNode
 	size_t estimateCosts;//预估代价
 }AStarNode;
 //迷宫寻路-A星寻路
-XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XPoint dest);
+XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XPoint dest,bool Oblique);
 #endif // !XMazePathfindingAStar_H

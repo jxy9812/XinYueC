@@ -15,4 +15,6 @@ typedef struct XPointStep
 bool isPass(const XVector* maze, XPoint CurPoint);
 //探路四个方向-栈(周围是否已经无路可走了),并把能走的点保存到栈
 bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep CurPoint);
+//探寻周围能斜着的点
+size_t PathfinderOblique(struct XStack* stack, struct XVector* maze, struct XPointStep CurPoint);
 #endif // !XMAZEPATHFINDINGOBJECT_H

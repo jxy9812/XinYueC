@@ -26,7 +26,7 @@ bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep Cu
 			XPoint Point = { CurPoint.x - 1,CurPoint.y };
 			if (isPass(maze, Point))
 			{
-				XPointStep p = { CurPoint.x - 1,CurPoint.y,CurPoint.cur + 1 };
+				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
 				stack->push(stack, &p);
 				++sum;
 			}
@@ -37,7 +37,7 @@ bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep Cu
 			XPoint Point = { CurPoint.x + 1,CurPoint.y };
 			if (isPass(maze, Point))
 			{
-				XPointStep p = { CurPoint.x + 1,CurPoint.y,CurPoint.cur + 1 };
+				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
 				stack->push(stack, &p);
 				++sum;
 			}
@@ -48,7 +48,7 @@ bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep Cu
 			XPoint Point = { CurPoint.x,CurPoint.y - 1 };
 			if (isPass(maze, Point))
 			{
-				XPointStep p = { CurPoint.x,CurPoint.y - 1 ,CurPoint.cur + 1 };
+				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
 				stack->push(stack, &p);
 				++sum;
 			}
@@ -59,7 +59,7 @@ bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep Cu
 			XPoint Point = { CurPoint.x,CurPoint.y + 1 };
 			if (isPass(maze, Point))
 			{
-				XPointStep p = { CurPoint.x,CurPoint.y + 1,CurPoint.cur + 1 };
+				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
 				stack->push(stack, &p);
 				++sum;
 			}
@@ -70,4 +70,61 @@ bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep Cu
 		}
 	}
 	return sum == 0 ? true : false;
+}
+//探寻周围能斜着的点
+size_t PathfinderOblique(struct XStack* stack, struct XVector* maze, struct XPointStep CurPoint)
+{
+	int sum = 0;
+	for (size_t i = UpLeft; i < 4+ UpLeft; i++)
+	{
+		switch (i) {
+		case UpLeft:
+		{
+			XPoint Point = { CurPoint.x - 1,CurPoint.y-1 };
+			if (isPass(maze, Point))
+			{
+				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
+				stack->push(stack, &p);
+				++sum;
+			}
+			break;
+		}
+		case UpRight:
+		{
+			XPoint Point = { CurPoint.x + 1,CurPoint.y-1 };
+			if (isPass(maze, Point))
+			{
+				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
+				stack->push(stack, &p);
+				++sum;
+			}
+			break;
+		}
+		case DownRight:
+		{
+			XPoint Point = { CurPoint.x+1,CurPoint.y + 1 };
+			if (isPass(maze, Point))
+			{
+				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
+				stack->push(stack, &p);
+				++sum;
+			}
+			break;
+		}
+		case DownLeft:
+		{
+			XPoint Point = { CurPoint.x-1,CurPoint.y + 1 };
+			if (isPass(maze, Point))
+			{
+				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
+				stack->push(stack, &p);
+				++sum;
+			}
+			break;
+		}
+		default:
+			break;
+		}
+	}
+	return sum;
 }

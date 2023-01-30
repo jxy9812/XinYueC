@@ -8,14 +8,14 @@
 #include<stdlib.h>
 void XMazePathfinding()
 {
-	int XMazeSize = 10;//迷宫大小
+	int XMazeSize = 50;//迷宫大小
 	XPoint start = { 1,1 };//迷宫起点
 	XPoint dest = { XMazeSize-2,XMazeSize-2 };//迷宫终点
 	struct XVector* maze = NULL;
 	//随机出可用的迷宫
 	while (true)
 	{
-		maze = XMazeGenerated(XMazeSize, XMazeSize, start.x, start.y,false);
+		maze = XMazeGenerated(XMazeSize, XMazeSize, start.x, start.y,true);
 		int Sign = *((int*)XVectorTwo_at_XPoint(maze, dest));
 		if (Sign == XMazeRoute)
 			break;
@@ -71,7 +71,7 @@ void XMazePathfinding()
 	//XVectorTwo_free(PathAll);
 	
 	//XVector* Path = XMazePathfindingBFS(maze, start, dest);
-	XVector* Path = XMazePathfindingAStar(maze, start, dest);
+	XVector* Path = XMazePathfindingAStar(maze, start, dest,true);
 	system("pause");
 	XMazePathPrintSleep(maze, Path, "■", "  ", "★", 100);
 	XVector_free(Path);

@@ -14,7 +14,11 @@ enum XMazeDirection
 	Up,//上
 	Right,//右
 	Down,//下
-	Left//左
+	Left,//左
+	UpLeft,//上左
+	UpRight,//上右
+	DownRight,//下右
+	DownLeft,//下左
 };
 //初始化迷宫
 struct XVector* XMaze_init(const size_t r, const size_t l);
