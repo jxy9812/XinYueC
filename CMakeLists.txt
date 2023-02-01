@@ -28,7 +28,7 @@ FIND_INCLUDE_DIR(INCLUDE_DIR_LIST "SourceFile")			#调用函数，指定参数
 #将INCLUDE_DIR_LIST中路径列表加入工程		
 include_directories(${INCLUDE_DIR_LIST})
 #递归搜索目录下的文件添加到变量中
-file(GLOB_RECURSE QtFILE "SourceFile/*.c" "SourceFile/*.h")
+file(GLOB_RECURSE FILE "SourceFile/*.c" "SourceFile/*.h")
 
 #设置图标
 #aux_source_directory(. MY_SCOURCES)
@@ -36,5 +36,5 @@ file(GLOB_RECURSE QtFILE "SourceFile/*.c" "SourceFile/*.h")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
 #添加参加编译的文件
 add_executable(${PROJECT_NAME}
-${QtFILE}
+${FILE}
  )

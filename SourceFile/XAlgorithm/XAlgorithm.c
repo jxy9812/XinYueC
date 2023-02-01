@@ -1,6 +1,7 @@
 ﻿#include"XAlgorithm.h"
 #include"XStack.h"
 #include"XVector.h"
+#include"XVector_head.h"
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
@@ -71,9 +72,36 @@ void XStackRCopyXVector(const XStack* stack, XVector* vector)
 	size_t TypeSize = XStack_TypeSize(stack);
 	char* pTail = XStack_top(stack);//数组末尾元素
 	char* pHead = pTail- TypeSize*(Size-1);//数组头元素
+	XVECTOR* v = (XVECTOR*)vector;
+	v->object._data = malloc(Size * TypeSize);
+	if (isObjectNULL(v->object._data, "XStackCopyXVector-New _data"))
+		return;
+	v->object._capacity = Size;
+	v->object._size = Size;
 	for (size_t i = 0; i < Size; i++)
 	{
-		XVector_push_back(vector,pHead+i* TypeSize);
+		memcpy((char*)v->object._data + i * TypeSize, pHead + i * TypeSize, TypeSize);
+	}
+}
+
+void XStackCopyXVector(const XStack* stack, XVector* vector)
+{
+	size_t Size = XStack_size(stack);
+	if (Size == 0)
+		return;
+	XVector_clear(vector);
+	size_t TypeSize = XStack_TypeSize(stack);
+	char* pTail = XStack_top(stack);//数组末尾元素
+	char* pHead = pTail - TypeSize * (Size - 1);//数组头元素
+	XVECTOR* v = (XVECTOR*)vector;
+	v->object._data = malloc(Size* TypeSize);
+	if (isObjectNULL(v->object._data, "XStackCopyXVector-New _data"))
+		return;
+	v->object._capacity = Size;
+	v->object._size = Size;
+	for (size_t i = 0; i < Size; i++)
+	{
+		memcpy((char*)v->object._data+ i * TypeSize, pTail - i * TypeSize, TypeSize);
 	}
 }
 

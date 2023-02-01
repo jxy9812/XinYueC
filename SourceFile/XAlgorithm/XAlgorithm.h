@@ -12,6 +12,8 @@ void gotoxy(short x, short y);
 void swap(void* valOne, void* valTwo, const int typeSize);
 //栈逆序拷贝至数组
 void XStackRCopyXVector(const struct XStack* stack,struct XVector* vector);
+//栈拷贝至数组
+void XStackCopyXVector(const struct XStack* stack, struct XVector* vector);
 //延迟毫秒
 void XDelay(const size_t msec);
 #endif // !XALGORITHM_H

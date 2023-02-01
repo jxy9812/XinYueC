@@ -13,4 +13,6 @@ void SortTest();
 void XMazeGeneratedTest();
 //深度寻路算法
 void XMazePathfinding();
+//二叉树基类测试
+void XBinaryTreeObjectTest();
 #endif

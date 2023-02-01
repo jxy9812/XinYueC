@@ -1,8 +1,77 @@
 ﻿#include "XBinaryTreeObject.h"
 #include"XContainerObject.h"
 #include"XStack.h"
+#include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
+//前序
+static XVector* BinaryTreeTraversingToXVector_Preorder(struct TreeNode* this_root)
+{
+	XVector* vector = XVector_init("struct TreeNode*", sizeof(struct TreeNode*));
+	XStack* stack = XStack_init("struct TreeNode*", sizeof(struct TreeNode*));
+	XStack_Push(stack, &this_root);
+	struct TreeNode* currentNode = NULL;//当前节点指针
+	while (!XStack_empty(stack))
+	{
+		currentNode = *(struct TreeNode**)XStack_top(stack);
+		XStack_pop(stack);
+		if (currentNode->RightChild != NULL)
+			XStack_Push(stack, &currentNode->RightChild);
+		if (currentNode->LeftChild != NULL)
+			XStack_Push(stack, &currentNode->LeftChild);
+		XVector_push_back(vector, &currentNode);
+	}
+	XStack_free(stack);
+	return vector;
+}
+//中序
+static XVector* BinaryTreeTraversingToXVector_Inorder(struct TreeNode* this_root)
+{
+	XVector* vector = XVector_init("struct TreeNode*", sizeof(struct TreeNode*));
+	XStack* stack = XStack_init("struct TreeNode*", sizeof(struct TreeNode*));
+	struct TreeNode* currentNode = this_root;//当前节点指针
+	while (!XStack_empty(stack)|| currentNode!=NULL)
+	{
+		if (currentNode != NULL)
+		{
+			XStack_Push(stack, &currentNode);
+			currentNode = currentNode->LeftChild;
+		}
+		else
+		{
+			struct TreeNode*  Node = *(struct TreeNode**)XStack_top(stack);
+			XVector_push_back(vector, &Node);
+			currentNode = Node->RightChild;
+			XStack_pop(stack);
+		}
+	}
+	XStack_free(stack);
+	return vector;
+}
+//后序
+static XVector* BinaryTreeTraversingToXVector_Postorder(struct TreeNode* this_root)
+{
+	XVector* vector = XVector_init("struct TreeNode*", sizeof(struct TreeNode*));
+	XStack* stack = XStack_init("struct TreeNode*", sizeof(struct TreeNode*));
+	XStack* stackTraversing = XStack_init("struct TreeNode*", sizeof(struct TreeNode*));
+	XStack_Push(stack, &this_root);
+	struct TreeNode* currentNode = NULL;//当前节点指针
+	while (!XStack_empty(stack))
+	{
+		currentNode = *(struct TreeNode**)XStack_top(stack);
+		XStack_pop(stack);
+		XStack_Push(stackTraversing, &currentNode);
+		
+		if (currentNode->LeftChild != NULL)
+			XStack_Push(stack, &currentNode->LeftChild);
+		if (currentNode->RightChild != NULL)
+			XStack_Push(stack, &currentNode->RightChild);
+	}
+	XStack_free(stack);
+	XStackCopyXVector(stackTraversing, vector);
+	XStack_free(stackTraversing);
+	return vector;
+}
 TreeNode* TreeNode_creation(const size_t TypeSize)
 {
 	struct TreeNode* node =(struct TreeNode*)malloc(sizeof(struct TreeNode));
@@ -17,6 +86,15 @@ TreeNode* TreeNode_creation(const size_t TypeSize)
 	node->LeftChild = NULL;
 	node->parent = NULL;
 	node->RightChild = NULL;
+	return node;
+}
+
+TreeNode* TreeNode_creationInsertData(const void* LPData, const size_t TypeSize)
+{
+	struct TreeNode* node = TreeNode_creation(TypeSize);
+	/*if(isObjectNULL(node,"TreeNode_creationInsertData-node"))
+		return NULL;*/
+	TreeNode_insertData(node, LPData, TypeSize);
 	return node;
 }
 
@@ -38,18 +116,36 @@ const bool TreeNode_free(struct TreeNode* this_node , const bool parentSetNull)
 		return false;
 	//释放数据
 	free(this_node->data);
-	if(parentSetNull)
-	//在父节点将指向此节点的指针置空NULL
-	struct TreeNode* LPparent = this_node->parent;
-	if (LPparent->LeftChild == this_node)
-		LPparent->LeftChild = NULL;
-	else if (LPparent->RightChild == this_node)
-		LPparent->RightChild = NULL;
+	if (parentSetNull)
+	{
+		//在父节点将指向此节点的指针置空NULL
+		struct TreeNode* LPparent = this_node->parent;
+		if (LPparent->LeftChild == this_node)
+			LPparent->LeftChild = NULL;
+		else if (LPparent->RightChild == this_node)
+			LPparent->RightChild = NULL;
+	}
 	//释放节点
 	free(this_node);
 	return true;
 }
 
+XVector* BinaryTreeTraversingToXVector(TreeNode* this_root, const enum BinaryTreeTraversing Traversing)
+{
+	if (isObjectNULL(this_root, "BinaryTreeTraversingToXVector-this_root"))
+		return false;
+	switch (Traversing)
+	{
+	case  BinaryTreePreorder:
+		return BinaryTreeTraversingToXVector_Preorder(this_root);
+	case BinaryTreeInorder:
+		return BinaryTreeTraversingToXVector_Inorder(this_root);
+	case BinaryTreePostorder:
+		return BinaryTreeTraversingToXVector_Postorder(this_root);
+	default:
+		return NULL;
+	}
+}
 const size_t Tree_freeAll(struct TreeNode* this_root)
 {
 	if (isObjectNULL(this_root, "Tree_freeAll-this_root"))
@@ -61,10 +157,14 @@ const size_t Tree_freeAll(struct TreeNode* this_root)
 	while (!XStack_empty(stack))
 	{
 		currentNode = *(struct TreeNode**)XStack_top(stack);
+		XStack_pop(stack);
 		if(currentNode->LeftChild!=NULL)
 			XStack_Push(stack, &currentNode->LeftChild);
 		if (currentNode->RightChild != NULL)
 			XStack_Push(stack, &currentNode->RightChild);
+		TreeNode_free(currentNode,false);//释放当前节点
+		sum++;
 	}
+	XStack_free(stack);
 	return sum;
 }
