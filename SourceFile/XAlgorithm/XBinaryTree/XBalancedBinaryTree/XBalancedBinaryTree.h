@@ -24,8 +24,6 @@ const size_t GetLayerNumberThis(const TreeNodeBalance* this_root);
 const size_t GetLayerNumberChild(const TreeNodeBalance* this_root);
 //设置高度(层数)
 const size_t SetLayerNumberThis(TreeNodeBalance* this_root);
-//修改父节点的孩子并建立新的指针关系
-bool TreeNodeBalance_Modifi_LParent(TreeNodeBalance* parent, TreeNodeBalance* OrigChild,TreeNodeBalance* NewChild);
 //旋转
 void TreeNodeBalance_Spin(const TreeNodeBalance** this_root, compare less, const void* LPData);
 #endif // !BALANCEDBINARYTREE_H

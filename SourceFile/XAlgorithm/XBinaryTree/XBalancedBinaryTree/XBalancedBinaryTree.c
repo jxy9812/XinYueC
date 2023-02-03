@@ -17,12 +17,14 @@ TreeNodeBalance* TreeNodeBalance_insert(TreeNodeBalance** this_root, compare les
 		return NULL;
 	//创建一个新的节点
 	TreeNodeBalance* NewNode = TreeNodeBalance_creation(TypeSize);
-	if (this_root == NULL)//如果没有根节点
+	if (!TreeNode_insertData(NewNode, LPData, TypeSize))//插入数据
 	{
-		if (TreeNode_insertData(NewNode, LPData, TypeSize))//插入数据
-			return NewNode;
 		TreeNode_free(NewNode, false);//插入失败释放创建的节点
 		return NULL;
+	}
+	if (this_root == NULL)//如果没有根节点
+	{
+		return NewNode;
 	}
 	if(isObjectNULL(less,"TreeNodeBalance_insert-less"))
 		return NULL;
@@ -30,43 +32,47 @@ TreeNodeBalance* TreeNodeBalance_insert(TreeNodeBalance** this_root, compare les
 		return NULL;
 	//开始遍历,插入节点
 	size_t currentHeight = 0;//当前高度
-	TreeNodeBalance** currentNode = this_root;
-	while (*currentNode!=NULL)
+	TreeNodeBalance* currentNode = *this_root;
+	while (currentNode!=NULL)
 	{
 		//满足小于往左边放
-		if (less(NewNode->data, (*currentNode)->data))
+		if (less(NewNode->data, (currentNode)->data))
 		{
-			if ((*currentNode)->leftChild == NULL)//建立关系
+			if ((currentNode)->leftChild == NULL)//建立关系
 			{
-				(*currentNode)->leftChild = NewNode;
-				NewNode->parent = *currentNode;
+				(currentNode)->leftChild = NewNode;
+				NewNode->parent = currentNode;
 				break;
 			}
 			else
 			{
-				currentNode = &(*currentNode)->leftChild;
+				currentNode = (currentNode)->leftChild;
 			}
 		}
 		else//满足大于等于的情况
 		{
-			if ((*currentNode)->rightChild == NULL)//建立关系
+			if ((currentNode)->rightChild == NULL)//建立关系
 			{
-				(*currentNode)->rightChild = NewNode;
-				NewNode->parent = *currentNode;
+				(currentNode)->rightChild = NewNode;
+				NewNode->parent = currentNode;
 				break;
 			}
 			else
 			{
-				currentNode = &(*currentNode)->rightChild;
+				currentNode = (currentNode)->rightChild;
 			}
 		}
 	}
 	//循环返回父节点设置层数
-	while (*currentNode != NULL)
+	while (currentNode != NULL)
 	{
-		(*currentNode)->maxLayer =1+ GetLayerNumberChild(*currentNode);
-		TreeNodeBalance_Spin(currentNode,less,LPData);
-		currentNode = &(*currentNode)->parent;
+		(currentNode)->maxLayer =1+ GetLayerNumberChild(currentNode);
+		if (currentNode == *this_root)
+			TreeNodeBalance_Spin(this_root, less, LPData);
+		else
+		TreeNodeBalance_Spin(&currentNode,less,LPData);
+		currentNode = (currentNode)->parent;
+		
 	}
     return NewNode;
 }
@@ -87,35 +93,32 @@ const size_t SetLayerNumberThis(TreeNodeBalance* this_root)
 {
 	return this_root->maxLayer = 1 + GetLayerNumberChild(this_root);;
 }
-bool TreeNodeBalance_Modifi_LParent(TreeNodeBalance* parent, TreeNodeBalance* OrigChild, TreeNodeBalance* NewChild)
-{
-	if (isObjectNULL(parent, "TreeNodeBalance_Modifi_LParent_parent"))
-		return false;
-	if (isObjectNULL(OrigChild, "TreeNodeBalance_Modifi_LParent-OrigChild"))
-		return false;
-	if (isObjectNULL(NewChild, "TreeNodeBalance_Modifi_LParent-NewChild"))
-		return false;
-	TreeNodeBalance** ModifiNode = NULL;
-	if (parent->leftChild == OrigChild)
-		ModifiNode = &parent->leftChild;
-	else if (parent->rightChild == OrigChild)
-		ModifiNode = &parent->rightChild;
-	if(ModifiNode==NULL)//没找到孩子节点
-		return false;
-	//开始修改建立关系
-	*ModifiNode = NewChild;
-	NewChild->parent = parent;
-}
 //右旋
 static TreeNodeBalance*  RR(TreeNodeBalance** this_root)
 {
 	if (isObjectNULL(this_root, "TreeNodeBalance_RR"))
 		return NULL;
-	TreeNodeBalance* NewRoot = (*this_root)->leftChild;
-	(*this_root)->leftChild = (NewRoot)->rightChild;
-	(NewRoot)->rightChild = *this_root;
+	if (isObjectNULL(*this_root, "TreeNodeBalance_RR"))
+		return NULL;
+	TreeNodeBalance* root = *this_root;
+	TreeNodeBalance* NewRoot = root->leftChild;
+	if (root->parent != NULL)
+	{
+		TreeNodeBalance* root_par = root->parent;
+		if (root_par->leftChild == root)
+			root_par->leftChild = NewRoot;
+		else if (root_par->rightChild == root)
+			root_par->rightChild = NewRoot;
+	}
+
+	NewRoot->parent = root->parent;
+	root->parent = NewRoot;
+
+	root->leftChild = (NewRoot)->rightChild;
+	(NewRoot)->rightChild = root;
+	
 	//TreeNodeBalance_Modifi_LParent(this_root->parent, this_root, NewRoot);
-	SetLayerNumberThis(*this_root);
+	SetLayerNumberThis(root);
 	SetLayerNumberThis(NewRoot);
 	return NewRoot;
 }
@@ -126,11 +129,25 @@ static TreeNodeBalance* LL(TreeNodeBalance** this_root)
 		return NULL;
 	if (isObjectNULL(*this_root, "TreeNodeBalance_LL"))
 		return NULL;
-	TreeNodeBalance* NewRoot = (*this_root)->rightChild;
-	(*this_root)->rightChild = (NewRoot)->leftChild;
-	(NewRoot)->leftChild = *this_root;
+	TreeNodeBalance* root = *this_root;
+	TreeNodeBalance* NewRoot = root->rightChild;
+	if (root->parent != NULL)
+	{
+		TreeNodeBalance* root_par = root->parent;
+		if (root_par->leftChild == root)
+			root_par->leftChild = NewRoot;
+		else if (root_par->rightChild == root)
+			root_par->rightChild = NewRoot;
+	}
+
+	NewRoot->parent = root->parent;
+	root->parent = NewRoot;
+	
+	root->rightChild = (NewRoot)->leftChild;
+	(NewRoot)->leftChild = root;
+	
 	//TreeNodeBalance_Modifi_LParent(this_root->parent, this_root, NewRoot);
-	SetLayerNumberThis(*this_root);
+	SetLayerNumberThis(root);
 	SetLayerNumberThis(NewRoot);
 	return NewRoot;
 }
@@ -147,7 +164,7 @@ static TreeNodeBalance*  LR(TreeNodeBalance** this_root)
 {
 	if (isObjectNULL(this_root, "TreeNodeBalance_LR"))
 		return NULL;
-	(*this_root)->leftChild = RR(&((*this_root)->leftChild));
+	(*this_root)->leftChild = LL(&((*this_root)->leftChild));
 	return RR(this_root);
 }
 

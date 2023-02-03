@@ -15,7 +15,7 @@ static bool Less(const void* LPrevValue, const void* LNextValue)
 }
 void TreeNodeBalanceTest()
 {
-	int a[] = { 0,1,2,3,4,5,6,7 };
+	int a[] = { 4,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
 	int* LPa = a;
 
 	TreeNodeBalance* root = TreeNodeBalance_insert(NULL, Less,LPa++, sizeof(int));
@@ -48,4 +48,5 @@ void TreeNodeBalanceTest()
 	XVector_iterator_for_each(TreePreorder, printTreeNode);
 	printf("\n");
 	XVector_free(TreePreorder);
+	printf("高度%d", root->maxLayer);
 }
