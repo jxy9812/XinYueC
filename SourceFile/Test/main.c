@@ -1,6 +1,7 @@
 ﻿#include"Test.h"
 #include"XVector_iterator.h"
 #include<stdio.h>
+#include<math.h>
 int main(int argc, char* args[])
 {
 	//ListSortTest();
@@ -13,6 +14,7 @@ int main(int argc, char* args[])
 	//XMazeGeneratedTest();
 	//XMazePathfinding();
 	//queueTest();
-	XBinaryTreeObjectTest();
+	//XBinaryTreeObjectTest();
+	TreeNodeBalanceTest();
 	return 0;
 }

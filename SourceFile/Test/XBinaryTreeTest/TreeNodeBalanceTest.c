@@ -1,27 +1,32 @@
 ﻿#include"Test.h"
 #include"XBinaryTreeObject.h"
+#include"XBalancedBinaryTree.h"
+#include"XVector.h"
 //打印节点的数据
 static void printTreeNode(void* LPVal)
 {
-	struct TreeNode* currentNode = *(struct TreeNode**)LPVal;
+	struct TreeNodeBalance* currentNode = *(struct TreeNodeBalance**)LPVal;
 	printf("%d ", *(int*)currentNode->data);
 }
-void XBinaryTreeObjectTest()
+//排序准则
+static bool Less(const void* LPrevValue, const void* LNextValue)
+{
+	return *(int*)LPrevValue < *(int*)LNextValue;
+}
+void TreeNodeBalanceTest()
 {
 	int a[] = { 0,1,2,3,4,5,6,7 };
 	int* LPa = a;
-	
-	TreeNode* root = TreeNode_creationInsertData(LPa++,sizeof(int));
-	TreeNode* curNode = root;
-	curNode->leftChild = TreeNode_creationInsertData(LPa++, sizeof(int));
-	curNode = curNode->leftChild;
-	curNode->leftChild = TreeNode_creationInsertData(LPa++, sizeof(int));
-	curNode->rightChild = TreeNode_creationInsertData(LPa++, sizeof(int));
 
-	root->rightChild=TreeNode_creationInsertData(LPa++, sizeof(int));
-	curNode = root->rightChild;
-	curNode->leftChild = TreeNode_creationInsertData(LPa++, sizeof(int));
-	curNode->rightChild = TreeNode_creationInsertData(LPa++, sizeof(int));
+	TreeNodeBalance* root = TreeNodeBalance_insert(NULL, Less,LPa++, sizeof(int));
+	for (size_t i = 0; i < sizeof(a)/sizeof(a[0])-1; i++)
+	{
+		TreeNodeBalance_insert(&root, Less, LPa++, sizeof(int));
+	}
+	
+
+
+	/*printf("root_data:%d\n", *(int*)root->data);*/
 
 	//前序测试
 	XVector* TreePreorder = BinaryTreeTraversingToXVector(root, BinaryTreePreorder);

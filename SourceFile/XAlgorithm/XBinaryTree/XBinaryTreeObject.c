@@ -15,10 +15,10 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct TreeNode* this_roo
 	{
 		currentNode = *(struct TreeNode**)XStack_top(stack);
 		XStack_pop(stack);
-		if (currentNode->RightChild != NULL)
-			XStack_Push(stack, &currentNode->RightChild);
-		if (currentNode->LeftChild != NULL)
-			XStack_Push(stack, &currentNode->LeftChild);
+		if (currentNode->rightChild != NULL)
+			XStack_Push(stack, &currentNode->rightChild);
+		if (currentNode->leftChild != NULL)
+			XStack_Push(stack, &currentNode->leftChild);
 		XVector_push_back(vector, &currentNode);
 	}
 	XStack_free(stack);
@@ -35,13 +35,13 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct TreeNode* this_root
 		if (currentNode != NULL)
 		{
 			XStack_Push(stack, &currentNode);
-			currentNode = currentNode->LeftChild;
+			currentNode = currentNode->leftChild;
 		}
 		else
 		{
 			struct TreeNode*  Node = *(struct TreeNode**)XStack_top(stack);
 			XVector_push_back(vector, &Node);
-			currentNode = Node->RightChild;
+			currentNode = Node->rightChild;
 			XStack_pop(stack);
 		}
 	}
@@ -62,71 +62,71 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct TreeNode* this_ro
 		XStack_pop(stack);
 		XStack_Push(stackTraversing, &currentNode);
 		
-		if (currentNode->LeftChild != NULL)
-			XStack_Push(stack, &currentNode->LeftChild);
-		if (currentNode->RightChild != NULL)
-			XStack_Push(stack, &currentNode->RightChild);
+		if (currentNode->leftChild != NULL)
+			XStack_Push(stack, &currentNode->leftChild);
+		if (currentNode->rightChild != NULL)
+			XStack_Push(stack, &currentNode->rightChild);
 	}
 	XStack_free(stack);
 	XStackCopyXVector(stackTraversing, vector);
 	XStack_free(stackTraversing);
 	return vector;
 }
-TreeNode* TreeNode_creation(const size_t TypeSize)
+void* TreeNode_creation(const size_t NodeSize, const size_t TypeSize)
 {
-	struct TreeNode* node =(struct TreeNode*)malloc(sizeof(struct TreeNode));
-	if (isObjectNULL(node,"CreationTreeNode-node"))
+	TreeNode* node =(TreeNode*)malloc(NodeSize);
+	if (isObjectNULL(node,"TreeNode_creation-node"))
 		return NULL;
 	node->data= calloc(1,TypeSize);//开辟内存并且置为0
-	if (isObjectNULL(node->data, "CreationTreeNode-node->data"))
+	if (isObjectNULL(node->data, "TreeNode_creation-node->data"))
 	{
 		free(node);
 		return NULL;
 	}
-	node->LeftChild = NULL;
+	node->leftChild = NULL;
 	node->parent = NULL;
-	node->RightChild = NULL;
+	node->rightChild = NULL;
 	return node;
 }
 
 TreeNode* TreeNode_creationInsertData(const void* LPData, const size_t TypeSize)
 {
-	struct TreeNode* node = TreeNode_creation(TypeSize);
+	struct TreeNode* node = TreeNode_creation(sizeof(TreeNode),TypeSize);
 	/*if(isObjectNULL(node,"TreeNode_creationInsertData-node"))
 		return NULL;*/
 	TreeNode_insertData(node, LPData, TypeSize);
 	return node;
 }
 
-const bool TreeNode_insertData(struct TreeNode* this_node, const void* LPData, const size_t TypeSize)
+const bool TreeNode_insertData(struct TreeNode* this_root, const void* LPData, const size_t TypeSize)
 {
-	if (isObjectNULL(this_node, "InsertTreeNodeData-this_node"))
+	if (isObjectNULL(this_root, "InsertTreeNodeData-this_root"))
 		return false;
 	if (isObjectNULL(LPData, "InsertTreeNodeData-LPData"))
 		return false;
 	if (isObjectNULL(TypeSize, "InsertTreeNodeData-TypeSize"))
 		return false;
-	memcpy(this_node->data, LPData, TypeSize);
+	memcpy(this_root->data, LPData, TypeSize);
 	return true;
 }
 
-const bool TreeNode_free(struct TreeNode* this_node , const bool parentSetNull)
+const bool TreeNode_free(struct TreeNode* this_root , const bool parentSetNull)
 {
-	if (isObjectNULL(this_node, "TreeNode_free-this_node"))
+	if (isObjectNULL(this_root, "TreeNode_free-this_root"))
 		return false;
 	//释放数据
-	free(this_node->data);
+	free(this_root->data);
 	if (parentSetNull)
 	{
 		//在父节点将指向此节点的指针置空NULL
-		struct TreeNode* LPparent = this_node->parent;
-		if (LPparent->LeftChild == this_node)
-			LPparent->LeftChild = NULL;
-		else if (LPparent->RightChild == this_node)
-			LPparent->RightChild = NULL;
+		struct TreeNode* LPparent = this_root->parent;
+		if (LPparent->leftChild == this_root)
+			LPparent->leftChild = NULL;
+		else if (LPparent->rightChild == this_root)
+			LPparent->rightChild = NULL;
 	}
 	//释放节点
-	free(this_node);
+	free(this_root);
 	return true;
 }
 
@@ -158,10 +158,10 @@ const size_t Tree_freeAll(struct TreeNode* this_root)
 	{
 		currentNode = *(struct TreeNode**)XStack_top(stack);
 		XStack_pop(stack);
-		if(currentNode->LeftChild!=NULL)
-			XStack_Push(stack, &currentNode->LeftChild);
-		if (currentNode->RightChild != NULL)
-			XStack_Push(stack, &currentNode->RightChild);
+		if(currentNode->leftChild!=NULL)
+			XStack_Push(stack, &currentNode->leftChild);
+		if (currentNode->rightChild != NULL)
+			XStack_Push(stack, &currentNode->rightChild);
 		TreeNode_free(currentNode,false);//释放当前节点
 		sum++;
 	}
