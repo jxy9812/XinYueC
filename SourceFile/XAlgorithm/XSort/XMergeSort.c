@@ -1,8 +1,9 @@
 ﻿#include"XAlgorithm.h"
+#include"XSort.h"
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
-void XMergeSort(void* LArray, const size_t nSize, const size_t TypeSize, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
+void XMergeSort(void* LArray, const size_t nSize, const size_t TypeSize, XCompare compare )
 {
 	char* temp = malloc(nSize * TypeSize);//开辟临时数组
 
@@ -48,7 +49,7 @@ void XMergeSort(void* LArray, const size_t nSize, const size_t TypeSize, bool(*S
 			{
 				if (LpOne <= righta && LpTwo <= rightb)//两个数组均有数的时候
 				{
-					if (Sort(LpOne, LpTwo))//比较的数符合排序标准
+					if (compare(LpOne, LpTwo))//比较的数符合排序标准
 					{
 						swap(LpOne, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素

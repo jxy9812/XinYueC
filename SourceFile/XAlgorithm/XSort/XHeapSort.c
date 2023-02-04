@@ -1,6 +1,7 @@
 ﻿#include"XAlgorithm.h"
+#include"XSort.h"
 //建堆
-static void AdjustDwon(void* LArray, const size_t nSize, const size_t TypeSize, const size_t LpRoot, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
+static void AdjustDwon(void* LArray, const size_t nSize, const size_t TypeSize, const size_t LpRoot,XCompare compare )
 {
 	size_t parent = LpRoot;//父亲节点
 	//while (1)
@@ -11,14 +12,14 @@ static void AdjustDwon(void* LArray, const size_t nSize, const size_t TypeSize, 
 		if (child + 1 < nSize)
 		{
 			char* p_right = p_left + TypeSize;//右孩子指针
-			if (Sort(p_left, p_right))//排序比较函数，选出大的那个
+			if (compare(p_left, p_right))//排序比较函数，选出大的那个
 			{
 				++child;//右孩子大默认孩子+1
 			}
 		}
 
 		char* p_child = (char*)LArray + child * TypeSize;//选出的默认孩子指针
-		if (!Sort(p_child, p_parent))//排序比较函数
+		if (!compare(p_child, p_parent))//排序比较函数
 		{
 			swap(p_child, p_parent, TypeSize);//交换函数
 			parent = child;//父亲节点更新
@@ -30,18 +31,18 @@ static void AdjustDwon(void* LArray, const size_t nSize, const size_t TypeSize, 
 		}
 	}
 }
-void XHeapSort(void* LArray, const size_t nSize, const size_t TypeSize, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
+void XHeapSort(void* LArray, const size_t nSize, const size_t TypeSize,XCompare compare )
 {
 	//建堆
 	size_t root = (nSize - 1 - 1) / 2;/*最后一个非叶子节点*/
 	for (size_t i = 0; i <= root; i++)
 	{
-		AdjustDwon(LArray, nSize, TypeSize, root - i, Sort);
+		AdjustDwon(LArray, nSize, TypeSize, root - i, compare);
 	}
 	for (size_t i = 0; i < nSize - 1; i++)
 	{
 		char* p = (char*)LArray + (nSize - 1 - i) * TypeSize;//从最后一位开始排序数据
 		swap(LArray, p, TypeSize);//交换函数
-		AdjustDwon(LArray, nSize - 1 - i, TypeSize, 0, Sort);
+		AdjustDwon(LArray, nSize - 1 - i, TypeSize, 0, compare);
 	}
 }

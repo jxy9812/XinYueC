@@ -1,6 +1,7 @@
 ﻿#ifndef  XVECTOR_FUNC_H
 #define XVECTOR_FUNC_H
 #include<stdbool.h>
+#include"XFunctionCallback.h"
 struct XVector;
 //清空vector的队列，释放内存v
 void XVector_clear(struct XVector* this_vector);
@@ -27,9 +28,9 @@ void* XVector_front(const  struct XVector* this_vector);
 //返回向量尾指针，指向向量最后一个元素
 void* XVector_back(const  struct XVector* this_vector);
 //查找数据，返回找到的指针，没有返回NULL
-void* XVector_find(const struct XVector* this_vector, const void* val, bool(*fi)(const void* val1, const void* val2));
+void* XVector_find(const struct XVector* this_vector, const void* val, XEquality equality);
 //排序
-void  XVector_sort(struct XVector* this_vector, int (*Sort)(const void* LPrevValue, const void* LNextValue));
+void  XVector_sort(struct XVector* this_vector, XCompare compare);
 //释放内存
 void XVector_free(const  struct XVector* this_vector);
 //检测vector内是否为空，空为真 O(1)

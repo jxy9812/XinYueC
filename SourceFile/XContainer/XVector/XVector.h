@@ -22,14 +22,14 @@ typedef struct XVector
 	void* (*at)(const struct XVector* this_vector, int);// 返回第0-n个元素的指针
 	void* (*front)(const struct XVector* this_vector);// 返回向量头指针，指向第一个元素
 	void* (*back)(const struct XVector* this_vector);//返回向量尾指针，指向向量最后一个元素
-	void* (*find)(const struct XVector* this_vector, const void* val, bool(*fi)(const void* val1, const void* val2));//查找数据，返回找到的指针，没有返回NULL
+	void* (*find)(const struct XVector* this_vector, const void* val, XEquality equality);//查找数据，返回找到的指针，没有返回NULL
 	//判断函数
 	bool (*empty)(const struct XVector* this_vector);// 检测vector内是否为空，空为真 O(1)
 	//大小函数
 	int (*size)(const struct XVector* this_vector);//返回vector内元素的个数 O(1)
 	int (*capacity)(const struct XVector* this_vector); //返回当前向量所能容纳的最大元素个数
 	//其他函数
-	void (*sort)(struct XVector* this_vector, int (*Sort)(const void* LPrevValue, const void* LNextValue));//排序
+	void (*sort)(struct XVector* this_vector, XCompare compare);//排序
 	void (*swap)(struct XVector* vectorOne, struct XVector* vectorTwo);//交换两个同类型向量的数据
 	//释放
 	void (*free)(const struct XVector* this_vector);//释放内存

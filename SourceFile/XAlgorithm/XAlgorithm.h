@@ -1,5 +1,6 @@
 ﻿#ifndef XALGORITHM_H
 #define XALGORITHM_H
+#include<stdio.h>
 #include"XStringOperation.h"
 struct XStack;
 struct XVector;

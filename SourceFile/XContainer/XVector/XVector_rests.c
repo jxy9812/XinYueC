@@ -1,4 +1,6 @@
 ﻿#include"XVector_head.h"
+#include"XSort.h"
+#include"XFunctionCallback.h"
 #include<stdlib.h>
 #include<string.h>
 struct XVector;
@@ -60,21 +62,22 @@ size_t XVector_TypeSize(struct XVector* this_vector)
 	XVECTOR* vector = (XVECTOR*)this_vector;
 	return vector->object._type;
 }
-void  XVector_sort(struct XVector* this_vector, int (*Sort)(const void* LPrevValue, const void* LNextValue))//排序
+
+void  XVector_sort(struct XVector* this_vector, XCompare compare)//排序
 {
 	if (isObjectNULL(this_vector, "XVector_sort"))
 		return;
 	XVECTOR* vector=(XVECTOR*)this_vector;
-	qsort(vector->object._data, vector->object._size, vector->object._type, Sort);
+	XQuicPitSort_Stack(vector->object._data, vector->object._size, vector->object._type, compare);
 }
-void* XVector_find(const struct XVector* this_vector, const void* val, bool(*fi)(const void* val1, const void* val2))//查找数据，返回找到的指针，没有返回NULL
+void* XVector_find(const struct XVector* this_vector, const void* val, XEquality equality)//查找数据，返回找到的指针，没有返回NULL
 {
 	if (isObjectNULL(this_vector, "XVector_find"))
 		return NULL;
 	XVECTOR* vector=(XVECTOR*)this_vector;
 	for (int i = 0; i < vector->size(this_vector); i++)
 	{
-		if (fi(vector->at(this_vector, i), val))
+		if (equality(vector->at(this_vector, i), val))
 		{
 			return vector->at(this_vector, i);
 		}

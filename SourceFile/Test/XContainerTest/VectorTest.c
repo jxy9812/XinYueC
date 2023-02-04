@@ -1,5 +1,10 @@
 ﻿#include"Test.h"
 #include"XVector.h"
+#include"XFunctionCallback.h"
+void XFor_each_int(void* LPVal)
+{
+	printf("%d ", *(int*)LPVal);
+}
 struct people
 {
 	int age;
@@ -7,6 +12,7 @@ struct people
 	char name[20];
 	char achievement[20];
 };
+
 void VectorTest()
 {
 	/*XVector* v = XVector_init(" people ", sizeof(struct people));
@@ -36,8 +42,9 @@ void VectorTest()
 		int n = arr[i];
 		XVector_push_front(v,arr+i);
 	}
-	for (XVector_iterator* it = XVector_begin(v); it != XVector_end(v); it = XVector_iterator_add(v, it))
-	{
-		printf("%d ", *(int*)it);
-	}
+	XVector_iterator_for_each(v,XFor_each_int);
+	printf("\n");
+	XVector_sort(v, XLess_int);
+	XVector_iterator_for_each(v, XFor_each_int);
+	printf("\n");
 }
