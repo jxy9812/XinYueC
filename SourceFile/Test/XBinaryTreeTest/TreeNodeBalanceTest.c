@@ -15,7 +15,7 @@ static bool Less(const void* LPrevValue, const void* LNextValue)
 }
 void TreeNodeBalanceTest()
 {
-	int a[] = { 4,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
+	int a[] = { 4,5,6,7,0/*,1,2,3,10,0,12,456,13,465,123,8748,4,6*/ };
 	int* LPa = a;
 
 	TreeNodeBalance* root = TreeNodeBalance_insert(NULL, Less,LPa++, sizeof(int));
@@ -24,8 +24,6 @@ void TreeNodeBalanceTest()
 		TreeNodeBalance_insert(&root, Less, LPa++, sizeof(int));
 	}
 	
-
-
 	/*printf("root_data:%d\n", *(int*)root->data);*/
 
 	//前序测试

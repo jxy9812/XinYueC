@@ -11,7 +11,7 @@ TreeNodeBalance* TreeNodeBalance_creation(const size_t TypeSize)
 	return node;
 }
 
-TreeNodeBalance* TreeNodeBalance_insert(TreeNodeBalance** this_root, compare less, const void* LPData, const size_t TypeSize)
+TreeNodeBalance* TreeNodeBalance_insert(TreeNodeBalance** this_root, XLess less, const void* LPData, const size_t TypeSize)
 {
 	if (isObjectNULL(TypeSize, "TreeNodeBalance_insert-TypeSize"))
 		return NULL;
@@ -159,7 +159,7 @@ static TreeNodeBalance*  LR(TreeNodeBalance* this_root)
 	return RR(this_root);
 }
 
-void TreeNodeBalance_Spin(const TreeNodeBalance** this_root, compare less, const void* LPData)
+void TreeNodeBalance_Spin(const TreeNodeBalance** this_root, XLess less, const void* LPData)
 {
 	if (isObjectNULL(this_root, "TreeNodeBalance_Spin-this_root"))
 		return NULL;
