@@ -1,4 +1,5 @@
-﻿#ifndef XBALANCEDBINARYTREE_H
+﻿//平衡二叉树
+#ifndef XBALANCEDBINARYTREE_H
 #define XBALANCEDBINARYTREE_H
 #include<stdio.h>
 #include<stdbool.h>

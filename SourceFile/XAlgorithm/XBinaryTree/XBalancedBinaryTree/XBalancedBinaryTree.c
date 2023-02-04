@@ -67,12 +67,19 @@ TreeNodeBalance* TreeNodeBalance_insert(TreeNodeBalance** this_root, compare les
 	while (currentNode != NULL)
 	{
 		(currentNode)->maxLayer =1+ GetLayerNumberChild(currentNode);
-		if (currentNode == *this_root)
+		if (currentNode == *this_root)//如果是根节点
+		{
 			TreeNodeBalance_Spin(this_root, less, LPData);
-		else
-		TreeNodeBalance_Spin(&currentNode,less,LPData);
+		}
+		else//存在父节点
+		{//传父节点指向孩子的指针
+			TreeNodeBalance* root_par = currentNode->parent;
+			if (root_par->leftChild == currentNode)
+				TreeNodeBalance_Spin(&(root_par->leftChild), less, LPData);//
+			else if (root_par->rightChild == currentNode)
+				TreeNodeBalance_Spin(&(root_par->rightChild), less, LPData);
+		}
 		currentNode = (currentNode)->parent;
-		
 	}
     return NewNode;
 }
@@ -94,77 +101,61 @@ const size_t SetLayerNumberThis(TreeNodeBalance* this_root)
 	return this_root->maxLayer = 1 + GetLayerNumberChild(this_root);;
 }
 //右旋
-static TreeNodeBalance*  RR(TreeNodeBalance** this_root)
+static TreeNodeBalance*  RR(TreeNodeBalance* root)
 {
-	if (isObjectNULL(this_root, "TreeNodeBalance_RR"))
+	if (isObjectNULL(root, "TreeNodeBalance_RR"))
 		return NULL;
-	if (isObjectNULL(*this_root, "TreeNodeBalance_RR"))
-		return NULL;
-	TreeNodeBalance* root = *this_root;
 	TreeNodeBalance* NewRoot = root->leftChild;
-	if (root->parent != NULL)
-	{
-		TreeNodeBalance* root_par = root->parent;
-		if (root_par->leftChild == root)
-			root_par->leftChild = NewRoot;
-		else if (root_par->rightChild == root)
-			root_par->rightChild = NewRoot;
-	}
+	////存在父节点，重新定义父节点的孩子指针
+	//if (root->parent != NULL)
+	//{
+	//	TreeNodeBalance* root_par = root->parent;
+	//	if (root_par->leftChild == root)
+	//		root_par->leftChild = NewRoot;
+	//	else if (root_par->rightChild == root)
+	//		root_par->rightChild = NewRoot;
+	//}
 
 	NewRoot->parent = root->parent;
 	root->parent = NewRoot;
 
-	root->leftChild = (NewRoot)->rightChild;
-	(NewRoot)->rightChild = root;
-	
-	//TreeNodeBalance_Modifi_LParent(this_root->parent, this_root, NewRoot);
+	root->leftChild = NewRoot->rightChild;
+	NewRoot->rightChild = root;
 	SetLayerNumberThis(root);
 	SetLayerNumberThis(NewRoot);
 	return NewRoot;
 }
 //左旋
-static TreeNodeBalance* LL(TreeNodeBalance** this_root)
+static TreeNodeBalance* LL(TreeNodeBalance* this_root)
 {
 	if (isObjectNULL(this_root, "TreeNodeBalance_LL"))
 		return NULL;
-	if (isObjectNULL(*this_root, "TreeNodeBalance_LL"))
-		return NULL;
-	TreeNodeBalance* root = *this_root;
-	TreeNodeBalance* NewRoot = root->rightChild;
-	if (root->parent != NULL)
-	{
-		TreeNodeBalance* root_par = root->parent;
-		if (root_par->leftChild == root)
-			root_par->leftChild = NewRoot;
-		else if (root_par->rightChild == root)
-			root_par->rightChild = NewRoot;
-	}
+	TreeNodeBalance* NewRoot = this_root->rightChild;
 
-	NewRoot->parent = root->parent;
-	root->parent = NewRoot;
+	NewRoot->parent = this_root->parent;
+	this_root->parent = NewRoot;
 	
-	root->rightChild = (NewRoot)->leftChild;
-	(NewRoot)->leftChild = root;
-	
-	//TreeNodeBalance_Modifi_LParent(this_root->parent, this_root, NewRoot);
-	SetLayerNumberThis(root);
+	this_root->rightChild = NewRoot->leftChild;
+	NewRoot->leftChild = this_root;
+
+	SetLayerNumberThis(this_root);
 	SetLayerNumberThis(NewRoot);
 	return NewRoot;
 }
 //右左旋
-static TreeNodeBalance*  RL(TreeNodeBalance** this_root)
+static TreeNodeBalance*  RL(TreeNodeBalance* this_root)
 {
 	if (isObjectNULL(this_root, "TreeNodeBalance_RL"))
 		return NULL;
-	(*this_root)->rightChild =RR(&((*this_root)->rightChild));
+	this_root->rightChild =RR(this_root->rightChild);
 	return LL(this_root);
 }
 //左右旋
-static TreeNodeBalance*  LR(TreeNodeBalance** this_root)
+static TreeNodeBalance*  LR(TreeNodeBalance* this_root)
 {
 	if (isObjectNULL(this_root, "TreeNodeBalance_LR"))
 		return NULL;
-	(*this_root)->leftChild = LL(&((*this_root)->leftChild));
+	this_root->leftChild = LL(this_root->leftChild);
 	return RR(this_root);
 }
 
@@ -182,16 +173,16 @@ void TreeNodeBalance_Spin(const TreeNodeBalance** this_root, compare less, const
 		if(leftLayer> rightLayer)
 		{
 			if (less(LPData, (*this_root)->leftChild->data))
-				*this_root = RR(this_root);
+				*this_root = RR(*this_root);
 			else
-				*this_root = LR(this_root);
+				*this_root = LR(*this_root);
 		}
 		else
 		{
 			if (!less(LPData, (*this_root)->rightChild->data))
-				*this_root = LL(this_root);
+				*this_root = LL(*this_root);
 			else
-				*this_root = RL(this_root);
+				*this_root = RL(*this_root);
 		}
 
 	}
