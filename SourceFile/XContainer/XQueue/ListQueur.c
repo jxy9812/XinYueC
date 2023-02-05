@@ -3,22 +3,22 @@
 #include"XQueue_head.h"
 #include<stdlib.h>
 #include<string.h>
-static struct Node
+static struct XListNode
 {
 	void* date;
-	struct Node* prev;//指向上一个
-	struct Node* next;//指向下一个
+	struct XListNode* prev;//指向上一个
+	struct XListNode* next;//指向下一个
 };
-typedef struct Node Node;
+typedef struct XListNode XListNode;
 
 //开辟新的节点
-static Node* open(XQueue* que)
+static XListNode* open(XQueue* que)
 {
 	XQUEUE* queue=(XQUEUE*)que;
-	Node* newNode = NULL;
+	XListNode* newNode = NULL;
 	if (queue->_data == NULL && queue->_size == 0)//无元素
 	{
-		newNode = malloc(sizeof(Node));//新节点
+		newNode = malloc(sizeof(XListNode));//新节点
 		queue->_data = newNode;
 		if (queue->_data == NULL)
 		{
@@ -37,9 +37,9 @@ static Node* open(XQueue* que)
 	}
 	else
 	{
-		newNode = malloc(sizeof(Node));//新节点
-		Node* head = queue->_data;//头节点
-		Node* tail = head->prev;//原尾节点
+		newNode = malloc(sizeof(XListNode));//新节点
+		XListNode* head = queue->_data;//头节点
+		XListNode* tail = head->prev;//原尾节点
 		newNode->next = head;//新节点下一个指向头节点
 		newNode->prev = tail;//新节点上一个指向原尾节点
 		head->prev = newNode;//头节点上一个指向新节点
@@ -56,8 +56,8 @@ void XQueue_clear(XQueue* que)//清空queue的队列，释放内存
 	XQUEUE* queue=(XQUEUE*)que;
 	if (queue->_data != NULL && queue->_size != 0)//无元素
 	{
-		Node* p = queue->_data;//开始指向头节点
-		Node* pnext = NULL;
+		XListNode* p = queue->_data;//开始指向头节点
+		XListNode* pnext = NULL;
 		for (size_t i = 0; i < queue->_size; i++)
 		{
 			pnext = p->next;//临时保存下一个节点地址
@@ -74,7 +74,7 @@ void XQueue_clear(XQueue* que)//清空queue的队列，释放内存
 void XQueue_Push(XQueue* que, void*LValue)//插入到队列的队尾
 {
 	XQUEUE* queue=(XQUEUE*)que;
-	Node* p = open(que);
+	XListNode* p = open(que);
 	memcpy(p->date, LValue, queue->_type);
 	queue->_current++;
 }
@@ -83,8 +83,8 @@ void XQueue_pop(struct XQueue* que)//删除queue的队头元素
 	XQUEUE* queue=(XQUEUE*)que;
 	if (queue->_current > 1)
 	{
-		Node* head = queue->_data;
-		Node* next = head->next;
+		XListNode* head = queue->_data;
+		XListNode* next = head->next;
 		free(head->date);
 		free(head);
 		queue->_data = next;
@@ -92,7 +92,7 @@ void XQueue_pop(struct XQueue* que)//删除queue的队头元素
 	}
 	else if (queue->_current == 1)
 	{
-		Node* head = queue->_data;
+		XListNode* head = queue->_data;
 		free(head->date);
 		free(head);
 		queue->_data = NULL;
@@ -102,12 +102,12 @@ void XQueue_pop(struct XQueue* que)//删除queue的队头元素
 void* XQueue_front(struct XQueue* que)// 返回队列的队头元素指针，但不删除该元素
 {
 	XQUEUE* queue=(XQUEUE*)que;
-	return ((Node*)queue->_data)->date;
+	return ((XListNode*)queue->_data)->date;
 }
 void* XQueue_back(struct XQueue* que)// 返回队列的队尾元素指针，但不删除该元素
 {
 	XQUEUE* queue=(XQUEUE*)que;
-	return ((Node*)queue->_data)->prev->date;
+	return ((XListNode*)queue->_data)->prev->date;
 }
 bool XQueue_empty(struct XQueue* que)//检测队内是否为空，空为真 O(1)
 {

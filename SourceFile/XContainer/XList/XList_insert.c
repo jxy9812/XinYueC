@@ -4,12 +4,12 @@
 #include<string.h>
 #include <stdarg.h> 
 //插入
-Node* XList_push_front(XList* this_list, void*LValue)
+XListNode* XList_push_front(XList* this_list, void*LValue)
 {
 	if (isObjectNULL(this_list, "List_push_back"))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
-	Node* NewNode = XList_push_back(this_list, LValue);
+	XListNode* NewNode = XList_push_back(this_list, LValue);
 	if (list->object._size != 0)
 	{
 		list->object._data = NewNode;
@@ -17,12 +17,12 @@ Node* XList_push_front(XList* this_list, void*LValue)
 	return NewNode;
 }
 
-Node* XList_push_back (XList* this_list, void*LValue)
+XListNode* XList_push_back (XList* this_list, void*LValue)
 {
 	if (isObjectNULL(this_list, "List_push_front"))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
-	Node* NewNode = malloc(sizeof(Node));//新节点
+	XListNode* NewNode = malloc(sizeof(XListNode));//新节点
 	if (NewNode == NULL)
 	{
 		perror("开辟节点失败");
@@ -38,8 +38,8 @@ Node* XList_push_back (XList* this_list, void*LValue)
 	}
 	else
 	{
-		Node* pfront = list->object._data;//原头节点
-		Node* pback = pfront->prev;//原尾节点
+		XListNode* pfront = list->object._data;//原头节点
+		XListNode* pback = pfront->prev;//原尾节点
 		NewNode->next = pfront;
 		NewNode->prev = pback;
 		pfront->prev = NewNode;
@@ -50,7 +50,7 @@ Node* XList_push_back (XList* this_list, void*LValue)
 	return NewNode;
 }
 
-void XList_insert_front_p(XList* this_list, Node* pval, ...)
+void XList_insert_front_p(XList* this_list, XListNode* pval, ...)
 {
 	if (isObjectNULL(this_list, "List_insert_front_p"))
 		return ;
@@ -73,10 +73,10 @@ void XList_insert_front_p(XList* this_list, Node* pval, ...)
 		/*Node* pval = List_find(li, p);*/
 		if (pval != NULL)
 		{
-			Node* left = pval->prev;
+			XListNode* left = pval->prev;
 			//OneList* right = pval->next;
 
-			Node* pk = malloc(sizeof(Node));//开辟节点
+			XListNode* pk = malloc(sizeof(XListNode));//开辟节点
 			if (pk == NULL)
 			{
 				perror("开辟节点失败");
@@ -121,11 +121,11 @@ void XList_insert_front_int(XList* this_list, int i, ...)
 	va_end(args);//参数使用结束  
 	if (n > 1000 || n <= 0)//一次调用最多插入1000个
 		n = 1;
-	Node* p = list->at(this_list, i);
+	XListNode* p = list->at(this_list, i);
 	list->insert_front_p(this_list, p, x, n);
 }
 
-void XList_insert(XList* this_list, Node* pval, const void* p1, const void* p2)
+void XList_insert(XList* this_list, XListNode* pval, const void* p1, const void* p2)
 {
 	if (isObjectNULL(this_list, "List_insert"))
 		return;

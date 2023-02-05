@@ -2,14 +2,14 @@
 #include"XList_head.h"
 #include<string.h>
 //遍历
-Node* XList_at(const XList* this_list, int n)
+XListNode* XList_at(const XList* this_list, int n)
 {
 	if (isObjectNULL(this_list, "List_at"))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
 	if (n >= 0 && n <= (list->object._size / 2))//向后找
 	{
-		Node* p = (Node*)list->object._data;
+		XListNode* p = (XListNode*)list->object._data;
 		if (n == 0)
 		{
 			return p;
@@ -22,7 +22,7 @@ Node* XList_at(const XList* this_list, int n)
 	}
 	else if (n > (list->object._size / 2) && n < list->object._size)//向前找
 	{
-		Node* p = list->object._data;
+		XListNode* p = list->object._data;
 		for (size_t i = 0; i < list->object._size - n; i++)
 		{
 			p = p->prev;
@@ -32,7 +32,7 @@ Node* XList_at(const XList* this_list, int n)
 	return NULL;
 }
 
-Node* XList_front(XList* this_list)
+XListNode* XList_front(XList* this_list)
 {
 	if (isObjectNULL(this_list, "List_front"))
 		return NULL;
@@ -40,27 +40,22 @@ Node* XList_front(XList* this_list)
 	return list->object._data;
 }
 
-Node* XList_back(XList* this_list)
+XListNode* XList_back(XList* this_list)
 {
 	if (isObjectNULL(this_list, "List_back"))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
-	return ((Node*)(list->object._data))->prev;
+	return ((XListNode*)(list->object._data))->prev;
 }
 
-Node* XList_find(const XList* this_list, bool (*find)(const struct Node* node, const void* val), const void* findVal)
+XListNode* XList_find(const XList* this_list, XEquality equality, const void* findVal)
 {
 	if (isObjectNULL(this_list, "List_find"))
 		return NULL;
-	XLIST* list=(XLIST*)this_list;
-	Node* pNode = list->object._data;
-	for (size_t i = 0; i < list->object._size; i++)
+	for (XList_iterator* it = XList_begin(this_list); it != XList_end(this_list); it = XList_iterator_add(this_list, it))
 	{
-		if (find(pNode, findVal))
-		{
-			return pNode;
-		}
-		pNode = pNode->next;
+		if (equality(((XListNode*)it)->date, findVal))
+			return it;
 	}
 	return NULL;
 }

@@ -70,7 +70,7 @@ void  XVector_sort(struct XVector* this_vector, XCompare compare)//排序
 	XVECTOR* vector=(XVECTOR*)this_vector;
 	XQuicPitSort_Stack(vector->object._data, vector->object._size, vector->object._type, compare);
 }
-void* XVector_find(const struct XVector* this_vector, const void* val, XEquality equality)//查找数据，返回找到的指针，没有返回NULL
+void* XVector_find(const struct XVector* this_vector, XEquality equality, const void* val)//查找数据，返回找到的指针，没有返回NULL
 {
 	if (isObjectNULL(this_vector, "XVector_find"))
 		return NULL;

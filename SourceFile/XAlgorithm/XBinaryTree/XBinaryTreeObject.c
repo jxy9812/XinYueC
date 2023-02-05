@@ -39,9 +39,9 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct TreeNode* this_root
 		}
 		else
 		{
-			struct TreeNode*  Node = *(struct TreeNode**)XStack_top(stack);
-			XVector_push_back(vector, &Node);
-			currentNode = Node->rightChild;
+			struct TreeNode*  XListNode = *(struct TreeNode**)XStack_top(stack);
+			XVector_push_back(vector, &XListNode);
+			currentNode = XListNode->rightChild;
 			XStack_pop(stack);
 		}
 	}

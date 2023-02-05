@@ -1,7 +1,9 @@
 ﻿#include "XList_iterator.h"
 #include"XList.h"
-#include"XList_head.h"
+//#include"XList_head.h"
 #include<stdio.h>
+#include"XListNode.h"
+
 struct XList_iterator* XList_begin(struct XList* this_list)
 {
 	if (isObjectNULL(this_list, "XList_begin"))
@@ -23,6 +25,6 @@ struct XList_iterator* XList_iterator_add(struct XList* this_list, struct XList_
 	XList_iterator*  back= XList_back(this_list);
 	if(it== back)//如果是最后一个元素则返回空表示遍历完成了
 	return NULL;
-	Node* node = (Node*)it;
+	XListNode* node = (XListNode*)it;
 	return node->next;//指向下一个元素
 }

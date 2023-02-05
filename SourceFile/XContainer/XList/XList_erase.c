@@ -10,7 +10,7 @@ void  XList_pop_front(struct XList* this_list)
 	XLIST* list=(XLIST*)this_list;
 	if (list->object._size == 1)
 	{
-		Node* head = list->object._data;
+		XListNode* head = list->object._data;
 		free(head->date);
 		free(head);
 		list->object._data = NULL;
@@ -19,9 +19,9 @@ void  XList_pop_front(struct XList* this_list)
 	}
 	else if (list->object._size > 1)
 	{
-		Node* pfront = list->object._data;//原头节点
-		Node* pback = pfront->prev;//原尾节点
-		Node* pnfront = pfront->next;//新头节点
+		XListNode* pfront = list->object._data;//原头节点
+		XListNode* pback = pfront->prev;//原尾节点
+		XListNode* pnfront = pfront->next;//新头节点
 		pnfront->prev = pback;
 		pback->next = pnfront;
 		list->object._data = pnfront;
@@ -43,9 +43,9 @@ void XList_pop_back(XList* this_list)
 	}
 	else if (list->object._size > 1)
 	{
-		Node* pfront = list->object._data;//原头节点
-		Node* pback = pfront->prev;//原尾节点
-		Node* pnback = pback->prev;//新尾节点
+		XListNode* pfront = list->object._data;//原头节点
+		XListNode* pback = pfront->prev;//原尾节点
+		XListNode* pnback = pback->prev;//新尾节点
 		pnback->next = pfront;
 		pfront->prev = pnback;
 		free(pback->date);
@@ -55,17 +55,17 @@ void XList_pop_back(XList* this_list)
 	}
 }
 
-void XList_erase_p(XList* this_list, const Node* pNodeOne, const Node* NodeTwo)
+void XList_erase_p(XList* this_list, const XListNode* pNodeOne, const XListNode* NodeTwo)
 {
 	if (isObjectNULL(this_list, "List_erase_p-this_list")|| isObjectNULL(pNodeOne, "List_erase_p-pNodeOne"))
 		return;
-	Node* pNodeTwo = NodeTwo;
+	XListNode* pNodeTwo = NodeTwo;
 	if (pNodeTwo == NULL)
 		pNodeTwo = pNodeOne;
 	XLIST* list=(XLIST*)this_list;
-	Node* pp = pNodeOne;
-	Node* left = pNodeOne->prev;
-	Node* right = pNodeTwo->next;
+	XListNode* pp = pNodeOne;
+	XListNode* left = pNodeOne->prev;
+	XListNode* right = pNodeTwo->next;
 	for (pp = pp->next; pp != pNodeTwo; pp = pp->next )
 	{
 		free(pp->prev->date);
@@ -92,9 +92,9 @@ void XList_erase_int(XList* this_list, const int left, const int right)
 	XLIST* list=(XLIST*)this_list;
 	if (right < list->object._size && left <= right && left >= 0)
 	{
-		Node* p = XList_at(list, left);//left的节点指针
-		Node* prev = p->prev;//上一个节点
-		Node* pleft = p;
+		XListNode* p = XList_at(list, left);//left的节点指针
+		XListNode* prev = p->prev;//上一个节点
+		XListNode* pleft = p;
 		for (size_t i = 0; i <= right - left; i++)
 		{
 			p = p->next;
@@ -102,7 +102,7 @@ void XList_erase_int(XList* this_list, const int left, const int right)
 			free(pleft);
 			pleft = p;
 		}
-		Node* pnext = p;//right的下一个节点
+		XListNode* pnext = p;//right的下一个节点
 		prev->next = pnext;
 		pnext->prev = prev;
 		list->object._size -= right - left + 1;
@@ -115,8 +115,8 @@ void XList_clear(XList* this_list)
 	if (isObjectNULL(this_list, "List_clear"))
 		return;
 	XLIST* list=(XLIST*)this_list;
-	Node* p = list->object._data;
-	Node* pnext = p->next;
+	XListNode* p = list->object._data;
+	XListNode* pnext = p->next;
 	for (size_t i = 0; i < list->object._size; i++)
 	{
 		pnext = p->next;

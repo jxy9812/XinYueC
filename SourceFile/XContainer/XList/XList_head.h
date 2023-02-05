@@ -2,27 +2,27 @@
 #define LIST_HEAD_H
 #include<stdio.h>
 #include"XContainerObject.h"
-struct Node;
+struct XListNode;
 //真实的结构体
 struct XLIST
 {
 	//插入函数
-	Node* (*push_front)(struct XLIST* li, void*LValue);//头插
-	Node* (*push_back)(struct XLIST* li, void*LValue);//尾插
-	void (*insert_front_p)(struct XLIST*, Node* pval, ...);//list*li, const void* p, const void*LValue, const int n 链表中指向节点前增加元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+	XListNode* (*push_front)(struct XLIST* li, void*LValue);//头插
+	XListNode* (*push_back)(struct XLIST* li, void*LValue);//尾插
+	void (*insert_front_p)(struct XLIST*, XListNode* pval, ...);//list*li, const void* p, const void*LValue, const int n 链表中指向节点前增加元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
 	void (*insert_front_int)(struct XLIST*, int n, ...);//(list*li, int n, const void*LValue, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
-	void (*insert)(struct XLIST*, Node* pval, const void* p1, const void* p2);// 链表中指向节点前插入另一个相同类型数组[p1,p2]间的数据，数组传递用指针
+	void (*insert)(struct XLIST*, XListNode* pval, const void* p1, const void* p2);// 链表中指向节点前插入另一个相同类型数组[p1,p2]间的数据，数组传递用指针
 	//删除函数
 	void (*pop_front)(void*);//头删
 	void (*pop_back)(struct XLIST*);//尾删
-	void (*erase_p)(struct XLIST*, const Node*, const Node*);//删除指定节点区间内的节点(包括其本身)，传入其指针地址，搭配find函数查找返回指针最佳，删除一个时请输入相同的指针
+	void (*erase_p)(struct XLIST*, const XListNode*, const XListNode*);//删除指定节点区间内的节点(包括其本身)，传入其指针地址，搭配find函数查找返回指针最佳，删除一个时请输入相同的指针
 	void (*erase_int)(struct XLIST*, const int, const int);//删除指定节点区间内的节点(包括其本身)，将其想象成数组下标访问，输入要删除的下标，删除一个时请输入相同下标
 	void (*clear) (struct XLIST*);//清空list数据，释放内存
 	//遍历函数
-	Node* (*at)(const struct XLIST*, int);// 想象成数组，输入下标返回元素节点的指针
-	Node* (*front)(const struct XLIST*);// 返回链表头指针，指向第一个元素
-	Node* (*back)(const struct XLIST*);//返回链表尾指针，指向链表最后一个元素
-	Node* (*find)(const struct XLIST*, const void*);//查找数据，返回找到的节点指针，没有返回NULL
+	XListNode* (*at)(const struct XLIST*, int);// 想象成数组，输入下标返回元素节点的指针
+	XListNode* (*front)(const struct XLIST*);// 返回链表头指针，指向第一个元素
+	XListNode* (*back)(const struct XLIST*);//返回链表尾指针，指向链表最后一个元素
+	XListNode* (*find)(const struct XLIST*, const void*);//查找数据，返回找到的节点指针，没有返回NULL
 	//判断函数
 	bool (*empty)(const struct XLIST*);// 检测list内是否为空，空为真 O(1)
 	//大小函数

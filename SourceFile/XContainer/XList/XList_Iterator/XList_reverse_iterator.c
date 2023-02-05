@@ -1,7 +1,8 @@
 ﻿#include "XList_reverse_iterator.h"
 #include"XList.h"
-#include"XList_head.h"
+//#include"XList_head.h"
 #include"stdio.h"
+#include"XListNode.h"
 XList_reverse_iterator* XList_rbegin(XList* this_list)
 {
 	if (isObjectNULL(this_list, "XList_rbegin"))
@@ -23,6 +24,6 @@ XList_reverse_iterator* XList_reverse_iterator_add(XList* this_list, XList_rever
 	XList_reverse_iterator* front = XList_front(this_list);
 	if (it == front)//如果是第一个元素则返回空表示遍历完成了
 		return NULL;
-	Node* node = (Node*)it;
+	XListNode* node = (XListNode*)it;
 	return node->prev;//指向上一个元素
 }

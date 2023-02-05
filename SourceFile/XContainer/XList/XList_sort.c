@@ -6,7 +6,7 @@
 #include<stdlib.h>
 #include"XAlgorithm.h"
 //一次快排
-static struct Node* List_OneSort(struct Node* ListHead, struct Node* ListTail,const size_t type, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
+static struct XListNode* List_OneSort(XListNode* ListHead, XListNode* ListTail,const size_t type, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
 {
 	
 	char* compareVal = malloc(type);
@@ -52,20 +52,20 @@ void XList_sort(struct XList* this_list, bool(*Sort)(const void* LPrevValue, con
 	if (isObjectNULL(this_list, "List_sort"))
 		return ;
 	struct XLIST* list = (XLIST*)this_list;
-	struct Node* ListHead = XList_front(this_list);//链表第一个节点
-	struct Node* ListTail = XList_back(this_list);//链表最后一个节点
-	struct XStack* stack = XStack_init("struct Node*",sizeof(struct Node*));
+	XListNode* ListHead = XList_front(this_list);//链表第一个节点
+	XListNode* ListTail = XList_back(this_list);//链表最后一个节点
+	struct XStack* stack = XStack_init("struct Node*",sizeof(struct XListNode*));
 	XStack_Push(stack, &ListTail);
 	XStack_Push(stack, &ListHead);
 	while (!XStack_empty(stack))
 	{
 		//获取节点
-		struct Node* ListHead = *((struct Node**)XStack_top(stack));
+		XListNode* ListHead = *((struct XListNode**)XStack_top(stack));
 		XStack_pop(stack);
-		struct Node* ListTail = *((struct Node**)XStack_top(stack));
+		 XListNode* ListTail = *((struct XListNode**)XStack_top(stack));
 		XStack_pop(stack);
 		//单次排序
-		struct Node* ListMiddle=List_OneSort(ListHead, ListTail, list->object._type, Sort);
+	 XListNode* ListMiddle=List_OneSort(ListHead, ListTail, list->object._type, Sort);
 		//判断左区间是否存在
 		if (ListHead != ListMiddle && ListHead->next != ListMiddle)
 		{

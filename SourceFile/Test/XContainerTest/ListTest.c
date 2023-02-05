@@ -7,7 +7,7 @@ bool mysort(void* x, void* y)//自定义的排序回调函数
 {
 	return  *(int*)x < *(int*)y;
 }
-bool findListInt(const struct Node* node, const void* val)
+bool findListInt(const  XListNode* node, const void* val)
 {
 	return (*(int*)node->date) == (*(int*)val);
 }
@@ -39,12 +39,12 @@ void ListIterator()
 	printf("开始正向遍历\n");
 	for (XList_iterator* it = XList_begin(li); it != XList_end(li); it = XList_iterator_add(li, it))
 	{
-		printf("%d\n", *(int*)((Node*)it)->date);
+		printf("%d\n", *(int*)((XListNode*)it)->date);
 	}
 	printf("开始反向遍历\n");
 	for (XList_reverse_iterator* it = XList_rbegin(li); it != XList_rend(li); it = XList_reverse_iterator_add(li, it))
 	{
-		printf("%d\n", *(int*)((Node*)it)->date);
+		printf("%d\n", *(int*)((XListNode*)it)->date);
 	}
 	XList_free(li);
 }
@@ -69,7 +69,7 @@ void ListTest()
 	printf("头元素为：%d\n", *(int*)li->front(li)->date);
 	printf("尾元素为：%d\n", *(int*)li->back(li)->date);
 
-	struct Node*findNode=XList_find(li, findListInt, arr +2);
+	XListNode*findNode=XList_find(li, findListInt, arr +2);
 	printf("找到的数字%d\n", *(int*)findNode->date);
 
 

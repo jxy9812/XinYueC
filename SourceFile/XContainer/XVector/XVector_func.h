@@ -28,7 +28,7 @@ void* XVector_front(const  struct XVector* this_vector);
 //返回向量尾指针，指向向量最后一个元素
 void* XVector_back(const  struct XVector* this_vector);
 //查找数据，返回找到的指针，没有返回NULL
-void* XVector_find(const struct XVector* this_vector, const void* val, XEquality equality);
+void* XVector_find(const struct XVector* this_vector, XEquality equality, const void* val);
 //排序
 void  XVector_sort(struct XVector* this_vector, XCompare compare);
 //释放内存

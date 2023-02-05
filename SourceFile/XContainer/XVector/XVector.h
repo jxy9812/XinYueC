@@ -22,7 +22,7 @@ typedef struct XVector
 	void* (*at)(const struct XVector* this_vector, int);// 返回第0-n个元素的指针
 	void* (*front)(const struct XVector* this_vector);// 返回向量头指针，指向第一个元素
 	void* (*back)(const struct XVector* this_vector);//返回向量尾指针，指向向量最后一个元素
-	void* (*find)(const struct XVector* this_vector, const void* val, XEquality equality);//查找数据，返回找到的指针，没有返回NULL
+	void* (*find)(const struct XVector* this_vector, XEquality equality, const void* val);//查找数据，返回找到的指针，没有返回NULL
 	//判断函数
 	bool (*empty)(const struct XVector* this_vector);// 检测vector内是否为空，空为真 O(1)
 	//大小函数
