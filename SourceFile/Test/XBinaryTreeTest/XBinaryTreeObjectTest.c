@@ -26,21 +26,21 @@ void XBinaryTreeObjectTest()
 	//前序测试
 	XVector* TreePreorder = BinaryTreeTraversingToXVector(root, BinaryTreePreorder);
 	printf("前序遍历:", XVector_size(TreePreorder));
-	XVector_iterator_for_each(TreePreorder, printTreeNode);
+	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free(TreePreorder);
 
 	//中序测试
 	TreePreorder = BinaryTreeTraversingToXVector(root, BinaryTreeInorder);
 	printf("中序遍历:", XVector_size(TreePreorder));
-	XVector_iterator_for_each(TreePreorder, printTreeNode);
+	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free(TreePreorder);
 
 	//后序测试
 	TreePreorder = BinaryTreeTraversingToXVector(root, BinaryTreePostorder);
 	printf("后序遍历:", XVector_size(TreePreorder));
-	XVector_iterator_for_each(TreePreorder, printTreeNode);
+	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free(TreePreorder);
 }

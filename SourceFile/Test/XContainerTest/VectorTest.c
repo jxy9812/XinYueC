@@ -1,6 +1,8 @@
 ﻿#include"Test.h"
 #include"XVector.h"
 #include"XFunctionCallback.h"
+#include"XEquality.h"
+#include"XLess.h"
 void XFor_each_int(void* LPVal)
 {
 	printf("%d ", *(int*)LPVal);
@@ -36,15 +38,19 @@ void VectorTest()
 	v->free(v);*/
 
 	XVector* v = XVector_init("int", sizeof(int*));
-	int arr[]={100,123,456,4,8496,3,321,23,3,132,132};
+	int arr[]={100,123,456,4,8496,3,321,23,3,132,0};
 	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
 	{
 		int n = arr[i];
 		XVector_push_front(v,arr+i);
 	}
-	XVector_iterator_for_each(v,XFor_each_int);
+	XVector_iterator_for_each(v,XFor_each_int,NULL);
 	printf("\n");
 	XVector_sort(v, XLess_int);
-	XVector_iterator_for_each(v, XFor_each_int);
+	XVector_iterator_for_each(v, XFor_each_int,NULL);
 	printf("\n");
+	int findVal = 100;
+	int* findRet=XVector_find(v, XEquality_int, &findVal);
+	if(findRet!=NULL)
+	printf("找到的数字:%d", *findRet);
 }

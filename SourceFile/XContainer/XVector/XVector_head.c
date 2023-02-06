@@ -2,7 +2,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 //检测是否需要扩容
-void VectorEnlargeCapacity(XVECTOR* this_vector)
+void XVectorEnlargeCapacity(XVECTOR* this_vector)
 {
 	if (isObjectNULL(this_vector, "VectorEnlargeCapacity"))
 		return;

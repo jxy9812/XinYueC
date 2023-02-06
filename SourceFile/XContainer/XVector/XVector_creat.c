@@ -55,3 +55,8 @@ XVector* XVector_init(const char* arr, ...)
 	this_vector->_data = NULL;*/
 	return this_vector;
 }
+XContainerObject* XVector_object(XVector* this_vector)
+{
+	XVECTOR* vector = (XVECTOR*)this_vector;
+	return &vector->object;
+}

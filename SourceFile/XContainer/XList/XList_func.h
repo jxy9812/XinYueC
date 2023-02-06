@@ -43,7 +43,7 @@ bool  XList_empty(const struct XList* this_list);
 size_t   XList_size(const  struct XList* this_list);
 //其他函数
 //排序
-void  XList_sort(struct XList* this_list, bool(*Sort)(const void* LPrevValue, const void* LNextValue));
+void  XList_sort(struct XList* this_list, XCompare compare);
 //交换两个同类型链表的数据
 void  XList_swap(struct XList* this_list1, struct XList* this_list2);
 //释放内存

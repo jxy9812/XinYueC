@@ -15,7 +15,7 @@ void XVector_push_back(struct XVector* this_vector, void* val)
 	if (isObjectNULL(this_vector, "XVector_Push_Back"))
 		return;
 	XVECTOR* v=(XVECTOR*)this_vector;
-	VectorEnlargeCapacity(v);
+	XVectorEnlargeCapacity(v);
 	char* str1 = (char*)v->object._data + v->object._type * v->object._size;
 	memcpy(str1, val, v->object._type);
 	v->object._size++;
@@ -35,7 +35,7 @@ void XVector_insert_front(struct XVector* this_vector, const void* pSel, const v
 		void* ptr = malloc(size);
 		if (ptr == NULL)
 			return;
-		VectorEnlargeCapacity(v);
+		XVectorEnlargeCapacity(v);
 		char* UpData_pSel = XVector_at(this_vector,nSel);//扩容后需要重新定位指针
 		//将后半段数据往后挪一下位置
 		memcpy(ptr, UpData_pSel, size);
@@ -53,14 +53,14 @@ void XVector_insert_nfront(struct XVector* this_vector, const void* pSel, const 
 	XVECTOR* v=(XVECTOR*)this_vector;
 	if (pSel >= v->front(v) && pSel <= v->back(v))
 	{
-		VectorEnlargeCapacity(v);
+		XVectorEnlargeCapacity(v);
 		int size = (char*)v->back(v) -(char*)pSel + v->object._type;
 		void* ptr = malloc(size);
 		memcpy(ptr, pSel, size);
 		int sizen = ((char*)pSel - (char*)v->front(v)) / v->object._type;
 		for (size_t i = 0; i < n; i++)
 		{
-			VectorEnlargeCapacity(v);
+			XVectorEnlargeCapacity(v);
 			memcpy((char*)v->at(v, sizen), val, v->object._type);
 			sizen++;
 			v->object._size++;
@@ -76,7 +76,7 @@ void XVector_insert(struct XVector* this_vector, const void* pSel, const void* p
 	XVECTOR* v=(XVECTOR*)this_vector;
 	if (pSel >= v->front(v) && pSel <= v->back(v))
 	{
-		VectorEnlargeCapacity(v);
+		XVectorEnlargeCapacity(v);
 		int size = (char*)v->back(v) -(char*)pSel + v->object._type;
 		void* ptr = malloc(size);
 		memcpy(ptr, pSel, size);
@@ -84,7 +84,7 @@ void XVector_insert(struct XVector* this_vector, const void* pSel, const void* p
 		int push_n = ((char*)p2 - (char*)p1) / v->object._type + 1;
 		for (size_t i = 0; i < push_n; i++)
 		{
-			VectorEnlargeCapacity(v);
+			XVectorEnlargeCapacity(v);
 			memcpy((char*)v->at(v, sizen), (char*)p1 + i * v->object._type, v->object._type);
 			sizen++;
 			v->object._size++;

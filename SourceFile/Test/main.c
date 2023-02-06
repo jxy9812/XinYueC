@@ -7,7 +7,7 @@ int main(int argc, char* args[])
 	//ListSortTest();
 	//ListTest();
 	//ListIterator();
-	VectorTest();
+	//VectorTest();
 	//stackTest();
 	//XStringTest();
 	//SortTest();
@@ -15,6 +15,6 @@ int main(int argc, char* args[])
 	//XMazePathfinding();
 	//queueTest();
 	//XBinaryTreeObjectTest();
-	//TreeNodeBalanceTest();
+	TreeNodeBalanceTest();
 	return 0;
 }

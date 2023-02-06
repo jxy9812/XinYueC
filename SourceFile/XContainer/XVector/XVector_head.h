@@ -36,7 +36,7 @@ typedef struct XVECTOR
 	//int _type;//类型占用字节数
 }XVECTOR;
 //检测是否需要扩容
-void VectorEnlargeCapacity(XVECTOR* this_vector);
+void XVectorEnlargeCapacity(XVECTOR* this_vector);
 #endif // ! VECTOR_HEAD
 
 

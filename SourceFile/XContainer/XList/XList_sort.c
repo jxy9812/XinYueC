@@ -47,7 +47,7 @@ static struct XListNode* List_OneSort(XListNode* ListHead, XListNode* ListTail,c
 
 }
 
-void XList_sort(struct XList* this_list, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
+void XList_sort(struct XList* this_list, XCompare compare)
 {
 	if (isObjectNULL(this_list, "List_sort"))
 		return ;
@@ -65,7 +65,7 @@ void XList_sort(struct XList* this_list, bool(*Sort)(const void* LPrevValue, con
 		 XListNode* ListTail = *((struct XListNode**)XStack_top(stack));
 		XStack_pop(stack);
 		//单次排序
-	 XListNode* ListMiddle=List_OneSort(ListHead, ListTail, list->object._type, Sort);
+	 XListNode* ListMiddle=List_OneSort(ListHead, ListTail, list->object._type, compare);
 		//判断左区间是否存在
 		if (ListHead != ListMiddle && ListHead->next != ListMiddle)
 		{

@@ -2,6 +2,7 @@
 #define XVECTOR_FUNC_H
 #include<stdbool.h>
 #include"XFunctionCallback.h"
+#include"XContainerObject.h"
 struct XVector;
 //清空vector的队列，释放内存v
 void XVector_clear(struct XVector* this_vector);
@@ -45,5 +46,6 @@ void XVector_swap(struct XVector* this_vectorOne, struct XVector* this_vectorTwo
 size_t XVector_TypeSize(struct XVector* this_vector);
 //开辟一个动态数组,初始化
 struct XVector* XVector_init(const char* arr, ...);
-
+//获取基类指针
+struct XContainerObject* XVector_object(struct XVector* this_vector);
 #endif // ! ITERATOR_H

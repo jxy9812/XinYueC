@@ -1,15 +1,13 @@
 ﻿#include"Test.h"
 #include"XList.h"
+#include"XEquality.h"
+#include"XCompare.h"
 #include<time.h>
 #include<stdio.h>
 #include<stdlib.h>
-bool mysort(void* x, void* y)//自定义的排序回调函数
+void ListFor_each(void* LPVal, void* args)
 {
-	return  *(int*)x < *(int*)y;
-}
-bool findListInt(const  XListNode* node, const void* val)
-{
-	return (*(int*)node->date) == (*(int*)val);
+	printf("%d ",*(int*)LPVal);
 }
 void ListSortTest()
 {
@@ -23,7 +21,7 @@ void ListSortTest()
 		li->push_back(li,&num);//尾插
 	}
 	clock_t  time_front = clock();
-	XList_sort(li, mysort);
+	XList_sort(li, XLess_int);
 	clock_t time_after = clock();
 	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
 	li->free(li);
@@ -51,25 +49,23 @@ void ListIterator()
 
 void ListTest()
 {
-	XList* li = XList_init(sizeof(int));
-
+	XList* list = XList_init(sizeof(int));
 	
 	int arr[] = { 123,12,1,4,9 };
 	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
 	{
-		XList_push_back(li,arr+i);
+		XList_push_back(list,arr+i);
 	}
 	int x = 100;
 	//li->insert_front_int(li, 0, &x, 10);
 	printf("元素遍历\n");
-	for (size_t i = 0; i < li->size(li); i++)
-	{
-		printf("%d\n", *(int*)li->at(li, i)->date);
-	}
-	printf("头元素为：%d\n", *(int*)li->front(li)->date);
-	printf("尾元素为：%d\n", *(int*)li->back(li)->date);
 
-	XListNode*findNode=XList_find(li, findListInt, arr +2);
+	XList_iterator_for_each(list, ListFor_each,NULL);
+	printf("\n");
+	printf("头元素为：%d\n", *(int*)list->front(list)->date);
+	printf("尾元素为：%d\n", *(int*)list->back(list)->date);
+
+	XListNode*findNode=XList_find(list, XEquality_int, arr +2);
 	printf("找到的数字%d\n", *(int*)findNode->date);
 
 
@@ -78,13 +74,13 @@ void ListTest()
 	li->pop_front(li);
 	li->pop_front(li);*/
 	//li->erase_p(li,li->find(li,num+1), li->find(li,num+5));
-	li->erase_int(li,1, 8);
+	list->erase_int(list,1, 8);
 	printf("删除元素后遍历\n");
-	for (size_t i = 0; i < li->size(li); i++)
+	for (size_t i = 0; i < list->size(list); i++)
 	{
-		printf("%d\n", *(int*)li->at(li, i)->date);
+		printf("%d\n", *(int*)list->at(list, i)->date);
 	}
-	li->free(li);
+	list->free(list);
 }
 
 void ListSwapTest()//交换函数测试

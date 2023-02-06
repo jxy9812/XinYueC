@@ -1,5 +1,5 @@
-﻿#include"XAlgorithm.h"
-#include"XFunctionCallback.h"
+﻿#include"XSort.h"
+#include"XLess.h"
 void SortTest()
 {
 	int array[] = { 10,100,21,123,123,54,5,12,5,12,13,51,5,3 };
