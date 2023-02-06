@@ -1,7 +1,12 @@
 ﻿//小于回调函数
-#ifndef XFUNCTIONCALLBACKLESS_H
-#define XFUNCTIONCALLBACKLESS_H
+#ifndef XLESS_H
+#define XLESS_H
 #include<stdbool.h>
-//int
-const bool XLess_int(const void* LPrevValue, const void* LNextValue);
+#include"XDefineFunc.h"
+XDefineFunc_Define(XLess, char)
+XDefineFunc_DefineTwo(XLess, unsigned, char)
+XDefineFunc_Define(XLess, int)
+XDefineFunc_DefineTwo(XLess, unsigned, int)
+XDefineFunc_Define(XLess, float)
+XDefineFunc_Define(XLess, double)
 #endif // !XFUNCTIONPOINTER_H

@@ -2,4 +2,6 @@
 #ifndef XCOMPARE_H
 #define XCOMPARE_H
 #include"XLess.h"
+#include"XGreater.h"
+#include"XEquality.h"
 #endif // !XFUNCTIONPOINTER_H
