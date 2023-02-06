@@ -2,29 +2,28 @@
 #include"XBinaryTreeObject.h"
 #include"XBalancedBinaryTree.h"
 #include"XVector.h"
+#include"XLess.h"
+#include"XEquality.h"
 //打印节点的数据
 static void printTreeNode(void* LPVal)
 {
 	struct TreeNodeBalance* currentNode = *(struct TreeNodeBalance**)LPVal;
 	printf("%d ", *(int*)currentNode->data);
 }
-//排序准则
-static bool Less(const void* LPrevValue, const void* LNextValue)
-{
-	return *(int*)LPrevValue < *(int*)LNextValue;
-}
 void TreeNodeBalanceTest()
 {
-	int a[] = { 4,5,6,7,0/*,1,2,3,10,0,12,456,13,465,123,8748,4,6*/ };
+	int a[] = { 4,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
 	int* LPa = a;
 
-	TreeNodeBalance* root = TreeNodeBalance_insert(NULL, Less,LPa++, sizeof(int));
+	TreeNodeBalance* root = TreeNodeBalance_insert(NULL, XLess_int,LPa++, sizeof(int));
 	for (size_t i = 0; i < sizeof(a)/sizeof(a[0])-1; i++)
 	{
-		TreeNodeBalance_insert(&root, Less, LPa++, sizeof(int));
+		TreeNodeBalance_insert(&root, XLess_int, LPa++, sizeof(int));
 	}
-	
-	/*printf("root_data:%d\n", *(int*)root->data);*/
+	int findVal = 456;
+	TreeNodeBalance* findRet = TreeNodeBalance_find(root, XLess_int, XEquality_int,&findVal);
+	if(findRet!=NULL)
+	printf("找到的:%d\n", *(int*)findRet->data);
 
 	//前序测试
 	XVector* TreePreorder = BinaryTreeTraversingToXVector(root, BinaryTreePreorder);

@@ -84,6 +84,39 @@ TreeNodeBalance* TreeNodeBalance_insert(TreeNodeBalance** this_root, XLess less,
     return NewNode;
 }
 
+void* TreeNodeBalance_erase(TreeNodeBalance** this_root, XLess less, XEquality equality, const void* LPData, const size_t TypeSize)
+{
+	if (isObjectNULL(this_root, "TreeNodeBalance_erase-this_root"))
+		return NULL;
+	TreeNodeBalance* findRet = TreeNodeBalance_find(*this_root, less, equality, LPData);
+	if(findRet==NULL)
+		return NULL;//要删除的节点没找到
+
+}
+
+TreeNodeBalance* TreeNodeBalance_find(TreeNodeBalance* this_root, XLess less, XEquality equality, const void* LPData)
+{
+	if (isObjectNULL(this_root, "TreeNodeBalance_find-this_root"))
+		return NULL; 
+	TreeNodeBalance* CurNode = this_root;//当前节点指针
+	while (CurNode!=NULL)
+	{
+		if (equality(CurNode->data, LPData))
+		{
+			return CurNode;
+		}
+		else if (less(CurNode->data, LPData))
+		{
+			CurNode = CurNode->rightChild;
+		}
+		else
+		{
+			CurNode = CurNode->leftChild;
+		}
+	}
+	return NULL;
+}
+
 const size_t GetLayerNumberThis(const TreeNodeBalance* this_root)
 {
 	if (this_root != NULL)
