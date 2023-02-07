@@ -21,12 +21,12 @@ TreeNodeBalance* TreeNodeBalance_insert(struct TreeNodeBalance** this_root, XLes
 void* TreeNodeBalance_erase(struct TreeNodeBalance** this_root, XLess less, XEquality equality, const void* LPData, const size_t TypeSize);
 //查找二叉树节点
 struct TreeNodeBalance* TreeNodeBalance_find(struct TreeNodeBalance* this_root, XLess less, XEquality equality, const void* LPData);
-//获取本身的高度(层数)
-const size_t GetLayerNumberThis(const TreeNodeBalance* this_root);
-//获取左右两孩子到自己中最大层数
-const size_t GetLayerNumberChild(const TreeNodeBalance* this_root);
-//设置高度(层数)
-const size_t SetLayerNumberThis(TreeNodeBalance* this_root);
+//获取本身的高度(层数最大孩子高度+1(自己))
+const size_t TreeNodeBalance_GetLayerNumberThis(const TreeNodeBalance* this_root);
+//获取左右两孩子中最大层数
+const size_t TreeNodeBalance_GetLayerNumberChild(const TreeNodeBalance* this_root);
+//设置高度(层数最大孩子高度+1(自己))
+const size_t TreeNodeBalance_SetLayerNumberThis(TreeNodeBalance* this_root);
 //旋转
 void TreeNodeBalance_Spin(const TreeNodeBalance** this_root, XLess less, const void* LPData);
 #endif // !BALANCEDBINARYTREE_H

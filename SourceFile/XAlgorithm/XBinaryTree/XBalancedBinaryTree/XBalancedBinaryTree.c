@@ -66,7 +66,7 @@ TreeNodeBalance* TreeNodeBalance_insert(TreeNodeBalance** this_root, XLess less,
 	//循环返回父节点设置层数
 	while (currentNode != NULL)
 	{
-		(currentNode)->maxLayer =1+ GetLayerNumberChild(currentNode);
+		(currentNode)->maxLayer =1+ TreeNodeBalance_GetLayerNumberChild(currentNode);
 		if (currentNode == *this_root)//如果是根节点
 		{
 			TreeNodeBalance_Spin(this_root, less, LPData);
@@ -117,21 +117,21 @@ TreeNodeBalance* TreeNodeBalance_find(TreeNodeBalance* this_root, XLess less, XE
 	return NULL;
 }
 
-const size_t GetLayerNumberThis(const TreeNodeBalance* this_root)
+const size_t TreeNodeBalance_GetLayerNumberThis(const TreeNodeBalance* this_root)
 {
 	if (this_root != NULL)
 		return this_root->maxLayer;
 	return 0;
 }
-const size_t GetLayerNumberChild(const TreeNodeBalance* this_root)
+const size_t TreeNodeBalance_GetLayerNumberChild(const TreeNodeBalance* this_root)
 {
-	size_t left = GetLayerNumberThis(this_root->leftChild);
-	size_t right = GetLayerNumberThis(this_root->rightChild);
+	size_t left = TreeNodeBalance_GetLayerNumberThis(this_root->leftChild);
+	size_t right = TreeNodeBalance_GetLayerNumberThis(this_root->rightChild);
 	return (left > right) ? left : right;
 }
-const size_t SetLayerNumberThis(TreeNodeBalance* this_root)
+const size_t TreeNodeBalance_SetLayerNumberThis(TreeNodeBalance* this_root)
 {
-	return this_root->maxLayer = 1 + GetLayerNumberChild(this_root);;
+	return this_root->maxLayer = 1 + TreeNodeBalance_GetLayerNumberChild(this_root);;
 }
 //右旋
 static TreeNodeBalance*  RR(TreeNodeBalance* root)
@@ -154,8 +154,8 @@ static TreeNodeBalance*  RR(TreeNodeBalance* root)
 
 	root->leftChild = NewRoot->rightChild;
 	NewRoot->rightChild = root;
-	SetLayerNumberThis(root);
-	SetLayerNumberThis(NewRoot);
+	TreeNodeBalance_SetLayerNumberThis(root);
+	TreeNodeBalance_SetLayerNumberThis(NewRoot);
 	return NewRoot;
 }
 //左旋
@@ -171,8 +171,8 @@ static TreeNodeBalance* LL(TreeNodeBalance* this_root)
 	this_root->rightChild = NewRoot->leftChild;
 	NewRoot->leftChild = this_root;
 
-	SetLayerNumberThis(this_root);
-	SetLayerNumberThis(NewRoot);
+	TreeNodeBalance_SetLayerNumberThis(this_root);
+	TreeNodeBalance_SetLayerNumberThis(NewRoot);
 	return NewRoot;
 }
 //右左旋
@@ -198,8 +198,8 @@ void TreeNodeBalance_Spin(const TreeNodeBalance** this_root, XLess less, const v
 		return NULL;
 	if (isObjectNULL(*this_root, "TreeNodeBalance_Spin-this_root"))
 		return NULL;
-	size_t leftLayer = GetLayerNumberThis((*this_root)->leftChild);
-	size_t rightLayer = GetLayerNumberThis((*this_root)->rightChild);
+	size_t leftLayer = TreeNodeBalance_GetLayerNumberThis((*this_root)->leftChild);
+	size_t rightLayer = TreeNodeBalance_GetLayerNumberThis((*this_root)->rightChild);
 	//TreeNodeBalance* ret = NULL;
 	if (abs(leftLayer - rightLayer) > 1)//左边比右边高度大于1
 	{

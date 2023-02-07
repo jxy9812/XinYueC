@@ -74,7 +74,7 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct TreeNode* this_ro
 }
 void* TreeNode_creation(const size_t NodeSize, const size_t TypeSize)
 {
-	TreeNode* node =(TreeNode*)malloc(NodeSize);
+	TreeNode* node =(TreeNode*)calloc(1,NodeSize);
 	if (isObjectNULL(node,"TreeNode_creation-node"))
 		return NULL;
 	node->data= calloc(1,TypeSize);//开辟内存并且置为0
@@ -83,9 +83,9 @@ void* TreeNode_creation(const size_t NodeSize, const size_t TypeSize)
 		free(node);
 		return NULL;
 	}
-	node->leftChild = NULL;
+	/*node->leftChild = NULL;
 	node->parent = NULL;
-	node->rightChild = NULL;
+	node->rightChild = NULL;*/
 	return node;
 }
 
