@@ -72,7 +72,7 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct TreeNode* this_ro
 	XStack_free(stackTraversing);
 	return vector;
 }
-void* TreeNode_creation(const size_t NodeSize, const size_t TypeSize)
+void* XBinaryTreeObject_creationNode(const size_t NodeSize, const size_t TypeSize)
 {
 	TreeNode* node =(TreeNode*)calloc(1,NodeSize);
 	if (isObjectNULL(node,"TreeNode_creation-node"))
@@ -89,16 +89,16 @@ void* TreeNode_creation(const size_t NodeSize, const size_t TypeSize)
 	return node;
 }
 
-TreeNode* TreeNode_creationInsertData(const void* LPData, const size_t TypeSize)
+TreeNode* XBinaryTreeObject_creationInsertData(const void* LPData, const size_t TypeSize)
 {
-	struct TreeNode* node = TreeNode_creation(sizeof(TreeNode),TypeSize);
+	struct TreeNode* node = XBinaryTreeObject_creationNode(sizeof(TreeNode),TypeSize);
 	/*if(isObjectNULL(node,"TreeNode_creationInsertData-node"))
 		return NULL;*/
-	TreeNode_insertData(node, LPData, TypeSize);
+	XBinaryTreeObject_insertData(node, LPData, TypeSize);
 	return node;
 }
 
-const bool TreeNode_insertData(struct TreeNode* this_root, const void* LPData, const size_t TypeSize)
+const bool XBinaryTreeObject_insertData(struct TreeNode* this_root, const void* LPData, const size_t TypeSize)
 {
 	if (isObjectNULL(this_root, "InsertTreeNodeData-this_root"))
 		return false;
@@ -110,7 +110,7 @@ const bool TreeNode_insertData(struct TreeNode* this_root, const void* LPData, c
 	return true;
 }
 
-const bool TreeNode_free(struct TreeNode* this_root , const bool parentSetNull)
+const bool XBinaryTreeObject_freeNode(struct TreeNode* this_root , const bool parentSetNull)
 {
 	if (isObjectNULL(this_root, "TreeNode_free-this_root"))
 		return false;
@@ -130,7 +130,7 @@ const bool TreeNode_free(struct TreeNode* this_root , const bool parentSetNull)
 	return true;
 }
 
-XVector* BinaryTreeTraversingToXVector(TreeNode* this_root, const enum BinaryTreeTraversing Traversing)
+XVector* XBinaryTreeObject_TraversingToXVector(TreeNode* this_root, const enum BinaryTreeTraversing Traversing)
 {
 	if (isObjectNULL(this_root, "BinaryTreeTraversingToXVector-this_root"))
 		return false;
@@ -146,7 +146,7 @@ XVector* BinaryTreeTraversingToXVector(TreeNode* this_root, const enum BinaryTre
 		return NULL;
 	}
 }
-const size_t Tree_freeAll(struct TreeNode* this_root)
+const size_t XBinaryTreeObject_freeNodeAll(struct TreeNode* this_root)
 {
 	if (isObjectNULL(this_root, "Tree_freeAll-this_root"))
 		return 0;
@@ -162,7 +162,7 @@ const size_t Tree_freeAll(struct TreeNode* this_root)
 			XStack_Push(stack, &currentNode->leftChild);
 		if (currentNode->rightChild != NULL)
 			XStack_Push(stack, &currentNode->rightChild);
-		TreeNode_free(currentNode,false);//释放当前节点
+		XBinaryTreeObject_freeNode(currentNode,false);//释放当前节点
 		sum++;
 	}
 	XStack_free(stack);

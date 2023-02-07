@@ -85,7 +85,7 @@ static int sortDescendingtCosts(const void* LPrevValue, const void* LNextValue)
 	return (NodeOne->currentCosts + NodeOne->estimateCosts) - (NodeTwo->currentCosts + NodeTwo->estimateCosts);
 }
 //释放树节点
-static void TreeNode_free(AStarNode* root)
+static void XBinaryTreeObject_freeNode(AStarNode* root)
 {
 	XStack* stack = XStack_init("AStarNode*", sizeof(AStarNode*));
 	XStack_Push(stack, &root);
@@ -127,7 +127,7 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 	XVector* Path = NULL;
 	if(isFindEnd)
 		Path = GetXMazePath(CurrentNode);
-	TreeNode_free(root);
+	XBinaryTreeObject_freeNode(root);
 	XVector_free(CurrentNodeArray);
 	XVectorTwo_free(tempMaze);
 	return Path;

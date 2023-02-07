@@ -15,18 +15,21 @@ typedef struct TreeNodeBalance
 }TreeNodeBalance;
 
 //创建初始化一个二叉树节点
-TreeNodeBalance* TreeNodeBalance_creation(const size_t TypeSize);
+TreeNodeBalance* XBalancedBinaryTree_creation(const size_t TypeSize);
 //插入数据，自动创建节点
-TreeNodeBalance* TreeNodeBalance_insert(struct TreeNodeBalance** this_root, XLess less, const void* LPData, const size_t TypeSize);
-void* TreeNodeBalance_erase(struct TreeNodeBalance** this_root, XLess less, XEquality equality, const void* LPData, const size_t TypeSize);
+TreeNodeBalance* XBalancedBinaryTree_insert(struct TreeNodeBalance** this_root, XLess less, const void* LPData, const size_t TypeSize);
+//二叉树删除节点
+void* XBalancedBinaryTree_erase(struct TreeNodeBalance** this_root, XLess less, XEquality equality, const void* LPData, const size_t TypeSize);
 //查找二叉树节点
-struct TreeNodeBalance* TreeNodeBalance_find(struct TreeNodeBalance* this_root, XLess less, XEquality equality, const void* LPData);
+struct TreeNodeBalance* XBalancedBinaryTree_find(struct TreeNodeBalance* this_root, XLess less, XEquality equality, const void* LPData);
 //获取本身的高度(层数最大孩子高度+1(自己))
-const size_t TreeNodeBalance_GetLayerNumberThis(const TreeNodeBalance* this_root);
+const size_t XBalancedBinaryTree_GetLayerNumberThis(const TreeNodeBalance* this_root);
 //获取左右两孩子中最大层数
-const size_t TreeNodeBalance_GetLayerNumberChild(const TreeNodeBalance* this_root);
+const size_t XBalancedBinaryTree_GetLayerNumberChild(const TreeNodeBalance* this_root);
 //设置高度(层数最大孩子高度+1(自己))
-const size_t TreeNodeBalance_SetLayerNumberThis(TreeNodeBalance* this_root);
+const size_t XBalancedBinaryTree_SetLayerNumberThis(TreeNodeBalance* this_root);
+//设置高度从当前节点一直到根
+const size_t XBalancedBinaryTree_SetLayerNumberAll(TreeNodeBalance** this_root, TreeNodeBalance* currentNode);
 //旋转
-void TreeNodeBalance_Spin(const TreeNodeBalance** this_root, XLess less, const void* LPData);
+void XBalancedBinaryTree_Spin(const TreeNodeBalance** this_root);
 #endif // !BALANCEDBINARYTREE_H

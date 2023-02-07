@@ -20,15 +20,15 @@ typedef struct TreeNode
 	void* data;//数据指针
 }TreeNode;
 //创建初始化一个二叉树节点
-void* TreeNode_creation(const size_t NodeSize,const size_t TypeSize);
+void* XBinaryTreeObject_creationNode(const size_t NodeSize,const size_t TypeSize);
 //创建初始化一个二叉树节点,并插入数据
-struct TreeNode* TreeNode_creationInsertData(const void* LPData, const size_t TypeSize);
+struct TreeNode* XBinaryTreeObject_creationInsertData(const void* LPData, const size_t TypeSize);
 //插入数据-不创建节点，传入节点
-const bool TreeNode_insertData(struct TreeNode* this_root,const void* LPData, const size_t TypeSize);
+const bool XBinaryTreeObject_insertData(struct TreeNode* this_root,const void* LPData, const size_t TypeSize);
 //释放一个树节点,parentSetNull父节点指向的指针置为空
-const bool TreeNode_free(struct TreeNode* this_root,const bool parentSetNull);
+const bool XBinaryTreeObject_freeNode(struct TreeNode* this_root,const bool parentSetNull);
 //二叉树遍历转数组存储
-struct XVector* BinaryTreeTraversingToXVector(struct TreeNode* this_root,const enum BinaryTreeTraversing Traversing);
+struct XVector* XBinaryTreeObject_TraversingToXVector(struct TreeNode* this_root,const enum BinaryTreeTraversing Traversing);
 //释放整个树(当前节点及其所有子节点)
-const size_t Tree_freeAll(struct TreeNode* this_root);
+const size_t XBinaryTreeObject_freeNodeAll(struct TreeNode* this_root);
 #endif // !XBINARYTREEOBJECT_H

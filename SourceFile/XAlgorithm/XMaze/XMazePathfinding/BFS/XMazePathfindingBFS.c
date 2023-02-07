@@ -57,7 +57,7 @@ static size_t insertChild(const XVector* maze, BFSNode* node, XVector* NextNodeA
 	return XVector_size(node->child);
 }
 //释放树节点
-static void TreeNode_free(BFSNode* root)
+static void XBinaryTreeObject_freeNode(BFSNode* root)
 {
 	XStack* stack=XStack_init("BFSNode*",sizeof(BFSNode*));
 	XStack_Push(stack,&root);
@@ -102,6 +102,6 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 	XVector_free(CurrentNodeArray);
 	XVector_free(NextNodeArray);
 	XVectorTwo_free(tempMaze);
-	TreeNode_free(root);
+	XBinaryTreeObject_freeNode(root);
 	return Path;
 }
