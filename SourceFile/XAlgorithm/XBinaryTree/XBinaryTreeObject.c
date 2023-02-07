@@ -119,11 +119,7 @@ const bool XBinaryTreeObject_freeNode(struct TreeNode* this_root , const bool pa
 	if (parentSetNull)
 	{
 		//在父节点将指向此节点的指针置空NULL
-		struct TreeNode* LPparent = this_root->parent;
-		if (LPparent->leftChild == this_root)
-			LPparent->leftChild = NULL;
-		else if (LPparent->rightChild == this_root)
-			LPparent->rightChild = NULL;
+		*XBinaryTreeObject_findChildisParent(this_root->parent, this_root) = NULL;
 	}
 	//释放节点
 	free(this_root);
@@ -132,8 +128,8 @@ const bool XBinaryTreeObject_freeNode(struct TreeNode* this_root , const bool pa
 
 XVector* XBinaryTreeObject_TraversingToXVector(TreeNode* this_root, const enum BinaryTreeTraversing Traversing)
 {
-	if (isObjectNULL(this_root, "BinaryTreeTraversingToXVector-this_root"))
-		return false;
+	if (this_root==NULL)
+		return NULL;
 	switch (Traversing)
 	{
 	case  BinaryTreePreorder:
@@ -167,4 +163,12 @@ const size_t XBinaryTreeObject_freeNodeAll(struct TreeNode* this_root)
 	}
 	XStack_free(stack);
 	return sum;
+}
+
+TreeNode** XBinaryTreeObject_findChildisParent(TreeNode* Parent, TreeNode* Child)
+{
+	if (Parent->leftChild == Child)
+		return &Parent->leftChild;
+	if (Parent->rightChild == Child)
+		return &Parent->rightChild;
 }
