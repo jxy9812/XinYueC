@@ -11,7 +11,7 @@ TreeNodeBalance* XBalancedBinaryTree_creation(const size_t TypeSize)
 
 TreeNodeBalance* XBalancedBinaryTree_find(TreeNodeBalance* this_root, XLess less, XEquality equality, const void* LPData)
 {
-	if (isObjectNULL(this_root, "TreeNodeBalance_find-this_root"))
+	if (isNULL(isNULLInfo(this_root,"")))
 		return NULL; 
 	TreeNodeBalance* CurNode = this_root;//当前节点指针
 	while (CurNode!=NULL)

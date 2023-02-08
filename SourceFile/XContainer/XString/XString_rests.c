@@ -8,7 +8,7 @@
 //判断函数
 bool XString_empty(const struct XString* this_XString)
 {
-	if (isObjectNULL(this_XString, "XString_empty"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	struct XSTRING* string = (struct XSTRING*)this_XString;
 	return string->_size==0;
@@ -16,7 +16,7 @@ bool XString_empty(const struct XString* this_XString)
 //返回当前元素大小
 int XString_size(const struct XString* this_XString)
 {
-	if (isObjectNULL(this_XString, "XString_size"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	struct XSTRING* string = (struct XSTRING*)this_XString;
 	return string->_size;
@@ -32,7 +32,7 @@ int XString_size(const struct XString* this_XString)
 //交换
 void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringTwo)
 {
-	if (isObjectNULL(this_XStringOne, "XString_swap-this_XStringOne")|| isObjectNULL(this_XStringTwo, "XString_swap-this_XStringTwo"))
+	if (isNULL(isNULLInfo(this_XStringOne, ""))|| isNULL(isNULLInfo(this_XStringTwo, "")))
 		return NULL;
 	struct XSTRING* stringOne = (struct XSTRING*)this_XStringOne;
 	struct XSTRING* stringTwo = (struct XSTRING*)this_XStringTwo;
@@ -42,7 +42,7 @@ void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringT
 //释放容器
 void XString_free(const struct XString* this_XString)
 {
-	if (isObjectNULL(this_XString, "XString_free"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	struct XSTRING* string = (struct XSTRING*)this_XString;
 	XVector_free(string->_data);

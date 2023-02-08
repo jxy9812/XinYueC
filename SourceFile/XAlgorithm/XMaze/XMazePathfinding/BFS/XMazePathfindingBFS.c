@@ -8,7 +8,7 @@
 static BFSNode* CreationBFSNode_XPoint(XPoint pos)
 {
 	BFSNode* node = (BFSNode*)malloc(sizeof(BFSNode));
-	if (isObjectNULL(node,"CreationBFSNode"))
+	if (isNULL(isNULLInfo(node, "")))
 		return NULL;
 	node->pos = pos;
 	node->parent = NULL;

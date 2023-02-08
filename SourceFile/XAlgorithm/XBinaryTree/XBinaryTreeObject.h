@@ -32,5 +32,7 @@ struct XVector* XBinaryTreeObject_TraversingToXVector(struct TreeNode* this_root
 //释放整个树(当前节点及其所有子节点)
 const size_t XBinaryTreeObject_freeNodeAll(struct TreeNode* this_root);
 //查找在孩子在父节点指针的位置
-struct TreeNode** XBinaryTreeObject_findChildisParent(struct TreeNode* Parent, struct TreeNode* Child);
+struct TreeNode** XBinaryTreeObject_findChildisParent(struct TreeNode* Child);
+//替换孩子节点(将原孩子在父节点的指向修改为新的节点，并建立新的父子关系)
+bool XBinaryTreeObject_ReplacementChildNode(struct TreeNode* formerChild/*旧的*/, struct TreeNode* freshChild/*新的*/);
 #endif // !XBINARYTREEOBJECT_H

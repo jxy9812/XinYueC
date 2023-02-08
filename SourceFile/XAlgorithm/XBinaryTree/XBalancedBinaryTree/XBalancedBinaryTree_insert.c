@@ -4,11 +4,11 @@
 
 TreeNodeBalance* XBalancedBinaryTree_insert(TreeNodeBalance** this_root, XLess less, const void* LPData, const size_t TypeSize)
 {
-	if (isObjectNULL(less, "TreeNodeBalance_insert-less"))
+	if (isNULL(isNULLInfo(less, "")))
 		return NULL;
-	if (isObjectNULL(LPData, "TreeNodeBalance_insert-LPData"))
+	if (isNULL(isNULLInfo(LPData, "")))
 		return NULL;
-	if (isObjectNULL(TypeSize, "TreeNodeBalance_insert-TypeSize"))
+	if (isNULL(isNULLInfo(TypeSize, "")))
 		return NULL;
 	//创建一个新的节点
 	TreeNodeBalance* NewNode = XBalancedBinaryTree_creation(TypeSize);

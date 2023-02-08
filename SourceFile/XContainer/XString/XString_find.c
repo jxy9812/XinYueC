@@ -5,7 +5,7 @@
 //查找函数
 int XString_find_first_of(const struct XString* this_XString, const char* find)
 {
-	if (isObjectNULL(this_XString, "XString_find_first_of"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
@@ -22,7 +22,7 @@ int XString_find_first_of(const struct XString* this_XString, const char* find)
 }
 int XString_find_last_of(const struct XString* this_XString, const char* find)
 {
-	if (isObjectNULL(this_XString, "XString_find_last_of"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
@@ -39,7 +39,7 @@ int XString_find_last_of(const struct XString* this_XString, const char* find)
 }
 int XString_find_first_not_of(const struct XString* this_XString, const char* find)
 {
-	if (isObjectNULL(this_XString, "XString_find_first_not_of"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
@@ -60,7 +60,7 @@ int XString_find_first_not_of(const struct XString* this_XString, const char* fi
 }
 int XString_find_last_not_of(const struct XString* this_XString, const char* find)
 {
-	if (isObjectNULL(this_XString, "XString_find_last_not_of"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);

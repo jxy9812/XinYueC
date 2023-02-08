@@ -49,7 +49,7 @@ static struct XListNode* List_OneSort(XListNode* ListHead, XListNode* ListTail,c
 
 void XList_sort(struct XList* this_list, XCompare compare)
 {
-	if (isObjectNULL(this_list, "List_sort"))
+	if (isNULL(isNULLInfo(this_list, "")))
 		return ;
 	struct XLIST* list = (XLIST*)this_list;
 	XListNode* ListHead = XList_front(this_list);//链表第一个节点

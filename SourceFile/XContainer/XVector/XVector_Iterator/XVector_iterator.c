@@ -4,7 +4,7 @@
 #include"stdio.h"
 XVector_iterator* XVector_begin(struct XVector* this_vector)
 {
-	if (isObjectNULL(this_vector, "XVector_begin"))
+	if (isNULL(isNULLInfo(this_vector, "")))
 		return NULL;
 	return XVector_front(this_vector);
 }
@@ -16,9 +16,9 @@ XVector_iterator* XVector_end(struct XVector* this_vector)
 
 XVector_iterator* XVector_iterator_add(struct XVector* this_vector, XVector_iterator* it)
 {
-	if (isObjectNULL(this_vector, "XVector_iterator_add  struct XVector*"))
+	if (isNULL(isNULLInfo(this_vector, "")))
 		return NULL;
-	if (isObjectNULL(it, "XVector_iterator_add  XVector_iterator*"))
+	if (isNULL(isNULLInfo(it, "")))
 		return NULL;
 	XVector_iterator*  back= XVector_back(this_vector);
 	if(it== back)//如果是最后一个元素则返回空表示遍历完成了

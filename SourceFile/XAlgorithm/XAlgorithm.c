@@ -74,7 +74,7 @@ void XStackRCopyXVector(const XStack* stack, XVector* vector)
 	char* pHead = pTail- TypeSize*(Size-1);//数组头元素
 	XVECTOR* v = (XVECTOR*)vector;
 	v->object._data = malloc(Size * TypeSize);
-	if (isObjectNULL(v->object._data, "XStackCopyXVector-New _data"))
+	if (isNULL(isNULLInfo(v->object._data, "")))
 		return;
 	v->object._capacity = Size;
 	v->object._size = Size;
@@ -95,7 +95,7 @@ void XStackCopyXVector(const XStack* stack, XVector* vector)
 	char* pHead = pTail - TypeSize * (Size - 1);//数组头元素
 	XVECTOR* v = (XVECTOR*)vector;
 	v->object._data = malloc(Size* TypeSize);
-	if (isObjectNULL(v->object._data, "XStackCopyXVector-New _data"))
+	if (isNULL(isNULLInfo(v->object._data, "")))
 		return;
 	v->object._capacity = Size;
 	v->object._size = Size;

@@ -7,7 +7,7 @@
 //尾插
 void XString_append(struct XString* this_XString, const char* str)
 {
-	if (isObjectNULL(this_XString, "XString_append"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return ;
 	struct XVector* v = ((struct XSTRING*)this_XString)->_data;
 	XString_insert(this_XString, XVector_size(v) - 1,str);
@@ -15,7 +15,7 @@ void XString_append(struct XString* this_XString, const char* str)
 // 赋值
 void XString_assign(struct XString* this_XString, const char* str)
 {
-	if (isObjectNULL(this_XString, "XString_assign"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XSTRING*)this_XString)->_data;
 	XString_clear(this_XString);
@@ -24,7 +24,7 @@ void XString_assign(struct XString* this_XString, const char* str)
 // 第索引处开始插入字符串
 void XString_insert(struct XString* this_XString, const int nSel, const char* str)
 {
-	if (isObjectNULL(this_XString, "XString_insert"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return;
 	if (str == NULL||nSel<0)
 		return;

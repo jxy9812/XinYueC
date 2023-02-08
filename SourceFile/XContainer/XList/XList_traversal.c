@@ -4,7 +4,7 @@
 //遍历
 XListNode* XList_at(const XList* this_list, int n)
 {
-	if (isObjectNULL(this_list, "List_at"))
+	if (isNULL(isNULLInfo(this_list, "")))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
 	if (n >= 0 && n <= (list->object._size / 2))//向后找
@@ -34,7 +34,7 @@ XListNode* XList_at(const XList* this_list, int n)
 
 XListNode* XList_front(XList* this_list)
 {
-	if (isObjectNULL(this_list, "List_front"))
+	if (isNULL(isNULLInfo(this_list, "")))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
 	return list->object._data;
@@ -42,7 +42,7 @@ XListNode* XList_front(XList* this_list)
 
 XListNode* XList_back(XList* this_list)
 {
-	if (isObjectNULL(this_list, "List_back"))
+	if (isNULL(isNULLInfo(this_list, "")))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
 	return ((XListNode*)(list->object._data))->prev;
@@ -50,7 +50,7 @@ XListNode* XList_back(XList* this_list)
 
 XListNode* XList_find(const XList* this_list, XEquality equality, const void* findVal)
 {
-	if (isObjectNULL(this_list, "List_find"))
+	if (isNULL(isNULLInfo(this_list, "")))
 		return NULL;
 	for (XList_iterator* it = XList_begin(this_list); it != XList_end(this_list); it = XList_iterator_add(this_list, it))
 	{

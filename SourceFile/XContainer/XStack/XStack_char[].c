@@ -4,7 +4,7 @@
 //char[]数组字符串型入栈
 void XStack_Push_charArray(XStack* this_stack, const char* val)
 {
-	if (isObjectNULL(this_stack, "XStack_Push_charArray"))
+	if (isNULL(isNULLInfo(this_stack, "")))
 		return;
 	XSTACK* stack=(XSTACK*)this_stack;
 	strcpy(StacketEnlargeCapacity(stack), val);
@@ -12,7 +12,7 @@ void XStack_Push_charArray(XStack* this_stack, const char* val)
 //char[]数组字符串型取元素
 char* XStack_top_charArray(XStack* this_stack)
 {
-	if (isObjectNULL(this_stack, "XStack_top_charArray"))
+	if (isNULL(isNULLInfo(this_stack, "")))
 		return;
 	return (char*)XStack_top(this_stack);
 }

@@ -6,7 +6,7 @@
 //删除索引处字符
 bool XString_eraseOne(struct XString* this_XString, const int nSel)
 {
-	if (isObjectNULL(this_XString, "XString_eraseOne"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return false;
 	if (nSel < 0 )
 		return false;
@@ -25,14 +25,14 @@ bool XString_eraseOne(struct XString* this_XString, const int nSel)
 //尾删
 void XString_pop_back(struct XString* this_XString)
 {
-	if (isObjectNULL(this_XString, "XString_pop_back"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return;
 	XString_eraseOne(this_XString, XString_size(this_XString) - 1);
 }
 //删除索引处开始的n个字符
 void XString_erase(struct XString* this_XString, const int nSel, const int n)
 {
-	if (isObjectNULL(this_XString, "XString_erase"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return;
 	if (nSel < 0 || n <= 0)
 		return;
@@ -45,7 +45,7 @@ void XString_erase(struct XString* this_XString, const int nSel, const int n)
 //清空字符串
 void XString_clear(struct XString* this_XString)
 {
-	if (isObjectNULL(this_XString, "XString_clear"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XSTRING*)this_XString)->_data;
 	int right = XVector_size(v) - 2;

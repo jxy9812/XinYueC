@@ -9,7 +9,7 @@
 XVector* XVector_init(const char* arr, ...)
 {
 	XVECTOR* this_vector = malloc(sizeof(XVECTOR));
-	if (isObjectNULL(this_vector, "XVector_init-malloc"))
+	if (isNULL(isNULLInfo(this_vector,"")))
 		return NULL;
 	char buf[100];
 	strcpy(buf, arr);

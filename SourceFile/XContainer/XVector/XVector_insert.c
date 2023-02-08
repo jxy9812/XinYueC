@@ -12,7 +12,7 @@ void XVector_push_front(struct XVector* this_vector, void* LValue)
 }
 void XVector_push_back(struct XVector* this_vector, void* val)
 {
-	if (isObjectNULL(this_vector, "XVector_Push_Back"))
+	if (isNULL(isNULLInfo(this_vector, "")))
 		return;
 	XVECTOR* v=(XVECTOR*)this_vector;
 	XVectorEnlargeCapacity(v);
@@ -22,7 +22,7 @@ void XVector_push_back(struct XVector* this_vector, void* val)
 }
 void XVector_insert_front(struct XVector* this_vector, const void* pSel, const void* val)
 {
-	if (isObjectNULL(this_vector, "XVector_insert_front"))
+	if (isNULL(isNULLInfo(this_vector, "")))
 		return;
 	XVECTOR* v=(XVECTOR*)this_vector;
 	size_t TypeSize = XVector_TypeSize(this_vector);//数据类型的大小
@@ -48,7 +48,7 @@ void XVector_insert_front(struct XVector* this_vector, const void* pSel, const v
 }
 void XVector_insert_nfront(struct XVector* this_vector, const void* pSel, const int n, const void* val)// 向量中指向元素p前增加n个相同的元素x
 {
-	if (isObjectNULL(this_vector, "XVector_insert_nfront"))
+	if (isNULL(isNULLInfo(this_vector, "")))
 		return;
 	XVECTOR* v=(XVECTOR*)this_vector;
 	if (pSel >= v->front(v) && pSel <= v->back(v))
@@ -71,7 +71,7 @@ void XVector_insert_nfront(struct XVector* this_vector, const void* pSel, const 
 }
 void XVector_insert(struct XVector* this_vector, const void* pSel, const void* p1, const void* p2)// 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2)间的数据
 {
-	if (isObjectNULL(this_vector, "XVector_insert"))
+	if (isNULL(isNULLInfo(this_vector, "")))
 		return;
 	XVECTOR* v=(XVECTOR*)this_vector;
 	if (pSel >= v->front(v) && pSel <= v->back(v))

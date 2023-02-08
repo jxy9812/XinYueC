@@ -8,10 +8,10 @@
 struct XString* XString_init()
 {
 	struct XSTRING* this_XString = malloc(sizeof(struct XSTRING));
-	if (isObjectNULL(this_XString,"XString_init-malloc"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	XVector* vector= XVector_init("char", sizeof(char));
-	if (isObjectNULL(vector, "XString_init-XVector_init"))
+	if (isNULL(isNULLInfo(vector, "")))
 		return NULL;
 	this_XString->_data = vector;
 	//初始化数组为0;

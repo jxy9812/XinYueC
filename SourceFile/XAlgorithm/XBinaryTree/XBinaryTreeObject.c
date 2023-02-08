@@ -75,10 +75,10 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct TreeNode* this_ro
 void* XBinaryTreeObject_creationNode(const size_t NodeSize, const size_t TypeSize)
 {
 	TreeNode* node =(TreeNode*)calloc(1,NodeSize);
-	if (isObjectNULL(node,"TreeNode_creation-node"))
+	if (isNULL(isNULLInfo(node,"")))
 		return NULL;
 	node->data= calloc(1,TypeSize);//开辟内存并且置为0
-	if (isObjectNULL(node->data, "TreeNode_creation-node->data"))
+	if (isNULL(isNULLInfo(node->data,"")))
 	{
 		free(node);
 		return NULL;
@@ -100,11 +100,11 @@ TreeNode* XBinaryTreeObject_creationInsertData(const void* LPData, const size_t 
 
 const bool XBinaryTreeObject_insertData(struct TreeNode* this_root, const void* LPData, const size_t TypeSize)
 {
-	if (isObjectNULL(this_root, "InsertTreeNodeData-this_root"))
+	if (isNULL(isNULLInfo(this_root,"")))
 		return false;
-	if (isObjectNULL(LPData, "InsertTreeNodeData-LPData"))
+	if (isNULL(isNULLInfo(LPData, "")))
 		return false;
-	if (isObjectNULL(TypeSize, "InsertTreeNodeData-TypeSize"))
+	if (isNULL(isNULLInfo(TypeSize, "")))
 		return false;
 	memcpy(this_root->data, LPData, TypeSize);
 	return true;
@@ -112,14 +112,14 @@ const bool XBinaryTreeObject_insertData(struct TreeNode* this_root, const void* 
 
 const bool XBinaryTreeObject_freeNode(struct TreeNode* this_root , const bool parentSetNull)
 {
-	if (isObjectNULL(this_root, "TreeNode_free-this_root"))
+	if (isNULL(isNULLInfo(this_root, "")))
 		return false;
 	//释放数据
 	free(this_root->data);
 	if (parentSetNull)
 	{
 		//在父节点将指向此节点的指针置空NULL
-		*XBinaryTreeObject_findChildisParent(this_root->parent, this_root) = NULL;
+		*XBinaryTreeObject_findChildisParent(this_root) = NULL;
 	}
 	//释放节点
 	free(this_root);
@@ -144,7 +144,7 @@ XVector* XBinaryTreeObject_TraversingToXVector(TreeNode* this_root, const enum B
 }
 const size_t XBinaryTreeObject_freeNodeAll(struct TreeNode* this_root)
 {
-	if (isObjectNULL(this_root, "Tree_freeAll-this_root"))
+	if (isNULL(isNULLInfo(this_root, "")))
 		return 0;
 	size_t sum = 0;//一共释放了几个节点
 	XStack* stack = XStack_init("struct TreeNode*",sizeof(struct TreeNode*));
@@ -165,10 +165,35 @@ const size_t XBinaryTreeObject_freeNodeAll(struct TreeNode* this_root)
 	return sum;
 }
 
-TreeNode** XBinaryTreeObject_findChildisParent(TreeNode* Parent, TreeNode* Child)
+TreeNode** XBinaryTreeObject_findChildisParent(struct TreeNode* Child)
 {
+	if (isNULL(isNULLInfo(Child, "")))
+		return NULL;
+	TreeNode* Parent = Child->parent;
+	if (Parent == NULL)
+		return NULL;
 	if (Parent->leftChild == Child)
 		return &Parent->leftChild;
 	if (Parent->rightChild == Child)
 		return &Parent->rightChild;
+}
+
+bool XBinaryTreeObject_ReplacementChildNode(TreeNode* formerChild, TreeNode* freshChild)
+{
+	if(isNULL(isNULLInfo(formerChild, "")))
+		return false;
+	if (isNULL(isNULLInfo(freshChild, "")))
+		return false;
+	TreeNode* Parent = formerChild->parent;//父节点
+	if (Parent == NULL)
+		return false;
+	TreeNode** ParentPointToChild = XBinaryTreeObject_findChildisParent(formerChild);//父节点指向孩子指针
+	if(ParentPointToChild==NULL)
+		return false;
+	//与新节点互相建立链接
+	*ParentPointToChild = freshChild;
+	freshChild->parent = Parent;
+	//断开旧节点指向父的指针
+	formerChild->parent = NULL;
+	return true;
 }

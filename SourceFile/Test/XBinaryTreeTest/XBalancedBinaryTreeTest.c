@@ -36,7 +36,7 @@ void TreeNodeBalanceTest()
 	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreeInorder);
 	printf("中序遍历:%d\n", XVector_size(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
-	printf("\n");
+	printf("size:%d\n",XVector_size(TreePreorder));
 	XVector_free(TreePreorder);
 
 	//后序测试
@@ -49,7 +49,14 @@ void TreeNodeBalanceTest()
 
 	//删除测试
 	int erase_int = 4;
-	XBalancedBinaryTree_erase(&root,XLess_int,XEquality_int,&erase_int,sizeof(int));
+	for (size_t i = 0; i < sizeof(a) / sizeof(a[0]); i++)
+	{
+		if (i == 8)
+			i = 8;
+		XBalancedBinaryTree_erase(&root, XLess_int, XEquality_int, a+i, sizeof(int));
+		
+	}
+	
 	//中序测试
 	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreeInorder);
 	if(TreePreorder!=NULL)
@@ -57,7 +64,9 @@ void TreeNodeBalanceTest()
 		printf("中序遍历:%d\n", XVector_size(TreePreorder));
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		printf("\n");
+		printf("size:%d\n", XVector_size(TreePreorder));
 		XVector_free(TreePreorder);
 		printf("高度%d\n", root->maxLayer);
+		
 	}
 }

@@ -6,7 +6,7 @@
 //插入
 XListNode* XList_push_front(XList* this_list, void*LValue)
 {
-	if (isObjectNULL(this_list, "List_push_back"))
+	if (isNULL(isNULLInfo(this_list, "")))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
 	XListNode* NewNode = XList_push_back(this_list, LValue);
@@ -19,7 +19,7 @@ XListNode* XList_push_front(XList* this_list, void*LValue)
 
 XListNode* XList_push_back (XList* this_list, void*LValue)
 {
-	if (isObjectNULL(this_list, "List_push_front"))
+	if (isNULL(isNULLInfo(this_list, "")))
 		return NULL;
 	XLIST* list=(XLIST*)this_list;
 	XListNode* NewNode = malloc(sizeof(XListNode));//新节点
@@ -52,7 +52,7 @@ XListNode* XList_push_back (XList* this_list, void*LValue)
 
 void XList_insert_front_p(XList* this_list, XListNode* pval, ...)
 {
-	if (isObjectNULL(this_list, "List_insert_front_p"))
+	if (isNULL(isNULLInfo(this_list, "")))
 		return ;
 	XLIST* list=(XLIST*)this_list;
 	if (pval == NULL)
@@ -106,7 +106,7 @@ void XList_insert_front_p(XList* this_list, XListNode* pval, ...)
 
 void XList_insert_front_int(XList* this_list, int i, ...)
 {
-	if (isObjectNULL(this_list, "List_insert_front_int"))
+	if (isNULL(isNULLInfo(this_list, "")))
 		return;
 	XLIST* list=(XLIST*)this_list;
 	if ((i < 0) && (list->object._size <= i))
@@ -127,7 +127,7 @@ void XList_insert_front_int(XList* this_list, int i, ...)
 
 void XList_insert(XList* this_list, XListNode* pval, const void* p1, const void* p2)
 {
-	if (isObjectNULL(this_list, "List_insert"))
+	if (isNULL(isNULLInfo(this_list, "")))
 		return;
 	XLIST* list=(XLIST*)this_list;
 	if (pval == NULL)

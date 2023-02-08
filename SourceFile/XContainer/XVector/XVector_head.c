@@ -4,7 +4,7 @@
 //检测是否需要扩容
 void XVectorEnlargeCapacity(XVECTOR* this_vector)
 {
-	if (isObjectNULL(this_vector, "VectorEnlargeCapacity"))
+	if (isNULL(isNULLInfo(this_vector, "")))
 		return;
 	if (this_vector->object._capacity == 0)
 	{

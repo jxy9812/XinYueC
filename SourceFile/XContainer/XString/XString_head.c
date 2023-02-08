@@ -20,7 +20,7 @@ size_t XString_charNumber(const char* str)
 
 size_t XString_XVectorNsel(const struct XSTRING* this_XString,const size_t nSel)
 {
-	if (isObjectNULL(this_XString, "XString_XVectorNsel"))
+	if (isNULL(isNULLInfo(this_XString, "")))
 		return;
 	if (nSel < 0)
 		return -1;
