@@ -176,6 +176,8 @@ TreeNode** XBinaryTreeObject_findChildisParent(struct TreeNode* Child)
 		return &Parent->leftChild;
 	if (Parent->rightChild == Child)
 		return &Parent->rightChild;
+	isNULL(isNULLInfo(0, "在父节点找不到孩子"));
+	return NULL;
 }
 
 bool XBinaryTreeObject_ReplacementChildNode(TreeNode* formerChild, TreeNode* freshChild)

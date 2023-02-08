@@ -23,20 +23,22 @@ const size_t XBalancedBinaryTree_SetLayerNumberAll(TreeNodeBalance** this_root, 
 	//循环返回父节点设置层数
 	while (currentNode != NULL)
 	{
-		(currentNode)->maxLayer = 1 + XBalancedBinaryTree_GetLayerNumberChild(currentNode);
+		currentNode->maxLayer = 1 + XBalancedBinaryTree_GetLayerNumberChild(currentNode);
 		if (currentNode == *this_root)//如果是根节点
 		{
-			XBalancedBinaryTree_Spin(this_root);//传入根的二级指针
+			currentNode = XBalancedBinaryTree_Spin(this_root);//传入根的二级指针
 		}
 		else//存在父节点
 		{//传父节点指向孩子的指针
-			TreeNodeBalance* root_par = currentNode->parent;
-			if (root_par->leftChild == currentNode)
-				XBalancedBinaryTree_Spin(&(root_par->leftChild));//
-			else if (root_par->rightChild == currentNode)
-				XBalancedBinaryTree_Spin(&(root_par->rightChild));
+			currentNode = XBalancedBinaryTree_Spin(XBinaryTreeObject_findChildisParent(currentNode));
+			
+			//TreeNodeBalance* root_par = currentNode->parent;
+			//if (root_par->leftChild == currentNode)
+			//	XBalancedBinaryTree_Spin(&(root_par->leftChild));//
+			//else if (root_par->rightChild == currentNode)
+			//	XBalancedBinaryTree_Spin(&(root_par->rightChild));
 		}
-		currentNode = (currentNode)->parent;
+		currentNode = currentNode->parent;
 		++count;
 	}
 	return count;

@@ -5,10 +5,18 @@
 #include"XLess.h"
 #include"XEquality.h"
 //打印节点的数据
-static void printTreeNode(void* LPVal)
+static void printTreeNode(void* LPVal, void* args)
 {
 	struct TreeNodeBalance* currentNode = *(struct TreeNodeBalance**)LPVal;
 	printf("%d ", *(int*)currentNode->data);
+}
+void traverse(void* LPVal, void* args)
+{
+	struct TreeNodeBalance* currentNode = *(struct TreeNodeBalance**)LPVal;
+	if (currentNode->parent == NULL)
+		return;
+	if(XBinaryTreeObject_findChildisParent(currentNode)==NULL)
+		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->data);
 }
 void TreeNodeBalanceTest()
 {
@@ -18,7 +26,12 @@ void TreeNodeBalanceTest()
 	TreeNodeBalance* root = XBalancedBinaryTree_insert(NULL, XLess_int,LPa++, sizeof(int));
 	for (size_t i = 0; i < sizeof(a)/sizeof(a[0])-1; i++)
 	{
+		if (i == 11)
+			i = 11;
 		XBalancedBinaryTree_insert(&root, XLess_int, LPa++, sizeof(int));
+		XVector* TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreePreorder);
+		XVector_iterator_for_each(TreePreorder, traverse, NULL);
+		XVector_free(TreePreorder);
 	}
 	int findVal = 456;
 	TreeNodeBalance* findRet = XBalancedBinaryTree_find(root, XLess_int, XEquality_int,&findVal);
@@ -47,14 +60,10 @@ void TreeNodeBalanceTest()
 	XVector_free(TreePreorder);
 	printf("高度%d\n", root->maxLayer);
 
-	//删除测试
-	int erase_int = 4;
+	//删除测试遍历插入的数组一个个查找删除，直至清空二叉树
 	for (size_t i = 0; i < sizeof(a) / sizeof(a[0]); i++)
 	{
-		if (i == 8)
-			i = 8;
 		XBalancedBinaryTree_erase(&root, XLess_int, XEquality_int, a+i, sizeof(int));
-		
 	}
 	
 	//中序测试
@@ -67,6 +76,9 @@ void TreeNodeBalanceTest()
 		printf("size:%d\n", XVector_size(TreePreorder));
 		XVector_free(TreePreorder);
 		printf("高度%d\n", root->maxLayer);
-		
+	}
+	else
+	{
+		printf("二叉树是空的\n");
 	}
 }

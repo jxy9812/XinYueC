@@ -22,6 +22,9 @@ static TreeNodeBalance* RR(TreeNodeBalance* this_root)
 	this_root->parent = NewRoot;
 
 	this_root->leftChild = NewRoot->rightChild;
+	if (NewRoot->rightChild != NULL)
+	NewRoot->rightChild->parent = this_root;
+
 	NewRoot->rightChild = this_root;
 	XBalancedBinaryTree_SetLayerNumberThis(this_root);
 	XBalancedBinaryTree_SetLayerNumberThis(NewRoot);
@@ -38,6 +41,9 @@ static TreeNodeBalance* LL(TreeNodeBalance* this_root)
 	this_root->parent = NewRoot;
 
 	this_root->rightChild = NewRoot->leftChild;
+	if(NewRoot->leftChild!=NULL)
+	NewRoot->leftChild->parent = this_root;
+
 	NewRoot->leftChild = this_root;
 
 	XBalancedBinaryTree_SetLayerNumberThis(this_root);
@@ -61,7 +67,7 @@ static TreeNodeBalance* LR(TreeNodeBalance* this_root)
 	return RR(this_root);
 }
 
-void XBalancedBinaryTree_Spin(const TreeNodeBalance** this_root)
+TreeNodeBalance* XBalancedBinaryTree_Spin(const TreeNodeBalance** this_root)
 {
 	if (isNULL(isNULLInfo(this_root, "")))
 		return NULL;
@@ -94,4 +100,5 @@ void XBalancedBinaryTree_Spin(const TreeNodeBalance** this_root)
 		}
 
 	}
+	return *this_root;
 }

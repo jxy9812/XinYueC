@@ -31,5 +31,5 @@ const size_t XBalancedBinaryTree_SetLayerNumberThis(TreeNodeBalance* this_root);
 //设置高度从当前节点一直到根
 const size_t XBalancedBinaryTree_SetLayerNumberAll(TreeNodeBalance** this_root, TreeNodeBalance* currentNode);
 //旋转
-void XBalancedBinaryTree_Spin(const TreeNodeBalance** this_root);
+TreeNodeBalance* XBalancedBinaryTree_Spin(const TreeNodeBalance** this_root);
 #endif // !BALANCEDBINARYTREE_H

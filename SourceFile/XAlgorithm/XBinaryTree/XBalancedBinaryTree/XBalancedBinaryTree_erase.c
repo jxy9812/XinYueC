@@ -8,7 +8,7 @@ static void* leaf_erase(TreeNodeBalance** this_root, TreeNodeBalance* eraseNode)
 
 	if (eraseNode->parent == NULL)//是叶子也是根
 	{
-		XBinaryTreeObject_freeNode(eraseNode, true);
+		XBinaryTreeObject_freeNode(eraseNode, false);
 		*this_root = NULL;
 		return;
 	}
@@ -82,18 +82,7 @@ static void* TwoChild_erase(TreeNodeBalance** this_root, TreeNodeBalance* eraseN
 	}
 	
 	XBalancedBinaryTree_SetLayerNumberAll(this_root, LPparent);
-	//if (currentNode == *this_root)//也是根
-	//{
-	//	XBinaryTreeObject_freeNode(currentNode, true);
-	//	*this_root = ChildNode;
-	//	return;
-	//}
-	//TreeNodeBalance* currentParent = eraseNode->parent;//要删除节点的父节点
-	//TreeNodeBalance** temp = XBinaryTreeObject_findChildisParent(currentParent, eraseNode);
-	//XBinaryTreeObject_freeNode(eraseNode, true);
-	//*temp = ChildNode;//将父节点的指针指向新的孩子;
-	//ChildNode->parent = currentParent;//孩子的指针也指向新的父节点
-	//XBalancedBinaryTree_SetLayerNumberAll(this_root, currentParent);
+
 }
 
 void* XBalancedBinaryTree_erase(TreeNodeBalance** this_root, XLess less, XEquality equality, const void* LPData, const size_t TypeSize)
@@ -108,10 +97,10 @@ void* XBalancedBinaryTree_erase(TreeNodeBalance** this_root, XLess less, XEquali
 		++count;
 	if (findRet->rightChild != NULL)
 		++count;
-	//if(count==0)//叶子
-	//	leaf_erase(this_root,findRet);
-	//if (count == 1)//一个孩子
-	//	OneChild_erase(this_root, findRet);
+	if(count==0)//叶子
+		leaf_erase(this_root,findRet);
+	if (count == 1)//一个孩子
+		OneChild_erase(this_root, findRet);
 	if (count == 2)//两个孩子
 		TwoChild_erase(this_root, findRet);
 }
