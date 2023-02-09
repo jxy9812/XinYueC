@@ -24,7 +24,7 @@ typedef struct XBinaryTreeNode
 //创建初始化一个二叉树节点
 void* XBinaryTreeObject_creationNode(const size_t NodeSize, const size_t nodeArrySize,const size_t TypeSize);
 //创建初始化一个二叉树节点,并插入数据
-struct XBinaryTreeNode* XBinaryTreeObject_creationInsertData(const void* LPData, const size_t TypeSize);
+struct XBinaryTreeNode* XBinaryTreeObject_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize);
 //插入数据-不创建节点，传入节点
 const bool XBinaryTreeObject_insertData(struct XBinaryTreeNode* this_root,const void* LPData, const size_t TypeSize);
 //释放一个树节点,parentSetNull父节点指向的指针置为空

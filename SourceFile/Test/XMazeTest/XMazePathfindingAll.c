@@ -55,7 +55,7 @@ void XMazePathfinding()
 	//system("pause");
 	//system("cls");
 
-	// PathAll = XMazePathfindingAllDFS(maze, start, dest);
+	//PathAll = XMazePathfindingAllDFS(maze, start, dest);
 	//printf("测试迷宫寻路-全部方案一共找到%d种方案\n",XVector_size(PathAll));
 	//system("pause");
 	//system("cls");
@@ -70,8 +70,8 @@ void XMazePathfinding()
 	//}
 	//XVectorTwo_free(PathAll);
 	
-	//XVector* Path = XMazePathfindingBFS(maze, start, dest);
-	XVector* Path = XMazePathfindingAStar(maze, start, dest,true);
+	XVector* Path = XMazePathfindingBFS(maze, start, dest);
+	//XVector* Path = XMazePathfindingAStar(maze, start, dest,true);
 	system("pause");
 	XMazePathPrintSleep(maze, Path, "■", "  ", "★", 100);
 	XVector_free(Path);

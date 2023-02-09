@@ -11,18 +11,18 @@ void XBinaryTreeObjectTest()
 	int a[] = { 0,1,2,3,4,5,6,7 };
 	int* LPa = a;
 	
-	XBinaryTreeNode* root = XBinaryTreeObject_creationInsertData(LPa++,sizeof(int));
+	XBinaryTreeNode* root = XBinaryTreeObject_creationInsertData(LPa++,3,sizeof(int));
 	XBinaryTreeNode* curNode = root;
-	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild) = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild) = XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
 	//curNode->leftChild = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
 	curNode = *XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild);
-	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild)  = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
-	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeRChild) = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild)  = XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
+	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeRChild) = XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
 
-	*XBinaryTreeObject_GetTreeNode(root, XBTreeRChild) =XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	*XBinaryTreeObject_GetTreeNode(root, XBTreeRChild) =XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
 	curNode = *XBinaryTreeObject_GetTreeNode(root, XBTreeRChild);
-	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild) = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
-	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeRChild) = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild) = XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
+	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeRChild) = XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
 
 	//前序测试
 	XVector* TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreePreorder);

@@ -110,11 +110,11 @@ void* XBinaryTreeObject_creationNode(const size_t NodeSize, const size_t nodeArr
 	return node;
 }
 
-XBinaryTreeNode* XBinaryTreeObject_creationInsertData(const void* LPData, const size_t TypeSize)
+XBinaryTreeNode* XBinaryTreeObject_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize)
 {
-	struct XBinaryTreeNode* node = XBinaryTreeObject_creationNode(sizeof(XBinaryTreeNode),3,TypeSize);
-	/*if(isObjectNULL(node,"TreeNode_creationInsertData-node"))
-		return NULL;*/
+	struct XBinaryTreeNode* node = XBinaryTreeObject_creationNode(sizeof(XBinaryTreeNode), nodeArrySize,TypeSize);
+	if(isNULL(isNULLInfo( node,"创建节点失败")))
+		return NULL;
 	XBinaryTreeObject_insertData(node, LPData, TypeSize);
 	return node;
 }
@@ -185,12 +185,12 @@ const size_t XBinaryTreeObject_freeNodeAll(struct XBinaryTreeNode* this_root)
 	{
 		currentNode = *(struct XBinaryTreeNode**)XStack_top(stack);
 		XStack_pop(stack);
-		XBinaryTreeNode* LChild = *XBinaryTreeObject_GetTreeNode(currentNode, XBTreeLChild);
-		XBinaryTreeNode* RChild = *XBinaryTreeObject_GetTreeNode(currentNode, XBTreeRChild);
-		if(LChild !=NULL)
-			XStack_Push(stack, &LChild);
-		if (RChild != NULL)
-			XStack_Push(stack, &RChild);
+		XVector_iterator* it = XVector_begin(currentNode->node);
+		it = XVector_iterator_add(currentNode->node, it);
+		for ( ; it != XVector_end(currentNode->node); it= XVector_iterator_add(currentNode->node,it))
+		{
+			XStack_Push(stack, it);
+		}
 		XBinaryTreeObject_freeNode(currentNode,false);//释放当前节点
 		sum++;
 	}
