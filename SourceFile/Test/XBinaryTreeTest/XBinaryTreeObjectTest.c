@@ -3,7 +3,7 @@
 //打印节点的数据
 static void printTreeNode(void* LPVal)
 {
-	struct TreeNode* currentNode = *(struct TreeNode**)LPVal;
+	struct XBinaryTreeNode* currentNode = *(struct XBinaryTreeNode**)LPVal;
 	printf("%d ", *(int*)currentNode->data);
 }
 void XBinaryTreeObjectTest()
@@ -11,34 +11,35 @@ void XBinaryTreeObjectTest()
 	int a[] = { 0,1,2,3,4,5,6,7 };
 	int* LPa = a;
 	
-	TreeNode* root = XBinaryTreeObject_creationInsertData(LPa++,sizeof(int));
-	TreeNode* curNode = root;
-	curNode->leftChild = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
-	curNode = curNode->leftChild;
-	curNode->leftChild = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
-	curNode->rightChild = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	XBinaryTreeNode* root = XBinaryTreeObject_creationInsertData(LPa++,sizeof(int));
+	XBinaryTreeNode* curNode = root;
+	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild) = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	//curNode->leftChild = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	curNode = *XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild);
+	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild)  = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeRChild) = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
 
-	root->rightChild=XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
-	curNode = root->rightChild;
-	curNode->leftChild = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
-	curNode->rightChild = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	*XBinaryTreeObject_GetTreeNode(root, XBTreeRChild) =XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	curNode = *XBinaryTreeObject_GetTreeNode(root, XBTreeRChild);
+	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild) = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
+	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeRChild) = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
 
 	//前序测试
-	XVector* TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreePreorder);
+	XVector* TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreePreorder);
 	printf("前序遍历:", XVector_size(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free(TreePreorder);
 
 	//中序测试
-	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreeInorder);
+	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreeInorder);
 	printf("中序遍历:", XVector_size(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free(TreePreorder);
 
 	//后序测试
-	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreePostorder);
+	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreePostorder);
 	printf("后序遍历:", XVector_size(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");

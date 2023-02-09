@@ -7,53 +7,53 @@
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
-	struct TreeNodeBalance* currentNode = *(struct TreeNodeBalance**)LPVal;
-	printf("%d ", *(int*)currentNode->data);
+	struct XBBTreeNode* currentNode = *(struct XBBTreeNode**)LPVal;
+	printf("%d ", *(int*)currentNode->XBTNode.data);
 }
 void traverse(void* LPVal, void* args)
 {
-	struct TreeNodeBalance* currentNode = *(struct TreeNodeBalance**)LPVal;
-	if (currentNode->parent == NULL)
+	struct XBBTreeNode* currentNode = *(struct XBBTreeNode**)LPVal;
+	if (*XBinaryTreeObject_GetTreeNode(currentNode,XBTreeParent) == NULL)
 		return;
 	if(XBinaryTreeObject_findChildisParent(currentNode)==NULL)
-		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->data);
+		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.data);
 }
 void TreeNodeBalanceTest()
 {
 	int a[] = { 4,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
 	int* LPa = a;
 
-	TreeNodeBalance* root = XBalancedBinaryTree_insert(NULL, XLess_int,LPa++, sizeof(int));
+	XBBTreeNode* root = XBalancedBinaryTree_insert(NULL, XLess_int,LPa++, sizeof(int));
 	for (size_t i = 0; i < sizeof(a)/sizeof(a[0])-1; i++)
 	{
 		if (i == 11)
 			i = 11;
 		XBalancedBinaryTree_insert(&root, XLess_int, LPa++, sizeof(int));
-		XVector* TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreePreorder);
+		XVector* TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreePreorder);
 		XVector_iterator_for_each(TreePreorder, traverse, NULL);
 		XVector_free(TreePreorder);
 	}
 	int findVal = 456;
-	TreeNodeBalance* findRet = XBalancedBinaryTree_find(root, XLess_int, XEquality_int,&findVal);
+	XBBTreeNode* findRet = XBalancedBinaryTree_find(root, XLess_int, XEquality_int,&findVal);
 	if(findRet!=NULL)
-	printf("找到的:%d\n", *(int*)findRet->data);
+	printf("找到的:%d\n", *(int*)findRet->XBTNode.data);
 
 	//前序测试
-	XVector* TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreePreorder);
+	XVector* TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreePreorder);
 	printf("前序遍历:%d\n", XVector_size(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free(TreePreorder);
 
 	//中序测试
-	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreeInorder);
+	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreeInorder);
 	printf("中序遍历:%d\n", XVector_size(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("size:%d\n",XVector_size(TreePreorder));
 	XVector_free(TreePreorder);
 
 	//后序测试
-	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreePostorder);
+	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreePostorder);
 	printf("后序遍历::%d\n", XVector_size(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
@@ -67,7 +67,7 @@ void TreeNodeBalanceTest()
 	}
 	
 	//中序测试
-	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, BinaryTreeInorder);
+	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreeInorder);
 	if(TreePreorder!=NULL)
 	{
 		printf("中序遍历:%d\n", XVector_size(TreePreorder));

@@ -1,32 +1,31 @@
 ﻿#include "XBalancedBinaryTree.h"
-#include"XBinaryTreeObject.h"
 #include"XContainerObject.h"
 #include"XStack.h"
-TreeNodeBalance* XBalancedBinaryTree_creation(const size_t TypeSize)
+XBBTreeNode* XBalancedBinaryTree_creation(const size_t TypeSize)
 {
-	struct TreeNodeBalance* node = XBinaryTreeObject_creationNode(sizeof(TreeNodeBalance),TypeSize);
+	struct XBBTreeNode* node = XBinaryTreeObject_creationNode(sizeof(XBBTreeNode),3,TypeSize);
 	node->maxLayer = 1;
 	return node;
 }
 
-TreeNodeBalance* XBalancedBinaryTree_find(TreeNodeBalance* this_root, XLess less, XEquality equality, const void* LPData)
+XBBTreeNode* XBalancedBinaryTree_find(XBBTreeNode* this_root, XLess less, XEquality equality, const void* LPData)
 {
 	if (isNULL(isNULLInfo(this_root,"")))
 		return NULL; 
-	TreeNodeBalance* CurNode = this_root;//当前节点指针
+	XBBTreeNode* CurNode = this_root;//当前节点指针
 	while (CurNode!=NULL)
 	{
-		if (equality(CurNode->data, LPData))
+		if (equality(CurNode->XBTNode.data, LPData))
 		{
 			return CurNode;
 		}
-		else if (less(CurNode->data, LPData))
+		else if (less(CurNode->XBTNode.data, LPData))
 		{
-			CurNode = CurNode->rightChild;
+			CurNode = *XBinaryTreeObject_GetTreeNode(CurNode, XBTreeRChild);
 		}
 		else
 		{
-			CurNode = CurNode->leftChild;
+			CurNode = *XBinaryTreeObject_GetTreeNode(CurNode, XBTreeLChild);
 		}
 	}
 	return NULL;

@@ -1,23 +1,22 @@
 ﻿#include "XBalancedBinaryTree.h"
-#include"XBinaryTreeObject.h"
 #include"XContainerObject.h"
-const size_t XBalancedBinaryTree_GetLayerNumberThis(const TreeNodeBalance* this_root)
+const size_t XBalancedBinaryTree_GetLayerNumberThis(const XBBTreeNode* this_root)
 {
 	if (this_root != NULL)
 		return this_root->maxLayer;
 	return 0;
 }
-const size_t XBalancedBinaryTree_GetLayerNumberChild(const TreeNodeBalance* this_root)
+const size_t XBalancedBinaryTree_GetLayerNumberChild(const XBBTreeNode* this_root)
 {
-	size_t left = XBalancedBinaryTree_GetLayerNumberThis(this_root->leftChild);
-	size_t right = XBalancedBinaryTree_GetLayerNumberThis(this_root->rightChild);
+	size_t left = XBalancedBinaryTree_GetLayerNumberThis(*XBinaryTreeObject_GetTreeNode(this_root, XBTreeLChild));
+	size_t right = XBalancedBinaryTree_GetLayerNumberThis(*XBinaryTreeObject_GetTreeNode(this_root, XBTreeRChild));
 	return (left > right) ? left : right;
 }
-const size_t XBalancedBinaryTree_SetLayerNumberThis(TreeNodeBalance* this_root)
+const size_t XBalancedBinaryTree_SetLayerNumberThis(XBBTreeNode* this_root)
 {
 	return this_root->maxLayer = 1 + XBalancedBinaryTree_GetLayerNumberChild(this_root);;
 }
-const size_t XBalancedBinaryTree_SetLayerNumberAll(TreeNodeBalance** this_root, TreeNodeBalance* currentNode)
+const size_t XBalancedBinaryTree_SetLayerNumberAll(XBBTreeNode** this_root, XBBTreeNode* currentNode)
 {
 	size_t count = 0;//向上调整一共经历了多少个节点
 	//循环返回父节点设置层数
@@ -31,14 +30,8 @@ const size_t XBalancedBinaryTree_SetLayerNumberAll(TreeNodeBalance** this_root, 
 		else//存在父节点
 		{//传父节点指向孩子的指针
 			currentNode = XBalancedBinaryTree_Spin(XBinaryTreeObject_findChildisParent(currentNode));
-			
-			//TreeNodeBalance* root_par = currentNode->parent;
-			//if (root_par->leftChild == currentNode)
-			//	XBalancedBinaryTree_Spin(&(root_par->leftChild));//
-			//else if (root_par->rightChild == currentNode)
-			//	XBalancedBinaryTree_Spin(&(root_par->rightChild));
 		}
-		currentNode = currentNode->parent;
+		currentNode = *XBinaryTreeObject_GetTreeNode(currentNode, XBTreeParent);
 		++count;
 	}
 	return count;

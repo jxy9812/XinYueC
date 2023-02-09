@@ -7,8 +7,12 @@
 //初始化函数
 XStack* XStack_init(const char* arr, ...)
 {
-	XSTACK* this_stack = malloc(sizeof(XSTACK));
-	char buf[20];
+	XSTACK* this_stack =(XSTACK*)malloc(sizeof(XSTACK));
+	if (isNULL(isNULLInfo(this_stack, "创建XStack失败")))
+		return NULL;
+	char* buf=(char*)malloc(sizeof(char)*strlen(arr)+1);
+	if (isNULL(isNULLInfo(buf, "buf申请空间失败")))
+		return NULL;
 	strcpy(buf, arr);
 	size_t len = strlen(buf);
 	//去掉字符串空格
@@ -97,5 +101,6 @@ XStack* XStack_init(const char* arr, ...)
 	{
 		this_stack->object._capacity = MAXNUM;
 	}
+	free(buf);
 	return this_stack;
 }

@@ -1,8 +1,7 @@
 ﻿#include "XBalancedBinaryTree.h"
-#include"XBinaryTreeObject.h"
 #include"XContainerObject.h"
 
-TreeNodeBalance* XBalancedBinaryTree_insert(TreeNodeBalance** this_root, XLess less, const void* LPData, const size_t TypeSize)
+XBBTreeNode* XBalancedBinaryTree_insert(XBBTreeNode** this_root, XLess less, const void* LPData, const size_t TypeSize)
 {
 	if (isNULL(isNULLInfo(less, "")))
 		return NULL;
@@ -11,7 +10,7 @@ TreeNodeBalance* XBalancedBinaryTree_insert(TreeNodeBalance** this_root, XLess l
 	if (isNULL(isNULLInfo(TypeSize, "")))
 		return NULL;
 	//创建一个新的节点
-	TreeNodeBalance* NewNode = XBalancedBinaryTree_creation(TypeSize);
+	XBBTreeNode* NewNode = XBalancedBinaryTree_creation(TypeSize);
 	if (!XBinaryTreeObject_insertData(NewNode, LPData, TypeSize))//插入数据
 	{
 		XBinaryTreeObject_freeNode(NewNode, false);//插入失败释放创建的节点
@@ -23,34 +22,36 @@ TreeNodeBalance* XBalancedBinaryTree_insert(TreeNodeBalance** this_root, XLess l
 	}
 	//开始遍历,插入节点
 	size_t currentHeight = 0;//当前高度
-	TreeNodeBalance* currentNode = *this_root;
+	XBBTreeNode* currentNode = *this_root;
 	while (currentNode != NULL)
 	{
 		//满足小于往左边放
-		if (less(NewNode->data, (currentNode)->data))
+		if (less(NewNode->XBTNode.data, currentNode->XBTNode.data))
 		{
-			if ((currentNode)->leftChild == NULL)//建立关系
+			XBinaryTreeNode** ppLChild = XBinaryTreeObject_GetTreeNode(currentNode, XBTreeLChild);
+			if (*ppLChild == NULL)//建立关系
 			{
-				(currentNode)->leftChild = NewNode;
-				NewNode->parent = currentNode;
+				*ppLChild = NewNode;
+				*XBinaryTreeObject_GetTreeNode(NewNode, XBTreeParent) = currentNode;
 				break;
 			}
 			else
 			{
-				currentNode = (currentNode)->leftChild;
+				currentNode = *ppLChild;
 			}
 		}
 		else//满足大于等于的情况
 		{
-			if ((currentNode)->rightChild == NULL)//建立关系
+			XBinaryTreeNode** ppRChild = XBinaryTreeObject_GetTreeNode(currentNode, XBTreeRChild);
+			if (*ppRChild == NULL)//建立关系
 			{
-				(currentNode)->rightChild = NewNode;
-				NewNode->parent = currentNode;
+				*ppRChild = NewNode;
+				*XBinaryTreeObject_GetTreeNode(NewNode, XBTreeParent) = currentNode;
 				break;
 			}
 			else
 			{
-				currentNode = (currentNode)->rightChild;
+				currentNode = *ppRChild;
 			}
 		}
 	}

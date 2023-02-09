@@ -9,9 +9,11 @@
 XVector* XVector_init(const char* arr, ...)
 {
 	XVECTOR* this_vector = malloc(sizeof(XVECTOR));
-	if (isNULL(isNULLInfo(this_vector,"")))
+	if (isNULL(isNULLInfo(this_vector, "创建XVector失败")))
 		return NULL;
-	char buf[100];
+	char* buf = (char*)malloc(sizeof(char) * strlen(arr) + 1);
+	if (isNULL(isNULLInfo(buf, "buf申请空间失败")))
+		return NULL;
 	strcpy(buf, arr);
 	size_t len = strlen(buf);
 	//printf("去空格前：%s\n", buf);
@@ -49,10 +51,7 @@ XVector* XVector_init(const char* arr, ...)
 	this_vector->capacity = XVector_capacity;//返回当前向量所能容纳的最大元素值
 	this_vector->swap = XVector_swap;//交换两个同类型向量的数据
 	
-	//this_vector->_type = n;
-	/*this_vector->_current = 0;
-	this_vector->_size = 0;
-	this_vector->_data = NULL;*/
+	free(buf);
 	return this_vector;
 }
 XContainerObject* XVector_object(XVector* this_vector)
