@@ -32,7 +32,7 @@ XBBTreeNode* XBalancedBinaryTree_insert(XBBTreeNode** this_root, XLess less, con
 			if (*ppLChild == NULL)//建立关系
 			{
 				*ppLChild = NewNode;
-				*XBinaryTreeObject_GetTreeNode(NewNode, XBTreeParent) = currentNode;
+				XBTreeGetParent(NewNode) = currentNode;
 				break;
 			}
 			else
@@ -46,7 +46,7 @@ XBBTreeNode* XBalancedBinaryTree_insert(XBBTreeNode** this_root, XLess less, con
 			if (*ppRChild == NULL)//建立关系
 			{
 				*ppRChild = NewNode;
-				*XBinaryTreeObject_GetTreeNode(NewNode, XBTreeParent) = currentNode;
+				XBTreeGetParent(NewNode) = currentNode;
 				break;
 			}
 			else

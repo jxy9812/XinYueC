@@ -21,11 +21,11 @@ XBBTreeNode* XBalancedBinaryTree_find(XBBTreeNode* this_root, XLess less, XEqual
 		}
 		else if (less(CurNode->XBTNode.data, LPData))
 		{
-			CurNode = *XBinaryTreeObject_GetTreeNode(CurNode, XBTreeRChild);
+			CurNode = XBTreeGetRChild(CurNode);
 		}
 		else
 		{
-			CurNode = *XBinaryTreeObject_GetTreeNode(CurNode, XBTreeLChild);
+			CurNode = XBTreeGetLChild(CurNode);
 		}
 	}
 	return NULL;

@@ -7,6 +7,11 @@
 #define XBTreeParent 0//父节点
 #define XBTreeLChild 1//左孩子
 #define XBTreeRChild 2//右孩子
+
+//获取节点
+#define XBTreeGetParent(node) *XBinaryTreeObject_GetTreeNode(node, XBTreeParent)//父节点
+#define XBTreeGetLChild(node) *XBinaryTreeObject_GetTreeNode(node, XBTreeLChild)//左孩子
+#define XBTreeGetRChild(node) *XBinaryTreeObject_GetTreeNode(node, XBTreeRChild)//右孩子
 //二叉树遍历
 enum XBinaryTreeTraversing
 {

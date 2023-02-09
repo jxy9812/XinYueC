@@ -15,8 +15,8 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBinaryTreeNode* t
 	{
 		currentNode = *(struct XBinaryTreeNode**)XStack_top(stack);
 		XStack_pop(stack);
-		XBinaryTreeNode* LChild = *XBinaryTreeObject_GetTreeNode(currentNode, XBTreeLChild);
-		XBinaryTreeNode* RChild = *XBinaryTreeObject_GetTreeNode(currentNode, XBTreeRChild);
+		XBinaryTreeNode* LChild = XBTreeGetLChild(currentNode);
+		XBinaryTreeNode* RChild = XBTreeGetRChild(currentNode);
 		if (LChild != NULL)
 			XStack_Push(stack, &LChild);
 		if (RChild != NULL)
@@ -37,13 +37,13 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBinaryTreeNode* th
 		if (currentNode != NULL)
 		{
 			XStack_Push(stack, &currentNode);
-			currentNode = *XBinaryTreeObject_GetTreeNode(currentNode, XBTreeLChild);
+			currentNode = XBTreeGetLChild(currentNode);
 		}
 		else
 		{
 			struct XBinaryTreeNode*  XListNode = *(struct XBinaryTreeNode**)XStack_top(stack);
 			XVector_push_back(vector, &XListNode);
-			currentNode = *XBinaryTreeObject_GetTreeNode(XListNode, XBTreeRChild);
+			currentNode = XBTreeGetRChild(XListNode);
 			XStack_pop(stack);
 		}
 	}
@@ -64,8 +64,8 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBinaryTreeNode* 
 		XStack_pop(stack);
 		XStack_Push(stackTraversing, &currentNode);
 		
-		XBinaryTreeNode* LChild = *XBinaryTreeObject_GetTreeNode(currentNode, XBTreeLChild);
-		XBinaryTreeNode* RChild = *XBinaryTreeObject_GetTreeNode(currentNode, XBTreeRChild);
+		XBinaryTreeNode* LChild = XBTreeGetLChild(currentNode);
+		XBinaryTreeNode* RChild = XBTreeGetRChild(currentNode);
 		if (LChild != NULL)
 			XStack_Push(stack, &LChild);
 		if (RChild != NULL)
@@ -104,9 +104,6 @@ void* XBinaryTreeObject_creationNode(const size_t NodeSize, const size_t nodeArr
 	{
 		XVector_push_back(node->node,&NULLNode);
 	}
-	/*node->leftChild = NULL;
-	node->parent = NULL;
-	node->rightChild = NULL;*/
 	return node;
 }
 
@@ -202,9 +199,9 @@ XBinaryTreeNode** XBinaryTreeObject_findChildisParent(struct XBinaryTreeNode* Ch
 {
 	if (isNULL(isNULLInfo(Child, "")))
 		return NULL;
-	XBinaryTreeNode* Parent = *XBinaryTreeObject_GetTreeNode(Child, XBTreeParent);
-	XBinaryTreeNode* ParentToLChild = *XBinaryTreeObject_GetTreeNode(Parent, XBTreeLChild);
-	XBinaryTreeNode* ParentToRChild = *XBinaryTreeObject_GetTreeNode(Parent, XBTreeRChild);
+	XBinaryTreeNode* Parent = XBTreeGetParent(Child);
+	XBinaryTreeNode* ParentToLChild = XBTreeGetLChild(Parent);
+	XBinaryTreeNode* ParentToRChild = XBTreeGetRChild(Parent);
 
 	if (Parent == NULL)
 		return NULL;
@@ -222,7 +219,7 @@ bool XBinaryTreeObject_ReplacementChildNode(XBinaryTreeNode* formerChild, XBinar
 		return false;
 	if (isNULL(isNULLInfo(freshChild, "")))
 		return false;
-	XBinaryTreeNode* Parent = *XBinaryTreeObject_GetTreeNode(formerChild, XBTreeParent);//父节点
+	XBinaryTreeNode* Parent = XBTreeGetParent(formerChild);//父节点
 	if (Parent == NULL)
 		return false;
 	XBinaryTreeNode** ParentPointToChild = XBinaryTreeObject_findChildisParent(formerChild);//父节点指向孩子指针
@@ -230,8 +227,8 @@ bool XBinaryTreeObject_ReplacementChildNode(XBinaryTreeNode* formerChild, XBinar
 		return false;
 	//与新节点互相建立链接
 	*ParentPointToChild = freshChild;
-	*XBinaryTreeObject_GetTreeNode(freshChild, XBTreeParent) = Parent;
+	XBTreeGetParent(freshChild) = Parent;
 	//断开旧节点指向父的指针
-	*XBinaryTreeObject_GetTreeNode(formerChild, XBTreeParent) = NULL;
+	XBTreeGetParent(formerChild) = NULL;
 	return true;
 }

@@ -8,8 +8,8 @@ const size_t XBalancedBinaryTree_GetLayerNumberThis(const XBBTreeNode* this_root
 }
 const size_t XBalancedBinaryTree_GetLayerNumberChild(const XBBTreeNode* this_root)
 {
-	size_t left = XBalancedBinaryTree_GetLayerNumberThis(*XBinaryTreeObject_GetTreeNode(this_root, XBTreeLChild));
-	size_t right = XBalancedBinaryTree_GetLayerNumberThis(*XBinaryTreeObject_GetTreeNode(this_root, XBTreeRChild));
+	size_t left = XBalancedBinaryTree_GetLayerNumberThis(XBTreeGetLChild(this_root));
+	size_t right = XBalancedBinaryTree_GetLayerNumberThis(XBTreeGetRChild(this_root));
 	return (left > right) ? left : right;
 }
 const size_t XBalancedBinaryTree_SetLayerNumberThis(XBBTreeNode* this_root)
@@ -31,7 +31,7 @@ const size_t XBalancedBinaryTree_SetLayerNumberAll(XBBTreeNode** this_root, XBBT
 		{//传父节点指向孩子的指针
 			currentNode = XBalancedBinaryTree_Spin(XBinaryTreeObject_findChildisParent(currentNode));
 		}
-		currentNode = *XBinaryTreeObject_GetTreeNode(currentNode, XBTreeParent);
+		currentNode = XBTreeGetParent(currentNode);
 		++count;
 	}
 	return count;
