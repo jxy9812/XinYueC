@@ -4,44 +4,51 @@
 #include<stdio.h>
 #include<stdbool.h>
 #include"XVector.h"
-#define XBTreeParent 0//父节点
-#define XBTreeLChild 1//左孩子
-#define XBTreeRChild 2//右孩子
-
-//获取节点
-#define XBTreeGetParent(node) *XBinaryTreeObject_GetTreeNode(node, XBTreeParent)//父节点
-#define XBTreeGetLChild(node) *XBinaryTreeObject_GetTreeNode(node, XBTreeLChild)//左孩子
-#define XBTreeGetRChild(node) *XBinaryTreeObject_GetTreeNode(node, XBTreeRChild)//右孩子
-//二叉树遍历
-enum XBinaryTreeTraversing
+//定义节点类型
+enum XBTreeNodeType
 {
-	XBinaryTreePreorder,//前序(根左右)
-	XBinaryTreeInorder,//中序(左根右)
-	XBinaryTreePostorder//后序(左右根)
+	XBTreeParent,//二叉树-父节点
+	XBTreeLChild,//二叉树-左孩子
+	XBTreeRChild //二叉树-右孩子
 };
-
+//获取节点
+#define XBTREE_GET_PARENT(this_root) *XBTree_GetTreeNode(this_root, XBTreeParent)//二叉树-获取父节点
+#define XBTREE_GET_LCHILD(this_root) *XBTree_GetTreeNode(this_root, XBTreeLChild)//二叉树-获取左孩子
+#define XBTREE_GET_RCHILD(this_root) *XBTree_GetTreeNode(this_root, XBTreeRChild)//二叉树-获取右孩子
+//设置节点
+#define XBTREE_SET_PARENT(this_root,node) (*XBTree_GetTreeNode(this_root, XBTreeParent)=node)//二叉树-设置父节点
+#define XBTREE_SET_LCHILD(this_root,node) (*XBTree_GetTreeNode(this_root, XBTreeLChild)=node)//二叉树-设置左孩子
+#define XBTREE_SET_RCHILD(this_root,node) (*XBTree_GetTreeNode(this_root, XBTreeRChild)=node)//二叉树-设置右孩子
+//二叉树遍历方式
+enum XBTreeTraversing
+{
+	XBTreePreorder,//前序(根左右)
+	XBTreeInorder,//中序(左根右)
+	XBTreePostorder//后序(左右根)
+};
 //二叉树节点
-typedef struct XBinaryTreeNode
+typedef struct XBTreeNode
 {
 	XVector* node;//节点数组
 	void* data;//数据指针
-}XBinaryTreeNode;
+}XBTreeNode;
+
 //创建初始化一个二叉树节点
-void* XBinaryTreeObject_creationNode(const size_t NodeSize, const size_t nodeArrySize,const size_t TypeSize);
+void* XBTree_creationNode(const size_t NodeSize, const size_t nodeArrySize,const size_t TypeSize);
 //创建初始化一个二叉树节点,并插入数据
-struct XBinaryTreeNode* XBinaryTreeObject_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize);
+struct XBTreeNode* XBTree_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize);
 //插入数据-不创建节点，传入节点
-const bool XBinaryTreeObject_insertData(struct XBinaryTreeNode* this_root,const void* LPData, const size_t TypeSize);
+const bool XBTree_insertData(struct XBTreeNode* this_root,const void* LPData, const size_t TypeSize);
 //释放一个树节点,parentSetNull父节点指向的指针置为空
-const bool XBinaryTreeObject_freeNode(struct XBinaryTreeNode* this_root,const bool parentSetNull);
+const bool XBTree_freeNode(struct XBTreeNode* this_root,const bool parentSetNull);
 //获取节点指针
-struct XBinaryTreeNode** XBinaryTreeObject_GetTreeNode(XBinaryTreeNode* this_root, const size_t nSel);
+struct XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel);
 //二叉树遍历转数组存储
-struct XVector* XBinaryTreeObject_TraversingToXVector(struct XBinaryTreeNode* this_root,const enum XBinaryTreeTraversing Traversing);
+XVector* XBTree_TraversingToXVector(struct XBTreeNode* this_root,const enum XBTreeTraversing Traversing);
 //释放整个树(当前节点及其所有子节点)
-const size_t XBinaryTreeObject_freeNodeAll(struct XBinaryTreeNode* this_root);
+const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root);
 //查找在孩子在父节点指针的位置
-struct XBinaryTreeNode** XBinaryTreeObject_findChildisParent(struct XBinaryTreeNode* Child);
+struct XBTreeNode** XBTree_findChildisParent(struct XBTreeNode* Child);
 //替换孩子节点(将原孩子在父节点的指向修改为新的节点，并建立新的父子关系)
-bool XBinaryTreeObject_ReplacementChildNode(struct XBinaryTreeNode* formerChild/*旧的*/, struct XBinaryTreeNode* freshChild/*新的*/);
+bool XBTree_ReplacementChildNode(struct XBTreeNode* formerChild/*旧的*/, struct XBTreeNode* freshChild/*新的*/);
 #endif // !XBINARYTREEOBJECT_H

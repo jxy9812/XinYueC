@@ -6,33 +6,33 @@
 #include<string.h>
 #define GetXPoint(node) (*(XPoint*)node->data)
 //创建一个节点
-static XBinaryTreeNode* CreationBFSNode_XPoint(XPoint pos)
+static XBTreeNode* CreationBFSNode_XPoint(XPoint pos)
 {
-	XBinaryTreeNode* node = XBinaryTreeObject_creationInsertData(&pos,1,sizeof(XPoint));
+	XBTreeNode* node = XBTree_creationInsertData(&pos,1,sizeof(XPoint));
 	if (isNULL(isNULLInfo(node, "")))
 		return NULL;
 	return node;
 }
 //创建一个节点
-static XBinaryTreeNode* CreationBFSNode(const int x,const int y)
+static XBTreeNode* CreationBFSNode(const int x,const int y)
 {
 	XPoint pos = { x,y };
 	return CreationBFSNode_XPoint(pos);
 }
 //获取迷宫路径
-static XVector* GetXMazePath(const XBinaryTreeNode* child)
+static XVector* GetXMazePath(const XBTreeNode* child)
 {
 	XVector* Path = XVector_init("XPoint*",sizeof(XPoint));
-	XBinaryTreeNode* current = child;
+	XBTreeNode* current = child;
 	while (current!=NULL)
 	{
 		XVector_push_front(Path, current->data);
-		current = *XBinaryTreeObject_GetTreeNode(current,XBTreeParent);
+		current = *XBTree_GetTreeNode(current,XBTreeParent);
 	}
 	return Path;
 }
 //插入孩子
-static size_t insertChild(const XVector* maze, XBinaryTreeNode* node, XVector* NextNodeArray)
+static size_t insertChild(const XVector* maze, XBTreeNode* node, XVector* NextNodeArray)
 {
 	int* pMazePos = (int*)XVectorTwo_at_XPoint(maze, GetXPoint(node));
 	if (*pMazePos != XMazeRoute)
@@ -45,8 +45,8 @@ static size_t insertChild(const XVector* maze, XBinaryTreeNode* node, XVector* N
 	while (!XStack_empty(ChildAll))
 	{
 		XPointStep* pCurrentPos = (XPointStep*)XStack_top(ChildAll);
-		XBinaryTreeNode* childBFSNode = CreationBFSNode(pCurrentPos->x,pCurrentPos ->y);
-		*XBinaryTreeObject_GetTreeNode(childBFSNode, XBTreeParent) = node;
+		XBTreeNode* childBFSNode = CreationBFSNode(pCurrentPos->x,pCurrentPos ->y);
+		*XBTree_GetTreeNode(childBFSNode, XBTreeParent) = node;
 		XVector_push_back(node->node, &childBFSNode);
 		XVector_push_back(NextNodeArray, &childBFSNode);
 		XStack_pop(ChildAll);
@@ -58,18 +58,18 @@ static size_t insertChild(const XVector* maze, XBinaryTreeNode* node, XVector* N
 XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoint dest)
 {
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
-	XBinaryTreeNode* root = CreationBFSNode_XPoint(start);//根节点
-	XVector* CurrentNodeArray = XVector_init("BFSNode*", sizeof(XBinaryTreeNode*));//当前节点数组
-	XVector* NextNodeArray = XVector_init("BFSNode*", sizeof(XBinaryTreeNode*));//下一个节点数组
+	XBTreeNode* root = CreationBFSNode_XPoint(start);//根节点
+	XVector* CurrentNodeArray = XVector_init("BFSNode*", sizeof(XBTreeNode*));//当前节点数组
+	XVector* NextNodeArray = XVector_init("BFSNode*", sizeof(XBTreeNode*));//下一个节点数组
 	XVector_push_back(CurrentNodeArray,&root);//入根节点
 
-	XBinaryTreeNode* CurrentNode = NULL;//当前遍历的节点
+	XBTreeNode* CurrentNode = NULL;//当前遍历的节点
 	bool isFindEnd = false;//找到终点标记
 	while (!isFindEnd&&!XVector_empty(CurrentNodeArray))
 	{
 		for (XVector_iterator* it=XVector_begin(CurrentNodeArray);it!= XVector_end(CurrentNodeArray); it= XVector_iterator_add(CurrentNodeArray,it))
 		{
-			CurrentNode = *(XBinaryTreeNode**)it;
+			CurrentNode = *(XBTreeNode**)it;
 			if (GetXPoint(CurrentNode).x == dest.x && GetXPoint(CurrentNode).y == dest.y)//判断是否到终点了
 			{
 				isFindEnd = true;
@@ -84,6 +84,6 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 	XVector_free(CurrentNodeArray);
 	XVector_free(NextNodeArray);
 	XVectorTwo_free(tempMaze);
-	XBinaryTreeObject_freeNodeAll(root);
+	XBTree_freeNodeAll(root);
 	return Path;
 }

@@ -8,26 +8,36 @@
 //平衡二叉树节点
 typedef struct XBBTreeNode
 {
-	XBinaryTreeNode XBTNode;//普通二叉树节点
+	XBTreeNode XBTNode;//普通二叉树节点
 	size_t maxLayer;			//左右两孩子到自己中最大层数
 }XBBTreeNode;
 
 //创建初始化一个二叉树节点
-XBBTreeNode* XBalancedBinaryTree_creation(const size_t TypeSize);
+XBBTreeNode* XBBTree_creation(const size_t TypeSize);
 //插入数据，自动创建节点
-XBBTreeNode* XBalancedBinaryTree_insert(struct XBBTreeNode** this_root, XLess less, const void* LPData, const size_t TypeSize);
+XBBTreeNode* XBBTree_insertAlign(XBBTreeNode** this_root, XLess less, const void* LPData, const size_t TypeSize);
+//自动创建节点，插入数据，并自动调整高度和旋转保证平衡
+XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XLess less, const void* LPData, const size_t TypeSize);
 //二叉树删除节点
-void* XBalancedBinaryTree_erase(struct XBBTreeNode** this_root, XLess less, XEquality equality, const void* LPData, const size_t TypeSize);
+void* XBBTree_erase(XBBTreeNode** this_root, XLess less, XEquality equality, const void* LPData, const size_t TypeSize);
 //查找二叉树节点
-struct XBBTreeNode* XBalancedBinaryTree_find(struct XBBTreeNode* this_root, XLess less, XEquality equality, const void* LPData);
+XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equality, const void* LPData);
 //获取本身的高度(层数最大孩子高度+1(自己))
-const size_t XBalancedBinaryTree_GetLayerNumberThis(const XBBTreeNode* this_root);
+const size_t XBBTree_GetLayerNumberThis(const XBBTreeNode* this_root);
 //获取左右两孩子中最大层数
-const size_t XBalancedBinaryTree_GetLayerNumberChild(const XBBTreeNode* this_root);
+const size_t XBBTree_GetLayerNumberChild(const XBBTreeNode* this_root);
 //设置高度(层数最大孩子高度+1(自己))
-const size_t XBalancedBinaryTree_SetLayerNumberThis(XBBTreeNode* this_root);
+const size_t XBBTree_SetLayerNumberThis(XBBTreeNode* this_root);
 //设置高度从当前节点一直到根
-const size_t XBalancedBinaryTree_SetLayerNumberAll(XBBTreeNode** this_root, XBBTreeNode* currentNode);
+const size_t XBBTree_SetLayerNumberAll(XBBTreeNode** this_root, XBBTreeNode* currentNode);
 //旋转
-XBBTreeNode* XBalancedBinaryTree_Spin(const XBBTreeNode** this_root);
+XBBTreeNode* XBBTree_Spin(const XBBTreeNode** this_root);
+//右旋
+XBBTreeNode* XBBTree_SpinRR(XBBTreeNode* this_root);
+//左旋
+XBBTreeNode* XBBTree_SpinLL(XBBTreeNode* this_root);
+//右左旋
+XBBTreeNode* XBBTree_SpinRL(XBBTreeNode* this_root);
+//左右旋
+XBBTreeNode* XBBTree_SpinLR(XBBTreeNode* this_root);
 #endif // !BALANCEDBINARYTREE_H

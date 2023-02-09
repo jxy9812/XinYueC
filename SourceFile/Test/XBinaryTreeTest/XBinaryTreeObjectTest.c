@@ -3,7 +3,7 @@
 //打印节点的数据
 static void printTreeNode(void* LPVal)
 {
-	struct XBinaryTreeNode* currentNode = *(struct XBinaryTreeNode**)LPVal;
+	struct XBTreeNode* currentNode = *(struct XBTreeNode**)LPVal;
 	printf("%d ", *(int*)currentNode->data);
 }
 void XBinaryTreeObjectTest()
@@ -11,35 +11,35 @@ void XBinaryTreeObjectTest()
 	int a[] = { 0,1,2,3,4,5,6,7 };
 	int* LPa = a;
 	
-	XBinaryTreeNode* root = XBinaryTreeObject_creationInsertData(LPa++,3,sizeof(int));
-	XBinaryTreeNode* curNode = root;
-	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild) = XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
+	XBTreeNode* root = XBTree_creationInsertData(LPa++,3,sizeof(int));
+	XBTreeNode* curNode = root;
+	*XBTree_GetTreeNode(curNode, XBTreeLChild) = XBTree_creationInsertData(LPa++,3, sizeof(int));
 	//curNode->leftChild = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
-	curNode = *XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild);
-	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild)  = XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
-	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeRChild) = XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
+	curNode = *XBTree_GetTreeNode(curNode, XBTreeLChild);
+	*XBTree_GetTreeNode(curNode, XBTreeLChild)  = XBTree_creationInsertData(LPa++,3, sizeof(int));
+	*XBTree_GetTreeNode(curNode, XBTreeRChild) = XBTree_creationInsertData(LPa++,3, sizeof(int));
 
-	*XBinaryTreeObject_GetTreeNode(root, XBTreeRChild) =XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
-	curNode = *XBinaryTreeObject_GetTreeNode(root, XBTreeRChild);
-	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeLChild) = XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
-	*XBinaryTreeObject_GetTreeNode(curNode, XBTreeRChild) = XBinaryTreeObject_creationInsertData(LPa++,3, sizeof(int));
+	*XBTree_GetTreeNode(root, XBTreeRChild) =XBTree_creationInsertData(LPa++,3, sizeof(int));
+	curNode = *XBTree_GetTreeNode(root, XBTreeRChild);
+	*XBTree_GetTreeNode(curNode, XBTreeLChild) = XBTree_creationInsertData(LPa++,3, sizeof(int));
+	*XBTree_GetTreeNode(curNode, XBTreeRChild) = XBTree_creationInsertData(LPa++,3, sizeof(int));
 
 	//前序测试
-	XVector* TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreePreorder);
+	XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder);
 	printf("前序遍历:", XVector_size(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free(TreePreorder);
 
 	//中序测试
-	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreeInorder);
+	TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder);
 	printf("中序遍历:", XVector_size(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free(TreePreorder);
 
 	//后序测试
-	TreePreorder = XBinaryTreeObject_TraversingToXVector(root, XBinaryTreePostorder);
+	TreePreorder = XBTree_TraversingToXVector(root, XBTreePostorder);
 	printf("后序遍历:", XVector_size(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");

@@ -5,18 +5,18 @@
 #include<stdlib.h>
 #include<string.h>
 //前序
-static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBinaryTreeNode* this_root)
+static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_root)
 {
-	XVector* vector = XVector_init("struct XBinaryTreeNode*", sizeof(struct XBinaryTreeNode*));
-	XStack* stack = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBinaryTreeNode*));
+	XVector* vector = XVector_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
 	XStack_Push(stack, &this_root);
-	struct XBinaryTreeNode* currentNode = NULL;//当前节点指针
+	struct XBTreeNode* currentNode = NULL;//当前节点指针
 	while (!XStack_empty(stack))
 	{
-		currentNode = *(struct XBinaryTreeNode**)XStack_top(stack);
+		currentNode = *(struct XBTreeNode**)XStack_top(stack);
 		XStack_pop(stack);
-		XBinaryTreeNode* LChild = XBTreeGetLChild(currentNode);
-		XBinaryTreeNode* RChild = XBTreeGetRChild(currentNode);
+		XBTreeNode* LChild = XBTREE_GET_LCHILD(currentNode);
+		XBTreeNode* RChild = XBTREE_GET_RCHILD(currentNode);
 		if (LChild != NULL)
 			XStack_Push(stack, &LChild);
 		if (RChild != NULL)
@@ -27,23 +27,23 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBinaryTreeNode* t
 	return vector;
 }
 //中序
-static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBinaryTreeNode* this_root)
+static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_root)
 {
-	XVector* vector = XVector_init("struct XBinaryTreeNode*", sizeof(struct XBinaryTreeNode*));
-	XStack* stack = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBinaryTreeNode*));
-	struct XBinaryTreeNode* currentNode = this_root;//当前节点指针
+	XVector* vector = XVector_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	struct XBTreeNode* currentNode = this_root;//当前节点指针
 	while (!XStack_empty(stack)|| currentNode!=NULL)
 	{
 		if (currentNode != NULL)
 		{
 			XStack_Push(stack, &currentNode);
-			currentNode = XBTreeGetLChild(currentNode);
+			currentNode = XBTREE_GET_LCHILD(currentNode);
 		}
 		else
 		{
-			struct XBinaryTreeNode*  XListNode = *(struct XBinaryTreeNode**)XStack_top(stack);
+			struct XBTreeNode*  XListNode = *(struct XBTreeNode**)XStack_top(stack);
 			XVector_push_back(vector, &XListNode);
-			currentNode = XBTreeGetRChild(XListNode);
+			currentNode = XBTREE_GET_RCHILD(XListNode);
 			XStack_pop(stack);
 		}
 	}
@@ -51,21 +51,21 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBinaryTreeNode* th
 	return vector;
 }
 //后序
-static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBinaryTreeNode* this_root)
+static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_root)
 {
-	XVector* vector = XVector_init("struct XBinaryTreeNode*", sizeof(struct XBinaryTreeNode*));
-	XStack* stack = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBinaryTreeNode*));
-	XStack* stackTraversing = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBinaryTreeNode*));
+	XVector* vector = XVector_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	XStack* stackTraversing = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
 	XStack_Push(stack, &this_root);
-	struct XBinaryTreeNode* currentNode = NULL;//当前节点指针
+	struct XBTreeNode* currentNode = NULL;//当前节点指针
 	while (!XStack_empty(stack))
 	{
-		currentNode = *(struct XBinaryTreeNode**)XStack_top(stack);
+		currentNode = *(struct XBTreeNode**)XStack_top(stack);
 		XStack_pop(stack);
 		XStack_Push(stackTraversing, &currentNode);
 		
-		XBinaryTreeNode* LChild = XBTreeGetLChild(currentNode);
-		XBinaryTreeNode* RChild = XBTreeGetRChild(currentNode);
+		XBTreeNode* LChild = XBTREE_GET_LCHILD(currentNode);
+		XBTreeNode* RChild = XBTREE_GET_RCHILD(currentNode);
 		if (LChild != NULL)
 			XStack_Push(stack, &LChild);
 		if (RChild != NULL)
@@ -76,7 +76,7 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBinaryTreeNode* 
 	XStack_free(stackTraversing);
 	return vector;
 }
-void* XBinaryTreeObject_creationNode(const size_t NodeSize, const size_t nodeArrySize, const size_t TypeSize)
+void* XBTree_creationNode(const size_t NodeSize, const size_t nodeArrySize, const size_t TypeSize)
 {
 	if (isNULL(isNULLInfo(NodeSize, "节点大小不能为空")))
 		return NULL;
@@ -84,7 +84,7 @@ void* XBinaryTreeObject_creationNode(const size_t NodeSize, const size_t nodeArr
 		return NULL;
 	if (isNULL(isNULLInfo(TypeSize, "数据大小不能为空")))
 		return NULL;
-	XBinaryTreeNode* node =(XBinaryTreeNode*)calloc(1,NodeSize);
+	XBTreeNode* node =(XBTreeNode*)calloc(1,NodeSize);
 	if (isNULL(isNULLInfo(node,"节点申请内存失败")))
 		return NULL;
 	node->data= calloc(1,TypeSize);//开辟内存并且置为0
@@ -93,13 +93,13 @@ void* XBinaryTreeObject_creationNode(const size_t NodeSize, const size_t nodeArr
 		free(node);
 		return NULL;
 	}
-	node->node = (XBinaryTreeNode*)XVector_init("XBinaryTreeNode*", sizeof(XBinaryTreeNode*));
+	node->node = (XBTreeNode*)XVector_init("XBinaryTreeNode*", sizeof(XBTreeNode*));
 	if (isNULL(isNULLInfo(node->node, "节点数组申请内存失败")))
 	{
 		free(node);
 		return NULL;
 	}
-	XBinaryTreeNode* NULLNode = NULL;
+	XBTreeNode* NULLNode = NULL;
 	for (size_t i = 0; i < nodeArrySize; i++)
 	{
 		XVector_push_back(node->node,&NULLNode);
@@ -107,16 +107,16 @@ void* XBinaryTreeObject_creationNode(const size_t NodeSize, const size_t nodeArr
 	return node;
 }
 
-XBinaryTreeNode* XBinaryTreeObject_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize)
+XBTreeNode* XBTree_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize)
 {
-	struct XBinaryTreeNode* node = XBinaryTreeObject_creationNode(sizeof(XBinaryTreeNode), nodeArrySize,TypeSize);
+	struct XBTreeNode* node = XBTree_creationNode(sizeof(XBTreeNode), nodeArrySize,TypeSize);
 	if(isNULL(isNULLInfo( node,"创建节点失败")))
 		return NULL;
-	XBinaryTreeObject_insertData(node, LPData, TypeSize);
+	XBTree_insertData(node, LPData, TypeSize);
 	return node;
 }
 
-const bool XBinaryTreeObject_insertData(struct XBinaryTreeNode* this_root, const void* LPData, const size_t TypeSize)
+const bool XBTree_insertData(struct XBTreeNode* this_root, const void* LPData, const size_t TypeSize)
 {
 	if (isNULL(isNULLInfo(this_root,"")))
 		return false;
@@ -128,7 +128,7 @@ const bool XBinaryTreeObject_insertData(struct XBinaryTreeNode* this_root, const
 	return true;
 }
 
-const bool XBinaryTreeObject_freeNode(struct XBinaryTreeNode* this_root , const bool parentSetNull)
+const bool XBTree_freeNode(struct XBTreeNode* this_root , const bool parentSetNull)
 {
 	if (isNULL(isNULLInfo(this_root, "")))
 		return false;
@@ -138,7 +138,7 @@ const bool XBinaryTreeObject_freeNode(struct XBinaryTreeNode* this_root , const 
 	if (parentSetNull)
 	{
 		//在父节点将指向此节点的指针置空NULL
-		*XBinaryTreeObject_findChildisParent(this_root) = NULL;
+		*XBTree_findChildisParent(this_root) = NULL;
 	}
 	//释放节点数组
 	XVector_free(this_root->node);
@@ -147,40 +147,40 @@ const bool XBinaryTreeObject_freeNode(struct XBinaryTreeNode* this_root , const 
 	return true;
 }
 
-XBinaryTreeNode** XBinaryTreeObject_GetTreeNode(XBinaryTreeNode* this_root, const size_t nSel)
+XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel)
 {
 	if (isNULL(isNULLInfo(this_root, "")))
 		return NULL;
-	return (XBinaryTreeNode**)XVector_at(this_root->node, nSel);
+	return (XBTreeNode**)XVector_at(this_root->node, nSel);
 }
 
-XVector* XBinaryTreeObject_TraversingToXVector(XBinaryTreeNode* this_root, const enum XBinaryTreeTraversing Traversing)
+XVector* XBTree_TraversingToXVector(XBTreeNode* this_root, const enum XBTreeTraversing Traversing)
 {
 	if (this_root==NULL)
 		return NULL;
 	switch (Traversing)
 	{
-	case  XBinaryTreePreorder:
+	case  XBTreePreorder:
 		return BinaryTreeTraversingToXVector_Preorder(this_root);
-	case XBinaryTreeInorder:
+	case XBTreeInorder:
 		return BinaryTreeTraversingToXVector_Inorder(this_root);
-	case XBinaryTreePostorder:
+	case XBTreePostorder:
 		return BinaryTreeTraversingToXVector_Postorder(this_root);
 	default:
 		return NULL;
 	}
 }
-const size_t XBinaryTreeObject_freeNodeAll(struct XBinaryTreeNode* this_root)
+const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root)
 {
 	if (isNULL(isNULLInfo(this_root, "")))
 		return 0;
 	size_t sum = 0;//一共释放了几个节点
-	XStack* stack = XStack_init("struct XBinaryTreeNode*",sizeof(struct XBinaryTreeNode*));
+	XStack* stack = XStack_init("struct XBinaryTreeNode*",sizeof(struct XBTreeNode*));
 	XStack_Push(stack,&this_root);
-	struct XBinaryTreeNode* currentNode = NULL;//当前节点指针
+	struct XBTreeNode* currentNode = NULL;//当前节点指针
 	while (!XStack_empty(stack))
 	{
-		currentNode = *(struct XBinaryTreeNode**)XStack_top(stack);
+		currentNode = *(struct XBTreeNode**)XStack_top(stack);
 		XStack_pop(stack);
 		XVector_iterator* it = XVector_begin(currentNode->node);
 		it = XVector_iterator_add(currentNode->node, it);
@@ -188,47 +188,47 @@ const size_t XBinaryTreeObject_freeNodeAll(struct XBinaryTreeNode* this_root)
 		{
 			XStack_Push(stack, it);
 		}
-		XBinaryTreeObject_freeNode(currentNode,false);//释放当前节点
+		XBTree_freeNode(currentNode,false);//释放当前节点
 		sum++;
 	}
 	XStack_free(stack);
 	return sum;
 }
 
-XBinaryTreeNode** XBinaryTreeObject_findChildisParent(struct XBinaryTreeNode* Child)
+XBTreeNode** XBTree_findChildisParent(struct XBTreeNode* Child)
 {
 	if (isNULL(isNULLInfo(Child, "")))
 		return NULL;
-	XBinaryTreeNode* Parent = XBTreeGetParent(Child);
-	XBinaryTreeNode* ParentToLChild = XBTreeGetLChild(Parent);
-	XBinaryTreeNode* ParentToRChild = XBTreeGetRChild(Parent);
+	XBTreeNode* Parent = XBTREE_GET_PARENT(Child);
+	XBTreeNode* ParentToLChild = XBTREE_GET_LCHILD(Parent);
+	XBTreeNode* ParentToRChild = XBTREE_GET_RCHILD(Parent);
 
 	if (Parent == NULL)
 		return NULL;
 	if (ParentToLChild == Child)
-		return XBinaryTreeObject_GetTreeNode(Parent, XBTreeLChild);
+		return XBTree_GetTreeNode(Parent, XBTreeLChild);
 	if (ParentToRChild == Child)
-		return XBinaryTreeObject_GetTreeNode(Parent, XBTreeRChild);
+		return XBTree_GetTreeNode(Parent, XBTreeRChild);
 	isNULL(isNULLInfo(0, "在父节点找不到孩子"));
 	return NULL;
 }
 
-bool XBinaryTreeObject_ReplacementChildNode(XBinaryTreeNode* formerChild, XBinaryTreeNode* freshChild)
+bool XBTree_ReplacementChildNode(XBTreeNode* formerChild, XBTreeNode* freshChild)
 {
 	if(isNULL(isNULLInfo(formerChild, "")))
 		return false;
 	if (isNULL(isNULLInfo(freshChild, "")))
 		return false;
-	XBinaryTreeNode* Parent = XBTreeGetParent(formerChild);//父节点
+	XBTreeNode* Parent = XBTREE_GET_PARENT(formerChild);//父节点
 	if (Parent == NULL)
 		return false;
-	XBinaryTreeNode** ParentPointToChild = XBinaryTreeObject_findChildisParent(formerChild);//父节点指向孩子指针
+	XBTreeNode** ParentPointToChild = XBTree_findChildisParent(formerChild);//父节点指向孩子指针
 	if(ParentPointToChild==NULL)
 		return false;
 	//与新节点互相建立链接
 	*ParentPointToChild = freshChild;
-	XBTreeGetParent(freshChild) = Parent;
+	XBTREE_SET_PARENT(freshChild,Parent);
 	//断开旧节点指向父的指针
-	XBTreeGetParent(formerChild) = NULL;
+	XBTREE_SET_PARENT(formerChild, NULL);
 	return true;
 }
