@@ -6,16 +6,16 @@ XBBTreeNode* XBBTree_SpinRR(XBBTreeNode* this_root)
 {
 	if (isNULL(isNULLInfo(this_root, "")))
 		return NULL;
-	XBBTreeNode* NewRoot = XBTREE_GET_LCHILD(this_root);
+	XBBTreeNode* NewRoot = XBTree_GetLChild(this_root);
 
 	XBBTreeNode** ppThis_rootParent= XBTree_GetTreeNode(this_root, XBTreeParent);
-	XBTREE_SET_PARENT(NewRoot,*ppThis_rootParent);
+	XBTree_SetParent(NewRoot,*ppThis_rootParent);
 	*ppThis_rootParent = NewRoot;
 
 	XBBTreeNode** ppNewRootRightChild= XBTree_GetTreeNode(NewRoot, XBTreeRChild);
-	XBTREE_SET_LCHILD(this_root,*ppNewRootRightChild);
+	XBTree_SetLChild(this_root,*ppNewRootRightChild);
 	if (*ppNewRootRightChild != NULL)
-		XBTREE_SET_PARENT(*ppNewRootRightChild,this_root);
+		XBTree_SetParent(*ppNewRootRightChild,this_root);
 
 	*ppNewRootRightChild = this_root;
 	XBBTree_SetLayerNumberThis(this_root);
@@ -27,16 +27,16 @@ XBBTreeNode* XBBTree_SpinLL(XBBTreeNode* this_root)
 {
 	if (isNULL(isNULLInfo(this_root, "")))
 		return NULL;
-	XBBTreeNode* NewRoot = XBTREE_GET_RCHILD(this_root);
+	XBBTreeNode* NewRoot = XBTree_GetRChild(this_root);
 
 	XBBTreeNode** ppThis_rootParent = XBTree_GetTreeNode(this_root, XBTreeParent);
-	XBTREE_SET_PARENT(NewRoot,*ppThis_rootParent);
+	XBTree_SetParent(NewRoot,*ppThis_rootParent);
 	*ppThis_rootParent = NewRoot;
 
 	XBBTreeNode** ppNewRootLeftChild = XBTree_GetTreeNode(NewRoot, XBTreeLChild);
-	XBTREE_SET_RCHILD(this_root,*ppNewRootLeftChild);
+	XBTree_SetRChild(this_root,*ppNewRootLeftChild);
 	if(*ppNewRootLeftChild !=NULL)
-		XBTREE_SET_PARENT(*ppNewRootLeftChild,this_root);
+		XBTree_SetParent(*ppNewRootLeftChild,this_root);
 
 	*ppNewRootLeftChild = this_root;
 
@@ -69,16 +69,16 @@ XBBTreeNode* XBBTree_Spin(const XBBTreeNode** this_root)
 		return NULL;
 	if (isNULL(isNULLInfo(*this_root, "")))
 		return NULL;
-	size_t leftLayer = XBBTree_GetLayerNumberThis(XBTREE_GET_LCHILD(*this_root));
-	size_t rightLayer = XBBTree_GetLayerNumberThis(XBTREE_GET_RCHILD(*this_root));
+	size_t leftLayer = XBBTree_GetLayerNumberThis(XBTree_GetLChild(*this_root));
+	size_t rightLayer = XBBTree_GetLayerNumberThis(XBTree_GetRChild(*this_root));
 	if (abs(leftLayer - rightLayer) > 1)
 	{
 		XBBTreeNode* centre = NULL;
 		if (leftLayer > rightLayer)//左边比右边高度大于1(右旋/左右旋)
 		{
-			centre = XBTREE_GET_LCHILD(*this_root);
-			size_t centreLeft = XBBTree_GetLayerNumberThis(XBTREE_GET_LCHILD(centre));
-			size_t centreRight = XBBTree_GetLayerNumberThis(XBTREE_GET_RCHILD(centre));
+			centre = XBTree_GetLChild(*this_root);
+			size_t centreLeft = XBBTree_GetLayerNumberThis(XBTree_GetLChild(centre));
+			size_t centreRight = XBBTree_GetLayerNumberThis(XBTree_GetRChild(centre));
 			if (centreLeft > centreRight)//左大于右(右旋)
 				*this_root = XBBTree_SpinRR(*this_root);
 			else
@@ -86,9 +86,9 @@ XBBTreeNode* XBBTree_Spin(const XBBTreeNode** this_root)
 		}
 		else//左旋/右左旋
 		{
-			centre = XBTREE_GET_RCHILD(*this_root);
-			size_t centreLeft = XBBTree_GetLayerNumberThis(XBTREE_GET_LCHILD(centre));
-			size_t centreRight = XBBTree_GetLayerNumberThis(XBTREE_GET_RCHILD(centre));
+			centre = XBTree_GetRChild(*this_root);
+			size_t centreLeft = XBBTree_GetLayerNumberThis(XBTree_GetLChild(centre));
+			size_t centreRight = XBBTree_GetLayerNumberThis(XBTree_GetRChild(centre));
 			if (centreLeft < centreRight)//右大于左(左旋)
 				*this_root = XBBTree_SpinLL(*this_root);
 			else

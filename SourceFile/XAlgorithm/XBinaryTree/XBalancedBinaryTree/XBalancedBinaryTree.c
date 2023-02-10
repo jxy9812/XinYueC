@@ -21,11 +21,11 @@ XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equa
 		}
 		else if (less(CurNode->XBTNode.data, LPData))
 		{
-			CurNode = XBTREE_GET_RCHILD(CurNode);
+			CurNode = XBTree_GetRChild(CurNode);
 		}
 		else
 		{
-			CurNode = XBTREE_GET_LCHILD(CurNode);
+			CurNode = XBTree_GetLChild(CurNode);
 		}
 	}
 	return NULL;

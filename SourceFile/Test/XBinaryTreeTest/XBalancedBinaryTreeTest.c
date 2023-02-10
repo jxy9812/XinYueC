@@ -1,14 +1,11 @@
 ﻿#include"Test.h"
-#include"XBinaryTreeObject.h"
 #include"XBalancedBinaryTree.h"
-#include"XVector.h"
 #include"XLess.h"
 #include"XEquality.h"
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
-	struct XBBTreeNode* currentNode = *(struct XBBTreeNode**)LPVal;
-	printf("%d ", *(int*)currentNode->XBTNode.data);
+	printf("%d ", XBTree_GetData(LPVal, int));
 }
 void traverse(void* LPVal, void* args)
 {
@@ -18,7 +15,7 @@ void traverse(void* LPVal, void* args)
 	if(XBTree_findChildisParent(currentNode)==NULL)
 		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.data);
 }
-void TreeNodeBalanceTest()
+void XBalancedBinaryTreeTest()
 {
 	int a[] = { 4,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
 	int* LPa = a;

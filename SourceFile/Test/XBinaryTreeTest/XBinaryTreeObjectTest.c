@@ -1,10 +1,9 @@
 ﻿#include"Test.h"
 #include"XBinaryTreeObject.h"
 //打印节点的数据
-static void printTreeNode(void* LPVal)
+static void printTreeNode(void* LPVal, void* args)
 {
-	struct XBTreeNode* currentNode = *(struct XBTreeNode**)LPVal;
-	printf("%d ", *(int*)currentNode->data);
+	printf("%d ", XBTree_GetData(LPVal, int));
 }
 void XBinaryTreeObjectTest()
 {

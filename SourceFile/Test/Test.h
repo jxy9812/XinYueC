@@ -1,13 +1,22 @@
 ﻿#ifndef TEST_H
 #define TEST_H
+//链表迭代器测试
 void ListIterator();
+//链表内置快排测试
 void ListSortTest();
+//链表一般项测试
 void ListTest();
+//双链表交换测试
 void ListSwapTest();
+//栈测试
 void stackTest();
+//队列测试
 void queueTest();
+//动态数组测试
 void VectorTest();
+//字符串测试
 void XStringTest();
+//排序算法测试
 void SortTest();
 //随机迷宫生成算法——深度优先算法
 void XMazeGeneratedTest();
@@ -16,5 +25,7 @@ void XMazePathfinding();
 //二叉树基类测试
 void XBinaryTreeObjectTest();
 //平衡二叉树测试
-void TreeNodeBalanceTest();
+void XBalancedBinaryTreeTest();
+//红黑树测试
+void XRedBlackTreeTest();
 #endif

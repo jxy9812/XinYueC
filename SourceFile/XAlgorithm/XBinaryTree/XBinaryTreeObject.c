@@ -15,8 +15,8 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_r
 	{
 		currentNode = *(struct XBTreeNode**)XStack_top(stack);
 		XStack_pop(stack);
-		XBTreeNode* LChild = XBTREE_GET_LCHILD(currentNode);
-		XBTreeNode* RChild = XBTREE_GET_RCHILD(currentNode);
+		XBTreeNode* LChild = XBTree_GetLChild(currentNode);
+		XBTreeNode* RChild = XBTree_GetRChild(currentNode);
 		if (LChild != NULL)
 			XStack_Push(stack, &LChild);
 		if (RChild != NULL)
@@ -37,13 +37,13 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_ro
 		if (currentNode != NULL)
 		{
 			XStack_Push(stack, &currentNode);
-			currentNode = XBTREE_GET_LCHILD(currentNode);
+			currentNode = XBTree_GetLChild(currentNode);
 		}
 		else
 		{
 			struct XBTreeNode*  XListNode = *(struct XBTreeNode**)XStack_top(stack);
 			XVector_push_back(vector, &XListNode);
-			currentNode = XBTREE_GET_RCHILD(XListNode);
+			currentNode = XBTree_GetRChild(XListNode);
 			XStack_pop(stack);
 		}
 	}
@@ -64,8 +64,8 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_
 		XStack_pop(stack);
 		XStack_Push(stackTraversing, &currentNode);
 		
-		XBTreeNode* LChild = XBTREE_GET_LCHILD(currentNode);
-		XBTreeNode* RChild = XBTREE_GET_RCHILD(currentNode);
+		XBTreeNode* LChild = XBTree_GetLChild(currentNode);
+		XBTreeNode* RChild = XBTree_GetRChild(currentNode);
 		if (LChild != NULL)
 			XStack_Push(stack, &LChild);
 		if (RChild != NULL)
@@ -199,9 +199,9 @@ XBTreeNode** XBTree_findChildisParent(struct XBTreeNode* Child)
 {
 	if (isNULL(isNULLInfo(Child, "")))
 		return NULL;
-	XBTreeNode* Parent = XBTREE_GET_PARENT(Child);
-	XBTreeNode* ParentToLChild = XBTREE_GET_LCHILD(Parent);
-	XBTreeNode* ParentToRChild = XBTREE_GET_RCHILD(Parent);
+	XBTreeNode* Parent = XBTree_GetParent(Child);
+	XBTreeNode* ParentToLChild = XBTree_GetLChild(Parent);
+	XBTreeNode* ParentToRChild = XBTree_GetRChild(Parent);
 
 	if (Parent == NULL)
 		return NULL;
@@ -219,7 +219,7 @@ bool XBTree_ReplacementChildNode(XBTreeNode* formerChild, XBTreeNode* freshChild
 		return false;
 	if (isNULL(isNULLInfo(freshChild, "")))
 		return false;
-	XBTreeNode* Parent = XBTREE_GET_PARENT(formerChild);//父节点
+	XBTreeNode* Parent = XBTree_GetParent(formerChild);//父节点
 	if (Parent == NULL)
 		return false;
 	XBTreeNode** ParentPointToChild = XBTree_findChildisParent(formerChild);//父节点指向孩子指针
@@ -227,8 +227,8 @@ bool XBTree_ReplacementChildNode(XBTreeNode* formerChild, XBTreeNode* freshChild
 		return false;
 	//与新节点互相建立链接
 	*ParentPointToChild = freshChild;
-	XBTREE_SET_PARENT(freshChild,Parent);
+	XBTree_SetParent(freshChild,Parent);
 	//断开旧节点指向父的指针
-	XBTREE_SET_PARENT(formerChild, NULL);
+	XBTree_SetParent(formerChild, NULL);
 	return true;
 }

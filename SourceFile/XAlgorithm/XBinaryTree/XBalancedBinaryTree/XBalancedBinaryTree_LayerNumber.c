@@ -8,8 +8,8 @@ const size_t XBBTree_GetLayerNumberThis(const XBBTreeNode* this_root)
 }
 const size_t XBBTree_GetLayerNumberChild(const XBBTreeNode* this_root)
 {
-	size_t left = XBBTree_GetLayerNumberThis(XBTREE_GET_LCHILD(this_root));
-	size_t right = XBBTree_GetLayerNumberThis(XBTREE_GET_RCHILD(this_root));
+	size_t left = XBBTree_GetLayerNumberThis(XBTree_GetLChild(this_root));
+	size_t right = XBBTree_GetLayerNumberThis(XBTree_GetRChild(this_root));
 	return (left > right) ? left : right;
 }
 const size_t XBBTree_SetLayerNumberThis(XBBTreeNode* this_root)
@@ -31,7 +31,7 @@ const size_t XBBTree_SetLayerNumberAll(XBBTreeNode** this_root, XBBTreeNode* cur
 		{//传父节点指向孩子的指针
 			currentNode = XBBTree_Spin(XBTree_findChildisParent(currentNode));
 		}
-		currentNode = XBTREE_GET_PARENT(currentNode);
+		currentNode = XBTree_GetParent(currentNode);
 		++count;
 	}
 	return count;
