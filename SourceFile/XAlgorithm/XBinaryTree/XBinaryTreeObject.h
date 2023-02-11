@@ -52,6 +52,10 @@ XVector* XBTree_TraversingToXVector(struct XBTreeNode* this_root,const enum XBTr
 const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root);
 //查找在孩子在父节点指针的位置
 struct XBTreeNode** XBTree_findChildisParent(struct XBTreeNode* Child);
-//替换孩子节点(将原孩子在父节点的指向修改为新的节点，并建立新的父子关系)
+//替换孩子节点(将原孩子在父节点的指向修改为新的节点，并建立新的父子关系,旧节点的父指针指向空)
 bool XBTree_ReplacementChildNode(struct XBTreeNode* formerChild/*旧的*/, struct XBTreeNode* freshChild/*新的*/);
+//右旋
+XBTreeNode* XBTree_SpinRR(XBTreeNode* this_root);
+//左旋
+XBTreeNode* XBTree_SpinLL(XBTreeNode* this_root);
 #endif // !XBINARYTREEOBJECT_H

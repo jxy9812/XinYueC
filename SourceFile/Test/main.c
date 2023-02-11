@@ -14,7 +14,7 @@ int main(int argc, char* args[])
 	//XMazeGeneratedTest();
 	//XMazePathfinding();
 	//queueTest();
-	//XBinaryTreeObjectTest();
+	//XBinaryTreeObjectTest();	
 	//XBalancedBinaryTreeTest();
 	XRedBlackTreeTest();
 	return 0;
