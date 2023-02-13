@@ -13,12 +13,19 @@ void XRedBlackTreeTest()
 	int* LPa = a;
 
 	XRBTreeNode* root = XRBTree_insert(NULL, XLess_int, LPa++, sizeof(int));
-	/*for (size_t i = 0; i < sizeof(a) / sizeof(a[0]) - 1; i++)
+	for (size_t i = 0; i < sizeof(a) / sizeof(a[0]) - 1; i++)
 	{
 		if (i == 11)
 			i = 11;
-		XBBTree_insert(&root, XLess_int, LPa++, sizeof(int));
-	}*/
+		XRBTree_insert(&root, XLess_int, LPa++, sizeof(int));
+	}
+	//删除测试遍历插入的数组一个个查找删除，直至清空二叉树
+	for (size_t i = 0; i < 5/*sizeof(a) / sizeof(a[0])*/; i++)
+	{
+		if (i == 5)
+			i = 5;
+		XRBTree_erase(&root, XLess_int, XEquality_int, a + i, sizeof(int));
+	}
 	if (root != NULL)
 	{
 		//中序测试
