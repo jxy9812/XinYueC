@@ -9,7 +9,7 @@ static void printTreeNode(void* LPVal, void* args)
 }
 void XRedBlackTreeTest()
 {
-	int a[] = { 4,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
+	int a[] = { 40,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
 	int* LPa = a;
 
 	XRBTreeNode* root = XRBTree_insert(NULL, XLess_int, LPa++, sizeof(int));

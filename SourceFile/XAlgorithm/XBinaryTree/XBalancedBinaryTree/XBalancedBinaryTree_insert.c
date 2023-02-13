@@ -9,7 +9,7 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess
 	}
 	if (this_root == NULL)//如果没有根节点
 	{
-		return insertNode;
+		return true;
 	}
 	//开始遍历,插入节点
 	XBBTreeNode* currentNode = *this_root;
