@@ -16,7 +16,7 @@ XStack* XStack_init(const char* arr, ...)
 	strcpy(buf, arr);
 	size_t len = strlen(buf);
 	//去掉字符串空格
-	Unblank(buf, middle | left | right);
+	Unblank(buf,left | right);
 	XContainerObject_init(&this_stack->object,0);
 	if (strcmp(buf, "char") == 0)
 	{

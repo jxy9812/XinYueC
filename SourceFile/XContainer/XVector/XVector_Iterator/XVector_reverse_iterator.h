@@ -1,6 +1,7 @@
 ﻿#ifndef XVECTOR_REVERSE_ITERATOR_H
 #define XVECTOR_REVERSE_ITERATOR_H
 #include"XFunctionCallback.h"
+struct XVector;
 //反向迭代器
 typedef struct XVector_reverse_iterator
 {

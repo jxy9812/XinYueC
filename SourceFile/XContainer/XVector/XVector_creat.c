@@ -18,7 +18,7 @@ XVector* XVector_init(const char* arr, ...)
 	size_t len = strlen(buf);
 	//printf("去空格前：%s\n", buf);
 	//去掉字符串空格
-	Unblank(buf, middle | left | right);
+	Unblank(buf, left | right);
 	{
 		va_list args;//接收可变参数，
 		va_start(args, arr);

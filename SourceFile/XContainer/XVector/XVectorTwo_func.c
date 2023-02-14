@@ -1,7 +1,7 @@
 ﻿#include "XVectorTwo_func.h"
 #include"XVector.h"
 #include"XPoint.h"
-#include"String.h"
+#include<string.h>
 XVector* XVectorTwoMatrix_init(const size_t TypeSize, const size_t row, const size_t list, const void* initVal)
 {
 	struct XVector* VTwo = XVector_init("struct XVector*", sizeof(struct XVector*));//二维数组

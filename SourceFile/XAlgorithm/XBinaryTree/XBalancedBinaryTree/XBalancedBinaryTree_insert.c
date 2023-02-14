@@ -61,8 +61,11 @@ XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XLess less, const void* LPD
 	if (isNULL(isNULLInfo(NewNode, "")))
 		return NULL;
 	bool flag=XBBTree_insertAlign(this_root, NewNode, less, LPData, TypeSize);
-	if (isNULL(isNULLInfo(flag, "节点插入失败")))
+	if (!flag)
+	{	
+		printf("节点插入失败\n");
 		return NULL;
+	}
 	XBBTree_SetLayerNumberAll(this_root, XBTree_GetParent(NewNode));
 	return NewNode;
 }

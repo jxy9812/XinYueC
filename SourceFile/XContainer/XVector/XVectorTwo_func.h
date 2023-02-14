@@ -1,6 +1,7 @@
 ﻿#ifndef XVECTORTWO_FUNC_H
 #define XVECTORTWO_FUNC_H
 #include<stdbool.h>
+#include<stdio.h>
 struct XVector;
 struct XPoint;
 //开辟一个二维动态数组矩阵,初始化row行 list列

@@ -2,6 +2,7 @@
 #include"XRedBlackTree.h"
 #include"XLess.h"
 #include"XEquality.h"
+#include<stdio.h>
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
