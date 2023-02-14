@@ -1,5 +1,5 @@
 ﻿#include"XRedBlackTree.h"
-//#include"XBalancedBinaryTree.h"
+#include"XBalancedBinaryTree.h"
 //当前节点的父节点是红色，且当前节点的祖父节点的另一一个子节点(叔叔节点)也是红色
 bool XRBTree_AdjustNoOne(XRBTreeNode** currentNode,XRBTreeNode* LPpater, XRBTreeNode* LPgrandpa, XRBTreeNode* LPuncle)
 {
