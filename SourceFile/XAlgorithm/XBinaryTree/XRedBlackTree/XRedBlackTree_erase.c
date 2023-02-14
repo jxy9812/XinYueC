@@ -1,28 +1,10 @@
 ﻿#include"XRedBlackTree.h"
 #include"XBalancedBinaryTree.h"
-static void traverse(void* LPVal, void* args)
-{
-	struct XRBTreeNode* currentNode = *(struct XRBTreeNode**)LPVal;
-	printf("%-3d ", XBTree_GetData(LPVal, int));
-	if (*XBTree_GetTreeNode(currentNode, XBTreeParent) == NULL)
-		return;
-	if (XBTree_findChildisParent(currentNode) == NULL)
-		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.data);
-
-}
 //删除调整树
 static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* node, XRBTreeNode* LPpater)
 {
-	printf("调整前:");
-	XVector* TreePreorder = XBTree_TraversingToXVector(*this_root, XBTreeInorder);
-	XVector_iterator_for_each(TreePreorder, traverse, NULL);
-	printf("\t");
-	XVector_free(TreePreorder);
-	//XRBTreeNode* LPpater = NULL;//父节点
-	//if (node != NULL)
-	//	LPpater=XBTree_GetParent(node);
 	XRBTreeNode* LPbrother = NULL;//兄弟节点
-	while (!node||XRBTree_IsBlack(node)&& node!= *this_root)
+	while ((node==NULL||XRBTree_IsBlack(node))&& node!= *this_root)
 	{
 		if(XBTree_GetLChild(LPpater)==node)
 		{
@@ -31,15 +13,15 @@ static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* node, XRBTreeN
 			{
 				XRBTree_SetBlack(LPbrother);
 				XRBTree_SetRed(LPpater);
-				XBTree_SpinLL(LPpater);
+				XBTree_SpinLL(this_root, LPpater);
 				LPbrother = XBTree_GetRChild(LPpater);
 			}
-			if (LPbrother)
+			if (LPbrother!=NULL)
 			{
-				XRBTreeNode* LPbrotherLChild = XBTree_GetLChild(LPbrother);
-				XRBTreeNode* LPbrotherRChild = XBTree_GetRChild(LPbrother);
-				if (!LPbrotherLChild || XRBTree_IsBlack(LPbrotherLChild)
-					&& !LPbrotherRChild|| XRBTree_IsBlack(LPbrotherRChild))
+				XRBTreeNode* LPbrotherLChild = XBTree_GetLChild(LPbrother);//兄弟节点的左孩子
+				XRBTreeNode* LPbrotherRChild = XBTree_GetRChild(LPbrother);//兄弟节点的右孩子
+				if ((LPbrotherLChild==NULL || XRBTree_IsBlack(LPbrotherLChild))
+					&& (LPbrotherRChild==NULL|| XRBTree_IsBlack(LPbrotherRChild)))
 				{
 					XRBTree_SetRed(LPbrother);
 					node = LPpater;
@@ -51,13 +33,13 @@ static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* node, XRBTreeN
 					{
 						XRBTree_SetBlack((XRBTreeNode*)XBTree_GetLChild(LPbrother));
 						XRBTree_SetRed(LPbrother);
-						XBTree_SpinRR(LPbrother);
+						XBTree_SpinRR(this_root, LPbrother);
 						LPbrother = XBTree_GetRChild(LPpater);
 					}
 					XRBTree_SetColor(LPbrother, XRBTree_GetColor(LPpater));
 					XRBTree_SetBlack(LPpater);
 					XRBTree_SetBlack((XRBTreeNode*)XBTree_GetRChild(LPbrother));
-					XBTree_SpinLL(LPpater);
+					XBTree_SpinLL(this_root, LPpater);
 					node = *this_root;
 					break;
 				}
@@ -75,30 +57,40 @@ static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* node, XRBTreeN
 			{
 				XRBTree_SetBlack(LPbrother);
 				XRBTree_SetRed(LPpater);
-				XBTree_SpinLL(LPpater);
+				XBTree_SpinLL(this_root, LPpater);
 				LPbrother = XBTree_GetLChild(LPpater);
 			}
-			if ((XBTree_GetLChild(LPbrother) == NULL || XRBTree_IsBlack((XRBTreeNode*)XBTree_GetLChild(LPbrother))) && (XBTree_GetRChild(LPbrother) == NULL || XRBTree_IsBlack((XRBTreeNode*)XBTree_GetRChild(LPbrother))))
+			if (LPbrother!=NULL)
 			{
-				XRBTree_SetRed(LPbrother);
-				node = LPpater;
-				LPpater = XBTree_GetParent(node);
+				XRBTreeNode* LPbrotherLChild = XBTree_GetLChild(LPbrother);//兄弟节点的左孩子
+				XRBTreeNode* LPbrotherRChild = XBTree_GetRChild(LPbrother);//兄弟节点的右孩子
+				if ((LPbrotherLChild == NULL || XRBTree_IsBlack(LPbrotherLChild))
+					&& (LPbrotherRChild == NULL || XRBTree_IsBlack(LPbrotherRChild)))
+				{
+					XRBTree_SetRed(LPbrother);
+					node = LPpater;
+					LPpater = XBTree_GetParent(node);
+				}
+				else
+				{
+					if ((XBTree_GetLChild(LPbrother) == NULL || XRBTree_IsBlack((XRBTreeNode*)XBTree_GetLChild(LPbrother))))
+					{
+						XRBTree_SetBlack((XRBTreeNode*)XBTree_GetRChild(LPbrother));
+						XRBTree_SetRed(LPbrother);
+						XBTree_SpinLL(this_root, LPbrother);
+						LPbrother = XBTree_GetLChild(LPpater);
+					}
+					XRBTree_SetColor(LPbrother, XRBTree_GetColor(LPpater));
+					XRBTree_SetBlack(LPpater);
+					XRBTree_SetBlack((XRBTreeNode*)XBTree_GetLChild(LPbrother));
+					XBTree_SpinRR(this_root, LPpater);
+					node = *this_root;
+					break;
+				}
 			}
 			else
 			{
-				if ((XBTree_GetLChild(LPbrother) == NULL || XRBTree_IsBlack((XRBTreeNode*)XBTree_GetLChild(LPbrother))))
-				{
-					XRBTree_SetBlack((XRBTreeNode*)XBTree_GetRChild(LPbrother));
-					XRBTree_SetRed(LPbrother);
-					XBTree_SpinLL(LPbrother);
-					LPbrother = XBTree_GetLChild(LPpater);
-				}
-				XRBTree_SetColor(LPbrother, XRBTree_GetColor(LPpater));
-				XRBTree_SetBlack(LPpater);
-				XRBTree_SetBlack((XRBTreeNode*)XBTree_GetLChild(LPbrother));
-				XBTree_SpinRR(LPpater);
-				node = *this_root;
-				break;
+				node = LPpater;
 			}
 		}
 	}
@@ -117,23 +109,11 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	}
 	XRBTreeNode* LPpater = XBTree_GetParent(eraseNode);
 	
-	//free(eraseNode->XBTNode.data);
-	/*eraseNode->XBTNode.data = LPchild->XBTNode.data;
-	LPreplace->XBTNode.data = NULL;*/
 	enum XRBTreeColor color = XRBTree_GetColor(eraseNode);//颜色
 	if (LPpater != NULL)
 	{
 		XRBTreeNode** LPpaterToEraseNode = XBTree_findChildisParent(eraseNode);//孩子在父节点位置
 		*LPpaterToEraseNode = LPchild;
-		
-		/*if (XBTree_GetLChild(LPpater) == eraseNode)
-		{
-			XBTree_SetLChild(LPpater, LPchild);
-		}
-		else
-		{
-			XBTree_SetRChild(LPpater, LPchild);
-		}*/
 	}
 	else
 	{
@@ -143,7 +123,7 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	if (LPchild != NULL)
 		XBTree_SetParent(LPchild, LPpater);
 	XBTree_freeNode(eraseNode, false);
-	if (color == XRBTreeBlack)
+	if (color == XRBTreeBlack&& *this_root!=NULL)
 	{
 		//调整树：
 		eraseAdjustTree(this_root, LPchild, LPpater);
@@ -162,28 +142,11 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	{
 		LPreplace = XBTree_GetLChild(LPreplace);
 	}
-	//LPpater = XBTree_GetParent(eraseNode);
 
 	free(eraseNode->XBTNode.data);
 	eraseNode->XBTNode.data = LPreplace->XBTNode.data;
 	LPreplace->XBTNode.data = NULL;
 
-	if (LPpater != NULL)//删除的节点是不是根节点
-	{
-		//不是根节点
-		/*if (XBTree_GetLChild(LPpater) == eraseNode)
-		{
-			XBTree_SetLChild(LPpater, LPreplace);
-		}
-		else
-		{
-			XBTree_SetRChild(LPpater, LPreplace);
-		}*/
-	}
-	else
-	{
-		//*this_root = LPreplace;
-	}
 	LPchild = XBTree_GetRChild(LPreplace);
 	LPpater = XBTree_GetParent(LPreplace);
 	enum XRBTreeColor color = XRBTree_GetColor(LPreplace);
@@ -200,27 +163,6 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	{
 		XBTree_SetParent(LPchild, LPpater);
 	}
-	//if (LPpater == eraseNode)
-	//{
-	//	LPpater = LPreplace;
-	//}
-	//else
-	//{
-	//	if (LPchild != NULL)
-	//	{
-	//		XBTree_SetParent(LPchild, LPpater);
-	//	}
-	//	XBTree_SetLChild(LPpater, LPchild);
-	//	XBTree_SetRChild(LPreplace, XBTree_GetRChild(eraseNode));
-	//	XBTree_SetParent(XBTree_GetRChild(eraseNode), LPreplace);
-	//}
-	////调整替换节点父节点
-	//XBTree_SetParent(LPreplace, XBTree_GetParent(eraseNode));
-	//XRBTree_SetColor(LPreplace, XRBTree_GetColor(eraseNode));
-	//XBTree_SetLChild(LPreplace, XBTree_GetLChild(eraseNode));
-	////调整删除节点父节点
-	//XBTree_SetParent(XBTree_GetLChild(eraseNode), LPreplace);
-
 	XBTree_freeNode(LPreplace, false);
 	if (color == XRBTreeBlack)
 	{
@@ -245,9 +187,4 @@ XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root,XLess less, XEquality equalit
 		OneChild_erase(this_root, findErase);
 	if (count == 2)//两个孩子
 		TwoChild_erase(this_root, findErase);
-	printf("调整后:");
-	XVector* TreePreorder = XBTree_TraversingToXVector(*this_root, XBTreeInorder);
-	XVector_iterator_for_each(TreePreorder, traverse, NULL);
-	printf("\n");
-	XVector_free(TreePreorder);
 }

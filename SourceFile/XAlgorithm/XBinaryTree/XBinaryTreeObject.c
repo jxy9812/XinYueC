@@ -233,41 +233,63 @@ bool XBTree_ReplacementChildNode(XBTreeNode* formerChild, XBTreeNode* freshChild
 	return true;
 }
 
-XBTreeNode* XBTree_SpinRR(XBTreeNode* this_root)
+XBTreeNode* XBTree_SpinRR(XBTreeNode** this_root,XBTreeNode* node)
 {
-	if (isNULL(isNULLInfo(this_root, "")))
+	if (isNULL(isNULLInfo(node, "")))
 		return NULL;
 	//获取将成为的根节点
-	XBTreeNode* NewRoot = XBTree_GetLChild(this_root);
+	XBTreeNode* NewNode = XBTree_GetLChild(node);
+	
 	//设置NewRoot的父节点，this_root成为NewRoot的孩子
-	XBTreeNode** ppThis_rootParent = XBTree_GetTreeNode(this_root, XBTreeParent);
-	XBTree_SetParent(NewRoot, *ppThis_rootParent);
-	*ppThis_rootParent = NewRoot;
+	XBTreeNode** ppThis_nodeParent = XBTree_GetTreeNode(node, XBTreeParent);
+	//父节点
+	XBTreeNode* pater = *ppThis_nodeParent;
+	if (pater == NULL)//根节点改变
+	{
+		*this_root = NewNode;
+	}
+	else
+	{
+		*XBTree_findChildisParent(node) = NewNode;
+	}
+	XBTree_SetParent(NewNode, pater);
+	*ppThis_nodeParent = NewNode;
+	
 	//NewRoot的右孩子交给this_root的左孩子，
-	XBTreeNode** ppNewRootRightChild = XBTree_GetTreeNode(NewRoot, XBTreeRChild);
-	XBTree_SetLChild(this_root, *ppNewRootRightChild);
+	XBTreeNode** ppNewRootRightChild = XBTree_GetTreeNode(NewNode, XBTreeRChild);
+	XBTree_SetLChild(node, *ppNewRootRightChild);
 	if (*ppNewRootRightChild != NULL)
-		XBTree_SetParent(*ppNewRootRightChild, this_root);
+		XBTree_SetParent(*ppNewRootRightChild, node);
 
-	*ppNewRootRightChild = this_root;
-	return NewRoot;
+	*ppNewRootRightChild = node;
+	return NewNode;
 }
 
-XBTreeNode* XBTree_SpinLL(XBTreeNode* this_root)
+XBTreeNode* XBTree_SpinLL(XBTreeNode** this_root, XBTreeNode* node)
 {
-	if (isNULL(isNULLInfo(this_root, "")))
+	if (isNULL(isNULLInfo(node, "")))
 		return NULL;
-	XBTreeNode* NewRoot = XBTree_GetRChild(this_root);
+	XBTreeNode* NewNode = XBTree_GetRChild(node);
 
-	XBTreeNode** ppThis_rootParent = XBTree_GetTreeNode(this_root, XBTreeParent);
-	XBTree_SetParent(NewRoot, *ppThis_rootParent);
-	*ppThis_rootParent = NewRoot;
+	XBTreeNode** ppThis_rootParent = XBTree_GetTreeNode(node, XBTreeParent);
+	//父节点
+	XBTreeNode* pater = *ppThis_rootParent;
+	if (pater == NULL)//根节点改变
+	{
+		*this_root = NewNode;
+	}
+	else
+	{
+		*XBTree_findChildisParent(node) = NewNode;
+	}
+	XBTree_SetParent(NewNode, pater);
+	*ppThis_rootParent = NewNode;
 
-	XBTreeNode** ppNewRootLeftChild = XBTree_GetTreeNode(NewRoot, XBTreeLChild);
-	XBTree_SetRChild(this_root, *ppNewRootLeftChild);
+	XBTreeNode** ppNewRootLeftChild = XBTree_GetTreeNode(NewNode, XBTreeLChild);
+	XBTree_SetRChild(node, *ppNewRootLeftChild);
 	if (*ppNewRootLeftChild != NULL)
-		XBTree_SetParent(*ppNewRootLeftChild, this_root);
+		XBTree_SetParent(*ppNewRootLeftChild, node);
 
-	*ppNewRootLeftChild = this_root;
-	return NewRoot;
+	*ppNewRootLeftChild = node;
+	return NewNode;
 }

@@ -15,7 +15,7 @@ bool XRBTree_AdjustNoOne(XRBTreeNode** currentNode,XRBTreeNode* LPpater, XRBTree
 }
 
 //调整成为红黑树
-void XRBTree_insertAdjust(XRBTreeNode* currentNode)
+void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNode)
 {
 	XRBTreeNode* LPpater = NULL;//父节点
 	XRBTreeNode* LPgrandpa = NULL;//祖父节点
@@ -34,13 +34,13 @@ void XRBTree_insertAdjust(XRBTreeNode* currentNode)
 				if (currentNode == XBTree_GetRChild(LPpater))
 				{
 					currentNode = LPpater;
-					LPpater = XBTree_SpinLL(LPpater);
+					LPpater = XBTree_SpinLL(this_root,LPpater);
 				}
 				//NO.3当前节点是其父节点的左孩子
 				{
 					XRBTree_SetBlack(LPpater);
 					XRBTree_SetRed(LPgrandpa);
-					XBTree_SpinRR(LPgrandpa);
+					XBTree_SpinRR(this_root,LPgrandpa);
 				}
 			}
 		}
@@ -55,13 +55,13 @@ void XRBTree_insertAdjust(XRBTreeNode* currentNode)
 				if (currentNode == XBTree_GetLChild(LPpater))
 				{
 					currentNode = LPpater;
-					LPpater = XBTree_SpinRR(LPpater);
+					LPpater = XBTree_SpinRR(this_root, LPpater);
 				}
 				//NO.3当前节点是其父节点的左孩子
 				{
 					XRBTree_SetBlack(LPpater);
 					XRBTree_SetRed(LPgrandpa);
-					XBTree_SpinLL(LPgrandpa);
+					XBTree_SpinLL(this_root, LPgrandpa);
 				}
 			}
 		}
@@ -82,6 +82,6 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, const void* LPD
 	bool flag = XBBTree_insertAlign(this_root, node, less, LPData, TypeSize);//将数据插入到节点，并且链接
 	if (isNULL(isNULLInfo(flag, "节点插入失败")))
 		return NULL;
-	XRBTree_insertAdjust( node);
+	XRBTree_insertAdjust(this_root, node);
 	return node;
 }

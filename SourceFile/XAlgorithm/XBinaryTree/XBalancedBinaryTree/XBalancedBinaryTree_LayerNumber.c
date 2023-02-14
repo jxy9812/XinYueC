@@ -23,14 +23,7 @@ const size_t XBBTree_SetLayerNumberAll(XBBTreeNode** this_root, XBBTreeNode* cur
 	while (currentNode != NULL)
 	{
 		currentNode->maxLayer = 1 + XBBTree_GetLayerNumberChild(currentNode);
-		if (currentNode == *this_root)//如果是根节点
-		{
-			currentNode = XBBTree_Spin(this_root);//传入根的二级指针
-		}
-		else//存在父节点
-		{//传父节点指向孩子的指针
-			currentNode = XBBTree_Spin(XBTree_findChildisParent(currentNode));
-		}
+		currentNode = XBBTree_Spin(this_root, currentNode);
 		currentNode = XBTree_GetParent(currentNode);
 		++count;
 	}

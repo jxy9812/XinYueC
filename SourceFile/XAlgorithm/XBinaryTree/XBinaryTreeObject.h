@@ -55,7 +55,7 @@ struct XBTreeNode** XBTree_findChildisParent(struct XBTreeNode* Child);
 //替换孩子节点(将原孩子在父节点的指向修改为新的节点，并建立新的父子关系,旧节点的父指针指向空)
 bool XBTree_ReplacementChildNode(struct XBTreeNode* formerChild/*旧的*/, struct XBTreeNode* freshChild/*新的*/);
 //右旋
-XBTreeNode* XBTree_SpinRR(XBTreeNode* this_root);
+XBTreeNode* XBTree_SpinRR(XBTreeNode** this_root, XBTreeNode* node);
 //左旋
-XBTreeNode* XBTree_SpinLL(XBTreeNode* this_root);
+XBTreeNode* XBTree_SpinLL(XBTreeNode** this_root, XBTreeNode* node);
 #endif // !XBINARYTREEOBJECT_H
