@@ -15,4 +15,18 @@ XDefineFunc_DefineTwo(XLess, unsigned, long)
 XDefineFunc_Define(XLess, float)
 XDefineFunc_Define(XLess, double)
 XDefineFunc_DefineTwo(XLess, long, double)
+
+XDefineFunc_XMapDefine(XLess, char)
+XDefineFunc_XMapDefineTwo(XLess, unsigned, char)
+XDefineFunc_XMapDefine(XLess, int)
+XDefineFunc_XMapDefine(XLess, long)
+XDefineFunc_XMapDefineTwo(XLess, unsigned, int)
+XDefineFunc_XMapDefineTwo(XLess, short, int)
+XDefineFunc_XMapDefineTwo(XLess, long, int)
+XDefineFunc_XMapDefineTwo(XLess, long, long)
+XDefineFunc_XMapDefineTwo(XLess, unsigned, long)
+XDefineFunc_XMapDefine(XLess, float)
+XDefineFunc_XMapDefine(XLess, double)
+XDefineFunc_XMapDefineTwo(XLess, long, double)
+
 #endif // !XFUNCTIONPOINTER_H

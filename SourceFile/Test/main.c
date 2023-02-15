@@ -10,12 +10,13 @@ int main(int argc, char* args[])
 	//VectorTest();
 	//stackTest();
 	//XStringTest();
+	XMapTest();
 	//SortTest();
 	//XMazeGeneratedTest();
 	//XMazePathfinding();
 	//queueTest();
 	//XBinaryTreeObjectTest();	
 	//XBalancedBinaryTreeTest();
-	XRedBlackTreeTest();
+	//XRedBlackTreeTest();
 	return 0;
 }

@@ -16,6 +16,8 @@ void queueTest();
 void VectorTest();
 //字符串测试
 void XStringTest();
+//map映射测试
+void  XMapTest();
 //排序算法测试
 void SortTest();
 //随机迷宫生成算法——深度优先算法
