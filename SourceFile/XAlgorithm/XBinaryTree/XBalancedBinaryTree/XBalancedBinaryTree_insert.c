@@ -7,12 +7,13 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess
 		XBTree_freeNode(insertNode, false);//插入失败释放创建的节点
 		return false;
 	}
-	if (this_root == NULL)//如果没有根节点
+	if (this_root == NULL|| *this_root == NULL)//如果没有根节点或根为空
 	{
 		return true;
 	}
 	//开始遍历,插入节点
 	XBBTreeNode* currentNode = *this_root;
+
 	while (currentNode != NULL)
 	{
 		//满足小于往左边放

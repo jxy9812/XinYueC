@@ -2,22 +2,22 @@
 #include"XContainerObject.h"
 #include<stdlib.h>
 #include<string.h>
-XPair* XPair_init(const size_t firstTypeSize, const size_t secondTypeSize)
+XPair* XPair_init(const size_t firstTypeSize, const size_t keyTypeSize)
 {
-	if (firstTypeSize == 0 || secondTypeSize == 0)
+	if (firstTypeSize == 0 || keyTypeSize == 0)
 	{
 		printf("有类型设置错误");
 		return NULL;
 	}
 	XPair* this_pair = (XPair*)malloc(sizeof(XPair));
 	this_pair->firstTypeSize = firstTypeSize;
-	this_pair->secondTypeSize = secondTypeSize;
+	this_pair->keyTypeSize = keyTypeSize;
 	if (isNULL(isNULLInfo(this_pair, "初始化pair结构体失败")))
 		return NULL;
 	this_pair->first = calloc(1,firstTypeSize);//开辟的同时初始化为零
 	if (isNULL(isNULLInfo(this_pair->first, "初始化pair-first失败")))
 		return NULL;
-	this_pair->second = calloc(1,secondTypeSize);
+	this_pair->second = calloc(1,keyTypeSize);
 	if (isNULL(isNULLInfo(this_pair->second, "初始化pair-second失败")))
 		return NULL;
 	return this_pair;
@@ -26,7 +26,7 @@ XPair* XPair_init(const size_t firstTypeSize, const size_t secondTypeSize)
 void XPair_insert(XPair* this_pair, void* firstData, void* secondData)
 {
 	XPair_insertFirst(this_pair, firstData);
-	XPair_insertFirst(this_pair, secondData);
+	XPair_insertSecond(this_pair, secondData);
 }
 
 void XPair_insertFirst(XPair* this_pair, void* firstData)
@@ -44,7 +44,7 @@ void XPair_insertSecond(XPair* this_pair, void* secondData)
 		return;
 	if (isNULL(isNULLInfo(secondData, "")))
 		return;
-	memcpy(this_pair->second, secondData, this_pair->secondTypeSize);
+	memcpy(this_pair->second, secondData, this_pair->keyTypeSize);
 }
 void* XPair_first(XPair* this_pair)
 {

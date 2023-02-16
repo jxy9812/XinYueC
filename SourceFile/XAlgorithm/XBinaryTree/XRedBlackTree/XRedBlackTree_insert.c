@@ -20,7 +20,7 @@ void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNode)
 	XRBTreeNode* LPpater = NULL;//父节点
 	XRBTreeNode* LPgrandpa = NULL;//祖父节点
 	XRBTreeNode* LPuncle = NULL;//叔叔节点
-	while ((LPpater = XBTree_GetParent(currentNode))&& XRBTree_IsRed(LPpater))
+	while ((LPpater=XBTree_GetParent(currentNode))&& XRBTree_IsRed(LPpater))
 	{
 		LPgrandpa = XBTree_GetParent(LPpater);
 		if (LPpater == XBTree_GetLChild(LPgrandpa))//父节点是祖父的左孩子
@@ -28,20 +28,17 @@ void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNode)
 			LPuncle = XBTree_GetRChild(LPgrandpa);
 			if (XRBTree_AdjustNoOne(&currentNode, LPpater, LPgrandpa, LPuncle))//叔叔节点是红色
 				continue;
-			if (LPuncle != NULL && XRBTree_IsBlack(LPuncle))//叔叔节点是黑色
+			//NO.2当前节点是其父节点的右孩子
+			if (currentNode == XBTree_GetRChild(LPpater))
 			{
-				//NO.2当前节点是其父节点的右孩子
-				if (currentNode == XBTree_GetRChild(LPpater))
-				{
-					currentNode = LPpater;
-					LPpater = XBTree_SpinLL(this_root,LPpater);
-				}
-				//NO.3当前节点是其父节点的左孩子
-				{
-					XRBTree_SetBlack(LPpater);
-					XRBTree_SetRed(LPgrandpa);
-					XBTree_SpinRR(this_root,LPgrandpa);
-				}
+				currentNode = LPpater;
+				LPpater = XBTree_SpinLL(this_root, LPpater);
+			}
+			//NO.3当前节点是其父节点的左孩子
+			{
+				XRBTree_SetBlack(LPpater);
+				XRBTree_SetRed(LPgrandpa);
+				XBTree_SpinRR(this_root, LPgrandpa);
 			}
 		}
 		else//父节点是祖父的右孩子
@@ -49,24 +46,22 @@ void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNode)
 			LPuncle = XBTree_GetLChild(LPgrandpa);
 			if (XRBTree_AdjustNoOne(&currentNode, LPpater, LPgrandpa, LPuncle))//叔叔节点是红色
 				continue;
-			if (LPuncle != NULL && XRBTree_IsBlack(LPuncle))//叔叔节点是黑色
+			//NO.2当前节点是其父节点的左孩子
+			if (currentNode == XBTree_GetLChild(LPpater))
 			{
-				//NO.2当前节点是其父节点的左孩子
-				if (currentNode == XBTree_GetLChild(LPpater))
-				{
-					currentNode = LPpater;
-					LPpater = XBTree_SpinRR(this_root, LPpater);
-				}
-				//NO.3当前节点是其父节点的左孩子
-				{
-					XRBTree_SetBlack(LPpater);
-					XRBTree_SetRed(LPgrandpa);
-					XBTree_SpinLL(this_root, LPgrandpa);
-				}
+				currentNode = LPpater;
+				LPpater = XBTree_SpinRR(this_root, LPpater);
+			}
+			//NO.3当前节点是其父节点的左孩子
+			{
+				XRBTree_SetBlack(LPpater);
+				XRBTree_SetRed(LPgrandpa);
+				XBTree_SpinLL(this_root, LPgrandpa);
 			}
 		}
+		//LPpater = XBTree_GetParent(currentNode);
 	}
-	XRBTree_SetBlack(currentNode);
+	XRBTree_SetBlack(*this_root);
 }
 XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, const void* LPData, const size_t TypeSize)
 {
@@ -84,6 +79,17 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, const void* LPD
 	{	
 		printf("节点插入失败\n");
 		return NULL;
+	}
+	if (this_root == NULL)//根节点，无内存开辟
+	{
+		XRBTree_SetBlack(node);
+		return node;
+	}
+	else if (*this_root == NULL)
+	{
+		*this_root = node;
+		XRBTree_SetBlack(node);
+		return node;
 	}
 	XRBTree_insertAdjust(this_root, node);
 	return node;
