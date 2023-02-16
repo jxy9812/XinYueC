@@ -21,7 +21,7 @@ typedef struct XContainerObject
 }XContainerObject;
 
 #define isNULLInfo(args,str) args,#args,str ,__FUNCTION__,__FILE__,__LINE__
-
+#define ObjectData(Object,Type) (*(Type*)(Object->_data))
 bool isNULL(const void*args/*参数数值*/,const char*argsName/*参数名字*/, const char* str/*附加参数*/,const char*funcName/*函数名字*/,const char* filePath/*所在文件路径*/,int line/*所在行号*/);
 const bool XContainerObject_empty(const struct XContainerObject* Object);
 const size_t XContainerObject_size(const struct XContainerObject* Object);

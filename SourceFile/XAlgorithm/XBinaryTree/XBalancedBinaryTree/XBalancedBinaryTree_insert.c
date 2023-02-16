@@ -1,6 +1,6 @@
 ﻿#include "XBalancedBinaryTree.h"
 #include"XContainerObject.h"
-bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess less, const void* LPData, const size_t TypeSize)
+bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess less, XCompareRuleTwo lessRule, const void* LPData, const size_t TypeSize)
 {
 	if (!XBTree_insertData(insertNode, LPData, TypeSize))//插入数据
 	{
@@ -17,7 +17,8 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess
 	while (currentNode != NULL)
 	{
 		//满足小于往左边放
-		if (less(insertNode->XBTNode.data, currentNode->XBTNode.data))
+		if(lessRule(less, insertNode, currentNode))
+		//if (less(insertNode->XBTNode.data, currentNode->XBTNode.data))
 		{
 			XBTreeNode** ppLChild = XBTree_GetTreeNode(currentNode, XBTreeLChild);
 			if (*ppLChild == NULL)//建立关系
@@ -49,7 +50,7 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess
 	XBTree_freeNode(insertNode, false);
 	return false;
 }
-XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XLess less, const void* LPData, const size_t TypeSize)
+XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XLess less, XCompareRuleTwo lessRule, const void* LPData, const size_t TypeSize)
 {
 	if (isNULL(isNULLInfo(less, "")))
 		return NULL;
@@ -61,7 +62,7 @@ XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XLess less, const void* LPD
 	XBBTreeNode* NewNode = XBBTree_creation(TypeSize);
 	if (isNULL(isNULLInfo(NewNode, "")))
 		return NULL;
-	bool flag=XBBTree_insertAlign(this_root, NewNode, less, LPData, TypeSize);
+	bool flag=XBBTree_insertAlign(this_root, NewNode, less, lessRule, LPData, TypeSize);
 	if (!flag)
 	{	
 		printf("节点插入失败\n");

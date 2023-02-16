@@ -4,19 +4,19 @@
 #include<stdio.h>
 #include"XListNode.h"
 
-struct XList_iterator* XList_begin(struct XList* this_list)
+XList_iterator* XList_begin(struct XList* this_list)
 {
 	if (isNULL(this_list, "XList_begin"))
 		return NULL;
 	return XList_front(this_list);
 }
 
-struct XList_iterator* XList_end(struct XList* this_list)
+XList_iterator* XList_end(struct XList* this_list)
 {
 	return NULL;
 }
 
-struct XList_iterator* XList_iterator_add(struct XList* this_list, struct XList_iterator* it)
+XList_iterator* XList_iterator_add(struct XList* this_list, struct XList_iterator* it)
 {
 	if (isNULL(this_list, "XList_iterator_add  struct XList*"))
 		return NULL;

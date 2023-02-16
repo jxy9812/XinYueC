@@ -1,13 +1,14 @@
 ﻿#ifndef  XMAP_FUNC_H
 #define XMAP_FUNC_H
 #include"XFunctionCallback.h"
+typedef struct XPair XPair;
 typedef struct XMap XMap;
 //Map插入数据
 void XMap_insert(XMap* this_map, const void* key, const void* val);
 //map删除数据
 void XMap_erase(XMap* this_map, const void* key);
 //查找数据，返回找到的指针，没有返回NULL
-void* XMap_find( XMap* this_map, const void* key);
+XPair* XMap_find( XMap* this_map, const void* key);
 //清空Map，释放内存
 void XMap_clear(XMap* this_map);
 //释放内存

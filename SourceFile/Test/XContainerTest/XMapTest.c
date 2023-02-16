@@ -12,7 +12,7 @@ void XMapTest()
 {
 	int arryint[] = {1,23,456,5};
 	char arraychar[][100]={"琦神","小白","666","私房菜"};
-	XMap* map = XMap_init(sizeof(int),sizeof(char*),XEquality_int_XMap, XLess_int_XMap);
+	XMap* map = XMap_init(sizeof(int),sizeof(char*),XEquality_int, XLess_int);
 	
 	for (size_t i=0;i<4;i++)
 	{
@@ -20,4 +20,6 @@ void XMapTest()
 	}
 
 	XMap_iterator_for_each(map, XFor_each_pair,NULL);
+	XPair* pair =XMap_find(map, arryint);
+	printf("查询到:key: % d val : % s\n", XPair_First(pair, int), XPair_second(pair));
 }

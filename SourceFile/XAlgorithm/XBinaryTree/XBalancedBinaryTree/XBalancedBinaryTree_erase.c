@@ -86,11 +86,11 @@ static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 
 }
 
-void* XBBTree_erase(XBBTreeNode** this_root, XLess less, XEquality equality, const void* LPData, const size_t TypeSize)
+void* XBBTree_erase(XBBTreeNode** this_root, XLess less, XEquality equality, XCompareRuleOne Rule,const void* LPData, const size_t TypeSize)
 {
 	if (isNULL(isNULLInfo(this_root, "")))
 		return NULL;
-	XBBTreeNode* findRet = XBBTree_findData(*this_root, less, equality, LPData);
+	XBBTreeNode* findRet = XBBTree_findData(*this_root, less,equality, Rule, LPData);
 	if (findRet == NULL)
 		return NULL;//要删除的节点没找到
 	size_t count = 0;

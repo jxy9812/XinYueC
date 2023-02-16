@@ -20,18 +20,18 @@ void XBalancedBinaryTreeTest()
 	int a[] = { 4,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
 	int* LPa = a;
 
-	XBBTreeNode* root = XBBTree_insert(NULL, XLess_int,LPa++, sizeof(int));
+	XBBTreeNode* root = XBBTree_insert(NULL, XLess_int,XCompareRuleTwo_BinaryTree, LPa++, sizeof(int));
 	for (size_t i = 0; i < sizeof(a)/sizeof(a[0])-1; i++)
 	{
 		if (i == 11)
 			i = 11;
-		XBBTree_insert(&root, XLess_int, LPa++, sizeof(int));
+		XBBTree_insert(&root, XLess_int, XCompareRuleTwo_BinaryTree, LPa++, sizeof(int));
 		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder);
 		XVector_iterator_for_each(TreePreorder, traverse, NULL);
 		XVector_free(TreePreorder);
 	}
 	int findVal = 456;
-	XBBTreeNode* findRet = XBBTree_findData(root, XLess_int, XEquality_int,&findVal);
+	XBBTreeNode* findRet = XBBTree_findData(root, XLess_int, XEquality_int,XCompareRuleOne_BinaryTree,&findVal);
 	if(findRet!=NULL)
 	printf("找到的:%d\n", *(int*)findRet->XBTNode.data);
 
@@ -60,7 +60,7 @@ void XBalancedBinaryTreeTest()
 	//删除测试遍历插入的数组一个个查找删除，直至清空二叉树
 	for (size_t i = 0; i < sizeof(a) / sizeof(a[0]); i++)
 	{
-		XBBTree_erase(&root, XLess_int, XEquality_int, a+i, sizeof(int));
+		XBBTree_erase(&root, XLess_int, XEquality_int,XCompareRuleOne_BinaryTree, a+i, sizeof(int));
 	}
 	
 	//中序测试
