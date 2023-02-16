@@ -63,22 +63,53 @@ void XMap_insert(XMap* this_map, const void* key, const void* val)
 {
 	if (isNULL(isNULLInfo(this_map, "")))
 		return;
-	XPair* LPpair = XPair_init(this_map->keyTypeSize, this_map->object._type);
-	XPair_insert(LPpair, key, val);
-	//printf("创建的xpair key:%d val:%s\n",XPair_First(LPpair,int),XPair_second(LPpair));
-	XRBTree_insert(&(this_map->object._data), this_map->KeyLess,XCompareRuleTwo_XMap, &LPpair, sizeof(XPair*));
-	/*XRBTreeNode* root= this_map->object._data;
-	LPpair= *(XPair**)root->XBTNode.data;
-	printf("根节点，key:%d val:%s\n", XPair_First(LPpair, int), XPair_second(LPpair));*/
-	++this_map->object._capacity;
-	++this_map->object._size;
-	this_map->isModify = true;
+	XPair* pair = XMap_find(this_map, key);
+	if (pair == NULL)//当前没有这个键值对
+	{
+		XPair* LPpair = XPair_init(this_map->keyTypeSize, this_map->object._type);
+		XPair_insert(LPpair, key, val);
+
+		//printf("创建的xpair key:%d val:%s\n",XPair_First(LPpair,int),XPair_second(LPpair));
+
+		XRBTree_insert(&(this_map->object._data), this_map->KeyLess, XCompareRuleTwo_XMap, &LPpair, sizeof(XPair*));
+
+		/*XRBTreeNode* root= this_map->object._data;
+		LPpair= *(XPair**)root->XBTNode.data;
+		printf("根节点，key:%d val:%s\n", XPair_First(LPpair, int), XPair_second(LPpair));*/
+		++this_map->object._capacity;
+		++this_map->object._size;
+		this_map->isModify = true;
+	}
+	else
+	{
+		XPair_insertSecond(pair, val);
+	}
+	
+}
+void* XMap_at(XMap* this_map, const void* key)
+{
+	if (isNULL(isNULLInfo(this_map, "")))
+		return NULL;
+	XPair* pair = XMap_find(this_map, key);
+	if (pair == NULL)//当前没有这个键值对
+	{
+		pair = XPair_init(this_map->keyTypeSize, this_map->object._type);
+		XPair_insert(pair, key, NULL);
+		XRBTree_insert(&(this_map->object._data), this_map->KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
+		++this_map->object._capacity;
+		++this_map->object._size;
+		this_map->isModify = true;
+	}
+	return XPair_second(pair);
 }
 //查找数据XPair
 XPair* XMap_find(XMap* this_map, const void* key)
 {
 	if (isNULL(isNULLInfo(this_map, "")))
 		return NULL;
-	XPair* pair= *(XPair**)(XBBTree_findData(this_map->object._data, this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key)->XBTNode.data);
+	XBTreeNode* node= XBBTree_findData(this_map->object._data, this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
+	if (node == NULL)
+		return NULL;
+	XPair* pair = *(XPair**)node->data;
 	return pair;
 }

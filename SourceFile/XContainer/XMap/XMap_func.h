@@ -7,7 +7,9 @@ typedef struct XMap XMap;
 void XMap_insert(XMap* this_map, const void* key, const void* val);
 //map删除数据
 void XMap_erase(XMap* this_map, const void* key);
-//查找数据，返回找到的指针，没有返回NULL
+//根据键值返回数据地址
+void* XMap_at(XMap* this_map, const void* key);
+//查找数据，返回找到的XPair地址，没有返回NULL
 XPair* XMap_find( XMap* this_map, const void* key);
 //清空Map，释放内存
 void XMap_clear(XMap* this_map);

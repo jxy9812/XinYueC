@@ -42,9 +42,16 @@ void XPair_insertSecond(XPair* this_pair, void* secondData)
 {
 	if (isNULL(isNULLInfo(this_pair, "")))
 		return;
-	if (isNULL(isNULLInfo(secondData, "")))
-		return;
-	memcpy(this_pair->second, secondData, this_pair->keyTypeSize);
+	/*if (isNULL(isNULLInfo(secondData, "")))
+		return;*/
+	if(secondData!=NULL)
+	{
+		memcpy(this_pair->second, secondData, this_pair->keyTypeSize);
+	}
+	else
+	{
+		memset(this_pair->second,0, this_pair->keyTypeSize);
+	}
 }
 void* XPair_first(XPair* this_pair)
 {
