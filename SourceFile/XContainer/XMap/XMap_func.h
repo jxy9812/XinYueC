@@ -19,9 +19,9 @@ void XMap_free(XMap* this_map);
 bool XMap_empty(const  XMap* this_map);
 //返回Map内元素的个数 O(1)
 int XMap_size(const  XMap* this_map);
-//交换两个同类型向量的数据
+//交换两个同类型Map的数据
 void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
-//开辟一个动态数组,初始化
+//开辟一个Map,初始化
 XMap* XMap_init(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess/*, XEquality ValEquality*/);
 //更新迭代器
 void XMap_updataIterator(XMap* this_map);

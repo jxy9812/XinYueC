@@ -132,8 +132,10 @@ const bool XBTree_freeNode(struct XBTreeNode* this_root , const bool parentSetNu
 {
 	if (isNULL(isNULLInfo(this_root, "")))
 		return false;
+	
 	//释放数据
-	free(this_root->data);
+	if(this_root->data!=NULL)
+		free(this_root->data);
 	
 	if (parentSetNull)
 	{
@@ -177,11 +179,13 @@ const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root)
 	size_t sum = 0;//一共释放了几个节点
 	XStack* stack = XStack_init("struct XBinaryTreeNode*",sizeof(struct XBTreeNode*));
 	XStack_Push(stack,&this_root);
-	struct XBTreeNode* currentNode = NULL;//当前节点指针
+	XBTreeNode* currentNode = NULL;//当前节点指针
 	while (!XStack_empty(stack))
 	{
 		currentNode = *(struct XBTreeNode**)XStack_top(stack);
 		XStack_pop(stack);
+		if (currentNode == NULL)
+			continue;
 		XVector_iterator* it = XVector_begin(currentNode->node);
 		it = XVector_iterator_add(currentNode->node, it);
 		for ( ; it != XVector_end(currentNode->node); it= XVector_iterator_add(currentNode->node,it))

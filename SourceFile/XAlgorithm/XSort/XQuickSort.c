@@ -48,10 +48,10 @@ static void* QuicPitSort_One(void const* LpLeft, void const* LpRight, const size
 }
 
 //挖坑法栈模拟递归
-void XQuicPitSort_Stack(void* LArray, const size_t nSize, const size_t TypeSize,XCompare compare )
+void XQuicPitSort_Stack(void* LParray, const size_t nSize, const size_t TypeSize,XCompare compare )
 {
 	struct XStack* st=XStack_init("char*");
-	char* begin = LArray;//移动头指针，开始指向头元素
+	char* begin = LParray;//移动头指针，开始指向头元素
 	char* end = begin + TypeSize * (nSize - 1);//移动尾指针，开始指向尾元素
 	char* temp = NULL;//入栈边界临时指针
 	st->push(st, end);//入右边界
@@ -83,7 +83,7 @@ void XQuicPitSort_Stack(void* LArray, const size_t nSize, const size_t TypeSize,
 }
 
 //挖坑法递归调用函数
-static void QuicPitSort_Recur(void* LArray, void const* LpLeft, void const* LpRight, const size_t TypeSize,XCompare compare )
+static void QuicPitSort_Recur(void* LParray, void const* LpLeft, void const* LpRight, const size_t TypeSize,XCompare compare )
 {
 
 	if (LpLeft >= LpRight)//区间不存在或只有一个数
@@ -97,14 +97,14 @@ static void QuicPitSort_Recur(void* LArray, void const* LpLeft, void const* LpRi
 		return;
 	}
 	char* pivit = QuicPitSort_One(LpLeft, LpRight, TypeSize, compare);
-	QuicPitSort_Recur(LArray, LpLeft, pivit - TypeSize, TypeSize, compare);//左区间排序
-	QuicPitSort_Recur(LArray, pivit + TypeSize, LpRight, TypeSize, compare);//右区间排序
+	QuicPitSort_Recur(LParray, LpLeft, pivit - TypeSize, TypeSize, compare);//左区间排序
+	QuicPitSort_Recur(LParray, pivit + TypeSize, LpRight, TypeSize, compare);//右区间排序
 }
 
-void XQuickSort(void* LArray, const size_t nSize, const size_t TypeSize,XCompare compare )
+void XQuickSort(void* LParray, const size_t nSize, const size_t TypeSize,XCompare compare )
 {
-	char* begin = LArray;//头指针
+	char* begin = LParray;//头指针
 	char* end = begin + TypeSize * (nSize - 1);//尾指针
 	//递归
-	QuicPitSort_Recur(LArray, begin, end, TypeSize, compare);//挖坑法
+	QuicPitSort_Recur(LParray, begin, end, TypeSize, compare);//挖坑法
 }

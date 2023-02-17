@@ -1,8 +1,8 @@
 ﻿#include"XAlgorithm.h"
 #include"XSort.h"
-void XSelectSort(void* LArray, const size_t nSize, const size_t TypeSize, XCompare compare )
+void XSelectSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompare compare )
 {//四指针头尾同时遍历直接选择
-	char* p_left = LArray;//指向第一个元素
+	char* p_left = LParray;//指向第一个元素
 	char* p_right = p_left + TypeSize * (nSize - 1);//指向最后一个元素
 	char* p_move_left;//遍历左指针
 	char* p_move_right;//遍历右指针

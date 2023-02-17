@@ -3,7 +3,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
-void XMergeSort(void* LArray, const size_t nSize, const size_t TypeSize, XCompare compare )
+void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompare compare )
 {
 	char* temp = malloc(nSize * TypeSize);//开辟临时数组
 
@@ -13,7 +13,7 @@ void XMergeSort(void* LArray, const size_t nSize, const size_t TypeSize, XCompar
 	}
 	//memset(tmp, 0, n * size);
 	size_t gap = 1;
-	char* begin = LArray;//数组头指针，开始指向头元素
+	char* begin = LParray;//数组头指针，开始指向头元素
 	char* end = begin + TypeSize * (nSize - 1);//数组尾指针，指向最后一个元素
 	char* LpOne = NULL;//第一组遍历指针指向头
 	char* LpTwo = NULL;//第二组遍历指针指向头
@@ -91,7 +91,7 @@ void XMergeSort(void* LArray, const size_t nSize, const size_t TypeSize, XCompar
 				begtmp += TypeSize;//指向tmp数组的下一个元素
 			}
 		}
-		memcpy(LArray, temp, nSize * TypeSize);//将临时数组保存的数据考回原数组
+		memcpy(LParray, temp, nSize * TypeSize);//将临时数组保存的数据考回原数组
 		//memset(tmp, 0, n * size);
 		gap *= 2;
 	}

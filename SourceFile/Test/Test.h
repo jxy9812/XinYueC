@@ -30,4 +30,6 @@ void XBinaryTreeObjectTest();
 void XBalancedBinaryTreeTest();
 //红黑树测试
 void XRedBlackTreeTest();
+//XMap和XVector的查询性能测试;
+void XMapAndXVectorFindTest();
 #endif

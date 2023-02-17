@@ -4,6 +4,7 @@
 #include"XPair.h"
 #include"XBalancedBinaryTree.h"
 #include"XRedBlackTree.h"
+#include"XAlgorithm.h"
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
@@ -86,11 +87,19 @@ void XMap_insert(XMap* this_map, const void* key, const void* val)
 	}
 	
 }
+
 void XMap_erase(XMap* this_map, const void* key)
 {
 	if (isNULL(isNULLInfo(this_map, "")))
 		return NULL;
-	XRBTree_erase(&(this_map->object._data), this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_BinaryTree, key);
+	//XMap_updataIterator(this_map);
+	XRBTreeNode* node= XRBTree_erase(&(this_map->object._data), this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
+	if (node != NULL)
+	{
+		--this_map->object._capacity;
+		--this_map->object._size;
+		this_map->isModify = true;
+	}
 }
 void* XMap_at(XMap* this_map, const void* key)
 {
@@ -118,4 +127,48 @@ XPair* XMap_find(XMap* this_map, const void* key)
 		return NULL;
 	XPair* pair = *(XPair**)node->data;
 	return pair;
+}
+static void XMap_freeNodeData(void* LPVal, void* args)
+{
+	XPair* pair = *(XPair**)LPVal;
+	XPair_free(pair);
+	*(XPair**)LPVal = NULL;
+}
+void XMap_clear(XMap* this_map)
+{
+	XMap_updataIterator(this_map);
+	XMap_iterator_for_each(this_map, XMap_freeNodeData,NULL);
+	XBTree_freeNodeAll(this_map->object._data);
+	XVector_free(this_map->itArray);
+	this_map->itArray = NULL;
+	this_map->object._capacity = 0;
+	this_map->object._size=0;
+	this_map->object._data = NULL;
+	this_map->isModify = false;
+}
+
+void XMap_free(XMap* this_map)
+{
+	XMap_clear(this_map);
+	free(this_map);
+}
+
+bool XMap_empty(const XMap* this_map)
+{
+	return XContainerObject_empty(this_map);
+}
+
+int XMap_size(const XMap* this_map)
+{
+	return XContainerObject_size(this_map);
+}
+
+void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
+{
+	XContainerObject_swap(this_mapOne, this_mapTwo);
+	swap(&this_mapOne->isModify, &this_mapTwo->isModify,sizeof(bool));
+	swap(&this_mapOne->itArray, &this_mapTwo->itArray, sizeof(XVector*));
+	swap(&this_mapOne->KeyEquality, &this_mapTwo->KeyEquality, sizeof(XEquality));
+	swap(&this_mapOne->KeyLess, &this_mapTwo->KeyLess, sizeof(XLess));
+	swap(&this_mapOne->keyTypeSize, &this_mapTwo->keyTypeSize, sizeof(size_t));
 }
