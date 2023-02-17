@@ -86,6 +86,12 @@ void XMap_insert(XMap* this_map, const void* key, const void* val)
 	}
 	
 }
+void XMap_erase(XMap* this_map, const void* key)
+{
+	if (isNULL(isNULLInfo(this_map, "")))
+		return NULL;
+	XRBTree_erase(&(this_map->object._data), this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_BinaryTree, key);
+}
 void* XMap_at(XMap* this_map, const void* key)
 {
 	if (isNULL(isNULLInfo(this_map, "")))

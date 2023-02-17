@@ -27,5 +27,5 @@ typedef struct XRBTreeNode
 XRBTreeNode* XRBTree_creation(const size_t TypeSize);
 //红黑树-自动创建节点，插入数据，并自动调整高度和旋转保证平衡
 XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, XCompareRuleTwo lessRule,const void* LPData, const size_t TypeSize);
-XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less,XEquality equality, XCompareRuleOne Rule, const void* LPData, const size_t TypeSize);
+XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less,XEquality equality, XCompareRuleOne Rule, const void* LPData);
 #endif // !XREDBLACKTREE_H

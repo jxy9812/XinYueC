@@ -171,7 +171,7 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	}
 	
 }
-XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less,XEquality equality, XCompareRuleOne Rule, const void* LPData, const size_t TypeSize)
+XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less,XEquality equality, XCompareRuleOne Rule, const void* LPData)
 {
 	if (isNULL(isNULLInfo(this_root, "")))
 		return NULL;
@@ -187,4 +187,5 @@ XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less,XEquality equalit
 		OneChild_erase(this_root, findErase);
 	if (count == 2)//两个孩子
 		TwoChild_erase(this_root, findErase);
+	return findErase;
 }

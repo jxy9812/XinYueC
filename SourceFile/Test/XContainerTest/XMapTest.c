@@ -18,7 +18,7 @@ void XMapTest()
 	{
 		XMap_insert(map, &arryint[i], arraychar[i]);
 	}
-
+	XMap_erase(map, 23);
 	XMap_iterator_for_each(map, XFor_each_pair,NULL);
 	XPair* pair =XMap_find(map, arryint);
 	printf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_second(pair));
