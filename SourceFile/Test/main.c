@@ -10,8 +10,9 @@ int main(int argc, char* args[])
 	//VectorTest();
 	//stackTest();
 	//XStringTest();
-	//XMapTest();
-	XMapAndXVectorFindTest();
+	XMapTest();
+	//XMapAndXVectorFindTest();
+	//XBinarySearchTest();
 	//SortTest();
 	//XMazeGeneratedTest();
 	//XMazePathfinding();
