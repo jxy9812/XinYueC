@@ -1,0 +1,8 @@
+{
+    "qtConfigure.qtKitDir": "/home/jxy/Qt/6.2.4/gcc_64",
+    "C_Cpp.errorSquiggles": "enabled",
+    "files.associations": {
+        "xredblacktree.h": "c",
+        "xbinarytreeobject.h": "c"
+    }
+}
