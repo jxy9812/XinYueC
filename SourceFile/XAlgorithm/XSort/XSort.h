@@ -11,6 +11,8 @@ void XInsertSort(void* LParray, const size_t nSize, const size_t TypeSize,XCompa
 void XShellSort(void* LParray, const size_t nSize, const size_t TypeSize,XCompare compare );
 //直接选择排序
 void XSelectSort(void* LParray, const size_t nSize, const size_t TypeSize,XCompare compare );
+//创建堆(调整数组使其成为堆结构)
+void XCreateHeap(void* LPArray, const size_t nSize, const size_t TypeSize, XCompare compare);
 //堆排序
 void XHeapSort(void* LParray, const size_t nSize, const size_t TypeSize,XCompare compare );
 //冒泡排序
