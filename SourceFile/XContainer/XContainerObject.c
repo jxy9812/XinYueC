@@ -31,6 +31,13 @@ const size_t XContainerObject_capacity(const struct XContainerObject* Object)
 	return Object->_capacity;
 }
 
+const size_t XContainerObject_type(const XContainerObject* Object)
+{
+	if (isNULL(isNULLInfo(Object, "")))
+		return 0;
+	return Object->_type;
+}
+
 void XContainerObject_swap(struct XContainerObject* ObjectOne, struct XContainerObject* ObjectTwo)
 {
 	bool one = isNULL(isNULLInfo(ObjectOne, ""));
