@@ -18,7 +18,7 @@ void XMapAndXVectorFindTest()
 {
 	//创建乱序的数组
 	XVector* VArray = XVector_init("size_t", sizeof(size_t));
-	int count = 10000000;//测试数据量
+	int count = 10;//测试数据量
 	for (size_t i = 0; i < count; i++)
 	{
 		XVector_push_back(VArray,&i);
@@ -26,8 +26,8 @@ void XMapAndXVectorFindTest()
 	/*printf("打乱前\n");
 	XVector_iterator_for_each(VArray, ForPrint, NULL);*/
 	XDerangement(XVector_begin(VArray), count, sizeof(size_t));
-	/*printf("打乱后\n");
-	XVector_iterator_for_each(VArray, ForPrint, NULL);*/
+	printf("打乱后\n");
+	XVector_iterator_for_each(VArray, ForPrint, NULL);
 	/*printf("使用排序后\n");
 	XVector_sort(VArray,XLess_int);
 	XVector_iterator_for_each(VArray, ForPrint, NULL);*/

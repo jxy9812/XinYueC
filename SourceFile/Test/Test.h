@@ -10,6 +10,8 @@ void ListTest();
 void ListSwapTest();
 //栈测试
 void stackTest();
+//优先队列
+void XPriority_QueueTest();
 //队列测试
 void queueTest();
 //动态数组测试

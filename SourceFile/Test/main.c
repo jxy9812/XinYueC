@@ -13,10 +13,11 @@ int main(int argc, char* args[])
 	//XMapTest();
 	//XMapAndXVectorFindTest();
 	//XBinarySearchTest();
-	SortTest();
+	//SortTest();
 	//XMazeGeneratedTest();
 	//XMazePathfinding();
 	//queueTest();
+	XPriority_QueueTest();
 	//XBinaryTreeObjectTest();	
 	//XBalancedBinaryTreeTest();
 	//XRedBlackTreeTest();
