@@ -6,22 +6,22 @@
 struct XList;
 //插入函数
 // 链表头部增加一个元素X
- XListNode* XList_push_front(struct XList* this_list, void* LValue);
+ XListNode* XList_push_front(struct XList* this_list, void* LPValue);
 // 链表尾部增加一个元素X
- XListNode* XList_push_back(struct XList* this_list, void* LValue);
-//(list*li, const void* p, const void*LValue, const int n) 链表中指向元素p前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
-void  XList_insert_front_p(struct XList* this_list,XListNode* pval, ...);
-//(list*li, int n, const void*LValue, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+ XListNode* XList_push_back(struct XList* this_list, void* LPValue);
+//(list*li, const void* p, const void*LPValue, const int n) 链表中指向元素p前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+void  XList_insert_front_p(struct XList* this_list,XListNode* curNode, ...);
+//(list*li, int n, const void*LPValue, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
 void XList_insert_front_int(struct XList* this_list, int n, ...);
 // 链表中指向元素p前插入另一个相同类型数组[p1,p2]间的数据，数组传递用指针
-void  XList_insert(struct XList* this_list,XListNode* pval, const void* p1, const void* p2);
+void  XList_insert(struct XList* this_list,XListNode* curNode, const void* begin, const void* end);
 //删除函数
 //删除链表中第一个元素
 void  XList_pop_front(struct XList* this_list);
 //删除链表中最后一个元素
 void  XList_pop_back(struct XList* this_list);
 //删除指定元素区间内的数据(包括其本身)，传入其节点指针地址，搭配find函数查找返回指针最佳，删除一个时请输入相同的指针
-void  XList_erase_p(struct XList* this_list, const XListNode* p1, const XListNode* p2);
+void  XList_erase_p(struct XList* this_list, const XListNode* begin, const XListNode* end);
 //删除指定元素区间内的数据(包括其本身)，将其想象成数组下标访问，输入要删除的下标，删除一个时请输入相同下标
 void  XList_erase_int(struct XList* this_list, const int left, const int right);
 //清空list的队列，释放内存
@@ -45,9 +45,9 @@ size_t   XList_size(const  struct XList* this_list);
 //排序
 void  XList_sort(struct XList* this_list, XCompare compare);
 //交换两个同类型链表的数据
-void  XList_swap(struct XList* this_list1, struct XList* this_list2);
+void  XList_swap(struct XList* this_listOne, struct XList* this_listTwo);
 //释放内存
 void  XList_free(struct XList* this_list);
 //创建链表
-struct XList* XList_init(int size);
+struct XList* XList_init(int TypeSize);
 #endif

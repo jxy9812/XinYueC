@@ -6,8 +6,8 @@ typedef struct XVECTOR
 {
 	//插入函数
 	void(*push_back)(void*);//尾插
-	void (*insert_front)(struct XVECTOR*, const void* p, const void*LValue);// 向量中指向元素p前增加一个元素x
-	void (*insert_nfront)(struct XVECTOR*, const void* p, const int n, const void*LValue);// 向量中指向元素p前增加n个相同的元素x
+	void (*insert_front)(struct XVECTOR*, const void* p, const void*LPValue);// 向量中指向元素p前增加一个元素x
+	void (*insert_nfront)(struct XVECTOR*, const void* p, const int n, const void*LPValue);// 向量中指向元素p前增加n个相同的元素x
 	void (*insert)(struct XVECTOR*, const void* p, const void* p1, const void* p2);// 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2)间的数据
 	//删除函数
 	void (*pop_back)(struct XVECTOR*);//尾删

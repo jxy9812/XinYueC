@@ -3,12 +3,12 @@
 #include<stdlib.h>
 #include<string.h>
 struct XVector;
-void XVector_push_front(struct XVector* this_vector, void* LValue)
+void XVector_push_front(struct XVector* this_vector, void* LPValue)
 {
 	if (XVector_empty(this_vector))
-		XVector_push_back(this_vector, LValue);
+		XVector_push_back(this_vector, LPValue);
 	else
-		XVector_insert_front(this_vector, XVector_front(this_vector), LValue);
+		XVector_insert_front(this_vector, XVector_front(this_vector), LPValue);
 }
 void XVector_push_back(struct XVector* this_vector, void* val)
 {

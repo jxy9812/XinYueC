@@ -5,7 +5,7 @@
 typedef  struct XSTACK
 {
 	void (*clear) (struct XStack* this_stack);//清空stack的队列，释放内存
-	void(*push)(struct XStack* this_stack, void*LValue);//压栈，增加元素 O(1)
+	void(*push)(struct XStack* this_stack, void*LPValue);//压栈，增加元素 O(1)
 	void (*pop)(struct XStack* this_stack);//移除栈顶元素 O(1)
 	int* (*top)(struct XStack* this_stack);// 取得栈顶元素（但不删除）O(1)
 	bool (*empty)(struct XStack* this_stack);// 检测栈内是否为空，空为真 O(1)

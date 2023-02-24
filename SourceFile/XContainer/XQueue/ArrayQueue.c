@@ -46,11 +46,11 @@ void XQueue_clear(XQUEUE* que)//清空queue的队列，释放内存
 	}
 }
 
-void XQueue_Push(XQUEUE* que, void*LValue)//插入到队列的队尾
+void XQueue_Push(XQUEUE* que, void*LPValue)//插入到队列的队尾
 {
 	open(que);
 	char* str1 = (char*)que->_data + que->_type * que->_current;
-	memcpy(str1, LValue, que->_type);
+	memcpy(str1, LPValue, que->_type);
 	que->_current++;
 }
 void XQueue_pop(struct XQUEUE* que)//删除queue的队头元素

@@ -2,7 +2,7 @@
 #include"XMazePathfindingDFS.h"
 #include"XMazePathfindingBFS.h"
 #include"XMazePathfindingAStar.h"
-#include"XMazeGeneratedDepthFirst.h"
+#include"XMazeGeneratedDF.h"
 #include"XStack.h"
 #include"XAlgorithm.h"
 #include<stdlib.h>

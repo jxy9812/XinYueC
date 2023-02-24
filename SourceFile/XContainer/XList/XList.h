@@ -9,10 +9,10 @@
 typedef struct XList
 {
 	//插入函数
-	XListNode* (*push_front)(struct XList* this_list, void* LValue);//头插
-	XListNode* (*push_back)(struct XList* this_list, void*LValue);//尾插
-	void (*insert_front_p)(struct XList*, XListNode* pval, ...);//list*li, const void* p, const void*LValue, const int n 链表中指向节点前增加元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
-	void (*insert_front_int)(struct XList*, int n, ...);//(list*li, int n, const void*LValue, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+	XListNode* (*push_front)(struct XList* this_list, void* LPValue);//头插
+	XListNode* (*push_back)(struct XList* this_list, void*LPValue);//尾插
+	void (*insert_front_p)(struct XList*, XListNode* pval, ...);//list*li, const void* p, const void*LPValue, const int n 链表中指向节点前增加元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
+	void (*insert_front_int)(struct XList*, int n, ...);//(list*li, int n, const void*LPValue, const int n) 链表中下标n的节点前增加x元素n个,不填n默认1个(单次调用最多插入1000个，溢出均为1个)
 	void (*insert)(struct XList*, XListNode* pval, const void* p1, const void* p2);// 链表中指向节点前插入另一个相同类型数组[p1,p2]间的数据，数组传递用指针
 	//删除函数
 	void (*pop_front)(void*);//头删
