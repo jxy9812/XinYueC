@@ -24,11 +24,11 @@ macro(FIND_INCLUDE_DIR result curdir)  #定义函数,2个参数:存放结果resu
 endmacro()																#函数结束
 
 #查找include目录下的所有*.hpp,*.h头文件,并路径列表保存到 INCLUDE_DIR_LIST 变量中
-FIND_INCLUDE_DIR(INCLUDE_DIR_LIST "SourceFile")			#调用函数，指定参数
+FIND_INCLUDE_DIR(INCLUDE_DIR_LIST "CodeFile")			#调用函数，指定参数
 #将INCLUDE_DIR_LIST中路径列表加入工程		
 include_directories(${INCLUDE_DIR_LIST})
 #递归搜索目录下的文件添加到变量中
-file(GLOB_RECURSE FILE "SourceFile/*.c" "SourceFile/*.h")
+file(GLOB_RECURSE FILE "CodeFile/*.c" "CodeFile/*.h")
 
 #设置图标
 #aux_source_directory(. MY_SCOURCES)
