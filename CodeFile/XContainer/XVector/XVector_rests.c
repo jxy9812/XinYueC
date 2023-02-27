@@ -74,3 +74,34 @@ void* XVector_find(const struct XVector* this_vector, XEquality equality, const 
 	}
 	return NULL;
 }
+void XVector_resize(struct XVector* this_vector, const size_t size)
+{
+	size_t capacity = XVector_capacity(this_vector);//当前容器的最大数量
+	size_t count= XVector_size(this_vector);//当前容器使用的数量
+	size_t TypeSize = XVector_TypeSize(this_vector);//数据类型大小
+	XContainerObject* object = XVector_object(this_vector);//数据父类
+	if (size <= count)
+	{
+		for (size_t i = 0; i < count-size; i++)
+		{
+			XVector_pop_back(this_vector);
+		}
+		return;
+	}
+
+	if (size > capacity)//大于最大容量
+	{
+		object->_data = realloc(object->_data, size * TypeSize);
+		if (object->_data == NULL)
+		{
+			perror("扩容失败vector");
+			exit(-1);
+		}
+		object->_capacity = size;
+	}
+
+	char* LPstart = ((char*)(object->_data)) + count * TypeSize;//最后一个元素的下一个元素
+	memset(LPstart, 0, (size - count) * TypeSize);
+	object->_size = size;//设置当前容器元素数量
+	return;
+}

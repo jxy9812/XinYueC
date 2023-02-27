@@ -13,7 +13,7 @@ void traverse(void* LPVal, void* args)
 	if (*XBTree_GetTreeNode(currentNode,XBTreeParent) == NULL)
 		return;
 	if(XBTree_findChildisParent(currentNode)==NULL)
-		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.data);
+		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.value);
 }
 void XBalancedBinaryTreeTest()
 {
@@ -33,7 +33,7 @@ void XBalancedBinaryTreeTest()
 	int findVal = 456;
 	XBBTreeNode* findRet = XBBTree_findData(root, XLess_int, XEquality_int,XCompareRuleOne_BinaryTree,&findVal);
 	if(findRet!=NULL)
-	printf("找到的:%d\n", *(int*)findRet->XBTNode.data);
+	printf("找到的:%d\n", *(int*)findRet->XBTNode.value);
 
 	//前序测试
 	XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder);

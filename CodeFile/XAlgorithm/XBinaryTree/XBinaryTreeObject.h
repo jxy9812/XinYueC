@@ -13,8 +13,8 @@
 #define XBTree_SetLChild(this_root,node) (*XBTree_GetTreeNode(this_root, XBTreeLChild)=node)//二叉树-设置左孩子(继承的子类均可以使用)
 #define XBTree_SetRChild(this_root,node) (*XBTree_GetTreeNode(this_root, XBTreeRChild)=node)//二叉树-设置右孩子(继承的子类均可以使用)
 //数据
-#define  XBTree_InsertData(this_root,data) XBTree_insertData(this_root,&data,sizeof(data))//二叉树-插入数据
-#define  XBTree_GetData(this_root,Type) (*((Type*)((*(XBTreeNode**)this_root)->data)))//二叉树-获取数据(继承的子类均可以使用)
+#define  XBTree_InsertData(this_root,value) XBTree_insertData(this_root,&value,sizeof(value))//二叉树-插入数据
+#define  XBTree_GetData(this_root,Type) (*((Type*)((*(XBTreeNode**)this_root)->value)))//二叉树-获取数据(继承的子类均可以使用)
 //定义节点类型
 enum XBTreeNodeType
 {
@@ -33,7 +33,7 @@ enum XBTreeTraversing
 typedef struct XBTreeNode
 {
 	XVector* node;//节点数组
-	void* data;//数据指针
+	void* value;//数据指针
 }XBTreeNode;
 
 //创建初始化一个二叉树节点

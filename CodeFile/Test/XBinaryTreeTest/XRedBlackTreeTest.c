@@ -15,7 +15,7 @@ static void traverse(void* LPVal, void* args)
 	if (*XBTree_GetTreeNode(currentNode, XBTreeParent) == NULL)
 		return;
 	if (XBTree_findChildisParent(currentNode) == NULL)
-		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.data);
+		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.value);
 	
 }
 void XRedBlackTreeTest()

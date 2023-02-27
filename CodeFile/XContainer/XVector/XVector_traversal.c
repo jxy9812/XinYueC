@@ -17,6 +17,8 @@ void* XVector_front(const struct XVector* this_vector)//返回向量头指针，
 {
 	if (isNULL(isNULLInfo(this_vector, "")))
 		return NULL;
+	if(XVector_empty(this_vector))
+		return NULL;
 	return XVector_object(this_vector)->_data;
 }
 void* XVector_back(const struct XVector* this_vector)//返回向量尾指针，指向向量最后一个元素

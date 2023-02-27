@@ -14,7 +14,7 @@ typedef struct XString
 	void (*clear) (struct XString* this_XString);//清空字符串
 	//遍历函数
 	char (*at)(const struct XString* this_XString, int);// 返回索引处字符
-	char* (*data)(const struct XString* this_XString);// 返回字符串
+	char* (*value)(const struct XString* this_XString);// 返回字符串
 	//查找函数
 	int (*find_first_of)(const struct XString* this_XString, const char* find);
 	int (*find_last_of)(const struct XString* this_XString, const char* find);

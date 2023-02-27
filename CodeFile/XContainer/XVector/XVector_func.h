@@ -48,4 +48,6 @@ size_t XVector_TypeSize(struct XVector* this_vector);
 struct XVector* XVector_init(const char* arr, ...);
 //获取基类指针
 struct XContainerObject* XVector_object(struct XVector* this_vector);
+//设置XVector的大小，超过大小插入0值数据，小于删除数据
+void XVector_resize(struct XVector* this_vector,const size_t size);
 #endif // ! ITERATOR_H
