@@ -11,7 +11,7 @@
 static void ForTreeNode(void* LPVal, void* args)
 {
 	XRBTreeNode* node = *(XRBTreeNode**)LPVal;
-	XVector_push_back(args, (node->XBTNode.value));
+	XVector_push_back(args, (node->XBTNode.LPvalue));
 }
 void XMap_updataIterator(XMap* this_map)
 {

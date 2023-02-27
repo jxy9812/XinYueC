@@ -87,8 +87,8 @@ void* XBTree_creationNode(const size_t NodeSize, const size_t nodeArrySize, cons
 	XBTreeNode* node =(XBTreeNode*)calloc(1,NodeSize);
 	if (isNULL(isNULLInfo(node,"节点申请内存失败")))
 		return NULL;
-	node->value= calloc(1,TypeSize);//开辟内存并且置为0
-	if (isNULL(isNULLInfo(node->value,"节点数据申请内存失败")))
+	node->LPvalue= calloc(1,TypeSize);//开辟内存并且置为0
+	if (isNULL(isNULLInfo(node->LPvalue,"节点数据申请内存失败")))
 	{
 		free(node);
 		return NULL;
@@ -124,7 +124,7 @@ const bool XBTree_insertData(struct XBTreeNode* this_root, const void* LPData, c
 		return false;
 	if (isNULL(isNULLInfo(TypeSize, "")))
 		return false;
-	memcpy(this_root->value, LPData, TypeSize);
+	memcpy(this_root->LPvalue, LPData, TypeSize);
 	return true;
 }
 
@@ -134,8 +134,8 @@ const bool XBTree_freeNode(struct XBTreeNode* this_root , const bool parentSetNu
 		return false;
 	
 	//释放数据
-	if(this_root->value!=NULL)
-		free(this_root->value);
+	if(this_root->LPvalue!=NULL)
+		free(this_root->LPvalue);
 	
 	if (parentSetNull)
 	{

@@ -143,9 +143,9 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 		LPreplace = XBTree_GetLChild(LPreplace);
 	}
 
-	free(eraseNode->XBTNode.value);
-	eraseNode->XBTNode.value = LPreplace->XBTNode.value;
-	LPreplace->XBTNode.value = NULL;
+	free(eraseNode->XBTNode.LPvalue);
+	eraseNode->XBTNode.LPvalue = LPreplace->XBTNode.LPvalue;
+	LPreplace->XBTNode.LPvalue = NULL;
 
 	LPchild = XBTree_GetRChild(LPreplace);
 	LPpater = XBTree_GetParent(LPreplace);

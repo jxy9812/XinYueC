@@ -4,17 +4,7 @@
 #include<stdio.h>
 #include<stdbool.h>
 #include"XVector.h"
-//获取节点
-#define XBTree_GetParent(this_root) (*XBTree_GetTreeNode(this_root, XBTreeParent))//二叉树-获取父节点(继承的子类均可以使用)
-#define XBTree_GetLChild(this_root) (*XBTree_GetTreeNode(this_root, XBTreeLChild))//二叉树-获取左孩子(继承的子类均可以使用)
-#define XBTree_GetRChild(this_root) (*XBTree_GetTreeNode(this_root, XBTreeRChild))//二叉树-获取右孩子(继承的子类均可以使用)
-//设置节点
-#define XBTree_SetParent(this_root,node) (*XBTree_GetTreeNode(this_root, XBTreeParent)=node)//二叉树-设置父节点(继承的子类均可以使用)
-#define XBTree_SetLChild(this_root,node) (*XBTree_GetTreeNode(this_root, XBTreeLChild)=node)//二叉树-设置左孩子(继承的子类均可以使用)
-#define XBTree_SetRChild(this_root,node) (*XBTree_GetTreeNode(this_root, XBTreeRChild)=node)//二叉树-设置右孩子(继承的子类均可以使用)
-//数据
-#define  XBTree_InsertData(this_root,value) XBTree_insertData(this_root,&value,sizeof(value))//二叉树-插入数据
-#define  XBTree_GetData(this_root,Type) (*((Type*)((*(XBTreeNode**)this_root)->value)))//二叉树-获取数据(继承的子类均可以使用)
+#include"XBinaryTreeObject_macro.h"
 //定义节点类型
 enum XBTreeNodeType
 {
@@ -33,7 +23,7 @@ enum XBTreeTraversing
 typedef struct XBTreeNode
 {
 	XVector* node;//节点数组
-	void* value;//数据指针
+	void* LPvalue;//数据指针
 }XBTreeNode;
 
 //创建初始化一个二叉树节点

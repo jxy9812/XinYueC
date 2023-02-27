@@ -23,7 +23,7 @@ struct XString* XString_init()
 	this_XString->at = XString_at;
 	/*this_XString->capacity = XString_capacity;*/
 	this_XString->clear = XString_clear;
-	this_XString->value = XString_data;
+	this_XString->LPvalue = XString_data;
 	this_XString->empty = XString_empty;
 	this_XString->erase = XString_erase;
 	this_XString->find_first_not_of = XString_find_first_not_of;

@@ -4,7 +4,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
-#define GetXPoint(node) (*(XPoint*)node->value)
+#define GetXPoint(node) (*(XPoint*)node->LPvalue)
 //创建一个节点
 static XBTreeNode* CreationBFSNode_XPoint(XPoint pos)
 {
@@ -26,7 +26,7 @@ static XVector* GetXMazePath(const XBTreeNode* child)
 	XBTreeNode* current = child;
 	while (current!=NULL)
 	{
-		XVector_push_front(Path, current->value);
+		XVector_push_front(Path, current->LPvalue);
 		current = *XBTree_GetTreeNode(current,XBTreeParent);
 	}
 	return Path;

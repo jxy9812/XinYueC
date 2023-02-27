@@ -98,7 +98,7 @@ XPair* XMap_find(XMap* this_map, const void* key)
 	XBTreeNode* node = XBBTree_findData(this_map->object._data, this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
 	if (node == NULL)
 		return NULL;
-	XPair* pair = *(XPair**)node->value;
+	XPair* pair = *(XPair**)node->LPvalue;
 	return pair;
 }
 static void XMap_freeNodeData(void* LPVal, void* args)

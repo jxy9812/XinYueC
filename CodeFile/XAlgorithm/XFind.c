@@ -1,9 +1,9 @@
 ﻿#include"XFind.h"
 #include"XContainerObject.h"
-void* XBinarySearch(void* value, size_t n, size_t TypeSize, XLess less, XEquality equality, void* findVal)
+void* XBinarySearch(void* LPvalue, size_t n, size_t TypeSize, XLess less, XEquality equality, void* findVal)
 {
 	{
-		if (isNULL(isNULLInfo(value, "")))
+		if (isNULL(isNULLInfo(LPvalue, "")))
 			return NULL;
 		if (isNULL(isNULLInfo(n, "")))
 			return NULL;
@@ -21,7 +21,7 @@ void* XBinarySearch(void* value, size_t n, size_t TypeSize, XLess less, XEqualit
 	while (nSel_Left<= nSel_Right)
 	{
 		nSel = (nSel_Left + nSel_Right) / 2;
-		LPcurrt = (char*)value + nSel * TypeSize;
+		LPcurrt = (char*)LPvalue + nSel * TypeSize;
 		//相等找到了
 		if (equality(LPcurrt, findVal))
 			return LPcurrt;
