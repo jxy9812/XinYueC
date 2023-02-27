@@ -26,6 +26,29 @@ const enum  XTTTree_NodeNum XTTTree_NodeNum(const XTTTreeNode* this_root)
     return XVector_size(this_root->LPvalueArray)+2;
 }
 
+const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, const void* LPData, const size_t TypeSize)
+{
+    if (isNULL(isNULLInfo(this_root, "")))
+        return 0;
+    XVector* LPNode = this_root->object.node;//储存节点指针的数组
+    enum  XTTTree_NodeNum nodeNum = XTTTree_NodeNum(this_root);//当前是几节点
+    XVector_resize(LPNode, XVector_size(LPNode)+1);//储存指针的扩容+1
+    if (nodeNum == XTTTree_TwoNode)//当前是二节点
+    {
+       /* XTTTreeNode* temp = *(XTTTreeNode**)XVector_back(this_root);
+        XVector_push_back(this_root,&temp);*/
+        
+        this_root->LPvalueArray = XVector_init("", TypeSize);//初始化值
+    }
+    //XVector_resize(this_root->LPvalueArray, XVector_size(LPNode) + 1);//储存数据的扩容+1
+    XVector_push_back(this_root->LPvalueArray, LPData);//插入数值扩容
+    XVector_push_back(this_root->LPvalueArray, this_root->object.LPvalue);//插入第一个数值
+    XVector_sort(this_root->LPvalueArray, less);//排序
+    memcpy(this_root->object.LPvalue, XVector_begin(this_root->LPvalueArray), TypeSize);//将最小的拷贝回去
+    XVector_erase_int(this_root, 0, 0);//删除重复的第一个
+    return XTTTree_NodeNum(this_root);
+}
+
 XTTTreeNode** XTTTree_Node(const XTTTreeNode* this_root, size_t nSel)
 {
     return XBTree_GetTreeNode(this_root, nSel);
@@ -60,12 +83,5 @@ XTTTreeNode* XTTTree_findData(XTTTreeNode* this_root, XLess less, XEquality equa
     return NULL;
 }
 
-XTTTreeNode* XTTTree_insert(XTTTreeNode** this_root, XLess less, XCompareRuleTwo lessRule, const void* LPData, const size_t TypeSize)
-{
-    return NULL;
-}
 
-XTTTreeNode* XTTTree_erase(XTTTreeNode** this_root, XLess less, XEquality equality, XCompareRuleOne Rule, const void* LPData)
-{
-    return NULL;
-}
+

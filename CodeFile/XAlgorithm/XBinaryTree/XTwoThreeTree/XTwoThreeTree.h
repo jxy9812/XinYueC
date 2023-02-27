@@ -21,6 +21,8 @@ typedef struct XTTTreeNode
 XTTTreeNode* XTTTree_creationNode(const enum XTTTree_NodeNum nodeCount,const size_t TypeSize);
 //当前是几节点
 const enum  XTTTree_NodeNum  XTTTree_NodeNum(const XTTTreeNode* this_root);
+//升级当前节点
+const enum  XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less,const void* LPData, const size_t TypeSize);
 //返回节点指针的地址
 XTTTreeNode** XTTTree_Node(const XTTTreeNode* this_root, size_t nSel);
 //返回数据指针
