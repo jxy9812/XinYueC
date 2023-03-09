@@ -16,7 +16,7 @@ XList_iterator* XList_end(struct XList* this_list)
 	return NULL;
 }
 
-XList_iterator* XList_iterator_add(struct XList* this_list, struct XList_iterator* it)
+XList_iterator* XList_iterator_add(struct XList* this_list,XList_iterator*it)
 {
 	if (isNULL(this_list, "XList_iterator_add  struct XList*"))
 		return NULL;

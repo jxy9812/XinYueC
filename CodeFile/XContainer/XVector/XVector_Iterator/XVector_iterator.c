@@ -14,7 +14,7 @@ XVector_iterator* XVector_end(struct XVector* this_vector)
 	return NULL;
 }
 
-XVector_iterator* XVector_iterator_add(struct XVector* this_vector, XVector_iterator* it)
+XVector_iterator* XVector_iterator_add(struct XVector* this_vector,XVector_iterator*it)
 {
 	if (isNULL(isNULLInfo(this_vector, "")))
 		return NULL;
