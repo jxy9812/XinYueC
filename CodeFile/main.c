@@ -5,7 +5,7 @@
 int main(int argc, char* args[])
 {
 	//ListSortTest();
-	ListTest();
+	//ListTest();
 	//ListIterator();
 	//VectorTest();
 	//stackTest();
@@ -20,6 +20,6 @@ int main(int argc, char* args[])
 	//XPriority_QueueTest();
 	//XBinaryTreeObjectTest();	
 	//XBalancedBinaryTreeTest();
-	//XRedBlackTreeTest();
+	XRedBlackTreeTest();
 	return 0;
 }
