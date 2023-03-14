@@ -36,4 +36,6 @@ void XRedBlackTreeTest();
 void XMapAndXVectorFindTest();
 //二分查找测试
 void XBinarySearchTest();
+//哈夫曼树测试
+void XHuffmanTreeTest();
 #endif

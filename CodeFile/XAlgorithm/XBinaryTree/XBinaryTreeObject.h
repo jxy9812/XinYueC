@@ -28,6 +28,7 @@ typedef struct XBTreeNode
 
 //创建初始化一个二叉树节点
 void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount,const size_t dataCount,const size_t TypeSize);
+#define XBTree_CreationNode(NodeType,nodeCount,dataCount,Type) ((NodeType*)XBTree_creationNode(sizeof(NodeType),nodeCount,dataCount,sizeof(Type)))
 //创建初始化一个二叉树节点,并插入数据
 struct XBTreeNode* XBTree_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize);
 //插入数据-不创建节点，传入节点
@@ -36,6 +37,8 @@ const bool XBTree_insertData(struct XBTreeNode* this_root,const void* LPData,con
 const bool XBTree_freeNode(struct XBTreeNode* this_root,const bool parentSetNull);
 //获取节点指针
 XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel);
+//获取数据
+void* XBTree_Getdata(XBTreeNode* this_root, const size_t nSel);
 //二叉树遍历转数组存储
 XVector* XBTree_TraversingToXVector(struct XBTreeNode* this_root,const enum XBTreeTraversing Traversing);
 //释放整个树(当前节点及其所有子节点)

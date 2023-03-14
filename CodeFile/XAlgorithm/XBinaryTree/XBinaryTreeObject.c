@@ -164,7 +164,26 @@ XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel)
 {
 	if (isNULL(isNULLInfo(this_root, "")))
 		return NULL;
+	size_t count = XVector_size(this_root->nodes);
+	if (nSel >= count)
+	{
+		PRINT("nSel:%d>=总量:%d", nSel, count);
+		return;
+	}
 	return (XBTreeNode**)XVector_at(this_root->nodes, nSel);
+}
+
+void* XBTree_Getdata(XBTreeNode* this_root, const size_t nSel)
+{
+	if (isNULL(isNULLInfo(this_root, "")))
+		return NULL;
+	size_t count = XVector_size(this_root->values);
+	if (nSel >= count)
+	{
+		PRINT("nSel:%d>=总量:%d", nSel, count);
+		return;
+	}
+	return XVector_at(this_root->values, nSel);
 }
 
 XVector* XBTree_TraversingToXVector(XBTreeNode* this_root, const enum XBTreeTraversing Traversing)

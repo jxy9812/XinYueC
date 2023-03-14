@@ -11,7 +11,7 @@ int main(int argc, char* args[])
 	//stackTest();
 	//XStringTest();
 	//XMapTest();
-	XMapAndXVectorFindTest();
+	//XMapAndXVectorFindTest();
 	//XBinarySearchTest();
 	//SortTest();
 	//XMazeGeneratedTest();
@@ -21,5 +21,6 @@ int main(int argc, char* args[])
 	//XBinaryTreeObjectTest();	
 	//XBalancedBinaryTreeTest();
 	//XRedBlackTreeTest();
+	XHuffmanTreeTest();
 	return 0;
 }
