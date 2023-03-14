@@ -6,32 +6,33 @@
 #include<string.h>
 #include <stdarg.h> 
 //初始化函数
-XVector* XVector_init(const char* arr, ...)
+XVector* XVector_init(const size_t TypeSize)
 {
 	XVECTOR* this_vector = malloc(sizeof(XVECTOR));
 	if (isNULL(isNULLInfo(this_vector, "创建XVector失败")))
 		return NULL;
-	char* buf = (char*)malloc(sizeof(char) * strlen(arr) + 1);
-	if (isNULL(isNULLInfo(buf, "buf申请空间失败")))
-		return NULL;
-	strcpy(buf, arr);
-	size_t len = strlen(buf);
-	//printf("去空格前：%s\n", buf);
-	//去掉字符串空格
-	Unblank(buf, left | right);
-	{
-		va_list args;//接收可变参数，
-		va_start(args, arr);
-		size_t n = va_arg(args, size_t);//依次访问参数，需指定按照什么类型读取数据  
-		if (n <= 0 || n > 1000)
-		{
-			perror("您的类型本程序无内置请输入类型的字符数量，将以void指针形式返回，请强转后解引用使用（上限1000字节）\n");
-			exit(-1);
-		}
-		va_end(args);//参数使用结束  
-		XContainerObject_init(&this_vector->object, n);
-		//this_vector->object._type = n;
-	}
+	//char* buf = (char*)malloc(sizeof(char) * strlen(arr) + 1);
+	//if (isNULL(isNULLInfo(buf, "buf申请空间失败")))
+	//	return NULL;
+	//strcpy(buf, arr);
+	//size_t len = strlen(buf);
+	////printf("去空格前：%s\n", buf);
+	////去掉字符串空格
+	//Unblank(buf, left | right);
+	//{
+	//	va_list args;//接收可变参数，
+	//	va_start(args, arr);
+	//	size_t n = va_arg(args, size_t);//依次访问参数，需指定按照什么类型读取数据  
+	//	if (n <= 0 || n > 1000)
+	//	{
+	//		perror("您的类型本程序无内置请输入类型的字符数量，将以void指针形式返回，请强转后解引用使用（上限1000字节）\n");
+	//		exit(-1);
+	//	}
+	//	va_end(args);//参数使用结束  
+	//	
+	//	//this_vector->object._type = n;
+	//}
+	XContainerObject_init(&this_vector->object, TypeSize);
 	this_vector->clear = XVector_clear;//清空vector的队列，释放内存
 	this_vector->push_back = XVector_push_back;//尾插
 	this_vector->insert_front = XVector_insert_front;// 向量中指向元素p前增加一个元素x
@@ -51,7 +52,7 @@ XVector* XVector_init(const char* arr, ...)
 	this_vector->capacity = XVector_capacity;//返回当前向量所能容纳的最大元素值
 	this_vector->swap = XVector_swap;//交换两个同类型向量的数据
 	
-	free(buf);
+	//free(buf);
 	return this_vector;
 }
 XContainerObject* XVector_object(XVector* this_vector)

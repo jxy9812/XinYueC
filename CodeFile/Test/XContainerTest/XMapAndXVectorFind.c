@@ -17,7 +17,7 @@ static void insertMap(void* values, void* args)
 void XMapAndXVectorFindTest()
 {
 	//创建乱序的数组
-	XVector* VArray = XVector_init("size_t", sizeof(size_t));
+	XVector* VArray = XVector_init(sizeof(size_t));
 	int count = 1000000;//测试数据量
 	for (size_t i = 0; i < count; i++)
 	{

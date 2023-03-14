@@ -8,7 +8,7 @@ XTTTreeNode* XTTTree_creationNode(const enum XTTTree_NodeNum nodeCount, const si
     nodes->LPvalueArray = NULL;
     if (nodeCount == XTTTree_TwoNode)
         return nodes;
-    nodes->LPvalueArray = XVector_init("", TypeSize);
+    nodes->LPvalueArray = XVector_init(TypeSize);
     if (nodes->LPvalueArray == NULL)//创建数据数组失败
     {
         XBTree_freeNode(nodes,false);
@@ -38,7 +38,7 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
        /* XTTTreeNode* temp = *(XTTTreeNode**)XVector_back(this_root);
         XVector_push_back(this_root,&temp);*/
         
-        this_root->LPvalueArray = XVector_init("", TypeSize);//初始化值
+        this_root->LPvalueArray = XVector_init( TypeSize);//初始化值
     }
     //XVector_resize(this_root->LPvalueArray, XVector_size(LPNode) + 1);//储存数据的扩容+1
     XVector_push_back(this_root->LPvalueArray, LPData);//插入数值扩容

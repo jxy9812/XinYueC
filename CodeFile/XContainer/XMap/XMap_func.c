@@ -28,7 +28,7 @@ void XMap_updataIterator(XMap* this_map)
 	}
 	//已中序遍历获取所有树的节点,临时
 	XVector* TreeNode = XBTree_TraversingToXVector(this_map->object._data, XBTreeInorder);
-	this_map->itArray = XVector_init("XPair*", sizeof(XPair*));
+	this_map->itArray = XVector_init( sizeof(XPair*));
 	//将数据XPair的节点指针插入数组
 	XVector_iterator_for_each(TreeNode, ForTreeNode, this_map->itArray);
 	XVector_free(TreeNode);

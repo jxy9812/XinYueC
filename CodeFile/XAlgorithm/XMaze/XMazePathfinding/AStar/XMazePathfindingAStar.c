@@ -13,7 +13,7 @@ static AStarNode* CreationAStarNode(const int x, const int y)
 	nodes->pos.x = x;
 	nodes->pos.y = y;
 	nodes->parent = NULL;
-	nodes->child = XVector_init("AStarNode*", sizeof(AStarNode*));
+	nodes->child = XVector_init(sizeof(AStarNode*));
 	nodes->currentCosts = 0;
 	nodes->estimateCosts = 0;
 	return nodes;
@@ -42,7 +42,7 @@ static void setCosts(const XVector* maze, const XPoint dest,AStarNode* nodes, AS
 //获取迷宫路径
 static XVector* GetXMazePath(const XVector* child)
 {
-	XVector* Path = XVector_init("XPoint*", sizeof(XPoint));
+	XVector* Path = XVector_init( sizeof(XPoint));
 	AStarNode* current = child;
 	while (current != NULL)
 	{
@@ -105,7 +105,7 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 {
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	AStarNode* root = CreationAStarNode_XPoint(start);//根节点
-	XVector* CurrentNodeArray = XVector_init("AStarNode*", sizeof(AStarNode*));//当前节点数组
+	XVector* CurrentNodeArray = XVector_init( sizeof(AStarNode*));//当前节点数组
 	XVector_push_back(CurrentNodeArray, &root);//入根节点
 
 	AStarNode* CurrentNode = NULL;//当前遍历的节点

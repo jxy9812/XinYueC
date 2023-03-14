@@ -45,7 +45,7 @@ void XVector_swap(struct XVector* this_vectorOne, struct XVector* this_vectorTwo
 //返回元素类型字节大小
 size_t XVector_TypeSize(struct XVector* this_vector);
 //开辟一个动态数组,初始化
-struct XVector* XVector_init(const char* arr, ...);
+struct XVector* XVector_init(const size_t TypeSize);
 //获取基类指针
 struct XContainerObject* XVector_object(struct XVector* this_vector);
 //设置XVector的大小，超过大小插入0值数据，小于删除数据

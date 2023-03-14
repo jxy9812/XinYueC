@@ -22,7 +22,7 @@ static XBTreeNode* CreationBFSNode(const int x,const int y)
 //获取迷宫路径
 static XVector* GetXMazePath(const XBTreeNode* child)
 {
-	XVector* Path = XVector_init("XPoint*",sizeof(XPoint));
+	XVector* Path = XVector_init(sizeof(XPoint));
 	XBTreeNode* current = child;
 	while (current!=NULL)
 	{
@@ -59,8 +59,8 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 {
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	XBTreeNode* root = CreationBFSNode_XPoint(start);//根节点
-	XVector* CurrentNodeArray = XVector_init("BFSNode*", sizeof(XBTreeNode*));//当前节点数组
-	XVector* NextNodeArray = XVector_init("BFSNode*", sizeof(XBTreeNode*));//下一个节点数组
+	XVector* CurrentNodeArray = XVector_init( sizeof(XBTreeNode*));//当前节点数组
+	XVector* NextNodeArray = XVector_init(sizeof(XBTreeNode*));//下一个节点数组
 	XVector_push_back(CurrentNodeArray,&root);//入根节点
 
 	XBTreeNode* CurrentNode = NULL;//当前遍历的节点

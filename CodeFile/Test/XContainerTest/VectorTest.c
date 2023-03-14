@@ -17,7 +17,7 @@ struct people
 
 void VectorTest()
 {
-	/*XVector* v = XVector_init(" people ", sizeof(struct people));
+	/*XVector* v = XVector_init(sizeof(struct people));
 	struct people p1 = { 22, "男", "琦神","大佬" };
 	XVector_push_back(v, &p1);
 	struct people p2 = { 19, "男", "小白","大佬" };
@@ -37,7 +37,7 @@ void VectorTest()
 	}
 	v->free(v);*/
 
-	XVector* v = XVector_init("int", sizeof(int*));
+	XVector* v = XVector_init(sizeof(int*));
 	int arr[]={100,123,456,4,8496,3,321,23,3,132,0};
 	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
 	{

@@ -7,7 +7,7 @@
 //前序
 static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_root)
 {
-	XVector* vector = XVector_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	XVector* vector = XVector_init(sizeof(struct XBTreeNode*));
 	XStack* stack = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
 	XStack_Push(stack, &this_root);
 	struct XBTreeNode* currentNode = NULL;//当前节点指针
@@ -29,7 +29,7 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_r
 //中序
 static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_root)
 {
-	XVector* vector = XVector_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	XVector* vector = XVector_init(sizeof(struct XBTreeNode*));
 	XStack* stack = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
 	struct XBTreeNode* currentNode = this_root;//当前节点指针
 	while (!XStack_empty(stack)|| currentNode!=NULL)
@@ -53,7 +53,7 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_ro
 //后序
 static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_root)
 {
-	XVector* vector = XVector_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	XVector* vector = XVector_init( sizeof(struct XBTreeNode*));
 	XStack* stack = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
 	XStack* stackTraversing = XStack_init("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
 	XStack_Push(stack, &this_root);
@@ -97,7 +97,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 	//	return NULL;
 	//}
 	//申请节点数组
-	nodes->nodes = XVector_init("XBinaryTreeNode*", sizeof(XBTreeNode*));
+	nodes->nodes = XVector_init( sizeof(XBTreeNode*));
 	if (isNULL(isNULLInfo(nodes->nodes, "节点数组申请内存失败")))
 	{
 		free(nodes);
@@ -105,7 +105,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 	}
 	XVector_resize(nodes->nodes, nodeCount);
 	//申请数据数组
-	nodes->values = XVector_init("TypeSize", TypeSize);
+	nodes->values = XVector_init(TypeSize);
 	if (isNULL(isNULLInfo(nodes->values, "数据数组申请内存失败")))
 	{
 		XVector_free(nodes->values);
