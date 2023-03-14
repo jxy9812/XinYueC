@@ -4,6 +4,7 @@
 #include<stdbool.h>
 #include"XVector_func.h"
 #include"XVectorTwo_func.h"
+#include"XVector_macro.h"
 #include"XVector_Iterator/XVector_iterator.h"
 #include"XVector_Iterator/XVector_reverse_iterator.h"
 typedef struct XVector

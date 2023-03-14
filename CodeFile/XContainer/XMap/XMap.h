@@ -1,6 +1,8 @@
 ﻿#ifndef XMAP_H
 #define XMAP_H
 #include "XContainerObject.h"
+#include"XPair.h"
+#include"XMap_macro.h"
 #include"XMap_Iterator.h"
 #include"XMap_reverse_iterator.h"
 typedef struct XVector XVector;

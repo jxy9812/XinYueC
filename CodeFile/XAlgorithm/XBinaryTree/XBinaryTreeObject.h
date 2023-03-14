@@ -28,7 +28,6 @@ typedef struct XBTreeNode
 
 //创建初始化一个二叉树节点
 void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount,const size_t dataCount,const size_t TypeSize);
-#define XBTree_CreationNode(NodeType,nodeCount,dataCount,Type) ((NodeType*)XBTree_creationNode(sizeof(NodeType),nodeCount,dataCount,sizeof(Type)))
 //创建初始化一个二叉树节点,并插入数据
 struct XBTreeNode* XBTree_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize);
 //插入数据-不创建节点，传入节点

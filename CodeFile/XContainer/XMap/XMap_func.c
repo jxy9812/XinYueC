@@ -1,7 +1,6 @@
 ﻿#include"XMap.h"
 #include"XMap_func.h"
 #include"XContainerObject.h"
-#include"XPair.h"
 #include"XBalancedBinaryTree.h"
 #include"XRedBlackTree.h"
 #include"XAlgorithm.h"

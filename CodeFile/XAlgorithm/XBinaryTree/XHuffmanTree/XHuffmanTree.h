@@ -8,7 +8,7 @@ typedef struct XHfmNodeData
 {
 	unsigned char ch;//字符
 	size_t count;//出现次数
-	XVector* code;//哈夫曼编码
+	XVector* code;//哈夫曼编码   char类型
 }XHfmNodeData;
 //哈夫曼树
 typedef struct XHuffmanTree
@@ -17,7 +17,9 @@ typedef struct XHuffmanTree
 	XMap* dictionaries;//字典
 }XHuffmanTree;
 //创建一个哈夫曼节点
-XHfmNode* XHfmTree_creationNode(const size_t TypeSize);
+XHfmNode* XHfmTree_creationNode();
 //哈夫曼树初始化
-void XHfmTree_init(XHuffmanTree* this_tree);
+XHuffmanTree* XHfmTree_init();
+//读取数据构建哈夫曼树
+const bool XHfmTree_readData(XHuffmanTree*  tree,const char* data,const size_t size);
 #endif // !XHuffman_h

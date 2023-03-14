@@ -17,10 +17,10 @@ int main(int argc, char* args[])
 	//XMazeGeneratedTest();
 	//XMazePathfinding();
 	//queueTest();
-	XPriority_QueueTest();
-	XBinaryTreeObjectTest();	
-	XBalancedBinaryTreeTest();
-	XRedBlackTreeTest();
+	//XPriority_QueueTest();
+	//XBinaryTreeObjectTest();	
+	//XBalancedBinaryTreeTest();
+	//XRedBlackTreeTest();
 	XHuffmanTreeTest();
 	return 0;
 }

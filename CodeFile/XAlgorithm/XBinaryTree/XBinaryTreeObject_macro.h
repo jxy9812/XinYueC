@@ -1,5 +1,7 @@
 ﻿#ifndef XBINARYTREEOBJECT_MACRO_H
 #define XBINARYTREEOBJECT_MACRO_H
+//创建节点
+#define XBTree_CreationNode(NodeType, nodeCount, dataCount, Type) ((NodeType*)XBTree_creationNode(sizeof(NodeType), nodeCount, dataCount, sizeof(Type)))
 //获取节点
 #define XBTree_GetParent(this_root) (*XBTree_GetTreeNode(this_root, XBTreeParent))//二叉树-获取父节点(继承的子类均可以使用)
 #define XBTree_GetLChild(this_root) (*XBTree_GetTreeNode(this_root, XBTreeLChild))//二叉树-获取左孩子(继承的子类均可以使用)
