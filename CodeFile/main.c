@@ -18,8 +18,8 @@ int main(int argc, char* args[])
 	//XMazePathfinding();
 	//queueTest();
 	//XPriority_QueueTest();
-	//XBinaryTreeObjectTest();	
+	XBinaryTreeObjectTest();	
 	//XBalancedBinaryTreeTest();
-	XRedBlackTreeTest();
+	//XRedBlackTreeTest();
 	return 0;
 }

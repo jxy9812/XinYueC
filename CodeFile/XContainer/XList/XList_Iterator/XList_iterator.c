@@ -25,6 +25,6 @@ XList_iterator* XList_iterator_add(struct XList* this_list,XList_iterator*it)
 	XList_iterator*  back= XList_back(this_list);
 	if(it== back)//如果是最后一个元素则返回空表示遍历完成了
 	return NULL;
-	XListNode* node = (XListNode*)it;
-	return node->next;//指向下一个元素
+	XListNode* nodes = (XListNode*)it;
+	return nodes->next;//指向下一个元素
 }

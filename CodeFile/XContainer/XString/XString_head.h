@@ -15,7 +15,7 @@ struct XSTRING
 	void (*clear) (struct XSTRING* this_XString);//清空，释放内存
 	//遍历函数
 	char (*at)(const struct XSTRING* this_XString, int);// 返回索引处字符
-	char* (*LPvalue)(const struct XSTRING* this_XString);// 返回字符串
+	char* (*values)(const struct XSTRING* this_XString);// 返回字符串
 	//查找函数
 	int (*find_first_of)(const struct XSTRING* this_XString, const char* find);
 	int (*find_last_of)(const struct XSTRING* this_XString, const char* find);

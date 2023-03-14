@@ -2,7 +2,7 @@
 #include"XContainerObject.h"
 bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess less, XCompareRuleTwo lessRule, const void* LPData, const size_t TypeSize)
 {
-	if (!XBTree_insertData(insertNode, LPData, TypeSize))//插入数据
+	if (!XBTree_insertData(insertNode, LPData, 0,TypeSize))//插入数据
 	{
 		XBTree_freeNode(insertNode, false);//插入失败释放创建的节点
 		return false;

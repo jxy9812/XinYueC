@@ -9,12 +9,12 @@ bool XCompareRuleTwo_Standard(XCompare compare, const void* LPrevValue, const vo
 
 bool XCompareRuleTwo_BinaryTree(XCompare compare, const void* LPrevValue, const void* LNextValue)
 {
-	return compare(((XBTreeNode*)LPrevValue)->LPvalue, ((XBTreeNode*)LNextValue)->LPvalue);
+	return compare(((XBTreeNode*)LPrevValue)->values, ((XBTreeNode*)LNextValue)->values);
 }
 
 bool XCompareRuleTwo_XMap(XCompare compare, const void* LPrevValue, const void* LNextValue)
 {
-	return compare(XPair_first(*(XPair**)(((XBTreeNode*)LPrevValue)->LPvalue)), XPair_first(*(XPair**)(((XBTreeNode*)LNextValue)->LPvalue)));
+	return compare(XPair_first(*(XPair**)(((XBTreeNode*)LPrevValue)->values)), XPair_first(*(XPair**)(((XBTreeNode*)LNextValue)->values)));
 }
 
 bool XCompareRuleOne_Standard(XCompare compare, const void* Value, const void* CompareValue)
@@ -24,10 +24,10 @@ bool XCompareRuleOne_Standard(XCompare compare, const void* Value, const void* C
 
 bool XCompareRuleOne_BinaryTree(XCompare compare, const void* Value, const void* CompareValue)
 {
-	return compare(((XBTreeNode*)Value)->LPvalue, CompareValue);
+	return compare(((XBTreeNode*)Value)->values, CompareValue);
 }
 
 bool XCompareRuleOne_XMap(XCompare compare, const void* Value, const void* CompareValue)
 {
-	return compare(XPair_first(*(XPair**)(((XBTreeNode*)Value)->LPvalue)), CompareValue);
+	return compare(XPair_first(*(XPair**)(((XBTreeNode*)Value)->values)), CompareValue);
 }

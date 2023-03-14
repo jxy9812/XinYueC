@@ -3,9 +3,9 @@
 #include"XStack.h"
 XBBTreeNode* XBBTree_creation(const size_t TypeSize)
 {
-	struct XBBTreeNode* node = XBTree_creationNode(sizeof(XBBTreeNode),3,TypeSize);
-	node->maxLayer = 1;
-	return node;
+	struct XBBTreeNode* nodes = XBTree_creationNode(sizeof(XBBTreeNode),3,1,TypeSize);
+	nodes->maxLayer = 1;
+	return nodes;
 }
 
 XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne Rule, void* LPData)

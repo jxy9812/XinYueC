@@ -10,8 +10,8 @@
 #include<string.h>
 static void ForTreeNode(void* LPVal, void* args)
 {
-	XRBTreeNode* node = *(XRBTreeNode**)LPVal;
-	XVector_push_back(args, (node->XBTNode.LPvalue));
+	XRBTreeNode* nodes = *(XRBTreeNode**)LPVal;
+	XVector_push_back(args, (nodes->XBTNode.values));
 }
 void XMap_updataIterator(XMap* this_map)
 {

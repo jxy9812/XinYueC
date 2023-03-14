@@ -3,7 +3,8 @@
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
-	printf("%d ", XBTree_GetData(LPVal, int));
+	//int* val = XVector_at(((XBTreeNode*)LPVal)->values, 0);
+	printf("%d ", XBTree_GetData((*(XBTreeNode**)LPVal), 0,int));
 }
 void XBinaryTreeObjectTest()
 {

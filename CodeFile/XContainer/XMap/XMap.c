@@ -66,8 +66,8 @@ void XMap_erase(XMap* this_map, const void* key)
 	if (isNULL(isNULLInfo(this_map, "")))
 		return NULL;
 	//XMap_updataIterator(this_map);
-	XRBTreeNode* node = XRBTree_erase(&(this_map->object._data), this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
-	if (node != NULL)
+	XRBTreeNode* nodes = XRBTree_erase(&(this_map->object._data), this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
+	if (nodes != NULL)
 	{
 		--this_map->object._capacity;
 		--this_map->object._size;
@@ -95,10 +95,10 @@ XPair* XMap_find(XMap* this_map, const void* key)
 {
 	if (isNULL(isNULLInfo(this_map, "")))
 		return NULL;
-	XBTreeNode* node = XBBTree_findData(this_map->object._data, this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
-	if (node == NULL)
+	XBTreeNode* nodes = XBBTree_findData(this_map->object._data, this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
+	if (nodes == NULL)
 		return NULL;
-	XPair* pair = *(XPair**)node->LPvalue;
+	XPair* pair = *(XPair**)nodes->values;
 	return pair;
 }
 static void XMap_freeNodeData(void* LPVal, void* args)

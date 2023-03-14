@@ -6,13 +6,13 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<time.h>
-static void ForPrint(void* LPvalue, void* args)
+static void ForPrint(void* values, void* args)
 {
-	printf("%d\n", *(int*)LPvalue);
+	printf("%d\n", *(int*)values);
 }
-static void insertMap(void* LPvalue, void* args)
+static void insertMap(void* values, void* args)
 {
-	XMap_insert(args, LPvalue, LPvalue);
+	XMap_insert(args, values, values);
 }
 void XMapAndXVectorFindTest()
 {

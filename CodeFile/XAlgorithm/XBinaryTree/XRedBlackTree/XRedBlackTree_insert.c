@@ -72,11 +72,11 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, XCompareRuleTwo
 		return NULL;
 	if (isNULL(isNULLInfo(TypeSize, "")))
 		return NULL;
-	XRBTreeNode* node = XRBTree_creation(TypeSize);//创建一个红黑树节点并且初始化,默认红色
-	if (isNULL(isNULLInfo(node, "")))
+	XRBTreeNode* nodes = XRBTree_creation(TypeSize);//创建一个红黑树节点并且初始化,默认红色
+	if (isNULL(isNULLInfo(nodes, "")))
 		return NULL;
-	PRINT("node=%p\n",node);
-	bool flag = XBBTree_insertAlign(this_root, node, less, lessRule, LPData, TypeSize);//将数据插入到节点，并且链接
+	PRINT("nodes=%p\n",nodes);
+	bool flag = XBBTree_insertAlign(this_root, nodes, less, lessRule, LPData, TypeSize);//将数据插入到节点，并且链接
 	if (!flag)
 	{	
 		printf("节点插入失败\n");
@@ -84,15 +84,15 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, XCompareRuleTwo
 	}
 	if (this_root == NULL)//根节点，无内存开辟
 	{
-		XRBTree_SetBlack(node);
-		return node;
+		XRBTree_SetBlack(nodes);
+		return nodes;
 	}
 	else if (*this_root == NULL)//根节点为空
 	{
-		*this_root = node;
-		XRBTree_SetBlack(node);
-		return node;
+		*this_root = nodes;
+		XRBTree_SetBlack(nodes);
+		return nodes;
 	}
-	XRBTree_insertAdjust(this_root, node);
-	return node;
+	XRBTree_insertAdjust(this_root, nodes);
+	return nodes;
 }

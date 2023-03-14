@@ -7,7 +7,7 @@
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
-	printf("%-3d ", XBTree_GetData(LPVal,int));
+	printf("%-3d ", XBTree_GetData(LPVal,0,int));
 }
 static void traverse(void* LPVal, void* args)
 {
@@ -15,7 +15,7 @@ static void traverse(void* LPVal, void* args)
 	if (*XBTree_GetTreeNode(currentNode, XBTreeParent) == NULL)
 		return;
 	if (XBTree_findChildisParent(currentNode) == NULL)
-		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.LPvalue);
+		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.values);
 	
 }
 void XRedBlackTreeTest()

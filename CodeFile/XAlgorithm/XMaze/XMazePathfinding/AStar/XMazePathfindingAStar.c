@@ -7,16 +7,16 @@
 //创建一个节点
 static AStarNode* CreationAStarNode(const int x, const int y)
 {
-	AStarNode* node = (AStarNode*)malloc(sizeof(AStarNode));
-	if (isNULL(isNULLInfo(node, "")))
+	AStarNode* nodes = (AStarNode*)malloc(sizeof(AStarNode));
+	if (isNULL(isNULLInfo(nodes, "")))
 		return NULL;
-	node->pos.x = x;
-	node->pos.y = y;
-	node->parent = NULL;
-	node->child = XVector_init("AStarNode*", sizeof(AStarNode*));
-	node->currentCosts = 0;
-	node->estimateCosts = 0;
-	return node;
+	nodes->pos.x = x;
+	nodes->pos.y = y;
+	nodes->parent = NULL;
+	nodes->child = XVector_init("AStarNode*", sizeof(AStarNode*));
+	nodes->currentCosts = 0;
+	nodes->estimateCosts = 0;
+	return nodes;
 }
 //创建一个节点
 static AStarNode* CreationAStarNode_XPoint(const XPoint pos)
@@ -24,20 +24,20 @@ static AStarNode* CreationAStarNode_XPoint(const XPoint pos)
 	return CreationAStarNode(pos.x,pos.y);
 }
 //设置代价
-static void setCosts(const XVector* maze, const XPoint dest,AStarNode* node, AStarNode* parent)
+static void setCosts(const XVector* maze, const XPoint dest,AStarNode* nodes, AStarNode* parent)
 {
 	//设置当前代价
-	size_t sum = abs(node->pos.x - parent->pos.x) + abs(node->pos.y - parent->pos.y);
+	size_t sum = abs(nodes->pos.x - parent->pos.x) + abs(nodes->pos.y - parent->pos.y);
 	if (sum == 1)//直线
 	{
-		node->currentCosts += StraightLine;
+		nodes->currentCosts += StraightLine;
 	}
 	else if (sum == 2)//斜线
 	{
-		node->currentCosts += ObliqueLine;
+		nodes->currentCosts += ObliqueLine;
 	}
 	//设置预期代价
-	node->estimateCosts= (abs(node->pos.x - dest.x) + abs(node->pos.y - dest.y))* StraightLine;
+	nodes->estimateCosts= (abs(nodes->pos.x - dest.x) + abs(nodes->pos.y - dest.y))* StraightLine;
 }
 //获取迷宫路径
 static XVector* GetXMazePath(const XVector* child)
@@ -52,14 +52,14 @@ static XVector* GetXMazePath(const XVector* child)
 	return Path;
 }
 //插入孩子
-static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* node, const XVector* NodeArray, bool Oblique)
+static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nodes, const XVector* NodeArray, bool Oblique)
 {
-	int* pMazePos = (int*)XVectorTwo_at_XPoint(maze, node->pos);
+	int* pMazePos = (int*)XVectorTwo_at_XPoint(maze, nodes->pos);
 	if (*pMazePos != XMazeRoute)
 		return 0;
 	else
 		*pMazePos = XMazePath;//标记走过了
-	XPointStep pos = { node->pos.x,node->pos.y,1 };
+	XPointStep pos = { nodes->pos.x,nodes->pos.y,1 };
 	XStack* ChildAll = XStack_init("XPointStep", sizeof(XPointStep));
 	Pathfinder(ChildAll, maze, pos);//获取周围能走的点位
 	if(Oblique)//能斜着走
@@ -68,14 +68,14 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 	{
 		XPointStep* pCurrentPos = (XPointStep*)XStack_top(ChildAll);
 		AStarNode* childAStarNode = CreationAStarNode(pCurrentPos->x, pCurrentPos->y);//创建孩子节点
-		childAStarNode->parent = node;//设置父节点
-		setCosts(maze, dest, childAStarNode, node);//设置代价
-		XVector_push_back(node->child, &childAStarNode);//将创建的孩子绑定到父节点下
+		childAStarNode->parent = nodes;//设置父节点
+		setCosts(maze, dest, childAStarNode, nodes);//设置代价
+		XVector_push_back(nodes->child, &childAStarNode);//将创建的孩子绑定到父节点下
 		XVector_push_back(NodeArray, &childAStarNode);
 		XStack_pop(ChildAll);
 	}
 	XStack_free(ChildAll);
-	return XVector_size(node->child);
+	return XVector_size(nodes->child);
 }
 //排序,根据总代价进行降序排序
 static int sortDescendingtCosts(const void* LPrevValue, const void* LNextValue)

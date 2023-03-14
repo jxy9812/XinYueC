@@ -29,13 +29,13 @@ const size_t XBBTree_SetLayerNumberThis(XBBTreeNode* this_root);
 //设置高度从当前节点一直到根
 const size_t XBBTree_SetLayerNumberAll(XBBTreeNode** this_root, XBBTreeNode* currentNode);
 //旋转
-XBBTreeNode* XBBTree_Spin(XBBTreeNode** this_root, XBBTreeNode* node);
+XBBTreeNode* XBBTree_Spin(XBBTreeNode** this_root, XBBTreeNode* nodes);
 //右旋
-XBBTreeNode* XBBTree_SpinRR(XBBTreeNode** this_root, XBBTreeNode* node);
+XBBTreeNode* XBBTree_SpinRR(XBBTreeNode** this_root, XBBTreeNode* nodes);
 //左旋
-XBBTreeNode* XBBTree_SpinLL(XBBTreeNode** this_root, XBBTreeNode* node);
+XBBTreeNode* XBBTree_SpinLL(XBBTreeNode** this_root, XBBTreeNode* nodes);
 //右左旋
-XBBTreeNode* XBBTree_SpinRL(XBBTreeNode** this_root, XBBTreeNode* node);
+XBBTreeNode* XBBTree_SpinRL(XBBTreeNode** this_root, XBBTreeNode* nodes);
 //左右旋
-XBBTreeNode* XBBTree_SpinLR(XBBTreeNode** this_root, XBBTreeNode* node);
+XBBTreeNode* XBBTree_SpinLR(XBBTreeNode** this_root, XBBTreeNode* nodes);
 #endif // !BALANCEDBINARYTREE_H

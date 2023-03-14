@@ -4,14 +4,14 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
-#define GetXPoint(node) (*(XPoint*)node->LPvalue)
+#define GetXPoint(nodes) (*(XPoint*)nodes->values)
 //创建一个节点
 static XBTreeNode* CreationBFSNode_XPoint(XPoint pos)
 {
-	XBTreeNode* node = XBTree_creationInsertData(&pos,1,sizeof(XPoint));
-	if (isNULL(isNULLInfo(node, "")))
+	XBTreeNode* nodes = XBTree_creationInsertData(&pos,1,sizeof(XPoint));
+	if (isNULL(isNULLInfo(nodes, "")))
 		return NULL;
-	return node;
+	return nodes;
 }
 //创建一个节点
 static XBTreeNode* CreationBFSNode(const int x,const int y)
@@ -26,33 +26,33 @@ static XVector* GetXMazePath(const XBTreeNode* child)
 	XBTreeNode* current = child;
 	while (current!=NULL)
 	{
-		XVector_push_front(Path, current->LPvalue);
+		XVector_push_front(Path, current->values);
 		current = *XBTree_GetTreeNode(current,XBTreeParent);
 	}
 	return Path;
 }
 //插入孩子
-static size_t insertChild(const XVector* maze, XBTreeNode* node, XVector* NextNodeArray)
+static size_t insertChild(const XVector* maze, XBTreeNode* nodes, XVector* NextNodeArray)
 {
-	int* pMazePos = (int*)XVectorTwo_at_XPoint(maze, GetXPoint(node));
+	int* pMazePos = (int*)XVectorTwo_at_XPoint(maze, GetXPoint(nodes));
 	if (*pMazePos != XMazeRoute)
 		return 0;
 	else
 		*pMazePos = XMazePath;//标记走过了
-	XPointStep pos = { GetXPoint(node).x,GetXPoint(node).y,1};
+	XPointStep pos = { GetXPoint(nodes).x,GetXPoint(nodes).y,1};
 	XStack* ChildAll = XStack_init("XPointStep",sizeof(XPointStep));
 	Pathfinder(ChildAll,maze, pos);//获取周围能走的点位
 	while (!XStack_empty(ChildAll))
 	{
 		XPointStep* pCurrentPos = (XPointStep*)XStack_top(ChildAll);
 		XBTreeNode* childBFSNode = CreationBFSNode(pCurrentPos->x,pCurrentPos ->y);
-		*XBTree_GetTreeNode(childBFSNode, XBTreeParent) = node;
-		XVector_push_back(node->node, &childBFSNode);
+		*XBTree_GetTreeNode(childBFSNode, XBTreeParent) = nodes;
+		XVector_push_back(nodes->nodes, &childBFSNode);
 		XVector_push_back(NextNodeArray, &childBFSNode);
 		XStack_pop(ChildAll);
 	}
 	XStack_free(ChildAll);
-	return XVector_size(node->node)>1? XVector_size(node->node) -1:0;
+	return XVector_size(nodes->nodes)>1? XVector_size(nodes->nodes) -1:0;
 }
 
 XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoint dest)

@@ -1,12 +1,12 @@
 ﻿#include"XRedBlackTree.h"
 #include"XBalancedBinaryTree.h"
 //删除调整树
-static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* node, XRBTreeNode* LPpater)
+static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* nodes, XRBTreeNode* LPpater)
 {
 	XRBTreeNode* LPbrother = NULL;//兄弟节点
-	while ((node==NULL||XRBTree_IsBlack(node))&& node!= *this_root)
+	while ((nodes==NULL||XRBTree_IsBlack(nodes))&& nodes!= *this_root)
 	{
-		if(XBTree_GetLChild(LPpater)==node)
+		if(XBTree_GetLChild(LPpater)==nodes)
 		{
 			LPbrother = XBTree_GetRChild(LPpater);
 			if (LPbrother!=NULL&&XRBTree_IsRed(LPbrother))
@@ -24,8 +24,8 @@ static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* node, XRBTreeN
 					&& (LPbrotherRChild==NULL|| XRBTree_IsBlack(LPbrotherRChild)))
 				{
 					XRBTree_SetRed(LPbrother);
-					node = LPpater;
-					LPpater = XBTree_GetParent(node);
+					nodes = LPpater;
+					LPpater = XBTree_GetParent(nodes);
 				}
 				else
 				{
@@ -40,13 +40,13 @@ static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* node, XRBTreeN
 					XRBTree_SetBlack(LPpater);
 					XRBTree_SetBlack((XRBTreeNode*)XBTree_GetRChild(LPbrother));
 					XBTree_SpinLL(this_root, LPpater);
-					node = *this_root;
+					nodes = *this_root;
 					break;
 				}
 			}
 			else
 			{
-				node = LPpater;
+				nodes = LPpater;
 			}
 			
 		}
@@ -68,8 +68,8 @@ static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* node, XRBTreeN
 					&& (LPbrotherRChild == NULL || XRBTree_IsBlack(LPbrotherRChild)))
 				{
 					XRBTree_SetRed(LPbrother);
-					node = LPpater;
-					LPpater = XBTree_GetParent(node);
+					nodes = LPpater;
+					LPpater = XBTree_GetParent(nodes);
 				}
 				else
 				{
@@ -84,19 +84,19 @@ static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* node, XRBTreeN
 					XRBTree_SetBlack(LPpater);
 					XRBTree_SetBlack((XRBTreeNode*)XBTree_GetLChild(LPbrother));
 					XBTree_SpinRR(this_root, LPpater);
-					node = *this_root;
+					nodes = *this_root;
 					break;
 				}
 			}
 			else
 			{
-				node = LPpater;
+				nodes = LPpater;
 			}
 		}
 	}
-	if (node)
+	if (nodes)
 	{
-		XRBTree_SetBlack(node);
+		XRBTree_SetBlack(nodes);
 	}
 }
 //删除的是有一个孩子
@@ -143,9 +143,9 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 		LPreplace = XBTree_GetLChild(LPreplace);
 	}
 
-	free(eraseNode->XBTNode.LPvalue);
-	eraseNode->XBTNode.LPvalue = LPreplace->XBTNode.LPvalue;
-	LPreplace->XBTNode.LPvalue = NULL;
+	free(eraseNode->XBTNode.values);
+	eraseNode->XBTNode.values = LPreplace->XBTNode.values;
+	LPreplace->XBTNode.values = NULL;
 
 	LPchild = XBTree_GetRChild(LPreplace);
 	LPpater = XBTree_GetParent(LPreplace);
