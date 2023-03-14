@@ -176,6 +176,7 @@ XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less,XEquality equalit
 	if (isNULL(isNULLInfo(this_root, "")))
 		return NULL;
 	XRBTreeNode* findErase = XBBTree_findData(*this_root, less,equality, Rule, LPData);//删除的节点
+	//PRINT("findErase=%p", findErase);
 	if (findErase == NULL)
 		return NULL;//要删除的节点没找到
 	size_t count = 0;

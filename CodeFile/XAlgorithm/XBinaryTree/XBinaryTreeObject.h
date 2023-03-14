@@ -35,7 +35,7 @@ const bool XBTree_insertData(struct XBTreeNode* this_root,const void* LPData,con
 //释放一个树节点,parentSetNull父节点指向的指针置为空
 const bool XBTree_freeNode(struct XBTreeNode* this_root,const bool parentSetNull);
 //获取节点指针
-struct XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel);
+XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel);
 //二叉树遍历转数组存储
 XVector* XBTree_TraversingToXVector(struct XBTreeNode* this_root,const enum XBTreeTraversing Traversing);
 //释放整个树(当前节点及其所有子节点)

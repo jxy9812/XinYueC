@@ -146,7 +146,7 @@ const bool XBTree_freeNode(struct XBTreeNode* this_root , const bool parentSetNu
 	
 	//释放数据
 	if(this_root->values!=NULL)
-		free(this_root->values);
+		XVector_free(this_root->values);
 	
 	if (parentSetNull)
 	{

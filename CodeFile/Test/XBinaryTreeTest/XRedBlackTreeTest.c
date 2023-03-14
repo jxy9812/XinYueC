@@ -7,7 +7,7 @@
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
-	printf("%-3d ", XBTree_GetData(LPVal,0,int));
+	printf("%-3d ", XBTree_GetData(*(XBTreeNode**)LPVal,0,int));
 }
 static void traverse(void* LPVal, void* args)
 {

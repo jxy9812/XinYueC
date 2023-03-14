@@ -65,7 +65,7 @@ void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNode)
 }
 XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, XCompareRuleTwo lessRule, const void* LPData, const size_t TypeSize)
 {
-	PRINT("less=%p LPData=%p TypeSize=%u\n",less,LPData,TypeSize);
+	//PRINT("less=%p LPData=%p TypeSize=%u\n",less,LPData,TypeSize);
 	if (isNULL(isNULLInfo(less, "")))
 		return NULL;
 	if (isNULL(isNULLInfo(LPData, "")))
@@ -75,7 +75,7 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, XCompareRuleTwo
 	XRBTreeNode* nodes = XRBTree_creation(TypeSize);//创建一个红黑树节点并且初始化,默认红色
 	if (isNULL(isNULLInfo(nodes, "")))
 		return NULL;
-	PRINT("nodes=%p\n",nodes);
+	//PRINT("nodes=%p\n",nodes);
 	bool flag = XBBTree_insertAlign(this_root, nodes, less, lessRule, LPData, TypeSize);//将数据插入到节点，并且链接
 	if (!flag)
 	{	

@@ -17,6 +17,7 @@ XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equa
 	XBBTreeNode* CurNode = this_root;//当前节点指针
 	while (CurNode!=NULL)
 	{
+		//printf("%d \n", XBTree_GetData(CurNode,0,int));
 		//if (equality(CurNode->XBTNode.data, LPData))
 		if(Rule(equality, CurNode, LPData))
 		{

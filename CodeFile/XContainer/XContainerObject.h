@@ -19,6 +19,7 @@ typedef struct XContainerObject
 	size_t _size;//当前容器内的元素个数
 	size_t _type;//类型占用字节数
 }XContainerObject;
+
 #ifdef DEBUG_ON
 #if DEBUG_ON &&defined _DEBUG
 #define PRINT(fmt,...) printf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)

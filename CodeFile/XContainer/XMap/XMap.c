@@ -48,7 +48,7 @@ void XMap_insert(XMap* this_map, const void* key, const void* val)
 		XRBTree_insert(&(this_map->object._data), this_map->KeyLess, XCompareRuleTwo_XMap, &LPpair, sizeof(XPair*));
 
 		/*XRBTreeNode* root= this_map->object._data;
-		LPpair= *(XPair**)root->XBTNode.data;
+		LPpair= *(XPair**)XVector_at(root->XBTNode.values,0);
 		printf("根节点，key:%d val:%s\n", XPair_First(LPpair, int), XPair_second(LPpair));*/
 		++this_map->object._capacity;
 		++this_map->object._size;
@@ -98,7 +98,7 @@ XPair* XMap_find(XMap* this_map, const void* key)
 	XBTreeNode* nodes = XBBTree_findData(this_map->object._data, this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes == NULL)
 		return NULL;
-	XPair* pair = *(XPair**)nodes->values;
+	XPair* pair = *(XPair**)XVector_at(nodes->values,0);
 	return pair;
 }
 static void XMap_freeNodeData(void* LPVal, void* args)
