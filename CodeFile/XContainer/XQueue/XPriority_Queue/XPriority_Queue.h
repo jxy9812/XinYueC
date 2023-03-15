@@ -2,6 +2,7 @@
 #define XPRIORITY_QUEUE
 #include"XContainerObject.h"
 #include"XFunctionCallback.h"
+#include"XPriority_Queue_macro.h"
 //优先队列
 typedef struct XPriority_Queue
 {

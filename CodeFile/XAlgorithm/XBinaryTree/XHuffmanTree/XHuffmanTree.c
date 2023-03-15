@@ -1,6 +1,30 @@
 ﻿#include"XHuffmanTree.h"
 #include"XEquality.h"
 #include"XLess.h"
+#include"XPriority_Queue.h"
+//优先队列大于的回调函数
+static bool greater(XPair**pairOne, XPair** pairTwo)
+{
+	return XPair_Second(*pairOne, size_t) > XPair_Second(*pairTwo, size_t);
+}
+//字典数据插入优先队列
+static void installQueue(XPair** LPpair, XPriority_Queue* queue)
+{
+	XPriority_Queue_push(queue, LPpair);
+}
+//根据字典创建树
+static void XHfmTree_creationTree(XHuffmanTree* tree)
+{
+	XPriority_Queue* queue = XPriority_Queue_Init(XPair*, greater);
+	XMap_iterator_for_each(tree->dictionaries, installQueue, queue);
+	//测试队列数据是否正确
+	while (!XPriority_Queue_empty(queue))
+	{
+		XPair** LPpair = XPriority_Queue_top(queue);
+		printf("data:%d count:%d\n", XPair_First(*LPpair, char), XPair_Second(*LPpair, size_t));
+		XPriority_Queue_pop(queue);
+	}
+}
 XHfmNode* XHfmTree_creationNode()
 {
 	XBTreeNode* node = XBTree_CreationNode(XBTreeNode, 3, 1, XHfmNodeData);
@@ -51,5 +75,6 @@ const bool XHfmTree_readData(XHuffmanTree* tree,const char* data, const size_t s
 	{
 		XMap_At(tree->dictionaries,data[i],size_t)+=1;
 	}
+	XHfmTree_creationTree(tree);
 	return true;
 }
