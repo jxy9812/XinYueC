@@ -1,49 +1,6 @@
 ﻿#include"XHuffmanTree.h"
 #include"XEquality.h"
 #include"XLess.h"
-#include"XPriority_Queue.h"
-//优先队列大于的回调函数
-static bool greater(XPair**pairOne, XPair** pairTwo)
-{
-	return XPair_Second(*pairOne, size_t) > XPair_Second(*pairTwo, size_t);
-}
-//字典数据插入优先队列
-static void installQueue(XPair** LPpair, XPriority_Queue* queue)
-{
-	XPriority_Queue_push(queue, LPpair);
-}
-//根据字典创建树
-static void XHfmTree_creationTree(XHuffmanTree* tree)
-{
-	XPriority_Queue* queue = XPriority_Queue_Init(XPair*, greater);
-	XMap_iterator_for_each(tree->dictionaries, installQueue, queue);
-	//测试队列数据是否正确
-	while (!XPriority_Queue_empty(queue))
-	{
-		XPair** LPpair = XPriority_Queue_top(queue);
-		printf("data:%d count:%d\n", XPair_First(*LPpair, char), XPair_Second(*LPpair, size_t));
-		XPriority_Queue_pop(queue);
-	}
-}
-XHfmNode* XHfmTree_creationNode()
-{
-	XBTreeNode* node = XBTree_CreationNode(XBTreeNode, 3, 1, XHfmNodeData);
-	if (node==NULL)
-	{
-		return NULL;
-	}
-	XHfmNodeData* LPData = XBTree_Getdata(node, 0);
-	LPData->ch = 0;
-	LPData->count = 0;
-	LPData->code = XVector_Init(char);
-	if (LPData->code==NULL)
-	{
-		XBTree_freeNode(node,false);
-		return NULL;
-	}
-	return node;
-}
-
 XHuffmanTree* XHfmTree_init()
 {
 	XHuffmanTree* tree = malloc(sizeof(XHuffmanTree));
@@ -51,18 +8,31 @@ XHuffmanTree* XHfmTree_init()
 	{
 		return NULL;
 	}
-	tree->root = XHfmTree_creationNode();
-	if (ISNULL(tree->root, "申请哈夫曼树节点失败"))
-	{
-		return NULL;
-	}
-	tree->dictionaries = XMap_Init(char,size_t,XEquality_char,XLess_char);
+	tree->root = NULL;
+	tree->dictionaries = XMap_Init(char, DictionaryValue,XEquality_char,XLess_char);
 	if (ISNULL(tree->dictionaries, "申请哈夫曼树字典失败"))
 	{
-		XBTree_freeNode(tree->root,false);
 		return NULL;
 	}
 	return tree;
+}
+void XHfmTree_setDictionaries(XMap* dictionaries, const char* data, const size_t size)
+{
+	if (ISNULL(dictionaries, "哈夫曼树字典不能NULL"))
+	{
+		return ;
+	}
+	for (size_t i = 0; i < size; i++)
+	{
+		DictionaryValue* dv = XMap_at(dictionaries, data + i);
+		//创建哈夫曼编码数组
+		if (dv->count == 0)
+		{
+			dv->code = XVector_Init(char);
+		}
+		dv->count += 1;//计数+1
+		//XMap_At(tree->dictionaries,data[i],size_t)+=1;
+	}
 }
 
 const bool XHfmTree_readData(XHuffmanTree* tree,const char* data, const size_t size)
@@ -71,10 +41,35 @@ const bool XHfmTree_readData(XHuffmanTree* tree,const char* data, const size_t s
 	{
 		return false;
 	}
-	for (size_t i = 0; i < size; i++)
+	XHfmTree_setDictionaries(tree->dictionaries,data,size);
+	tree->root=XHfmTree_creationTree(tree->dictionaries);
+	if(tree->root)
 	{
-		XMap_At(tree->dictionaries,data[i],size_t)+=1;
+		XHfmTree_setCode(tree->root);
+		return true;
 	}
-	XHfmTree_creationTree(tree);
-	return true;
+	return false;
+}
+//释放哈夫曼编码数组
+static void freeCode(XPair** pair,void*args)
+{
+	XVector* v = XPair_Second(*pair, DictionaryValue).code;
+	XVector_free(v);
+}
+void XHfmTree_clear(XHuffmanTree* tree)
+{
+	//释放哈夫曼树
+	if(tree->root!=NULL)
+		XBTree_freeNodeAll(tree->root);
+	tree->root = NULL;
+	//清空哈夫曼编码
+	XMap_iterator_for_each(tree->dictionaries, freeCode,NULL);
+	XMap_clear(tree->dictionaries);
+}
+
+void XHfmTree_free(XHuffmanTree* tree)
+{
+	XHfmTree_clear(tree);
+	XMap_free(tree->dictionaries);
+	free(tree);
 }

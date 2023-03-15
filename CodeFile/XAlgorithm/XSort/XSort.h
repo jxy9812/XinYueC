@@ -25,4 +25,6 @@ void XQuicPitSort_Stack(void* LParray, const size_t nSize, const size_t TypeSize
 void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize,XCompare compare );
 //乱序(打乱原有顺序)
 void XDerangement(void* LParray, const size_t nSize, const size_t TypeSize);
+//逆序(将数组元素逆序)
+void XReversed(void* LParray, const size_t nSize, const size_t TypeSize);
 #endif // !XSORT_H

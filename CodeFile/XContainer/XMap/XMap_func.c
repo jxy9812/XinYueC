@@ -14,8 +14,10 @@ static void ForTreeNode(void* LPVal, void* args)
 }
 void XMap_updataIterator(XMap* this_map)
 {
-	if (isNULL(isNULLInfo(this_map, "")))
-		return NULL;
+	if (ISNULL(this_map, "map不能为NULL"))
+		return ;
+	if (XMap_empty(this_map))//map当前是空的
+		return;
 	if (!this_map->isModify)
 		return;
 	//开始更新迭代器

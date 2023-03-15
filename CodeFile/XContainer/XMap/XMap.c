@@ -109,6 +109,8 @@ static void XMap_freeNodeData(void* LPVal, void* args)
 }
 void XMap_clear(XMap* this_map)
 {
+	if (XMap_empty(this_map))
+		return;
 	XMap_updataIterator(this_map);
 	XMap_iterator_for_each(this_map, XMap_freeNodeData, NULL);
 	XBTree_freeNodeAll(this_map->object._data);
