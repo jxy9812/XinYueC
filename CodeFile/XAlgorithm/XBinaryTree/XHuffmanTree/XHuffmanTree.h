@@ -3,24 +3,12 @@
 #include"XMap.h"
 #include"XBinaryTreeObject.h"
 #include"XHuffmanTree_macro.h"
-typedef XBTreeNode XHfmNode;//哈夫曼树节点
-//哈夫曼节点数据
-typedef struct XHfmNodeData
-{
-	unsigned char ch;//字符
-	size_t count;//出现次数
-	XVector* code;//哈夫曼编码   value:char类型
-}XHfmNodeData;
-//字典值(内容)
-typedef struct DictionaryValue
-{
-	size_t count;//出现次数
-	XVector* code;//哈夫曼编码
-}DictionaryValue;
+#include"XHuffmanTree_node.h"
+#include"XHuffmanTree_dictionaries.h"
 //哈夫曼树
 typedef struct XHuffmanTree
 {
-	XHfmNode* root;//树的根据节点
+	XHfmNode* root;//树的根节点
 	XMap* dictionaries;//字典  key:char value: DictionaryValue
 }XHuffmanTree;
 //创建一个哈夫曼节点
@@ -33,6 +21,8 @@ XHfmNode* XHfmTree_creationTree(XMap* dictionaries);
 void XHfmTree_setCode(XHfmNode* root);
 //根据数据生成字典(不带编码)
 void XHfmTree_setDictionaries(XMap* dictionaries, const char* data, const size_t size);
+//根据字典写入压缩数据
+int XHfmTree_writeCompressDictionaries(XVector* retData, XMap* dictionaries);
 //读取数据构建哈夫曼树
 const bool XHfmTree_readData(XHuffmanTree* tree,const char* data,const size_t size);
 //根据哈夫曼树和字典压缩数据

@@ -14,7 +14,7 @@ void XHuffmanTreeTest()
 	XHfmTree_clear(tree);//哈夫曼树清空测试
 	XHfmTree_readData(tree, data, count);//读取数据构建哈夫曼树
 	//使用XMap迭代器遍历哈夫曼的字典
-	XMap_iterator_for_each(tree->dictionaries, for_each,NULL);
+	//XMap_iterator_for_each(tree->dictionaries, for_each,NULL);
 	XVector* compressData=XHfmTree_compress(tree, data, count);//压缩后的数据
 
 	XVector_free(compressData);//释放返回的压缩数据

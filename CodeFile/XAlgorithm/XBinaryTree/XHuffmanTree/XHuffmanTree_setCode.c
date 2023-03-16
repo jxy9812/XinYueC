@@ -36,10 +36,10 @@ static void getCode(XHfmNode** LProot,void* args)
 	XHfmNodeData* LPdata = &XHfmTree_GetNodeData(*LProot);//根据二叉树节点获取其数据的指针
 	if (LPdata->code != NULL)
 	{
-		printf("data:%d count:%d\n", LPdata->ch, LPdata->count);
+		//printf("data:%d count:%d\n", LPdata->ch, LPdata->count);
 		setCode(*LProot, LPdata->code);
-		XVector_iterator_for_each(LPdata->code, printCode, NULL);
-		printf("\n");
+		//XVector_iterator_for_each(LPdata->code, printCode, NULL);
+		//printf("\n");
 	}
 }
 void XHfmTree_setCode(XHfmNode* root)
