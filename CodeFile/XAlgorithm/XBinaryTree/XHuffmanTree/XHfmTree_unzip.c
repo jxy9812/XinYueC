@@ -1,7 +1,7 @@
 ﻿#include"XHuffmanTree.h"
 #include<string.h>
-//读取压缩后的数据//构建哈夫曼树
-static size_t readTree(XHuffmanTree* tree, const char* data)
+//读取压缩后的数据//构建字典
+static size_t readDictionaries(XHuffmanTree* tree, const char* data)
 {
 	size_t offset = 0;//偏移字节
 	size_t count = *(size_t*)data;//字典的DictionaryData数量
@@ -22,22 +22,50 @@ static size_t readTree(XHuffmanTree* tree, const char* data)
 	}
 	return offset;
 }
-//读取压缩后的树
+//写入解压后的数据
+static bool writeUnZip(XVector* unzipData, XHfmNode*node)
+{
+	//printf("%d ", XHfmTree_GetNodeData(node).ch);
+	if (XHfmTree_GetNodeData(node).code != NULL)//当前的节点有数据
+	{
+		XVector_push_back(unzipData, &XHfmTree_GetNodeData(node).ch);
+		return true;
+	}
+	return false;
+}
+//读取压缩后的数据
 static XVector*  readData(XHuffmanTree* tree, const char* data,const size_t size)
 {
 	XVector* unzipData = XVector_Init(char);//返回的压缩后的数据
-	for (size_t i = 0; i < size; i++)
+	XHfmNode* root = tree->root;//根节点
+	XHfmNode* currentNode = root;//当前节点
+	for (size_t i = 0; i < size; i++)//遍历每一个字节
 	{
 		char byteRead = data[i];//读取的一字节
-		char charReadIdx = 0;//字节内的比特位索引
-		//遍历每一个比特位
+		//字节内的比特位索引
+		
+		for (char charReadIdx = 0; charReadIdx < 8; charReadIdx++)//遍历每一个比特位
+		{
+			char temp = (byteRead >> (7 - charReadIdx)) & 0x01;
+			if (temp == 0)//左边
+			{
+				if (writeUnZip(unzipData, currentNode = XBTree_GetLChild(currentNode)))
+					currentNode = root;
+			}
+			else if (temp == 1)//右边
+			{
+				if (writeUnZip(unzipData, currentNode = XBTree_GetRChild(currentNode)))
+					currentNode = root;
+			}
+		}
 	}
 	return unzipData;
 }
 XVector* XHfmTree_unzip(XHuffmanTree* tree, const char* data, const size_t size)
 {
 	XHfmTree_clear(tree);//哈夫曼树清空测试
-	size_t offset = readTree(tree, data);
+	size_t offset = readDictionaries(tree, data);
+	tree->root = XHfmTree_creationTree(tree->dictionaries);
 	XVector* unzipData = readData(tree, data + offset, size- offset);//返回的压缩后的数据
 	return unzipData;
 }
