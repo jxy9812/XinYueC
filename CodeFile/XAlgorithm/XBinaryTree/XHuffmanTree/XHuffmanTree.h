@@ -26,7 +26,9 @@ int XHfmTree_writeCompressDictionaries(XVector* retData, XMap* dictionaries);
 //读取数据构建哈夫曼树
 const bool XHfmTree_readData(XHuffmanTree* tree,const char* data,const size_t size);
 //根据哈夫曼树和字典压缩数据
-XVector* XHfmTree_compress(XHuffmanTree* tree, const char* data, const size_t size);
+XVector* XHfmTree_gzip(XHuffmanTree* tree, const char* data, const size_t size);
+//根据哈夫曼树和字典解压数据
+XVector* XHfmTree_unzip(XHuffmanTree* tree, const char* data, const size_t size);
 //清空哈夫曼树
 void XHfmTree_clear(XHuffmanTree* tree);
 //释放哈夫曼树

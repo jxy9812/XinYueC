@@ -1,8 +1,8 @@
 ﻿#include"XHuffmanTree.h"
 //写入压缩数据
-static void writeData(XVector* compressData, XMap* dictionaries, const char* data, const size_t size)
+static void writeData(XVector* gzipData, XMap* dictionaries, const char* data, const size_t size)
 {
-	size_t currentSize = XVector_size(compressData);//当前字节大小
+	size_t currentSize = XVector_size(gzipData);//当前字节大小
 	XVector* code = NULL;//哈夫曼编码数组
 	char byteWrite = 0;//写入的一字节
 	char charWriteIdx = 0;//字节内的比特位索引
@@ -25,7 +25,7 @@ static void writeData(XVector* compressData, XMap* dictionaries, const char* dat
 			}
 			if (charWriteIdx == 8)//写入了一字节
 			{
-				XVector_push_back(compressData, &byteWrite);
+				XVector_push_back(gzipData, &byteWrite);
 				byteWrite = 0;
 				charWriteIdx = 0;
 			}
@@ -34,15 +34,17 @@ static void writeData(XVector* compressData, XMap* dictionaries, const char* dat
 	}
 	if (charWriteIdx != 0)//剩下的比特位，写入
 	{
-		XVector_push_back(compressData, &byteWrite);
+		XVector_push_back(gzipData, &byteWrite);
 	}
 }
-XVector* XHfmTree_compress(XHuffmanTree* tree, const char* data, const size_t size)
+XVector* XHfmTree_gzip(XHuffmanTree* tree, const char* data, const size_t size)
 {
-	XVector* compressData=XVector_Init(char);//返回的压缩后的数据
-	size_t sizeD=XHfmTree_writeCompressDictionaries(compressData, tree->dictionaries);
+	XHfmTree_clear(tree);//哈夫曼树清空测试
+	XHfmTree_readData(tree, data, size);//读取数据构建哈夫曼树
+	XVector* gzipData=XVector_Init(char);//返回的压缩后的数据
+	size_t sizeD=XHfmTree_writeCompressDictionaries(gzipData, tree->dictionaries);
 	//printf("Dictionaries:%d\n",sizeD);
-	writeData(compressData, tree->dictionaries,data,size);
-	//printf("compressData:%d\n", XVector_size(compressData));
-	return compressData;
+	writeData(gzipData, tree->dictionaries,data,size);
+	//printf("gzipData:%d\n", XVector_size(gzipData));
+	return gzipData;
 }
