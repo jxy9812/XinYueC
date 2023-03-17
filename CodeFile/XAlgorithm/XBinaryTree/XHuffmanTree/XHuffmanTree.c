@@ -24,7 +24,7 @@ const bool XHfmTree_readData(XHuffmanTree* tree,const char* data, const size_t s
 		return false;
 	}
 	XHfmTree_setDictionaries(tree->dictionaries,data,size);
-	tree->root=XHfmTree_creationTree(tree->dictionaries);
+	tree->root=XHfmTree_DictionariesToCreationTree(tree->dictionaries);
 	if(tree->root)
 	{
 		XHfmTree_setCode(tree->root);

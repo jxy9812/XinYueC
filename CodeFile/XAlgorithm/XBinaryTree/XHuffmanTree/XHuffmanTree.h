@@ -16,7 +16,7 @@ XHfmNode* XHfmTree_creationNode(unsigned char ch,size_t count, XVector* code);
 //创建哈夫曼树初始化
 XHuffmanTree* XHfmTree_init();
 //根据字典创建树
-XHfmNode* XHfmTree_creationTree(XMap* dictionaries);
+XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries);
 //根据哈夫曼树设置哈夫曼编码
 void XHfmTree_setCode(XHfmNode* root);
 //根据数据生成字典(不带编码)

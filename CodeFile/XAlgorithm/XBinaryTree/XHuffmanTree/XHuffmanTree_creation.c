@@ -15,7 +15,7 @@ static void installQueue(XPair** LPpair, XPriority_Queue* queue)
 	XPriority_Queue_push(queue, &node);
 }
 //根据字典创建树
-XHfmNode* XHfmTree_creationTree(XMap* dictionaries)
+XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 {
 	XPriority_Queue* queue = XPriority_Queue_Init(XHfmNode*, Less);
 	//原始字典生成单独的节点插入优先队列

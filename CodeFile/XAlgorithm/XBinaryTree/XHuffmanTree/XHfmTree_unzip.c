@@ -33,9 +33,17 @@ static bool writeUnZip(XVector* unzipData, XHfmNode*node)
 	}
 	return false;
 }
-//读取压缩后的数据
-static XVector*  readData(XHuffmanTree* tree, const char* data,const size_t size)
+//累加计算字符的次数
+static void addCount(XPair** LPpair, size_t* LPcount)
 {
+	*LPcount += XPair_Second(*LPpair, DictionaryValue).count;
+}
+//读取压缩后的数据
+static XVector*  writeUnZipData(XHuffmanTree* tree, const char* data,const size_t size)
+{
+	size_t countMax = 0;//字符最大出现次数
+	size_t count = 0;//字符出现次数
+	XMap_iterator_for_each(tree->dictionaries, addCount, &countMax);//累加计算字符的最大次数
 	XVector* unzipData = XVector_Init(char);//返回的压缩后的数据
 	XHfmNode* root = tree->root;//根节点
 	XHfmNode* currentNode = root;//当前节点
@@ -50,13 +58,21 @@ static XVector*  readData(XHuffmanTree* tree, const char* data,const size_t size
 			if (temp == 0)//左边
 			{
 				if (writeUnZip(unzipData, currentNode = XBTree_GetLChild(currentNode)))
+				{
 					currentNode = root;
+					++count;
+				}
 			}
 			else if (temp == 1)//右边
 			{
 				if (writeUnZip(unzipData, currentNode = XBTree_GetRChild(currentNode)))
+				{
 					currentNode = root;
+					count++;
+				}
 			}
+			if (count == countMax)//已经遍历完了
+				return unzipData;
 		}
 	}
 	return unzipData;
@@ -65,7 +81,7 @@ XVector* XHfmTree_unzip(XHuffmanTree* tree, const char* data, const size_t size)
 {
 	XHfmTree_clear(tree);//哈夫曼树清空测试
 	size_t offset = readDictionaries(tree, data);
-	tree->root = XHfmTree_creationTree(tree->dictionaries);
-	XVector* unzipData = readData(tree, data + offset, size- offset);//返回的压缩后的数据
+	tree->root = XHfmTree_DictionariesToCreationTree(tree->dictionaries);
+	XVector* unzipData = writeUnZipData(tree, data + offset, size- offset);//返回的压缩后的数据
 	return unzipData;
 }
