@@ -1,0 +1,37 @@
+﻿#include"Test.h"
+#include"XHuffmanTree.h"
+static void for_each(void* LPVal, void* args)
+{
+	XPair* pair = *(XPair**)LPVal;
+	printf("key:%d count:%d\n", XPair_First(pair, char), XPair_Second(pair,size_t));
+}
+//遍历解压后的数据
+static void UnZipFor(char* ch, void* args)
+{
+	printf("%d ",*ch);
+}
+void XHuffmanTreeTest()
+{
+	//数据
+	char data[] = {1,1,1,3,3,5,8,8,5,78,54,66,66,66,1,123,32,3,3,3};
+	size_t count = sizeof(data) / sizeof(data[0]);//数据大小字节
+	XHuffmanTree* tree = XHfmTree_init();//创建一个哈夫曼树
+
+	XVector* gzipData=XHfmTree_gzip(tree, data, count);//压缩后的数据
+	//遍历压缩后的数据
+	//XVector_iterator_for_each(gzipData, UnZipFor, NULL); printf("\n");
+	//遍历压缩数据后产生的字典
+	XMap_iterator_for_each(tree->dictionaries, for_each, NULL); printf("\n");
+	XVector* unzipData = XHfmTree_unzip(tree,XVector_begin(gzipData),XVector_size(gzipData));//获得解压后的数据
+	
+	//遍历读取到的压缩数据中的字典
+	XMap_iterator_for_each(tree->dictionaries, for_each,NULL);printf("\n");
+	//遍历解压后的数据
+	XVector_iterator_for_each(unzipData, UnZipFor, NULL); printf("\n");
+	
+
+
+	XVector_free(gzipData);//释放返回的压缩数据
+	XVector_free(unzipData);//释放解压后的压缩数据
+	XHfmTree_free(tree);//释放哈夫曼树
+}

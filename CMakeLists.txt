@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.5)
 #设置项目名称
 project(Container VERSION 0.1 LANGUAGES C)
 
+
+#set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -O0  -Wall")
+#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0  -Wall")
+
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 
@@ -25,14 +29,12 @@ macro(FIND_INCLUDE_DIR result curdir)  #定义函数,2个参数:存放结果resu
 endmacro()																#函数结束
 
 #查找include目录下的所有*.hpp,*.h头文件,并路径列表保存到 INCLUDE_DIR_LIST 变量中
-FIND_INCLUDE_DIR(INCLUDE_DIR_LIST "CodeFile")			#调用函数，指定参数
+FIND_INCLUDE_DIR(INCLUDE_DIR_LIST "Src")			#调用函数，指定参数
 #将INCLUDE_DIR_LIST中路径列表加入工程		
 include_directories(${INCLUDE_DIR_LIST})
 #递归搜索目录下的文件添加到变量中
-file(GLOB_RECURSE FILE "CodeFile/*.c" "CodeFile/*.h")
+file(GLOB_RECURSE FILE "Src/*.c" "Src/*.h")
 
-#设置图标
-#aux_source_directory(. MY_SCOURCES)
 #设置可执行文件的输出目录
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
 #添加参加编译的文件
