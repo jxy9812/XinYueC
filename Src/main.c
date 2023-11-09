@@ -2,12 +2,6 @@
 #include"XVector_iterator.h"
 #include<stdio.h>
 #include<math.h>
-void test()
-{
-	int x = 3, y = 4, z = 5;
-
-	printf("%d\n", !(x + y) + z - 1 && y + z / 2);
-}
 int main(int argc, char* args[])
 {
 	//ListSortTest();

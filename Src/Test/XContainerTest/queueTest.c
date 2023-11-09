@@ -4,6 +4,7 @@
 #include"XSort.h"
 #include"XLess.h"
 #include"XGreater.h"
+#include"XVector.h"
 void queueTest()
 {
 	XQueue* queue = XQueue_init(sizeof(int));
