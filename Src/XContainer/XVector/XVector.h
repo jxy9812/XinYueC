@@ -11,8 +11,8 @@ typedef struct XVector
 {
 	//插入函数
 	void(*push_back)(struct XVector* this_vector , void*);//尾插
-	void (*insert_front)(struct XVector* this_vector, const void* p, const void*LPValue);// 向量中指向元素p前增加一个元素x
-	void (*insert_nfront)(struct XVector* this_vector, const void* p, const int n, const void*LPValue);// 向量中指向元素p前增加n个相同的元素x
+	void (*insert_front)(struct XVector* this_vector, const void* p, const void*LpValue);// 向量中指向元素p前增加一个元素x
+	void (*insert_nfront)(struct XVector* this_vector, const void* p, const int n, const void*LpValue);// 向量中指向元素p前增加n个相同的元素x
 	void (*insert)(struct XVector* this_vector, const void* p, const void* p1, const void* p2);// 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2)间的数据
 	//删除函数
 	void (*pop_back)(struct XVector* this_vector);//尾删

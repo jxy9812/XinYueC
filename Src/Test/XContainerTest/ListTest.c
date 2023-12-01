@@ -11,7 +11,7 @@ void ListFor_each(void* LPVal, void* args)
 }
 void ListSortTest()
 {
-	XList* li = XList_init(sizeof(int));
+	XList* li = XList_init(sizeof(int),XEquality_int,XLess_int);
 	int size = 1000000;
 	srand((unsigned int)time(NULL));
 	int* p1 = malloc(sizeof(int) * size);
@@ -28,7 +28,7 @@ void ListSortTest()
 }
 void ListIterator()
 {
-	XList* li = XList_init(sizeof(int));
+	XList* li = XList_init(sizeof(int), XEquality_int, XLess_int);
 	int arr[] = { 123,12,1,4,9 };
 	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
 	{
@@ -49,16 +49,20 @@ void ListIterator()
 
 void ListTest()
 {
-	XList* list = XList_init(sizeof(int));
+	XList* list = XList_init(sizeof(int), XEquality_int, XLess_int);
 	printf("%s\n", XContainerObject_empty(list)?"empty":"");
 	printf("%d\n", XContainerObject_size(list));
+
+	
+
 	int arr[] = { 123,12,1,4,9 };
 	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
 	{
 		XList_push_back(list,arr+i);
 	}
 	int x = 100;
-	//li->insert_front_int(li, 0, &x, 10);
+	int findValue = 12;
+	XList_insert(list, XList_at(list, &findValue), &x);
 	printf("元素遍历\n");
 
 	XList_iterator_for_each(list, ListFor_each,NULL);
@@ -86,7 +90,7 @@ void ListTest()
 
 void ListSwapTest()//交换函数测试
 {
-	XList* li1 = XList_init(sizeof(int));
+	XList* li1 = XList_init(sizeof(int), XEquality_int, XLess_int);
 	int num;
 
 	for (size_t i = 0; i < 10; i++)
@@ -100,7 +104,7 @@ void ListSwapTest()//交换函数测试
 		printf("%d\n", *(int*)li1->at(li1, i));
 	}*/
 
-	XList* li2 = XList_init(sizeof(int));
+	XList* li2 = XList_init(sizeof(int), XEquality_int, XLess_int);
 
 	for (size_t i = 0; i < 20; i++)
 	{

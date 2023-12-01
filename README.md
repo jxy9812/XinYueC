@@ -144,22 +144,22 @@ void XContainerObject_swap(struct XContainerObject* ObjectOne, struct XContainer
 ```
 ### XList(链表)
 [^this_list]:链表指针
-[^LPValue]:数据的内存地址 
+[^LpValue]:数据的内存地址 
 [^curNode]:指定的节点指针 
 #### 插入
 
 ##### 链表头部增加一个元素
 
-1[^this_list] 2[^LPValue]
+1[^this_list] 2[^LpValue]
 
 ```C
- XListNode* XList_push_front(struct XList* this_list, void* LPValue);
+ XListNode* XList_push_front(struct XList* this_list, void* LpValue);
 ```
 ##### 链表尾部增加一个元素
-1[^this_list] 2[^LPValue]
+1[^this_list] 2[^LpValue]
 
 ```c
-XListNode* XList_push_back(struct XList* this_list, void* LPValue);
+XListNode* XList_push_back(struct XList* this_list, void* LpValue);
 ```
 ##### 链表指向的节点前插入多个
 1[^this_list] 2[^curNode]

@@ -1,8 +1,4 @@
 ﻿#include"XContainerObject.h"
-#include"XAlgorithm.h"
-#include"XContainerObject_virtual.h"
-//虚函数表
-void* XContainerObjectVtable[] = { XVContainerObject_empty,XVContainerObject_size,XVContainerObject_capacity,XVContainerObject_type,XVContainerObject_swap,XVContainerObject_free };
 
 bool isNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/)
 {

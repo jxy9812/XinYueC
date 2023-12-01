@@ -1,5 +1,9 @@
 ﻿#include"XContainerObject_virtual.h"
 #include"XContainerObject.h"
+#include"XAlgorithm.h"
+//虚函数表定义
+void* XContainerObjectVtable[] = { XVContainerObject_empty,XVContainerObject_size,XVContainerObject_capacity,XVContainerObject_type,XVContainerObject_swap,XVContainerObject_free };
+
 bool XVContainerObject_empty(const XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))

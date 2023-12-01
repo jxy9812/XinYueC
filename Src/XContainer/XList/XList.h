@@ -13,34 +13,49 @@ enum XListVtableEnum
 {
 	Push_Front= Free+1,
 	Push_Back,
-	Insert
+	Inserts,
+	Insert,
+	InsertArray,
+	Pop_Front,
+	Pop_Back,
+	Erase,
+	Remove,
+	Clear,
+	At,
+	Front,
+	Back,
+	Find
 };
 typedef struct XList
 {
 	XContainerObject object;
+	XEquality equality;//相等比较函数
+	XLess less;//小于比较函数
 }XList;
 
 //插入函数
 // 链表头部增加一个元素X
-XListNode* XList_push_front(struct XList* this_list, void* LPValue);
+XListNode* XList_push_front(XList* this_list, void* LpValue);
 // 链表尾部增加一个元素X
-XListNode* XList_push_back(struct XList* this_list, void* LPValue);
+XListNode* XList_push_back(XList* this_list, void* LpValue);
+void XList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t n);
+void XList_insert(XList* this_list, XListNode* curNode, void* LpValue);
 // 链表中指向元素p前插入另一个相同类型数组[p1,p2]间的数据，数组传递用指针
-void  XList_insert(struct XList* this_list, XListNode* curNode, const void* begin, const void* end);
+void  XList_insertArray(XList* this_list, XListNode* curNode, const void* begin, size_t n);
 //删除函数
 //删除链表中第一个元素
-void  XList_pop_front(struct XList* this_list);
+void  XList_pop_front(XList* this_list);
 //删除链表中最后一个元素
-void  XList_pop_back(struct XList* this_list);
-//删除指定元素区间内的数据(包括其本身)，传入其节点指针地址，搭配find函数查找返回指针最佳，删除一个时请输入相同的指针
-void  XList_erase_p(struct XList* this_list, const XListNode* begin, const XListNode* end);
-//删除指定元素区间内的数据(包括其本身)，将其想象成数组下标访问，输入要删除的下标，删除一个时请输入相同下标
-void  XList_erase_int(struct XList* this_list, const int left, const int right);
+void  XList_pop_back(XList* this_list);
+//删除指定节点
+void  XList_erase(XList* this_list, XListNode* node);
+//删除指定元素
+void  XList_remove(XList* this_list, void* LpValue);
 //清空list的队列，释放内存
-void  XList_clear(struct XList* this_list);
+void  XList_clear(XList* this_list);
 //遍历函数
-// 想象成数组，输入下标返回元素节点的指针
-XListNode* XList_at(const struct XList* this_list, int i);
+//返回元素节点的指针
+XListNode* XList_at(const XList* this_list,const void* LpValue);
 //返回链表头指针，指向第一个节点指针
 XListNode* XList_front(struct XList* this_list);
 //返回链表尾指针，指向链表最后一个节点指针
@@ -61,5 +76,5 @@ void  XList_swap(struct XList* this_listOne, struct XList* this_listTwo);
 //释放内存
 void  XList_free(struct XList* this_list);
 //创建链表
-struct XList* XList_init(int TypeSize);
+XList* XList_init(int TypeSize,XEquality equality, XLess less);
 #endif // 
