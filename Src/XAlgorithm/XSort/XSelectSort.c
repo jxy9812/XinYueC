@@ -12,7 +12,7 @@ void XSelectSort(void* LParray, const size_t nSize, const size_t TypeSize, XComp
 	{
 		if (!compare(p_left, p_right))//排序比较左右是否需要交换
 		{
-			swap(p_left, p_right, TypeSize);//交换函数
+			XSwap(p_left, p_right, TypeSize);//交换函数
 		}
 		p_val_left = p_left;
 		p_val_right = p_right;
@@ -35,7 +35,7 @@ void XSelectSort(void* LParray, const size_t nSize, const size_t TypeSize, XComp
 				p_val_right = p_move_right;//更新右边最大值
 			}
 		}//找出最大和最小的数
-		swap(p_val_left, p_left, TypeSize);//交换函数
-		swap(p_val_right, p_right, TypeSize);//交换函数
+		XSwap(p_val_left, p_left, TypeSize);//交换函数
+		XSwap(p_val_right, p_right, TypeSize);//交换函数
 	}
 }

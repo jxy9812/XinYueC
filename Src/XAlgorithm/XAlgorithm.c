@@ -14,7 +14,7 @@ void gotoxy(short x, short y)
 	SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
 }
 #endif // _Win32
-void swap(void* valOne, void* valTwo, const int typeSize)//交换任意数据类型的函数
+void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据类型的函数
 {
 	if (valOne == NULL || valTwo == NULL || typeSize <= 0)
 	{

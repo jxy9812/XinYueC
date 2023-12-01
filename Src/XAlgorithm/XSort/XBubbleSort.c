@@ -9,7 +9,7 @@ void XBubbleSort(void* LParray, const size_t nSize, const size_t TypeSize,XCompa
 		{
 			if (!compare(Lp, Lp + TypeSize))
 			{
-				swap(Lp, Lp + TypeSize, TypeSize);//交换函数
+				XSwap(Lp, Lp + TypeSize, TypeSize);//交换函数
 				flag = false;
 			}
 		}

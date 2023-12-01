@@ -11,7 +11,7 @@ void XDerangement(void* LParray, const size_t nSize, const size_t TypeSize)
 	for (size_t i = nSize; i>1; i--)
 	{
 		size_t nSel = rand() % i;
-		swap((char*)LParray+ nSel* TypeSize, (char*)LParray+(i-1)*TypeSize, TypeSize);//交换数据
+		XSwap((char*)LParray+ nSel* TypeSize, (char*)LParray+(i-1)*TypeSize, TypeSize);//交换数据
 	}
 }
 

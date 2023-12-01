@@ -1,5 +1,4 @@
 ﻿#include"XList.h"
-#include"XList_head.h"
 #include<stdlib.h>
 //struct list;
 //删除
@@ -7,7 +6,7 @@ void  XList_pop_front(struct XList* this_list)
 {
 	if (isNULL(isNULLInfo(this_list, "")))
 		return;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	if (list->object._size == 1)
 	{
 		XListNode* head = list->object._data;
@@ -36,7 +35,7 @@ void XList_pop_back(XList* this_list)
 {
 	if (isNULL(isNULLInfo(this_list, "")))
 		return;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	if (list->object._size == 1)
 	{
 		XList_pop_front(this_list);
@@ -62,7 +61,7 @@ void XList_erase_p(XList* this_list, const XListNode* pNodeOne, const XListNode*
 	XListNode* pNodeTwo = NodeTwo;
 	if (pNodeTwo == NULL)
 		pNodeTwo = pNodeOne;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	XListNode* pp = pNodeOne;
 	XListNode* left = pNodeOne->prev;
 	XListNode* right = pNodeTwo->next;
@@ -89,7 +88,7 @@ void XList_erase_int(XList* this_list, const int left, const int right)
 {
 	if (isNULL(isNULLInfo(this_list, "")))
 		return;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	if (right < list->object._size && left <= right && left >= 0)
 	{
 		XListNode* p = XList_at(list, left);//left的节点指针
@@ -114,7 +113,7 @@ void XList_clear(XList* this_list)
 {
 	if (isNULL(isNULLInfo(this_list, "")))
 		return;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	XListNode* p = list->object._data;
 	XListNode* pnext = p->next;
 	for (size_t i = 0; i < list->object._size; i++)

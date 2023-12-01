@@ -18,13 +18,13 @@ void ListSortTest()
 	for (size_t i = 0; i < size; i++)
 	{
 		int num = rand() % 1000;
-		li->push_back(li,&num);//尾插
+		//li->push_back(li,&num);//尾插
 	}
 	clock_t  time_front = clock();
 	XList_sort(li, XLess_int);
 	clock_t time_after = clock();
 	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
-	li->free(li);
+	//li->free(li);
 }
 void ListIterator()
 {
@@ -50,7 +50,8 @@ void ListIterator()
 void ListTest()
 {
 	XList* list = XList_init(sizeof(int));
-	
+	printf("%s\n", XContainerObject_empty(list)?"empty":"");
+	printf("%d\n", XContainerObject_size(list));
 	int arr[] = { 123,12,1,4,9 };
 	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
 	{
@@ -62,8 +63,8 @@ void ListTest()
 
 	XList_iterator_for_each(list, ListFor_each,NULL);
 	printf("\n");
-	printf("头元素为：%d\n", *(int*)list->front(list)->date);
-	printf("尾元素为：%d\n", *(int*)list->back(list)->date);
+	//printf("头元素为：%d\n", *(int*)list->front(list)->date);
+	//printf("尾元素为：%d\n", *(int*)list->back(list)->date);
 
 	XListNode*findNode=XList_find(list, XEquality_int, arr +2);
 	printf("找到的数字%d\n", *(int*)findNode->date);
@@ -74,13 +75,13 @@ void ListTest()
 	li->pop_front(li);
 	li->pop_front(li);*/
 	//li->erase_p(li,li->find(li,num+1), li->find(li,num+5));
-	list->erase_int(list,1, 8);
+	//list->erase_int(list,1, 8);
 	printf("删除元素后遍历\n");
-	for (size_t i = 0; i < list->size(list); i++)
+	/*for (size_t i = 0; i < list->size(list); i++)
 	{
 		printf("%d\n", *(int*)list->at(list, i)->date);
 	}
-	list->free(list);
+	list->free(list);*/
 }
 
 void ListSwapTest()//交换函数测试
@@ -91,28 +92,28 @@ void ListSwapTest()//交换函数测试
 	for (size_t i = 0; i < 10; i++)
 	{
 		num = i;
-		li1->push_front(li1, &num);
+		//li1->push_front(li1, &num);
 	}
 	printf("li1元素遍历\n");
-	for (size_t i = 0; i < li1->size(li1); i++)
+	/*for (size_t i = 0; i < li1->size(li1); i++)
 	{
 		printf("%d\n", *(int*)li1->at(li1, i));
-	}
+	}*/
 
 	XList* li2 = XList_init(sizeof(int));
 
 	for (size_t i = 0; i < 20; i++)
 	{
 		num = 20 - i;
-		li1->push_front(li2, &num);
+		//li1->push_front(li2, &num);
 	}
 	printf("li2元素遍历\n");
-	for (size_t i = 0; i < li1->size(li2); i++)
+	//for (size_t i = 0; i < li1->size(li2); i++)
 	{
-		printf("%d\n", *(int*)li1->at(li2, i));
+		//printf("%d\n", *(int*)li1->at(li2, i));
 	}
 
-	li1->swap(li1, li2);
+	/*li1->swap(li1, li2);
 
 	printf("交换后li1元素遍历\n");
 	for (size_t i = 0; i < li1->size(li1); i++)
@@ -126,5 +127,5 @@ void ListSwapTest()//交换函数测试
 		printf("%d\n", *(int*)li1->at(li2, i));
 	}
 	li1->clear(li1);
-	li1->clear(li2);
+	li1->clear(li2);*/
 }

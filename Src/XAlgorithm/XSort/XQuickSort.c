@@ -18,7 +18,7 @@ static void* QuicPitSort_One(void const* LpLeft, void const* LpRight, const size
 	char* begin = LpLeft;//头指针
 	char* end = LpRight;//尾指针
 	char* index = GetMidIndex(LpLeft, LpRight, TypeSize, compare);//三数取中
-	swap(index, LpLeft, TypeSize);//交换
+	XSwap(index, LpLeft, TypeSize);//交换
 	char* pivit = LpLeft;//坑位置
 	while (begin < end)
 	{
@@ -30,7 +30,7 @@ static void* QuicPitSort_One(void const* LpLeft, void const* LpRight, const size
 		}
 		if (begin < end)
 		{
-			swap(pivit, end, TypeSize);//交换函数,入坑
+			XSwap(pivit, end, TypeSize);//交换函数,入坑
 			pivit = end;//新的坑位
 		}
 		//左边找放右边
@@ -40,7 +40,7 @@ static void* QuicPitSort_One(void const* LpLeft, void const* LpRight, const size
 		}
 		if (begin < end)
 		{
-			swap(pivit, begin, TypeSize);//交换函数,入坑
+			XSwap(pivit, begin, TypeSize);//交换函数,入坑
 			pivit = begin;//新的坑位
 		}
 	}

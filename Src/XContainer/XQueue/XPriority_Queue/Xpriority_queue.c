@@ -57,7 +57,7 @@ static void AdjustUp(void* LParray,const size_t TypeSize, size_t childNSel, XCom
 		LPchild= (char*)LParray + childNSel * TypeSize;
 		if (compare(LPchild, LPparent))
 		{
-			swap(LPchild, LPparent, TypeSize);
+			XSwap(LPchild, LPparent, TypeSize);
 		}
 		if (parentNSel == 0)//已经调整到顶部了
 			return;
@@ -99,7 +99,7 @@ static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize,
 		}
 		if (compare(LPchild, LPparent))//排序比较函数
 		{
-			swap(LPchild, LPparent, TypeSize);//交换函数
+			XSwap(LPchild, LPparent, TypeSize);//交换函数
 			parentNSel = child;//父亲节点更新
 			child = parentNSel * 2 + 1;//默认孩子更新
 		}

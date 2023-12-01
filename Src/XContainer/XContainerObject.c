@@ -1,6 +1,10 @@
-﻿#include "XContainerObject.h"
+﻿#include"XContainerObject.h"
 #include"XAlgorithm.h"
- bool isNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/)
+#include"XContainerObject_virtual.h"
+//虚函数表
+void* XContainerObjectVtable[] = { XVContainerObject_empty,XVContainerObject_size,XVContainerObject_capacity,XVContainerObject_type,XVContainerObject_swap,XVContainerObject_free };
+
+bool isNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/)
 {
 	if (args == NULL)
 	{
@@ -9,56 +13,63 @@
 	}
 	return false;
 }
-const bool XContainerObject_empty(const struct XContainerObject* Object)
+
+bool XContainerObject_empty(const XContainerObject* Object)
 {
-	if (isNULL(isNULLInfo(Object, "")))
+	if (ISNULL(Object, "")|| ISNULL(Object->vtable, ""))
 		return true;
-	return Object->_size == 0;
+	typedef bool (*funcPtr)(const XContainerObject* );
+	//void* p = ObjectVirtualFunc(Object, Empty, funcPtr);
+	return ObjectVirtualFunc(Object, Empty,funcPtr)(Object);
 }
 
-const size_t XContainerObject_size(const struct XContainerObject* Object)
+size_t XContainerObject_size(const struct XContainerObject* Object)
 {
-	
-	if (isNULL(isNULLInfo(Object,"")))
+	if (ISNULL(Object, "") || ISNULL(Object->vtable, ""))
 		return 0;
-	return Object->_size;
+	typedef size_t(*funcPtr)(const XContainerObject*);
+	return ObjectVirtualFunc(Object, Size, funcPtr)(Object);
 }
 
-const size_t XContainerObject_capacity(const struct XContainerObject* Object)
+size_t XContainerObject_capacity(const struct XContainerObject* Object)
 {
-	if (isNULL(isNULLInfo(Object, "")))
+	if (ISNULL(Object, "") || ISNULL(Object->vtable, ""))
 		return 0;
-	return Object->_capacity;
+	typedef size_t(*funcPtr)(const XContainerObject*);
+	return ObjectVirtualFunc(Object, Capacity, funcPtr)(Object);
 }
 
-const size_t XContainerObject_type(const XContainerObject* Object)
+size_t XContainerObject_type(const XContainerObject* Object)
 {
-	if (isNULL(isNULLInfo(Object, "")))
+	if (ISNULL(Object, "") || ISNULL(Object->vtable, ""))
 		return 0;
-	return Object->_type;
+	typedef size_t(*funcPtr)(const XContainerObject*);
+	return ObjectVirtualFunc(Object, Type, funcPtr)(Object);
 }
 
-void XContainerObject_swap(struct XContainerObject* ObjectOne, struct XContainerObject* ObjectTwo)
+void XContainerObject_swap( XContainerObject* ObjectOne,  XContainerObject* ObjectTwo)
 {
-	bool one = isNULL(isNULLInfo(ObjectOne, ""));
-	bool two = isNULL(isNULLInfo(ObjectTwo, ""));
-	if (!(one || two))
-	{
-		swap(&ObjectOne->_data, &ObjectTwo->_data, sizeof(void*));
-		swap(&ObjectOne->_capacity, &ObjectTwo->_capacity, sizeof(size_t));
-		swap(&ObjectOne->_size, &ObjectTwo->_size, sizeof(size_t));
-	}
+	bool one = ISNULL(ObjectOne, "");
+	bool two = ISNULL(ObjectTwo, "");
+	typedef void(*funcPtr)(XContainerObject*, XContainerObject*);
+	return ObjectVirtualFunc(ObjectOne, Swap, funcPtr)(ObjectOne, ObjectTwo);
 }
 
-void XContainerObject_init( struct XContainerObject* Object,size_t type)
+void XContainerObject_free(XContainerObject* Object)
 {
+	if (ISNULL(Object, "") || ISNULL(Object->vtable, ""))
+		return 0;
+	typedef void(*funcPtr)(XContainerObject*);
+	return ObjectVirtualFunc(Object, Free, funcPtr)(Object);
+}
+
+
+void XContainerObject_init(XContainerObject* Object,size_t type)
+{
+	Object->vtable = XContainerObjectVtable;
 	Object->_data = NULL;
 	Object->_capacity = 0;
 	Object->_size = 0;
 	Object->_type = type;
-	Object->capacity = XContainerObject_capacity;
-	Object->empty = XContainerObject_empty;
-	Object->size = XContainerObject_size;
-	Object->swap = XContainerObject_swap;
-
 }
+

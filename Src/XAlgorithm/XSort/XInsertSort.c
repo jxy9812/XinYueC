@@ -15,7 +15,7 @@ void InsertSort_gap(void* LParray, const size_t  nSize, const size_t TypeSize, c
 			}
 			else
 			{
-				swap(LpOne, LpTwo, TypeSize);//交换函数
+				XSwap(LpOne, LpTwo, TypeSize);//交换函数
 				LpTwo = LpOne;
 			}
 		}

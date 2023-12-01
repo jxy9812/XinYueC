@@ -1,14 +1,12 @@
-﻿#include"XList.h"
-#include"XList_head.h"
-#include<stdlib.h>
-#include<string.h>
-#include <stdarg.h> 
-//插入
-XListNode* XList_push_front(XList* this_list, void*LPValue)
+﻿#include"XList_virtual.h"
+#include"XList.h"
+#include"stdlib.h"
+#include<stdarg.h> 
+XListNode* XVList_push_front(XList* this_list, void* LPValue)
 {
-	if (isNULL(isNULLInfo(this_list, "")))
+	if (ISNULL(this_list, ""))
 		return NULL;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	XListNode* NewNode = XList_push_back(this_list, LPValue);
 	if (list->object._size != 0)
 	{
@@ -17,11 +15,11 @@ XListNode* XList_push_front(XList* this_list, void*LPValue)
 	return NewNode;
 }
 
-XListNode* XList_push_back (XList* this_list, void*LPValue)
+XListNode* XVList_push_back(XList* this_list, void* LPValue)
 {
-	if (isNULL(isNULLInfo(this_list, "")))
+	if (ISNULL(this_list, ""))
 		return NULL;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	XListNode* NewNode = malloc(sizeof(XListNode));//新节点
 	if (NewNode == NULL)
 	{
@@ -50,15 +48,15 @@ XListNode* XList_push_back (XList* this_list, void*LPValue)
 	return NewNode;
 }
 
-void XList_insert_front_p(XList* this_list, XListNode* pval, ...)
+void XVList_insert_front_p(XList* this_list, XListNode* pval, ...)
 {
-	if (isNULL(isNULLInfo(this_list, "")))
-		return ;
-	XLIST* list=(XLIST*)this_list;
+	if (ISNULL(this_list, ""))
+		return;
+	XList* list = this_list;
 	if (pval == NULL)
 	{
 		printf("节点指针不能为空\n");
-		return ;
+		return;
 	}
 	va_list args;//接收可变参数，
 	va_start(args, pval);
@@ -104,15 +102,15 @@ void XList_insert_front_p(XList* this_list, XListNode* pval, ...)
 	}
 }
 
-void XList_insert_front_int(XList* this_list, int i, ...)
+void XVList_insert_front_int(XList* this_list, int i, ...)
 {
-	if (isNULL(isNULLInfo(this_list, "")))
+	if (ISNULL(this_list, ""))
 		return;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	if ((i < 0) && (list->object._size <= i))
 	{
 		printf("输入的下标不在范围内\n");
-		return ;
+		return;
 	}
 	va_list args;//接收可变参数，
 	va_start(args, i);
@@ -121,22 +119,22 @@ void XList_insert_front_int(XList* this_list, int i, ...)
 	va_end(args);//参数使用结束  
 	if (n > 1000 || n <= 0)//一次调用最多插入1000个
 		n = 1;
-	XListNode* p = list->at(this_list, i);
-	list->insert_front_p(this_list, p, x, n);
+	/*XListNode* p = list->at(this_list, i);
+	list->insert_front_p(this_list, p, x, n);*/
 }
 
-void XList_insert(XList* this_list, XListNode* pval, const void* p1, const void* p2)
+void XVList_insert(XList* this_list, XListNode* pval, const void* p1, const void* p2)
 {
-	if (isNULL(isNULLInfo(this_list, "")))
+	if (ISNULL(this_list, ""))
 		return;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	if (pval == NULL)
 	{
 		printf("节点指针不能为空\n");
-		return ;
+		return;
 	}
 	for (size_t i = 0; i < ((char*)p2 - (char*)p1) / list->object._type + 1; i++)
 	{
-		XList_insert_front_p(this_list, pval, (char*)p1 + i * list->object._type);
+		XVList_insert_front_p(this_list, pval, (char*)p1 + i * list->object._type);
 	}
 }

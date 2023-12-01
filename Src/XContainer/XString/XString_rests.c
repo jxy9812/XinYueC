@@ -37,7 +37,7 @@ void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringT
 	struct XSTRING* stringOne = (struct XSTRING*)this_XStringOne;
 	struct XSTRING* stringTwo = (struct XSTRING*)this_XStringTwo;
 	XVector_swap(stringOne->_data, stringTwo->_data);
-	swap(&stringOne->_size, &stringTwo->_size, sizeof(size_t));
+	XSwap(&stringOne->_size, &stringTwo->_size, sizeof(size_t));
 }
 //释放容器
 void XString_free(const struct XString* this_XString)

@@ -9,9 +9,9 @@ struct XVector;
 void gotoxy(short x, short y);
 #endif
 //交换任意数据类型的函数
-#define XSWAP(ValOne,ValTwo) (swap(ValOne,ValTwo,sizeof(ValOne)))
+#define XSWAP(ValOne,ValTwo) (XSwap(ValOne,ValTwo,sizeof(ValOne)))
 //交换任意数据类型的函数
-void swap(void* valOne, void* valTwo, const int typeSize);
+void XSwap(void* valOne, void* valTwo, const int typeSize);
 //栈逆序拷贝至数组
 void XStackRCopyXVector(const struct XStack* stack,struct XVector* vector);
 //栈拷贝至数组

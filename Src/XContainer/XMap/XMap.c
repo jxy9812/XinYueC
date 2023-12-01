@@ -141,9 +141,9 @@ int XMap_size(const XMap* this_map)
 void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
 {
 	XContainerObject_swap(this_mapOne, this_mapTwo);
-	swap(&this_mapOne->isModify, &this_mapTwo->isModify, sizeof(bool));
-	swap(&this_mapOne->itArray, &this_mapTwo->itArray, sizeof(XVector*));
-	swap(&this_mapOne->KeyEquality, &this_mapTwo->KeyEquality, sizeof(XEquality));
-	swap(&this_mapOne->KeyLess, &this_mapTwo->KeyLess, sizeof(XLess));
-	swap(&this_mapOne->keyTypeSize, &this_mapTwo->keyTypeSize, sizeof(size_t));
+	XSwap(&this_mapOne->isModify, &this_mapTwo->isModify, sizeof(bool));
+	XSwap(&this_mapOne->itArray, &this_mapTwo->itArray, sizeof(XVector*));
+	XSwap(&this_mapOne->KeyEquality, &this_mapTwo->KeyEquality, sizeof(XEquality));
+	XSwap(&this_mapOne->KeyLess, &this_mapTwo->KeyLess, sizeof(XLess));
+	XSwap(&this_mapOne->keyTypeSize, &this_mapTwo->keyTypeSize, sizeof(size_t));
 }

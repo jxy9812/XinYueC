@@ -1,19 +1,26 @@
-﻿#ifndef CONTAINEROBJECT_H
-#define CONTAINEROBJECT_H
+﻿#ifndef XCONTAINEROBJECT_H
+#define XCONTAINEROBJECT_H
 #include<stdio.h>
-#include<stdlib.h>
+//#include<stdlib.h>
 #include<stdbool.h>
 //#define DEBUG_ON 1
+
+//XContainerObject虚函数表
+extern void* XContainerObjectVtable[];
+//XContainerObject虚函数表枚举
+enum XContainerObjectVtableEnum
+{
+	Empty,
+	Size,
+	Capacity,
+	Type,
+	Swap,
+	Free
+};
 //容器基类
 typedef struct XContainerObject
 {
-	//判断函数
-	const bool (*empty)(const struct XContainerObject*);// 检测容器是否为空，空为真 O(1)
-	//大小函数
-	const size_t(*size)(const struct XContainerObject*);//返回容器内元素的个数 O(1)
-	const size_t(*capacity)(const struct XContainerObject*); //返回当前容器所能容纳的最大元素值
-	//其他函数
-	void (*swap)(struct XContainerObject*, struct XContainerObject*);//交换两个同类型容器的数据
+	void** vtable;//虚函数表
 	void* _data;//指向容器数据的指针
 	size_t  _capacity;//当前容器能容纳的最大元素数量
 	size_t _size;//当前容器内的元素个数
@@ -37,11 +44,14 @@ typedef struct XContainerObject
 #define ISNULL(args,str)(isNULL(isNULLInfo(args,str)))
 #define ObjectData(Object,Type) (*(Type*)(Object->_data))
 #define ObjectSize(Object) (((XContainerObject*)Object)->_size)
+#define ObjectVtableFunc(Vtable,Offset,Type) ((Type)((Vtable)[Offset]))//用虚函数表获取函数
+#define ObjectVirtualFunc(Object,Offset,Type) ((Type)((((XContainerObject*)Object)->vtable)[Offset]))//用XContainerObject及其子类获取虚函数
 bool isNULL(const void*args/*参数数值*/,const char*argsName/*参数名字*/, const char* str/*附加参数*/,const char*funcName/*函数名字*/,const char* filePath/*所在文件路径*/,int line/*所在行号*/);
-const bool XContainerObject_empty(const struct XContainerObject* Object);
-const size_t XContainerObject_size(const struct XContainerObject* Object);
-const size_t XContainerObject_capacity(const struct XContainerObject* Object);
-const size_t XContainerObject_type(const struct XContainerObject* Object);
-void XContainerObject_swap(struct XContainerObject* ObjectOne, struct XContainerObject* ObjectTwo);
-void XContainerObject_init( struct XContainerObject* Object,size_t type);
+bool XContainerObject_empty(const XContainerObject* Object);
+size_t XContainerObject_size(const XContainerObject* Object);
+size_t XContainerObject_capacity(const XContainerObject* Object);
+size_t XContainerObject_type(const XContainerObject* Object);
+void XContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
+void XContainerObject_init(XContainerObject* Object,size_t type);
+void XContainerObject_free(XContainerObject* Object);
 #endif // !ContainerObject_h

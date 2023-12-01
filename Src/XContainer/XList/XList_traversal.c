@@ -1,12 +1,11 @@
 ﻿#include"XList.h"
-#include"XList_head.h"
 #include<string.h>
 //遍历
 XListNode* XList_at(const XList* this_list, int n)
 {
 	if (isNULL(isNULLInfo(this_list, "")))
 		return NULL;
-	XLIST* list=(XLIST*)this_list;
+	const XList* list=this_list;
 	if (n >= 0 && n <= (list->object._size / 2))//向后找
 	{
 		XListNode* p = (XListNode*)list->object._data;
@@ -36,7 +35,7 @@ XListNode* XList_front(XList* this_list)
 {
 	if (isNULL(isNULLInfo(this_list, "")))
 		return NULL;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	return list->object._data;
 }
 
@@ -44,7 +43,7 @@ XListNode* XList_back(XList* this_list)
 {
 	if (isNULL(isNULLInfo(this_list, "")))
 		return NULL;
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	return ((XListNode*)(list->object._data))->prev;
 }
 

@@ -1,5 +1,4 @@
 ﻿#include"XList.h"
-#include"XList_head.h"
 #include"XContainerObject.h"
 #include"XStack.h"
 #include<string.h>
@@ -51,7 +50,7 @@ void XList_sort(struct XList* this_list, XCompare compare)
 {
 	if (isNULL(isNULLInfo(this_list, "")))
 		return ;
-	struct XLIST* list = (XLIST*)this_list;
+	XList* list = this_list;
 	XListNode* ListHead = XList_front(this_list);//链表第一个节点
 	XListNode* ListTail = XList_back(this_list);//链表最后一个节点
 	struct XStack* stack = XStack_init("struct Node*",sizeof(struct XListNode*));

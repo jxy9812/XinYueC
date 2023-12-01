@@ -15,7 +15,7 @@ static void RandomOpenCircuitRecursion(struct XVector* maze, const int x, const 
 	for (int i = 4; i > 0; --i) {
 		//随机选择一个方向
 		int r = rand() % i;
-		swap(&direction[r], &direction[i - 1], sizeof(int));
+		XSwap(&direction[r], &direction[i - 1], sizeof(int));
 		switch (direction[i - 1]) {
 		case Left:
 		{
@@ -81,7 +81,7 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 	for (int i = 4; i > 0; --i) {
 		//随机选择一个方向
 		int r = rand() % i;
-		swap(&direction[r], &direction[i - 1], sizeof(int));
+		XSwap(&direction[r], &direction[i - 1], sizeof(int));
 		switch (direction[i - 1]) {
 		case Left:
 		{

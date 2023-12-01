@@ -51,14 +51,14 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 				{
 					if (compare(LpOne, LpTwo))//比较的数符合排序标准
 					{
-						swap(LpOne, begtmp, TypeSize);
+						XSwap(LpOne, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素
 						if (LpOne <= righta)
 							LpOne += TypeSize;
 					}
 					else
 					{
-						swap(LpTwo, begtmp, TypeSize);
+						XSwap(LpTwo, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素
 						if (LpTwo <= rightb)
 							LpTwo += TypeSize;
@@ -69,7 +69,7 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 				{
 					for (; LpTwo <= rightb; LpTwo += TypeSize)
 					{
-						swap(LpTwo, begtmp, TypeSize);
+						XSwap(LpTwo, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素
 					}
 				}
@@ -77,7 +77,7 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 				{
 					for (; LpOne <= righta; LpOne += TypeSize)
 					{
-						swap(LpOne, begtmp, TypeSize);
+						XSwap(LpOne, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素
 					}
 				}
@@ -87,7 +87,7 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 		{
 			for (; LpTwo <= end; LpTwo += TypeSize)
 			{
-				swap(LpTwo, begtmp, TypeSize);
+				XSwap(LpTwo, begtmp, TypeSize);
 				begtmp += TypeSize;//指向tmp数组的下一个元素
 			}
 		}

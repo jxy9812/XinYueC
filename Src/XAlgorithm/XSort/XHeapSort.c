@@ -28,7 +28,7 @@ static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize,
 			flag = !flag;
 		if (flag)//排序比较函数
 		{
-			swap(LPchild, LPparent, TypeSize);//交换函数
+			XSwap(LPchild, LPparent, TypeSize);//交换函数
 			parent = child;//父亲节点更新
 			child = parent * 2 + 1;//默认孩子更新
 		}
@@ -59,7 +59,7 @@ void XHeapSort(void* LPArray, const size_t nSize, const size_t TypeSize,XCompare
 	for (size_t i = 0; i < nSize - 1; i++)
 	{
 		char* p = (char*)LPArray + (nSize - 1 - i) * TypeSize;//从最后一位开始排序数据
-		swap(LPArray, p, TypeSize);//交换函数
+		XSwap(LPArray, p, TypeSize);//交换函数
 		AdjustDwon(LPArray, nSize - 1 - i, TypeSize, 0, compare, true);
 	}
 }

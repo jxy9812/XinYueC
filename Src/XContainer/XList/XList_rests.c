@@ -1,5 +1,4 @@
 ﻿#include"XList.h"
-#include"XList_head.h"
 #include"XContainerObject.h"
 #include<string.h>
 #include<stdlib.h>
@@ -7,7 +6,7 @@
 //其他
 bool XList_empty(const XList* this_list)
 {
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	if (isNULL(isNULLInfo(this_list, "")))
 		return true;
 	return XContainerObject_empty(&list->object);
@@ -15,7 +14,7 @@ bool XList_empty(const XList* this_list)
 
 size_t XList_size(const XList* this_list)
 {
-	XLIST* list=(XLIST*)this_list;
+	XList* list = this_list;
 	if (isNULL(isNULLInfo(this_list, "")))
 		return 0;
 	return XContainerObject_size(&list->object);
@@ -24,10 +23,8 @@ size_t XList_size(const XList* this_list)
 
 void XList_swap(XList* this_ListOne, XList* this_ListTwo)
 {
-	XLIST* list1=(XLIST*)this_ListOne;
-	XLIST* list2=(XLIST*)this_ListTwo;
 	if (!(isNULL(isNULLInfo(this_ListOne, ""))|| isNULL(isNULLInfo(this_ListTwo, ""))))
-		return XContainerObject_swap(&list1->object,&list2->object);
+		return XContainerObject_swap(&this_ListOne->object,&this_ListTwo->object);
 }
 
 void XList_free(XList* this_list)

@@ -5,7 +5,7 @@
 int main(int argc, char* args[])
 {
 	//ListSortTest();
-	//ListTest();
+	ListTest();
 	//ListIterator();
 	//VectorTest();
 	//stackTest();
@@ -22,7 +22,7 @@ int main(int argc, char* args[])
 	//XBalancedBinaryTreeTest();
 	//XRedBlackTreeTest();
 #ifdef _WIN32
-	XHuffmanTreeTest();
+	//XHuffmanTreeTest();
 #else
 	XRedBlackTreeTest();
 #endif // _Win32
