@@ -24,23 +24,25 @@ enum XListVtableEnum
 	At,
 	Front,
 	Back,
-	Find
+	Find,
+	Sort
 };
 typedef struct XList
 {
 	XContainerObject object;
 	XEquality equality;//相等比较函数
-	XLess less;//小于比较函数
 }XList;
 
 //插入函数
-// 链表头部增加一个元素X
+//链表头部增加一个元素X
 XListNode* XList_push_front(XList* this_list, void* LpValue);
 // 链表尾部增加一个元素X
 XListNode* XList_push_back(XList* this_list, void* LpValue);
+//链表指定节点前插入n个数据
 void XList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t n);
+//链表指定节点前插入1个数据
 void XList_insert(XList* this_list, XListNode* curNode, void* LpValue);
-// 链表中指向元素p前插入另一个相同类型数组[p1,p2]间的数据，数组传递用指针
+// 链表中指向节点前插入另一个相同类型数组的数据，需要指出数组大小n
 void  XList_insertArray(XList* this_list, XListNode* curNode, const void* begin, size_t n);
 //删除函数
 //删除链表中第一个元素
@@ -61,20 +63,20 @@ XListNode* XList_front(struct XList* this_list);
 //返回链表尾指针，指向链表最后一个节点指针
 XListNode* XList_back(struct XList* this_list);
 //查找数据，返回找到的指针，没有返回NULL
-XListNode* XList_find(const struct XList* this_list, XEquality equality, const void* findVal);
+XListNode* XList_find(const struct XList* this_list,const void* findVal);
 //判断函数
 //检测list内是否为空，空为真 O(1)
-bool  XList_empty(const struct XList* this_list);
+bool  XList_empty(const XList* this_list);
 //大小函数
 //返回list内元素的个数 O(1)
-size_t   XList_size(const  struct XList* this_list);
+size_t  XList_size(const XList* this_list);
 //其他函数
 //排序
-void  XList_sort(struct XList* this_list, XCompare compare);
+void  XList_sort(XList* this_list, XCompare compare);
 //交换两个同类型链表的数据
-void  XList_swap(struct XList* this_listOne, struct XList* this_listTwo);
+void  XList_swap(XList* this_listOne, XList* this_listTwo);
 //释放内存
-void  XList_free(struct XList* this_list);
+void  XList_free(XList* this_list);
 //创建链表
-XList* XList_init(int TypeSize,XEquality equality, XLess less);
+XList* XList_init(int TypeSize,XEquality equality);
 #endif // 

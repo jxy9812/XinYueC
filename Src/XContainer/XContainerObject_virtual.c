@@ -2,9 +2,9 @@
 #include"XContainerObject.h"
 #include"XAlgorithm.h"
 //虚函数表定义
-void* XContainerObjectVtable[] = { XVContainerObject_empty,XVContainerObject_size,XVContainerObject_capacity,XVContainerObject_type,XVContainerObject_swap,XVContainerObject_free };
+void* XContainerObjectVtable[] = { VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_free };
 
-bool XVContainerObject_empty(const XContainerObject* Object)
+bool VXContainerObject_empty(const XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return true;
@@ -12,27 +12,27 @@ bool XVContainerObject_empty(const XContainerObject* Object)
 }
 
 
-size_t XVContainerObject_size(const XContainerObject* Object)
+size_t VXContainerObject_size(const XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
 	return Object->_size;
 }
 
-size_t XVContainerObject_capacity(const XContainerObject* Object)
+size_t VXContainerObject_capacity(const XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
 	return Object->_capacity;
 }
-size_t XVContainerObject_type(const XContainerObject* Object)
+size_t VXContainerObject_type(const XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
 	return Object->_type;
 }
 
-void XVContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo)
+void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo)
 {
 	bool one = ISNULL(ObjectOne, "");
 	bool two = ISNULL(ObjectTwo, "");
@@ -44,7 +44,7 @@ void XVContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* Objec
 	}
 }
 
-void XVContainerObject_free(XContainerObject* Object)
+void VXContainerObject_free(XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;

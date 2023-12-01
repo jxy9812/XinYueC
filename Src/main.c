@@ -5,8 +5,9 @@
 int main(int argc, char* args[])
 {
 	//ListSortTest();
-	ListTest();
+	//ListTest();
 	//ListIterator();
+	//ListSwapTest();
 	//VectorTest();
 	//stackTest();
 	//XStringTest();
