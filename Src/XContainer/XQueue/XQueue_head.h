@@ -14,7 +14,7 @@ typedef struct XQUEUE
 	void* _data;//指向自定义数组类型
 	int  _current;//当前元素个数
 	int _size;//元素最大个数
-	int _type;//类型占用字节数
+	int _typeSize;//类型占用字节数
 }XQUEUE;
 #endif // !QUEUE_HEAD_H
 

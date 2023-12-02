@@ -20,13 +20,13 @@ XStack* XStack_init(const char* arr, ...)
 	XContainerObject_init(&this_stack->object,0);
 	if (strcmp(buf, "char") == 0)
 	{
-		this_stack->object._type = sizeof(char);
+		this_stack->object._typeSize = sizeof(char);
 		this_stack->push = XStack_Push_char;//入栈
 		this_stack->top = XStack_top_char;//取得栈顶元素（但不删除）O(1)
 	}
 	else if (strcmp(buf, "char*") == 0)
 	{
-		this_stack->object._type = sizeof(char*);
+		this_stack->object._typeSize = sizeof(char*);
 		this_stack->push = XStack_Push_Char;//入栈
 		this_stack->top = XStack_top_Char;//取得栈顶元素（但不删除）O(1)
 	}
@@ -36,20 +36,20 @@ XStack* XStack_init(const char* arr, ...)
 		size_t n = strlen(buf) - 6;
 		strncpy(num, &buf[5], n);
 		num[n] = '\0';
-		this_stack->object._type = sizeof(char) * atoi(num);
+		this_stack->object._typeSize = sizeof(char) * atoi(num);
 		this_stack->push = XStack_Push_charArray;//入栈
 		this_stack->top = XStack_top_charArray;//取得栈顶元素（但不删除）O(1)
-		//printf("%d\n", st->_type);
+		//printf("%d\n", st->_typeSize);
 	}
 	else if (strcmp(buf, "int") == 0)
 	{
-		this_stack->object._type = sizeof(int);
+		this_stack->object._typeSize = sizeof(int);
 		this_stack->push = XStack_Push_int;//入栈
 		this_stack->top = XStack_top_int;//取得栈顶元素（但不删除）O(1)
 	}
 	else if (strcmp(buf, "int*") == 0)
 	{
-		this_stack->object._type = sizeof(int*);
+		this_stack->object._typeSize = sizeof(int*);
 		this_stack->push = XStack_Push_Int;//入栈
 		this_stack->top = XStack_top_Int;//取得栈顶元素（但不删除）O(1)
 	}
@@ -59,10 +59,10 @@ XStack* XStack_init(const char* arr, ...)
 	//	size_t n = strlen(buf) - 5;
 	//	strncpy(num, &buf[4], n);
 	//	num[n] = '\0';
-	//	st->_type = sizeof(int) * TurnNumber(num);
+	//	st->_typeSize = sizeof(int) * TurnNumber(num);
 	//	st->push = Stack_Push_charArray;//入栈
 	//	st->top = Stack_top_charArray;//取得栈顶元素（但不删除）O(1)
-	//	printf("%d\n", st->_type);
+	//	printf("%d\n", st->_typeSize);
 	//}
 	else
 	{
@@ -75,7 +75,7 @@ XStack* XStack_init(const char* arr, ...)
 			exit(-1);
 		}
 		va_end(args);//参数使用结束  
-		this_stack->object._type = n;
+		this_stack->object._typeSize = n;
 		this_stack->push = XStack_Push;//入栈
 		this_stack->top = XStack_top;//取得栈顶元素（但不删除）O(1)
 	}
@@ -91,7 +91,7 @@ XStack* XStack_init(const char* arr, ...)
 	this_stack->swap = XStack_Swap;
 	this_stack->free = XStack_free;
 	//开辟初始空间
-	this_stack->object._data = malloc(this_stack->object._type * MAXNUM);
+	this_stack->object._data = malloc(this_stack->object._typeSize * MAXNUM);
 	if (this_stack->object._data == NULL)
 	{
 		perror("初始化sttor失败");

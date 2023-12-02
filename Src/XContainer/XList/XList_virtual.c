@@ -42,8 +42,8 @@ XListNode* VXList_push_back(XList* this_list, void* LpValue)
 		perror("开辟节点失败");
 		exit(-1);
 	}
-	NewNode->date = malloc(list->object._type);//开辟节点内储存数据的空间
-	memcpy(NewNode->date, LpValue, list->object._type);//拷贝数据
+	NewNode->date = malloc(list->object._typeSize);//开辟节点内储存数据的空间
+	memcpy(NewNode->date, LpValue, list->object._typeSize);//拷贝数据
 	if (list->object._size == 0)
 	{
 		list->object._data = NewNode;
@@ -83,8 +83,8 @@ void VXList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t 
 				perror("开辟节点失败");
 				exit(-1);
 			}
-			newNode->date = malloc(list->object._type);//开辟节点内储存数据的空间
-			memcpy(newNode->date, LpValue, list->object._type);//拷贝数据
+			newNode->date = malloc(list->object._typeSize);//开辟节点内储存数据的空间
+			memcpy(newNode->date, LpValue, list->object._typeSize);//拷贝数据
 
 			newNode->prev = left;
 			newNode->next = curNode;
@@ -130,7 +130,7 @@ void VXList_insertArray(XList* this_list, XListNode* curNode, const void* begin,
 	}
 	for (size_t i = 0; i < n; i++)
 	{
-		VXList_inserts(this_list, curNode, (char*)begin + i * list->object._type,1);
+		VXList_inserts(this_list, curNode, (char*)begin + i * list->object._typeSize,1);
 	}
 }
 //删除
@@ -304,7 +304,7 @@ void VXList_sort(XList* this_list, XCompare compare)
 		XListNode* ListTail = *((struct XListNode**)XStack_top(stack));
 		XStack_pop(stack);
 		//单次排序
-		XListNode* ListMiddle = List_OneSort(ListHead, ListTail, list->object._type, compare);
+		XListNode* ListMiddle = List_OneSort(ListHead, ListTail, list->object._typeSize, compare);
 		//判断左区间是否存在
 		if (ListHead != ListMiddle && ListHead->next != ListMiddle)
 		{

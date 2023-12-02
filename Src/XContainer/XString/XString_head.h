@@ -30,7 +30,7 @@ struct XSTRING
 	void (*swap)(struct XSTRING* this_XStringOne, struct XSTRING* this_XStringTwo);//交换
 	//释放容器
 	void (*free)(const struct XSTRING* this_XString);
-	struct XVECTOR* _data;
+	struct XVector* _data;
 	size_t _size;//当前容器内的字符个数
 };
 //判断是中文

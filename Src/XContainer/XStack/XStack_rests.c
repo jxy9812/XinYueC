@@ -45,7 +45,7 @@ size_t XStack_TypeSize(struct XStack* this_stack)
 	XSTACK* stack = (XSTACK*)this_stack;
 	if (isNULL(isNULLInfo(this_stack, "")))
 		return 0;
-	return stack->object._type;
+	return stack->object._typeSize;
 }
 //将st2拷贝到st1
 void XStack_Copy(XStack* this_stackOne, const XStack* this_stackTwo)
@@ -55,11 +55,11 @@ void XStack_Copy(XStack* this_stackOne, const XStack* this_stackTwo)
 	if (isNULL(isNULLInfo(stack1, "")) || isNULL(isNULLInfo(stack2, "")))
 		return ;
 	free(stack1->object._data);
-	stack1->object._data = malloc(stack2->object._size * stack2->object._type);
-	memcpy(stack1->object._data, stack2->object._data, stack2->object._size * stack2->object._type);
+	stack1->object._data = malloc(stack2->object._size * stack2->object._typeSize);
+	memcpy(stack1->object._data, stack2->object._data, stack2->object._size * stack2->object._typeSize);
 	stack1->object._capacity = stack2->object._size;
 	stack1->object._size = stack2->object._size;
-	stack1->object._type = stack2->object._type;
+	stack1->object._typeSize = stack2->object._typeSize;
 }
 //将st2逆序拷贝到st1
 void XStack_Rcopy(XStack* this_stackOne, const XStack* this_stackTwo)
@@ -71,13 +71,13 @@ void XStack_Rcopy(XStack* this_stackOne, const XStack* this_stackTwo)
 	if (isNULL(isNULLInfo(stack1, "")) || isNULL(isNULLInfo(stack2, "")))
 		return;
 	free(stack1->object._data);
-	stack1->object._data = malloc(stack2->object._size * stack2->object._type);
+	stack1->object._data = malloc(stack2->object._size * stack2->object._typeSize);
 	stack1->object._capacity = stack2->object._size;
 	stack1->object._size = stack2->object._size;
-	stack1->object._type = stack2->object._type;
-	for (char* pst2 = (char*)stack2->object._data + (stack2->object._size - 1) * stack2->object._type, *pst1 = stack1->object._data; pst2 >= stack2->object._data; pst2 -= stack2->object._type, pst1 += stack2->object._type)
+	stack1->object._typeSize = stack2->object._typeSize;
+	for (char* pst2 = (char*)stack2->object._data + (stack2->object._size - 1) * stack2->object._typeSize, *pst1 = stack1->object._data; pst2 >= stack2->object._data; pst2 -= stack2->object._typeSize, pst1 += stack2->object._typeSize)
 	{
-		memcpy(pst1, pst2, stack2->object._type);
+		memcpy(pst1, pst2, stack2->object._typeSize);
 	}
 }
 void XStack_Swap(XStack* this_stackOne, XStack* this_stackTwo)//交换两个栈

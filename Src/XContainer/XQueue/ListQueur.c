@@ -29,7 +29,7 @@ static XListNode* open(XQueue* que)
 		{
 			newNode->next = newNode;//头节点均指向自己
 			newNode->prev = newNode;
-			newNode->date = malloc(queue->_type);//为节点数据开辟空间储存
+			newNode->date = malloc(queue->_typeSize);//为节点数据开辟空间储存
 			if (newNode->date == NULL)
 				printf("开辟数据空间的时候失败\n");
 			queue->_size++;
@@ -44,7 +44,7 @@ static XListNode* open(XQueue* que)
 		newNode->prev = tail;//新节点上一个指向原尾节点
 		head->prev = newNode;//头节点上一个指向新节点
 		tail->next = newNode;//原尾节点下一个指向新节点
-		newNode->date = malloc(queue->_type);//为节点数据开辟空间储存
+		newNode->date = malloc(queue->_typeSize);//为节点数据开辟空间储存
 		if (newNode->date == NULL)
 			printf("开辟数据空间的时候失败\n");
 		queue->_size++;
@@ -75,7 +75,7 @@ void XQueue_Push(XQueue* que, void*LpValue)//插入到队列的队尾
 {
 	XQUEUE* queue=(XQUEUE*)que;
 	XListNode* p = open(que);
-	memcpy(p->date, LpValue, queue->_type);
+	memcpy(p->date, LpValue, queue->_typeSize);
 	queue->_current++;
 }
 void XQueue_pop(struct XQueue* que)//删除queue的队头元素

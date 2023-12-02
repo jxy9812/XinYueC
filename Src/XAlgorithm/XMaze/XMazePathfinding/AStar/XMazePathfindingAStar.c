@@ -122,7 +122,8 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 			break;
 		}
 		size_t n = insertChild(tempMaze, dest, CurrentNode, CurrentNodeArray,Oblique);
-		XVector_erase_int(CurrentNodeArray, nSel, nSel);
+		//XVector_erase_int(CurrentNodeArray, nSel, nSel);
+		XVector_remove(CurrentNodeArray, nSel,1);
 	}
 	XVector* Path = NULL;
 	if(isFindEnd)

@@ -1,10 +1,9 @@
 ﻿#include"XString.h"
 #include"XString_head.h"
 #include"XVector.h"
-#include"XVector_head.h"
 #include"XContainerObject.h"
 // 返回索引处字符
-char XString_at(const struct XString* this_XString, int nSel)
+char XString_at(const XString* this_XString, int nSel)
 {
 	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
@@ -12,7 +11,7 @@ char XString_at(const struct XString* this_XString, int nSel)
 	return *((char*)XVector_at(string->_data,nSel));
 }
 // 返回字符串
-char* XString_data(const struct XString* this_XString)
+char* XString_data(const XString* this_XString)
 {
 	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;

@@ -67,7 +67,7 @@ const size_t XVectorTwo_List(const XVector* this_vector, const size_t row)
 
 size_t XVectorTwo_TypeSize(XVector* this_vector)
 {
-	return XVector_TypeSize(*(struct XVector**)XVector_begin(this_vector));
+	return XVector_typeSize(*(struct XVector**)XVector_begin(this_vector));
 }
 
 void XVectorTwo_clear(const XVector* this_vector)

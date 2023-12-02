@@ -20,7 +20,7 @@ typedef  struct XSTACK
 	//void* _data;//指向自定义数组类型
 	//int  _current;//当前元素个数
 	//int _size;//元素最大个数
-	//int _type;//类型占用字节数
+	//int _typeSize;//类型占用字节数
 }XSTACK;
 //检测是否扩容,并返回需要插入的指针
 void* StacketEnlargeCapacity(XSTACK* this_stack);

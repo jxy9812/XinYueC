@@ -142,7 +142,7 @@ void XList_free(XList* this_list)
 	if (ISNULL(this_list, "") || ISNULL(this_list->object.vtable, ""))
 		return;
 	typedef void (*funcPtr)(XList*);
-	ObjectVirtualFunc(this_list, Free, funcPtr)(this_list);
+	ObjectVirtualFunc(this_list, XContainerObject_Free, funcPtr)(this_list);
 }
 
 XList* XList_init(int TypeSize, XEquality equality)

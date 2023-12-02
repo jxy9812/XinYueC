@@ -1,7 +1,6 @@
 ﻿#include"XString.h"
 #include"XString_head.h"
 #include"XVector.h"
-#include"XVector_head.h"
 #include"XContainerObject.h"
 #include"XAlgorithm.h"
 #include<stdlib.h>

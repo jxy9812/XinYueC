@@ -11,7 +11,7 @@ extern void* XListVtable[];
 //XList虚函数表枚举
 enum XListVtableEnum
 {
-	Push_Front= Free+1,
+	Push_Front= XContainerObject_Free+1,
 	Push_Back,
 	Inserts,
 	Insert,

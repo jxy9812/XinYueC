@@ -29,7 +29,7 @@ size_t VXContainerObject_type(const XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
-	return Object->_type;
+	return Object->_typeSize;
 }
 
 void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo)
@@ -52,5 +52,5 @@ void VXContainerObject_free(XContainerObject* Object)
 	Object->_data = NULL;
 	Object->_capacity = 0;
 	Object->_size = 0;
-	Object->_type = 0;
+	Object->_typeSize = 0;
 }

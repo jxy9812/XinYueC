@@ -9,7 +9,7 @@ static void XPriority_QueueCapacity(XPriority_Queue* this_queue)
 		return;
 	if (this_queue->object._capacity == 0)
 	{
-		this_queue->object._data = malloc(this_queue->object._type * INITNUM);
+		this_queue->object._data = malloc(this_queue->object._typeSize * INITNUM);
 		if (this_queue->object._data == NULL)
 		{
 			perror("初始化vector失败");
@@ -22,7 +22,7 @@ static void XPriority_QueueCapacity(XPriority_Queue* this_queue)
 	}
 	else if (this_queue->object._capacity == this_queue->object._size)//空间已满需要扩容
 	{
-		void* _data = realloc(this_queue->object._data, this_queue->object._capacity * this_queue->object._type * 1.5);
+		void* _data = realloc(this_queue->object._data, this_queue->object._capacity * this_queue->object._typeSize * 1.5);
 		if (_data == NULL)
 		{
 			perror("扩容失败vector");
@@ -74,7 +74,7 @@ void XPriority_Queue_push(XPriority_Queue* this_queue, void* val)
 	//拷贝数据进来
 	char* LParr = this_queue->object._data;//指向数组的开始
 	size_t arrSize = XContainerObject_size(this_queue);//数组元素数量
-	size_t TypeSize = XContainerObject_type(this_queue);//单个元素大小字节
+	size_t TypeSize = XContainerObject_typeSize(this_queue);//单个元素大小字节
 	char* start = LParr + arrSize * TypeSize;
 	memcpy(start, val, TypeSize);
 	if (arrSize>0)//一个元素不用调整
@@ -116,7 +116,7 @@ void XPriority_Queue_pop(XPriority_Queue* this_queue)
 		return NULL;
 	char* LParr = this_queue->object._data;//指向数组的开始
 	size_t arrSize = XContainerObject_size(this_queue);//数组元素数量
-	size_t TypeSize = XContainerObject_type(this_queue);//单个元素大小字节
+	size_t TypeSize = XContainerObject_typeSize(this_queue);//单个元素大小字节
 	//拷贝最后一个元素到第一个
 	memcpy(LParr, LParr+ (arrSize - 1) * TypeSize, TypeSize);
 	if(arrSize>1)

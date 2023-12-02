@@ -8,7 +8,7 @@ void XStack_Push_Int(XStack* this_stack, const int* val)
 		return;
 	XSTACK* stack=(XSTACK*)this_stack;
 	*(int**)StacketEnlargeCapacity(stack) = val;
-	//memcpy(Capacity(st), &x, st->_type);
+	//memcpy(Capacity(st), &x, st->_typeSize);
 }
 //int*型取元素
 int* XStack_top_Int(XStack* this_stack)

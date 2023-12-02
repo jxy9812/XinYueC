@@ -1,7 +1,6 @@
 ﻿#include"XString.h"
 #include"XString_head.h"
 #include"XVector.h"
-#include"XVector_head.h"
 #include"XContainerObject.h"
 //删除索引处字符
 bool XString_eraseOne(struct XString* this_XString, const int nSel)
@@ -18,7 +17,8 @@ bool XString_eraseOne(struct XString* this_XString, const int nSel)
 	int offset = 0;
 	if (XString_isChinese(*((char*)XVector_at(v, VnSel))))//是中文
 		++offset;
-	XVector_erase_int(v, VnSel - offset, VnSel);
+	//XVector_erase_int(v, VnSel - offset, VnSel);
+	XVector_remove(v, VnSel - offset,offset);
 	((struct XSTRING*)this_XString)->_size -= 1;
 	return true;
 }
@@ -49,7 +49,8 @@ void XString_clear(struct XString* this_XString)
 		return;
 	struct XVector* v = ((struct XSTRING*)this_XString)->_data;
 	int right = XVector_size(v) - 2;
-	if(right>=0)
-	XVector_erase_int(v, 0, right);
+	if (right >= 0)
+		//XVector_erase_int(v, 0, right);
+		XVector_remove(v,0,right);
 	((struct XSTRING*)this_XString)->_size = 0;
 }
