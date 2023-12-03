@@ -5,7 +5,6 @@
 #include<stdint.h>
 #include"XContainerObject.h"
 #include"XVectorTwo_func.h"
-#include"XVector_macro.h"
 #include"XVector_Iterator/XVector_iterator.h"
 #include"XVector_Iterator/XVector_reverse_iterator.h"
 //XVector虚函数表
@@ -35,6 +34,11 @@ typedef struct XVector
 	XContainerObject object;
 	XEquality equality;//相等比较函数
 }XVector;
+//初始化 Xvector
+#define XVector_Init(Type) XVector_init(sizeof(Type))
+//开辟一个动态数组,初始化
+XVector* XVector_init(size_t TypeSize);
+
 //设置XVector的大小，超过大小插入0值数据，小于删除数据
 void XVector_resize(XVector* this_vector,size_t size);
 // 向量头部增加一个元素
@@ -79,9 +83,6 @@ int  XVector_capacity(const  XVector* this_vector);
 void XVector_swap(XVector* this_vectorOne, XVector* this_vectorTwo);
 //返回元素类型字节大小
 size_t XVector_typeSize(XVector* this_vector);
-//开辟一个动态数组,初始化
-XVector* XVector_init(size_t TypeSize);
-
 #endif // !VECTOR_H
 
 

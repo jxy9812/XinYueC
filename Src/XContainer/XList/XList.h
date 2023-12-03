@@ -32,6 +32,10 @@ typedef struct XList
 	XContainerObject object;
 	XEquality equality;//相等比较函数
 }XList;
+//初始化 XList
+#define XList_Init(Type) XList_init(sizeof(Type))
+//创建链表
+XList* XList_init(int TypeSize);
 
 //插入函数
 //链表头部增加一个元素X
@@ -59,11 +63,11 @@ void  XList_clear(XList* this_list);
 //返回元素节点的指针
 XListNode* XList_at(const XList* this_list,const void* LpValue);
 //返回链表头指针，指向第一个节点指针
-XListNode* XList_front(struct XList* this_list);
+XListNode* XList_front(XList* this_list);
 //返回链表尾指针，指向链表最后一个节点指针
-XListNode* XList_back(struct XList* this_list);
+XListNode* XList_back(XList* this_list);
 //查找数据，返回找到的指针，没有返回NULL
-XListNode* XList_find(const struct XList* this_list,const void* findVal);
+XListNode* XList_find(const  XList* this_list,const void* findVal);
 //判断函数
 //检测list内是否为空，空为真 O(1)
 bool  XList_empty(const XList* this_list);
@@ -77,6 +81,5 @@ void  XList_sort(XList* this_list, XCompare compare);
 void  XList_swap(XList* this_listOne, XList* this_listTwo);
 //释放内存
 void  XList_free(XList* this_list);
-//创建链表
-XList* XList_init(int TypeSize);
+
 #endif // 
