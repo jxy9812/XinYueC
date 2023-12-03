@@ -19,6 +19,7 @@ void VectorTest()
 {
 	XVector* v = XVector_init(sizeof(int));
 	v->equality = XEquality_int;
+	//XVector_resize(v,11);
 	int arr[]={100,123,456,4,8496,3,321,23,3,132,0};
 	
 	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
@@ -35,4 +36,5 @@ void VectorTest()
 	int* findRet=XVector_find(v, &findVal);
 	if(findRet!=NULL)
 	printf("找到的数字:%d", *findRet);
+	XVector_free(v);
 }

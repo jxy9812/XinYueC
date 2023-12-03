@@ -142,10 +142,7 @@ void XVector_sort(XVector* this_vector, XCompare compare)
 
 void XVector_free(XVector* this_vector)
 {
-	if (ISNULL(this_vector, "") || ISNULL(this_vector->object.vtable, ""))
-		return NULL;
-	typedef void (*funcPtr)(XVector*);
-	ObjectVirtualFunc(this_vector, XContainerObject_Free, funcPtr)(this_vector);
+	return XContainerObject_free(this_vector);
 }
 
 bool XVector_empty(const XVector* this_vector)

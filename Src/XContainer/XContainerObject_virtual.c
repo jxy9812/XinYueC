@@ -1,6 +1,7 @@
 ﻿#include"XContainerObject_virtual.h"
 #include"XContainerObject.h"
 #include"XAlgorithm.h"
+#include<stdlib.h>
 //虚函数表定义
 void* XContainerObjectVtable[] = { VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_free };
 
@@ -53,4 +54,7 @@ void VXContainerObject_free(XContainerObject* Object)
 	Object->_capacity = 0;
 	Object->_size = 0;
 	Object->_typeSize = 0;
+	if (Object->_data);
+		free(Object->_data);
+	free(Object);
 }

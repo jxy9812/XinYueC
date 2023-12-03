@@ -8,7 +8,7 @@
 //虚函数表定义
 void* XVectorVtable[] = {
 	//继承的函数
-	VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXVector_free,
+	VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_free,
 	VXVector_resize,
 	//插入
 	VXVector_push_front,VXVector_push_back,VXVector_inserts,VXVector_insert,VXVector_insertArray,
@@ -51,14 +51,6 @@ void VXVectorEnlargeCapacity(XVector* this_vector)
 			ObjectCapacity(this_vector) *= 1.5;
 		}
 	}
-}
-
-void VXVector_free(XVector* this_vector)//释放内存
-{
-	if (ISNULL(this_vector, ""))
-		return;
-	VXVector_clear(this_vector);
-	free(this_vector);
 }
 void VXVector_resize(XVector* this_vector, size_t size)
 {

@@ -5,7 +5,6 @@
 #include<stdint.h>
 #include"XFunctionCallback.h"
 typedef struct XVector XVector;
-void VXVector_free(XVector* this_vector);//释放内存
 void VXVector_resize(XVector* this_vector, size_t size);
 void VXVector_push_front(XVector* this_vector, void* LpValue);
 void VXVector_push_back(XVector* this_vector, void* LpValue);
