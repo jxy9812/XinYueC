@@ -204,7 +204,7 @@ void VXList_clear(XList* this_list)
 //遍历
 XListNode* VXList_at(const XList* this_list, void* LpValue)
 {
-	if (ISNULL(this_list, "")|| ISNULL(LpValue, ""))
+	if (ISNULL(this_list, "") || ISNULL(this_list->equality, "") || ISNULL(LpValue, ""))
 		return NULL;
 	for (XList_iterator* it = XList_begin(this_list); it != XList_end(this_list); it = XList_iterator_add(this_list, it))
 	{

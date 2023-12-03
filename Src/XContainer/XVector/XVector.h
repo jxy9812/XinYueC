@@ -13,26 +13,27 @@ extern void* XVectorVtable[];
 //XVector虚函数表枚举
 enum XVectorEnum
 {
-	Resize=XContainerObject_Free + 1,
-	Push_Front,
-	Push_Back,
-	Inserts,
-	Insert,
-	InsertArray,
-	Pop_Front,
-	Pop_Back,
-	Erase,
-	Remove,
-	Clear,
-	At,
-	Front,
-	Back,
-	Find,
-	Sort
+	XVector_Resize=XContainerObject_Free + 1,
+	XVector_Push_Front,
+	XVector_Push_Back,
+	XVector_Inserts,
+	XVector_Insert,
+	XVector_InsertArray,
+	XVector_Pop_Front,
+	XVector_Pop_Back,
+	XVector_Erase,
+	XVector_Remove,
+	XVector_Clear,
+	XVector_At,
+	XVector_Front,
+	XVector_Back,
+	XVector_Find,
+	XVector_Sort
 };
 typedef struct XVector
 {
 	XContainerObject object;
+	XEquality equality;//相等比较函数
 }XVector;
 //设置XVector的大小，超过大小插入0值数据，小于删除数据
 void XVector_resize(XVector* this_vector,size_t size);
@@ -63,11 +64,11 @@ void* XVector_front(const  XVector* this_vector);
 //返回向量尾指针，指向向量最后一个元素
 void* XVector_back(const  XVector* this_vector);
 //查找数据，返回找到的指针，没有返回NULL
-void* XVector_find(const XVector* this_vector, XEquality equality, const void* findVal);
+void* XVector_find(const XVector* this_vector, const void* findVal);
 //排序
 void  XVector_sort(XVector* this_vector, XCompare compare);
 //释放内存
-void XVector_free(const  XVector* this_vector);
+void XVector_free(XVector* this_vector);
 //检测vector内是否为空，空为真 O(1)
 bool XVector_empty(const  XVector* this_vector);
 //返回vector内元素的个数 O(1)
@@ -79,7 +80,7 @@ void XVector_swap(XVector* this_vectorOne, XVector* this_vectorTwo);
 //返回元素类型字节大小
 size_t XVector_typeSize(XVector* this_vector);
 //开辟一个动态数组,初始化
-XVector* XVector_init(const size_t TypeSize);
+XVector* XVector_init(size_t TypeSize);
 
 #endif // !VECTOR_H
 

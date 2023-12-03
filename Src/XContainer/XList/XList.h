@@ -11,21 +11,21 @@ extern void* XListVtable[];
 //XList虚函数表枚举
 enum XListVtableEnum
 {
-	Push_Front= XContainerObject_Free+1,
-	Push_Back,
-	Inserts,
-	Insert,
-	InsertArray,
-	Pop_Front,
-	Pop_Back,
-	Erase,
-	Remove,
-	Clear,
-	At,
-	Front,
-	Back,
-	Find,
-	Sort
+	XList_Push_Front= XContainerObject_Free+1,
+	XList_Push_Back,
+	XList_Inserts,
+	XList_Insert,
+	XList_InsertArray,
+	XList_Pop_Front,
+	XList_Pop_Back,
+	XList_Erase,
+	XList_Remove,
+	XList_Clear,
+	XList_At,
+	XList_Front,
+	XList_Back,
+	XList_Find,
+	XList_Sort
 };
 typedef struct XList
 {
@@ -78,5 +78,5 @@ void  XList_swap(XList* this_listOne, XList* this_listTwo);
 //释放内存
 void  XList_free(XList* this_list);
 //创建链表
-XList* XList_init(int TypeSize,XEquality equality);
+XList* XList_init(int TypeSize);
 #endif // 
