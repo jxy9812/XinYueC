@@ -4,10 +4,10 @@
 #include<string.h>
 XVector* XVectorTwoMatrix_init(const size_t TypeSize, const size_t row, const size_t list, const void* initVal)
 {
-	struct XVector* VTwo = XVector_init(sizeof(struct XVector*));//二维数组
+	struct XVector* VTwo = XVector_new(sizeof(struct XVector*));//二维数组
 	for (size_t i = 0; i < row; i++)
 	{
-		struct XVector* RowVector = XVector_init( TypeSize);//每一行的一维数组
+		struct XVector* RowVector = XVector_new( TypeSize);//每一行的一维数组
 		for (size_t j = 0; j < list; j++)
 		{
 			XVector_push_back(RowVector, initVal);
@@ -19,7 +19,7 @@ XVector* XVectorTwoMatrix_init(const size_t TypeSize, const size_t row, const si
 
 XVector* XVectorTwo_init()
 {
-	struct XVector* VTwo = XVector_init( sizeof(struct XVector*));//二维数组
+	struct XVector* VTwo = XVector_new( sizeof(struct XVector*));//二维数组
 	return VTwo;
 }
 
@@ -29,11 +29,11 @@ XVector* XVectorTwo_copy(const XVector* this_vector)
 	if (row == 0)
 		return NULL;
 	size_t TypeSize = XVectorTwo_TypeSize(this_vector);
-	XVector* temp = XVector_init( sizeof(struct XVector*));//二维数组
+	XVector* temp = XVector_new( sizeof(struct XVector*));//二维数组
 	for (size_t i = 0; i < row; i++)
 	{
 		size_t List = XVectorTwo_List(this_vector,i);
-		XVector*LTemp= XVector_init( TypeSize);
+		XVector*LTemp= XVector_new( TypeSize);
 		for (size_t j = 0; j < List; j++) 
 		{
 			XVector_push_back(LTemp,XVectorTwo_at(this_vector, i, j));

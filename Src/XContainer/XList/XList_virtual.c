@@ -8,7 +8,7 @@
 //虚函数表定义
 void* XListVtable[] = {
 	//继承的函数
-	VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXList_clear,VXList_free,
+	VXList_free,VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXList_clear,
 	//插入
 	VXList_push_front,VXList_push_back,VXList_inserts,VXList_insert,VXList_insertArray,
 	//删除
@@ -288,7 +288,7 @@ void VXList_sort(XList* this_list, XCompare compare)
 	XList* list = this_list;
 	XListNode* ListHead = XList_front(this_list);//链表第一个节点
 	XListNode* ListTail = XList_back(this_list);//链表最后一个节点
-	struct XStack* stack = XStack_init("struct Node*", sizeof(struct XListNode*));
+	struct XStack* stack = XStack_new("struct Node*", sizeof(struct XListNode*));
 	XStack_push(stack, &ListTail);
 	XStack_push(stack, &ListHead);
 	while (!XStack_empty(stack))

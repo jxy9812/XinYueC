@@ -12,7 +12,7 @@ extern void* XListVtable[];
 enum XListVtableEnum
 {
 	EXList_Clear= EXContainerObject_Clear,
-	EXList_Push_Front= EXContainerObject_Free+1,
+	EXList_Push_Front,
 	EXList_Push_Back,
 	EXList_Inserts,
 	EXList_Insert,
@@ -32,10 +32,13 @@ typedef struct XList
 	XEquality equality;//相等比较函数
 }XList;
 //创建链表
-XList* XList_init(size_t TypeSize);
-#define XList_Init(Type) XList_init(sizeof(Type))
+XList* XList_new(size_t TypeSize);
+#define XList_New(Type) XList_new(sizeof(Type))
+//初始化 链表
+void XList_init(XList* this_list, size_t typeSize);
 //释放内存
 void  XList_free(XList* this_list);
+
 //插入函数
 //链表头部增加一个元素X
 XListNode* XList_push_front(XList* this_list, void* LpValue);

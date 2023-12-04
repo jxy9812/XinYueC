@@ -7,7 +7,7 @@
 #include"XVector.h"
 void queueTest()
 {
-	XQueue* queue = XQueue_Init(int);
+	XQueue* queue = XQueue_New(int);
 	int array[] = { 0,1,2,3,4,5,6,7,8,9 };
 	for (size_t i = 0; i < sizeof(array)/sizeof(array[0]); i++)
 	{
@@ -29,7 +29,7 @@ void XPriority_QueueTest()
 {
 	//XPriority_Queue* queue=XPriority_Queue_init(sizeof(int),XLess_int);//小堆，先出小的
 	XPriority_Queue* queue = XPriority_Queue_init(sizeof(int), XGreater_int);//大堆，先出大的
-	XVector* v = XVector_init(sizeof(int));
+	XVector* v = XVector_New(int);
 	for (size_t i = 0; i < 10; i++)
 	{
 		XVector_push_back(v, &i);

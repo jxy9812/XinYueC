@@ -138,14 +138,20 @@ void XList_free(XList* this_list)
 	ObjectVirtualFunc(this_list, EXContainerObject_Free, funcPtr)(this_list);
 }
 
-XList* XList_init(size_t TypeSize)
+XList* XList_new(size_t typeSize)
 {
-	if (ISNULL(TypeSize, "") )
-		return;
+	if (ISNULL(typeSize, ""))
+		return NULL;
 	XList* this_list = malloc(sizeof(XList));
-	XContainerObject_init(this_list, TypeSize);
-	this_list->object.vtable = XListVtable;
-	this_list->equality= NULL;
+	XList_init(this_list, typeSize);
 	return this_list;
+}
+void XList_init(XList* this_list, size_t typeSize)
+{
+	if (ISNULL(this_list, "")||ISNULL(typeSize, ""))
+		return;
+	XContainerObject_init(this_list, typeSize);
+	this_list->object.vtable = XListVtable;
+	this_list->equality = NULL;
 }
 

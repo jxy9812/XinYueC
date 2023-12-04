@@ -17,7 +17,7 @@ struct people
 
 void VectorTest()
 {
-	XVector* v = XVector_init(sizeof(int));
+	XVector* v = XVector_New(int);
 	v->equality = XEquality_int;
 	//XVector_resize(v,11);
 	int arr[]={100,123,456,4,8496,3,321,23,3,132,0};

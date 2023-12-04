@@ -10,7 +10,7 @@ struct XString* XString_init()
 	struct XSTRING* this_XString = malloc(sizeof(struct XSTRING));
 	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
-	XVector* vector= XVector_init(sizeof(char));
+	XVector* vector= XVector_new(sizeof(char));
 	if (isNULL(isNULLInfo(vector, "")))
 		return NULL;
 	this_XString->_data = vector;

@@ -13,7 +13,7 @@ static AStarNode* CreationAStarNode(const int x, const int y)
 	nodes->pos.x = x;
 	nodes->pos.y = y;
 	nodes->parent = NULL;
-	nodes->child = XVector_init(sizeof(AStarNode*));
+	nodes->child = XVector_new(sizeof(AStarNode*));
 	nodes->currentCosts = 0;
 	nodes->estimateCosts = 0;
 	return nodes;
@@ -42,7 +42,7 @@ static void setCosts(const XVector* maze, const XPoint dest,AStarNode* nodes, AS
 //获取迷宫路径
 static XVector* GetXMazePath(const XVector* child)
 {
-	XVector* Path = XVector_init( sizeof(XPoint));
+	XVector* Path = XVector_new( sizeof(XPoint));
 	AStarNode* current = child;
 	while (current != NULL)
 	{
@@ -60,7 +60,7 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 	else
 		*pMazePos = XMazePath;//标记走过了
 	XPointStep pos = { nodes->pos.x,nodes->pos.y,1 };
-	XStack* ChildAll = XStack_init("XPointStep", sizeof(XPointStep));
+	XStack* ChildAll = XStack_new("XPointStep", sizeof(XPointStep));
 	Pathfinder(ChildAll, maze, pos);//获取周围能走的点位
 	if(Oblique)//能斜着走
 		PathfinderOblique(ChildAll, maze, pos);//获取周围能走的点位，斜的
@@ -87,7 +87,7 @@ static int sortDescendingtCosts(const void* LPrevValue, const void* LNextValue)
 //释放树节点
 static void XBinaryTreeObject_freeNode(AStarNode* root)
 {
-	XStack* stack = XStack_init("AStarNode*", sizeof(AStarNode*));
+	XStack* stack = XStack_new("AStarNode*", sizeof(AStarNode*));
 	XStack_push(stack, &root);
 	while (!XStack_empty(stack))
 	{
@@ -105,7 +105,7 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 {
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	AStarNode* root = CreationAStarNode_XPoint(start);//根节点
-	XVector* CurrentNodeArray = XVector_init( sizeof(AStarNode*));//当前节点数组
+	XVector* CurrentNodeArray = XVector_new( sizeof(AStarNode*));//当前节点数组
 	XVector_push_back(CurrentNodeArray, &root);//入根节点
 
 	AStarNode* CurrentNode = NULL;//当前遍历的节点

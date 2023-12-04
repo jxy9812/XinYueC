@@ -8,8 +8,9 @@ typedef struct XStack
 	XVector vector;
 }XStack;
 //创建一个stack容器并返回其指针
-XStack* XStack_init(size_t TypeSize);
-#define XStack_Init(Type) XStack_init(sizeof(Type))
+XStack* XStack_new(size_t typeSize);
+#define XStack_New(Type) XStack_new(sizeof(Type))
+void XStack_init(XStack* this_stack, size_t typeSize);
 //释放栈
 void XStack_free(XStack* this_stack);
 // 压栈，增加元素 O(1)

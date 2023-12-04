@@ -2,7 +2,7 @@
 #include"XStack.h"
 void stackTest()
 {
-	XStack* s = XStack_Init(int);
+	XStack* s = XStack_New(int);
 	int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
 
 	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
@@ -16,7 +16,7 @@ void stackTest()
 		XStack_pop(s);
 	}
 	XStack_free(s);
-	XStack* string = XStack_Init(char[100]);
+	XStack* string = XStack_New(char[100]);
 	char* strings[] = { "琦神","小白","皮皮","蛇蛇" };
 	for (size_t i = 0; i < sizeof(strings) / sizeof(strings[0]); i++)
 	{

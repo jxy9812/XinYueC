@@ -10,13 +10,13 @@ extern void* XContainerObjectVtable[];
 //XContainerObject虚函数表枚举
 enum XContainerObjectVtableEnum
 {
+	EXContainerObject_Free,
 	EXContainerObject_Empty,
 	EXContainerObject_Size,
 	EXContainerObject_Capacity,
 	EXContainerObject_TypeSize,
 	EXContainerObject_Swap,
 	EXContainerObject_Clear,
-	EXContainerObject_Free
 };
 //容器基类
 typedef struct XContainerObject
@@ -52,11 +52,11 @@ typedef struct XContainerObject
 #define ObjectVirtualFunc(Object,Offset,Type) ((Type)((((XContainerObject*)Object)->vtable)[Offset]))//用XContainerObject及其子类获取虚函数
 bool isNULL(const void*args/*参数数值*/,const char*argsName/*参数名字*/, const char* str/*附加参数*/,const char*funcName/*函数名字*/,const char* filePath/*所在文件路径*/,int line/*所在行号*/);
 bool XContainerObject_empty(const XContainerObject* Object);
+void XContainerObject_init(XContainerObject* Object, size_t typeSize);
+void XContainerObject_free(XContainerObject* Object);
 size_t XContainerObject_size(const XContainerObject* Object);
 size_t XContainerObject_capacity(const XContainerObject* Object);
 size_t XContainerObject_typeSize(const XContainerObject* Object);
 void XContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
-void XContainerObject_init(XContainerObject* Object,size_t type);
 void XContainerObject_clear(XContainerObject* Object);
-void XContainerObject_free(XContainerObject* Object);
 #endif // !ContainerObject_h

@@ -3,7 +3,7 @@
 #include"XAlgorithm.h"
 #include<stdlib.h>
 //虚函数表定义
-void* XContainerObjectVtable[] = { VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_clear,VXContainerObject_free };
+void* XContainerObjectVtable[] = { VXContainerObject_free, VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_clear };
 
 bool VXContainerObject_empty(const XContainerObject* Object)
 {

@@ -1,8 +1,19 @@
 ﻿#include "XQueue.h"
-
-XQueue* XQueue_init(size_t TypeSize)
+#include<stdlib.h>
+XQueue* XQueue_new(size_t typeSize)
 {
-	return XList_init(TypeSize);
+	if (ISNULL(typeSize, ""))
+		return NULL;
+	XQueue* this_queue = malloc(sizeof(XQueue));
+	XQueue_init(this_queue, typeSize);
+	return this_queue;
+}
+
+void XQueue_init(XQueue* this_queue, size_t typeSize)
+{
+	if (ISNULL(this_queue, "") || ISNULL(typeSize, ""))
+		return;
+	XList_init(this_queue, typeSize);
 }
 
 void XQueue_free(XQueue* this_queue)

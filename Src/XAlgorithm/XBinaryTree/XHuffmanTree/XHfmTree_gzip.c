@@ -41,7 +41,7 @@ XVector* XHfmTree_gzip(XHuffmanTree* tree, const char* data, const size_t size)
 {
 	XHfmTree_clear(tree);//哈夫曼树清空测试
 	XHfmTree_readData(tree, data, size);//读取数据构建哈夫曼树
-	XVector* gzipData=XVector_Init(char);//返回的压缩后的数据
+	XVector* gzipData=XVector_New(char);//返回的压缩后的数据
 	size_t sizeD=XHfmTree_writeCompressDictionaries(gzipData, tree->dictionaries);
 	//printf("Dictionaries:%d\n",sizeD);
 	writeData(gzipData, tree->dictionaries,data,size);

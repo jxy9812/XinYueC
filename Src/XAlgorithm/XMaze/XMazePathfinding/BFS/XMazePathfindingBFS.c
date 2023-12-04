@@ -22,7 +22,7 @@ static XBTreeNode* CreationBFSNode(const int x,const int y)
 //获取迷宫路径
 static XVector* GetXMazePath(const XBTreeNode* child)
 {
-	XVector* Path = XVector_init(sizeof(XPoint));
+	XVector* Path = XVector_new(sizeof(XPoint));
 	XBTreeNode* current = child;
 	while (current!=NULL)
 	{
@@ -40,7 +40,7 @@ static size_t insertChild(const XVector* maze, XBTreeNode* nodes, XVector* NextN
 	else
 		*pMazePos = XMazePath;//标记走过了
 	XPointStep pos = { GetXPoint(nodes).x,GetXPoint(nodes).y,1};
-	XStack* ChildAll = XStack_init("XPointStep",sizeof(XPointStep));
+	XStack* ChildAll = XStack_new("XPointStep",sizeof(XPointStep));
 	Pathfinder(ChildAll,maze, pos);//获取周围能走的点位
 	while (!XStack_empty(ChildAll))
 	{
@@ -59,8 +59,8 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 {
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	XBTreeNode* root = CreationBFSNode_XPoint(start);//根节点
-	XVector* CurrentNodeArray = XVector_init( sizeof(XBTreeNode*));//当前节点数组
-	XVector* NextNodeArray = XVector_init(sizeof(XBTreeNode*));//下一个节点数组
+	XVector* CurrentNodeArray = XVector_new( sizeof(XBTreeNode*));//当前节点数组
+	XVector* NextNodeArray = XVector_new(sizeof(XBTreeNode*));//下一个节点数组
 	XVector_push_back(CurrentNodeArray,&root);//入根节点
 
 	XBTreeNode* CurrentNode = NULL;//当前遍历的节点

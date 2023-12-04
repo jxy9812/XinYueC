@@ -8,7 +8,7 @@
 //虚函数表定义
 void* XVectorVtable[] = {
 	//继承的函数
-	VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXVector_clear,VXContainerObject_free,
+	VXContainerObject_free,VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXVector_clear,
 	VXVector_resize,
 	//插入
 	VXVector_push_front,VXVector_push_back,VXVector_inserts,VXVector_insert,VXVector_insertArray,

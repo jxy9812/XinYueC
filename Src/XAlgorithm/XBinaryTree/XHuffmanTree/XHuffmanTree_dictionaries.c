@@ -12,7 +12,7 @@ void XHfmTree_setDictionaries(XMap* dictionaries, const char* data, const size_t
 		//创建哈夫曼编码数组
 		if (dv->count == 0)
 		{
-			dv->code = XVector_Init(char);
+			dv->code = XVector_New(char);
 		}
 		dv->count += 1;//计数+1
 		//XMap_At(tree->dictionaries,data[i],size_t)+=1;

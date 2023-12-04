@@ -5,7 +5,7 @@
 void XBinarySearchTest()
 {
 	//数组
-	XVector* VArray = XVector_init(sizeof(size_t));
+	XVector* VArray = XVector_New(size_t);
 	int count = 10000000;//测试数据量
 	for (size_t i = 0; i < count; i++)
 	{

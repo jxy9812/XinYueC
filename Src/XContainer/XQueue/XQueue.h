@@ -8,8 +8,9 @@ typedef struct XQueue
 	XList list;
 }XQueue;
 //queue容器初始化函数
-XQueue* XQueue_init(size_t TypeSize);
-#define XQueue_Init(Type) XQueue_init(sizeof(Type))
+XQueue* XQueue_new(size_t typeSize);
+#define XQueue_New(Type) XQueue_new(sizeof(Type))
+void XQueue_init(XQueue* this_queue, size_t typeSize);
 //释放队列
 void XQueue_free(XQueue* this_queue);
 //清空queue的队列，释放内存

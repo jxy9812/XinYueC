@@ -1,15 +1,21 @@
 ﻿#include"XVector.h"
 #include<stdlib.h>
-//初始化函数
-XVector* XVector_init(size_t TypeSize)
+XVector* XVector_new(size_t typeSize)
 {
-	XVector* this_vector = malloc(sizeof(XVector));
-	if (ISNULL(this_vector, "创建XVector失败"))
+	if (ISNULL(typeSize, ""))
 		return NULL;
-	XContainerObject_init(this_vector, TypeSize);
+	XVector* this_vector = malloc(sizeof(XVector));
+	XVector_init(this_vector,typeSize);
+	return this_vector;
+}
+//初始化函数
+void XVector_init(XVector* this_vector,size_t typeSize )
+{
+	if (ISNULL(this_vector, "") || ISNULL(typeSize, ""))
+		return;
+	XContainerObject_init(this_vector, typeSize);
 	this_vector->object.vtable = XVectorVtable;
 	this_vector->equality = NULL;
-	return this_vector;
 }
 
 void XVector_resize(XVector* this_vector, size_t size)

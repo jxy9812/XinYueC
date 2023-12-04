@@ -1,10 +1,21 @@
 ﻿#include"XStack.h"
 #include<string.h>
-
+#include<stdlib.h>
 //初始化函数
-XStack* XStack_init(size_t TypeSize)
+XStack* XStack_new(size_t typeSize)
 {
-	return XVector_init(TypeSize);
+	if (ISNULL(typeSize, ""))
+		return NULL;
+	XVector* this_stack = malloc(sizeof(XVector));
+	XStack_init(this_stack, typeSize);
+	return this_stack;
+}
+
+void XStack_init(XStack* this_stack, size_t typeSize)
+{
+	if (ISNULL(this_stack, "") || ISNULL(typeSize, ""))
+		return;
+	XVector_init(this_stack, typeSize);
 }
 
 void XStack_free(XStack* this_stack)

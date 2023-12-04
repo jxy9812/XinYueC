@@ -13,7 +13,7 @@ extern void* XVectorVtable[];
 enum XVectorEnum
 {
 	EXVector_Clear = EXContainerObject_Clear,
-	EXVector_Resize=EXContainerObject_Free + 1,
+	EXVector_Resize,
 	EXVector_Push_Front,
 	EXVector_Push_Back,
 	EXVector_Inserts,
@@ -36,10 +36,13 @@ typedef struct XVector
 	XContainerObject object;
 	XEquality equality;//相等比较函数
 }XVector;
-//初始化 Xvector
-#define XVector_Init(Type) XVector_init(sizeof(Type))
+
+
 //开辟一个动态数组,初始化
-XVector* XVector_init(size_t TypeSize);
+XVector* XVector_new(size_t typeSize);
+#define XVector_New(Type) XVector_new(sizeof(Type))
+//初始化 XVector
+void XVector_init(XVector* this_vector, size_t typeSize);
 //释放内存
 void XVector_free(XVector* this_vector);
 

@@ -52,7 +52,7 @@ void XQuicPitSort_Stack(void* LParray, const size_t nSize, const size_t TypeSize
 {
 	if (LParray == NULL || nSize == 0 || TypeSize == 0)
 		return;
-	XStack* st=XStack_Init(char*);
+	XStack* st=XStack_New(char*);
 	char* begin = LParray;//移动头指针，开始指向头元素
 	char* end = begin + TypeSize * (nSize - 1);//移动尾指针，开始指向尾元素
 	char* temp = NULL;//入栈边界临时指针
