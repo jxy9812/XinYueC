@@ -28,7 +28,7 @@ void VectorTest()
 		XVector_push_front(v,arr+i);
 	}
 	printf("插入数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
-	XVector_remove(v, 2, -1);
+	XVector_remove(v, 2, 1);
 	printf("删除数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	XVector_sort(v, XLess_int);
 	printf("排序数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");

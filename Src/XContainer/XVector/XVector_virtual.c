@@ -8,12 +8,14 @@
 //虚函数表定义
 void* XVectorVtable[] = {
 	//继承的函数
-	VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_free,
+	VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXVector_clear,VXContainerObject_free,
 	VXVector_resize,
 	//插入
 	VXVector_push_front,VXVector_push_back,VXVector_inserts,VXVector_insert,VXVector_insertArray,
 	//删除
-	VXVector_pop_front,VXVector_pop_back,VXVector_erase,VXVector_remove,VXVector_clear,
+	VXVector_pop_front,VXVector_pop_back,VXVector_erase,VXVector_remove,
+	//拷贝
+	VXVector_copy,VXVector_rcopy,
 	//遍历
 	VXVector_at,VXVector_front,VXVector_back,VXVector_find,
 	//排序
@@ -217,6 +219,51 @@ void VXVector_clear(XVector* this_vector)//清空vector的数组
 		object->_capacity = 0;
 		object->_size = 0;
 	}*/
+}
+void VXVector_copy(XVector* this_One, const XVector* this_Two)
+{
+	if (ISNULL(this_One, "") || ISNULL(this_One, ""))
+		return;
+	if(ObjectDataPtr(this_One))
+		free(ObjectDataPtr(this_One));
+	size_t size = ObjectSize(this_Two);
+	size_t typeSize = ObjectTypeSize(this_Two);
+	if (size > 0)
+	{
+		ObjectDataPtr(this_One) = malloc(size * typeSize);
+		memcpy(ObjectDataPtr(this_One), ObjectDataPtr(this_Two), size * typeSize);
+	}
+	else
+	{
+		ObjectDataPtr(this_One) = NULL;
+	}
+	ObjectCapacity(this_One) = size;
+	ObjectSize(this_One) = size;
+	ObjectTypeSize(this_One) = typeSize;
+}
+void VXVector_rcopy(XVector* this_One, const XVector* this_Two)
+{
+	if (ISNULL(this_One, "") || ISNULL(this_One, ""))
+		return;
+	if (ObjectDataPtr(this_One))
+		free(ObjectDataPtr(this_One));
+	size_t size = ObjectSize(this_Two);
+	size_t typeSize = ObjectTypeSize(this_Two);
+	if (size > 0)
+	{
+		ObjectDataPtr(this_One) = malloc(size * typeSize);
+		for (char* pst2 = ObjectDataPtr(this_Two) + (size - 1) * typeSize, *pst1 = ObjectDataPtr(this_One); pst2 >= ObjectDataPtr(this_Two); pst2 -= typeSize, pst1 += typeSize)
+		{
+			memcpy(pst1, pst2, typeSize);
+		}
+	}
+	else
+	{
+		ObjectDataPtr(this_One) = NULL;
+	}
+	ObjectCapacity(this_One) = size;
+	ObjectSize(this_One) = size;
+	ObjectTypeSize(this_One) = typeSize;
 }
 void* VXVector_at(const XVector* this_vector, int64_t index)// 返回元素的指针
 {

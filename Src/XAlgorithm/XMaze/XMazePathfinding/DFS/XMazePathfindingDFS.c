@@ -29,7 +29,7 @@ XVector* XMazePathfindingOneDFS(const XVector* maze, const XPoint start, const X
 	XStack* StackPointAll = XStack_init("XPointStep", sizeof(XPointStep));//记录所有的点
 	XStack* StackPath = XStack_init("XPointStep", sizeof(XPointStep));//记录路径
 	XPointStep p = { start.x,start.y,1 };
-	XStack_Push(StackPointAll, &p);
+	XStack_push(StackPointAll, &p);
 	while (!XStack_empty(StackPointAll))
 	{
 		XPointStep CurPoint = *(XPointStep*)XStack_top(StackPointAll);//获取栈顶保存的点
@@ -41,7 +41,7 @@ XVector* XMazePathfindingOneDFS(const XVector* maze, const XPoint start, const X
 		if (*pSign == XMazeRoute)
 		{
 			*pSign = XMazePath;//标记当前位置
-			XStack_Push(StackPath, &CurPoint);//保存坐标
+			XStack_push(StackPath, &CurPoint);//保存坐标
 			if (CurPoint.x == dest.x && CurPoint.y == dest.y)//找到终点了
 			{
 				break;
@@ -68,7 +68,7 @@ XVector* XMazePathfindingShortDFS(const XVector* maze, const XPoint start, const
 	XStack* StackPointAll = XStack_init("XPointStep", sizeof(XPointStep));//记录所有的点
 	XStack* StackPath = XStack_init("XPointStep", sizeof(XPointStep));//记录路径
 	XPointStep PointStart = { start.x,start.y,1 };
-	XStack_Push(StackPointAll, &PointStart);
+	XStack_push(StackPointAll, &PointStart);
 	size_t CurSize = 0;//当前最短的节点数量
 	while (!XStack_empty(StackPointAll))
 	{
@@ -80,7 +80,7 @@ XVector* XMazePathfindingShortDFS(const XVector* maze, const XPoint start, const
 		if (*pSign == XMazeRoute)
 		{
 			*pSign = XMazePath;//标记当前位置
-			XStack_Push(StackPath, &CurPoint);//保存坐标
+			XStack_push(StackPath, &CurPoint);//保存坐标
 			if (CurPoint.x == dest.x && CurPoint.y == dest.y)//找到终点了
 			{
 				if(CurSize==0|| CurSize>=XStack_size(StackPath))//初始 找到相同或更短路径
@@ -119,7 +119,7 @@ XVector* XMazePathfindingAllDFS(const XVector* maze, const XPoint start, const X
 	XStack* StackPointAll = XStack_init("XPointStep", sizeof(XPointStep));//记录所有的点
 	XStack* StackPath = XStack_init("XPointStep", sizeof(XPointStep));//记录路径
 	XPointStep PointStart = {start.x,start.y,1};
-	XStack_Push(StackPointAll, &PointStart);
+	XStack_push(StackPointAll, &PointStart);
 	while (!XStack_empty(StackPointAll))
 	{
 		XPointStep CurPoint = *(XPointStep*)XStack_top(StackPointAll);//获取栈顶保存的点
@@ -132,7 +132,7 @@ XVector* XMazePathfindingAllDFS(const XVector* maze, const XPoint start, const X
 		if (*pSign == XMazeRoute)
 		{
 			*pSign = XMazePath;//标记当前位置
-			XStack_Push(StackPath, &CurPoint);//保存坐标
+			XStack_push(StackPath, &CurPoint);//保存坐标
 			if (CurPoint.x == dest.x && CurPoint.y == dest.y)//找到终点了
 			{
 				XVector* path = XVector_init( sizeof(XPoint));

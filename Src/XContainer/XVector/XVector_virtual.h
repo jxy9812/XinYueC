@@ -16,6 +16,8 @@ void VXVector_pop_back(XVector* this_vector);
 void VXVector_erase(XVector* this_vector, void* LpValue);
 void VXVector_remove(XVector* this_vector, int64_t index, int64_t n);//删除数据 n<0 后面全部删除
 void VXVector_clear(XVector* this_vector);
+void VXVector_copy(XVector* this_One, const XVector* this_Two);
+void VXVector_rcopy(XVector* this_One, const XVector* this_Two);
 void* VXVector_at(const XVector* this_vector, int64_t index);
 void* VXVector_front(const XVector* this_vector);
 void* VXVector_back(const XVector* this_vector);

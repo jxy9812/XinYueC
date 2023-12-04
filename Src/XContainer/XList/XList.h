@@ -11,21 +11,21 @@ extern void* XListVtable[];
 //XList虚函数表枚举
 enum XListVtableEnum
 {
-	XList_Push_Front= XContainerObject_Free+1,
-	XList_Push_Back,
-	XList_Inserts,
-	XList_Insert,
-	XList_InsertArray,
-	XList_Pop_Front,
-	XList_Pop_Back,
-	XList_Erase,
-	XList_Remove,
-	XList_Clear,
-	XList_At,
-	XList_Front,
-	XList_Back,
-	XList_Find,
-	XList_Sort
+	EXList_Clear= EXContainerObject_Clear,
+	EXList_Push_Front= EXContainerObject_Free+1,
+	EXList_Push_Back,
+	EXList_Inserts,
+	EXList_Insert,
+	EXList_InsertArray,
+	EXList_Pop_Front,
+	EXList_Pop_Back,
+	EXList_Erase,
+	EXList_Remove,
+	EXList_At,
+	EXList_Front,
+	EXList_Back,
+	EXList_Find,
+	EXList_Sort
 };
 typedef struct XList
 {
@@ -36,7 +36,8 @@ typedef struct XList
 #define XList_Init(Type) XList_init(sizeof(Type))
 //创建链表
 XList* XList_init(int TypeSize);
-
+//释放内存
+void  XList_free(XList* this_list);
 //插入函数
 //链表头部增加一个元素X
 XListNode* XList_push_front(XList* this_list, void* LpValue);
@@ -79,7 +80,4 @@ size_t  XList_size(const XList* this_list);
 void  XList_sort(XList* this_list, XCompare compare);
 //交换两个同类型链表的数据
 void  XList_swap(XList* this_listOne, XList* this_listTwo);
-//释放内存
-void  XList_free(XList* this_list);
-
 #endif // 

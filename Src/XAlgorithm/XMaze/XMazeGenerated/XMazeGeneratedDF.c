@@ -82,13 +82,16 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 		//随机选择一个方向
 		int r = rand() % i;
 		XSwap(&direction[r], &direction[i - 1], sizeof(int));
+		int temp_x = x, temp_y = y;
 		switch (direction[i - 1]) {
 		case Left:
 		{
 			if (x - 1 > 0)
 			{
-				stack->push(stack,y);
-				stack->push(stack, x - 1);
+				temp_y = y;
+				temp_x = x - 1;
+				/*XStack_push(stack,y);
+				XStack_push(stack,x - 1);*/
 			}
 			break;
 		}
@@ -96,8 +99,10 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 		{
 			if (x + 1 < list - 1)
 			{
-				stack->push(stack, y);
-				stack->push(stack, x + 1);
+				temp_y = y;
+				temp_x = x + 1;
+				/*XStack_push(stack, y);
+				XStack_push(stack, x + 1);*/
 			}
 			break;
 		}
@@ -105,8 +110,10 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 		{
 			if (y - 1 > 0)
 			{
-				stack->push(stack, y-1);
-				stack->push(stack, x);
+				temp_y = y-1;
+				temp_x = x;
+				/*XStack_push(stack, y-1);
+				XStack_push(stack, x);*/
 			}
 			break;
 		}
@@ -114,27 +121,31 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 		{
 			if (y + 1 < row - 1)
 			{
-				stack->push(stack, y+1);
-				stack->push(stack, x);
+				temp_y = y + 1;
+				temp_x = x;
+				/*XStack_push(stack, y+1);
+				XStack_push(stack, x);*/
 			}
 			break;
 		}
 		default:
 			break;
 		}
+		XStack_push(stack, &temp_y);
+		XStack_push(stack, &temp_x);
 	}
 }
 //砸墙开路-栈
 static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y, bool oneExit)
 {
 	XStack* stack=XStack_init("int");
-	stack->push(stack, y);
-	stack->push(stack, x);
+	XStack_push(stack, &y);
+	XStack_push(stack, &x);
 	while (!XStack_empty(stack))
 	{
-		int x = stack->top(stack);
+		int x = XStack_Top(stack,int);
 		XStack_pop(stack);
-		int y = stack->top(stack);
+		int y = XStack_Top(stack,int);
 		XStack_pop(stack);
 
 		struct XVector* LMaze = *(struct XVector**)XVector_at(maze, y);

@@ -2,24 +2,31 @@
 #include"XStack.h"
 void stackTest()
 {
-	XStack* sInt = XStack_init("int");
-	sInt->push(sInt, 1);
-	sInt->push(sInt, 100);
-	sInt->push(sInt, 65);
-	sInt->push(sInt, 77);
-	while (!sInt->empty(sInt))
+	XStack* s = XStack_Init(int);
+	int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
+
+	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
 	{
-		printf("%d\n", sInt->top(sInt));
-		sInt->pop(sInt);
+		int n = arr[i];
+		XStack_push(s, arr + i);
 	}
-	XStack* string = XStack_init("char[100]");
-	string->push(string, "琦神");
-	string->push(string, "小白");
-	string->push(string, "皮皮");
-	string->push(string, "蛇蛇");
-	while (!string->empty(string))
+	while (!XStack_empty(s))
 	{
-		printf("%s\n", string->top(string));
-		string->pop(string);
+		printf("%d\n",XStack_Top(s,int));
+		XStack_pop(s);
 	}
+	XStack_free(s);
+	XStack* string = XStack_Init(char[100]);
+	char* strings[] = { "琦神","小白","皮皮","蛇蛇" };
+	for (size_t i = 0; i < sizeof(strings) / sizeof(strings[0]); i++)
+	{
+		char* str = strings[i];
+		XStack_push(string, str);
+	}
+	while (!XStack_empty(string))
+	{
+		printf("%s\n", XStack_top(string));
+		XStack_pop(string);
+	}
+	XStack_free(string);
 }

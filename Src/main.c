@@ -8,8 +8,8 @@ int main(int argc, char* args[])
 	//ListTest();
 	//ListIterator();
 	//ListSwapTest();
-	VectorTest();
-	//stackTest();
+	//VectorTest();
+	stackTest();
 	//XStringTest();
 	//XMapTest();
 	//XMapAndXVectorFindTest();

@@ -27,7 +27,7 @@ bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep Cu
 			if (isPass(maze, Point))
 			{
 				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
-				stack->push(stack, &p);
+				XStack_push(stack, &p);
 				++sum;
 			}
 			break;
@@ -38,7 +38,7 @@ bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep Cu
 			if (isPass(maze, Point))
 			{
 				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
-				stack->push(stack, &p);
+				XStack_push(stack, &p);
 				++sum;
 			}
 			break;
@@ -49,7 +49,7 @@ bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep Cu
 			if (isPass(maze, Point))
 			{
 				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
-				stack->push(stack, &p);
+				XStack_push(stack, &p);
 				++sum;
 			}
 			break;
@@ -60,7 +60,7 @@ bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep Cu
 			if (isPass(maze, Point))
 			{
 				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
-				stack->push(stack, &p);
+				XStack_push(stack, &p);
 				++sum;
 			}
 			break;
@@ -84,7 +84,7 @@ size_t PathfinderOblique(struct XStack* stack, struct XVector* maze, struct XPoi
 			if (isPass(maze, Point))
 			{
 				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
-				stack->push(stack, &p);
+				XStack_push(stack, &p);
 				++sum;
 			}
 			break;
@@ -95,7 +95,7 @@ size_t PathfinderOblique(struct XStack* stack, struct XVector* maze, struct XPoi
 			if (isPass(maze, Point))
 			{
 				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
-				stack->push(stack, &p);
+				XStack_push(stack, &p);
 				++sum;
 			}
 			break;
@@ -106,7 +106,7 @@ size_t PathfinderOblique(struct XStack* stack, struct XVector* maze, struct XPoi
 			if (isPass(maze, Point))
 			{
 				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
-				stack->push(stack, &p);
+				XStack_push(stack, &p);
 				++sum;
 			}
 			break;
@@ -117,7 +117,7 @@ size_t PathfinderOblique(struct XStack* stack, struct XVector* maze, struct XPoi
 			if (isPass(maze, Point))
 			{
 				XPointStep p = { Point.x,Point.y,CurPoint.cur + 1 };
-				stack->push(stack, &p);
+				XStack_push(stack, &p);
 				++sum;
 			}
 			break;

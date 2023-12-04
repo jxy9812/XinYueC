@@ -10,12 +10,13 @@ extern void* XContainerObjectVtable[];
 //XContainerObject虚函数表枚举
 enum XContainerObjectVtableEnum
 {
-	XContainerObject_Empty,
-	XContainerObject_Size,
-	XContainerObject_Capacity,
-	XContainerObject_TypeSize,
-	XContainerObject_Swap,
-	XContainerObject_Free
+	EXContainerObject_Empty,
+	EXContainerObject_Size,
+	EXContainerObject_Capacity,
+	EXContainerObject_TypeSize,
+	EXContainerObject_Swap,
+	EXContainerObject_Clear,
+	EXContainerObject_Free
 };
 //容器基类
 typedef struct XContainerObject
@@ -56,5 +57,6 @@ size_t XContainerObject_capacity(const XContainerObject* Object);
 size_t XContainerObject_typeSize(const XContainerObject* Object);
 void XContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
 void XContainerObject_init(XContainerObject* Object,size_t type);
+void XContainerObject_clear(XContainerObject* Object);
 void XContainerObject_free(XContainerObject* Object);
 #endif // !ContainerObject_h

@@ -12,22 +12,24 @@ extern void* XVectorVtable[];
 //XVector虚函数表枚举
 enum XVectorEnum
 {
-	XVector_Resize=XContainerObject_Free + 1,
-	XVector_Push_Front,
-	XVector_Push_Back,
-	XVector_Inserts,
-	XVector_Insert,
-	XVector_InsertArray,
-	XVector_Pop_Front,
-	XVector_Pop_Back,
-	XVector_Erase,
-	XVector_Remove,
-	XVector_Clear,
-	XVector_At,
-	XVector_Front,
-	XVector_Back,
-	XVector_Find,
-	XVector_Sort
+	EXVector_Clear = EXContainerObject_Clear,
+	EXVector_Resize=EXContainerObject_Free + 1,
+	EXVector_Push_Front,
+	EXVector_Push_Back,
+	EXVector_Inserts,
+	EXVector_Insert,
+	EXVector_InsertArray,
+	EXVector_Pop_Front,
+	EXVector_Pop_Back,
+	EXVector_Erase,
+	EXVector_Remove,
+	EXVector_Copy,
+	EXVector_Rcopy,
+	EXVector_At,
+	EXVector_Front,
+	EXVector_Back,
+	EXVector_Find,
+	EXVector_Sort
 };
 typedef struct XVector
 {
@@ -38,6 +40,8 @@ typedef struct XVector
 #define XVector_Init(Type) XVector_init(sizeof(Type))
 //开辟一个动态数组,初始化
 XVector* XVector_init(size_t TypeSize);
+//释放内存
+void XVector_free(XVector* this_vector);
 
 //设置XVector的大小，超过大小插入0值数据，小于删除数据
 void XVector_resize(XVector* this_vector,size_t size);
@@ -61,18 +65,24 @@ void XVector_erase(XVector* this_vector, void* LpValue);
 void XVector_remove(XVector* this_vector, int64_t index, int64_t n);
 //清空vector的队列，不是释放内存
 void XVector_clear(XVector* this_vector);
+//将this_Two拷贝到this_One
+void XVector_copy(XVector* this_One, const XVector* this_Two);
+//将this_Two逆序拷贝到this_One
+void XVector_rcopy(XVector* this_One, const XVector* this_Two);
 // 返回元素的指针
 void* XVector_at(const XVector* this_vector, int64_t index);
+#define XVector_At(vector,index,type) (*((type*)XVector_at(vector,index)))
 //返回向量头指针，指向第一个元素
 void* XVector_front(const  XVector* this_vector);
+#define XVector_Front(vector,type) (*((type*)XVector_front(vector)))
 //返回向量尾指针，指向向量最后一个元素
 void* XVector_back(const  XVector* this_vector);
+#define XVector_Back(vector,type) (*((type*)XVector_back(vector)))
 //查找数据，返回找到的指针，没有返回NULL
 void* XVector_find(const XVector* this_vector, const void* findVal);
 //排序
 void  XVector_sort(XVector* this_vector, XCompare compare);
-//释放内存
-void XVector_free(XVector* this_vector);
+
 //检测vector内是否为空，空为真 O(1)
 bool XVector_empty(const  XVector* this_vector);
 //返回vector内元素的个数 O(1)

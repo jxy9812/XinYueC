@@ -52,36 +52,38 @@ void XQuicPitSort_Stack(void* LParray, const size_t nSize, const size_t TypeSize
 {
 	if (LParray == NULL || nSize == 0 || TypeSize == 0)
 		return;
-	struct XStack* st=XStack_init("char*");
+	XStack* st=XStack_Init(char*);
 	char* begin = LParray;//移动头指针，开始指向头元素
 	char* end = begin + TypeSize * (nSize - 1);//移动尾指针，开始指向尾元素
 	char* temp = NULL;//入栈边界临时指针
-	st->push(st, end);//入右边界
-	st->push(st, begin);//入左边界
+	XStack_push(st,&end);//入右边界
+	XStack_push(st, &begin);//入左边界
+	//st->push(st, end);//入右边界
+	//st->push(st, begin);//入左边界
 	char* left = NULL;//区间头指针
 	char* right = NULL;//区间尾指针
 	char* pivit = NULL;//单次排序返回的排好元素指针
-	while (!st->empty(st))
+	while (!XStack_empty(st))
 	{
-		left = st->top(st);//头指针
-		st->pop(st);
-		right = st->top(st);//尾指针 
-		st->pop(st);
+		left = XStack_Top(st,char*);//头指针
+		XStack_pop(st);
+		right = XStack_Top(st,char*);//尾指针 
+		XStack_pop(st);
 		pivit = QuicPitSort_One(left, right, TypeSize, compare);
 		temp = pivit + TypeSize;
 		if (temp < right)//右区间存在
 		{
-			st->push(st, right);
-			st->push(st, temp);
+			XStack_push(st, &right);
+			XStack_push(st, &temp);
 		}
 		temp = pivit - TypeSize;
 		if (left < temp)//左区间存在
 		{
-			st->push(st, temp);
-			st->push(st, left);
+			XStack_push(st, &temp);
+			XStack_push(st, &left);
 		}
 	}
-	st->free(st);
+	XStack_free(st);
 }
 
 //挖坑法递归调用函数

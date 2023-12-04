@@ -88,14 +88,14 @@ static int sortDescendingtCosts(const void* LPrevValue, const void* LNextValue)
 static void XBinaryTreeObject_freeNode(AStarNode* root)
 {
 	XStack* stack = XStack_init("AStarNode*", sizeof(AStarNode*));
-	XStack_Push(stack, &root);
+	XStack_push(stack, &root);
 	while (!XStack_empty(stack))
 	{
 		AStarNode* current = *(AStarNode**)XStack_top(stack);
 		XStack_pop(stack);
 		for (XVector_iterator* it = XVector_begin(current->child); it != XVector_end(current->child); it = XVector_iterator_add(current->child, it))
 		{
-			XStack_Push(stack, it);
+			XStack_push(stack, it);
 		}
 		XVector_free(current->child);
 		free(current);

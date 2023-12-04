@@ -8,11 +8,11 @@
 //虚函数表定义
 void* XListVtable[] = {
 	//继承的函数
-	VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXList_free,
+	VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXList_clear,VXList_free,
 	//插入
 	VXList_push_front,VXList_push_back,VXList_inserts,VXList_insert,VXList_insertArray,
 	//删除
-	VXList_pop_front,VXList_pop_back,VXList_erase,VXList_remove,VXList_clear,
+	VXList_pop_front,VXList_pop_back,VXList_erase,VXList_remove,
 	//遍历
 	VXList_at,VXList_front,VXList_back,VXList_find,
 	//排序
@@ -294,8 +294,8 @@ void VXList_sort(XList* this_list, XCompare compare)
 	XListNode* ListHead = XList_front(this_list);//链表第一个节点
 	XListNode* ListTail = XList_back(this_list);//链表最后一个节点
 	struct XStack* stack = XStack_init("struct Node*", sizeof(struct XListNode*));
-	XStack_Push(stack, &ListTail);
-	XStack_Push(stack, &ListHead);
+	XStack_push(stack, &ListTail);
+	XStack_push(stack, &ListHead);
 	while (!XStack_empty(stack))
 	{
 		//获取节点
@@ -308,14 +308,14 @@ void VXList_sort(XList* this_list, XCompare compare)
 		//判断左区间是否存在
 		if (ListHead != ListMiddle && ListHead->next != ListMiddle)
 		{
-			XStack_Push(stack, &ListMiddle->prev);
-			XStack_Push(stack, &ListHead);
+			XStack_push(stack, &ListMiddle->prev);
+			XStack_push(stack, &ListHead);
 		}
 		//判断右区间是否存在
 		if (ListTail != ListMiddle && ListMiddle->next != ListTail)
 		{
-			XStack_Push(stack, &ListTail);
-			XStack_Push(stack, &ListMiddle->next);
+			XStack_push(stack, &ListTail);
+			XStack_push(stack, &ListMiddle->next);
 		}
 	}
 	XStack_free(stack);
