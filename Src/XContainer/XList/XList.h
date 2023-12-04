@@ -21,7 +21,6 @@ enum XListVtableEnum
 	EXList_Pop_Back,
 	EXList_Erase,
 	EXList_Remove,
-	EXList_At,
 	EXList_Front,
 	EXList_Back,
 	EXList_Find,
@@ -32,10 +31,9 @@ typedef struct XList
 	XContainerObject object;
 	XEquality equality;//相等比较函数
 }XList;
-//初始化 XList
-#define XList_Init(Type) XList_init(sizeof(Type))
 //创建链表
-XList* XList_init(int TypeSize);
+XList* XList_init(size_t TypeSize);
+#define XList_Init(Type) XList_init(sizeof(Type))
 //释放内存
 void  XList_free(XList* this_list);
 //插入函数
@@ -62,12 +60,13 @@ void  XList_remove(XList* this_list, void* LpValue);
 void  XList_clear(XList* this_list);
 //遍历函数
 //返回元素节点的指针
-XListNode* XList_at(const XList* this_list,const void* LpValue);
-//返回链表头指针，指向第一个节点指针
-XListNode* XList_front(XList* this_list);
-//返回链表尾指针，指向链表最后一个节点指针
-XListNode* XList_back(XList* this_list);
-//查找数据，返回找到的指针，没有返回NULL
+//返回链表头
+void* XList_front(XList* this_list);
+#define XList_Front(list,Type) (*(Type*)XList_front(list))
+//返回链表尾
+void* XList_back(XList* this_list);
+#define XList_Back(list,Type) (*(Type*)XList_back(list))
+//查找数据，返回找到的节点，没有返回NULL
 XListNode* XList_find(const  XList* this_list,const void* findVal);
 //判断函数
 //检测list内是否为空，空为真 O(1)

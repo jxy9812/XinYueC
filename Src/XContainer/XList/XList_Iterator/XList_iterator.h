@@ -2,8 +2,9 @@
 #define XLIST_ITERATOR_H
 #include"XFunctionCallback.h"
 struct XList;
+typedef struct XListNode XListNode;
 //正向迭代器
-typedef void XList_iterator;
+typedef XListNode XList_iterator;
 XList_iterator* XList_begin(struct XList* this_list);
 XList_iterator* XList_end(struct XList* this_list);
 XList_iterator* XList_iterator_add(struct XList* this_list,XList_iterator*it);

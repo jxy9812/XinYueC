@@ -3,8 +3,10 @@
 #include<stdio.h>
 #include<stdbool.h>
 #include"XVector.h"
-typedef  XVector  XStack;//完全继承XVector
-
+typedef struct XStack
+{
+	XVector vector;
+}XStack;
 //创建一个stack容器并返回其指针
 XStack* XStack_init(size_t TypeSize);
 #define XStack_Init(Type) XStack_init(sizeof(Type))

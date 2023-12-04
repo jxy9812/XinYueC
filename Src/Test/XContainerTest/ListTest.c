@@ -57,6 +57,7 @@ void ListIterator()
 void ListTest()
 {
 	XList* list = XList_init(sizeof(int), XEquality_int);
+	list->equality = XEquality_int;
 	printf("%s\n", XContainerObject_empty(list)?"empty":"");
 	printf("%d\n", XContainerObject_size(list));
 
@@ -71,12 +72,12 @@ void ListTest()
 	int findValue = 123;
 	//XList_insert(list, XList_at(list, &findValue), &x);
 	
-	printf("元素遍历\n");
-	XList_iterator_for_each(list, ListFor_each,NULL);printf("\n");
-	printf("头元素为：%d\n", *(int*)XList_front(list)->date);
-	printf("尾元素为：%d\n", *(int*)XList_back(list)->date);
+	printf("元素遍历\t");XList_iterator_for_each(list, ListFor_each,NULL);printf("\n");
+	printf("头元素为：%d\n", XList_Front(list,int));
+	printf("尾元素为：%d\n", XList_Back(list,int));
 
 	XListNode*findNode=XList_find(list,arr +2);
+
 	printf("找到的数字%d\n", *(int*)findNode->date);
 
 	XList_pop_front(list);
@@ -85,8 +86,7 @@ void ListTest()
 	int removeVlaue =4 ;
 	XList_remove(list,&removeVlaue);
 	//XList_clear(list);
-	printf("删除元素后遍历\n");
-	XList_iterator_for_each(list, ListFor_each, NULL);
+	printf("删除元素后遍历\t");XList_iterator_for_each(list, ListFor_each, NULL);
 	XList_free(list);
 }
 

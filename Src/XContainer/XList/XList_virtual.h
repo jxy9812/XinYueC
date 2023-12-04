@@ -19,9 +19,8 @@ void VXList_erase(XList* this_list, XListNode* node);
 void VXList_remove(XList* this_list, void* LpValue); 
 void VXList_clear(XList* this_list);
 //遍历
-XListNode* VXList_at(const XList* this_list, void* LpValue);
-XListNode* VXList_front(XList* this_list);
-XListNode* VXList_back(XList* this_list);
+void* VXList_front(XList* this_list);
+void* VXList_back(XList* this_list);
 XListNode* VXList_find(const XList* this_list, void* LpValue);
 //其他
 void VXList_sort(XList* this_list, XCompare compare);

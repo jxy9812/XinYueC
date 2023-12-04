@@ -9,7 +9,9 @@ int main(int argc, char* args[])
 	//ListIterator();
 	//ListSwapTest();
 	//VectorTest();
-	stackTest();
+	//stackTest();
+	//queueTest();
+	XPriority_QueueTest();
 	//XStringTest();
 	//XMapTest();
 	//XMapAndXVectorFindTest();
@@ -17,8 +19,6 @@ int main(int argc, char* args[])
 	//SortTest();
 	//XMazeGeneratedTest();
 	//XMazePathfinding();
-	//queueTest();
-	//XPriority_QueueTest();
 	//XBinaryTreeObjectTest();	
 	//XBalancedBinaryTreeTest();
 	//XRedBlackTreeTest();

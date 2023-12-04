@@ -82,27 +82,20 @@ void XList_clear(XList* this_list)
 }
 
 //遍历
-XListNode* XList_at(const XList* this_list, const void* LpValue)
-{
-	if (ISNULL(this_list, "") || ISNULL(this_list->object.vtable, ""))
-		return;
-	typedef XListNode* (*funcPtr)(XList*, const void* );
-	return ObjectVirtualFunc(this_list, EXList_At, funcPtr)(this_list, LpValue);
-}
 
-XListNode* XList_front(XList* this_list)
+void* XList_front(XList* this_list)
 {
 	if (ISNULL(this_list, "") || ISNULL(this_list->object.vtable, ""))
 		return;
-	typedef XListNode* (*funcPtr)(XList*);
+	typedef void* (*funcPtr)(XList*);
 	return ObjectVirtualFunc(this_list, EXList_Front, funcPtr)(this_list);
 }
 
-XListNode* XList_back(XList* this_list)
+void* XList_back(XList* this_list)
 {
 	if (ISNULL(this_list, "") || ISNULL(this_list->object.vtable, ""))
 		return;
-	typedef XListNode* (*funcPtr)(XList*);
+	typedef void* (*funcPtr)(XList*);
 	return ObjectVirtualFunc(this_list, EXList_Back, funcPtr)(this_list);
 }
 
@@ -145,7 +138,7 @@ void XList_free(XList* this_list)
 	ObjectVirtualFunc(this_list, EXContainerObject_Free, funcPtr)(this_list);
 }
 
-XList* XList_init(int TypeSize)
+XList* XList_init(size_t TypeSize)
 {
 	if (ISNULL(TypeSize, "") )
 		return;

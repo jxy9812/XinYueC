@@ -14,7 +14,7 @@ void* XListVtable[] = {
 	//删除
 	VXList_pop_front,VXList_pop_back,VXList_erase,VXList_remove,
 	//遍历
-	VXList_at,VXList_front,VXList_back,VXList_find,
+	VXList_front,VXList_back,VXList_find,
 	//排序
 	VXList_sort
 };
@@ -138,14 +138,14 @@ void VXList_pop_front(XList* this_list)
 {
 	if (ISNULL(this_list, "") || VXContainerObject_empty(this_list))
 		return;
-	VXList_erase(this_list,VXList_front(this_list));
+	VXList_erase(this_list,XList_begin(this_list));
 }
 
 void VXList_pop_back(XList* this_list)
 {
 	if (ISNULL(this_list, "") || VXContainerObject_empty(this_list))
 		return;
-	VXList_erase(this_list, VXList_back(this_list));
+	VXList_erase(this_list, XList_rbegin(this_list));
 }
 
 void VXList_erase(XList* this_list, XListNode* node)
@@ -178,14 +178,14 @@ void VXList_remove(XList* this_list, void* LpValue)
 	if (ISNULL(this_list, "") || ISNULL(LpValue, ""))
 		return;
 	XList* list = this_list;
-	XListNode* node = VXList_at(this_list, LpValue);
+	XListNode* node = VXList_find(this_list, LpValue);
 	if(node)
 		VXList_erase(this_list,node);
 }
 
 void VXList_clear(XList* this_list)
 {
-	if (ISNULL(this_list, ""))
+	if (VXContainerObject_empty(this_list))
 		return;
 	XList* list = this_list;
 	XListNode* p = list->object._data;
@@ -201,8 +201,24 @@ void VXList_clear(XList* this_list)
 	list->object._capacity = 0;
 	list->object._data = NULL;
 }
-//遍历
-XListNode* VXList_at(const XList* this_list, void* LpValue)
+
+void* VXList_front(XList* this_list)
+{
+	if (ISNULL(this_list, ""))
+		return NULL;
+	XList* list = this_list;
+	return ((XListNode*)(list->object._data))->date;
+}
+
+void* VXList_back(XList* this_list)
+{
+	if (ISNULL(this_list, ""))
+		return NULL;
+	XList* list = this_list;
+	return ((XListNode*)(list->object._data))->prev->date;
+}
+
+XListNode* VXList_find(const XList* this_list, void* LpValue)
 {
 	if (ISNULL(this_list, "") || ISNULL(this_list->equality, "") || ISNULL(LpValue, ""))
 		return NULL;
@@ -212,27 +228,6 @@ XListNode* VXList_at(const XList* this_list, void* LpValue)
 			return it;
 	}
 	return NULL;
-}
-
-XListNode* VXList_front(XList* this_list)
-{
-	if (ISNULL(this_list, ""))
-		return NULL;
-	XList* list = this_list;
-	return list->object._data;
-}
-
-XListNode* VXList_back(XList* this_list)
-{
-	if (ISNULL(this_list, ""))
-		return NULL;
-	XList* list = this_list;
-	return ((XListNode*)(list->object._data))->prev;
-}
-
-XListNode* VXList_find(const XList* this_list, void* LpValue)
-{
-	return VXList_at(this_list,LpValue);
 }
 //其他
 
