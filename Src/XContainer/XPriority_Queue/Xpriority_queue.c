@@ -136,7 +136,7 @@ bool XPriority_Queue_empty(XPriority_Queue* this_queue)
 	return XContainerObject_empty(this_queue);
 }
 
-int XPriority_Queue_size(XPriority_Queue* this_queue)
+size_t XPriority_Queue_size(XPriority_Queue* this_queue)
 {
 	return XContainerObject_size(this_queue);
 }
