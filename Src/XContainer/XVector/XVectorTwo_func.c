@@ -2,7 +2,7 @@
 #include"XVector.h"
 #include"XPoint.h"
 #include<string.h>
-XVector* XVectorTwoMatrix_init(const size_t TypeSize, const size_t row, const size_t list, const void* initVal)
+XVector* XVectorTwoMatrix_new(const size_t TypeSize, const size_t row, const size_t list, const void* initVal)
 {
 	struct XVector* VTwo = XVector_new(sizeof(struct XVector*));//二维数组
 	for (size_t i = 0; i < row; i++)
@@ -17,7 +17,7 @@ XVector* XVectorTwoMatrix_init(const size_t TypeSize, const size_t row, const si
 	return VTwo;
 }
 
-XVector* XVectorTwo_init()
+XVector* XVectorTwo_new()
 {
 	struct XVector* VTwo = XVector_new( sizeof(struct XVector*));//二维数组
 	return VTwo;

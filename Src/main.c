@@ -5,13 +5,13 @@
 int main(int argc, char* args[])
 {
 	//ListSortTest();
-	ListTest();
+	//ListTest();
 	//ListIterator();
 	//ListSwapTest();
 	//VectorTest();
 	//stackTest();
 	//queueTest();
-	//XPriority_QueueTest();
+	XPriority_QueueTest();
 	//XStringTest();
 	//XMapTest();
 	//XMapAndXVectorFindTest();

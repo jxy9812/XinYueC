@@ -5,9 +5,9 @@
 struct XVector;
 struct XPoint;
 //开辟一个二维动态数组矩阵,初始化row行 list列
-struct XVector* XVectorTwoMatrix_init(const size_t TypeSize, const size_t row,const size_t list,const void* initVal);
+struct XVector* XVectorTwoMatrix_new(const size_t TypeSize, const size_t row,const size_t list,const void* initVal);
 //开辟一个二维动态数组,初始化row行 list列
-struct XVector* XVectorTwo_init();
+struct XVector* XVectorTwo_new();
 //拷贝复制一个二维数组
 struct XVector* XVectorTwo_copy(const struct XVector* this_vector);
 // 返回元素的指针

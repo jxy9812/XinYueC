@@ -27,8 +27,8 @@ static insertData(void* values ,void*args)
 }
 void XPriority_QueueTest()
 {
-	//XPriority_Queue* queue=XPriority_Queue_init(sizeof(int),XLess_int);//小堆，先出小的
-	XPriority_Queue* queue = XPriority_Queue_init(sizeof(int), XGreater_int);//大堆，先出大的
+	//XPriority_Queue* queue=XPriority_Queue_new(sizeof(int),XLess_int);//小堆，先出小的
+	XPriority_Queue* queue = XPriority_Queue_new(sizeof(int), XGreater_int);//大堆，先出大的
 	XVector* v = XVector_New(int);
 	for (size_t i = 0; i < 10; i++)
 	{

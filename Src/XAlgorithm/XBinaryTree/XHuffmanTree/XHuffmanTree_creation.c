@@ -17,7 +17,7 @@ static void installQueue(XPair** LPpair, XPriority_Queue* queue)
 //根据字典创建树
 XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 {
-	XPriority_Queue* queue = XPriority_Queue_Init(XHfmNode*, Less);
+	XPriority_Queue* queue = XPriority_Queue_New(XHfmNode*, Less);
 	//原始字典生成单独的节点插入优先队列
 	XMap_iterator_for_each(dictionaries, installQueue, queue);
 	//生成哈夫曼树
@@ -42,7 +42,7 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 			XBTree_SetRChild(LPparent, LPright);
 			XBTree_SetParent(LPleft, LPparent);
 			XBTree_SetParent(LPright, LPparent);
-			XPriority_Queue_Push(queue, LPparent);
+			XPriority_Queue_push(queue, &LPparent);
 			LPleft = NULL;
 			LPright = NULL;
 		}

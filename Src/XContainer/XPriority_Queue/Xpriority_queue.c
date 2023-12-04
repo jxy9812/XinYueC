@@ -1,50 +1,24 @@
 ﻿#include"XPriority_Queue.h"
 #include"XAlgorithm.h"
 #include<string.h>
-#define INITNUM 4
-//检测是否需要扩容
-static void XPriority_QueueCapacity(XPriority_Queue* this_queue)
+#include<stdlib.h>
+XPriority_Queue* XPriority_Queue_new(size_t typeSize, XCompare compare)
 {
-	if (isNULL(isNULLInfo(this_queue, "")))
-		return;
-	if (this_queue->object._capacity == 0)
-	{
-		this_queue->object._data = malloc(this_queue->object._typeSize * INITNUM);
-		if (this_queue->object._data == NULL)
-		{
-			perror("初始化vector失败");
-			exit(-1);
-		}
-		else
-		{
-			this_queue->object._capacity = INITNUM;
-		}
-	}
-	else if (this_queue->object._capacity == this_queue->object._size)//空间已满需要扩容
-	{
-		void* _data = realloc(this_queue->object._data, this_queue->object._capacity * this_queue->object._typeSize * 1.5);
-		if (_data == NULL)
-		{
-			perror("扩容失败vector");
-			exit(-1);
-		}
-		else
-		{
-			this_queue->object._data = _data;
-			this_queue->object._capacity *= 1.5;
-		}
-	}
-}
-
-XPriority_Queue* XPriority_Queue_init(size_t TypeSize, XCompare compare)
-{
-	XPriority_Queue* this_queue = malloc(sizeof(XPriority_Queue));
-	if (isNULL(isNULLInfo(this_queue, "")))
+	if (ISNULL(typeSize, ""))
 		return NULL;
-	XContainerObject_init(this_queue, TypeSize);
-	this_queue->compare = compare;
+	XVector* this_queue = malloc(sizeof(XPriority_Queue));
+	XPriority_Queue_init(this_queue, typeSize,compare);
 	return this_queue;
 }
+
+void XPriority_Queue_init(XPriority_Queue* this_queue, size_t typeSize, XCompare compare)
+{
+	if (ISNULL(this_queue, "") || ISNULL(typeSize, ""))
+		return;
+	XVector_init(this_queue, typeSize);
+	this_queue->compare = compare;
+}
+
 //插入向上调整
 static void AdjustUp(void* LParray,const size_t TypeSize, size_t childNSel, XCompare compare)
 {
@@ -65,21 +39,14 @@ static void AdjustUp(void* LParray,const size_t TypeSize, size_t childNSel, XCom
 		parentNSel = (childNSel - 1) / 2;
 	}
 }
-void XPriority_Queue_push(XPriority_Queue* this_queue, void* val)
+void XPriority_Queue_push(XPriority_Queue* this_queue, void* LpValue)
 {
-	if (isNULL(isNULLInfo(this_queue, "")))
+	if (ISNULL(this_queue, ""))
 		return NULL;
-	//检测是否要扩容
-	XPriority_QueueCapacity(this_queue);
-	//拷贝数据进来
-	char* LParr = this_queue->object._data;//指向数组的开始
-	size_t arrSize = XContainerObject_size(this_queue);//数组元素数量
-	size_t TypeSize = XContainerObject_typeSize(this_queue);//单个元素大小字节
-	char* start = LParr + arrSize * TypeSize;
-	memcpy(start, val, TypeSize);
-	if (arrSize>0)//一个元素不用调整
-		AdjustUp(LParr, TypeSize, arrSize, this_queue->compare);
-	++ObjectSize(this_queue);
+	XVector_push_back(this_queue, LpValue);
+	size_t size=ObjectSize(this_queue)-1;
+	if (size >0)//一个元素不用调整
+		AdjustUp(ObjectDataPtr(this_queue), ObjectTypeSize(this_queue), size, this_queue->compare);
 }
 //向下调整
 static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize,size_t parentNSel, XCompare compare)
@@ -112,9 +79,9 @@ static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize,
 
 void XPriority_Queue_pop(XPriority_Queue* this_queue)
 {
-	if (isNULL(isNULLInfo(this_queue, "")))
+	if (ISNULL(this_queue, ""))
 		return NULL;
-	char* LParr = this_queue->object._data;//指向数组的开始
+	char* LParr = ObjectDataPtr(this_queue);//指向数组的开始
 	size_t arrSize = XContainerObject_size(this_queue);//数组元素数量
 	size_t TypeSize = XContainerObject_typeSize(this_queue);//单个元素大小字节
 	//拷贝最后一个元素到第一个
@@ -126,9 +93,9 @@ void XPriority_Queue_pop(XPriority_Queue* this_queue)
 
 void* XPriority_Queue_top(XPriority_Queue* this_queue)
 {
-	if (isNULL(isNULLInfo(this_queue, "")))
+	if (ISNULL(this_queue, ""))
 		return NULL;
-	return this_queue->object._data;//指向数组的开始
+	return  XVector_front(this_queue);//指向数组的开始
 }
 
 bool XPriority_Queue_empty(XPriority_Queue* this_queue)
@@ -143,20 +110,18 @@ size_t XPriority_Queue_size(XPriority_Queue* this_queue)
 
 void XPriority_Queue_clear(XPriority_Queue* this_queue)
 {
-	if (isNULL(isNULLInfo(this_queue, "")))
-		return ;
-	char** LPParr = &this_queue->object._data;//指向数组的开始
-	if (*LPParr != NULL)
-	{
-		free(*LPParr);//清空数组
-		*LPParr = NULL;
-	}
+	XVector_clear(this_queue);
+	//char** LPParr = &ObjectDataPtr(this_queue);//指向数组的开始
+	//if (*LPParr != NULL)
+	//{
+	//	free(*LPParr);//清空数组
+	//	*LPParr = NULL;
+	//}
 }
 
 void XPriority_Queue_free(XPriority_Queue* this_queue)
 {
-	if (isNULL(isNULLInfo(this_queue, "")))
-		return ;
-	XPriority_Queue_clear(this_queue);
-	free(this_queue);
+	XVector_free(this_queue);
+	/*XPriority_Queue_clear(this_queue);
+	free(this_queue);*/
 }
