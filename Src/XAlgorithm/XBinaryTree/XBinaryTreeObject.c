@@ -8,7 +8,7 @@
 static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_root)
 {
 	XVector* vector = XVector_new(sizeof(struct XBTreeNode*));
-	XStack* stack = XStack_new("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
 	XStack_push(stack, &this_root);
 	struct XBTreeNode* currentNode = NULL;//当前节点指针
 	while (!XStack_empty(stack))
@@ -30,7 +30,7 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_r
 static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_root)
 {
 	XVector* vector = XVector_new(sizeof(struct XBTreeNode*));
-	XStack* stack = XStack_new("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
 	struct XBTreeNode* currentNode = this_root;//当前节点指针
 	while (!XStack_empty(stack)|| currentNode!=NULL)
 	{
@@ -54,8 +54,8 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_ro
 static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_root)
 {
 	XVector* vector = XVector_new( sizeof(struct XBTreeNode*));
-	XStack* stack = XStack_new("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
-	XStack* stackTraversing = XStack_new("struct XBinaryTreeNode*", sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
+	XStack* stackTraversing = XStack_new(sizeof(struct XBTreeNode*));
 	XStack_push(stack, &this_root);
 	struct XBTreeNode* currentNode = NULL;//当前节点指针
 	while (!XStack_empty(stack))
@@ -207,7 +207,7 @@ const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root)
 	if (isNULL(isNULLInfo(this_root, "")))
 		return 0;
 	size_t sum = 0;//一共释放了几个节点
-	XStack* stack = XStack_new("struct XBinaryTreeNode*",sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
 	XStack_push(stack,&this_root);
 	XBTreeNode* currentNode = NULL;//当前节点指针
 	while (!XStack_empty(stack))

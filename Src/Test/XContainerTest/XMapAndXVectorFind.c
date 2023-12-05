@@ -39,7 +39,7 @@ void XMapAndXVectorFindTest()
 	//性能测试
 	size_t findNum = count / 2;
 	clock_t vector_start = clock();
-	size_t* Vret=XVector_find(VArray, XEquality_int, &findNum);
+	size_t* Vret=XVector_find(VArray, &findNum);
 	clock_t vector_end = clock();
 	printf("XVector查询数据:%d 用时%dms\n", *Vret, vector_end- vector_start);
 

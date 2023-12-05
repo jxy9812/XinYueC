@@ -82,7 +82,7 @@ void VXVector_resize(XVector* this_vector, size_t size)
 		ObjectCapacity(this_vector) = size;
 	}
 
-	char* LPstart = ObjectDataPtr(this_vector) + count * TypeSize;//最后一个元素的下一个元素
+	char* LPstart = (char*)ObjectDataPtr(this_vector) + count * TypeSize;//最后一个元素的下一个元素
 	memset(LPstart, 0, (size - count) * TypeSize);
 	ObjectSize(this_vector) = size;//设置当前容器元素数量
 	return;
@@ -265,7 +265,7 @@ void VXVector_rcopy(XVector* this_One, const XVector* this_Two)
 	if (size > 0)
 	{
 		ObjectDataPtr(this_One) = malloc(size * typeSize);
-		for (char* pst2 = ObjectDataPtr(this_Two) + (size - 1) * typeSize, *pst1 = ObjectDataPtr(this_One); pst2 >= ObjectDataPtr(this_Two); pst2 -= typeSize, pst1 += typeSize)
+		for (char* pst2 = (char*)ObjectDataPtr(this_Two) + (size - 1) * typeSize, *pst1 = ObjectDataPtr(this_One); pst2 >= ObjectDataPtr(this_Two); pst2 -= typeSize, pst1 += typeSize)
 		{
 			memcpy(pst1, pst2, typeSize);
 		}
@@ -286,7 +286,7 @@ void* VXVector_at(const XVector* this_vector, int64_t index)// 返回元素的�
 	{
 		return NULL;
 	}
-	return (void*)(ObjectDataPtr(this_vector) + ObjectTypeSize(this_vector) * index);
+	return (void*)((char*)ObjectDataPtr(this_vector) + ObjectTypeSize(this_vector) * index);
 }
 void* VXVector_front(const XVector* this_vector)//返回向量头指针，指向第一个元素
 {

@@ -43,7 +43,7 @@ typedef struct XContainerObject
 #endif // !DEBUG_ON
 #define isNULLInfo(args,str) args,#args,str ,__FUNCTION__,__FILE__,__LINE__
 #define ISNULL(args,str)(isNULL(isNULLInfo(args,str)))
-#define ObjectDataPtr(Object) ((char*)((XContainerObject*)Object)->_data)//当前数据指针
+#define ObjectDataPtr(Object) ((XContainerObject*)Object)->_data//当前数据指针
 #define ObjectData(Object,Type) (*(Type*)ObjectDataPtr(Object))//当前数据
 #define ObjectCapacity(Object) (((XContainerObject*)Object)->_capacity)//当前容器能容纳的最大元素数量
 #define ObjectSize(Object) (((XContainerObject*)Object)->_size)//当前容器内的元素个数

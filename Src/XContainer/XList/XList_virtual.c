@@ -288,7 +288,7 @@ void VXList_sort(XList* this_list, XCompare compare)
 	XList* list = this_list;
 	XListNode* ListHead = XList_front(this_list);//链表第一个节点
 	XListNode* ListTail = XList_back(this_list);//链表最后一个节点
-	struct XStack* stack = XStack_new("struct Node*", sizeof(struct XListNode*));
+	struct XStack* stack = XStack_new(sizeof(struct XListNode*));
 	XStack_push(stack, &ListTail);
 	XStack_push(stack, &ListHead);
 	while (!XStack_empty(stack))

@@ -29,6 +29,7 @@ void XString_insert(struct XString* this_XString, const int nSel, const char* st
 		return;
 	struct XSTRING* string = (struct XSTRING*)this_XString;
 	struct XVector* v = string->_data;
-	XVector_insert(v, XVector_at(v, nSel), str, str + strlen(str) - 1);
+
+	//XVector_insert(v, nSel, str, str + strlen(str) - 1);
 	((struct XSTRING*)this_XString)->_size += XString_charNumber(str);
 }

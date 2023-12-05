@@ -26,8 +26,8 @@ static void XMazeRetracement(const XVector* maze, XStack* StackPointAll, XStack*
 XVector* XMazePathfindingOneDFS(const XVector* maze, const XPoint start, const XPoint dest)
 {
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
-	XStack* StackPointAll = XStack_new("XPointStep", sizeof(XPointStep));//记录所有的点
-	XStack* StackPath = XStack_new("XPointStep", sizeof(XPointStep));//记录路径
+	XStack* StackPointAll = XStack_new( sizeof(XPointStep));//记录所有的点
+	XStack* StackPath = XStack_new(sizeof(XPointStep));//记录路径
 	XPointStep p = { start.x,start.y,1 };
 	XStack_push(StackPointAll, &p);
 	while (!XStack_empty(StackPointAll))
@@ -65,8 +65,8 @@ XVector* XMazePathfindingShortDFS(const XVector* maze, const XPoint start, const
 {
 	XVector* PathShortAll = XVector_new(sizeof(XVector*));//返回的二维数组保存所有的最短可行路径
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
-	XStack* StackPointAll = XStack_new("XPointStep", sizeof(XPointStep));//记录所有的点
-	XStack* StackPath = XStack_new("XPointStep", sizeof(XPointStep));//记录路径
+	XStack* StackPointAll = XStack_new(sizeof(XPointStep));//记录所有的点
+	XStack* StackPath = XStack_new(sizeof(XPointStep));//记录路径
 	XPointStep PointStart = { start.x,start.y,1 };
 	XStack_push(StackPointAll, &PointStart);
 	size_t CurSize = 0;//当前最短的节点数量
@@ -116,8 +116,8 @@ XVector* XMazePathfindingAllDFS(const XVector* maze, const XPoint start, const X
 {
 	XVector* PathAll = XVector_new( sizeof(XVector*));//返回的二维数组保存所有的可行路径
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
-	XStack* StackPointAll = XStack_new("XPointStep", sizeof(XPointStep));//记录所有的点
-	XStack* StackPath = XStack_new("XPointStep", sizeof(XPointStep));//记录路径
+	XStack* StackPointAll = XStack_new(sizeof(XPointStep));//记录所有的点
+	XStack* StackPath = XStack_new(sizeof(XPointStep));//记录路径
 	XPointStep PointStart = {start.x,start.y,1};
 	XStack_push(StackPointAll, &PointStart);
 	while (!XStack_empty(StackPointAll))

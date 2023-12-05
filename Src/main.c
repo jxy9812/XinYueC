@@ -10,7 +10,7 @@ int main(int argc, char* args[])
 	//ListTest();
 	//ListIterator();
 	//ListSwapTest();
-	//VectorTest();
+	VectorTest();
 	//stackTest();
 	//queueTest();
 	//XPriority_QueueTest();

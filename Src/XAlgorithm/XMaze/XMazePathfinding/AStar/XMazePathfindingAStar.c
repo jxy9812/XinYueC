@@ -60,7 +60,7 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 	else
 		*pMazePos = XMazePath;//标记走过了
 	XPointStep pos = { nodes->pos.x,nodes->pos.y,1 };
-	XStack* ChildAll = XStack_new("XPointStep", sizeof(XPointStep));
+	XStack* ChildAll = XStack_new(sizeof(XPointStep));
 	Pathfinder(ChildAll, maze, pos);//获取周围能走的点位
 	if(Oblique)//能斜着走
 		PathfinderOblique(ChildAll, maze, pos);//获取周围能走的点位，斜的
@@ -87,7 +87,7 @@ static int sortDescendingtCosts(const void* LPrevValue, const void* LNextValue)
 //释放树节点
 static void XBinaryTreeObject_freeNode(AStarNode* root)
 {
-	XStack* stack = XStack_new("AStarNode*", sizeof(AStarNode*));
+	XStack* stack = XStack_new(sizeof(AStarNode*));
 	XStack_push(stack, &root);
 	while (!XStack_empty(stack))
 	{

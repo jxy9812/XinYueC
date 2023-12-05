@@ -40,7 +40,7 @@ static size_t insertChild(const XVector* maze, XBTreeNode* nodes, XVector* NextN
 	else
 		*pMazePos = XMazePath;//标记走过了
 	XPointStep pos = { GetXPoint(nodes).x,GetXPoint(nodes).y,1};
-	XStack* ChildAll = XStack_new("XPointStep",sizeof(XPointStep));
+	XStack* ChildAll = XStack_new(sizeof(XPointStep));
 	Pathfinder(ChildAll,maze, pos);//获取周围能走的点位
 	while (!XStack_empty(ChildAll))
 	{
