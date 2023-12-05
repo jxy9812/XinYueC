@@ -22,7 +22,7 @@ void* XVectorVtable[] = {
 	VXVector_sort
 };
 //检测是否需要扩容
-void VXVectorEnlargeCapacity(XVector* this_vector)
+static void VXVectorEnlargeCapacity(XVector* this_vector)
 {
 	if (ISNULL(this_vector, ""))
 		return;
@@ -129,6 +129,13 @@ void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t
 		memcpy(VXVector_at(this_vector, sizen), temp, size);
 		free(temp);
 	}
+	else if (XContainerObject_empty(this_vector))
+	{
+		for (size_t i = 0; i < n; i++)
+		{
+			XVector_push_back(this_vector, LpValue);
+		}
+	}
 }
 void VXVector_insertArray(XVector* this_vector, int64_t index, const void* begin, size_t n)// 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2)间的数据
 {
@@ -136,9 +143,8 @@ void VXVector_insertArray(XVector* this_vector, int64_t index, const void* begin
 		return;
 	const void* ptr = VXVector_at(this_vector, index);
 	size_t typeSize = ObjectTypeSize(this_vector);
-	if (ptr >= VXVector_front(this_vector) && ptr <= VXVector_back(this_vector))
+	if (ptr&&ptr >= VXVector_front(this_vector) && ptr <= VXVector_back(this_vector))
 	{
-		VXVectorEnlargeCapacity(this_vector);
 		int64_t size = (char*)VXVector_back(this_vector) - (char*)ptr + typeSize;
 		void* temp = malloc(size);
 		memcpy(temp, ptr, size);
@@ -152,6 +158,13 @@ void VXVector_insertArray(XVector* this_vector, int64_t index, const void* begin
 		}
 		memcpy(VXVector_at(this_vector, sizen), temp, size);
 		free(temp);
+	}
+	else if(XContainerObject_empty(this_vector))
+	{
+		for (size_t i = 0; i < n; i++)
+		{
+			XVector_push_back(this_vector, (char*)begin+i*ObjectTypeSize(this_vector));
+		}
 	}
 }
 void VXVector_pop_front(XVector* this_vector)//删除向量中第一个元素
@@ -174,13 +187,13 @@ void VXVector_pop_front(XVector* this_vector)//删除向量中第一个元素
 void VXVector_pop_back(XVector* this_vector)//删除向量中最后一个元素
 {
 	if (VXContainerObject_empty(this_vector))
-		return NULL;
+		return ;
 	--ObjectSize(this_vector);
 }
 void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 {
 	if (VXContainerObject_empty(this_vector))
-		return NULL;
+		return ;
 	if (VXVector_front(this_vector) <= LpValue && LpValue <= VXVector_back(this_vector) && ((char*)LpValue - (char*)VXVector_front(this_vector)) % ObjectTypeSize(this_vector) == 0)
 	{
 		size_t typeSize = ObjectTypeSize(this_vector);
@@ -287,6 +300,8 @@ void* VXVector_back(const XVector* this_vector)//返回向量尾指针，指向�
 {
 	if (VXContainerObject_empty(this_vector))
 		return NULL;
+	if (ObjectSize(this_vector) == 1)
+		return VXVector_front(this_vector);
 	return VXVector_at(this_vector,ObjectSize(this_vector)-1);
 }
 void* VXVector_find(const XVector* this_vector, const void* findVal)//查找数据，返回找到的指针，没有返回NULL

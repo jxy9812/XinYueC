@@ -1,9 +1,11 @@
 ﻿#include"Test.h"
 #include"XVector_iterator.h"
+#include"XVirtual.h"
 #include<stdio.h>
 #include<math.h>
 int main(int argc, char* args[])
 {
+	XVirtual_init();
 	//ListSortTest();
 	//ListTest();
 	//ListIterator();
@@ -11,7 +13,7 @@ int main(int argc, char* args[])
 	//VectorTest();
 	//stackTest();
 	//queueTest();
-	XPriority_QueueTest();
+	//XPriority_QueueTest();
 	//XStringTest();
 	//XMapTest();
 	//XMapAndXVectorFindTest();
