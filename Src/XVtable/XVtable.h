@@ -12,7 +12,8 @@ typedef struct XVtable
 XVtable* XVtable_new();
 void XVtable_init(XVtable* this_vtable);
 void XVtable_insert(XVtable* this_vtable, int64_t index, const void* func);
-void XVtable_insertArray(XVtable* this_vtable, int64_t index, const void** begin, size_t n);
+void XVtable_insert_array(XVtable* this_vtable, int64_t index, const void** begin, size_t n);
+void XVtable_append_array(XVtable* this_vtable, const void** begin, size_t n);
 void XVtable_push_back(XVtable* this_vtable, void* func);
 void XVtable_pop_back(XVtable* this_vtable);
 void XVtable_clear(XVtable* this_vtable);

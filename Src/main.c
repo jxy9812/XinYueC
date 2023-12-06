@@ -1,11 +1,11 @@
 ﻿#include"Test.h"
 #include"XVector_iterator.h"
-#include"XVirtual.h"
+#include"XClass.h"
 #include<stdio.h>
 #include<math.h>
 int main(int argc, char* args[])
 {
-	XVirtual_init();
+	XClass_init();
 	//ListSortTest();
 	//ListTest();
 	//ListIterator();

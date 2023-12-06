@@ -55,7 +55,7 @@ void XVtable_init(XVtable* this_vtable)
 
 void XVtable_insert(XVtable* this_vtable, int64_t index, const void* func)
 {
-	if (ISNULL(this_vtable, ""))
+	if (ISNULL(this_vtable, "") || ISNULL(index, "") || ISNULL(func, ""))
 		return;
 	const void* ptr = (void*)(this_vtable->data + index);
 	size_t typeSize = sizeof(void*);
@@ -77,9 +77,9 @@ void XVtable_insert(XVtable* this_vtable, int64_t index, const void* func)
 	}
 }
 
-void XVtable_insertArray(XVtable* this_vtable, int64_t index, const void** begin, size_t n)
+void XVtable_insert_array(XVtable* this_vtable, int64_t index, const void** begin, size_t n)
 {
-	if (ISNULL(this_vtable, ""))
+	if (ISNULL(this_vtable, "")|| ISNULL(index, "")||ISNULL(begin, "") || ISNULL(n, ""))
 		return;
 	//XVtableEnlargeCapacity(this_vtable);
 	const void* ptr = (void*)(this_vtable->data + index);
@@ -100,12 +100,16 @@ void XVtable_insertArray(XVtable* this_vtable, int64_t index, const void** begin
 		memcpy(this_vtable->data + sizen, temp, size);
 		free(temp);
 	}
-	else if (XVtable_empty(this_vtable))
+	
+}
+
+void XVtable_append_array(XVtable* this_vtable, const void** begin, size_t n)
+{
+	if (ISNULL(this_vtable, "") || ISNULL(begin, "") || ISNULL(n, ""))
+		return;
+	for (size_t i = 0; i < n; i++)
 	{
-		for (size_t i = 0; i < n; i++)
-		{
-			XVtable_push_back(this_vtable, begin[i]);
-		}
+		XVtable_push_back(this_vtable, begin[i]);
 	}
 }
 

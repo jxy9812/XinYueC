@@ -1,9 +1,18 @@
 ﻿#include"XContainerObject_virtual.h"
 #include"XContainerObject.h"
 #include"XAlgorithm.h"
+#include"XVtable.h"
 #include<stdlib.h>
+XVtable* XContainerObjectVtable = NULL;
+void XContainerObject_class_init()
+{
+	//虚函数表初始化
+	XContainerObjectVtable = XVtable_new();
+	void* vtable[] = { VXContainerObject_free, VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_clear };
+	XVtable_append_array(XContainerObjectVtable,vtable,sizeof(vtable)/sizeof(vtable[0]));
+}
 //虚函数表定义
-void* XContainerObjectVtable[] = { VXContainerObject_free, VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_clear };
+//void* XContainerObjectVtable[] = { VXContainerObject_free, VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_clear };
 
 bool VXContainerObject_empty(const XContainerObject* Object)
 {
@@ -54,7 +63,7 @@ void VXContainerObject_free(XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
-	Object->vtable = NULL;
+	ObjectVtable(Object) = NULL;
 	Object->_data = NULL;
 	Object->_capacity = 0;
 	Object->_size = 0;

@@ -44,9 +44,9 @@ void XPriority_Queue_push(XPriority_Queue* this_queue, void* LpValue)
 	if (ISNULL(this_queue, ""))
 		return NULL;
 	XVector_push_back(this_queue, LpValue);
-	size_t size=ObjectSize(this_queue)-1;
+	size_t size=ContainerSize(this_queue)-1;
 	if (size >0)//一个元素不用调整
-		AdjustUp(ObjectDataPtr(this_queue), ObjectTypeSize(this_queue), size, this_queue->compare);
+		AdjustUp(ContainerDataPtr(this_queue), ContainerTypeSize(this_queue), size, this_queue->compare);
 }
 //向下调整
 static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize,size_t parentNSel, XCompare compare)
@@ -81,14 +81,14 @@ void XPriority_Queue_pop(XPriority_Queue* this_queue)
 {
 	if (ISNULL(this_queue, ""))
 		return NULL;
-	char* LParr = ObjectDataPtr(this_queue);//指向数组的开始
+	char* LParr = ContainerDataPtr(this_queue);//指向数组的开始
 	size_t arrSize = XContainerObject_size(this_queue);//数组元素数量
 	size_t TypeSize = XContainerObject_typeSize(this_queue);//单个元素大小字节
 	//拷贝最后一个元素到第一个
 	memcpy(LParr, LParr+ (arrSize - 1) * TypeSize, TypeSize);
 	if(arrSize>1)
 	AdjustDwon(LParr, arrSize, TypeSize,0, this_queue->compare);
-	--ObjectSize(this_queue);
+	--ContainerSize(this_queue);
 }
 
 void* XPriority_Queue_top(XPriority_Queue* this_queue)
@@ -111,7 +111,7 @@ size_t XPriority_Queue_size(XPriority_Queue* this_queue)
 void XPriority_Queue_clear(XPriority_Queue* this_queue)
 {
 	XVector_clear(this_queue);
-	//char** LPParr = &ObjectDataPtr(this_queue);//指向数组的开始
+	//char** LPParr = &ContainerDataPtr(this_queue);//指向数组的开始
 	//if (*LPParr != NULL)
 	//{
 	//	free(*LPParr);//清空数组

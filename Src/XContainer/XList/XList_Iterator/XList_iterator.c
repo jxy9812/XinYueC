@@ -7,7 +7,7 @@ XList_iterator* XList_begin(struct XList* this_list)
 {
 	if (ISNULL(this_list, "XList_begin"))
 		return NULL;
-	return ObjectDataPtr(this_list);
+	return ContainerDataPtr(this_list);
 }
 
 XList_iterator* XList_end(struct XList* this_list)
