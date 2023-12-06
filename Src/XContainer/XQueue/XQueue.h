@@ -3,10 +3,20 @@
 #include<stdio.h>
 #include<stdbool.h>
 #include"XList.h"
+//XQueue虚函数表
+extern XVtable* XQueueVtable;
+//XQueue虚函数表枚举
+enum XQueueEnum
+{
+	EXQueue_Push = EXList_Sort + 1,
+	EXQueue_Pop,
+};
 typedef struct XQueue
 {
 	XList list;
 }XQueue;
+//初始化类
+void XQueue_class_init();
 //queue容器初始化函数
 XQueue* XQueue_new(size_t typeSize);
 #define XQueue_New(Type) XQueue_new(sizeof(Type))

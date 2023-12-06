@@ -1,5 +1,6 @@
-﻿#include "XQueue.h"
+﻿#include"XQueue.h"
 #include<stdlib.h>
+
 XQueue* XQueue_new(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
@@ -14,6 +15,7 @@ void XQueue_init(XQueue* this_queue, size_t typeSize)
 	if (ISNULL(this_queue, "") || ISNULL(typeSize, ""))
 		return;
 	XList_init(this_queue, typeSize);
+	ObjectVtable(this_queue) = XQueueVtable;
 }
 
 void XQueue_free(XQueue* this_queue)
@@ -28,12 +30,18 @@ void XQueue_clear(XQueue* this_queue)
 
 void XQueue_push(XQueue* this_queue, void* LpValue)
 {
-	XList_push_back(this_queue,LpValue);
+	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+		return ;
+	typedef void (*funcPtr)(XQueue*, void*);
+	ObjectVirtualFunc(this_queue, EXQueue_Push, funcPtr)(this_queue, LpValue);
 }
 
 void XQueue_pop(XQueue* this_queue)
 {
-	XList_pop_front(this_queue);
+	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+		return ;
+	typedef void (*funcPtr)(XQueue*);
+	ObjectVirtualFunc(this_queue, EXQueue_Pop, funcPtr)(this_queue);
 }
 
 void* XQueue_front(XQueue* this_queue)

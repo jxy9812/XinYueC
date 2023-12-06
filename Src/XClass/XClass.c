@@ -3,11 +3,17 @@
 #include"XContainerObject.h"
 #include"XVector.h"
 #include"XList.h"
+#include"XStack.h"
+#include"XQueue.h"
+#include"XPriority_Queue.h"
 XClass_init()
 {
 	XContainerObject_class_init();
 	XVector_class_init();
 	XList_class_init();
+	XStack_class_init();
+	XQueue_class_init();
+	XPriority_Queue_class_init();
 	//测试
 	/*void* array[] = {1,2,3,4};
 	XVtable* vtable= XVtable_new();

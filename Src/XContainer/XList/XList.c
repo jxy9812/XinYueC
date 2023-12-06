@@ -20,7 +20,7 @@ XListNode* XList_push_back(XList* this_list, void* LpValue)
 void XList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t n)
 {
 	if (ISNULL(this_list, "") || ISNULL(ObjectVtable(this_list), ""))
-		return NULL;
+		return ;
 	typedef void(*funcPtr)(XList*, XListNode*, void* , size_t );
 	ObjectVirtualFunc(this_list, EXList_Inserts, funcPtr)(this_list, curNode, LpValue,n);
 }
@@ -28,7 +28,7 @@ void XList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t n
 void XList_insert(XList* this_list, XListNode* curNode, void* LpValue)
 {
 	if (ISNULL(this_list, "") || ISNULL(ObjectVtable(this_list), ""))
-		return NULL;
+		return ;
 	typedef void(*funcPtr)(XList*, XListNode*, void*);
 	ObjectVirtualFunc(this_list, EXList_Insert, funcPtr)(this_list, curNode, LpValue);
 }
@@ -82,11 +82,10 @@ void XList_clear(XList* this_list)
 }
 
 //遍历
-
 void* XList_front(XList* this_list)
 {
 	if (ISNULL(this_list, "") || ISNULL(ObjectVtable(this_list), ""))
-		return;
+		return NULL;
 	typedef void* (*funcPtr)(XList*);
 	return ObjectVirtualFunc(this_list, EXList_Front, funcPtr)(this_list);
 }
@@ -94,7 +93,7 @@ void* XList_front(XList* this_list)
 void* XList_back(XList* this_list)
 {
 	if (ISNULL(this_list, "") || ISNULL(ObjectVtable(this_list), ""))
-		return;
+		return NULL;
 	typedef void* (*funcPtr)(XList*);
 	return ObjectVirtualFunc(this_list, EXList_Back, funcPtr)(this_list);
 }
@@ -102,7 +101,7 @@ void* XList_back(XList* this_list)
 XListNode* XList_find(const XList* this_list, const void* findVal)
 {
 	if (ISNULL(this_list, "") || ISNULL(ObjectVtable(this_list), ""))
-		return;
+		return NULL;
 	typedef XListNode* (*funcPtr)(XList*, const void*);
 	return ObjectVirtualFunc(this_list, EXList_Find, funcPtr)(this_list, findVal);
 }

@@ -3,7 +3,7 @@
 #include"XVtable.h"
 #include<string.h>
 #include<stdlib.h>
-#include "XList.h"
+#include"XList.h"
 //声明
 #define VECTORNUM 4//初始数组大小
 //虚函数表定义

@@ -23,7 +23,7 @@ void XVector_init(XVector* this_vector,size_t typeSize )
 void XVector_resize(XVector* this_vector, size_t size)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*, size_t);
 	ObjectVirtualFunc(this_vector, EXVector_Resize, funcPtr)(this_vector, size);
 }
@@ -31,7 +31,7 @@ void XVector_resize(XVector* this_vector, size_t size)
 void XVector_push_front(XVector* this_vector, void* LpValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*, void*);
 	ObjectVirtualFunc(this_vector, EXVector_Push_Front, funcPtr)(this_vector, LpValue);
 }
@@ -39,7 +39,7 @@ void XVector_push_front(XVector* this_vector, void* LpValue)
 void XVector_push_back(XVector* this_vector, void* LpValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*, void*);
 	ObjectVirtualFunc(this_vector, EXVector_Push_Back, funcPtr)(this_vector, LpValue);
 }
@@ -47,7 +47,7 @@ void XVector_push_back(XVector* this_vector, void* LpValue)
 void XVector_insert(XVector* this_vector, int64_t index, const void* LpValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*, int64_t, void*);
 	ObjectVirtualFunc(this_vector, EXVector_Insert, funcPtr)(this_vector,index, LpValue);
 }
@@ -55,7 +55,7 @@ void XVector_insert(XVector* this_vector, int64_t index, const void* LpValue)
 void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
 	ObjectVirtualFunc(this_vector, EXVector_Inserts, funcPtr)(this_vector, index, LpValue,n);
 }
@@ -63,7 +63,7 @@ void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t 
 void XVector_insertArray(XVector* this_vector, int64_t index, const void* begin, size_t n)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
 	ObjectVirtualFunc(this_vector, EXVector_InsertArray, funcPtr)(this_vector, index, begin, n);
 }
@@ -71,7 +71,7 @@ void XVector_insertArray(XVector* this_vector, int64_t index, const void* begin,
 void XVector_pop_front(XVector* this_vector)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*);
 	ObjectVirtualFunc(this_vector, EXVector_Pop_Front, funcPtr)(this_vector);
 }
@@ -79,7 +79,7 @@ void XVector_pop_front(XVector* this_vector)
 void XVector_pop_back(XVector* this_vector)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*);
 	ObjectVirtualFunc(this_vector, EXVector_Pop_Back, funcPtr)(this_vector);
 }
@@ -87,7 +87,7 @@ void XVector_pop_back(XVector* this_vector)
 void XVector_erase(XVector* this_vector, void* LpValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*, void*);
 	ObjectVirtualFunc(this_vector, EXVector_Erase, funcPtr)(this_vector,LpValue);
 }
@@ -95,7 +95,7 @@ void XVector_erase(XVector* this_vector, void* LpValue)
 void XVector_remove(XVector* this_vector, int64_t index, int64_t n)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
 	ObjectVirtualFunc(this_vector, EXVector_Remove, funcPtr)(this_vector, index,n);
 }
@@ -103,7 +103,7 @@ void XVector_remove(XVector* this_vector, int64_t index, int64_t n)
 void XVector_clear(XVector* this_vector)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*);
 	ObjectVirtualFunc(this_vector, EXVector_Clear, funcPtr)(this_vector);
 }
@@ -159,7 +159,7 @@ void* XVector_find(const XVector* this_vector,const void* findVal)
 void XVector_sort(XVector* this_vector, XCompare compare)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return NULL;
+		return ;
 	typedef void (*funcPtr)(XVector*, XCompare);
 	ObjectVirtualFunc(this_vector, EXVector_Sort, funcPtr)(this_vector, compare);
 }

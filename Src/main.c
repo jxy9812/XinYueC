@@ -12,9 +12,9 @@ int main(int argc, char* args[])
 	//ListIterator();
 	//ListSwapTest();
 	//VectorTest();
-	//stackTest();
-	//queueTest();
-	//XPriority_QueueTest();
+	stackTest();
+	queueTest();
+	XPriority_QueueTest();
 	//XStringTest();
 	//XMapTest();
 	//XMapAndXVectorFindTest();

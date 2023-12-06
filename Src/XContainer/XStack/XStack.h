@@ -3,10 +3,21 @@
 #include<stdio.h>
 #include<stdbool.h>
 #include"XVector.h"
+//XStack虚函数表
+extern XVtable* XStackVtable;
+//XStack虚函数表枚举
+enum XStackEnum
+{
+	EXStack_Push = EXVector_Sort + 1,
+	EXStack_Pop,
+	EXStack_Top,
+};
 typedef struct XStack
 {
 	XVector vector;
 }XStack;
+//初始化类
+void XStack_class_init();
 //创建一个stack容器并返回其指针
 XStack* XStack_new(size_t typeSize);
 #define XStack_New(Type) XStack_new(sizeof(Type))

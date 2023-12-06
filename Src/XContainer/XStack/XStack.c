@@ -16,6 +16,7 @@ void XStack_init(XStack* this_stack, size_t typeSize)
 	if (ISNULL(this_stack, "") || ISNULL(typeSize, ""))
 		return;
 	XVector_init(this_stack, typeSize);
+	ObjectVtable(this_stack)=XStackVtable;
 }
 
 void XStack_free(XStack* this_stack)
@@ -25,17 +26,26 @@ void XStack_free(XStack* this_stack)
 
 void XStack_push(XStack* this_stack, void* LpValue)
 {
-	XVector_push_back(this_stack,LpValue);
+	if (ISNULL(this_stack, "") || ISNULL(ObjectVtable(this_stack), ""))
+		return ;
+	typedef void (*funcPtr)(XStack*, void*);
+	ObjectVirtualFunc(this_stack, EXStack_Push, funcPtr)(this_stack, LpValue);
 }
 
 void XStack_pop(XStack* this_stack)
 {
-	XVector_pop_back(this_stack);
+	if (ISNULL(this_stack, "") || ISNULL(ObjectVtable(this_stack), ""))
+		return ;
+	typedef void (*funcPtr)(XStack*);
+	ObjectVirtualFunc(this_stack, EXStack_Pop, funcPtr)(this_stack);
 }
 
 void* XStack_top(XStack* this_stack)
 {
-	return XVector_back(this_stack);
+	if (ISNULL(this_stack, "") || ISNULL(ObjectVtable(this_stack), ""))
+		return NULL;
+	typedef void* (*funcPtr)(XStack*);
+	return ObjectVirtualFunc(this_stack, EXStack_Top, funcPtr)(this_stack);
 }
 
 void XStack_clear(XStack* this_stack)

@@ -1,13 +1,23 @@
 ﻿#ifndef XPRIORITY_QUEUE
 #define XPRIORITY_QUEUE
 #include"XVector.h"
-//#include"XFunctionCallback.h"
+//XPriority_Queue虚函数表
+extern XVtable* XPriority_QueueVtable;
+//XPriority_Queue虚函数表枚举
+enum XPriority_QueueEnum
+{
+	EXPriority_Queue_Push = EXVector_Sort + 1,
+	EXPriority_Queue_Pop,
+	EXPriority_Queue_Top,
+};
 //优先队列
 typedef struct XPriority_Queue
 {
 	XVector vector;//基本数据
 	XCompare compare;//比较准则
 }XPriority_Queue;
+//初始化类
+void XPriority_Queue_class_init();
 //队列初始化函数
 XPriority_Queue* XPriority_Queue_new(size_t typeSize, XCompare compare);
 #define XPriority_Queue_New(Type,compare) XPriority_Queue_new(sizeof(Type),compare)
