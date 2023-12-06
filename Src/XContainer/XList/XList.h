@@ -7,7 +7,7 @@
 #include"XListNode.h"
 #include"XContainerObject.h"
 //XList虚函数表
-extern void* XListVtable[];
+extern XVtable* XListVtable;
 //XList虚函数表枚举
 enum XListVtableEnum
 {
@@ -31,6 +31,8 @@ typedef struct XList
 	XContainerObject object;
 	XEquality equality;//相等比较函数
 }XList;
+//初始化类
+void XList_class_init();
 //创建链表
 XList* XList_new(size_t TypeSize);
 #define XList_New(Type) XList_new(sizeof(Type))

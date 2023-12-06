@@ -5,23 +5,9 @@
 #include"XVtable.h"
 #include<string.h>
 #include<stdlib.h>
+#include "XList.h"
 #define VECTORNUM 4//初始数组大小
 //虚函数表定义
-//void* XVectorVtable[] = {
-//	//继承的函数
-//	VXContainerObject_free,VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXVector_clear,
-//	VXVector_resize,
-//	//插入
-//	VXVector_push_front,VXVector_push_back,VXVector_inserts,VXVector_insert,VXVector_insertArray,
-//	//删除
-//	VXVector_pop_front,VXVector_pop_back,VXVector_erase,VXVector_remove,
-//	//拷贝
-//	VXVector_copy,VXVector_rcopy,
-//	//遍历
-//	VXVector_at,VXVector_front,VXVector_back,VXVector_find,
-//	//排序
-//	VXVector_sort
-//};
 XVtable* XVectorVtable=NULL;
 void XVector_class_init()
 {
@@ -40,7 +26,7 @@ void XVector_class_init()
 	};
 	XVectorVtable = XVtable_new();
 	//继承的函数
-	XVtable_append_array(XVectorVtable,XContainerObjectVtable->data, XContainerObjectVtable->size);
+	XVtable_append_vtable(XVectorVtable,XContainerObjectVtable);
 	//追加函数
 	XVtable_append_array(XVectorVtable, vtable, sizeof(vtable)/sizeof(vtable[0]));
 }

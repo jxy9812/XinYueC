@@ -8,7 +8,6 @@
 #include"XVector_Iterator/XVector_iterator.h"
 #include"XVector_Iterator/XVector_reverse_iterator.h"
 //XVector虚函数表
-typedef struct XVtable XVtable;
 extern XVtable* XVectorVtable;
 //XVector虚函数表枚举
 enum XVectorEnum
@@ -37,7 +36,7 @@ typedef struct XVector
 	XContainerObject object;
 	XEquality equality;//相等比较函数
 }XVector;
-
+//初始化类
 void XVector_class_init();
 //开辟一个动态数组,初始化
 XVector* XVector_new(size_t typeSize);

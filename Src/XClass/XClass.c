@@ -2,10 +2,13 @@
 #include"XVtable.h"
 #include"XContainerObject.h"
 #include"XVector.h"
+#include"XList.h"
 XClass_init()
 {
 	XContainerObject_class_init();
 	XVector_class_init();
+	XList_class_init();
+	//测试
 	/*void* array[] = {1,2,3,4};
 	XVtable* vtable= XVtable_new();
 	XVtable_insert_array(vtable,0,array,4);

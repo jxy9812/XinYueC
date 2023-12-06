@@ -4,20 +4,29 @@
 #include"XStack.h"
 #include<stdlib.h>
 #include<string.h>
-#include<stdarg.h> 
 //虚函数表定义
-void* XListVtable[] = {
+XVtable* XListVtable = NULL;
+void XList_class_init()
+{
+	void* vtable[] = {
+		//插入
+		VXList_push_front,VXList_push_back,VXList_inserts,VXList_insert,VXList_insertArray,
+		//删除
+		VXList_pop_front,VXList_pop_back,VXList_erase,VXList_remove,
+		//遍历
+		VXList_front,VXList_back,VXList_find,
+		//排序
+		VXList_sort
+	};
+	XListVtable = XVtable_new();
 	//继承的函数
-	VXList_free,VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXList_clear,
-	//插入
-	VXList_push_front,VXList_push_back,VXList_inserts,VXList_insert,VXList_insertArray,
-	//删除
-	VXList_pop_front,VXList_pop_back,VXList_erase,VXList_remove,
-	//遍历
-	VXList_front,VXList_back,VXList_find,
-	//排序
-	VXList_sort
-};
+	XVtable_append_vtable(XListVtable, XContainerObjectVtable);
+	//追加函数
+	XVtable_append_array(XListVtable, vtable, sizeof(vtable) / sizeof(vtable[0]));
+	//重写的函数
+	XVtable_At(XListVtable,EXContainerObject_Free)= VXList_free;
+	XVtable_At(XListVtable, EXContainerObject_Clear) = VXList_clear;
+}
 XListNode* VXList_push_front(XList* this_list, void* LpValue)
 {
 	if (ISNULL(this_list, ""))

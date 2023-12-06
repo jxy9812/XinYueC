@@ -113,6 +113,11 @@ void XVtable_append_array(XVtable* this_vtable, const void** begin, size_t n)
 	}
 }
 
+void XVtable_append_vtable(XVtable* this_vtable, XVtable* table)
+{
+	XVtable_append_array(this_vtable, table->data, table->size);
+}
+
 void XVtable_push_back(XVtable* this_vtable, void* func)
 {
 	if (ISNULL(this_vtable, ""))
