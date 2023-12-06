@@ -1,14 +1,32 @@
-﻿#include"XVector_virtual.h"
-#include"XVector.h"
-#include"XContainerObject_virtual.h"
+﻿#include"XVector.h"
 #include"XSort.h"
 #include"XVtable.h"
 #include<string.h>
 #include<stdlib.h>
 #include "XList.h"
+//声明
 #define VECTORNUM 4//初始数组大小
 //虚函数表定义
 XVtable* XVectorVtable=NULL;
+static void VXVector_resize(XVector* this_vector, size_t size);
+static void VXVector_push_front(XVector* this_vector, void* LpValue);
+static void VXVector_push_back(XVector* this_vector, void* LpValue);
+static void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n);
+static void VXVector_insert(XVector* this_vector, int64_t index, const void* LpValue);
+static void VXVector_insertArray(XVector* this_vector, int64_t index, const void* begin, size_t n);
+static void VXVector_pop_front(XVector* this_vector);
+static void VXVector_pop_back(XVector* this_vector);
+static void VXVector_erase(XVector* this_vector, void* LpValue);
+static void VXVector_remove(XVector* this_vector, int64_t index, int64_t n);//删除数据 n<0 后面全部删除
+static void VXVector_clear(XVector* this_vector);
+static void VXVector_copy(XVector* this_One, const XVector* this_Two);
+static void VXVector_rcopy(XVector* this_One, const XVector* this_Two);
+static void* VXVector_at(const XVector* this_vector, int64_t index);
+static void* VXVector_front(const XVector* this_vector);
+static void* VXVector_back(const XVector* this_vector);
+static void* VXVector_find(const XVector* this_vector, const void* findVal);//查找数据，返回找到的指针，没有返回NULL
+static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
+
 void XVector_class_init()
 {
 	void* vtable[] = {
@@ -30,6 +48,7 @@ void XVector_class_init()
 	//追加函数
 	XVtable_append_array(XVectorVtable, vtable, sizeof(vtable)/sizeof(vtable[0]));
 }
+
 //检测是否需要扩容
 static void VXVectorEnlargeCapacity(XVector* this_vector)
 {
@@ -98,7 +117,7 @@ void VXVector_resize(XVector* this_vector, size_t size)
 }
 void VXVector_push_front(XVector* this_vector, void* LpValue)
 {
-	if (VXContainerObject_empty(this_vector))
+	if (XContainerObject_empty(this_vector))
 		VXVector_push_back(this_vector, LpValue);
 	else
 		VXVector_insert(this_vector, 0, LpValue);
@@ -195,13 +214,13 @@ void VXVector_pop_front(XVector* this_vector)//删除向量中第一个元素
 }
 void VXVector_pop_back(XVector* this_vector)//删除向量中最后一个元素
 {
-	if (VXContainerObject_empty(this_vector))
+	if (XContainerObject_empty(this_vector))
 		return ;
 	--ContainerSize(this_vector);
 }
 void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 {
-	if (VXContainerObject_empty(this_vector))
+	if (XContainerObject_empty(this_vector))
 		return ;
 	if (VXVector_front(this_vector) <= LpValue && LpValue <= VXVector_back(this_vector) && ((char*)LpValue - (char*)VXVector_front(this_vector)) % ContainerTypeSize(this_vector) == 0)
 	{
@@ -212,7 +231,7 @@ void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 }
 void VXVector_remove(XVector* this_vector, int64_t index, int64_t n)//删除数据 n<0 后面全部删除
 {
-	if (VXContainerObject_empty(this_vector))
+	if (XContainerObject_empty(this_vector))
 		return;
 	size_t size = ContainerSize(this_vector);
 
@@ -231,7 +250,7 @@ void VXVector_remove(XVector* this_vector, int64_t index, int64_t n)//删除数�
 }
 void VXVector_clear(XVector* this_vector)//清空vector的数组
 {
-	if (VXContainerObject_empty(this_vector))
+	if (XContainerObject_empty(this_vector))
 		return;
 	ContainerSize(this_vector) = 0;
 	/*if (object->_data != NULL)
@@ -301,13 +320,13 @@ void* VXVector_front(const XVector* this_vector)//返回向量头指针，指向
 {
 	/*if (ISNULL(this_vector, ""))
 		return NULL;*/
-	if (VXContainerObject_empty(this_vector))
+	if (XContainerObject_empty(this_vector))
 		return NULL;
 	return ContainerDataPtr(this_vector);
 }
 void* VXVector_back(const XVector* this_vector)//返回向量尾指针，指向向量最后一个元素
 {
-	if (VXContainerObject_empty(this_vector))
+	if (XContainerObject_empty(this_vector))
 		return NULL;
 	if (ContainerSize(this_vector) == 1)
 		return VXVector_front(this_vector);

@@ -1,9 +1,17 @@
-﻿#include"XContainerObject_virtual.h"
-#include"XContainerObject.h"
+﻿#include"XContainerObject.h"
 #include"XAlgorithm.h"
 #include"XVtable.h"
 #include<stdlib.h>
+//声明 
+static void VXContainerObject_free(XContainerObject* Object);
+static bool VXContainerObject_empty(const XContainerObject* Object);
+static size_t VXContainerObject_size(const XContainerObject* Object);
+static size_t VXContainerObject_capacity(const  XContainerObject* Object);
+static size_t VXContainerObject_type(const XContainerObject* Object);
+static void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
+static void VXContainerObject_clear(XContainerObject* Object);
 XVtable* XContainerObjectVtable = NULL;
+
 void XContainerObject_class_init()
 {
 	//虚函数表初始化

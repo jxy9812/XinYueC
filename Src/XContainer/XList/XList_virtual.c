@@ -1,11 +1,30 @@
-﻿#include"XList_virtual.h"
-#include"XList.h"
-#include"XContainerObject_virtual.h"
+﻿#include"XList.h"
 #include"XStack.h"
 #include<stdlib.h>
 #include<string.h>
+//声明
+//插入
+static XListNode* VXList_push_front(XList* this_list, void* LpValue);
+static XListNode* VXList_push_back(XList* this_list, void* LpValue);
+static void VXList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t n);
+static void VXList_insert(XList* this_list, XListNode* curNode, void* LpValue);
+static void VXList_insertArray(XList* this_list, XListNode* curNode, const void* begin, size_t n);
+ //删除
+static void VXList_pop_front(XList* this_list);
+static void VXList_pop_back(XList* this_list);
+static void VXList_erase(XList* this_list, XListNode* node);
+static void VXList_remove(XList* this_list, void* LpValue);
+static void VXList_clear(XList* this_list);
+//遍历
+static void* VXList_front(XList* this_list);
+static void* VXList_back(XList* this_list);
+static XListNode* VXList_find(const XList* this_list, void* LpValue);
+//其他
+static void VXList_sort(XList* this_list, XCompare compare);
+static void VXList_free(XList* this_list);
 //虚函数表定义
 XVtable* XListVtable = NULL;
+
 void XList_class_init()
 {
 	void* vtable[] = {
@@ -27,6 +46,7 @@ void XList_class_init()
 	XVtable_At(XListVtable,EXContainerObject_Free)= VXList_free;
 	XVtable_At(XListVtable, EXContainerObject_Clear) = VXList_clear;
 }
+
 XListNode* VXList_push_front(XList* this_list, void* LpValue)
 {
 	if (ISNULL(this_list, ""))
@@ -145,21 +165,21 @@ void VXList_insertArray(XList* this_list, XListNode* curNode, const void* begin,
 //删除
 void VXList_pop_front(XList* this_list)
 {
-	if (ISNULL(this_list, "") || VXContainerObject_empty(this_list))
+	if (ISNULL(this_list, "") || XContainerObject_empty(this_list))
 		return;
 	VXList_erase(this_list,XList_begin(this_list));
 }
 
 void VXList_pop_back(XList* this_list)
 {
-	if (ISNULL(this_list, "") || VXContainerObject_empty(this_list))
+	if (ISNULL(this_list, "") || XContainerObject_empty(this_list))
 		return;
 	VXList_erase(this_list, XList_rbegin(this_list));
 }
 
 void VXList_erase(XList* this_list, XListNode* node)
 {
-	if (ISNULL(this_list, "")|| ISNULL(node, "")|| VXContainerObject_empty(this_list))
+	if (ISNULL(this_list, "")|| ISNULL(node, "")|| XContainerObject_empty(this_list))
 		return;
 	XList* list = this_list;
 	XListNode* nextNode = node->next;//下一个节点
@@ -194,7 +214,7 @@ void VXList_remove(XList* this_list, void* LpValue)
 
 void VXList_clear(XList* this_list)
 {
-	if (VXContainerObject_empty(this_list))
+	if (XContainerObject_empty(this_list))
 		return;
 	XList* list = this_list;
 	XListNode* p = list->object._data;
@@ -292,12 +312,12 @@ static struct XListNode* List_OneSort(XListNode* ListHead, XListNode* ListTail, 
 
 void VXList_sort(XList* this_list, XCompare compare)
 {
-	if (isNULL(isNULLInfo(this_list, "")))
+	if (ISNULL(this_list, ""))
 		return;
 	XList* list = this_list;
-	XListNode* ListHead = XList_front(this_list);//链表第一个节点
-	XListNode* ListTail = XList_back(this_list);//链表最后一个节点
-	struct XStack* stack = XStack_new(sizeof(struct XListNode*));
+	XListNode* ListHead = XList_begin(this_list);//链表第一个节点
+	XListNode* ListTail = XList_rbegin(this_list);//链表最后一个节点
+	XStack* stack = XStack_New(XListNode*);
 	XStack_push(stack, &ListTail);
 	XStack_push(stack, &ListHead);
 	while (!XStack_empty(stack))

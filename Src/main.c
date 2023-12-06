@@ -6,8 +6,9 @@
 int main(int argc, char* args[])
 {
 	XClass_init();
+
 	//ListSortTest();
-	ListTest();
+	//ListTest();
 	//ListIterator();
 	//ListSwapTest();
 	//VectorTest();
