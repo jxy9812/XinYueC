@@ -54,6 +54,14 @@ void* XQueue_back(XQueue* this_queue)
 	return XList_back(this_queue);
 }
 
+void* XQueue_top(XQueue* this_queue)
+{
+	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+		return;
+	typedef void* (*funcPtr)(XQueue*);
+	return ObjectVirtualFunc(this_queue, EXQueue_Top, funcPtr)(this_queue);
+}
+
 bool XQueue_empty(XQueue* this_queue)
 {
 	return XList_empty(this_queue);

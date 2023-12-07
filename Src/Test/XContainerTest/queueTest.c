@@ -15,7 +15,7 @@ void queueTest()
 	}
 	while (!XQueue_empty(queue))
 	{
-		printf("%d ", XQueue_Front(queue,int));
+		printf("%d ", XQueue_Top(queue,int));
 		XQueue_pop(queue);
 	}
 	XQueue_free(queue);

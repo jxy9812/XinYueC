@@ -8,9 +8,9 @@ extern XVtable* XStackVtable;
 //XStack虚函数表枚举
 enum XStackEnum
 {
-	EXStack_Push = EXVector_Sort + 1,
-	EXStack_Pop,
-	EXStack_Top,
+	EXStack_Push = EXVector_Push_Back,
+	EXStack_Pop= EXVector_Pop_Back,
+	EXStack_Top= EXVector_Back,
 };
 typedef struct XStack
 {

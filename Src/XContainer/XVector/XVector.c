@@ -16,7 +16,6 @@ void XVector_init(XVector* this_vector,size_t typeSize )
 		return;
 	XContainerObject_init(this_vector, typeSize);
 	ObjectVtable(this_vector)= XVectorVtable;
-	//this_vector->object.object.vtable = XVectorVtable;
 	this_vector->equality = NULL;
 }
 
@@ -60,12 +59,20 @@ void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t 
 	ObjectVirtualFunc(this_vector, EXVector_Inserts, funcPtr)(this_vector, index, LpValue,n);
 }
 
-void XVector_insertArray(XVector* this_vector, int64_t index, const void* begin, size_t n)
+void XVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n)
 {
 	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
 		return ;
 	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
-	ObjectVirtualFunc(this_vector, EXVector_InsertArray, funcPtr)(this_vector, index, begin, n);
+	ObjectVirtualFunc(this_vector, EXVector_Insert_Array, funcPtr)(this_vector, index, begin, n);
+}
+
+void XVector_append_array(XVector* this_vector, const void* begin, size_t n)
+{
+	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
+		return;
+	typedef void (*funcPtr)(XVector*, void*, size_t);
+	ObjectVirtualFunc(this_vector, EXVector_append_Array, funcPtr)(this_vector, begin, n);
 }
 
 void XVector_pop_front(XVector* this_vector)

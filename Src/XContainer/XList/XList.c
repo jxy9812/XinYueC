@@ -33,12 +33,12 @@ void XList_insert(XList* this_list, XListNode* curNode, void* LpValue)
 	ObjectVirtualFunc(this_list, EXList_Insert, funcPtr)(this_list, curNode, LpValue);
 }
 
-void XList_insertArray(XList* this_list, XListNode* curNode, const void* begin, size_t n)
+void XList_insert_array(XList* this_list, XListNode* curNode, const void* begin, size_t n)
 {
 	if (ISNULL(this_list, "") || ISNULL(ObjectVtable(this_list), ""))
 		return;
 	typedef void (*funcPtr)(XList*, XListNode*, const void* , const void* );
-	ObjectVirtualFunc(this_list, EXList_InsertArray, funcPtr)(this_list, curNode,begin,n);
+	ObjectVirtualFunc(this_list, EXList_Insert_Array, funcPtr)(this_list, curNode,begin,n);
 }
 
 void XList_pop_front(XList* this_list)

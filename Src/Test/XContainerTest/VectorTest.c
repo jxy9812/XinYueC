@@ -22,12 +22,13 @@ void VectorTest()
 	//XVector_resize(v,11);
 	int arr[]={100,123,456,4,8496,3,321,23,3,132,0};
 	
-	XVector_insertArray(v,0,arr, sizeof(arr) / sizeof(arr[0]));
+	
 	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
 	{
 		int n = arr[i];
 		XVector_push_front(v,arr+i);
 	}
+	XVector_append_array(v, arr, sizeof(arr) / sizeof(arr[0]));
 	printf("插入数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	XVector_remove(v, 2, 1);
 	printf("删除数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");

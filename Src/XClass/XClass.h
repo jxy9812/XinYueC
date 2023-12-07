@@ -1,8 +1,6 @@
 ﻿#ifndef XCLASS_H
 #define XCLASS_H
 #include"XVtable.h"
-//所有面向对象的类在这里初始化他们的虚函数表
-XClass_init();
 
 typedef struct XVtable XVtable;
 //容器基类
@@ -10,6 +8,11 @@ typedef struct XClassObject
 {
 	XVtable* vtable;//虚函数表
 }XClassObject;
+
+//所有面向对象的类在这里初始化他们的虚函数表
+XClass_init();
+
+
 #define VtableFunc(Vtable,Offset,Type) ((Type)((Vtable)[Offset]))//用虚函数表获取函数
 #define ObjectVtable(Object) ((XClassObject*)Object)->vtable  //用获取类中的虚函数表
 #define ObjectVirtualFunc(Object,Offset,Type) ((Type)((((XClassObject*)Object)->vtable->data)[Offset]))//用XContainerObject及其子类获取虚函数

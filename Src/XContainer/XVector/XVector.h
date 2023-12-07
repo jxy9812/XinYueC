@@ -18,7 +18,8 @@ enum XVectorEnum
 	EXVector_Push_Back,
 	EXVector_Inserts,
 	EXVector_Insert,
-	EXVector_InsertArray,
+	EXVector_Insert_Array,
+	EXVector_append_Array,
 	EXVector_Pop_Front,
 	EXVector_Pop_Back,
 	EXVector_Erase,
@@ -57,8 +58,8 @@ void XVector_insert(XVector* this_vector, int64_t index, const void* LpValue);
 // 向量中指向元素p前增加n个相同的元素x
 void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n);
 // 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2]间的数据
-void XVector_insertArray(XVector* this_vector, int64_t index, const void* begin, size_t n);
-
+void XVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n);
+void XVector_append_array(XVector* this_vector, const void* begin, size_t n);
 void XVector_pop_front(XVector* this_vector);
 //删除向量中最后一个元素
 void XVector_pop_back(XVector* this_vector);

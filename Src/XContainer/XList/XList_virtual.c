@@ -8,7 +8,7 @@ static XListNode* VXList_push_front(XList* this_list, void* LpValue);
 static XListNode* VXList_push_back(XList* this_list, void* LpValue);
 static void VXList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t n);
 static void VXList_insert(XList* this_list, XListNode* curNode, void* LpValue);
-static void VXList_insertArray(XList* this_list, XListNode* curNode, const void* begin, size_t n);
+static void VXList_insert_array(XList* this_list, XListNode* curNode, const void* begin, size_t n);
  //删除
 static void VXList_pop_front(XList* this_list);
 static void VXList_pop_back(XList* this_list);
@@ -29,7 +29,7 @@ void XList_class_init()
 {
 	void* vtable[] = {
 		//插入
-		VXList_push_front,VXList_push_back,VXList_inserts,VXList_insert,VXList_insertArray,
+		VXList_push_front,VXList_push_back,VXList_inserts,VXList_insert,VXList_insert_array,
 		//删除
 		VXList_pop_front,VXList_pop_back,VXList_erase,VXList_remove,
 		//遍历
@@ -147,7 +147,7 @@ void VXList_insert(XList* this_list, XListNode* curNode, void* LpValue)
 	VXList_inserts(this_list, curNode, LpValue, 1);
 }
 
-void VXList_insertArray(XList* this_list, XListNode* curNode, const void* begin, size_t n)
+void VXList_insert_array(XList* this_list, XListNode* curNode, const void* begin, size_t n)
 {
 	if (ISNULL(this_list, ""))
 		return;

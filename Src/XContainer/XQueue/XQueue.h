@@ -8,8 +8,9 @@ extern XVtable* XQueueVtable;
 //XQueue虚函数表枚举
 enum XQueueEnum
 {
-	EXQueue_Push = EXList_Sort + 1,
-	EXQueue_Pop,
+	EXQueue_Push = EXList_Push_Back,
+	EXQueue_Pop= EXList_Pop_Front,
+	EXQueue_Top = EXList_Front,
 };
 typedef struct XQueue
 {
@@ -35,6 +36,9 @@ void* XQueue_front(XQueue* this_queue);
 // 返回队列的队尾元素指针，但不删除该元素
 void* XQueue_back(XQueue* this_queue);
 #define XQueue_Back(queue,Type) (*(Type*)XQueue_back(queue))
+// 取得队头元素（但不删除）O(1)
+void* XQueue_top(XQueue* this_queue);
+#define XQueue_Top(queue,type) (*((type*)XQueue_top(queue)))
 //当队列为空时返回true，否则返回false
 bool XQueue_empty(XQueue* this_queue);
 //返回队列中元素的个数

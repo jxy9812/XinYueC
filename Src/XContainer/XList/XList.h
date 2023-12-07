@@ -16,7 +16,7 @@ enum XListVtableEnum
 	EXList_Push_Back,
 	EXList_Inserts,
 	EXList_Insert,
-	EXList_InsertArray,
+	EXList_Insert_Array,
 	EXList_Pop_Front,
 	EXList_Pop_Back,
 	EXList_Erase,
@@ -51,7 +51,7 @@ void XList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t n
 //链表指定节点前插入1个数据
 void XList_insert(XList* this_list, XListNode* curNode, void* LpValue);
 // 链表中指向节点前插入另一个相同类型数组的数据，需要指出数组大小n
-void  XList_insertArray(XList* this_list, XListNode* curNode, const void* begin, size_t n);
+void  XList_insert_array(XList* this_list, XListNode* curNode, const void* begin, size_t n);
 //删除函数
 //删除链表中第一个元素
 void  XList_pop_front(XList* this_list);
