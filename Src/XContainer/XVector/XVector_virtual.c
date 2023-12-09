@@ -30,6 +30,8 @@ static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
 
 void XVector_class_init()
 {
+	if (XVectorVtable)
+		return;
 	void* vtable[] = {
 		VXVector_resize,
 		//插入

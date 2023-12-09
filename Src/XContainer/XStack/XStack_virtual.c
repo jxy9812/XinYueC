@@ -4,9 +4,8 @@ XVtable* XStackVtable = NULL;
 
 void XStack_class_init()
 {
-	/*void* vtable[] = {
-		VXStack_push,VXStack_pop,VXStack_top
-	};*/
+	if (XStackVtable)
+		return;
 	XStackVtable = XVtable_new();
 	//继承的函数
 	XVtable_append_vtable(XStackVtable, XVectorVtable);

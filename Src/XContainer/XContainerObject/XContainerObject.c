@@ -3,6 +3,7 @@ void XContainerObject_init(XContainerObject* Object, size_t typeSize)
 {
 	if (ISNULL(Object, "") || ISNULL(typeSize, ""))
 		return;
+	XContainerObject_class_init();
 	ObjectVtable(Object)= XContainerObjectVtable;
 	Object->_data = NULL;
 	Object->_capacity = 0;

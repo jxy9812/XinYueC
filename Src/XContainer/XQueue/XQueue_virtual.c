@@ -4,9 +4,8 @@ XVtable* XQueueVtable = NULL;
 
 void XQueue_class_init()
 {
-	/*void* vtable[] = {
-		VXQueue_push,VXQueue_pop
-	};*/
+	if (XQueueVtable)
+		return;
 	XQueueVtable = XVtable_new();
 	//继承的函数
 	XVtable_append_vtable(XQueueVtable, XListVtable);

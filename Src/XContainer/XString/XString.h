@@ -5,27 +5,29 @@
 //XVector虚函数表
 extern XVtable* XStringVtable;
 //XVector虚函数表枚举
-//enum XStringEnum
-//{
-//	EXString_Clear = EXContainerObject_Clear,
-//	EXString_Resize,
-//	EXString_Push_Front,
-//	EXString_Push_Back,
-//	EXString_Inserts,
-//	EXString_Insert,
-//	EXString_InsertArray,
-//	EXString_Pop_Front,
-//	EXString_Pop_Back,
-//	EXString_Erase,
-//	EXString_Remove,
-//	EXString_Copy,
-//	EXString_Rcopy,
-//	EXString_At,
-//	EXString_Front,
-//	EXString_Back,
-//	EXString_Find,
-//	EXString_Sort
-//};
+enum XStringEnum
+{
+	EXString_Empty = EXContainerObject_Empty,
+	EXString_Size = EXContainerObject_Size,
+	EXString_Resize = EXVector_Resize,
+	EXString_Push_Front,
+	EXString_Push_Back,
+	EXString_Inserts,
+	EXString_Insert,
+	EXString_InsertArray,
+	EXString_append = EXVector_append_Array,
+	EXString_Pop_Front,
+	EXString_Pop_Back,
+	EXString_Erase,
+	EXString_Remove,
+	EXString_Copy,
+	EXString_Rcopy,
+	EXString_At,
+	EXString_Front,
+	EXString_Back,
+	EXString_Find,
+	EXString_Sort
+};
 
 typedef struct XString
 {
@@ -37,35 +39,41 @@ void XString_class_init();
  XString* XString_new();
  //初始化 XVector
 void XString_init(XString* this_string);
+//设置XString的大小，实际大小自动+1存/0
+void XString_resize(XString* this_string, size_t len);
+//头部增加一个字符
+void XString_push_front(XString* this_string,char c);
+//尾部增加一个字符
+void XString_push_back(XString* this_string, char c);
 //尾插
-void XString_append(struct XString* this_string, const char* str);
+void XString_append(XString* this_string, const char* string);
 // 赋值
-void XString_assign(struct XString* this_string, const char* str);
+void XString_assign(XString* this_string, const char* str);
 // 第索引处开始插入字符串
-void XString_insert(struct XString* this_string, const int nSel, const char* str);
+void XString_insert(XString* this_string, const int nSel, const char* str);
 //尾删
-void XString_pop_back(struct XString* this_string);
+void XString_pop_back(XString* this_string);
 //删除索引处开始的n个字符
-void XString_erase(struct XString* this_string, const int nSel, const int n);
+void XString_erase(XString* this_string, const int nSel, const int n);
 //清空字符串
-void XString_clear (struct XString* this_string);
+void XString_clear (XString* this_string);
 // 返回索引处字符
-char XString_at(const struct XString* this_string, int nSel);
+char XString_at(const XString* this_string, int nSel);
 // 返回字符串
-char* XString_data(const struct XString* this_string);
+char* XString_data(const XString* this_string);
 //查找函数
-int XString_find_first_of(const struct XString* this_string, const char* find);
-int XString_find_last_of(const struct XString* this_string, const char* find);
-int XString_find_first_not_of(const struct XString* this_string, const char* find);
-int XString_find_last_not_of(const struct XString* this_string, const char* find);
+int XString_find_first_of(const XString* this_string, const char* find);
+int XString_find_last_of(const XString* this_string, const char* find);
+int XString_find_first_not_of(const XString* this_string, const char* find);
+int XString_find_last_not_of(const XString* this_string, const char* find);
 //判断函数
-bool XString_empty(const struct XString* this_string);// 
-//返回当前元素大小
-int XString_size(const struct XString* this_string);//
+bool XString_empty(const XString* this_string);// 
+//返回当前字符串大小
+size_t XString_size(const XString* this_string);//
 ////返回当前容器的最大容量
-//int XString_capacity(const struct XString* this_string); //
+//int XString_capacity(const XString* this_string); //
 //交换
-void XString_swap(struct XString* this_stringOne, struct XString* this_stringTwo);
+void XString_swap(XString* this_stringOne, XString* this_stringTwo);
 //释放容器
-void XString_free(const struct XString* this_string);
+void XString_free(const XString* this_string);
 #endif // !STRING_H

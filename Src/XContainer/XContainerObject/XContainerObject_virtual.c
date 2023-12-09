@@ -14,6 +14,8 @@ XVtable* XContainerObjectVtable = NULL;
 
 void XContainerObject_class_init()
 {
+	if (XContainerObjectVtable)
+		return;
 	//虚函数表初始化
 	XContainerObjectVtable = XVtable_new();
 	void* vtable[] = { VXContainerObject_free, VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_clear };
@@ -24,9 +26,7 @@ void XContainerObject_class_init()
 
 bool VXContainerObject_empty(const XContainerObject* Object)
 {
-	if (ISNULL(Object, ""))
-		return true;
-	return Object->_size == 0;
+	return VXContainerObject_size(Object) == 0;
 }
 
 

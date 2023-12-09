@@ -1,14 +1,34 @@
 ﻿#include"XString.h"
+#include<string.h>
 //判断是中文
 bool XString_isChinese(const char c);
 //返回字符串中字符数量，中文算一个
 size_t XString_charNumber(const char* str);
 //返回对应XVector的索引
 size_t XString_XVectorNsel(const struct XString* this_XString, const size_t nSel);
+//设置XString的大小，实际大小自动+1存/0
+void VXString_resize(XString* this_string, size_t len);
+//尾部增加一个字符
+void VXString_push_back(XString* this_string, char c);
+//尾插
+void VXString_append(XString* this_string, const char* string);
 
+bool VXString_empty(const XString* this_string);
+//返回当前字符串大小
+size_t VXString_size(const XString* this_string);
+//虚函数表定义
+XVtable* XStringVtable = NULL;
 void XString_class_init()
 {
-
+	if (XStringVtable)
+		return;
+	/*void* vtable[] = {
+		
+	};*/
+	XStringVtable = XVtable_new();
+	//继承的函数
+	XVtable_append_vtable(XStringVtable, XVectorVtable);
+	//追加函数
 }
 /*
 bool XString_isChinese(const char c)
@@ -270,3 +290,51 @@ char* XString_data(const XString* this_XString)
 	return string->_data->object._data;
 }
 */
+
+void VXString_resize(XString* this_string, size_t len)
+{
+	typedef void (*funcPtr)(XVector*, size_t);
+	VtableFunc(XVectorVtable, EXVector_Resize, funcPtr)(this_string,len+1);
+}
+
+void VXString_push_back(XString* this_string, char c)
+{
+	if (ISNULL(this_string, "")||c=='/0')
+		return;
+	if(ContainerSize(this_string)==0)
+	{
+		char arr[] = {c,'/0'};
+		typedef void (*funcPtr)(XVector*, const void*, size_t);
+		VtableFunc(XVectorVtable, EXVector_append_Array, funcPtr)(this_string, arr,2);
+	}
+	else
+	{
+		typedef void* (*funcPtr)(XVector*, int64_t);
+		(*(char*)(VtableFunc(XVectorVtable, EXVector_At, funcPtr)(this_string, ContainerSize(this_string) - 1)))=c;
+		//插入/0;
+		c = '/0';
+		VtableFunc(XVectorVtable, EXVector_Push_Back, void (*)(XVector*, void*))(this_string, &c);
+	}
+}
+
+void VXString_append(XString* this_string, const char* string)
+{
+	if (ISNULL(this_string, "") || ISNULL(string, ""))
+		return;
+	VXString_resize(this_string, VXString_size(this_string)+strlen(string));
+}
+
+bool VXString_empty(const XString* this_string)
+{
+	return VXString_size(this_string)==0;
+}
+
+size_t VXString_size(const XString* this_string)
+{
+	if (ISNULL(this_string, ""))
+		return;
+	size_t len = ContainerSize(this_string);
+	if (len == 0)
+		return 0;
+	return len -1;
+}

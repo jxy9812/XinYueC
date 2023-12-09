@@ -12,6 +12,8 @@ static void VXPriority_Queue_pop(XPriority_Queue* this_queue);
 static void* VXPriority_Queue_top(XPriority_Queue* this_queue);
 void XPriority_Queue_class_init()
 {
+	if (XPriority_QueueVtable)
+		return;
 	void* vtable[] = { VXPriority_Queue_push,VXPriority_Queue_pop,VXPriority_Queue_top};
 	XPriority_QueueVtable = XVtable_new();
 	//继承的函数

@@ -15,6 +15,7 @@ void XVector_init(XVector* this_vector,size_t typeSize )
 	if (ISNULL(this_vector, "") || ISNULL(typeSize, ""))
 		return;
 	XContainerObject_init(this_vector, typeSize);
+	XVector_class_init();
 	ObjectVtable(this_vector)= XVectorVtable;
 	this_vector->equality = NULL;
 }
@@ -181,12 +182,12 @@ bool XVector_empty(const XVector* this_vector)
 	return XContainerObject_empty(this_vector);
 }
 
-int XVector_size(const XVector* this_vector)
+size_t XVector_size(const XVector* this_vector)
 {
 	return XContainerObject_size(this_vector);
 }
 
-int XVector_capacity(const XVector* this_vector)
+size_t XVector_capacity(const XVector* this_vector)
 {
 	return XContainerObject_capacity(this_vector);
 }

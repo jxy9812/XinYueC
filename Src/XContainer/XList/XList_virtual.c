@@ -27,6 +27,8 @@ XVtable* XListVtable = NULL;
 
 void XList_class_init()
 {
+	if (XListVtable)
+		return;
 	void* vtable[] = {
 		//插入
 		VXList_push_front,VXList_push_back,VXList_inserts,VXList_insert,VXList_insert_array,

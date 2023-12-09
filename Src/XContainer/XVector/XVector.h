@@ -90,9 +90,9 @@ void  XVector_sort(XVector* this_vector, XCompare compare);
 //检测vector内是否为空，空为真 O(1)
 bool XVector_empty(const  XVector* this_vector);
 //返回vector内元素的个数 O(1)
-int XVector_size(const  XVector* this_vector);
+size_t XVector_size(const  XVector* this_vector);
 //返回当前向量所能容纳的最大元素个数
-int  XVector_capacity(const  XVector* this_vector);
+size_t  XVector_capacity(const  XVector* this_vector);
 //交换两个同类型向量的数据
 void XVector_swap(XVector* this_vectorOne, XVector* this_vectorTwo);
 //返回元素类型字节大小

@@ -150,6 +150,7 @@ void XList_init(XList* this_list, size_t typeSize)
 	if (ISNULL(this_list, "")||ISNULL(typeSize, ""))
 		return;
 	XContainerObject_init(this_list, typeSize);
+	XList_class_init();
 	ObjectVtable(this_list) = XListVtable;
 	this_list->equality = NULL;
 }
