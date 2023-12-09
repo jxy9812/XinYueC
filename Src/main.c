@@ -5,15 +5,15 @@
 #include<math.h>
 int main(int argc, char* args[])
 {
-	ListSortTest();
-	ListTest();
-	ListIterator();
-	ListSwapTest();
+	//ListSortTest();
+	//ListTest();
+	//ListIterator();
+	//ListSwapTest();
 	//VectorTest();
 	//stackTest();
 	//queueTest();
 	//XPriority_QueueTest();
-	//XStringTest();
+	XStringTest();
 	//XMapTest();
 	//XMapAndXVectorFindTest();
 	//XBinarySearchTest();

@@ -23,6 +23,8 @@ static void XVtableEnlargeCapacity(XVtable* this_vtable)
 	}
 	else if (this_vtable->capacity == this_vtable->size)//空间已满需要扩容
 	{
+		if (ISNULL(!this_vtable->isStack, "栈上空间满了，无法自动扩容"))
+			return;
 		void* _data = realloc(this_vtable->data, this_vtable->capacity * sizeof(void*) * 1.5);
 		if (_data == NULL)
 		{
@@ -43,6 +45,16 @@ XVtable* XVtable_new()
 	return this_vtable;
 }
 
+void XVtable_init_stack(XVtable* this_vtable, void** data, size_t size)
+{
+	if (ISNULL(this_vtable, ""))
+		return NULL;
+	this_vtable->data = data;
+	this_vtable->capacity = size;
+	this_vtable->size = 0;
+	this_vtable->isStack = true;
+}
+
 void XVtable_init(XVtable* this_vtable)
 {
 	if (ISNULL(this_vtable, ""))
@@ -50,6 +62,7 @@ void XVtable_init(XVtable* this_vtable)
 	this_vtable->data = NULL;
 	this_vtable->capacity = 0;
 	this_vtable->size = 0;
+	this_vtable->isStack = false;
 	//XVtableEnlargeCapacity(this_vtable);
 }
 

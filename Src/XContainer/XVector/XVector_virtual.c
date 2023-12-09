@@ -27,12 +27,15 @@ static void* VXVector_front(const XVector* this_vector);
 static void* VXVector_back(const XVector* this_vector);
 static void* VXVector_find(const XVector* this_vector, const void* findVal);//查找数据，返回找到的指针，没有返回NULL
 static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
-
+#if VtableIsStack
+	static XVtable vtable;//虚函数类
+	static void* vtable_data[25];//虚函数数据
+#endif
 void XVector_class_init()
 {
 	if (XVectorVtable)
 		return;
-	void* vtable[] = {
+	void* table[] = {
 		VXVector_resize,
 		//插入
 		VXVector_push_front,VXVector_push_back,VXVector_inserts,VXVector_insert,VXVector_insert_array,VXVector_append_array,
@@ -45,11 +48,19 @@ void XVector_class_init()
 		//排序
 		VXVector_sort
 	};
+#if !VtableIsStack
 	XVectorVtable = XVtable_new();
+#else
+	XVectorVtable = &vtable;
+	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+#endif
 	//继承的函数
 	XVtable_append_vtable(XVectorVtable,XContainerObjectVtable);
 	//追加函数
-	XVtable_append_array(XVectorVtable, vtable, sizeof(vtable)/sizeof(vtable[0]));
+	XVtable_append_array(XVectorVtable, table, sizeof(table)/sizeof(table[0]));
+#if ShowContainerSize
+	printf("XVector size:%d\n", XVtable_size(XVectorVtable));
+#endif // ShowContainerSize
 }
 
 //检测是否需要扩容

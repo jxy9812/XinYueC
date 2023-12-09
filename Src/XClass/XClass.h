@@ -15,4 +15,7 @@ typedef struct XClassObject
 #define isNULLInfo(args,str) args,#args,str ,__FUNCTION__,__FILE__,__LINE__
 #define ISNULL(args,str)(isNULL(isNULLInfo(args,str)))
 bool isNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/);
+
+#define VtableIsStack true //虚函数表定义在栈上
+#define ShowContainerSize false; //显示容器大小
 #endif // !XVirtual_H

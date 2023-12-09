@@ -8,8 +8,12 @@ typedef struct XVtable
 	void** data;
 	size_t size;
 	size_t capacity;//当前容器能容纳的最大元素数量
+	bool isStack;//定义在栈上
 }XVtable;
 XVtable* XVtable_new();
+//定义在栈上
+void XVtable_init_stack(XVtable* this_vtable, void** data, size_t size);
+//初始化堆上的
 void XVtable_init(XVtable* this_vtable);
 void XVtable_insert(XVtable* this_vtable, int64_t index, const void* func);
 void XVtable_insert_array(XVtable* this_vtable, int64_t index, const void** begin, size_t n);
