@@ -164,7 +164,7 @@ void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t
 		for (size_t i = 0; i < n; i++)
 		{
 			VXVectorEnlargeCapacity(this_vector);
-			memcpy(VXVector_at(this_vector, sizen), LpValue, typeSize);
+			memcpy(VXVector_at(this_vector, sizen), (char*)LpValue+i*typeSize, typeSize);
 			sizen++;
 			ContainerSize(this_vector)++;
 		}

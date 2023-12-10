@@ -12,23 +12,58 @@ void VXString_resize(XString* this_string, size_t len);
 void VXString_push_back(XString* this_string, char c);
 //尾插
 void VXString_append(XString* this_string, const char* string);
-
+void VXString_insert(XString* this_string, const int64_t index, const char* string);
+//void VXString_pop_front(XString* this_string);
+void VXString_pop_back(XString* this_string);
+void VXString_remove(XString* this_string, int64_t index, int64_t n);
+void VXString_erase(XString* this_string, void* LpValue);
+void VXString_clear(XString* this_string);
 bool VXString_empty(const XString* this_string);
 //返回当前字符串大小
 size_t VXString_size(const XString* this_string);
+// 赋值
+void VXString_assign(XString* this_string, const char* string);
+// 返回字符串
+const char* VXString_data(const XString* this_string);
+
 //虚函数表定义
 XVtable* XStringVtable = NULL;
+#if VtableIsStack
+	static XVtable vtable;//虚函数类
+	static void* vtable_data[27];//虚函数数据
+#endif
 void XString_class_init()
 {
 	if (XStringVtable)
 		return;
-	/*void* vtable[] = {
+	void* table[] = { VXString_assign,VXString_data
 		
-	};*/
+	};
+#if !VtableIsStack
 	XStringVtable = XVtable_new();
+#else
+	XStringVtable = &vtable;
+	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+#endif
 	//继承的函数
 	XVtable_append_vtable(XStringVtable, XVectorVtable);
+	//重写的函数
+	XVtable_At(XStringVtable, EXVector_Erase) = VXString_erase;
+	XVtable_At(XStringVtable,EXVector_Clear)=VXString_clear;
+	XVtable_At(XStringVtable, EXVector_Remove) = VXString_remove;
+	XVtable_At(XStringVtable, EXVector_Push_Back) = VXString_push_back;
+	XVtable_At(XStringVtable, EXVector_append_Array) = VXString_append;
+	XVtable_At(XStringVtable, EXVector_Insert) = VXString_insert;
+	//XVtable_At(XStringVtable, EXVector_Pop_Front) = VXString_pop_front;
+	XVtable_At(XStringVtable, EXVector_Pop_Back) = VXString_pop_back;
+	XVtable_At(XStringVtable, EXContainerObject_Empty) = VXString_empty;
+	XVtable_At(XStringVtable, EXContainerObject_Size) = VXString_size;
 	//追加函数
+	XVtable_append_array(XStringVtable, table, sizeof(table) / sizeof(table[0]));
+
+#if ShowContainerSize
+	printf("XString size:%d\n", XVtable_size(XStringVtable));
+#endif // ShowContainerSize
 }
 /*
 bool XString_isChinese(const char c)
@@ -299,29 +334,78 @@ void VXString_resize(XString* this_string, size_t len)
 
 void VXString_push_back(XString* this_string, char c)
 {
-	if (ISNULL(this_string, "")||c=='/0')
+	if (ISNULL(this_string, "")||c==0)
 		return;
-	if(ContainerSize(this_string)==0)
-	{
-		char arr[] = {c,'/0'};
-		typedef void (*funcPtr)(XVector*, const void*, size_t);
-		VtableFunc(XVectorVtable, EXVector_append_Array, funcPtr)(this_string, arr,2);
-	}
-	else
-	{
-		typedef void* (*funcPtr)(XVector*, int64_t);
-		(*(char*)(VtableFunc(XVectorVtable, EXVector_At, funcPtr)(this_string, ContainerSize(this_string) - 1)))=c;
-		//插入/0;
-		c = '/0';
-		VtableFunc(XVectorVtable, EXVector_Push_Back, void (*)(XVector*, void*))(this_string, &c);
-	}
+	char arr[] = { c,0 };
+	VXString_append(this_string, arr);
 }
 
 void VXString_append(XString* this_string, const char* string)
 {
 	if (ISNULL(this_string, "") || ISNULL(string, ""))
 		return;
-	VXString_resize(this_string, VXString_size(this_string)+strlen(string));
+	size_t len = strlen(string);
+	if(ContainerSize(this_string)+ len +1>ContainerCapacity(this_string))
+		VXString_resize(this_string, VXString_size(this_string)+strlen(string));
+	strcat(ContainerDataPtr(this_string), string);
+	ContainerSize(this_string)+=len;
+}
+
+void VXString_insert(XString* this_string, const int64_t index, const char* string)
+{
+	if (ISNULL(this_string, "") || ISNULL(string, ""))
+		return;
+	if (index<0 || index>=ContainerSize(this_string))
+		return;
+	//void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n);
+	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
+	VtableFunc(XVectorVtable, EXVector_Inserts, funcPtr)(this_string,index,string,strlen(string));
+}
+
+//void VXString_pop_front(XString* this_string)
+//{
+//	if (VXString_empty(this_string))
+//		return;
+//	typedef void (*funcPtr)(XVector*, void*);
+//	VtableFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_string, "");
+//}
+
+void VXString_pop_back(XString* this_string)
+{
+	if (VXString_empty(this_string))
+		return;
+	//void XVector_remove(XVector* this_vector, int64_t index, int64_t n);
+	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
+	VtableFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string,ContainerSize(this_string)-2,1);
+}
+
+void VXString_remove(XString* this_string, int64_t index, int64_t n)
+{
+	if (VXString_empty(this_string))
+		return;
+	if (index < 0 || index >= ContainerSize(this_string)-1)
+		return;
+	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
+	VtableFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string, index, n);
+}
+
+void VXString_erase(XString* this_string, void* LpValue)
+{
+	if (VXString_empty(this_string))
+		return;
+	if ((char*)ContainerDataPtr(this_string) + ContainerSize(this_string) - 1 == LpValue)
+		return;
+	typedef void (*funcPtr)(XVector*, void*);
+	VtableFunc(XVectorVtable, EXVector_Erase, funcPtr)(this_string, LpValue);
+}
+
+void VXString_clear(XString* this_string)
+{
+	if (ISNULL(this_string, ""))
+		return;
+	ContainerSize(this_string)=0;
+	typedef void (*funcPtr)(XVector*, void*);
+	VtableFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_string,"");
 }
 
 bool VXString_empty(const XString* this_string)
@@ -332,9 +416,24 @@ bool VXString_empty(const XString* this_string)
 size_t VXString_size(const XString* this_string)
 {
 	if (ISNULL(this_string, ""))
-		return;
+		return 0;
 	size_t len = ContainerSize(this_string);
 	if (len == 0)
 		return 0;
 	return len -1;
+}
+
+void VXString_assign(XString* this_string, const char* string)
+{
+	if (ISNULL(this_string, "")|| ISNULL(string, ""))
+		return;
+	VXString_clear(this_string);
+	VXString_append(this_string,string);
+}
+
+const char* VXString_data(const XString* this_string)
+{
+	if (ISNULL(this_string, ""))
+		return NULL;
+	return ContainerDataPtr(this_string);
 }

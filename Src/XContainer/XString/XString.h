@@ -15,18 +15,20 @@ enum XStringEnum
 	EXString_Inserts,
 	EXString_Insert,
 	EXString_InsertArray,
-	EXString_append = EXVector_append_Array,
+	EXString_Append = EXVector_append_Array,
 	EXString_Pop_Front,
 	EXString_Pop_Back,
-	EXString_Erase,
-	EXString_Remove,
-	EXString_Copy,
-	EXString_Rcopy,
-	EXString_At,
-	EXString_Front,
-	EXString_Back,
-	EXString_Find,
-	EXString_Sort
+	//EXString_Erase,
+	//EXString_Remove,
+	//EXString_Copy,
+	//EXString_Rcopy,
+	//EXString_At,
+	//EXString_Front,
+	//EXString_Back,
+	//EXString_Find,
+	//EXString_Sort,
+	EXString_Assign=EXVector_Sort+1,
+	EXString_Data
 };
 
 typedef struct XString
@@ -48,24 +50,28 @@ void XString_push_back(XString* this_string, char c);
 //尾插
 void XString_append(XString* this_string, const char* string);
 // 赋值
-void XString_assign(XString* this_string, const char* str);
-// 第索引处开始插入字符串
-void XString_insert(XString* this_string, const int nSel, const char* str);
+void XString_assign(XString* this_string, const char* string);
+// 索引前开始插入字符串
+void XString_insert(XString* this_string, const int64_t index, const char* string);
+//头删
+void XString_pop_front(XString* this_string);
 //尾删
 void XString_pop_back(XString* this_string);
+//删除指针处的字符
+void XString_erase(XString* this_string, void* LpValue);
 //删除索引处开始的n个字符
-void XString_erase(XString* this_string, const int nSel, const int n);
+void XString_remove(XString* this_string, int64_t index, int64_t n);
 //清空字符串
 void XString_clear (XString* this_string);
 // 返回索引处字符
-char XString_at(const XString* this_string, int nSel);
+char XString_at(const XString* this_string, int64_t index);
 // 返回字符串
-char* XString_data(const XString* this_string);
+const char* XString_data(const XString* this_string);
 //查找函数
-int XString_find_first_of(const XString* this_string, const char* find);
-int XString_find_last_of(const XString* this_string, const char* find);
-int XString_find_first_not_of(const XString* this_string, const char* find);
-int XString_find_last_not_of(const XString* this_string, const char* find);
+int64_t XString_find_first_of(const XString* this_string, const char* find);
+int64_t XString_find_last_of(const XString* this_string, const char* find);
+int64_t XString_find_first_not_of(const XString* this_string, const char* find);
+int64_t XString_find_last_not_of(const XString* this_string, const char* find);
 //判断函数
 bool XString_empty(const XString* this_string);// 
 //返回当前字符串大小

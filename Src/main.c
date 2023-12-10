@@ -26,7 +26,7 @@ int main(int argc, char* args[])
 #ifdef _WIN32
 	//XHuffmanTreeTest();
 #else
-	XRedBlackTreeTest();
+	//XRedBlackTreeTest();
 #endif // _Win32
 	return 0;
 }

@@ -8,7 +8,7 @@ typedef struct XClassObject
 {
 	XVtable* vtable;//虚函数表
 }XClassObject;
-#define VtableFunc(Vtable,Offset,Type) ((Type)(((void**)Vtable)[Offset]))//用虚函数表获取函数
+#define VtableFunc(Vtable,Offset,Type) ((Type)((((XVtable*)Vtable)->data)[Offset]))//用虚函数表获取函数
 #define ObjectVtable(Object) ((XClassObject*)Object)->vtable  //用获取类中的虚函数表
 #define ObjectVirtualFunc(Object,Offset,Type) ((Type)((((XClassObject*)Object)->vtable->data)[Offset]))//用XContainerObject及其子类获取虚函数
 
@@ -17,5 +17,5 @@ typedef struct XClassObject
 bool isNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/);
 
 #define VtableIsStack true //虚函数表定义在栈上
-#define ShowContainerSize false; //显示容器大小
+#define ShowContainerSize false //显示容器大小
 #endif // !XVirtual_H
