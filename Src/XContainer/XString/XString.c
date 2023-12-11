@@ -138,3 +138,35 @@ const char* XString_data(const XString* this_string)
 	typedef const char* (*funcPtr)(const XString*);
 	return ObjectVirtualFunc(this_string, EXString_Data, funcPtr)(this_string);
 }
+
+int64_t XString_find_first_of(const XString* this_string, const char* subStr)
+{
+	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+		return -1;
+	typedef const char* (*funcPtr)(const XString*, const char*);
+	return ObjectVirtualFunc(this_string, EXString_Find_First_Of, funcPtr)(this_string,subStr);
+}
+
+int64_t XString_find_last_of(const XString* this_string, const char* subStr)
+{
+	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+		return -1;
+	typedef const char* (*funcPtr)(const XString*, const char*);
+	return ObjectVirtualFunc(this_string, EXString_Find_Last_Of, funcPtr)(this_string, subStr);
+}
+
+int64_t XString_find_first_not_of(const XString* this_string, const char* subStr)
+{
+	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+		return -1;
+	typedef const char* (*funcPtr)(const XString*, const char*);
+	return ObjectVirtualFunc(this_string, EXString_Find_First_Not_Of, funcPtr)(this_string, subStr);
+}
+
+int64_t XString_find_last_not_of(const XString* this_string, const char* subStr)
+{
+	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+		return -1;
+	typedef const char* (*funcPtr)(const XString*, const char*);
+	return ObjectVirtualFunc(this_string, EXString_Find_Last_Not_Of, funcPtr)(this_string, subStr);
+}

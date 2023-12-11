@@ -1,6 +1,7 @@
 ﻿#include"XHuffmanTree.h"
 #include"XEquality.h"
 #include"XLess.h"
+#include<stdlib.h>
 XHuffmanTree* XHfmTree_init()
 {
 	XHuffmanTree* tree = malloc(sizeof(XHuffmanTree));

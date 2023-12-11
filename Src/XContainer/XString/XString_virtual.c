@@ -7,37 +7,41 @@ size_t XString_charNumber(const char* str);
 //返回对应XVector的索引
 size_t XString_XVectorNsel(const struct XString* this_XString, const size_t nSel);
 //设置XString的大小，实际大小自动+1存/0
-void VXString_resize(XString* this_string, size_t len);
+static void VXString_resize(XString* this_string, size_t len);
 //尾部增加一个字符
-void VXString_push_back(XString* this_string, char c);
+static void VXString_push_back(XString* this_string, char c);
 //尾插
-void VXString_append(XString* this_string, const char* string);
-void VXString_insert(XString* this_string, const int64_t index, const char* string);
-//void VXString_pop_front(XString* this_string);
-void VXString_pop_back(XString* this_string);
-void VXString_remove(XString* this_string, int64_t index, int64_t n);
-void VXString_erase(XString* this_string, void* LpValue);
-void VXString_clear(XString* this_string);
-bool VXString_empty(const XString* this_string);
+static void VXString_append(XString* this_string, const char* string);
+static void VXString_insert(XString* this_string, const int64_t index, const char* string);
+//static void VXString_pop_front(XString* this_string);
+static void VXString_pop_back(XString* this_string);
+static void VXString_remove(XString* this_string, int64_t index, int64_t n);
+static void VXString_erase(XString* this_string, void* LpValue);
+static void VXString_clear(XString* this_string);
+static bool VXString_empty(const XString* this_string);
 //返回当前字符串大小
-size_t VXString_size(const XString* this_string);
+static size_t VXString_size(const XString* this_string);
 // 赋值
-void VXString_assign(XString* this_string, const char* string);
+static void VXString_assign(XString* this_string, const char* string);
 // 返回字符串
-const char* VXString_data(const XString* this_string);
-
+static const char* VXString_data(const XString* this_string);
+static int64_t VXString_find_first_of(const XString* this_string, const char* subStr);
+static int64_t VXString_find_last_of(const XString* this_string, const char* subStr);
+static int64_t VXString_find_first_not_of(const XString* this_string, const char* subStr);
+static int64_t VXString_find_last_not_of(const XString* this_string, const char* subStr);
 //虚函数表定义
 XVtable* XStringVtable = NULL;
 #if VtableIsStack
 	static XVtable vtable;//虚函数类
-	static void* vtable_data[27];//虚函数数据
+	static void* vtable_data[31];//虚函数数据
 #endif
 void XString_class_init()
 {
 	if (XStringVtable)
 		return;
-	void* table[] = { VXString_assign,VXString_data
-		
+	void* table[] = { VXString_assign,VXString_data,
+		VXString_find_first_of,VXString_find_last_of,
+		VXString_find_first_not_of,VXString_find_last_not_of
 	};
 #if !VtableIsStack
 	XStringVtable = XVtable_new();
@@ -156,53 +160,53 @@ void XString_clear(struct XString* this_XString)
 }
 
 //查找函数
-int XString_find_first_of(const struct XString* this_XString, const char* find)
+int XString_find_first_of(const struct XString* this_XString, const char* subStr)
 {
 	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
-	size_t fLen = strlen(find);
+	size_t fLen = strlen(subStr);
 	for (size_t i = 0; i < sLen; i++)
 	{
 		for (size_t j = 0; j < fLen; j++)
 		{
-			if (str[i] == find[j])
+			if (str[i] == subStr[j])
 				return i;
 		}
 	}
 	return -1;
 }
-int XString_find_last_of(const struct XString* this_XString, const char* find)
+int XString_find_last_of(const struct XString* this_XString, const char* subStr)
 {
 	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
-	size_t fLen = strlen(find);
+	size_t fLen = strlen(subStr);
 	for (size_t i = 0; i < sLen; i++)
 	{
 		for (size_t j = 0; j < fLen; j++)
 		{
-			if (str[sLen - i - 1] == find[j])
+			if (str[sLen - i - 1] == subStr[j])
 				return sLen - i - 1;
 		}
 	}
 	return -1;
 }
-int XString_find_first_not_of(const struct XString* this_XString, const char* find)
+int XString_find_first_not_of(const struct XString* this_XString, const char* subStr)
 {
 	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
-	size_t fLen = strlen(find);
+	size_t fLen = strlen(subStr);
 	for (size_t i = 0; i < sLen; i++)
 	{
 		size_t n = 0;
 		for (size_t j = 0; j < fLen; j++)
 		{
-			if (str[i] == find[j])
+			if (str[i] == subStr[j])
 				break;
 			n++;
 		}
@@ -211,19 +215,19 @@ int XString_find_first_not_of(const struct XString* this_XString, const char* fi
 	}
 	return -1;
 }
-int XString_find_last_not_of(const struct XString* this_XString, const char* find)
+int XString_find_last_not_of(const struct XString* this_XString, const char* subStr)
 {
 	if (isNULL(isNULLInfo(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
-	size_t fLen = strlen(find);
+	size_t fLen = strlen(subStr);
 	for (size_t i = 0; i < sLen; i++)
 	{
 		size_t n = 0;
 		for (size_t j = 0; j < fLen; j++)
 		{
-			if (str[sLen - i - 1] == find[j])
+			if (str[sLen - i - 1] == subStr[j])
 				break;
 			n++;
 		}
@@ -436,4 +440,92 @@ const char* VXString_data(const XString* this_string)
 	if (ISNULL(this_string, ""))
 		return NULL;
 	return ContainerDataPtr(this_string);
+}
+
+int64_t VXString_find_first_of(const XString* this_string, const char* subStr)
+{
+	if (ISNULL(this_string, "")|| ISNULL(subStr, ""))
+		return -1;
+	char* ret = strstr(ContainerDataPtr(this_string),subStr);
+	if (ret == NULL)
+		return -1;
+	return ret - (char*)ContainerDataPtr(this_string);
+	/*char* str = XString_data(this_string);
+	size_t sLen = strlen(str);
+	size_t fLen = strlen(subStr);
+	for (size_t i = 0; i < sLen; i++)
+	{
+		for (size_t j = 0; j < fLen; j++)
+		{
+			if (str[i] == subStr[j])
+				return i;
+		}
+	}*/
+	//return -1;
+}
+static char* strrstr(const char* haystack, const char* needle) {
+	size_t haystack_len = strlen(haystack);
+	size_t needle_len = strlen(needle);
+
+	if (needle_len == 0) {
+		return (char*)haystack + haystack_len;
+	}
+
+	const char* last_occurrence = NULL;
+	const char* current_occurrence = haystack;
+
+	while ((current_occurrence = strstr(current_occurrence, needle)) != NULL) {
+		last_occurrence = current_occurrence;
+		current_occurrence += needle_len;
+	}
+
+	return (char*)last_occurrence;
+}
+int64_t VXString_find_last_of(const XString* this_string, const char* subStr)
+{
+	if (ISNULL(this_string, "") || ISNULL(subStr, ""))
+		return -1;
+	char* ret = strrstr(ContainerDataPtr(this_string), subStr);
+	if (ret == NULL)
+		return -1;
+	return ret - (char*)ContainerDataPtr(this_string);
+}
+
+int64_t VXString_find_first_not_of(const XString* this_string, const char* subStr)
+{
+	if (ISNULL(this_string, "") || ISNULL(subStr, ""))
+		return -1;
+	const char* haystack=ContainerDataPtr(this_string);
+	const char* needle=subStr;
+	size_t haystack_len = strlen(haystack);
+	size_t needle_len = strlen(needle);
+
+	if (needle_len == 0) {
+		return -1;
+	}
+
+	const char* last_occurrence = NULL;
+	const char* current_occurrence = haystack;
+
+	while ((current_occurrence = strstr(current_occurrence, needle)) != NULL) {
+		if (last_occurrence != NULL && current_occurrence > last_occurrence + needle_len)
+			return last_occurrence + needle_len;
+		last_occurrence = current_occurrence;
+		current_occurrence += needle_len;
+	}
+
+	return -1;
+}
+
+int64_t VXString_find_last_not_of(const XString* this_string, const char* subStr)
+{
+	if (ISNULL(this_string, "") || ISNULL(subStr, ""))
+		return -1;
+	int64_t index= VXString_find_last_of(this_string, subStr);
+	if (index == -1)
+		return 0;
+	size_t len = strlen(subStr);
+	if (index + len < VXString_size(this_string))
+		return index + len;
+	return -1;
 }

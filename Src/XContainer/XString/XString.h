@@ -28,7 +28,11 @@ enum XStringEnum
 	//EXString_Find,
 	//EXString_Sort,
 	EXString_Assign=EXVector_Sort+1,
-	EXString_Data
+	EXString_Data,
+	EXString_Find_First_Of,
+	EXString_Find_Last_Of,
+	EXString_Find_First_Not_Of,
+	EXString_Find_Last_Not_Of,
 };
 
 typedef struct XString
@@ -68,10 +72,10 @@ char XString_at(const XString* this_string, int64_t index);
 // 返回字符串
 const char* XString_data(const XString* this_string);
 //查找函数
-int64_t XString_find_first_of(const XString* this_string, const char* find);
-int64_t XString_find_last_of(const XString* this_string, const char* find);
-int64_t XString_find_first_not_of(const XString* this_string, const char* find);
-int64_t XString_find_last_not_of(const XString* this_string, const char* find);
+int64_t XString_find_first_of(const XString* this_string, const char* subStr);
+int64_t XString_find_last_of(const XString* this_string, const char* subStr);
+int64_t XString_find_first_not_of(const XString* this_string, const char* subStr);
+int64_t XString_find_last_not_of(const XString* this_string, const char* subStr);
 //判断函数
 bool XString_empty(const XString* this_string);// 
 //返回当前字符串大小
