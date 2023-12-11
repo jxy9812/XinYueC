@@ -78,16 +78,16 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_
 }
 void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, const size_t dataCount, const size_t TypeSize)
 {
-	if (isNULL(isNULLInfo(NodeTypeSize, "节点大小不能为空")))
+	if (ISNULL(NodeTypeSize, "节点大小不能为空"))
 		return NULL;
-	if (isNULL(isNULLInfo(nodeCount, "节点数组不能为空")))
+	if (ISNULL(nodeCount, "节点数组不能为空"))
 		return NULL;
-	if (isNULL(isNULLInfo(dataCount, "数据数量")))
+	if (ISNULL(dataCount, "数据数量"))
 		return NULL;
-	if (isNULL(isNULLInfo(TypeSize, "数据大小不能为空")))
+	if (ISNULL(TypeSize, "数据大小不能为空"))
 		return NULL;
 	XBTreeNode* nodes =(XBTreeNode*)calloc(1,NodeTypeSize);
-	if (isNULL(isNULLInfo(nodes,"节点申请内存失败")))
+	if (ISNULL(nodes,"节点申请内存失败"))
 		return NULL;
 
 	//nodes->values= calloc(1,TypeSize);//开辟内存并且置为0
@@ -98,21 +98,23 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 	//}
 	//申请节点数组
 	nodes->nodes = XVector_new( sizeof(XBTreeNode*));
-	if (isNULL(isNULLInfo(nodes->nodes, "节点数组申请内存失败")))
+	if (ISNULL(nodes->nodes, "节点数组申请内存失败"))
 	{
 		free(nodes);
 		return NULL;
 	}
 	XVector_resize(nodes->nodes, nodeCount);
+	ContainerSize(nodes->nodes) = nodeCount;
 	//申请数据数组
 	nodes->values = XVector_new(TypeSize);
-	if (isNULL(isNULLInfo(nodes->values, "数据数组申请内存失败")))
+	if (ISNULL(nodes->values, "数据数组申请内存失败"))
 	{
 		XVector_free(nodes->values);
 		free(nodes);
 		return NULL;
 	}
 	XVector_resize(nodes->values, dataCount);
+	ContainerSize(nodes->values) = dataCount;
 	return nodes;
 }
 
@@ -128,12 +130,13 @@ XBTreeNode* XBTree_creationInsertData(const void* LPData, const size_t nodeArryS
 
 const bool XBTree_insertData(struct XBTreeNode* this_root, const void* LPData, const size_t nSel, const size_t TypeSize)
 {
-	if (isNULL(isNULLInfo(this_root,"")))
+	if (ISNULL(this_root,""))
 		return false;
-	if (isNULL(isNULLInfo(LPData, "")))
+	if (ISNULL(LPData, ""))
 		return false;
-	if (isNULL(isNULLInfo(TypeSize, "")))
+	if (ISNULL(TypeSize, ""))
 		return false;
+	//XVector_insert(this_root->values,nSel, LPData);
 	void* data=XVector_at(this_root->values,nSel);
 	memcpy(data, LPData, TypeSize);
 	return true;

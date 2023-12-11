@@ -12,7 +12,7 @@ void XMapTest()
 {
 	int arryint[] = {1,23,456,5,23};
 	char arraychar[][100]={"琦神","星小白","章鱼哥","私房菜","玩蛇"};
-	XMap* map = XMap_init(sizeof(int),sizeof(char*),XEquality_int, XLess_int);
+	XMap* map = XMap_new(sizeof(int),sizeof(char*),XEquality_int, XLess_int);
 	
 	for (size_t i=0;i<5;i++)
 	{

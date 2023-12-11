@@ -8,7 +8,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
-XMap* XMap_init(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
+XMap* XMap_new(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
 {
 	if (keyTypeSize == 0 || valTypeSize == 0)
 	{
@@ -21,7 +21,7 @@ XMap* XMap_init(const size_t keyTypeSize, const size_t valTypeSize, XEquality Ke
 		return NULL;
 	}
 	XMap* this_map = (XMap*)malloc(sizeof(XMap));
-	if (isNULL(isNULLInfo(this_map, "")))
+	if (ISNULL(this_map, ""))
 		return NULL;
 	XContainerObject_init(&this_map->object, valTypeSize);
 	this_map->keyTypeSize = keyTypeSize;
@@ -40,7 +40,7 @@ void XMap_insert(XMap* this_map, const void* key, const void* val)
 	XPair* pair = XMap_find(this_map, key);
 	if (pair == NULL)//当前没有这个键值对
 	{
-		XPair* LPpair = XPair_init(this_map->keyTypeSize, this_map->object._typeSize);
+		XPair* LPpair = XPair_new(this_map->keyTypeSize, this_map->object._typeSize);
 		XPair_insert(LPpair, key, val);
 
 		//printf("创建的xpair key:%d val:%s\n",XPair_First(LPpair,int),XPair_second(LPpair));
@@ -81,7 +81,7 @@ void* XMap_at(XMap* this_map, const void* key)
 	XPair* pair = XMap_find(this_map, key);
 	if (pair == NULL)//当前没有这个键值对
 	{
-		pair = XPair_init(this_map->keyTypeSize, this_map->object._typeSize);
+		pair = XPair_new(this_map->keyTypeSize, this_map->object._typeSize);
 		XPair_insert(pair, key, NULL);
 		XRBTree_insert(&(this_map->object._data), this_map->KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
 		++this_map->object._capacity;

@@ -2,7 +2,7 @@
 #include"XContainerObject.h"
 #include<stdlib.h>
 #include<string.h>
-XPair* XPair_init(const size_t firstTypeSize, const size_t keyTypeSize)
+XPair* XPair_new(const size_t firstTypeSize, const size_t keyTypeSize)
 {
 	if (firstTypeSize == 0 || keyTypeSize == 0)
 	{

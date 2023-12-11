@@ -32,7 +32,7 @@ void XMapAndXVectorFindTest()
 	XVector_sort(VArray,XLess_int);
 	XVector_iterator_for_each(VArray, ForPrint, NULL);*/
 
-	XMap* map = XMap_init(sizeof(size_t), sizeof(size_t),XEquality_int,XLess_int);
+	XMap* map = XMap_new(sizeof(size_t), sizeof(size_t),XEquality_int,XLess_int);
 	//map插入Vector的数据
 	XVector_iterator_for_each(VArray, insertMap, map);
 
