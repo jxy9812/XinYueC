@@ -17,6 +17,7 @@ struct people
 
 void VectorTest()
 {
+	printf("XVector 测试\n");
 	XVector* v = XVector_New(int);
 	v->equality = XEquality_int;
 	//XVector_resize(v,11);

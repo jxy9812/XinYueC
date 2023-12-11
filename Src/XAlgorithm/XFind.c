@@ -3,15 +3,15 @@
 void* XBinarySearch(void* values, size_t n, size_t TypeSize, XLess less, XEquality equality, void* findVal)
 {
 	{
-		if (isNULL(isNULLInfo(values, "")))
+		if (ISNULL(values, ""))
 			return NULL;
-		if (isNULL(isNULLInfo(n, "")))
+		if (ISNULL(n, ""))
 			return NULL;
-		if (isNULL(isNULLInfo(less, "")))
+		if (ISNULL(less, ""))
 			return NULL;
-		if (isNULL(isNULLInfo(equality, "")))
+		if (ISNULL(equality, ""))
 			return NULL;
-		if (isNULL(isNULLInfo(findVal, "")))
+		if (ISNULL(findVal, ""))
 			return NULL;
 	}
 	size_t nSel_Left=0;

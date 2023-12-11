@@ -52,15 +52,15 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess
 }
 XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XLess less, XCompareRuleTwo lessRule, const void* LPData, const size_t TypeSize)
 {
-	if (isNULL(isNULLInfo(less, "")))
+	if (ISNULL(less, ""))
 		return NULL;
-	if (isNULL(isNULLInfo(LPData, "")))
+	if (ISNULL(LPData, ""))
 		return NULL;
-	if (isNULL(isNULLInfo(TypeSize, "")))
+	if (ISNULL(TypeSize, ""))
 		return NULL;
 	//创建一个新的节点
 	XBBTreeNode* NewNode = XBBTree_creation(TypeSize);
-	if (isNULL(isNULLInfo(NewNode, "")))
+	if (ISNULL(NewNode, ""))
 		return NULL;
 	bool flag=XBBTree_insertAlign(this_root, NewNode, less, lessRule, LPData, TypeSize);
 	if (!flag)

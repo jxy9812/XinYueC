@@ -5,8 +5,8 @@
 #include<math.h>
 int main(int argc, char* args[])
 {
-	ListSortTest();
 	ListTest();
+	ListSortTest();
 	ListIterator();
 	ListSwapTest();
 	VectorTest();

@@ -35,10 +35,11 @@ void XMap_class_init();
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess);
 //Map插入数据
 void XMap_insert(XMap* this_map, const void* key, const void* LpValue);
-
+#define XMap_Insert(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMap_insert(this_map,&k,&v);}
 void XMap_erase(XMap* this_map, const XPair** LPpair);
 //map删除数据
 void XMap_remove(XMap* this_map, const void* key);
+#define XMap_Remove(this_map,keyType,key) {keyType k=key;XMap_remove(this_map,&k);}
 //根据键值返回数据地址
 void* XMap_at(XMap* this_map, const void* key);
 #define XMap_At(this_map,key,ValueType) (*(ValueType*)XMap_at(this_map,&(key)))

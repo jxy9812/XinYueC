@@ -8,7 +8,7 @@
 static AStarNode* CreationAStarNode(const int x, const int y)
 {
 	AStarNode* nodes = (AStarNode*)malloc(sizeof(AStarNode));
-	if (isNULL(isNULLInfo(nodes, "")))
+	if (ISNULL(nodes, ""))
 		return NULL;
 	nodes->pos.x = x;
 	nodes->pos.y = y;

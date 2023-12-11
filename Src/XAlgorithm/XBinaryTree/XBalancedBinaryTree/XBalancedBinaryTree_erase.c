@@ -88,7 +88,7 @@ static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 
 void* XBBTree_erase(XBBTreeNode** this_root, XLess less, XEquality equality, XCompareRuleOne Rule,const void* LPData, const size_t TypeSize)
 {
-	if (isNULL(isNULLInfo(this_root, "")))
+	if (ISNULL(this_root, ""))
 		return NULL;
 	XBBTreeNode* findRet = XBBTree_findData(*this_root, less,equality, Rule, LPData);
 	if (findRet == NULL)

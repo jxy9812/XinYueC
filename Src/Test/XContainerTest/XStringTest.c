@@ -2,6 +2,7 @@
 #include"XString.h"
 void XStringTest()
 {
+	printf("XString 测试\n");
 	XString* str = XString_new();
 	XString_append(str, "nihao ");
 	XString_push_front(str, '#');

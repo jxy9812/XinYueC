@@ -7,6 +7,7 @@
 #include"XVector.h"
 void queueTest()
 {
+	printf("XQueue 测试\n");
 	XQueue* queue = XQueue_New(int);
 	int array[] = { 0,1,2,3,4,5,6,7,8,9 };
 	for (size_t i = 0; i < sizeof(array)/sizeof(array[0]); i++)
@@ -18,6 +19,7 @@ void queueTest()
 		printf("%d ", XQueue_Top(queue,int));
 		XQueue_pop(queue);
 	}
+	printf("\n");
 	XQueue_free(queue);
 }
 static insertData(void* values ,void*args)
@@ -27,6 +29,7 @@ static insertData(void* values ,void*args)
 }
 void XPriority_QueueTest()
 {
+	printf("XPriority_QueueTest 测试\n");
 	//XPriority_Queue* queue=XPriority_Queue_new(sizeof(int),XLess_int);//小堆，先出小的
 	XPriority_Queue* queue = XPriority_Queue_new(sizeof(int), XGreater_int);//大堆，先出大的
 	XVector* v = XVector_New(int);
@@ -44,6 +47,7 @@ void XPriority_QueueTest()
 		printf("%d ", *values);
 		XPriority_Queue_pop(queue);
 	}
+	printf("\n");
 	XPriority_Queue_free(queue);
 
 }

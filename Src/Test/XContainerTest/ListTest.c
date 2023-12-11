@@ -56,10 +56,11 @@ void ListIterator()
 
 void ListTest()
 {
+	printf("XList 测试\n");
 	XList* list = XList_new(sizeof(int));
 	list->equality = XEquality_int;
-	printf("%s\n", XContainerObject_empty(list)?"empty":"");
-	printf("%d\n", XContainerObject_size(list));
+	//printf("%s\n", XContainerObject_empty(list)?"empty":"");
+	//printf("%d\n", XContainerObject_size(list));
 
 	
 

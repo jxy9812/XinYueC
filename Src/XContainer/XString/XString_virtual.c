@@ -88,7 +88,7 @@ size_t XString_charNumber(const char* str)
 
 size_t XString_XVectorNsel(const struct XString* this_XString, const size_t nSel)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return;
 	if (nSel < 0)
 		return -1;
@@ -109,7 +109,7 @@ size_t XString_XVectorNsel(const struct XString* this_XString, const size_t nSel
 //删除索引处字符
 bool XString_eraseOne(struct XString* this_XString, const int nSel)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return false;
 	if (nSel < 0)
 		return false;
@@ -129,14 +129,14 @@ bool XString_eraseOne(struct XString* this_XString, const int nSel)
 //尾删
 void XString_pop_back(struct XString* this_XString)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return;
 	XString_eraseOne(this_XString, XString_size(this_XString) - 1);
 }
 //删除索引处开始的n个字符
 void XString_erase(struct XString* this_XString, const int nSel, const int n)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return;
 	if (nSel < 0 || n <= 0)
 		return;
@@ -149,7 +149,7 @@ void XString_erase(struct XString* this_XString, const int nSel, const int n)
 //清空字符串
 void XString_clear(struct XString* this_XString)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XString*)this_XString)->_data;
 	int right = XVector_size(v) - 2;
@@ -162,7 +162,7 @@ void XString_clear(struct XString* this_XString)
 //查找函数
 int XString_find_first_of(const struct XString* this_XString, const char* subStr)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
@@ -179,7 +179,7 @@ int XString_find_first_of(const struct XString* this_XString, const char* subStr
 }
 int XString_find_last_of(const struct XString* this_XString, const char* subStr)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
@@ -196,7 +196,7 @@ int XString_find_last_of(const struct XString* this_XString, const char* subStr)
 }
 int XString_find_first_not_of(const struct XString* this_XString, const char* subStr)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
@@ -217,7 +217,7 @@ int XString_find_first_not_of(const struct XString* this_XString, const char* su
 }
 int XString_find_last_not_of(const struct XString* this_XString, const char* subStr)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return NULL;
 	char* str = XString_data(this_XString);
 	size_t sLen = strlen(str);
@@ -240,7 +240,7 @@ int XString_find_last_not_of(const struct XString* this_XString, const char* sub
 //尾插
 void XString_append(struct XString* this_XString, const char* str)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XString*)this_XString)->_data;
 	XString_insert(this_XString, XVector_size(v) - 1, str);
@@ -248,7 +248,7 @@ void XString_append(struct XString* this_XString, const char* str)
 // 赋值
 void XString_assign(struct XString* this_XString, const char* str)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XString*)this_XString)->_data;
 	XString_clear(this_XString);
@@ -257,7 +257,7 @@ void XString_assign(struct XString* this_XString, const char* str)
 // 第索引处开始插入字符串
 void XString_insert(struct XString* this_XString, const int nSel, const char* str)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return;
 	if (str == NULL || nSel < 0)
 		return;
@@ -271,7 +271,7 @@ void XString_insert(struct XString* this_XString, const int nSel, const char* st
 //判断函数
 bool XString_empty(const struct XString* this_XString)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
 	return string->_size == 0;
@@ -279,7 +279,7 @@ bool XString_empty(const struct XString* this_XString)
 //返回当前元素大小
 int XString_size(const struct XString* this_XString)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
 	return string->_size;
@@ -295,7 +295,7 @@ int XString_size(const struct XString* this_XString)
 //交换
 void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringTwo)
 {
-	if (isNULL(isNULLInfo(this_XStringOne, "")) || isNULL(isNULLInfo(this_XStringTwo, "")))
+	if (ISNULL(this_XStringOne, "")) || isNULL(isNULLInfo(this_XStringTwo, "")))
 		return NULL;
 	struct XString* stringOne = (struct XString*)this_XStringOne;
 	struct XString* stringTwo = (struct XString*)this_XStringTwo;
@@ -305,7 +305,7 @@ void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringT
 //释放容器
 void XString_free(const struct XString* this_XString)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
 	XVector_free(string->_data);
@@ -315,7 +315,7 @@ void XString_free(const struct XString* this_XString)
 // 返回索引处字符
 char XString_at(const XString* this_XString, int nSel)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
 	return *((char*)XVector_at(string->_data, nSel));
@@ -323,7 +323,7 @@ char XString_at(const XString* this_XString, int nSel)
 // 返回字符串
 char* XString_data(const XString* this_XString)
 {
-	if (isNULL(isNULLInfo(this_XString, "")))
+	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
 	return string->_data->object._data;

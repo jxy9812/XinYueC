@@ -2,6 +2,7 @@
 #include"XStack.h"
 void stackTest()
 {
+	printf("XStack 测试\n");
 	XStack* s = XStack_New(int);
 	int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
 

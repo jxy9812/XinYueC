@@ -5,7 +5,7 @@
 XBBTreeNode* XBBTree_SpinRR(XBBTreeNode** this_root, XBBTreeNode* nodes)
 {
 	XBBTreeNode* NewNode = XBTree_SpinRR(this_root,nodes);
-	if (isNULL(isNULLInfo(NewNode, "")))
+	if (ISNULL(NewNode, ""))
 		return NULL;
 	XBBTree_SetLayerNumberThis(nodes);
 	XBBTree_SetLayerNumberThis(NewNode);
@@ -15,7 +15,7 @@ XBBTreeNode* XBBTree_SpinRR(XBBTreeNode** this_root, XBBTreeNode* nodes)
 XBBTreeNode* XBBTree_SpinLL(XBBTreeNode** this_root, XBBTreeNode* nodes)
 {
 	XBBTreeNode* NewNode = XBTree_SpinLL(this_root, nodes);
-	if (isNULL(isNULLInfo(NewNode, "")))
+	if (ISNULL(NewNode, ""))
 		return NULL;
 	XBBTree_SetLayerNumberThis(nodes);
 	XBBTree_SetLayerNumberThis(NewNode);
@@ -24,7 +24,7 @@ XBBTreeNode* XBBTree_SpinLL(XBBTreeNode** this_root, XBBTreeNode* nodes)
 //右左旋
 XBBTreeNode* XBBTree_SpinRL(XBBTreeNode** this_root, XBBTreeNode* nodes)
 {
-	if (isNULL(isNULLInfo(nodes, "")))
+	if (ISNULL(nodes, ""))
 		return NULL;
 	XBBTreeNode** ppThisRootRightChild = XBTree_GetTreeNode(nodes, XBTreeRChild);
 	/**ppThisRootRightChild = */XBBTree_SpinRR(this_root ,*ppThisRootRightChild);
@@ -33,7 +33,7 @@ XBBTreeNode* XBBTree_SpinRL(XBBTreeNode** this_root, XBBTreeNode* nodes)
 //左右旋
 XBBTreeNode* XBBTree_SpinLR(XBBTreeNode** this_root, XBBTreeNode* nodes)
 {
-	if (isNULL(isNULLInfo(nodes, "")))
+	if (ISNULL(nodes, ""))
 		return NULL;
 	XBBTreeNode** ppThisRootLeftChild = XBTree_GetTreeNode(nodes, XBTreeLChild);
 	/**ppThisRootLeftChild =*/ XBBTree_SpinLL(this_root ,*ppThisRootLeftChild);
@@ -42,7 +42,7 @@ XBBTreeNode* XBBTree_SpinLR(XBBTreeNode** this_root, XBBTreeNode* nodes)
 
 XBBTreeNode* XBBTree_Spin(XBBTreeNode** this_root, XBBTreeNode* nodes)
 {
-	if (isNULL(isNULLInfo(nodes, "")))
+	if (ISNULL(nodes, ""))
 		return NULL;
 	size_t leftLayer = XBBTree_GetLayerNumberThis(XBTree_GetLChild(nodes));
 	size_t rightLayer = XBBTree_GetLayerNumberThis(XBTree_GetRChild(nodes));

@@ -10,7 +10,7 @@ XBBTreeNode* XBBTree_creation(const size_t TypeSize)
 
 XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne Rule, void* LPData)
 {
-	/*if (isNULL(isNULLInfo(this_root,"")))
+	/*if (ISNULL(this_root,"")))
 		return NULL; */
 	if (this_root == NULL)//树是空的
 		return NULL;

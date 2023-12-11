@@ -9,7 +9,7 @@
 static XBTreeNode* CreationBFSNode_XPoint(XPoint pos)
 {
 	XBTreeNode* nodes = XBTree_creationInsertData(&pos,1,sizeof(XPoint));
-	if (isNULL(isNULLInfo(nodes, "")))
+	if (ISNULL(nodes, ""))
 		return NULL;
 	return nodes;
 }

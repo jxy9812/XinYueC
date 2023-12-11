@@ -21,14 +21,14 @@ XTTTreeNode* XTTTree_creationNode(const enum XTTTree_NodeNum nodeCount, const si
 
 const enum  XTTTree_NodeNum XTTTree_NodeNum(const XTTTreeNode* this_root)
 {
-    if (isNULL(isNULLInfo(this_root, "")))
+    if (ISNULL(this_root, ""))
         return 0;
     return XVector_size(this_root->LpValueArray)+2;
 }
 
 const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, const void* LPData, const size_t TypeSize)
 {
-    if (isNULL(isNULLInfo(this_root, "")))
+    if (ISNULL(this_root, ""))
         return 0;
     XVector* LPNode = this_root->object.nodes;//储存节点指针的数组
     enum  XTTTree_NodeNum nodeNum = XTTTree_NodeNum(this_root);//当前是几节点
@@ -57,7 +57,7 @@ XTTTreeNode** XTTTree_Node(const XTTTreeNode* this_root, size_t nSel)
 
 void* XTTTree_data(const XTTTreeNode* this_root, size_t nSel)
 {
-    if (isNULL(isNULLInfo(this_root, "")))
+    if (ISNULL(this_root, ""))
         return 0;
     if (/*this_root->LpValueArray == NULL||*/ nSel==0)//当前是二节点
     {
@@ -72,7 +72,7 @@ void* XTTTree_data(const XTTTreeNode* this_root, size_t nSel)
 
 void XTTTree_free(const XTTTreeNode* this_root)
 {
-    if (isNULL(isNULLInfo(this_root, "")))
+    if (ISNULL(this_root, ""))
         return 0;
     if (this_root->LpValueArray != NULL)
         XVector_free(this_root->LpValueArray);
