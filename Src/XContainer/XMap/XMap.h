@@ -30,8 +30,10 @@ XMap* XMap_new(const size_t keyTypeSize, const size_t valTypeSize, XEquality Key
 #define XMap_New(keyType,valType,KeyEquality,KeyLess) XMap_new(sizeof(keyType),sizeof(valType),KeyEquality,KeyLess)
 //Map插入数据
 void XMap_insert(XMap* this_map, const void* key, const void* LpValue);
+
+void XMap_erase(XMap* this_map, const XPair** LPpair);
 //map删除数据
-void XMap_erase(XMap* this_map, const void* key);
+void XMap_remove(XMap* this_map, const void* key);
 //根据键值返回数据地址
 void* XMap_at(XMap* this_map, const void* key);
 #define XMap_At(this_map,key,ValueType) (*(ValueType*)XMap_at(this_map,&(key)))

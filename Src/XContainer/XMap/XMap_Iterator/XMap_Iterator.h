@@ -2,7 +2,8 @@
 #define XMAP_ITERATOR_H
 #include"XFunctionCallback.h"
 typedef struct XMap XMap;
-typedef void XMap_Iterator;
+typedef struct XPair XPair;
+typedef XPair* XMap_Iterator;
 XMap_Iterator* XMap_begin(XMap* this_Map);
 XMap_Iterator* XMap_end(XMap* this_Map);
 XMap_Iterator* XMap_iterator_add(XMap* this_Map, XMap_Iterator* it);

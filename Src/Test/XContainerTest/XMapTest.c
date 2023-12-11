@@ -21,7 +21,7 @@ void XMapTest()
 	printf("当前Map容器内数据数量:%d\n", XMap_size(map));
 	XMap_iterator_for_each(map, XFor_each_pair, NULL);
 
-	XMap_erase(map, arryint+2);
+	XMap_remove(map, arryint+2);
 	printf("当前Map容器内数据数量:%d\n", XMap_size(map));
 	XMap_iterator_for_each(map, XFor_each_pair,NULL);
 	

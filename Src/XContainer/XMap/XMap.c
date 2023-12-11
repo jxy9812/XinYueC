@@ -61,7 +61,7 @@ void XMap_insert(XMap* this_map, const void* key, const void* val)
 
 }
 
-void XMap_erase(XMap* this_map, const void* key)
+void XMap_remove(XMap* this_map, const void* key)
 {
 	if (isNULL(isNULLInfo(this_map, "")))
 		return NULL;
