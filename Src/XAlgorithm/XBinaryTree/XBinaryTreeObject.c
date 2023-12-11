@@ -128,7 +128,7 @@ XBTreeNode* XBTree_creationInsertData(const void* LPData, const size_t nodeArryS
 	return nodes;
 }
 
-const bool XBTree_insertData(struct XBTreeNode* this_root, const void* LPData, const size_t nSel, const size_t TypeSize)
+const bool XBTree_insertData(struct XBTreeNode* this_root, const void* LPData, const size_t index, const size_t TypeSize)
 {
 	if (ISNULL(this_root,""))
 		return false;
@@ -136,8 +136,8 @@ const bool XBTree_insertData(struct XBTreeNode* this_root, const void* LPData, c
 		return false;
 	if (ISNULL(TypeSize, ""))
 		return false;
-	//XVector_insert(this_root->values,nSel, LPData);
-	void* data=XVector_at(this_root->values,nSel);
+	//XVector_insert(this_root->values,index, LPData);
+	void* data=XVector_at(this_root->values,index);
 	memcpy(data, LPData, TypeSize);
 	return true;
 }

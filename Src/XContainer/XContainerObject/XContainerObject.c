@@ -51,7 +51,7 @@ size_t XContainerObject_typeSize(const XContainerObject* Object)
 	return ObjectVirtualFunc(Object, EXContainerObject_TypeSize, funcPtr)(Object);
 }
 
-void XContainerObject_swap( XContainerObject* ObjectOne,  XContainerObject* ObjectTwo)
+void XContainerObject_swap(XContainerObject* ObjectOne,  XContainerObject* ObjectTwo)
 {
 	if (ISNULL(ObjectOne, "") || ISNULL(ObjectTwo, ""))
 		return;

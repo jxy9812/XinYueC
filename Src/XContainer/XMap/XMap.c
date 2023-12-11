@@ -1,5 +1,4 @@
 ﻿#include"XMap.h"
-#include"XMap_func.h"
 #include"XContainerObject.h"
 #include"XPair.h"
 #include"XBalancedBinaryTree.h"
@@ -21,111 +20,85 @@ XMap* XMap_new(const size_t keyTypeSize, const size_t valTypeSize, XEquality Key
 		return NULL;
 	}
 	XMap* this_map = (XMap*)malloc(sizeof(XMap));
+	XMap_init(this_map,keyTypeSize,valTypeSize,KeyEquality,KeyLess);
+	return this_map;
+}
+void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
+{
+	if (ISNULL(this_map, ""))
+		return NULL;
+	if (keyTypeSize == 0 || valTypeSize == 0)
+	{
+		printf("类型参数不能为0");
+		return NULL;
+	}
+	if (KeyEquality == NULL || KeyLess == NULL)
+	{
+		printf("KeyEquality相等比较函数NULL或KeyLess小于比较函数NULL");
+		return NULL;
+	}
 	if (ISNULL(this_map, ""))
 		return NULL;
 	XContainerObject_init(&this_map->object, valTypeSize);
+	XMap_class_init();
+	ObjectVtable(this_map) = XMapVtable;
 	this_map->keyTypeSize = keyTypeSize;
 	this_map->KeyEquality = KeyEquality;
 	this_map->KeyLess = KeyLess;
 	this_map->isModify = true;
 	this_map->itArray = NULL;
-	return this_map;
 }
 
 
-void XMap_insert(XMap* this_map, const void* key, const void* val)
+
+void XMap_insert(XMap* this_map, const void* key, const void* LpValue)
 {
-	if (isNULL(isNULLInfo(this_map, "")))
+	if (ISNULL(this_map, "") || ISNULL(ObjectVtable(this_map), ""))
 		return;
-	XPair* pair = XMap_find(this_map, key);
-	if (pair == NULL)//当前没有这个键值对
-	{
-		XPair* LPpair = XPair_new(this_map->keyTypeSize, this_map->object._typeSize);
-		XPair_insert(LPpair, key, val);
+	typedef void (*funcPtr)(XMap*, const void*, const void*);
+	ObjectVirtualFunc(this_map, EXMap_Insert, funcPtr)(this_map, key, LpValue);
 
-		//printf("创建的xpair key:%d val:%s\n",XPair_First(LPpair,int),XPair_second(LPpair));
+}
 
-		XRBTree_insert(&(this_map->object._data), this_map->KeyLess, XCompareRuleTwo_XMap, &LPpair, sizeof(XPair*));
-
-		/*XRBTreeNode* root= this_map->object._data;
-		LPpair= *(XPair**)XVector_at(root->XBTNode.values,0);
-		printf("根节点，key:%d val:%s\n", XPair_First(LPpair, int), XPair_second(LPpair));*/
-		++this_map->object._capacity;
-		++this_map->object._size;
-		this_map->isModify = true;
-	}
-	else
-	{
-		XPair_insertSecond(pair, val);
-	}
-
+void XMap_erase(XMap* this_map, const XPair** LPpair)
+{
+	if (ISNULL(this_map, "") || ISNULL(ObjectVtable(this_map), ""))
+		return;
+	typedef void (*funcPtr)(XMap*, const XPair**);
+	ObjectVirtualFunc(this_map, EXMap_Erase, funcPtr)(this_map, LPpair);
 }
 
 void XMap_remove(XMap* this_map, const void* key)
 {
-	if (isNULL(isNULLInfo(this_map, "")))
-		return NULL;
-	//XMap_updataIterator(this_map);
-	XRBTreeNode* nodes = XRBTree_erase(&(this_map->object._data), this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
-	if (nodes != NULL)
-	{
-		--this_map->object._capacity;
-		--this_map->object._size;
-		this_map->isModify = true;
-	}
+	if (ISNULL(this_map, "") || ISNULL(ObjectVtable(this_map), ""))
+		return;
+	typedef void (*funcPtr)(XMap*, const void*);
+	ObjectVirtualFunc(this_map, EXMap_Remove, funcPtr)(this_map, key);
 }
 void* XMap_at(XMap* this_map, const void* key)
 {
-	if (isNULL(isNULLInfo(this_map, "")))
+	if (ISNULL(this_map, "") || ISNULL(ObjectVtable(this_map), ""))
 		return NULL;
-	XPair* pair = XMap_find(this_map, key);
-	if (pair == NULL)//当前没有这个键值对
-	{
-		pair = XPair_new(this_map->keyTypeSize, this_map->object._typeSize);
-		XPair_insert(pair, key, NULL);
-		XRBTree_insert(&(this_map->object._data), this_map->KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
-		++this_map->object._capacity;
-		++this_map->object._size;
-		this_map->isModify = true;
-	}
-	return XPair_second(pair);
+	typedef void* (*funcPtr)(XMap*, const void*);
+	return ObjectVirtualFunc(this_map, EXMap_At, funcPtr)(this_map, key);
 }
 //查找数据XPair
 XPair* XMap_find(XMap* this_map, const void* key)
 {
-	if (isNULL(isNULLInfo(this_map, "")))
+	if (ISNULL(this_map, "") || ISNULL(ObjectVtable(this_map), ""))
 		return NULL;
-	XBTreeNode* nodes = XBBTree_findData(this_map->object._data, this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
-	if (nodes == NULL)
-		return NULL;
-	XPair* pair = *(XPair**)XVector_at(nodes->values,0);
-	return pair;
+	typedef XPair* (*funcPtr)(XMap*, const void*);
+	return ObjectVirtualFunc(this_map, EXMap_Find, funcPtr)(this_map, key);
 }
-static void XMap_freeNodeData(void* LPVal, void* args)
-{
-	XPair* pair = *(XPair**)LPVal;
-	XPair_free(pair);
-	*(XPair**)LPVal = NULL;
-}
+
 void XMap_clear(XMap* this_map)
 {
-	if (XMap_empty(this_map))
-		return;
-	XMap_updataIterator(this_map);
-	XMap_iterator_for_each(this_map, XMap_freeNodeData, NULL);
-	XBTree_freeNodeAll(this_map->object._data);
-	XVector_free(this_map->itArray);
-	this_map->itArray = NULL;
-	this_map->object._capacity = 0;
-	this_map->object._size = 0;
-	this_map->object._data = NULL;
-	this_map->isModify = false;
+	XContainerObject_clear(this_map);
 }
 
 void XMap_free(XMap* this_map)
 {
-	XMap_clear(this_map);
-	free(this_map);
+	XContainerObject_free(this_map);
 }
 
 bool XMap_empty(const XMap* this_map)
@@ -133,17 +106,46 @@ bool XMap_empty(const XMap* this_map)
 	return XContainerObject_empty(this_map);
 }
 
-int XMap_size(const XMap* this_map)
+size_t XMap_size(const XMap* this_map)
 {
 	return XContainerObject_size(this_map);
 }
 
 void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
 {
-	XContainerObject_swap(this_mapOne, this_mapTwo);
-	XSwap(&this_mapOne->isModify, &this_mapTwo->isModify, sizeof(bool));
-	XSwap(&this_mapOne->itArray, &this_mapTwo->itArray, sizeof(XVector*));
-	XSwap(&this_mapOne->KeyEquality, &this_mapTwo->KeyEquality, sizeof(XEquality));
-	XSwap(&this_mapOne->KeyLess, &this_mapTwo->KeyLess, sizeof(XLess));
-	XSwap(&this_mapOne->keyTypeSize, &this_mapTwo->keyTypeSize, sizeof(size_t));
+	if (ISNULL(this_mapOne, "") || ISNULL(ObjectVtable(this_mapOne), "")|| ISNULL(this_mapTwo, ""))
+		return ;
+	typedef XPair* (*funcPtr)(XMap*, XMap*);
+	ObjectVirtualFunc(this_mapOne, EXContainerObject_Swap, funcPtr)(this_mapOne, this_mapTwo);
+}
+
+
+static void ForTreeNode(void* LPVal, void* args)
+{
+	XRBTreeNode* nodes = *(XRBTreeNode**)LPVal;
+	XVector_push_back(args, XVector_at(nodes->XBTNode.values, 0));
+}
+void XMap_updataIterator(XMap* this_map)
+{
+	if (ISNULL(this_map, "map不能为NULL"))
+		return;
+	if (XMap_empty(this_map))//map当前是空的
+		return;
+	if (!this_map->isModify)
+		return;
+	//开始更新迭代器
+	if (this_map->itArray != NULL)
+	{
+		//释放原先的数组
+		XVector_free(this_map->itArray);
+		this_map->itArray = NULL;
+	}
+	//已中序遍历获取所有树的节点,临时
+	XVector* TreeNode = XBTree_TraversingToXVector(this_map->object._data, XBTreeInorder);
+	this_map->itArray = XVector_new(sizeof(XPair*));
+	//将数据XPair的节点指针插入数组
+	XVector_iterator_for_each(TreeNode, ForTreeNode, this_map->itArray);
+	XVector_free(TreeNode);
+
+	this_map->isModify = false;
 }

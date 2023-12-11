@@ -11,10 +11,11 @@ extern XVtable* XMapVtable;
 //XMap虚函数表枚举
 enum XMapEnum
 {
-	XMap_Insert=EXContainerObject_Clear+1,
-	XMap_Erase,
-	XMap_Remove,
-	XMap_At,
+	EXMap_Insert=EXContainerObject_Clear+1,
+	EXMap_Erase,
+	EXMap_Remove,
+	EXMap_At,
+	EXMap_Find,
 };
 typedef struct XMap
 {
@@ -28,6 +29,10 @@ typedef struct XMap
 //开辟一个Map,初始化
 XMap* XMap_new(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess/*, XEquality ValEquality*/);
 #define XMap_New(keyType,valType,KeyEquality,KeyLess) XMap_new(sizeof(keyType),sizeof(valType),KeyEquality,KeyLess)
+//初始化类
+void XMap_class_init();
+//初始化 XMap
+void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess);
 //Map插入数据
 void XMap_insert(XMap* this_map, const void* key, const void* LpValue);
 
@@ -46,8 +51,15 @@ void XMap_free(XMap* this_map);
 //检测Map内是否为空，空为真 O(1)
 bool XMap_empty(const  XMap* this_map);
 //返回Map内元素的个数 O(1)
-int XMap_size(const  XMap* this_map);
+size_t XMap_size(const  XMap* this_map);
 //交换两个同类型Map的数据
 void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
 
+//其他函数
+//插入迭代器地址
+void XMap_insertIterator(XMap* this_map, XPair* LPdata);
+//删除迭代器地址
+void XMap_eraseIterator(XMap* this_map, XPair* LPdata);
+//更新迭代器
+void XMap_updataIterator(XMap* this_map);
 #endif // !XMap_H

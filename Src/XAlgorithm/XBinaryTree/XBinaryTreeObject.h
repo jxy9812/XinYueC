@@ -31,7 +31,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount,cons
 //创建初始化一个二叉树节点,并插入数据
 struct XBTreeNode* XBTree_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize);
 //插入数据-不创建节点，传入节点
-const bool XBTree_insertData(struct XBTreeNode* this_root,const void* LPData,const size_t nSel, const size_t TypeSize);
+const bool XBTree_insertData(struct XBTreeNode* this_root,const void* LPData,const size_t index, const size_t TypeSize);
 //释放一个树节点,parentSetNull父节点指向的指针置为空
 const bool XBTree_freeNode(struct XBTreeNode* this_root,const bool parentSetNull);
 //获取节点指针

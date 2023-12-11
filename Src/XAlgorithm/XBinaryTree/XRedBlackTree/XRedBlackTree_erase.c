@@ -173,7 +173,7 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 }
 XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less,XEquality equality, XCompareRuleOne Rule, const void* LPData)
 {
-	if (isNULL(isNULLInfo(this_root, "")))
+	if (ISNULL(this_root, ""))
 		return NULL;
 	XRBTreeNode* findErase = XBBTree_findData(*this_root, less,equality, Rule, LPData);//删除的节点
 	//PRINT("findErase=%p", findErase);
