@@ -1,24 +1,19 @@
-
 {
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "QtBuild",
-            "type": "cppdbg",
+            "name": "(Windows) 启动",
+            "type": "cppvsdbg",
             "request": "launch",
-            "program": "${command:cmake.launchTargetPath}",
+            "program": "${workspaceFolder}/bin\\Debug\\Container.exe",
             "args": [],
             "stopAtEntry": false,
-            "cwd": "${workspaceRoot}",
-            "environment": [
-                {
-                    "name": "PATH",
-                    "value": "/home/jxy/Qt/6.2.4/gcc_64/bin"
-                }
-            ],
-            "externalConsole": false,
-            "miDebuggerPath": "/bin/gdb",
-            "visualizerFile": "/home/jxy/.config/Code/User/workspaceStorage/c5469ea456fff25d87e03b88dbdf50bc/tonka3000.qtvsctools/qt.natvis.xml"
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "console": "externalTerminal"
         }
     ]
 }
