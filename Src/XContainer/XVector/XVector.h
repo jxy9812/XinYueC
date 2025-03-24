@@ -5,8 +5,8 @@
 #include<stdint.h>
 #include"XContainerObject.h"
 #include"XVectorTwo_func.h"
-#include"XVector_Iterator/XVector_iterator.h"
-#include"XVector_Iterator/XVector_reverse_iterator.h"
+#include"XVector_iterator.h"
+#include"XVector_reverse_iterator.h"
 //XVector虚函数表
 extern XVtable* XVectorVtable;
 //XVector虚函数表枚举

@@ -1,9 +1,9 @@
 ﻿#ifndef XCONTAINEROBJECT_H
 #define XCONTAINEROBJECT_H
 #include<stdio.h>
-//#include<stdlib.h>
 #include<stdbool.h>
 #include"XClass.h"
+#include"XMemory.h"
 //#define DEBUG_ON 1
 
 //XContainerObject虚函数表

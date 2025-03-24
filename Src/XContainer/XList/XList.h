@@ -2,8 +2,8 @@
 #define LIST_H
 #include<stdbool.h>
 #include<stdio.h>
-#include"XList_Iterator/XList_iterator.h"
-#include"XList_Iterator/XList_reverse_iterator.h"
+#include"XList_iterator.h"
+#include"XList_reverse_iterator.h"
 #include"XListNode.h"
 #include"XContainerObject.h"
 //XList虚函数表
