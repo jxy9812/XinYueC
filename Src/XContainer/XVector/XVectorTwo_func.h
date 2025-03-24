@@ -1,5 +1,8 @@
 ﻿#ifndef XVECTORTWO_FUNC_H
 #define XVECTORTWO_FUNC_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdbool.h>
 #include<stdio.h>
 struct XVector;
@@ -24,4 +27,7 @@ size_t XVectorTwo_TypeSize(struct XVector* this_vector);
 void XVectorTwo_clear(const struct XVector* this_vector);
 //释放二维数组内存
 void XVectorTwo_free(const struct XVector* this_vector);
+#ifdef __cplusplus
+}
+#endif
 #endif // !XVECTORTWO_FUNC_H

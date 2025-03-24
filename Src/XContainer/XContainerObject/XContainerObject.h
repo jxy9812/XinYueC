@@ -1,5 +1,8 @@
 ﻿#ifndef XCONTAINEROBJECT_H
 #define XCONTAINEROBJECT_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdio.h>
 #include<stdbool.h>
 #include"XClass.h"
@@ -21,29 +24,14 @@ enum XContainerObjectVtableEnum
 	EXContainerObject_Clear,
 };
 //容器基类
-typedef struct XContainerObject
+typedef struct 
 {
 	XClassObject object;
-	//void** vtable;//虚函数表
 	void* _data;//指向容器数据的指针
 	size_t  _capacity;//当前容器能容纳的最大元素数量
 	size_t _size;//当前容器内的元素个数
 	size_t _typeSize;//类型占用字节数
 }XContainerObject;
-
-#ifdef DEBUG_ON
-#if DEBUG_ON &&defined _DEBUG
-#define PRINT(fmt,...) printf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
-#else
-#define PRINT(fmt,...)
-#endif
-#else
-#if defined _DEBUG
-#define PRINT(fmt,...) printf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
-#else
-#define PRINT(fmt,...)
-#endif
-#endif // !DEBUG_ON
 
 #define ContainerDataPtr(Object) ((XContainerObject*)Object)->_data//当前数据指针
 #define ContainerData(Object,Type) (*(Type*)ContainerDataPtr(Object))//当前数据
@@ -60,4 +48,7 @@ size_t XContainerObject_capacity(const XContainerObject* Object);
 size_t XContainerObject_typeSize(const XContainerObject* Object);
 void XContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
 void XContainerObject_clear(XContainerObject* Object);
+#ifdef __cplusplus
+}
+#endif
 #endif // !ContainerObject_h

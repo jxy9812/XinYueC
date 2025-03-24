@@ -1,4 +1,6 @@
-﻿#include"XMap.h"
+﻿#include"Test.h"
+#if DemoTest
+#include"XMap.h"
 #include"XVector.h"
 #include"XSort.h"
 #include"XLess.h"
@@ -48,3 +50,5 @@ void XMapAndXVectorFindTest()
 	clock_t map_end = clock();
 	printf("XMap查询数据:%d 用时%dms\n", *mret, map_end - map_start);
 }
+
+#endif

@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XString.h"
 void XStringTest()
 {
@@ -24,3 +25,5 @@ void XStringTest()
 	////XString_erase(str, 0, 4);
 	printf("%s\n", XString_data(str));
 }
+
+#endif

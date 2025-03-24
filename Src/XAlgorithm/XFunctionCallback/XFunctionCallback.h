@@ -1,6 +1,9 @@
 ﻿//回调函数
 #ifndef XFUNCTIONCALLBACK_H
 #define XFUNCTIONCALLBACK_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdbool.h>
 //比较大小函数指针-回调函数
 typedef  const bool(*XCompare)(const void* LPrevValue, const void* LNextValue);
@@ -31,4 +34,7 @@ bool XCompareRuleTwo_XMap(XCompare compare, const void* LPrevValue, const void* 
 bool XCompareRuleOne_Standard(XCompare compare, const void* Value, const void* CompareValue);
 bool XCompareRuleOne_BinaryTree(XCompare compare, const void* Value, const void* CompareValue);
 bool XCompareRuleOne_XMap(XCompare compare, const void* Value, const void* CompareValue);
+#ifdef __cplusplus
+}
+#endif
 #endif // !XFUNCTIONPOINTER_H

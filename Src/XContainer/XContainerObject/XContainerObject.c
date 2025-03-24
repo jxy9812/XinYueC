@@ -28,7 +28,7 @@ bool XContainerObject_empty(const XContainerObject* Object)
 	return ObjectVirtualFunc(Object, EXContainerObject_Empty,funcPtr)(Object);
 }
 
-size_t XContainerObject_size(const struct XContainerObject* Object)
+size_t XContainerObject_size(const  XContainerObject* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(Object->object.vtable, ""))
 		return 0;
@@ -36,7 +36,7 @@ size_t XContainerObject_size(const struct XContainerObject* Object)
 	return ObjectVirtualFunc(Object, EXContainerObject_Size, funcPtr)(Object);
 }
 
-size_t XContainerObject_capacity(const struct XContainerObject* Object)
+size_t XContainerObject_capacity(const  XContainerObject* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(Object->object.vtable, ""))
 		return 0;

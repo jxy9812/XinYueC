@@ -18,7 +18,7 @@ static void VXMap_clear(XMap* this_map);
 static void VXMap_free(XMap* this_map);
 static void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
 XVtable* XMapVtable = NULL;
-#if VtableIsStack
+#if VTABLEISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[12];//虚函数数据
 #endif
@@ -29,7 +29,7 @@ void XMap_class_init()
 	void* table[] = {
 		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_at,VXMap_find
 	};
-#if !VtableIsStack
+#if !VTABLEISSTACK
 	XMapVtable = XVtable_new();
 #else
 	XMapVtable = &vtable;
@@ -43,9 +43,9 @@ void XMap_class_init()
 	XVtable_At(XMapVtable, EXContainerObject_Swap) = VXMap_swap;
 	//追加函数
 	XVtable_append_array(XMapVtable, table, sizeof(table) / sizeof(table[0]));
-#if ShowContainerSize
+#if SHOWCONTAINERSIZE
 	printf("XMap size:%d\n", XVtable_size(XMapVtable));
-#endif // ShowContainerSize
+#endif // SHOWCONTAINERSIZE
 }
 void VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
 {
@@ -149,7 +149,7 @@ void VXMap_clear(XMap* this_map)
 void VXMap_free(XMap* this_map)
 {
 	XMap_clear(this_map);
-	free(this_map);
+	XMemory_free(this_map);
 }
 
 void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo)

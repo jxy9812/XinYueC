@@ -1,4 +1,6 @@
-﻿#include"XFind.h"
+﻿#include"Test.h"
+#if DemoTest
+#include"XFind.h"
 #include"XVector.h"
 #include"XLess.h"
 #include"XEquality.h"
@@ -15,3 +17,4 @@ void XBinarySearchTest()
 	int* ret=XBinarySearch(XVector_begin(VArray), count,sizeof(size_t),XLess_int,XEquality_int,&findVal);
 	printf("二分查找到值:%d", *ret);
 }
+#endif

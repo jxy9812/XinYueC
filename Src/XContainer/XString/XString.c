@@ -3,7 +3,7 @@
 #include<string.h>
 XString* XString_new()
 {
-	XString* this_string = malloc(sizeof(XString));
+	XString* this_string = XMemory_malloc(sizeof(XString));
 	XString_init(this_string);
 	return this_string;
 }

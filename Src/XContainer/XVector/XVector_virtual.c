@@ -27,7 +27,7 @@ static void* VXVector_front(const XVector* this_vector);
 static void* VXVector_back(const XVector* this_vector);
 static void* VXVector_find(const XVector* this_vector, const void* findVal);//查找数据，返回找到的指针，没有返回NULL
 static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
-#if VtableIsStack
+#if VTABLEISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[25];//虚函数数据
 #endif
@@ -48,7 +48,7 @@ void XVector_class_init()
 		//排序
 		VXVector_sort
 	};
-#if !VtableIsStack
+#if !VTABLEISSTACK
 	XVectorVtable = XVtable_new();
 #else
 	XVectorVtable = &vtable;
@@ -58,9 +58,9 @@ void XVector_class_init()
 	XVtable_append_vtable(XVectorVtable,XContainerObjectVtable);
 	//追加函数
 	XVtable_append_array(XVectorVtable, table, sizeof(table)/sizeof(table[0]));
-#if ShowContainerSize
+#if SHOWCONTAINERSIZE
 	printf("XVector size:%d\n", XVtable_size(XVectorVtable));
-#endif // ShowContainerSize
+#endif // SHOWCONTAINERSIZE
 }
 
 //检测是否需要扩容
@@ -70,7 +70,7 @@ static void VXVectorEnlargeCapacity(XVector* this_vector)
 		return;
 	if (ContainerCapacity(this_vector) == 0)
 	{
-		ContainerDataPtr(this_vector) = malloc(ContainerTypeSize(this_vector) * VECTORNUM);
+		ContainerDataPtr(this_vector) = XMemory_malloc(ContainerTypeSize(this_vector) * VECTORNUM);
 		if (ContainerDataPtr(this_vector) == NULL)
 		{
 			perror("初始化vector失败");
@@ -83,15 +83,27 @@ static void VXVectorEnlargeCapacity(XVector* this_vector)
 	}
 	else if (ContainerCapacity(this_vector) == ContainerSize(this_vector))//空间已满需要扩容
 	{
-		void* _data = realloc(ContainerDataPtr(this_vector), ContainerCapacity(this_vector) * ContainerTypeSize(this_vector) * 1.5);
+		void* _data = NULL;
+#if XMEMORYREALLOCUSEMALLOCFREE
+		void* ptr = ContainerDataPtr(this_vector);
+		uint64_t size = ContainerCapacity(this_vector) * ContainerTypeSize(this_vector);
+		_data = XMemory_malloc(size * 1.5);
+		if (_data && ptr)
+			memcpy(_data, ptr, size);
+		if (ptr)
+			XMemory_free(ptr);
+#else
+		_data = XMemory_realloc(ContainerDataPtr(this_vector), ContainerCapacity(this_vector) * ContainerTypeSize(this_vector) * 1.5);
+#endif // XMEMORYREALLOCUSEMALLOCFREE
+		ContainerDataPtr(this_vector) = _data;
 		if (_data == NULL)
 		{
 			perror("扩容失败vector");
-			exit(-1);
+			ContainerCapacity(this_vector) =0;
+			ContainerSize(this_vector) = 0;
 		}
 		else
 		{
-			ContainerDataPtr(this_vector)=_data;
 			ContainerCapacity(this_vector) *= 1.5;
 		}
 	}
@@ -115,13 +127,30 @@ void VXVector_resize(XVector* this_vector, size_t size)
 	//char* lpData = ContainerDataPtr(this_vector);
 	if (size > capacity)//大于最大容量
 	{
-		ContainerDataPtr(this_vector) = realloc(ContainerDataPtr(this_vector), size * TypeSize);
-		if (ContainerDataPtr(this_vector) == NULL)
+		void* _data = NULL;
+#if XMEMORYREALLOCUSEMALLOCFREE
+		void* ptr = ContainerDataPtr(this_vector);
+		_data = XMemory_malloc(size * TypeSize);
+		if (_data&& ptr)
+			memcpy(_data, ptr, size);
+		if (ptr)
+			XMemory_free(ptr);
+#else
+		_data = XMemory_realloc(ContainerDataPtr(this_vector), size * TypeSize);
+#endif
+		ContainerDataPtr(this_vector) = _data;
+		if (_data == NULL)
 		{
 			perror("扩容失败vector");
-			exit(-1);
+			//exit(-1);
+			ContainerCapacity(this_vector) = 0;
+			ContainerSize(this_vector) = 0;
 		}
-		ContainerCapacity(this_vector) = size;
+		else
+		{
+			ContainerCapacity(this_vector) = size;
+		}
+		
 	}
 
 	char* LPstart = (char*)ContainerDataPtr(this_vector) + count * TypeSize;//最后一个元素的下一个元素
@@ -158,7 +187,7 @@ void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t
 	if (ptr&&ptr >= VXVector_front(this_vector) && ptr <= VXVector_back(this_vector))
 	{
 		int64_t size = (char*)VXVector_back(this_vector) - (char*)ptr + typeSize;
-		void* temp = malloc(size);
+		void* temp = XMemory_malloc(size);
 		memcpy(temp, ptr, size);
 		int64_t sizen = ((char*)ptr - (char*)VXVector_front(this_vector)) / typeSize;
 		for (size_t i = 0; i < n; i++)
@@ -169,7 +198,7 @@ void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t
 			ContainerSize(this_vector)++;
 		}
 		memcpy(VXVector_at(this_vector, sizen), temp, size);
-		free(temp);
+		XMemory_free(temp);
 	}
 	/*else if (XContainerObject_empty(this_vector))
 	{
@@ -188,7 +217,7 @@ void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 	if (ptr&&ptr >= VXVector_front(this_vector) && ptr <= VXVector_back(this_vector))
 	{
 		int64_t size = (char*)VXVector_back(this_vector) - (char*)ptr + typeSize;
-		void* temp = malloc(size);
+		void* temp = XMemory_malloc(size);
 		memcpy(temp, ptr, size);
 		int64_t sizen = ((char*)ptr - (char*)VXVector_front(this_vector)) / typeSize;
 		for (size_t i = 0; i < n; i++)
@@ -199,7 +228,7 @@ void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 			ContainerSize(this_vector)++;
 		}
 		memcpy(VXVector_at(this_vector, sizen), temp, size);
-		free(temp);
+		XMemory_free(temp);
 	}
 	/*else if(XContainerObject_empty(this_vector))
 	{
@@ -278,7 +307,7 @@ void VXVector_clear(XVector* this_vector)//清空vector的数组
 	ContainerSize(this_vector) = 0;
 	/*if (object->_data != NULL)
 	{
-		free(object->_data);
+		XMemory_free(object->_data);
 		object->_data = NULL;
 		object->_capacity = 0;
 		object->_size = 0;
@@ -289,12 +318,12 @@ void VXVector_copy(XVector* this_One, const XVector* this_Two)
 	if (ISNULL(this_One, "") || ISNULL(this_One, ""))
 		return;
 	if(ContainerDataPtr(this_One))
-		free(ContainerDataPtr(this_One));
+		XMemory_free(ContainerDataPtr(this_One));
 	size_t size = ContainerSize(this_Two);
 	size_t typeSize = ContainerTypeSize(this_Two);
 	if (size > 0)
 	{
-		ContainerDataPtr(this_One) = malloc(size * typeSize);
+		ContainerDataPtr(this_One) = XMemory_malloc(size * typeSize);
 		memcpy(ContainerDataPtr(this_One), ContainerDataPtr(this_Two), size * typeSize);
 	}
 	else
@@ -310,12 +339,12 @@ void VXVector_rcopy(XVector* this_One, const XVector* this_Two)
 	if (ISNULL(this_One, "") || ISNULL(this_One, ""))
 		return;
 	if (ContainerDataPtr(this_One))
-		free(ContainerDataPtr(this_One));
+		XMemory_free(ContainerDataPtr(this_One));
 	size_t size = ContainerSize(this_Two);
 	size_t typeSize = ContainerTypeSize(this_Two);
 	if (size > 0)
 	{
-		ContainerDataPtr(this_One) = malloc(size * typeSize);
+		ContainerDataPtr(this_One) = XMemory_malloc(size * typeSize);
 		for (char* pst2 = (char*)ContainerDataPtr(this_Two) + (size - 1) * typeSize, *pst1 = ContainerDataPtr(this_One); pst2 >= ContainerDataPtr(this_Two); pst2 -= typeSize, pst1 += typeSize)
 		{
 			memcpy(pst1, pst2, typeSize);

@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XMazeGeneratedDF.h"
 void XMazeGeneratedTest()
 {
@@ -6,3 +7,4 @@ void XMazeGeneratedTest()
 	XMazePrint(maze,"■","  ");
 	XMazeFree(maze);
 }
+#endif

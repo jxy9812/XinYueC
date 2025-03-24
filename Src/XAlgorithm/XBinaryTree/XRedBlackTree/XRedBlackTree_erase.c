@@ -143,7 +143,7 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 		LPreplace = XBTree_GetLChild(LPreplace);
 	}
 
-	free(eraseNode->XBTNode.values);
+	XMemory_free(eraseNode->XBTNode.values);
 	eraseNode->XBTNode.values = LPreplace->XBTNode.values;
 	LPreplace->XBTNode.values = NULL;
 
@@ -176,7 +176,7 @@ XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less,XEquality equalit
 	if (ISNULL(this_root, ""))
 		return NULL;
 	XRBTreeNode* findErase = XBBTree_findData(*this_root, less,equality, Rule, LPData);//删除的节点
-	//PRINT("findErase=%p", findErase);
+	//DEBUG_PRINTF("findErase=%p", findErase);
 	if (findErase == NULL)
 		return NULL;//要删除的节点没找到
 	size_t count = 0;

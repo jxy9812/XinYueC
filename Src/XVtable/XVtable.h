@@ -1,9 +1,12 @@
 ﻿#ifndef XVtable_H
 #define XVtable_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdio.h>
 #include<stdbool.h>
 #include<stdint.h>
-typedef struct XVtable
+typedef struct 
 {
 	void** data;
 	size_t size;
@@ -26,4 +29,7 @@ bool XVtable_empty(XVtable* this_vtable);
 size_t XVtable_size(XVtable* this_vtable);
 void* XVtable_at(XVtable* this_vtable, int64_t index);
 #define XVtable_At(this_vtable,index) (*(this_vtable->data + index))
-#endif // !XVtable_H
+#ifdef __cplusplus
+}
+#endif
+#endif// !XVtable_H

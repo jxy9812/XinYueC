@@ -31,7 +31,7 @@ static int64_t VXString_find_first_not_of(const XString* this_string, const char
 static int64_t VXString_find_last_not_of(const XString* this_string, const char* subStr);
 //虚函数表定义
 XVtable* XStringVtable = NULL;
-#if VtableIsStack
+#if VTABLEISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[31];//虚函数数据
 #endif
@@ -43,7 +43,7 @@ void XString_class_init()
 		VXString_find_first_of,VXString_find_last_of,
 		VXString_find_first_not_of,VXString_find_last_not_of
 	};
-#if !VtableIsStack
+#if !VTABLEISSTACK
 	XStringVtable = XVtable_new();
 #else
 	XStringVtable = &vtable;
@@ -65,9 +65,9 @@ void XString_class_init()
 	//追加函数
 	XVtable_append_array(XStringVtable, table, sizeof(table) / sizeof(table[0]));
 
-#if ShowContainerSize
+#if SHOWCONTAINERSIZE
 	printf("XString size:%d\n", XVtable_size(XStringVtable));
-#endif // ShowContainerSize
+#endif // SHOWCONTAINERSIZE
 }
 /*
 bool XString_isChinese(const char c)
@@ -309,7 +309,7 @@ void XString_free(const struct XString* this_XString)
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
 	XVector_free(string->_data);
-	free(this_XString);
+	XMemory_free(this_XString);
 }
 
 // 返回索引处字符

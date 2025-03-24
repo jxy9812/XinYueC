@@ -93,14 +93,14 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 	//nodes->values= calloc(1,TypeSize);//开辟内存并且置为0
 	//if (ISNULL(nodes->values,"节点数据申请内存失败")))
 	//{
-	//	free(nodes);
+	//	XMemory_free(nodes);
 	//	return NULL;
 	//}
 	//申请节点数组
 	nodes->nodes = XVector_new( sizeof(XBTreeNode*));
 	if (ISNULL(nodes->nodes, "节点数组申请内存失败"))
 	{
-		free(nodes);
+		XMemory_free(nodes);
 		return NULL;
 	}
 	XVector_resize(nodes->nodes, nodeCount);
@@ -110,7 +110,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 	if (ISNULL(nodes->values, "数据数组申请内存失败"))
 	{
 		XVector_free(nodes->values);
-		free(nodes);
+		XMemory_free(nodes);
 		return NULL;
 	}
 	XVector_resize(nodes->values, dataCount);
@@ -159,7 +159,7 @@ const bool XBTree_freeNode(struct XBTreeNode* this_root , const bool parentSetNu
 	//释放节点数组
 	XVector_free(this_root->nodes);
 	//释放节点
-	free(this_root);
+	XMemory_free(this_root);
 	return true;
 }
 
@@ -170,7 +170,7 @@ XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel)
 	size_t count = XVector_size(this_root->nodes);
 	if (nSel >= count)
 	{
-		PRINT("nSel:%d>=总量:%d", nSel, count);
+		DEBUG_PRINTF("nSel:%d>=总量:%d", nSel, count);
 		return;
 	}
 	return (XBTreeNode**)XVector_at(this_root->nodes, nSel);
@@ -183,7 +183,7 @@ void* XBTree_Getdata(XBTreeNode* this_root, const size_t nSel)
 	size_t count = XVector_size(this_root->values);
 	if (nSel >= count)
 	{
-		PRINT("nSel:%d>=总量:%d", nSel, count);
+		DEBUG_PRINTF("nSel:%d>=总量:%d", nSel, count);
 		return;
 	}
 	return XVector_at(this_root->values, nSel);

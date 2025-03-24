@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XVector.h"
 #include"XFunctionCallback.h"
 #include"XEquality.h"
@@ -41,3 +42,5 @@ void VectorTest()
 	printf("找到的数字:%d", *findRet);
 	XVector_free(v);
 }
+
+#endif

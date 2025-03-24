@@ -1,6 +1,9 @@
 ﻿//平衡二叉树
 #ifndef XBALANCEDBINARYTREE_H
 #define XBALANCEDBINARYTREE_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include"XFunctionCallback.h"
 #include"XBinaryTreeObject.h"
 //平衡二叉树节点
@@ -38,4 +41,7 @@ XBBTreeNode* XBBTree_SpinLL(XBBTreeNode** this_root, XBBTreeNode* nodes);
 XBBTreeNode* XBBTree_SpinRL(XBBTreeNode** this_root, XBBTreeNode* nodes);
 //左右旋
 XBBTreeNode* XBBTree_SpinLR(XBBTreeNode** this_root, XBBTreeNode* nodes);
+#ifdef __cplusplus
+}
+#endif
 #endif // !BALANCEDBINARYTREE_H

@@ -10,7 +10,7 @@ static void XVtableEnlargeCapacity(XVtable* this_vtable)
 		return;
 	if (this_vtable->capacity == 0)
 	{
-		this_vtable->data = malloc(sizeof(void*)* VECTORNUM);
+		this_vtable->data = XMemory_malloc(sizeof(void*)* VECTORNUM);
 		if (this_vtable->data == NULL)
 		{
 			perror("初始化vector失败");
@@ -25,7 +25,7 @@ static void XVtableEnlargeCapacity(XVtable* this_vtable)
 	{
 		if (ISNULL(!this_vtable->isStack, "栈上空间满了，无法自动扩容"))
 			return;
-		void* _data = realloc(this_vtable->data, this_vtable->capacity * sizeof(void*) * 1.5);
+		void* _data = XMemory_realloc(this_vtable->data, this_vtable->capacity * sizeof(void*) * 1.5);
 		if (_data == NULL)
 		{
 			perror("扩容失败vector");
@@ -40,7 +40,7 @@ static void XVtableEnlargeCapacity(XVtable* this_vtable)
 }
 XVtable* XVtable_new()
 {
-	XVtable* this_vtable = malloc(sizeof(XVtable));
+	XVtable* this_vtable = XMemory_malloc(sizeof(XVtable));
 	XVtable_init(this_vtable);
 	return this_vtable;
 }
@@ -75,7 +75,7 @@ void XVtable_insert(XVtable* this_vtable, int64_t index, const void* func)
 	if (!XVtable_empty(this_vtable) && ptr >= this_vtable->data && (index == 0 || ptr <= this_vtable->data + (index - 1)))
 	{
 		int64_t size = (char*)(&this_vtable->data[this_vtable->size - 1]) - (char*)ptr + typeSize;
-		void* temp = malloc(size);
+		void* temp = XMemory_malloc(size);
 		memcpy(temp, ptr, size);
 		int64_t sizen = ((char*)ptr - (char*)this_vtable->data) / typeSize;
 		for (size_t i = 0; i < 1; i++)
@@ -86,7 +86,7 @@ void XVtable_insert(XVtable* this_vtable, int64_t index, const void* func)
 			this_vtable->size++;
 		}
 		memcpy(this_vtable->data + sizen, temp, size);
-		free(temp);
+		XMemory_free(temp);
 	}
 }
 
@@ -100,7 +100,7 @@ void XVtable_insert_array(XVtable* this_vtable, int64_t index, const void** begi
 	if (!XVtable_empty(this_vtable) && ptr >= this_vtable->data && (index == 0 || ptr <= this_vtable->data + (index - 1)))
 	{
 		int64_t size = (char*)(&this_vtable->data[this_vtable->size-1]) - (char*)ptr + typeSize;
-		void* temp = malloc(size);
+		void* temp = XMemory_malloc(size);
 		memcpy(temp, ptr, size);
 		int64_t sizen = ((char*)ptr - (char*)this_vtable->data) / typeSize;
 		for (size_t i = 0; i < n; i++)
@@ -111,7 +111,7 @@ void XVtable_insert_array(XVtable* this_vtable, int64_t index, const void** begi
 			this_vtable->size++;
 		}
 		memcpy(this_vtable->data + sizen, temp, size);
-		free(temp);
+		XMemory_free(temp);
 	}
 	
 }

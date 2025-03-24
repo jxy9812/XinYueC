@@ -5,7 +5,7 @@ XVector* XVector_new(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XVector* this_vector = malloc(sizeof(XVector));
+	XVector* this_vector = XMemory_malloc(sizeof(XVector));
 	XVector_init(this_vector,typeSize);
 	return this_vector;
 }

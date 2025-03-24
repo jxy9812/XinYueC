@@ -1,5 +1,8 @@
 ﻿#ifndef XPRIORITY_QUEUE
 #define XPRIORITY_QUEUE
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include"XVector.h"
 //XPriority_Queue虚函数表
 extern XVtable* XPriority_QueueVtable;
@@ -11,7 +14,7 @@ enum XPriority_QueueEnum
 	EXPriority_Queue_Top,
 };
 //优先队列
-typedef struct XPriority_Queue
+typedef struct 
 {
 	XVector vector;//基本数据
 	XCompare compare;//比较准则
@@ -39,4 +42,7 @@ size_t XPriority_Queue_size(XPriority_Queue* this_queue);
 //清空队列，释放内存
 void XPriority_Queue_clear(XPriority_Queue* this_queue);
 
+#ifdef __cplusplus
+}
+#endif
 #endif

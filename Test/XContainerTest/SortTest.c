@@ -1,4 +1,6 @@
-﻿#include"XSort.h"
+﻿#include"Test.h"
+#if DemoTest
+#include"XSort.h"
 #include"XLess.h"
 void SortTest()
 {
@@ -12,3 +14,5 @@ void SortTest()
 	}
 	printf("\n");
 }
+
+#endif

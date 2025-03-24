@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XBalancedBinaryTree.h"
 #include"XLess.h"
 #include"XEquality.h"
@@ -79,3 +80,4 @@ void XBalancedBinaryTreeTest()
 		printf("二叉树是空的\n");
 	}
 }
+#endif

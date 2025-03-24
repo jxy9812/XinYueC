@@ -88,7 +88,7 @@ void Unblank(char* str, const  enum UnblankType type)
 		if (pleft == NULL || pright == NULL || pleft > pright)
 			return;
 		int middleLen = pright - pleft;
-		char* pmiddle = (char*)malloc(strlen(str) + 1);
+		char* pmiddle = (char*)XMemory_malloc(strlen(str) + 1);
 		memset(pmiddle, 0, middleLen + 1);
 		strncpy(pmiddle, pleft, middleLen);
 		char* f = NULL;
@@ -101,7 +101,7 @@ void Unblank(char* str, const  enum UnblankType type)
 		} while (f != NULL);
 		strcat(pmiddle, pright);
 		strcpy(pleft, pmiddle);
-		free(pmiddle);
+		XMemory_free(pmiddle);
 	}
 	if (type & left)
 	{

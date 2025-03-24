@@ -9,7 +9,7 @@ XPair* XPair_new(const size_t firstTypeSize, const size_t secondTypeSize)
 		printf("有类型设置错误");
 		return NULL;
 	}
-	XPair* this_pair = (XPair*)malloc(sizeof(XPair));
+	XPair* this_pair = (XPair*)XMemory_malloc(sizeof(XPair));
 	this_pair->firstTypeSize = firstTypeSize;
 	this_pair->secondTypeSize = secondTypeSize;
 	if (ISNULL(this_pair, "初始化pair结构体失败"))
@@ -67,7 +67,7 @@ void* XPair_second(XPair* this_pair)
 }
 void XPair_free(XPair* this_pair)
 {
-	free(this_pair->first);
-	free(this_pair->second);
-	free(this_pair);
+	XMemory_free(this_pair->first);
+	XMemory_free(this_pair->second);
+	XMemory_free(this_pair);
 }

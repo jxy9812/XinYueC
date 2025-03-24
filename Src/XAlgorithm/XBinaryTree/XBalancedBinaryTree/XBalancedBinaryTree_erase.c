@@ -50,7 +50,7 @@ static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 
 	if (XBTree_GetRChild(preCursor)== NULL)//LeftChildNode的孩子不存在右子树的情况
 	{
-		free(eraseNode->XBTNode.values);//释放其数据
+		XMemory_free(eraseNode->XBTNode.values);//释放其数据
 		//与左子树数据交换
 		eraseNode->XBTNode.values = preCursor->XBTNode.values;
 		preCursor->XBTNode.values = NULL;
@@ -68,7 +68,7 @@ static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 		{
 			preCursor = XBTree_GetRChild(preCursor);
 		}
-		free(eraseNode->XBTNode.values);//释放其数据
+		XMemory_free(eraseNode->XBTNode.values);//释放其数据
 		//与左子树数据交换
 		eraseNode->XBTNode.values = preCursor->XBTNode.values;
 		preCursor->XBTNode.values = NULL;

@@ -1,19 +1,19 @@
 ﻿#include "XVector_iterator.h"
 #include"XVector.h"
 #include<stdio.h>
-XVector_iterator* XVector_begin(struct XVector* this_vector)
+XVector_iterator* XVector_begin(XVector* this_vector)
 {
 	if (ISNULL(this_vector, ""))
 		return NULL;
 	return XVector_front(this_vector);
 }
 
-XVector_iterator* XVector_end(struct XVector* this_vector)
+XVector_iterator* XVector_end(XVector* this_vector)
 {
 	return NULL;
 }
 
-XVector_iterator* XVector_iterator_add(struct XVector* this_vector,XVector_iterator*it)
+XVector_iterator* XVector_iterator_add(XVector* this_vector,XVector_iterator*it)
 {
 	if (ISNULL(this_vector, "") || ISNULL(it, ""))
 		return NULL;
@@ -23,7 +23,7 @@ XVector_iterator* XVector_iterator_add(struct XVector* this_vector,XVector_itera
 	return (char*)it + this_vector->object._typeSize;//指向下一个元素
 }
 
-void XVector_iterator_for_each(struct XVector* this_vector, XFor_each ForFunction, void* args)
+void XVector_iterator_for_each(XVector* this_vector, XFor_each ForFunction, void* args)
 {
 	for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
 	{

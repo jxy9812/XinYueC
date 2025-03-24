@@ -10,7 +10,7 @@ static void VXPriority_Queue_push(XPriority_Queue* this_queue, void* LpValue);
 static void VXPriority_Queue_pop(XPriority_Queue* this_queue);
 // 返回优先队列堆顶元素
 static void* VXPriority_Queue_top(XPriority_Queue* this_queue);
-#if VtableIsStack
+#if VTABLEISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[28];//虚函数数据
 #endif
@@ -19,7 +19,7 @@ void XPriority_Queue_class_init()
 	if (XPriority_QueueVtable)
 		return;
 	void* table[] = { VXPriority_Queue_push,VXPriority_Queue_pop,VXPriority_Queue_top};
-#if !VtableIsStack
+#if !VTABLEISSTACK
 	XPriority_QueueVtable = XVtable_new();
 #else
 	XPriority_QueueVtable = &vtable;
@@ -30,9 +30,9 @@ void XPriority_Queue_class_init()
 	//追加函数
 	XVtable_append_array(XPriority_QueueVtable, table, sizeof(table) / sizeof(table[0]));
 
-#if ShowContainerSize
+#if SHOWCONTAINERSIZE
 	printf("XPriority_Queue size:%d\n", XVtable_size(XPriority_QueueVtable));
-#endif // ShowContainerSize
+#endif // SHOWCONTAINERSIZE
 }
 //插入向上调整
 static void AdjustUp(void* LParray, const size_t TypeSize, size_t childNSel, XCompare compare)

@@ -1,5 +1,8 @@
 ﻿#ifndef XMAZEGENERATED_H
 #define XMAZEGENERATED_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include"XVector.h"
 //迷宫地图元素
 enum XMazeSign
@@ -36,4 +39,7 @@ void XMazeFree(const struct XVector* maze);
 const int XMazeRow(const struct XVector* maze);
 //返回迷宫列数
 const int XMazeList(const struct XVector* maze);
-#endif // !XMAZE_H
+#ifdef __cplusplus
+}
+#endif
+#endif// !XMAZE_H

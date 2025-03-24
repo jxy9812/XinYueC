@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XHuffmanTree.h"
 static void for_each(void* LPVal, void* args)
 {
@@ -35,3 +36,5 @@ void XHuffmanTreeTest()
 	XVector_free(unzipData);//释放解压后的压缩数据
 	XHfmTree_free(tree);//释放哈夫曼树
 }
+
+#endif

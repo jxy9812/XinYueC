@@ -4,7 +4,7 @@
 #include<stdlib.h>
 XHuffmanTree* XHfmTree_init()
 {
-	XHuffmanTree* tree = malloc(sizeof(XHuffmanTree));
+	XHuffmanTree* tree = XMemory_malloc(sizeof(XHuffmanTree));
 	if (ISNULL(tree, "初始化哈夫曼树失败"))
 	{
 		return NULL;
@@ -54,5 +54,5 @@ void XHfmTree_free(XHuffmanTree* tree)
 {
 	XHfmTree_clear(tree);
 	XMap_free(tree->dictionaries);
-	free(tree);
+	XMemory_free(tree);
 }

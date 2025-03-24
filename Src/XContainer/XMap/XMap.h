@@ -1,5 +1,8 @@
 ﻿#ifndef XMAP_H
 #define XMAP_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include"XContainerObject.h"
 #include"XPair.h"
 #include"XMap_Iterator.h"
@@ -58,9 +61,12 @@ void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
 
 //其他函数
 //插入迭代器地址
-void XMap_insertIterator(XMap* this_map, XPair* LPdata);
-//删除迭代器地址
-void XMap_eraseIterator(XMap* this_map, XPair* LPdata);
-//更新迭代器
+//void XMap_insertIterator(XMap* this_map, XPair* LPdata);
+////删除迭代器地址
+//void XMap_eraseIterator(XMap* this_map, XPair* LPdata);
+////更新迭代器
 void XMap_updataIterator(XMap* this_map);
-#endif // !XMap_H
+#ifdef __cplusplus
+}
+#endif
+#endif// !XMap_H

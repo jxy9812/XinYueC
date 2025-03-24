@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XQueue.h"
 #include"XPriority_Queue.h"
 #include"XSort.h"
@@ -51,3 +52,4 @@ void XPriority_QueueTest()
 	XPriority_Queue_free(queue);
 
 }
+#endif

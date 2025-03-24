@@ -1,8 +1,11 @@
 ﻿#ifndef XCLASS_H
 #define XCLASS_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include"XVtable.h"
-
-typedef struct XVtable XVtable;
+#include"XDataStructConfig.h"
+typedef struct  XVtable;
 //容器基类
 typedef struct XClassObject
 {
@@ -16,6 +19,8 @@ typedef struct XClassObject
 #define ISNULL(args,str)(isNULL(isNULLInfo(args,str)))
 bool isNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/);
 
-#define VtableIsStack true //虚函数表定义在栈上
-#define ShowContainerSize false //显示容器大小
+
+#ifdef __cplusplus
+}
+#endif
 #endif // !XVirtual_H

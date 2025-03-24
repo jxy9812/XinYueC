@@ -7,7 +7,7 @@
 //创建一个节点
 static AStarNode* CreationAStarNode(const int x, const int y)
 {
-	AStarNode* nodes = (AStarNode*)malloc(sizeof(AStarNode));
+	AStarNode* nodes = (AStarNode*)XMemory_malloc(sizeof(AStarNode));
 	if (ISNULL(nodes, ""))
 		return NULL;
 	nodes->pos.x = x;
@@ -98,7 +98,7 @@ static void XBinaryTreeObject_freeNode(AStarNode* root)
 			XStack_push(stack, it);
 		}
 		XVector_free(current->child);
-		free(current);
+		XMemory_free(current);
 	}
 }
 XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XPoint dest, bool Oblique)

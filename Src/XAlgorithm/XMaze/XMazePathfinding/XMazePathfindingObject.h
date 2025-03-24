@@ -1,5 +1,8 @@
 ﻿#ifndef XMAZEPATHFINDINGOBJECT_H
 #define XMAZEPATHFINDINGOBJECT_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include"XMaze.h"
 #include"XVector.h"
 #include"XPoint.h"
@@ -17,4 +20,7 @@ bool isPass(const XVector* maze, XPoint CurPoint);
 bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep CurPoint);
 //探寻周围能斜着的点
 size_t PathfinderOblique(struct XStack* stack, struct XVector* maze, struct XPointStep CurPoint);
-#endif // !XMAZEPATHFINDINGOBJECT_H
+#ifdef __cplusplus
+}
+#endif
+#endif// !XMAZEPATHFINDINGOBJECT_H

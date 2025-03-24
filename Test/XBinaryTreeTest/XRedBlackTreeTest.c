@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XRedBlackTree.h"
 #include"XLess.h"
 #include"XEquality.h"
@@ -64,3 +65,5 @@ void XRedBlackTreeTest()
 	}
 	
 }
+
+#endif

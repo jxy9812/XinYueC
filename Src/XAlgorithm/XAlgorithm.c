@@ -48,7 +48,7 @@ void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据�
 		}
 		else
 		{
-			void* valMiddle = malloc(typeSize);
+			void* valMiddle = XMemory_malloc(typeSize);
 			if (valMiddle == NULL)
 			{
 				perror("交换函数创建p临时空间失败");
@@ -57,7 +57,7 @@ void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据�
 			memcpy(valMiddle, valOne, typeSize);
 			memcpy(valOne, valTwo, typeSize);
 			memcpy(valTwo, valMiddle, typeSize);
-			free(valMiddle);
+			XMemory_free(valMiddle);
 		}
 	}
 }
@@ -72,7 +72,7 @@ void XStackRCopyXVector(const XStack* stack, XVector* vector)
 	char* pTail = XStack_top(stack);//数组末尾元素
 	char* pHead = pTail- TypeSize*(Size-1);//数组头元素
 	/*XVECTOR* v = (XVECTOR*)vector;
-	v->object._data = malloc(Size * TypeSize);
+	v->object._data = XMemory_malloc(Size * TypeSize);
 	if (ISNULL(v->object._data, "")))
 		return;
 	v->object._capacity = Size;
@@ -93,7 +93,7 @@ void XStackCopyXVector(const XStack* stack, XVector* vector)
 	char* pTail = XStack_top(stack);//数组末尾元素
 	char* pHead = pTail - TypeSize * (Size - 1);//数组头元素
 	//XVECTOR* v = (XVECTOR*)vector;
-	//v->object._data = malloc(Size* TypeSize);
+	//v->object._data = XMemory_malloc(Size* TypeSize);
 	//if (ISNULL(v->object._data, "")))
 	//	return;
 	//v->object._capacity = Size;

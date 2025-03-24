@@ -1,5 +1,8 @@
 ﻿#ifndef XSTACK_H
 #define XSTACK_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdio.h>
 #include<stdbool.h>
 #include"XVector.h"
@@ -12,7 +15,7 @@ enum XStackEnum
 	EXStack_Pop= EXVector_Pop_Back,
 	EXStack_Top= EXVector_Back,
 };
-typedef struct XStack
+typedef struct 
 {
 	XVector vector;
 }XStack;
@@ -50,6 +53,9 @@ void XStack_rcopy(XStack* this_stackOne, const XStack* this_stackTwo);
 size_t XStack_typeSize(XStack* this_stack);
 
 
-#endif // !STACK_H
+#ifdef __cplusplus
+}
+#endif
+#endif// !STACK_H
 
 

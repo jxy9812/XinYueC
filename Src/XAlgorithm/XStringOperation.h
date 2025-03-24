@@ -1,5 +1,8 @@
 ﻿#ifndef XStringOPERATION_H
 #define XStringOPERATION_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdbool.h>
 //在该字符串str中查找第一个属于字符串sfchar中的字符返回其指针，失败为NULL
 char* string_find_first_of(const char* str, const char* fchar);
@@ -19,4 +22,7 @@ enum UnblankType//去空格类型
 };
 //去空格
 void Unblank(char* str, const  enum UnblankType type);
+#ifdef __cplusplus
+}
+#endif
 #endif // XStringOPERATION_H

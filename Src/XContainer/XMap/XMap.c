@@ -19,7 +19,7 @@ XMap* XMap_new(const size_t keyTypeSize, const size_t valTypeSize, XEquality Key
 		printf("KeyEquality相等比较函数NULL或KeyLess小于比较函数NULL");
 		return NULL;
 	}
-	XMap* this_map = (XMap*)malloc(sizeof(XMap));
+	XMap* this_map = (XMap*)XMemory_malloc(sizeof(XMap));
 	XMap_init(this_map,keyTypeSize,valTypeSize,KeyEquality,KeyLess);
 	return this_map;
 }

@@ -1,5 +1,8 @@
 ﻿#ifndef STRING_H
 #define STRING_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdbool.h>
 #include"XVector.h"
 //XVector虚函数表
@@ -35,7 +38,7 @@ enum XStringEnum
 	EXString_Find_Last_Not_Of,
 };
 
-typedef struct XString
+typedef struct 
 {
 	XVector vector;
 }XString;
@@ -86,4 +89,7 @@ size_t XString_size(const XString* this_string);//
 void XString_swap(XString* this_stringOne, XString* this_stringTwo);
 //释放容器
 void XString_free(const XString* this_string);
+#ifdef __cplusplus
+}
+#endif
 #endif // !STRING_H

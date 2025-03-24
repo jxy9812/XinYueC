@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 #include<stdint.h>
+#include"XDataStructConfig.h"
 typedef void* (*MallocMethod)(size_t size);
 typedef void* (*FreeMethod)(void* pointer);
 typedef void* (*ReallocMethod)(void* pointer, size_t size);
@@ -18,6 +19,8 @@ void XMemory_setMethod(const XMemory* method);
 void XMemory_setMallocMethod(MallocMethod method);
 void XMemory_setFreeMethod(FreeMethod method);
 void XMemory_setReallocMethod(ReallocMethod method);
+//XMemory_malloc XMemory_free配合实现XMemory_realloc  扩大内存拷贝时有一定隐患
+void* XMemory_reallocPack(void* pointer, size_t size);
 //内存管理
 void* XMemory_malloc(size_t size);
 void XMemory_free(void* pointer);

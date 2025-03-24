@@ -1,5 +1,8 @@
 ﻿#ifndef XHUFFMANTREE_H
 #define XHUFFMANTREE_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include"XMap.h"
 #include"XBinaryTreeObject.h"
 #include"XHuffmanTree_macro.h"
@@ -33,4 +36,7 @@ XVector* XHfmTree_unzip(XHuffmanTree* tree, const char* data, const size_t size)
 void XHfmTree_clear(XHuffmanTree* tree);
 //释放哈夫曼树
 void XHfmTree_free(XHuffmanTree* tree);
-#endif // !XHuffman_h
+#ifdef __cplusplus
+}
+#endif
+#endif// !XHuffman_h

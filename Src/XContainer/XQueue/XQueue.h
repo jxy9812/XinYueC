@@ -1,5 +1,8 @@
 ﻿#ifndef QUEUE_H
 #define QUEUE_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdio.h>
 #include<stdbool.h>
 #include"XList.h"
@@ -12,7 +15,7 @@ enum XQueueEnum
 	EXQueue_Pop= EXList_Pop_Front,
 	EXQueue_Top = EXList_Front,
 };
-typedef struct XQueue
+typedef struct 
 {
 	XList list;
 }XQueue;
@@ -44,5 +47,7 @@ bool XQueue_empty(XQueue* this_queue);
 //返回队列中元素的个数
 size_t XQueue_size(XQueue* this_queue);
 
-#endif 
-
+#ifdef __cplusplus
+}
+#endif
+#endif

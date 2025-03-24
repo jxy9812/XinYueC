@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XStack.h"
 void stackTest()
 {
@@ -31,3 +32,5 @@ void stackTest()
 	}
 	XStack_free(string);
 }
+
+#endif

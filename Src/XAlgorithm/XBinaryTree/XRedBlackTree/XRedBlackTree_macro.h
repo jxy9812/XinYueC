@@ -1,5 +1,9 @@
 ﻿#ifndef XREDBLACKTREE_MACRO_H
 #define XREDBLACKTREE_MACRO_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 //辅助宏
 #define XRBTree_GetColor(this_root)  ((this_root)->color)//红黑树-获取颜色
 #define XRBTree_SetColor(this_root,Color)  ((this_root)->color=Color)//红黑树-设置颜色
@@ -10,4 +14,7 @@
 //数据
 #define XRBTree_GetData(this_root,Type) XBTree_GetData(this_root,Type)//红黑树-获取数据
 
+#ifdef __cplusplus
+}
+#endif
 #endif

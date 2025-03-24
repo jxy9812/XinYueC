@@ -1,7 +1,9 @@
 ﻿#ifndef XPAIR_H
 #define XPAIR_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdio.h>
-//#include"XVector.h"
 typedef struct XPair//pair是将2个数据组合成一组数据，当需要这样的需求时就可以使用pair
 {
 	void* first;//第一组数据
@@ -29,4 +31,7 @@ void* XPair_first(XPair* this_pair);
 void* XPair_second(XPair* this_pair);
 //释放
 void XPair_free(XPair* this_pair);
+#ifdef __cplusplus
+}
+#endif
 #endif

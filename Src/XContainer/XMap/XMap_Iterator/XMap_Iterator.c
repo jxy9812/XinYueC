@@ -7,10 +7,10 @@ XMap_Iterator* XMap_begin(XMap* this_Map)
 	XMap_updataIterator(this_Map);
 	if (this_Map->itArray == NULL)
 		return NULL;
-	XVector_iterator* Vectorit = XVector_begin(this_Map->itArray);
+	XVector_iterator* it = XVector_begin(this_Map->itArray);
 	/*if(Vectorit!=NULL)
 		return *(XPair**)Vectorit;*/
-	return Vectorit;
+	return it;
 }
 
 XMap_Iterator* XMap_end(XMap* this_Map)
@@ -20,10 +20,10 @@ XMap_Iterator* XMap_end(XMap* this_Map)
 
 XMap_Iterator* XMap_iterator_add(XMap* this_Map, XMap_Iterator* it)
 {
-	XVector_iterator* Vectorit = XVector_iterator_add(this_Map->itArray,it);
+	XVector_iterator* iterator = XVector_iterator_add(this_Map->itArray,it);
 	/*if (Vectorit != NULL)
 		return *(XPair**)Vectorit;*/
-	return Vectorit;
+	return iterator;
 }
 
 void XMap_iterator_for_each(XMap* this_Map, XFor_each ForFunction, void* args)

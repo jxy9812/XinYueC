@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XMap.h"
 #include"XEquality.h"
 #include"XLess.h"
@@ -27,9 +28,10 @@ void XMapTest()
 	//XMap_remove(map, arrayint+2);
 	XMap_Remove(map,int,arrayint[2]);
 	printf("当前Map容器内数据数量:%d\n", XMap_size(map));
-	XMap_iterator_for_each(map, XFor_each_pair,NULL);
+	XMap_reverse_iterator_for_each(map, XFor_each_pair,NULL);
 	
 	XPair* pair =XMap_find(map, arrayint);
 	printf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair,char*));
 	XMap_clear(map);
 }
+#endif

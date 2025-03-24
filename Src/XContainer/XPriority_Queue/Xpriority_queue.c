@@ -6,7 +6,7 @@ XPriority_Queue* XPriority_Queue_new(size_t typeSize, XCompare compare)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XVector* this_queue = malloc(sizeof(XPriority_Queue));
+	XVector* this_queue = XMemory_malloc(sizeof(XPriority_Queue));
 	XPriority_Queue_init(this_queue, typeSize,compare);
 	return this_queue;
 }
@@ -63,7 +63,7 @@ void XPriority_Queue_clear(XPriority_Queue* this_queue)
 	//char** LPParr = &ContainerDataPtr(this_queue);//指向数组的开始
 	//if (*LPParr != NULL)
 	//{
-	//	free(*LPParr);//清空数组
+	//	XMemory_free(*LPParr);//清空数组
 	//	*LPParr = NULL;
 	//}
 }
@@ -72,5 +72,5 @@ void XPriority_Queue_free(XPriority_Queue* this_queue)
 {
 	XVector_free(this_queue);
 	/*XPriority_Queue_clear(this_queue);
-	free(this_queue);*/
+	XMemory_free(this_queue);*/
 }

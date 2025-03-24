@@ -1,6 +1,9 @@
 ﻿//迷宫广度优先搜索寻路算法
 #ifndef XMAZEPATHFINDINGBFS_H
 #define XMAZEPATHFINDINGBFS_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include"XMaze.h"
 #include"XPoint.h"
 #include"XBinaryTreeObject.h"
@@ -12,4 +15,7 @@
 //}BFSNode;
 //迷宫寻路-广度优先搜索寻路
 XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoint dest);
-#endif // !XMAZEPATHFINDINGBFS_H
+#ifdef __cplusplus
+}
+#endif
+#endif// !XMAZEPATHFINDINGBFS_H

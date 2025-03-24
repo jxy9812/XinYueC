@@ -1,4 +1,5 @@
 ﻿#include"XMemory.h"
+#include"string.h"
 #ifdef _WIN32
 #include<stdlib.h>
 static XMemory global_Memory = { malloc,free,realloc };
@@ -46,4 +47,21 @@ void* XMemory_realloc(void* pointer, size_t size)
 void XMemory_setReallocMethod(ReallocMethod method)
 {
 	global_Memory.reallocate = method;
+}
+
+void* XMemory_reallocPack(void* pointer, size_t size)
+{
+	if(pointer==NULL)
+		return NULL;
+	if (size == 0)
+	{
+		XMemory_free(pointer);
+		return NULL;
+	}
+	void* ptr = XMemory_malloc(size);
+	if (ptr == NULL)
+		return NULL;
+	memcpy(ptr,pointer,size);
+	XMemory_free(pointer);
+	return ptr;
 }

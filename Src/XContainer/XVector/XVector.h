@@ -1,5 +1,8 @@
 ﻿#ifndef VECTOR_H
 #define VECTOR_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdio.h>
 #include<stdbool.h>
 #include<stdint.h>
@@ -97,6 +100,9 @@ size_t  XVector_capacity(const  XVector* this_vector);
 void XVector_swap(XVector* this_vectorOne, XVector* this_vectorTwo);
 //返回元素类型字节大小
 size_t XVector_typeSize(XVector* this_vector);
+#ifdef __cplusplus
+}
+#endif
 #endif // !VECTOR_H
 
 

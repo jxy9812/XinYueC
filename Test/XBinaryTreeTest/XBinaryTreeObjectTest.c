@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XBinaryTreeObject.h"
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
@@ -45,3 +46,5 @@ void XBinaryTreeObjectTest()
 	printf("\n");
 	XVector_free(TreePreorder);
 }
+
+#endif

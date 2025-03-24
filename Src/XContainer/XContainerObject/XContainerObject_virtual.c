@@ -11,7 +11,7 @@ static size_t VXContainerObject_type(const XContainerObject* Object);
 static void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
 static void VXContainerObject_clear(XContainerObject* Object);
 XVtable* XContainerObjectVtable = NULL;
-#if VtableIsStack
+#if VTABLEISSTACK
 static XVtable vtable;//虚函数类
 static void* vtable_data[7];//虚函数数据
 #endif
@@ -20,7 +20,7 @@ void XContainerObject_class_init()
 	if (XContainerObjectVtable)
 		return;
 	//虚函数表初始化
- #if !VtableIsStack
+ #if !VTABLEISSTACK
 	XContainerObjectVtable = XVtable_new();
 #else
 	XContainerObjectVtable = &vtable;
@@ -28,7 +28,7 @@ void XContainerObject_class_init()
 #endif
 	void* table[] = { VXContainerObject_free, VXContainerObject_empty,VXContainerObject_size,VXContainerObject_capacity,VXContainerObject_type,VXContainerObject_swap,VXContainerObject_clear };
 	XVtable_append_array(XContainerObjectVtable,table,sizeof(table)/sizeof(table[0]));
-#if ShowContainerSize
+#if SHOWCONTAINERSIZE
 	printf("XContainerObject size:%d\n", XVtable_size(XContainerObjectVtable));
 #endif
 }
@@ -88,6 +88,6 @@ void VXContainerObject_free(XContainerObject* Object)
 	Object->_size = 0;
 	Object->_typeSize = 0;
 	if (Object->_data);
-		free(Object->_data);
-	free(Object);
+		XMemory_free(Object->_data);
+	XMemory_free(Object);
 }

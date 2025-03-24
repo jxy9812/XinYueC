@@ -1,5 +1,8 @@
 ﻿#ifndef XALGORITHM_H
 #define XALGORITHM_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdio.h>
 #include"XStringOperation.h"
 struct XStack;
@@ -18,5 +21,8 @@ void XStackRCopyXVector(const struct XStack* stack,struct XVector* vector);
 void XStackCopyXVector(const struct XStack* stack, struct XVector* vector);
 //延迟毫秒
 void XDelay(const size_t msec);
-#endif // !XALGORITHM_H
+#ifdef __cplusplus
+}
+#endif
+#endif// !XALGORITHM_H
 

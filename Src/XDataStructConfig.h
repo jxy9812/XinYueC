@@ -1,0 +1,33 @@
+﻿#ifndef XDATASTRUCTCONFIG_H
+#define XDATASTRUCTCONFIG_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+//数据结构配置文件
+#define XMEMORYREALLOCUSEMALLOCFREE		0//realloc用malloc和free配合实现
+#define VTABLEISSTACK					1//虚函数表定义在栈上
+#define SHOWCONTAINERSIZE				0//显示容器大小
+#define DEBUG_ON						0
+#define DEMOTEST						1//测试代码
+
+
+
+
+#ifdef DEBUG_ON
+#if ((DEBUG_ON) && defined(_DEBUG))
+#define DEBUG_PRINTF(fmt,...) printf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
+#else
+#define DEBUG_PRINTF(fmt,...)
+#endif
+#else
+#if defined _DEBUG
+#define DEBUG_PRINTF(fmt,...) printf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
+#else
+#define DEBUG_PRINTF(fmt,...)
+#endif
+#endif // !DEBUG_ON
+
+#ifdef __cplusplus
+}
+#endif
+#endif

@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XList.h"
 #include"XEquality.h"
 #include"XCompare.h"
@@ -14,7 +15,7 @@ void ListSortTest()
 	XList* li = XList_new(sizeof(int));
 	int size = 10;
 	srand((unsigned int)time(NULL));
-	int* p1 = malloc(sizeof(int) * size);
+	int* p1 = XMemory_malloc(sizeof(int) * size);
 	for (size_t i = 0; i < size; i++)
 	{
 		int num = rand() % 1000;
@@ -124,3 +125,5 @@ void ListSwapTest()//交换函数测试
 	XList_free(li1);
 	XList_free(li2);
 }
+
+#endif

@@ -6,7 +6,7 @@ XStack* XStack_new(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XVector* this_stack = malloc(sizeof(XVector));
+	XVector* this_stack = XMemory_malloc(sizeof(XVector));
 	XStack_init(this_stack, typeSize);
 	return this_stack;
 }

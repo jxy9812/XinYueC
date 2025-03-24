@@ -1,5 +1,8 @@
 ﻿#ifndef XLISTNODE_H
 #define XLISTNODE_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 //List的一个节点
 typedef struct XListNode
 {
@@ -7,4 +10,7 @@ typedef struct XListNode
 	struct XListNode* next;//指向下一个
 	void* date;//储存的数据指针
 }XListNode;
+#ifdef __cplusplus
+}
+#endif
 #endif // !XLISTNODE_H

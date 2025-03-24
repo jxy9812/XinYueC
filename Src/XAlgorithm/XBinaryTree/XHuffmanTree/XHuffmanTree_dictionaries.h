@@ -1,6 +1,9 @@
 ﻿//哈夫曼树字典类型声明
 #ifndef XHUFFMANTREE_DICTIONARIES_H
 #define XHUFFMANTREE_DICTIONARIES_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include"XVector.h"
 //字典数据(写入压缩的)
 typedef struct DictionaryData
@@ -16,4 +19,7 @@ typedef struct DictionaryValue
 	XVector* code;//哈夫曼编码
 }DictionaryValue;
 
+#ifdef __cplusplus
+}
+#endif
 #endif

@@ -362,7 +362,7 @@ void ListSortTest()
 	XList_sort(li, XLess_int);
 	clock_t time_after = clock();
 	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
-	li->free(li);
+	li->XMemory_free(li);
 }
 //链表的迭代器测试
 void ListIterator()
@@ -419,7 +419,7 @@ void ListTest()
 	{
 		printf("%d\n", *(int*)list->at(list, i)->date);
 	}
-	list->free(list);
+	list->XMemory_free(list);
 }
 //交换函数测试
 void ListSwapTest()

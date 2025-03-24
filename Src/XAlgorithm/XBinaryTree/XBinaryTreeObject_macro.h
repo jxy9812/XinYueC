@@ -1,5 +1,9 @@
 ﻿#ifndef XBINARYTREEOBJECT_MACRO_H
 #define XBINARYTREEOBJECT_MACRO_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 //创建节点
 #define XBTree_CreationNode(NodeType, nodeCount, dataCount, Type) ((NodeType*)XBTree_creationNode(sizeof(NodeType), nodeCount, dataCount, sizeof(Type)))
 //获取节点
@@ -13,4 +17,7 @@
 //数据
 #define  XBTree_InsertData(this_root,nSel,values) XBTree_insertData(this_root,&values,nSel,sizeof(values))//二叉树-插入数据
 #define  XBTree_GetData(this_root,nSel,Type) (*((Type*)(XVector_at(((XBTreeNode*)this_root)->values,nSel))))//二叉树-获取数据(继承的子类均可以使用)
+#ifdef __cplusplus
+}
+#endif
 #endif

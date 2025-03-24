@@ -1,4 +1,5 @@
 ﻿#include"Test.h"
+#if DemoTest
 #include"XMazePathfindingDFS.h"
 #include"XMazePathfindingBFS.h"
 #include"XMazePathfindingAStar.h"
@@ -77,3 +78,4 @@ void XMazePathfinding()
 	XVector_free(Path);
 	XMazeFree(maze);
 }
+#endif

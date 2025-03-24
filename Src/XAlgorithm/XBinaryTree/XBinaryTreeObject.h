@@ -1,6 +1,9 @@
 ﻿//二叉树基类
 #ifndef XBINARYTREEOBJECT_H
 #define XBINARYTREEOBJECT_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdio.h>
 #include<stdbool.h>
 #include"XVector.h"
@@ -50,4 +53,7 @@ bool XBTree_ReplacementChildNode(struct XBTreeNode* formerChild/*旧的*/, struc
 XBTreeNode* XBTree_SpinRR(XBTreeNode** this_root, XBTreeNode* nodes);
 //左旋
 XBTreeNode* XBTree_SpinLL(XBTreeNode** this_root, XBTreeNode* nodes);
+#ifdef __cplusplus
+}
+#endif
 #endif // !XBINARYTREEOBJECT_H

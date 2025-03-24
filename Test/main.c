@@ -5,6 +5,7 @@
 #include<math.h>
 int main(int argc, char* args[])
 {
+#if DemoTest
 	ListTest();
 	ListSortTest();
 	ListIterator();
@@ -23,6 +24,7 @@ int main(int argc, char* args[])
 	//XBinaryTreeObjectTest();	
 	//XBalancedBinaryTreeTest();
 	//XRedBlackTreeTest();
+#endif
 #ifdef _WIN32
 	//XHuffmanTreeTest();
 #else

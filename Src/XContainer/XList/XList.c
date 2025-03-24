@@ -141,7 +141,7 @@ XList* XList_new(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XList* this_list = malloc(sizeof(XList));
+	XList* this_list = XMemory_malloc(sizeof(XList));
 	XList_init(this_list, typeSize);
 	return this_list;
 }

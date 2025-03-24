@@ -24,7 +24,7 @@ static void VXList_sort(XList* this_list, XCompare compare);
 static void VXList_free(XList* this_list);
 //虚函数表定义
 XVtable* XListVtable = NULL;
-#if VtableIsStack
+#if VTABLEISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[20];//虚函数数据
 #endif
@@ -42,7 +42,7 @@ void XList_class_init()
 		//排序
 		VXList_sort
 	};
-#if !VtableIsStack
+#if !VTABLEISSTACK
 	XListVtable = XVtable_new();
 #else
 	XListVtable = &vtable;
@@ -56,7 +56,7 @@ void XList_class_init()
 	XVtable_At(XListVtable,EXContainerObject_Free)= VXList_free;
 	XVtable_At(XListVtable, EXContainerObject_Clear) = VXList_clear;
 
-#if ShowContainerSize
+#if SHOWCONTAINERSIZE
 	printf("XList size:%d\n", XVtable_size(XListVtable));
 #endif
 }
@@ -79,13 +79,13 @@ XListNode* VXList_push_back(XList* this_list, void* LpValue)
 	if (ISNULL(this_list, ""))
 		return NULL;
 	XList* list = this_list;
-	XListNode* NewNode = malloc(sizeof(XListNode));//新节点
+	XListNode* NewNode = XMemory_malloc(sizeof(XListNode));//新节点
 	if (NewNode == NULL)
 	{
 		perror("开辟节点失败");
 		exit(-1);
 	}
-	NewNode->date = malloc(list->object._typeSize);//开辟节点内储存数据的空间
+	NewNode->date = XMemory_malloc(list->object._typeSize);//开辟节点内储存数据的空间
 	memcpy(NewNode->date, LpValue, list->object._typeSize);//拷贝数据
 	if (list->object._size == 0)
 	{
@@ -120,13 +120,13 @@ void VXList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t 
 			XListNode* left = curNode->prev;
 			//XListNode* right = left->next;
 
-			XListNode* newNode = malloc(sizeof(XListNode));//新节点
+			XListNode* newNode = XMemory_malloc(sizeof(XListNode));//新节点
 			if (newNode == NULL)
 			{
 				perror("开辟节点失败");
 				exit(-1);
 			}
-			newNode->date = malloc(list->object._typeSize);//开辟节点内储存数据的空间
+			newNode->date = XMemory_malloc(list->object._typeSize);//开辟节点内储存数据的空间
 			memcpy(newNode->date, LpValue, list->object._typeSize);//拷贝数据
 
 			newNode->prev = left;
@@ -199,8 +199,8 @@ void VXList_erase(XList* this_list, XListNode* node)
 	XListNode* nextNode = node->next;//下一个节点
 	XListNode* prevNode = node->prev;//上一个节点
 	if(node->date)
-		free(node->date);//释放节点的数据
-	free(node);//释放节点
+		XMemory_free(node->date);//释放节点的数据
+	XMemory_free(node);//释放节点
 	if (list->object._size == 1)
 	{
 		this_list->object._data = NULL;
@@ -236,8 +236,8 @@ void VXList_clear(XList* this_list)
 	for (size_t i = 0; i < list->object._size; i++)
 	{
 		pnext = p->next;
-		free(p->date);
-		free(p);
+		XMemory_free(p->date);
+		XMemory_free(p);
 		p = pnext;
 	}
 	list->object._size = 0;
@@ -279,14 +279,14 @@ void VXList_free(XList* this_list)
 	if (ISNULL(this_list, ""))
 		return;
 	VXList_clear(this_list);
-	free(this_list);
+	XMemory_free(this_list);
 }
 //排序
 //一次快排
 static struct XListNode* List_OneSort(XListNode* ListHead, XListNode* ListTail, const size_t type, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
 {
 
-	char* compareVal = malloc(type);
+	char* compareVal = XMemory_malloc(type);
 	if (compareVal == NULL)
 		return;
 	memcpy(compareVal, ListHead->date, type);
@@ -318,7 +318,7 @@ static struct XListNode* List_OneSort(XListNode* ListHead, XListNode* ListTail, 
 		}
 	}
 	memcpy(ListTail->date, compareVal, type);
-	free(compareVal);
+	XMemory_free(compareVal);
 	//单次结束，分割节点
 	return ListHead;
 

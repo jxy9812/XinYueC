@@ -1,5 +1,8 @@
-﻿#ifndef LIST_H
-#define LIST_H
+﻿#ifndef XLIST_H
+#define XLIST_H
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include<stdbool.h>
 #include<stdio.h>
 #include"XList_iterator.h"
@@ -26,7 +29,7 @@ enum XListVtableEnum
 	EXList_Find,
 	EXList_Sort
 };
-typedef struct XList
+typedef struct 
 {
 	XContainerObject object;
 	XEquality equality;//相等比较函数
@@ -84,4 +87,7 @@ size_t  XList_size(const XList* this_list);
 void  XList_sort(XList* this_list, XCompare compare);
 //交换两个同类型链表的数据
 void  XList_swap(XList* this_listOne, XList* this_listTwo);
+#ifdef __cplusplus
+}
+#endif
 #endif // 

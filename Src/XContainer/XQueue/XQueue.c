@@ -5,7 +5,7 @@ XQueue* XQueue_new(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XQueue* this_queue = malloc(sizeof(XQueue));
+	XQueue* this_queue = XMemory_malloc(sizeof(XQueue));
 	XQueue_init(this_queue, typeSize);
 	return this_queue;
 }
