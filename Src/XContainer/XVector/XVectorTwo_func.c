@@ -4,10 +4,10 @@
 #include<string.h>
 XVector* XVectorTwoMatrix_new(const size_t TypeSize, const size_t row, const size_t list, const void* initVal)
 {
-	struct XVector* VTwo = XVector_new(sizeof(struct XVector*));//二维数组
+	XVector* VTwo = XVector_new(sizeof(struct XVector*));//二维数组
 	for (size_t i = 0; i < row; i++)
 	{
-		struct XVector* RowVector = XVector_new( TypeSize);//每一行的一维数组
+		XVector* RowVector = XVector_new( TypeSize);//每一行的一维数组		
 		for (size_t j = 0; j < list; j++)
 		{
 			XVector_push_back(RowVector, initVal);

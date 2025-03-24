@@ -4,14 +4,14 @@
 extern "C" {
 #endif
 #include"XFunctionCallback.h"
-struct XList;
+typedef struct XList XList;
 typedef struct XListNode XListNode;
 //正向迭代器
 typedef XListNode XList_iterator;
-XList_iterator* XList_begin(struct XList* this_list);
-XList_iterator* XList_end(struct XList* this_list);
-XList_iterator* XList_iterator_add(struct XList* this_list,XList_iterator*it);
-void XList_iterator_for_each(struct XList* this_list, XFor_each ForFunction, void* args);
+XList_iterator* XList_begin(XList* this_list);
+XList_iterator* XList_end(XList* this_list);
+XList_iterator* XList_iterator_add(XList* this_list,XList_iterator*it);
+void XList_iterator_for_each(XList* this_list, XFor_each ForFunction, void* args);
 #ifdef __cplusplus
 }
 #endif

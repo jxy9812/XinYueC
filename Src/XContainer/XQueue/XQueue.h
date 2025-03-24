@@ -15,7 +15,7 @@ enum XQueueEnum
 	EXQueue_Pop= EXList_Pop_Front,
 	EXQueue_Top = EXList_Front,
 };
-typedef struct 
+typedef struct XQueue
 {
 	XList list;
 }XQueue;

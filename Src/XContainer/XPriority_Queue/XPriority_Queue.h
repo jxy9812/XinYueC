@@ -14,7 +14,7 @@ enum XPriority_QueueEnum
 	EXPriority_Queue_Top,
 };
 //优先队列
-typedef struct 
+typedef struct XPriority_Queue
 {
 	XVector vector;//基本数据
 	XCompare compare;//比较准则

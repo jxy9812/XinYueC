@@ -38,7 +38,7 @@ enum XStringEnum
 	EXString_Find_Last_Not_Of,
 };
 
-typedef struct 
+typedef struct XString
 {
 	XVector vector;
 }XString;

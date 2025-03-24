@@ -5,8 +5,8 @@ extern "C" {
 #endif
 #include<stdio.h>
 #include"XStringOperation.h"
-struct XStack;
-struct XVector;
+typedef struct XStack XStack;
+typedef struct XVector XVector;
 #ifdef _WIN32
 //控制台移动
 void gotoxy(short x, short y);
@@ -16,9 +16,9 @@ void gotoxy(short x, short y);
 //交换任意数据类型的函数
 void XSwap(void* valOne, void* valTwo, const int typeSize);
 //栈逆序拷贝至数组
-void XStackRCopyXVector(const struct XStack* stack,struct XVector* vector);
+void XStackRCopyXVector(const XStack* stack,XVector* vector);
 //栈拷贝至数组
-void XStackCopyXVector(const struct XStack* stack, struct XVector* vector);
+void XStackCopyXVector(const XStack* stack, XVector* vector);
 //延迟毫秒
 void XDelay(const size_t msec);
 #ifdef __cplusplus

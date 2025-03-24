@@ -19,18 +19,18 @@ FIND_INCLUDE_DIR(INCLUDE_TEST_LIST "Test")			#调用函数，指定参数
 include_directories(${INCLUDE_SRC_LIST})
 include_directories(${INCLUDE_TEST_LIST})
 #递归搜索目录下的文件添加到变量中
-file(GLOB_RECURSE SrcFILE "Src/*.c" "Src/*.h")
-file(GLOB_RECURSE TestFILE "Test/*.c" "Test/*.h")
+file(GLOB_RECURSE SRC_FILE "Src/*.c")
+file(GLOB_RECURSE TEST_FILE "Test/*.c" )
 
-add_library(${EXPORT_NAME}static  STATIC  ${SrcFILE})
-add_library(${EXPORT_NAME}  SHARED  ${SrcFILE} ${PUBLIC_HDRS})
+add_library(${EXPORT_NAME}static  STATIC  ${SRC_FILE})
+add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${PUBLIC_HDRS})
 
 #添加参加编译的文件
 add_executable(${PROJECT_NAME}
-${TestFILE}
+${TEST_FILE}
+"main.c"
  )
  target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME})
 
 #安装
-file(GLOB_RECURSE PUBLIC_HDRS  "Src/*.h" "Src/*.hpp" )
 include(CMake_Install.cmake)

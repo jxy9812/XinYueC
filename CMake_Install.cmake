@@ -1,5 +1,13 @@
-﻿ #安装头文件
-install(FILES ${PUBLIC_HDRS} DESTINATION "include/${EXPORT_NAME}")
+﻿file(GLOB_RECURSE PUBLIC_HDRS  "Src/*.h" "Src/*.hpp" )
+file(GLOB_RECURSE TEST_HDRS  "Test/*.h" "Test/*.hpp" )
+#安装库头文件
+install(FILES ${PUBLIC_HDRS} DESTINATION "Src/include")
+#安装库源文件
+install(FILES ${SRC_FILE} DESTINATION "Src")
+#安装测试头文件
+install(FILES ${TEST_HDRS} DESTINATION "XDataStructTest/include")
+#安装测试源文件
+install(FILES ${TEST_FILE} DESTINATION "XDataStructTest")
 
 set_target_properties(${EXPORT_NAME} PROPERTIES
     OUTPUT_NAME ${EXPORT_NAME}

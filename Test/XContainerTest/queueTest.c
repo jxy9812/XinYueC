@@ -1,5 +1,5 @@
-﻿#include"Test.h"
-#if DemoTest
+﻿#include"XDataStructTest.h"
+#if DEMOTEST
 #include"XQueue.h"
 #include"XPriority_Queue.h"
 #include"XSort.h"

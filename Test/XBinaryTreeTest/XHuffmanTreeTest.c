@@ -1,5 +1,5 @@
-﻿#include"Test.h"
-#if DemoTest
+﻿#include"XDataStructTest.h"
+#if DEMOTEST
 #include"XHuffmanTree.h"
 static void for_each(void* LPVal, void* args)
 {

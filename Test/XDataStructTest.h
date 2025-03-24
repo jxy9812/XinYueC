@@ -1,10 +1,10 @@
-﻿#ifndef TEST_H
-#define TEST_H
+﻿#ifndef XDATASTRUCTTEST_H
+#define XDATASTRUCTTEST_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include"XDataStructConfig.h"
-#if DemoTest
+#if DEMOTEST
 
 	//链表迭代器测试
 	void ListIterator();
@@ -44,7 +44,7 @@ extern "C" {
 	void XBinarySearchTest();
 	//哈夫曼树测试
 	void XHuffmanTreeTest();
-#endif // DemoTest
+#endif // DEMOTEST
 
 #ifdef __cplusplus
 }

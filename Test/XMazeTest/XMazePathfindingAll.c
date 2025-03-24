@@ -1,5 +1,5 @@
-﻿#include"Test.h"
-#if DemoTest
+﻿#include"XDataStructTest.h"
+#if DEMOTEST
 #include"XMazePathfindingDFS.h"
 #include"XMazePathfindingBFS.h"
 #include"XMazePathfindingAStar.h"

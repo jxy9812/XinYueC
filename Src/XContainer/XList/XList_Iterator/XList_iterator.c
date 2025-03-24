@@ -3,19 +3,19 @@
 #include<stdio.h>
 #include"XListNode.h"
 
-XList_iterator* XList_begin(struct XList* this_list)
+XList_iterator* XList_begin(XList* this_list)
 {
 	if (ISNULL(this_list, "XList_begin"))
 		return NULL;
 	return ContainerDataPtr(this_list);
 }
 
-XList_iterator* XList_end(struct XList* this_list)
+XList_iterator* XList_end(XList* this_list)
 {
 	return NULL;
 }
 
-XList_iterator* XList_iterator_add(struct XList* this_list,XList_iterator*it)
+XList_iterator* XList_iterator_add(XList* this_list,XList_iterator*it)
 {
 	if (ISNULL(this_list, "XList_iterator_add  struct XList*"))
 		return NULL;
@@ -28,7 +28,7 @@ XList_iterator* XList_iterator_add(struct XList* this_list,XList_iterator*it)
 	return nodes->next;//指向下一个元素
 }
 
-void XList_iterator_for_each(struct XList* this_list, XFor_each ForFunction, void* args)
+void XList_iterator_for_each(XList* this_list, XFor_each ForFunction, void* args)
 {
 	for (XList_iterator* it = XList_begin(this_list); it != XList_end(this_list); it = XList_iterator_add(this_list, it))
 	{

@@ -1,9 +1,9 @@
-﻿#include"Test.h"
-#if DemoTest
+﻿#include"XDataStructTest.h"
+#if DEMOTEST
 #include"XMazeGeneratedDF.h"
 void XMazeGeneratedTest()
 {
-	struct XVector* maze= XMazeGenerated(50, 50,1,1,true);
+	XVector* maze= XMazeGenerated(50, 50,1,1,true);
 	XMazePrint(maze,"■","  ");
 	XMazeFree(maze);
 }

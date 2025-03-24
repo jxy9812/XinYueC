@@ -29,7 +29,7 @@ enum XListVtableEnum
 	EXList_Find,
 	EXList_Sort
 };
-typedef struct 
+typedef struct XList
 {
 	XContainerObject object;
 	XEquality equality;//相等比较函数

@@ -1,5 +1,5 @@
-﻿#include"Test.h"
-#if DemoTest
+﻿#include"XDataStructTest.h"
+#if DEMOTEST
 #include"XBinaryTreeObject.h"
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)

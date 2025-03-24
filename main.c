@@ -1,11 +1,11 @@
-﻿#include"Test.h"
+﻿#include"XDataStructTest.h"
 #include"XVector_iterator.h"
 #include"XClass.h"
 #include<stdio.h>
 #include<math.h>
 int main(int argc, char* args[])
 {
-#if DemoTest
+#if DEMOTEST
 	ListTest();
 	ListSortTest();
 	ListIterator();
@@ -17,13 +17,13 @@ int main(int argc, char* args[])
 	XStringTest();
 	XMapTest();
 	//XMapAndXVectorFindTest();
-	//XBinarySearchTest();
-	//SortTest();
+	XBinarySearchTest();
+	SortTest();
 	//XMazeGeneratedTest();
 	//XMazePathfinding();
-	//XBinaryTreeObjectTest();	
-	//XBalancedBinaryTreeTest();
-	//XRedBlackTreeTest();
+	XBinaryTreeObjectTest();	
+	XBalancedBinaryTreeTest();
+	XRedBlackTreeTest();
 #endif
 #ifdef _WIN32
 	//XHuffmanTreeTest();

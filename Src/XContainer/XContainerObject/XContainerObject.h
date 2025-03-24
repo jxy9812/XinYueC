@@ -24,7 +24,7 @@ enum XContainerObjectVtableEnum
 	EXContainerObject_Clear,
 };
 //容器基类
-typedef struct 
+typedef struct XContainerObject
 {
 	XClassObject object;
 	void* _data;//指向容器数据的指针

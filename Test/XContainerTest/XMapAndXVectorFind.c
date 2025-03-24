@@ -1,5 +1,5 @@
-﻿#include"Test.h"
-#if DemoTest
+﻿#include"XDataStructTest.h"
+#if DEMOTEST
 #include"XMap.h"
 #include"XVector.h"
 #include"XSort.h"
@@ -20,19 +20,20 @@ void XMapAndXVectorFindTest()
 {
 	//创建乱序的数组
 	XVector* VArray = XVector_new(sizeof(size_t));
+	VArray->equality = XEquality_size_t;
 	int count = 1000000;//测试数据量
 	for (size_t i = 0; i < count; i++)
 	{
 		XVector_push_back(VArray,&i);
 	}
-	/*printf("打乱前\n");
-	XVector_iterator_for_each(VArray, ForPrint, NULL);*/
+	printf("打乱前\n");
+	//XVector_iterator_for_each(VArray, ForPrint, NULL);
 	XDerangement(XVector_begin(VArray), count, sizeof(size_t));
 	printf("打乱后\n");
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
-	/*printf("使用排序后\n");
+	printf("使用排序后\n");
 	XVector_sort(VArray,XLess_int);
-	XVector_iterator_for_each(VArray, ForPrint, NULL);*/
+	//XVector_iterator_for_each(VArray, ForPrint, NULL);
 
 	XMap* map = XMap_new(sizeof(size_t), sizeof(size_t),XEquality_int,XLess_int);
 	//map插入Vector的数据

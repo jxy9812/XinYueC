@@ -27,7 +27,7 @@ XList_reverse_iterator* XList_reverse_iterator_add(XList* this_list, XList_rever
 	return nodes->prev;//指向上一个元素
 }
 
-void XList_reverse_iterator_for_each(struct XList* this_list, XFor_each ForFunction, void* args)
+void XList_reverse_iterator_for_each(XList* this_list, XFor_each ForFunction, void* args)
 {
 	for (XList_reverse_iterator* it = XList_rbegin(this_list); it != XList_rend(this_list); it = XList_reverse_iterator_add(this_list, it))
 	{

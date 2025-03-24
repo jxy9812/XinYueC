@@ -15,7 +15,7 @@ enum XStackEnum
 	EXStack_Pop= EXVector_Pop_Back,
 	EXStack_Top= EXVector_Back,
 };
-typedef struct 
+typedef struct XStack
 {
 	XVector vector;
 }XStack;

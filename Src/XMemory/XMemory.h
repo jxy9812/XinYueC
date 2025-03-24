@@ -3,10 +3,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include<stdint.h>
+#include<stdio.h>
 #include"XDataStructConfig.h"
 typedef void* (*MallocMethod)(size_t size);
-typedef void* (*FreeMethod)(void* pointer);
+typedef void (*FreeMethod)(void* pointer);
 typedef void* (*ReallocMethod)(void* pointer, size_t size);
 //内存管理
 typedef struct

@@ -38,7 +38,7 @@ void XVector_class_init()
 	void* table[] = {
 		VXVector_resize,
 		//插入
-		VXVector_push_front,VXVector_push_back,VXVector_inserts,VXVector_insert,VXVector_insert_array,VXVector_append_array,
+	VXVector_push_front,VXVector_push_back,VXVector_inserts,VXVector_insert,VXVector_insert_array,VXVector_append_array,
 		//删除
 		VXVector_pop_front,VXVector_pop_back,VXVector_erase,VXVector_remove,
 		//拷贝

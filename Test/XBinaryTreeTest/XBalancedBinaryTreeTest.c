@@ -1,5 +1,5 @@
-﻿#include"Test.h"
-#if DemoTest
+﻿#include"XDataStructTest.h"
+#if DEMOTEST
 #include"XBalancedBinaryTree.h"
 #include"XLess.h"
 #include"XEquality.h"
