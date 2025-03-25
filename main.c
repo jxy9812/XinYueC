@@ -14,10 +14,10 @@ int main(int argc, char* args[])
 	//
 	//stackTest();
 	//queueTest();
-	//XPriority_QueueTest();
+	XPriority_QueueTest();
 	//XStringTest();
 	//XRedBlackTreeTest();
-	XMapTest();
+	//XMapTest();
 	return;
 	
 

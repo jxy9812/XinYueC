@@ -50,6 +50,6 @@ void XPriority_QueueTest()
 	}
 	printf("\n");
 	XPriority_Queue_free(queue);
-
+	XVector_free(v);
 }
 #endif
