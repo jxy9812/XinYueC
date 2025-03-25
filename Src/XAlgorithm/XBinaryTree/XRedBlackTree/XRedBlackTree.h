@@ -16,7 +16,7 @@ enum  XRBTreeColor
 typedef struct XRBTreeNode
 {
 	XBTreeNode XBTNode;//普通二叉树节点
-	size_t color;		//颜色
+	char color;		//颜色
 }XRBTreeNode;
 //红黑树-创建初始化一个节点
 XRBTreeNode* XRBTree_creation(const size_t TypeSize);

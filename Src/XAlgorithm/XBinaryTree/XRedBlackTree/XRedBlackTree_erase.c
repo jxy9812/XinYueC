@@ -102,31 +102,31 @@ static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* nodes, XRBTree
 //删除的是有一个孩子
 static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 {
-	XRBTreeNode* LPchild = XBTree_GetLChild(eraseNode);//孩子节点
-	if (LPchild == NULL)
+	XRBTreeNode* Pchild = XBTree_GetLChild(eraseNode);//孩子节点
+	if (Pchild == NULL)
 	{
-		LPchild= XBTree_GetRChild(eraseNode);
+		Pchild= XBTree_GetRChild(eraseNode);
 	}
-	XRBTreeNode* LPpater = XBTree_GetParent(eraseNode);
+	XRBTreeNode* parent = XBTree_GetParent(eraseNode);//获取父节点
 	
 	enum XRBTreeColor color = XRBTree_GetColor(eraseNode);//颜色
-	if (LPpater != NULL)
+	if (parent != NULL)
 	{
 		XRBTreeNode** LPpaterToEraseNode = XBTree_findChildisParent(eraseNode);//孩子在父节点位置
-		*LPpaterToEraseNode = LPchild;
+		*LPpaterToEraseNode = Pchild;
 	}
 	else
 	{
 		//删除节点为根节点
-		*this_root = LPchild;
+		*this_root = Pchild;
 	}
-	if (LPchild != NULL)
-		XBTree_SetParent(LPchild, LPpater);
+	if (Pchild != NULL)
+		XBTree_SetParent(Pchild, parent);
 	XBTree_freeNode(eraseNode, false);
 	if (color == XRBTreeBlack&& *this_root!=NULL)
 	{
 		//调整树：
-		eraseAdjustTree(this_root, LPchild, LPpater);
+		eraseAdjustTree(this_root, Pchild, parent);
 	}
 	
 }
@@ -135,39 +135,39 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 {
 	XRBTreeNode* LPchild = NULL;//孩子节点
 	XRBTreeNode* LPreplace = eraseNode;//替换节点
-	XRBTreeNode* LPpater = NULL;//父节点
+	XRBTreeNode* LPparent = NULL;//父节点
 	
 	LPreplace = XBTree_GetRChild(LPreplace);//从右子树中取最左边
 	while (XBTree_GetLChild(LPreplace) != NULL)//找替换的节点
 	{
 		LPreplace = XBTree_GetLChild(LPreplace);
 	}
-
-	XMemory_free(eraseNode->XBTNode.values);
+	if(eraseNode->XBTNode.values)
+		XVector_free(eraseNode->XBTNode.values);
 	eraseNode->XBTNode.values = LPreplace->XBTNode.values;
 	LPreplace->XBTNode.values = NULL;
 
 	LPchild = XBTree_GetRChild(LPreplace);
-	LPpater = XBTree_GetParent(LPreplace);
+	LPparent = XBTree_GetParent(LPreplace);
 	enum XRBTreeColor color = XRBTree_GetColor(LPreplace);
-	if (LPpater == eraseNode)
+	if (LPparent == eraseNode)
 	{
-		XBTree_SetRChild(LPpater, LPchild);
+		XBTree_SetRChild(LPparent, LPchild);
 	}
 	else
 	{
-		XBTree_SetLChild(LPpater, LPchild);
+		XBTree_SetLChild(LPparent, LPchild);
 	}
 	
 	if (LPchild != NULL)
 	{
-		XBTree_SetParent(LPchild, LPpater);
+		XBTree_SetParent(LPchild, LPparent);
 	}
-	XBTree_freeNode(LPreplace, false);
+	XBTree_freeNode(LPreplace, true);
 	if (color == XRBTreeBlack)
 	{
 		//调整树：
-		eraseAdjustTree(this_root, LPchild, LPpater);
+		eraseAdjustTree(this_root, LPchild, LPparent);
 	}
 	
 }

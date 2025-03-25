@@ -83,7 +83,6 @@ void VXContainerObject_free(XContainerObject* Object)
 	if (ISNULL(Object, ""))
 		return 0;
 	ObjectVtable(Object) = NULL;
-	Object->_data = NULL;
 	Object->_capacity = 0;
 	Object->_size = 0;
 	Object->_typeSize = 0;

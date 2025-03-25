@@ -14,12 +14,14 @@ XPair* XPair_new(const size_t firstTypeSize, const size_t secondTypeSize)
 	this_pair->secondTypeSize = secondTypeSize;
 	if (ISNULL(this_pair, "初始化pair结构体失败"))
 		return NULL;
-	this_pair->first = calloc(1,firstTypeSize);//开辟的同时初始化为零
+	this_pair->first = XMemory_malloc(firstTypeSize);//开辟的同时初始化为零
 	if (ISNULL(this_pair->first, "初始化pair-first失败"))
 		return NULL;
-	this_pair->second = calloc(1,secondTypeSize);
+	memset(this_pair->first,0, firstTypeSize);
+	this_pair->second = XMemory_malloc(secondTypeSize);
 	if (ISNULL(this_pair->second, "初始化pair-second失败"))
 		return NULL;
+	memset(this_pair->second, 0, secondTypeSize);
 	return this_pair;
 }
 

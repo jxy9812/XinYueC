@@ -86,10 +86,10 @@ static void VXVectorEnlargeCapacity(XVector* this_vector)
 		void* _data = NULL;
 #if XMEMORYREALLOCUSEMALLOCFREE
 		void* ptr = ContainerDataPtr(this_vector);
-		uint64_t size = ContainerCapacity(this_vector) * ContainerTypeSize(this_vector);
-		_data = XMemory_malloc(size * 1.5);
+		uint32_t typeSize = ContainerTypeSize(this_vector);
+		_data = XMemory_malloc(ContainerCapacity(this_vector) * typeSize * 1.5);
 		if (_data && ptr)
-			memcpy(_data, ptr, size);
+			memcpy(_data, ptr, typeSize* ContainerCapacity(this_vector));
 		if (ptr)
 			XMemory_free(ptr);
 #else
@@ -132,7 +132,7 @@ void VXVector_resize(XVector* this_vector, size_t size)
 		void* ptr = ContainerDataPtr(this_vector);
 		_data = XMemory_malloc(size * TypeSize);
 		if (_data&& ptr)
-			memcpy(_data, ptr, size);
+			memcpy(_data, ptr, size * TypeSize);
 		if (ptr)
 			XMemory_free(ptr);
 #else

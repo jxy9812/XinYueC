@@ -85,10 +85,12 @@ void VXMap_remove(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return ;
-	//XMap_updataIterator(this_map);
-	XRBTreeNode* nodes = XRBTree_erase(&(this_map->object._data), this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
+	XRBTreeNode* nodes = XBBTree_findData(this_map->object._data, this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
+		XPair* pair = *((XPair**)XVector_at(nodes->XBTNode.values, 0));
+		XRBTree_erase(&(this_map->object._data), this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
+		XPair_free(pair);
 		--ContainerCapacity(this_map);
 		--ContainerSize(this_map);
 	/*	--this_map->object._capacity;
@@ -138,8 +140,11 @@ void VXMap_clear(XMap* this_map)
 	XMap_updataIterator(this_map);
 	XMap_iterator_for_each(this_map, XMap_freeNodeData, NULL);
 	XBTree_freeNodeAll(this_map->object._data);
-	XVector_free(this_map->itArray);
-	this_map->itArray = NULL;
+	if(this_map->itArray)
+	{
+		XVector_free(this_map->itArray);
+		this_map->itArray = NULL;
+	}
 	this_map->object._capacity = 0;
 	this_map->object._size = 0;
 	this_map->object._data = NULL;

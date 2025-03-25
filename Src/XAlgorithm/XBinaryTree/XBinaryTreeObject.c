@@ -86,11 +86,11 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 		return NULL;
 	if (ISNULL(TypeSize, "数据大小不能为空"))
 		return NULL;
-	XBTreeNode* nodes =(XBTreeNode*)calloc(1,NodeTypeSize);
+	XBTreeNode* nodes =(XBTreeNode*)XMemory_malloc(NodeTypeSize);
 	if (ISNULL(nodes,"节点申请内存失败"))
 		return NULL;
-
-	//nodes->values= calloc(1,TypeSize);//开辟内存并且置为0
+	memset(nodes,0, NodeTypeSize);
+	//nodes->values= XMemory_malloc(TypeSize);//开辟内存并且置为0
 	//if (ISNULL(nodes->values,"节点数据申请内存失败")))
 	//{
 	//	XMemory_free(nodes);
@@ -142,7 +142,7 @@ const bool XBTree_insertData(struct XBTreeNode* this_root, const void* LPData, c
 	return true;
 }
 
-const bool XBTree_freeNode(struct XBTreeNode* this_root , const bool parentSetNull)
+const bool XBTree_freeNode(XBTreeNode* this_root , const bool parentSetNull)
 {
 	if (ISNULL(this_root, ""))
 		return false;
@@ -153,11 +153,14 @@ const bool XBTree_freeNode(struct XBTreeNode* this_root , const bool parentSetNu
 	
 	if (parentSetNull)
 	{
+		XBTreeNode** ptr=XBTree_findChildisParent(this_root);
 		//在父节点将指向此节点的指针置空NULL
-		*XBTree_findChildisParent(this_root) = NULL;
+		if(ptr)
+			*ptr = NULL;
 	}
 	//释放节点数组
-	XVector_free(this_root->nodes);
+	if (this_root->nodes != NULL)
+		XVector_free(this_root->nodes);
 	//释放节点
 	XMemory_free(this_root);
 	return true;
@@ -246,7 +249,7 @@ XBTreeNode** XBTree_findChildisParent(struct XBTreeNode* Child)
 		return XBTree_GetTreeNode(Parent, XBTreeLChild);
 	if (ParentToRChild == Child)
 		return XBTree_GetTreeNode(Parent, XBTreeRChild);
-	isNULL(isNULLInfo(0, "在父节点找不到孩子"));
+	//isNULL(isNULLInfo(0, "在父节点找不到孩子"));
 	return NULL;
 }
 

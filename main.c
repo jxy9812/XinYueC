@@ -6,16 +6,21 @@
 int main(int argc, char* args[])
 {
 #if DEMOTEST
-	ListTest();
-	ListSortTest();
-	ListIterator();
-	ListSwapTest();
-	VectorTest();
-	stackTest();
-	queueTest();
-	XPriority_QueueTest();
-	XStringTest();
+	//ListTest();
+	//ListSortTest();
+	//ListIterator();
+	//ListSwapTest();
+	//VectorTest();
+	//
+	//stackTest();
+	//queueTest();
+	//XPriority_QueueTest();
+	//XStringTest();
+	//XRedBlackTreeTest();
 	XMapTest();
+	return;
+	
+
 	//XMapAndXVectorFindTest();
 	XBinarySearchTest();
 	SortTest();
@@ -23,7 +28,7 @@ int main(int argc, char* args[])
 	//XMazePathfinding();
 	XBinaryTreeObjectTest();	
 	XBalancedBinaryTreeTest();
-	XRedBlackTreeTest();
+	
 #endif
 #ifdef _WIN32
 	//XHuffmanTreeTest();
