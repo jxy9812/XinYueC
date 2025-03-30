@@ -1,4 +1,5 @@
 ﻿#include"XList_reverse_iterator.h"
+#if XList_ON
 #include"XList.h"
 #include"stdio.h"
 #include"XListNode.h"
@@ -34,3 +35,7 @@ void XList_reverse_iterator_for_each(XList* this_list, XFor_each ForFunction, vo
 		ForFunction(((XListNode*)it)->date, args);
 	}
 }
+
+
+
+#endif

@@ -1,4 +1,5 @@
-﻿#ifndef XLISTNODE_H
+﻿#include"XContainerObject.h"
+#if !defined(XLISTNODE_H)&& XList_ON
 #define XLISTNODE_H
 #ifdef __cplusplus
 extern "C" {

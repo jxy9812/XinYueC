@@ -9,10 +9,17 @@ extern "C" {
 #define DEBUG_ON						0
 #define DEMOTEST						1//测试代码
 
-#define XMap_ON							0
-#define XString_ON						0
-#define	XPriority_Queue_ON				0
-#define	Queue_ON						0
+#define XMap_ON							1
+#define XString_ON						1
+#define	XPriority_Queue_ON				1
+#define	XQueue_ON						1
+#define	XList_ON						1
+
+
+
+#if !XList_ON
+#define	XQueue_ON						0
+#endif
 
 #ifdef DEBUG_ON
 #if ((DEBUG_ON) && defined(_DEBUG))

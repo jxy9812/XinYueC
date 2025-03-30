@@ -1,4 +1,5 @@
 ﻿#include"XList.h"
+#if XList_ON
 #include"stdlib.h"
 //插入
 XListNode* XList_push_front(XList* this_list, void* LpValue)
@@ -155,3 +156,4 @@ void XList_init(XList* this_list, size_t typeSize)
 	this_list->equality = NULL;
 }
 
+#endif

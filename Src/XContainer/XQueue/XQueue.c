@@ -1,5 +1,5 @@
 ﻿#include"XQueue.h"
-#if Queue_ON
+#if XQueue_ON
 #include<stdlib.h>
 
 XQueue* XQueue_new(size_t typeSize)

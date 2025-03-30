@@ -1,5 +1,5 @@
 ﻿#include"XQueue.h"
-#if Queue_ON
+#if XQueue_ON
 //虚函数表定义
 XVtable* XQueueVtable = NULL;
 #if VTABLEISSTACK

@@ -12,6 +12,7 @@ void ListFor_each(void* LPVal, void* args)
 }
 void ListSortTest()
 {
+#if XList_ON
 	XList* li = XList_new(sizeof(int));
 	int size = 10;
 	srand((unsigned int)time(NULL));
@@ -33,9 +34,11 @@ void ListSortTest()
 
 	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
 	XList_free(li);
+#endif
 }
 void ListIterator()
 {
+#if XList_ON
 	XList* li = XList_new(sizeof(int));
 	int arr[] = { 123,12,1,4,9 };
 	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
@@ -53,10 +56,12 @@ void ListIterator()
 		printf("%d\n", *(int*)((XListNode*)it)->date);
 	}
 	XList_free(li);
+#endif
 }
 
 void ListTest()
 {
+#if XList_ON
 	printf("XList 测试\n");
 	XList* list = XList_new(sizeof(int));
 	list->equality = XEquality_int;
@@ -90,10 +95,12 @@ void ListTest()
 	//XList_clear(list);
 	printf("删除元素后遍历\t");XList_iterator_for_each(list, ListFor_each, NULL);
 	XList_free(list);
+#endif
 }
 
 void ListSwapTest()//交换函数测试
 {
+#if XList_ON
 	XList* li1 = XList_new(sizeof(int));
 	int num;
 
@@ -124,6 +131,7 @@ void ListSwapTest()//交换函数测试
 	XList_iterator_for_each(li2, ListFor_each, NULL); printf("\n");
 	XList_free(li1);
 	XList_free(li2);
+#endif
 }
 
 #endif

@@ -1,4 +1,5 @@
-﻿#ifndef  XLIST_ITERATOR_H
+﻿#include"XContainerObject.h"
+#if !defined(XLIST_ITERATOR_H)&& XList_ON
 #define XLIST_ITERATOR_H
 #ifdef __cplusplus
 extern "C" {

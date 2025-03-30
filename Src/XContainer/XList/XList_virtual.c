@@ -1,4 +1,5 @@
 ﻿#include"XList.h"
+#if XList_ON
 #include"XStack.h"
 #include<stdlib.h>
 #include<string.h>
@@ -358,3 +359,4 @@ void VXList_sort(XList* this_list, XCompare compare)
 	}
 	XStack_free(stack);
 }
+#endif
