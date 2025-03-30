@@ -1,4 +1,5 @@
-﻿#ifndef XPRIORITY_QUEUE
+﻿#include"XContainerObject.h"
+#if !defined(XPRIORITY_QUEUE)&& XPriority_Queue_ON
 #define XPRIORITY_QUEUE
 #ifdef __cplusplus
 extern "C" {

@@ -1,4 +1,5 @@
 ﻿#include"XPriority_Queue.h"
+#if XPriority_Queue_ON
 #include"XAlgorithm.h"
 #include<string.h>
 #include<stdlib.h>
@@ -115,3 +116,4 @@ void* VXPriority_Queue_top(XPriority_Queue* this_queue)
 		return NULL;
 	return  XVector_front(this_queue);//指向数组的开始
 }
+#endif

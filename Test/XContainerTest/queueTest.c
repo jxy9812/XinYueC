@@ -30,6 +30,7 @@ static insertData(void* values ,void*args)
 }
 void XPriority_QueueTest()
 {
+#if	XPriority_Queue_ON
 	printf("XPriority_QueueTest 测试\n");
 	//XPriority_Queue* queue=XPriority_Queue_new(sizeof(int),XLess_int);//小堆，先出小的
 	XPriority_Queue* queue = XPriority_Queue_new(sizeof(int), XGreater_int);//大堆，先出大的
@@ -51,5 +52,6 @@ void XPriority_QueueTest()
 	printf("\n");
 	XPriority_Queue_free(queue);
 	XVector_free(v);
+#endif
 }
 #endif

@@ -1,4 +1,5 @@
 ﻿#include"XPriority_Queue.h"
+#if XPriority_Queue_ON
 #include"XAlgorithm.h"
 #include<string.h>
 #include<stdlib.h>
@@ -74,3 +75,4 @@ void XPriority_Queue_free(XPriority_Queue* this_queue)
 	/*XPriority_Queue_clear(this_queue);
 	XMemory_free(this_queue);*/
 }
+#endif
