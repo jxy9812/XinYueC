@@ -1,4 +1,5 @@
 ﻿#include"XMap.h"
+#if XMap_ON
 #include"XContainerObject.h"
 #include"XPair.h"
 #include"XBalancedBinaryTree.h"
@@ -149,3 +150,4 @@ void XMap_updataIterator(XMap* this_map)
 
 	this_map->isModify = false;
 }
+#endif

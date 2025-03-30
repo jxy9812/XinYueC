@@ -1,4 +1,5 @@
 ﻿#include"XHuffmanTree.h"
+#if XMap_ON
 #include<string.h>
 //读取压缩后的数据//构建字典
 static size_t readDictionaries(XHuffmanTree* tree, const char* data)
@@ -85,3 +86,5 @@ XVector* XHfmTree_unzip(XHuffmanTree* tree, const char* data, const size_t size)
 	XVector* unzipData = writeUnZipData(tree, data + offset, size- offset);//返回的压缩后的数据
 	return unzipData;
 }
+
+#endif

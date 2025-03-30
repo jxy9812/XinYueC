@@ -4,6 +4,7 @@
 #include"XEquality.h"
 #include"XLess.h"
 #include"XBalancedBinaryTree.h"
+
 static void XFor_each_pair(void* LPVal, void* args)
 {
 	XPair* pair = *(XPair**)LPVal;
@@ -11,6 +12,7 @@ static void XFor_each_pair(void* LPVal, void* args)
 }
 void XMapTest()
 {
+#if XMap_ON
 	printf("XMap 测试\n");
 	int arrayint[] = {1,23,456,5,23};
 	char arraychar[][100]={"琦神","星小白","章鱼哥","123dfsadsadsad","玩蛇"};
@@ -34,5 +36,6 @@ void XMapTest()
 	printf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair,char*));
 	//XMap_clear(map);
 	XMap_free(map);
+#endif
 }
 #endif

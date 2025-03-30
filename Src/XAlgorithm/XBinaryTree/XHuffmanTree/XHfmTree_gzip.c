@@ -1,4 +1,5 @@
 ﻿#include"XHuffmanTree.h"
+#if XMap_ON
 //写入压缩数据
 static void writeData(XVector* gzipData, XMap* dictionaries, const char* data, const size_t size)
 {
@@ -48,3 +49,5 @@ XVector* XHfmTree_gzip(XHuffmanTree* tree, const char* data, const size_t size)
 	//printf("gzipData:%d\n", XVector_size(gzipData));
 	return gzipData;
 }
+
+#endif

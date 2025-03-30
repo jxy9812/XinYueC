@@ -1,4 +1,5 @@
 ﻿#include"XHuffmanTree.h"
+#if XMap_ON
 #include"XEquality.h"
 #include"XLess.h"
 #include<stdlib.h>
@@ -56,3 +57,5 @@ void XHfmTree_free(XHuffmanTree* tree)
 	XMap_free(tree->dictionaries);
 	XMemory_free(tree);
 }
+
+#endif

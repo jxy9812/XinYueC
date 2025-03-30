@@ -1,4 +1,5 @@
 ﻿#include"XMap.h"
+#if XMap_ON
 #include"XBalancedBinaryTree.h"
 #include"XRedBlackTree.h"
 #include"XAlgorithm.h"
@@ -168,3 +169,5 @@ void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
 	XSwap(&this_mapOne->KeyLess, &this_mapTwo->KeyLess, sizeof(XLess));
 	XSwap(&this_mapOne->keyTypeSize, &this_mapTwo->keyTypeSize, sizeof(size_t));
 }
+
+#endif

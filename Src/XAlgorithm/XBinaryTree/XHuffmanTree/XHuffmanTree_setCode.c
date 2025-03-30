@@ -1,5 +1,6 @@
 ﻿#include"XHuffmanTree.h"
 #include"XSort.h"
+#if XMap_ON
 //遍历下编码
 static printCode(char* ch,void* args)
 {
@@ -50,3 +51,4 @@ void XHfmTree_setCode(XHfmNode* root)
 	XVector_iterator_for_each(nodeList, getCode,NULL);
 	XVector_free(nodeList);
 }
+#endif

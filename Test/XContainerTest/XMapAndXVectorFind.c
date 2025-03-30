@@ -8,6 +8,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<time.h>
+#if XMap_ON
 static void ForPrint(void* values, void* args)
 {
 	printf("%d\n", *(int*)values);
@@ -16,8 +17,10 @@ static void insertMap(void* values, void* args)
 {
 	XMap_insert(args, values, values);
 }
+#endif
 void XMapAndXVectorFindTest()
 {
+#if XMap_ON
 	//创建乱序的数组
 	XVector* VArray = XVector_new(sizeof(size_t));
 	VArray->equality = XEquality_size_t;
@@ -50,6 +53,7 @@ void XMapAndXVectorFindTest()
 	size_t* mret = XMap_at(map,&findNum);
 	clock_t map_end = clock();
 	printf("XMap查询数据:%d 用时%dms\n", *mret, map_end - map_start);
+#endif
 }
 
 #endif

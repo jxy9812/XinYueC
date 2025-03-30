@@ -1,4 +1,5 @@
 ﻿#include"XHuffmanTree.h"
+#if XMap_ON
 #include<string.h>
 void XHfmTree_setDictionaries(XMap* dictionaries, const char* data, const size_t size)
 {
@@ -41,3 +42,5 @@ int XHfmTree_writeCompressDictionaries(XVector* gzipData, XMap* dictionaries)
 	XMap_iterator_for_each(dictionaries, writeDictionaryData, gzipData);
 	return XVector_size(gzipData);
 }
+
+#endif

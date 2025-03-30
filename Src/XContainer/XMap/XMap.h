@@ -1,9 +1,9 @@
-﻿#ifndef XMAP_H
+﻿#include"XContainerObject.h"
+#if !defined(XMAP_H)&& XMap_ON
 #define XMAP_H
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XContainerObject.h"
 #include"XPair.h"
 #include"XMap_Iterator.h"
 #include"XMap_reverse_iterator.h"

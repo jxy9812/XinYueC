@@ -1,4 +1,5 @@
 ﻿#include "XMap_reverse_iterator.h"
+#if XMap_ON
 #include"XMap.h"
 #include"XVector.h"
 #include"XRedBlackTree.h"
@@ -30,3 +31,5 @@ void XMap_reverse_iterator_for_each(XMap* this_Map, XFor_each ForFunction, void*
 		ForFunction(it, args);
 	}
 }
+
+#endif

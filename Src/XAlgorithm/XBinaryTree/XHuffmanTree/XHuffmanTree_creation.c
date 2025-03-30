@@ -1,4 +1,5 @@
 ﻿#include"XHuffmanTree.h"
+#if XMap_ON
 #include"XPriority_Queue.h"
 //优先队列大于的回调函数
 static bool Less(XHfmNode** nodeOne, XHfmNode** nodeTwo)
@@ -70,3 +71,4 @@ XHfmNode* XHfmTree_creationNode(unsigned char ch, size_t count, XVector* code)
 	}*/
 	return node;
 }
+#endif

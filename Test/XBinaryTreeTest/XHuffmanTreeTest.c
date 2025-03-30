@@ -1,18 +1,23 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XHuffmanTree.h"
+#if XMap_ON
 static void for_each(void* LPVal, void* args)
 {
 	XPair* pair = *(XPair**)LPVal;
-	printf("key:%d count:%d\n", XPair_First(pair, char), XPair_Second(pair,size_t));
+	printf("key:%d count:%d\n", XPair_First(pair, char), XPair_Second(pair, size_t));
 }
 //遍历解压后的数据
 static void UnZipFor(char* ch, void* args)
 {
-	printf("%d ",*ch);
+	printf("%d ", *ch);
 }
+#endif // XMap_ON
+
+
 void XHuffmanTreeTest()
 {
+#if XMap_ON
 	//数据
 	char data[] = {1,1,1,3,3,5,8,8,5,78,54,66,66,66,1,123,32,3,3,3};
 	size_t count = sizeof(data) / sizeof(data[0]);//数据大小字节
@@ -35,6 +40,9 @@ void XHuffmanTreeTest()
 	XVector_free(gzipData);//释放返回的压缩数据
 	XVector_free(unzipData);//释放解压后的压缩数据
 	XHfmTree_free(tree);//释放哈夫曼树
+
+
+#endif
 }
 
 #endif
