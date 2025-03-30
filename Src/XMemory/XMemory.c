@@ -44,6 +44,11 @@ void* XMemory_realloc(void* pointer, size_t size)
 	return global_Memory.reallocate(pointer,size);
 }
 
+bool XMemory_realloc_isNULL()
+{
+	return global_Memory.reallocate==NULL;
+}
+
 void XMemory_setReallocMethod(ReallocMethod method)
 {
 	global_Memory.reallocate = method;

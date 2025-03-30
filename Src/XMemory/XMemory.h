@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 #include<stdio.h>
+#include<stdbool.h>
 #include"XDataStructConfig.h"
 typedef void* (*MallocMethod)(size_t size);
 typedef void (*FreeMethod)(void* pointer);
@@ -25,6 +26,8 @@ void* XMemory_reallocPack(void* pointer, size_t size);
 void* XMemory_malloc(size_t size);
 void XMemory_free(void* pointer);
 void* XMemory_realloc(void* pointer, size_t size);
+//realloc是否是空
+bool XMemory_realloc_isNULL();
 #ifdef __cplusplus
 }
 #endif

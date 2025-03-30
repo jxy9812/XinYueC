@@ -84,17 +84,20 @@ static void VXVectorEnlargeCapacity(XVector* this_vector)
 	else if (ContainerCapacity(this_vector) == ContainerSize(this_vector))//空间已满需要扩容
 	{
 		void* _data = NULL;
-#if XMEMORYREALLOCUSEMALLOCFREE
-		void* ptr = ContainerDataPtr(this_vector);
-		uint32_t typeSize = ContainerTypeSize(this_vector);
-		_data = XMemory_malloc(ContainerCapacity(this_vector) * typeSize * 1.5);
-		if (_data && ptr)
-			memcpy(_data, ptr, typeSize* ContainerCapacity(this_vector));
-		if (ptr)
-			XMemory_free(ptr);
-#else
-		_data = XMemory_realloc(ContainerDataPtr(this_vector), ContainerCapacity(this_vector) * ContainerTypeSize(this_vector) * 1.5);
-#endif // XMEMORYREALLOCUSEMALLOCFREE
+		if (XMemory_realloc_isNULL())
+		{
+			void* ptr = ContainerDataPtr(this_vector);
+			uint32_t typeSize = ContainerTypeSize(this_vector);
+			_data = XMemory_malloc(ContainerCapacity(this_vector) * typeSize * 1.5);
+			if (_data && ptr)
+				memcpy(_data, ptr, typeSize * ContainerCapacity(this_vector));
+			if (ptr)
+				XMemory_free(ptr);
+		}
+		else
+		{
+			_data = XMemory_realloc(ContainerDataPtr(this_vector), ContainerCapacity(this_vector) * ContainerTypeSize(this_vector) * 1.5);
+		}
 		ContainerDataPtr(this_vector) = _data;
 		if (_data == NULL)
 		{
@@ -128,16 +131,19 @@ void VXVector_resize(XVector* this_vector, size_t size)
 	if (size > capacity)//大于最大容量
 	{
 		void* _data = NULL;
-#if XMEMORYREALLOCUSEMALLOCFREE
-		void* ptr = ContainerDataPtr(this_vector);
-		_data = XMemory_malloc(size * TypeSize);
-		if (_data&& ptr)
-			memcpy(_data, ptr, size * TypeSize);
-		if (ptr)
-			XMemory_free(ptr);
-#else
-		_data = XMemory_realloc(ContainerDataPtr(this_vector), size * TypeSize);
-#endif
+		if (XMemory_realloc_isNULL())
+		{
+			void* ptr = ContainerDataPtr(this_vector);
+			_data = XMemory_malloc(size * TypeSize);
+			if (_data && ptr)
+				memcpy(_data, ptr, size * TypeSize);
+			if (ptr)
+				XMemory_free(ptr);
+		}
+		else
+		{
+			_data = XMemory_realloc(ContainerDataPtr(this_vector), size * TypeSize);
+		}
 		ContainerDataPtr(this_vector) = _data;
 		if (_data == NULL)
 		{

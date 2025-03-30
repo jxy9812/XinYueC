@@ -44,6 +44,7 @@ extern "C" {
 	void XBinarySearchTest();
 	//哈夫曼树测试
 	void XHuffmanTreeTest();
+	void cJsonTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

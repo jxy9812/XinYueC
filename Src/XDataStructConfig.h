@@ -4,7 +4,6 @@
 extern "C" {
 #endif
 //数据结构配置文件
-#define XMEMORYREALLOCUSEMALLOCFREE		1//realloc用malloc和free配合实现
 #define VTABLEISSTACK					1//虚函数表定义在栈上
 #define SHOWCONTAINERSIZE				0//显示容器大小
 #define DEBUG_ON						0
