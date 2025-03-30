@@ -10,7 +10,7 @@ extern "C" {
 #define DEMOTEST						1//测试代码
 
 #define XMap_ON							0
-
+#define XString_ON						0
 
 #ifdef DEBUG_ON
 #if ((DEBUG_ON) && defined(_DEBUG))

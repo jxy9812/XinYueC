@@ -1,4 +1,5 @@
 ﻿#include"XString.h"
+#if XString_ON
 #include<stdlib.h>
 #include<string.h>
 XString* XString_new()
@@ -170,3 +171,4 @@ int64_t XString_find_last_not_of(const XString* this_string, const char* subStr)
 	typedef const char* (*funcPtr)(const XString*, const char*);
 	return ObjectVirtualFunc(this_string, EXString_Find_Last_Not_Of, funcPtr)(this_string, subStr);
 }
+#endif

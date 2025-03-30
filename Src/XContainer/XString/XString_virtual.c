@@ -1,4 +1,5 @@
 ﻿#include"XString.h"
+#if XString_ON
 #include<string.h>
 //判断是中文
 bool XString_isChinese(const char c);
@@ -529,3 +530,6 @@ int64_t VXString_find_last_not_of(const XString* this_string, const char* subStr
 		return index + len;
 	return -1;
 }
+
+
+#endif

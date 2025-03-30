@@ -3,6 +3,7 @@
 #include"XString.h"
 void XStringTest()
 {
+#if XString_ON
 	printf("XString 测试\n");
 	XString* str = XString_new();
 	XString_append(str, "nihao ");
@@ -25,6 +26,7 @@ void XStringTest()
 	////XString_erase(str, 0, 4);
 	printf("%s\n", XString_data(str));
 	XString_free(str);
+#endif
 }
 
 #endif
