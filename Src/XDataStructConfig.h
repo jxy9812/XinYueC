@@ -12,6 +12,7 @@ extern "C" {
 #define XMap_ON							0
 #define XString_ON						0
 #define	XPriority_Queue_ON				0
+#define	Queue_ON						0
 
 #ifdef DEBUG_ON
 #if ((DEBUG_ON) && defined(_DEBUG))

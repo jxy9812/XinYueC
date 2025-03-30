@@ -8,6 +8,7 @@
 #include"XVector.h"
 void queueTest()
 {
+#if	Queue_ON
 	printf("XQueue 测试\n");
 	XQueue* queue = XQueue_New(int);
 	int array[] = { 0,1,2,3,4,5,6,7,8,9 };
@@ -22,12 +23,15 @@ void queueTest()
 	}
 	printf("\n");
 	XQueue_free(queue);
+#endif
 }
+#if	XPriority_Queue_ON
 static insertData(void* values ,void*args)
 {
 	XPriority_Queue_push(args, values);
 	printf("入队:%d 堆顶:%d\n", *(int*)values, *(int*)XPriority_Queue_top(args));
 }
+#endif
 void XPriority_QueueTest()
 {
 #if	XPriority_Queue_ON

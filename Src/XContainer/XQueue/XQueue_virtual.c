@@ -1,4 +1,5 @@
 ﻿#include"XQueue.h"
+#if Queue_ON
 //虚函数表定义
 XVtable* XQueueVtable = NULL;
 #if VTABLEISSTACK
@@ -23,3 +24,4 @@ void XQueue_class_init()
 	printf("XQueue size:%d\n", XVtable_size(XQueueVtable));
 #endif
 }
+#endif

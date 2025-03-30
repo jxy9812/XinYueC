@@ -1,4 +1,5 @@
-﻿#ifndef QUEUE_H
+﻿#include"XContainerObject.h"
+#if !defined(QUEUE_H)&& Queue_ON
 #define QUEUE_H
 #ifdef __cplusplus
 extern "C" {

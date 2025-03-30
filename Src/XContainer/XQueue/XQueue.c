@@ -1,4 +1,5 @@
 ﻿#include"XQueue.h"
+#if Queue_ON
 #include<stdlib.h>
 
 XQueue* XQueue_new(size_t typeSize)
@@ -72,3 +73,6 @@ size_t XQueue_size(XQueue* this_queue)
 {
 	return XList_size(this_queue);
 }
+
+
+#endif
