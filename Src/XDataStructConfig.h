@@ -14,12 +14,17 @@ extern "C" {
 #define	XPriority_Queue_ON				1
 #define	XQueue_ON						1
 #define	XList_ON						1
-
+#define	XStack_ON						0
 
 
 #if !XList_ON
 #define	XQueue_ON						0
 #endif
+
+
+
+
+#define IS_ON_DEBUG(on)						ISNULL(on,"此函数需要开启"#on",在XDataStructConfig.h")
 
 #ifdef DEBUG_ON
 #if ((DEBUG_ON) && defined(_DEBUG))

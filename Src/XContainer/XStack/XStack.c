@@ -1,4 +1,5 @@
 ﻿#include"XStack.h"
+#if XStack_ON
 #include<string.h>
 #include<stdlib.h>
 //初始化函数
@@ -88,3 +89,4 @@ size_t XStack_typeSize(XStack* this_stack)
 {
 	return XVector_typeSize(this_stack);
 }
+#endif

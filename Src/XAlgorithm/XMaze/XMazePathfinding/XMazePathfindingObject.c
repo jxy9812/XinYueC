@@ -17,6 +17,7 @@ bool isPass(const XVector* maze, XPoint CurPoint)
 //探路四个方向-栈(周围是否已经无路可走了)
 bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep CurPoint)
 {
+#if XStack_ON
 	int sum = 0;
 	for (size_t i = 0; i < 4; i++)
 	{
@@ -70,10 +71,15 @@ bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep Cu
 		}
 	}
 	return sum == 0 ? true : false;
+#else
+	IS_ON_DEBUG(XStack_ON);
+	return false;
+#endif
 }
 //探寻周围能斜着的点
 size_t PathfinderOblique(struct XStack* stack, struct XVector* maze, struct XPointStep CurPoint)
 {
+#if XStack_ON
 	int sum = 0;
 	for (size_t i = UpLeft; i < 4+ UpLeft; i++)
 	{
@@ -127,4 +133,8 @@ size_t PathfinderOblique(struct XStack* stack, struct XVector* maze, struct XPoi
 		}
 	}
 	return sum;
+#else
+	IS_ON_DEBUG(XStack_ON);
+	return 0;
+#endif
 }

@@ -34,6 +34,7 @@ static XVector* GetXMazePath(const XBTreeNode* child)
 //插入孩子
 static size_t insertChild(const XVector* maze, XBTreeNode* nodes, XVector* NextNodeArray)
 {
+#if XStack_ON
 	int* pMazePos = (int*)XVectorTwo_at_XPoint(maze, GetXPoint(nodes));
 	if (*pMazePos != XMazeRoute)
 		return 0;
@@ -53,6 +54,9 @@ static size_t insertChild(const XVector* maze, XBTreeNode* nodes, XVector* NextN
 	}
 	XStack_free(ChildAll);
 	return XVector_size(nodes->nodes)>1? XVector_size(nodes->nodes) -1:0;
+#else
+	IS_ON_DEBUG(XStack_ON);
+#endif
 }
 
 XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoint dest)

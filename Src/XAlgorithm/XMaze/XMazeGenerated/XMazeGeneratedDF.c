@@ -138,6 +138,7 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 //砸墙开路-栈
 static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y, bool oneExit)
 {
+#if XStack_ON
 	XStack* stack=XStack_New(int);
 	XStack_push(stack, &y);
 	XStack_push(stack, &x);
@@ -171,6 +172,9 @@ static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y
 		}
 	}
 	XStack_free(stack);
+#else
+	IS_ON_DEBUG(XStack_ON);
+#endif
 }
 //生成迷宫r行l列
 XVector* XMazeGenerated(const size_t r, const size_t l, const int x, const int y, bool oneExit)

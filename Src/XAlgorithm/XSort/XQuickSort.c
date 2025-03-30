@@ -50,6 +50,7 @@ static void* QuicPitSort_One(void const* LpLeft, void const* LpRight, const size
 //挖坑法栈模拟递归
 void XQuicPitSort_Stack(void* LParray, const size_t nSize, const size_t TypeSize,XCompare compare )
 {
+#if XStack_ON
 	if (LParray == NULL || nSize == 0 || TypeSize == 0)
 		return;
 	XStack* st=XStack_New(char*);
@@ -84,6 +85,9 @@ void XQuicPitSort_Stack(void* LParray, const size_t nSize, const size_t TypeSize
 		}
 	}
 	XStack_free(st);
+#else
+	IS_ON_DEBUG(XStack_ON);
+#endif
 }
 
 //挖坑法递归调用函数

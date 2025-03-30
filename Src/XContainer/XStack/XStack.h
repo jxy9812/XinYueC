@@ -1,4 +1,5 @@
-﻿#ifndef XSTACK_H
+﻿#include"XContainerObject.h"
+#if !defined(XSTACK_H)&& XStack_ON
 #define XSTACK_H
 #ifdef __cplusplus
 extern "C" {

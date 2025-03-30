@@ -3,6 +3,7 @@
 #include"XStack.h"
 void stackTest()
 {
+#if XStack_ON
 	printf("XStack 测试\n");
 	XStack* s = XStack_New(int);
 	int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
@@ -31,6 +32,9 @@ void stackTest()
 		XStack_pop(string);
 	}
 	XStack_free(string);
+#else
+	IS_ON_DEBUG(XStack_ON);
+#endif
 }
 
 #endif

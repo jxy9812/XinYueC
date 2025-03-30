@@ -64,6 +64,7 @@ void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据�
 
 void XStackRCopyXVector(const XStack* stack, XVector* vector)
 {
+#if XStack_ON
 	size_t Size = XStack_size(stack);
 	if (Size == 0)
 		return;
@@ -81,10 +82,14 @@ void XStackRCopyXVector(const XStack* stack, XVector* vector)
 	{
 		memcpy((char*)v->object._data + i * TypeSize, pHead + i * TypeSize, TypeSize);
 	}*/
+#else
+	IS_ON_DEBUG(XStack_ON);
+#endif
 }
 
 void XStackCopyXVector(const XStack* stack, XVector* vector)
 {
+#if XStack_ON
 	size_t Size = XStack_size(stack);
 	if (Size == 0)
 		return;
@@ -102,6 +107,9 @@ void XStackCopyXVector(const XStack* stack, XVector* vector)
 	//{
 	//	memcpy((char*)v->object._data+ i * TypeSize, pTail - i * TypeSize, TypeSize);
 	//}
+#else
+	IS_ON_DEBUG(XStack_ON);
+#endif
 }
 
 void XDelay(const size_t msec)

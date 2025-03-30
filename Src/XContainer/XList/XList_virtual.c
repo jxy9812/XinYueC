@@ -327,6 +327,7 @@ static struct XListNode* List_OneSort(XListNode* ListHead, XListNode* ListTail, 
 
 void VXList_sort(XList* this_list, XCompare compare)
 {
+#if XStack_ON
 	if (ISNULL(this_list, ""))
 		return;
 	XList* list = this_list;
@@ -358,5 +359,8 @@ void VXList_sort(XList* this_list, XCompare compare)
 		}
 	}
 	XStack_free(stack);
+#else
+	IS_ON_DEBUG(XStack_ON);
+#endif
 }
 #endif

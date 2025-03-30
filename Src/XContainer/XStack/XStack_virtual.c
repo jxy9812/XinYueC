@@ -1,4 +1,5 @@
 ﻿#include"XStack.h"
+#if XStack_ON
 //虚函数表定义
 XVtable* XStackVtable = NULL;
 #if VTABLEISSTACK
@@ -23,3 +24,4 @@ void XStack_class_init()
 	printf("XStack size:%d\n", XVtable_size(XStackVtable));
 #endif
 }
+#endif

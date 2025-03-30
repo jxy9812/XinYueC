@@ -1,4 +1,4 @@
-﻿#include "XMazePathfindingAStar.h"
+﻿#include"XMazePathfindingAStar.h"
 #include"XContainerObject.h"
 #include"XMazePathfindingObject.h"
 #include<string.h>
@@ -54,6 +54,7 @@ static XVector* GetXMazePath(const XVector* child)
 //插入孩子
 static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nodes, const XVector* NodeArray, bool Oblique)
 {
+#if XStack_ON
 	int* pMazePos = (int*)XVectorTwo_at_XPoint(maze, nodes->pos);
 	if (*pMazePos != XMazeRoute)
 		return 0;
@@ -76,6 +77,10 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 	}
 	XStack_free(ChildAll);
 	return XVector_size(nodes->child);
+#else
+	IS_ON_DEBUG(XStack_ON);
+	return 0;
+#endif
 }
 //排序,根据总代价进行降序排序
 static int sortDescendingtCosts(const void* LPrevValue, const void* LNextValue)
@@ -87,6 +92,7 @@ static int sortDescendingtCosts(const void* LPrevValue, const void* LNextValue)
 //释放树节点
 static void XBinaryTreeObject_freeNode(AStarNode* root)
 {
+#if XStack_ON
 	XStack* stack = XStack_new(sizeof(AStarNode*));
 	XStack_push(stack, &root);
 	while (!XStack_empty(stack))
@@ -100,6 +106,9 @@ static void XBinaryTreeObject_freeNode(AStarNode* root)
 		XVector_free(current->child);
 		XMemory_free(current);
 	}
+#else
+	IS_ON_DEBUG(XStack_ON);
+#endif
 }
 XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XPoint dest, bool Oblique)
 {

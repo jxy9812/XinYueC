@@ -7,6 +7,7 @@
 //前序
 static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_root)
 {
+#if XStack_ON
 	XVector* vector = XVector_new(sizeof(struct XBTreeNode*));
 	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
 	XStack_push(stack, &this_root);
@@ -25,10 +26,15 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_r
 	}
 	XStack_free(stack);
 	return vector;
+#else
+	IS_ON_DEBUG(XStack_ON);
+	return NULL;
+#endif
 }
 //中序
 static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_root)
 {
+#if XStack_ON
 	XVector* vector = XVector_new(sizeof(struct XBTreeNode*));
 	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
 	struct XBTreeNode* currentNode = this_root;//当前节点指针
@@ -49,10 +55,15 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_ro
 	}
 	XStack_free(stack);
 	return vector;
+#else
+	IS_ON_DEBUG(XStack_ON);
+	return NULL;
+#endif
 }
 //后序
 static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_root)
 {
+#if XStack_ON
 	XVector* vector = XVector_new( sizeof(struct XBTreeNode*));
 	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
 	XStack* stackTraversing = XStack_new(sizeof(struct XBTreeNode*));
@@ -75,6 +86,10 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_
 	XStackCopyXVector(stackTraversing, vector);
 	XStack_free(stackTraversing);
 	return vector;
+#else
+	IS_ON_DEBUG(XStack_ON);
+	return NULL;
+#endif
 }
 void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, const size_t dataCount, const size_t TypeSize)
 {
@@ -210,6 +225,7 @@ XVector* XBTree_TraversingToXVector(XBTreeNode* this_root, const enum XBTreeTrav
 }
 const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root)
 {
+#if XStack_ON
 	if (ISNULL(this_root, ""))
 		return 0;
 	size_t sum = 0;//一共释放了几个节点
@@ -233,6 +249,10 @@ const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root)
 	}
 	XStack_free(stack);
 	return sum;
+#else
+	IS_ON_DEBUG(XStack_ON);
+	return  0;
+#endif
 }
 
 XBTreeNode** XBTree_findChildisParent(struct XBTreeNode* Child)
