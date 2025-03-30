@@ -9,6 +9,7 @@
 #include<stdlib.h>
 void XMazePathfinding()
 {
+#if XVectorTwo_ON
 	int XMazeSize = 50;//迷宫大小
 	XPoint start = { 1,1 };//迷宫起点
 	XPoint dest = { XMazeSize-2,XMazeSize-2 };//迷宫终点
@@ -77,5 +78,8 @@ void XMazePathfinding()
 	XMazePathPrintSleep(maze, Path, "■", "  ", "★", 100);
 	XVector_free(Path);
 	XMazeFree(maze);
+#else
+	IS_ON_DEBUG(XVectorTwo_ON);
+#endif
 }
 #endif

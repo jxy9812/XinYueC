@@ -1,4 +1,4 @@
-﻿#include "XBinaryTreeObject.h"
+﻿#include"XBinaryTreeObject.h"
 #include"XContainerObject.h"
 #include"XStack.h"
 #include"XAlgorithm.h"
@@ -93,6 +93,7 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_
 }
 void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, const size_t dataCount, const size_t TypeSize)
 {
+#if XVector_ON
 	if (ISNULL(NodeTypeSize, "节点大小不能为空"))
 		return NULL;
 	if (ISNULL(nodeCount, "节点数组不能为空"))
@@ -131,6 +132,10 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 	XVector_resize(nodes->values, dataCount);
 	ContainerSize(nodes->values) = dataCount;
 	return nodes;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif
 }
 
 XBTreeNode* XBTree_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize)
@@ -145,6 +150,7 @@ XBTreeNode* XBTree_creationInsertData(const void* LPData, const size_t nodeArryS
 
 const bool XBTree_insertData(struct XBTreeNode* this_root, const void* LPData, const size_t index, const size_t TypeSize)
 {
+#if XVector_ON
 	if (ISNULL(this_root,""))
 		return false;
 	if (ISNULL(LPData, ""))
@@ -155,10 +161,15 @@ const bool XBTree_insertData(struct XBTreeNode* this_root, const void* LPData, c
 	void* data=XVector_at(this_root->values,index);
 	memcpy(data, LPData, TypeSize);
 	return true;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return false;
+#endif;
 }
 
 const bool XBTree_freeNode(XBTreeNode* this_root , const bool parentSetNull)
 {
+#if XVector_ON
 	if (ISNULL(this_root, ""))
 		return false;
 	
@@ -179,10 +190,15 @@ const bool XBTree_freeNode(XBTreeNode* this_root , const bool parentSetNull)
 	//释放节点
 	XMemory_free(this_root);
 	return true;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return false;
+#endif
 }
 
 XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel)
 {
+#if XVector_ON
 	if (ISNULL(this_root, ""))
 		return NULL;
 	size_t count = XVector_size(this_root->nodes);
@@ -192,19 +208,28 @@ XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel)
 		return;
 	}
 	return (XBTreeNode**)XVector_at(this_root->nodes, nSel);
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif
 }
 
 void* XBTree_Getdata(XBTreeNode* this_root, const size_t nSel)
 {
+#if XVector_ON
 	if (ISNULL(this_root, ""))
 		return NULL;
 	size_t count = XVector_size(this_root->values);
 	if (nSel >= count)
 	{
 		DEBUG_PRINTF("nSel:%d>=总量:%d", nSel, count);
-		return;
+		return NULL;
 	}
 	return XVector_at(this_root->values, nSel);
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif
 }
 
 XVector* XBTree_TraversingToXVector(XBTreeNode* this_root, const enum XBTreeTraversing Traversing)

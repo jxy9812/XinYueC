@@ -133,6 +133,7 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 //删除的是有两个孩子
 static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 {
+#if XVector_ON
 	XRBTreeNode* LPchild = NULL;//孩子节点
 	XRBTreeNode* LPreplace = eraseNode;//替换节点
 	XRBTreeNode* LPparent = NULL;//父节点
@@ -169,7 +170,9 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 		//调整树：
 		eraseAdjustTree(this_root, LPchild, LPparent);
 	}
-	
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less,XEquality equality, XCompareRuleOne Rule, const void* LPData)
 {

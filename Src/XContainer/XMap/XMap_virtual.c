@@ -84,6 +84,7 @@ void VXMap_erase(XMap* this_map, const XPair** LPpair)
 
 void VXMap_remove(XMap* this_map, const void* key)
 {
+#if XVector_ON
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return ;
 	XRBTreeNode* nodes = XBBTree_findData(this_map->object._data, this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
@@ -98,6 +99,9 @@ void VXMap_remove(XMap* this_map, const void* key)
 		--this_map->object._size;*/
 		this_map->isModify = true;
 	}
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 
 void* VXMap_at(XMap* this_map, const void* key)
@@ -119,6 +123,7 @@ void* VXMap_at(XMap* this_map, const void* key)
 
 XPair* VXMap_find(XMap* this_map, const void* key)
 {
+#if XVector_ON
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return NULL;
 	XBTreeNode* nodes = XBBTree_findData(this_map->object._data, this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
@@ -126,6 +131,10 @@ XPair* VXMap_find(XMap* this_map, const void* key)
 		return NULL;
 	XPair* pair = *(XPair**)XVector_at(nodes->values, 0);
 	return pair;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif
 }
 
 static void XMap_freeNodeData(void* LPVal, void* args)
@@ -136,6 +145,7 @@ static void XMap_freeNodeData(void* LPVal, void* args)
 }
 void VXMap_clear(XMap* this_map)
 {
+#if XVector_ON
 	if (XMap_empty(this_map))
 		return;
 	XMap_updataIterator(this_map);
@@ -150,6 +160,9 @@ void VXMap_clear(XMap* this_map)
 	this_map->object._size = 0;
 	this_map->object._data = NULL;
 	this_map->isModify = false;
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif;
 }
 
 void VXMap_free(XMap* this_map)
@@ -160,6 +173,7 @@ void VXMap_free(XMap* this_map)
 
 void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
 {
+#if XVector_ON
 	typedef void (*funcPtr)(XContainerObject*, XContainerObject*);
 	VtableFunc(XVectorVtable, EXContainerObject_Swap, funcPtr)(this_mapOne, this_mapTwo);
 	//XContainerObject_swap(this_mapOne, this_mapTwo);
@@ -168,6 +182,9 @@ void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
 	XSwap(&this_mapOne->KeyEquality, &this_mapTwo->KeyEquality, sizeof(XEquality));
 	XSwap(&this_mapOne->KeyLess, &this_mapTwo->KeyLess, sizeof(XLess));
 	XSwap(&this_mapOne->keyTypeSize, &this_mapTwo->keyTypeSize, sizeof(size_t));
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 
 #endif

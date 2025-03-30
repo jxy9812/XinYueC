@@ -3,6 +3,7 @@
 #include<string.h>
 void XHfmTree_setDictionaries(XMap* dictionaries, const char* data, const size_t size)
 {
+#if XVector_ON
 	if (ISNULL(dictionaries, "哈夫曼树字典不能NULL"))
 	{
 		return;
@@ -18,6 +19,9 @@ void XHfmTree_setDictionaries(XMap* dictionaries, const char* data, const size_t
 		dv->count += 1;//计数+1
 		//XMap_At(tree->dictionaries,data[i],size_t)+=1;
 	}
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 //写入字典数据到压缩的数组中
 static void writeDictionaryData(XPair** LPpair, XVector* gzipData)
@@ -35,12 +39,17 @@ static void writeDictionaryData(XPair** LPpair, XVector* gzipData)
 
 int XHfmTree_writeCompressDictionaries(XVector* gzipData, XMap* dictionaries)
 {
+#if XVector_ON
 	size_t count = XMap_size(dictionaries);
 	XVector_resize(gzipData, sizeof(size_t));
 	//写入数量
 	memcpy(XVector_begin(gzipData), &count,sizeof(size_t));//写入数据个数
 	XMap_iterator_for_each(dictionaries, writeDictionaryData, gzipData);
 	return XVector_size(gzipData);
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return 0;
+#endif
 }
 
 #endif

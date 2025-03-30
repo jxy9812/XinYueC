@@ -3,6 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+	typedef struct XVector XVector;
 #include"XMaze.h"
 #include"XPoint.h"
 #define StraightLine  10//直线

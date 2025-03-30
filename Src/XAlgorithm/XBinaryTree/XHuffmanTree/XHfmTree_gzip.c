@@ -3,6 +3,7 @@
 //写入压缩数据
 static void writeData(XVector* gzipData, XMap* dictionaries, const char* data, const size_t size)
 {
+#if XVector_ON
 	size_t currentSize = XVector_size(gzipData);//当前字节大小
 	XVector* code = NULL;//哈夫曼编码数组
 	char byteWrite = 0;//写入的一字节
@@ -37,9 +38,13 @@ static void writeData(XVector* gzipData, XMap* dictionaries, const char* data, c
 	{
 		XVector_push_back(gzipData, &byteWrite);
 	}
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 XVector* XHfmTree_gzip(XHuffmanTree* tree, const char* data, const size_t size)
 {
+#if XVector_ON
 	XHfmTree_clear(tree);//哈夫曼树清空测试
 	XHfmTree_readData(tree, data, size);//读取数据构建哈夫曼树
 	XVector* gzipData=XVector_New(char);//返回的压缩后的数据
@@ -48,6 +53,10 @@ XVector* XHfmTree_gzip(XHuffmanTree* tree, const char* data, const size_t size)
 	writeData(gzipData, tree->dictionaries,data,size);
 	//printf("gzipData:%d\n", XVector_size(gzipData));
 	return gzipData;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif
 }
 
 #endif

@@ -18,6 +18,7 @@ void traverse(void* LPVal, void* args)
 }
 void XBalancedBinaryTreeTest()
 {
+#if XVector_ON
 	int a[] = { 4,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
 	int* LPa = a;
 
@@ -79,5 +80,8 @@ void XBalancedBinaryTreeTest()
 	{
 		printf("二叉树是空的\n");
 	}
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 #endif

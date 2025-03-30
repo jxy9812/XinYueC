@@ -1,5 +1,6 @@
-﻿#ifndef VECTOR_H
-#define VECTOR_H
+﻿#include"XContainerObject.h"
+#if !defined(XVECTOR_H)&& XVector_ON
+#define XVECTOR_H
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -7,6 +7,7 @@
 //创建一个节点
 static AStarNode* CreationAStarNode(const int x, const int y)
 {
+#if XVector_ON
 	AStarNode* nodes = (AStarNode*)XMemory_malloc(sizeof(AStarNode));
 	if (ISNULL(nodes, ""))
 		return NULL;
@@ -17,6 +18,10 @@ static AStarNode* CreationAStarNode(const int x, const int y)
 	nodes->currentCosts = 0;
 	nodes->estimateCosts = 0;
 	return nodes;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif
 }
 //创建一个节点
 static AStarNode* CreationAStarNode_XPoint(const XPoint pos)
@@ -112,6 +117,7 @@ static void XBinaryTreeObject_freeNode(AStarNode* root)
 }
 XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XPoint dest, bool Oblique)
 {
+#if XVectorTwo_ON&&XVector_ON
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	AStarNode* root = CreationAStarNode_XPoint(start);//根节点
 	XVector* CurrentNodeArray = XVector_new( sizeof(AStarNode*));//当前节点数组
@@ -141,4 +147,8 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 	XVector_free(CurrentNodeArray);
 	XVectorTwo_free(tempMaze);
 	return Path;
+#else
+	IS_ON_DEBUG(XVectorTwo_ON&& XVector_ON);
+	return NULL;
+#endif
 }

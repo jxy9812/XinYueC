@@ -4,6 +4,7 @@
 //读取压缩后的数据//构建字典
 static size_t readDictionaries(XHuffmanTree* tree, const char* data)
 {
+#if XVector_ON
 	size_t offset = 0;//偏移字节
 	size_t count = *(size_t*)data;//字典的DictionaryData数量
 	offset += sizeof(size_t);
@@ -22,6 +23,10 @@ static size_t readDictionaries(XHuffmanTree* tree, const char* data)
 		DictionData = data + offset;//重新定位指针
 	}
 	return offset;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return 0;
+#endif
 }
 //写入解压后的数据
 static bool writeUnZip(XVector* unzipData, XHfmNode*node)
@@ -42,6 +47,7 @@ static void addCount(XPair** LPpair, size_t* LPcount)
 //读取压缩后的数据
 static XVector*  writeUnZipData(XHuffmanTree* tree, const char* data,const size_t size)
 {
+#if XVector_ON
 	size_t countMax = 0;//字符最大出现次数
 	size_t count = 0;//字符出现次数
 	XMap_iterator_for_each(tree->dictionaries, addCount, &countMax);//累加计算字符的最大次数
@@ -77,6 +83,10 @@ static XVector*  writeUnZipData(XHuffmanTree* tree, const char* data,const size_
 		}
 	}
 	return unzipData;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif
 }
 XVector* XHfmTree_unzip(XHuffmanTree* tree, const char* data, const size_t size)
 {

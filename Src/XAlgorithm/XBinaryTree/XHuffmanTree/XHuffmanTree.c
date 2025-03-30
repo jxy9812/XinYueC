@@ -37,8 +37,12 @@ const bool XHfmTree_readData(XHuffmanTree* tree,const char* data, const size_t s
 //释放哈夫曼编码数组
 static void freeCode(XPair** pair,void*args)
 {
+#if XVector_ON
 	XVector* v = XPair_Second(*pair, DictionaryValue).code;
 	XVector_free(v);
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 void XHfmTree_clear(XHuffmanTree* tree)
 {

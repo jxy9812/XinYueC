@@ -20,7 +20,7 @@ static void insertMap(void* values, void* args)
 #endif
 void XMapAndXVectorFindTest()
 {
-#if XMap_ON
+#if XMap_ON&&XVector_ON
 	//创建乱序的数组
 	XVector* VArray = XVector_new(sizeof(size_t));
 	VArray->equality = XEquality_size_t;

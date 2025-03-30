@@ -4,6 +4,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
+typedef struct XVector XVector;
 #define GetXPoint(nodes) (*(XPoint*)nodes->values)
 //创建一个节点
 static XBTreeNode* CreationBFSNode_XPoint(XPoint pos)
@@ -19,6 +20,7 @@ static XBTreeNode* CreationBFSNode(const int x,const int y)
 	XPoint pos = { x,y };
 	return CreationBFSNode_XPoint(pos);
 }
+
 //获取迷宫路径
 static XVector* GetXMazePath(const XBTreeNode* child)
 {
@@ -61,6 +63,7 @@ static size_t insertChild(const XVector* maze, XBTreeNode* nodes, XVector* NextN
 
 XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoint dest)
 {
+#if XVector_ON
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	XBTreeNode* root = CreationBFSNode_XPoint(start);//根节点
 	XVector* CurrentNodeArray = XVector_new( sizeof(XBTreeNode*));//当前节点数组
@@ -90,4 +93,8 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 	XVectorTwo_free(tempMaze);
 	XBTree_freeNodeAll(root);
 	return Path;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif
 }

@@ -1,4 +1,5 @@
-﻿#include "XVectorTwo_func.h"
+﻿#include"XVectorTwo_func.h"
+#if XVectorTwo_ON
 #include"XVector.h"
 #include"XPoint.h"
 #include<string.h>
@@ -85,3 +86,4 @@ void XVectorTwo_free(const XVector* this_vector)
 	XVectorTwo_clear(this_vector);
 	XVector_free(this_vector);
 }
+#endif

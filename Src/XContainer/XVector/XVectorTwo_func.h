@@ -1,4 +1,5 @@
-﻿#ifndef XVECTORTWO_FUNC_H
+﻿#include"XContainerObject.h"
+#if !defined(XVECTORTWO_FUNC_H)&& XVectorTwo_ON
 #define XVECTORTWO_FUNC_H
 #ifdef __cplusplus
 extern "C" {

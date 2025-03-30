@@ -18,6 +18,7 @@ struct people
 
 void VectorTest()
 {
+#if XVector_ON
 	printf("XVector 测试\n");
 	XVector* v = XVector_New(int);
 	v->equality = XEquality_int;
@@ -41,6 +42,9 @@ void VectorTest()
 	if(findRet!=NULL)
 	printf("找到的数字:%d", *findRet);
 	XVector_free(v);
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 
 #endif

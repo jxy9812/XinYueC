@@ -5,16 +5,21 @@
 //打印路径点
 void XMazePathPrintPoint(XVector* Path)
 {
+#if XVector_ON
 	for (XVector_iterator* it = XVector_begin(Path); it != XVector_end(Path); it = XVector_iterator_add(Path, it))
 	{
 		XPoint CurPoint = *(XPoint*)it;//获取点
 		printf("(%d,%d) ", CurPoint.x, CurPoint.y);
 	}
 	printf("\n");
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 //打印迷宫
 static void Print(const struct XVector* maze, const char* Wall, const char* Route, const char* Path)
 {
+#if XVector_ON
 	for (XVector_iterator* it = XVector_begin(maze); it != XVector_end(maze); it = XVector_iterator_add(maze, it))
 	{
 		struct XVector* RowMaze = *((struct XVector**)it);
@@ -41,10 +46,14 @@ static void Print(const struct XVector* maze, const char* Wall, const char* Rout
 		}
 		printf("\n");
 	}
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 //初始化迷宫
-struct XVector* XMaze_init(const size_t r, const size_t l)
+XVector* XMaze_init(const size_t r, const size_t l)
 {
+#if XVector_ON
 	struct XVector* maze = XVector_new( sizeof(struct XVector*));
 	for (size_t i = 0; i < r; i++)
 	{
@@ -57,6 +66,10 @@ struct XVector* XMaze_init(const size_t r, const size_t l)
 		XVector_push_back(maze, &Lmaze);
 	}
 	return maze;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif
 }
 //打印迷宫 wall墙(替换的字符) Route道路(替换的字符)  Path路径(替换的字符) 
 void XMazePrint(const struct XVector* maze, const char* Wall, const char* Route)
@@ -66,6 +79,7 @@ void XMazePrint(const struct XVector* maze, const char* Wall, const char* Route)
 
 void XMazePathPrint(const XVector* maze, XVector* mazePath, const char* Wall, const char* Route, const char* Path)
 {
+#if XVector_ON
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	for (XVector_iterator* it = XVector_begin(mazePath); it != XVector_end(mazePath); it = XVector_iterator_add(mazePath, it))
 	{
@@ -74,10 +88,14 @@ void XMazePathPrint(const XVector* maze, XVector* mazePath, const char* Wall, co
 	}
 	Print(tempMaze, Wall, Route, Path);
 	XVectorTwo_free(tempMaze);
+#else
+		IS_ON_DEBUG(XVector_ON);
+#endif
 }
 
 void XMazePathPrintSleep(const XVector* maze, XVector* mazePath, const char* Wall, const char* Route, const char* Path, const size_t msec)
 {
+#if XVector_ON
 	//system("mode con cols=110 lines=55"); //cols为控制台的宽度，lines则代表控制台的高度。
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	for (XVector_iterator* it = XVector_begin(mazePath); it != XVector_end(mazePath); it = XVector_iterator_add(mazePath, it))
@@ -96,19 +114,34 @@ void XMazePathPrintSleep(const XVector* maze, XVector* mazePath, const char* Wal
 		XDelay(msec);
 	}
 	XVectorTwo_free(tempMaze);
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 
 void XMazeFree(const struct XVector* maze)
 {
+#if XVector_ON
 	XVectorTwo_free(maze);
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 
 const int XMazeRow(const XVector* maze)
 {
+#if XVector_ON
 	return XVectorTwo_Row(maze);//行
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 
 const int XMazeList(const XVector* maze)
 {
+#if XVector_ON
 	return XVectorTwo_List(maze,0);//列
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }

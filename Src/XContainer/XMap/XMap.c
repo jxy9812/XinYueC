@@ -123,11 +123,16 @@ void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
 
 static void ForTreeNode(void* LPVal, void* args)
 {
+#if XVector_ON
 	XRBTreeNode* nodes = *(XRBTreeNode**)LPVal;
 	XVector_push_back(args, XVector_at(nodes->XBTNode.values, 0));
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 void XMap_updataIterator(XMap* this_map)
 {
+#if XVector_ON
 	if (ISNULL(this_map, "map不能为NULL"))
 		return;
 	if (XMap_empty(this_map))//map当前是空的
@@ -149,5 +154,8 @@ void XMap_updataIterator(XMap* this_map)
 	XVector_free(TreeNode);
 
 	this_map->isModify = false;
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 #endif

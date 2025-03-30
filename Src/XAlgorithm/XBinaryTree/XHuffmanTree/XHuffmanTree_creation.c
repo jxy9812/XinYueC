@@ -7,6 +7,7 @@ static bool Less(XHfmNode** nodeOne, XHfmNode** nodeTwo)
 	return XHfmTree_GetNodeData(*nodeOne).count < XHfmTree_GetNodeData(*nodeTwo).count;
 }
 //字典数据插入优先队列
+#if XPriority_Queue_ON
 static void installQueue(XPair** LPpair, XPriority_Queue* queue)
 {
 	//创建节点插入优先队列
@@ -15,9 +16,11 @@ static void installQueue(XPair** LPpair, XPriority_Queue* queue)
 	XHfmNode* node = XHfmTree_creationNode( ch, dv.count,dv.code);
 	XPriority_Queue_push(queue, &node);
 }
+#endif
 //根据字典创建树
 XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 {
+#if XPriority_Queue_ON
 	XPriority_Queue* queue = XPriority_Queue_New(XHfmNode*, Less);
 	//原始字典生成单独的节点插入优先队列
 	XMap_iterator_for_each(dictionaries, installQueue, queue);
@@ -51,6 +54,10 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 	}
 	XPriority_Queue_free(queue);
 	return LPparent;
+#else
+	IS_ON_DEBUG(XPriority_Queue_ON);
+	return NULL;
+#endif
 }
 XHfmNode* XHfmTree_creationNode(unsigned char ch, size_t count, XVector* code)
 {

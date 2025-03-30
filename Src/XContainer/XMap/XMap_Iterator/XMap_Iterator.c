@@ -5,6 +5,7 @@
 #include"XRedBlackTree.h"
 XMap_Iterator* XMap_begin(XMap* this_Map)
 {
+#if XVector_ON
 	XMap_updataIterator(this_Map);
 	if (this_Map->itArray == NULL)
 		return NULL;
@@ -12,19 +13,33 @@ XMap_Iterator* XMap_begin(XMap* this_Map)
 	/*if(Vectorit!=NULL)
 		return *(XPair**)Vectorit;*/
 	return it;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif;
 }
 
 XMap_Iterator* XMap_end(XMap* this_Map)
 {
+#if XVector_ON
 	return XVector_end(this_Map->itArray);
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif;
 }
 
 XMap_Iterator* XMap_iterator_add(XMap* this_Map, XMap_Iterator* it)
 {
+#if XVector_ON
 	XVector_iterator* iterator = XVector_iterator_add(this_Map->itArray,it);
 	/*if (Vectorit != NULL)
 		return *(XPair**)Vectorit;*/
 	return iterator;
+#else
+	IS_ON_DEBUG(XVector_ON);
+	return NULL;
+#endif;
 }
 
 void XMap_iterator_for_each(XMap* this_Map, XFor_each ForFunction, void* args)

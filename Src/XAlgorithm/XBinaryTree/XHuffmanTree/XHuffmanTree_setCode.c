@@ -9,6 +9,7 @@ static printCode(char* ch,void* args)
 //设置哈夫曼编码
 static void setCode(XHfmNode* root,XVector*code)
 {
+#if XVector_ON
 	XHfmNode* curentNode = root;
 	XHfmNode* parent = XBTree_GetParent(curentNode);
 	char ch = 0;//哈夫曼编码
@@ -30,6 +31,9 @@ static void setCode(XHfmNode* root,XVector*code)
 	}
 	//将编码逆序
 	XReversed(XVector_front(code),XVector_size(code),sizeof(char));
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif;
 }
 //获取哈夫曼编码数组以及对应的节点
 static void getCode(XHfmNode** LProot,void* args)
@@ -45,10 +49,14 @@ static void getCode(XHfmNode** LProot,void* args)
 }
 void XHfmTree_setCode(XHfmNode* root)
 {
+#if XVector_ON
 	if (ISNULL(root, "传入的根节点不能为NULL"))
 		return;
 	XVector* nodeList = XBTree_TraversingToXVector(root, XBTreeInorder);
 	XVector_iterator_for_each(nodeList, getCode,NULL);
 	XVector_free(nodeList);
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif;
 }
 #endif

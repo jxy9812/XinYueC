@@ -17,7 +17,7 @@ static void UnZipFor(char* ch, void* args)
 
 void XHuffmanTreeTest()
 {
-#if XMap_ON
+#if XMap_ON&&XVector_ON
 	//数据
 	char data[] = {1,1,1,3,3,5,8,8,5,78,54,66,66,66,1,123,32,3,3,3};
 	size_t count = sizeof(data) / sizeof(data[0]);//数据大小字节

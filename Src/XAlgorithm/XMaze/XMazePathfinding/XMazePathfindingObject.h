@@ -2,7 +2,8 @@
 #define XMAZEPATHFINDINGOBJECT_H
 #ifdef __cplusplus
 extern "C" {
-#endif
+#endif 
+typedef struct XVector XVector;
 #include"XMaze.h"
 #include"XVector.h"
 #include"XPoint.h"

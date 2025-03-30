@@ -9,6 +9,7 @@ static void printTreeNode(void* LPVal, void* args)
 }
 void XBinaryTreeObjectTest()
 {
+#if XVector_ON
 	int a[] = { 0,1,2,3,4,5,6,7 };
 	int* LPa = a;
 	
@@ -45,6 +46,9 @@ void XBinaryTreeObjectTest()
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free(TreePreorder);
+#else
+	IS_ON_DEBUG(XVector_ON);
+#endif
 }
 
 #endif

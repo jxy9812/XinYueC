@@ -2,6 +2,7 @@
 #include<string.h>
 XTTTreeNode* XTTTree_creationNode(const enum XTTTree_NodeNum nodeCount, const size_t TypeSize)
 {
+#if XVector_ON
     XTTTreeNode* nodes = XBTree_creationNode(sizeof(XTTTreeNode), nodeCount + 1,1, TypeSize);
     if (nodes == NULL)//初始化父类失败
         return NULL;
@@ -17,17 +18,27 @@ XTTTreeNode* XTTTree_creationNode(const enum XTTTree_NodeNum nodeCount, const si
     //插入0值,初始化剩余的值
     XVector_resize(nodes->LpValueArray, nodeCount - 2);
     return nodes;
+#else
+    IS_ON_DEBUG(XVector_ON);
+    return NULL;
+#endif
 }
 
 const enum  XTTTree_NodeNum XTTTree_NodeNum(const XTTTreeNode* this_root)
 {
+#if XVector_ON
     if (ISNULL(this_root, ""))
         return 0;
     return XVector_size(this_root->LpValueArray)+2;
+#else
+    IS_ON_DEBUG(XVector_ON);
+    return XTTTree_TwoNode;
+#endif
 }
 
 const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, const void* LPData, const size_t TypeSize)
 {
+#if XVector_ON
     if (ISNULL(this_root, ""))
         return 0;
     XVector* LPNode = this_root->object.nodes;//储存节点指针的数组
@@ -48,6 +59,10 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
     //XVector_erase_int(this_root, 0, 0);//删除重复的第一个
     XVector_pop_front(this_root);
     return XTTTree_NodeNum(this_root);
+#else
+    IS_ON_DEBUG(XVector_ON);
+    return XTTTree_TwoNode;
+#endif
 }
 
 XTTTreeNode** XTTTree_Node(const XTTTreeNode* this_root, size_t nSel)
@@ -57,6 +72,7 @@ XTTTreeNode** XTTTree_Node(const XTTTreeNode* this_root, size_t nSel)
 
 void* XTTTree_data(const XTTTreeNode* this_root, size_t nSel)
 {
+#if XVector_ON
     if (ISNULL(this_root, ""))
         return 0;
     if (/*this_root->LpValueArray == NULL||*/ nSel==0)//当前是二节点
@@ -68,15 +84,24 @@ void* XTTTree_data(const XTTTreeNode* this_root, size_t nSel)
         return XVector_at(this_root->LpValueArray, nSel - 1);
     }
     return NULL;
+#else
+    IS_ON_DEBUG(XVector_ON);
+    return NULL;
+#endif
 }
 
 void XTTTree_free(const XTTTreeNode* this_root)
 {
+#if XVector_ON
     if (ISNULL(this_root, ""))
         return 0;
     if (this_root->LpValueArray != NULL)
         XVector_free(this_root->LpValueArray);
     XBTree_freeNode(this_root, false);
+#else
+    IS_ON_DEBUG(XVector_ON);
+    return NULL;
+#endif
 }
 
 XTTTreeNode* XTTTree_findData(XTTTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne equalityRule, void* LPData)

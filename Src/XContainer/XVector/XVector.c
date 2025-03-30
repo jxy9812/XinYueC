@@ -1,4 +1,5 @@
 ﻿#include"XVector.h"
+#if XVector_ON
 #include<stdlib.h>
 
 XVector* XVector_new(size_t typeSize)
@@ -201,3 +202,4 @@ size_t XVector_typeSize(XVector* this_vector)
 {
 	return XContainerObject_typeSize(this_vector);
 }
+#endif

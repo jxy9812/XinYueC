@@ -3,6 +3,7 @@
 //判断当前点周围是否还有通道可以经过
 bool isPass(const XVector* maze, XPoint CurPoint)
 {
+#if XVectorTwo_ON
 	int row = XVectorTwo_Row(maze);//行
 	int list = XVectorTwo_List(maze, 0);//列
 	if (CurPoint.x >= 0 && CurPoint.x < list && CurPoint.y >= 0 && CurPoint.y < row)
@@ -13,6 +14,10 @@ bool isPass(const XVector* maze, XPoint CurPoint)
 			return true;
 	}
 	return false;
+#else
+	IS_ON_DEBUG(XVectorTwo_ON);
+	return false;
+#endif
 }
 //探路四个方向-栈(周围是否已经无路可走了)
 bool Pathfinder(struct XStack* stack, struct XVector* maze, struct XPointStep CurPoint)

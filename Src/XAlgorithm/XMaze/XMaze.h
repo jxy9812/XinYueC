@@ -3,6 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef struct XVector XVector;
 #include"XVector.h"
 //迷宫地图元素
 enum XMazeSign
@@ -24,7 +25,7 @@ enum XMazeDirection
 	DownLeft,//下左
 };
 //初始化迷宫
-struct XVector* XMaze_init(const size_t r, const size_t l);
+XVector* XMaze_init(const size_t r, const size_t l);
 //打印路径点
 void XMazePathPrintPoint(XVector* Path);
 //打印迷宫 wall墙(替换的字符) Route道路(替换的字符)

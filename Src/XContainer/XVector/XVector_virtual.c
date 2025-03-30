@@ -1,4 +1,5 @@
 ﻿#include"XVector.h"
+#if XVector_ON
 #include"XSort.h"
 #include"XVtable.h"
 #include<string.h>
@@ -407,3 +408,4 @@ void VXVector_sort(XVector* this_vector, XCompare compare)//排序
 		XQuicPitSort_Stack(ContainerDataPtr(this_vector),ContainerSize(this_vector), ContainerTypeSize(this_vector), compare);
 }
 
+#endif

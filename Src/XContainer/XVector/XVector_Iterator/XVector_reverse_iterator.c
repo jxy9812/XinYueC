@@ -1,4 +1,5 @@
 ﻿#include "XVector_reverse_iterator.h"
+#if XVector_ON
 #include"XVector.h"
 #include<stdio.h>
 XVector_reverse_iterator* XVector_rbegin(XVector* this_vector)
@@ -30,3 +31,5 @@ void XVector_reverse_iterator_for_each(XVector* this_vector, XFor_each ForFuncti
 		ForFunction(it, args);
 	}
 }
+
+#endif
