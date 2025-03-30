@@ -2,10 +2,13 @@
 #if XString_ON
 #include<stdlib.h>
 #include<string.h>
-XString* XString_new()
+#include"XEquality.h"
+XString* XString_new(const char* string)
 {
 	XString* this_string = XMemory_malloc(sizeof(XString));
 	XString_init(this_string);
+	if(string)
+		XString_append(this_string,string);
 	return this_string;
 }
 void XString_init(XString* this_string)
@@ -13,6 +16,7 @@ void XString_init(XString* this_string)
 	if (ISNULL(this_string, "") )
 		return;
 	XVector_init(this_string, sizeof(char));
+	this_string->vector.equality = XEquality_char;
 	XString_class_init();
 	ObjectVtable(this_string) = XStringVtable;
 	XString_clear(this_string);

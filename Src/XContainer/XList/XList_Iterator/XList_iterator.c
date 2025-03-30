@@ -8,7 +8,7 @@ XList_iterator* XList_begin(XList* this_list)
 {
 	if (ISNULL(this_list, "XList_begin"))
 		return NULL;
-	return ContainerDataPtr(this_list);
+	return XContainerDataPtr(this_list);
 }
 
 XList_iterator* XList_end(XList* this_list)

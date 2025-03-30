@@ -93,8 +93,8 @@ void VXMap_remove(XMap* this_map, const void* key)
 		XPair* pair = *((XPair**)XVector_at(nodes->XBTNode.values, 0));
 		XRBTree_erase(&(this_map->object._data), this_map->KeyLess, this_map->KeyEquality, XCompareRuleOne_XMap, key);
 		XPair_free(pair);
-		--ContainerCapacity(this_map);
-		--ContainerSize(this_map);
+		--XContainerCapacity(this_map);
+		--XContainerSize(this_map);
 	/*	--this_map->object._capacity;
 		--this_map->object._size;*/
 		this_map->isModify = true;

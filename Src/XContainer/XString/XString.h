@@ -46,7 +46,7 @@ typedef struct XString
 //初始化类
 void XString_class_init();
 //初始化XString;
- XString* XString_new();
+ XString* XString_new(const char* string);
  //初始化 XVector
 void XString_init(XString* this_string);
 //设置XString的大小，实际大小自动+1存/0

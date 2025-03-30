@@ -89,16 +89,16 @@ void VXPriority_Queue_push(XPriority_Queue* this_queue, void* LpValue)
 	if (ISNULL(this_queue, "")|| ISNULL(LpValue, ""))
 		return ;
 	XVector_push_back(this_queue, LpValue);
-	size_t size = ContainerSize(this_queue) - 1;
+	size_t size = XContainerSize(this_queue) - 1;
 	if (size > 0)//一个元素不用调整
-		AdjustUp(ContainerDataPtr(this_queue), ContainerTypeSize(this_queue), size, this_queue->compare);
+		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->compare);
 }
 
 void VXPriority_Queue_pop(XPriority_Queue* this_queue)
 {
 	if (ISNULL(this_queue, "")|| XContainerObject_empty(this_queue))
 		return ;
-	char* LParr = ContainerDataPtr(this_queue);//指向数组的开始
+	char* LParr = XContainerDataPtr(this_queue);//指向数组的开始
 	size_t arrSize = XContainerObject_size(this_queue);//数组元素数量
 	size_t TypeSize = XContainerObject_typeSize(this_queue);//单个元素大小字节
 	//拷贝最后一个元素到第一个
@@ -107,7 +107,7 @@ void VXPriority_Queue_pop(XPriority_Queue* this_queue)
 		memcpy(LParr, LParr + (arrSize - 1) * TypeSize, TypeSize);
 		AdjustDwon(LParr, arrSize, TypeSize, 0, this_queue->compare);
 	}
-	--ContainerSize(this_queue);
+	--XContainerSize(this_queue);
 }
 
 void* VXPriority_Queue_top(XPriority_Queue* this_queue)

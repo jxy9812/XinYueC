@@ -46,6 +46,7 @@ extern "C" {
 	//哈夫曼树测试
 	void XHuffmanTreeTest();
 	void cJsonTest();
+	void cJsonXContainerTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

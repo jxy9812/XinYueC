@@ -5,8 +5,8 @@ void XStringTest()
 {
 #if XString_ON
 	printf("XString 测试\n");
-	XString* str = XString_new();
-	XString_append(str, "nihao ");
+	XString* str = XString_new("nihao ");
+	//XString_append(str, );
 	XString_push_front(str, '#');
 	XString_push_back(str, '!');
 	XString_insert(str,2,"12121ni_");

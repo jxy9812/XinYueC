@@ -35,11 +35,11 @@ typedef struct XContainerObject
 	size_t _typeSize;//类型占用字节数
 }XContainerObject;
 
-#define ContainerDataPtr(Object) ((XContainerObject*)Object)->_data//当前数据指针
-#define ContainerData(Object,Type) (*(Type*)ContainerDataPtr(Object))//当前数据
-#define ContainerCapacity(Object) (((XContainerObject*)Object)->_capacity)//当前容器能容纳的最大元素数量
-#define ContainerSize(Object) (((XContainerObject*)Object)->_size)//当前容器内的元素个数
-#define ContainerTypeSize(Object) (((XContainerObject*)Object)->_typeSize)//类型占用字节数
+#define XContainerDataPtr(Object) ((XContainerObject*)Object)->_data//当前数据指针
+#define XContainerData(Object,Type) (*(Type*)XContainerDataPtr(Object))//当前数据
+#define XContainerCapacity(Object) (((XContainerObject*)Object)->_capacity)//当前容器能容纳的最大元素数量
+#define XContainerSize(Object) (((XContainerObject*)Object)->_size)//当前容器内的元素个数
+#define XContainerTypeSize(Object) (((XContainerObject*)Object)->_typeSize)//类型占用字节数
 
 void XContainerObject_class_init(); 
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);

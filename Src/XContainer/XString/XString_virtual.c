@@ -350,17 +350,17 @@ void VXString_append(XString* this_string, const char* string)
 	if (ISNULL(this_string, "") || ISNULL(string, ""))
 		return;
 	size_t len = strlen(string);
-	if(ContainerSize(this_string)+ len +1>ContainerCapacity(this_string))
+	if(XContainerSize(this_string)+ len +1>XContainerCapacity(this_string))
 		VXString_resize(this_string, VXString_size(this_string)+strlen(string));
-	strcat(ContainerDataPtr(this_string), string);
-	ContainerSize(this_string)+=len;
+	strcat(XContainerDataPtr(this_string), string);
+	XContainerSize(this_string)+=len;
 }
 
 void VXString_insert(XString* this_string, const int64_t index, const char* string)
 {
 	if (ISNULL(this_string, "") || ISNULL(string, ""))
 		return;
-	if (index<0 || index>=ContainerSize(this_string))
+	if (index<0 || index>=XContainerSize(this_string))
 		return;
 	//void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n);
 	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
@@ -381,14 +381,14 @@ void VXString_pop_back(XString* this_string)
 		return;
 	//void XVector_remove(XVector* this_vector, int64_t index, int64_t n);
 	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
-	VtableFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string,ContainerSize(this_string)-2,1);
+	VtableFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string,XContainerSize(this_string)-2,1);
 }
 
 void VXString_remove(XString* this_string, int64_t index, int64_t n)
 {
 	if (VXString_empty(this_string))
 		return;
-	if (index < 0 || index >= ContainerSize(this_string)-1)
+	if (index < 0 || index >= XContainerSize(this_string)-1)
 		return;
 	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
 	VtableFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string, index, n);
@@ -398,7 +398,7 @@ void VXString_erase(XString* this_string, void* LpValue)
 {
 	if (VXString_empty(this_string))
 		return;
-	if ((char*)ContainerDataPtr(this_string) + ContainerSize(this_string) - 1 == LpValue)
+	if ((char*)XContainerDataPtr(this_string) + XContainerSize(this_string) - 1 == LpValue)
 		return;
 	typedef void (*funcPtr)(XVector*, void*);
 	VtableFunc(XVectorVtable, EXVector_Erase, funcPtr)(this_string, LpValue);
@@ -408,7 +408,7 @@ void VXString_clear(XString* this_string)
 {
 	if (ISNULL(this_string, ""))
 		return;
-	ContainerSize(this_string)=0;
+	XContainerSize(this_string)=0;
 	typedef void (*funcPtr)(XVector*, void*);
 	VtableFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_string,"");
 }
@@ -422,7 +422,7 @@ size_t VXString_size(const XString* this_string)
 {
 	if (ISNULL(this_string, ""))
 		return 0;
-	size_t len = ContainerSize(this_string);
+	size_t len = XContainerSize(this_string);
 	if (len == 0)
 		return 0;
 	return len -1;
@@ -440,17 +440,17 @@ const char* VXString_data(const XString* this_string)
 {
 	if (ISNULL(this_string, ""))
 		return NULL;
-	return ContainerDataPtr(this_string);
+	return XContainerDataPtr(this_string);
 }
 
 int64_t VXString_find_first_of(const XString* this_string, const char* subStr)
 {
 	if (ISNULL(this_string, "")|| ISNULL(subStr, ""))
 		return -1;
-	char* ret = strstr(ContainerDataPtr(this_string),subStr);
+	char* ret = strstr(XContainerDataPtr(this_string),subStr);
 	if (ret == NULL)
 		return -1;
-	return ret - (char*)ContainerDataPtr(this_string);
+	return ret - (char*)XContainerDataPtr(this_string);
 	/*char* str = XString_data(this_string);
 	size_t sLen = strlen(str);
 	size_t fLen = strlen(subStr);
@@ -486,17 +486,17 @@ int64_t VXString_find_last_of(const XString* this_string, const char* subStr)
 {
 	if (ISNULL(this_string, "") || ISNULL(subStr, ""))
 		return -1;
-	char* ret = strrstr(ContainerDataPtr(this_string), subStr);
+	char* ret = strrstr(XContainerDataPtr(this_string), subStr);
 	if (ret == NULL)
 		return -1;
-	return ret - (char*)ContainerDataPtr(this_string);
+	return ret - (char*)XContainerDataPtr(this_string);
 }
 
 int64_t VXString_find_first_not_of(const XString* this_string, const char* subStr)
 {
 	if (ISNULL(this_string, "") || ISNULL(subStr, ""))
 		return -1;
-	const char* haystack=ContainerDataPtr(this_string);
+	const char* haystack=XContainerDataPtr(this_string);
 	const char* needle=subStr;
 	size_t haystack_len = strlen(haystack);
 	size_t needle_len = strlen(needle);

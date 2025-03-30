@@ -7,7 +7,7 @@ XList_reverse_iterator* XList_rbegin(XList* this_list)
 {
 	if (ISNULL(this_list, "XList_rbegin"))
 		return NULL;
-	return ContainerData(this_list,XListNode).prev;
+	return XContainerData(this_list,XListNode).prev;
 }
 
 XList_reverse_iterator* XList_rend(XList* this_list)

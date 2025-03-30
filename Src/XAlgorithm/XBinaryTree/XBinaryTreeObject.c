@@ -120,7 +120,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 		return NULL;
 	}
 	XVector_resize(nodes->nodes, nodeCount);
-	ContainerSize(nodes->nodes) = nodeCount;
+	XContainerSize(nodes->nodes) = nodeCount;
 	//申请数据数组
 	nodes->values = XVector_new(TypeSize);
 	if (ISNULL(nodes->values, "数据数组申请内存失败"))
@@ -130,7 +130,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 		return NULL;
 	}
 	XVector_resize(nodes->values, dataCount);
-	ContainerSize(nodes->values) = dataCount;
+	XContainerSize(nodes->values) = dataCount;
 	return nodes;
 #else
 	IS_ON_DEBUG(XVector_ON);

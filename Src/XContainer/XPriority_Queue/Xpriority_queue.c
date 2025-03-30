@@ -61,7 +61,7 @@ size_t XPriority_Queue_size(XPriority_Queue* this_queue)
 void XPriority_Queue_clear(XPriority_Queue* this_queue)
 {
 	XVector_clear(this_queue);
-	//char** LPParr = &ContainerDataPtr(this_queue);//指向数组的开始
+	//char** LPParr = &XContainerDataPtr(this_queue);//指向数组的开始
 	//if (*LPParr != NULL)
 	//{
 	//	XMemory_free(*LPParr);//清空数组

@@ -60,8 +60,11 @@
 #include "XMemory.h"
 #if XString_ON
 #include"XString.h"
+#include"XVector.h"
 #endif
-
+#if XVector_ON
+#include"XVector.h"
+#endif
 
 /* define our own boolean type */
 #ifdef true
@@ -100,6 +103,22 @@ CJSON_PUBLIC(const char *) cJSON_GetErrorPtr(void)
 {
     return (const char*) (global_error.json + global_error.position);
 }
+#if XString_ON
+CJSON_PUBLIC(cJSON*) cJSON_GetObjectItem_XString(const cJSON* const object, const XString* const string)
+{
+    return cJSON_GetObjectItem(object,XString_data(string));
+}
+
+CJSON_PUBLIC(cJSON*) cJSON_GetObjectItemCaseSensitive_XString(const cJSON* const object, const XString* const string)
+{
+    return cJSON_GetObjectItemCaseSensitive(object, XString_data(string));
+}
+
+CJSON_PUBLIC(cJSON_bool) cJSON_HasObjectItem_XString(const cJSON* object, const XString* string)
+{
+    return  cJSON_HasObjectItem(object, XString_data(string));
+}
+#endif
 
 CJSON_PUBLIC(char *) cJSON_GetStringValue(const cJSON * const item)
 {
@@ -120,7 +139,17 @@ CJSON_PUBLIC(double) cJSON_GetNumberValue(const cJSON * const item)
 
     return item->valuedouble;
 }
+#if XString_ON
+CJSON_PUBLIC(XString*) cJSON_GetStringValue_XString(const cJSON* const item)
+{
+    if (!cJSON_IsString(item))
+    {
+        return NULL;
+    }
 
+    return XString_new(item->valuestring);
+}
+#endif
 /* This is a safeguard to prevent copy-pasters from using incompatible C and header files */
 #if (CJSON_VERSION_MAJOR != 1) || (CJSON_VERSION_MINOR != 7) || (CJSON_VERSION_PATCH != 18)
     #error cJSON.h and cJSON.c have different versions. Make sure that both have the same.
@@ -1189,7 +1218,7 @@ CJSON_PUBLIC(cJSON*) cJSON_Parse_XString(const XString* string)
 {
     if(string==NULL)
         return NULL;
-    return cJSON_Parse(XString_data(string));
+    return cJSON_ParseWithLength(XString_data(string),XString_size(string));
 }
 #endif
 
@@ -1206,16 +1235,16 @@ CJSON_PUBLIC(cJSON *) cJSON_ParseWithLength(const char *value, size_t buffer_len
 
 #define cjson_min(a, b) (((a) < (b)) ? (a) : (b))
 
-static unsigned char *print(const cJSON * const item, cJSON_bool format/*, const internal_hooks * const hooks*/)
+static unsigned char* print(const cJSON* const item, cJSON_bool format/*, const internal_hooks * const hooks*/)
 {
     static const size_t default_buffer_size = 256;
     printbuffer buffer[1];
-    unsigned char *printed = NULL;
+    unsigned char* printed = NULL;
 
     memset(buffer, 0, sizeof(buffer));
 
     /* create buffer */
-    buffer->buffer = (unsigned char*) XMemory_malloc(default_buffer_size);
+    buffer->buffer = (unsigned char*)XMemory_malloc(default_buffer_size);
     buffer->length = default_buffer_size;
     buffer->format = format;
     //buffer->hooks = *hooks;
@@ -1242,7 +1271,7 @@ static unsigned char *print(const cJSON * const item, cJSON_bool format/*, const
     }
     else /* otherwise copy the JSON over to a new buffer */
     {
-        printed = (unsigned char*) XMemory_malloc(buffer->offset + 1);
+        printed = (unsigned char*)XMemory_malloc(buffer->offset + 1);
         if (printed == NULL)
         {
             goto fail;
@@ -1272,7 +1301,82 @@ fail:
 
     return NULL;
 }
+#if XString_ON
+static XString* print_XString(const cJSON * const item, cJSON_bool format/*, const internal_hooks * const hooks*/)
+{
+    XString* str = XString_new(NULL);
+    static const size_t default_buffer_size = 256;
+    printbuffer buffer[1];
+    unsigned char *printed = NULL;
 
+    memset(buffer, 0, sizeof(buffer));
+    XVector_resize(str, default_buffer_size);
+    /* create buffer */
+    buffer->buffer = XContainerDataPtr(str);
+    buffer->length = default_buffer_size;
+    buffer->format = format;
+    //buffer->hooks = *hooks;
+    if (buffer->buffer == NULL)
+    {
+        goto fail;
+    }
+
+    /* print the value */
+    if (!print_value(item, buffer))
+    {
+        goto fail;
+    }
+    update_offset(buffer);
+
+    /* check if reallocate is available */
+    if (!XMemory_realloc_isNULL())
+    {
+        printed = (unsigned char*)XMemory_realloc(buffer->buffer, buffer->offset + 1);
+        if (printed == NULL) {
+            goto fail;
+        }
+        buffer->buffer = NULL;
+        XContainerDataPtr(str) = printed;
+        XContainerCapacity(str) = buffer->offset + 1;
+        XContainerSize(str) = buffer->offset;
+    }
+    else /* otherwise copy the JSON over to a new buffer */
+    {
+        printed = (unsigned char*) XMemory_malloc(buffer->offset + 1);
+        if (printed == NULL)
+        {
+            goto fail;
+        }
+        memcpy(printed, buffer->buffer, cjson_min(buffer->length, buffer->offset + 1));
+        printed[buffer->offset] = '\0'; /* just to be sure */
+
+        /* free the buffer */
+        XMemory_free(buffer->buffer);
+        buffer->buffer = NULL;
+        XContainerDataPtr(str) = printed;
+        XContainerCapacity(str) = buffer->offset + 1;
+        XContainerSize(str) = buffer->offset;
+    }
+
+    return str;
+
+fail:
+    if (buffer->buffer != NULL)
+    {
+        XMemory_free(buffer->buffer);
+        buffer->buffer = NULL;
+    }
+
+    if (printed != NULL)
+    {
+        XMemory_free(printed);
+        printed = NULL;
+    }
+    if (str != NULL)
+        XString_free(str);
+    return NULL;
+}
+#endif
 /* Render a cJSON item/entity/structure to text. */
 CJSON_PUBLIC(char *) cJSON_Print(const cJSON *item)
 {
@@ -1333,6 +1437,17 @@ CJSON_PUBLIC(cJSON_bool) cJSON_PrintPreallocated(cJSON *item, char *buffer, cons
 
     return print_value(item, &p);
 }
+
+#if XString_ON
+CJSON_PUBLIC(XString*) cJSON_Print_XString(const cJSON* item)
+{
+    return print_XString(item, true/*, &global_hooks*/);
+}
+CJSON_PUBLIC(XString*) cJSON_PrintUnformatted_XString(const cJSON* item)
+{
+    return print_XString(item, false/*, &global_hooks*/);
+}
+#endif
 
 /* Parser core - when encountering text, process appropriately. */
 static cJSON_bool parse_value(cJSON * const item, parse_buffer * const input_buffer)
@@ -2505,6 +2620,12 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateString(const char *string)
     return item;
 }
 
+#if XString_ON
+CJSON_PUBLIC(cJSON*) cJSON_CreateString_XString(const XString* string)
+{
+    return cJSON_CreateString(XString_data(string));
+}
+#endif
 CJSON_PUBLIC(cJSON *) cJSON_CreateStringReference(const char *string)
 {
     cJSON *item = cJSON_New_Item(/*&global_hooks*/);
@@ -2537,7 +2658,12 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateArrayReference(const cJSON *child) {
 
     return item;
 }
-
+#if XString_ON
+CJSON_PUBLIC(cJSON*) cJSON_CreateStringReference_XString(const XString* string)
+{
+    return cJSON_CreateStringReference(XString_data(string));
+}
+#endif
 CJSON_PUBLIC(cJSON *) cJSON_CreateRaw(const char *raw)
 {
     cJSON *item = cJSON_New_Item(/*&global_hooks*/);
@@ -2576,7 +2702,12 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateObject(void)
 
     return item;
 }
-
+#if XString_ON
+CJSON_PUBLIC(cJSON*) cJSON_CreateRaw_XString(const XString* raw)
+{
+    return cJSON_CreateRaw(XString_data(raw));
+}
+#endif
 /* Create Arrays: */
 CJSON_PUBLIC(cJSON *) cJSON_CreateIntArray(const int *numbers, int count)
 {
@@ -2737,7 +2868,51 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateStringArray(const char *const *strings, int co
 
     return a;
 }
+#if XVector_ON
+CJSON_PUBLIC(cJSON*) cJSON_CreateIntArray_XVector_int(const XVector* vector)
+{
+    if (vector == NULL)
+        return NULL;
+    return cJSON_CreateIntArray(XContainerDataPtr(vector), XVector_size(vector));
+}
 
+CJSON_PUBLIC(cJSON*) cJSON_CreateFloatArray_XVector_float(const XVector* vector)
+{
+    if (vector == NULL)
+        return NULL;
+    return  cJSON_CreateFloatArray(XContainerDataPtr(vector), XVector_size(vector));
+}
+
+CJSON_PUBLIC(cJSON*) cJSON_CreateDoubleArray_XVector_double(const XVector* vector)
+{
+    if (vector == NULL)
+        return NULL;
+    return cJSON_CreateDoubleArray(XContainerDataPtr(vector), XVector_size(vector));
+}
+
+CJSON_PUBLIC(cJSON*) cJSON_CreateStringArray_XVector_char(const XVector* vector)
+{
+    if (vector == NULL)
+        return NULL;
+    return cJSON_CreateStringArray(XContainerDataPtr(vector), XVector_size(vector));
+}
+
+#endif
+#if XString_ON
+CJSON_PUBLIC(cJSON*) cJSON_CreateStringArray_XVector_XString(const XVector* vector)
+{
+    if (vector == NULL)
+        return NULL;
+    cJSON*  array=cJSON_CreateArray();
+    for (XVector_iterator* it = XVector_begin(vector); it != XVector_end(vector); it = XVector_iterator_add(vector, it))
+    {
+        XString* str = *(XString**)it;
+        cJSON* string= cJSON_CreateString(XString_data(str));
+        cJSON_AddItemToArray(array, string);
+    }
+    return array;
+}
+#endif
 /* Duplication */
 CJSON_PUBLIC(cJSON *) cJSON_Duplicate(const cJSON *item, cJSON_bool recurse)
 {
