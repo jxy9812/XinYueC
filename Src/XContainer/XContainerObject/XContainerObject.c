@@ -1,4 +1,5 @@
 ﻿#include"XContainerObject.h"
+#if XContainerObject_ON
 void XContainerObject_init(XContainerObject* Object, size_t typeSize)
 {
 	if (ISNULL(Object, "") || ISNULL(typeSize, ""))
@@ -68,6 +69,6 @@ void XContainerObject_clear(XContainerObject* Object)
 }
 
 
-
+#endif
 
 

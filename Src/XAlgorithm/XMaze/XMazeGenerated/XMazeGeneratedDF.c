@@ -1,4 +1,5 @@
 ﻿#include"XMazeGeneratedDF.h"
+#include"XClass.h"
 #include"XAlgorithm.h"
 #include"XStack.h"
 #include<string.h>

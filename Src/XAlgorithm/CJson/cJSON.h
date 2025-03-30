@@ -12,6 +12,11 @@
 extern "C"
 {
 #endif
+#include"XDataStructConfig.h"
+#if XString_ON
+    typedef struct XString XString;
+#endif
+
 
 #if !defined(__WINDOWS__) && (defined(WIN32) || defined(WIN64) || defined(_MSC_VER) || defined(_WIN32))
 #define __WINDOWS__
@@ -126,7 +131,9 @@ CJSON_PUBLIC(cJSON *) cJSON_ParseWithLength(const char *value, size_t buffer_len
 / 如果你在 return_parse_end 中提供了一个指针，且解析失败，那么 return_parse_end 将包含指向错误位置的指针，这与 cJSON_GetErrorPtr() 的返回结果一致。 */
 CJSON_PUBLIC(cJSON *) cJSON_ParseWithOpts(const char *value, const char **return_parse_end, cJSON_bool require_null_terminated);
 CJSON_PUBLIC(cJSON *) cJSON_ParseWithLengthOpts(const char *value, size_t buffer_length, const char **return_parse_end, cJSON_bool require_null_terminated);
-
+#if XString_ON
+CJSON_PUBLIC(cJSON*) cJSON_Parse_XString(const XString* string);
+#endif
 /* 将一个 cJSON 实体渲染为文本，以便进行传输或存储。 */
 CJSON_PUBLIC(char *) cJSON_Print(const cJSON *item);
 /* 将一个 cJSON 实体渲染为无任何格式的文本，用于传输或存储。 */

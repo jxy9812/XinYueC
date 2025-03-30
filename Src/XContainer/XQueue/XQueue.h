@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XDataStructConfig.h"
 #if !defined(XQUEUE_H)&& XQueue_ON
 #define XQUEUE_H
 #ifdef __cplusplus

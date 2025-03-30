@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XDataStructConfig.h"
 #if !defined(XPRIORITY_QUEUE)&& XPriority_Queue_ON
 #define XPRIORITY_QUEUE
 #ifdef __cplusplus

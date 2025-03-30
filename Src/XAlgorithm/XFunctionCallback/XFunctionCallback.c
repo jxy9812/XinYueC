@@ -1,4 +1,5 @@
 ﻿#include"XFunctionCallback.h"
+#include"XClass.h"
 #include"XBinaryTreeObject.h"
 #include"XPair.h"
 //小于回调函数的标准准则

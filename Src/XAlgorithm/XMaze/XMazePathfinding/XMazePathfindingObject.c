@@ -1,5 +1,5 @@
 ﻿#include"XMazePathfindingObject.h"
-
+#include"XClass.h"
 //判断当前点周围是否还有通道可以经过
 bool isPass(const XVector* maze, XPoint CurPoint)
 {

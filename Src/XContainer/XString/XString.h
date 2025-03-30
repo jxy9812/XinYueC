@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XDataStructConfig.h"
 #if !defined(STRING_H)&& XString_ON
 #define STRING_H
 #ifdef __cplusplus

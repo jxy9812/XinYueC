@@ -1,4 +1,5 @@
 ﻿#include"XTwoThreeTree.h"
+#include"XClass.h"
 #include<string.h>
 XTTTreeNode* XTTTree_creationNode(const enum XTTTree_NodeNum nodeCount, const size_t TypeSize)
 {

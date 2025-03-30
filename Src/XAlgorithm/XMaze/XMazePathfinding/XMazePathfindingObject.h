@@ -4,6 +4,7 @@
 extern "C" {
 #endif 
 typedef struct XVector XVector;
+#include<stdbool.h>
 #include"XMaze.h"
 #include"XVector.h"
 #include"XPoint.h"

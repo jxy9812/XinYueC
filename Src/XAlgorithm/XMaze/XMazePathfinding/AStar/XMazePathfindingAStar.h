@@ -3,9 +3,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-	typedef struct XVector XVector;
+typedef struct XVector XVector;
+#include<stdbool.h>
 #include"XMaze.h"
 #include"XPoint.h"
+
 #define StraightLine  10//直线
 #define ObliqueLine  14//斜线
 typedef struct AStarNode

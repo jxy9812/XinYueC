@@ -1,11 +1,13 @@
-﻿#ifndef XCONTAINEROBJECT_H
+﻿#include"XDataStructConfig.h"
+#include"XClass.h"
+#if !defined(XCONTAINEROBJECT_H)&& XContainerObject_ON
 #define XCONTAINEROBJECT_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include<stdio.h>
 #include<stdbool.h>
-#include"XClass.h"
+
 #include"XMemory.h"
 //#define DEBUG_ON 1
 

@@ -9,13 +9,14 @@ extern "C" {
 #define DEBUG_ON						0
 #define DEMOTEST						1//测试代码
 
+#define XContainerObject_ON				1
 #define XMap_ON							1
 #define XString_ON						1
-#define	XPriority_Queue_ON				0
+#define	XPriority_Queue_ON				1
 #define	XQueue_ON						1
 #define	XList_ON						1
 #define	XStack_ON						1
-#define	XVector_ON						0
+#define	XVector_ON						1
 #define	XVectorTwo_ON					1
 
 #if !XList_ON
@@ -25,6 +26,16 @@ extern "C" {
 #define	XStack_ON						0
 #define	XPriority_Queue_ON				0
 #define	XString_ON						0
+#define	XVectorTwo_ON					0
+#endif
+#if !XContainerObject_ON					
+#define XMap_ON							0
+#define XString_ON						0
+#define	XPriority_Queue_ON				0
+#define	XQueue_ON						0
+#define	XList_ON						0
+#define	XStack_ON						0
+#define	XVector_ON						0
 #define	XVectorTwo_ON					0
 #endif
 

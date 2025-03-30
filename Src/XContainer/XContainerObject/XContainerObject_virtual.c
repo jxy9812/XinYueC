@@ -1,4 +1,5 @@
 ﻿#include"XContainerObject.h"
+#if XContainerObject_ON
 #include"XAlgorithm.h"
 #include"XVtable.h"
 #include<stdlib.h>
@@ -90,3 +91,7 @@ void VXContainerObject_free(XContainerObject* Object)
 		XMemory_free(Object->_data);
 	XMemory_free(Object);
 }
+
+
+
+#endif

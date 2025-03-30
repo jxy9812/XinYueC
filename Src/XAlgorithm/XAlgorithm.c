@@ -1,4 +1,5 @@
 ﻿#include"XAlgorithm.h"
+#include"XClass.h"
 #include"XStack.h"
 #include"XVector.h"
 #include<stdio.h>

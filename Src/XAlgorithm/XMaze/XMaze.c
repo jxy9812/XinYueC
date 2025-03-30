@@ -1,6 +1,7 @@
 ﻿#include"XMaze.h"
 #include"XPoint.h"
 #include"XAlgorithm.h"
+#include"XClass.h"
 #include<string.h>
 //打印路径点
 void XMazePathPrintPoint(XVector* Path)

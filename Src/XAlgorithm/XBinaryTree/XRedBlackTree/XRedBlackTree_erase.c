@@ -1,4 +1,5 @@
 ﻿#include"XRedBlackTree.h"
+#include"XClass.h"
 #include"XBalancedBinaryTree.h"
 //删除调整树
 static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* nodes, XRBTreeNode* LPpater)

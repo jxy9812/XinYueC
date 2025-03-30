@@ -1,4 +1,5 @@
 ﻿#include"XRedBlackTree.h"
+#include"XClass.h"
 #include"XBalancedBinaryTree.h"
 XRBTreeNode* XRBTree_creation(const size_t TypeSize)
 {

@@ -1,6 +1,7 @@
 ﻿#include"XAlgorithm.h"
 #include"XSort.h"
 #include"XStack.h"
+#include"XClass.h"
 //三数取中
 static void* GetMidIndex(void const* LpLeft, void const* LpRight, const size_t TypeSize,XCompare compare )
 {

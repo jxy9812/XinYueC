@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XDataStructConfig.h"
 #if !defined(XMAP_ITERATOR_H)&& XMap_ON
 #define XMAP_ITERATOR_H
 #ifdef __cplusplus

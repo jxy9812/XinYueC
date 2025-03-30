@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XDataStructConfig.h"
 #if !defined(XHUFFMANTREE_H)&& XMap_ON
 #define XHUFFMANTREE_H
 #ifdef __cplusplus

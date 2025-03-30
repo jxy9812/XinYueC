@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 #include"XDataStructConfig.h"
+#include"XClass.h"
 #if DEMOTEST
 
 	//链表迭代器测试

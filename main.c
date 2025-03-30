@@ -7,7 +7,7 @@ int main(int argc, char* args[])
 {
 #if DEMOTEST
 	cJsonTest();
-	return;
+	//return;
 	ListTest();
 	ListSortTest();
 	ListIterator();

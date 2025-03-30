@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XDataStructConfig.h"
 #if !defined(XVECTORTWO_FUNC_H)&& XVectorTwo_ON
 #define XVECTORTWO_FUNC_H
 #ifdef __cplusplus

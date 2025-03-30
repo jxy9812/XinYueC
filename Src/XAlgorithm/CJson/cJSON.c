@@ -58,6 +58,11 @@
 
 #include "cJSON.h"
 #include "XMemory.h"
+#if XString_ON
+#include"XString.h"
+#endif
+
+
 /* define our own boolean type */
 #ifdef true
 #undef true
@@ -1179,6 +1184,14 @@ fail:
 
     return NULL;
 }
+#if XString_ON
+CJSON_PUBLIC(cJSON*) cJSON_Parse_XString(const XString* string)
+{
+    if(string==NULL)
+        return NULL;
+    return cJSON_Parse(XString_data(string));
+}
+#endif
 
 /* Default options for cJSON_Parse */
 CJSON_PUBLIC(cJSON *) cJSON_Parse(const char *value)

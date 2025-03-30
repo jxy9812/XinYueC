@@ -1,4 +1,5 @@
 ﻿#include"XTwoThreeTree.h"
+#include"XClass.h"
 XTTTreeNode* XTTTree_insert(XTTTreeNode** this_root, XLess less, XCompareRuleTwo lessRule, const void* LPData, const size_t TypeSize)
 {
     XTTTreeNode* nodes = XTTTree_creationNode(XTTTree_TwoNode,TypeSize);

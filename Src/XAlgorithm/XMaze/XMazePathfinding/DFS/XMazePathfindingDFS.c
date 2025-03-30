@@ -1,8 +1,8 @@
 ﻿#include"XMazePathfindingDFS.h"
 #include"XAlgorithm.h"
 #include"XStack.h"
-#include"XAlgorithm.h"
 #include"XMazePathfindingObject.h"
+#include"XClass.h"
 #include<math.h>
 //回撤记录的点
 static void XMazeRetracement(const XVector* maze, XStack* StackPointAll, XStack* StackPath)

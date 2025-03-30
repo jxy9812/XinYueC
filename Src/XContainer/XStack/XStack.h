@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XDataStructConfig.h"
 #if !defined(XSTACK_H)&& XStack_ON
 #define XSTACK_H
 #ifdef __cplusplus

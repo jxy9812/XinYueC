@@ -1,5 +1,6 @@
 ﻿#include"XVtable.h"
 #include"XContainerObject.h"
+#include"XClass.h"
 #include<stdlib.h>
 #include<string.h>
 #define VECTORNUM 4//初始数组大小

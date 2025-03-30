@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XDataStructConfig.h"
 #if !defined(XVECTOR_REVERSE_ITERATOR_H)&& XVector_ON
 #define XVECTOR_REVERSE_ITERATOR_H
 #ifdef __cplusplus

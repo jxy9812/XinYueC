@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XDataStructConfig.h"
 #if !defined(XLIST_H)&& XList_ON
 #define XLIST_H
 #ifdef __cplusplus
