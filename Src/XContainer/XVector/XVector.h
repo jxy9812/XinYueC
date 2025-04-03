@@ -38,8 +38,8 @@ enum XVectorEnum
 };
 typedef struct XVector
 {
-	XContainerObject object;
-	XEquality equality;//相等比较函数
+	XContainerObject m_object;
+	XEquality m_equality;//相等比较函数
 }XVector;
 //初始化类
 void XVector_class_init();
@@ -55,10 +55,13 @@ void XVector_free(XVector* this_vector);
 void XVector_resize(XVector* this_vector,size_t size);
 // 向量头部增加一个元素
 void XVector_push_front(XVector* this_vector, void* LpValue);
+#define XVector_Push_Front(this_vector,type,value){type t=value;XVector_push_front(this_vector,&t);}
 // 向量尾部增加一个元素
 void XVector_push_back(XVector* this_vector, void* LpValue);
+#define XVector_Push_Back(this_vector,type,value){type t=value;XVector_push_back(this_vector,&t);}
 // 向量中前增加一个元素
 void XVector_insert(XVector* this_vector, int64_t index, const void* LpValue);
+#define XVector_Insert(this_vector,index,type,value){type t=value;XVector_insert(this_vector,index,&t);}
 // 向量中指向元素p前增加n个相同的元素x
 void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n);
 // 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2]间的数据

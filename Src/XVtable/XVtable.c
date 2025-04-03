@@ -26,15 +26,15 @@ static void XVtableEnlargeCapacity(XVtable* this_vtable)
 	{
 		if (ISNULL(!this_vtable->isStack, "栈上空间满了，无法自动扩容"))
 			return;
-		void* _data = XMemory_realloc(this_vtable->data, this_vtable->capacity * sizeof(void*) * 1.5);
-		if (_data == NULL)
+		void* m_data = XMemory_realloc(this_vtable->data, this_vtable->capacity * sizeof(void*) * 1.5);
+		if (m_data == NULL)
 		{
 			perror("扩容失败vector");
 			exit(-1);
 		}
 		else
 		{
-			this_vtable->data = _data;
+			this_vtable->data = m_data;
 			this_vtable->capacity *= 1.5;
 		}
 	}

@@ -21,7 +21,7 @@ XVector_reverse_iterator* XVector_reverse_iterator_add(XVector* this_vector,XVec
 	XVector_reverse_iterator* back = XVector_front(this_vector);
 	if (it == back)//如果是第一个元素则返回空表示遍历完成了
 		return NULL;
-	return (char*)it - this_vector->object._typeSize;//指向上一个元素
+	return (char*)it - this_vector->m_object.m_typeSize;//指向上一个元素
 }
 
 void XVector_reverse_iterator_for_each(XVector* this_vector, XFor_each ForFunction, void* args)

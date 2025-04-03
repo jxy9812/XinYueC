@@ -30,6 +30,7 @@ void XStack_init(XStack* this_stack, size_t typeSize);
 void XStack_free(XStack* this_stack);
 // 压栈，增加元素 O(1)
 void XStack_push(XStack* this_stack,void* LpValue);
+#define XStack_Push(this_stack,type,value) {type t=value;XStack_push(this_stack,&t);}
 //移除栈顶元素 O(1)
 void XStack_pop(XStack* this_stack);
 // 取得栈顶元素（但不删除）O(1)

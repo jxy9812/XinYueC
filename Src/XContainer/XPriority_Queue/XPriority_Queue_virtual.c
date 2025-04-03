@@ -91,7 +91,7 @@ void VXPriority_Queue_push(XPriority_Queue* this_queue, void* LpValue)
 	XVector_push_back(this_queue, LpValue);
 	size_t size = XContainerSize(this_queue) - 1;
 	if (size > 0)//一个元素不用调整
-		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->compare);
+		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->m_compare);
 }
 
 void VXPriority_Queue_pop(XPriority_Queue* this_queue)
@@ -105,7 +105,7 @@ void VXPriority_Queue_pop(XPriority_Queue* this_queue)
 	if (arrSize > 1)
 	{
 		memcpy(LParr, LParr + (arrSize - 1) * TypeSize, TypeSize);
-		AdjustDwon(LParr, arrSize, TypeSize, 0, this_queue->compare);
+		AdjustDwon(LParr, arrSize, TypeSize, 0, this_queue->m_compare);
 	}
 	--XContainerSize(this_queue);
 }

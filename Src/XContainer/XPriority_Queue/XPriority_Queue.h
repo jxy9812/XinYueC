@@ -17,8 +17,8 @@ enum XPriority_QueueEnum
 //优先队列
 typedef struct XPriority_Queue
 {
-	XVector vector;//基本数据
-	XCompare compare;//比较准则
+	XVector m_vector;//基本数据
+	XCompare m_compare;//比较准则
 }XPriority_Queue;
 //初始化类
 void XPriority_Queue_class_init();

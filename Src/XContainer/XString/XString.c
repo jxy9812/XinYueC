@@ -16,7 +16,7 @@ void XString_init(XString* this_string)
 	if (ISNULL(this_string, "") )
 		return;
 	XVector_init(this_string, sizeof(char));
-	this_string->vector.equality = XEquality_char;
+	this_string->m_vector.m_equality = XEquality_char;
 	XString_class_init();
 	ObjectVtable(this_string) = XStringVtable;
 	XString_clear(this_string);

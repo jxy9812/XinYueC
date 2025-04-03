@@ -40,14 +40,14 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 	}
 	if (ISNULL(this_map, ""))
 		return NULL;
-	XContainerObject_init(&this_map->object, valTypeSize);
+	XContainerObject_init(&this_map->m_object, valTypeSize);
 	XMap_class_init();
 	ObjectVtable(this_map) = XMapVtable;
-	this_map->keyTypeSize = keyTypeSize;
-	this_map->KeyEquality = KeyEquality;
-	this_map->KeyLess = KeyLess;
-	this_map->isModify = true;
-	this_map->itArray = NULL;
+	this_map->m_keyTypeSize = keyTypeSize;
+	this_map->m_KeyEquality = KeyEquality;
+	this_map->m_KeyLess = KeyLess;
+	this_map->m_isModify = true;
+	this_map->m_itArray = NULL;
 }
 
 
@@ -137,23 +137,23 @@ void XMap_updataIterator(XMap* this_map)
 		return;
 	if (XMap_empty(this_map))//map当前是空的
 		return;
-	if (!this_map->isModify)
+	if (!this_map->m_isModify)
 		return;
 	//开始更新迭代器
-	if (this_map->itArray != NULL)
+	if (this_map->m_itArray != NULL)
 	{
 		//释放原先的数组
-		XVector_free(this_map->itArray);
-		this_map->itArray = NULL;
+		XVector_free(this_map->m_itArray);
+		this_map->m_itArray = NULL;
 	}
 	//已中序遍历获取所有树的节点,临时
-	XVector* TreeNode = XBTree_TraversingToXVector(this_map->object._data, XBTreeInorder);
-	this_map->itArray = XVector_new(sizeof(XPair*));
+	XVector* TreeNode = XBTree_TraversingToXVector(this_map->m_object.m_data, XBTreeInorder);
+	this_map->m_itArray = XVector_new(sizeof(XPair*));
 	//将数据XPair的节点指针插入数组
-	XVector_iterator_for_each(TreeNode, ForTreeNode, this_map->itArray);
+	XVector_iterator_for_each(TreeNode, ForTreeNode, this_map->m_itArray);
 	XVector_free(TreeNode);
 
-	this_map->isModify = false;
+	this_map->m_isModify = false;
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif

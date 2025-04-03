@@ -153,7 +153,7 @@ void XList_init(XList* this_list, size_t typeSize)
 	XContainerObject_init(this_list, typeSize);
 	XList_class_init();
 	ObjectVtable(this_list) = XListVtable;
-	this_list->equality = NULL;
+	this_list->m_equality = NULL;
 }
 
 #endif

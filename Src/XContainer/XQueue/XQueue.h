@@ -18,7 +18,7 @@ enum XQueueEnum
 };
 typedef struct XQueue
 {
-	XList list;
+	XList m_list;
 }XQueue;
 //初始化类
 void XQueue_class_init();
@@ -32,6 +32,7 @@ void XQueue_free(XQueue* this_queue);
 void XQueue_clear(XQueue* this_queue);
 //插入到队列的队尾
 void XQueue_push(XQueue* this_queue, void* LpValue);
+#define XQueue_Push(this_queue,type,value) {type t=value;XQueue_push(this_queue,&t);}
 //删除queue的队头元素
 void XQueue_pop(XQueue* this_queue);
 // 返回队列的队头元素指针，但不删除该元素

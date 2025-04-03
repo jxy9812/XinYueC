@@ -18,7 +18,7 @@ void XVector_init(XVector* this_vector,size_t typeSize )
 	XContainerObject_init(this_vector, typeSize);
 	XVector_class_init();
 	ObjectVtable(this_vector)= XVectorVtable;
-	this_vector->equality = NULL;
+	this_vector->m_equality = NULL;
 }
 
 void XVector_resize(XVector* this_vector, size_t size)

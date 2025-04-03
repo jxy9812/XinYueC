@@ -32,8 +32,8 @@ enum XListVtableEnum
 };
 typedef struct XList
 {
-	XContainerObject object;
-	XEquality equality;//相等比较函数
+	XContainerObject m_object;
+	XEquality m_equality;//相等比较函数
 }XList;
 //初始化类
 void XList_class_init();
@@ -48,8 +48,10 @@ void  XList_free(XList* this_list);
 //插入函数
 //链表头部增加一个元素X
 XListNode* XList_push_front(XList* this_list, void* LpValue);
+#define XList_Push_Front(this_list,type,value){type t=value;XList_push_front(this_list,&t);}
 // 链表尾部增加一个元素X
 XListNode* XList_push_back(XList* this_list, void* LpValue);
+#define XList_Push_Back(this_list,type,value){type t=value;XList_push_back(this_list,&t);}
 //链表指定节点前插入n个数据
 void XList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t n);
 //链表指定节点前插入1个数据
@@ -65,6 +67,7 @@ void  XList_pop_back(XList* this_list);
 void  XList_erase(XList* this_list, XListNode* node);
 //删除指定元素
 void  XList_remove(XList* this_list, void* LpValue);
+#define XList_Remove(this_list,type,value){type t=value;XList_remove(this_list,&t);}
 //清空list的队列，释放内存
 void  XList_clear(XList* this_list);
 //遍历函数

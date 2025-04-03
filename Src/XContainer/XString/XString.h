@@ -41,7 +41,7 @@ enum XStringEnum
 
 typedef struct XString
 {
-	XVector vector;
+	XVector m_vector;
 }XString;
 //初始化类
 void XString_class_init();

@@ -28,18 +28,18 @@ enum XContainerObjectVtableEnum
 //容器基类
 typedef struct XContainerObject
 {
-	XClassObject object;
-	void* _data;//指向容器数据的指针
-	size_t  _capacity;//当前容器能容纳的最大元素数量
-	size_t _size;//当前容器内的元素个数
-	size_t _typeSize;//类型占用字节数
+	XClassObject m_object;
+	void* m_data;//指向容器数据的指针
+	size_t  m_capacity;//当前容器能容纳的最大元素数量
+	size_t m_size;//当前容器内的元素个数
+	size_t m_typeSize;//类型占用字节数
 }XContainerObject;
 
-#define XContainerDataPtr(Object) ((XContainerObject*)Object)->_data//当前数据指针
+#define XContainerDataPtr(Object) ((XContainerObject*)Object)->m_data//当前数据指针
 #define XContainerData(Object,Type) (*(Type*)XContainerDataPtr(Object))//当前数据
-#define XContainerCapacity(Object) (((XContainerObject*)Object)->_capacity)//当前容器能容纳的最大元素数量
-#define XContainerSize(Object) (((XContainerObject*)Object)->_size)//当前容器内的元素个数
-#define XContainerTypeSize(Object) (((XContainerObject*)Object)->_typeSize)//类型占用字节数
+#define XContainerCapacity(Object) (((XContainerObject*)Object)->m_capacity)//当前容器能容纳的最大元素数量
+#define XContainerSize(Object) (((XContainerObject*)Object)->m_size)//当前容器内的元素个数
+#define XContainerTypeSize(Object) (((XContainerObject*)Object)->m_typeSize)//类型占用字节数
 
 void XContainerObject_class_init(); 
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);

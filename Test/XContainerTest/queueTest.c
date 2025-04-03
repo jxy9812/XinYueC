@@ -8,7 +8,7 @@
 #include"XVector.h"
 void queueTest()
 {
-#if	Queue_ON
+#if	XQueue_ON
 	printf("XQueue 测试\n");
 	XQueue* queue = XQueue_New(int);
 	int array[] = { 0,1,2,3,4,5,6,7,8,9 };

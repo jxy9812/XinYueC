@@ -16,7 +16,7 @@ void ListSortTest()
 	XList* li = XList_new(sizeof(int));
 	int size = 10;
 	srand((unsigned int)time(NULL));
-	int* p1 = XMemory_malloc(sizeof(int) * size);
+	//int* p1 = XMemory_malloc(sizeof(int) * size);
 	for (size_t i = 0; i < size; i++)
 	{
 		int num = rand() % 1000;
@@ -64,7 +64,7 @@ void ListTest()
 #if XList_ON
 	printf("XList 测试\n");
 	XList* list = XList_new(sizeof(int));
-	list->equality = XEquality_int;
+	list->m_equality = XEquality_int;
 	//printf("%s\n", XContainerObject_empty(list)?"empty":"");
 	//printf("%d\n", XContainerObject_size(list));
 

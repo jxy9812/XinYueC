@@ -6,15 +6,15 @@ void XContainerObject_init(XContainerObject* Object, size_t typeSize)
 		return;
 	XContainerObject_class_init();
 	ObjectVtable(Object)= XContainerObjectVtable;
-	Object->_data = NULL;
-	Object->_capacity = 0;
-	Object->_size = 0;
-	Object->_typeSize = typeSize;
+	Object->m_data = NULL;
+	Object->m_capacity = 0;
+	Object->m_size = 0;
+	Object->m_typeSize = typeSize;
 }
 
 void XContainerObject_free(XContainerObject* Object)
 {
-	if (ISNULL(Object, "") || ISNULL(Object->object.vtable, ""))
+	if (ISNULL(Object, "") || ISNULL(Object->m_object.vtable, ""))
 		return ;
 	typedef void(*funcPtr)(XContainerObject*);
 	ObjectVirtualFunc(Object, EXContainerObject_Free, funcPtr)(Object);
@@ -22,7 +22,7 @@ void XContainerObject_free(XContainerObject* Object)
 
 bool XContainerObject_empty(const XContainerObject* Object)
 {
-	if (ISNULL(Object, "")|| ISNULL(Object->object.vtable, ""))
+	if (ISNULL(Object, "")|| ISNULL(Object->m_object.vtable, ""))
 		return true;
 	typedef bool (*funcPtr)(const XContainerObject* );
 	//void* p = ObjectVirtualFunc(Object, XContainerObject_Empty, funcPtr);
@@ -31,7 +31,7 @@ bool XContainerObject_empty(const XContainerObject* Object)
 
 size_t XContainerObject_size(const  XContainerObject* Object)
 {
-	if (ISNULL(Object, "") || ISNULL(Object->object.vtable, ""))
+	if (ISNULL(Object, "") || ISNULL(Object->m_object.vtable, ""))
 		return 0;
 	typedef size_t(*funcPtr)(const XContainerObject*);
 	return ObjectVirtualFunc(Object, EXContainerObject_Size, funcPtr)(Object);
@@ -39,14 +39,14 @@ size_t XContainerObject_size(const  XContainerObject* Object)
 
 size_t XContainerObject_capacity(const  XContainerObject* Object)
 {
-	if (ISNULL(Object, "") || ISNULL(Object->object.vtable, ""))
+	if (ISNULL(Object, "") || ISNULL(Object->m_object.vtable, ""))
 		return 0;
 	typedef size_t(*funcPtr)(const XContainerObject*);
 	return ObjectVirtualFunc(Object, EXContainerObject_Capacity, funcPtr)(Object);
 }
 size_t XContainerObject_typeSize(const XContainerObject* Object)
 {
-	if (ISNULL(Object, "") || ISNULL(Object->object.vtable, ""))
+	if (ISNULL(Object, "") || ISNULL(Object->m_object.vtable, ""))
 		return 0;
 	typedef size_t(*funcPtr)(const XContainerObject*);
 	return ObjectVirtualFunc(Object, EXContainerObject_TypeSize, funcPtr)(Object);
@@ -62,7 +62,7 @@ void XContainerObject_swap(XContainerObject* ObjectOne,  XContainerObject* Objec
 
 void XContainerObject_clear(XContainerObject* Object)
 {
-	if (ISNULL(Object, "") || ISNULL(Object->object.vtable, ""))
+	if (ISNULL(Object, "") || ISNULL(Object->m_object.vtable, ""))
 		return ;
 	typedef void(*funcPtr)(XContainerObject*);
 	ObjectVirtualFunc(Object, EXContainerObject_Clear, funcPtr)(Object);

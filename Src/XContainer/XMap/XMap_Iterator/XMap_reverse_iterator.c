@@ -7,9 +7,9 @@ XMap_reverse_iterator* XMap_rbegin(XMap* this_Map)
 {
 #if XVector_ON
 	XMap_updataIterator(this_Map);
-	if (this_Map->itArray == NULL)
+	if (this_Map->m_itArray == NULL)
 		return NULL;
-	XVector_reverse_iterator* it = XVector_rbegin(this_Map->itArray);
+	XVector_reverse_iterator* it = XVector_rbegin(this_Map->m_itArray);
 
 	return it;
 #else
@@ -21,7 +21,7 @@ XMap_reverse_iterator* XMap_rbegin(XMap* this_Map)
 XMap_reverse_iterator* XMap_rend(XMap* this_Map)
 {
 #if XVector_ON
-	return XVector_rend(this_Map->itArray);
+	return XVector_rend(this_Map->m_itArray);
 #else
 	IS_ON_DEBUG(XVector_ON);
 	return NULL;
@@ -31,7 +31,7 @@ XMap_reverse_iterator* XMap_rend(XMap* this_Map)
 XMap_reverse_iterator* XMap_reverse_iterator_add(XMap* this_Map, XMap_reverse_iterator* it)
 {
 #if XVector_ON
-	XVector_reverse_iterator* reverse_iterator = XVector_reverse_iterator_add(this_Map->itArray, it);
+	XVector_reverse_iterator* reverse_iterator = XVector_reverse_iterator_add(this_Map->m_itArray, it);
 	return reverse_iterator;
 #else
 	IS_ON_DEBUG(XVector_ON);

@@ -93,7 +93,7 @@ size_t XString_XVectorNsel(const struct XString* this_XString, const size_t nSel
 		return;
 	if (nSel < 0)
 		return -1;
-	struct XVector* v = ((struct XString*)this_XString)->_data;
+	struct XVector* v = ((struct XString*)this_XString)->m_data;
 	size_t VnSel = -1;
 	for (size_t i = 0; i < XVector_size(v) - 1; i++)
 	{
@@ -114,7 +114,7 @@ bool XString_eraseOne(struct XString* this_XString, const int nSel)
 		return false;
 	if (nSel < 0)
 		return false;
-	struct XVector* v = ((struct XString*)this_XString)->_data;
+	struct XVector* v = ((struct XString*)this_XString)->m_data;
 	size_t VnSel = XString_XVectorNsel(this_XString, nSel);
 	if (VnSel == -1)
 		return false;
@@ -124,7 +124,7 @@ bool XString_eraseOne(struct XString* this_XString, const int nSel)
 		++offset;
 	//XVector_erase_int(v, VnSel - offset, VnSel);
 	XVector_remove(v, VnSel - offset, offset);
-	((struct XString*)this_XString)->_size -= 1;
+	((struct XString*)this_XString)->m_size -= 1;
 	return true;
 }
 //尾删
@@ -152,12 +152,12 @@ void XString_clear(struct XString* this_XString)
 {
 	if (ISNULL(this_XString, "")))
 		return;
-	struct XVector* v = ((struct XString*)this_XString)->_data;
+	struct XVector* v = ((struct XString*)this_XString)->m_data;
 	int right = XVector_size(v) - 2;
 	if (right >= 0)
 		//XVector_erase_int(v, 0, right);
 		XVector_remove(v, 0, right);
-	((struct XString*)this_XString)->_size = 0;
+	((struct XString*)this_XString)->m_size = 0;
 }
 
 //查找函数
@@ -243,7 +243,7 @@ void XString_append(struct XString* this_XString, const char* str)
 {
 	if (ISNULL(this_XString, "")))
 		return;
-	struct XVector* v = ((struct XString*)this_XString)->_data;
+	struct XVector* v = ((struct XString*)this_XString)->m_data;
 	XString_insert(this_XString, XVector_size(v) - 1, str);
 }
 // 赋值
@@ -251,7 +251,7 @@ void XString_assign(struct XString* this_XString, const char* str)
 {
 	if (ISNULL(this_XString, "")))
 		return;
-	struct XVector* v = ((struct XString*)this_XString)->_data;
+	struct XVector* v = ((struct XString*)this_XString)->m_data;
 	XString_clear(this_XString);
 	XString_insert(this_XString, 0, str);
 }
@@ -263,10 +263,10 @@ void XString_insert(struct XString* this_XString, const int nSel, const char* st
 	if (str == NULL || nSel < 0)
 		return;
 	struct XString* string = (struct XString*)this_XString;
-	struct XVector* v = string->_data;
+	struct XVector* v = string->m_data;
 
 	//XVector_insert(v, nSel, str, str + strlen(str) - 1);
-	((struct XString*)this_XString)->_size += XString_charNumber(str);
+	((struct XString*)this_XString)->m_size += XString_charNumber(str);
 }
 
 //判断函数
@@ -275,7 +275,7 @@ bool XString_empty(const struct XString* this_XString)
 	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
-	return string->_size == 0;
+	return string->m_size == 0;
 }
 //返回当前元素大小
 int XString_size(const struct XString* this_XString)
@@ -283,7 +283,7 @@ int XString_size(const struct XString* this_XString)
 	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
-	return string->_size;
+	return string->m_size;
 }
 ////返回当前容器的最大容量
 //int XString_capacity(const struct XString* this_XString)
@@ -291,7 +291,7 @@ int XString_size(const struct XString* this_XString)
 //	if (isObjectNULL(this_XString, "XString_capacity"))
 //		return NULL;
 //	struct XString* string = (struct XString*)this_XString;
-//	return XVector_capacity(string->_data);
+//	return XVector_capacity(string->m_data);
 //}
 //交换
 void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringTwo)
@@ -300,8 +300,8 @@ void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringT
 		return NULL;
 	struct XString* stringOne = (struct XString*)this_XStringOne;
 	struct XString* stringTwo = (struct XString*)this_XStringTwo;
-	XVector_swap(stringOne->_data, stringTwo->_data);
-	XSwap(&stringOne->_size, &stringTwo->_size, sizeof(size_t));
+	XVector_swap(stringOne->m_data, stringTwo->m_data);
+	XSwap(&stringOne->m_size, &stringTwo->m_size, sizeof(size_t));
 }
 //释放容器
 void XString_free(const struct XString* this_XString)
@@ -309,7 +309,7 @@ void XString_free(const struct XString* this_XString)
 	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
-	XVector_free(string->_data);
+	XVector_free(string->m_data);
 	XMemory_free(this_XString);
 }
 
@@ -319,7 +319,7 @@ char XString_at(const XString* this_XString, int nSel)
 	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
-	return *((char*)XVector_at(string->_data, nSel));
+	return *((char*)XVector_at(string->m_data, nSel));
 }
 // 返回字符串
 char* XString_data(const XString* this_XString)
@@ -327,7 +327,7 @@ char* XString_data(const XString* this_XString)
 	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
-	return string->_data->object._data;
+	return string->m_data->object.m_data;
 }
 */
 

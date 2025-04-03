@@ -84,23 +84,23 @@ static void VXVectorEnlargeCapacity(XVector* this_vector)
 	}
 	else if (XContainerCapacity(this_vector) == XContainerSize(this_vector))//空间已满需要扩容
 	{
-		void* _data = NULL;
+		void* m_data = NULL;
 		if (XMemory_realloc_isNULL())
 		{
 			void* ptr = XContainerDataPtr(this_vector);
 			uint32_t typeSize = XContainerTypeSize(this_vector);
-			_data = XMemory_malloc(XContainerCapacity(this_vector) * typeSize * 1.5);
-			if (_data && ptr)
-				memcpy(_data, ptr, typeSize * XContainerCapacity(this_vector));
+			m_data = XMemory_malloc(XContainerCapacity(this_vector) * typeSize * 1.5);
+			if (m_data && ptr)
+				memcpy(m_data, ptr, typeSize * XContainerCapacity(this_vector));
 			if (ptr)
 				XMemory_free(ptr);
 		}
 		else
 		{
-			_data = XMemory_realloc(XContainerDataPtr(this_vector), XContainerCapacity(this_vector) * XContainerTypeSize(this_vector) * 1.5);
+			m_data = XMemory_realloc(XContainerDataPtr(this_vector), XContainerCapacity(this_vector) * XContainerTypeSize(this_vector) * 1.5);
 		}
-		XContainerDataPtr(this_vector) = _data;
-		if (_data == NULL)
+		XContainerDataPtr(this_vector) = m_data;
+		if (m_data == NULL)
 		{
 			perror("扩容失败vector");
 			XContainerCapacity(this_vector) =0;
@@ -131,22 +131,22 @@ void VXVector_resize(XVector* this_vector, size_t size)
 	//char* lpData = XContainerDataPtr(this_vector);
 	if (size > capacity)//大于最大容量
 	{
-		void* _data = NULL;
+		void* m_data = NULL;
 		if (XMemory_realloc_isNULL())
 		{
 			void* ptr = XContainerDataPtr(this_vector);
-			_data = XMemory_malloc(size * TypeSize);
-			if (_data && ptr)
-				memcpy(_data, ptr, size * TypeSize);
+			m_data = XMemory_malloc(size * TypeSize);
+			if (m_data && ptr)
+				memcpy(m_data, ptr, size * TypeSize);
 			if (ptr)
 				XMemory_free(ptr);
 		}
 		else
 		{
-			_data = XMemory_realloc(XContainerDataPtr(this_vector), size * TypeSize);
+			m_data = XMemory_realloc(XContainerDataPtr(this_vector), size * TypeSize);
 		}
-		XContainerDataPtr(this_vector) = _data;
-		if (_data == NULL)
+		XContainerDataPtr(this_vector) = m_data;
+		if (m_data == NULL)
 		{
 			perror("扩容失败vector");
 			//exit(-1);
@@ -312,12 +312,12 @@ void VXVector_clear(XVector* this_vector)//清空vector的数组
 	if (XContainerObject_empty(this_vector))
 		return;
 	XContainerSize(this_vector) = 0;
-	/*if (object->_data != NULL)
+	/*if (object->m_data != NULL)
 	{
-		XMemory_free(object->_data);
-		object->_data = NULL;
-		object->_capacity = 0;
-		object->_size = 0;
+		XMemory_free(object->m_data);
+		object->m_data = NULL;
+		object->m_capacity = 0;
+		object->m_size = 0;
 	}*/
 }
 void VXVector_copy(XVector* this_One, const XVector* this_Two)
@@ -393,11 +393,11 @@ void* VXVector_back(const XVector* this_vector)//返回向量尾指针，指向�
 }
 void* VXVector_find(const XVector* this_vector, const void* findVal)//查找数据，返回找到的指针，没有返回NULL
 {
-	if (ISNULL(this_vector, "")|| ISNULL(this_vector->equality, ""))
+	if (ISNULL(this_vector, "")|| ISNULL(this_vector->m_equality, ""))
 		return NULL;
 	for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
 	{
-		if (this_vector->equality(it, findVal))
+		if (this_vector->m_equality(it, findVal))
 			return it;
 	}
 	return NULL;

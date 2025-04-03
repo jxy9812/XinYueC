@@ -18,7 +18,7 @@ void XPriority_Queue_init(XPriority_Queue* this_queue, size_t typeSize, XCompare
 		return;
 	XVector_init(this_queue, typeSize);
 	XPriority_Queue_class_init();
-	this_queue->compare = compare;
+	this_queue->m_compare = compare;
 	ObjectVtable(this_queue)=XPriority_QueueVtable;
 }
 

@@ -46,20 +46,20 @@ size_t VXContainerObject_size(const XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
-	return Object->_size;
+	return Object->m_size;
 }
 
 size_t VXContainerObject_capacity(const XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
-	return Object->_capacity;
+	return Object->m_capacity;
 }
 size_t VXContainerObject_type(const XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
-	return Object->_typeSize;
+	return Object->m_typeSize;
 }
 
 void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo)
@@ -68,15 +68,15 @@ void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* Objec
 	bool two = ISNULL(ObjectTwo, "");
 	if (!(one || two))
 	{
-		XSwap(&ObjectOne->_data, &ObjectTwo->_data, sizeof(void*));
-		XSwap(&ObjectOne->_capacity, &ObjectTwo->_capacity, sizeof(size_t));
-		XSwap(&ObjectOne->_size, &ObjectTwo->_size, sizeof(size_t));
+		XSwap(&ObjectOne->m_data, &ObjectTwo->m_data, sizeof(void*));
+		XSwap(&ObjectOne->m_capacity, &ObjectTwo->m_capacity, sizeof(size_t));
+		XSwap(&ObjectOne->m_size, &ObjectTwo->m_size, sizeof(size_t));
 	}
 }
 
 void VXContainerObject_clear(XContainerObject* Object)
 {
-	Object->_size = 0;
+	Object->m_size = 0;
 }
 
 void VXContainerObject_free(XContainerObject* Object)
@@ -84,11 +84,11 @@ void VXContainerObject_free(XContainerObject* Object)
 	if (ISNULL(Object, ""))
 		return 0;
 	ObjectVtable(Object) = NULL;
-	Object->_capacity = 0;
-	Object->_size = 0;
-	Object->_typeSize = 0;
-	if (Object->_data);
-		XMemory_free(Object->_data);
+	Object->m_capacity = 0;
+	Object->m_size = 0;
+	Object->m_typeSize = 0;
+	if (Object->m_data);
+		XMemory_free(Object->m_data);
 	XMemory_free(Object);
 }
 

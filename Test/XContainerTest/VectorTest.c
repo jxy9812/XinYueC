@@ -21,7 +21,7 @@ void VectorTest()
 #if XVector_ON
 	printf("XVector 测试\n");
 	XVector* v = XVector_New(int);
-	v->equality = XEquality_int;
+	v->m_equality = XEquality_int;
 	//XVector_resize(v,11);
 	int arr[]={100,123,456,4,8496,3,321,23,3,132,0};
 	
