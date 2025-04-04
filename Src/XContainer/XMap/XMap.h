@@ -17,7 +17,7 @@ enum XMapEnum
 	EXMap_Insert=EXContainerObject_Clear+1,
 	EXMap_Erase,
 	EXMap_Remove,
-	EXMap_At,
+	EXMap_Value,
 	EXMap_Find,
 };
 typedef struct XMap
@@ -44,8 +44,8 @@ void XMap_erase(XMap* this_map, const XPair** LPpair);
 void XMap_remove(XMap* this_map, const void* key);
 #define XMap_Remove(this_map,keyType,key) {keyType k=key;XMap_remove(this_map,&k);}
 //根据键值返回数据地址
-void* XMap_at(XMap* this_map, const void* key);
-#define XMap_At(this_map,key,ValueType) (*(ValueType*)XMap_at(this_map,&(key)))
+void* XMap_value(XMap* this_map, const void* key);
+#define XMap_Value(this_map,key,ValueType) (*(ValueType*)XMap_value(this_map,&(key)))
 //查找数据，返回找到的XPair地址，没有返回NULL
 XPair* XMap_find(XMap* this_map, const void* key);
 //清空Map，释放内存
@@ -58,6 +58,13 @@ bool XMap_empty(const  XMap* this_map);
 size_t XMap_size(const  XMap* this_map);
 //交换两个同类型Map的数据
 void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
+
+//默认释放派生类的方法 key是派生的容器
+void XMap_DefaultDerivedClassDataKeyFreeMethod(void* args);
+//默认释放派生类的方法 value是派生的容器
+void XMap_DefaultDerivedClassDataValueFreeMethod(void* args);
+//默认释放派生类的方法 key和value都是派生的容器
+void XMap_DefaultDerivedClassDataKeyValueFreeMethod(void* args);
 
 //其他函数
 //插入迭代器地址

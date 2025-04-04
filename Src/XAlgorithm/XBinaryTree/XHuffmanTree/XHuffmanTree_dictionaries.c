@@ -10,7 +10,7 @@ void XHfmTree_setDictionaries(XMap* dictionaries, const char* data, const size_t
 	}
 	for (size_t i = 0; i < size; i++)
 	{
-		DictionaryValue* dv = XMap_at(dictionaries, data + i);
+		DictionaryValue* dv = XMap_value(dictionaries, data + i);
 		//创建哈夫曼编码数组
 		if (dv->count == 0)
 		{

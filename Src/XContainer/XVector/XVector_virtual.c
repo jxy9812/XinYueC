@@ -59,6 +59,8 @@ void XVector_class_init()
 	XVtable_append_vtable(XVectorVtable,XContainerObjectVtable);
 	//追加函数
 	XVtable_append_array(XVectorVtable, table, sizeof(table)/sizeof(table[0]));
+	//重写的函数
+	XVtable_At(XVectorVtable, EXContainerObject_Clear) = VXVector_clear;
 #if SHOWCONTAINERSIZE
 	printf("XVector size:%d\n", XVtable_size(XVectorVtable));
 #endif // SHOWCONTAINERSIZE
@@ -275,16 +277,24 @@ void VXVector_pop_back(XVector* this_vector)//删除向量中最后一个元素
 {
 	if (XContainerObject_empty(this_vector))
 		return ;
+	if (XContainerDataFreeMethod(this_vector) != NULL)
+		XContainerDataFreeMethod(this_vector)(XVector_back(this_vector));
 	--XContainerSize(this_vector);
 }
 void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 {
 	if (XContainerObject_empty(this_vector))
 		return ;
-	if (VXVector_front(this_vector) <= LpValue && LpValue <= VXVector_back(this_vector) && ((char*)LpValue - (char*)VXVector_front(this_vector)) % XContainerTypeSize(this_vector) == 0)
+	void* front = VXVector_front(this_vector),* back= VXVector_back(this_vector);
+	size_t typeSize = XContainerTypeSize(this_vector);
+	//if (VXVector_front(this_vector) <= LpValue && LpValue <= VXVector_back(this_vector) && ((char*)LpValue - (char*)VXVector_front(this_vector)) % XContainerTypeSize(this_vector) == 0)
+	if(front <= LpValue && LpValue <= back && ((char*)LpValue - (char*)front)% typeSize==0)
 	{
-		size_t typeSize = XContainerTypeSize(this_vector);
-		memcpy(LpValue, (char*)LpValue + typeSize, (size_t)((char*)VXVector_back(this_vector) - (char*)LpValue - typeSize));
+		if (XContainerDataFreeMethod(this_vector) != NULL)
+			XContainerDataFreeMethod(this_vector)(LpValue);
+		//size_t typeSize = XContainerTypeSize(this_vector);
+		//memcpy(LpValue, (char*)LpValue + typeSize, (size_t)((char*)VXVector_back(this_vector) - (char*)LpValue - typeSize));
+		memcpy(LpValue, (char*)LpValue + typeSize, (size_t)((char*)back - (char*)LpValue - typeSize));
 		--XContainerSize(this_vector);
 	}
 }
@@ -301,9 +311,19 @@ void VXVector_remove(XVector* this_vector, int64_t index, int64_t n)//删除数�
 	//修正n大小
 	if (index + n > size|| n < 0)
 		n = size-index;
+	//释放数据
+	if (XContainerDataFreeMethod(this_vector) != NULL)
+	{
+		for (size_t i = 0; i < n; i++)
+		{
+			XContainerDataFreeMethod(this_vector)(ptr+(i+index)* typeSize);
+		}
+	}
 	for (size_t i = 0; i < size - index - n; i++)
 	{
-		memcpy(ptr + (i + index) * typeSize, ptr + (i + index + n) * typeSize, typeSize);
+		char* p = ptr + (i + index) * typeSize;
+		memcpy(p, p+n * typeSize, typeSize);
+		//memcpy(ptr + (i + index) * typeSize, ptr + (i + index + n) * typeSize, typeSize);
 	}
 	XContainerSize(this_vector) -= n;
 }
@@ -311,6 +331,14 @@ void VXVector_clear(XVector* this_vector)//清空vector的数组
 {
 	if (XContainerObject_empty(this_vector))
 		return;
+	//释放数据
+	if (XContainerDataFreeMethod(this_vector) != NULL)
+	{
+		for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
+		{
+			XContainerDataFreeMethod(this_vector)(it);
+		}
+	}
 	XContainerSize(this_vector) = 0;
 	/*if (object->m_data != NULL)
 	{

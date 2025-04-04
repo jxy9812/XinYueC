@@ -76,12 +76,12 @@ void XMap_remove(XMap* this_map, const void* key)
 	typedef void (*funcPtr)(XMap*, const void*);
 	ObjectVirtualFunc(this_map, EXMap_Remove, funcPtr)(this_map, key);
 }
-void* XMap_at(XMap* this_map, const void* key)
+void* XMap_value(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(ObjectVtable(this_map), ""))
 		return NULL;
 	typedef void* (*funcPtr)(XMap*, const void*);
-	return ObjectVirtualFunc(this_map, EXMap_At, funcPtr)(this_map, key);
+	return ObjectVirtualFunc(this_map, EXMap_Value, funcPtr)(this_map, key);
 }
 //查找数据XPair
 XPair* XMap_find(XMap* this_map, const void* key)
@@ -118,6 +118,26 @@ void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
 		return ;
 	typedef XPair* (*funcPtr)(XMap*, XMap*);
 	ObjectVirtualFunc(this_mapOne, EXContainerObject_Swap, funcPtr)(this_mapOne, this_mapTwo);
+}
+
+void XMap_DefaultDerivedClassDataKeyFreeMethod(void* args)
+{
+	XPair* pair = (XPair*)args;
+	XContainerObject* object = *((XContainerObject**)XPair_second(pair));
+	XContainerObject_free(object);
+}
+
+void XMap_DefaultDerivedClassDataValueFreeMethod(void* args)
+{
+	XPair* pair = (XPair*)args;
+	XContainerObject* object = *((XContainerObject**)XPair_first(pair));
+	XContainerObject_free(object);
+}
+
+void XMap_DefaultDerivedClassDataKeyValueFreeMethod(void* args)
+{
+	XMap_DefaultDerivedClassDataKeyFreeMethod(args);
+	XMap_DefaultDerivedClassDataValueFreeMethod(args);
 }
 
 

@@ -11,8 +11,10 @@ extern "C" {
 #include"XMemory.h"
 //#define DEBUG_ON 1
 
-//XContainerObject虚函数表
+//数据释放方法
+typedef void (*XCDataFreeMethod)(void* args);
 
+//XContainerObject虚函数表
 extern XVtable* XContainerObjectVtable;
 //XContainerObject虚函数表枚举
 enum XContainerObjectVtableEnum
@@ -30,17 +32,22 @@ typedef struct XContainerObject
 {
 	XClassObject m_object;
 	void* m_data;//指向容器数据的指针
+	XCDataFreeMethod m_dataFreeMethod;//数据释放方法
 	size_t  m_capacity;//当前容器能容纳的最大元素数量
 	size_t m_size;//当前容器内的元素个数
 	size_t m_typeSize;//类型占用字节数
 }XContainerObject;
-
+//宏函数
 #define XContainerDataPtr(Object) ((XContainerObject*)Object)->m_data//当前数据指针
 #define XContainerData(Object,Type) (*(Type*)XContainerDataPtr(Object))//当前数据
 #define XContainerCapacity(Object) (((XContainerObject*)Object)->m_capacity)//当前容器能容纳的最大元素数量
 #define XContainerSize(Object) (((XContainerObject*)Object)->m_size)//当前容器内的元素个数
 #define XContainerTypeSize(Object) (((XContainerObject*)Object)->m_typeSize)//类型占用字节数
-
+#define XContainerDataFreeMethod(Object) (((XContainerObject*)Object)->m_dataFreeMethod)//获取容器数据释放方法
+#define XContainerSetDataFreeMethod(Object,method) (((XContainerObject*)Object)->m_dataFreeMethod=method)//设置容器的数据释放方法
+//默认释放派生类的方法
+void XContainerDefaultDerivedClassDataFreeMethod(void* args);
+//以下是成员函数
 void XContainerObject_class_init(); 
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);
 void XContainerObject_free(XContainerObject* Object);

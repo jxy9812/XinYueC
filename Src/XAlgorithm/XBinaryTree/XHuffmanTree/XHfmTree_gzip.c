@@ -11,7 +11,7 @@ static void writeData(XVector* gzipData, XMap* dictionaries, const char* data, c
 	for (size_t i = 0; i < size; i++)
 	{
 		char ch = data[i];//遍历每一个字节
-		code = XMap_At(dictionaries, ch, DictionaryValue).code;
+		code = XMap_Value(dictionaries, ch, DictionaryValue).code;
 		//遍历编码
 		for (XVector_iterator* it = XVector_begin(code); it != XVector_end(code); it = XVector_iterator_add(code, it))
 		{

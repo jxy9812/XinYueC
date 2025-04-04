@@ -10,7 +10,7 @@ static void VXMap_erase(XMap* this_map, const XPair** LPpair);
 //map删除数据
 static void VXMap_remove(XMap* this_map, const void* key);
 //根据键值返回数据地址
-static void* VXMap_at(XMap* this_map, const void* key);
+static void* VXMap_value(XMap* this_map, const void* key);
 //查找数据，返回找到的XPair地址，没有返回NULL
 static XPair* VXMap_find(XMap* this_map, const void* key);
 //清空Map，释放内存
@@ -28,7 +28,7 @@ void XMap_class_init()
 	if (XMapVtable)
 		return;
 	void* table[] = {
-		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_at,VXMap_find
+		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find
 	};
 #if !VTABLEISSTACK
 	XMapVtable = XVtable_new();
@@ -91,6 +91,8 @@ void VXMap_remove(XMap* this_map, const void* key)
 	if (nodes != NULL)
 	{
 		XPair* pair = *((XPair**)XVector_at(nodes->XBTNode.values, 0));
+		if (XContainerDataFreeMethod(this_map) != NULL)
+			XContainerDataFreeMethod(this_map)(pair);
 		XRBTree_erase(&(this_map->m_object.m_data), this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
 		XPair_free(pair);
 		--XContainerCapacity(this_map);
@@ -104,7 +106,7 @@ void VXMap_remove(XMap* this_map, const void* key)
 #endif
 }
 
-void* VXMap_at(XMap* this_map, const void* key)
+void* VXMap_value(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return NULL;
@@ -140,6 +142,8 @@ XPair* VXMap_find(XMap* this_map, const void* key)
 static void XMap_freeNodeData(void* LPVal, void* args)
 {
 	XPair* pair = *(XPair**)LPVal;
+	if (XContainerDataFreeMethod(args) != NULL)
+		XContainerDataFreeMethod(args)(pair);
 	XPair_free(pair);
 	*(XPair**)LPVal = NULL;
 }
@@ -149,7 +153,7 @@ void VXMap_clear(XMap* this_map)
 	if (XMap_empty(this_map))
 		return;
 	XMap_updataIterator(this_map);
-	XMap_iterator_for_each(this_map, XMap_freeNodeData, NULL);
+	XMap_iterator_for_each(this_map, XMap_freeNodeData, this_map);
 	XBTree_freeNodeAll(this_map->m_object.m_data);
 	if(this_map->m_itArray)
 	{

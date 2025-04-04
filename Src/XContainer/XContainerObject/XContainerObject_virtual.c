@@ -16,6 +16,11 @@ XVtable* XContainerObjectVtable = NULL;
 static XVtable vtable;//虚函数类
 static void* vtable_data[7];//虚函数数据
 #endif
+void XContainerDefaultDerivedClassDataFreeMethod(void* args)
+{
+	XContainerObject* object = *((XContainerObject**)args);
+	XContainerObject_free(object);
+}
 void XContainerObject_class_init()
 {
 	if (XContainerObjectVtable)
@@ -83,6 +88,7 @@ void VXContainerObject_free(XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
+	XContainerObject_clear(Object);
 	ObjectVtable(Object) = NULL;
 	Object->m_capacity = 0;
 	Object->m_size = 0;

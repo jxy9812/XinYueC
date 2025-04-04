@@ -199,8 +199,12 @@ void VXList_erase(XList* this_list, XListNode* node)
 	XList* list = this_list;
 	XListNode* nextNode = node->next;//下一个节点
 	XListNode* prevNode = node->prev;//上一个节点
-	if(node->date)
+	if (node->date)
+	{
+		if (XContainerDataFreeMethod(this_list) != NULL)
+			XContainerDataFreeMethod(this_list)(node->date);
 		XMemory_free(node->date);//释放节点的数据
+	}
 	XMemory_free(node);//释放节点
 	if (list->m_object.m_size == 1)
 	{
@@ -236,6 +240,8 @@ void VXList_clear(XList* this_list)
 	XListNode* pnext = p->next;
 	for (size_t i = 0; i < list->m_object.m_size; i++)
 	{
+		if (XContainerDataFreeMethod(this_list) != NULL)
+			XContainerDataFreeMethod(this_list)(p->date);
 		pnext = p->next;
 		XMemory_free(p->date);
 		XMemory_free(p);
@@ -279,7 +285,7 @@ void VXList_free(XList* this_list)
 {
 	if (ISNULL(this_list, ""))
 		return;
-	VXList_clear(this_list);
+	XList_clear(this_list);
 	XMemory_free(this_list);
 }
 //排序

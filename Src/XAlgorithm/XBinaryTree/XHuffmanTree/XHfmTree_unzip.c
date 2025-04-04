@@ -11,7 +11,7 @@ static size_t readDictionaries(XHuffmanTree* tree, const char* data)
 	DictionaryData* DictionData = data + offset;//字典数据
 	for (size_t i = 0; i < count; i++)
 	{
-		DictionaryValue* value=&XMap_At(tree->dictionaries, DictionData->ch, DictionaryValue);
+		DictionaryValue* value=&XMap_Value(tree->dictionaries, DictionData->ch, DictionaryValue);
 		size_t codeSize = DictionData->codeSize;//编码大小字节
 		value->count = DictionData->count;
 		XVector* code= XVector_New(char);
