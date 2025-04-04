@@ -5,6 +5,8 @@
 #include<math.h>
 int main(int argc, char* args[])
 {
+	XStringVectorTest();
+	return;
 #if DEMOTEST
 	cJsonTest();
 	cJsonXContainerTest();
@@ -13,7 +15,7 @@ int main(int argc, char* args[])
 	ListSortTest();
 	ListIterator();
 	ListSwapTest();
-	VectorTest();
+	XVectorTest();
 	
 	stackTest();
 	queueTest();

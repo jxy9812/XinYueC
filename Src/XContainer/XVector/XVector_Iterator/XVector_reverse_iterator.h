@@ -4,10 +4,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XFunctionCallback.h"
-typedef struct XVector XVector;
+#include"XContainerObject_iterator.h"
+XContainerTypeDeclare(XVector);
 //反向迭代器
-typedef void XVector_reverse_iterator;
+XContainerReverseIteratorDeclare(XVector);
 XVector_reverse_iterator* XVector_rbegin(XVector* this_vector);
 XVector_reverse_iterator* XVector_rend(XVector* this_vector);
 XVector_reverse_iterator* XVector_reverse_iterator_add(XVector* this_vector,XVector_reverse_iterator* it);

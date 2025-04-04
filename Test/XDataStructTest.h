@@ -22,7 +22,9 @@ extern "C" {
 	//队列测试
 	void queueTest();
 	//动态数组测试
-	void VectorTest();
+	void XVectorTest();
+	//字符串数组测试
+	void XStringVectorTest();
 	//字符串测试
 	void XStringTest();
 	//map映射测试

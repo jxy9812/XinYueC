@@ -4,7 +4,7 @@
 #include"XFunctionCallback.h"
 #include"XEquality.h"
 #include"XLess.h"
-void XFor_each_int(void* LPVal)
+static void XFor_each_int(void* LPVal)
 {
 	printf("%d ", *(int*)LPVal);
 }
@@ -16,7 +16,7 @@ struct people
 	char achievement[20];
 };
 
-void VectorTest()
+void XVectorTest()
 {
 #if XVector_ON
 	printf("XVector 测试\n");
@@ -42,9 +42,10 @@ void VectorTest()
 	if(findRet!=NULL)
 	printf("找到的数字:%d", *findRet);
 	XVector_free(v);
+
+
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
 }
-
 #endif

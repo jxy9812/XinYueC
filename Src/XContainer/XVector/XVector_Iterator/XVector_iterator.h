@@ -4,12 +4,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XFunctionCallback.h"
-typedef struct XVector XVector;
-////容器for_each(容器循环遍历)回调函数
-//typedef void (*XFor_each)(void* LPVal);
+#include"XContainerObject_iterator.h"
+XContainerTypeDeclare(XVector);
 //正向迭代器
-typedef void XVector_iterator;
+XContainerIteratorDeclare(XVector);
+
 XVector_iterator* XVector_begin(XVector* this_vector);
 XVector_iterator* XVector_end(XVector* this_vector);
 XVector_iterator* XVector_iterator_add(XVector* this_vector, XVector_iterator*it);

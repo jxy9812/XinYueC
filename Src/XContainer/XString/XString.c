@@ -144,6 +144,11 @@ const char* XString_data(const XString* this_string)
 	return ObjectVirtualFunc(this_string, EXString_Data, funcPtr)(this_string);
 }
 
+const char* XString_c_str(const XString* this_string)
+{
+	return XString_data(this_string);
+}
+
 int64_t XString_find_first_of(const XString* this_string, const char* subStr)
 {
 	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))

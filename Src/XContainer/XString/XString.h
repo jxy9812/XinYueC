@@ -75,6 +75,7 @@ void XString_clear (XString* this_string);
 char XString_at(const XString* this_string, int64_t index);
 // 返回字符串
 const char* XString_data(const XString* this_string);
+const char* XString_c_str(const XString* this_string);
 //查找函数
 int64_t XString_find_first_of(const XString* this_string, const char* subStr);
 int64_t XString_find_last_of(const XString* this_string, const char* subStr);
