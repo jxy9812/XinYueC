@@ -25,7 +25,7 @@ void XModbus_init(XModbus* modbus,size_t bufferSize, XModbusMode mode, XModbusGe
 	modbus->recvBuffer = XVector_New(uint8_t);
 	XVector_resize(modbus->recvBuffer,bufferSize);
 	modbus->sendQueue=XQueue_New(XVector*);
-    modbus->recvQueue=XModbusFrameQueue_new();
+    modbus->recvFrameQueue=XModbusFrameQueue_new();
 	modbus->eventQueue = XEventQueue_new(XEventQueue_defaultConfigInit);
 	modbus->mode = mode;
 	modbus->xGetByte = xGetByte;
@@ -61,6 +61,7 @@ void XModbus_init(XModbus* modbus,size_t bufferSize, XModbusMode mode, XModbusGe
 #endif
     default: // 非法模式处理
         modbus->errorCode = MB_EINVAL; // 不支持的模式错误
+        return;
     }
 
     // 初始化成功后配置协议栈状态
@@ -124,23 +125,63 @@ XModbusErrorCode XModbus_disable(XModbus* modbus)
 // 接收到完整的 Modbus 帧
 static void XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
 {
-    ((char*)(XVector_begin(modbus->recvBuffer)))[XVector_size(modbus->recvBuffer)] = 0;
-    printf("数据:%s  大小:%d buff接收缓冲区大小:%d\n",XVector_begin(modbus->recvBuffer), XVector_size(modbus->recvBuffer), XVector_capacity(modbus->recvBuffer));
+   /* ((char*)(XVector_begin(modbus->recvBuffer)))[XVector_size(modbus->recvBuffer)] = 0;
+    printf("数据:%s  大小:%d buff接收缓冲区大小:%d\n",XVector_begin(modbus->recvBuffer), XVector_size(modbus->recvBuffer), XVector_capacity(modbus->recvBuffer));*/
     // 调用对应模式的接收函数，获取帧数据（地址、缓冲区、长度）
-    XModbusFrameData dataFrame = XModbusFrameData_new();
-    modbus->errorCode = modbus->peMBFrameReceiveCur(modbus,&dataFrame);
+    XModbusFrameData* dataFrame = XModbusFrameData_new();
+    //解析数据帧
+    modbus->peMBFrameReceiveCur(modbus,dataFrame);
+   
     if (modbus->errorCode == MB_ENOERR) {
-        //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
-        if ((dataFrame.address == modbus->address) || (dataFrame.address == MB_ADDRESS_BROADCAST)) 
+        UCHAR address= XModbusFrameData_getRtuAddress(dataFrame);
+        UCHAR code= XModbusFrameData_getRtuFuncCode(dataFrame);
+        //XString* str= XModbusFrameData_to16HexString(dataFrame);
+        //printf("地址:%X 功能码:%X 完整:%s\n", address,code,XString_c_str(str));
+        ////            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
+        //XString_free(str);
+        if (modbus->mode % 2 == 0)
         {
-            XModbusFrameQueue_push(modbus->recvQueue, &dataFrame);
+            //printf("当前是主站\n");
+           
+        }
+        else if ((address == modbus->address) || (address == MB_ADDRESS_BROADCAST))
+        {
+            //printf("将有效的帧加入接收队列处理\n");
+            XModbusFrameQueue_push(modbus->recvFrameQueue, dataFrame);
             XEventQueue_push(modbus->eventQueue, EV_EXECUTE);
             //                xMBPortEventPost(EV_EXECUTE); // 触发功能码执行事件
         }
-        //        }
+        else
+        {
+            XModbusFrameData_free(dataFrame);
+        }
     }
+    else
+    {
+        XModbusFrameData_free(dataFrame);
+    }
+    
 }
+//功能码处理
+static void  XModbus_EV_EXECUTE(XModbus* modbus)
+{
+    //printf("处理功能码\n");
+    if (modbus == NULL || XModbusFrameQueue_empty(modbus->recvFrameQueue))
+        return;
+   
+    XModbusFrameData* frame = XModbusFrameQueue_Top(modbus->recvFrameQueue);
+    UCHAR address = XModbusFrameData_getRtuAddress(frame);
+    UCHAR code = XModbusFrameData_getRtuFuncCode(frame);
+    XString* str = XModbusFrameData_to16HexString(frame);
+    printf("地址:%X 功能码:%X 完整:%s\n", address, code, XString_c_str(str));
+    //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
+    XString_free(str);
 
+
+
+    //释放一个资源
+    XModbusFrameQueue_pop(modbus->recvFrameQueue);
+}
 XModbusErrorCode XModbus_poll(XModbus* modbus)
 {
     if (modbus == NULL)
@@ -166,38 +207,7 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
     //{ // 有事件待处理
         switch (eEvent) {
         case EV_FRAME_RECEIVED: XModbus_EV_FRAME_RECEIVED(modbus);  break; // 接收到完整的 Modbus 帧
-        case EV_EXECUTE: { // 执行功能码处理（接收到有效帧后触发）
-    //        ucFunctionCode = ucMBFrame[MB_PDU_FUNC_OFF]; // 提取功能码（位于 PDU 起始位置）
-    //        eException = MB_EX_ILLEGAL_FUNCTION; // 初始化为非法功能码异常
-
-    //        // 查找功能码对应的处理函数（遍历注册的处理函数表）
-    //        for (i = 0; i < MB_FUNC_HANDLERS_MAX; i++) {
-    //            if (xFuncHandlers[i].ucFunctionCode == 0) {
-    //                break; // 遇到空槽位，停止查找（处理函数表已遍历完）
-    //            }
-    //            else if (xFuncHandlers[i].ucFunctionCode == ucFunctionCode) {
-    //                // 调用处理函数，获取异常码（正常处理返回 MB_EX_NONE，异常返回对应错误码）
-    //                eException = xFuncHandlers[i].pxHandler(ucMBFrame, &usLength);
-    //                break; // 找到匹配的处理函数，停止查找
-                }
-           // }
-
-    //        // 非广播地址需要返回响应（广播地址请求无需响应）
-    //        if (ucRcvAddress != MB_ADDRESS_BROADCAST) {
-    //            if (eException != MB_EX_NONE) { // 处理过程中发生异常，构建错误帧
-    //                usLength = 0;
-    //                ucMBFrame[usLength++] = ucFunctionCode | MB_FUNC_ERROR; // 错误功能码（原功能码 | 0x80）
-    //                ucMBFrame[usLength++] = eException; // 添加异常码
-    //            }
-    //            // ASCII 模式发送前添加延迟（根据配置，确保字符间隔符合协议要求）
-    //            if ((eMBCurrentMode == MB_ASCII) && MB_ASCII_TIMEOUT_WAIT_BEFORE_SEND_MS) {
-    //                vMBPortTimersDelay(MB_ASCII_TIMEOUT_WAIT_BEFORE_SEND_MS); // 平台特定的延迟函数
-    //            }
-    //            // 调用对应模式的发送函数，返回响应帧
-    //            eStatus = peMBFrameSendCur(ucMBAddress, ucMBFrame, usLength);
-    //        }
-    //        break;
-    //    }
+        case EV_EXECUTE: XModbus_EV_EXECUTE(modbus); break;
     //                   // 其他事件（如 EV_READY、EV_FRAME_SENT）暂时忽略，留空处理
     //    case EV_READY:
     //    case EV_FRAME_SENT:

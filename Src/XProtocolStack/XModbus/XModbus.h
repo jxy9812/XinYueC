@@ -123,7 +123,7 @@ typedef struct XModbus
     XModbusState     state;//状态
     XVector* recvBuffer;//接收缓冲区
     XQueue* sendQueue;//发送队列(XQueue<XVector>)
-    XModbusFrameQueue* recvQueue;//接收队列
+    XModbusFrameQueue* recvFrameQueue;//接收帧队列 后面处理执行
     XEventQueue* eventQueue;//事件队列
     int sendRemaining;//当前发送的进度
     /* ----------------------- 函数指针类型定义  0-------------------------------------*/
@@ -137,7 +137,7 @@ typedef struct XModbus
     /* ----------------------- RTU-------------------------------------*/
     bool xRxEnable;//接收
     bool xTxEnable;//发送
-    XTimer* timer;//定时器
+    XTimer* timer;//定时器     平台初始化
     XModbusSndState eSndState;    // 发送状态机（volatile确保多线程可见）
     XModbusRcvState eRcvState;    // 接收状态机
     //函数

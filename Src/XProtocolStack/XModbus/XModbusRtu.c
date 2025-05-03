@@ -41,35 +41,19 @@ void XModbusRtuStop(XModbus* modbus)
 }
 XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* dataFrame)
 {
-    if (modbus == NULL)
+    if (modbus == NULL|| dataFrame==NULL)
         return MB_EINVAL;
     bool            xFrameReceived = false;
     modbus->errorCode= MB_ENOERR;
 
     ENTER_CRITICAL_SECTION();
     //assert(usRcvBufferPos < MB_SER_PDU_SIZE_MAX);  // 确保缓冲区未溢出
-
-    //XModbusFrameData dataFrame = XModbusFrameData_new();
-    XVector_copy(dataFrame->dataFrame, modbus->recvBuffer);
-
-    size_t recvSize = XVector_size(dataFrame->dataFrame);
-    UCHAR* recvBuffer = (UCHAR*)XVector_begin(dataFrame->dataFrame);
-    
-    // 校验帧长度和CRC（最小长度4字节，CRC正确）
-    if ((recvSize >= MB_SER_PDU_SIZE_MIN) && (XCRC16(recvBuffer, recvSize) == 0)) {
-        dataFrame->address = recvBuffer[MB_SER_PDU_ADDR_OFF];  // 提取从机地址
-        // 计算PDU长度（总长度 - 地址长度 - CRC长度）
-        dataFrame->pduLength = (USHORT)(recvSize - MB_SER_PDU_PDU_OFF - MB_SER_PDU_SIZE_CRC);
-        dataFrame->pPduFramePos = &recvBuffer[MB_SER_PDU_PDU_OFF];  // PDU起始位置（地址后第1字节）
-        //dataFrame.crc16;
-        xFrameReceived = TRUE;
-    }
-    else {
-        modbus->errorCode = MB_EIO;  // 帧无效（长度不足或CRC错误）
-    }
-
+    XModbusFrameData_setRtuData(dataFrame, modbus->recvBuffer);
+    //解析的帧有问题
+    if(dataFrame->pPduFramePos==NULL)
+        modbus->errorCode = MB_EIO;
     EXIT_CRITICAL_SECTION();
-    //XModbusFrameQueue_push(modbus->object.recvQueue,&dataFrame);
+    //XModbusFrameQueue_push(modbus->object.recvFrameQueue,&dataFrame);
     return  modbus->errorCode;
 }
 

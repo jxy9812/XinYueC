@@ -1,6 +1,7 @@
 ﻿#include"XProtocolStackTest.h"
 #include"XModbusRtu.h"
 #include"XMemory.h"
+#include"XCrc.h"
 #ifdef WIN32
 #include <windows.h>
 // 告诉编译器链接 winmm.lib 库
@@ -225,10 +226,16 @@ static void SerialPoll(XModbus* modbus)
     ResetEvent(ov.hEvent);
 }
 #endif // WIN32
+
 void XModbusTest()
 {
+    //UCHAR buffer[] = {0x01,0x06,0x00,0x00,0x00,0x01,0x48,0x0A };
+    //UCHAR buffer[] = { 0x01,0x06,0x00,0x00,0x00,0x02,0x08,0x0B };
+    //printf("CRC校验为:%d\n", modbus_crc16_table(buffer, sizeof(buffer)));
+    //printf("CRC校验为:%d\n", XCRC16(buffer, sizeof(buffer)-2));
     XModbus* modbus = XMemory_malloc(sizeof(XModbus));
-    XModbus_init(modbus, 256, MB_RTU_MASTER, XModbus_GetByte, XModbus_PutByte);
+    modbus->address = 0x1;
+    XModbus_init(modbus, 256, MB_RTU_SLAVE, XModbus_GetByte, XModbus_PutByte);
     modbus->SerialEnable = NULL;
     modbus->timer= XTimer_new(XTimerCreat);
     modbus->timer->data = modbus;

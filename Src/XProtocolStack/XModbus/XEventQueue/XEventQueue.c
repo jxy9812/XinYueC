@@ -87,6 +87,7 @@ bool XEventQueue_push(XEventQueue* queue, XEventQueueEventType event)
 {
 	if (queue && queue->free)
 		return queue->push(queue,event);
+	return false;
 }
 XEventQueueEventType XEventQueue_Top(XEventQueue* queue)
 {
@@ -97,6 +98,7 @@ bool XEventQueue_pop(XEventQueue* queue)
 {
 	if (queue && queue->pop)
 		return queue->pop(queue);
+	return false;
 }
 
 bool XEventQueue_empty(XEventQueue* queue)
