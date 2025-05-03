@@ -5,8 +5,10 @@
 #include<math.h>
 int main(int argc, char* args[])
 {
-	XStringVectorTest();
+	XModbusTest();
 	return;
+	XStringVectorTest();
+	
 #if DEMOTEST
 	cJsonTest();
 	cJsonXContainerTest();
