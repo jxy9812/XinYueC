@@ -1,6 +1,7 @@
 ﻿#include "XModbusRtu.h"
-#include "XModbusFrameQueue.h"
+#include "XModbusFrameData.h"
 #include "XCrc.h"
+#include "XModbusConfig.h"
 void XModbusRtuInit(XModbus* modbus)
 {
     { // RTU 模式初始化（二进制传输，效率高，适合串口通信）
@@ -82,7 +83,7 @@ XModbusErrorCode XModbusRtuSend(XModbus* modbus, XModbusFrameData* dataFrame)
     //    dataFrame[MB_SER_PDU_PDU_OFF + i] = pucFrame[i];
     //} 
     //// 计算CRC（包含地址和PDU）
-    //usCRC16 = XCRC16((UCHAR*)dataFrame, usLength+1);
+    //usCRC16 = XCrc_get16((UCHAR*)dataFrame, usLength+1);
     ////保存校验码
     //uint16_t pos = usLength + 1;//校验码所属位置
     //dataFrame[pos++] = (UCHAR)(usCRC16 & 0xFF);  // CRC低位（小端模式）
@@ -100,10 +101,14 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
     if (modbus == NULL)
         return FALSE;
     UCHAR           ucByte;
-    if (modbus->eSndState != STATE_TX_IDLE || modbus->eSndState == STATE_TX_END)
+    if (modbus->eSndState != STATE_TX_IDLE /*|| modbus->eSndState == STATE_TX_END*/)
         return FALSE;
     //assert(modbus->eSndState == STATE_TX_IDLE);  // 确保发送状态为空闲
-    //printf("开始接收数据\n");
+    //发送完数据后3.5字符内收到了返回信息 重置发送状态
+    if (modbus->eSndState == STATE_TX_END)
+    {
+        modbus->eSndState = STATE_TX_IDLE;
+    }
     // 读取接收到的字节（平台特定：从串口缓冲区获取）
     (void)modbus->xGetByte(modbus,(CHAR*)&ucByte);
     XVector* recvVector = modbus->recvBuffer;
@@ -140,18 +145,20 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
 bool XModbusRtuTransmitFSM(XModbus* modbus)
 {
     if (modbus == NULL)
-        return FALSE;
+        return false;
    // bool            xNeedPoll = FALSE;
     //printf("检查是否可以发送\n");
     if (modbus->eRcvState != STATE_RX_IDLE|| modbus->eSndState == STATE_TX_END)
-        return FALSE;
-    //printf("接收总线空闲，可以进行发送检查\n");
-    //assert(modbus->eRcvState == STATE_RX_IDLE);  // 确保接收状态为空闲
-    XQueue* sendQueue = modbus->sendQueue;
+        return false;
+
+    //以下可以发送数据
+    XModbusFrameQueue* sendQueue = modbus->sendQueue;
+    XModbusFrameData* frame = NULL;
     XVector* dataVector = NULL;
-    if (!XQueue_empty(sendQueue))
+    if (!XModbusFrameQueue_empty(sendQueue))
     {
-        dataVector = XQueue_Top(sendQueue, XVector*);
+        frame = XModbusFrameQueue_top(sendQueue);
+        dataVector=frame->dataFrame;
         if (modbus->SerialEnable)
             modbus->SerialEnable(modbus, FALSE,TRUE);  // 发送，禁用接收
     }
@@ -185,9 +192,13 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
                 XTimer_start(modbus->timer);  // 发送完成等待下一帧
                 if (modbus->SerialEnable)
                     modbus->SerialEnable(modbus, TRUE, FALSE);  // 禁用发送，重新使能接收
-                if (!XContainerDataFreeMethod(sendQueue))
-                    XVector_free(dataVector);
-                XQueue_pop(sendQueue);
+#if MB_SEND_FRAME_SHOW
+                XString* str = XModbusFrameData_to16HexString(frame);
+                printf("发送帧:%s\n", XString_c_str(str));
+                //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
+                XString_free(str);
+#endif // MB_SEND_FRAME_SHOW
+                XModbusFrameQueue_pop(sendQueue);
                 // 发送完成，通知上层协议帧已发送
                 XEventQueue_push(modbus->eventQueue, EV_FRAME_SENT);
                 //xNeedPoll = xMBPortEventPost(EV_FRAME_SENT);
@@ -204,7 +215,7 @@ bool XModbusRtuTimerT35Expired(XModbus* modbus)
     //发完一帧数据总线等待
     if (modbus->eSndState == STATE_TX_END)
     {
-        modbus->eSndState == STATE_TX_IDLE;
+        modbus->eSndState = STATE_TX_IDLE;
         XTimer_stop(modbus->timer);  // 关闭定时器
         return true;
     }

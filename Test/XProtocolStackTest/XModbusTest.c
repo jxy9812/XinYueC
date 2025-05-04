@@ -239,8 +239,19 @@ void XModbusTest()
     modbus->SerialEnable = NULL;
     modbus->timer= XTimer_new(XTimerCreat);
     modbus->timer->data = modbus;
-    //XTimer_start(modbus->timer);
-    //XTimer_stop(modbus->timer);
+
+    XModbusRegisterFunc* Register=XModbusRegisterFunc_new(16);
+    //设置从站的功能码回调函数
+    {
+        XModbusFunctionHandler Handler = { MB_FUNC_READ_HOLDING_REGISTER,XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc,Register };
+        XModbus_setFunctionHandler(modbus, &Handler);
+    }
+
+    {
+        XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterFunc_0x06_RTU_slaveRecvHandCallFunc,Register };
+        XModbus_setFunctionHandler(modbus, &Handler);
+    }
+
 #ifdef WIN32
 	XModbusTest_WIn32(modbus);
 #endif // WIN32

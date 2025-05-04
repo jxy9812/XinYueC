@@ -158,6 +158,7 @@ void VXVector_resize(XVector* this_vector, size_t size)
 		else
 		{
 			XContainerCapacity(this_vector) = size;
+			XContainerSize(this_vector) = size;
 		}
 		
 	}

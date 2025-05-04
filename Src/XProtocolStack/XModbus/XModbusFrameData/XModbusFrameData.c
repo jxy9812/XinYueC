@@ -1,4 +1,4 @@
-﻿#include "XModbusFrameQueue.h"
+﻿#include "XModbusFrameData.h"
 #include "XQueue.h"
 #include "XMemory.h"
 #include "XModbusRtu.h"
@@ -19,7 +19,7 @@ void XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrameData* dataFram
 	XQueue_push(queue,&dataFrame);
 }
 
-XModbusFrameData* XModbusFrameQueue_Top(XModbusFrameQueue* queue)
+XModbusFrameData* XModbusFrameQueue_top(XModbusFrameQueue* queue)
 {
 	if(queue==NULL)
 		return NULL;
@@ -40,7 +40,7 @@ void XModbusFrameQueue_pop(XModbusFrameQueue* queue)
 	//没有设置自动释放手动释放
 	if (XContainerDataFreeMethod(queue) == NULL)
 	{
-		XModbusFrameData* top= XModbusFrameQueue_Top(queue);
+		XModbusFrameData* top= XModbusFrameQueue_top(queue);
 		////显释放里面的XVector数据
 		//if(top->dataFrame)
 		//	XVector_free(top->dataFrame);
@@ -70,15 +70,25 @@ XModbusFrameData* XModbusFrameData_new()
 	//dataFrame.crc16 = 0;
 	dataFrame->dataFrame = XVector_New(UCHAR);
 	dataFrame->pduLength = 0;
+	dataFrame->recvHandle = NULL;
 	return dataFrame;
 }
-void XModbusFrameData_free(XModbusFrameData* dataFrame)
+XModbusFrameData* XModbusFrameData_newRecvHandle()
 {
-	if (dataFrame)
+	XModbusFrameData* dataFrame = XModbusFrameData_new();
+	dataFrame->recvHandle = XMemory_malloc(sizeof(XModbusFrameDataRecvHandle));
+	XModbusFrameDataRecvHandle_setZero(dataFrame->recvHandle);
+	return dataFrame;
+}
+void XModbusFrameData_free(XModbusFrameData* frame)
+{
+	if (frame)
 	{
-		if (dataFrame->dataFrame)
-			XVector_free(dataFrame->dataFrame);
-		XMemory_free(dataFrame);
+		if (frame->dataFrame)
+			XVector_free(frame->dataFrame);
+		if (frame->recvHandle)
+			XMemory_free(frame->recvHandle);
+		XMemory_free(frame);
 	}
 }
 //解析CRC16
@@ -91,12 +101,13 @@ static USHORT XModbusFrameData_parse‌CRC16(uint8_t* pData, uint16_t pos)
 	// 组合成 16 位 CRC 校验码
 	return (highByte << 8) | lowByte;
 }
-//设置CRC16
-static void XModbusFrameData_set‌CRC16(uint8_t* pData, uint16_t pos,uint16_t crc16)
-{
-	pData[pos++] = (UCHAR)(crc16 & 0xFF);  // CRC低位（小端模式）
-	pData[pos++] = (UCHAR)(crc16 >> 8);       // CRC高位
-}
+
+////设置CRC16
+//static void XModbusFrameData_set‌CRC16(uint8_t* pData, uint16_t pos,uint16_t crc16)
+//{
+//	pData[pos++] = (UCHAR)(crc16 & 0xFF);  // CRC低位（小端模式）
+//	pData[pos++] = (UCHAR)(crc16 >> 8);       // CRC高位
+//}
 void XModbusFrameData_setRtuDataFrame(XModbusFrameData* dataFrame, UCHAR address, const UCHAR* pPduframe, USHORT pduLength)
 {
 	if (dataFrame = NULL)
@@ -111,17 +122,17 @@ void XModbusFrameData_setRtuDataFrame(XModbusFrameData* dataFrame, UCHAR address
 	//获取内部数据指针
 	UCHAR* pData = (UCHAR*)XVector_begin(dataVector);
 	//保存从机地址
-	pData[MB_SER_PDU_ADDR_OFF] = address;  // 添加从机地址
+	pData[MB_SER_PDU_ADDR_OFF] = address;  // 添加地址
 	//保存pdu数据
 	for (size_t i = 0; i < pduLength; i++)
 	{
 		pData[MB_SER_PDU_PDU_OFF + i] = pPduframe[i];
 	}
 	// 计算CRC（包含地址和PDU）
-	USHORT usCRC16 = XCRC16((UCHAR*)dataFrame, pduLength + 1);
+	USHORT usCRC16 = XCrc_get16((UCHAR*)dataFrame, pduLength + 1);
 	//保存校验码
 	uint16_t pos = pduLength + 1;//校验码所属位置
-	XModbusFrameData_set‌CRC16(pData, pos, usCRC16);
+	XCrc_set16Data(pData+pos, usCRC16);
 	//pData[pos++] = (UCHAR)(usCRC16 & 0xFF);  // CRC低位（小端模式）
 	//pData[pos++] = (UCHAR)(usCRC16 >> 8);       // CRC高位
 	dataFrame->pduLength = pduLength;
@@ -144,7 +155,7 @@ void XModbusFrameData_setRtuData(XModbusFrameData* dataFrame, XVector* data)
 	size_t dataSize = XVector_size(data);
 	UCHAR* pData = (UCHAR*)XVector_begin(data);
 	// 校验帧长度和CRC（最小长度4字节，CRC正确）
-	if ((dataSize >= MB_SER_PDU_SIZE_MIN) && (XCRC16(pData, dataSize) == 0)) {
+	if ((dataSize >= MB_SER_PDU_SIZE_MIN) && (XCrc_get16(pData, dataSize) == 0)) {
 		//printf("校验通过\n");
 		XVector_copy(dataFrame->dataFrame, data);
 		//dataFrame->address = pData[MB_SER_PDU_ADDR_OFF];  // 提取从机地址
@@ -156,7 +167,7 @@ void XModbusFrameData_setRtuData(XModbusFrameData* dataFrame, XVector* data)
 	}
 	else 
 	{
-		int num = *pData;
+		//int num = *pData;
 		XVector_clear(dataFrame->dataFrame);
 		dataFrame->pPduFramePos = NULL;
 	}
@@ -191,5 +202,15 @@ XString* XModbusFrameData_to16HexString(XModbusFrameData* dataFrame)
 		XString_pop_back(str);
 		return str;
 	}
-	return 0;
+	return NULL;
+}
+
+void XModbusFrameDataRecvHandle_setZero(XModbusFrameDataRecvHandle* handle)
+{
+	if (handle)
+	{
+		handle->pRecvHandCallFunc = NULL;
+		handle->userData = NULL;
+		handle->waitAddressCode = NULL;
+	}
 }

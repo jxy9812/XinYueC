@@ -99,7 +99,17 @@ extern "C" {
  
  /*! \brief 启用“读写多个寄存器”功能（功能码0x17） */
  #define MB_FUNC_READWRITE_HOLDING_ENABLED       (  1 )
- 
+
+//以下是调试选项
+
+ //接收帧显示
+ #define MB_RECV_FRAME_SHOW						 (  1 )
+ //发送帧显示
+ #define MB_SEND_FRAME_SHOW						 (  1 )
+//枚举可以转String
+ #define MB_ENUM_TO_STRING						 (  1 )
+//显示处理的事件
+ #define MB_EVENT_HANDLE_SHOW							 (  1 )
  /*! @} */
 #ifdef __cplusplus
 }

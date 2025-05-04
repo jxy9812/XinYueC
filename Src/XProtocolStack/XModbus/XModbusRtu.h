@@ -17,8 +17,10 @@ typedef struct XModbusFrameData XModbusFrameData;
 #define MB_SER_PDU_PDU_OFF      1       // Modbus PDU在帧中的偏移（地址后第1字节开始）
 
 
-//typedef struct XModbusRtu XModbusRtu;
+typedef struct XModbusRtu XModbusRtu;
+//typedef struct XModbusRtu
 //
+//}XModbusRtu;
 //typedef struct XModbusRtu
 //{
 //    XModbus object;

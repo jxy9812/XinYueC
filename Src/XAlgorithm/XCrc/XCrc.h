@@ -40,7 +40,10 @@ extern "C" {
   *          USHORT crc = usMBCRC16(frame, len);
   *          // 将crc填入帧尾的两个字节（低字节在前，高字节在后）
   */
- uint16_t          XCRC16( uint8_t * pucFrame, uint16_t usLen );
+ uint16_t          XCrc_get16( uint8_t * pucFrame, uint16_t usLen );
+ //设置CRC16
+ void XCrc_set16Data(uint8_t* pData, uint16_t crc16);
+
 #ifdef __cplusplus
 }
 #endif
