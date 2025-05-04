@@ -89,6 +89,7 @@ typedef struct XModbus
     bool xRxEnable;//接收
     bool xTxEnable;//发送
     XTimer* timer;//定时器     平台初始化
+    size_t timerOutNumber;//定时器超时次数
     XModbusSndState eSndState;    // 发送状态机（volatile确保多线程可见）
     XModbusRcvState eRcvState;    // 接收状态机
     //函数

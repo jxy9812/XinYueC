@@ -149,6 +149,7 @@ static  void XTimer_Stop(XTimer* timer)
     {
         timeKillEvent(timer->timerId);
         timer->timerId = 0;
+        //printf("停止定时器\n");
     }
 }
 static  void XTimerCreat(XTimer* timer)

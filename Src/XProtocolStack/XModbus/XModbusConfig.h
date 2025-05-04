@@ -101,7 +101,9 @@ extern "C" {
  #define MB_FUNC_READWRITE_HOLDING_ENABLED       (  1 )
 //接收缓冲区默认大小
  #define MB_RECV_BUFFER_SIZE					 (  256 )
-//主站接收返回超时时间
+//主站接收等待时间  
+#define MB_MASTER_RECV_WAIT_TIME				 (  5 )
+//主站接收返回超时时间  要大于MB_MASTER_RECV_WAIT_TIME
  #define MB_MASTER_RECV_OUT_TIME				 (  10 )
 //以下是调试选项
 
@@ -112,8 +114,13 @@ extern "C" {
 //枚举可以转String
  #define MB_ENUM_TO_STRING						 (  1 )
 //显示处理的事件
- #define MB_EVENT_HANDLE_SHOW							 (  1 )
+ #define MB_EVENT_HANDLE_SHOW				     (  1 )
  /*! @} */
+
+//宏定义检查
+#if MB_MASTER_RECV_OUT_TIME <MB_MASTER_RECV_WAIT_TIME
+#error "MB_MASTER_RECV_OUT_TIME 需要大于 MB_MASTER_RECV_WAIT_TIME"  
+#endif
 #ifdef __cplusplus
 }
 #endif
