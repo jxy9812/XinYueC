@@ -51,10 +51,20 @@ static const uint16_t crc16_table[256] = {
     0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
 };
 
-void XCrc_set16Data(uint8_t* pData, uint16_t crc16)
+void XCrc_set16Data(uint8_t* pData, uint16_t crc16, uint8_t mode)
 {
-    *pData = (uint8_t)(crc16 & 0xFF);  // CRC低位（小端模式）
-     *(pData+1) = (uint8_t)(crc16 >> 8);       // CRC高位
+   
+     if (mode) 
+     {
+         // 大端模式：高位在前，低位在后
+         *pData = (uint8_t)(crc16 >> 8);
+         *(pData + 1) = (uint8_t)(crc16 & 0xFF);
+     }
+     else 
+     {
+         *pData = (uint8_t)(crc16 & 0xFF);  // CRC低位（小端模式）
+         *(pData + 1) = (uint8_t)(crc16 >> 8);       // CRC高位
+     }
 }
 
 // 使用查表法计算 CRC16 校验码

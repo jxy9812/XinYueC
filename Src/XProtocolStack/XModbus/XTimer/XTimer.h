@@ -10,7 +10,7 @@ typedef void (*XTimerFree)(XTimer* timer);
 
 typedef void (*XTimerStart)(XTimer* timer);
 typedef void (*XTimerStop)(XTimer* timer);
-typedef void (*XTimerSetInterval)(XTimer* timer);
+//typedef void (*XTimerSetInterval)(XTimer* timer);
 //定时器超时回调函数
 typedef void (*XTimerOut)(XTimer* timer);
 //定时器抽象
@@ -20,18 +20,22 @@ typedef struct XTimer
 	unsigned int timerId;//定时器id
 	int interval;//定时间隔
 	int remainingTime;//超时前的剩余时间
+	size_t number;//超时次数
 	//函数
 	XTimerStart start;//启动
 	XTimerStop stop;//关闭
-	XTimerSetInterval setInterval;
+	//XTimerSetInterval setInterval;
 	XTimerOut timeout;//超时回调
 }XTimer;
 XTimer* XTimer_new(XTimerCreate create);
 void XTimer_free(XTimer* timer, XTimerFree free);
 void XTimer_start(XTimer*timer);
 void XTimer_stop(XTimer* timer);
-//设置定时事件
+//设置定时时间
 void XTimer_setInterval(XTimer* timer,int value);
+
+//超时回调函数
+void XTimer_out(XTimer* timer);
 
 #ifdef __cplusplus
 }

@@ -8,7 +8,7 @@ XModbusFrameQueue* XModbusFrameQueue_new()
 	XModbusFrameQueue* queue = XQueue_New(XModbusFrameData*);
 	/*if (queue)
 	{
-		XModbusFrameData dataFrame{1,XVector_New(UCHAR)};
+		XModbusFrameData frame{1,XVector_New(UCHAR)};
 
 	}*/
 	return queue;
@@ -42,8 +42,8 @@ void XModbusFrameQueue_pop(XModbusFrameQueue* queue)
 	{
 		XModbusFrameData* top= XModbusFrameQueue_top(queue);
 		////显释放里面的XVector数据
-		//if(top->dataFrame)
-		//	XVector_free(top->dataFrame);
+		//if(top->frame)
+		//	XVector_free(top->frame);
 		XModbusFrameData_free(top);
 	}
 	XQueue_pop(queue);
@@ -65,20 +65,20 @@ void XModbusFrameQueue_free(XModbusFrameQueue* queue)
 
 XModbusFrameData* XModbusFrameData_new()
 {
-	XModbusFrameData* dataFrame=XMemory_malloc(sizeof(XModbusFrameData));
-	//dataFrame.address = 1;
-	//dataFrame.crc16 = 0;
-	dataFrame->dataFrame = XVector_New(UCHAR);
-	dataFrame->pduLength = 0;
-	dataFrame->recvHandle = NULL;
-	return dataFrame;
+	XModbusFrameData* frame=XMemory_malloc(sizeof(XModbusFrameData));
+	//frame.address = 1;
+	//frame.crc16 = 0;
+	frame->dataFrame = XVector_New(UCHAR);
+	frame->pduLength = 0;
+	frame->recvHandle = NULL;
+	return frame;
 }
 XModbusFrameData* XModbusFrameData_newRecvHandle()
 {
-	XModbusFrameData* dataFrame = XModbusFrameData_new();
-	dataFrame->recvHandle = XMemory_malloc(sizeof(XModbusFrameDataRecvHandle));
-	XModbusFrameDataRecvHandle_setZero(dataFrame->recvHandle);
-	return dataFrame;
+	XModbusFrameData* frame = XModbusFrameData_new();
+	frame->recvHandle = XMemory_malloc(sizeof(XModbusFrameDataRecvHandle));
+	XModbusFrameDataRecvHandle_setZero(frame->recvHandle);
+	return frame;
 }
 void XModbusFrameData_free(XModbusFrameData* frame)
 {
@@ -132,11 +132,46 @@ void XModbusFrameData_setRtuDataFrame(XModbusFrameData* dataFrame, UCHAR address
 	USHORT usCRC16 = XCrc_get16((UCHAR*)dataFrame, pduLength + 1);
 	//保存校验码
 	uint16_t pos = pduLength + 1;//校验码所属位置
-	XCrc_set16Data(pData+pos, usCRC16);
+	XCrc_set16Data(pData+pos, usCRC16, 0);
 	//pData[pos++] = (UCHAR)(usCRC16 & 0xFF);  // CRC低位（小端模式）
 	//pData[pos++] = (UCHAR)(usCRC16 >> 8);       // CRC高位
 	dataFrame->pduLength = pduLength;
 	dataFrame->pPduFramePos= XVector_at(dataFrame->dataFrame, MB_SER_PDU_PDU_OFF);
+	dataFrame->address = XModbusFrameData_getRtuAddress(dataFrame);;
+	dataFrame->funcCode = XModbusFrameData_getRtuFuncCode(dataFrame);
+}
+
+void XModbusFrameData_setRtuDataFrame_0x06_request(XModbusFrameData* frame, UCHAR address, UCHAR funcCode, uint16_t regAddress, const uint16_t* regData)
+{
+	if (frame == NULL)
+		return;
+	if(frame->dataFrame==NULL)
+		frame->dataFrame = XVector_New(UCHAR);
+	XVector* v = frame->dataFrame;
+	//
+	XVector_resize(v, MB_SER_PDU_PDU_OFF+1+2+2+MB_SER_PDU_SIZE_CRC);
+	frame->pduLength = 1 + 2 + 2;
+	frame->pPduFramePos = XVector_at(v,1);
+	//设置地址
+	XVector_At(v, 0, uint8_t) = address;
+	frame->address = address;
+	//设置功能码
+	XVector_At(v, 1, uint8_t) = funcCode;
+	frame->funcCode = funcCode;
+	//设置寄存器地址
+	//printf("设置寄存器地址\n");
+	XCrc_set16Data(XVector_at(v,2), regAddress,1);
+	//设置寄存器数据
+	XCrc_set16Data(XVector_at(v, 4), *regData,0);
+	//设置crc校验
+	uint16_t crc16 = XCrc_get16(XVector_begin(v), XVector_size(v) - MB_SER_PDU_SIZE_CRC);
+	XCrc_set16Data(XVector_at(v, 6), crc16,0);
+	/*
+	XString* str = XModbusFrameData_to16HexString(frame);
+	printf("当前帧:%s\n", XString_c_str(str));
+	//            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
+	XString_free(str);
+	*/
 }
 
 void XModbusFrameData_setRtuData(XModbusFrameData* dataFrame, XVector* data)
@@ -158,12 +193,12 @@ void XModbusFrameData_setRtuData(XModbusFrameData* dataFrame, XVector* data)
 	if ((dataSize >= MB_SER_PDU_SIZE_MIN) && (XCrc_get16(pData, dataSize) == 0)) {
 		//printf("校验通过\n");
 		XVector_copy(dataFrame->dataFrame, data);
-		//dataFrame->address = pData[MB_SER_PDU_ADDR_OFF];  // 提取从机地址
+		//frame->address = pData[MB_SER_PDU_ADDR_OFF];  // 提取从机地址
 		// 计算PDU长度（总长度 - 地址长度 - CRC长度）
 		dataFrame->pduLength = (USHORT)(dataSize - MB_SER_PDU_PDU_OFF - MB_SER_PDU_SIZE_CRC);
 		dataFrame->pPduFramePos = XVector_at(dataFrame->dataFrame,MB_SER_PDU_PDU_OFF);  // PDU起始位置（地址后第1字节）
-
-		//dataFrame->crc16= XModbusFrameData_parse‌CRC16(pData, dataFrame->pduLength +1);
+		dataFrame->address= XModbusFrameData_getRtuAddress(dataFrame);
+		dataFrame->funcCode= XModbusFrameData_getRtuFuncCode(dataFrame);
 	}
 	else 
 	{

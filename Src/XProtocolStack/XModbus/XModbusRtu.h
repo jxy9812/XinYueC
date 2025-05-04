@@ -35,8 +35,9 @@ typedef struct XModbusRtu XModbusRtu;
 //    XModbusFrameCBTransmitterEmpty FrameCBTransmitterEmpty;
 //    XModbusPortCBTimerExpired PortCBTimerExpired;
 //}XModbusRtu;
-//modbusRTU初始化
-void  XModbusRtuInit(XModbus* modbus);
+
+//modbusRTU初始化 不是给用户调用的 
+void  XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_InitFunction* func, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity);
 /*!
  * @brief 启动Modbus RTU接收和发送功能
  *

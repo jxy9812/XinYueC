@@ -6,8 +6,9 @@ extern "C" {
 #include"XModbusPort.h"
 #include"XString.h"
 //帧接收队列
+typedef struct XModbus XModbus;
 typedef struct XModbusFrameData XModbusFrameData;
-typedef void (*XModbusFrameDataRecvHandCallFunc)(XModbusFrameData* dataFrame);
+typedef void (*XModbusFrameDataRecvHandCallFunc)(XModbus* modbus, XModbusFrameData* dataFrame);
 //接收回调方法
 typedef struct XModbusFrameDataRecvHandle
 {
@@ -18,7 +19,8 @@ typedef struct XModbusFrameDataRecvHandle
 
 typedef struct XModbusFrameData
 {
-    //UCHAR address;
+    UCHAR address;//地址
+    UCHAR funcCode;//功能码
     XVector* dataFrame;//数据帧
     USHORT pduLength;//功能码+数据//不包含CRC
     UCHAR* pPduFramePos;//pdu的指针，指向 dataFrame中
@@ -40,8 +42,11 @@ void XModbusFrameQueue_free(XModbusFrameQueue* queue);
 XModbusFrameData* XModbusFrameData_new();
 XModbusFrameData* XModbusFrameData_newRecvHandle();
 void XModbusFrameData_free(XModbusFrameData* dataFrame);
+
 //构建数据帧
 void XModbusFrameData_setRtuDataFrame(XModbusFrameData* dataFrame,UCHAR address, const UCHAR* pPduframe, USHORT pduLength);
+//构建数据帧0x06功能码
+void XModbusFrameData_setRtuDataFrame_0x06_request(XModbusFrameData* dataFrame, UCHAR address, UCHAR funcCode, uint16_t regAddress, const uint16_t* regData);
 //设置RTU模式下的数据+解析
 void XModbusFrameData_setRtuData(XModbusFrameData* dataFrame, XVector*data);
 //获取RTU模式下的主机地址

@@ -41,9 +41,19 @@ extern "C" {
   *          // 将crc填入帧尾的两个字节（低字节在前，高字节在后）
   */
  uint16_t          XCrc_get16( uint8_t * pucFrame, uint16_t usLen );
- //设置CRC16
- void XCrc_set16Data(uint8_t* pData, uint16_t crc16);
-
+ //设置CRC16  mode为1是大端,0小端
+ void XCrc_set16Data(uint8_t* pData, uint16_t crc16, uint8_t mode);
+ // 宏函数用于设置 CRC16 数据，mode 为 1 表示大端模式，为 0 表示小端模式
+#define XCrc_SET16DATA(pData, crc16, mode) \
+    do { \
+        if (mode) { \
+            *(pData) = (uint8_t)((crc16) >> 8); \
+            *(pData + 1) = (uint8_t)((crc16) & 0xFF); \
+        } else { \
+            *(pData) = (uint8_t)((crc16) & 0xFF); \
+            *(pData + 1) = (uint8_t)((crc16) >> 8); \
+        } \
+    } while (0)
 #ifdef __cplusplus
 }
 #endif

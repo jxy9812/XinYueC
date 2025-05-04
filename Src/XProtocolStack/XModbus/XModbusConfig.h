@@ -99,7 +99,10 @@ extern "C" {
  
  /*! \brief 启用“读写多个寄存器”功能（功能码0x17） */
  #define MB_FUNC_READWRITE_HOLDING_ENABLED       (  1 )
-
+//接收缓冲区默认大小
+ #define MB_RECV_BUFFER_SIZE					 (  256 )
+//主站接收返回超时时间
+ #define MB_MASTER_RECV_OUT_TIME				 (  10 )
 //以下是调试选项
 
  //接收帧显示

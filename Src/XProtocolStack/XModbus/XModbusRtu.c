@@ -2,7 +2,12 @@
 #include "XModbusFrameData.h"
 #include "XCrc.h"
 #include "XModbusConfig.h"
-void XModbusRtuInit(XModbus* modbus)
+#include <string.h>
+static void  XModbusRtu_Timer_out(XTimer* timer)
+{
+    ((XModbus*)timer->data)->pxMBPortCBTimerExpired(timer->data);
+}
+void XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_InitFunction* func, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
 {
     { // RTU 模式初始化（二进制传输，效率高，适合串口通信）
         // 绑定 RTU 模式专用函数（来自 mbrtu.c）
@@ -20,7 +25,28 @@ void XModbusRtuInit(XModbus* modbus)
         modbus->eSndState = STATE_TX_IDLE;
         modbus->eRcvState = STATE_RX_INIT;
         // 调用 RTU 底层初始化（配置串口参数：端口号、波特率、校验位）
-        //eStatus = eMBRTUInit(ucMBAddress, ucPort, ulBaudRate, eParity);
+        assert(func->SerialInit);
+        if (!func->SerialInit(modbus, port, baudRate, parity))
+        {
+            modbus->errorCode= MB_EPORTERR;
+            return;
+        }
+        modbus->SerialEnable = func->SerialEnable;
+        //定时器初始化
+        assert(func->TimerCreate);
+        modbus->timer= XTimer_new(func->TimerCreate);
+        modbus->timer->data = modbus;
+        modbus->timer->timeout = XModbusRtu_Timer_out;
+        assert(func->TimerStart);
+        modbus->timer->start = func->TimerStart;
+        assert(func->TimerStop);
+        modbus->timer->stop = func->TimerStop;
+       /* assert(func->TimerSetInterval);
+        modbus->timer->setInterval = func->TimerSetInterval;*/
+        //设置定时时间
+        modbus->timer->interval = 3.5 * (10+ parity) * 1000 / baudRate;
+        if (modbus->timer->interval < 2)
+            modbus->timer->interval = 2;
     }
 }
 void XModbusRtuStart(XModbus* modbus)
@@ -98,17 +124,17 @@ XModbusErrorCode XModbusRtuSend(XModbus* modbus, XModbusFrameData* dataFrame)
 
 bool XModbusRtuReceiveFSM(XModbus* modbus)
 {
+    //printf("检查接收缓冲区\n");
     if (modbus == NULL)
         return FALSE;
     UCHAR           ucByte;
+    
     if (modbus->eSndState != STATE_TX_IDLE /*|| modbus->eSndState == STATE_TX_END*/)
         return FALSE;
+    //printf("可以接收数据\n");
     //assert(modbus->eSndState == STATE_TX_IDLE);  // 确保发送状态为空闲
     //发送完数据后3.5字符内收到了返回信息 重置发送状态
-    if (modbus->eSndState == STATE_TX_END)
-    {
-        modbus->eSndState = STATE_TX_IDLE;
-    }
+   
     // 读取接收到的字节（平台特定：从串口缓冲区获取）
     (void)modbus->xGetByte(modbus,(CHAR*)&ucByte);
     XVector* recvVector = modbus->recvBuffer;
@@ -124,8 +150,10 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
     case STATE_RX_IDLE:  // 空闲状态（接收到新帧起始字节）
         XVector_clear(recvVector);  // 重置接收缓冲区位置
         XVector_push_back(recvVector,&ucByte);  // 存储第一个字节（从机地址）
+        if (modbus->eSndState == STATE_TX_END)
+            modbus->eSndState = STATE_TX_IDLE;
         modbus->eRcvState = STATE_RX_RCV;  // 切换到接收中状态
-        XTimer_start(modbus->timer);  // 启动T35定时器
+        //XTimer_start(modbus->timer);  // 启动T35定时器
         break;
 
     case STATE_RX_RCV:  // 接收中状态（连续接收字节）
@@ -198,6 +226,21 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
                 //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
                 XString_free(str);
 #endif // MB_SEND_FRAME_SHOW
+                if (XModbus_isMaster(modbus))
+                {//如果是主站 设置当前接收回调
+                    if (frame->recvHandle != NULL&& frame->recvHandle->pRecvHandCallFunc!=NULL)
+                    {//发送的帧中存在回调方法
+                        if (modbus->recvHandleMaster != NULL)//当前存在上一个回调
+                            XMemory_free(modbus->recvHandleMaster);
+                        modbus->recvHandleMaster= frame->recvHandle;
+                        frame->recvHandle = NULL;//转移所有权
+                    }
+                    else
+                    {//发送的帧中不存在回调 初始化结构体全部置为0
+                        XModbusFrameDataRecvHandle_setZero(modbus->recvHandleMaster);
+                    }
+                  
+                }
                 XModbusFrameQueue_pop(sendQueue);
                 // 发送完成，通知上层协议帧已发送
                 XEventQueue_push(modbus->eventQueue, EV_FRAME_SENT);
@@ -215,8 +258,32 @@ bool XModbusRtuTimerT35Expired(XModbus* modbus)
     //发完一帧数据总线等待
     if (modbus->eSndState == STATE_TX_END)
     {
-        modbus->eSndState = STATE_TX_IDLE;
-        XTimer_stop(modbus->timer);  // 关闭定时器
+        if (XModbus_isMaster(modbus))
+        {
+            if (((modbus->timer->number) * (modbus->timer->interval) > MB_MASTER_RECV_OUT_TIME))
+            {//超时也没有触发回调
+                //if(modbus->recvHandleMaster != NULL)
+                //{
+                //    if (modbus->recvHandleMaster->pRecvHandCallFunc)
+                //        modbus->recvHandleMaster->pRecvHandCallFunc(modbus, NULL);//
+                //    //用完释放
+                //    XMemory_free(modbus->recvHandleMaster);
+                //    modbus->recvHandleMaster = NULL;
+                //   
+                //}
+                modbus->eSndState = STATE_TX_IDLE;
+                XTimer_stop(modbus->timer);  // 关闭定时器
+            } 
+            /*else  if (((modbus->timer->number) * (modbus->timer->interval) > MB_MASTER_RECV_OUT_TIME/2))
+            {
+                modbus->eSndState = STATE_TX_IDLE;
+            }*/
+        }
+        else
+        {
+            modbus->eSndState = STATE_TX_IDLE;
+            XTimer_stop(modbus->timer);  // 关闭定时器
+        }
         return true;
     }
     //接收超时等待

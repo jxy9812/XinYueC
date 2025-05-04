@@ -149,7 +149,7 @@ XModbusException XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc(XModbus* mod
 	}
 	//设置crc16校验码
 	uint16_t crc16 = XCrc_get16(XVector_begin(sendVector), XVector_size(sendVector)- MB_SER_PDU_SIZE_CRC);
-	XCrc_set16Data(XVector_at(sendVector, XVector_size(sendVector) - MB_SER_PDU_SIZE_CRC), crc16);
+	XCrc_set16Data(XVector_at(sendVector, XVector_size(sendVector) - MB_SER_PDU_SIZE_CRC), crc16, 0);
 	sendFrame->pPduFramePos = XVector_at(sendVector, MB_SER_PDU_PDU_OFF);
 	sendFrame->pduLength = 1 + 1 + len;
 	XModbus_sendData(modbus, sendFrame);

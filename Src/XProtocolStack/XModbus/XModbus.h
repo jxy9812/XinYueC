@@ -35,6 +35,7 @@ typedef XModbusErrorCode(*XModbusFrameSend) (XModbus* modbus, XModbusFrameData* 
 typedef void(*XModbusFrameClose) (XModbus* modbus);
 typedef bool (*XModbusGetByte)(XModbus* modbus, uint8_t* Byte);//获取一个字符
 typedef bool (*XModbusPutByte)(XModbus* modbus, uint8_t Byte);//发送一个字符
+typedef bool(*XModbusSerialInit)(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity);//初始化串口
 /*!
  * @brief 启用/禁用串口收发
  * @param xRxEnable TRUE=启用接收，FALSE=禁用接收
@@ -45,7 +46,21 @@ typedef void(*XModbusSerialEnable)(XModbus* modbus, bool xRxEnable, bool xTxEnab
 typedef bool(*XModbusFrameCBByteReceived)(XModbus* modbus);   // 接收到单个字节时调用（触发接收状态机）
 typedef bool(*XModbusFrameCBTransmitterEmpty)(XModbus* modbus); // 发送缓冲区空时调用（触发发送状态机）
 typedef bool(*XModbusPortCBTimerExpired)(XModbus* modbus);    // 定时器超时回调（如 RTU 的 T35 超时、ASCII 的 T1S 超时）
-
+//初始化的函数
+typedef struct XModbus_InitFunction
+{
+    XModbusGetByte xGetByte;//获取一个字符数据
+    XModbusPutByte xPutByte;//发送一个字符数据
+    XModbusSerialInit SerialInit;//初始化串口
+    XModbusSerialEnable SerialEnable;//控制串口收发状态  可以为NULL
+    //以下是定时器的参数
+    XTimerCreate TimerCreate;//定时器创建
+    XTimerFree   TimerFree;//这个不是必须，需要释放资源关闭的时候才需要
+    XTimerStart  TimerStart;
+    XTimerStop   TimerStop;
+    //XTimerSetInterval TimerSetInterval; //不是必须
+    //XTimerOut    TimerOut;
+}XModbus_InitFunction;
 typedef struct XModbus
 {
     UCHAR    address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
@@ -84,7 +99,7 @@ typedef struct XModbus
 
 }XModbus;
 
-void XModbus_init(XModbus* modbus,size_t bufferSize, XModbusMode mode, XModbusGetByte xGetByte, XModbusPutByte xPutByte);
+void XModbus_init(XModbus* modbus, XModbus_InitFunction* func,XModbusMode mode,uint8_t address,uint8_t port,uint32_t baudRate, XModbusParity parity);
 XModbus* XModbus_new(size_t bufferSize, XModbusMode mode, XModbusGetByte xGetByte, XModbusPutByte xPutByte);
 /*! \ingroup modbus
  * \brief 启用Modbus协议栈
@@ -115,6 +130,8 @@ XModbusErrorCode  XModbus_poll(XModbus* modbus);
 //发送一帧数据
 XModbusErrorCode XModbus_sendData(XModbus* modbus, XModbusFrameData* sendFrame);
 
+//当前是主站吗
+bool XModbus_isMaster(XModbus* modbus);
 //设置功能码处理函数
 XModbusErrorCode XModbus_setFunctionHandler(XModbus* modbus, XModbusFunctionHandler* FunctionHandler);
 #ifdef __cplusplus

@@ -19,35 +19,38 @@
 #define MB_PORT_HAS_CLOSE 0
 #endif
 
-void XModbus_init(XModbus* modbus,size_t bufferSize, XModbusMode mode, XModbusGetByte xGetByte, XModbusPutByte xPutByte)
+void XModbus_init(XModbus* modbus, XModbus_InitFunction* func, XModbusMode mode, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
 {
-	if (modbus == NULL)
+	if (modbus == NULL|| func==NULL)
 		return;
 	modbus->recvBuffer = XVector_New(uint8_t);
-	XVector_resize(modbus->recvBuffer,bufferSize);
+	XVector_resize(modbus->recvBuffer, MB_RECV_BUFFER_SIZE);
 	modbus->sendQueue= XModbusFrameQueue_new();
     modbus->recvFrameQueue=XModbusFrameQueue_new();
 	modbus->eventQueue = XEventQueue_new(XEventQueue_defaultConfigInit);
     modbus->funcCodeList = XModbusFuncCodeList_new();
 	modbus->mode = mode;
-	modbus->xGetByte = xGetByte;
-	modbus->xPutByte = xPutByte;
+    assert(func->xGetByte);
+	modbus->xGetByte = func->xGetByte;
+    assert(func->xPutByte);
+	modbus->xPutByte = func->xPutByte;
     modbus->errorCode = MB_ENOERR;
+    modbus->recvHandleMaster = NULL;
     // 根据选择的模式初始化对应的函数指针和底层模块
-    if (modbus->mode % 2 == 0)
+    if (XModbus_isMaster(modbus))
     {//主站下初始化资源
-        modbus->recvHandleMaster = XMemory_malloc(sizeof(XModbusFrameDataRecvHandle));
-        XModbusFrameDataRecvHandle_setZero(modbus->recvHandleMaster);
+        /*modbus->recvHandleMaster = XMemory_malloc(sizeof(XModbusFrameDataRecvHandle));
+        XModbusFrameDataRecvHandle_setZero(modbus->recvHandleMaster);*/
     }
     else
     {//从站初始化资源
-        modbus->recvHandleMaster = NULL;
+       
     }
     switch (mode) {
 #if MB_RTU_ENABLED > 0
     case MB_RTU_MASTER: 
     case MB_RTU_SLAVE:
-        XModbusRtuInit(modbus);
+        XModbusRtuInit(modbus,mode,func,address,port,baudRate,parity);
     break;
 #endif
 #if MB_ASCII_ENABLED > 0
@@ -88,14 +91,13 @@ void XModbus_init(XModbus* modbus,size_t bufferSize, XModbusMode mode, XModbusGe
     }
 //}
 }
-
 XModbus* XModbus_new( size_t bufferSize, XModbusMode mode, XModbusGetByte xGetByte, XModbusPutByte xPutByte)
 {
 	XModbus* modbus = XMemory_malloc(sizeof(XModbus));
 	if(modbus==NULL)
 		return modbus;
 	//正式初始化
-	XModbus_init(modbus,bufferSize,mode,xGetByte,xPutByte);
+	//XModbus_init(modbus,bufferSize,mode,xGetByte,xPutByte);
 }
 XModbusErrorCode XModbus_enable(XModbus* modbus)
 {
@@ -138,22 +140,23 @@ static void XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
 {
    /* ((char*)(XVector_begin(modbus->recvBuffer)))[XVector_size(modbus->recvBuffer)] = 0;
     printf("数据:%s  大小:%d buff接收缓冲区大小:%d\n",XVector_begin(modbus->recvBuffer), XVector_size(modbus->recvBuffer), XVector_capacity(modbus->recvBuffer));*/
-
+    
     // 调用对应模式的接收函数，获取帧数据（地址、缓冲区、长度）
     XModbusFrameData* recvFrame = XModbusFrameData_new();
+    
     //解析数据帧
     modbus->peMBFrameReceiveCur(modbus,recvFrame);
-   
+    //printf("进入帧数据处理:%d\n", modbus->errorCode);
     if (modbus->errorCode == MB_ENOERR) {
-        UCHAR address= XModbusFrameData_getRtuAddress(recvFrame);
-        UCHAR code= XModbusFrameData_getRtuFuncCode(recvFrame);
+        UCHAR address= recvFrame->address;
+        UCHAR code= recvFrame->funcCode;
 #if MB_RECV_FRAME_SHOW
         XString* str = XModbusFrameData_to16HexString(recvFrame);
         printf("接收帧:%s\n", XString_c_str(str));
         //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
         XString_free(str);
 #endif // MB_SEND_FRAME_SHOW
-        if (modbus->mode % 2 == 0)
+        if (XModbus_isMaster(modbus))
         {
             //printf("当前是主站\n");
            //printf("将有效的帧加入接收队列处理\n");
@@ -186,12 +189,55 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
         return;
    
     XModbusFrameData* frame = XModbusFrameQueue_top(modbus->recvFrameQueue);
-    UCHAR address = XModbusFrameData_getRtuAddress(frame);
-    UCHAR code = XModbusFrameData_getRtuFuncCode(frame);
+    UCHAR address = frame->address;
+    UCHAR code = frame->funcCode;
     //XString* str = XModbusFrameData_to16HexString(frame);
     //printf("地址:%X 功能码:%X 完整:%s\n", address, code, XString_c_str(str));
     ////            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
     //XString_free(str);
+
+    if (XModbus_isMaster(modbus)&& modbus->recvHandleMaster!=NULL)
+    {
+        if (modbus->recvHandleMaster->pRecvHandCallFunc)
+        {
+            if (modbus->recvHandleMaster->waitAddressCode == (frame->address << 8 | frame->funcCode))
+            {
+                if (frame->recvHandle != NULL)//释放准备交换
+                    XMemory_free(frame->recvHandle);
+                //拷贝数据
+                frame->recvHandle = modbus->recvHandleMaster;
+                modbus->recvHandleMaster = NULL;
+                frame->recvHandle->pRecvHandCallFunc(modbus, frame);
+                //释放一个资源
+                XModbusFrameQueue_pop(modbus->recvFrameQueue);
+                return;
+            }
+            else
+            {//新帧与等待的响应不符合，定义为丢失，回调提醒用户
+                   modbus->recvHandleMaster->pRecvHandCallFunc(modbus, NULL);
+                    //用完释放
+                   XMemory_free(modbus->recvHandleMaster);
+                   modbus->recvHandleMaster = NULL;
+            }
+        }
+        //if (modbus->recvHandleMaster->waitAddressCode == (frame->address << 8 | frame->funcCode))
+        //{//当前正在等待的就是需要的
+        //    if (modbus->recvHandleMaster->pRecvHandCallFunc)
+        //    {
+        //        if (frame->recvHandle != NULL)//释放准备交换
+        //            XMemory_free(frame->recvHandle);
+        //        //拷贝数据
+        //        frame->recvHandle = modbus->recvHandleMaster;
+        //        modbus->recvHandleMaster=NULL;
+        //        frame->recvHandle->pRecvHandCallFunc(modbus, frame);
+        //        //释放一个资源
+        //        XModbusFrameQueue_pop(modbus->recvFrameQueue);
+        //        return;
+        //    }
+        //}
+   
+    }
+
     XModbusFunctionHandler* FunctionHandler=XModbusFuncCodeList_findFuncCode(modbus->funcCodeList,code);
     if (FunctionHandler == NULL)
     {//没有对应的处理函数
@@ -199,6 +245,7 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
     }
     else
     {
+        //printf("执行功能码\n");
         assert(FunctionHandler->function);
         FunctionHandler->function(modbus,frame, FunctionHandler);//处理中
     }
@@ -248,10 +295,19 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
    return modbus->errorCode; // 轮询成功（无错误或错误已处理）
 }
 
-XModbusErrorCode XModbus_sendData(XModbus* modbus, XModbusFrameData* sendFrame)
+XModbusErrorCode XModbus_sendData(XModbus* modbus, XModbusFrameData* frame)
 {
-    XModbusFrameQueue_push(modbus->sendQueue, sendFrame);
-    return MB_ENOERR;
+    if (frame->recvHandle != NULL)
+    {
+        frame->recvHandle->waitAddressCode = frame->address<< 8 | frame->funcCode;
+    }
+    XModbusFrameQueue_push(modbus->sendQueue, frame);
+    return modbus->errorCode;
+}
+
+bool XModbus_isMaster(XModbus* modbus)
+{
+    return modbus->mode % 2 == 0;
 }
 
 XModbusErrorCode XModbus_setFunctionHandler(XModbus* modbus, XModbusFunctionHandler* FunctionHandler)

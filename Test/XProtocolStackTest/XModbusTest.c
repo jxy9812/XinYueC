@@ -11,7 +11,10 @@ static HANDLE hSerial;
 static  HANDLE hEvent;
 static OVERLAPPED ov;
 // 打开串口
-static BOOL OpenSerialPort(const char* portName, DWORD baudRate) {
+static bool SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity)
+{
+    char portName[10] = {0};
+    sprintf(portName,"COM%d",port);
    // 打开串口
     hSerial = CreateFile(portName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
     if (hSerial == INVALID_HANDLE_VALUE) {
@@ -40,7 +43,7 @@ static BOOL OpenSerialPort(const char* portName, DWORD baudRate) {
     dcbSerialParams.BaudRate = baudRate;
     dcbSerialParams.ByteSize = 8;
     dcbSerialParams.StopBits = ONESTOPBIT;
-    dcbSerialParams.Parity = NOPARITY;
+    dcbSerialParams.Parity = parity;
     if (!SetCommState(hSerial, &dcbSerialParams)) {
         printf("无法设置串口状态！\n");
         CloseHandle(hSerial);
@@ -67,7 +70,19 @@ static BOOL OpenSerialPort(const char* portName, DWORD baudRate) {
     if (!SetCommMask(hSerial, EV_RXCHAR))
         printf("设置事件掩码失败");
 
-   // printf("串口监听中... 按Ctrl+C退出\n");
+    // 关闭 DTR 和 RTS
+    if (!EscapeCommFunction(hSerial, CLRDTR)) {
+        DWORD errorCode = GetLastError();
+        printf("无法关闭 DTR！错误代码: %lu\n", errorCode);
+        CloseHandle(hSerial);
+        return 1;
+    }
+    if (!EscapeCommFunction(hSerial, CLRRTS)) {
+        DWORD errorCode = GetLastError();
+        printf("无法关闭 RTS！错误代码: %lu\n", errorCode);
+        CloseHandle(hSerial);
+        return 1;
+    }
     return TRUE;
 }
 static bool XModbus_GetByte(XModbus* modbus, uint8_t* byte)
@@ -115,20 +130,13 @@ static bool XModbus_PutByte(XModbus* modbus, uint8_t Byte)
 VOID CALLBACK TimerCallback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2) 
 {
     XTimer* timer = ((XTimer*)dwUser);
-    if(timer->timeout)
-        timer->timeout(dwUser);
-}
-static void  XTimer_out(XTimer* timer)
-{
-   // printf("定时器触发\n");
-    //XModbusRtuTimerT35Expired(timer->data);
-    ((XModbus*)timer->data)->pxMBPortCBTimerExpired(timer->data);
+    XTimer_out(timer);
 }
 static  void XTimer_Start(XTimer* timer)
 {
     XTimer_stop(timer);
     // 创建定时器，间隔为 2 毫秒
-    UINT timerId = timeSetEvent(2, 1, TimerCallback, timer, TIME_PERIODIC);
+    UINT timerId = timeSetEvent(timer->interval, 1, TimerCallback, timer, TIME_PERIODIC);
     if (timerId == 0) {
         timeEndPeriod(1);
         printf("定时器创建失败\n");
@@ -150,62 +158,10 @@ static  void XTimerCreat(XTimer* timer)
     //timer->data = XMemory_malloc(sizeof(UINT));
     timer->start = XTimer_Start;
     timer->stop = XTimer_Stop;
-    timer->timeout = XTimer_out;
-    //timer->interval = 1750;//1750微秒
-    //static LARGE_INTEGER frequency;
-    //static LARGE_INTEGER start;
-    //LARGE_INTEGER current;
-    //double elapsedMicroseconds;
-    //// 获取性能计数器的频率
-    //QueryPerformanceFrequency(&frequency);
-    //// 获取开始时间
-    //QueryPerformanceCounter(&start);
-    //while (1) {
-    //    // 获取当前时间
-    //    QueryPerformanceCounter(&current);
-    //    // 计算经过的时间（微秒）
-    //    elapsedMicroseconds = ((double)(current.QuadPart - start.QuadPart) * 1000000) / frequency.QuadPart;
-
-    //    if (elapsedMicroseconds >= timer->interval) {
-    //        // 定时器触发
-    //        if(timer->timeout)
-    //            timer->timeout(timer);
-    //        // 更新开始时间
-    //        start = current;
-    //    }
-    //}
 }
 
-
-static XModbusTest_WIn32(XModbus* modbus)
-{
-    //HANDLE hEvent=NULL;
-    // 打开串口
-    if (OpenSerialPort("COM6", CBR_115200)) {
-        // 关闭 DTR 和 RTS
-        if (!EscapeCommFunction(hSerial, CLRDTR)) {
-            DWORD errorCode = GetLastError();
-            printf("无法关闭 DTR！错误代码: %lu\n", errorCode);
-            CloseHandle(hSerial);
-            return 1;
-        }
-        if (!EscapeCommFunction(hSerial, CLRRTS)) {
-            DWORD errorCode = GetLastError();
-            printf("无法关闭 RTS！错误代码: %lu\n", errorCode);
-            CloseHandle(hSerial);
-            return 1;
-        }
-        
-    }
-   
-}
-char buffer[1024];
-#define BUFFER_SIZE 1024
 static void SerialPoll(XModbus* modbus)
 {
-    DWORD dwEvent;
-    DWORD bytesRead;
-    char buffer[BUFFER_SIZE];
     COMSTAT comStat;
     DWORD errors;
 
@@ -214,7 +170,7 @@ static void SerialPoll(XModbus* modbus)
         printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
         return FALSE;
     }
-    if (comStat.cbInQue && modbus->eSndState == STATE_TX_IDLE)
+    if (comStat.cbInQue)
     {
         modbus->pxMBFrameCBByteReceived(modbus);
     }
@@ -226,6 +182,14 @@ static void SerialPoll(XModbus* modbus)
     ResetEvent(ov.hEvent);
 }
 #endif // WIN32
+//0x6 功能码响应
+static void RtuDataFrame_0x06_reply(XModbus* modbus, XModbusFrameData* frame)
+{
+    if(frame==NULL)
+        printf("超时了\n");
+    printf("执行自定义回调%p\n",frame);
+   //exit(0);
+}
 
 void XModbusTest()
 {
@@ -233,13 +197,15 @@ void XModbusTest()
     //UCHAR buffer[] = { 0x01,0x06,0x00,0x00,0x00,0x02,0x08,0x0B };
     //printf("CRC校验为:%d\n", modbus_crc16_table(buffer, sizeof(buffer)));
     //printf("CRC校验为:%d\n", XCRC16(buffer, sizeof(buffer)-2));
+    XModbus_InitFunction InitFunction = {0};
+    InitFunction.xGetByte = XModbus_GetByte;
+    InitFunction.xPutByte = XModbus_PutByte;
+    InitFunction.SerialInit = SerialInit;
+    InitFunction.TimerCreate = XTimerCreat;
+    InitFunction.TimerStart = XTimer_Start;
+    InitFunction.TimerStop = XTimer_Stop;
     XModbus* modbus = XMemory_malloc(sizeof(XModbus));
-    modbus->address = 0x1;
-    XModbus_init(modbus, 256, MB_RTU_SLAVE, XModbus_GetByte, XModbus_PutByte);
-    modbus->SerialEnable = NULL;
-    modbus->timer= XTimer_new(XTimerCreat);
-    modbus->timer->data = modbus;
-
+    XModbus_init(modbus, &InitFunction, MB_RTU_MASTER, 0x01, 2, 38400, MB_PAR_NONE);
     XModbusRegisterFunc* Register=XModbusRegisterFunc_new(16);
     //设置从站的功能码回调函数
     {
@@ -251,10 +217,20 @@ void XModbusTest()
         XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterFunc_0x06_RTU_slaveRecvHandCallFunc,Register };
         XModbus_setFunctionHandler(modbus, &Handler);
     }
-
-#ifdef WIN32
-	XModbusTest_WIn32(modbus);
-#endif // WIN32
+    {
+        XModbusFrameData* frame = XModbusFrameData_newRecvHandle();
+        frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
+        char buff[] = {0x00,0x01};
+        XModbusFrameData_setRtuDataFrame_0x06_request(frame, 0x01, 0x06, 0x01, buff);
+        XModbus_sendData(modbus, frame);
+    }
+    {
+        XModbusFrameData* frame = XModbusFrameData_newRecvHandle();
+        //frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
+        char buff[] = { 0x00,0x01 };
+        XModbusFrameData_setRtuDataFrame_0x06_request(frame, 0x01, 0x06, 0x00, buff);
+        XModbus_sendData(modbus, frame);
+    }
     XModbus_enable(modbus);
     while (true)
     {

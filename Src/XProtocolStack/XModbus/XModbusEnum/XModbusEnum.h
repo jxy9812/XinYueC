@@ -63,7 +63,13 @@ extern "C" {
         EV_EXECUTE,                 /*!< 执行功能码处理事件 */
         EV_FRAME_SENT               /*!< 帧发送完成事件 */
     } XModbusEventType;
-
+    /*! \brief 串口传输校验位类型 */
+    typedef enum
+    {
+        MB_PAR_NONE,                /*!< 无校验 */
+        MB_PAR_ODD,                 /*!< 奇校验 */
+        MB_PAR_EVEN                 /*!< 偶校验 */
+    } XModbusParity;
     /* ----------------------- 接收状态机枚举 -----------------------------*/
     typedef enum {
         STATE_RX_INIT,    // 接收初始状态（等待总线空闲）

@@ -28,6 +28,7 @@ uint16_t* XModbusRegisterFunc_at(XModbusRegisterFunc* regFunc, uint16_t regAddre
 
 //0x03读保持寄存器接收回调函数 主站是响应报文
 XModbusException XModbusRegisterFunc_0x03_RTU_masterRecvHandCallFunc(XModbus* modbus, XModbusFrameData* frameData, XModbusFunctionHandler* FunctionHandler);
+
 //0x03读保持寄存器接收回调函数 从站是请求报文
 XModbusException XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrameData* frameData, XModbusFunctionHandler* FunctionHandler);
 
