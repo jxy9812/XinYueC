@@ -54,7 +54,7 @@ static const uint16_t crc16_table[256] = {
 
 void XCrc_set16Data(uint8_t* dst, uint16_t src, uint8_t mode)
 {
-    *((uint16_t*)dst) = WriteEndian16(src, mode);
+    *((uint16_t*)dst) = SwapEndian16(src, mode);
      //if (mode) 
      //{
      //    // 大端模式：高位在前，低位在后

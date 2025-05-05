@@ -10,7 +10,25 @@ extern "C" {
 typedef struct XModbusFrameData XModbusFrameData;
 typedef struct XString XString;
 typedef struct XVector XVector;
-
+/* -------------------------------------- 线圈与离散输入-------------------------------------*/
+#define XMODBUS_COILS_STATE_ON        0xFF00//线圈打开状态
+#define XMODBUS_COILS_STATE_OFF       0x0000//线圈打开状态  
+/*
+* @brief  一个字节中按偏移量设置一个比特位
+* @param  ByteBuff:uint8_t* 类型 指向要操作的字节
+* @param  Offset:偏移量(0~7)
+* @param  State:要设置的状态(0或1)
+* @retval
+*/
+#define XMODBUS_UINT8_SET_BITS(ByteBuff,Offset,State) (*(ByteBuff)=((State<<Offset)|(*(ByteBuff))))
+/*
+* @brief  一个字节中按偏移量查看一个比特位
+* @param  ByteBuff:uint8_t* 类型 指向要查看的字节
+* @param  Offset:偏移量(0~7)
+* @retval 状态(0或1)
+*/
+#define XMODBUS_UINT8_GET_BITS(ByteBuff,Offset) (((*(ByteBuff))>>Offset)&0x1) 
+/* --------------------------------- RTU模式初始化数据帧-------------------------------------*/
 /*
 * @brief  初始化RTU格式数据帧     主机地址(1)+功能码(1)+数据(dataSIze)+crc16(2)
 * @param  frame:XModbusFrameData对象
@@ -96,6 +114,24 @@ void XModbusFrameDataRTU_setDataFrame_0x04_request(XModbusFrameData* frame, uint
 */
 void XModbusFrameDataRTU_setDataFrame_0x04_reply(XModbusFrameData* frame, uint8_t address, uint16_t* regData,uint16_t regCount);
 /*
+* @brief  构建数据帧0x05功能码请求帧   写单个线圈
+* @param  frame:XModbusFrameData对象
+* @param  address:从机地址
+* @param  coilsAddress:线圈地址(数据帧中的地址)
+* @param  coilsState:指向要写入的线圈状态  值填 XMODBUS_COILS_STATE_ON(开) XMODBUS_COILS_STATE_OFF(关)
+* @retval
+*/
+void XModbusFrameDataRTU_setDataFrame_0x05_request(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, uint16_t coilsState);
+/*
+* @brief  构建数据帧0x05功能码响应帧   写单个线圈(实际成功直接转发请求帧)
+* @param  frame:XModbusFrameData对象
+* @param  address:主机地址
+* @param  coilsAddress:线圈地址(数据帧中的地址)
+* @param  coilsState:指向要写入的线圈状态  值填 XMODBUS_COILS_STATE_ON(开) XMODBUS_COILS_STATE_OFF(关)
+* @retval
+*/
+void XModbusFrameDataRTU_setDataFrame_0x05_reply(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, uint16_t coilsState);
+/*
 * @brief  构建数据帧0x06功能码请求帧   写寄存器
 * @param  frame:XModbusFrameData对象
 * @param  address:从机地址
@@ -132,6 +168,25 @@ void XModbusFrameDataRTU_setDataFrame_0x10_request(XModbusFrameData* frame, uint
 * @retval
 */
 void XModbusFrameDataRTU_setDataFrame_0x10_reply(XModbusFrameData* frame, uint8_t address, uint16_t regAddress, uint16_t regCount);
+/*
+* @brief  构建数据帧0x0F功能码请求帧   写多个线圈
+* @param  frame:XModbusFrameData对象
+* @param  address:从机地址
+* @param  coilsAddress:线圈地址(数据帧中的地址)
+* @param  coilsCount:线圈数量
+* @param  coilsData:指向要写入的线圈数据的缓冲区()传入数据
+* @retval
+*/
+void XModbusFrameDataRTU_setDataFrame_0x0F_request(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, uint16_t coilsCount, uint8_t* coilsData);
+/*
+* @brief  构建数据帧0x0F功能码响应帧   写多个线圈
+* @param  frame:XModbusFrameData对象
+* @param  address:主机地址
+* @param  coilsAddress:线圈地址(数据帧中的地址)
+* @param  coilsCount:线圈数量
+* @retval
+*/
+void XModbusFrameDataRTU_setDataFrame_0x0F_reply(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, uint16_t coilsCount);
 /* ----------------------- RTU模式解析数据帧-------------------------------------*/
 //将一个数据解析成RTU帧
 void XModbusFrameDataRTU_parseData(XModbusFrameData* frame, XVector* data);

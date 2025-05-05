@@ -124,7 +124,7 @@ void XDelay(const size_t msec)
 	}
 }
 
-uint16_t WriteEndian16(uint16_t data, uint8_t mode)
+uint16_t SwapEndian16(uint16_t data, uint8_t mode)
 {
 #if IS_BIG_ENDIAN
 	if (mode) {

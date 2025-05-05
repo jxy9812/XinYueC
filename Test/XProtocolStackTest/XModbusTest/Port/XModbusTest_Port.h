@@ -1,0 +1,33 @@
+﻿#ifndef XMODBUSTEST_PORT_H
+#define XMODBUSTEST_PORT_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include"XProtocolStackTest.h"
+#include"XModbusRtu.h"
+#include"XMemory.h"
+#include"XCrc.h"
+#include"XModbusFrameData.h"
+
+/*Modbus测试接口头文件
+不同的操作系统要实现下面几个函数即可启用,Windows接口以实现
+移植可以查看Windows实现
+*/
+// 打开串口
+bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity);
+//获取一个字节
+bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte);
+//发送一个字节
+bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte);
+//定时器启动
+void XModbusTest_XTimer_Start(XTimer* timer);
+//定时器停止
+void XModbusTest_XTimer_Stop(XTimer* timer);
+//定时器创建
+void XModbusTest_XTimerCreat(XTimer* timer);
+//控制读写
+void XModbusTest_SerialPoll(XModbus* modbus);
+#ifdef __cplusplus
+}
+#endif
+#endif

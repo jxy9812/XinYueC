@@ -1,9 +1,6 @@
-﻿#include"XProtocolStackTest.h"
-#include"XModbusRtu.h"
-#include"XMemory.h"
-#include"XCrc.h"
-#include"XModbusFrameData.h"
-#ifdef WIN32
+﻿#ifdef WIN32
+//Windows接口文件
+#include"XModbusTest_Port.h"
 #include <windows.h>
 // 告诉编译器链接 winmm.lib 库
 #pragma comment(lib, "winmm.lib")
@@ -12,11 +9,11 @@ static HANDLE hSerial;
 static  HANDLE hEvent;
 static OVERLAPPED ov;
 // 打开串口
-static bool SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity)
+bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity)
 {
-    char portName[10] = {0};
-    sprintf(portName,"COM%d",port);
-   // 打开串口
+    char portName[10] = { 0 };
+    sprintf(portName, "COM%d", port);
+    // 打开串口
     hSerial = CreateFile(portName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
     if (hSerial == INVALID_HANDLE_VALUE) {
         DWORD errorCode = GetLastError();
@@ -86,9 +83,9 @@ static bool SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbus
     }
     return TRUE;
 }
-static bool XModbus_GetByte(XModbus* modbus, uint8_t* byte)
+bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte)
 {
-	DWORD bytesRead;
+    DWORD bytesRead;
     if (!ReadFile(hSerial, byte, 1, &bytesRead, &ov))
     {
         if (GetLastError() != ERROR_IO_PENDING)
@@ -103,14 +100,14 @@ static bool XModbus_GetByte(XModbus* modbus, uint8_t* byte)
             printf("异步读取失败\n");
             return false;
         }
-	}
-   // printf("接收到字符%c\n", *byte);
-	return TRUE;
+    }
+    // printf("接收到字符%c\n", *byte);
+    return TRUE;
 }
-static bool XModbus_PutByte(XModbus* modbus, uint8_t Byte)
+bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte)
 {
-	DWORD bytesWritten;
-	if (!WriteFile(hSerial, &Byte,1, &bytesWritten, &ov))
+    DWORD bytesWritten;
+    if (!WriteFile(hSerial, &Byte, 1, &bytesWritten, &ov))
     {
         if (GetLastError() != ERROR_IO_PENDING)
         {
@@ -123,17 +120,17 @@ static bool XModbus_PutByte(XModbus* modbus, uint8_t Byte)
             printf("异步写入失败");
             return FALSE;
         }
-	}
-	return TRUE;
+    }
+    return TRUE;
 }
 
 // 定时器回调函数
-VOID CALLBACK TimerCallback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2) 
+VOID CALLBACK TimerCallback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
 {
     XTimer* timer = ((XTimer*)dwUser);
     XTimer_out(timer);
 }
-static  void XTimer_Start(XTimer* timer)
+void XModbusTest_XTimer_Start(XTimer* timer)
 {
     XTimer_stop(timer);
     // 创建定时器，间隔为 2 毫秒
@@ -144,25 +141,25 @@ static  void XTimer_Start(XTimer* timer)
     }
     timer->timerId = timerId;
 }
-static  void XTimer_Stop(XTimer* timer)
+void XModbusTest_XTimer_Stop(XTimer* timer)
 {
-    if(timer->timerId)
+    if (timer->timerId)
     {
         timeKillEvent(timer->timerId);
         timer->timerId = 0;
         //printf("停止定时器\n");
     }
 }
-static  void XTimerCreat(XTimer* timer)
+void XModbusTest_XTimerCreat(XTimer* timer)
 {
     // 设置定时器分辨率
     //timeBeginPeriod(1);
     //timer->data = XMemory_malloc(sizeof(UINT));
-    timer->start = XTimer_Start;
-    timer->stop = XTimer_Stop;
+    timer->start = XModbusTest_XTimer_Start;
+    timer->stop = XModbusTest_XTimer_Stop;
 }
 
-static void SerialPoll(XModbus* modbus)
+void XModbusTest_SerialPoll(XModbus* modbus)
 {
     COMSTAT comStat;
     DWORD errors;
@@ -184,59 +181,3 @@ static void SerialPoll(XModbus* modbus)
     ResetEvent(ov.hEvent);
 }
 #endif // WIN32
-//0x6 功能码响应
-static void RtuDataFrame_0x06_reply(XModbus* modbus, XModbusFrameData* frame)
-{
-    if(frame==NULL)
-        printf("超时了\n");
-    printf("执行自定义回调%p\n",frame);
-   //exit(0);
-}
-
-void XModbusTest()
-{
-    //UCHAR buffer[] = {0x01,0x06,0x00,0x00,0x00,0x01,0x48,0x0A };
-    //UCHAR buffer[] = { 0x01,0x06,0x00,0x00,0x00,0x02,0x08,0x0B };
-    //printf("CRC校验为:%d\n", modbus_crc16_table(buffer, sizeof(buffer)));
-    //printf("CRC校验为:%d\n", XCRC16(buffer, sizeof(buffer)-2));
-    XModbus_InitFunction InitFunction = {0};
-    InitFunction.xGetByte = XModbus_GetByte;
-    InitFunction.xPutByte = XModbus_PutByte;
-    InitFunction.SerialInit = SerialInit;
-    InitFunction.TimerCreate = XTimerCreat;
-    InitFunction.TimerStart = XTimer_Start;
-    InitFunction.TimerStop = XTimer_Stop;
-    XModbus* modbus = XMemory_malloc(sizeof(XModbus));
-    XModbus_init(modbus, &InitFunction, MB_RTU_MASTER, 0x01, 2, 38400, MB_PAR_NONE);
-    XModbusRegisterFunc* Register=XModbusRegisterFunc_new(16);
-    //设置从站的功能码回调函数
-    {
-        XModbusFunctionHandler Handler = { MB_FUNC_READ_HOLDING_REGISTER,XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc,Register };
-        XModbus_setFunctionHandler(modbus, &Handler);
-    }
-
-    {
-        XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterFunc_0x06_RTU_slaveRecvHandCallFunc,Register };
-        XModbus_setFunctionHandler(modbus, &Handler);
-    }
-    {
-        XModbusFrameData* frame = XModbusFrameData_newRecvHandle();
-        frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
-        char buff[] = {0x00,0x01};
-        XModbusFrameDataRTU_setDataFrame_0x06_request(frame, 0x01,  0x01, buff);
-        XModbus_sendData(modbus, frame);
-    }
-    {
-        XModbusFrameData* frame = XModbusFrameData_newRecvHandle();
-        //frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
-        char buff[] = { 0x00,0x01 };
-        XModbusFrameDataRTU_setDataFrame_0x06_request(frame, 0x01,  0x00, buff);
-        XModbus_sendData(modbus, frame);
-    }
-    XModbus_enable(modbus);
-    while (true)
-    {
-        XModbus_poll(modbus);
-        SerialPoll(modbus);
-    }
-}

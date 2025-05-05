@@ -29,14 +29,7 @@ void XDelay(const size_t msec);
 * @param  mode:转化模式 1是转大端 0是转小端   
 * @retval 转化后的数据 
 */
-uint16_t WriteEndian16(uint16_t data, uint8_t mode);
-/*
-* @brief  根据需要的模式大小端转化后写入
-* @param  data:待转化的数据
-* @param  mode:转化模式 1是转大端 0是转小端
-* @retval 转化后的数据
-*/
-uint16_t WriteEndian16(uint16_t data, uint8_t mode);
+uint16_t SwapEndian16(uint16_t data, uint8_t mode);
 #ifdef __cplusplus
 }
 #endif

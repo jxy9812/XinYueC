@@ -8,9 +8,10 @@
 //CRC16校验设置  其他数据必须都设置好了,并且预留了两字节的CRC空间
 static XModbusFrameData_set16Data(XVector* v)
 {
+	size_t size = XVector_size(v) - MB_SER_PDU_SIZE_CRC;
 	//设置crc校验
-	uint16_t crc16 = XCrc_get16(XVector_begin(v), XVector_size(v) - MB_SER_PDU_SIZE_CRC);
-	XCrc_set16Data(XVector_at(v, 6), crc16, 0);
+	uint16_t crc16 = XCrc_get16(XVector_begin(v), size);
+	XCrc_set16Data(XVector_at(v, size), crc16, 0);
 }
 //8字节数据帧设置
 static void setRtuDataFrame_8(XModbusFrameData* frame, uint8_t address, uint8_t funcCode, uint16_t dataOne, uint16_t dataTwo)
@@ -40,8 +41,8 @@ static void setDataFrame_readCoils_reply(XModbusFrameData* frame, uint8_t addres
 	//主机地址(1)+功能码(1)+数据字节数目(1)+数据()+crc16(2)
 	if (frame == NULL)
 		return;
-	//uint16_t coilsSize = (coilsCount % 8 == 0) ? (coilsCount / 8) : ((coilsCount / 8) + 1);
-	uint8_t coilsSize = (coilsCount / 8) +(coilsCount % 8 == 0);
+	uint8_t coilsSize = (coilsCount % 8 == 0) ? (coilsCount / 8) : ((coilsCount / 8) + 1);
+	/*uint8_t coilsSize = (coilsCount / 8) +(coilsCount % 8 == 0);*/
 	//数据字节数目(1)+数据(?)
 	XModbusFrameDataRTU_initDataFrame(frame, address, funcCode, 1 + coilsSize);
 	XVector* v = frame->dataFrame;
@@ -146,6 +147,16 @@ void XModbusFrameDataRTU_setDataFrame_0x04_reply(XModbusFrameData* frame, uint8_
 	setRtuDataFrame_readReg_reply(frame, address, MB_FUNC_READ_INPUT_REGISTER, regData, regCount);
 }
 
+void XModbusFrameDataRTU_setDataFrame_0x05_request(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, uint16_t coilsState)
+{
+	setRtuDataFrame_8(frame, address, MB_FUNC_WRITE_SINGLE_COIL, SwapEndian16(coilsAddress, 1), SwapEndian16(coilsState, 1));
+}
+
+void XModbusFrameDataRTU_setDataFrame_0x05_reply(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, uint16_t coilsState)
+{
+	XModbusFrameDataRTU_setDataFrame_0x05_request(frame,address,coilsAddress,coilsAddress);
+}
+
 void XModbusFrameDataRTU_setDataFrame_0x06_request(XModbusFrameData* frame, uint8_t address, uint16_t regAddress, const uint16_t* regData)
 {
 	if (regData != NULL)
@@ -180,6 +191,34 @@ void XModbusFrameDataRTU_setDataFrame_0x10_reply(XModbusFrameData* frame, uint8_
 {
 	//主机地址(1)+功能码(1)+寄存器起始地址(2)+已经写入的寄存器数量(2)+crc16(2)
 	setRtuDataFrame_8(frame, address, MB_FUNC_WRITE_MULTIPLE_REGISTERS, SwapEndian16(regAddress,1), SwapEndian16(regCount, 1));
+}
+
+void XModbusFrameDataRTU_setDataFrame_0x0F_request(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, uint16_t coilsCount, uint8_t* coilsData)
+{
+	//主机地址(1)+功能码(1)+起始线圈地址(2)+线圈数量(2)+数据字节数(1)+数据()+crc16(2)
+	if (frame == NULL)
+		return;
+	uint8_t coilsSize = (coilsCount % 8 == 0) ? (coilsCount / 8) : ((coilsCount / 8) + 1);
+	//起始线圈地址(2)+线圈数量(2)+数据字节数(1)+数据()
+	XModbusFrameDataRTU_initDataFrame(frame, address, MB_FUNC_WRITE_MULTIPLE_COILS, 2 + 2 + 1+ coilsSize);
+	XVector* v = frame->dataFrame;
+	//写入 寄存器起始地址
+	XVector_At(v, 2, uint16_t) = SwapEndian16(coilsAddress, 1);
+	//写入 寄存器数量
+	XVector_At(v, 4, uint16_t) = SwapEndian16(coilsCount, 1);
+	//写入数据字节数
+	XVector_At(v, 6, uint8_t) = coilsSize;
+	//开始写入数据
+	if (coilsData > 0)
+		memcpy(XVector_at(v, 7), coilsData, coilsSize);
+	//CRC校验
+	XModbusFrameData_set16Data(v);
+}
+
+void XModbusFrameDataRTU_setDataFrame_0x0F_reply(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, uint16_t coilsCount)
+{
+	//主机地址(1)+功能码(1)+线圈起始地址(2)+已经写入的线圈数量(2)+crc16(2)
+	setRtuDataFrame_8(frame, address, MB_FUNC_WRITE_MULTIPLE_COILS, SwapEndian16(coilsAddress, 1), SwapEndian16(coilsCount, 1));
 }
 
 void XModbusFrameDataRTU_parseData(XModbusFrameData* frame, XVector* data)
