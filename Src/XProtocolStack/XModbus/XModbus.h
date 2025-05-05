@@ -53,13 +53,12 @@ typedef struct XModbus_InitFunction
     XModbusPutByte xPutByte;//发送一个字符数据
     XModbusSerialInit SerialInit;//初始化串口
     XModbusSerialEnable SerialEnable;//控制串口收发状态  可以为NULL
+    XEventQueueInit EventQueueInit;//时间队列初始化函数 不是必须可以为空使用默认的事件队列
     //以下是定时器的参数
     XTimerCreate TimerCreate;//定时器创建
     XTimerFree   TimerFree;//这个不是必须，需要释放资源关闭的时候才需要
     XTimerStart  TimerStart;
     XTimerStop   TimerStop;
-    //XTimerSetInterval TimerSetInterval; //不是必须
-    //XTimerOut    TimerOut;
 }XModbus_InitFunction;
 typedef struct XModbus
 {
@@ -97,7 +96,6 @@ typedef struct XModbus
     XModbusFrameCBByteReceived pxMBFrameCBByteReceived;// 接收到单个字节时调用（触发接收状态机）
     XModbusFrameCBTransmitterEmpty pxMBFrameCBTransmitterEmpty;// 发送缓冲区空时调用（触发发送状态机）
     XModbusPortCBTimerExpired pxMBPortCBTimerExpired; // 定时器超时回调（如 RTU 的 T35 超时、ASCII 的 T1S 超时）
-
 }XModbus;
 
 void XModbus_init(XModbus* modbus, XModbus_InitFunction* func,XModbusMode mode,uint8_t address,uint8_t port,uint32_t baudRate, XModbusParity parity);

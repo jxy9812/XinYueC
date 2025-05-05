@@ -34,6 +34,23 @@ static void setRtuDataFrame_8(XModbusFrameData* frame, uint8_t address, uint8_t 
 	XString_free(str);
 	*/
 }
+//可变字节数据帧 读取线圈 响应帧
+static void setDataFrame_readCoils_reply(XModbusFrameData* frame, uint8_t address, uint8_t funcCode, uint8_t* coilsData, const uint16_t coilsCount)
+{
+	//主机地址(1)+功能码(1)+数据字节数目(1)+数据()+crc16(2)
+	if (frame == NULL)
+		return;
+	//uint16_t coilsSize = (coilsCount % 8 == 0) ? (coilsCount / 8) : ((coilsCount / 8) + 1);
+	uint8_t coilsSize = (coilsCount / 8) +(coilsCount % 8 == 0);
+	//数据字节数目(1)+数据(?)
+	XModbusFrameDataRTU_initDataFrame(frame, address, funcCode, 1 + coilsSize);
+	XVector* v = frame->dataFrame;
+	//设置返回的字节数量
+	XVector_At(v, 2, uint8_t) = coilsSize;
+	if (coilsData > 0)
+		memcpy(XVector_at(v, 3), coilsData, coilsSize);
+	XModbusFrameData_set16Data(v);
+}
 //可变字节数据帧 读取寄存器 响应帧
 static void setRtuDataFrame_readReg_reply(XModbusFrameData* frame, uint8_t address, uint8_t funcCode, uint16_t* regData, const uint16_t regCount)
 {
@@ -84,6 +101,28 @@ void XModbusFrameDataRTU_initDataFrame(XModbusFrameData* frame, uint8_t address,
 	XVector_At(v, 1, uint8_t) = funcCode;
 	frame->funcCode = funcCode;
 	
+}
+
+void XModbusFrameDataRTU_setDataFrame_0x01_request(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, const uint16_t coilsCount)
+{
+	setRtuDataFrame_8(frame,address, MB_FUNC_READ_COILS, SwapEndian16(coilsAddress, 1), SwapEndian16(coilsCount, 1));
+}
+
+void XModbusFrameDataRTU_setDataFrame_0x01_reply(XModbusFrameData* frame, uint8_t address, uint8_t* coilsData, const uint16_t coilsCount)
+{
+	//主机地址(1)+功能码(1)+数据字节数目(1)+数据(?)+crc16(2)
+	setDataFrame_readCoils_reply(frame,address, MB_FUNC_READ_COILS, coilsData, coilsCount);
+}
+
+void XModbusFrameDataRTU_setDataFrame_0x02_request(XModbusFrameData* frame, uint8_t address, uint16_t discAddress, const uint16_t discCount)
+{
+	setRtuDataFrame_8(frame, address, MB_FUNC_READ_DISCRETE_INPUTS, SwapEndian16(discAddress, 1), SwapEndian16(discCount, 1));
+}
+
+void XModbusFrameDataRTU_setDataFrame_0x02_reply(XModbusFrameData* frame, uint8_t address, uint8_t* discAddress, const uint16_t discCount)
+{
+	//主机地址(1)+功能码(1)+数据字节数目(1)+数据(?)+crc16(2)
+	setDataFrame_readCoils_reply(frame, address, MB_FUNC_READ_DISCRETE_INPUTS, discAddress, discCount);
 }
 
 void XModbusFrameDataRTU_setDataFrame_0x03_request(XModbusFrameData* frame, uint8_t address, uint16_t regAddress, const uint16_t regCount)

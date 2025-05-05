@@ -21,6 +21,43 @@ typedef struct XVector XVector;
 */
 void XModbusFrameDataRTU_initDataFrame(XModbusFrameData* frame, uint8_t address, uint8_t funcCode,uint16_t dataSIze);
 /* ----------------------- RTU模式根据功能码构建数据帧-------------------------------------*/
+/*
+* @brief  构建数据帧0x01功能码请求帧   读线圈状态.
+* @param  frame:XModbusFrameData对象
+* @param  address:从机地址
+* @param  coilsAddress:线圈地址(数据帧中的地址)
+* @param  coilsCount:线圈数量
+* @retval
+*/
+void XModbusFrameDataRTU_setDataFrame_0x01_request(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, const uint16_t coilsCount);
+/*
+* @brief  构建数据帧0x01功能码响应帧   读线圈状态
+* @param  frame:XModbusFrameData对象
+* @param  address:主机地址
+* @param  coilsData:线圈数据缓冲区
+* @param  coilsCount:线圈数量
+* @retval
+*/
+void XModbusFrameDataRTU_setDataFrame_0x01_reply(XModbusFrameData* frame, uint8_t address, uint8_t* coilsData, const uint16_t coilsCount);
+
+/*
+* @brief  构建数据帧0x02功能码请求帧   读离散输入状态.
+* @param  frame:XModbusFrameData对象
+* @param  address:从机地址
+* @param  discAddress:离散输入地址(数据帧中的地址)
+* @param  discCount:离散输入数量
+* @retval
+*/
+void XModbusFrameDataRTU_setDataFrame_0x02_request(XModbusFrameData* frame, uint8_t address, uint16_t discAddress, const uint16_t  discCount);
+/*
+* @brief  构建数据帧0x01功能码响应帧   读离散输入状态
+* @param  frame:XModbusFrameData对象
+* @param  address:主机地址
+* @param  discAddress:离散输入数据缓冲区
+* @param  discCount:离散输入数量
+* @retval
+*/
+void XModbusFrameDataRTU_setDataFrame_0x02_reply(XModbusFrameData* frame, uint8_t address, uint8_t* discAddress, const uint16_t discCount);
 
 /*
 * @brief  构建数据帧0x03功能码请求帧   读保持寄存器.

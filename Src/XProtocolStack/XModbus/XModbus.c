@@ -27,7 +27,10 @@ void XModbus_init(XModbus* modbus, XModbus_InitFunction* func, XModbusMode mode,
 	XVector_resize(modbus->recvBuffer, MB_RECV_BUFFER_SIZE);
 	modbus->sendQueue= XModbusFrameQueue_new();
     modbus->recvFrameQueue=XModbusFrameQueue_new();
-	modbus->eventQueue = XEventQueue_new(XEventQueue_defaultConfigInit);
+    if(func->EventQueueInit)
+        modbus->eventQueue = XEventQueue_new(func->EventQueueInit);
+    else
+	    modbus->eventQueue = XEventQueue_new(XEventQueue_defaultConfigInit);
     modbus->funcCodeList = XModbusFuncCodeList_new();
 	modbus->mode = mode;
     assert(func->xGetByte);
