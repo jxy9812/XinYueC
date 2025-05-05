@@ -151,7 +151,7 @@ static void XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
         UCHAR address= recvFrame->address;
         UCHAR code= recvFrame->funcCode;
 #if MB_RECV_FRAME_SHOW
-        XString* str = XModbusFrameData_to16HexString(recvFrame);
+        XString* str = XModbusFrameDataRTU_to16HexString(recvFrame);
         printf("接收帧:%s\n", XString_c_str(str));
         //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
         XString_free(str);
@@ -191,7 +191,7 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
     XModbusFrameData* frame = XModbusFrameQueue_top(modbus->recvFrameQueue);
     UCHAR address = frame->address;
     UCHAR code = frame->funcCode;
-    //XString* str = XModbusFrameData_to16HexString(frame);
+    //XString* str = XModbusFrameDataRTU_to16HexString(frame);
     //printf("地址:%X 功能码:%X 完整:%s\n", address, code, XString_c_str(str));
     ////            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
     //XString_free(str);
@@ -297,6 +297,13 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
 
 XModbusErrorCode XModbus_sendData(XModbus* modbus, XModbusFrameData* frame)
 {
+    if(modbus==NULL|| frame == NULL)
+        return MB_EINVAL;
+    if (frame->dataFrame==NULL||XVector_empty(frame->dataFrame))
+    {
+        XModbusFrameData_free(frame);
+        return MB_EINVAL;
+    }
     if (frame->recvHandle != NULL)
     {
         frame->recvHandle->waitAddressCode = frame->address<< 8 | frame->funcCode;

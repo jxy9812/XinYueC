@@ -75,7 +75,7 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* dataFrame)
 
     ENTER_CRITICAL_SECTION();
     //assert(usRcvBufferPos < MB_SER_PDU_SIZE_MAX);  // 确保缓冲区未溢出
-    XModbusFrameData_setRtuData(dataFrame, modbus->recvBuffer);
+    XModbusFrameDataRTU_parseData(dataFrame, modbus->recvBuffer);
     //解析的帧有问题
     if(dataFrame->pPduFramePos==NULL)
         modbus->errorCode = MB_EIO;
@@ -222,7 +222,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
                 if (modbus->SerialEnable)
                     modbus->SerialEnable(modbus, TRUE, FALSE);  // 禁用发送，重新使能接收
 #if MB_SEND_FRAME_SHOW
-                XString* str = XModbusFrameData_to16HexString(frame);
+                XString* str = XModbusFrameDataRTU_to16HexString(frame);
                 printf("发送帧:%s\n", XString_c_str(str));
                 //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
                 XString_free(str);

@@ -18,7 +18,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
- 
+
  /* ----------------------- 宏定义 ------------------------------------------*/
  /*! \defgroup modbus_cfg Modbus配置
   *

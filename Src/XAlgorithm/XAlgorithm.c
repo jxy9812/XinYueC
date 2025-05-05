@@ -124,3 +124,27 @@ void XDelay(const size_t msec)
 	}
 }
 
+uint16_t SwapEndian16(uint16_t data, uint8_t mode)
+{
+#if IS_BIG_ENDIAN
+	if (mode) {
+		// 大端模式：如果当前是大端，无需转换，直接返回原数据
+		// 交换字节顺序
+		return data;
+	}
+	else {
+		// 小端模式：如果当前不是小端，需要转换
+		return (data << 8) | (data >> 8);
+	}
+#else
+	if (mode) {
+		// 大端模式：如果当前不是大端，需要转换
+		// 交换字节顺序
+		return (data << 8) | (data >> 8);
+	}
+	else {
+		// 小端模式：如果当前是小端，无需转换，直接返回原数据
+		return data;
+	}
+}
+#endif // IS_BIG_ENDIAN

@@ -2,6 +2,7 @@
 #include"XModbusRtu.h"
 #include"XMemory.h"
 #include"XCrc.h"
+#include"XModbusFrameData.h"
 #ifdef WIN32
 #include <windows.h>
 // 告诉编译器链接 winmm.lib 库
@@ -222,14 +223,14 @@ void XModbusTest()
         XModbusFrameData* frame = XModbusFrameData_newRecvHandle();
         frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
         char buff[] = {0x00,0x01};
-        XModbusFrameData_setRtuDataFrame_0x06_request(frame, 0x01, 0x06, 0x01, buff);
+        XModbusFrameDataRTU_setDataFrame_0x06_request(frame, 0x01,  0x01, buff);
         XModbus_sendData(modbus, frame);
     }
     {
         XModbusFrameData* frame = XModbusFrameData_newRecvHandle();
         //frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
         char buff[] = { 0x00,0x01 };
-        XModbusFrameData_setRtuDataFrame_0x06_request(frame, 0x01, 0x06, 0x00, buff);
+        XModbusFrameDataRTU_setDataFrame_0x06_request(frame, 0x01,  0x00, buff);
         XModbus_sendData(modbus, frame);
     }
     XModbus_enable(modbus);

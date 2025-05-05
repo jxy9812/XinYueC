@@ -6,6 +6,7 @@
 #include"XModbus.h"
 #include"XModbusRtu.h"
 #include"XCrc.h"
+#include"XAlgorithm.h"
 #include<string.h>
 //寄存器大小
 #define REGISTERSIZE 2
@@ -113,63 +114,17 @@ XModbusException XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc(XModbus* mod
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
 	XModbusRegisterFunc* regFunc = FunctionHandler->data;
 
-	//printf("读取保持寄存器\n");
-	
 	//指向功能码后的寄存器地址数据
-	UCHAR* p = recvFrame->pPduFramePos + 1;
+	uint16_t* p = recvFrame->pPduFramePos + 1;
 	//获取寄存器地址
-	uint16_t regAddress = ReadData16(p);
+	uint16_t regAddress = SwapEndian16(p[0], 1);
 	//需要读取的寄存器数量
-	uint16_t regCount = ReadData16(p+2);
-	
+	uint16_t regCount = SwapEndian16(p[1], 1);
 	XVector* data = regFunc->parent.data;//寄存器数据
-	uint32_t dataSize = XVector_size(data);//寄存器个数
-	//判断地址和数量是否合法  一次最多127个寄存器
-	if (dataSize < (regAddress + regCount)|| regCount>127)
-		return MB_EX_ILLEGAL_DATA_ADDRESS;
-	//开始准备发送数据
+	void* readStart = XVector_at(data, regAddress);//寄存器数据缓冲区
 	XModbusFrameData* sendFrame = XModbusFrameData_new();
-	XVector* recvVector = recvFrame->dataFrame;
-	XVector* sendVector = sendFrame->dataFrame;
-	XVector_resize(sendVector, MB_SER_PDU_PDU_OFF+1+1+ regCount * REGISTERSIZE+MB_SER_PDU_SIZE_CRC);
-	//拷贝地址和功能码
-	XVector_At(sendVector,0,uint16_t)= XVector_At(recvVector, 0, uint16_t);
-
-	uint8_t len = regCount * REGISTERSIZE;//字节数据量
-	//设置数据字节数
-	XVector_At(sendVector, 2, uint8_t) = len;
-	//拷贝寄存器的数据
-	{
-		char* readStart = XVector_at(data, regAddress);
-		char* writeStart = XVector_at(sendVector, 3);
-		for (size_t i = 0; i < len; i++)
-		{
-			writeStart[i] = readStart[i];
-		}
-	}
-	//设置crc16校验码
-	uint16_t crc16 = XCrc_get16(XVector_begin(sendVector), XVector_size(sendVector)- MB_SER_PDU_SIZE_CRC);
-	XCrc_set16Data(XVector_at(sendVector, XVector_size(sendVector) - MB_SER_PDU_SIZE_CRC), crc16, 0);
-	sendFrame->pPduFramePos = XVector_at(sendVector, MB_SER_PDU_PDU_OFF);
-	sendFrame->pduLength = 1 + 1 + len;
-	XModbus_sendData(modbus, sendFrame);
-
-	
-
-	////拷贝地址
-	//XVector_Push_Back(sendVector,UCHAR, XModbusFrameData_getRtuAddress(recvFrame));
-	////拷贝功能码
-	//XVector_Push_Back(sendVector, UCHAR, XModbusFrameData_getRtuFuncCode(recvFrame));
-	////设置数据字节数
-	//uint8_t len = regCount * REGISTERSIZE;
-	//XVector_push_back(sendVector, &len);
-	////拷贝寄存器的数据
-	//char* p=XVector_at(data, regAddress);
-	//for (size_t i = 0; i < len; i++)
-	//{
-	//	XVector_push_back(sendVector,p+i);
-	//}
-	//添加crc校验码
+	XModbusFrameDataRTU_setDataFrame_0x03_reply(sendFrame, recvFrame->address, readStart,regCount);
+	//printf("读取保持寄存器\n");
 
 	return MB_EX_NONE;
 }
@@ -191,17 +146,16 @@ XModbusException XModbusRegisterFunc_0x06_RTU_slaveRecvHandCallFunc(XModbus* mod
 	XModbusRegisterFunc* regFunc = FunctionHandler->data;
 
 	//printf("写保持寄存器\n");
-	//XString* str = XModbusFrameData_to16HexString(recvFrame);
+	//XString* str = XModbusFrameDataRTU_to16HexString(recvFrame);
 	//printf("完整:%s\n", XString_c_str(str));
 	////            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
 	//XString_free(str);
 	
 	//指向功能码后的寄存器地址数据
-	UCHAR* p = recvFrame->pPduFramePos+1;
+	uint16_t* p = (uint16_t*)recvFrame->pPduFramePos+1;
 	//获取寄存器地址
-	uint16_t regAddress = ReadData16(p);
-	uint16_t value = *((uint16_t*)(p + 2));
-	//uint16_t value = (*(p + 2)) << 8 | (*(p + 3));;
+	uint16_t regAddress = SwapEndian16(*p,1);
+	uint16_t value = *((p + 1));
 	if (XModbusRegisterFunc_write_uint16_t(regFunc, regAddress, value))
 	{//写入成功 将数据帧再次发送回去
 		XModbusFrameData* sendFrame = XModbusFrameData_new();

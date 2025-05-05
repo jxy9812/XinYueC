@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 #include<stdio.h>
+#include<stdint.h>
 #include"XStringOperation.h"
 typedef struct XStack XStack;
 typedef struct XVector XVector;
@@ -21,6 +22,15 @@ void XStackRCopyXVector(const XStack* stack,XVector* vector);
 void XStackCopyXVector(const XStack* stack, XVector* vector);
 //延迟毫秒
 void XDelay(const size_t msec);
+
+/*
+* @brief  大小端字节转化
+* @param  data:待转化的数据
+* @param  mode:转化模式 1是转大端 0是转小端
+* @retval 转化后的数据
+*/
+uint16_t SwapEndian16(uint16_t data, uint8_t mode);
+
 #ifdef __cplusplus
 }
 #endif

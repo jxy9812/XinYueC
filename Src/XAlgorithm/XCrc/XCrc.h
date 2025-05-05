@@ -42,7 +42,8 @@ extern "C" {
   */
  uint16_t          XCrc_get16( uint8_t * pucFrame, uint16_t usLen );
  //设置CRC16  mode为1是大端,0小端
- void XCrc_set16Data(uint8_t* pData, uint16_t crc16, uint8_t mode);
+ void XCrc_set16Data(uint8_t* dst, uint16_t src, uint8_t mode);
+
  // 宏函数用于设置 CRC16 数据，mode 为 1 表示大端模式，为 0 表示小端模式
 #define XCrc_SET16DATA(pData, crc16, mode) \
     do { \

@@ -1,5 +1,6 @@
 ﻿
-#include"stdint.h"
+#include"XDataStructConfig.h"
+#include"XAlgorithm.h"
 /* 
  * FreeModbus 库：适用于 Modbus ASCII/RTU 的可移植实现
  * 版权 (c) 2006-2018 Christian Walter <cwalter@embedded-solutions.at>
@@ -51,21 +52,22 @@ static const uint16_t crc16_table[256] = {
     0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
 };
 
-void XCrc_set16Data(uint8_t* pData, uint16_t crc16, uint8_t mode)
+void XCrc_set16Data(uint8_t* dst, uint16_t src, uint8_t mode)
 {
-   
-     if (mode) 
-     {
-         // 大端模式：高位在前，低位在后
-         *pData = (uint8_t)(crc16 >> 8);
-         *(pData + 1) = (uint8_t)(crc16 & 0xFF);
-     }
-     else 
-     {
-         *pData = (uint8_t)(crc16 & 0xFF);  // CRC低位（小端模式）
-         *(pData + 1) = (uint8_t)(crc16 >> 8);       // CRC高位
-     }
+    *((uint16_t*)dst) = SwapEndian16(src, mode);
+     //if (mode) 
+     //{
+     //    // 大端模式：高位在前，低位在后
+     //    *dst = (uint8_t)(src >> 8);
+     //    *(dst + 1) = (uint8_t)(src & 0xFF);
+     //}
+     //else 
+     //{
+     //    *dst = (uint8_t)(src & 0xFF);  // CRC低位（小端模式）
+     //    *(dst + 1) = (uint8_t)(src >> 8);       // CRC高位
+     //}
 }
+
 
 // 使用查表法计算 CRC16 校验码
 uint16_t XCrc_get16(uint8_t* data, uint16_t length) 
