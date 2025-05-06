@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 #include"XModbusProto.h"
+#include"XModbusEnum.h"
 typedef struct XModbus XModbus;
 typedef struct XModbusFrame XModbusFrame;
 typedef struct XModbusFunctionHandler XModbusFunctionHandler;

@@ -409,9 +409,9 @@ static void XModbusFrameRTU_parse0x8X_reply(XModbusFrameRTU* rtu, XVector* frame
 {
 	if (rtu == NULL || frameData == NULL)
 		return;
-	rtu->error = XVector_At(frameData, 2, uint8_t);//获取错误码
+	rtu->exception = XVector_At(frameData, 2, uint8_t);//获取错误码
 }
-void XModbusFrameRTU_setFrameData_0x8X_reply(XModbusFrame* frame, uint8_t address, uint8_t funcCode, uint8_t error)
+void XModbusFrameRTU_setFrameData_0x8X_reply(XModbusFrame* frame, uint8_t address, uint8_t funcCode, XModbusException exception)
 {
 	//主机地址(1)+异常功能码(1)+错误码(1)+crc16(2)
 	if (frame == NULL)
@@ -419,7 +419,7 @@ void XModbusFrameRTU_setFrameData_0x8X_reply(XModbusFrame* frame, uint8_t addres
 	//数据(2)+数据(2)
 	XModbusFrameRTU_initDataFrame(frame, address, funcCode| MB_FUNC_ERROR,1);
 	XVector* v = frame->frameData;
-	XVector_At(v,2,uint8_t)=error;
+	XVector_At(v,2,uint8_t)= exception;
 	XModbusFrame_set16Data(v);
 }
 void XModbusFrameRTU_parseData_request(XModbusFrame* frame, XVector* frameData)

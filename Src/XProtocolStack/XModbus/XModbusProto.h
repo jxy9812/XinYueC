@@ -54,32 +54,6 @@
 #define MB_FUNC_OTHER_REPORT_SLAVEID          ( 17 )            /*! 其他：报告从机ID（功能码0x11） */
 #define MB_FUNC_ERROR                         ( 128 )           /*! 异常功能码基值（0x80+原功能码） */
 
-/* ----------------------- 类型定义 ---------------------------------------*/
-/*! \brief Modbus异常码枚举（对应功能码异常响应） */
-typedef enum
- {
-     MB_EX_NONE = 0x00,                 /*!< 无异常 */
-     MB_EX_ILLEGAL_FUNCTION = 0x01,     /*!< 非法功能码（功能码未实现） */
-     MB_EX_ILLEGAL_DATA_ADDRESS = 0x02, /*!< 非法数据地址（寄存器/线圈地址超出范围） */
-     MB_EX_ILLEGAL_DATA_VALUE = 0x03,   /*!< 非法数据值（写入数据无效） */
-     MB_EX_SLAVE_DEVICE_FAILURE = 0x04, /*!< 从机设备故障（硬件或初始化错误） */
-     MB_EX_ACKNOWLEDGE = 0x05,          /*!< 接收确认（保留功能） */
-     MB_EX_SLAVE_BUSY = 0x06,           /*!< 从机繁忙（请求处理中） */
-     MB_EX_MEMORY_PARITY_ERROR = 0x08,  /*!< 内存奇偶校验错误（存储错误） */
-     MB_EX_GATEWAY_PATH_FAILED = 0x0A,  /*!< 网关路径失败（Modbus TCP网关错误） */
-     MB_EX_GATEWAY_TGT_FAILED = 0x0B    /*!< 网关目标设备失败（目标从机无响应） */
- } XModbusException;
-
- /*! \brief 功能码处理函数指针类型 */
- //typedef XModbusException(*pXModbusFunctionHandler) (UCHAR* pucFrame, USHORT* pusLength);
-
- ///*! \brief 功能码处理函数表结构体 */
- //typedef struct
- //{
- //    UCHAR           ucFunctionCode;       /*!< Modbus功能码（1-127） */
- //    pxMBFunctionHandler pxHandler;        /*!< 对应的处理函数指针 */
- //} xMBFunctionHandler;
- 
  #ifdef __cplusplus
  PR_END_EXTERN_C
  #endif

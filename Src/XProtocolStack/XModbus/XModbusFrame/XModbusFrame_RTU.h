@@ -7,6 +7,7 @@ extern "C" {
 #include"XModbusConfig.h"
 #if MB_RTU_ENABLED
 #include<stdint.h>
+#include"XModbusEnum.h"
 typedef struct XModbusFrame XModbusFrame;
 typedef struct XString XString;
 typedef struct XVector XVector;
@@ -19,7 +20,7 @@ typedef struct XModbusFrameRTU
        uint16_t coilsAddress;//线圈地址
        uint16_t discAddress;//离散地址
        uint16_t regAddress;//寄存器地址
-       uint8_t  error;//错误码
+       //uint8_t  error;//错误码
     };
     union {
         uint16_t coilsCount;//线圈数量
@@ -27,7 +28,10 @@ typedef struct XModbusFrameRTU
         uint16_t regCount;//寄存器数量
     };
     uint16_t crc16;//校验码
+    union {
     XVector* data;//数据 ---线圈/离散/寄存器
+    XModbusException exception;//错误码
+    };
 }XModbusFrameRTU;
 XModbusFrameRTU* XModbusFrameRTU_new();
 void XModbusFrameRTU_free(XModbusFrameRTU* data);
@@ -213,10 +217,10 @@ void XModbusFrameRTU_setFrameData_0x0F_reply(XModbusFrame* frame, uint8_t addres
 * @param  frame:XModbusFrameData对象
 * @param  address:主机地址
 * @param  funcCode:正常功能码(将自动组装成异常功能码)
-* @param  error:错误码
+* @param  exception:错误码
 * @retval
 */
-void XModbusFrameRTU_setFrameData_0x8X_reply(XModbusFrame* frame, uint8_t address, uint8_t funcCode, uint8_t error);
+void XModbusFrameRTU_setFrameData_0x8X_reply(XModbusFrame* frame, uint8_t address, uint8_t funcCode, XModbusException exception);
 /* ----------------------- RTU模式解析数据帧-------------------------------------*/
 //将一个数据解析成RTU 请求帧
 void XModbusFrameRTU_parseData_request(XModbusFrame* frame, XVector* frameData);
