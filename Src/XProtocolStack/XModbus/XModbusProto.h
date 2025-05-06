@@ -18,7 +18,19 @@
  #ifdef __cplusplus
  PR_BEGIN_EXTERN_C
  #endif
+     /* ----------------------- 标准库及平台头文件 -----------------------------*/
+#include <assert.h>       // 断言头文件（用于调试）
+#include <inttypes.h>     // 整数类型别名头文件（如uint8_t等）
+//#include "system.h"       // 平台相关系统头文件（包含时钟、中断等定义）
 
+/* ----------------------- 跨语言及内联支持 -----------------------------*/
+#define INLINE                      inline         // 内联函数声明宏（优化代码体积）
+#define PR_BEGIN_EXTERN_C           extern "C" {   // C++兼容声明开始
+#define PR_END_EXTERN_C             }              // C++兼容声明结束
+
+/* ----------------------- 临界区操作宏（嵌入式系统关键）-------------------*/
+#define ENTER_CRITICAL_SECTION( )  //INTX_DISABLE() // 进入临界区：关闭中断
+#define EXIT_CRITICAL_SECTION( )   //INTX_ENABLE()  // 退出临界区：开启中断
      /* ----------------------- 宏定义 ------------------------------------------*/
 #define MB_ADDRESS_BROADCAST    ( 0 )   /*! Modbus广播地址（地址0表示广播） */
 #define MB_ADDRESS_MIN          ( 1 )   /*! 最小从机地址（有效范围1-247） */

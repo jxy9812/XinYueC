@@ -18,14 +18,14 @@ bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XM
     if (hSerial == INVALID_HANDLE_VALUE) {
         DWORD errorCode = GetLastError();
         printf("无法打开串口%s！错误代码: %lu\n", portName, errorCode);
-        return FALSE;
+        return false;
     }
 
     // 配置串口缓冲区
     if (!SetupComm(hSerial, 1024, 1024)) {
         printf("无法设置串口缓冲区！\n");
         CloseHandle(hSerial);
-        return FALSE;
+        return false;
     }
 
     // 获取当前串口配置
@@ -34,7 +34,7 @@ bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XM
     if (!GetCommState(hSerial, &dcbSerialParams)) {
         printf("无法获取串口状态！\n");
         CloseHandle(hSerial);
-        return FALSE;
+        return false;
     }
 
     // 设置串口参数
@@ -45,7 +45,7 @@ bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XM
     if (!SetCommState(hSerial, &dcbSerialParams)) {
         printf("无法设置串口状态！\n");
         CloseHandle(hSerial);
-        return FALSE;
+        return false;
     }
 
     // 3. 设置超时
@@ -59,7 +59,7 @@ bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XM
 
     // 4. 创建异步操作结构
     //OVERLAPPED ov = { 0 };
-    ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    ov.hEvent = CreateEvent(NULL, true, false, NULL);
 
     if (ov.hEvent == NULL)
         printf("创建事件对象失败");
@@ -81,7 +81,7 @@ bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XM
         CloseHandle(hSerial);
         return 1;
     }
-    return TRUE;
+    return true;
 }
 bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte)
 {
@@ -95,14 +95,14 @@ bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte)
         }
 
         // 等待异步操作完成
-        if (!GetOverlappedResult(hSerial, &ov, &bytesRead, TRUE))
+        if (!GetOverlappedResult(hSerial, &ov, &bytesRead, true))
         {
             printf("异步读取失败\n");
             return false;
         }
     }
     // printf("接收到字符%c\n", *byte);
-    return TRUE;
+    return true;
 }
 bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte)
 {
@@ -112,16 +112,16 @@ bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte)
         if (GetLastError() != ERROR_IO_PENDING)
         {
             printf("写入失败");
-            return FALSE;
+            return false;
         }
         // 等待异步操作完成
-        if (!GetOverlappedResult(hSerial, &ov, &bytesWritten, TRUE))
+        if (!GetOverlappedResult(hSerial, &ov, &bytesWritten, true))
         {
             printf("异步写入失败");
-            return FALSE;
+            return false;
         }
     }
-    return TRUE;
+    return true;
 }
 
 // 定时器回调函数
@@ -167,7 +167,7 @@ void XModbusTest_SerialPoll(XModbus* modbus)
     // 清除通信错误并获取串口状态
     if (!ClearCommError(hSerial, &errors, &comStat)) {
         printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
-        return FALSE;
+        return false;
     }
     if (comStat.cbInQue)
     {

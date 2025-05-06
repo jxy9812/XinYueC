@@ -67,10 +67,9 @@ void XModbusFrameQueue_free(XModbusFrameQueue* queue)
 XModbusFrameData* XModbusFrameData_new()
 {
 	XModbusFrameData* frame=XMemory_malloc(sizeof(XModbusFrameData));
-	//frame.address = 1;
-	//frame.crc16 = 0;
-	frame->dataFrame = XVector_New(UCHAR);
-	frame->pduLength = 0;
+	frame->mode = MB_NOT_MODE;
+	frame->dataFrame = XVector_New(uint8_t);
+	frame->data = NULL;
 	frame->recvHandle = NULL;
 	return frame;
 }
@@ -93,7 +92,7 @@ void XModbusFrameData_free(XModbusFrameData* frame)
 	}
 }
 //解析CRC16
-static USHORT XModbusFrameData_parse‌CRC16(uint8_t* pData, uint16_t pos)
+static uint8_t XModbusFrameData_parse‌CRC16(uint8_t* pData, uint16_t pos)
 {
 	// 提取低位字节
 	uint16_t lowByte = (uint16_t)pData[pos];

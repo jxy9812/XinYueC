@@ -5,7 +5,6 @@ extern "C" {
 #endif
 #include <stdbool.h>
 #include "XModbus.h"
-#include "XModbusPort.h"
 #include "XTimer.h"
 
 typedef struct XModbusFrameData XModbusFrameData;
@@ -109,7 +108,7 @@ bool            XModbusRtuTransmitFSM(XModbus* modbus);
  * T35定时器用于RTU模式的帧间超时检测，超时表示一帧数据接收完成，
  * 触发协议栈对接收帧进行CRC校验和功能码处理。
  *
- * @return BOOL 定时器超时后是否触发事件（通常返回TRUE以通知协议栈处理帧）
+ * @return BOOL 定时器超时后是否触发事件（通常返回true以通知协议栈处理帧）
  */
 bool           XModbusRtuTimerT35Expired(XModbus* modbus);
 #ifdef __cplusplus

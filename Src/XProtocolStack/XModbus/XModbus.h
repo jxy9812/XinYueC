@@ -38,8 +38,8 @@ typedef bool (*XModbusPutByte)(XModbus* modbus, uint8_t Byte);//发送一个字�
 typedef bool(*XModbusSerialInit)(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity);//初始化串口
 /*!
  * @brief 启用/禁用串口收发
- * @param xRxEnable TRUE=启用接收，FALSE=禁用接收
- * @param xTxEnable TRUE=启用发送，FALSE=禁用发送
+ * @param xRxEnable true=启用接收，false=禁用接收
+ * @param xTxEnable true=启用发送，false=禁用发送
  */
 typedef void(*XModbusSerialEnable)(XModbus* modbus, bool xRxEnable, bool xTxEnable);
 /* 端口层回调函数（需平台实现，处理外部事件驱动协议栈） */
@@ -62,7 +62,7 @@ typedef struct XModbus_InitFunction
 }XModbus_InitFunction;
 typedef struct XModbus
 {
-    UCHAR    address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
+    uint8_t    address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
     XModbusMode mode;//模式
     XModbusErrorCode errorCode;//错误代码
     XModbusState     state;//状态
@@ -85,8 +85,8 @@ typedef struct XModbus
     XModbusFrameReceive  peMBFrameReceiveCur;  // 帧接收函数指针（接收完整 Modbus 帧，返回帧数据）
     XModbusFrameClose    pvMBFrameCloseCur;    // 端口关闭函数指针（可选，用于释放端口资源，如关闭串口）
     /* ----------------------- RTU-------------------------------------*/
-    bool xRxEnable;//接收
-    bool xTxEnable;//发送
+   // bool xRxEnable;//接收
+   // bool xTxEnable;//发送
     XTimer* timer;//定时器     平台初始化
     size_t timerOutNumber;//定时器超时次数
     XModbusSndState eSndState;    // 发送状态机（volatile确保多线程可见）
@@ -97,7 +97,17 @@ typedef struct XModbus
     XModbusFrameCBTransmitterEmpty pxMBFrameCBTransmitterEmpty;// 发送缓冲区空时调用（触发发送状态机）
     XModbusPortCBTimerExpired pxMBPortCBTimerExpired; // 定时器超时回调（如 RTU 的 T35 超时、ASCII 的 T1S 超时）
 }XModbus;
-
+/*
+* @brief  Modbus初始化
+* @param  modbus:XModbus对象指针
+* @param  func:XModbus_InitFunction 初始化结构体
+* @param  mode:启动模式
+* @param  address:主机地址
+* @param  port:端口号
+* @param  baudRate:波特率
+* @param  parity:奇偶校验
+* @retval
+*/
 void XModbus_init(XModbus* modbus, XModbus_InitFunction* func,XModbusMode mode,uint8_t address,uint8_t port,uint32_t baudRate, XModbusParity parity);
 XModbus* XModbus_new(size_t bufferSize, XModbusMode mode, XModbusGetByte xGetByte, XModbusPutByte xPutByte);
 /*! \ingroup modbus

@@ -4,11 +4,13 @@
 extern "C" {
 #endif
 #include"XModbusConfig.h"
-#include"XModbusPort.h"
 #include"XString.h"
+#include"XModbusEnum.h"
 #if MB_RTU_ENABLED
 #include"XModbusFrameData_RTU.h"
 #endif
+typedef struct XQueue XQueue;
+typedef XQueue XModbusFrameQueue;
 //帧接收队列
 typedef struct XModbus XModbus;
 typedef struct XModbusFrameData XModbusFrameData;
@@ -23,17 +25,14 @@ typedef struct XModbusFrameDataRecvHandle
 
 typedef struct XModbusFrameData
 {
-    UCHAR address;//地址
-    UCHAR funcCode;//功能码
+    uint8_t address;//地址
+    uint8_t funcCode;//功能码
+    XModbusMode mode;//modbus的模式
     XVector* dataFrame;//数据帧
-    USHORT pduLength;//功能码+数据//不包含CRC
-    UCHAR* pPduFramePos;//pdu的指针，指向 dataFrame中
-    //USHORT crc16;
-    
+    void* data;//用来存放解析后的数据 结构体
     XModbusFrameDataRecvHandle* recvHandle;//接收处理   主站才有
 }XModbusFrameData;
-typedef struct XQueue XQueue;
-typedef XQueue XModbusFrameQueue;
+
 
 XModbusFrameQueue* XModbusFrameQueue_new();
 void XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrameData* frame);
@@ -46,7 +45,9 @@ void XModbusFrameQueue_free(XModbusFrameQueue* queue);
 XModbusFrameData* XModbusFrameData_new();
 XModbusFrameData* XModbusFrameData_newRecvHandle();
 void XModbusFrameData_free(XModbusFrameData* frame);
+#if MB_RTU_ENABLED
 
+#endif
 
 /* ----------------------- XModbusFrameDataRecvHandle-------------------------------------*/
 //将其置为0

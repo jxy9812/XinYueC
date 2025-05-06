@@ -151,8 +151,8 @@ static void XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
     modbus->peMBFrameReceiveCur(modbus,recvFrame);
     //printf("进入帧数据处理:%d\n", modbus->errorCode);
     if (modbus->errorCode == MB_ENOERR) {
-        UCHAR address= recvFrame->address;
-        UCHAR code= recvFrame->funcCode;
+        uint8_t address= recvFrame->address;
+        uint8_t code= recvFrame->funcCode;
 #if MB_RECV_FRAME_SHOW
         XString* str = XModbusFrameDataRTU_to16HexString(recvFrame);
         printf("接收帧:%s\n", XString_c_str(str));
@@ -192,8 +192,8 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
         return;
    
     XModbusFrameData* frame = XModbusFrameQueue_top(modbus->recvFrameQueue);
-    UCHAR address = frame->address;
-    UCHAR code = frame->funcCode;
+    uint8_t address = frame->address;
+    uint8_t code = frame->funcCode;
     //XString* str = XModbusFrameDataRTU_to16HexString(frame);
     //printf("地址:%X 功能码:%X 完整:%s\n", address, code, XString_c_str(str));
     ////            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）

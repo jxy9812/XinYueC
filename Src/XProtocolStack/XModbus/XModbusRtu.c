@@ -54,7 +54,7 @@ void XModbusRtuStart(XModbus* modbus)
     ENTER_CRITICAL_SECTION();
     modbus->eRcvState = STATE_RX_INIT;  // 初始状态：等待总线空闲
     if(modbus->SerialEnable)
-        modbus->SerialEnable(modbus,TRUE, FALSE);  // 使能接收，禁用发送
+        modbus->SerialEnable(modbus,true, false);  // 使能接收，禁用发送
     XTimer_start(modbus->timer);  // 启动定时器（T35用于检测帧间隔）
     EXIT_CRITICAL_SECTION();
 }
@@ -62,7 +62,7 @@ void XModbusRtuStop(XModbus* modbus)
 {
     ENTER_CRITICAL_SECTION();
     if (modbus->SerialEnable)
-        modbus->SerialEnable(modbus, FALSE, FALSE);  // 禁用接收和发送
+        modbus->SerialEnable(modbus, false, false);  // 禁用接收和发送
     XTimer_stop(modbus->timer); // 关闭定时器
     EXIT_CRITICAL_SECTION();
 }
@@ -71,13 +71,13 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* dataFrame)
     if (modbus == NULL|| dataFrame==NULL)
         return MB_EINVAL;
     bool            xFrameReceived = false;
-    modbus->errorCode= MB_ENOERR;
+    //modbus->errorCode= MB_ENOERR;
 
     ENTER_CRITICAL_SECTION();
     //assert(usRcvBufferPos < MB_SER_PDU_SIZE_MAX);  // 确保缓冲区未溢出
     XModbusFrameDataRTU_parseData(dataFrame, modbus->recvBuffer);
     //解析的帧有问题
-    if(dataFrame->pPduFramePos==NULL)
+    if(XVector_empty(dataFrame->dataFrame))
         modbus->errorCode = MB_EIO;
     EXIT_CRITICAL_SECTION();
     //XModbusFrameQueue_push(modbus->object.recvFrameQueue,&dataFrame);
@@ -90,7 +90,7 @@ XModbusErrorCode XModbusRtuSend(XModbus* modbus, XModbusFrameData* dataFrame)
         return MB_EINVAL;
     //XModbusErrorCode    eStatus = MB_ENOERR;
     //USHORT          usCRC16;  // CRC - 16校验值
-    XVector* dataVector = XVector_New(UCHAR);
+    XVector* dataVector = XVector_New(uint8_t);
     if (dataVector == NULL)
     {
         modbus->errorCode = MB_ENORES;
@@ -126,17 +126,17 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
 {
     //printf("检查接收缓冲区\n");
     if (modbus == NULL)
-        return FALSE;
-    UCHAR           ucByte;
+        return false;
+    uint8_t           ucByte;
     //上一帧刚发完等待一段时间在尝试接收
     if (modbus->eSndState == STATE_TX_XMIT || (modbus->timerOutNumber < MB_MASTER_RECV_WAIT_TIME && modbus->eSndState == STATE_TX_END))
-        return FALSE;
+        return false;
     //printf("可以接收数据\n");
     //assert(modbus->eSndState == STATE_TX_IDLE);  // 确保发送状态为空闲
     //发送完数据后3.5字符内收到了返回信息 重置发送状态
    
     // 读取接收到的字节（平台特定：从串口缓冲区获取）
-    (void)modbus->xGetByte(modbus,(CHAR*)&ucByte);
+    (void)modbus->xGetByte(modbus,(uint8_t*)&ucByte);
     XVector* recvVector = modbus->recvBuffer;
     switch (modbus->eRcvState) {
     case STATE_RX_INIT:  // 初始状态（等待总线空闲）
@@ -167,14 +167,14 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
         XTimer_start(modbus->timer);  // 每次接收到字节后重置定时器
         break;
     }
-    return TRUE;
+    return true;
 }
 
 bool XModbusRtuTransmitFSM(XModbus* modbus)
 {
     if (modbus == NULL)
         return false;
-   // bool            xNeedPoll = FALSE;
+   // bool            xNeedPoll = false;
     //printf("检查是否可以发送\n");
     if (modbus->eRcvState != STATE_RX_IDLE|| modbus->eSndState == STATE_TX_END)
         return false;
@@ -188,13 +188,13 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
         frame = XModbusFrameQueue_top(sendQueue);
         dataVector=frame->dataFrame;
         if (modbus->SerialEnable)
-            modbus->SerialEnable(modbus, FALSE,TRUE);  // 发送，禁用接收
+            modbus->SerialEnable(modbus, false,true);  // 发送，禁用接收
     }
     else
     {
         //printf("发送队列是空的\n");
         if (modbus->SerialEnable)
-            modbus->SerialEnable(modbus,TRUE, FALSE);  // 禁用发送，重新使能接收
+            modbus->SerialEnable(modbus,true, false);  // 禁用发送，重新使能接收
         return true;
     }
 
@@ -211,7 +211,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
         {
             if (modbus->sendRemaining != 0)
             {
-                modbus->xPutByte(modbus,XVector_At(dataVector, XVector_size(dataVector)- modbus->sendRemaining,UCHAR));
+                modbus->xPutByte(modbus,XVector_At(dataVector, XVector_size(dataVector)- modbus->sendRemaining, uint8_t));
                 --modbus->sendRemaining;
             }
             else
@@ -220,7 +220,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
                 modbus->timerOutNumber = 0;//开始计数
                 XTimer_start(modbus->timer);  // 发送完成等待下一帧
                 if (modbus->SerialEnable)
-                    modbus->SerialEnable(modbus, TRUE, FALSE);  // 禁用发送，重新使能接收
+                    modbus->SerialEnable(modbus, true, false);  // 禁用发送，重新使能接收
 #if MB_SEND_FRAME_SHOW
                 XString* str = XModbusFrameDataRTU_to16HexString(frame);
                 printf("发送帧:%s\n", XString_c_str(str));
@@ -255,7 +255,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
 
 bool XModbusRtuTimerT35Expired(XModbus* modbus)
 {
-    bool            xNeedPoll = FALSE;
+    bool            xNeedPoll = false;
     //发完一帧数据总线等待
     if (modbus->eSndState == STATE_TX_END)
     {
@@ -301,9 +301,9 @@ bool XModbusRtuTimerT35Expired(XModbus* modbus)
 
     case STATE_RX_ERROR: // 错误状态超时（忽略）
         break;
-    case STATE_RX_IDLE: //接收空闲
+   // case STATE_RX_IDLE: //接收空闲
         /*printf("接收空闲:%d\n", modbus->eSndState);*/
-        break;
+       // break;
     default:            // 非法状态（断言检查）
         assert((modbus->eRcvState == STATE_RX_INIT) || (modbus->eRcvState == STATE_RX_RCV) || (modbus->eRcvState == STATE_RX_ERROR));
     }

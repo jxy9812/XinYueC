@@ -13,7 +13,8 @@ extern "C" {
      */
     typedef enum
     {
-        MB_RTU_MASTER,                     /*!< RTU传输模式 主站*/
+        MB_NOT_MODE = 0xFF,                     /*无协议*/
+        MB_RTU_MASTER=0,                     /*!< RTU传输模式 主站*/
         MB_RTU_SLAVE,                     /*!< RTU传输模式 从站*/
         MB_ASCII_MASTER,                   /*!< ASCII传输模式 主站*/
         MB_ASCII_SLAVE,                   /*!< ASCII传输模式 从站*/
@@ -84,6 +85,10 @@ extern "C" {
         STATE_TX_XMIT,     // 发送中状态（正在发送数据帧）
         STATE_TX_END     // 发送结束（刚发完一帧数据）
     } XModbusSndState;
+
+
+
+
 #if MB_ENUM_TO_STRING
    //modbus协议栈事件类型转string字符串常量输出
    const char* XModbusEventType_toString(XModbusEventType type);

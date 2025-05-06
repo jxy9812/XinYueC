@@ -93,8 +93,8 @@ void XModbusFrameDataRTU_initDataFrame(XModbusFrameData* frame, uint8_t address,
 	XVector* v = frame->dataFrame;
 	//主机地址(1)+功能码(1)+数据(dataSIze)+crc16(2)
 	XVector_resize(v, MB_SER_PDU_PDU_OFF + 1 + dataSize + MB_SER_PDU_SIZE_CRC);
-	frame->pduLength = 1 + dataSize;
-	frame->pPduFramePos = XVector_at(v, 1);
+	//frame->pduLength = 1 + dataSize;
+	//frame->pPduFramePos = XVector_at(v, 1);
 	//设置地址
 	XVector_At(v, 0, uint8_t) = address;
 	frame->address = address;
@@ -230,7 +230,7 @@ void XModbusFrameDataRTU_parseData(XModbusFrameData* frame, XVector* data)
 	if (frame->dataFrame == NULL)
 	{
 		XVector_clear(frame->dataFrame);
-		frame->pPduFramePos = NULL;
+		//frame->pPduFramePos = NULL;
 		return;
 	}
 	//开始解析RTU数据
@@ -242,8 +242,8 @@ void XModbusFrameDataRTU_parseData(XModbusFrameData* frame, XVector* data)
 		XVector_copy(frame->dataFrame, data);
 		//frame->address = pData[MB_SER_PDU_ADDR_OFF];  // 提取从机地址
 		// 计算PDU长度（总长度 - 地址长度 - CRC长度）
-		frame->pduLength = (USHORT)(dataSize - MB_SER_PDU_PDU_OFF - MB_SER_PDU_SIZE_CRC);
-		frame->pPduFramePos = XVector_at(frame->dataFrame, MB_SER_PDU_PDU_OFF);  // PDU起始位置（地址后第1字节）
+		//frame->pduLength = (USHORT)(dataSize - MB_SER_PDU_PDU_OFF - MB_SER_PDU_SIZE_CRC);
+		//frame->pPduFramePos = XVector_at(frame->dataFrame, MB_SER_PDU_PDU_OFF);  // PDU起始位置（地址后第1字节）
 		frame->address = XModbusFrameDataRTU_parseAddress(frame);
 		frame->funcCode = XModbusFrameDataRTU_parseFuncCode(frame);
 	}
@@ -251,27 +251,27 @@ void XModbusFrameDataRTU_parseData(XModbusFrameData* frame, XVector* data)
 	{
 		//int num = *pData;
 		XVector_clear(frame->dataFrame);
-		frame->pPduFramePos = NULL;
+		//frame->pPduFramePos = NULL;
 	}
 }
 
 uint8_t XModbusFrameDataRTU_parseAddress(XModbusFrameData* frame)
 {
-	if (frame && frame->pPduFramePos)
-		return *(frame->pPduFramePos - (MB_SER_PDU_PDU_OFF - MB_SER_PDU_ADDR_OFF));
+	if (frame && !XVector_empty(frame->dataFrame))
+		return XVector_At(frame->dataFrame, 0, uint8_t);
 	return 0xFF;
 }
 
 uint8_t XModbusFrameDataRTU_parseFuncCode(XModbusFrameData* frame)
 {
-	if (frame && frame->pPduFramePos)
-		return *(frame->pPduFramePos);
+	if (frame && !XVector_empty(frame->dataFrame))
+		return XVector_At(frame->dataFrame, MB_SER_PDU_PDU_OFF, uint8_t);
 	return 0;
 }
 
 XString* XModbusFrameDataRTU_to16HexString(XModbusFrameData* frame)
 {
-	if (frame && frame->pPduFramePos)
+	if (frame && !XVector_empty(frame->dataFrame))
 	{
 		XVector* vector = frame->dataFrame;
 		XString* str = XString_new(NULL);

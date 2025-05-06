@@ -20,7 +20,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XModbusPort.h"
 /*!
  * 这些常量定义了Modbus帧的格式。以下以Modbus RTU/ASCII帧为例。
  * 注意，Modbus协议数据单元（PDU）不依赖于底层传输方式。

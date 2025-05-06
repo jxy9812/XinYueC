@@ -10,9 +10,15 @@ extern "C" {
 typedef struct XModbusFrameData XModbusFrameData;
 typedef struct XString XString;
 typedef struct XVector XVector;
+typedef struct XModbusFrameData_RTU
+{
+    uint8_t address;//地址
+    uint8_t funcCode;//功能码
+    uint16_t crc16;//校验码
+}XModbusFrameData_RTU;
 /* -------------------------------------- 线圈与离散输入-------------------------------------*/
 #define XMODBUS_COILS_STATE_ON        0xFF00//线圈打开状态
-#define XMODBUS_COILS_STATE_OFF       0x0000//线圈打开状态  
+#define XMODBUS_COILS_STATE_OFF       0x0000//线圈关闭状态  
 /*
 * @brief  一个字节中按偏移量设置一个比特位
 * @param  ByteBuff:uint8_t* 类型 指向要操作的字节

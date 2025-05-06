@@ -115,7 +115,7 @@ XModbusException XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc(XModbus* mod
 	XModbusRegisterFunc* regFunc = FunctionHandler->data;
 
 	//指向功能码后的寄存器地址数据
-	uint16_t* p = recvFrame->pPduFramePos + 1;
+	uint16_t* p =XVector_at(recvFrame->dataFrame,2);
 	//获取寄存器地址
 	uint16_t regAddress = SwapEndian16(p[0], 1);
 	//需要读取的寄存器数量
@@ -152,7 +152,7 @@ XModbusException XModbusRegisterFunc_0x06_RTU_slaveRecvHandCallFunc(XModbus* mod
 	//XString_free(str);
 	
 	//指向功能码后的寄存器地址数据
-	uint16_t* p = (uint16_t*)recvFrame->pPduFramePos+1;
+	uint16_t* p = XVector_at(recvFrame->dataFrame, 2);
 	//获取寄存器地址
 	uint16_t regAddress = SwapEndian16(*p,1);
 	uint16_t value = *((p + 1));
