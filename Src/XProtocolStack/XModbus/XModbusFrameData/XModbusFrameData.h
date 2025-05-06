@@ -14,7 +14,7 @@ typedef XQueue XModbusFrameQueue;
 //帧接收队列
 typedef struct XModbus XModbus;
 typedef struct XModbusFrameData XModbusFrameData;
-typedef void (*XModbusFrameDataRecvHandCallFunc)(XModbus* modbus, XModbusFrameData* dataFrame);
+typedef void (*XModbusFrameDataRecvHandCallFunc)(XModbus* modbus, XModbusFrameData* frameData);
 //接收回调方法
 typedef struct XModbusFrameDataRecvHandle
 {
@@ -25,10 +25,10 @@ typedef struct XModbusFrameDataRecvHandle
 
 typedef struct XModbusFrameData
 {
-    uint8_t address;//地址
-    uint8_t funcCode;//功能码
+    //uint8_t address;//地址
+    //uint8_t funcCode;//功能码
     XModbusMode mode;//modbus的模式
-    XVector* dataFrame;//数据帧
+    XVector* frameData;//帧数据
     void* data;//用来存放解析后的数据 结构体
     XModbusFrameDataRecvHandle* recvHandle;//接收处理   主站才有
 }XModbusFrameData;
@@ -45,6 +45,10 @@ void XModbusFrameQueue_free(XModbusFrameQueue* queue);
 XModbusFrameData* XModbusFrameData_new();
 XModbusFrameData* XModbusFrameData_newRecvHandle();
 void XModbusFrameData_free(XModbusFrameData* frame);
+//获取数据帧中主机地址
+uint8_t XModbusFrameData_getAddress(XModbusFrameData* frame);
+//获取数据帧中功能码
+uint8_t XModbusFrameData_getFuncCode(XModbusFrameData* frame);
 #if MB_RTU_ENABLED
 
 #endif

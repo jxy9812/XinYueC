@@ -15,9 +15,9 @@ XModbusFrameQueue* XModbusFrameQueue_new()
 	return queue;
 }
 
-void XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrameData* dataFrame)
+void XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrameData* frameData)
 {
-	XQueue_push(queue,&dataFrame);
+	XQueue_push(queue,&frameData);
 }
 
 XModbusFrameData* XModbusFrameQueue_top(XModbusFrameQueue* queue)
@@ -68,7 +68,7 @@ XModbusFrameData* XModbusFrameData_new()
 {
 	XModbusFrameData* frame=XMemory_malloc(sizeof(XModbusFrameData));
 	frame->mode = MB_NOT_MODE;
-	frame->dataFrame = XVector_New(uint8_t);
+	frame->frameData = XVector_New(uint8_t);
 	frame->data = NULL;
 	frame->recvHandle = NULL;
 	return frame;
@@ -84,12 +84,64 @@ void XModbusFrameData_free(XModbusFrameData* frame)
 {
 	if (frame)
 	{
-		if (frame->dataFrame)
-			XVector_free(frame->dataFrame);
+		if (frame->frameData)
+		{
+			XVector_free(frame->frameData);
+		}
 		if (frame->recvHandle)
+		{
 			XMemory_free(frame->recvHandle);
+		}
+		if (frame->data)
+		{
+			switch (frame->mode)
+			{
+			
+			case MB_RTU_MASTER:
+			case MB_RTU_SLAVE:XModbusFrameDataRTU_free(frame->data); break;
+			case MB_NOT_MODE:printf("内存没释放\n"); break;
+			default:
+				break;
+			}
+		}
 		XMemory_free(frame);
 	}
+}
+uint8_t XModbusFrameData_getAddress(XModbusFrameData* frame)
+{
+	if (frame)
+	{
+		switch (frame->mode)
+		{
+		case MB_RTU_MASTER:
+		case MB_RTU_SLAVE:
+			if (frame->data)
+				return ((XModbusFrameDataRTU*)frame->data)->address;
+			else
+				return XModbusFrameDataRTU_parseAddress(frame); break;
+		default:
+			break;
+		}
+	}
+	return 0;
+}
+uint8_t XModbusFrameData_getFuncCode(XModbusFrameData* frame)
+{
+	if (frame)
+	{
+		switch (frame->mode)
+		{
+		case MB_RTU_MASTER:
+		case MB_RTU_SLAVE:
+			if (frame->data)
+				return ((XModbusFrameDataRTU*)frame->data)->funcCode;
+			else
+				return XModbusFrameDataRTU_parseFuncCode(frame); break;
+		default:
+			break;
+		}
+	}
+	return 0;
 }
 //解析CRC16
 static uint8_t XModbusFrameData_parse‌CRC16(uint8_t* pData, uint16_t pos)

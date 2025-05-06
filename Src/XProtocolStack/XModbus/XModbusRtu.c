@@ -66,25 +66,26 @@ void XModbusRtuStop(XModbus* modbus)
     XTimer_stop(modbus->timer); // 关闭定时器
     EXIT_CRITICAL_SECTION();
 }
-XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* dataFrame)
+XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* frameData)
 {
-    if (modbus == NULL|| dataFrame==NULL)
+    if (modbus == NULL|| frameData==NULL)
         return MB_EINVAL;
     bool            xFrameReceived = false;
     //modbus->errorCode= MB_ENOERR;
 
     ENTER_CRITICAL_SECTION();
-    //assert(usRcvBufferPos < MB_SER_PDU_SIZE_MAX);  // 确保缓冲区未溢出
-    XModbusFrameDataRTU_parseData(dataFrame, modbus->recvBuffer);
+
+    XModbusFrameDataRTU_parseData_reply(frameData, modbus->recvBuffer);
+
     //解析的帧有问题
-    if(XVector_empty(dataFrame->dataFrame))
+    if(XVector_empty(frameData->frameData))
         modbus->errorCode = MB_EIO;
     EXIT_CRITICAL_SECTION();
-    //XModbusFrameQueue_push(modbus->object.recvFrameQueue,&dataFrame);
+    //XModbusFrameQueue_push(modbus->object.recvFrameQueue,&frameData);
     return  modbus->errorCode;
 }
 
-XModbusErrorCode XModbusRtuSend(XModbus* modbus, XModbusFrameData* dataFrame)
+XModbusErrorCode XModbusRtuSend(XModbus* modbus, XModbusFrameData* frameData)
 {
     if (modbus == NULL)
         return MB_EINVAL;
@@ -96,24 +97,24 @@ XModbusErrorCode XModbusRtuSend(XModbus* modbus, XModbusFrameData* dataFrame)
         modbus->errorCode = MB_ENORES;
         return modbus->errorCode;
     }
-    XVector_copy(dataVector, dataFrame->dataFrame);
+    XVector_copy(dataVector, frameData->frameData);
     ////设置数据的总长度
     //XVector_resize(dataVector, usLength+1+ MB_SER_PDU_SIZE_CRC);
     ////获取内部数据指针
-    //UCHAR* dataFrame = XVector_front(dataVector);
+    //UCHAR* frameData = XVector_front(dataVector);
     ////保存从机地址
-    //dataFrame[MB_SER_PDU_ADDR_OFF] = ucSlaveAddress;  // 添加从机地址
+    //frameData[MB_SER_PDU_ADDR_OFF] = ucSlaveAddress;  // 添加从机地址
     ////保存pdu数据
     //for (size_t i = 0; i < usLength; i++)
     //{
-    //    dataFrame[MB_SER_PDU_PDU_OFF + i] = pucFrame[i];
+    //    frameData[MB_SER_PDU_PDU_OFF + i] = pucFrame[i];
     //} 
     //// 计算CRC（包含地址和PDU）
-    //usCRC16 = XCrc_get16((UCHAR*)dataFrame, usLength+1);
+    //usCRC16 = XCrc_get16((UCHAR*)frameData, usLength+1);
     ////保存校验码
     //uint16_t pos = usLength + 1;//校验码所属位置
-    //dataFrame[pos++] = (UCHAR)(usCRC16 & 0xFF);  // CRC低位（小端模式）
-    //dataFrame[pos++] = (UCHAR)(usCRC16 >> 8);       // CRC高位
+    //frameData[pos++] = (UCHAR)(usCRC16 & 0xFF);  // CRC低位（小端模式）
+    //frameData[pos++] = (UCHAR)(usCRC16 >> 8);       // CRC高位
     ////将发送数据插入发送队列
     //XQueue_push(modbus->object.sendQueue,&dataVector);
     ENTER_CRITICAL_SECTION();
@@ -186,7 +187,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
     if (!XModbusFrameQueue_empty(sendQueue))
     {
         frame = XModbusFrameQueue_top(sendQueue);
-        dataVector=frame->dataFrame;
+        dataVector=frame->frameData;
         if (modbus->SerialEnable)
             modbus->SerialEnable(modbus, false,true);  // 发送，禁用接收
     }
@@ -301,8 +302,9 @@ bool XModbusRtuTimerT35Expired(XModbus* modbus)
 
     case STATE_RX_ERROR: // 错误状态超时（忽略）
         break;
-   // case STATE_RX_IDLE: //接收空闲
-        /*printf("接收空闲:%d\n", modbus->eSndState);*/
+    case STATE_RX_IDLE: //接收空闲
+        //发生一次错误
+        //printf("接收空闲:%d\n", modbus->eSndState);
        // break;
     default:            // 非法状态（断言检查）
         assert((modbus->eRcvState == STATE_RX_INIT) || (modbus->eRcvState == STATE_RX_RCV) || (modbus->eRcvState == STATE_RX_ERROR));

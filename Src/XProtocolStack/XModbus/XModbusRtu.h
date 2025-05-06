@@ -66,7 +66,7 @@ void            XModbusRtuStop(XModbus* modbus);
  *         - MB_EIO：底层I/O错误（如串口读取失败）
  *         - MB_ETIMEDOUT：接收超时（超过T35定时器时间）
  */
-XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* dataFrame);
+XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* frameData);
 /*!
  * @brief 发送Modbus RTU帧
  *
@@ -80,7 +80,7 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* dataFrame)
  *         - MB_ENOERR：成功发送
  *         - MB_EIO：底层I/O错误（如串口发送失败）
  */
-XModbusErrorCode    XModbusRtuSend(XModbus* modbus, XModbusFrameData* dataFrame);
+XModbusErrorCode    XModbusRtuSend(XModbus* modbus, XModbusFrameData* frameData);
 
 /*!
   * @brief RTU接收有限状态机处理函数

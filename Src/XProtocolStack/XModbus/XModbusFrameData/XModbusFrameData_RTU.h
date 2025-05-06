@@ -10,12 +10,27 @@ extern "C" {
 typedef struct XModbusFrameData XModbusFrameData;
 typedef struct XString XString;
 typedef struct XVector XVector;
-typedef struct XModbusFrameData_RTU
+//RTU模式下的数据
+typedef struct XModbusFrameDataRTU
 {
     uint8_t address;//地址
     uint8_t funcCode;//功能码
+    union  {
+       uint16_t coilsAddress;//线圈地址
+       uint16_t discAddress;//离散地址
+       uint16_t regAddress;//寄存器地址
+       uint8_t  error;//错误码
+    };
+    union {
+        uint16_t coilsCount;//线圈数量
+        uint16_t discCount;//离散数量
+        uint16_t regCount;//寄存器数量
+    };
     uint16_t crc16;//校验码
-}XModbusFrameData_RTU;
+    XVector* data;//数据 ---线圈/离散/寄存器
+}XModbusFrameDataRTU;
+XModbusFrameDataRTU* XModbusFrameDataRTU_new();
+void XModbusFrameDataRTU_free(XModbusFrameDataRTU* data);
 /* -------------------------------------- 线圈与离散输入-------------------------------------*/
 #define XMODBUS_COILS_STATE_ON        0xFF00//线圈打开状态
 #define XMODBUS_COILS_STATE_OFF       0x0000//线圈关闭状态  
@@ -194,11 +209,13 @@ void XModbusFrameDataRTU_setDataFrame_0x0F_request(XModbusFrameData* frame, uint
 */
 void XModbusFrameDataRTU_setDataFrame_0x0F_reply(XModbusFrameData* frame, uint8_t address, uint16_t coilsAddress, uint16_t coilsCount);
 /* ----------------------- RTU模式解析数据帧-------------------------------------*/
-//将一个数据解析成RTU帧
-void XModbusFrameDataRTU_parseData(XModbusFrameData* frame, XVector* data);
-//解析RTU模式下数据库帧中主机地址
+//将一个数据解析成RTU 请求帧
+void XModbusFrameDataRTU_parseData_request(XModbusFrameData* frame, XVector* frameData);
+//将一个数据解析成RTU 响应帧
+void XModbusFrameDataRTU_parseData_reply(XModbusFrameData* frame, XVector* frameData);
+//解析RTU模式下数据帧中主机地址
 uint8_t XModbusFrameDataRTU_parseAddress(XModbusFrameData* frame);
-//解析RTU模式下数据库帧中功能码
+//解析RTU模式下数据帧中功能码
 uint8_t XModbusFrameDataRTU_parseFuncCode(XModbusFrameData* frame);
 //转16进制显示
 XString* XModbusFrameDataRTU_to16HexString(XModbusFrameData* frame); 

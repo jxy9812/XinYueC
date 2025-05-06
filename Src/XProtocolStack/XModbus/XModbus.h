@@ -28,9 +28,9 @@ typedef void    (*XModbusFrameStart) (XModbus* modbus);
 // 停止接收Modbus帧的函数指针类型
 typedef void    (*XModbusFrameStop) (XModbus* modbus);
 // 接收Modbus帧的函数指针类型
-typedef XModbusErrorCode(*XModbusFrameReceive) (XModbus* modbus, XModbusFrameData* dataFrame);
+typedef XModbusErrorCode(*XModbusFrameReceive) (XModbus* modbus, XModbusFrameData* frameData);
 // 发送Modbus帧的函数指针类型
-typedef XModbusErrorCode(*XModbusFrameSend) (XModbus* modbus, XModbusFrameData* dataFrame);
+typedef XModbusErrorCode(*XModbusFrameSend) (XModbus* modbus, XModbusFrameData* frameData);
 // 关闭Modbus帧处理的函数指针类型
 typedef void(*XModbusFrameClose) (XModbus* modbus);
 typedef bool (*XModbusGetByte)(XModbus* modbus, uint8_t* Byte);//获取一个字符

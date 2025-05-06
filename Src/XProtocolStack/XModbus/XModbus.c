@@ -146,13 +146,13 @@ static void XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
     
     // 调用对应模式的接收函数，获取帧数据（地址、缓冲区、长度）
     XModbusFrameData* recvFrame = XModbusFrameData_new();
-    
+    recvFrame->mode = modbus->mode;
     //解析数据帧
     modbus->peMBFrameReceiveCur(modbus,recvFrame);
     //printf("进入帧数据处理:%d\n", modbus->errorCode);
     if (modbus->errorCode == MB_ENOERR) {
-        uint8_t address= recvFrame->address;
-        uint8_t code= recvFrame->funcCode;
+        uint8_t address= XModbusFrameData_getAddress(recvFrame);
+        uint8_t code= XModbusFrameData_getFuncCode(recvFrame);
 #if MB_RECV_FRAME_SHOW
         XString* str = XModbusFrameDataRTU_to16HexString(recvFrame);
         printf("接收帧:%s\n", XString_c_str(str));
@@ -192,8 +192,8 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
         return;
    
     XModbusFrameData* frame = XModbusFrameQueue_top(modbus->recvFrameQueue);
-    uint8_t address = frame->address;
-    uint8_t code = frame->funcCode;
+    uint8_t address = XModbusFrameData_getAddress(frame);
+    uint8_t code = XModbusFrameData_getFuncCode(frame);
     //XString* str = XModbusFrameDataRTU_to16HexString(frame);
     //printf("地址:%X 功能码:%X 完整:%s\n", address, code, XString_c_str(str));
     ////            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
@@ -203,7 +203,7 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
     {
         if (modbus->recvHandleMaster->pRecvHandCallFunc)
         {
-            if (modbus->recvHandleMaster->waitAddressCode == (frame->address << 8 | frame->funcCode))
+            if (modbus->recvHandleMaster->waitAddressCode == (address << 8 | code))
             {
                 if (frame->recvHandle != NULL)//释放准备交换
                     XMemory_free(frame->recvHandle);
@@ -302,14 +302,14 @@ XModbusErrorCode XModbus_sendData(XModbus* modbus, XModbusFrameData* frame)
 {
     if(modbus==NULL|| frame == NULL)
         return MB_EINVAL;
-    if (frame->dataFrame==NULL||XVector_empty(frame->dataFrame))
+    if (frame->frameData==NULL||XVector_empty(frame->frameData))
     {
         XModbusFrameData_free(frame);
         return MB_EINVAL;
     }
     if (frame->recvHandle != NULL)
     {
-        frame->recvHandle->waitAddressCode = frame->address<< 8 | frame->funcCode;
+        frame->recvHandle->waitAddressCode = XModbusFrameData_getAddress (frame)<< 8 | XModbusFrameData_getFuncCode(frame);
     }
     XModbusFrameQueue_push(modbus->sendQueue, frame);
     return modbus->errorCode;

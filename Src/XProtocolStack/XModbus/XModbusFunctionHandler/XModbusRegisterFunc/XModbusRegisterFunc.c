@@ -115,7 +115,7 @@ XModbusException XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc(XModbus* mod
 	XModbusRegisterFunc* regFunc = FunctionHandler->data;
 
 	//指向功能码后的寄存器地址数据
-	uint16_t* p =XVector_at(recvFrame->dataFrame,2);
+	uint16_t* p =XVector_at(recvFrame->frameData,2);
 	//获取寄存器地址
 	uint16_t regAddress = SwapEndian16(p[0], 1);
 	//需要读取的寄存器数量
@@ -123,7 +123,7 @@ XModbusException XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc(XModbus* mod
 	XVector* data = regFunc->parent.data;//寄存器数据
 	void* readStart = XVector_at(data, regAddress);//寄存器数据缓冲区
 	XModbusFrameData* sendFrame = XModbusFrameData_new();
-	XModbusFrameDataRTU_setDataFrame_0x03_reply(sendFrame, recvFrame->address, readStart,regCount);
+	XModbusFrameDataRTU_setDataFrame_0x03_reply(sendFrame, XModbusFrameData_getAddress(recvFrame), readStart, regCount);
 	//printf("读取保持寄存器\n");
 
 	return MB_EX_NONE;
@@ -144,22 +144,14 @@ XModbusException XModbusRegisterFunc_0x06_RTU_slaveRecvHandCallFunc(XModbus* mod
 	if (recvFrame == NULL || FunctionHandler == NULL)
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
 	XModbusRegisterFunc* regFunc = FunctionHandler->data;
+	XModbusFrameDataRTU* rtu = (XModbusFrameDataRTU*)recvFrame->data;
+	if (rtu==NULL)
+		return;
 
-	//printf("写保持寄存器\n");
-	//XString* str = XModbusFrameDataRTU_to16HexString(recvFrame);
-	//printf("完整:%s\n", XString_c_str(str));
-	////            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
-	//XString_free(str);
-	
-	//指向功能码后的寄存器地址数据
-	uint16_t* p = XVector_at(recvFrame->dataFrame, 2);
-	//获取寄存器地址
-	uint16_t regAddress = SwapEndian16(*p,1);
-	uint16_t value = *((p + 1));
-	if (XModbusRegisterFunc_write_uint16_t(regFunc, regAddress, value))
+	if (XModbusRegisterFunc_write_uint16_t(regFunc, rtu->regAddress,XVector_At(rtu->data,0,uint16_t)))
 	{//写入成功 将数据帧再次发送回去
 		XModbusFrameData* sendFrame = XModbusFrameData_new();
-		XVector_swap(recvFrame->dataFrame, sendFrame->dataFrame);
+		XVector_swap(recvFrame->frameData, sendFrame->frameData);
 		XModbus_sendData(modbus, sendFrame);
 	}
 	return MB_EX_NONE;
