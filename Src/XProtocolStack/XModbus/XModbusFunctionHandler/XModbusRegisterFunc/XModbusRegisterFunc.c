@@ -1,7 +1,7 @@
 ﻿#include"XModbusRegisterFunc.h"
 #include"XMemory.h"
 #include"XVector.h"
-#include"XModbusFrameData.h"
+#include"XModbusFrame.h"
 #include"XModbusFunctionHandler.h"
 #include"XModbus.h"
 #include"XModbusRtu.h"
@@ -83,7 +83,7 @@ uint16_t* XModbusRegisterFunc_at(XModbusRegisterFunc* regFunc, uint16_t regAddre
 	return XVector_at(regFunc->parent.data, regAddress);
 }
 
-XModbusException XModbusRegisterFunc_0x03_RTU_masterRecvHandCallFunc(XModbus* modbus, XModbusFrameData* frameData, XModbusFunctionHandler* FunctionHandler)
+XModbusException XModbusRegisterFunc_0x03_RTU_masterRecvHandCallFunc(XModbus* modbus, XModbusFrame* frameData, XModbusFunctionHandler* FunctionHandler)
 {
 	if (frameData == NULL || FunctionHandler == NULL)
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
@@ -108,7 +108,7 @@ XModbusException XModbusRegisterFunc_0x03_RTU_masterRecvHandCallFunc(XModbus* mo
 0x01 0x02：第一个寄存器值（0x0102）
 0x03 0x04：第二个寄存器值（0x0304）
 */
-XModbusException XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrameData* recvFrame, XModbusFunctionHandler* FunctionHandler)
+XModbusException XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler)
 {
 	if (recvFrame == NULL || FunctionHandler == NULL)
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
@@ -122,8 +122,8 @@ XModbusException XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc(XModbus* mod
 	uint16_t regCount = SwapEndian16(p[1], 1);
 	XVector* data = regFunc->parent.data;//寄存器数据
 	void* readStart = XVector_at(data, regAddress);//寄存器数据缓冲区
-	XModbusFrameData* sendFrame = XModbusFrameData_new();
-	XModbusFrameDataRTU_setDataFrame_0x03_reply(sendFrame, XModbusFrameData_getAddress(recvFrame), readStart, regCount);
+	XModbusFrame* sendFrame = XModbusFrame_new();
+	XModbusFrameRTU_setFrameData_0x03_reply(sendFrame, XModbusFrame_getAddress(recvFrame), readStart, regCount);
 	//printf("读取保持寄存器\n");
 
 	return MB_EX_NONE;
@@ -139,18 +139,18 @@ XModbusException XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc(XModbus* mod
 0x02 0x06 0x00 0x03 0x00 0xA1 CRC16
 解析：响应与请求相同，确认写入成功
 */
-XModbusException XModbusRegisterFunc_0x06_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrameData* recvFrame, XModbusFunctionHandler* FunctionHandler)
+XModbusException XModbusRegisterFunc_0x06_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler)
 {
 	if (recvFrame == NULL || FunctionHandler == NULL)
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
 	XModbusRegisterFunc* regFunc = FunctionHandler->data;
-	XModbusFrameDataRTU* rtu = (XModbusFrameDataRTU*)recvFrame->data;
+	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu==NULL)
 		return;
 
 	if (XModbusRegisterFunc_write_uint16_t(regFunc, rtu->regAddress,XVector_At(rtu->data,0,uint16_t)))
 	{//写入成功 将数据帧再次发送回去
-		XModbusFrameData* sendFrame = XModbusFrameData_new();
+		XModbusFrame* sendFrame = XModbusFrame_new();
 		XVector_swap(recvFrame->frameData, sendFrame->frameData);
 		XModbus_sendData(modbus, sendFrame);
 	}

@@ -7,7 +7,7 @@ extern "C" {
 #include "XModbus.h"
 #include "XTimer.h"
 
-typedef struct XModbusFrameData XModbusFrameData;
+typedef struct XModbusFrame XModbusFrame;
     /* ----------------------- 常量定义 -----------------------------------*/
 #define MB_SER_PDU_SIZE_MIN     4       // Modbus RTU帧最小长度（地址+功能码+数据+CRC=4字节）
 #define MB_SER_PDU_SIZE_MAX     256     // Modbus RTU帧最大长度（256字节，含CRC）
@@ -66,7 +66,7 @@ void            XModbusRtuStop(XModbus* modbus);
  *         - MB_EIO：底层I/O错误（如串口读取失败）
  *         - MB_ETIMEDOUT：接收超时（超过T35定时器时间）
  */
-XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* frameData);
+XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrame* frameData);
 /*!
  * @brief 发送Modbus RTU帧
  *
@@ -80,7 +80,7 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* frameData)
  *         - MB_ENOERR：成功发送
  *         - MB_EIO：底层I/O错误（如串口发送失败）
  */
-XModbusErrorCode    XModbusRtuSend(XModbus* modbus, XModbusFrameData* frameData);
+XModbusErrorCode    XModbusRtuSend(XModbus* modbus, XModbusFrame* frameData);
 
 /*!
   * @brief RTU接收有限状态机处理函数

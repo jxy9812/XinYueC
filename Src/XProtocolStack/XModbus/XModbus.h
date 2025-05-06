@@ -8,7 +8,6 @@ extern "C" {
 #include"XQueue.h"
 #include"XEventQueue.h"
 #include"XModbusFrame.h"
-#include"XModbusFrameData.h"
 #include"XTimer.h"
 #include"XModbusFunctionHandler.h"
 #include"XModbusRegisterFunc.h"
@@ -28,9 +27,9 @@ typedef void    (*XModbusFrameStart) (XModbus* modbus);
 // 停止接收Modbus帧的函数指针类型
 typedef void    (*XModbusFrameStop) (XModbus* modbus);
 // 接收Modbus帧的函数指针类型
-typedef XModbusErrorCode(*XModbusFrameReceive) (XModbus* modbus, XModbusFrameData* frameData);
+typedef XModbusErrorCode(*XModbusFrameReceive) (XModbus* modbus, XModbusFrame* frameData);
 // 发送Modbus帧的函数指针类型
-typedef XModbusErrorCode(*XModbusFrameSend) (XModbus* modbus, XModbusFrameData* frameData);
+typedef XModbusErrorCode(*XModbusFrameSend) (XModbus* modbus, XModbusFrame* frameData);
 // 关闭Modbus帧处理的函数指针类型
 typedef void(*XModbusFrameClose) (XModbus* modbus);
 typedef bool (*XModbusGetByte)(XModbus* modbus, uint8_t* Byte);//获取一个字符
@@ -68,7 +67,7 @@ typedef struct XModbus
     XModbusState     state;//状态
     XVector* recvBuffer;//接收缓冲区
     XModbusFrameQueue* sendQueue;//发送队列(XQueue<XModbusFrameData*>)
-    XModbusFrameQueue* recvFrameQueue;//接收帧队列(XQueue<XModbusFrameData*>) 后面处理执行
+    XModbusFrameQueue* recvFrameQueue;//接收帧队列(XQueue<XModbusFrame*>) 后面处理执行
     XEventQueue* eventQueue;//事件队列
     XModbusFunctionHandlerList* funcCodeList;//功能码列表
 
@@ -137,7 +136,7 @@ XModbusErrorCode   XModbus_disable(XModbus* modbus);
 XModbusErrorCode  XModbus_poll(XModbus* modbus);
 
 //发送一帧数据
-XModbusErrorCode XModbus_sendData(XModbus* modbus, XModbusFrameData* sendFrame);
+XModbusErrorCode XModbus_sendData(XModbus* modbus, XModbusFrame* sendFrame);
 
 //当前是主站吗
 bool XModbus_isMaster(XModbus* modbus);

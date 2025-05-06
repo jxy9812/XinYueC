@@ -3,9 +3,9 @@
 #include"XModbusRtu.h"
 #include"XMemory.h"
 #include"XCrc.h"
-#include"XModbusFrameData.h"
+#include"XModbusFrame.h"
 //0x6 功能码响应
-static void RtuDataFrame_0x06_reply(XModbus* modbus, XModbusFrameData* frame)
+static void RtuDataFrame_0x06_reply(XModbus* modbus, XModbusFrame* frame)
 {
     if(frame==NULL)
         printf("超时了\n");
@@ -38,17 +38,17 @@ void XModbusTest()
         XModbus_setFunctionHandler(modbus, &Handler);
     }
     {//发送一帧数据
-        XModbusFrameData* frame = XModbusFrameData_newRecvHandle();
+        XModbusFrame* frame = XModbusFrame_newRecvHandle();
         frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
         char buff[] = {0x00,0x01};
-        XModbusFrameDataRTU_setDataFrame_0x06_request(frame, 0x01,  0x01, buff);
+        XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x01, buff);
         XModbus_sendData(modbus, frame);
     }
     {//发送一帧数据
-        XModbusFrameData* frame = XModbusFrameData_newRecvHandle();
+        XModbusFrame* frame = XModbusFrame_newRecvHandle();
         //frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
         char buff[] = { 0x00,0x01 };
-        XModbusFrameDataRTU_setDataFrame_0x06_request(frame, 0x01,  0x00, buff);
+        XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x00, buff);
         XModbus_sendData(modbus, frame);
        /* uint8_t State =0;
         XMODBUS_UINT8_SET_BITS(&State, 0, 1);
@@ -56,7 +56,7 @@ void XModbusTest()
         XMODBUS_UINT8_SET_BITS(&State,3,1);
         XMODBUS_UINT8_SET_BITS(&State, 7, 1);
 
-        XModbusFrameDataRTU_setDataFrame_0x0F_request(frame, 0x01,0x0, 8, &State);
+        XModbusFrameRTU_setFrameData_0x0F_request(frame, 0x01,0x0, 8, &State);
         XModbus_sendData(modbus, frame);*/
     }
     //使能打开Modbus

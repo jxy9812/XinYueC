@@ -1,4 +1,4 @@
-﻿#include "XModbusFrameData.h"
+﻿#include "XModbusFrame.h"
 #include "XQueue.h"
 #include "XMemory.h"
 #include "XModbusRtu.h"
@@ -6,21 +6,21 @@
 #include <string.h>
 XModbusFrameQueue* XModbusFrameQueue_new()
 {
-	XModbusFrameQueue* queue = XQueue_New(XModbusFrameData*);
+	XModbusFrameQueue* queue = XQueue_New(XModbusFrame*);
 	/*if (queue)
 	{
-		XModbusFrameData frame{1,XVector_New(UCHAR)};
+		XModbusFrame frame{1,XVector_New(UCHAR)};
 
 	}*/
 	return queue;
 }
 
-void XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrameData* frameData)
+void XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrame* frameData)
 {
 	XQueue_push(queue,&frameData);
 }
 
-XModbusFrameData* XModbusFrameQueue_top(XModbusFrameQueue* queue)
+XModbusFrame* XModbusFrameQueue_top(XModbusFrameQueue* queue)
 {
 	if(queue==NULL)
 		return NULL;
@@ -41,11 +41,11 @@ void XModbusFrameQueue_pop(XModbusFrameQueue* queue)
 	//没有设置自动释放手动释放
 	if (XContainerDataFreeMethod(queue) == NULL)
 	{
-		XModbusFrameData* top= XModbusFrameQueue_top(queue);
+		XModbusFrame* top= XModbusFrameQueue_top(queue);
 		////显释放里面的XVector数据
 		//if(top->frame)
 		//	XVector_free(top->frame);
-		XModbusFrameData_free(top);
+		XModbusFrame_free(top);
 	}
 	XQueue_pop(queue);
 }
@@ -64,23 +64,23 @@ void XModbusFrameQueue_free(XModbusFrameQueue* queue)
 	XQueue_free(queue);
 }
 
-XModbusFrameData* XModbusFrameData_new()
+XModbusFrame* XModbusFrame_new()
 {
-	XModbusFrameData* frame=XMemory_malloc(sizeof(XModbusFrameData));
+	XModbusFrame* frame=XMemory_malloc(sizeof(XModbusFrame));
 	frame->mode = MB_NOT_MODE;
 	frame->frameData = XVector_New(uint8_t);
 	frame->data = NULL;
 	frame->recvHandle = NULL;
 	return frame;
 }
-XModbusFrameData* XModbusFrameData_newRecvHandle()
+XModbusFrame* XModbusFrame_newRecvHandle()
 {
-	XModbusFrameData* frame = XModbusFrameData_new();
+	XModbusFrame* frame = XModbusFrame_new();
 	frame->recvHandle = XMemory_malloc(sizeof(XModbusFrameDataRecvHandle));
 	XModbusFrameDataRecvHandle_setZero(frame->recvHandle);
 	return frame;
 }
-void XModbusFrameData_free(XModbusFrameData* frame)
+void XModbusFrame_free(XModbusFrame* frame)
 {
 	if (frame)
 	{
@@ -98,7 +98,7 @@ void XModbusFrameData_free(XModbusFrameData* frame)
 			{
 			
 			case MB_RTU_MASTER:
-			case MB_RTU_SLAVE:XModbusFrameDataRTU_free(frame->data); break;
+			case MB_RTU_SLAVE:XModbusFrameRTU_free(frame->data); break;
 			case MB_NOT_MODE:printf("内存没释放\n"); break;
 			default:
 				break;
@@ -107,7 +107,7 @@ void XModbusFrameData_free(XModbusFrameData* frame)
 		XMemory_free(frame);
 	}
 }
-uint8_t XModbusFrameData_getAddress(XModbusFrameData* frame)
+uint8_t XModbusFrame_getAddress(XModbusFrame* frame)
 {
 	if (frame)
 	{
@@ -116,16 +116,16 @@ uint8_t XModbusFrameData_getAddress(XModbusFrameData* frame)
 		case MB_RTU_MASTER:
 		case MB_RTU_SLAVE:
 			if (frame->data)
-				return ((XModbusFrameDataRTU*)frame->data)->address;
+				return ((XModbusFrameRTU*)frame->data)->address;
 			else
-				return XModbusFrameDataRTU_parseAddress(frame); break;
+				return XModbusFrameRTU_parseAddress(frame); break;
 		default:
 			break;
 		}
 	}
 	return 0;
 }
-uint8_t XModbusFrameData_getFuncCode(XModbusFrameData* frame)
+uint8_t XModbusFrame_getFuncCode(XModbusFrame* frame)
 {
 	if (frame)
 	{
@@ -134,9 +134,9 @@ uint8_t XModbusFrameData_getFuncCode(XModbusFrameData* frame)
 		case MB_RTU_MASTER:
 		case MB_RTU_SLAVE:
 			if (frame->data)
-				return ((XModbusFrameDataRTU*)frame->data)->funcCode;
+				return ((XModbusFrameRTU*)frame->data)->funcCode;
 			else
-				return XModbusFrameDataRTU_parseFuncCode(frame); break;
+				return XModbusFrameRTU_parseFuncCode(frame); break;
 		default:
 			break;
 		}
@@ -144,7 +144,7 @@ uint8_t XModbusFrameData_getFuncCode(XModbusFrameData* frame)
 	return 0;
 }
 //解析CRC16
-static uint8_t XModbusFrameData_parse‌CRC16(uint8_t* pData, uint16_t pos)
+static uint8_t XModbusFrame_parse‌CRC16(uint8_t* pData, uint16_t pos)
 {
 	// 提取低位字节
 	uint16_t lowByte = (uint16_t)pData[pos];

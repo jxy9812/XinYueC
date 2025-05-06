@@ -1,5 +1,5 @@
 ﻿#include "XModbusRtu.h"
-#include "XModbusFrameData.h"
+#include "XModbusFrame.h"
 #include "XCrc.h"
 #include "XModbusConfig.h"
 #include <string.h>
@@ -66,7 +66,7 @@ void XModbusRtuStop(XModbus* modbus)
     XTimer_stop(modbus->timer); // 关闭定时器
     EXIT_CRITICAL_SECTION();
 }
-XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* frameData)
+XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrame* frameData)
 {
     if (modbus == NULL|| frameData==NULL)
         return MB_EINVAL;
@@ -75,7 +75,7 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* frameData)
 
     ENTER_CRITICAL_SECTION();
 
-    XModbusFrameDataRTU_parseData_reply(frameData, modbus->recvBuffer);
+    XModbusFrameRTU_parseData_reply(frameData, modbus->recvBuffer);
 
     //解析的帧有问题
     if(XVector_empty(frameData->frameData))
@@ -85,7 +85,7 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrameData* frameData)
     return  modbus->errorCode;
 }
 
-XModbusErrorCode XModbusRtuSend(XModbus* modbus, XModbusFrameData* frameData)
+XModbusErrorCode XModbusRtuSend(XModbus* modbus, XModbusFrame* frameData)
 {
     if (modbus == NULL)
         return MB_EINVAL;
@@ -182,7 +182,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
 
     //以下可以发送数据
     XModbusFrameQueue* sendQueue = modbus->sendQueue;
-    XModbusFrameData* frame = NULL;
+    XModbusFrame* frame = NULL;
     XVector* dataVector = NULL;
     if (!XModbusFrameQueue_empty(sendQueue))
     {
@@ -223,7 +223,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
                 if (modbus->SerialEnable)
                     modbus->SerialEnable(modbus, true, false);  // 禁用发送，重新使能接收
 #if MB_SEND_FRAME_SHOW
-                XString* str = XModbusFrameDataRTU_to16HexString(frame);
+                XString* str = XModbusFrameRTU_to16HexString(frame);
                 printf("发送帧:%s\n", XString_c_str(str));
                 //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
                 XString_free(str);

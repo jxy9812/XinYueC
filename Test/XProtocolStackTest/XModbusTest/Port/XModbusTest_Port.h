@@ -7,7 +7,7 @@ extern "C" {
 #include"XModbusRtu.h"
 #include"XMemory.h"
 #include"XCrc.h"
-#include"XModbusFrameData.h"
+#include"XModbusFrame.h"
 
 /*Modbus测试接口头文件
 不同的操作系统要实现下面几个函数即可启用,Windows接口以实现
