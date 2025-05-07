@@ -171,10 +171,12 @@ void XModbusTest_SerialPoll(XModbus* modbus)
     }
     if (comStat.cbInQue)
     {
+        //接收缓冲区空时调用
         modbus->pxMBFrameCBByteReceived(modbus);
     }
     else
     {
+        //写入缓冲区空时调用
         modbus->pxMBFrameCBTransmitterEmpty(modbus);
     }
     // 重置事件

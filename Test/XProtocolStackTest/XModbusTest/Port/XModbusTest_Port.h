@@ -25,6 +25,15 @@ void XModbusTest_XTimer_Start(XTimer* timer);
 void XModbusTest_XTimer_Stop(XTimer* timer);
 //定时器创建
 void XModbusTest_XTimerCreat(XTimer* timer);
+/*
+* XModbusTest_SerialPoll 移植的时候不是必须要实现的 
+* 如果使用中断的方式，在合适的时机调用下面两个函数指针即可
+* 然后将XModbusTest_SerialPoll的代码删掉
+ //接收缓冲区空时调用
+ modbus->pxMBFrameCBByteReceived(modbus);
+ //写入缓冲区空时调用
+ modbus->pxMBFrameCBTransmitterEmpty(modbus);
+*/
 //控制读写
 void XModbusTest_SerialPoll(XModbus* modbus);
 #ifdef __cplusplus

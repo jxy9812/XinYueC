@@ -1,5 +1,6 @@
 ﻿#include"XTimer.h"
 #include"XMemory.h"
+#include<string.h>
 XTimer* XTimer_new(XTimerCreate create)
 {
 	if (create == NULL)
@@ -7,15 +8,9 @@ XTimer* XTimer_new(XTimerCreate create)
 	XTimer* timer = XMemory_malloc(sizeof(XTimer));
 	if (timer == NULL)
 		return;
-	timer->data=NULL;
-	timer->interval = 0;
-	timer->timerId = 0;
+	memset(timer,0, sizeof(XTimer));
 	timer->remainingTime = -1;
-	timer->start = NULL;
-	timer->stop = NULL;
-	timer->timeout = NULL;
-	timer->number = 0;
-	//timer->setInterval = NULL;
+	
 	create(timer);
 	return timer;
 }
