@@ -3,15 +3,15 @@
 #include "XVector.h"
 #include <string.h>
 #include <assert.h>
-XIODevice* XIODevice_new(XIODevice_Port* port)
+XIODevice* XIODevice_new(XIODevice_PortFunc* port)
 {
 	if (port == NULL)
 		return NULL;
 	XIODevice* io= XMemory_malloc(sizeof(XIODevice));
 	//开始初始化
-	memset(io, 0, sizeof(XIODevice)- sizeof(XIODevice_Port));
+	memset(io, 0, sizeof(XIODevice)- sizeof(XIODevice_PortFunc));
 	//绑定函数指针
-	memcpy(&(io->m_port), port, sizeof(XIODevice_Port));
+	memcpy(&(io->m_port), port, sizeof(XIODevice_PortFunc));
 	return io;
 }
 void XIODevice_free(XIODevice* io)
@@ -64,20 +64,16 @@ size_t XIODevice_write(XIODevice* io, const char* data, size_t maxSize)
 {
 	if(io==NULL||data==NULL||maxSize==0||io->m_mode& XIODeviceBase_WriteOnly==0)
 		return 0;
-	if (io->m_port.putByte_funcPointer == NULL)
+	if (io->m_port.writeBufferFull_funcPointer == NULL)
 		return 0;
 	size_t count=0;
 	if (io->m_writeBuffer == NULL)
 	{//没有写入缓冲区
-		for (size_t i = 0; i < maxSize; i++)
-		{
-			if (io->m_port.putByte_funcPointer(io, data[i]))
-				++count;
-		}
+		count+=io->m_port.writeBufferFull_funcPointer(io, data, maxSize);
 	}
 	else
 	{//如果有缓冲区
-		count = maxSize;
+		//count = maxSize;
 		XVector* buff = io->m_writeBuffer;
 		size_t marginSize = maxSize;//剩余大小
 		while (marginSize)
@@ -93,12 +89,14 @@ size_t XIODevice_write(XIODevice* io, const char* data, size_t maxSize)
 				XVector_append_array(buff, data[maxSize - marginSize], marginBuffSize);
 				marginSize -= marginBuffSize;
 			}
-			if (XContainerCapacity(buff) == XContainerSize(buff))
+			if (XContainerCapacity(buff) == XContainerSize(buff)&& io->m_port.writeBufferFull_funcPointer!=NULL)
 			{//缓冲区已满，清空缓冲区
 				char* buffData = XContainerDataPtr(buff);
-				for (size_t i = 0; i < XContainerSize(buff); i++)
-				{
-					io->m_port.putByte_funcPointer(io, buffData[i]);
+				size_t len=io->m_port.writeBufferFull_funcPointer(io, buffData, XContainerSize(buff));
+				count +=len;
+				if (len != XContainerSize(buff))
+				{//缓冲区满后写入设备出错
+					break;
 				}
 				XContainerSize(buff) = 0;
 			}
@@ -116,37 +114,59 @@ size_t XIODevice_read(XIODevice* io, char* data, size_t maxSize)
 {
 	if (io == NULL || data == NULL || maxSize == 0  || io->m_mode & XIODeviceBase_ReadOnly == 0)
 		return 0;
-	if (io->m_port.getByte_funcPointer == NULL)
+	if (io->m_port.readBufferEmpty_funcPointer == NULL)
 			return 0;
 	size_t count = 0;
 	if (io->m_readBuffer == NULL)
 	{//没有读取缓冲区
-		for (size_t i = 0; i < maxSize; i++)
-		{
-			if (io->m_port.getByte_funcPointer(io, data+i))
-				++count;
-		}
+		count += io->m_port.readBufferEmpty_funcPointer(io, data, maxSize);
 	}
 	else
 	{//如果有缓冲区
 		XVector* buff = io->m_readBuffer;
-		size_t buffSize = XContainerSize(buff);//缓冲区中的数据量
-		char* buffData = XContainerDataPtr(buff);
-		if (buffSize>= maxSize)
-		{//缓冲区中的数据量大于等于要读取的数据量
-			memcpy(data, buffData, maxSize);
-			for (size_t i = 0; i < buffSize- maxSize; i++)
-			{//缓冲区剩余数据往前挪
-				buffData[i] = buffData[maxSize+i];
+		size_t marginSize = maxSize;//剩余大小
+		size_t buffSize = 0;//缓冲区中的数据量
+		char* buffData = NULL;
+		while (marginSize)
+		{
+			buffSize = XContainerSize(buff);
+			buffData = XContainerDataPtr(buff);
+			if (buffSize >= marginSize)
+			{//缓冲区中的数据量大于等于要读取的数据量
+				memcpy(data[maxSize - marginSize], buffData, marginSize);
+				for (size_t i = 0; i < buffSize - marginSize; i++)
+				{//缓冲区剩余数据往前挪
+					buffData[i] = buffData[marginSize + i];
+				}
+				XContainerSize(buff) = buffSize - marginSize;//修改数据个数
+				count += marginSize;
+				marginSize = 0;
 			}
-			XContainerSize(buff) = buffSize- maxSize;//修改数据个数
-			count = maxSize;
-		}
-		else
-		{//如果小于不够
-			memcpy(data, buffData, buffSize);
-			XContainerSize(buff) = 0;
-			count = buffSize;
+			else if(buffSize>0)
+			{//如果小于不够
+				memcpy(data[maxSize - marginSize], buffData, buffSize);
+				XContainerSize(buff) = 0;
+				count += buffSize;
+				marginSize -= buffSize;
+				//数据为空判断是否有读取缓冲区空的方法
+				if (io->m_port.readBufferEmpty_funcPointer)
+				{
+					size_t readSize = 0;
+					if(XContainerCapacity(buff)> marginSize)
+					{
+						readSize = io->m_port.readBufferEmpty_funcPointer(io, buffData, marginSize);
+					}
+					else
+					{
+						readSize = io->m_port.readBufferEmpty_funcPointer(io, buffData, XContainerCapacity(buff));
+					}
+					XContainerSize(buff) += readSize;
+				}
+			}
+			else
+			{
+				break;//无法在获得更多数据
+			}
 		}
 	}
 	return count;
@@ -157,20 +177,22 @@ XVector* XIODevice_readVector(XIODevice* io, size_t maxSize)
 {
 	if (io == NULL)
 		return NULL;
-	XVector* v = XVector_New(char);
+	XVector* v = XVector_New(char);	
 	if (io->m_readBuffer == NULL)
 	{//没有读取缓冲区
 		for (size_t i = 0; i < maxSize; i++)
 		{
 			char byte;
-			if (io->m_port.getByte_funcPointer(io, &byte))
+			if (io->m_port.readBufferEmpty_funcPointer(io, &byte,1))
 				XVector_push_back(v,&byte);
 		}
 	}
 	else if(maxSize!=0)
 	{
 		XVector_resize(v, maxSize);
-		XIODevice_read(io, XContainerDataPtr(v),maxSize);
+		size_t readSize=XIODevice_read(io, XContainerDataPtr(v),maxSize);
+		if(readSize!= maxSize)
+			XVector_resize(v, readSize);
 	}
 	return v;
 }

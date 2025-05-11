@@ -43,7 +43,7 @@ typedef struct XVector
 }XVector;
 //初始化类
 void XVector_class_init();
-//开辟一个动态数组,初始化 size_t  m_capacity
+//开辟一个动态数组,初始化 size_t
 XVector* XVector_new(size_t typeSize);
 #define XVector_New(Type) XVector_new(sizeof(Type))
 //初始化 XVector

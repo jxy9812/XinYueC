@@ -22,27 +22,33 @@ typedef enum /*XIODeviceBase*/
 typedef struct XIODevice XIODevice;
 typedef bool (*XIODeviceGetByte)(XIODevice* io, uint8_t* Byte);//获取一个字节
 typedef bool (*XIODevicePutByte)(XIODevice* io, uint8_t Byte);//发送一个字节
+typedef size_t(*XIOBufferEmpty)(XIODevice* io,char* data, size_t size);//缓冲区空
+typedef size_t(*XIOBufferFull)(XIODevice* io,const char* data,size_t size);//缓冲区满
 typedef bool (*XIODeviceOpen)(XIODevice* io, XIODeviceBase mode);//打开IO设备
 typedef void (*XIODeviceClose)(XIODevice* io);//关闭IO,释放资源
 //IO设备接口
-typedef struct XIODevice_Port
+typedef struct XIODevice_PortFunc
 {
-	XIODeviceGetByte getByte_funcPointer;//获取一个字节
-	XIODevicePutByte putByte_funcPointer;//发送一个字节
+	XIOBufferEmpty   writeBufferEmpty_funcPointer;
+	XIOBufferFull     writeBufferFull_funcPointer;
+	XIOBufferEmpty   readBufferEmpty_funcPointer;
+	XIOBufferFull     readBufferFull_funcPointer;
+	//XIODeviceGetByte getByte_funcPointer;//获取一个字节
+	//XIODevicePutByte putByte_funcPointer;//发送一个字节
 	XIODeviceOpen  open_funcPointer;//打开IO设备
 	XIODeviceClose   close_funcPointer;//关闭IO
-}XIODevice_Port;
+}XIODevice_PortFunc;
 //IO设备
 typedef struct XIODevice
 {
 	uint16_t m_mode;//打开模式
-	//void* handle;//句柄或标识符
+	void* device;//设备
 	XVector* m_writeBuffer;//写入缓冲区
 	XVector* m_readBuffer;//读取缓冲区
 	/* ----------------------- 函数指针-------------------------------------*/
-	XIODevice_Port m_port;//接口
+	XIODevice_PortFunc m_port;//接口
 }XIODevice;
-XIODevice* XIODevice_new(XIODevice_Port* port);
+XIODevice* XIODevice_new(XIODevice_PortFunc* port);
 void XIODevice_free(XIODevice* io);
 void XIODevice_setWriteBuffer(XIODevice* io,size_t size);
 void XIODevice_setReadBuffer(XIODevice* io, size_t size);
