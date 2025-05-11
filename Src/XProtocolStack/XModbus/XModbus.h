@@ -6,6 +6,7 @@ extern "C" {
 
 #include"XVector.h"
 #include"XQueue.h"
+#include"XIODevice.h"
 #include"XEventQueue.h"
 #include"XModbusFrame.h"
 #include"XTimer.h"
@@ -32,9 +33,6 @@ typedef XModbusErrorCode(*XModbusFrameReceive) (XModbus* modbus, XModbusFrame* f
 typedef XModbusErrorCode(*XModbusFrameSend) (XModbus* modbus, XModbusFrame* frameData);
 // 关闭Modbus帧处理的函数指针类型
 typedef void(*XModbusFrameClose) (XModbus* modbus);
-typedef bool (*XModbusGetByte)(XModbus* modbus, uint8_t* Byte);//获取一个字符
-typedef bool (*XModbusPutByte)(XModbus* modbus, uint8_t Byte);//发送一个字符
-typedef bool(*XModbusSerialInit)(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity);//初始化串口
 /*!
  * @brief 启用/禁用串口收发
  * @param xRxEnable true=启用接收，false=禁用接收
@@ -46,26 +44,20 @@ typedef bool(*XModbusFrameCBByteReceived)(XModbus* modbus);   // 接收到单个
 typedef bool(*XModbusFrameCBTransmitterEmpty)(XModbus* modbus); // 发送缓冲区空时调用（触发发送状态机）
 typedef bool(*XModbusPortCBTimerExpired)(XModbus* modbus);    // 定时器超时回调（如 RTU 的 T35 超时、ASCII 的 T1S 超时）
 //初始化的函数
-typedef struct XModbus_InitFunction
+typedef struct XModbus_PortFunc
 {
-    XModbusGetByte xGetByte;//获取一个字符数据
-    XModbusPutByte xPutByte;//发送一个字符数据
-    XModbusSerialInit SerialInit;//初始化串口
+    XIODevice_PortFunc IO_Port;//io接口
+    XTimer_PortFunc    timePort;
     XModbusSerialEnable SerialEnable;//控制串口收发状态  可以为NULL
     XEventQueueInit EventQueueInit;//时间队列初始化函数 不是必须可以为空使用默认的事件队列
-    //以下是定时器的参数
-    XTimerCreate TimerCreate;//定时器创建
-    XTimerFree   TimerFree;//这个不是必须，需要释放资源关闭的时候才需要
-    XTimerStart  TimerStart;
-    XTimerStop   TimerStop;
-}XModbus_InitFunction;
+}XModbus_PortFunc;
 typedef struct XModbus
 {
     uint8_t    address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
     XModbusMode mode;//模式
     XModbusErrorCode errorCode;//错误代码
     XModbusState     state;//状态
-    XVector* recvBuffer;//接收缓冲区
+    XIODevice* ioDevice;//IO设备
     XModbusFrameQueue* sendQueue;//发送队列(XQueue<XModbusFrameData*>)
     XModbusFrameQueue* recvFrameQueue;//接收帧队列(XQueue<XModbusFrame*>) 后面处理执行
     XEventQueue* eventQueue;//事件队列
@@ -76,8 +68,6 @@ typedef struct XModbus
     XModbusFrameDataRecvHandle* recvHandleMaster;//接收处理   主站才有
 
     /* ----------------------- 函数指针类型定义  0-------------------------------------*/
-    XModbusGetByte xGetByte;//获取一个字符数据
-    XModbusPutByte xPutByte;//发送一个字符数据
     XModbusFrameSend     peMBFrameSendCur;     // 帧发送函数指针（发送完整 Modbus 帧）
     XModbusFrameStart    pvMBFrameStartCur;    // 协议栈启动函数指针（初始化端口资源，如串口、定时器）
     XModbusFrameStop     pvMBFrameStopCur;     // 协议栈停止函数指针（停止接收/发送，释放临时资源）
@@ -99,7 +89,7 @@ typedef struct XModbus
 /*
 * @brief  Modbus初始化
 * @param  modbus:XModbus对象指针
-* @param  func:XModbus_InitFunction 初始化结构体
+* @param  func:XModbus_PortFunc 初始化结构体
 * @param  mode:启动模式
 * @param  address:主机地址
 * @param  port:端口号
@@ -107,8 +97,7 @@ typedef struct XModbus
 * @param  parity:奇偶校验
 * @retval
 */
-void XModbus_init(XModbus* modbus, XModbus_InitFunction* func,XModbusMode mode,uint8_t address,uint8_t port,uint32_t baudRate, XModbusParity parity);
-XModbus* XModbus_new(size_t bufferSize, XModbusMode mode, XModbusGetByte xGetByte, XModbusPutByte xPutByte);
+void XModbus_init(XModbus* modbus, XModbus_PortFunc* func,XModbusMode mode,uint8_t address,uint8_t port,uint32_t baudRate, XModbusParity parity);
 /*! \ingroup modbus
  * \brief 启用Modbus协议栈
  *

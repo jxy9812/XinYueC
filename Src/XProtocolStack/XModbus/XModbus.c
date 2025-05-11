@@ -19,12 +19,12 @@
 #define MB_PORT_HAS_CLOSE 0
 #endif
 
-void XModbus_init(XModbus* modbus, XModbus_InitFunction* func, XModbusMode mode, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
+void XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMode mode, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
 {
 	if (modbus == NULL|| func==NULL)
 		return;
-	modbus->recvBuffer = XVector_New(uint8_t);
-	XVector_resize(modbus->recvBuffer, MB_RECV_BUFFER_SIZE);
+	//modbus->recvBuffer = XVector_New(uint8_t);
+	//XVector_resize(modbus->recvBuffer, MB_RECV_BUFFER_SIZE);
 	modbus->sendQueue= XModbusFrameQueue_new();
     modbus->recvFrameQueue=XModbusFrameQueue_new();
     if(func->EventQueueInit)
@@ -33,10 +33,10 @@ void XModbus_init(XModbus* modbus, XModbus_InitFunction* func, XModbusMode mode,
 	    modbus->eventQueue = XEventQueue_new(XEventQueue_defaultConfigInit);
     modbus->funcCodeList = XModbusFuncCodeList_new();
 	modbus->mode = mode;
-    assert(func->xGetByte);
-	modbus->xGetByte = func->xGetByte;
-    assert(func->xPutByte);
-	modbus->xPutByte = func->xPutByte;
+    assert(func->IO_Port.readBufferEmpty_funcPointer);
+
+    assert(func->IO_Port.writeBufferFull_funcPointer);
+
     modbus->errorCode = MB_ENOERR;
     modbus->recvHandleMaster = NULL;
     // 根据选择的模式初始化对应的函数指针和底层模块
@@ -94,14 +94,7 @@ void XModbus_init(XModbus* modbus, XModbus_InitFunction* func, XModbusMode mode,
     }
 //}
 }
-XModbus* XModbus_new( size_t bufferSize, XModbusMode mode, XModbusGetByte xGetByte, XModbusPutByte xPutByte)
-{
-	XModbus* modbus = XMemory_malloc(sizeof(XModbus));
-	if(modbus==NULL)
-		return modbus;
-	//正式初始化
-	//XModbus_init(modbus,bufferSize,mode,xGetByte,xPutByte);
-}
+
 XModbusErrorCode XModbus_enable(XModbus* modbus)
 {
     //printf("mode\n");

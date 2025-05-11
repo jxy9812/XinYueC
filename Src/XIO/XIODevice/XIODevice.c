@@ -8,6 +8,8 @@ XIODevice* XIODevice_new(XIODevice_PortFunc* port)
 	if (port == NULL)
 		return NULL;
 	XIODevice* io= XMemory_malloc(sizeof(XIODevice));
+	if (io == NULL)
+		return;
 	//开始初始化
 	memset(io, 0, sizeof(XIODevice)- sizeof(XIODevice_PortFunc));
 	//绑定函数指针
@@ -216,4 +218,11 @@ void XIODevice_close(XIODevice* io)
 	if (io == NULL || io->m_port.close_funcPointer == NULL)
 		return ;
 	io->m_port.close_funcPointer(io);
+}
+
+size_t XIODevice_writeFull(XIODevice* io)
+{
+	if(io!=NULL||io->m_writeBuffer!=NULL)
+		return io->m_port.writeBufferFull_funcPointer(io, XContainerDataPtr(io->m_writeBuffer), XContainerSize(io->m_writeBuffer));
+	return 0;
 }

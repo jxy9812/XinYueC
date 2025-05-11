@@ -14,12 +14,13 @@ typedef enum
     SP_PAR_EVEN                 /*!< 偶校验 */
 } XSerialPortParity;
 //串口设备
-typedef struct XSerialPort
+typedef struct XSerialPortDevice
 {
     uint8_t m_portNum;//端口号
     uint32_t m_baudRate;//波特率
     XSerialPortParity m_parity;//校验
-}XSerialPort;//串口
+}XSerialPortDevice;//串口
+typedef XIODevice XSerialPort ;
 XIODevice* XSerialPort_new(XIODevice_PortFunc* port);
 bool XSerialPort_open(XIODevice* io, XIODeviceBase mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity);
 #ifdef __cplusplus

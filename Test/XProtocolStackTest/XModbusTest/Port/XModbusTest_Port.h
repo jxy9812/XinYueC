@@ -14,11 +14,14 @@ extern "C" {
 移植可以查看Windows实现
 */
 // 打开串口
+bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode);
 bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity);
 //获取一个字节
 bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte);
+bool XModbusTest_readByte(XIODevice* io, char* data, size_t size);
 //发送一个字节
 bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte);
+bool XModbusTest_writeByte(XIODevice* io,const char* data, size_t size);
 //定时器启动
 void XModbusTest_XTimer_Start(XTimer* timer);
 //定时器停止

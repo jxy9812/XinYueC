@@ -16,13 +16,17 @@ static void RtuDataFrame_0x06_reply(XModbus* modbus, XModbusFrame* frame)
 void XModbusTest()
 {
     //初始化信息
-    XModbus_InitFunction InitFunction = {0};
-    InitFunction.xGetByte = XModbusTest_GetByte;
-    InitFunction.xPutByte = XModbusTest_PutByte;
-    InitFunction.SerialInit = XModbusTest_SerialInit;
-    InitFunction.TimerCreate = XModbusTest_XTimerCreat;
-    InitFunction.TimerStart = XModbusTest_XTimer_Start;
-    InitFunction.TimerStop = XModbusTest_XTimer_Stop;
+    XIODevice_PortFunc io_port = { 0 };//串口设备接口设置
+    io_port.open_funcPointer = XModbusTest_SerialOpen;
+    io_port.readData_funcPointer = XModbusTest_readByte;
+    io_port.writeData_funcPointer = XModbusTest_writeByte;
+    XTimer_PortFunc  timePort = { 0 };//定时器接口设置
+    timePort.create = XModbusTest_XTimerCreat;
+    timePort.start = XModbusTest_XTimer_Start;
+    timePort.stop = XModbusTest_XTimer_Stop;
+    XModbus_PortFunc InitFunction = {0};//modbus接口设置
+    InitFunction.IO_Port = io_port;
+    InitFunction.timePort = timePort;
     XModbus* modbus = XMemory_malloc(sizeof(XModbus));
     //初始化Modbus
     XModbus_init(modbus, &InitFunction, MB_RTU_MASTER, 0x02, 2, 38400, MB_PAR_NONE);

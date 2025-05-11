@@ -1,44 +1,44 @@
 ﻿#include"XTimer.h"
 #include"XMemory.h"
 #include<string.h>
-XTimer* XTimer_new(XTimerCreate create)
+XTimer* XTimer_new(XTimer_PortFunc* port)
 {
-	if (create == NULL)
+	if(port==NULL)
 		return NULL;
 	XTimer* timer = XMemory_malloc(sizeof(XTimer));
 	if (timer == NULL)
 		return;
-	memset(timer,0, sizeof(XTimer));
-	timer->remainingTime = -1;
-	
-	create(timer);
+	//开始初始化
+	memset(timer, 0, sizeof(XTimer) - sizeof(XTimer_PortFunc));
+	//绑定函数指针
+	memcpy(&(timer->m_port), port, sizeof(XTimer_PortFunc));
 	return timer;
 }
 
-void XTimer_free(XTimer* timer, XTimerFree free)
+void XTimer_free(XTimer* timer)
 {
-	if (timer && free)
+	if (timer && timer->m_port.free)
 	{
 		XTimer_stop(timer);
-		free(timer);
+		timer->m_port.free(timer);
 		XMemory_free(timer);
 	}
 }
 
 void XTimer_start(XTimer* timer)
 {
-	if (timer&&timer->start)
+	if (timer&&timer->m_port.start)
 	{
-		timer->start(timer);
+		timer->m_port.start(timer);
 		timer->number = 0;
 	}
 }
 
 void XTimer_stop(XTimer* timer)
 {
-	if (timer&&timer->stop)
+	if (timer&&timer->m_port.stop)
 	{
-		timer->stop(timer);
+		timer->m_port.stop(timer);
 	}
 }
 
@@ -53,8 +53,8 @@ void XTimer_setInterval(XTimer* timer,int value)
 }
 void XTimer_out(XTimer* timer)
 {
-	if (timer == NULL||timer->timeout==NULL)
+	if (timer == NULL||timer->m_port.timeout==NULL)
 		return;
 	++timer->number;
-	timer->timeout(timer);
+	timer->m_port.timeout(timer);
 }

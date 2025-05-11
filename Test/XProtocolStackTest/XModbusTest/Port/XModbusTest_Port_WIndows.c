@@ -1,6 +1,7 @@
 ﻿#ifdef WIN32
 //Windows接口文件
 #include"XModbusTest_Port.h"
+#include"XSerialPort.h"
 #include <windows.h>
 // 告诉编译器链接 winmm.lib 库
 #pragma comment(lib, "winmm.lib")
@@ -9,10 +10,12 @@ static HANDLE hSerial;
 static  HANDLE hEvent;
 static OVERLAPPED ov;
 // 打开串口
-bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity)
+//bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity)
+bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
 {
+    XSerialPortDevice* serial = io->device;
     char portName[10] = { 0 };
-    sprintf(portName, "COM%d", port);
+    sprintf(portName, "COM%d", serial->m_portNum);
     // 打开串口
     hSerial = CreateFile(portName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
     if (hSerial == INVALID_HANDLE_VALUE) {
@@ -38,10 +41,10 @@ bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XM
     }
 
     // 设置串口参数
-    dcbSerialParams.BaudRate = baudRate;
+    dcbSerialParams.BaudRate = serial->m_baudRate;
     dcbSerialParams.ByteSize = 8;
     dcbSerialParams.StopBits = ONESTOPBIT;
-    dcbSerialParams.Parity = parity;
+    dcbSerialParams.Parity = serial->m_parity;
     if (!SetCommState(hSerial, &dcbSerialParams)) {
         printf("无法设置串口状态！\n");
         CloseHandle(hSerial);
@@ -83,10 +86,11 @@ bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XM
     }
     return true;
 }
-bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte)
+bool XModbusTest_readByte(XIODevice* io, char* byte, size_t size)
+//bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte)
 {
     DWORD bytesRead;
-    if (!ReadFile(hSerial, byte, 1, &bytesRead, &ov))
+    if (!ReadFile(hSerial, byte, size, &bytesRead, &ov))
     {
         if (GetLastError() != ERROR_IO_PENDING)
         {
@@ -104,10 +108,11 @@ bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte)
     // printf("接收到字符%c\n", *byte);
     return true;
 }
-bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte)
+//bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte)
+bool XModbusTest_writeByte(XIODevice* io, const char* data, size_t size)
 {
     DWORD bytesWritten;
-    if (!WriteFile(hSerial, &Byte, 1, &bytesWritten, &ov))
+    if (!WriteFile(hSerial, data, size, &bytesWritten, &ov))
     {
         if (GetLastError() != ERROR_IO_PENDING)
         {
@@ -152,11 +157,7 @@ void XModbusTest_XTimer_Stop(XTimer* timer)
 }
 void XModbusTest_XTimerCreat(XTimer* timer)
 {
-    // 设置定时器分辨率
-    //timeBeginPeriod(1);
-    //timer->data = XMemory_malloc(sizeof(UINT));
-    timer->start = XModbusTest_XTimer_Start;
-    timer->stop = XModbusTest_XTimer_Stop;
+
 }
 
 void XModbusTest_SerialPoll(XModbus* modbus)

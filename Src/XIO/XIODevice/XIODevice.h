@@ -30,8 +30,14 @@ typedef void (*XIODeviceClose)(XIODevice* io);//关闭IO,释放资源
 typedef struct XIODevice_PortFunc
 {
 	XIOBufferEmpty   writeBufferEmpty_funcPointer;
-	XIOBufferFull     writeBufferFull_funcPointer;
-	XIOBufferEmpty   readBufferEmpty_funcPointer;
+	union {
+		XIOBufferFull     writeBufferFull_funcPointer;
+		XIOBufferFull     writeData_funcPointer;
+	};
+	union{
+		XIOBufferEmpty   readBufferEmpty_funcPointer;
+		XIOBufferEmpty   readData_funcPointer;
+	};
 	XIOBufferFull     readBufferFull_funcPointer;
 	//XIODeviceGetByte getByte_funcPointer;//获取一个字节
 	//XIODevicePutByte putByte_funcPointer;//发送一个字节
@@ -59,6 +65,7 @@ XVector* XIODevice_readVector(XIODevice* io, size_t maxSize);//读取
 bool XIODevice_isOpen(XIODevice* io);
 bool XIODevice_open(XIODevice* io, XIODeviceBase mode);
 void XIODevice_close(XIODevice* io);
+size_t XIODevice_writeFull(XIODevice* io);//将剩余的数据刷入设备
 #ifdef __cplusplus
 }
 #endif

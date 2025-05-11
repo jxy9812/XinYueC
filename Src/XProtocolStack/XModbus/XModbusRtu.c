@@ -2,13 +2,23 @@
 #include "XModbusFrame.h"
 #include "XCrc.h"
 #include "XModbusConfig.h"
+#include "XSerialPort.h"
 #include <string.h>
 static void  XModbusRtu_Timer_out(XTimer* timer)
 {
     ((XModbus*)timer->data)->pxMBPortCBTimerExpired(timer->data);
 }
-void XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_InitFunction* func, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
+void XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortFunc* func, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
 {
+    modbus->ioDevice = XSerialPort_new(&(func->IO_Port));
+    XIODevice_setReadBuffer(modbus->ioDevice, MB_RECV_BUFFER_SIZE);
+
+    // 调用 RTU 底层初始化（配置串口参数：端口号、波特率、校验位）
+    if (!XSerialPort_open(modbus->ioDevice, mode, port, baudRate, parity))
+    {
+        modbus->errorCode = MB_EPORTERR;
+        return;
+    }
     { // RTU 模式初始化（二进制传输，效率高，适合串口通信）
         // 绑定 RTU 模式专用函数（来自 mbrtu.c）
         modbus->pvMBFrameStartCur = XModbusRtuStart;      // 启动 RTU 协议栈（初始化串口、设置波特率、校验位）
@@ -24,25 +34,14 @@ void XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_InitFunction* fun
 
         modbus->eSndState = STATE_TX_IDLE;
         modbus->eRcvState = STATE_RX_INIT;
-        // 调用 RTU 底层初始化（配置串口参数：端口号、波特率、校验位）
-        assert(func->SerialInit);
-        if (!func->SerialInit(modbus, port, baudRate, parity))
-        {
-            modbus->errorCode= MB_EPORTERR;
-            return;
-        }
+
+ 
         modbus->SerialEnable = func->SerialEnable;
         //定时器初始化
-        assert(func->TimerCreate);
-        modbus->timer= XTimer_new(func->TimerCreate);
+       // assert(func->timePort.create);
+        modbus->timer = XTimer_new(&(func->timePort));
         modbus->timer->data = modbus;
-        modbus->timer->timeout = XModbusRtu_Timer_out;
-        assert(func->TimerStart);
-        modbus->timer->start = func->TimerStart;
-        assert(func->TimerStop);
-        modbus->timer->stop = func->TimerStop;
-       /* assert(func->TimerSetInterval);
-        modbus->timer->setInterval = func->TimerSetInterval;*/
+        modbus->timer->m_port.timeout = XModbusRtu_Timer_out;
         //设置定时时间
         modbus->timer->interval = 3.5 * (10+ parity) * 1000 / baudRate;
         if (modbus->timer->interval < 2)
@@ -75,7 +74,7 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrame* frameData)
 
     ENTER_CRITICAL_SECTION();
 
-    XModbusFrameRTU_parseData_reply(frameData, modbus->recvBuffer);
+    XModbusFrameRTU_parseData_reply(frameData, modbus->ioDevice->m_readBuffer);
 
     //解析的帧有问题
     if(XVector_empty(frameData->frameData))
@@ -137,8 +136,8 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
     //发送完数据后3.5字符内收到了返回信息 重置发送状态
    
     // 读取接收到的字节（平台特定：从串口缓冲区获取）
-    (void)modbus->xGetByte(modbus,(uint8_t*)&ucByte);
-    XVector* recvVector = modbus->recvBuffer;
+    modbus->ioDevice->m_port.readBufferEmpty_funcPointer(modbus->ioDevice, (uint8_t*)&ucByte,1);
+    XVector* recvVector = modbus->ioDevice->m_readBuffer;
     switch (modbus->eRcvState) {
     case STATE_RX_INIT:  // 初始状态（等待总线空闲）
         XTimer_start(modbus->timer);  // 启动T35定时器，检测帧间隔
@@ -212,7 +211,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
         {
             if (modbus->sendRemaining != 0)
             {
-                modbus->xPutByte(modbus,XVector_At(dataVector, XVector_size(dataVector)- modbus->sendRemaining, uint8_t));
+                modbus->ioDevice->m_port.writeBufferFull_funcPointer(modbus->ioDevice,XVector_at(dataVector, XVector_size(dataVector)- modbus->sendRemaining),1);
                 --modbus->sendRemaining;
             }
             else

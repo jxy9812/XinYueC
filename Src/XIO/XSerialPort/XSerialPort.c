@@ -5,7 +5,7 @@ XIODevice* XSerialPort_new(XIODevice_PortFunc* port)
 	XIODevice* io = XIODevice_new(port);
 	if(io)
 	{
-		io->device = XMemory_malloc(sizeof(XSerialPort));
+		io->device = XMemory_malloc(sizeof(XSerialPortDevice));
 		if (io->device == NULL)
 			XIODevice_free(io);
 	}
@@ -17,7 +17,7 @@ bool XSerialPort_open(XIODevice* io, XIODeviceBase mode, uint8_t portNum, uint32
 {
 	if(io==NULL|| io->device==NULL)
 		return false;
-	XSerialPort* serial = (XSerialPort*)io->device;
+	XSerialPortDevice* serial = (XSerialPortDevice*)io->device;
 	serial->m_baudRate = baudRate;
 	serial->m_parity= parity;
 	serial->m_portNum = portNum;
