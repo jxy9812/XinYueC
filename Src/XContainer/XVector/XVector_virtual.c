@@ -289,7 +289,11 @@ void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 	void* front = VXVector_front(this_vector),* back= VXVector_back(this_vector);
 	size_t typeSize = XContainerTypeSize(this_vector);
 	//if (VXVector_front(this_vector) <= LpValue && LpValue <= VXVector_back(this_vector) && ((char*)LpValue - (char*)VXVector_front(this_vector)) % XContainerTypeSize(this_vector) == 0)
-	if(front <= LpValue && LpValue <= back && ((char*)LpValue - (char*)front)% typeSize==0)
+	if (XContainerSize(this_vector) == 1)
+	{
+		--XContainerSize(this_vector);
+	}
+	else if(front <= LpValue && LpValue <= back && ((char*)LpValue - (char*)front)% typeSize==0)
 	{
 		if (XContainerDataFreeMethod(this_vector) != NULL)
 			XContainerDataFreeMethod(this_vector)(LpValue);

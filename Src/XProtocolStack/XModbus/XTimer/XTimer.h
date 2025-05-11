@@ -41,7 +41,12 @@ void XTimer_setInterval(XTimer* timer,int value);
 
 //超时回调函数
 void XTimer_out(XTimer* timer);
-
+//当前时间  累计添加
+void XTimer_inc(size_t tick_period);
+//设置当前时间 时间锉
+void XTimer_setCurrentTime(size_t time);
+//获得当前时间
+size_t XTimer_getCurrentTime();
 #ifdef __cplusplus
 }
 #endif

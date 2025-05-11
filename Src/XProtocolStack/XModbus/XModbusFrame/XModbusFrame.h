@@ -30,9 +30,10 @@ typedef void (*XModbusFrameDataRecvHandCallFunc)(XModbus* modbus, XModbusFrame* 
 //接收回调方法
 typedef struct XModbusFrameDataRecvHandle
 {
-    XModbusFrameDataRecvHandCallFunc pRecvHandCallFunc;//当前回调函数
-    void* userData;//用户数据
     uint16_t waitAddressCode;//等待操作的地址和功能码
+    XModbusFrameDataRecvHandCallFunc pRecvHandCallFunc;//当前回调函数
+    size_t timeout;//超时时间
+    void* userData;//用户数据
 }XModbusFrameDataRecvHandle;
 
 //Modbus一帧数据处理
@@ -54,6 +55,7 @@ void XModbusFrameQueue_clear(XModbusFrameQueue* queue);
 void XModbusFrameQueue_free(XModbusFrameQueue* queue);
 /* --------------------------------- XModbusFrame 方法------------------------------------------*/
 XModbusFrame* XModbusFrame_new();
+XModbusFrame* XModbusFrame_copy(XModbusFrame* frame);
 XModbusFrame* XModbusFrame_newRecvHandle();
 void XModbusFrame_free(XModbusFrame* frame);
 //获取数据帧中主机地址

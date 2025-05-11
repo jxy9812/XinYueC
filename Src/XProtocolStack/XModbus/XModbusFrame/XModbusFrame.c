@@ -73,6 +73,25 @@ XModbusFrame* XModbusFrame_new()
 	frame->recvHandle = NULL;
 	return frame;
 }
+XModbusFrame* XModbusFrame_copy(XModbusFrame* frame)
+{
+	if(frame==NULL)
+		return NULL;
+	XModbusFrame* newFrame = NULL;
+	if (frame->recvHandle == NULL)
+	{
+		newFrame = XModbusFrame_new();
+
+	}
+	else
+	{
+		newFrame = XModbusFrame_newRecvHandle();
+		memcpy(newFrame->recvHandle, frame->recvHandle,sizeof(XModbusFrameDataRecvHandle));
+	}
+	XVector_copy(newFrame->frameData, frame->frameData);
+	newFrame->mode = frame->mode;
+	newFrame->data = frame->data;
+}
 XModbusFrame* XModbusFrame_newRecvHandle()
 {
 	XModbusFrame* frame = XModbusFrame_new();

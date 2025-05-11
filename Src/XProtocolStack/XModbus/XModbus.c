@@ -3,6 +3,7 @@
 #include "XModbusConfig.h"
 #include "XModbusProto.h"
 #include "XModbusFunctionHandler.h"
+#include "XPair.h"
 // 条件编译：根据配置启用不同 Modbus 通信模式
 #if MB_RTU_ENABLED == 1    // 启用 RTU 模式（二进制传输，常用于串口）
 #include "XModbusRtu.h"        // RTU 模式具体实现
@@ -18,7 +19,12 @@
 #ifndef MB_PORT_HAS_CLOSE
 #define MB_PORT_HAS_CLOSE 0
 #endif
-
+static const bool recvHandleMaster_XEquality(const void* Value, const void* CompareValue)
+{
+    uint16_t waitAddressCode = (*((XModbusFrameDataRecvHandle**)Value))->waitAddressCode;
+    uint16_t  value = *((uint16_t*)CompareValue);
+    return (*((XModbusFrameDataRecvHandle**)Value))->waitAddressCode == *((uint16_t*)CompareValue);
+}
 void XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMode mode, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
 {
 	if (modbus == NULL|| func==NULL)
@@ -42,8 +48,9 @@ void XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMode mode, uin
     // 根据选择的模式初始化对应的函数指针和底层模块
     if (XModbus_isMaster(modbus))
     {//主站下初始化资源
-        /*modbus->recvHandleMaster = XMemory_malloc(sizeof(XModbusFrameDataRecvHandle));
-        XModbusFrameDataRecvHandle_setZero(modbus->recvHandleMaster);*/
+        modbus->recvHandleMaster = XVector_New(XModbusFrameDataRecvHandle*);
+        modbus->recvHandleMaster->m_equality = recvHandleMaster_XEquality;
+        modbus->regularlySendMaster = XModbusRegularlySendFrameLsit_new();
     }
     else
     {//从站初始化资源
@@ -192,46 +199,47 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
     ////            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
     //XString_free(str);
 
-    if (XModbus_isMaster(modbus)&& modbus->recvHandleMaster!=NULL)
+    if (XModbus_isMaster(modbus)/*&& modbus->recvHandleMaster!=NULL*/)
     {
-        if (modbus->recvHandleMaster->pRecvHandCallFunc)
+        uint16_t waitAddressCode= (address << 8 | code);
+        XModbusFrameDataRecvHandle** value=XVector_find(modbus->recvHandleMaster,&waitAddressCode);
+        //printf("value:%p\n",value);
+        if (value)
         {
-            if (modbus->recvHandleMaster->waitAddressCode == (address << 8 | code))
-            {
-                if (frame->recvHandle != NULL)//释放准备交换
-                    XMemory_free(frame->recvHandle);
-                //拷贝数据
-                frame->recvHandle = modbus->recvHandleMaster;
-                modbus->recvHandleMaster = NULL;
-                frame->recvHandle->pRecvHandCallFunc(modbus, frame);
-                //释放一个资源
-                XModbusFrameQueue_pop(modbus->recvFrameQueue);
-                return;
-            }
-            else
-            {//新帧与等待的响应不符合，定义为丢失，回调提醒用户
-                   modbus->recvHandleMaster->pRecvHandCallFunc(modbus, NULL);
-                    //用完释放
-                   XMemory_free(modbus->recvHandleMaster);
-                   modbus->recvHandleMaster = NULL;
-            }
+            if (frame->recvHandle != NULL)//释放准备交换
+                XMemory_free(frame->recvHandle);
+            //拷贝数据
+            frame->recvHandle = *value;
+            *value = NULL;
+            frame->recvHandle->pRecvHandCallFunc(modbus, frame);
+            //释放一个资源
+            XModbusFrameQueue_pop(modbus->recvFrameQueue);
+            XVector_erase(modbus->recvHandleMaster, value);
+            return;
         }
-        //if (modbus->recvHandleMaster->waitAddressCode == (frame->address << 8 | frame->funcCode))
-        //{//当前正在等待的就是需要的
-        //    if (modbus->recvHandleMaster->pRecvHandCallFunc)
+        //if (modbus->recvHandleMaster->pRecvHandCallFunc)
+        //{
+        //    if (modbus->recvHandleMaster->waitAddressCode == (address << 8 | code))
         //    {
         //        if (frame->recvHandle != NULL)//释放准备交换
         //            XMemory_free(frame->recvHandle);
         //        //拷贝数据
         //        frame->recvHandle = modbus->recvHandleMaster;
-        //        modbus->recvHandleMaster=NULL;
+        //        modbus->recvHandleMaster = NULL;
         //        frame->recvHandle->pRecvHandCallFunc(modbus, frame);
         //        //释放一个资源
         //        XModbusFrameQueue_pop(modbus->recvFrameQueue);
         //        return;
         //    }
+        //    else
+        //    {//新帧与等待的响应不符合，定义为丢失，回调提醒用户
+        //           modbus->recvHandleMaster->pRecvHandCallFunc(modbus, NULL);
+        //            //用完释放
+        //           XMemory_free(modbus->recvHandleMaster);
+        //           modbus->recvHandleMaster = NULL;
+        //    }
         //}
-   
+      
     }
 
     XModbusFunctionHandler* FunctionHandler=XModbusFuncCodeList_findFuncCode(modbus->funcCodeList,code);
@@ -254,7 +262,7 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
 {
     if (modbus == NULL)
         return MB_EINVAL;
-    //XModbusErrorCode eStatus = MB_ENOERR;
+   
     //printf("轮询中");
     //// 检查协议栈状态（必须已启用才能处理事件）
     if (modbus->state != STATE_ENABLED) {
@@ -265,6 +273,37 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
     // 获取端口事件（如接收完成、定时器超时，驱动协议栈处理）
     if (XEventQueue_empty(modbus->eventQueue))
     {
+        //轮询超时
+        if (modbus->recvHandleMaster != NULL)
+        {
+            XModbusFrameDataRecvHandle** Handle = XVector_front(modbus->recvHandleMaster);
+            if (Handle != NULL && (*Handle)->timeout < XTimer_getCurrentTime())
+            {//已经超时了
+                if ((*Handle)->pRecvHandCallFunc)
+                    (*Handle)->pRecvHandCallFunc(modbus, NULL);
+                XMemory_free(*Handle);
+                XVector_pop_front(modbus->recvHandleMaster);
+            }
+        }
+        //处理定时发送帧数据
+        if (modbus->regularlySendMaster != NULL)
+        {
+            XListNode * frontNode= XContainerDataPtr(modbus->regularlySendMaster);
+            if (frontNode != NULL)
+            {
+                XModbusRegularlySendFrame* regularly = (XModbusRegularlySendFrame*)(frontNode->date);
+                //XModbusFrame*  frame= regularly->frame;
+                if (regularly->timeOut < XTimer_getCurrentTime())
+                {//时间到了
+                    regularly->timeOut = regularly->time + XTimer_getCurrentTime();
+                    //printf("时间到了\n");
+                    XModbus_sendFrame(modbus, XModbusFrame_copy(regularly->frame));
+                   
+                }
+                //重新指向新节点
+                XContainerDataPtr(modbus->regularlySendMaster) = frontNode->next;
+            }
+        }
         modbus->errorCode= MB_ENOERR;
         return modbus->errorCode;
     }
@@ -288,23 +327,47 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
     //        break;
         }
    XEventQueue_pop(modbus->eventQueue);
+   
    return modbus->errorCode; // 轮询成功（无错误或错误已处理）
 }
-
-XModbusErrorCode XModbus_sendData(XModbus* modbus, XModbusFrame* frame)
+//发送帧之前处理一些信息
+static void sendFrame(XModbus* modbus, XModbusFrame* frame)
 {
-    if(modbus==NULL|| frame == NULL)
+    if (modbus == NULL || frame == NULL)
         return MB_EINVAL;
-    if (frame->frameData==NULL||XVector_empty(frame->frameData))
+    if (frame->frameData == NULL || XVector_empty(frame->frameData))
     {
         XModbusFrame_free(frame);
         return MB_EINVAL;
     }
+    //
+    frame->mode = modbus->mode;
+    //
     if (frame->recvHandle != NULL)
     {
-        frame->recvHandle->waitAddressCode = XModbusFrame_getAddress (frame)<< 8 | XModbusFrame_getFuncCode(frame);
+        frame->recvHandle->waitAddressCode = XModbusFrame_getAddress(frame) << 8 | XModbusFrame_getFuncCode(frame);
+        frame->recvHandle->timeout = XTimer_getCurrentTime() + MB_MASTER_RECV_OUT_TIME;//设置超时时间
     }
+}
+XModbusErrorCode XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame)
+{
+    if (modbus == NULL || frame == NULL)
+        return MB_EINVAL;
+    sendFrame(modbus,frame);
     XModbusFrameQueue_push(modbus->sendQueue, frame);
+    return modbus->errorCode;
+}
+
+XModbusErrorCode XModbus_sendFrameRegularlyMaster(XModbus* modbus, XModbusFrame* frame, uint32_t time)
+{
+    if (modbus == NULL || frame == NULL)
+        return MB_EINVAL;
+    sendFrame(modbus, frame);
+    XModbusRegularlySendFrame regularly = {0};
+    regularly.frame = frame;
+    regularly.time = time;
+    regularly.timeOut= time + XTimer_getCurrentTime();
+    XList_push_back(modbus->regularlySendMaster,&regularly);
     return modbus->errorCode;
 }
 

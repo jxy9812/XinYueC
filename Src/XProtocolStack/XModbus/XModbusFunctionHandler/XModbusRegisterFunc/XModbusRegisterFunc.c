@@ -152,7 +152,7 @@ XModbusException XModbusRegisterFunc_0x06_RTU_slaveRecvHandCallFunc(XModbus* mod
 	{//写入成功 将数据帧再次发送回去
 		XModbusFrame* sendFrame = XModbusFrame_new();
 		XVector_swap(recvFrame->frameData, sendFrame->frameData);
-		XModbus_sendData(modbus, sendFrame);
+		XModbus_sendFrame(modbus, sendFrame);
 	}
 	return MB_EX_NONE;
 }

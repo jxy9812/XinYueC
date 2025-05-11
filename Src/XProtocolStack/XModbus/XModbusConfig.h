@@ -104,7 +104,7 @@ extern "C" {
 //主站接收等待时间  
 #define MB_MASTER_RECV_WAIT_TIME				 (  5 )
 //主站接收返回超时时间  要大于MB_MASTER_RECV_WAIT_TIME
- #define MB_MASTER_RECV_OUT_TIME				 (  10 )
+ #define MB_MASTER_RECV_OUT_TIME				 (  1000 )
 //以下是调试选项
 
  //接收帧显示

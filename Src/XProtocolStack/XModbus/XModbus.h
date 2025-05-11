@@ -12,6 +12,7 @@ extern "C" {
 #include"XTimer.h"
 #include"XModbusFunctionHandler.h"
 #include"XModbusRegisterFunc.h"
+#include"XModbusRegularlySendFrame.h"
 #include"XModbusEnum.h"
     /* ----------------------- 宏定义 ------------------------------------------*/
 
@@ -58,15 +59,15 @@ typedef struct XModbus
     XModbusErrorCode errorCode;//错误代码
     XModbusState     state;//状态
     XIODevice* ioDevice;//IO设备
-    XModbusFrameQueue* sendQueue;//发送队列(XQueue<XModbusFrameData*>)
+    XModbusFrameQueue* sendQueue;//发送队列(XQueue<XModbusFrame*>)
     XModbusFrameQueue* recvFrameQueue;//接收帧队列(XQueue<XModbusFrame*>) 后面处理执行
     XEventQueue* eventQueue;//事件队列
     XModbusFunctionHandlerList* funcCodeList;//功能码列表
 
     int sendRemaining;//当前发送的进度
+    XModbusRegularlySendFrameLsit* regularlySendMaster;//主站定期发送帧数据
     /* ----------------------- 以下主站等待处理发送返回请求-------------------------------------*/
-    XModbusFrameDataRecvHandle* recvHandleMaster;//接收处理   主站才有
-
+    XVector* recvHandleMaster;//XVector<XModbusFrameDataRecvHandle>
     /* ----------------------- 函数指针类型定义  0-------------------------------------*/
     XModbusFrameSend     peMBFrameSendCur;     // 帧发送函数指针（发送完整 Modbus 帧）
     XModbusFrameStart    pvMBFrameStartCur;    // 协议栈启动函数指针（初始化端口资源，如串口、定时器）
@@ -125,8 +126,9 @@ XModbusErrorCode   XModbus_disable(XModbus* modbus);
 XModbusErrorCode  XModbus_poll(XModbus* modbus);
 
 //发送一帧数据
-XModbusErrorCode XModbus_sendData(XModbus* modbus, XModbusFrame* sendFrame);
-
+XModbusErrorCode XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame);
+//主站定期发送
+XModbusErrorCode XModbus_sendFrameRegularlyMaster(XModbus* modbus, XModbusFrame* frame,uint32_t time);
 //当前是主站吗
 bool XModbus_isMaster(XModbus* modbus);
 //设置功能码处理函数

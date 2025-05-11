@@ -126,6 +126,7 @@ bool XModbusTest_writeByte(XIODevice* io, const char* data, size_t size)
             return false;
         }
     }
+   // printf("写入数据:%02x\n",*data);
     return true;
 }
 
@@ -155,9 +156,18 @@ void XModbusTest_XTimer_Stop(XTimer* timer)
         //printf("停止定时器\n");
     }
 }
+VOID CALLBACK XTimer_incCallback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
+{
+    XTimer_inc(1);
+}
 void XModbusTest_XTimerCreat(XTimer* timer)
 {
-
+    // 创建定时器，间隔为 1 毫秒
+    UINT timerId = timeSetEvent(1, 1, XTimer_incCallback, timer, TIME_PERIODIC);
+    if (timerId == 0) {
+        timeEndPeriod(1);
+        printf("定时器创建失败\n");
+    }
 }
 
 void XModbusTest_SerialPoll(XModbus* modbus)
@@ -170,8 +180,10 @@ void XModbusTest_SerialPoll(XModbus* modbus)
         printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
         return false;
     }
+    
     if (comStat.cbInQue)
     {
+       // printf("comStat.cbInQue:%d\n", comStat.cbInQue);
         //接收缓冲区空时调用
         modbus->pxMBFrameCBByteReceived(modbus);
     }

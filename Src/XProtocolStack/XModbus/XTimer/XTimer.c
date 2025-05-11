@@ -12,6 +12,8 @@ XTimer* XTimer_new(XTimer_PortFunc* port)
 	memset(timer, 0, sizeof(XTimer) - sizeof(XTimer_PortFunc));
 	//绑定函数指针
 	memcpy(&(timer->m_port), port, sizeof(XTimer_PortFunc));
+	if (port->create)
+		port->create(timer);
 	return timer;
 }
 
@@ -57,4 +59,19 @@ void XTimer_out(XTimer* timer)
 		return;
 	++timer->number;
 	timer->m_port.timeout(timer);
+}
+static size_t currentTime=0;
+void XTimer_inc(size_t tick_period)
+{
+	currentTime += tick_period;
+}
+
+void XTimer_setCurrentTime(size_t time)
+{
+	currentTime = time;
+}
+
+size_t XTimer_getCurrentTime()
+{
+	return currentTime;
 }
