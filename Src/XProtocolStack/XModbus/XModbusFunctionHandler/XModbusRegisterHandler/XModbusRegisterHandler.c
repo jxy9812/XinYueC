@@ -5,8 +5,8 @@
 #include"XModbusFunctionHandler.h"
 #include"XModbus.h"
 #include"XModbusRtu.h"
-#include"XCrc.h"
-#include"XAlgorithm.h"
+//#include"XCrc.h"
+//#include"XAlgorithm.h"
 #include<string.h>
 //寄存器大小
 #define REGISTERSIZE 2
@@ -17,18 +17,18 @@ XModbusRegisterHandler* XModbusRegisterHandler_new(uint16_t regCount)
 	if(regCount==0)
 		return NULL;
 	XModbusRegisterHandler* ptr = XMemory_malloc(sizeof(XModbusRegisterHandler));
-	ptr->parent.data = XVector_New(REGISTERSIZE);
+	ptr->parent.data = XVector_new(REGISTERSIZE);
 	XVector_resize(ptr->parent.data, regCount);
 	return ptr;
 }
 
-void XModbusRegisterHandler_free(XModbusRegisterHandler* pRegFunc)
+void XModbusRegisterHandler_free(XModbusRegisterHandler* pRegHandler)
 {
-	if (pRegFunc)
+	if (pRegHandler)
 	{
-		if (pRegFunc->parent.data)
-			XVector_free(pRegFunc->parent.data);
-		XMemory_free(pRegFunc);
+		if (pRegHandler->parent.data)
+			XVector_free(pRegHandler->parent.data);
+		XMemory_free(pRegHandler);
 	}
 }
 
@@ -46,17 +46,17 @@ bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint
 	return false;
 }
 
-bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regAddress, const char* writeArray, uint16_t arraySize)
+bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount, const char* writeArray)
 {
-	if (regFunc == NULL || regFunc->parent.data == NULL|| writeArray==NULL||arraySize==0)
+	if (regFunc == NULL || regFunc->parent.data == NULL|| writeArray==NULL||regCount==0)
 		return false;
 	XVector* data = regFunc->parent.data;
 	uint32_t dataSize = XVector_size(data);
 	//uint16_t typeSize = XVector_typeSize(data);
-	if (dataSize > regAddress && (dataSize * REGISTERSIZE) >= (regAddress * REGISTERSIZE + arraySize))
+	if (dataSize > regAddress && (dataSize * REGISTERSIZE) >= (regAddress * REGISTERSIZE + regCount* REGISTERSIZE))
 	{//开始写入
 		char* p= XVector_at(data, regAddress);
-		for (size_t i=0; i < arraySize; i++)
+		for (size_t i=0; i < regCount* REGISTERSIZE; i++)
 		{
 			p[i] = writeArray[i];
 		}

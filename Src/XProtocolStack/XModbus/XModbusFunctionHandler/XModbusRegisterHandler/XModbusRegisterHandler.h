@@ -19,7 +19,7 @@ void XModbusRegisterHandler_free(XModbusRegisterHandler* pRegFunc);
 //写入寄存器
 bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint16_t regAddress,uint16_t value);
 //写入寄存器 数组的方式
-bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regAddress,const char* writeArray,uint16_t arraySize);
+bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount,const char* writeArray);
 // 读取寄存器
 bool XModbusRegisterHandler_read(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount,char* readArray, uint16_t readArraySize);
 //获取指定地址寄存器的缓冲区地址
