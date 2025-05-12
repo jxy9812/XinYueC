@@ -11,7 +11,7 @@ extern "C" {
 #include"XModbusFrame.h"
 #include"XTimer.h"
 #include"XModbusFunctionHandler.h"
-#include"XModbusRegisterFunc.h"
+#include"XModbusRegisterHandler.h"
 #include"XModbusRegularlySendFrame.h"
 #include"XModbusEnum.h"
     /* ----------------------- 宏定义 ------------------------------------------*/

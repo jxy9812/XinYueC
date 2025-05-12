@@ -261,9 +261,10 @@ bool XModbusRtuTimerT35Expired(XModbus* modbus)
     case STATE_RX_ERROR: // 错误状态超时（忽略）
         break;
     case STATE_RX_IDLE: //接收空闲
+
         //发生一次错误
         //printf("接收空闲:%d\n", modbus->eSndState);
-       // break;
+        break;
     default:            // 非法状态（断言检查）
         assert((modbus->eRcvState == STATE_RX_INIT) || (modbus->eRcvState == STATE_RX_RCV) || (modbus->eRcvState == STATE_RX_ERROR));
     }

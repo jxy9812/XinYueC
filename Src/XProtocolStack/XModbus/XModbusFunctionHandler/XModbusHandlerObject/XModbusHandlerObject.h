@@ -11,11 +11,11 @@ typedef struct XModbusFunctionHandler XModbusFunctionHandler;
 /*! \brief 功能码处理函数指针类型 */
 typedef XModbusException(*pXModbusFunctionHandler) (XModbus* modbus,XModbusFrame* frameData, XModbusFunctionHandler* FunctionHandler);
 //功能码处理基类结构体
-typedef struct XModbusFuncObject
+typedef struct XModbusHandlerObject
 {
 	void* data;//数据
 
-}XModbusFuncObject;
+}XModbusHandlerObject;
 
 #ifdef __cplusplus
 }

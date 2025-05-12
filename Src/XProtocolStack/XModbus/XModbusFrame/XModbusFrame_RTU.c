@@ -378,7 +378,7 @@ static void XModbusFrameRTU_parse0x10_request(XModbusFrameRTU* rtu, XVector* fra
 	rtu->regAddress = SwapEndian16(XVector_At(frameData, 2, uint16_t), 1);//获取寄存器地址
 	rtu->regCount = SwapEndian16(XVector_At(frameData, 4, uint16_t), 1);//获取寄存器数量
 	uint8_t len = XVector_At(frameData, 6, uint8_t);//获取返回的字节数
-	if (len)
+	if ((len > 0) && (((rtu->regCount) * 2) == len))
 	{
 		if (rtu->data == NULL)
 			rtu->data = XVector_New(uint8_t);

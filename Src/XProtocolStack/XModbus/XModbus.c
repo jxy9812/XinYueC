@@ -3,7 +3,6 @@
 #include "XModbusConfig.h"
 #include "XModbusProto.h"
 #include "XModbusFunctionHandler.h"
-#include "XPair.h"
 // 条件编译：根据配置启用不同 Modbus 通信模式
 #if MB_RTU_ENABLED == 1    // 启用 RTU 模式（二进制传输，常用于串口）
 #include "XModbusRtu.h"        // RTU 模式具体实现
@@ -277,12 +276,22 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
         if (modbus->recvHandleMaster != NULL)
         {
             XModbusFrameDataRecvHandle** Handle = XVector_front(modbus->recvHandleMaster);
-            if (Handle != NULL && (*Handle)->timeout < XTimer_getCurrentTime())
+            if (Handle != NULL)
             {//已经超时了
-                if ((*Handle)->pRecvHandCallFunc)
-                    (*Handle)->pRecvHandCallFunc(modbus, NULL);
-                XMemory_free(*Handle);
-                XVector_pop_front(modbus->recvHandleMaster);
+                if((*Handle) != NULL)
+                {
+                    if((*Handle)->timeout < XTimer_getCurrentTime())
+                    {
+                        if ((*Handle)->pRecvHandCallFunc)
+                            (*Handle)->pRecvHandCallFunc(modbus, NULL);
+                        XMemory_free(*Handle);
+                        XVector_pop_front(modbus->recvHandleMaster);
+                    }
+                }
+                else
+                {
+                    XVector_pop_front(modbus->recvHandleMaster);
+                }
             }
         }
         //处理定时发送帧数据

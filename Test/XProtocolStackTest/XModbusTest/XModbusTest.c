@@ -30,16 +30,16 @@ void XModbusTest()
     XModbus* modbus = XMemory_malloc(sizeof(XModbus));
     //初始化Modbus
     XModbus_init(modbus, &InitFunction, MB_RTU_MASTER, 0x02, 2, 38400, MB_PAR_NONE);
-    XModbusRegisterFunc* Register=XModbusRegisterFunc_new(16);
+    XModbusRegisterHandler* Register=XModbusRegisterHandler_new(16);
     //设置从站的功能码回调函数
     {
-        XModbusFunctionHandler Handler = { MB_FUNC_READ_HOLDING_REGISTER,XModbusRegisterFunc_0x03_RTU_slaveRecvHandCallFunc,Register };
-       // XModbus_setFunctionHandler(modbus, &Handler);
+        XModbusFunctionHandler Handler = { MB_FUNC_READ_HOLDING_REGISTER,XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc,Register };
+        XModbus_setFunctionHandler(modbus, &Handler);
     }
 
     {
-        XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterFunc_0x06_RTU_slaveRecvHandCallFunc,Register };
-      //  XModbus_setFunctionHandler(modbus, &Handler);
+        XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc,Register };
+       XModbus_setFunctionHandler(modbus, &Handler);
     }
     {//发送一帧数据
         XModbusFrame* frame = XModbusFrame_newRecvHandle();
@@ -47,14 +47,15 @@ void XModbusTest()
         char buff[] = {0x00,0x01};
         XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x01, buff);
        // XModbus_sendFrame(modbus, frame);
-        XModbus_sendFrameRegularlyMaster(modbus, frame,50);
+        //XModbus_sendFrameRegularlyMaster(modbus, frame,50);
     }
     {//发送一帧数据
         XModbusFrame* frame = XModbusFrame_newRecvHandle();
         //frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
         char buff[] = { 0x00,0x01 };
         XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x00, buff);
-        XModbus_sendFrameRegularlyMaster(modbus, frame,1000);
+        XModbus_sendFrame(modbus, frame);
+        //XModbus_sendFrameRegularlyMaster(modbus, frame,1000);
        /* uint8_t State =0;
         XMODBUS_UINT8_SET_BITS(&State, 0, 1);
         XMODBUS_UINT8_SET_BITS(&State, 2, 1); 

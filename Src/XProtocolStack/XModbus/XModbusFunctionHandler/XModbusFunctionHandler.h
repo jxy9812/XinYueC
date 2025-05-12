@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 #include<stdint.h>
-#include"XModbusFuncObject.h"
+#include"XModbusHandlerObject.h"
 typedef struct XModbus XModbus;
 typedef struct XModbusFunctionHandler XModbusFunctionHandler;
 
