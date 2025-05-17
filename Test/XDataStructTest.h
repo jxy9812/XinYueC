@@ -6,6 +6,7 @@ extern "C" {
 #include"XDataStructConfig.h"
 #include"XClass.h"
 #include"XProtocolStackTest.h"
+#include"XIOTest.h"
 #if DEMOTEST
 
 	//链表迭代器测试

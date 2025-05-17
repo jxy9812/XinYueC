@@ -12,9 +12,13 @@ XTimer* XTimer_new(XTimer_PortFunc* port)
 	memset(timer, 0, sizeof(XTimer) - sizeof(XTimer_PortFunc));
 	//绑定函数指针
 	memcpy(&(timer->m_port), port, sizeof(XTimer_PortFunc));
-	if (port->create)
-		port->create(timer);
 	return timer;
+}
+
+void XTimer_create(XTimer* timer)
+{
+	if (timer != NULL && timer->m_port.create)
+		timer->m_port.create(timer);
 }
 
 void XTimer_free(XTimer* timer)

@@ -56,8 +56,8 @@ void XMemory_setReallocMethod(ReallocMethod method)
 
 void* XMemory_reallocPack(void* pointer, size_t size)
 {
-	if(pointer==NULL)
-		return NULL;
+	if (pointer == NULL)
+		return XMemory_malloc(size);
 	if (size == 0)
 	{
 		XMemory_free(pointer);

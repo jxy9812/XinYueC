@@ -46,6 +46,7 @@ void XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortFunc* func, u
         modbus->timer->interval = 3.5 * (10+ parity) * 1000 / baudRate;
         if (modbus->timer->interval < 2)
             modbus->timer->interval = 2;
+        XTimer_create(modbus->timer);
     }
 }
 void XModbusRtuStart(XModbus* modbus)
@@ -53,7 +54,7 @@ void XModbusRtuStart(XModbus* modbus)
     ENTER_CRITICAL_SECTION();
     modbus->eRcvState = STATE_RX_INIT;  // 初始状态：等待总线空闲
     if(modbus->SerialEnable)
-        modbus->SerialEnable(modbus,true, false);  // 使能接收，禁用发送
+        modbus->SerialEnable(modbus->ioDevice,true, false);  // 使能接收，禁用发送
     XTimer_start(modbus->timer);  // 启动定时器（T35用于检测帧间隔）
     EXIT_CRITICAL_SECTION();
 }

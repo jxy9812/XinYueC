@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 #include<stdint.h>
+#include<stdio.h>
 typedef struct XTimer XTimer;
 typedef void (*XTimerCreate)(XTimer* timer);
 typedef void (*XTimerFree)(XTimer* timer);
@@ -33,6 +34,7 @@ typedef struct XTimer
 	XTimer_PortFunc m_port;//接口
 }XTimer;
 XTimer* XTimer_new(XTimer_PortFunc* port);
+void XTimer_create(XTimer* timer);
 void XTimer_free(XTimer* timer);
 void XTimer_start(XTimer*timer);
 void XTimer_stop(XTimer* timer);

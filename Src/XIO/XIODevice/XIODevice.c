@@ -3,18 +3,25 @@
 #include "XVector.h"
 #include <string.h>
 #include <assert.h>
-XIODevice* XIODevice_new(XIODevice_PortFunc* port)
+XIODevice* XIODevice_new(XIODevice_PortFuncInit* port)
 {
 	if (port == NULL)
 		return NULL;
 	XIODevice* io= XMemory_malloc(sizeof(XIODevice));
 	if (io == NULL)
 		return;
-	//开始初始化
-	memset(io, 0, sizeof(XIODevice)- sizeof(XIODevice_PortFunc));
-	//绑定函数指针
-	memcpy(&(io->m_port), port, sizeof(XIODevice_PortFunc));
+	XIODevice_init(io,port);
 	return io;
+}
+void XIODevice_init(XIODevice* io, XIODevice_PortFuncInit* port)
+{
+	if (io&&port)
+	{
+		//开始初始化
+		memset(io, 0, sizeof(XIODevice) - sizeof(XIODevice_PortFunc));
+		//绑定函数指针
+		memcpy(&(io->m_port), port, sizeof(XIODevice_PortFunc));
+	}
 }
 void XIODevice_free(XIODevice* io)
 {
@@ -218,6 +225,14 @@ void XIODevice_close(XIODevice* io)
 	if (io == NULL || io->m_port.close_funcPointer == NULL)
 		return ;
 	io->m_port.close_funcPointer(io);
+}
+
+void XIODevice_poll(XIODevice* io)
+{
+	if (io&&io->m_port.poll_funcPointer)
+	{
+		io->m_port.poll_funcPointer(io);
+	}
 }
 
 size_t XIODevice_writeFull(XIODevice* io)

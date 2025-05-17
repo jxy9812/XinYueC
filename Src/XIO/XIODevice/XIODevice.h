@@ -20,8 +20,6 @@ typedef enum /*XIODeviceBase*/
 	XIODeviceBase_ExistingOnly= 0x0080,//如果要打开的文件不存在，则操作失败。这个志必须与 ReadOnly（只读）、WriteOnly（只写）或 ReadWrite（读写）一起指定
 }XIODeviceBase;
 typedef struct XIODevice XIODevice;
-typedef bool (*XIODeviceGetByte)(XIODevice* io, uint8_t* Byte);//获取一个字节
-typedef bool (*XIODevicePutByte)(XIODevice* io, uint8_t Byte);//发送一个字节
 typedef size_t(*XIOBufferEmpty)(XIODevice* io,char* data, size_t size);//缓冲区空
 typedef size_t(*XIOBufferFull)(XIODevice* io,const char* data,size_t size);//缓冲区满
 typedef bool (*XIODeviceOpen)(XIODevice* io, XIODeviceBase mode);//打开IO设备
@@ -29,32 +27,34 @@ typedef void (*XIODeviceClose)(XIODevice* io);//关闭IO,释放资源
 //IO设备接口
 typedef struct XIODevice_PortFunc
 {
-	XIOBufferEmpty   writeBufferEmpty_funcPointer;
+	//XIOBufferEmpty   writeBufferEmpty_funcPointer;//写入缓冲区空
 	union {
-		XIOBufferFull     writeBufferFull_funcPointer;
-		XIOBufferFull     writeData_funcPointer;
+		XIOBufferFull     writeBufferFull_funcPointer;//写入缓冲区满
+		XIOBufferFull     writeData_funcPointer;//
 	};
 	union{
 		XIOBufferEmpty   readBufferEmpty_funcPointer;
 		XIOBufferEmpty   readData_funcPointer;
 	};
-	XIOBufferFull     readBufferFull_funcPointer;
-	//XIODeviceGetByte getByte_funcPointer;//获取一个字节
-	//XIODevicePutByte putByte_funcPointer;//发送一个字节
+	//XIOBufferFull     readBufferFull_funcPointer;
 	XIODeviceOpen  open_funcPointer;//打开IO设备
 	XIODeviceClose   close_funcPointer;//关闭IO
+	void (*poll_funcPointer)(XIODevice* io);//设备轮询
 }XIODevice_PortFunc;
+//IO设备初始化接口
+typedef XIODevice_PortFunc XIODevice_PortFuncInit;
 //IO设备
 typedef struct XIODevice
 {
-	uint16_t m_mode;//打开模式
 	void* device;//设备
+	uint16_t m_mode;//打开模式
 	XVector* m_writeBuffer;//写入缓冲区
 	XVector* m_readBuffer;//读取缓冲区
-	/* ----------------------- 函数指针-------------------------------------*/
+	/* ----------------------- 接口指针-------------------------------------*/
 	XIODevice_PortFunc m_port;//接口
 }XIODevice;
-XIODevice* XIODevice_new(XIODevice_PortFunc* port);
+XIODevice* XIODevice_new(XIODevice_PortFuncInit* port);
+void XIODevice_init(XIODevice* io, XIODevice_PortFuncInit* port);
 void XIODevice_free(XIODevice* io);
 void XIODevice_setWriteBuffer(XIODevice* io,size_t size);
 void XIODevice_setReadBuffer(XIODevice* io, size_t size);
@@ -65,6 +65,7 @@ XVector* XIODevice_readVector(XIODevice* io, size_t maxSize);//读取
 bool XIODevice_isOpen(XIODevice* io);
 bool XIODevice_open(XIODevice* io, XIODeviceBase mode);
 void XIODevice_close(XIODevice* io);
+void XIODevice_poll(XIODevice* io);
 size_t XIODevice_writeFull(XIODevice* io);//将剩余的数据刷入设备
 #ifdef __cplusplus
 }
