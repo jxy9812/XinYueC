@@ -41,7 +41,7 @@ void XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortFunc* func, u
        // assert(func->timePort.create);
         modbus->timer = XTimer_new(&(func->timePort));
         modbus->timer->data = modbus;
-        modbus->timer->m_port.timeout = XModbusRtu_Timer_out;
+        modbus->timer->m_port.timerCallback = XModbusRtu_Timer_out;
         //设置定时时间
         modbus->timer->interval = 3.5 * (10+ parity) * 1000 / baudRate;
         if (modbus->timer->interval < 2)
