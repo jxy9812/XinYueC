@@ -21,6 +21,7 @@ typedef struct XTimer_PortFunc
 	XTimerStop stop;//关闭
 	XTimerCallback timerCallback;//超时回调
 }XTimer_PortFunc;
+typedef XTimer_PortFunc XTimer_PortFuncInit ;
 //定时器抽象
 typedef struct XTimer
 {
@@ -32,9 +33,10 @@ typedef struct XTimer
 	//函数
 	XTimer_PortFunc m_port;//接口
 }XTimer;
-XTimer* XTimer_new(XTimer_PortFunc* port);
+XTimer* XTimer_new(XTimer_PortFuncInit* port);
 #ifdef WIN32
-XTimer* XTimer_newWin32();
+XTimer* XTimer_new_Win32();
+XTimer_PortFunc XTimer_PortFunc_Win32();
 #endif
 void XTimer_create(XTimer* timer);
 void XTimer_free(XTimer* timer);

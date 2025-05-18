@@ -9,9 +9,17 @@ XSwitchDevice* XSwitchDevice_new(XSwitchDevice_PortFuncInit* port)
 		return NULL;
 	XSwitchDevice* sw = XMemory_malloc(sizeof(XSwitchDevice));
 	if (sw == NULL)
-		return;
+		return sw;
 	XSwitchDevice_init(sw,port);
 	return sw;
+}
+
+void XSwitchDevice_free(XSwitchDevice* sw)
+{
+	if (sw)
+	{
+		XMemory_free(sw);
+	}
 }
 
 void XSwitchDevice_init(XSwitchDevice* sw, XSwitchDevice_PortFuncInit* port)
@@ -49,8 +57,10 @@ void XSwitchDevice_setState(XSwitchDevice* sw, bool state)
 	if(sw)
 	{
 		XIODevice_write(sw, &state, sizeof(bool));
-		/*if(XIODevice_write(sw, &state, sizeof(bool))>0)
-			sw->state = state;*/
+		if (sw->m_parent.m_port.poll_funcPointer == NULL)
+		{//不存在轮询方式的时候直接改变保存的状态
+			sw->state = state;
+		}
 	}
 }
 

@@ -25,6 +25,7 @@ typedef struct XSwitchDevice
 }XSwitchDevice;
 //开关设备
 XSwitchDevice* XSwitchDevice_new(XSwitchDevice_PortFuncInit* port);
+void XSwitchDevice_free(XSwitchDevice* sw);
 //初始化
 void XSwitchDevice_init(XSwitchDevice* sw,XSwitchDevice_PortFuncInit* port);
 //默认轮询方法

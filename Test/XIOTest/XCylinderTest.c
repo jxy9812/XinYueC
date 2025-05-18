@@ -67,7 +67,8 @@ void XCylinderTest()
 
 	//定时器模拟测试
 #ifdef WIN32
-	XTimer* timer = XTimer_newWin32();
+	XTimer* timer = XTimer_new_Win32();
+	XTimer_create(timer);
 	timer->m_port.timerCallback = XTimer_Callback;
 	XTimer_setInterval(timer,1000);
 	XTimer_start(timer);

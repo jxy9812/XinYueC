@@ -9,8 +9,20 @@
 static HANDLE hSerial;
 static  HANDLE hEvent;
 static OVERLAPPED ov;
+static VOID CALLBACK XTimer_incCallback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
+{
+    XTimer_inc(1);
+}
+static void XModbusTest_XTimerCreat(XTimer* timer)
+{
+    // 创建定时器，间隔为 1 毫秒
+    UINT timerId = timeSetEvent(1, 1, XTimer_incCallback, timer, TIME_PERIODIC);
+    if (timerId == 0) {
+        timeEndPeriod(1);
+        printf("定时器创建失败\n");
+    }
+}
 // 打开串口
-//bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity)
 bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
 {
     XSerialPortDevice* serial = io->device;
@@ -84,6 +96,7 @@ bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
         CloseHandle(hSerial);
         return 1;
     }
+    XModbusTest_XTimerCreat(NULL);
     return true;
 }
 bool XModbusTest_readByte(XIODevice* io, char* byte, size_t size)
@@ -130,45 +143,7 @@ bool XModbusTest_writeByte(XIODevice* io, const char* data, size_t size)
     return true;
 }
 
-// 定时器回调函数
-VOID CALLBACK TimerCallback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
-{
-    XTimer* timer = ((XTimer*)dwUser);
-    XTimer_out(timer);
-}
-void XModbusTest_XTimer_Start(XTimer* timer)
-{
-    XTimer_stop(timer);
-    // 创建定时器，间隔为 2 毫秒
-    UINT timerId = timeSetEvent(timer->interval, 1, TimerCallback, timer, TIME_PERIODIC);
-    if (timerId == 0) {
-        timeEndPeriod(1);
-        printf("定时器创建失败\n");
-    }
-    timer->timerId = timerId;
-}
-void XModbusTest_XTimer_Stop(XTimer* timer)
-{
-    if (timer->timerId)
-    {
-        timeKillEvent(timer->timerId);
-        timer->timerId = 0;
-        //printf("停止定时器\n");
-    }
-}
-VOID CALLBACK XTimer_incCallback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
-{
-    XTimer_inc(1);
-}
-void XModbusTest_XTimerCreat(XTimer* timer)
-{
-    // 创建定时器，间隔为 1 毫秒
-    UINT timerId = timeSetEvent(1, 1, XTimer_incCallback, timer, TIME_PERIODIC);
-    if (timerId == 0) {
-        timeEndPeriod(1);
-        printf("定时器创建失败\n");
-    }
-}
+
 
 void XModbusTest_SerialPoll(XModbus* modbus)
 {

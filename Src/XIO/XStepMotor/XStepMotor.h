@@ -5,6 +5,8 @@ extern "C" {
 #endif
 #define   StepMotor_TIM_1MHz_Prescaler (84-1)//步进电机定时器在1Mz的预分频系数
 #include"XIODevice.h"
+#include"XPWMDevice.h"
+#include"XSwitchDevice.h"
 typedef struct XStepMotor XStepMotor;
 //步进电机接口
 typedef struct XStepMotor_PortFunc
@@ -21,9 +23,12 @@ typedef struct XStepMotor_PortFuncInit
 typedef struct XStepMotor
 {
 	XIODevice m_parent;//父对象
+	XPWMDevice* m_PUL;//pwm引脚
+	XSwitchDevice* m_ENA;//使能引脚
+	XSwitchDevice* m_DIR;//方向引脚
 	XStepMotor_PortFunc m_port;//开关设备接口
 }XStepMotor;
-
+XStepMotor* XStepMotor_new(XStepMotor_PortFuncInit* port);
 //初始化
 void XStepMotor_init(XStepMotor* motor);
 //使能打开输出

@@ -20,10 +20,7 @@ void XModbusTest()
     io_port.open_funcPointer = XModbusTest_SerialOpen;
     io_port.readData_funcPointer = XModbusTest_readByte;
     io_port.writeData_funcPointer = XModbusTest_writeByte;
-    XTimer_PortFunc  timePort = { 0 };//定时器接口设置
-    timePort.create = XModbusTest_XTimerCreat;
-    timePort.start = XModbusTest_XTimer_Start;
-    timePort.stop = XModbusTest_XTimer_Stop;
+    XTimer_PortFunc  timePort = XTimer_PortFunc_Win32();//定时器接口设置
     XModbus_PortFunc InitFunction = {0};//modbus接口设置
     InitFunction.IO_Port = io_port;
     InitFunction.timePort = timePort;

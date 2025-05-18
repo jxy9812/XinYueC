@@ -5,12 +5,13 @@
 #include<math.h>
 int main(int argc, char* args[])
 {
-	//XModbusTest();
-	XCylinderTest();
-	return;
-	XStringVectorTest();
 	
 #if DEMOTEST
+	//XPWMDeviceTest();
+	//XModbusTest();
+	//XCylinderTest();	
+	return;
+	XStringVectorTest();
 	cJsonTest();
 	cJsonXContainerTest();
 	//return;

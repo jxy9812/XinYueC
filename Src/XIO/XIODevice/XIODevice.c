@@ -9,7 +9,7 @@ XIODevice* XIODevice_new(XIODevice_PortFuncInit* port)
 		return NULL;
 	XIODevice* io= XMemory_malloc(sizeof(XIODevice));
 	if (io == NULL)
-		return;
+		return io;
 	XIODevice_init(io,port);
 	return io;
 }

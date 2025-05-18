@@ -15,12 +15,13 @@ typedef struct XCylinder_PortInit
 //气缸
 typedef struct XCylinder
 {
-    XSwitchDevice m_sv;//电磁阀
-    XSwitchDevice m_ul;//上限位
-    XSwitchDevice m_dl;//下限位
+    XSwitchDevice* m_sv;//电磁阀
+    XSwitchDevice* m_ul;//上限位
+    XSwitchDevice* m_dl;//下限位
 }XCylinder;
 //获取一个气缸类
 XCylinder* XCylinder_new(XCylinder_PortInit* port);
+void XCylinder_free(XCylinder* cylinder);
 //轮询扫描状态
 void XCylinder_poll(XCylinder* cylinder);
 

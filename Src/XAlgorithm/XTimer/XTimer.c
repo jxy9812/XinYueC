@@ -1,7 +1,7 @@
 ﻿#include"XTimer.h"
 #include"XMemory.h"
 #include<string.h>
-XTimer* XTimer_new(XTimer_PortFunc* port)
+XTimer* XTimer_new(XTimer_PortFuncInit* port)
 {
 	if(port==NULL)
 		return NULL;
@@ -26,6 +26,7 @@ static VOID CALLBACK TimerCallback(PTP_CALLBACK_INSTANCE Instance, PVOID Context
 }
 static void XTimerCreateWin32(XTimer* timer)
 {
+	//printf("创建定时器\n");
 	if (timer == NULL)
 		return;
 	// 创建线程池计时器
@@ -37,6 +38,7 @@ static void XTimerCreateWin32(XTimer* timer)
 }
 static void XTimerStartWin32(XTimer* timer)
 {
+	//printf("启动定时器\n");
 	XTimer_stop(timer);
 	// 设置计时器立即启动，每1000ms触发一次
 	if (timer == NULL || timer->timerId == 0)
@@ -56,29 +58,36 @@ static void XTimerStartWin32(XTimer* timer)
 }
 static void XTimerStopWin32(XTimer* timer)
 {
+	//printf("停止定时器\n");
 	if (timer->timerId)
 	{
 		SetThreadpoolTimer(((PTP_TIMER)(timer->timerId)), NULL, 0, 0);
-
-		// 等待所有回调完成
-		WaitForThreadpoolTimerCallbacks(((PTP_TIMER)(timer->timerId)), FALSE);
 	}
 }
 static void XTimerFreeWin32(XTimer* timer)
 {
-	// 清理资源
-	CloseThreadpoolTimer(((PTP_TIMER)(timer->timerId)));
+	if (timer->timerId)
+	{
+		// 等待所有回调完成
+		WaitForThreadpoolTimerCallbacks(((PTP_TIMER)(timer->timerId)), false);
+		// 清理资源
+		CloseThreadpoolTimer(((PTP_TIMER)(timer->timerId)));
+	}
 }
-XTimer* XTimer_newWin32()
+XTimer* XTimer_new_Win32()
+{
+	XTimer_PortFunc port=XTimer_PortFunc_Win32();
+	XTimer* timer= XTimer_new(&port);
+	return timer;
+}
+XTimer_PortFunc XTimer_PortFunc_Win32()
 {
 	XTimer_PortFunc port = { 0 };
 	port.create = XTimerCreateWin32;
 	port.free = XTimerFreeWin32;
 	port.start = XTimerStartWin32;
 	port.stop = XTimerStopWin32;
-	XTimer* timer= XTimer_new(&port);
-	XTimerCreateWin32(timer);
-	return timer;
+	return port;
 }
 #endif
 void XTimer_create(XTimer* timer)
