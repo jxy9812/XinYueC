@@ -33,6 +33,13 @@ void XCylinder_free(XCylinder* cylinder)
 		XSwitchDevice_free(cylinder->m_ul);
 }
 
+void XCylinder_open(XCylinder* cylinder)
+{
+	XIODevice_open(cylinder->m_dl, XIODeviceBase_ReadOnly);
+	XIODevice_open(cylinder->m_ul, XIODeviceBase_ReadOnly);
+	XIODevice_open(cylinder->m_sv, XIODeviceBase_WriteOnly);
+}
+
 void XCylinder_poll(XCylinder* cylinder)
 {
 	if (cylinder == NULL)
