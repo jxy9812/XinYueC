@@ -69,6 +69,11 @@ void XIODevice_setReadBuffer(XIODevice* io, size_t size)
 		io->m_readBuffer = NULL;
 	}
 }
+void XIODevice_setDevice(XIODevice* io, void* device)
+{
+	if (io != NULL)
+		io->device = device;
+}
 size_t XIODevice_write(XIODevice* io, const char* data, size_t maxSize)
 {
 	if(io==NULL||data==NULL||maxSize==0||io->m_mode& XIODeviceBase_WriteOnly==0)

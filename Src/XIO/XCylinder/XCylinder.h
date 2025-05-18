@@ -22,6 +22,8 @@ typedef struct XCylinder
 //获取一个气缸类
 XCylinder* XCylinder_new(XCylinder_PortInit* port);
 void XCylinder_free(XCylinder* cylinder);
+
+void XCylinder_setDevice(XCylinder* cylinder, void* device);
 //打开设备
 void XCylinder_open(XCylinder* cylinder);
 //轮询扫描状态

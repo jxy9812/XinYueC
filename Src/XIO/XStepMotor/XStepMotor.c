@@ -29,6 +29,17 @@ void XStepMotor_init(XStepMotor* motor, XStepMotor_PortFuncInit* port)
 	motor->m_DIR = XPWMDevice_new(&(port->DIR));
 	//绑定函数指针
 	memcpy(&(motor->m_port), &(port->StepMotorPort), sizeof(XStepMotor_PortFunc));
+	XStepMotor_setDevice(motor, motor);
+}
+
+void XStepMotor_setDevice(XStepMotor* motor, void* device)
+{
+	if (motor != NULL)
+	{
+		XIODevice_setDevice(motor->m_PUL,device);
+		XIODevice_setDevice(motor->m_ENA, device);
+		XIODevice_setDevice(motor->m_DIR, device);
+	}
 }
 
 void XStepMotor_setENA(XStepMotor* motor, bool open)

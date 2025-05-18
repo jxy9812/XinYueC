@@ -42,6 +42,8 @@ typedef struct XStepMotor
 XStepMotor* XStepMotor_new(XStepMotor_PortFuncInit* port);
 //初始化
 void XStepMotor_init(XStepMotor* motor, XStepMotor_PortFuncInit* port);
+void XStepMotor_setDevice(XStepMotor* motor, void* device);
+
 //使能打开输出
 void XStepMotor_setENA(XStepMotor* motor,bool open);
 //方向切换

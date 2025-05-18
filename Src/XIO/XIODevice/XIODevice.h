@@ -58,6 +58,7 @@ void XIODevice_init(XIODevice* io, XIODevice_PortFuncInit* port);
 void XIODevice_free(XIODevice* io);
 void XIODevice_setWriteBuffer(XIODevice* io,size_t size);
 void XIODevice_setReadBuffer(XIODevice* io, size_t size);
+void XIODevice_setDevice(XIODevice* io, void* device);
 size_t XIODevice_write(XIODevice* io,const char* data, size_t maxSize);//写入
 size_t XIODevice_writeVector(XIODevice* io, XVector* array);//写入
 size_t XIODevice_read(XIODevice* io,char* data, size_t maxSize);//读取

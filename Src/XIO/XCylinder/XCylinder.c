@@ -15,9 +15,7 @@ XCylinder* XCylinder_new(XCylinder_PortInit* port)
 	cylinder->m_dl = XSwitchDevice_new(&(port->dl));
 	cylinder->m_ul = XSwitchDevice_new(&(port->ul));
 	//绑定设备
-	cylinder->m_sv->m_parent.device = cylinder;
-	cylinder->m_dl->m_parent.device = cylinder;
-	cylinder->m_ul->m_parent.device = cylinder;
+	XCylinder_setDevice(cylinder, cylinder);
 	return cylinder;
 }
 
@@ -31,6 +29,16 @@ void XCylinder_free(XCylinder* cylinder)
 		XSwitchDevice_free(cylinder->m_sv);
 	if (cylinder->m_ul)
 		XSwitchDevice_free(cylinder->m_ul);
+}
+
+void XCylinder_setDevice(XCylinder* cylinder, void* device)
+{
+	if (cylinder != NULL)
+	{
+		XIODevice_setDevice(cylinder->m_dl, device);
+		XIODevice_setDevice(cylinder->m_sv, device);
+		XIODevice_setDevice(cylinder->m_ul, device);
+	}
 }
 
 void XCylinder_open(XCylinder* cylinder)
