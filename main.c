@@ -9,7 +9,7 @@ int main(int argc, char* args[])
 #if DEMOTEST
 	//XPWMDeviceTest();
 	//XModbusTest();
-	//XCylinderTest();	
+	XCylinderTest();	
 	return;
 	XStringVectorTest();
 	cJsonTest();

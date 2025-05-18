@@ -39,7 +39,7 @@ static size_t getULState(XIODevice* io, char* data, size_t size)
 static void ulStateChangeCallback(XSwitchDevice* io)
 {
 	printf("上限位状态改变了:%s\n", XSwitchDevice_getState(io) ? "true" : "false");
-	XSwitchDevice_setState((&((XCylinder*)(io->m_parent.device))->m_sv), !svState);
+	XSwitchDevice_setState((((XCylinder*)(io->m_parent.device))->m_sv), !svState);
 	
 }
 #endif
@@ -64,7 +64,9 @@ void XCylinderTest()
 
 	XCylinder_PortInit init = { sv,ul,dl };
 	XCylinder* cy= XCylinder_new(&init);
-
+	
+	cy->m_sv->m_parent.m_mode = XIODeviceBase_WriteOnly;
+	cy->m_ul->m_parent.m_mode = XIODeviceBase_ReadOnly;
 	//定时器模拟测试
 #ifdef WIN32
 	XTimer* timer = XTimer_new_Win32();

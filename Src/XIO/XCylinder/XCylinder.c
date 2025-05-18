@@ -14,6 +14,10 @@ XCylinder* XCylinder_new(XCylinder_PortInit* port)
 	cylinder->m_sv=XSwitchDevice_new(&(port->sv));
 	cylinder->m_dl = XSwitchDevice_new(&(port->dl));
 	cylinder->m_ul = XSwitchDevice_new(&(port->ul));
+	//绑定设备
+	cylinder->m_sv->m_parent.device = cylinder;
+	cylinder->m_dl->m_parent.device = cylinder;
+	cylinder->m_ul->m_parent.device = cylinder;
 	return cylinder;
 }
 

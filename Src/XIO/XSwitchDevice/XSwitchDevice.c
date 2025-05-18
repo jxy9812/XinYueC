@@ -39,26 +39,32 @@ void XSwitchDevice_pollDefaultMethod(XSwitchDevice* sw)
 {
 	if (sw == NULL)
 		return;
-	//扫描保存状态
-	bool state= sw->state;
-	//读取当前状态
-	XIODevice_read(sw,&state,1);
-	//printf("state:%s\n", state ? "true" : "false");
-	if (state != sw->state)
+	if(sw->m_parent.m_mode & XIODeviceBase_ReadOnly)
 	{
-		sw->state = state;
-		if (sw->m_port.stateChangeCallback)//判断当前是否有状态改变回调函数
-			sw->m_port.stateChangeCallback(sw);
+		//扫描保存状态
+		bool state = sw->state;
+		//读取当前状态
+		XIODevice_read(sw, &state, 1);
+		//printf("state:%s\n", state ? "true" : "false");
+		if (state != sw->state)
+		{
+			sw->state = state;
+			if (sw->m_port.stateChangeCallback)//判断当前是否有状态改变回调函数
+				sw->m_port.stateChangeCallback(sw);
+		}
 	}
 }
 
 void XSwitchDevice_setState(XSwitchDevice* sw, bool state)
 {
-	if(sw)
+	//printf("A\n");
+	if (sw && ((sw->m_parent.m_mode) & XIODeviceBase_WriteOnly))
 	{
 		XIODevice_write(sw, &state, sizeof(bool));
-		if (sw->m_parent.m_port.poll_funcPointer == NULL)
-		{//不存在轮询方式的时候直接改变保存的状态
+		//if (sw->m_parent.m_port.poll_funcPointer == NULL)
+		if ((sw->state != state) && sw->m_port.stateChangeCallback)
+		{
+			sw->m_port.stateChangeCallback(sw);
 			sw->state = state;
 		}
 	}
