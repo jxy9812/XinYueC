@@ -19,6 +19,7 @@ typedef struct XTimer_PortFunc
 	XTimerFree   free;//释放
 	XTimerStart start;//启动
 	XTimerStop stop;//关闭
+	//void (*setInterval)(XTimer* timer,size_t val);//
 	XTimerCallback timerCallback;//超时回调
 }XTimer_PortFunc;
 typedef XTimer_PortFunc XTimer_PortFuncInit ;

@@ -11,18 +11,29 @@ typedef struct XStepMotor XStepMotor;
 //步进电机接口
 typedef struct XStepMotor_PortFunc
 {
-	void (*stateChangeCallback)(XStepMotor* io);//状态改变回调函数
+	bool b;
+	//void (*stateChangeCallback)(XStepMotor* io);//状态改变回调函数
 }XStepMotor_PortFunc;
 //步进电机初始化接口
 typedef struct XStepMotor_PortFuncInit
 {
 	XIODevice_PortFuncInit parentPort;//父对象接口
-	XStepMotor_PortFunc SwitchPort;//子类开关接口
+	XPWMDevice_PortFuncInit PUL;//脉冲
+	XSwitchDevice_PortFuncInit ENA;//使能
+	XSwitchDevice_PortFuncInit DIR;//方向
+	XStepMotor_PortFunc StepMotorPort;//子类开关接口
 }XStepMotor_PortFuncInit;
 //步进电机
 typedef struct XStepMotor
 {
-	XIODevice m_parent;//父对象
+	//XIODevice m_parent;//父对象
+	//uint8_t m_acceleration;//加速度
+	uint16_t m_currentSpeed;//当前转速
+	//uint16_t m_setSpeed;//设置转速
+	uint16_t m_pulsesPerRevolution;//每转脉冲数
+	uint64_t m_currentPulses;//当前脉冲数 
+	uint64_t m_setPulses;//设置脉冲数 //0是速度模式 其他是距离模式
+	int64_t m_directionPulses;//累计方向脉冲数 正++ 反--
 	XPWMDevice* m_PUL;//pwm引脚
 	XSwitchDevice* m_ENA;//使能引脚
 	XSwitchDevice* m_DIR;//方向引脚
@@ -30,24 +41,24 @@ typedef struct XStepMotor
 }XStepMotor;
 XStepMotor* XStepMotor_new(XStepMotor_PortFuncInit* port);
 //初始化
-void XStepMotor_init(XStepMotor* motor);
+void XStepMotor_init(XStepMotor* motor, XStepMotor_PortFuncInit* port);
 //使能打开输出
-void XStepMotor_ENA(XStepMotor* motor,bool open);
+void XStepMotor_setENA(XStepMotor* motor,bool open);
 //方向切换
-void XStepMotor_DIR(XStepMotor* motor,bool corotation);
-//开启定时器运行
+void XStepMotor_setDIR(XStepMotor* motor,bool corotation);
+//开启运行
 void XStepMotor_start(XStepMotor* motor);
-//关闭定时器输出
+//关闭输出
 void XStepMotor_stop(XStepMotor* motor);
+//设置每转脉冲数
+void XStepMotor_setPulsesPerRevolution(XStepMotor* motor, uint16_t num);
 /*
 * @brief  设置旋转速度.
 * @param  motor:StepMotor对象
 * @param  speed:转速 转/分钟
-* @param  acceleration:加速度 转/秒^2
-* @param  speed_init:初始化转速(转速为0才生效) 转/分钟
 * @retval  
 */
-void XStepMotor_setSpeed(XStepMotor* motor,uint16_t speed,uint16_t acceleration,uint16_t speed_init);
+void XStepMotor_setSpeed(XStepMotor* motor,uint16_t speed);
 /*
 * @brief  设置旋转圈数.
 * @param  motor:StepMotor对象
@@ -62,12 +73,11 @@ void XStepMotor_setNumRotations(XStepMotor* motor,double num);
 */
 double XStepMotor_numRotations(XStepMotor* motor);
 
-/*
-* @brief  调速完成.
-* @param  motor:StepMotor对象
-* @retval  完成返回true
-*/
-bool XStepMotor_isSpeedRegulationFinish(XStepMotor* motor);
+//轮询扫描状态
+void XStepMotor_poll(XStepMotor* motor);
+
+//一次完整的电平变化后调用 回调函数
+void XStepMotor_timerCallback(XStepMotor* motor);
 #ifdef __cplusplus
 }
 #endif

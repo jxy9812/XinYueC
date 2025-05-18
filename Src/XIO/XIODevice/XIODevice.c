@@ -217,14 +217,23 @@ bool XIODevice_open(XIODevice* io, XIODeviceBase mode)
 {
 	if(io==NULL||io->m_port.open_funcPointer==NULL)
 		return false;
-	return io->m_port.open_funcPointer(io,mode);
+	if (io->m_port.open_funcPointer(io, mode))
+	{
+		io->m_mode = mode;
+		return true;
+	}
+	return false;
 }
 
 void XIODevice_close(XIODevice* io)
 {
 	if (io == NULL || io->m_port.close_funcPointer == NULL)
 		return ;
-	io->m_port.close_funcPointer(io);
+	if (io->m_mode != XIODeviceBase_NotOpen)
+	{
+		io->m_port.close_funcPointer(io);
+		io->m_mode = XIODeviceBase_NotOpen;
+	}
 }
 
 void XIODevice_poll(XIODevice* io)
