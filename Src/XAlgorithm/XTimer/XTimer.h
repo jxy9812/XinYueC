@@ -27,7 +27,7 @@ typedef XTimer_PortFunc XTimer_PortFuncInit ;
 typedef struct XTimer
 {
 	void* data;
-	unsigned int timerId;//定时器id
+	size_t timerId;//定时器id
 	int interval;//定时间隔
 	int remainingTime;//超时前的剩余时间
 	size_t number;//超时次数

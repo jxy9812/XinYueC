@@ -128,7 +128,7 @@ void XTimer_setInterval(XTimer* timer,int value)
 	if (timer == NULL /*||timer->setInterval==NULL*/)
 		return;
 	timer->interval=value;
-	XTimer_start(timer);
+	//XTimer_start(timer);
 	/*if(timer->setInterval)
 		timer->setInterval(timer);*/
 }
