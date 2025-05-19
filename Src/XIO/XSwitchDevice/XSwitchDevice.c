@@ -64,8 +64,8 @@ void XSwitchDevice_setState(XSwitchDevice* sw, bool state)
 		//if (sw->m_parent.m_port.poll_funcPointer == NULL)
 		if ((sw->state != state) && sw->m_port.stateChangeCallback)
 		{
-			sw->m_port.stateChangeCallback(sw);
 			sw->state = state;
+			sw->m_port.stateChangeCallback(sw);
 		}
 	}
 }
