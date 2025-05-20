@@ -472,21 +472,21 @@ void XModbusFrameRTU_parseData_reply(XModbusFrame* frame, XVector* frameData)
 
 uint8_t XModbusFrameRTU_parseAddress(XModbusFrame* frame)
 {
-	if (frame && !XVector_empty(frame->frameData))
+	if (frame && !XVector_isEmpty(frame->frameData))
 		return XVector_At(frame->frameData, 0, uint8_t);
 	return 0xFF;
 }
 
 uint8_t XModbusFrameRTU_parseFuncCode(XModbusFrame* frame)
 {
-	if (frame && !XVector_empty(frame->frameData))
+	if (frame && !XVector_isEmpty(frame->frameData))
 		return XVector_At(frame->frameData, MB_SER_PDU_PDU_OFF, uint8_t);
 	return 0;
 }
 
 XString* XModbusFrameRTU_to16HexString(XModbusFrame* frame)
 {
-	if (frame && !XVector_empty(frame->frameData))
+	if (frame && !XVector_isEmpty(frame->frameData))
 	{
 		XVector* vector = frame->frameData;
 		XString* str = XString_new(NULL);

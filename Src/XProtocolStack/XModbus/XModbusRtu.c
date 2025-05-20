@@ -78,7 +78,7 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrame* frameData)
     XModbusFrameRTU_parseData_reply(frameData, modbus->ioDevice->m_readBuffer);
 
     //解析的帧有问题
-    if(XVector_empty(frameData->frameData))
+    if(XVector_isEmpty(frameData->frameData))
         modbus->errorCode = MB_EIO;
     EXIT_CRITICAL_SECTION();
     //XModbusFrameQueue_push(modbus->object.recvFrameQueue,&frameData);

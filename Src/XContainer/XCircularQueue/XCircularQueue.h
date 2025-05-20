@@ -35,7 +35,7 @@ void XCircularQueue_push(XCircularQueue* this_queue, void* LpValue);
 void XCircularQueue_pop(XCircularQueue* this_queue);
 // 返回优先队列堆顶元素
 void* XCircularQueue_top(XCircularQueue* this_queue);
-#define XCircularQueue_empty	XVector_empty
+#define XCircularQueue_isEmpty	XVector_isEmpty
 #define XCircularQueue_size		XVector_size
 #define XCircularQueue_clear	XVector_clear
 #ifdef __cplusplus

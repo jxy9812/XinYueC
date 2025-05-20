@@ -50,7 +50,7 @@ void* XPriority_Queue_top(XPriority_Queue* this_queue)
 
 bool XPriority_Queue_empty(XPriority_Queue* this_queue)
 {
-	return XContainerObject_empty(this_queue);
+	return XContainerObject_isEmpty(this_queue);
 }
 
 size_t XPriority_Queue_size(XPriority_Queue* this_queue)

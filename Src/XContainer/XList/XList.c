@@ -109,7 +109,7 @@ XListNode* XList_find(const XList* this_list, const void* findVal)
 
 bool XList_empty(const XList* this_list)
 {
-	return XContainerObject_empty(this_list);
+	return XContainerObject_isEmpty(this_list);
 }
 
 size_t XList_size(const XList* this_list)

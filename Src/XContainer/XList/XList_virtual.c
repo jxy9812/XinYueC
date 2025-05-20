@@ -180,21 +180,21 @@ void VXList_insert_array(XList* this_list, XListNode* curNode, const void* begin
 //删除
 void VXList_pop_front(XList* this_list)
 {
-	if (ISNULL(this_list, "") || XContainerObject_empty(this_list))
+	if (ISNULL(this_list, "") || XContainerObject_isEmpty(this_list))
 		return;
 	VXList_erase(this_list,XList_begin(this_list));
 }
 
 void VXList_pop_back(XList* this_list)
 {
-	if (ISNULL(this_list, "") || XContainerObject_empty(this_list))
+	if (ISNULL(this_list, "") || XContainerObject_isEmpty(this_list))
 		return;
 	VXList_erase(this_list, XList_rbegin(this_list));
 }
 
 void VXList_erase(XList* this_list, XListNode* node)
 {
-	if (ISNULL(this_list, "")|| ISNULL(node, "")|| XContainerObject_empty(this_list))
+	if (ISNULL(this_list, "")|| ISNULL(node, "")|| XContainerObject_isEmpty(this_list))
 		return;
 	XList* list = this_list;
 	XListNode* nextNode = node->next;//下一个节点
@@ -233,7 +233,7 @@ void VXList_remove(XList* this_list, void* LpValue)
 
 void VXList_clear(XList* this_list)
 {
-	if (XContainerObject_empty(this_list))
+	if (XContainerObject_isEmpty(this_list))
 		return;
 	XList* list = this_list;
 	XListNode* p = list->m_object.m_data;

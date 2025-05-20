@@ -96,7 +96,7 @@ void VXPriority_Queue_push(XPriority_Queue* this_queue, void* LpValue)
 
 void VXPriority_Queue_pop(XPriority_Queue* this_queue)
 {
-	if (ISNULL(this_queue, "")|| XContainerObject_empty(this_queue))
+	if (ISNULL(this_queue, "")|| XContainerObject_isEmpty(this_queue))
 		return ;
 	char* LParr = XContainerDataPtr(this_queue);//指向数组的开始
 	size_t arrSize = XContainerObject_size(this_queue);//数组元素数量

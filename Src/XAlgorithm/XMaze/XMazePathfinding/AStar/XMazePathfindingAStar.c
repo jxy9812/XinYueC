@@ -126,7 +126,7 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 
 	AStarNode* CurrentNode = NULL;//当前遍历的节点
 	bool isFindEnd = false;//找到终点标记
-	while (!isFindEnd && !XVector_empty(CurrentNodeArray))
+	while (!isFindEnd && !XVector_isEmpty(CurrentNodeArray))
 	{
 		XVector_sort(CurrentNodeArray, sortDescendingtCosts);
 		AStarNode** back = XVector_back(CurrentNodeArray);

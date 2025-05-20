@@ -178,9 +178,9 @@ void XVector_sort(XVector* this_vector, XCompare compare)
 //	return XContainerObject_free(this_vector);
 //}
 //
-//bool XVector_empty(const XVector* this_vector)
+//bool XVector_isEmpty(const XVector* this_vector)
 //{
-//	return XContainerObject_empty(this_vector);
+//	return XContainerObject_isEmpty(this_vector);
 //}
 //
 //size_t XVector_size(const XVector* this_vector)

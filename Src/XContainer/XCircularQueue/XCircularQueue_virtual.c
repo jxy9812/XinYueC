@@ -9,7 +9,10 @@ XVtable* XCircularQueueVtable = NULL;
 static XVtable vtable;//虚函数类
 static void* vtable_data[XCIRCULARQUEUE_VTABLE_SIZE];//虚函数数据
 #endif
-static bool VXCircularQueue_empty(const XCircularQueue* this_queue);
+static bool VXCircularQueue_isEmpty(const XCircularQueue* this_queue);
+static bool VXCircularQueue_isFull(const XCircularQueue* this_queue);
+static void VXCircularQueue_clear(XCircularQueue* this_queue);//清空
+static size_t VXCircularQueue_size(const XCircularQueue* this_queue);
 //插入到队列的队尾
 static void VXCircularQueue_push(XCircularQueue* this_queue, void* LpValue);
 //出队
@@ -20,7 +23,7 @@ void XCircularQueue_class_init()
 {
 	if (XCircularQueueVtable)
 		return;
-	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top };
+	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top};
 #if !VTABLEISSTACK
 	XCircularQueueVtable = XVtable_new();
 #else
@@ -32,32 +35,71 @@ void XCircularQueue_class_init()
 	//追加函数
 	XVtable_append_array(XCircularQueueVtable, table, sizeof(table) / sizeof(table[0]));
 	//重写的函数
-	XVtable_At(XCircularQueueVtable, EXContainerObject_Empty) = VXCircularQueue_empty;
-
+	XVtable_At(XCircularQueueVtable, EXContainerObject_Empty) = VXCircularQueue_isEmpty;
+	XVtable_At(XCircularQueueVtable, EXContainerObject_Clear) = VXCircularQueue_clear;
+	XVtable_At(XCircularQueueVtable, EXContainerObject_Size) = VXCircularQueue_size;
 #if SHOWCONTAINERSIZE
 	printf("XPriority_Queue size:%d\n", XVtable_size(XCircularQueueVtable));
 #endif // SHOWCONTAINERSIZE
 }
 
 
-bool VXCircularQueue_empty(const XCircularQueue* this_queue)
+bool VXCircularQueue_isEmpty(const XCircularQueue* this_queue)
+{
+	if (this_queue == NULL)
+		return true;
+	return ((this_queue->m_head) == (this_queue->m_tail));//头指针等于尾指针时为空
+}
+
+bool VXCircularQueue_isFull(const XCircularQueue* this_queue)
+{
+	if (this_queue == NULL)
+		return false;
+	return ((this_queue->m_tail + 1) % XContainerSize(this_queue) == this_queue->m_head);//尾指针下一个位置等于头指针时为满
+}
+
+void VXCircularQueue_clear(XCircularQueue* this_queue)
 {
 	if (this_queue == NULL)
 		return;
-	return ((this_queue->m_head) == (this_queue->m_tail));
+	while (VXCircularQueue_isEmpty(this_queue))
+	{
+		VXCircularQueue_pop(this_queue);
+	}
+}
+
+size_t VXCircularQueue_size(const XCircularQueue* this_queue)
+{
+	if (this_queue == NULL)
+		return 0;
+	if (this_queue->m_tail >= this_queue->m_head)
+		return this_queue->m_tail - this_queue->m_head;
+	else
+		return this_queue->m_tail+XContainerSize(this_queue) - this_queue->m_head;;
+
 }
 
 void VXCircularQueue_push(XCircularQueue* this_queue, void* LpValue)
 {
-
+	if (VXCircularQueue_isFull(this_queue))
+		return;//插入失败
+	memcpy(((char*)XContainerDataPtr(this_queue))+this_queue->m_tail*XContainerTypeSize(this_queue),LpValue, XContainerTypeSize(this_queue));
+	this_queue->m_tail = (this_queue->m_tail + 1) % XContainerSize(this_queue);//指针后移取模实现环形
 }
 
 void VXCircularQueue_pop(XCircularQueue* this_queue)
 {
+	if (VXCircularQueue_isEmpty(this_queue))
+		return;
+	if (XContainerDataFreeMethod(this_queue) != NULL)
+		XContainerDataFreeMethod(this_queue)(VXCircularQueue_top(this_queue));
+	this_queue->m_head= (this_queue->m_head + 1) % XContainerSize(this_queue);//指针后移取模实现环形
 }
 
 void* VXCircularQueue_top(XCircularQueue* this_queue)
 {
-	return NULL;
+	if(VXCircularQueue_isEmpty(this_queue))
+		return NULL;
+	return ((char*)XContainerDataPtr(this_queue)) + (this_queue->m_head * XContainerTypeSize(this_queue));
 }
 #endif

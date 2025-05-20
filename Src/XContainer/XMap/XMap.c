@@ -104,7 +104,7 @@ void XMap_free(XMap* this_map)
 
 bool XMap_empty(const XMap* this_map)
 {
-	return XContainerObject_empty(this_map);
+	return XContainerObject_isEmpty(this_map);
 }
 
 size_t XMap_size(const XMap* this_map)

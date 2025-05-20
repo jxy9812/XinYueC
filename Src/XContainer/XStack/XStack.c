@@ -57,7 +57,7 @@ void XStack_clear(XStack* this_stack)
 
 bool XStack_empty(XStack* this_stack)
 {
-	return XVector_empty(this_stack);
+	return XVector_isEmpty(this_stack);
 }
 
 int XStack_size(XStack* this_stack)

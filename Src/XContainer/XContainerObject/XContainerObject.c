@@ -21,7 +21,7 @@ void XContainerObject_free(XContainerObject* Object)
 	ObjectVirtualFunc(Object, EXContainerObject_Free, funcPtr)(Object);
 }
 
-bool XContainerObject_empty(const XContainerObject* Object)
+bool XContainerObject_isEmpty(const XContainerObject* Object)
 {
 	if (ISNULL(Object, "")|| ISNULL(Object->m_object.vtable, ""))
 		return true;

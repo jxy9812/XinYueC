@@ -97,8 +97,8 @@ void* XVector_find(const XVector* this_vector, const void* findVal);
 void  XVector_sort(XVector* this_vector, XCompare compare);
 
 //检测vector内是否为空，空为真 O(1)
-//bool XVector_empty(const  XVector* this_vector);
-#define XVector_empty		XContainerObject_empty
+//bool XVector_isEmpty(const  XVector* this_vector);
+#define XVector_isEmpty		XContainerObject_isEmpty
 //返回vector内元素的个数 O(1)
 //size_t XVector_size(const  XVector* this_vector);
 #define XVector_size		XContainerObject_size

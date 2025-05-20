@@ -80,7 +80,7 @@ void* XTTTree_data(const XTTTreeNode* this_root, size_t nSel)
     {
         return this_root->object.values;
     }
-    if (!XVector_empty(this_root->LpValueArray)&& nSel<3)
+    if (!XVector_isEmpty(this_root->LpValueArray)&& nSel<3)
     {
         return XVector_at(this_root->LpValueArray, nSel - 1);
     }

@@ -55,7 +55,7 @@ void XContainerObject_class_init();
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);
 void XContainerObject_free(XContainerObject* Object);
 size_t XContainerObject_size(const XContainerObject* Object);
-bool XContainerObject_empty(const XContainerObject* Object);
+bool XContainerObject_isEmpty(const XContainerObject* Object);
 size_t XContainerObject_capacity(const XContainerObject* Object);
 size_t XContainerObject_typeSize(const XContainerObject* Object);
 void XContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);

@@ -344,7 +344,7 @@ static void sendFrame(XModbus* modbus, XModbusFrame* frame)
 {
     if (modbus == NULL || frame == NULL)
         return MB_EINVAL;
-    if (frame->frameData == NULL || XVector_empty(frame->frameData))
+    if (frame->frameData == NULL || XVector_isEmpty(frame->frameData))
     {
         XModbusFrame_free(frame);
         return MB_EINVAL;
