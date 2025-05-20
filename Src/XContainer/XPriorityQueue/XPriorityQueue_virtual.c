@@ -1,38 +1,38 @@
-﻿#include"XPriority_Queue.h"
-#if XPriority_Queue_ON
+﻿#include"XPriorityQueue.h"
+#if XPriorityQueue_ON
 #include"XAlgorithm.h"
 #include<string.h>
 #include<stdlib.h>
 //虚函数表定义
-XVtable* XPriority_QueueVtable = NULL;
+XVtable* XPriorityQueueVtable = NULL;
 //插入到队列的队尾
-static void VXPriority_Queue_push(XPriority_Queue* this_queue, void* LpValue);
+static void VXPriorityQueue_push(XPriorityQueue* this_queue, void* LpValue);
 //出队
-static void VXPriority_Queue_pop(XPriority_Queue* this_queue);
+static void VXPriorityQueue_pop(XPriorityQueue* this_queue);
 // 返回优先队列堆顶元素
-static void* VXPriority_Queue_top(XPriority_Queue* this_queue);
+static void* VXPriorityQueue_top(XPriorityQueue* this_queue);
 #if VTABLEISSTACK
 	static XVtable vtable;//虚函数类
-	static void* vtable_data[XPRIORITY_QUEUE_VTABLE_SIZE];//虚函数数据
+	static void* vtable_data[XPriorityQueue_VTABLE_SIZE];//虚函数数据
 #endif
-void XPriority_Queue_class_init()
+void XPriorityQueue_class_init()
 {
-	if (XPriority_QueueVtable)
+	if (XPriorityQueueVtable)
 		return;
-	void* table[] = { VXPriority_Queue_push,VXPriority_Queue_pop,VXPriority_Queue_top};
+	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top};
 #if !VTABLEISSTACK
-	XPriority_QueueVtable = XVtable_new();
+	XPriorityQueueVtable = XVtable_new();
 #else
-	XPriority_QueueVtable = &vtable;
+	XPriorityQueueVtable = &vtable;
 	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
 #endif
 	//继承的函数
-	XVtable_append_vtable(XPriority_QueueVtable, XVectorVtable);
+	XVtable_append_vtable(XPriorityQueueVtable, XVectorVtable);
 	//追加函数
-	XVtable_append_array(XPriority_QueueVtable, table, sizeof(table) / sizeof(table[0]));
+	XVtable_append_array(XPriorityQueueVtable, table, sizeof(table) / sizeof(table[0]));
 
 #if SHOWCONTAINERSIZE
-	printf("XPriority_Queue size:%d\n", XVtable_size(XPriority_QueueVtable));
+	printf("XPriorityQueue size:%d\n", XVtable_size(XPriorityQueueVtable));
 #endif // SHOWCONTAINERSIZE
 }
 //插入向上调整
@@ -84,7 +84,7 @@ static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize,
 	}
 }
 
-void VXPriority_Queue_push(XPriority_Queue* this_queue, void* LpValue)
+void VXPriorityQueue_push(XPriorityQueue* this_queue, void* LpValue)
 {
 	if (ISNULL(this_queue, "")|| ISNULL(LpValue, ""))
 		return ;
@@ -94,7 +94,7 @@ void VXPriority_Queue_push(XPriority_Queue* this_queue, void* LpValue)
 		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->m_compare);
 }
 
-void VXPriority_Queue_pop(XPriority_Queue* this_queue)
+void VXPriorityQueue_pop(XPriorityQueue* this_queue)
 {
 	if (ISNULL(this_queue, "")|| XContainerObject_isEmpty(this_queue))
 		return ;
@@ -110,7 +110,7 @@ void VXPriority_Queue_pop(XPriority_Queue* this_queue)
 	--XContainerSize(this_queue);
 }
 
-void* VXPriority_Queue_top(XPriority_Queue* this_queue)
+void* VXPriorityQueue_top(XPriorityQueue* this_queue)
 {
 	if (ISNULL(this_queue, ""))
 		return NULL;

@@ -1,37 +1,37 @@
 ﻿#include"XHuffmanTree.h"
 #if XMap_ON
-#include"XPriority_Queue.h"
+#include"XPriorityQueue.h"
 //优先队列大于的回调函数
 static bool Less(XHfmNode** nodeOne, XHfmNode** nodeTwo)
 {
 	return XHfmTree_GetNodeData(*nodeOne).count < XHfmTree_GetNodeData(*nodeTwo).count;
 }
 //字典数据插入优先队列
-#if XPriority_Queue_ON
-static void installQueue(XPair** LPpair, XPriority_Queue* queue)
+#if XPriorityQueue_ON
+static void installQueue(XPair** LPpair, XPriorityQueue* queue)
 {
 	//创建节点插入优先队列
 	unsigned char ch = XPair_First(*LPpair, unsigned char);
 	DictionaryValue dv = XPair_Second(*LPpair, DictionaryValue);
 	XHfmNode* node = XHfmTree_creationNode( ch, dv.count,dv.code);
-	XPriority_Queue_push(queue, &node);
+	XPriorityQueue_push(queue, &node);
 }
 #endif
 //根据字典创建树
 XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 {
-#if XPriority_Queue_ON
-	XPriority_Queue* queue = XPriority_Queue_New(XHfmNode*, Less);
+#if XPriorityQueue_ON
+	XPriorityQueue* queue = XPriorityQueue_New(XHfmNode*, Less);
 	//原始字典生成单独的节点插入优先队列
 	XMap_iterator_for_each(dictionaries, installQueue, queue);
 	//生成哈夫曼树
 	XHfmNode* LPparent = NULL;//父节点
 	XHfmNode* LPleft = NULL;//左节点
 	XHfmNode* LPright = NULL;//右节点
-	while (!XPriority_Queue_isEmpty(queue))
+	while (!XPriorityQueue_isEmpty(queue))
 	{
-		XHfmNode* LPNode = XPriority_Queue_Top(queue, XHfmNode*);
-		XPriority_Queue_pop(queue);
+		XHfmNode* LPNode = XPriorityQueue_Top(queue, XHfmNode*);
+		XPriorityQueue_pop(queue);
 		//printf("isNULL:%s data:%d count:%d\n", XBTree_GetData(LPNode, 0, XHfmNodeData).code==0 ? "true" : "false", XBTree_GetData(LPNode, 0, XHfmNodeData).ch, XBTree_GetData(LPNode, 0, XHfmNodeData).count);
 		if (LPleft == NULL)
 		{
@@ -46,16 +46,16 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 			XBTree_SetRChild(LPparent, LPright);
 			XBTree_SetParent(LPleft, LPparent);
 			XBTree_SetParent(LPright, LPparent);
-			XPriority_Queue_push(queue, &LPparent);
+			XPriorityQueue_push(queue, &LPparent);
 			LPleft = NULL;
 			LPright = NULL;
 		}
 
 	}
-	XPriority_Queue_free(queue);
+	XPriorityQueue_free(queue);
 	return LPparent;
 #else
-	IS_ON_DEBUG(XPriority_Queue_ON);
+	IS_ON_DEBUG(XPriorityQueue_ON);
 	return NULL;
 #endif
 }

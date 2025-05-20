@@ -1,7 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XQueue.h"
-#include"XPriority_Queue.h"
+#include"XPriorityQueue.h"
 #include"XSort.h"
 #include"XLess.h"
 #include"XGreater.h"
@@ -25,19 +25,19 @@ void queueTest()
 	XQueue_free(queue);
 #endif
 }
-#if	XPriority_Queue_ON
+#if	XPriorityQueue_ON
 static insertData(void* values ,void*args)
 {
-	XPriority_Queue_push(args, values);
-	printf("入队:%d 堆顶:%d\n", *(int*)values, *(int*)XPriority_Queue_top(args));
+	XPriorityQueue_push(args, values);
+	printf("入队:%d 堆顶:%d\n", *(int*)values, *(int*)XPriorityQueue_top(args));
 }
 #endif
 void XPriority_QueueTest()
 {
-#if	XPriority_Queue_ON
+#if	XPriorityQueue_ON
 	printf("XPriority_QueueTest 测试\n");
-	//XPriority_Queue* queue=XPriority_Queue_new(sizeof(int),XLess_int);//小堆，先出小的
-	XPriority_Queue* queue = XPriority_Queue_new(sizeof(int), XGreater_int);//大堆，先出大的
+	//XPriorityQueue* queue=XPriorityQueue_new(sizeof(int),XLess_int);//小堆，先出小的
+	XPriorityQueue* queue = XPriorityQueue_new(sizeof(int), XGreater_int);//大堆，先出大的
 	XVector* v = XVector_New(int);
 	for (size_t i = 0; i < 10; i++)
 	{
@@ -47,14 +47,14 @@ void XPriority_QueueTest()
 	//printf("入队数据:");
 	XVector_iterator_for_each(v, insertData, queue);
 	printf("\n队列循环出队:");
-	while (!XPriority_Queue_isEmpty(queue))
+	while (!XPriorityQueue_isEmpty(queue))
 	{
-		int* values = XPriority_Queue_top(queue);
+		int* values = XPriorityQueue_top(queue);
 		printf("%d ", *values);
-		XPriority_Queue_pop(queue);
+		XPriorityQueue_pop(queue);
 	}
 	printf("\n");
-	XPriority_Queue_free(queue);
+	XPriorityQueue_free(queue);
 	XVector_free(v);
 #endif
 }

@@ -13,7 +13,7 @@ extern "C" {
 #define XContainerObject_ON				1
 #define XMap_ON							1
 #define XString_ON						1
-#define	XPriority_Queue_ON				1
+#define	XPriorityQueue_ON				1
 #define	XQueue_ON						1
 #define	XList_ON						1
 #define	XStack_ON						1
@@ -27,7 +27,7 @@ extern "C" {
 #endif
 #if !XVector_ON					
 #define	XStack_ON						0
-#define	XPriority_Queue_ON				0
+#define	XPriorityQueue_ON				0
 #define	XString_ON						0
 #define	XVectorTwo_ON					0
 #define	XStringVector_ON				0
@@ -35,7 +35,7 @@ extern "C" {
 #if !XContainerObject_ON					
 #define XMap_ON							0
 #define XString_ON						0
-#define	XPriority_Queue_ON				0
+#define	XPriorityQueue_ON				0
 #define	XQueue_ON						0
 #define	XList_ON						0
 #define	XStack_ON						0
