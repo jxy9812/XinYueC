@@ -61,7 +61,7 @@ void XString_class_init()
 	XVtable_At(XStringVtable, EXVector_Insert) = VXString_insert;
 	//XVtable_At(XStringVtable, EXVector_Pop_Front) = VXString_pop_front;
 	XVtable_At(XStringVtable, EXVector_Pop_Back) = VXString_pop_back;
-	XVtable_At(XStringVtable, EXContainerObject_Empty) = VXString_empty;
+	XVtable_At(XStringVtable, EXContainerObject_IsEmpty) = VXString_empty;
 	XVtable_At(XStringVtable, EXContainerObject_Size) = VXString_size;
 	//追加函数
 	XVtable_append_array(XStringVtable, table, sizeof(table) / sizeof(table[0]));
@@ -270,7 +270,7 @@ void XString_insert(struct XString* this_XString, const int nSel, const char* st
 }
 
 //判断函数
-bool XString_empty(const struct XString* this_XString)
+bool XString_isEmpty(const struct XString* this_XString)
 {
 	if (ISNULL(this_XString, "")))
 		return NULL;

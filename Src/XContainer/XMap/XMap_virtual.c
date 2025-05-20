@@ -150,7 +150,7 @@ static void XMap_freeNodeData(void* LPVal, void* args)
 void VXMap_clear(XMap* this_map)
 {
 #if XVector_ON
-	if (XMap_empty(this_map))
+	if (XMap_isEmpty(this_map))
 		return;
 	XMap_updataIterator(this_map);
 	XMap_iterator_for_each(this_map, XMap_freeNodeData, this_map);

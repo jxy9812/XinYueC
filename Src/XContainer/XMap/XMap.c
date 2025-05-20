@@ -102,7 +102,7 @@ void XMap_free(XMap* this_map)
 	XContainerObject_free(this_map);
 }
 
-bool XMap_empty(const XMap* this_map)
+bool XMap_isEmpty(const XMap* this_map)
 {
 	return XContainerObject_isEmpty(this_map);
 }
@@ -155,7 +155,7 @@ void XMap_updataIterator(XMap* this_map)
 #if XVector_ON
 	if (ISNULL(this_map, "map不能为NULL"))
 		return;
-	if (XMap_empty(this_map))//map当前是空的
+	if (XMap_isEmpty(this_map))//map当前是空的
 		return;
 	if (!this_map->m_isModify)
 		return;

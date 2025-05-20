@@ -11,7 +11,7 @@ extern XVtable* XStringVtable;
 //XVector虚函数表枚举
 enum XStringEnum
 {
-	EXString_Empty = EXContainerObject_Empty,
+	EXString_Empty = EXContainerObject_IsEmpty,
 	EXString_Size = EXContainerObject_Size,
 	EXString_Resize = EXVector_Resize,
 	EXString_Push_Front,
@@ -82,7 +82,7 @@ int64_t XString_find_last_of(const XString* this_string, const char* subStr);
 int64_t XString_find_first_not_of(const XString* this_string, const char* subStr);
 int64_t XString_find_last_not_of(const XString* this_string, const char* subStr);
 //判断函数
-bool XString_empty(const XString* this_string);// 
+bool XString_isEmpty(const XString* this_string);// 
 //返回当前字符串大小
 size_t XString_size(const XString* this_string);//
 ////返回当前容器的最大容量

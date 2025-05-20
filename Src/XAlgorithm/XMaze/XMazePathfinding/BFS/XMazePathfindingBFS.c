@@ -46,7 +46,7 @@ static size_t insertChild(const XVector* maze, XBTreeNode* nodes, XVector* NextN
 	XPointStep pos = { GetXPoint(nodes).x,GetXPoint(nodes).y,1};
 	XStack* ChildAll = XStack_new(sizeof(XPointStep));
 	Pathfinder(ChildAll,maze, pos);//获取周围能走的点位
-	while (!XStack_empty(ChildAll))
+	while (!XStack_isEmpty(ChildAll))
 	{
 		XPointStep* pCurrentPos = (XPointStep*)XStack_top(ChildAll);
 		XBTreeNode* childBFSNode = CreationBFSNode(pCurrentPos->x,pCurrentPos ->y);

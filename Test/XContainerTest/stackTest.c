@@ -13,7 +13,7 @@ void stackTest()
 		int n = arr[i];
 		XStack_push(s, arr + i);
 	}
-	while (!XStack_empty(s))
+	while (!XStack_isEmpty(s))
 	{
 		printf("%d\n",XStack_Top(s,int));
 		XStack_pop(s);
@@ -26,7 +26,7 @@ void stackTest()
 		char* str = strings[i];
 		XStack_push(string, str);
 	}
-	while (!XStack_empty(string))
+	while (!XStack_isEmpty(string))
 	{
 		printf("%s\n", XStack_top(string));
 		XStack_pop(string);

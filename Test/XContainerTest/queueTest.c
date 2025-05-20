@@ -16,7 +16,7 @@ void queueTest()
 	{
 		XQueue_push(queue, array + i);
 	}
-	while (!XQueue_empty(queue))
+	while (!XQueue_isEmpty(queue))
 	{
 		printf("%d ", XQueue_Top(queue,int));
 		XQueue_pop(queue);
@@ -47,7 +47,7 @@ void XPriority_QueueTest()
 	//printf("入队数据:");
 	XVector_iterator_for_each(v, insertData, queue);
 	printf("\n队列循环出队:");
-	while (!XPriority_Queue_empty(queue))
+	while (!XPriority_Queue_isEmpty(queue))
 	{
 		int* values = XPriority_Queue_top(queue);
 		printf("%d ", *values);

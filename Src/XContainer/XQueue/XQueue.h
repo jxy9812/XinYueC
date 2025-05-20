@@ -45,7 +45,7 @@ void* XQueue_back(XQueue* this_queue);
 void* XQueue_top(XQueue* this_queue);
 #define XQueue_Top(queue,type) (*((type*)XQueue_top(queue)))
 //当队列为空时返回true，否则返回false
-bool XQueue_empty(XQueue* this_queue);
+bool XQueue_isEmpty(XQueue* this_queue);
 //返回队列中元素的个数
 size_t XQueue_size(XQueue* this_queue);
 

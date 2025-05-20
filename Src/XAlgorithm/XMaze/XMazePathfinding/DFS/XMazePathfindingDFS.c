@@ -9,7 +9,7 @@ static void XMazeRetracement(const XVector* maze, XStack* StackPointAll, XStack*
 {
 #if XStack_ON
 	XPointStep CurPoint = *(XPointStep*)XStack_top(StackPointAll);//获取栈顶保存的点
-	while (!XStack_empty(StackPath))
+	while (!XStack_isEmpty(StackPath))
 	{
 		XPointStep PathCurPoint = *(XPointStep*)XStack_top(StackPath);//获取栈顶保存的点
 		if (PathCurPoint.cur < CurPoint.cur)
@@ -35,7 +35,7 @@ XVector* XMazePathfindingOneDFS(const XVector* maze, const XPoint start, const X
 	XStack* StackPath = XStack_new(sizeof(XPointStep));//记录路径
 	XPointStep p = { start.x,start.y,1 };
 	XStack_push(StackPointAll, &p);
-	while (!XStack_empty(StackPointAll))
+	while (!XStack_isEmpty(StackPointAll))
 	{
 		XPointStep CurPoint = *(XPointStep*)XStack_top(StackPointAll);//获取栈顶保存的点
 		XStack_pop(StackPointAll);
@@ -80,7 +80,7 @@ XVector* XMazePathfindingShortDFS(const XVector* maze, const XPoint start, const
 	XPointStep PointStart = { start.x,start.y,1 };
 	XStack_push(StackPointAll, &PointStart);
 	size_t CurSize = 0;//当前最短的节点数量
-	while (!XStack_empty(StackPointAll))
+	while (!XStack_isEmpty(StackPointAll))
 	{
 		XPointStep CurPoint = *(XPointStep*)XStack_top(StackPointAll);//获取栈顶保存的点
 		XStack_pop(StackPointAll);
@@ -135,7 +135,7 @@ XVector* XMazePathfindingAllDFS(const XVector* maze, const XPoint start, const X
 	XStack* StackPath = XStack_new(sizeof(XPointStep));//记录路径
 	XPointStep PointStart = {start.x,start.y,1};
 	XStack_push(StackPointAll, &PointStart);
-	while (!XStack_empty(StackPointAll))
+	while (!XStack_isEmpty(StackPointAll))
 	{
 		XPointStep CurPoint = *(XPointStep*)XStack_top(StackPointAll);//获取栈顶保存的点
 		XStack_pop(StackPointAll);

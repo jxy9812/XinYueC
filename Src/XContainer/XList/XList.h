@@ -83,7 +83,7 @@ void* XList_back(XList* this_list);
 XListNode* XList_find(const  XList* this_list,const void* findVal);
 //判断函数
 //检测list内是否为空，空为真 O(1)
-bool  XList_empty(const XList* this_list);
+bool  XList_isEmpty(const XList* this_list);
 //大小函数
 //返回list内元素的个数 O(1)
 size_t  XList_size(const XList* this_list);

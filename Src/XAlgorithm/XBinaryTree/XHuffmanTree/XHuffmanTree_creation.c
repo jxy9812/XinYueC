@@ -28,7 +28,7 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 	XHfmNode* LPparent = NULL;//父节点
 	XHfmNode* LPleft = NULL;//左节点
 	XHfmNode* LPright = NULL;//右节点
-	while (!XPriority_Queue_empty(queue))
+	while (!XPriority_Queue_isEmpty(queue))
 	{
 		XHfmNode* LPNode = XPriority_Queue_Top(queue, XHfmNode*);
 		XPriority_Queue_pop(queue);

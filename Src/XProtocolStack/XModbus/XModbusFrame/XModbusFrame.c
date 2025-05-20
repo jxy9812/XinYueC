@@ -30,7 +30,7 @@ XModbusFrame* XModbusFrameQueue_top(XModbusFrameQueue* queue)
 bool XModbusFrameQueue_empty(XModbusFrameQueue* queue)
 {
 	if (queue)
-		return XQueue_empty(queue);
+		return XQueue_isEmpty(queue);
 	return true;
 }
 

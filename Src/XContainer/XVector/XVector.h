@@ -76,7 +76,7 @@ void XVector_erase(XVector* this_vector, void* LpValue);
 //删除数据 n<0 后面全部删除
 void XVector_remove(XVector* this_vector, int64_t index, int64_t n);
 //清空vector的队列，不是释放内存
-void XVector_clear(XVector* this_vector);
+//void XVector_clear(XVector* this_vector);
 #define XVector_clear  XContainerObject_clear
 //将this_Two拷贝到this_One
 void XVector_copy(XVector* this_One, const XVector* this_Two);

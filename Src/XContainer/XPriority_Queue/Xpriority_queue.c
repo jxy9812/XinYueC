@@ -48,7 +48,7 @@ void* XPriority_Queue_top(XPriority_Queue* this_queue)
 	return ObjectVirtualFunc(this_queue, EXPriority_Queue_Top, funcPtr)(this_queue);
 }
 
-bool XPriority_Queue_empty(XPriority_Queue* this_queue)
+bool XPriority_Queue_isEmpty(XPriority_Queue* this_queue)
 {
 	return XContainerObject_isEmpty(this_queue);
 }

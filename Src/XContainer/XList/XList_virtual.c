@@ -342,7 +342,7 @@ void VXList_sort(XList* this_list, XCompare compare)
 	XStack* stack = XStack_New(XListNode*);
 	XStack_push(stack, &ListTail);
 	XStack_push(stack, &ListHead);
-	while (!XStack_empty(stack))
+	while (!XStack_isEmpty(stack))
 	{
 		//获取节点
 		XListNode* ListHead = *((struct XListNode**)XStack_top(stack));

@@ -39,7 +39,7 @@ void* XStack_top(XStack* this_stack);
 //清空stack的队列，释放内存
 void XStack_clear(XStack* this_stack);
 //检测栈内是否为空，空为真 O(1)
-bool XStack_empty(XStack* this_stack);
+bool XStack_isEmpty(XStack* this_stack);
 //返回stack内元素的个数 O(1)
 int XStack_size(XStack* this_stack);
 //返回当前stack所能容纳的最大元素值

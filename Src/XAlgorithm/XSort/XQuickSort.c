@@ -65,7 +65,7 @@ void XQuicPitSort_Stack(void* LParray, const size_t nSize, const size_t TypeSize
 	char* left = NULL;//区间头指针
 	char* right = NULL;//区间尾指针
 	char* pivit = NULL;//单次排序返回的排好元素指针
-	while (!XStack_empty(st))
+	while (!XStack_isEmpty(st))
 	{
 		left = XStack_Top(st,char*);//头指针
 		XStack_pop(st);

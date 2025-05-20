@@ -35,7 +35,7 @@ void XCircularQueue_class_init()
 	//追加函数
 	XVtable_append_array(XCircularQueueVtable, table, sizeof(table) / sizeof(table[0]));
 	//重写的函数
-	XVtable_At(XCircularQueueVtable, EXContainerObject_Empty) = VXCircularQueue_isEmpty;
+	XVtable_At(XCircularQueueVtable, EXContainerObject_IsEmpty) = VXCircularQueue_isEmpty;
 	XVtable_At(XCircularQueueVtable, EXContainerObject_Clear) = VXCircularQueue_clear;
 	XVtable_At(XCircularQueueVtable, EXContainerObject_Size) = VXCircularQueue_size;
 #if SHOWCONTAINERSIZE

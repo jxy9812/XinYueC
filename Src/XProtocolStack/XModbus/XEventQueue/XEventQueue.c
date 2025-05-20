@@ -53,7 +53,7 @@ static bool XEventQueue_defaultConfigEmpty(XEventQueue* queue)
 {
 	if (queue && queue->queue)
 	{
-		return XQueue_empty(queue->queue);
+		return XQueue_isEmpty(queue->queue);
 	}
 	return true;
 }

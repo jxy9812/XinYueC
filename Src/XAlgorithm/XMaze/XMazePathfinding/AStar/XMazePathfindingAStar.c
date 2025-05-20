@@ -71,7 +71,7 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 	Pathfinder(ChildAll, maze, pos);//获取周围能走的点位
 	if(Oblique)//能斜着走
 		PathfinderOblique(ChildAll, maze, pos);//获取周围能走的点位，斜的
-	while (!XStack_empty(ChildAll))
+	while (!XStack_isEmpty(ChildAll))
 	{
 		XPointStep* pCurrentPos = (XPointStep*)XStack_top(ChildAll);
 		AStarNode* childAStarNode = CreationAStarNode(pCurrentPos->x, pCurrentPos->y);//创建孩子节点
@@ -101,7 +101,7 @@ static void XBinaryTreeObject_freeNode(AStarNode* root)
 #if XStack_ON
 	XStack* stack = XStack_new(sizeof(AStarNode*));
 	XStack_push(stack, &root);
-	while (!XStack_empty(stack))
+	while (!XStack_isEmpty(stack))
 	{
 		AStarNode* current = *(AStarNode**)XStack_top(stack);
 		XStack_pop(stack);

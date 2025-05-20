@@ -64,9 +64,9 @@ void* XQueue_top(XQueue* this_queue)
 	return ObjectVirtualFunc(this_queue, EXQueue_Top, funcPtr)(this_queue);
 }
 
-bool XQueue_empty(XQueue* this_queue)
+bool XQueue_isEmpty(XQueue* this_queue)
 {
-	return XList_empty(this_queue);
+	return XList_isEmpty(this_queue);
 }
 
 size_t XQueue_size(XQueue* this_queue)

@@ -21,7 +21,7 @@ extern XVtable* XContainerObjectVtable;
 enum XContainerObjectVtableEnum
 {
 	EXContainerObject_Free,
-	EXContainerObject_Empty,
+	EXContainerObject_IsEmpty,
 	EXContainerObject_Size,
 	EXContainerObject_Capacity,
 	EXContainerObject_TypeSize,
@@ -44,7 +44,7 @@ typedef struct XContainerObject
 #define XContainerData(Object,Type) (*(Type*)XContainerDataPtr(Object))//当前数据
 #define XContainerCapacity(Object) (((XContainerObject*)(Object))->m_capacity)//当前容器能容纳的最大元素数量
 #define XContainerSize(Object) (((XContainerObject*)(Object))->m_size)//当前容器内的元素个数
-#define XContainerEmpty(Object) (XContainerSize(Object)==0)//当前容器是否时空的
+#define XContainerIsEmpty(Object) (XContainerSize(Object)==0)//当前容器是否时空的
 #define XContainerTypeSize(Object) (((XContainerObject*)(Object))->m_typeSize)//类型占用字节数
 #define XContainerDataFreeMethod(Object) (((XContainerObject*)(Object))->m_dataFreeMethod)//获取容器数据释放方法
 #define XContainerSetDataFreeMethod(Object,method) (((XContainerObject*)(Object))->m_dataFreeMethod=method)//设置容器的数据释放方法

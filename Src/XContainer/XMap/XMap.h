@@ -53,7 +53,7 @@ void XMap_clear(XMap* this_map);
 //释放内存
 void XMap_free(XMap* this_map);
 //检测Map内是否为空，空为真 O(1)
-bool XMap_empty(const  XMap* this_map);
+bool XMap_isEmpty(const  XMap* this_map);
 //返回Map内元素的个数 O(1)
 size_t XMap_size(const  XMap* this_map);
 //交换两个同类型Map的数据

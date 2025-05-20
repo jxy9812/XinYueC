@@ -38,7 +38,7 @@ void XPriority_Queue_pop(XPriority_Queue* this_queue);
 void* XPriority_Queue_top(XPriority_Queue* this_queue);
 #define XPriority_Queue_Top(queue,Type) (*(Type*)XPriority_Queue_top(queue))
 //当队列为空时返回true，否则返回false
-bool XPriority_Queue_empty(XPriority_Queue* this_queue);
+bool XPriority_Queue_isEmpty(XPriority_Queue* this_queue);
 //返回队列中元素的个数
 size_t XPriority_Queue_size(XPriority_Queue* this_queue);
 //清空队列，释放内存

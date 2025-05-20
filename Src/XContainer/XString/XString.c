@@ -88,7 +88,7 @@ void XString_erase(XString* this_string, void* LpValue)
 	ObjectVirtualFunc(this_string, EXVector_Erase, funcPtr)(this_string, LpValue);
 }
 
-bool XString_empty(const XString* this_string)
+bool XString_isEmpty(const XString* this_string)
 {
 	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
 		return true;

@@ -27,7 +27,7 @@ bool XContainerObject_isEmpty(const XContainerObject* Object)
 		return true;
 	typedef bool (*funcPtr)(const XContainerObject* );
 	//void* p = ObjectVirtualFunc(Object, XContainerObject_Empty, funcPtr);
-	return ObjectVirtualFunc(Object, EXContainerObject_Empty,funcPtr)(Object);
+	return ObjectVirtualFunc(Object, EXContainerObject_IsEmpty,funcPtr)(Object);
 }
 
 size_t XContainerObject_size(const  XContainerObject* Object)

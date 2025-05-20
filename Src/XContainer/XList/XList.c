@@ -107,7 +107,7 @@ XListNode* XList_find(const XList* this_list, const void* findVal)
 	return ObjectVirtualFunc(this_list, EXList_Find, funcPtr)(this_list, findVal);
 }
 
-bool XList_empty(const XList* this_list)
+bool XList_isEmpty(const XList* this_list)
 {
 	return XContainerObject_isEmpty(this_list);
 }

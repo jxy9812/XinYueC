@@ -143,7 +143,7 @@ static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y
 	XStack* stack=XStack_New(int);
 	XStack_push(stack, &y);
 	XStack_push(stack, &x);
-	while (!XStack_empty(stack))
+	while (!XStack_isEmpty(stack))
 	{
 		int x = XStack_Top(stack,int);
 		XStack_pop(stack);
