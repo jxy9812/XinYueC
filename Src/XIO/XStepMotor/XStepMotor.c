@@ -10,10 +10,10 @@ XStepMotor* XStepMotor_new(XStepMotor_PortFuncInit* port)
 {
 	if (port == NULL)
 		return NULL;
-	XStepMotor* motor= XMemory_malloc(sizeof(XSwitchDevice));
+	XStepMotor* motor = XMemory_malloc(sizeof(XSwitchDevice));
 	if (motor == NULL)
 		return motor;
-	XStepMotor_init(motor,port);
+	XStepMotor_init(motor, port);
 	return motor;
 }
 
@@ -23,7 +23,7 @@ void XStepMotor_init(XStepMotor* motor, XStepMotor_PortFuncInit* port)
 		return NULL;
 	//XIODevice_init(&(motor->m_parent), &(port->parentPort));
 	//开始初始化
-	memset(motor, 0, sizeof(XStepMotor) /*- sizeof(XIODevice) */- sizeof(XStepMotor_PortFunc));
+	memset(motor, 0, sizeof(XStepMotor) /*- sizeof(XIODevice) */ - sizeof(XStepMotor_PortFunc));
 	motor->m_PUL = XPWMDevice_new(&(port->PUL));
 	motor->m_ENA = XPWMDevice_new(&(port->ENA));
 	motor->m_DIR = XPWMDevice_new(&(port->DIR));
@@ -32,11 +32,21 @@ void XStepMotor_init(XStepMotor* motor, XStepMotor_PortFuncInit* port)
 	XStepMotor_setDevice(motor, motor);
 }
 
+void XStepMotor_open(XStepMotor* motor)
+{
+	if (motor != NULL)
+	{
+		XIODevice_open(motor->m_ENA, XIODeviceBase_WriteOnly);
+		XIODevice_open(motor->m_DIR, XIODeviceBase_WriteOnly);
+		XIODevice_open(motor->m_PUL, XIODeviceBase_WriteOnly);
+	}
+}
+
 void XStepMotor_setDevice(XStepMotor* motor, void* device)
 {
 	if (motor != NULL)
 	{
-		XIODevice_setDevice(motor->m_PUL,device);
+		XIODevice_setDevice(motor->m_PUL, device);
 		XIODevice_setDevice(motor->m_ENA, device);
 		XIODevice_setDevice(motor->m_DIR, device);
 	}
@@ -89,7 +99,10 @@ void XStepMotor_setSpeed(XStepMotor* motor, uint16_t speed)
 		return;
 	motor->m_currentSpeed = speed;
 	uint32_t secr = speed * motor->m_pulsesPerRevolution / 60;//一秒脉冲数目  频率
-	XPWMDevice_setFrequency(motor->m_PUL,secr);
+
+	XPWMDevice_setFrequency(motor->m_PUL, secr);
+	if (motor->m_PUL->m_dutyCycle == 0)
+		XPWMDevice_setDutyCycle(motor->m_PUL, 50);
 
 }
 
@@ -98,6 +111,7 @@ void XStepMotor_setNumRotations(XStepMotor* motor, double num)
 	if (motor != NULL)
 	{
 		motor->m_setPulses = num * motor->m_pulsesPerRevolution;
+		//printf("脉冲数:%d\n",(int)motor->m_setPulses);
 	}
 }
 
@@ -118,7 +132,7 @@ void XStepMotor_poll(XStepMotor* motor)
 
 void XStepMotor_timerCallback(XStepMotor* motor)
 {
-	if (motor==NULL)
+	if (motor == NULL)
 		return NULL;
 	//累计脉冲数
 	++motor->m_currentPulses;
