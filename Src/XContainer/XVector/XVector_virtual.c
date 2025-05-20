@@ -30,7 +30,7 @@ static void* VXVector_find(const XVector* this_vector, const void* findVal);//�
 static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
 #if VTABLEISSTACK
 	static XVtable vtable;//虚函数类
-	static void* vtable_data[25];//虚函数数据
+	static void* vtable_data[XVECTOR_VTABLE_SIZE];//虚函数数据
 #endif
 void XVector_class_init()
 {

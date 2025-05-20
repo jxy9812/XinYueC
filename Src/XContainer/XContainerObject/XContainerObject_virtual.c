@@ -14,7 +14,7 @@ static void VXContainerObject_clear(XContainerObject* Object);
 XVtable* XContainerObjectVtable = NULL;
 #if VTABLEISSTACK
 static XVtable vtable;//虚函数类
-static void* vtable_data[7];//虚函数数据
+static void* vtable_data[XCONTAINEROBJECT_VTABLE_SIZE];//虚函数数据
 #endif
 void XContainerDefaultDerivedClassDataFreeMethod(void* args)
 {

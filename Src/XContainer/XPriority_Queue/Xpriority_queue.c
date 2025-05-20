@@ -7,7 +7,7 @@ XPriority_Queue* XPriority_Queue_new(size_t typeSize, XCompare compare)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XVector* this_queue = XMemory_malloc(sizeof(XPriority_Queue));
+	XPriority_Queue* this_queue = XMemory_malloc(sizeof(XPriority_Queue));
 	XPriority_Queue_init(this_queue, typeSize,compare);
 	return this_queue;
 }

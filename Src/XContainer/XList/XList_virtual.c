@@ -27,7 +27,7 @@ static void VXList_free(XList* this_list);
 XVtable* XListVtable = NULL;
 #if VTABLEISSTACK
 	static XVtable vtable;//虚函数类
-	static void* vtable_data[20];//虚函数数据
+	static void* vtable_data[XLIST_VTABLE_SIZE];//虚函数数据
 #endif
 void XList_class_init()
 {

@@ -12,6 +12,7 @@ extern "C" {
 #include"XContainerObject.h"
 //XList虚函数表
 extern XVtable* XListVtable;
+#define XLIST_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+13)       //XList容器虚函数表大小
 //XList虚函数表枚举
 enum XListVtableEnum
 {

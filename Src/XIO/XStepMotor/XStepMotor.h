@@ -26,10 +26,7 @@ extern "C" {
 	//步进电机
 	typedef struct XStepMotor
 	{
-		//XIODevice m_parent;//父对象
-		//uint8_t m_acceleration;//加速度
 		uint16_t m_currentSpeed;//当前转速
-		//uint16_t m_setSpeed;//设置转速
 		uint16_t m_pulsesPerRevolution;//每转脉冲数
 		uint64_t m_currentPulses;//当前脉冲数 
 		uint64_t m_setPulses;//设置脉冲数 //0是速度模式 其他是距离模式

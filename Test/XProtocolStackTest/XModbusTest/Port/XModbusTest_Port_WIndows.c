@@ -25,7 +25,7 @@ static void XModbusTest_XTimerCreat(XTimer* timer)
 // 打开串口
 bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
 {
-    XSerialPortDevice* serial = io->device;
+    XSerialPortDevice* serial = (XSerialPortDevice*)io;
     char portName[10] = { 0 };
     sprintf(portName, "COM%d", serial->m_portNum);
     // 打开串口

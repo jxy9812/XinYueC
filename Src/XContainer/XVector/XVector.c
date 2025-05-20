@@ -109,13 +109,13 @@ void XVector_remove(XVector* this_vector, int64_t index, int64_t n)
 	ObjectVirtualFunc(this_vector, EXVector_Remove, funcPtr)(this_vector, index,n);
 }
 
-void XVector_clear(XVector* this_vector)
-{
-	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
-		return ;
-	typedef void (*funcPtr)(XVector*);
-	ObjectVirtualFunc(this_vector, EXVector_Clear, funcPtr)(this_vector);
-}
+//void XVector_clear(XVector* this_vector)
+//{
+//	if (ISNULL(this_vector, "") || ISNULL(ObjectVtable(this_vector), ""))
+//		return ;
+//	typedef void (*funcPtr)(XVector*);
+//	ObjectVirtualFunc(this_vector, EXVector_Clear, funcPtr)(this_vector);
+//}
 
 void XVector_copy(XVector* this_One, const XVector* this_Two)
 {
@@ -173,33 +173,33 @@ void XVector_sort(XVector* this_vector, XCompare compare)
 	ObjectVirtualFunc(this_vector, EXVector_Sort, funcPtr)(this_vector, compare);
 }
 
-void XVector_free(XVector* this_vector)
-{
-	return XContainerObject_free(this_vector);
-}
-
-bool XVector_empty(const XVector* this_vector)
-{
-	return XContainerObject_empty(this_vector);
-}
-
-size_t XVector_size(const XVector* this_vector)
-{
-	return XContainerObject_size(this_vector);
-}
-
-size_t XVector_capacity(const XVector* this_vector)
-{
-	return XContainerObject_capacity(this_vector);
-}
-
-void XVector_swap(XVector* this_vectorOne, XVector* this_vectorTwo)
-{
-	XContainerObject_swap(this_vectorOne,this_vectorTwo);
-}
-
-size_t XVector_typeSize(XVector* this_vector)
-{
-	return XContainerObject_typeSize(this_vector);
-}
+//void XVector_free(XVector* this_vector)
+//{
+//	return XContainerObject_free(this_vector);
+//}
+//
+//bool XVector_empty(const XVector* this_vector)
+//{
+//	return XContainerObject_empty(this_vector);
+//}
+//
+//size_t XVector_size(const XVector* this_vector)
+//{
+//	return XContainerObject_size(this_vector);
+//}
+//
+//size_t XVector_capacity(const XVector* this_vector)
+//{
+//	return XContainerObject_capacity(this_vector);
+//}
+//
+//void XVector_swap(XVector* this_vectorOne, XVector* this_vectorTwo)
+//{
+//	XContainerObject_swap(this_vectorOne,this_vectorTwo);
+//}
+//
+//size_t XVector_typeSize(XVector* this_vector)
+//{
+//	return XContainerObject_typeSize(this_vector);
+//}
 #endif

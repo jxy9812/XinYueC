@@ -20,6 +20,7 @@ extern "C" {
 #define	XVector_ON						1
 #define	XVectorTwo_ON					1
 #define	XStringVector_ON				1
+#define	XCircularQueue_ON				1
 
 #if !XList_ON
 #define	XQueue_ON						0

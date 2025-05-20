@@ -23,7 +23,7 @@ void XStepMotor_init(XStepMotor* motor, XStepMotor_PortFuncInit* port)
 		return NULL;
 	//XIODevice_init(&(motor->m_parent), &(port->parentPort));
 	//开始初始化
-	memset(motor, 0, sizeof(XStepMotor) /*- sizeof(XIODevice) */ - sizeof(XStepMotor_PortFunc));
+	memset(motor, 0, sizeof(XStepMotor));
 	motor->m_PUL = XPWMDevice_new(&(port->PUL));
 	motor->m_ENA = XPWMDevice_new(&(port->ENA));
 	motor->m_DIR = XPWMDevice_new(&(port->DIR));

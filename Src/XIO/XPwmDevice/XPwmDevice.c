@@ -23,11 +23,11 @@ void XPWMDevice_free(XPWMDevice* pwm)
 void XPWMDevice_init(XPWMDevice* pwm, XPWMDevice_PortFuncInit* port)
 {
 	if (pwm == NULL || port == NULL)
-		return NULL;
+		return ;
 	memset(pwm, 0, sizeof(XPWMDevice));
 	XIODevice_init(&(pwm->m_parent), &(port->parentPort));
 	//开始初始化
-	memset(&(pwm->m_parent)+1, 0, sizeof(XPWMDevice) - sizeof(XIODevice) - sizeof(XPWMDevice_PortFunc));
+	//memset(&(pwm->m_parent)+1, 0, sizeof(XPWMDevice) - sizeof(XIODevice) - sizeof(XPWMDevice_PortFunc));
 	//pwm->m_timer = XTimer_new(&(port->timerPort));
 	//pwm->m_timer->data = pwm;
 	//绑定函数指针

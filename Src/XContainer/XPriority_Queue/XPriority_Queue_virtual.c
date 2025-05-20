@@ -13,7 +13,7 @@ static void VXPriority_Queue_pop(XPriority_Queue* this_queue);
 static void* VXPriority_Queue_top(XPriority_Queue* this_queue);
 #if VTABLEISSTACK
 	static XVtable vtable;//虚函数类
-	static void* vtable_data[28];//虚函数数据
+	static void* vtable_data[XPRIORITY_QUEUE_VTABLE_SIZE];//虚函数数据
 #endif
 void XPriority_Queue_class_init()
 {

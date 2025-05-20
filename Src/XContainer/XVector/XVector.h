@@ -13,6 +13,7 @@ extern "C" {
 #include"XVector_reverse_iterator.h"
 //XVector虚函数表
 extern XVtable* XVectorVtable;
+#define XVECTOR_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+18)       //XVector容器虚函数表大小
 //XVector虚函数表枚举
 enum XVectorEnum
 {
@@ -49,8 +50,8 @@ XVector* XVector_new(size_t typeSize);
 //初始化 XVector
 void XVector_init(XVector* this_vector, size_t typeSize);
 //释放内存
-void XVector_free(XVector* this_vector);
-
+//void XVector_free(XVector* this_vector);
+#define XVector_free   XContainerObject_free
 //设置XVector的大小，超过大小插入0值数据，小于删除数据
 void XVector_resize(XVector* this_vector,size_t size);
 // 向量头部增加一个元素
@@ -76,6 +77,7 @@ void XVector_erase(XVector* this_vector, void* LpValue);
 void XVector_remove(XVector* this_vector, int64_t index, int64_t n);
 //清空vector的队列，不是释放内存
 void XVector_clear(XVector* this_vector);
+#define XVector_clear  XContainerObject_clear
 //将this_Two拷贝到this_One
 void XVector_copy(XVector* this_One, const XVector* this_Two);
 //将this_Two逆序拷贝到this_One
@@ -95,15 +97,20 @@ void* XVector_find(const XVector* this_vector, const void* findVal);
 void  XVector_sort(XVector* this_vector, XCompare compare);
 
 //检测vector内是否为空，空为真 O(1)
-bool XVector_empty(const  XVector* this_vector);
+//bool XVector_empty(const  XVector* this_vector);
+#define XVector_empty		XContainerObject_empty
 //返回vector内元素的个数 O(1)
-size_t XVector_size(const  XVector* this_vector);
+//size_t XVector_size(const  XVector* this_vector);
+#define XVector_size		XContainerObject_size
 //返回当前向量所能容纳的最大元素个数
-size_t  XVector_capacity(const  XVector* this_vector);
+//size_t  XVector_capacity(const  XVector* this_vector);
+#define XVector_capacity		XContainerObject_capacity
 //交换两个同类型向量的数据
-void XVector_swap(XVector* this_vectorOne, XVector* this_vectorTwo);
+//void XVector_swap(XVector* this_vectorOne, XVector* this_vectorTwo);
+#define XVector_swap		XContainerObject_swap
 //返回元素类型字节大小
-size_t XVector_typeSize(XVector* this_vector);
+//size_t XVector_typeSize(XVector* this_vector);
+#define XVector_typeSize		XContainerObject_typeSize
 #ifdef __cplusplus
 }
 #endif

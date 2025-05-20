@@ -16,6 +16,7 @@ typedef void (*XCDataFreeMethod)(void* args);
 
 //XContainerObject虚函数表
 extern XVtable* XContainerObjectVtable;
+#define XCONTAINEROBJECT_VTABLE_SIZE   7      //容器基类虚函数表大小
 //XContainerObject虚函数表枚举
 enum XContainerObjectVtableEnum
 {
