@@ -6,7 +6,6 @@ extern "C" {
 #include"XDataStructConfig.h"
 #include"XClass.h"
 #if DEMOTEST
-	void XCylinderTest();
 	void XPWMDeviceTest();
 #endif // DEMOTEST
 
