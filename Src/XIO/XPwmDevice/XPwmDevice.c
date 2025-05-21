@@ -64,6 +64,8 @@ void XPWMDevice_start(XPWMDevice* pwm)
 		{
 			pwm->m_port.start(pwm);
 			pwm->m_isRun = true;
+			if (pwm->m_port.runChangeCallback)
+				pwm->m_port.runChangeCallback(pwm);
 		}
 	}
 }
@@ -78,7 +80,30 @@ void XPWMDevice_stop(XPWMDevice* pwm)
 			{
 				pwm->m_port.stop(pwm);
 				pwm->m_isRun = false;
+				if (pwm->m_port.runChangeCallback)
+					pwm->m_port.runChangeCallback(pwm);
 			}
 		}
 	}
+}
+
+bool XPWMDevice_isRunning(XPWMDevice* pwm)
+{
+	if(pwm==NULL)
+		return false;
+	return pwm->m_isRun;
+}
+
+size_t XPWMDevice_getFrequency(XPWMDevice* pwm)
+{
+	if(pwm==NULL)
+		return 0;
+	return pwm->m_frequency;
+}
+
+uint8_t XPWMDevice_getDutyCycle(XPWMDevice* pwm)
+{
+	if (pwm == NULL)
+		return 0;
+	return pwm->m_dutyCycle;
 }

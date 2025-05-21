@@ -1,10 +1,6 @@
 ﻿#include "XStepMotor.h"
 #include <string.h>
 #include <stdio.h>
-#include "XMap.h"
-#include "XEquality.h"
-#include "XLess.h"
-//#include "FreeRTOS.h"
 
 XStepMotor* XStepMotor_new(XStepMotor_PortFuncInit* port)
 {
@@ -110,7 +106,16 @@ void XStepMotor_setNumRotations(XStepMotor* motor, double num)
 {
 	if (motor != NULL)
 	{
-		motor->m_setPulses = num * motor->m_pulsesPerRevolution;
+		if (num > 0.0)
+		{
+			XStepMotor_setDIR(motor, true);
+			motor->m_setPulses = num * motor->m_pulsesPerRevolution;
+		}
+		else if (num < 0.0)
+		{
+			XStepMotor_setDIR(motor, false);
+			motor->m_setPulses = -num * motor->m_pulsesPerRevolution;
+		}
 		//printf("脉冲数:%d\n",(int)motor->m_setPulses);
 	}
 }

@@ -88,6 +88,7 @@ void VXContainerObject_free(XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
+	//printf("准备释放\n");
 	XContainerObject_clear(Object);
 	ObjectVtable(Object) = NULL;
 	Object->m_capacity = 0;

@@ -26,14 +26,17 @@ typedef struct XCircularQueue
 void XCircularQueue_class_init();
 //队列初始化函数
 void XCircularQueue_init(XCircularQueue* this_queue,size_t typeSize, size_t count);
-//队列初始化函数
+//队列创建函数
+#define XCircularQueue_New(Type,count) XCircularQueue_new(sizeof(Type),count)
 XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count);
 #define XCircularQueue_free		XVector_free
 //插入到队列的队尾
+#define XCircularQueue_Push(this_queue,type,value){type t=value;XCircularQueue_push(this_vector,&t);}
 void XCircularQueue_push(XCircularQueue* this_queue, void* LpValue);
 //出队
 void XCircularQueue_pop(XCircularQueue* this_queue);
 // 返回优先队列堆顶元素
+#define XCircularQueue_Top(this_queue,Type) (*(Type*)XCircularQueue_top(this_queue))
 void* XCircularQueue_top(XCircularQueue* this_queue);
 #define XCircularQueue_isEmpty	XVector_isEmpty
 #define XCircularQueue_size		XVector_size

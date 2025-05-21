@@ -16,7 +16,7 @@ XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count)
 	if (ISNULL(typeSize, "")|| ISNULL(count, ""))
 		return NULL;
 	XCircularQueue* this_queue = XMemory_malloc(sizeof(XCircularQueue));
-	XCircularQueue_init(this_queue,typeSize,count);
+	XCircularQueue_init(this_queue,typeSize,count+1);
 	return this_queue;
 }
 

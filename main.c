@@ -8,8 +8,9 @@ int main(int argc, char* args[])
 	
 #if DEMOTEST
 	//XPWMDeviceTest();
-	XModbusTest();
+	//XModbusTest();
 	//XCylinderTest();	
+	XCircularQueueTest();
 	return;
 	XStringVectorTest();
 	cJsonTest();

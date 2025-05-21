@@ -11,6 +11,7 @@ typedef struct XPWMDevice_PortFunc
 {
 	void (*start)(XPWMDevice* pwm);
 	void (*stop)(XPWMDevice* pwm);
+	void (*runChangeCallback)(XPWMDevice* pwm);//运行状态改变回调函数
 }XPWMDevice_PortFunc;
 //pwm设备初始化接口
 typedef struct XPWMDevice_PortFuncInit
@@ -40,6 +41,11 @@ void XPWMDevice_setFrequency(XPWMDevice* pwm,size_t f);
 void XPWMDevice_setDutyCycle(XPWMDevice* pwm, uint8_t d);
 void XPWMDevice_start(XPWMDevice* pwm);
 void XPWMDevice_stop(XPWMDevice* pwm);
+bool XPWMDevice_isRunning(XPWMDevice* pwm);
+//频率  T(s)=1/F(HZ) 周期  一个周期
+size_t XPWMDevice_getFrequency(XPWMDevice* pwm);
+//占空比 T(s)=1/F(HZ)*D(0`100)/100   电平翻转周期
+uint8_t XPWMDevice_getDutyCycle(XPWMDevice* pwm);
 #ifdef __cplusplus
 }
 #endif

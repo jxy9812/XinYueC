@@ -62,7 +62,7 @@ void VXCircularQueue_clear(XCircularQueue* this_queue)
 {
 	if (this_queue == NULL)
 		return;
-	while (VXCircularQueue_isEmpty(this_queue))
+	while (!VXCircularQueue_isEmpty(this_queue))
 	{
 		VXCircularQueue_pop(this_queue);
 	}
