@@ -24,20 +24,28 @@ void XCustomQueue_free(XCustomQueue* queue)
 	if (queue && queue->m_port.free_funcPointer)
 	{
 		queue->m_port.free_funcPointer(queue);
+		XMemory_free(queue);
 	}
+	
 }
 
-bool XCustomQueue_push(XCustomQueue* queue, void* lpData)
+bool XCustomQueue_push(XCustomQueue* queue, void* pvData)
 {
 	if (queue && queue->m_port.push_funcPointer)
-		return queue->m_port.push_funcPointer(queue, lpData);
+		return queue->m_port.push_funcPointer(queue, pvData);
 	return false;
 }
 
-void* XCustomQueue_Top(XCustomQueue* queue)
+void* XCustomQueue_top(XCustomQueue* queue)
 {
 	if (queue && queue->m_port.top_funcPointer)
 		return queue->m_port.top_funcPointer(queue);
+}
+
+bool XCustomQueue_receive(XCustomQueue* queue, void* pvBuffer, uint32_t wait)
+{
+	if (queue && queue->m_port.receive_funcPointer)
+		return queue->m_port.receive_funcPointer(queue,pvBuffer, wait);
 }
 
 bool XCustomQueue_pop(XCustomQueue* queue)

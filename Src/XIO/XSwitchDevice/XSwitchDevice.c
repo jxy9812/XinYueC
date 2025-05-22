@@ -42,13 +42,19 @@ void XSwitchDevice_pollDefaultMethod(XSwitchDevice* sw)
 	if(sw->m_parent.m_mode & XIODeviceBase_ReadOnly)
 	{
 		//扫描保存状态
-		bool state = sw->state;
+		bool state = sw->buffer;
 		//读取当前状态
 		XIODevice_read(sw, &state, 1);
 		//printf("state:%s\n", state ? "true" : "false");
-		if (state != sw->state)
+		if (state != sw->buffer)
 		{
-			sw->state = state;
+			sw->buffer = state;
+			return;
+		}
+		if (sw->buffer != sw->state)
+		//if (state != sw->state)
+		{
+			sw->state = sw->buffer;
 			if (sw->m_port.stateChangeCallback)//判断当前是否有状态改变回调函数
 				sw->m_port.stateChangeCallback(sw);
 		}

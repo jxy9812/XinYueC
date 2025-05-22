@@ -20,6 +20,7 @@ typedef struct XSwitchDevice_PortFuncInit
 typedef struct XSwitchDevice
 {
 	XIODevice m_parent;//父对象
+	bool buffer;//存储状态
 	bool state;//状态   开或关
 	XSwitchDevice_PortFunc m_port;//开关设备接口
 }XSwitchDevice;
