@@ -3,6 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include<stdio.h>
 #include<stdbool.h>
 #include<stdint.h>
 typedef struct XCustomQueue XCustomQueue;
@@ -11,8 +12,9 @@ typedef struct XCustomQueue_Port
 {
 	bool (*create_funcPointer)(XCustomQueue* queue);
 	void (*free_funcPointer)(XCustomQueue* queue);
-	bool (*push_funcPointer)(XCustomQueue* queue,void* lpData);
+	bool (*push_funcPointer)(XCustomQueue* queue,void* pvData);
 	void* (*top_funcPointer)(XCustomQueue* queue);
+	bool (*receive_funcPointer)(XCustomQueue* queue, void* pvBuffer, uint32_t wait);
 	bool (*pop_funcPointer)(XCustomQueue* queue);
 	bool (*isEmpty_funcPointer)(XCustomQueue* queue);
 	size_t(*size_funcPointer)(XCustomQueue* queue);
@@ -26,8 +28,9 @@ typedef struct XCustomQueue
 }XCustomQueue;
 XCustomQueue* XCustomQueue_new(XCustomQueue_Port* port);
 void XCustomQueue_free(XCustomQueue* queue);
-bool XCustomQueue_push(XCustomQueue* queue, void* lpData);
-void* XCustomQueue_Top(XCustomQueue* queue);
+bool XCustomQueue_push(XCustomQueue* queue, void* pvData);
+void* XCustomQueue_top(XCustomQueue* queue);
+bool XCustomQueue_receive(XCustomQueue* queue, void* pvBuffer, uint32_t wait);
 bool XCustomQueue_pop(XCustomQueue* queue);
 bool XCustomQueue_isEmpty(XCustomQueue* queue);
 size_t XCustomQueue_size(XCustomQueue* queue);
