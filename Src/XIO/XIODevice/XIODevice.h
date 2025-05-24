@@ -5,7 +5,7 @@ extern "C" {
 #endif
 #include<stdint.h>
 #include<stdbool.h>
-#include"XCircularQueueAtomic.h"
+typedef struct XCircularQueue XCircularQueue;
 typedef enum /*XIODeviceBase*/
 {
 	XIODeviceBase_NotOpen= 0x0000,//设备未打开
@@ -27,16 +27,14 @@ typedef void (*XIODeviceClose)(XIODevice* io);//关闭IO,释放资源
 //IO设备接口
 typedef struct XIODevice_PortFunc
 {
-	//XIOBufferEmpty   writeBufferEmpty_funcPointer;//写入缓冲区空
 	union {
-		//XIOBufferFull     writeBufferFull_funcPointer;//写入缓冲区满
-		XIOBufferFull     writeData_funcPointer;//
+		void (*writeBufferFull_funcPointer)(XIODevice* io);//写入缓冲区满
+		XIOBufferFull     writeData_funcPointer;//无缓冲区直接写入数据
 	};
 	union{
-		//XIOBufferEmpty   readBufferEmpty_funcPointer;
-		XIOBufferEmpty   readData_funcPointer;
+		void (*readBufferEmpty_funcPointer)(XIODevice* io);//读取缓冲区空
+		XIOBufferEmpty   readData_funcPointer;//无缓冲区读取数据
 	};
-	//XIOBufferFull     readBufferFull_funcPointer;
 	XIODeviceOpen  open_funcPointer;//打开IO设备
 	XIODeviceClose   close_funcPointer;//关闭IO
 	void (*poll_funcPointer)(XIODevice* io);//设备轮询
@@ -48,8 +46,8 @@ typedef struct XIODevice
 {
 	void* device;//设备
 	uint16_t m_mode;//打开模式
-	XCircularQueueAtomic* m_writeBuffer;//写入缓冲区
-	XCircularQueueAtomic* m_readBuffer;//读取缓冲区
+	XCircularQueue* m_writeBuffer;//写入缓冲区
+	XCircularQueue* m_readBuffer;//读取缓冲区
 	/* ----------------------- 接口指针-------------------------------------*/
 	XIODevice_PortFunc m_port;//接口
 }XIODevice;
@@ -60,9 +58,9 @@ void XIODevice_setWriteBuffer(XIODevice* io,size_t count);
 void XIODevice_setReadBuffer(XIODevice* io, size_t count);
 void XIODevice_setDevice(XIODevice* io, void* device);
 size_t XIODevice_write(XIODevice* io,const char* data, size_t maxSize);//写入
-size_t XIODevice_writeVector(XIODevice* io, XVector* array);//写入
 size_t XIODevice_read(XIODevice* io,char* data, size_t maxSize);//读取
-XVector* XIODevice_readVector(XIODevice* io, size_t maxSize);//读取
+//接收数据从硬件接收数据到缓冲区
+void XIODevice_receive(XIODevice* io, char* data, size_t size);
 bool XIODevice_isOpen(XIODevice* io);
 bool XIODevice_open(XIODevice* io, XIODeviceBase mode);
 void XIODevice_close(XIODevice* io);

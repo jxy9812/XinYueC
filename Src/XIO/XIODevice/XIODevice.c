@@ -1,6 +1,6 @@
 ﻿#include "XIODevice.h"
 #include "XMemory.h"
-#include "XVector.h"
+#include"XCircularQueueAtomic.h"
 #include <string.h>
 #include <assert.h>
 XIODevice* XIODevice_new(XIODevice_PortFuncInit* port)
@@ -85,19 +85,21 @@ size_t XIODevice_write(XIODevice* io, const char* data, size_t maxSize)
 	}
 	else
 	{
-		while (XCircularQueue_size(io->m_writeBuffer)+1<XContainerSize(io->m_writeBuffer)&& count<maxSize)
+		do
 		{
-			XCircularQueue_push(io->m_writeBuffer, data+count);
-			++count;
-		}
-
+			while (XCircularQueue_push(io->m_writeBuffer, data + count))
+			{
+				++count;
+				if (count >= maxSize)
+					break;
+			}
+			if(XCircularQueue_isFull(io->m_writeBuffer))
+				io->m_port.writeBufferFull_funcPointer(io);
+			if (count >= maxSize)
+				break;
+		}while(!XCircularQueue_isFull(io->m_writeBuffer));
 	}
 	return count;
-}
-
-size_t XIODevice_writeVector(XIODevice* io, XVector* array)
-{
-	return XIODevice_write(io, XContainerDataPtr(array), XContainerSize(array));
 }
 
 size_t XIODevice_read(XIODevice* io, char* data, size_t maxSize)
@@ -112,79 +114,37 @@ size_t XIODevice_read(XIODevice* io, char* data, size_t maxSize)
 		count += io->m_port.readData_funcPointer(io, data, maxSize);
 	}
 	else
-	{//如果有缓冲区
-		XVector* buff = io->m_readBuffer;
-		size_t marginSize = maxSize;//剩余大小
-		size_t buffSize = 0;//缓冲区中的数据量
-		char* buffData = NULL;
-		while (marginSize)
+	{
+		do
 		{
-			buffSize = XContainerSize(buff);
-			buffData = XContainerDataPtr(buff);
-			if (buffSize >= marginSize)
-			{//缓冲区中的数据量大于等于要读取的数据量
-				memcpy(data[maxSize - marginSize], buffData, marginSize);
-				for (size_t i = 0; i < buffSize - marginSize; i++)
-				{//缓冲区剩余数据往前挪
-					buffData[i] = buffData[marginSize + i];
-				}
-				XContainerSize(buff) = buffSize - marginSize;//修改数据个数
-				count += marginSize;
-				marginSize = 0;
-			}
-			else if(buffSize>0)
-			{//如果小于不够
-				memcpy(data[maxSize - marginSize], buffData, buffSize);
-				XContainerSize(buff) = 0;
-				count += buffSize;
-				marginSize -= buffSize;
-				//数据为空判断是否有读取缓冲区空的方法
-				if (io->m_port.readData_funcPointer)
-				{
-					size_t readSize = 0;
-					if(XContainerCapacity(buff)> marginSize)
-					{
-						readSize = io->m_port.readData_funcPointer(io, buffData, marginSize);
-					}
-					else
-					{
-						readSize = io->m_port.readData_funcPointer(io, buffData, XContainerCapacity(buff));
-					}
-					XContainerSize(buff) += readSize;
-				}
-			}
-			else
+			while (XCircularQueue_receive(io->m_readBuffer, data + count))
 			{
-				break;//无法在获得更多数据
+				++count;
+				if (count >= maxSize)
+					break;
 			}
-		}
+			if (XCircularQueue_isFull(io->m_readBuffer))
+				io->m_port.readBufferEmpty_funcPointer(io);
+			if (count >= maxSize)
+				break;
+			
+		} while (!XCircularQueue_isEmpty(io->m_readBuffer));
+		
 	}
 	return count;
 
 }
 
-XVector* XIODevice_readVector(XIODevice* io, size_t maxSize)
+
+void XIODevice_receive(XIODevice* io, char* data, size_t size)
 {
-	if (io == NULL)
-		return NULL;
-	XVector* v = XVector_New(char);	
-	if (io->m_readBuffer == NULL)
-	{//没有读取缓冲区
-		for (size_t i = 0; i < maxSize; i++)
+	if (io != NULL&&io->m_readBuffer!=NULL)
+	{
+		for (size_t i = 0; i < size; i++)
 		{
-			char byte;
-			if (io->m_port.readData_funcPointer(io, &byte,1))
-				XVector_push_back(v,&byte);
+			XCircularQueue_push(io->m_readBuffer, data + size);
 		}
 	}
-	else if(maxSize!=0)
-	{
-		XVector_resize(v, maxSize);
-		size_t readSize=XIODevice_read(io, XContainerDataPtr(v),maxSize);
-		if(readSize!= maxSize)
-			XVector_resize(v, readSize);
-	}
-	return v;
 }
 
 bool XIODevice_isOpen(XIODevice* io)
@@ -227,7 +187,15 @@ void XIODevice_poll(XIODevice* io)
 
 size_t XIODevice_writeFull(XIODevice* io)
 {
-	if(io!=NULL||io->m_writeBuffer!=NULL)
-		return io->m_port.writeData_funcPointer(io, XContainerDataPtr(io->m_writeBuffer), XContainerSize(io->m_writeBuffer));
-	return 0;
+	size_t count = 0;
+	if (io != NULL && io->m_writeBuffer != NULL)
+	{
+		if (!XCircularQueue_isEmpty(io->m_writeBuffer))
+		{
+			count = XCircularQueue_size(io->m_writeBuffer);
+			io->m_port.writeBufferFull_funcPointer(io);
+			count-= XCircularQueue_size(io->m_writeBuffer);
+		}
+	}
+	return count;
 }
