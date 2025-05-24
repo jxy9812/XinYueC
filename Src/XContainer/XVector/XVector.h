@@ -17,8 +17,7 @@ extern XVtable* XVectorVtable;
 //XVector虚函数表枚举
 enum XVectorEnum
 {
-	EXVector_Clear = EXContainerObject_Clear,
-	EXVector_Resize,
+	EXVector_Resize= XCONTAINEROBJECT_VTABLE_SIZE,
 	EXVector_Push_Front,
 	EXVector_Push_Back,
 	EXVector_Inserts,

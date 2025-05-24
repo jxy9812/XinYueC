@@ -7,14 +7,15 @@ extern "C" {
 #include"XVector.h"
 //XCircularQueue虚函数表
 extern XVtable* XCircularQueueVtable;
-#define XCIRCULARQUEUE_VTABLE_SIZE (XVECTOR_VTABLE_SIZE+4)       //XCircularQueue容器虚函数表大小
+#define XCIRCULARQUEUE_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+5)       //XCircularQueue容器虚函数表大小
 //XCircularQueue虚函数表枚举
 enum XCircularQueueEnum
 {
-	EXCircularQueue_Push = EXVector_Sort + 1,
+	EXCircularQueue_Push = XCONTAINEROBJECT_VTABLE_SIZE,
 	EXCircularQueue_Pop,
 	EXCircularQueue_Top,
 	EXCircularQueue_Receive,
+	EXCircularQueue_IsFull
 };
 //环形队列
 typedef struct XCircularQueue
@@ -30,7 +31,7 @@ void XCircularQueue_init(XCircularQueue* this_queue,size_t typeSize, size_t coun
 //队列创建函数
 #define XCircularQueue_New(Type,count) XCircularQueue_new(sizeof(Type),count)
 XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count);
-#define XCircularQueue_free		XVector_free
+#define XCircularQueue_free		XContainerObject_free
 //插入到队列的队尾
 #define XCircularQueue_Push(this_queue,type,value){type t=value;XCircularQueue_push(this_vector,&t);}
 bool XCircularQueue_push(XCircularQueue* this_queue, void* pvData);
@@ -41,9 +42,10 @@ bool XCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer);
 // 返回队头元素
 #define XCircularQueue_Top(this_queue,Type) (*(Type*)XCircularQueue_top(this_queue))
 void* XCircularQueue_top(XCircularQueue* this_queue);
-#define XCircularQueue_isEmpty	XVector_isEmpty
-#define XCircularQueue_size		XVector_size
-#define XCircularQueue_clear	XVector_clear
+bool XCircularQueue_isFull(XCircularQueue* this_queue);
+#define XCircularQueue_isEmpty	XContainerObject_isEmpty
+#define XCircularQueue_size		XContainerObject_size
+#define XCircularQueue_clear	XContainerObject_clear
 #ifdef __cplusplus
 }
 #endif

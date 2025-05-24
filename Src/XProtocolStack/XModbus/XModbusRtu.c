@@ -117,7 +117,7 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
     //发送完数据后3.5字符内收到了返回信息 重置发送状态
    
     // 读取接收到的字节（平台特定：从串口缓冲区获取）
-    modbus->ioDevice->m_port.readBufferEmpty_funcPointer(modbus->ioDevice, (uint8_t*)&ucByte,1);
+    modbus->ioDevice->m_port.readData_funcPointer(modbus->ioDevice, (uint8_t*)&ucByte,1);
     XVector* recvVector = modbus->ioDevice->m_readBuffer;
     switch (modbus->eRcvState) {
     case STATE_RX_INIT:  // 初始状态（等待总线空闲）
@@ -192,7 +192,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
         {
             if (modbus->sendRemaining != 0)
             {
-                modbus->ioDevice->m_port.writeBufferFull_funcPointer(modbus->ioDevice,XVector_at(dataVector, XVector_size(dataVector)- modbus->sendRemaining),1);
+                modbus->ioDevice->m_port.writeData_funcPointer(modbus->ioDevice,XVector_at(dataVector, XVector_size(dataVector)- modbus->sendRemaining),1);
                 --modbus->sendRemaining;
             }
             else

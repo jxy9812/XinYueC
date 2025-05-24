@@ -24,7 +24,7 @@ void XCircularQueue_class_init()
 {
 	if (XCircularQueueVtable)
 		return;
-	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top,VXCircularQueue_receive };
+	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top,VXCircularQueue_receive,VXCircularQueue_isFull };
 #if !VTABLEISSTACK
 	XCircularQueueVtable = XVtable_new();
 #else
@@ -32,7 +32,7 @@ void XCircularQueue_class_init()
 	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
 #endif
 	//继承的函数
-	XVtable_append_vtable(XCircularQueueVtable, XVectorVtable);
+	XVtable_append_vtable(XCircularQueueVtable, XContainerObjectVtable);
 	//追加函数
 	XVtable_append_array(XCircularQueueVtable, table, sizeof(table) / sizeof(table[0]));
 	//重写的函数
@@ -47,22 +47,22 @@ void XCircularQueue_class_init()
 
 bool VXCircularQueue_isEmpty(const XCircularQueue* this_queue)
 {
-	if (this_queue == NULL)
-		return true;
+	/*if (this_queue == NULL)
+		return true;*/
 	return ((this_queue->m_head) == (this_queue->m_tail));//头指针等于尾指针时为空
 }
 
 bool VXCircularQueue_isFull(const XCircularQueue* this_queue)
 {
-	if (this_queue == NULL)
-		return false;
+	/*if (this_queue == NULL)
+		return false;*/
 	return ((this_queue->m_tail + 1) % XContainerSize(this_queue) == this_queue->m_head);//尾指针下一个位置等于头指针时为满
 }
 
 void VXCircularQueue_clear(XCircularQueue* this_queue)
 {
-	if (this_queue == NULL)
-		return;
+	/*if (this_queue == NULL)
+		return;*/
 	while (!VXCircularQueue_isEmpty(this_queue))
 	{
 		VXCircularQueue_pop(this_queue);
@@ -71,8 +71,8 @@ void VXCircularQueue_clear(XCircularQueue* this_queue)
 
 size_t VXCircularQueue_size(const XCircularQueue* this_queue)
 {
-	if (this_queue == NULL)
-		return 0;
+	/*if (this_queue == NULL)
+		return 0;*/
 	if (this_queue->m_tail >= this_queue->m_head)
 		return this_queue->m_tail - this_queue->m_head;
 	else

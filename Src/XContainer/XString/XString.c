@@ -128,7 +128,7 @@ void XString_clear(XString* this_string)
 	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
 		return;
 	typedef size_t(*funcPtr)(XString*);
-	return ObjectVirtualFunc(this_string, EXVector_Clear, funcPtr)(this_string);
+	return ObjectVirtualFunc(this_string, EXContainerObject_Clear, funcPtr)(this_string);
 }
 
 char XString_at(const XString* this_string, int64_t index)

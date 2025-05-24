@@ -5,7 +5,7 @@ extern "C" {
 #endif
 #include<stdint.h>
 #include<stdbool.h>
-#include"XVector.h"
+#include"XCircularQueueAtomic.h"
 typedef enum /*XIODeviceBase*/
 {
 	XIODeviceBase_NotOpen= 0x0000,//设备未打开
@@ -29,11 +29,11 @@ typedef struct XIODevice_PortFunc
 {
 	//XIOBufferEmpty   writeBufferEmpty_funcPointer;//写入缓冲区空
 	union {
-		XIOBufferFull     writeBufferFull_funcPointer;//写入缓冲区满
+		//XIOBufferFull     writeBufferFull_funcPointer;//写入缓冲区满
 		XIOBufferFull     writeData_funcPointer;//
 	};
 	union{
-		XIOBufferEmpty   readBufferEmpty_funcPointer;
+		//XIOBufferEmpty   readBufferEmpty_funcPointer;
 		XIOBufferEmpty   readData_funcPointer;
 	};
 	//XIOBufferFull     readBufferFull_funcPointer;
@@ -48,16 +48,16 @@ typedef struct XIODevice
 {
 	void* device;//设备
 	uint16_t m_mode;//打开模式
-	XVector* m_writeBuffer;//写入缓冲区
-	XVector* m_readBuffer;//读取缓冲区
+	XCircularQueueAtomic* m_writeBuffer;//写入缓冲区
+	XCircularQueueAtomic* m_readBuffer;//读取缓冲区
 	/* ----------------------- 接口指针-------------------------------------*/
 	XIODevice_PortFunc m_port;//接口
 }XIODevice;
 XIODevice* XIODevice_new(XIODevice_PortFuncInit* port);
 void XIODevice_init(XIODevice* io, XIODevice_PortFuncInit* port);
 void XIODevice_free(XIODevice* io);
-void XIODevice_setWriteBuffer(XIODevice* io,size_t size);
-void XIODevice_setReadBuffer(XIODevice* io, size_t size);
+void XIODevice_setWriteBuffer(XIODevice* io,size_t count);
+void XIODevice_setReadBuffer(XIODevice* io, size_t count);
 void XIODevice_setDevice(XIODevice* io, void* device);
 size_t XIODevice_write(XIODevice* io,const char* data, size_t maxSize);//写入
 size_t XIODevice_writeVector(XIODevice* io, XVector* array);//写入

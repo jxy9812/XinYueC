@@ -54,7 +54,7 @@ void XString_class_init()
 	XVtable_append_vtable(XStringVtable, XVectorVtable);
 	//重写的函数
 	XVtable_At(XStringVtable, EXVector_Erase) = VXString_erase;
-	XVtable_At(XStringVtable,EXVector_Clear)=VXString_clear;
+	XVtable_At(XStringVtable, EXContainerObject_Clear)=VXString_clear;
 	XVtable_At(XStringVtable, EXVector_Remove) = VXString_remove;
 	XVtable_At(XStringVtable, EXVector_Push_Back) = VXString_push_back;
 	XVtable_At(XStringVtable, EXVector_append_Array) = VXString_append;

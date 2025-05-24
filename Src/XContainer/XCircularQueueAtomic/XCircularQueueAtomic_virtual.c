@@ -24,7 +24,7 @@ void XCircularQueueAtomic_class_init()
 {
 	if (XCircularQueueAtomicVtable)
 		return;
-	void* table[] = { VXCircularQueueAtomic_push,VXCircularQueueAtomic_pop,VXCircularQueueAtomic_top,VXCircularQueueAtomic_receive };
+	void* table[] = { VXCircularQueueAtomic_push,VXCircularQueueAtomic_pop,VXCircularQueueAtomic_top,VXCircularQueueAtomic_receive,VXCircularQueueAtomic_isFull };
 #if !VTABLEISSTACK
 	XCircularQueueAtomicVtable = XVtable_new();
 #else
@@ -32,7 +32,7 @@ void XCircularQueueAtomic_class_init()
 	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
 #endif
 	//继承的函数
-	XVtable_append_vtable(XCircularQueueAtomicVtable, XVectorVtable);
+	XVtable_append_vtable(XCircularQueueAtomicVtable, XContainerObjectVtable);
 	//追加函数
 	XVtable_append_array(XCircularQueueAtomicVtable, table, sizeof(table) / sizeof(table[0]));
 	//重写的函数

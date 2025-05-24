@@ -4,19 +4,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XVector.h"
+#include"XCircularQueue.h"
 #include"XAtomic.h"
 //XCircularQueueAtomic虚函数表
 extern XVtable* XCircularQueueAtomicVtable;
-#define XCIRCULARQUEUEATOMIC_VTABLE_SIZE (XVECTOR_VTABLE_SIZE+4)       //XCircularQueueAtomic容器虚函数表大小
-//XCircularQueue虚函数表枚举
-enum XCircularQueueAtomicEnum
-{
-	EXCircularQueueAtomic_Push = EXVector_Sort + 1,
-	EXCircularQueueAtomic_Pop,
-	EXCircularQueueAtomic_Top,
-	EXCircularQueueAtomic_Receive,
-};
+#define XCIRCULARQUEUEATOMIC_VTABLE_SIZE (XCIRCULARQUEUE_VTABLE_SIZE)       //XCircularQueueAtomic容器虚函数表大小
 //环形队列
 typedef struct XCircularQueueAtomic
 {
@@ -31,7 +23,7 @@ void XCircularQueueAtomic_init(XCircularQueueAtomic* this_queue,size_t typeSize,
 //队列创建函数
 #define XCircularQueueAtomic_New(Type,count) XCircularQueueAtomic_new(sizeof(Type),count)
 XCircularQueueAtomic* XCircularQueueAtomic_new(size_t typeSize, size_t count);
-#define XCircularQueueAtomic_free		XVector_free
+#define XCircularQueueAtomic_free		XContainerObject_free
 //插入到队列的队尾
 #define XCircularQueueAtomic_Push(this_queue,type,value){type t=value;XCircularQueueAtomic_push(this_vector,&t);}
 bool XCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* pvData);
@@ -42,9 +34,10 @@ bool XCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuff
 // 返回队头元素
 #define XCircularQueueAtomic_Top(this_queue,Type) (*(Type*)XCircularQueueAtomic_top(this_queue))
 void* XCircularQueueAtomic_top(XCircularQueueAtomic* this_queue);
-#define XCircularQueueAtomic_isEmpty	XVector_isEmpty
-#define XCircularQueueAtomic_size		XVector_size
-#define XCircularQueueAtomic_clear	XVector_clear
+bool XCircularQueueAtomic_isFull(XCircularQueueAtomic* this_queue);
+#define XCircularQueueAtomic_isEmpty	XContainerObject_isEmpty
+#define XCircularQueueAtomic_size		XContainerObject_size
+#define XCircularQueueAtomic_clear		XContainerObject_clear
 #ifdef __cplusplus
 }
 #endif

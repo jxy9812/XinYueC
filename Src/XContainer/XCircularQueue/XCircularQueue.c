@@ -48,4 +48,11 @@ void* XCircularQueue_top(XCircularQueue* this_queue)
 	return ObjectVirtualFunc(this_queue, EXCircularQueue_Top, void* (*)(XCircularQueue*))(this_queue);
 }
 
+bool XCircularQueue_isFull(XCircularQueue* this_queue)
+{
+	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+		return false;
+	return ObjectVirtualFunc(this_queue, EXCircularQueue_IsFull, bool (*)(XCircularQueue*))(this_queue);
+}
+
 #endif

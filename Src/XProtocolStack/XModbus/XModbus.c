@@ -38,9 +38,9 @@ void XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMode mode, uin
 	    modbus->eventQueue = XEventQueue_new(XEventQueue_defaultConfigInit);
     modbus->funcCodeList = XModbusFuncCodeList_new();
 	modbus->mode = mode;
-    assert(func->IO_Port.readBufferEmpty_funcPointer);
+    assert(func->IO_Port.readData_funcPointer);
 
-    assert(func->IO_Port.writeBufferFull_funcPointer);
+    assert(func->IO_Port.writeData_funcPointer);
 
     modbus->errorCode = MB_ENOERR;
     modbus->recvHandleMaster = NULL;
