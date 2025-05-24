@@ -14,7 +14,8 @@ int main(int argc, char* args[])
 	//XPWMDeviceTest();
 	//XModbusTest();
 	//XCylinderTest();	
-	XCircularQueueAtomicTest();
+	//XCircularQueueAtomicTest();
+	XVectorTest();
 	return;
 	XStringVectorTest();
 	cJsonTest();

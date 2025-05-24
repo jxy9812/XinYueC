@@ -40,7 +40,7 @@ void XCircularQueue_class_init()
 	XVtable_At(XCircularQueueVtable, EXContainerObject_Clear) = VXCircularQueue_clear;
 	XVtable_At(XCircularQueueVtable, EXContainerObject_Size) = VXCircularQueue_size;
 #if SHOWCONTAINERSIZE
-	printf("XPriorityQueue size:%d\n", XVtable_size(XCircularQueueVtable));
+	printf("XCircularQueue size:%d\n", XVtable_size(XCircularQueueVtable));
 #endif // SHOWCONTAINERSIZE
 }
 

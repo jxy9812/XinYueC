@@ -252,10 +252,13 @@ void VXVector_append_array(XVector* this_vector, const void* begin, size_t n)
 {
 	if (ISNULL(this_vector, "") ||  ISNULL(begin, "") || ISNULL(n, ""))
 		return;
+	size_t index = XContainerSize(this_vector);
+	//printf("数组Size:%d Capacity:%d n:%d\n", index, XContainerCapacity(this_vector),n);
 	if(XContainerSize(this_vector) + n> XContainerCapacity(this_vector))
 		VXVector_resize(this_vector,XContainerSize(this_vector)+n);
-	memcpy((char*)XContainerDataPtr(this_vector) + (XContainerSize(this_vector))* XContainerTypeSize(this_vector),begin,n* XContainerTypeSize(this_vector));
-	XContainerSize(this_vector)+=n;
+	//printf("数组Size:%d Capacity:%d\n",XContainerSize(this_vector), XContainerCapacity(this_vector));
+	memcpy((char*)XContainerDataPtr(this_vector) + index*XContainerTypeSize(this_vector),begin,n* XContainerTypeSize(this_vector));
+	//XContainerSize(this_vector)+=n;
 }
 void VXVector_pop_front(XVector* this_vector)//删除向量中第一个元素
 {

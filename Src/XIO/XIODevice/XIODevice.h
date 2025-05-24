@@ -5,6 +5,23 @@ extern "C" {
 #endif
 #include<stdint.h>
 #include<stdbool.h>
+#include"XClass.h"
+//XIODevice虚函数表
+extern XVtable* XIODeviceVtable;
+#define XIODEVICE_VTABLE_SIZE (7)       //XIODevice容器虚函数表大小
+//XContainerObject虚函数表枚举
+enum XIODeviceVtableEnum
+{
+	EXIODevice_Free,
+	EXIODevice_IsOpen,
+	EXIODevice_Open,
+	EXIODevice_Write,
+	EXIODevice_WriteFull,
+	EXIODevice_Read,
+	EXIODevice_Receive,
+	EXIODevice_Close,
+	EXIODevice_Poll,
+};
 typedef struct XCircularQueue XCircularQueue;
 typedef enum /*XIODeviceBase*/
 {
@@ -44,6 +61,7 @@ typedef XIODevice_PortFunc XIODevice_PortFuncInit;
 //IO设备
 typedef struct XIODevice
 {
+	XClass m_parent;//继承类
 	void* device;//设备
 	uint16_t m_mode;//打开模式
 	XCircularQueue* m_writeBuffer;//写入缓冲区
@@ -51,6 +69,8 @@ typedef struct XIODevice
 	/* ----------------------- 接口指针-------------------------------------*/
 	XIODevice_PortFunc m_port;//接口
 }XIODevice;
+//初始化类
+void XIODevice_class_init();
 XIODevice* XIODevice_new(XIODevice_PortFuncInit* port);
 void XIODevice_init(XIODevice* io, XIODevice_PortFuncInit* port);
 void XIODevice_free(XIODevice* io);

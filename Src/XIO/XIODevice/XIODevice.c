@@ -15,13 +15,14 @@ XIODevice* XIODevice_new(XIODevice_PortFuncInit* port)
 }
 void XIODevice_init(XIODevice* io, XIODevice_PortFuncInit* port)
 {
-	if (io&&port)
-	{
-		//开始初始化
-		memset(io, 0, sizeof(XIODevice) - sizeof(XIODevice_PortFunc));
-		//绑定函数指针
-		memcpy(&(io->m_port), port, sizeof(XIODevice_PortFunc));
-	}
+	if (ISNULL(io, "") || ISNULL(port, ""))
+		return;
+	XIODevice_class_init();
+	XClassGetVtable(io) = XIODeviceVtable;
+	//开始初始化
+	memset(io, 0, sizeof(XIODevice) - sizeof(XIODevice_PortFunc));
+	//绑定函数指针
+	memcpy(&(io->m_port), port, sizeof(XIODevice_PortFunc));
 }
 void XIODevice_free(XIODevice* io)
 {
