@@ -9,7 +9,7 @@ DWORD WINAPI ThreadFunc1(LPVOID lpParam)
 	XCircularQueueAtomic* queue = lpParam;
 	//int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
 
-	for (size_t i = 0; i < 1000; i++)
+	for (size_t i = 0; i < 100000; i++)
 	{
 		int n = i;
 		while(!XCircularQueueAtomic_push(queue, &n));
@@ -43,16 +43,18 @@ void XCircularQueueAtomicTest()
 {
 #if XCircularQueueAtomic_ON
 	printf("循环队列 测试\n");
-	XCircularQueueAtomic* queue = XCircularQueueAtomic_New(int,5);
+	XCircularQueueAtomic* queue = XCircularQueueAtomic_New(int,1000);
 	
 	threadTest(queue);
 	int index = 0;
+	int value;
 	while (true)
 	{
-		while (!XCircularQueueAtomic_isEmpty(queue))
+		if (XCircularQueueAtomic_receive(queue, &value))
 		{
-			printf("index:%d %d size:%d\n",index++, XCircularQueueAtomic_Top(queue, int), XCircularQueueAtomic_size(queue));
-			XCircularQueueAtomic_pop(queue);
+
+			printf("index:%d %d size:%d\n",index++,value ,XCircularQueueAtomic_size(queue));
+			//XCircularQueueAtomic_pop(queue);
 		}
 	}
 	

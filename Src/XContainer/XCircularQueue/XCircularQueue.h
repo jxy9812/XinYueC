@@ -7,20 +7,21 @@ extern "C" {
 #include"XVector.h"
 //XCircularQueue虚函数表
 extern XVtable* XCircularQueueVtable;
-#define XCIRCULARQUEUE_VTABLE_SIZE (XVECTOR_VTABLE_SIZE+3)       //XCircularQueue容器虚函数表大小
+#define XCIRCULARQUEUE_VTABLE_SIZE (XVECTOR_VTABLE_SIZE+4)       //XCircularQueue容器虚函数表大小
 //XCircularQueue虚函数表枚举
 enum XCircularQueueEnum
 {
 	EXCircularQueue_Push = EXVector_Sort + 1,
 	EXCircularQueue_Pop,
 	EXCircularQueue_Top,
+	EXCircularQueue_Receive,
 };
 //环形队列
 typedef struct XCircularQueue
 {
 	XVector m_vector;//基本数据
-	volatile size_t  m_head;//队头索引
-	volatile size_t  m_tail;//队尾索引
+	size_t  m_head;//队头索引
+	size_t  m_tail;//队尾索引
 }XCircularQueue;
 //初始化类
 void XCircularQueue_class_init();
@@ -32,10 +33,12 @@ XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count);
 #define XCircularQueue_free		XVector_free
 //插入到队列的队尾
 #define XCircularQueue_Push(this_queue,type,value){type t=value;XCircularQueue_push(this_vector,&t);}
-bool XCircularQueue_push(XCircularQueue* this_queue, void* LpValue);
+bool XCircularQueue_push(XCircularQueue* this_queue, void* pvData);
 //出队
 void XCircularQueue_pop(XCircularQueue* this_queue);
-// 返回优先队列堆顶元素
+//接收数据并且出队
+bool XCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer);
+// 返回队头元素
 #define XCircularQueue_Top(this_queue,Type) (*(Type*)XCircularQueue_top(this_queue))
 void* XCircularQueue_top(XCircularQueue* this_queue);
 #define XCircularQueue_isEmpty	XVector_isEmpty

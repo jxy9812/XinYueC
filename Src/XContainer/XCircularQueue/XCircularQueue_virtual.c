@@ -17,13 +17,14 @@ static size_t VXCircularQueue_size(const XCircularQueue* this_queue);
 static bool VXCircularQueue_push(XCircularQueue* this_queue, void* LpValue);
 //出队
 static void VXCircularQueue_pop(XCircularQueue* this_queue);
-// 返回优先队列堆顶元素
+// 返回队头元素
 static void* VXCircularQueue_top(XCircularQueue* this_queue);
+static bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer);
 void XCircularQueue_class_init()
 {
 	if (XCircularQueueVtable)
 		return;
-	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top};
+	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top,VXCircularQueue_receive };
 #if !VTABLEISSTACK
 	XCircularQueueVtable = XVtable_new();
 #else
@@ -102,5 +103,16 @@ void* VXCircularQueue_top(XCircularQueue* this_queue)
 	if(VXCircularQueue_isEmpty(this_queue))
 		return NULL;
 	return ((char*)XContainerDataPtr(this_queue)) + (this_queue->m_head * XContainerTypeSize(this_queue));
+}
+bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer)
+{
+	if (VXCircularQueue_isEmpty(this_queue))
+		return false;
+	void* pvTop = ((char*)XContainerDataPtr(this_queue)) + (this_queue->m_head * XContainerTypeSize(this_queue));
+	memcpy(pvBuffer, pvTop, XContainerTypeSize(this_queue));
+	if (XContainerDataFreeMethod(this_queue) != NULL)
+		XContainerDataFreeMethod(this_queue)(pvTop);
+	this_queue->m_head = (this_queue->m_head + 1) % XContainerSize(this_queue);//指针后移取模实现环形
+	return true;
 }
 #endif

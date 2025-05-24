@@ -20,11 +20,11 @@ XCircularQueueAtomic* XCircularQueueAtomic_new(size_t typeSize, size_t count)
 	return this_queue;
 }
 
-bool XCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* LpValue)
+bool XCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* pvData)
 {
-	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(pvData, "") ||ISNULL(ObjectVtable(this_queue), ""))
 		return false;
-	return ObjectVirtualFunc(this_queue, EXCircularQueueAtomic_Push, bool (*)(XCircularQueueAtomic*, void*))(this_queue, LpValue);
+	return ObjectVirtualFunc(this_queue, EXCircularQueueAtomic_Push, bool (*)(XCircularQueueAtomic*, void*))(this_queue, pvData);
 }
 
 void XCircularQueueAtomic_pop(XCircularQueueAtomic* this_queue)
@@ -32,6 +32,13 @@ void XCircularQueueAtomic_pop(XCircularQueueAtomic* this_queue)
 	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
 		return;
 	ObjectVirtualFunc(this_queue, EXCircularQueueAtomic_Pop, void (*)(XCircularQueueAtomic*))(this_queue);
+}
+
+bool XCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuffer)
+{
+	if (ISNULL(this_queue, "") || ISNULL(pvBuffer, "")||ISNULL(ObjectVtable(this_queue), ""))
+		return;
+	return ObjectVirtualFunc(this_queue, EXCircularQueueAtomic_Receive, bool (*)(XCircularQueueAtomic*,void*))(this_queue, pvBuffer);
 }
 
 void* XCircularQueueAtomic_top(XCircularQueueAtomic* this_queue)

@@ -45,15 +45,18 @@ void XTimer_start(XTimer*timer);
 void XTimer_stop(XTimer* timer);
 //设置定时时间
 void XTimer_setInterval(XTimer* timer,int value);
-
 //超时回调函数
 void XTimer_out(XTimer* timer);
+
+/*                              以毫秒为单位的时间锉                                     */
 //当前时间  累计添加
 void XTimer_inc(size_t tick_period);
 //设置当前时间 时间锉
 void XTimer_setCurrentTime(size_t time);
 //获得当前时间
 size_t XTimer_getCurrentTime();
+//设置获取当前时间的函数方法
+void XTimer_setCurrentTimeFunc(size_t(*get)());
 #ifdef __cplusplus
 }
 #endif

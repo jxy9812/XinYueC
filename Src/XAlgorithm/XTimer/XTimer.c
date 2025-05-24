@@ -140,6 +140,7 @@ void XTimer_out(XTimer* timer)
 	if(timer->m_port.timerCallback != NULL)
 		timer->m_port.timerCallback(timer);
 }
+static size_t(*getCurrentTime)()=NULL;
 static size_t currentTime=0;
 void XTimer_inc(size_t tick_period)
 {
@@ -153,5 +154,12 @@ void XTimer_setCurrentTime(size_t time)
 
 size_t XTimer_getCurrentTime()
 {
-	return currentTime;
+	if(getCurrentTime==NULL)
+		return currentTime;
+	return getCurrentTime();
+}
+
+void XTimer_setCurrentTimeFunc(size_t(*get)())
+{
+	getCurrentTime = get;
 }

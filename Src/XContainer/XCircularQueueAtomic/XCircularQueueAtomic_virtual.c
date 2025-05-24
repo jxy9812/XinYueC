@@ -17,13 +17,14 @@ static size_t VXCircularQueueAtomic_size(const XCircularQueueAtomic* this_queue)
 static bool VXCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* LpValue);
 //出队
 static void VXCircularQueueAtomic_pop(XCircularQueueAtomic* this_queue);
-// 返回优先队列堆顶元素
+// 返回队头元素
 static void* VXCircularQueueAtomic_top(XCircularQueueAtomic* this_queue);
+static bool VXCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuffer);
 void XCircularQueueAtomic_class_init()
 {
 	if (XCircularQueueAtomicVtable)
 		return;
-	void* table[] = { VXCircularQueueAtomic_push,VXCircularQueueAtomic_pop,VXCircularQueueAtomic_top};
+	void* table[] = { VXCircularQueueAtomic_push,VXCircularQueueAtomic_pop,VXCircularQueueAtomic_top,VXCircularQueueAtomic_receive };
 #if !VTABLEISSTACK
 	XCircularQueueAtomicVtable = XVtable_new();
 #else
@@ -108,5 +109,18 @@ void* VXCircularQueueAtomic_top(XCircularQueueAtomic* this_queue)
 		return NULL;
 	size_t head = XAtomic_load_size_t(&(this_queue->m_head));
 	return ((char*)XContainerDataPtr(this_queue)) + (head * XContainerTypeSize(this_queue));
+}
+bool VXCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuffer)
+{
+	if (VXCircularQueueAtomic_isEmpty(this_queue))
+		return false;
+	size_t head = XAtomic_load_size_t(&(this_queue->m_head));
+	void* pvTop = ((char*)XContainerDataPtr(this_queue)) + (head * XContainerTypeSize(this_queue));
+	memcpy(pvBuffer, pvTop, XContainerTypeSize(this_queue));
+	if (XContainerDataFreeMethod(this_queue) != NULL)
+		XContainerDataFreeMethod(this_queue)(pvTop);
+	// 更新队头指针(原子操作)
+	XAtomic_store_size_t(&(this_queue->m_head), (head + 1) % XContainerSize(this_queue));
+	return true;
 }
 #endif
