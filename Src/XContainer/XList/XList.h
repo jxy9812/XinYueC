@@ -33,7 +33,7 @@ enum XListVtableEnum
 };
 typedef struct XList
 {
-	XContainerObject m_object;
+	XContainerObject m_parent;
 	XEquality m_equality;//相等比较函数
 }XList;
 //初始化类

@@ -22,7 +22,7 @@ enum XMapEnum
 };
 typedef struct XMap
 {
-	XContainerObject m_object;//基本数据
+	XContainerObject m_parent;//基本数据
 	size_t m_keyTypeSize;//第二组数据类型大小
 	XEquality m_KeyEquality;//key的相等比较函数
 	XLess m_KeyLess;//key小于比较函数

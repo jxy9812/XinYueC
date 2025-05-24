@@ -17,7 +17,7 @@ void XQueue_init(XQueue* this_queue, size_t typeSize)
 		return;
 	XList_init(this_queue, typeSize);
 	XQueue_class_init();
-	ObjectVtable(this_queue) = XQueueVtable;
+	XClassGetVtable(this_queue) = XQueueVtable;
 }
 
 void XQueue_free(XQueue* this_queue)
@@ -32,18 +32,18 @@ void XQueue_clear(XQueue* this_queue)
 
 void XQueue_push(XQueue* this_queue, void* LpValue)
 {
-	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return ;
 	typedef void (*funcPtr)(XQueue*, void*);
-	ObjectVirtualFunc(this_queue, EXQueue_Push, funcPtr)(this_queue, LpValue);
+	XClassGetVirtualFunc(this_queue, EXQueue_Push, funcPtr)(this_queue, LpValue);
 }
 
 void XQueue_pop(XQueue* this_queue)
 {
-	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return ;
 	typedef void (*funcPtr)(XQueue*);
-	ObjectVirtualFunc(this_queue, EXQueue_Pop, funcPtr)(this_queue);
+	XClassGetVirtualFunc(this_queue, EXQueue_Pop, funcPtr)(this_queue);
 }
 
 void* XQueue_front(XQueue* this_queue)
@@ -58,10 +58,10 @@ void* XQueue_back(XQueue* this_queue)
 
 void* XQueue_top(XQueue* this_queue)
 {
-	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return;
 	typedef void* (*funcPtr)(XQueue*);
-	return ObjectVirtualFunc(this_queue, EXQueue_Top, funcPtr)(this_queue);
+	return XClassGetVirtualFunc(this_queue, EXQueue_Top, funcPtr)(this_queue);
 }
 
 bool XQueue_isEmpty(XQueue* this_queue)

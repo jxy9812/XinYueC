@@ -294,7 +294,7 @@ XBTreeNode** XBTree_findChildisParent(struct XBTreeNode* Child)
 		return XBTree_GetTreeNode(Parent, XBTreeLChild);
 	if (ParentToRChild == Child)
 		return XBTree_GetTreeNode(Parent, XBTreeRChild);
-	//isNULL(isNULLInfo(0, "在父节点找不到孩子"));
+	//ArgIsNULL(isNULLInfo(0, "在父节点找不到孩子"));
 	return NULL;
 }
 

@@ -21,7 +21,7 @@ XVector_iterator* XVector_iterator_add(XVector* this_vector,XVector_iterator*it)
 	XVector_iterator*  back= XVector_back(this_vector);
 	if(it== back)//如果是最后一个元素则返回空表示遍历完成了
 		return NULL;
-	return (char*)it + this_vector->m_object.m_typeSize;//指向下一个元素
+	return (char*)it + this_vector->m_parent.m_typeSize;//指向下一个元素
 }
 
 void XVector_iterator_for_each(XVector* this_vector, XFor_each ForFunction, void* args)

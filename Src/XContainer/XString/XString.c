@@ -18,7 +18,7 @@ void XString_init(XString* this_string)
 	XVector_init(this_string, sizeof(char));
 	this_string->m_vector.m_equality = XEquality_char;
 	XString_class_init();
-	ObjectVtable(this_string) = XStringVtable;
+	XClassGetVtable(this_string) = XStringVtable;
 	XString_clear(this_string);
 }
 
@@ -34,74 +34,74 @@ void XString_push_front(XString* this_string, char c)
 
 void XString_push_back(XString* this_string, char c)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
 	typedef void (*funcPtr)(XString*, char);
-	ObjectVirtualFunc(this_string, EXString_Push_Back, funcPtr)(this_string, c);
+	XClassGetVirtualFunc(this_string, EXString_Push_Back, funcPtr)(this_string, c);
 }
 
 void XString_append(XString* this_string, const char* string)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
 	typedef void (*funcPtr)(XString*, const char*);
-	ObjectVirtualFunc(this_string, EXString_Append, funcPtr)(this_string, string);
+	XClassGetVirtualFunc(this_string, EXString_Append, funcPtr)(this_string, string);
 }
 
 void XString_assign(XString* this_string, const char* string)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
 	typedef void (*funcPtr)(XString*, const char*);
-	ObjectVirtualFunc(this_string, EXString_Assign, funcPtr)(this_string, string);
+	XClassGetVirtualFunc(this_string, EXString_Assign, funcPtr)(this_string, string);
 }
 
 void XString_insert(XString* this_string, const int64_t index, const char* string)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), "")||ISNULL(string, ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), "")||ISNULL(string, ""))
 		return;
 	typedef void (*funcPtr)(XString*, int64_t, const char*);
-	ObjectVirtualFunc(this_string, EXString_Insert, funcPtr)(this_string, index, string);
+	XClassGetVirtualFunc(this_string, EXString_Insert, funcPtr)(this_string, index, string);
 }
 
 void XString_pop_front(XString* this_string)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
 	typedef void (*funcPtr)(XString*);
-	ObjectVirtualFunc(this_string, EXString_Pop_Front, funcPtr)(this_string);
+	XClassGetVirtualFunc(this_string, EXString_Pop_Front, funcPtr)(this_string);
 }
 
 void XString_pop_back(XString* this_string)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
 	typedef void (*funcPtr)(XString*);
-	ObjectVirtualFunc(this_string, EXString_Pop_Back, funcPtr)(this_string);
+	XClassGetVirtualFunc(this_string, EXString_Pop_Back, funcPtr)(this_string);
 }
 
 void XString_erase(XString* this_string, void* LpValue)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
 	typedef void (*funcPtr)(XString*, void*);
-	ObjectVirtualFunc(this_string, EXVector_Erase, funcPtr)(this_string, LpValue);
+	XClassGetVirtualFunc(this_string, EXVector_Erase, funcPtr)(this_string, LpValue);
 }
 
 bool XString_isEmpty(const XString* this_string)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return true;
 	typedef bool(*funcPtr)(XString*);
-	return ObjectVirtualFunc(this_string, EXString_Empty, funcPtr)(this_string);
+	return XClassGetVirtualFunc(this_string, EXString_Empty, funcPtr)(this_string);
 }
 
 size_t XString_size(const XString* this_string)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return 0;
 	typedef size_t (*funcPtr)(XString*);
-	return ObjectVirtualFunc(this_string, EXString_Size, funcPtr)(this_string);
+	return XClassGetVirtualFunc(this_string, EXString_Size, funcPtr)(this_string);
 	//XVector_size(this_string);
 }
 
@@ -117,18 +117,18 @@ void XString_free(const XString* this_string)
 
 void XString_remove(XString* this_string, int64_t index, int64_t n)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
 	typedef size_t(*funcPtr)(XString*, int64_t, int64_t);
-	return ObjectVirtualFunc(this_string, EXVector_Remove, funcPtr)(this_string,index,n);
+	return XClassGetVirtualFunc(this_string, EXVector_Remove, funcPtr)(this_string,index,n);
 }
 
 void XString_clear(XString* this_string)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
 	typedef size_t(*funcPtr)(XString*);
-	return ObjectVirtualFunc(this_string, EXContainerObject_Clear, funcPtr)(this_string);
+	return XClassGetVirtualFunc(this_string, EXContainerObject_Clear, funcPtr)(this_string);
 }
 
 char XString_at(const XString* this_string, int64_t index)
@@ -138,10 +138,10 @@ char XString_at(const XString* this_string, int64_t index)
 
 const char* XString_data(const XString* this_string)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return NULL;
 	typedef const char* (*funcPtr)(const XString*);
-	return ObjectVirtualFunc(this_string, EXString_Data, funcPtr)(this_string);
+	return XClassGetVirtualFunc(this_string, EXString_Data, funcPtr)(this_string);
 }
 
 const char* XString_c_str(const XString* this_string)
@@ -151,33 +151,33 @@ const char* XString_c_str(const XString* this_string)
 
 int64_t XString_find_first_of(const XString* this_string, const char* subStr)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return -1;
 	typedef const char* (*funcPtr)(const XString*, const char*);
-	return ObjectVirtualFunc(this_string, EXString_Find_First_Of, funcPtr)(this_string,subStr);
+	return XClassGetVirtualFunc(this_string, EXString_Find_First_Of, funcPtr)(this_string,subStr);
 }
 
 int64_t XString_find_last_of(const XString* this_string, const char* subStr)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return -1;
 	typedef const char* (*funcPtr)(const XString*, const char*);
-	return ObjectVirtualFunc(this_string, EXString_Find_Last_Of, funcPtr)(this_string, subStr);
+	return XClassGetVirtualFunc(this_string, EXString_Find_Last_Of, funcPtr)(this_string, subStr);
 }
 
 int64_t XString_find_first_not_of(const XString* this_string, const char* subStr)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return -1;
 	typedef const char* (*funcPtr)(const XString*, const char*);
-	return ObjectVirtualFunc(this_string, EXString_Find_First_Not_Of, funcPtr)(this_string, subStr);
+	return XClassGetVirtualFunc(this_string, EXString_Find_First_Not_Of, funcPtr)(this_string, subStr);
 }
 
 int64_t XString_find_last_not_of(const XString* this_string, const char* subStr)
 {
-	if (ISNULL(this_string, "") || ISNULL(ObjectVtable(this_string), ""))
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return -1;
 	typedef const char* (*funcPtr)(const XString*, const char*);
-	return ObjectVirtualFunc(this_string, EXString_Find_Last_Not_Of, funcPtr)(this_string, subStr);
+	return XClassGetVirtualFunc(this_string, EXString_Find_Last_Not_Of, funcPtr)(this_string, subStr);
 }
 #endif

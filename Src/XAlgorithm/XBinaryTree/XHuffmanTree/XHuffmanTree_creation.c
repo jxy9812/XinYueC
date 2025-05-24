@@ -32,7 +32,7 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 	{
 		XHfmNode* LPNode = XPriorityQueue_Top(queue, XHfmNode*);
 		XPriorityQueue_pop(queue);
-		//printf("isNULL:%s data:%d count:%d\n", XBTree_GetData(LPNode, 0, XHfmNodeData).code==0 ? "true" : "false", XBTree_GetData(LPNode, 0, XHfmNodeData).ch, XBTree_GetData(LPNode, 0, XHfmNodeData).count);
+		//printf("ArgIsNULL:%s data:%d count:%d\n", XBTree_GetData(LPNode, 0, XHfmNodeData).code==0 ? "true" : "false", XBTree_GetData(LPNode, 0, XHfmNodeData).ch, XBTree_GetData(LPNode, 0, XHfmNodeData).count);
 		if (LPleft == NULL)
 		{
 			LPleft = LPNode;

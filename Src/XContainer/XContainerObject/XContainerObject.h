@@ -31,7 +31,7 @@ enum XContainerObjectVtableEnum
 //容器基类
 typedef struct XContainerObject
 {
-	XClassObject m_object;
+	XClass m_parent;
 	void* m_data;//指向容器数据的指针
 	XCDataFreeMethod m_dataFreeMethod;//数据释放方法
 	size_t  m_capacity;//当前容器能容纳的最大元素数量

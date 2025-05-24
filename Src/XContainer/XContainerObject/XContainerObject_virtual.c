@@ -90,7 +90,7 @@ void VXContainerObject_free(XContainerObject* Object)
 		return 0;
 	//printf("准备释放\n");
 	XContainerObject_clear(Object);
-	ObjectVtable(Object) = NULL;
+	XClassGetVtable(Object) = NULL;
 	Object->m_capacity = 0;
 	Object->m_size = 0;
 	Object->m_typeSize = 0;

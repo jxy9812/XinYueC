@@ -19,33 +19,33 @@ void XPriorityQueue_init(XPriorityQueue* this_queue, size_t typeSize, XCompare c
 	XVector_init(this_queue, typeSize);
 	XPriorityQueue_class_init();
 	this_queue->m_compare = compare;
-	ObjectVtable(this_queue)=XPriorityQueueVtable;
+	XClassGetVtable(this_queue)=XPriorityQueueVtable;
 }
 
 
 void XPriorityQueue_push(XPriorityQueue* this_queue, void* LpValue)
 {
-	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return ;
 	typedef void (*funcPtr)(XPriorityQueue*, void*);
-	ObjectVirtualFunc(this_queue, EXPriorityQueue_Push, funcPtr)(this_queue, LpValue);
+	XClassGetVirtualFunc(this_queue, EXPriorityQueue_Push, funcPtr)(this_queue, LpValue);
 }
 
 
 void XPriorityQueue_pop(XPriorityQueue* this_queue)
 {
-	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return;
 	typedef void (*funcPtr)(XPriorityQueue*);
-	ObjectVirtualFunc(this_queue, EXPriorityQueue_Pop, funcPtr)(this_queue);
+	XClassGetVirtualFunc(this_queue, EXPriorityQueue_Pop, funcPtr)(this_queue);
 }
 
 void* XPriorityQueue_top(XPriorityQueue* this_queue)
 {
-	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return NULL;
 	typedef void* (*funcPtr)(XPriorityQueue*);
-	return ObjectVirtualFunc(this_queue, EXPriorityQueue_Top, funcPtr)(this_queue);
+	return XClassGetVirtualFunc(this_queue, EXPriorityQueue_Top, funcPtr)(this_queue);
 }
 
 bool XPriorityQueue_isEmpty(XPriorityQueue* this_queue)

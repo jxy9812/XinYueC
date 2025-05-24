@@ -38,7 +38,7 @@ enum XVectorEnum
 };
 typedef struct XVector
 {
-	XContainerObject m_object;
+	XContainerObject m_parent;
 	XEquality m_equality;//相等比较函数
 }XVector;
 //初始化类

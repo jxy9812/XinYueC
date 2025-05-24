@@ -9,7 +9,7 @@ void XCircularQueue_init(XCircularQueue* this_queue, size_t typeSize, size_t cou
 	this_queue->m_head = 0;
 	this_queue->m_tail = 0;
 	XCircularQueue_class_init();
-	ObjectVtable(this_queue) = XCircularQueueVtable;
+	XClassGetVtable(this_queue) = XCircularQueueVtable;
 }
 XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count)
 {
@@ -22,37 +22,37 @@ XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count)
 
 bool XCircularQueue_push(XCircularQueue* this_queue, void* pvData)
 {
-	if (ISNULL(this_queue, "") || ISNULL(pvData, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(pvData, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return false;
-	return ObjectVirtualFunc(this_queue, EXCircularQueue_Push, bool (*)(XCircularQueue*, void*))(this_queue, pvData);
+	return XClassGetVirtualFunc(this_queue, EXCircularQueue_Push, bool (*)(XCircularQueue*, void*))(this_queue, pvData);
 }
 
 void XCircularQueue_pop(XCircularQueue* this_queue)
 {
-	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return;
-	ObjectVirtualFunc(this_queue, EXCircularQueue_Pop, void (*)(XCircularQueue*))(this_queue);
+	XClassGetVirtualFunc(this_queue, EXCircularQueue_Pop, void (*)(XCircularQueue*))(this_queue);
 }
 
 bool XCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer)
 {
-	if (ISNULL(this_queue, "") || ISNULL(pvBuffer, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(pvBuffer, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return false;
-	return ObjectVirtualFunc(this_queue, EXCircularQueue_Receive, bool (*)(XCircularQueue*, void*))(this_queue, pvBuffer);
+	return XClassGetVirtualFunc(this_queue, EXCircularQueue_Receive, bool (*)(XCircularQueue*, void*))(this_queue, pvBuffer);
 }
 
 void* XCircularQueue_top(XCircularQueue* this_queue)
 {
-	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return NULL;
-	return ObjectVirtualFunc(this_queue, EXCircularQueue_Top, void* (*)(XCircularQueue*))(this_queue);
+	return XClassGetVirtualFunc(this_queue, EXCircularQueue_Top, void* (*)(XCircularQueue*))(this_queue);
 }
 
 bool XCircularQueue_isFull(XCircularQueue* this_queue)
 {
-	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
+	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return false;
-	return ObjectVirtualFunc(this_queue, EXCircularQueue_IsFull, bool (*)(XCircularQueue*))(this_queue);
+	return XClassGetVirtualFunc(this_queue, EXCircularQueue_IsFull, bool (*)(XCircularQueue*))(this_queue);
 }
 
 #endif

@@ -296,7 +296,7 @@ int XString_size(const struct XString* this_XString)
 //交换
 void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringTwo)
 {
-	if (ISNULL(this_XStringOne, "")) || isNULL(isNULLInfo(this_XStringTwo, "")))
+	if (ISNULL(this_XStringOne, "")) || ArgIsNULL(isNULLInfo(this_XStringTwo, "")))
 		return NULL;
 	struct XString* stringOne = (struct XString*)this_XStringOne;
 	struct XString* stringTwo = (struct XString*)this_XStringTwo;
@@ -334,7 +334,7 @@ char* XString_data(const XString* this_XString)
 void VXString_resize(XString* this_string, size_t len)
 {
 	typedef void (*funcPtr)(XVector*, size_t);
-	VtableFunc(XVectorVtable, EXVector_Resize, funcPtr)(this_string,len+1);
+	XVtableGetFunc(XVectorVtable, EXVector_Resize, funcPtr)(this_string,len+1);
 }
 
 void VXString_push_back(XString* this_string, char c)
@@ -364,7 +364,7 @@ void VXString_insert(XString* this_string, const int64_t index, const char* stri
 		return;
 	//void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n);
 	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
-	VtableFunc(XVectorVtable, EXVector_Inserts, funcPtr)(this_string,index,string,strlen(string));
+	XVtableGetFunc(XVectorVtable, EXVector_Inserts, funcPtr)(this_string,index,string,strlen(string));
 }
 
 //void VXString_pop_front(XString* this_string)
@@ -372,7 +372,7 @@ void VXString_insert(XString* this_string, const int64_t index, const char* stri
 //	if (VXString_empty(this_string))
 //		return;
 //	typedef void (*funcPtr)(XVector*, void*);
-//	VtableFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_string, "");
+//	XVtableGetFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_string, "");
 //}
 
 void VXString_pop_back(XString* this_string)
@@ -381,7 +381,7 @@ void VXString_pop_back(XString* this_string)
 		return;
 	//void XVector_remove(XVector* this_vector, int64_t index, int64_t n);
 	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
-	VtableFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string,XContainerSize(this_string)-2,1);
+	XVtableGetFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string,XContainerSize(this_string)-2,1);
 }
 
 void VXString_remove(XString* this_string, int64_t index, int64_t n)
@@ -391,7 +391,7 @@ void VXString_remove(XString* this_string, int64_t index, int64_t n)
 	if (index < 0 || index >= XContainerSize(this_string)-1)
 		return;
 	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
-	VtableFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string, index, n);
+	XVtableGetFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string, index, n);
 }
 
 void VXString_erase(XString* this_string, void* LpValue)
@@ -401,7 +401,7 @@ void VXString_erase(XString* this_string, void* LpValue)
 	if ((char*)XContainerDataPtr(this_string) + XContainerSize(this_string) - 1 == LpValue)
 		return;
 	typedef void (*funcPtr)(XVector*, void*);
-	VtableFunc(XVectorVtable, EXVector_Erase, funcPtr)(this_string, LpValue);
+	XVtableGetFunc(XVectorVtable, EXVector_Erase, funcPtr)(this_string, LpValue);
 }
 
 void VXString_clear(XString* this_string)
@@ -410,7 +410,7 @@ void VXString_clear(XString* this_string)
 		return;
 	XContainerSize(this_string)=0;
 	typedef void (*funcPtr)(XVector*, void*);
-	VtableFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_string,"");
+	XVtableGetFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_string,"");
 }
 
 bool VXString_empty(const XString* this_string)

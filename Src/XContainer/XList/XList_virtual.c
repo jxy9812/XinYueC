@@ -68,9 +68,9 @@ XListNode* VXList_push_front(XList* this_list, void* LpValue)
 		return NULL;
 	XList* list = this_list;
 	XListNode* NewNode = XList_push_back(this_list, LpValue);
-	if (list->m_object.m_size != 0)
+	if (list->m_parent.m_size != 0)
 	{
-		list->m_object.m_data = NewNode;
+		list->m_parent.m_data = NewNode;
 	}
 	return NewNode;
 }
@@ -86,25 +86,25 @@ XListNode* VXList_push_back(XList* this_list, void* LpValue)
 		perror("开辟节点失败");
 		exit(-1);
 	}
-	NewNode->date = XMemory_malloc(list->m_object.m_typeSize);//开辟节点内储存数据的空间
-	memcpy(NewNode->date, LpValue, list->m_object.m_typeSize);//拷贝数据
-	if (list->m_object.m_size == 0)
+	NewNode->date = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
+	memcpy(NewNode->date, LpValue, list->m_parent.m_typeSize);//拷贝数据
+	if (list->m_parent.m_size == 0)
 	{
-		list->m_object.m_data = NewNode;
+		list->m_parent.m_data = NewNode;
 		NewNode->next = NewNode;
 		NewNode->prev = NewNode;
 	}
 	else
 	{
-		XListNode* pfront = list->m_object.m_data;//原头节点
+		XListNode* pfront = list->m_parent.m_data;//原头节点
 		XListNode* pback = pfront->prev;//原尾节点
 		NewNode->next = pfront;
 		NewNode->prev = pback;
 		pfront->prev = NewNode;
 		pback->next = NewNode;
 	}
-	list->m_object.m_size++;
-	list->m_object.m_capacity++;
+	list->m_parent.m_size++;
+	list->m_parent.m_capacity++;
 	return NewNode;
 }
 
@@ -127,20 +127,20 @@ void VXList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t 
 				perror("开辟节点失败");
 				exit(-1);
 			}
-			newNode->date = XMemory_malloc(list->m_object.m_typeSize);//开辟节点内储存数据的空间
-			memcpy(newNode->date, LpValue, list->m_object.m_typeSize);//拷贝数据
+			newNode->date = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
+			memcpy(newNode->date, LpValue, list->m_parent.m_typeSize);//拷贝数据
 
 			newNode->prev = left;
 			newNode->next = curNode;
 			left->next = newNode;
 			curNode->prev = newNode;
 
-			if (curNode == list->m_object.m_data)
+			if (curNode == list->m_parent.m_data)
 			{
-				list->m_object.m_data = newNode;
+				list->m_parent.m_data = newNode;
 			}
-			list->m_object.m_size++;
-			list->m_object.m_capacity++;
+			list->m_parent.m_size++;
+			list->m_parent.m_capacity++;
 		}
 		else
 		{
@@ -174,7 +174,7 @@ void VXList_insert_array(XList* this_list, XListNode* curNode, const void* begin
 	}
 	for (size_t i = 0; i < n; i++)
 	{
-		VXList_inserts(this_list, curNode, (char*)begin + i * list->m_object.m_typeSize,1);
+		VXList_inserts(this_list, curNode, (char*)begin + i * list->m_parent.m_typeSize,1);
 	}
 }
 //删除
@@ -206,19 +206,19 @@ void VXList_erase(XList* this_list, XListNode* node)
 		XMemory_free(node->date);//释放节点的数据
 	}
 	XMemory_free(node);//释放节点
-	if (list->m_object.m_size == 1)
+	if (list->m_parent.m_size == 1)
 	{
-		this_list->m_object.m_data = NULL;
+		this_list->m_parent.m_data = NULL;
 	}
 	else
 	{
 		nextNode->prev = prevNode;
 		prevNode->next = nextNode;
-		if (this_list->m_object.m_data == node)
-			this_list->m_object.m_data = nextNode;//重新设置头节点
+		if (this_list->m_parent.m_data == node)
+			this_list->m_parent.m_data = nextNode;//重新设置头节点
 	}
-	--this_list->m_object.m_capacity;
-	--this_list->m_object.m_size;
+	--this_list->m_parent.m_capacity;
+	--this_list->m_parent.m_size;
 }
 
 void VXList_remove(XList* this_list, void* LpValue)
@@ -236,9 +236,9 @@ void VXList_clear(XList* this_list)
 	if (XContainerObject_isEmpty(this_list))
 		return;
 	XList* list = this_list;
-	XListNode* p = list->m_object.m_data;
+	XListNode* p = list->m_parent.m_data;
 	XListNode* pnext = p->next;
-	for (size_t i = 0; i < list->m_object.m_size; i++)
+	for (size_t i = 0; i < list->m_parent.m_size; i++)
 	{
 		if (XContainerDataFreeMethod(this_list) != NULL)
 			XContainerDataFreeMethod(this_list)(p->date);
@@ -247,9 +247,9 @@ void VXList_clear(XList* this_list)
 		XMemory_free(p);
 		p = pnext;
 	}
-	list->m_object.m_size = 0;
-	list->m_object.m_capacity = 0;
-	list->m_object.m_data = NULL;
+	list->m_parent.m_size = 0;
+	list->m_parent.m_capacity = 0;
+	list->m_parent.m_data = NULL;
 }
 
 void* VXList_front(XList* this_list)
@@ -257,7 +257,7 @@ void* VXList_front(XList* this_list)
 	if (ISNULL(this_list, ""))
 		return NULL;
 	XList* list = this_list;
-	return ((XListNode*)(list->m_object.m_data))->date;
+	return ((XListNode*)(list->m_parent.m_data))->date;
 }
 
 void* VXList_back(XList* this_list)
@@ -265,7 +265,7 @@ void* VXList_back(XList* this_list)
 	if (ISNULL(this_list, ""))
 		return NULL;
 	XList* list = this_list;
-	return ((XListNode*)(list->m_object.m_data))->prev->date;
+	return ((XListNode*)(list->m_parent.m_data))->prev->date;
 }
 
 XListNode* VXList_find(const XList* this_list, void* LpValue)
@@ -350,7 +350,7 @@ void VXList_sort(XList* this_list, XCompare compare)
 		XListNode* ListTail = *((struct XListNode**)XStack_top(stack));
 		XStack_pop(stack);
 		//单次排序
-		XListNode* ListMiddle = List_OneSort(ListHead, ListTail, list->m_object.m_typeSize, compare);
+		XListNode* ListMiddle = List_OneSort(ListHead, ListTail, list->m_parent.m_typeSize, compare);
 		//判断左区间是否存在
 		if (ListHead != ListMiddle && ListHead->next != ListMiddle)
 		{

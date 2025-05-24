@@ -37,19 +37,19 @@ void XStringVector_class_init()
 //void VXStringVector_push_front(XStringVector* this_stringVector, XString* string)
 //{
 //	typedef void (*funcPtr)(XVector*, void*);
-//	VtableFunc(XVectorVtable, EXVector_Push_Front, funcPtr)(this_stringVector,&string);
+//	XVtableGetFunc(XVectorVtable, EXVector_Push_Front, funcPtr)(this_stringVector,&string);
 //}
 //
 //void VXStringVector_push_back(XStringVector* this_stringVector, XString* string)
 //{
 //	typedef void (*funcPtr)(XVector*, void*);
-//	VtableFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_stringVector, &string);
+//	XVtableGetFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_stringVector, &string);
 //}
 //
 //void VXStringVector_insert(XStringVector* this_stringVector, int64_t index, XString* string)
 //{
 //	typedef void (*funcPtr)(XVector*, int64_t, void*);
-//	VtableFunc(XVectorVtable, EXVector_Insert, funcPtr)(this_stringVector,index, &string);
+//	XVtableGetFunc(XVectorVtable, EXVector_Insert, funcPtr)(this_stringVector,index, &string);
 //}
 
 

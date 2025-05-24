@@ -55,18 +55,18 @@ void VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
 	XPair* pair = XMap_find(this_map, key);
 	if (pair == NULL)//当前没有这个键值对
 	{
-		XPair* LPpair = XPair_new(this_map->m_keyTypeSize, this_map->m_object.m_typeSize);
+		XPair* LPpair = XPair_new(this_map->m_keyTypeSize, this_map->m_parent.m_typeSize);
 		XPair_insert(LPpair, key, LpValue);
 
 		//printf("创建的xpair key:%d LpValue:%s\n",XPair_First(LPpair,int),XPair_second(LPpair));
 
-		XRBTree_insert(&(this_map->m_object.m_data), this_map->m_KeyLess, XCompareRuleTwo_XMap, &LPpair, sizeof(XPair*));
+		XRBTree_insert(&(this_map->m_parent.m_data), this_map->m_KeyLess, XCompareRuleTwo_XMap, &LPpair, sizeof(XPair*));
 
 		/*XRBTreeNode* root= this_map->object.m_data;
 		LPpair= *(XPair**)XVector_at(root->XBTNode.values,0);
 		printf("根节点，key:%d LpValue:%s\n", XPair_First(LPpair, int), XPair_second(LPpair));*/
-		++this_map->m_object.m_capacity;
-		++this_map->m_object.m_size;
+		++this_map->m_parent.m_capacity;
+		++this_map->m_parent.m_size;
 		this_map->m_isModify = true;
 	}
 	else
@@ -87,13 +87,13 @@ void VXMap_remove(XMap* this_map, const void* key)
 #if XVector_ON
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return ;
-	XRBTreeNode* nodes = XBBTree_findData(this_map->m_object.m_data, this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
+	XRBTreeNode* nodes = XBBTree_findData(this_map->m_parent.m_data, this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
 		XPair* pair = *((XPair**)XVector_at(nodes->XBTNode.values, 0));
 		if (XContainerDataFreeMethod(this_map) != NULL)
 			XContainerDataFreeMethod(this_map)(pair);
-		XRBTree_erase(&(this_map->m_object.m_data), this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
+		XRBTree_erase(&(this_map->m_parent.m_data), this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
 		XPair_free(pair);
 		--XContainerCapacity(this_map);
 		--XContainerSize(this_map);
@@ -113,11 +113,11 @@ void* VXMap_value(XMap* this_map, const void* key)
 	XPair* pair = XMap_find(this_map, key);
 	if (pair == NULL)//当前没有这个键值对
 	{
-		pair = XPair_new(this_map->m_keyTypeSize, this_map->m_object.m_typeSize);
+		pair = XPair_new(this_map->m_keyTypeSize, this_map->m_parent.m_typeSize);
 		XPair_insert(pair, key, NULL);
-		XRBTree_insert(&(this_map->m_object.m_data), this_map->m_KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
-		++this_map->m_object.m_capacity;
-		++this_map->m_object.m_size;
+		XRBTree_insert(&(this_map->m_parent.m_data), this_map->m_KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
+		++this_map->m_parent.m_capacity;
+		++this_map->m_parent.m_size;
 		this_map->m_isModify = true;
 	}
 	return XPair_second(pair);
@@ -128,7 +128,7 @@ XPair* VXMap_find(XMap* this_map, const void* key)
 #if XVector_ON
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return NULL;
-	XBTreeNode* nodes = XBBTree_findData(this_map->m_object.m_data, this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
+	XBTreeNode* nodes = XBBTree_findData(this_map->m_parent.m_data, this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes == NULL)
 		return NULL;
 	XPair* pair = *(XPair**)XVector_at(nodes->values, 0);
@@ -154,15 +154,15 @@ void VXMap_clear(XMap* this_map)
 		return;
 	XMap_updataIterator(this_map);
 	XMap_iterator_for_each(this_map, XMap_freeNodeData, this_map);
-	XBTree_freeNodeAll(this_map->m_object.m_data);
+	XBTree_freeNodeAll(this_map->m_parent.m_data);
 	if(this_map->m_itArray)
 	{
 		XVector_free(this_map->m_itArray);
 		this_map->m_itArray = NULL;
 	}
-	this_map->m_object.m_capacity = 0;
-	this_map->m_object.m_size = 0;
-	this_map->m_object.m_data = NULL;
+	this_map->m_parent.m_capacity = 0;
+	this_map->m_parent.m_size = 0;
+	this_map->m_parent.m_data = NULL;
 	this_map->m_isModify = false;
 #else
 	IS_ON_DEBUG(XVector_ON);
@@ -179,7 +179,7 @@ void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
 {
 #if XVector_ON
 	typedef void (*funcPtr)(XContainerObject*, XContainerObject*);
-	VtableFunc(XVectorVtable, EXContainerObject_Swap, funcPtr)(this_mapOne, this_mapTwo);
+	XVtableGetFunc(XVectorVtable, EXContainerObject_Swap, funcPtr)(this_mapOne, this_mapTwo);
 	//XContainerObject_swap(this_mapOne, this_mapTwo);
 	XSwap(&this_mapOne->m_isModify, &this_mapTwo->m_isModify, sizeof(bool));
 	XSwap(&this_mapOne->m_itArray, &this_mapTwo->m_itArray, sizeof(XVector*));
