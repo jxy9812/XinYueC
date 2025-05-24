@@ -28,7 +28,7 @@ static void* VXVector_front(const XVector* this_vector);
 static void* VXVector_back(const XVector* this_vector);
 static void* VXVector_find(const XVector* this_vector, const void* findVal);//查找数据，返回找到的指针，没有返回NULL
 static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
-#if VTABLEISSTACK
+#if VTABLE_ISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[XVECTOR_VTABLE_SIZE];//虚函数数据
 #endif
@@ -49,7 +49,7 @@ void XVector_class_init()
 		//排序
 		VXVector_sort
 	};
-#if !VTABLEISSTACK
+#if !VTABLE_ISSTACK
 	XVectorVtable = XVtable_new();
 #else
 	XVectorVtable = &vtable;

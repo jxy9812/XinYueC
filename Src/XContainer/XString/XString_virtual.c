@@ -32,7 +32,7 @@ static int64_t VXString_find_first_not_of(const XString* this_string, const char
 static int64_t VXString_find_last_not_of(const XString* this_string, const char* subStr);
 //虚函数表定义
 XVtable* XStringVtable = NULL;
-#if VTABLEISSTACK
+#if VTABLE_ISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[31];//虚函数数据
 #endif
@@ -44,7 +44,7 @@ void XString_class_init()
 		VXString_find_first_of,VXString_find_last_of,
 		VXString_find_first_not_of,VXString_find_last_not_of
 	};
-#if !VTABLEISSTACK
+#if !VTABLE_ISSTACK
 	XStringVtable = XVtable_new();
 #else
 	XStringVtable = &vtable;

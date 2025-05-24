@@ -11,7 +11,7 @@ static void VXPriorityQueue_push(XPriorityQueue* this_queue, void* LpValue);
 static void VXPriorityQueue_pop(XPriorityQueue* this_queue);
 // 返回优先队列堆顶元素
 static void* VXPriorityQueue_top(XPriorityQueue* this_queue);
-#if VTABLEISSTACK
+#if VTABLE_ISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[XPriorityQueue_VTABLE_SIZE];//虚函数数据
 #endif
@@ -20,7 +20,7 @@ void XPriorityQueue_class_init()
 	if (XPriorityQueueVtable)
 		return;
 	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top};
-#if !VTABLEISSTACK
+#if !VTABLE_ISSTACK
 	XPriorityQueueVtable = XVtable_new();
 #else
 	XPriorityQueueVtable = &vtable;

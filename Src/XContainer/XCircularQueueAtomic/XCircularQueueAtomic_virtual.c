@@ -5,7 +5,7 @@
 #include<stdlib.h>
 //虚函数表定义
 XVtable* XCircularQueueAtomicVtable = NULL;
-#if VTABLEISSTACK
+#if VTABLE_ISSTACK
 static XVtable vtable;//虚函数类
 static void* vtable_data[XCIRCULARQUEUEATOMIC_VTABLE_SIZE];//虚函数数据
 #endif
@@ -25,7 +25,7 @@ void XCircularQueueAtomic_class_init()
 	if (XCircularQueueAtomicVtable)
 		return;
 	void* table[] = { VXCircularQueueAtomic_push,VXCircularQueueAtomic_pop,VXCircularQueueAtomic_top,VXCircularQueueAtomic_receive,VXCircularQueueAtomic_isFull };
-#if !VTABLEISSTACK
+#if !VTABLE_ISSTACK
 	XCircularQueueAtomicVtable = XVtable_new();
 #else
 	XCircularQueueAtomicVtable = &vtable;

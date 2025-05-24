@@ -12,7 +12,7 @@ static size_t VXContainerObject_type(const XContainerObject* Object);
 static void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
 static void VXContainerObject_clear(XContainerObject* Object);
 XVtable* XContainerObjectVtable = NULL;
-#if VTABLEISSTACK
+#if VTABLE_ISSTACK
 static XVtable vtable;//虚函数类
 static void* vtable_data[XCONTAINEROBJECT_VTABLE_SIZE];//虚函数数据
 #endif
@@ -26,7 +26,7 @@ void XContainerObject_class_init()
 	if (XContainerObjectVtable)
 		return;
 	//虚函数表初始化
- #if !VTABLEISSTACK
+ #if !VTABLE_ISSTACK
 	XContainerObjectVtable = XVtable_new();
 #else
 	XContainerObjectVtable = &vtable;

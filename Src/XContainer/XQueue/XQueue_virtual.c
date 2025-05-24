@@ -2,7 +2,7 @@
 #if XQueue_ON
 //虚函数表定义
 XVtable* XQueueVtable = NULL;
-#if VTABLEISSTACK
+#if VTABLE_ISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[20];//虚函数数据
 #endif
@@ -10,7 +10,7 @@ void XQueue_class_init()
 {
 	if (XQueueVtable)
 		return;
-#if !VTABLEISSTACK
+#if !VTABLE_ISSTACK
 	XQueueVtable = XVtable_new();
 #else
 	XQueueVtable = &vtable;

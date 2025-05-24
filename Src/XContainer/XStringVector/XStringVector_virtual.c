@@ -2,7 +2,7 @@
 #if XStringVector_ON&&0
 //虚函数表定义
 XVtable* XStringVectorVtable = NULL;
-#if VTABLEISSTACK
+#if VTABLE_ISSTACK
 static XVtable vtable;//虚函数类
 static void* vtable_data[25];//虚函数数据
 #endif
@@ -15,7 +15,7 @@ void XStringVector_class_init()
 		return;
 	void* table[] = {
 	};
-#if !VTABLEISSTACK
+#if !VTABLE_ISSTACK
 	XStringVectorVtable = XVtable_new();
 #else
 	XStringVectorVtable = &vtable;

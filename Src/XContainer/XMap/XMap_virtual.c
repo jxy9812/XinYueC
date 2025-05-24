@@ -19,7 +19,7 @@ static void VXMap_clear(XMap* this_map);
 static void VXMap_free(XMap* this_map);
 static void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
 XVtable* XMapVtable = NULL;
-#if VTABLEISSTACK
+#if VTABLE_ISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[12];//虚函数数据
 #endif
@@ -30,7 +30,7 @@ void XMap_class_init()
 	void* table[] = {
 		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find
 	};
-#if !VTABLEISSTACK
+#if !VTABLE_ISSTACK
 	XMapVtable = XVtable_new();
 #else
 	XMapVtable = &vtable;

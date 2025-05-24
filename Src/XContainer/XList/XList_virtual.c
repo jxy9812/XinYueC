@@ -25,7 +25,7 @@ static void VXList_sort(XList* this_list, XCompare compare);
 static void VXList_free(XList* this_list);
 //虚函数表定义
 XVtable* XListVtable = NULL;
-#if VTABLEISSTACK
+#if VTABLE_ISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[XLIST_VTABLE_SIZE];//虚函数数据
 #endif
@@ -43,7 +43,7 @@ void XList_class_init()
 		//排序
 		VXList_sort
 	};
-#if !VTABLEISSTACK
+#if !VTABLE_ISSTACK
 	XListVtable = XVtable_new();
 #else
 	XListVtable = &vtable;

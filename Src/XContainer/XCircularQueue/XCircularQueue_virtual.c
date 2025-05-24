@@ -5,7 +5,7 @@
 #include<stdlib.h>
 //虚函数表定义
 XVtable* XCircularQueueVtable = NULL;
-#if VTABLEISSTACK
+#if VTABLE_ISSTACK
 static XVtable vtable;//虚函数类
 static void* vtable_data[XCIRCULARQUEUE_VTABLE_SIZE];//虚函数数据
 #endif
@@ -25,7 +25,7 @@ void XCircularQueue_class_init()
 	if (XCircularQueueVtable)
 		return;
 	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top,VXCircularQueue_receive,VXCircularQueue_isFull };
-#if !VTABLEISSTACK
+#if !VTABLE_ISSTACK
 	XCircularQueueVtable = XVtable_new();
 #else
 	XCircularQueueVtable = &vtable;
