@@ -21,6 +21,7 @@ extern "C" {
 	void XPriority_QueueTest();
 	//循环队列测试
 	void XCircularQueueTest();
+	void XCircularQueueAtomicTest();
 	//队列测试
 	void queueTest();
 	//动态数组测试

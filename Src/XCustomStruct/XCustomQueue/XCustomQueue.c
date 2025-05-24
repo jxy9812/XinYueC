@@ -1,14 +1,14 @@
 ﻿#include "XCustomQueue.h"
 #include "XMemory.h"
 #include <string.h>
-XCustomQueue* XCustomQueue_new(XCustomQueue_Port* port)
+XCustomQueue* XCustomQueue_new(XCustomQueue_Port* port, size_t typeSize, size_t count)
 {
 	if (port == NULL)
 		return NULL;
 	XCustomQueue* queue = XMemory_malloc(sizeof(XCustomQueue));
 	if (port->create_funcPointer)
 	{
-		if (!(port->create_funcPointer(queue)))
+		if (!(port->create_funcPointer(queue, typeSize,count)))
 		{
 			XMemory_free(queue);
 			return NULL;
@@ -73,4 +73,62 @@ void XCustomQueue_clear(XCustomQueue* queue)
 {
 	if (queue && queue->m_port.clear_funcPointer)
 		queue->m_port.clear_funcPointer(queue);
+}
+/*											XCircularQueue															*/
+#include"XCircularQueue.h"
+static bool XCircularQueue_createFunc(XCustomQueue* queue, size_t typeSize, size_t count)
+{
+	queue->m_queue = XCircularQueue_new(typeSize,count);
+}
+static void XCircularQueue_freeFunc(XCustomQueue* queue)
+{ 
+	XCircularQueue_free(queue->m_queue);
+}
+static bool XCircularQueue_pushFunc(XCustomQueue* queue, void* pvData)
+{
+	return XCircularQueue_push(queue->m_queue,pvData);
+}
+static void* XCircularQueue_topFunc(XCustomQueue* queue)
+{
+	return XCircularQueue_top(queue->m_queue);
+}
+static void XCircularQueue_popFunc(XCustomQueue* queue)
+{
+	XCircularQueue_pop(queue->m_queue);
+}
+static bool XCircularQueue_receiveFunc(XCustomQueue* queue, void* pvBuffer, uint32_t wait)
+{
+	void* data= XCircularQueue_top(queue->m_queue);
+	if (data == NULL)
+		return false;
+	memcpy(pvBuffer,data,XContainerTypeSize(queue->m_queue));
+	XCircularQueue_pop(queue->m_queue);
+	return true;
+	//XCircularQueue* circularQueue = (XCircularQueue*)queue->m_queue;
+}
+static bool XCircularQueue_isEmptyFunc(XCustomQueue* queue)
+{
+	return XCircularQueue_isEmpty(queue->m_queue);
+}
+static size_t XCircularQueue_sizeFunc(XCustomQueue* queue)
+{
+	return XCircularQueue_size(queue->m_queue);
+}
+static void XCircularQueue_clearFunc(XCustomQueue* queue)
+{
+	XCircularQueue_clear(queue->m_queue);
+}
+XCustomQueue* XCustomQueue_new_XCircularQueue(size_t typeSize, size_t count)
+{
+	XCustomQueue_Port port = { 0 };
+	port.create_funcPointer = XCircularQueue_createFunc;
+	port.free_funcPointer = XCircularQueue_freeFunc;
+	port.push_funcPointer = XCircularQueue_pushFunc;
+	port.top_funcPointer = XCircularQueue_topFunc;
+	port.pop_funcPointer = XCircularQueue_popFunc;
+	port.receive_funcPointer = XCircularQueue_receiveFunc;
+	port.isEmpty_funcPointer = XCircularQueue_isEmptyFunc;
+	port.size_funcPointer = XCircularQueue_sizeFunc;
+	port.clear_funcPointer = XCircularQueue_clearFunc;
+	return XCustomQueue_new(&port, typeSize,count);
 }

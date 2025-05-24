@@ -20,11 +20,11 @@ XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count)
 	return this_queue;
 }
 
-void XCircularQueue_push(XCircularQueue* this_queue, void* LpValue)
+bool XCircularQueue_push(XCircularQueue* this_queue, void* LpValue)
 {
 	if (ISNULL(this_queue, "") || ISNULL(ObjectVtable(this_queue), ""))
-		return;
-	ObjectVirtualFunc(this_queue, EXCircularQueue_Push, void (*)(XCircularQueue*, void*))(this_queue, LpValue);
+		return false;
+	return ObjectVirtualFunc(this_queue, EXCircularQueue_Push, bool (*)(XCircularQueue*, void*))(this_queue, LpValue);
 }
 
 void XCircularQueue_pop(XCircularQueue* this_queue)

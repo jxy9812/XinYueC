@@ -19,8 +19,8 @@ enum XCircularQueueEnum
 typedef struct XCircularQueue
 {
 	XVector m_vector;//基本数据
-	size_t  m_head;//队头索引
-	size_t  m_tail;//队尾索引
+	volatile size_t  m_head;//队头索引
+	volatile size_t  m_tail;//队尾索引
 }XCircularQueue;
 //初始化类
 void XCircularQueue_class_init();
@@ -32,7 +32,7 @@ XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count);
 #define XCircularQueue_free		XVector_free
 //插入到队列的队尾
 #define XCircularQueue_Push(this_queue,type,value){type t=value;XCircularQueue_push(this_vector,&t);}
-void XCircularQueue_push(XCircularQueue* this_queue, void* LpValue);
+bool XCircularQueue_push(XCircularQueue* this_queue, void* LpValue);
 //出队
 void XCircularQueue_pop(XCircularQueue* this_queue);
 // 返回优先队列堆顶元素

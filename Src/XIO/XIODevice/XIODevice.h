@@ -68,6 +68,8 @@ bool XIODevice_open(XIODevice* io, XIODeviceBase mode);
 void XIODevice_close(XIODevice* io);
 void XIODevice_poll(XIODevice* io);
 size_t XIODevice_writeFull(XIODevice* io);//将剩余的数据刷入设备
+
+
 #ifdef __cplusplus
 }
 #endif
