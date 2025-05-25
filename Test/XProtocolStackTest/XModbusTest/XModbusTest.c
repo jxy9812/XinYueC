@@ -64,10 +64,11 @@ void XModbusTest()
     }
     //使能打开Modbus
     XModbus_enable(modbus);
+    XModbusTest_threadReceiveCreate(modbus);
     //开始轮询
     while (true)
     {
         XModbus_poll(modbus);
-        XModbusTest_SerialPoll(modbus);
+       // XModbusTest_SerialPoll(modbus);
     }
 }

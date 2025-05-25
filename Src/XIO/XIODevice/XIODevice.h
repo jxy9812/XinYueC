@@ -48,11 +48,11 @@ typedef void (*XIODeviceClose)(XIODevice* io);//关闭IO,释放资源
 typedef struct XIODevice_PortFunc
 {
 	union {
-		void (*writeBufferFull_funcPointer)(XIODevice* io);//写入缓冲区满
+		void (*writeBufferFull_funcPointer)(XIODevice* io, XCircularQueue*queue);//写入缓冲区满
 		XIOBufferFull     writeData_funcPointer;//无缓冲区直接写入数据
 	};
 	union{
-		void (*readBufferEmpty_funcPointer)(XIODevice* io);//读取缓冲区空
+		void (*readBufferEmpty_funcPointer)(XIODevice* io, XCircularQueue* queue);//读取缓冲区空
 		XIOBufferEmpty   readData_funcPointer;//无缓冲区读取数据
 	};
 	XIODeviceOpen  open_funcPointer;//打开IO设备

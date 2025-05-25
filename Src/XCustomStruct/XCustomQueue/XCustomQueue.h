@@ -20,7 +20,7 @@ typedef struct XCustomQueue_Port
 	size_t(*size_funcPointer)(XCustomQueue* queue);
 	void (*clear_funcPointer)(XCustomQueue* queue);
 }XCustomQueue_Port;
-//任务队列
+//自定义队列
 typedef struct XCustomQueue
 {
 	void* m_queue;//队列本体
@@ -28,7 +28,9 @@ typedef struct XCustomQueue
 }XCustomQueue;
 XCustomQueue* XCustomQueue_new(XCustomQueue_Port* port, size_t typeSize, size_t count);
 void XCustomQueue_free(XCustomQueue* queue);
+#define XCustomQueue_Push(queue,type,value){type t=value;XCustomQueue_push(queue,&t);}
 bool XCustomQueue_push(XCustomQueue* queue, void* pvData);
+#define XCustomQueue_Top(queue,Type) (*(Type*)XCustomQueue_top(queue))
 void* XCustomQueue_top(XCustomQueue* queue);
 bool XCustomQueue_receive(XCustomQueue* queue, void* pvBuffer, uint32_t wait);
 bool XCustomQueue_pop(XCustomQueue* queue);

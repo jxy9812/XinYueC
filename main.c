@@ -12,10 +12,10 @@ int main(int argc, char* args[])
 	printf("%d\n",XAtomic_load_int32(&b));
 #if DEMOTEST
 	//XPWMDeviceTest();
-	//XModbusTest();
+	XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
-	XSerialPortTest();
+	//XSerialPortTest();
 	//XVectorTest();
 	return;
 	XStringVectorTest();

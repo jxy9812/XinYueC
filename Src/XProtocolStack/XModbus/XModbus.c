@@ -3,6 +3,7 @@
 #include "XModbusConfig.h"
 #include "XModbusProto.h"
 #include "XModbusFunctionHandler.h"
+#include "XCircularQueue.h"
 // 条件编译：根据配置启用不同 Modbus 通信模式
 #if MB_RTU_ENABLED == 1    // 启用 RTU 模式（二进制传输，常用于串口）
 #include "XModbusRtu.h"        // RTU 模式具体实现
@@ -32,16 +33,17 @@ void XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMode mode, uin
 	//XVector_resize(modbus->recvBuffer, MB_RECV_BUFFER_SIZE);
 	modbus->sendQueue= XModbusFrameQueue_new();
     modbus->recvFrameQueue=XModbusFrameQueue_new();
-    if(func->EventQueueInit)
-        modbus->eventQueue = XEventQueue_new(func->EventQueueInit);
+    if(func->EventQueuePort.create_funcPointer)
+        modbus->eventQueue = XCustomQueue_new(&(func->EventQueuePort),sizeof(10),20);
     else
-	    modbus->eventQueue = XEventQueue_new(XEventQueue_defaultConfigInit);
+	    modbus->eventQueue = XCustomQueue_new_XCircularQueue(sizeof(10), 20);
     modbus->funcCodeList = XModbusFuncCodeList_new();
 	modbus->mode = mode;
-    assert(func->IO_Port.readData_funcPointer);
+    //assert(func->IO_Port.readData_funcPointer);
 
     assert(func->IO_Port.writeData_funcPointer);
-
+    modbus->recvBuffer = XVector_new(sizeof(char));
+    XVector_resize(modbus->recvBuffer ,MB_RECV_BUFFER_SIZE);
     modbus->errorCode = MB_ENOERR;
     modbus->recvHandleMaster = NULL;
     // 根据选择的模式初始化对应的函数指针和底层模块
@@ -163,13 +165,13 @@ static void XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
             //printf("当前是主站\n");
            //printf("将有效的帧加入接收队列处理\n");
             XModbusFrameQueue_push(modbus->recvFrameQueue, recvFrame);
-            XEventQueue_push(modbus->eventQueue, EV_EXECUTE);
+            XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_EXECUTE);
         }
         else if ((address == modbus->address) || (address == MB_ADDRESS_BROADCAST))
         {//当前是从站
             //printf("将有效的帧加入接收队列处理\n");
             XModbusFrameQueue_push(modbus->recvFrameQueue, recvFrame);
-            XEventQueue_push(modbus->eventQueue, EV_EXECUTE);
+            XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_EXECUTE);
             //                xMBPortEventPost(EV_EXECUTE); // 触发功能码执行事件
         }
         else
@@ -256,13 +258,68 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
     //释放一个资源
     XModbusFrameQueue_pop(modbus->recvFrameQueue);
 }
+static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
+{
+    //检查回调函数是否超时
+    if (modbus->recvHandleMaster != NULL)
+    {
+        XModbusFrameDataRecvHandle** Handle = XVector_front(modbus->recvHandleMaster);
+        if (Handle != NULL)
+        {//已经超时了
+            if ((*Handle) != NULL)
+            {
+                if ((*Handle)->timeout < XTimer_getCurrentTime())
+                {
+                    if ((*Handle)->pRecvHandCallFunc)
+                        (*Handle)->pRecvHandCallFunc(modbus, NULL);
+                    XMemory_free(*Handle);
+                    XVector_pop_front(modbus->recvHandleMaster);
+                }
+            }
+            else
+            {
+                XVector_pop_front(modbus->recvHandleMaster);
+            }
+        }
+    }
+    //处理定时发送帧数据
+    if (modbus->regularlySendMaster != NULL)
+    {
+        XListNode* frontNode = XContainerDataPtr(modbus->regularlySendMaster);
+        if (frontNode != NULL)
+        {
+            XModbusRegularlySendFrame* regularly = (XModbusRegularlySendFrame*)(frontNode->date);
+            //XModbusFrame*  frame= regularly->frame;
+            if (regularly->timeOut < XTimer_getCurrentTime())
+            {//时间到了
+                regularly->timeOut = regularly->time + XTimer_getCurrentTime();
+                //printf("时间到了\n");
+                XModbus_sendFrame(modbus, XModbusFrame_copy(regularly->frame));
 
+            }
+            //重新指向新节点
+            XContainerDataPtr(modbus->regularlySendMaster) = frontNode->next;
+        }
+    }
+    //处理设备缓冲区
+    if (modbus->eSndState == STATE_TX_XMIT ||XCircularQueue_isEmpty(modbus->ioDevice->m_readBuffer))
+    {
+       //printf("发送数据\n");
+        modbus->pxMBFrameCBTransmitterEmpty(modbus);
+    }
+    else //if(modbus->eSndState != STATE_TX_XMIT)
+    {
+        //printf("处理接收数据\n");
+        modbus->pxMBFrameCBByteReceived(modbus);
+    }
+    return modbus->errorCode;
+}
 XModbusErrorCode XModbus_poll(XModbus* modbus)
 {
     if (modbus == NULL)
         return MB_EINVAL;
    
-    //printf("轮询中");
+    //printf("轮询中\n");
     //// 检查协议栈状态（必须已启用才能处理事件）
     if (modbus->state != STATE_ENABLED) {
         modbus->errorCode = MB_EILLSTATE;
@@ -270,55 +327,13 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
     }
     //return modbus->errorCode;
     // 获取端口事件（如接收完成、定时器超时，驱动协议栈处理）
-    if (XEventQueue_empty(modbus->eventQueue))
+    if (XCustomQueue_isEmpty(modbus->eventQueue))
     {
-        //轮询超时
-        if (modbus->recvHandleMaster != NULL)
-        {
-            XModbusFrameDataRecvHandle** Handle = XVector_front(modbus->recvHandleMaster);
-            if (Handle != NULL)
-            {//已经超时了
-                if((*Handle) != NULL)
-                {
-                    if((*Handle)->timeout < XTimer_getCurrentTime())
-                    {
-                        if ((*Handle)->pRecvHandCallFunc)
-                            (*Handle)->pRecvHandCallFunc(modbus, NULL);
-                        XMemory_free(*Handle);
-                        XVector_pop_front(modbus->recvHandleMaster);
-                    }
-                }
-                else
-                {
-                    XVector_pop_front(modbus->recvHandleMaster);
-                }
-            }
-        }
-        //处理定时发送帧数据
-        if (modbus->regularlySendMaster != NULL)
-        {
-            XListNode * frontNode= XContainerDataPtr(modbus->regularlySendMaster);
-            if (frontNode != NULL)
-            {
-                XModbusRegularlySendFrame* regularly = (XModbusRegularlySendFrame*)(frontNode->date);
-                //XModbusFrame*  frame= regularly->frame;
-                if (regularly->timeOut < XTimer_getCurrentTime())
-                {//时间到了
-                    regularly->timeOut = regularly->time + XTimer_getCurrentTime();
-                    //printf("时间到了\n");
-                    XModbus_sendFrame(modbus, XModbusFrame_copy(regularly->frame));
-                   
-                }
-                //重新指向新节点
-                XContainerDataPtr(modbus->regularlySendMaster) = frontNode->next;
-            }
-        }
-        modbus->errorCode= MB_ENOERR;
-        return modbus->errorCode;
+        return XModbus_EventEmpty(modbus);
     }
    
     //从队列中获取事件
-    XModbusEventType eEvent = XEventQueue_Top(modbus->eventQueue);
+    XModbusEventType eEvent = XCustomQueue_Top(modbus->eventQueue, XModbusEventType);
 #if MB_EVENT_HANDLE_SHOW
 #if MB_ENUM_TO_STRING
     printf("准备处理事件:%s\n", XModbusEventType_toString(eEvent));
@@ -335,8 +350,9 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
     //    case EV_FRAME_SENT:
     //        break;
         }
-   XEventQueue_pop(modbus->eventQueue);
-   
+        //printf("准备删除事件\n");
+        XCustomQueue_pop(modbus->eventQueue);
+        //printf("删除事件完毕\n");
    return modbus->errorCode; // 轮询成功（无错误或错误已处理）
 }
 //发送帧之前处理一些信息

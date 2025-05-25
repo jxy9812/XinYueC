@@ -22,7 +22,7 @@ bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte);
 bool XModbusTest_readByte(XIODevice* io, char* data, size_t size);
 //发送一个字节
 bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte);
-bool XModbusTest_writeByte(XIODevice* io,const char* data, size_t size);
+bool XModbusTest_writeByte(XIODevice* io, XCircularQueue* queue);
 //定时器启动
 void XModbusTest_XTimer_Start(XTimer* timer);
 //定时器停止
@@ -40,6 +40,8 @@ void XModbusTest_XTimerCreat(XTimer* timer);
 */
 //控制读写
 void XModbusTest_SerialPoll(XModbus* modbus);
+//开启接收任务
+void XModbusTest_threadReceiveCreate(XModbus* modbus);
 #ifdef __cplusplus
 }
 #endif

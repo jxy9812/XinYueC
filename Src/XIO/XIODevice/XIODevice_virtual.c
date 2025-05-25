@@ -74,6 +74,7 @@ size_t VXIODevice_write(XIODevice* io, const char* data, size_t maxSize)
 		return 0;
 	if (io->m_port.writeData_funcPointer == NULL)
 		return 0;
+	//printf("x");
 	size_t count = 0;
 	if (io->m_writeBuffer == NULL)
 	{//没有写入缓冲区
@@ -90,7 +91,7 @@ size_t VXIODevice_write(XIODevice* io, const char* data, size_t maxSize)
 					break;
 			}
 			if (XCircularQueue_isFull(io->m_writeBuffer))
-				io->m_port.writeBufferFull_funcPointer(io);
+				io->m_port.writeBufferFull_funcPointer(io,io->m_writeBuffer);
 			if (count >= maxSize)
 				break;
 		} while (!XCircularQueue_isFull(io->m_writeBuffer));
@@ -106,7 +107,7 @@ size_t VXIODevice_writeFull(XIODevice* io)
 		if (!XCircularQueue_isEmpty(io->m_writeBuffer))
 		{
 			count = XCircularQueue_size(io->m_writeBuffer);
-			io->m_port.writeBufferFull_funcPointer(io);
+			io->m_port.writeBufferFull_funcPointer(io,io->m_writeBuffer);
 			count -= XCircularQueue_size(io->m_writeBuffer);
 		}
 	}
@@ -135,7 +136,7 @@ size_t VXIODevice_read(XIODevice* io, char* data, size_t maxSize)
 					break;
 			}
 			if (XCircularQueue_isEmpty(io->m_readBuffer))
-				io->m_port.readBufferEmpty_funcPointer(io);
+				io->m_port.readBufferEmpty_funcPointer(io,io->m_readBuffer);
 			if (count >= maxSize)
 				break;
 

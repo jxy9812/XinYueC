@@ -7,7 +7,7 @@ extern "C" {
 #include"XVector.h"
 #include"XQueue.h"
 #include"XIODevice.h"
-#include"XEventQueue.h"
+#include"XCustomQueue.h"
 #include"XModbusFrame.h"
 #include"XTimer.h"
 #include"XModbusFunctionHandler.h"
@@ -50,7 +50,7 @@ typedef struct XModbus_PortFunc
     XIODevice_PortFunc IO_Port;//io接口
     XTimer_PortFunc    timePort;
     XModbusSerialEnable SerialEnable;//控制串口收发状态  可以为NULL
-    XEventQueueInit EventQueueInit;//时间队列初始化函数 不是必须可以为空使用默认的事件队列
+    XCustomQueue_Port EventQueuePort;//事件队列初始化函数 不是必须可以为空使用默认的事件队列
 }XModbus_PortFunc;
 typedef struct XModbus
 {
@@ -59,9 +59,10 @@ typedef struct XModbus
     XModbusErrorCode errorCode;//错误代码
     XModbusState     state;//状态
     XIODevice* ioDevice;//IO设备
+    XVector* recvBuffer;//接收缓冲区
     XModbusFrameQueue* sendQueue;//发送队列(XQueue<XModbusFrame*>)
     XModbusFrameQueue* recvFrameQueue;//接收帧队列(XQueue<XModbusFrame*>) 后面处理执行
-    XEventQueue* eventQueue;//事件队列
+    XCustomQueue* eventQueue;//事件队列
     XModbusFunctionHandlerList* funcCodeList;//功能码列表
 
     int sendRemaining;//当前发送的进度

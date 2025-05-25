@@ -1,4 +1,5 @@
 ﻿#include "XSerialPort.h"
+#include "XMemory.h"
 #include <string.h>
 XSerialPort* XSerialPort_new(XSerialPort_PortFuncInit* port)
 {
