@@ -281,7 +281,7 @@ bool XModbusRtuTimerT35Expired(XModbus* modbus)
         assert((modbus->eRcvState == STATE_RX_INIT) || (modbus->eRcvState == STATE_RX_RCV) || (modbus->eRcvState == STATE_RX_ERROR));
     }
    
-    XTimer_stop(modbus->timer);  // 关闭定时器
     modbus->eRcvState = STATE_RX_IDLE;  // 切换到接收空闲状态
+    XTimer_stop(modbus->timer);  // 关闭定时器
     return xNeedPoll;
 }

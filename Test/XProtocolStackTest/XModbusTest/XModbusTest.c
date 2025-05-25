@@ -20,7 +20,7 @@ void XModbusTest()
     io_port.open_funcPointer = XModbusTest_SerialOpen;
     io_port.readData_funcPointer = XModbusTest_readByte;
     io_port.writeData_funcPointer = XModbusTest_writeByte;
-    XTimer_PortFunc  timePort = XTimer_PortFunc_Win32();//定时器接口设置
+    XTimer_PortFunc  timePort = XTimer_PortFunc_Win32TimeSetEvent();//定时器接口设置
     XModbus_PortFunc InitFunction = {0};//modbus接口设置
     InitFunction.IO_Port = io_port;
     InitFunction.timePort = timePort;
@@ -36,7 +36,7 @@ void XModbusTest()
 
     {
         XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc,Register };
-       XModbus_setFunctionHandler(modbus, &Handler);
+       //XModbus_setFunctionHandler(modbus, &Handler);
     }
     {//发送一帧数据
         XModbusFrame* frame = XModbusFrame_newRecvHandle();
@@ -51,8 +51,8 @@ void XModbusTest()
         //frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
         char buff[] = { 0x00,0x01 };
         XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x00, buff);
-        XModbus_sendFrame(modbus, frame);
-        //XModbus_sendFrameRegularlyMaster(modbus, frame,1000);
+        //XModbus_sendFrame(modbus, frame);
+        XModbus_sendFrameRegularlyMaster(modbus, frame,100);
        /* uint8_t State =0;
         XMODBUS_UINT8_SET_BITS(&State, 0, 1);
         XMODBUS_UINT8_SET_BITS(&State, 2, 1); 

@@ -26,10 +26,10 @@ static void TimerCallback(XTimer* timer)
 static bool XPWMDeviceOpen(XPWMDevice* pwm, XIODeviceBase mode)//打开IO设备
 {
 	printf("创建定时器\n");
-	pwmTimer.timer1 = XTimer_new_Win32();
+	pwmTimer.timer1 = XTimer_new_Win32ThreadpoolTimer();
 	XTimer_create(pwmTimer.timer1);
 	pwmTimer.timer1->m_port.timerCallback = TimerCallback;
-	pwmTimer.timer2 = XTimer_new_Win32();
+	pwmTimer.timer2 = XTimer_new_Win32ThreadpoolTimer();
 	XTimer_create(pwmTimer.timer2);
 	pwmTimer.timer2->m_port.timerCallback = TimerCallback;
 	pwm->data = &pwmTimer;

@@ -302,7 +302,7 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
         }
     }
     //处理设备缓冲区
-    if (modbus->eSndState == STATE_TX_XMIT ||XCircularQueue_isEmpty(modbus->ioDevice->m_readBuffer))
+    if (/*modbus->eSndState == STATE_TX_XMIT ||*/XCircularQueue_isEmpty(modbus->ioDevice->m_readBuffer))
     {
        //printf("发送数据\n");
         modbus->pxMBFrameCBTransmitterEmpty(modbus);

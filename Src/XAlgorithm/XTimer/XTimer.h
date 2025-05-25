@@ -36,8 +36,10 @@ typedef struct XTimer
 }XTimer;
 XTimer* XTimer_new(XTimer_PortFuncInit* port);
 #ifdef WIN32
-XTimer* XTimer_new_Win32();
-XTimer_PortFunc XTimer_PortFunc_Win32();
+XTimer* XTimer_new_Win32ThreadpoolTimer();
+XTimer_PortFunc XTimer_PortFunc_Win32ThreadpoolTimer();
+XTimer* XTimer_new_Win32TimeSetEvent();
+XTimer_PortFunc XTimer_PortFunc_Win32TimeSetEvent();
 #endif
 void XTimer_create(XTimer* timer);
 void XTimer_free(XTimer* timer);

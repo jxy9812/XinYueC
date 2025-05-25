@@ -1,4 +1,5 @@
 ﻿#include"XPWMDevice.h"
+#include"XMemory.h"
 #include<string.h>
 XPWMDevice* XPWMDevice_new(XPWMDevice_PortFuncInit* port)
 {
