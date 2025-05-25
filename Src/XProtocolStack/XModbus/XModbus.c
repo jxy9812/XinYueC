@@ -356,14 +356,14 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
    return modbus->errorCode; // 轮询成功（无错误或错误已处理）
 }
 //发送帧之前处理一些信息
-static void sendFrame(XModbus* modbus, XModbusFrame* frame)
+static bool setSendFrame(XModbus* modbus, XModbusFrame* frame)
 {
     if (modbus == NULL || frame == NULL)
-        return MB_EINVAL;
+        return false;
     if (frame->frameData == NULL || XVector_isEmpty(frame->frameData))
     {
         XModbusFrame_free(frame);
-        return MB_EINVAL;
+        return false;
     }
     //
     frame->mode = modbus->mode;
@@ -373,13 +373,14 @@ static void sendFrame(XModbus* modbus, XModbusFrame* frame)
         frame->recvHandle->waitAddressCode = XModbusFrame_getAddress(frame) << 8 | XModbusFrame_getFuncCode(frame);
         frame->recvHandle->timeout = XTimer_getCurrentTime() + MB_MASTER_RECV_OUT_TIME;//设置超时时间
     }
+    return true;
 }
 XModbusErrorCode XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame)
 {
     if (modbus == NULL || frame == NULL)
         return MB_EINVAL;
-    sendFrame(modbus,frame);
-    XModbusFrameQueue_push(modbus->sendQueue, frame);
+    if(setSendFrame(modbus, frame))
+        XModbusFrameQueue_push(modbus->sendQueue, frame);
     return modbus->errorCode;
 }
 
@@ -387,12 +388,14 @@ XModbusErrorCode XModbus_sendFrameRegularlyMaster(XModbus* modbus, XModbusFrame*
 {
     if (modbus == NULL || frame == NULL)
         return MB_EINVAL;
-    sendFrame(modbus, frame);
-    XModbusRegularlySendFrame regularly = {0};
-    regularly.frame = frame;
-    regularly.time = time;
-    regularly.timeOut= time + XTimer_getCurrentTime();
-    XList_push_back(modbus->regularlySendMaster,&regularly);
+    if (setSendFrame(modbus, frame))
+    {
+        XModbusRegularlySendFrame regularly = { 0 };
+        regularly.frame = frame;
+        regularly.time = time;
+        regularly.timeOut = time + XTimer_getCurrentTime();
+        XList_push_back(modbus->regularlySendMaster, &regularly);
+    }
     return modbus->errorCode;
 }
 

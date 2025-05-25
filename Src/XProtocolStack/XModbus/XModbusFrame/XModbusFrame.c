@@ -91,6 +91,7 @@ XModbusFrame* XModbusFrame_copy(XModbusFrame* frame)
 	XVector_copy(newFrame->frameData, frame->frameData);
 	newFrame->mode = frame->mode;
 	newFrame->data = frame->data;
+	return newFrame;
 }
 XModbusFrame* XModbusFrame_newRecvHandle()
 {
