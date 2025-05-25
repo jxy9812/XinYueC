@@ -61,7 +61,7 @@ size_t XIODevice_read(XIODevice* io, char* data, size_t maxSize)
 }
 
 
-void XIODevice_receive(XIODevice* io,const char* data, size_t size)
+size_t XIODevice_receive(XIODevice* io,const char* data, size_t size)
 {
 	if (ISNULL(io, "") || ISNULL(data, "") || ISNULL(size, ""))
 		return;

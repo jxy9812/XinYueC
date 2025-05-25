@@ -48,11 +48,11 @@ size_t VXSerialPort_read(XIODevice* io, char* data, size_t maxSize)
 {
 	if (io->m_mode & XIODeviceBase_ReadOnly == 0)
 		return 0;
-	if (io->m_port.readData_funcPointer == NULL)
-		return 0;
 	size_t count = 0;
 	if (io->m_readBuffer == NULL)
 	{//没有读取缓冲区
+		if (io->m_port.readData_funcPointer == NULL)
+			return 0;
 		count += io->m_port.readData_funcPointer(io, data, maxSize);
 	}
 	else

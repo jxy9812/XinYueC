@@ -85,15 +85,86 @@ static bool SerialOpen(XIODevice* io, XIODeviceBase mode)
     }
     return true;
 }
+// 线程接收函数
+static DWORD WINAPI ThreadReceive(LPVOID lpParam)
+{
+    XSerialPort* serial = lpParam;
+    COMSTAT comStat;
+    DWORD errors;
+    char buff[1024];
+    while (1)
+    {
+        // 清除通信错误并获取串口状态
+        if (!ClearCommError(hSerial, &errors, &comStat)) {
+            printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
+            return false;
+        }
+        if (comStat.cbInQue)
+        {
+            DWORD bytesRead= comStat.cbInQue;
+            if (bytesRead > 1024)
+                bytesRead = 1024;
+            
+            if (!ReadFile(hSerial, buff, bytesRead, &bytesRead, &ov))
+            {
+                if (GetLastError() != ERROR_IO_PENDING)
+                {
+                    printf("读取失败\n");
+                    return false;
+                }
+              
+                // 等待异步操作完成
+                if (!GetOverlappedResult(hSerial, &ov, &bytesRead, true))
+                {
+                    printf("异步读取失败\n");
+                    return false;
+                }
+            }
+            //将接收到的数据保存到缓冲区
+            XSerialPort_receive(serial, buff, bytesRead);
+        }
+        // 重置事件
+        ResetEvent(ov.hEvent);
+    }
+    return 0;
+}
+static void threadTest(XSerialPort* serial)
+{
+    HANDLE hThread1;
+    DWORD threadId1;
+    // 创建线程 1
+    hThread1 = CreateThread(NULL, 0, ThreadReceive, serial, 0, &threadId1);
+    if (hThread1 == NULL) {
+        printf("CreateThread1 failed with error %d\n", GetLastError());
+        return 1;
+    }
+
+}
 void XSerialPortTest()
 {
     XIODevice_PortFuncInit port = { 0 };
     port.open_funcPointer = SerialOpen;
     XSerialPort* serial = XSerialPort_new(&port);
-    if (!XSerialPort_open(serial, XIODeviceBase_ReadWrite, 10, 115200, SP_PAR_NONE))
+    if (!XSerialPort_open(serial, XIODeviceBase_ReadWrite, 6, 115200, SP_PAR_NONE))
     {
         XSerialPort_free(serial);
         return;
+    }
+    XSerialPort_setReadBuffer(serial,1024);
+    //线程接收数据
+    threadTest(serial);
+    //主线程处理数据
+    char buff[1024];
+    while (true)
+    {
+        size_t len = XSerialPort_read(serial, buff, 1024);
+        if (len >0)
+        {
+            for (size_t i = 0; i < len; i++)
+            {
+                printf("%c", buff[i]);
+            }
+        }
     }
 }
 #else

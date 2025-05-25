@@ -34,17 +34,17 @@ void XSerialPort_class_init();
 XSerialPort* XSerialPort_new(XSerialPort_PortFuncInit* port);
 void XSerialPort_init(XSerialPort* serial, XSerialPort_PortFuncInit* port);
 bool XSerialPort_open(XSerialPort* serial, XIODeviceBase mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity);
-#define XSerialPort_free XIODevice_free;
-#define XSerialPort_setWriteBuffer XIODevice_setWriteBuffer;
-#define XSerialPort_setReadBuffer XIODevice_setReadBuffer;
-#define XSerialPort_setDevice XIODevice_setDevice;
-#define XSerialPort_write XIODevice_write;
-#define XSerialPort_read XIODevice_read;
-#define XSerialPort_receive XIODevice_receive;
-#define XSerialPort_isOpen XIODevice_isOpen;
-#define XSerialPort_close XIODevice_close;
-#define XSerialPort_poll XIODevice_poll;
-#define XSerialPort_writeFull XIODevice_writeFull;
+#define XSerialPort_free XIODevice_free
+#define XSerialPort_setWriteBuffer XIODevice_setWriteBuffer
+#define XSerialPort_setReadBuffer XIODevice_setReadBuffer
+#define XSerialPort_setDevice XIODevice_setDevice
+#define XSerialPort_write XIODevice_write
+#define XSerialPort_read XIODevice_read
+#define XSerialPort_receive XIODevice_receive
+#define XSerialPort_isOpen XIODevice_isOpen
+#define XSerialPort_close XIODevice_close
+#define XSerialPort_poll XIODevice_poll
+#define XSerialPort_writeFull XIODevice_writeFull
 #ifdef __cplusplus
 }
 #endif

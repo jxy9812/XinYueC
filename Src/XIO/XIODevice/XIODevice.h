@@ -83,7 +83,7 @@ void XIODevice_setDevice(XIODevice* io, void* device);
 size_t XIODevice_write(XIODevice* io,const char* data, size_t maxSize);//写入
 size_t XIODevice_read(XIODevice* io,char* data, size_t maxSize);//读取
 //接收数据从硬件接收数据到缓冲区
-void XIODevice_receive(XIODevice* io,const char* data, size_t size);
+size_t XIODevice_receive(XIODevice* io,const char* data, size_t size);
 bool XIODevice_isOpen(XIODevice* io);
 bool XIODevice_open(XIODevice* io, XIODeviceBase mode);
 void XIODevice_close(XIODevice* io);

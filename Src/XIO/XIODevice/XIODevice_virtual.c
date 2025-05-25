@@ -11,7 +11,7 @@ static bool VXIODevice_open(XIODevice* io, XIODeviceBase mode);
 static size_t VXIODevice_write(XIODevice* io, const char* data, size_t maxSize);//写入
 static size_t VXIODevice_writeFull(XIODevice* io);//将剩余的数据刷入设备
 static size_t VXIODevice_read(XIODevice* io, char* data, size_t maxSize);//读取
-static void VXIODevice_receive(XIODevice* io, const char* data, size_t size);//接收数据从硬件接收数据到缓冲区
+static size_t VXIODevice_receive(XIODevice* io, const char* data, size_t size);//接收数据从硬件接收数据到缓冲区
 static void VXIODevice_close(XIODevice* io);
 static void VXIODevice_poll(XIODevice* io);
 static void VXIODevice_setWriteBuffer(XIODevice* io, size_t count);
@@ -145,15 +145,18 @@ size_t VXIODevice_read(XIODevice* io, char* data, size_t maxSize)
 	return count;
 }
 
-void VXIODevice_receive(XIODevice* io, const char* data, size_t size)
+size_t VXIODevice_receive(XIODevice* io, const char* data, size_t size)
 {
+	size_t count = 0;
 	if (io->m_readBuffer != NULL)
 	{
 		for (size_t i = 0; i < size; i++)
 		{
-			XCircularQueue_push(io->m_readBuffer, data + size);
+			if (XCircularQueue_push(io->m_readBuffer, data + i))
+				++count;
 		}
 	}
+	return count;
 }
 
 void VXIODevice_close(XIODevice* io)
