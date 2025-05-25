@@ -7,6 +7,7 @@ extern "C" {
 #include"XClass.h"
 #if DEMOTEST
 	void XPWMDeviceTest();
+	void XSerialPortTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

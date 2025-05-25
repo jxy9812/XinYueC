@@ -1,7 +1,6 @@
-﻿#ifdef WIN32
-//Windows接口文件
-#include"XModbusTest_Port.h"
+﻿#include"XIOTest.h"
 #include"XSerialPort.h"
+#ifdef WIN32
 #include <windows.h>
 // 告诉编译器链接 winmm.lib 库
 #pragma comment(lib, "winmm.lib")
@@ -9,22 +8,10 @@
 static HANDLE hSerial;
 static  HANDLE hEvent;
 static OVERLAPPED ov;
-static VOID CALLBACK XTimer_incCallback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
-{
-    XTimer_inc(1);
-}
-static void XModbusTest_XTimerCreat(XTimer* timer)
-{
-    // 创建定时器，间隔为 1 毫秒
-    UINT timerId = timeSetEvent(1, 1, XTimer_incCallback, timer, TIME_PERIODIC);
-    if (timerId == 0) {
-        timeEndPeriod(1);
-        printf("定时器创建失败\n");
-    }
-}
 // 打开串口
-bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
+static bool SerialOpen(XIODevice* io, XIODeviceBase mode)
 {
+    //printf("打开串口\n");
     XSerialPort* serial = (XSerialPort*)io;
     char portName[10] = { 0 };
     sprintf(portName, "COM%d", serial->m_portNum);
@@ -96,78 +83,22 @@ bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
         CloseHandle(hSerial);
         return 1;
     }
-    XModbusTest_XTimerCreat(NULL);
     return true;
 }
-bool XModbusTest_readByte(XIODevice* io, char* byte, size_t size)
-//bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte)
+void XSerialPortTest()
 {
-    DWORD bytesRead;
-    if (!ReadFile(hSerial, byte, size, &bytesRead, &ov))
+    XIODevice_PortFuncInit port = { 0 };
+    port.open_funcPointer = SerialOpen;
+    XSerialPort* serial = XSerialPort_new(&port);
+    if (!XSerialPort_open(serial, XIODeviceBase_ReadWrite, 10, 115200, SP_PAR_NONE))
     {
-        if (GetLastError() != ERROR_IO_PENDING)
-        {
-            printf("读取失败\n");
-            return false;
-        }
-
-        // 等待异步操作完成
-        if (!GetOverlappedResult(hSerial, &ov, &bytesRead, true))
-        {
-            printf("异步读取失败\n");
-            return false;
-        }
+        XSerialPort_free(serial);
+        return;
     }
-    // printf("接收到字符%c\n", *byte);
-    return true;
 }
-//bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte)
-bool XModbusTest_writeByte(XIODevice* io, const char* data, size_t size)
+#else
+void XSerialPortTest()
 {
-    DWORD bytesWritten;
-    if (!WriteFile(hSerial, data, size, &bytesWritten, &ov))
-    {
-        if (GetLastError() != ERROR_IO_PENDING)
-        {
-            printf("写入失败");
-            return false;
-        }
-        // 等待异步操作完成
-        if (!GetOverlappedResult(hSerial, &ov, &bytesWritten, true))
-        {
-            printf("异步写入失败");
-            return false;
-        }
-    }
-   // printf("写入数据:%02x\n",*data);
-    return true;
+
 }
-
-
-
-void XModbusTest_SerialPoll(XModbus* modbus)
-{
-    COMSTAT comStat;
-    DWORD errors;
-
-    // 清除通信错误并获取串口状态
-    if (!ClearCommError(hSerial, &errors, &comStat)) {
-        printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
-        return false;
-    }
-    
-    if (comStat.cbInQue)
-    {
-       // printf("comStat.cbInQue:%d\n", comStat.cbInQue);
-        //接收缓冲区空时调用
-        modbus->pxMBFrameCBByteReceived(modbus);
-    }
-    else
-    {
-        //写入缓冲区空时调用
-        modbus->pxMBFrameCBTransmitterEmpty(modbus);
-    }
-    // 重置事件
-    ResetEvent(ov.hEvent);
-}
-#endif // WIN32
+#endif

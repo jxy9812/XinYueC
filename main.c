@@ -15,7 +15,8 @@ int main(int argc, char* args[])
 	//XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
-	XVectorTest();
+	XSerialPortTest();
+	//XVectorTest();
 	return;
 	XStringVectorTest();
 	cJsonTest();

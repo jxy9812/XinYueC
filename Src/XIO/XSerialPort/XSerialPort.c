@@ -1,33 +1,30 @@
 ﻿#include "XSerialPort.h"
 #include <string.h>
-XSerialPortDevice* XSerialPort_new(XSerialPortDevice_PortFuncInit* port)
+XSerialPort* XSerialPort_new(XSerialPort_PortFuncInit* port)
 {
 	if (port == NULL)
 		return NULL;
 
-	XSerialPortDevice* serial = XMemory_malloc(sizeof(XSerialPortDevice));
+	XSerialPort* serial = XMemory_malloc(sizeof(XSerialPort));
 	if (serial == NULL)
 		return serial;
 	XSerialPort_init(serial, port);
 	return serial;
 }
 
-void XSerialPort_init(XSerialPortDevice* serial, XSerialPortDevice_PortFuncInit* port)
+void XSerialPort_init(XSerialPort* serial, XSerialPort_PortFuncInit* port)
 {
 	if (serial == NULL || port == NULL)
 		return ;
-	memset(serial, 0, sizeof(XSerialPortDevice));
+	memset(((XIODevice*)serial)+1, 0, sizeof(XSerialPort)-sizeof(XIODevice));
 	XIODevice_init(serial, port);
-
+	XSerialPort_class_init();
+	XClassGetVtable(serial) = XSerialPortVtable;
 }
 
-bool XSerialPort_open(XSerialPortDevice* serial, XIODeviceBase mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)
+bool XSerialPort_open(XSerialPort* serial, XIODeviceBase mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)
 {
-	if(serial ==NULL)
+	if (ISNULL(serial, ""))
 		return false;
-	//XSerialPortDevice* serial = (XSerialPortDevice*)io->device;
-	serial->m_baudRate = baudRate;
-	serial->m_parity= parity;
-	serial->m_portNum = portNum;
-	return XIODevice_open(serial, mode);
+	return XClassGetVirtualFunc(serial, EXIODevice_Open, bool(*)(XSerialPort*, XIODeviceBase, uint8_t, uint32_t, XSerialPortParity))(serial, mode,portNum,baudRate,parity);
 }

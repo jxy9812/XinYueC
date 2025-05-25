@@ -8,7 +8,7 @@ extern "C" {
 #include"XClass.h"
 //XIODevice虚函数表
 extern XVtable* XIODeviceVtable;
-#define XIODEVICE_VTABLE_SIZE (7)       //XIODevice容器虚函数表大小
+#define XIODEVICE_VTABLE_SIZE (12)       //XIODevice容器虚函数表大小
 //XContainerObject虚函数表枚举
 enum XIODeviceVtableEnum
 {
@@ -21,6 +21,9 @@ enum XIODeviceVtableEnum
 	EXIODevice_Receive,
 	EXIODevice_Close,
 	EXIODevice_Poll,
+	EXIODevice_SetWriteBuffer,
+	EXIODevice_SetReadBuffer,
+	EXIODevice_SetDevice,
 };
 typedef struct XCircularQueue XCircularQueue;
 typedef enum /*XIODeviceBase*/
@@ -80,7 +83,7 @@ void XIODevice_setDevice(XIODevice* io, void* device);
 size_t XIODevice_write(XIODevice* io,const char* data, size_t maxSize);//写入
 size_t XIODevice_read(XIODevice* io,char* data, size_t maxSize);//读取
 //接收数据从硬件接收数据到缓冲区
-void XIODevice_receive(XIODevice* io, char* data, size_t size);
+void XIODevice_receive(XIODevice* io,const char* data, size_t size);
 bool XIODevice_isOpen(XIODevice* io);
 bool XIODevice_open(XIODevice* io, XIODeviceBase mode);
 void XIODevice_close(XIODevice* io);
