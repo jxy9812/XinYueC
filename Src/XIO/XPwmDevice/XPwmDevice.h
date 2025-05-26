@@ -64,8 +64,8 @@ uint8_t XPWMDevice_getDutyCycle(XPWMDevice* pwm);
 #define XPWMDevice_open XIODevice_open
 #define XPWMDevice_close XIODevice_close
 #define XPWMDevice_setDevice XIODevice_setDevice
-#define XPWMDevice_free XIODevice_free;
-#define XPWMDevice_poll XIODevice_poll;
+#define XPWMDevice_free XIODevice_free
+#define XPWMDevice_poll XIODevice_poll
 #ifdef __cplusplus
 }
 #endif

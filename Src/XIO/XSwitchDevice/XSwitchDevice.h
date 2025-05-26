@@ -49,8 +49,8 @@ bool XSwitchDevice_getState(XSwitchDevice* sw);
 #define XSwitchDevice_open XIODevice_open
 #define XSwitchDevice_close XIODevice_close
 #define XSwitchDevice_setDevice XIODevice_setDevice
-#define XSwitchDevice_free XIODevice_free;
-#define XSwitchDevice_poll XIODevice_poll;
+#define XSwitchDevice_free XIODevice_free
+#define XSwitchDevice_poll XIODevice_poll
 #ifdef __cplusplus
 }
 #endif

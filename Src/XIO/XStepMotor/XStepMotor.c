@@ -21,8 +21,8 @@ void XStepMotor_init(XStepMotor* motor, XStepMotor_PortFuncInit* port)
 	//开始初始化
 	memset(motor, 0, sizeof(XStepMotor));
 	motor->m_PUL = XPWMDevice_new(&(port->PUL));
-	motor->m_ENA = XPWMDevice_new(&(port->ENA));
-	motor->m_DIR = XPWMDevice_new(&(port->DIR));
+	motor->m_ENA = XSwitchDevice_new(&(port->ENA));
+	motor->m_DIR = XSwitchDevice_new(&(port->DIR));
 	//绑定函数指针
 	memcpy(&(motor->m_port), &(port->StepMotorPort), sizeof(XStepMotor_PortFunc));
 	XStepMotor_setDevice(motor, motor);

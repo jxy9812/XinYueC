@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define  StepMotor_TIM_1MHz_Prescaler (84-1)//步进电机定时器在1Mz的预分频系数
+#define  STM32F407_168M_StepMotor_TIM_1MHz_Prescaler (84-1)//STM32F407 主频168M步进电机定时器在1Mz的预分频系数
 #include"XIODevice.h"
 #include"XPWMDevice.h"
 #include"XSwitchDevice.h"
