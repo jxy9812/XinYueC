@@ -26,34 +26,25 @@ void XStack_class_init();
 XStack* XStack_new(size_t typeSize);
 #define XStack_New(Type) XStack_new(sizeof(Type))
 void XStack_init(XStack* this_stack, size_t typeSize);
-//释放栈
-void XStack_free(XStack* this_stack);
 // 压栈，增加元素 O(1)
-void XStack_push(XStack* this_stack,void* LpValue);
-#define XStack_Push(this_stack,type,value) {type t=value;XStack_push(this_stack,&t);}
+#define XStack_push			XVector_push_back
+#define XStack_Push			XVector_Push_Back
 //移除栈顶元素 O(1)
-void XStack_pop(XStack* this_stack);
+#define XStack_pop			XVector_pop_back
 // 取得栈顶元素（但不删除）O(1)
-void* XStack_top(XStack* this_stack);
-#define XStack_Top(stack,type) (*((type*)XStack_top(stack)))
-//清空stack的队列，释放内存
-void XStack_clear(XStack* this_stack);
-//检测栈内是否为空，空为真 O(1)
-bool XStack_isEmpty(XStack* this_stack);
-//返回stack内元素的个数 O(1)
-int XStack_size(XStack* this_stack);
-//返回当前stack所能容纳的最大元素值
-int XStack_capacity(XStack* this_stack);
-//交换两个栈
-void XStack_swap(XStack* this_stackOne, XStack* this_stackTwo);
-
+#define XStack_top          XVector_back
+#define XStack_Top          XVector_Back
 //将this_stackTwo拷贝到this_stackOne
-void XStack_copy(XStack* this_stackOne, const XStack* this_stackTwo);
+#define XStack_copy			XVector_copy
 //将this_stackTwo逆序拷贝到this_stackOne
-void XStack_rcopy(XStack* this_stackOne, const XStack* this_stackTwo);
-//返回元素类型字节大小
-size_t XStack_typeSize(XStack* this_stack);
-
+#define XStack_rcopy		XVector_rcopy
+#define XStack_free			XVector_free	
+#define XStack_clear		XVector_clear	
+#define XStack_isEmpty		XVector_isEmpty	
+#define XStack_size			XVector_size	
+#define XStack_capacity		XVector_capacity
+#define XStack_swap			XVector_swap	
+#define XStack_typeSize		XVector_typeSize
 
 #ifdef __cplusplus
 }
