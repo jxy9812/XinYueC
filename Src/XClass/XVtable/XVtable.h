@@ -16,6 +16,7 @@ typedef struct
 XVtable* XVtable_new();
 //定义在栈上
 void XVtable_init_stack(XVtable* this_vtable, void** data, size_t size);
+#define XVtable_Init_Stack(this_vtable,vtable_data) XVtable_init_stack((this_vtable),vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]))
 //初始化堆上的
 void XVtable_init(XVtable* this_vtable);
 void XVtable_insert(XVtable* this_vtable, int64_t index, const void* func);

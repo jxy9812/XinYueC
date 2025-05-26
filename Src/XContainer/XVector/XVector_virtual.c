@@ -36,10 +36,18 @@ void XVector_class_init()
 {
 	if (XVectorVtable)
 		return;
+#if !VTABLE_ISSTACK
+	XVectorVtable = XVtable_new();
+#else
+	XVectorVtable = &vtable;
+	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+#endif
+	//继承的函数
+	XVtable_append_vtable(XVectorVtable,XContainerObjectVtable);
 	void* table[] = {
 		VXVector_resize,
 		//插入
-	VXVector_push_front,VXVector_push_back,VXVector_inserts,VXVector_insert,VXVector_insert_array,VXVector_append_array,
+		VXVector_push_front,VXVector_push_back,VXVector_inserts,VXVector_insert,VXVector_insert_array,VXVector_append_array,
 		//删除
 		VXVector_pop_front,VXVector_pop_back,VXVector_erase,VXVector_remove,
 		//拷贝
@@ -49,14 +57,6 @@ void XVector_class_init()
 		//排序
 		VXVector_sort
 	};
-#if !VTABLE_ISSTACK
-	XVectorVtable = XVtable_new();
-#else
-	XVectorVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
-#endif
-	//继承的函数
-	XVtable_append_vtable(XVectorVtable,XContainerObjectVtable);
 	//追加函数
 	XVtable_append_array(XVectorVtable, table, sizeof(table)/sizeof(table[0]));
 	//重写的函数

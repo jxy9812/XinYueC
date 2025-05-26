@@ -4,6 +4,15 @@
 extern "C" {
 #endif
 #include"XIODevice.h"
+//XSwitchDevice虚函数表
+extern XVtable* XSwitchDeviceVtable;
+#define XSWITCHDEVICE_VTABLE_SIZE (XIODEVICE_VTABLE_SIZE+2)       //XSwitchDevice容器虚函数表大小
+//XSwitchDevice虚函数表枚举
+enum XSwitchDeviceVtableEnum
+{
+	EXSwitchDevice_SetState = XIODEVICE_VTABLE_SIZE,
+	EXSwitchDevice_GetState,
+};
 typedef struct XSwitchDevice XSwitchDevice;
 //开关设备接口
 typedef struct XSwitchDevice_PortFunc
@@ -24,9 +33,10 @@ typedef struct XSwitchDevice
 	bool state;//状态   开或关
 	XSwitchDevice_PortFunc m_port;//开关设备接口
 }XSwitchDevice;
+//初始化类
+void XSwitchDevice_class_init();
 //开关设备
 XSwitchDevice* XSwitchDevice_new(XSwitchDevice_PortFuncInit* port);
-void XSwitchDevice_free(XSwitchDevice* sw);
 //初始化
 void XSwitchDevice_init(XSwitchDevice* sw,XSwitchDevice_PortFuncInit* port);
 //默认轮询方法
@@ -35,7 +45,12 @@ void XSwitchDevice_pollDefaultMethod(XSwitchDevice* sw);
 void XSwitchDevice_setState(XSwitchDevice* sw,bool state);
 //获取状态
 bool XSwitchDevice_getState(XSwitchDevice* sw);
-#define XSwitchDevice_poll(sw) XIODevice_poll(sw);
+#define XSwitchDevice_isOpen XIODevice_isOpen
+#define XSwitchDevice_open XIODevice_open
+#define XSwitchDevice_close XIODevice_close
+#define XSwitchDevice_setDevice XIODevice_setDevice
+#define XSwitchDevice_free XIODevice_free;
+#define XSwitchDevice_poll XIODevice_poll;
 #ifdef __cplusplus
 }
 #endif

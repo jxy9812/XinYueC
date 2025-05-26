@@ -13,14 +13,6 @@ XPWMDevice* XPWMDevice_new(XPWMDevice_PortFuncInit* port)
 	return pwm;
 }
 
-void XPWMDevice_free(XPWMDevice* pwm)
-{
-	if (pwm!=NULL)
-	{
-		XMemory_free(pwm);
-	}
-}
-
 void XPWMDevice_init(XPWMDevice* pwm, XPWMDevice_PortFuncInit* port)
 {
 	if (pwm == NULL || port == NULL)
@@ -33,78 +25,56 @@ void XPWMDevice_init(XPWMDevice* pwm, XPWMDevice_PortFuncInit* port)
 	//pwm->m_timer->data = pwm;
 	//绑定函数指针
 	memcpy(&(pwm->m_port), &(port->pwmPort), sizeof(XPWMDevice_PortFunc));
+
+	XPWMDevice_class_init();
+	XClassGetVtable(pwm) = XPWMDeviceVtable;
 }
 
 void XPWMDevice_setFrequency(XPWMDevice* pwm, size_t f)
 {
-	if (pwm!=NULL)
-	{
-		pwm->m_frequency = f;
-		if(pwm->m_isRun)
-			XPWMDevice_start(pwm);
-	}
+	if (ISNULL(pwm, ""))
+		return;
+	XClassGetVirtualFunc(pwm, EXPWMDevice_SetFrequency, void(*)(XPWMDevice*, size_t))(pwm, f);
 }
 
 void XPWMDevice_setDutyCycle(XPWMDevice* pwm, uint8_t d)
 {
-	if (pwm!=NULL&&d>=0&&d<=100)
-	{
-		pwm->m_dutyCycle = d;
-		if (pwm->m_isRun)
-			XPWMDevice_start(pwm);
-	}
+	if (ISNULL(pwm, ""))
+		return;
+	XClassGetVirtualFunc(pwm, EXPWMDevice_SetDutyCycle, void(*)(XPWMDevice*, uint8_t))(pwm, d);
 }
 
 void XPWMDevice_start(XPWMDevice* pwm)
 {
-	if (pwm != NULL)
-	{
-		XPWMDevice_stop(pwm);
-		//开始运行
-		if (pwm->m_port.start)
-		{
-			pwm->m_port.start(pwm);
-			pwm->m_isRun = true;
-			if (pwm->m_port.runChangeCallback)
-				pwm->m_port.runChangeCallback(pwm);
-		}
-	}
+	if (ISNULL(pwm, ""))
+		return;
+	XClassGetVirtualFunc(pwm, EXPWMDevice_Start, void(*)(XPWMDevice*))(pwm);
 }
 
 void XPWMDevice_stop(XPWMDevice* pwm)
 {
-	if (pwm != NULL)
-	{
-		if (pwm->m_isRun)
-		{//如果运行则执行关闭
-			if (pwm->m_port.stop)
-			{
-				pwm->m_port.stop(pwm);
-				pwm->m_isRun = false;
-				if (pwm->m_port.runChangeCallback)
-					pwm->m_port.runChangeCallback(pwm);
-			}
-		}
-	}
+	if (ISNULL(pwm, ""))
+		return;
+	XClassGetVirtualFunc(pwm, EXPWMDevice_Stop, void(*)(XPWMDevice*))(pwm);
 }
 
 bool XPWMDevice_isRunning(XPWMDevice* pwm)
 {
-	if(pwm==NULL)
+	if (ISNULL(pwm, ""))
 		return false;
-	return pwm->m_isRun;
+	return XClassGetVirtualFunc(pwm, EXPWMDevice_IsRunning, bool(*)(XPWMDevice*))(pwm);
 }
 
 size_t XPWMDevice_getFrequency(XPWMDevice* pwm)
 {
-	if(pwm==NULL)
+	if (ISNULL(pwm, ""))
 		return 0;
-	return pwm->m_frequency;
+	return XClassGetVirtualFunc(pwm, EXPWMDevice_GetFrequency, size_t(*)(XPWMDevice*))(pwm);
 }
 
 uint8_t XPWMDevice_getDutyCycle(XPWMDevice* pwm)
 {
-	if (pwm == NULL)
+	if (ISNULL(pwm, ""))
 		return 0;
-	return pwm->m_dutyCycle;
+	return XClassGetVirtualFunc(pwm, EXPWMDevice_GetDutyCycle, uint8_t(*)(XPWMDevice*))(pwm);
 }

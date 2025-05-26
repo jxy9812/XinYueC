@@ -14,18 +14,10 @@ XSwitchDevice* XSwitchDevice_new(XSwitchDevice_PortFuncInit* port)
 	return sw;
 }
 
-void XSwitchDevice_free(XSwitchDevice* sw)
-{
-	if (sw)
-	{
-		XMemory_free(sw);
-	}
-}
-
 void XSwitchDevice_init(XSwitchDevice* sw, XSwitchDevice_PortFuncInit* port)
 {
 	if (sw == NULL || port == NULL)
-		return NULL;
+		return ;
 	XIODevice_init(&(sw->m_parent), &(port->parentPort));
 	//开始初始化
 	memset(&(sw->state), 0, sizeof(XSwitchDevice) - sizeof(XIODevice) - sizeof(XSwitchDevice_PortFunc));
@@ -33,6 +25,8 @@ void XSwitchDevice_init(XSwitchDevice* sw, XSwitchDevice_PortFuncInit* port)
 	memcpy(&(sw->m_port), &(port->SwitchPort), sizeof(XSwitchDevice_PortFunc));
 	if (sw->m_parent.m_port.poll_funcPointer == NULL)
 		sw->m_parent.m_port.poll_funcPointer = XSwitchDevice_pollDefaultMethod;
+	XSwitchDevice_class_init();
+	XClassGetVtable(sw) = XSwitchDeviceVtable;
 }
 
 void XSwitchDevice_pollDefaultMethod(XSwitchDevice* sw)
@@ -63,22 +57,14 @@ void XSwitchDevice_pollDefaultMethod(XSwitchDevice* sw)
 
 void XSwitchDevice_setState(XSwitchDevice* sw, bool state)
 {
-	//printf("A\n");
-	if (sw && ((sw->m_parent.m_mode) & XIODeviceBase_WriteOnly))
-	{
-		XIODevice_write(sw, &state, sizeof(bool));
-		//if (sw->m_parent.m_port.poll_funcPointer == NULL)
-		if ((sw->state != state) && sw->m_port.stateChangeCallback)
-		{
-			sw->state = state;
-			sw->m_port.stateChangeCallback(sw);
-		}
-	}
+	if (ISNULL(sw, ""))
+		return ;
+	XClassGetVirtualFunc(sw, EXSwitchDevice_SetState, void(*)(XSwitchDevice*,bool))(sw, state);
 }
 
 bool XSwitchDevice_getState(XSwitchDevice* sw)
 {
-	if(sw)
-		return sw->state;
-	return false;
+	if (ISNULL(sw, ""))
+		return false;
+	return XClassGetVirtualFunc(sw, EXSwitchDevice_GetState, bool(*)(XSwitchDevice*))(sw);
 }
