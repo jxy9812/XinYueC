@@ -100,29 +100,6 @@ bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
     XModbusTest_XTimerCreat(NULL);
     return true;
 }
-bool XModbusTest_readByte(XIODevice* io, char* byte, size_t size)
-//bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte)
-{
-    DWORD bytesRead;
-    if (!ReadFile(hSerial, byte, size, &bytesRead, &ov))
-    {
-        if (GetLastError() != ERROR_IO_PENDING)
-        {
-            printf("读取失败\n");
-            return false;
-        }
-
-        // 等待异步操作完成
-        if (!GetOverlappedResult(hSerial, &ov, &bytesRead, true))
-        {
-            printf("异步读取失败\n");
-            return false;
-        }
-    }
-    // printf("接收到字符%c\n", *byte);
-    return true;
-}
-//bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte)
 bool XModbusTest_writeByte(XIODevice* io, XCircularQueue* queue)
 {
     char data;
@@ -190,7 +167,7 @@ static DWORD WINAPI ThreadReceive(LPVOID lpParam)
         else
         {
             //printf("准备推送数据\n");
-            XSerialPort_writeFull(serial);
+            //XSerialPort_writeFull(serial);
         }
         // 重置事件
         ResetEvent(ov.hEvent);

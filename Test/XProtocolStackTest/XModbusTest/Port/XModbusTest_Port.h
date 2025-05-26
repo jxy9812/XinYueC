@@ -16,12 +16,7 @@ extern "C" {
 void XModbusTest_SerialEnable(XIODevice* io, bool xRxEnable, bool xTxEnable);
 // 打开串口
 bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode);
-bool XModbusTest_SerialInit(XModbus* modbus, uint8_t port, uint32_t baudRate, XModbusParity parity);
-//获取一个字节
-bool XModbusTest_GetByte(XModbus* modbus, uint8_t* byte);
-bool XModbusTest_readByte(XIODevice* io, char* data, size_t size);
-//发送一个字节
-bool XModbusTest_PutByte(XModbus* modbus, uint8_t Byte);
+//发送数据
 bool XModbusTest_writeByte(XIODevice* io, XCircularQueue* queue);
 //定时器启动
 void XModbusTest_XTimer_Start(XTimer* timer);

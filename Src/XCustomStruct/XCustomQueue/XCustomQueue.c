@@ -98,7 +98,7 @@ static void XCircularQueue_popFunc(XCustomQueue* queue)
 }
 static bool XCircularQueue_receiveFunc(XCustomQueue* queue, void* pvBuffer, uint32_t wait)
 {
-	return XCircularQueue_receive(queue,pvBuffer);
+	return XCircularQueue_receive(queue->m_queue,pvBuffer);
 	//XCircularQueue* circularQueue = (XCircularQueue*)queue->m_queue;
 }
 static bool XCircularQueue_isEmptyFunc(XCustomQueue* queue)

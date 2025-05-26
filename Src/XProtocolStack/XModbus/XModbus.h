@@ -56,16 +56,15 @@ typedef struct XModbus
 {
     uint8_t    address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
     XModbusMode mode;//模式
-    XModbusErrorCode errorCode;//错误代码
     XModbusState     state;//状态
     XIODevice* ioDevice;//IO设备
     XVector* recvBuffer;//接收缓冲区
-    XModbusFrameQueue* sendQueue;//发送队列(XQueue<XModbusFrame*>)
-    XModbusFrameQueue* recvFrameQueue;//接收帧队列(XQueue<XModbusFrame*>) 后面处理执行
+    XModbusFrameQueue* sendQueue;//发送队列(XCircularQueue<XModbusFrame*>)
+    XModbusFrameQueue* recvFrameQueue;//接收帧队列(XCircularQueue<XModbusFrame*>) 后面处理执行
     XCustomQueue* eventQueue;//事件队列
     XModbusFunctionHandlerList* funcCodeList;//功能码列表
 
-    int sendRemaining;//当前发送的进度
+    int pendingCount;//待发送的数据量
     XModbusRegularlySendFrameLsit* regularlySendMaster;//主站定期发送帧数据
     /* ----------------------- 以下主站等待处理发送返回请求-------------------------------------*/
     XVector* recvHandleMaster;//XVector<XModbusFrameDataRecvHandle>
@@ -76,8 +75,9 @@ typedef struct XModbus
     XModbusFrameReceive  peMBFrameReceiveCur;  // 帧接收函数指针（接收完整 Modbus 帧，返回帧数据）
     XModbusFrameClose    pvMBFrameCloseCur;    // 端口关闭函数指针（可选，用于释放端口资源，如关闭串口）
     /* ----------------------- RTU-------------------------------------*/
-   // bool xRxEnable;//接收
-   // bool xTxEnable;//发送
+#if MB_CALIBRATION_TIMER_SETTINGS
+    size_t calibrationTimer_current;//校准定时器用记录当前时间
+#endif // MB_CALIBRATION_TIMER_SETTINGS
     XTimer* timer;//定时器     平台初始化
     size_t timerOutNumber;//定时器超时次数
     XModbusSndState eSndState;    // 发送状态机（volatile确保多线程可见）
@@ -99,7 +99,7 @@ typedef struct XModbus
 * @param  parity:奇偶校验
 * @retval
 */
-void XModbus_init(XModbus* modbus, XModbus_PortFunc* func,XModbusMode mode,uint8_t address,uint8_t port,uint32_t baudRate, XModbusParity parity);
+XModbusErrorCode XModbus_init(XModbus* modbus, XModbus_PortFunc* func,XModbusMode mode,uint8_t address,uint8_t port,uint32_t baudRate, XModbusParity parity);
 /*! \ingroup modbus
  * \brief 启用Modbus协议栈
  *

@@ -1,36 +1,32 @@
 ﻿#include "XModbusFrame.h"
+#include "XCircularQueueAtomic.h"
 #include "XQueue.h"
 #include "XMemory.h"
 #include "XModbusRtu.h"
 #include "XCrc.h"
 #include <string.h>
-XModbusFrameQueue* XModbusFrameQueue_new()
+XModbusFrameQueue* XModbusFrameQueue_new(size_t count)
 {
-	XModbusFrameQueue* queue = XQueue_New(XModbusFrame*);
-	/*if (queue)
-	{
-		XModbusFrame frame{1,XVector_New(UCHAR)};
-
-	}*/
+	XModbusFrameQueue* queue = XCircularQueueAtomic_New(XModbusFrame*,count);
 	return queue;
 }
 
 void XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrame* frameData)
 {
-	XQueue_push(queue,&frameData);
+	XCircularQueue_push(queue,&frameData);
 }
 
 XModbusFrame* XModbusFrameQueue_top(XModbusFrameQueue* queue)
 {
 	if(queue==NULL)
 		return NULL;
-	return XQueue_Top(queue, XModbusFrameQueue*);
+	return XCircularQueue_Top(queue, XModbusFrameQueue*);
 }
 
 bool XModbusFrameQueue_empty(XModbusFrameQueue* queue)
 {
 	if (queue)
-		return XQueue_isEmpty(queue);
+		return XCircularQueue_isEmpty(queue);
 	return true;
 }
 
@@ -47,7 +43,7 @@ void XModbusFrameQueue_pop(XModbusFrameQueue* queue)
 		//	XVector_free(top->frame);
 		XModbusFrame_free(top);
 	}
-	XQueue_pop(queue);
+	XCircularQueue_pop(queue);
 }
 
 void XModbusFrameQueue_clear(XModbusFrameQueue* queue)
@@ -61,7 +57,7 @@ void XModbusFrameQueue_clear(XModbusFrameQueue* queue)
 void XModbusFrameQueue_free(XModbusFrameQueue* queue)
 {
 	XModbusFrameQueue_clear(queue);
-	XQueue_free(queue);
+	XCircularQueue_free(queue);
 }
 
 XModbusFrame* XModbusFrame_new()

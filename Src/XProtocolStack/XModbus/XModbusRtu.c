@@ -9,16 +9,17 @@ static void  XModbusRtu_Timer_out(XTimer* timer)
 {
     ((XModbus*)timer->data)->pxMBPortCBTimerExpired(timer->data);
 }
-void XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortFunc* func, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
+XModbusErrorCode XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortFunc* func, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
 {
+    XModbusErrorCode error = MB_ENOERR;
     modbus->ioDevice = XSerialPort_new(&(func->IO_Port));
-    XIODevice_setReadBuffer(modbus->ioDevice, MB_RECV_BUFFER_SIZE);
-    XIODevice_setWriteBuffer(modbus->ioDevice, MB_RECV_BUFFER_SIZE);
+    XIODevice_setReadBuffer(modbus->ioDevice, MB_DEVICE_RECV_BUFFER_SIZE);
+    XIODevice_setWriteBuffer(modbus->ioDevice, MB_DEVICE_SEND_BUFFER_SIZE);
     // 调用 RTU 底层初始化（配置串口参数：端口号、波特率、校验位）
     if (!XSerialPort_open(modbus->ioDevice, mode, port, baudRate, parity))
     {
-        modbus->errorCode = MB_EPORTERR;
-        return;
+        error = MB_EPORTERR;
+        return error;
     }
     { // RTU 模式初始化（二进制传输，效率高，适合串口通信）
         // 绑定 RTU 模式专用函数（来自 mbrtu.c）
@@ -49,6 +50,7 @@ void XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortFunc* func, u
             modbus->timer->interval = 2;
         XTimer_create(modbus->timer);
     }
+    return error;
 }
 void XModbusRtuStart(XModbus* modbus)
 {
@@ -72,7 +74,6 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrame* frameData)
     if (modbus == NULL|| frameData==NULL)
         return MB_EINVAL;
     bool            xFrameReceived = false;
-    //modbus->errorCode= MB_ENOERR;
 
     ENTER_CRITICAL_SECTION();
 
@@ -80,28 +81,28 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrame* frameData)
 
     //解析的帧有问题
     if(XVector_isEmpty(frameData->frameData))
-        modbus->errorCode = MB_EIO;
+        return MB_EIO;
     EXIT_CRITICAL_SECTION();
-    //XModbusFrameQueue_push(modbus->object.recvFrameQueue,&frameData);
-    return  modbus->errorCode;
+    return MB_ENOERR;
 }
 
 XModbusErrorCode XModbusRtuSend(XModbus* modbus, XModbusFrame* frameData)
 {
     if (modbus == NULL)
         return MB_EINVAL;
+    XModbusErrorCode error = MB_ENOERR;
     XVector* dataVector = XVector_New(uint8_t);
     if (dataVector == NULL)
     {
-        modbus->errorCode = MB_ENORES;
-        return modbus->errorCode;
+        error = MB_ENORES;
+        return error;
     }
     XVector_copy(dataVector, frameData->frameData);
    
     ENTER_CRITICAL_SECTION();
     XQueue_push(modbus->sendQueue, &dataVector);
     EXIT_CRITICAL_SECTION();
-    return modbus->errorCode;
+    return error;
 }
 
 bool XModbusRtuReceiveFSM(XModbus* modbus)
@@ -124,10 +125,16 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
     switch (modbus->eRcvState) {
     case STATE_RX_INIT:  // 初始状态（等待总线空闲）
         XTimer_start(modbus->timer);  // 启动T35定时器，检测帧间隔
+#if MB_CALIBRATION_TIMER_SETTINGS
+        modbus->calibrationTimer_current = XTimer_getCurrentTime();
+#endif 
         break;
 
     case STATE_RX_ERROR:  // 接收错误状态（忽略后续字节）
         XTimer_start(modbus->timer);  // 保持定时器运行，等待错误帧结束
+#if MB_CALIBRATION_TIMER_SETTINGS
+        modbus->calibrationTimer_current = XTimer_getCurrentTime();
+#endif 
         break;
 
     case STATE_RX_IDLE:  // 空闲状态（接收到新帧起始字节）
@@ -149,6 +156,9 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
             //printf("缓冲区溢出\n");
         }
         XTimer_start(modbus->timer);  // 每次接收到字节后重置定时器
+#if MB_CALIBRATION_TIMER_SETTINGS
+        modbus->calibrationTimer_current = XTimer_getCurrentTime();
+#endif 
         break;
     }
     return true;
@@ -158,7 +168,6 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
 {
     if (modbus == NULL)
         return false;
-   // bool            xNeedPoll = false;
     //printf("检查是否可以发送\n");
     if (modbus->eRcvState != STATE_RX_IDLE|| modbus->eSndState == STATE_TX_END)
         return false;
@@ -186,7 +195,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
     {
         case STATE_TX_IDLE:  // 发送空闲状态（无数据发送）
         {
-            modbus->sendRemaining = XVector_size(dataVector);
+            modbus->pendingCount = XVector_size(dataVector);
 
             modbus->eSndState = STATE_TX_XMIT;
             //printf("发送空闲\n");
@@ -195,17 +204,20 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
         case STATE_TX_XMIT:  // 发送中状态（逐个字节发送）
         {
             //printf("发送中\n");
-            if (modbus->sendRemaining != 0)
+            if (modbus->pendingCount != 0)
             {
-                XIODevice_write(modbus->ioDevice, XVector_at(dataVector, XVector_size(dataVector) - modbus->sendRemaining), 1);
-                //modbus->sendRemaining = 0;
-                //printf("写入\n");
-               // modbus->ioDevice->m_port.writeData_funcPointer(modbus->ioDevice,XVector_at(dataVector, XVector_size(dataVector)- modbus->sendRemaining),1);
-                --modbus->sendRemaining;
+                XIODevice_write(modbus->ioDevice, XVector_at(dataVector, XVector_size(dataVector) - modbus->pendingCount), 1);
+#if !MB_IS_COMP_SEND_FRAME
+                XIODevice_writeFull(modbus->ioDevice);
+#endif
+                --modbus->pendingCount;
                // printf("end\n");
             }
             else
             {//发送完成
+#if MB_IS_COMP_SEND_FRAME
+                XIODevice_writeFull(modbus->ioDevice);
+#endif
                 modbus->eSndState = STATE_TX_END;  // 切换到发送空闲状态
                 modbus->timerOutNumber = 0;//开始计数
                 XTimer_start(modbus->timer);  // 发送完成等待下一帧
@@ -229,8 +241,6 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
                 // 发送完成，通知上层协议帧已发送
                 //printf("发送完成事件\n");
                 XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_FRAME_SENT);
-                //printf("完成事件\n");
-                //xNeedPoll = xMBPortEventPost(EV_FRAME_SENT);
             }
             break;
         }

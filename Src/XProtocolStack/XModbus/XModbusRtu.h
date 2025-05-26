@@ -36,7 +36,7 @@ typedef struct XModbusRtu XModbusRtu;
 //}XModbusRtu;
 
 //modbusRTU初始化 不是给用户调用的 
-void  XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortFunc* func, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity);
+XModbusErrorCode  XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortFunc* func, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity);
 /*!
  * @brief 启动Modbus RTU接收和发送功能
  *

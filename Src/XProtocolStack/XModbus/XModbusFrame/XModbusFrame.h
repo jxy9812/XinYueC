@@ -20,8 +20,8 @@ extern "C" {
 #include"XModbusFrame_RTU.h"
 #endif
 /* ---------------------------------  类型声明------------------------------------------*/
-typedef struct XQueue XQueue;
-typedef XQueue XModbusFrameQueue;
+typedef struct XCircularQueue XCircularQueue;
+typedef XCircularQueue XModbusFrameQueue;
 //帧接收队列
 typedef struct XModbus XModbus;
 typedef struct XModbusFrame XModbusFrame;
@@ -46,7 +46,7 @@ typedef struct XModbusFrame
 }XModbusFrame;
 
 /* --------------------------------- XModbusFrameQueue 方法------------------------------------------*/
-XModbusFrameQueue* XModbusFrameQueue_new();
+XModbusFrameQueue* XModbusFrameQueue_new(size_t count);
 void XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrame* frame);
 XModbusFrame* XModbusFrameQueue_top(XModbusFrameQueue* queue);
 bool XModbusFrameQueue_empty(XModbusFrameQueue* queue);

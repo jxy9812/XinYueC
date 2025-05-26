@@ -25,18 +25,17 @@ static const bool recvHandleMaster_XEquality(const void* Value, const void* Comp
     uint16_t  value = *((uint16_t*)CompareValue);
     return (*((XModbusFrameDataRecvHandle**)Value))->waitAddressCode == *((uint16_t*)CompareValue);
 }
-void XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMode mode, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
+XModbusErrorCode XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMode mode, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
 {
 	if (modbus == NULL|| func==NULL)
-		return;
-	//modbus->recvBuffer = XVector_New(uint8_t);
-	//XVector_resize(modbus->recvBuffer, MB_RECV_BUFFER_SIZE);
-	modbus->sendQueue= XModbusFrameQueue_new();
-    modbus->recvFrameQueue=XModbusFrameQueue_new();
+		return MB_EINVAL;
+    XModbusErrorCode error= MB_ENOERR;
+	modbus->sendQueue= XModbusFrameQueue_new(MB_FRAME_SEND_QUEUE_COUNT);
+    modbus->recvFrameQueue=XModbusFrameQueue_new(MB_FRAME_RECV_QUEUE_COUNT);
     if(func->EventQueuePort.create_funcPointer)
-        modbus->eventQueue = XCustomQueue_new(&(func->EventQueuePort),sizeof(10),20);
+        modbus->eventQueue = XCustomQueue_new(&(func->EventQueuePort),sizeof(XModbusEventType), MB_EVENT_QUEUE_COUNT);
     else
-	    modbus->eventQueue = XCustomQueue_new_XCircularQueue(sizeof(10), 20);
+	    modbus->eventQueue = XCustomQueue_new_XCircularQueue(sizeof(XModbusEventType), MB_EVENT_QUEUE_COUNT);
     modbus->funcCodeList = XModbusFuncCodeList_new();
 	modbus->mode = mode;
     //assert(func->IO_Port.readData_funcPointer);
@@ -44,8 +43,11 @@ void XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMode mode, uin
     assert(func->IO_Port.writeData_funcPointer);
     modbus->recvBuffer = XVector_new(sizeof(char));
     XVector_resize(modbus->recvBuffer ,MB_RECV_BUFFER_SIZE);
-    modbus->errorCode = MB_ENOERR;
+ 
     modbus->recvHandleMaster = NULL;
+#if MB_CALIBRATION_TIMER_SETTINGS
+    modbus->calibrationTimer_current = 0;
+#endif
     // 根据选择的模式初始化对应的函数指针和底层模块
     if (XModbus_isMaster(modbus))
     {//主站下初始化资源
@@ -61,7 +63,7 @@ void XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMode mode, uin
 #if MB_RTU_ENABLED > 0
     case MB_RTU_MASTER: 
     case MB_RTU_SLAVE:
-        XModbusRtuInit(modbus,mode,func,address,port,baudRate,parity);
+        error = XModbusRtuInit(modbus,mode,func,address,port,baudRate,parity);
     break;
 #endif
 #if MB_ASCII_ENABLED > 0
@@ -85,27 +87,30 @@ void XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMode mode, uin
    }
 #endif
     default: // 非法模式处理
-        modbus->errorCode = MB_EINVAL; // 不支持的模式错误
-        return;
+        error = MB_EINVAL; // 不支持的模式错误
+        return error;
     }
 
     // 初始化成功后配置协议栈状态
-    if (modbus->errorCode == MB_ENOERR) {
-        // 初始化端口事件模块（如事件队列，用于驱动协议栈轮询）
-        if (modbus->eventQueue==NULL) {
-            modbus->errorCode = MB_EPORTERR; // 端口事件初始化失败（平台相关错误）
+    if (error == MB_ENOERR) 
+    {
+    // 初始化端口事件模块（如事件队列，用于驱动协议栈轮询）
+        if (modbus->eventQueue==NULL) 
+        {
+            error = MB_EPORTERR; // 端口事件初始化失败（平台相关错误）
         }
-        else {
+        else 
+        {
             //eMBCurrentMode = eMode; // 记录当前工作模式
             modbus->state = STATE_DISABLED; // 初始化后状态为“禁用”，需调用 eMBEnable 激活
         }
     }
-//}
+    return error;
 }
 
 XModbusErrorCode XModbus_enable(XModbus* modbus)
 {
-    //printf("mode\n");
+    XModbusErrorCode error = MB_ENOERR;
     if (modbus && modbus->pvMBFrameStartCur)
     {
         if (modbus->state == STATE_DISABLED) {
@@ -113,35 +118,37 @@ XModbusErrorCode XModbus_enable(XModbus* modbus)
             modbus->state = STATE_ENABLED; // 更新状态为启用
         }
         else {
-            modbus->errorCode = MB_EILLSTATE; // 非法状态（已启用或未初始化）
+            error = MB_EILLSTATE; // 非法状态（已启用或未初始化）
         }
-        return modbus->errorCode;
+        return error;
     }
     return MB_EINVAL;
 }
 XModbusErrorCode XModbus_disable(XModbus* modbus)
 {
+    XModbusErrorCode error = MB_ENOERR;
     if (modbus && modbus->pvMBFrameStopCur)
     {
         if (modbus->state == STATE_ENABLED) { // 从启用状态禁用
             modbus->pvMBFrameStopCur(modbus); // 停止协议栈（暂停接收/发送，清理临时资源）
             modbus->state = STATE_DISABLED; // 更新状态为禁用
-            modbus->errorCode = MB_ENOERR;
+            error = MB_ENOERR;
         }
         else if (modbus->state == STATE_DISABLED) { // 已禁用状态，直接返回成功
-            modbus->errorCode = MB_ENOERR;
+            error = MB_ENOERR;
         }
         else { // 未初始化状态
-            modbus->errorCode = MB_EILLSTATE; // 非法状态错误
+            error = MB_EILLSTATE; // 非法状态错误
         }
-        return modbus->errorCode;
+        return error;
     }
     return MB_EINVAL;
    
 }
 // 接收到完整的 Modbus 帧
-static void XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
+static XModbusErrorCode XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
 {
+    XModbusErrorCode error = MB_ENOERR;
    /* ((char*)(XVector_begin(modbus->recvBuffer)))[XVector_size(modbus->recvBuffer)] = 0;
     printf("数据:%s  大小:%d buff接收缓冲区大小:%d\n",XVector_begin(modbus->recvBuffer), XVector_size(modbus->recvBuffer), XVector_capacity(modbus->recvBuffer));*/
     
@@ -149,9 +156,9 @@ static void XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
     XModbusFrame* recvFrame = XModbusFrame_new();
     recvFrame->mode = modbus->mode;
     //解析数据帧
-    modbus->peMBFrameReceiveCur(modbus,recvFrame);
-    //printf("进入帧数据处理:%d\n", modbus->errorCode);
-    if (modbus->errorCode == MB_ENOERR) {
+    error = modbus->peMBFrameReceiveCur(modbus,recvFrame);
+    //printf("进入帧数据处理:%d\n", error);
+    if (error == MB_ENOERR) {
         uint8_t address= XModbusFrame_getAddress(recvFrame);
         uint8_t code= XModbusFrame_getFuncCode(recvFrame);
 #if MB_RECV_FRAME_SHOW
@@ -183,7 +190,7 @@ static void XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
     {
         XModbusFrame_free(recvFrame);
     }
-    
+    return error;
 }
 //功能码处理
 static void  XModbus_EV_EXECUTE(XModbus* modbus)
@@ -260,6 +267,7 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
 }
 static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
 {
+    XModbusErrorCode error = MB_ENOERR;
     //检查回调函数是否超时
     if (modbus->recvHandleMaster != NULL)
     {
@@ -306,34 +314,38 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
     {
        //printf("发送数据\n");
         modbus->pxMBFrameCBTransmitterEmpty(modbus);
+        
+#if MB_CALIBRATION_TIMER_SETTINGS //软件定时校准接收状态
+        if (modbus->calibrationTimer_current + (modbus->timer->interval*2) < XTimer_getCurrentTime())
+        {
+            modbus->calibrationTimer_current = XTimer_getCurrentTime();
+            modbus->eRcvState = STATE_RX_IDLE;  // 切换到接收空闲状态
+        }
+#endif // MB_CALIBRATION_TIMER_SETTINGS
     }
     else //if(modbus->eSndState != STATE_TX_XMIT)
     {
         //printf("处理接收数据\n");
         modbus->pxMBFrameCBByteReceived(modbus);
     }
-    return modbus->errorCode;
+    return error;
 }
 XModbusErrorCode XModbus_poll(XModbus* modbus)
 {
     if (modbus == NULL)
         return MB_EINVAL;
-   
+    XModbusErrorCode error = MB_ENOERR;
     //printf("轮询中\n");
     //// 检查协议栈状态（必须已启用才能处理事件）
     if (modbus->state != STATE_ENABLED) {
-        modbus->errorCode = MB_EILLSTATE;
         return MB_EILLSTATE; // 非法状态，直接返回错误
     }
-    //return modbus->errorCode;
+    XModbusEventType eEvent;
     // 获取端口事件（如接收完成、定时器超时，驱动协议栈处理）
-    if (XCustomQueue_isEmpty(modbus->eventQueue))
+    if (!XCustomQueue_receive(modbus->eventQueue,&eEvent,0))
     {
         return XModbus_EventEmpty(modbus);
     }
-   
-    //从队列中获取事件
-    XModbusEventType eEvent = XCustomQueue_Top(modbus->eventQueue, XModbusEventType);
 #if MB_EVENT_HANDLE_SHOW
 #if MB_ENUM_TO_STRING
     printf("准备处理事件:%s\n", XModbusEventType_toString(eEvent));
@@ -351,9 +363,9 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
     //        break;
         }
         //printf("准备删除事件\n");
-        XCustomQueue_pop(modbus->eventQueue);
+        //XCustomQueue_pop(modbus->eventQueue);
         //printf("删除事件完毕\n");
-   return modbus->errorCode; // 轮询成功（无错误或错误已处理）
+   return error; // 轮询成功（无错误或错误已处理）
 }
 //发送帧之前处理一些信息
 static bool setSendFrame(XModbus* modbus, XModbusFrame* frame)
@@ -381,7 +393,7 @@ XModbusErrorCode XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame)
         return MB_EINVAL;
     if(setSendFrame(modbus, frame))
         XModbusFrameQueue_push(modbus->sendQueue, frame);
-    return modbus->errorCode;
+    return MB_ENOERR;
 }
 
 XModbusErrorCode XModbus_sendFrameRegularlyMaster(XModbus* modbus, XModbusFrame* frame, uint32_t time)
@@ -396,7 +408,7 @@ XModbusErrorCode XModbus_sendFrameRegularlyMaster(XModbus* modbus, XModbusFrame*
         regularly.timeOut = time + XTimer_getCurrentTime();
         XList_push_back(modbus->regularlySendMaster, &regularly);
     }
-    return modbus->errorCode;
+    return MB_ENOERR;
 }
 
 bool XModbus_isMaster(XModbus* modbus)

@@ -99,14 +99,26 @@ extern "C" {
  
  /*! \brief 启用“读写多个寄存器”功能（功能码0x17） */
  #define MB_FUNC_READWRITE_HOLDING_ENABLED       (  1 )
+//io设备接收缓冲区默认大小
+ #define MB_DEVICE_RECV_BUFFER_SIZE			   	 (  128 )
+//io设备发送缓冲区默认大小
+ #define MB_DEVICE_SEND_BUFFER_SIZE		    	 (  128 )
+//发送帧队列最大元素个数
+#define MB_FRAME_SEND_QUEUE_COUNT		    	 (  30 )
+//接收帧队列最大元素个数
+#define MB_FRAME_RECV_QUEUE_COUNT		    	 (  30 )
+//事件队列最大元素个数
+#define MB_EVENT_QUEUE_COUNT		    		 (  30 )
 //接收缓冲区默认大小
- #define MB_RECV_BUFFER_SIZE					 (  256 )
+ #define MB_RECV_BUFFER_SIZE					 (  1024 )
 //主站接收等待时间  
-#define MB_MASTER_RECV_WAIT_TIME				 (  5 )
-//主站接收返回超时时间  要大于MB_MASTER_RECV_WAIT_TIME
+ #define MB_MASTER_RECV_WAIT_TIME				 (  5 )
+//主站接收返回超时时间 (ms)
  #define MB_MASTER_RECV_OUT_TIME				 (  1000 )
-//以下是调试选项
-
+//是否完整的帧一起发送
+ #define MB_IS_COMP_SEND_FRAME					 (  0 )
+//是否启用校准软件定时器接收状态
+ #define MB_CALIBRATION_TIMER_SETTINGS			 (  0 )
  //接收帧显示
  #define MB_RECV_FRAME_SHOW						 (  1 )
  //发送帧显示
@@ -118,9 +130,9 @@ extern "C" {
  /*! @} */
 
 //宏定义检查
-#if MB_MASTER_RECV_OUT_TIME <MB_MASTER_RECV_WAIT_TIME
-#error "MB_MASTER_RECV_OUT_TIME 需要大于 MB_MASTER_RECV_WAIT_TIME"  
-#endif
+//#if MB_MASTER_RECV_OUT_TIME <MB_MASTER_RECV_WAIT_TIME
+//#error "MB_MASTER_RECV_OUT_TIME 需要大于 MB_MASTER_RECV_WAIT_TIME"  
+//#endif
 #ifdef __cplusplus
 }
 #endif
