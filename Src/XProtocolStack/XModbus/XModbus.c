@@ -154,6 +154,8 @@ static XModbusErrorCode XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
     
     // 调用对应模式的接收函数，获取帧数据（地址、缓冲区、长度）
     XModbusFrame* recvFrame = XModbusFrame_new();
+    if (recvFrame == NULL)
+        return MB_ENORES;
     recvFrame->mode = modbus->mode;
     //解析数据帧
     error = modbus->peMBFrameReceiveCur(modbus,recvFrame);
@@ -167,29 +169,30 @@ static XModbusErrorCode XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
         //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
         XString_free(str);
 #endif // MB_SEND_FRAME_SHOW
+        XModbusEventType event = EV_EXECUTE;
         if (XModbus_isMaster(modbus))
         {
             //printf("当前是主站\n");
            //printf("将有效的帧加入接收队列处理\n");
-            XModbusFrameQueue_push(modbus->recvFrameQueue, recvFrame);
-            XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_EXECUTE);
+            if (XModbusFrameQueue_push(modbus->recvFrameQueue, recvFrame)&& XCustomQueue_push(modbus->eventQueue, &event))
+                return error;
+            error = MB_ENORES;
+            //XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_EXECUTE);
         }
         else if ((address == modbus->address) || (address == MB_ADDRESS_BROADCAST))
         {//当前是从站
             //printf("将有效的帧加入接收队列处理\n");
-            XModbusFrameQueue_push(modbus->recvFrameQueue, recvFrame);
-            XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_EXECUTE);
+            if (XModbusFrameQueue_push(modbus->recvFrameQueue, recvFrame) && XCustomQueue_push(modbus->eventQueue, &event))
+                return error;
+            error = MB_ENORES;
             //                xMBPortEventPost(EV_EXECUTE); // 触发功能码执行事件
         }
         else
         {
-            XModbusFrame_free(recvFrame);
+            error = MB_EIO;
         }
     }
-    else
-    {
-        XModbusFrame_free(recvFrame);
-    }
+    XModbusFrame_free(recvFrame);
     return error;
 }
 //功能码处理
@@ -219,6 +222,7 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
             //拷贝数据
             frame->recvHandle = *value;
             *value = NULL;
+            //执行回调函数
             frame->recvHandle->pRecvHandCallFunc(modbus, frame);
             //释放一个资源
             XModbusFrameQueue_pop(modbus->recvFrameQueue);
@@ -355,8 +359,8 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
 #endif // MB_EVENT_SHOH
     //{ // 有事件待处理
         switch (eEvent) {
-        case EV_FRAME_RECEIVED: XModbus_EV_FRAME_RECEIVED(modbus);  break; // 接收到完整的 Modbus 帧
-        case EV_EXECUTE: XModbus_EV_EXECUTE(modbus); break;
+        //case EV_FRAME_RECEIVED: XModbus_EV_FRAME_RECEIVED(modbus);  break; // 接收到完整的 Modbus 帧
+        //case EV_EXECUTE: XModbus_EV_EXECUTE(modbus); break;
     //                   // 其他事件（如 EV_READY、EV_FRAME_SENT）暂时忽略，留空处理
     //    case EV_READY:
     //    case EV_FRAME_SENT:
@@ -391,8 +395,14 @@ XModbusErrorCode XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame)
 {
     if (modbus == NULL || frame == NULL)
         return MB_EINVAL;
-    if(setSendFrame(modbus, frame))
-        XModbusFrameQueue_push(modbus->sendQueue, frame);
+    if (setSendFrame(modbus, frame))
+    {
+        if (!XModbusFrameQueue_push(modbus->sendQueue, frame))
+        {
+            XMemory_free(frame);
+            return MB_ENORES;
+        }
+    }
     return MB_ENOERR;
 }
 

@@ -11,9 +11,9 @@ XModbusFrameQueue* XModbusFrameQueue_new(size_t count)
 	return queue;
 }
 
-void XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrame* frameData)
+bool XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrame* frameData)
 {
-	XCircularQueue_push(queue,&frameData);
+	return XCircularQueue_push(queue, &frameData);
 }
 
 XModbusFrame* XModbusFrameQueue_top(XModbusFrameQueue* queue)
@@ -63,6 +63,8 @@ void XModbusFrameQueue_free(XModbusFrameQueue* queue)
 XModbusFrame* XModbusFrame_new()
 {
 	XModbusFrame* frame=XMemory_malloc(sizeof(XModbusFrame));
+	if (frame == NULL)
+		return NULL;
 	frame->mode = MB_NOT_MODE;
 	frame->frameData = XVector_New(uint8_t);
 	frame->data = NULL;

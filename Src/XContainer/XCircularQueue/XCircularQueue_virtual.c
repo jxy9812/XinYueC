@@ -57,16 +57,18 @@ bool VXCircularQueue_isFull(const XCircularQueue* this_queue)
 	/*if (this_queue == NULL)
 		return false;*/
 	return ((this_queue->m_tail + 1) % XContainerSize(this_queue) == this_queue->m_head);//尾指针下一个位置等于头指针时为满
+
 }
 
 void VXCircularQueue_clear(XCircularQueue* this_queue)
 {
 	/*if (this_queue == NULL)
 		return;*/
-	while (!VXCircularQueue_isEmpty(this_queue))
+	this_queue->m_head = this_queue->m_tail;
+	/*while (!VXCircularQueue_isEmpty(this_queue))
 	{
 		VXCircularQueue_pop(this_queue);
-	}
+	}*/
 }
 
 size_t VXCircularQueue_size(const XCircularQueue* this_queue)
@@ -83,7 +85,32 @@ size_t VXCircularQueue_size(const XCircularQueue* this_queue)
 bool VXCircularQueue_push(XCircularQueue* this_queue, void* LpValue)
 {
 	if (VXCircularQueue_isFull(this_queue))
-		return false;//插入失败
+	{
+		if (!this_queue->m_autoExpansion)
+			return true;//不开启自动扩容
+		//准备扩容
+		size_t newSize = XContainerSize(this_queue) * 1.5;
+		char* new_array = XMemory_malloc( XContainerTypeSize(this_queue) * newSize);
+		if (new_array == NULL)
+			return true;
+		//暂时将队列修改为空
+		//this_queue->m_tail = this_queue->m_head;
+		//复制数组内容
+		// 复制元素到新数组
+		int i = this_queue->m_head;
+		int count = 0;
+		while (i != this_queue->m_tail) {
+			new_array[count++] = ((char*)XContainerDataPtr(this_queue))[i];
+			i = (i + 1) % XContainerSize(this_queue);
+		}
+		// 设置新数组的头尾指针
+		this_queue->m_head = 0;
+		this_queue->m_tail = count;  // 新队列的长度等于原队列的元素个数
+		XMemory_free(XContainerDataPtr(this_queue));//释放原数组
+		XContainerDataPtr(this_queue) = new_array;//设置新数组
+		XContainerCapacity(this_queue) = newSize;//改变容量大小
+		XContainerSize(this_queue) = newSize;
+	}
 	memcpy(((char*)XContainerDataPtr(this_queue))+this_queue->m_tail*XContainerTypeSize(this_queue),LpValue, XContainerTypeSize(this_queue));
 	this_queue->m_tail = (this_queue->m_tail + 1) % XContainerSize(this_queue);//指针后移取模实现环形
 	return true;

@@ -171,7 +171,7 @@ static DWORD WINAPI ThreadReceive(LPVOID lpParam)
         }
         // 重置事件
         ResetEvent(ov.hEvent);
-        Sleep(1);
+        Sleep(10);
     }
     return 0;
 }

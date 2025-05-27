@@ -144,7 +144,10 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
         if (modbus->eSndState == STATE_TX_END)
             modbus->eSndState = STATE_TX_IDLE;
         modbus->eRcvState = STATE_RX_RCV;  // 切换到接收中状态
-        //XTimer_start(modbus->timer);  // 启动T35定时器
+        XTimer_start(modbus->timer);  // 启动T35定时器
+#if MB_CALIBRATION_TIMER_SETTINGS
+        modbus->calibrationTimer_current = XTimer_getCurrentTime();
+#endif 
         break;
 
     case STATE_RX_RCV:  // 接收中状态（连续接收字节）
@@ -208,7 +211,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
             {
                 XIODevice_write(modbus->ioDevice, XVector_at(dataVector, XVector_size(dataVector) - modbus->pendingCount), 1);
 #if !MB_IS_COMP_SEND_FRAME
-                XIODevice_writeFull(modbus->ioDevice);
+                //XIODevice_writeFull(modbus->ioDevice);
 #endif
                 --modbus->pendingCount;
                // printf("end\n");

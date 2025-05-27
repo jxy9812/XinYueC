@@ -114,6 +114,7 @@ bool VXCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuf
 {
 	if (VXCircularQueueAtomic_isEmpty(this_queue))
 		return false;
+	//printf("原子接收数据\n");
 	size_t head = XAtomic_load_size_t(&(this_queue->m_head));
 	void* pvTop = ((char*)XContainerDataPtr(this_queue)) + (head * XContainerTypeSize(this_queue));
 	memcpy(pvBuffer, pvTop, XContainerTypeSize(this_queue));

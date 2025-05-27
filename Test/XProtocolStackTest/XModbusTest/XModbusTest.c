@@ -25,7 +25,7 @@ void XModbusTest()
     InitFunction.timePort = timePort;
     XModbus* modbus = XMemory_malloc(sizeof(XModbus));
     //初始化Modbus
-    XModbus_init(modbus, &InitFunction, MB_RTU_MASTER, 0x02, 2, 38400, MB_PAR_NONE);
+    XModbus_init(modbus, &InitFunction, MB_RTU_MASTER, 0x02, 9, 38400, MB_PAR_NONE);
     XModbusRegisterHandler* Register=XModbusRegisterHandler_new(16);
     //设置从站的功能码回调函数
     {

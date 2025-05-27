@@ -47,7 +47,7 @@ typedef struct XModbusFrame
 
 /* --------------------------------- XModbusFrameQueue 方法------------------------------------------*/
 XModbusFrameQueue* XModbusFrameQueue_new(size_t count);
-void XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrame* frame);
+bool XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrame* frame);
 XModbusFrame* XModbusFrameQueue_top(XModbusFrameQueue* queue);
 bool XModbusFrameQueue_empty(XModbusFrameQueue* queue);
 void XModbusFrameQueue_pop(XModbusFrameQueue* queue);
