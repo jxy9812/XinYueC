@@ -107,7 +107,19 @@ XModbusErrorCode XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMo
     }
     return error;
 }
+//向接收队列中增加功能码帧数据
+static bool recvFrameQueue_pushExecuteFrame(XModbus* modbus, XModbusFrame* recvFrame)
+{
+    if (!XModbusFrameQueue_push(modbus->recvFrameQueue, recvFrame))
+    {
+#if MB_QUEUE_FULL_SHOW
+        printf("接收帧队列溢出当前最大:%d,建议增大队列,调整:MB_FRAME_RECV_QUEUE_COUNT\n", MB_FRAME_RECV_QUEUE_COUNT);
+#endif // MB_QUEUE_FULL_SHOW
+        return false;
+    }
 
+    return XModbus_sendEvent(modbus, EV_EXECUTE);
+}
 XModbusErrorCode XModbus_enable(XModbus* modbus)
 {
     XModbusErrorCode error = MB_ENOERR;
@@ -169,20 +181,19 @@ static XModbusErrorCode XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
         //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
         XString_free(str);
 #endif // MB_SEND_FRAME_SHOW
-        XModbusEventType event = EV_EXECUTE;
+        
         if (XModbus_isMaster(modbus))
         {
             //printf("当前是主站\n");
            //printf("将有效的帧加入接收队列处理\n");
-            if (XModbusFrameQueue_push(modbus->recvFrameQueue, recvFrame)&& XCustomQueue_push(modbus->eventQueue, &event))
+            if (recvFrameQueue_pushExecuteFrame(modbus, recvFrame))
                 return error;
             error = MB_ENORES;
-            //XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_EXECUTE);
         }
         else if ((address == modbus->address) || (address == MB_ADDRESS_BROADCAST))
         {//当前是从站
             //printf("将有效的帧加入接收队列处理\n");
-            if (XModbusFrameQueue_push(modbus->recvFrameQueue, recvFrame) && XCustomQueue_push(modbus->eventQueue, &event))
+            if (recvFrameQueue_pushExecuteFrame(modbus, recvFrame))
                 return error;
             error = MB_ENORES;
             //                xMBPortEventPost(EV_EXECUTE); // 触发功能码执行事件
@@ -210,6 +221,7 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
     ////            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
     //XString_free(str);
 
+    //如果是主站检查是否有回调函数
     if (XModbus_isMaster(modbus)/*&& modbus->recvHandleMaster!=NULL*/)
     {
         uint16_t waitAddressCode= (address << 8 | code);
@@ -229,31 +241,8 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
             XVector_erase(modbus->recvHandleMaster, value);
             return;
         }
-        //if (modbus->recvHandleMaster->pRecvHandCallFunc)
-        //{
-        //    if (modbus->recvHandleMaster->waitAddressCode == (address << 8 | code))
-        //    {
-        //        if (frame->recvHandle != NULL)//释放准备交换
-        //            XMemory_free(frame->recvHandle);
-        //        //拷贝数据
-        //        frame->recvHandle = modbus->recvHandleMaster;
-        //        modbus->recvHandleMaster = NULL;
-        //        frame->recvHandle->pRecvHandCallFunc(modbus, frame);
-        //        //释放一个资源
-        //        XModbusFrameQueue_pop(modbus->recvFrameQueue);
-        //        return;
-        //    }
-        //    else
-        //    {//新帧与等待的响应不符合，定义为丢失，回调提醒用户
-        //           modbus->recvHandleMaster->pRecvHandCallFunc(modbus, NULL);
-        //            //用完释放
-        //           XMemory_free(modbus->recvHandleMaster);
-        //           modbus->recvHandleMaster = NULL;
-        //    }
-        //}
-      
     }
-
+    //执行功能码
     XModbusFunctionHandler* FunctionHandler=XModbusFuncCodeList_findFuncCode(modbus->funcCodeList,code);
     if (FunctionHandler == NULL)
     {//没有对应的处理函数
@@ -314,7 +303,7 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
         }
     }
     //处理设备缓冲区
-    if (/*modbus->eSndState == STATE_TX_XMIT ||*/XCircularQueue_isEmpty(modbus->ioDevice->m_readBuffer))
+    if (modbus->eSndState == STATE_TX_XMIT ||XCircularQueue_isEmpty(modbus->ioDevice->m_readBuffer))
     {
        //printf("发送数据\n");
         modbus->pxMBFrameCBTransmitterEmpty(modbus);
@@ -358,17 +347,11 @@ XModbusErrorCode XModbus_poll(XModbus* modbus)
 #endif
 #endif // MB_EVENT_SHOH
     //{ // 有事件待处理
-        switch (eEvent) {
-        //case EV_FRAME_RECEIVED: XModbus_EV_FRAME_RECEIVED(modbus);  break; // 接收到完整的 Modbus 帧
-        //case EV_EXECUTE: XModbus_EV_EXECUTE(modbus); break;
-    //                   // 其他事件（如 EV_READY、EV_FRAME_SENT）暂时忽略，留空处理
-    //    case EV_READY:
-    //    case EV_FRAME_SENT:
-    //        break;
-        }
-        //printf("准备删除事件\n");
-        //XCustomQueue_pop(modbus->eventQueue);
-        //printf("删除事件完毕\n");
+    switch (eEvent)
+    {
+    case EV_FRAME_RECEIVED: XModbus_EV_FRAME_RECEIVED(modbus);  break; // 接收到完整的 Modbus 帧
+    case EV_EXECUTE: XModbus_EV_EXECUTE(modbus); break;
+    }
    return error; // 轮询成功（无错误或错误已处理）
 }
 //发送帧之前处理一些信息
@@ -399,7 +382,10 @@ XModbusErrorCode XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame)
     {
         if (!XModbusFrameQueue_push(modbus->sendQueue, frame))
         {
-            XMemory_free(frame);
+#if MB_QUEUE_FULL_SHOW
+            printf("发送帧队列溢出当前最大:%d,建议增大队列,调整:MB_FRAME_SEND_QUEUE_COUNT\n", MB_FRAME_SEND_QUEUE_COUNT);
+#endif // MB_QUEUE_FULL_SHOW
+            XModbusFrame_free(frame);
             return MB_ENORES;
         }
     }
@@ -434,4 +420,17 @@ XModbusErrorCode XModbus_setFunctionHandler(XModbus* modbus, XModbusFunctionHand
         return MB_EINVAL;
     XModbusFuncCodeList_push(modbus->funcCodeList, FunctionHandler);
     return MB_ENOERR;
+}
+
+bool XModbus_sendEvent(XModbus* modbus, XModbusEventType event)
+{
+    //XModbusEventType event = EV_EXECUTE;
+    if (!XCustomQueue_push(modbus->eventQueue, &event))
+    {
+#if MB_QUEUE_FULL_SHOW
+        printf("事件队列溢出当前最大:%d,建议增大队列,调整:MB_EVENT_QUEUE_COUNT\n", MB_EVENT_QUEUE_COUNT);
+#endif // MB_QUEUE_FULL_SHOW
+        return false;
+    }
+    return;
 }

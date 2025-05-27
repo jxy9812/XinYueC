@@ -182,7 +182,7 @@ XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbus* 
 	XModbusRegisterHandler* regFunc = FunctionHandler->data;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu==NULL)
-		return;
+		return MB_EX_ILLEGAL_FUNCTION;
 
 	XModbusFrame* sendFrame = XModbusFrame_new();
 	if (rtu->data != NULL)

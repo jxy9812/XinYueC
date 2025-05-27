@@ -114,7 +114,7 @@ extern "C" {
 //主站接收等待时间  
  #define MB_MASTER_RECV_WAIT_TIME				 (  5 )
 //主站接收返回超时时间 (ms)
- #define MB_MASTER_RECV_OUT_TIME				 (  1000 )
+ #define MB_MASTER_RECV_OUT_TIME				 (  2000 )
 //是否完整的帧一起发送
  #define MB_IS_COMP_SEND_FRAME					 (  0 )
 //是否启用校准软件定时器接收状态
@@ -127,6 +127,8 @@ extern "C" {
  #define MB_ENUM_TO_STRING						 (  1 )
 //显示处理的事件
  #define MB_EVENT_HANDLE_SHOW				     (  1 )
+//队列溢出(满)提示信息
+ #define MB_QUEUE_FULL_SHOW						 (  1 )
  /*! @} */
 
 //宏定义检查

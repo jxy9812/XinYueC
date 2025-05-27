@@ -134,6 +134,9 @@ XModbusErrorCode XModbus_sendFrameRegularlyMaster(XModbus* modbus, XModbusFrame*
 bool XModbus_isMaster(XModbus* modbus);
 //设置功能码处理函数
 XModbusErrorCode XModbus_setFunctionHandler(XModbus* modbus, XModbusFunctionHandler* FunctionHandler);
+
+//发送一个事件
+bool XModbus_sendEvent(XModbus* modbus, XModbusEventType event);
 #ifdef __cplusplus
 }
 #endif

@@ -46,6 +46,11 @@ void XModbusFrameQueue_pop(XModbusFrameQueue* queue)
 	XCircularQueue_pop(queue);
 }
 
+bool XModbusFrameQueue_receive(XModbusFrameQueue* queue, XModbusFrame** pvFrame)
+{
+	return XCircularQueue_receive(queue,pvFrame);
+}
+
 void XModbusFrameQueue_clear(XModbusFrameQueue* queue)
 {
 	while (XModbusFrameQueue_empty(queue))

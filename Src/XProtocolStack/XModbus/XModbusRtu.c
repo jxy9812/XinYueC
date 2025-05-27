@@ -211,7 +211,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
             {
                 XIODevice_write(modbus->ioDevice, XVector_at(dataVector, XVector_size(dataVector) - modbus->pendingCount), 1);
 #if !MB_IS_COMP_SEND_FRAME
-                //XIODevice_writeFull(modbus->ioDevice);
+                XIODevice_writeFull(modbus->ioDevice);
 #endif
                 --modbus->pendingCount;
                // printf("end\n");
@@ -243,7 +243,8 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
                 XModbusFrameQueue_pop(sendQueue);
                 // 发送完成，通知上层协议帧已发送
                 //printf("发送完成事件\n");
-                XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_FRAME_SENT);
+                XModbus_sendEvent(modbus, EV_FRAME_SENT);
+                //XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_FRAME_SENT);
             }
             break;
         }
@@ -276,11 +277,13 @@ bool XModbusRtuTimerT35Expired(XModbus* modbus)
     //接收超时等待
     switch (modbus->eRcvState) {
     case STATE_RX_INIT:  // 初始状态超时（总线空闲，进入IDLE）
-        XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_READY);  // 通知协议栈总线就绪
+        XModbus_sendEvent(modbus, EV_READY);
+        //XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_READY);  // 通知协议栈总线就绪
         break;
 
     case STATE_RX_RCV:   // 接收中状态超时（帧接收完成）
-       XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_FRAME_RECEIVED);  // 通知上层协议帧已接收
+        XModbus_sendEvent(modbus, EV_FRAME_RECEIVED);
+       //XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_FRAME_RECEIVED);  // 通知上层协议帧已接收
         break;
 
     case STATE_RX_ERROR: // 错误状态超时（忽略）
