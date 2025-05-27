@@ -291,7 +291,6 @@ void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 		return ;
 	void* front = VXVector_front(this_vector),* back= VXVector_back(this_vector);
 	size_t typeSize = XContainerTypeSize(this_vector);
-	//if (VXVector_front(this_vector) <= LpValue && LpValue <= VXVector_back(this_vector) && ((char*)LpValue - (char*)VXVector_front(this_vector)) % XContainerTypeSize(this_vector) == 0)
 	if (XContainerSize(this_vector) == 1)
 	{
 		--XContainerSize(this_vector);
@@ -300,9 +299,7 @@ void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 	{
 		if (XContainerDataFreeMethod(this_vector) != NULL)
 			XContainerDataFreeMethod(this_vector)(LpValue);
-		//size_t typeSize = XContainerTypeSize(this_vector);
-		//memcpy(LpValue, (char*)LpValue + typeSize, (size_t)((char*)VXVector_back(this_vector) - (char*)LpValue - typeSize));
-		memcpy(LpValue, (char*)LpValue + typeSize, (size_t)((char*)back - (char*)LpValue - typeSize));
+		memcpy(LpValue, (char*)LpValue + typeSize, (size_t)((char*)back - (char*)LpValue));
 		--XContainerSize(this_vector);
 	}
 }

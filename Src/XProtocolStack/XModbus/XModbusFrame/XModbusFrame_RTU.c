@@ -244,11 +244,7 @@ static void parseFrameData(XModbusFrame* frame, XVector* data)
 	if (frame->frameData == NULL)
 		frame->frameData = XVector_New(uint8_t);
 	if (frame->frameData == NULL)
-	{
-		XVector_clear(frame->frameData);
-		//frame->pPduFramePos = NULL;
 		return;
-	}
 	//开始解析RTU数据
 	size_t dataSize = XVector_size(data);
 	uint8_t* pData = (uint8_t*)XVector_begin(data);
@@ -271,7 +267,6 @@ static void parseFrameData(XModbusFrame* frame, XVector* data)
 			frame->data = NULL;
 		}
 		XVector_clear(frame->frameData);
-		//frame->pPduFramePos = NULL;
 	}
 }
 //解析0x01响应头

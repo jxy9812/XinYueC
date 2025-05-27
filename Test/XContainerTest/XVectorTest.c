@@ -33,15 +33,18 @@ void XVectorTest()
 	}
 	//printf("当前Size:%d\n",XVector_size(v)); 
 	XVector_append_array(v, arr, sizeof(arr) / sizeof(arr[0]));
-	printf("插入数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
+	/*printf("插入数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	XVector_remove(v, 2, 10);
 	printf("删除数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
-	XVector_sort(v, XLess_int);
+	XVector_sort(v, XLess_int);*/
 	printf("排序数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	int findVal = 100;
 	int* findRet=XVector_find(v, &findVal);
 	if(findRet!=NULL)
-	printf("找到的数字:%d", *findRet);
+	printf("找到的数字:%d\n", *findRet);
+	XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
+	XVector_erase(v,findRet); 
+	XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	XVector_free(v);
 
 
