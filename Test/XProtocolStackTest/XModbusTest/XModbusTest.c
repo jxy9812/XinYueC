@@ -19,10 +19,10 @@ void XModbusTest()
     XIODevice_PortFunc io_port = { 0 };//串口设备接口设置
     io_port.open_funcPointer = XModbusTest_SerialOpen;
     io_port.writeData_funcPointer = XModbusTest_writeByte;
-    XTimer_PortFunc  timePort = XTimer_PortFunc_Win32TimeSetEvent();//定时器接口设置
+    //XTimer_PortFunc  timePort = XTimer_PortFunc_Win32TimeSetEvent();//定时器接口设置
     XModbus_PortFunc InitFunction = {0};//modbus接口设置
     InitFunction.IO_Port = io_port;
-    InitFunction.timePort = timePort;
+    InitFunction.timer = XTimer_new_Win32TimeSetEvent();
     XModbus* modbus = XMemory_malloc(sizeof(XModbus));
     //初始化Modbus
     XModbus_init(modbus, &InitFunction, MB_RTU_MASTER, 0x02, 2, 38400, MB_PAR_NONE);

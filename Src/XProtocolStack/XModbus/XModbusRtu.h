@@ -25,7 +25,7 @@ typedef struct XModbusRtu XModbusRtu;
 //    XModbus object;
 //    bool xRxEnable;//接收
 //    bool xTxEnable;//发送
-//    XTimer* timer;//定时器
+//    XTimerBase* timer;//定时器
 //    XModbusSndState eSndState;    // 发送状态机（volatile确保多线程可见）
 //    XModbusRcvState eRcvState;    // 接收状态机
 ////函数

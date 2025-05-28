@@ -37,7 +37,7 @@ typedef struct XPWMDevice_PortFuncInit
 typedef struct XPWMDevice
 {
 	XIODevice m_parent;//父对象
-	//XTimer* m_timer;
+	//XTimerBase* m_timer;
 	bool m_isRun;//是否运行
 	uint8_t m_dutyCycle;//占空比
 	size_t m_frequency;//频率

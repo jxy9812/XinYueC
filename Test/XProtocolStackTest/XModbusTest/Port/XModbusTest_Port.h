@@ -19,11 +19,11 @@ bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode);
 //发送数据
 bool XModbusTest_writeByte(XIODevice* io, XCircularQueue* queue);
 //定时器启动
-void XModbusTest_XTimer_Start(XTimer* timer);
+void XModbusTest_XTimer_Start(XTimerBase* timer);
 //定时器停止
-void XModbusTest_XTimer_Stop(XTimer* timer);
+void XModbusTest_XTimer_Stop(XTimerBase* timer);
 //定时器创建
-void XModbusTest_XTimerCreat(XTimer* timer);
+void XModbusTest_XTimerCreat(XTimerBase* timer);
 /*
 * XModbusTest_SerialPoll 移植的时候不是必须要实现的 
 * 如果使用中断的方式，在合适的时机调用下面两个函数指针即可

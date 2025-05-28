@@ -314,7 +314,7 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
        //printf("发送数据\n");
         modbus->pxMBFrameCBTransmitterEmpty(modbus);
 #if MB_CALIBRATION_TIMER_SETTINGS //软件定时校准状态
-        if (modbus->calibrationTimer_current + (modbus->timer->interval * 100) < XTimer_getCurrentTime())
+        if (modbus->calibrationTimer_current + (modbus->timer->m_interval * 100) < XTimer_getCurrentTime())
         {
             printf("超时了\n");
             modbus->calibrationTimer_current = XTimer_getCurrentTime();

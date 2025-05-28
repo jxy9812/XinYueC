@@ -48,7 +48,7 @@ typedef bool(*XModbusPortCBTimerExpired)(XModbus* modbus);    // 定时器超时
 typedef struct XModbus_PortFunc
 {
     XIODevice_PortFunc IO_Port;//io接口
-    XTimer_PortFunc    timePort;
+    XTimerBase* timer;
     XModbusSerialEnable SerialEnable;//控制串口收发状态  可以为NULL
     XCustomQueue_Port EventQueuePort;//事件队列初始化函数 不是必须可以为空使用默认的事件队列
 }XModbus_PortFunc;
@@ -78,7 +78,7 @@ typedef struct XModbus
 #if MB_CALIBRATION_TIMER_SETTINGS
     size_t calibrationTimer_current;//校准定时器用记录当前时间
 #endif // MB_CALIBRATION_TIMER_SETTINGS
-    XTimer* timer;//定时器     平台初始化
+    XTimerBase* timer;//定时器     平台初始化
     size_t timerOutNumber;//定时器超时次数
     XModbusSndState eSndState;    // 发送状态机（volatile确保多线程可见）
     XModbusRcvState eRcvState;    // 接收状态机

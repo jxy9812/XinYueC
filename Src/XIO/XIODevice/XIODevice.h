@@ -8,7 +8,7 @@ extern "C" {
 #include"XClass.h"
 //XIODevice虚函数表
 extern XVtable* XIODeviceVtable;
-#define XIODEVICE_VTABLE_SIZE (12)       //XIODevice容器虚函数表大小
+#define XIODEVICE_VTABLE_SIZE (12)       //XIODevice虚函数表大小
 //XContainerObject虚函数表枚举
 enum XIODeviceVtableEnum
 {
