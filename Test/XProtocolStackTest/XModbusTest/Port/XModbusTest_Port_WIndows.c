@@ -128,59 +128,65 @@ bool XModbusTest_writeByte(XIODevice* io, XCircularQueue* queue)
     //printf("写入数据:%02x\n",*data);
     return true;
 }
-
-// 线程接收函数
-static DWORD WINAPI ThreadReceive(LPVOID lpParam)
+// 定时器回调函数
+static void CALLBACK TimerCallbackReceive(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
 {
-    XSerialPort* serial = lpParam;
+    XSerialPort* serial = dwUser;
     COMSTAT comStat;
     DWORD errors;
     char buff[1024];
+    // 清除通信错误并获取串口状态
+    if (!ClearCommError(hSerial, &errors, &comStat)) {
+        printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
+        return;
+    }
+    if (comStat.cbInQue)
+    {
+        DWORD bytesRead = comStat.cbInQue;
+        if (bytesRead > 1024)
+            bytesRead = 1024;
+
+        if (!ReadFile(hSerial, buff, bytesRead, &bytesRead, &ov))
+        {
+            if (GetLastError() != ERROR_IO_PENDING)
+            {
+                printf("读取失败\n");
+                return;
+            }
+
+            // 等待异步操作完成
+            if (!GetOverlappedResult(hSerial, &ov, &bytesRead, true))
+            {
+                printf("异步读取失败\n");
+                return;
+            }
+        }
+        //将接收到的数据保存到缓冲区
+       //printf("接收到数据size:%d\n", bytesRead);
+        XSerialPort_receive(serial, buff, bytesRead);
+    }
+    else
+    {
+        //printf("准备推送数据\n");
+        //XSerialPort_writeFull(serial);
+    }
+    // 重置事件
+    ResetEvent(ov.hEvent);
+    //Sleep(10);
+}
+// 线程接收函数
+static DWORD WINAPI ThreadReceive(LPVOID lpParam)
+{
     while (1)
     {
-        // 清除通信错误并获取串口状态
-        if (!ClearCommError(hSerial, &errors, &comStat)) {
-            printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
-           continue;
-        }
-        if (comStat.cbInQue)
-        {
-            DWORD bytesRead = comStat.cbInQue;
-            if (bytesRead > 1024)
-                bytesRead = 1024;
-
-            if (!ReadFile(hSerial, buff, bytesRead, &bytesRead, &ov))
-            {
-                if (GetLastError() != ERROR_IO_PENDING)
-                {
-                    printf("读取失败\n");
-                    continue;
-                }
-
-                // 等待异步操作完成
-                if (!GetOverlappedResult(hSerial, &ov, &bytesRead, true))
-                {
-                    printf("异步读取失败\n");
-                    continue;
-                }
-            }
-            //将接收到的数据保存到缓冲区
-           //printf("接收到数据size:%d\n", bytesRead);
-            XSerialPort_receive(serial, buff, bytesRead);
-        }
-        else
-        {
-            //printf("准备推送数据\n");
-            //XSerialPort_writeFull(serial);
-        }
-        // 重置事件
-        ResetEvent(ov.hEvent);
-        Sleep(10);
+        TimerCallbackReceive(NULL, NULL, lpParam, NULL, NULL);
     }
     return 0;
 }
 void XModbusTest_threadReceiveCreate(XModbus* modbus)
 {
+#if 0
+
     HANDLE hThread1;
     DWORD threadId1;
     // 创建线程 1
@@ -189,7 +195,15 @@ void XModbusTest_threadReceiveCreate(XModbus* modbus)
         printf("CreateThread1 failed with error %d\n", GetLastError());
         return 1;
     }
-
+#else
+    timeSetEvent(
+        10,           // 触发间隔毫秒
+        1,             // 精度1毫秒
+        TimerCallbackReceive, // 回调函数
+        modbus,             // 不传递用户数据
+        TIME_PERIODIC  // 周期性触发
+    );
+#endif // 0
 }
 
 #endif // WIN32

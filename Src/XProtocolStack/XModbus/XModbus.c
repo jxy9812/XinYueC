@@ -260,12 +260,12 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
 }
 static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
 {
-    static size_t currentTime = 0;
-    if (currentTime + 1000 < XTimer_getCurrentTime())
-    {
-        currentTime = XTimer_getCurrentTime();
-        printf("事件队列是空\n");
-    }
+    //static size_t currentTime = 0;
+    //if (currentTime + 1000 < XTimer_getCurrentTime())
+    //{
+    //    currentTime = XTimer_getCurrentTime();
+    //    printf("事件队列是空\n");
+    //}
     XModbusErrorCode error = MB_ENOERR;
     //检查回调函数是否超时
     if (modbus->recvHandleMaster != NULL)
