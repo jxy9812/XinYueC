@@ -89,12 +89,12 @@ void XStepMotor_setPulsesPerRevolution(XStepMotor* motor, uint16_t num)
 	}
 }
 
-void XStepMotor_setSpeed(XStepMotor* motor, uint16_t speed)
+void XStepMotor_setSpeed(XStepMotor* motor, double speed)
 {
 	if (motor == NULL)
 		return;
 	motor->m_currentSpeed = speed;
-	uint32_t secr = speed * motor->m_pulsesPerRevolution / 60;//一秒脉冲数目  频率
+	uint32_t secr = speed * motor->m_pulsesPerRevolution / 60.0;//一秒脉冲数目  频率
 
 	XPWMDevice_setFrequency(motor->m_PUL, secr);
 	if (motor->m_PUL->m_dutyCycle == 0)
@@ -120,11 +120,11 @@ void XStepMotor_setNumRotations(XStepMotor* motor, double num)
 	}
 }
 
-double XStepMotor_numRotations(XStepMotor* motor)
+double XStepMotor_getNumRotations(XStepMotor* motor)
 {
 	if (motor == NULL)
 		return 0.0;
-	return motor->m_directionPulses / motor->m_pulsesPerRevolution;
+	return ((double)motor->m_directionPulses) / motor->m_pulsesPerRevolution;
 }
 
 void XStepMotor_poll(XStepMotor* motor)

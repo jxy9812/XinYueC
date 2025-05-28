@@ -59,7 +59,7 @@ void XStepMotor_setPulsesPerRevolution(XStepMotor* motor, uint16_t num);
 * @param  speed:转速 转/分钟
 * @retval
 */
-void XStepMotor_setSpeed(XStepMotor* motor, uint16_t speed);
+void XStepMotor_setSpeed(XStepMotor* motor, double speed);
 /*
 * @brief  设置旋转圈数.
 * @param  motor:StepMotor对象
@@ -72,7 +72,7 @@ void XStepMotor_setNumRotations(XStepMotor* motor, double num);
 * @param  motor:StepMotor对象
 * @retval  旋转圈数，正转一圈+1 反转一圈减1 可获取位置信息
 */
-double XStepMotor_numRotations(XStepMotor* motor);
+double XStepMotor_getNumRotations(XStepMotor* motor);
 
 //轮询扫描状态
 void XStepMotor_poll(XStepMotor* motor);

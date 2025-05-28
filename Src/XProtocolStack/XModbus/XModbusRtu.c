@@ -224,6 +224,9 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
                 modbus->eSndState = STATE_TX_END;  // 切换到发送空闲状态
                 modbus->timerOutNumber = 0;//开始计数
                 XTimer_start(modbus->timer);  // 发送完成等待下一帧
+#if MB_CALIBRATION_TIMER_SETTINGS
+                modbus->calibrationTimer_current = XTimer_getCurrentTime();
+#endif 
                 if (modbus->SerialEnable)
                     modbus->SerialEnable(modbus, true, false);  // 禁用发送，重新使能接收
 #if MB_SEND_FRAME_SHOW

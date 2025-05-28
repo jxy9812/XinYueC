@@ -46,7 +46,7 @@ XModbusErrorCode XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMo
  
     modbus->recvHandleMaster = NULL;
 #if MB_CALIBRATION_TIMER_SETTINGS
-    modbus->calibrationTimer_current = 0;
+    modbus->calibrationTimer_current = XTimer_getCurrentTime();
 #endif
     // 根据选择的模式初始化对应的函数指针和底层模块
     if (XModbus_isMaster(modbus))
@@ -260,6 +260,12 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
 }
 static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
 {
+    static size_t currentTime = 0;
+    if (currentTime + 1000 < XTimer_getCurrentTime())
+    {
+        currentTime = XTimer_getCurrentTime();
+        printf("事件队列是空\n");
+    }
     XModbusErrorCode error = MB_ENOERR;
     //检查回调函数是否超时
     if (modbus->recvHandleMaster != NULL)
@@ -307,12 +313,18 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
     {
        //printf("发送数据\n");
         modbus->pxMBFrameCBTransmitterEmpty(modbus);
-        
-#if MB_CALIBRATION_TIMER_SETTINGS //软件定时校准接收状态
-        if (modbus->calibrationTimer_current + (modbus->timer->interval*2) < XTimer_getCurrentTime())
+#if MB_CALIBRATION_TIMER_SETTINGS //软件定时校准状态
+        if (modbus->calibrationTimer_current + (modbus->timer->interval * 100) < XTimer_getCurrentTime())
         {
+            printf("超时了\n");
             modbus->calibrationTimer_current = XTimer_getCurrentTime();
-            modbus->eRcvState = STATE_RX_IDLE;  // 切换到接收空闲状态
+            //if (modbus->eRcvState == STATE_RX_RCV)
+            //    XModbus_sendEvent(modbus, EV_FRAME_RECEIVED);
+            //modbus->eRcvState = STATE_RX_IDLE;  // 切换到接收空闲状态
+            //if (modbus->eSndState == STATE_TX_END)
+            //    modbus->eSndState = STATE_TX_IDLE;
+            XTimer_stop(modbus->timer);  // 关闭定时器
+            modbus->pxMBPortCBTimerExpired(modbus);
         }
 #endif // MB_CALIBRATION_TIMER_SETTINGS
     }

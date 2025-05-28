@@ -10,18 +10,21 @@
 static HANDLE hSerial;
 static  HANDLE hEvent;
 static OVERLAPPED ov;
-static VOID CALLBACK XTimer_incCallback(UINT uTimerID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
-{
-    XTimer_inc(1);
-}
-static void XModbusTest_XTimerCreat(XTimer* timer)
-{
-    // 创建定时器，间隔为 1 毫秒
-    UINT timerId = timeSetEvent(1, 1, XTimer_incCallback, timer, TIME_PERIODIC);
-    if (timerId == 0) {
-        timeEndPeriod(1);
-        printf("定时器创建失败\n");
-    }
+// 获取当前毫秒级时间戳（自1970-01-01 00:00:00 UTC）
+static long long GetCurrentTimeMillis() {
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+
+    // 将FILETIME转换为64位整数（100纳秒间隔数）
+    ULARGE_INTEGER uli;
+    uli.LowPart = ft.dwLowDateTime;
+    uli.HighPart = ft.dwHighDateTime;
+
+    // 1601年到1970年的偏移量（100纳秒间隔数）
+    const long long EPOCH_OFFSET = 116444736000000000LL;
+
+    // 转换为毫秒（除以10,000）
+    return (uli.QuadPart - EPOCH_OFFSET) / 10000;
 }
 // 打开串口
 bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
@@ -97,7 +100,8 @@ bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
         CloseHandle(hSerial);
         return 1;
     }
-    XModbusTest_XTimerCreat(NULL);
+    //设置XTimer获取毫秒时间搓
+    XTimer_setCurrentTimeFunc(GetCurrentTimeMillis);
     return true;
 }
 bool XModbusTest_writeByte(XIODevice* io, XCircularQueue* queue)
@@ -137,7 +141,7 @@ static DWORD WINAPI ThreadReceive(LPVOID lpParam)
         // 清除通信错误并获取串口状态
         if (!ClearCommError(hSerial, &errors, &comStat)) {
             printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
-            return false;
+           continue;
         }
         if (comStat.cbInQue)
         {
@@ -150,14 +154,14 @@ static DWORD WINAPI ThreadReceive(LPVOID lpParam)
                 if (GetLastError() != ERROR_IO_PENDING)
                 {
                     printf("读取失败\n");
-                    return false;
+                    continue;
                 }
 
                 // 等待异步操作完成
                 if (!GetOverlappedResult(hSerial, &ov, &bytesRead, true))
                 {
                     printf("异步读取失败\n");
-                    return false;
+                    continue;
                 }
             }
             //将接收到的数据保存到缓冲区
@@ -188,29 +192,4 @@ void XModbusTest_threadReceiveCreate(XModbus* modbus)
 
 }
 
-void XModbusTest_SerialPoll(XModbus* modbus)
-{
-    COMSTAT comStat;
-    DWORD errors;
-
-    // 清除通信错误并获取串口状态
-    if (!ClearCommError(hSerial, &errors, &comStat)) {
-        printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
-        return false;
-    }
-    
-    if (comStat.cbInQue)
-    {
-       // printf("comStat.cbInQue:%d\n", comStat.cbInQue);
-        //接收缓冲区空时调用
-        modbus->pxMBFrameCBByteReceived(modbus);
-    }
-    else
-    {
-        //写入缓冲区空时调用
-        modbus->pxMBFrameCBTransmitterEmpty(modbus);
-    }
-    // 重置事件
-    ResetEvent(ov.hEvent);
-}
 #endif // WIN32
