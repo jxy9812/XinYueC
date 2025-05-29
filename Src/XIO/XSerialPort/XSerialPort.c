@@ -1,27 +1,28 @@
 ﻿#include "XSerialPort.h"
 #include "XMemory.h"
 #include <string.h>
-XSerialPort* XSerialPort_new(XSerialPort_PortFuncInit* port)
+XSerialPort* XSerialPort_new(XVtable* vtable)
 {
-	if (port == NULL)
-		return NULL;
-
 	XSerialPort* serial = XMemory_malloc(sizeof(XSerialPort));
 	if (serial == NULL)
 		return serial;
-	XSerialPort_init(serial, port);
+	XSerialPort_init(serial, vtable);
 	return serial;
 }
 
-void XSerialPort_init(XSerialPort* serial, XSerialPort_PortFuncInit* port)
+void XSerialPort_init(XSerialPort* serial, XVtable* vtable)
 {
-	if (serial == NULL || port == NULL)
+	if (serial == NULL)
 		return ;
 	//memset(serial,0,sizeof(XSerialPort));
 	memset(((XIODeviceBase*)serial)+1, 0, sizeof(XSerialPort)-sizeof(XIODeviceBase));
-	XIODevice_init(serial, port);
+	XIODevice_init(serial, vtable);
 	XSerialPort_class_init();
-	XClassGetVtable(serial) = XSerialPortVtable;
+	if (vtable == NULL)
+		XClassGetVtable(serial) = XSerialPortVtable;
+	else
+		XClassGetVtable(serial) = vtable;
+	
 }
 
 bool XSerialPort_open_base(XSerialPort* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)

@@ -17,22 +17,22 @@ static void VXIODevice_poll(XIODeviceBase* io);
 static void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count);
 static void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count);
 static void VXIODevice_setDevice(XIODeviceBase* io, void* device);
-XVtable* XIODeviceVtable = NULL;
+XVtable* XIODeviceBaseVtable = NULL;
 #if VTABLE_ISSTACK
 static XVtable vtable;//虚函数类
-static void* vtable_data[XIODEVICE_VTABLE_SIZE];//虚函数数据
+static void* vtable_data[XIODEVICEBASE_VTABLE_SIZE];//虚函数数据
 #endif
 
 void XIODevice_class_init()
 {
 	//仅初始化一次
-	if (XIODeviceVtable)
+	if (XIODeviceBaseVtable)
 		return;
 #if !VTABLE_ISSTACK
 	XIODeviceVtable = XVtable_new();
 #else
-	XIODeviceVtable = &vtable;
-	XVtable_init_stack(XIODeviceVtable, vtable_data, XIODEVICE_VTABLE_SIZE);
+	XIODeviceBaseVtable = &vtable;
+	XVtable_init_stack(XIODeviceBaseVtable, vtable_data, XIODEVICEBASE_VTABLE_SIZE);
 #endif
 	void* table[] = { 
 		VXIODevice_free,VXIODevice_isOpen,
@@ -42,9 +42,9 @@ void XIODevice_class_init()
 		VXIODevice_poll,VXIODevice_setWriteBuffer,
 		VXIODevice_setReadBuffer,VXIODevice_setDevice 
 	};
-	XVtable_append_array(XIODeviceVtable, table, sizeof(table) / sizeof(table[0]));
+	XVtable_append_array(XIODeviceBaseVtable, table, sizeof(table) / sizeof(table[0]));
 #if SHOWCONTAINERSIZE
-	printf("XIODeviceBase size:%d\n", XVtable_size(XIODeviceVtable));
+	printf("XIODeviceBase size:%d\n", XVtable_size(XIODeviceBaseVtable));
 #endif
 }
 

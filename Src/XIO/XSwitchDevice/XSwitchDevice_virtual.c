@@ -22,7 +22,7 @@ void XSwitchDeviceBase_class_init()
 	XVtable_init_stack(&vtable, vtable_data, XSWITCHDEVICEBASE_VTABLE_SIZE);
 #endif
 	//继承的函数
-	XVtable_append_vtable(XSwitchDeviceBaseVtable, XIODeviceVtable);
+	XVtable_append_vtable(XSwitchDeviceBaseVtable, XIODeviceBaseVtable);
 	void* table[] = { VXSwitchDevice_setState,VXSwitchDevice_getState };
 	//追加的函数
 	XVtable_append_array(XSwitchDeviceBaseVtable, table, sizeof(table) / sizeof(table[0]));

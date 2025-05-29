@@ -40,7 +40,7 @@ XModbusErrorCode XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMo
 	modbus->mode = mode;
     //assert(func->IO_Port.readData_funcPointer);
 
-    assert(func->IO_Port.writeData_funcPointer);
+    //assert(func->IO_Port.writeData_funcPointer);
     modbus->recvBuffer = XVector_new(sizeof(char));
     XVector_resize_base(modbus->recvBuffer ,MB_RECV_BUFFER_SIZE);
  

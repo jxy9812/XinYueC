@@ -27,7 +27,7 @@ void XPWMDeviceBase_class_init()
 	XVtable_Init_Stack(&vtable, vtable_data);
 #endif
 	//继承的函数
-	XVtable_append_vtable(XPWMDeviceVtable, XIODeviceVtable);
+	XVtable_append_vtable(XPWMDeviceVtable, XIODeviceBaseVtable);
 	void* table[] = { 
 		VXPWMDevice_setFrequency,VXPWMDevice_setDutyCycle,
 		VXPWMDevice_start,VXPWMDevice_stop,

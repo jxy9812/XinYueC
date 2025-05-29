@@ -24,7 +24,7 @@ void XSerialPort_class_init()
 	printf("XSerialPort size:%d\n", XVtable_size(XSerialPortVtable));
 #endif
 	//继承的函数
-	XVtable_append_vtable(XSerialPortVtable, XIODeviceVtable);
+	XVtable_append_vtable(XSerialPortVtable, XIODeviceBaseVtable);
 	//重写
 	XVtable_At(XSerialPortVtable, EXIODeviceBase_Open) = VXSerialPort_open;
 	XVtable_At(XSerialPortVtable, EXIODeviceBase_Read) = VXSerialPort_read;
@@ -40,7 +40,7 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode, uint8_t port
 	serial->m_parity = parity;
 	serial->m_portNum = portNum;
 	//调用父类
-	return XVtableGetFunc(XIODeviceVtable, EXIODeviceBase_Open,bool(*)(XIODeviceBase*, XIODeviceBaseMode))(serial, mode);
+	return XVtableGetFunc(XIODeviceBaseVtable, EXIODeviceBase_Open,bool(*)(XIODeviceBase*, XIODeviceBaseMode))(serial, mode);
 	//return XIODevice_open_base(serial, mode);
 }
 

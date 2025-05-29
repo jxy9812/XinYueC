@@ -8,7 +8,7 @@
 #pragma comment(lib, "winmm.lib")
 // 串口句柄
 static HANDLE hSerial;
-static  HANDLE hEvent;
+//static  HANDLE hEvent;
 static OVERLAPPED ov;
 // 获取当前毫秒级时间戳（自1970-01-01 00:00:00 UTC）
 static long long GetCurrentTimeMillis() {

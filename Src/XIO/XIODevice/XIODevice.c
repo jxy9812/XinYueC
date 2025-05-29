@@ -20,7 +20,7 @@ void XIODevice_init(XIODeviceBase* io, XVtable* vtable)
 
 	XIODevice_class_init();
 	if (vtable == NULL)
-		XClassGetVtable(io) = XIODeviceVtable;
+		XClassGetVtable(io) = XIODeviceBaseVtable;
 	else
 		XClassGetVtable(io) = vtable;
 }

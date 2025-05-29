@@ -12,7 +12,7 @@ static void  XModbusRtu_Timer_out(void* arg)
 XModbusErrorCode XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortFunc* func, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
 {
     XModbusErrorCode error = MB_ENOERR;
-    modbus->ioDevice = XSerialPort_new(&(func->IO_Port));
+    //modbus->ioDevice = XSerialPort_new(&(func->IO_Port));
     XIODevice_setReadBuffer_base(modbus->ioDevice, MB_DEVICE_RECV_BUFFER_SIZE);
     XIODevice_setWriteBuffer_base(modbus->ioDevice, MB_DEVICE_SEND_BUFFER_SIZE);
     // 调用 RTU 底层初始化（配置串口参数：端口号、波特率、校验位）

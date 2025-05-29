@@ -45,8 +45,8 @@ static void XPWMDeviceStart(XPWMDeviceBase* pwm)
 //模拟测试
 void XPWMDeviceTest()
 {
-	XIODevice_PortFuncInit  ioPort = { 0 };
-	ioPort.open_funcPointer = XPWMDeviceOpen;
+	//XIODevice_PortFuncInit  ioPort = { 0 };
+	//ioPort.open_funcPointer = XPWMDeviceOpen;
 	//XPWMDevice_PortFunc     pwmPort = { 0 };
 	//pwmPort.start=XPWMDeviceStart;
 	//XPWMDevice_PortFuncInit port = { 0 };

@@ -6,11 +6,11 @@ extern "C" {
 #include"XIODevice.h"
 //XSwitchDeviceBase虚函数表
 extern XVtable* XSwitchDeviceBaseVtable;
-#define XSWITCHDEVICEBASE_VTABLE_SIZE (XIODEVICE_VTABLE_SIZE+2)       //XSwitchDeviceBase容器虚函数表大小
+#define XSWITCHDEVICEBASE_VTABLE_SIZE (XIODEVICEBASE_VTABLE_SIZE+2)       //XSwitchDeviceBase容器虚函数表大小
 //XSwitchDevice虚函数表枚举
 enum XSwitchDeviceBaseVtableEnum
 {
-	EXSwitchDeviceBase_SetState = XIODEVICE_VTABLE_SIZE,
+	EXSwitchDeviceBase_SetState = XIODEVICEBASE_VTABLE_SIZE,
 	EXSwitchDeviceBase_GetState,
 };
 typedef struct XSwitchDeviceBase XSwitchDeviceBase;
