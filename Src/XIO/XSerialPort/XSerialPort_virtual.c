@@ -57,7 +57,7 @@ size_t VXSerialPort_read(XIODevice* io, char* data, size_t maxSize)
 	}
 	else
 	{
-		while (XCircularQueue_receive(io->m_readBuffer, data + count))
+		while (XCircularQueue_receive_base(io->m_readBuffer, data + count))
 		{
 			++count;
 			if (count >= maxSize)

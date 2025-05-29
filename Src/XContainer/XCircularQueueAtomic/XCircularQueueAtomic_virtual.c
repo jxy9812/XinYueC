@@ -12,7 +12,7 @@ static void* vtable_data[XCIRCULARQUEUEATOMIC_VTABLE_SIZE];//虚函数数据
 static bool VXCircularQueueAtomic_isEmpty(const XCircularQueueAtomic* this_queue);
 static bool VXCircularQueueAtomic_isFull(const XCircularQueueAtomic* this_queue);
 static void VXCircularQueueAtomic_clear(XCircularQueueAtomic* this_queue);//清空
-static size_t VXCircularQueueAtomic_size(const XCircularQueueAtomic* this_queue);
+static size_t VXCircularQueueAtomic_getSize(const XCircularQueueAtomic* this_queue);
 //插入到队列的队尾
 static bool VXCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* LpValue);
 //出队
@@ -38,7 +38,7 @@ void XCircularQueueAtomic_class_init()
 	//重写的函数
 	XVtable_At(XCircularQueueAtomicVtable, EXContainerObject_IsEmpty) = VXCircularQueueAtomic_isEmpty;
 	XVtable_At(XCircularQueueAtomicVtable, EXContainerObject_Clear) = VXCircularQueueAtomic_clear;
-	XVtable_At(XCircularQueueAtomicVtable, EXContainerObject_Size) = VXCircularQueueAtomic_size;
+	XVtable_At(XCircularQueueAtomicVtable, EXContainerObject_Size) = VXCircularQueueAtomic_getSize;
 #if SHOWCONTAINERSIZE
 	printf("XCircularQueueAtomic size:%d\n", XVtable_size(XCircularQueueAtomicVtable));
 #endif // SHOWCONTAINERSIZE
@@ -71,7 +71,7 @@ void VXCircularQueueAtomic_clear(XCircularQueueAtomic* this_queue)
 	}
 }
 
-size_t VXCircularQueueAtomic_size(const XCircularQueueAtomic* this_queue)
+size_t VXCircularQueueAtomic_getSize(const XCircularQueueAtomic* this_queue)
 {
 	if (this_queue == NULL)
 		return 0;

@@ -8,7 +8,7 @@
 //CRC16校验设置  其他数据必须都设置好了,并且预留了两字节的CRC空间
 static XModbusFrame_set16Data(XVector* v)
 {
-	size_t size = XVector_size(v) - MB_SER_PDU_SIZE_CRC;
+	size_t size = XVector_size_base(v) - MB_SER_PDU_SIZE_CRC;
 	//设置crc校验
 	uint16_t crc16 = XCrc_get16(XVector_begin(v), size);
 	XCrc_set16Data(XVector_at(v, size), crc16, 0);
@@ -82,7 +82,7 @@ void XModbusFrameRTU_free(XModbusFrameRTU* data)
 	if (data)
 	{
 		if (data->data)
-			XVector_free(data->data);
+			XVector_free_base(data->data);
 	}
 	XMemory_free(data);
 }
@@ -246,7 +246,7 @@ static void parseFrameData(XModbusFrame* frame, XVector* data)
 	if (frame->frameData == NULL)
 		return;
 	//开始解析RTU数据
-	size_t dataSize = XVector_size(data);
+	size_t dataSize = XVector_size_base(data);
 	uint8_t* pData = (uint8_t*)XVector_begin(data);
 	// 校验帧长度和CRC（最小长度4字节，CRC正确）
 	if ((dataSize >= MB_SER_PDU_SIZE_MIN) && (XCrc_get16(pData, dataSize) == 0)) {
@@ -266,7 +266,7 @@ static void parseFrameData(XModbusFrame* frame, XVector* data)
 			XModbusFrameRTU_free(frame->data);
 			frame->data = NULL;
 		}
-		XVector_clear(frame->frameData);
+		XVector_clear_base(frame->frameData);
 	}
 }
 //解析0x01响应头
@@ -288,7 +288,7 @@ static void XModbusFrameRTU_parse0x01_reply(XModbusFrameRTU* rtu, XVector* frame
 	}
 	else if (data != NULL)//释放数据
 	{
-		XVector_free(data);
+		XVector_free_base(data);
 		rtu->data = NULL;
 	}
 	
@@ -385,7 +385,7 @@ static void XModbusFrameRTU_parse0x10_request(XModbusFrameRTU* rtu, XVector* fra
 	}
 	else if(rtu->data!=NULL)
 	{
-		XVector_free(rtu->data);
+		XVector_free_base(rtu->data);
 		rtu->data = NULL;
 	}
 }
@@ -467,21 +467,21 @@ void XModbusFrameRTU_parseData_reply(XModbusFrame* frame, XVector* frameData)
 
 uint8_t XModbusFrameRTU_parseAddress(XModbusFrame* frame)
 {
-	if (frame && !XVector_isEmpty(frame->frameData))
+	if (frame && !XVector_isEmpty_base(frame->frameData))
 		return XVector_At(frame->frameData, 0, uint8_t);
 	return 0xFF;
 }
 
 uint8_t XModbusFrameRTU_parseFuncCode(XModbusFrame* frame)
 {
-	if (frame && !XVector_isEmpty(frame->frameData))
+	if (frame && !XVector_isEmpty_base(frame->frameData))
 		return XVector_At(frame->frameData, MB_SER_PDU_PDU_OFF, uint8_t);
 	return 0;
 }
 
 XString* XModbusFrameRTU_to16HexString(XModbusFrame* frame)
 {
-	if (frame && !XVector_isEmpty(frame->frameData))
+	if (frame && !XVector_isEmpty_base(frame->frameData))
 	{
 		XVector* vector = frame->frameData;
 		XString* str = XString_new(NULL);

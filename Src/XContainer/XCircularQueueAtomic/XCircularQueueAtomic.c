@@ -20,35 +20,35 @@ XCircularQueueAtomic* XCircularQueueAtomic_new(size_t typeSize, size_t count)
 	return this_queue;
 }
 
-bool XCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* pvData)
+bool XCircularQueueAtomic_push_base(XCircularQueueAtomic* this_queue, void* pvData)
 {
 	if (ISNULL(this_queue, "") || ISNULL(pvData, "") ||ISNULL(XClassGetVtable(this_queue), ""))
 		return false;
 	return XClassGetVirtualFunc(this_queue, EXCircularQueue_Push, bool (*)(XCircularQueueAtomic*, void*))(this_queue, pvData);
 }
 
-void XCircularQueueAtomic_pop(XCircularQueueAtomic* this_queue)
+void XCircularQueueAtomic_pop_base(XCircularQueueAtomic* this_queue)
 {
 	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return;
 	XClassGetVirtualFunc(this_queue, EXCircularQueue_Pop, void (*)(XCircularQueueAtomic*))(this_queue);
 }
 
-bool XCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuffer)
+bool XCircularQueueAtomic_receive_base(XCircularQueueAtomic* this_queue, void* pvBuffer)
 {
 	if (ISNULL(this_queue, "") || ISNULL(pvBuffer, "")||ISNULL(XClassGetVtable(this_queue), ""))
 		return;
 	return XClassGetVirtualFunc(this_queue, EXCircularQueue_Receive, bool (*)(XCircularQueueAtomic*,void*))(this_queue, pvBuffer);
 }
 
-void* XCircularQueueAtomic_top(XCircularQueueAtomic* this_queue)
+void* XCircularQueueAtomic_top_base(XCircularQueueAtomic* this_queue)
 {
 	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return NULL;
 	return XClassGetVirtualFunc(this_queue, EXCircularQueue_Top, void* (*)(XCircularQueueAtomic*))(this_queue);
 }
 
-bool XCircularQueueAtomic_isFull(XCircularQueueAtomic* this_queue)
+bool XCircularQueueAtomic_isFull_base(XCircularQueueAtomic* this_queue)
 {
 	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return false;

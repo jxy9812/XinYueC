@@ -82,7 +82,7 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 		XStack_pop(ChildAll);
 	}
 	XStack_free(ChildAll);
-	return XVector_size(nodes->child);
+	return XVector_size_base(nodes->child);
 #else
 	IS_ON_DEBUG(XStack_ON);
 	return 0;
@@ -109,7 +109,7 @@ static void XBinaryTreeObject_freeNode(AStarNode* root)
 		{
 			XStack_push(stack, it);
 		}
-		XVector_free(current->child);
+		XVector_free_base(current->child);
 		XMemory_free(current);
 	}
 #else
@@ -126,12 +126,12 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 
 	AStarNode* CurrentNode = NULL;//当前遍历的节点
 	bool isFindEnd = false;//找到终点标记
-	while (!isFindEnd && !XVector_isEmpty(CurrentNodeArray))
+	while (!isFindEnd && !XVector_isEmpty_base(CurrentNodeArray))
 	{
 		XVector_sort(CurrentNodeArray, sortDescendingtCosts);
 		AStarNode** back = XVector_back(CurrentNodeArray);
 		CurrentNode = *back;
-		int nSel = XVector_size(CurrentNodeArray)-1;
+		int nSel = XVector_size_base(CurrentNodeArray)-1;
 		if (CurrentNode->pos.x == dest.x && CurrentNode->pos.y == dest.y)//判断是否到终点了
 		{
 			isFindEnd = true;
@@ -145,7 +145,7 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 	if(isFindEnd)
 		Path = GetXMazePath(CurrentNode);
 	XBinaryTreeObject_freeNode(root);
-	XVector_free(CurrentNodeArray);
+	XVector_free_base(CurrentNodeArray);
 	XVectorTwo_free(tempMaze);
 	return Path;
 #else

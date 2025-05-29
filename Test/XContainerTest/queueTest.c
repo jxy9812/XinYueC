@@ -28,8 +28,8 @@ void queueTest()
 #if	XPriorityQueue_ON
 static insertData(void* values ,void*args)
 {
-	XPriorityQueue_push(args, values);
-	printf("入队:%d 堆顶:%d\n", *(int*)values, *(int*)XPriorityQueue_top(args));
+	XPriorityQueue_push_base(args, values);
+	printf("入队:%d 堆顶:%d\n", *(int*)values, *(int*)XPriorityQueue_top_base(args));
 }
 #endif
 void XPriority_QueueTest()
@@ -43,19 +43,19 @@ void XPriority_QueueTest()
 	{
 		XVector_push_back(v, &i);
 	}
-	XDerangement(XVector_begin(v),XVector_size(v), sizeof(int));
+	XDerangement(XVector_begin(v),XVector_size_base(v), sizeof(int));
 	//printf("入队数据:");
 	XVector_iterator_for_each(v, insertData, queue);
 	printf("\n队列循环出队:");
-	while (!XPriorityQueue_isEmpty(queue))
+	while (!XPriorityQueue_isEmpty_base(queue))
 	{
-		int* values = XPriorityQueue_top(queue);
+		int* values = XPriorityQueue_top_base(queue);
 		printf("%d ", *values);
-		XPriorityQueue_pop(queue);
+		XPriorityQueue_pop_base(queue);
 	}
 	printf("\n");
-	XPriorityQueue_free(queue);
-	XVector_free(v);
+	XPriorityQueue_free_base(queue);
+	XVector_free_base(v);
 #endif
 }
 #endif

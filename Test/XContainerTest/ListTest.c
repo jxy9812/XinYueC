@@ -20,13 +20,13 @@ void ListSortTest()
 	for (size_t i = 0; i < size; i++)
 	{
 		int num = rand() % 1000;
-		XList_push_back(li,&num);//尾插
+		XList_push_back_base(li,&num);//尾插
 	}
 	printf("排序前\n");
 	XList_iterator_for_each(li, ListFor_each, NULL);printf("\n");
 
 	clock_t  time_front = clock();
-	XList_sort(li, XLess_int);
+	XList_sort_base(li, XLess_int);
 	clock_t time_after = clock();
 
 	printf("排序后\n");
@@ -43,7 +43,7 @@ void ListIterator()
 	int arr[] = { 123,12,1,4,9 };
 	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
 	{
-		XList_push_back(li, arr + i);
+		XList_push_back_base(li, arr + i);
 	}
 	printf("开始正向遍历\n");
 	for (XList_iterator* it = XList_begin(li); it != XList_end(li); it = XList_iterator_add(li, it))
@@ -66,33 +66,33 @@ void ListTest()
 	XList* list = XList_new(sizeof(int));
 	list->m_equality = XEquality_int;
 	//printf("%s\n", XContainerObject_empty(list)?"empty":"");
-	//printf("%d\n", XContainerObject_size(list));
+	//printf("%d\n", XContainerObject_getSize_base(list));
 
 	
 
 	int arr[] = { 123,12,1,4,9 };
 	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
 	{
-		XList_push_back(list,arr+i);
+		XList_push_back_base(list,arr+i);
 	}
 	int x = 100;
 	int findValue = 123;
-	//XList_insert(list, XList_at(list, &findValue), &x);
+	//XList_insert_base(list, XList_at(list, &findValue), &x);
 	
 	printf("元素遍历\t");XList_iterator_for_each(list, ListFor_each,NULL);printf("\n");
-	printf("头元素为：%d\n", XList_Front(list,int));
-	printf("尾元素为：%d\n", XList_Back(list,int));
+	printf("头元素为：%d\n", XList_Front_Base(list,int));
+	printf("尾元素为：%d\n", XList_Back_Base(list,int));
 
-	XListNode*findNode=XList_find(list,arr +2);
+	XListNode*findNode=XList_find_base(list,arr +2);
 
 	printf("找到的数字%d\n", *(int*)findNode->date);
 
-	XList_pop_front(list);
-	XList_pop_back(list);
-	//XList_erase(list, XList_at(list, &findValue));
+	XList_pop_front_base(list);
+	XList_pop_back_base(list);
+	//XList_erase_base(list, XList_at(list, &findValue));
 	int removeVlaue =4 ;
-	XList_remove(list,&removeVlaue);
-	//XList_clear(list);
+	XList_remove_base(list,&removeVlaue);
+	//XList_clear_base(list);
 	printf("删除元素后遍历\t");XList_iterator_for_each(list, ListFor_each, NULL);
 	XList_free(list);
 #endif
@@ -107,7 +107,7 @@ void ListSwapTest()//交换函数测试
 	for (size_t i = 0; i < 10; i++)
 	{
 		num = i;
-		XList_push_back(li1, &num);//尾插
+		XList_push_back_base(li1, &num);//尾插
 	}
 	printf("li1元素遍历\n");
 	XList_iterator_for_each(li1, ListFor_each, NULL); printf("\n");
@@ -117,12 +117,12 @@ void ListSwapTest()//交换函数测试
 	for (size_t i = 0; i < 20; i++)
 	{
 		num = 20 - i;
-		XList_push_back(li2, &num);//尾插
+		XList_push_back_base(li2, &num);//尾插
 	}
 	printf("li2元素遍历\n");
 	XList_iterator_for_each(li2, ListFor_each, NULL); printf("\n");
 
-	XList_swap(li1, li2);
+	XList_swap_base(li1, li2);
 
 	printf("交换后li1元素遍历\n");
 	XList_iterator_for_each(li1, ListFor_each, NULL); printf("\n");

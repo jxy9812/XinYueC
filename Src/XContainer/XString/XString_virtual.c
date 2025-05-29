@@ -95,7 +95,7 @@ size_t XString_XVectorNsel(const struct XString* this_XString, const size_t nSel
 		return -1;
 	struct XVector* v = ((struct XString*)this_XString)->m_data;
 	size_t VnSel = -1;
-	for (size_t i = 0; i < XVector_size(v) - 1; i++)
+	for (size_t i = 0; i < XVector_size_base(v) - 1; i++)
 	{
 		char c = *((char*)XVector_at(v, i));
 		if (XString_isChinese(c))
@@ -153,7 +153,7 @@ void XString_clear(struct XString* this_XString)
 	if (ISNULL(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	int right = XVector_size(v) - 2;
+	int right = XVector_size_base(v) - 2;
 	if (right >= 0)
 		//XVector_erase_int(v, 0, right);
 		XVector_remove(v, 0, right);
@@ -244,7 +244,7 @@ void XString_append(struct XString* this_XString, const char* str)
 	if (ISNULL(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	XString_insert(this_XString, XVector_size(v) - 1, str);
+	XString_insert(this_XString, XVector_size_base(v) - 1, str);
 }
 // 赋值
 void XString_assign(struct XString* this_XString, const char* str)
@@ -291,7 +291,7 @@ int XString_size(const struct XString* this_XString)
 //	if (isObjectNULL(this_XString, "XString_capacity"))
 //		return NULL;
 //	struct XString* string = (struct XString*)this_XString;
-//	return XVector_capacity(string->m_data);
+//	return XVector_capacity_base(string->m_data);
 //}
 //交换
 void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringTwo)
@@ -300,7 +300,7 @@ void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringT
 		return NULL;
 	struct XString* stringOne = (struct XString*)this_XStringOne;
 	struct XString* stringTwo = (struct XString*)this_XStringTwo;
-	XVector_swap(stringOne->m_data, stringTwo->m_data);
+	XVector_swap_base(stringOne->m_data, stringTwo->m_data);
 	XSwap(&stringOne->m_size, &stringTwo->m_size, sizeof(size_t));
 }
 //释放容器
@@ -309,7 +309,7 @@ void XString_free(const struct XString* this_XString)
 	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
-	XVector_free(string->m_data);
+	XVector_free_base(string->m_data);
 	XMemory_free(this_XString);
 }
 

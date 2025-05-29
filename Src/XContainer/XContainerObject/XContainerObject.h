@@ -53,13 +53,13 @@ void XContainerDefaultDerivedClassDataFreeMethod(void* args);
 //以下是成员函数
 void XContainerObject_class_init(); 
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);
-void XContainerObject_free(XContainerObject* Object);
-size_t XContainerObject_size(const XContainerObject* Object);
-bool XContainerObject_isEmpty(const XContainerObject* Object);
-size_t XContainerObject_capacity(const XContainerObject* Object);
-size_t XContainerObject_typeSize(const XContainerObject* Object);
-void XContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
-void XContainerObject_clear(XContainerObject* Object);
+void XContainerObject_free_base(XContainerObject* Object);
+size_t XContainerObject_getSize_base(const XContainerObject* Object);
+bool XContainerObject_isEmpty_base(const XContainerObject* Object);
+size_t XContainerObject_getCapacity_base(const XContainerObject* Object);
+size_t XContainerObject_getTypeSize_base(const XContainerObject* Object);
+void XContainerObject_swap_base(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
+void XContainerObject_clear_base(XContainerObject* Object);
 #ifdef __cplusplus
 }
 #endif

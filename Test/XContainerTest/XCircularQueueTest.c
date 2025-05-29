@@ -11,23 +11,23 @@ void XCircularQueueTest()
 	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
 	{
 		int n = arr[i];
-		XCircularQueue_push(queue, arr + i);
+		XCircularQueue_push_base(queue, arr + i);
 	}
-	XCircularQueue_pop(queue);
-	XCircularQueue_pop(queue);
-	XCircularQueue_pop(queue);
+	XCircularQueue_pop_base(queue);
+	XCircularQueue_pop_base(queue);
+	XCircularQueue_pop_base(queue);
 	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
 	{
 		int n = arr[i];
-		XCircularQueue_push(queue, arr + i);
+		XCircularQueue_push_base(queue, arr + i);
 	}
-	while (!XCircularQueue_isEmpty(queue))
+	while (!XCircularQueue_isEmpty_base(queue))
 	{
-		printf("%d size:%d\n", XCircularQueue_Top(queue, int), XCircularQueue_size(queue));
-		XCircularQueue_pop(queue);
+		printf("%d size:%d\n", XCircularQueue_Top_Base(queue, int), XCircularQueue_getSize_base(queue));
+		XCircularQueue_pop_base(queue);
 	}
 	
-	XCircularQueue_free(queue);
+	XCircularQueue_free_base(queue);
 	printf("循环队列 空\n");
 	
 #else

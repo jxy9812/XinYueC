@@ -45,10 +45,10 @@ XModbusErrorCode XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortF
         XTimerBase_setUserData(modbus->timer,modbus);
         XTimerBase_setTimerCallback(modbus->timer,XModbusRtu_Timer_out);
         //设置定时时间
-        XTimerBase_setIntervalBase(modbus->timer, 3.5 * (10 + parity) * 1000 / baudRate);
+        XTimerBase_setInterval_base(modbus->timer, 3.5 * (10 + parity) * 1000 / baudRate);
         //modbus->timer->m_interval = 3.5 * (10+ parity) * 1000 / baudRate;
-        if (XTimerBase_interval(modbus->timer) < 2)
-            XTimerBase_setIntervalBase(modbus->timer, 2);
+        if (XTimerBase_getInterval(modbus->timer) < 2)
+            XTimerBase_setInterval_base(modbus->timer, 2);
         //XTimer_create(modbus->timer);
     }
     return error;
@@ -59,7 +59,7 @@ void XModbusRtuStart(XModbus* modbus)
     modbus->eRcvState = STATE_RX_INIT;  // 初始状态：等待总线空闲
     if(modbus->SerialEnable)
         modbus->SerialEnable(modbus->ioDevice,true, false);  // 使能接收，禁用发送
-    XTimerBase_startBase(modbus->timer);  // 启动定时器（T35用于检测帧间隔）
+    XTimerBase_start_base(modbus->timer);  // 启动定时器（T35用于检测帧间隔）
     EXIT_CRITICAL_SECTION();
 }
 void XModbusRtuStop(XModbus* modbus)
@@ -67,7 +67,7 @@ void XModbusRtuStop(XModbus* modbus)
     ENTER_CRITICAL_SECTION();
     if (modbus->SerialEnable)
         modbus->SerialEnable(modbus, false, false);  // 禁用接收和发送
-    XTimerBase_stopBase(modbus->timer); // 关闭定时器
+    XTimerBase_stop_base(modbus->timer); // 关闭定时器
     EXIT_CRITICAL_SECTION();
 }
 XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrame* frameData)
@@ -81,7 +81,7 @@ XModbusErrorCode XModbusRtuReceive(XModbus* modbus, XModbusFrame* frameData)
     XModbusFrameRTU_parseData_reply(frameData, modbus->recvBuffer);
 
     //解析的帧有问题
-    if(XVector_isEmpty(frameData->frameData))
+    if(XVector_isEmpty_base(frameData->frameData))
         return MB_EIO;
     EXIT_CRITICAL_SECTION();
     return MB_ENOERR;
@@ -121,18 +121,18 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
    
     // 读取接收到的字节（平台特定：从串口缓冲区获取）
     //modbus->ioDevice->m_port.readData_funcPointer(modbus->ioDevice, (uint8_t*)&ucByte,1);
-    XCircularQueue_receive(modbus->ioDevice->m_readBuffer, &ucByte);
+    XCircularQueue_receive_base(modbus->ioDevice->m_readBuffer, &ucByte);
     XVector* recvVector = modbus->recvBuffer;
     switch (modbus->eRcvState) {
     case STATE_RX_INIT:  // 初始状态（等待总线空闲）
-        XTimerBase_startBase(modbus->timer);  // 启动T35定时器，检测帧间隔
+        XTimerBase_start_base(modbus->timer);  // 启动T35定时器，检测帧间隔
 #if MB_CALIBRATION_TIMER_SETTINGS
         modbus->calibrationTimer_current = XTimer_getCurrentTime();
 #endif 
         break;
 
     case STATE_RX_ERROR:  // 接收错误状态（忽略后续字节）
-        XTimerBase_startBase(modbus->timer);  // 保持定时器运行，等待错误帧结束
+        XTimerBase_start_base(modbus->timer);  // 保持定时器运行，等待错误帧结束
 #if MB_CALIBRATION_TIMER_SETTINGS
         modbus->calibrationTimer_current = XTimer_getCurrentTime();
 #endif 
@@ -140,26 +140,26 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
 
     case STATE_RX_IDLE:  // 空闲状态（接收到新帧起始字节）
         //printf("开始接收\n");
-        XVector_clear(recvVector);  // 重置接收缓冲区位置
+        XVector_clear_base(recvVector);  // 重置接收缓冲区位置
         XVector_push_back(recvVector,&ucByte);  // 存储第一个字节（从机地址）
         if (modbus->eSndState == STATE_TX_END)
             modbus->eSndState = STATE_TX_IDLE;
         modbus->eRcvState = STATE_RX_RCV;  // 切换到接收中状态
-        XTimerBase_startBase(modbus->timer);  // 启动T35定时器
+        XTimerBase_start_base(modbus->timer);  // 启动T35定时器
 #if MB_CALIBRATION_TIMER_SETTINGS
         modbus->calibrationTimer_current = XTimer_getCurrentTime();
 #endif 
         break;
 
     case STATE_RX_RCV:  // 接收中状态（连续接收字节）
-        if (XVector_size(recvVector) < MB_SER_PDU_SIZE_MAX) {
+        if (XVector_size_base(recvVector) < MB_SER_PDU_SIZE_MAX) {
             XVector_push_back(recvVector, &ucByte);  // 存储字节到缓冲区
         }
         else {
             modbus->eRcvState = STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
             //printf("缓冲区溢出\n");
         }
-        XTimerBase_startBase(modbus->timer);  // 每次接收到字节后重置定时器
+        XTimerBase_start_base(modbus->timer);  // 每次接收到字节后重置定时器
 #if MB_CALIBRATION_TIMER_SETTINGS
         modbus->calibrationTimer_current = XTimer_getCurrentTime();
 #endif 
@@ -199,7 +199,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
     {
         case STATE_TX_IDLE:  // 发送空闲状态（无数据发送）
         {
-            modbus->pendingCount = XVector_size(dataVector);
+            modbus->pendingCount = XVector_size_base(dataVector);
 
             modbus->eSndState = STATE_TX_XMIT;
             //printf("发送空闲\n");
@@ -210,7 +210,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
             //printf("发送中\n");
             if (modbus->pendingCount != 0)
             {
-                XIODevice_write(modbus->ioDevice, XVector_at(dataVector, XVector_size(dataVector) - modbus->pendingCount), 1);
+                XIODevice_write(modbus->ioDevice, XVector_at(dataVector, XVector_size_base(dataVector) - modbus->pendingCount), 1);
 #if !MB_IS_COMP_SEND_FRAME
                 XIODevice_writeFull(modbus->ioDevice);
 #endif
@@ -224,7 +224,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
 #endif
                 modbus->eSndState = STATE_TX_END;  // 切换到发送空闲状态
                 modbus->timerOutNumber = 0;//开始计数
-                XTimerBase_startBase(modbus->timer);  // 发送完成等待下一帧
+                XTimerBase_start_base(modbus->timer);  // 发送完成等待下一帧
 #if MB_CALIBRATION_TIMER_SETTINGS
                 modbus->calibrationTimer_current = XTimer_getCurrentTime();
 #endif 
@@ -268,13 +268,13 @@ bool XModbusRtuTimerT35Expired(XModbus* modbus)
             if ((modbus->timerOutNumber > MB_MASTER_RECV_WAIT_TIME))
             {//发送后等待一段时间
                 modbus->eSndState = STATE_TX_IDLE;
-                XTimerBase_stopBase(modbus->timer);  // 关闭定时器
+                XTimerBase_stop_base(modbus->timer);  // 关闭定时器
             } 
         }
         else
         {
             modbus->eSndState = STATE_TX_IDLE;
-            XTimerBase_stopBase(modbus->timer);  // 关闭定时器
+            XTimerBase_stop_base(modbus->timer);  // 关闭定时器
         }
         return true;
     }
@@ -302,6 +302,6 @@ bool XModbusRtuTimerT35Expired(XModbus* modbus)
     }
    
     modbus->eRcvState = STATE_RX_IDLE;  // 切换到接收空闲状态
-    XTimerBase_stopBase(modbus->timer);  // 关闭定时器
+    XTimerBase_stop_base(modbus->timer);  // 关闭定时器
     return xNeedPoll;
 }

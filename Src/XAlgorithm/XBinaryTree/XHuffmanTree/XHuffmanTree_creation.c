@@ -14,7 +14,7 @@ static void installQueue(XPair** LPpair, XPriorityQueue* queue)
 	unsigned char ch = XPair_First(*LPpair, unsigned char);
 	DictionaryValue dv = XPair_Second(*LPpair, DictionaryValue);
 	XHfmNode* node = XHfmTree_creationNode( ch, dv.count,dv.code);
-	XPriorityQueue_push(queue, &node);
+	XPriorityQueue_push_base(queue, &node);
 }
 #endif
 //根据字典创建树
@@ -28,10 +28,10 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 	XHfmNode* LPparent = NULL;//父节点
 	XHfmNode* LPleft = NULL;//左节点
 	XHfmNode* LPright = NULL;//右节点
-	while (!XPriorityQueue_isEmpty(queue))
+	while (!XPriorityQueue_isEmpty_base(queue))
 	{
-		XHfmNode* LPNode = XPriorityQueue_Top(queue, XHfmNode*);
-		XPriorityQueue_pop(queue);
+		XHfmNode* LPNode = XPriorityQueue_Top_Base(queue, XHfmNode*);
+		XPriorityQueue_pop_base(queue);
 		//printf("ArgIsNULL:%s data:%d count:%d\n", XBTree_GetData(LPNode, 0, XHfmNodeData).code==0 ? "true" : "false", XBTree_GetData(LPNode, 0, XHfmNodeData).ch, XBTree_GetData(LPNode, 0, XHfmNodeData).count);
 		if (LPleft == NULL)
 		{
@@ -46,13 +46,13 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 			XBTree_SetRChild(LPparent, LPright);
 			XBTree_SetParent(LPleft, LPparent);
 			XBTree_SetParent(LPright, LPparent);
-			XPriorityQueue_push(queue, &LPparent);
+			XPriorityQueue_push_base(queue, &LPparent);
 			LPleft = NULL;
 			LPright = NULL;
 		}
 
 	}
-	XPriorityQueue_free(queue);
+	XPriorityQueue_free_base(queue);
 	return LPparent;
 #else
 	IS_ON_DEBUG(XPriorityQueue_ON);

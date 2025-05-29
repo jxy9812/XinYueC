@@ -15,7 +15,7 @@ static void ForPrint(void* values, void* args)
 }
 static void insertMap(void* values, void* args)
 {
-	XMap_insert(args, values, values);
+	XMap_insert_base(args, values, values);
 }
 #endif
 void XMapAndXVectorFindTest()
@@ -50,7 +50,7 @@ void XMapAndXVectorFindTest()
 	printf("XVector查询数据:%d 用时%dms\n", *Vret, vector_end- vector_start);
 
 	clock_t map_start = clock();
-	size_t* mret = XMap_value(map,&findNum);
+	size_t* mret = XMap_value_base(map,&findNum);
 	clock_t map_end = clock();
 	printf("XMap查询数据:%d 用时%dms\n", *mret, map_end - map_start);
 #endif

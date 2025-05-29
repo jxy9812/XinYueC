@@ -13,20 +13,20 @@ XModbusFrameQueue* XModbusFrameQueue_new(size_t count)
 
 bool XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrame* frameData)
 {
-	return XCircularQueue_push(queue, &frameData);
+	return XCircularQueue_push_base(queue, &frameData);
 }
 
 XModbusFrame* XModbusFrameQueue_top(XModbusFrameQueue* queue)
 {
 	if(queue==NULL)
 		return NULL;
-	return XCircularQueue_Top(queue, XModbusFrameQueue*);
+	return XCircularQueue_Top_Base(queue, XModbusFrameQueue*);
 }
 
 bool XModbusFrameQueue_empty(XModbusFrameQueue* queue)
 {
 	if (queue)
-		return XCircularQueue_isEmpty(queue);
+		return XCircularQueue_isEmpty_base(queue);
 	return true;
 }
 
@@ -40,15 +40,15 @@ void XModbusFrameQueue_pop(XModbusFrameQueue* queue)
 		XModbusFrame* top= XModbusFrameQueue_top(queue);
 		////显释放里面的XVector数据
 		//if(top->frame)
-		//	XVector_free(top->frame);
+		//	XVector_free_base(top->frame);
 		XModbusFrame_free(top);
 	}
-	XCircularQueue_pop(queue);
+	XCircularQueue_pop_base(queue);
 }
 
 bool XModbusFrameQueue_receive(XModbusFrameQueue* queue, XModbusFrame** pvFrame)
 {
-	return XCircularQueue_receive(queue,pvFrame);
+	return XCircularQueue_receive_base(queue,pvFrame);
 }
 
 void XModbusFrameQueue_clear(XModbusFrameQueue* queue)
@@ -62,7 +62,7 @@ void XModbusFrameQueue_clear(XModbusFrameQueue* queue)
 void XModbusFrameQueue_free(XModbusFrameQueue* queue)
 {
 	XModbusFrameQueue_clear(queue);
-	XCircularQueue_free(queue);
+	XCircularQueue_free_base(queue);
 }
 
 XModbusFrame* XModbusFrame_new()
@@ -109,7 +109,7 @@ void XModbusFrame_free(XModbusFrame* frame)
 	{
 		if (frame->frameData)
 		{
-			XVector_free(frame->frameData);
+			XVector_free_base(frame->frameData);
 		}
 		if (frame->recvHandle)
 		{

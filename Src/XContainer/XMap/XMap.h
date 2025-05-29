@@ -11,6 +11,7 @@ typedef struct XVector XVector;
 typedef struct XPair XPair;
 //XMap虚函数表
 extern XVtable* XMapVtable;
+#define XMAP_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+5)       //XCircularQueue容器虚函数表大小
 //XMap虚函数表枚举
 enum XMapEnum
 {
@@ -37,28 +38,31 @@ void XMap_class_init();
 //初始化 XMap
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess);
 //Map插入数据
-void XMap_insert(XMap* this_map, const void* key, const void* LpValue);
-#define XMap_Insert(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMap_insert(this_map,&k,&v);}
-void XMap_erase(XMap* this_map, const XPair** LPpair);
+void XMap_insert_base(XMap* this_map, const void* key, const void* LpValue);
+#define XMap_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMap_insert_base(this_map,&k,&v);}
+void XMap_erase_base(XMap* this_map, const XPair** LPpair);
 //map删除数据
-void XMap_remove(XMap* this_map, const void* key);
-#define XMap_Remove(this_map,keyType,key) {keyType k=key;XMap_remove(this_map,&k);}
+void XMap_remove_base(XMap* this_map, const void* key);
+#define XMap_Remove_Base(this_map,keyType,key) {keyType k=key;XMap_remove_base(this_map,&k);}
 //根据键值返回数据地址
-void* XMap_value(XMap* this_map, const void* key);
-#define XMap_Value(this_map,key,ValueType) (*(ValueType*)XMap_value(this_map,&(key)))
+void* XMap_value_base(XMap* this_map, const void* key);
+#define XMap_Value_Base(this_map,key,ValueType) (*(ValueType*)XMap_value_base(this_map,&(key)))
 //查找数据，返回找到的XPair地址，没有返回NULL
-XPair* XMap_find(XMap* this_map, const void* key);
-//清空Map，释放内存
-void XMap_clear(XMap* this_map);
+XPair* XMap_find_base(XMap* this_map, const void* key);
 //释放内存
-void XMap_free(XMap* this_map);
-//检测Map内是否为空，空为真 O(1)
-bool XMap_isEmpty(const  XMap* this_map);
-//返回Map内元素的个数 O(1)
-size_t XMap_size(const  XMap* this_map);
-//交换两个同类型Map的数据
-void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
-
+#define XMap_free_base   XContainerObject_free_base
+//清空，不是释放内存
+#define XMap_clear_base  XContainerObject_clear_base
+//检测是否为空，空为真 O(1)
+#define XMap_isEmpty_base			XContainerObject_isEmpty_base
+//返回元素的个数 O(1)
+#define XMap_size_base			XContainerObject_getSize_base
+//返回当前向量所能容纳的最大元素个数
+#define XMap_capacity_base		XContainerObject_getCapacity_base
+//交换两个同类型向量的数据
+#define XMap_swap_base			XContainerObject_swap_base
+//返回元素类型字节大小
+#define XMap_getTypeSize_base		XContainerObject_getTypeSize_base
 //默认释放派生类的方法 key是派生的容器
 void XMap_DefaultDerivedClassDataKeyFreeMethod(void* args);
 //默认释放派生类的方法 value是派生的容器

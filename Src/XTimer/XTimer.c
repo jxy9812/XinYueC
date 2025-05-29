@@ -39,7 +39,7 @@ static void XTimerCreateWin32ThreadpoolTimer(XTimerBase* timer)
 static void XTimerStartWin32ThreadpoolTimer(XTimerBase* timer)
 {
 	//printf("启动定时器\n");
-	XTimerBase_stopBase(timer);
+	XTimerBase_stop_base(timer);
 	// 设置计时器立即启动，每1000ms触发一次
 	if (timer == NULL || timer->timerId == 0)
 		return;
@@ -79,7 +79,7 @@ static void XTimerSetIntervalWin32ThreadpoolTimer(XTimerBase* timer, size_t valu
 	timer->m_interval = value;
 	if (XTimerBase_isRunning(timer))
 	{
-		XTimerBase_startBase(timer);
+		XTimerBase_start_base(timer);
 	}
 }
 XTimerBase* XTimer_new_Win32ThreadpoolTimer()
@@ -122,7 +122,7 @@ static void XTimerCreateWin32TimeSetEvent(XTimerBase* timer)
 static void XTimerStartWin32TimeSetEvent(XTimerBase* timer)
 {
 	//printf("启动定时器\n");
-	XTimerBase_stopBase(timer);
+	XTimerBase_stop_base(timer);
 	timer->timerId = timeSetEvent(
 		timer->m_interval,           // 触发间隔毫秒
 		1,             // 精度1毫秒
@@ -150,7 +150,7 @@ void XTimerSetIntervalWin32TimeSetEvent(XTimerBase* timer, size_t value)
 	timer->m_interval = value;
 	if(XTimerBase_isRunning(timer))
 	{
-		XTimerBase_startBase(timer);
+		XTimerBase_start_base(timer);
 	}
 }
 XTimerBase* XTimer_new_Win32TimeSetEvent()
@@ -172,7 +172,7 @@ XTimerBase* XTimer_new_Win32TimeSetEvent()
 }
 #endif
 
-void XTimerBase_freeBase(XTimerBase* timer)
+void XTimerBase_free_base(XTimerBase* timer)
 {
 	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
 		return;
@@ -185,7 +185,7 @@ void XTimerBase_freeBase(XTimerBase* timer)
 	}*/
 }
 
-void XTimerBase_startBase(XTimerBase* timer)
+void XTimerBase_start_base(XTimerBase* timer)
 {
 	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
 		return;
@@ -197,7 +197,7 @@ void XTimerBase_startBase(XTimerBase* timer)
 	}*/
 }
 
-void XTimerBase_stopBase(XTimerBase* timer)
+void XTimerBase_stop_base(XTimerBase* timer)
 {
 	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
 		return;
@@ -208,7 +208,7 @@ void XTimerBase_stopBase(XTimerBase* timer)
 	}*/
 }
 
-void XTimerBase_setIntervalBase(XTimerBase* timer, size_t value)
+void XTimerBase_setInterval_base(XTimerBase* timer, size_t value)
 {
 	if (ISNULL(timer, "")|| ISNULL(XClassGetVtable(timer), ""))
 		return;
@@ -247,19 +247,19 @@ bool XTimerBase_isRunning(XTimerBase* timer)
 		return timer->m_isRun;
 	return false;
 }
-size_t XTimerBase_interval(XTimerBase* timer)
+size_t XTimerBase_getInterval(XTimerBase* timer)
 {
 	if(timer)
 		return timer->m_interval;
 	return 0;
 }
-size_t XTimerBase_timerId(XTimerBase* timer)
+size_t XTimerBase_getTimerId(XTimerBase* timer)
 {
 	if(timer)
 		return timer->timerId;
 	return 0;
 }
-void* XTimerBase_userData(XTimerBase* timer)
+void* XTimerBase_getUserData(XTimerBase* timer)
 {
 	if(timer)
 		return timer->m_userData;

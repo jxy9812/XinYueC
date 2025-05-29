@@ -30,7 +30,7 @@ const enum  XTTTree_NodeNum XTTTree_NodeNum(const XTTTreeNode* this_root)
 #if XVector_ON
     if (ISNULL(this_root, ""))
         return 0;
-    return XVector_size(this_root->LpValueArray)+2;
+    return XVector_size_base(this_root->LpValueArray)+2;
 #else
     IS_ON_DEBUG(XVector_ON);
     return XTTTree_TwoNode;
@@ -44,7 +44,7 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
         return 0;
     XVector* LPNode = this_root->object.nodes;//储存节点指针的数组
     enum  XTTTree_NodeNum nodeNum = XTTTree_NodeNum(this_root);//当前是几节点
-    XVector_resize(LPNode, XVector_size(LPNode)+1);//储存指针的扩容+1
+    XVector_resize(LPNode, XVector_size_base(LPNode)+1);//储存指针的扩容+1
     if (nodeNum == XTTTree_TwoNode)//当前是二节点
     {
        /* XTTTreeNode* temp = *(XTTTreeNode**)XVector_back(this_root);
@@ -52,7 +52,7 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
         
         this_root->LpValueArray = XVector_new( TypeSize);//初始化值
     }
-    //XVector_resize(this_root->LpValueArray, XVector_size(LPNode) + 1);//储存数据的扩容+1
+    //XVector_resize(this_root->LpValueArray, XVector_size_base(LPNode) + 1);//储存数据的扩容+1
     XVector_push_back(this_root->LpValueArray, LPData);//插入数值扩容
     XVector_push_back(this_root->LpValueArray, this_root->object.values);//插入第一个数值
     XVector_sort(this_root->LpValueArray, less);//排序
@@ -80,7 +80,7 @@ void* XTTTree_data(const XTTTreeNode* this_root, size_t nSel)
     {
         return this_root->object.values;
     }
-    if (!XVector_isEmpty(this_root->LpValueArray)&& nSel<3)
+    if (!XVector_isEmpty_base(this_root->LpValueArray)&& nSel<3)
     {
         return XVector_at(this_root->LpValueArray, nSel - 1);
     }
@@ -97,7 +97,7 @@ void XTTTree_free(const XTTTreeNode* this_root)
     if (ISNULL(this_root, ""))
         return 0;
     if (this_root->LpValueArray != NULL)
-        XVector_free(this_root->LpValueArray);
+        XVector_free_base(this_root->LpValueArray);
     XBTree_freeNode(this_root, false);
 #else
     IS_ON_DEBUG(XVector_ON);

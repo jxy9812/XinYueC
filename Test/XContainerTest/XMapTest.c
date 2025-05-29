@@ -20,22 +20,22 @@ void XMapTest()
 	
 	for (size_t i=0;i<5;i++)
 	{
-		XMap_Insert(map,int, arrayint[i],char* ,arraychar[i]);
+		XMap_Insert_Base(map,int, arrayint[i],char* ,arraychar[i]);
 		//char* str = &arraychar[i];
-		//XMap_insert(map, &arrayint[i], &str);
+		//XMap_insert_base(map, &arrayint[i], &str);
 	}
-	printf("当前Map容器内数据数量:%d\n", XMap_size(map));
+	printf("当前Map容器内数据数量:%d\n", XMap_size_base(map));
 	XMap_iterator_for_each(map, XFor_each_pair, NULL);
 
-	//XMap_remove(map, arrayint+2);
-	XMap_Remove(map,int,arrayint[2]);
-	printf("当前Map容器内数据数量:%d\n", XMap_size(map));
+	//XMap_remove_base(map, arrayint+2);
+	XMap_Remove_Base(map,int,arrayint[2]);
+	printf("当前Map容器内数据数量:%d\n", XMap_size_base(map));
 	XMap_reverse_iterator_for_each(map, XFor_each_pair,NULL);
 	
-	XPair* pair =XMap_find(map, arrayint);
+	XPair* pair =XMap_find_base(map, arrayint);
 	printf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair,char*));
-	//XMap_clear(map);
-	XMap_free(map);
+	//XMap_clear_base(map);
+	XMap_free_base(map);
 #endif
 }
 #endif

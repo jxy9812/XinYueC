@@ -12,7 +12,7 @@ static DWORD WINAPI ThreadReceive(LPVOID lpParam)
 	for (size_t i = 0; i < 100000; i++)
 	{
 		int n = i;
-		while(!XCircularQueueAtomic_push(queue, &n));
+		while(!XCircularQueueAtomic_push_base(queue, &n));
 		//Sleep(100);
 	}
 
@@ -50,15 +50,15 @@ void XCircularQueueAtomicTest()
 	int value;
 	while (true)
 	{
-		if (XCircularQueueAtomic_receive(queue, &value))
+		if (XCircularQueueAtomic_receive_base(queue, &value))
 		{
 
-			printf("index:%d %d size:%d\n",index++,value ,XCircularQueueAtomic_size(queue));
-			//XCircularQueueAtomic_pop(queue);
+			printf("index:%d %d size:%d\n",index++,value ,XCircularQueueAtomic_getSize_base(queue));
+			//XCircularQueueAtomic_pop_base(queue);
 		}
 	}
 	
-	XCircularQueueAtomic_free(queue);
+	XCircularQueueAtomic_free_base(queue);
 	printf("循环队列 空\n");
 	
 #else

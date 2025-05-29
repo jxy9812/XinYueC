@@ -38,13 +38,13 @@ void XStack_init(XStack* this_stack, size_t typeSize);
 #define XStack_copy			XVector_copy
 //将this_stackTwo逆序拷贝到this_stackOne
 #define XStack_rcopy		XVector_rcopy
-#define XStack_free			XVector_free	
-#define XStack_clear		XVector_clear	
-#define XStack_isEmpty		XVector_isEmpty	
-#define XStack_size			XVector_size	
-#define XStack_capacity		XVector_capacity
-#define XStack_swap			XVector_swap	
-#define XStack_typeSize		XVector_typeSize
+#define XStack_free			XVector_free_base	
+#define XStack_clear		XVector_clear_base	
+#define XStack_isEmpty		XVector_isEmpty_base	
+#define XStack_size			XVector_size_base	
+#define XStack_capacity		XVector_capacity_base
+#define XStack_swap			XVector_swap_base	
+#define XStack_typeSize		XVector_getTypeSize_base
 
 #ifdef __cplusplus
 }

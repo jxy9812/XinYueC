@@ -107,7 +107,7 @@ bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
 bool XModbusTest_writeByte(XIODevice* io, XCircularQueue* queue)
 {
     char data;
-    while (XCircularQueue_receive(queue,&data))
+    while (XCircularQueue_receive_base(queue,&data))
     {
         DWORD bytesWritten;
         if (!WriteFile(hSerial, &data, 1, &bytesWritten, &ov))

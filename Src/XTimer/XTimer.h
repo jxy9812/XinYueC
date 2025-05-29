@@ -39,19 +39,19 @@ XTimerBase* XTimer_new_Win32ThreadpoolTimer();
 XTimerBase* XTimer_new_Win32TimeSetEvent();
 #endif
 
-void XTimerBase_freeBase(XTimerBase* timer);
-void XTimerBase_startBase(XTimerBase*timer);
-void XTimerBase_stopBase(XTimerBase* timer);
+void XTimerBase_free_base(XTimerBase* timer);
+void XTimerBase_start_base(XTimerBase*timer);
+void XTimerBase_stop_base(XTimerBase* timer);
 //设置定时时间
-void XTimerBase_setIntervalBase(XTimerBase* timer, size_t value);
+void XTimerBase_setInterval_base(XTimerBase* timer, size_t value);
 void XTimerBase_setUserData(XTimerBase* timer, void* userData);
 void XTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
 void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId);
 bool XTimerBase_isPeriodic(XTimerBase* timer);
 bool XTimerBase_isRunning(XTimerBase* timer);
-size_t XTimerBase_interval(XTimerBase* timer);
-size_t XTimerBase_timerId(XTimerBase* timer);
-void*  XTimerBase_userData(XTimerBase* timer);
+size_t XTimerBase_getInterval(XTimerBase* timer);
+size_t XTimerBase_getTimerId(XTimerBase* timer);
+void*  XTimerBase_getUserData(XTimerBase* timer);
 //超时回调函数
 void XTimer_out(XTimerBase* timer);
 

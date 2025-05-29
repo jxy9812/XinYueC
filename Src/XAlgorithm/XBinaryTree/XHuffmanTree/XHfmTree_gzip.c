@@ -4,14 +4,14 @@
 static void writeData(XVector* gzipData, XMap* dictionaries, const char* data, const size_t size)
 {
 #if XVector_ON
-	size_t currentSize = XVector_size(gzipData);//当前字节大小
+	size_t currentSize = XVector_size_base(gzipData);//当前字节大小
 	XVector* code = NULL;//哈夫曼编码数组
 	char byteWrite = 0;//写入的一字节
 	char charWriteIdx = 0;//字节内的比特位索引
 	for (size_t i = 0; i < size; i++)
 	{
 		char ch = data[i];//遍历每一个字节
-		code = XMap_Value(dictionaries, ch, DictionaryValue).code;
+		code = XMap_Value_Base(dictionaries, ch, DictionaryValue).code;
 		//遍历编码
 		for (XVector_iterator* it = XVector_begin(code); it != XVector_end(code); it = XVector_iterator_add(code, it))
 		{
@@ -51,7 +51,7 @@ XVector* XHfmTree_gzip(XHuffmanTree* tree, const char* data, const size_t size)
 	size_t sizeD=XHfmTree_writeCompressDictionaries(gzipData, tree->dictionaries);
 	//printf("Dictionaries:%d\n",sizeD);
 	writeData(gzipData, tree->dictionaries,data,size);
-	//printf("gzipData:%d\n", XVector_size(gzipData));
+	//printf("gzipData:%d\n", XVector_size_base(gzipData));
 	return gzipData;
 #else
 	IS_ON_DEBUG(XVector_ON);

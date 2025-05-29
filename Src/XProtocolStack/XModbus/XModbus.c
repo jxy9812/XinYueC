@@ -161,8 +161,8 @@ XModbusErrorCode XModbus_disable(XModbus* modbus)
 static XModbusErrorCode XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
 {
     XModbusErrorCode error = MB_ENOERR;
-   /* ((char*)(XVector_begin(modbus->recvBuffer)))[XVector_size(modbus->recvBuffer)] = 0;
-    printf("数据:%s  大小:%d buff接收缓冲区大小:%d\n",XVector_begin(modbus->recvBuffer), XVector_size(modbus->recvBuffer), XVector_capacity(modbus->recvBuffer));*/
+   /* ((char*)(XVector_begin(modbus->recvBuffer)))[XVector_size_base(modbus->recvBuffer)] = 0;
+    printf("数据:%s  大小:%d buff接收缓冲区大小:%d\n",XVector_begin(modbus->recvBuffer), XVector_size_base(modbus->recvBuffer), XVector_capacity_base(modbus->recvBuffer));*/
     
     // 调用对应模式的接收函数，获取帧数据（地址、缓冲区、长度）
     XModbusFrame* recvFrame = XModbusFrame_new();
@@ -309,7 +309,7 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
         }
     }
     //处理设备缓冲区
-    if (modbus->eSndState == STATE_TX_XMIT ||XCircularQueue_isEmpty(modbus->ioDevice->m_readBuffer))
+    if (modbus->eSndState == STATE_TX_XMIT ||XCircularQueue_isEmpty_base(modbus->ioDevice->m_readBuffer))
     {
        //printf("发送数据\n");
         modbus->pxMBFrameCBTransmitterEmpty(modbus);
@@ -371,7 +371,7 @@ static bool setSendFrame(XModbus* modbus, XModbusFrame* frame)
 {
     if (modbus == NULL || frame == NULL)
         return false;
-    if (frame->frameData == NULL || XVector_isEmpty(frame->frameData))
+    if (frame->frameData == NULL || XVector_isEmpty_base(frame->frameData))
     {
         XModbusFrame_free(frame);
         return false;
@@ -414,7 +414,7 @@ XModbusErrorCode XModbus_sendFrameRegularlyMaster(XModbus* modbus, XModbusFrame*
         regularly.frame = frame;
         regularly.time = time;
         regularly.timeOut = time + XTimer_getCurrentTime();
-        XList_push_back(modbus->regularlySendMaster, &regularly);
+        XList_push_back_base(modbus->regularlySendMaster, &regularly);
     }
     return MB_ENOERR;
 }

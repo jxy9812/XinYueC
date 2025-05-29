@@ -69,7 +69,7 @@ void XStackRCopyXVector(const XStack* stack, XVector* vector)
 	size_t Size = XStack_size(stack);
 	if (Size == 0)
 		return;
-	XVector_clear(vector);
+	XVector_clear_base(vector);
 	size_t TypeSize = XStack_typeSize(stack);
 	char* pTail = XStack_top(stack);//数组末尾元素
 	char* pHead = pTail- TypeSize*(Size-1);//数组头元素
@@ -94,7 +94,7 @@ void XStackCopyXVector(const XStack* stack, XVector* vector)
 	size_t Size = XStack_size(stack);
 	if (Size == 0)
 		return;
-	XVector_clear(vector);
+	XVector_clear_base(vector);
 	size_t TypeSize = XStack_typeSize(stack);
 	char* pTail = XStack_top(stack);//数组末尾元素
 	char* pHead = pTail - TypeSize * (Size - 1);//数组头元素

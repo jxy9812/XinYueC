@@ -21,7 +21,7 @@ static void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
 XVtable* XMapVtable = NULL;
 #if VTABLE_ISSTACK
 	static XVtable vtable;//虚函数类
-	static void* vtable_data[12];//虚函数数据
+	static void* vtable_data[XMAP_VTABLE_SIZE];//虚函数数据
 #endif
 void XMap_class_init()
 {
@@ -34,7 +34,7 @@ void XMap_class_init()
 	XMapVtable = XVtable_new();
 #else
 	XMapVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+	XVtable_init_stack(&vtable, vtable_data, XMAP_VTABLE_SIZE);
 #endif
 	//继承的函数
 	XVtable_append_vtable(XMapVtable, XContainerObjectVtable);
@@ -52,7 +52,7 @@ void VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
 {
 	if (ISNULL(this_map, "")|| ISNULL(key, "")||ISNULL(LpValue, ""))
 		return;
-	XPair* pair = XMap_find(this_map, key);
+	XPair* pair = XMap_find_base(this_map, key);
 	if (pair == NULL)//当前没有这个键值对
 	{
 		XPair* LPpair = XPair_new(this_map->m_keyTypeSize, this_map->m_parent.m_typeSize);
@@ -110,7 +110,7 @@ void* VXMap_value(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return NULL;
-	XPair* pair = XMap_find(this_map, key);
+	XPair* pair = XMap_find_base(this_map, key);
 	if (pair == NULL)//当前没有这个键值对
 	{
 		pair = XPair_new(this_map->m_keyTypeSize, this_map->m_parent.m_typeSize);
@@ -150,14 +150,14 @@ static void XMap_freeNodeData(void* LPVal, void* args)
 void VXMap_clear(XMap* this_map)
 {
 #if XVector_ON
-	if (XMap_isEmpty(this_map))
+	if (XMap_isEmpty_base(this_map))
 		return;
 	XMap_updataIterator(this_map);
 	XMap_iterator_for_each(this_map, XMap_freeNodeData, this_map);
 	XBTree_freeNodeAll(this_map->m_parent.m_data);
 	if(this_map->m_itArray)
 	{
-		XVector_free(this_map->m_itArray);
+		XVector_free_base(this_map->m_itArray);
 		this_map->m_itArray = NULL;
 	}
 	this_map->m_parent.m_capacity = 0;
@@ -171,7 +171,7 @@ void VXMap_clear(XMap* this_map)
 
 void VXMap_free(XMap* this_map)
 {
-	XMap_clear(this_map);
+	XMap_clear_base(this_map);
 	XMemory_free(this_map);
 }
 
@@ -180,7 +180,7 @@ void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
 #if XVector_ON
 	typedef void (*funcPtr)(XContainerObject*, XContainerObject*);
 	XVtableGetFunc(XVectorVtable, EXContainerObject_Swap, funcPtr)(this_mapOne, this_mapTwo);
-	//XContainerObject_swap(this_mapOne, this_mapTwo);
+	//XContainerObject_swap_base(this_mapOne, this_mapTwo);
 	XSwap(&this_mapOne->m_isModify, &this_mapTwo->m_isModify, sizeof(bool));
 	XSwap(&this_mapOne->m_itArray, &this_mapTwo->m_itArray, sizeof(XVector*));
 	XSwap(&this_mapOne->m_KeyEquality, &this_mapTwo->m_KeyEquality, sizeof(XEquality));

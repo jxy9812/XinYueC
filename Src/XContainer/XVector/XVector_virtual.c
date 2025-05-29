@@ -170,7 +170,7 @@ void VXVector_resize(XVector* this_vector, size_t size)
 }
 void VXVector_push_front(XVector* this_vector, void* LpValue)
 {
-	if (XContainerObject_isEmpty(this_vector))
+	if (XContainerObject_isEmpty_base(this_vector))
 		VXVector_push_back(this_vector, LpValue);
 	else
 		VXVector_insert(this_vector, 0, LpValue);
@@ -210,7 +210,7 @@ void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t
 		memcpy(VXVector_at(this_vector, sizen), temp, size);
 		XMemory_free(temp);
 	}
-	/*else if (XContainerObject_isEmpty(this_vector))
+	/*else if (XContainerObject_isEmpty_base(this_vector))
 	{
 		for (size_t i = 0; i < n; i++)
 		{
@@ -240,7 +240,7 @@ void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 		memcpy(VXVector_at(this_vector, sizen), temp, size);
 		XMemory_free(temp);
 	}
-	/*else if(XContainerObject_isEmpty(this_vector))
+	/*else if(XContainerObject_isEmpty_base(this_vector))
 	{
 		for (size_t i = 0; i < n; i++)
 		{
@@ -279,7 +279,7 @@ void VXVector_pop_front(XVector* this_vector)//删除向量中第一个元素
 }
 void VXVector_pop_back(XVector* this_vector)//删除向量中最后一个元素
 {
-	if (XContainerObject_isEmpty(this_vector))
+	if (XContainerObject_isEmpty_base(this_vector))
 		return ;
 	if (XContainerDataFreeMethod(this_vector) != NULL)
 		XContainerDataFreeMethod(this_vector)(XVector_back(this_vector));
@@ -287,7 +287,7 @@ void VXVector_pop_back(XVector* this_vector)//删除向量中最后一个元素
 }
 void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 {
-	if (XContainerObject_isEmpty(this_vector))
+	if (XContainerObject_isEmpty_base(this_vector))
 		return ;
 	void* front = VXVector_front(this_vector),* back= VXVector_back(this_vector);
 	size_t typeSize = XContainerTypeSize(this_vector);
@@ -305,7 +305,7 @@ void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 }
 void VXVector_remove(XVector* this_vector, int64_t index, int64_t n)//删除数据 n<0 后面全部删除
 {
-	if (XContainerObject_isEmpty(this_vector))
+	if (XContainerObject_isEmpty_base(this_vector))
 		return;
 	size_t size = XContainerSize(this_vector);
 
@@ -334,7 +334,7 @@ void VXVector_remove(XVector* this_vector, int64_t index, int64_t n)//删除数�
 }
 void VXVector_clear(XVector* this_vector)//清空vector的数组
 {
-	if (XContainerObject_isEmpty(this_vector))
+	if (XContainerObject_isEmpty_base(this_vector))
 		return;
 	//释放数据
 	if (XContainerDataFreeMethod(this_vector) != NULL)
@@ -412,13 +412,13 @@ void* VXVector_front(const XVector* this_vector)//返回向量头指针，指向
 {
 	/*if (ISNULL(this_vector, ""))
 		return NULL;*/
-	if (XContainerObject_isEmpty(this_vector))
+	if (XContainerObject_isEmpty_base(this_vector))
 		return NULL;
 	return XContainerDataPtr(this_vector);
 }
 void* VXVector_back(const XVector* this_vector)//返回向量尾指针，指向向量最后一个元素
 {
-	if (XContainerObject_isEmpty(this_vector))
+	if (XContainerObject_isEmpty_base(this_vector))
 		return NULL;
 	if (XContainerSize(this_vector) == 1)
 		return VXVector_front(this_vector);

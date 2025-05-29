@@ -27,7 +27,7 @@ void XModbusRegisterHandler_free(XModbusRegisterHandler* pRegHandler)
 	if (pRegHandler)
 	{
 		if (pRegHandler->parent.data)
-			XVector_free(pRegHandler->parent.data);
+			XVector_free_base(pRegHandler->parent.data);
 		XMemory_free(pRegHandler);
 	}
 }
@@ -37,7 +37,7 @@ bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint
 	if (regFunc == NULL || regFunc->parent.data == NULL)
 		return false;
 	XVector* data= regFunc->parent.data;
-	if(XVector_size(data)>regAddress)
+	if(XVector_size_base(data)>regAddress)
 	{
 		XVector_At(data, regAddress, uint16_t) = value;
 		//printf("写入的值是:%d\n",value);
@@ -51,8 +51,8 @@ bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regA
 	if (regFunc == NULL || regFunc->parent.data == NULL|| writeArray==NULL||regCount==0)
 		return false;
 	XVector* data = regFunc->parent.data;
-	uint32_t dataSize = XVector_size(data);
-	//uint16_t typeSize = XVector_typeSize(data);
+	uint32_t dataSize = XVector_size_base(data);
+	//uint16_t typeSize = XVector_getTypeSize_base(data);
 	if (dataSize > regAddress && (dataSize * REGISTERSIZE) >= (regAddress * REGISTERSIZE + regCount* REGISTERSIZE))
 	{//开始写入
 		char* p= XVector_at(data, regAddress);
@@ -74,7 +74,7 @@ bool XModbusRegisterHandler_read(XModbusRegisterHandler* regFunc, uint16_t regAd
 		return false;
 	
 	XVector* data = regFunc->parent.data;
-	uint32_t dataSize = XVector_size(data);
+	uint32_t dataSize = XVector_size_base(data);
 	//检查寄存器地址和数量是否合法
 	if (dataSize < (regAddress+ regCount))
 		return false;
@@ -189,7 +189,7 @@ XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbus* 
 	{
 		if (XModbusRegisterHandler_write_uint16_t(regFunc, rtu->regAddress, XVector_At(rtu->data, 0, uint16_t)))
 		{//写入成功 将数据帧再次发送回去
-			XVector_swap(recvFrame->frameData, sendFrame->frameData);
+			XVector_swap_base(recvFrame->frameData, sendFrame->frameData);
 		}
 		else
 		{

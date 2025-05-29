@@ -82,36 +82,36 @@ static bool XCircularQueue_createFunc(XCustomQueue* queue, size_t typeSize, size
 }
 static void XCircularQueue_freeFunc(XCustomQueue* queue)
 { 
-	XCircularQueue_free(queue->m_queue);
+	XCircularQueue_free_base(queue->m_queue);
 }
 static bool XCircularQueue_pushFunc(XCustomQueue* queue, void* pvData)
 {
-	return XCircularQueue_push(queue->m_queue,pvData);
+	return XCircularQueue_push_base(queue->m_queue,pvData);
 }
 static void* XCircularQueue_topFunc(XCustomQueue* queue)
 {
-	return XCircularQueue_top(queue->m_queue);
+	return XCircularQueue_top_base(queue->m_queue);
 }
 static void XCircularQueue_popFunc(XCustomQueue* queue)
 {
-	XCircularQueue_pop(queue->m_queue);
+	XCircularQueue_pop_base(queue->m_queue);
 }
 static bool XCircularQueue_receiveFunc(XCustomQueue* queue, void* pvBuffer, uint32_t wait)
 {
-	return XCircularQueue_receive(queue->m_queue,pvBuffer);
+	return XCircularQueue_receive_base(queue->m_queue,pvBuffer);
 	//XCircularQueue* circularQueue = (XCircularQueue*)queue->m_queue;
 }
 static bool XCircularQueue_isEmptyFunc(XCustomQueue* queue)
 {
-	return XCircularQueue_isEmpty(queue->m_queue);
+	return XCircularQueue_isEmpty_base(queue->m_queue);
 }
 static size_t XCircularQueue_sizeFunc(XCustomQueue* queue)
 {
-	return XCircularQueue_size(queue->m_queue);
+	return XCircularQueue_getSize_base(queue->m_queue);
 }
 static void XCircularQueue_clearFunc(XCustomQueue* queue)
 {
-	XCircularQueue_clear(queue->m_queue);
+	XCircularQueue_clear_base(queue->m_queue);
 }
 XCustomQueue* XCustomQueue_new_XCircularQueue(size_t typeSize, size_t count)
 {

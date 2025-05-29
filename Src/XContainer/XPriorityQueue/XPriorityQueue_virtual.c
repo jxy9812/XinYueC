@@ -96,11 +96,11 @@ void VXPriorityQueue_push(XPriorityQueue* this_queue, void* LpValue)
 
 void VXPriorityQueue_pop(XPriorityQueue* this_queue)
 {
-	if (ISNULL(this_queue, "")|| XContainerObject_isEmpty(this_queue))
+	if (ISNULL(this_queue, "")|| XContainerObject_isEmpty_base(this_queue))
 		return ;
 	char* LParr = XContainerDataPtr(this_queue);//指向数组的开始
-	size_t arrSize = XContainerObject_size(this_queue);//数组元素数量
-	size_t TypeSize = XContainerObject_typeSize(this_queue);//单个元素大小字节
+	size_t arrSize = XContainerObject_getSize_base(this_queue);//数组元素数量
+	size_t TypeSize = XContainerObject_getTypeSize_base(this_queue);//单个元素大小字节
 	//拷贝最后一个元素到第一个
 	if (arrSize > 1)
 	{

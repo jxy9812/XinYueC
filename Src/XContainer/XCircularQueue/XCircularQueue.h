@@ -35,20 +35,20 @@ XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count);
 //设置自动扩容
 void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue,bool autoExpansion);
 //插入到队列的队尾
-#define XCircularQueue_Push(this_queue,type,value){type t=value;XCircularQueue_push(this_vector,&t);}
-bool XCircularQueue_push(XCircularQueue* this_queue, void* pvData);
+#define XCircularQueue_Push_Base(this_queue,type,value){type t=value;XCircularQueue_push_base(this_vector,&t);}
+bool XCircularQueue_push_base(XCircularQueue* this_queue, void* pvData);
 //出队
-void XCircularQueue_pop(XCircularQueue* this_queue);
+void XCircularQueue_pop_base(XCircularQueue* this_queue);
 //接收数据并且出队
-bool XCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer);
+bool XCircularQueue_receive_base(XCircularQueue* this_queue, void* pvBuffer);
 // 返回队头元素
-#define XCircularQueue_Top(this_queue,Type) (*(Type*)XCircularQueue_top(this_queue))
-void* XCircularQueue_top(XCircularQueue* this_queue);
-bool XCircularQueue_isFull(XCircularQueue* this_queue);
-#define XCircularQueue_free		XContainerObject_free
-#define XCircularQueue_isEmpty	XContainerObject_isEmpty
-#define XCircularQueue_size		XContainerObject_size
-#define XCircularQueue_clear	XContainerObject_clear
+#define XCircularQueue_Top_Base(this_queue,Type) (*(Type*)XCircularQueue_top_base(this_queue))
+void* XCircularQueue_top_base(XCircularQueue* this_queue);
+bool XCircularQueue_isFull_base(XCircularQueue* this_queue);
+#define XCircularQueue_free_base		XContainerObject_free_base
+#define XCircularQueue_isEmpty_base	XContainerObject_isEmpty_base
+#define XCircularQueue_getSize_base		XContainerObject_getSize_base
+#define XCircularQueue_clear_base	XContainerObject_clear_base
 #ifdef __cplusplus
 }
 #endif

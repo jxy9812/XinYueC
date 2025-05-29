@@ -56,7 +56,7 @@ static size_t insertChild(const XVector* maze, XBTreeNode* nodes, XVector* NextN
 		XStack_pop(ChildAll);
 	}
 	XStack_free(ChildAll);
-	return XVector_size(nodes->nodes)>1? XVector_size(nodes->nodes) -1:0;
+	return XVector_size_base(nodes->nodes)>1? XVector_size_base(nodes->nodes) -1:0;
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif
@@ -73,7 +73,7 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 
 	XBTreeNode* CurrentNode = NULL;//当前遍历的节点
 	bool isFindEnd = false;//找到终点标记
-	while (!isFindEnd&&!XVector_isEmpty(CurrentNodeArray))
+	while (!isFindEnd&&!XVector_isEmpty_base(CurrentNodeArray))
 	{
 		for (XVector_iterator* it=XVector_begin(CurrentNodeArray);it!= XVector_end(CurrentNodeArray); it= XVector_iterator_add(CurrentNodeArray,it))
 		{
@@ -85,12 +85,12 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 			}
 			size_t n=insertChild(tempMaze, CurrentNode, NextNodeArray);
 		}
-		XVector_clear(CurrentNodeArray);
-		XVector_swap(CurrentNodeArray, NextNodeArray);
+		XVector_clear_base(CurrentNodeArray);
+		XVector_swap_base(CurrentNodeArray, NextNodeArray);
 	}
 	XVector* Path = GetXMazePath(CurrentNode);
-	XVector_free(CurrentNodeArray);
-	XVector_free(NextNodeArray);
+	XVector_free_base(CurrentNodeArray);
+	XVector_free_base(NextNodeArray);
 	XVectorTwo_free(tempMaze);
 	XBTree_freeNodeAll(root);
 	return Path;

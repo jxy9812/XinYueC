@@ -52,7 +52,7 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 
 
 
-void XMap_insert(XMap* this_map, const void* key, const void* LpValue)
+void XMap_insert_base(XMap* this_map, const void* key, const void* LpValue)
 {
 	if (ISNULL(this_map, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return;
@@ -61,7 +61,7 @@ void XMap_insert(XMap* this_map, const void* key, const void* LpValue)
 
 }
 
-void XMap_erase(XMap* this_map, const XPair** LPpair)
+void XMap_erase_base(XMap* this_map, const XPair** LPpair)
 {
 	if (ISNULL(this_map, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return;
@@ -69,14 +69,14 @@ void XMap_erase(XMap* this_map, const XPair** LPpair)
 	XClassGetVirtualFunc(this_map, EXMap_Erase, funcPtr)(this_map, LPpair);
 }
 
-void XMap_remove(XMap* this_map, const void* key)
+void XMap_remove_base(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return;
 	typedef void (*funcPtr)(XMap*, const void*);
 	XClassGetVirtualFunc(this_map, EXMap_Remove, funcPtr)(this_map, key);
 }
-void* XMap_value(XMap* this_map, const void* key)
+void* XMap_value_base(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return NULL;
@@ -84,7 +84,7 @@ void* XMap_value(XMap* this_map, const void* key)
 	return XClassGetVirtualFunc(this_map, EXMap_Value, funcPtr)(this_map, key);
 }
 //查找数据XPair
-XPair* XMap_find(XMap* this_map, const void* key)
+XPair* XMap_find_base(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return NULL;
@@ -92,46 +92,19 @@ XPair* XMap_find(XMap* this_map, const void* key)
 	return XClassGetVirtualFunc(this_map, EXMap_Find, funcPtr)(this_map, key);
 }
 
-void XMap_clear(XMap* this_map)
-{
-	XContainerObject_clear(this_map);
-}
-
-void XMap_free(XMap* this_map)
-{
-	XContainerObject_free(this_map);
-}
-
-bool XMap_isEmpty(const XMap* this_map)
-{
-	return XContainerObject_isEmpty(this_map);
-}
-
-size_t XMap_size(const XMap* this_map)
-{
-	return XContainerObject_size(this_map);
-}
-
-void XMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
-{
-	if (ISNULL(this_mapOne, "") || ISNULL(XClassGetVtable(this_mapOne), "")|| ISNULL(this_mapTwo, ""))
-		return ;
-	typedef XPair* (*funcPtr)(XMap*, XMap*);
-	XClassGetVirtualFunc(this_mapOne, EXContainerObject_Swap, funcPtr)(this_mapOne, this_mapTwo);
-}
 
 void XMap_DefaultDerivedClassDataKeyFreeMethod(void* args)
 {
 	XPair* pair = (XPair*)args;
 	XContainerObject* object = *((XContainerObject**)XPair_second(pair));
-	XContainerObject_free(object);
+	XContainerObject_free_base(object);
 }
 
 void XMap_DefaultDerivedClassDataValueFreeMethod(void* args)
 {
 	XPair* pair = (XPair*)args;
 	XContainerObject* object = *((XContainerObject**)XPair_first(pair));
-	XContainerObject_free(object);
+	XContainerObject_free_base(object);
 }
 
 void XMap_DefaultDerivedClassDataKeyValueFreeMethod(void* args)
@@ -155,7 +128,7 @@ void XMap_updataIterator(XMap* this_map)
 #if XVector_ON
 	if (ISNULL(this_map, "map不能为NULL"))
 		return;
-	if (XMap_isEmpty(this_map))//map当前是空的
+	if (XMap_isEmpty_base(this_map))//map当前是空的
 		return;
 	if (!this_map->m_isModify)
 		return;
@@ -163,7 +136,7 @@ void XMap_updataIterator(XMap* this_map)
 	if (this_map->m_itArray != NULL)
 	{
 		//释放原先的数组
-		XVector_free(this_map->m_itArray);
+		XVector_free_base(this_map->m_itArray);
 		this_map->m_itArray = NULL;
 	}
 	//已中序遍历获取所有树的节点,临时
@@ -171,7 +144,7 @@ void XMap_updataIterator(XMap* this_map)
 	this_map->m_itArray = XVector_new(sizeof(XPair*));
 	//将数据XPair的节点指针插入数组
 	XVector_iterator_for_each(TreeNode, ForTreeNode, this_map->m_itArray);
-	XVector_free(TreeNode);
+	XVector_free_base(TreeNode);
 
 	this_map->m_isModify = false;
 #else

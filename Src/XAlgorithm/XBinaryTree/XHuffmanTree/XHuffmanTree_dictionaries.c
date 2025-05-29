@@ -10,7 +10,7 @@ void XHfmTree_setDictionaries(XMap* dictionaries, const char* data, const size_t
 	}
 	for (size_t i = 0; i < size; i++)
 	{
-		DictionaryValue* dv = XMap_value(dictionaries, data + i);
+		DictionaryValue* dv = XMap_value_base(dictionaries, data + i);
 		//创建哈夫曼编码数组
 		if (dv->count == 0)
 		{
@@ -26,9 +26,9 @@ void XHfmTree_setDictionaries(XMap* dictionaries, const char* data, const size_t
 //写入字典数据到压缩的数组中
 static void writeDictionaryData(XPair** LPpair, XVector* gzipData)
 {
-	size_t currentSize= XVector_size(gzipData);//当前字节大小
+	size_t currentSize= XVector_size_base(gzipData);//当前字节大小
 	XVector* code = XPair_Second(*LPpair, DictionaryValue).code;//编码数组
-	size_t codeSize = XVector_size(code);//编码大小(字节)
+	size_t codeSize = XVector_size_base(code);//编码大小(字节)
 	DictionaryData data = {XPair_First(*LPpair,char),XPair_Second(*LPpair,size_t),codeSize };
 	XVector_resize(gzipData,currentSize + sizeof(DictionaryData) + codeSize);//扩容到可以写入一组数据
 	char* LPcurrent = (char*)XVector_begin(gzipData)+ currentSize;//当前可以写入的指针
@@ -40,12 +40,12 @@ static void writeDictionaryData(XPair** LPpair, XVector* gzipData)
 int XHfmTree_writeCompressDictionaries(XVector* gzipData, XMap* dictionaries)
 {
 #if XVector_ON
-	size_t count = XMap_size(dictionaries);
+	size_t count = XMap_size_base(dictionaries);
 	XVector_resize(gzipData, sizeof(size_t));
 	//写入数量
 	memcpy(XVector_begin(gzipData), &count,sizeof(size_t));//写入数据个数
 	XMap_iterator_for_each(dictionaries, writeDictionaryData, gzipData);
-	return XVector_size(gzipData);
+	return XVector_size_base(gzipData);
 #else
 	IS_ON_DEBUG(XVector_ON);
 	return 0;

@@ -13,7 +13,7 @@ void XContainerObject_init(XContainerObject* Object, size_t typeSize)
 	Object->m_typeSize = typeSize;
 }
 
-void XContainerObject_free(XContainerObject* Object)
+void XContainerObject_free_base(XContainerObject* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(Object->m_parent.m_vtable, ""))
 		return ;
@@ -21,7 +21,7 @@ void XContainerObject_free(XContainerObject* Object)
 	XClassGetVirtualFunc(Object, EXContainerObject_Free, funcPtr)(Object);
 }
 
-bool XContainerObject_isEmpty(const XContainerObject* Object)
+bool XContainerObject_isEmpty_base(const XContainerObject* Object)
 {
 	if (ISNULL(Object, "")|| ISNULL(Object->m_parent.m_vtable, ""))
 		return true;
@@ -30,7 +30,7 @@ bool XContainerObject_isEmpty(const XContainerObject* Object)
 	return XClassGetVirtualFunc(Object, EXContainerObject_IsEmpty,funcPtr)(Object);
 }
 
-size_t XContainerObject_size(const  XContainerObject* Object)
+size_t XContainerObject_getSize_base(const  XContainerObject* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(Object->m_parent.m_vtable, ""))
 		return 0;
@@ -38,14 +38,14 @@ size_t XContainerObject_size(const  XContainerObject* Object)
 	return XClassGetVirtualFunc(Object, EXContainerObject_Size, funcPtr)(Object);
 }
 
-size_t XContainerObject_capacity(const  XContainerObject* Object)
+size_t XContainerObject_getCapacity_base(const  XContainerObject* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(Object->m_parent.m_vtable, ""))
 		return 0;
 	typedef size_t(*funcPtr)(const XContainerObject*);
 	return XClassGetVirtualFunc(Object, EXContainerObject_Capacity, funcPtr)(Object);
 }
-size_t XContainerObject_typeSize(const XContainerObject* Object)
+size_t XContainerObject_getTypeSize_base(const XContainerObject* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(Object->m_parent.m_vtable, ""))
 		return 0;
@@ -53,7 +53,7 @@ size_t XContainerObject_typeSize(const XContainerObject* Object)
 	return XClassGetVirtualFunc(Object, EXContainerObject_TypeSize, funcPtr)(Object);
 }
 
-void XContainerObject_swap(XContainerObject* ObjectOne,  XContainerObject* ObjectTwo)
+void XContainerObject_swap_base(XContainerObject* ObjectOne,  XContainerObject* ObjectTwo)
 {
 	if (ISNULL(ObjectOne, "") || ISNULL(ObjectTwo, ""))
 		return;
@@ -61,7 +61,7 @@ void XContainerObject_swap(XContainerObject* ObjectOne,  XContainerObject* Objec
 	XClassGetVirtualFunc(ObjectOne, EXContainerObject_Swap, funcPtr)(ObjectOne, ObjectTwo);
 }
 
-void XContainerObject_clear(XContainerObject* Object)
+void XContainerObject_clear_base(XContainerObject* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(Object->m_parent.m_vtable, ""))
 		return ;

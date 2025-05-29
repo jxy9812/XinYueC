@@ -8,7 +8,7 @@ XStringVector* XStringVector_new()
 }
 void XStringVector_free(XStringVector* this_stringVector)
 {
-	XVector_free(this_stringVector);
+	XVector_free_base(this_stringVector);
 }
 void XStringVector_push_front(XStringVector* this_stringVector, XString* string)
 {

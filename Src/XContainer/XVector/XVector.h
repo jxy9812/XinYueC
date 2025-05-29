@@ -89,19 +89,19 @@ void* XVector_find(const XVector* this_vector, const void* findVal);
 //排序
 void  XVector_sort(XVector* this_vector, XCompare compare);
 //释放内存
-#define XVector_free   XContainerObject_free
+#define XVector_free_base   XContainerObject_free_base
 //清空vector的队列，不是释放内存
-#define XVector_clear  XContainerObject_clear
+#define XVector_clear_base  XContainerObject_clear_base
 //检测vector内是否为空，空为真 O(1)
-#define XVector_isEmpty			XContainerObject_isEmpty
+#define XVector_isEmpty_base			XContainerObject_isEmpty_base
 //返回vector内元素的个数 O(1)
-#define XVector_size			XContainerObject_size
+#define XVector_size_base			XContainerObject_getSize_base
 //返回当前向量所能容纳的最大元素个数
-#define XVector_capacity		XContainerObject_capacity
+#define XVector_capacity_base		XContainerObject_getCapacity_base
 //交换两个同类型向量的数据
-#define XVector_swap			XContainerObject_swap
+#define XVector_swap_base			XContainerObject_swap_base
 //返回元素类型字节大小
-#define XVector_typeSize		XContainerObject_typeSize
+#define XVector_getTypeSize_base		XContainerObject_getTypeSize_base
 #ifdef __cplusplus
 }
 #endif

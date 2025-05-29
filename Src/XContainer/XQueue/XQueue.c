@@ -27,7 +27,7 @@ void XQueue_free(XQueue* this_queue)
 
 void XQueue_clear(XQueue* this_queue)
 {
-	XList_clear(this_queue);
+	XList_clear_base(this_queue);
 }
 
 void XQueue_push(XQueue* this_queue, void* LpValue)
@@ -48,12 +48,12 @@ void XQueue_pop(XQueue* this_queue)
 
 void* XQueue_front(XQueue* this_queue)
 {
-	return XList_front(this_queue);
+	return XList_front_base(this_queue);
 }
 
 void* XQueue_back(XQueue* this_queue)
 {
-	return XList_back(this_queue);
+	return XList_back_base(this_queue);
 }
 
 void* XQueue_top(XQueue* this_queue)
@@ -66,12 +66,12 @@ void* XQueue_top(XQueue* this_queue)
 
 bool XQueue_isEmpty(XQueue* this_queue)
 {
-	return XList_isEmpty(this_queue);
+	return XList_isEmpty_base(this_queue);
 }
 
 size_t XQueue_size(XQueue* this_queue)
 {
-	return XList_size(this_queue);
+	return XList_getSize(this_queue);
 }
 
 

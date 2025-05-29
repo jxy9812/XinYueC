@@ -12,7 +12,7 @@ static void* vtable_data[XCIRCULARQUEUE_VTABLE_SIZE];//虚函数数据
 static bool VXCircularQueue_isEmpty(const XCircularQueue* this_queue);
 static bool VXCircularQueue_isFull(const XCircularQueue* this_queue);
 static void VXCircularQueue_clear(XCircularQueue* this_queue);//清空
-static size_t VXCircularQueue_size(const XCircularQueue* this_queue);
+static size_t VXCircularQueue_getSize(const XCircularQueue* this_queue);
 //插入到队列的队尾
 static bool VXCircularQueue_push(XCircularQueue* this_queue, void* LpValue);
 //出队
@@ -38,7 +38,7 @@ void XCircularQueue_class_init()
 	//重写的函数
 	XVtable_At(XCircularQueueVtable, EXContainerObject_IsEmpty) = VXCircularQueue_isEmpty;
 	XVtable_At(XCircularQueueVtable, EXContainerObject_Clear) = VXCircularQueue_clear;
-	XVtable_At(XCircularQueueVtable, EXContainerObject_Size) = VXCircularQueue_size;
+	XVtable_At(XCircularQueueVtable, EXContainerObject_Size) = VXCircularQueue_getSize;
 #if SHOWCONTAINERSIZE
 	printf("XCircularQueue size:%d\n", XVtable_size(XCircularQueueVtable));
 #endif // SHOWCONTAINERSIZE
@@ -71,7 +71,7 @@ void VXCircularQueue_clear(XCircularQueue* this_queue)
 	}*/
 }
 
-size_t VXCircularQueue_size(const XCircularQueue* this_queue)
+size_t VXCircularQueue_getSize(const XCircularQueue* this_queue)
 {
 	/*if (this_queue == NULL)
 		return 0;*/

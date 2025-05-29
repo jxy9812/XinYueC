@@ -2873,28 +2873,28 @@ CJSON_PUBLIC(cJSON*) cJSON_CreateIntArray_XVector_int(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return cJSON_CreateIntArray(XContainerDataPtr(vector), XVector_size(vector));
+    return cJSON_CreateIntArray(XContainerDataPtr(vector), XVector_size_base(vector));
 }
 
 CJSON_PUBLIC(cJSON*) cJSON_CreateFloatArray_XVector_float(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return  cJSON_CreateFloatArray(XContainerDataPtr(vector), XVector_size(vector));
+    return  cJSON_CreateFloatArray(XContainerDataPtr(vector), XVector_size_base(vector));
 }
 
 CJSON_PUBLIC(cJSON*) cJSON_CreateDoubleArray_XVector_double(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return cJSON_CreateDoubleArray(XContainerDataPtr(vector), XVector_size(vector));
+    return cJSON_CreateDoubleArray(XContainerDataPtr(vector), XVector_size_base(vector));
 }
 
 CJSON_PUBLIC(cJSON*) cJSON_CreateStringArray_XVector_char(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return cJSON_CreateStringArray(XContainerDataPtr(vector), XVector_size(vector));
+    return cJSON_CreateStringArray(XContainerDataPtr(vector), XVector_size_base(vector));
 }
 
 #endif

@@ -45,9 +45,9 @@ void VXIODevice_free(XIODevice* io)
 {
 	VXIODevice_close(io);
 	if (io->m_writeBuffer)
-		XCircularQueue_free(io->m_writeBuffer);
+		XCircularQueue_free_base(io->m_writeBuffer);
 	if (io->m_readBuffer)
-		XCircularQueue_free(io->m_readBuffer);
+		XCircularQueue_free_base(io->m_readBuffer);
 	XMemory_free(io);
 }
 
@@ -84,17 +84,17 @@ size_t VXIODevice_write(XIODevice* io, const char* data, size_t maxSize)
 	{
 		do
 		{
-			while (XCircularQueue_push(io->m_writeBuffer, data + count))
+			while (XCircularQueue_push_base(io->m_writeBuffer, data + count))
 			{
 				++count;
 				if (count >= maxSize)
 					break;
 			}
-			if (XCircularQueue_isFull(io->m_writeBuffer))
+			if (XCircularQueue_isFull_base(io->m_writeBuffer))
 				io->m_port.writeBufferFull_funcPointer(io,io->m_writeBuffer);
 			if (count >= maxSize)
 				break;
-		} while (!XCircularQueue_isFull(io->m_writeBuffer));
+		} while (!XCircularQueue_isFull_base(io->m_writeBuffer));
 	}
 	return count;
 }
@@ -104,11 +104,11 @@ size_t VXIODevice_writeFull(XIODevice* io)
 	size_t count = 0;
 	if (io->m_writeBuffer != NULL)
 	{
-		if (!XCircularQueue_isEmpty(io->m_writeBuffer))
+		if (!XCircularQueue_isEmpty_base(io->m_writeBuffer))
 		{
-			count = XCircularQueue_size(io->m_writeBuffer);
+			count = XCircularQueue_getSize_base(io->m_writeBuffer);
 			io->m_port.writeBufferFull_funcPointer(io,io->m_writeBuffer);
-			count -= XCircularQueue_size(io->m_writeBuffer);
+			count -= XCircularQueue_getSize_base(io->m_writeBuffer);
 		}
 	}
 	return count;
@@ -129,18 +129,18 @@ size_t VXIODevice_read(XIODevice* io, char* data, size_t maxSize)
 	{
 		do
 		{
-			while (XCircularQueue_receive(io->m_readBuffer, data + count))
+			while (XCircularQueue_receive_base(io->m_readBuffer, data + count))
 			{
 				++count;
 				if (count >= maxSize)
 					break;
 			}
-			if (XCircularQueue_isEmpty(io->m_readBuffer))
+			if (XCircularQueue_isEmpty_base(io->m_readBuffer))
 				io->m_port.readBufferEmpty_funcPointer(io,io->m_readBuffer);
 			if (count >= maxSize)
 				break;
 
-		} while (!XCircularQueue_isEmpty(io->m_readBuffer));
+		} while (!XCircularQueue_isEmpty_base(io->m_readBuffer));
 
 	}
 	return count;
@@ -153,7 +153,7 @@ size_t VXIODevice_receive(XIODevice* io, const char* data, size_t size)
 	{
 		for (size_t i = 0; i < size; i++)
 		{
-			if (XCircularQueue_push(io->m_readBuffer, data + i))
+			if (XCircularQueue_push_base(io->m_readBuffer, data + i))
 				++count;
 		}
 	}
@@ -188,7 +188,7 @@ void VXIODevice_setWriteBuffer(XIODevice* io, size_t count)
 	}
 	else if (io->m_writeBuffer != NULL)
 	{
-		XCircularQueueAtomic_free(io->m_writeBuffer);
+		XCircularQueueAtomic_free_base(io->m_writeBuffer);
 		io->m_writeBuffer = NULL;
 	}
 }
@@ -203,7 +203,7 @@ void VXIODevice_setReadBuffer(XIODevice* io, size_t count)
 	}
 	else if (io->m_readBuffer != NULL)
 	{
-		XCircularQueueAtomic_free(io->m_readBuffer);
+		XCircularQueueAtomic_free_base(io->m_readBuffer);
 		io->m_readBuffer = NULL;
 	}
 }

@@ -109,7 +109,7 @@ void XVector_remove(XVector* this_vector, int64_t index, int64_t n)
 	XClassGetVirtualFunc(this_vector, EXVector_Remove, funcPtr)(this_vector, index,n);
 }
 
-//void XVector_clear(XVector* this_vector)
+//void XVector_clear_base(XVector* this_vector)
 //{
 //	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 //		return ;
@@ -173,33 +173,33 @@ void XVector_sort(XVector* this_vector, XCompare compare)
 	XClassGetVirtualFunc(this_vector, EXVector_Sort, funcPtr)(this_vector, compare);
 }
 
-//void XVector_free(XVector* this_vector)
+//void XVector_free_base(XVector* this_vector)
 //{
-//	return XContainerObject_free(this_vector);
+//	return XContainerObject_free_base(this_vector);
 //}
 //
-//bool XVector_isEmpty(const XVector* this_vector)
+//bool XVector_isEmpty_base(const XVector* this_vector)
 //{
-//	return XContainerObject_isEmpty(this_vector);
+//	return XContainerObject_isEmpty_base(this_vector);
 //}
 //
-//size_t XVector_size(const XVector* this_vector)
+//size_t XVector_size_base(const XVector* this_vector)
 //{
-//	return XContainerObject_size(this_vector);
+//	return XContainerObject_getSize_base(this_vector);
 //}
 //
-//size_t XVector_capacity(const XVector* this_vector)
+//size_t XVector_capacity_base(const XVector* this_vector)
 //{
-//	return XContainerObject_capacity(this_vector);
+//	return XContainerObject_getCapacity_base(this_vector);
 //}
 //
-//void XVector_swap(XVector* this_vectorOne, XVector* this_vectorTwo)
+//void XVector_swap_base(XVector* this_vectorOne, XVector* this_vectorTwo)
 //{
-//	XContainerObject_swap(this_vectorOne,this_vectorTwo);
+//	XContainerObject_swap_base(this_vectorOne,this_vectorTwo);
 //}
 //
-//size_t XVector_typeSize(XVector* this_vector)
+//size_t XVector_getTypeSize_base(XVector* this_vector)
 //{
-//	return XContainerObject_typeSize(this_vector);
+//	return XContainerObject_getTypeSize_base(this_vector);
 //}
 #endif

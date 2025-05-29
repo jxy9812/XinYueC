@@ -28,7 +28,7 @@ void XHuffmanTreeTest()
 	//XVector_iterator_for_each(gzipData, UnZipFor, NULL); printf("\n");
 	//遍历压缩数据后产生的字典
 	XMap_iterator_for_each(tree->dictionaries, for_each, NULL); printf("\n");
-	XVector* unzipData = XHfmTree_unzip(tree,XVector_begin(gzipData),XVector_size(gzipData));//获得解压后的数据
+	XVector* unzipData = XHfmTree_unzip(tree,XVector_begin(gzipData),XVector_size_base(gzipData));//获得解压后的数据
 	
 	//遍历读取到的压缩数据中的字典
 	XMap_iterator_for_each(tree->dictionaries, for_each,NULL);printf("\n");
@@ -37,8 +37,8 @@ void XHuffmanTreeTest()
 	
 
 
-	XVector_free(gzipData);//释放返回的压缩数据
-	XVector_free(unzipData);//释放解压后的压缩数据
+	XVector_free_base(gzipData);//释放返回的压缩数据
+	XVector_free_base(unzipData);//释放解压后的压缩数据
 	XHfmTree_free(tree);//释放哈夫曼树
 
 

@@ -102,17 +102,17 @@ size_t XString_size(const XString* this_string)
 		return 0;
 	typedef size_t (*funcPtr)(XString*);
 	return XClassGetVirtualFunc(this_string, EXString_Size, funcPtr)(this_string);
-	//XVector_size(this_string);
+	//XVector_size_base(this_string);
 }
 
 void XString_swap(XString* this_stringOne, XString* this_stringTwo)
 {
-	XVector_swap(this_stringOne,this_stringTwo);
+	XVector_swap_base(this_stringOne,this_stringTwo);
 }
 
 void XString_free(const XString* this_string)
 {
-	XVector_free(this_string);
+	XVector_free_base(this_string);
 }
 
 void XString_remove(XString* this_string, int64_t index, int64_t n)
