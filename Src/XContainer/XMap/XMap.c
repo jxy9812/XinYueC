@@ -118,7 +118,7 @@ static void ForTreeNode(void* LPVal, void* args)
 {
 #if XVector_ON
 	XRBTreeNode* nodes = *(XRBTreeNode**)LPVal;
-	XVector_push_back(args, XVector_at(nodes->XBTNode.values, 0));
+	XVector_push_back_base(args, XVector_at_base(nodes->XBTNode.values, 0));
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif

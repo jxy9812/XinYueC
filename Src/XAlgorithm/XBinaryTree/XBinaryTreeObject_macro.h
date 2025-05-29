@@ -16,7 +16,7 @@ extern "C" {
 #define XBTree_SetRChild(this_root,nodes) (*XBTree_GetTreeNode(this_root, XBTreeRChild)=nodes)//二叉树-设置右孩子(继承的子类均可以使用)
 //数据
 #define  XBTree_InsertData(this_root,nSel,values) XBTree_insertData(this_root,&values,nSel,sizeof(values))//二叉树-插入数据
-#define  XBTree_GetData(this_root,nSel,Type) (*((Type*)(XVector_at(((XBTreeNode*)this_root)->values,nSel))))//二叉树-获取数据(继承的子类均可以使用)
+#define  XBTree_GetData(this_root,nSel,Type) (*((Type*)(XVector_at_base(((XBTreeNode*)this_root)->values,nSel))))//二叉树-获取数据(继承的子类均可以使用)
 #ifdef __cplusplus
 }
 #endif

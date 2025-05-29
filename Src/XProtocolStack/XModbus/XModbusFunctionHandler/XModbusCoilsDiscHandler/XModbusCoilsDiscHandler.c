@@ -9,7 +9,7 @@ XModbusCoilsDiscHandler* XModbusCoilsDiscHandler_new(uint16_t count)
     XModbusCoilsDiscHandler* ptr = XMemory_malloc(sizeof(XModbusCoilsDiscHandler));
     ptr->count = count;
     ptr->parent.data = XVector_New(char);
-    XVector_resize(ptr->parent.data, size);
+    XVector_resize_base(ptr->parent.data, size);
     return ptr;
 }
 

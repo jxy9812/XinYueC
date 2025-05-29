@@ -17,7 +17,7 @@ void XModbusFuncCodeList_push(XModbusFunctionHandlerList* list, XModbusFunctionH
 		return;	
 	XModbusFuncCodeList_remove(list, data->code);
 	
-	XVector_push_back(list, data);
+	XVector_push_back_base(list, data);
 }
 
 void XModbusFuncCodeList_remove(XModbusFunctionHandlerList* list, uint8_t code)
@@ -31,10 +31,10 @@ void XModbusFuncCodeList_remove(XModbusFunctionHandlerList* list, uint8_t code)
 	//	//if(find->data)
 	//		
 	//}
-	XVector_erase(list, find);
+	XVector_erase_base(list, find);
 }
 
 XModbusFunctionHandler* XModbusFuncCodeList_findFuncCode(XModbusFunctionHandlerList* list, uint8_t code)
 {
-	return XVector_find(list,&code);
+	return XVector_find_base(list,&code);
 }

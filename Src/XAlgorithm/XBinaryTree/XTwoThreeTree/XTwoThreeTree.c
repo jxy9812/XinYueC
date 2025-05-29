@@ -17,7 +17,7 @@ XTTTreeNode* XTTTree_creationNode(const enum XTTTree_NodeNum nodeCount, const si
         return NULL;
     }
     //插入0值,初始化剩余的值
-    XVector_resize(nodes->LpValueArray, nodeCount - 2);
+    XVector_resize_base(nodes->LpValueArray, nodeCount - 2);
     return nodes;
 #else
     IS_ON_DEBUG(XVector_ON);
@@ -30,7 +30,7 @@ const enum  XTTTree_NodeNum XTTTree_NodeNum(const XTTTreeNode* this_root)
 #if XVector_ON
     if (ISNULL(this_root, ""))
         return 0;
-    return XVector_size_base(this_root->LpValueArray)+2;
+    return XVector_getSize_base(this_root->LpValueArray)+2;
 #else
     IS_ON_DEBUG(XVector_ON);
     return XTTTree_TwoNode;
@@ -44,21 +44,21 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
         return 0;
     XVector* LPNode = this_root->object.nodes;//储存节点指针的数组
     enum  XTTTree_NodeNum nodeNum = XTTTree_NodeNum(this_root);//当前是几节点
-    XVector_resize(LPNode, XVector_size_base(LPNode)+1);//储存指针的扩容+1
+    XVector_resize_base(LPNode, XVector_getSize_base(LPNode)+1);//储存指针的扩容+1
     if (nodeNum == XTTTree_TwoNode)//当前是二节点
     {
-       /* XTTTreeNode* temp = *(XTTTreeNode**)XVector_back(this_root);
-        XVector_push_back(this_root,&temp);*/
+       /* XTTTreeNode* temp = *(XTTTreeNode**)XVector_back_base(this_root);
+        XVector_push_back_base(this_root,&temp);*/
         
         this_root->LpValueArray = XVector_new( TypeSize);//初始化值
     }
-    //XVector_resize(this_root->LpValueArray, XVector_size_base(LPNode) + 1);//储存数据的扩容+1
-    XVector_push_back(this_root->LpValueArray, LPData);//插入数值扩容
-    XVector_push_back(this_root->LpValueArray, this_root->object.values);//插入第一个数值
-    XVector_sort(this_root->LpValueArray, less);//排序
+    //XVector_resize_base(this_root->LpValueArray, XVector_getSize_base(LPNode) + 1);//储存数据的扩容+1
+    XVector_push_back_base(this_root->LpValueArray, LPData);//插入数值扩容
+    XVector_push_back_base(this_root->LpValueArray, this_root->object.values);//插入第一个数值
+    XVector_sort_base(this_root->LpValueArray, less);//排序
     memcpy(this_root->object.values, XVector_begin(this_root->LpValueArray), TypeSize);//将最小的拷贝回去
     //XVector_erase_int(this_root, 0, 0);//删除重复的第一个
-    XVector_pop_front(this_root);
+    XVector_pop_front_base(this_root);
     return XTTTree_NodeNum(this_root);
 #else
     IS_ON_DEBUG(XVector_ON);
@@ -82,7 +82,7 @@ void* XTTTree_data(const XTTTreeNode* this_root, size_t nSel)
     }
     if (!XVector_isEmpty_base(this_root->LpValueArray)&& nSel<3)
     {
-        return XVector_at(this_root->LpValueArray, nSel - 1);
+        return XVector_at_base(this_root->LpValueArray, nSel - 1);
     }
     return NULL;
 #else

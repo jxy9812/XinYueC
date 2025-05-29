@@ -52,7 +52,7 @@ static XVector* GetXMazePath(const XVector* child)
 	AStarNode* current = child;
 	while (current != NULL)
 	{
-		XVector_push_front(Path, &current->pos);
+		XVector_push_front_base(Path, &current->pos);
 		current = current->parent;
 	}
 	return Path;
@@ -71,18 +71,18 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 	Pathfinder(ChildAll, maze, pos);//获取周围能走的点位
 	if(Oblique)//能斜着走
 		PathfinderOblique(ChildAll, maze, pos);//获取周围能走的点位，斜的
-	while (!XStack_isEmpty(ChildAll))
+	while (!XStack_isEmpty_base(ChildAll))
 	{
-		XPointStep* pCurrentPos = (XPointStep*)XStack_top(ChildAll);
+		XPointStep* pCurrentPos = (XPointStep*)XStack_top_base(ChildAll);
 		AStarNode* childAStarNode = CreationAStarNode(pCurrentPos->x, pCurrentPos->y);//创建孩子节点
 		childAStarNode->parent = nodes;//设置父节点
 		setCosts(maze, dest, childAStarNode, nodes);//设置代价
-		XVector_push_back(nodes->child, &childAStarNode);//将创建的孩子绑定到父节点下
-		XVector_push_back(NodeArray, &childAStarNode);
-		XStack_pop(ChildAll);
+		XVector_push_back_base(nodes->child, &childAStarNode);//将创建的孩子绑定到父节点下
+		XVector_push_back_base(NodeArray, &childAStarNode);
+		XStack_pop_base(ChildAll);
 	}
-	XStack_free(ChildAll);
-	return XVector_size_base(nodes->child);
+	XStack_free_base(ChildAll);
+	return XVector_getSize_base(nodes->child);
 #else
 	IS_ON_DEBUG(XStack_ON);
 	return 0;
@@ -100,14 +100,14 @@ static void XBinaryTreeObject_freeNode(AStarNode* root)
 {
 #if XStack_ON
 	XStack* stack = XStack_new(sizeof(AStarNode*));
-	XStack_push(stack, &root);
-	while (!XStack_isEmpty(stack))
+	XStack_push_base(stack, &root);
+	while (!XStack_isEmpty_base(stack))
 	{
-		AStarNode* current = *(AStarNode**)XStack_top(stack);
-		XStack_pop(stack);
+		AStarNode* current = *(AStarNode**)XStack_top_base(stack);
+		XStack_pop_base(stack);
 		for (XVector_iterator* it = XVector_begin(current->child); it != XVector_end(current->child); it = XVector_iterator_add(current->child, it))
 		{
-			XStack_push(stack, it);
+			XStack_push_base(stack, it);
 		}
 		XVector_free_base(current->child);
 		XMemory_free(current);
@@ -122,16 +122,16 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	AStarNode* root = CreationAStarNode_XPoint(start);//根节点
 	XVector* CurrentNodeArray = XVector_new( sizeof(AStarNode*));//当前节点数组
-	XVector_push_back(CurrentNodeArray, &root);//入根节点
+	XVector_push_back_base(CurrentNodeArray, &root);//入根节点
 
 	AStarNode* CurrentNode = NULL;//当前遍历的节点
 	bool isFindEnd = false;//找到终点标记
 	while (!isFindEnd && !XVector_isEmpty_base(CurrentNodeArray))
 	{
-		XVector_sort(CurrentNodeArray, sortDescendingtCosts);
-		AStarNode** back = XVector_back(CurrentNodeArray);
+		XVector_sort_base(CurrentNodeArray, sortDescendingtCosts);
+		AStarNode** back = XVector_back_base(CurrentNodeArray);
 		CurrentNode = *back;
-		int nSel = XVector_size_base(CurrentNodeArray)-1;
+		int nSel = XVector_getSize_base(CurrentNodeArray)-1;
 		if (CurrentNode->pos.x == dest.x && CurrentNode->pos.y == dest.y)//判断是否到终点了
 		{
 			isFindEnd = true;
@@ -139,7 +139,7 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 		}
 		size_t n = insertChild(tempMaze, dest, CurrentNode, CurrentNodeArray,Oblique);
 		//XVector_erase_int(CurrentNodeArray, nSel, nSel);
-		XVector_remove(CurrentNodeArray, nSel,1);
+		XVector_remove_base(CurrentNodeArray, nSel,1);
 	}
 	XVector* Path = NULL;
 	if(isFindEnd)

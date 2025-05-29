@@ -4,7 +4,7 @@
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
-	//int* val = XVector_at(((XBTreeNode*)LPVal)->values, 0);
+	//int* val = XVector_at_base(((XBTreeNode*)LPVal)->values, 0);
 	printf("%d ", XBTree_GetData((*(XBTreeNode**)LPVal), 0,int));
 }
 void XBinaryTreeObjectTest()
@@ -28,21 +28,21 @@ void XBinaryTreeObjectTest()
 
 	//前序测试
 	XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder);
-	printf("前序遍历:", XVector_size_base(TreePreorder));
+	printf("前序遍历:", XVector_getSize_base(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free_base(TreePreorder);
 
 	//中序测试
 	TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder);
-	printf("中序遍历:", XVector_size_base(TreePreorder));
+	printf("中序遍历:", XVector_getSize_base(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free_base(TreePreorder);
 
 	//后序测试
 	TreePreorder = XBTree_TraversingToXVector(root, XBTreePostorder);
-	printf("后序遍历:", XVector_size_base(TreePreorder));
+	printf("后序遍历:", XVector_getSize_base(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	printf("\n");
 	XVector_free_base(TreePreorder);

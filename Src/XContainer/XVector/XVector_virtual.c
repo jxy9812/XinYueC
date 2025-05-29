@@ -126,7 +126,7 @@ void VXVector_resize(XVector* this_vector, size_t size)
 	{
 		for (size_t i = 0; i < count - size; i++)
 		{
-			XVector_pop_back(this_vector);
+			XVector_pop_back_base(this_vector);
 		}
 		return;
 	}
@@ -214,7 +214,7 @@ void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t
 	{
 		for (size_t i = 0; i < n; i++)
 		{
-			XVector_push_back(this_vector, LpValue);
+			XVector_push_back_base(this_vector, LpValue);
 		}
 	}*/
 }
@@ -244,7 +244,7 @@ void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 	{
 		for (size_t i = 0; i < n; i++)
 		{
-			XVector_push_back(this_vector, (char*)begin+i*XContainerTypeSize(this_vector));
+			XVector_push_back_base(this_vector, (char*)begin+i*XContainerTypeSize(this_vector));
 		}
 	}*/
 }
@@ -282,7 +282,7 @@ void VXVector_pop_back(XVector* this_vector)//删除向量中最后一个元素
 	if (XContainerObject_isEmpty_base(this_vector))
 		return ;
 	if (XContainerDataFreeMethod(this_vector) != NULL)
-		XContainerDataFreeMethod(this_vector)(XVector_back(this_vector));
+		XContainerDataFreeMethod(this_vector)(XVector_back_base(this_vector));
 	--XContainerSize(this_vector);
 }
 void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据

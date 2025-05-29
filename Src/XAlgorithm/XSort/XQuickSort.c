@@ -58,34 +58,34 @@ void XQuicPitSort_Stack(void* LParray, const size_t nSize, const size_t TypeSize
 	char* begin = LParray;//移动头指针，开始指向头元素
 	char* end = begin + TypeSize * (nSize - 1);//移动尾指针，开始指向尾元素
 	char* temp = NULL;//入栈边界临时指针
-	XStack_push(st,&end);//入右边界
-	XStack_push(st, &begin);//入左边界
+	XStack_push_base(st,&end);//入右边界
+	XStack_push_base(st, &begin);//入左边界
 	//st->push(st, end);//入右边界
 	//st->push(st, begin);//入左边界
 	char* left = NULL;//区间头指针
 	char* right = NULL;//区间尾指针
 	char* pivit = NULL;//单次排序返回的排好元素指针
-	while (!XStack_isEmpty(st))
+	while (!XStack_isEmpty_base(st))
 	{
-		left = XStack_Top(st,char*);//头指针
-		XStack_pop(st);
-		right = XStack_Top(st,char*);//尾指针 
-		XStack_pop(st);
+		left = XStack_Top_Base(st,char*);//头指针
+		XStack_pop_base(st);
+		right = XStack_Top_Base(st,char*);//尾指针 
+		XStack_pop_base(st);
 		pivit = QuicPitSort_One(left, right, TypeSize, compare);
 		temp = pivit + TypeSize;
 		if (temp < right)//右区间存在
 		{
-			XStack_push(st, &right);
-			XStack_push(st, &temp);
+			XStack_push_base(st, &right);
+			XStack_push_base(st, &temp);
 		}
 		temp = pivit - TypeSize;
 		if (left < temp)//左区间存在
 		{
-			XStack_push(st, &temp);
-			XStack_push(st, &left);
+			XStack_push_base(st, &temp);
+			XStack_push_base(st, &left);
 		}
 	}
-	XStack_free(st);
+	XStack_free_base(st);
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif

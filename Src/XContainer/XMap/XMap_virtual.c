@@ -63,7 +63,7 @@ void VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
 		XRBTree_insert(&(this_map->m_parent.m_data), this_map->m_KeyLess, XCompareRuleTwo_XMap, &LPpair, sizeof(XPair*));
 
 		/*XRBTreeNode* root= this_map->object.m_data;
-		LPpair= *(XPair**)XVector_at(root->XBTNode.values,0);
+		LPpair= *(XPair**)XVector_at_base(root->XBTNode.values,0);
 		printf("根节点，key:%d LpValue:%s\n", XPair_First(LPpair, int), XPair_second(LPpair));*/
 		++this_map->m_parent.m_capacity;
 		++this_map->m_parent.m_size;
@@ -90,7 +90,7 @@ void VXMap_remove(XMap* this_map, const void* key)
 	XRBTreeNode* nodes = XBBTree_findData(this_map->m_parent.m_data, this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
-		XPair* pair = *((XPair**)XVector_at(nodes->XBTNode.values, 0));
+		XPair* pair = *((XPair**)XVector_at_base(nodes->XBTNode.values, 0));
 		if (XContainerDataFreeMethod(this_map) != NULL)
 			XContainerDataFreeMethod(this_map)(pair);
 		XRBTree_erase(&(this_map->m_parent.m_data), this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
@@ -131,7 +131,7 @@ XPair* VXMap_find(XMap* this_map, const void* key)
 	XBTreeNode* nodes = XBBTree_findData(this_map->m_parent.m_data, this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes == NULL)
 		return NULL;
-	XPair* pair = *(XPair**)XVector_at(nodes->values, 0);
+	XPair* pair = *(XPair**)XVector_at_base(nodes->values, 0);
 	return pair;
 #else
 	IS_ON_DEBUG(XVector_ON);

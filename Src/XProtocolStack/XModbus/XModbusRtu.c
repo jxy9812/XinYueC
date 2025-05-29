@@ -98,10 +98,10 @@ XModbusErrorCode XModbusRtuSend(XModbus* modbus, XModbusFrame* frameData)
         error = MB_ENORES;
         return error;
     }
-    XVector_copy(dataVector, frameData->frameData);
+    XVector_copy_base(dataVector, frameData->frameData);
    
     ENTER_CRITICAL_SECTION();
-    XQueue_push(modbus->sendQueue, &dataVector);
+    XQueue_push_base(modbus->sendQueue, &dataVector);
     EXIT_CRITICAL_SECTION();
     return error;
 }
@@ -141,7 +141,7 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
     case STATE_RX_IDLE:  // 空闲状态（接收到新帧起始字节）
         //printf("开始接收\n");
         XVector_clear_base(recvVector);  // 重置接收缓冲区位置
-        XVector_push_back(recvVector,&ucByte);  // 存储第一个字节（从机地址）
+        XVector_push_back_base(recvVector,&ucByte);  // 存储第一个字节（从机地址）
         if (modbus->eSndState == STATE_TX_END)
             modbus->eSndState = STATE_TX_IDLE;
         modbus->eRcvState = STATE_RX_RCV;  // 切换到接收中状态
@@ -152,8 +152,8 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
         break;
 
     case STATE_RX_RCV:  // 接收中状态（连续接收字节）
-        if (XVector_size_base(recvVector) < MB_SER_PDU_SIZE_MAX) {
-            XVector_push_back(recvVector, &ucByte);  // 存储字节到缓冲区
+        if (XVector_getSize_base(recvVector) < MB_SER_PDU_SIZE_MAX) {
+            XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
         }
         else {
             modbus->eRcvState = STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
@@ -199,7 +199,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
     {
         case STATE_TX_IDLE:  // 发送空闲状态（无数据发送）
         {
-            modbus->pendingCount = XVector_size_base(dataVector);
+            modbus->pendingCount = XVector_getSize_base(dataVector);
 
             modbus->eSndState = STATE_TX_XMIT;
             //printf("发送空闲\n");
@@ -210,7 +210,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
             //printf("发送中\n");
             if (modbus->pendingCount != 0)
             {
-                XIODevice_write(modbus->ioDevice, XVector_at(dataVector, XVector_size_base(dataVector) - modbus->pendingCount), 1);
+                XIODevice_write(modbus->ioDevice, XVector_at_base(dataVector, XVector_getSize_base(dataVector) - modbus->pendingCount), 1);
 #if !MB_IS_COMP_SEND_FRAME
                 XIODevice_writeFull(modbus->ioDevice);
 #endif
@@ -240,7 +240,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
                 {//如果是主站 设置当前接收回调
                     if (frame->recvHandle != NULL && frame->recvHandle->pRecvHandCallFunc)
                     {//发送的帧中存在回调方法
-                        XVector_push_back(modbus->recvHandleMaster,&(frame->recvHandle));
+                        XVector_push_back_base(modbus->recvHandleMaster,&(frame->recvHandle));
                         frame->recvHandle = NULL;//转移所有权
                     }
                 }

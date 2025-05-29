@@ -11,9 +11,9 @@ XVector* XVectorTwoMatrix_new(const size_t TypeSize, const size_t row, const siz
 		XVector* RowVector = XVector_new( TypeSize);//每一行的一维数组		
 		for (size_t j = 0; j < list; j++)
 		{
-			XVector_push_back(RowVector, initVal);
+			XVector_push_back_base(RowVector, initVal);
 		}
-		XVector_push_back(VTwo, &RowVector);
+		XVector_push_back_base(VTwo, &RowVector);
 	}
 	return VTwo;
 }
@@ -37,9 +37,9 @@ XVector* XVectorTwo_copy(const XVector* this_vector)
 		XVector*LTemp= XVector_new( TypeSize);
 		for (size_t j = 0; j < List; j++) 
 		{
-			XVector_push_back(LTemp,XVectorTwo_at(this_vector, i, j));
+			XVector_push_back_base(LTemp,XVectorTwo_at(this_vector, i, j));
 		}
-		XVector_push_back(temp, &LTemp);
+		XVector_push_back_base(temp, &LTemp);
 	}
 	return temp;
 }
@@ -47,8 +47,8 @@ XVector* XVectorTwo_copy(const XVector* this_vector)
 void* XVectorTwo_at(const XVector* this_vector, const size_t row, const size_t list)
 {
 	//获取当前位置
-	struct XVector* RowVector = *(struct XVector**)XVector_at(this_vector, row);
-	return XVector_at(RowVector, list);
+	struct XVector* RowVector = *(struct XVector**)XVector_at_base(this_vector, row);
+	return XVector_at_base(RowVector, list);
 }
 
 void* XVectorTwo_at_XPoint(const XVector* this_vector, const XPoint point)
@@ -58,12 +58,12 @@ void* XVectorTwo_at_XPoint(const XVector* this_vector, const XPoint point)
 
 const size_t XVectorTwo_Row(const XVector* this_vector)
 {
-	return XVector_size_base(this_vector);//行
+	return XVector_getSize_base(this_vector);//行
 }
 
 const size_t XVectorTwo_List(const XVector* this_vector, const size_t row)
 {
-	return XVector_size_base(*(struct XVector**)XVector_at(this_vector, row));//列
+	return XVector_getSize_base(*(struct XVector**)XVector_at_base(this_vector, row));//列
 }
 
 size_t XVectorTwo_TypeSize(XVector* this_vector)

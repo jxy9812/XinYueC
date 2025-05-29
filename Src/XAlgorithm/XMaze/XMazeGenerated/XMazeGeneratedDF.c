@@ -50,8 +50,8 @@ static void RandomOpenCircuitRecursion(struct XVector* maze, const int x, const 
 //砸墙开路-递归版
 static void XMazeOpenCircuitRecursion(struct XVector* maze, const int x, const int y)
 {    
-	struct XVector* LMaze = *(struct XVector**)XVector_at(maze, y);
-	int Sign = *((int*)XVector_at(LMaze, x));
+	struct XVector* LMaze = *(struct XVector**)XVector_at_base(maze, y);
+	int Sign = *((int*)XVector_at_base(LMaze, x));
 	if (Sign != XMazeWall)//如果当前不是墙壁，当前位置不需要开路
 		return;
 	int SignSum = 0;//判断上下左右一共有几个道路
@@ -61,14 +61,14 @@ static void XMazeOpenCircuitRecursion(struct XVector* maze, const int x, const i
 		{
 			if (abs(i) == abs(j))
 				continue;
-			struct XVector* TLMaze = *(struct XVector**)XVector_at(maze, y+i);
-			int TSign = *((int*)XVector_at(TLMaze, x+j));
+			struct XVector* TLMaze = *(struct XVector**)XVector_at_base(maze, y+i);
+			int TSign = *((int*)XVector_at_base(TLMaze, x+j));
 			SignSum += TSign;
 		}
 	}
 	if (SignSum <= XMazeRoute) //如果周围道路不超过一个，避免回到原点
 	{
-		*((int*)XVector_at(LMaze, x)) = XMazeRoute;
+		*((int*)XVector_at_base(LMaze, x)) = XMazeRoute;
 		RandomOpenCircuitRecursion(maze,x,y);
 	}
 }
@@ -91,8 +91,8 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 			{
 				temp_y = y;
 				temp_x = x - 1;
-				/*XStack_push(stack,y);
-				XStack_push(stack,x - 1);*/
+				/*XStack_push_base(stack,y);
+				XStack_push_base(stack,x - 1);*/
 			}
 			break;
 		}
@@ -102,8 +102,8 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 			{
 				temp_y = y;
 				temp_x = x + 1;
-				/*XStack_push(stack, y);
-				XStack_push(stack, x + 1);*/
+				/*XStack_push_base(stack, y);
+				XStack_push_base(stack, x + 1);*/
 			}
 			break;
 		}
@@ -113,8 +113,8 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 			{
 				temp_y = y-1;
 				temp_x = x;
-				/*XStack_push(stack, y-1);
-				XStack_push(stack, x);*/
+				/*XStack_push_base(stack, y-1);
+				XStack_push_base(stack, x);*/
 			}
 			break;
 		}
@@ -124,16 +124,16 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 			{
 				temp_y = y + 1;
 				temp_x = x;
-				/*XStack_push(stack, y+1);
-				XStack_push(stack, x);*/
+				/*XStack_push_base(stack, y+1);
+				XStack_push_base(stack, x);*/
 			}
 			break;
 		}
 		default:
 			break;
 		}
-		XStack_push(stack, &temp_y);
-		XStack_push(stack, &temp_x);
+		XStack_push_base(stack, &temp_y);
+		XStack_push_base(stack, &temp_x);
 	}
 }
 //砸墙开路-栈
@@ -141,17 +141,17 @@ static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y
 {
 #if XStack_ON
 	XStack* stack=XStack_New(int);
-	XStack_push(stack, &y);
-	XStack_push(stack, &x);
-	while (!XStack_isEmpty(stack))
+	XStack_push_base(stack, &y);
+	XStack_push_base(stack, &x);
+	while (!XStack_isEmpty_base(stack))
 	{
-		int x = XStack_Top(stack,int);
-		XStack_pop(stack);
-		int y = XStack_Top(stack,int);
-		XStack_pop(stack);
+		int x = XStack_Top_Base(stack,int);
+		XStack_pop_base(stack);
+		int y = XStack_Top_Base(stack,int);
+		XStack_pop_base(stack);
 
-		struct XVector* LMaze = *(struct XVector**)XVector_at(maze, y);
-		int Sign = *((int*)XVector_at(LMaze, x));//获取当前位置
+		struct XVector* LMaze = *(struct XVector**)XVector_at_base(maze, y);
+		int Sign = *((int*)XVector_at_base(LMaze, x));//获取当前位置
 		if (Sign != XMazeWall)//如果当前不是墙壁，当前位置不需要开路
 			continue;
 		int SignSum = 0;//判断上下左右一共有几个道路
@@ -161,18 +161,18 @@ static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y
 			{
 				if (abs(i) == abs(j))
 					continue;
-				 XVector* TLMaze = *(XVector**)XVector_at(maze, y + i);
-				int TSign = *((int*)XVector_at(TLMaze, x + j));
+				 XVector* TLMaze = *(XVector**)XVector_at_base(maze, y + i);
+				int TSign = *((int*)XVector_at_base(TLMaze, x + j));
 				SignSum += TSign;
 			}
 		}
 		if (SignSum <= (XMazeRoute+ !oneExit)) //如果周围道路不超过一个，避免回到原点
 		{
-			*((int*)XVector_at(LMaze, x)) = XMazeRoute;
+			*((int*)XVector_at_base(LMaze, x)) = XMazeRoute;
 			RandomOpenCircuitStack(stack,maze, x, y);
 		}
 	}
-	XStack_free(stack);
+	XStack_free_base(stack);
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif

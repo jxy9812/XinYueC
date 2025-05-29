@@ -5,7 +5,7 @@ void XCircularQueueAtomic_init(XCircularQueueAtomic* this_queue, size_t typeSize
 	if (ISNULL(this_queue, "") || ISNULL(typeSize, "") || ISNULL(count, ""))
 		return NULL;
 	XVector_init(this_queue, typeSize);
-	XVector_resize(this_queue,count);
+	XVector_resize_base(this_queue,count);
 	XAtomic_init(this_queue->m_head,0);
 	XAtomic_init(this_queue->m_tail, 0);
 	XCircularQueueAtomic_class_init();

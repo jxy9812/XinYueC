@@ -26,29 +26,34 @@ void XQueue_class_init();
 XQueue* XQueue_new(size_t typeSize);
 #define XQueue_New(Type) XQueue_new(sizeof(Type))
 void XQueue_init(XQueue* this_queue, size_t typeSize);
-//释放队列
-void XQueue_free(XQueue* this_queue);
-//清空queue的队列，释放内存
-void XQueue_clear(XQueue* this_queue);
 //插入到队列的队尾
-void XQueue_push(XQueue* this_queue, void* LpValue);
-#define XQueue_Push(this_queue,type,value) {type t=value;XQueue_push(this_queue,&t);}
+void XQueue_push_base(XQueue* this_queue, void* LpValue);
+#define XQueue_Push_Base(this_queue,type,value) {type t=value;XQueue_push_base(this_queue,&t);}
 //删除queue的队头元素
-void XQueue_pop(XQueue* this_queue);
+void XQueue_pop_base(XQueue* this_queue);
 // 返回队列的队头元素指针，但不删除该元素
-void* XQueue_front(XQueue* this_queue);
-#define XQueue_Front(queue,Type) (*(Type*)XQueue_front(queue))
+void* XQueue_front_base(XQueue* this_queue);
+#define XQueue_Front_Base(queue,Type) (*(Type*)XQueue_front_base(queue))
 // 返回队列的队尾元素指针，但不删除该元素
-void* XQueue_back(XQueue* this_queue);
-#define XQueue_Back(queue,Type) (*(Type*)XQueue_back(queue))
+void* XQueue_back_base(XQueue* this_queue);
+#define XQueue_Back_Base(queue,Type) (*(Type*)XQueue_back_base(queue))
 // 取得队头元素（但不删除）O(1)
-void* XQueue_top(XQueue* this_queue);
-#define XQueue_Top(queue,type) (*((type*)XQueue_top(queue)))
-//当队列为空时返回true，否则返回false
-bool XQueue_isEmpty(XQueue* this_queue);
-//返回队列中元素的个数
-size_t XQueue_size(XQueue* this_queue);
-
+void* XQueue_top_base(XQueue* this_queue);
+#define XQueue_Top_Base(queue,type) (*((type*)XQueue_top_base(queue)))
+//释放内存
+#define XQueue_free_base   XContainerObject_free_base
+//清空，不是释放内存
+#define XQueue_clear_base  XContainerObject_clear_base
+//检测是否为空，空为真 O(1)
+#define XQueue_isEmpty_base			XContainerObject_isEmpty_base
+//返回元素的个数 O(1)
+#define XQueue_size_base			XContainerObject_getSize_base
+//返回当前向量所能容纳的最大元素个数
+#define XQueue_capacity_base		XContainerObject_getCapacity_base
+//交换两个同类型向量的数据
+#define XQueue_swap_base			XContainerObject_swap_base
+//返回元素类型字节大小
+#define XQueue_getTypeSize_base		XContainerObject_getTypeSize_base
 #ifdef __cplusplus
 }
 #endif

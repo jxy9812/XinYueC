@@ -14,15 +14,15 @@ void queueTest()
 	int array[] = { 0,1,2,3,4,5,6,7,8,9 };
 	for (size_t i = 0; i < sizeof(array)/sizeof(array[0]); i++)
 	{
-		XQueue_push(queue, array + i);
+		XQueue_push_base(queue, array + i);
 	}
-	while (!XQueue_isEmpty(queue))
+	while (!XQueue_isEmpty_base(queue))
 	{
-		printf("%d ", XQueue_Top(queue,int));
-		XQueue_pop(queue);
+		printf("%d ", XQueue_Top_Base(queue,int));
+		XQueue_pop_base(queue);
 	}
 	printf("\n");
-	XQueue_free(queue);
+	XQueue_free_base(queue);
 #endif
 }
 #if	XPriorityQueue_ON
@@ -41,9 +41,9 @@ void XPriority_QueueTest()
 	XVector* v = XVector_New(int);
 	for (size_t i = 0; i < 10; i++)
 	{
-		XVector_push_back(v, &i);
+		XVector_push_back_base(v, &i);
 	}
-	XDerangement(XVector_begin(v),XVector_size_base(v), sizeof(int));
+	XDerangement(XVector_begin(v),XVector_getSize_base(v), sizeof(int));
 	//printf("入队数据:");
 	XVector_iterator_for_each(v, insertData, queue);
 	printf("\n队列循环出队:");

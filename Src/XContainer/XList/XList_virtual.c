@@ -340,31 +340,31 @@ void VXList_sort(XList* this_list, XCompare compare)
 	XListNode* ListHead = XList_begin(this_list);//链表第一个节点
 	XListNode* ListTail = XList_rbegin(this_list);//链表最后一个节点
 	XStack* stack = XStack_New(XListNode*);
-	XStack_push(stack, &ListTail);
-	XStack_push(stack, &ListHead);
-	while (!XStack_isEmpty(stack))
+	XStack_push_base(stack, &ListTail);
+	XStack_push_base(stack, &ListHead);
+	while (!XStack_isEmpty_base(stack))
 	{
 		//获取节点
-		XListNode* ListHead = *((struct XListNode**)XStack_top(stack));
-		XStack_pop(stack);
-		XListNode* ListTail = *((struct XListNode**)XStack_top(stack));
-		XStack_pop(stack);
+		XListNode* ListHead = *((struct XListNode**)XStack_top_base(stack));
+		XStack_pop_base(stack);
+		XListNode* ListTail = *((struct XListNode**)XStack_top_base(stack));
+		XStack_pop_base(stack);
 		//单次排序
 		XListNode* ListMiddle = List_OneSort(ListHead, ListTail, list->m_parent.m_typeSize, compare);
 		//判断左区间是否存在
 		if (ListHead != ListMiddle && ListHead->next != ListMiddle)
 		{
-			XStack_push(stack, &ListMiddle->prev);
-			XStack_push(stack, &ListHead);
+			XStack_push_base(stack, &ListMiddle->prev);
+			XStack_push_base(stack, &ListHead);
 		}
 		//判断右区间是否存在
 		if (ListTail != ListMiddle && ListMiddle->next != ListTail)
 		{
-			XStack_push(stack, &ListTail);
-			XStack_push(stack, &ListMiddle->next);
+			XStack_push_base(stack, &ListTail);
+			XStack_push_base(stack, &ListMiddle->next);
 		}
 	}
-	XStack_free(stack);
+	XStack_free_base(stack);
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif

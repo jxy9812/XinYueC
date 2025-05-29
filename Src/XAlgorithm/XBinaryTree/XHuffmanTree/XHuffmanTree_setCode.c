@@ -25,12 +25,12 @@ static void setCode(XHfmNode* root,XVector*code)
 		{
 			ch = 1;
 		}
-		XVector_push_back(code, &ch);
+		XVector_push_back_base(code, &ch);
 		curentNode = parent;
 		parent= XBTree_GetParent(curentNode);
 	}
 	//将编码逆序
-	XReversed(XVector_front(code),XVector_size_base(code),sizeof(char));
+	XReversed(XVector_front_base(code),XVector_getSize_base(code),sizeof(char));
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif;

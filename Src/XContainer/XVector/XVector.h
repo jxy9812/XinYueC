@@ -49,57 +49,57 @@ XVector* XVector_new(size_t typeSize);
 //初始化 XVector
 void XVector_init(XVector* this_vector, size_t typeSize);
 //设置XVector的大小，超过大小插入0值数据，小于删除数据
-void XVector_resize(XVector* this_vector,size_t size);
+void XVector_resize_base(XVector* this_vector,size_t size);
 // 向量头部增加一个元素
-void XVector_push_front(XVector* this_vector, void* LpValue);
-#define XVector_Push_Front(this_vector,type,value){type t=value;XVector_push_front(this_vector,&t);}
+void XVector_push_front_base(XVector* this_vector, void* LpValue);
+#define XVector_Push_Front_Base(this_vector,type,value){type t=value;XVector_push_front_base(this_vector,&t);}
 // 向量尾部增加一个元素
-void XVector_push_back(XVector* this_vector, void* LpValue);
-#define XVector_Push_Back(this_vector,type,value){type t=value;XVector_push_back(this_vector,&t);}
+void XVector_push_back_base(XVector* this_vector, void* LpValue);
+#define XVector_Push_Back_Base(this_vector,type,value){type t=value;XVector_push_back_base(this_vector,&t);}
 // 向量中前增加一个元素
-void XVector_insert(XVector* this_vector, int64_t index, const void* LpValue);
-#define XVector_Insert(this_vector,index,type,value){type t=value;XVector_insert(this_vector,index,&t);}
+void XVector_insert_base(XVector* this_vector, int64_t index, const void* LpValue);
+#define XVector_Insert_Base(this_vector,index,type,value){type t=value;XVector_insert_base(this_vector,index,&t);}
 // 向量中指向元素p前增加n个相同的元素x
-void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n);
+void XVector_inserts_base(XVector* this_vector, int64_t index, void* LpValue, size_t n);
 // 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2]间的数据
-void XVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n);
-void XVector_append_array(XVector* this_vector, const void* begin, size_t n);
-void XVector_pop_front(XVector* this_vector);
+void XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
+void XVector_append_array_base(XVector* this_vector, const void* begin, size_t n);
+void XVector_pop_front_base(XVector* this_vector);
 //删除向量中最后一个元素
-void XVector_pop_back(XVector* this_vector);
+void XVector_pop_back_base(XVector* this_vector);
 //删除指针区间内的数据
-void XVector_erase(XVector* this_vector, void* LpValue);
+void XVector_erase_base(XVector* this_vector, void* LpValue);
 //删除数据 n<0 后面全部删除
-void XVector_remove(XVector* this_vector, int64_t index, int64_t n);
+void XVector_remove_base(XVector* this_vector, int64_t index, int64_t n);
 //将this_Two拷贝到this_One
-void XVector_copy(XVector* this_One, const XVector* this_Two);
+void XVector_copy_base(XVector* this_One, const XVector* this_Two);
 //将this_Two逆序拷贝到this_One
-void XVector_rcopy(XVector* this_One, const XVector* this_Two);
+void XVector_rcopy_base(XVector* this_One, const XVector* this_Two);
 // 返回元素的指针
-void* XVector_at(const XVector* this_vector, int64_t index);
-#define XVector_At(vector,index,type) (*((type*)XVector_at(vector,index)))
+void* XVector_at_base(const XVector* this_vector, int64_t index);
+#define XVector_At_Base(vector,index,type) (*((type*)XVector_at_base(vector,index)))
 //返回向量头指针，指向第一个元素
-void* XVector_front(const  XVector* this_vector);
-#define XVector_Front(vector,type) (*((type*)XVector_front(vector)))
+void* XVector_front_base(const  XVector* this_vector);
+#define XVector_Front_Base(vector,type) (*((type*)XVector_front_base(vector)))
 //返回向量尾指针，指向向量最后一个元素
-void* XVector_back(const  XVector* this_vector);
-#define XVector_Back(vector,type) (*((type*)XVector_back(vector)))
+void* XVector_back_base(const  XVector* this_vector);
+#define XVector_Back_Base(vector,type) (*((type*)XVector_back_base(vector)))
 //查找数据，返回找到的指针，没有返回NULL
-void* XVector_find(const XVector* this_vector, const void* findVal);
+void* XVector_find_base(const XVector* this_vector, const void* findVal);
 //排序
-void  XVector_sort(XVector* this_vector, XCompare compare);
+void  XVector_sort_base(XVector* this_vector, XCompare compare);
 //释放内存
-#define XVector_free_base   XContainerObject_free_base
+#define XVector_free_base				XContainerObject_free_base
 //清空vector的队列，不是释放内存
-#define XVector_clear_base  XContainerObject_clear_base
+#define XVector_clear_base				XContainerObject_clear_base
 //检测vector内是否为空，空为真 O(1)
 #define XVector_isEmpty_base			XContainerObject_isEmpty_base
 //返回vector内元素的个数 O(1)
-#define XVector_size_base			XContainerObject_getSize_base
+#define XVector_getSize_base			XContainerObject_getSize_base
 //返回当前向量所能容纳的最大元素个数
-#define XVector_capacity_base		XContainerObject_getCapacity_base
+#define XVector_getCapacity_base		XContainerObject_getCapacity_base
 //交换两个同类型向量的数据
-#define XVector_swap_base			XContainerObject_swap_base
+#define XVector_swap_base				XContainerObject_swap_base
 //返回元素类型字节大小
 #define XVector_getTypeSize_base		XContainerObject_getTypeSize_base
 #ifdef __cplusplus

@@ -18,7 +18,7 @@ XModbusRegisterHandler* XModbusRegisterHandler_new(uint16_t regCount)
 		return NULL;
 	XModbusRegisterHandler* ptr = XMemory_malloc(sizeof(XModbusRegisterHandler));
 	ptr->parent.data = XVector_new(REGISTERSIZE);
-	XVector_resize(ptr->parent.data, regCount);
+	XVector_resize_base(ptr->parent.data, regCount);
 	return ptr;
 }
 
@@ -37,9 +37,9 @@ bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint
 	if (regFunc == NULL || regFunc->parent.data == NULL)
 		return false;
 	XVector* data= regFunc->parent.data;
-	if(XVector_size_base(data)>regAddress)
+	if(XVector_getSize_base(data)>regAddress)
 	{
-		XVector_At(data, regAddress, uint16_t) = value;
+		XVector_At_Base(data, regAddress, uint16_t) = value;
 		//printf("写入的值是:%d\n",value);
 		return true;
 	}
@@ -51,11 +51,11 @@ bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regA
 	if (regFunc == NULL || regFunc->parent.data == NULL|| writeArray==NULL||regCount==0)
 		return false;
 	XVector* data = regFunc->parent.data;
-	uint32_t dataSize = XVector_size_base(data);
+	uint32_t dataSize = XVector_getSize_base(data);
 	//uint16_t typeSize = XVector_getTypeSize_base(data);
 	if (dataSize > regAddress && (dataSize * REGISTERSIZE) >= (regAddress * REGISTERSIZE + regCount* REGISTERSIZE))
 	{//开始写入
-		char* p= XVector_at(data, regAddress);
+		char* p= XVector_at_base(data, regAddress);
 		for (size_t i=0; i < regCount* REGISTERSIZE; i++)
 		{
 			p[i] = writeArray[i];
@@ -74,7 +74,7 @@ bool XModbusRegisterHandler_read(XModbusRegisterHandler* regFunc, uint16_t regAd
 		return false;
 	
 	XVector* data = regFunc->parent.data;
-	uint32_t dataSize = XVector_size_base(data);
+	uint32_t dataSize = XVector_getSize_base(data);
 	//检查寄存器地址和数量是否合法
 	if (dataSize < (regAddress+ regCount))
 		return false;
@@ -90,7 +90,7 @@ uint16_t* XModbusRegisterHandler_at(XModbusRegisterHandler* regFunc, uint16_t re
 {
 	if (regFunc == NULL || regFunc->parent.data == NULL);
 		return NULL;
-	return XVector_at(regFunc->parent.data, regAddress);
+	return XVector_at_base(regFunc->parent.data, regAddress);
 }
 
 XModbusException XModbusRegisterHandler_0x03_RTU_masterRecvHandCallFunc(XModbus* modbus, XModbusFrame* frameData, XModbusFunctionHandler* FunctionHandler)
@@ -128,7 +128,7 @@ XModbusException XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc(XModbus* 
 	XVector* data = regFunc->parent.data;//寄存器数据
 	if ((((rtu->regAddress) + (rtu->regCount)) <= XContainerSize(data)) && ((rtu->regCount) > 0))
 	{
-		void* readStart = XVector_at(data, rtu->regAddress);//寄存器数据缓冲区
+		void* readStart = XVector_at_base(data, rtu->regAddress);//寄存器数据缓冲区
 		XModbusFrameRTU_setFrameData_0x03_reply(sendFrame, rtu->address, readStart, rtu->regCount);
 	}
 	else
@@ -152,7 +152,7 @@ XModbusException XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbus* 
 	XVector* data = regFunc->parent.data;//寄存器数据
 	if ((((rtu->regAddress) + (rtu->regCount)) <= XContainerSize(data)) && ((rtu->regCount) > 0))
 	{
-		void* readStart = XVector_at(data, rtu->regAddress);//寄存器数据缓冲区
+		void* readStart = XVector_at_base(data, rtu->regAddress);//寄存器数据缓冲区
 		XModbusFrameRTU_setFrameData_0x04_reply(sendFrame, rtu->address, readStart, rtu->regCount);
 	}
 	else
@@ -187,7 +187,7 @@ XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbus* 
 	XModbusFrame* sendFrame = XModbusFrame_new();
 	if (rtu->data != NULL)
 	{
-		if (XModbusRegisterHandler_write_uint16_t(regFunc, rtu->regAddress, XVector_At(rtu->data, 0, uint16_t)))
+		if (XModbusRegisterHandler_write_uint16_t(regFunc, rtu->regAddress, XVector_At_Base(rtu->data, 0, uint16_t)))
 		{//写入成功 将数据帧再次发送回去
 			XVector_swap_base(recvFrame->frameData, sendFrame->frameData);
 		}
@@ -221,8 +221,8 @@ XModbusException XModbusRegisterHandler_0x10_RTU_slaveRecvHandCallFunc(XModbus* 
 	XModbusFrame* sendFrame = XModbusFrame_new();
 	if (rtu->data!=NULL)
 	{
-		void* readStart = XVector_at(data, regAddress);//寄存器数据缓冲区
-		memcpy(readStart, XVector_front(rtu->data), XContainerSize(rtu->data));//写入数据
+		void* readStart = XVector_at_base(data, regAddress);//寄存器数据缓冲区
+		memcpy(readStart, XVector_front_base(rtu->data), XContainerSize(rtu->data));//写入数据
 		XModbusFrameRTU_setFrameData_0x10_reply(sendFrame, rtu->regAddress, regAddress, regCount);
 	}
 	else

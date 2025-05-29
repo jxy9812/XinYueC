@@ -88,7 +88,7 @@ void VXPriorityQueue_push(XPriorityQueue* this_queue, void* LpValue)
 {
 	if (ISNULL(this_queue, "")|| ISNULL(LpValue, ""))
 		return ;
-	XVector_push_back(this_queue, LpValue);
+	XVector_push_back_base(this_queue, LpValue);
 	size_t size = XContainerSize(this_queue) - 1;
 	if (size > 0)//一个元素不用调整
 		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->m_compare);
@@ -114,6 +114,6 @@ void* VXPriorityQueue_top(XPriorityQueue* this_queue)
 {
 	if (ISNULL(this_queue, ""))
 		return NULL;
-	return  XVector_front(this_queue);//指向数组的开始
+	return  XVector_front_base(this_queue);//指向数组的开始
 }
 #endif

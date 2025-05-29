@@ -27,7 +27,7 @@ void XMapAndXVectorFindTest()
 	int count = 1000000;//测试数据量
 	for (size_t i = 0; i < count; i++)
 	{
-		XVector_push_back(VArray,&i);
+		XVector_push_back_base(VArray,&i);
 	}
 	printf("打乱前\n");
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
@@ -35,7 +35,7 @@ void XMapAndXVectorFindTest()
 	printf("打乱后\n");
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
 	printf("使用排序后\n");
-	XVector_sort(VArray,XLess_int);
+	XVector_sort_base(VArray,XLess_int);
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
 
 	XMap* map = XMap_new(sizeof(size_t), sizeof(size_t),XEquality_int,XLess_int);
@@ -45,7 +45,7 @@ void XMapAndXVectorFindTest()
 	//性能测试
 	size_t findNum = count / 2;
 	clock_t vector_start = clock();
-	size_t* Vret=XVector_find(VArray, &findNum);
+	size_t* Vret=XVector_find_base(VArray, &findNum);
 	clock_t vector_end = clock();
 	printf("XVector查询数据:%d 用时%dms\n", *Vret, vector_end- vector_start);
 

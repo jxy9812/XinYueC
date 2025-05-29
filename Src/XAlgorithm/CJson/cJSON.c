@@ -1310,7 +1310,7 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
     unsigned char *printed = NULL;
 
     memset(buffer, 0, sizeof(buffer));
-    XVector_resize(str, default_buffer_size);
+    XVector_resize_base(str, default_buffer_size);
     /* create buffer */
     buffer->buffer = XContainerDataPtr(str);
     buffer->length = default_buffer_size;
@@ -2873,28 +2873,28 @@ CJSON_PUBLIC(cJSON*) cJSON_CreateIntArray_XVector_int(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return cJSON_CreateIntArray(XContainerDataPtr(vector), XVector_size_base(vector));
+    return cJSON_CreateIntArray(XContainerDataPtr(vector), XVector_getSize_base(vector));
 }
 
 CJSON_PUBLIC(cJSON*) cJSON_CreateFloatArray_XVector_float(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return  cJSON_CreateFloatArray(XContainerDataPtr(vector), XVector_size_base(vector));
+    return  cJSON_CreateFloatArray(XContainerDataPtr(vector), XVector_getSize_base(vector));
 }
 
 CJSON_PUBLIC(cJSON*) cJSON_CreateDoubleArray_XVector_double(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return cJSON_CreateDoubleArray(XContainerDataPtr(vector), XVector_size_base(vector));
+    return cJSON_CreateDoubleArray(XContainerDataPtr(vector), XVector_getSize_base(vector));
 }
 
 CJSON_PUBLIC(cJSON*) cJSON_CreateStringArray_XVector_char(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return cJSON_CreateStringArray(XContainerDataPtr(vector), XVector_size_base(vector));
+    return cJSON_CreateStringArray(XContainerDataPtr(vector), XVector_getSize_base(vector));
 }
 
 #endif

@@ -17,7 +17,7 @@ static void XEventQueue_defaultConfigFree(XEventQueue* queue)
 {
 	if (queue&&queue->queue)
 	{
-		XQueue_free(queue->queue);
+		XQueue_free_base(queue->queue);
 		queue->queue = NULL;
 		XMemory_free(queue);
 	}
@@ -26,7 +26,7 @@ static bool XEventQueue_defaultConfigPush(XEventQueue* queue, XEventQueueEventTy
 {
 	if (queue && queue->queue)
 	{
-		XQueue_Push(queue->queue, XEventQueueEventType,event);
+		XQueue_Push_Base(queue->queue, XEventQueueEventType,event);
 		return true;
 	}
 	return false;
@@ -36,7 +36,7 @@ static XEventQueueEventType XEventQueue_defaultConfigTop(XEventQueue* queue)
 	assert(queue && queue->queue);
 	//if (queue && queue->queue)
 	{
-		return XQueue_Top(queue->queue, XEventQueueEventType);
+		return XQueue_Top_Base(queue->queue, XEventQueueEventType);
 	}
 	//return false;
 }
@@ -44,7 +44,7 @@ static bool XEventQueue_defaultConfigPop(XEventQueue* queue)
 {
 	if (queue && queue->queue)
 	{
-		XQueue_pop(queue->queue);
+		XQueue_pop_base(queue->queue);
 		return true;
 	}
 	return false;
@@ -53,7 +53,7 @@ static bool XEventQueue_defaultConfigEmpty(XEventQueue* queue)
 {
 	if (queue && queue->queue)
 	{
-		return XQueue_isEmpty(queue->queue);
+		return XQueue_isEmpty_base(queue->queue);
 	}
 	return true;
 }
@@ -61,7 +61,7 @@ static bool XEventQueue_defaultConfigEmpty(XEventQueue* queue)
 static void XEventQueue_defaultConfigClear(XEventQueue* queue)
 {
 	if (queue && queue->queue)
-		XQueue_clear(queue->queue);
+		XQueue_clear_base(queue->queue);
 }
 bool XEventQueue_defaultConfigInit(XEventQueue* queue)
 {

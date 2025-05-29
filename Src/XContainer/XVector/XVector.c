@@ -21,7 +21,7 @@ void XVector_init(XVector* this_vector,size_t typeSize )
 	this_vector->m_equality = NULL;
 }
 
-void XVector_resize(XVector* this_vector, size_t size)
+void XVector_resize_base(XVector* this_vector, size_t size)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -29,7 +29,7 @@ void XVector_resize(XVector* this_vector, size_t size)
 	XClassGetVirtualFunc(this_vector, EXVector_Resize, funcPtr)(this_vector, size);
 }
 
-void XVector_push_front(XVector* this_vector, void* LpValue)
+void XVector_push_front_base(XVector* this_vector, void* LpValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -37,7 +37,7 @@ void XVector_push_front(XVector* this_vector, void* LpValue)
 	XClassGetVirtualFunc(this_vector, EXVector_Push_Front, funcPtr)(this_vector, LpValue);
 }
 
-void XVector_push_back(XVector* this_vector, void* LpValue)
+void XVector_push_back_base(XVector* this_vector, void* LpValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -45,7 +45,7 @@ void XVector_push_back(XVector* this_vector, void* LpValue)
 	XClassGetVirtualFunc(this_vector, EXVector_Push_Back, funcPtr)(this_vector, LpValue);
 }
 
-void XVector_insert(XVector* this_vector, int64_t index, const void* LpValue)
+void XVector_insert_base(XVector* this_vector, int64_t index, const void* LpValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -53,7 +53,7 @@ void XVector_insert(XVector* this_vector, int64_t index, const void* LpValue)
 	XClassGetVirtualFunc(this_vector, EXVector_Insert, funcPtr)(this_vector,index, LpValue);
 }
 
-void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n)
+void XVector_inserts_base(XVector* this_vector, int64_t index, void* LpValue, size_t n)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -61,7 +61,7 @@ void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t 
 	XClassGetVirtualFunc(this_vector, EXVector_Inserts, funcPtr)(this_vector, index, LpValue,n);
 }
 
-void XVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n)
+void XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -69,7 +69,7 @@ void XVector_insert_array(XVector* this_vector, int64_t index, const void* begin
 	XClassGetVirtualFunc(this_vector, EXVector_Insert_Array, funcPtr)(this_vector, index, begin, n);
 }
 
-void XVector_append_array(XVector* this_vector, const void* begin, size_t n)
+void XVector_append_array_base(XVector* this_vector, const void* begin, size_t n)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return;
@@ -77,7 +77,7 @@ void XVector_append_array(XVector* this_vector, const void* begin, size_t n)
 	XClassGetVirtualFunc(this_vector, EXVector_append_Array, funcPtr)(this_vector, begin, n);
 }
 
-void XVector_pop_front(XVector* this_vector)
+void XVector_pop_front_base(XVector* this_vector)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -85,7 +85,7 @@ void XVector_pop_front(XVector* this_vector)
 	XClassGetVirtualFunc(this_vector, EXVector_Pop_Front, funcPtr)(this_vector);
 }
 
-void XVector_pop_back(XVector* this_vector)
+void XVector_pop_back_base(XVector* this_vector)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -93,7 +93,7 @@ void XVector_pop_back(XVector* this_vector)
 	XClassGetVirtualFunc(this_vector, EXVector_Pop_Back, funcPtr)(this_vector);
 }
 
-void XVector_erase(XVector* this_vector, void* LpValue)
+void XVector_erase_base(XVector* this_vector, void* LpValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -101,7 +101,7 @@ void XVector_erase(XVector* this_vector, void* LpValue)
 	XClassGetVirtualFunc(this_vector, EXVector_Erase, funcPtr)(this_vector,LpValue);
 }
 
-void XVector_remove(XVector* this_vector, int64_t index, int64_t n)
+void XVector_remove_base(XVector* this_vector, int64_t index, int64_t n)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -117,7 +117,7 @@ void XVector_remove(XVector* this_vector, int64_t index, int64_t n)
 //	XClassGetVirtualFunc(this_vector, EXVector_Clear, funcPtr)(this_vector);
 //}
 
-void XVector_copy(XVector* this_One, const XVector* this_Two)
+void XVector_copy_base(XVector* this_One, const XVector* this_Two)
 {
 	if (ISNULL(this_One, "") || ISNULL(this_Two, ""))
 		return;
@@ -125,7 +125,7 @@ void XVector_copy(XVector* this_One, const XVector* this_Two)
 	XClassGetVirtualFunc(this_One, EXVector_Copy, funcPtr)(this_One, this_Two);
 }
 
-void XVector_rcopy(XVector* this_One, const XVector* this_Two)
+void XVector_rcopy_base(XVector* this_One, const XVector* this_Two)
 {
 	if (ISNULL(this_One, "") || ISNULL(this_Two, ""))
 		return;
@@ -133,7 +133,7 @@ void XVector_rcopy(XVector* this_One, const XVector* this_Two)
 	XClassGetVirtualFunc(this_One, EXVector_Rcopy, funcPtr)(this_One, this_Two);
 }
 
-void* XVector_at(const XVector* this_vector, int64_t index)
+void* XVector_at_base(const XVector* this_vector, int64_t index)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return NULL;
@@ -141,7 +141,7 @@ void* XVector_at(const XVector* this_vector, int64_t index)
 	return XClassGetVirtualFunc(this_vector, EXVector_At, funcPtr)(this_vector, index);
 }
 
-void* XVector_front(const XVector* this_vector)
+void* XVector_front_base(const XVector* this_vector)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return NULL;
@@ -149,7 +149,7 @@ void* XVector_front(const XVector* this_vector)
 	return XClassGetVirtualFunc(this_vector, EXVector_Front, funcPtr)(this_vector);
 }
 
-void* XVector_back(const XVector* this_vector)
+void* XVector_back_base(const XVector* this_vector)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return NULL;
@@ -157,7 +157,7 @@ void* XVector_back(const XVector* this_vector)
 	return XClassGetVirtualFunc(this_vector, EXVector_Back, funcPtr)(this_vector);
 }
 
-void* XVector_find(const XVector* this_vector,const void* findVal)
+void* XVector_find_base(const XVector* this_vector,const void* findVal)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return NULL;
@@ -165,7 +165,7 @@ void* XVector_find(const XVector* this_vector,const void* findVal)
 	return XClassGetVirtualFunc(this_vector, EXVector_Find, funcPtr)(this_vector,findVal);
 }
 
-void XVector_sort(XVector* this_vector, XCompare compare)
+void XVector_sort_base(XVector* this_vector, XCompare compare)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
@@ -183,12 +183,12 @@ void XVector_sort(XVector* this_vector, XCompare compare)
 //	return XContainerObject_isEmpty_base(this_vector);
 //}
 //
-//size_t XVector_size_base(const XVector* this_vector)
+//size_t XVector_getSize_base(const XVector* this_vector)
 //{
 //	return XContainerObject_getSize_base(this_vector);
 //}
 //
-//size_t XVector_capacity_base(const XVector* this_vector)
+//size_t XVector_getCapacity_base(const XVector* this_vector)
 //{
 //	return XContainerObject_getCapacity_base(this_vector);
 //}

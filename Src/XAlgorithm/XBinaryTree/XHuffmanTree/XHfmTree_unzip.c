@@ -16,7 +16,7 @@ static size_t readDictionaries(XHuffmanTree* tree, const char* data)
 		value->count = DictionData->count;
 		XVector* code= XVector_New(char);
 		value->code = code;
-		XVector_resize(code,codeSize);
+		XVector_resize_base(code,codeSize);
 		offset += sizeof(DictionaryData);//指向写入的哈夫曼编码
 		memcpy(XVector_begin(code), data + offset, codeSize);
 		offset += codeSize;//指向下一组数据
@@ -34,7 +34,7 @@ static bool writeUnZip(XVector* unzipData, XHfmNode*node)
 	//printf("%d ", XHfmTree_GetNodeData(node).ch);
 	if (XHfmTree_GetNodeData(node).code != NULL)//当前的节点有数据
 	{
-		XVector_push_back(unzipData, &XHfmTree_GetNodeData(node).ch);
+		XVector_push_back_base(unzipData, &XHfmTree_GetNodeData(node).ch);
 		return true;
 	}
 	return false;

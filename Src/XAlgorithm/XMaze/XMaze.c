@@ -62,9 +62,9 @@ XVector* XMaze_init(const size_t r, const size_t l)
 		for (size_t j = 0; j < l; j++)
 		{
 			int Sign = XMazeWall;
-			XVector_push_back(Lmaze, &Sign);
+			XVector_push_back_base(Lmaze, &Sign);
 		}
-		XVector_push_back(maze, &Lmaze);
+		XVector_push_back_base(maze, &Lmaze);
 	}
 	return maze;
 #else

@@ -5,7 +5,7 @@ void XCircularQueue_init(XCircularQueue* this_queue, size_t typeSize, size_t cou
 	if (ISNULL(this_queue, "") || ISNULL(typeSize, "") || ISNULL(count, ""))
 		return NULL;
 	XVector_init(this_queue, typeSize);
-	XVector_resize(this_queue,count);
+	XVector_resize_base(this_queue,count);
 	this_queue->m_autoExpansion = false;
 	this_queue->m_head = 0;
 	this_queue->m_tail = 0;

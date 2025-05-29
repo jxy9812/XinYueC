@@ -10,21 +10,21 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_r
 #if XStack_ON
 	XVector* vector = XVector_new(sizeof(struct XBTreeNode*));
 	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
-	XStack_push(stack, &this_root);
+	XStack_push_base(stack, &this_root);
 	struct XBTreeNode* currentNode = NULL;//当前节点指针
-	while (!XStack_isEmpty(stack))
+	while (!XStack_isEmpty_base(stack))
 	{
-		currentNode = *(struct XBTreeNode**)XStack_top(stack);
-		XStack_pop(stack);
+		currentNode = *(struct XBTreeNode**)XStack_top_base(stack);
+		XStack_pop_base(stack);
 		XBTreeNode* LChild = XBTree_GetLChild(currentNode);
 		XBTreeNode* RChild = XBTree_GetRChild(currentNode);
 		if (LChild != NULL)
-			XStack_push(stack, &LChild);
+			XStack_push_base(stack, &LChild);
 		if (RChild != NULL)
-			XStack_push(stack, &RChild);
-		XVector_push_back(vector, &currentNode);
+			XStack_push_base(stack, &RChild);
+		XVector_push_back_base(vector, &currentNode);
 	}
-	XStack_free(stack);
+	XStack_free_base(stack);
 	return vector;
 #else
 	IS_ON_DEBUG(XStack_ON);
@@ -38,22 +38,22 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_ro
 	XVector* vector = XVector_new(sizeof(struct XBTreeNode*));
 	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
 	struct XBTreeNode* currentNode = this_root;//当前节点指针
-	while (!XStack_isEmpty(stack)|| currentNode!=NULL)
+	while (!XStack_isEmpty_base(stack)|| currentNode!=NULL)
 	{
 		if (currentNode != NULL)
 		{
-			XStack_push(stack, &currentNode);
+			XStack_push_base(stack, &currentNode);
 			currentNode = XBTree_GetLChild(currentNode);
 		}
 		else
 		{
-			struct XBTreeNode*  XListNode = *(struct XBTreeNode**)XStack_top(stack);
-			XVector_push_back(vector, &XListNode);
+			struct XBTreeNode*  XListNode = *(struct XBTreeNode**)XStack_top_base(stack);
+			XVector_push_back_base(vector, &XListNode);
 			currentNode = XBTree_GetRChild(XListNode);
-			XStack_pop(stack);
+			XStack_pop_base(stack);
 		}
 	}
-	XStack_free(stack);
+	XStack_free_base(stack);
 	return vector;
 #else
 	IS_ON_DEBUG(XStack_ON);
@@ -67,24 +67,24 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_
 	XVector* vector = XVector_new( sizeof(struct XBTreeNode*));
 	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
 	XStack* stackTraversing = XStack_new(sizeof(struct XBTreeNode*));
-	XStack_push(stack, &this_root);
+	XStack_push_base(stack, &this_root);
 	struct XBTreeNode* currentNode = NULL;//当前节点指针
-	while (!XStack_isEmpty(stack))
+	while (!XStack_isEmpty_base(stack))
 	{
-		currentNode = *(struct XBTreeNode**)XStack_top(stack);
-		XStack_pop(stack);
-		XStack_push(stackTraversing, &currentNode);
+		currentNode = *(struct XBTreeNode**)XStack_top_base(stack);
+		XStack_pop_base(stack);
+		XStack_push_base(stackTraversing, &currentNode);
 		
 		XBTreeNode* LChild = XBTree_GetLChild(currentNode);
 		XBTreeNode* RChild = XBTree_GetRChild(currentNode);
 		if (LChild != NULL)
-			XStack_push(stack, &LChild);
+			XStack_push_base(stack, &LChild);
 		if (RChild != NULL)
-			XStack_push(stack, &RChild);
+			XStack_push_base(stack, &RChild);
 	}
-	XStack_free(stack);
+	XStack_free_base(stack);
 	XStackCopyXVector(stackTraversing, vector);
-	XStack_free(stackTraversing);
+	XStack_free_base(stackTraversing);
 	return vector;
 #else
 	IS_ON_DEBUG(XStack_ON);
@@ -119,7 +119,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 		XMemory_free(nodes);
 		return NULL;
 	}
-	XVector_resize(nodes->nodes, nodeCount);
+	XVector_resize_base(nodes->nodes, nodeCount);
 	XContainerSize(nodes->nodes) = nodeCount;
 	//申请数据数组
 	nodes->values = XVector_new(TypeSize);
@@ -129,7 +129,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 		XMemory_free(nodes);
 		return NULL;
 	}
-	XVector_resize(nodes->values, dataCount);
+	XVector_resize_base(nodes->values, dataCount);
 	XContainerSize(nodes->values) = dataCount;
 	return nodes;
 #else
@@ -157,8 +157,8 @@ const bool XBTree_insertData(struct XBTreeNode* this_root, const void* LPData, c
 		return false;
 	if (ISNULL(TypeSize, ""))
 		return false;
-	//XVector_insert(this_root->values,index, LPData);
-	void* data=XVector_at(this_root->values,index);
+	//XVector_insert_base(this_root->values,index, LPData);
+	void* data=XVector_at_base(this_root->values,index);
 	memcpy(data, LPData, TypeSize);
 	return true;
 #else
@@ -201,13 +201,13 @@ XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel)
 #if XVector_ON
 	if (ISNULL(this_root, ""))
 		return NULL;
-	size_t count = XVector_size_base(this_root->nodes);
+	size_t count = XVector_getSize_base(this_root->nodes);
 	if (nSel >= count)
 	{
 		DEBUG_PRINTF("nSel:%d>=总量:%d", nSel, count);
 		return;
 	}
-	return (XBTreeNode**)XVector_at(this_root->nodes, nSel);
+	return (XBTreeNode**)XVector_at_base(this_root->nodes, nSel);
 #else
 	IS_ON_DEBUG(XVector_ON);
 	return NULL;
@@ -219,13 +219,13 @@ void* XBTree_Getdata(XBTreeNode* this_root, const size_t nSel)
 #if XVector_ON
 	if (ISNULL(this_root, ""))
 		return NULL;
-	size_t count = XVector_size_base(this_root->values);
+	size_t count = XVector_getSize_base(this_root->values);
 	if (nSel >= count)
 	{
 		DEBUG_PRINTF("nSel:%d>=总量:%d", nSel, count);
 		return NULL;
 	}
-	return XVector_at(this_root->values, nSel);
+	return XVector_at_base(this_root->values, nSel);
 #else
 	IS_ON_DEBUG(XVector_ON);
 	return NULL;
@@ -255,24 +255,24 @@ const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root)
 		return 0;
 	size_t sum = 0;//一共释放了几个节点
 	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
-	XStack_push(stack,&this_root);
+	XStack_push_base(stack,&this_root);
 	XBTreeNode* currentNode = NULL;//当前节点指针
-	while (!XStack_isEmpty(stack))
+	while (!XStack_isEmpty_base(stack))
 	{
-		currentNode = *(struct XBTreeNode**)XStack_top(stack);
-		XStack_pop(stack);
+		currentNode = *(struct XBTreeNode**)XStack_top_base(stack);
+		XStack_pop_base(stack);
 		if (currentNode == NULL)
 			continue;
 		XVector_iterator* it = XVector_begin(currentNode->nodes);
 		it = XVector_iterator_add(currentNode->nodes, it);
 		for ( ; it != XVector_end(currentNode->nodes); it= XVector_iterator_add(currentNode->nodes,it))
 		{
-			XStack_push(stack, it);
+			XStack_push_base(stack, it);
 		}
 		XBTree_freeNode(currentNode,false);//释放当前节点
 		sum++;
 	}
-	XStack_free(stack);
+	XStack_free_base(stack);
 	return sum;
 #else
 	IS_ON_DEBUG(XStack_ON);

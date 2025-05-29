@@ -24,12 +24,12 @@ void XString_init(XString* this_string)
 
 void XString_resize(XString* this_string, size_t len)
 {
-	XVector_resize(this_string,len);
+	XVector_resize_base(this_string,len);
 }
 
 void XString_push_front(XString* this_string, char c)
 {
-	XVector_push_front(this_string,&c);
+	XVector_push_front_base(this_string,&c);
 }
 
 void XString_push_back(XString* this_string, char c)
@@ -102,7 +102,7 @@ size_t XString_size(const XString* this_string)
 		return 0;
 	typedef size_t (*funcPtr)(XString*);
 	return XClassGetVirtualFunc(this_string, EXString_Size, funcPtr)(this_string);
-	//XVector_size_base(this_string);
+	//XVector_getSize_base(this_string);
 }
 
 void XString_swap(XString* this_stringOne, XString* this_stringTwo)
@@ -133,7 +133,7 @@ void XString_clear(XString* this_string)
 
 char XString_at(const XString* this_string, int64_t index)
 {
-	return XVector_At(this_string,index,char);
+	return XVector_At_Base(this_string,index,char);
 }
 
 const char* XString_data(const XString* this_string)

@@ -42,7 +42,7 @@ XModbusErrorCode XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMo
 
     assert(func->IO_Port.writeData_funcPointer);
     modbus->recvBuffer = XVector_new(sizeof(char));
-    XVector_resize(modbus->recvBuffer ,MB_RECV_BUFFER_SIZE);
+    XVector_resize_base(modbus->recvBuffer ,MB_RECV_BUFFER_SIZE);
  
     modbus->recvHandleMaster = NULL;
 #if MB_CALIBRATION_TIMER_SETTINGS
@@ -161,8 +161,8 @@ XModbusErrorCode XModbus_disable(XModbus* modbus)
 static XModbusErrorCode XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
 {
     XModbusErrorCode error = MB_ENOERR;
-   /* ((char*)(XVector_begin(modbus->recvBuffer)))[XVector_size_base(modbus->recvBuffer)] = 0;
-    printf("数据:%s  大小:%d buff接收缓冲区大小:%d\n",XVector_begin(modbus->recvBuffer), XVector_size_base(modbus->recvBuffer), XVector_capacity_base(modbus->recvBuffer));*/
+   /* ((char*)(XVector_begin(modbus->recvBuffer)))[XVector_getSize_base(modbus->recvBuffer)] = 0;
+    printf("数据:%s  大小:%d buff接收缓冲区大小:%d\n",XVector_begin(modbus->recvBuffer), XVector_getSize_base(modbus->recvBuffer), XVector_getCapacity_base(modbus->recvBuffer));*/
     
     // 调用对应模式的接收函数，获取帧数据（地址、缓冲区、长度）
     XModbusFrame* recvFrame = XModbusFrame_new();
@@ -225,7 +225,7 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
     if (XModbus_isMaster(modbus)/*&& modbus->recvHandleMaster!=NULL*/)
     {
         uint16_t waitAddressCode= (address << 8 | code);
-        XModbusFrameDataRecvHandle** value=XVector_find(modbus->recvHandleMaster,&waitAddressCode);
+        XModbusFrameDataRecvHandle** value=XVector_find_base(modbus->recvHandleMaster,&waitAddressCode);
         //printf("value:%p\n",value);
         if (value)
         {
@@ -238,7 +238,7 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
             frame->recvHandle->pRecvHandCallFunc(modbus, frame);
             //释放一个资源
             XModbusFrameQueue_pop(modbus->recvFrameQueue);
-            XVector_erase(modbus->recvHandleMaster, value);
+            XVector_erase_base(modbus->recvHandleMaster, value);
             return;
         }
     }
@@ -270,7 +270,7 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
     //检查回调函数是否超时
     if (modbus->recvHandleMaster != NULL)
     {
-        XModbusFrameDataRecvHandle** Handle = XVector_front(modbus->recvHandleMaster);
+        XModbusFrameDataRecvHandle** Handle = XVector_front_base(modbus->recvHandleMaster);
         if (Handle != NULL)
         {//已经超时了
             if ((*Handle) != NULL)
@@ -280,12 +280,12 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
                     if ((*Handle)->pRecvHandCallFunc)
                         (*Handle)->pRecvHandCallFunc(modbus, NULL);
                     XMemory_free(*Handle);
-                    XVector_pop_front(modbus->recvHandleMaster);
+                    XVector_pop_front_base(modbus->recvHandleMaster);
                 }
             }
             else
             {
-                XVector_pop_front(modbus->recvHandleMaster);
+                XVector_pop_front_base(modbus->recvHandleMaster);
             }
         }
     }

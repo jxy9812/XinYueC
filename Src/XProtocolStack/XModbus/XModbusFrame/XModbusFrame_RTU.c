@@ -8,10 +8,10 @@
 //CRC16校验设置  其他数据必须都设置好了,并且预留了两字节的CRC空间
 static XModbusFrame_set16Data(XVector* v)
 {
-	size_t size = XVector_size_base(v) - MB_SER_PDU_SIZE_CRC;
+	size_t size = XVector_getSize_base(v) - MB_SER_PDU_SIZE_CRC;
 	//设置crc校验
 	uint16_t crc16 = XCrc_get16(XVector_begin(v), size);
-	XCrc_set16Data(XVector_at(v, size), crc16, 0);
+	XCrc_set16Data(XVector_at_base(v, size), crc16, 0);
 }
 //8字节数据帧设置
 static void setRtuDataFrame_8(XModbusFrame* frame, uint8_t address, uint8_t funcCode, uint16_t dataOne, uint16_t dataTwo)
@@ -23,9 +23,9 @@ static void setRtuDataFrame_8(XModbusFrame* frame, uint8_t address, uint8_t func
 	XModbusFrameRTU_initDataFrame(frame, address, funcCode, 2+2);
 	XVector* v = frame->frameData;
 	//第一个双字节数据
-	memcpy(XVector_at(v, 2), &dataOne, 2);
+	memcpy(XVector_at_base(v, 2), &dataOne, 2);
 	//设置寄存器数据
-	memcpy(XVector_at(v, 4), &dataTwo, 2);
+	memcpy(XVector_at_base(v, 4), &dataTwo, 2);
 
 	XModbusFrame_set16Data(v);
 	/*
@@ -47,9 +47,9 @@ static void setDataFrame_readCoils_reply(XModbusFrame* frame, uint8_t address, u
 	XModbusFrameRTU_initDataFrame(frame, address, funcCode, 1 + coilsSize);
 	XVector* v = frame->frameData;
 	//设置返回的字节数量
-	XVector_At(v, 2, uint8_t) = coilsSize;
+	XVector_At_Base(v, 2, uint8_t) = coilsSize;
 	if (coilsData > 0)
-		memcpy(XVector_at(v, 3), coilsData, coilsSize);
+		memcpy(XVector_at_base(v, 3), coilsData, coilsSize);
 	XModbusFrame_set16Data(v);
 }
 //可变字节数据帧 读取寄存器 响应帧
@@ -62,10 +62,10 @@ static void setRtuDataFrame_readReg_reply(XModbusFrame* frame, uint8_t address, 
 	XModbusFrameRTU_initDataFrame(frame,address,funcCode, 1 + 2 * regCount);
 	XVector* v = frame->frameData;
 	//设置返回的字节数量
-	XVector_At(v, 2, uint8_t) = 2 * regCount;
+	XVector_At_Base(v, 2, uint8_t) = 2 * regCount;
 	//准备拷贝寄存器数据
 	if (regCount > 0)
-		memcpy(XVector_at(v, 3), regData, regCount * 2);
+		memcpy(XVector_at_base(v, 3), regData, regCount * 2);
 
 	XModbusFrame_set16Data(v);
 }
@@ -108,14 +108,14 @@ void XModbusFrameRTU_initDataFrame(XModbusFrame* frame, uint8_t address, uint8_t
 		frame->frameData = XVector_New(uint8_t);
 	XVector* v = frame->frameData;
 	//主机地址(1)+功能码(1)+数据(dataSIze)+crc16(2)
-	XVector_resize(v, MB_SER_PDU_PDU_OFF + 1 + dataSize + MB_SER_PDU_SIZE_CRC);
+	XVector_resize_base(v, MB_SER_PDU_PDU_OFF + 1 + dataSize + MB_SER_PDU_SIZE_CRC);
 	//frame->pduLength = 1 + dataSize;
-	//frame->pPduFramePos = XVector_at(v, 1);
+	//frame->pPduFramePos = XVector_at_base(v, 1);
 	//设置地址
-	XVector_At(v, 0, uint8_t) = address;
+	XVector_At_Base(v, 0, uint8_t) = address;
 	//frame->address = address;
 	//设置功能码
-	XVector_At(v, 1, uint8_t) = funcCode;
+	XVector_At_Base(v, 1, uint8_t) = funcCode;
 	//frame->funcCode = funcCode;
 	
 }
@@ -193,12 +193,12 @@ void XModbusFrameRTU_setFrameData_0x10_request(XModbusFrame* frame, uint8_t addr
 	XModbusFrameRTU_initDataFrame(frame, address, MB_FUNC_WRITE_MULTIPLE_REGISTERS, 2 + 2+ 2 * regCount);
 	XVector* v = frame->frameData;
 	//写入 寄存器起始地址
-	XVector_At(v,2, uint16_t)=SwapEndian16(regAddress,1);
+	XVector_At_Base(v,2, uint16_t)=SwapEndian16(regAddress,1);
 	//写入 寄存器数量
-	XVector_At(v, 4, uint16_t) = SwapEndian16(regCount, 1);
+	XVector_At_Base(v, 4, uint16_t) = SwapEndian16(regCount, 1);
 	//开始写入数据
 	if(regCount>0)
-		memcpy(XVector_at(v, 6 ), regData, 2 * regCount);
+		memcpy(XVector_at_base(v, 6 ), regData, 2 * regCount);
 	//CRC校验
 	XModbusFrame_set16Data(v);
 }
@@ -219,14 +219,14 @@ void XModbusFrameRTU_setFrameData_0x0F_request(XModbusFrame* frame, uint8_t addr
 	XModbusFrameRTU_initDataFrame(frame, address, MB_FUNC_WRITE_MULTIPLE_COILS, 2 + 2 + 1+ coilsSize);
 	XVector* v = frame->frameData;
 	//写入 寄存器起始地址
-	XVector_At(v, 2, uint16_t) = SwapEndian16(coilsAddress, 1);
+	XVector_At_Base(v, 2, uint16_t) = SwapEndian16(coilsAddress, 1);
 	//写入 寄存器数量
-	XVector_At(v, 4, uint16_t) = SwapEndian16(coilsCount, 1);
+	XVector_At_Base(v, 4, uint16_t) = SwapEndian16(coilsCount, 1);
 	//写入数据字节数
-	XVector_At(v, 6, uint8_t) = coilsSize;
+	XVector_At_Base(v, 6, uint8_t) = coilsSize;
 	//开始写入数据
 	if (coilsData > 0)
-		memcpy(XVector_at(v, 7), coilsData, coilsSize);
+		memcpy(XVector_at_base(v, 7), coilsData, coilsSize);
 	//CRC校验
 	XModbusFrame_set16Data(v);
 }
@@ -246,18 +246,18 @@ static void parseFrameData(XModbusFrame* frame, XVector* data)
 	if (frame->frameData == NULL)
 		return;
 	//开始解析RTU数据
-	size_t dataSize = XVector_size_base(data);
+	size_t dataSize = XVector_getSize_base(data);
 	uint8_t* pData = (uint8_t*)XVector_begin(data);
 	// 校验帧长度和CRC（最小长度4字节，CRC正确）
 	if ((dataSize >= MB_SER_PDU_SIZE_MIN) && (XCrc_get16(pData, dataSize) == 0)) {
 		//printf("校验通过\n");
-		XVector_copy(frame->frameData, data);
+		XVector_copy_base(frame->frameData, data);
 		if (frame->data == NULL)
 			frame->data = XModbusFrameRTU_new();
 		XModbusFrameRTU* rtu = (XModbusFrameRTU*)frame->data;
 		rtu->address = XModbusFrameRTU_parseAddress(frame);
 		rtu->funcCode = XModbusFrameRTU_parseFuncCode(frame);
-		rtu->crc16 = SwapEndian16(XVector_At(data, dataSize - MB_SER_PDU_SIZE_CRC, uint16_t), 0);
+		rtu->crc16 = SwapEndian16(XVector_At_Base(data, dataSize - MB_SER_PDU_SIZE_CRC, uint16_t), 0);
 	}
 	else
 	{
@@ -274,7 +274,7 @@ static void XModbusFrameRTU_parse0x01_reply(XModbusFrameRTU* rtu, XVector* frame
 {
 	if (rtu == NULL || frameData == NULL)
 		return;
-	uint8_t len = XVector_At(frameData,2,uint8_t);//获取返回的字节数
+	uint8_t len = XVector_At_Base(frameData,2,uint8_t);//获取返回的字节数
 	XVector* data = rtu->data;
 	if (len)
 	{
@@ -283,8 +283,8 @@ static void XModbusFrameRTU_parse0x01_reply(XModbusFrameRTU* rtu, XVector* frame
 		data = rtu->data;
 		if (data == NULL)
 			assert(data);//新建数组失败了
-		XVector_resize(data, len);
-		memcpy(XVector_begin(data), XVector_at(frameData, 3), len);//拷贝线圈状态数据
+		XVector_resize_base(data, len);
+		memcpy(XVector_begin(data), XVector_at_base(frameData, 3), len);//拷贝线圈状态数据
 	}
 	else if (data != NULL)//释放数据
 	{
@@ -298,8 +298,8 @@ static void XModbusFrameRTU_parse0x01_request(XModbusFrameRTU* rtu, XVector* fra
 {
 	if (rtu == NULL || frameData == NULL)
 		return;
-	rtu->coilsAddress= SwapEndian16(XVector_At(frameData, 2, uint16_t),1);//获取起始线圈地址
-	rtu->coilsCount= SwapEndian16(XVector_At(frameData, 4, uint16_t), 1);//获取线圈数量
+	rtu->coilsAddress= SwapEndian16(XVector_At_Base(frameData, 2, uint16_t),1);//获取起始线圈地址
+	rtu->coilsCount= SwapEndian16(XVector_At_Base(frameData, 4, uint16_t), 1);//获取线圈数量
 }
 //解析0x02响应头
 static void XModbusFrameRTU_parse0x02_reply(XModbusFrameRTU* rtu, XVector* frameData)
@@ -336,14 +336,14 @@ static void XModbusFrameRTU_parse0x05_reply(XModbusFrameRTU* rtu, XVector* frame
 {
 	if (rtu == NULL || frameData == NULL)
 		return;
-	rtu->coilsAddress = SwapEndian16(XVector_At(frameData, 2, uint16_t), 1);
+	rtu->coilsAddress = SwapEndian16(XVector_At_Base(frameData, 2, uint16_t), 1);
 	if (rtu->data == NULL)
 		rtu->data = XVector_New(uint8_t);
 	XVector* data = rtu->data;
 	if (data == NULL)
 		assert(data);//新建数组失败了
-	XVector_resize(data, 2);
-	memcpy(XVector_begin(data), XVector_at(frameData, 4), 2);//拷贝寄存器数据
+	XVector_resize_base(data, 2);
+	memcpy(XVector_begin(data), XVector_at_base(frameData, 4), 2);//拷贝寄存器数据
 }
 //解析0x05请求头
 static void XModbusFrameRTU_parse0x05_request(XModbusFrameRTU* rtu, XVector* frameData)
@@ -370,9 +370,9 @@ static void XModbusFrameRTU_parse0x10_request(XModbusFrameRTU* rtu, XVector* fra
 {
 	if (rtu == NULL || frameData == NULL)
 		return;
-	rtu->regAddress = SwapEndian16(XVector_At(frameData, 2, uint16_t), 1);//获取寄存器地址
-	rtu->regCount = SwapEndian16(XVector_At(frameData, 4, uint16_t), 1);//获取寄存器数量
-	uint8_t len = XVector_At(frameData, 6, uint8_t);//获取返回的字节数
+	rtu->regAddress = SwapEndian16(XVector_At_Base(frameData, 2, uint16_t), 1);//获取寄存器地址
+	rtu->regCount = SwapEndian16(XVector_At_Base(frameData, 4, uint16_t), 1);//获取寄存器数量
+	uint8_t len = XVector_At_Base(frameData, 6, uint8_t);//获取返回的字节数
 	if ((len > 0) && (((rtu->regCount) * 2) == len))
 	{
 		if (rtu->data == NULL)
@@ -380,8 +380,8 @@ static void XModbusFrameRTU_parse0x10_request(XModbusFrameRTU* rtu, XVector* fra
 		XVector* data = rtu->data;
 		if (data == NULL)
 			assert(data);//新建数组失败了
-		XVector_resize(data, len);
-		memcpy(XVector_begin(data), XVector_at(frameData, 7), len);//拷贝寄存器数据
+		XVector_resize_base(data, len);
+		memcpy(XVector_begin(data), XVector_at_base(frameData, 7), len);//拷贝寄存器数据
 	}
 	else if(rtu->data!=NULL)
 	{
@@ -404,7 +404,7 @@ static void XModbusFrameRTU_parse0x8X_reply(XModbusFrameRTU* rtu, XVector* frame
 {
 	if (rtu == NULL || frameData == NULL)
 		return;
-	rtu->exception = XVector_At(frameData, 2, uint8_t);//获取错误码
+	rtu->exception = XVector_At_Base(frameData, 2, uint8_t);//获取错误码
 }
 void XModbusFrameRTU_setFrameData_0x8X_reply(XModbusFrame* frame, uint8_t address, uint8_t funcCode, XModbusException exception)
 {
@@ -414,7 +414,7 @@ void XModbusFrameRTU_setFrameData_0x8X_reply(XModbusFrame* frame, uint8_t addres
 	//数据(2)+数据(2)
 	XModbusFrameRTU_initDataFrame(frame, address, funcCode| MB_FUNC_ERROR,1);
 	XVector* v = frame->frameData;
-	XVector_At(v,2,uint8_t)= exception;
+	XVector_At_Base(v,2,uint8_t)= exception;
 	XModbusFrame_set16Data(v);
 }
 void XModbusFrameRTU_parseData_request(XModbusFrame* frame, XVector* frameData)
@@ -468,14 +468,14 @@ void XModbusFrameRTU_parseData_reply(XModbusFrame* frame, XVector* frameData)
 uint8_t XModbusFrameRTU_parseAddress(XModbusFrame* frame)
 {
 	if (frame && !XVector_isEmpty_base(frame->frameData))
-		return XVector_At(frame->frameData, 0, uint8_t);
+		return XVector_At_Base(frame->frameData, 0, uint8_t);
 	return 0xFF;
 }
 
 uint8_t XModbusFrameRTU_parseFuncCode(XModbusFrame* frame)
 {
 	if (frame && !XVector_isEmpty_base(frame->frameData))
-		return XVector_At(frame->frameData, MB_SER_PDU_PDU_OFF, uint8_t);
+		return XVector_At_Base(frame->frameData, MB_SER_PDU_PDU_OFF, uint8_t);
 	return 0;
 }
 

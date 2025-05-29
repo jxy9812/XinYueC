@@ -95,9 +95,9 @@ size_t XString_XVectorNsel(const struct XString* this_XString, const size_t nSel
 		return -1;
 	struct XVector* v = ((struct XString*)this_XString)->m_data;
 	size_t VnSel = -1;
-	for (size_t i = 0; i < XVector_size_base(v) - 1; i++)
+	for (size_t i = 0; i < XVector_getSize_base(v) - 1; i++)
 	{
-		char c = *((char*)XVector_at(v, i));
+		char c = *((char*)XVector_at_base(v, i));
 		if (XString_isChinese(c))
 			++i;
 		++VnSel;
@@ -120,10 +120,10 @@ bool XString_eraseOne(struct XString* this_XString, const int nSel)
 		return false;
 
 	int offset = 0;
-	if (XString_isChinese(*((char*)XVector_at(v, VnSel))))//是中文
+	if (XString_isChinese(*((char*)XVector_at_base(v, VnSel))))//是中文
 		++offset;
 	//XVector_erase_int(v, VnSel - offset, VnSel);
-	XVector_remove(v, VnSel - offset, offset);
+	XVector_remove_base(v, VnSel - offset, offset);
 	((struct XString*)this_XString)->m_size -= 1;
 	return true;
 }
@@ -153,10 +153,10 @@ void XString_clear(struct XString* this_XString)
 	if (ISNULL(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	int right = XVector_size_base(v) - 2;
+	int right = XVector_getSize_base(v) - 2;
 	if (right >= 0)
 		//XVector_erase_int(v, 0, right);
-		XVector_remove(v, 0, right);
+		XVector_remove_base(v, 0, right);
 	((struct XString*)this_XString)->m_size = 0;
 }
 
@@ -244,7 +244,7 @@ void XString_append(struct XString* this_XString, const char* str)
 	if (ISNULL(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	XString_insert(this_XString, XVector_size_base(v) - 1, str);
+	XString_insert(this_XString, XVector_getSize_base(v) - 1, str);
 }
 // 赋值
 void XString_assign(struct XString* this_XString, const char* str)
@@ -265,7 +265,7 @@ void XString_insert(struct XString* this_XString, const int nSel, const char* st
 	struct XString* string = (struct XString*)this_XString;
 	struct XVector* v = string->m_data;
 
-	//XVector_insert(v, nSel, str, str + strlen(str) - 1);
+	//XVector_insert_base(v, nSel, str, str + strlen(str) - 1);
 	((struct XString*)this_XString)->m_size += XString_charNumber(str);
 }
 
@@ -291,7 +291,7 @@ int XString_size(const struct XString* this_XString)
 //	if (isObjectNULL(this_XString, "XString_capacity"))
 //		return NULL;
 //	struct XString* string = (struct XString*)this_XString;
-//	return XVector_capacity_base(string->m_data);
+//	return XVector_getCapacity_base(string->m_data);
 //}
 //交换
 void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringTwo)
@@ -319,7 +319,7 @@ char XString_at(const XString* this_XString, int nSel)
 	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
-	return *((char*)XVector_at(string->m_data, nSel));
+	return *((char*)XVector_at_base(string->m_data, nSel));
 }
 // 返回字符串
 char* XString_data(const XString* this_XString)
@@ -362,7 +362,7 @@ void VXString_insert(XString* this_string, const int64_t index, const char* stri
 		return;
 	if (index<0 || index>=XContainerSize(this_string))
 		return;
-	//void XVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n);
+	//void XVector_inserts_base(XVector* this_vector, int64_t index, void* LpValue, size_t n);
 	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
 	XVtableGetFunc(XVectorVtable, EXVector_Inserts, funcPtr)(this_string,index,string,strlen(string));
 }
@@ -379,7 +379,7 @@ void VXString_pop_back(XString* this_string)
 {
 	if (VXString_empty(this_string))
 		return;
-	//void XVector_remove(XVector* this_vector, int64_t index, int64_t n);
+	//void XVector_remove_base(XVector* this_vector, int64_t index, int64_t n);
 	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
 	XVtableGetFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string,XContainerSize(this_string)-2,1);
 }

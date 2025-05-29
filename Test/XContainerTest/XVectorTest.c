@@ -22,28 +22,28 @@ void XVectorTest()
 	printf("XVector 测试\n");
 	XVector* v = XVector_New(int);
 	v->m_equality = XEquality_int;
-	//XVector_resize(v,11);
+	//XVector_resize_base(v,11);
 	int arr[]={100,123,456,4,8496,3,321,23,3,132,0};
 	
 	
 	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
 	{
 		int n = arr[i];
-		XVector_Push_Front(v,int,arr[i]);
+		XVector_Push_Front_Base(v,int,arr[i]);
 	}
-	//printf("当前Size:%d\n",XVector_size_base(v)); 
-	XVector_append_array(v, arr, sizeof(arr) / sizeof(arr[0]));
+	//printf("当前Size:%d\n",XVector_getSize_base(v)); 
+	XVector_append_array_base(v, arr, sizeof(arr) / sizeof(arr[0]));
 	/*printf("插入数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
-	XVector_remove(v, 2, 10);
+	XVector_remove_base(v, 2, 10);
 	printf("删除数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
-	XVector_sort(v, XLess_int);*/
+	XVector_sort_base(v, XLess_int);*/
 	printf("排序数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	int findVal = 100;
-	int* findRet=XVector_find(v, &findVal);
+	int* findRet=XVector_find_base(v, &findVal);
 	if(findRet!=NULL)
 	printf("找到的数字:%d\n", *findRet);
 	XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
-	XVector_erase(v,findRet); 
+	XVector_erase_base(v,findRet); 
 	XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	XVector_free_base(v);
 
