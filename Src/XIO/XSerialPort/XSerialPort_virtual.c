@@ -19,7 +19,7 @@ void XSerialPort_class_init()
 	XSerialPortVtable = XVtable_new();
 #else
 	XSerialPortVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+	XVtable_init_stack(&vtable, vtable_data, XSERIALPORT_VTABLE_SIZE);
 #if SHOWCONTAINERSIZE
 	printf("XSerialPort size:%d\n", XVtable_size(XSerialPortVtable));
 #endif

@@ -200,7 +200,7 @@ void XModbusTest_threadReceiveCreate(XModbus* modbus)
         10,           // 触发间隔毫秒
         1,             // 精度1毫秒
         TimerCallbackReceive, // 回调函数
-        modbus,             // 不传递用户数据
+        modbus->ioDevice,             // 不传递用户数据
         TIME_PERIODIC  // 周期性触发
     );
 #endif // 0

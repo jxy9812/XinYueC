@@ -17,7 +17,8 @@ void XSerialPort_init(XSerialPort* serial, XSerialPort_PortFuncInit* port)
 {
 	if (serial == NULL || port == NULL)
 		return ;
-	memset(((XIODevice*)serial)+1, 0, sizeof(XSerialPort)-sizeof(XIODevice));
+	memset(serial,0,sizeof(XSerialPort));
+	//memset(((XIODevice*)serial)+1, 0, sizeof(XSerialPort)-sizeof(XIODevice));
 	XIODevice_init(serial, port);
 	XSerialPort_class_init();
 	XClassGetVtable(serial) = XSerialPortVtable;

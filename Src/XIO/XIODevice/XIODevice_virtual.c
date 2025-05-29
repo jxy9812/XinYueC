@@ -32,9 +32,16 @@ void XIODevice_class_init()
 	XIODeviceVtable = XVtable_new();
 #else
 	XIODeviceVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+	XVtable_init_stack(XIODeviceVtable, vtable_data, XIODEVICE_VTABLE_SIZE);
 #endif
-	void* table[] = { VXIODevice_free,VXIODevice_isOpen,VXIODevice_open,VXIODevice_write,VXIODevice_writeFull,VXIODevice_read,VXIODevice_receive,VXIODevice_close, VXIODevice_poll,VXIODevice_setWriteBuffer,VXIODevice_setReadBuffer,VXIODevice_setDevice };
+	void* table[] = { 
+		VXIODevice_free,VXIODevice_isOpen,
+		VXIODevice_open,VXIODevice_write,
+		VXIODevice_writeFull,VXIODevice_read,
+		VXIODevice_receive,VXIODevice_close, 
+		VXIODevice_poll,VXIODevice_setWriteBuffer,
+		VXIODevice_setReadBuffer,VXIODevice_setDevice 
+	};
 	XVtable_append_array(XIODeviceVtable, table, sizeof(table) / sizeof(table[0]));
 #if SHOWCONTAINERSIZE
 	printf("XIODevice size:%d\n", XVtable_size(XIODeviceVtable));
