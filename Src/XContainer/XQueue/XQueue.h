@@ -47,9 +47,9 @@ void* XQueue_top_base(XQueue* this_queue);
 //检测是否为空，空为真 O(1)
 #define XQueue_isEmpty_base			XContainerObject_isEmpty_base
 //返回元素的个数 O(1)
-#define XQueue_size_base			XContainerObject_getSize_base
+#define XQueue_getSize_base			XContainerObject_getSize_base
 //返回当前向量所能容纳的最大元素个数
-#define XQueue_capacity_base		XContainerObject_getCapacity_base
+#define XQueue_getCapacity_base		XContainerObject_getCapacity_base
 //交换两个同类型向量的数据
 #define XQueue_swap_base			XContainerObject_swap_base
 //返回元素类型字节大小

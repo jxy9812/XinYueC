@@ -128,14 +128,14 @@ bool XString_eraseOne(struct XString* this_XString, const int nSel)
 	return true;
 }
 //尾删
-void XString_pop_back(struct XString* this_XString)
+void XString_pop_back_base(struct XString* this_XString)
 {
 	if (ISNULL(this_XString, "")))
 		return;
-	XString_eraseOne(this_XString, XString_size(this_XString) - 1);
+	XString_eraseOne(this_XString, XString_getSize_base(this_XString) - 1);
 }
 //删除索引处开始的n个字符
-void XString_erase(struct XString* this_XString, const int nSel, const int n)
+void XString_erase_base(struct XString* this_XString, const int nSel, const int n)
 {
 	if (ISNULL(this_XString, "")))
 		return;
@@ -148,7 +148,7 @@ void XString_erase(struct XString* this_XString, const int nSel, const int n)
 	}
 }
 //清空字符串
-void XString_clear(struct XString* this_XString)
+void XString_clear_base(struct XString* this_XString)
 {
 	if (ISNULL(this_XString, "")))
 		return;
@@ -239,24 +239,24 @@ int XString_find_last_not_of(const struct XString* this_XString, const char* sub
 }
 
 //尾插
-void XString_append(struct XString* this_XString, const char* str)
+void XString_append_base(struct XString* this_XString, const char* str)
 {
 	if (ISNULL(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	XString_insert(this_XString, XVector_getSize_base(v) - 1, str);
+	XString_insert_base(this_XString, XVector_getSize_base(v) - 1, str);
 }
 // 赋值
-void XString_assign(struct XString* this_XString, const char* str)
+void XString_assign_base(struct XString* this_XString, const char* str)
 {
 	if (ISNULL(this_XString, "")))
 		return;
 	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	XString_clear(this_XString);
-	XString_insert(this_XString, 0, str);
+	XString_clear_base(this_XString);
+	XString_insert_base(this_XString, 0, str);
 }
 // 第索引处开始插入字符串
-void XString_insert(struct XString* this_XString, const int nSel, const char* str)
+void XString_insert_base(struct XString* this_XString, const int nSel, const char* str)
 {
 	if (ISNULL(this_XString, "")))
 		return;
@@ -270,7 +270,7 @@ void XString_insert(struct XString* this_XString, const int nSel, const char* st
 }
 
 //判断函数
-bool XString_isEmpty(const struct XString* this_XString)
+bool XString_isEmpty_base(const struct XString* this_XString)
 {
 	if (ISNULL(this_XString, "")))
 		return NULL;
@@ -278,7 +278,7 @@ bool XString_isEmpty(const struct XString* this_XString)
 	return string->m_size == 0;
 }
 //返回当前元素大小
-int XString_size(const struct XString* this_XString)
+int XString_getSize_base(const struct XString* this_XString)
 {
 	if (ISNULL(this_XString, "")))
 		return NULL;
@@ -294,7 +294,7 @@ int XString_size(const struct XString* this_XString)
 //	return XVector_getCapacity_base(string->m_data);
 //}
 //交换
-void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringTwo)
+void XString_swap_base(struct XString* this_XStringOne, struct XString* this_XStringTwo)
 {
 	if (ISNULL(this_XStringOne, "")) || ArgIsNULL(isNULLInfo(this_XStringTwo, "")))
 		return NULL;
@@ -304,7 +304,7 @@ void XString_swap(struct XString* this_XStringOne, struct XString* this_XStringT
 	XSwap(&stringOne->m_size, &stringTwo->m_size, sizeof(size_t));
 }
 //释放容器
-void XString_free(const struct XString* this_XString)
+void XString_free_base(const struct XString* this_XString)
 {
 	if (ISNULL(this_XString, "")))
 		return NULL;
@@ -350,10 +350,11 @@ void VXString_append(XString* this_string, const char* string)
 	if (ISNULL(this_string, "") || ISNULL(string, ""))
 		return;
 	size_t len = strlen(string);
+	size_t currentSize = XContainerSize(this_string);
 	if(XContainerSize(this_string)+ len +1>XContainerCapacity(this_string))
-		VXString_resize(this_string, VXString_size(this_string)+strlen(string));
+		VXString_resize(this_string, VXString_size(this_string)+strlen(string)+1);
 	strcat(XContainerDataPtr(this_string), string);
-	XContainerSize(this_string)+=len;
+	XContainerSize(this_string)= currentSize+len;
 }
 
 void VXString_insert(XString* this_string, const int64_t index, const char* string)

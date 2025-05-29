@@ -32,7 +32,7 @@ static void setRtuDataFrame_8(XModbusFrame* frame, uint8_t address, uint8_t func
 	XString* str = XModbusFrameRTU_to16HexString(frame);
 	printf("当前帧:%s\n", XString_c_str(str));
 	//            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
-	XString_free(str);
+	XString_free_base(str);
 	*/
 }
 //可变字节数据帧 读取线圈 响应帧
@@ -489,9 +489,9 @@ XString* XModbusFrameRTU_to16HexString(XModbusFrame* frame)
 		for (XVector_iterator* it = XVector_begin(vector); it != XVector_end(vector); it = XVector_iterator_add(vector, it))
 		{
 			sprintf(buff, "%02X ", *((uint8_t*)it));
-			XString_append(str, buff);
+			XString_append_base(str, buff);
 		}
-		XString_pop_back(str);
+		XString_pop_back_base(str);
 		return str;
 	}
 	return NULL;

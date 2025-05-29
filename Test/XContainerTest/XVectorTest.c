@@ -32,7 +32,8 @@ void XVectorTest()
 		XVector_Push_Front_Base(v,int,arr[i]);
 	}
 	//printf("当前Size:%d\n",XVector_getSize_base(v)); 
-	XVector_append_array_base(v, arr, sizeof(arr) / sizeof(arr[0]));
+	XVector_Push_Front_Base(v,int,9999);
+	//XVector_append_array_base(v, arr, sizeof(arr) / sizeof(arr[0]));
 	/*printf("插入数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	XVector_remove_base(v, 2, 10);
 	printf("删除数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");

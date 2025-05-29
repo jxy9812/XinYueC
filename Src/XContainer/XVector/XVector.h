@@ -67,7 +67,7 @@ void XVector_append_array_base(XVector* this_vector, const void* begin, size_t n
 void XVector_pop_front_base(XVector* this_vector);
 //删除向量中最后一个元素
 void XVector_pop_back_base(XVector* this_vector);
-//删除指针区间内的数据
+//删除指针处的数据(指针要在容器内)
 void XVector_erase_base(XVector* this_vector, void* LpValue);
 //删除数据 n<0 后面全部删除
 void XVector_remove_base(XVector* this_vector, int64_t index, int64_t n);

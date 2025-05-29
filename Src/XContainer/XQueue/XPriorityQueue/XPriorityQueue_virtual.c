@@ -11,15 +11,17 @@ static void VXPriorityQueue_push(XPriorityQueue* this_queue, void* LpValue);
 static void VXPriorityQueue_pop(XPriorityQueue* this_queue);
 // 返回优先队列堆顶元素
 static void* VXPriorityQueue_top(XPriorityQueue* this_queue);
+static bool VXPriorityQueue_receive(XPriorityQueue* this_queue, void* pvBuffer);
+static bool VXPriorityQueue_isFull(const XPriorityQueue* this_queue);
 #if VTABLE_ISSTACK
 	static XVtable vtable;//虚函数类
-	static void* vtable_data[XPriorityQueue_VTABLE_SIZE];//虚函数数据
+	static void* vtable_data[XPRIORITYQUEUE_VTABLE_SIZE];//虚函数数据
 #endif
 void XPriorityQueue_class_init()
 {
 	if (XPriorityQueueVtable)
 		return;
-	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top};
+	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top,VXPriorityQueue_receive,VXPriorityQueue_isFull };
 #if !VTABLE_ISSTACK
 	XPriorityQueueVtable = XVtable_new();
 #else
@@ -27,7 +29,7 @@ void XPriorityQueue_class_init()
 	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
 #endif
 	//继承的函数
-	XVtable_append_vtable(XPriorityQueueVtable, XVectorVtable);
+	XVtable_append_vtable(XPriorityQueueVtable, XContainerObjectVtable);
 	//追加函数
 	XVtable_append_array(XPriorityQueueVtable, table, sizeof(table) / sizeof(table[0]));
 
@@ -84,11 +86,12 @@ static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize,
 	}
 }
 
-void VXPriorityQueue_push(XPriorityQueue* this_queue, void* LpValue)
+void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvData)
 {
-	if (ISNULL(this_queue, "")|| ISNULL(LpValue, ""))
+	if (ISNULL(this_queue, "")|| ISNULL(pvData, ""))
 		return ;
-	XVector_push_back_base(this_queue, LpValue);
+	XVtableGetFunc(XVectorVtable, EXVector_Push_Back,void(*)(XVector*,void*))(this_queue, pvData);
+	//XVector_push_back_base(this_queue, pvData);
 	size_t size = XContainerSize(this_queue) - 1;
 	if (size > 0)//一个元素不用调整
 		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->m_compare);
@@ -114,6 +117,20 @@ void* VXPriorityQueue_top(XPriorityQueue* this_queue)
 {
 	if (ISNULL(this_queue, ""))
 		return NULL;
-	return  XVector_front_base(this_queue);//指向数组的开始
+	return XVtableGetFunc(XVectorVtable, EXVector_Front, void*(*)(XVector*))(this_queue);
+	//return  XVector_front_base(this_queue);//指向数组的开始
+}
+bool VXPriorityQueue_receive(XPriorityQueue* this_queue, void* pvBuffer)
+{
+	void* data = VXPriorityQueue_top(this_queue);//指向数组的开始
+	if(data==NULL)
+		return false;
+	memcpy(pvBuffer, data,XContainerCapacity(this_queue));
+	VXPriorityQueue_pop(this_queue);
+	return true;
+}
+bool VXPriorityQueue_isFull(const XPriorityQueue* this_queue)
+{
+	return XContainerObject_getSize_base(this_queue)== XContainerObject_getCapacity_base(this_queue);
 }
 #endif

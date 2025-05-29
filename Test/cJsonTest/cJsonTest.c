@@ -44,7 +44,7 @@ void cJsonXContainerTest()
     if (root == NULL) {
         return 1;
     }
-    XString_free(json_str);
+    XString_free_base(json_str);
     // 修改 JSON 对象中的值
     cJSON* age = cJSON_GetObjectItemCaseSensitive(root, "age");
     if (cJSON_IsNumber(age)) {
@@ -65,7 +65,7 @@ void cJsonXContainerTest()
     printf("%s\n", XString_data(json_str_modified));
 
     // 释放字符串和 cJSON 对象
-    XString_free(json_str_modified);
+    XString_free_base(json_str_modified);
     cJSON_Delete(root);
 }
 #endif

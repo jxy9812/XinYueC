@@ -1218,7 +1218,7 @@ CJSON_PUBLIC(cJSON*) cJSON_Parse_XString(const XString* string)
 {
     if(string==NULL)
         return NULL;
-    return cJSON_ParseWithLength(XString_data(string),XString_size(string));
+    return cJSON_ParseWithLength(XString_data(string),XString_getSize_base(string));
 }
 #endif
 
@@ -1373,7 +1373,7 @@ fail:
         printed = NULL;
     }
     if (str != NULL)
-        XString_free(str);
+        XString_free_base(str);
     return NULL;
 }
 #endif
