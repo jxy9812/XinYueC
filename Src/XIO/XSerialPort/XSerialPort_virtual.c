@@ -41,7 +41,7 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBase mode, uint8_t portNum,
 	serial->m_portNum = portNum;
 	//调用父类
 	return XVtableGetFunc(XIODeviceVtable, EXIODevice_Open,bool(*)(XIODevice*, XIODeviceBase))(serial, mode);
-	//return XIODevice_open(serial, mode);
+	//return XIODevice_open_base(serial, mode);
 }
 
 size_t VXSerialPort_read(XIODevice* io, char* data, size_t maxSize)

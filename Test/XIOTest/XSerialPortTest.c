@@ -121,7 +121,7 @@ static DWORD WINAPI ThreadReceive(LPVOID lpParam)
                 }
             }
             //将接收到的数据保存到缓冲区
-            XSerialPort_receive(serial, buff, bytesRead);
+            XSerialPort_receive_base(serial, buff, bytesRead);
         }
         // 重置事件
         ResetEvent(ov.hEvent);
@@ -145,19 +145,19 @@ void XSerialPortTest()
     XIODevice_PortFuncInit port = { 0 };
     port.open_funcPointer = SerialOpen;
     XSerialPort* serial = XSerialPort_new(&port);
-    if (!XSerialPort_open(serial, XIODeviceBase_ReadWrite, 6, 115200, SP_PAR_NONE))
+    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 6, 115200, SP_PAR_NONE))
     {
-        XSerialPort_free(serial);
+        XSerialPort_free_base(serial);
         return;
     }
-    XSerialPort_setReadBuffer(serial,1024);
+    XSerialPort_setReadBuffer_base(serial,1024);
     //线程接收数据
     threadTest(serial);
     //主线程处理数据
     char buff[1024];
     while (true)
     {
-        size_t len = XSerialPort_read(serial, buff, 1024);
+        size_t len = XSerialPort_read_base(serial, buff, 1024);
         if (len >0)
         {
             for (size_t i = 0; i < len; i++)

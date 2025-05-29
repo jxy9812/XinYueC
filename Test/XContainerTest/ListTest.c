@@ -33,7 +33,7 @@ void ListSortTest()
 	XList_iterator_for_each(li, ListFor_each, NULL);printf("\n");
 
 	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
-	XList_free(li);
+	XList_free_base(li);
 #endif
 }
 void ListIterator()
@@ -55,7 +55,7 @@ void ListIterator()
 	{
 		printf("%d\n", *(int*)((XListNode*)it)->date);
 	}
-	XList_free(li);
+	XList_free_base(li);
 #endif
 }
 
@@ -94,7 +94,7 @@ void ListTest()
 	XList_remove_base(list,&removeVlaue);
 	//XList_clear_base(list);
 	printf("删除元素后遍历\t");XList_iterator_for_each(list, ListFor_each, NULL);
-	XList_free(list);
+	XList_free_base(list);
 #endif
 }
 
@@ -129,8 +129,8 @@ void ListSwapTest()//交换函数测试
 
 	printf("交换后li2元素遍历\n");
 	XList_iterator_for_each(li2, ListFor_each, NULL); printf("\n");
-	XList_free(li1);
-	XList_free(li2);
+	XList_free_base(li1);
+	XList_free_base(li2);
 #endif
 }
 

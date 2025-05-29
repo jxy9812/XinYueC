@@ -38,7 +38,7 @@ void XSwitchDevice_pollDefaultMethod(XSwitchDevice* sw)
 		//扫描保存状态
 		bool state = sw->buffer;
 		//读取当前状态
-		XIODevice_read(sw, &state, 1);
+		XIODevice_read_base(sw, &state, 1);
 		//printf("state:%s\n", state ? "true" : "false");
 		if (state != sw->buffer)
 		{
@@ -55,16 +55,16 @@ void XSwitchDevice_pollDefaultMethod(XSwitchDevice* sw)
 	}
 }
 
-void XSwitchDevice_setState(XSwitchDevice* sw, bool state)
+void XSwitchDevice_setState_base(XSwitchDevice* sw, bool state)
 {
-	if (ISNULL(sw, ""))
+	if (ISNULL(sw, "") || ISNULL(XClassGetVtable(sw), ""))
 		return ;
 	XClassGetVirtualFunc(sw, EXSwitchDevice_SetState, void(*)(XSwitchDevice*,bool))(sw, state);
 }
 
-bool XSwitchDevice_getState(XSwitchDevice* sw)
+bool XSwitchDevice_getState_base(XSwitchDevice* sw)
 {
-	if (ISNULL(sw, ""))
+	if (ISNULL(sw, "") || ISNULL(XClassGetVtable(sw), ""))
 		return false;
 	return XClassGetVirtualFunc(sw, EXSwitchDevice_GetState, bool(*)(XSwitchDevice*))(sw);
 }

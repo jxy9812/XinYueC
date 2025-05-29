@@ -76,19 +76,19 @@ typedef struct XIODevice
 void XIODevice_class_init();
 XIODevice* XIODevice_new(XIODevice_PortFuncInit* port);
 void XIODevice_init(XIODevice* io, XIODevice_PortFuncInit* port);
-void XIODevice_free(XIODevice* io);
-void XIODevice_setWriteBuffer(XIODevice* io,size_t count);
-void XIODevice_setReadBuffer(XIODevice* io, size_t count);
-void XIODevice_setDevice(XIODevice* io, void* device);
-size_t XIODevice_write(XIODevice* io,const char* data, size_t maxSize);//写入
-size_t XIODevice_read(XIODevice* io,char* data, size_t maxSize);//读取
+void XIODevice_free_base(XIODevice* io);
+void XIODevice_setWriteBuffer_base(XIODevice* io,size_t count);
+void XIODevice_setReadBuffer_base(XIODevice* io, size_t count);
+void XIODevice_setDevice_base(XIODevice* io, void* device);
+size_t XIODevice_write_base(XIODevice* io,const char* data, size_t maxSize);//写入
+size_t XIODevice_read_base(XIODevice* io,char* data, size_t maxSize);//读取
 //接收数据从硬件接收数据到缓冲区
-size_t XIODevice_receive(XIODevice* io,const char* data, size_t size);
-bool XIODevice_isOpen(XIODevice* io);
-bool XIODevice_open(XIODevice* io, XIODeviceBase mode);
-void XIODevice_close(XIODevice* io);
-void XIODevice_poll(XIODevice* io);
-size_t XIODevice_writeFull(XIODevice* io);//将剩余的数据刷入设备
+size_t XIODevice_receive_base(XIODevice* io,const char* data, size_t size);
+bool XIODevice_isOpen_base(XIODevice* io);
+bool XIODevice_open_base(XIODevice* io, XIODeviceBase mode);
+void XIODevice_close_base(XIODevice* io);
+void XIODevice_poll_base(XIODevice* io);
+size_t XIODevice_writeFull_base(XIODevice* io);//将剩余的数据刷入设备
 
 
 #ifdef __cplusplus

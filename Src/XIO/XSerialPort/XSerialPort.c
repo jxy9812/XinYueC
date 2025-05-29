@@ -23,9 +23,9 @@ void XSerialPort_init(XSerialPort* serial, XSerialPort_PortFuncInit* port)
 	XClassGetVtable(serial) = XSerialPortVtable;
 }
 
-bool XSerialPort_open(XSerialPort* serial, XIODeviceBase mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)
+bool XSerialPort_open_base(XSerialPort* serial, XIODeviceBase mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)
 {
-	if (ISNULL(serial, ""))
+	if (ISNULL(serial, "") || ISNULL(XClassGetVtable(serial), ""))
 		return false;
 	return XClassGetVirtualFunc(serial, EXIODevice_Open, bool(*)(XSerialPort*, XIODeviceBase, uint8_t, uint32_t, XSerialPortParity))(serial, mode,portNum,baudRate,parity);
 }

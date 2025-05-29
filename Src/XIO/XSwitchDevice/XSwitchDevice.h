@@ -42,15 +42,15 @@ void XSwitchDevice_init(XSwitchDevice* sw,XSwitchDevice_PortFuncInit* port);
 //默认轮询方法
 void XSwitchDevice_pollDefaultMethod(XSwitchDevice* sw);
 //设置开关设备状态
-void XSwitchDevice_setState(XSwitchDevice* sw,bool state);
+void XSwitchDevice_setState_base(XSwitchDevice* sw,bool state);
 //获取状态
-bool XSwitchDevice_getState(XSwitchDevice* sw);
-#define XSwitchDevice_isOpen XIODevice_isOpen
-#define XSwitchDevice_open XIODevice_open
-#define XSwitchDevice_close XIODevice_close
-#define XSwitchDevice_setDevice XIODevice_setDevice
-#define XSwitchDevice_free XIODevice_free
-#define XSwitchDevice_poll XIODevice_poll
+bool XSwitchDevice_getState_base(XSwitchDevice* sw);
+#define XSwitchDevice_isOpen_base XIODevice_isOpen_base
+#define XSwitchDevice_open_base XIODevice_open_base
+#define XSwitchDevice_close_base XIODevice_close_base
+#define XSwitchDevice_setDevice_base XIODevice_setDevice_base
+#define XSwitchDevice_free_base XIODevice_free_base
+#define XSwitchDevice_poll_base XIODevice_poll_base
 #ifdef __cplusplus
 }
 #endif

@@ -74,14 +74,6 @@ void XList_remove_base(XList* this_list, void* LpValue)
 	XClassGetVirtualFunc(this_list, EXList_Remove, funcPtr)(this_list, LpValue);
 }
 
-void XList_clear_base(XList* this_list)
-{
-	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
-		return;
-	typedef void (*funcPtr)(XList*);
-	XClassGetVirtualFunc(this_list, EXList_Clear, funcPtr)(this_list);
-}
-
 //遍历
 void* XList_front_base(XList* this_list)
 {
@@ -107,16 +99,6 @@ XListNode* XList_find_base(const XList* this_list, const void* findVal)
 	return XClassGetVirtualFunc(this_list, EXList_Find, funcPtr)(this_list, findVal);
 }
 
-bool XList_isEmpty_base(const XList* this_list)
-{
-	return XContainerObject_isEmpty_base(this_list);
-}
-
-size_t XList_getSize(const XList* this_list)
-{
-	return XContainerObject_getSize_base(this_list);
-}
-
 void XList_sort_base(XList* this_list, XCompare compare)
 {
 	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
@@ -125,18 +107,6 @@ void XList_sort_base(XList* this_list, XCompare compare)
 	XClassGetVirtualFunc(this_list, EXList_Sort, funcPtr)(this_list, compare);
 }
 
-void XList_swap_base(XList* this_listOne, XList* this_listTwo)
-{
-	return XContainerObject_swap_base(this_listOne, this_listTwo);
-}
-
-void XList_free(XList* this_list)
-{
-	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
-		return;
-	typedef void (*funcPtr)(XList*);
-	XClassGetVirtualFunc(this_list, EXContainerObject_Free, funcPtr)(this_list);
-}
 
 XList* XList_new(size_t typeSize)
 {

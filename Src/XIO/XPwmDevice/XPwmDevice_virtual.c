@@ -46,7 +46,7 @@ void VXPWMDevice_setFrequency(XPWMDevice* pwm, size_t f)
 	{
 		pwm->m_frequency = f;
 		if (pwm->m_isRun)
-			XPWMDevice_start(pwm);
+			XPWMDevice_start_base(pwm);
 	}
 }
 
@@ -56,7 +56,7 @@ void VXPWMDevice_setDutyCycle(XPWMDevice* pwm, uint8_t d)
 	{
 		pwm->m_dutyCycle = d;
 		if (pwm->m_isRun)
-			XPWMDevice_start(pwm);
+			XPWMDevice_start_base(pwm);
 	}
 }
 
@@ -64,7 +64,7 @@ void VXPWMDevice_start(XPWMDevice* pwm)
 {
 	if (pwm != NULL)
 	{
-		XPWMDevice_stop(pwm);
+		XPWMDevice_stop_base(pwm);
 		//开始运行
 		if (pwm->m_port.start)
 		{

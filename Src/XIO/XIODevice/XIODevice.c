@@ -1,4 +1,5 @@
 ﻿#include "XIODevice.h"
+#include "XMemory.h"
 #include<string.h>
 XIODevice* XIODevice_new(XIODevice_PortFuncInit* port)
 {
@@ -22,83 +23,83 @@ void XIODevice_init(XIODevice* io, XIODevice_PortFuncInit* port)
 	XIODevice_class_init();
 	XClassGetVtable(io) = XIODeviceVtable;
 }
-void XIODevice_free(XIODevice* io)
+void XIODevice_free_base(XIODevice* io)
 {
-	if (ISNULL(io, "") )
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return;
 	XClassGetVirtualFunc(io, EXIODevice_Free,void(*)(XIODevice*))(io);
 }
-void XIODevice_setWriteBuffer(XIODevice* io, size_t count)
+void XIODevice_setWriteBuffer_base(XIODevice* io, size_t count)
 {
-	if (ISNULL(io, ""))
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return;
 	XClassGetVirtualFunc(io, EXIODevice_SetWriteBuffer, void(*)(XIODevice*, size_t))(io,count);
 }
-void XIODevice_setReadBuffer(XIODevice* io, size_t count)
+void XIODevice_setReadBuffer_base(XIODevice* io, size_t count)
 {
-	if (ISNULL(io, ""))
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return;
 	XClassGetVirtualFunc(io, EXIODevice_SetReadBuffer, void(*)(XIODevice*, size_t))(io, count);
 }
-void XIODevice_setDevice(XIODevice* io, void* device)
+void XIODevice_setDevice_base(XIODevice* io, void* device)
 {
-	if (ISNULL(io, "")|| ISNULL(device, ""))
+	if (ISNULL(io, "")|| ISNULL(device, "") || ISNULL(XClassGetVtable(io), ""))
 		return;
 	XClassGetVirtualFunc(io, EXIODevice_SetDevice, void(*)(XIODevice*, void*))(io,device);
 }
-size_t XIODevice_write(XIODevice* io, const char* data, size_t maxSize)
+size_t XIODevice_write_base(XIODevice* io, const char* data, size_t maxSize)
 {
-	if (ISNULL(io, "") || ISNULL(data, "") || ISNULL(maxSize, ""))
+	if (ISNULL(io, "") || ISNULL(data, "") || ISNULL(maxSize, "") || ISNULL(XClassGetVtable(io), ""))
 		return 0;
 	return XClassGetVirtualFunc(io, EXIODevice_Write, bool(*)(XIODevice*, const char*, size_t))(io,data,maxSize);
 }
 
-size_t XIODevice_read(XIODevice* io, char* data, size_t maxSize)
+size_t XIODevice_read_base(XIODevice* io, char* data, size_t maxSize)
 {
-	if (ISNULL(io, "") || ISNULL(data, "") || ISNULL(maxSize, ""))
+	if (ISNULL(io, "") || ISNULL(data, "") || ISNULL(maxSize, "") || ISNULL(XClassGetVtable(io), ""))
 		return 0;
 	return XClassGetVirtualFunc(io, EXIODevice_Read, bool(*)(XIODevice*, char*, size_t))(io, data, maxSize);
 }
 
 
-size_t XIODevice_receive(XIODevice* io,const char* data, size_t size)
+size_t XIODevice_receive_base(XIODevice* io,const char* data, size_t size)
 {
-	if (ISNULL(io, "") || ISNULL(data, "") || ISNULL(size, ""))
+	if (ISNULL(io, "") || ISNULL(data, "") || ISNULL(size, "") || ISNULL(XClassGetVtable(io), ""))
 		return;
 	return XClassGetVirtualFunc(io, EXIODevice_Receive, bool(*)(XIODevice*,const char*, size_t))(io, data, size);
 }
 
-bool XIODevice_isOpen(XIODevice* io)
+bool XIODevice_isOpen_base(XIODevice* io)
 {
-	if (ISNULL(io, ""))
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return false;
 	return XClassGetVirtualFunc(io, EXIODevice_IsOpen, bool(*)(XIODevice*))(io);
 }
 
-bool XIODevice_open(XIODevice* io, XIODeviceBase mode)
+bool XIODevice_open_base(XIODevice* io, XIODeviceBase mode)
 {
-	if (ISNULL(io, ""))
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return false;
 	return XClassGetVirtualFunc(io, EXIODevice_Open, bool(*)(XIODevice*, XIODeviceBase))(io, mode);
 }
 
-void XIODevice_close(XIODevice* io)
+void XIODevice_close_base(XIODevice* io)
 {
-	if (ISNULL(io, ""))
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return ;
 	XClassGetVirtualFunc(io, EXIODevice_Close, void(*)(XIODevice*))(io);
 }
 
-void XIODevice_poll(XIODevice* io)
+void XIODevice_poll_base(XIODevice* io)
 {
-	if (ISNULL(io, ""))
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return ;
 	XClassGetVirtualFunc(io, EXIODevice_Poll, void(*)(XIODevice*))(io);
 }
 
-size_t XIODevice_writeFull(XIODevice* io)
+size_t XIODevice_writeFull_base(XIODevice* io)
 {
-	if (ISNULL(io, ""))
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return 0;
 	return XClassGetVirtualFunc(io, EXIODevice_WriteFull, bool(*)(XIODevice*))(io);
 }

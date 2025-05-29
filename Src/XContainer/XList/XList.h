@@ -16,8 +16,7 @@ extern XVtable* XListVtable;
 //XList虚函数表枚举
 enum XListVtableEnum
 {
-	EXList_Clear= EXContainerObject_Clear,
-	EXList_Push_Front,
+	EXList_Push_Front= XCONTAINEROBJECT_VTABLE_SIZE,
 	EXList_Push_Back,
 	EXList_Inserts,
 	EXList_Insert,
@@ -43,9 +42,6 @@ XList* XList_new(size_t TypeSize);
 #define XList_New(Type) XList_new(sizeof(Type))
 //初始化 链表
 void XList_init(XList* this_list, size_t typeSize);
-//释放内存
-void  XList_free(XList* this_list);
-
 //插入函数
 //链表头部增加一个元素X
 XListNode* XList_push_front_base(XList* this_list, void* LpValue);
@@ -69,10 +65,7 @@ void  XList_erase_base(XList* this_list, XListNode* node);
 //删除指定元素
 void  XList_remove_base(XList* this_list, void* LpValue);
 #define XList_Remove_Base(this_list,type,value){type t=value;XList_remove_base(this_list,&t);}
-//清空list的队列，释放内存
-void  XList_clear_base(XList* this_list);
 //遍历函数
-//返回元素节点的指针
 //返回链表头
 void* XList_front_base(XList* this_list);
 #define XList_Front_Base(list,Type) (*(Type*)XList_front_base(list))
@@ -81,17 +74,20 @@ void* XList_back_base(XList* this_list);
 #define XList_Back_Base(list,Type) (*(Type*)XList_back_base(list))
 //查找数据，返回找到的节点，没有返回NULL
 XListNode* XList_find_base(const  XList* this_list,const void* findVal);
-//判断函数
-//检测list内是否为空，空为真 O(1)
-bool  XList_isEmpty_base(const XList* this_list);
-//大小函数
-//返回list内元素的个数 O(1)
-size_t  XList_getSize(const XList* this_list);
-//其他函数
-//排序
-void  XList_sort_base(XList* this_list, XCompare compare);
-//交换两个同类型链表的数据
-void  XList_swap_base(XList* this_listOne, XList* this_listTwo);
+//释放内存
+#define XList_free_base					XContainerObject_free_base
+//清空vector的队列，不是释放内存
+#define XList_clear_base				XContainerObject_clear_base
+//检测vector内是否为空，空为真 O(1)
+#define XList_isEmpty_base				XContainerObject_isEmpty_base
+//返回vector内元素的个数 O(1)
+#define XList_getSize_base				XContainerObject_getSize_base
+//返回当前向量所能容纳的最大元素个数
+#define XList_getCapacity_base			XContainerObject_getCapacity_base
+//交换两个同类型向量的数据
+#define XList_swap_base					XContainerObject_swap_base
+//返回元素类型字节大小
+#define XList_getTypeSize_base			XContainerObject_getTypeSize_base
 #ifdef __cplusplus
 }
 #endif

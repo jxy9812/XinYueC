@@ -50,22 +50,22 @@ void XPWMDevice_class_init();
 XPWMDevice* XPWMDevice_new(XPWMDevice_PortFuncInit* port);
 void XPWMDevice_init(XPWMDevice* pwm,XPWMDevice_PortFuncInit* port);
 //设置频率  T(s)=1/F(HZ) 周期  一个周期
-void XPWMDevice_setFrequency(XPWMDevice* pwm,size_t f);
+void XPWMDevice_setFrequency_base(XPWMDevice* pwm,size_t f);
 //设置占空比 T(s)=1/F(HZ)*D(0`100)/100   电平翻转周期
-void XPWMDevice_setDutyCycle(XPWMDevice* pwm, uint8_t d);
-void XPWMDevice_start(XPWMDevice* pwm);
-void XPWMDevice_stop(XPWMDevice* pwm);
-bool XPWMDevice_isRunning(XPWMDevice* pwm);
+void XPWMDevice_setDutyCycle_base(XPWMDevice* pwm, uint8_t d);
+void XPWMDevice_start_base(XPWMDevice* pwm);
+void XPWMDevice_stop_base(XPWMDevice* pwm);
+bool XPWMDevice_isRunning_base(XPWMDevice* pwm);
 //频率  T(s)=1/F(HZ) 周期  一个周期
-size_t XPWMDevice_getFrequency(XPWMDevice* pwm);
+size_t XPWMDevice_getFrequency_base(XPWMDevice* pwm);
 //占空比 T(s)=1/F(HZ)*D(0`100)/100   电平翻转周期
-uint8_t XPWMDevice_getDutyCycle(XPWMDevice* pwm);
-#define XPWMDevice_isOpen XIODevice_isOpen
-#define XPWMDevice_open XIODevice_open
-#define XPWMDevice_close XIODevice_close
-#define XPWMDevice_setDevice XIODevice_setDevice
-#define XPWMDevice_free XIODevice_free
-#define XPWMDevice_poll XIODevice_poll
+uint8_t XPWMDevice_getDutyCycle_base(XPWMDevice* pwm);
+#define XPWMDevice_isOpen_base XIODevice_isOpen_base
+#define XPWMDevice_open_base XIODevice_open_base
+#define XPWMDevice_close_base XIODevice_close_base
+#define XPWMDevice_setDevice_base XIODevice_setDevice_base
+#define XPWMDevice_free_base XIODevice_free_base
+#define XPWMDevice_poll_base XIODevice_poll_base
 #ifdef __cplusplus
 }
 #endif
