@@ -23,7 +23,7 @@ static void TimerCallback(XTimerBase* timer)
 	}
 	printf("%s\n", state ? "高电平" : "低电平");
 }
-static bool XPWMDeviceOpen(XPWMDevice* pwm, XIODeviceBase mode)//打开IO设备
+static bool XPWMDeviceOpen(XPWMDeviceBase* pwm, XIODeviceBaseMode mode)//打开IO设备
 {
 	printf("创建定时器\n");
 	pwmTimer.timer1 = XTimer_new_Win32ThreadpoolTimer();
@@ -32,10 +32,10 @@ static bool XPWMDeviceOpen(XPWMDevice* pwm, XIODeviceBase mode)//打开IO设备
 	pwmTimer.timer2 = XTimer_new_Win32ThreadpoolTimer();
 	//XTimer_create(pwmTimer.timer2);
 	//pwmTimer.timer2->m_port.timerCallback = TimerCallback;
-	pwm->data = &pwmTimer;
+	pwm->m_userData = &pwmTimer;
 	
 }
-static void XPWMDeviceStart(XPWMDevice* pwm)
+static void XPWMDeviceStart(XPWMDeviceBase* pwm)
 {
 	//((struct XPWMDeviceTimer*)(pwm->data))->timer1->m_interval = 1.0 / (pwm->m_frequency) * 1000;
 	//printf("启动定时器:%f\n", ((struct XPWMDeviceTimer*)(pwm->data))->timer1->interval * (pwm->m_dutyCycle) / 100.0);
@@ -47,16 +47,16 @@ void XPWMDeviceTest()
 {
 	XIODevice_PortFuncInit  ioPort = { 0 };
 	ioPort.open_funcPointer = XPWMDeviceOpen;
-	XPWMDevice_PortFunc     pwmPort = { 0 };
-	pwmPort.start=XPWMDeviceStart;
-	XPWMDevice_PortFuncInit port = { 0 };
-	port.parentPort = ioPort;
-	port.pwmPort = pwmPort;
-	XPWMDevice* pwm = XPWMDevice_new(&port);
-	XPWMDevice_setFrequency_base(pwm,5);
-	XPWMDevice_setDutyCycle_base(pwm, 50);
-	XIODevice_open_base(pwm, XIODeviceBase_ReadWrite);
-	XPWMDevice_start_base(pwm);
+	//XPWMDevice_PortFunc     pwmPort = { 0 };
+	//pwmPort.start=XPWMDeviceStart;
+	//XPWMDevice_PortFuncInit port = { 0 };
+	//port.parentPort = ioPort;
+	//port.pwmPort = pwmPort;
+	//XPWMDeviceBase* pwm = XPWMDeviceBase_new(&port);
+	//XPWMDeviceBase_setFrequency_base(pwm,5);
+	//XPWMDeviceBase_setDutyCycle_base(pwm, 50);
+	//XIODevice_open_base(pwm, XIODeviceBase_ReadWrite);
+	//XPWMDeviceBase_start_base(pwm);
 	while (true);
 }
 #endif

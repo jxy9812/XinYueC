@@ -329,12 +329,12 @@ typedef struct
     //internal_hooks hooks;
 } parse_buffer;
 
-/* check if the given size is left to read in a given parse buffer (starting with 1) */
+/* check if the given size is left to read in a given parse m_buffer (starting with 1) */
 #define can_read(buffer, size) ((buffer != NULL) && (((buffer)->offset + size) <= (buffer)->length))
-/* check if the buffer can be accessed at the given index (starting with 0) */
+/* check if the m_buffer can be accessed at the given index (starting with 0) */
 #define can_access_at_index(buffer, index) ((buffer != NULL) && (((buffer)->offset + index) < (buffer)->length))
 #define cannot_access_at_index(buffer, index) (!can_access_at_index(buffer, index))
-/* get a pointer to the buffer at the position */
+/* get a pointer to the m_buffer at the position */
 #define buffer_at_offset(buffer) ((buffer)->content + (buffer)->offset)
 
 /* Parse the input text to generate a number, and populate the result into item. */
@@ -351,7 +351,7 @@ static cJSON_bool parse_number(cJSON * const item, parse_buffer * const input_bu
         return false;
     }
 
-    /* copy the number into a temporary buffer and replace '.' with the decimal point
+    /* copy the number into a temporary m_buffer and replace '.' with the decimal point
      * of the current locale (for strtod)
      * This also takes care of '\0' not necessarily being available for marking the end of the input */
     for (i = 0; (i < (sizeof(number_c_string) - 1)) && can_access_at_index(input_buffer, i); i++)
@@ -510,7 +510,7 @@ static unsigned char* ensure(printbuffer * const p, size_t needed)
         return NULL;
     }
 
-    /* calculate new buffer size */
+    /* calculate new m_buffer size */
     if (needed > (INT_MAX / 2))
     {
         /* overflow of int, use INT_MAX if possible */
@@ -590,7 +590,7 @@ static cJSON_bool print_number(const cJSON * const item, printbuffer * const out
     double d = item->valuedouble;
     int length = 0;
     size_t i = 0;
-    unsigned char number_buffer[26] = {0}; /* temporary buffer to print the number into */
+    unsigned char number_buffer[26] = {0}; /* temporary m_buffer to print the number into */
     unsigned char decimal_point = get_decimal_point();
     double test = 0.0;
 
@@ -621,7 +621,7 @@ static cJSON_bool print_number(const cJSON * const item, printbuffer * const out
         }
     }
 
-    /* sprintf failed or buffer overrun occurred */
+    /* sprintf failed or m_buffer overrun occurred */
     if ((length < 0) || (length > (int)(sizeof(number_buffer) - 1)))
     {
         return false;
@@ -836,7 +836,7 @@ static cJSON_bool parse_string(cJSON * const item, parse_buffer * const input_bu
             {
                 if ((size_t)(input_end + 1 - input_buffer->content) >= input_buffer->length)
                 {
-                    /* prevent buffer overflow when last input character is a backslash */
+                    /* prevent m_buffer overflow when last input character is a backslash */
                     goto fail;
                 }
                 skipped_bytes++;
@@ -1103,7 +1103,7 @@ static parse_buffer *buffer_skip_whitespace(parse_buffer * const buffer)
     return buffer;
 }
 
-/* skip the UTF-8 BOM (byte order mark) if it is at the beginning of a buffer */
+/* skip the UTF-8 BOM (byte order mark) if it is at the beginning of a m_buffer */
 static parse_buffer *skip_utf8_bom(parse_buffer * const buffer)
 {
     if ((buffer == NULL) || (buffer->content == NULL) || (buffer->offset != 0))
@@ -1152,7 +1152,7 @@ CJSON_PUBLIC(cJSON *) cJSON_ParseWithLengthOpts(const char *value, size_t buffer
     buffer.content = (const unsigned char*)value;
     buffer.length = buffer_length;
     buffer.offset = 0;
-   // buffer.hooks = global_hooks;
+   // m_buffer.hooks = global_hooks;
 
     item = cJSON_New_Item(/*&global_hooks*/);
     if (item == NULL) /* memory fail */
@@ -1243,11 +1243,11 @@ static unsigned char* print(const cJSON* const item, cJSON_bool format/*, const 
 
     memset(buffer, 0, sizeof(buffer));
 
-    /* create buffer */
+    /* create m_buffer */
     buffer->buffer = (unsigned char*)XMemory_malloc(default_buffer_size);
     buffer->length = default_buffer_size;
     buffer->format = format;
-    //buffer->hooks = *hooks;
+    //m_buffer->hooks = *hooks;
     if (buffer->buffer == NULL)
     {
         goto fail;
@@ -1269,7 +1269,7 @@ static unsigned char* print(const cJSON* const item, cJSON_bool format/*, const 
         }
         buffer->buffer = NULL;
     }
-    else /* otherwise copy the JSON over to a new buffer */
+    else /* otherwise copy the JSON over to a new m_buffer */
     {
         printed = (unsigned char*)XMemory_malloc(buffer->offset + 1);
         if (printed == NULL)
@@ -1279,7 +1279,7 @@ static unsigned char* print(const cJSON* const item, cJSON_bool format/*, const 
         memcpy(printed, buffer->buffer, cjson_min(buffer->length, buffer->offset + 1));
         printed[buffer->offset] = '\0'; /* just to be sure */
 
-        /* free the buffer */
+        /* free the m_buffer */
         XMemory_free(buffer->buffer);
         buffer->buffer = NULL;
     }
@@ -1311,11 +1311,11 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
 
     memset(buffer, 0, sizeof(buffer));
     XVector_resize_base(str, default_buffer_size);
-    /* create buffer */
+    /* create m_buffer */
     buffer->buffer = XContainerDataPtr(str);
     buffer->length = default_buffer_size;
     buffer->format = format;
-    //buffer->hooks = *hooks;
+    //m_buffer->hooks = *hooks;
     if (buffer->buffer == NULL)
     {
         goto fail;
@@ -1340,7 +1340,7 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
         XContainerCapacity(str) = buffer->offset + 1;
         XContainerSize(str) = buffer->offset;
     }
-    else /* otherwise copy the JSON over to a new buffer */
+    else /* otherwise copy the JSON over to a new m_buffer */
     {
         printed = (unsigned char*) XMemory_malloc(buffer->offset + 1);
         if (printed == NULL)
@@ -1350,7 +1350,7 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
         memcpy(printed, buffer->buffer, cjson_min(buffer->length, buffer->offset + 1));
         printed[buffer->offset] = '\0'; /* just to be sure */
 
-        /* free the buffer */
+        /* free the m_buffer */
         XMemory_free(buffer->buffer);
         buffer->buffer = NULL;
         XContainerDataPtr(str) = printed;
@@ -1604,7 +1604,7 @@ static cJSON_bool parse_array(cJSON * const item, parse_buffer * const input_buf
         goto success;
     }
 
-    /* check if we skipped to the end of the buffer */
+    /* check if we skipped to the end of the m_buffer */
     if (cannot_access_at_index(input_buffer, 0))
     {
         input_buffer->offset--;
@@ -1762,7 +1762,7 @@ static cJSON_bool parse_object(cJSON * const item, parse_buffer * const input_bu
         goto success; /* empty object */
     }
 
-    /* check if we skipped to the end of the buffer */
+    /* check if we skipped to the end of the m_buffer */
     if (cannot_access_at_index(input_buffer, 0))
     {
         input_buffer->offset--;

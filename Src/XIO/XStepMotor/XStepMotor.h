@@ -18,9 +18,9 @@ typedef struct XStepMotor_PortFunc
 typedef struct XStepMotor_PortFuncInit
 {
 	//XIODevice_PortFuncInit parentPort;//父对象接口
-	XPWMDevice_PortFuncInit PUL;//脉冲
-	XSwitchDevice_PortFuncInit ENA;//使能
-	XSwitchDevice_PortFuncInit DIR;//方向
+	//XPWMDevice_PortFuncInit PUL;//脉冲
+	//XSwitchDevice_PortFuncInit ENA;//使能
+	//XSwitchDevice_PortFuncInit DIR;//方向
 	XStepMotor_PortFunc StepMotorPort;//子类开关接口
 }XStepMotor_PortFuncInit;
 //步进电机
@@ -31,9 +31,9 @@ typedef struct XStepMotor
 	uint64_t m_currentPulses;//当前脉冲数 
 	uint64_t m_setPulses;//设置脉冲数 //0是速度模式 其他是距离模式
 	int64_t m_directionPulses;//累计方向脉冲数 正++ 反--
-	XPWMDevice* m_PUL;//pwm引脚
-	XSwitchDevice* m_ENA;//使能引脚
-	XSwitchDevice* m_DIR;//方向引脚
+	XPWMDeviceBase* m_PUL;//pwm引脚
+	XSwitchDeviceBase* m_ENA;//使能引脚
+	XSwitchDeviceBase* m_DIR;//方向引脚
 	XStepMotor_PortFunc m_port;//开关设备接口
 }XStepMotor;
 XStepMotor* XStepMotor_new(XStepMotor_PortFuncInit* port);

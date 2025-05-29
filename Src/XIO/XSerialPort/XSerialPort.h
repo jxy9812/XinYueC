@@ -24,7 +24,7 @@ typedef struct XSerialPort_PortFuncInit
 //串口设备
 typedef struct XSerialPort
 {
-    XIODevice m_parent;//父对象
+    XIODeviceBase m_parent;//父对象
     uint8_t m_portNum;//端口号
     uint32_t m_baudRate;//波特率
     XSerialPortParity m_parity;//校验
@@ -33,7 +33,7 @@ typedef struct XSerialPort
 void XSerialPort_class_init();
 XSerialPort* XSerialPort_new(XSerialPort_PortFuncInit* port);
 void XSerialPort_init(XSerialPort* serial, XSerialPort_PortFuncInit* port);
-bool XSerialPort_open_base(XSerialPort* serial, XIODeviceBase mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity);
+bool XSerialPort_open_base(XSerialPort* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity);
 #define XSerialPort_free_base XIODevice_free_base
 #define XSerialPort_setWriteBuffer_base XIODevice_setWriteBuffer_base
 #define XSerialPort_setReadBuffer_base XIODevice_setReadBuffer_base

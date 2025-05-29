@@ -13,11 +13,11 @@ extern "C" {
 不同的操作系统要实现下面几个函数即可启用,Windows接口以实现
 移植可以查看Windows实现
 */
-void XModbusTest_SerialEnable(XIODevice* io, bool xRxEnable, bool xTxEnable);
+void XModbusTest_SerialEnable(XIODeviceBase* io, bool xRxEnable, bool xTxEnable);
 // 打开串口
-bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode);
+bool XModbusTest_SerialOpen(XIODeviceBase* io, XIODeviceBaseMode mode);
 //发送数据
-bool XModbusTest_writeByte(XIODevice* io, XCircularQueue* queue);
+bool XModbusTest_writeByte(XIODeviceBase* io, XCircularQueue* queue);
 //定时器启动
 void XModbusTest_XTimer_Start(XTimerBase* timer);
 //定时器停止

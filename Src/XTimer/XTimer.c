@@ -145,7 +145,7 @@ static void XTimerFreeWin32TimeSetEvent(XTimerBase* timer)
 {
 	XTimerStopWin32TimeSetEvent(timer);
 }
-void XTimerSetIntervalWin32TimeSetEvent(XTimerBase* timer, size_t value)
+static void XTimerSetIntervalWin32TimeSetEvent(XTimerBase* timer, size_t value)
 {
 	timer->m_interval = value;
 	if(XTimerBase_isRunning(timer))

@@ -27,7 +27,7 @@ static long long GetCurrentTimeMillis() {
     return (uli.QuadPart - EPOCH_OFFSET) / 10000;
 }
 // 打开串口
-bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
+bool XModbusTest_SerialOpen(XIODeviceBase* io, XIODeviceBaseMode mode)
 {
     XSerialPort* serial = (XSerialPort*)io;
     char portName[10] = { 0 };
@@ -104,7 +104,7 @@ bool XModbusTest_SerialOpen(XIODevice* io, XIODeviceBase mode)
     XTimer_setCurrentTimeFunc(GetCurrentTimeMillis);
     return true;
 }
-bool XModbusTest_writeByte(XIODevice* io, XCircularQueue* queue)
+bool XModbusTest_writeByte(XIODeviceBase* io, XCircularQueue* queue)
 {
     char data;
     while (XCircularQueue_receive_base(queue,&data))

@@ -1,70 +1,76 @@
 ﻿#include"XSwitchDevice.h"
 #include"XMemory.h"
 #include<string.h>
-#define Parent(ptr) ((XIODevice*)(ptr))
+#define Parent(ptr) ((XIODeviceBase*)(ptr))
 #define Port(ptr)  ((XSwitchDevice_PortFunc*)(ptr->m_parent.m_port))
-XSwitchDevice* XSwitchDevice_new(XSwitchDevice_PortFuncInit* port)
+XSwitchDeviceBase* XSwitchDeviceBase_new(XVtable* vtable)
 {
-	if (port == NULL)
-		return NULL;
-	XSwitchDevice* sw = XMemory_malloc(sizeof(XSwitchDevice));
+	XSwitchDeviceBase* sw = XMemory_malloc(sizeof(XSwitchDeviceBase));
+	//开始初始化
+	memset(sw, 0, sizeof(XSwitchDeviceBase));
 	if (sw == NULL)
-		return sw;
-	XSwitchDevice_init(sw,port);
+		return NULL;
+	XSwitchDeviceBase_init(sw, vtable);
 	return sw;
 }
 
-void XSwitchDevice_init(XSwitchDevice* sw, XSwitchDevice_PortFuncInit* port)
+void XSwitchDeviceBase_init(XSwitchDeviceBase* sw, XVtable* vtable)
 {
-	if (sw == NULL || port == NULL)
+	if (sw == NULL)
 		return ;
-	XIODevice_init(&(sw->m_parent), &(port->parentPort));
-	//开始初始化
-	memset(&(sw->state), 0, sizeof(XSwitchDevice) - sizeof(XIODevice) - sizeof(XSwitchDevice_PortFunc));
-	//绑定函数指针
-	memcpy(&(sw->m_port), &(port->SwitchPort), sizeof(XSwitchDevice_PortFunc));
-	if (sw->m_parent.m_port.poll_funcPointer == NULL)
-		sw->m_parent.m_port.poll_funcPointer = XSwitchDevice_pollDefaultMethod;
-	XSwitchDevice_class_init();
-	XClassGetVtable(sw) = XSwitchDeviceVtable;
+	memset(((XIODeviceBase*)sw) + 1, 0, sizeof(XSwitchDeviceBase) - sizeof(XIODeviceBase));
+	XIODevice_init(sw, vtable);
+	XSwitchDeviceBase_class_init();
+	if(vtable==NULL)
+		XClassGetVtable(sw) = XSwitchDeviceBaseVtable;
+	else 
+		XClassGetVtable(sw) = vtable;
+	if (XVtable_At(XClassGetVtable(sw), EXIODeviceBase_Poll) == NULL)
+		XVtable_At(XClassGetVtable(sw), EXIODeviceBase_Poll) = XSwitchDeviceBase_pollDefaultMethod;
 }
 
-void XSwitchDevice_pollDefaultMethod(XSwitchDevice* sw)
+void XSwitchDeviceBase_setStateChangeCallback(XSwitchDeviceBase* sw, void(*callback)(XSwitchDeviceBase* io))
+{
+	if (sw)
+		sw->m_stateChangeCallback = callback;
+}
+
+void XSwitchDeviceBase_pollDefaultMethod(XSwitchDeviceBase* sw)
 {
 	if (sw == NULL)
 		return;
 	if(sw->m_parent.m_mode & XIODeviceBase_ReadOnly)
 	{
 		//扫描保存状态
-		bool state = sw->buffer;
+		bool state = sw->m_buffer;
 		//读取当前状态
 		XIODevice_read_base(sw, &state, 1);
-		//printf("state:%s\n", state ? "true" : "false");
-		if (state != sw->buffer)
+		//printf("m_state:%s\n", m_state ? "true" : "false");
+		if (state != sw->m_buffer)
 		{
-			sw->buffer = state;
+			sw->m_buffer = state;
 			return;
 		}
-		if (sw->buffer != sw->state)
-		//if (state != sw->state)
+		if (sw->m_buffer != sw->m_state)
+		//if (m_state != sw->m_state)
 		{
-			sw->state = sw->buffer;
-			if (sw->m_port.stateChangeCallback)//判断当前是否有状态改变回调函数
-				sw->m_port.stateChangeCallback(sw);
+			sw->m_state = sw->m_buffer;
+			if (sw->m_stateChangeCallback)//判断当前是否有状态改变回调函数
+				sw->m_stateChangeCallback(sw);
 		}
 	}
 }
 
-void XSwitchDevice_setState_base(XSwitchDevice* sw, bool state)
+void XSwitchDeviceBase_setState_base(XSwitchDeviceBase* sw, bool state)
 {
 	if (ISNULL(sw, "") || ISNULL(XClassGetVtable(sw), ""))
 		return ;
-	XClassGetVirtualFunc(sw, EXSwitchDevice_SetState, void(*)(XSwitchDevice*,bool))(sw, state);
+	XClassGetVirtualFunc(sw, EXSwitchDeviceBase_SetState, void(*)(XSwitchDeviceBase*,bool))(sw, state);
 }
 
-bool XSwitchDevice_getState_base(XSwitchDevice* sw)
+bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw)
 {
 	if (ISNULL(sw, "") || ISNULL(XClassGetVtable(sw), ""))
 		return false;
-	return XClassGetVirtualFunc(sw, EXSwitchDevice_GetState, bool(*)(XSwitchDevice*))(sw);
+	return XClassGetVirtualFunc(sw, EXSwitchDeviceBase_GetState, bool(*)(XSwitchDeviceBase*))(sw);
 }

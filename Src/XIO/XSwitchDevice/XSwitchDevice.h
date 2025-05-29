@@ -4,53 +4,44 @@
 extern "C" {
 #endif
 #include"XIODevice.h"
-//XSwitchDevice虚函数表
-extern XVtable* XSwitchDeviceVtable;
-#define XSWITCHDEVICE_VTABLE_SIZE (XIODEVICE_VTABLE_SIZE+2)       //XSwitchDevice容器虚函数表大小
+//XSwitchDeviceBase虚函数表
+extern XVtable* XSwitchDeviceBaseVtable;
+#define XSWITCHDEVICEBASE_VTABLE_SIZE (XIODEVICE_VTABLE_SIZE+2)       //XSwitchDeviceBase容器虚函数表大小
 //XSwitchDevice虚函数表枚举
-enum XSwitchDeviceVtableEnum
+enum XSwitchDeviceBaseVtableEnum
 {
-	EXSwitchDevice_SetState = XIODEVICE_VTABLE_SIZE,
-	EXSwitchDevice_GetState,
+	EXSwitchDeviceBase_SetState = XIODEVICE_VTABLE_SIZE,
+	EXSwitchDeviceBase_GetState,
 };
-typedef struct XSwitchDevice XSwitchDevice;
-//开关设备接口
-typedef struct XSwitchDevice_PortFunc
-{
-	void (*stateChangeCallback)(XSwitchDevice* io);//状态改变回调函数
-}XSwitchDevice_PortFunc;
-//开关设备初始化接口
-typedef struct XSwitchDevice_PortFuncInit
-{
-	XIODevice_PortFuncInit parentPort;//父对象接口
-	XSwitchDevice_PortFunc SwitchPort;//子类开关接口
-}XSwitchDevice_PortFuncInit;
+typedef struct XSwitchDeviceBase XSwitchDeviceBase;
 //开关设备
-typedef struct XSwitchDevice
+typedef struct XSwitchDeviceBase
 {
-	XIODevice m_parent;//父对象
-	bool buffer;//存储状态
-	bool state;//状态   开或关
-	XSwitchDevice_PortFunc m_port;//开关设备接口
-}XSwitchDevice;
+	XIODeviceBase m_parent;//父对象
+	bool m_buffer;//存储状态
+	bool m_state;//状态   开或关
+	void (*m_stateChangeCallback)(XSwitchDeviceBase* io);//状态改变回调函数
+}XSwitchDeviceBase;
 //初始化类
-void XSwitchDevice_class_init();
+void XSwitchDeviceBase_class_init();
 //开关设备
-XSwitchDevice* XSwitchDevice_new(XSwitchDevice_PortFuncInit* port);
+XSwitchDeviceBase* XSwitchDeviceBase_new(XVtable* vtable);
 //初始化
-void XSwitchDevice_init(XSwitchDevice* sw,XSwitchDevice_PortFuncInit* port);
-//默认轮询方法
-void XSwitchDevice_pollDefaultMethod(XSwitchDevice* sw);
+void XSwitchDeviceBase_init(XSwitchDeviceBase* sw, XVtable* vtable);
+//设置状态改变回调函数
+void XSwitchDeviceBase_setStateChangeCallback(XSwitchDeviceBase* sw, void (*callback)(XSwitchDeviceBase* io));
+//默认轮询方法(初始化时虚函数表不存在将自动指定)
+void XSwitchDeviceBase_pollDefaultMethod(XSwitchDeviceBase* sw);
 //设置开关设备状态
-void XSwitchDevice_setState_base(XSwitchDevice* sw,bool state);
+void XSwitchDeviceBase_setState_base(XSwitchDeviceBase* sw,bool state);
 //获取状态
-bool XSwitchDevice_getState_base(XSwitchDevice* sw);
-#define XSwitchDevice_isOpen_base XIODevice_isOpen_base
-#define XSwitchDevice_open_base XIODevice_open_base
-#define XSwitchDevice_close_base XIODevice_close_base
-#define XSwitchDevice_setDevice_base XIODevice_setDevice_base
-#define XSwitchDevice_free_base XIODevice_free_base
-#define XSwitchDevice_poll_base XIODevice_poll_base
+bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw);
+#define XSwitchDeviceBase_isOpen_base XIODevice_isOpen_base
+#define XSwitchDeviceBase_open_base XIODevice_open_base
+#define XSwitchDeviceBase_close_base XIODevice_close_base
+#define XSwitchDeviceBase_setDevice_base XIODevice_setDevice_base
+#define XSwitchDeviceBase_free_base XIODevice_free_base
+#define XSwitchDeviceBase_poll_base XIODevice_poll_base
 #ifdef __cplusplus
 }
 #endif

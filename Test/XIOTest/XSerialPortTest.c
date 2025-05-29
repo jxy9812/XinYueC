@@ -9,7 +9,7 @@ static HANDLE hSerial;
 static  HANDLE hEvent;
 static OVERLAPPED ov;
 // 打开串口
-static bool SerialOpen(XIODevice* io, XIODeviceBase mode)
+static bool SerialOpen(XIODeviceBase* io, XIODeviceBaseMode mode)
 {
     //printf("打开串口\n");
     XSerialPort* serial = (XSerialPort*)io;

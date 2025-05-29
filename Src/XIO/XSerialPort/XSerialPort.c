@@ -17,16 +17,16 @@ void XSerialPort_init(XSerialPort* serial, XSerialPort_PortFuncInit* port)
 {
 	if (serial == NULL || port == NULL)
 		return ;
-	memset(serial,0,sizeof(XSerialPort));
-	//memset(((XIODevice*)serial)+1, 0, sizeof(XSerialPort)-sizeof(XIODevice));
+	//memset(serial,0,sizeof(XSerialPort));
+	memset(((XIODeviceBase*)serial)+1, 0, sizeof(XSerialPort)-sizeof(XIODeviceBase));
 	XIODevice_init(serial, port);
 	XSerialPort_class_init();
 	XClassGetVtable(serial) = XSerialPortVtable;
 }
 
-bool XSerialPort_open_base(XSerialPort* serial, XIODeviceBase mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)
+bool XSerialPort_open_base(XSerialPort* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)
 {
 	if (ISNULL(serial, "") || ISNULL(XClassGetVtable(serial), ""))
 		return false;
-	return XClassGetVirtualFunc(serial, EXIODevice_Open, bool(*)(XSerialPort*, XIODeviceBase, uint8_t, uint32_t, XSerialPortParity))(serial, mode,portNum,baudRate,parity);
+	return XClassGetVirtualFunc(serial, EXIODeviceBase_Open, bool(*)(XSerialPort*, XIODeviceBaseMode, uint8_t, uint32_t, XSerialPortParity))(serial, mode,portNum,baudRate,parity);
 }

@@ -1,80 +1,84 @@
 ﻿#include"XPWMDevice.h"
 #include"XMemory.h"
 #include<string.h>
-XPWMDevice* XPWMDevice_new(XPWMDevice_PortFuncInit* port)
+XPWMDeviceBase* XPWMDeviceBase_new(XVtable* vtable)
 {
-	if (port == NULL)
-		return NULL;
-	XPWMDevice* pwm = XMemory_malloc(sizeof(XPWMDevice));
+	/*if (port == NULL)
+		return NULL;*/
+	XPWMDeviceBase* pwm = XMemory_malloc(sizeof(XPWMDeviceBase));
 	if (pwm == NULL)
 		return pwm;
 	
-	XPWMDevice_init(pwm, port);
+	XPWMDeviceBase_init(pwm, vtable);
 	return pwm;
 }
 
-void XPWMDevice_init(XPWMDevice* pwm, XPWMDevice_PortFuncInit* port)
+void XPWMDeviceBase_init(XPWMDeviceBase* pwm, XVtable* vtable)
 {
-	if (pwm == NULL || port == NULL)
+	if (pwm == NULL )
 		return ;
-	memset(pwm, 0, sizeof(XPWMDevice));
-	XIODevice_init(&(pwm->m_parent), &(port->parentPort));
+	//初始化父类以外的数据
+	memset(((XIODeviceBase*)pwm)+1, 0, sizeof(XPWMDeviceBase) - sizeof(XIODeviceBase));
+	XIODevice_init(pwm, vtable);
 	//开始初始化
-	//memset(&(pwm->m_parent)+1, 0, sizeof(XPWMDevice) - sizeof(XIODevice) - sizeof(XPWMDevice_PortFunc));
-	//pwm->m_timer = XTimer_new(&(port->timerPort));
-	//pwm->m_timer->data = pwm;
-	//绑定函数指针
-	memcpy(&(pwm->m_port), &(port->pwmPort), sizeof(XPWMDevice_PortFunc));
-
-	XPWMDevice_class_init();
-	XClassGetVtable(pwm) = XPWMDeviceVtable;
+	XPWMDeviceBase_class_init();
+	if (vtable == NULL)
+		XClassGetVtable(pwm) = XPWMDeviceVtable;
+	else
+		XClassGetVtable(pwm) = vtable;
 }
 
-void XPWMDevice_setFrequency_base(XPWMDevice* pwm, size_t f)
+void XPWMDeviceBase_setRunChangeCallback(XPWMDeviceBase* sw, void(*callback)(XPWMDeviceBase* pwm))
+{
+	if (sw)
+		sw->m_runChangeCallback = callback;
+}
+
+void XPWMDeviceBase_setFrequency_base(XPWMDeviceBase* pwm, size_t f)
 {
 	if (ISNULL(pwm, "") || ISNULL(XClassGetVtable(pwm), ""))
 		return;
-	XClassGetVirtualFunc(pwm, EXPWMDevice_SetFrequency, void(*)(XPWMDevice*, size_t))(pwm, f);
+	XClassGetVirtualFunc(pwm, EXPWMDeviceBase_SetFrequency, void(*)(XPWMDeviceBase*, size_t))(pwm, f);
 }
 
-void XPWMDevice_setDutyCycle_base(XPWMDevice* pwm, uint8_t d)
+void XPWMDeviceBase_setDutyCycle_base(XPWMDeviceBase* pwm, uint8_t d)
 {
 	if (ISNULL(pwm, "") || ISNULL(XClassGetVtable(pwm), ""))
 		return;
-	XClassGetVirtualFunc(pwm, EXPWMDevice_SetDutyCycle, void(*)(XPWMDevice*, uint8_t))(pwm, d);
+	XClassGetVirtualFunc(pwm, EXPWMDeviceBase_SetDutyCycle, void(*)(XPWMDeviceBase*, uint8_t))(pwm, d);
 }
 
-void XPWMDevice_start_base(XPWMDevice* pwm)
+void XPWMDeviceBase_start_base(XPWMDeviceBase* pwm)
 {
 	if (ISNULL(pwm, "") || ISNULL(XClassGetVtable(pwm), ""))
 		return;
-	XClassGetVirtualFunc(pwm, EXPWMDevice_Start, void(*)(XPWMDevice*))(pwm);
+	XClassGetVirtualFunc(pwm, EXPWMDeviceBase_Start, void(*)(XPWMDeviceBase*))(pwm);
 }
 
-void XPWMDevice_stop_base(XPWMDevice* pwm)
+void XPWMDeviceBase_stop_base(XPWMDeviceBase* pwm)
 {
 	if (ISNULL(pwm, "") || ISNULL(XClassGetVtable(pwm), ""))
 		return;
-	XClassGetVirtualFunc(pwm, EXPWMDevice_Stop, void(*)(XPWMDevice*))(pwm);
+	XClassGetVirtualFunc(pwm, EXPWMDeviceBase_Stop, void(*)(XPWMDeviceBase*))(pwm);
 }
 
-bool XPWMDevice_isRunning_base(XPWMDevice* pwm)
+bool XPWMDeviceBase_isRunning_base(XPWMDeviceBase* pwm)
 {
 	if (ISNULL(pwm, "") || ISNULL(XClassGetVtable(pwm), ""))
 		return false;
-	return XClassGetVirtualFunc(pwm, EXPWMDevice_IsRunning, bool(*)(XPWMDevice*))(pwm);
+	return XClassGetVirtualFunc(pwm, EXPWMDeviceBase_IsRunning, bool(*)(XPWMDeviceBase*))(pwm);
 }
 
-size_t XPWMDevice_getFrequency_base(XPWMDevice* pwm)
+size_t XPWMDeviceBase_getFrequency_base(XPWMDeviceBase* pwm)
 {
 	if (ISNULL(pwm, "") || ISNULL(XClassGetVtable(pwm), ""))
 		return 0;
-	return XClassGetVirtualFunc(pwm, EXPWMDevice_GetFrequency, size_t(*)(XPWMDevice*))(pwm);
+	return XClassGetVirtualFunc(pwm, EXPWMDeviceBase_GetFrequency, size_t(*)(XPWMDeviceBase*))(pwm);
 }
 
-uint8_t XPWMDevice_getDutyCycle_base(XPWMDevice* pwm)
+uint8_t XPWMDeviceBase_getDutyCycle_base(XPWMDeviceBase* pwm)
 {
 	if (ISNULL(pwm, "") || ISNULL(XClassGetVtable(pwm), ""))
 		return 0;
-	return XClassGetVirtualFunc(pwm, EXPWMDevice_GetDutyCycle, uint8_t(*)(XPWMDevice*))(pwm);
+	return XClassGetVirtualFunc(pwm, EXPWMDeviceBase_GetDutyCycle, uint8_t(*)(XPWMDeviceBase*))(pwm);
 }

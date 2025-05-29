@@ -39,7 +39,7 @@ typedef void(*XModbusFrameClose) (XModbus* modbus);
  * @param xRxEnable true=启用接收，false=禁用接收
  * @param xTxEnable true=启用发送，false=禁用发送
  */
-typedef void(*XModbusSerialEnable)(XIODevice* io, bool xRxEnable, bool xTxEnable);
+typedef void(*XModbusSerialEnable)(XIODeviceBase* io, bool xRxEnable, bool xTxEnable);
 /* 端口层回调函数（需平台实现，处理外部事件驱动协议栈） */
 typedef bool(*XModbusFrameCBByteReceived)(XModbus* modbus);   // 接收到单个字节时调用（触发接收状态机）
 typedef bool(*XModbusFrameCBTransmitterEmpty)(XModbus* modbus); // 发送缓冲区空时调用（触发发送状态机）
@@ -57,7 +57,7 @@ typedef struct XModbus
     uint8_t    address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
     XModbusMode mode;//模式
     XModbusState     state;//状态
-    XIODevice* ioDevice;//IO设备
+    XIODeviceBase* ioDevice;//IO设备
     XVector* recvBuffer;//接收缓冲区
     XModbusFrameQueue* sendQueue;//发送队列(XCircularQueue<XModbusFrame*>)
     XModbusFrameQueue* recvFrameQueue;//接收帧队列(XCircularQueue<XModbusFrame*>) 后面处理执行

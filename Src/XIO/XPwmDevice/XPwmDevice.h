@@ -10,62 +10,52 @@ extern XVtable* XPWMDeviceVtable;
 //XPWMDevice虚函数表枚举
 enum XPWMDeviceVtableEnum
 {
-	EXPWMDevice_SetFrequency = XIODEVICE_VTABLE_SIZE,
-	EXPWMDevice_SetDutyCycle,
-	EXPWMDevice_Start,
-	EXPWMDevice_Stop,
-	EXPWMDevice_IsRunning,
-	EXPWMDevice_GetFrequency,
-	EXPWMDevice_GetDutyCycle,
+	EXPWMDeviceBase_SetFrequency = XIODEVICE_VTABLE_SIZE,
+	EXPWMDeviceBase_SetDutyCycle,
+	EXPWMDeviceBase_Start,
+	EXPWMDeviceBase_Stop,
+	EXPWMDeviceBase_IsRunning,
+	EXPWMDeviceBase_GetFrequency,
+	EXPWMDeviceBase_GetDutyCycle,
 };
-typedef struct XPWMDevice XPWMDevice;
-//pwm设备接口
-typedef struct XPWMDevice_PortFunc
-{
-	void (*start)(XPWMDevice* pwm);
-	void (*stop)(XPWMDevice* pwm);
-	void (*runChangeCallback)(XPWMDevice* pwm);//运行状态改变回调函数
-}XPWMDevice_PortFunc;
-//pwm设备初始化接口
-typedef struct XPWMDevice_PortFuncInit
-{
-	XIODevice_PortFuncInit parentPort;//父对象接口
-	//XTimer_PortFuncInit timerPort;//定时器接口
-	XPWMDevice_PortFunc pwmPort;//子类开关接口
-}XPWMDevice_PortFuncInit;
+typedef struct XPWMDeviceBase XPWMDeviceBase;
+
 //pwm设备
-typedef struct XPWMDevice
+typedef struct XPWMDeviceBase
 {
-	XIODevice m_parent;//父对象
-	//XTimerBase* m_timer;
+	XIODeviceBase m_parent;//父对象
 	bool m_isRun;//是否运行
 	uint8_t m_dutyCycle;//占空比
 	size_t m_frequency;//频率
-	void* data;//用户数据
-	XPWMDevice_PortFunc m_port;//pwm设备接口
-}XPWMDevice;
+	void* m_userData;//用户数据
+	void (*m_runChangeCallback)(XPWMDeviceBase* pwm);//运行状态改变回调函数
+}XPWMDeviceBase;
 //初始化类
-void XPWMDevice_class_init();
+void XPWMDeviceBase_class_init();
 //pwm设备
-XPWMDevice* XPWMDevice_new(XPWMDevice_PortFuncInit* port);
-void XPWMDevice_init(XPWMDevice* pwm,XPWMDevice_PortFuncInit* port);
+XPWMDeviceBase* XPWMDeviceBase_new(XVtable* vtable);
+void XPWMDeviceBase_init(XPWMDeviceBase* pwm, XVtable* vtable);
+//设置运行状态改变回调函数
+void XPWMDeviceBase_setRunChangeCallback(XPWMDeviceBase* sw, void (*callback)(XPWMDeviceBase* pwm));
 //设置频率  T(s)=1/F(HZ) 周期  一个周期
-void XPWMDevice_setFrequency_base(XPWMDevice* pwm,size_t f);
+void XPWMDeviceBase_setFrequency_base(XPWMDeviceBase* pwm,size_t f);
 //设置占空比 T(s)=1/F(HZ)*D(0`100)/100   电平翻转周期
-void XPWMDevice_setDutyCycle_base(XPWMDevice* pwm, uint8_t d);
-void XPWMDevice_start_base(XPWMDevice* pwm);
-void XPWMDevice_stop_base(XPWMDevice* pwm);
-bool XPWMDevice_isRunning_base(XPWMDevice* pwm);
+void XPWMDeviceBase_setDutyCycle_base(XPWMDeviceBase* pwm, uint8_t d);
+//启动函数 需要重载实现
+void XPWMDeviceBase_start_base(XPWMDeviceBase* pwm);
+//停止函数 需要重载实现
+void XPWMDeviceBase_stop_base(XPWMDeviceBase* pwm);
+bool XPWMDeviceBase_isRunning_base(XPWMDeviceBase* pwm);
 //频率  T(s)=1/F(HZ) 周期  一个周期
-size_t XPWMDevice_getFrequency_base(XPWMDevice* pwm);
+size_t XPWMDeviceBase_getFrequency_base(XPWMDeviceBase* pwm);
 //占空比 T(s)=1/F(HZ)*D(0`100)/100   电平翻转周期
-uint8_t XPWMDevice_getDutyCycle_base(XPWMDevice* pwm);
-#define XPWMDevice_isOpen_base XIODevice_isOpen_base
-#define XPWMDevice_open_base XIODevice_open_base
-#define XPWMDevice_close_base XIODevice_close_base
-#define XPWMDevice_setDevice_base XIODevice_setDevice_base
-#define XPWMDevice_free_base XIODevice_free_base
-#define XPWMDevice_poll_base XIODevice_poll_base
+uint8_t XPWMDeviceBase_getDutyCycle_base(XPWMDeviceBase* pwm);
+#define XPWMDeviceBase_isOpen_base XIODevice_isOpen_base
+#define XPWMDeviceBase_open_base XIODevice_open_base
+#define XPWMDeviceBase_close_base XIODevice_close_base
+#define XPWMDeviceBase_setDevice_base XIODevice_setDevice_base
+#define XPWMDeviceBase_free_base XIODevice_free_base
+#define XPWMDeviceBase_poll_base XIODevice_poll_base
 #ifdef __cplusplus
 }
 #endif
