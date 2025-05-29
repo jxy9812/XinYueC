@@ -10,7 +10,7 @@ typedef XList XModbusRegularlySendFrameLsit;
 typedef struct XModbusRegularlySendFrame
 {
 	uint32_t time;//定时时间
-	uint32_t timeOut;//超时时间
+	size_t timeOut;//超时时间
 	XModbusFrame* frame;//帧数据
 }XModbusRegularlySendFrame;
 XModbusRegularlySendFrameLsit* XModbusRegularlySendFrameLsit_new();

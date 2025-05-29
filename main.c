@@ -11,9 +11,8 @@ int main(int argc, char* args[])
 	XAtomic_fetch_sub_int32(&b,1);
 	printf("%d\n",XAtomic_load_int32(&b));
 #if DEMOTEST
-	XPriority_QueueTest();
 	//XPWMDeviceTest();
-	//XModbusTest();
+	XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
 	//XSerialPortTest();

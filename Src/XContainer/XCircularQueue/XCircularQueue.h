@@ -4,19 +4,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include"XQueueBase.h"
 #include"XVector.h"
 //XCircularQueue虚函数表
 extern XVtable* XCircularQueueVtable;
-#define XCIRCULARQUEUE_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+5)       //XCircularQueue容器虚函数表大小
-//XCircularQueue虚函数表枚举
-enum XCircularQueueEnum
-{
-	EXCircularQueue_Push = XCONTAINEROBJECT_VTABLE_SIZE,
-	EXCircularQueue_Pop,
-	EXCircularQueue_Top,
-	EXCircularQueue_Receive,
-	EXCircularQueue_IsFull
-};
+#define XCIRCULARQUEUE_VTABLE_SIZE (XQUEUEBASE_VTABLE_SIZE)       //XCircularQueue容器虚函数表大小
 //环形队列
 typedef struct XCircularQueue
 {
@@ -34,21 +26,31 @@ void XCircularQueue_init(XCircularQueue* this_queue,size_t typeSize, size_t coun
 XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count);
 //设置自动扩容
 void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue,bool autoExpansion);
-//插入到队列的队尾
-#define XCircularQueue_Push_Base(this_queue,type,value){type t=value;XCircularQueue_push_base(this_vector,&t);}
-bool XCircularQueue_push_base(XCircularQueue* this_queue, void* pvData);
+//api
+#define XCircularQueue_Push_Base				XQueueBase_Push_Base
+#define XCircularQueue_push_base				XQueueBase_push_base
 //出队
-void XCircularQueue_pop_base(XCircularQueue* this_queue);
-//接收数据并且出队
-bool XCircularQueue_receive_base(XCircularQueue* this_queue, void* pvBuffer);
+#define XCircularQueue_pop_base					XQueueBase_pop_base
+//接收数据并且出队	
+#define XCircularQueue_receive_base				XQueueBase_receive_base
 // 返回队头元素
-#define XCircularQueue_Top_Base(this_queue,Type) (*(Type*)XCircularQueue_top_base(this_queue))
-void* XCircularQueue_top_base(XCircularQueue* this_queue);
-bool XCircularQueue_isFull_base(XCircularQueue* this_queue);
-#define XCircularQueue_free_base		XContainerObject_free_base
-#define XCircularQueue_isEmpty_base	XContainerObject_isEmpty_base
-#define XCircularQueue_getSize_base		XContainerObject_getSize_base
-#define XCircularQueue_clear_base	XContainerObject_clear_base
+#define XCircularQueue_Top_Base					XQueueBase_Top_Base
+#define XCircularQueue_top_base					XQueueBase_top_base
+#define XCircularQueue_isFull_base				XQueueBase_isFull_base
+//释放内存
+#define XCircularQueue_free_base				XQueueBase_free_base
+//清空，不是释放内存
+#define XCircularQueue_clear_base				XQueueBase_clear_base
+//检测是否为空，空为真 O(1)
+#define XCircularQueue_isEmpty_base				XQueueBase_isEmpty_base
+//返回元素的个数 O(1)
+#define XCircularQueue_getSize_base				XQueueBase_getSize_base
+//返回当前向量所能容纳的最大元素个数
+#define XCircularQueue_getCapacity_base			XQueueBase_getCapacity_base
+//交换两个同类型向量的数据
+#define XCircularQueue_swap_base				XQueueBase_swap_base
+//返回元素类型字节大小
+#define XCircularQueue_getTypeSize_base			XQueueBase_getTypeSize_base
 #ifdef __cplusplus
 }
 #endif

@@ -300,7 +300,7 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
             if (regularly->timeOut < XTimer_getCurrentTime())
             {//时间到了
                 regularly->timeOut = regularly->time + XTimer_getCurrentTime();
-                //printf("时间到了\n");
+                //printf("时间到了:%\n");
                 XModbus_sendFrame(modbus, XModbusFrame_copy(regularly->frame));
 
             }

@@ -51,7 +51,7 @@ void XModbusTest()
         char buff[] = { 0x00,0x01 };
         XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x00, buff);
         //XModbus_sendFrame(modbus, frame);
-        XModbus_sendFrameRegularlyMaster(modbus, frame,100);
+        XModbus_sendFrameRegularlyMaster(modbus, frame,1000);
        /* uint8_t State =0;
         XMODBUS_UINT8_SET_BITS(&State, 0, 1);
         XMODBUS_UINT8_SET_BITS(&State, 2, 1); 

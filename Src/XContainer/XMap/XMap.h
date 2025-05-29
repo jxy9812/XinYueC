@@ -50,17 +50,17 @@ void* XMap_value_base(XMap* this_map, const void* key);
 //查找数据，返回找到的XPair地址，没有返回NULL
 XPair* XMap_find_base(XMap* this_map, const void* key);
 //释放内存
-#define XMap_free_base   XContainerObject_free_base
+#define XMap_free_base				XContainerObject_free_base
 //清空，不是释放内存
-#define XMap_clear_base  XContainerObject_clear_base
+#define XMap_clear_base				XContainerObject_clear_base
 //检测是否为空，空为真 O(1)
 #define XMap_isEmpty_base			XContainerObject_isEmpty_base
 //返回元素的个数 O(1)
-#define XMap_size_base			XContainerObject_getSize_base
+#define XMap_size_base				XContainerObject_getSize_base
 //返回当前向量所能容纳的最大元素个数
-#define XMap_capacity_base		XContainerObject_getCapacity_base
+#define XMap_capacity_base			XContainerObject_getCapacity_base
 //交换两个同类型向量的数据
-#define XMap_swap_base			XContainerObject_swap_base
+#define XMap_swap_base				XContainerObject_swap_base
 //返回元素类型字节大小
 #define XMap_getTypeSize_base		XContainerObject_getTypeSize_base
 //默认释放派生类的方法 key是派生的容器

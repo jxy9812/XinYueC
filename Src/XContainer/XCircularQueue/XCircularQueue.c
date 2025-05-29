@@ -29,39 +29,5 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue, bool autoExpans
 	}
 }
 
-bool XCircularQueue_push_base(XCircularQueue* this_queue, void* pvData)
-{
-	if (ISNULL(this_queue, "") || ISNULL(pvData, "") || ISNULL(XClassGetVtable(this_queue), ""))
-		return false;
-	return XClassGetVirtualFunc(this_queue, EXCircularQueue_Push, bool (*)(XCircularQueue*, void*))(this_queue, pvData);
-}
-
-void XCircularQueue_pop_base(XCircularQueue* this_queue)
-{
-	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
-		return;
-	XClassGetVirtualFunc(this_queue, EXCircularQueue_Pop, void (*)(XCircularQueue*))(this_queue);
-}
-
-bool XCircularQueue_receive_base(XCircularQueue* this_queue, void* pvBuffer)
-{
-	if (ISNULL(this_queue, "") || ISNULL(pvBuffer, "") || ISNULL(XClassGetVtable(this_queue), ""))
-		return false;
-	return XClassGetVirtualFunc(this_queue, EXCircularQueue_Receive, bool (*)(XCircularQueue*, void*))(this_queue, pvBuffer);
-}
-
-void* XCircularQueue_top_base(XCircularQueue* this_queue)
-{
-	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
-		return NULL;
-	return XClassGetVirtualFunc(this_queue, EXCircularQueue_Top, void* (*)(XCircularQueue*))(this_queue);
-}
-
-bool XCircularQueue_isFull_base(XCircularQueue* this_queue)
-{
-	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
-		return false;
-	return XClassGetVirtualFunc(this_queue, EXCircularQueue_IsFull, bool (*)(XCircularQueue*))(this_queue);
-}
 
 #endif
