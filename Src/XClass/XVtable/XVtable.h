@@ -29,7 +29,7 @@ void XVtable_clear(XVtable* this_vtable);
 bool XVtable_empty(XVtable* this_vtable);
 size_t XVtable_size(XVtable* this_vtable);
 //重写函数
-void* XVtable_at(XVtable* this_vtable, int64_t index);
+void* XVtable_at(XVtable* this_vtable, size_t index);
 #define XVtable_At(this_vtable,index) (*(this_vtable->data + index))
 #ifdef __cplusplus
 }

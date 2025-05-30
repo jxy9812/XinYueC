@@ -7,14 +7,14 @@
 //检测是否需要扩容
 static void XVtableEnlargeCapacity(XVtable* this_vtable)
 {
-	if (ISNULL(this_vtable, ""))
+	if (ISNULL(this_vtable, "")|| this_vtable->isStack)
 		return;
 	if (this_vtable->capacity == 0)
 	{
 		this_vtable->data = XMemory_malloc(sizeof(void*)* VECTORNUM);
 		if (this_vtable->data == NULL)
 		{
-			perror("初始化vector失败");
+			perror("动态创建虚函数表失败\n");
 			exit(-1);
 		}
 		else
@@ -24,12 +24,12 @@ static void XVtableEnlargeCapacity(XVtable* this_vtable)
 	}
 	else if (this_vtable->capacity == this_vtable->size)//空间已满需要扩容
 	{
-		if (ISNULL(!this_vtable->isStack, "栈上空间满了，无法自动扩容"))
-			return;
+		/*if (ISNULL(!this_vtable->isStack, "栈上空间满了，无法自动扩容\n"))
+			return;*/
 		void* m_data = XMemory_realloc(this_vtable->data, this_vtable->capacity * sizeof(void*) * 1.5);
 		if (m_data == NULL)
 		{
-			perror("扩容失败vector");
+			perror("扩容失败虚函数失败\n");
 			exit(-1);
 		}
 		else
@@ -170,11 +170,11 @@ size_t XVtable_size(XVtable* this_vtable)
 	return this_vtable->size;
 }
 
-void* XVtable_at(XVtable* this_vtable, int64_t index)
+void* XVtable_at(XVtable* this_vtable, size_t index)
 {
 	if (ISNULL(this_vtable, ""))
 		return NULL;
-	if (index<0 || index + 1 > this_vtable->size)
+	if (index + 1 > this_vtable->size)
 	{
 		return NULL;
 	}
