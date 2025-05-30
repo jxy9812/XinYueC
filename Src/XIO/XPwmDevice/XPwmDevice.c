@@ -19,7 +19,7 @@ void XPWMDeviceBase_init(XPWMDeviceBase* pwm, XVtable* vtable)
 		return ;
 	//初始化父类以外的数据
 	memset(((XIODeviceBase*)pwm)+1, 0, sizeof(XPWMDeviceBase) - sizeof(XIODeviceBase));
-	XIODevice_init(pwm, vtable);
+	XIODeviceBase_init(pwm, vtable);
 	//开始初始化
 	XPWMDeviceBase_class_init();
 	if (vtable == NULL)

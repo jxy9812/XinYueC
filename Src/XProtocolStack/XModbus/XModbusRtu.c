@@ -12,11 +12,11 @@ static void  XModbusRtu_Timer_out(void* arg)
 XModbusErrorCode XModbusRtuInit(XModbus* modbus, XModbusMode mode, XModbus_PortFunc* func, uint8_t address, uint8_t port, uint32_t baudRate, XModbusParity parity)
 {
     XModbusErrorCode error = MB_ENOERR;
-    //modbus->ioDevice = XSerialPort_new(&(func->IO_Port));
-    XIODevice_setReadBuffer_base(modbus->ioDevice, MB_DEVICE_RECV_BUFFER_SIZE);
-    XIODevice_setWriteBuffer_base(modbus->ioDevice, MB_DEVICE_SEND_BUFFER_SIZE);
+    //modbus->ioDevice = XSerialPortBase_new(&(func->IO_Port));
+    XIODeviceBase_setReadBuffer_base(modbus->ioDevice, MB_DEVICE_RECV_BUFFER_SIZE);
+    XIODeviceBase_setWriteBuffer_base(modbus->ioDevice, MB_DEVICE_SEND_BUFFER_SIZE);
     // 调用 RTU 底层初始化（配置串口参数：端口号、波特率、校验位）
-    if (!XSerialPort_open_base(modbus->ioDevice, mode, port, baudRate, parity))
+    if (!XSerialPortBase_open_base(modbus->ioDevice, mode, port, baudRate, parity))
     {
         error = MB_EPORTERR;
         return error;
@@ -210,9 +210,9 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
             //printf("发送中\n");
             if (modbus->pendingCount != 0)
             {
-                XIODevice_write_base(modbus->ioDevice, XVector_at_base(dataVector, XVector_getSize_base(dataVector) - modbus->pendingCount), 1);
+                XIODeviceBase_write_base(modbus->ioDevice, XVector_at_base(dataVector, XVector_getSize_base(dataVector) - modbus->pendingCount), 1);
 #if !MB_IS_COMP_SEND_FRAME
-                XIODevice_writeFull_base(modbus->ioDevice);
+                XIODeviceBase_writeFull_base(modbus->ioDevice);
 #endif
                 --modbus->pendingCount;
                // printf("end\n");
@@ -220,7 +220,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
             else
             {//发送完成
 #if MB_IS_COMP_SEND_FRAME
-                XIODevice_writeFull_base(modbus->ioDevice);
+                XIODeviceBase_writeFull_base(modbus->ioDevice);
 #endif
                 modbus->eSndState = STATE_TX_END;  // 切换到发送空闲状态
                 modbus->timerOutNumber = 0;//开始计数

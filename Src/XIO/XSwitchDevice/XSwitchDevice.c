@@ -19,7 +19,7 @@ void XSwitchDeviceBase_init(XSwitchDeviceBase* sw, XVtable* vtable)
 	if (sw == NULL)
 		return ;
 	memset(((XIODeviceBase*)sw) + 1, 0, sizeof(XSwitchDeviceBase) - sizeof(XIODeviceBase));
-	XIODevice_init(sw, vtable);
+	XIODeviceBase_init(sw, vtable);
 	XSwitchDeviceBase_class_init();
 	if(vtable==NULL)
 		XClassGetVtable(sw) = XSwitchDeviceBaseVtable;
@@ -44,7 +44,7 @@ void XSwitchDeviceBase_pollDefaultMethod(XSwitchDeviceBase* sw)
 		//扫描保存状态
 		bool state = sw->m_buffer;
 		//读取当前状态
-		XIODevice_read_base(sw, &state, 1);
+		XIODeviceBase_read_base(sw, &state, 1);
 		//printf("m_state:%s\n", m_state ? "true" : "false");
 		if (state != sw->m_buffer)
 		{

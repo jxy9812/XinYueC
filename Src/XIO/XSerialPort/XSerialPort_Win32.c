@@ -2,29 +2,18 @@
 #include"XSerialPort.h"
 #include"XCircularQueue.h"
 #include"XMemory.h"
-#include <windows.h>
-// 告诉编译器链接 winmm.lib 库
-#pragma comment(lib, "winmm.lib")
-//串口设备
-typedef struct XSerialPortWin32
-{
-    XSerialPort m_parent;//父对象
-    HANDLE m_hSerial;
-    HANDLE m_hEvent;
-    OVERLAPPED m_ov;
-}XSerialPortWin32;//串口
 
-static bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity);
+static bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
 static size_t VXIODevice_write(XSerialPortWin32* serial, const char* data, size_t maxSize);//写入
 static size_t VXIODevice_writeFull(XSerialPortWin32* serial);//将剩余的数据刷入设备
 static size_t VXIODevice_read(XSerialPortWin32* serial, char* data, size_t maxSize);//读取
 static void VXIODevice_close(XSerialPortWin32* serial);
 static void VXIODevice_poll(XSerialPortWin32* serial);
-XSerialPort* XSerialPort_new_Win32()
+XSerialPortWin32* XSerialPort_new_Win32()
 {
 	static XVtable* pvVtable = NULL;
 	if (pvVtable != NULL)
-		return XSerialPort_new(pvVtable);
+		return XSerialPortBase_new(pvVtable);
 #if VTABLE_ISSTACK
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[XSERIALPORT_VTABLE_SIZE];//虚函数数据
@@ -36,7 +25,7 @@ XSerialPort* XSerialPort_new_Win32()
     XSerialPortWin32* serialPort = XMemory_malloc(sizeof(XSerialPortWin32));
     if (serialPort == NULL)
         return serialPort;
-    XSerialPort_init(serialPort, NULL);
+    XSerialPortBase_init(serialPort, NULL);
     serialPort->m_hSerial = INVALID_HANDLE_VALUE;
     XClassGetVtable(serialPort) = pvVtable;
 	//继承的函数
@@ -51,12 +40,12 @@ XSerialPort* XSerialPort_new_Win32()
 	return serialPort;
 }
 
-bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)
+bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity)
 {
     if (serial == NULL)
         return false;
     printf("打开串口\n");
-    XSerialPort* parent = serial;
+    XSerialPortBase* parent = serial;
     parent->m_baudRate = baudRate;
     parent->m_parity = parity;
     parent->m_portNum = portNum;
@@ -275,7 +264,7 @@ void VXIODevice_close(XSerialPortWin32* serial)
     if (serial == NULL || serial->m_hSerial == INVALID_HANDLE_VALUE)
         return ;
     XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (XIODevice_isOpen_base(io))
+    if (XIODeviceBase_isOpen_base(io))
     { //开始关闭串口
         // 1. 取消所有未完成的异步操作
         if (!CancelIoEx(serial->m_hSerial, &(serial->m_ov)))
@@ -306,6 +295,6 @@ void VXIODevice_poll(XSerialPortWin32* serial)
     //将接收到的数据保存到缓冲区
     //printf("接收到数据size:%d\n", bytesRead);
     if(bytesRead)
-        XSerialPort_receive_base(serial, buff, bytesRead);
+        XSerialPortBase_receive_base(serial, buff, bytesRead);
 }
 #endif // Win32

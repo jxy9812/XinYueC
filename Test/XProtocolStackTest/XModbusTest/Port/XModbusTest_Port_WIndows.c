@@ -29,7 +29,7 @@ static long long GetCurrentTimeMillis() {
 // 打开串口
 bool XModbusTest_SerialOpen(XIODeviceBase* io, XIODeviceBaseMode mode)
 {
-    XSerialPort* serial = (XSerialPort*)io;
+    XSerialPortBase* serial = (XSerialPortBase*)io;
     char portName[10] = { 0 };
     sprintf(portName, "COM%d", serial->m_portNum);
     // 打开串口
@@ -131,7 +131,7 @@ bool XModbusTest_writeByte(XIODeviceBase* io, XCircularQueue* queue)
 // 定时器回调函数
 static void CALLBACK TimerCallbackReceive(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
 {
-    XSerialPort* serial = dwUser;
+    XSerialPortBase* serial = dwUser;
     COMSTAT comStat;
     DWORD errors;
     char buff[1024];
@@ -163,12 +163,12 @@ static void CALLBACK TimerCallbackReceive(UINT uID, UINT uMsg, DWORD_PTR dwUser,
         }
         //将接收到的数据保存到缓冲区
        //printf("接收到数据size:%d\n", bytesRead);
-        XSerialPort_receive_base(serial, buff, bytesRead);
+        XSerialPortBase_receive_base(serial, buff, bytesRead);
     }
     else
     {
         //printf("准备推送数据\n");
-        //XSerialPort_writeFull_base(serial);
+        //XSerialPortBase_writeFull_base(serial);
     }
     // 重置事件
     ResetEvent(ov.hEvent);

@@ -49,26 +49,26 @@ typedef struct XIODeviceBase
 	XCircularQueue* m_readBuffer;//读取缓冲区
 }XIODeviceBase;
 //初始化类
-void XIODevice_class_init();
-XIODeviceBase* XIODevice_new(XVtable* vtable);
-void XIODevice_init(XIODeviceBase* io, XVtable* vtable);
-void XIODevice_free_base(XIODeviceBase* io);
-void XIODevice_setWriteBuffer_base(XIODeviceBase* io,size_t count);
-void XIODevice_setReadBuffer_base(XIODeviceBase* io, size_t count);
-void XIODevice_setDevice_base(XIODeviceBase* io, void* device);
-size_t XIODevice_write_base(XIODeviceBase* io,const char* data, size_t maxSize);//写入
-size_t XIODevice_read_base(XIODeviceBase* io,char* data, size_t maxSize);//读取
+void XIODeviceBase_class_init();
+XIODeviceBase* XIODeviceBase_new(XVtable* vtable);
+void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable);
+void XIODeviceBase_free_base(XIODeviceBase* io);
+void XIODeviceBase_setWriteBuffer_base(XIODeviceBase* io,size_t count);
+void XIODeviceBase_setReadBuffer_base(XIODeviceBase* io, size_t count);
+void XIODeviceBase_setDevice_base(XIODeviceBase* io, void* device);
+size_t XIODeviceBase_write_base(XIODeviceBase* io,const char* data, size_t maxSize);//写入
+size_t XIODeviceBase_read_base(XIODeviceBase* io,char* data, size_t maxSize);//读取
 //接收数据从硬件接收数据到缓冲区
-size_t XIODevice_receive_base(XIODeviceBase* io,const char* data, size_t size);
-bool XIODevice_isOpen_base(XIODeviceBase* io);
+size_t XIODeviceBase_receive_base(XIODeviceBase* io,const char* data, size_t size);
+bool XIODeviceBase_isOpen_base(XIODeviceBase* io);
 //打开设备		必须要重载
-bool XIODevice_open_base(XIODeviceBase* io, XIODeviceBaseMode mode);
+bool XIODeviceBase_open_base(XIODeviceBase* io, XIODeviceBaseMode mode);
 //关闭设备      需重载
-void XIODevice_close_base(XIODeviceBase* io);
+void XIODeviceBase_close_base(XIODeviceBase* io);
 //轮询设备      需重载
-void XIODevice_poll_base(XIODeviceBase* io);
+void XIODeviceBase_poll_base(XIODeviceBase* io);
 //将剩余的数据刷入设备   需重载
-size_t XIODevice_writeFull_base(XIODeviceBase* io);
+size_t XIODeviceBase_writeFull_base(XIODeviceBase* io);
 
 
 #ifdef __cplusplus

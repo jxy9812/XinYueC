@@ -23,7 +23,7 @@ static XVtable vtable;//虚函数类
 static void* vtable_data[XIODEVICEBASE_VTABLE_SIZE];//虚函数数据
 #endif
 
-void XIODevice_class_init()
+void XIODeviceBase_class_init()
 {
 	//仅初始化一次
 	if (XIODeviceBaseVtable)
@@ -50,7 +50,7 @@ void XIODevice_class_init()
 
 void VXIODevice_free(XIODeviceBase* io)
 {
-	VXIODevice_close(io);
+	XIODeviceBase_close_base(io);
 	if (io->m_writeBuffer)
 		XCircularQueue_free_base(io->m_writeBuffer);
 	if (io->m_readBuffer)

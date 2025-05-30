@@ -1,23 +1,23 @@
 ﻿#include "XSerialPort.h"
 #include "XMemory.h"
 #include <string.h>
-XSerialPort* XSerialPort_new(XVtable* vtable)
+XSerialPortBase* XSerialPortBase_new(XVtable* vtable)
 {
-	XSerialPort* serial = XMemory_malloc(sizeof(XSerialPort));
+	XSerialPortBase* serial = XMemory_malloc(sizeof(XSerialPortBase));
 	if (serial == NULL)
 		return serial;
-	XSerialPort_init(serial, vtable);
+	XSerialPortBase_init(serial, vtable);
 	return serial;
 }
 
-void XSerialPort_init(XSerialPort* serial, XVtable* vtable)
+void XSerialPortBase_init(XSerialPortBase* serial, XVtable* vtable)
 {
 	if (serial == NULL)
 		return ;
-	//memset(serial,0,sizeof(XSerialPort));
-	memset(((XIODeviceBase*)serial)+1, 0, sizeof(XSerialPort)-sizeof(XIODeviceBase));
-	XIODevice_init(serial, vtable);
-	XSerialPort_class_init();
+	//memset(serial,0,sizeof(XSerialPortBase));
+	memset(((XIODeviceBase*)serial)+1, 0, sizeof(XSerialPortBase)-sizeof(XIODeviceBase));
+	XIODeviceBase_init(serial, vtable);
+	XSerialPortBase_class_init();
 	if (vtable == NULL)
 		XClassGetVtable(serial) = XSerialPortVtable;
 	else
@@ -25,9 +25,9 @@ void XSerialPort_init(XSerialPort* serial, XVtable* vtable)
 	
 }
 
-bool XSerialPort_open_base(XSerialPort* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)
+bool XSerialPortBase_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity)
 {
 	if (ISNULL(serial, "") || ISNULL(XClassGetVtable(serial), ""))
 		return false;
-	return XClassGetVirtualFunc(serial, EXIODeviceBase_Open, bool(*)(XSerialPort*, XIODeviceBaseMode, uint8_t, uint32_t, XSerialPortParity))(serial, mode,portNum,baudRate,parity);
+	return XClassGetVirtualFunc(serial, EXIODeviceBase_Open, bool(*)(XSerialPortBase*, XIODeviceBaseMode, uint8_t, uint32_t, XSerialPortBaseParity))(serial, mode,portNum,baudRate,parity);
 }

@@ -36,12 +36,12 @@ void XSwitchDeviceBase_pollDefaultMethod(XSwitchDeviceBase* sw);
 void XSwitchDeviceBase_setState_base(XSwitchDeviceBase* sw,bool state);
 //获取状态
 bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw);
-#define XSwitchDeviceBase_isOpen_base XIODevice_isOpen_base
-#define XSwitchDeviceBase_open_base XIODevice_open_base
-#define XSwitchDeviceBase_close_base XIODevice_close_base
-#define XSwitchDeviceBase_setDevice_base XIODevice_setDevice_base
-#define XSwitchDeviceBase_free_base XIODevice_free_base
-#define XSwitchDeviceBase_poll_base XIODevice_poll_base
+#define XSwitchDeviceBase_isOpen_base XIODeviceBase_isOpen_base
+#define XSwitchDeviceBase_open_base XIODeviceBase_open_base
+#define XSwitchDeviceBase_close_base XIODeviceBase_close_base
+#define XSwitchDeviceBase_setDevice_base XIODeviceBase_setDevice_base
+#define XSwitchDeviceBase_free_base XIODeviceBase_free_base
+#define XSwitchDeviceBase_poll_base XIODeviceBase_poll_base
 #ifdef __cplusplus
 }
 #endif

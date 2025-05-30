@@ -7,14 +7,14 @@
 // 线程接收函数
 static DWORD WINAPI ThreadReceive(LPVOID lpParam)
 {
-    XSerialPort* serial = lpParam;
+    XSerialPortBase* serial = lpParam;
     while (1)
     {
-        XSerialPort_poll_base(serial);
+        XSerialPortBase_poll_base(serial);
     }
     return 0;
 }
-static void threadTest(XSerialPort* serial)
+static void threadTest(XSerialPortBase* serial)
 {
     HANDLE hThread1;
     DWORD threadId1;
@@ -28,20 +28,20 @@ static void threadTest(XSerialPort* serial)
 }
 void XSerialPortTest()
 {
-    XSerialPort* serial = XSerialPort_new_Win32();
-    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 6, 115200, SP_PAR_NONE))
+    XSerialPortBase* serial = XSerialPort_new_Win32();
+    if (!XSerialPortBase_open_base(serial, XIODeviceBase_ReadWrite, 6, 115200, SP_PAR_NONE))
     {
-        XSerialPort_free_base(serial);
+        XSerialPortBase_free_base(serial);
         return;
     }
-    XSerialPort_setReadBuffer_base(serial,1024);
+    XSerialPortBase_setReadBuffer_base(serial,1024);
     //线程接收数据
     threadTest(serial);
     //主线程处理数据
     char buff[1024];
     while (true)
     {
-        size_t len = XSerialPort_read_base(serial, buff, 1024);
+        size_t len = XSerialPortBase_read_base(serial, buff, 1024);
         if (len >0)
         {
             for (size_t i = 0; i < len; i++)

@@ -1,7 +1,7 @@
 ﻿#include"XSerialPort.h"
 #include"XCircularQueueAtomic.h"
 //声明
-static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity);
+static bool VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
 static size_t VXSerialPort_read(XIODeviceBase* io, char* data, size_t maxSize);//读取
 XVtable* XSerialPortVtable = NULL;
 #if VTABLE_ISSTACK
@@ -9,7 +9,7 @@ static XVtable vtable;//虚函数类
 static void* vtable_data[XSERIALPORT_VTABLE_SIZE];//虚函数数据
 #endif
 
-void XSerialPort_class_init()
+void XSerialPortBase_class_init()
 {
 	//仅初始化一次
 	if (XSerialPortVtable)
@@ -21,7 +21,7 @@ void XSerialPort_class_init()
 	XSerialPortVtable = &vtable;
 	XVtable_init_stack(&vtable, vtable_data, XSERIALPORT_VTABLE_SIZE);
 #if SHOWCONTAINERSIZE
-	printf("XSerialPort size:%d\n", XVtable_size(XSerialPortVtable));
+	printf("XSerialPortBase size:%d\n", XVtable_size(XSerialPortVtable));
 #endif
 	//继承的函数
 	XVtable_append_vtable(XSerialPortVtable, XIODeviceBaseVtable);
@@ -31,7 +31,7 @@ void XSerialPort_class_init()
 #endif
 }
 
-bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)
+bool VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity)
 {
 	//printf("准备打开\n");
 	if (serial == NULL)
@@ -41,7 +41,7 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode, uint8_t port
 	serial->m_portNum = portNum;
 	//调用父类
 	return XVtableGetFunc(XIODeviceBaseVtable, EXIODeviceBase_Open,bool(*)(XIODeviceBase*, XIODeviceBaseMode))(serial, mode);
-	//return XIODevice_open_base(serial, mode);
+	//return XIODeviceBase_open_base(serial, mode);
 }
 
 size_t VXSerialPort_read(XIODeviceBase* io, char* data, size_t maxSize)

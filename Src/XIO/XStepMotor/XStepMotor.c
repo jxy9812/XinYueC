@@ -17,7 +17,7 @@ void XStepMotor_init(XStepMotor* motor, XStepMotor_PortFuncInit* port)
 {
 	if (motor == NULL || port == NULL)
 		return NULL;
-	//XIODevice_init(&(motor->m_parent), &(port->parentPort));
+	//XIODeviceBase_init(&(motor->m_parent), &(port->parentPort));
 	//开始初始化
 	memset(motor, 0, sizeof(XStepMotor));
 	///motor->m_PUL = XPWMDeviceBase_new(&(port->PUL));
@@ -32,9 +32,9 @@ void XStepMotor_open(XStepMotor* motor)
 {
 	if (motor != NULL)
 	{
-		XIODevice_open_base(motor->m_ENA, XIODeviceBase_WriteOnly);
-		XIODevice_open_base(motor->m_DIR, XIODeviceBase_WriteOnly);
-		XIODevice_open_base(motor->m_PUL, XIODeviceBase_WriteOnly);
+		XIODeviceBase_open_base(motor->m_ENA, XIODeviceBase_WriteOnly);
+		XIODeviceBase_open_base(motor->m_DIR, XIODeviceBase_WriteOnly);
+		XIODeviceBase_open_base(motor->m_PUL, XIODeviceBase_WriteOnly);
 	}
 }
 
@@ -42,9 +42,9 @@ void XStepMotor_setDevice(XStepMotor* motor, void* device)
 {
 	if (motor != NULL)
 	{
-		XIODevice_setDevice_base(motor->m_PUL, device);
-		XIODevice_setDevice_base(motor->m_ENA, device);
-		XIODevice_setDevice_base(motor->m_DIR, device);
+		XIODeviceBase_setDevice_base(motor->m_PUL, device);
+		XIODeviceBase_setDevice_base(motor->m_ENA, device);
+		XIODeviceBase_setDevice_base(motor->m_DIR, device);
 	}
 }
 

@@ -15,34 +15,45 @@ typedef enum
     SP_PAR_NONE,                /*!< 无校验 */
     SP_PAR_ODD,                 /*!< 奇校验 */
     SP_PAR_EVEN                 /*!< 偶校验 */
-} XSerialPortParity;
-//串口设备
-typedef struct XSerialPort
+} XSerialPortBaseParity;
+//串口设备抽象类
+typedef struct XSerialPortBase
 {
     XIODeviceBase m_parent;//父对象
     uint8_t m_portNum;//端口号
     uint32_t m_baudRate;//波特率
-    XSerialPortParity m_parity;//校验
-}XSerialPort;//串口
+    XSerialPortBaseParity m_parity;//校验
+}XSerialPortBase;//串口
 //初始化类
-void XSerialPort_class_init();
-XSerialPort* XSerialPort_new(XVtable* vtable);
-void XSerialPort_init(XSerialPort* serial, XVtable* vtable);
-bool XSerialPort_open_base(XSerialPort* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity);
-#define XSerialPort_free_base                                   XIODevice_free_base
-#define XSerialPort_setWriteBuffer_base                         XIODevice_setWriteBuffer_base
-#define XSerialPort_setReadBuffer_base                          XIODevice_setReadBuffer_base
-#define XSerialPort_setDevice_base                              XIODevice_setDevice_base
-#define XSerialPort_write_base                                  XIODevice_write_base
-#define XSerialPort_read_base                                   XIODevice_read_base
-#define XSerialPort_receive_base                                XIODevice_receive_base
-#define XSerialPort_isOpen_base                                 XIODevice_isOpen_base
-#define XSerialPort_close_base                                  XIODevice_close_base
-#define XSerialPort_poll_base                                   XIODevice_poll_base
-#define XSerialPort_writeFull_base                              XIODevice_writeFull_base
+void XSerialPortBase_class_init();
+XSerialPortBase* XSerialPortBase_new(XVtable* vtable);
+void XSerialPortBase_init(XSerialPortBase* serial, XVtable* vtable);
+bool XSerialPortBase_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
+#define XSerialPortBase_free_base                                   XIODeviceBase_free_base
+#define XSerialPortBase_setWriteBuffer_base                         XIODeviceBase_setWriteBuffer_base
+#define XSerialPortBase_setReadBuffer_base                          XIODeviceBase_setReadBuffer_base
+#define XSerialPortBase_setDevice_base                              XIODeviceBase_setDevice_base
+#define XSerialPortBase_write_base                                  XIODeviceBase_write_base
+#define XSerialPortBase_read_base                                   XIODeviceBase_read_base
+#define XSerialPortBase_receive_base                                XIODeviceBase_receive_base
+#define XSerialPortBase_isOpen_base                                 XIODeviceBase_isOpen_base
+#define XSerialPortBase_close_base                                  XIODeviceBase_close_base
+#define XSerialPortBase_poll_base                                   XIODeviceBase_poll_base
+#define XSerialPortBase_writeFull_base                              XIODeviceBase_writeFull_base
 //下面是各平台的实现
 #ifdef WIN32
-XSerialPort* XSerialPort_new_Win32();
+#include <windows.h>
+// 告诉编译器链接 winmm.lib 库
+#pragma comment(lib, "winmm.lib")
+//串口设备
+typedef struct XSerialPortWin32
+{
+    XSerialPortBase m_parent;//父对象
+    HANDLE m_hSerial;
+    HANDLE m_hEvent;
+    OVERLAPPED m_ov;
+}XSerialPortWin32;//串口
+XSerialPortWin32* XSerialPort_new_Win32();
 #endif // Win32
 
 #ifdef __cplusplus
