@@ -1,34 +1,34 @@
 ﻿#include "XStepMotor.h"
+#include "XMemory.h"
 #include <string.h>
 #include <stdio.h>
 
-XStepMotor* XStepMotor_new(XStepMotor_PortFuncInit* port)
+XStepMotor* XStepMotor_new(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL)
 {
-	if (port == NULL)
+	if (ENA == NULL|| DIR==NULL|| PUL==NULL)
 		return NULL;
 	XStepMotor* motor = XMemory_malloc(sizeof(XSwitchDeviceBase));
 	if (motor == NULL)
 		return motor;
-	XStepMotor_init(motor, port);
+	XStepMotor_init(motor, ENA,DIR,PUL);
 	return motor;
 }
 
-void XStepMotor_init(XStepMotor* motor, XStepMotor_PortFuncInit* port)
+void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL)
 {
-	if (motor == NULL || port == NULL)
+	if (motor == NULL || ENA == NULL || DIR == NULL || PUL == NULL)
 		return NULL;
-	//XIODeviceBase_init(&(motor->m_parent), &(port->parentPort));
 	//开始初始化
 	memset(motor, 0, sizeof(XStepMotor));
-	///motor->m_PUL = XPWMDeviceBase_new(&(port->PUL));
-	//motor->m_ENA = XSwitchDeviceBase_new(&(port->ENA));
-	//motor->m_DIR = XSwitchDeviceBase_new(&(port->DIR));
-	//绑定函数指针
-	memcpy(&(motor->m_port), &(port->StepMotorPort), sizeof(XStepMotor_PortFunc));
-	XStepMotor_setDevice(motor, motor);
+	XStepMotor_class_init();
+	XClassGetVtable(motor) = XStepMotorVtable;
+	motor->m_ENA = ENA;
+	motor->m_DIR = DIR;
+	motor->m_PUL = PUL;
+	XStepMotor_setDevice_base(motor, motor);
 }
 
-void XStepMotor_open(XStepMotor* motor)
+void XStepMotor_open_base(XStepMotor* motor)
 {
 	if (motor != NULL)
 	{
@@ -38,7 +38,7 @@ void XStepMotor_open(XStepMotor* motor)
 	}
 }
 
-void XStepMotor_setDevice(XStepMotor* motor, void* device)
+void XStepMotor_setDevice_base(XStepMotor* motor, void* device)
 {
 	if (motor != NULL)
 	{
@@ -48,21 +48,21 @@ void XStepMotor_setDevice(XStepMotor* motor, void* device)
 	}
 }
 
-void XStepMotor_setENA(XStepMotor* motor, bool open)
+void XStepMotor_setENA_base(XStepMotor* motor, bool open)
 {
 	if (motor == NULL)
 		return;
 	XSwitchDeviceBase_setState_base(motor->m_ENA, open);
 }
 
-void XStepMotor_setDIR(XStepMotor* motor, bool corotation)
+void XStepMotor_setDIR_base(XStepMotor* motor, bool corotation)
 {
 	if (motor == NULL)
 		return;
 	XSwitchDeviceBase_setState_base(motor->m_DIR, corotation);
 }
 
-void XStepMotor_start(XStepMotor* motor)
+void XStepMotor_start_base(XStepMotor* motor)
 {
 	if (motor == NULL)
 		return;
@@ -73,7 +73,7 @@ void XStepMotor_start(XStepMotor* motor)
 	XPWMDeviceBase_start_base(motor->m_PUL);
 }
 
-void XStepMotor_stop(XStepMotor* motor)
+void XStepMotor_stop_base(XStepMotor* motor)
 {
 	if (motor == NULL)
 		return;
@@ -81,7 +81,7 @@ void XStepMotor_stop(XStepMotor* motor)
 	XPWMDeviceBase_stop_base(motor->m_PUL);
 }
 
-void XStepMotor_setPulsesPerRevolution(XStepMotor* motor, uint16_t num)
+void XStepMotor_setStepsPerRevolution_base(XStepMotor* motor, uint16_t num)
 {
 	if (motor != NULL)
 	{
@@ -89,7 +89,7 @@ void XStepMotor_setPulsesPerRevolution(XStepMotor* motor, uint16_t num)
 	}
 }
 
-void XStepMotor_setSpeed(XStepMotor* motor, double speed)
+void XStepMotor_setSpeed_base(XStepMotor* motor, double speed)
 {
 	if (motor == NULL)
 		return;
@@ -102,25 +102,25 @@ void XStepMotor_setSpeed(XStepMotor* motor, double speed)
 
 }
 
-void XStepMotor_setNumRotations(XStepMotor* motor, double num)
+void XStepMotor_setRevolutions_base(XStepMotor* motor, double num)
 {
 	if (motor != NULL)
 	{
 		if (num > 0.0)
 		{
-			XStepMotor_setDIR(motor, true);
+			XStepMotor_setDIR_base(motor, true);
 			motor->m_setPulses = num * motor->m_pulsesPerRevolution;
 		}
 		else if (num < 0.0)
 		{
-			XStepMotor_setDIR(motor, false);
+			XStepMotor_setDIR_base(motor, false);
 			motor->m_setPulses = -num * motor->m_pulsesPerRevolution;
 		}
 		//printf("脉冲数:%d\n",(int)motor->m_setPulses);
 	}
 }
 
-double XStepMotor_getNumRotations(XStepMotor* motor)
+double XStepMotor_getRevolutions(XStepMotor* motor)
 {
 	if (motor == NULL)
 		return 0.0;

@@ -25,6 +25,7 @@ XSerialPortWin32* XSerialPort_new_Win32()
     XSerialPortWin32* serialPort = XMemory_malloc(sizeof(XSerialPortWin32));
     if (serialPort == NULL)
         return serialPort;
+    memset(((XSerialPortBase*)serialPort)+1,0,sizeof(XSerialPortWin32)-sizeof(XSerialPortBase));
     XSerialPortBase_init(serialPort, NULL);
     serialPort->m_hSerial = INVALID_HANDLE_VALUE;
     XClassGetVtable(serialPort) = pvVtable;
@@ -49,7 +50,7 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t
     parent->m_baudRate = baudRate;
     parent->m_parity = parity;
     parent->m_portNum = portNum;
-   
+    //memset(&(serial->m_ov), 0, sizeof(OVERLAPPED));
     char portName[10] = { 0 };
     sprintf(portName, "COM%d", parent->m_portNum);
     // 打开串口
@@ -61,7 +62,7 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t
     }
 
     // 配置串口缓冲区
-    if (!SetupComm(hSerial, 1024, 1024)) {
+    if (!SetupComm(hSerial, 128, 128)) {
         printf("无法设置串口缓冲区！\n");
         CloseHandle(hSerial);
         return false;
@@ -99,9 +100,9 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t
 
     // 4. 创建异步操作结构
     //OVERLAPPED ov = { 0 };
-    serial->m_hEvent = CreateEvent(NULL, true, false, NULL);
+    serial->m_ov.hEvent = CreateEvent(NULL, true, false, NULL);
 
-    if (serial->m_hEvent == NULL)
+    if (serial->m_ov.hEvent == NULL)
         printf("创建事件对象失败");
 
     // 5. 设置事件通知
@@ -123,8 +124,8 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t
     }
     serial->m_hSerial = hSerial;
     parent->m_parent.m_mode = mode;
-    memset(&(serial->m_ov), 0, sizeof(OVERLAPPED));
-    serial->m_ov.hEvent = serial->m_hEvent;  // 使用已创建的事件句柄
+   
+    //serial->m_ov.hEvent = serial->m_hEvent;  // 使用已创建的事件句柄
     return true;
 }
 //串口写入

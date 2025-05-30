@@ -49,8 +49,10 @@ bool XSerialPortBase_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, 
 typedef struct XSerialPortWin32
 {
     XSerialPortBase m_parent;//父对象
+    size_t m_readBufferSize;//
+    size_t m_writeBufferSize;//
     HANDLE m_hSerial;
-    HANDLE m_hEvent;
+    //HANDLE m_hEvent;
     OVERLAPPED m_ov;
 }XSerialPortWin32;//串口
 XSerialPortWin32* XSerialPort_new_Win32();

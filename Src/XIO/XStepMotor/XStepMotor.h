@@ -4,28 +4,35 @@
 extern "C" {
 #endif
 #define  STM32F407_168M_StepMotor_TIM_1MHz_Prescaler (84-1)//STM32F407 主频168M步进电机定时器在1Mz的预分频系数
-#include"XIODevice.h"
+#include"XClass.h"
 #include"XPWMDevice.h"
 #include"XSwitchDevice.h"
+//XStepMotor虚函数表
+extern XVtable* XStepMotorVtable;
+#define XSTEPMOTOR_VTABLE_SIZE (14)       //XStepMotor虚函数表大小
+//XStepMotor虚函数表枚举
+enum XStepMotorVtableEnum
+{
+	EXStepMotor_Free,
+	EXStepMotor_IsOpen,
+	EXStepMotor_Open,
+	EXStepMotor_IsRunning,
+	EXStepMotor_Close,
+	EXStepMotor_Poll,
+	EXStepMotor_SetDevice,
+	EXStepMotor_SetENA,
+	EXStepMotor_SetDIR,
+	EXStepMotor_Start,
+	EXStepMotor_Stop,
+	EXStepMotor_SetStepsPerRevolution,
+	EXStepMotor_SetSpeed,
+	EXStepMotor_SetRevolutions,
+};
 typedef struct XStepMotor XStepMotor;
-//步进电机接口
-typedef struct XStepMotor_PortFunc
-{
-	bool b;
-	//void (*stateChangeCallback)(XStepMotor* io);//状态改变回调函数
-}XStepMotor_PortFunc;
-//步进电机初始化接口
-typedef struct XStepMotor_PortFuncInit
-{
-	//XIODevice_PortFuncInit parentPort;//父对象接口
-	//XPWMDevice_PortFuncInit PUL;//脉冲
-	//XSwitchDevice_PortFuncInit ENA;//使能
-	//XSwitchDevice_PortFuncInit DIR;//方向
-	XStepMotor_PortFunc StepMotorPort;//子类开关接口
-}XStepMotor_PortFuncInit;
 //步进电机
 typedef struct XStepMotor
 {
+	XClass m_parent;//继承类
 	uint16_t m_currentSpeed;//当前转速
 	uint16_t m_pulsesPerRevolution;//每转脉冲数
 	uint64_t m_currentPulses;//当前脉冲数 
@@ -34,45 +41,47 @@ typedef struct XStepMotor
 	XPWMDeviceBase* m_PUL;//pwm引脚
 	XSwitchDeviceBase* m_ENA;//使能引脚
 	XSwitchDeviceBase* m_DIR;//方向引脚
-	XStepMotor_PortFunc m_port;//开关设备接口
 }XStepMotor;
-XStepMotor* XStepMotor_new(XStepMotor_PortFuncInit* port);
+//初始化类
+void XStepMotor_class_init();
+XStepMotor* XStepMotor_new(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
 //初始化
-void XStepMotor_init(XStepMotor* motor, XStepMotor_PortFuncInit* port);
+void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
 //打开设备
-void XStepMotor_open(XStepMotor* motor);
-void XStepMotor_setDevice(XStepMotor* motor, void* device);
+void XStepMotor_open_base(XStepMotor* motor);
+//设置设备
+void XStepMotor_setDevice_base(XStepMotor* motor, void* device);
 
 //使能打开输出
-void XStepMotor_setENA(XStepMotor* motor, bool open);
+void XStepMotor_setENA_base(XStepMotor* motor, bool isEnabled);
 //方向切换
-void XStepMotor_setDIR(XStepMotor* motor, bool corotation);
+void XStepMotor_setDIR_base(XStepMotor* motor, bool isForward);
 //开启运行
-void XStepMotor_start(XStepMotor* motor);
+void XStepMotor_start_base(XStepMotor* motor);
 //关闭输出
-void XStepMotor_stop(XStepMotor* motor);
+void XStepMotor_stop_base(XStepMotor* motor);
 //设置每转脉冲数
-void XStepMotor_setPulsesPerRevolution(XStepMotor* motor, uint16_t num);
+void XStepMotor_setStepsPerRevolution_base(XStepMotor* motor, uint16_t steps);
 /*
 * @brief  设置旋转速度.
 * @param  motor:StepMotor对象
 * @param  speed:转速 转/分钟
 * @retval
 */
-void XStepMotor_setSpeed(XStepMotor* motor, double speed);
+void XStepMotor_setSpeed_base(XStepMotor* motor, double speed);
 /*
 * @brief  设置旋转圈数.
 * @param  motor:StepMotor对象
-* @param  num:圈数  会自动停止
+* @param  revolutions:圈数  会自动停止
 * @retval
 */
-void XStepMotor_setNumRotations(XStepMotor* motor, double num);
+void XStepMotor_setRevolutions_base(XStepMotor* motor, double revolutions);
 /*
 * @brief  获取旋转圈数.
 * @param  motor:StepMotor对象
 * @retval  旋转圈数，正转一圈+1 反转一圈减1 可获取位置信息
 */
-double XStepMotor_getNumRotations(XStepMotor* motor);
+double XStepMotor_getRevolutions(XStepMotor* motor);
 
 //轮询扫描状态
 void XStepMotor_poll(XStepMotor* motor);

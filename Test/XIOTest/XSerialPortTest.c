@@ -29,7 +29,7 @@ static void threadTest(XSerialPortBase* serial)
 void XSerialPortTest()
 {
     XSerialPortBase* serial = XSerialPort_new_Win32();
-    if (!XSerialPortBase_open_base(serial, XIODeviceBase_ReadWrite, 6, 115200, SP_PAR_NONE))
+    if (!XSerialPortBase_open_base(serial, XIODeviceBase_ReadWrite, 2, 115200, SP_PAR_NONE))
     {
         XSerialPortBase_free_base(serial);
         return;
