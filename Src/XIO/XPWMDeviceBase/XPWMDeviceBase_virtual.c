@@ -1,4 +1,4 @@
-﻿#include "XPwmDevice.h"
+﻿#include "XPWMDeviceBase.h"
 #include "XMemory.h"
 #include <string.h>
 #include <assert.h>

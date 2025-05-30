@@ -6,7 +6,7 @@ extern "C" {
 
 #include"XVector.h"
 #include"XQueue.h"
-#include"XIODevice.h"
+#include"XIODeviceBase.h"
 #include"XCustomQueue.h"
 #include"XModbusFrame.h"
 #include"XTimer.h"

@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XIODevice.h"
+#include"XIODeviceBase.h"
 //XSwitchDeviceBase虚函数表
 extern XVtable* XSwitchDeviceBaseVtable;
 #define XSWITCHDEVICEBASE_VTABLE_SIZE (XIODEVICEBASE_VTABLE_SIZE+2)       //XSwitchDeviceBase容器虚函数表大小

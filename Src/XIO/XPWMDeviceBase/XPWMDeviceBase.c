@@ -1,4 +1,4 @@
-﻿#include"XPWMDevice.h"
+﻿#include"XPWMDeviceBase.h"
 #include"XMemory.h"
 #include<string.h>
 XPWMDeviceBase* XPWMDeviceBase_new(XVtable* vtable)

@@ -1,4 +1,4 @@
-﻿#include "XIODevice.h"
+﻿#include "XIODeviceBase.h"
 #include "XMemory.h"
 #include<string.h>
 XIODeviceBase* XIODeviceBase_new(XVtable* vtable)

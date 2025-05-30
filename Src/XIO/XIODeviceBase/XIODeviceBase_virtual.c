@@ -1,4 +1,4 @@
-﻿#include"XIODevice.h"
+﻿#include"XIODeviceBase.h"
 #include"XCircularQueue.h"
 #include"XCircularQueueAtomic.h"
 #include "XMemory.h"

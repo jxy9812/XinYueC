@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XIODevice.h"
+#include"XIODeviceBase.h"
 //XPWMDevice虚函数表
 extern XVtable* XPWMDeviceVtable;
 #define XPWMDEVICE_VTABLE_SIZE (XIODEVICEBASE_VTABLE_SIZE+7)       //XPWMDevice虚函数表大小

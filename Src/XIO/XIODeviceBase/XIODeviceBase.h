@@ -1,5 +1,5 @@
-﻿#ifndef XIODEVICE_H
-#define XIODEVICE_H
+﻿#ifndef XIODEVICEBASE_H
+#define XIODEVICEBASE_H
 #ifdef __cplusplus
 extern "C" {
 #endif

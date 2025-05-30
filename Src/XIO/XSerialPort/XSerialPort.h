@@ -5,7 +5,7 @@ extern "C" {
 #endif
 #include<stdint.h>
 #include<stdbool.h>
-#include"XIODevice.h"
+#include"XIODeviceBase.h"
 //XSerialPortDevice虚函数表
 extern XVtable* XSerialPortVtable;
 #define XSERIALPORT_VTABLE_SIZE (XIODEVICEBASE_VTABLE_SIZE)       //XSerialPortDevice容器虚函数表大小

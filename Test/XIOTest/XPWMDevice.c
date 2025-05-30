@@ -1,6 +1,6 @@
 ﻿#include"XIOTest.h"
 #if DEMOTEST
-#include"XPWMDevice.h"
+#include"XPWMDeviceBase.h"
 #include"XTimer.h"
 static struct XPWMDeviceTimer
 {

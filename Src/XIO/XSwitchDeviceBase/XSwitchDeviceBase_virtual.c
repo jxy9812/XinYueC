@@ -1,4 +1,4 @@
-﻿#include "XSwitchDevice.h"
+﻿#include "XSwitchDeviceBase.h"
 #include "XMemory.h"
 #include <string.h>
 #include <assert.h>

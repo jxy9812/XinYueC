@@ -5,8 +5,8 @@ extern "C" {
 #endif
 #define  STM32F407_168M_StepMotor_TIM_1MHz_Prescaler (84-1)//STM32F407 主频168M步进电机定时器在1Mz的预分频系数
 #include"XClass.h"
-#include"XPWMDevice.h"
-#include"XSwitchDevice.h"
+#include"XPWMDeviceBase.h"
+#include"XSwitchDeviceBase.h"
 //XStepMotor虚函数表
 extern XVtable* XStepMotorVtable;
 #define XSTEPMOTOR_VTABLE_SIZE (14)       //XStepMotor虚函数表大小
