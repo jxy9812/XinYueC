@@ -2,7 +2,7 @@
 #include "XModbusFrame.h"
 #include "XCrc.h"
 #include "XModbusConfig.h"
-#include "XSerialPort.h"
+#include "XSerialPortBase.h"
 #include "XCircularQueue.h"
 #include <string.h>
 static void  XModbusRtu_Timer_out(void* arg)

@@ -1,4 +1,4 @@
-﻿#include "XSerialPort.h"
+﻿#include "XSerialPortBase.h"
 #include "XMemory.h"
 #include <string.h>
 XSerialPortBase* XSerialPortBase_new(XVtable* vtable)

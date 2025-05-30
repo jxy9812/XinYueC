@@ -1,5 +1,5 @@
 ﻿#include"XIOTest.h"
-#include"XSerialPort.h"
+#include"XSerialPortBase.h"
 #ifdef WIN32
 #include <windows.h>
 // 告诉编译器链接 winmm.lib 库
@@ -28,8 +28,8 @@ static void threadTest(XSerialPortBase* serial)
 }
 void XSerialPortTest()
 {
-    XSerialPortBase* serial = XSerialPort_new_Win32();
-    if (!XSerialPortBase_open_base(serial, XIODeviceBase_ReadWrite, 2, 115200, SP_PAR_NONE))
+    XSerialPortBase* serial = XSerialPortWin32_new();
+    if (!XSerialPortBase_open_base(serial, XIODeviceBase_ReadWrite, 6, 115200, SP_PAR_NONE))
     {
         XSerialPortBase_free_base(serial);
         return;

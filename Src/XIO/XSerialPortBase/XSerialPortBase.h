@@ -1,5 +1,5 @@
-﻿#ifndef XSERIALPORT_H
-#define XSERIALPORT_H
+﻿#ifndef XSERIALPORTBASE_H
+#define XSERIALPORTBASE_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -40,24 +40,11 @@ bool XSerialPortBase_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, 
 #define XSerialPortBase_close_base                                  XIODeviceBase_close_base
 #define XSerialPortBase_poll_base                                   XIODeviceBase_poll_base
 #define XSerialPortBase_writeFull_base                              XIODeviceBase_writeFull_base
-//下面是各平台的实现
-#ifdef WIN32
-#include <windows.h>
-// 告诉编译器链接 winmm.lib 库
-#pragma comment(lib, "winmm.lib")
-//串口设备
-typedef struct XSerialPortWin32
-{
-    XSerialPortBase m_parent;//父对象
-    size_t m_readBufferSize;//
-    size_t m_writeBufferSize;//
-    HANDLE m_hSerial;
-    //HANDLE m_hEvent;
-    OVERLAPPED m_ov;
-}XSerialPortWin32;//串口
-XSerialPortWin32* XSerialPort_new_Win32();
-#endif // Win32
 
+//以下是平台的具体实现
+#ifdef WIN32
+#include"XSerialPortWin32.h"
+#endif
 #ifdef __cplusplus
 }
 #endif

@@ -1,7 +1,8 @@
 ﻿#ifdef WIN32
-#include"XSerialPort.h"
-#include"XCircularQueue.h"
-#include"XMemory.h"
+#include "XSerialPortBase.h"
+#include "XCircularQueue.h"
+#include "XMemory.h"
+#include "XSerialPortWin32.h"
 
 static bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
 static size_t VXIODevice_write(XSerialPortWin32* serial, const char* data, size_t maxSize);//写入
@@ -9,36 +10,48 @@ static size_t VXIODevice_writeFull(XSerialPortWin32* serial);//将剩余的数�
 static size_t VXIODevice_read(XSerialPortWin32* serial, char* data, size_t maxSize);//读取
 static void VXIODevice_close(XSerialPortWin32* serial);
 static void VXIODevice_poll(XSerialPortWin32* serial);
-XSerialPortWin32* XSerialPort_new_Win32()
+
+static XVtable* pvVtable = NULL;
+void XSerialPortWin32_class_init()
 {
-	static XVtable* pvVtable = NULL;
-	if (pvVtable != NULL)
-		return XSerialPortBase_new(pvVtable);
+    if (pvVtable)
+        return;
 #if VTABLE_ISSTACK
-	static XVtable vtable;//虚函数类
-	static void* vtable_data[XSERIALPORT_VTABLE_SIZE];//虚函数数据
-	XVtable_init_stack(&vtable, vtable_data, XSERIALPORT_VTABLE_SIZE);
-	pvVtable = &vtable;
+    static XVtable vtable;//虚函数类
+    static void* vtable_data[XSERIALPORT_VTABLE_SIZE];//虚函数数据
+    XVtable_init_stack(&vtable, vtable_data, XSERIALPORT_VTABLE_SIZE);
+    pvVtable = &vtable;
 #else
-	pvVtable = XVtable_new();
+    pvVtable = XVtable_new();
 #endif
-    XSerialPortWin32* serialPort = XMemory_malloc(sizeof(XSerialPortWin32));
-    if (serialPort == NULL)
-        return serialPort;
-    memset(((XSerialPortBase*)serialPort)+1,0,sizeof(XSerialPortWin32)-sizeof(XSerialPortBase));
-    XSerialPortBase_init(serialPort, NULL);
-    serialPort->m_hSerial = INVALID_HANDLE_VALUE;
-    XClassGetVtable(serialPort) = pvVtable;
-	//继承的函数
-	XVtable_append_vtable(pvVtable, XIODeviceBaseVtable);
-	//重写
-	XVtable_At(pvVtable, EXIODeviceBase_Open) = VXSerialPort_open;
+    //继承的函数
+    XVtable_append_vtable(pvVtable, XIODeviceBaseVtable);
+    //重写
+    XVtable_At(pvVtable, EXIODeviceBase_Open) = VXSerialPort_open;
     XVtable_At(pvVtable, EXIODeviceBase_Write) = VXIODevice_write;
     XVtable_At(pvVtable, EXIODeviceBase_WriteFull) = VXIODevice_writeFull;
     XVtable_At(pvVtable, EXIODeviceBase_Read) = VXIODevice_read;
     XVtable_At(pvVtable, EXIODeviceBase_Close) = VXIODevice_close;
     XVtable_At(pvVtable, EXIODeviceBase_Poll) = VXIODevice_poll;
-	return serialPort;
+}
+XSerialPortWin32* XSerialPortWin32_new()
+{
+    XSerialPortWin32* serial = XMemory_malloc(sizeof(XSerialPortWin32));
+    if (serial == NULL)
+        return serial;
+    XSerialPortWin32_init(serial);
+	return serial;
+}
+
+void XSerialPortWin32_init(XSerialPortWin32* serial)
+{
+    if (serial == NULL)
+        return;
+    memset(((XSerialPortBase*)serial) + 1, 0, sizeof(XSerialPortWin32) - sizeof(XSerialPortBase));
+    XSerialPortBase_init(serial, NULL);
+    serial->m_hSerial = INVALID_HANDLE_VALUE;
+    XSerialPortWin32_class_init();
+    XClassGetVtable(serial) = pvVtable;
 }
 
 bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity)

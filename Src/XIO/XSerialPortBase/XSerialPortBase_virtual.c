@@ -1,4 +1,4 @@
-﻿#include"XSerialPort.h"
+﻿#include"XSerialPortBase.h"
 #include"XCircularQueueAtomic.h"
 //声明
 static bool VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);

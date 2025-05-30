@@ -1,7 +1,7 @@
 ﻿#ifdef WIN32
 //Windows接口文件
 #include"XModbusTest_Port.h"
-#include"XSerialPort.h"
+#include"XSerialPortBase.h"
 #include <windows.h>
 #include"XCircularQueue.h"
 // 告诉编译器链接 winmm.lib 库
