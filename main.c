@@ -19,7 +19,7 @@ int main(int argc, char* args[])
 	XSerialPortTest();
 	//stackTest();
 	//XStringTest();
-	//XVectorTest();
+	XVectorTest();
 	return;
 	XStringVectorTest();
 	cJsonTest();

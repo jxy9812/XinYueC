@@ -8,12 +8,11 @@ extern "C" {
 #include"XClass.h"
 //XIODevice虚函数表
 extern XVtable* XIODeviceBaseVtable;
-#define XIODEVICEBASE_VTABLE_SIZE (12)       //XIODeviceBase虚函数表大小
+#define XIODEVICEBASE_VTABLE_SIZE		(XCLASS_VTABLE_SIZE+11)       //XIODeviceBase虚函数表大小
 //XContainerObject虚函数表枚举
 enum XIODeviceBaseVtableEnum
 {
-	EXIODeviceBase_Free,
-	EXIODeviceBase_IsOpen,
+	EXIODeviceBase_IsOpen= XCLASS_VTABLE_SIZE,
 	EXIODeviceBase_Open,
 	EXIODeviceBase_Write,
 	EXIODeviceBase_WriteFull,
@@ -48,11 +47,9 @@ typedef struct XIODeviceBase
 	XCircularQueue* m_writeBuffer;//写入缓冲区
 	XCircularQueue* m_readBuffer;//读取缓冲区
 }XIODeviceBase;
-//初始化类
-void XIODeviceBase_class_init();
 XIODeviceBase* XIODeviceBase_new(XVtable* vtable);
 void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable);
-void XIODeviceBase_free_base(XIODeviceBase* io);
+#define XIODeviceBase_free_base	XClass_free_base
 void XIODeviceBase_setWriteBuffer_base(XIODeviceBase* io,size_t count);
 void XIODeviceBase_setReadBuffer_base(XIODeviceBase* io, size_t count);
 void XIODeviceBase_setDevice_base(XIODeviceBase* io, void* device);

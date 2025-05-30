@@ -32,7 +32,7 @@ static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[XVECTOR_VTABLE_SIZE];//虚函数数据
 #endif
-void XVector_class_init()
+static void XVector_class_init()
 {
 	if (XVectorVtable)
 		return;
@@ -65,7 +65,16 @@ void XVector_class_init()
 	printf("XVector size:%d\n", XVtable_size(XVectorVtable));
 #endif // SHOWCONTAINERSIZE
 }
-
+//初始化函数
+void XVector_init(XVector* this_vector, size_t typeSize)
+{
+	if (ISNULL(this_vector, "") || ISNULL(typeSize, ""))
+		return;
+	XContainerObject_init(this_vector, typeSize);
+	XVector_class_init();
+	XClassGetVtable(this_vector) = XVectorVtable;
+	this_vector->m_equality = NULL;
+}
 //检测是否需要扩容
 static void VXVectorEnlargeCapacity(XVector* this_vector)
 {

@@ -23,7 +23,7 @@ XVtable* XMapVtable = NULL;
 	static XVtable vtable;//虚函数类
 	static void* vtable_data[XMAP_VTABLE_SIZE];//虚函数数据
 #endif
-void XMap_class_init()
+static void XMap_class_init()
 {
 	if (XMapVtable)
 		return;
@@ -40,7 +40,7 @@ void XMap_class_init()
 	XVtable_append_vtable(XMapVtable, XContainerObjectVtable);
 	//重写的函数
 	XVtable_At(XMapVtable, EXContainerObject_Clear) = VXMap_clear;
-	XVtable_At(XMapVtable, EXContainerObject_Free) = VXMap_free;
+	XVtable_At(XMapVtable, EXClass_Free) = VXMap_free;
 	XVtable_At(XMapVtable, EXContainerObject_Swap) = VXMap_swap;
 	//追加函数
 	XVtable_append_array(XMapVtable, table, sizeof(table) / sizeof(table[0]));
@@ -48,6 +48,32 @@ void XMap_class_init()
 	printf("XMap size:%d\n", XVtable_size(XMapVtable));
 #endif // SHOWCONTAINERSIZE
 }
+void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
+{
+	if (ISNULL(this_map, ""))
+		return NULL;
+	if (keyTypeSize == 0 || valTypeSize == 0)
+	{
+		printf("类型参数不能为0");
+		return NULL;
+	}
+	if (KeyEquality == NULL || KeyLess == NULL)
+	{
+		printf("KeyEquality相等比较函数NULL或KeyLess小于比较函数NULL");
+		return NULL;
+	}
+	if (ISNULL(this_map, ""))
+		return NULL;
+	XContainerObject_init(&this_map->m_parent, valTypeSize);
+	XMap_class_init();
+	XClassGetVtable(this_map) = XMapVtable;
+	this_map->m_keyTypeSize = keyTypeSize;
+	this_map->m_KeyEquality = KeyEquality;
+	this_map->m_KeyLess = KeyLess;
+	this_map->m_isModify = true;
+	this_map->m_itArray = NULL;
+}
+
 void VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
 {
 	if (ISNULL(this_map, "")|| ISNULL(key, "")||ISNULL(LpValue, ""))

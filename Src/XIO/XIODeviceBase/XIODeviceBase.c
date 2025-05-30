@@ -11,25 +11,6 @@ XIODeviceBase* XIODeviceBase_new(XVtable* vtable)
 	XIODeviceBase_init(io, vtable);
 	return io;
 }
-void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable)
-{
-	if (ISNULL(io, ""))
-		return;
-	//开始初始化
-	memset(io, 0, sizeof(XIODeviceBase));
-
-	XIODeviceBase_class_init();
-	if (vtable == NULL)
-		XClassGetVtable(io) = XIODeviceBaseVtable;
-	else
-		XClassGetVtable(io) = vtable;
-}
-void XIODeviceBase_free_base(XIODeviceBase* io)
-{
-	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
-		return;
-	XClassGetVirtualFunc(io, EXIODeviceBase_Free,void(*)(XIODeviceBase*))(io);
-}
 void XIODeviceBase_setWriteBuffer_base(XIODeviceBase* io, size_t count)
 {
 	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))

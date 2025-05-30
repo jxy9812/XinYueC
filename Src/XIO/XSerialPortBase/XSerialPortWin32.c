@@ -12,7 +12,7 @@ static void VXIODevice_close(XSerialPortWin32* serial);
 static void VXIODevice_poll(XSerialPortWin32* serial);
 
 static XVtable* pvVtable = NULL;
-void XSerialPortWin32_class_init()
+static void XSerialPortWin32_class_init()
 {
     if (pvVtable)
         return;

@@ -18,11 +18,8 @@ typedef struct XSerialPortWin32
     size_t m_readBufferSize;//
     size_t m_writeBufferSize;//
     HANDLE m_hSerial;
-    //HANDLE m_hEvent;
     OVERLAPPED m_ov;
 }XSerialPortWin32;//串口
-//初始化类
-void XSerialPortWin32_class_init();
 XSerialPortWin32* XSerialPortWin32_new();
 void XSerialPortWin32_init(XSerialPortWin32* serial);
 

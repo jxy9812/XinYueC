@@ -54,7 +54,7 @@ void XList_class_init()
 	//追加函数
 	XVtable_append_array(XListVtable, table, sizeof(table) / sizeof(table[0]));
 	//重写的函数
-	XVtable_At(XListVtable,EXContainerObject_Free)= VXList_free;
+	XVtable_At(XListVtable, EXClass_Free)= VXList_free;
 	XVtable_At(XListVtable, EXContainerObject_Clear) = VXList_clear;
 
 #if SHOWCONTAINERSIZE

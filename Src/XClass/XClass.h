@@ -6,6 +6,14 @@ extern "C" {
 #include"XVtable.h"
 #include"XDataStructConfig.h"
 typedef struct  XVtable;
+//XClass虚函数表
+extern XVtable* XClassVtable;
+#define XCLASS_VTABLE_SIZE   1      //虚函数表大小
+//XClass虚函数表枚举
+enum XClassVtableEnum
+{
+	EXClass_Free,
+};
 //容器基类
 typedef struct XClass
 {
@@ -19,7 +27,8 @@ typedef struct XClass
 #define ISNULL(args,str)(ArgIsNULL(isNULLInfo(args,str)))
 bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/);
 
-
+void XClass_init(XClass* Object);
+void XClass_free_base(XClass* Object);
 #ifdef __cplusplus
 }
 #endif

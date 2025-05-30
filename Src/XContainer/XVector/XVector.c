@@ -10,16 +10,6 @@ XVector* XVector_new(size_t typeSize)
 	XVector_init(this_vector,typeSize);
 	return this_vector;
 }
-//初始化函数
-void XVector_init(XVector* this_vector,size_t typeSize )
-{
-	if (ISNULL(this_vector, "") || ISNULL(typeSize, ""))
-		return;
-	XContainerObject_init(this_vector, typeSize);
-	XVector_class_init();
-	XClassGetVtable(this_vector)= XVectorVtable;
-	this_vector->m_equality = NULL;
-}
 
 void XVector_resize_base(XVector* this_vector, size_t size)
 {

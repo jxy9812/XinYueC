@@ -24,33 +24,6 @@ XMap* XMap_new(const size_t keyTypeSize, const size_t valTypeSize, XEquality Key
 	XMap_init(this_map,keyTypeSize,valTypeSize,KeyEquality,KeyLess);
 	return this_map;
 }
-void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
-{
-	if (ISNULL(this_map, ""))
-		return NULL;
-	if (keyTypeSize == 0 || valTypeSize == 0)
-	{
-		printf("类型参数不能为0");
-		return NULL;
-	}
-	if (KeyEquality == NULL || KeyLess == NULL)
-	{
-		printf("KeyEquality相等比较函数NULL或KeyLess小于比较函数NULL");
-		return NULL;
-	}
-	if (ISNULL(this_map, ""))
-		return NULL;
-	XContainerObject_init(&this_map->m_parent, valTypeSize);
-	XMap_class_init();
-	XClassGetVtable(this_map) = XMapVtable;
-	this_map->m_keyTypeSize = keyTypeSize;
-	this_map->m_KeyEquality = KeyEquality;
-	this_map->m_KeyLess = KeyLess;
-	this_map->m_isModify = true;
-	this_map->m_itArray = NULL;
-}
-
-
 
 void XMap_insert_base(XMap* this_map, const void* key, const void* LpValue)
 {

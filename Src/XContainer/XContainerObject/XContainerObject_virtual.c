@@ -21,7 +21,7 @@ void XContainerDefaultDerivedClassDataFreeMethod(void* args)
 	XContainerObject* object = *((XContainerObject**)args);
 	XContainerObject_free_base(object);
 }
-void XContainerObject_class_init()
+static void XContainerObject_class_init()
 {
 	if (XContainerObjectVtable)
 		return;
@@ -30,16 +30,31 @@ void XContainerObject_class_init()
 	XContainerObjectVtable = XVtable_new();
 #else
 	XContainerObjectVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+	XVtable_init_stack(&vtable, vtable_data, XCONTAINEROBJECT_VTABLE_SIZE);
 #endif
-	void* table[] = { VXContainerObject_free, VXContainerObject_isEmpty,VXContainerObject_getSize,VXContainerObject_getCapacity,VXContainerObject_getTypeSize,VXContainerObject_swap,VXContainerObject_clear };
+	//继承的函数
+	XVtable_append_vtable(XContainerObjectVtable, XClassVtable);
+	void* table[] = {VXContainerObject_isEmpty,VXContainerObject_getSize,VXContainerObject_getCapacity,VXContainerObject_getTypeSize,VXContainerObject_swap,VXContainerObject_clear };
 	XVtable_append_array(XContainerObjectVtable,table,sizeof(table)/sizeof(table[0]));
+	//重写的函数
+	XVtable_At(XContainerObjectVtable, EXClass_Free) = VXContainerObject_free;
 #if SHOWCONTAINERSIZE
 	printf("XContainerObject size:%d\n", XVtable_size(XContainerObjectVtable));
 #endif
 }
-//虚函数表定义
-//void* XContainerObjectVtable[] = { VXContainerObject_free, VXContainerObject_isEmpty,VXContainerObject_getSize,VXContainerObject_getCapacity,VXContainerObject_getTypeSize,VXContainerObject_swap,VXContainerObject_clear };
+void XContainerObject_init(XContainerObject* Object, size_t typeSize)
+{
+	if (ISNULL(Object, "") || ISNULL(typeSize, ""))
+		return;
+	XClass_init(Object);
+	XContainerObject_class_init();
+	XClassGetVtable(Object) = XContainerObjectVtable;
+	Object->m_data = NULL;
+	Object->m_dataFreeMethod = NULL;
+	Object->m_capacity = 0;
+	Object->m_size = 0;
+	Object->m_typeSize = typeSize;
+}
 
 bool VXContainerObject_isEmpty(const XContainerObject* Object)
 {
