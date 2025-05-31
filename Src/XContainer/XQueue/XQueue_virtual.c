@@ -7,8 +7,7 @@ XVtable* XQueue_class_init()
 		return XClassVtable;
 	//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_DEFINITION(XQUEUE_VTABLE_SIZE)
-		XVTABLE_STACK_INIT(XClassVtable)
+	XVTABLE_STACK_INIT(XClassVtable, XQUEUE_VTABLE_SIZE)
 #else
 	XVTABLE_HEAP_INIT(XClassVtable)
 #endif

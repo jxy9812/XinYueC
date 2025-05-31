@@ -24,15 +24,13 @@ typedef struct XClass
 #define isNULLInfo(args,str) args,#args,str ,__FUNCTION__,__FILE__,__LINE__
 #define ISNULL(args,str)(ArgIsNULL(isNULLInfo(args,str)))
 bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/);
-//虚函数表定义在栈上
-#define XVTABLE_STACK_DEFINITION(size)  \
-		static XVtable vtable;\
-		static void* vtable_data[size];
 //虚函数表在堆上初始化
 #define XVTABLE_HEAP_INIT(Vtable)\
 	Vtable = XVtable_new();
 //虚函数表在栈上初始化
-#define XVTABLE_STACK_INIT(Vtable)\
+#define XVTABLE_STACK_INIT(Vtable,size)\
+	static XVtable vtable;\
+	static void* vtable_data[size];\
 	Vtable = &vtable;\
 	XVtable_init_stack(Vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
 
