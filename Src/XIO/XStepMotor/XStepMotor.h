@@ -27,8 +27,8 @@ enum XStepMotorVtableEnum
 	EXStepMotor_SetSpeed,
 	EXStepMotor_SetRevolutions,
 };
-typedef struct XStepMotor XStepMotor;
 //步进电机
+typedef struct XStepMotor XStepMotor;
 typedef struct XStepMotor
 {
 	XClass m_parent;//继承类
@@ -41,8 +41,6 @@ typedef struct XStepMotor
 	XSwitchDeviceBase* m_ENA;//使能引脚
 	XSwitchDeviceBase* m_DIR;//方向引脚
 }XStepMotor;
-//初始化类
-void XStepMotor_class_init();
 XStepMotor* XStepMotor_new(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
 //初始化
 void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
@@ -50,7 +48,6 @@ void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBas
 void XStepMotor_open_base(XStepMotor* motor);
 //设置设备
 void XStepMotor_setDevice_base(XStepMotor* motor, void* device);
-
 //使能打开输出
 void XStepMotor_setENA_base(XStepMotor* motor, bool isEnabled);
 //方向切换
@@ -82,11 +79,16 @@ void XStepMotor_setRevolutions_base(XStepMotor* motor, double revolutions);
 */
 double XStepMotor_getRevolutions(XStepMotor* motor);
 
+bool XStepMotor_isOpen_base(XStepMotor* motor);
+
+bool XStepMotor_isRunning_base(XStepMotor* motor);
+
 //轮询扫描状态
 void XStepMotor_poll(XStepMotor* motor);
 
-//一次完整的电平变化后调用 回调函数
-void XStepMotor_timerCallback(XStepMotor* motor);
+void XStepMotor_close_base(XStepMotor* motor);
+
+#define XStepMotor_free_base	XClass_free_base
 #ifdef __cplusplus
 }
 #endif
