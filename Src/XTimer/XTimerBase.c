@@ -117,8 +117,34 @@ void XTimerBase_out(XTimerBase* timer)
 	if(timer->m_timerCallback != NULL)
 		timer->m_timerCallback(timer->m_userData);
 }
-static size_t(*getCurrentTime)()=NULL;
-static size_t currentTime=0;
+//
+#ifdef WIN32
+#include <windows.h>
+// 告诉编译器链接 winmm.lib 库
+#pragma comment(lib, "winmm.lib")
+// 获取当前毫秒级时间戳（自1970-01-01 00:00:00 UTC）
+static size_t GetCurrentTimeMillis() {
+	FILETIME ft;
+	GetSystemTimeAsFileTime(&ft);
+
+	// 将FILETIME转换为64位整数（100纳秒间隔数）
+	ULARGE_INTEGER uli;
+	uli.LowPart = ft.dwLowDateTime;
+	uli.HighPart = ft.dwHighDateTime;
+
+	// 1601年到1970年的偏移量（100纳秒间隔数）
+	const size_t EPOCH_OFFSET = 116444736000000000LL;
+
+	// 转换为毫秒（除以10,000）
+	return (uli.QuadPart - EPOCH_OFFSET) / 10000;
+}
+static size_t(*getCurrentTime)() = GetCurrentTimeMillis;
+#else
+static size_t(*getCurrentTime)() = NULL;
+
+#endif
+
+static size_t currentTime = 0;
 void XTimer_inc(size_t tick_period)
 {
 	currentTime += tick_period;

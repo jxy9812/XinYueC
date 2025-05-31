@@ -43,17 +43,21 @@ static void XTimerStartWin32ThreadpoolTimer(XTimerBase* timer)
 
 	// 启动计时器
 	SetThreadpoolTimer(((PTP_TIMER)(timer->timerId)), &ftDueTime, period, tolerance);
+	timer->m_isRun = true;
+	timer->m_isPeriodic = true;
 }
 static void XTimerStopWin32ThreadpoolTimer(XTimerBase* timer)
 {
 	//printf("停止定时器\n");
-	if (timer->timerId)
+	if (timer->timerId&& XTimerBase_isRunning(timer))
 	{
 		SetThreadpoolTimer(((PTP_TIMER)(timer->timerId)), NULL, 0, 0);
+		timer->m_isRun = false;
 	}
 }
 static void XTimerFreeWin32ThreadpoolTimer(XTimerBase* timer)
 {
+	XTimerStopWin32ThreadpoolTimer(timer);
 	if (timer->timerId)
 	{
 		// 等待所有回调完成
@@ -75,7 +79,7 @@ XVtable* XTimerWin32ThreadpoolTimer_class_init()
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XTIMERBASE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XTIMERWIN32THREADPOOLTIMERE_VTABLE_SIZE)
 #else
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif

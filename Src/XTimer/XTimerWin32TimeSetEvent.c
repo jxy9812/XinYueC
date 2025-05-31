@@ -10,12 +10,6 @@ static void CALLBACK TimerCallbackTimeSetEvent(UINT uID, UINT uMsg, DWORD_PTR dw
 	XTimerBase* timer = ((XTimerBase*)dwUser);
 	XTimerBase_out(timer);
 }
-static void XTimerCreateWin32TimeSetEvent(XTimerBase* timer)
-{
-	//printf("创建定时器\n");
-	if (timer == NULL)
-		return;
-}
 static void XTimerStartWin32TimeSetEvent(XTimerBase* timer)
 {
 	//printf("启动定时器\n");
@@ -27,15 +21,18 @@ static void XTimerStartWin32TimeSetEvent(XTimerBase* timer)
 		timer,             // 不传递用户数据
 		TIME_PERIODIC  // 周期性触发
 	);
+	timer->m_isRun = true;
+	timer->m_isPeriodic = true;
 }
 static void XTimerStopWin32TimeSetEvent(XTimerBase* timer)
 {
 	//printf("停止定时器\n");
-	if (timer->timerId)
+	if (timer->timerId && XTimerBase_isRunning(timer))
 	{
 		// 关闭定时器
 		timeKillEvent(timer->timerId);
 		timer->timerId = 0;
+		timer->m_isRun = false;
 	}
 }
 static void XTimerFreeWin32TimeSetEvent(XTimerBase* timer)
@@ -55,7 +52,7 @@ XVtable* XTimerWin32TimeSetEvent_class_init()
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XTIMERBASE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XTIMERWIN32TIMESETEVENT_VTABLE_SIZE)
 #else
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif

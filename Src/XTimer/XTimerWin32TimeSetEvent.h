@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 #include"XTimerBase.h"
+#define XTIMERWIN32TIMESETEVENT_VTABLE_SIZE (XTIMERBASE_VTABLE_SIZE)       //XTimerWin32TimeSetEvent虚函数表大小
 //定时器TimeSetEvent 封装
 typedef struct XTimerWin32TimeSetEvent
 {
