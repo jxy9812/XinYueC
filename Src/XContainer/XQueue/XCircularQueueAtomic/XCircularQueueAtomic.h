@@ -6,8 +6,6 @@ extern "C" {
 #endif
 #include"XCircularQueue.h"
 #include"XAtomic.h"
-//XCircularQueueAtomic虚函数表
-extern XVtable* XCircularQueueAtomicVtable;
 #define XCIRCULARQUEUEATOMIC_VTABLE_SIZE (XCIRCULARQUEUE_VTABLE_SIZE)       //XCircularQueueAtomic容器虚函数表大小
 //环形队列
 typedef struct XCircularQueueAtomic
@@ -17,7 +15,7 @@ typedef struct XCircularQueueAtomic
 	XAtomic_size_t  m_tail;//队尾索引
 }XCircularQueueAtomic;
 //初始化类
-void XCircularQueueAtomic_class_init();
+XVtable* XCircularQueueAtomic_class_init();
 //队列初始化函数
 void XCircularQueueAtomic_init(XCircularQueueAtomic* this_queue,size_t typeSize, size_t count);
 //队列创建函数

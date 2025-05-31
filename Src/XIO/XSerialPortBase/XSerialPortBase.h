@@ -25,7 +25,7 @@ typedef struct XSerialPortBase
     XSerialPortBaseParity m_parity;//校验
 }XSerialPortBase;//串口
 //初始化类
-void XSerialPortBase_class_init();
+XVtable* XSerialPortBase_class_init();
 XSerialPortBase* XSerialPortBase_new(XVtable* vtable);
 void XSerialPortBase_init(XSerialPortBase* serial, XVtable* vtable);
 bool XSerialPortBase_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);

@@ -6,8 +6,6 @@ extern "C" {
 #endif
 #include<stdbool.h>
 #include"XVector.h"
-//XVector虚函数表
-extern XVtable* XStringVtable;
 #define XSTRING_VTABLE_SIZE (XVECTOR_VTABLE_SIZE+6)       //XString容器虚函数表大小
 //XVector虚函数表枚举
 enum XStringEnum
@@ -45,7 +43,7 @@ typedef struct XString
 	XVector m_vector;
 }XString;
 //初始化类
-void XString_class_init();
+XVtable* XString_class_init();
 //初始化XString;
  XString* XString_new(const char* string);
  //初始化 XVector

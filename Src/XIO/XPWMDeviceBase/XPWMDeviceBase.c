@@ -23,7 +23,7 @@ void XPWMDeviceBase_init(XPWMDeviceBase* pwm, XVtable* vtable)
 	//开始初始化
 	XPWMDeviceBase_class_init();
 	if (vtable == NULL)
-		XClassGetVtable(pwm) = XPWMDeviceVtable;
+		XClassGetVtable(pwm) = XPWMDeviceBase_class_init();
 	else
 		XClassGetVtable(pwm) = vtable;
 }

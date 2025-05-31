@@ -9,8 +9,6 @@ extern "C" {
 #include"XMap_reverse_iterator.h"
 typedef struct XVector XVector;
 typedef struct XPair XPair;
-//XMap虚函数表
-extern XVtable* XMapVtable;
 #define XMAP_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+5)       //XCircularQueue容器虚函数表大小
 //XMap虚函数表枚举
 enum XMapEnum
@@ -30,6 +28,7 @@ typedef struct XMap
 	bool m_isModify;//是否修改了
 	XVector* m_itArray;//迭代器数组
 }XMap;
+XVtable* XMap_class_init();
 //开辟一个Map,初始化
 XMap* XMap_new(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess/*, XEquality ValEquality*/);
 #define XMap_New(keyType,valType,KeyEquality,KeyLess) XMap_new(sizeof(keyType),sizeof(valType),KeyEquality,KeyLess)

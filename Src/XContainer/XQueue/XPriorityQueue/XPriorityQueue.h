@@ -6,9 +6,7 @@ extern "C" {
 #endif
 #include"XQueueBase.h"
 #include"XVector.h"
-//XPriorityQueue虚函数表
-extern XVtable* XPriorityQueueVtable;
-#define XPRIORITYQUEUE_VTABLE_SIZE (XQUEUEBASE_VTABLE_SIZE)       //XVector容器虚函数表大小
+#define XPRIORITYQUEUE_VTABLE_SIZE (XQUEUEBASE_VTABLE_SIZE)       //XPriorityQueue容器虚函数表大小
 //优先队列
 typedef struct XPriorityQueue
 {
@@ -16,7 +14,7 @@ typedef struct XPriorityQueue
 	XCompare m_compare;//比较准则
 }XPriorityQueue;
 //初始化类
-void XPriorityQueue_class_init();
+XVtable* XPriorityQueue_class_init();
 //初始化 队列
 void XPriorityQueue_init(XPriorityQueue* this_queue, size_t typeSize, XCompare compare);
 //队列初始化函数

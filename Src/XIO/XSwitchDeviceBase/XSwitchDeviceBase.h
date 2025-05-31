@@ -4,8 +4,6 @@
 extern "C" {
 #endif
 #include"XIODeviceBase.h"
-//XSwitchDeviceBase虚函数表
-extern XVtable* XSwitchDeviceBaseVtable;
 #define XSWITCHDEVICEBASE_VTABLE_SIZE (XIODEVICEBASE_VTABLE_SIZE+2)       //XSwitchDeviceBase容器虚函数表大小
 //XSwitchDevice虚函数表枚举
 enum XSwitchDeviceBaseVtableEnum
@@ -23,7 +21,7 @@ typedef struct XSwitchDeviceBase
 	void (*m_stateChangeCallback)(XSwitchDeviceBase* io);//状态改变回调函数
 }XSwitchDeviceBase;
 //初始化类
-void XSwitchDeviceBase_class_init();
+XVtable* XSwitchDeviceBase_class_init();
 //开关设备
 XSwitchDeviceBase* XSwitchDeviceBase_new(XVtable* vtable);
 //初始化

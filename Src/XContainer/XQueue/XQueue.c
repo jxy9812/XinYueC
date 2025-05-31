@@ -16,8 +16,7 @@ void XQueue_init(XQueue* this_queue, size_t typeSize)
 	if (ISNULL(this_queue, "") || ISNULL(typeSize, ""))
 		return;
 	XList_init(this_queue, typeSize);
-	XQueue_class_init();
-	XClassGetVtable(this_queue) = XQueueVtable;
+	XClassGetVtable(this_queue) = XQueue_class_init();
 }
 
 void XQueue_push_base(XQueue* this_queue, void* LpValue)

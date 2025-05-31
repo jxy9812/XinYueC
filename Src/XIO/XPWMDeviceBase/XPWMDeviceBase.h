@@ -4,8 +4,6 @@
 extern "C" {
 #endif
 #include"XIODeviceBase.h"
-//XPWMDevice虚函数表
-extern XVtable* XPWMDeviceVtable;
 #define XPWMDEVICE_VTABLE_SIZE (XIODEVICEBASE_VTABLE_SIZE+7)       //XPWMDevice虚函数表大小
 //XPWMDevice虚函数表枚举
 enum XPWMDeviceVtableEnum
@@ -31,7 +29,7 @@ typedef struct XPWMDeviceBase
 	void (*m_runChangeCallback)(XPWMDeviceBase* pwm);//运行状态改变回调函数
 }XPWMDeviceBase;
 //初始化类
-void XPWMDeviceBase_class_init();
+XVtable* XPWMDeviceBase_class_init();
 //pwm设备
 XPWMDeviceBase* XPWMDeviceBase_new(XVtable* vtable);
 void XPWMDeviceBase_init(XPWMDeviceBase* pwm, XVtable* vtable);

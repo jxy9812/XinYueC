@@ -17,7 +17,6 @@ void XStack_init(XStack* this_stack, size_t typeSize)
 	if (ISNULL(this_stack, "") || ISNULL(typeSize, ""))
 		return;
 	XVector_init(this_stack, typeSize);
-	XStack_class_init();
-	XClassGetVtable(this_stack)=XStackVtable;
+	XClassGetVtable(this_stack)= XStack_class_init();
 }
 #endif

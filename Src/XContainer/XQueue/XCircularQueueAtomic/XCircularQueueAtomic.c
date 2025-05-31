@@ -8,8 +8,7 @@ void XCircularQueueAtomic_init(XCircularQueueAtomic* this_queue, size_t typeSize
 	XVector_resize_base(this_queue,count);
 	XAtomic_init(this_queue->m_head,0);
 	XAtomic_init(this_queue->m_tail, 0);
-	XCircularQueueAtomic_class_init();
-	XClassGetVtable(this_queue) = XCircularQueueAtomicVtable;
+	XClassGetVtable(this_queue) = XCircularQueueAtomic_class_init();
 }
 XCircularQueueAtomic* XCircularQueueAtomic_new(size_t typeSize, size_t count)
 {

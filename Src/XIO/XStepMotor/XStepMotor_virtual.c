@@ -17,25 +17,20 @@ static void VXStepMotor_stop(XStepMotor* motor);
 static void VXStepMotor_setStepsPerRevolution(XStepMotor* motor, uint16_t steps);
 static void VXStepMotor_setSpeed(XStepMotor* motor, double speed);
 static void VXStepMotor_setRevolutions(XStepMotor* motor, double revolutions);
-
-XVtable* XStepMotorVtable = NULL;
-#if VTABLE_ISSTACK
-static XVtable vtable;//虚函数类
-static void* vtable_data[XSTEPMOTOR_VTABLE_SIZE];//虚函数数据
-#endif
-void XStepMotor_class_init()
+XVtable* XStepMotor_class_init()
 {
-	//仅初始化一次
-	if (XStepMotorVtable)
-		return;
-#if !VTABLE_ISSTACK
-	XIODeviceVtable = XVtable_new();
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XSTEPMOTOR_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XStepMotorVtable = &vtable;
-	XVtable_init_stack(XStepMotorVtable, vtable_data, XSTEPMOTOR_VTABLE_SIZE);
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
 	//继承的函数
-	XVtable_append_vtable(XStepMotorVtable, XClassVtable);
+	XVtable_append_vtable(XClassVtable, XClass_class_init());
 	void* table[] = {
 		VXStepMotor_isOpen,
 		VXStepMotor_open,VXStepMotor_isRunning,
@@ -45,12 +40,13 @@ void XStepMotor_class_init()
 		VXStepMotor_stop,VXStepMotor_setStepsPerRevolution,
 		VXStepMotor_setSpeed,VXStepMotor_setRevolutions
 	};
-	XVtable_append_array(XStepMotorVtable, table, sizeof(table) / sizeof(table[0]));
+	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
 	//重写的函数
-	XVtable_At(XStepMotorVtable, EXClass_Free) = VXStepMotor_free;
+	XVtable_At(XClassVtable, EXClass_Free) = VXStepMotor_free;
 #if SHOWCONTAINERSIZE
-	printf("XStepMotor size:%d\n", XVtable_size(XStepMotorVtable));
+	printf("XStepMotor size:%d\n", XVtable_size(XClassVtable));
 #endif
+	return XClassVtable;
 }
 
 void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL)
@@ -59,8 +55,7 @@ void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBas
 		return NULL;
 	//开始初始化
 	memset(motor, 0, sizeof(XStepMotor));
-	XStepMotor_class_init();
-	XClassGetVtable(motor) = XStepMotorVtable;
+	XClassGetVtable(motor) = XStepMotor_class_init();
 	motor->m_ENA = ENA;
 	motor->m_DIR = DIR;
 	motor->m_PUL = PUL;
@@ -76,7 +71,7 @@ void VXStepMotor_free(XStepMotor* motor)
 	if (motor->m_PUL)
 		XPWMDeviceBase_free_base(motor->m_PUL);
 	//调用父类释放方法
-	XVtableGetFunc(XClassVtable, EXClass_Free,void(*)(XClass*));
+	XVtableGetFunc(XClass_class_init(), EXClass_Free,void(*)(XClass*));
 }
 
 bool VXStepMotor_isOpen(XStepMotor* motor)

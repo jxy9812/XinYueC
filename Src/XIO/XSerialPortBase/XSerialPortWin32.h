@@ -20,6 +20,7 @@ typedef struct XSerialPortWin32
     HANDLE m_hSerial;
     OVERLAPPED m_ov;
 }XSerialPortWin32;//串口
+XVtable* XSerialPortWin32_class_init();
 XSerialPortWin32* XSerialPortWin32_new();
 void XSerialPortWin32_init(XSerialPortWin32* serial);
 

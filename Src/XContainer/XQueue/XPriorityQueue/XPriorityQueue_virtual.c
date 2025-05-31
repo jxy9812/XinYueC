@@ -3,8 +3,6 @@
 #include"XAlgorithm.h"
 #include<string.h>
 #include<stdlib.h>
-//虚函数表定义
-XVtable* XPriorityQueueVtable = NULL;
 //插入到队列的队尾
 static void VXPriorityQueue_push(XPriorityQueue* this_queue, void* LpValue);
 //出队
@@ -13,29 +11,28 @@ static void VXPriorityQueue_pop(XPriorityQueue* this_queue);
 static void* VXPriorityQueue_top(XPriorityQueue* this_queue);
 static bool VXPriorityQueue_receive(XPriorityQueue* this_queue, void* pvBuffer);
 static bool VXPriorityQueue_isFull(const XPriorityQueue* this_queue);
-#if VTABLE_ISSTACK
-	static XVtable vtable;//虚函数类
-	static void* vtable_data[XPRIORITYQUEUE_VTABLE_SIZE];//虚函数数据
-#endif
-void XPriorityQueue_class_init()
+XVtable* XPriorityQueue_class_init()
 {
-	if (XPriorityQueueVtable)
-		return;
-	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top,VXPriorityQueue_receive,VXPriorityQueue_isFull };
-#if !VTABLE_ISSTACK
-	XPriorityQueueVtable = XVtable_new();
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XPRIORITYQUEUE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XPriorityQueueVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
+	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top,VXPriorityQueue_receive,VXPriorityQueue_isFull };
 	//继承的函数
-	XVtable_append_vtable(XPriorityQueueVtable, XContainerObjectVtable);
+	XVtable_append_vtable(XClassVtable, XContainerObject_class_init());
 	//追加函数
-	XVtable_append_array(XPriorityQueueVtable, table, sizeof(table) / sizeof(table[0]));
+	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
 
 #if SHOWCONTAINERSIZE
-	printf("XPriorityQueue size:%d\n", XVtable_size(XPriorityQueueVtable));
+	printf("XPriorityQueue size:%d\n", XVtable_size(XClassVtable));
 #endif // SHOWCONTAINERSIZE
+	return XClassVtable;
 }
 //插入向上调整
 static void AdjustUp(void* LParray, const size_t TypeSize, size_t childNSel, XCompare compare)
@@ -90,7 +87,7 @@ void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvData)
 {
 	if (ISNULL(this_queue, "")|| ISNULL(pvData, ""))
 		return ;
-	XVtableGetFunc(XVectorVtable, EXVector_Push_Back,void(*)(XVector*,void*))(this_queue, pvData);
+	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back,void(*)(XVector*,void*))(this_queue, pvData);
 	//XVector_push_back_base(this_queue, pvData);
 	size_t size = XContainerSize(this_queue) - 1;
 	if (size > 0)//一个元素不用调整
@@ -117,7 +114,7 @@ void* VXPriorityQueue_top(XPriorityQueue* this_queue)
 {
 	if (ISNULL(this_queue, ""))
 		return NULL;
-	return XVtableGetFunc(XVectorVtable, EXVector_Front, void*(*)(XVector*))(this_queue);
+	return XVtableGetFunc(XVector_class_init(), EXVector_Front, void*(*)(XVector*))(this_queue);
 	//return  XVector_front_base(this_queue);//指向数组的开始
 }
 bool VXPriorityQueue_receive(XPriorityQueue* this_queue, void* pvBuffer)

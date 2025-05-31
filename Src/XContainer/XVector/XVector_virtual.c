@@ -28,22 +28,20 @@ static void* VXVector_front(const XVector* this_vector);
 static void* VXVector_back(const XVector* this_vector);
 static void* VXVector_find(const XVector* this_vector, const void* findVal);//查找数据，返回找到的指针，没有返回NULL
 static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
-#if VTABLE_ISSTACK
-	static XVtable vtable;//虚函数类
-	static void* vtable_data[XVECTOR_VTABLE_SIZE];//虚函数数据
-#endif
-static void XVector_class_init()
+XVtable* XVector_class_init()
 {
-	if (XVectorVtable)
-		return;
-#if !VTABLE_ISSTACK
-	XVectorVtable = XVtable_new();
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XVECTOR_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XVectorVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
 	//继承的函数
-	XVtable_append_vtable(XVectorVtable,XContainerObjectVtable);
+	XVtable_append_vtable(XClassVtable, XContainerObject_class_init());
 	void* table[] = {
 		VXVector_resize,
 		//插入
@@ -58,12 +56,13 @@ static void XVector_class_init()
 		VXVector_sort
 	};
 	//追加函数
-	XVtable_append_array(XVectorVtable, table, sizeof(table)/sizeof(table[0]));
+	XVtable_append_array(XClassVtable, table, sizeof(table)/sizeof(table[0]));
 	//重写的函数
-	XVtable_At(XVectorVtable, EXContainerObject_Clear) = VXVector_clear;
+	XVtable_At(XClassVtable, EXContainerObject_Clear) = VXVector_clear;
 #if SHOWCONTAINERSIZE
-	printf("XVector size:%d\n", XVtable_size(XVectorVtable));
+	printf("XVector size:%d\n", XVtable_size(XClassVtable));
 #endif // SHOWCONTAINERSIZE
+	return XClassVtable;
 }
 //初始化函数
 void XVector_init(XVector* this_vector, size_t typeSize)
@@ -71,8 +70,7 @@ void XVector_init(XVector* this_vector, size_t typeSize)
 	if (ISNULL(this_vector, "") || ISNULL(typeSize, ""))
 		return;
 	XContainerObject_init(this_vector, typeSize);
-	XVector_class_init();
-	XClassGetVtable(this_vector) = XVectorVtable;
+	XClassGetVtable(this_vector)=XVector_class_init();
 	this_vector->m_equality = NULL;
 }
 //检测是否需要扩容

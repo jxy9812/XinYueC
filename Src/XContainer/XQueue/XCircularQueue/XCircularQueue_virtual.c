@@ -3,12 +3,6 @@
 #include"XAlgorithm.h"
 #include<string.h>
 #include<stdlib.h>
-//虚函数表定义
-XVtable* XCircularQueueVtable = NULL;
-#if VTABLE_ISSTACK
-static XVtable vtable;//虚函数类
-static void* vtable_data[XCIRCULARQUEUE_VTABLE_SIZE];//虚函数数据
-#endif
 static bool VXCircularQueue_isEmpty(const XCircularQueue* this_queue);
 static bool VXCircularQueue_isFull(const XCircularQueue* this_queue);
 static void VXCircularQueue_clear(XCircularQueue* this_queue);//清空
@@ -20,28 +14,31 @@ static void VXCircularQueue_pop(XCircularQueue* this_queue);
 // 返回队头元素
 static void* VXCircularQueue_top(XCircularQueue* this_queue);
 static bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer);
-void XCircularQueue_class_init()
+XVtable* XCircularQueue_class_init()
 {
-	if (XCircularQueueVtable)
-		return;
-	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top,VXCircularQueue_receive,VXCircularQueue_isFull };
-#if !VTABLE_ISSTACK
-	XCircularQueueVtable = XVtable_new();
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XCIRCULARQUEUE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XCircularQueueVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
+	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top,VXCircularQueue_receive,VXCircularQueue_isFull };
 	//继承的函数
-	XVtable_append_vtable(XCircularQueueVtable, XContainerObjectVtable);
+	XVtable_append_vtable(XClassVtable, XContainerObject_class_init());
 	//追加函数
-	XVtable_append_array(XCircularQueueVtable, table, sizeof(table) / sizeof(table[0]));
+	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
 	//重写的函数
-	XVtable_At(XCircularQueueVtable, EXContainerObject_IsEmpty) = VXCircularQueue_isEmpty;
-	XVtable_At(XCircularQueueVtable, EXContainerObject_Clear) = VXCircularQueue_clear;
-	XVtable_At(XCircularQueueVtable, EXContainerObject_Size) = VXCircularQueue_getSize;
+	XVtable_At(XClassVtable, EXContainerObject_IsEmpty) = VXCircularQueue_isEmpty;
+	XVtable_At(XClassVtable, EXContainerObject_Clear) = VXCircularQueue_clear;
+	XVtable_At(XClassVtable, EXContainerObject_Size) = VXCircularQueue_getSize;
 #if SHOWCONTAINERSIZE
-	printf("XCircularQueue size:%d\n", XVtable_size(XCircularQueueVtable));
+	printf("XCircularQueue size:%d\n", XVtable_size(XClassVtable));
 #endif // SHOWCONTAINERSIZE
+	return XClassVtable;
 }
 
 

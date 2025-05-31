@@ -22,7 +22,7 @@ void XSwitchDeviceBase_init(XSwitchDeviceBase* sw, XVtable* vtable)
 	XIODeviceBase_init(sw, vtable);
 	XSwitchDeviceBase_class_init();
 	if(vtable==NULL)
-		XClassGetVtable(sw) = XSwitchDeviceBaseVtable;
+		XClassGetVtable(sw) = XSwitchDeviceBase_class_init();
 	else 
 		XClassGetVtable(sw) = vtable;
 }

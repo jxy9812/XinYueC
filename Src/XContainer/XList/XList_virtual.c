@@ -23,16 +23,19 @@ static XListNode* VXList_find(const XList* this_list, void* LpValue);
 //其他
 static void VXList_sort(XList* this_list, XCompare compare);
 static void VXList_free(XList* this_list);
-//虚函数表定义
-XVtable* XListVtable = NULL;
-#if VTABLE_ISSTACK
-	static XVtable vtable;//虚函数类
-	static void* vtable_data[XLIST_VTABLE_SIZE];//虚函数数据
-#endif
-void XList_class_init()
+
+XVtable* XList_class_init()
 {
-	if (XListVtable)
-		return;
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XLIST_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
+#else
+	XVTABLE_HEAP_INIT(XClassVtable)
+#endif
 	void* table[] = {
 		//插入
 		VXList_push_front,VXList_push_back,VXList_inserts,VXList_insert,VXList_insert_array,
@@ -43,23 +46,18 @@ void XList_class_init()
 		//排序
 		VXList_sort
 	};
-#if !VTABLE_ISSTACK
-	XListVtable = XVtable_new();
-#else
-	XListVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
-#endif
 	//继承的函数
-	XVtable_append_vtable(XListVtable, XContainerObjectVtable);
+	XVtable_append_vtable(XClassVtable, XContainerObject_class_init());
 	//追加函数
-	XVtable_append_array(XListVtable, table, sizeof(table) / sizeof(table[0]));
+	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
 	//重写的函数
-	XVtable_At(XListVtable, EXClass_Free)= VXList_free;
-	XVtable_At(XListVtable, EXContainerObject_Clear) = VXList_clear;
+	XVtable_At(XClassVtable, EXClass_Free)= VXList_free;
+	XVtable_At(XClassVtable, EXContainerObject_Clear) = VXList_clear;
 
 #if SHOWCONTAINERSIZE
-	printf("XList size:%d\n", XVtable_size(XListVtable));
+	printf("XList size:%d\n", XVtable_size(XClassVtable));
 #endif
+return XClassVtable;
 }
 
 XListNode* VXList_push_front(XList* this_list, void* LpValue)

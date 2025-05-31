@@ -2,33 +2,28 @@
 #include"XVtable.h"
 #include"XMemory.h"
 static void VXClass_free(XClass* Object);
-
-XVtable* XClassVtable = NULL;
-#if VTABLE_ISSTACK
-static XVtable vtable;//虚函数类
-static void* vtable_data[XCLASS_VTABLE_SIZE];//虚函数数据
-#endif
-static void XClass_class_init()
+XVtable* XClass_class_init()
 {
+	static XVtable* XClassVtable = NULL;
 	if (XClassVtable)
-		return;
+		return XClassVtable;
 	//虚函数表初始化
-#if !VTABLE_ISSTACK
-	XClassVtable = XVtable_new();
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XCLASS_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XClassVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, XCLASS_VTABLE_SIZE);
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
 	void* table[] = { VXClass_free };
 	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
 #if SHOWCONTAINERSIZE
 	printf("XContainerObject size:%d\n", XVtable_size(XClassVtable));
 #endif
+	return XClassVtable;
 }
 void XClass_init(XClass* Object)
 {
-	XClass_class_init();
-	XClassGetVtable(Object) = XClassVtable;
+	XClassGetVtable(Object) = XClass_class_init();
 }
 void VXClass_free(XClass* Object)
 {

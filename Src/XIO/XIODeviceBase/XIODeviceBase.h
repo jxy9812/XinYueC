@@ -6,8 +6,6 @@ extern "C" {
 #include<stdint.h>
 #include<stdbool.h>
 #include"XClass.h"
-//XIODevice虚函数表
-extern XVtable* XIODeviceBaseVtable;
 #define XIODEVICEBASE_VTABLE_SIZE		(XCLASS_VTABLE_SIZE+12)       //XIODeviceBase虚函数表大小
 //XContainerObject虚函数表枚举
 enum XIODeviceBaseVtableEnum
@@ -48,6 +46,7 @@ typedef struct XIODeviceBase
 	XCircularQueue* m_writeBuffer;//写入缓冲区
 	XCircularQueue* m_readBuffer;//读取缓冲区
 }XIODeviceBase;
+XVtable* XIODeviceBase_class_init();
 XIODeviceBase* XIODeviceBase_new(XVtable* vtable);
 void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable);
 #define XIODeviceBase_free_base	XClass_free_base

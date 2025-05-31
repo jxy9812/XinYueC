@@ -3,32 +3,29 @@
 //声明
 static bool VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
 static size_t VXSerialPort_read(XIODeviceBase* io, char* data, size_t maxSize);//读取
-XVtable* XSerialPortVtable = NULL;
-#if VTABLE_ISSTACK
-static XVtable vtable;//虚函数类
-static void* vtable_data[XSERIALPORT_VTABLE_SIZE];//虚函数数据
-#endif
 
-void XSerialPortBase_class_init()
+XVtable* XSerialPortBase_class_init()
 {
-	//仅初始化一次
-	if (XSerialPortVtable)
-		return;
-	//printf("配置虚函数表\n");
-#if !VTABLE_ISSTACK
-	XSerialPortVtable = XVtable_new();
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XSERIALPORT_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XSerialPortVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, XSERIALPORT_VTABLE_SIZE);
-#if SHOWCONTAINERSIZE
-	printf("XSerialPortBase size:%d\n", XVtable_size(XSerialPortVtable));
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
 	//继承的函数
-	XVtable_append_vtable(XSerialPortVtable, XIODeviceBaseVtable);
+	XVtable_append_vtable(XClassVtable, XIODeviceBase_class_init());
 	//重写
-	XVtable_At(XSerialPortVtable, EXIODeviceBase_Open) = VXSerialPort_open;
-	XVtable_At(XSerialPortVtable, EXIODeviceBase_Read) = VXSerialPort_read;
+	XVtable_At(XClassVtable, EXIODeviceBase_Open) = VXSerialPort_open;
+	XVtable_At(XClassVtable, EXIODeviceBase_Read) = VXSerialPort_read;
+
+#if SHOWCONTAINERSIZE
+	printf("XSerialPortBase size:%d\n", XVtable_size(XClassVtable));
 #endif
+	return XClassVtable;
 }
 
 bool VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity)
@@ -40,7 +37,7 @@ bool VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t 
 	serial->m_parity = parity;
 	serial->m_portNum = portNum;
 	//调用父类
-	return XVtableGetFunc(XIODeviceBaseVtable, EXIODeviceBase_Open,bool(*)(XIODeviceBase*, XIODeviceBaseMode))(serial, mode);
+	return XVtableGetFunc(XIODeviceBase_class_init(), EXIODeviceBase_Open,bool(*)(XIODeviceBase*, XIODeviceBaseMode))(serial, mode);
 	//return XIODeviceBase_open_base(serial, mode);
 }
 

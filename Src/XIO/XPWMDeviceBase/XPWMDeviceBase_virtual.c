@@ -11,23 +11,20 @@ bool VXPWMDevice_isRunning(XPWMDeviceBase* pwm);
 size_t VXPWMDevice_getFrequency(XPWMDeviceBase* pwm);
 uint8_t VXPWMDevice_getDutyCycle(XPWMDeviceBase* pwm);
 XVtable* XPWMDeviceVtable = NULL;
-#if VTABLE_ISSTACK
-static XVtable vtable;//虚函数类
-static void* vtable_data[XPWMDEVICE_VTABLE_SIZE];//虚函数数据
-#endif
-void XPWMDeviceBase_class_init()
+XVtable* XPWMDeviceBase_class_init()
 {
-	//仅初始化一次
-	if (XPWMDeviceVtable)
-		return;
-#if !VTABLE_ISSTACK
-	XPWMDeviceVtable = XVtable_new();
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XPWMDEVICE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XPWMDeviceVtable = &vtable;
-	XVtable_Init_Stack(&vtable, vtable_data);
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
 	//继承的函数
-	XVtable_append_vtable(XPWMDeviceVtable, XIODeviceBaseVtable);
+	XVtable_append_vtable(XPWMDeviceVtable, XIODeviceBase_class_init());
 	void* table[] = { 
 		VXPWMDevice_setFrequency,VXPWMDevice_setDutyCycle,
 		VXPWMDevice_start,VXPWMDevice_stop,
@@ -38,6 +35,7 @@ void XPWMDeviceBase_class_init()
 #if SHOWCONTAINERSIZE
 	printf("XPWMDeviceBase size:%d\n", XVtable_size(XPWMDeviceVtable));
 #endif
+	return XClassVtable;
 }
 
 void VXPWMDevice_setFrequency(XPWMDeviceBase* pwm, size_t f)

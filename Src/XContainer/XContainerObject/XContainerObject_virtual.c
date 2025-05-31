@@ -11,51 +11,34 @@ static size_t VXContainerObject_getCapacity(const  XContainerObject* Object);
 static size_t VXContainerObject_getTypeSize(const XContainerObject* Object);
 static void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
 static void VXContainerObject_clear(XContainerObject* Object);
-XVtable* XContainerObjectVtable = NULL;
-#if VTABLE_ISSTACK
-static XVtable vtable;//虚函数类
-static void* vtable_data[XCONTAINEROBJECT_VTABLE_SIZE];//虚函数数据
-#endif
 void XContainerDefaultDerivedClassDataFreeMethod(void* args)
 {
 	XContainerObject* object = *((XContainerObject**)args);
 	XContainerObject_free_base(object);
 }
-static void XContainerObject_class_init()
+XVtable* XContainerObject_class_init()
 {
-	if (XContainerObjectVtable)
-		return;
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
 	//虚函数表初始化
- #if !VTABLE_ISSTACK
-	XContainerObjectVtable = XVtable_new();
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XCONTAINEROBJECT_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XContainerObjectVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, XCONTAINEROBJECT_VTABLE_SIZE);
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
 	//继承的函数
-	XVtable_append_vtable(XContainerObjectVtable, XClassVtable);
+	XVtable_append_vtable(XClassVtable, XClass_class_init());
 	void* table[] = {VXContainerObject_isEmpty,VXContainerObject_getSize,VXContainerObject_getCapacity,VXContainerObject_getTypeSize,VXContainerObject_swap,VXContainerObject_clear };
-	XVtable_append_array(XContainerObjectVtable,table,sizeof(table)/sizeof(table[0]));
+	XVtable_append_array(XClassVtable,table,sizeof(table)/sizeof(table[0]));
 	//重写的函数
-	XVtable_At(XContainerObjectVtable, EXClass_Free) = VXContainerObject_free;
+	XVtable_At(XClassVtable, EXClass_Free) = VXContainerObject_free;
 #if SHOWCONTAINERSIZE
-	printf("XContainerObject size:%d\n", XVtable_size(XContainerObjectVtable));
+	printf("XContainerObject size:%d\n", XVtable_size(XClassVtable));
 #endif
+	return XClassVtable;
 }
-void XContainerObject_init(XContainerObject* Object, size_t typeSize)
-{
-	if (ISNULL(Object, "") || ISNULL(typeSize, ""))
-		return;
-	XClass_init(Object);
-	XContainerObject_class_init();
-	XClassGetVtable(Object) = XContainerObjectVtable;
-	Object->m_data = NULL;
-	Object->m_dataFreeMethod = NULL;
-	Object->m_capacity = 0;
-	Object->m_size = 0;
-	Object->m_typeSize = typeSize;
-}
-
 bool VXContainerObject_isEmpty(const XContainerObject* Object)
 {
 	return VXContainerObject_getSize(Object) == 0;

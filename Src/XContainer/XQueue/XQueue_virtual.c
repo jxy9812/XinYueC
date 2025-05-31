@@ -1,27 +1,24 @@
 ﻿#include"XQueue.h"
 #if XQueue_ON
-//虚函数表定义
-XVtable* XQueueVtable = NULL;
-#if VTABLE_ISSTACK
-	static XVtable vtable;//虚函数类
-	static void* vtable_data[20];//虚函数数据
-#endif
-void XQueue_class_init()
+XVtable* XQueue_class_init()
 {
-	if (XQueueVtable)
-		return;
-#if !VTABLE_ISSTACK
-	XQueueVtable = XVtable_new();
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XQUEUE_VTABLE_SIZE)
+		XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XQueueVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
 	//继承的函数
-	XVtable_append_vtable(XQueueVtable, XListVtable);
+	XVtable_append_vtable(XClassVtable, XList_class_init());
 	//追加函数
-	//XVtable_append_array(XQueueVtable, vtable, sizeof(vtable) / sizeof(vtable[0]));
+	//XVtable_append_array(XClassVtable, vtable, sizeof(vtable) / sizeof(vtable[0]));
 #if SHOWCONTAINERSIZE
-	printf("XQueue size:%d\n", XVtable_size(XQueueVtable));
+	printf("XQueue size:%d\n", XVtable_size(XClassVtable));
 #endif
+	return XClassVtable;
 }
 #endif

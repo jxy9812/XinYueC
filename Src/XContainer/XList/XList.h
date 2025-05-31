@@ -10,8 +10,6 @@ extern "C" {
 #include"XList_reverse_iterator.h"
 #include"XListNode.h"
 #include"XContainerObject.h"
-//XList虚函数表
-extern XVtable* XListVtable;
 #define XLIST_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+13)       //XList容器虚函数表大小
 //XList虚函数表枚举
 enum XListVtableEnum
@@ -36,7 +34,7 @@ typedef struct XList
 	XEquality m_equality;//相等比较函数
 }XList;
 //初始化类
-void XList_class_init();
+XVtable* XList_class_init();
 //创建链表
 XList* XList_new(size_t TypeSize);
 #define XList_New(Type) XList_new(sizeof(Type))

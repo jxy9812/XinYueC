@@ -18,25 +18,21 @@ static void VXIODevice_poll(XIODeviceBase* io);
 static void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count);
 static void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count);
 static void VXIODevice_setDevice(XIODeviceBase* io, void* device);
-XVtable* XIODeviceBaseVtable = NULL;
-#if VTABLE_ISSTACK
-static XVtable vtable;//虚函数类
-static void* vtable_data[XIODEVICEBASE_VTABLE_SIZE];//虚函数数据
-#endif
 
-void XIODeviceBase_class_init()
+XVtable* XIODeviceBase_class_init()
 {
-	//仅初始化一次
-	if (XIODeviceBaseVtable)
-		return;
-#if !VTABLE_ISSTACK
-	XIODeviceVtable = XVtable_new();
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XIODEVICEBASE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XIODeviceBaseVtable = &vtable;
-	XVtable_init_stack(XIODeviceBaseVtable, vtable_data, XIODEVICEBASE_VTABLE_SIZE);
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
 	//继承的函数
-	XVtable_append_vtable(XIODeviceBaseVtable, XClassVtable);
+	XVtable_append_vtable(XClassVtable, XClass_class_init());
 	void* table[] = {
 		VXIODevice_open,VXIODevice_write,
 		VXIODevice_writeFull,VXIODevice_read,
@@ -45,28 +41,14 @@ void XIODeviceBase_class_init()
 		VXIODevice_poll,VXIODevice_setWriteBuffer,
 		VXIODevice_setReadBuffer,VXIODevice_setDevice 
 	};
-	XVtable_append_array(XIODeviceBaseVtable, table, sizeof(table) / sizeof(table[0]));
+	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
 	//重写的函数
-	XVtable_At(XIODeviceBaseVtable, EXClass_Free) = VXIODevice_free;
+	XVtable_At(XClassVtable, EXClass_Free) = VXIODevice_free;
 #if SHOWCONTAINERSIZE
-	printf("XIODeviceBase size:%d\n", XVtable_size(XIODeviceBaseVtable));
+	printf("XIODeviceBase size:%d\n", XVtable_size(XClassVtable));
 #endif
+	return XClassVtable;
 }
-
-void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable)
-{
-	if (ISNULL(io, ""))
-		return;
-	//开始初始化
-	memset(io, 0, sizeof(XIODeviceBase));
-	XClass_init(io);
-	XIODeviceBase_class_init();
-	if (vtable == NULL)
-		XClassGetVtable(io) = XIODeviceBaseVtable;
-	else
-		XClassGetVtable(io) = vtable;
-}
-
 void VXIODevice_free(XIODeviceBase* io)
 {
 	XIODeviceBase_close_base(io);

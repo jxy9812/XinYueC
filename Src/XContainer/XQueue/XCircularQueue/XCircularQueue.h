@@ -6,8 +6,6 @@ extern "C" {
 #endif
 #include"XQueueBase.h"
 #include"XVector.h"
-//XCircularQueue虚函数表
-extern XVtable* XCircularQueueVtable;
 #define XCIRCULARQUEUE_VTABLE_SIZE (XQUEUEBASE_VTABLE_SIZE)       //XCircularQueue容器虚函数表大小
 //环形队列
 typedef struct XCircularQueue
@@ -18,7 +16,7 @@ typedef struct XCircularQueue
 	size_t  m_tail;//队尾索引
 }XCircularQueue;
 //初始化类
-void XCircularQueue_class_init();
+XVtable* XCircularQueue_class_init();
 //队列初始化函数
 void XCircularQueue_init(XCircularQueue* this_queue,size_t typeSize, size_t count);
 //队列创建函数

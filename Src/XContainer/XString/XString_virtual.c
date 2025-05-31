@@ -30,45 +30,42 @@ static int64_t VXString_find_first_of(const XString* this_string, const char* su
 static int64_t VXString_find_last_of(const XString* this_string, const char* subStr);
 static int64_t VXString_find_first_not_of(const XString* this_string, const char* subStr);
 static int64_t VXString_find_last_not_of(const XString* this_string, const char* subStr);
-//虚函数表定义
-XVtable* XStringVtable = NULL;
-#if VTABLE_ISSTACK
-	static XVtable vtable;//虚函数类
-	static void* vtable_data[31];//虚函数数据
-#endif
-void XString_class_init()
+XVtable* XString_class_init()
 {
-	if (XStringVtable)
-		return;
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XSTRING_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
+#else
+	XVTABLE_HEAP_INIT(XClassVtable)
+#endif
 	void* table[] = { VXString_assign,VXString_data,
 		VXString_find_first_of,VXString_find_last_of,
 		VXString_find_first_not_of,VXString_find_last_not_of
 	};
-#if !VTABLE_ISSTACK
-	XStringVtable = XVtable_new();
-#else
-	XStringVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
-#endif
 	//继承的函数
-	XVtable_append_vtable(XStringVtable, XVectorVtable);
+	XVtable_append_vtable(XClassVtable, XVector_class_init());
 	//重写的函数
-	XVtable_At(XStringVtable, EXVector_Erase) = VXString_erase;
-	XVtable_At(XStringVtable, EXContainerObject_Clear)=VXString_clear;
-	XVtable_At(XStringVtable, EXVector_Remove) = VXString_remove;
-	XVtable_At(XStringVtable, EXVector_Push_Back) = VXString_push_back;
-	XVtable_At(XStringVtable, EXVector_append_Array) = VXString_append;
-	XVtable_At(XStringVtable, EXVector_Insert) = VXString_insert;
-	//XVtable_At(XStringVtable, EXVector_Pop_Front) = VXString_pop_front;
-	XVtable_At(XStringVtable, EXVector_Pop_Back) = VXString_pop_back;
-	XVtable_At(XStringVtable, EXContainerObject_IsEmpty) = VXString_empty;
-	XVtable_At(XStringVtable, EXContainerObject_Size) = VXString_size;
+	XVtable_At(XClassVtable, EXVector_Erase) = VXString_erase;
+	XVtable_At(XClassVtable, EXContainerObject_Clear)=VXString_clear;
+	XVtable_At(XClassVtable, EXVector_Remove) = VXString_remove;
+	XVtable_At(XClassVtable, EXVector_Push_Back) = VXString_push_back;
+	XVtable_At(XClassVtable, EXVector_append_Array) = VXString_append;
+	XVtable_At(XClassVtable, EXVector_Insert) = VXString_insert;
+	//XVtable_At(XClassVtable, EXVector_Pop_Front) = VXString_pop_front;
+	XVtable_At(XClassVtable, EXVector_Pop_Back) = VXString_pop_back;
+	XVtable_At(XClassVtable, EXContainerObject_IsEmpty) = VXString_empty;
+	XVtable_At(XClassVtable, EXContainerObject_Size) = VXString_size;
 	//追加函数
-	XVtable_append_array(XStringVtable, table, sizeof(table) / sizeof(table[0]));
+	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
 
 #if SHOWCONTAINERSIZE
-	printf("XString size:%d\n", XVtable_size(XStringVtable));
+	printf("XString size:%d\n", XVtable_size(XClassVtable));
 #endif // SHOWCONTAINERSIZE
+	return XClassVtable;
 }
 /*
 bool XString_isChinese(const char c)
@@ -334,7 +331,7 @@ char* XString_data(const XString* this_XString)
 void VXString_resize(XString* this_string, size_t len)
 {
 	typedef void (*funcPtr)(XVector*, size_t);
-	XVtableGetFunc(XVectorVtable, EXVector_Resize, funcPtr)(this_string,len+1);
+	XVtableGetFunc(XVector_class_init(), EXVector_Resize, funcPtr)(this_string,len+1);
 }
 
 void VXString_push_back(XString* this_string, char c)
@@ -365,7 +362,7 @@ void VXString_insert(XString* this_string, const int64_t index, const char* stri
 		return;
 	//void XVector_inserts_base(XVector* this_vector, int64_t index, void* LpValue, size_t n);
 	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
-	XVtableGetFunc(XVectorVtable, EXVector_Inserts, funcPtr)(this_string,index,string,strlen(string));
+	XVtableGetFunc(XVector_class_init(), EXVector_Inserts, funcPtr)(this_string,index,string,strlen(string));
 }
 
 //void VXString_pop_front(XString* this_string)
@@ -373,7 +370,7 @@ void VXString_insert(XString* this_string, const int64_t index, const char* stri
 //	if (VXString_empty(this_string))
 //		return;
 //	typedef void (*funcPtr)(XVector*, void*);
-//	XVtableGetFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_string, "");
+//	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back, funcPtr)(this_string, "");
 //}
 
 void VXString_pop_back(XString* this_string)
@@ -382,7 +379,7 @@ void VXString_pop_back(XString* this_string)
 		return;
 	//void XVector_remove_base(XVector* this_vector, int64_t index, int64_t n);
 	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
-	XVtableGetFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string,XContainerSize(this_string)-2,1);
+	XVtableGetFunc(XVector_class_init(), EXVector_Remove, funcPtr)(this_string,XContainerSize(this_string)-2,1);
 }
 
 void VXString_remove(XString* this_string, int64_t index, int64_t n)
@@ -392,7 +389,7 @@ void VXString_remove(XString* this_string, int64_t index, int64_t n)
 	if (index < 0 || index >= XContainerSize(this_string)-1)
 		return;
 	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
-	XVtableGetFunc(XVectorVtable, EXVector_Remove, funcPtr)(this_string, index, n);
+	XVtableGetFunc(XVector_class_init(), EXVector_Remove, funcPtr)(this_string, index, n);
 }
 
 void VXString_erase(XString* this_string, void* LpValue)
@@ -402,7 +399,7 @@ void VXString_erase(XString* this_string, void* LpValue)
 	if ((char*)XContainerDataPtr(this_string) + XContainerSize(this_string) - 1 == LpValue)
 		return;
 	typedef void (*funcPtr)(XVector*, void*);
-	XVtableGetFunc(XVectorVtable, EXVector_Erase, funcPtr)(this_string, LpValue);
+	XVtableGetFunc(XVector_class_init(), EXVector_Erase, funcPtr)(this_string, LpValue);
 }
 
 void VXString_clear(XString* this_string)
@@ -411,7 +408,7 @@ void VXString_clear(XString* this_string)
 		return;
 	XContainerSize(this_string)=0;
 	typedef void (*funcPtr)(XVector*, void*);
-	XVtableGetFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_string,"");
+	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back, funcPtr)(this_string,"");
 }
 
 bool VXString_empty(const XString* this_string)

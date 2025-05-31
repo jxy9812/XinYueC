@@ -19,7 +19,7 @@ void XSerialPortBase_init(XSerialPortBase* serial, XVtable* vtable)
 	XIODeviceBase_init(serial, vtable);
 	XSerialPortBase_class_init();
 	if (vtable == NULL)
-		XClassGetVtable(serial) = XSerialPortVtable;
+		XClassGetVtable(serial) = XSerialPortBase_class_init();
 	else
 		XClassGetVtable(serial) = vtable;
 	

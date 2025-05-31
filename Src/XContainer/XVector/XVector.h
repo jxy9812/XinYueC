@@ -11,8 +11,6 @@ extern "C" {
 #include"XVectorTwo_func.h"
 #include"XVector_iterator.h"
 #include"XVector_reverse_iterator.h"
-//XVector虚函数表
-extern XVtable* XVectorVtable;
 #define XVECTOR_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+18)       //XVector容器虚函数表大小
 //XVector虚函数表枚举
 enum XVectorEnum
@@ -41,6 +39,7 @@ typedef struct XVector
 	XContainerObject m_parent;
 	XEquality m_equality;//相等比较函数
 }XVector;
+XVtable* XVector_class_init();
 //开辟一个动态数组,初始化 size_t
 XVector* XVector_new(size_t typeSize);
 #define XVector_New(Type) XVector_new(sizeof(Type))

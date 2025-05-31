@@ -14,8 +14,6 @@ extern "C" {
 //数据释放方法
 typedef void (*XCDataFreeMethod)(void* args);
 
-//XContainerObject虚函数表
-extern XVtable* XContainerObjectVtable;
 #define XCONTAINEROBJECT_VTABLE_SIZE   (XCLASS_VTABLE_SIZE+6)      //容器基类虚函数表大小
 //XContainerObject虚函数表枚举
 enum XContainerObjectVtableEnum
@@ -50,7 +48,7 @@ typedef struct XContainerObject
 #define XContainerSetDataFreeMethod(Object,method) (((XContainerObject*)(Object))->m_dataFreeMethod=method)//设置容器的数据释放方法
 //默认释放派生类的方法
 void XContainerDefaultDerivedClassDataFreeMethod(void* args);
-
+XVtable* XContainerObject_class_init();
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);
 #define XContainerObject_free_base	XClass_free_base
 size_t XContainerObject_getSize_base(const XContainerObject* Object);

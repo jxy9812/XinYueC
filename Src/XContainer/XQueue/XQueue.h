@@ -7,8 +7,7 @@ extern "C" {
 #include<stdio.h>
 #include<stdbool.h>
 #include"XList.h"
-//XQueue虚函数表
-extern XVtable* XQueueVtable;
+#define XQUEUE_VTABLE_SIZE (XLIST_VTABLE_SIZE)       //XQueue容器虚函数表大小
 //XQueue虚函数表枚举
 enum XQueueEnum
 {
@@ -21,7 +20,7 @@ typedef struct XQueue
 	XList m_list;
 }XQueue;
 //初始化类
-void XQueue_class_init();
+XVtable* XQueue_class_init();
 //queue容器初始化函数
 XQueue* XQueue_new(size_t typeSize);
 #define XQueue_New(Type) XQueue_new(sizeof(Type))

@@ -7,8 +7,6 @@ extern "C" {
 #include"XClass.h"
 #include"XPWMDeviceBase.h"
 #include"XSwitchDeviceBase.h"
-//XStepMotor虚函数表
-extern XVtable* XStepMotorVtable;
 #define XSTEPMOTOR_VTABLE_SIZE (XCLASS_VTABLE_SIZE+13)       //XStepMotor虚函数表大小
 //XStepMotor虚函数表枚举
 enum XStepMotorVtableEnum
@@ -41,6 +39,7 @@ typedef struct XStepMotor
 	XSwitchDeviceBase* m_ENA;//使能引脚
 	XSwitchDeviceBase* m_DIR;//方向引脚
 }XStepMotor;
+XVtable* XStepMotor_class_init();
 XStepMotor* XStepMotor_new(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
 //初始化
 void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);

@@ -6,31 +6,28 @@
 static void VXSwitchDevice_setState(XSwitchDeviceBase* sw, bool state);
 static bool VXSwitchDevice_getState(XSwitchDeviceBase* sw);
 static void VXIODevice_poll(XSwitchDeviceBase* sw);
-XVtable* XSwitchDeviceBaseVtable = NULL;
-#if VTABLE_ISSTACK
-static XVtable vtable;//虚函数类
-static void* vtable_data[XSWITCHDEVICEBASE_VTABLE_SIZE];//虚函数数据
-#endif
-void XSwitchDeviceBase_class_init()
+XVtable* XSwitchDeviceBase_class_init()
 {
-	//仅初始化一次
-	if (XSwitchDeviceBaseVtable)
-		return;
-#if !VTABLE_ISSTACK
-	XSwitchDeviceBaseVtable = XVtable_new();
+	static XVtable* XClassVtable = NULL;
+	if (XClassVtable)
+		return XClassVtable;
+	//虚函数表初始化
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_DEFINITION(XSWITCHDEVICEBASE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT(XClassVtable)
 #else
-	XSwitchDeviceBaseVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, XSWITCHDEVICEBASE_VTABLE_SIZE);
+	XVTABLE_HEAP_INIT(XClassVtable)
 #endif
 	//继承的函数
-	XVtable_append_vtable(XSwitchDeviceBaseVtable, XIODeviceBaseVtable);
+	XVtable_append_vtable(XClassVtable, XIODeviceBase_class_init());
 	void* table[] = { VXSwitchDevice_setState,VXSwitchDevice_getState };
 	//追加的函数
-	XVtable_append_array(XSwitchDeviceBaseVtable, table, sizeof(table) / sizeof(table[0]));
-	XVtable_At(XSwitchDeviceBaseVtable, EXIODeviceBase_Poll) = VXIODevice_poll;
+	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
+	XVtable_At(XClassVtable, EXIODeviceBase_Poll) = VXIODevice_poll;
 #if SHOWCONTAINERSIZE
-	printf("XSwitchDeviceBase size:%d\n", XVtable_size(XSwitchDeviceBaseVtable));
+	printf("XSwitchDeviceBase size:%d\n", XVtable_size(XClassVtable));
 #endif
+	return XClassVtable;
 }
 
 void VXSwitchDevice_setState(XSwitchDeviceBase* sw, bool state)
