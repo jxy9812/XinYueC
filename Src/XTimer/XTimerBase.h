@@ -1,5 +1,5 @@
-﻿#ifndef XTIMER_H
-#define XTIMER_H
+﻿#ifndef XTIMERBASE_H
+#define XTIMERBASE_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -34,11 +34,6 @@ typedef struct XTimerBase
 	size_t number;//超时次数
 }XTimerBase;
 XTimerBase* XTimerBase_new(XVtable*vtable);
-#ifdef WIN32
-XTimerBase* XTimer_new_Win32ThreadpoolTimer();
-XTimerBase* XTimer_new_Win32TimeSetEvent();
-#endif
-
 void XTimerBase_free_base(XTimerBase* timer);
 void XTimerBase_start_base(XTimerBase*timer);
 void XTimerBase_stop_base(XTimerBase* timer);
@@ -53,7 +48,7 @@ size_t XTimerBase_getInterval(XTimerBase* timer);
 size_t XTimerBase_getTimerId(XTimerBase* timer);
 void*  XTimerBase_getUserData(XTimerBase* timer);
 //超时回调函数
-void XTimer_out(XTimerBase* timer);
+void XTimerBase_out(XTimerBase* timer);
 
 /*                              以毫秒为单位的时间锉                                     */
 //当前时间  累计添加

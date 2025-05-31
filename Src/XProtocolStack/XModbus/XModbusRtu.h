@@ -5,7 +5,7 @@ extern "C" {
 #endif
 #include <stdbool.h>
 #include "XModbus.h"
-#include "XTimer.h"
+#include "XTimerBase.h"
 
 typedef struct XModbusFrame XModbusFrame;
     /* ----------------------- 常量定义 -----------------------------------*/

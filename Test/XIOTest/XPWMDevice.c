@@ -1,7 +1,7 @@
 ﻿#include"XIOTest.h"
 #if DEMOTEST
 #include"XPWMDeviceBase.h"
-#include"XTimer.h"
+#include"XTimerBase.h"
 static struct XPWMDeviceTimer
 {
 	XTimerBase* timer1;//一个周期

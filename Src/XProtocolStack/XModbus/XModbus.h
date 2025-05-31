@@ -9,7 +9,7 @@ extern "C" {
 #include"XIODeviceBase.h"
 #include"XCustomQueue.h"
 #include"XModbusFrame.h"
-#include"XTimer.h"
+#include"XTimerBase.h"
 #include"XModbusFunctionHandler.h"
 #include"XModbusRegisterHandler.h"
 #include"XModbusRegularlySendFrame.h"
