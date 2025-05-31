@@ -32,39 +32,38 @@ static int64_t VXString_find_first_not_of(const XString* this_string, const char
 static int64_t VXString_find_last_not_of(const XString* this_string, const char* subStr);
 XVtable* XString_class_init()
 {
-	static XVtable* XClassVtable = NULL;
-	if (XClassVtable)
-		return XClassVtable;
+	XVTABLE_CREAT_DEFAULT
 	//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT(XClassVtable, XSTRING_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XSTRING_VTABLE_SIZE)
 #else
-	XVTABLE_HEAP_INIT(XClassVtable)
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
+	//继承类
+	XVTABLE_INHERIT_DEFAULT(XVector_class_init());
 	void* table[] = { VXString_assign,VXString_data,
 		VXString_find_first_of,VXString_find_last_of,
 		VXString_find_first_not_of,VXString_find_last_not_of
 	};
-	//继承的函数
-	XVtable_append_vtable(XClassVtable, XVector_class_init());
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+
 	//重写的函数
-	XVtable_At(XClassVtable, EXVector_Erase) = VXString_erase;
-	XVtable_At(XClassVtable, EXContainerObject_Clear)=VXString_clear;
-	XVtable_At(XClassVtable, EXVector_Remove) = VXString_remove;
-	XVtable_At(XClassVtable, EXVector_Push_Back) = VXString_push_back;
-	XVtable_At(XClassVtable, EXVector_append_Array) = VXString_append;
-	XVtable_At(XClassVtable, EXVector_Insert) = VXString_insert;
-	//XVtable_At(XClassVtable, EXVector_Pop_Front) = VXString_pop_front;
-	XVtable_At(XClassVtable, EXVector_Pop_Back) = VXString_pop_back;
-	XVtable_At(XClassVtable, EXContainerObject_IsEmpty) = VXString_empty;
-	XVtable_At(XClassVtable, EXContainerObject_Size) = VXString_size;
-	//追加函数
-	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Erase, VXString_erase);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXString_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Remove, VXString_remove);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back, VXString_push_back);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_append_Array, VXString_append);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Insert, VXString_insert);
+	//XVTABLE_OVERLOAD_DEFAULT( EXVector_Pop_Front, VXString_pop_front);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Pop_Back, VXString_pop_back);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXString_empty);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Size, VXString_size);
 
 #if SHOWCONTAINERSIZE
-	printf("XString size:%d\n", XVtable_size(XClassVtable));
+	printf("XString size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
-	return XClassVtable;
+	return XVTABLE_DEFAULT;
 }
 /*
 bool XString_isChinese(const char c)

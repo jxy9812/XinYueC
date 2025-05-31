@@ -26,15 +26,16 @@ static void VXList_free(XList* this_list);
 
 XVtable* XList_class_init()
 {
-	static XVtable* XClassVtable = NULL;
-	if (XClassVtable)
-		return XClassVtable;
+	XVTABLE_CREAT_DEFAULT
 	//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT(XClassVtable, XLIST_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XLIST_VTABLE_SIZE)
 #else
-	XVTABLE_HEAP_INIT(XClassVtable)
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
+	//继承类
+	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+
 	void* table[] = {
 		//插入
 		VXList_push_front,VXList_push_back,VXList_inserts,VXList_insert,VXList_insert_array,
@@ -45,18 +46,16 @@ XVtable* XList_class_init()
 		//排序
 		VXList_sort
 	};
-	//继承的函数
-	XVtable_append_vtable(XClassVtable, XContainerObject_class_init());
-	//追加函数
-	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
-	//重写的函数
-	XVtable_At(XClassVtable, EXClass_Free)= VXList_free;
-	XVtable_At(XClassVtable, EXContainerObject_Clear) = VXList_clear;
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Free,VXList_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXList_clear);
 
 #if SHOWCONTAINERSIZE
-	printf("XList size:%d\n", XVtable_size(XClassVtable));
+	printf("XList size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
-return XClassVtable;
+return XVTABLE_DEFAULT;
 }
 
 XListNode* VXList_push_front(XList* this_list, void* LpValue)

@@ -13,25 +13,23 @@ static bool VXPriorityQueue_receive(XPriorityQueue* this_queue, void* pvBuffer);
 static bool VXPriorityQueue_isFull(const XPriorityQueue* this_queue);
 XVtable* XPriorityQueue_class_init()
 {
-	static XVtable* XClassVtable = NULL;
-	if (XClassVtable)
-		return XClassVtable;
+	XVTABLE_CREAT_DEFAULT
 	//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT(XClassVtable, XPRIORITYQUEUE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XPRIORITYQUEUE_VTABLE_SIZE)
 #else
-	XVTABLE_HEAP_INIT(XClassVtable)
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
+	//继承类
+	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
 	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top,VXPriorityQueue_receive,VXPriorityQueue_isFull };
-	//继承的函数
-	XVtable_append_vtable(XClassVtable, XContainerObject_class_init());
-	//追加函数
-	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
 #if SHOWCONTAINERSIZE
-	printf("XPriorityQueue size:%d\n", XVtable_size(XClassVtable));
+	printf("XPriorityQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
-	return XClassVtable;
+	return XVTABLE_DEFAULT;
 }
 //插入向上调整
 static void AdjustUp(void* LParray, const size_t TypeSize, size_t childNSel, XCompare compare)

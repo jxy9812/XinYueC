@@ -20,30 +20,28 @@ static void VXMap_free(XMap* this_map);
 static void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
 XVtable* XMap_class_init()
 {
-	static XVtable* XClassVtable = NULL;
-	if (XClassVtable)
-		return XClassVtable;
-	//虚函数表初始化
+	XVTABLE_CREAT_DEFAULT
+		//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT(XClassVtable, XMAP_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XMAP_VTABLE_SIZE)
 #else
-	XVTABLE_HEAP_INIT(XClassVtable)
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
-	//继承的函数
-	XVtable_append_vtable(XClassVtable, XContainerObject_class_init());
+	//继承类
+	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
 	void* table[] = {
 		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find
 	};
-	//追加函数
-	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
-	//重写的函数
-	XVtable_At(XClassVtable, EXContainerObject_Clear) = VXMap_clear;
-	XVtable_At(XClassVtable, EXClass_Free) = VXMap_free;
-	XVtable_At(XClassVtable, EXContainerObject_Swap) = VXMap_swap;
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXMap_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Free,VXMap_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
 #if SHOWCONTAINERSIZE
-	printf("XMap size:%d\n", XVtable_size(XClassVtable));
+	printf("XMap size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
-	return XClassVtable;
+	return XVTABLE_DEFAULT;
 }
 
 void VXMap_insert(XMap* this_map, const void* key, const void* LpValue)

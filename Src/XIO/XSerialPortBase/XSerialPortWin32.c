@@ -15,31 +15,29 @@ static void VXIODevice_setReadBuffer(XSerialPortWin32* serial, size_t count);
 static size_t VXIODevice_getBytesAvailable(XSerialPortWin32* serial);
 XVtable* XSerialPortWin32_class_init()
 {
-    static XVtable* XClassVtable = NULL;
-    if (XClassVtable)
-        return XClassVtable;
-    //虚函数表初始化
+    XVTABLE_CREAT_DEFAULT
+        //虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT(XClassVtable, XSERIALPORT_VTABLE_SIZE)
+    XVTABLE_STACK_INIT_DEFAULT(XSERIALPORT_VTABLE_SIZE)
 #else
-    XVTABLE_HEAP_INIT(XClassVtable)
+    XVTABLE_HEAP_INIT_DEFAULT
 #endif
-    //继承的函数
-    XVtable_append_vtable(XClassVtable, XIODeviceBase_class_init());
-    //重写
-    XVtable_At(XClassVtable, EXIODeviceBase_Open) = VXSerialPort_open;
-    XVtable_At(XClassVtable, EXIODeviceBase_Write) = VXIODevice_write;
-    XVtable_At(XClassVtable, EXIODeviceBase_WriteFull) = VXIODevice_writeFull;
-    XVtable_At(XClassVtable, EXIODeviceBase_Read) = VXIODevice_read;
-    XVtable_At(XClassVtable, EXIODeviceBase_Close) = VXIODevice_close;
-    XVtable_At(XClassVtable, EXIODeviceBase_Poll) = VXIODevice_poll;
-    XVtable_At(XClassVtable, EXIODeviceBase_SetWriteBuffer) = VXIODevice_setWriteBuffer;
-    XVtable_At(XClassVtable, EXIODeviceBase_SetReadBuffer) = VXIODevice_setReadBuffer;
-    XVtable_At(XClassVtable, EXIODeviceBase_GetBytesAvailable) = VXIODevice_getBytesAvailable;
+    //继承类
+    XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
+    //重载
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXSerialPort_open);
+    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_Write, VXIODevice_write);
+    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_WriteFull, VXIODevice_writeFull);
+    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_Read, VXIODevice_read);
+    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_Close, VXIODevice_close);
+    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_Poll, VXIODevice_poll);
+    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
+    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
+    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_GetBytesAvailable, VXIODevice_getBytesAvailable);
 #if SHOWCONTAINERSIZE
-    printf("XSerialPortWin32 size:%d\n", XVtable_size(XClassVtable));
+    printf("XSerialPortWin32 size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
-    return XClassVtable;
+    return XVTABLE_DEFAULT;
 }
 XSerialPortWin32* XSerialPortWin32_new()
 {

@@ -2,22 +2,18 @@
 #if XQueue_ON
 XVtable* XQueue_class_init()
 {
-	static XVtable* XClassVtable = NULL;
-	if (XClassVtable)
-		return XClassVtable;
+	XVTABLE_CREAT_DEFAULT
 	//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT(XClassVtable, XQUEUE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XQUEUE_VTABLE_SIZE)
 #else
-	XVTABLE_HEAP_INIT(XClassVtable)
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
-	//继承的函数
-	XVtable_append_vtable(XClassVtable, XList_class_init());
-	//追加函数
-	//XVtable_append_array(XClassVtable, vtable, sizeof(vtable) / sizeof(vtable[0]));
+	//继承类
+	XVTABLE_INHERIT_DEFAULT(XList_class_init());
 #if SHOWCONTAINERSIZE
-	printf("XQueue size:%d\n", XVtable_size(XClassVtable));
+	printf("XQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
-	return XClassVtable;
+	return XVTABLE_DEFAULT;
 }
 #endif

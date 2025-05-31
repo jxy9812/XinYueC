@@ -7,8 +7,6 @@
 #include"XList.h"
 //声明
 #define VECTORNUM 4//初始数组大小
-//虚函数表定义
-XVtable* XVectorVtable=NULL;
 static void VXVector_resize(XVector* this_vector, size_t size);
 static void VXVector_push_front(XVector* this_vector, void* LpValue);
 static void VXVector_push_back(XVector* this_vector, void* LpValue);
@@ -30,17 +28,15 @@ static void* VXVector_find(const XVector* this_vector, const void* findVal);//�
 static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
 XVtable* XVector_class_init()
 {
-	static XVtable* XClassVtable = NULL;
-	if (XClassVtable)
-		return XClassVtable;
+	XVTABLE_CREAT_DEFAULT
 	//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT(XClassVtable, XVECTOR_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XVECTOR_VTABLE_SIZE)
 #else
-	XVTABLE_HEAP_INIT(XClassVtable)
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
-	//继承的函数
-	XVtable_append_vtable(XClassVtable, XContainerObject_class_init());
+	//继承类
+	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
 	void* table[] = {
 		VXVector_resize,
 		//插入
@@ -54,14 +50,14 @@ XVtable* XVector_class_init()
 		//排序
 		VXVector_sort
 	};
-	//追加函数
-	XVtable_append_array(XClassVtable, table, sizeof(table)/sizeof(table[0]));
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重写的函数
-	XVtable_At(XClassVtable, EXContainerObject_Clear) = VXVector_clear;
+	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXVector_clear);
 #if SHOWCONTAINERSIZE
-	printf("XVector size:%d\n", XVtable_size(XClassVtable));
+	printf("XVector size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
-	return XClassVtable;
+	return XVTABLE_DEFAULT;
 }
 //初始化函数
 void XVector_init(XVector* this_vector, size_t typeSize)

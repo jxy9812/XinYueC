@@ -16,28 +16,26 @@ static void* VXCircularQueue_top(XCircularQueue* this_queue);
 static bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer);
 XVtable* XCircularQueue_class_init()
 {
-	static XVtable* XClassVtable = NULL;
-	if (XClassVtable)
-		return XClassVtable;
+	XVTABLE_CREAT_DEFAULT
 	//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT(XClassVtable, XCIRCULARQUEUE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XCIRCULARQUEUE_VTABLE_SIZE)
 #else
-	XVTABLE_HEAP_INIT(XClassVtable)
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
+	//继承类
+	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
 	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top,VXCircularQueue_receive,VXCircularQueue_isFull };
-	//继承的函数
-	XVtable_append_vtable(XClassVtable, XContainerObject_class_init());
-	//追加函数
-	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
-	//重写的函数
-	XVtable_At(XClassVtable, EXContainerObject_IsEmpty) = VXCircularQueue_isEmpty;
-	XVtable_At(XClassVtable, EXContainerObject_Clear) = VXCircularQueue_clear;
-	XVtable_At(XClassVtable, EXContainerObject_Size) = VXCircularQueue_getSize;
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty,VXCircularQueue_isEmpty);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXCircularQueue_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Size,VXCircularQueue_getSize);
 #if SHOWCONTAINERSIZE
-	printf("XCircularQueue size:%d\n", XVtable_size(XClassVtable));
+	printf("XCircularQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
-	return XClassVtable;
+	return XVTABLE_DEFAULT;
 }
 
 

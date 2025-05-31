@@ -6,25 +6,23 @@ static size_t VXSerialPort_read(XIODeviceBase* io, char* data, size_t maxSize);/
 
 XVtable* XSerialPortBase_class_init()
 {
-	static XVtable* XClassVtable = NULL;
-	if (XClassVtable)
-		return XClassVtable;
-	//虚函数表初始化
+	XVTABLE_CREAT_DEFAULT
+		//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT(XClassVtable, XSERIALPORT_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XSERIALPORT_VTABLE_SIZE)
 #else
-	XVTABLE_HEAP_INIT(XClassVtable)
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
-	//继承的函数
-	XVtable_append_vtable(XClassVtable, XIODeviceBase_class_init());
+	//继承类
+	XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
 	//重写
-	XVtable_At(XClassVtable, EXIODeviceBase_Open) = VXSerialPort_open;
-	XVtable_At(XClassVtable, EXIODeviceBase_Read) = VXSerialPort_read;
+	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open,VXSerialPort_open);
+	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read,VXSerialPort_read);
 
 #if SHOWCONTAINERSIZE
-	printf("XSerialPortBase size:%d\n", XVtable_size(XClassVtable));
+	printf("XSerialPortBase size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
-	return XClassVtable;
+	return XVTABLE_DEFAULT;
 }
 
 bool VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity)

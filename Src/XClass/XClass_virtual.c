@@ -4,21 +4,20 @@
 static void VXClass_free(XClass* Object);
 XVtable* XClass_class_init()
 {
-	static XVtable* XClassVtable = NULL;
-	if (XClassVtable)
-		return XClassVtable;
-	//虚函数表初始化
+	XVTABLE_CREAT_DEFAULT
+		//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT(XClassVtable, XCLASS_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_SIZE)
 #else
-	XVTABLE_HEAP_INIT(XClassVtable)
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	void* table[] = { VXClass_free };
-	XVtable_append_array(XClassVtable, table, sizeof(table) / sizeof(table[0]));
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+
 #if SHOWCONTAINERSIZE
 	printf("XContainerObject size:%d\n", XVtable_size(XClassVtable));
 #endif
-	return XClassVtable;
+	return XVTABLE_DEFAULT;
 }
 void XClass_init(XClass* Object)
 {

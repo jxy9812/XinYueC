@@ -6,15 +6,13 @@
 #endif
 XVtable* XStack_class_init()
 {
-	XVtable* XStackVtable = NULL;
-	if (XStackVtable)
-		return XStackVtable;
-	XStackVtable = XVector_class_init();
+	XVTABLE_CREAT_DEFAULT
+	XVTABLE_DEFAULT = XVector_class_init();
 	//继承的函数
 	//XVtable_append_vtable(XStackVtable, XVectorVtable);
 #if SHOWCONTAINERSIZE
-	printf("XStack size:%d\n", XVtable_size(XStackVtable));
+	printf("XStack size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
-	return XStackVtable;
+	return XVTABLE_DEFAULT;
 }
 #endif
