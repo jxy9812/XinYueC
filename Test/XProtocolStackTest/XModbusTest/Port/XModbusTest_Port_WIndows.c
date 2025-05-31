@@ -163,7 +163,7 @@ static void CALLBACK TimerCallbackReceive(UINT uID, UINT uMsg, DWORD_PTR dwUser,
         }
         //将接收到的数据保存到缓冲区
        //printf("接收到数据size:%d\n", bytesRead);
-        XSerialPortBase_receive_base(serial, buff, bytesRead);
+        //XSerialPortBase_receive_base(serial, buff, bytesRead);
     }
     else
     {

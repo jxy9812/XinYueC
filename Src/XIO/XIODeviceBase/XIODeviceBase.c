@@ -44,18 +44,32 @@ size_t XIODeviceBase_read_base(XIODeviceBase* io, char* data, size_t maxSize)
 }
 
 
-size_t XIODeviceBase_receive_base(XIODeviceBase* io,const char* data, size_t size)
+size_t XIODeviceBase_getBytesAvailable_base(XIODeviceBase* io)
 {
-	if (ISNULL(io, "") || ISNULL(data, "") || ISNULL(size, "") || ISNULL(XClassGetVtable(io), ""))
-		return;
-	return XClassGetVirtualFunc(io, EXIODeviceBase_Receive, size_t(*)(XIODeviceBase*,const char*, size_t))(io, data, size);
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
+		return 0;
+	return XClassGetVirtualFunc(io, EXIODeviceBase_GetBytesAvailable, size_t(*)(XIODeviceBase*))(io);
 }
 
-bool XIODeviceBase_isOpen_base(XIODeviceBase* io)
+size_t XIODeviceBase_getBytesToWrite_base(XIODeviceBase* io)
+{
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
+		return 0;
+	return XClassGetVirtualFunc(io, EXIODeviceBase_GetBytesToWrite, size_t(*)(XIODeviceBase*))(io);
+}
+
+bool XIODeviceBase_atEnd_base(XIODeviceBase* io)
 {
 	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return false;
-	return XClassGetVirtualFunc(io, EXIODeviceBase_IsOpen, bool(*)(XIODeviceBase*))(io);
+	return XClassGetVirtualFunc(io, EXIODeviceBase_AtEnd, bool(*)(XIODeviceBase*))(io);
+}
+
+bool XIODeviceBase_isOpen(XIODeviceBase* io)
+{
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
+		return false;
+	return io->m_mode != XIODeviceBase_NotOpen;
 }
 
 bool XIODeviceBase_open_base(XIODeviceBase* io, XIODeviceBaseMode mode)

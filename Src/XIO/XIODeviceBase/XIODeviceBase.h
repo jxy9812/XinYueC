@@ -8,16 +8,17 @@ extern "C" {
 #include"XClass.h"
 //XIODevice虚函数表
 extern XVtable* XIODeviceBaseVtable;
-#define XIODEVICEBASE_VTABLE_SIZE		(XCLASS_VTABLE_SIZE+11)       //XIODeviceBase虚函数表大小
+#define XIODEVICEBASE_VTABLE_SIZE		(XCLASS_VTABLE_SIZE+12)       //XIODeviceBase虚函数表大小
 //XContainerObject虚函数表枚举
 enum XIODeviceBaseVtableEnum
 {
-	EXIODeviceBase_IsOpen= XCLASS_VTABLE_SIZE,
-	EXIODeviceBase_Open,
+	EXIODeviceBase_Open = XCLASS_VTABLE_SIZE,
 	EXIODeviceBase_Write,
 	EXIODeviceBase_WriteFull,
 	EXIODeviceBase_Read,
-	EXIODeviceBase_Receive,
+	EXIODeviceBase_GetBytesAvailable,
+	EXIODeviceBase_GetBytesToWrite,
+	EXIODeviceBase_AtEnd,
 	EXIODeviceBase_Close,
 	EXIODeviceBase_Poll,
 	EXIODeviceBase_SetWriteBuffer,
@@ -55,9 +56,13 @@ void XIODeviceBase_setReadBuffer_base(XIODeviceBase* io, size_t count);
 void XIODeviceBase_setDevice_base(XIODeviceBase* io, void* device);
 size_t XIODeviceBase_write_base(XIODeviceBase* io,const char* data, size_t maxSize);//写入
 size_t XIODeviceBase_read_base(XIODeviceBase* io,char* data, size_t maxSize);//读取
-//接收数据从硬件接收数据到缓冲区
-size_t XIODeviceBase_receive_base(XIODeviceBase* io,const char* data, size_t size);
-bool XIODeviceBase_isOpen_base(XIODeviceBase* io);
+//获取可供读取的字节数
+size_t XIODeviceBase_getBytesAvailable_base(XIODeviceBase* io);
+//查询当前 待写入设备的数据量（即尚未完成写入操作的字节数）
+size_t XIODeviceBase_getBytesToWrite_base(XIODeviceBase* io);
+//是否到达末尾
+bool XIODeviceBase_atEnd_base(XIODeviceBase* io);
+bool XIODeviceBase_isOpen(XIODeviceBase* io);
 //打开设备		必须要重载
 bool XIODeviceBase_open_base(XIODeviceBase* io, XIODeviceBaseMode mode);
 //关闭设备      需重载

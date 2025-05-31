@@ -35,8 +35,9 @@ bool XSerialPortBase_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, 
 #define XSerialPortBase_setDevice_base                              XIODeviceBase_setDevice_base
 #define XSerialPortBase_write_base                                  XIODeviceBase_write_base
 #define XSerialPortBase_read_base                                   XIODeviceBase_read_base
-#define XSerialPortBase_receive_base                                XIODeviceBase_receive_base
-#define XSerialPortBase_isOpen_base                                 XIODeviceBase_isOpen_base
+#define XSerialPortBase_getBytesAvailable_base                      XIODeviceBase_getBytesAvailable_base
+#define XSerialPortBase_getBytesToWrite_base                        XIODeviceBase_getBytesToWrite_base
+#define XSerialPortBase_isOpen                                      XIODeviceBase_isOpen
 #define XSerialPortBase_close_base                                  XIODeviceBase_close_base
 #define XSerialPortBase_poll_base                                   XIODeviceBase_poll_base
 #define XSerialPortBase_writeFull_base                              XIODeviceBase_writeFull_base

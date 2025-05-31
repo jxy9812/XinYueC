@@ -34,9 +34,9 @@ void XSerialPortTest()
         XSerialPortBase_free_base(serial);
         return;
     }
-    XSerialPortBase_setReadBuffer_base(serial,1024);
+    //XSerialPortBase_setReadBuffer_base(serial,1024);
     //线程接收数据
-    threadTest(serial);
+    //threadTest(serial);
     //主线程处理数据
     char buff[1024];
     while (true)

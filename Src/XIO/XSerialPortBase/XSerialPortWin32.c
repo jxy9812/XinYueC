@@ -10,7 +10,9 @@ static size_t VXIODevice_writeFull(XSerialPortWin32* serial);//将剩余的数�
 static size_t VXIODevice_read(XSerialPortWin32* serial, char* data, size_t maxSize);//读取
 static void VXIODevice_close(XSerialPortWin32* serial);
 static void VXIODevice_poll(XSerialPortWin32* serial);
-
+static void VXIODevice_setWriteBuffer(XSerialPortWin32* serial, size_t count);
+static void VXIODevice_setReadBuffer(XSerialPortWin32* serial, size_t count);
+static size_t VXIODevice_getBytesAvailable(XSerialPortWin32* serial);
 static XVtable* pvVtable = NULL;
 static void XSerialPortWin32_class_init()
 {
@@ -33,6 +35,9 @@ static void XSerialPortWin32_class_init()
     XVtable_At(pvVtable, EXIODeviceBase_Read) = VXIODevice_read;
     XVtable_At(pvVtable, EXIODeviceBase_Close) = VXIODevice_close;
     XVtable_At(pvVtable, EXIODeviceBase_Poll) = VXIODevice_poll;
+    XVtable_At(pvVtable, EXIODeviceBase_SetWriteBuffer) = VXIODevice_setWriteBuffer;
+    XVtable_At(pvVtable, EXIODeviceBase_SetReadBuffer) = VXIODevice_setReadBuffer;
+    XVtable_At(pvVtable, EXIODeviceBase_GetBytesAvailable) = VXIODevice_getBytesAvailable;
 }
 XSerialPortWin32* XSerialPortWin32_new()
 {
@@ -75,11 +80,11 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t
     }
 
     // 配置串口缓冲区
-    if (!SetupComm(hSerial, 128, 128)) {
-        printf("无法设置串口缓冲区！\n");
-        CloseHandle(hSerial);
-        return false;
-    }
+   // if (!SetupComm(hSerial, 128, 128)) {
+   //     printf("无法设置串口缓冲区！\n");
+   //     CloseHandle(hSerial);
+   //     return false;
+  //  }
 
     // 获取当前串口配置
     DCB dcbSerialParams = { 0 };
@@ -171,6 +176,7 @@ size_t VXIODevice_write(XSerialPortWin32* serial, const char* data, size_t maxSi
     XIODeviceBase* io = (XIODeviceBase*)serial;
     if (io->m_mode & XIODeviceBase_WriteOnly == 0)
      	return 0;
+    return XSerialPort_write(io, data, maxSize);
      //printf("x");
      size_t count = 0;
      if (io->m_writeBuffer == NULL)
@@ -219,14 +225,7 @@ static size_t XSerialPort_read(XSerialPortWin32* serial,char* data, size_t maxSi
 {
     if (serial == NULL || data == NULL || maxSize == 0)
         return 0;
-    COMSTAT comStat;
-    DWORD errors;
-    // 清除通信错误并获取串口状态
-    if (!ClearCommError(serial->m_hSerial, &errors, &comStat)) {
-        printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
-        return 0;
-    }
-    DWORD bytesRead = comStat.cbInQue;
+    DWORD bytesRead = XSerialPortBase_getBytesAvailable_base(serial);
     if (bytesRead == 0)
         return 0;
     if (bytesRead > maxSize)
@@ -257,28 +256,14 @@ size_t VXIODevice_read(XSerialPortWin32* serial, char* data, size_t maxSize)
     XIODeviceBase* io = (XIODeviceBase*)serial;
     if (io->m_mode & XIODeviceBase_ReadOnly == 0)
         return 0;
-    size_t count = 0;
-    if (io->m_readBuffer == NULL)
-    {//没有读取缓冲区
-    	count += XSerialPort_read(io, data, maxSize);
-    }
-    else
-    {
-    	while (XCircularQueue_receive_base(io->m_readBuffer, data + count))
-    	{
-    		++count;
-    		if (count >= maxSize)
-    			break;
-    	}
-    }
-    return count;
+    return XSerialPort_read(io, data, maxSize);
 }
 void VXIODevice_close(XSerialPortWin32* serial)
 {
     if (serial == NULL || serial->m_hSerial == INVALID_HANDLE_VALUE)
         return ;
     XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (XIODeviceBase_isOpen_base(io))
+    if (XIODeviceBase_isOpen(io))
     { //开始关闭串口
         // 1. 取消所有未完成的异步操作
         if (!CancelIoEx(serial->m_hSerial, &(serial->m_ov)))
@@ -304,11 +289,42 @@ void VXIODevice_poll(XSerialPortWin32* serial)
 {
     if (serial == NULL)
         return ;
-    char buff[1024];
-    size_t bytesRead =XSerialPort_read(serial, buff,1024);
+   // char buff[1024];
+   // size_t bytesRead =XSerialPort_read(serial, buff,1024);
     //将接收到的数据保存到缓冲区
     //printf("接收到数据size:%d\n", bytesRead);
-    if(bytesRead)
-        XSerialPortBase_receive_base(serial, buff, bytesRead);
+   /* if(bytesRead)
+        XCircularQueue_push_base(serial->, buff, bytesRead);*/
+}
+void VXIODevice_setWriteBuffer(XSerialPortWin32* serial, size_t count)
+{
+    // 配置串口缓冲区
+    if (!SetupComm(serial->m_hSerial, serial->m_readBufferSize, count)) {
+        printf("无法设置串口缓冲区！\n");
+        CloseHandle(serial->m_hSerial);
+        return ;
+    }
+    serial->m_writeBufferSize = count;
+}
+void VXIODevice_setReadBuffer(XSerialPortWin32* serial, size_t count)
+{
+    // 配置串口缓冲区
+    if (!SetupComm(serial->m_hSerial, count, serial->m_writeBufferSize)) {
+        printf("无法设置串口缓冲区！\n");
+        CloseHandle(serial->m_hSerial);
+        return ;
+    }
+    serial->m_readBufferSize = count;
+}
+size_t VXIODevice_getBytesAvailable(XSerialPortWin32* serial)
+{
+    COMSTAT comStat;
+    DWORD errors;
+    // 清除通信错误并获取串口状态
+    if (!ClearCommError(serial->m_hSerial, &errors, &comStat)) {
+        printf("获取串口状态时发生错误，错误码: %d\n", GetLastError());
+        return 0;
+    }
+    return comStat.cbInQue;
 }
 #endif // Win32

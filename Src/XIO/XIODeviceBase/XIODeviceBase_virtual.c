@@ -6,12 +6,13 @@
 #include <assert.h>
 //声明 
 static void VXIODevice_free(XIODeviceBase* io);
-static bool VXIODevice_isOpen(XIODeviceBase* io);
 static bool VXIODevice_open(XIODeviceBase* io, XIODeviceBaseMode mode);
 static size_t VXIODevice_write(XIODeviceBase* io, const char* data, size_t maxSize);//写入
 static size_t VXIODevice_writeFull(XIODeviceBase* io);//将剩余的数据刷入设备
 static size_t VXIODevice_read(XIODeviceBase* io, char* data, size_t maxSize);//读取
-static size_t VXIODevice_receive(XIODeviceBase* io, const char* data, size_t size);//接收数据从硬件接收数据到缓冲区
+static size_t VXIODevice_getBytesAvailable(XIODeviceBase* io);
+static size_t VXIODeviceBase_getBytesToWrite(XIODeviceBase* io);
+static bool VXIODeviceBase_atEnd(XIODeviceBase* io);
 static void VXIODevice_close(XIODeviceBase* io);
 static void VXIODevice_poll(XIODeviceBase* io);
 static void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count);
@@ -36,10 +37,11 @@ void XIODeviceBase_class_init()
 #endif
 	//继承的函数
 	XVtable_append_vtable(XIODeviceBaseVtable, XClassVtable);
-	void* table[] = {VXIODevice_isOpen,
+	void* table[] = {
 		VXIODevice_open,VXIODevice_write,
 		VXIODevice_writeFull,VXIODevice_read,
-		VXIODevice_receive,VXIODevice_close, 
+		VXIODevice_getBytesAvailable,VXIODeviceBase_getBytesToWrite,
+		VXIODeviceBase_atEnd,VXIODevice_close,
 		VXIODevice_poll,VXIODevice_setWriteBuffer,
 		VXIODevice_setReadBuffer,VXIODevice_setDevice 
 	};
@@ -73,11 +75,6 @@ void VXIODevice_free(XIODeviceBase* io)
 	if (io->m_readBuffer)
 		XCircularQueue_free_base(io->m_readBuffer);
 	XMemory_free(io);
-}
-
-bool VXIODevice_isOpen(XIODeviceBase* io)
-{
-	return io->m_mode!= XIODeviceBase_NotOpen;
 }
 
 bool VXIODevice_open(XIODeviceBase* io, XIODeviceBaseMode mode)
@@ -184,18 +181,23 @@ size_t VXIODevice_read(XIODeviceBase* io, char* data, size_t maxSize)
 	//return count;
 }
 
-size_t VXIODevice_receive(XIODeviceBase* io, const char* data, size_t size)
+size_t VXIODevice_getBytesAvailable(XIODeviceBase* io)
 {
-	size_t count = 0;
-	if (io->m_readBuffer != NULL)
-	{
-		for (size_t i = 0; i < size; i++)
-		{
-			if (XCircularQueue_push_base(io->m_readBuffer, data + i))
-				++count;
-		}
-	}
-	return count;
+	if (io->m_readBuffer == NULL)
+		return 0;
+	return XCircularQueue_getSize_base(io->m_readBuffer);
+}
+
+size_t VXIODeviceBase_getBytesToWrite(XIODeviceBase* io)
+{
+	if (io->m_writeBuffer == NULL)
+		return 0;
+	return XCircularQueue_getSize_base(io->m_writeBuffer);
+}
+
+bool VXIODeviceBase_atEnd(XIODeviceBase* io)
+{
+	return false;
 }
 
 void VXIODevice_close(XIODeviceBase* io)

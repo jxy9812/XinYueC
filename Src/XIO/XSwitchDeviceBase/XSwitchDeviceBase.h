@@ -30,18 +30,16 @@ XSwitchDeviceBase* XSwitchDeviceBase_new(XVtable* vtable);
 void XSwitchDeviceBase_init(XSwitchDeviceBase* sw, XVtable* vtable);
 //设置状态改变回调函数
 void XSwitchDeviceBase_setStateChangeCallback(XSwitchDeviceBase* sw, void (*callback)(XSwitchDeviceBase* io));
-//默认轮询方法(初始化时虚函数表不存在将自动指定)
-void XSwitchDeviceBase_pollDefaultMethod(XSwitchDeviceBase* sw);
 //设置开关设备状态
 void XSwitchDeviceBase_setState_base(XSwitchDeviceBase* sw,bool state);
 //获取状态
 bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw);
-#define XSwitchDeviceBase_isOpen_base XIODeviceBase_isOpen_base
-#define XSwitchDeviceBase_open_base XIODeviceBase_open_base
-#define XSwitchDeviceBase_close_base XIODeviceBase_close_base
+#define XSwitchDeviceBase_isOpen		 XIODeviceBase_isOpen
+#define XSwitchDeviceBase_open_base		 XIODeviceBase_open_base
+#define XSwitchDeviceBase_close_base	 XIODeviceBase_close_base
 #define XSwitchDeviceBase_setDevice_base XIODeviceBase_setDevice_base
-#define XSwitchDeviceBase_free_base XIODeviceBase_free_base
-#define XSwitchDeviceBase_poll_base XIODeviceBase_poll_base
+#define XSwitchDeviceBase_free_base		 XIODeviceBase_free_base
+#define XSwitchDeviceBase_poll_base		 XIODeviceBase_poll_base
 #ifdef __cplusplus
 }
 #endif

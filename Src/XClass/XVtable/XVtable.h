@@ -8,7 +8,7 @@ extern "C" {
 #include<stdint.h>
 typedef struct 
 {
-	void** data;
+	void** data;//
 	size_t size;
 	size_t capacity;//当前容器能容纳的最大元素数量
 	bool isStack;//定义在栈上
