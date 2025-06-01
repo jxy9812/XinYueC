@@ -48,12 +48,12 @@ void ListIterator()
 	printf("开始正向遍历\n");
 	for (XListDLinked_iterator* it = XListDLinked_begin(li); it != XListDLinked_end(li); it = XListDLinked_iterator_add(li, it))
 	{
-		printf("%d\n", *(int*)((XListDNode*)it)->date);
+		printf("%d\n", *(int*)((XListDNode*)it)->data);
 	}
 	printf("开始反向遍历\n");
 	for (XListDLinked_reverse_iterator* it = XListDLinked_rbegin(li); it != XListDLinked_rend(li); it = XListDLinked_reverse_iterator_add(li, it))
 	{
-		printf("%d\n", *(int*)((XListDNode*)it)->date);
+		printf("%d\n", *(int*)((XListDNode*)it)->data);
 	}
 	XListBase_free_base(li);
 #endif
@@ -85,7 +85,7 @@ void ListTest()
 
 	XListDNode*findNode=XListBase_find_base(list,arr +2);
 
-	printf("找到的数字%d\n", *(int*)findNode->date);
+	printf("找到的数字%d\n", *(int*)findNode->data);
 
 	XListBase_pop_front_base(list);
 	XListBase_pop_back_base(list);

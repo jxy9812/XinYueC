@@ -32,6 +32,11 @@ extern "C" {
 	void XStringTest();
 	//map映射测试
 	void  XMapTest();
+
+	void XListSLinkedTest();
+	void XListSLinkedSwapTest();
+	void XListSLinkedIterator();
+	void XListSLinkedSortTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

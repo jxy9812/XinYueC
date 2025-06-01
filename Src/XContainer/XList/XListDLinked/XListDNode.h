@@ -9,7 +9,7 @@ typedef struct XListDNode
 {
 	struct XListDNode* prev;//指向上一个
 	struct XListDNode* next;//指向下一个
-	void* date;//储存的数据指针
+	void* data;//储存的数据指针
 }XListDNode;
 #ifdef __cplusplus
 }

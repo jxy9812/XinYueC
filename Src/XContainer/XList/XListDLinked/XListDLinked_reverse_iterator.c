@@ -32,7 +32,7 @@ void XListDLinked_reverse_iterator_for_each(XListDLinked* this_list, XFor_each F
 {
 	for (XListDLinked_reverse_iterator* it = XListDLinked_rbegin(this_list); it != XListDLinked_rend(this_list); it = XListDLinked_reverse_iterator_add(this_list, it))
 	{
-		ForFunction(((XListDNode*)it)->date, args);
+		ForFunction(((XListDNode*)it)->data, args);
 	}
 }
 

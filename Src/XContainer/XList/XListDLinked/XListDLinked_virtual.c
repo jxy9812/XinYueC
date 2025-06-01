@@ -3,7 +3,6 @@
 #include"XStack.h"
 #include<stdlib.h>
 #include<string.h>
-//声明
 //插入
 static XListDNode* VXList_push_front(XListDLinked* this_list, void* LpValue);
 static XListDNode* VXList_push_back(XListDLinked* this_list, void* LpValue);
@@ -79,10 +78,10 @@ XListDNode* VXList_push_back(XListDLinked* this_list, void* LpValue)
 	if (NewNode == NULL)
 	{
 		perror("开辟节点失败");
-		exit(-1);
+		return NULL;
 	}
-	NewNode->date = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
-	memcpy(NewNode->date, LpValue, list->m_parent.m_typeSize);//拷贝数据
+	NewNode->data = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
+	memcpy(NewNode->data, LpValue, list->m_parent.m_typeSize);//拷贝数据
 	if (list->m_parent.m_size == 0)
 	{
 		list->m_parent.m_data = NewNode;
@@ -98,8 +97,9 @@ XListDNode* VXList_push_back(XListDLinked* this_list, void* LpValue)
 		pfront->prev = NewNode;
 		pback->next = NewNode;
 	}
-	list->m_parent.m_size++;
-	list->m_parent.m_capacity++;
+	//更新记录数量
+	++XContainerSize(this_list);
+	++XContainerCapacity(this_list);
 	return NewNode;
 }
 
@@ -122,8 +122,8 @@ void VXList_inserts(XListDLinked* this_list, XListDNode* curNode, void* LpValue,
 				perror("开辟节点失败");
 				exit(-1);
 			}
-			newNode->date = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
-			memcpy(newNode->date, LpValue, list->m_parent.m_typeSize);//拷贝数据
+			newNode->data = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
+			memcpy(newNode->data, LpValue, list->m_parent.m_typeSize);//拷贝数据
 
 			newNode->prev = left;
 			newNode->next = curNode;
@@ -194,11 +194,11 @@ void VXList_erase(XListDLinked* this_list, XListDNode* node)
 	XListBase* list = this_list;
 	XListDNode* nextNode = node->next;//下一个节点
 	XListDNode* prevNode = node->prev;//上一个节点
-	if (node->date)
+	if (node->data)
 	{
 		if (XContainerDataFreeMethod(this_list) != NULL)
-			XContainerDataFreeMethod(this_list)(node->date);
-		XMemory_free(node->date);//释放节点的数据
+			XContainerDataFreeMethod(this_list)(node->data);
+		XMemory_free(node->data);//释放节点的数据
 	}
 	XMemory_free(node);//释放节点
 	if (list->m_parent.m_size == 1)
@@ -236,9 +236,9 @@ void VXList_clear(XListDLinked* this_list)
 	for (size_t i = 0; i < list->m_parent.m_size; i++)
 	{
 		if (XContainerDataFreeMethod(this_list) != NULL)
-			XContainerDataFreeMethod(this_list)(p->date);
+			XContainerDataFreeMethod(this_list)(p->data);
 		pnext = p->next;
-		XMemory_free(p->date);
+		XMemory_free(p->data);
 		XMemory_free(p);
 		p = pnext;
 	}
@@ -252,7 +252,7 @@ void* VXList_front(XListDLinked* this_list)
 	if (ISNULL(this_list, ""))
 		return NULL;
 	XListBase* list = this_list;
-	return ((XListDNode*)(list->m_parent.m_data))->date;
+	return ((XListDNode*)(list->m_parent.m_data))->data;
 }
 
 void* VXList_back(XListDLinked* this_list)
@@ -260,7 +260,7 @@ void* VXList_back(XListDLinked* this_list)
 	if (ISNULL(this_list, ""))
 		return NULL;
 	XListBase* list = this_list;
-	return ((XListDNode*)(list->m_parent.m_data))->prev->date;
+	return ((XListDNode*)(list->m_parent.m_data))->prev->data;
 }
 
 XListDNode* VXList_find(const XListDLinked* this_list, void* LpValue)
@@ -270,7 +270,7 @@ XListDNode* VXList_find(const XListDLinked* this_list, void* LpValue)
 		return NULL;
 	for (XListDLinked_iterator* it = XListDLinked_begin(this_list); it != XListDLinked_end(this_list); it = XListDLinked_iterator_add(this_list, it))
 	{
-		if (list->m_equality(((XListDNode*)it)->date, LpValue))
+		if (list->m_equality(((XListDNode*)it)->data, LpValue))
 			return it;
 	}
 	return NULL;
@@ -292,35 +292,35 @@ static struct XListDNode* List_OneSort(XListDNode* ListHead, XListDNode* ListTai
 	char* compareVal = XMemory_malloc(type);
 	if (compareVal == NULL)
 		return;
-	memcpy(compareVal, ListHead->date, type);
+	memcpy(compareVal, ListHead->data, type);
 	while (ListHead != ListTail)
 	{
 		while (ListHead != ListTail)//右边开始往左边找
 		{
-			if (!Sort(ListTail->date, compareVal))
+			if (!Sort(ListTail->data, compareVal))
 			{
 				ListTail = ListTail->prev;
 			}
 			else
 			{
-				memcpy(ListHead->date, ListTail->date, type);
+				memcpy(ListHead->data, ListTail->data, type);
 				break;
 			}
 		}
 		while (ListHead != ListTail)//左边开始往右边找
 		{
-			if (Sort(ListHead->date, compareVal))
+			if (Sort(ListHead->data, compareVal))
 			{
 				ListHead = ListHead->next;
 			}
 			else
 			{
-				memcpy(ListTail->date, ListHead->date, type);
+				memcpy(ListTail->data, ListHead->data, type);
 				break;
 			}
 		}
 	}
-	memcpy(ListTail->date, compareVal, type);
+	memcpy(ListTail->data, compareVal, type);
 	XMemory_free(compareVal);
 	//单次结束，分割节点
 	return ListHead;

@@ -1,6 +1,6 @@
 ﻿#include"XDataStructConfig.h"
-#if !defined(XListDLinked_H)&& XListDLinked_ON
-#define XListDLinked_H
+#if !defined(XLISTDLINKED_H)&& XListDLinked_ON
+#define XLISTDLINKED_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -11,7 +11,7 @@ extern "C" {
 #include"XListDNode.h"
 #include"XListBase.h"
 #define XLISTDLINKED_VTABLE_SIZE (XLISTBASE_VTABLE_SIZE)       //XList容器虚函数表大小
-//双向链表
+//双向循环链表
 typedef struct XListDLinked
 {
 	XListBase m_parent;

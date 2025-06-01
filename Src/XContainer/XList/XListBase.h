@@ -42,8 +42,8 @@ XListBaseNode* XListBase_push_back_base(XListBase* this_list, void* pvData);
 #define XListBase_Push_Back_Base(this_list,type,value){type t=value;XListBase_push_back_base(this_list,&t);}
 //链表指定节点前插入1个数据
 void XListBase_insert_base(XListBase* this_list, XListBaseNode* curNode, void* pvData);
-// 链表中指向节点前插入另一个相同类型数组的数据，需要指出数组大小n
-void  XListBase_insert_array_base(XListBase* this_list, XListBaseNode* curNode, const void* array, size_t size);
+// 链表中指向节点前插入另一个相同类型数组的数据，需要指出数组大小(元素数量)
+void  XListBase_insert_array_base(XListBase* this_list, XListBaseNode* curNode, const void* array, size_t count);
 //删除函数
 //删除链表中第一个元素
 void  XListBase_pop_front_base(XListBase* this_list);

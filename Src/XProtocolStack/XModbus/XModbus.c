@@ -295,7 +295,7 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
         XListDNode* frontNode = XContainerDataPtr(modbus->regularlySendMaster);
         if (frontNode != NULL)
         {
-            XModbusRegularlySendFrame* regularly = (XModbusRegularlySendFrame*)(frontNode->date);
+            XModbusRegularlySendFrame* regularly = (XModbusRegularlySendFrame*)(frontNode->data);
             //XModbusFrame*  frame= regularly->frame;
             if (regularly->timeOut < XTimer_getCurrentTime())
             {//时间到了

@@ -11,13 +11,16 @@ int main(int argc, char* args[])
 	XAtomic_fetch_sub_int32(&b,1);
 	printf("%d\n",XAtomic_load_int32(&b));
 #if DEMOTEST
-	ListTest();
+	//XListSLinkedTest();
+	//XListSLinkedSwapTest();
+	//XListSLinkedIterator();
+	XListSLinkedSortTest();
 	//XPriority_QueueTest();
 	//XPWMDeviceTest();
 	//XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
-	XSerialPortTest();
+	//XSerialPortTest();
 	//stackTest();
 	//XStringTest();
 	//XVectorTest();

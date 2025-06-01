@@ -17,6 +17,7 @@ extern "C" {
 #define	XQueue_ON						1
 #define	XList_ON						1
 #define	XListDLinked_ON					1
+#define	XListSLinked_ON					1
 #define	XStack_ON						1
 #define	XVector_ON						1
 #define	XVectorTwo_ON					1
