@@ -194,6 +194,9 @@ void VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, const voi
 		XContainerDataPtr(this_list) = NewListHead;//更新头节点
 		this_list->m_tail = NewListTail;//更新尾节点
 		NewListTail->next = NULL;
+		//更新数量
+		XContainerSize(this_list) += count;
+		XContainerCapacity(this_list) += count;
 		return;
 	}
 
@@ -233,6 +236,8 @@ void VXList_pop_front(XListSLinked* this_list)
 	{
 		XContainerDataPtr(this_list) = head->next;
 	}
+	if (XContainerDataFreeMethod(this_list) != NULL)
+		XContainerDataFreeMethod(this_list)(&(head->data));
 	//释放节点
 	XMemory_free(head);
 	//更新数量
@@ -264,7 +269,8 @@ void VXList_pop_back(XListSLinked* this_list)
 			node=node->next;
 		}
 	}
-
+	if (XContainerDataFreeMethod(this_list) != NULL)
+		XContainerDataFreeMethod(this_list)(&(tail->data));
 	XMemory_free(tail);
 	//更新数量
 	--XContainerSize(this_list);
@@ -287,6 +293,8 @@ static removeNode(XListSLinked* this_list, XListSNode* prev, XListSNode* removeN
 		if (prev)
 			prev->next = NULL;
 	}
+	if (XContainerDataFreeMethod(this_list) != NULL)
+		XContainerDataFreeMethod(this_list)(&(removeNode->data));
 	XMemory_free(removeNode);
 	//更新数量
 	--XContainerSize(this_list);
@@ -342,6 +350,8 @@ void VXList_clear(XListSLinked* this_list)
 	{
 		prev = node;
 		node = node->next;
+		if (XContainerDataFreeMethod(this_list) != NULL)
+			XContainerDataFreeMethod(this_list)(&(prev->data));
 		XMemory_free(prev);
 	}
 	this_list->m_tail = NULL;
@@ -353,7 +363,7 @@ void VXList_clear(XListSLinked* this_list)
 void* VXList_front(XListSLinked* this_list)
 {
 	if(XContainerDataPtr(this_list))
-		return &(((XListSNode*)XContainerDataPtr(this_list))->data);
+		return XListSNode_DataPtr(XContainerDataPtr(this_list));
 	return NULL;
 }
 

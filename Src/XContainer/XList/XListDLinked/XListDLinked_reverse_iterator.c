@@ -2,7 +2,6 @@
 #if XListDLinked_ON
 #include"XListDLinked.h"
 #include"stdio.h"
-#include"XListDNode.h"
 XListDLinked_reverse_iterator* XListDLinked_rbegin(XListDLinked* this_list)
 {
 	if (ISNULL(this_list, "XListDLinked_rbegin"))
@@ -32,7 +31,7 @@ void XListDLinked_reverse_iterator_for_each(XListDLinked* this_list, XFor_each F
 {
 	for (XListDLinked_reverse_iterator* it = XListDLinked_rbegin(this_list); it != XListDLinked_rend(this_list); it = XListDLinked_reverse_iterator_add(this_list, it))
 	{
-		ForFunction(((XListDNode*)it)->data, args);
+		ForFunction(XListDNode_DataPtr(it), args);
 	}
 }
 

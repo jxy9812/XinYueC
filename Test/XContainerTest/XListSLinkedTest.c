@@ -1,6 +1,5 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
-#include"XListDLinked.h"
 #include"XListSLinked.h"
 #include"XEquality.h"
 #include"XCompare.h"
@@ -81,14 +80,14 @@ void XListSLinkedTest()
 	printf("尾元素为：%d\n", XListBase_Back_Base(list, int));
 	
 	XListSNode* findNode = XListBase_find_base(list, arr + 2);
-	
+	XListBase_insert_array_base(list, findNode, arr, 5);
 	printf("找到的数字%d\n", XListSNode_Data(findNode,int));
-	
+	XListSLinked_iterator_for_each(list, ListFor_each, NULL); printf("\n");
 	XListBase_pop_front_base(list);
 	XListBase_pop_back_base(list);
 	XListBase_erase_base(list, findNode);
 
-	XListSLinked_iterator_for_each(list, ListFor_each, NULL);
+	XListSLinked_iterator_for_each(list, ListFor_each, NULL); printf("\n");
 	//return;
 	int removeVlaue = 4;
 	XListBase_remove_base(list, &removeVlaue);

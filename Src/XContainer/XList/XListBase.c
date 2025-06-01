@@ -28,7 +28,7 @@ void XListBase_insert_base(XListBase* this_list, XListBaseNode* curNode, void* p
 }
 void XListBase_insert_array_base(XListBase* this_list, XListBaseNode* curNode, const void* array, size_t count)
 {
-	if (ISNULL(this_list, "") || ISNULL(curNode, "") || ISNULL(array, "") || ISNULL(count, "") || ISNULL(XClassGetVtable(this_list), ""))
+	if (ISNULL(this_list, "")  || ISNULL(array, "") || ISNULL(count, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return;
 	XClassGetVirtualFunc(this_list, EXListBase_Insert_Array, void(*)(XListBase*, XListBaseNode*, const void*, size_t))(this_list, curNode, array, count);
 }

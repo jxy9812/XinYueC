@@ -8,13 +8,13 @@ extern "C" {
 #if DEMOTEST
 
 	//链表迭代器测试
-	void ListIterator();
+	void XListDLinkedIterator();
 	//链表内置快排测试
-	void ListSortTest();
+	void XListDLinkedSortTest();
 	//链表一般项测试
-	void ListTest();
+	void XListDLinkedTest();
 	//双链表交换测试
-	void ListSwapTest();
+	void XListDLinkedSwapTest();
 	//栈测试
 	void stackTest();
 	//优先队列

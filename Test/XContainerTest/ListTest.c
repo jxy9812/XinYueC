@@ -10,7 +10,7 @@ void ListFor_each(void* LPVal, void* args)
 {
 	printf("%d ",*(int*)LPVal);
 }
-void ListSortTest()
+void XListDLinkedSortTest()
 {
 #if XList_ON
 	XListDLinked* li = XListDLinked_new(sizeof(int));
@@ -36,7 +36,7 @@ void ListSortTest()
 	XListBase_free_base(li);
 #endif
 }
-void ListIterator()
+void XListDLinkedIterator()
 {
 #if XList_ON
 	XListDLinked* li = XListDLinked_new(sizeof(int));
@@ -48,18 +48,18 @@ void ListIterator()
 	printf("开始正向遍历\n");
 	for (XListDLinked_iterator* it = XListDLinked_begin(li); it != XListDLinked_end(li); it = XListDLinked_iterator_add(li, it))
 	{
-		printf("%d\n", *(int*)((XListDNode*)it)->data);
+		printf("%d\n", XListDNode_Data(it, int));
 	}
 	printf("开始反向遍历\n");
 	for (XListDLinked_reverse_iterator* it = XListDLinked_rbegin(li); it != XListDLinked_rend(li); it = XListDLinked_reverse_iterator_add(li, it))
 	{
-		printf("%d\n", *(int*)((XListDNode*)it)->data);
+		printf("%d\n", XListDNode_Data(it, int));
 	}
 	XListBase_free_base(li);
 #endif
 }
 
-void ListTest()
+void XListDLinkedTest()
 {
 #if XList_ON
 	printf("XList 测试\n");
@@ -85,7 +85,7 @@ void ListTest()
 
 	XListDNode*findNode=XListBase_find_base(list,arr +2);
 
-	printf("找到的数字%d\n", *(int*)findNode->data);
+	printf("找到的数字%d\n", XListDNode_Data(findNode,int));
 
 	XListBase_pop_front_base(list);
 	XListBase_pop_back_base(list);
@@ -98,7 +98,7 @@ void ListTest()
 #endif
 }
 
-void ListSwapTest()//交换函数测试
+void XListDLinkedSwapTest()//交换函数测试
 {
 #if XList_ON
 	XListDLinked* li1 = XListDLinked_new(sizeof(int));

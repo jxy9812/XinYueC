@@ -8,9 +8,18 @@ extern "C" {
 #include<stdio.h>
 #include"XListDLinked_iterator.h"
 #include"XListDLinked_reverse_iterator.h"
-#include"XListDNode.h"
 #include"XListBase.h"
 #define XLISTDLINKED_VTABLE_SIZE (XLISTBASE_VTABLE_SIZE)       //XList容器虚函数表大小
+//List的一个节点
+typedef struct XListDNode
+{
+	struct XListDNode* prev;//指向上一个
+	struct XListDNode* next;//指向下一个
+	void* data;//储存的数据指针
+}XListDNode;
+#define XListDNode_DataPtr(Node)  (&(((XListDNode*)Node)->data))
+//获取链表节点中的数据
+#define XListDNode_Data(Node,Type) (*((Type*)XListDNode_DataPtr(Node)))
 //双向循环链表
 typedef struct XListDLinked
 {
@@ -57,11 +66,11 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize);
 #define XListDLinked_sort_base						XListBase_sort
 //释放内存
 #define XListDLinked_free_base						XListBase_free_base
-//清空vector的队列，不是释放内存
+//清空XList的队列，不是释放内存
 #define XListDLinked_clear_base						XListBase_clear_base
-//检测vector内是否为空，空为真 O(1)
+//检测XList内是否为空，空为真 O(1)
 #define XListDLinked_isEmpty_base					XListBase_isEmpty_base
-//返回vector内元素的个数 O(1)
+//返回XList内元素的个数 O(1)
 #define XListDLinked_getSize_base					XListBase_getSize_base
 //返回当前向量所能容纳的最大元素个数
 #define XListDLinked_getCapacity_base				XListBase_getCapacity_base

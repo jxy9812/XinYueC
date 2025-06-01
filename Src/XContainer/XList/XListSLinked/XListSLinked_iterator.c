@@ -31,7 +31,7 @@ void XListSLinked_iterator_for_each(XListSLinked* this_list, XFor_each ForFuncti
 {
 	for (XListSLinked_iterator* it = XListSLinked_begin(this_list); it != XListSLinked_end(this_list); it = XListSLinked_iterator_add(this_list, it))
 	{
-		ForFunction(&(((XListSNode*)it)->data), args);
+		ForFunction(XListSNode_DataPtr(it), args);
 	}
 }
 

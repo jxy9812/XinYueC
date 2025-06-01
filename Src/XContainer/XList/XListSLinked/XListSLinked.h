@@ -15,8 +15,9 @@ typedef struct XListSNode
 	struct XListSNode* next;//指向下一个
 	void* data;//储存的数据指针
 }XListSNode;
+#define XListSNode_DataPtr(Node)  (&(((XListSNode*)Node)->data))
 //获取链表节点中的数据
-#define XListSNode_Data(Node,Type) (*((Type*)(&(((XListSNode*)Node)->data))))
+#define XListSNode_Data(Node,Type) (*((Type*)XListSNode_DataPtr(Node)))
 //单链表
 typedef struct XListSLinked
 {
@@ -64,11 +65,11 @@ void XListSLinked_init(XListSLinked* this_list, size_t typeSize);
 #define XListSLinked_sort_base						XListBase_sort
 //释放内存
 #define XListSLinked_free_base						XListBase_free_base
-//清空vector的队列，不是释放内存
+//清空List的队列，不是释放内存
 #define XListSLinked_clear_base						XListBase_clear_base
-//检测vector内是否为空，空为真 O(1)
+//检测List内是否为空，空为真 O(1)
 #define XListSLinked_isEmpty_base					XListBase_isEmpty_base
-//返回vector内元素的个数 O(1)
+//返回List内元素的个数 O(1)
 #define XListSLinked_getSize_base					XListBase_getSize_base
 //返回当前向量所能容纳的最大元素个数
 #define XListSLinked_getCapacity_base				XListBase_getCapacity_base

@@ -2,7 +2,6 @@
 #if XListDLinked_ON
 #include"XListDLinked.h"
 #include<stdio.h>
-#include"XListDNode.h"
 
 XListDLinked_iterator* XListDLinked_begin(XListDLinked* this_list)
 {
@@ -33,7 +32,7 @@ void XListDLinked_iterator_for_each(XListDLinked* this_list, XFor_each ForFuncti
 {
 	for (XListDLinked_iterator* it = XListDLinked_begin(this_list); it != XListDLinked_end(this_list); it = XListDLinked_iterator_add(this_list, it))
 	{
-		ForFunction(((XListDNode*)it)->data, args);
+		ForFunction(XListDNode_DataPtr(it), args);
 	}
 }
 

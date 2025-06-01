@@ -4,20 +4,20 @@
 #include<stdlib.h>
 #include<string.h>
 //插入
-static XListDNode* VXList_push_front(XListDLinked* this_list, void* LpValue);
-static XListDNode* VXList_push_back(XListDLinked* this_list, void* LpValue);
-static void VXList_insert(XListDLinked* this_list, XListDNode* curNode, void* LpValue);
+static XListDNode* VXList_push_front(XListDLinked* this_list, void* pvData);
+static XListDNode* VXList_push_back(XListDLinked* this_list, void* pvData);
+static void VXList_insert(XListDLinked* this_list, XListDNode* curNode, void* pvData);
 static void VXList_insert_array(XListDLinked* this_list, XListDNode* curNode, const void* begin, size_t n);
  //删除
 static void VXList_pop_front(XListDLinked* this_list);
 static void VXList_pop_back(XListDLinked* this_list);
 static void VXList_erase(XListDLinked* this_list, XListDNode* node);
-static void VXList_remove(XListDLinked* this_list, void* LpValue);
+static void VXList_remove(XListDLinked* this_list, void* pvData);
 static void VXList_clear(XListDLinked* this_list);
 //遍历
 static void* VXList_front(XListDLinked* this_list);
 static void* VXList_back(XListDLinked* this_list);
-static XListDNode* VXList_find(const XListDLinked* this_list, void* LpValue);
+static XListDNode* VXList_find(const XListDLinked* this_list, void* pvData);
 //其他
 static void VXList_sort(XListDLinked* this_list, XCompare compare);
 static void VXList_free(XListDLinked* this_list);
@@ -55,42 +55,42 @@ XVtable* XListDLinked_class_init()
 #endif
 return XVTABLE_DEFAULT;
 }
-
-XListDNode* VXList_push_front(XListDLinked* this_list, void* LpValue)
+#define CreatNode(this_list)   (XMemory_malloc(sizeof(XListDNode*)*2+XContainerTypeSize(this_list)))
+XListDNode* VXList_push_front(XListDLinked* this_list, void* pvData)
 {
 	if (ISNULL(this_list, ""))
 		return NULL;
 	XListBase* list = this_list;
-	XListDNode* NewNode = XListDLinked_push_back_base(this_list, LpValue);
-	if (list->m_parent.m_size != 0)
+	XListDNode* NewNode = XListDLinked_push_back_base(this_list, pvData);
+	if (NewNode)
 	{
-		list->m_parent.m_data = NewNode;
+		XContainerDataPtr(this_list)=NewNode;
 	}
 	return NewNode;
 }
 
-XListDNode* VXList_push_back(XListDLinked* this_list, void* LpValue)
+XListDNode* VXList_push_back(XListDLinked* this_list, void* pvData)
 {
-	if (ISNULL(this_list, ""))
-		return NULL;
+	/*if (ISNULL(this_list, ""))
+		return NULL;*/
 	XListBase* list = this_list;
-	XListDNode* NewNode = XMemory_malloc(sizeof(XListDNode));//新节点
+	XListDNode* NewNode = CreatNode(this_list);//新节点
 	if (NewNode == NULL)
 	{
 		perror("开辟节点失败");
 		return NULL;
 	}
-	NewNode->data = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
-	memcpy(NewNode->data, LpValue, list->m_parent.m_typeSize);//拷贝数据
-	if (list->m_parent.m_size == 0)
+	//NewNode->data = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
+	memcpy(&(NewNode->data), pvData, XContainerTypeSize(this_list));//拷贝数据
+	if (XListBase_isEmpty_base(this_list))
 	{
-		list->m_parent.m_data = NewNode;
+		XContainerDataPtr(this_list) = NewNode;
 		NewNode->next = NewNode;
 		NewNode->prev = NewNode;
 	}
 	else
 	{
-		XListDNode* pfront = list->m_parent.m_data;//原头节点
+		XListDNode* pfront = XContainerDataPtr(this_list);//原头节点
 		XListDNode* pback = pfront->prev;//原尾节点
 		NewNode->next = pfront;
 		NewNode->prev = pback;
@@ -103,11 +103,11 @@ XListDNode* VXList_push_back(XListDLinked* this_list, void* LpValue)
 	return NewNode;
 }
 
-void VXList_inserts(XListDLinked* this_list, XListDNode* curNode, void* LpValue, size_t n)
+void VXList_inserts(XListDLinked* this_list, XListDNode* curNode, void* pvData, size_t n)
 {
 	XListBase* list = this_list;
-	if (ISNULL(this_list, ""))
-		return;
+	//if (ISNULL(this_list, ""))
+	//	return;
 	for (size_t i = 0; i < n; i++)
 	{
 		/*Node* pval = List_find(li, p);*/
@@ -116,26 +116,26 @@ void VXList_inserts(XListDLinked* this_list, XListDNode* curNode, void* LpValue,
 			XListDNode* left = curNode->prev;
 			//XListDNode* right = left->next;
 
-			XListDNode* newNode = XMemory_malloc(sizeof(XListDNode));//新节点
+			XListDNode* newNode = CreatNode(this_list);//新节点
 			if (newNode == NULL)
 			{
 				perror("开辟节点失败");
-				exit(-1);
+				return;
 			}
-			newNode->data = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
-			memcpy(newNode->data, LpValue, list->m_parent.m_typeSize);//拷贝数据
+			//newNode->data = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
+			memcpy(&(newNode->data), pvData, XContainerTypeSize(this_list));//拷贝数据
 
 			newNode->prev = left;
 			newNode->next = curNode;
 			left->next = newNode;
 			curNode->prev = newNode;
 
-			if (curNode == list->m_parent.m_data)
+			if (curNode == XContainerDataPtr(this_list))
 			{
-				list->m_parent.m_data = newNode;
+				XContainerDataPtr(this_list) = newNode;
 			}
-			list->m_parent.m_size++;
-			list->m_parent.m_capacity++;
+			++XContainerSize(this_list);
+			++XContainerCapacity(this_list);
 		}
 		else
 		{
@@ -144,52 +144,57 @@ void VXList_inserts(XListDLinked* this_list, XListDNode* curNode, void* LpValue,
 	}
 }
 
-void VXList_insert(XListDLinked* this_list, XListDNode* curNode, void* LpValue)
+void VXList_insert(XListDLinked* this_list, XListDNode* curNode, void* pvData)
 {
-	if (ISNULL(this_list, ""))
-		return;
+	/*if (ISNULL(this_list, ""))
+		return;*/
 	XListDLinked* list = this_list;
 	if (curNode == NULL)
 	{
 		printf("节点指针不能为空\n");
 		return;
 	}
-	VXList_inserts(this_list, curNode, LpValue, 1);
+	VXList_inserts(this_list, curNode, pvData, 1);
 }
 
-void VXList_insert_array(XListDLinked* this_list, XListDNode* curNode, const void* begin, size_t n)
+void VXList_insert_array(XListDLinked* this_list, XListDNode* curNode, const void* array, size_t count)
 {
-	if (ISNULL(this_list, ""))
-		return;
+	/*if (ISNULL(this_list, ""))
+		return;*/
 	XListBase* list = this_list;
 	if (curNode == NULL)
-	{
-		printf("节点指针不能为空\n");
-		return;
+	{//尾插
+		for (size_t i = 0; i < count; i++)
+		{
+			XListBase_push_back_base(this_list, ((char*)array)+ i * XContainerTypeSize(this_list));
+		}
 	}
-	for (size_t i = 0; i < n; i++)
+	else
 	{
-		VXList_inserts(this_list, curNode, (char*)begin + i * list->m_parent.m_typeSize,1);
+		for (size_t i = 0; i < count; i++)
+		{
+			VXList_inserts(this_list, curNode, ((char*)array) + i * XContainerTypeSize(this_list), 1);
+		}
 	}
 }
 //删除
 void VXList_pop_front(XListDLinked* this_list)
 {
-	if (ISNULL(this_list, "") || XContainerObject_isEmpty_base(this_list))
+	if (XContainerObject_isEmpty_base(this_list))
 		return;
-	VXList_erase(this_list,XListDLinked_begin(this_list));
+	XListBase_erase_base(this_list,XListDLinked_begin(this_list));
 }
 
 void VXList_pop_back(XListDLinked* this_list)
 {
-	if (ISNULL(this_list, "") || XContainerObject_isEmpty_base(this_list))
+	if (XContainerObject_isEmpty_base(this_list))
 		return;
-	VXList_erase(this_list, XListDLinked_rbegin(this_list));
+	XListBase_erase_base(this_list, XListDLinked_rbegin(this_list));
 }
 
 void VXList_erase(XListDLinked* this_list, XListDNode* node)
 {
-	if (ISNULL(this_list, "")|| ISNULL(node, "")|| XContainerObject_isEmpty_base(this_list))
+	if (ISNULL(node, "")|| XContainerObject_isEmpty_base(this_list))
 		return;
 	XListBase* list = this_list;
 	XListDNode* nextNode = node->next;//下一个节点
@@ -197,31 +202,31 @@ void VXList_erase(XListDLinked* this_list, XListDNode* node)
 	if (node->data)
 	{
 		if (XContainerDataFreeMethod(this_list) != NULL)
-			XContainerDataFreeMethod(this_list)(node->data);
-		XMemory_free(node->data);//释放节点的数据
+			XContainerDataFreeMethod(this_list)(&(node->data));
+		//XMemory_free(node->data);//释放节点的数据
 	}
 	XMemory_free(node);//释放节点
-	if (list->m_parent.m_size == 1)
+	if (XContainerSize(this_list) == 1)
 	{
-		list->m_parent.m_data = NULL;
+		XContainerDataPtr(this_list) = NULL;
 	}
 	else
 	{
 		nextNode->prev = prevNode;
 		prevNode->next = nextNode;
-		if (list->m_parent.m_data == node)
-			list->m_parent.m_data = nextNode;//重新设置头节点
+		if (XContainerDataPtr(this_list) == node)
+			XContainerDataPtr(this_list) = nextNode;//重新设置头节点
 	}
-	--list->m_parent.m_capacity;
-	--list->m_parent.m_size;
+	--XContainerSize(this_list);
+	--XContainerCapacity(this_list);
 }
 
-void VXList_remove(XListDLinked* this_list, void* LpValue)
+void VXList_remove(XListDLinked* this_list, void* pvData)
 {
-	if (ISNULL(this_list, "") || ISNULL(LpValue, ""))
+	if (ISNULL(pvData, ""))
 		return;
 	XListDLinked* list = this_list;
-	XListDNode* node = XListDLinked_find_base(this_list, LpValue);
+	XListDNode* node = XListDLinked_find_base(this_list, pvData);
 	if(node)
 		XListDLinked_erase_base(this_list,node);
 }
@@ -236,9 +241,9 @@ void VXList_clear(XListDLinked* this_list)
 	for (size_t i = 0; i < list->m_parent.m_size; i++)
 	{
 		if (XContainerDataFreeMethod(this_list) != NULL)
-			XContainerDataFreeMethod(this_list)(p->data);
+			XContainerDataFreeMethod(this_list)(&(p->data));
 		pnext = p->next;
-		XMemory_free(p->data);
+		//XMemory_free(p->data);
 		XMemory_free(p);
 		p = pnext;
 	}
@@ -249,28 +254,26 @@ void VXList_clear(XListDLinked* this_list)
 
 void* VXList_front(XListDLinked* this_list)
 {
-	if (ISNULL(this_list, ""))
-		return NULL;
-	XListBase* list = this_list;
-	return ((XListDNode*)(list->m_parent.m_data))->data;
+	if (XContainerDataPtr(this_list))
+		return XListDNode_DataPtr(XContainerDataPtr(this_list));
+	return NULL;
 }
 
 void* VXList_back(XListDLinked* this_list)
 {
-	if (ISNULL(this_list, ""))
-		return NULL;
-	XListBase* list = this_list;
-	return ((XListDNode*)(list->m_parent.m_data))->prev->data;
+	if (XContainerDataPtr(this_list))
+		return XListDNode_DataPtr(((XListDNode*)XContainerDataPtr(this_list))->prev);
+	return NULL;
 }
 
-XListDNode* VXList_find(const XListDLinked* this_list, void* LpValue)
+XListDNode* VXList_find(const XListDLinked* this_list, void* pvData)
 {
 	XListBase* list = this_list;
-	if (ISNULL(this_list, "") || ISNULL(list->m_equality, "") || ISNULL(LpValue, ""))
+	if (ISNULL(list->m_equality, "") || ISNULL(pvData, ""))
 		return NULL;
 	for (XListDLinked_iterator* it = XListDLinked_begin(this_list); it != XListDLinked_end(this_list); it = XListDLinked_iterator_add(this_list, it))
 	{
-		if (list->m_equality(((XListDNode*)it)->data, LpValue))
+		if (list->m_equality(XListDNode_DataPtr(it), pvData))
 			return it;
 	}
 	return NULL;
@@ -292,35 +295,35 @@ static struct XListDNode* List_OneSort(XListDNode* ListHead, XListDNode* ListTai
 	char* compareVal = XMemory_malloc(type);
 	if (compareVal == NULL)
 		return;
-	memcpy(compareVal, ListHead->data, type);
+	memcpy(compareVal, &(ListHead->data), type);
 	while (ListHead != ListTail)
 	{
 		while (ListHead != ListTail)//右边开始往左边找
 		{
-			if (!Sort(ListTail->data, compareVal))
+			if (!Sort(&(ListTail->data), compareVal))
 			{
 				ListTail = ListTail->prev;
 			}
 			else
 			{
-				memcpy(ListHead->data, ListTail->data, type);
+				memcpy(&(ListHead->data), &(ListTail->data), type);
 				break;
 			}
 		}
 		while (ListHead != ListTail)//左边开始往右边找
 		{
-			if (Sort(ListHead->data, compareVal))
+			if (Sort(&(ListHead->data), compareVal))
 			{
 				ListHead = ListHead->next;
 			}
 			else
 			{
-				memcpy(ListTail->data, ListHead->data, type);
+				memcpy(&(ListTail->data), &(ListHead->data), type);
 				break;
 			}
 		}
 	}
-	memcpy(ListTail->data, compareVal, type);
+	memcpy(&(ListTail->data), compareVal, type);
 	XMemory_free(compareVal);
 	//单次结束，分割节点
 	return ListHead;
