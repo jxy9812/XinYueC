@@ -97,7 +97,7 @@ void* XAtomic_load_ptr(const XAtomic_ptr_t* var)
 }
 void XAtomic_store_bool(XAtomic_bool* var, bool value)
 {
-	_InterlockedExchange((volatile bool*)&var->value, value);
+	_InterlockedExchange((volatile long*)&var->value, value);
 }
 void XAtomic_store_int32(XAtomic_int32_t* var, int32_t value)
 {

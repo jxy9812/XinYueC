@@ -4,11 +4,15 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include<stdio.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
 // 原子类型定义
+#ifdef _MSC_VER
+typedef struct { volatile long value; } XAtomic_bool;
+#else
 typedef struct { volatile bool value; } XAtomic_bool;
+#endif
 typedef struct { volatile int32_t value; } XAtomic_int32_t;
 typedef struct { volatile uint32_t value; }  XAtomic_uint32_t;
 typedef struct { volatile int64_t value; }  XAtomic_int64_t;

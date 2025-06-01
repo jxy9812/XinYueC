@@ -6,10 +6,10 @@
 #include"XAtomic.h"
 int main(int argc, char* args[])
 {
-	XAtomic_int32_t b;
-	XAtomic_init(b,100);
-	XAtomic_fetch_sub_int32(&b,1);
-	printf("%d\n",XAtomic_load_int32(&b));
+	XAtomic_bool b;
+	XAtomic_init(b,false);
+	//XAtomic_store_bool(&b,false);
+	printf("%d\n",XAtomic_load_bool(&b));
 #if DEMOTEST
 	//XListDLinkedTest();
 
