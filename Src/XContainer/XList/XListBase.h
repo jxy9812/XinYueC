@@ -1,6 +1,6 @@
 ﻿#include"XDataStructConfig.h"
-#if !defined(XLIST_H)&& XList_ON
-#define XLIST_H
+#if !defined(XLISTBASE_H)&& XList_ON
+#define XLISTBASE_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,6 +63,7 @@ void* XListBase_back_base(XListBase* this_list);
 #define XListBase_Back_Base(list,Type) (*(Type*)XListBase_back_base(list))
 //查找数据，返回找到的节点，没有返回NULL
 XListBaseNode* XListBase_find_base(const  XListBase* this_list, const void* findVal);
+void XListBase_sort(XListBase* this_list, XCompare compare);
 //释放内存
 #define XListBase_free_base					XContainerObject_free_base
 //清空List的队列，不是释放内存

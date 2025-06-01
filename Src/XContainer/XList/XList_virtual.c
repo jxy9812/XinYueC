@@ -7,7 +7,6 @@
 //插入
 static XListNode* VXList_push_front(XList* this_list, void* LpValue);
 static XListNode* VXList_push_back(XList* this_list, void* LpValue);
-static void VXList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t n);
 static void VXList_insert(XList* this_list, XListNode* curNode, void* LpValue);
 static void VXList_insert_array(XList* this_list, XListNode* curNode, const void* begin, size_t n);
  //删除
@@ -38,7 +37,7 @@ XVtable* XList_class_init()
 
 	void* table[] = {
 		//插入
-		VXList_push_front,VXList_push_back,VXList_inserts,VXList_insert,VXList_insert_array,
+		VXList_push_front,VXList_push_back,VXList_insert,VXList_insert_array,
 		//删除
 		VXList_pop_front,VXList_pop_back,VXList_erase,VXList_remove,
 		//遍历
@@ -62,7 +61,7 @@ XListNode* VXList_push_front(XList* this_list, void* LpValue)
 {
 	if (ISNULL(this_list, ""))
 		return NULL;
-	XList* list = this_list;
+	XListBase* list = this_list;
 	XListNode* NewNode = XList_push_back_base(this_list, LpValue);
 	if (list->m_parent.m_size != 0)
 	{
@@ -75,7 +74,7 @@ XListNode* VXList_push_back(XList* this_list, void* LpValue)
 {
 	if (ISNULL(this_list, ""))
 		return NULL;
-	XList* list = this_list;
+	XListBase* list = this_list;
 	XListNode* NewNode = XMemory_malloc(sizeof(XListNode));//新节点
 	if (NewNode == NULL)
 	{
@@ -106,7 +105,7 @@ XListNode* VXList_push_back(XList* this_list, void* LpValue)
 
 void VXList_inserts(XList* this_list, XListNode* curNode, void* LpValue, size_t n)
 {
-	XList* list = this_list;
+	XListBase* list = this_list;
 	if (ISNULL(this_list, ""))
 		return;
 	for (size_t i = 0; i < n; i++)
@@ -162,7 +161,7 @@ void VXList_insert_array(XList* this_list, XListNode* curNode, const void* begin
 {
 	if (ISNULL(this_list, ""))
 		return;
-	XList* list = this_list;
+	XListBase* list = this_list;
 	if (curNode == NULL)
 	{
 		printf("节点指针不能为空\n");
@@ -192,7 +191,7 @@ void VXList_erase(XList* this_list, XListNode* node)
 {
 	if (ISNULL(this_list, "")|| ISNULL(node, "")|| XContainerObject_isEmpty_base(this_list))
 		return;
-	XList* list = this_list;
+	XListBase* list = this_list;
 	XListNode* nextNode = node->next;//下一个节点
 	XListNode* prevNode = node->prev;//上一个节点
 	if (node->date)
@@ -204,17 +203,17 @@ void VXList_erase(XList* this_list, XListNode* node)
 	XMemory_free(node);//释放节点
 	if (list->m_parent.m_size == 1)
 	{
-		this_list->m_parent.m_data = NULL;
+		list->m_parent.m_data = NULL;
 	}
 	else
 	{
 		nextNode->prev = prevNode;
 		prevNode->next = nextNode;
-		if (this_list->m_parent.m_data == node)
-			this_list->m_parent.m_data = nextNode;//重新设置头节点
+		if (list->m_parent.m_data == node)
+			list->m_parent.m_data = nextNode;//重新设置头节点
 	}
-	--this_list->m_parent.m_capacity;
-	--this_list->m_parent.m_size;
+	--list->m_parent.m_capacity;
+	--list->m_parent.m_size;
 }
 
 void VXList_remove(XList* this_list, void* LpValue)
@@ -222,16 +221,16 @@ void VXList_remove(XList* this_list, void* LpValue)
 	if (ISNULL(this_list, "") || ISNULL(LpValue, ""))
 		return;
 	XList* list = this_list;
-	XListNode* node = VXList_find(this_list, LpValue);
+	XListNode* node = XList_find_base(this_list, LpValue);
 	if(node)
-		VXList_erase(this_list,node);
+		XList_erase_base(this_list,node);
 }
 
 void VXList_clear(XList* this_list)
 {
 	if (XContainerObject_isEmpty_base(this_list))
 		return;
-	XList* list = this_list;
+	XListBase* list = this_list;
 	XListNode* p = list->m_parent.m_data;
 	XListNode* pnext = p->next;
 	for (size_t i = 0; i < list->m_parent.m_size; i++)
@@ -252,7 +251,7 @@ void* VXList_front(XList* this_list)
 {
 	if (ISNULL(this_list, ""))
 		return NULL;
-	XList* list = this_list;
+	XListBase* list = this_list;
 	return ((XListNode*)(list->m_parent.m_data))->date;
 }
 
@@ -260,17 +259,18 @@ void* VXList_back(XList* this_list)
 {
 	if (ISNULL(this_list, ""))
 		return NULL;
-	XList* list = this_list;
+	XListBase* list = this_list;
 	return ((XListNode*)(list->m_parent.m_data))->prev->date;
 }
 
 XListNode* VXList_find(const XList* this_list, void* LpValue)
 {
-	if (ISNULL(this_list, "") || ISNULL(this_list->m_equality, "") || ISNULL(LpValue, ""))
+	XListBase* list = this_list;
+	if (ISNULL(this_list, "") || ISNULL(list->m_equality, "") || ISNULL(LpValue, ""))
 		return NULL;
 	for (XList_iterator* it = XList_begin(this_list); it != XList_end(this_list); it = XList_iterator_add(this_list, it))
 	{
-		if (this_list->m_equality(((XListNode*)it)->date, LpValue))
+		if (list->m_equality(((XListNode*)it)->date, LpValue))
 			return it;
 	}
 	return NULL;
@@ -332,7 +332,7 @@ void VXList_sort(XList* this_list, XCompare compare)
 #if XStack_ON
 	if (ISNULL(this_list, ""))
 		return;
-	XList* list = this_list;
+	XListBase* list = this_list;
 	XListNode* ListHead = XList_begin(this_list);//链表第一个节点
 	XListNode* ListTail = XList_rbegin(this_list);//链表最后一个节点
 	XStack* stack = XStack_New(XListNode*);

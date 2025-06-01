@@ -64,7 +64,7 @@ void ListTest()
 #if XList_ON
 	printf("XList 测试\n");
 	XList* list = XList_new(sizeof(int));
-	list->m_equality = XEquality_int;
+	list->m_parent.m_equality = XEquality_int;
 	//printf("%s\n", XContainerObject_empty(list)?"empty":"");
 	//printf("%d\n", XContainerObject_getSize_base(list));
 
@@ -89,7 +89,7 @@ void ListTest()
 
 	XList_pop_front_base(list);
 	XList_pop_back_base(list);
-	//XList_erase_base(list, XList_at(list, &findValue));
+	//XList_erase_base(list, findNode);
 	int removeVlaue =4 ;
 	XList_remove_base(list,&removeVlaue);
 	//XList_clear_base(list);

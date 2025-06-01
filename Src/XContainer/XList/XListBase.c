@@ -54,7 +54,7 @@ void XListBase_remove_base(XListBase* this_list, void* pvData)
 {
 	if (ISNULL(this_list, "") || ISNULL(pvData, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return;
-	XClassGetVirtualFunc(this_list, EXListBase_Erase, void(*)(XListBase*, void*))(this_list, pvData);
+	XClassGetVirtualFunc(this_list, EXListBase_Remove, void(*)(XListBase*, void*))(this_list, pvData);
 }
 void* XListBase_front_base(XListBase* this_list)
 {
@@ -73,5 +73,11 @@ XListBaseNode* XListBase_find_base(const XListBase* this_list, const void* findV
 	if (ISNULL(this_list, "") || ISNULL(findVal, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return NULL;
 	return XClassGetVirtualFunc(this_list, EXListBase_Find, void* (*)(XListBase*, const void*))(this_list, findVal);
+}
+void XListBase_sort(XListBase* this_list, XCompare compare)
+{
+	if (ISNULL(this_list, "") || ISNULL(compare, "") || ISNULL(XClassGetVtable(this_list), ""))
+		return NULL;
+	return XClassGetVirtualFunc(this_list, EXListBase_Sort, void* (*)(XListBase*, XCompare))(this_list,compare);
 }
 #endif

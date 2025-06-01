@@ -11,9 +11,9 @@ extern "C" {
 //XQueue虚函数表枚举
 enum XQueueEnum
 {
-	EXQueue_Push = EXList_Push_Back,
-	EXQueue_Pop= EXList_Pop_Front,
-	EXQueue_Top = EXList_Front,
+	EXQueue_Push = EXListBase_Push_Back,
+	EXQueue_Pop= EXListBase_Pop_Front,
+	EXQueue_Top = EXListBase_Front,
 };
 typedef struct XQueue
 {
