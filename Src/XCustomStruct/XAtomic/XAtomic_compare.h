@@ -17,6 +17,7 @@ extern "C" {
  *
  * 原子性保证：整个比较-交换过程不可分割
  */
+bool XAtomic_compare_exchange_strong_bool(XAtomic_bool* var, bool* expected, bool desired);
 bool XAtomic_compare_exchange_strong_int32(XAtomic_int32_t* var, int32_t* expected, int32_t desired);
 bool XAtomic_compare_exchange_strong_uint32(XAtomic_uint32_t* var, uint32_t* expected, uint32_t desired);
 bool XAtomic_compare_exchange_strong_int64(XAtomic_int64_t* var, int64_t* expected, int64_t desired);

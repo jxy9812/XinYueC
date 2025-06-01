@@ -10,6 +10,7 @@ extern "C" {
  *
  * 原子性保证：读取操作不会被中断，保证读取到完整的值
  */
+bool XAtomic_load_bool(const XAtomic_bool* var);
 int32_t XAtomic_load_int32(const XAtomic_int32_t* var);
 uint32_t XAtomic_load_uint32(const XAtomic_uint32_t* var);
 int64_t XAtomic_load_int64(const XAtomic_int64_t* var);

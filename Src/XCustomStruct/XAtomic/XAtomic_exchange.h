@@ -11,6 +11,7 @@ extern "C" {
  *
  * 原子性保证：整个读取-替换过程不可分割
  */
+bool XAtomic_exchange_bool(XAtomic_bool* var, bool value);
 int32_t XAtomic_exchange_int32(XAtomic_int32_t* var, int32_t value);
 uint32_t XAtomic_exchange_uint32(XAtomic_uint32_t* var, uint32_t value);
 int64_t XAtomic_exchange_int64(XAtomic_int64_t* var, int64_t value);

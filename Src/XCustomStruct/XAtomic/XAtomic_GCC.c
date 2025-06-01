@@ -73,6 +73,10 @@ void XAtomic_memory_barrier_release()
 {
 	__atomic_thread_fence(__ATOMIC_RELEASE);
 }
+bool XAtomic_load_bool(const XAtomic_bool* var)
+{
+	return __atomic_load_n(&(var->value), __ATOMIC_SEQ_CST);
+}
 int32_t XAtomic_load_int32(const XAtomic_int32_t* var)
 {
 	return __atomic_load_n(&(var->value), __ATOMIC_SEQ_CST);
@@ -97,6 +101,10 @@ void* XAtomic_load_ptr(const XAtomic_ptr_t* var)
 {
 	return __atomic_load_n(&(var->ptr), __ATOMIC_SEQ_CST);
 }
+void XAtomic_store_bool(XAtomic_bool* var, bool value)
+{
+	__atomic_store_n(&(var->value), value, __ATOMIC_SEQ_CST);
+}
 void XAtomic_store_int32(XAtomic_int32_t* var, int32_t value)
 {
 	__atomic_store_n(&(var->value), value, __ATOMIC_SEQ_CST);
@@ -113,6 +121,10 @@ void XAtomic_store_size_t(XAtomic_size_t* var, size_t value)
 {
 	XAtomic_store_ptr(var, value);
 }
+bool XAtomic_exchange_bool(XAtomic_bool* var, bool value)
+{
+	return __atomic_exchange_n(&(var->value), value, __ATOMIC_SEQ_CST);
+}
 int32_t XAtomic_exchange_int32(XAtomic_int32_t* var, int32_t value)
 {
 	return __atomic_exchange_n(&(var->value), value, __ATOMIC_SEQ_CST);
@@ -128,6 +140,11 @@ size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value)
 void* XAtomic_exchange_ptr(XAtomic_ptr_t* var, void* value)
 {
 	return __atomic_exchange_n(&(var->ptr), value, __ATOMIC_SEQ_CST);
+}
+bool XAtomic_compare_exchange_strong_bool(XAtomic_bool* var, bool* expected, bool desired)
+{
+	return __atomic_compare_exchange_n(
+		&(var->value), expected, desired, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 bool XAtomic_compare_exchange_strong_int32(XAtomic_int32_t* var, int32_t* expected, int32_t desired)
 {
