@@ -4,7 +4,6 @@
 #include"XVtable.h"
 #include<string.h>
 #include<stdlib.h>
-#include"XList.h"
 //声明
 #define VECTORNUM 4//初始数组大小
 static void VXVector_resize(XVector* this_vector, size_t size);

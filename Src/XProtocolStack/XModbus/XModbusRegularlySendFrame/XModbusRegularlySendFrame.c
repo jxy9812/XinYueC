@@ -3,7 +3,7 @@
 #include <string.h>
 XModbusRegularlySendFrameLsit* XModbusRegularlySendFrameLsit_new()
 {
-	XModbusRegularlySendFrameLsit* list = XList_New(XModbusRegularlySendFrame);
+	XModbusRegularlySendFrameLsit* list = XListDLinked_New(XModbusRegularlySendFrame);
 	//memset(list,0,sizeof(XModbusRegularlySendFrame));
 
 	return list;

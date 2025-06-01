@@ -10,7 +10,7 @@ XVtable* XQueue_class_init()
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XList_class_init());
+	XVTABLE_INHERIT_DEFAULT(XListDLinked_class_init());
 #if SHOWCONTAINERSIZE
 	printf("XQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

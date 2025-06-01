@@ -4,9 +4,9 @@
 extern "C" {
 #endif
 #include<stdbool.h>
-#include"XList.h"
+#include"XListDLinked.h"
 typedef struct XModbusFrame XModbusFrame;
-typedef XList XModbusRegularlySendFrameLsit;
+typedef XListDLinked XModbusRegularlySendFrameLsit;
 typedef struct XModbusRegularlySendFrame
 {
 	uint32_t time;//定时时间

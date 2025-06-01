@@ -292,7 +292,7 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
     //处理定时发送帧数据
     if (modbus->regularlySendMaster != NULL)
     {
-        XListNode* frontNode = XContainerDataPtr(modbus->regularlySendMaster);
+        XListDNode* frontNode = XContainerDataPtr(modbus->regularlySendMaster);
         if (frontNode != NULL)
         {
             XModbusRegularlySendFrame* regularly = (XModbusRegularlySendFrame*)(frontNode->date);
@@ -414,7 +414,7 @@ XModbusErrorCode XModbus_sendFrameRegularlyMaster(XModbus* modbus, XModbusFrame*
         regularly.frame = frame;
         regularly.time = time;
         regularly.timeOut = time + XTimer_getCurrentTime();
-        XList_push_back_base(modbus->regularlySendMaster, &regularly);
+        XListDLinked_push_back_base(modbus->regularlySendMaster, &regularly);
     }
     return MB_ENOERR;
 }

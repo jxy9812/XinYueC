@@ -15,7 +15,7 @@ void XQueue_init(XQueue* this_queue, size_t typeSize)
 {
 	if (ISNULL(this_queue, "") || ISNULL(typeSize, ""))
 		return;
-	XList_init(this_queue, typeSize);
+	XListDLinked_init(this_queue, typeSize);
 	XClassGetVtable(this_queue) = XQueue_class_init();
 }
 
@@ -37,12 +37,12 @@ void XQueue_pop_base(XQueue* this_queue)
 
 void* XQueue_front_base(XQueue* this_queue)
 {
-	return XList_front_base(this_queue);
+	return XListDLinked_front_base(this_queue);
 }
 
 void* XQueue_back_base(XQueue* this_queue)
 {
-	return XList_back_base(this_queue);
+	return XListDLinked_back_base(this_queue);
 }
 
 void* XQueue_top_base(XQueue* this_queue)
