@@ -24,6 +24,7 @@ typedef struct XTimerGroupBase
 }XTimerGroupBase;
 void XTimerGroupBase_init(XTimerGroupBase*group, XVtable* vtable, uint16_t precision);
 bool XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerBase* timer);
+//仅从任务中删除，需要手动释放
 bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerBase* timer);
 void XTimerGroupBase_poll_base(XTimerGroupBase* group);
 #define XTimerGroupBase_free_base XClass_free_base

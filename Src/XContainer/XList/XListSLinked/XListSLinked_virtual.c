@@ -11,7 +11,7 @@ static void VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, co
 //删除
 static void VXList_pop_front(XListSLinked* this_list);
 static void VXList_pop_back(XListSLinked* this_list);
-static void VXList_erase(XListSLinked* this_list, XListSNode* node);
+static void* VXList_erase(XListSLinked* this_list, XListSNode* node);
 static void VXList_remove(XListSLinked* this_list, void* pvData);
 static void VXList_clear(XListSLinked* this_list);
 //遍历
@@ -301,22 +301,24 @@ static removeNode(XListSLinked* this_list, XListSNode* prev, XListSNode* removeN
 	--XContainerCapacity(this_list);
 }
 
-void VXList_erase(XListSLinked* this_list, XListSNode* node)
+void* VXList_erase(XListSLinked* this_list, XListSNode* node)
 {
 	if (XListBase_isEmpty_base(this_list)||node==NULL)
-		return;
+		return NULL;
 	XListSNode* prev = NULL;//前一个节点
 	XListSNode* curNode = XContainerDataPtr(this_list);//当前节点
 	while (node)
 	{
 		if (curNode == node)
 		{//找到要删除的节点了
+			XListSNode* next = curNode->next;
 			removeNode(this_list,prev,curNode);
-			return;
+			return next;
 		}
 		prev = curNode;
 		curNode = curNode->next;
 	}
+	return NULL;
 }
 
 void VXList_remove(XListSLinked* this_list, void* pvData)

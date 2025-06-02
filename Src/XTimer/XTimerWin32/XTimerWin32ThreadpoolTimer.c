@@ -44,7 +44,7 @@ static void XTimerStartWin32ThreadpoolTimer(XTimerBase* timer)
 	// 启动计时器
 	SetThreadpoolTimer(((PTP_TIMER)(timer->timerId)), &ftDueTime, period, tolerance);
 	timer->m_isRun = true;
-	timer->m_isPeriodic = true;
+	//timer->m_isPeriodic = true;
 }
 static void XTimerStopWin32ThreadpoolTimer(XTimerBase* timer)
 {

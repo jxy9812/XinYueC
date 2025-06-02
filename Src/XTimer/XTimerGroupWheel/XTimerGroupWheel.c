@@ -23,6 +23,7 @@ void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision)
 	XClassGetVtable(group) = XTimerGroupWheel_class_init();
 	//初始化数据
 	group->m_timeWheel = XVector_New(XTimeWheel);
+	group->m_parent.m_current_tick = XTimerBase_getCurrentTime() / group->m_parent.m_precision;
 }
 
 void XTimerGroupWheel_addTimeWheel_base(XTimerGroupWheel* group, size_t slotsCount)

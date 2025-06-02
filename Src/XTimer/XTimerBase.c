@@ -90,7 +90,7 @@ void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId)
 bool XTimerBase_isPeriodic(XTimerBase* timer)
 {
 	if (timer)
-		return timer->m_isPeriodic;
+		return timer->m_interval==0;
 	return false;
 }
 bool XTimerBase_isRunning(XTimerBase* timer)

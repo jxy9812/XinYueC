@@ -9,6 +9,7 @@ extern "C" {
 #include"XContainerTest.h"
 #include"XProtocolStackTest.h"
 #include"XIOTest.h"
+#include"XTimerTest.h"
 #if DEMOTEST
 	//排序算法测试
 	void SortTest();

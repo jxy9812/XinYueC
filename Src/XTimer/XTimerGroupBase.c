@@ -14,6 +14,7 @@ bool XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerBase* timer)
 {
 	if (ISNULL(group, "") || ISNULL(timer, "") || ISNULL(XClassGetVtable(group), ""))
 		return false;
+	
 	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_Timer, bool(*)(XTimerGroupBase* ,XTimerBase*))(group,timer);
 }
 

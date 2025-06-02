@@ -22,7 +22,7 @@ static void XTimerStartWin32TimeSetEvent(XTimerBase* timer)
 		TIME_PERIODIC  // 周期性触发
 	);
 	timer->m_isRun = true;
-	timer->m_isPeriodic = true;
+	//timer->m_isPeriodic = true;
 }
 static void XTimerStopWin32TimeSetEvent(XTimerBase* timer)
 {
