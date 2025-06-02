@@ -4,11 +4,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XFunctionCallback.h"
-typedef struct XListSLinked XListSLinked;
-typedef struct XListDNode XListDNode;
+#include"XContainerObject_iterator.h"
+XContainerTypeDeclare(XListSLinked);
+XContainerTypeDeclare(XListSNode);
 //正向迭代器
-typedef XListDNode XListSLinked_iterator;
+typedef XListSNode XListSLinked_iterator;
 XListSLinked_iterator* XListSLinked_begin(XListSLinked* this_list);
 XListSLinked_iterator* XListSLinked_end(XListSLinked* this_list);
 XListSLinked_iterator* XListSLinked_iterator_add(XListSLinked* this_list,XListSLinked_iterator*it);

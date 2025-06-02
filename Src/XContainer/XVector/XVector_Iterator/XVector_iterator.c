@@ -26,7 +26,7 @@ XVector_iterator* XVector_iterator_add(XVector* this_vector,XVector_iterator*it)
 
 void XVector_iterator_for_each(XVector* this_vector, XFor_each ForFunction, void* args)
 {
-	for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
+	for_each_iterator(this_vector, XVector, it)
 	{
 		ForFunction(it, args);
 	}

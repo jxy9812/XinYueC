@@ -29,7 +29,8 @@ XListSLinked_iterator* XListSLinked_iterator_add(XListSLinked* this_list,XListSL
 
 void XListSLinked_iterator_for_each(XListSLinked* this_list, XFor_each ForFunction, void* args)
 {
-	for (XListSLinked_iterator* it = XListSLinked_begin(this_list); it != XListSLinked_end(this_list); it = XListSLinked_iterator_add(this_list, it))
+	//for (XListSLinked_iterator* it = XListSLinked_begin(this_list); it != XListSLinked_end(this_list); it = XListSLinked_iterator_add(this_list, it))
+	for_each_iterator(this_list, XListSLinked,it)
 	{
 		ForFunction(XListSNode_DataPtr(it), args);
 	}

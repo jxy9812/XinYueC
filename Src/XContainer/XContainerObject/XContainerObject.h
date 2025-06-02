@@ -7,7 +7,6 @@ extern "C" {
 #endif
 #include<stdio.h>
 #include<stdbool.h>
-
 #include"XMemory.h"
 //#define DEBUG_ON 1
 

@@ -4,9 +4,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include"XContainerObject_iterator.h"
 #include"XFunctionCallback.h"
-typedef struct XMap XMap;
-typedef struct XPair XPair;
+XContainerTypeDeclare(XMap);
+XContainerTypeDeclare(XPair);
 typedef XPair* XMap_reverse_iterator;
 XMap_reverse_iterator* XMap_rbegin(XMap* this_Map);
 XMap_reverse_iterator* XMap_rend(XMap* this_Map);

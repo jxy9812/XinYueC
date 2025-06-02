@@ -41,7 +41,7 @@ XMap_reverse_iterator* XMap_reverse_iterator_add(XMap* this_Map, XMap_reverse_it
 
 void XMap_reverse_iterator_for_each(XMap* this_Map, XFor_each ForFunction, void* args)
 {
-	for (XMap_reverse_iterator* it = XMap_rbegin(this_Map); it != XMap_rend(this_Map); it = XMap_reverse_iterator_add(this_Map, it))
+	for_each_reverse_iterator(this_Map, XMap, it)
 	{
 		ForFunction(it, args);
 	}

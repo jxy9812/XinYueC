@@ -4,9 +4,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include"XContainerObject_iterator.h"
 #include"XFunctionCallback.h"
-typedef struct XListDLinked XListDLinked;
-typedef struct XListDNode XListDNode;
+XContainerTypeDeclare(XListDLinked);
+XContainerTypeDeclare(XListDNode);
 //反向迭代器
 typedef XListDNode XListDLinked_reverse_iterator;
 XListDLinked_reverse_iterator* XListDLinked_rbegin(XListDLinked* this_list);

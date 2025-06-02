@@ -127,14 +127,14 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
     case STATE_RX_INIT:  // 初始状态（等待总线空闲）
         XTimerBase_start_base(modbus->timer);  // 启动T35定时器，检测帧间隔
 #if MB_CALIBRATION_TIMER_SETTINGS
-        modbus->calibrationTimer_current = XTimer_getCurrentTime();
+        modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
 #endif 
         break;
 
     case STATE_RX_ERROR:  // 接收错误状态（忽略后续字节）
         XTimerBase_start_base(modbus->timer);  // 保持定时器运行，等待错误帧结束
 #if MB_CALIBRATION_TIMER_SETTINGS
-        modbus->calibrationTimer_current = XTimer_getCurrentTime();
+        modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
 #endif 
         break;
 
@@ -147,7 +147,7 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
         modbus->eRcvState = STATE_RX_RCV;  // 切换到接收中状态
         XTimerBase_start_base(modbus->timer);  // 启动T35定时器
 #if MB_CALIBRATION_TIMER_SETTINGS
-        modbus->calibrationTimer_current = XTimer_getCurrentTime();
+        modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
 #endif 
         break;
 
@@ -161,7 +161,7 @@ bool XModbusRtuReceiveFSM(XModbus* modbus)
         }
         XTimerBase_start_base(modbus->timer);  // 每次接收到字节后重置定时器
 #if MB_CALIBRATION_TIMER_SETTINGS
-        modbus->calibrationTimer_current = XTimer_getCurrentTime();
+        modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
 #endif 
         break;
     }
@@ -226,7 +226,7 @@ bool XModbusRtuTransmitFSM(XModbus* modbus)
                 modbus->timerOutNumber = 0;//开始计数
                 XTimerBase_start_base(modbus->timer);  // 发送完成等待下一帧
 #if MB_CALIBRATION_TIMER_SETTINGS
-                modbus->calibrationTimer_current = XTimer_getCurrentTime();
+                modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
 #endif 
                 if (modbus->SerialEnable)
                     modbus->SerialEnable(modbus, true, false);  // 禁用发送，重新使能接收

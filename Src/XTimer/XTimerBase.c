@@ -145,24 +145,24 @@ static size_t(*getCurrentTime)() = NULL;
 #endif
 
 static size_t currentTime = 0;
-void XTimer_inc(size_t tick_period)
+void XTimerBase_inc(size_t tick_period)
 {
 	currentTime += tick_period;
 }
 
-void XTimer_setCurrentTime(size_t time)
+void XTimerBase_setCurrentTime(size_t time)
 {
 	currentTime = time;
 }
 
-size_t XTimer_getCurrentTime()
+size_t XTimerBase_getCurrentTime()
 {
 	if(getCurrentTime==NULL)
 		return currentTime;
 	return getCurrentTime();
 }
 
-void XTimer_setCurrentTimeFunc(size_t(*get)())
+void XTimerBase_setCurrentTimeFunc(size_t(*get)())
 {
 	getCurrentTime = get;
 }

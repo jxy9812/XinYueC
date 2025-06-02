@@ -30,7 +30,7 @@ XListDLinked_iterator* XListDLinked_iterator_add(XListDLinked* this_list,XListDL
 
 void XListDLinked_iterator_for_each(XListDLinked* this_list, XFor_each ForFunction, void* args)
 {
-	for (XListDLinked_iterator* it = XListDLinked_begin(this_list); it != XListDLinked_end(this_list); it = XListDLinked_iterator_add(this_list, it))
+	for_each_iterator(this_list, XListDLinked,it)
 	{
 		ForFunction(XListDNode_DataPtr(it), args);
 	}

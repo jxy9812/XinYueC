@@ -46,7 +46,7 @@ XModbusErrorCode XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMo
  
     modbus->recvHandleMaster = NULL;
 #if MB_CALIBRATION_TIMER_SETTINGS
-    modbus->calibrationTimer_current = XTimer_getCurrentTime();
+    modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
 #endif
     // 根据选择的模式初始化对应的函数指针和底层模块
     if (XModbus_isMaster(modbus))
@@ -261,9 +261,9 @@ static void  XModbus_EV_EXECUTE(XModbus* modbus)
 static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
 {
     //static size_t currentTime = 0;
-    //if (currentTime + 1000 < XTimer_getCurrentTime())
+    //if (currentTime + 1000 < XTimerBase_getCurrentTime())
     //{
-    //    currentTime = XTimer_getCurrentTime();
+    //    currentTime = XTimerBase_getCurrentTime();
     //    printf("事件队列是空\n");
     //}
     XModbusErrorCode error = MB_ENOERR;
@@ -275,7 +275,7 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
         {//已经超时了
             if ((*Handle) != NULL)
             {
-                if ((*Handle)->timeout < XTimer_getCurrentTime())
+                if ((*Handle)->timeout < XTimerBase_getCurrentTime())
                 {
                     if ((*Handle)->pRecvHandCallFunc)
                         (*Handle)->pRecvHandCallFunc(modbus, NULL);
@@ -297,9 +297,9 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
         {
             XModbusRegularlySendFrame* regularly = (XModbusRegularlySendFrame*)(frontNode->data);
             //XModbusFrame*  frame= regularly->frame;
-            if (regularly->timeOut < XTimer_getCurrentTime())
+            if (regularly->timeOut < XTimerBase_getCurrentTime())
             {//时间到了
-                regularly->timeOut = regularly->time + XTimer_getCurrentTime();
+                regularly->timeOut = regularly->time + XTimerBase_getCurrentTime();
                 //printf("时间到了:%\n");
                 XModbus_sendFrame(modbus, XModbusFrame_copy(regularly->frame));
 
@@ -314,10 +314,10 @@ static XModbusErrorCode XModbus_EventEmpty(XModbus* modbus)
        //printf("发送数据\n");
         modbus->pxMBFrameCBTransmitterEmpty(modbus);
 #if MB_CALIBRATION_TIMER_SETTINGS //软件定时校准状态
-        if (modbus->calibrationTimer_current + (modbus->timer->m_interval * 100) < XTimer_getCurrentTime())
+        if (modbus->calibrationTimer_current + (modbus->timer->m_interval * 100) < XTimerBase_getCurrentTime())
         {
             printf("超时了\n");
-            modbus->calibrationTimer_current = XTimer_getCurrentTime();
+            modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
             //if (modbus->eRcvState == STATE_RX_RCV)
             //    XModbus_sendEvent(modbus, EV_FRAME_RECEIVED);
             //modbus->eRcvState = STATE_RX_IDLE;  // 切换到接收空闲状态
@@ -382,7 +382,7 @@ static bool setSendFrame(XModbus* modbus, XModbusFrame* frame)
     if (frame->recvHandle != NULL)
     {
         frame->recvHandle->waitAddressCode = XModbusFrame_getAddress(frame) << 8 | XModbusFrame_getFuncCode(frame);
-        frame->recvHandle->timeout = XTimer_getCurrentTime() + MB_MASTER_RECV_OUT_TIME;//设置超时时间
+        frame->recvHandle->timeout = XTimerBase_getCurrentTime() + MB_MASTER_RECV_OUT_TIME;//设置超时时间
     }
     return true;
 }
@@ -413,7 +413,7 @@ XModbusErrorCode XModbus_sendFrameRegularlyMaster(XModbus* modbus, XModbusFrame*
         XModbusRegularlySendFrame regularly = { 0 };
         regularly.frame = frame;
         regularly.time = time;
-        regularly.timeOut = time + XTimer_getCurrentTime();
+        regularly.timeOut = time + XTimerBase_getCurrentTime();
         XListDLinked_push_back_base(modbus->regularlySendMaster, &regularly);
     }
     return MB_ENOERR;

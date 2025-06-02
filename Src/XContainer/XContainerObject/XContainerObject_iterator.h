@@ -11,6 +11,10 @@ extern "C" {
 #define XContainerIteratorDeclare(Container) typedef void Container##_iterator
 //容器反向迭代器声明
 #define XContainerReverseIteratorDeclare(Container) typedef void Container##_reverse_iterator
+//正向迭代器遍历
+#define for_each_iterator(container,type,it) for(type##_iterator*it=type##_begin(container);it!=type##_end(container);it=type##_iterator_add(container,it))
+//反向迭代器遍历
+#define for_each_reverse_iterator(container,type,it) for(type##_reverse_iterator*it=type##_rbegin(container);it!=type##_rend(container);it=type##_reverse_iterator_add(container,it))
 
 #define XContainer_begin(Container) Container##_iterator* Container##_begin(Container* this_##Container)
 #define XContainer_end(Container) Container##_iterator* Container##_end(Container* this_##Container)

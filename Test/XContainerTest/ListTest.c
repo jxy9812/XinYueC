@@ -46,12 +46,12 @@ void XListDLinkedIterator()
 		XListBase_push_back_base(li, arr + i);
 	}
 	printf("开始正向遍历\n");
-	for (XListDLinked_iterator* it = XListDLinked_begin(li); it != XListDLinked_end(li); it = XListDLinked_iterator_add(li, it))
+	for_each_iterator(li,XListDLinked,it)
 	{
 		printf("%d\n", XListDNode_Data(it, int));
 	}
 	printf("开始反向遍历\n");
-	for (XListDLinked_reverse_iterator* it = XListDLinked_rbegin(li); it != XListDLinked_rend(li); it = XListDLinked_reverse_iterator_add(li, it))
+	for_each_reverse_iterator(li, XListDLinked, it)
 	{
 		printf("%d\n", XListDNode_Data(it, int));
 	}

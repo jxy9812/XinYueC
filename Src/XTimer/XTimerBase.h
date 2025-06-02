@@ -52,13 +52,13 @@ void XTimerBase_out(XTimerBase* timer);
 
 /*                              以毫秒为单位的时间锉                                     */
 //当前时间  累计添加
-void XTimer_inc(size_t tick_period);
+void XTimerBase_inc(size_t tick_period);
 //设置当前时间 时间锉
-void XTimer_setCurrentTime(size_t time);
+void XTimerBase_setCurrentTime(size_t time);
 //获得当前时间
-size_t XTimer_getCurrentTime();
+size_t XTimerBase_getCurrentTime();
 //设置获取当前时间的函数方法
-void XTimer_setCurrentTimeFunc(size_t(*get)());
+void XTimerBase_setCurrentTimeFunc(size_t(*get)());
 // 定时器任务结构
 typedef struct XTimerTask
 {

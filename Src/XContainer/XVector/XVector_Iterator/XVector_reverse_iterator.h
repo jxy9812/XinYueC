@@ -5,8 +5,8 @@
 extern "C" {
 #endif
 #include"XContainerObject_iterator.h"
+//声明
 XContainerTypeDeclare(XVector);
-//反向迭代器
 XContainerReverseIteratorDeclare(XVector);
 XVector_reverse_iterator* XVector_rbegin(XVector* this_vector);
 XVector_reverse_iterator* XVector_rend(XVector* this_vector);

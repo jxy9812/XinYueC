@@ -101,7 +101,7 @@ bool XModbusTest_SerialOpen(XIODeviceBase* io, XIODeviceBaseMode mode)
         return 1;
     }
     //设置XTimer获取毫秒时间搓
-    XTimer_setCurrentTimeFunc(GetCurrentTimeMillis);
+    XTimerBase_setCurrentTimeFunc(GetCurrentTimeMillis);
     return true;
 }
 bool XModbusTest_writeByte(XIODeviceBase* io, XCircularQueue* queue)
