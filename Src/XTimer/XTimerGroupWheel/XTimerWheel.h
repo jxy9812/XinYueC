@@ -7,11 +7,17 @@ extern "C" {
 #include<stdint.h>
 #include<stdio.h>
 #include"XTimerBase.h"
+typedef struct XTimerGroupWheel XTimerGroupWheel;
+#define XTIMERWHEEL_VTABLE_SIZE (XTIMERBASE_VTABLE_SIZE)       //XTimerWheel虚函数表大小
 // 定时器节点结构
 typedef struct XTimerWheel 
 {
 	XTimerBase m_parent;
+	XTimerGroupWheel* m_group;
 } XTimerWheel;
+XVtable* XTimerWheel_class_init();
+XTimerWheel* XTimerWheel_new();
+void XTimerWheel_init(XTimerWheel* timer);
 
 #ifdef __cplusplus
 }
