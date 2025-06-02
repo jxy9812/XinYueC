@@ -9,10 +9,18 @@ XTimerBase* XTimerBase_new(XVtable* vtable)
 	XTimerBase* timer = XMemory_malloc(sizeof(XTimerBase));
 	if (timer == NULL)
 		return NULL;
+	XTimerBase_init(timer,vtable);
+	return timer;
+}
+
+void XTimerBase_init(XTimerBase* timer, XVtable* vtable)
+{
+	if (timer == NULL)
+		return;
 	//开始初始化
 	memset(timer, 0, sizeof(XTimerBase));
+	XClass_init(timer);
 	XClassGetVtable(timer) = vtable;
-	return timer;
 }
 
 
@@ -20,7 +28,7 @@ void XTimerBase_free_base(XTimerBase* timer)
 {
 	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
 		return;
-	XClassGetVirtualFunc(timer, EXTimerBase_Free, void(*)(XTimerBase*))(timer);
+	XClassGetVirtualFunc(timer, EXClass_Free, void(*)(XTimerBase*))(timer);
 	/*if (timer && timer->m_port.free)
 	{
 		XTimer_stop(timer);

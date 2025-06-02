@@ -9,11 +9,10 @@ extern "C" {
 #include"XClass.h"
 typedef void (*XTimerBaseCallback)(void* userData);
 typedef struct XTimerBase XTimerBase;
-#define XTIMERBASE_VTABLE_SIZE (4)       //XTimerBase虚函数表大小
+#define XTIMERBASE_VTABLE_SIZE (XCLASS_VTABLE_SIZE+3)       //XTimerBase虚函数表大小
 enum XTimerBaseVtableEnum
 {
-	EXTimerBase_Free,
-	EXTimerBase_Start,
+	EXTimerBase_Start= XCLASS_VTABLE_SIZE,
 	EXTimerBase_Stop,
 	EXTimerBase_SetInterval,
 	//EXTimerBase_IsPeriodic,
@@ -34,6 +33,7 @@ typedef struct XTimerBase
 	size_t number;//超时次数
 }XTimerBase;
 XTimerBase* XTimerBase_new(XVtable*vtable);
+void XTimerBase_init(XTimerBase* timer, XVtable* vtable);
 void XTimerBase_free_base(XTimerBase* timer);
 void XTimerBase_start_base(XTimerBase*timer);
 void XTimerBase_stop_base(XTimerBase* timer);
