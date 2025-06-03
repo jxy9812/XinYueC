@@ -92,11 +92,11 @@ bool XIODeviceBase_open_base(XIODeviceBase* io, XIODeviceBaseMode mode)
 	return XClassGetVirtualFunc(io, EXIODeviceBase_Open, bool(*)(XIODeviceBase*, XIODeviceBaseMode))(io, mode);
 }
 
-void XIODeviceBase_close_base(XIODeviceBase* io)
+bool XIODeviceBase_close_base(XIODeviceBase* io)
 {
 	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
-		return ;
-	XClassGetVirtualFunc(io, EXIODeviceBase_Close, void(*)(XIODeviceBase*))(io);
+		return false ;
+	return XClassGetVirtualFunc(io, EXIODeviceBase_Close, bool(*)(XIODeviceBase*))(io);
 }
 
 void XIODeviceBase_poll_base(XIODeviceBase* io)

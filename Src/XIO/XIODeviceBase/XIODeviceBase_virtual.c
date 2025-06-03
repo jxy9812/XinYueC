@@ -13,7 +13,7 @@ static size_t VXIODevice_read(XIODeviceBase* io, char* data, size_t maxSize);//�
 static size_t VXIODevice_getBytesAvailable(XIODeviceBase* io);
 static size_t VXIODeviceBase_getBytesToWrite(XIODeviceBase* io);
 static bool VXIODeviceBase_atEnd(XIODeviceBase* io);
-static void VXIODevice_close(XIODeviceBase* io);
+static bool VXIODevice_close(XIODeviceBase* io);
 static void VXIODevice_poll(XIODeviceBase* io);
 static void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count);
 static void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count);
@@ -180,7 +180,7 @@ bool VXIODeviceBase_atEnd(XIODeviceBase* io)
 	return false;
 }
 
-void VXIODevice_close(XIODeviceBase* io)
+bool VXIODevice_close(XIODeviceBase* io)
 {
 	/**************************************************/
 	ISNULL(0, "请重载这个函数,这是模板");
@@ -191,6 +191,7 @@ void VXIODevice_close(XIODeviceBase* io)
 			io->m_port.close_funcPointer(io);
 	}
 	io->m_mode = XIODeviceBase_NotOpen;*/
+	return true;
 }
 
 void VXIODevice_poll(XIODeviceBase* io)

@@ -54,10 +54,6 @@ void XTimerBase_stop_base(XTimerBase* timer)
 	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
 		return;
 	XClassGetVirtualFunc(timer, EXTimerBase_Stop, void(*)(XTimerBase*))(timer);
-	/*if (timer&&timer->m_port.stop)
-	{
-		timer->m_port.stop(timer);
-	}*/
 }
 
 void XTimerBase_setTimeout_base(XTimerBase* timer, size_t value)

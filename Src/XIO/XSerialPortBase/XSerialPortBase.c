@@ -22,12 +22,19 @@ void XSerialPortBase_init(XSerialPortBase* serial, XVtable* vtable)
 		XClassGetVtable(serial) = XSerialPortBase_class_init();
 	else
 		XClassGetVtable(serial) = vtable;
-	
+	serial->m_baudRate = 9600;
+	serial->m_dataBits = SP_DB_Eight;
+	serial->m_stopBits = SP_ST_One;
+	serial->m_parity = SP_PAR_NONE;
+	serial->m_flowControl = SP_FC_None;
 }
 
 bool XSerialPortBase_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity)
 {
 	if (ISNULL(serial, "") || ISNULL(XClassGetVtable(serial), ""))
 		return false;
-	return XClassGetVirtualFunc(serial, EXIODeviceBase_Open, bool(*)(XSerialPortBase*, XIODeviceBaseMode, uint8_t, uint32_t, XSerialPortBaseParity))(serial, mode,portNum,baudRate,parity);
+	serial->m_baudRate = baudRate;
+	serial->m_parity = parity;
+	serial->m_portNum = portNum;
+	return XClassGetVirtualFunc(serial, EXIODeviceBase_Open, bool(*)(XSerialPortBase*, XIODeviceBaseMode))(serial, mode);
 }

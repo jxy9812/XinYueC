@@ -1,7 +1,7 @@
 ﻿#include"XSerialPortBase.h"
 #include"XCircularQueueAtomic.h"
 //声明
-static bool VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
+static bool  VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode);
 static size_t VXSerialPort_read(XIODeviceBase* io, char* data, size_t maxSize);//读取
 
 XVtable* XSerialPortBase_class_init()
@@ -25,14 +25,14 @@ XVtable* XSerialPortBase_class_init()
 	return XVTABLE_DEFAULT;
 }
 
-bool VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity)
+bool VXSerialPort_open(XSerialPortBase* serial, XIODeviceBaseMode mode)
 {
 	//printf("准备打开\n");
 	if (serial == NULL)
 		return false;
-	serial->m_baudRate = baudRate;
+	/*serial->m_baudRate = baudRate;
 	serial->m_parity = parity;
-	serial->m_portNum = portNum;
+	serial->m_portNum = portNum;*/
 	//调用父类
 	return XVtableGetFunc(XIODeviceBase_class_init(), EXIODeviceBase_Open,bool(*)(XIODeviceBase*, XIODeviceBaseMode))(serial, mode);
 	//return XIODeviceBase_open_base(serial, mode);

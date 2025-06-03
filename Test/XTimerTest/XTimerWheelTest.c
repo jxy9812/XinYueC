@@ -7,6 +7,13 @@ static void Callback1(void* userData)
 
 	printf("定时器1触发:%d ms\n",XTimerBase_getCurrentTime()-current);
 	current = XTimerBase_getCurrentTime();
+
+	XTimerWheel* timer = XTimerWheel_new();
+	XTimerWheel_setUserData(timer, userData);
+	XTimerWheel_setTimeout_base(timer, 5);
+	XTimerWheel_setTimerCallback(timer, Callback1);
+	XTimerWheel_start_base(timer);
+	XTimerGroupBase_addTimer_base(userData, timer);
 }
 static void Callback2(void* userData)
 {
@@ -25,7 +32,8 @@ void XTimerWheelTest()
 	XTimerGroupWheel_addTimeWheel_base(wheel, 10);
 	{
 		XTimerWheel* timer = XTimerWheel_new();
-		XTimerWheel_setInterval_base(timer,9);
+		XTimerWheel_setUserData(timer, wheel);
+		//XTimerWheel_setInterval_base(timer,9);
 		XTimerWheel_setTimeout_base(timer, 5);
 		XTimerWheel_setTimerCallback(timer,Callback1);
 		XTimerWheel_start_base(timer);
@@ -37,7 +45,7 @@ void XTimerWheelTest()
 		XTimerWheel_setInterval_base(timer, 49);
 		XTimerWheel_setTimeout_base(timer, 15);
 		XTimerWheel_setTimerCallback(timer, Callback2);
-		XTimerGroupBase_addTimer_base(wheel, timer);
+		//XTimerGroupBase_addTimer_base(wheel, timer);
 		//仅从任务中删除，需要手动释放
 		//XTimerGroupWheel_removeTimer_base(wheel,timer);
 	}

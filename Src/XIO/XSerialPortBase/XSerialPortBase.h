@@ -9,20 +9,49 @@ extern "C" {
 //XSerialPortDevice虚函数表
 extern XVtable* XSerialPortVtable;
 #define XSERIALPORT_VTABLE_SIZE (XIODEVICEBASE_VTABLE_SIZE)       //XSerialPortDevice容器虚函数表大小
+// 跨平台停止位枚举
+typedef enum
+{
+    SP_ST_One,        // 1位停止位
+    SP_ST_OnePointFive,   // 1.5位停止位
+    SP_ST_Two             // 2位停止位
+}XSerialPortBaseStopBits;
+// 跨平台数据位枚举
+typedef enum 
+{
+    SP_DB_Five = 5,       // 5位数据位
+    SP_DB_Six = 6,        // 6位数据位
+    SP_DB_Seven = 7,      // 7位数据位
+    SP_DB_Eight = 8       // 8位数据位
+}XSerialPortBaseDataBits;
 /*! \brief 串口传输校验位类型 */
 typedef enum
 {
-    SP_PAR_NONE,                /*!< 无校验 */
+    SP_PAR_NONE = 0,                /*!< 无校验 */
     SP_PAR_ODD,                 /*!< 奇校验 */
-    SP_PAR_EVEN                 /*!< 偶校验 */
+    SP_PAR_EVEN,                 /*!< 偶校验 */
+    SP_PAR_Mark,                // 标记校验（始终为1）
+    SP_PAR_Space                // 空格校验（始终为0）
 } XSerialPortBaseParity;
+
+// 流控制类型枚举
+typedef enum 
+{
+    SP_FC_None,           // 无流控制（默认）
+    SP_FC_Hardware,       // 硬件流控制（RTS/CTS）
+    SP_FC_Software,       // 软件流控制（XON/XOFF）
+    SP_FC_Both            // 同时使用硬件和软件流控制
+}XSerialPortBaseFlowControl;
 //串口设备抽象类
 typedef struct XSerialPortBase
 {
     XIODeviceBase m_parent;//父对象
     uint8_t m_portNum;//端口号
     uint32_t m_baudRate;//波特率
+    XSerialPortBaseDataBits m_dataBits;//数据位
+    XSerialPortBaseStopBits m_stopBits;//停止位
     XSerialPortBaseParity m_parity;//校验
+    XSerialPortBaseFlowControl m_flowControl;//流控制
 }XSerialPortBase;//串口
 //初始化类
 XVtable* XSerialPortBase_class_init();

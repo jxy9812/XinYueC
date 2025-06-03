@@ -1,0 +1,1 @@
+﻿#include"XModbusBase.h"

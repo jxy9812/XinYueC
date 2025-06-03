@@ -29,7 +29,7 @@ typedef enum /*XIODeviceBase*/
 	XIODeviceBase_NotOpen= 0x0000,//设备未打开
 	XIODeviceBase_ReadOnly= 0x0001,//设备以只读方式打开
 	XIODeviceBase_WriteOnly= 0x0002,//设备以只写方式打开
-	XIODeviceBase_ReadWrite= XIODeviceBase_ReadOnly | XIODeviceBase_WriteOnly, //备以读写方式打开
+	XIODeviceBase_ReadWrite= XIODeviceBase_ReadOnly | XIODeviceBase_WriteOnly, //设备以读写方式打开
 	XIODeviceBase_Append= 0x0004,//设备以追加模式打开
 	XIODeviceBase_Truncate= 0x0008,//如果可能的话，在打开设备之前会截断设备
 	XIODeviceBase_Text= 0x0010,//在读取时，行尾终止符会被转换为 \n。在写入时，行终止符会被转换为本地编码，例如在 Windows 系统上会转换为 \r\n		   _
@@ -53,8 +53,8 @@ void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable);
 void XIODeviceBase_setWriteBuffer_base(XIODeviceBase* io,size_t count);
 void XIODeviceBase_setReadBuffer_base(XIODeviceBase* io, size_t count);
 void XIODeviceBase_setDevice_base(XIODeviceBase* io, void* device);
-size_t XIODeviceBase_write_base(XIODeviceBase* io,const char* data, size_t maxSize);//写入
-size_t XIODeviceBase_read_base(XIODeviceBase* io,char* data, size_t maxSize);//读取
+size_t XIODeviceBase_write_base(XIODeviceBase* io,const char* data, size_t maxSize);//写入 有缓冲区不阻塞
+size_t XIODeviceBase_read_base(XIODeviceBase* io,char* data, size_t maxSize);		//读取 超出最大读取会阻塞
 //获取可供读取的字节数
 size_t XIODeviceBase_getBytesAvailable_base(XIODeviceBase* io);
 //查询当前 待写入设备的数据量（即尚未完成写入操作的字节数）
@@ -65,7 +65,7 @@ bool XIODeviceBase_isOpen(XIODeviceBase* io);
 //打开设备		必须要重载
 bool XIODeviceBase_open_base(XIODeviceBase* io, XIODeviceBaseMode mode);
 //关闭设备      需重载
-void XIODeviceBase_close_base(XIODeviceBase* io);
+bool XIODeviceBase_close_base(XIODeviceBase* io);
 //轮询设备      需重载
 void XIODeviceBase_poll_base(XIODeviceBase* io);
 //将剩余的数据刷入设备   需重载

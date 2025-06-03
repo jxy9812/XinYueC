@@ -4,7 +4,7 @@
 #include "XMemory.h"
 #include "XSerialPortWin32.h"
 
-static bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
+static bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode);
 static size_t VXIODevice_write(XSerialPortWin32* serial, const char* data, size_t maxSize);//写入
 static size_t VXIODevice_writeFull(XSerialPortWin32* serial);//将剩余的数据刷入设备
 static size_t VXIODevice_read(XSerialPortWin32* serial, char* data, size_t maxSize);//读取
@@ -58,15 +58,15 @@ void XSerialPortWin32_init(XSerialPortWin32* serial)
     XClassGetVtable(serial) = XSerialPortWin32_class_init();
 }
 
-bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity)
+bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode)
 {
     if (serial == NULL)
         return false;
-    printf("打开串口\n");
+    //printf("打开串口\n");
     XSerialPortBase* parent = serial;
-    parent->m_baudRate = baudRate;
+   /* parent->m_baudRate = baudRate;
     parent->m_parity = parity;
-    parent->m_portNum = portNum;
+    parent->m_portNum = portNum;*/
     //memset(&(serial->m_ov), 0, sizeof(OVERLAPPED));
     char portName[10] = { 0 };
     sprintf(portName, "COM%d", parent->m_portNum);
@@ -86,9 +86,9 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t
   //  }
 
     // 获取当前串口配置
-    DCB dcbSerialParams = { 0 };
-    dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
-    if (!GetCommState(hSerial, &dcbSerialParams)) {
+    DCB dcb = { 0 };
+    dcb.DCBlength = sizeof(dcb);
+    if (!GetCommState(hSerial, &dcb)) {
         printf("无法获取串口状态！\n");
         CloseHandle(hSerial);
         return false;
@@ -96,11 +96,42 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t
    
 
     // 设置串口参数
-    dcbSerialParams.BaudRate = parent->m_baudRate;
-    dcbSerialParams.ByteSize = 8;
-    dcbSerialParams.StopBits = ONESTOPBIT;
-    dcbSerialParams.Parity = parent->m_parity;
-    if (!SetCommState(hSerial, &dcbSerialParams)) {
+    dcb.BaudRate = parent->m_baudRate;
+    dcb.ByteSize = parent->m_dataBits;
+    dcb.StopBits = parent->m_stopBits;
+    dcb.Parity = parent->m_parity;
+
+    // 配置流控制
+    switch (parent->m_flowControl) {
+    case SP_FC_None:
+        dcb.fRtsControl = RTS_CONTROL_DISABLE;
+        dcb.fDtrControl = DTR_CONTROL_DISABLE;
+        dcb.fOutX = FALSE;
+        dcb.fInX = FALSE;
+        break;
+
+    case SP_FC_Hardware:
+        dcb.fRtsControl = RTS_CONTROL_HANDSHAKE;
+        dcb.fDtrControl = DTR_CONTROL_HANDSHAKE;
+        dcb.fOutX = FALSE;
+        dcb.fInX = FALSE;
+        break;
+
+    case SP_FC_Software:
+        dcb.fRtsControl = RTS_CONTROL_DISABLE;
+        dcb.fDtrControl = DTR_CONTROL_DISABLE;
+        dcb.fOutX = TRUE;  // 启用输出XON/XOFF
+        dcb.fInX = TRUE;   // 启用输入XON/XOFF
+        break;
+
+    case SP_FC_Both:
+        dcb.fRtsControl = RTS_CONTROL_HANDSHAKE;
+        dcb.fDtrControl = DTR_CONTROL_HANDSHAKE;
+        dcb.fOutX = TRUE;
+        dcb.fInX = TRUE;
+        break;
+    }
+    if (!SetCommState(hSerial, &dcb)) {
         printf("无法设置串口状态！\n");
         CloseHandle(hSerial);
         return false;
@@ -126,19 +157,19 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode, uint8_t
     if (!SetCommMask(hSerial, EV_RXCHAR))
         printf("设置事件掩码失败");
 
-    // 关闭 DTR 和 RTS
-    if (!EscapeCommFunction(hSerial, CLRDTR)) {
-        DWORD errorCode = GetLastError();
-        printf("无法关闭 DTR！错误代码: %lu\n", errorCode);
-        CloseHandle(hSerial);
-        return false;
-    }
-    if (!EscapeCommFunction(hSerial, CLRRTS)) {
-        DWORD errorCode = GetLastError();
-        printf("无法关闭 RTS！错误代码: %lu\n", errorCode);
-        CloseHandle(hSerial);
-        return false;
-    }
+    //// 关闭 DTR 和 RTS
+    //if (!EscapeCommFunction(hSerial, CLRDTR)) {
+    //    DWORD errorCode = GetLastError();
+    //    printf("无法关闭 DTR！错误代码: %lu\n", errorCode);
+    //    CloseHandle(hSerial);
+    //    return false;
+    //}
+    //if (!EscapeCommFunction(hSerial, CLRRTS)) {
+    //    DWORD errorCode = GetLastError();
+    //    printf("无法关闭 RTS！错误代码: %lu\n", errorCode);
+    //    CloseHandle(hSerial);
+    //    return false;
+    //}
     serial->m_hSerial = hSerial;
     parent->m_parent.m_mode = mode;
    
@@ -255,7 +286,12 @@ size_t VXIODevice_read(XSerialPortWin32* serial, char* data, size_t maxSize)
     XIODeviceBase* io = (XIODeviceBase*)serial;
     if (io->m_mode & XIODeviceBase_ReadOnly == 0)
         return 0;
-    return XSerialPort_read(io, data, maxSize);
+    size_t size = 0;
+    while (size<maxSize)
+    {
+        size += XSerialPort_read(io, data+size, maxSize-size);
+    }
+    return size;
 }
 void VXIODevice_close(XSerialPortWin32* serial)
 {
