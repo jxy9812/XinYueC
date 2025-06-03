@@ -53,7 +53,7 @@ XModbusErrorCode XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMo
     {//主站下初始化资源
         modbus->recvHandleMaster = XVector_New(XModbusFrameDataRecvHandle*);
         modbus->recvHandleMaster->m_equality = recvHandleMaster_XEquality;
-        modbus->regularlySendMaster = XModbusRegularlySendFrameLsit_new();
+        modbus->regularlySendMaster = XModbusRegularlySendFrameList_new();
     }
     else
     {//从站初始化资源
@@ -444,5 +444,5 @@ bool XModbus_sendEvent(XModbus* modbus, XModbusEventType event)
 #endif // MB_QUEUE_FULL_SHOW
         return false;
     }
-    return;
+    return true;
 }

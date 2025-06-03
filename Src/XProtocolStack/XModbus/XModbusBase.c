@@ -1,1 +1,137 @@
-﻿#include"XModbusBase.h"
+﻿#include "XModbusBase.h"
+#include "XModbusFrame.h"
+#include "XModbusConfig.h"
+#include "XModbusProto.h"
+#include "XModbusFunctionHandler.h"
+#include "XModbusRegularlySendFrame.h"
+#include "XCircularQueueAtomic.h"
+#include <string.h>
+void XModbusBase_init(XModbusBase* modbus)
+{
+	if (modbus == NULL)
+		return NULL;
+	//开始初始化
+	memset(((XCommunicatorBase*)modbus) + 1, 0, sizeof(XModbusBase) - sizeof(XCommunicatorBase));
+	XCommunicatorBase_init(modbus);
+	modbus->address = 1;
+	modbus->mode = MB_NOT_MODE;
+	modbus->state = STATE_NOT_INITIALIZED;
+	modbus->sendQueue = XModbusFrameQueue_new(MB_FRAME_SEND_QUEUE_COUNT);
+	modbus->recvFrameQueue = XModbusFrameQueue_new(MB_FRAME_RECV_QUEUE_COUNT);
+	modbus->eventQueue = XCircularQueueAtomic_New(XModbusEventType, MB_EVENT_QUEUE_COUNT);
+	modbus->funcCodeList = XModbusFuncCodeList_new();
+	//设置异步接收的缓冲区大小
+	XCommunicatorBase_recvAsync_base(modbus, MB_RECV_BUFFER_SIZE);
+}
+
+void XModbusBase_setAddress(XModbusBase* modbus, uint8_t address)
+{
+	if (modbus == NULL)
+		return;
+	modbus->address = address;
+}
+static const bool recvHandleMaster_XEquality(const void* Value, const void* CompareValue)
+{
+	uint16_t waitAddressCode = (*((XModbusFrameDataRecvHandle**)Value))->waitAddressCode;
+	uint16_t  value = *((uint16_t*)CompareValue);
+	return (*((XModbusFrameDataRecvHandle**)Value))->waitAddressCode == *((uint16_t*)CompareValue);
+}
+void XModbusBase_setMode(XModbusBase* modbus, XModbusMode mode)
+{
+	if (modbus == NULL)
+		return;
+	modbus->mode = mode;
+	if (XModbusBase_isMaster(modbus))
+	{
+		if (modbus->recvHandleMaster == NULL)
+		{
+			modbus->recvHandleMaster= XVector_New(XModbusFrameDataRecvHandle*);
+			modbus->recvHandleMaster->m_equality = recvHandleMaster_XEquality;
+		}
+		if(modbus->regularlySendMaster==NULL)
+		modbus->regularlySendMaster = XModbusRegularlySendFrameList_new();
+	}
+	else
+	{//释放资源暂时还没写
+
+	}
+}
+
+bool XModbusBase_isMaster(XModbusBase* modbus)
+{
+	return modbus->mode % 2 == 0;
+}
+//发送帧之前处理一些信息
+static bool setSendFrame(XModbusBase* modbus, XModbusFrame* frame)
+{
+	if (modbus == NULL || frame == NULL)
+		return false;
+	if (frame->frameData == NULL || XVector_isEmpty_base(frame->frameData))
+	{
+		XModbusFrame_free(frame);
+		return false;
+	}
+	//
+	frame->mode = modbus->mode;
+	//
+	if (frame->recvHandle != NULL)
+	{
+		frame->recvHandle->waitAddressCode = XModbusFrame_getAddress(frame) << 8 | XModbusFrame_getFuncCode(frame);
+		frame->recvHandle->timeout = MB_MASTER_RECV_OUT_TIME;//设置超时时间
+	}
+	return true;
+}
+XModbusErrorCode XModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame)
+{
+	if (modbus == NULL || frame == NULL)
+		return MB_EINVAL;
+	if (setSendFrame(modbus, frame))
+	{
+		if (!XModbusFrameQueue_push(modbus->sendQueue, frame))
+		{
+#if MB_QUEUE_FULL_SHOW
+			printf("发送帧队列溢出当前最大:%d,建议增大队列,调整:MB_FRAME_SEND_QUEUE_COUNT\n", MB_FRAME_SEND_QUEUE_COUNT);
+#endif // MB_QUEUE_FULL_SHOW
+			XModbusFrame_free(frame);
+			return MB_ENORES;
+		}
+	}
+	return MB_ENOERR;
+}
+
+XModbusErrorCode XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFrame* frame, uint32_t time)
+{
+	if (modbus == NULL || frame == NULL)
+		return MB_EINVAL;
+	if (setSendFrame(modbus, frame))
+	{
+		XModbusRegularlySendFrame regularly = { 0 };
+		regularly.frame = frame;
+		regularly.time = time;
+		regularly.timeOut = MB_MASTER_RECV_OUT_TIME;
+		XListBase_push_back_base(modbus->regularlySendMaster, &regularly);
+	}
+	return MB_ENOERR;
+}
+
+XModbusErrorCode XModbusBase_setFunctionHandler(XModbusBase* modbus, XModbusFunctionHandler* FunctionHandler)
+{
+	if (modbus == NULL)
+		return MB_EINVAL;
+	if (FunctionHandler == NULL)
+		return MB_EINVAL;
+	XModbusFuncCodeList_push(modbus->funcCodeList, FunctionHandler);
+	return MB_ENOERR;
+}
+
+bool XModbusBase_sendEvent(XModbusBase* modbus, XModbusEventType event)
+{
+	if (!XQueueBase_push_base(modbus->eventQueue, &event))
+	{
+#if MB_QUEUE_FULL_SHOW
+		printf("事件队列溢出当前最大:%d,建议增大队列,调整:MB_EVENT_QUEUE_COUNT\n", MB_EVENT_QUEUE_COUNT);
+#endif // MB_QUEUE_FULL_SHOW
+		return false;
+	}
+	return true;
+}

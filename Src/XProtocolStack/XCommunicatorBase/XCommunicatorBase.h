@@ -9,7 +9,7 @@ extern "C" {
 typedef struct XVector XVector;
 typedef struct XTimerGroupWheel XTimerGroupWheel;
 typedef void (*RecvDataCallback)(const void* data, size_t size, void* userData);
-#define XCOMMUNICATORBASE_VTABLE_SIZE		(XCLASS_VTABLE_SIZE+12)       //XCommunicatorBase虚函数表大小
+#define XCOMMUNICATORBASE_VTABLE_SIZE		(XCLASS_VTABLE_SIZE+10)       //XCommunicatorBase虚函数表大小
 enum XCommunicatorBaseVtableEnum
 {
 	EXCommunicatorBase_Connect = XCLASS_VTABLE_SIZE,

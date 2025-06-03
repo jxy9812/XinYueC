@@ -20,8 +20,8 @@ extern "C" {
 #include"XModbusFrame_RTU.h"
 #endif
 /* ---------------------------------  类型声明------------------------------------------*/
-typedef struct XCircularQueue XCircularQueue;
-typedef XCircularQueue XModbusFrameQueue;
+typedef struct XQueueBase XQueueBase;
+typedef XQueueBase XModbusFrameQueue;
 //帧接收队列
 typedef struct XModbus XModbus;
 typedef struct XModbusFrame XModbusFrame;
