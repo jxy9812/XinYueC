@@ -63,16 +63,6 @@ void XTimerBase_setCurrentTime(size_t time);
 size_t XTimerBase_getCurrentTime();
 //设置获取当前时间的函数方法
 void XTimerBase_setCurrentTimeFunc(size_t(*get)());
-// 定时器任务结构
-typedef struct XTimerTask
-{
-	uint32_t m_expire_time;     // 到期时间戳（毫秒）
-	uint32_t m_interval;        // 间隔时间（用于周期性任务）
-	bool is_periodic;         // 是否为周期性任务
-	void (*TimerCallback)(void* arg);   // 回调函数
-	void* arg;                // 回调函数参数
-} XTimerTask;
-
 #ifdef __cplusplus
 }
 #endif

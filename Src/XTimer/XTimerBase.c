@@ -160,6 +160,15 @@ static size_t GetCurrentTimeMillis() {
 	return (uli.QuadPart - EPOCH_OFFSET) / 10000;
 }
 static size_t(*getCurrentTime)() = GetCurrentTimeMillis;
+#elif defined(__linux__) 
+#include <sys/time.h>
+static size_t get_milliseconds() 
+{
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	return (size_t)tv.tv_sec * 1000LL + tv.tv_usec / 1000;
+}
+static size_t(*getCurrentTime)() = get_milliseconds;
 #else
 static size_t(*getCurrentTime)() = NULL;
 
