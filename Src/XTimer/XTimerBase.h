@@ -14,6 +14,7 @@ enum XTimerBaseVtableEnum
 {
 	EXTimerBase_Start= XCLASS_VTABLE_SIZE,
 	EXTimerBase_Stop,
+	EXTimerBase_SetTimeOut,
 	EXTimerBase_SetInterval,
 	//EXTimerBase_IsPeriodic,
 	//EXTimerBase_IsRun,
@@ -38,6 +39,7 @@ void XTimerBase_free_base(XTimerBase* timer);
 void XTimerBase_start_base(XTimerBase*timer);
 void XTimerBase_stop_base(XTimerBase* timer);
 //设置定时时间
+void XTimerBase_setTimeout_base(XTimerBase* timer, size_t value);
 void XTimerBase_setInterval_base(XTimerBase* timer, size_t value);
 void XTimerBase_setUserData(XTimerBase* timer, void* userData);
 void XTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
@@ -45,6 +47,7 @@ void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId);
 // 是否为周期性任务
 bool XTimerBase_isPeriodic(XTimerBase* timer);
 bool XTimerBase_isRunning(XTimerBase* timer);
+size_t XTimerBase_getTimeout(XTimerBase* timer);
 size_t XTimerBase_getInterval(XTimerBase* timer);
 size_t XTimerBase_getTimerId(XTimerBase* timer);
 void*  XTimerBase_getUserData(XTimerBase* timer);

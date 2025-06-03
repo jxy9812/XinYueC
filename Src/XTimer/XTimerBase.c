@@ -60,6 +60,13 @@ void XTimerBase_stop_base(XTimerBase* timer)
 	}*/
 }
 
+void XTimerBase_setTimeout_base(XTimerBase* timer, size_t value)
+{
+	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
+		return;
+	XClassGetVirtualFunc(timer, EXTimerBase_SetTimeOut, void(*)(XTimerBase*, size_t))(timer, value);
+}
+
 void XTimerBase_setInterval_base(XTimerBase* timer, size_t value)
 {
 	if (ISNULL(timer, "")|| ISNULL(XClassGetVtable(timer), ""))
@@ -98,6 +105,12 @@ bool XTimerBase_isRunning(XTimerBase* timer)
 	if (timer)
 		return timer->m_isRun;
 	return false;
+}
+size_t XTimerBase_getTimeout(XTimerBase* timer)
+{
+	if (timer)
+		return timer->m_timeout;
+	return 0;
 }
 size_t XTimerBase_getInterval(XTimerBase* timer)
 {

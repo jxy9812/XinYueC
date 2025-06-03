@@ -1,0 +1,56 @@
+﻿#include"XTimerWheel.h"
+//static void VXTimerBase_free_base(XTimerWheel* timer);
+static void VXTimerBase_start_base(XTimerWheel* timer);
+static void VXTimerBase_stop_base(XTimerWheel* timer);
+static void VXTimerBase_setTimeout_base(XTimerWheel* timer, size_t value);
+static void VXTimerBase_setInterval_base(XTimerWheel* timer, size_t value);
+XVtable* XTimerWheel_class_init()
+{
+	XVTABLE_CREAT_DEFAULT
+		//虚函数表初始化
+#if VTABLE_ISSTACK
+		XVTABLE_STACK_INIT_DEFAULT(XTIMERWHEEL_VTABLE_SIZE)
+#else
+		XVTABLE_HEAP_INIT_DEFAULT
+#endif
+		//继承类
+		XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+	void* table[] = {
+	VXTimerBase_start_base,VXTimerBase_stop_base,
+	VXTimerBase_setTimeout_base,VXTimerBase_setInterval_base
+
+	};
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	//重载
+	//XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXTimerBase_free_base);
+#if SHOWCONTAINERSIZE
+	printf("XTimerWheel size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
+	return XVTABLE_DEFAULT;
+}
+
+//void VXTimerBase_free_base(XTimerWheel* timer)
+//{
+//
+//}
+
+void VXTimerBase_start_base(XTimerWheel* timer)
+{
+	timer->m_parent.m_isRun = true;
+}
+
+void VXTimerBase_stop_base(XTimerWheel* timer)
+{
+	timer->m_parent.m_isRun = false;
+}
+
+void VXTimerBase_setTimeout_base(XTimerWheel* timer, size_t value)
+{
+	timer->m_parent.m_timeout = value;
+}
+
+void VXTimerBase_setInterval_base(XTimerWheel* timer, size_t value)
+{
+	timer->m_parent.m_interval = value;
+}

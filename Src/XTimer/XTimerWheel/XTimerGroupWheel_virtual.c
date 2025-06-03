@@ -82,14 +82,14 @@ static bool addTimer(XTimerGroupWheel* group, XTimerWheel* timer, size_t timeout
 bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerWheel* timer)
 {
 	XTimerBase* parent = (XTimerBase*)timer;
-	if(timer==NULL||parent->m_timerCallback==NULL)
+	if (timer == NULL || parent->m_timerCallback == NULL || ((parent->m_interval == 0) && (parent->m_timeout == 0)))
 		return false;
 	//printf("添加\n");
 	// 计算超时时间（转换为）
 	size_t timeout_ticks = parent->m_timeout / group->m_parent.m_precision;
 	//size_t interval_ticks = parent->m_interval / group->m_parent.m_precision;
 	timer->m_expire_ticks = group->m_parent.m_current_tick + timeout_ticks;
-	timer->m_parent.m_isRun = true;
+	parent->timerId = group;
 	return addTimer(group,timer,timeout_ticks);
 }
 
