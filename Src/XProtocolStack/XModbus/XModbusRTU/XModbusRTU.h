@@ -23,6 +23,8 @@ enum XModbusRTUVtableEnum
 typedef struct XModbusRTU
 {
     XModbusBase m_parent;
+    XTimerBase* m_timerT35Expired;//检测帧间隔超时
+    XTimerBase* m_timerSendExpired;//检测发送帧到期
 }XModbusRTU;
 XVtable* XModbusRTU_class_init();
 void XModbusRTU_init(XModbusRTU* modbus);

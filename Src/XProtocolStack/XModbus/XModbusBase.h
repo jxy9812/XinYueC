@@ -18,7 +18,9 @@ typedef struct XListBase XListBase;
 enum XModbusBaseVtableEnum
 {
     EXModbusBase_SendFrame = XCOMMUNICATORBASE_VTABLE_SIZE,
-    EXModbusBase_RecvFrame
+    EXModbusBase_RecvFrame,
+    EXModbusBase_ReceiveFSM,//接收数据
+    EXModbusBase_TransmitFSM,//发送数据
 };
 typedef struct XModbusBase
 {
@@ -34,6 +36,7 @@ typedef struct XModbusBase
     XListBase* regularlySendMaster;//主站定期发送帧数据
 //    /* ----------------------- 以下主站等待处理发送返回请求-------------------------------------*/
     XVector* recvHandleMaster;//XVector<XModbusFrameDataRecvHandle>
+    
 //    /* ----------------------- 函数指针类型定义  0-------------------------------------*/
 //    XModbusFrameSend     peMBFrameSendCur;     // 帧发送函数指针（发送完整 Modbus 帧）
 //    XModbusFrameStart    pvMBFrameStartCur;    // 协议栈启动函数指针（初始化端口资源，如串口、定时器）

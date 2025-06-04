@@ -1,6 +1,3 @@
 ﻿#include"XModbusRTU.h"
-
-void XModbusRTU_init(XModbusRTU* modbus)
-{
-
-}
+#include"XTimerWheel.h"
+#include<string.h>
