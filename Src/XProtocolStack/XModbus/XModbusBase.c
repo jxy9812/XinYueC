@@ -84,7 +84,7 @@ static bool setSendFrame(XModbusBase* modbus, XModbusFrame* frame)
 	if (frame->recvHandle != NULL)
 	{
 		frame->recvHandle->waitAddressCode = XModbusFrame_getAddress(frame) << 8 | XModbusFrame_getFuncCode(frame);
-		frame->recvHandle->timeout = MB_MASTER_RECV_OUT_TIME;//设置超时时间
+		frame->recvHandle->timeout = XTimerBase_getCurrentTime() + MB_MASTER_RECV_OUT_TIME;//设置超时时间
 	}
 	return true;
 }
@@ -108,7 +108,11 @@ XModbusErrorCode XModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame)
 //发送帧数据的回调函数
 static void sendFrameCallback(XModbusRegularlySendFrame* regularly)
 {
-	XModbusBase_sendFrame(regularly->modbus, XModbusFrame_copy(regularly->frame));
+	XModbusFrame* frame=XModbusFrame_copy(regularly->frame);
+	
+	XModbusBase_sendFrame(regularly->modbus, frame);
+	//frame->recvHandle->timeout = XTimerBase_getCurrentTime() + MB_MASTER_RECV_OUT_TIME;
+	//printf("发送的:%d\n", frame->recvHandle->timeout);
 }
 XTimerBase* XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFrame* frame, uint32_t time)
 {
@@ -120,7 +124,7 @@ XTimerBase* XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFra
 		XModbusRegularlySendFrame regularly = { 0 };
 		regularly.frame = frame;
 		regularly.time = time;
-		regularly.timeOut = MB_MASTER_RECV_OUT_TIME;
+		//regularly.timeOut = MB_MASTER_RECV_OUT_TIME;
 		regularly.modbus = modbus;
 		regularly.timer = timer;
 		XListBase_push_back_base(modbus->regularlySendMaster, &regularly);

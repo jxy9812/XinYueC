@@ -32,7 +32,7 @@ void XModbusTest()
 
     {
         XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc,Register };
-       XModbusBase_setFunctionHandler(modbus, &Handler);
+       //XModbusBase_setFunctionHandler(modbus, &Handler);
     }
     {//发送一帧数据
         XModbusFrame* frame = XModbusFrame_newRecvHandle();
@@ -44,11 +44,13 @@ void XModbusTest()
     }
     {//发送一帧数据
         XModbusFrame* frame = XModbusFrame_newRecvHandle();
-        //frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
+       // printf("%d\n",frame->recvHandle->timeout);
+        frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
         char buff[] = { 0x00,0x01 };
         XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x00, buff);
-        XModbusBase_sendFrame(modbus, frame);
-        //XModbusBase_sendFrameRegularlyMaster(modbus, frame,50);
+        //XModbusBase_sendFrame(modbus, frame);
+        //printf("发送\n");
+        XModbusBase_sendFrameRegularlyMaster(modbus, frame,50);
        /* uint8_t State =0;
         XMODBUS_UINT8_SET_BITS(&State, 0, 1);
         XMODBUS_UINT8_SET_BITS(&State, 2, 1); 

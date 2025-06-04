@@ -64,6 +64,7 @@ static XModbusErrorCode XModbus_EventEmpty(XModbusBase* modbus)
 			{
 				if ((*Handle)->timeout < XTimerBase_getCurrentTime())
 				{
+					//printf("%d\n", (*Handle)->timeout);
 					if ((*Handle)->pRecvHandCallFunc)
 						(*Handle)->pRecvHandCallFunc(modbus, NULL);
 					XMemory_free(*Handle);
@@ -168,7 +169,7 @@ static void  XModbus_EV_EXECUTE(XModbusBase* modbus)
 	//XString_free_base(str);
 
 	//如果是主站检查是否有回调函数
-	if (XModbus_isMaster(modbus)/*&& modbus->recvHandleMaster!=NULL*/)
+	if (XModbusBase_isMaster(modbus)/*&& modbus->recvHandleMaster!=NULL*/)
 	{
 		uint16_t waitAddressCode = (address << 8 | code);
 		XModbusFrameDataRecvHandle** value = XVector_find_base(modbus->recvHandleMaster, &waitAddressCode);

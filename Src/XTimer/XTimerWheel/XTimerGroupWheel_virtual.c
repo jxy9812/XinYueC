@@ -65,9 +65,11 @@ static bool addTimer(XTimerGroupWheel* group, XTimerWheel* timer, size_t timeout
 	// 根据超时时间决定放入哪个时间轮
 	XTimeWheel* wheel = NULL;
 	size_t ticksCompare = 1,wheelSize=1;
-	for_each_iterator(group->m_timeWheel, XVector, it)
+	//for_each_iterator(group->m_timeWheel, XVector, it)
+	for(size_t i=0;i<XContainerSize(group->m_timeWheel);++i)
 	{
-		wheel = (XTimeWheel*)it;
+		//wheel = (XTimeWheel*)it;
+		wheel = (XTimeWheel*)(((uint8_t*)XContainerDataPtr(group->m_timeWheel))+i*XContainerTypeSize(group->m_timeWheel));
 		ticksCompare *= XContainerSize(wheel->m_slots);
 		if (timeout_ticks < ticksCompare)
 		{
@@ -147,7 +149,8 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
 	XListSLinked* list = XVector_At_Base(higher_level->m_slots, slot_index, XListSLinked*);
 	if (list == NULL)
 		return;
-	for_each_iterator(list, XListSLinked,it)
+	//for_each_iterator(list, XListSLinked,it)
+	for (XListSLinked_iterator* it = XContainerDataPtr(list); it != NULL; it = ((XListSNode*)it)->next)
 	{
 		XTimerWheel* timer = XListSNode_Data(it, XTimerWheel*);
 
@@ -156,9 +159,11 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
 			remaining_ticks = timer->m_expire_ticks - group->m_parent.m_current_tick;
 		XTimeWheel* wheel = NULL;
 		size_t ticksCompare = 1, wheelSize=1;
-		for_each_iterator(group->m_timeWheel, XVector, it)
+		//for_each_iterator(group->m_timeWheel, XVector, it)
+		for (size_t i = 0; i < XContainerSize(group->m_timeWheel); ++i)
 		{
-			wheel = (XTimeWheel*)it;
+			//wheel = (XTimeWheel*)it;
+			wheel = (XTimeWheel*)(((uint8_t*)XContainerDataPtr(group->m_timeWheel)) + i * XContainerTypeSize(group->m_timeWheel));
 			ticksCompare *= XContainerSize(wheel->m_slots);
 			if (remaining_ticks < ticksCompare)
 			{
@@ -201,7 +206,8 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
 			XContainerSize(list) = 0;
 			XContainerCapacity(list) = 0;
 			//printf("%p\n", list);
-			for_each_iterator(&cList, XListSLinked, it)
+			//for_each_iterator(&cList, XListSLinked, it)
+			for (XListSLinked_iterator* it = XContainerDataPtr(&cList); it != NULL; it = ((XListSNode*)it)->next)
 			{
 				XTimerWheel* timer = XListSNode_Data(it, XTimerWheel*);
 				if (timer->m_expire_ticks <= groupBase->m_current_tick && XTimerBase_isRunning(timer))
@@ -232,13 +238,15 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
 		// 检查是否需要触发中级轮降级
 		XTimeWheel* currentWheel = NULL;
 		size_t ticksCompare = 1;
-		for_each_iterator(group->m_timeWheel, XVector, it)
+		//for_each_iterator(group->m_timeWheel, XVector, it)
+		for (size_t i = 0; i < XContainerSize(group->m_timeWheel); ++i)
 		{
-			currentWheel = (XTimeWheel*)it;
+			//currentWheel = (XTimeWheel*)it;
+			currentWheel = (XTimeWheel*)(((uint8_t*)XContainerDataPtr(group->m_timeWheel)) + i * XContainerTypeSize(group->m_timeWheel));
 			ticksCompare *= XContainerSize(wheel->m_slots);
 			if (groupBase->m_current_tick % ticksCompare == 0)//注释这行可提高二级后的精度,但会增加cpu负载
 			{//一圈跑完
-				XTimeWheel* nextWheel = XVector_iterator_add(group->m_timeWheel, it);
+				XTimeWheel* nextWheel = XVector_iterator_add(group->m_timeWheel, currentWheel);
 				if (nextWheel == NULL)
 					break;//下一个时间轮不存在
 				int next_slot = (nextWheel->m_tick % XContainerSize(nextWheel->m_slots));

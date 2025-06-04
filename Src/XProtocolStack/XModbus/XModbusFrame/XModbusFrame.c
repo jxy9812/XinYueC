@@ -100,6 +100,7 @@ XModbusFrame* XModbusFrame_newRecvHandle()
 {
 	XModbusFrame* frame = XModbusFrame_new();
 	frame->recvHandle = XMemory_malloc(sizeof(XModbusFrameDataRecvHandle));
+	//printf("创建\n");
 	XModbusFrameDataRecvHandle_setZero(frame->recvHandle);
 	return frame;
 }
@@ -182,6 +183,7 @@ void XModbusFrameDataRecvHandle_setZero(XModbusFrameDataRecvHandle* handle)
 {
 	if (handle)
 	{
+		handle->timeout = 0;
 		handle->pRecvHandCallFunc = NULL;
 		handle->userData = NULL;
 		handle->waitAddressCode = NULL;
