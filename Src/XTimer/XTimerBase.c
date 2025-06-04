@@ -21,6 +21,7 @@ void XTimerBase_init(XTimerBase* timer, XVtable* vtable)
 	memset(timer, 0, sizeof(XTimerBase));
 	XClass_init(timer);
 	XClassGetVtable(timer) = vtable;
+	timer->m_autoFree = true;
 }
 
 

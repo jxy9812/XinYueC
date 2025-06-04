@@ -209,21 +209,23 @@ bool VXModbusBase_TransmitFSM(XModbusBase* modbus)
     }
     case STATE_TX_XMIT:  // 发送中状态（逐个字节发送）
     {
+#if !MB_IS_COMP_SEND_FRAME
         //printf("发送中\n");
         if (modbus->pendingCount != 0)
         {
+
             XIODeviceBase_write_base(modbus->m_parent.m_io, XVector_at_base(dataVector, XVector_getSize_base(dataVector) - modbus->pendingCount), 1);
-#if !MB_IS_COMP_SEND_FRAME
             XIODeviceBase_writeFull_base(modbus->m_parent.m_io);
-#endif
+
             --modbus->pendingCount;
             // printf("end\n");
         }
         else
-        {//发送完成
-#if MB_IS_COMP_SEND_FRAME
-            XIODeviceBase_writeFull_base(modbus->ioDevice);
+#else
+        XIODeviceBase_write_base(modbus->m_parent.m_io, XContainerDataPtr(dataVector),XContainerSize(dataVector));
+        XIODeviceBase_writeFull_base(modbus->m_parent.m_io);
 #endif
+        {//发送完成
             modbus->eSndState = STATE_TX_END;  // 切换到发送空闲状态
             //modbus->timerOutNumber = 0;//开始计数
             //XTimerBase_start_base(modbus->timer);  // 发送完成等待下一帧

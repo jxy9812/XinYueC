@@ -116,7 +116,7 @@ extern "C" {
 //主站接收返回超时时间 (ms)
  #define MB_MASTER_RECV_OUT_TIME				 (  2000 )
 //是否完整的帧一起发送
- #define MB_IS_COMP_SEND_FRAME					 (  0 )
+ #define MB_IS_COMP_SEND_FRAME					 (  1 )
 //是否启用校准软件定时器接收状态
  #define MB_CALIBRATION_TIMER_SETTINGS			 (  0 )
  //接收帧显示
