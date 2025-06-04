@@ -98,6 +98,7 @@ bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerWheel* timer)
 	if(timer->m_list==NULL)
 		return false;
 	XListSLinked_remove_base(timer->m_list,&timer);
+	timer->m_list = NULL;
 	return true;
 }
 
@@ -203,8 +204,11 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
 			for_each_iterator(&cList, XListSLinked, it)
 			{
 				XTimerWheel* timer = XListSNode_Data(it, XTimerWheel*);
-				if (timer->m_expire_ticks <= groupBase->m_current_tick&& XTimerBase_isRunning(timer))
+				if (timer->m_expire_ticks <= groupBase->m_current_tick && XTimerBase_isRunning(timer))
+				{
+					timer->m_list = NULL;
 					XTimerBase_out(timer);
+				}
 				XTimerBase* timerBase = (XTimerBase*)timer;
 				if (timerBase->m_interval > 0)
 				{
@@ -212,7 +216,7 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
 					timer->m_expire_ticks = groupBase->m_current_tick + timeout_ticks;
 					addTimer(group, timer, timeout_ticks);
 				}
-				else
+				else if (((XTimerBase*)timer) ->m_autoFree)
 				{//
 					//printf("%p\n", list);
 					XTimerBase_free_base(timer);

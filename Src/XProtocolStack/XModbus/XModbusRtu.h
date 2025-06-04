@@ -1,5 +1,5 @@
-﻿#ifndef XMODBUSRTU_H
-#define XMODBUSRTU_H
+﻿#ifndef XMODBUSRTUaa_H
+#define XMODBUSRTUaa_H
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -16,6 +16,8 @@ static bool VXModbusBase_TransmitFSM(XModbusBase* modbus);
 
 static void VXModbusBase_TimerT35Expired(XModbusBase* modbus);
 static void VXModbusBase_TimerSendExpired(XModbusBase* modbus);
+static bool VXCommunicatorBase_connect(XModbusRTU* modbus);
+static bool VXCommunicatorBase_disconnect(XModbusRTU* modbus);
 XVtable* XModbusRTU_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -36,6 +38,10 @@ XVtable* XModbusRTU_class_init()
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXModbusBase_SendFrame, VXModbusBase_sendFrame);
 	XVTABLE_OVERLOAD_DEFAULT(EXModbusBase_RecvFrame, VXModbusBase_recvFrame);
+    XVTABLE_OVERLOAD_DEFAULT(EXModbusBase_ReceiveFSM, VXModbusBase_ReceiveFSM);
+    XVTABLE_OVERLOAD_DEFAULT(EXModbusBase_TransmitFSM, VXModbusBase_TransmitFSM);
+    XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Connect, VXCommunicatorBase_connect);
+    XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Disconnect, VXCommunicatorBase_disconnect);
 #if SHOWCONTAINERSIZE
 	printf("XModbusRTU size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -48,15 +54,19 @@ void XModbusRTU_init(XModbusRTU* modbus)
     //开始初始化
     memset(((XModbusBase*)modbus) + 1, 0, sizeof(XModbusRTU) - sizeof(XModbusBase));
     XModbusBase_init(modbus);
-
+    XClassGetVtable(modbus) = XModbusRTU_class_init();
 
     modbus->m_timerSendExpired = XTimerWheel_new();
     XTimerWheel_setTimerCallback(modbus->m_timerSendExpired, VXModbusBase_TimerSendExpired);
     XTimerWheel_setUserData(modbus->m_timerSendExpired, modbus);
-    //XTimerWheel_setInterval_base(modbus->m_timerSendExpired, );
+    modbus->m_timerSendExpired->m_autoFree = false;    //MB_MASTER_RECV_WAIT_TIME
+    modbus->m_timerSendExpired->timerId = ((XCommunicatorBase*)modbus)->m_wheel;
+
     modbus->m_timerT35Expired = XTimerWheel_new();
     XTimerWheel_setTimerCallback(modbus->m_timerT35Expired, VXModbusBase_TimerT35Expired);
     XTimerWheel_setUserData(modbus->m_timerT35Expired, modbus);
+    modbus->m_timerT35Expired->m_autoFree = false;
+    modbus->m_timerT35Expired->timerId = ((XCommunicatorBase*)modbus)->m_wheel;
 }
 XModbusErrorCode VXModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frameData)
 {
@@ -113,7 +123,7 @@ bool VXModbusBase_ReceiveFSM(XModbusBase* modbus)
     XVector* recvVector = modbus->m_parent.m_recvAsyncBuffer;
     switch (modbus->eRcvState) {
     case STATE_RX_INIT:  // 初始状态（等待总线空闲）
-        XTimerWheel_start_base(((XModbusRTU*)modbus)->m_timerT35Expired);
+        XTimerBase_start_base(((XModbusRTU*)modbus)->m_timerT35Expired);
         //XTimerBase_start_base(modbus->timer);  // 启动T35定时器，检测帧间隔
 #if MB_CALIBRATION_TIMER_SETTINGS
         modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
@@ -122,7 +132,7 @@ bool VXModbusBase_ReceiveFSM(XModbusBase* modbus)
 
     case STATE_RX_ERROR:  // 接收错误状态（忽略后续字节）
        // XTimerBase_start_base(modbus->timer);  // 保持定时器运行，等待错误帧结束
-        XTimerWheel_start_base(((XModbusRTU*)modbus)->m_timerT35Expired);
+        XTimerBase_start_base(((XModbusRTU*)modbus)->m_timerT35Expired);
 #if MB_CALIBRATION_TIMER_SETTINGS
         modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
 #endif 
@@ -136,7 +146,7 @@ bool VXModbusBase_ReceiveFSM(XModbusBase* modbus)
             modbus->eSndState = STATE_TX_IDLE;
         modbus->eRcvState = STATE_RX_RCV;  // 切换到接收中状态
         //XTimerBase_start_base(modbus->timer);  // 启动T35定时器
-        XTimerWheel_start_base(((XModbusRTU*)modbus)->m_timerT35Expired);
+        XTimerBase_start_base(((XModbusRTU*)modbus)->m_timerT35Expired);
 #if MB_CALIBRATION_TIMER_SETTINGS
         modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
 #endif 
@@ -150,7 +160,8 @@ bool VXModbusBase_ReceiveFSM(XModbusBase* modbus)
             modbus->eRcvState = STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
             //printf("缓冲区溢出\n");
         }
-        XTimerBase_start_base(modbus->timer);  // 每次接收到字节后重置定时器
+        //XTimerBase_start_base(modbus->timer);  // 每次接收到字节后重置定时器
+        XTimerBase_start_base(((XModbusRTU*)modbus)->m_timerT35Expired);
 #if MB_CALIBRATION_TIMER_SETTINGS
         modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
 #endif 
@@ -216,6 +227,7 @@ bool VXModbusBase_TransmitFSM(XModbusBase* modbus)
             modbus->eSndState = STATE_TX_END;  // 切换到发送空闲状态
             //modbus->timerOutNumber = 0;//开始计数
             //XTimerBase_start_base(modbus->timer);  // 发送完成等待下一帧
+            XTimerBase_start_base(((XModbusRTU*)modbus)->m_timerSendExpired);
 #if MB_CALIBRATION_TIMER_SETTINGS
             modbus->calibrationTimer_current = XTimerBase_getCurrentTime();
 #endif 
@@ -227,12 +239,14 @@ bool VXModbusBase_TransmitFSM(XModbusBase* modbus)
             //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
             XString_free_base(str);
 #endif // MB_SEND_FRAME_SHOW
-            if (XModbus_isMaster(modbus))
+            if (XModbusBase_isMaster(modbus))
             {//如果是主站 设置当前接收回调
                 if (frame->recvHandle != NULL && frame->recvHandle->pRecvHandCallFunc)
                 {//发送的帧中存在回调方法
                     XVector_push_back_base(modbus->recvHandleMaster, &(frame->recvHandle));
+                    //frame->recvHandle->timeout=
                     frame->recvHandle = NULL;//转移所有权
+
                 }
             }
             XModbusFrameQueue_pop(sendQueue);
@@ -249,34 +263,16 @@ bool VXModbusBase_TransmitFSM(XModbusBase* modbus)
 void VXModbusBase_TimerT35Expired(XModbusBase* modbus)
 {
     bool            xNeedPoll = false;
-    //发完一帧数据总线等待
-    if (modbus->eSndState == STATE_TX_END)
-    {
-        //++modbus->timerOutNumber;
-        if (XModbus_isMaster(modbus))
-        {
-            if ((modbus->timerOutNumber > MB_MASTER_RECV_WAIT_TIME))
-            {//发送后等待一段时间
-                modbus->eSndState = STATE_TX_IDLE;
-                XTimerBase_stop_base(modbus->timer);  // 关闭定时器
-            }
-        }
-        else
-        {
-            modbus->eSndState = STATE_TX_IDLE;
-            XTimerBase_stop_base(modbus->timer);  // 关闭定时器
-        }
-        return true;
-    }
+   
     //接收超时等待
     switch (modbus->eRcvState) {
     case STATE_RX_INIT:  // 初始状态超时（总线空闲，进入IDLE）
-        XModbus_sendEvent(modbus, EV_READY);
-        //XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_READY);  // 通知协议栈总线就绪
+        XModbusBase_sendEvent(modbus, EV_READY);
+       // XQueueBase_Push_Base(modbus->eventQueue, XModbusEventType, EV_READY);  // 通知协议栈总线就绪
         break;
 
     case STATE_RX_RCV:   // 接收中状态超时（帧接收完成）
-        XModbus_sendEvent(modbus, EV_FRAME_RECEIVED);
+        XModbusBase_sendEvent(modbus, EV_FRAME_RECEIVED);
         //XCustomQueue_Push(modbus->eventQueue, XModbusEventType, EV_FRAME_RECEIVED);  // 通知上层协议帧已接收
         break;
 
@@ -292,11 +288,54 @@ void VXModbusBase_TimerT35Expired(XModbusBase* modbus)
     }
 
     modbus->eRcvState = STATE_RX_IDLE;  // 切换到接收空闲状态
-    XTimerBase_stop_base(modbus->timer);  // 关闭定时器
+    //printf("dddddddddddddddddddddd\n");
+   // XTimerBase_stop_base(((XModbusRTU*)modbus)->m_timerT35Expired);  // 关闭定时器
     return xNeedPoll;
 }
 
 void VXModbusBase_TimerSendExpired(XModbusBase* modbus)
 {
+    //发完一帧数据总线等待
+    if (modbus->eSndState == STATE_TX_END)
+    {
+        modbus->eSndState = STATE_TX_IDLE;
+        ////++modbus->timerOutNumber;
+        //if (XModbusBase_isMaster(modbus))
+        //{
+        //    if ((modbus->timerOutNumber > MB_MASTER_RECV_WAIT_TIME))
+        //    {//发送后等待一段时间
+        //       
+        //        XTimerBase_stop_base(modbus->timer);  // 关闭定时器
+        //    }
+        //}
+        //else
+        //{
+        //    modbus->eSndState = STATE_TX_IDLE;
+        //    XTimerBase_stop_base(modbus->timer);  // 关闭定时器
+        //}
+       // XTimerBase_stop_base(((XModbusRTU*)modbus)->m_timerSendExpired);  // 关闭定时器
+    }
+}
+
+bool VXCommunicatorBase_connect(XModbusRTU* modbus)
+{
+  
+    if (XVtableGetFunc(XModbusBase_class_init(), EXCommunicatorBase_Connect, bool(*)(XModbusBase*))(modbus))
+    {
+        if(modbus->m_parent.eRcvState == STATE_RX_INIT)
+            XTimerBase_start_base(modbus->m_timerT35Expired);  // 启动定时器（T35用于检测帧间隔）
+        return true;
+    }
+    return false;
+}
+
+bool VXCommunicatorBase_disconnect(XModbusRTU* modbus)
+{
+    if (XVtableGetFunc(XModbusBase_class_init(), EXCommunicatorBase_Disconnect, bool(*)(XModbusBase*))(modbus))
+    {
+        XTimerBase_stop_base(modbus->m_timerT35Expired); // 关闭定时器
+        XTimerBase_stop_base(modbus->m_timerSendExpired); // 关闭定时器
+        return true;
+    }
     return false;
 }

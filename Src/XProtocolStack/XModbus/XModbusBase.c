@@ -5,6 +5,7 @@
 #include "XModbusFunctionHandler.h"
 #include "XModbusRegularlySendFrame.h"
 #include "XCircularQueueAtomic.h"
+#include "XTimerWheel.h"
 #include <string.h>
 void XModbusBase_init(XModbusBase* modbus)
 {
@@ -13,6 +14,9 @@ void XModbusBase_init(XModbusBase* modbus)
 	//开始初始化
 	memset(((XCommunicatorBase*)modbus) + 1, 0, sizeof(XModbusBase) - sizeof(XCommunicatorBase));
 	XCommunicatorBase_init(modbus);
+	//设置异步接收的缓冲区大小
+	XCommunicatorBase_recvAsync_base(modbus, MB_RECV_BUFFER_SIZE);
+	XClassGetVtable(modbus) = XModbusBase_class_init();
 	modbus->address = 1;
 	modbus->mode = MB_NOT_MODE;
 	modbus->state = STATE_NOT_INITIALIZED;
@@ -20,8 +24,8 @@ void XModbusBase_init(XModbusBase* modbus)
 	modbus->recvFrameQueue = XModbusFrameQueue_new(MB_FRAME_RECV_QUEUE_COUNT);
 	modbus->eventQueue = XCircularQueueAtomic_New(XModbusEventType, MB_EVENT_QUEUE_COUNT);
 	modbus->funcCodeList = XModbusFuncCodeList_new();
-	//设置异步接收的缓冲区大小
-	XCommunicatorBase_recvAsync_base(modbus, MB_RECV_BUFFER_SIZE);
+	
+
 }
 
 void XModbusBase_setAddress(XModbusBase* modbus, uint8_t address)
@@ -49,7 +53,10 @@ void XModbusBase_setMode(XModbusBase* modbus, XModbusMode mode)
 			modbus->recvHandleMaster->m_equality = recvHandleMaster_XEquality;
 		}
 		if(modbus->regularlySendMaster==NULL)
-		modbus->regularlySendMaster = XModbusRegularlySendFrameList_new();
+		{
+			modbus->regularlySendMaster = XModbusRegularlySendFrameList_new();
+			//modbus->regularlySendMaster = XListSLinked_New(XModbusRegularlySendFrame);
+		}
 	}
 	else
 	{//释放资源暂时还没写
@@ -98,20 +105,34 @@ XModbusErrorCode XModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame)
 	}
 	return MB_ENOERR;
 }
-
-XModbusErrorCode XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFrame* frame, uint32_t time)
+//发送帧数据的回调函数
+static void sendFrameCallback(XModbusRegularlySendFrame* regularly)
+{
+	XModbusBase_sendFrame(regularly->modbus, XModbusFrame_copy(regularly->frame));
+}
+XTimerBase* XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFrame* frame, uint32_t time)
 {
 	if (modbus == NULL || frame == NULL)
-		return MB_EINVAL;
+		return NULL;
 	if (setSendFrame(modbus, frame))
 	{
+		XTimerWheel* timer = XTimerWheel_new();
 		XModbusRegularlySendFrame regularly = { 0 };
 		regularly.frame = frame;
 		regularly.time = time;
 		regularly.timeOut = MB_MASTER_RECV_OUT_TIME;
+		regularly.modbus = modbus;
+		regularly.timer = timer;
 		XListBase_push_back_base(modbus->regularlySendMaster, &regularly);
+		XTimerBase_setTimeout_base(timer,time);
+		XTimerBase_setInterval_base(timer, time);
+		XTimerBase_setTimerId(timer, ((XCommunicatorBase*)modbus)->m_wheel);
+		XTimerBase_setUserData(timer, XListBase_back_base(modbus->regularlySendMaster));
+		XTimerBase_setTimerCallback(timer, sendFrameCallback);
+		XTimerBase_start_base(timer);
+		return timer;
 	}
-	return MB_ENOERR;
+	return NULL;
 }
 
 XModbusErrorCode XModbusBase_setFunctionHandler(XModbusBase* modbus, XModbusFunctionHandler* FunctionHandler)

@@ -20,10 +20,10 @@ int main(int argc, char* args[])
 	XListSLinkedSortTest();*/
 	//XPriority_QueueTest();
 	//XPWMDeviceTest();
-	//XModbusTest();
+	XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
-	XSerialPortTest();
+	//XSerialPortTest();
 	//stackTest();
 	//XStringTest();
 	//XVectorTest();

@@ -3,7 +3,7 @@
 #include"XVector.h"
 #include"XModbusFrame.h"
 #include"XModbusFunctionHandler.h"
-#include"XModbus.h"
+#include"XModbusBase.h"
 #include"XModbusRtu.h"
 //#include"XCrc.h"
 //#include"XAlgorithm.h"
@@ -135,7 +135,7 @@ XModbusException XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc(XModbus* 
 	{//参数有问题
 		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->regAddress, MB_FUNC_READ_HOLDING_REGISTER, MB_EX_ILLEGAL_DATA_ADDRESS);
 	}
-	XModbus_sendFrame(modbus, sendFrame);
+	XModbusBase_sendFrame(modbus, sendFrame);
 	//printf("读取保持寄存器\n");
 
 	return MB_EX_NONE;
@@ -159,7 +159,7 @@ XModbusException XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbus* 
 	{//参数有问题
 		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->regAddress, MB_FUNC_READ_INPUT_REGISTER, MB_EX_ILLEGAL_DATA_ADDRESS);
 	}
-	XModbus_sendFrame(modbus, sendFrame);
+	XModbusBase_sendFrame(modbus, sendFrame);
 	//printf("读取输入寄存器\n");
 	
 	return MB_EX_NONE;
@@ -200,7 +200,7 @@ XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbus* 
 	{//参数有问题
 		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->regAddress, MB_FUNC_WRITE_REGISTER, MB_EX_ILLEGAL_DATA_ADDRESS);
 	}
-	XModbus_sendFrame(modbus, sendFrame);
+	XModbusBase_sendFrame(modbus, sendFrame);
 	return MB_EX_NONE;
 }
 
@@ -229,7 +229,7 @@ XModbusException XModbusRegisterHandler_0x10_RTU_slaveRecvHandCallFunc(XModbus* 
 	{//参数有问题
 		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->regAddress, MB_FUNC_WRITE_MULTIPLE_REGISTERS, MB_EX_ILLEGAL_DATA_ADDRESS);
 	}
-	XModbus_sendFrame(modbus, sendFrame);
+	XModbusBase_sendFrame(modbus, sendFrame);
 	//printf("写多个寄存器\n");
 
 	return MB_EX_NONE;

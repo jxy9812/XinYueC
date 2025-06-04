@@ -1,4 +1,5 @@
 ﻿#include"XTimerWheel.h"
+#include"XTimerGroupBase.h"
 //static void VXTimerBase_free_base(XTimerWheel* timer);
 static void VXTimerBase_start_base(XTimerWheel* timer);
 static void VXTimerBase_stop_base(XTimerWheel* timer);
@@ -37,12 +38,23 @@ XVtable* XTimerWheel_class_init()
 
 void VXTimerBase_start_base(XTimerWheel* timer)
 {
-	timer->m_parent.m_isRun = true;
+	if (timer->m_parent.m_isRun)
+		XTimerBase_stop_base(timer);
+	if (timer->m_parent.timerId)
+		XTimerGroupBase_addTimer_base(timer->m_parent.timerId, timer);
+	if (timer->m_list)
+		timer->m_parent.m_isRun = true;
+	
 }
 
 void VXTimerBase_stop_base(XTimerWheel* timer)
 {
-	timer->m_parent.m_isRun = false;
+	if(timer->m_parent.m_isRun)
+	{
+		if (timer->m_list)
+			XTimerGroupBase_removeTimer_base(timer->m_parent.timerId, timer);
+		timer->m_parent.m_isRun = false;
+	}
 }
 
 void VXTimerBase_setTimeout_base(XTimerWheel* timer, size_t value)

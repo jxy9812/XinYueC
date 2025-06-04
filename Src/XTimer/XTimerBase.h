@@ -25,6 +25,7 @@ enum XTimerBaseVtableEnum
 typedef struct XTimerBase
 {
 	XClass m_parent;//类
+	bool m_autoFree;//自动释放
 	bool m_isRun;//是否运行
 	size_t m_timeout;//首次超时时间
 	size_t m_interval;//定时间隔

@@ -11,10 +11,11 @@ typedef struct XModbusFunctionHandler XModbusFunctionHandler;
 typedef struct XModbusFrame XModbusFrame;
 typedef struct XVector XVector;
 typedef struct XListBase XListBase;
+typedef struct XTimerBase XTimerBase;
 #include"XCommunicatorBase.h"
 //使用默认的Modbus TCP端口（502）
 #define MB_TCP_PORT_USE_DEFAULT 0
-#define XMODBUSBASE_VTABLE_SIZE		(XCOMMUNICATORBASE_VTABLE_SIZE+10)       //XCommunicatorBase虚函数表大小
+#define XMODBUSBASE_VTABLE_SIZE		(XCOMMUNICATORBASE_VTABLE_SIZE+4)       //XCommunicatorBase虚函数表大小
 enum XModbusBaseVtableEnum
 {
     EXModbusBase_SendFrame = XCOMMUNICATORBASE_VTABLE_SIZE,
@@ -61,12 +62,15 @@ XVtable* XModbusBase_class_init();
 void XModbusBase_init(XModbusBase* modbus);
 void XModbusBase_setAddress(XModbusBase* modbus, uint8_t address);
 void XModbusBase_setMode(XModbusBase* modbus, XModbusMode mode);
+#define XModbusBase_connect_base                XCommunicatorBase_connect_base
+#define XModbusBase_disconnect_base             XCommunicatorBase_disconnect_base
+#define XModbusBase_isConnected_base            XCommunicatorBase_isConnected_base
 //当前是主站吗
 bool XModbusBase_isMaster(XModbusBase* modbus);
 //发送一帧数据
 XModbusErrorCode XModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame);
 //主站定期发送
-XModbusErrorCode XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFrame* frame, uint32_t time);
+XTimerBase* XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFrame* frame, uint32_t time);
 //设置功能码处理函数
 XModbusErrorCode XModbusBase_setFunctionHandler(XModbusBase* modbus, XModbusFunctionHandler* FunctionHandler);
 

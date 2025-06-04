@@ -58,6 +58,8 @@ bool VXCommunicatorBase_connect_base(XCommunicatorBase* comm)
 {
 	if(comm->m_io==NULL)
 		return false;
+	if (comm->m_io->m_mode != XIODeviceBase_NotOpen)
+		return true;
 	return XIODeviceBase_open_base(comm->m_io,XIODeviceBase_ReadWrite);
 }
 
@@ -65,7 +67,9 @@ bool VXCommunicatorBase_disconnect_base(XCommunicatorBase* comm)
 {
 	if (comm->m_io == NULL)
 		return false;
-	return XIODeviceBase_close_base(comm->m_io);
+	if (comm->m_io->m_mode != XIODeviceBase_NotOpen)
+		return XIODeviceBase_close_base(comm->m_io);
+	return true;
 }
 
 bool VXCommunicatorBase_isConnected_base(XCommunicatorBase* comm)
@@ -146,8 +150,8 @@ bool VXCommunicatorBase_sendAsync(XCommunicatorBase* comm, const void* data, siz
 
 bool VXCommunicatorBase_recvAsync(XCommunicatorBase* comm, size_t maxSize)
 {
-	if (comm->m_io == NULL)
-		return false;
+	/*if (comm->m_io == NULL)
+		return false;*/
 	if (maxSize > 0)
 	{
 		if (comm->m_recvAsyncBuffer == NULL)

@@ -390,6 +390,7 @@ XModbusErrorCode XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame)
 {
     if (modbus == NULL || frame == NULL)
         return MB_EINVAL;
+   // printf("fa\n");
     if (setSendFrame(modbus, frame))
     {
         if (!XModbusFrameQueue_push(modbus->sendQueue, frame))

@@ -6,6 +6,7 @@ extern "C" {
 #include <stdbool.h>
 #include "XModbusBase.h"
 #include "XTimerBase.h"
+#include "XSerialPortBase.h"
 typedef struct XModbusFrame XModbusFrame;
     /* ----------------------- 常量定义 -----------------------------------*/
 #define MB_SER_PDU_SIZE_MIN     4       // Modbus RTU帧最小长度（地址+功能码+数据+CRC=4字节）
@@ -28,6 +29,12 @@ typedef struct XModbusRTU
 }XModbusRTU;
 XVtable* XModbusRTU_class_init();
 void XModbusRTU_init(XModbusRTU* modbus);
+//创建串口
+XModbusRTU* XModbusRTU_newSerialPort(XSerialPortBase* serial);
+
+#define XModbusRTU_connect_base             XModbusBase_connect_base                
+#define XModbusRTU_disconnect_base          XModbusBase_disconnect_base             
+#define XModbusRTU_isConnected_base         XModbusBase_isConnected_base            
 #ifdef __cplusplus
 }
 #endif
