@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 #include<stdbool.h>
+#include<stdint.h>
 //比较大小函数指针-回调函数
 typedef  const bool(*XCompare)(const void* LPrevValue, const void* LNextValue);
 
@@ -22,7 +23,8 @@ typedef  const bool(*XEquality)(const void* Value, const void* CompareValue);
 
 //容器for_each(容器循环遍历)回调函数
 typedef void (*XFor_each)(void* LPVal,void* args);
-
+//hash函数
+typedef size_t(*XHash)(const void* key);
 
 //比较大小回调函数的标准准则
 bool XCompareRuleTwo_Standard(XCompare compare, const void* LPrevValue, const void* LNextValue);

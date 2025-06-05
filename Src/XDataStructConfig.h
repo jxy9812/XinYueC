@@ -12,6 +12,7 @@ extern "C" {
 
 #define XContainerObject_ON				1
 #define XMap_ON							1
+#define XHashMap_ON							1
 #define XString_ON						1
 #define	XPriorityQueue_ON				1
 #define	XQueue_ON						1

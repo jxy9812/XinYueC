@@ -41,16 +41,16 @@ void XListSLinked_init(XListSLinked* this_list, size_t typeSize);
 //链表指定节点前插入1个数据
 #define XListSLinked_insert_base					XListBase_insert_base
 // 链表中指向节点前插入另一个相同类型数组的数据，需要指出数组大小n
-#define  XListSLinked_insert_array_base				XListBase_insert_array_base
+#define XListSLinked_insert_array_base				XListBase_insert_array_base
 //删除函数
 //删除链表中第一个元素
-#define  XListSLinked_pop_front_base				XListBase_pop_front_base
+#define XListSLinked_pop_front_base					XListBase_pop_front_base
 //删除链表中最后一个元素
-#define  XListSLinked_pop_back_base					XListBase_pop_back_base
+#define XListSLinked_pop_back_base					XListBase_pop_back_base
 //删除指定节点
-#define  XListSLinked_erase_base					XListBase_erase_base
+#define XListSLinked_erase_base						XListBase_erase_base
 //删除指定元素
-#define  XListSLinked_remove_base					XListBase_remove_base
+#define XListSLinked_remove_base					XListBase_remove_base
 #define XListSLinked_Remove_Base					XListBase_Remove_Base
 //遍历函数
 //返回链表头

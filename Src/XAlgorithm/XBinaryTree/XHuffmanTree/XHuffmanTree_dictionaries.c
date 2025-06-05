@@ -40,7 +40,7 @@ static void writeDictionaryData(XPair** LPpair, XVector* gzipData)
 int XHfmTree_writeCompressDictionaries(XVector* gzipData, XMap* dictionaries)
 {
 #if XVector_ON
-	size_t count = XMap_size_base(dictionaries);
+	size_t count = XMap_getSize_base(dictionaries);
 	XVector_resize_base(gzipData, sizeof(size_t));
 	//写入数量
 	memcpy(XVector_begin(gzipData), &count,sizeof(size_t));//写入数据个数

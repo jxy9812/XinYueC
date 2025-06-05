@@ -9,7 +9,7 @@ extern "C" {
 #include"XMap_reverse_iterator.h"
 typedef struct XVector XVector;
 typedef struct XPair XPair;
-#define XMAP_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+5)       //XCircularQueue容器虚函数表大小
+#define XMAP_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+5)       //XMap容器虚函数表大小
 //XMap虚函数表枚举
 enum XMapEnum
 {
@@ -53,9 +53,9 @@ XPair* XMap_find_base(XMap* this_map, const void* key);
 //检测是否为空，空为真 O(1)
 #define XMap_isEmpty_base			XContainerObject_isEmpty_base
 //返回元素的个数 O(1)
-#define XMap_size_base				XContainerObject_getSize_base
+#define XMap_getSize_base				XContainerObject_getSize_base
 //返回当前向量所能容纳的最大元素个数
-#define XMap_capacity_base			XContainerObject_getCapacity_base
+#define XMap_getCapacity_base			XContainerObject_getCapacity_base
 //交换两个同类型向量的数据
 #define XMap_swap_base				XContainerObject_swap_base
 //返回元素类型字节大小
