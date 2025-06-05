@@ -52,7 +52,7 @@ void XPWMDeviceTest()
 	//XPWMDevice_PortFuncInit port = { 0 };
 	//port.parentPort = ioPort;
 	//port.pwmPort = pwmPort;
-	//XPWMDeviceBase* pwm = XPWMDeviceBase_new(&port);
+	//XPWMDeviceBase* pwm = XPWMDeviceBase_create(&port);
 	//XPWMDeviceBase_setFrequency_base(pwm,5);
 	//XPWMDeviceBase_setDutyCycle_base(pwm, 50);
 	//XIODeviceBase_open_base(pwm, XIODeviceBase_ReadWrite);

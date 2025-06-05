@@ -31,7 +31,7 @@ typedef struct XEventQueue
 	XEventQueueEmpty empty;
 	XEventQueueClear clear;
 }XEventQueue;
-XEventQueue* XEventQueue_new(XEventQueueInit init);
+XEventQueue* XEventQueue_create(XEventQueueInit init);
 //
 #if XEventQueueDefaultConfig
 bool XEventQueue_defaultConfigInit(XEventQueue* queue);

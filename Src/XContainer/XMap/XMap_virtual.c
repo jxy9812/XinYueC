@@ -51,7 +51,7 @@ void VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
 	XPair* pair = XMap_find_base(this_map, key);
 	if (pair == NULL)//当前没有这个键值对
 	{
-		XPair* LPpair = XPair_new(this_map->m_keyTypeSize, this_map->m_parent.m_typeSize);
+		XPair* LPpair = XPair_create(this_map->m_keyTypeSize, this_map->m_parent.m_typeSize);
 		XPair_insert(LPpair, key, LpValue);
 
 		//printf("创建的xpair key:%d LpValue:%s\n",XPair_First(LPpair,int),XPair_second(LPpair));
@@ -109,7 +109,7 @@ void* VXMap_value(XMap* this_map, const void* key)
 	XPair* pair = XMap_find_base(this_map, key);
 	if (pair == NULL)//当前没有这个键值对
 	{
-		pair = XPair_new(this_map->m_keyTypeSize, this_map->m_parent.m_typeSize);
+		pair = XPair_create(this_map->m_keyTypeSize, this_map->m_parent.m_typeSize);
 		XPair_insert(pair, key, NULL);
 		XRBTree_insert(&(this_map->m_parent.m_data), this_map->m_KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
 		++this_map->m_parent.m_capacity;

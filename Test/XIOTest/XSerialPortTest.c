@@ -40,7 +40,7 @@ static char* UTF8ToLocal(const char* utf8Str) {
 }
 void XSerialPortTest()
 {
-    XSerialPortBase* serial = XSerialPortWin32_new();
+    XSerialPortBase* serial = XSerialPortWin32_create();
     if (!XSerialPortBase_open_base(serial, XIODeviceBase_ReadWrite, 6, 115200, SP_PAR_NONE))
     {
         XSerialPortBase_free_base(serial);

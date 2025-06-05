@@ -95,7 +95,7 @@ XVtable* XTimerWin32ThreadpoolTimer_class_init()
 #endif
 	return XVTABLE_DEFAULT;
 }
-XTimerWin32ThreadpoolTimer* XTimerXTimerWin32ThreadpoolTimer_new()
+XTimerWin32ThreadpoolTimer* XTimerXTimerWin32ThreadpoolTimer_create()
 {
 	XTimerWin32ThreadpoolTimer* timer = XMemory_malloc(sizeof(XTimerWin32ThreadpoolTimer));
 	if (timer == NULL)

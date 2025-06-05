@@ -20,8 +20,8 @@ XVtable* XCircularQueue_class_init();
 //队列初始化函数
 void XCircularQueue_init(XCircularQueue* this_queue,size_t typeSize, size_t count);
 //队列创建函数
-#define XCircularQueue_New(Type,count) XCircularQueue_new(sizeof(Type),count)
-XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count);
+#define XCircularQueue_Create(Type,count) XCircularQueue_create(sizeof(Type),count)
+XCircularQueue* XCircularQueue_create(size_t typeSize, size_t count);
 //设置自动扩容
 void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue,bool autoExpansion);
 //api

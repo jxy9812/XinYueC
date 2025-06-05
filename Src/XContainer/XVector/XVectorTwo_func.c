@@ -3,12 +3,12 @@
 #include"XVector.h"
 #include"XPoint.h"
 #include<string.h>
-XVector* XVectorTwoMatrix_new(const size_t TypeSize, const size_t row, const size_t list, const void* initVal)
+XVector* XVectorTwoMatrix_create(const size_t TypeSize, const size_t row, const size_t list, const void* initVal)
 {
-	XVector* VTwo = XVector_new(sizeof(struct XVector*));//二维数组
+	XVector* VTwo = XVector_create(sizeof(struct XVector*));//二维数组
 	for (size_t i = 0; i < row; i++)
 	{
-		XVector* RowVector = XVector_new( TypeSize);//每一行的一维数组		
+		XVector* RowVector = XVector_create( TypeSize);//每一行的一维数组		
 		for (size_t j = 0; j < list; j++)
 		{
 			XVector_push_back_base(RowVector, initVal);
@@ -18,9 +18,9 @@ XVector* XVectorTwoMatrix_new(const size_t TypeSize, const size_t row, const siz
 	return VTwo;
 }
 
-XVector* XVectorTwo_new()
+XVector* XVectorTwo_create()
 {
-	struct XVector* VTwo = XVector_new( sizeof(struct XVector*));//二维数组
+	struct XVector* VTwo = XVector_create( sizeof(struct XVector*));//二维数组
 	return VTwo;
 }
 
@@ -30,11 +30,11 @@ XVector* XVectorTwo_copy(const XVector* this_vector)
 	if (row == 0)
 		return NULL;
 	size_t TypeSize = XVectorTwo_TypeSize(this_vector);
-	XVector* temp = XVector_new( sizeof(struct XVector*));//二维数组
+	XVector* temp = XVector_create( sizeof(struct XVector*));//二维数组
 	for (size_t i = 0; i < row; i++)
 	{
 		size_t List = XVectorTwo_List(this_vector,i);
-		XVector*LTemp= XVector_new( TypeSize);
+		XVector*LTemp= XVector_create( TypeSize);
 		for (size_t j = 0; j < List; j++) 
 		{
 			XVector_push_back_base(LTemp,XVectorTwo_at(this_vector, i, j));

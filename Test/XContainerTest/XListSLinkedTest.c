@@ -13,7 +13,7 @@ static void ListFor_each(void* LPVal, void* args)
 void XListSLinkedSortTest()
 {
 #if XList_ON
-	XListSLinked* li = XListSLinked_new(sizeof(int));
+	XListSLinked* li = XListSLinked_create(sizeof(int));
 	int size = 10;
 	srand((unsigned int)time(NULL));
 	//int* p1 = XMemory_malloc(sizeof(int) * size);
@@ -39,7 +39,7 @@ void XListSLinkedSortTest()
 void XListSLinkedIterator()
 {
 #if XList_ON
-	XListSLinked* li = XListSLinked_new(sizeof(int));
+	XListSLinked* li = XListSLinked_create(sizeof(int));
 	int arr[] = { 123,12,1,4,9 };
 	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
 	{
@@ -58,7 +58,7 @@ void XListSLinkedTest()
 {
 #if XList_ON
 	printf("XList 测试\n");
-	XListSLinked* list = XListSLinked_new(sizeof(int));
+	XListSLinked* list = XListSLinked_create(sizeof(int));
 	list->m_parent.m_equality = XEquality_int;
 	printf("%s\n", XContainerObject_isEmpty_base(list)?"empty":"");
 	printf("%d\n", XContainerObject_getSize_base(list));
@@ -100,7 +100,7 @@ void XListSLinkedTest()
 void XListSLinkedSwapTest()//交换函数测试
 {
 #if XList_ON
-	XListSLinked* li1 = XListSLinked_new(sizeof(int));
+	XListSLinked* li1 = XListSLinked_create(sizeof(int));
 	int num;
 
 	for (size_t i = 0; i < 10; i++)
@@ -111,7 +111,7 @@ void XListSLinkedSwapTest()//交换函数测试
 	printf("li1元素遍历\n");
 	XListSLinked_iterator_for_each(li1, ListFor_each, NULL); printf("\n");
 
-	XListSLinked* li2 = XListSLinked_new(sizeof(int));
+	XListSLinked* li2 = XListSLinked_create(sizeof(int));
 
 	for (size_t i = 0; i < 20; i++)
 	{

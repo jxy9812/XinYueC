@@ -17,7 +17,7 @@ typedef struct XModbusRegularlySendFrame
 	XModbusBase* modbus;//
 	XTimerBase* timer;
 }XModbusRegularlySendFrame;
-XModbusRegularlySendFrameLsit* XModbusRegularlySendFrameList_new();
+XModbusRegularlySendFrameLsit* XModbusRegularlySendFrameList_create();
 #ifdef __cplusplus
 }
 #endif

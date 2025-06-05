@@ -14,7 +14,7 @@ typedef struct XModbusRegisterHandler
 
 }XModbusRegisterHandler;
 //创建保持寄存器功能类 要创建几个保持寄存器
-XModbusRegisterHandler* XModbusRegisterHandler_new(uint16_t regCount);
+XModbusRegisterHandler* XModbusRegisterHandler_create(uint16_t regCount);
 void XModbusRegisterHandler_free(XModbusRegisterHandler* pRegFunc);
 //写入寄存器
 bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint16_t regAddress,uint16_t value);

@@ -18,8 +18,8 @@ XVtable* XPriorityQueue_class_init();
 //初始化 队列
 void XPriorityQueue_init(XPriorityQueue* this_queue, size_t typeSize, XCompare compare);
 //队列初始化函数
-XPriorityQueue* XPriorityQueue_new(size_t typeSize, XCompare compare);
-#define XPriorityQueue_New(Type,compare) XPriorityQueue_new(sizeof(Type),compare)
+XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare);
+#define XPriorityQueue_Create(Type,compare) XPriorityQueue_create(sizeof(Type),compare)
 //api
 #define XPriorityQueue_Push_Base				XQueueBase_Push_Base
 #define XPriorityQueue_push_base				XQueueBase_push_base

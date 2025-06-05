@@ -31,7 +31,7 @@ typedef struct XTimerGroupWheel
 	XVector* m_timeWheel;//多时间轮	/XVector<XTimeWheel>
 }XTimerGroupWheel;
 XVtable* XTimerGroupWheel_class_init();
-XTimerGroupWheel* XTimerGroupWheel_new(uint16_t precision);
+XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision);
 void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision);
 void XTimerGroupWheel_addTimeWheel_base(XTimerGroupWheel* group,size_t slotsCount);
 void XTimerGroupWheel_removeTimeWheel_base(XTimerGroupWheel* group);

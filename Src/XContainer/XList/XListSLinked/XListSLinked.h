@@ -27,8 +27,8 @@ typedef struct XListSLinked
 //初始化类
 XVtable* XListSLinked_class_init();
 //创建链表
-XListSLinked* XListSLinked_new(size_t typeSize);
-#define XListSLinked_New(Type) XListSLinked_new(sizeof(Type))
+XListSLinked* XListSLinked_create(size_t typeSize);
+#define XListSLinked_Create(Type) XListSLinked_create(sizeof(Type))
 //初始化 链表
 void XListSLinked_init(XListSLinked* this_list, size_t typeSize);
 //插入函数

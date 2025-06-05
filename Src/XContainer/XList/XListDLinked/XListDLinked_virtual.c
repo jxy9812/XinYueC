@@ -338,7 +338,7 @@ void VXList_sort(XListDLinked* this_list, XCompare compare)
 	XListBase* list = this_list;
 	XListDNode* ListHead = XListDLinked_begin(this_list);//链表第一个节点
 	XListDNode* ListTail = XListDLinked_rbegin(this_list);//链表最后一个节点
-	XStack* stack = XStack_New(XListDNode*);
+	XStack* stack = XStack_Create(XListDNode*);
 	XStack_push_base(stack, &ListTail);
 	XStack_push_base(stack, &ListHead);
 	while (!XStack_isEmpty_base(stack))

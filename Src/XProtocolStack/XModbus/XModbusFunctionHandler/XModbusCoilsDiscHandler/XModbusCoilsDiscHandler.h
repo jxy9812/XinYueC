@@ -13,7 +13,7 @@ typedef struct XModbusCoilsDiscHandler
 	uint16_t  count;//数量
 }XModbusCoilsDiscHandler;
 //创建线圈或离散功能类 要创建几个离散或线圈
-XModbusCoilsDiscHandler* XModbusCoilsDiscHandler_new(uint16_t count);
+XModbusCoilsDiscHandler* XModbusCoilsDiscHandler_create(uint16_t count);
 void XModbusCoilsDiscHandler_free(XModbusCoilsDiscHandler* pRegHandler);
 //写入线圈或离散
 bool XModbusCoilsDiscHandler_write(XModbusCoilsDiscHandler* pRegHandler, uint16_t address, uint16_t count, const char* writeArray);

@@ -56,13 +56,13 @@ void XModbusRTU_init(XModbusRTU* modbus)
     XModbusBase_init(modbus);
     XClassGetVtable(modbus) = XModbusRTU_class_init();
 
-    modbus->m_timerSendExpired = XTimerWheel_new();
+    modbus->m_timerSendExpired = XTimerWheel_create();
     XTimerWheel_setTimerCallback(modbus->m_timerSendExpired, VXModbusBase_TimerSendExpired);
     XTimerWheel_setUserData(modbus->m_timerSendExpired, modbus);
     modbus->m_timerSendExpired->m_autoFree = false;    //MB_MASTER_RECV_WAIT_TIME
     modbus->m_timerSendExpired->timerId = ((XCommunicatorBase*)modbus)->m_wheel;
 
-    modbus->m_timerT35Expired = XTimerWheel_new();
+    modbus->m_timerT35Expired = XTimerWheel_create();
     XTimerWheel_setTimerCallback(modbus->m_timerT35Expired, VXModbusBase_TimerT35Expired);
     XTimerWheel_setUserData(modbus->m_timerT35Expired, modbus);
     modbus->m_timerT35Expired->m_autoFree = false;
@@ -73,7 +73,7 @@ XModbusErrorCode VXModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame
 	if (modbus == NULL)
 		return MB_EINVAL;
 	XModbusErrorCode error = MB_ENOERR;
-	XVector* dataVector = XVector_New(uint8_t);
+	XVector* dataVector = XVector_Create(uint8_t);
 	if (dataVector == NULL)
 	{
 		error = MB_ENORES;

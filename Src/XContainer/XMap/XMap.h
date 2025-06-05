@@ -30,8 +30,8 @@ typedef struct XMap
 }XMap;
 XVtable* XMap_class_init();
 //开辟一个Map,初始化
-XMap* XMap_new(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess/*, XEquality ValEquality*/);
-#define XMap_New(keyType,valType,KeyEquality,KeyLess) XMap_new(sizeof(keyType),sizeof(valType),KeyEquality,KeyLess)
+XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess/*, XEquality ValEquality*/);
+#define XMap_Create(keyType,valType,KeyEquality,KeyLess) XMap_create(sizeof(keyType),sizeof(valType),KeyEquality,KeyLess)
 //初始化 XMap
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess);
 //Map插入数据

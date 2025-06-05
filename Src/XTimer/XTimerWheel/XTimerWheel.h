@@ -18,7 +18,7 @@ typedef struct XTimerWheel
 	XListSLinked* m_list;//加入的链表
 } XTimerWheel;
 XVtable* XTimerWheel_class_init();
-XTimerWheel* XTimerWheel_new();
+XTimerWheel* XTimerWheel_create();
 void XTimerWheel_init(XTimerWheel* timer);
 #define XTimerWheel_free_base XTimerBase_free_base
 #define XTimerWheel_start_base XTimerBase_start_base

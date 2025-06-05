@@ -39,7 +39,7 @@ static void XVtableEnlargeCapacity(XVtable* this_vtable)
 		}
 	}
 }
-XVtable* XVtable_new()
+XVtable* XVtable_create()
 {
 	XVtable* this_vtable = XMemory_malloc(sizeof(XVtable));
 	XVtable_init(this_vtable);

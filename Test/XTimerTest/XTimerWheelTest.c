@@ -8,7 +8,7 @@ static void Callback1(void* userData)
 	printf("定时器1触发:%d ms\n",XTimerBase_getCurrentTime()-current);
 	current = XTimerBase_getCurrentTime();
 
-	XTimerWheel* timer = XTimerWheel_new();
+	XTimerWheel* timer = XTimerWheel_create();
 	XTimerWheel_setUserData(timer, userData);
 	XTimerWheel_setTimeout_base(timer, 5);
 	XTimerWheel_setTimerCallback(timer, Callback1);
@@ -26,12 +26,12 @@ static void Callback2(void* userData)
 void XTimerWheelTest()
 {
 	printf("时间轮定时器测试\n");
-	XTimerGroupWheel* wheel=XTimerGroupWheel_new(1);
+	XTimerGroupWheel* wheel=XTimerGroupWheel_create(1);
 	XTimerGroupWheel_addTimeWheel_base(wheel,10);
 	XTimerGroupWheel_addTimeWheel_base(wheel,10);
 	XTimerGroupWheel_addTimeWheel_base(wheel, 10);
 	{
-		XTimerWheel* timer = XTimerWheel_new();
+		XTimerWheel* timer = XTimerWheel_create();
 		XTimerWheel_setUserData(timer, wheel);
 		//XTimerWheel_setInterval_base(timer,9);
 		XTimerWheel_setTimeout_base(timer, 5);
@@ -40,7 +40,7 @@ void XTimerWheelTest()
 		XTimerGroupBase_addTimer_base(wheel, timer);
 	}
 	{
-		XTimerWheel* timer = XTimerWheel_new();
+		XTimerWheel* timer = XTimerWheel_create();
 		XTimerBase* parentTimer = (XTimerBase*)timer;
 		XTimerWheel_setInterval_base(timer, 49);
 		XTimerWheel_setTimeout_base(timer, 15);

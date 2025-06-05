@@ -34,7 +34,7 @@ typedef struct XTimerBase
 	XTimerBaseCallback m_timerCallback; // 回调函数
 	size_t number;//超时次数
 }XTimerBase;
-XTimerBase* XTimerBase_new(XVtable*vtable);
+XTimerBase* XTimerBase_create(XVtable*vtable);
 void XTimerBase_init(XTimerBase* timer, XVtable* vtable);
 void XTimerBase_free_base(XTimerBase* timer);
 void XTimerBase_start_base(XTimerBase*timer);

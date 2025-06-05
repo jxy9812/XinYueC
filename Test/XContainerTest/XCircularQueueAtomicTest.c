@@ -43,7 +43,7 @@ void XCircularQueueAtomicTest()
 {
 #if XCircularQueueAtomic_ON
 	printf("循环队列 测试\n");
-	XCircularQueueAtomic* queue = XCircularQueueAtomic_New(int,1000);
+	XCircularQueueAtomic* queue = XCircularQueueAtomic_Create(int,1000);
 	
 	threadTest(queue);
 	int index = 0;

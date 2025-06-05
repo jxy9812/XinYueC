@@ -1,7 +1,7 @@
 ﻿#include "XMutex.h"
 #include "XMemory.h"
 #include <string.h>
-XMutex* XMutex_new(XMutex_Port* port)
+XMutex* XMutex_create(XMutex_Port* port)
 {
 	if (port == NULL)
 		return NULL;

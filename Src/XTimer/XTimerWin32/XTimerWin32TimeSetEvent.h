@@ -13,7 +13,7 @@ typedef struct XTimerWin32TimeSetEvent
 	
 }XTimerWin32TimeSetEvent;
 XVtable* XTimerWin32TimeSetEvent_class_init();
-XTimerWin32TimeSetEvent* XTimerWin32TimeSetEvent_new();
+XTimerWin32TimeSetEvent* XTimerWin32TimeSetEvent_create();
 void XTimerWin32TimeSetEvent_init(XTimerWin32TimeSetEvent* timer);
 #endif
 #ifdef __cplusplus

@@ -18,8 +18,8 @@ typedef struct XStringVector
 }XStringVector;
 //初始化类
 //void XStringVector_class_init();
-//开辟一个字符串数组,初始化  实际等同于XVector_New(XString*);
-XStringVector* XStringVector_new();
+//开辟一个字符串数组,初始化  实际等同于XVector_Create(XString*);
+XStringVector* XStringVector_create();
 //释放内存
 void XStringVector_free(XStringVector* this_stringVector);
 void XStringVector_push_front(XStringVector* this_stringVector,XString*string);

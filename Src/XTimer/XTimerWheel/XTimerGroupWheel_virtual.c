@@ -53,7 +53,7 @@ static void add_timer_to_wheel(XTimeWheel*wheel, XTimerWheel* timer, size_t tick
 	XListSLinked** pvList=XVector_at_base(wheel->m_slots, expire_slot);
 	if (*pvList == NULL)
 	{//当前不存在链表
-		*pvList = XListSLinked_New(XTimerWheel*);
+		*pvList = XListSLinked_Create(XTimerWheel*);
 		(*pvList)->m_parent.m_equality = XEquality_size_t;
 	}
 	//printf("插入的链表:%p\n", *pvList);
@@ -110,7 +110,7 @@ void VXTimerGroupWheel_addTimeWheel(XTimerGroupWheel* group, size_t slotsCount)
 		return;
 	XTimeWheel wheel = { 0 };
 	wheel.m_tick = 0;
-	wheel.m_slots = XVector_New(XListSLinked*);
+	wheel.m_slots = XVector_Create(XListSLinked*);
 	if (wheel.m_slots == NULL)
 		return;
 	XVector_resize_base(wheel.m_slots,slotsCount);

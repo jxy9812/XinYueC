@@ -41,8 +41,8 @@ typedef struct XVector
 }XVector;
 XVtable* XVector_class_init();
 //开辟一个动态数组,初始化 size_t
-XVector* XVector_new(size_t typeSize);
-#define XVector_New(Type) XVector_new(sizeof(Type))
+XVector* XVector_create(size_t typeSize);
+#define XVector_Create(Type) XVector_create(sizeof(Type))
 //初始化 XVector
 void XVector_init(XVector* this_vector, size_t typeSize);
 //设置XVector的大小，超过大小插入0值数据，小于删除数据

@@ -2,7 +2,7 @@
 #if XListDLinked_ON
 #include"stdlib.h"
 
-XListDLinked* XListDLinked_new(size_t typeSize)
+XListDLinked* XListDLinked_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;

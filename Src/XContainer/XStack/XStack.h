@@ -21,8 +21,8 @@ typedef struct XStack
 //初始化类
 XVtable* XStack_class_init();
 //创建一个stack容器并返回其指针
-XStack* XStack_new(size_t typeSize);
-#define XStack_New(Type) XStack_new(sizeof(Type))
+XStack* XStack_create(size_t typeSize);
+#define XStack_Create(Type) XStack_create(sizeof(Type))
 void XStack_init(XStack* this_stack, size_t typeSize);
 // 压栈，增加元素 O(1)
 #define XStack_push_base			XVector_push_back_base

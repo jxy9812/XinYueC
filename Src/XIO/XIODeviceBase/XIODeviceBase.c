@@ -1,7 +1,7 @@
 ﻿#include "XIODeviceBase.h"
 #include "XMemory.h"
 #include<string.h>
-XIODeviceBase* XIODeviceBase_new(XVtable* vtable)
+XIODeviceBase* XIODeviceBase_create(XVtable* vtable)
 {
 	/*if (port == NULL)
 		return NULL;*/

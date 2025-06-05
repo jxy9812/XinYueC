@@ -109,7 +109,7 @@ size_t VXCommunicatorBase_recv_base(XCommunicatorBase* comm, void* data, size_t 
 	XTimerWheel* timer = NULL;
 	if (comm->m_opt_timeout != 0)
 	{
-		timer = XTimerWheel_new();
+		timer = XTimerWheel_create();
 		XTimerWheel_setUserData(timer, &run);
 		XTimerWheel_setTimeout_base(timer, 5);
 		XTimerWheel_setTimerCallback(timer, recvOut);
@@ -155,7 +155,7 @@ bool VXCommunicatorBase_recvAsync(XCommunicatorBase* comm, size_t maxSize)
 	if (maxSize > 0)
 	{
 		if (comm->m_recvAsyncBuffer == NULL)
-			comm->m_recvAsyncBuffer = XVector_New(uint8_t);
+			comm->m_recvAsyncBuffer = XVector_Create(uint8_t);
 		XVector_resize_base(comm->m_recvAsyncBuffer, maxSize);
 		return true;
 	}

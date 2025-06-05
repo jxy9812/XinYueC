@@ -2,7 +2,7 @@
 #include"XMemory.h"
 #include<string.h>
 
-XTimerBase* XTimerBase_new(XVtable* vtable)
+XTimerBase* XTimerBase_create(XVtable* vtable)
 {
 	if (vtable == NULL)
 		return NULL;

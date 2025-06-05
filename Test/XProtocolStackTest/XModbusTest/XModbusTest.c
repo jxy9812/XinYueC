@@ -15,7 +15,7 @@ static void RtuDataFrame_0x06_reply(XModbus* modbus, XModbusFrame* frame)
 
 void XModbusTest()
 {
-    XSerialPortBase* serial = XSerialPortWin32_new();
+    XSerialPortBase* serial = XSerialPortWin32_create();
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
     XModbusRTU* modbus = XModbusRTU_newSerialPort(serial);
@@ -23,7 +23,7 @@ void XModbusTest()
     XModbusBase_setMode(modbus, MB_RTU_MASTER);
     //初始化Modbus
    // XModbus_init(modbus, &InitFunction, MB_RTU_MASTER, 0x02, 2, 38400, MB_PAR_NONE);
-    XModbusRegisterHandler* Register=XModbusRegisterHandler_new(16);
+    XModbusRegisterHandler* Register=XModbusRegisterHandler_create(16);
     //设置从站的功能码回调函数
     {
         XModbusFunctionHandler Handler = { MB_FUNC_READ_HOLDING_REGISTER,XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc,Register };

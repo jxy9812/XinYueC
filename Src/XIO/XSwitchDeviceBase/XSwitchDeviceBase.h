@@ -23,7 +23,7 @@ typedef struct XSwitchDeviceBase
 //初始化类
 XVtable* XSwitchDeviceBase_class_init();
 //开关设备
-XSwitchDeviceBase* XSwitchDeviceBase_new(XVtable* vtable);
+XSwitchDeviceBase* XSwitchDeviceBase_create(XVtable* vtable);
 //初始化
 void XSwitchDeviceBase_init(XSwitchDeviceBase* sw, XVtable* vtable);
 //设置状态改变回调函数

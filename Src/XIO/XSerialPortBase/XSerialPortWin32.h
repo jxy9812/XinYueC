@@ -21,7 +21,7 @@ typedef struct XSerialPortWin32
     OVERLAPPED m_ov;
 }XSerialPortWin32;//串口
 XVtable* XSerialPortWin32_class_init();
-XSerialPortWin32* XSerialPortWin32_new();
+XSerialPortWin32* XSerialPortWin32_create();
 void XSerialPortWin32_init(XSerialPortWin32* serial);
 
 

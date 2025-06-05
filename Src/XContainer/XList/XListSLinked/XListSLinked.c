@@ -1,6 +1,6 @@
 ﻿#include "XListSLinked.h"
 #if XListSLinked_ON
-XListSLinked* XListSLinked_new(size_t typeSize)
+XListSLinked* XListSLinked_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;

@@ -11,7 +11,7 @@ void XCircularQueue_init(XCircularQueue* this_queue, size_t typeSize, size_t cou
 	this_queue->m_tail = 0;
 	XClassGetVtable(this_queue) = XCircularQueue_class_init();
 }
-XCircularQueue* XCircularQueue_new(size_t typeSize, size_t count)
+XCircularQueue* XCircularQueue_create(size_t typeSize, size_t count)
 {
 	if (ISNULL(typeSize, "")|| ISNULL(count, ""))
 		return NULL;

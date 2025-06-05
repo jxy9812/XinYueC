@@ -112,7 +112,7 @@ static XModbusErrorCode XModbus_EV_FRAME_RECEIVED(XModbusBase* modbus)
 	 printf("数据:%s  大小:%d buff接收缓冲区大小:%d\n",XVector_begin(modbus->recvBuffer), XVector_getSize_base(modbus->recvBuffer), XVector_getCapacity_base(modbus->recvBuffer));*/
 
 	 // 调用对应模式的接收函数，获取帧数据（地址、缓冲区、长度）
-	XModbusFrame* recvFrame = XModbusFrame_new();
+	XModbusFrame* recvFrame = XModbusFrame_create();
 	if (recvFrame == NULL)
 		return MB_ENORES;
 	recvFrame->mode = modbus->mode;

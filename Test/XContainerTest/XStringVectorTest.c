@@ -12,7 +12,7 @@ static void XFor_each_XString(void* LPVal, void* args)
 void XStringVectorTest()
 {
 #if XVector_ON
-	XStringVector* stringList = XStringVector_new();
+	XStringVector* stringList = XStringVector_create();
 	XStringVector_push_back_c_str(stringList,"你好");
 	XStringVector_push_back_c_str(stringList, "非常好");
 	XStringVector_push_back_c_str(stringList, "世界");

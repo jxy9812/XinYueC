@@ -147,7 +147,7 @@ CJSON_PUBLIC(XString*) cJSON_GetStringValue_XString(const cJSON* const item)
         return NULL;
     }
 
-    return XString_new(item->valuestring);
+    return XString_create(item->valuestring);
 }
 #endif
 /* This is a safeguard to prevent copy-pasters from using incompatible C and header files */
@@ -1304,7 +1304,7 @@ fail:
 #if XString_ON
 static XString* print_XString(const cJSON * const item, cJSON_bool format/*, const internal_hooks * const hooks*/)
 {
-    XString* str = XString_new(NULL);
+    XString* str = XString_create(NULL);
     static const size_t default_buffer_size = 256;
     printbuffer buffer[1];
     unsigned char *printed = NULL;

@@ -2,7 +2,7 @@
 #include"XMemory.h"
 #include"XVector.h"
 #include<string.h>
-XTimerGroupWheel* XTimerGroupWheel_new(uint16_t precision)
+XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision)
 {
 	if (precision == 0)
 		return NULL;
@@ -22,7 +22,7 @@ void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision)
 	XTimerGroupBase_init(group,NULL,precision);
 	XClassGetVtable(group) = XTimerGroupWheel_class_init();
 	//初始化数据
-	group->m_timeWheel = XVector_New(XTimeWheel);
+	group->m_timeWheel = XVector_Create(XTimeWheel);
 	group->m_parent.m_current_tick = XTimerBase_getCurrentTime() / group->m_parent.m_precision;
 }
 

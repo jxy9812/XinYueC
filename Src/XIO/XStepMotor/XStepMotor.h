@@ -40,7 +40,7 @@ typedef struct XStepMotor
 	XSwitchDeviceBase* m_DIR;//方向引脚
 }XStepMotor;
 XVtable* XStepMotor_class_init();
-XStepMotor* XStepMotor_new(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
+XStepMotor* XStepMotor_create(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
 //初始化
 void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
 //打开设备

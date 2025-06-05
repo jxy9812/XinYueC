@@ -3,7 +3,7 @@
 #include<string.h>
 #define Parent(ptr) ((XIODeviceBase*)(ptr))
 #define Port(ptr)  ((XSwitchDevice_PortFunc*)(ptr->m_parent.m_port))
-XSwitchDeviceBase* XSwitchDeviceBase_new(XVtable* vtable)
+XSwitchDeviceBase* XSwitchDeviceBase_create(XVtable* vtable)
 {
 	XSwitchDeviceBase* sw = XMemory_malloc(sizeof(XSwitchDeviceBase));
 	//开始初始化

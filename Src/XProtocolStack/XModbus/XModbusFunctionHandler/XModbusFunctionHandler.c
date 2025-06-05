@@ -4,9 +4,9 @@ static const bool equality(const XModbusFunctionHandler* Value, const XModbusFun
 {
 	return Value->code == CompareValue->code;
 }
-XModbusFunctionHandlerList* XModbusFuncCodeList_new()
+XModbusFunctionHandlerList* XModbusFuncCodeList_create()
 {
-	XModbusFunctionHandlerList* list = XVector_New(XModbusFunctionHandler);
+	XModbusFunctionHandlerList* list = XVector_Create(XModbusFunctionHandler);
 	list->m_equality = equality;
 	return list;
 }

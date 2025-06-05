@@ -11,7 +11,7 @@ XHuffmanTree* XHfmTree_init()
 		return NULL;
 	}
 	tree->root = NULL;
-	tree->dictionaries = XMap_New(char, DictionaryValue,XEquality_char,XLess_char);
+	tree->dictionaries = XMap_Create(char, DictionaryValue,XEquality_char,XLess_char);
 	if (ISNULL(tree->dictionaries, "申请哈夫曼树字典失败"))
 	{
 		return NULL;

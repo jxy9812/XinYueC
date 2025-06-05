@@ -20,10 +20,10 @@ void XModbusBase_init(XModbusBase* modbus)
 	modbus->address = 1;
 	modbus->mode = MB_NOT_MODE;
 	modbus->state = STATE_NOT_INITIALIZED;
-	modbus->sendQueue = XModbusFrameQueue_new(MB_FRAME_SEND_QUEUE_COUNT);
-	modbus->recvFrameQueue = XModbusFrameQueue_new(MB_FRAME_RECV_QUEUE_COUNT);
-	modbus->eventQueue = XCircularQueueAtomic_New(XModbusEventType, MB_EVENT_QUEUE_COUNT);
-	modbus->funcCodeList = XModbusFuncCodeList_new();
+	modbus->sendQueue = XModbusFrameQueue_create(MB_FRAME_SEND_QUEUE_COUNT);
+	modbus->recvFrameQueue = XModbusFrameQueue_create(MB_FRAME_RECV_QUEUE_COUNT);
+	modbus->eventQueue = XCircularQueueAtomic_Create(XModbusEventType, MB_EVENT_QUEUE_COUNT);
+	modbus->funcCodeList = XModbusFuncCodeList_create();
 	
 
 }
@@ -49,13 +49,13 @@ void XModbusBase_setMode(XModbusBase* modbus, XModbusMode mode)
 	{
 		if (modbus->recvHandleMaster == NULL)
 		{
-			modbus->recvHandleMaster= XVector_New(XModbusFrameDataRecvHandle*);
+			modbus->recvHandleMaster= XVector_Create(XModbusFrameDataRecvHandle*);
 			modbus->recvHandleMaster->m_equality = recvHandleMaster_XEquality;
 		}
 		if(modbus->regularlySendMaster==NULL)
 		{
-			modbus->regularlySendMaster = XModbusRegularlySendFrameList_new();
-			//modbus->regularlySendMaster = XListSLinked_New(XModbusRegularlySendFrame);
+			modbus->regularlySendMaster = XModbusRegularlySendFrameList_create();
+			//modbus->regularlySendMaster = XListSLinked_Create(XModbusRegularlySendFrame);
 		}
 	}
 	else
@@ -120,7 +120,7 @@ XTimerBase* XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFra
 		return NULL;
 	if (setSendFrame(modbus, frame))
 	{
-		XTimerWheel* timer = XTimerWheel_new();
+		XTimerWheel* timer = XTimerWheel_create();
 		XModbusRegularlySendFrame regularly = { 0 };
 		regularly.frame = frame;
 		regularly.time = time;

@@ -5,9 +5,9 @@
 #include "XModbusRtu.h"
 #include "XCrc.h"
 #include <string.h>
-XModbusFrameQueue* XModbusFrameQueue_new(size_t count)
+XModbusFrameQueue* XModbusFrameQueue_create(size_t count)
 {
-	XModbusFrameQueue* queue = XCircularQueueAtomic_New(XModbusFrame*,count);
+	XModbusFrameQueue* queue = XCircularQueueAtomic_Create(XModbusFrame*,count);
 	return queue;
 }
 
@@ -65,13 +65,13 @@ void XModbusFrameQueue_free(XModbusFrameQueue* queue)
 	XCircularQueue_free_base(queue);
 }
 
-XModbusFrame* XModbusFrame_new()
+XModbusFrame* XModbusFrame_create()
 {
 	XModbusFrame* frame=XMemory_malloc(sizeof(XModbusFrame));
 	if (frame == NULL)
 		return NULL;
 	frame->mode = MB_NOT_MODE;
-	frame->frameData = XVector_New(uint8_t);
+	frame->frameData = XVector_Create(uint8_t);
 	frame->data = NULL;
 	frame->recvHandle = NULL;
 	return frame;
@@ -83,7 +83,7 @@ XModbusFrame* XModbusFrame_copy(XModbusFrame* frame)
 	XModbusFrame* newFrame = NULL;
 	if (frame->recvHandle == NULL)
 	{
-		newFrame = XModbusFrame_new();
+		newFrame = XModbusFrame_create();
 
 	}
 	else
@@ -98,7 +98,7 @@ XModbusFrame* XModbusFrame_copy(XModbusFrame* frame)
 }
 XModbusFrame* XModbusFrame_newRecvHandle()
 {
-	XModbusFrame* frame = XModbusFrame_new();
+	XModbusFrame* frame = XModbusFrame_create();
 	frame->recvHandle = XMemory_malloc(sizeof(XModbusFrameDataRecvHandle));
 	//printf("创建\n");
 	XModbusFrameDataRecvHandle_setZero(frame->recvHandle);

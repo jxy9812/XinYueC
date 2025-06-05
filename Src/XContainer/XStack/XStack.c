@@ -3,7 +3,7 @@
 #include<string.h>
 #include<stdlib.h>
 //初始化函数
-XStack* XStack_new(size_t typeSize)
+XStack* XStack_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;

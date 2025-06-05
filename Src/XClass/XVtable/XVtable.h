@@ -13,7 +13,7 @@ typedef struct
 	size_t capacity;//当前容器能容纳的最大元素数量
 	bool isStack;//定义在栈上
 }XVtable;
-XVtable* XVtable_new();
+XVtable* XVtable_create();
 //定义在栈上
 void XVtable_init_stack(XVtable* this_vtable, void** data, size_t size);
 #define XVtable_Init_Stack(this_vtable,vtable_data) XVtable_init_stack((this_vtable),vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]))

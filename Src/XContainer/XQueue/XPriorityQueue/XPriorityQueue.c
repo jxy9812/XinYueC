@@ -3,7 +3,7 @@
 #include"XAlgorithm.h"
 #include<string.h>
 #include<stdlib.h>
-XPriorityQueue* XPriorityQueue_new(size_t typeSize, XCompare compare)
+XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;

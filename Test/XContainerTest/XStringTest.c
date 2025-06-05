@@ -5,7 +5,7 @@ void XStringTest()
 {
 #if XString_ON
 	printf("XString 测试\n");
-	XString* str = XString_new("你好");
+	XString* str = XString_create("你好");
 	XString_append_base(str, "111");
 	XString_push_front_base(str, '#');
 	XString_push_back_base(str, '!');

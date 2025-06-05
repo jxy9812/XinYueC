@@ -1,7 +1,7 @@
 ﻿#include "XEventQueue.h"
 #include "XMemory.h"
 #include<assert.h>
-XEventQueue* XEventQueue_new(XEventQueueInit init)
+XEventQueue* XEventQueue_create(XEventQueueInit init)
 {
 	XEventQueue* queue = XMemory_malloc(sizeof(XEventQueue));
 	if (!init(queue))
@@ -67,7 +67,7 @@ bool XEventQueue_defaultConfigInit(XEventQueue* queue)
 {
 	if(queue==NULL)
 		return false;
-	queue->queue = XQueue_New(XEventQueueEventType);
+	queue->queue = XQueue_Create(XEventQueueEventType);
 	queue->free = XEventQueue_defaultConfigFree;
 	queue->pop = XEventQueue_defaultConfigPop;
 	queue->push = XEventQueue_defaultConfigPush;

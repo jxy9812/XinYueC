@@ -2,7 +2,7 @@
 #if XVector_ON
 #include<stdlib.h>
 
-XVector* XVector_new(size_t typeSize)
+XVector* XVector_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;

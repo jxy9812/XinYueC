@@ -19,8 +19,8 @@ XVtable* XCircularQueueAtomic_class_init();
 //队列初始化函数
 void XCircularQueueAtomic_init(XCircularQueueAtomic* this_queue,size_t typeSize, size_t count);
 //队列创建函数
-#define XCircularQueueAtomic_New(Type,count) XCircularQueueAtomic_new(sizeof(Type),count)
-XCircularQueueAtomic* XCircularQueueAtomic_new(size_t typeSize, size_t count);
+#define XCircularQueueAtomic_Create(Type,count) XCircularQueueAtomic_create(sizeof(Type),count)
+XCircularQueueAtomic* XCircularQueueAtomic_create(size_t typeSize, size_t count);
 //api
 #define XCircularQueueAtomic_Push_Base					XCircularQueue_Push_Base
 #define XCircularQueueAtomic_push_base					XCircularQueue_push_base

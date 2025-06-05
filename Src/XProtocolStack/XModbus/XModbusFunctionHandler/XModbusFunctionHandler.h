@@ -20,7 +20,7 @@ typedef struct XVector XVector;
 //功能码列表 XVector<XModbusFunctionHandler>
 typedef XVector XModbusFunctionHandlerList;
 //XVector<XModbusFunctionHandler>
-XModbusFunctionHandlerList* XModbusFuncCodeList_new();
+XModbusFunctionHandlerList* XModbusFuncCodeList_create();
 void XModbusFuncCodeList_push(XModbusFunctionHandlerList* list, XModbusFunctionHandler* data);
 //删除功能码
 void XModbusFuncCodeList_remove(XModbusFunctionHandlerList* list, uint8_t code);

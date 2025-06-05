@@ -47,7 +47,7 @@ typedef struct XIODeviceBase
 	XCircularQueue* m_readBuffer;//读取缓冲区
 }XIODeviceBase;
 XVtable* XIODeviceBase_class_init();
-XIODeviceBase* XIODeviceBase_new(XVtable* vtable);
+XIODeviceBase* XIODeviceBase_create(XVtable* vtable);
 void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable);
 #define XIODeviceBase_free_base	XClass_free_base
 void XIODeviceBase_setWriteBuffer_base(XIODeviceBase* io,size_t count);

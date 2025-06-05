@@ -8,7 +8,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
-XMap* XMap_new(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
+XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
 {
 	if (keyTypeSize == 0 || valTypeSize == 0)
 	{
@@ -137,7 +137,7 @@ void XMap_updataIterator(XMap* this_map)
 	}
 	//已中序遍历获取所有树的节点,临时
 	XVector* TreeNode = XBTree_TraversingToXVector(this_map->m_parent.m_data, XBTreeInorder);
-	this_map->m_itArray = XVector_new(sizeof(XPair*));
+	this_map->m_itArray = XVector_create(sizeof(XPair*));
 	//将数据XPair的节点指针插入数组
 	XVector_iterator_for_each(TreeNode, ForTreeNode, this_map->m_itArray);
 	XVector_free_base(TreeNode);

@@ -26,7 +26,7 @@ typedef struct XCustomQueue
 	void* m_queue;//队列本体
 	XCustomQueue_Port  m_port;//队列接口
 }XCustomQueue;
-XCustomQueue* XCustomQueue_new(XCustomQueue_Port* port, size_t typeSize, size_t count);
+XCustomQueue* XCustomQueue_create(XCustomQueue_Port* port, size_t typeSize, size_t count);
 void XCustomQueue_free(XCustomQueue* queue);
 #define XCustomQueue_Push(queue,type,value){type t=value;XCustomQueue_push(queue,&t);}
 bool XCustomQueue_push(XCustomQueue* queue, void* pvData);

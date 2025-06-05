@@ -140,7 +140,7 @@ static void RandomOpenCircuitStack(struct XStack* stack,struct XVector* maze, co
 static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y, bool oneExit)
 {
 #if XStack_ON
-	XStack* stack=XStack_New(int);
+	XStack* stack=XStack_Create(int);
 	XStack_push_base(stack, &y);
 	XStack_push_base(stack, &x);
 	while (!XStack_isEmpty_base(stack))
@@ -182,7 +182,7 @@ XVector* XMazeGenerated(const size_t r, const size_t l, const int x, const int y
 {
 #if XVectorTwo_ON
 	int sign = XMazeWall;
-	XVector* maze = XVectorTwoMatrix_new(sizeof(int),r, l,&sign);
+	XVector* maze = XVectorTwoMatrix_create(sizeof(int),r, l,&sign);
 	srand((unsigned)time(NULL));
 	XMazeOpenCircuitStack(maze,x, y,oneExit);
 	return maze;

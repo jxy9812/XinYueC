@@ -126,6 +126,7 @@ CJSON_PUBLIC(const char*) cJSON_Version(void);
 //CJSON_PUBLIC(void) cJSON_InitHooks(cJSON_Hooks* hooks);
 
 /* 内存管理：调用者始终有责任释放所有 cJSON_Parse 变体函数（使用 cJSON_Delete）和 cJSON_Print 函数（根据情况使用标准库的 free 函数、cJSON_Hooks.free_fn 或者 cJSON_free）返回的结果。例外情况是 cJSON_PrintPreallocated 函数，在该函数中，调用者要完全负责管理缓冲区。 */
+
 /* 提供一段 JSON 数据，此函数会返回一个可供你查询的 cJSON 对象。 */
 CJSON_PUBLIC(cJSON *) cJSON_Parse(const char *value);
 CJSON_PUBLIC(cJSON *) cJSON_ParseWithLength(const char *value, size_t buffer_length);

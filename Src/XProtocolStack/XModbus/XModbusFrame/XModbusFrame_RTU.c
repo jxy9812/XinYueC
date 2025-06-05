@@ -70,7 +70,7 @@ static void setRtuDataFrame_readReg_reply(XModbusFrame* frame, uint8_t address, 
 	XModbusFrame_set16Data(v);
 }
 
-XModbusFrameRTU* XModbusFrameRTU_new()
+XModbusFrameRTU* XModbusFrameRTU_create()
 {
 	XModbusFrameRTU* rtu = XMemory_malloc(sizeof(XModbusFrameRTU));
 	memset(rtu,0,sizeof(XModbusFrameRTU));
@@ -105,7 +105,7 @@ void XModbusFrameRTU_initDataFrame(XModbusFrame* frame, uint8_t address, uint8_t
 	if (frame == NULL)
 		return;
 	if (frame->frameData == NULL)
-		frame->frameData = XVector_New(uint8_t);
+		frame->frameData = XVector_Create(uint8_t);
 	XVector* v = frame->frameData;
 	//主机地址(1)+功能码(1)+数据(dataSIze)+crc16(2)
 	XVector_resize_base(v, MB_SER_PDU_PDU_OFF + 1 + dataSize + MB_SER_PDU_SIZE_CRC);
@@ -242,7 +242,7 @@ static void parseFrameData(XModbusFrame* frame, XVector* data)
 	if (frame == NULL || data == NULL)
 		return;
 	if (frame->frameData == NULL)
-		frame->frameData = XVector_New(uint8_t);
+		frame->frameData = XVector_Create(uint8_t);
 	if (frame->frameData == NULL)
 		return;
 	//开始解析RTU数据
@@ -253,7 +253,7 @@ static void parseFrameData(XModbusFrame* frame, XVector* data)
 		//printf("校验通过\n");
 		XVector_copy_base(frame->frameData, data);
 		if (frame->data == NULL)
-			frame->data = XModbusFrameRTU_new();
+			frame->data = XModbusFrameRTU_create();
 		XModbusFrameRTU* rtu = (XModbusFrameRTU*)frame->data;
 		rtu->address = XModbusFrameRTU_parseAddress(frame);
 		rtu->funcCode = XModbusFrameRTU_parseFuncCode(frame);
@@ -279,7 +279,7 @@ static void XModbusFrameRTU_parse0x01_reply(XModbusFrameRTU* rtu, XVector* frame
 	if (len)
 	{
 		if (data == NULL)
-			rtu->data = XVector_New(uint8_t);
+			rtu->data = XVector_Create(uint8_t);
 		data = rtu->data;
 		if (data == NULL)
 			assert(data);//新建数组失败了
@@ -338,7 +338,7 @@ static void XModbusFrameRTU_parse0x05_reply(XModbusFrameRTU* rtu, XVector* frame
 		return;
 	rtu->coilsAddress = SwapEndian16(XVector_At_Base(frameData, 2, uint16_t), 1);
 	if (rtu->data == NULL)
-		rtu->data = XVector_New(uint8_t);
+		rtu->data = XVector_Create(uint8_t);
 	XVector* data = rtu->data;
 	if (data == NULL)
 		assert(data);//新建数组失败了
@@ -376,7 +376,7 @@ static void XModbusFrameRTU_parse0x10_request(XModbusFrameRTU* rtu, XVector* fra
 	if ((len > 0) && (((rtu->regCount) * 2) == len))
 	{
 		if (rtu->data == NULL)
-			rtu->data = XVector_New(uint8_t);
+			rtu->data = XVector_Create(uint8_t);
 		XVector* data = rtu->data;
 		if (data == NULL)
 			assert(data);//新建数组失败了
@@ -484,7 +484,7 @@ XString* XModbusFrameRTU_to16HexString(XModbusFrame* frame)
 	if (frame && !XVector_isEmpty_base(frame->frameData))
 	{
 		XVector* vector = frame->frameData;
-		XString* str = XString_new(NULL);
+		XString* str = XString_create(NULL);
 		char buff[10];
 		for (XVector_iterator* it = XVector_begin(vector); it != XVector_end(vector); it = XVector_iterator_add(vector, it))
 		{

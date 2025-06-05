@@ -2,7 +2,7 @@
 #if XQueue_ON
 #include<stdlib.h>
 
-XQueue* XQueue_new(size_t typeSize)
+XQueue* XQueue_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;

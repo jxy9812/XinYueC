@@ -31,7 +31,7 @@ typedef struct XPWMDeviceBase
 //初始化类
 XVtable* XPWMDeviceBase_class_init();
 //pwm设备
-XPWMDeviceBase* XPWMDeviceBase_new(XVtable* vtable);
+XPWMDeviceBase* XPWMDeviceBase_create(XVtable* vtable);
 void XPWMDeviceBase_init(XPWMDeviceBase* pwm, XVtable* vtable);
 //设置运行状态改变回调函数
 void XPWMDeviceBase_setRunChangeCallback(XPWMDeviceBase* sw, void (*callback)(XPWMDeviceBase* pwm));

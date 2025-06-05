@@ -10,7 +10,7 @@ void queueTest()
 {
 #if	XQueue_ON
 	printf("XQueue 测试\n");
-	XQueue* queue = XQueue_New(int);
+	XQueue* queue = XQueue_Create(int);
 	int array[] = { 0,1,2,3,4,5,6,7,8,9 };
 	for (size_t i = 0; i < sizeof(array)/sizeof(array[0]); i++)
 	{
@@ -36,9 +36,9 @@ void XPriority_QueueTest()
 {
 #if	XPriorityQueue_ON
 	printf("XPriority_QueueTest 测试\n");
-	//XPriorityQueue* queue=XPriorityQueue_new(sizeof(int),XLess_int);//小堆，先出小的
-	XPriorityQueue* queue = XPriorityQueue_new(sizeof(int), XGreater_int);//大堆，先出大的
-	XVector* v = XVector_New(int);
+	//XPriorityQueue* queue=XPriorityQueue_create(sizeof(int),XLess_int);//小堆，先出小的
+	XPriorityQueue* queue = XPriorityQueue_create(sizeof(int), XGreater_int);//大堆，先出大的
+	XVector* v = XVector_Create(int);
 	for (size_t i = 0; i < 10; i++)
 	{
 		XVector_push_back_base(v, &i);

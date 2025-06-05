@@ -20,7 +20,7 @@ void XVectorTest()
 {
 #if XVector_ON
 	printf("XVector 测试\n");
-	XVector* v = XVector_New(int);
+	XVector* v = XVector_Create(int);
 	v->m_equality = XEquality_int;
 	//XVector_resize_base(v,11);
 	int arr[]={100,123,456,4,8496,3,321,23,3,132,0};

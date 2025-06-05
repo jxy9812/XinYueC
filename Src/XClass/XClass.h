@@ -32,7 +32,7 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 	 if (Vtable)return Vtable;
 //虚函数表在堆上初始化
 #define XVTABLE_HEAP_INIT(Vtable)\
-	Vtable = XVtable_new();
+	Vtable = XVtable_create();
 //虚函数表在栈上初始化
 #define XVTABLE_STACK_INIT(Vtable,Size)\
 {\

@@ -68,7 +68,7 @@ XVtable* XTimerWin32TimeSetEvent_class_init()
 #endif
 	return XVTABLE_DEFAULT;
 }
-XTimerWin32TimeSetEvent* XTimerWin32TimeSetEvent_new()
+XTimerWin32TimeSetEvent* XTimerWin32TimeSetEvent_create()
 {
 	XTimerWin32TimeSetEvent* timer = XMemory_malloc(sizeof(XTimerWin32TimeSetEvent));
 	if (timer == NULL)

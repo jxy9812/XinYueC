@@ -10,7 +10,7 @@ void XCircularQueueAtomic_init(XCircularQueueAtomic* this_queue, size_t typeSize
 	XAtomic_init(this_queue->m_tail, 0);
 	XClassGetVtable(this_queue) = XCircularQueueAtomic_class_init();
 }
-XCircularQueueAtomic* XCircularQueueAtomic_new(size_t typeSize, size_t count)
+XCircularQueueAtomic* XCircularQueueAtomic_create(size_t typeSize, size_t count)
 {
 	if (ISNULL(typeSize, "")|| ISNULL(count, ""))
 		return NULL;

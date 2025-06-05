@@ -210,7 +210,7 @@ void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count)
 	if (count != 0)
 	{
 		if (io->m_writeBuffer == NULL)
-			io->m_writeBuffer = XCircularQueueAtomic_New(char, count);
+			io->m_writeBuffer = XCircularQueueAtomic_Create(char, count);
 		assert(io->m_writeBuffer);
 	}
 	else if (io->m_writeBuffer != NULL)
@@ -225,7 +225,7 @@ void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count)
 	if (count != 0)
 	{
 		if (io->m_readBuffer == NULL)
-			io->m_readBuffer = XCircularQueueAtomic_New(char, count);
+			io->m_readBuffer = XCircularQueueAtomic_Create(char, count);
 		assert(io->m_readBuffer);
 	}
 	else if (io->m_readBuffer != NULL)

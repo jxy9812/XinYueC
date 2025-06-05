@@ -1,7 +1,7 @@
 ﻿#include"XTimerWheel.h"
 #include"XMemory.h"
 #include<string.h>
-XTimerWheel* XTimerWheel_new()
+XTimerWheel* XTimerWheel_create()
 {
 	XTimerWheel* timer = XMemory_malloc(sizeof(XTimerWheel));
 	if (timer == NULL)

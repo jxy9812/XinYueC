@@ -30,18 +30,18 @@ XModbusErrorCode XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMo
 	if (modbus == NULL|| func==NULL)
 		return MB_EINVAL;
     XModbusErrorCode error= MB_ENOERR;
-	modbus->sendQueue= XModbusFrameQueue_new(MB_FRAME_SEND_QUEUE_COUNT);
-    modbus->recvFrameQueue=XModbusFrameQueue_new(MB_FRAME_RECV_QUEUE_COUNT);
+	modbus->sendQueue= XModbusFrameQueue_create(MB_FRAME_SEND_QUEUE_COUNT);
+    modbus->recvFrameQueue=XModbusFrameQueue_create(MB_FRAME_RECV_QUEUE_COUNT);
     if(func->EventQueuePort.create_funcPointer)
-        modbus->eventQueue = XCustomQueue_new(&(func->EventQueuePort),sizeof(XModbusEventType), MB_EVENT_QUEUE_COUNT);
+        modbus->eventQueue = XCustomQueue_create(&(func->EventQueuePort),sizeof(XModbusEventType), MB_EVENT_QUEUE_COUNT);
     else
 	    modbus->eventQueue = XCustomQueue_new_XCircularQueue(sizeof(XModbusEventType), MB_EVENT_QUEUE_COUNT);
-    modbus->funcCodeList = XModbusFuncCodeList_new();
+    modbus->funcCodeList = XModbusFuncCodeList_create();
 	modbus->mode = mode;
     //assert(func->IO_Port.readData_funcPointer);
 
     //assert(func->IO_Port.writeData_funcPointer);
-    modbus->recvBuffer = XVector_new(sizeof(char));
+    modbus->recvBuffer = XVector_create(sizeof(char));
     XVector_resize_base(modbus->recvBuffer ,MB_RECV_BUFFER_SIZE);
  
     modbus->recvHandleMaster = NULL;
@@ -51,9 +51,9 @@ XModbusErrorCode XModbus_init(XModbus* modbus, XModbus_PortFunc* func, XModbusMo
     // 根据选择的模式初始化对应的函数指针和底层模块
     if (XModbus_isMaster(modbus))
     {//主站下初始化资源
-        modbus->recvHandleMaster = XVector_New(XModbusFrameDataRecvHandle*);
+        modbus->recvHandleMaster = XVector_Create(XModbusFrameDataRecvHandle*);
         modbus->recvHandleMaster->m_equality = recvHandleMaster_XEquality;
-        modbus->regularlySendMaster = XModbusRegularlySendFrameList_new();
+        modbus->regularlySendMaster = XModbusRegularlySendFrameList_create();
     }
     else
     {//从站初始化资源
@@ -165,7 +165,7 @@ static XModbusErrorCode XModbus_EV_FRAME_RECEIVED(XModbus* modbus)
     printf("数据:%s  大小:%d buff接收缓冲区大小:%d\n",XVector_begin(modbus->recvBuffer), XVector_getSize_base(modbus->recvBuffer), XVector_getCapacity_base(modbus->recvBuffer));*/
     
     // 调用对应模式的接收函数，获取帧数据（地址、缓冲区、长度）
-    XModbusFrame* recvFrame = XModbusFrame_new();
+    XModbusFrame* recvFrame = XModbusFrame_create();
     if (recvFrame == NULL)
         return MB_ENORES;
     recvFrame->mode = modbus->mode;

@@ -16,7 +16,7 @@ void XStringVector_class_init()
 	void* table[] = {
 	};
 #if !VTABLE_ISSTACK
-	XStringVectorVtable = XVtable_new();
+	XStringVectorVtable = XVtable_create();
 #else
 	XStringVectorVtable = &vtable;
 	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));

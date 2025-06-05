@@ -55,10 +55,10 @@ static void Print(const struct XVector* maze, const char* Wall, const char* Rout
 XVector* XMaze_init(const size_t r, const size_t l)
 {
 #if XVector_ON
-	struct XVector* maze = XVector_new( sizeof(struct XVector*));
+	struct XVector* maze = XVector_create( sizeof(struct XVector*));
 	for (size_t i = 0; i < r; i++)
 	{
-		struct XVector* Lmaze = XVector_new( sizeof(int));
+		struct XVector* Lmaze = XVector_create( sizeof(int));
 		for (size_t j = 0; j < l; j++)
 		{
 			int Sign = XMazeWall;

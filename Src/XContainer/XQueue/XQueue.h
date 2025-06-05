@@ -22,8 +22,8 @@ typedef struct XQueue
 //初始化类
 XVtable* XQueue_class_init();
 //queue容器初始化函数
-XQueue* XQueue_new(size_t typeSize);
-#define XQueue_New(Type) XQueue_new(sizeof(Type))
+XQueue* XQueue_create(size_t typeSize);
+#define XQueue_Create(Type) XQueue_create(sizeof(Type))
 void XQueue_init(XQueue* this_queue, size_t typeSize);
 //插入到队列的队尾
 void XQueue_push_base(XQueue* this_queue, void* LpValue);

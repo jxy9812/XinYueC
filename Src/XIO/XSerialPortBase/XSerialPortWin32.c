@@ -39,7 +39,7 @@ XVtable* XSerialPortWin32_class_init()
 #endif
     return XVTABLE_DEFAULT;
 }
-XSerialPortWin32* XSerialPortWin32_new()
+XSerialPortWin32* XSerialPortWin32_create()
 {
     XSerialPortWin32* serial = XMemory_malloc(sizeof(XSerialPortWin32));
     if (serial == NULL)

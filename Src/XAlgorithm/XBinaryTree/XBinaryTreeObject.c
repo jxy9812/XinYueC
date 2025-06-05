@@ -8,8 +8,8 @@
 static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_root)
 {
 #if XStack_ON
-	XVector* vector = XVector_new(sizeof(struct XBTreeNode*));
-	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
+	XVector* vector = XVector_create(sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_create(sizeof(struct XBTreeNode*));
 	XStack_push_base(stack, &this_root);
 	struct XBTreeNode* currentNode = NULL;//当前节点指针
 	while (!XStack_isEmpty_base(stack))
@@ -35,8 +35,8 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_r
 static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_root)
 {
 #if XStack_ON
-	XVector* vector = XVector_new(sizeof(struct XBTreeNode*));
-	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
+	XVector* vector = XVector_create(sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_create(sizeof(struct XBTreeNode*));
 	struct XBTreeNode* currentNode = this_root;//当前节点指针
 	while (!XStack_isEmpty_base(stack)|| currentNode!=NULL)
 	{
@@ -64,9 +64,9 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_ro
 static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_root)
 {
 #if XStack_ON
-	XVector* vector = XVector_new( sizeof(struct XBTreeNode*));
-	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
-	XStack* stackTraversing = XStack_new(sizeof(struct XBTreeNode*));
+	XVector* vector = XVector_create( sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_create(sizeof(struct XBTreeNode*));
+	XStack* stackTraversing = XStack_create(sizeof(struct XBTreeNode*));
 	XStack_push_base(stack, &this_root);
 	struct XBTreeNode* currentNode = NULL;//当前节点指针
 	while (!XStack_isEmpty_base(stack))
@@ -113,7 +113,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 	//	return NULL;
 	//}
 	//申请节点数组
-	nodes->nodes = XVector_new( sizeof(XBTreeNode*));
+	nodes->nodes = XVector_create( sizeof(XBTreeNode*));
 	if (ISNULL(nodes->nodes, "节点数组申请内存失败"))
 	{
 		XMemory_free(nodes);
@@ -122,7 +122,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 	XVector_resize_base(nodes->nodes, nodeCount);
 	XContainerSize(nodes->nodes) = nodeCount;
 	//申请数据数组
-	nodes->values = XVector_new(TypeSize);
+	nodes->values = XVector_create(TypeSize);
 	if (ISNULL(nodes->values, "数据数组申请内存失败"))
 	{
 		XVector_free_base(nodes->values);
@@ -254,7 +254,7 @@ const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root)
 	if (ISNULL(this_root, ""))
 		return 0;
 	size_t sum = 0;//一共释放了几个节点
-	XStack* stack = XStack_new(sizeof(struct XBTreeNode*));
+	XStack* stack = XStack_create(sizeof(struct XBTreeNode*));
 	XStack_push_base(stack,&this_root);
 	XBTreeNode* currentNode = NULL;//当前节点指针
 	while (!XStack_isEmpty_base(stack))

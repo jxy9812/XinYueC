@@ -33,7 +33,7 @@ typedef struct XModbusFrameRTU
     XModbusException exception;//错误码
     };
 }XModbusFrameRTU;
-XModbusFrameRTU* XModbusFrameRTU_new();
+XModbusFrameRTU* XModbusFrameRTU_create();
 void XModbusFrameRTU_free(XModbusFrameRTU* data);
 /* -------------------------------------- 线圈与离散输入-------------------------------------*/
 #define XMODBUS_COILS_STATE_ON        0xFF00//线圈打开状态

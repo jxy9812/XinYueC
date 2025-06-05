@@ -1,7 +1,7 @@
 ﻿#include "XSerialPortBase.h"
 #include "XMemory.h"
 #include <string.h>
-XSerialPortBase* XSerialPortBase_new(XVtable* vtable)
+XSerialPortBase* XSerialPortBase_create(XVtable* vtable)
 {
 	XSerialPortBase* serial = XMemory_malloc(sizeof(XSerialPortBase));
 	if (serial == NULL)

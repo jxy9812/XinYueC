@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 
-XStepMotor* XStepMotor_new(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL)
+XStepMotor* XStepMotor_create(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL)
 {
 	if (ENA == NULL|| DIR==NULL|| PUL==NULL)
 		return NULL;

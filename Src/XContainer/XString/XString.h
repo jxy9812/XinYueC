@@ -45,7 +45,7 @@ typedef struct XString
 //初始化类
 XVtable* XString_class_init();
 //初始化XString;
- XString* XString_new(const char* string);
+ XString* XString_create(const char* string);
  //初始化 XVector
 void XString_init(XString* this_string);
 // 赋值

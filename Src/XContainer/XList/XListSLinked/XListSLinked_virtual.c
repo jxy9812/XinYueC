@@ -447,7 +447,7 @@ void VXList_sort(XListSLinked* this_list, XCompare compare)
 	XListSNode* tail = findTail(head);
 
 	// 使用现有的XStack
-	XStack* stack = XStack_New(XListSNode*);
+	XStack* stack = XStack_Create(XListSNode*);
 	if (stack == NULL) 
 		return;
 

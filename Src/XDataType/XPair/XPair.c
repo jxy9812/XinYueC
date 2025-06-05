@@ -2,7 +2,7 @@
 #include"XContainerObject.h"
 #include<stdlib.h>
 #include<string.h>
-XPair* XPair_new(const size_t firstTypeSize, const size_t secondTypeSize)
+XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize)
 {
 	if (firstTypeSize == 0 || secondTypeSize == 0)
 	{

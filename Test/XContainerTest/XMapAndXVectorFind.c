@@ -22,7 +22,7 @@ void XMapAndXVectorFindTest()
 {
 #if XMap_ON&&XVector_ON
 	//创建乱序的数组
-	XVector* VArray = XVector_new(sizeof(size_t));
+	XVector* VArray = XVector_create(sizeof(size_t));
 	VArray->m_equality = XEquality_size_t;
 	int count = 1000000;//测试数据量
 	for (size_t i = 0; i < count; i++)
@@ -38,7 +38,7 @@ void XMapAndXVectorFindTest()
 	XVector_sort_base(VArray,XLess_int);
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
 
-	XMap* map = XMap_new(sizeof(size_t), sizeof(size_t),XEquality_int,XLess_int);
+	XMap* map = XMap_create(sizeof(size_t), sizeof(size_t),XEquality_int,XLess_int);
 	//map插入Vector的数据
 	XVector_iterator_for_each(VArray, insertMap, map);
 

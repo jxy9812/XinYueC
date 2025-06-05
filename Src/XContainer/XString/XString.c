@@ -3,7 +3,7 @@
 #include<stdlib.h>
 #include<string.h>
 #include"XEquality.h"
-XString* XString_new(const char* string)
+XString* XString_create(const char* string)
 {
 	XString* this_string = XMemory_malloc(sizeof(XString));
 	XString_init(this_string);

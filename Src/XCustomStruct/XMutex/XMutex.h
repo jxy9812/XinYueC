@@ -22,7 +22,7 @@ typedef struct XMutex
 	void* m_mutex;//
 	XMutex_Port m_port;
 }XMutex;
-XMutex* XMutex_new(XMutex_Port* port);
+XMutex* XMutex_create(XMutex_Port* port);
 void XMutex_free(XMutex* mutex);
 bool XMutex_lock(XMutex* mutex);
 bool XMutex_unlock(XMutex* mutex);

@@ -1,14 +1,14 @@
 ﻿#include "XModbusCoilsDiscHandler.h"
 #include "XMemory.h"
 #include"XVector.h"
-XModbusCoilsDiscHandler* XModbusCoilsDiscHandler_new(uint16_t count)
+XModbusCoilsDiscHandler* XModbusCoilsDiscHandler_create(uint16_t count)
 {
     if (count == 0)
         return NULL;
     uint16_t size = (count % 8 == 0) ? (count / 8) : ((count / 8) + 1);
     XModbusCoilsDiscHandler* ptr = XMemory_malloc(sizeof(XModbusCoilsDiscHandler));
     ptr->count = count;
-    ptr->parent.data = XVector_New(char);
+    ptr->parent.data = XVector_Create(char);
     XVector_resize_base(ptr->parent.data, size);
     return ptr;
 }

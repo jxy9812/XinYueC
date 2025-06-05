@@ -14,7 +14,7 @@ static size_t readDictionaries(XHuffmanTree* tree, const char* data)
 		DictionaryValue* value=&XMap_Value_Base(tree->dictionaries, DictionData->ch, DictionaryValue);
 		size_t codeSize = DictionData->codeSize;//编码大小字节
 		value->count = DictionData->count;
-		XVector* code= XVector_New(char);
+		XVector* code= XVector_Create(char);
 		value->code = code;
 		XVector_resize_base(code,codeSize);
 		offset += sizeof(DictionaryData);//指向写入的哈夫曼编码
@@ -51,7 +51,7 @@ static XVector*  writeUnZipData(XHuffmanTree* tree, const char* data,const size_
 	size_t countMax = 0;//字符最大出现次数
 	size_t count = 0;//字符出现次数
 	XMap_iterator_for_each(tree->dictionaries, addCount, &countMax);//累加计算字符的最大次数
-	XVector* unzipData = XVector_New(char);//返回的压缩后的数据
+	XVector* unzipData = XVector_Create(char);//返回的压缩后的数据
 	XHfmNode* root = tree->root;//根节点
 	XHfmNode* currentNode = root;//当前节点
 	for (size_t i = 0; i < size; i++)//遍历每一个字节

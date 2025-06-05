@@ -1,7 +1,7 @@
 ﻿#include"XPWMDeviceBase.h"
 #include"XMemory.h"
 #include<string.h>
-XPWMDeviceBase* XPWMDeviceBase_new(XVtable* vtable)
+XPWMDeviceBase* XPWMDeviceBase_create(XVtable* vtable)
 {
 	/*if (port == NULL)
 		return NULL;*/

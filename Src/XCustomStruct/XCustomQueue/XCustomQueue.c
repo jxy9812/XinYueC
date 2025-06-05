@@ -1,7 +1,7 @@
 ﻿#include "XCustomQueue.h"
 #include "XMemory.h"
 #include <string.h>
-XCustomQueue* XCustomQueue_new(XCustomQueue_Port* port, size_t typeSize, size_t count)
+XCustomQueue* XCustomQueue_create(XCustomQueue_Port* port, size_t typeSize, size_t count)
 {
 	if (port == NULL)
 		return NULL;
@@ -78,7 +78,7 @@ void XCustomQueue_clear(XCustomQueue* queue)
 #include"XCircularQueueAtomic.h"
 static bool XCircularQueue_createFunc(XCustomQueue* queue, size_t typeSize, size_t count)
 {
-	queue->m_queue = XCircularQueueAtomic_new(typeSize,count);
+	queue->m_queue = XCircularQueueAtomic_create(typeSize,count);
 }
 static void XCircularQueue_freeFunc(XCustomQueue* queue)
 { 
@@ -125,5 +125,5 @@ XCustomQueue* XCustomQueue_new_XCircularQueue(size_t typeSize, size_t count)
 	port.isEmpty_funcPointer = XCircularQueue_isEmptyFunc;
 	port.size_funcPointer = XCircularQueue_sizeFunc;
 	port.clear_funcPointer = XCircularQueue_clearFunc;
-	return XCustomQueue_new(&port, typeSize,count);
+	return XCustomQueue_create(&port, typeSize,count);
 }
