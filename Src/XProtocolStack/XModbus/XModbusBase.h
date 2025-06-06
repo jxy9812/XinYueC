@@ -33,7 +33,9 @@ typedef struct XModbusBase
     XQueueBase* m_recvFrameQueue;//接收帧队列(XCircularQueue<XModbusFrame*>) 后面处理执行
     XQueueBase* m_eventQueue;//事件队列
     XVector* m_funcCodeList;//功能码列表
+#if !MB_IS_COMP_SEND_FRAME
     int m_pendingCount;//待发送的数据量
+#endif
     XListBase* m_regularlySendMaster;//主站定期发送帧数据
 //    /* ----------------------- 以下主站等待处理发送返回请求-------------------------------------*/
     XVector* m_recvHandleMaster;//XVector<XModbusFrameDataRecvHandle>
@@ -51,7 +53,6 @@ typedef struct XModbusBase
 //    XModbusSerialEnable SerialEnable;//控制串口收发状态
 //    XModbusFrameCBByteReceived pxMBFrameCBByteReceived;// 接收到单个字节时调用（触发接收状态机）
 //    XModbusFrameCBTransmitterEmpty pxMBFrameCBTransmitterEmpty;// 发送缓冲区空时调用（触发发送状态机）
-//    XModbusPortCBTimerExpired pxMBPortCBTimerExpired; // 定时器超时回调（如 RTU 的 T35 超时、ASCII 的 T1S 超时）
 }XModbusBase;
 XVtable* XModbusBase_class_init();
 void XModbusBase_init(XModbusBase* modbus);

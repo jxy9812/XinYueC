@@ -15,7 +15,7 @@ typedef struct XModbusFrame XModbusFrame;
 #define MB_SER_PDU_ADDR_OFF     0       // 从机地址在帧中的偏移（第0字节）
 #define MB_SER_PDU_PDU_OFF      1       // Modbus PDU在帧中的偏移（地址后第1字节开始）
 
-#define XMODBUSRTU_VTABLE_SIZE		(XMODBUSBASE_VTABLE_SIZE+10)       //XModbusRTU虚函数表大小
+#define XMODBUSRTU_VTABLE_SIZE		(XMODBUSBASE_VTABLE_SIZE)       //XModbusRTU虚函数表大小
 enum XModbusRTUVtableEnum
 {
     EXModbusRTU_Send = XMODBUSBASE_VTABLE_SIZE,

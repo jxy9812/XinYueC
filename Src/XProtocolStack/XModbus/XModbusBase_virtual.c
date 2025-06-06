@@ -235,7 +235,6 @@ void VXModbusBase_poll(XModbusBase* modbus)
 	if (modbus->m_state != STATE_ENABLED) {
 		return MB_EILLSTATE; // 非法状态，直接返回错误
 	}
-	//printf("chulishijian \n");
 	XModbus_EventHandling(modbus);
 	XCommunicatorBase* comm = modbus;
 	//处理定时器任务
@@ -245,7 +244,6 @@ void VXModbusBase_poll(XModbusBase* modbus)
 
 bool VXCommunicatorBase_connect(XModbusBase* modbus)
 {
-	
 	if (modbus->m_state == STATE_ENABLED)
 		return true;
 	if (XVtableGetFunc(XCommunicatorBase_class_init(), EXCommunicatorBase_Connect, bool(*)(XCommunicatorBase*))(modbus))
@@ -254,8 +252,7 @@ bool VXCommunicatorBase_connect(XModbusBase* modbus)
 		//XTimerBase_start_base(modbus->);  // 启动定时器（T35用于检测帧间隔）
 		modbus->m_state = STATE_ENABLED; // 更新状态为启用
 		return true;
-	}
-	
+	}	
 	return false;
 }
 

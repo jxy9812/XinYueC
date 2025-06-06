@@ -23,7 +23,7 @@ XVtable* XModbusRTU_class_init()
 	XVTABLE_CREAT_DEFAULT
 	//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XCOMMUNICATORBASE_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XMODBUSRTU_VTABLE_SIZE)
 #else
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -81,7 +81,7 @@ XModbusErrorCode VXModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame
 	if (modbus == NULL)
 		return MB_EINVAL;
 	XModbusErrorCode error = MB_ENOERR;
-	XVector* dataVector = XVector_Create(uint8_t);
+	/*XVector* dataVector = XVector_Create(uint8_t);
 	if (dataVector == NULL)
 	{
 		error = MB_ENORES;
@@ -91,7 +91,7 @@ XModbusErrorCode VXModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame
 
 	ENTER_CRITICAL_SECTION();
 	XQueueBase_push_base(modbus->m_sendQueue, &dataVector);
-	EXIT_CRITICAL_SECTION();
+	EXIT_CRITICAL_SECTION();*/
 	return error;
 }
 
@@ -102,9 +102,10 @@ XModbusErrorCode VXModbusBase_recvFrame(XModbusBase* modbus, XModbusFrame* frame
 	bool            xFrameReceived = false;
 
 	ENTER_CRITICAL_SECTION();
-
-	XModbusFrameRTU_parseData_reply(frameData, modbus->m_parent.m_recvAsyncBuffer);
-
+    if(XModbusBase_isMaster(modbus))
+	    XModbusFrameRTU_parseData_reply(frameData, modbus->m_parent.m_recvAsyncBuffer);//主站接收到的是相应帧
+    else
+        XModbusFrameRTU_parseData_request(frameData, modbus->m_parent.m_recvAsyncBuffer);//从站接收到的是请求帧
 	//解析的帧有问题
 	if (XVector_isEmpty_base(frameData->frameData))
 		return MB_EIO;
@@ -209,8 +210,9 @@ bool VXModbusBase_TransmitFSM(XModbusBase* modbus)
     {
     case STATE_TX_IDLE:  // 发送空闲状态（无数据发送）
     {
+#if !MB_IS_COMP_SEND_FRAME
         modbus->m_pendingCount = XVector_getSize_base(dataVector);
-
+#endif
         modbus->m_eSndState = STATE_TX_XMIT;
         //printf("发送空闲\n");
         break;
