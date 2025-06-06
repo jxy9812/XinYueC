@@ -28,9 +28,9 @@ typedef struct XModbusRTU
     XTimerBase* m_timerSendExpired;//检测发送帧到期
 }XModbusRTU;
 XVtable* XModbusRTU_class_init();
-void XModbusRTU_init(XModbusRTU* modbus);
-//创建串口
-XModbusRTU* XModbusRTU_newSerialPort(XSerialPortBase* serial);
+void XModbusRTU_init(XModbusRTU* modbus, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired);
+//创建串口 
+XModbusRTU* XModbusRTU_newSerialPort(XSerialPortBase* serial, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired);
 
 #define XModbusRTU_connect_base             XModbusBase_connect_base                
 #define XModbusRTU_disconnect_base          XModbusBase_disconnect_base             

@@ -25,7 +25,7 @@ enum XTimerBaseVtableEnum
 typedef struct XTimerBase
 {
 	XClass m_parent;//类
-	bool m_autoFree;//自动释放
+	bool m_autoDelete;//自动释放
 	bool m_isRun;//是否运行
 	size_t m_timeout;//首次超时时间
 	size_t m_interval;//定时间隔
@@ -45,6 +45,7 @@ void XTimerBase_setInterval_base(XTimerBase* timer, size_t value);
 void XTimerBase_setUserData(XTimerBase* timer, void* userData);
 void XTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
 void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId);
+void XTimerBase_setAutoDelete(XTimerBase* timer, bool del);
 // 是否为周期性任务
 bool XTimerBase_isPeriodic(XTimerBase* timer);
 bool XTimerBase_isRunning(XTimerBase* timer);
@@ -52,6 +53,7 @@ size_t XTimerBase_getTimeout(XTimerBase* timer);
 size_t XTimerBase_getInterval(XTimerBase* timer);
 size_t XTimerBase_getTimerId(XTimerBase* timer);
 void*  XTimerBase_getUserData(XTimerBase* timer);
+bool   XTimerBase_isAutoDelete(XTimerBase* timer);
 //超时回调函数
 void XTimerBase_out(XTimerBase* timer);
 

@@ -1,6 +1,5 @@
 ﻿#include"XProtocolStackTest.h"
-#include"XModbusTest_Port.h"
-#include"XModbusRTU/XModbusRTU.h"
+#include"XModbusRTU.h"
 #include"XMemory.h"
 #include"XCrc.h"
 #include"XModbusFrame.h"
@@ -20,7 +19,7 @@ void XModbusTest()
     XSerialPortBase* serial = XSerialPortWin32_create();
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
-    XModbusRTU* modbus = XModbusRTU_newSerialPort(serial);
+    XModbusRTU* modbus = XModbusRTU_newSerialPort(serial,NULL,NULL);
     XModbusBase_setAddress(modbus,2);
     XModbusBase_setMode(modbus, MB_RTU_MASTER);
     //初始化Modbus

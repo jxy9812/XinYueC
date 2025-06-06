@@ -101,6 +101,8 @@ bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerWheel* timer)
 		return false;
 	XListSLinked_remove_base(timer->m_list,&timer);
 	timer->m_list = NULL;
+	if (timer->m_parent.m_autoDelete)
+		XTimerBase_free_base(timer);
 	return true;
 }
 
@@ -215,14 +217,15 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
 					timer->m_list = NULL;
 					XTimerBase_out(timer);
 				}
+				//转成父类指针
 				XTimerBase* timerBase = (XTimerBase*)timer;
 				if (timerBase->m_interval > 0)
-				{
+				{//有定时间隔的重新添加
 					size_t timeout_ticks = timerBase->m_interval / group->m_parent.m_precision;
 					timer->m_expire_ticks = groupBase->m_current_tick + timeout_ticks;
 					addTimer(group, timer, timeout_ticks);
 				}
-				else if (((XTimerBase*)timer) ->m_autoFree)
+				else if (((XTimerBase*)timer) ->m_autoDelete)
 				{//
 					//printf("%p\n", list);
 					XTimerBase_free_base(timer);

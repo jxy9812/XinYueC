@@ -26,17 +26,17 @@ enum XModbusBaseVtableEnum
 typedef struct XModbusBase
 {
 	XCommunicatorBase m_parent;
-    uint8_t    address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
-    XModbusMode mode;//模式
-    XModbusState     state;//状态
-    XQueueBase* sendQueue;//发送队列(XCircularQueue<XModbusFrame*>)
-    XQueueBase* recvFrameQueue;//接收帧队列(XCircularQueue<XModbusFrame*>) 后面处理执行
-    XQueueBase* eventQueue;//事件队列
-    XVector* funcCodeList;//功能码列表
-    int pendingCount;//待发送的数据量
-    XListBase* regularlySendMaster;//主站定期发送帧数据
+    uint8_t    m_address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
+    XModbusMode m_mode;//模式
+    XModbusState     m_state;//状态
+    XQueueBase* m_sendQueue;//发送队列(XCircularQueue<XModbusFrame*>)
+    XQueueBase* m_recvFrameQueue;//接收帧队列(XCircularQueue<XModbusFrame*>) 后面处理执行
+    XQueueBase* m_eventQueue;//事件队列
+    XVector* m_funcCodeList;//功能码列表
+    int m_pendingCount;//待发送的数据量
+    XListBase* m_regularlySendMaster;//主站定期发送帧数据
 //    /* ----------------------- 以下主站等待处理发送返回请求-------------------------------------*/
-    XVector* recvHandleMaster;//XVector<XModbusFrameDataRecvHandle>
+    XVector* m_recvHandleMaster;//XVector<XModbusFrameDataRecvHandle>
     
 //    /* ----------------------- 函数指针类型定义  0-------------------------------------*/
 //    XModbusFrameSend     peMBFrameSendCur;     // 帧发送函数指针（发送完整 Modbus 帧）
@@ -45,13 +45,8 @@ typedef struct XModbusBase
 //    XModbusFrameReceive  peMBFrameReceiveCur;  // 帧接收函数指针（接收完整 Modbus 帧，返回帧数据）
 //    XModbusFrameClose    pvMBFrameCloseCur;    // 端口关闭函数指针（可选，用于释放端口资源，如关闭串口）
 //    /* ----------------------- RTU-------------------------------------*/
-//MB_CALIBRATION_TIMER_SETTINGS
-//    size_t calibrationTimer_current;//校准定时器用记录当前时间
-//if // MB_CALIBRATION_TIMER_SETTINGS
-//    XTimerBase* timer;//定时器     平台初始化
-//    size_t timerOutNumber;//定时器超时次数
-    XModbusSndState eSndState;    // 发送状态机（volatile确保多线程可见）
-    XModbusRcvState eRcvState;    // 接收状态机
+    XModbusSndState m_eSndState;    // 发送状态机（volatile确保多线程可见）
+    XModbusRcvState m_eRcvState;    // 接收状态机
 //    //函数
 //    XModbusSerialEnable SerialEnable;//控制串口收发状态
 //    XModbusFrameCBByteReceived pxMBFrameCBByteReceived;// 接收到单个字节时调用（触发接收状态机）

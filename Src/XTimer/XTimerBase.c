@@ -21,7 +21,7 @@ void XTimerBase_init(XTimerBase* timer, XVtable* vtable)
 	memset(timer, 0, sizeof(XTimerBase));
 	XClass_init(timer);
 	XClassGetVtable(timer) = vtable;
-	timer->m_autoFree = true;
+	timer->m_autoDelete = true;
 }
 
 
@@ -91,6 +91,11 @@ void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId)
 	if (timer)
 		timer->timerId=timerId;
 }
+void XTimerBase_setAutoDelete(XTimerBase* timer, bool del)
+{
+	if (timer)
+		timer->m_autoDelete = del;
+}
 bool XTimerBase_isPeriodic(XTimerBase* timer)
 {
 	if (timer)
@@ -126,6 +131,12 @@ void* XTimerBase_getUserData(XTimerBase* timer)
 	if(timer)
 		return timer->m_userData;
 	return NULL;
+}
+bool XTimerBase_isAutoDelete(XTimerBase* timer)
+{
+	if (timer)
+		return timer->m_autoDelete;
+	return false;
 }
 void XTimerBase_out(XTimerBase* timer)
 {
