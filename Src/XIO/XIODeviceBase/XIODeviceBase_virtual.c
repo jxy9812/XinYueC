@@ -74,37 +74,30 @@ bool VXIODevice_open(XIODeviceBase* io, XIODeviceBaseMode mode)
 
 size_t VXIODevice_write(XIODeviceBase* io, const char* data, size_t maxSize)
 {
-	/**************************************************/
-	ISNULL(0, "请重载这个函数,这是模板");
-	/**************************************************/
-	return 0;
-	//if (io->m_mode & XIODeviceBase_WriteOnly == 0)
-	//	return 0;
-	//if (io->m_port.writeData_funcPointer == NULL)
-	//	return 0;
-	////printf("x");
-	//size_t count = 0;
-	//if (io->m_writeBuffer == NULL)
-	//{//没有写入缓冲区
-	//	count += io->m_port.writeData_funcPointer(io, data, maxSize);
-	//}
-	//else
-	//{
-	//	do
-	//	{
-	//		while (XCircularQueue_push_base(io->m_writeBuffer, data + count))
-	//		{
-	//			++count;
-	//			if (count >= maxSize)
-	//				break;
-	//		}
-	//		if (XCircularQueue_isFull_base(io->m_writeBuffer))
-	//			io->m_port.writeBufferFull_funcPointer(io,io->m_writeBuffer);
-	//		if (count >= maxSize)
-	//			break;
-	//	} while (!XCircularQueue_isFull_base(io->m_writeBuffer));
-	//}
-	//return count;
+	if (io->m_mode & XIODeviceBase_WriteOnly == 0)
+		return 0;
+	size_t count = 0;
+	if (io->m_writeBuffer == NULL)
+	{//没有写入缓冲区
+		return count;
+	}
+	else
+	{
+		do
+		{
+			while (XQueueBase_push_base(io->m_writeBuffer, data + count))
+			{
+				++count;
+				if (count >= maxSize)
+					break;
+			}
+			if (XQueueBase_isFull_base(io->m_writeBuffer))
+				XIODeviceBase_writeFull_base(io);
+			if (count >= maxSize)
+				break;
+		} while (!XQueueBase_isFull_base(io->m_writeBuffer));
+	}
+	return count;
 }
 
 size_t VXIODevice_writeFull(XIODeviceBase* io)
@@ -127,52 +120,33 @@ size_t VXIODevice_writeFull(XIODeviceBase* io)
 
 size_t VXIODevice_read(XIODeviceBase* io, char* data, size_t maxSize)
 {
-	/**************************************************/
-	ISNULL(0, "请重载这个函数,这是模板");
-	/**************************************************/
-	return;
-	//if (io->m_mode & XIODeviceBase_ReadOnly == 0)
-	//	return 0;
-	//if (io->m_port.readData_funcPointer == NULL)
-	//	return 0;
-	//size_t count = 0;
-	//if (io->m_readBuffer == NULL)
-	//{//没有读取缓冲区
-	//	count += io->m_port.readData_funcPointer(io, data, maxSize);
-	//}
-	//else
-	//{
-	//	do
-	//	{
-	//		while (XCircularQueue_receive_base(io->m_readBuffer, data + count))
-	//		{
-	//			++count;
-	//			if (count >= maxSize)
-	//				break;
-	//		}
-	//		if (XCircularQueue_isEmpty_base(io->m_readBuffer))
-	//			io->m_port.readBufferEmpty_funcPointer(io,io->m_readBuffer);
-	//		if (count >= maxSize)
-	//			break;
-
-	//	} while (!XCircularQueue_isEmpty_base(io->m_readBuffer));
-
-	//}
-	//return count;
+	if (io->m_mode & XIODeviceBase_ReadOnly == 0)
+		return 0;
+	size_t count = 0;
+	if (io->m_readBuffer == NULL)
+		return 0;
+	while (count < maxSize)
+	{
+		if (XQueueBase_receive_base(io->m_readBuffer, data + count))
+			++count;
+		else
+			break;
+	}
+	return count;
 }
 
 size_t VXIODevice_getBytesAvailable(XIODeviceBase* io)
 {
 	if (io->m_readBuffer == NULL)
 		return 0;
-	return XCircularQueue_getSize_base(io->m_readBuffer);
+	return XQueueBase_getSize_base(io->m_readBuffer);
 }
 
 size_t VXIODeviceBase_getBytesToWrite(XIODeviceBase* io)
 {
 	if (io->m_writeBuffer == NULL)
 		return 0;
-	return XCircularQueue_getSize_base(io->m_writeBuffer);
+	return XQueueBase_getSize_base(io->m_writeBuffer);
 }
 
 bool VXIODeviceBase_atEnd(XIODeviceBase* io)
@@ -182,15 +156,7 @@ bool VXIODeviceBase_atEnd(XIODeviceBase* io)
 
 bool VXIODevice_close(XIODeviceBase* io)
 {
-	/**************************************************/
-	ISNULL(0, "请重载这个函数,这是模板");
-	/**************************************************/
-	/*if (VXIODevice_isOpen(io))
-	{
-		if (io->m_port.close_funcPointer)
-			io->m_port.close_funcPointer(io);
-	}
-	io->m_mode = XIODeviceBase_NotOpen;*/
+	XIODeviceBase_writeFull_base(io);
 	return true;
 }
 
