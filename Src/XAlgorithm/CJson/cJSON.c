@@ -1373,7 +1373,7 @@ fail:
         printed = NULL;
     }
     if (str != NULL)
-        XString_free_base(str);
+        XString_delete_base(str);
     return NULL;
 }
 #endif

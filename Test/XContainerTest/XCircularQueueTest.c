@@ -27,7 +27,7 @@ void XCircularQueueTest()
 		XCircularQueue_pop_base(queue);
 	}
 	
-	XCircularQueue_free_base(queue);
+	XCircularQueue_delete_base(queue);
 	printf("循环队列 空\n");
 	
 #else

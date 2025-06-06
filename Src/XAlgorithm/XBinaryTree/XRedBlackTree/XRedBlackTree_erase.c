@@ -145,7 +145,7 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 		LPreplace = XBTree_GetLChild(LPreplace);
 	}
 	if(eraseNode->XBTNode.values)
-		XVector_free_base(eraseNode->XBTNode.values);
+		XVector_delete_base(eraseNode->XBTNode.values);
 	eraseNode->XBTNode.values = LPreplace->XBTNode.values;
 	LPreplace->XBTNode.values = NULL;
 

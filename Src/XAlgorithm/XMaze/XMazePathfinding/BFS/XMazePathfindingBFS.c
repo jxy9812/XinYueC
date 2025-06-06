@@ -55,7 +55,7 @@ static size_t insertChild(const XVector* maze, XBTreeNode* nodes, XVector* NextN
 		XVector_push_back_base(NextNodeArray, &childBFSNode);
 		XStack_pop_base(ChildAll);
 	}
-	XStack_free_base(ChildAll);
+	XStack_delete_base(ChildAll);
 	return XVector_getSize_base(nodes->nodes)>1? XVector_getSize_base(nodes->nodes) -1:0;
 #else
 	IS_ON_DEBUG(XStack_ON);
@@ -89,8 +89,8 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 		XVector_swap_base(CurrentNodeArray, NextNodeArray);
 	}
 	XVector* Path = GetXMazePath(CurrentNode);
-	XVector_free_base(CurrentNodeArray);
-	XVector_free_base(NextNodeArray);
+	XVector_delete_base(CurrentNodeArray);
+	XVector_delete_base(NextNodeArray);
 	XVectorTwo_free(tempMaze);
 	XBTree_freeNodeAll(root);
 	return Path;

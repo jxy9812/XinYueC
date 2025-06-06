@@ -87,7 +87,7 @@ void XStepMotor_poll(XStepMotor* motor);
 
 void XStepMotor_close_base(XStepMotor* motor);
 
-#define XStepMotor_free_base	XClass_free_base
+#define XStepMotor_delete_base	XClass_delete_base
 #ifdef __cplusplus
 }
 #endif

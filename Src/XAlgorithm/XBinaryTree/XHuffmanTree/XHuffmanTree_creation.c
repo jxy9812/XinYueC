@@ -52,7 +52,7 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 		}
 
 	}
-	XPriorityQueue_free_base(queue);
+	XPriorityQueue_delete_base(queue);
 	return LPparent;
 #else
 	IS_ON_DEBUG(XPriorityQueue_ON);

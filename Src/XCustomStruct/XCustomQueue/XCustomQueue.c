@@ -82,7 +82,7 @@ static bool XCircularQueue_createFunc(XCustomQueue* queue, size_t typeSize, size
 }
 static void XCircularQueue_freeFunc(XCustomQueue* queue)
 { 
-	XCircularQueue_free_base(queue->m_queue);
+	XCircularQueue_delete_base(queue->m_queue);
 }
 static bool XCircularQueue_pushFunc(XCustomQueue* queue, void* pvData)
 {

@@ -32,7 +32,7 @@ XCircularQueueAtomic* XCircularQueueAtomic_create(size_t typeSize, size_t count)
 #define XCircularQueueAtomic_top_base					XCircularQueue_top_base
 #define XCircularQueueAtomic_isFull_base				XCircularQueue_isFull_base
 //释放内存
-#define XCircularQueueAtomic_free_base					XCircularQueue_free_base
+#define XCircularQueueAtomic_delete_base					XCircularQueue_delete_base
 //清空，不是释放内存
 #define XCircularQueueAtomic_clear_base					XCircularQueue_clear_base
 //检测是否为空，空为真 O(1)

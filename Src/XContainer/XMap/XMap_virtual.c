@@ -153,7 +153,7 @@ void VXMap_clear(XMap* this_map)
 	XBTree_freeNodeAll(this_map->m_parent.m_data);
 	if(this_map->m_itArray)
 	{
-		XVector_free_base(this_map->m_itArray);
+		XVector_delete_base(this_map->m_itArray);
 		this_map->m_itArray = NULL;
 	}
 	this_map->m_parent.m_capacity = 0;

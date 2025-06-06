@@ -1,6 +1,6 @@
 ﻿#include"XTimerWheel.h"
 #include"XTimerGroupBase.h"
-//static void VXTimerBase_free_base(XTimerWheel* timer);
+//static void VXTimerBase_delete_base(XTimerWheel* timer);
 static void VXTimerBase_start_base(XTimerWheel* timer);
 static void VXTimerBase_stop_base(XTimerWheel* timer);
 static void VXTimerBase_setTimeout_base(XTimerWheel* timer, size_t value);
@@ -24,14 +24,14 @@ XVtable* XTimerWheel_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	//XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXTimerBase_free_base);
+	//XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXTimerBase_delete_base);
 #if SHOWCONTAINERSIZE
 	printf("XTimerWheel size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
 
-//void VXTimerBase_free_base(XTimerWheel* timer)
+//void VXTimerBase_delete_base(XTimerWheel* timer)
 //{
 //
 //}

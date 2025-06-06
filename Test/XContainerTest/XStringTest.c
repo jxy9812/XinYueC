@@ -25,7 +25,7 @@ void XStringTest()
 	printf("字符数量%d\n", XString_getSize_base(str));
 	//XString_erase_base(str, 0, 4);
 	printf("%s\n", XString_data(str));
-	XString_free_base(str);
+	XString_delete_base(str);
 #endif
 }
 

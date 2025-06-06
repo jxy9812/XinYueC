@@ -58,10 +58,10 @@ XVector* XMazePathfindingOneDFS(const XVector* maze, const XPoint start, const X
 		}
 
 	}
-	XStack_free_base(StackPointAll);
+	XStack_delete_base(StackPointAll);
 	XVector* vector = XVector_create(sizeof(XPoint));
 	XStackRCopyXVector(StackPath, vector);//将栈内的数据逆序拷贝到数组
-	XStack_free_base(StackPath);
+	XStack_delete_base(StackPath);
 	XVectorTwo_free(tempMaze);
 	return vector;
 #else
@@ -116,8 +116,8 @@ XVector* XMazePathfindingShortDFS(const XVector* maze, const XPoint start, const
 		}
 
 	}
-	XStack_free_base(StackPointAll);
-	XStack_free_base(StackPath);
+	XStack_delete_base(StackPointAll);
+	XStack_delete_base(StackPath);
 	XVectorTwo_free(tempMaze);
 	return PathShortAll;
 #else
@@ -166,8 +166,8 @@ XVector* XMazePathfindingAllDFS(const XVector* maze, const XPoint start, const X
 		}
 
 	}
-	XStack_free_base(StackPointAll);
-	XStack_free_base(StackPath);
+	XStack_delete_base(StackPointAll);
+	XStack_delete_base(StackPath);
 	XVectorTwo_free(tempMaze);
 	return PathAll;
 #else

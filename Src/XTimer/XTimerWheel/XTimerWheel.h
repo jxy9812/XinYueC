@@ -20,7 +20,7 @@ typedef struct XTimerWheel
 XVtable* XTimerWheel_class_init();
 XTimerWheel* XTimerWheel_create();
 void XTimerWheel_init(XTimerWheel* timer);
-#define XTimerWheel_free_base XTimerBase_free_base
+#define XTimerWheel_delete_base XTimerBase_delete_base
 #define XTimerWheel_start_base XTimerBase_start_base
 #define XTimerWheel_stop_base XTimerBase_stop_base
 //设置定时时间

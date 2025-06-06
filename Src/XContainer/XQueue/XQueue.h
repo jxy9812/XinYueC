@@ -40,7 +40,7 @@ void* XQueue_back_base(XQueue* this_queue);
 void* XQueue_top_base(XQueue* this_queue);
 #define XQueue_Top_Base(queue,type) (*((type*)XQueue_top_base(queue)))
 //释放内存
-#define XQueue_free_base   XContainerObject_free_base
+#define XQueue_delete_base   XContainerObject_delete_base
 //清空，不是释放内存
 #define XQueue_clear_base  XContainerObject_clear_base
 //检测是否为空，空为真 O(1)

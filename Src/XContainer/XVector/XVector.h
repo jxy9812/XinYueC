@@ -86,7 +86,7 @@ void* XVector_find_base(const XVector* this_vector, const void* findVal);
 //排序
 void  XVector_sort_base(XVector* this_vector, XCompare compare);
 //释放内存
-#define XVector_free_base				XContainerObject_free_base
+#define XVector_delete_base				XContainerObject_delete_base
 //清空vector的队列，不是释放内存
 #define XVector_clear_base				XContainerObject_clear_base
 //检测vector内是否为空，空为真 O(1)

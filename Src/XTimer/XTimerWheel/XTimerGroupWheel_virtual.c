@@ -43,7 +43,7 @@ void VXTimerGroupWheel_free(XTimerGroupWheel* group)
 	{
 		while (!XVector_isEmpty_base(group->m_timeWheel))
 			XTimerGroupWheel_removeTimeWheel_base(group);
-		XVector_free_base(group->m_timeWheel);
+		XVector_delete_base(group->m_timeWheel);
 	}
 	XMemory_free(group);
 }
@@ -102,7 +102,7 @@ bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerWheel* timer)
 	XListSLinked_remove_base(timer->m_list,&timer);
 	timer->m_list = NULL;
 	if (timer->m_parent.m_autoDelete)
-		XTimerBase_free_base(timer);
+		XTimerBase_delete_base(timer);
 	return true;
 }
 
@@ -135,9 +135,9 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
 				for_each_iterator(list, XListSLinked, it)
 				{
 					XTimerWheel* timer = XListSNode_Data(it, XTimerWheel*);
-					XTimerBase_free_base(timer);
+					XTimerBase_delete_base(timer);
 				}
-				XListSLinked_free_base(list);
+				XListSLinked_delete_base(list);
 			}
 		}
 	}
@@ -228,7 +228,7 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
 				else if (((XTimerBase*)timer) ->m_autoDelete)
 				{//
 					//printf("%p\n", list);
-					XTimerBase_free_base(timer);
+					XTimerBase_delete_base(timer);
 				}
 			}
 			//清空当前槽的链表

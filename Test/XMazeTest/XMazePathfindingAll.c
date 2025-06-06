@@ -34,7 +34,7 @@ void XMazePathfinding()
 	system("pause");
 	system("cls");
 	XMazePathPrintSleep(maze, Path, "■", "  ", "★", 100);
-	XVector_free_base(Path);
+	XVector_delete_base(Path);
 	system("pause");
 	system("cls");*/
 
@@ -76,7 +76,7 @@ void XMazePathfinding()
 	XVector* Path = XMazePathfindingAStar(maze, start, dest,true);
 	system("pause");
 	XMazePathPrintSleep(maze, Path, "■", "  ", "★", 100);
-	XVector_free_base(Path);
+	XVector_delete_base(Path);
 	XMazeFree(maze);
 #else
 	IS_ON_DEBUG(XVectorTwo_ON);

@@ -36,7 +36,7 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue,bool autoExpansi
 #define XCircularQueue_top_base					XQueueBase_top_base
 #define XCircularQueue_isFull_base				XQueueBase_isFull_base
 //释放内存
-#define XCircularQueue_free_base				XQueueBase_free_base
+#define XCircularQueue_delete_base				XQueueBase_delete_base
 //清空，不是释放内存
 #define XCircularQueue_clear_base				XQueueBase_clear_base
 //检测是否为空，空为真 O(1)

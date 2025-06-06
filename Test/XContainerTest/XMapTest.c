@@ -35,7 +35,7 @@ void XMapTest()
 	XPair* pair =XMap_find_base(map, arrayint);
 	printf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair,char*));
 	//XMap_clear_base(map);
-	XMap_free_base(map);
+	XMap_delete_base(map);
 #endif
 }
 #endif

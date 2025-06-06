@@ -52,7 +52,7 @@ uint8_t XPWMDeviceBase_getDutyCycle_base(XPWMDeviceBase* pwm);
 #define XPWMDeviceBase_open_base		XIODeviceBase_open_base
 #define XPWMDeviceBase_close_base		XIODeviceBase_close_base
 #define XPWMDeviceBase_setDevice_base   XIODeviceBase_setDevice_base
-#define XPWMDeviceBase_free_base		XIODeviceBase_free_base
+#define XPWMDeviceBase_delete_base		XIODeviceBase_delete_base
 #define XPWMDeviceBase_poll_base		XIODeviceBase_poll_base
 #ifdef __cplusplus
 }

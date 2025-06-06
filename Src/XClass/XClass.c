@@ -10,7 +10,7 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 	return false;
 }
 
-void XClass_free_base(XClass* Object)
+void XClass_delete_base(XClass* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(XClassGetVtable(Object), ""))
 		return;

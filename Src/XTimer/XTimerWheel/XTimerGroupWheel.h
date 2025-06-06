@@ -38,7 +38,7 @@ void XTimerGroupWheel_removeTimeWheel_base(XTimerGroupWheel* group);
 #define XTimerGroupWheel_addTimer_base				XTimerGroupBase_addTimer_base
 #define XTimerGroupWheel_removeTimer_base			XTimerGroupBase_removeTimer_base
 #define XTimerGroupWheel_poll_base					XTimerGroupBase_poll_base
-#define XTimerGroupWheel_free_base					XTimerGroupBase_free_base
+#define XTimerGroupWheel_delete_base					XTimerGroupBase_delete_base
 #ifdef __cplusplus
 }
 #endif

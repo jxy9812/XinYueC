@@ -172,7 +172,7 @@ static void XMazeOpenCircuitStack(struct XVector* maze, const int x, const int y
 			RandomOpenCircuitStack(stack,maze, x, y);
 		}
 	}
-	XStack_free_base(stack);
+	XStack_delete_base(stack);
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif

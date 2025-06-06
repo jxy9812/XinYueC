@@ -49,7 +49,7 @@ typedef struct XContainerObject
 void XContainerDefaultDerivedClassDataFreeMethod(void* args);
 XVtable* XContainerObject_class_init();
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);
-#define XContainerObject_free_base	XClass_free_base
+#define XContainerObject_delete_base	XClass_delete_base
 size_t XContainerObject_getSize_base(const XContainerObject* Object);
 bool XContainerObject_isEmpty_base(const XContainerObject* Object);
 size_t XContainerObject_getCapacity_base(const XContainerObject* Object);

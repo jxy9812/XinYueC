@@ -60,7 +60,7 @@ XVtable* XSerialPortBase_class_init();
 XSerialPortBase* XSerialPortBase_create(XVtable* vtable);
 void XSerialPortBase_init(XSerialPortBase* serial, XVtable* vtable);
 bool XSerialPortBase_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
-#define XSerialPortBase_free_base                                   XIODeviceBase_free_base
+#define XSerialPortBase_delete_base                                   XIODeviceBase_delete_base
 #define XSerialPortBase_setWriteBuffer_base                         XIODeviceBase_setWriteBuffer_base
 #define XSerialPortBase_setReadBuffer_base                          XIODeviceBase_setReadBuffer_base
 #define XSerialPortBase_setDevice_base                              XIODeviceBase_setDevice_base

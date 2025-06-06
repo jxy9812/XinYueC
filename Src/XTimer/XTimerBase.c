@@ -25,7 +25,7 @@ void XTimerBase_init(XTimerBase* timer, XVtable* vtable)
 }
 
 
-void XTimerBase_free_base(XTimerBase* timer)
+void XTimerBase_delete_base(XTimerBase* timer)
 {
 	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
 		return;

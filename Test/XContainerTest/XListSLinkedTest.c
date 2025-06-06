@@ -33,7 +33,7 @@ void XListSLinkedSortTest()
 	XListSLinked_iterator_for_each(li, ListFor_each, NULL); printf("\n");
 
 	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
-	XListBase_free_base(li);
+	XListBase_delete_base(li);
 #endif
 }
 void XListSLinkedIterator()
@@ -50,7 +50,7 @@ void XListSLinkedIterator()
 	{
 		printf("%d\n", XListSNode_Data(it, int));
 	}
-	XListBase_free_base(li);
+	XListBase_delete_base(li);
 #endif
 }
 
@@ -93,7 +93,7 @@ void XListSLinkedTest()
 	XListBase_remove_base(list, &removeVlaue);
 	//XList_clear_base(list);
 	printf("删除元素后遍历\t"); XListSLinked_iterator_for_each(list, ListFor_each, NULL);
-	XListBase_free_base(list);
+	XListBase_delete_base(list);
 #endif
 }
 
@@ -128,8 +128,8 @@ void XListSLinkedSwapTest()//交换函数测试
 
 	printf("交换后li2元素遍历\n");
 	XListSLinked_iterator_for_each(li2, ListFor_each, NULL); printf("\n");
-	XListBase_free_base(li1);
-	XListBase_free_base(li2);
+	XListBase_delete_base(li1);
+	XListBase_delete_base(li2);
 #endif
 }
 

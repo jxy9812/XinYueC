@@ -17,7 +17,7 @@ static void XEventQueue_defaultConfigFree(XEventQueue* queue)
 {
 	if (queue&&queue->queue)
 	{
-		XQueue_free_base(queue->queue);
+		XQueue_delete_base(queue->queue);
 		queue->queue = NULL;
 		XMemory_free(queue);
 	}

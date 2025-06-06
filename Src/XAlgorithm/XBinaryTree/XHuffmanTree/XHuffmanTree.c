@@ -39,7 +39,7 @@ static void freeCode(XPair** pair,void*args)
 {
 #if XVector_ON
 	XVector* v = XPair_Second(*pair, DictionaryValue).code;
-	XVector_free_base(v);
+	XVector_delete_base(v);
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
@@ -58,7 +58,7 @@ void XHfmTree_clear(XHuffmanTree* tree)
 void XHfmTree_free(XHuffmanTree* tree)
 {
 	XHfmTree_clear(tree);
-	XMap_free_base(tree->dictionaries);
+	XMap_delete_base(tree->dictionaries);
 	XMemory_free(tree);
 }
 

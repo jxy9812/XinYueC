@@ -163,9 +163,9 @@ void XVector_sort_base(XVector* this_vector, XCompare compare)
 	XClassGetVirtualFunc(this_vector, EXVector_Sort, funcPtr)(this_vector, compare);
 }
 
-//void XVector_free_base(XVector* this_vector)
+//void XVector_delete_base(XVector* this_vector)
 //{
-//	return XContainerObject_free_base(this_vector);
+//	return XContainerObject_delete_base(this_vector);
 //}
 //
 //bool XVector_isEmpty_base(const XVector* this_vector)

@@ -65,7 +65,7 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize);
 //排序
 #define XListDLinked_sort_base						XListBase_sort
 //释放内存
-#define XListDLinked_free_base						XListBase_free_base
+#define XListDLinked_delete_base						XListBase_delete_base
 //清空XList的队列，不是释放内存
 #define XListDLinked_clear_base						XListBase_clear_base
 //检测XList内是否为空，空为真 O(1)

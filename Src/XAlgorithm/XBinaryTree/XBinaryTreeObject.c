@@ -24,7 +24,7 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XBTreeNode* this_r
 			XStack_push_base(stack, &RChild);
 		XVector_push_back_base(vector, &currentNode);
 	}
-	XStack_free_base(stack);
+	XStack_delete_base(stack);
 	return vector;
 #else
 	IS_ON_DEBUG(XStack_ON);
@@ -53,7 +53,7 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XBTreeNode* this_ro
 			XStack_pop_base(stack);
 		}
 	}
-	XStack_free_base(stack);
+	XStack_delete_base(stack);
 	return vector;
 #else
 	IS_ON_DEBUG(XStack_ON);
@@ -82,9 +82,9 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_
 		if (RChild != NULL)
 			XStack_push_base(stack, &RChild);
 	}
-	XStack_free_base(stack);
+	XStack_delete_base(stack);
 	XStackCopyXVector(stackTraversing, vector);
-	XStack_free_base(stackTraversing);
+	XStack_delete_base(stackTraversing);
 	return vector;
 #else
 	IS_ON_DEBUG(XStack_ON);
@@ -125,7 +125,7 @@ void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount, con
 	nodes->values = XVector_create(TypeSize);
 	if (ISNULL(nodes->values, "数据数组申请内存失败"))
 	{
-		XVector_free_base(nodes->values);
+		XVector_delete_base(nodes->values);
 		XMemory_free(nodes);
 		return NULL;
 	}
@@ -175,7 +175,7 @@ const bool XBTree_freeNode(XBTreeNode* this_root , const bool parentSetNull)
 	
 	//释放数据数组
 	if(this_root->values!=NULL)
-		XVector_free_base(this_root->values);
+		XVector_delete_base(this_root->values);
 	
 	if (parentSetNull)
 	{
@@ -186,7 +186,7 @@ const bool XBTree_freeNode(XBTreeNode* this_root , const bool parentSetNull)
 	}
 	//释放节点数组
 	if (this_root->nodes != NULL)
-		XVector_free_base(this_root->nodes);
+		XVector_delete_base(this_root->nodes);
 	//释放节点
 	XMemory_free(this_root);
 	return true;
@@ -272,7 +272,7 @@ const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root)
 		XBTree_freeNode(currentNode,false);//释放当前节点
 		sum++;
 	}
-	XStack_free_base(stack);
+	XStack_delete_base(stack);
 	return sum;
 #else
 	IS_ON_DEBUG(XStack_ON);

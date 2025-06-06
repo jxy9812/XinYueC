@@ -97,7 +97,7 @@ void XTTTree_free(const XTTTreeNode* this_root)
     if (ISNULL(this_root, ""))
         return 0;
     if (this_root->LpValueArray != NULL)
-        XVector_free_base(this_root->LpValueArray);
+        XVector_delete_base(this_root->LpValueArray);
     XBTree_freeNode(this_root, false);
 #else
     IS_ON_DEBUG(XVector_ON);

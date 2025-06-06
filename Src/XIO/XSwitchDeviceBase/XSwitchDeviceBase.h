@@ -36,7 +36,7 @@ bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw);
 #define XSwitchDeviceBase_open_base		 XIODeviceBase_open_base
 #define XSwitchDeviceBase_close_base	 XIODeviceBase_close_base
 #define XSwitchDeviceBase_setDevice_base XIODeviceBase_setDevice_base
-#define XSwitchDeviceBase_free_base		 XIODeviceBase_free_base
+#define XSwitchDeviceBase_delete_base		 XIODeviceBase_delete_base
 #define XSwitchDeviceBase_poll_base		 XIODeviceBase_poll_base
 #ifdef __cplusplus
 }

@@ -490,7 +490,7 @@ void VXList_sort(XListSLinked* this_list, XCompare compare)
 		}
 	}
 
-	XStack_free_base(stack);
+	XStack_delete_base(stack);
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif

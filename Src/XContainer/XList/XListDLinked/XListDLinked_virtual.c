@@ -363,7 +363,7 @@ void VXList_sort(XListDLinked* this_list, XCompare compare)
 			XStack_push_base(stack, &ListMiddle->next);
 		}
 	}
-	XStack_free_base(stack);
+	XStack_delete_base(stack);
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif

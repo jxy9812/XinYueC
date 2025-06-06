@@ -62,7 +62,7 @@ int64_t XString_find_last_of(const XString* this_string, const char* subStr);
 int64_t XString_find_first_not_of(const XString* this_string, const char* subStr);
 int64_t XString_find_last_not_of(const XString* this_string, const char* subStr);
 //释放内存
-#define XString_free_base				XVector_free_base
+#define XString_delete_base				XVector_delete_base
 //清空vector的队列，不是释放内存
 #define XString_clear_base				XVector_clear_base
 //检测vector内是否为空，空为真 O(1)

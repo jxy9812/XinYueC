@@ -68,7 +68,7 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 /*								  类的创建主要用这些						*/
 XVtable* XClass_class_init();
 void XClass_init(XClass* Object);
-void XClass_free_base(XClass* Object);
+void XClass_delete_base(XClass* Object);
 #ifdef __cplusplus
 }
 #endif

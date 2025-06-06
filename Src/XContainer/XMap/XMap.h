@@ -47,7 +47,7 @@ void* XMap_value_base(XMap* this_map, const void* key);
 //查找数据，返回找到的XPair地址，没有返回NULL
 XPair* XMap_find_base(XMap* this_map, const void* key);
 //释放内存
-#define XMap_free_base				XContainerObject_free_base
+#define XMap_delete_base				XContainerObject_delete_base
 //清空，不是释放内存
 #define XMap_clear_base				XContainerObject_clear_base
 //检测是否为空，空为真 O(1)

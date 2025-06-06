@@ -22,7 +22,7 @@ void queueTest()
 		XQueue_pop_base(queue);
 	}
 	printf("\n");
-	XQueue_free_base(queue);
+	XQueue_delete_base(queue);
 #endif
 }
 #if	XPriorityQueue_ON
@@ -54,8 +54,8 @@ void XPriority_QueueTest()
 		XPriorityQueue_pop_base(queue);
 	}
 	printf("\n");
-	XPriorityQueue_free_base(queue);
-	XVector_free_base(v);
+	XPriorityQueue_delete_base(queue);
+	XVector_delete_base(v);
 #endif
 }
 #endif

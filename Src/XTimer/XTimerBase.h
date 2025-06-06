@@ -36,7 +36,7 @@ typedef struct XTimerBase
 }XTimerBase;
 XTimerBase* XTimerBase_create(XVtable*vtable);
 void XTimerBase_init(XTimerBase* timer, XVtable* vtable);
-void XTimerBase_free_base(XTimerBase* timer);
+void XTimerBase_delete_base(XTimerBase* timer);
 void XTimerBase_start_base(XTimerBase*timer);
 void XTimerBase_stop_base(XTimerBase* timer);
 //设置定时时间

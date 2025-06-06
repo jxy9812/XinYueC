@@ -93,14 +93,14 @@ void XMap_DefaultDerivedClassDataKeyFreeMethod(void* args)
 {
 	XPair* pair = (XPair*)args;
 	XContainerObject* object = *((XContainerObject**)XPair_second(pair));
-	XContainerObject_free_base(object);
+	XContainerObject_delete_base(object);
 }
 
 void XMap_DefaultDerivedClassDataValueFreeMethod(void* args)
 {
 	XPair* pair = (XPair*)args;
 	XContainerObject* object = *((XContainerObject**)XPair_first(pair));
-	XContainerObject_free_base(object);
+	XContainerObject_delete_base(object);
 }
 
 void XMap_DefaultDerivedClassDataKeyValueFreeMethod(void* args)
@@ -132,7 +132,7 @@ void XMap_updataIterator(XMap* this_map)
 	if (this_map->m_itArray != NULL)
 	{
 		//释放原先的数组
-		XVector_free_base(this_map->m_itArray);
+		XVector_delete_base(this_map->m_itArray);
 		this_map->m_itArray = NULL;
 	}
 	//已中序遍历获取所有树的节点,临时
@@ -140,7 +140,7 @@ void XMap_updataIterator(XMap* this_map)
 	this_map->m_itArray = XVector_create(sizeof(XPair*));
 	//将数据XPair的节点指针插入数组
 	XVector_iterator_for_each(TreeNode, ForTreeNode, this_map->m_itArray);
-	XVector_free_base(TreeNode);
+	XVector_delete_base(TreeNode);
 
 	this_map->m_isModify = false;
 #else

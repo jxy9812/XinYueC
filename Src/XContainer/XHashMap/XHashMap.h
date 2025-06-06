@@ -36,7 +36,7 @@ XHashMap* XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XH
 #define XHashMap_Create(keyType,valType,hash,KeyEquality) XMap_create(sizeof(keyType),sizeof(valType),hash,KeyEquality)
 	//初始化 XHashMap
 void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHash hash, XEquality KeyEquality);
-#define XHashMap_free_base				XContainerObject_free_base
+#define XHashMap_delete_base				XContainerObject_delete_base
 //清空，不是释放内存
 #define XHashMap_clear_base				XContainerObject_clear_base
 //检测是否为空，空为真 O(1)

@@ -247,7 +247,7 @@ bool VXModbusBase_TransmitFSM(XModbusBase* modbus)
             XString* str = XModbusFrameRTU_to16HexString(frame);
             printf("发送帧:%s\n", XString_c_str(str));
             //            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
-            XString_free_base(str);
+            XString_delete_base(str);
 #endif // MB_SEND_FRAME_SHOW
             if (XModbusBase_isMaster(modbus))
             {//如果是主站 设置当前接收回调

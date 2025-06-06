@@ -49,7 +49,7 @@ typedef struct XIODeviceBase
 XVtable* XIODeviceBase_class_init();
 XIODeviceBase* XIODeviceBase_create(XVtable* vtable);
 void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable);
-#define XIODeviceBase_free_base	XClass_free_base
+#define XIODeviceBase_delete_base	XClass_delete_base
 void XIODeviceBase_setWriteBuffer_base(XIODeviceBase* io,size_t count);
 void XIODeviceBase_setReadBuffer_base(XIODeviceBase* io, size_t count);
 void XIODeviceBase_setDevice_base(XIODeviceBase* io, void* device);

@@ -18,7 +18,7 @@ void stackTest()
 		printf("%d\n",XStack_Top_Base(s,int));
 		XStack_pop_base(s);
 	}
-	XStack_free_base(s);
+	XStack_delete_base(s);
 	XStack* string = XStack_Create(char[100]);
 	char* strings[] = { "琦神","小白","皮皮","蛇蛇" };
 	for (size_t i = 0; i < sizeof(strings) / sizeof(strings[0]); i++)
@@ -31,7 +31,7 @@ void stackTest()
 		printf("%s\n", XStack_top_base(string));
 		XStack_pop_base(string);
 	}
-	XStack_free_base(string);
+	XStack_delete_base(string);
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif

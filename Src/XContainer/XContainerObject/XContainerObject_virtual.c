@@ -14,7 +14,7 @@ static void VXContainerObject_clear(XContainerObject* Object);
 void XContainerDefaultDerivedClassDataFreeMethod(void* args)
 {
 	XContainerObject* object = *((XContainerObject**)args);
-	XContainerObject_free_base(object);
+	XContainerObject_delete_base(object);
 }
 XVtable* XContainerObject_class_init()
 {

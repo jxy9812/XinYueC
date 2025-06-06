@@ -46,7 +46,7 @@ void XVectorTest()
 	XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	XVector_erase_base(v,findRet); 
 	XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
-	XVector_free_base(v);
+	XVector_delete_base(v);
 
 
 #else

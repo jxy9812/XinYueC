@@ -43,7 +43,7 @@ void XSerialPortTest()
     XSerialPortBase* serial = XSerialPortWin32_create();
     if (!XSerialPortBase_open_base(serial, XIODeviceBase_ReadWrite, 6, 115200, SP_PAR_NONE))
     {
-        XSerialPortBase_free_base(serial);
+        XSerialPortBase_delete_base(serial);
         return;
     }
     //XSerialPortBase_setReadBuffer_base(serial,1024);

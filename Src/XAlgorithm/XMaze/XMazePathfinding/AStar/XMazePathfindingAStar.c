@@ -81,7 +81,7 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 		XVector_push_back_base(NodeArray, &childAStarNode);
 		XStack_pop_base(ChildAll);
 	}
-	XStack_free_base(ChildAll);
+	XStack_delete_base(ChildAll);
 	return XVector_getSize_base(nodes->child);
 #else
 	IS_ON_DEBUG(XStack_ON);
@@ -109,7 +109,7 @@ static void XBinaryTreeObject_freeNode(AStarNode* root)
 		{
 			XStack_push_base(stack, it);
 		}
-		XVector_free_base(current->child);
+		XVector_delete_base(current->child);
 		XMemory_free(current);
 	}
 #else
@@ -145,7 +145,7 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 	if(isFindEnd)
 		Path = GetXMazePath(CurrentNode);
 	XBinaryTreeObject_freeNode(root);
-	XVector_free_base(CurrentNodeArray);
+	XVector_delete_base(CurrentNodeArray);
 	XVectorTwo_free(tempMaze);
 	return Path;
 #else

@@ -46,7 +46,7 @@ bool XCommunicatorBase_recvAsync_base(XCommunicatorBase* comm, size_t maxSize); 
 void XCommunicatorBase_poll_base(XCommunicatorBase* comm);
 void XCommunicatorBase_setOption_base(XCommunicatorBase* comm, int optionId, const void* value, size_t size);
 void XCommunicatorBase_getOption_base(XCommunicatorBase* comm, int optionId, void* value, size_t* size);
-#define XCommunicatorBase_free_base XClass_free_base
+#define XCommunicatorBase_delete_base XClass_delete_base
 
 enum XCommunicatorBaseOption
 {

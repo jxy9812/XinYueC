@@ -32,7 +32,7 @@ bool XQueueBase_receive_base(XQueueBase* this_queue, void* pvBuffer);
 void* XQueueBase_top_base(XQueueBase* this_queue);
 bool XQueueBase_isFull_base(XQueueBase* this_queue);
 //释放内存
-#define XQueueBase_free_base				XContainerObject_free_base
+#define XQueueBase_delete_base				XContainerObject_delete_base
 //清空，不是释放内存
 #define XQueueBase_clear_base				XContainerObject_clear_base
 //检测是否为空，空为真 O(1)

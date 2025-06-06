@@ -126,7 +126,7 @@ static XModbusErrorCode XModbus_EV_FRAME_RECEIVED(XModbusBase* modbus)
 		XString* str = XModbusFrameRTU_to16HexString(recvFrame);
 		printf("接收帧:%s\n", XString_c_str(str));
 		//            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
-		XString_free_base(str);
+		XString_delete_base(str);
 #endif // MB_SEND_FRAME_SHOW
 
 		if (XModbusBase_isMaster(modbus))
@@ -166,7 +166,7 @@ static void  XModbus_EV_EXECUTE(XModbusBase* modbus)
 	//XString* str = XModbusFrameRTU_to16HexString(frame);
 	//printf("地址:%X 功能码:%X 完整:%s\n", address, code, XString_c_str(str));
 	////            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
-	//XString_free_base(str);
+	//XString_delete_base(str);
 
 	//如果是主站检查是否有回调函数
 	if (XModbusBase_isMaster(modbus)/*&& modbus->recvHandleMaster!=NULL*/)

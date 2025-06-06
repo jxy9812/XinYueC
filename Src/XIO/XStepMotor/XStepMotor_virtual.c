@@ -63,11 +63,11 @@ void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBas
 void VXStepMotor_free(XStepMotor* motor)
 {
 	if (motor->m_ENA)
-		XSwitchDeviceBase_free_base(motor->m_ENA);
+		XSwitchDeviceBase_delete_base(motor->m_ENA);
 	if (motor->m_DIR)
-		XSwitchDeviceBase_free_base(motor->m_DIR);
+		XSwitchDeviceBase_delete_base(motor->m_DIR);
 	if (motor->m_PUL)
-		XPWMDeviceBase_free_base(motor->m_PUL);
+		XPWMDeviceBase_delete_base(motor->m_PUL);
 	//调用父类释放方法
 	XVtableGetFunc(XClass_class_init(), EXClass_Free,void(*)(XClass*));
 }

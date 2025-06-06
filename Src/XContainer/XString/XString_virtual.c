@@ -299,12 +299,12 @@ void XString_swap_base(struct XString* this_XStringOne, struct XString* this_XSt
 	XSwap(&stringOne->m_size, &stringTwo->m_size, sizeof(size_t));
 }
 //释放容器
-void XString_free_base(const struct XString* this_XString)
+void XString_delete_base(const struct XString* this_XString)
 {
 	if (ISNULL(this_XString, "")))
 		return NULL;
 	struct XString* string = (struct XString*)this_XString;
-	XVector_free_base(string->m_data);
+	XVector_delete_base(string->m_data);
 	XMemory_free(this_XString);
 }
 

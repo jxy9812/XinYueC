@@ -48,9 +48,9 @@ XVtable* XCommunicatorBase_class_init()
 void VXCommunicatorBase_free(XCommunicatorBase* comm)
 {
 	if(comm->m_io)
-		XIODeviceBase_free_base(comm->m_io);
+		XIODeviceBase_delete_base(comm->m_io);
 	if (comm->m_recvAsyncBuffer)
-		XVector_free_base(comm->m_recvAsyncBuffer);
+		XVector_delete_base(comm->m_recvAsyncBuffer);
 	XMemory_free(comm);
 }
 
@@ -135,7 +135,7 @@ size_t VXCommunicatorBase_recv_base(XCommunicatorBase* comm, void* data, size_t 
 	if (timer && run)
 	{
 		XTimerGroupWheel_removeTimer_base(comm->m_wheel,timer);
-		XTimerWheel_free_base(timer);
+		XTimerWheel_delete_base(timer);
 	}
 	return size;
 	//return XIODeviceBase_read_base(comm->m_io, data, maxSize);
@@ -161,7 +161,7 @@ bool VXCommunicatorBase_recvAsync(XCommunicatorBase* comm, size_t maxSize)
 	}
 	if (comm->m_recvAsyncBuffer != NULL)
 	{
-		XVector_free_base(comm->m_recvAsyncBuffer);
+		XVector_delete_base(comm->m_recvAsyncBuffer);
 		comm->m_recvAsyncBuffer = NULL;
 	}
 	return false;

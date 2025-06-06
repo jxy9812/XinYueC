@@ -51,9 +51,9 @@ void VXIODevice_free(XIODeviceBase* io)
 {
 	XIODeviceBase_close_base(io);
 	if (io->m_writeBuffer)
-		XCircularQueue_free_base(io->m_writeBuffer);
+		XCircularQueue_delete_base(io->m_writeBuffer);
 	if (io->m_readBuffer)
-		XCircularQueue_free_base(io->m_readBuffer);
+		XCircularQueue_delete_base(io->m_readBuffer);
 	XMemory_free(io);
 }
 
@@ -181,7 +181,7 @@ void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count)
 	}
 	else if (io->m_writeBuffer != NULL)
 	{
-		XCircularQueueAtomic_free_base(io->m_writeBuffer);
+		XCircularQueueAtomic_delete_base(io->m_writeBuffer);
 		io->m_writeBuffer = NULL;
 	}
 }
@@ -196,7 +196,7 @@ void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count)
 	}
 	else if (io->m_readBuffer != NULL)
 	{
-		XCircularQueueAtomic_free_base(io->m_readBuffer);
+		XCircularQueueAtomic_delete_base(io->m_readBuffer);
 		io->m_readBuffer = NULL;
 	}
 }

@@ -54,7 +54,7 @@ void XHfmTree_setCode(XHfmNode* root)
 		return;
 	XVector* nodeList = XBTree_TraversingToXVector(root, XBTreeInorder);
 	XVector_iterator_for_each(nodeList, getCode,NULL);
-	XVector_free_base(nodeList);
+	XVector_delete_base(nodeList);
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif;

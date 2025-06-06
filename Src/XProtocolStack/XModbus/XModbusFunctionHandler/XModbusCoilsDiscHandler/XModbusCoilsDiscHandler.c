@@ -18,7 +18,7 @@ void XModbusCoilsDiscHandler_free(XModbusCoilsDiscHandler* pRegHandler)
     if (pRegHandler)
     {
         if (pRegHandler->parent.data)
-            XVector_free_base(pRegHandler->parent.data);
+            XVector_delete_base(pRegHandler->parent.data);
         XMemory_free(pRegHandler);
     }
 }

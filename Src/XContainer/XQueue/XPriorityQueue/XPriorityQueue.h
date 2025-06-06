@@ -32,7 +32,7 @@ XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare);
 #define XPriorityQueue_top_base					XQueueBase_top_base
 #define XPriorityQueue_isFull_base				XQueueBase_isFull_base
 //释放内存
-#define XPriorityQueue_free_base				XQueueBase_free_base
+#define XPriorityQueue_delete_base				XQueueBase_delete_base
 //清空，不是释放内存
 #define XPriorityQueue_clear_base				XQueueBase_clear_base
 //检测是否为空，空为真 O(1)

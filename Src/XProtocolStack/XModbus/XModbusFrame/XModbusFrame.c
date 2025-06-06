@@ -40,7 +40,7 @@ void XModbusFrameQueue_pop(XModbusFrameQueue* queue)
 		XModbusFrame* top= XModbusFrameQueue_top(queue);
 		////显释放里面的XVector数据
 		//if(top->frame)
-		//	XVector_free_base(top->frame);
+		//	XVector_delete_base(top->frame);
 		XModbusFrame_free(top);
 	}
 	XCircularQueue_pop_base(queue);
@@ -62,7 +62,7 @@ void XModbusFrameQueue_clear(XModbusFrameQueue* queue)
 void XModbusFrameQueue_free(XModbusFrameQueue* queue)
 {
 	XModbusFrameQueue_clear(queue);
-	XCircularQueue_free_base(queue);
+	XCircularQueue_delete_base(queue);
 }
 
 XModbusFrame* XModbusFrame_create()
@@ -110,7 +110,7 @@ void XModbusFrame_free(XModbusFrame* frame)
 	{
 		if (frame->frameData)
 		{
-			XVector_free_base(frame->frameData);
+			XVector_delete_base(frame->frameData);
 		}
 		if (frame->recvHandle)
 		{

@@ -76,7 +76,7 @@ void XVectorTwo_clear(const XVector* this_vector)
 	for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
 	{
 		struct XVector* RowVector = *(struct XVector**)it;
-		XVector_free_base(RowVector);
+		XVector_delete_base(RowVector);
 	}
 	XVector_clear_base(this_vector);
 }
@@ -84,6 +84,6 @@ void XVectorTwo_clear(const XVector* this_vector)
 void XVectorTwo_free(const XVector* this_vector)
 {
 	XVectorTwo_clear(this_vector);
-	XVector_free_base(this_vector);
+	XVector_delete_base(this_vector);
 }
 #endif

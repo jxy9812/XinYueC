@@ -36,7 +36,7 @@ void XStack_init(XStack* this_stack, size_t typeSize);
 #define XStack_copy_base			XVector_copy_base
 //将this_stackTwo逆序拷贝到this_stackOne
 #define XStack_rcopy_base		XVector_rcopy_base
-#define XStack_free_base			XVector_free_base	
+#define XStack_delete_base			XVector_delete_base	
 #define XStack_clear_base		XVector_clear_base	
 #define XStack_isEmpty_base		XVector_isEmpty_base	
 #define XStack_getSize_base			XVector_getSize_base	

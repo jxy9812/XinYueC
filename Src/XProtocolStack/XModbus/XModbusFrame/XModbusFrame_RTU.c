@@ -33,7 +33,7 @@ static void setRtuDataFrame_8(XModbusFrame* frame, uint8_t address, uint8_t func
 	XString* str = XModbusFrameRTU_to16HexString(frame);
 	printf("当前帧:%s\n", XString_c_str(str));
 	//            // 检查帧是否针对当前从机或广播地址（广播地址帧无需响应）
-	XString_free_base(str);
+	XString_delete_base(str);
 	*/
 }
 //可变字节数据帧 读取线圈 响应帧
@@ -83,7 +83,7 @@ void XModbusFrameRTU_free(XModbusFrameRTU* data)
 	if (data)
 	{
 		if (data->data)
-			XVector_free_base(data->data);
+			XVector_delete_base(data->data);
 	}
 	XMemory_free(data);
 }
@@ -289,7 +289,7 @@ static void XModbusFrameRTU_parse0x01_reply(XModbusFrameRTU* rtu, XVector* frame
 	}
 	else if (data != NULL)//释放数据
 	{
-		XVector_free_base(data);
+		XVector_delete_base(data);
 		rtu->data = NULL;
 	}
 	
@@ -386,7 +386,7 @@ static void XModbusFrameRTU_parse0x10_request(XModbusFrameRTU* rtu, XVector* fra
 	}
 	else if(rtu->data!=NULL)
 	{
-		XVector_free_base(rtu->data);
+		XVector_delete_base(rtu->data);
 		rtu->data = NULL;
 	}
 }
