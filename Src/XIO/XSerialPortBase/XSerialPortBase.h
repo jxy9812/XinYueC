@@ -14,7 +14,8 @@ typedef enum
 {
     SP_ST_One,        // 1位停止位
     SP_ST_OnePointFive,   // 1.5位停止位
-    SP_ST_Two             // 2位停止位
+    SP_ST_Two,             // 2位停止位
+    SP_ST_ZeroPointFive//0.5位停止位
 }XSerialPortBaseStopBits;
 // 跨平台数据位枚举
 typedef enum 
@@ -22,7 +23,8 @@ typedef enum
     SP_DB_Five = 5,       // 5位数据位
     SP_DB_Six = 6,        // 6位数据位
     SP_DB_Seven = 7,      // 7位数据位
-    SP_DB_Eight = 8       // 8位数据位
+    SP_DB_Eight = 8,       // 8位数据位
+    SP_DB_Nine = 9         // 9位数据位
 }XSerialPortBaseDataBits;
 /*! \brief 串口传输校验位类型 */
 typedef enum

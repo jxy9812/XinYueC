@@ -19,9 +19,9 @@ XVtable* XHashMap_class_init()
 	////追加虚函数
 	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXMap_clear);
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXMap_free);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXMap_clear);
+	//XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXMap_free);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
 #if SHOWCONTAINERSIZE
 	printf("XHashMap size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
