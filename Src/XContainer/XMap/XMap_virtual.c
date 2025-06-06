@@ -73,9 +73,9 @@ void VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
 
 void VXMap_erase(XMap* this_map, const XPair** LPpair)
 {
-	if (ISNULL(this_map, "") || ISNULL(LPpair, ""))
-		return;
-	VXMap_remove(this_map, (*LPpair)->m_first);
+	/*if (ISNULL(this_map, "") || ISNULL(LPpair, ""))
+		return;*/
+	XMap_remove_base(this_map, (*LPpair)->m_first);
 }
 
 void VXMap_remove(XMap* this_map, const void* key)

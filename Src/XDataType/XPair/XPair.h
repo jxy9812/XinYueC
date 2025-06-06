@@ -6,10 +6,10 @@ extern "C" {
 #include<stdio.h>
 typedef struct XPair//pair是将2个数据组合成一组数据，当需要这样的需求时就可以使用pair
 {
-	void* m_first;//第一组数据
 	size_t m_firstTypeSize;//第一组数据类型大小
-	void* m_second;//第二组数据
 	size_t m_secondTypeSize;//第二组数据类型大小
+	void* m_first;//第一组数据
+	void* m_second;//第二组数据
 }XPair;
 //开辟一个XPair,初始化
 #define XPair_Create(firstType,secondType) XPair_create(sizeof(firstType),sizeof(secondType))
