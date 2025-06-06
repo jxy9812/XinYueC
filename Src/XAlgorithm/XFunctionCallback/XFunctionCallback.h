@@ -6,6 +6,7 @@ extern "C" {
 #endif
 #include<stdbool.h>
 #include<stdint.h>
+#include<stdio.h>
 //比较大小函数指针-回调函数
 typedef  const bool(*XCompare)(const void* LPrevValue, const void* LNextValue);
 

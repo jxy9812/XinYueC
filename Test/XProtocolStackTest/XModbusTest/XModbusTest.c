@@ -4,6 +4,8 @@
 #include"XMemory.h"
 #include"XCrc.h"
 #include"XModbusFrame.h"
+#include"XModbusRegisterHandler.h"
+#include"XModbusFunctionHandler.h"
 //0x6 功能码响应
 static void RtuDataFrame_0x06_reply(XModbus* modbus, XModbusFrame* frame)
 {
