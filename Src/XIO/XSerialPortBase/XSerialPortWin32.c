@@ -97,7 +97,10 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode)
 
     // 设置串口参数
     dcb.BaudRate = parent->m_baudRate;
-    dcb.ByteSize = parent->m_dataBits;
+    if (parent->m_dataBits == SP_DB_Nine)
+        dcb.ByteSize = SP_DB_Eight;
+    else
+        dcb.ByteSize = parent->m_dataBits;
     dcb.StopBits = parent->m_stopBits;
     dcb.Parity = parent->m_parity;
 
