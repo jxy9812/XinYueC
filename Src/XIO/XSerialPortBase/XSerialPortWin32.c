@@ -64,10 +64,8 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode)
         return false;
     //printf("打开串口\n");
     XSerialPortBase* parent = serial;
-   /* parent->m_baudRate = baudRate;
-    parent->m_parity = parity;
-    parent->m_portNum = portNum;*/
-    //memset(&(serial->m_ov), 0, sizeof(OVERLAPPED));
+    if (parent->m_dataBits == SP_DB_Nine|| parent->m_stopBits== SP_ST_ZeroPointFive)
+        return false;//当前平台不支持
     char portName[10] = { 0 };
     sprintf(portName, "COM%d", parent->m_portNum);
     // 打开串口
@@ -97,10 +95,7 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode)
 
     // 设置串口参数
     dcb.BaudRate = parent->m_baudRate;
-    if (parent->m_dataBits == SP_DB_Nine)
-        dcb.ByteSize = SP_DB_Eight;
-    else
-        dcb.ByteSize = parent->m_dataBits;
+    dcb.ByteSize = parent->m_dataBits; 
     dcb.StopBits = parent->m_stopBits;
     dcb.Parity = parent->m_parity;
 

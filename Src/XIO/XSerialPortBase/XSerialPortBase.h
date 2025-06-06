@@ -14,7 +14,8 @@ typedef enum
 {
     SP_ST_One,        // 1位停止位
     SP_ST_OnePointFive,   // 1.5位停止位
-    SP_ST_Two             // 2位停止位
+    SP_ST_Two,             // 2位停止位
+    SP_ST_ZeroPointFive//0.5位停止位
 }XSerialPortBaseStopBits;
 // 跨平台数据位枚举
 typedef enum 
