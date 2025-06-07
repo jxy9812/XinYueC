@@ -39,6 +39,7 @@ typedef struct XModbusFrameDataRecvHandle
 //Modbus一帧数据处理
 typedef struct XModbusFrame
 {
+    bool autoDelete;//自动删除
     XModbusMode mode;//modbus的模式
     XVector* frameData;//帧数据
     void* data;//用来存放解析后的数据 结构体

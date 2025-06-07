@@ -1,10 +1,11 @@
 ﻿#include"XTimerWheel.h"
 #include"XTimerGroupBase.h"
-//static void VXTimerBase_delete_base(XTimerWheel* timer);
-static void VXTimerBase_start_base(XTimerWheel* timer);
-static void VXTimerBase_stop_base(XTimerWheel* timer);
-static void VXTimerBase_setTimeout_base(XTimerWheel* timer, size_t value);
-static void VXTimerBase_setInterval_base(XTimerWheel* timer, size_t value);
+#include"XMemory.h"
+static void VXTimerBase_start(XTimerWheel* timer);
+static void VXTimerBase_stop(XTimerWheel* timer);
+static void VXTimerBase_setTimeout(XTimerWheel* timer, size_t value);
+static void VXTimerBase_setInterval(XTimerWheel* timer, size_t value);
+static void VXTimerBase_delete(XTimerWheel* timer);
 XVtable* XTimerWheel_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -17,26 +18,28 @@ XVtable* XTimerWheel_class_init()
 		//继承类
 		XVTABLE_INHERIT_DEFAULT(XClass_class_init());
 	void* table[] = {
-	VXTimerBase_start_base,VXTimerBase_stop_base,
-	VXTimerBase_setTimeout_base,VXTimerBase_setInterval_base
+	VXTimerBase_start,VXTimerBase_stop,
+	VXTimerBase_setTimeout,VXTimerBase_setInterval
 
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	//XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXTimerBase_delete_base);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXTimerBase_delete);
 #if SHOWCONTAINERSIZE
 	printf("XTimerWheel size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
 
-//void VXTimerBase_delete_base(XTimerWheel* timer)
-//{
-//
-//}
+void VXTimerBase_delete(XTimerWheel* timer)
+{
+	XTimerWheel_stop_base(timer);
+	XMemory_free(timer);
+}
 
-void VXTimerBase_start_base(XTimerWheel* timer)
+
+void VXTimerBase_start(XTimerWheel* timer)
 {
 	if (timer->m_parent.m_isRun)
 		XTimerBase_stop_base(timer);
@@ -47,7 +50,7 @@ void VXTimerBase_start_base(XTimerWheel* timer)
 	
 }
 
-void VXTimerBase_stop_base(XTimerWheel* timer)
+void VXTimerBase_stop(XTimerWheel* timer)
 {
 	if(timer->m_parent.m_isRun)
 	{
@@ -57,12 +60,13 @@ void VXTimerBase_stop_base(XTimerWheel* timer)
 	}
 }
 
-void VXTimerBase_setTimeout_base(XTimerWheel* timer, size_t value)
+void VXTimerBase_setTimeout(XTimerWheel* timer, size_t value)
 {
 	timer->m_parent.m_timeout = value;
 }
 
-void VXTimerBase_setInterval_base(XTimerWheel* timer, size_t value)
+void VXTimerBase_setInterval(XTimerWheel* timer, size_t value)
 {
 	timer->m_parent.m_interval = value;
 }
+

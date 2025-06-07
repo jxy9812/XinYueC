@@ -110,11 +110,11 @@ size_t VXCommunicatorBase_recv_base(XCommunicatorBase* comm, void* data, size_t 
 	if (comm->m_opt_timeout != 0)
 	{
 		timer = XTimerWheel_create();
+		XTimerWheel_setGroup(timer,comm->m_wheel);
 		XTimerWheel_setUserData(timer, &run);
-		XTimerWheel_setTimeout_base(timer, 5);
+		XTimerWheel_setTimeout_base(timer, comm->m_opt_timeout);
 		XTimerWheel_setTimerCallback(timer, recvOut);
 		XTimerWheel_start_base(timer);
-		XTimerGroupWheel_addTimer_base(comm->m_wheel, timer);
 	}
 	while (size < maxSize)
 	{
@@ -134,7 +134,6 @@ size_t VXCommunicatorBase_recv_base(XCommunicatorBase* comm, void* data, size_t 
 	}
 	if (timer && run)
 	{
-		XTimerGroupWheel_removeTimer_base(comm->m_wheel,timer);
 		XTimerWheel_delete_base(timer);
 	}
 	return size;

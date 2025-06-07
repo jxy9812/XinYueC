@@ -256,8 +256,9 @@ bool VXModbusBase_TransmitFSM(XModbusBase* modbus)
                 if (frame->recvHandle != NULL && frame->recvHandle->pRecvHandCallFunc)
                 {//发送的帧中存在回调方法
                     XVector_push_back_base(modbus->m_recvHandleMaster, &(frame->recvHandle));
-                    //frame->recvHandle->timeout=
-                    frame->recvHandle = NULL;//转移所有权
+#if MB_SEND_FRAME_REGULARLY_COPY
+                    frame->recvHandle = NULL;//转移所有权  //打开后是拷贝模式
+#endif
 
                 }
             }

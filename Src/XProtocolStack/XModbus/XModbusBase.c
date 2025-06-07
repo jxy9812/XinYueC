@@ -94,6 +94,7 @@ XModbusErrorCode XModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame)
 		return MB_EINVAL;
 	if (setSendFrame(modbus, frame))
 	{
+		frame->autoDelete = true;
 		if (!XModbusFrameQueue_push(modbus->m_sendQueue, frame))
 		{
 #if MB_QUEUE_FULL_SHOW
@@ -108,9 +109,15 @@ XModbusErrorCode XModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame)
 //发送帧数据的回调函数
 static void sendFrameCallback(XModbusRegularlySendFrame* regularly)
 {
+#if MB_SEND_FRAME_REGULARLY_COPY
 	XModbusFrame* frame=XModbusFrame_copy(regularly->frame);
-	
+#else
+	XModbusFrame* frame = regularly->frame;
+#endif
 	XModbusBase_sendFrame(regularly->modbus, frame);
+#if !MB_SEND_FRAME_REGULARLY_COPY
+	frame->autoDelete = false;
+#endif
 	//frame->recvHandle->timeout = XTimerBase_getCurrentTime() + MB_MASTER_RECV_OUT_TIME;
 	//printf("发送的:%d\n", frame->recvHandle->timeout);
 }
@@ -120,6 +127,7 @@ XTimerBase* XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFra
 		return NULL;
 	if (setSendFrame(modbus, frame))
 	{
+		
 		XTimerWheel* timer = XTimerWheel_create();
 		XModbusRegularlySendFrame regularly = { 0 };
 		regularly.frame = frame;

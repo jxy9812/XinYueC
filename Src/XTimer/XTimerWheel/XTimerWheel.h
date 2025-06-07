@@ -28,13 +28,13 @@ void XTimerWheel_init(XTimerWheel* timer);
 #define XTimerWheel_setInterval_base XTimerBase_setInterval_base
 #define XTimerWheel_setUserData XTimerBase_setUserData
 #define XTimerWheel_setTimerCallback XTimerBase_setTimerCallback
-#define XTimerWheel_setTimerId XTimerBase_setTimerId
+#define XTimerWheel_setGroup XTimerBase_setTimerId
 // 是否为周期性任务
 #define XTimerWheel_isPeriodic XTimerBase_isPeriodic
 #define XTimerWheel_isRunning XTimerBase_isRunning
 #define XTimerWheel_getTimeout XTimerBase_getTimeout
 #define XTimerWheel_getInterval XTimerBase_getInterval
-#define XTimerWheel_getTimerId XTimerBase_getTimerId
+#define XTimerWheel_getGroup XTimerBase_getTimerId
 #define XTimerWheel_getUserData XTimerBase_getUserData
 //超时回调函数
 #define XTimerWheel_out XTimerBase_out

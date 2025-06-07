@@ -41,7 +41,8 @@ void XModbusFrameQueue_pop(XModbusFrameQueue* queue)
 		////显释放里面的XVector数据
 		//if(top->frame)
 		//	XVector_delete_base(top->frame);
-		XModbusFrame_free(top);
+		if(top->autoDelete)
+			XModbusFrame_free(top);
 	}
 	XCircularQueue_pop_base(queue);
 }

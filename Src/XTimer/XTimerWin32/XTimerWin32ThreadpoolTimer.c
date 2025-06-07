@@ -65,6 +65,7 @@ static void XTimerFreeWin32ThreadpoolTimer(XTimerBase* timer)
 		// 清理资源
 		CloseThreadpoolTimer(((PTP_TIMER)(timer->timerId)));
 	}
+	XMemory_free(timer);
 }
 static void XTimerSetIntervalWin32ThreadpoolTimer(XTimerBase* timer, size_t value)
 {

@@ -67,7 +67,9 @@ static XModbusErrorCode XModbus_EventEmpty(XModbusBase* modbus)
 					//printf("%d\n", (*Handle)->timeout);
 					if ((*Handle)->pRecvHandCallFunc)
 						(*Handle)->pRecvHandCallFunc(modbus, NULL);
-					XMemory_free(*Handle);
+#if MB_SEND_FRAME_REGULARLY_COPY
+					XMemory_free(*Handle);//打开后是拷贝模式
+#endif
 					XVector_pop_front_base(modbus->m_recvHandleMaster);
 				}
 			}
@@ -183,6 +185,9 @@ static void  XModbus_EV_EXECUTE(XModbusBase* modbus)
 			*value = NULL;
 			//执行回调函数
 			frame->recvHandle->pRecvHandCallFunc(modbus, frame);
+#if !MB_SEND_FRAME_REGULARLY_COPY
+			frame->recvHandle = NULL;//注释后是拷贝模式
+#endif // MB_SEND_FRAME_REGULARLY_COPY
 			//释放一个资源
 			XModbusFrameQueue_pop(modbus->m_recvFrameQueue);
 			XVector_erase_base(modbus->m_recvHandleMaster, value);

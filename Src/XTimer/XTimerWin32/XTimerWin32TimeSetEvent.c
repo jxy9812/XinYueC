@@ -38,6 +38,7 @@ static void XTimerStopWin32TimeSetEvent(XTimerBase* timer)
 static void XTimerFreeWin32TimeSetEvent(XTimerBase* timer)
 {
 	XTimerStopWin32TimeSetEvent(timer);
+	XMemory_free(timer);
 }
 static void XTimerSetIntervalWin32TimeSetEvent(XTimerBase* timer, size_t value)
 {

@@ -119,6 +119,8 @@ extern "C" {
  #define MB_IS_COMP_SEND_FRAME					 (  1 )
 //是否启用校准软件定时器接收状态
  #define MB_CALIBRATION_TIMER_SETTINGS			 (  0 )
+//定期发送的帧是否要拷贝
+ #define MB_SEND_FRAME_REGULARLY_COPY			 (  1 )
  //接收帧显示
  #define MB_RECV_FRAME_SHOW						 (  1 )
  //发送帧显示
