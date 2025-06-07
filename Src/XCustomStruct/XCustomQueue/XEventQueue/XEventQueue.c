@@ -13,7 +13,7 @@ XEventQueue* XEventQueue_create(XEventQueueInit init)
 }
 #if XEventQueueDefaultConfig
 #include"XQueue.h"
-static void XEventQueue_defaultConfigFree(XEventQueue* queue)
+static void XEventQueue_defaultConfigDelete(XEventQueue* queue)
 {
 	if (queue&&queue->queue)
 	{
@@ -68,7 +68,7 @@ bool XEventQueue_defaultConfigInit(XEventQueue* queue)
 	if(queue==NULL)
 		return false;
 	queue->queue = XQueue_Create(XEventQueueEventType);
-	queue->free = XEventQueue_defaultConfigFree;
+	queue->free = XEventQueue_defaultConfigDelete;
 	queue->pop = XEventQueue_defaultConfigPop;
 	queue->push = XEventQueue_defaultConfigPush;
 	queue->top = XEventQueue_defaultConfigTop;

@@ -14,5 +14,5 @@ void XClass_delete_base(XClass* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(XClassGetVtable(Object), ""))
 		return;
-	XClassGetVirtualFunc(Object, EXClass_Free, void(*)(XClass*))(Object);
+	XClassGetVirtualFunc(Object, EXClass_Delete, void(*)(XClass*))(Object);
 }

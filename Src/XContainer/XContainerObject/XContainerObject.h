@@ -11,13 +11,13 @@ extern "C" {
 //#define DEBUG_ON 1
 
 //数据释放方法
-typedef void (*XCDataFreeMethod)(void* args);
+typedef void (*XCDataDeleteMethod)(void* args);
 
 #define XCONTAINEROBJECT_VTABLE_SIZE   (XCLASS_VTABLE_SIZE+6)      //容器基类虚函数表大小
 //XContainerObject虚函数表枚举
 enum XContainerObjectVtableEnum
 {
-	//EXContainerObject_Free,
+	//EXContainerObject_Delete,
 	EXContainerObject_IsEmpty= XCLASS_VTABLE_SIZE,
 	EXContainerObject_Size,
 	EXContainerObject_Capacity,
@@ -30,7 +30,7 @@ typedef struct XContainerObject
 {
 	XClass m_parent;
 	void* m_data;//指向容器数据的指针
-	XCDataFreeMethod m_dataFreeMethod;//数据释放方法
+	XCDataDeleteMethod m_dataDeleteMethod;//数据释放方法
 	size_t  m_capacity;//当前容器能容纳的最大元素数量
 	size_t m_size;//当前容器内的元素个数
 	size_t m_typeSize;//类型占用字节数
@@ -43,10 +43,10 @@ typedef struct XContainerObject
 #define XContainerSize(Object) (((XContainerObject*)(Object))->m_size)//当前容器内的元素个数
 #define XContainerIsEmpty(Object) (XContainerSize(Object)==0)//当前容器是否时空的
 #define XContainerTypeSize(Object) (((XContainerObject*)(Object))->m_typeSize)//类型占用字节数
-#define XContainerDataFreeMethod(Object) (((XContainerObject*)(Object))->m_dataFreeMethod)//获取容器数据释放方法
-#define XContainerSetDataFreeMethod(Object,method) (((XContainerObject*)(Object))->m_dataFreeMethod=method)//设置容器的数据释放方法
+#define XContainerDataDeleteMethod(Object) (((XContainerObject*)(Object))->m_dataDeleteMethod)//获取容器数据释放方法
+#define XContainerSetDataDeleteMethod(Object,method) (((XContainerObject*)(Object))->m_dataDeleteMethod=method)//设置容器的数据释放方法
 //默认释放派生类的方法
-void XContainerDefaultDerivedClassDataFreeMethod(void* args);
+void XContainerDefaultDerivedClassDataDeleteMethod(void* args);
 XVtable* XContainerObject_class_init();
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);
 #define XContainerObject_delete_base	XClass_delete_base

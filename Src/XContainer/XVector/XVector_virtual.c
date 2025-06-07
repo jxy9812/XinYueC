@@ -282,8 +282,8 @@ void VXVector_pop_back(XVector* this_vector)//删除向量中最后一个元素
 {
 	if (XContainerObject_isEmpty_base(this_vector))
 		return ;
-	if (XContainerDataFreeMethod(this_vector) != NULL)
-		XContainerDataFreeMethod(this_vector)(XVector_back_base(this_vector));
+	if (XContainerDataDeleteMethod(this_vector) != NULL)
+		XContainerDataDeleteMethod(this_vector)(XVector_back_base(this_vector));
 	--XContainerSize(this_vector);
 }
 void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
@@ -298,8 +298,8 @@ void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 	}
 	else if(front <= LpValue && LpValue <= back && ((char*)LpValue - (char*)front)% typeSize==0)
 	{
-		if (XContainerDataFreeMethod(this_vector) != NULL)
-			XContainerDataFreeMethod(this_vector)(LpValue);
+		if (XContainerDataDeleteMethod(this_vector) != NULL)
+			XContainerDataDeleteMethod(this_vector)(LpValue);
 		memcpy(LpValue, (char*)LpValue + typeSize, (size_t)((char*)back - (char*)LpValue));
 		--XContainerSize(this_vector);
 	}
@@ -318,11 +318,11 @@ void VXVector_remove(XVector* this_vector, int64_t index, int64_t n)//删除数�
 	if (index + n > size|| n < 0)
 		n = size-index;
 	//释放数据
-	if (XContainerDataFreeMethod(this_vector) != NULL)
+	if (XContainerDataDeleteMethod(this_vector) != NULL)
 	{
 		for (size_t i = 0; i < n; i++)
 		{
-			XContainerDataFreeMethod(this_vector)(ptr+(i+index)* typeSize);
+			XContainerDataDeleteMethod(this_vector)(ptr+(i+index)* typeSize);
 		}
 	}
 	for (size_t i = 0; i < size - index - n; i++)
@@ -338,11 +338,11 @@ void VXVector_clear(XVector* this_vector)//清空vector的数组
 	if (XContainerObject_isEmpty_base(this_vector))
 		return;
 	//释放数据
-	if (XContainerDataFreeMethod(this_vector) != NULL)
+	if (XContainerDataDeleteMethod(this_vector) != NULL)
 	{
 		for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
 		{
-			XContainerDataFreeMethod(this_vector)(it);
+			XContainerDataDeleteMethod(this_vector)(it);
 		}
 	}
 	XContainerSize(this_vector) = 0;

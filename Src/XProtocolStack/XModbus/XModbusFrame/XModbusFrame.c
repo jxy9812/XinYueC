@@ -35,7 +35,7 @@ void XModbusFrameQueue_pop(XModbusFrameQueue* queue)
 	if (queue == NULL)
 		return NULL;
 	//没有设置自动释放手动释放
-	if (XContainerDataFreeMethod(queue) == NULL)
+	if (XContainerDataDeleteMethod(queue) == NULL)
 	{
 		XModbusFrame* top= XModbusFrameQueue_top(queue);
 		////显释放里面的XVector数据

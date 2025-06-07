@@ -3,7 +3,7 @@
 XStringVector* XStringVector_create()
 {
 	XStringVector* vector=XVector_Create(XString*);
-	XContainerSetDataFreeMethod(vector,XContainerDefaultDerivedClassDataFreeMethod);
+	XContainerSetDataDeleteMethod(vector,XContainerDefaultDerivedClassDataDeleteMethod);
 	return vector;
 }
 void XStringVector_free(XStringVector* this_stringVector)

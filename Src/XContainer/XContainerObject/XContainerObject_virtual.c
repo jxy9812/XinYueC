@@ -11,7 +11,7 @@ static size_t VXContainerObject_getCapacity(const  XContainerObject* Object);
 static size_t VXContainerObject_getTypeSize(const XContainerObject* Object);
 static void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
 static void VXContainerObject_clear(XContainerObject* Object);
-void XContainerDefaultDerivedClassDataFreeMethod(void* args)
+void XContainerDefaultDerivedClassDataDeleteMethod(void* args)
 {
 	XContainerObject* object = *((XContainerObject**)args);
 	XContainerObject_delete_base(object);
@@ -31,7 +31,7 @@ XVtable* XContainerObject_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXContainerObject_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXContainerObject_free);
 #if SHOWCONTAINERSIZE
 	printf("XContainerObject size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

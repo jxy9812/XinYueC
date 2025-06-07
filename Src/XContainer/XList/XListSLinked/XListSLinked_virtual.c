@@ -46,7 +46,7 @@ XVtable* XListSLinked_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXList_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXList_free);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXList_clear);
 
 #if SHOWCONTAINERSIZE
@@ -236,8 +236,8 @@ void VXList_pop_front(XListSLinked* this_list)
 	{
 		XContainerDataPtr(this_list) = head->next;
 	}
-	if (XContainerDataFreeMethod(this_list) != NULL)
-		XContainerDataFreeMethod(this_list)(&(head->data));
+	if (XContainerDataDeleteMethod(this_list) != NULL)
+		XContainerDataDeleteMethod(this_list)(&(head->data));
 	//释放节点
 	XMemory_free(head);
 	//更新数量
@@ -269,8 +269,8 @@ void VXList_pop_back(XListSLinked* this_list)
 			node=node->next;
 		}
 	}
-	if (XContainerDataFreeMethod(this_list) != NULL)
-		XContainerDataFreeMethod(this_list)(&(tail->data));
+	if (XContainerDataDeleteMethod(this_list) != NULL)
+		XContainerDataDeleteMethod(this_list)(&(tail->data));
 	XMemory_free(tail);
 	//更新数量
 	--XContainerSize(this_list);
@@ -293,8 +293,8 @@ static removeNode(XListSLinked* this_list, XListSNode* prev, XListSNode* removeN
 		if (prev)
 			prev->next = NULL;
 	}
-	if (XContainerDataFreeMethod(this_list) != NULL)
-		XContainerDataFreeMethod(this_list)(&(removeNode->data));
+	if (XContainerDataDeleteMethod(this_list) != NULL)
+		XContainerDataDeleteMethod(this_list)(&(removeNode->data));
 	XMemory_free(removeNode);
 	//更新数量
 	--XContainerSize(this_list);
@@ -352,8 +352,8 @@ void VXList_clear(XListSLinked* this_list)
 	{
 		prev = node;
 		node = node->next;
-		if (XContainerDataFreeMethod(this_list) != NULL)
-			XContainerDataFreeMethod(this_list)(&(prev->data));
+		if (XContainerDataDeleteMethod(this_list) != NULL)
+			XContainerDataDeleteMethod(this_list)(&(prev->data));
 		XMemory_free(prev);
 	}
 	this_list->m_tail = NULL;

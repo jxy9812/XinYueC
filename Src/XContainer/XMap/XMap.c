@@ -89,24 +89,24 @@ XPair* XMap_find_base(XMap* this_map, const void* key)
 }
 
 
-void XMap_DefaultDerivedClassDataKeyFreeMethod(void* args)
+void XMap_DefaultDerivedClassDataKeyDeleteMethod(void* args)
 {
 	XPair* pair = (XPair*)args;
 	XContainerObject* object = *((XContainerObject**)XPair_second(pair));
 	XContainerObject_delete_base(object);
 }
 
-void XMap_DefaultDerivedClassDataValueFreeMethod(void* args)
+void XMap_DefaultDerivedClassDataValueDeleteMethod(void* args)
 {
 	XPair* pair = (XPair*)args;
 	XContainerObject* object = *((XContainerObject**)XPair_first(pair));
 	XContainerObject_delete_base(object);
 }
 
-void XMap_DefaultDerivedClassDataKeyValueFreeMethod(void* args)
+void XMap_DefaultDerivedClassDataKeyValueDeleteMethod(void* args)
 {
-	XMap_DefaultDerivedClassDataKeyFreeMethod(args);
-	XMap_DefaultDerivedClassDataValueFreeMethod(args);
+	XMap_DefaultDerivedClassDataKeyDeleteMethod(args);
+	XMap_DefaultDerivedClassDataValueDeleteMethod(args);
 }
 
 

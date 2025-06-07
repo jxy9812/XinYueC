@@ -61,11 +61,11 @@ XPair* XMap_find_base(XMap* this_map, const void* key);
 //返回元素类型字节大小
 #define XMap_getTypeSize_base		XContainerObject_getTypeSize_base
 //默认释放派生类的方法 key是派生的容器
-void XMap_DefaultDerivedClassDataKeyFreeMethod(void* args);
+void XMap_DefaultDerivedClassDataKeyDeleteMethod(void* args);
 //默认释放派生类的方法 value是派生的容器
-void XMap_DefaultDerivedClassDataValueFreeMethod(void* args);
+void XMap_DefaultDerivedClassDataValueDeleteMethod(void* args);
 //默认释放派生类的方法 key和value都是派生的容器
-void XMap_DefaultDerivedClassDataKeyValueFreeMethod(void* args);
+void XMap_DefaultDerivedClassDataKeyValueDeleteMethod(void* args);
 
 //其他函数
 //插入迭代器地址

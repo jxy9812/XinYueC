@@ -36,7 +36,7 @@ XVtable* XMap_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXMap_clear);
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Free,VXMap_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete,VXMap_free);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
 #if SHOWCONTAINERSIZE
 	printf("XMap size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -87,8 +87,8 @@ void VXMap_remove(XMap* this_map, const void* key)
 	if (nodes != NULL)
 	{
 		XPair* pair = *((XPair**)XVector_at_base(nodes->XBTNode.values, 0));
-		if (XContainerDataFreeMethod(this_map) != NULL)
-			XContainerDataFreeMethod(this_map)(pair);
+		if (XContainerDataDeleteMethod(this_map) != NULL)
+			XContainerDataDeleteMethod(this_map)(pair);
 		XRBTree_erase(&(this_map->m_parent.m_data), this_map->m_KeyLess, this_map->m_KeyEquality, XCompareRuleOne_XMap, key);
 		XPair_free(pair);
 		--XContainerCapacity(this_map);
@@ -138,8 +138,8 @@ XPair* VXMap_find(XMap* this_map, const void* key)
 static void XMap_freeNodeData(void* LPVal, void* args)
 {
 	XPair* pair = *(XPair**)LPVal;
-	if (XContainerDataFreeMethod(args) != NULL)
-		XContainerDataFreeMethod(args)(pair);
+	if (XContainerDataDeleteMethod(args) != NULL)
+		XContainerDataDeleteMethod(args)(pair);
 	XPair_free(pair);
 	*(XPair**)LPVal = NULL;
 }

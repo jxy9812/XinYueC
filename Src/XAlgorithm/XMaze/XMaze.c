@@ -120,7 +120,7 @@ void XMazePathPrintSleep(const XVector* maze, XVector* mazePath, const char* Wal
 #endif
 }
 
-void XMazeFree(const struct XVector* maze)
+void XMazeDelete(const struct XVector* maze)
 {
 #if XVector_ON
 	XVectorTwo_free(maze);

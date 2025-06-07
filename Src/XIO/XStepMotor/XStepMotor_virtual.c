@@ -40,7 +40,7 @@ XVtable* XStepMotor_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXStepMotor_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXStepMotor_free);
 #if SHOWCONTAINERSIZE
 	printf("XStepMotor size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -69,7 +69,7 @@ void VXStepMotor_free(XStepMotor* motor)
 	if (motor->m_PUL)
 		XPWMDeviceBase_delete_base(motor->m_PUL);
 	//调用父类释放方法
-	XVtableGetFunc(XClass_class_init(), EXClass_Free,void(*)(XClass*));
+	XVtableGetFunc(XClass_class_init(), EXClass_Delete,void(*)(XClass*));
 }
 
 bool VXStepMotor_isOpen(XStepMotor* motor)

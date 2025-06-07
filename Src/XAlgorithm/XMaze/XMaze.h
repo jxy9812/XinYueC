@@ -35,7 +35,7 @@ void XMazePathPrint(const struct XVector* maze, XVector* mazePath,const char* Wa
 //打印迷宫路径 wall墙(替换的字符) Route道路(替换的字符) Path路径 毫秒延迟动画方式
 void XMazePathPrintSleep(const struct XVector* maze, XVector* mazePath, const char* Wall, const char* Route, const char* Path,const size_t msec);
 //释放迷宫
-void XMazeFree(const struct XVector* maze);
+void XMazeDelete(const struct XVector* maze);
 //返回迷宫行数
 const int XMazeRow(const struct XVector* maze);
 //返回迷宫列数

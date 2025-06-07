@@ -7,18 +7,18 @@ extern "C" {
 #include<stdbool.h>
 #include"XDataStructConfig.h"
 typedef void* (*MallocMethod)(size_t size);
-typedef void (*FreeMethod)(void* pointer);
+typedef void (*DeleteMethod)(void* pointer);
 typedef void* (*ReallocMethod)(void* pointer, size_t size);
 //内存管理
 typedef struct
 {
 	MallocMethod allocate;//申请内存
-	FreeMethod deallocate;//释放内存
+	DeleteMethod deallocate;//释放内存
 	ReallocMethod reallocate;//重新申请内存扩容
 } XMemory;
 void XMemory_setMethod(const XMemory* method);
 void XMemory_setMallocMethod(MallocMethod method);
-void XMemory_setFreeMethod(FreeMethod method);
+void XMemory_setDeleteMethod(DeleteMethod method);
 void XMemory_setReallocMethod(ReallocMethod method);
 //XMemory_malloc XMemory_free配合实现XMemory_realloc  扩大内存拷贝时有一定隐患
 void* XMemory_reallocPack(void* pointer, size_t size);

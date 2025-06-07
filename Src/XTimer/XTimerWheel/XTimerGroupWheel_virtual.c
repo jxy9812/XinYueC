@@ -30,7 +30,7 @@ XVtable* XTimerGroupWheel_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Free, VXTimerGroupWheel_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXTimerGroupWheel_free);
 #if SHOWCONTAINERSIZE
 	printf("XTimerGroupWheel size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

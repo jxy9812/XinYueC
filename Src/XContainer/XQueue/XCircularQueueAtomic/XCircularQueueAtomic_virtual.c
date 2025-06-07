@@ -91,8 +91,8 @@ void VXCircularQueueAtomic_pop(XCircularQueueAtomic* this_queue)
 	if (VXCircularQueueAtomic_isEmpty(this_queue))
 		return;
 	size_t head = XAtomic_load_size_t(&(this_queue->m_head));
-	if (XContainerDataFreeMethod(this_queue) != NULL)
-		XContainerDataFreeMethod(this_queue)(VXCircularQueueAtomic_top(this_queue));
+	if (XContainerDataDeleteMethod(this_queue) != NULL)
+		XContainerDataDeleteMethod(this_queue)(VXCircularQueueAtomic_top(this_queue));
 	// 更新队头指针(原子操作)
 	XAtomic_store_size_t(&(this_queue->m_head), (head + 1) % XContainerSize(this_queue));
 }
@@ -112,8 +112,8 @@ bool VXCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuf
 	size_t head = XAtomic_load_size_t(&(this_queue->m_head));
 	void* pvTop = ((char*)XContainerDataPtr(this_queue)) + (head * XContainerTypeSize(this_queue));
 	memcpy(pvBuffer, pvTop, XContainerTypeSize(this_queue));
-	if (XContainerDataFreeMethod(this_queue) != NULL)
-		XContainerDataFreeMethod(this_queue)(pvTop);
+	if (XContainerDataDeleteMethod(this_queue) != NULL)
+		XContainerDataDeleteMethod(this_queue)(pvTop);
 	// 更新队头指针(原子操作)
 	XAtomic_store_size_t(&(this_queue->m_head), (head + 1) % XContainerSize(this_queue));
 	return true;

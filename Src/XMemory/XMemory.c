@@ -34,7 +34,7 @@ void XMemory_free(void* pointer)
 	global_Memory.deallocate(pointer);
 }
 
-void XMemory_setFreeMethod(FreeMethod method)
+void XMemory_setDeleteMethod(DeleteMethod method)
 {
 	global_Memory.deallocate = method;
 }

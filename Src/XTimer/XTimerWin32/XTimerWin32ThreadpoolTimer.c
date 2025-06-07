@@ -55,7 +55,7 @@ static void XTimerStopWin32ThreadpoolTimer(XTimerBase* timer)
 		timer->m_isRun = false;
 	}
 }
-static void XTimerFreeWin32ThreadpoolTimer(XTimerBase* timer)
+static void XTimerDeleteWin32ThreadpoolTimer(XTimerBase* timer)
 {
 	XTimerStopWin32ThreadpoolTimer(timer);
 	if (timer->timerId)
@@ -87,7 +87,7 @@ XVtable* XTimerWin32ThreadpoolTimer_class_init()
 	//继承类
 	//XVTABLE_INHERIT_DEFAULT(XClass_class_init());
 		void* table[] = { 
-		XTimerFreeWin32ThreadpoolTimer,XTimerStartWin32ThreadpoolTimer,
+		XTimerDeleteWin32ThreadpoolTimer,XTimerStartWin32ThreadpoolTimer,
 		XTimerStopWin32ThreadpoolTimer,XTimerSetIntervalWin32ThreadpoolTimer };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);

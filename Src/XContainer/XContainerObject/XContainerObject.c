@@ -7,7 +7,7 @@ void XContainerObject_init(XContainerObject* Object, size_t typeSize)
 	XClass_init(Object);
 	XClassGetVtable(Object) = XContainerObject_class_init();
 	Object->m_data = NULL;
-	Object->m_dataFreeMethod = NULL;
+	Object->m_dataDeleteMethod = NULL;
 	Object->m_capacity = 0;
 	Object->m_size = 0;
 	Object->m_typeSize = typeSize;

@@ -35,7 +35,7 @@ static void XTimerStopWin32TimeSetEvent(XTimerBase* timer)
 		timer->m_isRun = false;
 	}
 }
-static void XTimerFreeWin32TimeSetEvent(XTimerBase* timer)
+static void XTimerDeleteWin32TimeSetEvent(XTimerBase* timer)
 {
 	XTimerStopWin32TimeSetEvent(timer);
 	XMemory_free(timer);
@@ -60,7 +60,7 @@ XVtable* XTimerWin32TimeSetEvent_class_init()
 	//继承类
 	//XVTABLE_INHERIT_DEFAULT(XClass_class_init());
 	void* table[] = {
-		XTimerFreeWin32TimeSetEvent,XTimerStartWin32TimeSetEvent,
+		XTimerDeleteWin32TimeSetEvent,XTimerStartWin32TimeSetEvent,
 		XTimerStopWin32TimeSetEvent,XTimerSetIntervalWin32TimeSetEvent };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);

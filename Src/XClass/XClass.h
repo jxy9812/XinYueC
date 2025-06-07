@@ -10,7 +10,7 @@ typedef struct  XVtable;
 //XClass虚函数表枚举
 enum XClassVtableEnum
 {
-	EXClass_Free,
+	EXClass_Delete,
 };
 //容器基类
 typedef struct XClass

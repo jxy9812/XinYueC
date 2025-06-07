@@ -26,7 +26,7 @@ void XModbusFuncCodeList_remove(XModbusFunctionHandlerList* list, uint8_t code)
 		return;
 	XModbusFunctionHandler* find = XModbusFuncCodeList_findFuncCode(list,code);
 	
-	//if (XContainerDataFreeMethod(list) == NULL)
+	//if (XContainerDataDeleteMethod(list) == NULL)
 	//{//没有设置自动释放手动释放
 	//	//if(find->data)
 	//		

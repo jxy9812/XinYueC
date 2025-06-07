@@ -47,7 +47,7 @@ XVtable* XListDLinked_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Free,VXList_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete,VXList_free);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXList_clear);
 
 #if SHOWCONTAINERSIZE
@@ -201,8 +201,8 @@ void VXList_erase(XListDLinked* this_list, XListDNode* node)
 	XListDNode* prevNode = node->prev;//上一个节点
 	if (node->data)
 	{
-		if (XContainerDataFreeMethod(this_list) != NULL)
-			XContainerDataFreeMethod(this_list)(&(node->data));
+		if (XContainerDataDeleteMethod(this_list) != NULL)
+			XContainerDataDeleteMethod(this_list)(&(node->data));
 		//XMemory_free(node->data);//释放节点的数据
 	}
 	XMemory_free(node);//释放节点
@@ -240,8 +240,8 @@ void VXList_clear(XListDLinked* this_list)
 	XListDNode* pnext = p->next;
 	for (size_t i = 0; i < list->m_parent.m_size; i++)
 	{
-		if (XContainerDataFreeMethod(this_list) != NULL)
-			XContainerDataFreeMethod(this_list)(&(p->data));
+		if (XContainerDataDeleteMethod(this_list) != NULL)
+			XContainerDataDeleteMethod(this_list)(&(p->data));
 		pnext = p->next;
 		//XMemory_free(p->data);
 		XMemory_free(p);

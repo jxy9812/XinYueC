@@ -29,7 +29,7 @@ void XTimerBase_delete_base(XTimerBase* timer)
 {
 	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
 		return;
-	XClassGetVirtualFunc(timer, EXClass_Free, void(*)(XTimerBase*))(timer);
+	XClassGetVirtualFunc(timer, EXClass_Delete, void(*)(XTimerBase*))(timer);
 	/*if (timer && timer->m_port.free)
 	{
 		XTimer_stop(timer);

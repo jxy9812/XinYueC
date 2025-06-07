@@ -14,7 +14,7 @@ extern "C" {
 //配置一些自定义函数类型
 typedef struct XEventQueue XEventQueue;
 typedef bool (*XEventQueueInit)(XEventQueue* queue);
-typedef void (*XEventQueueFree)(XEventQueue* queue);
+typedef void (*XEventQueueDelete)(XEventQueue* queue);
 typedef bool (*XEventQueuePush)(XEventQueue* queue, XEventQueueEventType event);
 typedef XEventQueueEventType(*XEventQueueTop)(XEventQueue* queue);
 typedef bool (*XEventQueuePop)(XEventQueue* queue);
@@ -24,7 +24,7 @@ typedef void(*XEventQueueClear)(XEventQueue* queue);
 typedef struct XEventQueue
 {
 	void* queue;
-	XEventQueueFree free;
+	XEventQueueDelete free;
 	XEventQueuePush push;
 	XEventQueueTop top;
 	XEventQueuePop pop;
