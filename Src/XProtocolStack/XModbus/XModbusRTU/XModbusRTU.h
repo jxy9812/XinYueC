@@ -30,7 +30,7 @@ typedef struct XModbusRTU
 XVtable* XModbusRTU_class_init();
 void XModbusRTU_init(XModbusRTU* modbus, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired);
 //创建串口 
-XModbusRTU* XModbusRTU_newSerialPort(XSerialPortBase* serial, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired);
+XModbusRTU* XModbusRTU_createSerialPort(XSerialPortBase* serial, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired);
 
 #define XModbusRTU_connect_base             XModbusBase_connect_base                
 #define XModbusRTU_disconnect_base          XModbusBase_disconnect_base             

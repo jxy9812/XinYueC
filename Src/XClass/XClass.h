@@ -27,9 +27,8 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 
 
 //定义虚函数表
-#define XVTABLE_CREAT(Vtable)  \
-	 static XVtable* Vtable = NULL;\
-	 if (Vtable)return Vtable;
+#define XVTABLE_CREAT(Vtable) static XVtable* Vtable = NULL;
+	 //if (Vtable)return Vtable;
 //虚函数表在堆上初始化
 #define XVTABLE_HEAP_INIT(Vtable)\
 	Vtable = XVtable_create();

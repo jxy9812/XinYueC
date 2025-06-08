@@ -2,7 +2,7 @@
 #include"XTimerWheel.h"
 #include"XMemory.h"
 #include<string.h>
-XModbusRTU* XModbusRTU_newSerialPort(XSerialPortBase* serial, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired)
+XModbusRTU* XModbusRTU_createSerialPort(XSerialPortBase* serial, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired)
 {
 	XModbusRTU* rtu = XMemory_malloc(sizeof(XModbusRTU));
 	if (rtu == NULL)

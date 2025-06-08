@@ -32,12 +32,12 @@ void VXSwitchDevice_setState(XSwitchDeviceBase* sw, bool state)
 {
 	if (sw && ((sw->m_parent.m_mode) & XIODeviceBase_WriteOnly))
 	{
-		XIODeviceBase_write_base(sw, &state, sizeof(bool));
-		//if (sw->m_parent.m_port.poll_funcPointer == NULL)
-		if ((sw->m_state != state) && sw->m_stateChangeCallback)
+		if (sw->m_state != state)
 		{
+			XIODeviceBase_write_base(sw, &state, sizeof(bool));
 			sw->m_state = state;
-			sw->m_stateChangeCallback(sw);
+			if (sw->m_stateChangeCallback)
+				sw->m_stateChangeCallback(sw);
 		}
 	}
 }

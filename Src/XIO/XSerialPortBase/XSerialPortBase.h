@@ -76,7 +76,10 @@ bool XSerialPortBase_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, 
 //以下是平台的具体实现
 #ifdef WIN32
 #include"XSerialPortWin32.h"
+#elif defined(USE_STDPERIPH_DRIVER) 
+#include"XSerialPortSTM32.h"
 #endif
+
 #ifdef __cplusplus
 }
 #endif

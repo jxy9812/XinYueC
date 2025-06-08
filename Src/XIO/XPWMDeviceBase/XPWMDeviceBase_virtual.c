@@ -3,14 +3,13 @@
 #include <string.h>
 #include <assert.h>
 //声明
-void VXPWMDevice_setFrequency(XPWMDeviceBase* pwm, size_t f);
-void VXPWMDevice_setDutyCycle(XPWMDeviceBase* pwm, uint8_t d);
-void VXPWMDevice_start(XPWMDeviceBase* pwm);
-void VXPWMDevice_stop(XPWMDeviceBase* pwm);
-bool VXPWMDevice_isRunning(XPWMDeviceBase* pwm);
-size_t VXPWMDevice_getFrequency(XPWMDeviceBase* pwm);
-uint8_t VXPWMDevice_getDutyCycle(XPWMDeviceBase* pwm);
-XVtable* XPWMDeviceVtable = NULL;
+static void VXPWMDevice_setFrequency(XPWMDeviceBase* pwm, size_t f);
+static void VXPWMDevice_setDutyCycle(XPWMDeviceBase* pwm, uint8_t d);
+static void VXPWMDevice_start(XPWMDeviceBase* pwm);
+static void VXPWMDevice_stop(XPWMDeviceBase* pwm);
+static bool VXPWMDevice_isRunning(XPWMDeviceBase* pwm);
+static size_t VXPWMDevice_getFrequency(XPWMDeviceBase* pwm);
+static uint8_t VXPWMDevice_getDutyCycle(XPWMDeviceBase* pwm);
 XVtable* XPWMDeviceBase_class_init()
 {
 	XVTABLE_CREAT_DEFAULT

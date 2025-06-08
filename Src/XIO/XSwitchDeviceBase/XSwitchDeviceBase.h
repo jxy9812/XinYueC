@@ -1,5 +1,5 @@
-﻿#ifndef XSWITCHDEVICE_H
-#define XSWITCHDEVICE_H
+﻿#ifndef XSWITCHDEVICEBASE_H
+#define XSWITCHDEVICEBASE_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,12 +32,16 @@ void XSwitchDeviceBase_setStateChangeCallback(XSwitchDeviceBase* sw, void (*call
 void XSwitchDeviceBase_setState_base(XSwitchDeviceBase* sw,bool state);
 //获取状态
 bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw);
-#define XSwitchDeviceBase_isOpen		 XIODeviceBase_isOpen
-#define XSwitchDeviceBase_open_base		 XIODeviceBase_open_base
-#define XSwitchDeviceBase_close_base	 XIODeviceBase_close_base
-#define XSwitchDeviceBase_setDevice_base XIODeviceBase_setDevice_base
+#define XSwitchDeviceBase_isOpen			 XIODeviceBase_isOpen
+#define XSwitchDeviceBase_open_base			 XIODeviceBase_open_base
+#define XSwitchDeviceBase_close_base		 XIODeviceBase_close_base
+#define XSwitchDeviceBase_setDevice_base	 XIODeviceBase_setDevice_base
 #define XSwitchDeviceBase_delete_base		 XIODeviceBase_delete_base
-#define XSwitchDeviceBase_poll_base		 XIODeviceBase_poll_base
+#define XSwitchDeviceBase_poll_base			 XIODeviceBase_poll_base
+
+#if defined(USE_STDPERIPH_DRIVER) 
+#include"XSwitchDeviceSTM32.h"
+#endif
 #ifdef __cplusplus
 }
 #endif

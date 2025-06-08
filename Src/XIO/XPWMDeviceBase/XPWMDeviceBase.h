@@ -54,6 +54,10 @@ uint8_t XPWMDeviceBase_getDutyCycle_base(XPWMDeviceBase* pwm);
 #define XPWMDeviceBase_setDevice_base   XIODeviceBase_setDevice_base
 #define XPWMDeviceBase_delete_base		XIODeviceBase_delete_base
 #define XPWMDeviceBase_poll_base		XIODeviceBase_poll_base
+
+#if defined(USE_STDPERIPH_DRIVER) 
+#include"XPWMDeviceSTM32.h"
+#endif
 #ifdef __cplusplus
 }
 #endif

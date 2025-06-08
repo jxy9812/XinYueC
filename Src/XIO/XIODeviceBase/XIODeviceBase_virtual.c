@@ -5,7 +5,7 @@
 #include <string.h>
 #include <assert.h>
 //声明 
-static void VXIODevice_free(XIODeviceBase* io);
+static void VXIODevice_delete(XIODeviceBase* io);
 static bool VXIODevice_open(XIODeviceBase* io, XIODeviceBaseMode mode);
 static size_t VXIODevice_write(XIODeviceBase* io, const char* data, size_t maxSize);//写入
 static size_t VXIODevice_writeFull(XIODeviceBase* io);//将剩余的数据刷入设备
@@ -41,13 +41,13 @@ XVtable* XIODeviceBase_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_delete);
 #if SHOWCONTAINERSIZE
 	printf("XIODeviceBase size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
-void VXIODevice_free(XIODeviceBase* io)
+void VXIODevice_delete(XIODeviceBase* io)
 {
 	XIODeviceBase_close_base(io);
 	if (io->m_writeBuffer)
