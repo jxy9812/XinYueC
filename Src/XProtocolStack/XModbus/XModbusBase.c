@@ -94,7 +94,6 @@ XModbusErrorCode XModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame)
 		return MB_EINVAL;
 	if (setSendFrame(modbus, frame))
 	{
-		frame->autoDelete = true;
 		if (!XModbusFrameQueue_push(modbus->m_sendQueue, frame))
 		{
 #if MB_QUEUE_FULL_SHOW

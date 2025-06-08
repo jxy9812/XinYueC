@@ -75,6 +75,7 @@ XModbusFrame* XModbusFrame_create()
 	frame->frameData = XVector_Create(uint8_t);
 	frame->data = NULL;
 	frame->recvHandle = NULL;
+	frame->autoDelete = true;
 	return frame;
 }
 XModbusFrame* XModbusFrame_copy(XModbusFrame* frame)
