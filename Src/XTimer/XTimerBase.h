@@ -9,7 +9,7 @@ extern "C" {
 #include"XClass.h"
 typedef void (*XTimerBaseCallback)(void* userData);
 typedef struct XTimerBase XTimerBase;
-#define XTIMERBASE_VTABLE_SIZE (XCLASS_VTABLE_SIZE+3)       //XTimerBase虚函数表大小
+#define XTIMERBASE_VTABLE_SIZE (XCLASS_VTABLE_SIZE+4)       //XTimerBase虚函数表大小
 enum XTimerBaseVtableEnum
 {
 	EXTimerBase_Start= XCLASS_VTABLE_SIZE,

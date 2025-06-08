@@ -1,5 +1,6 @@
 ﻿#ifdef USE_STDPERIPH_DRIVER
 #include"XSerialPortSTM32.h"
+#include"XInterrupt.h"
 #include"XQueueBase.h"
 static bool VXSerialPort_open(XSerialPortSTM32* serial, XIODeviceBaseMode mode);
 static size_t VXIODevice_write(XSerialPortSTM32* serial, const char* data, size_t maxSize);//写入
@@ -235,6 +236,14 @@ void VXIODevice_close(XSerialPortSTM32* serial)
     openUsart[serial->m_parent.m_portNum - 1] = NULL;
     ((XIODeviceBase*)serial)->m_mode = XIODeviceBase_NotOpen;
 }
+static void USARTCallback(XSerialPortSTM32* serial)
+{
+    if (USART_GetITStatus(serial->USARTX, USART_IT_RXNE) != RESET)
+    {
+        uint8_t r = USART_ReceiveData(serial->USARTX);
+        XQueueBase_push_base(((XIODeviceBase*)openUsart[serial->m_parent.m_portNum - 1])->m_readBuffer, &r); \
+    }
+}
 void VXIODevice_setReadBuffer(XSerialPortSTM32* serial, size_t count)
 {
     //调用父类方法初始化缓冲区
@@ -257,27 +266,14 @@ void VXIODevice_setReadBuffer(XSerialPortSTM32* serial, size_t count)
         NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 6;//抢占优先级
         NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;		//子优先级
         NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;			//IRQ通道使能
-        NVIC_Init(&NVIC_InitStructure);	//根据指定的参数初始化VIC寄存器、	
+        NVIC_Init(&NVIC_InitStructure);	//根据指定的参数初始化VIC寄存器、
+        XInterrupt_setUSARTxCallback(serial->m_parent.m_portNum, USARTCallback, serial);
     }
     else
     {
         USART_ITConfig(serial->USARTX, USART_IT_RXNE, DISABLE);//关闭接收相关中断
     }
-}   //USART_ClearFlag(USART##port, USART_IT_RXNE);\
-//中断接收处理函数
-#define USARTX_IRQHandler(port)  void USART##port##_IRQHandler(void)\
-{\
-    if(USART_GetITStatus(USART##port, USART_IT_RXNE) != RESET)\
-    {\
-        uint8_t r =USART_ReceiveData(USART##port);\
-        XQueueBase_push_base(((XIODeviceBase*)openUsart[port-1])->m_readBuffer,&r);\
-    }\
 }
-//接管F4 的四个串口中断处理函数
-USARTX_IRQHandler(1)
-USARTX_IRQHandler(2)
-USARTX_IRQHandler(3)
-USARTX_IRQHandler(6)
 #endif
 #endif
 

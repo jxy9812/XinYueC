@@ -7,6 +7,9 @@
 typedef struct XModbusFrame XModbusFrame;
 static XModbusErrorCode VXModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frameData);
 static XModbusErrorCode VXModbusBase_recvFrame(XModbusBase* modbus, XModbusFrame* frameData);
+static bool VXModbusBase_ReceiveFSM(XModbusBase* modbus);
+static bool VXModbusBase_TransmitFSM(XModbusBase* modbus);
+
 static void VXModbusBase_poll(XModbusBase* modbus);
 static bool VXCommunicatorBase_connect(XModbusBase* modbus);
 static bool VXCommunicatorBase_disconnect(XModbusBase* modbus);
@@ -15,18 +18,18 @@ XVtable* XModbusBase_class_init()
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XMODBUSBASE_VTABLE_SIZE)
+		XVTABLE_STACK_INIT_DEFAULT(XMODBUSBASE_VTABLE_SIZE)
 #else
-	XVTABLE_HEAP_INIT_DEFAULT
+		XVTABLE_HEAP_INIT_DEFAULT
 #endif
-	//继承类
-	XVTABLE_INHERIT_DEFAULT(XCommunicatorBase_class_init());
-	/*void* table[] =
+		//继承类
+		XVTABLE_INHERIT_DEFAULT(XCommunicatorBase_class_init());
+	void* table[] =
 	{
-		VXModbusBase_sendFrame,VXModbusBase_recvFrame,
-	};*/
+		VXModbusBase_sendFrame,VXModbusBase_recvFrame,VXModbusBase_ReceiveFSM,VXModbusBase_TransmitFSM
+	};
 	//追加虚函数
-	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Poll, VXModbusBase_poll);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Connect, VXCommunicatorBase_connect);
@@ -81,17 +84,17 @@ static XModbusErrorCode XModbus_EventEmpty(XModbusBase* modbus)
 	}
 	//return error;
 	//处理设备缓冲区
-	if (modbus->m_eSndState == STATE_TX_XMIT || XIODeviceBase_getBytesAvailable_base(((XCommunicatorBase*)modbus)->m_io)==0)
+	if (modbus->m_eSndState == STATE_TX_XMIT || XIODeviceBase_getBytesAvailable_base(((XCommunicatorBase*)modbus)->m_io) == 0)
 	{
 		//printf("发送数据\n");
-		XClassGetVirtualFunc(modbus, EXModbusBase_TransmitFSM,bool(*)(XModbusBase*))(modbus);
+		XClassGetVirtualFunc(modbus, EXModbusBase_TransmitFSM, bool(*)(XModbusBase*))(modbus);
 	}
 	else //if(modbus->eSndState != STATE_TX_XMIT)
 	{
 		//printf("处理接收数据\n");
 		XClassGetVirtualFunc(modbus, EXModbusBase_ReceiveFSM, bool(*)(XModbusBase*))(modbus);
 	}
-    return error;
+	return error;
 }
 //向接收队列中增加功能码帧数据
 static bool recvFrameQueue_pushExecuteFrame(XModbusBase* modbus, XModbusFrame* recvFrame)
@@ -257,7 +260,7 @@ bool VXCommunicatorBase_connect(XModbusBase* modbus)
 		//XTimerBase_start_base(modbus->);  // 启动定时器（T35用于检测帧间隔）
 		modbus->m_state = STATE_ENABLED; // 更新状态为启用
 		return true;
-	}	
+	}
 	return false;
 }
 
@@ -280,4 +283,22 @@ bool VXCommunicatorBase_disconnect(XModbusBase* modbus)
 		//return error;
 	}
 	return false;
+}
+XModbusErrorCode VXModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frameData)
+{
+	printf("请在子类中实现\n");
+	return MB_EPORTERR;
+}
+XModbusErrorCode VXModbusBase_recvFrame(XModbusBase* modbus, XModbusFrame* frameData)
+{
+	printf("请在子类中实现\n");
+	return MB_EPORTERR;
+}
+bool VXModbusBase_ReceiveFSM(XModbusBase* modbus)
+{
+	printf("请在子类中实现\n");
+}
+bool VXModbusBase_TransmitFSM(XModbusBase* modbus)
+{
+	printf("请在子类中实现\n");
 }

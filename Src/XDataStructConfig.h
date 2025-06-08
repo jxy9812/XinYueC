@@ -5,7 +5,7 @@ extern "C" {
 #endif
 #define IS_BIG_ENDIAN                   0 //当前是大端吗     默认是小端
 //数据结构配置文件
-#define VTABLE_ISSTACK					1//虚函数表定义在栈上
+#define VTABLE_ISSTACK					0//虚函数表定义在栈上
 #define SHOWCONTAINERSIZE				0//显示容器大小
 #define DEBUG_ON						0
 #define DEMOTEST						1//测试代码

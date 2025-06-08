@@ -27,26 +27,40 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 
 
 //定义虚函数表
-#define XVTABLE_CREAT(Vtable) static XVtable* Vtable = NULL;
-	 //if (Vtable)return Vtable;
+#define XVTABLE_CREAT(Vtable)  \
+	 static volatile XVtable* Vtable = NULL;\
+	 if (Vtable)return Vtable;
 //虚函数表在堆上初始化
 #define XVTABLE_HEAP_INIT(Vtable)\
 	Vtable = XVtable_create();
 //虚函数表在栈上初始化
 #define XVTABLE_STACK_INIT(Vtable,Size)\
 {\
-	static XVtable vtable;\
-	static void* vtable_data[Size];\
+	static volatile XVtable vtable;\
+	static volatile void* vtable_data[Size];\
 	Vtable = &vtable;\
 	XVtable_init_stack(Vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));\
 }
 //虚函数表继承
 #define XVTABLE_INHERIT(Vtable,VtableBase)			XVtable_append_vtable(Vtable,VtableBase)
 //虚函数表函数重载
-#define XVTABLE_OVERLOAD(Vtable,Type,Func)			XVtable_At(Vtable,Type)=Func
+#define XVTABLE_OVERLOAD(Vtable,Type,Func)\
+{\
+		if (Type >= Vtable->capacity)\
+		{\
+			printf("文件:%s 函数:%s 行号:%d 重载索引超出范围了 索引:%d 容量:%d个\n", __FILE__, __func__, __LINE__, Type, Vtable->capacity); \
+			exit(-1); \
+		}\
+			XVtable_At(Vtable, Type) = Func; \
+}
 //虚函数表追加函数列表
 #define XVTABLE_ADD_FUNC_LIST(Vtable,table)\
 { \
+	if(Vtable->isStack&&((Vtable->size)+(sizeof(table) / sizeof(table[0])))>Vtable->capacity)\
+	{\
+		printf("文件:%s 函数:%s 行号:%d 追加的函数超出最大容量了,超出:%d个\n",__FILE__,__func__,__LINE__,(Vtable->size)+(sizeof(table) / sizeof(table[0]))-Vtable->capacity);\
+		exit(-1);\
+	}\
 	XVtable_append_array(Vtable, table, sizeof(table) / sizeof(table[0]));\
  }
 /*								  以下是重新封装的默认参数						*/			
