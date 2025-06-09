@@ -172,7 +172,7 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
 	// 使能 GPIO 端口的时钟
 	RCC_AHB1PeriphClockCmd(pwm->m_gpio.GPIO_Clock, ENABLE);
 	// 使能 TIM1 定时器的时钟
-	if(pwm->m_portNum>1||pwm->m_portNum<8||pwm->m_portNum>11)//APB1
+	if (((pwm->m_portNum > 1) && (pwm->m_portNum < 8)) || pwm->m_portNum > 11)//APB1
 		RCC_APB1PeriphClockCmd(tim[portIndex].TIMX_Clock, ENABLE);
 	else
 		RCC_APB2PeriphClockCmd(tim[portIndex].TIMX_Clock, ENABLE);
@@ -199,7 +199,7 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
 	{
 		TIM_TimeBaseInitStructure.TIM_Prescaler =pwm->m_TIM_Prescaler;
 	}
-	else if(pwm->m_portNum>1||pwm->m_portNum<8||pwm->m_portNum>11)//APB1
+	else if (((pwm->m_portNum > 1) && (pwm->m_portNum < 8)) || pwm->m_portNum > 11)//APB1
 	{
 		TIM_TimeBaseInitStructure.TIM_Prescaler = STM32F407_168M_APB1_1MHz_Prescaler;//1us一次计数 1s计数1000000次
 		pwm->m_countFrequency=1000000;
@@ -260,7 +260,7 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
 	if(pwm->m_portNum==1||pwm->m_portNum==8)
     	TIM_CtrlPWMOutputs(tim[portIndex].TIMX, ENABLE);
 	// 使能 TIM1 定时器
-	TIM_Cmd(tim[portIndex].TIMX, ENABLE);
+	TIM_Cmd(tim[portIndex].TIMX, DISABLE);
 
 	
 	pwm->m_TIMX=tim[portIndex].TIMX;

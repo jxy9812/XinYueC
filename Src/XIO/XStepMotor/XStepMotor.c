@@ -5,9 +5,9 @@
 
 XStepMotor* XStepMotor_create(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL)
 {
-	if (ENA == NULL|| DIR==NULL|| PUL==NULL)
+	if (PUL==NULL)
 		return NULL;
-	XStepMotor* motor = XMemory_malloc(sizeof(XSwitchDeviceBase));
+	XStepMotor* motor = XMemory_malloc(sizeof(XStepMotor));
 	if (motor == NULL)
 		return motor;
 	XStepMotor_init(motor, ENA,DIR,PUL);

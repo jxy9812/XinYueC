@@ -82,12 +82,13 @@ bool XStepMotor_isOpen_base(XStepMotor* motor);
 
 bool XStepMotor_isRunning_base(XStepMotor* motor);
 
-//轮询扫描状态
+//轮询扫描状态//一次脉冲后需要调用一次，距离模式需要
 void XStepMotor_poll(XStepMotor* motor);
 
 void XStepMotor_close_base(XStepMotor* motor);
 
 #define XStepMotor_delete_base	XClass_delete_base
+
 #ifdef __cplusplus
 }
 #endif

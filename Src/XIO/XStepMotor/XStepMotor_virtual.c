@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 //声明 
-static void VXStepMotor_free(XStepMotor* motor);
+static void VXStepMotor_delete(XStepMotor* motor);
 static bool VXStepMotor_isOpen(XStepMotor* motor);
 static void VXStepMotor_open(XStepMotor* motor);
 static bool VXStepMotor_isRunning(XStepMotor* motor);
@@ -40,7 +40,7 @@ XVtable* XStepMotor_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXStepMotor_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXStepMotor_delete);
 #if SHOWCONTAINERSIZE
 	printf("XStepMotor size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -49,7 +49,7 @@ XVtable* XStepMotor_class_init()
 
 void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL)
 {
-	if (motor == NULL || ENA == NULL || DIR == NULL || PUL == NULL)
+	if (motor == NULL || PUL == NULL)
 		return NULL;
 	//开始初始化
 	memset(motor, 0, sizeof(XStepMotor));
@@ -60,7 +60,7 @@ void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBas
 	XStepMotor_setDevice_base(motor, motor);
 }
 
-void VXStepMotor_free(XStepMotor* motor)
+void VXStepMotor_delete(XStepMotor* motor)
 {
 	if (motor->m_ENA)
 		XSwitchDeviceBase_delete_base(motor->m_ENA);
@@ -115,10 +115,12 @@ void VXStepMotor_close(XStepMotor* motor)
 
 void VXStepMotor_poll(XStepMotor* motor)
 {
+	if (motor->m_PUL == NULL||(motor->m_ENA!=NULL&&!XSwitchDeviceBase_getState_base(motor->m_ENA)))
+		return;//pul不存在或使能没开的时候不计算距离
 	//累计脉冲数
 	++motor->m_currentPulses;
 	//计算距离
-	if (XSwitchDeviceBase_getState_base(motor->m_DIR))
+	if (motor->m_DIR == NULL || XSwitchDeviceBase_getState_base(motor->m_DIR))
 		++motor->m_directionPulses;
 	else
 		--motor->m_directionPulses;
@@ -177,6 +179,8 @@ void VXStepMotor_setSpeed(XStepMotor* motor, double speed)
 	XPWMDeviceBase_setFrequency_base(motor->m_PUL, secr);
 	if (motor->m_PUL->m_dutyCycle == 0)
 		XPWMDeviceBase_setDutyCycle_base(motor->m_PUL, 50);
+	else
+		XPWMDeviceBase_setDutyCycle_base(motor->m_PUL, motor->m_PUL->m_dutyCycle);
 }
 
 void VXStepMotor_setRevolutions(XStepMotor* motor, double revolutions)
