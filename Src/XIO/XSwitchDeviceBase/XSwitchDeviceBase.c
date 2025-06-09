@@ -25,12 +25,26 @@ void XSwitchDeviceBase_init(XSwitchDeviceBase* sw, XVtable* vtable)
 		XClassGetVtable(sw) = XSwitchDeviceBase_class_init();
 	else 
 		XClassGetVtable(sw) = vtable;
+	sw->m_triggerMode = XSwitchDeviceBase_Trigger_High;
 }
 
 void XSwitchDeviceBase_setStateChangeCallback(XSwitchDeviceBase* sw, void(*callback)(XSwitchDeviceBase* io))
 {
 	if (sw)
 		sw->m_stateChangeCallback = callback;
+}
+
+void XSwitchDeviceBase_setTriggerMode(XSwitchDeviceBase* sw, XSwitchDeviceBaseTriggerMode mode)
+{
+	if (sw)
+		sw->m_triggerMode = mode;
+}
+
+XSwitchDeviceBaseTriggerMode XSwitchDeviceBase_getTriggerMode(XSwitchDeviceBase* sw)
+{
+	if(sw)
+		return sw->m_triggerMode;
+	return XSwitchDeviceBase_Trigger_None;
 }
 
 void XSwitchDeviceBase_setState_base(XSwitchDeviceBase* sw, bool state)

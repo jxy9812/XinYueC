@@ -12,12 +12,19 @@ enum XSwitchDeviceBaseVtableEnum
 	EXSwitchDeviceBase_GetState,
 };
 typedef struct XSwitchDeviceBase XSwitchDeviceBase;
+typedef enum//触发方式
+{
+	XSwitchDeviceBase_Trigger_High,//高电平触发 
+	XSwitchDeviceBase_Trigger_Low,//低电平触发
+	XSwitchDeviceBase_Trigger_None,//无触发
+}XSwitchDeviceBaseTriggerMode;
 //开关设备
 typedef struct XSwitchDeviceBase
 {
 	XIODeviceBase m_parent;//父对象
 	bool m_buffer;//存储状态
 	bool m_state;//状态   开或关
+	XSwitchDeviceBaseTriggerMode m_triggerMode;//触发方式
 	void (*m_stateChangeCallback)(XSwitchDeviceBase* io);//状态改变回调函数
 }XSwitchDeviceBase;
 //初始化类
@@ -28,6 +35,9 @@ XSwitchDeviceBase* XSwitchDeviceBase_create(XVtable* vtable);
 void XSwitchDeviceBase_init(XSwitchDeviceBase* sw, XVtable* vtable);
 //设置状态改变回调函数
 void XSwitchDeviceBase_setStateChangeCallback(XSwitchDeviceBase* sw, void (*callback)(XSwitchDeviceBase* io));
+//设置触发方式 设备开的状态时候的电平
+void XSwitchDeviceBase_setTriggerMode(XSwitchDeviceBase* sw, XSwitchDeviceBaseTriggerMode mode);
+XSwitchDeviceBaseTriggerMode XSwitchDeviceBase_getTriggerMode(XSwitchDeviceBase* sw);
 //设置开关设备状态
 void XSwitchDeviceBase_setState_base(XSwitchDeviceBase* sw,bool state);
 //获取状态

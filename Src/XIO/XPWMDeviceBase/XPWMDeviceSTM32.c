@@ -257,8 +257,10 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
 	TIM_ARRPreloadConfig(tim[portIndex].TIMX, ENABLE);
 
 	 // 高级定时器需要额外使能主输出
-	if(pwm->m_portNum==1||pwm->m_portNum==8)
-    	TIM_CtrlPWMOutputs(tim[portIndex].TIMX, ENABLE);
+	if (pwm->m_portNum == 1 || pwm->m_portNum == 8)
+	{
+		TIM_CtrlPWMOutputs(tim[portIndex].TIMX, ENABLE);
+	}
 	// 使能 TIM1 定时器
 	TIM_Cmd(tim[portIndex].TIMX, DISABLE);
 

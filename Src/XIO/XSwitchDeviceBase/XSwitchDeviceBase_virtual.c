@@ -34,7 +34,16 @@ void VXSwitchDevice_setState(XSwitchDeviceBase* sw, bool state)
 	{
 		if (sw->m_state != state)
 		{
-			XIODeviceBase_write_base(sw, &state, sizeof(bool));
+			bool trigger;
+			switch (sw->m_triggerMode)
+			{
+			case XSwitchDeviceBase_Trigger_High:trigger= state; break;
+			case XSwitchDeviceBase_Trigger_Low:trigger= !state; break;
+			default:
+				ISNULL(0, "发生错误"); break;
+				break;
+			}
+			XIODeviceBase_write_base(sw, &trigger, sizeof(bool));
 			sw->m_state = state;
 			if (sw->m_stateChangeCallback)
 				sw->m_stateChangeCallback(sw);
@@ -54,9 +63,20 @@ void VXIODevice_poll(XSwitchDeviceBase* sw)
 	if (sw->m_parent.m_mode & XIODeviceBase_ReadOnly)
 	{
 		//扫描保存状态
-		bool state = sw->m_buffer;
-		//读取当前状态
-		XIODeviceBase_read_base(sw, &state, 1);
+		//bool state = sw->m_buffer;
+		
+		//读取当前电平状态
+		bool trigger;
+		XIODeviceBase_read_base(sw, &trigger, 1);
+		bool state;
+		switch (sw->m_triggerMode)
+		{
+			case XSwitchDeviceBase_Trigger_High:state = trigger; break;
+			case XSwitchDeviceBase_Trigger_Low:state = !trigger; break;
+			default:
+				ISNULL(0,"发生错误"); break;
+				break;
+		}
 		//printf("m_state:%s\n", m_state ? "true" : "false");
 		if (state != sw->m_buffer)
 		{

@@ -76,12 +76,12 @@ bool VXIODevice_open(XSwitchDeviceSTM32 *sw, XIODeviceBaseMode mode)
 		if(sw->m_gpio.GPIO_PuPd==GPIO_PuPd_DOWN)
 		{
 			GPIO_ResetBits(sw->m_gpio.GPIOX,sw->m_gpio.GPIO_Pin_X);//初始化当前是低电平
-			sw->m_parent.m_state=false;
+			//sw->m_parent.m_state=false;
 		}
 		else if(sw->m_gpio.GPIO_PuPd==GPIO_PuPd_UP)
 		{
 			GPIO_SetBits(sw->m_gpio.GPIOX,sw->m_gpio.GPIO_Pin_X);//初始化当前是高电平
-			sw->m_parent.m_state=true;
+			//sw->m_parent.m_state=true;
 		}
 	}
 	((XIODeviceBase*)sw)->m_mode=mode;
