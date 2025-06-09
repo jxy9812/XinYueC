@@ -8,23 +8,22 @@ extern "C" {
 #include<stdio.h>
 #include"XContainerObject.h"
 #include"XFunctionCallback.h"
-#define XLISTBASE_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+13)       //XList容器虚函数表大小
+#define XLISTBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListBase))       //XList容器虚函数表大小
 //XList虚函数表枚举
-enum XListBaseVtableEnum
-{
-	EXListBase_Push_Front = XCONTAINEROBJECT_VTABLE_SIZE,
-	EXListBase_Push_Back,
-	EXListBase_Insert,
-	EXListBase_Insert_Array,
-	EXListBase_Pop_Front,
-	EXListBase_Pop_Back,
-	EXListBase_Erase,
-	EXListBase_Remove,
-	EXListBase_Front,
-	EXListBase_Back,
-	EXListBase_Find,
-	EXListBase_Sort
-};
+XCLASS_DEFINE_BEGING(XListBase)
+XCLASS_DEFINE_ENUM(XListBase, Push_Front)=XCLASS_VTABLE_GET_SIZE(XContainerObject),
+XCLASS_DEFINE_ENUM(XListBase, Push_Back),
+XCLASS_DEFINE_ENUM(XListBase, Insert),
+XCLASS_DEFINE_ENUM(XListBase, Insert_Array),
+XCLASS_DEFINE_ENUM(XListBase, Pop_Front),
+XCLASS_DEFINE_ENUM(XListBase, Pop_Back),
+XCLASS_DEFINE_ENUM(XListBase, Erase),
+XCLASS_DEFINE_ENUM(XListBase, Remove),
+XCLASS_DEFINE_ENUM(XListBase, Front),
+XCLASS_DEFINE_ENUM(XListBase, Back),
+XCLASS_DEFINE_ENUM(XListBase, Find),
+XCLASS_DEFINE_ENUM(XListBase, Sort),
+XCLASS_DEFINE_END(XListBase)
 typedef struct XListBase
 {
 	XContainerObject m_parent;

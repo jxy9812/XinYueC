@@ -9,20 +9,20 @@ extern "C" {
 typedef struct XVector XVector;
 typedef struct XTimerGroupWheel XTimerGroupWheel;
 typedef void (*RecvDataCallback)(const void* data, size_t size, void* userData);
-#define XCOMMUNICATORBASE_VTABLE_SIZE		(XCLASS_VTABLE_SIZE+10)       //XCommunicatorBase虚函数表大小
-enum XCommunicatorBaseVtableEnum
-{
-	EXCommunicatorBase_Connect = XCLASS_VTABLE_SIZE,
-	EXCommunicatorBase_Disconnect,
-	EXCommunicatorBase_Send,
-	EXCommunicatorBase_Recv,
-	EXCommunicatorBase_SendAsync,
-	EXCommunicatorBase_RecvAsync,
-	EXCommunicatorBase_IsConnected,
-	EXCommunicatorBase_Poll,
-	EXCommunicatorBase_SetOption,
-	EXCommunicatorBase_GetOption,
-};
+#define XCOMMUNICATORBASE_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XCommunicatorBase))       //XCommunicatorBase虚函数表大小
+XCLASS_DEFINE_BEGING(XCommunicatorBase)
+XCLASS_DEFINE_ENUM(XCommunicatorBase, Connect) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, Disconnect),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, Send),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, Recv),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, SendAsync),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, RecvAsync),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, IsConnected),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, Poll),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, SetOption),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, GetOption),
+XCLASS_DEFINE_END(XCommunicatorBase)
+
 //通信基础类
 typedef struct XCommunicatorBase
 {

@@ -9,22 +9,20 @@ extern "C" {
 #include<stdbool.h>
 #include"XMemory.h"
 //#define DEBUG_ON 1
-
 //数据释放方法
 typedef void (*XCDataDeleteMethod)(void* args);
 
-#define XCONTAINEROBJECT_VTABLE_SIZE   (XCLASS_VTABLE_SIZE+6)      //容器基类虚函数表大小
+#define XCONTAINEROBJECT_VTABLE_SIZE   (XCLASS_VTABLE_GET_SIZE(XContainerObject))      //容器基类虚函数表大小
 //XContainerObject虚函数表枚举
-enum XContainerObjectVtableEnum
-{
-	//EXContainerObject_Delete,
-	EXContainerObject_IsEmpty= XCLASS_VTABLE_SIZE,
-	EXContainerObject_Size,
-	EXContainerObject_Capacity,
-	EXContainerObject_TypeSize,
-	EXContainerObject_Swap,
-	EXContainerObject_Clear,
-};
+XCLASS_DEFINE_BEGING(XContainerObject)
+XCLASS_DEFINE_ENUM(XContainerObject,IsEmpty) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XContainerObject,Size),
+XCLASS_DEFINE_ENUM(XContainerObject,Capacity),
+XCLASS_DEFINE_ENUM(XContainerObject,TypeSize),
+XCLASS_DEFINE_ENUM(XContainerObject,Swap),
+XCLASS_DEFINE_ENUM(XContainerObject,Clear),
+XCLASS_DEFINE_END(XContainerObject)
+
 //容器基类
 typedef struct XContainerObject
 {

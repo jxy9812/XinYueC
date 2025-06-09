@@ -6,23 +6,22 @@ extern "C" {
 #include<stdint.h>
 #include<stdbool.h>
 #include"XClass.h"
-#define XIODEVICEBASE_VTABLE_SIZE		(XCLASS_VTABLE_SIZE+12)       //XIODeviceBase虚函数表大小
+#define XIODEVICEBASE_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XIODeviceBase))       //XIODeviceBase虚函数表大小
 //XContainerObject虚函数表枚举
-enum XIODeviceBaseVtableEnum
-{
-	EXIODeviceBase_Open = XCLASS_VTABLE_SIZE,
-	EXIODeviceBase_Write,
-	EXIODeviceBase_WriteFull,
-	EXIODeviceBase_Read,
-	EXIODeviceBase_GetBytesAvailable,
-	EXIODeviceBase_GetBytesToWrite,
-	EXIODeviceBase_AtEnd,
-	EXIODeviceBase_Close,
-	EXIODeviceBase_Poll,
-	EXIODeviceBase_SetWriteBuffer,
-	EXIODeviceBase_SetReadBuffer,
-	EXIODeviceBase_SetDevice,
-};
+XCLASS_DEFINE_BEGING(XIODeviceBase)
+XCLASS_DEFINE_ENUM(XIODeviceBase, Open)= XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XIODeviceBase,Write),
+XCLASS_DEFINE_ENUM(XIODeviceBase,WriteFull),
+XCLASS_DEFINE_ENUM(XIODeviceBase,Read),
+XCLASS_DEFINE_ENUM(XIODeviceBase,GetBytesAvailable),
+XCLASS_DEFINE_ENUM(XIODeviceBase,GetBytesToWrite),
+XCLASS_DEFINE_ENUM(XIODeviceBase,AtEnd),
+XCLASS_DEFINE_ENUM(XIODeviceBase,Close),
+XCLASS_DEFINE_ENUM(XIODeviceBase,Poll),
+XCLASS_DEFINE_ENUM(XIODeviceBase,SetWriteBuffer),
+XCLASS_DEFINE_ENUM(XIODeviceBase,SetReadBuffer),
+XCLASS_DEFINE_ENUM(XIODeviceBase,SetDevice),
+XCLASS_DEFINE_END(XIODeviceBase)
 typedef struct XCircularQueue XCircularQueue;
 typedef enum /*XIODeviceBase*/
 {

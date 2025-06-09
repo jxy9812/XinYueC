@@ -5,11 +5,11 @@
 extern "C" {
 #endif
 #include"XContainerObject.h"
-#define XQUEUEBASE_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+5)       //XQueueBase容器虚函数表大小
+#define XQUEUEBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XContainerObject)+5)       //XQueueBase容器虚函数表大小
 //XQueueBase虚函数表枚举
 enum XQueueBaseEnum
 {
-	EXQueueBase_Push = XCONTAINEROBJECT_VTABLE_SIZE,
+	EXQueueBase_Push = XCLASS_VTABLE_GET_SIZE(XContainerObject),
 	EXQueueBase_Pop,
 	EXQueueBase_Top,
 	EXQueueBase_Receive,

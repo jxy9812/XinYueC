@@ -6,12 +6,11 @@ extern "C" {
 #include"XVtable.h"
 #include"XDataStructConfig.h"
 typedef struct  XVtable;
-#define XCLASS_VTABLE_SIZE   1      //虚函数表大小
+#define XCLASS_VTABLE_SIZE   XCLASS_VTABLE_GET_SIZE(XClass)      //虚函数表大小
 //XClass虚函数表枚举
-enum XClassVtableEnum
-{
-	EXClass_Delete,
-};
+XCLASS_DEFINE_BEGING(XClass)
+XCLASS_DEFINE_ENUM(XClass, Delete),
+XCLASS_DEFINE_END(XClass)
 //容器基类
 typedef struct XClass
 {

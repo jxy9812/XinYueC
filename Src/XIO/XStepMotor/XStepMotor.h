@@ -7,11 +7,11 @@ extern "C" {
 #include"XClass.h"
 #include"XPWMDeviceBase.h"
 #include"XSwitchDeviceBase.h"
-#define XSTEPMOTOR_VTABLE_SIZE (XCLASS_VTABLE_SIZE+13)       //XStepMotor虚函数表大小
+#define XSTEPMOTOR_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XClass)+13)       //XStepMotor虚函数表大小
 //XStepMotor虚函数表枚举
 enum XStepMotorVtableEnum
 {
-	EXStepMotor_IsOpen=XCLASS_VTABLE_SIZE,
+	EXStepMotor_IsOpen=XCLASS_VTABLE_GET_SIZE(XClass),
 	EXStepMotor_Open,
 	EXStepMotor_IsRunning,
 	EXStepMotor_Close,

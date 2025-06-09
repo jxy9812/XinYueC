@@ -9,10 +9,10 @@ extern "C" {
 #include"XClass.h"
 typedef struct XTimerBase XTimerBase;
 typedef struct XTimerGroupBase XTimerGroupBase;
-#define XTIMERGROUPBASE_VTABLE_SIZE (XCLASS_VTABLE_SIZE+3)       //XTimerGroupBase虚函数表大小
+#define XTIMERGROUPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XClass)+3)       //XTimerGroupBase虚函数表大小
 enum XTimerGroupBaseVtableEnum
 {
-	EXTimerGroupBase_Add_Timer = XCLASS_VTABLE_SIZE,
+	EXTimerGroupBase_Add_Timer = XCLASS_VTABLE_GET_SIZE(XClass),
 	EXTimerGroupBase_Remove_Timer,
 	EXTimerGroupBase_Poll,
 };

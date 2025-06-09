@@ -9,7 +9,7 @@ extern "C" {
 #include"XMap_reverse_iterator.h"
 typedef struct XVector XVector;
 typedef struct XPair XPair;
-#define XMAP_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+5)       //XMap容器虚函数表大小
+#define XMAP_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XContainerObject)+5)       //XMap容器虚函数表大小
 //XMap虚函数表枚举
 enum XMapEnum
 {

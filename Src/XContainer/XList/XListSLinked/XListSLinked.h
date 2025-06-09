@@ -8,7 +8,7 @@ extern "C" {
 #include<stdio.h>
 #include"XListSLinked_iterator.h"
 #include"XListBase.h"
-#define XLISTSLINKED_VTABLE_SIZE (XLISTBASE_VTABLE_SIZE)       //XList容器虚函数表大小
+#define XLISTSLINKED_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListBase))       //XList容器虚函数表大小
 //List的一个节点
 typedef struct XListSNode
 {

@@ -15,10 +15,10 @@ typedef struct XTimerBase XTimerBase;
 #include"XCommunicatorBase.h"
 //使用默认的Modbus TCP端口（502）
 #define MB_TCP_PORT_USE_DEFAULT 0
-#define XMODBUSBASE_VTABLE_SIZE		(XCOMMUNICATORBASE_VTABLE_SIZE+4)       //XCommunicatorBase虚函数表大小
+#define XMODBUSBASE_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XCommunicatorBase)+4)       //XCommunicatorBase虚函数表大小
 enum XModbusBaseVtableEnum
 {
-    EXModbusBase_SendFrame = XCOMMUNICATORBASE_VTABLE_SIZE,
+    EXModbusBase_SendFrame = XCLASS_VTABLE_GET_SIZE(XCommunicatorBase),
     EXModbusBase_RecvFrame,
     EXModbusBase_ReceiveFSM,//接收数据
     EXModbusBase_TransmitFSM,//发送数据

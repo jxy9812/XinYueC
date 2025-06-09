@@ -4,11 +4,11 @@
 extern "C" {
 #endif
 #include"XIODeviceBase.h"
-#define XPWMDEVICE_VTABLE_SIZE (XIODEVICEBASE_VTABLE_SIZE+7)       //XPWMDevice虚函数表大小
+#define XPWMDEVICE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODeviceBase)+7)       //XPWMDevice虚函数表大小
 //XPWMDevice虚函数表枚举
 enum XPWMDeviceVtableEnum
 {
-	EXPWMDeviceBase_SetFrequency = XIODEVICEBASE_VTABLE_SIZE,
+	EXPWMDeviceBase_SetFrequency = XCLASS_VTABLE_GET_SIZE(XIODeviceBase),
 	EXPWMDeviceBase_SetDutyCycle,
 	EXPWMDeviceBase_Start,
 	EXPWMDeviceBase_Stop,

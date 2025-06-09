@@ -6,7 +6,7 @@ extern "C" {
 #endif
 #include"XFunctionCallback.h"
 typedef struct XVector XVector;
-#define XHASHMAP_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+5)       //XHashMap容器虚函数表大小
+#define XHASHMAP_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XContainerObject)+5)       //XHashMap容器虚函数表大小
 //XHashMap虚函数表枚举
 enum XHashMapEnum
 {

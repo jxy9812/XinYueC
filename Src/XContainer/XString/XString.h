@@ -6,7 +6,7 @@ extern "C" {
 #endif
 #include<stdbool.h>
 #include"XVector.h"
-#define XSTRING_VTABLE_SIZE (XVECTOR_VTABLE_SIZE+6)       //XString容器虚函数表大小
+#define XSTRING_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XVector)+6)       //XString容器虚函数表大小
 //XVector虚函数表枚举
 enum XStringEnum
 {

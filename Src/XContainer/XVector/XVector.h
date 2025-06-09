@@ -11,29 +11,29 @@ extern "C" {
 #include"XVectorTwo_func.h"
 #include"XVector_iterator.h"
 #include"XVector_reverse_iterator.h"
-#define XVECTOR_VTABLE_SIZE (XCONTAINEROBJECT_VTABLE_SIZE+18)       //XVector容器虚函数表大小
+#define XVECTOR_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XVector))       //XVector容器虚函数表大小
 //XVector虚函数表枚举
-enum XVectorEnum
-{
-	EXVector_Resize= XCONTAINEROBJECT_VTABLE_SIZE,
-	EXVector_Push_Front,
-	EXVector_Push_Back,
-	EXVector_Inserts,
-	EXVector_Insert,
-	EXVector_Insert_Array,
-	EXVector_append_Array,
-	EXVector_Pop_Front,
-	EXVector_Pop_Back,
-	EXVector_Erase,
-	EXVector_Remove,
-	EXVector_Copy,
-	EXVector_Rcopy,
-	EXVector_At,
-	EXVector_Front,
-	EXVector_Back,
-	EXVector_Find,
-	EXVector_Sort
-};
+XCLASS_DEFINE_BEGING(XVector)
+XCLASS_DEFINE_ENUM(XVector, Resize)=XCLASS_VTABLE_GET_SIZE(XContainerObject),
+XCLASS_DEFINE_ENUM(XVector, Push_Front),
+XCLASS_DEFINE_ENUM(XVector, Push_Back),
+XCLASS_DEFINE_ENUM(XVector, Inserts),
+XCLASS_DEFINE_ENUM(XVector, Insert),
+XCLASS_DEFINE_ENUM(XVector, Insert_Array),
+XCLASS_DEFINE_ENUM(XVector, append_Array),
+XCLASS_DEFINE_ENUM(XVector, Pop_Front),
+XCLASS_DEFINE_ENUM(XVector, Pop_Back),
+XCLASS_DEFINE_ENUM(XVector, Erase),
+XCLASS_DEFINE_ENUM(XVector, Remove),
+XCLASS_DEFINE_ENUM(XVector, Copy),
+XCLASS_DEFINE_ENUM(XVector, Rcopy),
+XCLASS_DEFINE_ENUM(XVector, At),
+XCLASS_DEFINE_ENUM(XVector, Front),
+XCLASS_DEFINE_ENUM(XVector, Back),
+XCLASS_DEFINE_ENUM(XVector, Find),
+XCLASS_DEFINE_ENUM(XVector, Sort),
+XCLASS_DEFINE_END(XVector)
+
 typedef struct XVector
 {
 	XContainerObject m_parent;
