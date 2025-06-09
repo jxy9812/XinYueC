@@ -18,8 +18,9 @@ typedef void (*InterruptCallback)(void* data);//中断回调函数
 
 #if XINTERRUPT_ENABLE_USARTX_HANDLING
 //中断设置串口回调
-void XInterrupt_setUSARTxCallback(uint8_t portNum, InterruptCallback callback,void* userData);
-InterruptCallback  XInterrupt_getUSARTxCallback(uint8_t portNum);
+void XInterrupt_addUSARTxCallback(uint8_t portNum, InterruptCallback callback,void* userData);
+void XInterrupt_removeUSARTxCallback(uint8_t portNum, InterruptCallback callback, void* userData);
+size_t XInterrupt_getUSARTxCallbackSize(uint8_t portNum);
 #endif // 0
 
 //接管定时器中断

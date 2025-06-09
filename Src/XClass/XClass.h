@@ -28,7 +28,7 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 
 //定义虚函数表
 #define XVTABLE_CREAT(Vtable)  \
-	 static volatile XVtable* Vtable = NULL;\
+	 static XVtable* Vtable = NULL;\
 	 if (Vtable)return Vtable;
 //虚函数表在堆上初始化
 #define XVTABLE_HEAP_INIT(Vtable)\
@@ -36,8 +36,8 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 //虚函数表在栈上初始化
 #define XVTABLE_STACK_INIT(Vtable,Size)\
 {\
-	static volatile XVtable vtable;\
-	static volatile void* vtable_data[Size];\
+	static XVtable vtable;\
+	static void* vtable_data[Size];\
 	Vtable = &vtable;\
 	XVtable_init_stack(Vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));\
 }

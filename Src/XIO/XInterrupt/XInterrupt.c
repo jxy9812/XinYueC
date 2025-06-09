@@ -1,79 +1,123 @@
 ﻿#include"XInterrupt.h"
 #include"XListSLinked.h"
 #include"XEquality.h"
-typedef struct XInterrupt
+#include<string.h>
+typedef struct XInterruptNode
 {
 	InterruptCallback callback;
 	void* userData;
-}XInterrupt;//中断回调结构体
+}XInterruptNode;//中断回调结构体
+
+typedef struct  XInterrupt
+{
+	void** m_data;//XListSLinked* TIMx[TIM_COUNT] = {0};
+	size_t m_size;
+}XInterrupt;
+//遍历链表处理回调
+static void List_Handler(void** data,uint16_t index) 
+{
+	XListSLinked*list=data[index];
+	for_each_iterator(list,XListSLinked,it)
+	{
+		XInterruptNode* i=XListSNode_DataPtr(it);
+		i->callback(i->userData);
+	}
+}
+static const _Bool XEquality_XInterrupt(const void* LPrevValue, const void* LNextValue)
+{
+	return (((XInterruptNode*)LPrevValue)->callback == ((XInterruptNode*)LNextValue)->callback) && (((XInterruptNode*)LPrevValue)->userData == ((XInterruptNode*)LNextValue)->userData);
+}
+void XInterrupt_init_stack(XInterrupt* interrupt, void** data, size_t size)
+{
+	if (interrupt == NULL|| interrupt->m_data!=NULL)
+		return;//仅初始化一次  
+	interrupt->m_data = data;
+	interrupt->m_size = size;
+	memset(data,0,sizeof(void*)*size);
+}
+void XInterrupt_addCallback(XInterrupt* interrupt, uint8_t index, InterruptCallback callback, void* userData)
+{
+	if (interrupt == NULL || index >= interrupt->m_size)
+		return;
+	XListSLinked* list = NULL;
+	if (interrupt->m_data[index] == NULL)
+	{
+		interrupt->m_data[index] = XListSLinked_Create(XInterruptNode);
+		((XListSLinked*)interrupt->m_data[index])->m_parent.m_equality = XEquality_XInterrupt;
+	}
+	list = interrupt->m_data[index];
+	XListSNode* node = XListSLinked_find_base(list, &callback);
+	XInterruptNode i = { callback,userData };
+	if (node == NULL)
+	{//插入
+		XListSLinked_push_back_base(list, &i);
+	}
+	else
+	{//更新
+		XListSNode_Data(node, XInterruptNode) = i;
+	}
+}
+void XInterrupt_removeCallback(XInterrupt* interrupt, uint8_t index, InterruptCallback callback, void* userData)
+{
+	if (interrupt == NULL || index >= interrupt->m_size)
+		return;
+	XListSLinked* list = interrupt->m_data[index];
+	if (list == NULL)
+		return;
+	XInterruptNode i = { callback,userData };
+	XListSLinked_remove_base(list, &i);
+}
+size_t XInterrupt_getCallbackSize(XInterrupt* interrupt, uint8_t index)
+{
+	if (interrupt == NULL || index >= interrupt->m_size)
+		return 0;
+	if (interrupt->m_data[index] == NULL)
+		return 0;
+	return XListBase_getSize_base(interrupt->m_data[index]);
+}
+#define XInterrupt_Create(name,size)\
+static XInterrupt name={0};static void*name##data[size];
+#define XInterrupt_Init(name) XInterrupt_init_stack(&name,name##data,sizeof(name##data)/sizeof(name##data[0]))
 #define USART_COUNT 6  //串口数量
 #define TIM_COUNT 14   //定时器数量
 #if XINTERRUPT_ENABLE_USARTX_HANDLING
-static XInterrupt USARTx[USART_COUNT] = {0};//串口回调
-void XInterrupt_setUSARTxCallback(uint8_t portNum, InterruptCallback callback,void* userData)
+XInterrupt_Create(USARTx, USART_COUNT)
+void XInterrupt_addUSARTxCallback(uint8_t portNum, InterruptCallback callback,void* userData)
 {
-	if (portNum == 0 || portNum > USART_COUNT)
-		return;
-	USARTx[portNum - 1].callback = callback;
-	USARTx[portNum - 1].userData = userData;
+	XInterrupt_Init(USARTx);
+	XInterrupt_addCallback(&USARTx, portNum - 1, callback, userData);
 }
 
-InterruptCallback XInterrupt_getUSARTxCallback(uint8_t portNum)
+void XInterrupt_removeUSARTxCallback(uint8_t portNum, InterruptCallback callback, void* userData)
 {
-	if (portNum == 0 || portNum > USART_COUNT)
-		return NULL;
-	return USARTx[portNum - 1].callback;
+	XInterrupt_Init(USARTx);
+	XInterrupt_removeCallback(&USARTx, portNum - 1, callback, userData);
+}
+
+size_t XInterrupt_getUSARTxCallbackSize(uint8_t portNum)
+{
+	XInterrupt_Init(USARTx);
+	return XInterrupt_getCallbackSize(&USARTx, portNum - 1);
 }
 
 #endif
 
 #if XINTERRUPT_ENABLE_TIMX_HANDLING
-static XListSLinked* TIMx[TIM_COUNT] = {0};//定时器回调
-static const _Bool XEquality_XInterrupt(const void* LPrevValue, const void* LNextValue)
-{
-	return (((XInterrupt*)LPrevValue)->callback==((XInterrupt*)LNextValue)->callback)&& (((XInterrupt*)LPrevValue)->userData==((XInterrupt*)LNextValue)->userData);
-}
+XInterrupt_Create(TIMx, TIM_COUNT)
 void XInterrupt_addTIMxCallback(uint8_t portNum, InterruptCallback callback, void *userData)
 {
-	if (portNum == 0 || portNum > TIM_COUNT)
-		return;
-	if(TIMx[portNum - 1]==NULL)
-	{
-		TIMx[portNum - 1]=XListSLinked_Create(XInterrupt);
-		TIMx[portNum - 1]->m_parent.m_equality=XEquality_XInterrupt;
-	}
-	XListSLinked*list=TIMx[portNum - 1];	
-	XListSNode* node=XListSLinked_find_base(list,&callback);
-	XInterrupt i={callback,userData};
-	if(node==NULL)
-	{//插入
-		XListSLinked_push_back_base(list,&i);
-	}
-	else
-	{//更新
-		XListSNode_Data(node,XInterrupt)=i;
-	}
-	
-	// TIMx[portNum - 1].callback = callback;
-	// TIMx[portNum - 1].userData = userData;
+	XInterrupt_Init(TIMx);
+	XInterrupt_addCallback(&TIMx,portNum-1,callback,userData);
 }
 void XInterrupt_removeTIMxCallback(uint8_t portNum, InterruptCallback callback,void* userData)
 {
-	if (portNum == 0 || portNum > TIM_COUNT)
-		return;
-	if(TIMx[portNum - 1]==NULL)
-		return;
-	XListSLinked*list=TIMx[portNum - 1];
-	XInterrupt i={callback,userData};	
-	XListSLinked_remove_base(list,&i);
+	XInterrupt_Init(TIMx);
+	XInterrupt_removeCallback(&TIMx, portNum - 1, callback, userData);
 }
 size_t XInterrupt_getTIMxCallbackSize(uint8_t portNum)
 {
-    if (portNum == 0 || portNum > TIM_COUNT)
-		return 0;
-	if(TIMx[portNum - 1]==NULL)
-		return 0;
-	return XListBase_getSize_base(TIMx[portNum - 1]);
+	XInterrupt_Init(TIMx);
+	return XInterrupt_getCallbackSize(&TIMx, portNum - 1);
 }
 #endif
 //标准库
@@ -87,7 +131,7 @@ size_t XInterrupt_getTIMxCallbackSize(uint8_t portNum)
 //中断接收处理函数
 #define USARTX_IRQHandler(port)  void USART##port##_IRQHandler(void)\
 {\
-   USARTx[port-1].callback(USARTx[port-1].userData);\
+	List_Handler(USARTxdata,port-1);\
 }
 //接管F4 的四个串口中断处理函数
 #if XINTERRUPT_ENABLE_USART1_HANDLING
@@ -105,21 +149,10 @@ USARTX_IRQHandler(6)
 #endif
 //接管定时器
 #if XINTERRUPT_ENABLE_TIMX_HANDLING
-//遍历链表
-static void TIMX_Handler(uint8_t port) 
-{
-	XListSLinked*list=TIMx[port-1];
-	for_each_iterator(list,XListSLinked,it)
-	{
-		XInterrupt* i=XListSNode_DataPtr(it);
-		i->callback(i->userData);
-	}
-}
-
 #define TIMX_IRQHandler(port)\
 void TIM##port##_IRQHandler(void)\
 {\
-	TIMX_Handler(port);\
+	List_Handler(TIMxdata,port-1);\
 }
 
 #if XINTERRUPT_ENABLE_TIM1_HANDLING
@@ -179,7 +212,7 @@ void TIM8_UP_TIM13_IRQHandler(void)
 #if XINTERRUPT_ENABLE_TIM14_HANDLING
 void TIM8_TRG_COM_TIM14_IRQHandler(void) 
 {
-	TIMX_Handler(14);
+	List_Handler(TIMxdata,14-1);
 }
 #endif
 
