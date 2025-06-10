@@ -90,7 +90,7 @@ void VXMap_remove(XMap* this_map, const void* key)
 		if (XContainerDataDeleteMethod(this_map) != NULL)
 			XContainerDataDeleteMethod(this_map)(pair);
 		XRBTree_erase(&XContainerDataPtr(this_map), this_map->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
-		XPair_free(pair);
+		XPair_delete(pair);
 		--XContainerCapacity(this_map);
 		--XContainerSize(this_map);
 	/*	--this_map->object.m_capacity;
@@ -140,7 +140,7 @@ static void XMap_freeNodeData(void* LPVal, void* args)
 	XPair* pair = *(XPair**)LPVal;
 	if (XContainerDataDeleteMethod(args) != NULL)
 		XContainerDataDeleteMethod(args)(pair);
-	XPair_free(pair);
+	XPair_delete(pair);
 	*(XPair**)LPVal = NULL;
 }
 void VXMap_clear(XMap* this_map)

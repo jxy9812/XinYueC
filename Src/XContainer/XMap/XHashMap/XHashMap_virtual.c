@@ -140,7 +140,7 @@ void VXMap_erase(XHashMap* this_map, const XPair* pPair)
 			}
 			if (XContainerDataDeleteMethod(this_map) != NULL)
 				XContainerDataDeleteMethod(this_map)(current);
-			XMemory_free(current);
+			XPair_delete(current);
 			--XContainerSize(this_map);
 
 			return;//释放成功
@@ -171,7 +171,7 @@ void VXMap_remove(XHashMap* this_map, const void* pvKey)
 			}
 			if (XContainerDataDeleteMethod(this_map) != NULL)
 				XContainerDataDeleteMethod(this_map)(current);
-			XMemory_free(current);
+			XPair_delete(current);
 			--XContainerSize(this_map);
 			
 			return ;//释放成功
@@ -229,7 +229,7 @@ void VXMap_clear(XHashMap* this_map)
 			current = XHashMapNode_Next(this_map, current);
 			if (XContainerDataDeleteMethod(this_map) != NULL)
 				XContainerDataDeleteMethod(this_map)(deleteNode);
-			XMemory_free(deleteNode);
+			XPair_delete(deleteNode);
 		}
 	}
 	memset(XContainerDataPtr(this_map),0, sizeof(XHashMapNode*) * XContainerCapacity(this_map));

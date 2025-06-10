@@ -58,7 +58,7 @@ void* XPair_second(XPair* this_pair)
 		return;
 	return ((uint8_t*)(&(this_pair->m_first))) + this_pair->m_firstTypeSize;
 }
-void XPair_free(XPair* this_pair)
+void XPair_delete(XPair* this_pair)
 {
 	XMemory_free(this_pair);
 }

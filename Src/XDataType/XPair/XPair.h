@@ -30,7 +30,7 @@ void* XPair_first(XPair* this_pair);
 #define XPair_Second(this_pair,secondType) (*(secondType*)XPair_second(this_pair))
 void* XPair_second(XPair* this_pair);
 //释放
-void XPair_free(XPair* this_pair);
+void XPair_delete(XPair* this_pair);
 #ifdef __cplusplus
 }
 #endif
