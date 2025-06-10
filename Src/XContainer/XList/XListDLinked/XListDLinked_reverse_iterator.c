@@ -39,7 +39,7 @@ bool XListDLinked_reverse_iterator_equality(XListDLinked_reverse_iterator* itFir
 
 void XListDLinked_reverse_iterator_for_each(XListDLinked* this_list, XFor_each ForFunction, void* args)
 {
-	For_Each_Reverse_Iterator(this_list, XListDLinked, it)
+	for_each_reverse_iterator(this_list, XListDLinked, it)
 	{
 		ForFunction(XListDLinked_iterator_data(&it), args);
 	}

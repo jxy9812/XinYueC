@@ -271,7 +271,7 @@ XListDNode* VXList_find(const XListDLinked* this_list, void* pvData)
 	XListBase* list = this_list;
 	if (ISNULL(list->m_equality, "") || ISNULL(pvData, ""))
 		return NULL;
-	For_Each_Iterator(list, XListDLinked, it)
+	for_each_iterator(list, XListDLinked, it)
 	{
 		if (list->m_equality(XListDLinked_iterator_data(&it), pvData))
 			return it.node;

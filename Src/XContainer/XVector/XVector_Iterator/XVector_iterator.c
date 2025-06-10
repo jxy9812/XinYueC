@@ -4,6 +4,8 @@
 #include<stdio.h>
 XVector_iterator XVector_begin(XVector* this_vector)
 {
+	if (XVector_isEmpty_base(this_vector))
+		return XVector_end(this_vector);
 	XVector_iterator it = { 0 };
 	if (ISNULL(this_vector, ""))
 		return it;
@@ -40,7 +42,7 @@ void XVector_iterator_for_each(XVector* this_vector, XFor_each ForFunction, void
 {
 	if (this_vector == NULL || ForFunction == NULL)
 		return;
-	For_Each_Iterator(this_vector, XVector, it)
+	for_each_iterator(this_vector, XVector, it)
 	{
 		ForFunction(XVector_iterator_data(&it), args);
 	}

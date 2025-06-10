@@ -14,7 +14,7 @@ static void writeData(XVector* gzipData, XMap* dictionaries, const char* data, c
 		code = XMap_Value_Base(dictionaries, ch, DictionaryValue).code;
 		//遍历编码
 		//for (XVector_iterator* it = XVector_begin(code); it != XVector_end(code); it = XVector_iterator_add(code, it))
-		For_Each_Iterator(code, XVector, it)
+		for_each_iterator(code, XVector, it)
 		{
 			if (0 == *(char*)XVector_iterator_data(&it))
 			{

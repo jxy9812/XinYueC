@@ -7,11 +7,17 @@ extern "C" {
 #include"XContainerObject_iterator.h"
 //声明
 XContainerTypeDeclare(XVector);
-XContainerReverseIteratorDeclare(XVector);
-XVector_reverse_iterator* XVector_rbegin(XVector* this_vector);
-XVector_reverse_iterator* XVector_rend(XVector* this_vector);
-XVector_reverse_iterator* XVector_reverse_iterator_add(XVector* this_vector,XVector_reverse_iterator* it);
+//正向迭代器
+typedef struct XVector_reverse_iterator
+{
+	void* data;
+}XVector_reverse_iterator;
+XVector_reverse_iterator XVector_rbegin(XVector* this_vector);
+XVector_reverse_iterator XVector_rend(XVector* this_vector);
+void XVector_reverse_iterator_add(XVector* this_vector,XVector_reverse_iterator* it);
+bool XVector_reverse_iterator_equality(XVector_reverse_iterator* itFirst, XVector_reverse_iterator* itSecond);
 void XVector_reverse_iterator_for_each(XVector* this_vector, XFor_each ForFunction, void* args);
+void* XVector_reverse_iterator_data(XVector_reverse_iterator* it);
 #ifdef __cplusplus
 }
 #endif

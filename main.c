@@ -12,20 +12,20 @@ int main(int argc, char* args[])
 	printf("%d\n",XAtomic_load_bool(&b));
 #if DEMOTEST
 	//XTimerWheelTest();
-	//XListDLinkedIterator();
-	//XHashMapTest();
+	/*XListDLinkedIterator();
+	XHashMapTest();*/
 	//XMapTest();
 	/*XListDLinkedTest();
 	XListDLinkedSortTest();
 	XListDLinkedIterator();
-	XListDLinkedSwapTest();*/
-	/*XListSLinkedTest();
+	XListDLinkedSwapTest();
+	XListSLinkedTest();
 	XListSLinkedSwapTest();
 	XListSLinkedIterator();
-	XListSLinkedSortTest();*/
-	//XPriority_QueueTest();
-	//XPWMDeviceTest();
-	//XVectorTest();
+	XListSLinkedSortTest();
+	XPriority_QueueTest();
+	XPWMDeviceTest();
+	XVectorTest();*/
 	XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();

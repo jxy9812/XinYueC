@@ -60,7 +60,7 @@ bool XMap_reverse_iterator_equality(XMap_reverse_iterator* itFirst, XMap_reverse
 
 void XMap_reverse_iterator_for_each(XMap* this_map, XFor_each ForFunction, void* args)
 {
-	For_Each_Reverse_Iterator(this_map, XMap, it)
+	for_each_reverse_iterator(this_map, XMap, it)
 	{
 		ForFunction(XMap_reverse_iterator_data(&it), args);
 	}

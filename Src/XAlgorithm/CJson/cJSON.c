@@ -2905,7 +2905,7 @@ CJSON_PUBLIC(cJSON*) cJSON_CreateStringArray_XVector_XString(const XVector* vect
         return NULL;
     cJSON*  array=cJSON_CreateArray();
   //  for (XVector_iterator* it = XVector_begin(vector); it != XVector_end(vector); it = XVector_iterator_add(vector, it))
-    For_Each_Iterator(vector, XVector, it)
+    for_each_iterator(vector, XVector, it)
     {
         XString* str = *(XString**)XVector_iterator_data(&it);
         cJSON* string= cJSON_CreateString(XString_data(str));

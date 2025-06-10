@@ -7,7 +7,6 @@ extern "C" {
 #include"XContainerObject_iterator.h"
 //声明
 XContainerTypeDeclare(XVector);
-//XContainerIteratorDeclare(XVector);
 //正向迭代器
 typedef struct XVector_iterator
 {

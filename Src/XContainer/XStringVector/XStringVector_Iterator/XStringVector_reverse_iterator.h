@@ -5,15 +5,16 @@
 extern "C" {
 #endif
 #include"XContainerObject_iterator.h"
+#include"XVector_reverse_iterator.h"
 XContainerTypeDeclare(XStringVector);
 //反向迭代器
-XContainerReverseIteratorDeclare(XStringVector);
-
-XContainer_rbegin(XStringVector);
-XContainer_rend(XStringVector);
-XContainer_reverse_iterator_add(XStringVector);
-//typedef void (*XFor_each)(XString* string,void* args);
-XContainer_reverse_iterator_for_each(XStringVector);
+typedef XVector_reverse_iterator XStringVector_reverse_iterator;
+XStringVector_reverse_iterator XStringVector_rbegin(XStringVector* this_XStringVector);
+XStringVector_reverse_iterator XStringVector_rend(XStringVector* this_XStringVector);
+void XStringVector_reverse_iterator_add(XStringVector* this_XStringVector, XStringVector_reverse_iterator* it);
+bool XStringVector_reverse_iterator_equality(XStringVector_reverse_iterator* itFirst, XStringVector_reverse_iterator* itSecond);
+void XStringVector_reverse_iterator_for_each(XStringVector* this_XStringVector, XFor_each ForFunction, void* args);
+void* XStringVector_reverse_iterator_data(XStringVector_reverse_iterator* it);
 #ifdef __cplusplus
 }
 #endif

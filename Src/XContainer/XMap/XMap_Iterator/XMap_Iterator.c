@@ -61,7 +61,7 @@ bool XMap_iterator_equality(XMap_iterator* itFirst, XMap_iterator* itSecond)
 
 void XMap_iterator_for_each(XMap* this_map, XFor_each ForFunction, void* args)
 {
-	For_Each_Iterator(this_map,XMap,it)
+	for_each_iterator(this_map,XMap,it)
 	{
 		ForFunction(XMap_iterator_data(&it), args);
 	}

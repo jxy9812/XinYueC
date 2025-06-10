@@ -41,7 +41,7 @@ bool XListDLinked_iterator_equality(XListDLinked_iterator* itFirst, XListDLinked
 
 void XListDLinked_iterator_for_each(XListDLinked* this_list, XFor_each ForFunction, void* args)
 {
-	For_Each_Iterator(this_list, XListDLinked,it)
+	for_each_iterator(this_list, XListDLinked,it)
 	{
 		ForFunction(XListDLinked_iterator_data(&it), args);
 	}

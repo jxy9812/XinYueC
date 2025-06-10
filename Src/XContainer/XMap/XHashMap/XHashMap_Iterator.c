@@ -63,7 +63,7 @@ bool XHashMap_iterator_equality(XHashMap_iterator* itFirst, XHashMap_iterator* i
 
 void XHashMap_iterator_for_each(XHashMap* this_map, XFor_each ForFunction, void* args)
 {
-	For_Each_Iterator(this_map, XHashMap, it)
+	for_each_iterator(this_map, XHashMap, it)
 	{
 		ForFunction(XHashMap_iterator_data(&it),args);
 	}

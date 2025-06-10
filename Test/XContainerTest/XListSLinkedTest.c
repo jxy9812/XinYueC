@@ -46,7 +46,7 @@ void XListSLinkedIterator()
 		XListBase_push_back_base(li, arr + i);
 	}
 	printf("开始正向遍历\n");
-	For_Each_Iterator(li, XListSLinked,it)
+	for_each_iterator(li, XListSLinked,it)
 	{
 		printf("%d\n", XListSNode_Data(it.node, int));
 	}

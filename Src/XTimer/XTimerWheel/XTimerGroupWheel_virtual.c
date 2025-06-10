@@ -134,7 +134,7 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
 			//XListSLinked*list=*((XListSLinked**)vIt);
 			if (list != NULL)
 			{
-				//For_Each_Iterator(list, XListSLinked, it)
+				//for_each_iterator(list, XListSLinked, it)
 				XListSNode* node = XContainerDataPtr(list);
 				while(node)
 				{

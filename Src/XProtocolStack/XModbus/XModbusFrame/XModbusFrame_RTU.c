@@ -488,7 +488,7 @@ XString* XModbusFrameRTU_to16HexString(XModbusFrame* frame)
 		XString* str = XString_create(NULL);
 		char buff[10];
 		//for (XVector_iterator* it = XVector_begin(vector); it != XVector_end(vector); it = XVector_iterator_add(vector, it))
-		For_Each_Iterator(vector, XVector, it)
+		for_each_iterator(vector, XVector, it)
 		{
 			sprintf(buff, "%02X ", *((uint8_t*)XVector_iterator_data(&it)));
 			XString_append_base(str, buff);

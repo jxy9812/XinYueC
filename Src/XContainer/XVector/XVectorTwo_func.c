@@ -74,7 +74,7 @@ size_t XVectorTwo_TypeSize(XVector* this_vector)
 void XVectorTwo_clear(const XVector* this_vector)
 {
 	//for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
-	For_Each_Iterator(this_vector, XVector, it)
+	for_each_iterator(this_vector, XVector, it)
 	{
 		struct XVector* RowVector = *(struct XVector**)XVector_iterator_data(&it);
 		XVector_delete_base(RowVector);

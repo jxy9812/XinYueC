@@ -42,7 +42,7 @@ void XListSLinked_iterator_for_each(XListSLinked* this_list, XFor_each ForFuncti
 {
 	if (this_list == NULL || ForFunction == NULL)
 		return;
-	For_Each_Iterator(this_list, XListSLinked, it)
+	for_each_iterator(this_list, XListSLinked, it)
 	{
 		ForFunction(XListSLinked_iterator_data(&it), args);
 	}
