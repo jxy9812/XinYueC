@@ -182,14 +182,14 @@ void VXList_pop_front(XListDLinked* this_list)
 {
 	if (XContainerObject_isEmpty_base(this_list))
 		return;
-	XListBase_erase_base(this_list,XListDLinked_begin(this_list));
+	XListBase_erase_base(this_list, XContainerDataPtr(this_list));
 }
 
 void VXList_pop_back(XListDLinked* this_list)
 {
 	if (XContainerObject_isEmpty_base(this_list))
 		return;
-	XListBase_erase_base(this_list, XListDLinked_rbegin(this_list));
+	XListBase_erase_base(this_list, XContainerData(this_list, XListDNode*)->prev);
 }
 
 void VXList_erase(XListDLinked* this_list, XListDNode* node)
@@ -271,10 +271,10 @@ XListDNode* VXList_find(const XListDLinked* this_list, void* pvData)
 	XListBase* list = this_list;
 	if (ISNULL(list->m_equality, "") || ISNULL(pvData, ""))
 		return NULL;
-	for (XListDLinked_iterator* it = XListDLinked_begin(this_list); it != XListDLinked_end(this_list); it = XListDLinked_iterator_add(this_list, it))
+	For_Each_Iterator(list, XListDLinked, it)
 	{
-		if (list->m_equality(XListDNode_DataPtr(it), pvData))
-			return it;
+		if (list->m_equality(XListDLinked_iterator_data(&it), pvData))
+			return it.node;
 	}
 	return NULL;
 }
@@ -333,11 +333,11 @@ static struct XListDNode* List_OneSort(XListDNode* ListHead, XListDNode* ListTai
 void VXList_sort(XListDLinked* this_list, XCompare compare)
 {
 #if XStack_ON
-	if (ISNULL(this_list, ""))
+	if (ISNULL(this_list, "")||XListBase_isEmpty_base(this_list))
 		return;
 	XListBase* list = this_list;
-	XListDNode* ListHead = XListDLinked_begin(this_list);//链表第一个节点
-	XListDNode* ListTail = XListDLinked_rbegin(this_list);//链表最后一个节点
+	XListDNode* ListHead = XContainerDataPtr(this_list);//链表第一个节点
+	XListDNode* ListTail = XContainerData(this_list, XListDNode*)->prev;//链表最后一个节点
 	XStack* stack = XStack_Create(XListDNode*);
 	XStack_push_base(stack, &ListTail);
 	XStack_push_base(stack, &ListHead);

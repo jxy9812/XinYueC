@@ -14,7 +14,11 @@ int main(int argc, char* args[])
 	//XTimerWheelTest();
 	//XListDLinkedIterator();
 	//XHashMapTest();
-	XMapTest();
+	//XMapTest();
+	XListDLinkedTest();
+	//XListDLinkedSortTest();
+	XListDLinkedIterator();
+	XListDLinkedSwapTest();
 	/*XListSLinkedTest();
 	XListSLinkedSwapTest();
 	XListSLinkedIterator();
