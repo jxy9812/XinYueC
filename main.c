@@ -13,7 +13,8 @@ int main(int argc, char* args[])
 #if DEMOTEST
 	//XTimerWheelTest();
 	//XListDLinkedIterator();
-	XMapTest();
+	XHashMapTest();
+	//XMapTest();
 	/*XListSLinkedTest();
 	XListSLinkedSwapTest();
 	XListSLinkedIterator();
