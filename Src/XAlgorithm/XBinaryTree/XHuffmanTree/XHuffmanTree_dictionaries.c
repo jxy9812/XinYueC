@@ -31,10 +31,10 @@ static void writeDictionaryData(XPair** LPpair, XVector* gzipData)
 	size_t codeSize = XVector_getSize_base(code);//编码大小(字节)
 	DictionaryData data = {XPair_First(*LPpair,char),XPair_Second(*LPpair,size_t),codeSize };
 	XVector_resize_base(gzipData,currentSize + sizeof(DictionaryData) + codeSize);//扩容到可以写入一组数据
-	char* LPcurrent = (char*)XVector_begin(gzipData)+ currentSize;//当前可以写入的指针
+	char* LPcurrent = (char*)XContainerDataPtr(gzipData)+ currentSize;//当前可以写入的指针
 	memcpy(LPcurrent, &data, sizeof(DictionaryData));//拷贝字典基本数据
 	LPcurrent += sizeof(DictionaryData);//移位到后面写入编码
-	memcpy(LPcurrent, XVector_begin(code), codeSize);//拷贝编码
+	memcpy(LPcurrent, XContainerDataPtr(code), codeSize);//拷贝编码
 }
 
 int XHfmTree_writeCompressDictionaries(XVector* gzipData, XMap* dictionaries)
@@ -43,7 +43,7 @@ int XHfmTree_writeCompressDictionaries(XVector* gzipData, XMap* dictionaries)
 	size_t count = XMap_getSize_base(dictionaries);
 	XVector_resize_base(gzipData, sizeof(size_t));
 	//写入数量
-	memcpy(XVector_begin(gzipData), &count,sizeof(size_t));//写入数据个数
+	memcpy(XContainerDataPtr(gzipData), &count,sizeof(size_t));//写入数据个数
 	XMap_iterator_for_each(dictionaries, writeDictionaryData, gzipData);
 	return XVector_getSize_base(gzipData);
 #else

@@ -40,6 +40,8 @@ bool XListSLinked_iterator_equality(XListSLinked_iterator* itFirst, XListSLinked
 
 void XListSLinked_iterator_for_each(XListSLinked* this_list, XFor_each ForFunction, void* args)
 {
+	if (this_list == NULL || ForFunction == NULL)
+		return;
 	For_Each_Iterator(this_list, XListSLinked, it)
 	{
 		ForFunction(XListSLinked_iterator_data(&it), args);

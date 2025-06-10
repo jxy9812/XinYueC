@@ -56,7 +56,7 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
     XVector_push_back_base(this_root->LpValueArray, LPData);//插入数值扩容
     XVector_push_back_base(this_root->LpValueArray, this_root->object.values);//插入第一个数值
     XVector_sort_base(this_root->LpValueArray, less);//排序
-    memcpy(this_root->object.values, XVector_begin(this_root->LpValueArray), TypeSize);//将最小的拷贝回去
+    memcpy(this_root->object.values, XContainerDataPtr(this_root->LpValueArray), TypeSize);//将最小的拷贝回去
     //XVector_erase_int(this_root, 0, 0);//删除重复的第一个
     XVector_pop_front_base(this_root);
     return XTTTree_NodeNum(this_root);

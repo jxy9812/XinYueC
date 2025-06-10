@@ -75,9 +75,10 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 	bool isFindEnd = false;//找到终点标记
 	while (!isFindEnd&&!XVector_isEmpty_base(CurrentNodeArray))
 	{
-		for (XVector_iterator* it=XVector_begin(CurrentNodeArray);it!= XVector_end(CurrentNodeArray); it= XVector_iterator_add(CurrentNodeArray,it))
+		//for (XVector_iterator* it=XVector_begin(CurrentNodeArray);it!= XVector_end(CurrentNodeArray); it= XVector_iterator_add(CurrentNodeArray,it))
+		For_Each_Iterator(CurrentNodeArray, XVector, it)
 		{
-			CurrentNode = *(XBTreeNode**)it;
+			CurrentNode = *(XBTreeNode**)XVector_iterator_data(&it);
 			if (GetXPoint(CurrentNode).x == dest.x && GetXPoint(CurrentNode).y == dest.y)//判断是否到终点了
 			{
 				isFindEnd = true;

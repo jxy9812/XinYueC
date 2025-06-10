@@ -105,9 +105,10 @@ static void XBinaryTreeObject_freeNode(AStarNode* root)
 	{
 		AStarNode* current = *(AStarNode**)XStack_top_base(stack);
 		XStack_pop_base(stack);
-		for (XVector_iterator* it = XVector_begin(current->child); it != XVector_end(current->child); it = XVector_iterator_add(current->child, it))
+		//for (XVector_iterator* it = XVector_begin(current->child); it != XVector_end(current->child); it = XVector_iterator_add(current->child, it))
+		For_Each_Iterator(current->child, XVector, it)
 		{
-			XStack_push_base(stack, it);
+			XStack_push_base(stack, XVector_iterator_data(&it));
 		}
 		XVector_delete_base(current->child);
 		XMemory_free(current);

@@ -6,7 +6,7 @@
 #include"XLess.h"
 static void XFor_each_int(void* LPVal)
 {
-	printf("%d ", *(int*)LPVal);
+	printf("%d \n", *(int*)LPVal);
 }
 struct people
 {

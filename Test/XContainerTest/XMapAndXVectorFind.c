@@ -31,7 +31,7 @@ void XMapAndXVectorFindTest()
 	}
 	printf("打乱前\n");
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
-	XDerangement(XVector_begin(VArray), count, sizeof(size_t));
+	XDerangement(XContainerDataPtr(VArray), count, sizeof(size_t));
 	printf("打乱后\n");
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
 	printf("使用排序后\n");

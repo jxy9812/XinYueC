@@ -263,11 +263,12 @@ const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root)
 		XStack_pop_base(stack);
 		if (currentNode == NULL)
 			continue;
-		XVector_iterator* it = XVector_begin(currentNode->nodes);
+		/*XVector_iterator* it = XVector_begin(currentNode->nodes);
 		it = XVector_iterator_add(currentNode->nodes, it);
-		for ( ; it != XVector_end(currentNode->nodes); it= XVector_iterator_add(currentNode->nodes,it))
+		for ( ; it != XVector_end(currentNode->nodes); it= XVector_iterator_add(currentNode->nodes,it))*/
+		For_Each_Iterator(currentNode->nodes, XVector, it)
 		{
-			XStack_push_base(stack, it);
+			XStack_push_base(stack, XVector_iterator_data(&it));
 		}
 		XBTree_freeNode(currentNode,false);//释放当前节点
 		sum++;

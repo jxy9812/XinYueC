@@ -2,27 +2,40 @@
 #if XStringVector_ON
 #include"XString.h"
 #include<stdio.h>
-XContainer_begin(XStringVector)
+XStringVector_iterator XStringVector_begin(XStringVector* this_XStringVector)
 {
 	return XVector_begin(this_XStringVector);
 }
 
-XContainer_end(XStringVector)
+XStringVector_iterator XStringVector_end(XStringVector* this_XStringVector)
 {
 	return XVector_end(this_XStringVector);
 }
 
-XContainer_iterator_add(XStringVector)
+void XStringVector_iterator_add(XStringVector* this_XStringVector, XStringVector_iterator* it)
 {
-	return XVector_iterator_add(this_XStringVector,it);
+	XVector_iterator_add(this_XStringVector,it);
 }
 
-XContainer_iterator_for_each(XStringVector)
+bool XStringVector_iterator_equality(XStringVector_iterator* itFirst, XStringVector_iterator* itSecond)
 {
-	for (XStringVector_iterator* it = XStringVector_begin(this_XStringVector); it != XStringVector_end(this_XStringVector); it = XStringVector_iterator_add(this_XStringVector, it))
+	return itFirst->data == itSecond->data;
+}
+
+void XStringVector_iterator_for_each(XStringVector* this_XStringVector, XFor_each ForFunction, void* args)
+{
+	if (this_XStringVector == NULL || ForFunction == NULL)
+		return;
+	For_Each_Iterator(this_XStringVector, XVector, it)
 	{
-		ForFunction(XContainerValue(it, XString*), args);
+		ForFunction(*((XString**)XStringVector_iterator_data(&it)), args);
 	}
+}
+void* XStringVector_iterator_data(XStringVector_iterator* it)
+{
+	if (it == NULL || it->data == NULL)
+		return NULL;
+	return it->data;
 }
 #endif
 

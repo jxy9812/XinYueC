@@ -68,14 +68,15 @@ const size_t XVectorTwo_List(const XVector* this_vector, const size_t row)
 
 size_t XVectorTwo_TypeSize(XVector* this_vector)
 {
-	return XVector_getTypeSize_base(*(struct XVector**)XVector_begin(this_vector));
+	return XVector_getTypeSize_base(*(struct XVector**)XContainerDataPtr(this_vector));
 }
 
 void XVectorTwo_clear(const XVector* this_vector)
 {
-	for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
+	//for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
+	For_Each_Iterator(this_vector, XVector, it)
 	{
-		struct XVector* RowVector = *(struct XVector**)it;
+		struct XVector* RowVector = *(struct XVector**)XVector_iterator_data(&it);
 		XVector_delete_base(RowVector);
 	}
 	XVector_clear_base(this_vector);

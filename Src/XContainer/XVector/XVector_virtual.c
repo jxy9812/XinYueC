@@ -340,9 +340,10 @@ void VXVector_clear(XVector* this_vector)//清空vector的数组
 	//释放数据
 	if (XContainerDataDeleteMethod(this_vector) != NULL)
 	{
-		for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
+		//for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
+		for (size_t i = 0; i < XContainerSize(this_vector); i++)
 		{
-			XContainerDataDeleteMethod(this_vector)(it);
+			XContainerDataDeleteMethod(this_vector)(((uint8_t*)XContainerDataPtr(this_vector)) + i * XContainerTypeSize(this_vector));
 		}
 	}
 	XContainerSize(this_vector) = 0;
@@ -429,10 +430,12 @@ void* VXVector_find(const XVector* this_vector, const void* findVal)//查找数�
 {
 	if (ISNULL(this_vector, "")|| ISNULL(this_vector->m_equality, ""))
 		return NULL;
-	for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
+	//for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
+	for (size_t i = 0; i < XContainerSize(this_vector); i++)
 	{
-		if (this_vector->m_equality(it, findVal))
-			return it;
+		void* data = ((uint8_t*)XContainerDataPtr(this_vector)) + i * XContainerTypeSize(this_vector);
+		if (this_vector->m_equality(data, findVal))
+			return data;
 	}
 	return NULL;
 }

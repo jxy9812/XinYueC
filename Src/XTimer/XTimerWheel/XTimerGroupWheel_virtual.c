@@ -127,9 +127,11 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
 	if (wheel->m_slots != NULL)
 	{
 		//遍历槽数组
-		for_each_iterator(wheel->m_slots, XVector, vIt)
+		//for_each_iterator(wheel->m_slots, XVector, vIt)
+		for (size_t i = 0; i < XContainerSize(wheel->m_slots); ++i)
 		{
-			XListSLinked*list=*((XListSLinked**)vIt);
+			XListSLinked* list = (XTimeWheel*)(((uint8_t*)XContainerDataPtr(wheel->m_slots)) + i * XContainerTypeSize(wheel->m_slots));
+			//XListSLinked*list=*((XListSLinked**)vIt);
 			if (list != NULL)
 			{
 				//For_Each_Iterator(list, XListSLinked, it)
@@ -252,9 +254,11 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
 			ticksCompare *= XContainerSize(wheel->m_slots);
 			if (groupBase->m_current_tick % ticksCompare == 0)//注释这行可提高二级后的精度,但会增加cpu负载
 			{//一圈跑完
-				XTimeWheel* nextWheel = XVector_iterator_add(group->m_timeWheel, currentWheel);
-				if (nextWheel == NULL)
+				//XTimeWheel* nextWheel = XVector_iterator_add(group->m_timeWheel, currentWheel);
+				
+				if (i+1>= XContainerSize(group->m_timeWheel))
 					break;//下一个时间轮不存在
+				XTimeWheel* nextWheel = ((uint8_t*)currentWheel) + XContainerTypeSize(group->m_timeWheel);
 				int next_slot = (nextWheel->m_tick % XContainerSize(nextWheel->m_slots));
 				cascade_timers(group, nextWheel, next_slot);
 				++nextWheel->m_tick;

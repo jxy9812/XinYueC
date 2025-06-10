@@ -13,14 +13,15 @@ static void writeData(XVector* gzipData, XMap* dictionaries, const char* data, c
 		char ch = data[i];//遍历每一个字节
 		code = XMap_Value_Base(dictionaries, ch, DictionaryValue).code;
 		//遍历编码
-		for (XVector_iterator* it = XVector_begin(code); it != XVector_end(code); it = XVector_iterator_add(code, it))
+		//for (XVector_iterator* it = XVector_begin(code); it != XVector_end(code); it = XVector_iterator_add(code, it))
+		For_Each_Iterator(code, XVector, it)
 		{
-			if (0 == *(char*)it)
+			if (0 == *(char*)XVector_iterator_data(&it))
 			{
 				byteWrite &= ~(1 << (7 - charWriteIdx));
 				++charWriteIdx;
 			}
-			else if (1 == *(char*)it)
+			else if (1 == *(char*)XVector_iterator_data(&it))
 			{
 				byteWrite |= (1 << (7 - charWriteIdx));
 				++charWriteIdx;

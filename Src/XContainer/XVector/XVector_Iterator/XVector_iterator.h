@@ -7,12 +7,18 @@ extern "C" {
 #include"XContainerObject_iterator.h"
 //声明
 XContainerTypeDeclare(XVector);
-XContainerIteratorDeclare(XVector);
-
-XVector_iterator* XVector_begin(XVector* this_vector);
-XVector_iterator* XVector_end(XVector* this_vector);
-XVector_iterator* XVector_iterator_add(XVector* this_vector, XVector_iterator*it);
+//XContainerIteratorDeclare(XVector);
+//正向迭代器
+typedef struct XVector_iterator
+{
+	void* data;
+}XVector_iterator;
+XVector_iterator XVector_begin(XVector* this_vector);
+XVector_iterator XVector_end(XVector* this_vector);
+void XVector_iterator_add(XVector* this_vector, XVector_iterator*it);
+bool XVector_iterator_equality(XVector_iterator* itFirst, XVector_iterator* itSecond);
 void XVector_iterator_for_each(XVector* this_vector, XFor_each ForFunction, void* args);
+void* XVector_iterator_data(XVector_iterator* it);
 #ifdef __cplusplus
 }
 #endif

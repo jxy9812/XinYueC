@@ -7,9 +7,10 @@
 void XMazePathPrintPoint(XVector* Path)
 {
 #if XVector_ON
-	for (XVector_iterator* it = XVector_begin(Path); it != XVector_end(Path); it = XVector_iterator_add(Path, it))
+	//for (XVector_iterator* it = XVector_begin(Path); it != XVector_end(Path); it = XVector_iterator_add(Path, it))
+	For_Each_Iterator(Path, XVector, it)
 	{
-		XPoint CurPoint = *(XPoint*)it;//获取点
+		XPoint CurPoint = *(XPoint*)XVector_iterator_data(&it);//获取点
 		printf("(%d,%d) ", CurPoint.x, CurPoint.y);
 	}
 	printf("\n");
@@ -21,12 +22,14 @@ void XMazePathPrintPoint(XVector* Path)
 static void Print(const struct XVector* maze, const char* Wall, const char* Route, const char* Path)
 {
 #if XVector_ON
-	for (XVector_iterator* it = XVector_begin(maze); it != XVector_end(maze); it = XVector_iterator_add(maze, it))
+	//for (XVector_iterator* it = XVector_begin(maze); it != XVector_end(maze); it = XVector_iterator_add(maze, it))
+	For_Each_Iterator(maze, XVector, it)
 	{
-		struct XVector* RowMaze = *((struct XVector**)it);
-		for (XVector_iterator* Lit = XVector_begin(RowMaze); Lit != XVector_end(RowMaze); Lit = XVector_iterator_add(RowMaze, Lit))
+		struct XVector* RowMaze = *((struct XVector**)XVector_iterator_data(&it));
+		//for (XVector_iterator* Lit = XVector_begin(RowMaze); Lit != XVector_end(RowMaze); Lit = XVector_iterator_add(RowMaze, Lit))
+		For_Each_Iterator(RowMaze, XVector, Lit)
 		{
-			int* Sign = Lit;
+			int* Sign = XVector_iterator_data(&Lit);
 			char str[10];
 			switch (*Sign)
 			{
@@ -82,9 +85,10 @@ void XMazePathPrint(const XVector* maze, XVector* mazePath, const char* Wall, co
 {
 #if XVector_ON
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
-	for (XVector_iterator* it = XVector_begin(mazePath); it != XVector_end(mazePath); it = XVector_iterator_add(mazePath, it))
+	//for (XVector_iterator* it = XVector_begin(mazePath); it != XVector_end(mazePath); it = XVector_iterator_add(mazePath, it))
+	For_Each_Iterator(mazePath, XVector, it)
 	{
-		XPoint CurPoint = *(XPoint*)it;//获取点
+		XPoint CurPoint = *(XPoint*)XVector_iterator_data(&it);//获取点
 		*(int*)XVectorTwo_at_XPoint(tempMaze, CurPoint)= XMazePath;
 	}
 	Print(tempMaze, Wall, Route, Path);
@@ -99,9 +103,10 @@ void XMazePathPrintSleep(const XVector* maze, XVector* mazePath, const char* Wal
 #if XVector_ON
 	//system("mode con cols=110 lines=55"); //cols为控制台的宽度，lines则代表控制台的高度。
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
-	for (XVector_iterator* it = XVector_begin(mazePath); it != XVector_end(mazePath); it = XVector_iterator_add(mazePath, it))
+	//for (XVector_iterator* it = XVector_begin(mazePath); it != XVector_end(mazePath); it = XVector_iterator_add(mazePath, it))
+	For_Each_Iterator(mazePath, XVector, it)
 	{
-		XPoint CurPoint = *(XPoint*)it;//获取点
+		XPoint CurPoint = *(XPoint*)XVector_iterator_data(&it);//获取点
 		*(int*)XVectorTwo_at_XPoint(tempMaze, CurPoint) = XMazePath;
 		//清屏
 #ifdef _WIN32

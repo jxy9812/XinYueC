@@ -18,7 +18,7 @@ static size_t readDictionaries(XHuffmanTree* tree, const char* data)
 		value->code = code;
 		XVector_resize_base(code,codeSize);
 		offset += sizeof(DictionaryData);//指向写入的哈夫曼编码
-		memcpy(XVector_begin(code), data + offset, codeSize);
+		memcpy(XContainerDataPtr(code), data + offset, codeSize);
 		offset += codeSize;//指向下一组数据
 		DictionData = data + offset;//重新定位指针
 	}

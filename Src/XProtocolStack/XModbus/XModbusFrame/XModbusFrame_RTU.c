@@ -11,7 +11,7 @@ static XModbusFrame_set16Data(XVector* v)
 {
 	size_t size = XVector_getSize_base(v) - MB_SER_PDU_SIZE_CRC;
 	//设置crc校验
-	uint16_t crc16 = XCrc_get16(XVector_begin(v), size);
+	uint16_t crc16 = XCrc_get16(XContainerDataPtr(v), size);
 	XCrc_set16Data(XVector_at_base(v, size), crc16, 0);
 }
 //8字节数据帧设置
@@ -248,7 +248,7 @@ static void parseFrameData(XModbusFrame* frame, XVector* data)
 		return;
 	//开始解析RTU数据
 	size_t dataSize = XVector_getSize_base(data);
-	uint8_t* pData = (uint8_t*)XVector_begin(data);
+	uint8_t* pData = (uint8_t*)XContainerDataPtr(data);
 	// 校验帧长度和CRC（最小长度4字节，CRC正确）
 	if ((dataSize >= MB_SER_PDU_SIZE_MIN) && (XCrc_get16(pData, dataSize) == 0)) {
 		//printf("校验通过\n");
@@ -285,7 +285,7 @@ static void XModbusFrameRTU_parse0x01_reply(XModbusFrameRTU* rtu, XVector* frame
 		if (data == NULL)
 			assert(data);//新建数组失败了
 		XVector_resize_base(data, len);
-		memcpy(XVector_begin(data), XVector_at_base(frameData, 3), len);//拷贝线圈状态数据
+		memcpy(XContainerDataPtr(data), XVector_at_base(frameData, 3), len);//拷贝线圈状态数据
 	}
 	else if (data != NULL)//释放数据
 	{
@@ -344,7 +344,7 @@ static void XModbusFrameRTU_parse0x05_reply(XModbusFrameRTU* rtu, XVector* frame
 	if (data == NULL)
 		assert(data);//新建数组失败了
 	XVector_resize_base(data, 2);
-	memcpy(XVector_begin(data), XVector_at_base(frameData, 4), 2);//拷贝寄存器数据
+	memcpy(XContainerDataPtr(data), XVector_at_base(frameData, 4), 2);//拷贝寄存器数据
 }
 //解析0x05请求头
 static void XModbusFrameRTU_parse0x05_request(XModbusFrameRTU* rtu, XVector* frameData)
@@ -382,7 +382,7 @@ static void XModbusFrameRTU_parse0x10_request(XModbusFrameRTU* rtu, XVector* fra
 		if (data == NULL)
 			assert(data);//新建数组失败了
 		XVector_resize_base(data, len);
-		memcpy(XVector_begin(data), XVector_at_base(frameData, 7), len);//拷贝寄存器数据
+		memcpy(XContainerDataPtr(data), XVector_at_base(frameData, 7), len);//拷贝寄存器数据
 	}
 	else if(rtu->data!=NULL)
 	{
@@ -487,9 +487,10 @@ XString* XModbusFrameRTU_to16HexString(XModbusFrame* frame)
 		XVector* vector = frame->frameData;
 		XString* str = XString_create(NULL);
 		char buff[10];
-		for (XVector_iterator* it = XVector_begin(vector); it != XVector_end(vector); it = XVector_iterator_add(vector, it))
+		//for (XVector_iterator* it = XVector_begin(vector); it != XVector_end(vector); it = XVector_iterator_add(vector, it))
+		For_Each_Iterator(vector, XVector, it)
 		{
-			sprintf(buff, "%02X ", *((uint8_t*)it));
+			sprintf(buff, "%02X ", *((uint8_t*)XVector_iterator_data(&it)));
 			XString_append_base(str, buff);
 		}
 		XString_pop_back_base(str);
