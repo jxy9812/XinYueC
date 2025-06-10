@@ -262,8 +262,8 @@ void VXMap_swap(XHashMap* this_mapOne, XHashMap* this_mapTwo)
 {
 	//调用父类交换一部分
 	XVtableGetFunc(XContainerObject_class_init(), EXContainerObject_Swap, void(*)(XHashMap*, XHashMap*))(this_mapOne, this_mapTwo);
-	XSWAP(&(this_mapOne->m_parent.m_KeyEquality), &(this_mapTwo->m_parent.m_KeyEquality),XEquality);
-	XSWAP(&(this_mapOne->m_parent.m_keyTypeSize), &(this_mapTwo->m_parent.m_keyTypeSize), size_t);
-	XSWAP(&(this_mapOne->m_hash), &(this_mapTwo->m_hash), XHash);
+	XSwap(&(this_mapOne->m_parent.m_KeyEquality), &(this_mapTwo->m_parent.m_KeyEquality), sizeof(XEquality));
+	XSwap(&(this_mapOne->m_parent.m_keyTypeSize), &(this_mapTwo->m_parent.m_keyTypeSize), sizeof(size_t));
+	XSwap(&(this_mapOne->m_hash), &(this_mapTwo->m_hash), sizeof(XHash));
 }
 #endif
