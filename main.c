@@ -15,17 +15,17 @@ int main(int argc, char* args[])
 	//XListDLinkedIterator();
 	//XHashMapTest();
 	//XMapTest();
-	XListDLinkedTest();
-	//XListDLinkedSortTest();
+	/*XListDLinkedTest();
+	XListDLinkedSortTest();
 	XListDLinkedIterator();
-	XListDLinkedSwapTest();
+	XListDLinkedSwapTest();*/
 	/*XListSLinkedTest();
 	XListSLinkedSwapTest();
 	XListSLinkedIterator();
 	XListSLinkedSortTest();*/
 	//XPriority_QueueTest();
 	//XPWMDeviceTest();
-	//XModbusTest();
+	XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
 	//XSerialPortTest();

@@ -17,10 +17,12 @@ typedef struct  XInterrupt
 static void List_Handler(void** data,uint16_t index) 
 {
 	XListSLinked*list=data[index];
-	for_each_iterator(list,XListSLinked,it)
+	//For_Each_Iterator(list,XListSLinked,it)
+	XListSNode* node= XContainerDataPtr(list);
 	{
-		XInterruptNode* i=XListSNode_DataPtr(it);
+		XInterruptNode* i=XListSNode_DataPtr(node);
 		i->callback(i->userData);
+		node = node->next;
 	}
 }
 static const _Bool XEquality_XInterrupt(const void* LPrevValue, const void* LNextValue)

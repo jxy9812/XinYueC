@@ -8,11 +8,16 @@ extern "C" {
 XContainerTypeDeclare(XListSLinked);
 XContainerTypeDeclare(XListSNode);
 //正向迭代器
-typedef XListSNode XListSLinked_iterator;
-XListSLinked_iterator* XListSLinked_begin(XListSLinked* this_list);
-XListSLinked_iterator* XListSLinked_end(XListSLinked* this_list);
-XListSLinked_iterator* XListSLinked_iterator_add(XListSLinked* this_list,XListSLinked_iterator*it);
+typedef struct XListSLinked_iterator
+{
+	XListSNode* node;
+}XListSLinked_iterator;
+XListSLinked_iterator XListSLinked_begin(XListSLinked* this_list);
+XListSLinked_iterator XListSLinked_end(XListSLinked* this_list);
+void XListSLinked_iterator_add(XListSLinked* this_list,XListSLinked_iterator*it);
+bool XListSLinked_iterator_equality(XListSLinked_iterator* itFirst, XListSLinked_iterator* itSecond);
 void XListSLinked_iterator_for_each(XListSLinked* this_list, XFor_each ForFunction, void* args);
+void* XListSLinked_iterator_data(XListSLinked_iterator* it);
 #ifdef __cplusplus
 }
 #endif

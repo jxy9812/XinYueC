@@ -132,10 +132,13 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
 			XListSLinked*list=*((XListSLinked**)vIt);
 			if (list != NULL)
 			{
-				for_each_iterator(list, XListSLinked, it)
+				//For_Each_Iterator(list, XListSLinked, it)
+				XListSNode* node = XContainerDataPtr(list);
+				while(node)
 				{
-					XTimerWheel* timer = XListSNode_Data(it, XTimerWheel*);
+					XTimerWheel* timer = XListSNode_Data(node, XTimerWheel*);
 					XTimerBase_delete_base(timer);
+					node = node->next;
 				}
 				XListSLinked_delete_base(list);
 			}
