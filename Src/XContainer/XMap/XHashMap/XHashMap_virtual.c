@@ -1,4 +1,5 @@
 ﻿#include"XHashMap.h"
+#if XHashMap_ON
 #include"XAlgorithm.h"
 #include<string.h>
 //Map插入数据
@@ -18,7 +19,7 @@ static void VXMap_swap(XHashMap* this_mapOne, XHashMap* this_mapTwo);
 // 私有函数：扩容哈希表
 static bool XHashMap_resize(XHashMap* map, size_t new_capacity);
 #define XHashMapNode_GetSize(map)  (sizeof(size_t) * 2 + ((XMapBase*)map)->m_keyTypeSize + XContainerTypeSize(map)+sizeof(XHashMapNode*))
-#define XHashMapNode_Next(map,node) *((XHashMapNode**)(((char*)node)+(sizeof(size_t) * 2 + ((XMapBase*)map)->m_keyTypeSize + XContainerTypeSize(map))))
+//#define XHashMapNode_Next(map,node) *((XHashMapNode**)(((char*)node)+(sizeof(size_t) * 2 + ((XMapBase*)map)->m_keyTypeSize + XContainerTypeSize(map))))
 XVtable* XHashMap_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -60,12 +61,23 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 		XHashMapNode* current = ((XHashMapNode**)XContainerDataPtr(map))[i];
         while (current) 
 		{
-			XHashMapNode* next = XHashMapNode_Next(map, current) /* current->next*/;
-			size_t index = map->m_hash(XPair_first(current), ((XMapBase*)map)->m_keyTypeSize) % new_capacity;
-
-			XHashMapNode_Next(map, current) = newData[index];
-			newData[index] = current;
-
+			XHashMapNode* next =  current->next;
+			size_t index = map->m_hash(XPair_first(current->pair), ((XMapBase*)map)->m_keyTypeSize) % new_capacity;
+			XHashMapNode* new_current = newData[index];
+			if (new_current != NULL)
+			{
+				while (new_current->next)
+				{
+					new_current = new_current->next;
+				}
+				new_current->next = current;
+				
+			}
+			else
+			{
+				newData[index] = current;
+			}
+			current->next = NULL;
             current = next;
         }
     }
@@ -81,10 +93,11 @@ void VXMap_insert(XHashMap* this_map, const void* pvKey, const void* pvValue)
 	
     if ((double)XContainerSize(this_map) / XContainerCapacity(this_map) >= DEFAULT_LOAD_FACTOR)
 	{
+		//printf("XHashMap 扩容\n");
         size_t new_capacity = XContainerCapacity(this_map) * 2;
         if (!XHashMap_resize(this_map, new_capacity)) 
 		{
-			printf("XHashMap 扩容失败");
+			printf("XHashMap 扩容失败\n");
             return ;
         }
     }
@@ -94,28 +107,24 @@ void VXMap_insert(XHashMap* this_map, const void* pvKey, const void* pvValue)
 
     while (current) 
 	{
-        if (this_map->m_parent.m_KeyEquality(XPair_first(current), pvKey)) 
+        if (this_map->m_parent.m_KeyEquality(XPair_first(current->pair), pvKey)) 
 		{
-			XPair_insertSecond(current, pvValue);
+			XPair_insertSecond(current->pair, pvValue);
 			//memcpy(XPair_second(current), pvValue, XContainerTypeSize(this_map));
             return ;
         }
-        current = XHashMapNode_Next(this_map, current);
+        current = current->next;
     }
-	size_t nodeSize = XHashMapNode_GetSize(this_map);
-	XHashMapNode* new_node = (XHashMapNode*)XMemory_malloc(nodeSize);
-	{//pair派生后的初始化
-		memset(new_node, 0, nodeSize);
-		if (!new_node)
-			return false;
-		XPair* this_pair = new_node;
-		this_pair->m_firstTypeSize = ((XMapBase*)this_map)->m_keyTypeSize;
-		this_pair->m_secondTypeSize = XContainerTypeSize(this_map);
-	}
-	XPair_insertFirst(new_node,pvKey);
-	XPair_insertSecond(new_node, pvValue);
-	
-	XHashMapNode_Next(this_map, new_node)= ((XHashMapNode**)XContainerDataPtr(this_map))[index];
+	XHashMapNode* new_node = (XHashMapNode*)XMemory_malloc(sizeof(XHashMapNode));
+	if (new_node == NULL)
+		return;
+
+	XPair* pair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
+	XPair_insertFirst(pair,pvKey);
+	XPair_insertSecond(pair, pvValue);
+	new_node->pair = pair;
+
+	new_node->next= ((XHashMapNode**)XContainerDataPtr(this_map))[index];
 	((XHashMapNode**)XContainerDataPtr(this_map))[index] = new_node;
 	++XContainerSize(this_map);
 }
@@ -132,53 +141,56 @@ void VXMap_erase(XHashMap* this_map, const XPair* pPair)
 		{
 			if (prev)
 			{
-				prev->next = XHashMapNode_Next(this_map, current);
+				prev->next = current->next;
 			}
 			else
 			{
-				((XHashMapNode**)XContainerDataPtr(this_map))[index] = XHashMapNode_Next(this_map, current);
+				((XHashMapNode**)XContainerDataPtr(this_map))[index] = current->next;
 			}
 			if (XContainerDataDeleteMethod(this_map) != NULL)
-				XContainerDataDeleteMethod(this_map)(current);
-			XPair_delete(current);
+				XContainerDataDeleteMethod(this_map)(current->pair);
+			XPair_delete(current->pair);
+			XMemory_free(current);
 			--XContainerSize(this_map);
 
 			return;//释放成功
 		}
 
 		prev = current;
-		current = XHashMapNode_Next(this_map, current);
+		current = current->next;
 	}
 }
 
 void VXMap_remove(XHashMap* this_map, const void* pvKey)
 {
+	//printf("删除\n");
 	size_t index = this_map->m_hash(pvKey, ((XMapBase*)this_map)->m_keyTypeSize) % XContainerCapacity(this_map);
 	XHashMapNode* current = ((XHashMapNode**)XContainerDataPtr(this_map))[index];
 	XHashMapNode* prev = NULL;
 
 	while (current) 
 	{
-		if (this_map->m_parent.m_KeyEquality(XPair_first(current), pvKey)) 
+		if (this_map->m_parent.m_KeyEquality(XPair_first(current->pair), pvKey)) 
 		{
 			if (prev) 
 			{
-				prev->next = XHashMapNode_Next(this_map, current);
+				prev->next = current->next;
 			}
 			else 
 			{
-				((XHashMapNode**)XContainerDataPtr(this_map))[index] = XHashMapNode_Next(this_map, current);
+				((XHashMapNode**)XContainerDataPtr(this_map))[index] = current->next;
 			}
 			if (XContainerDataDeleteMethod(this_map) != NULL)
-				XContainerDataDeleteMethod(this_map)(current);
-			XPair_delete(current);
+				XContainerDataDeleteMethod(this_map)(current->pair);
+			XPair_delete(current->pair);
+			XMemory_free(current);
 			--XContainerSize(this_map);
 			
 			return ;//释放成功
 		}
 
 		prev = current;
-		current = XHashMapNode_Next(this_map, current);
+		current = current->next;
 	}
 
 }
@@ -190,12 +202,11 @@ void* VXMap_value(XHashMap* this_map, const void* pvKey)
 
 	while (current) 
 	{
-		if (((XMapBase*)this_map)->m_KeyEquality(XPair_first(current), pvKey))
+		if (((XMapBase*)this_map)->m_KeyEquality(XPair_first(current->pair), pvKey))
 		{
-			return XPair_second(current);
+			return XPair_second(current->pair);
 		}
-		current = XHashMapNode_Next(this_map, current);
-		//current = current->next;
+		current = current->next;
 	}
 	return NULL;
 }
@@ -207,18 +218,18 @@ XPair* VXMap_find(XHashMap* this_map, const void* pvKey)
 
 	while (current)
 	{
-		if (this_map->m_parent.m_KeyEquality(XPair_first(current), pvKey))
+		if (this_map->m_parent.m_KeyEquality(XPair_first(current->pair), pvKey))
 		{
-			return current;
+			return current->pair;
 		}
-		current = XHashMapNode_Next(this_map, current);
+		current = current->next;
 	}
 	return NULL;
 }
 
 void VXMap_clear(XHashMap* this_map)
 {
-	void* deleteNode = NULL;
+	XHashMapNode* deleteNode = NULL;
 	for (size_t i = 0; i < XContainerCapacity(this_map); i++)
 	{
 		XHashMapNode* current = ((XHashMapNode**)XContainerDataPtr(this_map))[i];
@@ -226,10 +237,11 @@ void VXMap_clear(XHashMap* this_map)
 		while (current)
 		{
 			deleteNode = current;
-			current = XHashMapNode_Next(this_map, current);
+			current = current->next;
 			if (XContainerDataDeleteMethod(this_map) != NULL)
-				XContainerDataDeleteMethod(this_map)(deleteNode);
-			XPair_delete(deleteNode);
+				XContainerDataDeleteMethod(this_map)(deleteNode->pair);
+			XPair_delete(deleteNode->pair);
+			XMemory_free(deleteNode);
 		}
 	}
 	memset(XContainerDataPtr(this_map),0, sizeof(XHashMapNode*) * XContainerCapacity(this_map));
@@ -238,6 +250,7 @@ void VXMap_clear(XHashMap* this_map)
 
 void VXMap_delete(XHashMap* this_map)
 {
+
 	XHashMap_clear_base(this_map);
 	void* data = XContainerDataPtr(this_map);
 	if (data)
@@ -253,3 +266,4 @@ void VXMap_swap(XHashMap* this_mapOne, XHashMap* this_mapTwo)
 	XSWAP(&(this_mapOne->m_parent.m_keyTypeSize), &(this_mapTwo->m_parent.m_keyTypeSize), size_t);
 	XSWAP(&(this_mapOne->m_hash), &(this_mapTwo->m_hash), XHash);
 }
+#endif

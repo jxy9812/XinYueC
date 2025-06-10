@@ -13,6 +13,7 @@ extern "C" {
 #define XContainerReverseIteratorDeclare(Container) typedef void Container##_reverse_iterator
 //正向迭代器遍历
 #define for_each_iterator(container,type,it) for(type##_iterator*it=type##_begin(container);it!=type##_end(container);it=type##_iterator_add(container,it))
+#define For_Each_Iterator(container,type,it) for(type##_iterator it=type##_begin(container),endIt=type##_end(container);type##_iterator_equality(&it,&endIt);type##_iterator_add(container,&it))
 //反向迭代器遍历
 #define for_each_reverse_iterator(container,type,it) for(type##_reverse_iterator*it=type##_rbegin(container);it!=type##_rend(container);it=type##_reverse_iterator_add(container,it))
 

@@ -7,6 +7,7 @@ extern "C" {
 #include"XFunctionCallback.h"
 #include"XMapBase.h"
 #include"XHash.h"
+#include"XHashMap_Iterator.h"
 // 默认初始容量
 #define DEFAULT_CAPACITY 16
 // 默认负载因子阈值
@@ -15,7 +16,7 @@ extern "C" {
 //哈希节点
 typedef struct XHashMapNode
 {
-	XPair pair;
+	XPair* pair;//键值
 	struct XHashMapNode* next;   // 指向下一个节点的指针
 }XHashMapNode;
 //#define XHashMapNode_KeyPtr(node)

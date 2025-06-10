@@ -42,7 +42,7 @@ void XMapBase_remove_base(XMapBase* this_map, const void* pvKey)
 {
 	if (ISNULL(this_map, "") || ISNULL(pvKey, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return;
-	XClassGetVirtualFunc(this_map, EXMapBase_Remove, void(*)(XMapBase* ,const XPair*))(this_map, pvKey);
+	XClassGetVirtualFunc(this_map, EXMapBase_Remove, void(*)(XMapBase* , const void*))(this_map, pvKey);
 }
 void* XMapBase_value_base(XMapBase* this_map, const void* pvKey)
 {

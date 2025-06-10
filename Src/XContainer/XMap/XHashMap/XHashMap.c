@@ -1,4 +1,5 @@
 ﻿#include"XHashMap.h"
+#if XHashMap_ON
 #include"XMemory.h"
 #include<string.h>
 XHashMap* XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHash hash, XEquality KeyEquality)
@@ -21,3 +22,5 @@ void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t va
 		XMemory_free(this_map);
 	memset(XContainerDataPtr(this_map),0,size);
 }
+
+#endif
