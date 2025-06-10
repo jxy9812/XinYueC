@@ -63,13 +63,13 @@ bool XHashMap_iterator_equality(XHashMap_iterator* itFirst, XHashMap_iterator* i
 
 void XHashMap_iterator_for_each(XHashMap* this_map, XFor_each ForFunction, void* args)
 {
-	for (XHashMap_iterator it = XHashMap_begin(this_map), endIt = XHashMap_end(this_map); !XHashMap_iterator_equality(&it, &endIt); XHashMap_iterator_add(this_map, &it))
+	For_Each_Iterator(this_map, XHashMap, it)
 	{
-		ForFunction(XHashMap_data(&it),args);
+		ForFunction(XHashMap_iterator_data(&it),args);
 	}
 }
 
-XPair* XHashMap_data(XHashMap_iterator* it)
+XPair* XHashMap_iterator_data(XHashMap_iterator* it)
 {
 	return ((XHashMapNode*)(it->node))->pair;
 }

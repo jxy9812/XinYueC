@@ -14,8 +14,6 @@ typedef struct XMap
 {
 	XMapBase m_parent;//基本数据
 	XLess m_KeyLess;//key小于比较函数
-	bool m_isModify;//是否修改了
-	XVector* m_itArray;//迭代器数组
 }XMap;
 XVtable* XMap_class_init();
 //开辟一个Map,初始化
@@ -47,10 +45,6 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 //返回元素类型字节大小
 #define XMap_getTypeSize_base			XMapBase_getTypeSize_base
 
-
-//其他函数
-//更新迭代器
-void XMap_updataIterator(XMap* this_map);
 #ifdef __cplusplus
 }
 #endif

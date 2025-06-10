@@ -3,51 +3,75 @@
 #include"XMap.h"
 #include"XVector.h"
 #include"XRedBlackTree.h"
-XMap_iterator* XMap_begin(XMap* this_Map)
-{
-#if XVector_ON
-	XMap_updataIterator(this_Map);
-	if (this_Map->m_itArray == NULL)
-		return NULL;
-	XVector_iterator* it = XVector_begin(this_Map->m_itArray);
-	/*if(Vectorit!=NULL)
-		return *(XPair**)Vectorit;*/
-	return it;
-#else
-	IS_ON_DEBUG(XVector_ON);
-	return NULL;
-#endif;
-}
 
-XMap_iterator* XMap_end(XMap* this_Map)
-{
-#if XVector_ON
-	return XVector_end(this_Map->m_itArray);
-#else
-	IS_ON_DEBUG(XVector_ON);
-	return NULL;
-#endif;
-}
 
-XMap_iterator* XMap_iterator_add(XMap* this_Map, XMap_iterator* it)
+XMap_iterator XMap_begin(XMap* this_map)
 {
-#if XVector_ON
-	XVector_iterator* iterator = XVector_iterator_add(this_Map->m_itArray,it);
-	/*if (Vectorit != NULL)
-		return *(XPair**)Vectorit;*/
-	return iterator;
-#else
-	IS_ON_DEBUG(XVector_ON);
-	return NULL;
-#endif;
-}
-
-void XMap_iterator_for_each(XMap* this_Map, XFor_each ForFunction, void* args)
-{
-	for_each_iterator(this_Map,XMap,it)
-	{
-		ForFunction(it, args);
+	//printf("开始\n");
+	XMap_iterator it = { 0 };
+	if (this_map == NULL)
+		return it;
+	XRBTreeNode* current = XContainerDataPtr(this_map);
+	if (current == NULL) return it;
+	while (XBTree_GetLChild(current)!= NULL) {
+		current = XBTree_GetLChild(current);
 	}
+	it.node = current;
+	return it;
+}
+
+XMap_iterator XMap_end(XMap* this_map)
+{
+	XMap_iterator it = { 0 };
+	if (this_map == NULL)
+		return it;
+	XRBTreeNode* this_root = XContainerDataPtr(this_map);
+	return it;
+}
+
+void XMap_iterator_add(XMap* this_map, XMap_iterator* it)
+{
+	if (this_map == NULL||it==NULL||it->node==NULL)
+		return ;
+	// 如果有右子树，找到右子树的最左节点
+	if (XBTree_GetRChild(it->node) != NULL) {
+		XRBTreeNode* current = XBTree_GetRChild(it->node);
+		while (XBTree_GetLChild(current) != NULL) {
+			current = XBTree_GetLChild(current);
+		}
+		it->node = current;
+		return ;
+	}
+
+	// 否则向上回溯，直到找到一个作为左子节点的祖先
+	XRBTreeNode* current = it->node;
+	XRBTreeNode* parent = XBTree_GetParent(current);
+	while (parent != NULL && current == XBTree_GetRChild(parent)) {
+		current = parent;
+		parent = XBTree_GetParent(parent);
+	}
+	it->node = parent;
+	return ;
+}
+
+bool XMap_iterator_equality(XMap_iterator* itFirst, XMap_iterator* itSecond)
+{
+	return itFirst->node==itSecond->node;
+}
+
+void XMap_iterator_for_each(XMap* this_map, XFor_each ForFunction, void* args)
+{
+	For_Each_Iterator(this_map,XMap,it)
+	{
+		ForFunction(XMap_iterator_data(&it), args);
+	}
+}
+
+XPair* XMap_iterator_data(XMap_iterator* it)
+{
+	if (it == NULL || it->node == NULL)
+		return NULL;
+	return XBTree_GetData(it->node,0, XPair*);
 }
 
 

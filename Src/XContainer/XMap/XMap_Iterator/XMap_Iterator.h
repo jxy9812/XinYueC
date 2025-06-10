@@ -8,11 +8,16 @@ extern "C" {
 #include"XFunctionCallback.h"
 XContainerTypeDeclare(XMap);
 XContainerTypeDeclare(XPair);
-typedef XPair* XMap_iterator;
-XMap_iterator* XMap_begin(XMap* this_Map);
-XMap_iterator* XMap_end(XMap* this_Map);
-XMap_iterator* XMap_iterator_add(XMap* this_Map, XMap_iterator* it);
-void XMap_iterator_for_each(XMap* this_Map, XFor_each ForFunction, void* args);
+typedef struct XMap_iterator
+{
+	void* node;//当前节点
+}XMap_iterator;
+XMap_iterator XMap_begin(XMap* this_map);
+XMap_iterator XMap_end(XMap* this_map);
+void XMap_iterator_add(XMap* this_map, XMap_iterator* it);
+bool XMap_iterator_equality(XMap_iterator* itFirst, XMap_iterator* itSecond);
+void XMap_iterator_for_each(XMap* this_map, XFor_each ForFunction, void* args);
+XPair* XMap_iterator_data(XMap_iterator* it);
 #ifdef __cplusplus
 }
 #endif

@@ -19,7 +19,7 @@ XHashMap_iterator XHashMap_end(XHashMap* this_map);
 void XHashMap_iterator_add(XHashMap* this_map, XHashMap_iterator* it);
 bool XHashMap_iterator_equality(XHashMap_iterator* itFirst, XHashMap_iterator* itSecond);
 void XHashMap_iterator_for_each(XHashMap* this_map, XFor_each ForFunction, void* args);
-XPair* XHashMap_data(XHashMap_iterator* it);
+XPair* XHashMap_iterator_data(XHashMap_iterator* it);
 #ifdef __cplusplus
 }
 #endif
