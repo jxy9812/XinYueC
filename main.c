@@ -13,14 +13,14 @@ int main(int argc, char* args[])
 #if DEMOTEST
 	//XTimerWheelTest();
 	//XListDLinkedIterator();
-
+	XMapTest();
 	/*XListSLinkedTest();
 	XListSLinkedSwapTest();
 	XListSLinkedIterator();
 	XListSLinkedSortTest();*/
 	//XPriority_QueueTest();
 	//XPWMDeviceTest();
-	XModbusTest();
+	//XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
 	//XSerialPortTest();

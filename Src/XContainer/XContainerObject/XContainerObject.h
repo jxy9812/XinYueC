@@ -35,7 +35,7 @@ typedef struct XContainerObject
 }XContainerObject;
 //宏函数
 #define XContainerValue(LPVal,type) (*(type*)LPVal)//派生类 读取数据 
-#define XContainerDataPtr(Object) ((XContainerObject*)(Object))->m_data//当前数据指针
+#define XContainerDataPtr(Object) (((XContainerObject*)(Object))->m_data)//当前数据指针
 #define XContainerData(Object,Type) (*(Type*)XContainerDataPtr(Object))//当前数据
 #define XContainerCapacity(Object) (((XContainerObject*)(Object))->m_capacity)//当前容器能容纳的最大元素数量
 #define XContainerSize(Object) (((XContainerObject*)(Object))->m_size)//当前容器内的元素个数

@@ -25,3 +25,10 @@ void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t va
 		XMemory_free(this_map);
 
 }
+
+void XHashMap_insert_base(XHashMap* this_map, const void* key, const void* pvValue)
+{
+	if (ISNULL(this_map, "") || ISNULL(XClassGetVtable(this_map), ""))
+		return;
+	XClassGetVirtualFunc(this_map, EXHashMap_Insert,void(*)(XHashMap*,const void* ,const void*))(this_map, key, pvValue);
+}

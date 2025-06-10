@@ -5,7 +5,7 @@
 #include "XCircularQueue.h"
 #include <string.h>
 #include <assert.h>
-static void VXCommunicatorBase_free(XCommunicatorBase* comm);
+static void VXCommunicatorBase_delete(XCommunicatorBase* comm);
 static bool VXCommunicatorBase_connect_base(XCommunicatorBase* comm);
 static bool VXCommunicatorBase_disconnect_base(XCommunicatorBase* comm);
 static size_t VXCommunicatorBase_send_base(XCommunicatorBase* comm, const void* data, size_t size);
@@ -38,14 +38,14 @@ XVtable* XCommunicatorBase_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXCommunicatorBase_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXCommunicatorBase_delete);
 #if SHOWCONTAINERSIZE
 	printf("XIODeviceBase size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
 
-void VXCommunicatorBase_free(XCommunicatorBase* comm)
+void VXCommunicatorBase_delete(XCommunicatorBase* comm)
 {
 	if(comm->m_io)
 		XIODeviceBase_delete_base(comm->m_io);
@@ -96,25 +96,15 @@ size_t VXCommunicatorBase_send_base(XCommunicatorBase* comm, const void* data, s
 	}
 	
 }
-static void recvOut(bool* run)
-{
-	*run = false;
-}
 size_t VXCommunicatorBase_recv_base(XCommunicatorBase* comm, void* data, size_t maxSize)
 {
 	if (comm->m_io == NULL)
 		return 0;
 	size_t size = 0,readSize=0;
-	bool run = true;
 	XTimerWheel* timer = NULL;
 	if (comm->m_opt_timeout != 0)
-	{
-		timer = XTimerWheel_create();
-		XTimerWheel_setGroup(timer,comm->m_wheel);
-		XTimerWheel_setUserData(timer, &run);
-		XTimerWheel_setTimeout_base(timer, comm->m_opt_timeout);
-		XTimerWheel_setTimerCallback(timer, recvOut);
-		XTimerWheel_start_base(timer);
+	{//设置了超时时间
+		comm->m_currentTimeout = XTimerBase_getCurrentTime();
 	}
 	while (size < maxSize)
 	{
@@ -123,21 +113,12 @@ size_t VXCommunicatorBase_recv_base(XCommunicatorBase* comm, void* data, size_t 
 		{
 			size += XIODeviceBase_read_base(comm->m_io, ((char*)data) + size, (maxSize - size) > readSize ? readSize : (maxSize - size));
 		}
-		else if (!run || comm->m_opt_timeout == 0)
-		{
+		else if (comm->m_opt_timeout != 0 && (comm->m_currentTimeout + comm->m_opt_timeout) < XTimerBase_getCurrentTime())
+		{//超时退出
 			break;
 		}
-		else
-		{
-			XTimerGroupWheel_poll_base(comm->m_wheel);
-		}
-	}
-	if (timer && run)
-	{
-		XTimerWheel_delete_base(timer);
 	}
 	return size;
-	//return XIODeviceBase_read_base(comm->m_io, data, maxSize);
 }
 
 bool VXCommunicatorBase_sendAsync(XCommunicatorBase* comm, const void* data, size_t size)

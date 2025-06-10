@@ -29,43 +29,32 @@ XVtable* XHashMap_class_init()
 }
 
 // 私有函数：扩容哈希表
-bool XHashMap_resize(XHashMap* map, size_t new_capacity)
+static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 {
-	void* data = NULL;
+	
 	size_t new_size = new_capacity * sizeof(XHashMapNode*);
-	if (XMemory_realloc_isNULL())
-	{//先申请拷贝后在释放
-		data = XMemory_malloc(new_size);
-		if (data)
-		{
-			memcpy(data, XContainerDataPtr(map), XContainerCapacity(map)* sizeof(XHashMapNode*));
-			XMemory_free(XContainerDataPtr(map));
-		}
-	}
-	else
-	{
-		data = XMemory_realloc(XContainerDataPtr(map), new_size);
-	}
-	if (data == NULL)
-		return;
-	XContainerDataPtr(map)=data;
-    /*for (size_t i = 0; i < XContainerCapacity(map); i++) 
+	XHashMapNode** newData = XMemory_malloc(new_size);
+	memset(newData, 0, new_size);
+	if (newData == NULL)
+		return false;
+
+    for (size_t i = 0; i < XContainerCapacity(map); i++) 
 	{
 		XHashMapNode* current = ((XHashMapNode**)XContainerDataPtr(map))[i];
         while (current) 
 		{
 			XHashMapNode* next = current->next;
-            size_t index = map->m_hash(current->key) % new_capacity;
+            size_t index = map->m_hash(XPair_first(current)) % new_capacity;
 
-            current->next = new_buckets[index];
-            new_buckets[index] = current;
+            current->next = newData[index];
+			newData[index] = current;
 
             current = next;
         }
     }
 
-    free(map->buckets);
-    map->buckets = new_buckets;
-    map->capacity = new_capacity;*/
-    return true;
+    XMemory_free(XContainerDataPtr(map));
+	XContainerDataPtr(map) = newData;
+	XContainerCapacity(map) = new_capacity;
+	return true;
 }

@@ -28,6 +28,7 @@ typedef struct XCommunicatorBase
 {
 	XClass m_parent;//继承类
 	uint16_t m_opt_timeout;//操作超时时间（毫秒），影响 Send/Receive 的阻塞时长。
+	size_t   m_currentTimeout;//调用阻塞函数的时候记录开始时间 
 	XIODeviceBase* m_io;//io设备
 	void* m_userData;//用户数据
 	RecvDataCallback m_recvDataCallback;//接收数据回调函数
