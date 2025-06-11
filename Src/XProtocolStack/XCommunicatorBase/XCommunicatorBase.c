@@ -1,12 +1,13 @@
 ﻿#include"XCommunicatorBase.h"
 #include"XTimerGroupWheel.h"
 #include<string.h>
-void XCommunicatorBase_init(XCommunicatorBase* comm)
+void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io)
 {
     //开始初始化
     memset(((XClass*)comm)+1, 0, sizeof(XCommunicatorBase)-sizeof(XClass));
     XClass_init(comm);
     XClassGetVtable(comm) = XCommunicatorBase_class_init();
+    comm->m_io = io;
     comm->m_wheel = XTimerGroupWheel_create(1);
     comm->m_opt_timeout = ~(comm->m_opt_timeout);//取反最大值
     XTimerGroupWheel_addTimeWheel_base(comm->m_wheel,100);

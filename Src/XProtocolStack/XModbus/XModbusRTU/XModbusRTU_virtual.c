@@ -47,13 +47,13 @@ XVtable* XModbusRTU_class_init()
 #endif
 	return XVTABLE_DEFAULT;
 }
-void XModbusRTU_init(XModbusRTU* modbus, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired)
+void XModbusRTU_init(XModbusRTU* modbus, XIODeviceBase* io, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired)
 {
     if (modbus == NULL)
         return NULL;
     //开始初始化
     memset(((XModbusBase*)modbus) + 1, 0, sizeof(XModbusRTU) - sizeof(XModbusBase));
-    XModbusBase_init(modbus);
+    XModbusBase_init(modbus, io);
     XClassGetVtable(modbus) = XModbusRTU_class_init();
 
     //3.5帧定时器
@@ -152,8 +152,8 @@ bool VXModbusBase_ReceiveFSM(XModbusBase* modbus)
         //printf("开始接收\n");
         XVector_clear_base(recvVector);  // 重置接收缓冲区位置
         XVector_push_back_base(recvVector, &ucByte);  // 存储第一个字节（从机地址）
-        if (modbus->m_eSndState == STATE_TX_END)
-            modbus->m_eSndState = STATE_TX_IDLE;
+        /*if (modbus->m_eSndState == STATE_TX_END)
+            modbus->m_eSndState = STATE_TX_IDLE;*/
         modbus->m_eRcvState = STATE_RX_RCV;  // 切换到接收中状态
         //XTimerBase_start_base(modbus->timer);  // 启动T35定时器
         XTimerBase_start_base(((XModbusRTU*)modbus)->m_timerT35Expired);

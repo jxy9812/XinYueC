@@ -55,7 +55,7 @@ typedef struct XModbusBase
 //    XModbusFrameCBTransmitterEmpty pxMBFrameCBTransmitterEmpty;// 发送缓冲区空时调用（触发发送状态机）
 }XModbusBase;
 XVtable* XModbusBase_class_init();
-void XModbusBase_init(XModbusBase* modbus);
+void XModbusBase_init(XModbusBase* modbus, XIODeviceBase* io);
 void XModbusBase_setAddress(XModbusBase* modbus, uint8_t address);
 void XModbusBase_setMode(XModbusBase* modbus, XModbusMode mode);
 #define XModbusBase_connect_base                XCommunicatorBase_connect_base

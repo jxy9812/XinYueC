@@ -36,7 +36,7 @@ typedef struct XCommunicatorBase
 	XTimerGroupWheel* m_wheel;//时间轮定时器组  默认3级(每级100轮) 1ms~999 秒
 }XCommunicatorBase;
 XVtable* XCommunicatorBase_class_init();
-void XCommunicatorBase_init(XCommunicatorBase* comm);
+void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io);
 bool XCommunicatorBase_connect_base(XCommunicatorBase* comm);
 bool  XCommunicatorBase_disconnect_base(XCommunicatorBase* comm);
 bool  XCommunicatorBase_isConnected_base(XCommunicatorBase* comm);

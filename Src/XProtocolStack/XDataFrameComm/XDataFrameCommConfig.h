@@ -18,6 +18,8 @@ extern "C" {
 #define XDFC_RECV_BUFFER_SIZE						 (  1024 )
 //半双工下发送等待时间
 #define XDFC_HALF_DUPLEX_SEND_WAIT_TIME             (2)
+//一帧数据接收结束事件
+#define XDFC_FRAME_END_TIMEOUT_TIME					(2)
 //主站接收返回超时时间 (ms)
 #define XDFC_MASTER_RECV_OUT_TIME					(  1000 )
 //是否完整的帧一起发送

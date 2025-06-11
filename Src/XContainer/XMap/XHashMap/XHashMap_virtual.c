@@ -131,6 +131,8 @@ void VXMap_insert(XHashMap* this_map, const void* pvKey, const void* pvValue)
 
 void VXMap_erase(XHashMap* this_map, const XPair* pPair)
 {
+	if (XMapBase_isEmpty_base(this_map))
+		return;
 	size_t index = this_map->m_hash(XPair_first(pPair), ((XMapBase*)this_map)->m_keyTypeSize) % XContainerCapacity(this_map);
 	XHashMapNode* current = ((XHashMapNode**)XContainerDataPtr(this_map))[index];
 	XHashMapNode* prev = NULL;
@@ -163,7 +165,8 @@ void VXMap_erase(XHashMap* this_map, const XPair* pPair)
 
 void VXMap_remove(XHashMap* this_map, const void* pvKey)
 {
-	//printf("删除\n");
+	if (XMapBase_isEmpty_base(this_map))
+		return ;
 	size_t index = this_map->m_hash(pvKey, ((XMapBase*)this_map)->m_keyTypeSize) % XContainerCapacity(this_map);
 	XHashMapNode* current = ((XHashMapNode**)XContainerDataPtr(this_map))[index];
 	XHashMapNode* prev = NULL;
@@ -197,6 +200,8 @@ void VXMap_remove(XHashMap* this_map, const void* pvKey)
 
 void* VXMap_value(XHashMap* this_map, const void* pvKey)
 {
+	if (XMapBase_isEmpty_base(this_map))
+		return NULL;
 	size_t index = this_map->m_hash(pvKey, ((XMapBase*)this_map)->m_keyTypeSize) % XContainerCapacity(this_map);
 	XHashMapNode* current = ((XHashMapNode**)XContainerDataPtr(this_map))[index];
 
@@ -213,6 +218,8 @@ void* VXMap_value(XHashMap* this_map, const void* pvKey)
 
 XPair* VXMap_find(XHashMap* this_map, const void* pvKey)
 {
+	if (XMapBase_isEmpty_base(this_map))
+		return NULL;
 	size_t index = this_map->m_hash(pvKey, ((XMapBase*)this_map)->m_keyTypeSize) % XContainerCapacity(this_map);
 	XHashMapNode* current = ((XHashMapNode**)XContainerDataPtr(this_map))[index];
 

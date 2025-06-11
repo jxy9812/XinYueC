@@ -89,6 +89,14 @@ bool XEventDispatcher_addEventCb(XEventDispatcher* dispatcher, XEventCB cb, int 
 	return true;
 }
 
+bool XEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, int code)
+{
+	if (dispatcher == NULL)
+		return false;
+	XMapBase_remove_base(dispatcher->m_filter_cb, &code);
+	return true;
+}
+
 void XEventDispatcher_handler(XEventDispatcher* dispatcher)
 {
 	if (dispatcher == NULL)

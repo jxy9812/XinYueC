@@ -35,6 +35,7 @@ typedef enum
 typedef enum {
     XDFC_STATE_RX_INIT,    // 接收初始状态（等待总线空闲）
     XDFC_STATE_RX_IDLE,    // 接收空闲状态（无数据接收）
+    XDFC_STATE_RX_HEAD,    // 接收帧头中
     XDFC_STATE_RX_RCV,     // 接收中状态（正在接收数据帧）
     XDFC_STATE_RX_ERROR    // 接收错误状态（帧无效）
 }XDFC_RcvState;

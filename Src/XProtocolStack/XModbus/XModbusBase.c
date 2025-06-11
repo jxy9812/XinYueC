@@ -7,13 +7,13 @@
 #include "XCircularQueueAtomic.h"
 #include "XTimerWheel.h"
 #include <string.h>
-void XModbusBase_init(XModbusBase* modbus)
+void XModbusBase_init(XModbusBase* modbus, XIODeviceBase* io)
 {
 	if (modbus == NULL)
 		return NULL;
 	//开始初始化
 	memset(((XCommunicatorBase*)modbus) + 1, 0, sizeof(XModbusBase) - sizeof(XCommunicatorBase));
-	XCommunicatorBase_init(modbus);
+	XCommunicatorBase_init(modbus,io);
 	//设置异步接收的缓冲区大小
 	XCommunicatorBase_recvAsync_base(modbus, MB_RECV_BUFFER_SIZE);
 	XClassGetVtable(modbus) = XModbusBase_class_init();

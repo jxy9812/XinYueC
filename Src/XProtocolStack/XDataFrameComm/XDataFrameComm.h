@@ -15,6 +15,7 @@ XCLASS_DEFINE_BEGING(XDataFrameComm)
 XCLASS_DEFINE_ENUM(XDataFrameComm, SendFrame) = XCLASS_VTABLE_GET_SIZE(XCommunicatorBase),
 XCLASS_DEFINE_ENUM(XDataFrameComm, RecvFrame),
 XCLASS_DEFINE_ENUM(XDataFrameComm, SetCommMode),
+XCLASS_DEFINE_ENUM(XDataFrameComm, SetFrameEndType),
 XCLASS_DEFINE_END(XDataFrameComm)
 
 //数据帧通信类
@@ -43,8 +44,9 @@ typedef struct XDataFrameComm
     XVector* m_recvFrameTail;//帧尾
 }XDataFrameComm;
 XVtable* XDataFrameComm_class_init();
-void XDataFrameComm_init(XDataFrameComm* comm,uint16_t sendQueueCount,uint16_t recvQueueCount,uint16_t eventQueueCount);
+void XDataFrameComm_init(XDataFrameComm* comm,XIODeviceBase* io);
 XDFC_ErrorCode XDataFrameComm_setCommMode_base(XDataFrameComm* comm, XDFC_CommMode mode);
+XDFC_ErrorCode XDataFrameComm_setFrameEndType_base(XDataFrameComm* comm, XDFC_FrameEndType mode);
 #define XDataFrameComm_poll_base  XCommunicatorBase_poll_base;
 //发送一帧数据
 //bool XDataFrameComm_sendFrame(XDataFrameComm* comm, XModbusFrame* frame);
