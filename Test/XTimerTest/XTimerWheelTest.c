@@ -36,7 +36,7 @@ void XTimerWheelTest()
 		XTimerWheel_setInterval_base(timer,9);
 		XTimerWheel_setTimeout_base(timer, 5);
 		XTimerWheel_setTimerCallback(timer,Callback1);
-		XTimerBase_setTimerId(timer,wheel);
+		XTimerBase_setTimerGroup(timer,wheel);
 		XTimerWheel_start_base(timer);
 		XTimerGroupBase_addTimer_base(wheel, timer);
 	

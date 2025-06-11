@@ -8,6 +8,7 @@ XModbusRTU* XModbusRTU_createSerialPort(XSerialPortBase* serial, XTimerBase* tim
 	if (rtu == NULL)
 		return rtu;
 	XModbusRTU_init(rtu, timerT35Expired,timerSendExpired);
+	//printf("创建\n");
 	((XCommunicatorBase*)rtu)->m_io = serial;
 	uint32_t timerout = 3.5 * (10 + serial->m_parity) * 1000 / serial->m_baudRate;
 	if (timerout < 2)

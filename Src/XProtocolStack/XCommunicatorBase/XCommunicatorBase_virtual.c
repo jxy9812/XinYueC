@@ -6,16 +6,16 @@
 #include <string.h>
 #include <assert.h>
 static void VXCommunicatorBase_delete(XCommunicatorBase* comm);
-static bool VXCommunicatorBase_connect_base(XCommunicatorBase* comm);
-static bool VXCommunicatorBase_disconnect_base(XCommunicatorBase* comm);
-static size_t VXCommunicatorBase_send_base(XCommunicatorBase* comm, const void* data, size_t size);
-static size_t VXCommunicatorBase_recv_base(XCommunicatorBase* comm, void* data, size_t maxSize);
+static bool VXCommunicatorBase_connect(XCommunicatorBase* comm);
+static bool VXCommunicatorBase_disconnect(XCommunicatorBase* comm);
+static size_t VXCommunicatorBase_send(XCommunicatorBase* comm, const void* data, size_t size);
+static size_t VXCommunicatorBase_recv(XCommunicatorBase* comm, void* data, size_t maxSize);
 static bool VXCommunicatorBase_sendAsync(XCommunicatorBase* comm, const void* data, size_t size); // 异步发送
 static bool VXCommunicatorBase_recvAsync(XCommunicatorBase* comm, size_t maxSize); // 异步接收
-static bool VXCommunicatorBase_isConnected_base(XCommunicatorBase* comm);
-static void VXCommunicatorBase_poll_base(XCommunicatorBase* comm);
-static void VXCommunicatorBase_setOption_base(XCommunicatorBase* comm, int optionId, const void* value, size_t size);
-static void VXCommunicatorBase_getOption_base(XCommunicatorBase* comm, int optionId, void* value, size_t* size);
+static bool VXCommunicatorBase_isConnected(XCommunicatorBase* comm);
+static void VXCommunicatorBase_poll(XCommunicatorBase* comm);
+static void VXCommunicatorBase_setOption(XCommunicatorBase* comm, int optionId, const void* value, size_t size);
+static void VXCommunicatorBase_getOption(XCommunicatorBase* comm, int optionId, void* value, size_t* size);
 XVtable* XCommunicatorBase_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -29,11 +29,11 @@ XVtable* XCommunicatorBase_class_init()
 		XVTABLE_INHERIT_DEFAULT(XClass_class_init());
 	void* table[] = 
 	{
-		VXCommunicatorBase_connect_base,VXCommunicatorBase_disconnect_base,
-		VXCommunicatorBase_send_base,VXCommunicatorBase_recv_base,
+		VXCommunicatorBase_connect,VXCommunicatorBase_disconnect,
+		VXCommunicatorBase_send,VXCommunicatorBase_recv,
 		VXCommunicatorBase_sendAsync,VXCommunicatorBase_recvAsync,
-		VXCommunicatorBase_isConnected_base,VXCommunicatorBase_poll_base,
-		VXCommunicatorBase_setOption_base,VXCommunicatorBase_getOption_base
+		VXCommunicatorBase_isConnected,VXCommunicatorBase_poll,
+		VXCommunicatorBase_setOption,VXCommunicatorBase_getOption
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -54,7 +54,7 @@ void VXCommunicatorBase_delete(XCommunicatorBase* comm)
 	XMemory_free(comm);
 }
 
-bool VXCommunicatorBase_connect_base(XCommunicatorBase* comm)
+bool VXCommunicatorBase_connect(XCommunicatorBase* comm)
 {
 	if(comm->m_io==NULL)
 		return false;
@@ -63,7 +63,7 @@ bool VXCommunicatorBase_connect_base(XCommunicatorBase* comm)
 	return XIODeviceBase_open_base(comm->m_io,XIODeviceBase_ReadWrite);
 }
 
-bool VXCommunicatorBase_disconnect_base(XCommunicatorBase* comm)
+bool VXCommunicatorBase_disconnect(XCommunicatorBase* comm)
 {
 	if (comm->m_io == NULL)
 		return false;
@@ -72,14 +72,14 @@ bool VXCommunicatorBase_disconnect_base(XCommunicatorBase* comm)
 	return true;
 }
 
-bool VXCommunicatorBase_isConnected_base(XCommunicatorBase* comm)
+bool VXCommunicatorBase_isConnected(XCommunicatorBase* comm)
 {
 	if (comm->m_io == NULL)
 		return false;
 	return XIODeviceBase_isOpen(comm->m_io);
 }
 
-size_t VXCommunicatorBase_send_base(XCommunicatorBase* comm, const void* data, size_t size)
+size_t VXCommunicatorBase_send(XCommunicatorBase* comm, const void* data, size_t size)
 {
 	if (comm->m_io == NULL)
 		return 0;
@@ -96,7 +96,7 @@ size_t VXCommunicatorBase_send_base(XCommunicatorBase* comm, const void* data, s
 	}
 	
 }
-size_t VXCommunicatorBase_recv_base(XCommunicatorBase* comm, void* data, size_t maxSize)
+size_t VXCommunicatorBase_recv(XCommunicatorBase* comm, void* data, size_t maxSize)
 {
 	if (comm->m_io == NULL)
 		return 0;
@@ -160,7 +160,7 @@ static void recvAsync(XCommunicatorBase* comm)
 			comm->m_recvDataCallback(XContainerDataPtr(comm->m_recvAsyncBuffer), readSize,comm->m_userData);
 	}
 }
-void VXCommunicatorBase_poll_base(XCommunicatorBase* comm)
+void VXCommunicatorBase_poll(XCommunicatorBase* comm)
 {
 	//处理异步接收
 	recvAsync(comm);
@@ -170,7 +170,7 @@ void VXCommunicatorBase_poll_base(XCommunicatorBase* comm)
 
 }
 
-void VXCommunicatorBase_setOption_base(XCommunicatorBase* comm, int optionId, const void* value, size_t size)
+void VXCommunicatorBase_setOption(XCommunicatorBase* comm, int optionId, const void* value, size_t size)
 {
 	switch (optionId)
 	{
@@ -182,7 +182,7 @@ void VXCommunicatorBase_setOption_base(XCommunicatorBase* comm, int optionId, co
 	}
 }
 
-void VXCommunicatorBase_getOption_base(XCommunicatorBase* comm, int optionId, void* value, size_t* size)
+void VXCommunicatorBase_getOption(XCommunicatorBase* comm, int optionId, void* value, size_t* size)
 {
 	switch (optionId)
 	{

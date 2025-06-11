@@ -26,7 +26,7 @@ int main(int argc, char* args[])
 	XPriority_QueueTest();
 	XPWMDeviceTest();
 	XVectorTest();*/
-	//XModbusTest();
+	XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
 	//XSerialPortTest();

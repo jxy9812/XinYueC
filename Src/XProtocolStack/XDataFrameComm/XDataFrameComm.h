@@ -6,40 +6,48 @@ extern "C" {
 #include<stdint.h>
 #include<stdbool.h>
 #include"XCommunicatorBase.h"
+#include"XDataFrameCommEnum.h"
 typedef struct XQueueBase XQueueBase;
+typedef struct XTimerBase XTimerBase;
 typedef struct XEventDispatcher XEventDispatcher;
 #define XDataFrameComm_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm))       //XDataFrameComm虚函数表大小
 XCLASS_DEFINE_BEGING(XDataFrameComm)
 XCLASS_DEFINE_ENUM(XDataFrameComm, SendFrame) = XCLASS_VTABLE_GET_SIZE(XCommunicatorBase),
 XCLASS_DEFINE_ENUM(XDataFrameComm, RecvFrame),
+XCLASS_DEFINE_ENUM(XDataFrameComm, SetCommMode),
 XCLASS_DEFINE_END(XDataFrameComm)
-typedef enum
-{
-    XDFC_READY,                   /*!< 启动完成事件 */
-    XDFC_FRAME_RECEIVED,          /*!< 接收到完整帧事件 */
-    XDFC_EXECUTE,                 /*!< 执行功能码处理事件 */
-    XDFC_FRAME_SENT               /*!< 帧发送完成事件 */
-}XDFC_EventType;
-// 协议栈状态机（未初始化/禁用/启用）
-typedef enum 
-{
-    XDFC_STATE_ENABLED,       // 协议栈已启用，正在处理通信（调用 eMBEnable 后）
-    XDFC_STATE_DISABLED,      // 协议栈已禁用，资源未释放（可通过 eMBEnable 重新激活）
-    XDFC_STATE_NOT_INITIALIZED// 协议栈未初始化（初始状态，需调用 eMBInit 初始化）
-} XDFC_State;
+
 //数据帧通信类
 typedef struct XDataFrameComm
 {
 	XCommunicatorBase m_parent;//继承类
     XDFC_State     m_state;//状态
-    XQueueBase* m_sendFrameQueue;//发送队列(XCircularQueue<XModbusFrame*>)
-    XQueueBase* m_recvFrameQueue;//接收帧队列(XCircularQueue<XModbusFrame*>) 后面处理执行
+    XDFC_CommMode  m_commMode;//通信模式
+    XDFC_FrameEndType m_frameEndMode;//帧结束模式
+    XDFC_SendMode     m_sendMode;//发送模式
+
+    XDFC_RcvState m_eRcvState;// 接收状态机
+    XDFC_SndState m_eSndState; // 发送状态机
+
+    XQueueBase* m_sendFrameQueue;//发送队列(XCircularQueue<XVector*>)
+    XQueueBase* m_recvFrameQueue;//接收帧队列(XCircularQueue<XVector*>) 后面处理执行
     XEventDispatcher* m_eventDispatcher;//事件调度器
+    size_t m_sentBytes;//已发送字节计数
+    XVector* m_sendFrameHead;//帧头
+    XVector* m_sendFrameTail;//帧尾
+    XTimerBase* m_timerT35Expired;//检测帧间隔超时
+    XTimerBase* m_timerSendExpired;//检测发送帧到期
+    //uint16_t m_frameRecv_timeout;//接收帧超时时间
+    //uint16_t m_frameSend_timeout;//发送帧超时时间
+    XVector* m_recvFrameHead;//帧头
+    XVector* m_recvFrameTail;//帧尾
 }XDataFrameComm;
 XVtable* XDataFrameComm_class_init();
 void XDataFrameComm_init(XDataFrameComm* comm,uint16_t sendQueueCount,uint16_t recvQueueCount,uint16_t eventQueueCount);
+XDFC_ErrorCode XDataFrameComm_setCommMode_base(XDataFrameComm* comm, XDFC_CommMode mode);
 #define XDataFrameComm_poll_base  XCommunicatorBase_poll_base;
-
+//发送一帧数据
+//bool XDataFrameComm_sendFrame(XDataFrameComm* comm, XModbusFrame* frame);
 #ifdef __cplusplus
 }
 #endif

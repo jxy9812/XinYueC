@@ -96,6 +96,11 @@ void XTimerBase_setAutoDelete(XTimerBase* timer, bool del)
 	if (timer)
 		timer->m_autoDelete = del;
 }
+void XTimerBase_setTimerGroup(XTimerBase* timer, XTimerGroupBase* group)
+{
+	if (timer)
+		timer->m_timerGroup = group;
+}
 bool XTimerBase_isPeriodic(XTimerBase* timer)
 {
 	if (timer)
@@ -137,6 +142,12 @@ bool XTimerBase_isAutoDelete(XTimerBase* timer)
 	if (timer)
 		return timer->m_autoDelete;
 	return false;
+}
+XTimerGroupBase* XTimerBase_getTimerGroup(XTimerBase* timer)
+{
+	if (timer)
+		return timer->m_timerGroup;
+	return NULL;
 }
 void XTimerBase_out(XTimerBase* timer)
 {

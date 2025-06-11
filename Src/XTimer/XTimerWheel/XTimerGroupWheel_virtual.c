@@ -91,7 +91,7 @@ bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerWheel* timer)
 	size_t timeout_ticks = parent->m_timeout / group->m_parent.m_precision;
 	//size_t interval_ticks = parent->m_interval / group->m_parent.m_precision;
 	timer->m_expire_ticks = group->m_parent.m_current_tick + timeout_ticks;
-	parent->timerId = group;
+	parent->m_timerGroup = group;
 	return addTimer(group,timer,timeout_ticks);
 }
 

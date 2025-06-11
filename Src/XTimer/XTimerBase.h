@@ -9,6 +9,7 @@ extern "C" {
 #include"XClass.h"
 typedef void (*XTimerBaseCallback)(void* userData);
 typedef struct XTimerBase XTimerBase;
+typedef struct XTimerGroupBase XTimerGroupBase;
 #define XTIMERBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XClass)+4)       //XTimerBase虚函数表大小
 enum XTimerBaseVtableEnum
 {
@@ -30,6 +31,7 @@ typedef struct XTimerBase
 	size_t m_timeout;//首次超时时间
 	size_t m_interval;//定时间隔
 	size_t timerId;//定时器id
+	XTimerGroupBase* m_timerGroup;//定时器组
 	void* m_userData;
 	XTimerBaseCallback m_timerCallback; // 回调函数
 	size_t number;//超时次数
@@ -46,6 +48,7 @@ void XTimerBase_setUserData(XTimerBase* timer, void* userData);
 void XTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
 void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId);
 void XTimerBase_setAutoDelete(XTimerBase* timer, bool del);
+void XTimerBase_setTimerGroup(XTimerBase* timer, XTimerGroupBase* group);
 // 是否为周期性任务
 bool XTimerBase_isPeriodic(XTimerBase* timer);
 bool XTimerBase_isRunning(XTimerBase* timer);
@@ -54,6 +57,7 @@ size_t XTimerBase_getInterval(XTimerBase* timer);
 size_t XTimerBase_getTimerId(XTimerBase* timer);
 void*  XTimerBase_getUserData(XTimerBase* timer);
 bool   XTimerBase_isAutoDelete(XTimerBase* timer);
+XTimerGroupBase* XTimerBase_getTimerGroup(XTimerBase* timer);
 //超时回调函数
 void XTimerBase_out(XTimerBase* timer);
 
