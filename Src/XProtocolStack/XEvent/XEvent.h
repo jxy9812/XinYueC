@@ -3,29 +3,52 @@
 #include<stdio.h>
 #include<stdint.h>
 #include"XQueueBase.h"
-
+#include"XMapBase.h"
+//迷你事件
+typedef struct XEventMin
+{
+    int code;                     //事件类型代码
+    size_t timestamp;             //事件发生时间
+    void* user_data;              // 可选的用户数据指针
+}XEventMin;
+//事件回调函数
+typedef void (*XEventCB)(XEventMin* event);
+//完整事件
 typedef struct XEvent
 {
-    int type;                     //事件类型
-    size_t timestamp;             //事件发生时间
+    XEventMin event;
     //size_t id;                  // 事件唯一标识
     uint8_t status;               // 事件状态
-    void* user_data;              // 可选的用户数据指针
-    void (*callback)(void*);      // 可选的回调函数
     void* data;//事件数据
 }XEvent;
-XEvent* XEvent_create(size_t eventDataSize);
+//创建一个迷你事件
+XEventMin* XEventMin_create(int type, size_t timestamp);
+XEvent* XEvent_create(void* eventData,size_t eventDataSize);
 #define XEvent_DataPtr(event) (&(((XEvent*)event)->data))
 #define XEvent_Data(event,dataType)  (*((dataType*)XEvent_DataPtr(event)))
+#define XEvent_Code(event)     (((XEventMin*)event)->code)
+#define XEvent_Timestamp(event)     (((XEventMin*)event)->timestamp)
+/*                      事件调度器                                                 */        
+typedef  struct XEventDispatcher
+{
+    XQueueBase* m_queue;//用来处理事件
+    XMapBase* m_filter_cb;//事件过滤回调
+    XEventCB m_allEvent_cb;//全部事件的回调
+    void* m_allEvent_user_data;//全部事件触发的回调用户数据
+}XEventDispatcher;
 
-typedef XQueueBase XEventQueue ;
-//XEventQueue* XEventQueue_create();
-//入队一个事件
-bool XEventQueue_pushEvent(XEventQueue* queue, XEvent* event);
-//接收事件并且出队
-bool XEventQueue_receive(XEventQueue* queue, void* pvBuffer);
+XEventDispatcher* XEventDispatcher_create(XQueueBase* queue, XMapBase* map_cb);
+XEventDispatcher* XEventDispatcher_createDefault(size_t queueCount);
+//添加一个事件
+bool XEventDispatcher_addEvent(XEventDispatcher* dispatcher, XEventMin* event);
 //释放内存
-void XEventQueue_delete(XEventQueue* queue);
+void XEventDispatcher_delete(XEventDispatcher* dispatcher);
+//添加事件回调
+bool XEventDispatcher_addEventCb(XEventDispatcher* dispatcher, XEventCB cb,int code, void* user_data);
+bool XEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, int code);
+//事件轮询处理
+void XEventDispatcher_handler(XEventDispatcher* dispatcher);
+
 
 
 #endif // !XDataFrameCommunicatorEvent_H

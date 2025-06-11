@@ -248,6 +248,7 @@ void VXModbusBase_poll(XModbusBase* modbus)
 	//处理定时器任务
 	if (comm->m_wheel)
 		XTimerGroupWheel_poll_base(comm->m_wheel);
+
 }
 
 bool VXCommunicatorBase_connect(XModbusBase* modbus)
