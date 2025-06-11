@@ -12,8 +12,8 @@ int main(int argc, char* args[])
 	printf("%d\n",XAtomic_load_bool(&b));
 #if DEMOTEST
 	//XTimerWheelTest();
-	/*XListDLinkedIterator();
-	XHashMapTest();*/
+	//XListDLinkedIterator();
+	//XHashMapTest();
 	//XMapTest();
 	/*XListDLinkedTest();
 	XListDLinkedSortTest();
@@ -26,7 +26,7 @@ int main(int argc, char* args[])
 	XPriority_QueueTest();
 	XPWMDeviceTest();
 	XVectorTest();*/
-	XModbusTest();
+	//XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
 	//XSerialPortTest();

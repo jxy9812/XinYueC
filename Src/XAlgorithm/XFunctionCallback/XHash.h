@@ -5,4 +5,6 @@
 #include <stdint.h>
 #include <stdio.h>
 size_t XHash_murmur3_32(const void* key, size_t len);
+size_t XHash_fnv1a_64(const void* key, size_t len);
+size_t XHash_cityhash64(const void* key, size_t len);
 #endif // !XFUNCTIONPOINTER_H
