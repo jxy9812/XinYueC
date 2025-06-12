@@ -53,15 +53,15 @@ void XVector_inserts_base(XVector* this_vector, int64_t index, void* LpValue, si
 
 void XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n)
 {
-	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return ;
+	if (ISNULL(this_vector, "") || ISNULL(index, "") || ISNULL(begin, "") || ISNULL(n, "") || ISNULL(XClassGetVtable(this_vector), ""))
+		return;
 	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
 	XClassGetVirtualFunc(this_vector, EXVector_Insert_Array, funcPtr)(this_vector, index, begin, n);
 }
 
 void XVector_append_array_base(XVector* this_vector, const void* begin, size_t n)
 {
-	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
+	if (ISNULL(this_vector, "") || ISNULL(begin, "") || ISNULL(n, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return;
 	typedef void (*funcPtr)(XVector*, void*, size_t);
 	XClassGetVirtualFunc(this_vector, EXVector_append_Array, funcPtr)(this_vector, begin, n);

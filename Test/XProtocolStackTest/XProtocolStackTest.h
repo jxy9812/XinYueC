@@ -7,6 +7,7 @@ extern "C" {
 #include"XClass.h"
 #if DEMOTEST
 	void XModbusTest();
+	void XDataFrameCommTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

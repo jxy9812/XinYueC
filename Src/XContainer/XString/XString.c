@@ -97,4 +97,18 @@ int64_t XString_find_last_not_of(const XString* this_string, const char* subStr)
 	typedef const char* (*funcPtr)(const XString*, const char*);
 	return XClassGetVirtualFunc(this_string, EXString_Find_Last_Not_Of, funcPtr)(this_string, subStr);
 }
+XString* XString_to16HexString(const uint8_t* data, size_t dataSize)
+{
+	if (data == NULL || dataSize == 0)
+		return NULL;
+	XString* str = XString_create(NULL);
+	char buff[10];
+	for (size_t i = 0; i < dataSize; i++)
+	{ 
+		sprintf(buff, "%02X ", data[i]);
+		XString_append_base(str, buff);
+	}
+	XString_pop_back_base(str);
+	return str;
+}
 #endif

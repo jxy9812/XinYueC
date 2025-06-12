@@ -9,7 +9,7 @@ typedef struct XEventMin
 {
     int code;                     //事件类型代码
     size_t timestamp;             //事件发生时间
-    void* user_data;              // 可选的用户数据指针
+    void* userData;              // 可选的用户数据指针
 }XEventMin;
 //事件回调函数
 typedef void (*XEventCB)(XEventMin* event);
@@ -28,6 +28,7 @@ XEvent* XEvent_create(void* eventData,size_t eventDataSize);
 #define XEvent_Data(event,dataType)  (*((dataType*)XEvent_DataPtr(event)))
 #define XEvent_Code(event)     (((XEventMin*)event)->code)
 #define XEvent_Timestamp(event)     (((XEventMin*)event)->timestamp)
+#define XEvent_UserData(event)     (((XEventMin*)event)->userData)
 /*                      事件调度器                                                 */        
 typedef  struct XEventDispatcher
 {
@@ -44,8 +45,9 @@ bool XEventDispatcher_addEvent(XEventDispatcher* dispatcher, XEventMin* event);
 //释放内存
 void XEventDispatcher_delete(XEventDispatcher* dispatcher);
 //添加事件回调
-bool XEventDispatcher_addEventCb(XEventDispatcher* dispatcher, XEventCB cb,int code, void* user_data);
+bool XEventDispatcher_addEventCb(XEventDispatcher* dispatcher, XEventCB cb,int code, void* userData);
 bool XEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, int code);
+bool XEventDispatcher_setAllEventCb(XEventDispatcher* dispatcher, XEventCB cb,void* userData);
 //事件轮询处理
 void XEventDispatcher_handler(XEventDispatcher* dispatcher);
 

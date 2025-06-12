@@ -3,7 +3,15 @@
 #include"XCircularQueueAtomic.h"
 #include"XDataFrameCommConfig.h"
 #include"XIODeviceBase.h"
+#include"XString.h"
 #include<string.h>
+static void XDataFrameComm_EvnetHandCb(XEventMin* event);
+XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
+{
+	XDataFrameComm* comm = XMemory_malloc(sizeof(XDataFrameComm));
+	XDataFrameComm_init(comm, io);
+	return comm;
+}
 void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 {
 	if (comm == NULL)
@@ -12,6 +20,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	memset(((XCommunicatorBase*)comm) + 1, 0, sizeof(XDataFrameComm) - sizeof(XCommunicatorBase));
 	XCommunicatorBase_init(comm,io);
 	XClassGetVtable(comm) = XDataFrameComm_class_init();
+
 	if (io != NULL)
 	{
 		XIODeviceBase_setReadBuffer_base(io, XDFC_DEVICE_RECV_BUFFER_SIZE);
@@ -21,7 +30,11 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	comm->m_state = XDFC_STATE_NOT_INITIALIZED;
 	comm->m_eventDispatcher = XEventDispatcher_createDefault(XDFC_EVENT_QUEUE_COUNT);
 	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XVector*, XDFC_FRAME_SEND_QUEUE_COUNT);
-	comm->m_recvFrameQueue = XCircularQueueAtomic_Create(XVector*, XDFC_FRAME_RECV_QUEUE_COUNT);
+	//comm->m_recvFrameQueue = XCircularQueueAtomic_Create(XVector*, XDFC_FRAME_RECV_QUEUE_COUNT);
+
+	XEventDispatcher_setAllEventCb(comm->m_eventDispatcher, XDataFrameComm_EvnetHandCb, comm);
+	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);
+	XDataFrameComm_setFrameEndType_base(comm,XDFC_FRAME_END_TIMEOUT);
 }
 
 XDFC_ErrorCode XDataFrameComm_setCommMode_base(XDataFrameComm* comm, XDFC_CommMode mode)
@@ -36,4 +49,186 @@ XDFC_ErrorCode XDataFrameComm_setFrameEndType_base(XDataFrameComm* comm, XDFC_Fr
 	if (ISNULL(comm, "") || ISNULL(XClassGetVtable(comm), ""))
 		return XDFC_EINVAL;
 	return XClassGetVirtualFunc(comm, EXDataFrameComm_SetFrameEndType, XDFC_ErrorCode(*)(XDataFrameComm*, XDFC_FrameEndType))(comm, mode);
+}
+
+XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XVector* data)
+{
+	if (ISNULL(comm, "") || ISNULL(XClassGetVtable(comm), ""))
+		return XDFC_EINVAL;
+	return XClassGetVirtualFunc(comm, EXDataFrameComm_SendData, XDFC_ErrorCode(*)(XDataFrameComm*, XVector*))(comm, data);
+}
+
+XDFC_ErrorCode XDataFrameComm_sendString(XDataFrameComm* comm, const char* str, bool appendNull)
+{
+	printf("发送字符串\n");
+	XVector* data = XVector_Create(uint8_t);
+	if (data == NULL)
+		return XDFC_ENORES;
+	XVector_append_array_base(data,str,strlen(str)+ appendNull?1:0);
+	return XDataFrameComm_sendData_base(comm, data);
+}
+
+void XDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+{
+	if (comm == NULL)
+		return;
+	if (data == NULL)
+	{//关掉接收帧头判断
+		if (comm->m_recvFrameHead!=NULL)
+		{
+			XVector_delete_base(comm->m_recvFrameHead);
+			comm->m_recvFrameHead = NULL;
+		}
+	}
+	else if (dataSize > 0)
+	{//设置接收帧头判断
+		if (comm->m_recvFrameHead == NULL)
+		{
+			XVector* v = XVector_Create(uint8_t);
+			XVector_append_array_base(v,data,dataSize);
+			comm->m_recvFrameHead = v;
+		}
+	}
+}
+
+void XDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+{
+	if (comm == NULL)
+		return;
+	if (data == NULL)
+	{//关掉接收帧尾判断
+		if (comm->m_recvFrameTail != NULL)
+		{
+			XVector_delete_base(comm->m_recvFrameTail);
+			comm->m_recvFrameTail = NULL;
+		}
+	}
+	else if (dataSize > 0)
+	{//设置接收帧尾判断
+		if (comm->m_recvFrameTail == NULL)
+		{
+			XVector* v = XVector_Create(uint8_t);
+			XVector_append_array_base(v, data, dataSize);
+			comm->m_recvFrameTail = v;
+		}
+	}
+}
+
+void XDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+{
+	if (comm == NULL)
+		return;
+	if (data == NULL)
+	{//关掉发送帧头
+		if (comm->m_sendFrameHead != NULL)
+		{
+			XVector_delete_base(comm->m_sendFrameHead);
+			comm->m_sendFrameHead = NULL;
+		}
+	}
+	else if (dataSize > 0)
+	{//设置发送帧头
+		if (comm->m_sendFrameHead == NULL)
+		{
+			XVector* v = XVector_Create(uint8_t);
+			XVector_append_array_base(v, data, dataSize);
+			comm->m_sendFrameHead = v;
+		}
+	}
+}
+
+void XDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+{
+	if (comm == NULL)
+		return;
+	//printf("设置发送帧尾巴\n");
+	if (data == NULL)
+	{//关掉发送帧尾
+		if (comm->m_sendFrameTail != NULL)
+		{
+			XVector_delete_base(comm->m_sendFrameTail);
+			comm->m_sendFrameTail = NULL;
+		}
+	}
+	else if (dataSize > 0)
+	{//设置发送帧尾
+		if (comm->m_sendFrameTail == NULL)
+		{
+			XVector* v = XVector_Create(uint8_t);
+			XVector_append_array_base(v, data, dataSize);
+			comm->m_sendFrameTail = v;
+		}
+	}
+}
+
+void XDataFrameComm_setRecvValidCb(XDataFrameComm* comm, XRecvValidCb cb)
+{
+	if (comm)
+	{
+		comm->m_recvValidCb = cb;
+	}
+}
+
+void XDataFrameComm_setSendValidCb(XDataFrameComm* comm, XSendValidCb cb)
+{
+	if (comm)
+	{
+		comm->m_sendValidCb = cb;
+	}
+}
+
+XEventRecvFrame* XEventRecvFrame_create(int code, size_t timestamp,XVector* frame)
+{
+	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
+	if (ev == NULL)
+		return NULL;
+	XEvent_Code(ev)=code;
+	XEvent_Timestamp(ev) = timestamp;
+	XEvent_UserData(ev) = NULL;
+	ev->m_frame = frame;
+	return ev;
+}
+
+void XDataFrameComm_EvnetHandCb(XEventMin* event)
+{
+	XDataFrameComm* comm = event->userData;
+#if XDFC_EVENT_HANDLE_SHOW
+#if XDFC_ENUM_TO_STRING
+	printf("准备处理事件:%s\n", XDataFrameComm_EventType_toString(event->code));
+#else
+	printf("准备处理事件:%d\n", eEvent);
+#endif
+#endif // MB_EVENT_SHOH
+	switch (event->code)
+	{
+		case XDFC_READY:break;
+		case XDFC_FRAME_RECEIVED:
+		{
+			XEventRecvFrame* ev = event;
+			XVector* v = ev->m_frame;
+		/*	if (!XQueueBase_receive_base(comm->m_recvFrameQueue, &v))
+				return;*/
+#if XDFC_RECV_FRAME_16HEX_SHOW
+			XString* str = XString_to16HexString(XContainerDataPtr(v), XContainerSize(v));
+			if (str != NULL)
+			{
+				printf("\n16进制接收帧:%s\n",XString_c_str(str));
+				XString_delete_base(str);
+			}
+#endif // XDFC_RECV_FRAME_16HEX_SHOW
+#ifdef XDFC_RECV_FRAME_STR_SHOW
+			if (XVector_Back_Base(v, char) != 0)
+			{
+				char c = 0;
+				XVector_push_back_base(v, &c);
+			}
+			printf("\nString接收帧:%s\n", XContainerDataPtr(v));
+#endif // XDFC_RECV_FRAME_STR_SHOW
+			ev->m_frame = NULL;
+			XVector_delete_base(v);
+			break;
+		}
+		case XDFC_EXECUTE:break;
+		case XDFC_FRAME_SENT:break;
+	}
 }

@@ -91,6 +91,9 @@ int64_t XString_find_last_not_of(const XString* this_string, const char* subStr)
 #define XString_remove_base								XVector_remove_base
 // 返回索引处字符
 #define XString_at(this_string,index)					XVector_At_Base(this_string,index,char)
+
+//转16进制显示
+XString* XString_to16HexString(const uint8_t* data, size_t dataSize);
 #ifdef __cplusplus
 }
 #endif

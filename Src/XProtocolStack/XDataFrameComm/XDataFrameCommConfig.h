@@ -26,10 +26,14 @@ extern "C" {
 #define XDFC_IS_COMP_SEND_FRAME						 (  1 )
 //定期发送的帧是否要拷贝
 #define XDFC_SEND_FRAME_REGULARLY_COPY				 (  1 )
- //接收帧显示
-#define XDFC_RECV_FRAME_SHOW						 (  1 )
- //发送帧显示
-#define XDFC_SEND_FRAME_SHOW						 (  1 )
+//接收帧16进制显示
+#define XDFC_RECV_FRAME_16HEX_SHOW					 (  1 )
+//接收帧字符串显示
+#define XDFC_RECV_FRAME_STR_SHOW					 (  1 )
+ //发送帧16进制显示
+#define XDFC_SEND_FRAME_16HEX_SHOW					 (  1 )
+//发送帧字符串显示
+#define XDFC_SEND_FRAME_STR_SHOW					 (  1 )
 //枚举可以转String
 #define XDFC_ENUM_TO_STRING							 (  1 )
 //显示处理的事件

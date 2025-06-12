@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
+#include"XDataFrameCommConfig.h"
 /*! \ingroup modbus
  * \brief 协议栈函数错误码
  */
@@ -21,6 +21,7 @@ typedef enum
 {
     XDFC_READY,                   /*!< 启动完成事件 */
     XDFC_FRAME_RECEIVED,          /*!< 接收到完整帧事件 */
+    XDFC_RX_BUFFER_OVERFLOW,      /*!<接收缓冲区溢出 >*/
     XDFC_EXECUTE,                 /*!< 执行功能码处理事件 */
     XDFC_FRAME_SENT               /*!< 帧发送完成事件 */
 }XDFC_EventType;
@@ -58,10 +59,9 @@ typedef enum {
     XDFC_FRAME_END_TIMEOUT,  // 帧超时结束
     XDFC_FRAME_END_MARKER    // 帧标志结束
 } XDFC_FrameEndType;
-#if MB_ENUM_TO_STRING
-    //modbus协议栈事件类型转string字符串常量输出
-   // const char* XDFC_EventType_toString(XModbusEventType type);
-
+#if XDFC_ENUM_TO_STRING
+    //XDataFrameComm协议栈事件类型转string字符串常量输出
+    const char* XDataFrameComm_EventType_toString(XDFC_EventType type);
 #endif // MB_ENUM_TO_STRING
 
 #ifdef __cplusplus

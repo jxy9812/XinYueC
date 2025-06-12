@@ -77,11 +77,12 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode)
     }
 
     // 配置串口缓冲区
-   // if (!SetupComm(hSerial, 128, 128)) {
-   //     printf("无法设置串口缓冲区！\n");
-   //     CloseHandle(hSerial);
-   //     return false;
-  //  }
+    if (!SetupComm(hSerial, serial->m_readBufferSize, serial->m_writeBufferSize)) 
+    {
+        printf("无法设置串口缓冲区！\n");
+        CloseHandle(hSerial);
+        return false;
+    }
 
     // 获取当前串口配置
     DCB dcb = { 0 };
@@ -331,21 +332,27 @@ void VXIODevice_poll(XSerialPortWin32* serial)
 }
 void VXIODevice_setWriteBuffer(XSerialPortWin32* serial, size_t count)
 {
-    // 配置串口缓冲区
-    if (!SetupComm(serial->m_hSerial, serial->m_readBufferSize, count)) {
-        printf("无法设置串口缓冲区！\n");
-        CloseHandle(serial->m_hSerial);
-        return ;
+    if (XIODeviceBase_isOpen(serial))
+    {
+        // 配置串口缓冲区
+        if (!SetupComm(serial->m_hSerial, serial->m_readBufferSize, count)) {
+            printf("无法设置串口缓冲区！\n");
+            CloseHandle(serial->m_hSerial);
+            return;
+        }
     }
     serial->m_writeBufferSize = count;
 }
 void VXIODevice_setReadBuffer(XSerialPortWin32* serial, size_t count)
 {
-    // 配置串口缓冲区
-    if (!SetupComm(serial->m_hSerial, count, serial->m_writeBufferSize)) {
-        printf("无法设置串口缓冲区！\n");
-        CloseHandle(serial->m_hSerial);
-        return ;
+    if (XIODeviceBase_isOpen(serial))
+    {
+        // 配置串口缓冲区
+        if (!SetupComm(serial->m_hSerial, count, serial->m_writeBufferSize)) {
+            printf("无法设置串口缓冲区！\n");
+            CloseHandle(serial->m_hSerial);
+            return;
+        }
     }
     serial->m_readBufferSize = count;
 }

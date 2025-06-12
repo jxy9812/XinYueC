@@ -68,17 +68,22 @@ void XVector_init(XVector* this_vector, size_t typeSize)
 	this_vector->m_equality = NULL;
 }
 //检测是否需要扩容
-static void VXVectorEnlargeCapacity(XVector* this_vector)
+static bool VXVectorEnlargeCapacity(XVector* this_vector)
 {
 	if (ISNULL(this_vector, ""))
-		return;
+		return false;
+	size_t newCapacity;
+	if (XContainerCapacity(this_vector) > 100)
+		newCapacity = XContainerCapacity(this_vector) * 1.5;
+	else
+		newCapacity = XContainerCapacity(this_vector) * 2;
 	if (XContainerCapacity(this_vector) == 0)
 	{
 		XContainerDataPtr(this_vector) = XMemory_malloc(XContainerTypeSize(this_vector) * VECTORNUM);
 		if (XContainerDataPtr(this_vector) == NULL)
 		{
-			perror("初始化vector失败");
-			exit(-1);
+			//perror("初始化vector失败");
+			return false;
 		}
 		else
 		{
@@ -92,7 +97,7 @@ static void VXVectorEnlargeCapacity(XVector* this_vector)
 		{
 			void* ptr = XContainerDataPtr(this_vector);
 			uint32_t typeSize = XContainerTypeSize(this_vector);
-			m_data = XMemory_malloc(XContainerCapacity(this_vector) * typeSize * 1.5);
+			m_data = XMemory_malloc(newCapacity * typeSize);
 			if (m_data && ptr)
 				memcpy(m_data, ptr, typeSize * XContainerCapacity(this_vector));
 			if (ptr)
@@ -100,20 +105,22 @@ static void VXVectorEnlargeCapacity(XVector* this_vector)
 		}
 		else
 		{
-			m_data = XMemory_realloc(XContainerDataPtr(this_vector), XContainerCapacity(this_vector) * XContainerTypeSize(this_vector) * 1.5);
+			m_data = XMemory_realloc(XContainerDataPtr(this_vector), newCapacity * XContainerTypeSize(this_vector));
 		}
 		XContainerDataPtr(this_vector) = m_data;
 		if (m_data == NULL)
 		{
-			perror("扩容失败vector");
+			//perror("扩容失败vector");
 			XContainerCapacity(this_vector) =0;
 			XContainerSize(this_vector) = 0;
+			return false;
 		}
 		else
 		{
-			XContainerCapacity(this_vector) *= 1.5;
+			XContainerCapacity(this_vector) = newCapacity;
 		}
 	}
+	return true;
 }
 void VXVector_resize(XVector* this_vector, size_t size)
 {
@@ -178,9 +185,8 @@ void VXVector_push_front(XVector* this_vector, void* LpValue)
 }
 void VXVector_push_back(XVector* this_vector, void* LpValue)
 {
-	if (ISNULL(this_vector, ""))
+	if (!VXVectorEnlargeCapacity(this_vector))
 		return;
-	VXVectorEnlargeCapacity(this_vector);
 	char* ptr = (char*)XContainerDataPtr(this_vector) + XContainerTypeSize(this_vector) * XContainerSize(this_vector);
 	memcpy(ptr, LpValue, XContainerTypeSize(this_vector));
 	XContainerSize(this_vector)++;
@@ -191,8 +197,6 @@ void VXVector_insert(XVector* this_vector, int64_t index, const void* LpValue)
 }
 void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n)// 向量中指向元素p前增加n个相同的元素x
 {
-	if (ISNULL(this_vector, ""))
-		return;
 	const void* ptr = VXVector_at(this_vector, index);
 	size_t typeSize = XContainerTypeSize(this_vector);
 	if (ptr&&ptr >= VXVector_front(this_vector) && ptr <= VXVector_back(this_vector))
@@ -203,7 +207,8 @@ void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t
 		int64_t sizen = ((char*)ptr - (char*)VXVector_front(this_vector)) / typeSize;
 		for (size_t i = 0; i < n; i++)
 		{
-			VXVectorEnlargeCapacity(this_vector);
+			if (!VXVectorEnlargeCapacity(this_vector))
+				break;
 			memcpy(VXVector_at(this_vector, sizen), (char*)LpValue+i*typeSize, typeSize);
 			sizen++;
 			XContainerSize(this_vector)++;
@@ -221,8 +226,6 @@ void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t
 }
 void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n)// 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2)间的数据
 {
-	if (ISNULL(this_vector, "")|| ISNULL(index, "")|| ISNULL(begin, "")|| ISNULL(n, ""))
-		return;
 	const void* ptr = VXVector_at(this_vector, index);
 	size_t typeSize = XContainerTypeSize(this_vector);
 	if (ptr&&ptr >= VXVector_front(this_vector) && ptr <= VXVector_back(this_vector))
@@ -233,7 +236,8 @@ void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 		int64_t sizen = ((char*)ptr - (char*)VXVector_front(this_vector)) / typeSize;
 		for (size_t i = 0; i < n; i++)
 		{
-			VXVectorEnlargeCapacity(this_vector);
+			if (!VXVectorEnlargeCapacity(this_vector))
+				break;
 			memcpy(VXVector_at(this_vector, sizen), (char*)begin + i * typeSize, typeSize);
 			sizen++;
 			XContainerSize(this_vector)++;
@@ -251,8 +255,6 @@ void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 }
 void VXVector_append_array(XVector* this_vector, const void* begin, size_t n)
 {
-	if (ISNULL(this_vector, "") ||  ISNULL(begin, "") || ISNULL(n, ""))
-		return;
 	size_t index = XContainerSize(this_vector);
 	//printf("数组Size:%d Capacity:%d n:%d\n", index, XContainerCapacity(this_vector),n);
 	if(XContainerSize(this_vector) + n> XContainerCapacity(this_vector))
