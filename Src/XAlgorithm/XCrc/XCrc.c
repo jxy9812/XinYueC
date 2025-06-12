@@ -1,6 +1,7 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"XCrc.h"
+#if XCrc_ON
 #include"XAlgorithm.h"
-#include"XCrc.h"
+#if XCrc16_ON
 /* ----------------------- 平台相关头文件 --------------------------------*/
 // CRC16 表
 static const uint16_t crc16_table[256] = {
@@ -38,20 +39,39 @@ static const uint16_t crc16_table[256] = {
     0x8201, 0x42C0, 0x4380, 0x8341, 0x4100, 0x81C1, 0x8081, 0x4040
 };
 
-void XCrc_set16Data(uint8_t* dst, uint16_t src, uint8_t mode)
+void XCrc_set16Data(uint8_t* dst, uint16_t crc16, XCRCByteOrder order)
 {
-    *((uint16_t*)dst) = SwapEndian16(src, mode);
-     //if (mode) 
-     //{
-     //    // 大端模式：高位在前，低位在后
-     //    *dst = (uint8_t)(src >> 8);
-     //    *(dst + 1) = (uint8_t)(src & 0xFF);
-     //}
-     //else 
-     //{
-     //    *dst = (uint8_t)(src & 0xFF);  // CRC低位（小端模式）
-     //    *(dst + 1) = (uint8_t)(src >> 8);       // CRC高位
-     //}
+    if (order == XCRC_BYTE_ORDER_NATIVE)
+    {
+        *((uint16_t*)dst) = crc16;
+    }
+    else
+    {
+#if IS_BIG_ENDIAN
+        if (order== XCRC_BYTE_ORDER_BIG_ENDIAN)
+        {
+            // 大端模式：如果当前是大端，无需转换，直接返回原数据
+            *((uint16_t*)dst) = crc16;
+        }
+        else 
+        {
+            // 小端模式：如果当前不是小端，需要转换
+            *((uint16_t*)dst) = (crc16 << 8) | (crc16 >> 8);
+        }
+#else
+        if (order == XCRC_BYTE_ORDER_BIG_ENDIAN) 
+        {
+            // 大端模式：如果当前不是大端，需要转换
+            // 交换字节顺序
+            *((uint16_t*)dst) = (crc16 << 8) | (crc16 >> 8);
+        }
+        else
+        {
+            // 小端模式：如果当前是小端，无需转换，直接返回原数据
+            *((uint16_t*)dst) = crc16;
+        }
+    }
+#endif
 }
 
 
@@ -64,3 +84,155 @@ uint16_t XCrc_get16(uint8_t* data, uint16_t length)
     }
     return crc;
 }
+#if XVector_ON
+#include"XVector.h"
+bool XVector_append_crc16(XVector* data, XCRCByteOrder order)
+{
+    if (data == NULL || XVector_isEmpty_base(data))
+        return false;
+    if (XContainerSize(data) + 2 > XContainerCapacity(data))
+        XVector_resize_base(data, XContainerSize(data) + 2);
+    else
+        XContainerSize(data) += 2;
+    size_t size = XContainerSize(data);//加上校验大小
+    XCrc_set16Data(((uint8_t*)XContainerDataPtr(data))+size-2, XCrc_get16(XContainerDataPtr(data),size-2), order);
+    return true;
+}
+#endif // XVector_ON
+#endif // XCrc16_ON
+/*                                            crc32                               */
+#if XCrc32_ON
+/* 静态CRC表，用于查表法优化计算 */
+static uint32_t crc_table[256];
+static int table_initialized = 0;
+static XCRC32Polynomial current_polynomial = XCRC32_IEEE_802_3;
+
+/* 常用CRC32多项式常量 */
+static const uint32_t CRC32_POLYNOMIALS[] = {
+    0x04C11DB7,  /* XCRC32_IEEE_802_3 */
+    0x1EDC6F41,  /* XCRC32_CASTAGNOLI */
+    0x741B8CD7,  /* XCRC32_KOOPMAN */
+    0x04C11DB7,  /* XCRC32_ISO_HDLC */
+    0x04C11DB7,  /* XCRC32_MPEG2 */
+    0x04C11DB7   /* XCRC32_POSIX */
+};
+
+/* 常用CRC32初始值 */
+static const uint32_t CRC32_INIT_VALUES[] = {
+    0xFFFFFFFF,  /* XCRC32_IEEE_802_3 */
+    0xFFFFFFFF,  /* XCRC32_CASTAGNOLI */
+    0xFFFFFFFF,  /* XCRC32_KOOPMAN */
+    0xFFFFFFFF,  /* XCRC32_ISO_HDLC */
+    0xFFFFFFFF,  /* XCRC32_MPEG2 */
+    0xFFFFFFFF   /* XCRC32_POSIX */
+};
+
+/* 常用CRC32异或输出值 */
+static const uint32_t CRC32_XOROUT_VALUES[] = {
+    0xFFFFFFFF,  /* XCRC32_IEEE_802_3 */
+    0xFFFFFFFF,  /* XCRC32_CASTAGNOLI */
+    0xFFFFFFFF,  /* XCRC32_KOOPMAN */
+    0xFFFFFFFF,  /* XCRC32_ISO_HDLC */
+    0x00000000,  /* XCRC32_MPEG2 */
+    0xFFFFFFFF   /* XCRC32_POSIX */
+};
+
+/**
+ * 初始化CRC32查找表
+ */
+void XCrc32_init_table(XCRC32Polynomial polynomial) {
+    uint32_t poly = CRC32_POLYNOMIALS[polynomial];
+    int i, j;
+
+    /* 如果多项式未变且表已初始化，则直接返回 */
+    if (table_initialized && polynomial == current_polynomial) {
+        return;
+    }
+
+    current_polynomial = polynomial;
+
+    for (i = 0; i < 256; i++) {
+        uint32_t crc = i;
+        for (j = 0; j < 8; j++) {
+            if (crc & 1) {
+                crc = (crc >> 1) ^ poly;
+            }
+            else {
+                crc = crc >> 1;
+            }
+        }
+        crc_table[i] = crc;
+    }
+
+    table_initialized = 1;
+}
+
+/**
+ * 计算数据的CRC32校验值
+ */
+uint32_t XCrc32_calculate(const uint8_t* data, size_t length, XCRCByteOrder order) {
+    uint32_t crc = CRC32_INIT_VALUES[current_polynomial];
+    size_t i;
+
+    /* 确保表已初始化 */
+    if (!table_initialized) {
+        XCrc32_init_table(current_polynomial);
+    }
+
+    for (i = 0; i < length; i++) {
+        crc = (crc >> 8) ^ crc_table[(crc & 0xFF) ^ data[i]];
+    }
+
+    /* 应用最终异或值 */
+    crc ^= CRC32_XOROUT_VALUES[current_polynomial];
+
+    /* 根据字节序调整 */
+    return XCrc32_finalize(crc, order);
+}
+
+/**
+ * 更新CRC32校验值（用于流式计算）
+ */
+uint32_t XCrc32_update(uint32_t crc, const uint8_t* data, size_t length) {
+    size_t i;
+
+    /* 确保表已初始化 */
+    if (!table_initialized) {
+        XCrc32_init_table(current_polynomial);
+    }
+
+    for (i = 0; i < length; i++) {
+        crc = (crc >> 8) ^ crc_table[(crc & 0xFF) ^ data[i]];
+    }
+
+    return crc;
+}
+
+/**
+ * 获取CRC32校验值（根据字节序调整）
+ */
+uint32_t XCrc32_finalize(uint32_t crc, XCRCByteOrder order) {
+    uint32_t result = crc;
+
+    /* 应用最终异或值 */
+    result ^= CRC32_XOROUT_VALUES[current_polynomial];
+
+    /* 根据字节序调整 */
+    if (order == XCRC_BYTE_ORDER_BIG_ENDIAN) {
+        result = ((result << 24) & 0xFF000000) |
+            ((result << 8) & 0x00FF0000) |
+            ((result >> 8) & 0x0000FF00) |
+            ((result >> 24) & 0x000000FF);
+    }
+
+    return result;
+}
+
+/**
+ * 设置当前使用的CRC32多项式
+ */
+void crc32_set_polynomial(XCRC32Polynomial polynomial) {
+    XCrc32_init_table(polynomial);
+}
+#endif
+#endif

@@ -5,11 +5,11 @@
 #include"XDataFrameCommConfig.h"
 #include"XTimerWheel.h"
 #include"XString.h"
+#include"XListBase.h"
 #include<assert.h>
 #include<string.h>
 #include<stdlib.h>
 static void XDataFrameComm_recvValid(XDataFrameComm* comm);//接收校验
-static void XDataFrameComm_sendValid(XDataFrameComm* comm);//发送校验
 //发送一个事件
 static bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XDFC_EventType event);
 static bool XDataFrameComm_sendEventRecvFrameReceived(XDataFrameComm* comm, XDFC_EventType event, XVector* frame);
@@ -20,7 +20,9 @@ static bool VXCommunicatorBase_connect(XDataFrameComm* comm);
 static bool VXCommunicatorBase_disconnect(XDataFrameComm* comm);
 static XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode mode);
 static XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameEndType mode);
-static XDFC_ErrorCode XDataFrameComm_sendData(XDataFrameComm* comm, XVector* data);
+static XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XVector* data);
+static XHandle VXDataFrameComm_sendDataPeriodic(XDataFrameComm* comm, XVector* data, uint32_t time);
+static bool  VXDataFrameComm_removeSendDataPeriodic(XDataFrameComm* comm, XHandle handle);
 XVtable* XDataFrameComm_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -36,7 +38,8 @@ XVtable* XDataFrameComm_class_init()
 	{
 		VXDataFrameComm_SendFrameFSM,VXDataFrameComm_RecvFrameFSM,
 		VXDataFrameComm_setCommMode,VXDataFrameComm_setFrameEndType,
-		XDataFrameComm_sendData
+		VXDataFrameComm_sendData,VXDataFrameComm_sendDataPeriodic,
+		VXDataFrameComm_removeSendDataPeriodic
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -52,6 +55,8 @@ XVtable* XDataFrameComm_class_init()
 
 void XDataFrameComm_recvValid(XDataFrameComm* comm)
 {
+	if (XVector_isEmpty_base(comm->m_parent.m_recvAsyncBuffer))
+		return;//数据缓冲区是空的也就没必要继续了
 	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm->m_parent.m_recvAsyncBuffer))
 		return;//校验没通过
 	XVector* v = XVector_Create(uint8_t);
@@ -70,11 +75,6 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 	{
 		XVector_delete_base(v);//释放数组防止内存泄露
 	}
-}
-
-void XDataFrameComm_sendValid(XDataFrameComm* comm)
-{
-
 }
 
 bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XDFC_EventType event)
@@ -477,7 +477,7 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 	return XDFC_ENOERR;
 }
 
-XDFC_ErrorCode XDataFrameComm_sendData(XDataFrameComm* comm, XVector* data)
+XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XVector* data)
 {
 	if (XVector_isEmpty_base(data))
 	{
@@ -495,4 +495,65 @@ XDFC_ErrorCode XDataFrameComm_sendData(XDataFrameComm* comm, XVector* data)
 		return XDFC_ENORES;
 	}
 	return XDFC_ENOERR;
+}
+//定期发送的定时器回调函数
+static void SendDataPeriodicCb(XPair* pair)
+{
+	XVector* v = XVector_Create(uint8_t);
+	if (v == NULL)
+		return;
+	XVector_copy_base(v, XPair_Second(pair, XVector*));
+	if (!XQueueBase_push_base(XPair_First(pair, XDataFrameComm*)->m_sendFrameQueue, &v))
+	{
+#if XDFC_QUEUE_FULL_SHOW
+		printf("发送队列溢出当前最大:%d,建议增大队列,调整:XDFC_FRAME_SEND_QUEUE_COUNT\n", XDFC_FRAME_SEND_QUEUE_COUNT);
+#endif
+		XVector_delete_base(v);
+		return XDFC_ENORES;
+	}
+	//XDataFrameComm_sendData_base(XPair_First(pair, XDataFrameComm*),v);
+}
+XHandle VXDataFrameComm_sendDataPeriodic(XDataFrameComm* comm, XVector* data, uint32_t time)
+{
+	if (XVector_isEmpty_base(data))
+		return NULL;
+	XPair* pair = XPair_Create(XDataFrameComm*, XVector*);
+	if (pair == NULL)
+	{
+		return NULL;
+	}
+	XTimerWheel* timer = XTimerWheel_create();
+	if (timer == NULL)
+	{
+		XPair_delete(pair);
+		return NULL;
+	}
+	if (comm->m_sendValidCb)
+		comm->m_sendValidCb(data);
+
+	XPair_First(pair, XDataFrameComm*) = comm;
+	XPair_Second(pair, XVector*) = data;
+	
+	XListBase_push_back_base(comm->m_periodicSendList,&pair);
+	XTimerBase_setTimeout_base(timer, time);
+	XTimerBase_setInterval_base(timer, time);
+	XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_wheel);
+	XTimerBase_setUserData(timer, pair);
+	XTimerBase_setTimerCallback(timer, SendDataPeriodicCb);
+	XTimerBase_start_base(timer);
+	return pair;
+}
+
+bool VXDataFrameComm_removeSendDataPeriodic(XDataFrameComm* comm, XHandle handle)
+{
+	if(XListBase_isEmpty_base(comm->m_periodicSendList))
+		return false;
+	size_t size = XContainerSize(comm->m_periodicSendList);
+	XListBase_remove_base(comm->m_periodicSendList,&handle);
+	if(size== XContainerSize(comm->m_periodicSendList))
+		return false;
+	XPair* pair = handle;
+	XVector_delete_base(XPair_Second(pair, XVector*));
+	XPair_delete(pair);
+	return true;
 }

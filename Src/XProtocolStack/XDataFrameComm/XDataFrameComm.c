@@ -3,7 +3,10 @@
 #include"XCircularQueueAtomic.h"
 #include"XDataFrameCommConfig.h"
 #include"XIODeviceBase.h"
+#include"XListSLinked.h"
 #include"XString.h"
+#include"XEquality.h"
+#include"XCrc.h"
 #include<string.h>
 static void XDataFrameComm_EvnetHandCb(XEventMin* event);
 XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
@@ -30,6 +33,8 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	comm->m_state = XDFC_STATE_NOT_INITIALIZED;
 	comm->m_eventDispatcher = XEventDispatcher_createDefault(XDFC_EVENT_QUEUE_COUNT);
 	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XVector*, XDFC_FRAME_SEND_QUEUE_COUNT);
+	comm->m_periodicSendList = XListSLinked_Create(XPair*);
+	comm->m_periodicSendList->m_equality = XEquality_ptr;
 	//comm->m_recvFrameQueue = XCircularQueueAtomic_Create(XVector*, XDFC_FRAME_RECV_QUEUE_COUNT);
 
 	XEventDispatcher_setAllEventCb(comm->m_eventDispatcher, XDataFrameComm_EvnetHandCb, comm);
@@ -60,12 +65,38 @@ XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XVector* data)
 
 XDFC_ErrorCode XDataFrameComm_sendString(XDataFrameComm* comm, const char* str, bool appendNull)
 {
-	printf("发送字符串\n");
+	if (ISNULL(comm, "") || ISNULL(str, "")|| ISNULL(XClassGetVtable(comm), ""))
+		return XDFC_EINVAL;
 	XVector* data = XVector_Create(uint8_t);
 	if (data == NULL)
 		return XDFC_ENORES;
-	XVector_append_array_base(data,str,strlen(str)+ appendNull?1:0);
+	XVector_append_array_base(data, str, strlen(str) + (appendNull ? 1 : 0));
 	return XDataFrameComm_sendData_base(comm, data);
+}
+
+XHandle XDataFrameComm_addSendDataPeriodic_base(XDataFrameComm* comm, XVector* data, uint32_t time)
+{
+	if (ISNULL(comm, "") || ISNULL(data, "") || ISNULL(time, "") || ISNULL(XClassGetVtable(comm), ""))
+		return NULL;
+	return XClassGetVirtualFunc(comm, EXDataFrameComm_AddSendDataPeriodic, XHandle(*)(XDataFrameComm*, XVector*, uint32_t))(comm, data,time);
+}
+
+XHandle XDataFrameComm_addSendStringPeriodic(XDataFrameComm* comm, const char* str, bool appendNull, uint32_t time)
+{
+	if (ISNULL(comm, "") || ISNULL(str, "") || ISNULL(time, "") || ISNULL(XClassGetVtable(comm), ""))
+		return NULL;
+	XVector* data = XVector_Create(uint8_t);
+	if (data == NULL)
+		return NULL;
+	XVector_append_array_base(data, str, strlen(str) + (appendNull ? 1 : 0));
+	return XDataFrameComm_addSendDataPeriodic_base(comm,data,time);
+}
+
+bool XDataFrameComm_removeSendDataPeriodic_base(XDataFrameComm* comm, XHandle handle)
+{
+	if (ISNULL(comm, "") || ISNULL(handle, "") || ISNULL(XClassGetVtable(comm), ""))
+		return false;
+	return XClassGetVirtualFunc(comm, EXDataFrameComm_RemoveSendDataPeriodic, bool(*)(XDataFrameComm*, XHandle))(comm, handle);
 }
 
 void XDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
@@ -174,6 +205,42 @@ void XDataFrameComm_setSendValidCb(XDataFrameComm* comm, XSendValidCb cb)
 	if (comm)
 	{
 		comm->m_sendValidCb = cb;
+	}
+}
+//接收验证Crc16回调
+static bool XRecvValidCrc16Cb(const XVector* data)
+{
+	return  XCrc_get16(XContainerDataPtr(data), XContainerSize(data)) == 0;
+}
+void XDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16)
+{
+	if (comm)
+	{
+		if (enableCRC16)
+			comm->m_recvValidCb = XRecvValidCrc16Cb;
+		else
+			comm->m_recvValidCb = NULL;
+	}
+}
+//发送验证Crc16回调
+static void XSendValidCrc16Cb(XVector* data)
+{
+	//设置crc校验
+	XVector_append_crc16(data,XCRC_BYTE_ORDER_LITTLE_ENDIAN);
+	
+	//uint16_t crc16 = XCrc_get16(XContainerDataPtr(data), XContainerSize(data));
+	//uint8_t buffer[2];
+	//XCrc_set16Data(buffer, crc16, 0);
+	//XVector_append_array_base(data, buffer, 2);
+}
+void XDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16)
+{
+	if (comm)
+	{
+		if (enableCRC16)
+			comm->m_sendValidCb = XSendValidCrc16Cb;
+		else
+			comm->m_sendValidCb = NULL;
 	}
 }
 

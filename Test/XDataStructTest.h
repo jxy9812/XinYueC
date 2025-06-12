@@ -10,6 +10,7 @@ extern "C" {
 #include"XProtocolStackTest.h"
 #include"XIOTest.h"
 #include"XTimerTest.h"
+#include"XAlgorithmTest.h"
 #if DEMOTEST
 	//排序算法测试
 	void SortTest();
@@ -29,8 +30,7 @@ extern "C" {
 	void XBinarySearchTest();
 	//哈夫曼树测试
 	void XHuffmanTreeTest();
-	void cJsonTest();
-	void cJsonXContainerTest();
+
 #endif // DEMOTEST
 
 #ifdef __cplusplus

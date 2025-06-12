@@ -64,7 +64,7 @@ void* XListBase_back_base(XListBase* this_list);
 XListBaseNode* XListBase_find_base(const  XListBase* this_list, const void* findVal);
 void XListBase_sort(XListBase* this_list, XCompare compare);
 //释放内存
-#define XListBase_delete_base					XContainerObject_delete_base
+#define XListBase_delete_base				XContainerObject_delete_base
 //清空List的队列，不是释放内存
 #define XListBase_clear_base				XContainerObject_clear_base
 //检测List内是否为空，空为真 O(1)

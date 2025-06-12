@@ -6,8 +6,7 @@ extern "C" {
 #include<stdint.h>
 #include<stdbool.h>
 #include"XIODeviceBase.h"
-typedef struct XVector XVector;
-typedef struct XTimerGroupWheel XTimerGroupWheel;
+#include"XTypes.h"
 typedef void (*RecvDataCallback)(const void* data, size_t size, void* userData);
 #define XCOMMUNICATORBASE_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XCommunicatorBase))       //XCommunicatorBase虚函数表大小
 XCLASS_DEFINE_BEGING(XCommunicatorBase)

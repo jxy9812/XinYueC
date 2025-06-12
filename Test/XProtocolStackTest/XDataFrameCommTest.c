@@ -15,10 +15,8 @@ void XDataFrameCommTest()
 		XDataFrameComm_setRecvFrameTail(comm, frameTail, 3);
 		XDataFrameComm_setSendFrameTail(comm, frameTail, 3);
 	}
-	
-	{
-		XDataFrameComm_sendString(comm, "main.cuttingMotorSp.val=999",false);
-	}
+	XDataFrameComm_setSendValidCRC16(comm,true);
+	XDataFrameComm_addSendStringPeriodic(comm, "main.cuttingMotorSp.val=999", false, 100);
 	XDataFrameComm_connect_base(comm);
 	while (true)
 	{

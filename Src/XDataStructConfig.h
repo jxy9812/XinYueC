@@ -9,7 +9,7 @@ extern "C" {
 #define SHOWCONTAINERSIZE				0//显示容器大小
 #define DEBUG_ON						0
 #define DEMOTEST						1//测试代码
-
+/*                容器                              */
 #define XContainerObject_ON				1
 #define XMap_ON							1
 #define XHashMap_ON						1
@@ -25,7 +25,12 @@ extern "C" {
 #define	XStringVector_ON				1
 #define	XCircularQueue_ON				1
 #define	XCircularQueueAtomic_ON			1
-
+/*                          算法                            */
+#define XCrc_ON                         1
+#define XCrc16_ON                       1
+#define XCrc32_ON                       1
+#define XBase64_ON						1
+/*                          依赖                            */
 #if !XList_ON
 #define	XQueue_ON						0
 #endif

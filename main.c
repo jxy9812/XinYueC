@@ -11,6 +11,8 @@ int main(int argc, char* args[])
 	//XAtomic_store_bool(&b,false);
 	printf("%d\n",XAtomic_load_bool(&b));
 #if DEMOTEST
+	//XBase64Test();
+	//return;
 	//XTimerWheelTest();
 	//XListDLinkedIterator();
 	//XHashMapTest();

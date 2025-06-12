@@ -8,10 +8,6 @@ extern "C" {
 #include"XCommunicatorBase.h"
 #include"XDataFrameCommEnum.h"
 #include"XEvent.h"
-typedef struct XQueueBase XQueueBase;
-typedef struct XTimerBase XTimerBase;
-typedef struct XString XString;
-typedef struct XEventDispatcher XEventDispatcher;
 typedef bool (*XRecvValidCb)(const XVector* data);//接收验证回调(校验)
 typedef void (*XSendValidCb)(XVector* data);//发送验证回调(添加)
 #define XDataFrameComm_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm))       //XDataFrameComm虚函数表大小
@@ -21,6 +17,8 @@ XCLASS_DEFINE_ENUM(XDataFrameComm, RecvFrameFSM),
 XCLASS_DEFINE_ENUM(XDataFrameComm, SetCommMode),
 XCLASS_DEFINE_ENUM(XDataFrameComm, SetFrameEndType),
 XCLASS_DEFINE_ENUM(XDataFrameComm, SendData),
+XCLASS_DEFINE_ENUM(XDataFrameComm, AddSendDataPeriodic),
+XCLASS_DEFINE_ENUM(XDataFrameComm, RemoveSendDataPeriodic),
 XCLASS_DEFINE_END(XDataFrameComm)
 
 //数据帧通信类
@@ -37,6 +35,7 @@ typedef struct XDataFrameComm
 
     XQueueBase* m_sendFrameQueue;//发送队列(XCircularQueue<XVector*>)
     //XQueueBase* m_recvFrameQueue;//接收帧队列(XCircularQueue<XVector*>) 后面处理执行
+    XListBase* m_periodicSendList;//定期发送数据链表
     XEventDispatcher* m_eventDispatcher;//事件调度器
     size_t m_sentBytes;//已发送字节计数
     XVector* m_sendFrameHead;//帧头
@@ -59,13 +58,18 @@ XDFC_ErrorCode XDataFrameComm_setFrameEndType_base(XDataFrameComm* comm, XDFC_Fr
 XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XVector* data);
 //发送字符串
 XDFC_ErrorCode XDataFrameComm_sendString(XDataFrameComm* comm, const char* str, bool appendNull);
+//定期发送
+XHandle XDataFrameComm_addSendDataPeriodic_base(XDataFrameComm* comm, XVector* data, uint32_t time);
+XHandle XDataFrameComm_addSendStringPeriodic(XDataFrameComm* comm, const char* str, bool appendNull, uint32_t time);
+bool  XDataFrameComm_removeSendDataPeriodic_base(XDataFrameComm* comm, XHandle handle);
 void XDataFrameComm_setRecvFrameHead(XDataFrameComm* comm,const uint8_t* data,uint8_t dataSize);
 void XDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 void XDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 void XDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
-void XDataFrameComm_setRecvValidCb(XDataFrameComm* comm, XRecvValidCb cb);//接收验证数据
-void XDataFrameComm_setSendValidCb(XDataFrameComm* comm, XSendValidCb cb);//发送数据添加验证
-
+void XDataFrameComm_setRecvValidCb(XDataFrameComm* comm, XRecvValidCb cb);//接收验证数据 回调
+void XDataFrameComm_setSendValidCb(XDataFrameComm* comm, XSendValidCb cb);//发送数据添加验证 回调
+void XDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16
+void XDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16
 
 #define XDataFrameComm_poll_base                   XCommunicatorBase_poll_base
 #define XDataFrameComm_connect_base                XCommunicatorBase_connect_base

@@ -247,7 +247,7 @@ static void parseFrameData(XModbusFrame* frame, XVector* data)
 	if (frame->frameData == NULL)
 		return;
 	//开始解析RTU数据
-	size_t dataSize = XVector_getSize_base(data);
+	size_t dataSize = XContainerSize(data);
 	uint8_t* pData = (uint8_t*)XContainerDataPtr(data);
 	// 校验帧长度和CRC（最小长度4字节，CRC正确）
 	if ((dataSize >= MB_SER_PDU_SIZE_MIN) && (XCrc_get16(pData, dataSize) == 0)) {

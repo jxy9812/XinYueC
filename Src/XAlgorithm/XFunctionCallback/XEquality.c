@@ -12,7 +12,7 @@ XDefineFunc_ComeTrue(XEquality, == , size_t)
 XDefineFunc_ComeTrue(XEquality, == , float)
 XDefineFunc_ComeTrue(XEquality, == , double)
 XDefineFunc_ComeTrueTwo(XEquality, == , long, double)
-//const bool XEquality_int(const void* LPrevValue, const void* LNextValue)
-//{
-//	return *(int*)LPrevValue == *(int*)LNextValue;
-//}
+const bool XEquality_ptr(const void* pvPrevValue, const void* pvNextValue)
+{
+	return *(void**)pvPrevValue == *(void**)pvNextValue;
+}
