@@ -304,15 +304,14 @@ static void  RecvSendData(XDataFrameComm* comm)
 	{
 		if (comm->m_eSndState == XDFC_STATE_TX_XMIT || XIODeviceBase_getBytesAvailable_base(((XCommunicatorBase*)comm)->m_io) == 0)
 		{
-			//printf("发送数据\n");
+			//printf("半双工通信中,发送数据\n");
 			if (comm->m_eRcvState == XDFC_STATE_RX_IDLE && comm->m_eSndState != XDFC_STATE_TX_END)
 				VXDataFrameComm_SendFrameFSM(comm);
 		}
-		else //if(modbus->eSndState != STATE_TX_XMIT)
+		else if (comm->m_eSndState == XDFC_STATE_TX_IDLE)
 		{
-			//printf("处理接收数据\n");
-			if (comm->m_eSndState == XDFC_STATE_TX_IDLE)
-				VXDataFrameComm_RecvFrameFSM(comm);
+			//printf("半双工通信中,接收数据\n");
+			VXDataFrameComm_RecvFrameFSM(comm);
 		}
 	}
 	else if (comm->m_commMode == XDFC_COMM_MODE_FULL_DUPLEX)

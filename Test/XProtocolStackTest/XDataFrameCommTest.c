@@ -9,6 +9,8 @@ void XDataFrameCommTest()
 	XSerialPortBase* USART = XSerialPortWin32_create(); 
 	USART->m_baudRate = 115200;
 	USART->m_portNum = 2;
+	XIODeviceBase_setReadBuffer_base(USART,1024);
+	XIODeviceBase_setWriteBuffer_base(USART, 1024);
 	XDataFrameComm* comm = XDataFrameComm_create(USART);
 	XDataFrameComm_setFrameEndType_base(comm, XDFC_FRAME_END_MARKER);
 	{
@@ -17,6 +19,7 @@ void XDataFrameCommTest()
 		XDataFrameComm_setSendFrameTail(comm, sendFrameTail, sizeof(sendFrameTail));
 		XDataFrameComm_setRecvFrameTail(comm, recvFrameTail, sizeof(recvFrameTail));
 	}
+	XDataFrameComm_setCommMode_base(comm, XDFC_COMM_MODE_HALF_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm, XDFC_FRAME_END_MARKER);
 	XDataFrameComm_setSendValidCRC16(comm,true);
 	XDataFrameComm_setRecvValidCRC16(comm,true);
