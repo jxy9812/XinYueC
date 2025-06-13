@@ -8,7 +8,7 @@ void XDataFrameCommTest()
 	printf("开始创建串口\n");
 	XSerialPortBase* USART = XSerialPortWin32_create(); 
 	USART->m_baudRate = 115200;
-	USART->m_portNum = 2;
+	USART->m_portNum = 20;
 	XIODeviceBase_setReadBuffer_base(USART,1024);
 	XIODeviceBase_setWriteBuffer_base(USART, 1024);
 	XDataFrameComm* comm = XDataFrameComm_create(USART);
