@@ -7,6 +7,7 @@
 //迷你事件
 typedef struct XEventMin
 {
+    bool accept;                  //接受事件
     int code;                     //事件类型代码
     size_t timestamp;             //事件发生时间
     void* userData;              // 可选的用户数据指针
@@ -22,8 +23,12 @@ typedef struct XEvent
     void* data;//事件数据
 }XEvent;
 //创建一个迷你事件
-XEventMin* XEventMin_create(int type, size_t timestamp);
+XEventMin* XEventMin_create(int code, size_t timestamp);
+void XEventMin_init(XEventMin* event,int code, size_t timestamp);
 XEvent* XEvent_create(void* eventData,size_t eventDataSize);
+#define XEvent_AcceptState(event) (((XEventMin*)event)->accept)
+#define XEvent_Accept(event) (XEvent_AcceptState(event)=true)
+#define XEvent_Ignore(event) (XEvent_AcceptState(event)=false)
 #define XEvent_DataPtr(event) (&(((XEvent*)event)->data))
 #define XEvent_Data(event,dataType)  (*((dataType*)XEvent_DataPtr(event)))
 #define XEvent_Code(event)     (((XEventMin*)event)->code)

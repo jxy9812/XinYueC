@@ -10,8 +10,6 @@
 #include<string.h>
 #include<stdlib.h>
 static void XDataFrameComm_recvValid(XDataFrameComm* comm);//接收校验
-//发送一个事件
-static bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XDFC_EventType event);
 static bool XDataFrameComm_sendEventRecvFrameReceived(XDataFrameComm* comm, XDFC_EventType event, XVector* frame);
 static void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm);
 static void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm);
@@ -57,13 +55,13 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 {
 	if (XVector_isEmpty_base(comm->m_parent.m_recvAsyncBuffer))
 		return;//数据缓冲区是空的也就没必要继续了
+	
 	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm->m_parent.m_recvAsyncBuffer))
 		return;//校验没通过
 	XVector* v = XVector_Create(uint8_t);
 	if (v == NULL)
 		return;
 	XVector_copy_base(v, comm->m_parent.m_recvAsyncBuffer);
-	
 //	if (!XQueueBase_push_base(comm->m_recvFrameQueue, &v))
 //	{//入队失败
 //		XVector_delete_base(v);//释放数组防止内存泄露
@@ -77,24 +75,10 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 	}
 }
 
-bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XDFC_EventType event)
-{
-	XEventMin* ev = XEventMin_create(event, 0);
-	if(ev==NULL)
-		return false;
-	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
-	{//添加失败，队列满了
-		XMemory_free(ev);
-#if XDFC_QUEUE_FULL_SHOW
-		printf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
-#endif
-		return false;
-	}
-	return true;
-}
+
 bool XDataFrameComm_sendEventRecvFrameReceived(XDataFrameComm* comm, XDFC_EventType event, XVector* frame)
 {
-	XEventMin* ev = XEventRecvFrame_create(event, 0, frame);
+	XEventMin* ev = XEventFuncCode_create(event, 0, frame,0);
 	if (ev == NULL)
 		return false;
 	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
@@ -309,6 +293,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			{
 				comm->m_eSndState = XDFC_STATE_TX_IDLE;  // 切换到发送空闲状态
 			}
+			XDataFrameComm_sendEvent(comm, XDFC_FRAME_SENT);
 			break;
 		}
 	}

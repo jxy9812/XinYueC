@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
 #include"XDefineFunc.h"
 XDefineFunc_Define(XEquality, char)
 XDefineFunc_DefineTwo(XEquality, unsigned, char)
@@ -15,6 +17,7 @@ XDefineFunc_DefineTwo(XEquality, short, int)
 XDefineFunc_DefineTwo(XEquality, long, int)
 XDefineFunc_DefineTwo(XEquality, long, long)
 XDefineFunc_DefineTwo(XEquality, unsigned, long)
+XDefineFunc_Define(XEquality, uint8_t)
 XDefineFunc_Define(XEquality, size_t)
 XDefineFunc_Define(XEquality,ptr)
 XDefineFunc_Define(XEquality, float)

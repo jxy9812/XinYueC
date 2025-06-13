@@ -13,13 +13,18 @@ typedef struct XEventCallback
 XEventMin* XEventMin_create(int code, size_t timestamp)
 {
 	XEventMin* event = XMemory_malloc(sizeof(XEventMin));
+	XEventMin_init(event,code,timestamp);
+	return event;
+}
+void XEventMin_init(XEventMin* event,int code, size_t timestamp)
+{
 	if (event)
 	{
+		event->accept = false;
 		event->code = code;
 		event->timestamp = timestamp;
 		event->userData = NULL;
 	}
-	return event;
 }
 XEvent* XEvent_create(void* eventData, size_t eventDataSize)
 {
@@ -61,9 +66,11 @@ XEventDispatcher* XEventDispatcher_createDefault(size_t queueCount)
 
 bool XEventDispatcher_addEvent(XEventDispatcher* dispatcher, XEventMin* event)
 {
-	if (dispatcher)
-		return XQueueBase_push_base(dispatcher->m_queue,&event);
-	return false;
+	if (dispatcher == NULL || event == NULL)
+		return false;
+	if (XEvent_Timestamp(event) == 0)
+		XEvent_Timestamp(event) = XTimerBase_getCurrentTime();
+	return XQueueBase_push_base(dispatcher->m_queue, &event);
 }
 
 void XEventDispatcher_delete(XEventDispatcher* dispatcher)
@@ -115,16 +122,24 @@ void XEventDispatcher_handler(XEventDispatcher* dispatcher)
 	{
 		if (event != NULL)
 		{
-			XEventCallback* c = XMapBase_value_base(dispatcher->m_filter_cb, &(event->code));
-			if (c != NULL)
-			{//有回调函数
-				event->userData = c->userData;
-				c->callback(event);
+			if (!event->accept&& dispatcher->m_filter_cb!=NULL)
+			{
+				XEventCallback* c = XMapBase_value_base(dispatcher->m_filter_cb, &(event->code));
+				if (c != NULL)
+				{//有回调函数
+					event->userData = c->userData;
+					c->callback(event);
+				}
 			}
-			event->userData = dispatcher->m_allEvent_user_data;
-			if (dispatcher->m_allEvent_cb)
+			
+			
+			if (!event->accept&&dispatcher->m_allEvent_cb)
+			{
+				event->userData = dispatcher->m_allEvent_user_data;
 				dispatcher->m_allEvent_cb(event);
-			XMemory_free(event);//事件执行完了释放
+			}
+			if(event->accept)//
+				XMemory_free(event);//事件被接受，执行完了释放
 		}
 
 	}

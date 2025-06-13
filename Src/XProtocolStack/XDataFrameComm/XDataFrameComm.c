@@ -285,21 +285,120 @@ void XDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16)
 	}
 }
 
+void XDataFrameComm_addFuncCode(XDataFrameComm* comm, uint8_t code, XFuncCodeCb cb, void* userData)
+{
+	if (comm == NULL)
+		return;
+	if (comm->m_funcCodeMap == NULL)
+		comm->m_funcCodeMap = XFuncCodeMap_create();
+	XFuncCodeMap_add(comm->m_funcCodeMap, code,cb,comm, userData);
+}
+
+void XDataFrameComm_removeFuncCode(XDataFrameComm* comm, uint8_t code)
+{
+	if (comm == NULL|| comm->m_funcCodeMap == NULL)
+		return;
+	XFuncCodeMap_remove(comm->m_funcCodeMap,code);
+}
+
+void XDataFrameComm_clearFuncCode(XDataFrameComm* comm)
+{
+	if (comm == NULL || comm->m_funcCodeMap == NULL)
+		return;
+	XFuncCodeMap_delete(comm->m_funcCodeMap);
+	comm->m_funcCodeMap = NULL;
+}
+
 XEventRecvFrame* XEventRecvFrame_create(int code, size_t timestamp,XVector* frame)
 {
 	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
 	if (ev == NULL)
 		return NULL;
-	XEvent_Code(ev)=code;
-	XEvent_Timestamp(ev) = timestamp;
-	XEvent_UserData(ev) = NULL;
-	ev->m_frame = frame;
+	XEventMin_init(ev, code, timestamp);
+	ev->frame = frame;
 	return ev;
 }
+XEventFuncCode* XEventFuncCode_create(int code, size_t timestamp, XVector* frame, uint8_t funcCode)
+{
+	XEventFuncCode* ev = XMemory_malloc(sizeof(XEventFuncCode));
+	if (ev == NULL)
+		return NULL;
+	XEventMin_init(ev, code, timestamp);
+	ev->m_parent.frame = frame;
+	ev->funcCode = funcCode;
+	return ev;
+}
+//接收到完整帧事件
+void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
+{
+	XEventRecvFrame* ev = event;
+	XVector* frame = ev->frame;
+	/*	if (!XQueueBase_receive_base(comm->m_recvFrameQueue, &v))
+			return;*/
+#if XDFC_RECV_FRAME_16HEX_SHOW
+	XString* str = XString_to16HexString(XContainerDataPtr(frame), XContainerSize(frame));
+	if (str != NULL)
+	{
+		printf("\n16进制接收帧:%s\n", XString_c_str(str));
+		XString_delete_base(str);
+	}
+#endif // XDFC_RECV_FRAME_16HEX_SHOW
+#ifdef XDFC_RECV_FRAME_STR_SHOW
+	if (XVector_Back_Base(frame, char) != 0)
+	{
+		char c = 0;
+		XVector_push_back_base(frame, &c);
+	}
+	printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
+#endif // XDFC_RECV_FRAME_STR_SHOW
+	XDataFrameComm* comm = event->userData;
+	if (comm->m_funcCodeMap == NULL)
+	{//没有功能码处理 直接释放
+		ev->frame = NULL;
+		XVector_delete_base(frame);
+		XEvent_Accept(ev);
+		return;
+	}
+	//获取功能码
+	((XEventFuncCode*)ev)->funcCode = *((uint8_t*)XContainerDataPtr(frame));
+	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
+	{//添加失败，队列满了
+		ev->frame = NULL;
+		XVector_delete_base(frame);//释放帧数据以免内存泄露
+		XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
+#if XDFC_QUEUE_FULL_SHOW
+		printf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
+#endif
+		return;
+	}
 
+}
+//功能码事件回调
+void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
+{
+	XEventFuncCode* ev = event;
+	XVector* frame = ev->m_parent.frame;
+	XDataFrameComm* comm = event->userData;
+	XFuncCodeNode* node = NULL;
+	if (comm->m_funcCodeMap != NULL)
+	{
+		node = XFuncCodeMap_value(comm->m_funcCodeMap, ev->funcCode);
+	}
+	if (node==NULL)
+	{
+		ev->m_parent.frame = NULL;
+		XVector_delete_base(frame);//释放帧数据以免内存泄露
+		XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
+		return;
+	}
+	if(node->cb!=NULL)
+		node->cb(ev->funcCode,node->obj,node->userData);
+	ev->m_parent.frame = NULL;
+	XVector_delete_base(frame);//释放帧数据以免内存泄露
+	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
+}
 void XDataFrameComm_EvnetHandCb(XEventMin* event)
 {
-	XDataFrameComm* comm = event->userData;
 #if XDFC_EVENT_HANDLE_SHOW
 #if XDFC_ENUM_TO_STRING
 	printf("准备处理事件:%s\n", XDataFrameComm_EventType_toString(event->code));
@@ -309,34 +408,25 @@ void XDataFrameComm_EvnetHandCb(XEventMin* event)
 #endif // MB_EVENT_SHOH
 	switch (event->code)
 	{
-		case XDFC_READY:break;
-		case XDFC_FRAME_RECEIVED:
-		{
-			XEventRecvFrame* ev = event;
-			XVector* v = ev->m_frame;
-		/*	if (!XQueueBase_receive_base(comm->m_recvFrameQueue, &v))
-				return;*/
-#if XDFC_RECV_FRAME_16HEX_SHOW
-			XString* str = XString_to16HexString(XContainerDataPtr(v), XContainerSize(v));
-			if (str != NULL)
-			{
-				printf("\n16进制接收帧:%s\n",XString_c_str(str));
-				XString_delete_base(str);
-			}
-#endif // XDFC_RECV_FRAME_16HEX_SHOW
-#ifdef XDFC_RECV_FRAME_STR_SHOW
-			if (XVector_Back_Base(v, char) != 0)
-			{
-				char c = 0;
-				XVector_push_back_base(v, &c);
-			}
-			printf("\nString接收帧:%s\n", XContainerDataPtr(v));
-#endif // XDFC_RECV_FRAME_STR_SHOW
-			ev->m_frame = NULL;
-			XVector_delete_base(v);
-			break;
-		}
-		case XDFC_EXECUTE:break;
-		case XDFC_FRAME_SENT:break;
+		//case XDFC_READY:break;
+		case XDFC_FRAME_RECEIVED:XDataFrameComm_EvnetFrame_ReceivedCb(event); break;
+		case XDFC_EXECUTE:XDataFrameComm_EvnetExecuteCb(event); break;
+		//case XDFC_FRAME_SENT:break;
+		default:XEvent_Accept(event); break;
 	}
+}
+bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XDFC_EventType event)
+{
+	XEventMin* ev = XEventMin_create(event, 0);
+	if (ev == NULL)
+		return false;
+	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
+	{//添加失败，队列满了
+		XMemory_free(ev);
+#if XDFC_QUEUE_FULL_SHOW
+		printf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
+#endif
+		return false;
+	}
+	return true;
 }

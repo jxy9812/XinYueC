@@ -7,6 +7,7 @@ extern "C" {
 #include"XFunctionCallback.h"
 #include"XMapBase.h"
 #include"XHash.h"
+#include"XEquality.h"
 #include"XHashMap_Iterator.h"
 // 默认初始容量
 #define DEFAULT_CAPACITY 16

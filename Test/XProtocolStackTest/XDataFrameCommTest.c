@@ -20,7 +20,7 @@ void XDataFrameCommTest()
 	XDataFrameComm_setFrameEndType_base(comm, XDFC_FRAME_END_MARKER);
 	XDataFrameComm_setSendValidCRC16(comm,true);
 	XDataFrameComm_setRecvValidCRC16(comm,true);
-	//XDataFrameComm_addPeriodicSendText(comm, "main.cuttingMotorSp.val=888", false, 500);
+	//XDataFrameComm_addPeriodicSendText(comm,false, 500, "main.cuttingMotorSp.val=888");
 	XDataFrameComm_connect_base(comm);
 	size_t speed=1,current = XTimerBase_getCurrentTime();
 	while (true)
