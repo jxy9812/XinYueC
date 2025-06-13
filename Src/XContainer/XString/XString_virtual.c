@@ -8,7 +8,7 @@ size_t XString_charNumber(const char* str);
 //返回对应XVector的索引
 size_t XString_XVectorNsel(const struct XString* this_XString, const size_t nSel);
 //设置XString的大小，实际大小自动+1存/0
-static void VXString_resize(XString* this_string, size_t len);
+static bool VXString_resize(XString* this_string, size_t len);
 //尾部增加一个字符
 static void VXString_push_back(XString* this_string, char c);
 //尾插
@@ -55,7 +55,7 @@ XVtable* XString_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back, VXString_push_back);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_append_Array, VXString_append);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Insert, VXString_insert);
-	//XVTABLE_OVERLOAD_DEFAULT( EXVector_Pop_Front, VXString_pop_front);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Resize, VXString_resize);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Pop_Back, VXString_pop_back);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXString_empty);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Size, VXString_size);
@@ -326,10 +326,9 @@ char* XString_data(const XString* this_XString)
 }
 */
 
-void VXString_resize(XString* this_string, size_t len)
+bool VXString_resize(XString* this_string, size_t len)
 {
-	typedef void (*funcPtr)(XVector*, size_t);
-	XVtableGetFunc(XVector_class_init(), EXVector_Resize, funcPtr)(this_string,len+1);
+	return XVtableGetFunc(XVector_class_init(), EXVector_Resize, bool (*)(XVector*, size_t))(this_string,len+1);
 }
 
 void VXString_push_back(XString* this_string, char c)

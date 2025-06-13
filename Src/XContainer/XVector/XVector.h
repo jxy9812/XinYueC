@@ -46,7 +46,7 @@ XVector* XVector_create(size_t typeSize);
 //初始化 XVector
 void XVector_init(XVector* this_vector, size_t typeSize);
 //设置XVector的大小，超过大小插入0值数据，小于删除数据
-void XVector_resize_base(XVector* this_vector,size_t size);
+bool XVector_resize_base(XVector* this_vector,size_t size);
 // 向量头部增加一个元素
 void XVector_push_front_base(XVector* this_vector, void* LpValue);
 #define XVector_Push_Front_Base(this_vector,type,value){type t=value;XVector_push_front_base(this_vector,&t);}
@@ -99,6 +99,11 @@ void  XVector_sort_base(XVector* this_vector, XCompare compare);
 #define XVector_swap_base				XContainerObject_swap_base
 //返回元素类型字节大小
 #define XVector_getTypeSize_base		XContainerObject_getTypeSize_base
+
+//格式构造字符串
+bool XVector_format_text_core(XVector* vector, bool appendNull, const char* format, va_list args);
+bool XVector_append_text_fmt(XVector* this_vector, bool appendNull, const char* format, ...);
+XVector* XVector_create_text_fmt(bool appendNull, const char* format, ...);
 #ifdef __cplusplus
 }
 #endif

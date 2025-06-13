@@ -21,8 +21,8 @@ static bool VXCommunicatorBase_disconnect(XDataFrameComm* comm);
 static XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode mode);
 static XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameEndType mode);
 static XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XVector* data);
-static XHandle VXDataFrameComm_sendDataPeriodic(XDataFrameComm* comm, XVector* data, uint32_t time);
-static bool  VXDataFrameComm_removeSendDataPeriodic(XDataFrameComm* comm, XHandle handle);
+static XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XVector* data, uint32_t time);
+static bool  VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle);
 XVtable* XDataFrameComm_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -38,8 +38,8 @@ XVtable* XDataFrameComm_class_init()
 	{
 		VXDataFrameComm_SendFrameFSM,VXDataFrameComm_RecvFrameFSM,
 		VXDataFrameComm_setCommMode,VXDataFrameComm_setFrameEndType,
-		VXDataFrameComm_sendData,VXDataFrameComm_sendDataPeriodic,
-		VXDataFrameComm_removeSendDataPeriodic
+		VXDataFrameComm_sendData,VXDataFrameComm_sendPeriodicData,
+		VXDataFrameComm_removePeriodicSendData
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -513,7 +513,7 @@ static void SendDataPeriodicCb(XPair* pair)
 	}
 	//XDataFrameComm_sendData_base(XPair_First(pair, XDataFrameComm*),v);
 }
-XHandle VXDataFrameComm_sendDataPeriodic(XDataFrameComm* comm, XVector* data, uint32_t time)
+XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XVector* data, uint32_t time)
 {
 	if (XVector_isEmpty_base(data))
 		return NULL;
@@ -544,7 +544,7 @@ XHandle VXDataFrameComm_sendDataPeriodic(XDataFrameComm* comm, XVector* data, ui
 	return pair;
 }
 
-bool VXDataFrameComm_removeSendDataPeriodic(XDataFrameComm* comm, XHandle handle)
+bool VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle)
 {
 	if(XListBase_isEmpty_base(comm->m_periodicSendList))
 		return false;

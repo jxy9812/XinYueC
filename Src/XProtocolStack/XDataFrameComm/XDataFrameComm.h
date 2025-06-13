@@ -57,11 +57,13 @@ XDFC_ErrorCode XDataFrameComm_setFrameEndType_base(XDataFrameComm* comm, XDFC_Fr
 //发送数据
 XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XVector* data);
 //发送字符串
-XDFC_ErrorCode XDataFrameComm_sendString(XDataFrameComm* comm, const char* str, bool appendNull);
+XDFC_ErrorCode XDataFrameComm_sendText(XDataFrameComm* comm, bool appendNull, const char* str);
+XDFC_ErrorCode XDataFrameComm_sendTextFmt(XDataFrameComm* comm, bool appendNull, const char* format, ...);
 //定期发送
-XHandle XDataFrameComm_addSendDataPeriodic_base(XDataFrameComm* comm, XVector* data, uint32_t time);
-XHandle XDataFrameComm_addSendStringPeriodic(XDataFrameComm* comm, const char* str, bool appendNull, uint32_t time);
-bool  XDataFrameComm_removeSendDataPeriodic_base(XDataFrameComm* comm, XHandle handle);
+XHandle XDataFrameComm_addPeriodicSendData_base(XDataFrameComm* comm, XVector* data, uint32_t time);
+XHandle XDataFrameComm_addPeriodicSendText(XDataFrameComm* comm, bool appendNull, uint32_t time, const char* str);
+XHandle XDataFrameComm_addPeriodicSendTextFmt(XDataFrameComm* comm, bool appendNull, uint32_t time, const char* format, ...);
+bool  XDataFrameComm_removePeriodicSendData_base(XDataFrameComm* comm, XHandle handle);
 void XDataFrameComm_setRecvFrameHead(XDataFrameComm* comm,const uint8_t* data,uint8_t dataSize);
 void XDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 void XDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);

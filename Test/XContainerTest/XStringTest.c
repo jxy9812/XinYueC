@@ -5,6 +5,11 @@ void XStringTest()
 {
 #if XString_ON
 	printf("XString 测试\n");
+	{
+		XString* str = XString_create_fmt("你好%d %d\n",121,9);
+		printf("%s", XString_data(str));
+	}
+	
 	XString* str = XString_create("你好");
 	XString_append_base(str, "111");
 	XString_push_front_base(str, '#');

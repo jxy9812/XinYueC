@@ -8,6 +8,7 @@
 #include"XEquality.h"
 #include"XCrc.h"
 #include<string.h>
+#include<stdarg.h>
 static void XDataFrameComm_EvnetHandCb(XEventMin* event);
 XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
 {
@@ -63,7 +64,7 @@ XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XVector* data)
 	return XClassGetVirtualFunc(comm, EXDataFrameComm_SendData, XDFC_ErrorCode(*)(XDataFrameComm*, XVector*))(comm, data);
 }
 
-XDFC_ErrorCode XDataFrameComm_sendString(XDataFrameComm* comm, const char* str, bool appendNull)
+XDFC_ErrorCode XDataFrameComm_sendText(XDataFrameComm* comm, bool appendNull, const char* str)
 {
 	if (ISNULL(comm, "") || ISNULL(str, "")|| ISNULL(XClassGetVtable(comm), ""))
 		return XDFC_EINVAL;
@@ -74,14 +75,34 @@ XDFC_ErrorCode XDataFrameComm_sendString(XDataFrameComm* comm, const char* str, 
 	return XDataFrameComm_sendData_base(comm, data);
 }
 
-XHandle XDataFrameComm_addSendDataPeriodic_base(XDataFrameComm* comm, XVector* data, uint32_t time)
+XDFC_ErrorCode XDataFrameComm_sendTextFmt(XDataFrameComm* comm, bool appendNull, const char* format, ...)
+{
+	if (ISNULL(comm, "") || ISNULL(format, "") || ISNULL(XClassGetVtable(comm), ""))
+		return XDFC_EINVAL;
+	XVector* data = XVector_Create(uint8_t);
+	if (data == NULL)
+		return XDFC_ENORES;
+	va_list args;
+	va_start(args, format);
+	bool result = XVector_format_text_core(data, appendNull, format, args);
+	va_end(args);
+
+	// 如果失败，释放内存并返回NULL
+	if (!result) {
+		XVector_delete_base(data);
+		return XDFC_ENORES;
+	}
+	return XDataFrameComm_sendData_base(comm, data);
+}
+
+XHandle XDataFrameComm_addPeriodicSendData_base(XDataFrameComm* comm, XVector* data, uint32_t time)
 {
 	if (ISNULL(comm, "") || ISNULL(data, "") || ISNULL(time, "") || ISNULL(XClassGetVtable(comm), ""))
 		return NULL;
 	return XClassGetVirtualFunc(comm, EXDataFrameComm_AddSendDataPeriodic, XHandle(*)(XDataFrameComm*, XVector*, uint32_t))(comm, data,time);
 }
 
-XHandle XDataFrameComm_addSendStringPeriodic(XDataFrameComm* comm, const char* str, bool appendNull, uint32_t time)
+XHandle XDataFrameComm_addPeriodicSendText(XDataFrameComm* comm, bool appendNull, uint32_t time, const char* str)
 {
 	if (ISNULL(comm, "") || ISNULL(str, "") || ISNULL(time, "") || ISNULL(XClassGetVtable(comm), ""))
 		return NULL;
@@ -89,10 +110,30 @@ XHandle XDataFrameComm_addSendStringPeriodic(XDataFrameComm* comm, const char* s
 	if (data == NULL)
 		return NULL;
 	XVector_append_array_base(data, str, strlen(str) + (appendNull ? 1 : 0));
-	return XDataFrameComm_addSendDataPeriodic_base(comm,data,time);
+	return XDataFrameComm_addPeriodicSendData_base(comm,data,time);
 }
 
-bool XDataFrameComm_removeSendDataPeriodic_base(XDataFrameComm* comm, XHandle handle)
+XHandle XDataFrameComm_addPeriodicSendTextFmt(XDataFrameComm* comm, bool appendNull, uint32_t time, const char* format, ...)
+{
+	if (ISNULL(comm, "") || ISNULL(format, "") || ISNULL(time, "") || ISNULL(XClassGetVtable(comm), ""))
+		return NULL;
+	XVector* data = XVector_Create(uint8_t);
+	if (data == NULL)
+		return XDFC_ENORES;
+	va_list args;
+	va_start(args, format);
+	bool result = XVector_format_text_core(data, appendNull, format, args);
+	va_end(args);
+
+	// 如果失败，释放内存并返回NULL
+	if (!result) {
+		XVector_delete_base(data);
+		return XDFC_ENORES;
+	}
+	return XDataFrameComm_addPeriodicSendData_base(comm, data, time);
+}
+
+bool XDataFrameComm_removePeriodicSendData_base(XDataFrameComm* comm, XHandle handle)
 {
 	if (ISNULL(comm, "") || ISNULL(handle, "") || ISNULL(XClassGetVtable(comm), ""))
 		return false;

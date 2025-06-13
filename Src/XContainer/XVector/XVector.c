@@ -1,7 +1,7 @@
 ﻿#include"XVector.h"
 #if XVector_ON
 #include<stdlib.h>
-
+#include<stdarg.h>
 XVector* XVector_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
@@ -11,11 +11,11 @@ XVector* XVector_create(size_t typeSize)
 	return this_vector;
 }
 
-void XVector_resize_base(XVector* this_vector, size_t size)
+bool XVector_resize_base(XVector* this_vector, size_t size)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return ;
-	typedef void (*funcPtr)(XVector*, size_t);
+		return false;
+	typedef bool (*funcPtr)(XVector*, size_t);
 	XClassGetVirtualFunc(this_vector, EXVector_Resize, funcPtr)(this_vector, size);
 }
 
@@ -161,6 +161,69 @@ void XVector_sort_base(XVector* this_vector, XCompare compare)
 		return ;
 	typedef void (*funcPtr)(XVector*, XCompare);
 	XClassGetVirtualFunc(this_vector, EXVector_Sort, funcPtr)(this_vector, compare);
+}
+// 内部核心函数：格式化文本并追加到向量
+bool XVector_format_text_core(XVector* vector, bool appendNull, const char* format, va_list args) 
+{
+	if (vector == NULL || format == NULL)
+		return false;
+
+	// 复制 va_list 以便后续重用
+	va_list args_copy;
+	va_copy(args_copy, args);
+
+	// 计算所需缓冲区大小
+	int len = vsnprintf(NULL, 0, format, args_copy);
+	va_end(args_copy);
+
+	if (len <= 0) return false;
+
+	// 调整向量大小
+	const size_t newSize = len + 1;
+	if (!XVector_resize_base(vector, newSize))
+		return false;
+
+	// 格式化文本到向量（重用 va_list）
+	va_copy(args_copy, args);
+	vsnprintf((char*)XContainerDataPtr(vector), len + 1, format, args_copy);
+	va_end(args_copy);
+
+	// 如果不保留\0，移除末尾字符
+	if (!appendNull && newSize > 0) {
+		XVector_pop_back_base(vector);
+	}
+
+	return true;
+}
+bool XVector_append_text_fmt(XVector* this_vector, bool appendNull, const char* format, ...)
+{
+	if (this_vector == NULL|| format==NULL)
+		return false;
+	va_list args;
+	va_start(args, format);
+	bool result = XVector_format_text_core(this_vector, appendNull, format, args);
+	va_end(args);
+
+	return result;
+}
+
+XVector* XVector_create_text_fmt(bool appendNull, const char* format, ...)
+{
+	XVector* data = XVector_Create(uint8_t);
+	if (data == NULL)
+		return NULL;
+	va_list args;
+	va_start(args, format);
+	bool result = XVector_format_text_core(data, appendNull, format, args);
+	va_end(args);
+
+	// 如果失败，释放内存并返回NULL
+	if (!result) {
+		XVector_delete_base(data);
+		return NULL;
+	}
+
+	return data;
 }
 
 //void XVector_delete_base(XVector* this_vector)

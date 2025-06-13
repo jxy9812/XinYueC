@@ -6,7 +6,7 @@
 #include<stdlib.h>
 //声明
 #define VECTORNUM 4//初始数组大小
-static void VXVector_resize(XVector* this_vector, size_t size);
+static bool VXVector_resize(XVector* this_vector, size_t size);
 static void VXVector_push_front(XVector* this_vector, void* LpValue);
 static void VXVector_push_back(XVector* this_vector, void* LpValue);
 static void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n);
@@ -122,10 +122,8 @@ static bool VXVectorEnlargeCapacity(XVector* this_vector)
 	}
 	return true;
 }
-void VXVector_resize(XVector* this_vector, size_t size)
+bool VXVector_resize(XVector* this_vector, size_t size)
 {
-	if (ISNULL(this_vector, ""))
-		return;
 	size_t capacity =XContainerCapacity(this_vector);//当前容器的最大数量
 	size_t count = XContainerSize(this_vector);//当前容器使用的数量
 	size_t TypeSize = XContainerTypeSize(this_vector);//数据类型大小
@@ -136,7 +134,7 @@ void VXVector_resize(XVector* this_vector, size_t size)
 		{
 			XVector_pop_back_base(this_vector);
 		}
-		return;
+		return true;
 	}
 	//char* lpData = XContainerDataPtr(this_vector);
 	if (size > capacity)//大于最大容量
@@ -158,10 +156,11 @@ void VXVector_resize(XVector* this_vector, size_t size)
 		XContainerDataPtr(this_vector) = m_data;
 		if (m_data == NULL)
 		{
-			perror("扩容失败vector");
+			//perror("扩容失败vector");
 			//exit(-1);
 			XContainerCapacity(this_vector) = 0;
 			XContainerSize(this_vector) = 0;
+			return false;
 		}
 		else
 		{
@@ -174,7 +173,7 @@ void VXVector_resize(XVector* this_vector, size_t size)
 	char* LPstart = (char*)XContainerDataPtr(this_vector) + count * TypeSize;//最后一个元素的下一个元素
 	memset(LPstart, 0, (size - count) * TypeSize);
 	//XContainerSize(this_vector) = size;//设置当前容器元素数量
-	//return;
+	return true;
 }
 void VXVector_push_front(XVector* this_vector, void* LpValue)
 {

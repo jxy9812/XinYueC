@@ -2,6 +2,7 @@
 #if XString_ON
 #include<stdlib.h>
 #include<string.h>
+#include<stdarg.h>
 #include"XEquality.h"
 XString* XString_create(const char* string)
 {
@@ -10,6 +11,32 @@ XString* XString_create(const char* string)
 	if(string)
 		XString_append_base(this_string,string);
 	return this_string;
+}
+XString* XString_create_fmt(const char* format, ...)
+{
+	va_list args;
+	va_start(args, format);
+
+	// 计算所需缓冲区大小
+	int len = vsnprintf(NULL, 0, format, args);
+	va_end(args);
+
+	if (len <= 0) return NULL;
+	XString* str = XString_create(NULL);
+	if (str == NULL)
+		return NULL;
+
+	// 分配内存缓冲区
+	if(!XString_resize_base(str,len))
+	{
+		XString_delete_base(str);
+		return NULL;
+	}
+	// 格式化文本
+	va_start(args, format);
+	vsnprintf(XContainerDataPtr(str), len + 1, format, args);
+	va_end(args);
+	return str;
 }
 void XString_init(XString* this_string)
 {

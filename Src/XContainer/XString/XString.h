@@ -46,6 +46,7 @@ typedef struct XString
 XVtable* XString_class_init();
 //初始化XString;
  XString* XString_create(const char* string);
+ XString* XString_create_fmt(const char* format, ...);
  //初始化 XVector
 void XString_init(XString* this_string);
 // 赋值
@@ -61,6 +62,8 @@ int64_t XString_find_first_of(const XString* this_string, const char* subStr);
 int64_t XString_find_last_of(const XString* this_string, const char* subStr);
 int64_t XString_find_first_not_of(const XString* this_string, const char* subStr);
 int64_t XString_find_last_not_of(const XString* this_string, const char* subStr);
+//设置XString的大小，超过大小插入0值数据，小于删除数据
+#define XString_resize_base				XVector_resize_base
 //释放内存
 #define XString_delete_base				XVector_delete_base
 //清空vector的队列，不是释放内存
