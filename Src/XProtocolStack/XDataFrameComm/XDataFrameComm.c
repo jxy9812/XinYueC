@@ -39,6 +39,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	//comm->m_recvFrameQueue = XCircularQueueAtomic_Create(XVector*, XDFC_FRAME_RECV_QUEUE_COUNT);
 
 	XEventDispatcher_setAllEventCb(comm->m_eventDispatcher, XDataFrameComm_EvnetHandCb, comm);
+	XDataFrameComm_setGetFuncCodeCb(comm,XDataFrameComm_GetFuncCodeCb);
 	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm,XDFC_FRAME_END_TIMEOUT);
 }
@@ -309,6 +310,12 @@ void XDataFrameComm_clearFuncCode(XDataFrameComm* comm)
 	comm->m_funcCodeMap = NULL;
 }
 
+void XDataFrameComm_setGetFuncCodeCb(XDataFrameComm* comm, GetFuncCodeCb cb)
+{
+	if (comm)
+		comm->m_getFuncCode = cb;
+}
+
 XEventRecvFrame* XEventRecvFrame_create(int code, size_t timestamp,XVector* frame)
 {
 	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
@@ -352,15 +359,13 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 	printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
 #endif // XDFC_RECV_FRAME_STR_SHOW
 	XDataFrameComm* comm = event->userData;
-	if (comm->m_funcCodeMap == NULL)
-	{//没有功能码处理 直接释放
+	if (comm->m_funcCodeMap == NULL||comm->m_getFuncCode==NULL|| !comm->m_getFuncCode(frame,&(((XEventFuncCode*)ev)->funcCode)))
+	{//没有功能码处理或获取失败 直接释放
 		ev->frame = NULL;
 		XVector_delete_base(frame);
 		XEvent_Accept(ev);
 		return;
 	}
-	//获取功能码
-	((XEventFuncCode*)ev)->funcCode = *((uint8_t*)XContainerDataPtr(frame));
 	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
 	{//添加失败，队列满了
 		ev->frame = NULL;
@@ -397,6 +402,13 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 	XVector_delete_base(frame);//释放帧数据以免内存泄露
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
+bool XDataFrameComm_GetFuncCodeCb(XVector* data, uint8_t* code)
+{
+	if(data==NULL||XVector_isEmpty_base(data)|| code==NULL)
+		return false;
+	*code=*((uint8_t*)XContainerDataPtr(data));
+	return true;
+}
 void XDataFrameComm_EvnetHandCb(XEventMin* event)
 {
 #if XDFC_EVENT_HANDLE_SHOW
@@ -414,19 +426,4 @@ void XDataFrameComm_EvnetHandCb(XEventMin* event)
 		//case XDFC_FRAME_SENT:break;
 		default:XEvent_Accept(event); break;
 	}
-}
-bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XDFC_EventType event)
-{
-	XEventMin* ev = XEventMin_create(event, 0);
-	if (ev == NULL)
-		return false;
-	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
-	{//添加失败，队列满了
-		XMemory_free(ev);
-#if XDFC_QUEUE_FULL_SHOW
-		printf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
-#endif
-		return false;
-	}
-	return true;
 }

@@ -67,10 +67,7 @@ bool VXSerialPort_open(XSerialPortWin32* serial, XIODeviceBaseMode mode)
     if (parent->m_dataBits == SP_DB_Nine|| parent->m_stopBits== SP_ST_ZeroPointFive)
         return false;//当前平台不支持
     char portName[10] = { 0 };
-    if(parent->m_portNum<10)
-        sprintf(portName, "COM%d", parent->m_portNum);
-    else
-        sprintf(portName, "\\\\.\\COM%d", parent->m_portNum);
+    sprintf(portName, "\\\\.\\COM%d", parent->m_portNum);
     // 打开串口
     HANDLE hSerial = CreateFile(portName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
     if (hSerial == INVALID_HANDLE_VALUE) {
