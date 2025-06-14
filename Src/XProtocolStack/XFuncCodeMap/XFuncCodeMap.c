@@ -6,11 +6,11 @@ XFuncCodeMap* XFuncCodeMap_create()
 	return hash;
 }
 
-bool XFuncCodeMap_add(XFuncCodeMap* map, uint8_t code, XFuncCodeCb cb, void* obj, void* userData)
+bool XFuncCodeMap_add(XFuncCodeMap* map, uint8_t code, XFuncCodeCb cb, void* userData)
 {
 	if (map == NULL || cb == NULL)
 		return false;
-	XFuncCodeNode node= {cb,obj,userData};
+	XFuncCodeNode node= {cb,userData};
 	XMapBase_insert_base(map, &code, &node);
 	return true;
 }

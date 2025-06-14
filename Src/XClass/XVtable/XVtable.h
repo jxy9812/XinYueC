@@ -38,6 +38,7 @@ void* XVtable_at(XVtable* this_vtable, size_t index);
 #define XCLASS_DEFINE_ENUM(Class,Value) E##Class##_##Value
 //定义类的虚函数枚举结束
 #define XCLASS_DEFINE_END(Class)    XCLASS_VTABLE_GET_SIZE(Class)};
+#define XCLASS_DEFINE_EXTEND_END(Class,Parent)    XCLASS_VTABLE_GET_SIZE(Class)=XCLASS_VTABLE_GET_SIZE(Parent)};
 //获取类虚函数表大小
 #define XCLASS_VTABLE_GET_SIZE(Class)   E##Class##_END_SIZE
 #ifdef __cplusplus

@@ -51,6 +51,8 @@ void VXCommunicatorBase_delete(XCommunicatorBase* comm)
 		XIODeviceBase_delete_base(comm->m_io);
 	if (comm->m_recvAsyncBuffer)
 		XVector_delete_base(comm->m_recvAsyncBuffer);
+	if (comm->m_wheel)
+		XTimerGroupBase_delete_base(comm->m_wheel);
 	XMemory_free(comm);
 }
 

@@ -6,20 +6,21 @@
 #include"XListSLinked.h"
 #include"XString.h"
 #include"XEquality.h"
-#include"XCrc.h"
 #include<string.h>
 #include<stdarg.h>
 static void XDataFrameComm_EvnetHandCb(XEventMin* event);
 XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
 {
+	if (io == NULL)
+		return NULL;
 	XDataFrameComm* comm = XMemory_malloc(sizeof(XDataFrameComm));
 	XDataFrameComm_init(comm, io);
 	return comm;
 }
 void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 {
-	if (comm == NULL)
-		return NULL;
+	if (comm == NULL||io==NULL)
+		return ;
 	//开始初始化
 	memset(((XCommunicatorBase*)comm) + 1, 0, sizeof(XDataFrameComm) - sizeof(XCommunicatorBase));
 	XCommunicatorBase_init(comm,io);
@@ -160,6 +161,7 @@ void XDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, 
 			XVector* v = XVector_Create(uint8_t);
 			XVector_append_array_base(v,data,dataSize);
 			comm->m_recvFrameHead = v;
+			
 		}
 	}
 }
@@ -249,41 +251,19 @@ void XDataFrameComm_setSendValidCb(XDataFrameComm* comm, XSendValidCb cb)
 		comm->m_sendValidCb = cb;
 	}
 }
-//接收验证Crc16回调
-static bool XRecvValidCrc16Cb(const XVector* data)
+
+void XDataFrameComm_setRecvValidCRC16_base(XDataFrameComm* comm, bool enableCRC16)
 {
-	return  XCrc_get16(XContainerDataPtr(data), XContainerSize(data)) == 0;
+	if (ISNULL(comm, "") || ISNULL(XClassGetVtable(comm), ""))
+		return ;
+	 XClassGetVirtualFunc(comm, EXDataFrameComm_SetRecvValidCRC16, void(*)(XDataFrameComm*, bool))(comm, enableCRC16);
 }
-void XDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16)
+
+void XDataFrameComm_setSendValidCRC16_base(XDataFrameComm* comm, bool enableCRC16)
 {
-	if (comm)
-	{
-		if (enableCRC16)
-			comm->m_recvValidCb = XRecvValidCrc16Cb;
-		else
-			comm->m_recvValidCb = NULL;
-	}
-}
-//发送验证Crc16回调
-static void XSendValidCrc16Cb(XVector* data)
-{
-	//设置crc校验
-	XVector_append_crc16(data,XCRC_BYTE_ORDER_LITTLE_ENDIAN);
-	
-	//uint16_t crc16 = XCrc_get16(XContainerDataPtr(data), XContainerSize(data));
-	//uint8_t buffer[2];
-	//XCrc_set16Data(buffer, crc16, 0);
-	//XVector_append_array_base(data, buffer, 2);
-}
-void XDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16)
-{
-	if (comm)
-	{
-		if (enableCRC16)
-			comm->m_sendValidCb = XSendValidCrc16Cb;
-		else
-			comm->m_sendValidCb = NULL;
-	}
+	if (ISNULL(comm, "") || ISNULL(XClassGetVtable(comm), ""))
+		return;
+	XClassGetVirtualFunc(comm, EXDataFrameComm_SetSendValidCRC16, void(*)(XDataFrameComm*, bool))(comm, enableCRC16);
 }
 
 void XDataFrameComm_addFuncCode(XDataFrameComm* comm, uint8_t code, XFuncCodeCb cb, void* userData)
@@ -292,7 +272,7 @@ void XDataFrameComm_addFuncCode(XDataFrameComm* comm, uint8_t code, XFuncCodeCb 
 		return;
 	if (comm->m_funcCodeMap == NULL)
 		comm->m_funcCodeMap = XFuncCodeMap_create();
-	XFuncCodeMap_add(comm->m_funcCodeMap, code,cb,comm, userData);
+	XFuncCodeMap_add(comm->m_funcCodeMap, code,cb,userData);
 }
 
 void XDataFrameComm_removeFuncCode(XDataFrameComm* comm, uint8_t code)
@@ -359,24 +339,20 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 	printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
 #endif // XDFC_RECV_FRAME_STR_SHOW
 	XDataFrameComm* comm = event->userData;
-	if (comm->m_funcCodeMap == NULL||comm->m_getFuncCode==NULL|| !comm->m_getFuncCode(frame,&(((XEventFuncCode*)ev)->funcCode)))
+	uint8_t funcCode;
+	if (comm->m_funcCodeMap == NULL||comm->m_getFuncCode==NULL|| !comm->m_getFuncCode(frame,&funcCode))
 	{//没有功能码处理或获取失败 直接释放
 		ev->frame = NULL;
 		XVector_delete_base(frame);
 		XEvent_Accept(ev);
 		return;
 	}
-	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
+	if (!XDataFrameComm_sendEvent(comm, XEventFuncCode_create(XDFC_EXECUTE,0, frame, funcCode)))
 	{//添加失败，队列满了
-		ev->frame = NULL;
 		XVector_delete_base(frame);//释放帧数据以免内存泄露
-		XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
-#if XDFC_QUEUE_FULL_SHOW
-		printf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
-#endif
-		return;
 	}
-
+	ev->frame = NULL;
+	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
 //功能码事件回调
 void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
@@ -397,7 +373,7 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 		return;
 	}
 	if(node->cb!=NULL)
-		node->cb(ev->funcCode,node->obj,node->userData);
+		node->cb(ev->funcCode,comm, frame,node->userData);
 	ev->m_parent.frame = NULL;
 	XVector_delete_base(frame);//释放帧数据以免内存泄露
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
@@ -407,6 +383,20 @@ bool XDataFrameComm_GetFuncCodeCb(XVector* data, uint8_t* code)
 	if(data==NULL||XVector_isEmpty_base(data)|| code==NULL)
 		return false;
 	*code=*((uint8_t*)XContainerDataPtr(data));
+	return true;
+}
+bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* ev)
+{
+	if (comm == NULL || ev == NULL)
+		return false;
+	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
+	{//添加失败，队列满了
+		XMemory_free(ev);
+#if XDFC_QUEUE_FULL_SHOW
+		printf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
+#endif
+		return false;
+	}
 	return true;
 }
 void XDataFrameComm_EvnetHandCb(XEventMin* event)

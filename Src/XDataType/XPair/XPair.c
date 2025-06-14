@@ -10,6 +10,7 @@ XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize)
 		return NULL;
 	}
 	XPair* this_pair = (XPair*)XMemory_malloc(sizeof(size_t)*2+ firstTypeSize+secondTypeSize);
+	memset(this_pair,0, sizeof(size_t) * 2 + firstTypeSize + secondTypeSize);
 	this_pair->m_firstTypeSize = firstTypeSize;
 	this_pair->m_secondTypeSize = secondTypeSize;
 	if (ISNULL(this_pair, "初始化pair结构体失败"))

@@ -12,7 +12,7 @@ extern "C" {
 typedef bool (*XRecvValidCb)(const XVector* data);//接收验证回调(校验)
 typedef void (*XSendValidCb)(XVector* data);//发送验证回调(添加)
 typedef bool(*GetFuncCodeCb)(XVector* data,uint8_t* code);//从数据帧中获取功能码
-#define XDataFrameComm_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm))       //XDataFrameComm虚函数表大小
+#define XDATAFRAMECOMM_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm))       //XDataFrameComm虚函数表大小
 XCLASS_DEFINE_BEGING(XDataFrameComm)
 XCLASS_DEFINE_ENUM(XDataFrameComm, SendFrameFSM) = XCLASS_VTABLE_GET_SIZE(XCommunicatorBase),
 XCLASS_DEFINE_ENUM(XDataFrameComm, RecvFrameFSM),
@@ -21,6 +21,8 @@ XCLASS_DEFINE_ENUM(XDataFrameComm, SetFrameEndType),
 XCLASS_DEFINE_ENUM(XDataFrameComm, SendData),
 XCLASS_DEFINE_ENUM(XDataFrameComm, AddSendDataPeriodic),
 XCLASS_DEFINE_ENUM(XDataFrameComm, RemoveSendDataPeriodic),
+XCLASS_DEFINE_ENUM(XDataFrameComm, SetRecvValidCRC16),
+XCLASS_DEFINE_ENUM(XDataFrameComm, SetSendValidCRC16),
 XCLASS_DEFINE_END(XDataFrameComm)
 
 //数据帧通信类
@@ -76,8 +78,8 @@ void XDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data, 
 /*校验*/
 void XDataFrameComm_setRecvValidCb(XDataFrameComm* comm, XRecvValidCb cb);//接收验证数据 回调
 void XDataFrameComm_setSendValidCb(XDataFrameComm* comm, XSendValidCb cb);//发送数据添加验证 回调
-void XDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
-void XDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
+void XDataFrameComm_setRecvValidCRC16_base(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
+void XDataFrameComm_setSendValidCRC16_base(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
 /*功能码*/
 void XDataFrameComm_addFuncCode(XDataFrameComm* comm, uint8_t code, XFuncCodeCb cb,void* userData);
 void XDataFrameComm_removeFuncCode(XDataFrameComm* comm, uint8_t code);
@@ -87,6 +89,7 @@ void XDataFrameComm_setGetFuncCodeCb(XDataFrameComm* comm, GetFuncCodeCb cb);//�
 #define XDataFrameComm_connect_base                XCommunicatorBase_connect_base
 #define XDataFrameComm_disconnect_base             XCommunicatorBase_disconnect_base
 #define XDataFrameComm_isConnected_base            XCommunicatorBase_isConnected_base
+#define XDataFrameComm_delete_base                 XCommunicatorBase_delete_base
 /*以下是默认的回调函数*/
 
 //默认的事件处理回调(全部事件)
@@ -98,6 +101,7 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event);//通过调用设置事件�
 //获取功能码回调
 bool XDataFrameComm_GetFuncCodeCb(XVector* data, uint8_t* code);
 /*以下是自定义的事件类型*/
+bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* event);//向事件队列追加一个事件
 typedef struct XEventRecvFrame
 {
     XEventMin m_parent;//

@@ -1,6 +1,7 @@
 ﻿#include"XDataFrameComm.h"
 #include"XTimerGroupBase.h"
 #include"XVector.h"
+#include"XCrc.h"
 #include"XEvent.h"
 #include"XDataFrameCommConfig.h"
 #include"XTimerWheel.h"
@@ -10,8 +11,6 @@
 #include<string.h>
 #include<stdlib.h>
 static void XDataFrameComm_recvValid(XDataFrameComm* comm);//接收校验
-static bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XDFC_EventType event);//发送一个事件
-static bool XDataFrameComm_sendEventRecvFrameReceived(XDataFrameComm* comm, XDFC_EventType event, XVector* frame);
 static void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm);
 static void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm);
 static void VXCommunicatorBase_poll(XDataFrameComm* comm);
@@ -22,12 +21,15 @@ static XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC
 static XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XVector* data);
 static XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XVector* data, uint32_t time);
 static bool  VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle);
+static void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
+static void VXDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
+static void VXDataFrameComm_delete(XDataFrameComm* comm);
 XVtable* XDataFrameComm_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
 #if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XDataFrameComm_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XDataFrameComm))
 #else
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -38,11 +40,13 @@ XVtable* XDataFrameComm_class_init()
 		VXDataFrameComm_SendFrameFSM,VXDataFrameComm_RecvFrameFSM,
 		VXDataFrameComm_setCommMode,VXDataFrameComm_setFrameEndType,
 		VXDataFrameComm_sendData,VXDataFrameComm_sendPeriodicData,
-		VXDataFrameComm_removePeriodicSendData
+		VXDataFrameComm_removePeriodicSendData,VXDataFrameComm_setRecvValidCRC16,
+		VXDataFrameComm_setSendValidCRC16
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXDataFrameComm_delete);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Poll, VXCommunicatorBase_poll);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Connect, VXCommunicatorBase_connect);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Disconnect, VXCommunicatorBase_disconnect);
@@ -63,49 +67,13 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 	if (v == NULL)
 		return;
 	XVector_copy_base(v, comm->m_parent.m_recvAsyncBuffer);
-//	if (!XQueueBase_push_base(comm->m_recvFrameQueue, &v))
-//	{//入队失败
-//		XVector_delete_base(v);//释放数组防止内存泄露
-//#if XDFC_QUEUE_FULL_SHOW
-//		printf("接收帧队列溢出当前最大:%d,建议增大队列,调整:XDFC_FRAME_RECV_QUEUE_COUNT\n", XDFC_FRAME_RECV_QUEUE_COUNT);
-//#endif
-//	}
-	if (!XDataFrameComm_sendEventRecvFrameReceived(comm, XDFC_FRAME_RECEIVED,v))
+
+	if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(XDFC_FRAME_RECEIVED, 0, v)))
 	{
 		XVector_delete_base(v);//释放数组防止内存泄露
 	}
 }
-bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XDFC_EventType event)
-{
-	XEventMin* ev = XEventMin_create(event, 0);
-	if (ev == NULL)
-		return false;
-	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
-	{//添加失败，队列满了
-		XMemory_free(ev);
-#if XDFC_QUEUE_FULL_SHOW
-		printf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
-#endif
-		return false;
-	}
-	return true;
-}
 
-bool XDataFrameComm_sendEventRecvFrameReceived(XDataFrameComm* comm, XDFC_EventType event, XVector* frame)
-{
-	XEventMin* ev = XEventFuncCode_create(event, 0, frame,0);
-	if (ev == NULL)
-		return false;
-	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
-	{//添加失败，队列满了
-		XMemory_free(ev);
-#if XDFC_QUEUE_FULL_SHOW
-		printf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
-#endif
-		return false;
-	}
-	return true;
-}
 void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 {
 	if (XIODeviceBase_getBytesAvailable_base(((XCommunicatorBase*)comm)->m_io) == 0)
@@ -151,16 +119,16 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				if (memcmp(XContainerDataPtr(recvVector), XContainerDataPtr(comm->m_recvFrameHead), 1) != 0)
 				{//比较第一个
 					return;//第一个就不一样 重新来过
-				}
+					}
 				if (XContainerSize(comm->m_recvFrameHead) == 1)
-				{
-					comm->m_eRcvState = XDFC_STATE_RX_RCV;//切换到接收数据中
-				}
-				else
-				{
-					comm->m_eRcvState = XDFC_STATE_RX_HEAD;//切换到接收帧头中
-				}
-			}
+					{
+							comm->m_eRcvState = XDFC_STATE_RX_RCV;//切换到接收数据中
+						}
+						else
+						{
+							comm->m_eRcvState = XDFC_STATE_RX_HEAD;//切换到接收帧头中
+						}
+					}
 			else
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_RCV;//切换到接收数据中
@@ -175,7 +143,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-				XDataFrameComm_sendEvent(comm, XDFC_RX_BUFFER_OVERFLOW);
+				XDataFrameComm_sendEvent(comm, XEventMin_create(XDFC_RX_BUFFER_OVERFLOW, 0));
 				return;
 			}
 			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
@@ -199,7 +167,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-				XDataFrameComm_sendEvent(comm, XDFC_RX_BUFFER_OVERFLOW);
+				XDataFrameComm_sendEvent(comm, XEventMin_create(XDFC_RX_BUFFER_OVERFLOW, 0));
 				return;
 			}
 			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
@@ -212,21 +180,21 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			else if (comm->m_frameEndMode == XDFC_FRAME_END_MARKER)
 			{//检测结束标志
 				if (comm->m_recvFrameTail == NULL || XVector_isEmpty_base(comm->m_recvFrameTail))
-				{
-					printf("当前设置是判断结束标志模式,但是未设置帧结束标志,程序无法知道帧结束\n"
-						"XDataFrameComm_setRecvFrameTail (设置接收帧尾)\n"
-						"XDataFrameComm_setFrameEndType_base (切换帧尾结束方式)\n");
-					exit(-1);
-					return;
-				}
+					{
+						printf("当前设置是判断结束标志模式,但是未设置帧结束标志,程序无法知道帧结束\n"
+							"XDataFrameComm_setRecvFrameTail (设置接收帧尾)\n"
+							"XDataFrameComm_setFrameEndType_base (切换帧尾结束方式)\n");
+						exit(-1);
+						return;
+					}
 				size_t size = XContainerSize(comm->m_recvFrameTail);
-				if (memcmp((uint8_t*)(XContainerDataPtr(recvVector))+ XContainerSize(recvVector)- size, XContainerDataPtr(comm->m_recvFrameTail), size) == 0)
-				{//检测到帧结束标志
-					XContainerSize(recvVector) -= size;//缓冲区删除结束标志
-					XDataFrameComm_recvValid(comm);
-					comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
+				if ((XContainerSize(recvVector) >= size) && memcmp((uint8_t*)(XContainerDataPtr(recvVector)) + XContainerSize(recvVector) - size, XContainerDataPtr(comm->m_recvFrameTail), size) == 0)
+					{//检测到帧结束标志
+						XContainerSize(recvVector) -= size;//缓冲区删除结束标志
+						XDataFrameComm_recvValid(comm);
+						comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
+					}
 				}
-			}
 			break;
 		}
 	}
@@ -308,7 +276,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			{
 				comm->m_eSndState = XDFC_STATE_TX_IDLE;  // 切换到发送空闲状态
 			}
-			XDataFrameComm_sendEvent(comm, XDFC_FRAME_SENT);
+			XDataFrameComm_sendEvent(comm, XEventMin_create(XDFC_FRAME_SENT, 0));
 			break;
 		}
 	}
@@ -428,7 +396,7 @@ static void TimerRecvExpired(XDataFrameComm* comm)
 {  //接收超时等待
 	switch (comm->m_eRcvState) {
 	case XDFC_STATE_RX_INIT:  // 初始状态超时（总线空闲，进入IDLE）
-		XDataFrameComm_sendEvent(comm, XDFC_READY);
+		XDataFrameComm_sendEvent(comm, XEventMin_create(XDFC_READY, 0));
 		break;
 
 	case XDFC_STATE_RX_RCV:   // 接收中状态超时（帧接收完成）
@@ -436,7 +404,7 @@ static void TimerRecvExpired(XDataFrameComm* comm)
 		break;
 
 	case XDFC_STATE_RX_ERROR: // 错误状态超时（忽略）
-		XDataFrameComm_sendEvent(comm, XDFC_RX_BUFFER_OVERFLOW);
+		XDataFrameComm_sendEvent(comm, XEventMin_create(XDFC_RX_BUFFER_OVERFLOW, 0));
 		break;
 	case XDFC_STATE_RX_IDLE: //接收空闲
 		break;
@@ -555,4 +523,61 @@ bool VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle
 	XVector_delete_base(XPair_Second(pair, XVector*));
 	XPair_delete(pair);
 	return true;
+}
+//接收验证Crc16回调
+static bool XRecvValidCrc16Cb(const XVector* data)
+{
+	return  XCrc_get16(XContainerDataPtr(data), XContainerSize(data)) == 0;
+}
+void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16)
+{
+	if (comm)
+	{
+		if (enableCRC16)
+			comm->m_recvValidCb = XRecvValidCrc16Cb;
+		else
+			comm->m_recvValidCb = NULL;
+	}
+}
+//发送验证Crc16回调
+static void XSendValidCrc16Cb(XVector* data)
+{
+	//设置crc校验
+	XVector_append_crc16(data, XCRC_BYTE_ORDER_LITTLE_ENDIAN);
+}
+void VXDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16)
+{
+	if (comm)
+	{
+		if (enableCRC16)
+			comm->m_sendValidCb = XSendValidCrc16Cb;
+		else
+			comm->m_sendValidCb = NULL;
+	}
+}
+
+void VXDataFrameComm_delete(XDataFrameComm* comm)
+{
+	if (comm->m_sendFrameQueue)
+		XQueueBase_delete_base(comm->m_sendFrameQueue);
+	if (comm->m_periodicSendList)
+		XListBase_delete_base(comm->m_periodicSendList);
+	if (comm->m_eventDispatcher)
+		XEventDispatcher_delete(comm->m_eventDispatcher);
+	if (comm->m_funcCodeMap)
+		XFuncCodeMap_delete(comm->m_funcCodeMap);
+	if (comm->m_sendFrameHead)
+		XVector_delete_base(comm->m_sendFrameHead);
+	if (comm->m_sendFrameTail)
+		XVector_delete_base(comm->m_sendFrameTail);
+	if (comm->m_recvFrameHead)
+		XVector_delete_base(comm->m_recvFrameHead);
+	/*if (comm->m_recvFrameTail)
+		XVector_delete_base(comm->m_recvFrameTail);*/
+	if (comm->m_timerRecvExpired)
+		XTimerBase_delete_base(comm->m_timerRecvExpired);
+	if (comm->m_timerSendExpired)
+		XTimerBase_delete_base(comm->m_timerSendExpired);
+	//调用父类释放函数
+	XVtableGetFunc(XCommunicatorBase_class_init(), EXClass_Delete, void(*)(XCommunicatorBase*))(comm);
 }
