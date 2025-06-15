@@ -1,19 +1,19 @@
-﻿#include"TJCHMIComm.h"
+﻿#include"XTJCHMIComm.h"
 #include"XVector.h"
 #include"XTimerBase.h"
 #include"XCrc.h"
 #include<string.h>
 static void XDataFrameComm_recvValid(XDataFrameComm* comm);
 static void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm);
-static void VXDataFrameComm_setRecvValidCRC16(TJCHMIComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
-static void VXDataFrameComm_setSendValidCRC16(TJCHMIComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
-static void VXDataFrameComm_setRecvFrameTail(TJCHMIComm* comm, const uint8_t* data, uint8_t dataSize);
-XVtable* TJCHMIComm_class_init()
+static void VXDataFrameComm_setRecvValidCRC16(XTJCHMIComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
+static void VXDataFrameComm_setSendValidCRC16(XTJCHMIComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
+static void VXDataFrameComm_setRecvFrameTail(XTJCHMIComm* comm, const uint8_t* data, uint8_t dataSize);
+XVtable* XTJCHMIComm_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
 #if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(TJCHMIComm))
+		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XTJCHMIComm))
 #else
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -34,7 +34,7 @@ XVtable* TJCHMIComm_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXDataFrameComm_RecvFrameFSM, VXDataFrameComm_RecvFrameFSM);
 	XVTABLE_OVERLOAD_DEFAULT(EXDataFrameComm_SetRecvFrameTail, VXDataFrameComm_setRecvFrameTail);
 #if SHOWCONTAINERSIZE
-	printf("TJCHMIComm size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+	printf("XTJCHMIComm size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
@@ -217,7 +217,7 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 		XVector_delete_base(v);//释放数组防止内存泄露
 	}
 }
-void VXDataFrameComm_setRecvValidCRC16(TJCHMIComm* comm, bool enableCRC16)
+void VXDataFrameComm_setRecvValidCRC16(XTJCHMIComm* comm, bool enableCRC16)
 {
 	XVtableGetFunc(XDataFrameComm_class_init(), EXDataFrameComm_SetRecvValidCRC16, void(*)(XDataFrameComm*, bool))(comm, enableCRC16);
 	/*if (enableCRC16)
@@ -232,7 +232,7 @@ void VXDataFrameComm_setRecvValidCRC16(TJCHMIComm* comm, bool enableCRC16)
 	}*/
 }
 
-void VXDataFrameComm_setSendValidCRC16(TJCHMIComm* comm, bool enableCRC16)
+void VXDataFrameComm_setSendValidCRC16(XTJCHMIComm* comm, bool enableCRC16)
 {
 	XVtableGetFunc(XDataFrameComm_class_init(), EXDataFrameComm_SetSendValidCRC16, void(*)(XDataFrameComm*, bool))(comm, enableCRC16);
 	if (enableCRC16)
@@ -247,7 +247,7 @@ void VXDataFrameComm_setSendValidCRC16(TJCHMIComm* comm, bool enableCRC16)
 	}
 }
 
-void VXDataFrameComm_setRecvFrameTail(TJCHMIComm* comm, const uint8_t* data, uint8_t dataSize)
+void VXDataFrameComm_setRecvFrameTail(XTJCHMIComm* comm, const uint8_t* data, uint8_t dataSize)
 {
 	//陶晶驰使用的帧尾方式已经添加无需添加
 	//printf("检查帧尾是否已经内置了\n");

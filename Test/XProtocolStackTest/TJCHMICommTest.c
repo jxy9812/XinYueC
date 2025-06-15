@@ -1,5 +1,5 @@
 ﻿#include"XProtocolStackTest.h"
-#include"TJCHMIComm.h"
+#include"XTJCHMIComm.h"
 #include"XSerialPortBase.h"
 #include"XVector.h"
 #include"XTimerBase.h"
@@ -44,7 +44,7 @@ void TJCHMICommTest()
 	USART->m_portNum = 20;
 	XIODeviceBase_setReadBuffer_base(USART, 1024);
 	XIODeviceBase_setWriteBuffer_base(USART, 1024);
-	TJCHMIComm* comm = TJCHMIComm_create(USART);
+	XTJCHMIComm* comm = XTJCHMIComm_create(USART);
 	XDataFrameComm_setFrameEndType_base(comm, XDFC_FRAME_END_MARKER);
 	{
 		uint8_t sendFrameTail[] = { 0x01, 0xFE,0xFE,0xFE };
