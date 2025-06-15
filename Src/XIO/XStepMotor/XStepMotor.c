@@ -111,3 +111,9 @@ void XStepMotor_close_base(XStepMotor* motor)
 		return;
 	XClassGetVirtualFunc(motor, EXStepMotor_Close, void(*)(XStepMotor*))(motor);
 }
+
+void XStepMotor_setSpeedChangeCb(XStepMotor* motor, void(*speedChangeCb)(XStepMotor* motor))
+{
+	if (motor)
+		motor->m_speedChangeCb = speedChangeCb;
+}

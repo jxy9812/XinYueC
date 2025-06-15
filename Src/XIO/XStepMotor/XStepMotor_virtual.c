@@ -96,9 +96,7 @@ void VXStepMotor_open(XStepMotor* motor)
 
 bool VXStepMotor_isRunning(XStepMotor* motor)
 {
-	if(motor->m_PUL==NULL)
-		return false;
-	if(motor->m_ENA!=NULL&& !XSwitchDeviceBase_getState_base(motor->m_ENA))
+	if (motor->m_PUL == NULL || (motor->m_ENA != NULL && !XSwitchDeviceBase_getState_base(motor->m_ENA)))
 		return false;
 	return XPWMDeviceBase_isRunning_base(motor->m_PUL);
 }
@@ -154,7 +152,7 @@ void VXStepMotor_setDIR(XStepMotor* motor, bool isForward)
 
 void VXStepMotor_start(XStepMotor* motor)
 {
-	motor->m_currentSpeed = 0;//清空转速
+	//motor->m_currentSpeed = 0;//清空转速
 	motor->m_currentPulses = 0;//清空脉冲计数
 	//开启pwm输出
 	XPWMDeviceBase_start_base(motor->m_PUL);
@@ -163,7 +161,16 @@ void VXStepMotor_start(XStepMotor* motor)
 void VXStepMotor_stop(XStepMotor* motor)
 {
 	//关闭pwm输出
-	XPWMDeviceBase_stop_base(motor->m_PUL);
+	if (VXStepMotor_isRunning(motor))
+	{
+		XPWMDeviceBase_stop_base(motor->m_PUL);
+		if (motor->m_currentSpeed != 0)
+		{
+			motor->m_currentSpeed = 0;
+			if (motor->m_speedChangeCb != NULL)
+				motor->m_speedChangeCb(motor);
+		}
+	}
 }
 
 void VXStepMotor_setStepsPerRevolution(XStepMotor* motor, uint16_t steps)
@@ -173,14 +180,19 @@ void VXStepMotor_setStepsPerRevolution(XStepMotor* motor, uint16_t steps)
 
 void VXStepMotor_setSpeed(XStepMotor* motor, double speed)
 {
-	motor->m_currentSpeed = speed;
-	uint32_t secr = speed * motor->m_pulsesPerRevolution / 60.0;//一秒脉冲数目  频率
+	if (motor->m_currentSpeed != speed)
+	{
+		motor->m_currentSpeed = speed;
+		uint32_t secr = speed * motor->m_pulsesPerRevolution / 60.0;//一秒脉冲数目  频率
 
-	XPWMDeviceBase_setFrequency_base(motor->m_PUL, secr);
-	if (motor->m_PUL->m_dutyCycle == 0)
-		XPWMDeviceBase_setDutyCycle_base(motor->m_PUL, 50);
-	else
-		XPWMDeviceBase_setDutyCycle_base(motor->m_PUL, motor->m_PUL->m_dutyCycle);
+		XPWMDeviceBase_setFrequency_base(motor->m_PUL, secr);
+		if (motor->m_PUL->m_dutyCycle == 0)
+			XPWMDeviceBase_setDutyCycle_base(motor->m_PUL, 50);
+		else
+			XPWMDeviceBase_setDutyCycle_base(motor->m_PUL, motor->m_PUL->m_dutyCycle);
+		if (VXStepMotor_isRunning(motor)&&motor->m_speedChangeCb!=NULL)
+			motor->m_speedChangeCb(motor);
+	}
 }
 
 void VXStepMotor_setRevolutions(XStepMotor* motor, double revolutions)

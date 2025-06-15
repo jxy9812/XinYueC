@@ -38,6 +38,7 @@ typedef struct XStepMotor
 	XPWMDeviceBase* m_PUL;//pwm引脚
 	XSwitchDeviceBase* m_ENA;//使能引脚
 	XSwitchDeviceBase* m_DIR;//方向引脚
+	void (*m_speedChangeCb)(XStepMotor* motor);//速度改变回调
 }XStepMotor;
 XVtable* XStepMotor_class_init();
 XStepMotor* XStepMotor_create(XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
@@ -88,7 +89,9 @@ void XStepMotor_poll(XStepMotor* motor);
 void XStepMotor_close_base(XStepMotor* motor);
 
 #define XStepMotor_delete_base	XClass_delete_base
-
+/*         设置回调函数             */
+//设置运行状态改变回调函数
+void XStepMotor_setSpeedChangeCb(XStepMotor* motor, void (*speedChangeCb)(XStepMotor* motor));
 #ifdef __cplusplus
 }
 #endif
