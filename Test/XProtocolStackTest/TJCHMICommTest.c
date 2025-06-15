@@ -49,8 +49,8 @@ void TJCHMICommTest()
 	{
 		uint8_t sendFrameTail[] = { 0x01, 0xFE,0xFE,0xFE };
 		uint8_t recvFrameTail1[] = { 0x01, 0xFE,0xFE,0xFE };
-		XDataFrameComm_setSendFrameTail(comm, sendFrameTail, sizeof(sendFrameTail));
-		//XDataFrameComm_setRecvFrameTail(comm, recvFrameTail1, sizeof(recvFrameTail1));
+		XDataFrameComm_setSendFrameTail_base(comm, sendFrameTail, sizeof(sendFrameTail));
+		XDataFrameComm_setRecvFrameTail_base(comm, recvFrameTail1, sizeof(recvFrameTail1));
 	}
 	//XDataFrameComm_setCommMode_base(comm, XDFC_COMM_MODE_HALF_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm, XDFC_FRAME_END_MARKER);

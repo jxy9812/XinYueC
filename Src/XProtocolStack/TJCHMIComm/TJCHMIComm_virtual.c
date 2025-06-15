@@ -7,6 +7,7 @@ static void XDataFrameComm_recvValid(XDataFrameComm* comm);
 static void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm);
 static void VXDataFrameComm_setRecvValidCRC16(TJCHMIComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_setSendValidCRC16(TJCHMIComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
+static void VXDataFrameComm_setRecvFrameTail(TJCHMIComm* comm, const uint8_t* data, uint8_t dataSize);
 XVtable* TJCHMIComm_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -31,6 +32,7 @@ XVtable* TJCHMIComm_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXDataFrameComm_SetRecvValidCRC16, VXDataFrameComm_setRecvValidCRC16);
 	XVTABLE_OVERLOAD_DEFAULT(EXDataFrameComm_SetSendValidCRC16, VXDataFrameComm_setSendValidCRC16);
 	XVTABLE_OVERLOAD_DEFAULT(EXDataFrameComm_RecvFrameFSM, VXDataFrameComm_RecvFrameFSM);
+	XVTABLE_OVERLOAD_DEFAULT(EXDataFrameComm_SetRecvFrameTail, VXDataFrameComm_setRecvFrameTail);
 #if SHOWCONTAINERSIZE
 	printf("TJCHMIComm size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -221,12 +223,12 @@ void VXDataFrameComm_setRecvValidCRC16(TJCHMIComm* comm, bool enableCRC16)
 	/*if (enableCRC16)
 	{
 		uint8_t recvFrameTail[] = { 0x01, 0xFE,0xFE,0xFE };
-		XDataFrameComm_setRecvFrameTail(comm, recvFrameTail, sizeof(recvFrameTail));
+		XDataFrameComm_setRecvFrameTail_base(comm, recvFrameTail, sizeof(recvFrameTail));
 	}
 	else
 	{
 		uint8_t recvFrameTail[] = { 0xFF,0xFF,0xFF };
-		XDataFrameComm_setRecvFrameTail(comm, recvFrameTail, sizeof(recvFrameTail));
+		XDataFrameComm_setRecvFrameTail_base(comm, recvFrameTail, sizeof(recvFrameTail));
 	}*/
 }
 
@@ -236,11 +238,30 @@ void VXDataFrameComm_setSendValidCRC16(TJCHMIComm* comm, bool enableCRC16)
 	if (enableCRC16)
 	{
 		uint8_t sendFrameTail[] = { 0x01, 0xFE,0xFE,0xFE };
-		XDataFrameComm_setSendFrameTail(comm, sendFrameTail, sizeof(sendFrameTail));
+		XDataFrameComm_setSendFrameTail_base(comm, sendFrameTail, sizeof(sendFrameTail));
 	}
 	else
 	{
 		uint8_t sendFrameTail[] = { 0xFF,0xFF,0xFF };
-		XDataFrameComm_setSendFrameTail(comm, sendFrameTail, sizeof(sendFrameTail));
+		XDataFrameComm_setSendFrameTail_base(comm, sendFrameTail, sizeof(sendFrameTail));
 	}
+}
+
+void VXDataFrameComm_setRecvFrameTail(TJCHMIComm* comm, const uint8_t* data, uint8_t dataSize)
+{
+	//陶晶驰使用的帧尾方式已经添加无需添加
+	//printf("检查帧尾是否已经内置了\n");
+	if (dataSize == 3)
+	{
+		uint8_t tail[] = { 0xFF,0xFF,0xFF };
+		if (memcmp(data, tail, 3) == 0)
+			return;
+	}
+	if (dataSize == 4)
+	{
+		uint8_t tail[] = { 0x01, 0xFE,0xFE,0xFE };
+		if (memcmp(data, tail, 4) == 0)
+			return;
+	}
+	XClassGetVirtualFunc(comm, EXDataFrameComm_SetRecvFrameTail, bool(*)(XDataFrameComm*, const uint8_t*, uint8_t))(comm, data, dataSize);
 }

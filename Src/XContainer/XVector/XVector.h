@@ -7,6 +7,7 @@ extern "C" {
 #include<stdio.h>
 #include<stdbool.h>
 #include<stdint.h>
+#include<stdarg.h>
 #include"XContainerObject.h"
 #include"XVectorTwo_func.h"
 #include"XVector_iterator.h"

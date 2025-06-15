@@ -8,7 +8,6 @@
 #include"XEquality.h"
 #include<string.h>
 #include<stdarg.h>
-static void XDataFrameComm_EvnetHandCb(XEventMin* event);
 XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
 {
 	if (io == NULL)
@@ -142,98 +141,32 @@ bool XDataFrameComm_removePeriodicSendData_base(XDataFrameComm* comm, XHandle ha
 	return XClassGetVirtualFunc(comm, EXDataFrameComm_RemoveSendDataPeriodic, bool(*)(XDataFrameComm*, XHandle))(comm, handle);
 }
 
-void XDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+void XDataFrameComm_setRecvFrameHead_base(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
 {
-	if (comm == NULL)
-		return;
-	if (data == NULL)
-	{//关掉接收帧头判断
-		if (comm->m_recvFrameHead!=NULL)
-		{
-			XVector_delete_base(comm->m_recvFrameHead);
-			comm->m_recvFrameHead = NULL;
-		}
-	}
-	else if (dataSize > 0)
-	{//设置接收帧头判断
-		if (comm->m_recvFrameHead == NULL)
-		{
-			XVector* v = XVector_Create(uint8_t);
-			XVector_append_array_base(v,data,dataSize);
-			comm->m_recvFrameHead = v;
-			
-		}
-	}
+	if (ISNULL(comm, "") || ISNULL(data, "") || ISNULL(dataSize, "") || ISNULL(XClassGetVtable(comm), ""))
+		return ;
+	XClassGetVirtualFunc(comm, EXDataFrameComm_SetRecvFrameHead, bool(*)(XDataFrameComm*, const uint8_t*, uint8_t))(comm, data, dataSize);
 }
 
-void XDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+void XDataFrameComm_setRecvFrameTail_base(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
 {
-	if (comm == NULL)
+	if (ISNULL(comm, "") || ISNULL(data, "") || ISNULL(dataSize, "") || ISNULL(XClassGetVtable(comm), ""))
 		return;
-	if (data == NULL)
-	{//关掉接收帧尾判断
-		if (comm->m_recvFrameTail != NULL)
-		{
-			XVector_delete_base(comm->m_recvFrameTail);
-			comm->m_recvFrameTail = NULL;
-		}
-	}
-	else if (dataSize > 0)
-	{//设置接收帧尾判断
-		if (comm->m_recvFrameTail == NULL)
-		{
-			XVector* v = XVector_Create(uint8_t);
-			XVector_append_array_base(v, data, dataSize);
-			comm->m_recvFrameTail = v;
-		}
-	}
+	XClassGetVirtualFunc(comm, EXDataFrameComm_SetRecvFrameTail, bool(*)(XDataFrameComm*, const uint8_t*, uint8_t))(comm, data, dataSize);
 }
 
-void XDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+void XDataFrameComm_setSendFrameHead_base(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
 {
-	if (comm == NULL)
+	if (ISNULL(comm, "") || ISNULL(data, "") || ISNULL(dataSize, "") || ISNULL(XClassGetVtable(comm), ""))
 		return;
-	if (data == NULL)
-	{//关掉发送帧头
-		if (comm->m_sendFrameHead != NULL)
-		{
-			XVector_delete_base(comm->m_sendFrameHead);
-			comm->m_sendFrameHead = NULL;
-		}
-	}
-	else if (dataSize > 0)
-	{//设置发送帧头
-		if (comm->m_sendFrameHead == NULL)
-		{
-			XVector* v = XVector_Create(uint8_t);
-			XVector_append_array_base(v, data, dataSize);
-			comm->m_sendFrameHead = v;
-		}
-	}
+	XClassGetVirtualFunc(comm, EXDataFrameComm_SetSendFrameHead, bool(*)(XDataFrameComm*, const uint8_t*, uint8_t))(comm, data, dataSize);
 }
 
-void XDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+void XDataFrameComm_setSendFrameTail_base(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
 {
-	if (comm == NULL)
+	if (ISNULL(comm, "") || ISNULL(data, "") || ISNULL(dataSize, "") || ISNULL(XClassGetVtable(comm), ""))
 		return;
-	//printf("设置发送帧尾巴\n");
-	if (data == NULL)
-	{//关掉发送帧尾
-		if (comm->m_sendFrameTail != NULL)
-		{
-			XVector_delete_base(comm->m_sendFrameTail);
-			comm->m_sendFrameTail = NULL;
-		}
-	}
-	else if (dataSize > 0)
-	{//设置发送帧尾
-		if (comm->m_sendFrameTail == NULL)
-		{
-			XVector* v = XVector_Create(uint8_t);
-			XVector_append_array_base(v, data, dataSize);
-			comm->m_sendFrameTail = v;
-		}
-	}
+	XClassGetVirtualFunc(comm, EXDataFrameComm_SetSendFrameTail, bool(*)(XDataFrameComm*, const uint8_t*, uint8_t))(comm, data, dataSize);
 }
 
 void XDataFrameComm_setRecvValidCb(XDataFrameComm* comm, XRecvValidCb cb)

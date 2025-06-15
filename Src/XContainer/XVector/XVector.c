@@ -1,7 +1,6 @@
 ﻿#include"XVector.h"
 #if XVector_ON
 #include<stdlib.h>
-#include<stdarg.h>
 XVector* XVector_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))

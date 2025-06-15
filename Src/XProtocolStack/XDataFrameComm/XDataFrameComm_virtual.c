@@ -24,10 +24,10 @@ static bool  VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandl
 static void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_delete(XDataFrameComm* comm);
-//static void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
-//static void VXDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
-//static void VXDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
-//static void VXDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
+static void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
+static void VXDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
+static void VXDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
+static void VXDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 XVtable* XDataFrameComm_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -44,8 +44,10 @@ XVtable* XDataFrameComm_class_init()
 		VXDataFrameComm_SendFrameFSM,VXDataFrameComm_RecvFrameFSM,
 		VXDataFrameComm_setCommMode,VXDataFrameComm_setFrameEndType,
 		VXDataFrameComm_sendData,VXDataFrameComm_sendPeriodicData,
-		VXDataFrameComm_removePeriodicSendData,VXDataFrameComm_setRecvValidCRC16,
-		VXDataFrameComm_setSendValidCRC16
+		VXDataFrameComm_setRecvValidCRC16,VXDataFrameComm_setSendValidCRC16,
+		VXDataFrameComm_setRecvFrameHead,VXDataFrameComm_setRecvFrameTail,
+		VXDataFrameComm_setSendFrameHead,VXDataFrameComm_setSendFrameTail,
+		VXDataFrameComm_removePeriodicSendData,
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -186,7 +188,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				if (comm->m_recvFrameTail == NULL || XVector_isEmpty_base(comm->m_recvFrameTail))
 					{
 						printf("当前设置是判断结束标志模式,但是未设置帧结束标志,程序无法知道帧结束\n"
-							"XDataFrameComm_setRecvFrameTail (设置接收帧尾)\n"
+							"XDataFrameComm_setRecvFrameTail_base (设置接收帧尾)\n"
 							"XDataFrameComm_setFrameEndType_base (切换帧尾结束方式)\n");
 						exit(-1);
 						return;
@@ -591,4 +593,98 @@ void VXDataFrameComm_delete(XDataFrameComm* comm)
 		XTimerBase_delete_base(comm->m_timerSendExpired);
 	//调用父类释放函数
 	XVtableGetFunc(XCommunicatorBase_class_init(), EXClass_Delete, void(*)(XCommunicatorBase*))(comm);
+}
+
+void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+{
+	if (comm == NULL)
+		return;
+	if (data == NULL)
+	{//关掉接收帧头判断
+		if (comm->m_recvFrameHead != NULL)
+		{
+			XVector_delete_base(comm->m_recvFrameHead);
+			comm->m_recvFrameHead = NULL;
+		}
+	}
+	else if (dataSize > 0)
+	{//设置接收帧头判断
+		if (comm->m_recvFrameHead == NULL)
+		{
+			XVector* v = XVector_Create(uint8_t);
+			XVector_append_array_base(v, data, dataSize);
+			comm->m_recvFrameHead = v;
+
+		}
+	}
+}
+
+void VXDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+{
+	if (comm == NULL)
+		return;
+	if (data == NULL)
+	{//关掉接收帧尾判断
+		if (comm->m_recvFrameTail != NULL)
+		{
+			XVector_delete_base(comm->m_recvFrameTail);
+			comm->m_recvFrameTail = NULL;
+		}
+	}
+	else if (dataSize > 0)
+	{//设置接收帧尾判断
+		if (comm->m_recvFrameTail == NULL)
+		{
+			XVector* v = XVector_Create(uint8_t);
+			XVector_append_array_base(v, data, dataSize);
+			comm->m_recvFrameTail = v;
+		}
+	}
+}
+
+void VXDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+{
+	if (comm == NULL)
+		return;
+	if (data == NULL)
+	{//关掉发送帧头
+		if (comm->m_sendFrameHead != NULL)
+		{
+			XVector_delete_base(comm->m_sendFrameHead);
+			comm->m_sendFrameHead = NULL;
+		}
+	}
+	else if (dataSize > 0)
+	{//设置发送帧头
+		if (comm->m_sendFrameHead == NULL)
+		{
+			XVector* v = XVector_Create(uint8_t);
+			XVector_append_array_base(v, data, dataSize);
+			comm->m_sendFrameHead = v;
+		}
+	}
+}
+
+void VXDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
+{
+	if (comm == NULL)
+		return;
+	//printf("设置发送帧尾巴\n");
+	if (data == NULL)
+	{//关掉发送帧尾
+		if (comm->m_sendFrameTail != NULL)
+		{
+			XVector_delete_base(comm->m_sendFrameTail);
+			comm->m_sendFrameTail = NULL;
+		}
+	}
+	else if (dataSize > 0)
+	{//设置发送帧尾
+		if (comm->m_sendFrameTail == NULL)
+		{
+			XVector* v = XVector_Create(uint8_t);
+			XVector_append_array_base(v, data, dataSize);
+			comm->m_sendFrameTail = v;
+		}
+	}
 }

@@ -20,9 +20,13 @@ XCLASS_DEFINE_ENUM(XDataFrameComm, SetCommMode),
 XCLASS_DEFINE_ENUM(XDataFrameComm, SetFrameEndType),
 XCLASS_DEFINE_ENUM(XDataFrameComm, SendData),
 XCLASS_DEFINE_ENUM(XDataFrameComm, AddSendDataPeriodic),
-XCLASS_DEFINE_ENUM(XDataFrameComm, RemoveSendDataPeriodic),
 XCLASS_DEFINE_ENUM(XDataFrameComm, SetRecvValidCRC16),
 XCLASS_DEFINE_ENUM(XDataFrameComm, SetSendValidCRC16),
+XCLASS_DEFINE_ENUM(XDataFrameComm, SetRecvFrameHead),
+XCLASS_DEFINE_ENUM(XDataFrameComm, SetRecvFrameTail),
+XCLASS_DEFINE_ENUM(XDataFrameComm, SetSendFrameHead),
+XCLASS_DEFINE_ENUM(XDataFrameComm, SetSendFrameTail),
+XCLASS_DEFINE_ENUM(XDataFrameComm, RemoveSendDataPeriodic),
 XCLASS_DEFINE_END(XDataFrameComm)
 
 //数据帧通信类
@@ -71,10 +75,10 @@ XHandle XDataFrameComm_addPeriodicSendText(XDataFrameComm* comm, bool appendNull
 XHandle XDataFrameComm_addPeriodicSendTextFmt(XDataFrameComm* comm, bool appendNull, uint32_t time, const char* format, ...);
 bool  XDataFrameComm_removePeriodicSendData_base(XDataFrameComm* comm, XHandle handle);
 /*帧头和帧尾*/
-void XDataFrameComm_setRecvFrameHead(XDataFrameComm* comm,const uint8_t* data,uint8_t dataSize);
-void XDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
-void XDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
-void XDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
+void XDataFrameComm_setRecvFrameHead_base(XDataFrameComm* comm,const uint8_t* data,uint8_t dataSize);
+void XDataFrameComm_setRecvFrameTail_base(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
+void XDataFrameComm_setSendFrameHead_base(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
+void XDataFrameComm_setSendFrameTail_base(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 /*校验*/
 void XDataFrameComm_setRecvValidCb(XDataFrameComm* comm, XRecvValidCb cb);//接收验证数据 回调
 void XDataFrameComm_setSendValidCb(XDataFrameComm* comm, XSendValidCb cb);//发送数据添加验证 回调

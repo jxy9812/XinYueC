@@ -6,6 +6,7 @@ extern "C" {
 #endif
 #include"XTypes.h"
 #include<stdint.h>
+#include<stdio.h>
 #include<stdbool.h>
 /**
  * CRC16字节序枚举
