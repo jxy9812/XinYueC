@@ -322,6 +322,7 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 	XVector* frame = ev->frame;
 	/*	if (!XQueueBase_receive_base(comm->m_recvFrameQueue, &v))
 			return;*/
+	//printf("接收帧\n");
 #if XDFC_RECV_FRAME_16HEX_SHOW
 	XString* str = XString_to16HexString(XContainerDataPtr(frame), XContainerSize(frame));
 	if (str != NULL)

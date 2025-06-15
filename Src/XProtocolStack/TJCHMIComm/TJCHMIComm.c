@@ -13,6 +13,7 @@ void TJCHMIComm_init(TJCHMIComm* comm, XIODeviceBase* io)
 	if (comm == NULL || io == NULL)
 		return;
 	XDataFrameComm_init(comm,io);
+	XClassGetVtable(comm) = TJCHMIComm_class_init();
 	XDataFrameComm_setCommMode_base(comm, XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm, XDFC_FRAME_END_MARKER);
 }

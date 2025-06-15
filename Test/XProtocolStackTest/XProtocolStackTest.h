@@ -8,6 +8,7 @@ extern "C" {
 #if DEMOTEST
 	void XModbusTest();
 	void XDataFrameCommTest();
+	void TJCHMICommTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

@@ -29,7 +29,8 @@ int main(int argc, char* args[])
 	XPriority_QueueTest();
 	XPWMDeviceTest();
 	XVectorTest();*/
-	XDataFrameCommTest();
+	TJCHMICommTest();
+	//XDataFrameCommTest();
 	//XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();

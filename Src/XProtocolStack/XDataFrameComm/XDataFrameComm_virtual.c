@@ -24,6 +24,10 @@ static bool  VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandl
 static void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_delete(XDataFrameComm* comm);
+//static void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
+//static void VXDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
+//static void VXDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
+//static void VXDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 XVtable* XDataFrameComm_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -191,7 +195,8 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				if ((XContainerSize(recvVector) >= size) && memcmp((uint8_t*)(XContainerDataPtr(recvVector)) + XContainerSize(recvVector) - size, XContainerDataPtr(comm->m_recvFrameTail), size) == 0)
 					{//检测到帧结束标志
 						XContainerSize(recvVector) -= size;//缓冲区删除结束标志
-						XDataFrameComm_recvValid(comm);
+						if (XContainerSize(recvVector) != 0)
+							XDataFrameComm_recvValid(comm);
 						comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
 					}
 				}
@@ -289,18 +294,24 @@ static void  RecvSendData(XDataFrameComm* comm)
 		{
 			//printf("半双工通信中,发送数据\n");
 			if (comm->m_eRcvState == XDFC_STATE_RX_IDLE && comm->m_eSndState != XDFC_STATE_TX_END)
-				VXDataFrameComm_SendFrameFSM(comm);
+			{
+				//VXDataFrameComm_SendFrameFSM(comm);
+				XClassGetVirtualFunc(comm, EXDataFrameComm_SendFrameFSM, void (*)(XDataFrameComm*))(comm);
+			}
 		}
 		else if (comm->m_eSndState == XDFC_STATE_TX_IDLE)
 		{
 			//printf("半双工通信中,接收数据\n");
-			VXDataFrameComm_RecvFrameFSM(comm);
+			XClassGetVirtualFunc(comm,EXDataFrameComm_RecvFrameFSM, void (*)(XDataFrameComm *))(comm);
+			//VXDataFrameComm_RecvFrameFSM(comm);
 		}
 	}
 	else if (comm->m_commMode == XDFC_COMM_MODE_FULL_DUPLEX)
 	{
-		VXDataFrameComm_SendFrameFSM(comm);
-		VXDataFrameComm_RecvFrameFSM(comm);
+		//VXDataFrameComm_SendFrameFSM(comm);
+		//VXDataFrameComm_RecvFrameFSM(comm);
+		XClassGetVirtualFunc(comm, EXDataFrameComm_SendFrameFSM, void (*)(XDataFrameComm*))(comm);
+		XClassGetVirtualFunc(comm, EXDataFrameComm_RecvFrameFSM, void (*)(XDataFrameComm*))(comm);
 	}
 }
 void VXCommunicatorBase_poll(XDataFrameComm* comm)
@@ -572,8 +583,8 @@ void VXDataFrameComm_delete(XDataFrameComm* comm)
 		XVector_delete_base(comm->m_sendFrameTail);
 	if (comm->m_recvFrameHead)
 		XVector_delete_base(comm->m_recvFrameHead);
-	/*if (comm->m_recvFrameTail)
-		XVector_delete_base(comm->m_recvFrameTail);*/
+	if (comm->m_recvFrameTail)
+		XVector_delete_base(comm->m_recvFrameTail);
 	if (comm->m_timerRecvExpired)
 		XTimerBase_delete_base(comm->m_timerRecvExpired);
 	if (comm->m_timerSendExpired)
