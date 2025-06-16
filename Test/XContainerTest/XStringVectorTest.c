@@ -19,6 +19,12 @@ void XStringVectorTest()
 		XStringVector_push_back_c_str(stringList, "你好");
 		XStringVector_push_back_c_str(stringList, "非常好");
 		XStringVector_push_back_c_str(stringList, "世界");
+		XString* str = XStringVector_join(stringList,"-");
+		if (str)
+		{
+			printf("连接:%s \n", XString_c_str(str));
+			XString_delete_base(str);
+		}
 		XStringVector_iterator_for_each(stringList, XFor_each_XString, NULL);
 		XStringVector_delete_base(stringList);
 	}

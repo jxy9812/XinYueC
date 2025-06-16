@@ -8,6 +8,7 @@ extern "C" {
 #include<stdio.h>
 #include<stdbool.h>
 #include"XMemory.h"
+#include"XTypes.h"
 //#define DEBUG_ON 1
 //数据释放方法
 typedef void (*XCDataDeleteMethod)(void* args);

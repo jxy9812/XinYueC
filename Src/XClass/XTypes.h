@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 typedef  void* XHandle;//句柄
+typedef struct XStringVector XStringVector;
 typedef struct XStepMotor XStepMotor;
 typedef struct XPWMDeviceBase XPWMDeviceBase;
 typedef struct XSwitchDeviceBase XSwitchDeviceBase;

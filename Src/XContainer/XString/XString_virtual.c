@@ -328,7 +328,13 @@ char* XString_data(const XString* this_XString)
 
 bool VXString_resize(XString* this_string, size_t len)
 {
-	return XVtableGetFunc(XVector_class_init(), EXVector_Resize, bool (*)(XVector*, size_t))(this_string,len+1);
+	if (XVtableGetFunc(XVector_class_init(), EXVector_Resize, bool (*)(XVector*, size_t))(this_string, len + 1))
+	{
+		((char*)XContainerDataPtr(this_string))[len]=0;
+		XContainerSize(this_string)=len;
+		return true;
+	}
+	return false;
 }
 
 void VXString_push_back(XString* this_string, char c)
@@ -339,15 +345,17 @@ void VXString_push_back(XString* this_string, char c)
 	VXString_append(this_string, arr);
 }
 
-void VXString_append(XString* this_string, const char* string)
+void VXString_append(XString* this_string, const char* str)
 {
-	if (ISNULL(this_string, "") || ISNULL(string, ""))
+	if (ISNULL(this_string, "") || ISNULL(str, ""))
 		return;
-	size_t len = strlen(string);
+	size_t len = strlen(str);
+	if (len == 0)
+		return;
 	size_t currentSize = XContainerSize(this_string);
 	if(XContainerSize(this_string)+ len +1>XContainerCapacity(this_string))
-		VXString_resize(this_string, VXString_size(this_string)+strlen(string)+1);
-	strcat(XContainerDataPtr(this_string), string);
+		VXString_resize(this_string, VXString_size(this_string)+strlen(str)+1);
+	strcat(XContainerDataPtr(this_string), str);
 	XContainerSize(this_string)= currentSize+len;
 }
 
@@ -404,8 +412,9 @@ void VXString_clear(XString* this_string)
 	if (ISNULL(this_string, ""))
 		return;
 	XContainerSize(this_string)=0;
-	typedef void (*funcPtr)(XVector*, void*);
-	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back, funcPtr)(this_string,"");
+	((char*)XContainerDataPtr(this_string))[0] = 0;
+	/*typedef void (*funcPtr)(XVector*, void*);
+	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back, funcPtr)(this_string,"");*/
 }
 
 bool VXString_empty(const XString* this_string)

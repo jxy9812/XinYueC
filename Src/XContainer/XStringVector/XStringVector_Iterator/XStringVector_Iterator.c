@@ -37,12 +37,12 @@ void XStringVector_iterator_for_each(XStringVector* this_XStringVector, XFor_eac
 	for_each_iterator(this_XStringVector, XStringVector, it)
 	{
 		/*printf("迭代器\n");*/
-		ForFunction(*((XString**)XStringVector_iterator_data(&it)), args);
+		ForFunction(XStringVector_iterator_data(&it), args);
 	}
 }
-void* XStringVector_iterator_data(XStringVector_iterator* it)
+XString* XStringVector_iterator_data(XStringVector_iterator* it)
 {
-	return XVector_iterator_data(it);
+	return *((XString**)XVector_iterator_data(it));
 }
 #endif
 

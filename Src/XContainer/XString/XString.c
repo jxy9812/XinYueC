@@ -4,6 +4,7 @@
 #include<string.h>
 #include<stdarg.h>
 #include"XEquality.h"
+#include"XStringVector.h"
 XString* XString_create(const char* string)
 {
 	XString* this_string = XMemory_malloc(sizeof(XString));
@@ -38,6 +39,15 @@ XString* XString_create_fmt(const char* format, ...)
 	va_end(args);
 	return str;
 }
+XString* XString_create_with_length(const char* string, size_t len)
+{
+	if (string == NULL || len == 0 || *string == 0)
+		return NULL;
+	XString* this_string = XString_create(NULL);
+	XString_resize_base(this_string, len);
+	memcpy(XContainerDataPtr(this_string),string,len);
+	return this_string;
+}
 void XString_init(XString* this_string)
 {
 	if (ISNULL(this_string, "") )
@@ -45,7 +55,7 @@ void XString_init(XString* this_string)
 	XVector_init(this_string, sizeof(char));
 	this_string->m_vector.m_equality = XEquality_char;
 	XClassGetVtable(this_string) = XString_class_init();
-	XString_clear_base(this_string);
+	XString_resize_base(this_string,0);
 }
 
 //void XString_push_front_base(XString* this_string, char c)
@@ -62,12 +72,19 @@ void XString_init(XString* this_string)
 //	XClassGetVirtualFunc(this_string, EXString_Push_Back, funcPtr)(this_string, c);
 //}
 
-void XString_append_base(XString* this_string, const char* string)
+void XString_append_base(XString* this_string, const char* str)
 {
 	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
 	typedef void (*funcPtr)(XString*, const char*);
-	XClassGetVirtualFunc(this_string, EXString_Append, funcPtr)(this_string, string);
+	XClassGetVirtualFunc(this_string, EXString_Append, funcPtr)(this_string, str);
+}
+
+void XString_append_string(XString* this_string, const XString* string)
+{
+	if (this_string == NULL || string == NULL)
+		return;
+	XString_append_base(this_string,XString_c_str(string));
 }
 
 void XString_assign_base(XString* this_string, const char* string)
@@ -137,5 +154,53 @@ XString* XString_to16HexString(const uint8_t* data, size_t dataSize)
 	}
 	XString_pop_back_base(str);
 	return str;
+}
+XStringVector* XString_split(XString* this_string, const char* sep)
+{
+	if(this_string==NULL|| sep==NULL||XString_isEmpty_base(this_string) || *sep == '\0')
+		return NULL;
+	// 创建结果向量
+	XStringVector* result = XStringVector_create();
+	if (result == NULL) {
+		return NULL;
+	}
+
+	const char* str = XContainerDataPtr(this_string);
+	size_t str_len = XContainerSize(this_string);
+	size_t sep_len = strlen(sep);
+
+	const char* start = str;
+	const char* end;
+
+	// 查找所有分隔符位置并分割字符串
+	while ((end = strstr(start, sep)) != NULL) {
+		size_t token_len = end - start;
+		/*printf("添加\n");*/
+		// 创建子字符串
+		XString* token = XString_create_with_length(start, token_len);
+		if (token == NULL) {
+			XStringVector_delete_base(result);
+			return NULL;
+		}
+
+		// 添加到结果向量
+		XStringVector_push_back_base(result, token);
+
+		// 移动到下一个可能的起始位置
+		start = end + sep_len;
+	}
+	// 处理最后一个分隔符后的剩余部分
+	size_t remaining_len = str + str_len - start;
+	if (remaining_len > 0 || start == str) {  // 包含空字符串的情况
+		XString* token = XString_create_with_length(start, remaining_len);
+		if (token == NULL) {
+			XStringVector_delete_base(result);
+			return NULL;
+		}
+
+		XStringVector_push_back_base(result, token);
+	}
+
+	return result;
 }
 #endif

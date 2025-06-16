@@ -1,13 +1,36 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XString.h"
+#include"XStringVector.h"
+static void XFor_each_XString(void* LPVal, void* args)
+{
+	XString* string = LPVal;
+	//printf("测试\n");
+	printf("%s \n", XString_c_str(string));
+}
 void XStringTest()
 {
+	//while(true)
+	{
 #if XString_ON
 	printf("XString 测试\n");
 	{
+		XString* str = XString_create("你好-世界-？？？？");
+		if (str)
+		{
+			XStringVector* v = XString_split(str, "-");
+			if (v)
+			{
+				XStringVector_iterator_for_each(v, XFor_each_XString, NULL);
+				XStringVector_delete_base(v);
+			}
+			XString_delete_base(str);
+		}
+	}
+	{
 		XString* str = XString_create_fmt("你好%d %d\n",121,9);
 		printf("%s", XString_data(str));
+		XString_delete_base(str);
 	}
 	
 	XString* str = XString_create("你好");
@@ -32,6 +55,7 @@ void XStringTest()
 	printf("%s\n", XString_data(str));
 	XString_delete_base(str);
 #endif
+	}
 }
 
 #endif

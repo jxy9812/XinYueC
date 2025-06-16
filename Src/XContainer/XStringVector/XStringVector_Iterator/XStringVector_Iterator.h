@@ -9,12 +9,13 @@ extern "C" {
 XContainerTypeDeclare(XStringVector);
 //正向迭代器
 typedef XVector_iterator XStringVector_iterator ;
+typedef struct XString XString;
 XStringVector_iterator XStringVector_begin(XStringVector* this_XStringVector);
 XStringVector_iterator XStringVector_end(XStringVector* this_XStringVector);
 void XStringVector_iterator_add(XStringVector* this_XStringVector, XStringVector_iterator* it);
 bool XStringVector_iterator_equality(XStringVector_iterator* itFirst, XStringVector_iterator* itSecond);
 void XStringVector_iterator_for_each(XStringVector* this_XStringVector, XFor_each ForFunction, void* args);
-void* XStringVector_iterator_data(XStringVector_iterator* it);
+XString* XStringVector_iterator_data(XStringVector_iterator* it);
 #ifdef __cplusplus
 }
 #endif

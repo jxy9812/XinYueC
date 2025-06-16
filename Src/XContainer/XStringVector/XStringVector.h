@@ -32,7 +32,9 @@ void XStringVector_insert_c_str(XStringVector* this_stringVector, int64_t index,
 XString* XStringVector_at_base(const XStringVector* this_stringVector, int64_t index);
 XString* XStringVector_front_base(const XStringVector* this_stringVector);
 XString* XStringVector_back_base(const XStringVector* this_stringVector);
-#define XStringVector_delete_base										XVector_delete_base
+//字符串拼接
+XString* XStringVector_join(const XStringVector* this_stringVector, const char* separator);
+#define XStringVector_delete_base									XVector_delete_base
 #define XStringVector_clear_base									XVector_clear_base
 #define	XStringVector_remove_base									XVector_remove_base
 #define XStringVector_erase_base                                    XVector_erase_base
