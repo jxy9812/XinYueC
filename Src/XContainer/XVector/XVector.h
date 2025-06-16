@@ -49,16 +49,16 @@ void XVector_init(XVector* this_vector, size_t typeSize);
 //设置XVector的大小，超过大小插入0值数据，小于删除数据
 bool XVector_resize_base(XVector* this_vector,size_t size);
 // 向量头部增加一个元素
-void XVector_push_front_base(XVector* this_vector, void* LpValue);
+void XVector_push_front_base(XVector* this_vector, void* pvValue);
 #define XVector_Push_Front_Base(this_vector,type,value){type t=value;XVector_push_front_base(this_vector,&t);}
 // 向量尾部增加一个元素
-void XVector_push_back_base(XVector* this_vector, void* LpValue);
+void XVector_push_back_base(XVector* this_vector, void* pvValue);
 #define XVector_Push_Back_Base(this_vector,type,value){type t=value;XVector_push_back_base(this_vector,&t);}
 // 向量中前增加一个元素
-void XVector_insert_base(XVector* this_vector, int64_t index, const void* LpValue);
+void XVector_insert_base(XVector* this_vector, int64_t index, const void* pvValue);
 #define XVector_Insert_Base(this_vector,index,type,value){type t=value;XVector_insert_base(this_vector,index,&t);}
 // 向量中指向元素p前增加n个相同的元素x
-void XVector_inserts_base(XVector* this_vector, int64_t index, void* LpValue, size_t n);
+void XVector_inserts_base(XVector* this_vector, int64_t index, void* pvValue, size_t n);
 // 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2]间的数据
 void XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
 void XVector_append_array_base(XVector* this_vector, const void* begin, size_t n);
@@ -66,7 +66,7 @@ void XVector_pop_front_base(XVector* this_vector);
 //删除向量中最后一个元素
 void XVector_pop_back_base(XVector* this_vector);
 //删除指针处的数据(指针要在容器内)
-void XVector_erase_base(XVector* this_vector, void* LpValue);
+void XVector_erase_base(XVector* this_vector, void* pvValue);
 //删除数据 n<0 后面全部删除
 void XVector_remove_base(XVector* this_vector, int64_t index, int64_t n);
 //将this_Two拷贝到this_One

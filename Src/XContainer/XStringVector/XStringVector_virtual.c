@@ -1,60 +1,42 @@
 ﻿#include"XStringVector.h"
-#if XStringVector_ON&&0
-//虚函数表定义
-XVtable* XStringVectorVtable = NULL;
-#if VTABLE_ISSTACK
-static XVtable vtable;//虚函数类
-static void* vtable_data[25];//虚函数数据
-#endif
-//void VXStringVector_push_front(XStringVector* this_stringVector, XString* string);
-//void VXStringVector_push_back(XStringVector* this_stringVector, XString* string);
-//void VXStringVector_insert(XStringVector* this_stringVector, int64_t index, XString* string);
-void XStringVector_class_init()
+#if XStringVector_ON
+static void VXStringVector_delete(XStringVector* this_stringVector);
+static void VXStringVector_push_front(XStringVector* this_stringVector, XString* string);
+static void VXStringVector_push_back(XStringVector* this_stringVector, XString* string);
+static void VXStringVector_insert(XStringVector* this_stringVector, int64_t index, XString* string);
+// 返回元素字符串
+static XString* VXStringVector_at(const XStringVector* this_stringVector, int64_t index);
+static XString* VXStringVector_front(const XStringVector* this_stringVector);
+static XString* VXStringVector_back(const XStringVector* this_stringVector);
+XVtable* XStringVector_class_init()
 {
-	if (XStringVectorVtable)
-		return;
-	void* table[] = {
-	};
-#if !VTABLE_ISSTACK
-	XStringVectorVtable = XVtable_create();
+	XVTABLE_CREAT_DEFAULT
+		//虚函数表初始化
+#if VTABLE_ISSTACK
+		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XStringVector))
 #else
-	XStringVectorVtable = &vtable;
-	XVtable_init_stack(&vtable, vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]));
+		XVTABLE_HEAP_INIT_DEFAULT
 #endif
-	//继承的函数
-	XVtable_append_vtable(XStringVectorVtable, XVectorVtable);
-	//追加函数
-	//XVtable_append_array(XStringVectorVtable, table, sizeof(table) / sizeof(table[0]));
+		//继承类
+	XVTABLE_INHERIT_DEFAULT(XVector_class_init());
+	//void* table[] = { };
+	//追加虚函数
+	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+
 	//重写的函数
-	/*XVtable_At(XStringVectorVtable, EXVector_Push_Front) = VXStringVector_push_front;
-	XVtable_At(XStringVectorVtable, EXVector_Push_Back) = VXStringVector_push_back;
-	XVtable_At(XStringVectorVtable, EXVector_Insert) = VXStringVector_insert;*/
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXStringVector_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Front, VXStringVector_push_front);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back, VXStringVector_push_back);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Insert, VXStringVector_insert);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_At, VXStringVector_at);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Front, VXStringVector_front);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Back, VXStringVector_back);
 #if SHOWCONTAINERSIZE
-	printf("XStringVector size:%d\n", XVtable_size(XStringVectorVtable));
+	printf("XStringVector size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
+	return XVTABLE_DEFAULT;
 }
 
-//void VXStringVector_push_front(XStringVector* this_stringVector, XString* string)
-//{
-//	typedef void (*funcPtr)(XVector*, void*);
-//	XVtableGetFunc(XVectorVtable, EXVector_Push_Front, funcPtr)(this_stringVector,&string);
-//}
-//
-//void VXStringVector_push_back(XStringVector* this_stringVector, XString* string)
-//{
-//	typedef void (*funcPtr)(XVector*, void*);
-//	XVtableGetFunc(XVectorVtable, EXVector_Push_Back, funcPtr)(this_stringVector, &string);
-//}
-//
-//void VXStringVector_insert(XStringVector* this_stringVector, int64_t index, XString* string)
-//{
-//	typedef void (*funcPtr)(XVector*, int64_t, void*);
-//	XVtableGetFunc(XVectorVtable, EXVector_Insert, funcPtr)(this_stringVector,index, &string);
-//}
-
-
-
-
 
 
 
@@ -65,4 +47,50 @@ void XStringVector_class_init()
 
 
 #endif
+
+void VXStringVector_delete(XStringVector* this_stringVector)
+{
+	
+	//调用父类释放
+	XVtableGetFunc(XVector_class_init(), EXClass_Delete, void (*)(XVector*))(this_stringVector);
+}
+
+void VXStringVector_push_front(XStringVector* this_stringVector, XString* string)
+{
+	XVtableGetFunc(XVector_class_init(),EXVector_Push_Front,void(*)(XVector*,void*))(this_stringVector,&string);
+}
+
+void VXStringVector_push_back(XStringVector* this_stringVector, XString* string)
+{
+	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back, void(*)(XVector*, void*))(this_stringVector, &string);
+}
+
+void VXStringVector_insert(XStringVector* this_stringVector, int64_t index, XString* string)
+{
+	XVtableGetFunc(XVector_class_init(), EXVector_Insert, void(*)(XVector*,int64_t, void*))(this_stringVector, index, &string);
+}
+
+XString* VXStringVector_at(const XStringVector* this_stringVector, int64_t index)
+{
+	void* pv = XVtableGetFunc(XVector_class_init(), EXVector_At, void* (*)(XVector*, int64_t))(this_stringVector, index);
+	if(pv==NULL)
+		return NULL;
+	return *((XString**)pv);
+}
+
+XString* VXStringVector_front(const XStringVector* this_stringVector)
+{
+	void* pv = XVtableGetFunc(XVector_class_init(), EXVector_Front, void* (*)(XVector*))(this_stringVector);
+	if (pv == NULL)
+		return NULL;
+	return *((XString**)pv);
+}
+
+XString* VXStringVector_back(const XStringVector* this_stringVector)
+{
+	void* pv = XVtableGetFunc(XVector_class_init(), EXVector_Back, void* (*)(XVector*))(this_stringVector);
+	if (pv == NULL)
+		return NULL;
+	return *((XString**)pv);
+}
 

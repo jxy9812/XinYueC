@@ -14,7 +14,15 @@ XStringVector_iterator XStringVector_end(XStringVector* this_XStringVector)
 
 void XStringVector_iterator_add(XStringVector* this_XStringVector, XStringVector_iterator* it)
 {
-	XVector_iterator_add(this_XStringVector,it);
+	if (ISNULL(this_XStringVector, "") || ISNULL(it, ""))
+		return;
+	void* back = XVtableGetFunc(XVector_class_init(), EXVector_Back, void* (*)(XVector*))(this_XStringVector);
+	if (it->data == back)//如果是最后一个元素则返回空表示遍历完成了
+	{
+		it->data = NULL;
+		return;
+	}
+	it->data = ((char*)(it->data)) + ((XContainerObject*)this_XStringVector)->m_typeSize;//指向下一个元素
 }
 
 bool XStringVector_iterator_equality(XStringVector_iterator* itFirst, XStringVector_iterator* itSecond)
@@ -26,8 +34,9 @@ void XStringVector_iterator_for_each(XStringVector* this_XStringVector, XFor_eac
 {
 	if (this_XStringVector == NULL || ForFunction == NULL)
 		return;
-	for_each_iterator(this_XStringVector, XVector, it)
+	for_each_iterator(this_XStringVector, XStringVector, it)
 	{
+		/*printf("迭代器\n");*/
 		ForFunction(*((XString**)XStringVector_iterator_data(&it)), args);
 	}
 }

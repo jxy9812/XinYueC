@@ -21,6 +21,35 @@ static void XFuncCodeCb0x30(uint8_t code, void* obj, void* data, void* userData)
 		return 1;
 	}
 	printf("解析成功\n");
+	// 获取整数类型的键值
+	cJSON* type = cJSON_GetObjectItem(root, "type");
+	if (cJSON_IsNumber(type)) {
+		printf("type: %d\n", type->valueint);
+	}
+	cJSON* isWhile = cJSON_GetObjectItem(root, "isWhile");
+	if (cJSON_IsBool(isWhile)) {
+		printf("isWhile: %d\n", cJSON_IsTrue(isWhile));
+	}
+	cJSON* cylinderOpenTime = cJSON_GetObjectItem(root, "cylinderOpenTime");
+	if (cJSON_IsNumber(cylinderOpenTime)) {
+		printf("cylinderOpenTime: %d\n", cylinderOpenTime->valueint);
+	}
+	cJSON* screwStartTime = cJSON_GetObjectItem(root, "screwStartTime");
+	if (cJSON_IsNumber(screwStartTime)) {
+		printf("screwStartTime: %d\n", screwStartTime->valueint);
+	}
+	cJSON* waitShearTime = cJSON_GetObjectItem(root, "waitShearTime");
+	if (cJSON_IsNumber(waitShearTime)) {
+		printf("waitShearTime: %d\n", waitShearTime->valueint);
+	}
+	cJSON* waitReturnTime = cJSON_GetObjectItem(root, "waitReturnTime");
+	if (cJSON_IsNumber(waitReturnTime)) {
+		printf("waitReturnTime: %d\n", waitReturnTime->valueint);
+	}
+	cJSON* cuttingMotorSpeedDocking = cJSON_GetObjectItem(root, "cuttingMotorSpeedDocking");
+	if (cJSON_IsString(cuttingMotorSpeedDocking) && (cuttingMotorSpeedDocking->valuestring != NULL)) {
+		printf("cuttingMotorSpeedDocking: %s\n", cuttingMotorSpeedDocking->valuestring);
+	}
 
 	// 将修改后的 JSON 对象转换为字符串
 	char* json_str_modified = cJSON_Print(root);
@@ -41,7 +70,7 @@ void TJCHMICommTest()
 	printf("开始创建串口\n");
 	XSerialPortBase* USART = XSerialPortWin32_create();
 	USART->m_baudRate = 115200;
-	USART->m_portNum = 20;
+	USART->m_portNum = 2;
 	XIODeviceBase_setReadBuffer_base(USART, 1024);
 	XIODeviceBase_setWriteBuffer_base(USART, 1024);
 	XTJCHMIComm* comm = XTJCHMIComm_create(USART);

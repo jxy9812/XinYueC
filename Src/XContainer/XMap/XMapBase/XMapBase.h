@@ -6,8 +6,6 @@ extern "C" {
 #endif
 #include"XFunctionCallback.h"
 #include"XPair.h"
-typedef struct XVector XVector;
-typedef struct XPair XPair;
 #define XMAPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))       //XMap容器虚函数表大小
 //XMap虚函数表枚举
 XCLASS_DEFINE_BEGING(XMapBase)

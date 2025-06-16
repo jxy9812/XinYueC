@@ -14,7 +14,15 @@ XStringVector_reverse_iterator XStringVector_rend(XStringVector* this_XStringVec
 
 void XStringVector_reverse_iterator_add(XStringVector* this_XStringVector, XStringVector_reverse_iterator* it)
 {
-	return XVector_reverse_iterator_add(this_XStringVector, it);
+	if (ISNULL(this_XStringVector, "") || ISNULL(it, ""))
+		return;
+	XVector_reverse_iterator* front = XVtableGetFunc(XVector_class_init(), EXVector_Front, void* (*)(XVector*))(this_XStringVector);
+	if (it->data == front)//如果是第一个元素则返回空表示遍历完成了
+	{
+		it->data = NULL;
+		return;
+	}
+	it->data = ((char*)(it->data)) - ((XContainerObject*)this_XStringVector)->m_typeSize;//指向上一个元素
 }
 
 bool XStringVector_reverse_iterator_equality(XStringVector_reverse_iterator* itFirst, XStringVector_reverse_iterator* itSecond)
