@@ -203,4 +203,46 @@ XStringVector* XString_split(XString* this_string, const char* sep)
 
 	return result;
 }
+int XString_toInt(XString* this_string)
+{
+	if (this_string == NULL || XString_isEmpty_base(this_string))
+		return 0;
+	return atoi(XContainerDataPtr(this_string));
+}
+long  XString_toLong(XString* this_string,int radix)
+{
+	if(this_string==NULL||XString_isEmpty_base(this_string))
+		return 0;
+	return strtol(XContainerDataPtr(this_string),NULL, radix);
+}
+unsigned long XString_toULong(XString* this_string, int radix)
+{
+	if (this_string == NULL || XString_isEmpty_base(this_string))
+		return 0;
+	return strtoul(XContainerDataPtr(this_string), NULL, radix);
+}
+long long XString_toLongLong(XString* this_string, int radix)
+{
+	if (this_string == NULL || XString_isEmpty_base(this_string))
+		return 0;
+	return strtoll(XContainerDataPtr(this_string), NULL, radix);
+}
+unsigned long long XString_toULongLong(XString* this_string, int radix)
+{
+	if (this_string == NULL || XString_isEmpty_base(this_string))
+		return 0;
+	return strtoull(XContainerDataPtr(this_string), NULL, radix);
+}
+float XString_toFloat(XString* this_string)
+{
+	if (this_string == NULL || XString_isEmpty_base(this_string))
+		return 0;
+	return strtof(XContainerDataPtr(this_string), NULL);
+}
+double XString_toDouble(XString* this_string)
+{
+	if (this_string == NULL || XString_isEmpty_base(this_string))
+		return 0;
+	return strtod(XContainerDataPtr(this_string),NULL);
+}
 #endif

@@ -41,6 +41,7 @@ enum XStringEnum
 typedef struct XString
 {
 	XVector m_vector;
+
 }XString;
 //初始化类
 XVtable* XString_class_init();
@@ -100,6 +101,13 @@ int64_t XString_find_last_not_of(const XString* this_string, const char* subStr)
 //转16进制显示
 XString* XString_to16HexString(const uint8_t* data, size_t dataSize);
 XStringVector* XString_split(XString* this_string, const char* sep);
+int  XString_toInt(XString* this_string);
+long  XString_toLong(XString* this_string, int radix);
+unsigned long  XString_toULong(XString* this_string, int radix);
+long long  XString_toLongLong(XString* this_string, int radix);
+unsigned long long  XString_toULongLong(XString* this_string, int radix);
+float XString_toFloat(XString* this_string);
+double XString_toDouble(XString* this_string);
 #ifdef __cplusplus
 }
 #endif

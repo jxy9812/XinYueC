@@ -4,6 +4,10 @@
 #include"XVector.h"
 #include"XTimerBase.h"
 #include"cJSON.h"
+#include"XString.h"
+#include"XStringVector.h"
+#include <stdio.h>
+#include <stdlib.h>
 static void XFuncCodeCb0x1A(uint8_t code, void* obj, void* data, void* userData)
 {
 	XVector* v = data;
@@ -48,9 +52,42 @@ static void XFuncCodeCb0x30(uint8_t code, void* obj, void* data, void* userData)
 	}
 	cJSON* cuttingMotorSpeedDocking = cJSON_GetObjectItem(root, "cuttingMotorSpeedDocking");
 	if (cJSON_IsString(cuttingMotorSpeedDocking) && (cuttingMotorSpeedDocking->valuestring != NULL)) {
-		printf("cuttingMotorSpeedDocking: %s\n", cuttingMotorSpeedDocking->valuestring);
+		//printf("cuttingMotorSpeedDocking: %s\n", cuttingMotorSpeedDocking->valuestring);
+		XString* str= cJSON_GetStringValue_XString(cuttingMotorSpeedDocking);
+		if (str != NULL)
+		{
+			XStringVector* strlist = XString_split(str, "-");
+			if (strlist != NULL )
+			{
+				if (XContainerSize(strlist) == 3)
+				{
+					printf("%d %d %d\n"
+						, XString_toInt(XStringVector_at_base(strlist, 0))
+						, XString_toInt(XStringVector_at_base(strlist, 1))
+						, XString_toInt(XStringVector_at_base(strlist, 2))
+					);
+				}
+				XStringVector_delete_base(strlist);
+			}
+			XString_delete_base(str);
+		}
 	}
-
+	cJSON* screwMotorSpeedStartMove = cJSON_GetObjectItem(root, "screwMotorSpeedStartMove");
+	if (cJSON_IsString(screwMotorSpeedStartMove) && (screwMotorSpeedStartMove->valuestring != NULL)) {
+		printf("screwMotorSpeedStartMove: %s\n", screwMotorSpeedStartMove->valuestring);
+	}
+	cJSON* screwMotorSpeedDocking = cJSON_GetObjectItem(root, "screwMotorSpeedDocking");
+	if (cJSON_IsString(screwMotorSpeedDocking) && (screwMotorSpeedDocking->valuestring != NULL)) {
+		printf("screwMotorSpeedDocking: %s\n", screwMotorSpeedDocking->valuestring);
+	}
+	cJSON* screwMotorSpeedReturn = cJSON_GetObjectItem(root, "screwMotorSpeedReturn");
+	if (cJSON_IsString(screwMotorSpeedReturn) && (screwMotorSpeedReturn->valuestring != NULL)) {
+		printf("screwMotorSpeedReturn: %s\n", screwMotorSpeedReturn->valuestring);
+	}
+	cJSON* cuttingArgs = cJSON_GetObjectItem(root, "cuttingArgs");
+	if (cJSON_IsString(cuttingArgs) && (cuttingArgs->valuestring != NULL)) {
+		printf("cuttingArgs: %s\n", cuttingArgs->valuestring);
+	}
 	// 将修改后的 JSON 对象转换为字符串
 	char* json_str_modified = cJSON_Print(root);
 	if (json_str_modified == NULL) {
