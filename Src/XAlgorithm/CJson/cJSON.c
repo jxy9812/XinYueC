@@ -142,7 +142,7 @@ CJSON_PUBLIC(double) cJSON_GetNumberValue(const cJSON * const item)
 #if XString_ON
 CJSON_PUBLIC(XString*) cJSON_GetStringValue_XString(const cJSON* const item)
 {
-    if (!cJSON_IsString(item))
+    if (item==NULL|| !cJSON_IsString(item))
     {
         return NULL;
     }
