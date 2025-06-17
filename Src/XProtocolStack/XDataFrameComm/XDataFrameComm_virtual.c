@@ -338,7 +338,10 @@ bool VXCommunicatorBase_connect(XDataFrameComm* comm)
 		return true;
 	if (XVtableGetFunc(XCommunicatorBase_class_init(), EXCommunicatorBase_Connect, bool(*)(XCommunicatorBase*))(comm))
 	{
-		comm->m_eRcvState = XDFC_STATE_RX_INIT;  // 初始状态：等待总线空闲
+		if(comm->m_frameEndMode== XDFC_FRAME_END_TIMEOUT)
+			comm->m_eRcvState = XDFC_STATE_RX_INIT;  // 初始状态：等待总线空闲
+		else
+			comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 初始状态：总线空闲
 		//comm->m_eSndState = XDFC_STATE_TX_IDLE;//发送空闲
 		comm->m_state = XDFC_STATE_ENABLED; // 更新状态为启用
 		return true;
