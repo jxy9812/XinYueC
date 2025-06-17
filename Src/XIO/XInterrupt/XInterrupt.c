@@ -14,13 +14,13 @@ typedef struct  XInterrupt
 	size_t m_size;
 }XInterrupt;
 //遍历链表处理回调
-static void List_Handler(void** data,uint16_t index) 
+static void List_Handler(void** data, uint16_t index)
 {
-	XListSLinked*list=data[index];
+	XListSLinked* list = data[index];
 	//for_each_iterator(list,XListSLinked,it)
-	XListSNode* node= XContainerDataPtr(list);
+	XListSNode* node = XContainerDataPtr(list);
 	{
-		XInterruptNode* i=XListSNode_DataPtr(node);
+		XInterruptNode* i = XListSNode_DataPtr(node);
 		i->callback(i->userData);
 		node = node->next;
 	}
@@ -31,11 +31,11 @@ static const _Bool XEquality_XInterrupt(const void* LPrevValue, const void* LNex
 }
 void XInterrupt_init_stack(XInterrupt* interrupt, void** data, size_t size)
 {
-	if (interrupt == NULL|| interrupt->m_data!=NULL)
+	if (interrupt == NULL || interrupt->m_data != NULL)
 		return;//仅初始化一次  
 	interrupt->m_data = data;
 	interrupt->m_size = size;
-	memset(data,0,sizeof(void*)*size);
+	memset(data, 0, sizeof(void*) * size);
 }
 void XInterrupt_addCallback(XInterrupt* interrupt, uint8_t index, InterruptCallback callback, void* userData)
 {
@@ -84,7 +84,7 @@ static XInterrupt name={0};static void*name##data[size];
 #define TIM_COUNT 14   //定时器数量
 #if XINTERRUPT_ENABLE_USARTX_HANDLING
 XInterrupt_Create(USARTx, USART_COUNT)
-void XInterrupt_addUSARTxCallback(uint8_t portNum, InterruptCallback callback,void* userData)
+void XInterrupt_addUSARTxCallback(uint8_t portNum, InterruptCallback callback, void* userData)
 {
 	XInterrupt_Init(USARTx);
 	XInterrupt_addCallback(&USARTx, portNum - 1, callback, userData);
@@ -106,12 +106,12 @@ size_t XInterrupt_getUSARTxCallbackSize(uint8_t portNum)
 
 #if XINTERRUPT_ENABLE_TIMX_HANDLING
 XInterrupt_Create(TIMx, TIM_COUNT)
-void XInterrupt_addTIMxCallback(uint8_t portNum, InterruptCallback callback, void *userData)
+void XInterrupt_addTIMxCallback(uint8_t portNum, InterruptCallback callback, void* userData)
 {
 	XInterrupt_Init(TIMx);
-	XInterrupt_addCallback(&TIMx,portNum-1,callback,userData);
+	XInterrupt_addCallback(&TIMx, portNum - 1, callback, userData);
 }
-void XInterrupt_removeTIMxCallback(uint8_t portNum, InterruptCallback callback,void* userData)
+void XInterrupt_removeTIMxCallback(uint8_t portNum, InterruptCallback callback, void* userData)
 {
 	XInterrupt_Init(TIMx);
 	XInterrupt_removeCallback(&TIMx, portNum - 1, callback, userData);
@@ -182,39 +182,39 @@ TIMX_IRQHandler(5)
 
 #endif
 #if XINTERRUPT_ENABLE_TIM9_HANDLING
-void TIM1_BRK_TIM9_IRQHandler(void) 
+void TIM1_BRK_TIM9_IRQHandler(void)
 {
-	TIMX_Handler(9);
+	List_Handler(TIMxdata, 9 - 1);
 }
 #endif
 #if XINTERRUPT_ENABLE_TIM10_HANDLING
-void TIM1_UP_TIM10_IRQHandler(void) 
+void TIM1_UP_TIM10_IRQHandler(void)
 {
-	TIMX_Handler(10);
+	List_Handler(TIMxdata, 10 - 1);
 }
 #endif
 #if XINTERRUPT_ENABLE_TIM11_HANDLING
-void TIM1_TRG_COM_TIM11_IRQHandler(void) 
+void TIM1_TRG_COM_TIM11_IRQHandler(void)
 {
-	TIMX_Handler(11);
+	List_Handler(TIMxdata, 11 - 1);
 }
 #endif
 #if XINTERRUPT_ENABLE_TIM12_HANDLING
-void TIM8_BRK_TIM12_IRQHandler(void) 
+void TIM8_BRK_TIM12_IRQHandler(void)
 {
-	TIMX_Handler(12);
+	List_Handler(TIMxdata, 12 - 1);
 }
 #endif
 #if XINTERRUPT_ENABLE_TIM13_HANDLING
-void TIM8_UP_TIM13_IRQHandler(void) 
+void TIM8_UP_TIM13_IRQHandler(void)
 {
-	TIMX_Handler(13);
+	List_Handler(TIMxdata, 13 - 1);
 }
 #endif
 #if XINTERRUPT_ENABLE_TIM14_HANDLING
-void TIM8_TRG_COM_TIM14_IRQHandler(void) 
+void TIM8_TRG_COM_TIM14_IRQHandler(void)
 {
-	List_Handler(TIMxdata,14-1);
+	List_Handler(TIMxdata, 14 - 1);
 }
 #endif
 

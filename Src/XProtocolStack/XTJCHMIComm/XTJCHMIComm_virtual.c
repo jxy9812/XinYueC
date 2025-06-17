@@ -155,7 +155,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 					XVector* v = XVector_Create(uint8_t);
 					if (v == NULL)
 						return;
-					XVector_copy_base(v, comm->m_parent.m_recvAsyncBuffer);
+					XVector_copy_base(v, recvVector);
 					if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(XDFC_FRAME_RECEIVED, 0, v)))
 					{
 						XVector_delete_base(v);//释放数组防止内存泄露
@@ -173,7 +173,8 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 					XVector* v = XVector_Create(uint8_t);
 					if (v == NULL)
 						return;
-					XVector_copy_base(v, comm->m_parent.m_recvAsyncBuffer);
+					XContainerSize(recvVector) -=2;//缓冲区删除CRC
+					XVector_copy_base(v, recvVector);
 					if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(XDFC_FRAME_RECEIVED, 0, v)))
 					{
 						XVector_delete_base(v);//释放数组防止内存泄露

@@ -18,7 +18,7 @@ static void XFuncCodeCb0x30(uint8_t code, void* obj, void* data, void* userData)
 	XVector* v = data;
 	printf("0x30功能码调用\n");
 	// 解析 JSON 字符串
-	cJSON* root = cJSON_ParseWithLength(((uint8_t*)XContainerDataPtr(v))+1, XContainerSize(v)-1-2);
+	cJSON* root = cJSON_ParseWithLength(((uint8_t*)XContainerDataPtr(v))+1, XContainerSize(v)-1);
 	if (root == NULL) 
 	{
 		printf("解析失败\n");
@@ -28,7 +28,7 @@ static void XFuncCodeCb0x30(uint8_t code, void* obj, void* data, void* userData)
 	// 获取整数类型的键值
 	cJSON* type = cJSON_GetObjectItem(root, "type");
 	if (cJSON_IsNumber(type)) {
-		printf("type: %d\n", type->valueint);
+		printf("Command: %d\n", type->valueint);
 	}
 	cJSON* isWhile = cJSON_GetObjectItem(root, "isWhile");
 	if (cJSON_IsBool(isWhile)) {
@@ -130,7 +130,7 @@ void TJCHMICommTest()
 	{
 		if (XTimerBase_getCurrentTime() > current + 1000)
 		{
-			XDataFrameComm_sendTextFmt(comm, false,  "main.cuttingMotorSp.val=%d", speed++);
+			//XDataFrameComm_sendTextFmt(comm, false,  "main.cuttingMotorSp.val=%d", speed++);
 			current = XTimerBase_getCurrentTime();
 		}
 		XDataFrameComm_poll_base(comm);
