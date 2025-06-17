@@ -262,7 +262,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 				XString_delete_base(str);
 			}
 #endif // 
-#ifdef XDFC_SEND_FRAME_STR_SHOW
+#if XDFC_SEND_FRAME_STR_SHOW
 			if (XVector_Back_Base(frame, char) != 0)
 			{
 				char c = 0;
