@@ -246,8 +246,8 @@ void VXModbusBase_poll(XModbusBase* modbus)
 	XModbus_EventHandling(modbus);
 	XCommunicatorBase* comm = modbus;
 	//处理定时器任务
-	if (comm->m_wheel)
-		XTimerGroupWheel_poll_base(comm->m_wheel);
+	if (comm->m_timerGroup)
+		XTimerGroupWheel_poll_base(comm->m_timerGroup);
 
 }
 

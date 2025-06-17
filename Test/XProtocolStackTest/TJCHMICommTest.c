@@ -6,6 +6,7 @@
 #include"cJSON.h"
 #include"XString.h"
 #include"XStringVector.h"
+#include"XTimerGroupBase.h"
 #include <stdio.h>
 #include <stdlib.h>
 static void XFuncCodeCb0x1A(uint8_t code, void* obj, void* data, void* userData)
@@ -107,7 +108,7 @@ void TJCHMICommTest()
 	printf("开始创建串口\n");
 	XSerialPortBase* USART = XSerialPortWin32_create();
 	USART->m_baudRate = 115200;
-	USART->m_portNum = 2;
+	USART->m_portNum = 20;
 	XIODeviceBase_setReadBuffer_base(USART, 1024);
 	XIODeviceBase_setWriteBuffer_base(USART, 1024);
 	XTJCHMIComm* comm = XTJCHMIComm_create(USART);
@@ -134,5 +135,6 @@ void TJCHMICommTest()
 			current = XTimerBase_getCurrentTime();
 		}
 		XDataFrameComm_poll_base(comm);
+		XTimerGroupBase_global_poll();
 	}
 }

@@ -39,3 +39,14 @@ void XTimerGroupWheel_removeTimeWheel_base(XTimerGroupWheel* group)
 		return;
 	XClassGetVirtualFunc(group, EXTimeGroupWheel_Remove_TimeWheel, void(*)(XTimerGroupWheel*))(group);
 }
+
+void XTimerGroupWheel_setGlobal()
+{
+	if (XTimerGroupBase_global() != NULL)
+		return;
+	XTimerGroupWheel* group = XTimerGroupWheel_create(1);
+	XTimerGroupWheel_addTimeWheel_base(group,100);
+	XTimerGroupWheel_addTimeWheel_base(group,100);
+	XTimerGroupWheel_addTimeWheel_base(group,100);
+	XTimerGroupBase_setGlobal(group);
+}

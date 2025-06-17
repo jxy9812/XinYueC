@@ -24,6 +24,7 @@ static bool  VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandl
 static void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_delete(XDataFrameComm* comm);
+static void VXDataFrameComm_setTimerGroup(XDataFrameComm* comm, XTimerGroupBase* group);
 static void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 static void VXDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 static void VXDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
@@ -56,6 +57,7 @@ XVtable* XDataFrameComm_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Poll, VXCommunicatorBase_poll);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Connect, VXCommunicatorBase_connect);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Disconnect, VXCommunicatorBase_disconnect);
+	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_SetTimerGroup, VXDataFrameComm_setTimerGroup);
 #if SHOWCONTAINERSIZE
 	printf("XDataFrameComm size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -68,7 +70,10 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 		return;//数据缓冲区是空的也就没必要继续了
 	
 	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm->m_parent.m_recvAsyncBuffer))
+	{
+		XDataFrameComm_sendEvent(comm, XEventMin_create(XDFC_RX_FRAME_ERROR, 0));
 		return;//校验没通过
+	}
 	XVector* v = XVector_Create(uint8_t);
 	if (v == NULL)
 		return;
@@ -328,9 +333,6 @@ void VXCommunicatorBase_poll(XDataFrameComm* comm)
 	{
 		XEventDispatcher_handler(comm->m_eventDispatcher);//处理事件
 	}
-	//处理定时器任务
-	if (((XCommunicatorBase*)comm)->m_wheel)
-		XTimerGroupBase_poll_base(((XCommunicatorBase*)comm)->m_wheel);
 }
 bool VXCommunicatorBase_connect(XDataFrameComm* comm)
 {
@@ -394,13 +396,18 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 	}
 	else if (mode == XDFC_COMM_MODE_HALF_DUPLEX)
 	{//半双工
+		if (((XCommunicatorBase*)comm)->m_timerGroup == NULL)
+		{
+			printf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
+			exit(-1);
+		}
 		if (comm->m_timerSendExpired==NULL)
 		{
 			XTimerBase* timer = XTimerWheel_create();
 			XTimerBase_setTimerCallback(timer, TimerSendExpired);
 			XTimerBase_setUserData(timer, comm);
 			XTimerBase_setAutoDelete(timer,false);
-			XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_wheel);
+			XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 			XTimerBase_setTimeout_base(timer, XDFC_HALF_DUPLEX_SEND_WAIT_TIME);
 			comm->m_timerSendExpired = timer;
 		}
@@ -437,13 +444,18 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 		return XDFC_EILLSTATE;//协议栈启动中不支持修改
 	if (mode == XDFC_FRAME_END_TIMEOUT)
 	{//设置为超时结束
+		if (((XCommunicatorBase*)comm)->m_timerGroup == NULL)
+		{
+			printf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
+			exit(-1);
+		}
 		if (comm->m_timerRecvExpired == NULL)
 		{
 			XTimerBase* timer = XTimerWheel_create();
 			XTimerBase_setTimerCallback(timer, TimerRecvExpired);
 			XTimerBase_setUserData(timer, comm);
 			XTimerBase_setAutoDelete(timer, false);
-			XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_wheel);
+			XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 			XTimerBase_setTimeout_base(timer, XDFC_FRAME_END_TIMEOUT_TIME);
 			comm->m_timerRecvExpired = timer;
 		}
@@ -520,7 +532,7 @@ XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XVector* data, ui
 	XListBase_push_back_base(comm->m_periodicSendList,&pair);
 	XTimerBase_setTimeout_base(timer, time);
 	XTimerBase_setInterval_base(timer, time);
-	XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_wheel);
+	XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 	XTimerBase_setUserData(timer, pair);
 	XTimerBase_setTimerCallback(timer, SendDataPeriodicCb);
 	XTimerBase_start_base(timer);
@@ -596,6 +608,19 @@ void VXDataFrameComm_delete(XDataFrameComm* comm)
 		XTimerBase_delete_base(comm->m_timerSendExpired);
 	//调用父类释放函数
 	XVtableGetFunc(XCommunicatorBase_class_init(), EXClass_Delete, void(*)(XCommunicatorBase*))(comm);
+}
+
+void VXDataFrameComm_setTimerGroup(XDataFrameComm* comm, XTimerGroupBase* group)
+{
+	XTimerGroupBase* g = ((XCommunicatorBase*)comm)->m_timerGroup;
+	if (g != NULL)
+	{
+		if (comm->m_timerRecvExpired)
+			XTimerGroupBase_removeTimer_base(g, comm->m_timerRecvExpired);
+		if (comm->m_timerSendExpired)
+			XTimerGroupBase_removeTimer_base(g, comm->m_timerSendExpired);
+	}
+	XVtableGetFunc(XCommunicatorBase_class_init(), EXCommunicatorBase_SetTimerGroup, bool(*)(XCommunicatorBase*, XTimerGroupBase*))(comm, group);
 }
 
 void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)

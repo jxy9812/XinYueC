@@ -137,7 +137,7 @@ XTimerBase* XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFra
 		XListBase_push_back_base(modbus->m_regularlySendMaster, &regularly);
 		XTimerBase_setTimeout_base(timer,time);
 		XTimerBase_setInterval_base(timer, time);
-		XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)modbus)->m_wheel);
+		XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)modbus)->m_timerGroup);
 		XTimerBase_setUserData(timer, XListBase_back_base(modbus->m_regularlySendMaster));
 		XTimerBase_setTimerCallback(timer, sendFrameCallback);
 		XTimerBase_start_base(timer);

@@ -22,6 +22,7 @@ typedef enum
     XDFC_READY,                   /*!< 启动完成事件 */
     XDFC_FRAME_RECEIVED,          /*!< 接收到完整帧事件 */
     XDFC_RX_BUFFER_OVERFLOW,      /*!<接收缓冲区溢出 >*/
+    XDFC_RX_FRAME_ERROR,          /*!<接收帧错误>*/
     XDFC_EXECUTE,                 /*!< 执行功能码处理事件 */
     XDFC_FRAME_SENT               /*!< 帧发送完成事件 */
 }XDFC_EventType;

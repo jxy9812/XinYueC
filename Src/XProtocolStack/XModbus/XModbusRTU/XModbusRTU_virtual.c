@@ -64,8 +64,8 @@ void XModbusRTU_init(XModbusRTU* modbus, XIODeviceBase* io, XTimerBase* timerT35
     XTimerWheel_setTimerCallback(modbus->m_timerT35Expired, VXModbusBase_TimerT35Expired);
     XTimerWheel_setUserData(modbus->m_timerT35Expired, modbus);
     modbus->m_timerT35Expired->m_autoDelete = false;
-   // modbus->m_timerT35Expired->timerId = ((XCommunicatorBase*)modbus)->m_wheel;
-    XTimerBase_setTimerGroup(modbus->m_timerT35Expired, ((XCommunicatorBase*)modbus)->m_wheel);
+   // modbus->m_timerT35Expired->timerId = ((XCommunicatorBase*)modbus)->m_timerGroup;
+    XTimerBase_setTimerGroup(modbus->m_timerT35Expired, ((XCommunicatorBase*)modbus)->m_timerGroup);
     //发送一帧数据定时器，延迟用来接收数据，防止一直在发却收不到
     if (timerSendExpired == NULL)
         modbus->m_timerSendExpired = XTimerWheel_create();
@@ -74,8 +74,8 @@ void XModbusRTU_init(XModbusRTU* modbus, XIODeviceBase* io, XTimerBase* timerT35
     XTimerWheel_setTimerCallback(modbus->m_timerSendExpired, VXModbusBase_TimerSendExpired);
     XTimerWheel_setUserData(modbus->m_timerSendExpired, modbus);
     modbus->m_timerSendExpired->m_autoDelete = false;    //MB_MASTER_RECV_WAIT_TIME
-    XTimerBase_setTimerGroup(modbus->m_timerSendExpired, ((XCommunicatorBase*)modbus)->m_wheel);
-    //modbus->m_timerSendExpired->timerId = ((XCommunicatorBase*)modbus)->m_wheel;
+    XTimerBase_setTimerGroup(modbus->m_timerSendExpired, ((XCommunicatorBase*)modbus)->m_timerGroup);
+    //modbus->m_timerSendExpired->timerId = ((XCommunicatorBase*)modbus)->m_timerGroup;
 }
 XModbusErrorCode VXModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frameData)
 {

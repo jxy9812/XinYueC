@@ -20,6 +20,7 @@ XCLASS_DEFINE_ENUM(XCommunicatorBase, IsConnected),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, Poll),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, SetOption),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, GetOption),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, SetTimerGroup),
 XCLASS_DEFINE_END(XCommunicatorBase)
 
 //通信基础类
@@ -32,10 +33,11 @@ typedef struct XCommunicatorBase
 	void* m_userData;//用户数据
 	RecvDataCallback m_recvDataCallback;//接收数据回调函数
 	XVector* m_recvAsyncBuffer;//异步接收数据的缓冲区
-	XTimerGroupWheel* m_wheel;//时间轮定时器组  默认3级(每级100轮) 1ms~999 秒
+	XTimerGroupBase* m_timerGroup;//定时器组 默认创建三级全局XTimerGroupWheel
 }XCommunicatorBase;
 XVtable* XCommunicatorBase_class_init();
 void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io);
+void XCommunicatorBase_setTimerGroup_base(XCommunicatorBase* comm, XTimerGroupBase* group);
 bool XCommunicatorBase_connect_base(XCommunicatorBase* comm);
 bool  XCommunicatorBase_disconnect_base(XCommunicatorBase* comm);
 bool  XCommunicatorBase_isConnected_base(XCommunicatorBase* comm);

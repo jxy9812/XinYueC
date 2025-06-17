@@ -16,6 +16,7 @@ const char* XDataFrameComm_EventType_toString(XDFC_EventType type)
 	case XDFC_EXECUTE:return "XDFC_EXECUTE(执行功能码处理事件)"; break;
 	case XDFC_FRAME_SENT:return "XDFC_FRAME_SENT(帧发送完成事件)"; break;
 	case XDFC_RX_BUFFER_OVERFLOW:return "XDFC_RX_BUFFER_OVERFLOW(接收缓冲区溢出事件)"; break;
+	case XDFC_RX_FRAME_ERROR:return "XDFC_RX_FRAME_ERROR(接收帧错误没通过校验)"; break;
 	default:
 		return ENUM_DEFAULT_EXPLAIN("当前事件类型未做说明"); break;
 	}

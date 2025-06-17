@@ -16,6 +16,7 @@ static bool VXCommunicatorBase_isConnected(XCommunicatorBase* comm);
 static void VXCommunicatorBase_poll(XCommunicatorBase* comm);
 static void VXCommunicatorBase_setOption(XCommunicatorBase* comm, int optionId, const void* value, size_t size);
 static void VXCommunicatorBase_getOption(XCommunicatorBase* comm, int optionId, void* value, size_t* size);
+static void VXCommunicatorBase_setTimerGroup(XCommunicatorBase* comm, XTimerGroupBase* group);
 XVtable* XCommunicatorBase_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -33,7 +34,8 @@ XVtable* XCommunicatorBase_class_init()
 		VXCommunicatorBase_send,VXCommunicatorBase_recv,
 		VXCommunicatorBase_sendAsync,VXCommunicatorBase_recvAsync,
 		VXCommunicatorBase_isConnected,VXCommunicatorBase_poll,
-		VXCommunicatorBase_setOption,VXCommunicatorBase_getOption
+		VXCommunicatorBase_setOption,VXCommunicatorBase_getOption,
+		VXCommunicatorBase_setTimerGroup
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -51,8 +53,8 @@ void VXCommunicatorBase_delete(XCommunicatorBase* comm)
 		XIODeviceBase_delete_base(comm->m_io);
 	if (comm->m_recvAsyncBuffer)
 		XVector_delete_base(comm->m_recvAsyncBuffer);
-	if (comm->m_wheel)
-		XTimerGroupBase_delete_base(comm->m_wheel);
+	/*if (comm->m_timerGroup)
+		XTimerGroupBase_delete_base(comm->m_timerGroup);*/
 	XMemory_free(comm);
 }
 
@@ -166,10 +168,6 @@ void VXCommunicatorBase_poll(XCommunicatorBase* comm)
 {
 	//处理异步接收
 	recvAsync(comm);
-	//处理定时器任务
-	if (comm->m_wheel)
-		XTimerGroupWheel_poll_base(comm->m_wheel);
-
 }
 
 void VXCommunicatorBase_setOption(XCommunicatorBase* comm, int optionId, const void* value, size_t size)
@@ -210,4 +208,10 @@ void VXCommunicatorBase_getOption(XCommunicatorBase* comm, int optionId, void* v
 	default:
 		break;
 	}
+}
+
+void VXCommunicatorBase_setTimerGroup(XCommunicatorBase* comm, XTimerGroupBase* group)
+{
+	if (comm)
+		comm->m_timerGroup = group;
 }
