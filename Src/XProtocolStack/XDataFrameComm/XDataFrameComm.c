@@ -268,12 +268,17 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 	{
 		char c = 0;
 		XVector_push_back_base(frame, &c);
+		printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
+		--XContainerSize(frame);
 	}
-	printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
+	else
+	{
+		printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
+	}
 #endif // XDFC_RECV_FRAME_STR_SHOW
 	XDataFrameComm* comm = event->userData;
 	uint8_t funcCode;
-	if (comm->m_funcCodeMap == NULL||comm->m_getFuncCode==NULL|| !comm->m_getFuncCode(frame,&funcCode))
+	if (comm->m_funcCodeMap == NULL||comm->m_getFuncCode==NULL|| !comm->m_getFuncCode(comm,frame,&funcCode))
 	{//没有功能码处理或获取失败 直接释放
 		ev->frame = NULL;
 		XVector_delete_base(frame);
@@ -290,6 +295,7 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 //功能码事件回调
 void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 {
+	//printf("功能码事件\n");
 	XEventFuncCode* ev = event;
 	XVector* frame = ev->m_parent.frame;
 	XDataFrameComm* comm = event->userData;
@@ -311,7 +317,7 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 	XVector_delete_base(frame);//释放帧数据以免内存泄露
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
-bool XDataFrameComm_GetFuncCodeCb(XVector* data, uint8_t* code)
+bool XDataFrameComm_GetFuncCodeCb(XDataFrameComm* comm, XVector* data, uint8_t* code)
 {
 	if(data==NULL||XVector_isEmpty_base(data)|| code==NULL)
 		return false;

@@ -7,6 +7,7 @@ extern "C" {
 #include"XModbusConfig.h"
 #if MB_RTU_ENABLED
 #include<stdint.h>
+#include<stdbool.h>
 #include"XModbusEnum.h"
 typedef struct XModbusFrame XModbusFrame;
 typedef struct XString XString;
@@ -223,9 +224,9 @@ void XModbusFrameRTU_setFrameData_0x0F_reply(XModbusFrame* frame, uint8_t addres
 void XModbusFrameRTU_setFrameData_0x8X_reply(XModbusFrame* frame, uint8_t address, uint8_t funcCode, XModbusException exception);
 /* ----------------------- RTU模式解析数据帧-------------------------------------*/
 //将一个数据解析成RTU 请求帧
-void XModbusFrameRTU_parseData_request(XModbusFrame* frame, XVector* frameData);
+void XModbusFrameRTU_parseData_request(XModbusFrame* frame, XVector* frameData, bool isCoypData);
 //将一个数据解析成RTU 响应帧
-void XModbusFrameRTU_parseData_reply(XModbusFrame* frame, XVector* frameData);
+void XModbusFrameRTU_parseData_reply(XModbusFrame* frame, XVector* frameData,bool isCoypData);
 //解析RTU模式下数据帧中主机地址
 uint8_t XModbusFrameRTU_parseAddress(XModbusFrame* frame);
 //解析RTU模式下数据帧中功能码

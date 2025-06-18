@@ -5,67 +5,6 @@
 #include "XModbusRtu.h"
 #include "XCrc.h"
 #include <string.h>
-XModbusFrameQueue* XModbusFrameQueue_create(size_t count)
-{
-	XModbusFrameQueue* queue = XCircularQueueAtomic_Create(XModbusFrame*,count);
-	return queue;
-}
-
-bool XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrame* frameData)
-{
-	return XCircularQueue_push_base(queue, &frameData);
-}
-
-XModbusFrame* XModbusFrameQueue_top(XModbusFrameQueue* queue)
-{
-	if(queue==NULL)
-		return NULL;
-	return XCircularQueue_Top_Base(queue, XModbusFrameQueue*);
-}
-
-bool XModbusFrameQueue_empty(XModbusFrameQueue* queue)
-{
-	if (queue)
-		return XCircularQueue_isEmpty_base(queue);
-	return true;
-}
-
-void XModbusFrameQueue_pop(XModbusFrameQueue* queue)
-{
-	if (queue == NULL)
-		return NULL;
-	//没有设置自动释放手动释放
-	if (XContainerDataDeleteMethod(queue) == NULL)
-	{
-		XModbusFrame* top= XModbusFrameQueue_top(queue);
-		////显释放里面的XVector数据
-		//if(top->frame)
-		//	XVector_delete_base(top->frame);
-		if(top->autoDelete)
-			XModbusFrame_free(top);
-	}
-	XCircularQueue_pop_base(queue);
-}
-
-bool XModbusFrameQueue_receive(XModbusFrameQueue* queue, XModbusFrame** pvFrame)
-{
-	return XCircularQueue_receive_base(queue,pvFrame);
-}
-
-void XModbusFrameQueue_clear(XModbusFrameQueue* queue)
-{
-	while (XModbusFrameQueue_empty(queue))
-	{
-		XModbusFrameQueue_pop(queue);
-	}
-}
-
-void XModbusFrameQueue_free(XModbusFrameQueue* queue)
-{
-	XModbusFrameQueue_clear(queue);
-	XCircularQueue_delete_base(queue);
-}
-
 XModbusFrame* XModbusFrame_create()
 {
 	XModbusFrame* frame=XMemory_malloc(sizeof(XModbusFrame));
@@ -75,7 +14,6 @@ XModbusFrame* XModbusFrame_create()
 	frame->frameData = XVector_Create(uint8_t);
 	frame->data = NULL;
 	frame->recvHandle = NULL;
-	frame->autoDelete = true;
 	return frame;
 }
 XModbusFrame* XModbusFrame_copy(XModbusFrame* frame)

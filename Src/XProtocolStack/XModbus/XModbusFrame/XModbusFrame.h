@@ -39,21 +39,11 @@ typedef struct XModbusFrameDataRecvHandle
 //Modbus一帧数据处理
 typedef struct XModbusFrame
 {
-    bool autoDelete;//自动删除
     XModbusMode mode;//modbus的模式
     XVector* frameData;//帧数据
     void* data;//用来存放解析后的数据 结构体
     XModbusFrameDataRecvHandle* recvHandle;//接收处理   主站才有
 }XModbusFrame;
-
-/* --------------------------------- XModbusFrameQueue 方法------------------------------------------*/
-XModbusFrameQueue* XModbusFrameQueue_create(size_t count);
-bool XModbusFrameQueue_push(XModbusFrameQueue* queue, XModbusFrame* frame);
-XModbusFrame* XModbusFrameQueue_top(XModbusFrameQueue* queue);
-bool XModbusFrameQueue_empty(XModbusFrameQueue* queue);
-void XModbusFrameQueue_pop(XModbusFrameQueue* queue);
-void XModbusFrameQueue_clear(XModbusFrameQueue* queue);
-void XModbusFrameQueue_free(XModbusFrameQueue* queue);
 /* --------------------------------- XModbusFrame 方法------------------------------------------*/
 XModbusFrame* XModbusFrame_create();
 XModbusFrame* XModbusFrame_copy(XModbusFrame* frame);

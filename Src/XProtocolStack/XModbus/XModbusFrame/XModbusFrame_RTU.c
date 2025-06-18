@@ -238,21 +238,31 @@ void XModbusFrameRTU_setFrameData_0x0F_reply(XModbusFrame* frame, uint8_t addres
 	setRtuDataFrame_8(frame, address, MB_FUNC_WRITE_MULTIPLE_COILS, SwapEndian16(coilsAddress, 1), SwapEndian16(coilsCount, 1));
 }
 //解析帧数据
-static void parseFrameData(XModbusFrame* frame, XVector* data)
+static void parseFrameData(XModbusFrame* frame, XVector* data, bool isCoypData)
 {
 	if (frame == NULL || data == NULL)
 		return;
-	if (frame->frameData == NULL)
-		frame->frameData = XVector_Create(uint8_t);
-	if (frame->frameData == NULL)
-		return;
+	if (isCoypData)
+	{
+		if (frame->frameData == NULL)
+			frame->frameData = XVector_Create(uint8_t);
+		if (frame->frameData == NULL)
+			return;
+	}
+	else if(frame->frameData != NULL)
+	{
+		XVector_delete_base(frame->frameData);
+	}
 	//开始解析RTU数据
 	size_t dataSize = XContainerSize(data);
 	uint8_t* pData = (uint8_t*)XContainerDataPtr(data);
 	// 校验帧长度和CRC（最小长度4字节，CRC正确）
 	if ((dataSize >= MB_SER_PDU_SIZE_MIN) && (XCrc_get16(pData, dataSize) == 0)) {
 		//printf("校验通过\n");
-		XVector_copy_base(frame->frameData, data);
+		if (isCoypData)
+			XVector_copy_base(frame->frameData, data);//拷贝
+		else
+			frame->frameData = data;//转移
 		if (frame->data == NULL)
 			frame->data = XModbusFrameRTU_create();
 		XModbusFrameRTU* rtu = (XModbusFrameRTU*)frame->data;
@@ -418,11 +428,11 @@ void XModbusFrameRTU_setFrameData_0x8X_reply(XModbusFrame* frame, uint8_t addres
 	XVector_At_Base(v,2,uint8_t)= exception;
 	XModbusFrame_set16Data(v);
 }
-void XModbusFrameRTU_parseData_request(XModbusFrame* frame, XVector* frameData)
+void XModbusFrameRTU_parseData_request(XModbusFrame* frame, XVector* frameData, bool isCoypData)
 {
 	if (frame == NULL || frameData == NULL)
 		return;
-	parseFrameData(frame, frameData);
+	parseFrameData(frame, frameData, isCoypData);
 	if (frame->data == NULL)
 		return;//初步解析失败没必要在解析下去了
 	uint8_t funcCode = ((XModbusFrameRTU*)(frame->data))->funcCode;
@@ -440,11 +450,11 @@ void XModbusFrameRTU_parseData_request(XModbusFrame* frame, XVector* frameData)
 		break;
 	}
 }
-void XModbusFrameRTU_parseData_reply(XModbusFrame* frame, XVector* frameData)
+void XModbusFrameRTU_parseData_reply(XModbusFrame* frame, XVector* frameData, bool isCoypData)
 {
 	if (frame == NULL || frameData == NULL)
 		return;
-	parseFrameData(frame,frameData);
+	parseFrameData(frame,frameData,isCoypData);
 	if(frame->data==NULL)
 		return;//初步解析失败没必要在解析下去了
 	uint8_t funcCode = ((XModbusFrameRTU*)(frame->data))->funcCode;

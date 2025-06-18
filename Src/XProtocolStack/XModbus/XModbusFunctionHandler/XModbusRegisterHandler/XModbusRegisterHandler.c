@@ -175,11 +175,11 @@ XModbusException XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbus* 
 0x02 0x06 0x00 0x03 0x00 0xA1 CRC16
 解析：响应与请求相同，确认写入成功
 */
-XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler)
+XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(uint8_t code, XModbusBase* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler)
 {
 	if (modbus == NULL || recvFrame == NULL || FunctionHandler == NULL)
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
-	XModbusRegisterHandler* regFunc = FunctionHandler->data;
+	XModbusRegisterHandler* regFunc = FunctionHandler;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu==NULL)
 		return MB_EX_ILLEGAL_FUNCTION;

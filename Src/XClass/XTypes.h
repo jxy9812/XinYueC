@@ -19,6 +19,7 @@ typedef struct XQueueBase XQueueBase;
 typedef struct XTimerBase XTimerBase;
 typedef struct XEventDispatcher XEventDispatcher;
 typedef struct XTimerGroupBase XTimerGroupBase;
+typedef struct XDataFrameComm  XDataFrameComm;
 typedef XMapBase XFuncCodeMap;
 
 

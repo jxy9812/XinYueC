@@ -3,6 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+typedef struct XModbusBase XModbusBase;
 #include"XModbusHandlerObject.h"
 #include<stdint.h>
 #include<stdbool.h>
@@ -35,7 +36,7 @@ XModbusException XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc(XModbus* 
 //0x04读输入寄存器接收回调函数 从站接收是请求报文
 XModbusException XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
 //0x06写保持寄存器接收回调函数 从站接收是请求报文
-XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
+XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(uint8_t code, XModbusBase* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
 //0x10写多个保持寄存器接收回调函数 从站接收是请求报文
 XModbusException XModbusRegisterHandler_0x10_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
 #ifdef __cplusplus

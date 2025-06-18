@@ -12,7 +12,7 @@ XModbusRTU* XModbusRTU_createSerialPort(XSerialPortBase* serial, XTimerBase* tim
 	uint32_t timerout = 3.5 * (10 + serial->m_parity) * 1000 / serial->m_baudRate;
 	if (timerout < 2)
 		timerout = 2;
-	XTimerWheel_setTimeout_base(rtu->m_timerT35Expired, timerout);
-	XTimerWheel_setTimeout_base(rtu->m_timerSendExpired, timerout* MB_MASTER_RECV_WAIT_TIME);
+	XTimerBase_setTimeout_base(((XDataFrameComm*)rtu)->m_timerRecvExpired, timerout);
+	XTimerBase_setTimeout_base(((XDataFrameComm*)rtu)->m_timerSendExpired, timerout* MB_MASTER_RECV_WAIT_TIME);
 	return rtu;
 }

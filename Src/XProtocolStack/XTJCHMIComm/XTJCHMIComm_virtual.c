@@ -206,7 +206,7 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 	if (XVector_isEmpty_base(comm->m_parent.m_recvAsyncBuffer))
 		return;//数据缓冲区是空的也就没必要继续了
 
-	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm->m_parent.m_recvAsyncBuffer))
+	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_parent.m_recvAsyncBuffer))
 		return;//校验没通过
 	XVector* v = XVector_Create(uint8_t);
 	if (v == NULL)

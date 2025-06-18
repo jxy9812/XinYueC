@@ -69,7 +69,7 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 	if (XVector_isEmpty_base(comm->m_parent.m_recvAsyncBuffer))
 		return;//数据缓冲区是空的也就没必要继续了
 	
-	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm->m_parent.m_recvAsyncBuffer))
+	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_parent.m_recvAsyncBuffer))
 	{
 		XDataFrameComm_sendEvent(comm, XEventMin_create(XDFC_RX_FRAME_ERROR, 0));
 		return;//校验没通过
@@ -341,9 +341,14 @@ bool VXCommunicatorBase_connect(XDataFrameComm* comm)
 	if (XVtableGetFunc(XCommunicatorBase_class_init(), EXCommunicatorBase_Connect, bool(*)(XCommunicatorBase*))(comm))
 	{
 		if(comm->m_frameEndMode== XDFC_FRAME_END_TIMEOUT)
+		{
 			comm->m_eRcvState = XDFC_STATE_RX_INIT;  // 初始状态：等待总线空闲
+			XTimerBase_start_base(comm->m_timerRecvExpired);
+		}
 		else
+		{
 			comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 初始状态：总线空闲
+		}
 		//comm->m_eSndState = XDFC_STATE_TX_IDLE;//发送空闲
 		comm->m_state = XDFC_STATE_ENABLED; // 更新状态为启用
 		return true;
@@ -480,7 +485,7 @@ XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XVector* data)
 		return XDFC_EINVAL;
 	}
 	if (comm->m_sendValidCb)
-		comm->m_sendValidCb(data);
+		comm->m_sendValidCb(comm,data);
 	if (!XQueueBase_push_base(comm->m_sendFrameQueue, &data))
 	{
 #if XDFC_QUEUE_FULL_SHOW
@@ -524,7 +529,7 @@ XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XVector* data, ui
 		return NULL;
 	}
 	if (comm->m_sendValidCb)
-		comm->m_sendValidCb(data);
+		comm->m_sendValidCb(comm,data);
 
 	XPair_First(pair, XDataFrameComm*) = comm;
 	XPair_Second(pair, XVector*) = data;
@@ -553,7 +558,7 @@ bool VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle
 	return true;
 }
 //接收验证Crc16回调
-static bool XRecvValidCrc16Cb(const XVector* data)
+static bool XRecvValidCrc16Cb(XDataFrameComm* comm, const XVector* data)
 {
 	return  XCrc_get16(XContainerDataPtr(data), XContainerSize(data)) == 0;
 }
@@ -568,7 +573,7 @@ void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16)
 	}
 }
 //发送验证Crc16回调
-static void XSendValidCrc16Cb(XVector* data)
+static void XSendValidCrc16Cb(XDataFrameComm* comm, XVector* data)
 {
 	//设置crc校验
 	XVector_append_crc16(data, XCRC_BYTE_ORDER_LITTLE_ENDIAN);

@@ -9,9 +9,9 @@ extern "C" {
 #include"XDataFrameCommEnum.h"
 #include"XEvent.h"
 #include"XFuncCodeMap.h"
-typedef bool (*XRecvValidCb)(const XVector* data);//接收验证回调(校验)
-typedef void (*XSendValidCb)(XVector* data);//发送验证回调(添加)
-typedef bool(*GetFuncCodeCb)(XVector* data,uint8_t* code);//从数据帧中获取功能码
+typedef bool (*XRecvValidCb)(XDataFrameComm* comm,const XVector* data);//接收验证回调(校验)
+typedef void (*XSendValidCb)(XDataFrameComm* comm, XVector* data);//发送验证回调(添加)
+typedef bool(*GetFuncCodeCb)(XDataFrameComm* comm, XVector* data,uint8_t* code);//从数据帧中获取功能码
 #define XDATAFRAMECOMM_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm))       //XDataFrameComm虚函数表大小
 XCLASS_DEFINE_BEGING(XDataFrameComm)
 XCLASS_DEFINE_ENUM(XDataFrameComm, SendFrameFSM) = XCLASS_VTABLE_GET_SIZE(XCommunicatorBase),
@@ -103,7 +103,7 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event);//通过调用设置
 //执行功能码事件回调
 void XDataFrameComm_EvnetExecuteCb(XEventMin* event);//通过调用设置事件处理函数重写
 //获取功能码回调
-bool XDataFrameComm_GetFuncCodeCb(XVector* data, uint8_t* code);
+bool XDataFrameComm_GetFuncCodeCb(XDataFrameComm* comm, XVector* data, uint8_t* code);
 /*以下是自定义的事件类型*/
 bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* event);//向事件队列追加一个事件
 typedef struct XEventRecvFrame

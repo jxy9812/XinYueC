@@ -7,25 +7,23 @@
 #include "XCircularQueueAtomic.h"
 #include "XTimerWheel.h"
 #include <string.h>
+static void XModbusBase_EvnetHandCb(XEventMin* event);
+static bool XModbusBase_GetFuncCodeCb(XModbusBase* modbus, XVector* data, uint8_t* code);
 void XModbusBase_init(XModbusBase* modbus, XIODeviceBase* io)
 {
 	if (modbus == NULL)
 		return NULL;
 	//开始初始化
-	memset(((XCommunicatorBase*)modbus) + 1, 0, sizeof(XModbusBase) - sizeof(XCommunicatorBase));
-	XCommunicatorBase_init(modbus,io);
+	memset(((XDataFrameComm*)modbus) + 1, 0, sizeof(XModbusBase) - sizeof(XDataFrameComm));
+	XDataFrameComm_init(modbus,io);
 	//设置异步接收的缓冲区大小
 	XCommunicatorBase_recvAsync_base(modbus, MB_RECV_BUFFER_SIZE);
 	XClassGetVtable(modbus) = XModbusBase_class_init();
+	XEventDispatcher_setAllEventCb(((XDataFrameComm*)modbus)->m_eventDispatcher, XModbusBase_EvnetHandCb, modbus);
+	XDataFrameComm_setGetFuncCodeCb(modbus, XModbusBase_GetFuncCodeCb);
 	modbus->m_address = 1;
 	modbus->m_mode = MB_NOT_MODE;
-	modbus->m_state = STATE_NOT_INITIALIZED;
-	modbus->m_sendQueue = XModbusFrameQueue_create(MB_FRAME_SEND_QUEUE_COUNT);
-	modbus->m_recvFrameQueue = XModbusFrameQueue_create(MB_FRAME_RECV_QUEUE_COUNT);
-	modbus->m_eventQueue = XCircularQueueAtomic_Create(XModbusEventType, MB_EVENT_QUEUE_COUNT);
-	modbus->m_funcCodeList = XModbusFuncCodeList_create();
-	
-
+	//modbus->m_state = STATE_NOT_INITIALIZED;
 }
 
 void XModbusBase_setAddress(XModbusBase* modbus, uint8_t address)
@@ -52,11 +50,11 @@ void XModbusBase_setMode(XModbusBase* modbus, XModbusMode mode)
 			modbus->m_recvHandleMaster= XVector_Create(XModbusFrameDataRecvHandle*);
 			modbus->m_recvHandleMaster->m_equality = recvHandleMaster_XEquality;
 		}
-		if(modbus->m_regularlySendMaster==NULL)
-		{
-			modbus->m_regularlySendMaster = XModbusRegularlySendFrameList_create();
-			//modbus->regularlySendMaster = XListSLinked_Create(XModbusRegularlySendFrame);
-		}
+		//if(modbus->m_regularlySendMaster==NULL)
+		//{
+		//	modbus->m_regularlySendMaster = XModbusRegularlySendFrameList_create();
+		//	//modbus->regularlySendMaster = XListSLinked_Create(XModbusRegularlySendFrame);
+		//}
 	}
 	else
 	{//释放资源暂时还没写
@@ -88,82 +86,137 @@ static bool setSendFrame(XModbusBase* modbus, XModbusFrame* frame)
 	}
 	return true;
 }
-XModbusErrorCode XModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame)
+XDFC_ErrorCode XModbusBase_sendFrame(XModbusBase* modbus, XModbusFrame* frame)
 {
 	if (modbus == NULL || frame == NULL)
-		return MB_EINVAL;
-	if (setSendFrame(modbus, frame))
-	{
-		if (!XModbusFrameQueue_push(modbus->m_sendQueue, frame))
-		{
-#if MB_QUEUE_FULL_SHOW
-			printf("发送帧队列溢出当前最大:%d,建议增大队列,调整:MB_FRAME_SEND_QUEUE_COUNT\n", MB_FRAME_SEND_QUEUE_COUNT);
-#endif // MB_QUEUE_FULL_SHOW
-			XModbusFrame_free(frame);
-			return MB_ENORES;
-		}
-	}
-	return MB_ENOERR;
-}
-//发送帧数据的回调函数
-static void sendFrameCallback(XModbusRegularlySendFrame* regularly)
-{
-#if MB_SEND_FRAME_REGULARLY_COPY
-	XModbusFrame* frame=XModbusFrame_copy(regularly->frame);
-#else
-	XModbusFrame* frame = regularly->frame;
-#endif
-	XModbusBase_sendFrame(regularly->modbus, frame);
-#if !MB_SEND_FRAME_REGULARLY_COPY
-	frame->autoDelete = false;
-#endif
-	//frame->recvHandle->timeout = XTimerBase_getCurrentTime() + MB_MASTER_RECV_OUT_TIME;
-	//printf("发送的:%d\n", frame->recvHandle->timeout);
+		return XDFC_ENOERR;
+	XDFC_ErrorCode code=XDataFrameComm_sendData_base(modbus, frame->frameData);
+	frame->frameData = NULL;
+	XModbusFrame_free(frame);
+	return code;
 }
 XTimerBase* XModbusBase_sendFrameRegularlyMaster(XModbusBase* modbus, XModbusFrame* frame, uint32_t time)
 {
 	if (modbus == NULL || frame == NULL)
 		return NULL;
-	if (setSendFrame(modbus, frame))
+	XDataFrameComm_addPeriodicSendData_base(modbus,frame->frameData,time);
+}
+//功能码事件回调
+void XModbusBase_EvnetExecuteCb(XEventMin* event)
+{
+	//printf("功能码事件\n");
+	XEventFuncCode* ev = event;
+	XModbusFrame* frame = ev->m_parent.frame;
+	XDataFrameComm* comm = event->userData;
+	XFuncCodeNode* node = NULL;
+	if (comm->m_funcCodeMap != NULL)
 	{
-		
-		XTimerWheel* timer = XTimerWheel_create();
-		XModbusRegularlySendFrame regularly = { 0 };
-		regularly.frame = frame;
-		regularly.time = time;
-		//regularly.timeOut = MB_MASTER_RECV_OUT_TIME;
-		regularly.modbus = modbus;
-		regularly.timer = timer;
-		XListBase_push_back_base(modbus->m_regularlySendMaster, &regularly);
-		XTimerBase_setTimeout_base(timer,time);
-		XTimerBase_setInterval_base(timer, time);
-		XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)modbus)->m_timerGroup);
-		XTimerBase_setUserData(timer, XListBase_back_base(modbus->m_regularlySendMaster));
-		XTimerBase_setTimerCallback(timer, sendFrameCallback);
-		XTimerBase_start_base(timer);
-		return timer;
+		node = XFuncCodeMap_value(comm->m_funcCodeMap, ev->funcCode);
 	}
-	return NULL;
-}
-
-XModbusErrorCode XModbusBase_setFunctionHandler(XModbusBase* modbus, XModbusFunctionHandler* FunctionHandler)
-{
-	if (modbus == NULL)
-		return MB_EINVAL;
-	if (FunctionHandler == NULL)
-		return MB_EINVAL;
-	XModbusFuncCodeList_push(modbus->m_funcCodeList, FunctionHandler);
-	return MB_ENOERR;
-}
-
-bool XModbusBase_sendEvent(XModbusBase* modbus, XModbusEventType event)
-{
-	if (!XQueueBase_push_base(modbus->m_eventQueue, &event))
+	if (node == NULL)
 	{
-#if MB_QUEUE_FULL_SHOW
-		printf("事件队列溢出当前最大:%d,建议增大队列,调整:MB_EVENT_QUEUE_COUNT\n", MB_EVENT_QUEUE_COUNT);
-#endif // MB_QUEUE_FULL_SHOW
+		ev->m_parent.frame = NULL;
+		//XVector_delete_base(frame);//释放帧数据以免内存泄露
+		XModbusFrame_free(frame);
+		XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
+		return;
+	}
+	if (node->cb != NULL)
+		node->cb(ev->funcCode, comm, frame, node->userData);
+	ev->m_parent.frame = NULL;
+	//XVector_delete_base(frame);//释放帧数据以免内存泄露
+	XModbusFrame_free(frame);
+	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
+}
+//接收到完整帧事件
+void XModbusBase_EvnetFrame_ReceivedCb(XEventMin* event)
+{
+	XEventRecvFrame* ev = event;
+	XVector* frame = ev->frame;
+	/*	if (!XQueueBase_receive_base(comm->m_recvFrameQueue, &v))
+			return;*/
+			//printf("接收帧\n");
+#if XDFC_RECV_FRAME_16HEX_SHOW
+	XString* str = XString_to16HexString(XContainerDataPtr(frame), XContainerSize(frame));
+	if (str != NULL)
+	{
+		printf("\n16进制接收帧:%s\n", XString_c_str(str));
+		XString_delete_base(str);
+	}
+#endif // XDFC_RECV_FRAME_16HEX_SHOW
+#ifdef XDFC_RECV_FRAME_STR_SHOW
+	if (XVector_Back_Base(frame, char) != 0)
+	{
+		char c = 0;
+		XVector_push_back_base(frame, &c);
+		printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
+		--XContainerSize(frame);
+	}
+	else
+	{
+		printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
+	}
+#endif // XDFC_RECV_FRAME_STR_SHOW
+	XModbusFrame* modbusFrame= XModbusFrame_newRecvHandle();//当前帧
+	XModbusBase* modbus= event->userData;
+	modbusFrame->mode = modbus->m_mode;
+	{
+		if(XModbusBase_isMaster(modbus))
+			XModbusFrameRTU_parseData_reply(modbusFrame, frame,false);//主站接收到的是响应帧
+		else
+			XModbusFrameRTU_parseData_request(modbusFrame, frame,false);//从站接收到的是请求帧
+	}
+	if (modbusFrame->frameData == NULL)
+	{//解析失败了
+		XModbusFrame_free(modbusFrame);
+		ev->frame = NULL;
+		XVector_delete_base(frame);
+		XEvent_Accept(ev);
+		return;
+	}
+	XDataFrameComm* comm = event->userData;
+	uint8_t funcCode;
+	{
+		if (comm->m_funcCodeMap == NULL || comm->m_getFuncCode == NULL || !comm->m_getFuncCode(comm, frame, &funcCode))
+		{//没有功能码处理或获取失败 直接释放
+			XModbusFrame_free(modbusFrame);
+			ev->frame = NULL;
+			//XVector_delete_base(frame);
+			XEvent_Accept(ev);
+			return;
+		}
+	}
+	if (!XDataFrameComm_sendEvent(comm, XEventFuncCode_create(XDFC_EXECUTE, 0, modbusFrame, funcCode)))
+	{//添加失败，队列满了
+		//XVector_delete_base(frame);//释放帧数据以免内存泄露
+		XModbusFrame_free(modbusFrame);
+	}
+	ev->frame = NULL;
+	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
+}
+void XModbusBase_EvnetHandCb(XEventMin* event)
+{
+#if XDFC_EVENT_HANDLE_SHOW
+#if XDFC_ENUM_TO_STRING
+	printf("准备处理事件:%s\n", XDataFrameComm_EventType_toString(event->code));
+#else
+	printf("准备处理事件:%d\n", eEvent);
+#endif
+#endif // MB_EVENT_SHOH
+	switch (event->code)
+	{
+		//case XDFC_READY:break;
+	case XDFC_FRAME_RECEIVED:XModbusBase_EvnetFrame_ReceivedCb(event); break;
+	case XDFC_EXECUTE:XModbusBase_EvnetExecuteCb(event); break;
+		//case XDFC_FRAME_SENT:break;
+	default:XEvent_Accept(event); break;
+	}
+}
+
+bool XModbusBase_GetFuncCodeCb(XModbusBase* modbus, XVector* data, uint8_t* code)
+{
+	if (data == NULL || XVector_isEmpty_base(data) || code == NULL)
 		return false;
-	}
+	*code = ((uint8_t*)XContainerDataPtr(data))[1];
 	return true;
 }

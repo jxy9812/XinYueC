@@ -3,6 +3,7 @@
 #include"XMemory.h"
 #include"XCrc.h"
 #include"XModbusFrame.h"
+#include"XTimerGroupBase.h"
 #include"XModbusRegisterHandler.h"
 #include"XModbusFunctionHandler.h"
 //0x6 功能码响应
@@ -28,12 +29,12 @@ void XModbusTest()
     //设置从站的功能码回调函数
     {
         XModbusFunctionHandler Handler = { MB_FUNC_READ_HOLDING_REGISTER,XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc,Register };
-        XModbusBase_setFunctionHandler(modbus, &Handler);
+        XDataFrameComm_addFuncCode(modbus, MB_FUNC_READ_HOLDING_REGISTER, XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc, Register);
     }
-
+    printf("设置回调\n");
     {
         XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc,Register };
-       //XModbusBase_setFunctionHandler(modbus, &Handler);
+        XDataFrameComm_addFuncCode(modbus, MB_FUNC_WRITE_REGISTER, XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc, Register);
     }
     {//发送一帧数据
         XModbusFrame* frame = XModbusFrame_newRecvHandle();
@@ -49,9 +50,9 @@ void XModbusTest()
         frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
         char buff[] = { 0x00,0x01 };
         XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x00, buff);
-        //XModbusBase_sendFrame(modbus, frame);
+        XModbusBase_sendFrame(modbus, frame);
         //printf("发送\n");
-        XModbusBase_sendFrameRegularlyMaster(modbus, frame,50);
+        //XModbusBase_sendFrameRegularlyMaster(modbus, frame,50);
        /* uint8_t State =0;
         XMODBUS_UINT8_SET_BITS(&State, 0, 1);
         XMODBUS_UINT8_SET_BITS(&State, 2, 1); 
@@ -69,6 +70,7 @@ void XModbusTest()
     while (true)
     {
         XModbusBase_poll_base(modbus);
+        XTimerGroupBase_global_poll();
        // XModbus_poll(modbus);
        // XModbusTest_SerialPoll(modbus);
     }
