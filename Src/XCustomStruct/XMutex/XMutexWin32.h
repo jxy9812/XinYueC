@@ -14,8 +14,8 @@ typedef struct XMutexWin32
 	void* m_mutex;
 }XMutexWin32;
 XVtable* XMutexWin32_class_init();
-XMutexWin32* XMutexWin32_create();
-void XMutexWin32_init(XMutexWin32* mutex);
+XMutexWin32* XMutexWin32_create(const char* name);
+void XMutexWin32_init(XMutexWin32* mutex, const char* name);
 #define XMutexWin32_lock_base				XMutexBase_lock_base
 #define XMutexWin32_lock_wait_base			XMutexBase_lock_wait_base
 #define	XMutexWin32_unlock_base				XMutexBase_unlock_base

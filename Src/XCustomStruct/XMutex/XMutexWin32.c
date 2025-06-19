@@ -32,14 +32,14 @@ XVtable* XMutexWin32_class_init()
     return XVTABLE_DEFAULT;
 }
 
-XMutexWin32* XMutexWin32_create()
+XMutexWin32* XMutexWin32_create(const char* name)
 {
     XMutexWin32* mutex = XMemory_malloc(sizeof(XMutexWin32));
-    XMutexWin32_init(mutex);
+    XMutexWin32_init(mutex, name);
 	return mutex;
 }
 
-void XMutexWin32_init(XMutexWin32* mutex)
+void XMutexWin32_init(XMutexWin32* mutex, const char* name)
 {
     if (mutex == NULL)
         return;
@@ -47,7 +47,7 @@ void XMutexWin32_init(XMutexWin32* mutex)
     XMutexBase_init(mutex, NULL);
     XClassGetVtable(mutex) = XMutexWin32_class_init();
     // 创建互斥锁（初始时无人拥有）
-    mutex->m_mutex = CreateMutex(NULL, FALSE, NULL);
+    mutex->m_mutex = CreateMutex(NULL, FALSE, name);
     if (mutex->m_mutex == NULL) {
         printf("创建互斥锁失败，错误码: %d\n", GetLastError());
         return 1;
