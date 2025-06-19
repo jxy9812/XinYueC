@@ -120,7 +120,12 @@ void VXPWMDevice_start(XPWMDeviceSTM32 *pwm)
 		TIM_Cmd(pwm->m_TIMX, ENABLE);
 		pwm->m_parent.m_isRun = true;
 		if (pwm->m_parent.m_runChangeCallback)
-			pwm->m_parent.m_runChangeCallback(pwm);
+		{
+			if (XIODeviceBase_CallbackQueue(pwm))
+				XIODeviceBase_callbackQueue_push(pwm, pwm->m_parent.m_runChangeCallback);
+			else
+				pwm->m_parent.m_runChangeCallback(pwm);
+		}
 	}
 }
 void VXPWMDevice_stop(XPWMDeviceSTM32 *pwm)
@@ -130,7 +135,12 @@ void VXPWMDevice_stop(XPWMDeviceSTM32 *pwm)
 		TIM_Cmd(pwm->m_TIMX, DISABLE);
 		pwm->m_parent.m_isRun = false;
 		if (pwm->m_parent.m_runChangeCallback)
-			pwm->m_parent.m_runChangeCallback(pwm);
+		{
+			if (XIODeviceBase_CallbackQueue(pwm))
+				XIODeviceBase_callbackQueue_push(pwm, pwm->m_parent.m_runChangeCallback);
+			else
+				pwm->m_parent.m_runChangeCallback(pwm);
+		}
 	}
 }
 static void TIMCallback(XPWMDeviceSTM32 *pwm)

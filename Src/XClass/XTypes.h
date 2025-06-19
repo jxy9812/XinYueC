@@ -20,9 +20,11 @@ typedef struct XTimerBase XTimerBase;
 typedef struct XEventDispatcher XEventDispatcher;
 typedef struct XTimerGroupBase XTimerGroupBase;
 typedef struct XDataFrameComm  XDataFrameComm;
+typedef struct XIODeviceBase  XIODeviceBase;
+typedef struct XCircularQueueAtomic XCircularQueueAtomic;
 typedef XMapBase XFuncCodeMap;
 
-
+typedef XCircularQueueAtomic XIOCallbackQueue;
 #ifdef __cplusplus
 }
 #endif

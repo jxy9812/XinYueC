@@ -105,6 +105,13 @@ void XStepMotor_poll(XStepMotor* motor)
 	XClassGetVirtualFunc(motor, EXStepMotor_Poll, void(*)(XStepMotor*))(motor);
 }
 
+//void XStepMotor_IRQHandler(XStepMotor* motor)
+//{
+//	if (ISNULL(motor, "") || ISNULL(XClassGetVtable(motor), ""))
+//		return;
+//	XClassGetVirtualFunc(motor, EXStepMotor_IRQHandler, void(*)(XStepMotor*))(motor);
+//}
+
 void XStepMotor_close_base(XStepMotor* motor)
 {
 	if (ISNULL(motor, "") || ISNULL(XClassGetVtable(motor), ""))

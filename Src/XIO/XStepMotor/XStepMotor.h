@@ -7,24 +7,23 @@ extern "C" {
 #include"XClass.h"
 #include"XPWMDeviceBase.h"
 #include"XSwitchDeviceBase.h"
-#define XSTEPMOTOR_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XClass)+13)       //XStepMotor虚函数表大小
+#define XSTEPMOTOR_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XStepMotor))       //XStepMotor虚函数表大小
 //XStepMotor虚函数表枚举
-enum XStepMotorVtableEnum
-{
-	EXStepMotor_IsOpen=XCLASS_VTABLE_GET_SIZE(XClass),
-	EXStepMotor_Open,
-	EXStepMotor_IsRunning,
-	EXStepMotor_Close,
-	EXStepMotor_Poll,
-	EXStepMotor_SetDevice,
-	EXStepMotor_SetENA,
-	EXStepMotor_SetDIR,
-	EXStepMotor_Start,
-	EXStepMotor_Stop,
-	EXStepMotor_SetStepsPerRevolution,
-	EXStepMotor_SetSpeed,
-	EXStepMotor_SetRevolutions,
-};
+XCLASS_DEFINE_BEGING(XStepMotor)
+XCLASS_DEFINE_ENUM(XStepMotor, IsOpen) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XStepMotor, Open),
+XCLASS_DEFINE_ENUM(XStepMotor, IsRunning),
+XCLASS_DEFINE_ENUM(XStepMotor, Close),
+XCLASS_DEFINE_ENUM(XStepMotor, Poll),
+XCLASS_DEFINE_ENUM(XStepMotor, SetDevice),
+XCLASS_DEFINE_ENUM(XStepMotor, SetENA),
+XCLASS_DEFINE_ENUM(XStepMotor, SetDIR),
+XCLASS_DEFINE_ENUM(XStepMotor, Start),
+XCLASS_DEFINE_ENUM(XStepMotor, Stop),
+XCLASS_DEFINE_ENUM(XStepMotor, SetStepsPerRevolution),
+XCLASS_DEFINE_ENUM(XStepMotor, SetSpeed),
+XCLASS_DEFINE_ENUM(XStepMotor, SetRevolutions),
+XCLASS_DEFINE_END(XStepMotor)
 //步进电机
 typedef struct XStepMotor XStepMotor;
 typedef struct XStepMotor
@@ -83,8 +82,10 @@ bool XStepMotor_isOpen_base(XStepMotor* motor);
 
 bool XStepMotor_isRunning_base(XStepMotor* motor);
 
-//轮询扫描状态//一次脉冲后需要调用一次，距离模式需要
+//轮询扫描状态//定时器中断的时候调用，一次脉冲后需要调用一次，距离模式需要
 void XStepMotor_poll(XStepMotor* motor);
+
+//void XStepMotor_IRQHandler(XStepMotor* motor);
 
 void XStepMotor_close_base(XStepMotor* motor);
 

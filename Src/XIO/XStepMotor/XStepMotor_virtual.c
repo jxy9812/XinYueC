@@ -17,6 +17,7 @@ static void VXStepMotor_stop(XStepMotor* motor);
 static void VXStepMotor_setStepsPerRevolution(XStepMotor* motor, uint16_t steps);
 static void VXStepMotor_setSpeed(XStepMotor* motor, double speed);
 static void VXStepMotor_setRevolutions(XStepMotor* motor, double revolutions);
+//static void VXStepMotor_IRQHandler(XStepMotor* motor);
 XVtable* XStepMotor_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -35,7 +36,8 @@ XVtable* XStepMotor_class_init()
 		VXStepMotor_setDevice,VXStepMotor_setENA,
 		VXStepMotor_setDIR,VXStepMotor_start,
 		VXStepMotor_stop,VXStepMotor_setStepsPerRevolution,
-		VXStepMotor_setSpeed,VXStepMotor_setRevolutions
+		VXStepMotor_setSpeed,VXStepMotor_setRevolutions,
+		//VXStepMotor_IRQHandler
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -113,7 +115,7 @@ void VXStepMotor_close(XStepMotor* motor)
 
 void VXStepMotor_poll(XStepMotor* motor)
 {
-	if (motor->m_PUL == NULL||(motor->m_ENA!=NULL&&!XSwitchDeviceBase_getState_base(motor->m_ENA)))
+	if (motor->m_PUL == NULL || (motor->m_ENA != NULL && !XSwitchDeviceBase_getState_base(motor->m_ENA)))
 		return;//pul不存在或使能没开的时候不计算距离
 	//累计脉冲数
 	++motor->m_currentPulses;
@@ -132,12 +134,21 @@ void VXStepMotor_poll(XStepMotor* motor)
 
 void VXStepMotor_setDevice(XStepMotor* motor, void* device)
 {
-	if(motor->m_PUL)
+	if (motor->m_PUL)
+	{
 		XIODeviceBase_setDevice_base(motor->m_PUL, device);
+		XIODeviceBase_setCallbackQueue(motor->m_PUL, XIODeviceBase_CallbackQueue(motor));
+	}
 	if (motor->m_ENA)
+	{
 		XIODeviceBase_setDevice_base(motor->m_ENA, device);
+		XIODeviceBase_setCallbackQueue(motor->m_ENA, XIODeviceBase_CallbackQueue(motor));
+	}
 	if (motor->m_DIR)
+	{
 		XIODeviceBase_setDevice_base(motor->m_DIR, device);
+		XIODeviceBase_setCallbackQueue(motor->m_DIR, XIODeviceBase_CallbackQueue(motor));
+	}
 }
 
 void VXStepMotor_setENA(XStepMotor* motor, bool isEnabled)
@@ -167,8 +178,13 @@ void VXStepMotor_stop(XStepMotor* motor)
 		if (motor->m_currentSpeed != 0)
 		{
 			motor->m_currentSpeed = 0;
-			if (motor->m_speedChangeCb != NULL)
-				motor->m_speedChangeCb(motor);
+			if (motor->m_speedChangeCb)
+			{
+				if (XIODeviceBase_CallbackQueue(motor))
+					XIODeviceBase_callbackQueue_push(motor, motor->m_speedChangeCb);
+				else
+					motor->m_speedChangeCb(motor);
+			}
 		}
 	}
 }
@@ -191,7 +207,12 @@ void VXStepMotor_setSpeed(XStepMotor* motor, double speed)
 		else
 			XPWMDeviceBase_setDutyCycle_base(motor->m_PUL, motor->m_PUL->m_dutyCycle);
 		if (VXStepMotor_isRunning(motor)&&motor->m_speedChangeCb!=NULL)
-			motor->m_speedChangeCb(motor);
+		{
+			if (XIODeviceBase_CallbackQueue(motor))
+				XIODeviceBase_callbackQueue_push(motor, motor->m_speedChangeCb);
+			else
+				motor->m_speedChangeCb(motor);
+		}
 	}
 }
 
@@ -200,12 +221,17 @@ void VXStepMotor_setRevolutions(XStepMotor* motor, double revolutions)
 	if (revolutions > 0.0)
 	{
 		XStepMotor_setDIR_base(motor, true);
-		motor->m_setPulses = revolutions * motor->m_pulsesPerRevolution;
+		motor->m_setPulses = revolutions * (motor->m_pulsesPerRevolution);
 	}
 	else if (revolutions < 0.0)
 	{
 		XStepMotor_setDIR_base(motor, false);
-		motor->m_setPulses = -revolutions * motor->m_pulsesPerRevolution;
+		motor->m_setPulses = -1.0 * revolutions * (motor->m_pulsesPerRevolution);
 	}
 	//printf("脉冲数:%d\n",(int)motor->m_setPulses);
 }
+
+//void VXStepMotor_IRQHandler(XStepMotor* motor)
+//{
+//	
+//}

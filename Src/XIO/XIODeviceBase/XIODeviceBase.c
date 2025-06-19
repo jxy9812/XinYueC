@@ -1,5 +1,6 @@
 ﻿#include "XIODeviceBase.h"
 #include "XMemory.h"
+#include "XIOCallbackQueue.h"
 #include<string.h>
 XIODeviceBase* XIODeviceBase_create(XVtable* vtable)
 {
@@ -111,4 +112,16 @@ size_t XIODeviceBase_writeFull_base(XIODeviceBase* io)
 	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return 0;
 	return XClassGetVirtualFunc(io, EXIODeviceBase_WriteFull, bool(*)(XIODeviceBase*))(io);
+}
+
+void XIODeviceBase_setCallbackQueue(XIODeviceBase* io, XIOCallbackQueue* queue)
+{
+	if (io)
+		io->m_callbackQueue = queue;
+}
+
+void XIODeviceBase_callbackQueue_push(XIODeviceBase* io, void(*callback)(XIODeviceBase* io))
+{
+	if(io)
+		XIOCallbackQueue_push(io->m_callbackQueue, io, callback);
 }

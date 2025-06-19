@@ -64,7 +64,12 @@ void VXPWMDevice_start(XPWMDeviceBase* pwm)
 		/**************************************************/
 		pwm->m_isRun = true;
 		if (pwm->m_runChangeCallback)
-			pwm->m_runChangeCallback(pwm);
+		{
+			if (XIODeviceBase_CallbackQueue(pwm))
+				XIODeviceBase_callbackQueue_push(pwm, pwm->m_runChangeCallback);
+			else
+				pwm->m_runChangeCallback(pwm);
+		}
 	}
 }
 
@@ -79,7 +84,16 @@ void VXPWMDevice_stop(XPWMDeviceBase* pwm)
 			/**************************************************/
 			pwm->m_isRun = false;
 			if (pwm->m_runChangeCallback)
-				pwm->m_runChangeCallback(pwm);
+			{
+				if (XIODeviceBase_CallbackQueue(pwm))
+				{
+					XIODeviceBase_callbackQueue_push(pwm, pwm->m_runChangeCallback);
+				}
+				else
+				{
+					pwm->m_runChangeCallback(pwm);
+				}
+			}
 		}
 	}
 }

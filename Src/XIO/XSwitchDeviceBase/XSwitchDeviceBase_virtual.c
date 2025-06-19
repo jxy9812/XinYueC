@@ -46,7 +46,12 @@ void VXSwitchDevice_setState(XSwitchDeviceBase* sw, bool state)
 			XIODeviceBase_write_base(sw, &trigger, sizeof(bool));
 			sw->m_state = state;
 			if (sw->m_stateChangeCallback)
-				sw->m_stateChangeCallback(sw);
+			{
+				if (XIODeviceBase_CallbackQueue(sw))
+					XIODeviceBase_callbackQueue_push(sw, sw->m_stateChangeCallback);
+				else
+					sw->m_stateChangeCallback(sw);
+			}
 		}
 	}
 }
@@ -87,8 +92,13 @@ void VXIODevice_poll(XSwitchDeviceBase* sw)
 			//if (m_state != sw->m_state)
 		{
 			sw->m_state = sw->m_buffer;
-			if (sw->m_stateChangeCallback)//判断当前是否有状态改变回调函数
-				sw->m_stateChangeCallback(sw);
+			if (sw->m_stateChangeCallback)
+			{
+				if (XIODeviceBase_CallbackQueue(sw))
+					XIODeviceBase_callbackQueue_push(sw, sw->m_stateChangeCallback);
+				else
+					sw->m_stateChangeCallback(sw);
+			}
 		}
 	}
 }

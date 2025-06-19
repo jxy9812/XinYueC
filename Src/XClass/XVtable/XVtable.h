@@ -6,6 +6,7 @@ extern "C" {
 #include<stdio.h>
 #include<stdbool.h>
 #include<stdint.h>
+#include"XTypes.h"
 typedef struct 
 {
 	void** data;//

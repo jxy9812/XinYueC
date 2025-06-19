@@ -44,6 +44,7 @@ typedef struct XIODeviceBase
 	uint16_t m_mode;//打开模式
 	XCircularQueue* m_writeBuffer;//写入缓冲区
 	XCircularQueue* m_readBuffer;//读取缓冲区
+	XIOCallbackQueue* m_callbackQueue;//回调队列
 }XIODeviceBase;
 XVtable* XIODeviceBase_class_init();
 XIODeviceBase* XIODeviceBase_create(XVtable* vtable);
@@ -69,8 +70,10 @@ bool XIODeviceBase_close_base(XIODeviceBase* io);
 void XIODeviceBase_poll_base(XIODeviceBase* io);
 //将剩余的数据刷入设备   需重载
 size_t XIODeviceBase_writeFull_base(XIODeviceBase* io);
-
-
+//设置回调队列
+void XIODeviceBase_setCallbackQueue(XIODeviceBase* io,XIOCallbackQueue*queue);
+#define XIODeviceBase_CallbackQueue(io) (((XIODeviceBase*)(io))->m_callbackQueue)
+void XIODeviceBase_callbackQueue_push(XIODeviceBase* io, void (*callback)(XIODeviceBase* io));
 #ifdef __cplusplus
 }
 #endif
