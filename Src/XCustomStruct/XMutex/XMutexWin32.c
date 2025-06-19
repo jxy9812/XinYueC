@@ -6,12 +6,9 @@
 static void XMutexBase_delete(XMutexWin32* mutex);
 //上锁
 static bool VXMutexBase_lock(XMutexWin32* mutex);
+static bool VXMutexBase_lock_wait(XMutexWin32* mutex, size_t timerout);
 //解锁
 static bool VXMutexBase_unlock(XMutexWin32* mutex);
-//中断中上锁
-static bool VXMutexBase_lockISR(XMutexWin32* mutex);
-//中断中解锁
-static bool VXMutexBase_unlockISR(XMutexWin32* mutex);
 XVtable* XMutexWin32_class_init()
 {
     XVTABLE_CREAT_DEFAULT
@@ -24,8 +21,7 @@ XVtable* XMutexWin32_class_init()
     //继承类
     XVTABLE_INHERIT_DEFAULT(XClass_class_init());
 	void* table[] = { 
-        VXMutexBase_lock,VXMutexBase_unlock,
-        VXMutexBase_lockISR,VXMutexBase_unlockISR};
+        VXMutexBase_lock,VXMutexBase_lock_wait,VXMutexBase_unlock};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
@@ -61,7 +57,8 @@ void XMutexWin32_init(XMutexWin32* mutex)
 void XMutexBase_delete(XMutexWin32* mutex)
 {
     // 关闭互斥锁句柄
-    CloseHandle(mutex->m_mutex);
+    if (mutex->m_mutex)
+        CloseHandle(mutex->m_mutex);
     //调用父类释放方法
     XVtableGetFunc(XClass_class_init(), EXClass_Delete, void(*)(XClass*));
 }
@@ -71,17 +68,12 @@ bool VXMutexBase_lock(XMutexWin32* mutex)
     return WaitForSingleObject(mutex->m_mutex, INFINITE) == WAIT_OBJECT_0;
 }
 
+bool VXMutexBase_lock_wait(XMutexWin32* mutex, size_t timerout)
+{
+    return WaitForSingleObject(mutex->m_mutex, timerout) == WAIT_OBJECT_0;
+}
+
 bool VXMutexBase_unlock(XMutexWin32* mutex)
-{
-    return  ReleaseMutex(mutex->m_mutex);
-}
-
-bool VXMutexBase_lockISR(XMutexWin32* mutex)
-{
-    return WaitForSingleObject(mutex->m_mutex, 0) == WAIT_OBJECT_0;
-}
-
-bool VXMutexBase_unlockISR(XMutexWin32* mutex)
 {
     return  ReleaseMutex(mutex->m_mutex);
 }

@@ -16,11 +16,10 @@ typedef struct XMutexWin32
 XVtable* XMutexWin32_class_init();
 XMutexWin32* XMutexWin32_create();
 void XMutexWin32_init(XMutexWin32* mutex);
-#define XMutexWin32_lock				XMutexBase_lock_base
-#define	XMutexWin32_unlock				XMutexBase_unlock_base
-#define XMutexWin32_lockISR				XMutexBase_lockISR_base
-#define XMutexWin32_unlockISR			XMutexBase_unlockISR_base
-#define XMutexWin32_delete				XMutexBase_delete_base
+#define XMutexWin32_lock_base				XMutexBase_lock_base
+#define XMutexWin32_lock_wait_base			XMutexBase_lock_wait_base
+#define	XMutexWin32_unlock_base				XMutexBase_unlock_base
+#define XMutexWin32_delete_base				XMutexBase_delete_base
 #ifdef __cplusplus
 }
 #endif
