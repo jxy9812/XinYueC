@@ -22,6 +22,7 @@ typedef struct XTimerGroupBase XTimerGroupBase;
 typedef struct XDataFrameComm  XDataFrameComm;
 typedef struct XIODeviceBase  XIODeviceBase;
 typedef struct XCircularQueueAtomic XCircularQueueAtomic;
+typedef struct XMutexBase XMutexBase;
 typedef XMapBase XFuncCodeMap;
 
 typedef XCircularQueueAtomic XIOCallbackQueue;

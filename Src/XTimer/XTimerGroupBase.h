@@ -7,15 +7,12 @@ extern "C" {
 #include<stdint.h>
 #include<stdio.h>
 #include"XClass.h"
-typedef struct XTimerBase XTimerBase;
-typedef struct XTimerGroupBase XTimerGroupBase;
-#define XTIMERGROUPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XClass)+3)       //XTimerGroupBase虚函数表大小
-enum XTimerGroupBaseVtableEnum
-{
-	EXTimerGroupBase_Add_Timer = XCLASS_VTABLE_GET_SIZE(XClass),
-	EXTimerGroupBase_Remove_Timer,
-	EXTimerGroupBase_Poll,
-};
+#define XTIMERGROUPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimerGroupBase))       //XTimerGroupBase虚函数表大小
+XCLASS_DEFINE_BEGING(XTimerGroupBase)
+XCLASS_DEFINE_ENUM(XTimerGroupBase, Add_Timer) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XTimerGroupBase,Remove_Timer),
+XCLASS_DEFINE_ENUM(XTimerGroupBase,Poll),
+XCLASS_DEFINE_END(XTimerGroupBase)
 typedef struct XTimerGroupBase
 {
 	XClass m_parent;
