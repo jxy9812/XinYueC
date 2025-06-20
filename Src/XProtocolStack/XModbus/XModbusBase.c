@@ -18,6 +18,11 @@ void XModbusBase_init(XModbusBase* modbus, XIODeviceBase* io)
 	XDataFrameComm_init(modbus,io);
 	//设置异步接收的缓冲区大小
 	XCommunicatorBase_recvAsync_base(modbus, MB_RECV_BUFFER_SIZE);
+	if (io != NULL)
+	{
+		XIODeviceBase_setReadBuffer_base(io, MB_DEVICE_RECV_BUFFER_SIZE);
+		XIODeviceBase_setWriteBuffer_base(io, MB_DEVICE_SEND_BUFFER_SIZE);
+	}
 	XClassGetVtable(modbus) = XModbusBase_class_init();
 	XEventDispatcher_setAllEventCb(((XDataFrameComm*)modbus)->m_eventDispatcher, XModbusBase_EvnetHandCb, modbus);
 	XDataFrameComm_setGetFuncCodeCb(modbus, XModbusBase_GetFuncCodeCb);

@@ -256,7 +256,7 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
 				}
 				//转成父类指针
 				XTimerBase* timerBase = (XTimerBase*)timer;
-				if (timerBase->m_interval > 0)
+				if ((timerBase->m_interval > 0)&& timerBase->m_isRun)
 				{//有定时间隔的重新添加
 					size_t timeout_ticks = timerBase->m_interval / group->m_parent.m_precision;
 					timer->m_expire_ticks = groupBase->m_current_tick + timeout_ticks;

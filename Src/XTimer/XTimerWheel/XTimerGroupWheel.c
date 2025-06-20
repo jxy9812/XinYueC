@@ -54,7 +54,7 @@ void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutexBase* mutex)
 	group->m_mutex = mutex;
 }
 #ifdef WIN32
-#include"XMutexWin32.h"
+#include"XSemaphoreWin32.h"
 #endif
 #ifdef configUSE_FREERTOS
 #include"XMutexFreeRTOS.h"
@@ -69,7 +69,7 @@ void XTimerGroupWheel_setGlobal()
 	XTimerGroupWheel_addTimeWheel_base(group,100);
 	XTimerGroupBase_setGlobal(group);
 #ifdef WIN32
-	XTimerGroupWheel_setMutex(group, XMutexWin32_create(NULL));
+	XTimerGroupWheel_setMutex(group, XSemaphoreWin32_create(NULL));
 #endif
 #ifdef configUSE_FREERTOS
 	XTimerGroupWheel_setMutex(group, XMutexFreeRTOS_create(NULL));

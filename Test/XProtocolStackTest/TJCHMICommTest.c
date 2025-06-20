@@ -123,8 +123,10 @@ void TJCHMICommTest()
 	XDataFrameComm_setSendValidCRC16_base(comm, true);
 	//XDataFrameComm_setRecvValidCRC16_base(comm, true);
 	//XDataFrameComm_addPeriodicSendText(comm,false, 100, "ain.cuttingMotorSp.val=888");
-	XDataFrameComm_addFuncCode(comm, 0x1A, XFuncCodeCb0x1A, NULL);
-	XDataFrameComm_addFuncCode(comm, 0x30, XFuncCodeCb0x30, NULL);
+	uint8_t funcCode = 0x1A;
+	XDataFrameComm_addFuncCode(comm, &funcCode, XFuncCodeCb0x1A, NULL);
+	funcCode = 0x30;
+	XDataFrameComm_addFuncCode(comm, &funcCode, XFuncCodeCb0x30, NULL);
 	XDataFrameComm_connect_base(comm);
 	size_t speed = 1, current = XTimerBase_getCurrentTime();
 	while (true)

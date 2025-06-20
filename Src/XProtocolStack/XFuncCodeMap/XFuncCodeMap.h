@@ -4,7 +4,8 @@
 #include<stdio.h>
 #include<stdint.h>
 #include<stdbool.h>
-typedef void (*XFuncCodeCb)(uint8_t code, void* obj, void* data,void* userData);
+#include"XFunctionCallback.h"
+typedef void (*XFuncCodeCb)(void* funcCode, void* obj, void* data,void* userData);
 //功能码节点
 typedef struct XFuncCodeNode
 {
@@ -13,10 +14,13 @@ typedef struct XFuncCodeNode
 }XFuncCodeNode;
 
 
-XFuncCodeMap* XFuncCodeMap_create();
-bool XFuncCodeMap_add(XFuncCodeMap* map, uint8_t code, XFuncCodeCb cb, void* userData);
-bool XFuncCodeMap_remove(XFuncCodeMap* map, uint8_t code);
-XFuncCodeNode* XFuncCodeMap_value(XFuncCodeMap* map, uint8_t code);
+XFuncCodeMap* XFuncCodeMap_create(size_t codeSize, XEquality codeEquality);
+bool XFuncCodeMap_add(XFuncCodeMap* map, void* code, XFuncCodeCb cb, void* userData);
+bool XFuncCodeMap_remove(XFuncCodeMap* map, void* code);
+XFuncCodeNode* XFuncCodeMap_value(XFuncCodeMap* map, void* code);
 bool XFuncCodeMap_clear(XFuncCodeMap* map);
 void XFuncCodeMap_delete(XFuncCodeMap* map);
+//创建功能码
+void* XFuncCodeMap_createCode(XFuncCodeMap* map);
+void XFuncCodeMap_deleteCode(void* code);
 #endif // !XFuncCodeMap_H

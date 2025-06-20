@@ -11,7 +11,7 @@ extern "C" {
 #include"XFuncCodeMap.h"
 typedef bool (*XRecvValidCb)(XDataFrameComm* comm,const XVector* data);//接收验证回调(校验)
 typedef void (*XSendValidCb)(XDataFrameComm* comm, XVector* data);//发送验证回调(添加)
-typedef bool(*GetFuncCodeCb)(XDataFrameComm* comm, XVector* data,uint8_t* code);//从数据帧中获取功能码
+typedef bool(*GetFuncCodeCb)(XDataFrameComm* comm, XVector* data,void* code);//从数据帧中获取功能码
 #define XDATAFRAMECOMM_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm))       //XDataFrameComm虚函数表大小
 XCLASS_DEFINE_BEGING(XDataFrameComm)
 XCLASS_DEFINE_ENUM(XDataFrameComm, SendFrameFSM) = XCLASS_VTABLE_GET_SIZE(XCommunicatorBase),
@@ -46,7 +46,9 @@ typedef struct XDataFrameComm
     XListBase* m_periodicSendList;//定期发送数据链表
     XEventDispatcher* m_eventDispatcher;//事件调度器
     XFuncCodeMap* m_funcCodeMap;//功能码映射
+    void* m_funcCode;//当前处理的功能码
     GetFuncCodeCb m_getFuncCode;//获取功能码回调
+
     size_t m_sentBytes;//已发送字节计数
     XVector* m_sendFrameHead;//帧头
     XVector* m_sendFrameTail;//帧尾
@@ -85,9 +87,11 @@ void XDataFrameComm_setSendValidCb(XDataFrameComm* comm, XSendValidCb cb);//发�
 void XDataFrameComm_setRecvValidCRC16_base(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
 void XDataFrameComm_setSendValidCRC16_base(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
 /*功能码*/
-void XDataFrameComm_addFuncCode(XDataFrameComm* comm, uint8_t code, XFuncCodeCb cb,void* userData);
-void XDataFrameComm_removeFuncCode(XDataFrameComm* comm, uint8_t code);
+void XDataFrameComm_funcCodeMap_create(XDataFrameComm* comm,size_t codeSize, XEquality codeEquality);
+void XDataFrameComm_addFuncCode(XDataFrameComm* comm, void* funcCode, XFuncCodeCb cb,void* userData);
+void XDataFrameComm_removeFuncCode(XDataFrameComm* comm, void* funcCode);
 void XDataFrameComm_clearFuncCode(XDataFrameComm* comm);
+void XDataFrameComm_deleteFuncCode(XDataFrameComm* comm);
 void XDataFrameComm_setGetFuncCodeCb(XDataFrameComm* comm, GetFuncCodeCb cb);//获取功能码回调
 #define XDataFrameComm_poll_base                   XCommunicatorBase_poll_base
 #define XDataFrameComm_connect_base                XCommunicatorBase_connect_base
@@ -102,8 +106,6 @@ void XDataFrameComm_EvnetHandCb(XEventMin* event);
 void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event);//通过调用设置事件处理函数重写
 //执行功能码事件回调
 void XDataFrameComm_EvnetExecuteCb(XEventMin* event);//通过调用设置事件处理函数重写
-//获取功能码回调
-bool XDataFrameComm_GetFuncCodeCb(XDataFrameComm* comm, XVector* data, uint8_t* code);
 /*以下是自定义的事件类型*/
 bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* event);//向事件队列追加一个事件
 typedef struct XEventRecvFrame
@@ -111,13 +113,13 @@ typedef struct XEventRecvFrame
     XEventMin m_parent;//
     XVector* frame;//帧数据
 }XEventRecvFrame;//接收帧事件
-XEventRecvFrame* XEventRecvFrame_create(int code, size_t timestamp,XVector* frame);
+XEventRecvFrame* XEventRecvFrame_create(int eventCode, size_t timestamp,XVector* frame);
 typedef struct XEventFuncCode
 {
     XEventRecvFrame m_parent;//
-    uint8_t funcCode;//功能码
+    void* funcCode;//功能码
 }XEventFuncCode;//执行功能码事件
-XEventFuncCode* XEventFuncCode_create(int code, size_t timestamp, XVector* frame, uint8_t funcCode);
+XEventFuncCode* XEventFuncCode_create(int eventCode, size_t timestamp, XVector* frame, void* funcCode);
 #ifdef __cplusplus
 }
 #endif

@@ -599,6 +599,8 @@ void VXDataFrameComm_delete(XDataFrameComm* comm)
 		XEventDispatcher_delete(comm->m_eventDispatcher);
 	if (comm->m_funcCodeMap)
 		XFuncCodeMap_delete(comm->m_funcCodeMap);
+	if (comm->m_funcCode != NULL)
+		XFuncCodeMap_deleteCode(comm->m_funcCodeMap);
 	if (comm->m_sendFrameHead)
 		XVector_delete_base(comm->m_sendFrameHead);
 	if (comm->m_sendFrameTail)

@@ -31,9 +31,9 @@ int main(int argc, char* args[])
 	XPriority_QueueTest();
 	XPWMDeviceTest();
 	XVectorTest();*/
-	//TJCHMICommTest();
+	TJCHMICommTest();
 	//XDataFrameCommTest();
-	XModbusTest();
+	//XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
 	//XSerialPortTest();

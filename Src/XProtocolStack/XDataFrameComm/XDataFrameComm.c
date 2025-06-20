@@ -38,7 +38,6 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	comm->m_periodicSendList->m_equality = XEquality_ptr;
 
 	XEventDispatcher_setAllEventCb(comm->m_eventDispatcher, XDataFrameComm_EvnetHandCb, comm);
-	XDataFrameComm_setGetFuncCodeCb(comm,XDataFrameComm_GetFuncCodeCb);
 	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm,XDFC_FRAME_END_TIMEOUT);
 }
@@ -198,27 +197,47 @@ void XDataFrameComm_setSendValidCRC16_base(XDataFrameComm* comm, bool enableCRC1
 	XClassGetVirtualFunc(comm, EXDataFrameComm_SetSendValidCRC16, void(*)(XDataFrameComm*, bool))(comm, enableCRC16);
 }
 
-void XDataFrameComm_addFuncCode(XDataFrameComm* comm, uint8_t code, XFuncCodeCb cb, void* userData)
+void XDataFrameComm_funcCodeMap_create(XDataFrameComm* comm, size_t codeSize, XEquality codeEquality)
 {
 	if (comm == NULL)
 		return;
-	if (comm->m_funcCodeMap == NULL)
-		comm->m_funcCodeMap = XFuncCodeMap_create();
-	XFuncCodeMap_add(comm->m_funcCodeMap, code,cb,userData);
+	if (comm->m_funcCodeMap != NULL)
+		XFuncCodeMap_delete(comm->m_funcCodeMap);
+	if (comm->m_funcCode != NULL)
+		XFuncCodeMap_deleteCode(comm->m_funcCodeMap);
+	comm->m_funcCodeMap = XFuncCodeMap_create(codeSize, codeEquality);
+	comm->m_funcCode = XFuncCodeMap_createCode(comm->m_funcCodeMap);
 }
 
-void XDataFrameComm_removeFuncCode(XDataFrameComm* comm, uint8_t code)
+void XDataFrameComm_addFuncCode(XDataFrameComm* comm, void* funcCode, XFuncCodeCb cb, void* userData)
+{
+	if (comm == NULL || comm->m_funcCodeMap == NULL)
+		return;
+	XFuncCodeMap_add(comm->m_funcCodeMap, funcCode,cb,userData);
+}
+
+void XDataFrameComm_removeFuncCode(XDataFrameComm* comm, void* funcCode)
 {
 	if (comm == NULL|| comm->m_funcCodeMap == NULL)
 		return;
-	XFuncCodeMap_remove(comm->m_funcCodeMap,code);
+	XFuncCodeMap_remove(comm->m_funcCodeMap,funcCode);
 }
 
 void XDataFrameComm_clearFuncCode(XDataFrameComm* comm)
 {
 	if (comm == NULL || comm->m_funcCodeMap == NULL)
 		return;
-	XFuncCodeMap_delete(comm->m_funcCodeMap);
+	XFuncCodeMap_clear(comm->m_funcCodeMap);
+}
+
+void XDataFrameComm_deleteFuncCode(XDataFrameComm* comm)
+{
+	if (comm == NULL)
+		return;
+	if(comm->m_funcCodeMap!=NULL)
+		XFuncCodeMap_delete(comm->m_funcCodeMap);
+	if (comm->m_funcCode != NULL)
+		XFuncCodeMap_deleteCode(comm->m_funcCodeMap);
 	comm->m_funcCodeMap = NULL;
 }
 
@@ -228,21 +247,21 @@ void XDataFrameComm_setGetFuncCodeCb(XDataFrameComm* comm, GetFuncCodeCb cb)
 		comm->m_getFuncCode = cb;
 }
 
-XEventRecvFrame* XEventRecvFrame_create(int code, size_t timestamp,XVector* frame)
+XEventRecvFrame* XEventRecvFrame_create(int eventCode, size_t timestamp,XVector* frame)
 {
 	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
 	if (ev == NULL)
 		return NULL;
-	XEventMin_init(ev, code, timestamp);
+	XEventMin_init(ev, eventCode, timestamp);
 	ev->frame = frame;
 	return ev;
 }
-XEventFuncCode* XEventFuncCode_create(int code, size_t timestamp, XVector* frame, uint8_t funcCode)
+XEventFuncCode* XEventFuncCode_create(int eventCode, size_t timestamp, XVector* frame, void* funcCode)
 {
 	XEventFuncCode* ev = XMemory_malloc(sizeof(XEventFuncCode));
 	if (ev == NULL)
 		return NULL;
-	XEventMin_init(ev, code, timestamp);
+	XEventMin_init(ev, eventCode, timestamp);
 	ev->m_parent.frame = frame;
 	ev->funcCode = funcCode;
 	return ev;
@@ -277,19 +296,18 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 	}
 #endif // XDFC_RECV_FRAME_STR_SHOW
 	XDataFrameComm* comm = event->userData;
-	uint8_t funcCode;
-	if (comm->m_funcCodeMap == NULL||comm->m_getFuncCode==NULL|| !comm->m_getFuncCode(comm,frame,&funcCode))
+	if (comm->m_funcCode == NULL||comm->m_getFuncCode==NULL|| !comm->m_getFuncCode(comm,frame, comm->m_funcCode))
 	{//没有功能码处理或获取失败 直接释放
 		ev->frame = NULL;
 		XVector_delete_base(frame);
 		XEvent_Accept(ev);
 		return;
 	}
-	if (!XDataFrameComm_sendEvent(comm, XEventFuncCode_create(XDFC_EXECUTE,0, frame, funcCode)))
+	if (!XDataFrameComm_sendEvent(comm, XEventFuncCode_create(XDFC_EXECUTE,0, frame, comm->m_funcCode)))
 	{//添加失败，队列满了
 		XVector_delete_base(frame);//释放帧数据以免内存泄露
 	}
-	ev->frame = NULL;
+	ev->frame = NULL;//帧数据转移到功能码帧中
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
 //功能码事件回调
@@ -314,15 +332,9 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 	if(node->cb!=NULL)
 		node->cb(ev->funcCode,comm, frame,node->userData);
 	ev->m_parent.frame = NULL;
+	ev->funcCode = NULL;
 	XVector_delete_base(frame);//释放帧数据以免内存泄露
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
-}
-bool XDataFrameComm_GetFuncCodeCb(XDataFrameComm* comm, XVector* data, uint8_t* code)
-{
-	if(data==NULL||XVector_isEmpty_base(data)|| code==NULL)
-		return false;
-	*code=*((uint8_t*)XContainerDataPtr(data));
-	return true;
 }
 bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* ev)
 {
