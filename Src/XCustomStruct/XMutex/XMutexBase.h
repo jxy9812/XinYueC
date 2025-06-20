@@ -16,7 +16,7 @@ typedef struct XMutexBase
 {
 	XClass m_parent;
 }XMutexBase;
-void XMutexBase_init(XMutexBase* mutex, XVtable* vtable);
+void XMutexBase_init(XMutexBase* mutex, const char* name);
 //上锁
 bool XMutexBase_lock_base(XMutexBase* mutex);
 //上锁

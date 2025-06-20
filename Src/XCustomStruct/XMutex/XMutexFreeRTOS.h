@@ -14,8 +14,8 @@ typedef struct XMutexFreeRTOS
 	void* m_mutex;
 }XMutexFreeRTOS;
 XVtable* XMutexFreeRTOS_class_init();
-XMutexFreeRTOS* XMutexFreeRTOS_create();
-void XMutexFreeRTOS_init(XMutexFreeRTOS* mutex);
+XMutexFreeRTOS* XMutexFreeRTOS_create(const char* name);
+void XMutexFreeRTOS_init(XMutexFreeRTOS* mutex, const char* name);
 #define XMutexFreeRTOS_lock_base					XMutexBase_lock_base
 #define XMutexFreeRTOS_lock_wait_base				XMutexBase_lock_wait_base
 #define	XMutexFreeRTOS_unlock_base					XMutexBase_unlock_base

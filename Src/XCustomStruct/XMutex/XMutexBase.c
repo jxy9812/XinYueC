@@ -2,13 +2,13 @@
 #include "XMemory.h"
 #include <string.h>
 
-void XMutexBase_init(XMutexBase* mutex, XVtable* vtable)
+void XMutexBase_init(XMutexBase* mutex, const char* name)
 {
 	if (mutex == NULL)
 		return;
 	XClass_init(mutex);
 	memset(((XClass*)mutex) + 1, 0, sizeof(XMutexBase) - sizeof(XClass));
-	XClassGetVtable(mutex) = vtable;
+	//XClassGetVtable(mutex) = vtable;
 }
 
 bool XMutexBase_lock_base(XMutexBase* mutex)

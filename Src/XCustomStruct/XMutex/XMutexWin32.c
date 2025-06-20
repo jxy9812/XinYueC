@@ -44,7 +44,7 @@ void XMutexWin32_init(XMutexWin32* mutex, const char* name)
     if (mutex == NULL)
         return;
     memset(((XMutexBase*)mutex) + 1, 0, sizeof(XMutexWin32) - sizeof(XMutexBase));
-    XMutexBase_init(mutex, NULL);
+    XMutexBase_init(mutex, name);
     XClassGetVtable(mutex) = XMutexWin32_class_init();
     // 创建互斥锁（初始时无人拥有）
     mutex->m_mutex = CreateMutex(NULL, FALSE, name);

@@ -248,11 +248,11 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
 				if (timer->m_expire_ticks <= groupBase->m_current_tick && XTimerBase_isRunning(timer))
 				{
 					timer->m_list = NULL;
-					if (group->m_mutex)//防止同线程同任务死锁
-						XMutexBase_unlock_base(group->m_mutex);
+					//if (group->m_mutex)//防止同线程同任务死锁
+					//	XMutexBase_unlock_base(group->m_mutex);
 					XTimerBase_out(timer);
-					if (group->m_mutex)
-						XMutexBase_lock_base(group->m_mutex);
+					/*if (group->m_mutex)
+						XMutexBase_lock_base(group->m_mutex);*/
 				}
 				//转成父类指针
 				XTimerBase* timerBase = (XTimerBase*)timer;

@@ -33,14 +33,14 @@ XVtable* XMutexFreeRTOS_class_init()
     return XVTABLE_DEFAULT;
 }
 
-XMutexFreeRTOS* XMutexFreeRTOS_create()
+XMutexFreeRTOS* XMutexFreeRTOS_create(const char* name)
 {
     XMutexFreeRTOS* mutex = XMemory_malloc(sizeof(XMutexFreeRTOS));
-    XMutexFreeRTOS_init(mutex);
+    XMutexFreeRTOS_init(mutex, name);
     return mutex;
 }
 
-void XMutexFreeRTOS_init(XMutexFreeRTOS* mutex)
+void XMutexFreeRTOS_init(XMutexFreeRTOS* mutex, const char* name)
 {
     if (mutex == NULL)
         return;
@@ -49,7 +49,7 @@ void XMutexFreeRTOS_init(XMutexFreeRTOS* mutex)
     XClassGetVtable(mutex) = XMutexFreeRTOS_class_init();
 
     // 在初始化代码中创建互斥锁
-    mutex->m_mutex = xSemaphoreCreateMutex();
+    mutex->m_mutex = xSemaphoreCreateRecursiveMutex();
     if ( mutex->m_mutex == NULL) 
     {
         printf("互斥锁创建失败\n");
@@ -66,17 +66,17 @@ void XMutexBase_delete(XMutexFreeRTOS* mutex)
 
 bool VXMutexBase_lock(XMutexFreeRTOS* mutex)
 {
-    return xSemaphoreTake(mutex->m_mutex, portMAX_DELAY) == pdTRUE;
+    return xSemaphoreTakeRecursive(mutex->m_mutex, portMAX_DELAY) == pdTRUE;
 }
 
 bool VXMutexBase_lock_wait(XMutexFreeRTOS* mutex, size_t timerout)
 {
-    return xSemaphoreTake(mutex->m_mutex, pdMS_TO_TICKS(timerout)) == pdTRUE;
+    return xSemaphoreTakeRecursive(mutex->m_mutex, pdMS_TO_TICKS(timerout)) == pdTRUE;
 }
 
 bool VXMutexBase_unlock(XMutexFreeRTOS* mutex)
 {
      // 释放互斥锁
-    return xSemaphoreGive(mutex->m_mutex)==pdTRUE;
+    return xSemaphoreGiveRecursive(mutex->m_mutex)==pdTRUE;
 }
 #endif
