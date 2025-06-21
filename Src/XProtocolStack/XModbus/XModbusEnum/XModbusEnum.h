@@ -4,6 +4,9 @@
 extern "C" {
 #endif
 #include"XModbusConfig.h"
+#include<stdio.h>
+#include<stdint.h>
+typedef struct XModbus XModbus;
     /*! \brief Modbus异常码枚举（对应功能码异常响应） */
     typedef enum
     {
@@ -99,9 +102,23 @@ extern "C" {
         STATE_TX_END     // 发送结束（刚发完一帧数据）
     } XModbusSndState;
 
-
-
-
+    typedef enum {
+      XMB_ModbusCodeOnly,//仅匹配Modbus的功能码
+      XMB_ModbusAddressOnly,//仅匹配Modbus的地址
+      XMB_ModbusAddressCode,//同时匹配Modbus地址和功能码
+    } XModbusRecvHandMode;
+    typedef struct
+    {
+        union {
+            struct
+            {
+                uint8_t address;
+                uint8_t code;
+            };
+            uint16_t addressCode;
+        };
+    } XModbusRecvMatch;
+typedef void (*XModbusRecvHandCb)(XModbusRecvMatch* math, XModbus* modbus, void* data, void* userData);
 #if MB_ENUM_TO_STRING
    //modbus协议栈事件类型转string字符串常量输出
    const char* XModbusEventType_toString(XModbusEventType type);

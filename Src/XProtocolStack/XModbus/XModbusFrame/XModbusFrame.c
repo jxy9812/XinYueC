@@ -2,7 +2,6 @@
 #include "XCircularQueueAtomic.h"
 #include "XQueue.h"
 #include "XMemory.h"
-#include "XModbusRtu.h"
 #include "XCrc.h"
 #include <string.h>
 XModbusFrame* XModbusFrame_create(XModbusMode mode)

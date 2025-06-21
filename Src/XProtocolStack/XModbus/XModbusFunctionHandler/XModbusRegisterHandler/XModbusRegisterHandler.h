@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef struct XModbusBase XModbusBase;
+typedef struct XModbus XModbus;
 #include"XModbusHandlerObject.h"
 #include<stdint.h>
 #include<stdbool.h>
@@ -29,16 +29,16 @@ uint16_t* XModbusRegisterHandler_at(XModbusRegisterHandler* regFunc, uint16_t re
 //以下都是功能码回调函数
 
 //0x03读保持寄存器接收回调函数 主站是响应报文
-XModbusException XModbusRegisterHandler_0x03_RTU_masterRecvHandCallFunc(XModbusBase* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
+XModbusException XModbusRegisterHandler_0x03_RTU_masterRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
 
 //0x03读保持寄存器接收回调函数 从站接收是请求报文
-XModbusException XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc(XModbusBase* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
+XModbusException XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
 //0x04读输入寄存器接收回调函数 从站接收是请求报文
-XModbusException XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbusBase* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
+XModbusException XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
 //0x06写保持寄存器接收回调函数 从站接收是请求报文
-XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(uint8_t code, XModbusBase* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
+XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
 //0x10写多个保持寄存器接收回调函数 从站接收是请求报文
-XModbusException XModbusRegisterHandler_0x10_RTU_slaveRecvHandCallFunc(XModbusBase* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
+XModbusException XModbusRegisterHandler_0x10_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler);
 #ifdef __cplusplus
 }
 #endif

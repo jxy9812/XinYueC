@@ -15,33 +15,44 @@ typedef struct XTimerBase XTimerBase;
 #include"XDataFrameComm.h"
 //使用默认的Modbus TCP端口（502）
 #define MB_TCP_PORT_USE_DEFAULT 0
-#define XMODBUSBASE_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm)+4)       //XCommunicatorBase虚函数表大小
-enum XModbusBaseVtableEnum
+#define XMODBUS_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm)+4)       //XCommunicatorBase虚函数表大小
+enum XModbusVtableEnum
 {
-    EXModbusBase_SendFrame = XCLASS_VTABLE_GET_SIZE(XCommunicatorBase),
-    EXModbusBase_RecvFrame,
+    EXModbus_SendFrame = XCLASS_VTABLE_GET_SIZE(XCommunicatorBase),
+    EXModbus_RecvFrame,
 };
-typedef struct XModbusBase
+
+typedef struct XModbus
 {
     XDataFrameComm m_parent;
     uint8_t    m_address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
     XModbusMode m_mode;//模式
-}XModbusBase;
-XVtable* XModbusBase_class_init();
-void XModbusBase_init(XModbusBase* modbus, XIODeviceBase* io);
-void XModbusBase_setAddress(XModbusBase* modbus, uint8_t address);
-void XModbusBase_setMode(XModbusBase* modbus, XModbusMode mode);
+    XModbusRecvHandMode m_recvHandMode;//接收处理模式
+}XModbus;
+XVtable* XModbus_class_init();
+//基础创建
+XModbus* XModbus_create(XIODeviceBase* io);
+//用串口创建RTU 
+XModbus* XModbus_create_RTU_SerialPort(XSerialPortBase* serial, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired);
+void XModbus_init(XModbus* modbus, XIODeviceBase* io);
+void XModbus_setAddress(XModbus* modbus, uint8_t address);
+void XModbus_setMode(XModbus* modbus, XModbusMode mode);
 //当前是主站吗
-bool XModbusBase_isMaster(XModbusBase* modbus);
-#define XModbusBase_connect_base                        XCommunicatorBase_connect_base
-#define XModbusBase_disconnect_base                     XCommunicatorBase_disconnect_base
-#define XModbusBase_isConnected_base                    XCommunicatorBase_isConnected_base
+bool XModbus_isMaster(XModbus* modbus);
+//设置接收处理模式
+void XModbus_setRecvHandMode(XModbus* modbus, XModbusRecvHandMode mode);
+void XModbus_addRecvHand_CodeOnly(XModbus* modbus,uint8_t modbusCode, XModbusRecvHandCb cb, void* userData);
+void XModbus_addRecvHand_AddressOnly(XModbus* modbus, uint8_t modbusAddress, XModbusRecvHandCb cb, void* userData);
+void XModbus_addRecvHand_AddressCode(XModbus* modbus, uint8_t modbusAddress, uint8_t modbusCode, XModbusRecvHandCb cb, void* userData);
+#define XModbus_connect_base                        XCommunicatorBase_connect_base
+#define XModbus_disconnect_base                     XCommunicatorBase_disconnect_base
+#define XModbus_isConnected_base                    XCommunicatorBase_isConnected_base
 //发送一帧数据
-#define XModbusBase_sendFrame_base                      XDataFrameComm_sendData_base
+#define XModbus_sendFrame_base                      XDataFrameComm_sendData_base
 //主站定期发送
-#define XModbusBase_sendFramePeriodicMaster             XDataFrameComm_addPeriodicSendData_base
+#define XModbus_sendFramePeriodicMaster             XDataFrameComm_addPeriodicSendData_base
 //轮询处理
-#define XModbusBase_poll_base XCommunicatorBase_poll_base
+#define XModbus_poll_base XCommunicatorBase_poll_base
 
 #ifdef __cplusplus
 }

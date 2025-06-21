@@ -2,7 +2,6 @@
 #if MB_RTU_ENABLED
 #include "XModbusFrame.h"
 #include "XModbusProto.h"
-#include "XModbusRtu.h"
 #include "XCrc.h"
 #include "XAlgorithm.h"
 #include <string.h>

@@ -23,6 +23,13 @@
 #include <inttypes.h>     // 整数类型别名头文件（如uint8_t等）
 //#include "system.h"       // 平台相关系统头文件（包含时钟、中断等定义）
 
+/* ----------------------- 常量定义 -----------------------------------*/
+#define MB_SER_PDU_SIZE_MIN     4       // Modbus RTU帧最小长度（地址+功能码+数据+CRC=4字节）
+#define MB_SER_PDU_SIZE_MAX     256     // Modbus RTU帧最大长度（256字节，含CRC）
+#define MB_SER_PDU_SIZE_CRC     2       // CRC校验字段长度（2字节）
+#define MB_SER_PDU_ADDR_OFF     0       // 从机地址在帧中的偏移（第0字节）
+#define MB_SER_PDU_PDU_OFF      1       // Modbus PDU在帧中的偏移（地址后第1字节开始）
+
 /* ----------------------- 跨语言及内联支持 -----------------------------*/
 #define INLINE                      inline         // 内联函数声明宏（优化代码体积）
 #define PR_BEGIN_EXTERN_C           extern "C" {   // C++兼容声明开始

@@ -7,14 +7,14 @@ extern "C" {
 #include"XListSLinked.h"
 typedef struct XModbusFrame XModbusFrame;
 typedef XListSLinked XModbusRegularlySendFrameLsit;
-typedef struct XModbusBase XModbusBase;
+typedef struct XModbus XModbus;
 typedef struct XTimerBase XTimerBase;
 typedef struct XModbusRegularlySendFrame
 {
 	uint32_t time;//定时时间
 	size_t timeOut;//超时时间
 	XModbusFrame* frame;//帧数据
-	XModbusBase* modbus;//
+	XModbus* modbus;//
 	XTimerBase* timer;
 }XModbusRegularlySendFrame;
 XModbusRegularlySendFrameLsit* XModbusRegularlySendFrameList_create();

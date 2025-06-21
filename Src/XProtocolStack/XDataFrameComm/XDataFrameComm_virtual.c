@@ -395,19 +395,21 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 	{//全双工
 		if (comm->m_timerSendExpired)
 		{
-			XTimerBase_delete_base(comm->m_timerSendExpired);
-			comm->m_timerSendExpired = NULL;
+			/*XTimerBase_delete_base(comm->m_timerSendExpired);
+			comm->m_timerSendExpired = NULL;*/
+			XTimerBase_stop_base(comm->m_timerSendExpired);
 		}
 	}
 	else if (mode == XDFC_COMM_MODE_HALF_DUPLEX)
 	{//半双工
-		if (((XCommunicatorBase*)comm)->m_timerGroup == NULL)
-		{
-			printf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
-			exit(-1);
-		}
+		
 		if (comm->m_timerSendExpired==NULL)
 		{
+			if (((XCommunicatorBase*)comm)->m_timerGroup == NULL)
+			{
+				printf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
+				exit(-1);
+			}
 			XTimerBase* timer = XTimerWheel_create();
 			XTimerBase_setTimerCallback(timer, TimerSendExpired);
 			XTimerBase_setUserData(timer, comm);
@@ -449,13 +451,14 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 		return XDFC_EILLSTATE;//协议栈启动中不支持修改
 	if (mode == XDFC_FRAME_END_TIMEOUT)
 	{//设置为超时结束
-		if (((XCommunicatorBase*)comm)->m_timerGroup == NULL)
-		{
-			printf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
-			exit(-1);
-		}
+		
 		if (comm->m_timerRecvExpired == NULL)
 		{
+			if (((XCommunicatorBase*)comm)->m_timerGroup == NULL)
+			{
+				printf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
+				exit(-1);
+			}
 			XTimerBase* timer = XTimerWheel_create();
 			XTimerBase_setTimerCallback(timer, TimerRecvExpired);
 			XTimerBase_setUserData(timer, comm);
@@ -469,8 +472,9 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 	{//设置为标志结束
 		if (comm->m_timerRecvExpired)
 		{
-			XTimerBase_delete_base(comm->m_timerRecvExpired);
-			comm->m_timerRecvExpired = NULL;
+			//XTimerBase_delete_base(comm->m_timerRecvExpired);
+			//comm->m_timerRecvExpired = NULL;
+			XTimerBase_stop_base(comm->m_timerRecvExpired);
 		}
 	}
 	comm->m_frameEndMode = mode;

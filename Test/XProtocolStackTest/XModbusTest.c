@@ -1,5 +1,6 @@
 ﻿#include"XProtocolStackTest.h"
-#include"XModbusRTU.h"
+#include"XModbusBase.h"
+#include"XSerialPortBase.h"
 #include"XMemory.h"
 #include"XCrc.h"
 #include"XModbusFrame.h"
@@ -20,27 +21,28 @@ void XModbusTest()
     XSerialPortBase* serial = XSerialPortWin32_create();
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
-    XModbusRTU* modbus = XModbusRTU_createSerialPort(serial,NULL,NULL);
-    XModbusBase_setAddress(modbus,2);
-    XModbusBase_setMode(modbus, MB_RTU_MASTER);
+    XModbus* modbus = XModbus_create_RTU_SerialPort(serial,NULL,NULL);
+    XModbus_setAddress(modbus,2);
+    XModbus_setMode(modbus, MB_RTU_MASTER);
     //初始化Modbus
    // XModbus_init(modbus, &InitFunction, MB_RTU_MASTER, 0x02, 2, 38400, MB_PAR_NONE);
     XModbusRegisterHandler* Register=XModbusRegisterHandler_create(16);
+    printf("设置回调\n");
     //设置从站的功能码回调函数
     {
         XModbusFunctionHandler Handler = { MB_FUNC_READ_HOLDING_REGISTER,XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc,Register };
-        XDataFrameComm_addFuncCode(modbus, MB_FUNC_READ_HOLDING_REGISTER, XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc, Register);
+        XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_READ_HOLDING_REGISTER, XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc, Register);
     }
     printf("设置回调\n");
     {
        // XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc,Register };
-        XDataFrameComm_addFuncCode(modbus, MB_FUNC_WRITE_REGISTER, XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc, Register);
+        XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_WRITE_REGISTER, XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc, Register);
     }
     {//发送一帧数据
         XVector* frame = XVector_Create(uint8_t);
         char buff[] = {0x00,0x01};
         XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x01, buff);
-        XModbusBase_sendFrame_base(modbus, frame);
+        XModbus_sendFrame_base(modbus, frame);
         //XModbus_sendFrameRegularlyMaster(modbus, frame,50);
     }
     {//发送一帧数据
@@ -62,12 +64,12 @@ void XModbusTest()
     }
     //使能打开Modbus
    // XModbus_enable(modbus);
-    XModbusBase_connect_base(modbus);
+    XModbus_connect_base(modbus);
    // XModbusTest_threadReceiveCreate(modbus);
     //开始轮询
     while (true)
     {
-        XModbusBase_poll_base(modbus);
+        XModbus_poll_base(modbus);
         XTimerGroupBase_global_poll();
        // XModbus_poll(modbus);
        // XModbusTest_SerialPoll(modbus);

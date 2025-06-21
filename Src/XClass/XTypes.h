@@ -23,6 +23,7 @@ typedef struct XDataFrameComm  XDataFrameComm;
 typedef struct XIODeviceBase  XIODeviceBase;
 typedef struct XCircularQueueAtomic XCircularQueueAtomic;
 typedef struct XMutexBase XMutexBase;
+typedef struct XSerialPortBase XSerialPortBase;
 typedef XMapBase XFuncCodeMap;
 
 typedef XCircularQueueAtomic XIOCallbackQueue;
