@@ -1,4 +1,4 @@
-﻿#include"XModbusBase.h"
+﻿#include"XModbus.h"
 #include"XTimerGroupWheel.h"
 #include"XQueueBase.h"
 #include"XModbusFrame.h"

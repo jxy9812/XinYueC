@@ -1,26 +1,18 @@
-﻿#ifndef XMODBUSBASE_H
-#define XMODBUSBASE_H
+﻿#ifndef XMODBUS_H
+#define XMODBUS_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include<stdio.h>
 #include<stdint.h>
 #include"XModbusEnum.h"
-typedef struct XQueueBase XQueueBase; 
-typedef struct XModbusFunctionHandler XModbusFunctionHandler; 
-typedef struct XModbusFrame XModbusFrame;
-typedef struct XVector XVector;
-typedef struct XListBase XListBase;
-typedef struct XTimerBase XTimerBase;
 #include"XDataFrameComm.h"
 //使用默认的Modbus TCP端口（502）
 #define MB_TCP_PORT_USE_DEFAULT 0
-#define XMODBUS_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm)+4)       //XCommunicatorBase虚函数表大小
-enum XModbusVtableEnum
-{
-    EXModbus_SendFrame = XCLASS_VTABLE_GET_SIZE(XCommunicatorBase),
-    EXModbus_RecvFrame,
-};
+#define XMODBUS_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm))       //XModbus虚函数表大小
+XCLASS_DEFINE_BEGING(XModbus)
+//EXModbus_SendFrame = XCLASS_VTABLE_GET_SIZE(XDataFrameComm),
+XCLASS_DEFINE_END(XModbus)
 
 typedef struct XModbus
 {
@@ -41,18 +33,24 @@ void XModbus_setMode(XModbus* modbus, XModbusMode mode);
 bool XModbus_isMaster(XModbus* modbus);
 //设置接收处理模式
 void XModbus_setRecvHandMode(XModbus* modbus, XModbusRecvHandMode mode);
+//只匹配modbus的功能码
 void XModbus_addRecvHand_CodeOnly(XModbus* modbus,uint8_t modbusCode, XModbusRecvHandCb cb, void* userData);
+//只匹配modbus的地址
 void XModbus_addRecvHand_AddressOnly(XModbus* modbus, uint8_t modbusAddress, XModbusRecvHandCb cb, void* userData);
+//同时匹配modbus的地址和功能码
 void XModbus_addRecvHand_AddressCode(XModbus* modbus, uint8_t modbusAddress, uint8_t modbusCode, XModbusRecvHandCb cb, void* userData);
+void XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame);
+
+void XModbus_sendFramePeriodicMaster(XModbus* modbus, XModbusFrame* frame, uint32_t time);
 #define XModbus_connect_base                        XCommunicatorBase_connect_base
 #define XModbus_disconnect_base                     XCommunicatorBase_disconnect_base
 #define XModbus_isConnected_base                    XCommunicatorBase_isConnected_base
 //发送一帧数据
-#define XModbus_sendFrame_base                      XDataFrameComm_sendData_base
+#define XModbus_sendData_base                       XDataFrameComm_sendData_base
 //主站定期发送
-#define XModbus_sendFramePeriodicMaster             XDataFrameComm_addPeriodicSendData_base
+#define XModbus_sendDataPeriodicMaster_base         XDataFrameComm_addPeriodicSendData_base
 //轮询处理
-#define XModbus_poll_base XCommunicatorBase_poll_base
+#define XModbus_poll_base                           XCommunicatorBase_poll_base
 
 #ifdef __cplusplus
 }

@@ -1,4 +1,4 @@
-﻿#include "XModbusBase.h"
+﻿#include "XModbus.h"
 #include "XModbusFrame.h"
 #include "XModbusConfig.h"
 #include "XModbusProto.h"
@@ -115,11 +115,11 @@ bool RTU_GetFuncCodeCb_AddressCode(XModbus* modbus, XVector* data, XModbusRecvMa
 //设置RTU获取模式
 void SetGetFuncCodeMode_RTU(XModbus* modbus, XModbusRecvHandMode mode)
 {
-	switch (modbus->m_mode)
+	switch (mode)
 	{
-	case XMB_ModbusCodeOnly:XDataFrameComm_setGetFuncCodeCb(modbus, RTU_GetFuncCodeCb_CodeOnly); break;
-	case XMB_ModbusAddressOnly:XDataFrameComm_setGetFuncCodeCb(modbus, RTU_GetFuncCodeCb_AddressOnly); break;
-	case XMB_ModbusAddressCode:XDataFrameComm_setGetFuncCodeCb(modbus, RTU_GetFuncCodeCb_AddressCode); break;
+	case XMB_RecvHand_CodeOnly:XDataFrameComm_setGetFuncCodeCb(modbus, RTU_GetFuncCodeCb_CodeOnly); break;
+	case XMB_RecvHand_AddressOnly:XDataFrameComm_setGetFuncCodeCb(modbus, RTU_GetFuncCodeCb_AddressOnly); break;
+	case XMB_RecvHand_AddressCode:XDataFrameComm_setGetFuncCodeCb(modbus, RTU_GetFuncCodeCb_AddressCode); break;
 	default:
 		break;
 	}
@@ -141,7 +141,7 @@ void XModbus_setRecvHandMode(XModbus* modbus, XModbusRecvHandMode mode)
 }
 void XModbus_addRecvHand_CodeOnly(XModbus* modbus, uint8_t modbusCode, XModbusRecvHandCb cb, void* userData)
 {
-	if (modbus == NULL || modbus->m_recvHandMode != XMB_ModbusCodeOnly)
+	if (modbus == NULL || modbus->m_recvHandMode != XMB_RecvHand_CodeOnly)
 		return;//与设置的类型不符合
 	XModbusRecvMatch math = { 0 };
 	math.code = modbusCode;
@@ -150,7 +150,7 @@ void XModbus_addRecvHand_CodeOnly(XModbus* modbus, uint8_t modbusCode, XModbusRe
 
 void XModbus_addRecvHand_AddressOnly(XModbus* modbus, uint8_t modbusAddress, XModbusRecvHandCb cb, void* userData)
 {
-	if (modbus == NULL || modbus->m_recvHandMode != XMB_ModbusAddressOnly)
+	if (modbus == NULL || modbus->m_recvHandMode != XMB_RecvHand_AddressOnly)
 		return;//与设置的类型不符合
 	XModbusRecvMatch math = { 0 };
 	math.address = modbusAddress;
@@ -159,12 +159,30 @@ void XModbus_addRecvHand_AddressOnly(XModbus* modbus, uint8_t modbusAddress, XMo
 
 void XModbus_addRecvHand_AddressCode(XModbus* modbus, uint8_t modbusAddress, uint8_t modbusCode, XModbusRecvHandCb cb, void* userData)
 {
-	if (modbus == NULL || modbus->m_recvHandMode != XMB_ModbusAddressCode)
+	if (modbus == NULL || modbus->m_recvHandMode != XMB_RecvHand_AddressCode)
 		return;//与设置的类型不符合
 	XModbusRecvMatch math = { 0 };
 	math.address = modbusAddress;
 	math.code = modbusCode;
 	XDataFrameComm_addFuncCode(modbus, &math, cb, userData);
+}
+
+void XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame)
+{
+	if (modbus == NULL || frame == NULL|| frame->frameData==NULL)
+		return;
+	XModbus_sendData_base(modbus,frame->frameData);
+	frame->frameData = NULL;
+	XModbusFrame_delete(frame);
+}
+
+void XModbus_sendFramePeriodicMaster(XModbus* modbus, XModbusFrame* frame, uint32_t time)
+{
+	if (modbus == NULL || frame == NULL || frame->frameData == NULL|| time==0)
+		return;
+	XModbus_sendDataPeriodicMaster_base(modbus, frame->frameData,time);
+	frame->frameData = NULL;
+	XModbusFrame_delete(frame);
 }
 
 //功能码事件回调
