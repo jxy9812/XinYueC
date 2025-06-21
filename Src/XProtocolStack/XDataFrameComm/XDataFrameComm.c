@@ -7,6 +7,7 @@
 #include"XListSLinked.h"
 #include"XString.h"
 #include"XEquality.h"
+#include"XTimerBase.h"
 #include<string.h>
 #include<stdarg.h>
 XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
@@ -246,6 +247,25 @@ void XDataFrameComm_setGetFuncCodeCb(XDataFrameComm* comm, GetFuncCodeCb cb)
 {
 	if (comm)
 		comm->m_getFuncCode = cb;
+}
+
+void XDataFrameComm_setTimerRecvExpired(XDataFrameComm* comm, XTimerBase* timer)
+{
+	if (comm == NULL)
+		return;
+	if (comm->m_timerRecvExpired)
+		XTimerBase_delete_base(comm->m_timerRecvExpired);
+	comm->m_timerRecvExpired = timer;
+}
+
+void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer)
+{
+	if (comm == NULL)
+		return;
+	if (comm->m_timerSendExpired)
+		XTimerBase_delete_base(comm->m_timerSendExpired);
+	comm->m_timerSendExpired = timer;
+
 }
 
 XEventRecvFrame* XEventRecvFrame_create(int eventCode, size_t timestamp,XByteArray* frame)

@@ -51,7 +51,7 @@ void XModbus_sendFramePeriodicMaster(XModbus* modbus, XModbusFrame* frame, uint3
 #define XModbus_sendDataPeriodicMaster_base         XDataFrameComm_addPeriodicSendData_base
 //轮询处理
 #define XModbus_poll_base                           XCommunicatorBase_poll_base
-
+#define XModbus_delete_base                         XDataFrameComm_delete_base
 #ifdef __cplusplus
 }
 #endif
