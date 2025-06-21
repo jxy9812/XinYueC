@@ -20,10 +20,10 @@ void XModbusTest()
     XModbusRegisterHandler* Register=XModbusRegisterHandler_create(16);
     //设置从站的功能码回调函数
     {
-        XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_READ_HOLDING_REGISTER, XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc, Register);
+        XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_READ_HOLDING_REGISTER, XModbusRegisterHandler_0x03_RTU_slaveRecvHandCb, Register);
     }
     {
-        XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_WRITE_REGISTER, XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc, Register);
+        XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_WRITE_REGISTER, XModbusRegisterHandler_0x06_RTU_slaveRecvHandCb, Register);
     }
     {//发送一帧数据
         XVector* frame = XVector_Create(uint8_t);

@@ -16,7 +16,7 @@ typedef struct XModbusRegisterHandler
 }XModbusRegisterHandler;
 //创建保持寄存器功能类 要创建几个保持寄存器
 XModbusRegisterHandler* XModbusRegisterHandler_create(uint16_t regCount);
-void XModbusRegisterHandler_free(XModbusRegisterHandler* pRegFunc);
+void XModbusRegisterHandler_delete(XModbusRegisterHandler* pRegFunc);
 //写入寄存器
 bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint16_t regAddress,uint16_t value);
 //写入寄存器 数组的方式
@@ -29,16 +29,16 @@ uint16_t* XModbusRegisterHandler_at(XModbusRegisterHandler* regFunc, uint16_t re
 //以下都是功能码回调函数
 
 //0x03读保持寄存器接收回调函数 主站是响应报文
-void XModbusRegisterHandler_0x03_RTU_masterRecvHandCallFunc(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
+void XModbusRegisterHandler_0x03_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
 
 //0x03读保持寄存器接收回调函数 从站接收是请求报文
-void XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
+void XModbusRegisterHandler_0x03_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
 //0x04读输入寄存器接收回调函数 从站接收是请求报文
-void XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
+void XModbusRegisterHandler_0x04_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
 //0x06写保持寄存器接收回调函数 从站接收是请求报文
-void XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
+void XModbusRegisterHandler_0x06_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
 //0x10写多个保持寄存器接收回调函数 从站接收是请求报文
-void XModbusRegisterHandler_0x10_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
+void XModbusRegisterHandler_0x10_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
 #ifdef __cplusplus
 }
 #endif

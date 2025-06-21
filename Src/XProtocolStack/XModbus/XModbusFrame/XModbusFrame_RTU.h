@@ -28,7 +28,7 @@ typedef struct XModbusFrameRTU
     };
     uint16_t crc16;//校验码
     union {
-    XByteArray* data;//数据 ---线圈/离散/寄存器
+    XVector* data;//数据 ---线圈/离散/寄存器
     XModbusException exception;//错误码
     };
 }XModbusFrameRTU;
