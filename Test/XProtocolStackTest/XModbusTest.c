@@ -33,24 +33,22 @@ void XModbusTest()
     }
     printf("设置回调\n");
     {
-        XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc,Register };
+       // XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc,Register };
         XDataFrameComm_addFuncCode(modbus, MB_FUNC_WRITE_REGISTER, XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc, Register);
     }
     {//发送一帧数据
-        XModbusFrame* frame = XModbusFrame_newRecvHandle();
-        frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
+        XVector* frame = XVector_Create(uint8_t);
         char buff[] = {0x00,0x01};
         XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x01, buff);
-       // XModbus_sendFrame(modbus, frame);
+        XModbusBase_sendFrame_base(modbus, frame);
         //XModbus_sendFrameRegularlyMaster(modbus, frame,50);
     }
     {//发送一帧数据
-        XModbusFrame* frame = XModbusFrame_newRecvHandle();
+   
        // printf("%d\n",frame->recvHandle->timeout);
-        frame->recvHandle->pRecvHandCallFunc = RtuDataFrame_0x06_reply;
         char buff[] = { 0x00,0x01 };
-        XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x00, buff);
-        XModbusBase_sendFrame(modbus, frame);
+        //XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x00, buff);
+        //XModbusBase_sendFrame(modbus, frame);
         //printf("发送\n");
         //XModbusBase_sendFrameRegularlyMaster(modbus, frame,50);
        /* uint8_t State =0;

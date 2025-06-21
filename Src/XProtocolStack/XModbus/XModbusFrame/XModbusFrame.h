@@ -23,43 +23,30 @@ extern "C" {
 typedef struct XQueueBase XQueueBase;
 typedef XQueueBase XModbusFrameQueue;
 //帧接收队列
-typedef struct XModbus XModbus;
 typedef struct XModbusFrame XModbusFrame;
-typedef void (*XModbusFrameDataRecvHandCallFunc)(XModbus* modbus, XModbusFrame* frameData);
 /* --------------------------------- 数据类型定义------------------------------------------*/
-//接收回调方法
-typedef struct XModbusFrameDataRecvHandle
-{
-    uint16_t waitAddressCode;//等待操作的地址和功能码
-    XModbusFrameDataRecvHandCallFunc pRecvHandCallFunc;//当前回调函数
-    size_t timeout;//超时时间
-    void* userData;//用户数据
-}XModbusFrameDataRecvHandle;
-
 //Modbus一帧数据处理
 typedef struct XModbusFrame
 {
     XModbusMode mode;//modbus的模式
     XVector* frameData;//帧数据
     void* data;//用来存放解析后的数据 结构体
-    XModbusFrameDataRecvHandle* recvHandle;//接收处理   主站才有
 }XModbusFrame;
+
 /* --------------------------------- XModbusFrame 方法------------------------------------------*/
-XModbusFrame* XModbusFrame_create();
+XModbusFrame* XModbusFrame_create(XModbusMode mode);
 XModbusFrame* XModbusFrame_copy(XModbusFrame* frame);
-XModbusFrame* XModbusFrame_newRecvHandle();
-void XModbusFrame_free(XModbusFrame* frame);
+void XModbusFrame_setMode(XModbusFrame* frame, XModbusMode mode);
+void XModbusFrame_delete(XModbusFrame* frame);
 //获取数据帧中主机地址
 uint8_t XModbusFrame_getAddress(XModbusFrame* frame);
 //获取数据帧中功能码
 uint8_t XModbusFrame_getFuncCode(XModbusFrame* frame);
+//将一个数据解析
+bool XModbusFrame_parseData(XModbusFrame* frame, XVector* frameData);
 #if MB_RTU_ENABLED
 
 #endif
-
-/* ----------------------- XModbusFrameDataRecvHandle-------------------------------------*/
-//将其置为0
-void XModbusFrameDataRecvHandle_setZero(XModbusFrameDataRecvHandle* handle);
 #ifdef __cplusplus
 }
 #endif

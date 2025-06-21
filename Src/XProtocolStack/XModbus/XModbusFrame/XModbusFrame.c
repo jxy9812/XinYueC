@@ -5,15 +5,15 @@
 #include "XModbusRtu.h"
 #include "XCrc.h"
 #include <string.h>
-XModbusFrame* XModbusFrame_create()
+XModbusFrame* XModbusFrame_create(XModbusMode mode)
 {
 	XModbusFrame* frame=XMemory_malloc(sizeof(XModbusFrame));
 	if (frame == NULL)
 		return NULL;
 	frame->mode = MB_NOT_MODE;
-	frame->frameData = XVector_Create(uint8_t);
+	frame->frameData = NULL;
 	frame->data = NULL;
-	frame->recvHandle = NULL;
+	XModbusFrame_setMode(frame,mode);
 	return frame;
 }
 XModbusFrame* XModbusFrame_copy(XModbusFrame* frame)
@@ -21,30 +21,51 @@ XModbusFrame* XModbusFrame_copy(XModbusFrame* frame)
 	if(frame==NULL)
 		return NULL;
 	XModbusFrame* newFrame = NULL;
-	if (frame->recvHandle == NULL)
+	newFrame = XModbusFrame_create(frame->mode);
+	if (frame->frameData!=NULL)
 	{
-		newFrame = XModbusFrame_create();
-
+		newFrame->frameData = XVector_Create(uint8_t);
+		XVector_copy_base(newFrame->frameData, frame->frameData);
 	}
-	else
-	{
-		newFrame = XModbusFrame_newRecvHandle();
-		memcpy(newFrame->recvHandle, frame->recvHandle,sizeof(XModbusFrameDataRecvHandle));
-	}
-	XVector_copy_base(newFrame->frameData, frame->frameData);
 	newFrame->mode = frame->mode;
-	newFrame->data = frame->data;
+	switch (frame->mode)
+	{
+	case MB_RTU_MASTER:
+	case MB_RTU_SLAVE:memcpy(newFrame->data, frame->data, sizeof(XModbusFrameRTU)); break;
+	case MB_NOT_MODE:printf("设置了未知模式\n");  break;
+	default:
+		break;
+	}
 	return newFrame;
 }
-XModbusFrame* XModbusFrame_newRecvHandle()
+void XModbusFrame_setMode(XModbusFrame* frame, XModbusMode mode)
 {
-	XModbusFrame* frame = XModbusFrame_create();
-	frame->recvHandle = XMemory_malloc(sizeof(XModbusFrameDataRecvHandle));
-	//printf("创建\n");
-	XModbusFrameDataRecvHandle_setZero(frame->recvHandle);
-	return frame;
+	if (frame == NULL)
+		return;
+	if (frame->data)
+	{
+		switch (frame->mode)
+		{
+
+		case MB_RTU_MASTER:
+		case MB_RTU_SLAVE:XModbusFrameRTU_delete(frame->data); break;
+		case MB_NOT_MODE:printf("内存没释放\n"); break;
+		default:
+			break;
+		}
+	}
+	switch (mode)
+	{
+
+	case MB_RTU_MASTER:
+	case MB_RTU_SLAVE:frame->data=XModbusFrameRTU_create(); break;
+	case MB_NOT_MODE:printf("设置了未知模式\n");  break;
+	default:
+		break;
+	}
+	frame->mode = mode;
 }
-void XModbusFrame_free(XModbusFrame* frame)
+void XModbusFrame_delete(XModbusFrame* frame)
 {
 	if (frame)
 	{
@@ -52,17 +73,13 @@ void XModbusFrame_free(XModbusFrame* frame)
 		{
 			XVector_delete_base(frame->frameData);
 		}
-		if (frame->recvHandle)
-		{
-			XMemory_free(frame->recvHandle);
-		}
 		if (frame->data)
 		{
 			switch (frame->mode)
 			{
 			
 			case MB_RTU_MASTER:
-			case MB_RTU_SLAVE:XModbusFrameRTU_free(frame->data); break;
+			case MB_RTU_SLAVE:XModbusFrameRTU_delete(frame->data); break;
 			case MB_NOT_MODE:printf("内存没释放\n"); break;
 			default:
 				break;
@@ -107,25 +124,16 @@ uint8_t XModbusFrame_getFuncCode(XModbusFrame* frame)
 	}
 	return 0;
 }
-//解析CRC16
-static uint8_t XModbusFrame_parse‌CRC16(uint8_t* pData, uint16_t pos)
+bool XModbusFrame_parseData(XModbusFrame* frame, XVector* frameData)
 {
-	// 提取低位字节
-	uint16_t lowByte = (uint16_t)pData[pos];
-	// 提取高位字节
-	uint16_t highByte = (uint16_t)pData[pos + 1];
-	// 组合成 16 位 CRC 校验码
-	return (highByte << 8) | lowByte;
-}
-
-
-void XModbusFrameDataRecvHandle_setZero(XModbusFrameDataRecvHandle* handle)
-{
-	if (handle)
+	if(frame==NULL||frameData==NULL||frame->mode== MB_NOT_MODE)
+		return false;
+	switch (frame->mode)
 	{
-		handle->timeout = 0;
-		handle->pRecvHandCallFunc = NULL;
-		handle->userData = NULL;
-		handle->waitAddressCode = NULL;
+	case MB_RTU_MASTER:return XModbusFrameRTU_parseData_reply(frame->data, frameData);
+	case MB_RTU_SLAVE:return XModbusFrameRTU_parseData_request(frame->data, frameData);
+	default:
+		break;
 	}
+	return false;
 }
