@@ -10,9 +10,9 @@
 
 static void XModbus_EvnetHandCb(XEventMin* event);
 static void SetGetFuncCodeMode_RTU(XModbus* modbus, XModbusRecvHandMode mode);
-static bool RTU_GetFuncCodeCb_CodeOnly(XModbus* modbus, XVector* data, XModbusRecvMatch* math);
-static bool RTU_GetFuncCodeCb_AddressOnly(XModbus* modbus, XVector* data, XModbusRecvMatch* math);
-static bool RTU_GetFuncCodeCb_AddressCode(XModbus* modbus, XVector* data, XModbusRecvMatch* math);
+static bool RTU_GetFuncCodeCb_CodeOnly(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math);
+static bool RTU_GetFuncCodeCb_AddressOnly(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math);
+static bool RTU_GetFuncCodeCb_AddressCode(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math);
 XModbus* XModbus_create(XIODeviceBase* io)
 {
 	if (io == NULL)
@@ -89,7 +89,7 @@ bool XModbus_isMaster(XModbus* modbus)
 {
 	return modbus->m_mode % 2 == 0;
 }
-bool RTU_GetFuncCodeCb_CodeOnly(XModbus* modbus, XVector* data, XModbusRecvMatch* math)
+bool RTU_GetFuncCodeCb_CodeOnly(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math)
 {
 	if (data == NULL || XVector_isEmpty_base(data) || math == NULL)
 		return false;
@@ -97,7 +97,7 @@ bool RTU_GetFuncCodeCb_CodeOnly(XModbus* modbus, XVector* data, XModbusRecvMatch
 	math->code = ((uint8_t*)XContainerDataPtr(data))[1];
 	return true;
 }
-bool RTU_GetFuncCodeCb_AddressOnly(XModbus* modbus, XVector* data, XModbusRecvMatch* math)
+bool RTU_GetFuncCodeCb_AddressOnly(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math)
 {
 	if (data == NULL || XVector_isEmpty_base(data) || math == NULL)
 		return false;
@@ -105,7 +105,7 @@ bool RTU_GetFuncCodeCb_AddressOnly(XModbus* modbus, XVector* data, XModbusRecvMa
 	math->address = ((uint8_t*)XContainerDataPtr(data))[0];
 	return true;
 }
-bool RTU_GetFuncCodeCb_AddressCode(XModbus* modbus, XVector* data, XModbusRecvMatch* math)
+bool RTU_GetFuncCodeCb_AddressCode(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math)
 {
 	if (data == NULL || XVector_isEmpty_base(data) || math == NULL)
 		return false;
@@ -216,7 +216,7 @@ void XModbus_EvnetExecuteCb(XEventMin* event)
 void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 {
 	XEventRecvFrame* ev = event;
-	XVector* frame = ev->frame;
+	XByteArray* frame = ev->frame;
 #if XDFC_RECV_FRAME_16HEX_SHOW
 	XString* str = XString_to16HexString(XContainerDataPtr(frame), XContainerSize(frame));
 	if (str != NULL)

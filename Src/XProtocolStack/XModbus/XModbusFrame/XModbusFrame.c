@@ -1,4 +1,5 @@
 ﻿#include "XModbusFrame.h"
+#include "XByteArray.h"
 #include "XCircularQueueAtomic.h"
 #include "XQueue.h"
 #include "XMemory.h"
@@ -23,7 +24,7 @@ XModbusFrame* XModbusFrame_copy(XModbusFrame* frame)
 	newFrame = XModbusFrame_create(frame->mode);
 	if (frame->frameData!=NULL)
 	{
-		newFrame->frameData = XVector_Create(uint8_t);
+		newFrame->frameData =XByteArray_create(0);
 		XVector_copy_base(newFrame->frameData, frame->frameData);
 	}
 	newFrame->mode = frame->mode;
@@ -123,7 +124,7 @@ uint8_t XModbusFrame_getFuncCode(XModbusFrame* frame)
 	}
 	return 0;
 }
-bool XModbusFrame_parseData(XModbusFrame* frame, XVector* frameData)
+bool XModbusFrame_parseData(XModbusFrame* frame, XByteArray* frameData)
 {
 	if(frame==NULL||frameData==NULL||frame->mode== MB_NOT_MODE)
 		return false;

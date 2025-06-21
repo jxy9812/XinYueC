@@ -1,6 +1,6 @@
 ﻿#include "XModbusCoilsDiscHandler.h"
 #include "XMemory.h"
-#include"XVector.h"
+#include "XByteArray.h"
 XModbusCoilsDiscHandler* XModbusCoilsDiscHandler_create(uint16_t count)
 {
     if (count == 0)

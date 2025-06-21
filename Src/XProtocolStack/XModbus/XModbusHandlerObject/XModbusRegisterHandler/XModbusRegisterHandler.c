@@ -1,10 +1,8 @@
 ﻿#include"XModbusRegisterHandler.h"
 #include"XMemory.h"
-#include"XVector.h"
+#include"XByteArray.h"
 #include"XModbusFrame.h"
 #include"XModbus.h"
-//#include"XCrc.h"
-//#include"XAlgorithm.h"
 #include<string.h>
 //寄存器大小
 #define REGISTERSIZE 2
@@ -34,7 +32,7 @@ bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint
 {
 	if (regFunc == NULL || regFunc->parent.data == NULL)
 		return false;
-	XVector* data= regFunc->parent.data;
+	XByteArray* data= regFunc->parent.data;
 	if(XVector_getSize_base(data)>regAddress)
 	{
 		XVector_At_Base(data, regAddress, uint16_t) = value;
@@ -48,7 +46,7 @@ bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regA
 {
 	if (regFunc == NULL || regFunc->parent.data == NULL|| writeArray==NULL||regCount==0)
 		return false;
-	XVector* data = regFunc->parent.data;
+	XByteArray* data = regFunc->parent.data;
 	uint32_t dataSize = XVector_getSize_base(data);
 	//uint16_t typeSize = XVector_getTypeSize_base(data);
 	if (dataSize > regAddress && (dataSize * REGISTERSIZE) >= (regAddress * REGISTERSIZE + regCount* REGISTERSIZE))
@@ -71,7 +69,7 @@ bool XModbusRegisterHandler_read(XModbusRegisterHandler* regFunc, uint16_t regAd
 	if(REGISTERSIZE* regCount> readArraySize)
 		return false;
 	
-	XVector* data = regFunc->parent.data;
+	XByteArray* data = regFunc->parent.data;
 	uint32_t dataSize = XVector_getSize_base(data);
 	//检查寄存器地址和数量是否合法
 	if (dataSize < (regAddress+ regCount))
@@ -123,7 +121,7 @@ void XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* mat
 	XModbusRegisterHandler* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	XModbusFrame* sendFrame = XModbusFrame_create(modbus->m_mode);
-	XVector* data = regFunc->parent.data;//寄存器数据
+	XByteArray* data = regFunc->parent.data;//寄存器数据
 	if ((((rtu->regAddress) + (rtu->regCount)) <= XContainerSize(data)) && ((rtu->regCount) > 0))
 	{
 		void* readStart = XVector_at_base(data, rtu->regAddress);//寄存器数据缓冲区
@@ -145,7 +143,7 @@ void XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* mat
 	if (rtu == NULL)
 		return;
 	XModbusFrame* sendFrame = XModbusFrame_create(modbus->m_mode);
-	XVector* data = regFunc->parent.data;//寄存器数据
+	XByteArray* data = regFunc->parent.data;//寄存器数据
 	if ((((rtu->regAddress) + (rtu->regCount)) <= XContainerSize(data)) && ((rtu->regCount) > 0))
 	{
 		void* readStart = XVector_at_base(data, rtu->regAddress);//寄存器数据缓冲区
@@ -179,7 +177,7 @@ void XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* mat
 	if (rtu==NULL)
 		return ;
 
-	XVector* sendFrame =XVector_Create(uint8_t);
+	XByteArray* sendFrame =XByteArray_create(0);
 	if (rtu->data != NULL)
 	{
 		if (XModbusRegisterHandler_write_uint16_t(regFunc, rtu->regAddress, XVector_At_Base(rtu->data, 0, uint16_t)))
@@ -211,7 +209,7 @@ void XModbusRegisterHandler_0x10_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* mat
 	//寄存器数量
 	uint16_t regCount = rtu->regCount;
 
-	XVector* data = regFunc->parent.data;//寄存器数据
+	XByteArray* data = regFunc->parent.data;//寄存器数据
 	XModbusFrame* sendFrame = XModbusFrame_create(modbus->m_mode);
 	if (rtu->data!=NULL)
 	{

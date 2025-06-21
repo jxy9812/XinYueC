@@ -21,6 +21,7 @@ extern "C" {
 #define	XListSLinked_ON					1
 #define	XStack_ON						1
 #define	XVector_ON						1
+#define	XByteArray_ON					1
 #define	XVectorTwo_ON					1
 #define	XStringVector_ON				1
 #define	XCircularQueue_ON				1

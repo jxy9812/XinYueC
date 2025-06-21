@@ -1,6 +1,6 @@
 ﻿#include"XDataFrameComm.h"
 #include"XTimerGroupBase.h"
-#include"XVector.h"
+#include"XByteArray.h"
 #include"XCrc.h"
 #include"XEvent.h"
 #include"XDataFrameCommConfig.h"
@@ -18,8 +18,8 @@ static bool VXCommunicatorBase_connect(XDataFrameComm* comm);
 static bool VXCommunicatorBase_disconnect(XDataFrameComm* comm);
 static XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode mode);
 static XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameEndType mode);
-static XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XVector* data);
-static XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XVector* data, uint32_t time);
+static XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XByteArray* data);
+static XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data, uint32_t time);
 static bool  VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle);
 static void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
@@ -74,7 +74,7 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 		XDataFrameComm_sendEvent(comm, XEventMin_create(XDFC_RX_FRAME_ERROR, 0));
 		return;//校验没通过
 	}
-	XVector* v = XVector_Create(uint8_t);
+	XByteArray* v =XByteArray_create(0);
 	if (v == NULL)
 		return;
 	XVector_copy_base(v, comm->m_parent.m_recvAsyncBuffer);
@@ -91,7 +91,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		return;//没有可以接收的
 	uint8_t           ucByte;
 	XIODeviceBase_read_base(comm->m_parent.m_io, &ucByte, 1);
-	XVector* recvVector = comm->m_parent.m_recvAsyncBuffer;
+	XByteArray* recvVector = comm->m_parent.m_recvAsyncBuffer;
 	switch (comm->m_eRcvState)//if (mode == XDFC_FRAME_END_TIMEOUT)
 	{
 		case XDFC_STATE_RX_INIT:  // 初始状态（等待总线空闲）
@@ -218,7 +218,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 	XQueueBase* queue = comm->m_sendFrameQueue;
 	if (XQueueBase_isEmpty_base(queue))
 		return;//无数据可以发送
-	XVector* frame = XQueueBase_Top_Base(queue,XVector*);
+	XByteArray* frame = XQueueBase_Top_Base(queue,XByteArray*);
 	switch (comm->m_eSndState)
 	{
 		case XDFC_STATE_TX_IDLE:  // 发送空闲状态（无数据发送）
@@ -481,7 +481,7 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 	return XDFC_ENOERR;
 }
 
-XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XVector* data)
+XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XByteArray* data)
 {
 	if (XVector_isEmpty_base(data))
 	{
@@ -503,10 +503,10 @@ XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XVector* data)
 //定期发送的定时器回调函数
 static void SendDataPeriodicCb(XPair* pair)
 {
-	XVector* v = XVector_Create(uint8_t);
+	XByteArray* v =XByteArray_create(0);
 	if (v == NULL)
 		return;
-	XVector_copy_base(v, XPair_Second(pair, XVector*));
+	XVector_copy_base(v, XPair_Second(pair, XByteArray*));
 	if (!XQueueBase_push_base(XPair_First(pair, XDataFrameComm*)->m_sendFrameQueue, &v))
 	{
 #if XDFC_QUEUE_FULL_SHOW
@@ -517,11 +517,11 @@ static void SendDataPeriodicCb(XPair* pair)
 	}
 	//XDataFrameComm_sendData_base(XPair_First(pair, XDataFrameComm*),v);
 }
-XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XVector* data, uint32_t time)
+XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data, uint32_t time)
 {
 	if (XVector_isEmpty_base(data))
 		return NULL;
-	XPair* pair = XPair_Create(XDataFrameComm*, XVector*);
+	XPair* pair = XPair_Create(XDataFrameComm*, XByteArray*);
 	if (pair == NULL)
 	{
 		return NULL;
@@ -536,7 +536,7 @@ XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XVector* data, ui
 		comm->m_sendValidCb(comm,data);
 
 	XPair_First(pair, XDataFrameComm*) = comm;
-	XPair_Second(pair, XVector*) = data;
+	XPair_Second(pair, XByteArray*) = data;
 	
 	XListBase_push_back_base(comm->m_periodicSendList,&pair);
 	XTimerBase_setTimeout_base(timer, time);
@@ -557,12 +557,12 @@ bool VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle
 	if(size== XContainerSize(comm->m_periodicSendList))
 		return false;
 	XPair* pair = handle;
-	XVector_delete_base(XPair_Second(pair, XVector*));
+	XVector_delete_base(XPair_Second(pair, XByteArray*));
 	XPair_delete(pair);
 	return true;
 }
 //接收验证Crc16回调
-static bool XRecvValidCrc16Cb(XDataFrameComm* comm, const XVector* data)
+static bool XRecvValidCrc16Cb(XDataFrameComm* comm, const XByteArray* data)
 {
 	return  XCrc_get16(XContainerDataPtr(data), XContainerSize(data)) == 0;
 }
@@ -577,7 +577,7 @@ void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16)
 	}
 }
 //发送验证Crc16回调
-static void XSendValidCrc16Cb(XDataFrameComm* comm, XVector* data)
+static void XSendValidCrc16Cb(XDataFrameComm* comm, XByteArray* data)
 {
 	//设置crc校验
 	XVector_append_crc16(data, XCRC_BYTE_ORDER_LITTLE_ENDIAN);
@@ -650,7 +650,7 @@ void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data,
 	{//设置接收帧头判断
 		if (comm->m_recvFrameHead == NULL)
 		{
-			XVector* v = XVector_Create(uint8_t);
+			XByteArray* v =XByteArray_create(0);
 			XVector_append_array_base(v, data, dataSize);
 			comm->m_recvFrameHead = v;
 
@@ -674,7 +674,7 @@ void VXDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data,
 	{//设置接收帧尾判断
 		if (comm->m_recvFrameTail == NULL)
 		{
-			XVector* v = XVector_Create(uint8_t);
+			XByteArray* v =XByteArray_create(0);
 			XVector_append_array_base(v, data, dataSize);
 			comm->m_recvFrameTail = v;
 		}
@@ -697,7 +697,7 @@ void VXDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data,
 	{//设置发送帧头
 		if (comm->m_sendFrameHead == NULL)
 		{
-			XVector* v = XVector_Create(uint8_t);
+			XByteArray* v =XByteArray_create(0);
 			XVector_append_array_base(v, data, dataSize);
 			comm->m_sendFrameHead = v;
 		}
@@ -721,7 +721,7 @@ void VXDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data,
 	{//设置发送帧尾
 		if (comm->m_sendFrameTail == NULL)
 		{
-			XVector* v = XVector_Create(uint8_t);
+			XByteArray* v =XByteArray_create(0);
 			XVector_append_array_base(v, data, dataSize);
 			comm->m_sendFrameTail = v;
 		}

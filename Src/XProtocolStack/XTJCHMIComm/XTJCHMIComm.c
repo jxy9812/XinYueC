@@ -23,7 +23,7 @@ void XTJCHMIComm_init(XTJCHMIComm* comm, XIODeviceBase* io)
 	XDataFrameComm_setGetFuncCodeCb(comm, XDataFrameComm_GetFuncCodeCb);
 }
 
-bool XDataFrameComm_GetFuncCodeCb(XDataFrameComm* comm, XVector* data, uint8_t* code)
+bool XDataFrameComm_GetFuncCodeCb(XDataFrameComm* comm, XByteArray* data, uint8_t* code)
 {
 	if (data == NULL || XVector_isEmpty_base(data) || code == NULL)
 		return false;

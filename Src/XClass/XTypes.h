@@ -15,6 +15,7 @@ typedef struct XPair XPair;
 typedef struct XString XString;
 typedef struct XListBase XListBase;
 typedef struct XVector XVector;
+typedef struct XByteArray XByteArray;
 typedef struct XTimerGroupWheel XTimerGroupWheel;
 typedef struct XQueueBase XQueueBase;
 typedef struct XTimerBase XTimerBase;

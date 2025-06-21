@@ -1,6 +1,6 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
-typedef struct XVector XVector;
+#include"XTypes.h"
 #include"XMazeGeneratedDF.h"
 void XMazeGeneratedTest()
 {

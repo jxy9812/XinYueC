@@ -1,4 +1,5 @@
 ﻿#include"XDataFrameComm.h"
+#include"XByteArray.h"
 #include"XEvent.h"
 #include"XCircularQueueAtomic.h"
 #include"XDataFrameCommConfig.h"
@@ -33,7 +34,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	XCommunicatorBase_recvAsync_base(comm, XDFC_RECV_BUFFER_SIZE);
 	comm->m_state = XDFC_STATE_NOT_INITIALIZED;
 	comm->m_eventDispatcher = XEventDispatcher_createDefault(XDFC_EVENT_QUEUE_COUNT);
-	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XVector*, XDFC_FRAME_SEND_QUEUE_COUNT);
+	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XByteArray*, XDFC_FRAME_SEND_QUEUE_COUNT);
 	comm->m_periodicSendList = XListSLinked_Create(XPair*);
 	comm->m_periodicSendList->m_equality = XEquality_ptr;
 
@@ -56,18 +57,18 @@ XDFC_ErrorCode XDataFrameComm_setFrameEndType_base(XDataFrameComm* comm, XDFC_Fr
 	return XClassGetVirtualFunc(comm, EXDataFrameComm_SetFrameEndType, XDFC_ErrorCode(*)(XDataFrameComm*, XDFC_FrameEndType))(comm, mode);
 }
 
-XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XVector* data)
+XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XByteArray* data)
 {
 	if (ISNULL(comm, "") || ISNULL(XClassGetVtable(comm), ""))
 		return XDFC_EINVAL;
-	return XClassGetVirtualFunc(comm, EXDataFrameComm_SendData, XDFC_ErrorCode(*)(XDataFrameComm*, XVector*))(comm, data);
+	return XClassGetVirtualFunc(comm, EXDataFrameComm_SendData, XDFC_ErrorCode(*)(XDataFrameComm*, XByteArray*))(comm, data);
 }
 
 XDFC_ErrorCode XDataFrameComm_sendText(XDataFrameComm* comm, bool appendNull, const char* str)
 {
 	if (ISNULL(comm, "") || ISNULL(str, "")|| ISNULL(XClassGetVtable(comm), ""))
 		return XDFC_EINVAL;
-	XVector* data = XVector_Create(uint8_t);
+	XByteArray* data =XByteArray_create(0);
 	if (data == NULL)
 		return XDFC_ENORES;
 	XVector_append_array_base(data, str, strlen(str) + (appendNull ? 1 : 0));
@@ -78,7 +79,7 @@ XDFC_ErrorCode XDataFrameComm_sendTextFmt(XDataFrameComm* comm, bool appendNull,
 {
 	if (ISNULL(comm, "") || ISNULL(format, "") || ISNULL(XClassGetVtable(comm), ""))
 		return XDFC_EINVAL;
-	XVector* data = XVector_Create(uint8_t);
+	XByteArray* data =XByteArray_create(0);
 	if (data == NULL)
 		return XDFC_ENORES;
 	va_list args;
@@ -94,18 +95,18 @@ XDFC_ErrorCode XDataFrameComm_sendTextFmt(XDataFrameComm* comm, bool appendNull,
 	return XDataFrameComm_sendData_base(comm, data);
 }
 
-XHandle XDataFrameComm_addPeriodicSendData_base(XDataFrameComm* comm, XVector* data, uint32_t time)
+XHandle XDataFrameComm_addPeriodicSendData_base(XDataFrameComm* comm, XByteArray* data, uint32_t time)
 {
 	if (ISNULL(comm, "") || ISNULL(data, "") || ISNULL(time, "") || ISNULL(XClassGetVtable(comm), ""))
 		return NULL;
-	return XClassGetVirtualFunc(comm, EXDataFrameComm_AddSendDataPeriodic, XHandle(*)(XDataFrameComm*, XVector*, uint32_t))(comm, data,time);
+	return XClassGetVirtualFunc(comm, EXDataFrameComm_AddSendDataPeriodic, XHandle(*)(XDataFrameComm*, XByteArray*, uint32_t))(comm, data,time);
 }
 
 XHandle XDataFrameComm_addPeriodicSendText(XDataFrameComm* comm, bool appendNull, uint32_t time, const char* str)
 {
 	if (ISNULL(comm, "") || ISNULL(str, "") || ISNULL(time, "") || ISNULL(XClassGetVtable(comm), ""))
 		return NULL;
-	XVector* data = XVector_Create(uint8_t);
+	XByteArray* data =XByteArray_create(0);
 	if (data == NULL)
 		return NULL;
 	XVector_append_array_base(data, str, strlen(str) + (appendNull ? 1 : 0));
@@ -116,7 +117,7 @@ XHandle XDataFrameComm_addPeriodicSendTextFmt(XDataFrameComm* comm, bool appendN
 {
 	if (ISNULL(comm, "") || ISNULL(format, "") || ISNULL(time, "") || ISNULL(XClassGetVtable(comm), ""))
 		return NULL;
-	XVector* data = XVector_Create(uint8_t);
+	XByteArray* data =XByteArray_create(0);
 	if (data == NULL)
 		return XDFC_ENORES;
 	va_list args;
@@ -247,7 +248,7 @@ void XDataFrameComm_setGetFuncCodeCb(XDataFrameComm* comm, GetFuncCodeCb cb)
 		comm->m_getFuncCode = cb;
 }
 
-XEventRecvFrame* XEventRecvFrame_create(int eventCode, size_t timestamp,XVector* frame)
+XEventRecvFrame* XEventRecvFrame_create(int eventCode, size_t timestamp,XByteArray* frame)
 {
 	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
 	if (ev == NULL)
@@ -256,7 +257,7 @@ XEventRecvFrame* XEventRecvFrame_create(int eventCode, size_t timestamp,XVector*
 	ev->frame = frame;
 	return ev;
 }
-XEventFuncCode* XEventFuncCode_create(int eventCode, size_t timestamp, XVector* frame, void* funcCode)
+XEventFuncCode* XEventFuncCode_create(int eventCode, size_t timestamp, XByteArray* frame, void* funcCode)
 {
 	XEventFuncCode* ev = XMemory_malloc(sizeof(XEventFuncCode));
 	if (ev == NULL)
@@ -270,7 +271,7 @@ XEventFuncCode* XEventFuncCode_create(int eventCode, size_t timestamp, XVector* 
 void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 {
 	XEventRecvFrame* ev = event;
-	XVector* frame = ev->frame;
+	XByteArray* frame = ev->frame;
 	/*	if (!XQueueBase_receive_base(comm->m_recvFrameQueue, &v))
 			return;*/
 	//printf("接收帧\n");
@@ -315,7 +316,7 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 {
 	//printf("功能码事件\n");
 	XEventFuncCode* ev = event;
-	XVector* frame = ev->m_parent.frame;
+	XByteArray* frame = ev->m_parent.frame;
 	XDataFrameComm* comm = event->userData;
 	XFuncCodeNode* node = NULL;
 	if (comm->m_funcCodeMap != NULL)

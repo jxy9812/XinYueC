@@ -9,9 +9,9 @@ extern "C" {
 #include"XDataFrameCommEnum.h"
 #include"XEvent.h"
 #include"XFuncCodeMap.h"
-typedef bool (*XRecvValidCb)(XDataFrameComm* comm,const XVector* data);//接收验证回调(校验)
-typedef void (*XSendValidCb)(XDataFrameComm* comm, XVector* data);//发送验证回调(添加)
-typedef bool(*GetFuncCodeCb)(XDataFrameComm* comm, XVector* data,void* code);//从数据帧中获取功能码
+typedef bool (*XRecvValidCb)(XDataFrameComm* comm,const XByteArray* data);//接收验证回调(校验)
+typedef void (*XSendValidCb)(XDataFrameComm* comm, XByteArray* data);//发送验证回调(添加)
+typedef bool(*GetFuncCodeCb)(XDataFrameComm* comm, XByteArray* data,void* code);//从数据帧中获取功能码
 #define XDATAFRAMECOMM_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XDataFrameComm))       //XDataFrameComm虚函数表大小
 XCLASS_DEFINE_BEGING(XDataFrameComm)
 XCLASS_DEFINE_ENUM(XDataFrameComm, SendFrameFSM) = XCLASS_VTABLE_GET_SIZE(XCommunicatorBase),
@@ -41,8 +41,8 @@ typedef struct XDataFrameComm
     XDFC_RcvState m_eRcvState;// 接收状态机
     XDFC_SndState m_eSndState; // 发送状态机
 
-    XQueueBase* m_sendFrameQueue;//发送队列(XCircularQueue<XVector*>)
-    //XQueueBase* m_recvFrameQueue;//接收帧队列(XCircularQueue<XVector*>) 后面处理执行
+    XQueueBase* m_sendFrameQueue;//发送队列(XCircularQueue<XByteArray*>)
+    //XQueueBase* m_recvFrameQueue;//接收帧队列(XCircularQueue<XByteArray*>) 后面处理执行
     XListBase* m_periodicSendList;//定期发送数据链表
     XEventDispatcher* m_eventDispatcher;//事件调度器
     XFuncCodeMap* m_funcCodeMap;//功能码映射
@@ -50,14 +50,14 @@ typedef struct XDataFrameComm
     GetFuncCodeCb m_getFuncCode;//获取功能码回调
 
     size_t m_sentBytes;//已发送字节计数
-    XVector* m_sendFrameHead;//帧头
-    XVector* m_sendFrameTail;//帧尾
+    XByteArray* m_sendFrameHead;//帧头
+    XByteArray* m_sendFrameTail;//帧尾
     XTimerBase* m_timerRecvExpired;//检测帧接收超时
     XTimerBase* m_timerSendExpired;//检测发送帧到期
     //uint16_t m_frameRecv_timeout;//接收帧超时时间
     //uint16_t m_frameSend_timeout;//发送帧超时时间
-    XVector* m_recvFrameHead;//帧头
-    XVector* m_recvFrameTail;//帧尾
+    XByteArray* m_recvFrameHead;//帧头
+    XByteArray* m_recvFrameTail;//帧尾
     XRecvValidCb m_recvValidCb;//接收验证回调
     XSendValidCb m_sendValidCb;//发送添加验证回调
 }XDataFrameComm;
@@ -67,12 +67,12 @@ void XDataFrameComm_init(XDataFrameComm* comm,XIODeviceBase* io);
 XDFC_ErrorCode XDataFrameComm_setCommMode_base(XDataFrameComm* comm, XDFC_CommMode mode);
 XDFC_ErrorCode XDataFrameComm_setFrameEndType_base(XDataFrameComm* comm, XDFC_FrameEndType mode);
 //发送数据
-XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XVector* data);
+XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XByteArray* data);
 //发送字符串
 XDFC_ErrorCode XDataFrameComm_sendText(XDataFrameComm* comm, bool appendNull, const char* str);
 XDFC_ErrorCode XDataFrameComm_sendTextFmt(XDataFrameComm* comm, bool appendNull, const char* format, ...);
 //定期发送
-XHandle XDataFrameComm_addPeriodicSendData_base(XDataFrameComm* comm, XVector* data, uint32_t time);
+XHandle XDataFrameComm_addPeriodicSendData_base(XDataFrameComm* comm, XByteArray* data, uint32_t time);
 XHandle XDataFrameComm_addPeriodicSendText(XDataFrameComm* comm, bool appendNull, uint32_t time, const char* str);
 XHandle XDataFrameComm_addPeriodicSendTextFmt(XDataFrameComm* comm, bool appendNull, uint32_t time, const char* format, ...);
 bool  XDataFrameComm_removePeriodicSendData_base(XDataFrameComm* comm, XHandle handle);
@@ -111,15 +111,15 @@ bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* event);//向事�
 typedef struct XEventRecvFrame
 {
     XEventMin m_parent;//
-    XVector* frame;//帧数据
+    XByteArray* frame;//帧数据
 }XEventRecvFrame;//接收帧事件
-XEventRecvFrame* XEventRecvFrame_create(int eventCode, size_t timestamp,XVector* frame);
+XEventRecvFrame* XEventRecvFrame_create(int eventCode, size_t timestamp,XByteArray* frame);
 typedef struct XEventFuncCode
 {
     XEventRecvFrame m_parent;//
     void* funcCode;//功能码
 }XEventFuncCode;//执行功能码事件
-XEventFuncCode* XEventFuncCode_create(int eventCode, size_t timestamp, XVector* frame, void* funcCode);
+XEventFuncCode* XEventFuncCode_create(int eventCode, size_t timestamp, XByteArray* frame, void* funcCode);
 #ifdef __cplusplus
 }
 #endif

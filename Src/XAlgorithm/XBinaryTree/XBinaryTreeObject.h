@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef struct XVector XVector;
+#include"XTypes.h"
 #include<stdio.h>
 #include<stdbool.h>
 #include"XVector.h"

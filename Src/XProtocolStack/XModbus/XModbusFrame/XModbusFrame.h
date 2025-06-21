@@ -20,8 +20,6 @@ extern "C" {
 #include"XModbusFrame_RTU.h"
 #endif
 /* ---------------------------------  类型声明------------------------------------------*/
-typedef struct XQueueBase XQueueBase;
-typedef XQueueBase XModbusFrameQueue;
 //帧接收队列
 typedef struct XModbusFrame XModbusFrame;
 /* --------------------------------- 数据类型定义------------------------------------------*/
@@ -29,7 +27,7 @@ typedef struct XModbusFrame XModbusFrame;
 typedef struct XModbusFrame
 {
     XModbusMode mode;//modbus的模式
-    XVector* frameData;//帧数据
+    XByteArray* frameData;//帧数据
     void* data;//用来存放解析后的数据 结构体
 }XModbusFrame;
 
@@ -43,7 +41,7 @@ uint8_t XModbusFrame_getAddress(XModbusFrame* frame);
 //获取数据帧中功能码
 uint8_t XModbusFrame_getFuncCode(XModbusFrame* frame);
 //将一个数据解析
-bool XModbusFrame_parseData(XModbusFrame* frame, XVector* frameData);
+bool XModbusFrame_parseData(XModbusFrame* frame, XByteArray* frameData);
 #if MB_RTU_ENABLED
 
 #endif

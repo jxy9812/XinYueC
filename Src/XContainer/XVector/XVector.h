@@ -40,6 +40,8 @@ typedef struct XVector
 	XContainerObject m_parent;
 	XEquality m_equality;//相等比较函数
 }XVector;
+
+
 XVtable* XVector_class_init();
 //开辟一个动态数组,初始化 size_t
 XVector* XVector_create(size_t typeSize);
