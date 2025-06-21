@@ -6,7 +6,6 @@
 #include"XModbusFrame.h"
 #include"XTimerGroupBase.h"
 #include"XModbusRegisterHandler.h"
-#include"XModbusFunctionHandler.h"
 //0x6 功能码响应
 static void RtuDataFrame_0x06_reply(XModbus* modbus, XModbusFrame* frame)
 {
@@ -30,12 +29,10 @@ void XModbusTest()
     printf("设置回调\n");
     //设置从站的功能码回调函数
     {
-        XModbusFunctionHandler Handler = { MB_FUNC_READ_HOLDING_REGISTER,XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc,Register };
         XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_READ_HOLDING_REGISTER, XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc, Register);
     }
     printf("设置回调\n");
     {
-       // XModbusFunctionHandler Handler = { MB_FUNC_WRITE_REGISTER,XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc,Register };
         XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_WRITE_REGISTER, XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc, Register);
     }
     {//发送一帧数据

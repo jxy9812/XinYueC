@@ -2,7 +2,6 @@
 #include "XModbusFrame.h"
 #include "XModbusConfig.h"
 #include "XModbusProto.h"
-#include "XModbusFunctionHandler.h"
 #include "XModbusRegularlySendFrame.h"
 #include "XCircularQueueAtomic.h"
 #include "XTimerWheel.h"

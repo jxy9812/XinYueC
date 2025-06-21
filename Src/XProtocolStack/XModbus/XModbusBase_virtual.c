@@ -3,7 +3,6 @@
 #include"XQueueBase.h"
 #include"XModbusFrame.h"
 #include"XModbusProto.h"
-#include"XModbusFunctionHandler.h"
 typedef struct XModbusFrame XModbusFrame;
 XVtable* XModbus_class_init()
 {

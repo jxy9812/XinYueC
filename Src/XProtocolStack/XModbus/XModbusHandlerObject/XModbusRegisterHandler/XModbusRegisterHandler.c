@@ -2,7 +2,6 @@
 #include"XMemory.h"
 #include"XVector.h"
 #include"XModbusFrame.h"
-#include"XModbusFunctionHandler.h"
 #include"XModbusBase.h"
 //#include"XCrc.h"
 //#include"XAlgorithm.h"
@@ -92,9 +91,9 @@ uint16_t* XModbusRegisterHandler_at(XModbusRegisterHandler* regFunc, uint16_t re
 	return XVector_at_base(regFunc->parent.data, regAddress);
 }
 
-XModbusException XModbusRegisterHandler_0x03_RTU_masterRecvHandCallFunc(XModbus* modbus, XModbusFrame* frameData, XModbusFunctionHandler* FunctionHandler)
+XModbusException XModbusRegisterHandler_0x03_RTU_masterRecvHandCallFunc(XModbus* modbus, XModbusFrame* frameData, XModbusHandlerObject* hand)
 {
-	if (frameData == NULL || FunctionHandler == NULL)
+	if (frameData == NULL || hand == NULL)
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
 
 	//主站收到数据调用回调函数用户自己处理数据
@@ -117,11 +116,11 @@ XModbusException XModbusRegisterHandler_0x03_RTU_masterRecvHandCallFunc(XModbus*
 0x01 0x02：第一个寄存器值（0x0102）
 0x03 0x04：第二个寄存器值（0x0304）
 */
-XModbusException XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler)
+XModbusException XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
 {
-	if (modbus==NULL|| recvFrame == NULL || FunctionHandler == NULL)
+	if (modbus==NULL|| recvFrame == NULL || hand == NULL)
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
-	XModbusRegisterHandler* regFunc = FunctionHandler->data;
+	XModbusRegisterHandler* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	XModbusFrame* sendFrame = XModbusFrame_create(modbus->m_mode);
 	XVector* data = regFunc->parent.data;//寄存器数据
@@ -139,11 +138,11 @@ XModbusException XModbusRegisterHandler_0x03_RTU_slaveRecvHandCallFunc(XModbus* 
 
 	return MB_EX_NONE;
 }
-XModbusException XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler)
+XModbusException XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
 {
-	if (modbus == NULL || recvFrame == NULL || FunctionHandler == NULL)
+	if (modbus == NULL || recvFrame == NULL || hand == NULL)
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
-	XModbusRegisterHandler* regFunc = FunctionHandler->data;
+	XModbusRegisterHandler* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu == NULL)
 		return;
@@ -174,11 +173,11 @@ XModbusException XModbusRegisterHandler_0x04_RTU_slaveRecvHandCallFunc(XModbus* 
 0x02 0x06 0x00 0x03 0x00 0xA1 CRC16
 解析：响应与请求相同，确认写入成功
 */
-XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler)
+XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
 {
-	if (modbus == NULL || recvFrame == NULL || FunctionHandler == NULL)
+	if (modbus == NULL || recvFrame == NULL || hand == NULL)
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
-	XModbusRegisterHandler* regFunc = FunctionHandler;
+	XModbusRegisterHandler* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu==NULL)
 		return MB_EX_ILLEGAL_FUNCTION;
@@ -203,11 +202,11 @@ XModbusException XModbusRegisterHandler_0x06_RTU_slaveRecvHandCallFunc(XModbusRe
 	return MB_EX_NONE;
 }
 
-XModbusException XModbusRegisterHandler_0x10_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusFunctionHandler* FunctionHandler)
+XModbusException XModbusRegisterHandler_0x10_RTU_slaveRecvHandCallFunc(XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
 {
-	if (modbus == NULL || recvFrame == NULL || FunctionHandler == NULL)
+	if (modbus == NULL || recvFrame == NULL || hand == NULL)
 		return MB_EX_ILLEGAL_DATA_ADDRESS;
-	XModbusRegisterHandler* regFunc = FunctionHandler->data;
+	XModbusRegisterHandler* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu == NULL)
 		return;
