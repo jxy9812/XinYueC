@@ -6,8 +6,7 @@ extern "C" {
 #include"XModbusConfig.h"
 #include<stdio.h>
 #include<stdint.h>
-typedef struct XModbus XModbus;
-typedef struct XModbusFrame XModbusFrame;
+#include"XTypes.h"
 /*! \brief Modbus异常码枚举（对应功能码异常响应） */
 typedef enum
 {
@@ -30,13 +29,13 @@ typedef enum
  */
 typedef enum
 {
-    MB_NOT_MODE = 0xFF,                     /*无协议*/
-    MB_RTU_MASTER=0,                     /*!< RTU传输模式 主站*/
-    MB_RTU_SLAVE,                     /*!< RTU传输模式 从站*/
-    MB_ASCII_MASTER,                   /*!< ASCII传输模式 主站*/
-    MB_ASCII_SLAVE,                   /*!< ASCII传输模式 从站*/
-    MB_TCP_MASTER,                      /*!< TCP传输模式 主站*/
-    MB_TCP_SLAVE                      /*!< TCP传输模式 从站*/
+    XMB_NOT_MODE = 0xFF,                     /*无协议*/
+    XMB_RTU_MASTER=0,                     /*!< RTU传输模式 主站*/
+    XMB_RTU_SLAVE,                     /*!< RTU传输模式 从站*/
+    XMB_ASCII_MASTER,                   /*!< ASCII传输模式 主站*/
+    XMB_ASCII_SLAVE,                   /*!< ASCII传输模式 从站*/
+    XMB_TCP_MASTER,                      /*!< TCP传输模式 主站*/
+    XMB_TCP_SLAVE                      /*!< TCP传输模式 从站*/
 } XModbusMode;
 
 /*! \ingroup modbus
@@ -49,8 +48,8 @@ typedef enum
  */
 typedef enum
 {
-    MB_REG_READ,                /*!< 读取寄存器值并传递给协议栈 */
-    MB_REG_WRITE                /*!< 更新寄存器值 */
+    XMB_REG_READ,                /*!< 读取寄存器值并传递给协议栈 */
+    XMB_REG_WRITE                /*!< 更新寄存器值 */
 } XModbusRegisterMode;
 typedef enum {
   XMB_RecvHand_Not = 0x0000,//无设置
@@ -70,9 +69,9 @@ typedef struct
     };
 } XModbusRecvMatch;
 typedef void (*XModbusRecvHandCb)(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* frame, void* userData);
-#if MB_ENUM_TO_STRING
+#if XMB_ENUM_TO_STRING
 
-#endif // MB_ENUM_TO_STRING
+#endif // XMB_ENUM_TO_STRING
 
 
 

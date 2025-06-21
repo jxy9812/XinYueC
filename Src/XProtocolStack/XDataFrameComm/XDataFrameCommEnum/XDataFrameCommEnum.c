@@ -23,4 +23,4 @@ const char* XDataFrameComm_EventType_toString(XDFC_EventType type)
 	return NULL;
 }
 
-#endif // MB_ENUM_TO_STRING
+#endif // XMB_ENUM_TO_STRING

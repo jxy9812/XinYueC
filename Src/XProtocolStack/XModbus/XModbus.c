@@ -38,7 +38,7 @@ XModbus* XModbus_create_RTU_SerialPort(XSerialPortBase* serial, XTimerBase* time
 	if (timerout < 2)
 		timerout = 2;
 	XTimerBase_setTimeout_base(((XDataFrameComm*)modbus)->m_timerRecvExpired, timerout);
-	XTimerBase_setTimeout_base(((XDataFrameComm*)modbus)->m_timerSendExpired, timerout * MB_MASTER_RECV_WAIT_TIME);
+	XTimerBase_setTimeout_base(((XDataFrameComm*)modbus)->m_timerSendExpired, timerout * XMB_MASTER_RECV_WAIT_TIME);
 	return modbus;
 }
 void XModbus_init(XModbus* modbus, XIODeviceBase* io)
@@ -49,18 +49,17 @@ void XModbus_init(XModbus* modbus, XIODeviceBase* io)
 	memset(((XDataFrameComm*)modbus) + 1, 0, sizeof(XModbus) - sizeof(XDataFrameComm));
 	XDataFrameComm_init(modbus,io);
 	//设置异步接收的缓冲区大小
-	XCommunicatorBase_recvAsync_base(modbus, MB_RECV_BUFFER_SIZE);
+	XCommunicatorBase_recvAsync_base(modbus, XMB_RECV_BUFFER_SIZE);
 	if (io != NULL)
 	{
-		XIODeviceBase_setReadBuffer_base(io, MB_DEVICE_RECV_BUFFER_SIZE);
-		XIODeviceBase_setWriteBuffer_base(io, MB_DEVICE_SEND_BUFFER_SIZE);
+		XIODeviceBase_setReadBuffer_base(io, XMB_DEVICE_RECV_BUFFER_SIZE);
+		XIODeviceBase_setWriteBuffer_base(io, XMB_DEVICE_SEND_BUFFER_SIZE);
 	}
 	XClassGetVtable(modbus) = XModbus_class_init();
 	XEventDispatcher_setAllEventCb(((XDataFrameComm*)modbus)->m_eventDispatcher, XModbus_EvnetHandCb, modbus);
 	XDataFrameComm_funcCodeMap_create(modbus,sizeof(XModbusRecvMatch),XEquality_uint16_t);
 	modbus->m_address = 1;
-	modbus->m_mode = MB_NOT_MODE;
-	//modbus->m_state = STATE_NOT_INITIALIZED;
+	modbus->m_mode = XMB_NOT_MODE;
 }
 
 void XModbus_setAddress(XModbus* modbus, uint8_t address)
@@ -77,8 +76,8 @@ void XModbus_setMode(XModbus* modbus, XModbusMode mode)
 	XModbus_setRecvHandMode(modbus,modbus->m_recvHandMode);
 	switch (mode)
 	{
-	case MB_RTU_MASTER:
-	case MB_RTU_SLAVE:
+	case XMB_RTU_MASTER:
+	case XMB_RTU_SLAVE:
 
 	default:
 		break;
@@ -131,9 +130,9 @@ void XModbus_setRecvHandMode(XModbus* modbus, XModbusRecvHandMode mode)
 		return;
 	switch (modbus->m_mode)
 	{
-	case MB_RTU_MASTER:
-	case MB_RTU_SLAVE:SetGetFuncCodeMode_RTU(modbus, mode); break;
-	case MB_NOT_MODE:printf("运行模式还未设置\n"); break;
+	case XMB_RTU_MASTER:
+	case XMB_RTU_SLAVE:SetGetFuncCodeMode_RTU(modbus, mode); break;
+	case XMB_NOT_MODE:printf("运行模式还未设置\n"); break;
 	default:
 		break;
 	}
@@ -217,7 +216,7 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 {
 	XEventRecvFrame* ev = event;
 	XByteArray* frame = ev->frame;
-#if XDFC_RECV_FRAME_16HEX_SHOW
+#if XMB_RECV_FRAME_16HEX_SHOW
 	XString* str = XString_to16HexString(XContainerDataPtr(frame), XContainerSize(frame));
 	if (str != NULL)
 	{
@@ -225,7 +224,7 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 		XString_delete_base(str);
 	}
 #endif // XDFC_RECV_FRAME_16HEX_SHOW
-#ifdef XDFC_RECV_FRAME_STR_SHOW
+#ifdef XMB_RECV_FRAME_STR_SHOW
 	if (XVector_Back_Base(frame, char) != 0)
 	{
 		char c = 0;
@@ -273,8 +272,8 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 }
 void XModbus_EvnetHandCb(XEventMin* event)
 {
-#if XDFC_EVENT_HANDLE_SHOW
-#if XDFC_ENUM_TO_STRING
+#if XMB_EVENT_HANDLE_SHOW
+#if XMB_ENUM_TO_STRING
 	printf("准备处理事件:%s\n", XDataFrameComm_EventType_toString(event->code));
 #else
 	printf("准备处理事件:%d\n", eEvent);

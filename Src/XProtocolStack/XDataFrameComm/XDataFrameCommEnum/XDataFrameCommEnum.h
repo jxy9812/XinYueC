@@ -63,7 +63,7 @@ typedef enum {
 #if XDFC_ENUM_TO_STRING
     //XDataFrameComm协议栈事件类型转string字符串常量输出
     const char* XDataFrameComm_EventType_toString(XDFC_EventType type);
-#endif // MB_ENUM_TO_STRING
+#endif // XMB_ENUM_TO_STRING
 
 #ifdef __cplusplus
 }

@@ -10,7 +10,7 @@ XModbusFrame* XModbusFrame_create(XModbusMode mode)
 	XModbusFrame* frame=XMemory_malloc(sizeof(XModbusFrame));
 	if (frame == NULL)
 		return NULL;
-	frame->mode = MB_NOT_MODE;
+	frame->mode = XMB_NOT_MODE;
 	frame->frameData = NULL;
 	frame->data = NULL;
 	XModbusFrame_setMode(frame,mode);
@@ -30,9 +30,9 @@ XModbusFrame* XModbusFrame_copy(XModbusFrame* frame)
 	newFrame->mode = frame->mode;
 	switch (frame->mode)
 	{
-	case MB_RTU_MASTER:
-	case MB_RTU_SLAVE:memcpy(newFrame->data, frame->data, sizeof(XModbusFrameRTU)); break;
-	case MB_NOT_MODE:printf("设置了未知模式\n");  break;
+	case XMB_RTU_MASTER:
+	case XMB_RTU_SLAVE:memcpy(newFrame->data, frame->data, sizeof(XModbusFrameRTU)); break;
+	case XMB_NOT_MODE:printf("设置了未知模式\n");  break;
 	default:
 		break;
 	}
@@ -47,9 +47,9 @@ void XModbusFrame_setMode(XModbusFrame* frame, XModbusMode mode)
 		switch (frame->mode)
 		{
 
-		case MB_RTU_MASTER:
-		case MB_RTU_SLAVE:XModbusFrameRTU_delete(frame->data); break;
-		case MB_NOT_MODE:printf("内存没释放\n"); break;
+		case XMB_RTU_MASTER:
+		case XMB_RTU_SLAVE:XModbusFrameRTU_delete(frame->data); break;
+		case XMB_NOT_MODE:printf("内存没释放\n"); break;
 		default:
 			break;
 		}
@@ -57,9 +57,9 @@ void XModbusFrame_setMode(XModbusFrame* frame, XModbusMode mode)
 	switch (mode)
 	{
 
-	case MB_RTU_MASTER:
-	case MB_RTU_SLAVE:frame->data=XModbusFrameRTU_create(); break;
-	case MB_NOT_MODE:printf("设置了未知模式\n");  break;
+	case XMB_RTU_MASTER:
+	case XMB_RTU_SLAVE:frame->data=XModbusFrameRTU_create(); break;
+	case XMB_NOT_MODE:printf("设置了未知模式\n");  break;
 	default:
 		break;
 	}
@@ -78,9 +78,9 @@ void XModbusFrame_delete(XModbusFrame* frame)
 			switch (frame->mode)
 			{
 			
-			case MB_RTU_MASTER:
-			case MB_RTU_SLAVE:XModbusFrameRTU_delete(frame->data); break;
-			case MB_NOT_MODE:printf("内存没释放\n"); break;
+			case XMB_RTU_MASTER:
+			case XMB_RTU_SLAVE:XModbusFrameRTU_delete(frame->data); break;
+			case XMB_NOT_MODE:printf("内存没释放\n"); break;
 			default:
 				break;
 			}
@@ -94,8 +94,8 @@ uint8_t XModbusFrame_getAddress(XModbusFrame* frame)
 	{
 		switch (frame->mode)
 		{
-		case MB_RTU_MASTER:
-		case MB_RTU_SLAVE:
+		case XMB_RTU_MASTER:
+		case XMB_RTU_SLAVE:
 			if (frame->data)
 				return ((XModbusFrameRTU*)frame->data)->address;
 			else
@@ -112,8 +112,8 @@ uint8_t XModbusFrame_getFuncCode(XModbusFrame* frame)
 	{
 		switch (frame->mode)
 		{
-		case MB_RTU_MASTER:
-		case MB_RTU_SLAVE:
+		case XMB_RTU_MASTER:
+		case XMB_RTU_SLAVE:
 			if (frame->data)
 				return ((XModbusFrameRTU*)frame->data)->funcCode;
 			else
@@ -126,12 +126,12 @@ uint8_t XModbusFrame_getFuncCode(XModbusFrame* frame)
 }
 bool XModbusFrame_parseData(XModbusFrame* frame, XByteArray* frameData)
 {
-	if(frame==NULL||frameData==NULL||frame->mode== MB_NOT_MODE)
+	if(frame==NULL||frameData==NULL||frame->mode== XMB_NOT_MODE)
 		return false;
 	switch (frame->mode)
 	{
-	case MB_RTU_MASTER:return XModbusFrameRTU_parseData_reply(frame->data, frameData);
-	case MB_RTU_SLAVE:return XModbusFrameRTU_parseData_request(frame->data, frameData);
+	case XMB_RTU_MASTER:return XModbusFrameRTU_parseData_reply(frame->data, frameData);
+	case XMB_RTU_SLAVE:return XModbusFrameRTU_parseData_request(frame->data, frameData);
 	default:
 		break;
 	}
