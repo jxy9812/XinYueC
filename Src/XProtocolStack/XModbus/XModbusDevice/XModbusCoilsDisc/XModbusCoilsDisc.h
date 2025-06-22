@@ -15,6 +15,8 @@ typedef struct XModbusCoilsDisc
 //创建线圈或离散功能类 要创建几个离散或线圈
 XModbusCoilsDisc* XModbusCoilsDisc_create(uint16_t count);
 void XModbusCoilsDisc_delete(XModbusCoilsDisc* pRegHandler);
+
+bool XModbusCoilsDisc_write_bool(XModbusCoilsDisc* pRegHandler, uint16_t address, bool state);
 //写入线圈或离散
 bool XModbusCoilsDisc_write(XModbusCoilsDisc* pRegHandler, uint16_t address, uint16_t count, const uint8_t* writeArray);
 // 读取线圈或离散

@@ -118,14 +118,14 @@ extern "C" {
 //是否完整的帧一起发送
  #define XMB_IS_COMP_SEND_FRAME					 (  1 )
  //接收帧显示
-#define XMB_RECV_FRAME_16HEX_SHOW				 (  1 )
-#define XMB_RECV_FRAME_STR_SHOW				     (  1 )
+#define XMB_RECV_FRAME_16HEX_SHOW				 (  0 )
+#define XMB_RECV_FRAME_STR_SHOW				     (  0 )
  //发送帧显示
- #define XMB_SEND_FRAME_SHOW				     (  1 )
+ #define XMB_SEND_FRAME_SHOW				     (  0 )
 //枚举可以转String
  #define XMB_ENUM_TO_STRING						 (  1 )
 //显示处理的事件
- #define XMB_EVENT_HANDLE_SHOW				     (  1 )
+ #define XMB_EVENT_HANDLE_SHOW				     (  0 )
 //队列溢出(满)提示信息
  #define XMB_QUEUE_FULL_SHOW					 (  1 )
  /*! @} */

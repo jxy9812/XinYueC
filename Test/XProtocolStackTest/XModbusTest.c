@@ -7,6 +7,21 @@
 #include"XTimerGroupBase.h"
 #include"XModbusRegister.h"
 #include"XModbusDigitalSwitch.h"
+#include"XSwitchDeviceModbus.h"
+static XSwitchDeviceModbus* SW;
+static void StateChangeCallback0(XSwitchDeviceBase* sw)
+{
+    printf("in0:%s\n",sw->m_state?"true":"false");
+    XSwitchDeviceBase_setState_base(SW, sw->m_state);
+}
+static void StateChangeCallback1(XSwitchDeviceBase* sw)
+{
+    printf("in1:%s\n", sw->m_state ? "true" : "false");
+}
+static void StateChangeCallback2(XSwitchDeviceBase* sw)
+{
+    printf("in2:%s\n", sw->m_state ? "true" : "false");
+}
 void XModbusTest()
 {
     XSerialPortBase* serial = XSerialPortWin32_create();
@@ -17,9 +32,37 @@ void XModbusTest()
     XModbus_setMode(modbus, XMB_RTU_MASTER);
     //XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);
  
-    XModbusDigitalSwitch* sw = XModbusDigitalSwitch_create(modbus,0x01,8,8);
-    //XModbusDigitalSwitch_bindModbus_RTU(sw,modbus);
-    XModbusDigitalSwitch_setScanningPeriod_RTU(sw,50);
+    XModbusDigitalSwitch* ds = XModbusDigitalSwitch_create(modbus,0x01,8,8);
+    //XModbusDigitalSwitch_bindModbus_RTU(ds,modbus);
+    XModbusDigitalSwitch_setScanningPeriod_RTU(ds,50);
+
+    {
+        XSwitchDeviceModbus* sw0 = XSwitchDeviceModbus_create(ds, 0);
+        XSwitchDeviceBase_open_base(sw0, XIODeviceBase_WriteOnly);
+        XSwitchDeviceBase_setState_base(sw0, true);
+        SW = sw0;
+
+        XSwitchDeviceModbus* sw1 = XSwitchDeviceModbus_create(ds, 1);
+        XSwitchDeviceBase_open_base(sw1, XIODeviceBase_WriteOnly);
+        XSwitchDeviceBase_setState_base(sw1, true);
+
+        XSwitchDeviceModbus* sw2 = XSwitchDeviceModbus_create(ds, 2);
+        XSwitchDeviceBase_open_base(sw2, XIODeviceBase_WriteOnly);
+        XSwitchDeviceBase_setState_base(sw2, true);
+    }
+    {
+        XSwitchDeviceModbus* sw0 = XSwitchDeviceModbus_create(ds, 0);
+        XSwitchDeviceBase_open_base(sw0, XIODeviceBase_ReadOnly);
+        XSwitchDeviceBase_setStateChangeCallback(sw0, StateChangeCallback0);
+
+        XSwitchDeviceModbus* sw1 = XSwitchDeviceModbus_create(ds, 1);
+        XSwitchDeviceBase_open_base(sw1, XIODeviceBase_ReadOnly);
+        XSwitchDeviceBase_setStateChangeCallback(sw1, StateChangeCallback1);
+
+        XSwitchDeviceModbus* sw2 = XSwitchDeviceModbus_create(ds, 2);
+        XSwitchDeviceBase_open_base(sw2, XIODeviceBase_ReadOnly);
+        XSwitchDeviceBase_setStateChangeCallback(sw2, StateChangeCallback2);
+    }
 
     XModbusRegister* Register=XModbusRegister_create(16);
     //设置从站的功能码回调函数

@@ -42,6 +42,24 @@ void XModbusCoilsDisc_delete(XModbusCoilsDisc* pRegHandler)
         XMemory_free(pRegHandler);
     }
 }
+bool XModbusCoilsDisc_write_bool(XModbusCoilsDisc* pRegHandler, uint16_t address, bool state)
+{
+    if (!pRegHandler || !pRegHandler->parent.data || address >= pRegHandler->count)
+        return false;
+
+    uint8_t* data = XContainerDataPtr(pRegHandler->parent.data);
+    uint16_t byte_index = address / 8;
+    uint8_t bit_index = address % 8;
+
+    if (state) {
+        data[byte_index] |= (1 << bit_index);  // 设置位为1
+    }
+    else {
+        data[byte_index] &= ~(1 << bit_index); // 设置位为0
+    }
+
+    return true;
+}
 // 定义MIN宏
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))

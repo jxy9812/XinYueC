@@ -31,13 +31,13 @@ extern "C" {
 //接收帧字符串显示
 #define XDFC_RECV_FRAME_STR_SHOW					 (  1 )
  //发送帧16进制显示
-#define XDFC_SEND_FRAME_16HEX_SHOW					 (  1 )
+#define XDFC_SEND_FRAME_16HEX_SHOW					 (  0 )
 //发送帧字符串显示
-#define XDFC_SEND_FRAME_STR_SHOW					 (  1 )
+#define XDFC_SEND_FRAME_STR_SHOW					 (  0 )
 //枚举可以转String
 #define XDFC_ENUM_TO_STRING							 (  1 )
 //显示处理的事件
-#define XDFC_EVENT_HANDLE_SHOW						 (  1 )
+#define XDFC_EVENT_HANDLE_SHOW						 (  0 )
 //队列溢出(满)提示信息
 #define XDFC_QUEUE_FULL_SHOW						 (  1 )
  /*! @} */

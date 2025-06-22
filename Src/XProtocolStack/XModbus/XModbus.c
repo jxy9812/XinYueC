@@ -216,7 +216,7 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 		XString_delete_base(str);
 	}
 #endif // XDFC_RECV_FRAME_16HEX_SHOW
-#ifdef XMB_RECV_FRAME_STR_SHOW
+#if XMB_RECV_FRAME_STR_SHOW
 	if (XVector_Back_Base(frame, char) != 0)
 	{
 		char c = 0;
