@@ -1,4 +1,4 @@
-﻿#include "XModbusCoilsDiscHandler.h"
+﻿#include "XModbusCoilsDisc.h"
 #include "XMemory.h"
 #include "XByteArray.h"
 #include"XModbusFrame.h"
@@ -20,19 +20,19 @@
 */
 #define XMODBUS_UINT8_GET_BITS(ByteBuff,Offset) (((*(ByteBuff))>>Offset)&0x1) 
 
-XModbusCoilsDiscHandler* XModbusCoilsDiscHandler_create(uint16_t count)
+XModbusCoilsDisc* XModbusCoilsDisc_create(uint16_t count)
 {
     if (count == 0)
         return NULL;
     uint16_t size = (count % 8 == 0) ? (count / 8) : ((count / 8) + 1);
-    XModbusCoilsDiscHandler* ptr = XMemory_malloc(sizeof(XModbusCoilsDiscHandler));
+    XModbusCoilsDisc* ptr = XMemory_malloc(sizeof(XModbusCoilsDisc));
     ptr->count = count;
     ptr->parent.data = XVector_Create(char);
     XVector_resize_base(ptr->parent.data, size);
     return ptr;
 }
 
-void XModbusCoilsDiscHandler_delete(XModbusCoilsDiscHandler* pRegHandler)
+void XModbusCoilsDisc_delete(XModbusCoilsDisc* pRegHandler)
 {
     if (pRegHandler)
     {
@@ -45,7 +45,7 @@ void XModbusCoilsDiscHandler_delete(XModbusCoilsDiscHandler* pRegHandler)
 #ifndef MIN
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 #endif
-bool XModbusCoilsDiscHandler_write(XModbusCoilsDiscHandler* pRegHandler, uint16_t address, uint16_t count, const uint8_t* writeArray)
+bool XModbusCoilsDisc_write(XModbusCoilsDisc* pRegHandler, uint16_t address, uint16_t count, const uint8_t* writeArray)
 {
     if (!pRegHandler || !pRegHandler->parent.data || !writeArray || !count)
         return false;
@@ -105,7 +105,7 @@ bool XModbusCoilsDiscHandler_write(XModbusCoilsDiscHandler* pRegHandler, uint16_
     return true;
 }
 
-bool XModbusCoilsDiscHandler_read(XModbusCoilsDiscHandler* pRegHandler, uint16_t address, uint16_t count, uint8_t* readArray, uint16_t readArraySize)
+bool XModbusCoilsDisc_read(XModbusCoilsDisc* pRegHandler, uint16_t address, uint16_t count, uint8_t* readArray, uint16_t readArraySize)
 {
     if (!pRegHandler || !pRegHandler->parent.data || !readArray || !count)
         return false;
@@ -168,7 +168,7 @@ bool XModbusCoilsDiscHandler_read(XModbusCoilsDiscHandler* pRegHandler, uint16_t
     return true;
 }
 
-bool XModbusCoilsDiscHandler_at(XModbusCoilsDiscHandler* pRegHandler, uint16_t regAddress)
+bool XModbusCoilsDisc_at(XModbusCoilsDisc* pRegHandler, uint16_t regAddress)
 {
     if (!pRegHandler || !pRegHandler->parent.data || regAddress >= pRegHandler->count)
         return false;
@@ -180,31 +180,31 @@ bool XModbusCoilsDiscHandler_at(XModbusCoilsDiscHandler* pRegHandler, uint16_t r
     return (data[byte_index] & (1 << bit_index)) != 0;
 }
 
-void XModbusCoilsDiscHandler_0x01_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusCoilsDisc_0x01_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
     if (modbus == NULL || recvFrame == NULL || hand == NULL)
         return;
-    XModbusCoilsDiscHandler* coilsFunc = hand;
+    XModbusCoilsDisc* coilsFunc = hand;
     XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
     if (rtu == NULL)
         return;
 
     if (rtu->data != NULL)
     {
-        XModbusCoilsDiscHandler_write(coilsFunc, rtu->regAddress, rtu->regCount,XContainerDataPtr(rtu->data));
+        XModbusCoilsDisc_write(coilsFunc, rtu->regAddress, rtu->regCount,XContainerDataPtr(rtu->data));
     }
 }
 
-void XModbusCoilsDiscHandler_0x02_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusCoilsDisc_0x02_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
-    XModbusCoilsDiscHandler_0x01_RTU_masterRecvHandCb(math,modbus,recvFrame,hand);
+    XModbusCoilsDisc_0x01_RTU_masterRecvHandCb(math,modbus,recvFrame,hand);
 }
 
-void XModbusCoilsDiscHandler_0x01_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusCoilsDisc_0x01_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
     if (modbus == NULL || recvFrame == NULL || hand == NULL)
         return;
-    XModbusCoilsDiscHandler* coilsFunc = hand;
+    XModbusCoilsDisc* coilsFunc = hand;
     XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
     XModbusFrame* sendFrame = XModbusFrame_create(modbus->m_mode);
     XVector* data = coilsFunc->parent.data;//寄存器数据
@@ -213,7 +213,7 @@ void XModbusCoilsDiscHandler_0x01_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XM
         //void* readStart = XVector_at_base(data, rtu->coilsAddress);//寄存器数据缓冲区
         size_t buffSize = rtu->coilsCount / 8 + 1;
         uint8_t* buff = XMemory_malloc(buffSize);
-        if(XModbusCoilsDiscHandler_read(hand, rtu->address, rtu->coilsCount, buff, buffSize))
+        if(XModbusCoilsDisc_read(hand, rtu->address, rtu->coilsCount, buff, buffSize))
             XModbusFrameRTU_setFrameData_0x01_reply(sendFrame, rtu->address, buff, rtu->coilsCount);
         else
             XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->address, MB_FUNC_READ_COILS, MB_EX_ILLEGAL_DATA_ADDRESS);
@@ -226,11 +226,11 @@ void XModbusCoilsDiscHandler_0x01_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XM
     XModbus_sendData_base(modbus, sendFrame);
 }
 
-void XModbusCoilsDiscHandler_0x02_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusCoilsDisc_0x02_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
     if (modbus == NULL || recvFrame == NULL || hand == NULL)
         return;
-    XModbusCoilsDiscHandler* coilsFunc = hand;
+    XModbusCoilsDisc* coilsFunc = hand;
     XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
     XModbusFrame* sendFrame = XModbusFrame_create(modbus->m_mode);
     XVector* data = coilsFunc->parent.data;//寄存器数据
@@ -239,7 +239,7 @@ void XModbusCoilsDiscHandler_0x02_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XM
         //void* readStart = XVector_at_base(data, rtu->coilsAddress);//寄存器数据缓冲区
         size_t buffSize = rtu->coilsCount / 8 + 1;
         uint8_t* buff = XMemory_malloc(buffSize);
-        if (XModbusCoilsDiscHandler_read(hand, rtu->address, rtu->coilsCount, buff, buffSize))
+        if (XModbusCoilsDisc_read(hand, rtu->address, rtu->coilsCount, buff, buffSize))
             XModbusFrameRTU_setFrameData_0x02_reply(sendFrame, rtu->address, buff, rtu->coilsCount);
         else
             XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->address, MB_FUNC_READ_DISCRETE_INPUTS, MB_EX_ILLEGAL_DATA_ADDRESS);
@@ -252,11 +252,11 @@ void XModbusCoilsDiscHandler_0x02_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XM
     XModbus_sendData_base(modbus, sendFrame);
 }
 
-void XModbusCoilsDiscHandler_0x05_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusCoilsDisc_0x05_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
     if (modbus == NULL || recvFrame == NULL || hand == NULL)
         return;
-    XModbusCoilsDiscHandler* coilsFunc = hand;
+    XModbusCoilsDisc* coilsFunc = hand;
     XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
     if (rtu == NULL)
         return;
@@ -270,7 +270,7 @@ void XModbusCoilsDiscHandler_0x05_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XM
             XMODBUS_UINT8_SET_BITS(&buff,0,true);
         else
             XMODBUS_UINT8_SET_BITS(&buff, 0, false);
-        if (XModbusCoilsDiscHandler_write(coilsFunc, rtu->regAddress, 1,&buff))
+        if (XModbusCoilsDisc_write(coilsFunc, rtu->regAddress, 1,&buff))
         {//写入成功 将数据帧再次发送回去
             XVector_swap_base(recvFrame->frameData, sendFrame);
         }
@@ -286,11 +286,11 @@ void XModbusCoilsDiscHandler_0x05_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XM
     XModbus_sendData_base(modbus, sendFrame);
 }
 
-void XModbusCoilsDiscHandler_0x0F_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusCoilsDisc_0x0F_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
     if (modbus == NULL || recvFrame == NULL || hand == NULL)
         return;
-    XModbusCoilsDiscHandler* coilsFunc = hand;
+    XModbusCoilsDisc* coilsFunc = hand;
     XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
     if (rtu == NULL)
         return;
@@ -302,7 +302,7 @@ void XModbusCoilsDiscHandler_0x0F_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XM
     XModbusFrame* sendFrame = XModbusFrame_create(modbus->m_mode);
     if (rtu->data != NULL)
     {
-        if(XModbusCoilsDiscHandler_write(coilsFunc, coilsAddress, coilsCount,XContainerDataPtr(rtu->data)))
+        if(XModbusCoilsDisc_write(coilsFunc, coilsAddress, coilsCount,XContainerDataPtr(rtu->data)))
             XModbusFrameRTU_setFrameData_0x0F_reply(sendFrame, rtu->address, coilsAddress, coilsCount);
         else
             XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->address, MB_FUNC_WRITE_MULTIPLE_COILS, MB_EX_ILLEGAL_DATA_ADDRESS);

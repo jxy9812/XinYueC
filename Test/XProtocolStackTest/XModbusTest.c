@@ -5,7 +5,7 @@
 #include"XCrc.h"
 #include"XModbusFrame.h"
 #include"XTimerGroupBase.h"
-#include"XModbusRegisterHandler.h"
+#include"XModbusRegister.h"
 
 void XModbusTest()
 {
@@ -17,13 +17,13 @@ void XModbusTest()
     XModbus_setMode(modbus, XMB_RTU_MASTER);
     //XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);
  
-    XModbusRegisterHandler* Register=XModbusRegisterHandler_create(16);
+    XModbusRegister* Register=XModbusRegister_create(16);
     //设置从站的功能码回调函数
     {
-        XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_READ_HOLDING_REGISTER, XModbusRegisterHandler_0x03_RTU_slaveRecvHandCb, Register);
+        XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_READ_HOLDING_REGISTER, XModbusRegister_0x03_RTU_slaveRecvHandCb, Register);
     }
     {
-        XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_WRITE_REGISTER, XModbusRegisterHandler_0x06_RTU_slaveRecvHandCb, Register);
+        XModbus_addRecvHand_CodeOnly(modbus, MB_FUNC_WRITE_REGISTER, XModbusRegister_0x06_RTU_slaveRecvHandCb, Register);
     }
     {//发送一帧数据
         XVector* frame = XVector_Create(uint8_t);

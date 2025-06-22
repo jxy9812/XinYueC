@@ -1,5 +1,5 @@
-﻿#ifndef XMODBUSFUNCOBJECT_H
-#define XMODBUSFUNCOBJECT_H
+﻿#ifndef XMODBUSDEVICEOBJECT_H
+#define XMODBUSDEVICEOBJECT_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -8,11 +8,11 @@ extern "C" {
 typedef struct XModbus XModbus;
 typedef struct XModbusFrame XModbusFrame;
 //功能码处理基类结构体
-typedef struct XModbusHandlerObject
+typedef struct XModbusDeviceObject
 {
 	void* data;//数据
 
-}XModbusHandlerObject;
+}XModbusDeviceObject;
 
 #ifdef __cplusplus
 }

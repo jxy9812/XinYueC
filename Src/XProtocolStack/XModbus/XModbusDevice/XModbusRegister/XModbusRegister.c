@@ -1,4 +1,4 @@
-﻿#include"XModbusRegisterHandler.h"
+﻿#include"XModbusRegister.h"
 #include"XMemory.h"
 #include"XByteArray.h"
 #include"XModbusFrame.h"
@@ -8,17 +8,17 @@
 #define REGISTERSIZE 2
 //读取16位数据
 #define ReadData16(p) ((*(p)) << 8 | (*(p + 1)))
-XModbusRegisterHandler* XModbusRegisterHandler_create(uint16_t regCount)
+XModbusRegister* XModbusRegister_create(uint16_t regCount)
 {
 	if(regCount==0)
 		return NULL;
-	XModbusRegisterHandler* ptr = XMemory_malloc(sizeof(XModbusRegisterHandler));
+	XModbusRegister* ptr = XMemory_malloc(sizeof(XModbusRegister));
 	ptr->parent.data = XVector_create(REGISTERSIZE);
 	XVector_resize_base(ptr->parent.data, regCount);
 	return ptr;
 }
 
-void XModbusRegisterHandler_delete(XModbusRegisterHandler* pRegHandler)
+void XModbusRegister_delete(XModbusRegister* pRegHandler)
 {
 	if (pRegHandler)
 	{
@@ -28,7 +28,7 @@ void XModbusRegisterHandler_delete(XModbusRegisterHandler* pRegHandler)
 	}
 }
 
-bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t value)
+bool XModbusRegister_write_uint16_t(XModbusRegister* regFunc, uint16_t regAddress, uint16_t value)
 {
 	if (regFunc == NULL || regFunc->parent.data == NULL)
 		return false;
@@ -42,7 +42,7 @@ bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint
 	return false;
 }
 
-bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount, const uint8_t* writeArray)
+bool XModbusRegister_write(XModbusRegister* regFunc, uint16_t regAddress, uint16_t regCount, const uint8_t* writeArray)
 {
 	if (regFunc == NULL || regFunc->parent.data == NULL|| writeArray==NULL||regCount==0)
 		return false;
@@ -61,7 +61,7 @@ bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regA
 	return false;
 }
 
-bool XModbusRegisterHandler_read(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount, uint8_t* readArray, uint16_t readArraySize)
+bool XModbusRegister_read(XModbusRegister* regFunc, uint16_t regAddress, uint16_t regCount, uint8_t* readArray, uint16_t readArraySize)
 {
 	if (regFunc == NULL || regFunc->parent.data == NULL || regCount==0|| readArray == NULL || readArraySize == 0)
 		return false;
@@ -77,50 +77,50 @@ bool XModbusRegisterHandler_read(XModbusRegisterHandler* regFunc, uint16_t regAd
 	//开始拷贝数据到读取缓冲区
 	for (size_t i = 0; i < regCount; i++)
 	{
-		*(((uint16_t*)readArray) + i) = *XModbusRegisterHandler_at(regFunc, regAddress+i);
+		*(((uint16_t*)readArray) + i) = *XModbusRegister_at(regFunc, regAddress+i);
 	}
 	return true;
 }
 
-uint16_t* XModbusRegisterHandler_at(XModbusRegisterHandler* regFunc, uint16_t regAddress)
+uint16_t* XModbusRegister_at(XModbusRegister* regFunc, uint16_t regAddress)
 {
 	if (regFunc == NULL || regFunc->parent.data == NULL);
 		return NULL;
 	return XVector_at_base(regFunc->parent.data, regAddress);
 }
 
-void XModbusRegisterHandler_0x03_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusRegister_0x03_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
 	if (modbus == NULL || recvFrame == NULL || hand == NULL)
 		return;
-	XModbusRegisterHandler* regFunc = hand;
+	XModbusRegister* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu == NULL)
 		return;
 
 	if (rtu->data != NULL)
 	{
-		XModbusRegisterHandler_write(regFunc, rtu->regAddress,rtu->regCount, XContainerDataPtr(rtu->data));
+		XModbusRegister_write(regFunc, rtu->regAddress,rtu->regCount, XContainerDataPtr(rtu->data));
 	}
 	else
 	{//参数有问题
 	}
 }
-void XModbusRegisterHandler_0x04_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusRegister_0x04_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
-	XModbusRegisterHandler_0x03_RTU_masterRecvHandCb(math,modbus,recvFrame,hand);
+	XModbusRegister_0x03_RTU_masterRecvHandCb(math,modbus,recvFrame,hand);
 }
-void XModbusRegisterHandler_0x06_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusRegister_0x06_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
 	if (modbus == NULL || recvFrame == NULL || hand == NULL)
 		return;
-	XModbusRegisterHandler* regFunc = hand;
+	XModbusRegister* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu == NULL)
 		return;
 	if (rtu->data != NULL)
 	{
-		XModbusRegisterHandler_write_uint16_t(regFunc, rtu->regAddress, XContainerDataPtr(rtu->data));
+		XModbusRegister_write_uint16_t(regFunc, rtu->regAddress, XContainerDataPtr(rtu->data));
 	}
 }
 /*
@@ -138,11 +138,11 @@ void XModbusRegisterHandler_0x06_RTU_masterRecvHandCb(XModbusRecvMatch* math, XM
 0x01 0x02：第一个寄存器值（0x0102）
 0x03 0x04：第二个寄存器值（0x0304）
 */
-void XModbusRegisterHandler_0x03_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusRegister_0x03_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
 	if (modbus==NULL|| recvFrame == NULL || hand == NULL)
 		return ;
-	XModbusRegisterHandler* regFunc = hand;
+	XModbusRegister* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	XModbusFrame* sendFrame = XModbusFrame_create(modbus->m_mode);
 	XVector* data = regFunc->parent.data;//寄存器数据
@@ -158,11 +158,11 @@ void XModbusRegisterHandler_0x03_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XMo
 	XModbus_sendData_base(modbus, sendFrame);
 	//printf("读取保持寄存器\n");
 }
-void XModbusRegisterHandler_0x04_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusRegister_0x04_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
 	if (modbus == NULL || recvFrame == NULL || hand == NULL)
 		return ;
-	XModbusRegisterHandler* regFunc = hand;
+	XModbusRegister* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu == NULL)
 		return;
@@ -192,11 +192,11 @@ void XModbusRegisterHandler_0x04_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XMo
 0x02 0x06 0x00 0x03 0x00 0xA1 CRC16
 解析：响应与请求相同，确认写入成功
 */
-void XModbusRegisterHandler_0x06_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusRegister_0x06_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
 	if (modbus == NULL || recvFrame == NULL || hand == NULL)
 		return ;
-	XModbusRegisterHandler* regFunc = hand;
+	XModbusRegister* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu==NULL)
 		return ;
@@ -204,7 +204,7 @@ void XModbusRegisterHandler_0x06_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XMo
 	XByteArray* sendFrame =XByteArray_create(0);
 	if (rtu->data != NULL)
 	{
-		if (XModbusRegisterHandler_write_uint16_t(regFunc, rtu->regAddress, XVector_At_Base(rtu->data, 0, uint16_t)))
+		if (XModbusRegister_write_uint16_t(regFunc, rtu->regAddress, XVector_At_Base(rtu->data, 0, uint16_t)))
 		{//写入成功 将数据帧再次发送回去
 			XVector_swap_base(recvFrame->frameData, sendFrame);
 		}
@@ -220,11 +220,11 @@ void XModbusRegisterHandler_0x06_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XMo
 	XModbus_sendData_base(modbus, sendFrame);
 }
 
-void XModbusRegisterHandler_0x10_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+void XModbusRegister_0x10_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand)
 {
 	if (modbus == NULL || recvFrame == NULL || hand == NULL)
 		return ;
-	XModbusRegisterHandler* regFunc = hand;
+	XModbusRegister* regFunc = hand;
 	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
 	if (rtu == NULL)
 		return;
