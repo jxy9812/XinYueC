@@ -112,13 +112,6 @@ void TJCHMICommTest()
 	XIODeviceBase_setReadBuffer_base(USART, 1024);
 	XIODeviceBase_setWriteBuffer_base(USART, 1024);
 	XTJCHMIComm* comm = XTJCHMIComm_create(USART);
-	/*{
-		uint8_t sendFrameTail[] = { 0x01, 0xFE,0xFE,0xFE };
-		uint8_t recvFrameTail1[] = { 0x01, 0xFE,0xFE,0xFE };
-		XDataFrameComm_setSendFrameTail_base(comm, sendFrameTail, sizeof(sendFrameTail));
-		XDataFrameComm_setRecvFrameTail_base(comm, recvFrameTail1, sizeof(recvFrameTail1));
-	}*/
-	//XDataFrameComm_setCommMode_base(comm, XDFC_COMM_MODE_HALF_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm, XDFC_FRAME_END_MARKER);
 	XDataFrameComm_setSendValidCRC16_base(comm, true);
 	//XDataFrameComm_setRecvValidCRC16_base(comm, true);
@@ -133,7 +126,7 @@ void TJCHMICommTest()
 	{
 		if (XTimerBase_getCurrentTime() > current + 1000)
 		{
-			//XDataFrameComm_sendTextFmt(comm, false,  "main.cuttingMotorSp.val=%d", speed++);
+			XDataFrameComm_sendTextFmt(comm, false,  "main.cuttingMotorSp.val=%d", speed++);
 			current = XTimerBase_getCurrentTime();
 		}
 		XDataFrameComm_poll_base(comm);

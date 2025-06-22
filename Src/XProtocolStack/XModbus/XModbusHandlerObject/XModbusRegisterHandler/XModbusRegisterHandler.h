@@ -20,9 +20,9 @@ void XModbusRegisterHandler_delete(XModbusRegisterHandler* pRegFunc);
 //写入寄存器
 bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint16_t regAddress,uint16_t value);
 //写入寄存器 数组的方式
-bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount,const char* writeArray);
+bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount,const uint8_t* writeArray);
 // 读取寄存器
-bool XModbusRegisterHandler_read(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount,char* readArray, uint16_t readArraySize);
+bool XModbusRegisterHandler_read(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount, uint8_t* readArray, uint16_t readArraySize);
 //获取指定地址寄存器的缓冲区地址
 uint16_t* XModbusRegisterHandler_at(XModbusRegisterHandler* regFunc, uint16_t regAddress);
 
@@ -30,6 +30,11 @@ uint16_t* XModbusRegisterHandler_at(XModbusRegisterHandler* regFunc, uint16_t re
 
 //0x03读保持寄存器接收回调函数 主站是响应报文
 void XModbusRegisterHandler_0x03_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
+//0x04读输入寄存器接收回调函数 主站是响应报文
+void XModbusRegisterHandler_0x04_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
+//0x06写保持寄存器接收回调函数 主站是响应报文
+void XModbusRegisterHandler_0x06_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);
+
 
 //0x03读保持寄存器接收回调函数 从站接收是请求报文
 void XModbusRegisterHandler_0x03_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand);

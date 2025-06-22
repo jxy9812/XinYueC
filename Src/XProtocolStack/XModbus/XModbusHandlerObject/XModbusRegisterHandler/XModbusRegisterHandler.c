@@ -42,7 +42,7 @@ bool XModbusRegisterHandler_write_uint16_t(XModbusRegisterHandler* regFunc, uint
 	return false;
 }
 
-bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount, const char* writeArray)
+bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount, const uint8_t* writeArray)
 {
 	if (regFunc == NULL || regFunc->parent.data == NULL|| writeArray==NULL||regCount==0)
 		return false;
@@ -51,7 +51,7 @@ bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regA
 	//uint16_t typeSize = XVector_getTypeSize_base(data);
 	if (dataSize > regAddress && (dataSize * REGISTERSIZE) >= (regAddress * REGISTERSIZE + regCount* REGISTERSIZE))
 	{//开始写入
-		char* p= XVector_at_base(data, regAddress);
+		uint8_t* p= XVector_at_base(data, regAddress);
 		for (size_t i=0; i < regCount* REGISTERSIZE; i++)
 		{
 			p[i] = writeArray[i];
@@ -61,7 +61,7 @@ bool XModbusRegisterHandler_write(XModbusRegisterHandler* regFunc, uint16_t regA
 	return false;
 }
 
-bool XModbusRegisterHandler_read(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount, char* readArray, uint16_t readArraySize)
+bool XModbusRegisterHandler_read(XModbusRegisterHandler* regFunc, uint16_t regAddress, uint16_t regCount, uint8_t* readArray, uint16_t readArraySize)
 {
 	if (regFunc == NULL || regFunc->parent.data == NULL || regCount==0|| readArray == NULL || readArraySize == 0)
 		return false;
@@ -91,13 +91,37 @@ uint16_t* XModbusRegisterHandler_at(XModbusRegisterHandler* regFunc, uint16_t re
 
 void XModbusRegisterHandler_0x03_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
 {
-	if (math == NULL || hand == NULL)
-		return ;
+	if (modbus == NULL || recvFrame == NULL || hand == NULL)
+		return;
+	XModbusRegisterHandler* regFunc = hand;
+	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
+	if (rtu == NULL)
+		return;
 
-	//主站收到数据调用回调函数用户自己处理数据
-	/*if (recvFrame->pRecvHandCallFunc)
-		recvFrame->pRecvHandCallFunc(recvFrame);*/
-	return ;
+	if (rtu->data != NULL)
+	{
+		XModbusRegisterHandler_write(regFunc, rtu->regAddress,rtu->regCount, XContainerDataPtr(rtu->data));
+	}
+	else
+	{//参数有问题
+	}
+}
+void XModbusRegisterHandler_0x04_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+{
+	XModbusRegisterHandler_0x03_RTU_masterRecvHandCb(math,modbus,recvFrame,hand);
+}
+void XModbusRegisterHandler_0x06_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusHandlerObject* hand)
+{
+	if (modbus == NULL || recvFrame == NULL || hand == NULL)
+		return;
+	XModbusRegisterHandler* regFunc = hand;
+	XModbusFrameRTU* rtu = (XModbusFrameRTU*)recvFrame->data;
+	if (rtu == NULL)
+		return;
+	if (rtu->data != NULL)
+	{
+		XModbusRegisterHandler_write_uint16_t(regFunc, rtu->regAddress, XContainerDataPtr(rtu->data));
+	}
 }
 /*
 请求报文（主站→从站）：
@@ -129,7 +153,7 @@ void XModbusRegisterHandler_0x03_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XMo
 	}
 	else
 	{//参数有问题
-		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->regAddress, MB_FUNC_READ_HOLDING_REGISTER, MB_EX_ILLEGAL_DATA_ADDRESS);
+		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->address, MB_FUNC_READ_HOLDING_REGISTER, MB_EX_ILLEGAL_DATA_ADDRESS);
 	}
 	XModbus_sendData_base(modbus, sendFrame);
 	//printf("读取保持寄存器\n");
@@ -151,7 +175,7 @@ void XModbusRegisterHandler_0x04_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XMo
 	}
 	else
 	{//参数有问题
-		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->regAddress, MB_FUNC_READ_INPUT_REGISTER, MB_EX_ILLEGAL_DATA_ADDRESS);
+		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->address, MB_FUNC_READ_INPUT_REGISTER, MB_EX_ILLEGAL_DATA_ADDRESS);
 	}
 	XModbus_sendData_base(modbus, sendFrame);
 	//printf("读取输入寄存器\n");
@@ -186,12 +210,12 @@ void XModbusRegisterHandler_0x06_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XMo
 		}
 		else
 		{
-			XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->regAddress, MB_FUNC_WRITE_REGISTER, MB_EX_SLAVE_DEVICE_FAILURE);//写入失败设备故障
+			XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->address, MB_FUNC_WRITE_REGISTER, MB_EX_SLAVE_DEVICE_FAILURE);//写入失败设备故障
 		}
 	}
 	else
 	{//参数有问题
-		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->regAddress, MB_FUNC_WRITE_REGISTER, MB_EX_ILLEGAL_DATA_ADDRESS);
+		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->address, MB_FUNC_WRITE_REGISTER, MB_EX_ILLEGAL_DATA_ADDRESS);
 	}
 	XModbus_sendData_base(modbus, sendFrame);
 }
@@ -215,11 +239,11 @@ void XModbusRegisterHandler_0x10_RTU_slaveRecvHandCb(XModbusRecvMatch* math, XMo
 	{
 		void* readStart = XVector_at_base(data, regAddress);//寄存器数据缓冲区
 		memcpy(readStart, XVector_front_base(rtu->data), XContainerSize(rtu->data));//写入数据
-		XModbusFrameRTU_setFrameData_0x10_reply(sendFrame, rtu->regAddress, regAddress, regCount);
+		XModbusFrameRTU_setFrameData_0x10_reply(sendFrame, rtu->address, regAddress, regCount);
 	}
 	else
 	{//参数有问题
-		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->regAddress, MB_FUNC_WRITE_MULTIPLE_REGISTERS, MB_EX_ILLEGAL_DATA_ADDRESS);
+		XModbusFrameRTU_setFrameData_0x8X_reply(sendFrame, rtu->address, MB_FUNC_WRITE_MULTIPLE_REGISTERS, MB_EX_ILLEGAL_DATA_ADDRESS);
 	}
 	XModbus_sendData_base(modbus, sendFrame);
 	//printf("写多个寄存器\n");

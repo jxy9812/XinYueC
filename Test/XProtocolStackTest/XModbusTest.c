@@ -40,14 +40,15 @@ void XModbusTest()
         //XModbusBase_sendFrame(modbus, frame);
         //printf("发送\n");
         //XModbusBase_sendFrameRegularlyMaster(modbus, frame,50);
-       /* uint8_t State =0;
+        XVector* frame = XVector_Create(uint8_t);
+        uint8_t State =0;
         XMODBUS_UINT8_SET_BITS(&State, 0, 1);
         XMODBUS_UINT8_SET_BITS(&State, 2, 1); 
         XMODBUS_UINT8_SET_BITS(&State,3,1);
         XMODBUS_UINT8_SET_BITS(&State, 7, 1);
 
         XModbusFrameRTU_setFrameData_0x0F_request(frame, 0x01,0x0, 8, &State);
-        XModbus_sendFrame(modbus, frame);*/
+       // XModbus_sendData_base(modbus, frame);
     }
     //使能打开Modbus
    // XModbus_enable(modbus);
