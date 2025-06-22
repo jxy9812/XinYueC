@@ -30,21 +30,6 @@ XFuncCodeNode* XFuncCodeMap_value(XFuncCodeMap* map, void* code)
 	return XMapBase_value_base(map,code);
 }
 
-bool XFuncCodeMap_clear(XFuncCodeMap* map)
-{
-	if (map == NULL)
-		return false;
-	XMapBase_clear_base(map);
-	return true;
-}
-
-void XFuncCodeMap_delete(XFuncCodeMap* map)
-{
-	if (map == NULL)
-		return ;
-	XMapBase_delete_base(map);
-}
-
 void* XFuncCodeMap_createCode(XFuncCodeMap* map)
 {
 	if (map == NULL)

@@ -4,14 +4,12 @@
 extern "C" {
 #endif
 #include"XIODeviceBase.h"
-#define XSWITCHDEVICEBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODeviceBase)+2)       //XSwitchDeviceBase容器虚函数表大小
+#define XSWITCHDEVICEBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSwitchDeviceBase))       //XSwitchDeviceBase容器虚函数表大小
 //XSwitchDevice虚函数表枚举
-enum XSwitchDeviceBaseVtableEnum
-{
-	EXSwitchDeviceBase_SetState = XCLASS_VTABLE_GET_SIZE(XIODeviceBase),
-	EXSwitchDeviceBase_GetState,
-};
-typedef struct XSwitchDeviceBase XSwitchDeviceBase;
+XCLASS_DEFINE_BEGING(XSwitchDeviceBase)
+XCLASS_DEFINE_ENUM(XSwitchDeviceBase,SetState) = XCLASS_VTABLE_GET_SIZE(XIODeviceBase),
+XCLASS_DEFINE_ENUM(XSwitchDeviceBase,GetState),
+XCLASS_DEFINE_END(XSwitchDeviceBase)
 typedef enum//触发方式
 {
 	XSwitchDeviceBase_Trigger_High,//高电平触发 

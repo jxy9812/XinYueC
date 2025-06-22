@@ -9,9 +9,6 @@
 #include <string.h>
 
 static void XModbus_EvnetHandCb(XEventMin* event);
-static void SetGetFuncCodeMode_RTU(XModbus* modbus, XModbusRecvHandMode mode);
-static bool RTU_GetFuncCodeCb_CodeOnly(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math);
-static bool RTU_GetFuncCodeCb_AddressOnly(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math);
 static bool RTU_GetFuncCodeCb_AddressCode(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math);
 XModbus* XModbus_create(XIODeviceBase* io)
 {
@@ -73,11 +70,10 @@ void XModbus_setMode(XModbus* modbus, XModbusMode mode)
 	if (modbus == NULL)
 		return;
 	modbus->m_mode = mode;
-	XModbus_setRecvHandMode(modbus,modbus->m_recvHandMode);
 	switch (mode)
 	{
 	case XMB_RTU_MASTER:
-	case XMB_RTU_SLAVE:
+	case XMB_RTU_SLAVE:XDataFrameComm_setGetFuncCodeCb(modbus, RTU_GetFuncCodeCb_AddressCode);
 
 	default:
 		break;
@@ -88,22 +84,6 @@ bool XModbus_isMaster(XModbus* modbus)
 {
 	return modbus->m_mode % 2 == 0;
 }
-bool RTU_GetFuncCodeCb_CodeOnly(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math)
-{
-	if (data == NULL || XVector_isEmpty_base(data) || math == NULL)
-		return false;
-	math->address = 0;
-	math->code = ((uint8_t*)XContainerDataPtr(data))[1];
-	return true;
-}
-bool RTU_GetFuncCodeCb_AddressOnly(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math)
-{
-	if (data == NULL || XVector_isEmpty_base(data) || math == NULL)
-		return false;
-	math->code = 0;
-	math->address = ((uint8_t*)XContainerDataPtr(data))[0];
-	return true;
-}
 bool RTU_GetFuncCodeCb_AddressCode(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math)
 {
 	if (data == NULL || XVector_isEmpty_base(data) || math == NULL)
@@ -111,54 +91,30 @@ bool RTU_GetFuncCodeCb_AddressCode(XModbus* modbus, XByteArray* data, XModbusRec
 	math->addressCode = ((uint16_t*)XContainerDataPtr(data))[0];
 	return true;
 }
-//设置RTU获取模式
-void SetGetFuncCodeMode_RTU(XModbus* modbus, XModbusRecvHandMode mode)
-{
-	switch (mode)
-	{
-	case XMB_RecvHand_CodeOnly:XDataFrameComm_setGetFuncCodeCb(modbus, RTU_GetFuncCodeCb_CodeOnly); break;
-	case XMB_RecvHand_AddressOnly:XDataFrameComm_setGetFuncCodeCb(modbus, RTU_GetFuncCodeCb_AddressOnly); break;
-	case XMB_RecvHand_AddressCode:XDataFrameComm_setGetFuncCodeCb(modbus, RTU_GetFuncCodeCb_AddressCode); break;
-	default:
-		break;
-	}
-}
 
-void XModbus_setRecvHandMode(XModbus* modbus, XModbusRecvHandMode mode)
-{
-	if (modbus == NULL)
-		return;
-	switch (modbus->m_mode)
-	{
-	case XMB_RTU_MASTER:
-	case XMB_RTU_SLAVE:SetGetFuncCodeMode_RTU(modbus, mode); break;
-	case XMB_NOT_MODE:printf("运行模式还未设置\n"); break;
-	default:
-		break;
-	}
-	modbus->m_recvHandMode = mode;
-}
 void XModbus_addRecvHand_CodeOnly(XModbus* modbus, uint8_t modbusCode, XModbusRecvHandCb cb, void* userData)
 {
-	if (modbus == NULL || modbus->m_recvHandMode != XMB_RecvHand_CodeOnly)
+	if (modbus == NULL)
 		return;//与设置的类型不符合
 	XModbusRecvMatch math = { 0 };
 	math.code = modbusCode;
+	math.address = 255;
 	XDataFrameComm_addFuncCode(modbus,&math,cb,userData);
 }
 
 void XModbus_addRecvHand_AddressOnly(XModbus* modbus, uint8_t modbusAddress, XModbusRecvHandCb cb, void* userData)
 {
-	if (modbus == NULL || modbus->m_recvHandMode != XMB_RecvHand_AddressOnly)
+	if (modbus == NULL)
 		return;//与设置的类型不符合
 	XModbusRecvMatch math = { 0 };
+	math.code = MB_FUNC_NONE;
 	math.address = modbusAddress;
 	XDataFrameComm_addFuncCode(modbus, &math, cb, userData);
 }
 
 void XModbus_addRecvHand_AddressCode(XModbus* modbus, uint8_t modbusAddress, uint8_t modbusCode, XModbusRecvHandCb cb, void* userData)
 {
-	if (modbus == NULL || modbus->m_recvHandMode != XMB_RecvHand_AddressCode)
+	if (modbus == NULL|| modbusCode==MB_FUNC_NONE|| modbusAddress==255)
 		return;//与设置的类型不符合
 	XModbusRecvMatch math = { 0 };
 	math.address = modbusAddress;
@@ -192,23 +148,29 @@ void XModbus_EvnetExecuteCb(XEventMin* event)
 	XModbusFrame* frame = ev->m_parent.frame;
 	XDataFrameComm* comm = event->userData;
 	XFuncCodeNode* node = NULL;
-	if (comm->m_funcCodeMap != NULL)
-	{
-		node = XFuncCodeMap_value(comm->m_funcCodeMap, ev->funcCode);
-	}
-	if (node == NULL)
-	{
-		ev->m_parent.frame = NULL;
-		//XVector_delete_base(frame);//释放帧数据以免内存泄露
-		XModbusFrame_delete(frame);
-		XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
-		return;
-	}
-	if (node->cb != NULL)
+	XModbusRecvMatch math = *((XModbusRecvMatch*)ev->funcCode);
+	if (comm->m_funcCodeMap == NULL)
+		goto end;
+	//查找同时匹配
+	node = XFuncCodeMap_value(comm->m_funcCodeMap,&math);
+	if (node != NULL&& node->cb != NULL)
 		node->cb(ev->funcCode, comm, frame, node->userData);
+	//只匹配功能码
+	math.address = 255;
+	node = XFuncCodeMap_value(comm->m_funcCodeMap, &math);
+	if (node != NULL && node->cb != NULL)
+		node->cb(ev->funcCode, comm, frame, node->userData);
+	//只匹配地址
+	math.code = MB_FUNC_NONE;
+	math.address = ((XModbusRecvMatch*)ev->funcCode)->address;
+	node = XFuncCodeMap_value(comm->m_funcCodeMap, &math);
+	if (node != NULL && node->cb != NULL)
+		node->cb(ev->funcCode, comm, frame, node->userData);
+end:
 	ev->m_parent.frame = NULL;
 	//XVector_delete_base(frame);//释放帧数据以免内存泄露
 	XModbusFrame_delete(frame);
+	XFuncCodeMap_deleteCode(ev->funcCode);
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
 //接收到完整帧事件
@@ -251,22 +213,16 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 	}
 	modbusFrame->frameData = frame;//解析成功后将帧数据转移
 	XDataFrameComm* comm = event->userData;
-	/*printf("共呢个\n");*/
+	void* math = XFuncCodeMap_createCode(comm->m_funcCodeMap);
 	{
-		if (comm->m_funcCodeMap == NULL || comm->m_getFuncCode == NULL || !comm->m_getFuncCode(comm, frame, comm->m_funcCode))
+		if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, math) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(XDFC_EXECUTE, 0, modbusFrame, math))))
 		{//没有功能码处理或获取失败 直接释放
+			//XVector_delete_base(frame);//释放帧数据以免内存泄露
 			XModbusFrame_delete(modbusFrame);
-			ev->frame = NULL;
-			//XVector_delete_base(frame);
-			XEvent_Accept(ev);
-			return;
+			XFuncCodeMap_deleteCode(math);
 		}
 	}
-	if (!XDataFrameComm_sendEvent(comm, XEventFuncCode_create(XDFC_EXECUTE, 0, modbusFrame, comm->m_funcCode)))
-	{//添加失败，队列满了
-		//XVector_delete_base(frame);//释放帧数据以免内存泄露
-		XModbusFrame_delete(modbusFrame);
-	}
+	//XVector_delete_base(frame);
 	ev->frame = NULL;
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }

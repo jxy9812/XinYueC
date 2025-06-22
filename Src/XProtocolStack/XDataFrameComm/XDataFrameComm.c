@@ -205,10 +205,7 @@ void XDataFrameComm_funcCodeMap_create(XDataFrameComm* comm, size_t codeSize, XE
 		return;
 	if (comm->m_funcCodeMap != NULL)
 		XFuncCodeMap_delete(comm->m_funcCodeMap);
-	if (comm->m_funcCode != NULL)
-		XFuncCodeMap_deleteCode(comm->m_funcCodeMap);
 	comm->m_funcCodeMap = XFuncCodeMap_create(codeSize, codeEquality);
-	comm->m_funcCode = XFuncCodeMap_createCode(comm->m_funcCodeMap);
 }
 
 void XDataFrameComm_addFuncCode(XDataFrameComm* comm, void* funcCode, XFuncCodeCb cb, void* userData)
@@ -238,8 +235,6 @@ void XDataFrameComm_deleteFuncCode(XDataFrameComm* comm)
 		return;
 	if(comm->m_funcCodeMap!=NULL)
 		XFuncCodeMap_delete(comm->m_funcCodeMap);
-	if (comm->m_funcCode != NULL)
-		XFuncCodeMap_deleteCode(comm->m_funcCodeMap);
 	comm->m_funcCodeMap = NULL;
 }
 
@@ -325,16 +320,11 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 	}
 #endif // XDFC_RECV_FRAME_STR_SHOW
 	XDataFrameComm* comm = event->userData;
-	if (comm->m_funcCode == NULL||comm->m_getFuncCode==NULL|| !comm->m_getFuncCode(comm,frame, comm->m_funcCode))
+	void* funcCode = XFuncCodeMap_createCode(comm->m_funcCodeMap);
+	if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, funcCode) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(XDFC_EXECUTE, 0, frame, funcCode))))
 	{//没有功能码处理或获取失败 直接释放
-		ev->frame = NULL;
 		XVector_delete_base(frame);
-		XEvent_Accept(ev);
-		return;
-	}
-	if (!XDataFrameComm_sendEvent(comm, XEventFuncCode_create(XDFC_EXECUTE,0, frame, comm->m_funcCode)))
-	{//添加失败，队列满了
-		XVector_delete_base(frame);//释放帧数据以免内存泄露
+		XFuncCodeMap_deleteCode(funcCode);
 	}
 	ev->frame = NULL;//帧数据转移到功能码帧中
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放

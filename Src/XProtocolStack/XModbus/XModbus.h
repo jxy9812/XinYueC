@@ -19,7 +19,6 @@ typedef struct XModbus
     XDataFrameComm m_parent;
     uint8_t    m_address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
     XModbusMode m_mode;//模式
-    XModbusRecvHandMode m_recvHandMode;//接收处理模式
 }XModbus;
 XVtable* XModbus_class_init();
 //基础创建
@@ -31,8 +30,6 @@ void XModbus_setAddress(XModbus* modbus, uint8_t address);
 void XModbus_setMode(XModbus* modbus, XModbusMode mode);
 //当前是主站吗
 bool XModbus_isMaster(XModbus* modbus);
-//设置接收处理模式
-void XModbus_setRecvHandMode(XModbus* modbus, XModbusRecvHandMode mode);
 //只匹配modbus的功能码
 void XModbus_addRecvHand_CodeOnly(XModbus* modbus,uint8_t modbusCode, XModbusRecvHandCb cb, void* userData);
 //只匹配modbus的地址

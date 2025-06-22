@@ -45,7 +45,6 @@ typedef struct XDataFrameComm
     XListBase* m_periodicSendList;//定期发送数据链表
     XEventDispatcher* m_eventDispatcher;//事件调度器
     XFuncCodeMap* m_funcCodeMap;//功能码映射
-    void* m_funcCode;//当前处理的功能码
     GetFuncCodeCb m_getFuncCode;//获取功能码回调
 
     size_t m_sentBytes;//已发送字节计数

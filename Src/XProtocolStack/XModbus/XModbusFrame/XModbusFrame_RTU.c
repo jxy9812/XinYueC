@@ -234,6 +234,8 @@ static bool  parseFrameData(XModbusFrameRTU* rtu, XByteArray* data)
 	if ((dataSize >= MB_SER_PDU_SIZE_MIN) && (XCrc_get16(pData, dataSize) == 0)) {
 		//printf("校验通过\n");
 		rtu->address = XModbusFrameRTU_parseAddress(data);
+		if ((rtu->address != MB_ADDRESS_BROADCAST) && (rtu->address > MB_ADDRESS_MAX || rtu->address < MB_ADDRESS_MIN))
+			return false;
 		rtu->funcCode = XModbusFrameRTU_parseFuncCode(data);
 		rtu->crc16 = SwapEndian16(XVector_At_Base(data, dataSize - MB_SER_PDU_SIZE_CRC, uint16_t), 0);
 		return true;

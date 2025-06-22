@@ -15,7 +15,7 @@ void XModbusTest()
     XModbus* modbus = XModbus_create_RTU_SerialPort(serial,NULL,NULL);
     XModbus_setAddress(modbus,2);
     XModbus_setMode(modbus, XMB_RTU_MASTER);
-    XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);
+    //XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);
  
     XModbusRegisterHandler* Register=XModbusRegisterHandler_create(16);
     //设置从站的功能码回调函数

@@ -13,7 +13,7 @@ XModbusCoilsDiscHandler* XModbusCoilsDiscHandler_create(uint16_t count)
     return ptr;
 }
 
-void XModbusCoilsDiscHandler_free(XModbusCoilsDiscHandler* pRegHandler)
+void XModbusCoilsDiscHandler_delete(XModbusCoilsDiscHandler* pRegHandler)
 {
     if (pRegHandler)
     {
