@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 #include"XDataFrameCommConfig.h"
-/*! \ingroup modbus
+/*! \ingroup m_modbus
  * \brief 协议栈函数错误码
  */
 typedef enum

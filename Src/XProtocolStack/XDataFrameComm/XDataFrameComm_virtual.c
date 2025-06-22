@@ -6,10 +6,16 @@
 #include"XDataFrameCommConfig.h"
 #include"XTimerWheel.h"
 #include"XString.h"
-#include"XListBase.h"
+#include"XListSLinked.h"
 #include<assert.h>
 #include<string.h>
 #include<stdlib.h>
+typedef struct
+{
+	XDataFrameComm* comm;
+	XByteArray* data;
+	XTimerWheel* timer;
+}PeriodicNode;//定时发送的节点
 static void XDataFrameComm_recvValid(XDataFrameComm* comm);//接收校验
 static void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm);
 static void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm);
@@ -361,7 +367,7 @@ bool VXCommunicatorBase_disconnect(XDataFrameComm* comm)
 	{
 		if (comm->m_state == XDFC_STATE_ENABLED) 
 		{ // 从启用状态禁用
-			//modbus->pvMBFrameStopCur(modbus); // 停止协议栈（暂停接收/发送，清理临时资源）
+			//m_modbus->pvMBFrameStopCur(m_modbus); // 停止协议栈（暂停接收/发送，清理临时资源）
 			comm->m_state = XDFC_STATE_DISABLED; // 更新状态为禁用
 			return true;
 		}
@@ -501,13 +507,13 @@ XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XByteArray* data)
 	return XDFC_ENOERR;
 }
 //定期发送的定时器回调函数
-static void SendDataPeriodicCb(XPair* pair)
+static void SendDataPeriodicCb(PeriodicNode* node)
 {
 	XByteArray* v =XByteArray_create(0);
 	if (v == NULL)
 		return;
-	XVector_copy_base(v, XPair_Second(pair, XByteArray*));
-	if (!XQueueBase_push_base(XPair_First(pair, XDataFrameComm*)->m_sendFrameQueue, &v))
+	XVector_copy_base(v, node->data);
+	if (!XQueueBase_push_base(node->comm->m_sendFrameQueue, &v))
 	{
 #if XDFC_QUEUE_FULL_SHOW
 		printf("发送队列溢出当前最大:%d,建议增大队列,调整:XDFC_FRAME_SEND_QUEUE_COUNT\n", XDFC_FRAME_SEND_QUEUE_COUNT);
@@ -521,31 +527,32 @@ XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data,
 {
 	if (XVector_isEmpty_base(data))
 		return NULL;
-	XPair* pair = XPair_Create(XDataFrameComm*, XByteArray*);
-	if (pair == NULL)
+	PeriodicNode* node= XMemory_malloc(sizeof(PeriodicNode));
+	if (node == NULL)
 	{
 		return NULL;
 	}
 	XTimerWheel* timer = XTimerWheel_create();
 	if (timer == NULL)
 	{
-		XPair_delete(pair);
+		XMemory_free(node);
 		return NULL;
 	}
 	if (comm->m_sendValidCb)
 		comm->m_sendValidCb(comm,data);
 
-	XPair_First(pair, XDataFrameComm*) = comm;
-	XPair_Second(pair, XByteArray*) = data;
-	
-	XListBase_push_back_base(comm->m_periodicSendList,&pair);
+	node->comm = comm;
+	node->data = data;
+	node->timer = timer;
+
+	XListBase_push_back_base(comm->m_periodicSendList,&node);
 	XTimerBase_setTimeout_base(timer, time);
 	XTimerBase_setInterval_base(timer, time);
 	XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
-	XTimerBase_setUserData(timer, pair);
+	XTimerBase_setUserData(timer, node);
 	XTimerBase_setTimerCallback(timer, SendDataPeriodicCb);
 	XTimerBase_start_base(timer);
-	return pair;
+	return node;
 }
 
 bool VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle)
@@ -556,9 +563,10 @@ bool VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle
 	XListBase_remove_base(comm->m_periodicSendList,&handle);
 	if(size== XContainerSize(comm->m_periodicSendList))
 		return false;
-	XPair* pair = handle;
-	XVector_delete_base(XPair_Second(pair, XByteArray*));
-	XPair_delete(pair);
+	PeriodicNode* node = handle;
+	XByteArray_delete_base(node->data);
+	XTimerBase_delete_base(node->timer);
+	XMemory_free(node);
 	return true;
 }
 //接收验证Crc16回调
@@ -598,7 +606,16 @@ void VXDataFrameComm_delete(XDataFrameComm* comm)
 	if (comm->m_sendFrameQueue)
 		XQueueBase_delete_base(comm->m_sendFrameQueue);
 	if (comm->m_periodicSendList)
+	{
+		for_each_iterator(comm->m_periodicSendList, XListSLinked, it)
+		{
+			PeriodicNode* node=XListSLinked_iterator_data(&it);
+			XByteArray_delete_base(node->data);
+			XTimerBase_delete_base(node->timer);
+			XMemory_free(node);
+		}
 		XListBase_delete_base(comm->m_periodicSendList);
+	}
 	if (comm->m_eventDispatcher)
 		XEventDispatcher_delete(comm->m_eventDispatcher);
 	if (comm->m_funcCodeMap)

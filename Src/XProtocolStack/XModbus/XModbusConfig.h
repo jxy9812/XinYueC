@@ -111,8 +111,8 @@ extern "C" {
 #define XMB_EVENT_QUEUE_COUNT		    		 (  30 )
 //接收缓冲区默认大小
  #define XMB_RECV_BUFFER_SIZE					 (  1024 )
-//主站接收等待时间  
- #define XMB_MASTER_RECV_WAIT_TIME				 (  1 )
+//主站接收等待时间(发送队列发送数据间隔时间倍数)  
+ #define XMB_MASTER_RECV_WAIT_TIME				 (  5 )
 //主站接收返回超时时间 (ms)
  #define XMB_MASTER_RECV_OUT_TIME				 (  1000 )
 //是否完整的帧一起发送

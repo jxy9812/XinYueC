@@ -30,15 +30,16 @@ XVtable* XSwitchDeviceModbus_class_init()
 	return XVTABLE_DEFAULT;
 }
 
-XSwitchDeviceModbus* XSwitchDeviceModbus_create(XModbus* modbus)
+XSwitchDeviceModbus* XSwitchDeviceModbus_create(XModbusDigitalSwitch* ds, uint16_t portNum)
 {
-	if (modbus == NULL)
+	if (ds == NULL)
 		return NULL;
 	XSwitchDeviceModbus* sw = XMemory_malloc(sizeof(XSwitchDeviceModbus));
 	if (sw == NULL)
 		return NULL;
 	XSwitchDeviceModbus_init(sw);
-	sw->m_modbus = modbus;
+	sw->m_ds = ds;
+	sw->m_portNum = portNum;
 	return sw;
 }
 
@@ -53,5 +54,8 @@ void XSwitchDeviceModbus_init(XSwitchDeviceModbus* sw)
 
 bool VXIODevice_open(XSwitchDeviceModbus* sw, XIODeviceBaseMode mode)
 {
-	return false;
+	if (XIODeviceBase_isOpen(sw))
+		return true;//已经打开了
+	if (!(mode & XIODeviceBase_ReadOnly || mode & XIODeviceBase_WriteOnly))
+		return false;
 }

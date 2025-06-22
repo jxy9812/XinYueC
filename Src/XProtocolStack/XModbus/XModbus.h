@@ -36,6 +36,10 @@ void XModbus_addRecvHand_CodeOnly(XModbus* modbus,uint8_t modbusCode, XModbusRec
 void XModbus_addRecvHand_AddressOnly(XModbus* modbus, uint8_t modbusAddress, XModbusRecvHandCb cb, void* userData);
 //同时匹配modbus的地址和功能码
 void XModbus_addRecvHand_AddressCode(XModbus* modbus, uint8_t modbusAddress, uint8_t modbusCode, XModbusRecvHandCb cb, void* userData);
+void XModbus_removeRecvHand_CodeOnly(XModbus* modbus, uint8_t modbusCode);
+void XModbus_removeRecvHand_AddressOnly(XModbus* modbus, uint8_t modbusAddress);
+void XModbus_removeRecvHand_AddressCode(XModbus* modbus, uint8_t modbusAddress, uint8_t modbusCode);
+
 void XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame);
 
 void XModbus_sendFramePeriodicMaster(XModbus* modbus, XModbusFrame* frame, uint32_t time);

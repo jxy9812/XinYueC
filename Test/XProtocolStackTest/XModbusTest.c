@@ -6,7 +6,7 @@
 #include"XModbusFrame.h"
 #include"XTimerGroupBase.h"
 #include"XModbusRegister.h"
-
+#include"XModbusDigitalSwitch.h"
 void XModbusTest()
 {
     XSerialPortBase* serial = XSerialPortWin32_create();
@@ -17,6 +17,10 @@ void XModbusTest()
     XModbus_setMode(modbus, XMB_RTU_MASTER);
     //XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);
  
+    XModbusDigitalSwitch* sw = XModbusDigitalSwitch_create(modbus,0x01,8,8);
+    //XModbusDigitalSwitch_bindModbus_RTU(sw,modbus);
+    XModbusDigitalSwitch_setScanningPeriod_RTU(sw,50);
+
     XModbusRegister* Register=XModbusRegister_create(16);
     //设置从站的功能码回调函数
     {
@@ -29,7 +33,7 @@ void XModbusTest()
         XVector* frame = XVector_Create(uint8_t);
         char buff[] = {0x00,0x01};
         XModbusFrameRTU_setFrameData_0x06_request(frame, 0x01,  0x01, buff);
-        XModbus_sendData_base(modbus, frame);
+        //XModbus_sendData_base(modbus, frame);
         //XModbus_sendDataPeriodicMaster_base(modbus, frame,50);
     }
     {//发送一帧数据
@@ -48,8 +52,14 @@ void XModbusTest()
         XMODBUS_UINT8_SET_BITS(&State, 7, 1);
 
         XModbusFrameRTU_setFrameData_0x0F_request(frame, 0x01,0x0, 8, &State);
-       // XModbus_sendData_base(modbus, frame);
+        //XModbus_sendData_base(modbus, frame);
     }
+    {
+        XVector* frame = XVector_Create(uint8_t);
+        XModbusFrameRTU_setFrameData_0x01_request(frame, 0x01, 0x0, 8);
+        //XModbus_sendDataPeriodicMaster_base(modbus, frame,500);
+    }
+
     //使能打开Modbus
    // XModbus_enable(modbus);
     XModbus_connect_base(modbus);

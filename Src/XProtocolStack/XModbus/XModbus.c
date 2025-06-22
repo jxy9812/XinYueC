@@ -122,6 +122,36 @@ void XModbus_addRecvHand_AddressCode(XModbus* modbus, uint8_t modbusAddress, uin
 	XDataFrameComm_addFuncCode(modbus, &math, cb, userData);
 }
 
+void XModbus_removeRecvHand_CodeOnly(XModbus* modbus, uint8_t modbusCode)
+{
+	if (modbus == NULL)
+		return;//
+	XModbusRecvMatch math = { 0 };
+	math.code = modbusCode;
+	math.address = 255;
+	XDataFrameComm_removeFuncCode(modbus, &math);
+}
+
+void XModbus_removeRecvHand_AddressOnly(XModbus* modbus, uint8_t modbusAddress)
+{
+	if (modbus == NULL)
+		return;//与设置的类型不符合
+	XModbusRecvMatch math = { 0 };
+	math.code = MB_FUNC_NONE;
+	math.address = modbusAddress;
+	XDataFrameComm_removeFuncCode(modbus, &math);
+}
+
+void XModbus_removeRecvHand_AddressCode(XModbus* modbus, uint8_t modbusAddress, uint8_t modbusCode)
+{
+	if (modbus == NULL || modbusCode == MB_FUNC_NONE || modbusAddress == 255)
+		return;//与设置的类型不符合
+	XModbusRecvMatch math = { 0 };
+	math.address = modbusAddress;
+	math.code = modbusCode;
+	XDataFrameComm_removeFuncCode(modbus, &math);
+}
+
 void XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame)
 {
 	if (modbus == NULL || frame == NULL|| frame->frameData==NULL)
@@ -202,7 +232,7 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 	//printf("接收数据\n");
 	XModbus* modbus = event->userData;
 	XModbusFrame* modbusFrame= XModbusFrame_create(modbus->m_mode);//当前帧
-	//XModbusFrame_setMode(modbusFrame, modbus->m_mode);
+	//XModbusFrame_setMode(modbusFrame, m_modbus->m_mode);
 	if (!XModbusFrame_parseData(modbusFrame, frame))
 	{//解析失败了
 		XModbusFrame_delete(modbusFrame);

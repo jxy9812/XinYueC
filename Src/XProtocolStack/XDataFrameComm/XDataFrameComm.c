@@ -36,7 +36,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	comm->m_state = XDFC_STATE_NOT_INITIALIZED;
 	comm->m_eventDispatcher = XEventDispatcher_createDefault(XDFC_EVENT_QUEUE_COUNT);
 	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XByteArray*, XDFC_FRAME_SEND_QUEUE_COUNT);
-	comm->m_periodicSendList = XListSLinked_Create(XPair*);
+	comm->m_periodicSendList = XListSLinked_Create(void*);
 	comm->m_periodicSendList->m_equality = XEquality_ptr;
 
 	XEventDispatcher_setAllEventCb(comm->m_eventDispatcher, XDataFrameComm_EvnetHandCb, comm);

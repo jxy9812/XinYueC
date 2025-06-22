@@ -360,20 +360,28 @@ void VXVector_copy(XVector* this_One, const XVector* this_Two)
 {
 	if (ISNULL(this_One, "") || ISNULL(this_One, ""))
 		return;
-	if(XContainerDataPtr(this_One))
-		XMemory_free(XContainerDataPtr(this_One));
+	/*if(XContainerDataPtr(this_One))
+		XMemory_free(XContainerDataPtr(this_One));*/
 	size_t size = XContainerSize(this_Two);
 	size_t typeSize = XContainerTypeSize(this_Two);
 	if (size > 0)
 	{
-		XContainerDataPtr(this_One) = XMemory_malloc(size * typeSize);
+		if(XContainerCapacity(this_One)* XContainerTypeSize(this_One)< size * typeSize)
+		{//原先的容量不够扩容
+			XMemory_free(XContainerDataPtr(this_One));
+			XContainerDataPtr(this_One) = XMemory_malloc(size * typeSize);
+			XContainerCapacity(this_One) = size;
+		}
+		else
+		{
+			XContainerCapacity(this_One) = XContainerCapacity(this_One) * XContainerTypeSize(this_One)/ typeSize;
+		}
 		memcpy(XContainerDataPtr(this_One), XContainerDataPtr(this_Two), size * typeSize);
 	}
 	else
 	{
 		XContainerDataPtr(this_One) = NULL;
 	}
-	XContainerCapacity(this_One) = size;
 	XContainerSize(this_One) = size;
 	XContainerTypeSize(this_One) = typeSize;
 }

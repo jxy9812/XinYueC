@@ -11,9 +11,12 @@ typedef struct XModbusFrame XModbusFrame;
 typedef struct XModbusDeviceObject
 {
 	void* data;//数据
-
+	void* userData;//用户数据
+	void (*cb)(void* userData);//回调函数
 }XModbusDeviceObject;
-
+void XModbusDeviceObject_init(XModbusDeviceObject* de);
+void XModbusDeviceObject_setCallback(XModbusDeviceObject* de, void (*cb)(void* userData));
+void XModbusDeviceObject_setUserData(XModbusDeviceObject* de, void* userData);
 #ifdef __cplusplus
 }
 #endif

@@ -21,7 +21,7 @@ typedef enum
     MB_EX_GATEWAY_PATH_FAILED = 0x0A,  /*!< 网关路径失败（Modbus TCP网关错误） */
     MB_EX_GATEWAY_TGT_FAILED = 0x0B    /*!< 网关目标设备失败（目标从机无响应） */
 } XModbusException;
-/*! \ingroup modbus
+/*! \ingroup m_modbus
  * \brief Modbus串行传输模式（RTU/ASCII/TCP）
  *
  * Modbus串行支持两种传输模式：ASCII或RTU。RTU速度更快但对硬件要求更高，需要低抖动的网络；
@@ -38,7 +38,7 @@ typedef enum
     XMB_TCP_SLAVE                      /*!< TCP传输模式 从站*/
 } XModbusMode;
 
-/*! \ingroup modbus
+/*! \ingroup m_modbus
  * \brief 寄存器读写模式
  *
  * 该值传递给支持读写寄存器值的回调函数。写操作表示应更新应用寄存器，

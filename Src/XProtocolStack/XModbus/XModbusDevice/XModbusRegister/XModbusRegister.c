@@ -13,6 +13,7 @@ XModbusRegister* XModbusRegister_create(uint16_t regCount)
 	if(regCount==0)
 		return NULL;
 	XModbusRegister* ptr = XMemory_malloc(sizeof(XModbusRegister));
+	XModbusDeviceObject_init(ptr);
 	ptr->parent.data = XVector_create(REGISTERSIZE);
 	XVector_resize_base(ptr->parent.data, regCount);
 	return ptr;

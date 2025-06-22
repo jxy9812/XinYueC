@@ -9,12 +9,13 @@ extern "C" {
 typedef struct XSwitchDeviceModbus
 {
 	XSwitchDeviceBase m_parent;//父对象
-	XModbus* m_modbus;
+	XModbusDigitalSwitch* m_ds;
+	uint16_t m_portNum;//端口号
 }XSwitchDeviceModbus;
 //初始化类
 XVtable* XSwitchDeviceModbus_class_init();
 //开关设备
-XSwitchDeviceModbus* XSwitchDeviceModbus_create(XModbus* modbus);
+XSwitchDeviceModbus* XSwitchDeviceModbus_create(XModbusDigitalSwitch* ds, uint16_t portNum);
 //初始化
 void XSwitchDeviceModbus_init(XSwitchDeviceModbus* sw);
 #define XSwitchDeviceModbus_setStateChangeCallback 		XSwitchDeviceBase_setStateChangeCallback
