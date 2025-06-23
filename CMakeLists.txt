@@ -1,14 +1,15 @@
 ﻿#请求CAMKE的最小构建版本
 cmake_minimum_required(VERSION 3.5)
 #设置项目名称
-project(Container VERSION 0.1 LANGUAGES C)
-set(EXPORT_NAME container)
+project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
+set(EXPORT_NAME XinYueC)
 #set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -O0  -Wall")
 #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0  -Wall")
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_DEBUG_POSTFIX "d")
 #设置可执行文件的输出目录
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
 include(CMake_Config.cmake)
@@ -22,7 +23,7 @@ include_directories(${INCLUDE_TEST_LIST})
 file(GLOB_RECURSE SRC_FILE "Src/*.c")
 file(GLOB_RECURSE TEST_FILE "Test/*.c" )
 
-add_library(${EXPORT_NAME}static  STATIC  ${SRC_FILE})
+add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE})
 add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${PUBLIC_HDRS})
 
 #添加参加编译的文件

@@ -29,6 +29,8 @@ XModbusDigitalSwitch* XModbusDigitalSwitch_create(XModbus* modbus,uint8_t addres
 	if (inCount == 0 && outCount == 0)
 		return NULL;
 	XModbusDigitalSwitch* group = XMemory_malloc(sizeof(XModbusDigitalSwitch));
+	if (group == NULL)
+		return NULL;
 	memset(group,0,sizeof(XModbusDigitalSwitch));
 	if (inCount > 0)
 	{
@@ -61,14 +63,23 @@ void XModbusDigitalSwitch_setAddress(XModbusDigitalSwitch* ds, uint8_t address)
 		return;
 	XModbus_removeRecvHand_AddressCode(ds->m_modbus,ds->m_address, MB_FUNC_READ_COILS);
 	XModbus_removeRecvHand_AddressCode(ds->m_modbus, ds->m_address, MB_FUNC_READ_DISCRETE_INPUTS);
-	if (ds->m_out)
+	switch (ds->m_modbus->m_mode)
 	{
-		XModbus_addRecvHand_AddressCode(ds->m_modbus, address, MB_FUNC_READ_COILS, CoilsDisc_0x01_RTU_masterRecvHandCb, ds->m_out);
-	}
-	if (ds->m_in)
+	case XMB_RTU_MASTER:
 	{
-		XModbus_addRecvHand_AddressCode(ds->m_modbus, address, MB_FUNC_READ_DISCRETE_INPUTS, CoilsDisc_0x02_RTU_masterRecvHandCb, ds->m_in);
+		if (ds->m_out)
+		{
+			XModbus_addRecvHand_AddressCode(ds->m_modbus, address, MB_FUNC_READ_COILS, CoilsDisc_0x01_RTU_masterRecvHandCb, ds->m_out);
+		}
+		if (ds->m_in)
+		{
+			XModbus_addRecvHand_AddressCode(ds->m_modbus, address, MB_FUNC_READ_DISCRETE_INPUTS, CoilsDisc_0x02_RTU_masterRecvHandCb, ds->m_in);
+		}
+	}break;
+	default:
+		break;
 	}
+	
 	ds->m_address = address;
 }
 void XModbusDigitalSwitch_delete(XModbusDigitalSwitch* ds)
@@ -98,9 +109,9 @@ void XModbusDigitalSwitch_delete(XModbusDigitalSwitch* ds)
 		XVector_delete_base(ds->m_ioOutList);
 	XMemory_free(ds);
 }
-bool XModbusDigitalSwitch_setScanningPeriod_RTU(XModbusDigitalSwitch* ds, uint32_t time)
+bool XModbusDigitalSwitch_setScanningPeriod(XModbusDigitalSwitch* ds, uint32_t time)
 {
-	if (ds == NULL || time == 0)
+	if (ds == NULL )
 		return false;
 	if (ds->m_outHandle)
 	{//先释放上次的
@@ -110,10 +121,13 @@ bool XModbusDigitalSwitch_setScanningPeriod_RTU(XModbusDigitalSwitch* ds, uint32
 	{//先释放上次的
 		XDataFrameComm_removePeriodicSendData_base(ds->m_modbus, ds->m_inHandle);
 	}
+	if (time == 0)
+		return false;
 	if(ds->m_out)
 	{
 		XByteArray* data = XByteArray_create(0);
-		XModbusFrameRTU_setFrameData_0x01_request(data, ds->m_address,ds->m_outAddressOffset, ds->m_out->count);
+		if(ds->m_modbus->m_mode== XMB_RTU_MASTER)
+			XModbusFrameRTU_setFrameData_0x01_request(data, ds->m_address,ds->m_outAddressOffset, ds->m_out->count);
 		ds->m_outHandle = XModbus_sendDataPeriodicMaster_base(ds->m_modbus, data, time);
 		XTimerBase_setAutoDelete(((PeriodicNode*)ds->m_outHandle)->timer, false);
 		XModbusDeviceObject_setCallback(ds->m_out, readOutHandCb);
@@ -122,7 +136,8 @@ bool XModbusDigitalSwitch_setScanningPeriod_RTU(XModbusDigitalSwitch* ds, uint32
 	if (ds->m_in)
 	{
 		XByteArray* data = XByteArray_create(0);
-		XModbusFrameRTU_setFrameData_0x02_request(data, ds->m_address, ds->m_inAddressOffset, ds->m_in->count);
+		if (ds->m_modbus->m_mode == XMB_RTU_MASTER)
+			XModbusFrameRTU_setFrameData_0x02_request(data, ds->m_address, ds->m_inAddressOffset, ds->m_in->count);
 		ds->m_inHandle = XModbus_sendDataPeriodicMaster_base(ds->m_modbus, data, time);
 		//XTimerBase_setAutoDelete(((PeriodicNode*)ds->m_inHandle)->timer, false);
 		XModbusDeviceObject_setCallback(ds->m_in, inHandCb);
@@ -152,6 +167,13 @@ bool XModbusDigitalSwitch_writeOut(XModbusDigitalSwitch* ds, uint16_t portNum, b
 	//XModbus_sendData_base(ds->m_modbus, data);
 	if (ds->m_outTimerMode == XMB_DS_OutTimerMode_Write_Run)
 		startOutPoll(ds);
+}
+bool XModbusDigitalSwitch_readOut(XModbusDigitalSwitch* ds, uint16_t portNum, bool *state)
+{
+	if (ds == NULL || ds->m_in == NULL || state == NULL)
+		return false;
+	*state = XModbusCoilsDisc_at(ds->m_out, portNum);
+	return true;
 }
 bool XModbusDigitalSwitch_XSwitchDeviceModbusOpen(XModbusDigitalSwitch* ds, XSwitchDeviceModbus* sw, XIODeviceBaseMode mode, uint16_t portNum)
 {

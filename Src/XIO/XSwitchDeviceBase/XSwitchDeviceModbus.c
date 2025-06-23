@@ -85,6 +85,11 @@ size_t VXIODevice_read(XSwitchDeviceModbus* sw, char* data, size_t maxSize)
 		if (XModbusDigitalSwitch_readIn(sw->m_ds, sw->m_portNum, data))
 			return maxSize;
 	}
+	else if (((XIODeviceBase*)sw)->m_mode & XIODeviceBase_WriteOnly)
+	{
+		if (XModbusDigitalSwitch_readOut(sw->m_ds, sw->m_portNum, data))
+			return maxSize;
+	}
 	return 0;
 }
 

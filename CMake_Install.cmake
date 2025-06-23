@@ -5,9 +5,9 @@ install(FILES ${PUBLIC_HDRS} DESTINATION "Src/include")
 #安装库源文件
 install(FILES ${SRC_FILE} DESTINATION "Src")
 #安装测试头文件
-install(FILES ${TEST_HDRS} DESTINATION "XDataStructTest/include")
+install(FILES ${TEST_HDRS} DESTINATION "XCXinYueTest/include")
 #安装测试源文件
-install(FILES ${TEST_FILE} DESTINATION "XDataStructTest")
+install(FILES ${TEST_FILE} DESTINATION "XCXinYueTest")
 
 set_target_properties(${EXPORT_NAME} PROPERTIES
     OUTPUT_NAME ${EXPORT_NAME}
@@ -16,8 +16,8 @@ set_target_properties(${EXPORT_NAME} PROPERTIES
     PUBLIC_HEADER "${PUBLIC_HDRS}"
 )
 
-#安装库
- install(TARGETS ${EXPORT_NAME} ${EXPORT_NAME}static
+#安装库动静态库
+ install(TARGETS ${EXPORT_NAME} ${EXPORT_NAME}S
         EXPORT ${EXPORT_NAME}Targets # 导出
         RUNTIME DESTINATION bin
         ARCHIVE DESTINATION lib
@@ -33,7 +33,7 @@ install(
 )
 #======================生成 xxxConfig.cmake===============================
 # 该变量会通过xxxConfig.cmake.in用于在生成的xxxConfig.cmake中
-set(INCLUDE_DIRS include/${EXPORT_NAME})
+set(INCLUDE_DIRS Src/include)
 set(LIBRARIES ${EXPORT_NAME})
 set(LIB_DIR lib)
 

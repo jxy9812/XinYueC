@@ -34,7 +34,7 @@ void XModbusTest()
  
     XModbusDigitalSwitch* ds = XModbusDigitalSwitch_create(modbus,0x01,8,8);
     //XModbusDigitalSwitch_bindModbus_RTU(ds,modbus);
-    XModbusDigitalSwitch_setScanningPeriod_RTU(ds,50);
+    XModbusDigitalSwitch_setScanningPeriod(ds,50);
 
     {
         XSwitchDeviceModbus* sw0 = XSwitchDeviceModbus_create(ds, 0);

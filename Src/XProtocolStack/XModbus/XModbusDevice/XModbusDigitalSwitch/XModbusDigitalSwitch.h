@@ -32,13 +32,18 @@ XModbusDigitalSwitch* XModbusDigitalSwitch_create(XModbus* modbus,uint8_t addres
 //释放除modbus以外的成员包括自身
 void XModbusDigitalSwitch_setAddress(XModbusDigitalSwitch*ds, uint8_t address);
 void XModbusDigitalSwitch_delete(XModbusDigitalSwitch* ds);
-bool XModbusDigitalSwitch_setScanningPeriod_RTU(XModbusDigitalSwitch* ds,uint32_t time);
+//设置扫描周期
+bool XModbusDigitalSwitch_setScanningPeriod(XModbusDigitalSwitch* ds,uint32_t time);
+//设置输出模式
 void XModbusDigitalSwitch_setOutTimerMode(XModbusDigitalSwitch* ds, XMB_DS_OutTimerMode mode);
 /*XSwitchDeviceModbus 调用的API*/
 bool XModbusDigitalSwitch_XSwitchDeviceModbusOpen(XModbusDigitalSwitch* ds, XSwitchDeviceModbus* sw, XIODeviceBaseMode mode, uint16_t portNum);
 void XModbusDigitalSwitch_XSwitchDeviceModbusClose(XModbusDigitalSwitch* ds, XSwitchDeviceModbus* sw, XIODeviceBaseMode mode, uint16_t portNum);
+//读取输入IO
 bool XModbusDigitalSwitch_readIn(XModbusDigitalSwitch* ds, uint16_t portNum, bool* state);
+//写入输出IO
 bool XModbusDigitalSwitch_writeOut(XModbusDigitalSwitch* ds, uint16_t portNum, bool state);
+bool XModbusDigitalSwitch_readOut(XModbusDigitalSwitch* ds, uint16_t portNum, bool *state);
 #ifdef __cplusplus
 }
 #endif
