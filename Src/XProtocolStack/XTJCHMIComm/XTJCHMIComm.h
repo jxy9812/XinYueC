@@ -19,9 +19,6 @@ void  XTJCHMIComm_init(XTJCHMIComm* comm, XIODeviceBase* io);
 #define XTJCHMIComm_setRecvValidCRC16_base		XDataFrameComm_setRecvValidCRC16_base
 #define XTJCHMIComm_setSendValidCRC16_base		XDataFrameComm_setSendValidCRC16_base
 
-//获取功能码回调
-bool XDataFrameComm_GetFuncCodeCb(XDataFrameComm* comm, XByteArray* data, uint8_t* code);
-
 #ifdef __cplusplus
 }
 #endif

@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 typedef  void* XHandle;//句柄
+typedef struct XPLCTask XPLCTask;
 typedef struct XModbusDigitalSwitch XModbusDigitalSwitch; 
 typedef struct XSwitchDeviceModbus XSwitchDeviceModbus;
 typedef struct XModbus XModbus;
