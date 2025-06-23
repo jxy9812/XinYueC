@@ -28,11 +28,11 @@ uint16_t* XModbusRegister_at(XModbusRegister* regFunc, uint16_t regAddress);
 
 //以下都是功能码回调函数
 
-//0x03读保持寄存器接收回调函数 主站是响应报文
+//0x03读保持寄存器接收回调函数 主站是响应报文 模板并不完整,返回帧并没有告诉有几个线圈
 void XModbusRegister_0x03_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand);
-//0x04读输入寄存器接收回调函数 主站是响应报文
+//0x04读输入寄存器接收回调函数 主站是响应报文 模板并不完整,返回帧并没有告诉有几个线圈
 void XModbusRegister_0x04_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand);
-//0x06写保持寄存器接收回调函数 主站是响应报文
+//0x06写保持寄存器接收回调函数 主站是响应报文 模板并不完整,返回帧并没有告诉有几个线圈
 void XModbusRegister_0x06_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand);
 
 

@@ -101,7 +101,7 @@ void XModbusRegister_0x03_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* 
 
 	if (rtu->data != NULL)
 	{
-		XModbusRegister_write(regFunc, rtu->regAddress,rtu->regCount, XContainerDataPtr(rtu->data));
+		//XModbusRegister_write(regFunc, rtu->regAddress,rtu->regCount, XContainerDataPtr(rtu->data));
 	}
 	else
 	{//参数有问题
@@ -121,7 +121,7 @@ void XModbusRegister_0x06_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* 
 		return;
 	if (rtu->data != NULL)
 	{
-		XModbusRegister_write_uint16_t(regFunc, rtu->regAddress, XContainerDataPtr(rtu->data));
+		//XModbusRegister_write_uint16_t(regFunc, rtu->regAddress, XContainerDataPtr(rtu->data));
 	}
 }
 /*

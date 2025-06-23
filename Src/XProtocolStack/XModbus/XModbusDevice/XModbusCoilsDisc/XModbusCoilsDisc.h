@@ -24,9 +24,9 @@ bool XModbusCoilsDisc_read(XModbusCoilsDisc* pRegHandler, uint16_t address, uint
 //获取指定地址寄存器的线圈或离散状态
 bool XModbusCoilsDisc_at(XModbusCoilsDisc* pRegHandler, uint16_t regAddress);
 /*    以下都是功能码回调函数*/
-//0x01读线圈接收回调函数 主站是响应报文
+//0x01读线圈接收回调函数 主站是响应报文 模板并不完整,返回帧并没有告诉有几个线圈
 void XModbusCoilsDisc_0x01_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand);
-//0x02读离散接收回调函数 主站是响应报文
+//0x02读离散接收回调函数 主站是响应报文 模板并不完整,返回帧并没有告诉有几个线圈
 void XModbusCoilsDisc_0x02_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* hand);
 
 //0x01读线圈接收回调函数 从站接收是请求报文
