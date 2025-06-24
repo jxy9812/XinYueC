@@ -6,7 +6,7 @@ extern "C" {
 #include<stdint.h>
 #include<stdbool.h>
 #include"XClass.h"
-#define XPLCTASK_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XClass))       //XPLCTask虚函数表大小
+#define XPLCTASK_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XPLCTask))       //XPLCTask虚函数表大小
 //XPLCTask虚函数表枚举
 XCLASS_DEFINE_BEGING(XPLCTask)
 XCLASS_DEFINE_ENUM(XPLCTask, AddTaskState) = XCLASS_VTABLE_GET_SIZE(XClass),

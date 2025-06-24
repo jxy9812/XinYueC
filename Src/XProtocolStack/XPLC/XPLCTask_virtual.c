@@ -94,11 +94,10 @@ void VXPLCTask_poll(XPLCTask* task)
 {
 	switch (task->m_lastTaskState)
 	{
-		case XPLCTaskState_Start:StartTask(task); break;
-		case XPLCTaskState_ExitTask:break;//任务已经退出了
-		case XPLCTaskState_Finish:FinishTask(task); break;
-		default:RunTask(task); break;
-
+	case XPLCTaskState_Start:StartTask(task); break;
+	case XPLCTaskState_ExitTask:break;//任务已经退出了
+	case XPLCTaskState_Finish:FinishTask(task); break;
+	default:RunTask(task); break;
 	}
 }
 void VXPLCTask_start(XPLCTask* task)

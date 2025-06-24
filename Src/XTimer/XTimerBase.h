@@ -70,6 +70,8 @@ void XTimerBase_setCurrentTime(size_t time);
 size_t XTimerBase_getCurrentTime();
 //设置获取当前时间的函数方法
 void XTimerBase_setCurrentTimeFunc(size_t(*get)());
+//设置延迟函数
+void XTimerBase_setDelayFunc(void(*delay)(const size_t msec));
 #ifdef __cplusplus
 }
 #endif

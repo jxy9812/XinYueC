@@ -1,0 +1,156 @@
+﻿#include"XPLC.h"
+#include"XHashMap.h"
+#include"XQueueBase.h"
+#include"XIODeviceBase.h"
+#include"XIOCallbackQueue.h"
+#include"XPLCTask.h"
+static bool VXPLC_addOutIODevice(XPLC* plc, int32_t id, XIODeviceBase* io);
+static bool VXPLC_addInIODevice(XPLC* plc, int32_t id, XIODeviceBase* io);
+static bool VXPLC_removeOutId(XPLC* plc, int32_t id);
+static bool VXPLC_removeInId(XPLC* plc, int32_t id);
+static bool VXPLC_removeIODevice(XPLC* plc, XIODeviceBase* io);
+static void VXPLC_poll(XPLC* plc);
+static void VXIODevice_delete(XPLC* task);
+XVtable* XPLC_class_init()
+{
+	XVTABLE_CREAT_DEFAULT
+		//虚函数表初始化
+#if VTABLE_ISSTACK
+		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XPLC))
+#else
+		XVTABLE_HEAP_INIT_DEFAULT
+#endif
+		//继承类
+		XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+	/*void* table[] = {
+		VXPLCTask_addState,VXPLCTask_removeState,
+		VXPLCTask_clearState,VXPLCTask_setState,
+		VXPLCTask_poll,VXPLCTask_start,VXPLCTask_finish
+	};*/
+	//追加虚函数
+	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_delete);
+#if SHOWCONTAINERSIZE
+	printf("XPLCTask size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
+	return XVTABLE_DEFAULT;
+}
+
+bool VXPLC_addOutIODevice(XPLC* plc, int32_t id, XIODeviceBase* io)
+{
+	if(io==NULL)
+		return false;
+	XIODeviceBase* findIo=XMapBase_value_base(plc->m_outIO, &id);
+	if (findIo != NULL)
+		XIODeviceBase_delete_base(findIo);
+	XMapBase_insert_base(plc->m_outIO,&id,&io);
+	if (plc->m_callbackQueue)
+		XIODeviceBase_setCallbackQueue(io, plc->m_callbackQueue);
+	return true;
+}
+
+bool VXPLC_addInIODevice(XPLC* plc, int32_t id, XIODeviceBase* io)
+{
+	if (io == NULL)
+		return false;
+	XIODeviceBase* findIo = XMapBase_value_base(plc->m_inIO, &id);
+	if (findIo != NULL)
+		XIODeviceBase_delete_base(findIo);
+	XMapBase_insert_base(plc->m_inIO, &id, &io);
+	if (plc->m_callbackQueue)
+		XIODeviceBase_setCallbackQueue(io, plc->m_callbackQueue);
+	return true;
+}
+
+bool VXPLC_removeOutId(XPLC* plc, int32_t id)
+{
+	XIODeviceBase* findIo = XMapBase_value_base(plc->m_outIO, &id);
+	if (findIo != NULL)
+		XIODeviceBase_delete_base(findIo);
+	XMapBase_remove_base(plc->m_outIO, &id);
+	return true;
+}
+
+bool VXPLC_removeInId(XPLC* plc, int32_t id)
+{
+	XIODeviceBase* findIo = XMapBase_value_base(plc->m_inIO, &id);
+	if (findIo != NULL)
+		XIODeviceBase_delete_base(findIo);
+	XMapBase_remove_base(plc->m_inIO, &id);
+	return true;
+}
+
+bool VXPLC_removeIODevice(XPLC* plc, XIODeviceBase* io)
+{
+	int32_t id;
+	bool isFind = false;
+	for_each_iterator(plc->m_inIO, XHashMap, it)
+	{
+		XPair* node = XHashMap_iterator_data(&it);
+		if (XPair_Second(node, XIODeviceBase*) == io)
+		{
+			id = XPair_First(node, int32_t);
+			isFind = true;
+			break;
+		}
+	}
+	if (isFind)
+	{
+		XIODeviceBase_delete_base(io);
+		XMapBase_remove_base(plc->m_inIO, &id);
+		return true;
+	}
+	for_each_iterator(plc->m_outIO, XHashMap, it)
+	{
+		XPair* node = XHashMap_iterator_data(&it);
+		if (XPair_Second(node, XIODeviceBase*) == io)
+		{
+			id = XPair_First(node, int32_t);
+			isFind = true;
+			break;
+		}
+	}
+	if (isFind)
+	{
+		XIODeviceBase_delete_base(io);
+		XMapBase_remove_base(plc->m_outIO, &id);
+		return true;
+	}
+}
+
+void VXPLC_poll(XPLC* plc)
+{
+	XPLCTask* task;
+	if (plc->m_taskQueue)
+	{
+		//printf("查询任务队列中\n");
+		if (XQueueBase_receive_base(plc->m_taskQueue, &task))
+		{
+			for_each_iterator(plc->m_inIO, XHashMap, it)
+			{
+				XPair* node = XHashMap_iterator_data(&it);
+				XIODeviceBase_poll_base(XPair_Second(node, XIODeviceBase*));
+			}
+			XPLCTask_poll_base(task);
+			if (plc->m_callbackQueue)//统一处理回调
+				XIOCallbackQueue_poll(plc->m_callbackQueue);
+		}
+	}
+}
+
+void VXIODevice_delete(XPLC* plc)
+{
+	for_each_iterator(plc->m_inIO, XHashMap, it)
+	{
+		XPair* node = XHashMap_iterator_data(&it);
+		XIODeviceBase_delete_base(XPair_Second(node, XIODeviceBase*));
+	}
+	XContainerObject_delete_base(plc->m_inIO);
+	for_each_iterator(plc->m_outIO, XHashMap, it)
+	{
+		XPair* node = XHashMap_iterator_data(&it);
+		XIODeviceBase_delete_base(XPair_Second(node, XIODeviceBase*));
+	}
+	XContainerObject_delete_base(plc->m_outIO);
+}
