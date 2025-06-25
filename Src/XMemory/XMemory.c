@@ -2,16 +2,16 @@
 #include"string.h"
 #ifdef _WIN32
 #include<stdlib.h>
-static XMemory global_Memory = { malloc,free,realloc };
+static XMemory global_Memory = { malloc,free,realloc,calloc };
 #elif defined(__linux__)
 #include<stdlib.h>
-static XMemory global_Memory = { malloc,free,realloc };
+static XMemory global_Memory = { malloc,free,realloc,calloc };
 #elif defined(__APPLE__) && defined(__MACH__)
 #include<stdlib.h>
-static XMemory global_Memory = { malloc,free,realloc };
+static XMemory global_Memory = { malloc,free,realloc,calloc };
 #elif defined(configUSE_FREERTOS) 
 #include"FreeRTOS.h"
-static XMemory global_Memory = { pvPortMalloc,vPortFree,XMemory_reallocPack };
+static XMemory global_Memory = { pvPortMalloc,vPortFree,XMemory_reallocPack,XMemory_callocPack };
 #else
 static XMemory global_Memory = { 0 };
 #endif
@@ -47,6 +47,11 @@ void* XMemory_realloc(void* pointer, size_t size)
 	return global_Memory.reallocate(pointer,size);
 }
 
+void* XMemory_calloc(size_t count, size_t size)
+{
+	return global_Memory.callocZero(count,size);
+}
+
 bool XMemory_realloc_isNULL()
 {
 	return global_Memory.reallocate==NULL;
@@ -55,6 +60,11 @@ bool XMemory_realloc_isNULL()
 void XMemory_setReallocMethod(ReallocMethod method)
 {
 	global_Memory.reallocate = method;
+}
+
+void XMemory_setCallocMethod(CallocMethod method)
+{
+	global_Memory.callocZero = method;
 }
 
 void* XMemory_reallocPack(void* pointer, size_t size)
@@ -71,5 +81,13 @@ void* XMemory_reallocPack(void* pointer, size_t size)
 		return NULL;
 	memcpy(ptr,pointer,size);
 	XMemory_free(pointer);
+	return ptr;
+}
+
+void* XMemory_callocPack(size_t count, size_t size)
+{
+	void* ptr = XMemory_malloc(count*size);
+	if (ptr)
+		memset(ptr,0,count*size);
 	return ptr;
 }
