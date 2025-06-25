@@ -25,9 +25,9 @@ typedef bool (*XPLCTaskStartFunc)(XPLCTask* task, void* taskData);
 typedef void (*XPLCTaskFinishFunc)(XPLCTask* task, void* taskData);
 typedef enum
 {
-	XPLCTaskState_Start=-0xFF,//开始
-	XPLCTaskState_Finish,//结束
-	XPLCTaskState_ExitTask//已经退出了
+	XPLCT_State_Start=-0xFF,//开始
+	XPLCT_State_Finish,//结束
+	XPLCT_State_ExitTask//已经退出了
 }XPLCTaskState;
 typedef struct XPLCTask
 {

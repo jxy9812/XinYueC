@@ -57,7 +57,7 @@ void XPLCTask_init(XPLCTask* task)
 	XClassGetVtable(task) = XPLCTask_class_init();
 	task->m_taskStateMap = XHashMap_Create(int32_t, TaskStateNode,XHash_murmur3_32,XEquality_int);
 	task->m_runTaskState = INT_MIN;
-	task->m_lastTaskState = XPLCTaskState_ExitTask;//默认退出任务状态
+	task->m_lastTaskState = XPLCT_State_ExitTask;//默认退出任务状态
 }
 
 bool VXPLCTask_addState(XPLCTask* task, uint16_t state, XPLCTaskStateFunc func, void* stateData)
@@ -94,23 +94,23 @@ void VXPLCTask_poll(XPLCTask* task)
 {
 	switch (task->m_lastTaskState)
 	{
-	case XPLCTaskState_Start:StartTask(task); break;
-	case XPLCTaskState_ExitTask:break;//任务已经退出了
-	case XPLCTaskState_Finish:FinishTask(task); break;
+	case XPLCT_State_Start:StartTask(task); break;
+	case XPLCT_State_ExitTask:break;//任务已经退出了
+	case XPLCT_State_Finish:FinishTask(task); break;
 	default:RunTask(task); break;
 	}
 }
 void VXPLCTask_start(XPLCTask* task)
 {
-	task->m_lastTaskState = XPLCTaskState_Start;
+	task->m_lastTaskState = XPLCT_State_Start;
 }
 void VXPLCTask_finish(XPLCTask* task)
 {
-	task->m_lastTaskState = XPLCTaskState_Finish;
+	task->m_lastTaskState = XPLCT_State_Finish;
 }
 void VXIODevice_delete(XPLCTask* task)
 {
-	if (task->m_lastTaskState != XPLCTaskState_ExitTask)
+	if (task->m_lastTaskState != XPLCT_State_ExitTask)
 	{
 		FinishTask(task);//先结束任务清理资源
 	}
@@ -128,7 +128,7 @@ void StartTask(XPLCTask* task)
 	}
 	else
 	{
-		task->m_lastTaskState = XPLCTaskState_Finish;
+		task->m_lastTaskState = XPLCT_State_Finish;
 	}
 }
 
@@ -143,7 +143,7 @@ void RunTask(XPLCTask* task)
 	node = task->m_taskNode;
 	if (node == NULL)
 	{//任务状态出错
-		task->m_lastTaskState = XPLCTaskState_Finish;
+		task->m_lastTaskState = XPLCT_State_Finish;
 		return;
 	}
 	node->func(task,task->m_taskData,node->stateData);
@@ -153,5 +153,5 @@ void FinishTask(XPLCTask* task)
 {
 	if (task->m_finishFunc)
 		task->m_finishFunc(task, task->m_taskData);
-	task->m_lastTaskState = XPLCTaskState_ExitTask;
+	task->m_lastTaskState = XPLCT_State_ExitTask;
 }

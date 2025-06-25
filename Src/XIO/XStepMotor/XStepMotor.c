@@ -70,6 +70,13 @@ void XStepMotor_setSpeed_base(XStepMotor* motor, double speed)
 	XClassGetVirtualFunc(motor, EXStepMotor_SetSpeed, void(*)(XStepMotor*, double))(motor, speed);
 }
 
+void XStepMotor_setControlMode_base(XStepMotor* motor, XStepMotorMode mode)
+{
+	if (ISNULL(motor, "") || ISNULL(XClassGetVtable(motor), ""))
+		return;
+	XClassGetVirtualFunc(motor, EXStepMotor_SetControlMode, void(*)(XStepMotor*, XStepMotorMode))(motor, mode);
+}
+
 void XStepMotor_setRevolutions_base(XStepMotor* motor, double revolutions)
 {
 	if (ISNULL(motor, "") || ISNULL(XClassGetVtable(motor), ""))
@@ -81,7 +88,33 @@ double XStepMotor_getRevolutions(XStepMotor* motor)
 {
 	if (motor == NULL)
 		return 0.0;
+	return ((double)motor->m_currentPulses) / motor->m_pulsesPerRevolution;
+}
+
+void XStepMotor_resetRevolutions(XStepMotor* motor)
+{
+	if (motor)
+		motor->m_currentPulses = 0;
+}
+
+double XStepMotor_getPosition(XStepMotor* motor)
+{
+	if (motor == NULL)
+		return 0.0;
 	return ((double)motor->m_directionPulses) / motor->m_pulsesPerRevolution;
+}
+
+void XStepMotor_resetOrigin(XStepMotor* motor)
+{
+	if (motor != NULL)
+		motor->m_directionPulses = 0;
+}
+
+bool XStepMotor_isTaskFinish_base(XStepMotor* motor)
+{
+	if (ISNULL(motor, "") || ISNULL(XClassGetVtable(motor), ""))
+		return false;
+	return XClassGetVirtualFunc(motor, EXStepMotor_IsTaskFinish, bool(*)(XStepMotor*))(motor);
 }
 
 bool XStepMotor_isOpen_base(XStepMotor* motor)

@@ -23,7 +23,16 @@ XCLASS_DEFINE_ENUM(XStepMotor, Stop),
 XCLASS_DEFINE_ENUM(XStepMotor, SetStepsPerRevolution),
 XCLASS_DEFINE_ENUM(XStepMotor, SetSpeed),
 XCLASS_DEFINE_ENUM(XStepMotor, SetRevolutions),
+XCLASS_DEFINE_ENUM(XStepMotor, SetControlMode), 
+XCLASS_DEFINE_ENUM(XStepMotor, IsTaskFinish),
 XCLASS_DEFINE_END(XStepMotor)
+typedef enum
+{
+	XSM_SPEED_CONTROL = 1,         // 速度控制模式
+	XSM_DISTANCE_CONTROL = 3,	   // 距离控制模式
+	XSM_POSITION_CONTROL = 5,	   // 位置控制模式
+	XSM_TORQUE_CONTROL=7           // 扭矩控制模式
+}XStepMotorMode;
 //步进电机
 typedef struct XStepMotor XStepMotor;
 typedef struct XStepMotor
@@ -33,6 +42,7 @@ typedef struct XStepMotor
 	uint16_t m_pulsesPerRevolution;//每转脉冲数
 	uint64_t m_currentPulses;//当前脉冲数 
 	uint64_t m_setPulses;//设置脉冲数 //0是速度模式 其他是距离模式
+	XStepMotorMode m_ControlMode;//控制模式
 	int64_t m_directionPulses;//累计方向脉冲数 正++ 反--
 	XPWMDeviceBase* m_PUL;//pwm引脚
 	XSwitchDeviceBase* m_ENA;//使能引脚
@@ -64,20 +74,30 @@ void XStepMotor_setStepsPerRevolution_base(XStepMotor* motor, uint16_t steps);
 * @retval
 */
 void XStepMotor_setSpeed_base(XStepMotor* motor, double speed);
+//设置控制模式
+void XStepMotor_setControlMode_base(XStepMotor* motor, XStepMotorMode mode);
 /*
 * @brief  设置旋转圈数.
 * @param  motor:StepMotor对象
 * @param  revolutions:圈数  会自动停止
-* @retval
+* @retval 根据不同的模式自动计算脉冲
 */
 void XStepMotor_setRevolutions_base(XStepMotor* motor, double revolutions);
 /*
 * @brief  获取旋转圈数.
 * @param  motor:StepMotor对象
-* @retval  旋转圈数，正转一圈+1 反转一圈减1 可获取位置信息
+* @retval 根据不同的模式自动计算脉冲
 */
 double XStepMotor_getRevolutions(XStepMotor* motor);
-
+//复位记录的圈数  XStepMotor_setRevolutions_base
+void XStepMotor_resetRevolutions(XStepMotor* motor);
+//获取位置 旋转圈数，正转一圈+1 反转一圈减1 可获取位置信息
+double XStepMotor_getPosition(XStepMotor* motor);
+//复位原点
+void XStepMotor_resetOrigin(XStepMotor* motor);
+//是否任务结束
+bool XStepMotor_isTaskFinish_base(XStepMotor* motor);
+//是否打开设备
 bool XStepMotor_isOpen_base(XStepMotor* motor);
 
 bool XStepMotor_isRunning_base(XStepMotor* motor);

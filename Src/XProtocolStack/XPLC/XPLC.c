@@ -1,5 +1,6 @@
 ﻿#include"XPLC.h"
 #include"XMemory.h"
+#include"XTimerBase.h"
 XPLC* XPLC_create()
 {
 	XPLC* plc = XMemory_malloc(sizeof(XPLC));
@@ -11,7 +12,10 @@ void XPLC_init(XPLC* plc)
 {
 	if (plc == NULL)
 		return;
-
+	XClass_init(plc);
+	XClassGetVtable(plc) = XPLC_class_init();
+	XPLC_setDelayMsCb(plc, XTimerBase_delay_ms);
+	XPLC_setScanPeriod(plc,10);
 }
 
 bool XPLC_addOutIODevice_base(XPLC* plc, int32_t id, XIODeviceBase* io)
@@ -60,4 +64,23 @@ void XPLC_setCallbackQueue(XPLC* plc, XIOCallbackQueue* queue)
 {
 	if (plc)
 		plc->m_callbackQueue = queue;
+}
+
+void XPLC_setScanPeriod(XPLC* plc, uint16_t delay_ms)
+{
+	if (plc)
+		plc->m_delay_ms = delay_ms;
+}
+
+int32_t XPLC_getScanPeriod(XPLC* plc)
+{
+	if(plc)
+		return plc->m_delay_ms;
+	return -1;
+}
+
+void XPLC_setDelayMsCb(XPLC* plc, void(*delay_ms_cb)(size_t))
+{
+	if (plc)
+		plc->m_delay_ms_cb = delay_ms_cb;
 }

@@ -9,6 +9,9 @@ static XMemory global_Memory = { malloc,free,realloc };
 #elif defined(__APPLE__) && defined(__MACH__)
 #include<stdlib.h>
 static XMemory global_Memory = { malloc,free,realloc };
+#elif defined(configUSE_FREERTOS) 
+#include"FreeRTOS.h"
+static XMemory global_Memory = { pvPortMalloc,vPortFree,XMemory_reallocPack };
 #else
 static XMemory global_Memory = { 0 };
 #endif

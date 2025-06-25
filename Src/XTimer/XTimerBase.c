@@ -178,7 +178,8 @@ static size_t GetCurrentTimeMillis() {
 	// 转换为毫秒（除以10,000）
 	return (uli.QuadPart - EPOCH_OFFSET) / 10000;
 }
-static size_t(*getCurrentTime)() = GetCurrentTimeMillis;
+static size_t(*global_getCurrentTime)() = GetCurrentTimeMillis;
+static void(*global_delay_ms)(const size_t msec)=Sleep;
 #elif defined(__linux__) 
 #include <sys/time.h>
 static size_t get_milliseconds() 
@@ -187,10 +188,29 @@ static size_t get_milliseconds()
 	gettimeofday(&tv, NULL);
 	return (size_t)tv.tv_sec * 1000LL + tv.tv_usec / 1000;
 }
-static size_t(*getCurrentTime)() = get_milliseconds;
+static size_t(*global_getCurrentTime)() = get_milliseconds;
+#elif defined(configUSE_FREERTOS) 
+#include"FreeRTOS.h"
+#include"task.h"
+static size_t GetCurrentTime()
+{
+#if (configTICK_RATE_HZ % 1000 == 0)
+	// 优化：当configTICK_RATE_HZ是1000的整数倍时（如1000Hz、2000Hz）
+	return xTaskGetTickCount() / (configTICK_RATE_HZ / 1000);
 #else
-static size_t(*getCurrentTime)() = NULL;
-
+	// 通用情况：避免浮点运算，使用整数除法
+	return (xTaskGetTickCount() * 1000) / configTICK_RATE_HZ;
+#endif
+}
+static void  Delay_ms(const size_t ms)
+{
+	vTaskDelay(pdMS_TO_TICKS(ms));
+}
+static size_t(*global_getCurrentTime)() = GetCurrentTime;
+static void(*global_delay_ms)(const size_t) = vTaskDelay;
+#else
+static size_t(*global_getCurrentTime)() = NULL;
+static void(*global_delay_ms)(const size_t)=NULL;
 #endif
 
 static size_t currentTime = 0;
@@ -206,12 +226,23 @@ void XTimerBase_setCurrentTime(size_t time)
 
 size_t XTimerBase_getCurrentTime()
 {
-	if(getCurrentTime==NULL)
+	if(global_getCurrentTime==NULL)
 		return currentTime;
-	return getCurrentTime();
+	return global_getCurrentTime();
 }
 
 void XTimerBase_setCurrentTimeFunc(size_t(*get)())
 {
-	getCurrentTime = get;
+	global_getCurrentTime = get;
+}
+
+void XTimerBase_setDelayMsFunc(void(*delay)(const size_t msec))
+{
+	global_delay_ms = delay;
+}
+
+void XTimerBase_delay_ms(const size_t delay_ms)
+{
+	if (global_delay_ms)
+		global_delay_ms(delay_ms);
 }

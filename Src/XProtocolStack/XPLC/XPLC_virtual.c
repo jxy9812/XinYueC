@@ -22,13 +22,13 @@ XVtable* XPLC_class_init()
 #endif
 		//继承类
 		XVTABLE_INHERIT_DEFAULT(XClass_class_init());
-	/*void* table[] = {
-		VXPLCTask_addState,VXPLCTask_removeState,
-		VXPLCTask_clearState,VXPLCTask_setState,
-		VXPLCTask_poll,VXPLCTask_start,VXPLCTask_finish
-	};*/
+	void* table[] = {
+		VXPLC_addOutIODevice,VXPLC_addInIODevice,
+		VXPLC_removeOutId,VXPLC_removeInId,
+		VXPLC_removeIODevice,VXPLC_poll
+	};
 	//追加虚函数
-	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_delete);
 #if SHOWCONTAINERSIZE
@@ -127,14 +127,19 @@ void VXPLC_poll(XPLC* plc)
 		//printf("查询任务队列中\n");
 		if (XQueueBase_receive_base(plc->m_taskQueue, &task))
 		{
-			for_each_iterator(plc->m_inIO, XHashMap, it)
+			while (task->m_lastTaskState!= XPLCT_State_ExitTask)
 			{
-				XPair* node = XHashMap_iterator_data(&it);
-				XIODeviceBase_poll_base(XPair_Second(node, XIODeviceBase*));
+				for_each_iterator(plc->m_inIO, XHashMap, it)
+				{
+					XPair* node = XHashMap_iterator_data(&it);
+					XIODeviceBase_poll_base(XPair_Second(node, XIODeviceBase*));
+				}
+				XPLCTask_poll_base(task);
+				if (plc->m_callbackQueue)//统一处理回调
+					XIOCallbackQueue_poll(plc->m_callbackQueue);
+				if (plc->m_delay_ms_cb != NULL && plc->m_delay_ms != 0)
+					plc->m_delay_ms_cb(plc->m_delay_ms);
 			}
-			XPLCTask_poll_base(task);
-			if (plc->m_callbackQueue)//统一处理回调
-				XIOCallbackQueue_poll(plc->m_callbackQueue);
 		}
 	}
 }

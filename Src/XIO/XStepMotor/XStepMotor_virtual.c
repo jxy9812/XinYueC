@@ -17,7 +17,8 @@ static void VXStepMotor_stop(XStepMotor* motor);
 static void VXStepMotor_setStepsPerRevolution(XStepMotor* motor, uint16_t steps);
 static void VXStepMotor_setSpeed(XStepMotor* motor, double speed);
 static void VXStepMotor_setRevolutions(XStepMotor* motor, double revolutions);
-//static void VXStepMotor_IRQHandler(XStepMotor* motor);
+static void VXStepMotor_setControlMode(XStepMotor* motor, XStepMotorMode mode);
+static bool VXStepMotor_isTaskFinish(XStepMotor* motor);
 XVtable* XStepMotor_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -37,7 +38,7 @@ XVtable* XStepMotor_class_init()
 		VXStepMotor_setDIR,VXStepMotor_start,
 		VXStepMotor_stop,VXStepMotor_setStepsPerRevolution,
 		VXStepMotor_setSpeed,VXStepMotor_setRevolutions,
-		//VXStepMotor_IRQHandler
+		VXStepMotor_setControlMode,VXStepMotor_isTaskFinish
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -60,6 +61,7 @@ void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBas
 	motor->m_DIR = DIR;
 	motor->m_PUL = PUL;
 	XStepMotor_setDevice_base(motor, motor);
+	XStepMotor_setControlMode_base(motor, XSM_SPEED_CONTROL);
 }
 
 void VXStepMotor_delete(XStepMotor* motor)
@@ -117,18 +119,23 @@ void VXStepMotor_poll(XStepMotor* motor)
 {
 	if (motor->m_PUL == NULL || (motor->m_ENA != NULL && !XSwitchDeviceBase_getState_base(motor->m_ENA)))
 		return;//pul不存在或使能没开的时候不计算距离
-	//累计脉冲数
-	++motor->m_currentPulses;
 	//计算距离
 	if (motor->m_DIR == NULL || XSwitchDeviceBase_getState_base(motor->m_DIR))
 		++motor->m_directionPulses;
 	else
 		--motor->m_directionPulses;
-
-	if (motor->m_setPulses != 0 && motor->m_setPulses == motor->m_currentPulses)
-	{//达到设定脉冲数了
-		motor->m_setPulses = 0;
-		XPWMDeviceBase_stop_base(motor->m_PUL);
+	
+	if (motor->m_ControlMode == XSM_SPEED_CONTROL)
+		return;
+	if (motor->m_ControlMode & XSM_DISTANCE_CONTROL || motor->m_ControlMode & XSM_POSITION_CONTROL)
+	{	//累计脉冲数
+		++motor->m_currentPulses;
+		if (motor->m_setPulses == motor->m_currentPulses)
+		{//达到设定脉冲数了
+			motor->m_setPulses = 0;
+			motor->m_currentPulses = 0;//清空脉冲计数
+			XPWMDeviceBase_stop_base(motor->m_PUL);
+		}
 	}
 }
 
@@ -164,7 +171,6 @@ void VXStepMotor_setDIR(XStepMotor* motor, bool isForward)
 void VXStepMotor_start(XStepMotor* motor)
 {
 	//motor->m_currentSpeed = 0;//清空转速
-	motor->m_currentPulses = 0;//清空脉冲计数
 	//开启pwm输出
 	XPWMDeviceBase_start_base(motor->m_PUL);
 }
@@ -177,7 +183,7 @@ void VXStepMotor_stop(XStepMotor* motor)
 		XPWMDeviceBase_stop_base(motor->m_PUL);
 		if (motor->m_currentSpeed != 0)
 		{
-			motor->m_currentSpeed = 0;
+			//motor->m_currentSpeed = 0;
 			if (motor->m_speedChangeCb)
 			{
 				if (XIODeviceBase_CallbackQueue(motor))
@@ -218,17 +224,59 @@ void VXStepMotor_setSpeed(XStepMotor* motor, double speed)
 
 void VXStepMotor_setRevolutions(XStepMotor* motor, double revolutions)
 {
-	if (revolutions > 0.0)
+	if (motor->m_ControlMode == XSM_DISTANCE_CONTROL)
 	{
-		XStepMotor_setDIR_base(motor, true);
-		motor->m_setPulses = revolutions * (motor->m_pulsesPerRevolution);
+		if (revolutions > 0.0)
+		{
+			XStepMotor_setDIR_base(motor, true);
+			motor->m_setPulses = revolutions * (motor->m_pulsesPerRevolution);
+		}
+		else if (revolutions < 0.0)
+		{
+			XStepMotor_setDIR_base(motor, false);
+			motor->m_setPulses = -1.0 * revolutions * (motor->m_pulsesPerRevolution);
+		}
+		XStepMotor_resetRevolutions(motor);
+		motor->m_currentPulses = 0;//清空脉冲计数
+		//printf("脉冲数:%d\n",(int)motor->m_setPulses);
 	}
-	else if (revolutions < 0.0)
+	else if (motor->m_ControlMode == XSM_POSITION_CONTROL)
 	{
-		XStepMotor_setDIR_base(motor, false);
-		motor->m_setPulses = -1.0 * revolutions * (motor->m_pulsesPerRevolution);
+		int64_t posPulses = revolutions * (motor->m_pulsesPerRevolution);//设置的位置脉冲数
+		if ((motor->m_directionPulses) > posPulses)
+		{
+			XStepMotor_setDIR_base(motor, false);
+			motor->m_setPulses = (motor->m_directionPulses) - posPulses;
+		}
+		else if ((motor->m_directionPulses) < posPulses)
+		{
+			XStepMotor_setDIR_base(motor, true);
+			motor->m_setPulses = posPulses - (motor->m_directionPulses);
+		}
+		else
+		{
+			return;
+		}
+		XStepMotor_resetRevolutions(motor);
+		motor->m_currentPulses = 0;//清空脉冲计数
 	}
-	//printf("脉冲数:%d\n",(int)motor->m_setPulses);
+}
+
+void VXStepMotor_setControlMode(XStepMotor* motor, XStepMotorMode mode)
+{
+	switch (mode)
+	{
+		case XSM_POSITION_CONTROL: break;
+		case XSM_SPEED_CONTROL: break;
+		case XSM_TORQUE_CONTROL:break;
+		default:break;
+	}
+	motor->m_ControlMode = mode;
+}
+
+bool VXStepMotor_isTaskFinish(XStepMotor* motor)
+{
+	return motor->m_setPulses==0;
 }
 
 //void VXStepMotor_IRQHandler(XStepMotor* motor)
