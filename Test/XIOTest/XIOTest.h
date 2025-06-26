@@ -8,6 +8,7 @@ extern "C" {
 #if DEMOTEST
 	void XPWMDeviceTest();
 	void XSerialPortTest();
+	void XSocketTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

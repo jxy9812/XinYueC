@@ -4,11 +4,17 @@
 extern "C" {
 #endif
 #include"XIODeviceBase.h"
-#define XSOCKETBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSocketBase))       //XSocketBase容器虚函数表大小
+#include<stdio.h>
+#include<stdint.h>
+#define XSOCKETBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSocketBase))       //XSocketBase虚函数表大小
 //XSwitchDevice虚函数表枚举
 XCLASS_DEFINE_BEGING(XSocketBase)
-XCLASS_DEFINE_ENUM(XSocketBase, SetState) = XCLASS_VTABLE_GET_SIZE(XIODeviceBase),
-XCLASS_DEFINE_ENUM(XSocketBase, GetState),
+XCLASS_DEFINE_ENUM(XSocketBase, ConnectToHost) = XCLASS_VTABLE_GET_SIZE(XIODeviceBase),
+XCLASS_DEFINE_ENUM(XSocketBase, DisconnectFromHost),
+XCLASS_DEFINE_ENUM(XSocketBase, WaitForConnected),
+XCLASS_DEFINE_ENUM(XSocketBase, WaitForDisconnected),
+XCLASS_DEFINE_ENUM(XSocketBase, LocalAddress),
+XCLASS_DEFINE_ENUM(XSocketBase, LocalPort),
 XCLASS_DEFINE_END(XSocketBase)
 typedef enum {
     XSOCKET_UNCONNECTED_STATE = 0,  // 套接字未连接
@@ -25,7 +31,7 @@ typedef enum {
     XSOCKET_TYPE_SCTP = 2,         // SCTP协议
     XSOCKET_TYPE_UNKNOWN = -1      // 非TCP、UDP和SCTP的其他协议
 } XSocketType;
-//开关设备
+//套接字
 typedef struct XSocketBase
 {
 	XIODeviceBase m_parent;//父对象
@@ -34,10 +40,11 @@ typedef struct XSocketBase
     XString* m_peerName;//远程主机名
     XString* m_peerAddress;//远程主机地址
     uint16_t m_peerPort;//远程主机端口
+    bool m_ipv6Enabled;           // IPv6启用标志
 }XSocketBase;
 //初始化类
 XVtable* XSocketBase_class_init();
-//开关设备
+//套接字
 XSocketBase* XSocketBase_create();
 //初始化
 void XSocketBase_init(XSocketBase* socket);
@@ -51,6 +58,7 @@ uint16_t XSocketBase_localPort_base(XSocketBase* socket);
 const char* XSocketBase_peerAddress(XSocketBase* socket);
 const char* XSocketBase_peerName(XSocketBase* socket);
 uint16_t XSocketBase_peerPort(XSocketBase* socket);
+void XSocketBase_setSocketType(XSocketBase* socket, XSocketType type);
 XSocketType XSocketBase_socketType(const XSocketBase* socket);
 XSocketState XSocketBase_state(const XSocketBase* socket);
 #define XSocketBase_isOpen					XIODeviceBase_isOpen
@@ -60,6 +68,12 @@ XSocketState XSocketBase_state(const XSocketBase* socket);
 #define XSocketBase_delete_base				XIODeviceBase_delete_base
 #define XSocketBase_poll_base				XIODeviceBase_poll_base
 
+
+//以下是平台的具体实现
+#ifdef WIN32
+#include"XSocketWin32.h"
+#elif defined(USE_STDPERIPH_DRIVER) 
+#endif
 #ifdef __cplusplus
 }
 #endif

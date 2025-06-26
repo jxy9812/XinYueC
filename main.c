@@ -33,6 +33,7 @@ int main(int argc, char* args[])
 	XVectorTest();*/
 	//TJCHMICommTest();
 	//XDataFrameCommTest();
+	XSocketTest();
 	XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();

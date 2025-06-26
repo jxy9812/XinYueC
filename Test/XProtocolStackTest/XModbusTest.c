@@ -111,7 +111,8 @@ void XModbusTest()
     while (true)
     {
         XModbus_poll_base(modbus);
-        XTimerGroupBase_global_poll();
+        if(XIODeviceBase_isOpen(modbus))
+            XTimerGroupBase_global_poll();
        // XModbus_poll(modbus);
        // XModbusTest_SerialPoll(modbus);
     }

@@ -179,7 +179,7 @@ static size_t GetCurrentTimeMillis() {
 	return (uli.QuadPart - EPOCH_OFFSET) / 10000;
 }
 static size_t(*global_getCurrentTime)() = GetCurrentTimeMillis;
-static void(*global_delay_ms)(const size_t msec)=Sleep;
+static void(*global_delay_ms)(size_t msec)=(void*)Sleep;
 #elif defined(__linux__) 
 #include <sys/time.h>
 static size_t get_milliseconds() 
@@ -207,10 +207,10 @@ static void  Delay_ms(const size_t ms)
 	vTaskDelay(pdMS_TO_TICKS(ms));
 }
 static size_t(*global_getCurrentTime)() = GetCurrentTime;
-static void(*global_delay_ms)(const size_t) = vTaskDelay;
+static void(*global_delay_ms)(size_t) = vTaskDelay;
 #else
 static size_t(*global_getCurrentTime)() = NULL;
-static void(*global_delay_ms)(const size_t)=NULL;
+static void(*global_delay_ms)(size_t)=NULL;
 #endif
 
 static size_t currentTime = 0;
