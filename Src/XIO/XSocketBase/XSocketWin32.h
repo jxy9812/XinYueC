@@ -9,7 +9,7 @@ extern "C" {
 typedef struct XSocketWin32
 {
     XSocketBase m_parent;//父对象
-    WSADATA m_wsaData;
+    //WSADATA m_wsaData;
     SOCKET  m_socket;
     struct addrinfo* m_addrInfo;  // 地址信息
 }XSocketWin32;

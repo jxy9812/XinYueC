@@ -92,7 +92,7 @@ void VXSocketBase_waitForDisconnected(XSocketBase* socket, int msecs)
 const char* VXSocketBase_localAddress(XSocketWin32* so)
 {
     XSocketBase* base = so;
-    if (!socket || so->m_socket == INVALID_SOCKET) return NULL;
+    if (!so || so->m_socket == INVALID_SOCKET) return NULL;
 
     static char localIP[46];
     struct sockaddr_storage localAddr;
@@ -120,7 +120,7 @@ const char* VXSocketBase_localAddress(XSocketWin32* so)
 uint16_t VXSocketBase_localPort(XSocketWin32* so)
 {
     XSocketBase* base = so;
-    if (!socket || so->m_socket == INVALID_SOCKET) return 0;
+    if (!so || so->m_socket == INVALID_SOCKET) return 0;
 
     struct sockaddr_storage localAddr;
     socklen_t addrLen = sizeof(localAddr);
@@ -153,12 +153,12 @@ bool VXIODevice_open(XSocketWin32* so, XIODeviceBaseMode mode)
     // 更新状态
     base->m_state = XSOCKET_HOST_LOOKUP_STATE;
 	int result;
- 
+    WSADATA wsaData;
 	// 初始化 Winsock
-	result = WSAStartup(MAKEWORD(2, 2), &so->m_wsaData);
+	result = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (result != 0) {
 		printf("WSAStartup failed: %d\n", result);
-		return 1;
+		return false;
 	}
     // 准备地址解析
     struct addrinfo hints;
@@ -187,7 +187,7 @@ bool VXIODevice_open(XSocketWin32* so, XIODeviceBaseMode mode)
         break;
     default:
         base->m_state = XSOCKET_UNCONNECTED_STATE;
-        return;
+        return false;
     }
    
     // 将 uint16_t 端口转换为字符串
@@ -201,7 +201,7 @@ bool VXIODevice_open(XSocketWin32* so, XIODeviceBaseMode mode)
         printf("getaddrinfo failed: %d\n", result);
         base->m_state = XSOCKET_UNCONNECTED_STATE;
         WSACleanup();
-        return 1;
+        return false;
     }
     // 尝试连接
     base->m_state = XSOCKET_CONNECTING_STATE;
@@ -264,13 +264,14 @@ bool VXIODevice_open(XSocketWin32* so, XIODeviceBaseMode mode)
         base->m_state = XSOCKET_UNCONNECTED_STATE;
     }
     ((XIODeviceBase*)so)->m_mode = XIODeviceBase_ReadWrite;
+    return true;
 }
 
 bool VXIODevice_close(XSocketWin32* so)
 {
-    if (!XIODeviceBase_isOpen(socket)|| XSocketBase_state(socket) == XSOCKET_UNCONNECTED_STATE)
+    if (!XIODeviceBase_isOpen(so)|| XSocketBase_state(so) == XSOCKET_UNCONNECTED_STATE)
         return false;
-    XSocketBase* base = socket;
+    XSocketBase* base = so;
 
     if (so->m_socket != INVALID_SOCKET) {
         base->m_state = XSOCKET_CLOSING_STATE;
@@ -288,7 +289,8 @@ bool VXIODevice_close(XSocketWin32* so)
 
     base->m_state = XSOCKET_UNCONNECTED_STATE;
 
-    ((XIODeviceBase*)socket)->m_mode = XIODeviceBase_NotOpen;
+    ((XIODeviceBase*)so)->m_mode = XIODeviceBase_NotOpen;
+    return true;
 }
 
 
