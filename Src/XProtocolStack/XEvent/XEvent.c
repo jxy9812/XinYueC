@@ -138,7 +138,7 @@ void XEventDispatcher_handler(XEventDispatcher* dispatcher)
 				event->userData = dispatcher->m_allEvent_user_data;
 				dispatcher->m_allEvent_cb(event);
 			}
-			if(event->accept)//
+			//if(event->accept)//
 				XMemory_free(event);//事件被接受，执行完了释放
 		}
 

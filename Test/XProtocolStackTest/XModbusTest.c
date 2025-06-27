@@ -8,6 +8,7 @@
 #include"XModbusRegister.h"
 #include"XModbusDigitalSwitch.h"
 #include"XSwitchDeviceModbus.h"
+#include"XSocketBase.h"
 static XSwitchDeviceModbus* SW;
 static void StateChangeCallback0(XSwitchDeviceBase* sw)
 {
@@ -27,7 +28,10 @@ void XModbusTest()
     XSerialPortBase* serial = XSerialPortWin32_create();
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
-    XModbus* modbus = XModbus_create_RTU_SerialPort(serial,NULL,NULL);
+    XSocketBase* socket = XSocketWin32_create();
+    XSocketBase_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
+
+    XModbus* modbus = XModbus_create_RTU_SerialPort(socket,NULL,NULL);
     XModbus_setAddress(modbus,2);
     XModbus_setMode(modbus, XMB_RTU_MASTER);
     //XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);
@@ -111,7 +115,8 @@ void XModbusTest()
     while (true)
     {
         XModbus_poll_base(modbus);
-        if(XIODeviceBase_isOpen(modbus))
+        XSocketBase_poll_base(socket);
+        if(XIODeviceBase_isOpen(socket))
             XTimerGroupBase_global_poll();
        // XModbus_poll(modbus);
        // XModbusTest_SerialPoll(modbus);

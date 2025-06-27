@@ -1,7 +1,10 @@
 ﻿#include"XSocketBase.h"
+#include"XString.h"
+#include"XEvent.h"
 static void VXIODevice_poll(XSocketBase* socket);
 static bool VXIODevice_open(XSocketBase* socket, XIODeviceBaseMode mode);
 static bool VXIODevice_close(XSocketBase* socket);
+static void VXIODevice_delete(XSocketBase* socket);
 XVtable* XSocketBase_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -20,6 +23,7 @@ XVtable* XSocketBase_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Poll, VXIODevice_poll);
 	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXIODevice_open);
 	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXIODevice_close);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_delete);
 #if SHOWCONTAINERSIZE
 	printf("XSocketBase size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -28,6 +32,8 @@ XVtable* XSocketBase_class_init()
 
 void VXIODevice_poll(XSocketBase* socket)
 {
+	// 处理事件调度器中的事件
+	XEventDispatcher_handler(socket->m_eventDispatcher);
 }
 
 bool VXIODevice_open(XSocketBase* socket, XIODeviceBaseMode mode)
@@ -38,4 +44,15 @@ bool VXIODevice_open(XSocketBase* socket, XIODeviceBaseMode mode)
 bool VXIODevice_close(XSocketBase* socket)
 {
 	return false;
+}
+
+void VXIODevice_delete(XSocketBase* socket)
+{
+	if (socket->m_peerAddress)
+		XString_delete_base(socket->m_peerAddress);
+	if(socket->m_peerName)
+		XString_delete_base(socket->m_peerName);
+	if (socket->m_eventDispatcher)
+		XEventDispatcher_delete(socket->m_eventDispatcher);
+	XMemory_free(socket);
 }

@@ -39,6 +39,7 @@ typedef struct XSocketBase
     XSocketType m_socketType;
     XString* m_peerName;//远程主机名
     XString* m_peerAddress;//远程主机地址
+    XEventDispatcher* m_eventDispatcher; // 事件调度器
     uint16_t m_peerPort;//远程主机端口
     bool m_ipv6Enabled;           // IPv6启用标志
 }XSocketBase;
@@ -67,6 +68,14 @@ XSocketState XSocketBase_state(const XSocketBase* socket);
 #define XSocketBase_setDevice_base			XIODeviceBase_setDevice_base
 #define XSocketBase_delete_base				XIODeviceBase_delete_base
 #define XSocketBase_poll_base				XIODeviceBase_poll_base
+#define XSocketBase_setWriteBuffer_base     XIODeviceBase_setWriteBuffer_base
+#define XSocketBase_setReadBuffer_base      XIODeviceBase_setReadBuffer_base
+#define XSocketBase_write_base              XIODeviceBase_write_base
+#define XSocketBase_read_base               XIODeviceBase_read_base
+#define XSocketBase_getBytesAvailable_base  XIODeviceBase_getBytesAvailable_base
+#define XSocketBase_getBytesToWrite_base    XIODeviceBase_getBytesToWrite_base
+#define XSocketBase_atEnd_base              XIODeviceBase_atEnd_base
+#define XSocketBase_writeFull_base          XIODeviceBase_writeFull_base
 
 
 //以下是平台的具体实现

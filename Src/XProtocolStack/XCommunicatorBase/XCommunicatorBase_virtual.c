@@ -64,6 +64,8 @@ bool VXCommunicatorBase_connect(XCommunicatorBase* comm)
 		return false;
 	if (comm->m_io->m_mode != XIODeviceBase_NotOpen)
 		return true;
+	if (XIODeviceBase_isOpen(comm->m_io))
+		return true;
 	return XIODeviceBase_open_base(comm->m_io,XIODeviceBase_ReadWrite);
 }
 
