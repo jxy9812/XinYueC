@@ -4,8 +4,11 @@
 #include<stdio.h>
 #include<math.h>
 #include"XAtomic.h"
+#include"XCoreApplication.h"
 int main(int argc, char* args[])
 {
+	XCoreApplication* app = XCoreApplication_create(argc,args);
+
 	XAtomic_bool b;
 	XAtomic_init(b,false);
 	//XAtomic_store_bool(&b,false);

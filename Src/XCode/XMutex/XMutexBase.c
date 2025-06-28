@@ -2,6 +2,16 @@
 #include "XMemory.h"
 #include <string.h>
 
+XMutexBase* XMutex_create(const char* name)
+{
+#ifdef WIN32
+	return XMutexWin32_create(name);
+#endif
+#ifdef configUSE_FREERTOS
+	return XMutexWin32_create(XMutexFreeRTOS);
+#endif
+}
+
 void XMutexBase_init(XMutexBase* mutex, const char* name)
 {
 	if (mutex == NULL)

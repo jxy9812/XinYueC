@@ -15,7 +15,7 @@ XVtable* XClass_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
 #if SHOWCONTAINERSIZE
-	printf("XContainerObject size:%d\n", XVtable_size(XClassVtable));
+	printf("XClass size:%d\n", XVtable_size(XClassVtable));
 #endif
 	return XVTABLE_DEFAULT;
 }

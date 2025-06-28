@@ -16,6 +16,9 @@ typedef struct XMutexBase
 {
 	XClass m_parent;
 }XMutexBase;
+//根据平台自动创建对应的互斥锁
+XMutexBase* XMutex_create(const char* name);
+
 void XMutexBase_init(XMutexBase* mutex, const char* name);
 //上锁
 bool XMutexBase_lock_base(XMutexBase* mutex);

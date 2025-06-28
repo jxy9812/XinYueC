@@ -15,7 +15,7 @@ typedef struct XSocketWin32
 }XSocketWin32;
 //初始化类
 XVtable* XSocketWin32_class_init();
-//开关设备
+//套接字
 XSocketWin32* XSocketWin32_create();
 //套接字
 void XSocketWin32_init(XSocketWin32* socket);
