@@ -6,7 +6,7 @@ extern "C" {
 #endif
 #include<stdint.h>
 #include<stdbool.h>
-#include"XSerialPortBase.h"
+#include"XSerialPort.h"
 #ifdef USE_STDPERIPH_DRIVER
 typedef struct XUsartGPIO
 {

@@ -1,6 +1,6 @@
 ﻿#include"XProtocolStackTest.h"
 #include"XModbus.h"
-#include"XSerialPortBase.h"
+#include"XSerialPort.h"
 #include"XMemory.h"
 #include"XCrc.h"
 #include"XModbusFrame.h"
@@ -25,7 +25,7 @@ static void StateChangeCallback2(XSwitchDeviceBase* sw)
 }
 void XModbusTest()
 {
-    XSerialPortBase* serial = XSerialPortWin32_create();
+    XSerialPortBase* serial = XSerialPort_create();
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
     XSocketBase* socket = XSocketWin32_create();

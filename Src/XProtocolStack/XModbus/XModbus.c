@@ -4,7 +4,7 @@
 #include "XModbusProto.h"
 #include "XCircularQueueAtomic.h"
 #include "XTimerWheel.h"
-#include "XSerialPortBase.h"
+#include "XSerialPort.h"
 #include "XEquality.h"
 #include <string.h>
 

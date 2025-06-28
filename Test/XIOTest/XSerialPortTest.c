@@ -1,5 +1,5 @@
 ﻿#include"XIOTest.h"
-#include"XSerialPortBase.h"
+#include"XSerialPort.h"
 #include"XMemory.h"
 #ifdef WIN32
 #include <windows.h>
@@ -40,10 +40,10 @@ static char* UTF8ToLocal(const char* utf8Str) {
 }
 void XSerialPortTest()
 {
-    XSerialPortBase* serial = XSerialPortWin32_create();
-    if (!XSerialPortBase_open_base(serial, XIODeviceBase_ReadWrite, 2, 115200, SP_PAR_NONE))
+    XSerialPortBase* serial = XSerialPort_create();
+    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 2, 115200, SP_PAR_NONE))
     {
-        XSerialPortBase_delete_base(serial);
+        XSerialPort_delete_base(serial);
         return;
     }
     //XSerialPortBase_setReadBuffer_base(serial,1024);
@@ -53,10 +53,10 @@ void XSerialPortTest()
     char buff[1024];
     while (true)
     {
-        size_t readSize = XSerialPortBase_getBytesAvailable_base(serial);
+        size_t readSize = XSerialPort_getBytesAvailable_base(serial);
         if (readSize == 0)
             continue;
-        size_t len = XSerialPortBase_read_base(serial, buff, readSize);
+        size_t len = XSerialPort_read_base(serial, buff, readSize);
         if (len >0)
         {
             buff[len] = 0;

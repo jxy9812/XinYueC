@@ -55,23 +55,21 @@ typedef struct XSerialPortBase
     XSerialPortBaseParity m_parity;//校验
     XSerialPortBaseFlowControl m_flowControl;//流控制
 }XSerialPortBase;//串口
-//初始化类
-XVtable* XSerialPortBase_class_init();
-XSerialPortBase* XSerialPortBase_create(XVtable* vtable);
 void XSerialPortBase_init(XSerialPortBase* serial, XVtable* vtable);
-bool XSerialPortBase_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
-#define XSerialPortBase_delete_base                                   XIODeviceBase_delete_base
-#define XSerialPortBase_setWriteBuffer_base                         XIODeviceBase_setWriteBuffer_base
-#define XSerialPortBase_setReadBuffer_base                          XIODeviceBase_setReadBuffer_base
-#define XSerialPortBase_setDevice_base                              XIODeviceBase_setDevice_base
-#define XSerialPortBase_write_base                                  XIODeviceBase_write_base
-#define XSerialPortBase_read_base                                   XIODeviceBase_read_base
-#define XSerialPortBase_getBytesAvailable_base                      XIODeviceBase_getBytesAvailable_base
-#define XSerialPortBase_getBytesToWrite_base                        XIODeviceBase_getBytesToWrite_base
-#define XSerialPortBase_isOpen                                      XIODeviceBase_isOpen
-#define XSerialPortBase_close_base                                  XIODeviceBase_close_base
-#define XSerialPortBase_poll_base                                   XIODeviceBase_poll_base
-#define XSerialPortBase_writeFull_base                              XIODeviceBase_writeFull_base
+
+bool XSerialPort_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
+#define XSerialPort_delete_base                                   XIODeviceBase_delete_base
+#define XSerialPort_setWriteBuffer_base                           XIODeviceBase_setWriteBuffer_base
+#define XSerialPort_setReadBuffer_base                            XIODeviceBase_setReadBuffer_base
+#define XSerialPort_setDevice_base                                XIODeviceBase_setDevice_base
+#define XSerialPort_write_base                                    XIODeviceBase_write_base
+#define XSerialPort_read_base                                     XIODeviceBase_read_base
+#define XSerialPort_getBytesAvailable_base                        XIODeviceBase_getBytesAvailable_base
+#define XSerialPort_getBytesToWrite_base                          XIODeviceBase_getBytesToWrite_base
+#define XSerialPort_isOpen                                        XIODeviceBase_isOpen
+#define XSerialPort_close_base                                    XIODeviceBase_close_base
+#define XSerialPort_poll_base                                     XIODeviceBase_poll_base
+#define XSerialPort_writeFull_base                                XIODeviceBase_writeFull_base
 
 //以下是平台的具体实现
 #ifdef WIN32

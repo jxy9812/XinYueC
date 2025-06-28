@@ -1,6 +1,6 @@
 ﻿#include"XProtocolStackTest.h"
 #include"XTJCHMIComm.h"
-#include"XSerialPortBase.h"
+#include"XSerialPort.h"
 #include"XVector.h"
 #include"XTimerBase.h"
 #include"cJSON.h"
@@ -106,7 +106,7 @@ static void XFuncCodeCb0x30(uint8_t code, void* obj, void* data, void* userData)
 void TJCHMICommTest()
 {
 	printf("开始创建串口\n");
-	XSerialPortBase* USART = XSerialPortWin32_create();
+	XSerialPortBase* USART = XSerialPort_create();
 	USART->m_baudRate = 115200;
 	USART->m_portNum = 20;
 	XIODeviceBase_setReadBuffer_base(USART, 1024);

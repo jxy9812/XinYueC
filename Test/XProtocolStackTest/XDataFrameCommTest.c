@@ -1,12 +1,12 @@
 ﻿#include"XProtocolStackTest.h"
 #include"XDataFrameComm.h"
-#include"XSerialPortBase.h"
+#include"XSerialPort.h"
 #include"XVector.h"
 #include"XTimerBase.h"
 void XDataFrameCommTest()
 {
 	printf("开始创建串口\n");
-	XSerialPortBase* USART = XSerialPortWin32_create(); 
+	XSerialPortBase* USART = XSerialPort_create(); 
 	USART->m_baudRate = 115200;
 	USART->m_portNum = 20;
 	XIODeviceBase_setReadBuffer_base(USART,1024);
