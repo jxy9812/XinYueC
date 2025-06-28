@@ -14,7 +14,10 @@ XCLASS_DEFINE_END(XSemaphore)
 typedef struct XSemaphore
 {
 	XMutex m_parent;
+	void* m_semaphore;
 }XSemaphore;
+XVtable* XSemaphore_class_init();
+XSemaphore* XSemaphore_create(const char* name);
 void XSemaphore_init(XSemaphore* semaphore, const char* name);
 /*             api                                 */
 void XSemaphore_lockISR_base(XSemaphore* semaphore);
@@ -23,13 +26,7 @@ void XSemaphore_unlockISR_base(XSemaphore* semaphore);
 #define XSemaphore_lock_wait_base			XMutex_lock_wait_base
 #define	XSemaphore_unlock_base				XMutex_unlock_base
 #define XSemaphore_delete_base				XMutex_delete_base
-/*             平台具体实现                                 */
-#ifdef WIN32
-#include"XSemaphoreWin32.h"
-#endif
-#ifdef configUSE_FREERTOS
-#include"XSemaphoreFreeRTOS.h"
-#endif
+
 #ifdef __cplusplus
 }
 #endif

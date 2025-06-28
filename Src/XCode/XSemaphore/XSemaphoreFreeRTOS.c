@@ -1,19 +1,19 @@
 ﻿#ifdef configUSE_FREERTOS
-#include "XSemaphoreFreeRTOS.h"
+#include "XSemaphore.h"
 #include "XMemory.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include <string.h>
 
-static void XMutexBase_delete(XSemaphoreFreeRTOS* semaphore);
+static void VXMutex_delete(XSemaphore* semaphore);
 //上锁
-static bool VXSemaphore_lock(XSemaphoreFreeRTOS* semaphore);
-static bool VXSemaphore_lock_wait(XSemaphoreFreeRTOS* semaphore, size_t timerout);
+static bool VXSemaphore_lock(XSemaphore* semaphore);
+static bool VXSemaphore_lock_wait(XSemaphore* semaphore, size_t timerout);
 //解锁
-static bool VXSemaphore_unlock(XSemaphoreFreeRTOS* semaphore);
-static void VXSemaphore_lockISR(XSemaphoreFreeRTOS* semaphore);
-static void VXSemaphore_unlockISR(XSemaphoreFreeRTOS* semaphore);
-XVtable* XSemaphoreFreeRTOS_class_init()
+static bool VXSemaphore_unlock(XSemaphore* semaphore);
+static void VXSemaphore_lockISR(XSemaphore* semaphore);
+static void VXSemaphore_unlockISR(XSemaphore* semaphore);
+XVtable* XSemaphore_class_init()
 {
     XVTABLE_CREAT_DEFAULT
         //虚函数表初始化
@@ -29,27 +29,27 @@ XVtable* XSemaphoreFreeRTOS_class_init()
     //追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, XMutexBase_delete);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXMutex_delete);
 #if SHOWCONTAINERSIZE
-    printf("XSemaphoreFreeRTOS size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+    printf("XSemaphore size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
     return XVTABLE_DEFAULT;
 }
 
-XSemaphoreFreeRTOS* XSemaphoreFreeRTOS_create(const char* name)
+XSemaphore* XSemaphore_create(const char* name)
 {
-    XSemaphoreFreeRTOS* semaphore = XMemory_malloc(sizeof(XSemaphoreFreeRTOS));
-    XSemaphoreFreeRTOS_init(semaphore, name);
+    XSemaphore* semaphore = XMemory_malloc(sizeof(XSemaphore));
+    XSemaphore_init(semaphore, name);
     return semaphore;
 }
 
-void XSemaphoreFreeRTOS_init(XSemaphoreFreeRTOS* semaphore, const char* name)
+void XSemaphore_init(XSemaphore* semaphore, const char* name)
 {
     if (semaphore == NULL)
         return;
-    memset(((XSemaphore*)semaphore) + 1, 0, sizeof(XSemaphoreFreeRTOS) - sizeof(XSemaphore));
-    XSemaphore_init(semaphore, NULL);
-    XClassGetVtable(semaphore) = XSemaphoreFreeRTOS_class_init();
+    memset(((XMutex*)semaphore) + 1, 0, sizeof(XSemaphore) - sizeof(XMutex));
+    XMutex_init(semaphore, name);
+    XClassGetVtable(semaphore) = XSemaphore_class_init();
    // 创建二值信号量，初始状态为"已获取"（0）
     semaphore->m_semaphore = xSemaphoreCreateBinary();
     if (semaphore->m_semaphore == NULL) {
@@ -61,7 +61,7 @@ void XSemaphoreFreeRTOS_init(XSemaphoreFreeRTOS* semaphore, const char* name)
 }
 
 
-void XMutexBase_delete(XSemaphoreFreeRTOS* semaphore)
+void VXMutex_delete(XSemaphore* semaphore)
 {
     // 关闭信号量句柄
     if (semaphore->m_semaphore)
@@ -70,27 +70,27 @@ void XMutexBase_delete(XSemaphoreFreeRTOS* semaphore)
     XVtableGetFunc(XClass_class_init(), EXClass_Delete, void(*)(XClass*));
 }
 
-bool VXSemaphore_lock(XSemaphoreFreeRTOS* semaphore)
+bool VXSemaphore_lock(XSemaphore* semaphore)
 {
     return xSemaphoreTake(semaphore->m_semaphore, portMAX_DELAY) == pdTRUE;
 }
 
-bool VXSemaphore_lock_wait(XSemaphoreFreeRTOS* semaphore, size_t timerout)
+bool VXSemaphore_lock_wait(XSemaphore* semaphore, size_t timerout)
 {
      return xSemaphoreTake(semaphore->m_semaphore, pdMS_TO_TICKS(timerout)) == pdTRUE;
 }
 
-bool VXSemaphore_unlock(XSemaphoreFreeRTOS* semaphore)
+bool VXSemaphore_unlock(XSemaphore* semaphore)
 {
     return xSemaphoreGive(semaphore->m_semaphore) == pdTRUE;
 }
-void VXSemaphore_lockISR(XSemaphoreFreeRTOS* semaphore)
+void VXSemaphore_lockISR(XSemaphore* semaphore)
 {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xSemaphoreTakeFromISR(semaphore->m_semaphore, &xHigherPriorityTaskWoken);
     return xHigherPriorityTaskWoken==pdTRUE;
 }
-void VXSemaphore_unlockISR(XSemaphoreFreeRTOS* semaphore)
+void VXSemaphore_unlockISR(XSemaphore* semaphore)
 {
     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     xSemaphoreGiveFromISR(semaphore->m_semaphore, &xHigherPriorityTaskWoken);

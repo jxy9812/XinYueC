@@ -15,7 +15,10 @@ XCLASS_DEFINE_END(XMutex)
 typedef struct XMutex
 {
 	XClass m_parent;
+	void* m_mutex;
 }XMutex;
+XVtable* XMutex_class_init();
+XMutex* XMutex_create(const char* name);
 void XMutex_init(XMutex* mutex, const char* name);
 //上锁
 bool XMutex_lock_base(XMutex* mutex);
@@ -25,12 +28,6 @@ bool XMutex_lock_wait_base(XMutex* mutex,size_t timerout);
 bool XMutex_unlock_base(XMutex* mutex);
 #define XMutex_delete_base XClass_delete_base
 
-#ifdef WIN32
-#include"XMutexWin32.h"
-#endif
-#ifdef configUSE_FREERTOS
-#include"XMutexFreeRTOS.h"
-#endif
 #ifdef __cplusplus
 }
 #endif

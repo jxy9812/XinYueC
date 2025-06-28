@@ -1,7 +1,7 @@
 ﻿#include"XTimerGroupWheel.h"
 #include"XMemory.h"
 #include"XVector.h"
-#include"XMutex.h"
+#include"XSemaphore.h"
 #include<string.h>
 XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision)
 {
@@ -53,12 +53,6 @@ void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex)
 		XMutex_delete_base(group->m_mutex);
 	group->m_mutex = mutex;
 }
-#ifdef WIN32
-#include"XSemaphoreWin32.h"
-#endif
-#ifdef configUSE_FREERTOS
-#include"XMutexFreeRTOS.h"
-#endif
 void XTimerGroupWheel_setGlobal()
 {
 	if (XTimerGroupBase_global() != NULL)
@@ -68,10 +62,5 @@ void XTimerGroupWheel_setGlobal()
 	XTimerGroupWheel_addTimeWheel_base(group,100);
 	XTimerGroupWheel_addTimeWheel_base(group,100);
 	XTimerGroupBase_setGlobal(group);
-#ifdef WIN32
-	XTimerGroupWheel_setMutex(group, XSemaphoreWin32_create(NULL));
-#endif
-#ifdef configUSE_FREERTOS
-	XTimerGroupWheel_setMutex(group, XMutexFreeRTOS_create(NULL));
-#endif
+	XTimerGroupWheel_setMutex(group, XSemaphore_create(NULL));
 }

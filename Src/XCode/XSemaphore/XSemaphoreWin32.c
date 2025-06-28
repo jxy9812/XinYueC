@@ -1,19 +1,19 @@
 ﻿#ifdef WIN32
-#include "XSemaphoreWin32.h"
+#include "XSemaphore.h"
 #include "XMemory.h"
 #include "Windows.h"
 #include <string.h>
 
-static void XMutexBase_delete(XSemaphoreWin32* mutex);
+static void VXMutex_delete(XSemaphore* mutex);
 //上锁
-static bool VXSemaphore_lock(XSemaphoreWin32* mutex);
-static bool VXSemaphore_lock_wait(XSemaphoreWin32* mutex, size_t timerout);
+static bool VXSemaphore_lock(XSemaphore* mutex);
+static bool VXSemaphore_lock_wait(XSemaphore* mutex, size_t timerout);
 //解锁
-static bool VXSemaphore_unlock(XSemaphoreWin32* mutex);
+static bool VXSemaphore_unlock(XSemaphore* mutex);
 
-static void VXSemaphore_lockISR(XSemaphoreWin32* mutex);
-static void VXSemaphore_unlockISR(XSemaphoreWin32* mutex);
-XVtable* XSemaphoreWin32_class_init()
+static void VXSemaphore_lockISR(XSemaphore* mutex);
+static void VXSemaphore_unlockISR(XSemaphore* mutex);
+XVtable* XSemaphore_class_init()
 {
     XVTABLE_CREAT_DEFAULT
         //虚函数表初始化
@@ -29,42 +29,42 @@ XVtable* XSemaphoreWin32_class_init()
     //追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, XMutexBase_delete);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXMutex_delete);
 #if SHOWCONTAINERSIZE
-    printf("XSemaphoreWin32 size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+    printf("XSemaphore size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
     return XVTABLE_DEFAULT;
 }
 
-XSemaphoreWin32* XSemaphoreWin32_create(const char* name)
+XSemaphore* XSemaphore_create(const char* name)
 {
-    XSemaphoreWin32* mutex = XMemory_malloc(sizeof(XSemaphoreWin32));
-    XSemaphoreWin32_init(mutex,name);
+    XSemaphore* mutex = XMemory_malloc(sizeof(XSemaphore));
+    XSemaphore_init(mutex,name);
     return mutex;
 }
 
-void XSemaphoreWin32_init(XSemaphoreWin32* mutex, const char* name)
+void XSemaphore_init(XSemaphore* semaphore, const char* name)
 {
-    if (mutex == NULL)
+    if (semaphore == NULL)
         return;
-    memset(((XSemaphore*)mutex) + 1, 0, sizeof(XSemaphoreWin32) - sizeof(XSemaphore));
-    XSemaphore_init(mutex, NULL);
-    XClassGetVtable(mutex) = XSemaphoreWin32_class_init();
+    memset(((XMutex*)semaphore) + 1, 0, sizeof(XSemaphore) - sizeof(XMutex));
+    XMutex_init(semaphore, name);
+    XClassGetVtable(semaphore) = XSemaphore_class_init();
     // 创建信号量（初始时无人拥有）
-    mutex->m_semaphore = CreateSemaphore(
+    semaphore->m_semaphore = CreateSemaphore(
         NULL,                // 安全属性，通常为 NULL
         1,                   // 初始计数（1 表示可用）
         1,                   // 最大计数（必须为 1 以实现二值信号量）
         name  // 信号量名称（非 NULL 表示命名信号量）
     );
-    if (mutex->m_semaphore == NULL) {
+    if (semaphore->m_semaphore == NULL) {
         printf("创建信号量失败，错误码: %d\n", GetLastError());
         return 1;
     }
 }
 
 
-void XMutexBase_delete(XSemaphoreWin32* mutex)
+void VXMutex_delete(XSemaphore* mutex)
 {
     // 关闭信号量句柄
     if (mutex->m_semaphore)
@@ -73,25 +73,25 @@ void XMutexBase_delete(XSemaphoreWin32* mutex)
     XVtableGetFunc(XClass_class_init(), EXClass_Delete, void(*)(XClass*));
 }
 
-bool VXSemaphore_lock(XSemaphoreWin32* mutex)
+bool VXSemaphore_lock(XSemaphore* mutex)
 {
     return WaitForSingleObject(mutex->m_semaphore, INFINITE) == WAIT_OBJECT_0;
 }
 
-bool VXSemaphore_lock_wait(XSemaphoreWin32* mutex, size_t timerout)
+bool VXSemaphore_lock_wait(XSemaphore* mutex, size_t timerout)
 {
     return WaitForSingleObject(mutex->m_semaphore, timerout) == WAIT_OBJECT_0;
 }
 
-bool VXSemaphore_unlock(XSemaphoreWin32* mutex)
+bool VXSemaphore_unlock(XSemaphore* mutex)
 {
     return  ReleaseSemaphore(mutex->m_semaphore,1, NULL);
 }
-void VXSemaphore_lockISR(XSemaphoreWin32* mutex)
+void VXSemaphore_lockISR(XSemaphore* mutex)
 {
     return WaitForSingleObject(mutex->m_semaphore, 0) == WAIT_OBJECT_0;
 }
-void VXSemaphore_unlockISR(XSemaphoreWin32* mutex)
+void VXSemaphore_unlockISR(XSemaphore* mutex)
 {
     return  ReleaseSemaphore(mutex->m_semaphore, 1, NULL);
 }

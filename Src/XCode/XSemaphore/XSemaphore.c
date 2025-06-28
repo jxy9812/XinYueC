@@ -1,12 +1,5 @@
 ﻿#include "XSemaphore.h"
 #include <string.h>
-void XSemaphore_init(XSemaphore* semaphore, const char* name)
-{
-	if (semaphore == NULL)
-		return;
-	XMutex_init(semaphore, name);
-	//memset(((XMutex*)semaphore) + 1, 0, sizeof(XSemaphore) - sizeof(XMutex));
-}
 
 void XSemaphore_lockISR_base(XSemaphore* semaphore)
 {
