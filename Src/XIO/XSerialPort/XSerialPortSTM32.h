@@ -1,6 +1,6 @@
 ﻿#ifdef USE_STDPERIPH_DRIVER
-#ifndef XSerialPortSTM32_H
-#define XSerialPortSTM32_H
+#ifndef XSerialPort_H
+#define XSerialPort_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,7 +18,7 @@ typedef struct XUsartGPIO
 #endif
 
 //stm32串口设备
-typedef struct XSerialPortSTM32
+typedef struct XSerialPort
 {
     XSerialPortBase m_parent;//父对象
 #ifdef USE_STDPERIPH_DRIVER
@@ -26,13 +26,13 @@ typedef struct XSerialPortSTM32
     XUsartGPIO TX;
     XUsartGPIO RX;
 #endif
-}XSerialPortSTM32;//串口
-    XVtable* XSerialPortSTM32_class_init();
+}XSerialPort;//串口
+    XVtable* XSerialPort_class_init();
 #ifdef USE_STDPERIPH_DRIVER
-    XSerialPortSTM32* XSerialPortSTM32StdPeriph_create(XUsartGPIO* TX, XUsartGPIO* RX);
+    XSerialPort* XSerialPort_create(XUsartGPIO* TX, XUsartGPIO* RX);
 #endif
-    void XSerialPortSTM32_init(XSerialPortSTM32* serial);
-    XSerialPortSTM32* XSerialPortSTM32_global(uint8_t port);
+    void XSerialPort_init(XSerialPort* serial);
+    XSerialPort* XSerialPort_global(uint8_t port);
 #ifdef __cplusplus
 }
 #endif
