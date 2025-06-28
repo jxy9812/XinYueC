@@ -13,7 +13,7 @@ typedef struct XCoreApplication
     int argc;
     char** argv;
     XMapBase* m_eventDispatcher;//事件调度器
-    XMutexBase* m_mutex;//互斥锁
+    XMutex* m_mutex;//互斥锁
     //XEventDispatcher* m_eventDispatcher; // 事件调度器
 }XCoreApplication;//
 XVtable* XCoreApplication_class_init();

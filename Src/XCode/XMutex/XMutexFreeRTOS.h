@@ -6,20 +6,17 @@ extern "C" {
 #endif
 #include<stdbool.h>
 #include<stdint.h>
-#include"XMutexBase.h"
+#include"XMutex.h"
 //互斥锁
 typedef struct XMutexFreeRTOS
 {
-	XMutexBase m_parent;
+	XMutex m_parent;
 	void* m_mutex;
 }XMutexFreeRTOS;
 XVtable* XMutexFreeRTOS_class_init();
 XMutexFreeRTOS* XMutexFreeRTOS_create(const char* name);
 void XMutexFreeRTOS_init(XMutexFreeRTOS* mutex, const char* name);
-#define XMutexFreeRTOS_lock_base					XMutexBase_lock_base
-#define XMutexFreeRTOS_lock_wait_base				XMutexBase_lock_wait_base
-#define	XMutexFreeRTOS_unlock_base					XMutexBase_unlock_base
-#define XMutexFreeRTOS_delete_base					XMutexBase_delete_base
+#define XMutex_create(name)  XMutexFreeRTOS_create(name)
 #ifdef __cplusplus
 }
 #endif

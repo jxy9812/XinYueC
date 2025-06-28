@@ -28,14 +28,14 @@ typedef struct XTimerGroupWheel
 {
 	XTimerGroupBase m_parent;//继承
 	XVector* m_timeWheel;//多时间轮	/XVector<XTimeWheel>
-	XMutexBase* m_mutex;//互斥锁
+	XMutex* m_mutex;//互斥锁
 }XTimerGroupWheel;
 XVtable* XTimerGroupWheel_class_init();
 XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision);
 void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision);
 void XTimerGroupWheel_addTimeWheel_base(XTimerGroupWheel* group,size_t slotsCount);
 void XTimerGroupWheel_removeTimeWheel_base(XTimerGroupWheel* group);
-void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutexBase* mutex);
+void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex);
 #define XTimerGroupWheel_addTimer_base				XTimerGroupBase_addTimer_base
 #define XTimerGroupWheel_removeTimer_base			XTimerGroupBase_removeTimer_base
 #define XTimerGroupWheel_poll_base					XTimerGroupBase_poll_base

@@ -6,26 +6,26 @@
 
 static void XMutexBase_delete(XSemaphoreWin32* mutex);
 //上锁
-static bool VXSemaphoreBase_lock(XSemaphoreWin32* mutex);
-static bool VXSemaphoreBase_lock_wait(XSemaphoreWin32* mutex, size_t timerout);
+static bool VXSemaphore_lock(XSemaphoreWin32* mutex);
+static bool VXSemaphore_lock_wait(XSemaphoreWin32* mutex, size_t timerout);
 //解锁
-static bool VXSemaphoreBase_unlock(XSemaphoreWin32* mutex);
+static bool VXSemaphore_unlock(XSemaphoreWin32* mutex);
 
-static void VXSemaphoreBase_lockISR(XSemaphoreWin32* mutex);
-static void VXSemaphoreBase_unlockISR(XSemaphoreWin32* mutex);
+static void VXSemaphore_lockISR(XSemaphoreWin32* mutex);
+static void VXSemaphore_unlockISR(XSemaphoreWin32* mutex);
 XVtable* XSemaphoreWin32_class_init()
 {
     XVTABLE_CREAT_DEFAULT
         //虚函数表初始化
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XSemaphoreBase))
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XSemaphore))
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         //继承类
         XVTABLE_INHERIT_DEFAULT(XClass_class_init());
     void* table[] = {
-        VXSemaphoreBase_lock,VXSemaphoreBase_lock_wait,VXSemaphoreBase_unlock,VXSemaphoreBase_lockISR,VXSemaphoreBase_unlockISR };
+        VXSemaphore_lock,VXSemaphore_lock_wait,VXSemaphore_unlock,VXSemaphore_lockISR,VXSemaphore_unlockISR };
     //追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
@@ -47,8 +47,8 @@ void XSemaphoreWin32_init(XSemaphoreWin32* mutex, const char* name)
 {
     if (mutex == NULL)
         return;
-    memset(((XSemaphoreBase*)mutex) + 1, 0, sizeof(XSemaphoreWin32) - sizeof(XSemaphoreBase));
-    XSemaphoreBase_init(mutex, NULL);
+    memset(((XSemaphore*)mutex) + 1, 0, sizeof(XSemaphoreWin32) - sizeof(XSemaphore));
+    XSemaphore_init(mutex, NULL);
     XClassGetVtable(mutex) = XSemaphoreWin32_class_init();
     // 创建信号量（初始时无人拥有）
     mutex->m_semaphore = CreateSemaphore(
@@ -73,25 +73,25 @@ void XMutexBase_delete(XSemaphoreWin32* mutex)
     XVtableGetFunc(XClass_class_init(), EXClass_Delete, void(*)(XClass*));
 }
 
-bool VXSemaphoreBase_lock(XSemaphoreWin32* mutex)
+bool VXSemaphore_lock(XSemaphoreWin32* mutex)
 {
     return WaitForSingleObject(mutex->m_semaphore, INFINITE) == WAIT_OBJECT_0;
 }
 
-bool VXSemaphoreBase_lock_wait(XSemaphoreWin32* mutex, size_t timerout)
+bool VXSemaphore_lock_wait(XSemaphoreWin32* mutex, size_t timerout)
 {
     return WaitForSingleObject(mutex->m_semaphore, timerout) == WAIT_OBJECT_0;
 }
 
-bool VXSemaphoreBase_unlock(XSemaphoreWin32* mutex)
+bool VXSemaphore_unlock(XSemaphoreWin32* mutex)
 {
     return  ReleaseSemaphore(mutex->m_semaphore,1, NULL);
 }
-void VXSemaphoreBase_lockISR(XSemaphoreWin32* mutex)
+void VXSemaphore_lockISR(XSemaphoreWin32* mutex)
 {
     return WaitForSingleObject(mutex->m_semaphore, 0) == WAIT_OBJECT_0;
 }
-void VXSemaphoreBase_unlockISR(XSemaphoreWin32* mutex)
+void VXSemaphore_unlockISR(XSemaphoreWin32* mutex)
 {
     return  ReleaseSemaphore(mutex->m_semaphore, 1, NULL);
 }

@@ -15,7 +15,7 @@ XVtable* XMutexFreeRTOS_class_init()
     XVTABLE_CREAT_DEFAULT
         //虚函数表初始化
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XMutexBase))
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XMutex))
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -44,8 +44,8 @@ void XMutexFreeRTOS_init(XMutexFreeRTOS* mutex, const char* name)
 {
     if (mutex == NULL)
         return;
-    memset(((XMutexBase*)mutex) + 1, 0, sizeof(XMutexFreeRTOS) - sizeof(XMutexBase));
-    XMutexBase_init(mutex, NULL);
+    memset(((XMutex*)mutex) + 1, 0, sizeof(XMutexFreeRTOS) - sizeof(XMutex));
+    XMutex_init(mutex, NULL);
     XClassGetVtable(mutex) = XMutexFreeRTOS_class_init();
 
     // 在初始化代码中创建互斥锁

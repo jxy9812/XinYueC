@@ -4,7 +4,7 @@
 #include "XEvent.h"
 #include "XHash.h"
 #include "XEquality.h"
-#include "XMutexBase.h"
+#include "XMutex.h"
 // 全局应用程序实例指针
 static XCoreApplication* g_app = NULL;
 
@@ -50,7 +50,7 @@ XEventDispatcher* XCoreApplication_getEventDispatcher()
 	XCoreApplication* app=XCoreApplication_create(NULL,NULL);
 	if (app == NULL)
 		return NULL;
-	XMutexBase_lock_base(app->m_mutex);
+	XMutex_lock_base(app->m_mutex);
 	//XEventDispatcher* dispatcher=XMapBase_va
 	return NULL;
 }

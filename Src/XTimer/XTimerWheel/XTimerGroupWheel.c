@@ -1,7 +1,7 @@
 ﻿#include"XTimerGroupWheel.h"
 #include"XMemory.h"
 #include"XVector.h"
-#include"XMutexBase.h"
+#include"XMutex.h"
 #include<string.h>
 XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision)
 {
@@ -41,16 +41,16 @@ void XTimerGroupWheel_removeTimeWheel_base(XTimerGroupWheel* group)
 	XClassGetVirtualFunc(group, EXTimeGroupWheel_Remove_TimeWheel, void(*)(XTimerGroupWheel*))(group);
 }
 
-void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutexBase* mutex)
+void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex)
 {
 	if (group == NULL)
 	{
 		if(mutex)
-			XMutexBase_delete_base(mutex);
+			XMutex_delete_base(mutex);
 		return;
 	}
 	if (group->m_mutex)
-		XMutexBase_delete_base(group->m_mutex);
+		XMutex_delete_base(group->m_mutex);
 	group->m_mutex = mutex;
 }
 #ifdef WIN32

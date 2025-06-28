@@ -14,7 +14,7 @@ XVtable* XMutexWin32_class_init()
     XVTABLE_CREAT_DEFAULT
         //虚函数表初始化
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XMutexBase))
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XMutex))
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -43,8 +43,8 @@ void XMutexWin32_init(XMutexWin32* mutex, const char* name)
 {
     if (mutex == NULL)
         return;
-    memset(((XMutexBase*)mutex) + 1, 0, sizeof(XMutexWin32) - sizeof(XMutexBase));
-    XMutexBase_init(mutex, name);
+    memset(((XMutex*)mutex) + 1, 0, sizeof(XMutexWin32) - sizeof(XMutex));
+    XMutex_init(mutex, name);
     XClassGetVtable(mutex) = XMutexWin32_class_init();
     // 创建互斥锁（初始时无人拥有）
     mutex->m_mutex = CreateMutex(NULL, FALSE, name);

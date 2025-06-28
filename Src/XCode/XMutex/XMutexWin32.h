@@ -6,20 +6,17 @@ extern "C" {
 #endif
 #include<stdbool.h>
 #include<stdint.h>
-#include"XMutexBase.h"
+#include"XMutex.h"
 //互斥锁
 typedef struct XMutexWin32
 {
-	XMutexBase m_parent;
+	XMutex m_parent;
 	void* m_mutex;
 }XMutexWin32;
 XVtable* XMutexWin32_class_init();
 XMutexWin32* XMutexWin32_create(const char* name);
 void XMutexWin32_init(XMutexWin32* mutex, const char* name);
-#define XMutexWin32_lock_base				XMutexBase_lock_base
-#define XMutexWin32_lock_wait_base			XMutexBase_lock_wait_base
-#define	XMutexWin32_unlock_base				XMutexBase_unlock_base
-#define XMutexWin32_delete_base				XMutexBase_delete_base
+#define XMutex_create(name)  XMutexWin32_create(name)
 #ifdef __cplusplus
 }
 #endif
