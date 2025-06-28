@@ -6,7 +6,9 @@ extern "C" {
 #include<stdint.h>
 #include<stdbool.h>
 #include"XClass.h"
-//
+XCLASS_DEFINE_BEGING(XObject)
+XCLASS_DEFINE_ENUM(XObject, Poll) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_END(XObject)
 typedef struct XObject
 {
     XClass m_parent;//父对象
@@ -15,6 +17,8 @@ typedef struct XObject
 XVtable* XObject_class_init();
 XObject* XObject_create();
 void XObject_init(XObject* object);
+void XObject_poll_base(XObject* object);
+#define XObject_delete_base    XClass_delete_base
 #ifdef __cplusplus
 }
 #endif

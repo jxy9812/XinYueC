@@ -1,6 +1,6 @@
 ﻿#ifdef USE_STDPERIPH_DRIVER
-#ifndef XSerialPort_H
-#define XSerialPort_H
+#ifndef XSERIALPORTSTM32_H
+#define XSERIALPORTSTM32_H
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -9,10 +9,10 @@ int main(int argc, char* args[])
 {
 	XCoreApplication* app = XCoreApplication_create(argc,args);
 
-	XAtomic_bool b;
-	XAtomic_init(b,false);
+	//XAtomic_bool b;
+	//XAtomic_init(b,false);
 	//XAtomic_store_bool(&b,false);
-	printf("%d\n",XAtomic_load_bool(&b));
+	//printf("%d\n",XAtomic_load_bool(&b));
 #if DEMOTEST
 	//XVectorTest();
 	//XStringVectorTest();
@@ -78,5 +78,5 @@ int main(int argc, char* args[])
 #else
 	//XRedBlackTreeTest();
 #endif // _Win32
-	return 0;
+	return XCoreApplication_exec();
 }

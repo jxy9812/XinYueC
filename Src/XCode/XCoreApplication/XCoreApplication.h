@@ -1,5 +1,5 @@
-﻿#ifndef XOBJECT_H
-#define XOBJECT_H
+﻿#ifndef XCOREAPPLICATION_H
+#define XCOREAPPLICATION_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -12,15 +12,15 @@ typedef struct XCoreApplication
     XClass m_parent;//父对象
     int argc;
     char** argv;
-    XMapBase* m_eventDispatcher;//事件调度器
-    XMutex* m_mutex;//互斥锁
-    //XEventDispatcher* m_eventDispatcher; // 事件调度器
+    XEventDispatcher* m_eventDispatcher;//事件调度器
 }XCoreApplication;//
 XVtable* XCoreApplication_class_init();
 XCoreApplication* XCoreApplication_create(int argc, char** argv);
 void XCoreApplication_init(XCoreApplication* app, int argc, char** argv);
 //获取事件调度器
 XEventDispatcher* XCoreApplication_getEventDispatcher();
+
+int XCoreApplication_exec();
 #ifdef __cplusplus
 }
 #endif

@@ -1,5 +1,5 @@
-﻿#ifndef XSERIALPORTBASE_H
-#define XSERIALPORTBASE_H
+﻿#ifndef XSERIALPORT_H
+#define XSERIALPORT_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -16,7 +16,7 @@ typedef enum
     SP_ST_OnePointFive,   // 1.5位停止位
     SP_ST_Two,             // 2位停止位
     SP_ST_ZeroPointFive//0.5位停止位
-}XSerialPortBaseStopBits;
+}XSerialPortStopBits;
 // 跨平台数据位枚举
 typedef enum 
 {
@@ -25,7 +25,7 @@ typedef enum
     SP_DB_Seven = 7,      // 7位数据位
     SP_DB_Eight = 8,       // 8位数据位
     SP_DB_Nine = 9         // 9位数据位
-}XSerialPortBaseDataBits;
+}XSerialPortDataBits;
 /*! \brief 串口传输校验位类型 */
 typedef enum
 {
@@ -34,7 +34,7 @@ typedef enum
     SP_PAR_EVEN,                 /*!< 偶校验 */
     SP_PAR_Mark,                // 标记校验（始终为1）
     SP_PAR_Space                // 空格校验（始终为0）
-} XSerialPortBaseParity;
+} XSerialPortParity;
 
 // 流控制类型枚举
 typedef enum 
@@ -43,21 +43,22 @@ typedef enum
     SP_FC_Hardware,       // 硬件流控制（RTS/CTS）
     SP_FC_Software,       // 软件流控制（XON/XOFF）
     SP_FC_Both            // 同时使用硬件和软件流控制
-}XSerialPortBaseFlowControl;
+}XSerialPortFlowControl;
 //串口设备抽象类
 typedef struct XSerialPortBase
 {
     XIODeviceBase m_parent;//父对象
     uint8_t m_portNum;//端口号
     uint32_t m_baudRate;//波特率
-    XSerialPortBaseDataBits m_dataBits;//数据位
-    XSerialPortBaseStopBits m_stopBits;//停止位
-    XSerialPortBaseParity m_parity;//校验
-    XSerialPortBaseFlowControl m_flowControl;//流控制
+    XSerialPortDataBits m_dataBits;//数据位
+    XSerialPortStopBits m_stopBits;//停止位
+    XSerialPortParity m_parity;//校验
+    XSerialPortFlowControl m_flowControl;//流控制
 }XSerialPortBase;//串口
 void XSerialPortBase_init(XSerialPortBase* serial, XVtable* vtable);
 
-bool XSerialPort_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity);
+/*以下是API*/
+bool XSerialPort_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity);
 #define XSerialPort_delete_base                                   XIODeviceBase_delete_base
 #define XSerialPort_setWriteBuffer_base                           XIODeviceBase_setWriteBuffer_base
 #define XSerialPort_setReadBuffer_base                            XIODeviceBase_setReadBuffer_base

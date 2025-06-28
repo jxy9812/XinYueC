@@ -18,7 +18,7 @@ void XSerialPortBase_init(XSerialPortBase* serial, XVtable* vtable)
 	serial->m_flowControl = SP_FC_None;
 }
 
-bool XSerialPort_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortBaseParity parity)
+bool XSerialPort_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity)
 {
 	if (ISNULL(serial, "") || ISNULL(XClassGetVtable(serial), ""))
 		return false;

@@ -39,8 +39,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 {
 	if (app == NULL)
 		return;
-	app->m_eventDispatcher = XHashMap_Create(size_t, XEventDispatcher*,XHash_murmur3_32,XEquality_size_t);
-	app->m_mutex=XMutex_create("XCoreApplication");
+	app->m_eventDispatcher = XEventDispatcher_createDefault(30);
 	app->argc = argc;
 	app->argv = argv;
 }
@@ -50,7 +49,21 @@ XEventDispatcher* XCoreApplication_getEventDispatcher()
 	XCoreApplication* app=XCoreApplication_create(NULL,NULL);
 	if (app == NULL)
 		return NULL;
-	XMutex_lock_base(app->m_mutex);
-	//XEventDispatcher* dispatcher=XMapBase_va
-	return NULL;
+	return app->m_eventDispatcher;
+}
+
+int XCoreApplication_exec()
+{
+	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
+	if (app == NULL)
+		return -1;
+	if (XEventDispatcher_getObjectSize(app->m_eventDispatcher) > 0)
+	{
+		while (true)
+		{
+			XEventDispatcher_handler(app->m_eventDispatcher);
+		}
+	}
+	XEventDispatcher_delete(app->m_eventDispatcher);
+	return 0;
 }
