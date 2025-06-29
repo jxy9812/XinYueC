@@ -18,7 +18,7 @@ void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable)
 		return;
 	//开始初始化
 	memset(io, 0, sizeof(XIODeviceBase));
-	XClass_init(io);
+	XObject_init(io);
 	XIODeviceBase_class_init();
 	if (vtable == NULL)
 		XClassGetVtable(io) = XIODeviceBase_class_init();
@@ -99,14 +99,6 @@ bool XIODeviceBase_close_base(XIODeviceBase* io)
 		return false ;
 	return XClassGetVirtualFunc(io, EXIODeviceBase_Close, bool(*)(XIODeviceBase*))(io);
 }
-
-void XIODeviceBase_poll_base(XIODeviceBase* io)
-{
-	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
-		return ;
-	XClassGetVirtualFunc(io, EXIODeviceBase_Poll, void(*)(XIODeviceBase*))(io);
-}
-
 size_t XIODeviceBase_writeFull_base(XIODeviceBase* io)
 {
 	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))

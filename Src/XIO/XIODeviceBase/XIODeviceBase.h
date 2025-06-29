@@ -5,11 +5,11 @@ extern "C" {
 #endif
 #include<stdint.h>
 #include<stdbool.h>
-#include"XClass.h"
+#include"XObject.h"
 #define XIODEVICEBASE_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XIODeviceBase))       //XIODeviceBase虚函数表大小
 //XContainerObject虚函数表枚举
 XCLASS_DEFINE_BEGING(XIODeviceBase)
-XCLASS_DEFINE_ENUM(XIODeviceBase, Open)= XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XIODeviceBase, Open)= XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XIODeviceBase,Write),
 XCLASS_DEFINE_ENUM(XIODeviceBase,WriteFull),
 XCLASS_DEFINE_ENUM(XIODeviceBase,Read),
@@ -17,7 +17,6 @@ XCLASS_DEFINE_ENUM(XIODeviceBase,GetBytesAvailable),
 XCLASS_DEFINE_ENUM(XIODeviceBase,GetBytesToWrite),
 XCLASS_DEFINE_ENUM(XIODeviceBase,AtEnd),
 XCLASS_DEFINE_ENUM(XIODeviceBase,Close),
-XCLASS_DEFINE_ENUM(XIODeviceBase,Poll),
 XCLASS_DEFINE_ENUM(XIODeviceBase,SetWriteBuffer),
 XCLASS_DEFINE_ENUM(XIODeviceBase,SetReadBuffer),
 XCLASS_DEFINE_ENUM(XIODeviceBase,SetDevice),
@@ -39,7 +38,7 @@ typedef enum /*XIODeviceBase*/
 //IO设备
 typedef struct XIODeviceBase
 {
-	XClass m_parent;//继承类
+	XObject m_parent;//继承类
 	void* device;//设备
 	uint16_t m_mode;//打开模式
 	XCircularQueue* m_writeBuffer;//写入缓冲区
@@ -66,10 +65,9 @@ bool XIODeviceBase_isOpen(XIODeviceBase* io);
 bool XIODeviceBase_open_base(XIODeviceBase* io, XIODeviceBaseMode mode);
 //关闭设备      需重载
 bool XIODeviceBase_close_base(XIODeviceBase* io);
-//轮询设备      需重载
-void XIODeviceBase_poll_base(XIODeviceBase* io);
 //将剩余的数据刷入设备   需重载
 size_t XIODeviceBase_writeFull_base(XIODeviceBase* io);
+#define XIODeviceBase_poll_base   XObject_poll_base    
 //设置回调队列
 void XIODeviceBase_setCallbackQueue(XIODeviceBase* io,XIOCallbackQueue*queue);
 #define XIODeviceBase_CallbackQueue(io) (((XIODeviceBase*)(io))->m_callbackQueue)

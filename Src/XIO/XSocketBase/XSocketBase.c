@@ -2,6 +2,7 @@
 #include"XMemory.h"
 #include"XString.h"
 #include"XEvent.h"
+#include "XEventDispatcher.h"
 #include<string.h>
 
 XSocketBase * XSocketBase_create()

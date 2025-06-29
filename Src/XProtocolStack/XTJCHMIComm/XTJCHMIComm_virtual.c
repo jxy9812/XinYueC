@@ -108,7 +108,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 		{
 			comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-			XDataFrameComm_sendEvent(comm, XEventMin_create(XDFC_RX_BUFFER_OVERFLOW, 0));
+			XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0));
 			return;
 		}
 		XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
@@ -132,7 +132,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 		{
 			comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-			XDataFrameComm_sendEvent(comm, XEventMin_create(XDFC_RX_BUFFER_OVERFLOW, 0));
+			XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0));
 			return;
 		}
 		XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
@@ -156,7 +156,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 					if (v == NULL)
 						return;
 					XVector_copy_base(v, recvVector);
-					if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(XDFC_FRAME_RECEIVED, 0, v)))
+					if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
 					{
 						XVector_delete_base(v);//释放数组防止内存泄露
 					}
@@ -175,7 +175,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 						return;
 					XContainerSize(recvVector) -=2;//缓冲区删除CRC
 					XVector_copy_base(v, recvVector);
-					if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(XDFC_FRAME_RECEIVED, 0, v)))
+					if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
 					{
 						XVector_delete_base(v);//释放数组防止内存泄露
 					}
@@ -213,7 +213,7 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 		return;
 	XVector_copy_base(v, comm->m_parent.m_recvAsyncBuffer);
 
-	if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(XDFC_FRAME_RECEIVED, 0, v)))
+	if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
 	{
 		XVector_delete_base(v);//释放数组防止内存泄露
 	}

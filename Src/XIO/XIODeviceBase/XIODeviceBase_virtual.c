@@ -14,7 +14,6 @@ static size_t VXIODevice_getBytesAvailable(XIODeviceBase* io);
 static size_t VXIODeviceBase_getBytesToWrite(XIODeviceBase* io);
 static bool VXIODeviceBase_atEnd(XIODeviceBase* io);
 static bool VXIODevice_close(XIODeviceBase* io);
-static void VXIODevice_poll(XIODeviceBase* io);
 static void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count);
 static void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count);
 static void VXIODevice_setDevice(XIODeviceBase* io, void* device);
@@ -29,13 +28,13 @@ XVtable* XIODeviceBase_class_init()
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+	XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 	void* table[] = {
 		VXIODevice_open,VXIODevice_write,
 		VXIODevice_writeFull,VXIODevice_read,
 		VXIODevice_getBytesAvailable,VXIODeviceBase_getBytesToWrite,
 		VXIODeviceBase_atEnd,VXIODevice_close,
-		VXIODevice_poll,VXIODevice_setWriteBuffer,
+	    VXIODevice_setWriteBuffer,
 		VXIODevice_setReadBuffer,VXIODevice_setDevice 
 	};
 	//追加虚函数
@@ -160,16 +159,6 @@ bool VXIODevice_close(XIODeviceBase* io)
 	return true;
 }
 
-void VXIODevice_poll(XIODeviceBase* io)
-{
-	/**************************************************/
-	ISNULL(0, "请重载这个函数,这是模板");
-	/**************************************************/
-	/*if (io->m_port.poll_funcPointer)
-	{
-		io->m_port.poll_funcPointer(io);
-	}*/
-}
 
 void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count)
 {

@@ -26,7 +26,7 @@ XVtable* XSwitchDeviceModbus_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write, VXIODevice_write);
 	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read, VXIODevice_read);
 	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXIODevice_close);
-	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Poll, VXIODevice_poll);
+	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXIODevice_poll);
 #if SHOWCONTAINERSIZE
 	printf("XSwitchDeviceModbus size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

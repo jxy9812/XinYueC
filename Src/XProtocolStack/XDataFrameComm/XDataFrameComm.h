@@ -112,13 +112,13 @@ typedef struct XEventRecvFrame
     XEventMin m_parent;//
     XByteArray* frame;//帧数据
 }XEventRecvFrame;//接收帧事件
-XEventRecvFrame* XEventRecvFrame_create(int eventCode, size_t timestamp,XByteArray* frame);
+XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t timestamp,XByteArray* frame);
 typedef struct XEventFuncCode
 {
     XEventRecvFrame m_parent;//
     void* funcCode;//功能码
 }XEventFuncCode;//执行功能码事件
-XEventFuncCode* XEventFuncCode_create(int eventCode, size_t timestamp, XByteArray* frame, void* funcCode);
+XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t timestamp, XByteArray* frame, void* funcCode);
 #ifdef __cplusplus
 }
 #endif

@@ -4,6 +4,7 @@
 #include "XString.h"
 #include "XEvent.h"
 #include "XTimerBase.h"
+#include "XEventDispatcher.h"
 #include <string.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -61,7 +62,7 @@ XVtable* XSocketWin32_class_init()
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_delete);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Poll, VXIODevice_poll);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXIODevice_poll);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXIODevice_open);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXIODevice_close);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write, VXIODevice_write);
@@ -451,14 +452,14 @@ void VXIODevice_poll(XSocketWin32* so)
         if (netEvents->lNetworkEvents & FD_CONNECT) {
             if (netEvents->iErrorCode[FD_CONNECT_BIT] != 0) {
                 // 连接错误
-                XEventMin* event = XEventMin_create(XEVENT_SOCKET_ERROR, XTimerBase_getCurrentTime());
+                XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_ERROR, XTimerBase_getCurrentTime());
                 event->userData = eventData;
                 XEventDispatcher_addEvent(((XSocketBase*)so)->m_eventDispatcher, event);
                 ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
             }
             else {
                 // 连接成功
-                XEventMin* event = XEventMin_create(XEVENT_SOCKET_CONNECTED, XTimerBase_getCurrentTime());
+                XEventMin* event = XEventMin_create(so,XEVENT_SOCKET_CONNECTED, XTimerBase_getCurrentTime());
                 event->userData = eventData;
                 XEventDispatcher_addEvent(((XSocketBase*)so)->m_eventDispatcher, event);
                 ((XSocketBase*)so)->m_state = XSOCKET_CONNECTED_STATE;
@@ -467,7 +468,7 @@ void VXIODevice_poll(XSocketWin32* so)
 
         if (netEvents->lNetworkEvents & FD_CLOSE) {
             // 连接关闭
-            XEventMin* event = XEventMin_create(XEVENT_SOCKET_DISCONNECTED, XTimerBase_getCurrentTime());
+            XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_DISCONNECTED, XTimerBase_getCurrentTime());
             event->userData = eventData;
             XEventDispatcher_addEvent(((XSocketBase*)so)->m_eventDispatcher, event);
             ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
@@ -475,7 +476,7 @@ void VXIODevice_poll(XSocketWin32* so)
 
         if (netEvents->lNetworkEvents & FD_READ) {
             // 有数据可读
-            XEventMin* event = XEventMin_create(XEVENT_SOCKET_DATA_READY, XTimerBase_getCurrentTime());
+            XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_DATA_READY, XTimerBase_getCurrentTime());
             event->userData = eventData;
             XEventDispatcher_addEvent(((XSocketBase*)so)->m_eventDispatcher, event);
         }
@@ -483,7 +484,7 @@ void VXIODevice_poll(XSocketWin32* so)
         // 可以添加对FD_WRITE事件的处理...
     }
 
-    XVtableGetFunc(XSocketBase_class_init(), EXIODeviceBase_Poll, void(*)(XSocketBase*))(so);
+    XVtableGetFunc(XSocketBase_class_init(), EXObject_Poll, void(*)(XSocketBase*))(so);
 }
 
 bool VXIODevice_open(XSocketWin32* so, XIODeviceBaseMode mode)

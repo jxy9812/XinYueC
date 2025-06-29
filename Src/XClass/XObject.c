@@ -3,6 +3,7 @@
 #include "XEvent.h"
 #include "XThread.h"
 #include "XCoreApplication.h"
+#include "XEventDispatcher.h"
 static void VXObject_poll(XObject* object);
 static void VXObject_delete(XObject* object);
 XVtable* XObject_class_init()

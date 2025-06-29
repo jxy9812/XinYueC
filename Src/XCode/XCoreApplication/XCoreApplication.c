@@ -5,6 +5,7 @@
 #include "XHash.h"
 #include "XEquality.h"
 #include "XMutex.h"
+#include "XEventDispatcher.h"
 // 全局应用程序实例指针
 static XCoreApplication* g_app = NULL;
 
@@ -39,6 +40,8 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 {
 	if (app == NULL)
 		return;
+	XClass_init(app);
+	XClassGetVtable(app) = XCoreApplication_class_init();
 	app->m_eventDispatcher = XEventDispatcher_createDefault(30);
 	app->m_argc = argc;
 	app->m_argv = argv;

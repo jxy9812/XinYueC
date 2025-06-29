@@ -3,9 +3,11 @@
 #include "XModbusConfig.h"
 #include "XModbusProto.h"
 #include "XCircularQueueAtomic.h"
+#include"XEventDispatcher.h"
 #include "XTimerWheel.h"
 #include "XSerialPort.h"
 #include "XEquality.h"
+#include "XMapBase.h"
 #include <string.h>
 
 static void XModbus_EvnetHandCb(XEventMin* event);
@@ -242,10 +244,10 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 		return;
 	}
 	modbusFrame->frameData = frame;//解析成功后将帧数据转移
-	XDataFrameComm* comm = event->userData;
+	XDataFrameComm* comm = event->object;
 	void* math = XFuncCodeMap_createCode(comm->m_funcCodeMap);
 	{
-		if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, math) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(XDFC_EXECUTE, 0, modbusFrame, math))))
+		if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, math) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(event->object,XDFC_EXECUTE, 0, modbusFrame, math))))
 		{//没有功能码处理或获取失败 直接释放
 			//XVector_delete_base(frame);//释放帧数据以免内存泄露
 			XModbusFrame_delete(modbusFrame);

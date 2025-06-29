@@ -1,6 +1,7 @@
 ﻿#include"XDataFrameComm.h"
 #include"XByteArray.h"
 #include"XEvent.h"
+#include"XMapBase.h"
 #include"XCircularQueueAtomic.h"
 #include"XDataFrameCommConfig.h"
 #include"XIODeviceBase.h"
@@ -8,6 +9,7 @@
 #include"XString.h"
 #include"XEquality.h"
 #include"XTimerBase.h"
+#include"XEventDispatcher.h"
 #include<string.h>
 #include<stdarg.h>
 XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
@@ -271,21 +273,21 @@ void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer)
 
 }
 
-XEventRecvFrame* XEventRecvFrame_create(int eventCode, size_t timestamp,XByteArray* frame)
+XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t timestamp,XByteArray* frame)
 {
 	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
 	if (ev == NULL)
 		return NULL;
-	XEventMin_init(ev, eventCode, timestamp);
+	XEventMin_init(ev, object, eventCode, timestamp);
 	ev->frame = frame;
 	return ev;
 }
-XEventFuncCode* XEventFuncCode_create(int eventCode, size_t timestamp, XByteArray* frame, void* funcCode)
+XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t timestamp, XByteArray* frame, void* funcCode)
 {
 	XEventFuncCode* ev = XMemory_malloc(sizeof(XEventFuncCode));
 	if (ev == NULL)
 		return NULL;
-	XEventMin_init(ev, eventCode, timestamp);
+	XEventMin_init(ev, object, eventCode, timestamp);
 	ev->m_parent.frame = frame;
 	ev->funcCode = funcCode;
 	return ev;
@@ -319,9 +321,9 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 		printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
 	}
 #endif // XDFC_RECV_FRAME_STR_SHOW
-	XDataFrameComm* comm = event->userData;
+	XDataFrameComm* comm = event->object;
 	void* funcCode = XFuncCodeMap_createCode(comm->m_funcCodeMap);
-	if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, funcCode) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(XDFC_EXECUTE, 0, frame, funcCode))))
+	if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, funcCode) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(event->object, XDFC_EXECUTE, 0, frame, funcCode))))
 	{//没有功能码处理或获取失败 直接释放
 		XVector_delete_base(frame);
 		XFuncCodeMap_deleteCode(funcCode);
