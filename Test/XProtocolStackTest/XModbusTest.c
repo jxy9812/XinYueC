@@ -30,12 +30,11 @@ void XModbusTest()
     serial->m_portNum = 2;
     XSocketBase* socket = XSocketWin32_create();
     XSocketBase_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
-
+    XSerialPort_delete_base(serial);
     XModbus* modbus = XModbus_create_RTU_SerialPort(socket,NULL,NULL);
     XModbus_setAddress(modbus,2);
     XModbus_setMode(modbus, XMB_RTU_MASTER);
     //XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);
- 
     XModbusDigitalSwitch* ds = XModbusDigitalSwitch_create(modbus,0x01,8,8);
     //XModbusDigitalSwitch_bindModbus_RTU(ds,modbus);
     XModbusDigitalSwitch_setScanningPeriod(ds,50);
