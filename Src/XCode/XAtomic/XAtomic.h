@@ -18,7 +18,7 @@ typedef struct { volatile uint32_t value; }  XAtomic_uint32_t;
 typedef struct { volatile int64_t value; }  XAtomic_int64_t;
 typedef struct { volatile uint64_t value; }  XAtomic_uint64_t;
 typedef struct { volatile size_t value; }  XAtomic_size_t;
-typedef struct { volatile void* ptr; }  XAtomic_ptr_t;
+typedef struct { volatile void* value; }  XAtomic_ptr_t;
 #include"XAtomic_load.h"
 #include"XAtomic_store.h"
 #include"XAtomic_exchange.h"

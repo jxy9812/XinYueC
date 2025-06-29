@@ -20,7 +20,7 @@ static void* VXList_back(XListDLinked* this_list);
 static XListDNode* VXList_find(const XListDLinked* this_list, void* pvData);
 //其他
 static void VXList_sort(XListDLinked* this_list, XCompare compare);
-static void VXList_free(XListDLinked* this_list);
+static void VXList_delete(XListDLinked* this_list);
 
 XVtable* XListDLinked_class_init()
 {
@@ -47,7 +47,7 @@ XVtable* XListDLinked_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete,VXList_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete,VXList_delete);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXList_clear);
 
 #if SHOWCONTAINERSIZE
@@ -280,7 +280,7 @@ XListDNode* VXList_find(const XListDLinked* this_list, void* pvData)
 }
 //其他
 
-void VXList_free(XListDLinked* this_list)
+void VXList_delete(XListDLinked* this_list)
 {
 	if (ISNULL(this_list, ""))
 		return;

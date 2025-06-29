@@ -93,7 +93,7 @@ size_t XAtomic_load_size_t(const XAtomic_size_t* var)
 }
 void* XAtomic_load_ptr(const XAtomic_ptr_t* var)
 {
-	return (void*)_InterlockedCompareExchangePointer((volatile void*)&var->ptr, NULL, NULL);
+	return (void*)_InterlockedCompareExchangePointer((volatile void*)&var->value, NULL, NULL);
 }
 void XAtomic_store_bool(XAtomic_bool* var, bool value)
 {
@@ -109,7 +109,7 @@ void XAtomic_store_uint32(XAtomic_uint32_t* var, uint32_t value)
 }
 void XAtomic_store_ptr(XAtomic_ptr_t* var, void* value)
 {
-	_InterlockedExchangePointer((volatile void*)&var->ptr, value);
+	_InterlockedExchangePointer((volatile void*)&var->value, value);
 }
 void XAtomic_store_size_t(XAtomic_size_t* var, size_t value)
 {
@@ -133,7 +133,7 @@ size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value)
 }
 void* XAtomic_exchange_ptr(XAtomic_ptr_t* var, void* value)
 {
-	return _InterlockedExchangePointer((volatile void*)&var->ptr, value);
+	return _InterlockedExchangePointer((volatile void*)&var->value, value);
 }
 bool XAtomic_compare_exchange_strong_bool(XAtomic_bool* var, bool* expected, bool desired)
 {
@@ -166,7 +166,7 @@ bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expecte
 }
 bool XAtomic_compare_exchange_strong_ptr(XAtomic_ptr_t* var, void** expected, void* desired)
 {
-	return (void*)_InterlockedCompareExchangePointer((volatile void*)&var->ptr, desired, *expected)== *expected;
+	return (void*)_InterlockedCompareExchangePointer((volatile void*)&var->value, desired, *expected)== *expected;
 }
 
 int32_t XAtomic_fetch_add_int32(XAtomic_int32_t* var, int32_t value)
