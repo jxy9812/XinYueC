@@ -44,7 +44,7 @@ int main(int argc, char* args[])
 	//stackTest();
 	//XStringTest();
 	//XVectorTest();
-	return;
+	return XCoreApplication_exec();
 	XStringVectorTest();
 	cJsonTest();
 	cJsonXContainerTest();

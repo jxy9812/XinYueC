@@ -10,8 +10,9 @@ extern "C" {
 typedef struct XCoreApplication
 {
     XClass m_parent;//父对象
-    int argc;
-    char** argv;
+    bool m_quit;//是否退出
+    int m_argc;
+    char** m_argv;
     XEventDispatcher* m_eventDispatcher;//事件调度器
 }XCoreApplication;//
 XVtable* XCoreApplication_class_init();
@@ -19,7 +20,7 @@ XCoreApplication* XCoreApplication_create(int argc, char** argv);
 void XCoreApplication_init(XCoreApplication* app, int argc, char** argv);
 //获取事件调度器
 XEventDispatcher* XCoreApplication_getEventDispatcher();
-
+void XCoreApplication_requestQuit();
 int XCoreApplication_exec();
 #ifdef __cplusplus
 }

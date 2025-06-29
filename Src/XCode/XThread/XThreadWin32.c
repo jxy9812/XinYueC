@@ -55,7 +55,7 @@ static DWORD WINAPI ThreadFunction(LPVOID lpParam) {
     //查看是否用到了事件调度器
     if (Object->m_eventDispatcher&& XEventDispatcher_getObjectSize(Object->m_eventDispatcher)>0)
     {//进入事件循环
-        while (!(Object->m_interruptionRequested))
+        while (!(Object->m_interruptionRequested) && (XEventDispatcher_getObjectSize(Object->m_eventDispatcher) > 0))
         {
             XEventDispatcher_handler(Object->m_eventDispatcher);
         }

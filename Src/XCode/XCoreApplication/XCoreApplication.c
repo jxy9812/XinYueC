@@ -40,8 +40,9 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 	if (app == NULL)
 		return;
 	app->m_eventDispatcher = XEventDispatcher_createDefault(30);
-	app->argc = argc;
-	app->argv = argv;
+	app->m_argc = argc;
+	app->m_argv = argv;
+	app->m_quit = false;
 }
 
 XEventDispatcher* XCoreApplication_getEventDispatcher()
@@ -52,6 +53,14 @@ XEventDispatcher* XCoreApplication_getEventDispatcher()
 	return app->m_eventDispatcher;
 }
 
+void XCoreApplication_requestQuit()
+{
+	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
+	if (app == NULL)
+		return ;
+	app->m_quit = true;
+}
+
 int XCoreApplication_exec()
 {
 	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
@@ -59,7 +68,7 @@ int XCoreApplication_exec()
 		return -1;
 	if (XEventDispatcher_getObjectSize(app->m_eventDispatcher) > 0)
 	{
-		while (true)
+		while (!(app->m_quit))
 		{
 			XEventDispatcher_handler(app->m_eventDispatcher);
 		}
