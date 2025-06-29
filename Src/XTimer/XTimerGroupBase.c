@@ -1,13 +1,13 @@
 ﻿#include"XTimerGroupBase.h"
 #include<string.h>
-void XTimerGroupBase_init(XTimerGroupBase* group, XVtable* vtable, uint16_t precision)
+void XTimerGroupBase_init(XTimerGroupBase* group, uint16_t precision)
 {
 	if (group == NULL|| precision==0)
 		return;
-	XClass_init(group);
-	memset(((XClass*)group)+1,0,sizeof(XTimerGroupBase)-sizeof(XClass));
+	XObject_init(group);
+	memset(((XObject*)group)+1,0,sizeof(XTimerGroupBase)-sizeof(XObject));
 	group->m_precision = precision;
-	XClassGetVtable(group) = vtable;
+	/*XClassGetVtable(group) = vtable;*/
 }
 
 bool XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerBase* timer)
@@ -23,13 +23,6 @@ bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerBase* timer)
 	if (ISNULL(group, "") || ISNULL(timer, "") || ISNULL(XClassGetVtable(group), ""))
 		return false;
 	return XClassGetVirtualFunc(group, EXTimerGroupBase_Remove_Timer, bool(*)(XTimerGroupBase*, XTimerBase*))(group, timer);
-}
-
-void XTimerGroupBase_poll_base(XTimerGroupBase* group)
-{
-	if (ISNULL(group, "") ||  ISNULL(XClassGetVtable(group), ""))
-		return;
-	XClassGetVirtualFunc(group, EXTimerGroupBase_Poll, void(*)(XTimerGroupBase*))(group);
 }
 static XTimerGroupBase* global_timerGroup=NULL;
 void XTimerGroupBase_setGlobal(XTimerGroupBase* group)

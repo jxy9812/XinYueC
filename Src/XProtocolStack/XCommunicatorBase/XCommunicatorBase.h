@@ -10,14 +10,13 @@ extern "C" {
 typedef void (*RecvDataCallback)(const void* data, size_t size, void* userData);
 #define XCOMMUNICATORBASE_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XCommunicatorBase))       //XCommunicatorBase虚函数表大小
 XCLASS_DEFINE_BEGING(XCommunicatorBase)
-XCLASS_DEFINE_ENUM(XCommunicatorBase, Connect) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XCommunicatorBase, Connect) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, Disconnect),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, Send),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, Recv),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, SendAsync),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, RecvAsync),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, IsConnected),
-XCLASS_DEFINE_ENUM(XCommunicatorBase, Poll),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, SetOption),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, GetOption),
 XCLASS_DEFINE_ENUM(XCommunicatorBase, SetTimerGroup),
@@ -26,7 +25,7 @@ XCLASS_DEFINE_END(XCommunicatorBase)
 //通信基础类
 typedef struct XCommunicatorBase
 {
-	XClass m_parent;//继承类
+	XObject m_parent;//继承类
 	uint16_t m_opt_timeout;//操作超时时间（毫秒），影响 Send/Receive 的阻塞时长。
 	size_t   m_currentTimeout;//调用阻塞函数的时候记录开始时间 
 	XIODeviceBase* m_io;//io设备
@@ -45,11 +44,10 @@ size_t XCommunicatorBase_send_base(XCommunicatorBase* comm,const void* data,size
 size_t XCommunicatorBase_recv_base(XCommunicatorBase* comm, void* data, size_t maxSize);
 bool XCommunicatorBase_sendAsync_base(XCommunicatorBase* comm, const void* data, size_t size); // 异步发送
 bool XCommunicatorBase_recvAsync_base(XCommunicatorBase* comm, size_t maxSize); // 异步接收
-void XCommunicatorBase_poll_base(XCommunicatorBase* comm);
 void XCommunicatorBase_setOption_base(XCommunicatorBase* comm, int optionId, const void* value, size_t size);
 void XCommunicatorBase_getOption_base(XCommunicatorBase* comm, int optionId, void* value, size_t* size);
-#define XCommunicatorBase_delete_base XClass_delete_base
-
+#define XCommunicatorBase_delete_base			XObject_delete_base
+#define XCommunicatorBase_poll_base				XObject_poll_base
 enum XCommunicatorBaseOption
 {
 	/*通用*/

@@ -112,13 +112,13 @@ void XModbusTest()
     XModbus_connect_base(modbus);
    // XModbusTest_threadReceiveCreate(modbus);
     //开始轮询
-    while (true)
-    {
-        XModbus_poll_base(modbus);
-        XSocketBase_poll_base(socket);
-        if(XIODeviceBase_isOpen(socket))
-            XTimerGroupBase_global_poll();
-       // XModbus_poll(modbus);
-       // XModbusTest_SerialPoll(modbus);
-    }
+    //while (true)
+    //{
+    //    XModbus_poll_base(modbus);
+    //    XSocketBase_poll_base(socket);
+    //    if(XIODeviceBase_isOpen(socket))
+    //        XTimerGroupBase_global_poll();
+    //   // XModbus_poll(modbus);
+    //   // XModbusTest_SerialPoll(modbus);
+    //}
 }

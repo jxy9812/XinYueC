@@ -4,11 +4,10 @@
 void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io)
 {
     //开始初始化
-    memset(((XClass*)comm)+1, 0, sizeof(XCommunicatorBase)-sizeof(XClass));
-    XClass_init(comm);
+    memset(((XObject*)comm)+1, 0, sizeof(XCommunicatorBase)-sizeof(XObject));
+    XObject_init(comm);
     XClassGetVtable(comm) = XCommunicatorBase_class_init();
     comm->m_io = io;
-    XTimerGroupWheel_setGlobal();
     comm->m_timerGroup = XTimerGroupBase_global();
     //comm->m_timerGroup = XTimerGroupWheel_create(1);
     //comm->m_opt_timeout = ~(comm->m_opt_timeout);//取反最大值
@@ -70,14 +69,6 @@ bool XCommunicatorBase_isConnected_base(XCommunicatorBase* comm)
         return false;
     return XClassGetVirtualFunc(comm, EXCommunicatorBase_IsConnected, bool(*)(XCommunicatorBase*))(comm);
 }
-
-void XCommunicatorBase_poll_base(XCommunicatorBase* comm)
-{
-    if (ISNULL(comm, "") || ISNULL(XClassGetVtable(comm), ""))
-        return;
-    XClassGetVirtualFunc(comm, EXCommunicatorBase_Poll, void(*)(XCommunicatorBase*))(comm);
-}
-
 void XCommunicatorBase_setOption_base(XCommunicatorBase* comm, int optionId, const void* value, size_t size)
 {
     if (ISNULL(comm, "") || ISNULL(value, "") || ISNULL(size, "") || ISNULL(XClassGetVtable(comm), ""))

@@ -12,12 +12,11 @@ typedef struct XListSLinked XListSLinked;
 typedef struct XVector XVector;
 typedef struct XTimerWheel  XTimerWheel;
 typedef struct XTimerGroupWheel XTimerGroupWheel;
-#define XTIMEGROUPWHEEL_VTABLE_SIZE (XTIMERGROUPBASE_VTABLE_SIZE+2)       //XTimeGroupWheel虚函数表大小
-enum XTimerGroupWheelVtableEnum
-{
+#define XTIMEGROUPWHEEL_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimerGroupWheel))       //XTimeGroupWheel虚函数表大小
+XCLASS_DEFINE_BEGING(XTimerGroupWheel)
 	EXTimeGroupWheel_Add_TimeWheel = XTIMERGROUPBASE_VTABLE_SIZE,
 	EXTimeGroupWheel_Remove_TimeWheel,
-};
+XCLASS_DEFINE_END(XTimerGroupWheel)
 // 单个时间轮结构
 typedef struct XTimeWheel {
 	size_t m_tick;						// 当前滴答计数

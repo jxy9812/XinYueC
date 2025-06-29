@@ -1,6 +1,9 @@
 ﻿#ifdef _WIN32
 #include"XThread.h"
 #include"XEvent.h"
+#include"XHashSet.h"
+#include"XMemory.h"
+#include"XObject.h"
 #include <windows.h>
 static bool VXThread_start(XThread* Object);
 static XHandle VXThread_getHandle(XThread* Object);
@@ -52,12 +55,15 @@ static DWORD WINAPI ThreadFunction(LPVOID lpParam) {
     
     if (Object->m_start_routine)
         Object->m_start_routine(Object);
-    //查看是否用到了事件调度器
-    if (Object->m_eventDispatcher&& XEventDispatcher_getObjectSize(Object->m_eventDispatcher)>0)
+    //查看是否用到了调度器
+    if (Object->m_Objects&&!XSetBase_isEmpty_base(Object->m_Objects))
     {//进入事件循环
-        while (!(Object->m_interruptionRequested) && (XEventDispatcher_getObjectSize(Object->m_eventDispatcher) > 0))
+        XObject* object = NULL;
+        for_each_iterator(Object->m_Objects, XHashSet, it)
         {
-            XEventDispatcher_handler(Object->m_eventDispatcher);
+            object = *((XObject**)XHashSet_iterator_data(&it));
+            if (XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*)))
+                XObject_poll_base(object);
         }
     }
     Object->m_finished = true;
@@ -207,15 +213,22 @@ void VXThread_delete(XThread* Object)
         CloseHandle(Object->m_handle);
        Object->m_handle = NULL;
     }*/
-    if (Object->m_eventDispatcher)
-        XEventDispatcher_delete(Object->m_eventDispatcher);
+    /*if (Object->m_eventDispatcher)
+        XEventDispatcher_delete(Object->m_eventDispatcher);*/
     XThread_mapRemove(Object);
-
+    if (Object->m_Objects)
+        XSetBase_delete_base(Object->m_Objects);
     XMemory_free(Object);
 }
 
 XHandle XThread_currentThreadId()
 {
     return GetCurrentThreadId();
+}
+XSetBase* XThread_getObjects(XThread* Object)
+{
+    if(Object==NULL)
+        return NULL;
+    return Object->m_Objects;
 }
 #endif

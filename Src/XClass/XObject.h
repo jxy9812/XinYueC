@@ -12,6 +12,7 @@ XCLASS_DEFINE_END(XObject)
 typedef struct XObject
 {
     XClass m_parent;//父对象
+    XSetBase* m_Objects;//列表
     XEventDispatcher* m_eventDispatcher; // 事件调度器
 }XObject;//
 XVtable* XObject_class_init();

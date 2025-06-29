@@ -22,16 +22,16 @@ XVtable* XTimerGroupWheel_class_init()
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 		//继承类
-	XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+	XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 	void* table[] = {
 		VXTimerGroupBase_addTimer,VXTimerGroupBase_removeTimer,
-		VXTimerGroupBase_poll,VXTimerGroupWheel_addTimeWheel,
-		VXTimerGroupWheel_removeTimeWheel,
+		VXTimerGroupWheel_addTimeWheel,VXTimerGroupWheel_removeTimeWheel,
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXTimerGroupWheel_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXTimerGroupBase_poll);
 #if SHOWCONTAINERSIZE
 	printf("XTimerGroupWheel size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -48,7 +48,8 @@ void VXTimerGroupWheel_delete(XTimerGroupWheel* group)
 	}
 	if (group->m_mutex)
 		XMutex_delete_base(group->m_mutex);
-	XMemory_free(group);
+	// 释放父对象
+	XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(group);
 }
 static void add_timer_to_wheel(XTimeWheel*wheel, XTimerWheel* timer, size_t ticks)
 {

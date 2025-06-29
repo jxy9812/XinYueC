@@ -2,6 +2,7 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XThread.h"
+#include "XSetBase.h"
 #include "XCoreApplication.h"
 #include "XEventDispatcher.h"
 static void VXObject_poll(XObject* object);
@@ -42,11 +43,13 @@ void XObject_init(XObject* object)
 	XThread* thread = XThread_currentThread();
 	if (thread == NULL)
 	{//当前是主线程
-		XEventDispatcher_addObject(XCoreApplication_getEventDispatcher(), object);
+		XSetBase_insert_base(XCoreApplication_getObjects(), &object);
+		object->m_Objects = XCoreApplication_getObjects();
 	}
 	else
 	{
-		XEventDispatcher_addObject(thread->m_eventDispatcher, object);
+		XSetBase_insert_base(XThread_getObjects(thread), &object);
+		object->m_Objects = XThread_getObjects(thread);
 	}
 }
 
@@ -70,7 +73,7 @@ void VXObject_poll(XObject* object)
 
 void VXObject_delete(XObject* object)
 {
-	if (object->m_eventDispatcher)
-		XEventDispatcher_removeObject(object->m_eventDispatcher,object);
+	if (object->m_Objects)
+		XSetBase_remove_base(object->m_Objects,&object);
 	XMemory_free(object);
 }

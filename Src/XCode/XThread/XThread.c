@@ -3,6 +3,7 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XHashMap.h"
+#include "XHashSet.h"
 #include "XHash.h"
 #include "XMutex.h"
 static XHashMap* threadMap=NULL;
@@ -18,7 +19,8 @@ void XThread_init(XThread* Object)
     Object->loopLevel = 0;
     Object->m_priority = XThread_NormalPriority;
     Object->m_stackSize = 512;
-    Object->m_eventDispatcher = XEventDispatcher_createDefault(30);
+    Object->m_eventDispatcher =NULL;
+    Object->m_Objects = XHashSet_Create(XObject*, XHash_murmur3_32, XEquality_ptr);
 }
 XThread* XThread_currentThread()
 {

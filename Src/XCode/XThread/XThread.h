@@ -54,6 +54,7 @@ XCLASS_DEFINE_END(XThread)
     int loopLevel;               /**< 线程循环级别 */
     XThread_Priority m_priority;   /**< 线程优先级 */
     uint32_t m_stackSize;          /**< 线程栈大小 */
+    XSetBase* m_Objects;//列表
     XEventDispatcher* m_eventDispatcher;       /**< 事件调度器指针 */
     void* (*m_start_routine)(void*);
     void* m_arg;
@@ -185,6 +186,7 @@ uint32_t XThread_stackSize(const XThread* Object);
 
 XThread* XThread_currentThread();
 XHandle XThread_currentThreadId();
+XSetBase* XThread_getObjects(XThread* Object);
 
 //不是给用户的内部API
 void XThread_mapRemove(XThread* Object);

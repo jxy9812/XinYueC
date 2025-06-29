@@ -61,7 +61,7 @@ XVtable* XDataFrameComm_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXDataFrameComm_delete);
-	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Poll, VXCommunicatorBase_poll);
+	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXCommunicatorBase_poll);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Connect, VXCommunicatorBase_connect);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Disconnect, VXCommunicatorBase_disconnect);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_SetTimerGroup, VXDataFrameComm_setTimerGroup);

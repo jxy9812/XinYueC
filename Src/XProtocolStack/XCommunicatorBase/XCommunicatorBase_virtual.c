@@ -27,13 +27,13 @@ XVtable* XCommunicatorBase_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 		//继承类
-		XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+		XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 	void* table[] = 
 	{
 		VXCommunicatorBase_connect,VXCommunicatorBase_disconnect,
 		VXCommunicatorBase_send,VXCommunicatorBase_recv,
 		VXCommunicatorBase_sendAsync,VXCommunicatorBase_recvAsync,
-		VXCommunicatorBase_isConnected,VXCommunicatorBase_poll,
+		VXCommunicatorBase_isConnected,
 		VXCommunicatorBase_setOption,VXCommunicatorBase_getOption,
 		VXCommunicatorBase_setTimerGroup
 	};
@@ -41,6 +41,7 @@ XVtable* XCommunicatorBase_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXCommunicatorBase_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXCommunicatorBase_poll);
 #if SHOWCONTAINERSIZE
 	printf("XIODeviceBase size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -55,7 +56,8 @@ void VXCommunicatorBase_delete(XCommunicatorBase* comm)
 		XVector_delete_base(comm->m_recvAsyncBuffer);
 	/*if (comm->m_timerGroup)
 		XTimerGroupBase_delete_base(comm->m_timerGroup);*/
-	XMemory_free(comm);
+		// 释放父对象
+	XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(comm);
 }
 
 bool VXCommunicatorBase_connect(XCommunicatorBase* comm)

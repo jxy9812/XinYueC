@@ -20,7 +20,7 @@ void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision)
 		return;
 	//初始化父类以外的数据
 	memset(((XTimerGroupBase*)group) + 1, 0, sizeof(XTimerGroupWheel) - sizeof(XTimerGroupBase));
-	XTimerGroupBase_init(group,NULL,precision);
+	XTimerGroupBase_init(group,precision);
 	XClassGetVtable(group) = XTimerGroupWheel_class_init();
 	//初始化数据
 	group->m_timeWheel = XVector_Create(XTimeWheel);

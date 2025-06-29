@@ -14,7 +14,6 @@ typedef  struct XEventDispatcher
     XMapBase* m_filter_cb;//事件过滤回调
     XEventCB m_allEvent_cb;//全部事件的回调
     void* m_allEvent_user_data;//全部事件触发的回调用户数据
-    XListBase* m_pollList;//轮询链表
 }XEventDispatcher;
 
 XEventDispatcher* XEventDispatcher_create(XQueueBase* queue, XMapBase* map_cb);
@@ -29,11 +28,6 @@ bool XEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, int code);
 bool XEventDispatcher_setAllEventCb(XEventDispatcher* dispatcher, XEventCB cb, void* userData);
 //事件轮询处理
 void XEventDispatcher_handler(XEventDispatcher* dispatcher);
-bool XEventDispatcher_addObject(XEventDispatcher* dispatcher, XObject* object);
-bool XEventDispatcher_removeObject(XEventDispatcher* dispatcher, XObject* object);
-size_t XEventDispatcher_getObjectSize(XEventDispatcher* dispatcher);
-
-
 #ifdef __cplusplus
 }
 #endif	

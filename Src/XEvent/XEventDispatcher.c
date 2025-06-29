@@ -22,8 +22,6 @@ XEventDispatcher* XEventDispatcher_create(XQueueBase* queue, XMapBase* map_cb)
 	dispatcher->m_filter_cb = map_cb;
 	dispatcher->m_allEvent_cb = NULL;
 	dispatcher->m_allEvent_user_data = NULL;
-	dispatcher->m_pollList = XListSLinked_Create(XObject*);
-	dispatcher->m_pollList->m_equality = XEquality_ptr;
 	return dispatcher;
 }
 
@@ -52,13 +50,6 @@ void XEventDispatcher_delete(XEventDispatcher* dispatcher)
 	}
 	XQueueBase_delete_base(dispatcher->m_queue);
 	XMapBase_delete_base(dispatcher->m_filter_cb);
-
-	//释放所有管理的Object
-	for_each_iterator(dispatcher->m_pollList, XListSLinked, it)
-	{
-		XObject_delete_base(*((XObject**)XListSLinked_iterator_data(&it)));
-	}
-	XListBase_delete_base(dispatcher->m_pollList);
 	XMemory_free(dispatcher);
 }
 
@@ -91,13 +82,6 @@ void XEventDispatcher_handler(XEventDispatcher* dispatcher)
 {
 	if (dispatcher == NULL)
 		return;
-	XObject* object = NULL;
-	for_each_iterator(dispatcher->m_pollList, XListSLinked, it)
-	{
-		object = *((XObject**)XListSLinked_iterator_data(&it));
-		if (XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*)))
-			XObject_poll_base(object);
-	}
 	XEventMin* event = NULL;
 	while (XQueueBase_receive_base(dispatcher->m_queue, &event))
 		//if (XQueueBase_receive_base(dispatcher->m_queue, &event))
@@ -125,36 +109,4 @@ void XEventDispatcher_handler(XEventDispatcher* dispatcher)
 		}
 
 	}
-}
-
-bool XEventDispatcher_addObject(XEventDispatcher* dispatcher, XObject* object)
-{
-	if (dispatcher == NULL || object == NULL)
-		return false;
-	if (XListBase_push_back_base(dispatcher->m_pollList, &object) != NULL)
-	{
-		object->m_eventDispatcher = dispatcher;
-		return true;
-	}
-	return false;
-}
-
-bool XEventDispatcher_removeObject(XEventDispatcher* dispatcher, XObject* object)
-{
-	if (dispatcher == NULL || object == NULL)
-		return false;
-	if (object->m_eventDispatcher == dispatcher)
-	{
-		XListBase_remove_base(dispatcher->m_pollList, &object);
-		object->m_eventDispatcher == NULL;
-		return true;
-	}
-	return false;
-}
-
-size_t XEventDispatcher_getObjectSize(XEventDispatcher* dispatcher)
-{
-	if (dispatcher == NULL)
-		return 0;
-	XListBase_getSize_base(dispatcher->m_pollList);
 }

@@ -3,9 +3,11 @@
 #include "XHashMap.h"
 #include "XEvent.h"
 #include "XHash.h"
+#include "XHashSet.h"
 #include "XEquality.h"
 #include "XMutex.h"
-#include "XEventDispatcher.h"
+#include "XObject.h"
+#include "XTimerGroupWheel.h"
 // 全局应用程序实例指针
 static XCoreApplication* g_app = NULL;
 
@@ -31,9 +33,9 @@ XCoreApplication* XCoreApplication_create(int argc, char** argv)
 {
 	if(g_app!=NULL)
 		return g_app;
-	XCoreApplication* app = XMemory_malloc(sizeof(XCoreApplication));
-	XCoreApplication_init(app, argc,argv);
-	return app;
+	g_app = XMemory_malloc(sizeof(XCoreApplication));
+	XCoreApplication_init(g_app, argc,argv);
+	return g_app;
 }
 
 void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
@@ -42,10 +44,12 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 		return;
 	XClass_init(app);
 	XClassGetVtable(app) = XCoreApplication_class_init();
-	app->m_eventDispatcher = XEventDispatcher_createDefault(30);
+	app->m_Objects = XHashSet_Create(XObject*,XHash_murmur3_32,XEquality_ptr);
 	app->m_argc = argc;
 	app->m_argv = argv;
 	app->m_quit = false;
+	//初始化一些全局类
+	XTimerGroupWheel_setGlobal();
 }
 
 XEventDispatcher* XCoreApplication_getEventDispatcher()
@@ -53,7 +57,7 @@ XEventDispatcher* XCoreApplication_getEventDispatcher()
 	XCoreApplication* app=XCoreApplication_create(NULL,NULL);
 	if (app == NULL)
 		return NULL;
-	return app->m_eventDispatcher;
+	return NULL;
 }
 
 void XCoreApplication_requestQuit()
@@ -69,13 +73,26 @@ int XCoreApplication_exec()
 	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
 	if (app == NULL)
 		return -1;
-	if (XEventDispatcher_getObjectSize(app->m_eventDispatcher) > 0)
+	if (!XSetBase_isEmpty_base(app->m_Objects))
 	{
+		XObject* object = NULL;
 		while (!(app->m_quit))
 		{
-			XEventDispatcher_handler(app->m_eventDispatcher);
+			for_each_iterator(app->m_Objects, XHashSet, it)
+			{
+				object = *((XObject**)XHashSet_iterator_data(&it));
+				if (XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*)))
+					XObject_poll_base(object);
+			}
 		}
 	}
-	XEventDispatcher_delete(app->m_eventDispatcher);
 	return 0;
+}
+
+XSetBase* XCoreApplication_getObjects()
+{
+	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
+	if (app == NULL)
+		return NULL;
+	return app->m_Objects;
 }
