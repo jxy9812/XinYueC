@@ -53,7 +53,8 @@ void VXIODevice_delete(XIODeviceBase* io)
 		XCircularQueue_delete_base(io->m_writeBuffer);
 	if (io->m_readBuffer)
 		XCircularQueue_delete_base(io->m_readBuffer);
-	XMemory_free(io);
+	// 释放父对象
+	XVtableGetFunc(XObject_class_init(), EXClass_Delete, void(*)(XObject*))(io);
 }
 
 bool VXIODevice_open(XIODeviceBase* io, XIODeviceBaseMode mode)

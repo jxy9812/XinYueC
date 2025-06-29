@@ -18,6 +18,7 @@ XVtable* XObject_class_init();
 XObject* XObject_create();
 void XObject_init(XObject* object);
 void XObject_poll_base(XObject* object);
+XEventDispatcher* XObject_getEventDispatcher(XObject* object);
 #define XObject_delete_base    XClass_delete_base
 #ifdef __cplusplus
 }

@@ -57,6 +57,13 @@ void XObject_poll_base(XObject* object)
 	XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*))(object);
 }
 
+XEventDispatcher* XObject_getEventDispatcher(XObject* object)
+{
+	if(object)
+		return object->m_eventDispatcher;
+	return NULL;
+}
+
 void VXObject_poll(XObject* object)
 {
 }

@@ -11,6 +11,8 @@ extern "C" {
 #define DEMOTEST						1//测试代码
 /*                容器                              */
 #define XContainerObject_ON				1
+#define XSet_ON							1
+#define XHashSet_ON						1
 #define XMap_ON							1
 #define XHashMap_ON						1
 #define XString_ON						1

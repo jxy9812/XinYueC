@@ -1,6 +1,7 @@
 ﻿#include"XSocketBase.h"
 #include"XString.h"
 #include"XEvent.h"
+#include"XEventDispatcher.h"
 static void VXIODevice_poll(XSocketBase* socket);
 static bool VXIODevice_open(XSocketBase* socket, XIODeviceBaseMode mode);
 static bool VXIODevice_close(XSocketBase* socket);
@@ -54,5 +55,6 @@ void VXIODevice_delete(XSocketBase* socket)
 		XString_delete_base(socket->m_peerName);
 	if (socket->m_eventDispatcher)
 		XEventDispatcher_delete(socket->m_eventDispatcher);
-	XMemory_free(socket);
+	// 释放父对象
+	XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(socket);
 }

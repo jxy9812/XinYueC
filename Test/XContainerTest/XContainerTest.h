@@ -37,6 +37,8 @@ extern "C" {
 	void XListSLinkedSwapTest();
 	void XListSLinkedIterator();
 	void XListSLinkedSortTest();
+
+	void XHashSetTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

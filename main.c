@@ -37,13 +37,15 @@ int main(int argc, char* args[])
 	//TJCHMICommTest();
 	//XDataFrameCommTest();
 	//XSocketTest();
-	XModbusTest();
+	XHashSetTest();
+	//XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
 	//XSerialPortTest();
 	//stackTest();
 	//XStringTest();
 	//XVectorTest();
+	return;
 	return XCoreApplication_exec();
 	XStringVectorTest();
 	cJsonTest();

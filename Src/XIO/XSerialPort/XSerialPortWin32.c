@@ -67,7 +67,8 @@ void VXSerialPort_delete(XSerialPort* serial)
 {
     if (serial->m_ov)
         XMemory_free(serial->m_ov);
-    XMemory_free(serial);
+    // 释放父对象
+    XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(serial);
 }
 
 bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
