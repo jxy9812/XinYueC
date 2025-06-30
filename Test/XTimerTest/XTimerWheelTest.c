@@ -8,12 +8,12 @@ static void Callback1(void* userData)
 	printf("定时器1触发:%d ms\n",XTimerBase_getCurrentTime()-current);
 	current = XTimerBase_getCurrentTime();
 
-	XTimerWheel* timer = XTimerWheel_create();
+	/*XTimerWheel* timer = XTimerWheel_create();
 	XTimerWheel_setUserData(timer, userData);
 	XTimerWheel_setTimeout_base(timer, 5);
 	XTimerWheel_setTimerCallback(timer, Callback1);
 	XTimerWheel_start_base(timer);
-	XTimerGroupBase_addTimer_base(userData, timer);
+	XTimerGroupBase_addTimer_base(userData, timer);*/
 }
 static void Callback2(void* userData)
 {
@@ -38,7 +38,7 @@ void XTimerWheelTest()
 		XTimerWheel_setTimerCallback(timer,Callback1);
 		XTimerBase_setTimerGroup(timer,wheel);
 		XTimerWheel_start_base(timer);
-		XTimerGroupBase_addTimer_base(wheel, timer);
+		//XTimerGroupBase_addTimer_base(wheel, timer);
 	
 	}
 	{

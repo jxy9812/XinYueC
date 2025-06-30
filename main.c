@@ -19,7 +19,7 @@ int main(int argc, char* args[])
 	//XStringTest();
 	//XBase64Test();
 	//return;
-	//XTimerWheelTest();
+	XTimerWheelTest();
 	//XListDLinkedIterator();
 	//XHashMapTest();
 	//XMapTest();
