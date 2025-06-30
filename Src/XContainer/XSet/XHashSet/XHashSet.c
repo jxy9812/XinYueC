@@ -4,11 +4,11 @@
 #include <string.h>
 
 // Set插入数据
-static void VXSet_insert(XHashSet* this_set, const void* pvKey);
+static bool VXSet_insert(XHashSet* this_set, const void* pvKey);
 // Set删除数据
 static void VXSet_erase(XHashSet* this_set, const void* pvKey);
 // Set移除数据
-static void VXSet_remove(XHashSet* this_set, const void* pvKey);
+static bool VXSet_remove(XHashSet* this_set, const void* pvKey);
 // 查找数据，返回是否找到
 static bool VXSet_find(XHashSet* this_set, const void* pvKey);
 // 清空Set，释放内存
@@ -85,7 +85,7 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
     return true;
 }
 
-void VXSet_insert(XHashSet* this_set, const void* pvKey)
+bool VXSet_insert(XHashSet* this_set, const void* pvKey)
 {
     if ((double)XContainerSize(this_set) / XContainerCapacity(this_set) >= DEFAULT_LOAD_FACTOR)
     {
@@ -93,7 +93,7 @@ void VXSet_insert(XHashSet* this_set, const void* pvKey)
         if (!XHashSet_resize(this_set, new_capacity))
         {
             printf("XHashSet 扩容失败\n");
-            return;
+            return false;
         }
     }
 
@@ -111,13 +111,14 @@ void VXSet_insert(XHashSet* this_set, const void* pvKey)
 
     XHashSetNode* new_node = (XHashSetNode*)XMemory_malloc(sizeof(XHashSetNode));
     if (new_node == NULL)
-        return;
+        return false;
 
     new_node->key = XMemory_malloc(((XSetBase*)this_set)->m_keyTypeSize);
     memcpy(new_node->key, pvKey, ((XSetBase*)this_set)->m_keyTypeSize);
     new_node->next = ((XHashSetNode**)XContainerDataPtr(this_set))[index];
     ((XHashSetNode**)XContainerDataPtr(this_set))[index] = new_node;
     ++XContainerSize(this_set);
+    return true;
 }
 
 void VXSet_erase(XHashSet* this_set, const void* pvKey)
@@ -151,9 +152,10 @@ void VXSet_erase(XHashSet* this_set, const void* pvKey)
     }
 }
 
-void VXSet_remove(XHashSet* this_set, const void* pvKey)
+bool VXSet_remove(XHashSet* this_set, const void* pvKey)
 {
     VXSet_erase(this_set, pvKey);
+    return true;
 }
 
 bool VXSet_find(XHashSet* this_set, const void* pvKey)

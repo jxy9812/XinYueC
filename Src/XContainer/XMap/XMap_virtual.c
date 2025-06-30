@@ -5,10 +5,10 @@
 #include"XAlgorithm.h"
 #include<stdlib.h>
 //Map插入数据
-static void VXMap_insert(XMap* this_map, const void* key, const void* LpValue);
+static bool VXMap_insert(XMap* this_map, const void* key, const void* LpValue);
 static void VXMap_erase(XMap* this_map, const XPair* LPpair);
 //map删除数据
-static void VXMap_remove(XMap* this_map, const void* key);
+static bool VXMap_remove(XMap* this_map, const void* key);
 //根据键值返回数据地址
 static void* VXMap_value(XMap* this_map, const void* key);
 //查找数据，返回找到的XPair地址，没有返回NULL
@@ -44,10 +44,10 @@ XVtable* XMap_class_init()
 	return XVTABLE_DEFAULT;
 }
 
-void VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
+bool VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
 {
 	if (ISNULL(this_map, "")|| ISNULL(key, "")||ISNULL(LpValue, ""))
-		return;
+		return false;
 	XPair* pair = XMap_find_base(this_map, key);
 	if (pair == NULL)//当前没有这个键值对
 	{
@@ -68,6 +68,7 @@ void VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
 	{
 		XPair_insertSecond(pair, LpValue);
 	}
+	return true;
 }
 
 void VXMap_erase(XMap* this_map, const XPair* LPpair)
@@ -77,11 +78,11 @@ void VXMap_erase(XMap* this_map, const XPair* LPpair)
 	XMap_remove_base(this_map, (LPpair)->m_first);
 }
 
-void VXMap_remove(XMap* this_map, const void* key)
+bool VXMap_remove(XMap* this_map, const void* key)
 {
 #if XVector_ON
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
-		return ;
+		return false;
 	XRBTreeNode* nodes = XBBTree_findData(XContainerDataPtr(this_map), this_map->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
@@ -92,7 +93,9 @@ void VXMap_remove(XMap* this_map, const void* key)
 		XPair_delete(pair);
 		--XContainerCapacity(this_map);
 		--XContainerSize(this_map);
+		return true;
 	}
+	return false;
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif

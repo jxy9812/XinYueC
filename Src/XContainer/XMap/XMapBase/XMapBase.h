@@ -25,11 +25,11 @@ XVtable* XMapBase_class_init();
 //初始化 XMap
 void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality);
 //Map插入数据
-void XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue);
+bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue);
 #define XMapBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMap_insert_base(this_map,&k,&v);}
 void XMapBase_erase_base(XMapBase* this_map, const XPair* pPair);
 //map删除数据
-void XMapBase_remove_base(XMapBase* this_map, const void* pvKey);
+bool XMapBase_remove_base(XMapBase* this_map, const void* pvKey);
 #define XMapBase_Remove_Base(this_map,keyType,key) {keyType k=key;XMap_remove_base(this_map,&k);}
 //根据键值返回数据地址
 void* XMapBase_value_base(XMapBase* this_map, const void* pvKey);

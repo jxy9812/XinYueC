@@ -25,11 +25,11 @@ void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XEquality KeyEq
     this_set->m_KeyEquality = KeyEquality;
 }
 
-void XSetBase_insert_base(XSetBase* this_set, const void* pvKey)
+bool XSetBase_insert_base(XSetBase* this_set, const void* pvKey)
 {
     if (ISNULL(this_set, "") || ISNULL(pvKey, "") || ISNULL(XClassGetVtable(this_set), ""))
-        return;
-    XClassGetVirtualFunc(this_set, EXSetBase_Insert, void(*)(XSetBase*, const void*))(this_set, pvKey);
+        return false;
+    return XClassGetVirtualFunc(this_set, EXSetBase_Insert, bool(*)(XSetBase*, const void*))(this_set, pvKey);
 }
 
 void XSetBase_erase_base(XSetBase* this_set, const void* pvKey)
@@ -39,11 +39,11 @@ void XSetBase_erase_base(XSetBase* this_set, const void* pvKey)
     XClassGetVirtualFunc(this_set, EXSetBase_Erase, void(*)(XSetBase*, const void*))(this_set, pvKey);
 }
 
-void XSetBase_remove_base(XSetBase* this_set, const void* pvKey)
+bool XSetBase_remove_base(XSetBase* this_set, const void* pvKey)
 {
     if (ISNULL(this_set, "") || ISNULL(pvKey, "") || ISNULL(XClassGetVtable(this_set), ""))
-        return;
-    XClassGetVirtualFunc(this_set, EXSetBase_Remove, void(*)(XSetBase*, const void*))(this_set, pvKey);
+        return false;
+    return XClassGetVirtualFunc(this_set, EXSetBase_Remove, bool(*)(XSetBase*, const void*))(this_set, pvKey);
 }
 
 bool XSetBase_find_base(XSetBase* this_set, const void* pvKey)

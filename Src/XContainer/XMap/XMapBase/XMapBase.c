@@ -26,11 +26,11 @@ void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t va
 	this_map->m_keyTypeSize = keyTypeSize;
 	this_map->m_KeyEquality = KeyEquality;
 }
-void XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue)
+bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue)
 {
 	if (ISNULL(this_map, "") || ISNULL(pvKey, "") || ISNULL(pvValue, "") || ISNULL(XClassGetVtable(this_map), ""))
-		return;
-	XClassGetVirtualFunc(this_map, EXMapBase_Insert, void(*)(XMapBase* ,const void*, const void*))(this_map, pvKey, pvValue);
+		return false;
+	return XClassGetVirtualFunc(this_map, EXMapBase_Insert, bool(*)(XMapBase* ,const void*, const void*))(this_map, pvKey, pvValue);
 }
 void XMapBase_erase_base(XMapBase* this_map, const XPair* pPair)
 {
@@ -38,11 +38,11 @@ void XMapBase_erase_base(XMapBase* this_map, const XPair* pPair)
 		return;
 	XClassGetVirtualFunc(this_map, EXMapBase_Erase, void(*)(XMapBase* ,const XPair*))(this_map, pPair);
 }
-void XMapBase_remove_base(XMapBase* this_map, const void* pvKey)
+bool XMapBase_remove_base(XMapBase* this_map, const void* pvKey)
 {
 	if (ISNULL(this_map, "") || ISNULL(pvKey, "") || ISNULL(XClassGetVtable(this_map), ""))
-		return;
-	XClassGetVirtualFunc(this_map, EXMapBase_Remove, void(*)(XMapBase* , const void*))(this_map, pvKey);
+		return false;
+	return XClassGetVirtualFunc(this_map, EXMapBase_Remove, bool(*)(XMapBase* , const void*))(this_map, pvKey);
 }
 void* XMapBase_value_base(XMapBase* this_map, const void* pvKey)
 {
