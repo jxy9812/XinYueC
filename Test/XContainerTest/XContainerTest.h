@@ -37,7 +37,10 @@ extern "C" {
 	void XListSLinkedSwapTest();
 	void XListSLinkedIterator();
 	void XListSLinkedSortTest();
-
+	void XListSLinkedAtomicTest();
+	void XListSLinkedAtomicSwapTest();
+	void XListSLinkedAtomicSortTest();
+	void XListSLinkedAtomicIterator();
 	void XHashSetTest();
 #endif // DEMOTEST
 

@@ -23,6 +23,10 @@ int main(int argc, char* args[])
 	//XListDLinkedIterator();
 	//XHashMapTest();
 	//XMapTest();
+	//XListSLinkedAtomicTest();
+	//XListSLinkedAtomicSwapTest();
+	//XListSLinkedAtomicSortTest();
+	//XListSLinkedAtomicIterator();
 	/*XListDLinkedTest();
 	XListDLinkedSortTest();
 	XListDLinkedIterator();

@@ -40,18 +40,18 @@ XListBaseNode* XListBase_push_front_base(XListBase* this_list, void* pvData);
 XListBaseNode* XListBase_push_back_base(XListBase* this_list, void* pvData);
 #define XListBase_Push_Back_Base(this_list,type,value){type t=value;XListBase_push_back_base(this_list,&t);}
 //链表指定节点前插入1个数据
-void XListBase_insert_base(XListBase* this_list, XListBaseNode* curNode, void* pvData);
+bool XListBase_insert_base(XListBase* this_list, XListBaseNode* curNode, void* pvData);
 // 链表中指向节点前插入另一个相同类型数组的数据，需要指出数组大小(元素数量)
-void  XListBase_insert_array_base(XListBase* this_list, XListBaseNode* curNode, const void* array, size_t count);
+size_t  XListBase_insert_array_base(XListBase* this_list, XListBaseNode* curNode, const void* array, size_t count);
 //删除函数
 //删除链表中第一个元素
-void  XListBase_pop_front_base(XListBase* this_list);
+bool  XListBase_pop_front_base(XListBase* this_list);
 //删除链表中最后一个元素
-void  XListBase_pop_back_base(XListBase* this_list);
+bool  XListBase_pop_back_base(XListBase* this_list);
 //删除指定节点
 void  XListBase_erase_base(XListBase* this_list, XListBaseNode* node);
 //删除指定元素
-void  XListBase_remove_base(XListBase* this_list, void* pvData);
+bool  XListBase_remove_base(XListBase* this_list, void* pvData);
 #define XListBase_Remove_Base(this_list,type,value){type t=value;XListBase_remove_base(this_list,&t);}
 //遍历函数
 //返回链表头

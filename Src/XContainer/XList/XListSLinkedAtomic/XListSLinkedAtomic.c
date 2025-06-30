@@ -2,21 +2,23 @@
 #if XListSLinkedAtomic_ON
 #include <stdlib.h>
 #include <string.h>
-
+#include"XStack.h"
 // 内部函数声明
 static XListSNodeAtomic * VXListAtomic_push_front(XListSLinkedAtomic * this_list, void* pvData);
 static XListSNodeAtomic* VXListAtomic_push_back(XListSLinkedAtomic* this_list, void* pvData);
-static void VXListAtomic_pop_front(XListSLinkedAtomic* this_list);
-static void VXListAtomic_pop_back(XListSLinkedAtomic* this_list);
+static bool VXList_insert(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, void* pvData);
+static size_t VXList_insert_array(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, const void* array, size_t count);
+static bool VXListAtomic_pop_front(XListSLinkedAtomic* this_list);
+static bool VXListAtomic_pop_back(XListSLinkedAtomic* this_list);
 static void VXListAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node);
-static void VXListAtomic_remove(XListSLinkedAtomic* this_list, void* pvData);
+static bool VXListAtomic_remove(XListSLinkedAtomic* this_list, void* pvData);
 static void VXListAtomic_clear(XListSLinkedAtomic* this_list);
 static void* VXListAtomic_front(XListSLinkedAtomic* this_list);
 static void* VXListAtomic_back(XListSLinkedAtomic* this_list);
 static XListSNodeAtomic* VXListAtomic_find(const XListSLinkedAtomic* this_list, void* pvData);
 static void VXListAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare);
 static void VXListAtomic_delete(XListSLinkedAtomic* this_list);
-
+static void VXListSLinkedAtomic_swap(XListSLinkedAtomic* list1, XListSLinkedAtomic* list2);
 // 创建新节点
 static XListSNodeAtomic* createNode(XListSLinkedAtomic* this_list, void* pvData) {
     XListSNodeAtomic* newNode = (XListSNodeAtomic*)XMemory_malloc(
@@ -45,7 +47,7 @@ XVtable* XListSLinkedAtomic_class_init()
 
     void* table[] = {
         // 插入操作
-        VXListAtomic_push_front, VXListAtomic_push_back,
+        VXListAtomic_push_front, VXListAtomic_push_back,VXList_insert,VXList_insert_array,
         // 删除操作
         VXListAtomic_pop_front, VXListAtomic_pop_back, VXListAtomic_erase, VXListAtomic_remove,
         // 遍历操作
@@ -58,7 +60,7 @@ XVtable* XListSLinkedAtomic_class_init()
     // 重载
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXListAtomic_delete);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXListAtomic_clear);
-
+    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXListSLinkedAtomic_swap);
 #if SHOWCONTAINERSIZE
     printf("XListSLinkedAtomic size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -131,16 +133,134 @@ XListSNodeAtomic* VXListAtomic_push_back(XListSLinkedAtomic* this_list, void* pv
     return newNode;
 }
 
+bool VXList_insert(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, void* pvData)
+{
+    if (this_list == NULL || curNode == NULL || pvData == NULL) return false;
+
+    XListSNodeAtomic* prev = NULL;
+    XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+
+    // 查找指定节点的前一个节点
+    while (current != NULL && current != curNode) {
+        prev = current;
+        current = (XListSNodeAtomic*)XAtomic_load_ptr(&current->next);
+    }
+
+    // 如果没有找到指定节点，直接返回
+    if (current == NULL) return false;
+
+    // 创建新节点
+    XListSNodeAtomic* newNode = createNode(this_list, pvData);
+    if (newNode == NULL) return false;
+
+    // 如果要插入的位置是头节点
+    if (prev == NULL) {
+        do {
+            current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+            newNode->next = current;
+        } while (!XAtomic_compare_exchange_strong_ptr(
+            &this_list->m_head, (void**)&current, newNode));
+    }
+    else {
+        // 插入到指定节点前
+        do {
+            current = (XListSNodeAtomic*)XAtomic_load_ptr(&prev->next);
+            newNode->next = current;
+        } while (!XAtomic_compare_exchange_strong_ptr(
+            &prev->next, (void**)&current, newNode));
+    }
+
+    // 更新记录数量
+    XAtomic_fetch_add_size_t(&XContainerSize(this_list), 1);
+    XAtomic_fetch_add_size_t(&XContainerCapacity(this_list), 1);
+    return true;
+}
+
+size_t VXList_insert_array(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, const void* array, size_t count)
+{
+    if (this_list == NULL || array == NULL || count == 0) return 0;
+
+    XListSNodeAtomic* prev = NULL;
+    XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+
+    // 查找指定节点的前一个节点
+    if (curNode != NULL) {
+        while (current != NULL && current != curNode) {
+            prev = current;
+            current = (XListSNodeAtomic*)XAtomic_load_ptr(&current->next);
+        }
+        // 如果没有找到指定节点，直接返回
+        if (current == NULL) return 0;
+    }
+
+    // 创建新链表
+    XListSNodeAtomic* newListHead = NULL;
+    XListSNodeAtomic* newListTail = NULL;
+    for (size_t i = 0; i < count; i++) {
+        XListSNodeAtomic* newNode = createNode(this_list, (void*)((char*)array + i * XContainerTypeSize(this_list)));
+        if (newNode == NULL) {
+            // 如果创建节点失败，释放已创建的节点
+            while (newListHead != NULL) {
+                XListSNodeAtomic* temp = newListHead;
+                newListHead = newListHead->next;
+                if (XContainerDataDeleteMethod(this_list) != NULL) {
+                    XContainerDataDeleteMethod(this_list)(&temp->data);
+                }
+                XMemory_free(temp);
+            }
+            return 0;
+        }
+        if (newListHead == NULL) {
+            newListHead = newNode;
+            newListTail = newNode;
+        }
+        else {
+            newListTail->next = newNode;
+            newListTail = newNode;
+        }
+    }
+    newListTail->next = NULL;
+
+    // 插入新链表
+    if (prev == NULL) {
+        // 插入到链表头部
+        do {
+            current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+            newListTail->next = current;
+        } while (!XAtomic_compare_exchange_strong_ptr(
+            &this_list->m_head, (void**)&current, newListHead));
+        if (current == NULL) {
+            XAtomic_store_ptr(&this_list->m_tail, newListTail);
+        }
+    }
+    else {
+        // 插入到指定节点前
+        do {
+            current = (XListSNodeAtomic*)XAtomic_load_ptr(&prev->next);
+            newListTail->next = current;
+        } while (!XAtomic_compare_exchange_strong_ptr(
+            &prev->next, (void**)&current, newListHead));
+        if (current == NULL) {
+            XAtomic_store_ptr(&this_list->m_tail, newListTail);
+        }
+    }
+
+    // 更新记录数量
+    XAtomic_fetch_add_size_t(&XContainerSize(this_list), count);
+    XAtomic_fetch_add_size_t(&XContainerCapacity(this_list), count);
+    return count;
+}
+
 // 头部删除
-void VXListAtomic_pop_front(XListSLinkedAtomic* this_list) {
-    if (XListSLinkedAtomic_isEmpty(this_list)) return;
+bool VXListAtomic_pop_front(XListSLinkedAtomic* this_list) {
+    if (XListSLinkedAtomic_isEmpty_base(this_list)) return false;
 
     XListSNodeAtomic* oldHead;
     XListSNodeAtomic* next;
 
     do {
         oldHead = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
-        if (oldHead == NULL) return;  // 链表可能已变空
+        if (oldHead == NULL) return false;  // 链表可能已变空
 
         next = (XListSNodeAtomic*)XAtomic_load_ptr(&oldHead->next);
 
@@ -162,18 +282,19 @@ void VXListAtomic_pop_front(XListSLinkedAtomic* this_list) {
     // 更新记录数量
     XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1);
     XAtomic_fetch_sub_size_t(&XContainerCapacity(this_list), 1);
+    return true;
 }
 
 // 尾部删除
-void VXListAtomic_pop_back(XListSLinkedAtomic* this_list) {
-    if (XListSLinkedAtomic_isEmpty(this_list)) return;
+bool VXListAtomic_pop_back(XListSLinkedAtomic* this_list) {
+    if (XListSLinkedAtomic_isEmpty_base(this_list)) return false;
 
     XListSNodeAtomic* tail;
     XListSNodeAtomic* prev;
 
     while (1) {
         tail = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_tail);
-        if (tail == NULL) return;  // 链表可能已变空
+        if (tail == NULL) return false;  // 链表可能已变空
 
         prev = NULL;
         XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
@@ -216,11 +337,12 @@ void VXListAtomic_pop_back(XListSLinkedAtomic* this_list) {
     // 更新记录数量
     XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1);
     XAtomic_fetch_sub_size_t(&XContainerCapacity(this_list), 1);
+    return true;
 }
 
 // 删除指定节点
 void VXListAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node) {
-    if (XListSLinkedAtomic_isEmpty(this_list) || node == NULL) return;
+    if (XListSLinkedAtomic_isEmpty_base(this_list) || node == NULL) return;
 
     XListSNodeAtomic* prev = NULL;
     XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
@@ -272,11 +394,11 @@ void VXListAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node) {
 }
 
 // 删除指定数据的节点
-void VXListAtomic_remove(XListSLinkedAtomic* this_list, void* pvData) {
-    if (XListSLinkedAtomic_isEmpty(this_list))
-        return;
+bool VXListAtomic_remove(XListSLinkedAtomic* this_list, void* pvData) {
+    if (XListSLinkedAtomic_isEmpty_base(this_list))
+        return false;
     if (((XListBase*)this_list)->m_equality == NULL)
-        return;
+        return false;
 
     XListSNodeAtomic* prev = NULL;
     XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
@@ -319,12 +441,13 @@ void VXListAtomic_remove(XListSLinkedAtomic* this_list, void* pvData) {
                     XAtomic_fetch_sub_size_t(&XContainerCapacity(this_list), 1);
                 }
             }
-            return;
+            return true;
         }
 
         prev = current;
         current = current->next;
     }
+    return false;
 }
 
 // 清空链表
@@ -351,8 +474,8 @@ void VXListAtomic_clear(XListSLinkedAtomic* this_list) {
 // 获取链表头数据
 void* VXListAtomic_front(XListSLinkedAtomic* this_list) {
     XListSNodeAtomic* head = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
-    if (head == NULL || head->next == NULL) return NULL;
-    return &head->next->data;
+    if (head == NULL) return NULL;
+    return &head->data;
 }
 
 // 获取链表尾数据
@@ -364,7 +487,7 @@ void* VXListAtomic_back(XListSLinkedAtomic* this_list) {
 
 // 查找数据
 XListSNodeAtomic* VXListAtomic_find(const XListSLinkedAtomic* this_list, void* pvData) {
-    if (XListSLinkedAtomic_isEmpty(this_list)) return NULL;
+    if (XListSLinkedAtomic_isEmpty_base(this_list)) return NULL;
     if (((XListBase*)this_list)->m_equality == NULL) return NULL;
 
     XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
@@ -379,10 +502,108 @@ XListSNodeAtomic* VXListAtomic_find(const XListSLinkedAtomic* this_list, void* p
     return NULL;
 }
 
+// 找到链表尾部节点
+static XListSNodeAtomic* findTail(XListSNodeAtomic* head) {
+    if (head == NULL) return NULL;
+    while (XAtomic_load_ptr(&head->next) != NULL)
+        head = (XListSNodeAtomic*)XAtomic_load_ptr(&head->next);
+    return head;
+}
+
+// 单向链表的一次快排（分区函数）
+static XListSNodeAtomic* List_OneSort(XListSNodeAtomic* left, XListSNodeAtomic* right, size_t typeSize, XCompare compare) {
+    if (left == NULL || right == NULL || left == right)
+        return left;
+
+    void* pivot = XMemory_malloc(typeSize);
+    if (pivot == NULL) return NULL;
+    memcpy(pivot, &(left->data), typeSize);
+
+    XListSNodeAtomic* i = left;    // 分区点
+    XListSNodeAtomic* j = (XListSNodeAtomic*)XAtomic_load_ptr(&left->next);
+
+    while (j != NULL) {
+        if (compare(&(j->data), pivot)) {
+            i = (XListSNodeAtomic*)XAtomic_load_ptr(&i->next);
+            // 交换i和j的数据
+            void* temp = XMemory_malloc(typeSize);
+            memcpy(temp, &(i->data), typeSize);
+            memcpy(&(i->data), &(j->data), typeSize);
+            memcpy(&(j->data), temp, typeSize);
+            XMemory_free(temp);
+        }
+        if (j == right) break;  // 到达右边界
+        j = (XListSNodeAtomic*)XAtomic_load_ptr(&j->next);
+    }
+
+    // 将pivot放到正确位置
+    void* temp = XMemory_malloc(typeSize);
+    memcpy(temp, &(i->data), typeSize);
+    memcpy(&(i->data), &(left->data), typeSize);
+    memcpy(&(left->data), temp, typeSize);
+    XMemory_free(temp);
+    XMemory_free(pivot);
+
+    return i;  // 返回分区点
+}
+
 // 链表排序
 void VXListAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare) {
-    // 链表排序实现（可以使用归并排序等算法）
-    // 此处省略具体实现，需要根据需求完成
+#if XStack_ON
+    if (XListSLinkedAtomic_isEmpty_base(this_list))
+        return;
+
+    XListSNodeAtomic* head = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+    XListSNodeAtomic* tail = findTail(head);
+
+    // 使用现有的XStack
+    XStack* stack = XStack_Create(XListSNodeAtomic*);
+    if (stack == NULL)
+        return;
+
+    // 初始化栈
+    if (head != NULL) {
+        XStack_push_base(stack, &tail);
+        XStack_push_base(stack, &head);
+    }
+
+    while (!XStack_isEmpty_base(stack)) {
+        // 弹出区间
+        XListSNodeAtomic* h = *((XListSNodeAtomic**)XStack_top_base(stack));
+        XStack_pop_base(stack);
+        XListSNodeAtomic* t = *((XListSNodeAtomic**)XStack_top_base(stack));
+        XStack_pop_base(stack);
+
+        if (h == NULL || t == NULL || h == t)
+            continue;
+
+        // 执行一次快排
+        XListSNodeAtomic* pivot = List_OneSort(h, t, XContainerTypeSize(this_list), compare);
+
+        // 处理左子区间
+        if (h != pivot) {
+            XListSNodeAtomic* leftTail = findTail(h);
+            if (leftTail != NULL && h != leftTail) {
+                XStack_push_base(stack, &leftTail);
+                XStack_push_base(stack, &h);
+            }
+        }
+
+        // 处理右子区间
+        if (pivot != NULL && XAtomic_load_ptr(&pivot->next) != NULL) {
+            XListSNodeAtomic* rightHead = (XListSNodeAtomic*)XAtomic_load_ptr(&pivot->next);
+            XListSNodeAtomic* rightTail = findTail(rightHead);
+            if (rightTail != NULL && rightHead != rightTail) {
+                XStack_push_base(stack, &rightTail);
+                XStack_push_base(stack, &rightHead);
+            }
+        }
+    }
+
+    XStack_delete_base(stack);
+#else
+    IS_ON_DEBUG(XStack_ON);
+#endif
 }
 
 // 释放链表
@@ -411,68 +632,8 @@ void XListSLinkedAtomic_init(XListSLinkedAtomic* this_list, size_t typeSize) {
     XAtomic_init(this_list->m_tail, NULL);
 }
 
-// 其他对外接口实现（直接调用内部函数）
-XListSNodeAtomic* XListSLinkedAtomic_push_front(XListSLinkedAtomic* this_list, void* pvData) {
-    return VXListAtomic_push_front(this_list, pvData);
-}
-
-XListSNodeAtomic* XListSLinkedAtomic_push_back(XListSLinkedAtomic* this_list, void* pvData) {
-    return VXListAtomic_push_back(this_list, pvData);
-}
-
-void XListSLinkedAtomic_pop_front(XListSLinkedAtomic* this_list) {
-    VXListAtomic_pop_front(this_list);
-}
-
-void XListSLinkedAtomic_pop_back(XListSLinkedAtomic* this_list) {
-    VXListAtomic_pop_back(this_list);
-}
-
-void XListSLinkedAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node) {
-    VXListAtomic_erase(this_list, node);
-}
-
-void XListSLinkedAtomic_remove(XListSLinkedAtomic* this_list, void* pvData) {
-    VXListAtomic_remove(this_list, pvData);
-}
-
-void* XListSLinkedAtomic_front(XListSLinkedAtomic* this_list) {
-    return VXListAtomic_front(this_list);
-}
-
-void* XListSLinkedAtomic_back(XListSLinkedAtomic* this_list) {
-    return VXListAtomic_back(this_list);
-}
-
-XListSNodeAtomic* XListSLinkedAtomic_find(const XListSLinkedAtomic* this_list, const void* findVal) {
-    return VXListAtomic_find(this_list, (void*)findVal);
-}
-
-void XListSLinkedAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare) {
-    VXListAtomic_sort(this_list, compare);
-}
-
-void XListSLinkedAtomic_delete(XListSLinkedAtomic* this_list) {
-    VXListAtomic_delete(this_list);
-}
-
-void XListSLinkedAtomic_clear(XListSLinkedAtomic* this_list) {
-    VXListAtomic_clear(this_list);
-}
-
-bool XListSLinkedAtomic_isEmpty(XListSLinkedAtomic* this_list) {
-    return XAtomic_load_ptr(&this_list->m_head) == NULL;
-}
-
-size_t XListSLinkedAtomic_getSize(XListSLinkedAtomic* this_list) {
-    return XAtomic_load_size_t(&XContainerSize(this_list));
-}
-
-size_t XListSLinkedAtomic_getCapacity(XListSLinkedAtomic* this_list) {
-    return XAtomic_load_size_t(&XContainerCapacity(this_list));
-}
-
-void XListSLinkedAtomic_swap(XListSLinkedAtomic* list1, XListSLinkedAtomic* list2) {
+void VXListSLinkedAtomic_swap(XListSLinkedAtomic* list1, XListSLinkedAtomic* list2)
+{
     // 交换链表实现
     XListSNodeAtomic* tempHead = (XListSNodeAtomic*)XAtomic_load_ptr(&list1->m_head);
     XListSNodeAtomic* tempTail = (XListSNodeAtomic*)XAtomic_load_ptr(&list1->m_tail);
@@ -488,10 +649,6 @@ void XListSLinkedAtomic_swap(XListSLinkedAtomic* list1, XListSLinkedAtomic* list
     XAtomic_store_ptr(&list2->m_tail, tempTail);
     XAtomic_store_size_t(&XContainerSize(list2), tempSize);
     XAtomic_store_size_t(&XContainerCapacity(list2), tempCapacity);
-}
-
-size_t XListSLinkedAtomic_getTypeSize(XListSLinkedAtomic* this_list) {
-    return XContainerTypeSize(this_list);
 }
 
 #endif // XListSLinkedAtomic_ON

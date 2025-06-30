@@ -268,6 +268,11 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
 					//printf("%p\n", list);
 					XTimerBase_delete_base(timer);
 				}
+				else//也不释放的定时器更新状态
+				{
+					((XTimerBase*)timer)->m_isRun = false;
+					timer->m_list = NULL;
+				}
 			}
 			//清空当前槽的链表
 			XListSLinked_clear_base(&cList);
