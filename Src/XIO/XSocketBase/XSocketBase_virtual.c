@@ -54,7 +54,7 @@ void VXIODevice_delete(XSocketBase* socket)
 	if(socket->m_peerName)
 		XString_delete_base(socket->m_peerName);
 	if (socket->m_eventDispatcher)
-		XEventDispatcher_delete(socket->m_eventDispatcher);
+		XEventDispatcher_delete_base(socket->m_eventDispatcher);
 	// 释放父对象
 	XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(socket);
 }

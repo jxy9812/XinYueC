@@ -150,9 +150,9 @@ void VXThread_requestInterruption(XThread* Object)
 
 void VXThread_setEventDispatcher(XThread* Object, XEventDispatcher* m_eventDispatcher)
 {
-    if (Object->m_eventDispatcher != NULL)
+    /*if (Object->m_eventDispatcher != NULL)
         XEventDispatcher_delete(Object->m_eventDispatcher);
-    Object->m_eventDispatcher = m_eventDispatcher;
+    Object->m_eventDispatcher = m_eventDispatcher;*/
 }
 
 void VXThread_setPriority(XThread* Object, XThread_Priority priority)

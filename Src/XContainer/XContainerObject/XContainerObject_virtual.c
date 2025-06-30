@@ -4,7 +4,7 @@
 #include"XVtable.h"
 #include<stdlib.h>
 //声明 
-static void VXContainerObject_free(XContainerObject* Object);
+static void VXContainerObject_delete(XContainerObject* Object);
 static bool VXContainerObject_isEmpty(const XContainerObject* Object);
 static size_t VXContainerObject_getSize(const XContainerObject* Object);
 static size_t VXContainerObject_getCapacity(const  XContainerObject* Object);
@@ -31,7 +31,7 @@ XVtable* XContainerObject_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXContainerObject_free);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXContainerObject_delete);
 #if SHOWCONTAINERSIZE
 	printf("XContainerObject size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -80,7 +80,7 @@ void VXContainerObject_clear(XContainerObject* Object)
 	Object->m_size = 0;
 }
 
-void VXContainerObject_free(XContainerObject* Object)
+void VXContainerObject_delete(XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;

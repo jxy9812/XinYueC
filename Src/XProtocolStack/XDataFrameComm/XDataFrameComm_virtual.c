@@ -618,7 +618,7 @@ void VXDataFrameComm_delete(XDataFrameComm* comm)
 		XListBase_delete_base(comm->m_periodicSendList);
 	}
 	if (comm->m_eventDispatcher)
-		XEventDispatcher_delete(comm->m_eventDispatcher);
+		XEventDispatcher_delete_base(comm->m_eventDispatcher);
 	if (comm->m_funcCodeMap)
 		XFuncCodeMap_delete(comm->m_funcCodeMap);
 	if (comm->m_sendFrameHead)

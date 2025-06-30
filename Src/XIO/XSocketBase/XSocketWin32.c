@@ -386,7 +386,7 @@ void VXIODevice_delete(XSocketWin32* so)
 
     // 释放事件调度器
     if (((XSocketBase*)so)->m_eventDispatcher) {
-        XEventDispatcher_delete(((XSocketBase*)so)->m_eventDispatcher);
+        XEventDispatcher_delete_base(((XSocketBase*)so)->m_eventDispatcher);
         ((XSocketBase*)so)->m_eventDispatcher = NULL;
     }
 
