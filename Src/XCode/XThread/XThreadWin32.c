@@ -52,18 +52,15 @@ XVtable* XThread_class_init()
 // 线程函数包装器，用于调用事件调度器
 static DWORD WINAPI ThreadFunction(LPVOID lpParam) {
     XThread* Object = (XThread*)lpParam;
-    
+    //运行函数
     if (Object->m_start_routine)
         Object->m_start_routine(Object);
-    //查看是否用到了调度器
-    if (Object->m_eventDispatcher->m_Objects&&!XSetBase_isEmpty_base(Object->m_eventDispatcher->m_Objects))
-    {//进入事件循环
-        XObject* object = NULL;
-        for_each_iterator(Object->m_eventDispatcher->m_Objects, XHashSet, it)
+    //运行事件调度
+    if (Object->m_eventDispatcher->m_Objects && !XSetBase_isEmpty_base(Object->m_eventDispatcher->m_Objects))
+    {
+        while (!(Object->m_interruptionRequested))
         {
-            object = *((XObject**)XHashSet_iterator_data(&it));
-            if (XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*)))
-                XObject_poll_base(object);
+            XEventDispatcherThread_handler_base(Object->m_eventDispatcher);
         }
     }
     Object->m_finished = true;

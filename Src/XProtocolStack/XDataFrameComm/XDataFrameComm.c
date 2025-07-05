@@ -36,14 +36,13 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	}
 	XCommunicatorBase_recvAsync_base(comm, XDFC_RECV_BUFFER_SIZE);
 	comm->m_state = XDFC_STATE_NOT_INITIALIZED;
-	//comm->m_eventDispatcher = XEventDispatcher_createDefault(XDFC_EVENT_QUEUE_COUNT);
+
 	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XByteArray*, XDFC_FRAME_SEND_QUEUE_COUNT);
 	comm->m_periodicSendList = XListSLinked_Create(void*);
 	comm->m_periodicSendList->m_equality = XEquality_ptr;
 
 	XObject_addEventFilter_base(comm, XEVENT_ALL, XDataFrameComm_EvnetHandCb,comm);
 
-	//XEventDispatcher_setAllEventCb(comm->m_eventDispatcher, XDataFrameComm_EvnetHandCb, comm);
 	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm,XDFC_FRAME_END_TIMEOUT);
 }

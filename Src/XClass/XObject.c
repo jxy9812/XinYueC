@@ -128,11 +128,11 @@ bool VXObject_moveToThread(XObject* object, XThread* thread)
 		targetD = thread->m_eventDispatcher;//目标调度器
 	}
 	//转移事件过滤
-	XMapBase* pvCodeMap = *((XMapBase**)XMapBase_value_base(((XEventDispatcher*)sourceD)->m_filter_cb, &object));
+	XMapBase** pvCodeMap =XMapBase_value_base(((XEventDispatcher*)sourceD)->m_filter_cb, &object);
 	if (pvCodeMap != NULL)
 	{//存在事件过滤
+		XMapBase_insert_base(((XEventDispatcher*)targetD)->m_filter_cb, &object,pvCodeMap);
 		XMapBase_remove_base(((XEventDispatcher*)sourceD)->m_filter_cb, &object);
-		XMapBase_insert_base(((XEventDispatcher*)targetD)->m_filter_cb, &object,&pvCodeMap);
 	}
 	XEventDispatcherThread_removeObject_base(sourceD, object);//源事件调度器删除
 	XEventDispatcherThread_addObject_base(targetD,object);

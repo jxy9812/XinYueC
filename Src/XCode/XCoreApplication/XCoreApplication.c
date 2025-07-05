@@ -83,18 +83,5 @@ int XCoreApplication_exec()
 	{
 		XEventDispatcherThread_handler_base(app->m_eventDispatcher);
 	}
-	/*if (!XSetBase_isEmpty_base(app->m_eventDispatcher->m_Objects))
-	{
-		XObject* object = NULL;
-		while (!(app->m_quit))
-		{
-			for_each_iterator(app->m_eventDispatcher->m_Objects, XHashSet, it)
-			{
-				object = *((XObject**)XHashSet_iterator_data(&it));
-				if (XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*)))
-					XObject_poll_base(object);
-			}
-		}
-	}*/
 	return 0;
 }
