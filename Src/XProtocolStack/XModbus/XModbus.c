@@ -55,7 +55,9 @@ void XModbus_init(XModbus* modbus, XIODeviceBase* io)
 		XIODeviceBase_setWriteBuffer_base(io, XMB_DEVICE_SEND_BUFFER_SIZE);
 	}
 	XClassGetVtable(modbus) = XModbus_class_init();
-	XEventDispatcher_setAllEventCb(((XDataFrameComm*)modbus)->m_eventDispatcher, XModbus_EvnetHandCb, modbus);
+
+	XObject_addEventFilter_base(modbus, XEVENT_ALL, XModbus_EvnetHandCb, modbus);
+
 	XDataFrameComm_funcCodeMap_create(modbus,sizeof(XModbusRecvMatch),XEquality_uint16_t);
 	modbus->m_address = 1;
 	modbus->m_mode = XMB_NOT_MODE;
@@ -244,10 +246,10 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 		return;
 	}
 	modbusFrame->frameData = frame;//解析成功后将帧数据转移
-	XDataFrameComm* comm = event->object;
+	XDataFrameComm* comm = event->receiver;
 	void* math = XFuncCodeMap_createCode(comm->m_funcCodeMap);
 	{
-		if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, math) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(event->object,XDFC_EXECUTE, 0, modbusFrame, math))))
+		if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, math) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(event->receiver,XDFC_EXECUTE, 0, modbusFrame, math))))
 		{//没有功能码处理或获取失败 直接释放
 			//XVector_delete_base(frame);//释放帧数据以免内存泄露
 			XModbusFrame_delete(modbusFrame);

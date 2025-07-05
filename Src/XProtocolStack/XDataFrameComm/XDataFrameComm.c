@@ -9,7 +9,7 @@
 #include"XString.h"
 #include"XEquality.h"
 #include"XTimerBase.h"
-#include"XEventDispatcher.h"
+#include"XEventDispatcherThread.h"
 #include<string.h>
 #include<stdarg.h>
 XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
@@ -36,12 +36,14 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	}
 	XCommunicatorBase_recvAsync_base(comm, XDFC_RECV_BUFFER_SIZE);
 	comm->m_state = XDFC_STATE_NOT_INITIALIZED;
-	comm->m_eventDispatcher = XEventDispatcher_createDefault(XDFC_EVENT_QUEUE_COUNT);
+	//comm->m_eventDispatcher = XEventDispatcher_createDefault(XDFC_EVENT_QUEUE_COUNT);
 	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XByteArray*, XDFC_FRAME_SEND_QUEUE_COUNT);
 	comm->m_periodicSendList = XListSLinked_Create(void*);
 	comm->m_periodicSendList->m_equality = XEquality_ptr;
 
-	XEventDispatcher_setAllEventCb(comm->m_eventDispatcher, XDataFrameComm_EvnetHandCb, comm);
+	XObject_addEventFilter_base(comm, XEVENT_ALL, XDataFrameComm_EvnetHandCb,comm);
+
+	//XEventDispatcher_setAllEventCb(comm->m_eventDispatcher, XDataFrameComm_EvnetHandCb, comm);
 	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm,XDFC_FRAME_END_TIMEOUT);
 }
@@ -321,9 +323,9 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 		printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
 	}
 #endif // XDFC_RECV_FRAME_STR_SHOW
-	XDataFrameComm* comm = event->object;
+	XDataFrameComm* comm = event->receiver;
 	void* funcCode = XFuncCodeMap_createCode(comm->m_funcCodeMap);
-	if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, funcCode) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(event->object, XDFC_EXECUTE, 0, frame, funcCode))))
+	if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, funcCode) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(event->receiver, XDFC_EXECUTE, 0, frame, funcCode))))
 	{//没有功能码处理或获取失败 直接释放
 		XVector_delete_base(frame);
 		XFuncCodeMap_deleteCode(funcCode);
@@ -361,7 +363,8 @@ bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* ev)
 {
 	if (comm == NULL || ev == NULL)
 		return false;
-	if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
+	if(!XEventDispatcherThread_postEvent_base(XObject_getEventDispatcher(comm),ev))
+	//if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
 	{//添加失败，队列满了
 		XMemory_free(ev);
 #if XDFC_QUEUE_FULL_SHOW

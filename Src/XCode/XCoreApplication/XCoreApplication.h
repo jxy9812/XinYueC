@@ -13,18 +13,17 @@ typedef struct XCoreApplication
     bool m_quit;//是否退出
     int m_argc;
     char** m_argv;
-    XSetBase* m_Objects;//列表
-    //XEventDispatcher* m_eventDispatcher;//事件调度器
+  
+    XEventDispatcherThread* m_eventDispatcher;//事件调度器
 }XCoreApplication;//
 XVtable* XCoreApplication_class_init();
+XCoreApplication* XCoreApplication_global();
 XCoreApplication* XCoreApplication_create(int argc, char** argv);
 void XCoreApplication_init(XCoreApplication* app, int argc, char** argv);
 //获取事件调度器
-XEventDispatcher* XCoreApplication_getEventDispatcher();
+XEventDispatcherThread* XCoreApplication_getEventDispatcher();
 void XCoreApplication_requestQuit();
 int XCoreApplication_exec();
-
-XSetBase* XCoreApplication_getObjects();
 #ifdef __cplusplus
 }
 #endif

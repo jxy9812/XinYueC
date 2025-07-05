@@ -6,6 +6,7 @@
 #include "XHashSet.h"
 #include "XHash.h"
 #include "XMutex.h"
+#include "XEventDispatcherThread.h"
 static XHashMap* threadMap=NULL;
 static XMutex* mutex=NULL;//互斥锁
 // 初始化 XThread 对象
@@ -20,7 +21,7 @@ void XThread_init(XThread* Object)
     Object->m_priority = XThread_NormalPriority;
     Object->m_stackSize = 512;
     Object->m_eventDispatcher =NULL;
-    Object->m_Objects = XHashSet_Create(XObject*, XHash_murmur3_32, XEquality_ptr);
+    Object->m_eventDispatcher = XEventDispatcherThread_create(30);
 }
 XThread* XThread_currentThread()
 {
@@ -78,9 +79,11 @@ bool XThread_wait(XThread* Object, unsigned long time)
 }
 
 // 获取事件调度器
-XEventDispatcher* XThread_eventDispatcher(const XThread* Object)
+XEventDispatcherThread* XThread_eventDispatcher(const XThread* Object)
 {
-    return XClassGetVirtualFunc(Object, EXThread_EventDispatcher, XEventDispatcher * (*)(const XThread*))(Object);
+    if (Object)
+        return Object->m_eventDispatcher;
+    return NULL;
 }
 
 // 判断线程是否结束

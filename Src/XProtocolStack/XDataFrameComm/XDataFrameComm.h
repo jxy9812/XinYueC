@@ -43,7 +43,7 @@ typedef struct XDataFrameComm
 
     XQueueBase* m_sendFrameQueue;//发送队列(XCircularQueue<XByteArray*>)
     XListBase* m_periodicSendList;//定期发送数据链表
-    XEventDispatcher* m_eventDispatcher;//事件调度器
+
     XFuncCodeMap* m_funcCodeMap;//功能码映射
     GetFuncCodeCb m_getFuncCode;//获取功能码回调
 

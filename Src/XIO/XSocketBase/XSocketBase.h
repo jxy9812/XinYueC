@@ -39,7 +39,6 @@ typedef struct XSocketBase
     XSocketType m_socketType;
     XString* m_peerName;//远程主机名
     XString* m_peerAddress;//远程主机地址
-    XEventDispatcher* m_eventDispatcher; // 事件调度器
     uint16_t m_peerPort;//远程主机端口
     bool m_ipv6Enabled;           // IPv6启用标志
 }XSocketBase;

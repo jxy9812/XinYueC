@@ -4,11 +4,11 @@
 #include"XHashSet.h"
 #include"XMemory.h"
 #include"XObject.h"
+#include"XEventDispatcherThread.h"
 #include <windows.h>
 static bool VXThread_start(XThread* Object);
 static XHandle VXThread_getHandle(XThread* Object);
 static bool VXThread_wait(XThread* Object, unsigned long time);
-static XEventDispatcher* VXThread_eventDispatcher(const XThread* Object);
 static bool VXThread_isFinished(const XThread* Object);
 static bool VXThread_isInterruptionRequested(const XThread* Object);
 static bool VXThread_isRunning(const XThread* Object);
@@ -34,7 +34,7 @@ XVtable* XThread_class_init()
 
         void* table[] = {
          VXThread_start,VXThread_getHandle,VXThread_wait,
-         VXThread_eventDispatcher,VXThread_isFinished,VXThread_isInterruptionRequested,
+         VXThread_isFinished,VXThread_isInterruptionRequested,
          VXThread_isRunning,VXThread_loopLevel,VXThread_priority,
          VXThread_requestInterruption,VXThread_setEventDispatcher,
          VXThread_setPriority,VXThread_setStackSize,VXThread_stackSize
@@ -56,10 +56,10 @@ static DWORD WINAPI ThreadFunction(LPVOID lpParam) {
     if (Object->m_start_routine)
         Object->m_start_routine(Object);
     //查看是否用到了调度器
-    if (Object->m_Objects&&!XSetBase_isEmpty_base(Object->m_Objects))
+    if (Object->m_eventDispatcher->m_Objects&&!XSetBase_isEmpty_base(Object->m_eventDispatcher->m_Objects))
     {//进入事件循环
         XObject* object = NULL;
-        for_each_iterator(Object->m_Objects, XHashSet, it)
+        for_each_iterator(Object->m_eventDispatcher->m_Objects, XHashSet, it)
         {
             object = *((XObject**)XHashSet_iterator_data(&it));
             if (XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*)))
@@ -97,11 +97,6 @@ bool VXThread_wait(XThread* Object, unsigned long time)
     }
     DWORD result = WaitForSingleObject(Object->m_handle, time);
     return (result == WAIT_OBJECT_0);
-}
-
-XEventDispatcher* VXThread_eventDispatcher(const XThread* Object)
-{
-    return Object->m_eventDispatcher;
 }
 
 bool VXThread_isFinished(const XThread* Object)
@@ -150,9 +145,9 @@ void VXThread_requestInterruption(XThread* Object)
 
 void VXThread_setEventDispatcher(XThread* Object, XEventDispatcher* m_eventDispatcher)
 {
-    /*if (Object->m_eventDispatcher != NULL)
-        XEventDispatcher_delete(Object->m_eventDispatcher);
-    Object->m_eventDispatcher = m_eventDispatcher;*/
+    if (Object->m_eventDispatcher != NULL)
+        XEventDispatcher_delete_base(Object->m_eventDispatcher);
+    Object->m_eventDispatcher = m_eventDispatcher;
 }
 
 void VXThread_setPriority(XThread* Object, XThread_Priority priority)
@@ -213,22 +208,14 @@ void VXThread_delete(XThread* Object)
         CloseHandle(Object->m_handle);
        Object->m_handle = NULL;
     }*/
-    /*if (Object->m_eventDispatcher)
-        XEventDispatcher_delete(Object->m_eventDispatcher);*/
+    if (Object->m_eventDispatcher)
+        XEventDispatcher_delete_base(Object->m_eventDispatcher);
     XThread_mapRemove(Object);
-    if (Object->m_Objects)
-        XSetBase_delete_base(Object->m_Objects);
     XMemory_free(Object);
 }
 
 XHandle XThread_currentThreadId()
 {
     return GetCurrentThreadId();
-}
-XSetBase* XThread_getObjects(XThread* Object)
-{
-    if(Object==NULL)
-        return NULL;
-    return Object->m_Objects;
 }
 #endif

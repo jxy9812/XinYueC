@@ -21,7 +21,6 @@ void XSocketBase_init(XSocketBase* socket)
     XClassGetVtable(socket) = XSocketBase_class_init();
     socket->m_peerName = XString_create(NULL);
     socket->m_peerAddress = XString_create(NULL);
-    socket->m_eventDispatcher = XEventDispatcher_createDefault(10); // 创建事件调度器
 }
 
 void XSocketBase_connectToHost_base(XSocketBase* socket, const char* hostName, uint16_t port, XIODeviceBaseMode mode)

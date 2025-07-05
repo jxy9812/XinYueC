@@ -8,6 +8,7 @@
 #include "XMutex.h"
 #include "XObject.h"
 #include "XTimerGroupWheel.h"
+#include "XEventDispatcherThread.h"
 // 全局应用程序实例指针
 static XCoreApplication* g_app = NULL;
 
@@ -29,6 +30,11 @@ XVtable* XCoreApplication_class_init()
 	return XVTABLE_DEFAULT;
 }
 
+XCoreApplication* XCoreApplication_global()
+{
+	return g_app;
+}
+
 XCoreApplication* XCoreApplication_create(int argc, char** argv)
 {
 	if(g_app!=NULL)
@@ -44,20 +50,20 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 		return;
 	XClass_init(app);
 	XClassGetVtable(app) = XCoreApplication_class_init();
-	app->m_Objects = XHashSet_Create(XObject*,XHash_murmur3_32,XEquality_ptr);
 	app->m_argc = argc;
 	app->m_argv = argv;
 	app->m_quit = false;
+	app->m_eventDispatcher = XEventDispatcherThread_create(30);
 	//初始化一些全局类
 	XTimerGroupWheel_setGlobal();
 }
 
-XEventDispatcher* XCoreApplication_getEventDispatcher()
+XEventDispatcherThread* XCoreApplication_getEventDispatcher()
 {
 	XCoreApplication* app=XCoreApplication_create(NULL,NULL);
 	if (app == NULL)
 		return NULL;
-	return NULL;
+	return app->m_eventDispatcher;
 }
 
 void XCoreApplication_requestQuit()
@@ -73,26 +79,22 @@ int XCoreApplication_exec()
 	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
 	if (app == NULL)
 		return -1;
-	if (!XSetBase_isEmpty_base(app->m_Objects))
+	while (!(app->m_quit))
+	{
+		XEventDispatcherThread_handler_base(app->m_eventDispatcher);
+	}
+	/*if (!XSetBase_isEmpty_base(app->m_eventDispatcher->m_Objects))
 	{
 		XObject* object = NULL;
 		while (!(app->m_quit))
 		{
-			for_each_iterator(app->m_Objects, XHashSet, it)
+			for_each_iterator(app->m_eventDispatcher->m_Objects, XHashSet, it)
 			{
 				object = *((XObject**)XHashSet_iterator_data(&it));
 				if (XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*)))
 					XObject_poll_base(object);
 			}
 		}
-	}
+	}*/
 	return 0;
-}
-
-XSetBase* XCoreApplication_getObjects()
-{
-	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
-	if (app == NULL)
-		return NULL;
-	return app->m_Objects;
 }

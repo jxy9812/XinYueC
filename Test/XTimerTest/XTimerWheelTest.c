@@ -52,8 +52,8 @@ void XTimerWheelTest()
 		//XTimerGroupWheel_removeTimer_base(wheel,timer);
 	}
 	//XTimerGroupWheel_removeTimeWheel_base(wheel);
-	while (true)
+	/*while (true)
 	{
 		XTimerGroupWheel_poll_base(wheel);
-	}
+	}*/
 }

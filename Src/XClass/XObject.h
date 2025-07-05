@@ -6,20 +6,26 @@ extern "C" {
 #include<stdint.h>
 #include<stdbool.h>
 #include"XClass.h"
+#include"XEvent.h"
 XCLASS_DEFINE_BEGING(XObject)
-XCLASS_DEFINE_ENUM(XObject, Poll) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XObject, Poll) = XCLASS_VTABLE_GET_SIZE(XClass),//installEventFilter moveToThread
+XCLASS_DEFINE_ENUM(XObject, AddEventFilter),
+XCLASS_DEFINE_ENUM(XObject, RemoveEventFilter),
+XCLASS_DEFINE_ENUM(XObject, MoveToThread),
 XCLASS_DEFINE_END(XObject)
 typedef struct XObject
 {
     XClass m_parent;//父对象
-    XSetBase* m_Objects;//列表
-    XEventDispatcher* m_eventDispatcher; // 事件调度器
+    XEventDispatcherThread* m_eventDispatcher; // 事件调度器
 }XObject;//
 XVtable* XObject_class_init();
 XObject* XObject_create();
 void XObject_init(XObject* object);
 void XObject_poll_base(XObject* object);
-XEventDispatcher* XObject_getEventDispatcher(XObject* object);
+bool XObject_addEventFilter_base(XObject* object, int code, XEventCB cb,void* userData);
+bool XObject_removeEventFilter_base(XObject* object, int code);
+bool XObject_moveToThread_base(XObject* object, XThread* thread);
+XEventDispatcherThread* XObject_getEventDispatcher(XObject* object);
 #define XObject_delete_base    XClass_delete_base
 #ifdef __cplusplus
 }

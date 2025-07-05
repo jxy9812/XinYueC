@@ -332,14 +332,7 @@ void VXCommunicatorBase_poll(XDataFrameComm* comm)
 {
 	if (comm->m_state != XDFC_STATE_ENABLED)
 		return;//协议栈还未准备好
-	if (XQueueBase_isEmpty_base(comm->m_eventDispatcher->m_queue))
-	{//当前无事件，执行接收和发送数据
-		RecvSendData(comm);
-	}
-	else
-	{
-		XEventDispatcher_handler(comm->m_eventDispatcher);//处理事件
-	}
+	RecvSendData(comm);
 }
 bool VXCommunicatorBase_connect(XDataFrameComm* comm)
 {
@@ -617,8 +610,6 @@ void VXDataFrameComm_delete(XDataFrameComm* comm)
 		}
 		XListBase_delete_base(comm->m_periodicSendList);
 	}
-	if (comm->m_eventDispatcher)
-		XEventDispatcher_delete_base(comm->m_eventDispatcher);
 	if (comm->m_funcCodeMap)
 		XFuncCodeMap_delete(comm->m_funcCodeMap);
 	if (comm->m_sendFrameHead)

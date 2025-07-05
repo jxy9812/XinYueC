@@ -10,12 +10,6 @@
 #include <ws2tcpip.h>
 #pragma comment(lib, "Ws2_32.lib")
 
-// 定义网络事件代码
-#define XEVENT_SOCKET_CONNECTED   1001
-#define XEVENT_SOCKET_DISCONNECTED 1002
-#define XEVENT_SOCKET_DATA_READY   1003
-#define XEVENT_SOCKET_ERROR        1004
-
 // 自定义网络事件数据结构
 typedef struct XSocketEventData {
     XSocketBase* socket;         // 关联的套接字
@@ -384,11 +378,6 @@ void VXIODevice_delete(XSocketWin32* so)
         VXIODevice_close(so);
     }
 
-    // 释放事件调度器
-    if (((XSocketBase*)so)->m_eventDispatcher) {
-        XEventDispatcher_delete_base(((XSocketBase*)so)->m_eventDispatcher);
-        ((XSocketBase*)so)->m_eventDispatcher = NULL;
-    }
 
     // 释放地址信息
     if (so->m_addrInfo) {
@@ -454,14 +443,14 @@ void VXIODevice_poll(XSocketWin32* so)
                 // 连接错误
                 XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_ERROR, XTimerBase_getCurrentTime());
                 event->userData = eventData;
-                XEventDispatcher_addEvent(((XSocketBase*)so)->m_eventDispatcher, event);
+                XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
                 ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
             }
             else {
                 // 连接成功
                 XEventMin* event = XEventMin_create(so,XEVENT_SOCKET_CONNECTED, XTimerBase_getCurrentTime());
                 event->userData = eventData;
-                XEventDispatcher_addEvent(((XSocketBase*)so)->m_eventDispatcher, event);
+                XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
                 ((XSocketBase*)so)->m_state = XSOCKET_CONNECTED_STATE;
             }
         }
@@ -470,7 +459,7 @@ void VXIODevice_poll(XSocketWin32* so)
             // 连接关闭
             XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_DISCONNECTED, XTimerBase_getCurrentTime());
             event->userData = eventData;
-            XEventDispatcher_addEvent(((XSocketBase*)so)->m_eventDispatcher, event);
+            XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
             ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
         }
 
@@ -478,7 +467,7 @@ void VXIODevice_poll(XSocketWin32* so)
             // 有数据可读
             XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_DATA_READY, XTimerBase_getCurrentTime());
             event->userData = eventData;
-            XEventDispatcher_addEvent(((XSocketBase*)so)->m_eventDispatcher, event);
+            XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
         }
 
         // 可以添加对FD_WRITE事件的处理...

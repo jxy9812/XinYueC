@@ -8,13 +8,13 @@
 #include"XListSLinked.h"
 #include"XObject.h"
 
-XEventMin* XEventMin_create(XObject* object,int code, size_t timestamp)
+XEventMin* XEventMin_create(XObject* receiver,int code, size_t timestamp)
 {
 	XEventMin* event = XMemory_malloc(sizeof(XEventMin));
-	XEventMin_init(event, object,code,timestamp);
+	XEventMin_init(event, receiver,code,timestamp);
 	return event;
 }
-void XEventMin_init(XEventMin* event, XObject* object,int code, size_t timestamp)
+void XEventMin_init(XEventMin* event, XObject* receiver,int code, size_t timestamp)
 {
 	if (event)
 	{
@@ -22,7 +22,7 @@ void XEventMin_init(XEventMin* event, XObject* object,int code, size_t timestamp
 		event->code = code;
 		event->timestamp = timestamp;
 		event->userData = NULL;
-		event->object = object;
+		event->receiver = receiver;
 	}
 }
 XEvent* XEvent_create(void* eventData, size_t eventDataSize)

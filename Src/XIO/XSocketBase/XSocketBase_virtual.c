@@ -33,8 +33,7 @@ XVtable* XSocketBase_class_init()
 
 void VXIODevice_poll(XSocketBase* socket)
 {
-	// 处理事件调度器中的事件
-	XEventDispatcher_handler(socket->m_eventDispatcher);
+	
 }
 
 bool VXIODevice_open(XSocketBase* socket, XIODeviceBaseMode mode)
@@ -53,8 +52,6 @@ void VXIODevice_delete(XSocketBase* socket)
 		XString_delete_base(socket->m_peerAddress);
 	if(socket->m_peerName)
 		XString_delete_base(socket->m_peerName);
-	if (socket->m_eventDispatcher)
-		XEventDispatcher_delete_base(socket->m_eventDispatcher);
 	// 释放父对象
 	XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(socket);
 }
