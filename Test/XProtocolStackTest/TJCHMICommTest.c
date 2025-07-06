@@ -122,7 +122,7 @@ void TJCHMICommTest()
 	XDataFrameComm_addFuncCode(comm, &funcCode, XFuncCodeCb0x30, NULL);
 	XDataFrameComm_connect_base(comm);
 	size_t speed = 1, current = XTimerBase_getCurrentTime();
-	while (true)
+	/*while (true)
 	{
 		if (XTimerBase_getCurrentTime() > current + 1000)
 		{
@@ -131,5 +131,5 @@ void TJCHMICommTest()
 		}
 		XDataFrameComm_poll_base(comm);
 		XTimerGroupBase_global_poll();
-	}
+	}*/
 }

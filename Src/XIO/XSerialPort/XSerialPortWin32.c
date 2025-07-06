@@ -61,6 +61,7 @@ void XSerialPort_init(XSerialPort* serial)
     serial->m_hSerial = INVALID_HANDLE_VALUE;
     XClassGetVtable(serial) = XSerialPort_class_init();
     serial->m_ov=XMemory_malloc(sizeof(OVERLAPPED));
+    memset(serial->m_ov,0, sizeof(OVERLAPPED));
 }
 
 void VXSerialPort_delete(XSerialPort* serial)
