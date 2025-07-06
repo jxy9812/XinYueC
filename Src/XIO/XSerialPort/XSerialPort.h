@@ -7,7 +7,7 @@ extern "C" {
 #include<stdbool.h>
 #include"XIODeviceBase.h"
 //XSerialPortDevice虚函数表
-#define XSERIALPORT_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODeviceBase))       //XSerialPortDevice容器虚函数表大小
+#define XSERIALPORT_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODeviceBase))       //XSerialPort容器虚函数表大小
 // 跨平台停止位枚举
 typedef enum
 {

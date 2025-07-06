@@ -8,7 +8,7 @@
 #include"XModbusRegister.h"
 #include"XModbusDigitalSwitch.h"
 #include"XSwitchDeviceModbus.h"
-#include"XSocketBase.h"
+#include"XSocket.h"
 static XSwitchDeviceModbus* SW;
 static void StateChangeCallback0(XSwitchDeviceBase* sw)
 {
@@ -28,8 +28,8 @@ void XModbusTest()
     XSerialPortBase* serial = XSerialPort_create();
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
-    XSocketBase* socket = XSocketWin32_create();
-    XSocketBase_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
+    XSocket* socket = XSocket_create();
+    XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
     XSerialPort_delete_base(serial);
     XModbus* modbus = XModbus_create_RTU_SerialPort(socket,NULL,NULL);
     XModbus_setAddress(modbus,2);

@@ -11,26 +11,26 @@
 #pragma comment(lib, "Ws2_32.lib")
 
 // 前向声明所有虚函数
-static void VXSocketBase_connectToHost(XSocketWin32* so, const char* hostName, uint16_t port, XIODeviceBaseMode mode);
+static void VXSocketBase_connectToHost(XSocket* so, const char* hostName, uint16_t port, XIODeviceBaseMode mode);
 static void VXSocketBase_disconnectFromHost(XSocketBase* so);
 static void VXSocketBase_waitForConnected(XSocketBase* so, int msecs);
 static void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs);
-static const char* VXSocketBase_localAddress(XSocketWin32* so);
-static uint16_t VXSocketBase_localPort(XSocketWin32* so);
-static void VXIODevice_poll(XSocketWin32* so);
-static bool VXIODevice_open(XSocketWin32* so, XIODeviceBaseMode mode);
-static bool VXIODevice_close(XSocketWin32* so);
-static size_t VXIODevice_write(XSocketWin32* so, const char* data, size_t maxSize);
-static size_t VXIODevice_writeFull(XSocketWin32* so);
-static size_t VXIODevice_read(XSocketWin32* so, char* data, size_t maxSize);
-static size_t VXIODevice_getBytesAvailable(XSocketWin32* so);
-static size_t VXIODeviceBase_getBytesToWrite(XSocketWin32* so);
-static bool VXIODeviceBase_atEnd(XSocketWin32* so);
-static void VXIODevice_setWriteBuffer(XSocketWin32* so, size_t count);
-static void VXIODevice_setReadBuffer(XSocketWin32* so, size_t count);
-static void VXIODevice_delete(XSocketWin32* so);
+static const char* VXSocketBase_localAddress(XSocket* so);
+static uint16_t VXSocketBase_localPort(XSocket* so);
+static void VXIODevice_poll(XSocket* so);
+static bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode);
+static bool VXIODevice_close(XSocket* so);
+static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize);
+static size_t VXIODevice_writeFull(XSocket* so);
+static size_t VXIODevice_read(XSocket* so, char* data, size_t maxSize);
+static size_t VXIODevice_getBytesAvailable(XSocket* so);
+static size_t VXIODeviceBase_getBytesToWrite(XSocket* so);
+static bool VXIODeviceBase_atEnd(XSocket* so);
+static void VXIODevice_setWriteBuffer(XSocket* so, size_t count);
+static void VXIODevice_setReadBuffer(XSocket* so, size_t count);
+static void VXIODevice_delete(XSocket* so);
 
-XVtable* XSocketWin32_class_init()
+XVtable* XSocket_class_init()
 {
     XVTABLE_CREAT_DEFAULT
         //虚函数表初始化
@@ -62,25 +62,25 @@ XVtable* XSocketWin32_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
 #if SHOWCONTAINERSIZE
-    printf("XSocketWin32 size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+    printf("XSocket size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
     return XVTABLE_DEFAULT;
 }
 
-XSocketWin32* XSocketWin32_create()
+XSocket* XSocket_create()
 {
-    XSocketWin32* so = XMemory_malloc(sizeof(XSocketWin32));
-    XSocketWin32_init(so);
+    XSocket* so = XMemory_malloc(sizeof(XSocket));
+    XSocket_init(so);
     return so;
 }
 
-void XSocketWin32_init(XSocketWin32* so)
+void XSocket_init(XSocket* so)
 {
     if (so == NULL)
         return;
-    memset(((XSocketBase*)so) + 1, 0, sizeof(XSocketWin32) - sizeof(XSocketBase));
+    memset(((XSocketBase*)so) + 1, 0, sizeof(XSocket) - sizeof(XSocketBase));
     XSocketBase_init((XSocketBase*)so);
-    XClassGetVtable(so) = XSocketWin32_class_init();
+    XClassGetVtable(so) = XSocket_class_init();
 
     // 初始化网络事件结构
     so->m_netEvents = XMemory_malloc(sizeof(WSANETWORKEVENTS));
@@ -89,9 +89,9 @@ void XSocketWin32_init(XSocketWin32* so)
     }
 }
 
-void VXSocketBase_connectToHost(XSocketWin32* so, const char* hostName, uint16_t port, XIODeviceBaseMode mode)
+void VXSocketBase_connectToHost(XSocket* so, const char* hostName, uint16_t port, XIODeviceBaseMode mode)
 {
-    if (XSocketBase_state((XSocketBase*)so) != XSOCKET_UNCONNECTED_STATE || hostName == NULL)
+    if (XSocket_state((XSocketBase*)so) != XSOCKET_UNCONNECTED_STATE || hostName == NULL)
         return;
     XSocketBase* base = (XSocketBase*)so;
     XString_clear_base(base->m_peerName);
@@ -103,7 +103,7 @@ void VXSocketBase_connectToHost(XSocketWin32* so, const char* hostName, uint16_t
 void VXSocketBase_disconnectFromHost(XSocketBase* so)
 {
     if (so && so->m_state != XSOCKET_UNCONNECTED_STATE) {
-        VXIODevice_close((XSocketWin32*)so);
+        VXIODevice_close((XSocket*)so);
     }
 }
 
@@ -111,7 +111,7 @@ void VXSocketBase_waitForConnected(XSocketBase* so, int msecs)
 {
     if (!so || so->m_state != XSOCKET_CONNECTING_STATE) return;
 
-    XSocketWin32* win32So = (XSocketWin32*)so;
+    XSocket* win32So = (XSocket*)so;
     WSAEVENT event = WSACreateEvent();
     if (event == WSA_INVALID_EVENT) {
         return;
@@ -157,7 +157,7 @@ void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs)
 {
     if (!so || so->m_state == XSOCKET_UNCONNECTED_STATE) return;
 
-    XSocketWin32* win32So = (XSocketWin32*)so;
+    XSocket* win32So = (XSocket*)so;
     WSAEVENT event = WSACreateEvent();
     if (event == WSA_INVALID_EVENT) {
         return;
@@ -192,7 +192,7 @@ void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs)
     WSACloseEvent(event);
 }
 
-const char* VXSocketBase_localAddress(XSocketWin32* so)
+const char* VXSocketBase_localAddress(XSocket* so)
 {
     XSocketBase* base = (XSocketBase*)so;
     if (!so || so->m_socket == INVALID_SOCKET) return NULL;
@@ -220,7 +220,7 @@ const char* VXSocketBase_localAddress(XSocketWin32* so)
     return localIP;
 }
 
-uint16_t VXSocketBase_localPort(XSocketWin32* so)
+uint16_t VXSocketBase_localPort(XSocket* so)
 {
     XSocketBase* base = (XSocketBase*)so;
     if (!so || so->m_socket == INVALID_SOCKET) return 0;
@@ -243,7 +243,7 @@ uint16_t VXSocketBase_localPort(XSocketWin32* so)
 }
 
 // 写入数据
-static size_t VXIODevice_write(XSocketWin32* so, const char* data, size_t maxSize) {
+static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize) {
     if (so == NULL || data == NULL || so->m_socket == INVALID_SOCKET) {
         return 0;
     }
@@ -267,7 +267,7 @@ static size_t VXIODevice_write(XSocketWin32* so, const char* data, size_t maxSiz
 }
 
 // 将剩余的数据刷入设备
-static size_t VXIODevice_writeFull(XSocketWin32* so) {
+static size_t VXIODevice_writeFull(XSocket* so) {
     if (so == NULL || so->m_socket == INVALID_SOCKET) {
         return 0;
     }
@@ -277,7 +277,7 @@ static size_t VXIODevice_writeFull(XSocketWin32* so) {
 }
 
 // 读取数据
-static size_t VXIODevice_read(XSocketWin32* so, char* data, size_t maxSize) {
+static size_t VXIODevice_read(XSocket* so, char* data, size_t maxSize) {
     if (so == NULL || data == NULL || so->m_socket == INVALID_SOCKET) {
         return 0;
     }
@@ -297,7 +297,7 @@ static size_t VXIODevice_read(XSocketWin32* so, char* data, size_t maxSize) {
 }
 
 // 获取可供读取的字节数
-static size_t VXIODevice_getBytesAvailable(XSocketWin32* so) {
+static size_t VXIODevice_getBytesAvailable(XSocket* so) {
     if (so == NULL || so->m_socket == INVALID_SOCKET) {
         return 0;
     }
@@ -310,13 +310,13 @@ static size_t VXIODevice_getBytesAvailable(XSocketWin32* so) {
 }
 
 // 查询当前待写入设备的数据量
-static size_t VXIODeviceBase_getBytesToWrite(XSocketWin32* so) {
+static size_t VXIODeviceBase_getBytesToWrite(XSocket* so) {
     // 这里假设没有额外的写入缓冲区，直接返回 0
     return 0;
 }
 
 // 是否到达末尾
-static bool VXIODeviceBase_atEnd(XSocketWin32* so) {
+static bool VXIODeviceBase_atEnd(XSocket* so) {
     if (so == NULL || so->m_socket == INVALID_SOCKET) {
         return false;
     }
@@ -326,7 +326,7 @@ static bool VXIODeviceBase_atEnd(XSocketWin32* so) {
 }
 
 // 设置写入缓冲区
-static void VXIODevice_setWriteBuffer(XSocketWin32* so, size_t count) {
+static void VXIODevice_setWriteBuffer(XSocket* so, size_t count) {
     if (so == NULL || so->m_socket == INVALID_SOCKET) {
         return;
     }
@@ -345,7 +345,7 @@ static void VXIODevice_setWriteBuffer(XSocketWin32* so, size_t count) {
 }
 
 // 设置读取缓冲区
-static void VXIODevice_setReadBuffer(XSocketWin32* so, size_t count) {
+static void VXIODevice_setReadBuffer(XSocket* so, size_t count) {
     if (so == NULL || so->m_socket == INVALID_SOCKET) {
         return;
     }
@@ -363,7 +363,7 @@ static void VXIODevice_setReadBuffer(XSocketWin32* so, size_t count) {
     }
 }
 
-void VXIODevice_delete(XSocketWin32* so)
+void VXIODevice_delete(XSocket* so)
 {
     if (!so) return;
 
@@ -393,11 +393,18 @@ void VXIODevice_delete(XSocketWin32* so)
     // 清理Winsock（仅在删除对象时调用一次）
     WSACleanup();
 
-    // 释放对象内存
-    XVtableGetFunc(XSocketBase_class_init(), EXClass_Delete,void(*)(XSocketBase*))(so);
+    {
+        XSocketBase* socket = so;
+        if (socket->m_peerAddress)
+            XString_delete_base(socket->m_peerAddress);
+        if (socket->m_peerName)
+            XString_delete_base(socket->m_peerName);
+        // 释放父对象
+        XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(socket);
+    }
 }
 
-void VXIODevice_poll(XSocketWin32* so)
+void VXIODevice_poll(XSocket* so)
 {
     if (!so || so->m_socket == INVALID_SOCKET || !so->m_netEvents) return;
 
@@ -458,15 +465,13 @@ void VXIODevice_poll(XSocketWin32* so)
 
         // 可以添加对FD_WRITE事件的处理...
     }
-
-    XVtableGetFunc(XSocketBase_class_init(), EXObject_Poll, void(*)(XSocketBase*))(so);
 }
 
-bool VXIODevice_open(XSocketWin32* so, XIODeviceBaseMode mode)
+bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
 {
     if (XIODeviceBase_isOpen((XIODeviceBase*)so))
         return true;
-    if (XSocketBase_state((XSocketBase*)so) != XSOCKET_UNCONNECTED_STATE)
+    if (XSocket_state((XSocketBase*)so) != XSOCKET_UNCONNECTED_STATE)
         return false;
     XSocketBase* base = (XSocketBase*)so;
     // 更新状态
@@ -636,7 +641,7 @@ bool VXIODevice_open(XSocketWin32* so, XIODeviceBaseMode mode)
     return true;
 }
 
-bool VXIODevice_close(XSocketWin32* so)
+bool VXIODevice_close(XSocket* so)
 {
     if (!so || !XIODeviceBase_isOpen((XIODeviceBase*)so))
         return false;
