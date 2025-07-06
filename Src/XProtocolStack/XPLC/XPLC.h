@@ -5,20 +5,19 @@ extern "C" {
 #endif
 #include<stdint.h>
 #include<stdbool.h>
-#include"XClass.h"
+#include"XObject.h"
 #define XPLC_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XPLC))       //XPLC虚函数表大小
 //XPLC虚函数表枚举XCLASS_DEFINE_BEGING(XPLC)
 XCLASS_DEFINE_BEGING(XPLC)
-XCLASS_DEFINE_ENUM(XPLC, AddOutIODevice) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XPLC, AddOutIODevice) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XPLC, AddInIODevice),
 XCLASS_DEFINE_ENUM(XPLC, RemoveOutId),
 XCLASS_DEFINE_ENUM(XPLC, RemoveInId),
 XCLASS_DEFINE_ENUM(XPLC, RemoveIODevice),
-XCLASS_DEFINE_ENUM(XPLC, Poll),
 XCLASS_DEFINE_END(XPLC)
 typedef struct XPLC
 {
-	XClass m_parent;//继承类
+	XObject m_parent;//继承类
 	XMapBase* m_outIO;//输出
 	XMapBase* m_inIO;//输入
 	XQueueBase* m_taskQueue;//任务队列
@@ -33,7 +32,7 @@ bool XPLC_addInIODevice_base(XPLC* plc, int32_t id, XIODeviceBase* io);
 bool XPLC_removeOutId_base(XPLC* plc, int32_t id);
 bool XPLC_removeInId_base(XPLC* plc, int32_t id);
 bool XPLC_removeIODevice_base(XPLC* plc,XIODeviceBase* io);
-void XPLC_poll_base(XPLC* plc);
+#define XPLC_poll_base      XObject_poll_base
 
 //设置扫描周期
 void XPLC_setScanPeriod(XPLC* plc, uint16_t delay_ms);

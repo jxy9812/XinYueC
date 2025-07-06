@@ -58,14 +58,6 @@ void XPLCTask_setState_base(XPLCTask* task, uint16_t state)
 		return;
 	XClassGetVirtualFunc(task, EXPLCTask_SetState, void(*)(XPLCTask*, uint16_t))(task,state);
 }
-
-void XPLCTask_poll_base(XPLCTask* task)
-{
-	if (ISNULL(task, "") || ISNULL(XClassGetVtable(task), ""))
-		return ;
-	XClassGetVirtualFunc(task, EXPLCTask_Poll, void(*)(XPLCTask*))(task);
-}
-
 void XPLCTask_start_base(XPLCTask* task)
 {
 	if (ISNULL(task, "") || ISNULL(XClassGetVtable(task), ""))

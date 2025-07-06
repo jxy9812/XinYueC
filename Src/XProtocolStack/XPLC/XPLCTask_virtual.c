@@ -37,12 +37,13 @@ XVtable* XPLCTask_class_init()
 	void* table[] = {
 		VXPLCTask_addState,VXPLCTask_removeState,
 		VXPLCTask_clearState,VXPLCTask_setState,
-		VXPLCTask_poll,VXPLCTask_start,VXPLCTask_finish
+		VXPLCTask_start,VXPLCTask_finish
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXPLCTask_poll);
 #if SHOWCONTAINERSIZE
 	printf("XPLCTask size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -53,7 +54,7 @@ void XPLCTask_init(XPLCTask* task)
 	if (task == NULL)
 		return;
 	memset(((XClass*)task) + 1, 0, sizeof(XPLCTask) - sizeof(XClass));
-	XClass_init(task);
+	XObject_init(task);
 	XClassGetVtable(task) = XPLCTask_class_init();
 	task->m_taskStateMap = XHashMap_Create(int32_t, TaskStateNode,XHash_murmur3_32,XEquality_int);
 	task->m_runTaskState = INT_MIN;

@@ -12,7 +12,7 @@ void XPLC_init(XPLC* plc)
 {
 	if (plc == NULL)
 		return;
-	XClass_init(plc);
+	XObject_init(plc);
 	XClassGetVtable(plc) = XPLC_class_init();
 	XPLC_setDelayMsCb(plc, XTimerBase_delay_ms);
 	XPLC_setScanPeriod(plc,10);
@@ -51,13 +51,6 @@ bool XPLC_removeIODevice_base(XPLC* plc, XIODeviceBase* io)
 	if (ISNULL(plc, "") || ISNULL(XClassGetVtable(plc), ""))
 		return false;
 	return XClassGetVirtualFunc(plc, EXPLC_RemoveIODevice, bool(*)(XPLC*, XIODeviceBase*))(plc, io);
-}
-
-void XPLC_poll_base(XPLC* plc)
-{
-	if (ISNULL(plc, "") || ISNULL(XClassGetVtable(plc), ""))
-		return ;
-	XClassGetVirtualFunc(plc, EXPLC_Poll, void(*)(XPLC*))(plc);
 }
 
 void XPLC_setScanPeriod(XPLC* plc, uint16_t delay_ms)

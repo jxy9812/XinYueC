@@ -5,15 +5,14 @@ extern "C" {
 #endif
 #include<stdint.h>
 #include<stdbool.h>
-#include"XClass.h"
+#include"XObject.h"
 #define XPLCTASK_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XPLCTask))       //XPLCTask虚函数表大小
 //XPLCTask虚函数表枚举
 XCLASS_DEFINE_BEGING(XPLCTask)
-XCLASS_DEFINE_ENUM(XPLCTask, AddTaskState) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XPLCTask, AddTaskState) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XPLCTask, RemoveTaskState),
 XCLASS_DEFINE_ENUM(XPLCTask, ClearTaskState),
 XCLASS_DEFINE_ENUM(XPLCTask, SetState),
-XCLASS_DEFINE_ENUM(XPLCTask, Poll),
 XCLASS_DEFINE_ENUM(XPLCTask, Start),
 XCLASS_DEFINE_ENUM(XPLCTask, Finish),
 XCLASS_DEFINE_END(XPLCTask)
@@ -31,7 +30,7 @@ typedef enum
 }XPLCTaskState;
 typedef struct XPLCTask
 {
-	XClass m_parent;//继承类
+	XObject m_parent;//继承类
 	int32_t m_lastTaskState;//上一次状态 用来缓存
 	int32_t m_runTaskState;//任务运行中的状态
 	void* m_taskNode;//缓存的任务节点
@@ -51,10 +50,10 @@ bool XPLCTask_addState_base(XPLCTask* task,uint16_t state, XPLCTaskStateFunc fun
 bool XPLCTask_removeState_base(XPLCTask* task, uint16_t state);
 void XPLCTask_clearState_base(XPLCTask* task);
 void XPLCTask_setState_base(XPLCTask* task, uint16_t state);
-void XPLCTask_poll_base(XPLCTask* task);
 void XPLCTask_start_base(XPLCTask* task);//开始任务
 void XPLCTask_finish_base(XPLCTask* task);//结束任务
 #define XPLCTask_delete_base	XClass_delete_base
+#define XPLCTask_poll_base      XObject_poll_base
 #ifdef __cplusplus
 }
 #endif
