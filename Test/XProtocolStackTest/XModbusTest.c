@@ -37,7 +37,8 @@ void XModbusTest()
     //XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);
     XModbusDigitalSwitch* ds = XModbusDigitalSwitch_create(modbus,0x01,8,8);
     //XModbusDigitalSwitch_bindModbus_RTU(ds,modbus);
-    XModbusDigitalSwitch_setScanningPeriod(ds,50);
+    //XDataFrameComm_setCommMode_base(modbus,XDFC_COMM_MODE_FULL_DUPLEX);
+    XModbusDigitalSwitch_setScanningPeriod(ds,999);
 
     {
         XSwitchDeviceModbus* sw0 = XSwitchDeviceModbus_create(ds, 0);
@@ -110,14 +111,4 @@ void XModbusTest()
    // XModbus_enable(modbus);
     XModbus_connect_base(modbus);
    // XModbusTest_threadReceiveCreate(modbus);
-    //开始轮询
-    //while (true)
-    //{
-    //    XModbus_poll_base(modbus);
-    //    XSocketBase_poll_base(socket);
-    //    if(XIODeviceBase_isOpen(socket))
-    //        XTimerGroupBase_global_poll();
-    //   // XModbus_poll(modbus);
-    //   // XModbusTest_SerialPoll(modbus);
-    //}
 }

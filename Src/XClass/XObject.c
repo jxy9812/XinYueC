@@ -7,9 +7,6 @@
 #include "XEventDispatcherThread.h"
 static void VXObject_poll(XObject* object);
 static void VXObject_delete(XObject* object);
-static bool VXObject_addEventFilter(XObject* object, int code, XEventCB cb, void* userData);
-static bool VXObject_removeEventFilter(XObject* object, int code);
-static bool VXObject_moveToThread(XObject* object, XThread* thread);
 XVtable* XObject_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -21,7 +18,7 @@ XVtable* XObject_class_init()
 #endif
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XClass_class_init());
-	void* table[] = { VXObject_poll,VXObject_addEventFilter,VXObject_removeEventFilter ,VXObject_moveToThread };
+	void* table[] = { VXObject_poll };
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXObject_delete);
@@ -65,25 +62,51 @@ void XObject_poll_base(XObject* object)
 	XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*))(object);
 }
 
-bool XObject_addEventFilter_base(XObject* object, int code, XEventCB cb, void* userData)
+bool XObject_addEventFilter(XObject* object, int code, XEventCB cb, void* userData)
 {
-	if (ISNULL(object, "") || ISNULL(XClassGetVtable(object), ""))
+	if (object == NULL)
 		return false;
-	return XClassGetVirtualFunc(object, EXObject_AddEventFilter, bool(*)(XObject*,int, XEventCB,void*))(object,code,cb,userData);
+	XEventDispatcherThread* d = XObject_getEventDispatcher(object);
+	return XEventDispatcherThread_addEventCb_base(d, object, code, cb, userData);
 }
 
-bool XObject_removeEventFilter_base(XObject* object, int code)
+bool XObject_removeEventFilter(XObject* object, int code)
 {
-	if (ISNULL(object, "") || ISNULL(XClassGetVtable(object), ""))
+	if (object == NULL)
 		return false;
-	return XClassGetVirtualFunc(object, EXObject_RemoveEventFilter, bool(*)(XObject*, int))(object, code);
+	XEventDispatcherThread* d = XObject_getEventDispatcher(object);
+	return XEventDispatcherThread_removeEventCb_base(d, object, code);
 }
 
-bool XObject_moveToThread_base(XObject* object, XThread* thread)
+bool XObject_moveToThread(XObject* object, XThread* thread)
 {
-	if (ISNULL(object, "") || ISNULL(XClassGetVtable(object), ""))
-		return false;
-	return XClassGetVirtualFunc(object, EXObject_MoveToThread, bool(*)(XObject*))(object);
+	XEventDispatcherThread* sourceD = object->m_eventDispatcher;//源调度器
+	XEventDispatcherThread* targetD = NULL;//目标调度器
+	if (thread == NULL)
+	{//移动到主线程
+		targetD = XCoreApplication_global()->m_eventDispatcher;
+	}
+	else
+	{
+		targetD = thread->m_eventDispatcher;//目标调度器
+	}
+	//转移事件过滤
+	XMapBase** pvCodeMap = XMapBase_value_base(((XEventDispatcher*)sourceD)->m_filter_cb, &object);
+	if (pvCodeMap != NULL)
+	{//存在事件过滤
+		XMapBase_insert_base(((XEventDispatcher*)targetD)->m_filter_cb, &object, pvCodeMap);
+		XMapBase_remove_base(((XEventDispatcher*)sourceD)->m_filter_cb, &object);
+	}
+	XEventDispatcherThread_removeObject_base(sourceD, object);//源事件调度器删除
+	XEventDispatcherThread_addObject_base(targetD, object);
+	return true;
+}
+
+XThread* XObject_thread(XObject* object)
+{
+	if(object==NULL)
+		return NULL;
+	return XThread_currentThread();
 }
 
 XEventDispatcherThread* XObject_getEventDispatcher(XObject* object)
@@ -101,40 +124,4 @@ void VXObject_delete(XObject* object)
 {
 	XEventDispatcherThread_removeObject_base(object->m_eventDispatcher,object);
 	XMemory_free(object);
-}
-
-bool VXObject_addEventFilter(XObject* object, int code, XEventCB cb, void* userData)
-{
-	XEventDispatcherThread* d = XObject_getEventDispatcher(object);
-	return XEventDispatcherThread_addEventCb_base(d, object, code, cb, userData);
-}
-
-bool VXObject_removeEventFilter(XObject* object, int code)
-{
-	XEventDispatcherThread* d = XObject_getEventDispatcher(object);
-	return XEventDispatcherThread_removeEventCb_base(d, object, code);
-}
-
-bool VXObject_moveToThread(XObject* object, XThread* thread)
-{
-	XEventDispatcherThread* sourceD = object->m_eventDispatcher;//源调度器
-	XEventDispatcherThread* targetD =NULL;//目标调度器
-	if (thread==NULL)
-	{//移动到主线程
-		targetD=XCoreApplication_global()->m_eventDispatcher;
-	}
-	else
-	{
-		targetD = thread->m_eventDispatcher;//目标调度器
-	}
-	//转移事件过滤
-	XMapBase** pvCodeMap =XMapBase_value_base(((XEventDispatcher*)sourceD)->m_filter_cb, &object);
-	if (pvCodeMap != NULL)
-	{//存在事件过滤
-		XMapBase_insert_base(((XEventDispatcher*)targetD)->m_filter_cb, &object,pvCodeMap);
-		XMapBase_remove_base(((XEventDispatcher*)sourceD)->m_filter_cb, &object);
-	}
-	XEventDispatcherThread_removeObject_base(sourceD, object);//源事件调度器删除
-	XEventDispatcherThread_addObject_base(targetD,object);
-	return true;
 }

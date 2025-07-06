@@ -41,7 +41,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	comm->m_periodicSendList = XListSLinked_Create(void*);
 	comm->m_periodicSendList->m_equality = XEquality_ptr;
 
-	XObject_addEventFilter_base(comm, XEVENT_ALL, XDataFrameComm_EvnetHandCb,comm);
+	XObject_addEventFilter(comm, XEVENT_ALL, XDataFrameComm_EvnetHandCb,comm);
 
 	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm,XDFC_FRAME_END_TIMEOUT);

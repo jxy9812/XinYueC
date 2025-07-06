@@ -56,7 +56,7 @@ void XModbus_init(XModbus* modbus, XIODeviceBase* io)
 	}
 	XClassGetVtable(modbus) = XModbus_class_init();
 
-	XObject_addEventFilter_base(modbus, XEVENT_ALL, XModbus_EvnetHandCb, modbus);
+	XObject_addEventFilter(modbus, XEVENT_ALL, XModbus_EvnetHandCb, modbus);
 
 	XDataFrameComm_funcCodeMap_create(modbus,sizeof(XModbusRecvMatch),XEquality_uint16_t);
 	modbus->m_address = 1;

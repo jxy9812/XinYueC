@@ -201,8 +201,8 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
     if (list == NULL)
         return;
 
-    if (group->m_mutex)
-        XMutex_lock_base(group->m_mutex);
+   /* if (group->m_mutex)
+        XMutex_lock_base(group->m_mutex);*/
 
     for (XListSLinked_iterator* it = XContainerDataPtr(list); it != NULL; it = ((XListSNode*)it)->next)
     {
@@ -232,8 +232,8 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
     // 清空当前槽的链表
     XListSLinked_clear_base(list);
 
-    if (group->m_mutex)
-        XMutex_unlock_base(group->m_mutex);
+  /*  if (group->m_mutex)
+        XMutex_unlock_base(group->m_mutex);*/
 }
 
 void VXTimerGroupBase_poll(XTimerGroupWheel* group)
