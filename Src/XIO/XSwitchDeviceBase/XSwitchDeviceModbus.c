@@ -52,7 +52,7 @@ void XSwitchDeviceModbus_init(XSwitchDeviceModbus* sw)
 	if (sw == NULL)
 		return;
 	memset(((XSwitchDeviceBase*)sw) + 1, 0, sizeof(XSwitchDeviceModbus) - sizeof(XSwitchDeviceBase));
-	XSwitchDeviceBase_init(sw, NULL);
+	XSwitchDeviceBase_init(sw);
 	XClassGetVtable(sw) = XSwitchDeviceModbus_class_init();
 }
 
@@ -123,10 +123,7 @@ void VXIODevice_poll(XSwitchDeviceModbus* sw)
 			base->m_state = state;
 			if (base->m_stateChangeCallback)
 			{
-				if (XIODeviceBase_CallbackQueue(sw))
-					XIODeviceBase_callbackQueue_push(sw, base->m_stateChangeCallback);
-				else
-					base->m_stateChangeCallback(sw);
+				XObject_postEvent(sw, XEventFunc_create(sw, base->m_stateChangeCallback, sw));
 			}
 		}
 	}

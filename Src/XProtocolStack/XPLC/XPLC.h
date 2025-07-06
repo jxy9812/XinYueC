@@ -22,7 +22,6 @@ typedef struct XPLC
 	XMapBase* m_outIO;//输出
 	XMapBase* m_inIO;//输入
 	XQueueBase* m_taskQueue;//任务队列
-	XIOCallbackQueue* m_callbackQueue;//回调队列 统一处理io设备的回调函数
 	void(*m_delay_ms_cb)(size_t delay_ms);//延迟毫秒的回调函数
 	uint16_t m_delay_ms;//延迟毫秒数/扫描周期
 }XPLC;
@@ -36,8 +35,6 @@ bool XPLC_removeInId_base(XPLC* plc, int32_t id);
 bool XPLC_removeIODevice_base(XPLC* plc,XIODeviceBase* io);
 void XPLC_poll_base(XPLC* plc);
 
-//设置回调队列
-void XPLC_setCallbackQueue(XPLC* plc, XIOCallbackQueue* queue);
 //设置扫描周期
 void XPLC_setScanPeriod(XPLC* plc, uint16_t delay_ms);
 int32_t XPLC_getScanPeriod(XPLC* plc);

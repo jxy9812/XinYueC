@@ -8,7 +8,7 @@ static bool VXStepMotor_isOpen(XStepMotor* motor);
 static void VXStepMotor_open(XStepMotor* motor);
 static bool VXStepMotor_isRunning(XStepMotor* motor);
 static void VXStepMotor_close(XStepMotor* motor);
-static void VXStepMotor_poll(XStepMotor* motor);
+static void VXStepMotor_IRQHandler(XStepMotor* motor);
 static void VXStepMotor_setDevice(XStepMotor* motor, void* device);
 static void VXStepMotor_setENA(XStepMotor* motor, bool isEnabled);
 static void VXStepMotor_setDIR(XStepMotor* motor, bool isForward);
@@ -33,7 +33,7 @@ XVtable* XStepMotor_class_init()
 	void* table[] = {
 		VXStepMotor_isOpen,
 		VXStepMotor_open,VXStepMotor_isRunning,
-		VXStepMotor_close,VXStepMotor_poll,
+		VXStepMotor_close,VXStepMotor_IRQHandler,
 		VXStepMotor_setDevice,VXStepMotor_setENA,
 		VXStepMotor_setDIR,VXStepMotor_start,
 		VXStepMotor_stop,VXStepMotor_setStepsPerRevolution,
@@ -44,6 +44,7 @@ XVtable* XStepMotor_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXStepMotor_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, NULL);
 #if SHOWCONTAINERSIZE
 	printf("XStepMotor size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -56,12 +57,14 @@ void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBas
 		return NULL;
 	//开始初始化
 	memset(motor, 0, sizeof(XStepMotor));
+	XObject_init(motor);
 	XClassGetVtable(motor) = XStepMotor_class_init();
 	motor->m_ENA = ENA;
 	motor->m_DIR = DIR;
 	motor->m_PUL = PUL;
 	XStepMotor_setDevice_base(motor, motor);
 	XStepMotor_setControlMode_base(motor, XSM_SPEED_CONTROL);
+	XObject_addEventFilter(motor, XEVENT_FUNC_RUN, XEventFuncRunCB, NULL);
 }
 
 void VXStepMotor_delete(XStepMotor* motor)
@@ -115,7 +118,7 @@ void VXStepMotor_close(XStepMotor* motor)
 		XPWMDeviceBase_close_base(motor->m_PUL);
 }
 
-void VXStepMotor_poll(XStepMotor* motor)
+void VXStepMotor_IRQHandler(XStepMotor* motor)
 {
 	if (motor->m_PUL == NULL || (motor->m_ENA != NULL && !XSwitchDeviceBase_getState_base(motor->m_ENA)))
 		return;//pul不存在或使能没开的时候不计算距离
@@ -144,17 +147,17 @@ void VXStepMotor_setDevice(XStepMotor* motor, void* device)
 	if (motor->m_PUL)
 	{
 		XIODeviceBase_setDevice_base(motor->m_PUL, device);
-		XIODeviceBase_setCallbackQueue(motor->m_PUL, XIODeviceBase_CallbackQueue(motor));
+		//XIODeviceBase_setCallbackQueue(motor->m_PUL, XIODeviceBase_CallbackQueue(motor));
 	}
 	if (motor->m_ENA)
 	{
 		XIODeviceBase_setDevice_base(motor->m_ENA, device);
-		XIODeviceBase_setCallbackQueue(motor->m_ENA, XIODeviceBase_CallbackQueue(motor));
+		//XIODeviceBase_setCallbackQueue(motor->m_ENA, XIODeviceBase_CallbackQueue(motor));
 	}
 	if (motor->m_DIR)
 	{
 		XIODeviceBase_setDevice_base(motor->m_DIR, device);
-		XIODeviceBase_setCallbackQueue(motor->m_DIR, XIODeviceBase_CallbackQueue(motor));
+		//XIODeviceBase_setCallbackQueue(motor->m_DIR, XIODeviceBase_CallbackQueue(motor));
 	}
 }
 
@@ -186,10 +189,7 @@ void VXStepMotor_stop(XStepMotor* motor)
 			//motor->m_currentSpeed = 0;
 			if (motor->m_speedChangeCb)
 			{
-				if (XIODeviceBase_CallbackQueue(motor))
-					XIODeviceBase_callbackQueue_push(motor, motor->m_speedChangeCb);
-				else
-					motor->m_speedChangeCb(motor);
+				XObject_postEvent(motor,XEventFunc_create(motor, motor->m_speedChangeCb,motor));
 			}
 		}
 	}
@@ -214,10 +214,7 @@ void VXStepMotor_setSpeed(XStepMotor* motor, double speed)
 			XPWMDeviceBase_setDutyCycle_base(motor->m_PUL, motor->m_PUL->m_dutyCycle);
 		if (VXStepMotor_isRunning(motor)&&motor->m_speedChangeCb!=NULL)
 		{
-			if (XIODeviceBase_CallbackQueue(motor))
-				XIODeviceBase_callbackQueue_push(motor, motor->m_speedChangeCb);
-			else
-				motor->m_speedChangeCb(motor);
+			XObject_postEvent(motor, XEventFunc_create(motor, motor->m_speedChangeCb, motor));
 		}
 	}
 }

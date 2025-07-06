@@ -4,17 +4,17 @@
 extern "C" {
 #endif
 #define  STM32F407_168M_StepMotor_TIM_1MHz_Prescaler (84-1)//STM32F407 主频168M步进电机定时器在1Mz的预分频系数
-#include"XClass.h"
+#include"XObject.h"
 #include"XPWMDeviceBase.h"
 #include"XSwitchDeviceBase.h"
 #define XSTEPMOTOR_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XStepMotor))       //XStepMotor虚函数表大小
 //XStepMotor虚函数表枚举
 XCLASS_DEFINE_BEGING(XStepMotor)
-XCLASS_DEFINE_ENUM(XStepMotor, IsOpen) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XStepMotor, IsOpen) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XStepMotor, Open),
 XCLASS_DEFINE_ENUM(XStepMotor, IsRunning),
 XCLASS_DEFINE_ENUM(XStepMotor, Close),
-XCLASS_DEFINE_ENUM(XStepMotor, Poll),
+XCLASS_DEFINE_ENUM(XStepMotor, IRQHandler),
 XCLASS_DEFINE_ENUM(XStepMotor, SetDevice),
 XCLASS_DEFINE_ENUM(XStepMotor, SetENA),
 XCLASS_DEFINE_ENUM(XStepMotor, SetDIR),
@@ -37,7 +37,7 @@ typedef enum
 typedef struct XStepMotor XStepMotor;
 typedef struct XStepMotor
 {
-	XClass m_parent;//继承类
+	XObject m_parent;//继承类
 	uint16_t m_currentSpeed;//当前转速
 	uint16_t m_pulsesPerRevolution;//每转脉冲数
 	uint64_t m_currentPulses;//当前脉冲数 
@@ -102,10 +102,10 @@ bool XStepMotor_isOpen_base(XStepMotor* motor);
 
 bool XStepMotor_isRunning_base(XStepMotor* motor);
 
-//轮询扫描状态//定时器中断的时候调用，一次脉冲后需要调用一次，距离模式需要
-void XStepMotor_poll(XStepMotor* motor);
+//void XStepMotor_poll(XStepMotor* motor);
 
-//void XStepMotor_IRQHandler(XStepMotor* motor);
+//轮询扫描状态//定时器中断的时候调用，一次脉冲后需要调用一次，距离模式需要
+void XStepMotor_IRQHandler(XStepMotor* motor);
 
 void XStepMotor_close_base(XStepMotor* motor);
 

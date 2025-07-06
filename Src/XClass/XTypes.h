@@ -37,7 +37,6 @@ typedef struct XMutex XMutex;
 typedef struct XSerialPortBase XSerialPortBase;
 typedef XMapBase XFuncCodeMap;
 
-typedef XCircularQueueAtomic XIOCallbackQueue;
 #ifdef __cplusplus
 }
 #endif

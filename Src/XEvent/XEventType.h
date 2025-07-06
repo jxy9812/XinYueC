@@ -18,6 +18,8 @@ typedef enum
     XEVENT_SOCKET_DISCONNECTED= 1002,
     XEVENT_SOCKET_DATA_READY =  1003,
     XEVENT_SOCKET_ERROR=        1004,
+    //函数运行
+    XEVENT_FUNC_RUN=1100
 }XEventType;
 
 

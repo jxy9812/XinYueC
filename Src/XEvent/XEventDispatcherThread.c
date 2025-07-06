@@ -5,6 +5,7 @@
 #include"XHash.h"
 #include"XObject.h"
 #include"XHashSet.h"
+#include"XTimerBase.h"
 #include"XCircularQueueAtomic.h"
 typedef struct XEventCallback
 {
@@ -195,7 +196,13 @@ bool VXEventDispatcher_postEvent(XEventDispatcherThread* dispatcher, XEventMin* 
 {
 	if (XEvent_Timestamp(event) == 0)
 		XEvent_Timestamp(event) = XTimerBase_getCurrentTime();
-	return XQueueBase_push_base(((XEventDispatcher*)dispatcher)->m_queue, &event);
+	if (!XQueueBase_push_base(((XEventDispatcher*)dispatcher)->m_queue, &event))
+	{
+		printf("线程事件调度器事件队列需要扩容,添加事件失败\n");
+		XMemory_free(event);
+		return false;
+	}
+	return true;
 }
 
 bool VXEventDispatcher_addEventCb(XEventDispatcherThread* dispatcher, XObject* receiver, int code, XEventCB cb,void* userData)

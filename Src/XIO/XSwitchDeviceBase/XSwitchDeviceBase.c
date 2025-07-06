@@ -3,28 +3,25 @@
 #include<string.h>
 #define Parent(ptr) ((XIODeviceBase*)(ptr))
 #define Port(ptr)  ((XSwitchDevice_PortFunc*)(ptr->m_parent.m_port))
-XSwitchDeviceBase* XSwitchDeviceBase_create(XVtable* vtable)
+XSwitchDeviceBase* XSwitchDeviceBase_create()
 {
 	XSwitchDeviceBase* sw = XMemory_malloc(sizeof(XSwitchDeviceBase));
 	//开始初始化
 	memset(sw, 0, sizeof(XSwitchDeviceBase));
 	if (sw == NULL)
 		return NULL;
-	XSwitchDeviceBase_init(sw, vtable);
+	XSwitchDeviceBase_init(sw);
 	return sw;
 }
 
-void XSwitchDeviceBase_init(XSwitchDeviceBase* sw, XVtable* vtable)
+void XSwitchDeviceBase_init(XSwitchDeviceBase* sw)
 {
 	if (sw == NULL)
 		return ;
 	memset(((XIODeviceBase*)sw) + 1, 0, sizeof(XSwitchDeviceBase) - sizeof(XIODeviceBase));
-	XIODeviceBase_init(sw, vtable);
+	XIODeviceBase_init(sw);
 	XSwitchDeviceBase_class_init();
-	if(vtable==NULL)
-		XClassGetVtable(sw) = XSwitchDeviceBase_class_init();
-	else 
-		XClassGetVtable(sw) = vtable;
+	XClassGetVtable(sw) = XSwitchDeviceBase_class_init();
 	sw->m_triggerMode = XSwitchDeviceBase_Trigger_High;
 }
 

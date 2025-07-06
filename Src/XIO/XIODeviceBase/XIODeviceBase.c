@@ -1,18 +1,17 @@
 ﻿#include "XIODeviceBase.h"
 #include "XMemory.h"
-#include "XIOCallbackQueue.h"
 #include<string.h>
-XIODeviceBase* XIODeviceBase_create(XVtable* vtable)
+XIODeviceBase* XIODeviceBase_create()
 {
 	/*if (port == NULL)
 		return NULL;*/
 	XIODeviceBase* io= XMemory_malloc(sizeof(XIODeviceBase));
 	if (io == NULL)
 		return io;
-	XIODeviceBase_init(io, vtable);
+	XIODeviceBase_init(io);
 	return io;
 }
-void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable)
+void XIODeviceBase_init(XIODeviceBase* io)
 {
 	if (ISNULL(io, ""))
 		return;
@@ -20,10 +19,8 @@ void XIODeviceBase_init(XIODeviceBase* io, XVtable* vtable)
 	memset(io, 0, sizeof(XIODeviceBase));
 	XObject_init(io);
 	XIODeviceBase_class_init();
-	if (vtable == NULL)
-		XClassGetVtable(io) = XIODeviceBase_class_init();
-	else
-		XClassGetVtable(io) = vtable;
+	XClassGetVtable(io) = XIODeviceBase_class_init();
+	XObject_addEventFilter(io, XEVENT_FUNC_RUN, XEventFuncRunCB,NULL);
 }
 void XIODeviceBase_setWriteBuffer_base(XIODeviceBase* io, size_t count)
 {
@@ -104,16 +101,4 @@ size_t XIODeviceBase_writeFull_base(XIODeviceBase* io)
 	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return 0;
 	return XClassGetVirtualFunc(io, EXIODeviceBase_WriteFull, bool(*)(XIODeviceBase*))(io);
-}
-
-void XIODeviceBase_setCallbackQueue(XIODeviceBase* io, XIOCallbackQueue* queue)
-{
-	if (io)
-		io->m_callbackQueue = queue;
-}
-
-void XIODeviceBase_callbackQueue_push(XIODeviceBase* io, void(*callback)(XIODeviceBase* io))
-{
-	if(io)
-		XIOCallbackQueue_push(io->m_callbackQueue, io, callback);
 }

@@ -10,8 +10,6 @@ extern "C" {
 XCLASS_DEFINE_BEGING(XObject)
 XCLASS_DEFINE_ENUM(XObject, Poll) = XCLASS_VTABLE_GET_SIZE(XClass),
 //XCLASS_DEFINE_ENUM(XObject, AddEventFilter),
-//XCLASS_DEFINE_ENUM(XObject, RemoveEventFilter),
-//XCLASS_DEFINE_ENUM(XObject, MoveToThread),
 XCLASS_DEFINE_END(XObject)
 typedef struct XObject
 {
@@ -25,6 +23,8 @@ void XObject_poll_base(XObject* object);
 bool XObject_addEventFilter(XObject* object, int code, XEventCB cb,void* userData);
 bool XObject_removeEventFilter(XObject* object, int code);
 bool XObject_moveToThread(XObject* object, XThread* thread);
+//给Object投递事件
+bool XObject_postEvent(XObject* object, XEventMin* event);
 XThread* XObject_thread(XObject* object);
 XEventDispatcherThread* XObject_getEventDispatcher(XObject* object);
 #define XObject_delete_base    XClass_delete_base

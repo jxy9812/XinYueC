@@ -102,6 +102,13 @@ bool XObject_moveToThread(XObject* object, XThread* thread)
 	return true;
 }
 
+bool XObject_postEvent(XObject* object, XEventMin* event)
+{
+	if (object == NULL || event == NULL)
+		return false;
+	return XEventDispatcherThread_postEvent_base(object->m_eventDispatcher,event);
+}
+
 XThread* XObject_thread(XObject* object)
 {
 	if(object==NULL)

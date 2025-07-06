@@ -2,7 +2,6 @@
 #include"XHashMap.h"
 #include"XQueueBase.h"
 #include"XIODeviceBase.h"
-#include"XIOCallbackQueue.h"
 #include"XPLCTask.h"
 static bool VXPLC_addOutIODevice(XPLC* plc, int32_t id, XIODeviceBase* io);
 static bool VXPLC_addInIODevice(XPLC* plc, int32_t id, XIODeviceBase* io);
@@ -45,8 +44,8 @@ bool VXPLC_addOutIODevice(XPLC* plc, int32_t id, XIODeviceBase* io)
 	if (findIo != NULL)
 		XIODeviceBase_delete_base(findIo);
 	XMapBase_insert_base(plc->m_outIO,&id,&io);
-	if (plc->m_callbackQueue)
-		XIODeviceBase_setCallbackQueue(io, plc->m_callbackQueue);
+	/*if (plc->m_callbackQueue)
+		XIODeviceBase_setCallbackQueue(io, plc->m_callbackQueue);*/
 	return true;
 }
 
@@ -58,8 +57,8 @@ bool VXPLC_addInIODevice(XPLC* plc, int32_t id, XIODeviceBase* io)
 	if (findIo != NULL)
 		XIODeviceBase_delete_base(findIo);
 	XMapBase_insert_base(plc->m_inIO, &id, &io);
-	if (plc->m_callbackQueue)
-		XIODeviceBase_setCallbackQueue(io, plc->m_callbackQueue);
+	/*if (plc->m_callbackQueue)
+		XIODeviceBase_setCallbackQueue(io, plc->m_callbackQueue);*/
 	return true;
 }
 
@@ -135,8 +134,6 @@ void VXPLC_poll(XPLC* plc)
 					XIODeviceBase_poll_base(XPair_Second(node, XIODeviceBase*));
 				}
 				XPLCTask_poll_base(task);
-				if (plc->m_callbackQueue)//统一处理回调
-					XIOCallbackQueue_poll(plc->m_callbackQueue);
 				if (plc->m_delay_ms_cb != NULL && plc->m_delay_ms != 0)
 					plc->m_delay_ms_cb(plc->m_delay_ms);
 			}

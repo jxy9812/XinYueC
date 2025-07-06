@@ -1,7 +1,7 @@
 ﻿#include"XPWMDeviceBase.h"
 #include"XMemory.h"
 #include<string.h>
-XPWMDeviceBase* XPWMDeviceBase_create(XVtable* vtable)
+XPWMDeviceBase* XPWMDeviceBase_create()
 {
 	/*if (port == NULL)
 		return NULL;*/
@@ -9,23 +9,20 @@ XPWMDeviceBase* XPWMDeviceBase_create(XVtable* vtable)
 	if (pwm == NULL)
 		return pwm;
 	
-	XPWMDeviceBase_init(pwm, vtable);
+	XPWMDeviceBase_init(pwm);
 	return pwm;
 }
 
-void XPWMDeviceBase_init(XPWMDeviceBase* pwm, XVtable* vtable)
+void XPWMDeviceBase_init(XPWMDeviceBase* pwm)
 {
 	if (pwm == NULL )
 		return ;
 	//初始化父类以外的数据
 	memset(((XIODeviceBase*)pwm)+1, 0, sizeof(XPWMDeviceBase) - sizeof(XIODeviceBase));
-	XIODeviceBase_init(pwm, vtable);
+	XIODeviceBase_init(pwm);
 	//开始初始化
 	XPWMDeviceBase_class_init();
-	if (vtable == NULL)
-		XClassGetVtable(pwm) = XPWMDeviceBase_class_init();
-	else
-		XClassGetVtable(pwm) = vtable;
+	XClassGetVtable(pwm) = XPWMDeviceBase_class_init();
 }
 
 void XPWMDeviceBase_setRunChangeCallback(XPWMDeviceBase* sw, void(*callback)(XPWMDeviceBase* pwm))

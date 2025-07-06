@@ -130,12 +130,11 @@ bool XStepMotor_isRunning_base(XStepMotor* motor)
 		return false;
 	return XClassGetVirtualFunc(motor, EXStepMotor_IsRunning, bool(*)(XStepMotor*))(motor);
 }
-
-void XStepMotor_poll(XStepMotor* motor)
+void XStepMotor_IRQHandler(XStepMotor* motor)
 {
 	if (ISNULL(motor, "") || ISNULL(XClassGetVtable(motor), ""))
 		return;
-	XClassGetVirtualFunc(motor, EXStepMotor_Poll, void(*)(XStepMotor*))(motor);
+	XClassGetVirtualFunc(motor, EXStepMotor_IRQHandler, void(*)(XStepMotor*))(motor);
 }
 
 //void XStepMotor_IRQHandler(XStepMotor* motor)

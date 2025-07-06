@@ -60,12 +60,6 @@ void XPLC_poll_base(XPLC* plc)
 	XClassGetVirtualFunc(plc, EXPLC_Poll, void(*)(XPLC*))(plc);
 }
 
-void XPLC_setCallbackQueue(XPLC* plc, XIOCallbackQueue* queue)
-{
-	if (plc)
-		plc->m_callbackQueue = queue;
-}
-
 void XPLC_setScanPeriod(XPLC* plc, uint16_t delay_ms)
 {
 	if (plc)

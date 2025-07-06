@@ -46,3 +46,19 @@ XEvent* XEvent_create(void* eventData, size_t eventDataSize)
 	return event;
 }
 
+XEventFunc* XEventFunc_create(XObject* receiver, void(*func)(void*), void* args)
+{
+	XEventFunc* event = XMemory_malloc(sizeof(XEventFunc));
+	XEventMin_init(event, receiver, XEVENT_FUNC_RUN, 0);
+	//XEvent_UserData(event)=userData;
+	event->func = func;
+	event->args = args;
+	return event;
+}
+
+void XEventFuncRunCB(XEventFunc* event)
+{
+	if (event->func)
+		event->func(event->args);
+}
+

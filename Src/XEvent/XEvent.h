@@ -42,7 +42,16 @@ XEvent* XEvent_create(void* eventData,size_t eventDataSize);
 #define XEvent_Receiver(event)                  (((XEventMin*)event)->receiver)
 #define XEvent_UserData(event)                  (((XEventMin*)event)->userData)
 
-
+//函数运行事件
+typedef struct XEventFunc
+{
+    XEventMin event;
+    void (*func)(void* userData);//需要执行的函数
+    void* args;//参数
+}XEventFunc;
+XEventFunc* XEventFunc_create(XObject* receiver, void (*func)(void*),void* args);
+//函数执行回调
+void XEventFuncRunCB(XEventFunc* event);//XEVENT_FUNC_RUN
 #ifdef __cplusplus
 }
 #endif	

@@ -28,9 +28,9 @@ typedef struct XSwitchDeviceBase
 //初始化类
 XVtable* XSwitchDeviceBase_class_init();
 //开关设备
-XSwitchDeviceBase* XSwitchDeviceBase_create(XVtable* vtable);
+XSwitchDeviceBase* XSwitchDeviceBase_create();
 //初始化
-void XSwitchDeviceBase_init(XSwitchDeviceBase* sw, XVtable* vtable);
+void XSwitchDeviceBase_init(XSwitchDeviceBase* sw);
 //设置状态改变回调函数
 void XSwitchDeviceBase_setStateChangeCallback(XSwitchDeviceBase* sw, void (*callback)(XSwitchDeviceBase* io));
 //设置触发方式 设备开的状态时候的电平

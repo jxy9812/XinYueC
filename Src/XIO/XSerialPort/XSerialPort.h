@@ -7,7 +7,6 @@ extern "C" {
 #include<stdbool.h>
 #include"XIODeviceBase.h"
 //XSerialPortDevice虚函数表
-extern XVtable* XSerialPortVtable;
 #define XSERIALPORT_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODeviceBase))       //XSerialPortDevice容器虚函数表大小
 // 跨平台停止位枚举
 typedef enum
@@ -55,7 +54,7 @@ typedef struct XSerialPortBase
     XSerialPortParity m_parity;//校验
     XSerialPortFlowControl m_flowControl;//流控制
 }XSerialPortBase;//串口
-void XSerialPortBase_init(XSerialPortBase* serial, XVtable* vtable);
+void XSerialPortBase_init(XSerialPortBase* serial);
 
 /*以下是API*/
 bool XSerialPort_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPortParity parity);
