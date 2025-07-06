@@ -42,6 +42,8 @@ extern "C" {
 	void XListSLinkedAtomicSortTest();
 	void XListSLinkedAtomicIterator();
 	void XHashSetTest();
+
+	void XVariantList();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

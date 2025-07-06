@@ -5,20 +5,13 @@
 #include "XEventDispatcher.h"
 #include<string.h>
 
-//XSocketBase * XSocketBase_create()
-//{
-//    XSocketBase* socket = XMemory_malloc(sizeof(XSocketBase));
-//    XSocketBase_init(socket);
-//    return socket;
-//}
-
 void XSocketBase_init(XSocketBase* socket)
 {
     if (socket == NULL)
         return;
     memset(((XIODeviceBase*)socket) + 1, 0, sizeof(XSocketBase) - sizeof(XIODeviceBase));
     XIODeviceBase_init(socket);
-    //XClassGetVtable(socket) = XSocketBase_class_init();
+   
     socket->m_peerName = XString_create(NULL);
     socket->m_peerAddress = XString_create(NULL);
 }
