@@ -30,6 +30,8 @@ void* XPair_first(XPair* this_pair);
 //获取第二个数据
 #define XPair_Second(this_pair,secondType) (*(secondType*)XPair_second(this_pair))
 void* XPair_second(XPair* this_pair);
+//
+size_t XPair_getSize(XPair* this_pair);
 //释放
 void XPair_delete(XPair* this_pair);
 #ifdef __cplusplus

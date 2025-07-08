@@ -28,17 +28,12 @@ typedef enum
 	XVariantType_Float,
 	XVariantType_Double,
 	/*自定义的数据结构*/
-	XVariantType_XPair,
-	XVariantType_XPoint,
-	/* 类*/
-	XVariantType_XVector,
-	XVariantType_XString,
-	XVariantType_XByteArray,
-	XVariantType_XListBase,
-	XVariantType_XMapBase,
-	XVariantType_XQueueBase,
-	XVariantType_XSetBase,
-	XVariantType_XStack,
+	XVariantType_Pair,
+	XVariantType_Point,
+	XVariantType_ByteArray,
+	XVariantType_String,
+
+	XVariantType_User,//用户定义类型
 }XVariantType;
 
 //普通创建
@@ -63,17 +58,12 @@ XVariant* XVariant_create_ptr(void* val);
 XVariant* XVariant_create_float(float val);
 XVariant* XVariant_create_double(double val);
 /*				自定义数据										*/		
-XVariant* XVariant_create_XPair(XPair* val);
+XVariant* XVariant_create_XPair(const XPair* val);
 XVariant* XVariant_create_XPoint(XPoint val);
-/*				类构造     效率考虑是转移所有权					*/
-XVariant* XVariant_create_XVector(XVector* val);
-XVariant* XVariant_create_XString(XString* val);
-XVariant* XVariant_create_XByteArray(XByteArray* val);
-XVariant* XVariant_create_XListBase(XListBase* val);
-XVariant* XVariant_create_XMapBase(XMapBase* val);
-XVariant* XVariant_create_XQueueBase(XQueueBase* val);
-XVariant* XVariant_create_XSetBase(XSetBase* val);
-XVariant* XVariant_create_XStack(XStack* val);
+XVariant* XVariant_create_XByteArray(const XByteArray* array);
+XVariant* XVariant_create_byteArray(const void* data, size_t size);
+XVariant* XVariant_create_XString(XString* string);
+XVariant* XVariant_create_str(const char* str);
 
 uint8_t  XVariant_toUint8 (XVariant* var);
 uint16_t XVariant_toUint16(XVariant* var);
@@ -91,15 +81,41 @@ size_t XVariant_toSize_t(XVariant* var);
 void* XVariant_toPtr(XVariant* var);
 float XVariant_toFloat(XVariant* var);
 double XVariant_toDouble(XVariant* var);
-
 XPair* XVariant_toXPair(XVariant* var);
 XPoint XVariant_toXPoint(XVariant* var);
+XByteArray* XVariant_toByteArray(XVariant* var);
+XString* XVariant_toString(XVariant* var);
 
+void XVariant_setValue(XVariant* var, const XVariant* newVar);
+void XVariant_setValue_uint8 (XVariant* var, uint8_t val);
+void XVariant_setValue_uint16(XVariant* var, uint16_t val);
+void XVariant_setValue_uint32(XVariant* var, uint32_t val);
+void XVariant_setValue_uint64(XVariant* var, uint64_t val);
+void XVariant_setValue_int8 (XVariant* var, int8_t val);
+void XVariant_setValue_int16(XVariant* var, int16_t val);
+void XVariant_setValue_int32(XVariant* var, int32_t val);
+void XVariant_setValue_int64(XVariant* var, int64_t val);
+void XVariant_setValue_bool (XVariant* var, bool val);
+void XVariant_setValue_char	(XVariant* var, char val);
+void XVariant_setValue_uchar(XVariant* var, unsigned char val);
+void XVariant_setValue_int(XVariant* var, int val);
+void XVariant_setValue_size_t(XVariant* var, size_t val);
+void XVariant_setValue_ptr(XVariant* var, void* val);
+void XVariant_setValue_float(XVariant* var, float val);
+void XVariant_setValue_double(XVariant* var, double val);
+void XVariant_setValue_XPair(XVariant* var, const XPair* pair);
+void XVariant_setValue_XPoint(XVariant* var, XPoint val);
+void XVariant_setValue_XByteArray(XVariant* var,const XByteArray* array);
+void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size);
+void XVariant_setValue_XString(XVariant* var, const XString* string);
+void XVariant_setValue_str(XVariant* var, const char* str);
 
 void XVariant_delete(XVariant* var);
+void XVariant_clear(XVariant* var);
+void XVariant_swap(XVariant* var,XVariant* other);
 int  XVariant_type(XVariant* var);
 void* XVariant_data(XVariant* var);
-#define XVariant_Data(Var,Type)   (*((Type*)XVariant_data(Var)))
+#define XVariant_Value(Var,Type)   (*((Type*)XVariant_data(Var)))
 #ifdef __cplusplus
 }
 #endif
