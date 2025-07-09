@@ -5,7 +5,7 @@
 #include"XTimerBase.h"
 #include"cJSON.h"
 #include"XString.h"
-#include"XStringVector.h"
+#include"XStringList.h"
 #include"XTimerGroupBase.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,18 +57,18 @@ static void XFuncCodeCb0x30(uint8_t code, void* obj, void* data, void* userData)
 		XString* str= cJSON_GetStringValue_XString(cuttingMotorSpeedDocking);
 		if (str != NULL)
 		{
-			XStringVector* strlist = XString_split(str, "-");
+			XStringList* strlist = XString_split(str, "-");
 			if (strlist != NULL )
 			{
 				if (XContainerSize(strlist) == 3)
 				{
 					printf("%lf %lf %lf\n"
-						, XString_toDouble(XStringVector_at_base(strlist, 0))
-						, XString_toDouble(XStringVector_at_base(strlist, 1))
-						, XString_toDouble(XStringVector_at_base(strlist, 2))
+						, XString_toDouble(XStringList_at_base(strlist, 0))
+						, XString_toDouble(XStringList_at_base(strlist, 1))
+						, XString_toDouble(XStringList_at_base(strlist, 2))
 					);
 				}
-				XStringVector_delete_base(strlist);
+				XStringList_delete_base(strlist);
 			}
 			XString_delete_base(str);
 		}

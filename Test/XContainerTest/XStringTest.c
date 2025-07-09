@@ -1,7 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XString.h"
-#include"XStringVector.h"
+#include"XStringList.h"
 static void XFor_each_XString(void* LPVal, void* args)
 {
 	XString* string = LPVal;
@@ -18,11 +18,11 @@ void XStringTest()
 		XString* str = XString_create("你好-世界-？？？？");
 		if (str)
 		{
-			XStringVector* v = XString_split(str, "-");
+			XStringList* v = XString_split(str, "-");
 			if (v)
 			{
-				XStringVector_iterator_for_each(v, XFor_each_XString, NULL);
-				XStringVector_delete_base(v);
+				XStringList_iterator_for_each(v, XFor_each_XString, NULL);
+				XStringList_delete_base(v);
 			}
 			XString_delete_base(str);
 		}

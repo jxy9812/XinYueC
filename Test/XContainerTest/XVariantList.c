@@ -19,6 +19,11 @@ void XVariantList()
 			printf("%s\n",XString_c_str(str));
 			XString_delete_base(str);
 		}
+
+		XVariant_setValue_str(var,"1000");
+		printf("%d\n", XVariant_toSize_t(var));
+
+
 		XVariant_delete(var);
 	}
 }

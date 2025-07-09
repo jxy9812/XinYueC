@@ -1,6 +1,6 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
-#include"XStringVector.h"
+#include"XStringList.h"
 #include"XFunctionCallback.h"
 #include"XEquality.h"
 #include"XLess.h"
@@ -10,23 +10,23 @@ static void XFor_each_XString(void* LPVal, void* args)
 	//printf("测试\n");
 	printf("%s \n",XString_c_str(string) );
 }
-void XStringVectorTest()
+void XStringListTest()
 {
 #if XVector_ON
 	//while (true)
 	{
-		XStringVector* stringList = XStringVector_create();
-		XStringVector_push_back_c_str(stringList, "你好");
-		XStringVector_push_back_c_str(stringList, "非常好");
-		XStringVector_push_back_c_str(stringList, "世界");
-		XString* str = XStringVector_join(stringList,"-");
+		XStringList* stringList = XStringList_create();
+		XStringList_push_back_c_str(stringList, "你好");
+		XStringList_push_back_c_str(stringList, "非常好");
+		XStringList_push_back_c_str(stringList, "世界");
+		XString* str = XStringList_join(stringList,"-");
 		if (str)
 		{
 			printf("连接:%s \n", XString_c_str(str));
 			XString_delete_base(str);
 		}
-		XStringVector_iterator_for_each(stringList, XFor_each_XString, NULL);
-		XStringVector_delete_base(stringList);
+		XStringList_iterator_for_each(stringList, XFor_each_XString, NULL);
+		XStringList_delete_base(stringList);
 	}
 #else
 	IS_ON_DEBUG(XVector_ON);

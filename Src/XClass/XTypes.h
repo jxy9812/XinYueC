@@ -14,7 +14,7 @@ typedef struct XModbusDigitalSwitch XModbusDigitalSwitch;
 typedef struct XSwitchDeviceModbus XSwitchDeviceModbus;
 typedef struct XModbus XModbus;
 typedef struct XModbusFrame XModbusFrame;
-typedef struct XStringVector XStringVector;
+typedef struct XStringList XStringList;
 typedef struct XStepMotor XStepMotor;
 typedef struct XPWMDeviceBase XPWMDeviceBase;
 typedef struct XSwitchDeviceBase XSwitchDeviceBase;

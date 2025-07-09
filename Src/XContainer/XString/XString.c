@@ -4,7 +4,7 @@
 #include<string.h>
 #include<stdarg.h>
 #include"XEquality.h"
-#include"XStringVector.h"
+#include"XStringList.h"
 XString* XString_create(const char* string)
 {
 	XString* this_string = XMemory_malloc(sizeof(XString));
@@ -155,12 +155,12 @@ XString* XString_to16HexString(const uint8_t* data, size_t dataSize)
 	XString_pop_back_base(str);
 	return str;
 }
-XStringVector* XString_split(XString* this_string, const char* sep)
+XStringList* XString_split(XString* this_string, const char* sep)
 {
 	if(this_string==NULL|| sep==NULL||XString_isEmpty_base(this_string) || *sep == '\0')
 		return NULL;
 	// 创建结果向量
-	XStringVector* result = XStringVector_create();
+	XStringList* result = XStringList_create();
 	if (result == NULL) {
 		return NULL;
 	}
@@ -179,12 +179,12 @@ XStringVector* XString_split(XString* this_string, const char* sep)
 		// 创建子字符串
 		XString* token = XString_create_with_length(start, token_len);
 		if (token == NULL) {
-			XStringVector_delete_base(result);
+			XStringList_delete_base(result);
 			return NULL;
 		}
 
 		// 添加到结果向量
-		XStringVector_push_back_base(result, token);
+		XStringList_push_back_base(result, token);
 
 		// 移动到下一个可能的起始位置
 		start = end + sep_len;
@@ -194,11 +194,11 @@ XStringVector* XString_split(XString* this_string, const char* sep)
 	if (remaining_len > 0 || start == str) {  // 包含空字符串的情况
 		XString* token = XString_create_with_length(start, remaining_len);
 		if (token == NULL) {
-			XStringVector_delete_base(result);
+			XStringList_delete_base(result);
 			return NULL;
 		}
 
-		XStringVector_push_back_base(result, token);
+		XStringList_push_back_base(result, token);
 	}
 
 	return result;

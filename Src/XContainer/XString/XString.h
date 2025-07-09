@@ -100,7 +100,7 @@ int64_t XString_find_last_not_of(const XString* this_string, const char* subStr)
 
 //转16进制显示
 XString* XString_to16HexString(const uint8_t* data, size_t dataSize);
-XStringVector* XString_split(XString* this_string, const char* sep);
+XStringList* XString_split(XString* this_string, const char* sep);
 int  XString_toInt(XString* this_string);
 long  XString_toLong(XString* this_string, int radix);
 unsigned long  XString_toULong(XString* this_string, int radix);

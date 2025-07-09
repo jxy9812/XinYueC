@@ -27,7 +27,7 @@ extern "C" {
 	//动态数组测试
 	void XVectorTest();
 	//字符串数组测试
-	void XStringVectorTest();
+	void XStringListTest();
 	//字符串测试
 	void XStringTest();
 	//map映射测试

@@ -53,7 +53,7 @@ int main(int argc, char* args[])
 	//XVectorTest();
 	//return;
 	return XCoreApplication_exec();
-	XStringVectorTest();
+	XStringListTest();
 	cJsonTest();
 	cJsonXContainerTest();
 	//return;
