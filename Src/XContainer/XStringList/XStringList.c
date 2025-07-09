@@ -4,11 +4,11 @@
 XStringList* XStringList_create()
 {
 	XStringList* vector=XMemory_malloc(sizeof(XStringList));
-	StringVector_init(vector);
+	XStringList_init(vector);
 	
 	return vector;
 }
-void StringVector_init(XStringList* this_stringVector)
+void XStringList_init(XStringList* this_stringVector)
 {
 	if (this_stringVector == NULL)
 		return;

@@ -1,6 +1,6 @@
 ﻿#include"XDataStructConfig.h"
-#if !defined(XSTRINGVECTOR_H)&& XStringList_ON
-#define XSTRINGVECTOR_H
+#if !defined(XSTRINGLIST_H)&& XStringList_ON
+#define XSTRINGLIST_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -21,7 +21,7 @@ typedef struct XStringList
 XVtable* XStringList_class_init();
 //开辟一个字符串数组,初始化  实际等同于XVector_Create(XString*);
 XStringList* XStringList_create();
-void StringVector_init(XStringList* this_stringVector);
+void XStringList_init(XStringList* this_stringVector);
 void XStringList_push_front_base(XStringList* this_stringVector,XString*string);
 void XStringList_push_front_c_str(XStringList* this_stringVector, const char* str);
 void XStringList_push_back_base(XStringList* this_stringVector,XString* string);

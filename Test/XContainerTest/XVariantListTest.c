@@ -1,12 +1,15 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
-#include"XVariant.h"
+#include"XVariantList.h"
 #include"XString.h"
-void XVariantList()
+
+void XVariantListTest()
 {
-	//while (true)
+	while (true)
 	{
+		XVariantList* list = XVariantList_create();
 		XVariant* var = XVariant_create_int(8);
+		XVariantList_push_back_base(list,var);
 
 		XVariant_setValue_double(var, 100.0);
 		XVariant_setValue_bool(var, true);
@@ -24,7 +27,9 @@ void XVariantList()
 		printf("%d\n", XVariant_toSize_t(var));
 
 
-		XVariant_delete(var);
+		//XVariant_delete(var);
+
+		XVariantList_delete_base(list);
 	}
 }
 

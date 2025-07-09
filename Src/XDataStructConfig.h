@@ -26,7 +26,8 @@ extern "C" {
 #define	XVector_ON						1
 #define	XByteArray_ON					1
 #define	XVectorTwo_ON					1
-#define	XStringList_ON				1
+#define	XStringList_ON					1
+#define XVariantList_ON					1
 #define	XCircularQueue_ON				1
 #define	XCircularQueueAtomic_ON			1
 /*                          算法                            */

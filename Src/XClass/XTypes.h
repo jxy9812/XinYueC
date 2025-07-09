@@ -39,6 +39,7 @@ typedef struct XStack XStack;
 typedef struct XPoint XPoint;
 typedef struct XVariant XVariant;
 typedef struct XSerialPortBase XSerialPortBase;
+typedef struct XVariantList XVariantList;
 typedef XMapBase XFuncCodeMap;
 
 #ifdef __cplusplus

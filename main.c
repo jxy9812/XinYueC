@@ -42,7 +42,7 @@ int main(int argc, char* args[])
 	//XDataFrameCommTest();
 	//XSocketTest();
 	//XHashSetTest();
-	XVariantList();
+	XVariantListTest();
 
 	//XModbusTest();
 	//XCylinderTest();	
