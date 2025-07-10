@@ -5,7 +5,7 @@
 
 void XVariantListTest()
 {
-	while (true)
+	//while (true)
 	{
 		XVariantList* list = XVariantList_create();
 		XVariant* var = XVariant_create_int(8);
@@ -24,7 +24,7 @@ void XVariantListTest()
 		}
 
 		XVariant_setValue_str(var,"1000");
-		printf("%d\n", XVariant_toSize_t(var));
+		printf("%d\n", XVariant_toInt(var));
 
 
 		//XVariant_delete(var);

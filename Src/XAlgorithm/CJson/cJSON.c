@@ -66,7 +66,7 @@
 #include"XVector.h"
 #endif
 
-/* define our own boolean type */
+/* define our own boolean m_type */
 #ifdef true
 #undef true
 #endif
@@ -437,7 +437,7 @@ CJSON_PUBLIC(double) cJSON_SetNumberHelper(cJSON *object, double number)
 CJSON_PUBLIC(char*) cJSON_SetValuestring(cJSON *object, const char *valuestring)
 {
     char *copy = NULL;
-    /* if object's type is not cJSON_String or is cJSON_IsReference, it should not set valuestring */
+    /* if object's m_type is not cJSON_String or is cJSON_IsReference, it should not set valuestring */
     if ((object == NULL) || !(object->type & cJSON_String) || (object->type & cJSON_IsReference))
     {
         return NULL;
@@ -3202,7 +3202,7 @@ CJSON_PUBLIC(cJSON_bool) cJSON_Compare(const cJSON * const a, const cJSON * cons
         return false;
     }
 
-    /* check if type is valid */
+    /* check if m_type is valid */
     switch (a->type & 0xFF)
     {
         case cJSON_False:
@@ -3227,7 +3227,7 @@ CJSON_PUBLIC(cJSON_bool) cJSON_Compare(const cJSON * const a, const cJSON * cons
 
     switch (a->type & 0xFF)
     {
-        /* in these cases and equal type is enough */
+        /* in these cases and equal m_type is enough */
         case cJSON_False:
         case cJSON_True:
         case cJSON_NULL:

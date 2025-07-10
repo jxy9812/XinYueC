@@ -8,8 +8,8 @@ extern "C" {
 #include<stdbool.h>
 #include"XVector.h"
 #include"XVariant.h"
-//#include"XVariantList_Iterator.h"
-//#include"XVariantList_reverse_iterator.h"
+#include"XVariantList_iterator.h"
+#include"XVariantList_reverse_iterator.h"
 #define XVARIANTLIST_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XVariantList))       //XVariantList容器虚函数表大小
 //XMap虚函数表枚举
 XCLASS_DEFINE_BEGING(XVariantList)
@@ -37,6 +37,7 @@ XVariant* XVariantList_back_base(const XVariantList* list);
 #define XVariantList_pop_back_base									XVector_pop_back_base
 #define	XVariantList_pop_front_base									XVector_pop_front_base
 #define	XVariantList_resize_base									XVector_resize_base
+#define XVariantList_isEmpty_base									XVector_isEmpty_base
 #define XVariantList_getSize_base									XVector_getSize_base
 #define XVariantList_getCapacity_base								XVector_getCapacity_base
 #define XVariantList_swap_base										XVector_swap_base

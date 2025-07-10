@@ -5,6 +5,8 @@ extern "C" {
 #endif
 #include"XTypes.h"
 #include"XPoint.h"
+#include"XFunctionCallback.h"
+#include"XEquality.h"
 #include<stdio.h>
 #include<stdint.h>
 #include<stdbool.h>
@@ -28,10 +30,11 @@ typedef enum
 	XVariantType_Float,
 	XVariantType_Double,
 	/*自定义的数据结构*/
-	XVariantType_Pair,
-	XVariantType_Point,
-	XVariantType_ByteArray,
-	XVariantType_String,
+	XVariantType_Pair,//XPair
+	XVariantType_Point,//XPoint
+	XVariantType_ByteArray,//XByteArray
+	XVariantType_String,//XString
+	XVariantType_List,//XVariantList
 
 	XVariantType_User,//用户定义类型
 }XVariantType;
@@ -64,6 +67,7 @@ XVariant* XVariant_create_XByteArray(const XByteArray* array);
 XVariant* XVariant_create_byteArray(const void* data, size_t size);
 XVariant* XVariant_create_XString(XString* string);
 XVariant* XVariant_create_str(const char* str);
+XVariant* XVariant_create_list(const XVariantList* list);
 
 uint8_t  XVariant_toUint8 (XVariant* var);
 uint16_t XVariant_toUint16(XVariant* var);
@@ -114,6 +118,7 @@ void XVariant_delete(XVariant* var);
 void XVariant_clear(XVariant* var);
 void XVariant_swap(XVariant* var,XVariant* other);
 int  XVariant_type(XVariant* var);
+bool XVariant_equality(XVariant* var, XVariant* cmp);
 void* XVariant_data(XVariant* var);
 #define XVariant_Value(Var,Type)   (*((Type*)XVariant_data(Var)))
 #ifdef __cplusplus
