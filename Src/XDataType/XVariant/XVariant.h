@@ -30,12 +30,12 @@ typedef enum
 	XVariantType_Float,
 	XVariantType_Double,
 	/*自定义的数据结构*/
-	XVariantType_Pair,//XPair
+	XVariantType_Pair,//XPair*
 	XVariantType_Point,//XPoint
-	XVariantType_ByteArray,//XByteArray
-	XVariantType_String,//XString
-	XVariantType_List,//XVariantList
-	XVariantType_MapBase,//XMapBase<XString, XVariant>
+	XVariantType_ByteArray,//XByteArray*
+	XVariantType_String,//XString*
+	XVariantType_List,//XVariantList*
+	XVariantType_MapBase,//XMapBase<XString*, XVariant*>
 	XVariantType_User,//用户定义类型
 }XVariantType;
 
@@ -77,8 +77,8 @@ XVariant* XVariant_create_byteArray(const void* data, size_t size);
 XVariant* XVariant_create_XString(XString* string);
 XVariant* XVariant_create_str(const char* str);
 XVariant* XVariant_create_list(const XVariantList* list);
-XVariant* XVariant_create_XMap(const XMap* map);//XMap<XString, XVariant>
-XVariant* XVariant_create_XHash(const XHash* map);//XHash<XString, XVariant>
+XVariant* XVariant_create_XMap(const XMap* map);//XMap<XString*, XVariant*>
+XVariant* XVariant_create_XHash(const XHash* map);//XHash<XString*, XVariant*>
 
 uint8_t  XVariant_toUint8 (XVariant* var);
 uint16_t XVariant_toUint16(XVariant* var);

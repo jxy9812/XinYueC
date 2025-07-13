@@ -4,6 +4,7 @@
 #include"XRedBlackTree.h"
 #include"XAlgorithm.h"
 #include<stdlib.h>
+#include<string.h>
 //Map插入数据
 static bool VXMap_insert(XMap* this_map, const void* key, const void* LpValue);
 static void VXMap_erase(XMap* this_map, const XPair* LPpair);
@@ -67,9 +68,13 @@ bool VXMap_insert(XMap* this_map, const void* key, const void* LpValue)
 		++XContainerCapacity(this_map);
 		++XContainerSize(this_map);
 	}
-	else
+	else//插入的已经存在键了
 	{
+		if (XContainerDataDeleteMethod(this_map) != NULL)
+			XContainerDataDeleteMethod(this_map)(pair);
 		XPair_insertSecond(pair, LpValue);
+		//拷贝键值
+		memcpy(((uint8_t*)(&(pair->m_first))), key, pair->m_firstTypeSize);
 	}
 	return true;
 }

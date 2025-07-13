@@ -61,7 +61,7 @@ void* XPair_second(XPair* this_pair)
 }
 size_t XPair_getSize(XPair* this_pair)
 {
-	return (( char*)this_pair->m_first)-((char*)this_pair) + this_pair->m_firstTypeSize + this_pair->m_secondTypeSize;
+	return ((char*)(&(this_pair->m_first))) - ((char*)this_pair) + this_pair->m_firstTypeSize + this_pair->m_secondTypeSize;
 }
 void XPair_delete(XPair* this_pair)
 {

@@ -112,9 +112,12 @@ bool VXMap_insert(XHash*this_map, const void* pvKey, const void* pvValue)
     while (current) 
 	{
         if (this_map->m_parent.m_KeyEquality(XPair_first(current->pair), pvKey)) 
-		{
+		{//有原先的键值
+			if (XContainerDataDeleteMethod(this_map) != NULL)
+				XContainerDataDeleteMethod(this_map)(current->pair);
 			XPair_insertSecond(current->pair, pvValue);
-			//memcpy(XPair_second(current), pvValue, XContainerTypeSize(this_map));
+			//拷贝键值
+			memcpy(((uint8_t*)(&(current->pair->m_first))), pvKey, current->pair->m_firstTypeSize);
             return true;
         }
         current = current->next;

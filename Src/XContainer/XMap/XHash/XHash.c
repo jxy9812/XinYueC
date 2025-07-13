@@ -23,4 +23,13 @@ void XHash_init(XHash*this_map, const size_t keyTypeSize, const size_t valTypeSi
 	memset(XContainerDataPtr(this_map),0,size);
 }
 
+XHash* XHash_create_XStringXVariant()
+{
+	XHash* hash = XHash_Create(XString*, XVariant*,XHash_murmur3_32, XEquality_XString);
+	if (hash == NULL)
+		return NULL;
+	XContainerSetDataDeleteMethod(hash, XMapBase_KeyXStringValueXVariantDeleteMethod);
+	return hash;
+}
+
 #endif

@@ -49,6 +49,8 @@ void XHash_init(XHash* this_map, const size_t keyTypeSize, const size_t valTypeS
 #define XHash_swap_base						XMapBase_swap_base
 //返回元素类型字节大小						
 #define XHash_getTypeSize_base				XMapBase_getTypeSize_base
+
+XHash* XHash_create_XStringXVariant();
 #ifdef __cplusplus
 }
 #endif

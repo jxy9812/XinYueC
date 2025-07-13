@@ -253,7 +253,7 @@ const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root)
 #if XStack_ON
 	if (ISNULL(this_root, ""))
 		return 0;
-	printf("开始释放节点\n");
+	//printf("开始释放节点\n");
 	size_t sum = 0;//一共释放了几个节点
 	XStack* stack = XStack_create(sizeof(struct XBTreeNode*));
 	XStack_push_base(stack,&this_root);

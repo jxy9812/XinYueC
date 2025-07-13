@@ -2,7 +2,7 @@
 #if DEMOTEST
 #include"XVariantList.h"
 #include"XString.h"
-
+#include"XMap.h"
 void XVariantListTest()
 {
 	printf("--------------------------XVariantList测试-----------------------\n");
@@ -35,9 +35,6 @@ void XVariantListTest()
 		XVariant_setValue_str(var,"1000");
 		printf("%d\n", XVariant_toInt(var));
 
-		
-
-	
 		printf("--------------------------XVariant_toList测试-----------------------\n");
 		{
 			XVariant* varList = XVariant_create_list(list);
@@ -56,7 +53,32 @@ void XVariantListTest()
 
 			XVariant_delete(varList);
 		}
-
+		printf("--------------------------XVariant_toMap测试-----------------------\n");
+		{
+			XMap* map = XMap_create_XStringXVariant();
+			{
+				XString* str = XString_create("6666");
+				XVariant* v = XVariant_create_int(9999);
+				XMap_insert_base(map, &str, &v);
+			}
+			{
+				XString* str = XString_create("111");
+				XVariant* v = XVariant_create_int(6666);
+				XMap_insert_base(map, &str, &v);
+			}
+			XVariant* varMap = XVariant_create_XMap(map);
+			XMap_delete_base(map);
+			map=XVariant_toMap(varMap);
+			for_each_iterator(map,XMap,it)
+			{
+				XPair* p=XMap_iterator_data(&it);
+				XString* str=XPair_First(p,XString*);
+				XVariant* var = XPair_Second(p, XVariant*);
+				printf("key:%s val:%d\n",XString_c_str(str),XVariant_toInt(var));
+			}
+			XMap_delete_base(map);
+			XVariant_delete(varMap);
+		}
 		XVariantList_delete_base(list);
 	}
 }

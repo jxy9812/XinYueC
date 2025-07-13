@@ -43,4 +43,13 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 	this_map->m_KeyLess = KeyLess;
 }
 
+XMap* XMap_create_XStringXVariant()
+{
+	XMap* map = XMap_Create(XString*, XVariant*, XEquality_XString, XLess_XString);
+	if (map == NULL)
+		return NULL;
+	XContainerSetDataDeleteMethod(map, XMapBase_KeyXStringValueXVariantDeleteMethod);
+	return map;
+}
+
 #endif
