@@ -24,8 +24,8 @@ void XVariantList_iterator_add(XVariantList* list,XVariantList_iterator*it)
 {
 	if (ISNULL(list, "") || ISNULL(it, ""))
 		return ;
-	void*  back= XVariantList_back_base(list);
-	if (it->data == back)//如果是最后一个元素则返回空表示遍历完成了
+	XVariant* back= XVariantList_back_base(list);
+	if (it->data != NULL && *((XVariant**)it->data) == back)//如果是最后一个元素则返回空表示遍历完成了
 	{
 		it->data = NULL;
 		return;

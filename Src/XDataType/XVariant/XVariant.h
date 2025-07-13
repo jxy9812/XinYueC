@@ -89,6 +89,7 @@ XPair* XVariant_toXPair(XVariant* var);
 XPoint XVariant_toXPoint(XVariant* var);
 XByteArray* XVariant_toByteArray(XVariant* var);
 XString* XVariant_toString(XVariant* var);
+XVariantList* XVariant_toList(XVariant* var);
 
 void XVariant_setValue(XVariant* var, const XVariant* newVar);
 void XVariant_setValue_uint8 (XVariant* var, uint8_t val);

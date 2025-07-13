@@ -30,6 +30,7 @@ void XVariantList_insert_base(XVariantList* list, int64_t index, XVariant* var);
 XVariant* XVariantList_at_base(const XVariantList* list, int64_t index);
 XVariant* XVariantList_front_base(const XVariantList* list);
 XVariant* XVariantList_back_base(const XVariantList* list);
+XVariant* XVariantList_find_base(const XVariantList* list, const XVariant* findVal);
 #define XVariantList_delete_base									XVector_delete_base
 #define XVariantList_clear_base										XVector_clear_base
 #define	XVariantList_remove_base									XVector_remove_base

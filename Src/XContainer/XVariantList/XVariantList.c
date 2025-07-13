@@ -1,5 +1,10 @@
 ﻿#include "XVariantList.h"
-
+static bool equality(XVariant** var, XVariant** cmp)
+{
+	if (var == NULL || cmp == NULL)
+		return false;
+	return XVariant_equality(*var,*cmp);
+}
 XVtable* XVariantList_class_init()
 {
 	return XVector_class_init();
@@ -9,7 +14,7 @@ XVariantList* XVariantList_create()
 {
 	XVariantList* vector = XMemory_malloc(sizeof(XVariantList));
 	XVariantList_init(vector);
-
+	vector->m_vector.m_equality = equality;
 	return vector;
 }
 //释放数据方法
@@ -64,4 +69,14 @@ XVariant* XVariantList_back_base(const XVariantList* list)
 	if (p == NULL)
 		return NULL;
 	return *p;
+}
+
+XVariant* XVariantList_find_base(const XVariantList* list, const XVariant* findVal)
+{
+	if (list == NULL || findVal == NULL)
+		return NULL;
+	XVariant** ret=XVector_find_base(list,&findVal);
+	if (ret == NULL)
+		return NULL;
+	return *ret;
 }

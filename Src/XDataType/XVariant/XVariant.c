@@ -410,6 +410,31 @@ XString* XVariant_toString(XVariant* var)
 	return str;
 }
 
+XVariantList* XVariant_toList(XVariant* var)
+{
+	if (var->m_type != XVariantType_List)
+		return NULL;
+	XVariantList* list = XVariantList_create();
+	if (list == NULL)
+		return NULL;
+	//正式保存数据
+	uint8_t* ptr = var->m_data;
+	size_t variantSize = sizeof(XVariant) - sizeof(void*);
+	XVariant* temp=ptr;
+	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
+	{
+		XVariant* newVar = XVariant_create(NULL,0,0);
+		memcpy(newVar, temp, variantSize);
+		newVar->m_data = XMemory_malloc(temp->m_dataSize);
+		ptr += variantSize;
+		memcpy(newVar->m_data, ptr, temp->m_dataSize);
+		ptr += temp->m_dataSize;
+		XVariantList_push_back_base(list,newVar);
+		temp = ptr;
+	}
+	return list;
+}
+
 XPair* XVariant_toXPair(XVariant* var)
 {
 	if (var->m_type != XVariantType_Pair)
@@ -615,32 +640,40 @@ bool XVariant_equality(XVariant* var, XVariant* cmp)
 		return false;
 	switch (var->m_type)
 	{
-	case XVariantType_Uint8:	
-	case XVariantType_Uint16:	
-	case XVariantType_Uint32:	
-	case XVariantType_Uint64:	
-	case XVariantType_Int8:		
-	case XVariantType_Int16:	
-	case XVariantType_Int32:	
-	case XVariantType_Int64:	
-	case XVariantType_Bool:		
-	case XVariantType_Char:		
-	case XVariantType_UChar:
-	case XVariantType_Int:		
-	case XVariantType_Size_t:	
-	case XVariantType_Ptr:		
-	case XVariantType_Float:	
-	case XVariantType_Double:
-	case XVariantType_Pair:
-	case XVariantType_Point://return var->m_equality(var->m_data, cmp->m_data);
+	case XVariantType_Uint8:return XEquality_uint8_t(var->m_data, cmp->m_data);
+	case XVariantType_Uint16:return XEquality_uint16_t(var->m_data, cmp->m_data);
+	case XVariantType_Uint32:return XEquality_uint32_t(var->m_data, cmp->m_data);
+	case XVariantType_Uint64:return XEquality_uint64_t(var->m_data, cmp->m_data);
+	case XVariantType_Int8:return XEquality_int8_t(var->m_data, cmp->m_data);
+	case XVariantType_Int16:return XEquality_int16_t(var->m_data, cmp->m_data);
+	case XVariantType_Int32:return XEquality_int32_t(var->m_data, cmp->m_data);
+	case XVariantType_Int64:return XEquality_int64_t(var->m_data, cmp->m_data);
+	case XVariantType_Bool:return XEquality_bool(var->m_data, cmp->m_data);
+	case XVariantType_Char:return XEquality_char(var->m_data, cmp->m_data);
+	case XVariantType_UChar:return XEquality_unsigned_char(var->m_data, cmp->m_data);
+	case XVariantType_Int:return XEquality_int(var->m_data, cmp->m_data);
+	case XVariantType_Size_t:return XEquality_size_t(var->m_data, cmp->m_data);
+	case XVariantType_Ptr:return XEquality_ptr(var->m_data, cmp->m_data);
+	case XVariantType_Float:return XEquality_float(var->m_data, cmp->m_data);
+	case XVariantType_Double:return XEquality_double(var->m_data, cmp->m_data);
+	case XVariantType_Pair:return XEquality_XPair(var->m_data, cmp->m_data);
+	case XVariantType_Point:return XEquality_XPoint(var->m_data, cmp->m_data);
 	case XVariantType_ByteArray:
 	{
-
+		XByteArray v = { 0 }, c = {0};
+		v.m_parent.m_parent.m_data = var->m_data;
+		v.m_parent.m_parent.m_capacity = var->m_dataSize;
+		v.m_parent.m_parent.m_size = var->m_dataSize;
+		c.m_parent.m_parent.m_data = cmp->m_data;
+		c.m_parent.m_parent.m_capacity = cmp->m_dataSize;
+		c.m_parent.m_parent.m_size = cmp->m_dataSize;
+		return XEquality_XByteArray(&v, &c);
 	}
 	default:return 0; 
 	}
 
 }
+
 
 void* XVariant_data(XVariant* var)
 {
