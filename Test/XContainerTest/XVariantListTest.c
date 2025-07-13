@@ -5,6 +5,7 @@
 
 void XVariantListTest()
 {
+	printf("--------------------------XVariantList测试-----------------------\n");
 	//while (true)
 	{
 		XVariantList* list = XVariantList_create();

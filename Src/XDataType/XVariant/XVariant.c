@@ -7,9 +7,10 @@
 #include "XString.h"
 #include "XAlgorithm.h"
 #include "XVariantList.h"
+#include "XHashMap.h"
 #include <string.h>
 #include <stdlib.h>
-
+static XHashMap* global_equalityHash= NULL;//自定义数据比较函数哈希映射
 typedef struct XVariant
 {
 	int m_type;//类型
@@ -58,7 +59,8 @@ XVariant* XVariant_create(void* data, size_t size, int type)
 			XMemory_free(var);
 			return NULL;
 		}
-		memcpy(XVariant_DataPtr(var), data, size);
+		if(data!=NULL)
+			memcpy(XVariant_DataPtr(var), data, size);
 	}
 	else
 	{
@@ -669,13 +671,42 @@ bool XVariant_equality(XVariant* var, XVariant* cmp)
 		c.m_parent.m_parent.m_size = cmp->m_dataSize;
 		return XEquality_XByteArray(&v, &c);
 	}
-	default:return 0; 
+	default:
+	{
+		//其他自定义数据
+		if(global_equalityHash==NULL)
+			return false;
+		//查找相等比较函数
+		XEquality*ePtr=XHashMap_value_base(global_equalityHash,&(var->m_type));
+		if (ePtr)
+			return (*ePtr)(var->m_data,cmp->m_data);
+		return false;
+	}
 	}
 
+}
+
+void XVariant_addEquality(int type, XEquality equality)
+{
+	if (type < XVariantType_User || equality == NULL)
+		return;
+	if (global_equalityHash == NULL)
+		global_equalityHash = XHashMap_Create(int, XEquality,XHash_murmur3_32,XEquality_int);
+	if(global_equalityHash)
+		XHashMap_insert_base(global_equalityHash,&type,&equality);
 }
 
 
 void* XVariant_data(XVariant* var)
 {
-	return XVariant_DataPtr(var);
+	if(var)
+		return XVariant_DataPtr(var);
+	return NULL;
+}
+
+size_t XVariant_dataSize(XVariant* var)
+{
+	if(var)
+		return var->m_dataSize;
+	return 0;
 }

@@ -35,11 +35,20 @@ typedef enum
 	XVariantType_ByteArray,//XByteArray
 	XVariantType_String,//XString
 	XVariantType_List,//XVariantList
-
+	XVariantType_Map,//XMapBase
 	XVariantType_User,//用户定义类型
 }XVariantType;
 
-//普通创建
+/*
+* @brief  创建一个XVariant数据
+* 当传入data参数时，函数会复制数据内容；若传入NULL，则仅分配内存空间，
+* 这种方式可配合XVariant_data函数创建自定义数据类型。
+*
+* @param  data:XVariant内的数据(将会拷贝) 
+* @param  dataSize:数据大小
+* @param  type:数据类型
+* @retval 返回新的XVariant
+*/
 XVariant* XVariant_create(void* data, size_t dataSize,int type);
 //变量的方式直接创建
 #define XVariant_Create(data,type)    XVariant_create(&data,sizeof(data),type)
@@ -68,6 +77,7 @@ XVariant* XVariant_create_byteArray(const void* data, size_t size);
 XVariant* XVariant_create_XString(XString* string);
 XVariant* XVariant_create_str(const char* str);
 XVariant* XVariant_create_list(const XVariantList* list);
+//XVariant* XVariant_create_XHashMap(const XVariantList* list);
 
 uint8_t  XVariant_toUint8 (XVariant* var);
 uint16_t XVariant_toUint16(XVariant* var);
@@ -120,7 +130,15 @@ void XVariant_clear(XVariant* var);
 void XVariant_swap(XVariant* var,XVariant* other);
 int  XVariant_type(XVariant* var);
 bool XVariant_equality(XVariant* var, XVariant* cmp);
+//添加自定义的数据相等比较回调函数
+void XVariant_addEquality(int type, XEquality equality);
+/*
+* @brief  获取XVariant的数据
+* @param  var:XVariant指针
+* @retval 返回XVariant内部的数据首地址
+*/
 void* XVariant_data(XVariant* var);
+size_t XVariant_dataSize(XVariant* var);
 #define XVariant_Value(Var,Type)   (*((Type*)XVariant_data(Var)))
 #ifdef __cplusplus
 }
