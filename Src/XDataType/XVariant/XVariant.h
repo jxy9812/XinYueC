@@ -35,7 +35,7 @@ typedef enum
 	XVariantType_ByteArray,//XByteArray
 	XVariantType_String,//XString
 	XVariantType_List,//XVariantList
-	XVariantType_Map,//XMapBase
+	XVariantType_MapBase,//XMapBase<XString, XVariant>
 	XVariantType_User,//用户定义类型
 }XVariantType;
 
@@ -77,7 +77,8 @@ XVariant* XVariant_create_byteArray(const void* data, size_t size);
 XVariant* XVariant_create_XString(XString* string);
 XVariant* XVariant_create_str(const char* str);
 XVariant* XVariant_create_list(const XVariantList* list);
-//XVariant* XVariant_create_XHashMap(const XVariantList* list);
+XVariant* XVariant_create_XMap(const XMap* map);//XMap<XString, XVariant>
+XVariant* XVariant_create_XHash(const XHash* map);//XHash<XString, XVariant>
 
 uint8_t  XVariant_toUint8 (XVariant* var);
 uint16_t XVariant_toUint16(XVariant* var);
@@ -100,6 +101,8 @@ XPoint XVariant_toXPoint(XVariant* var);
 XByteArray* XVariant_toByteArray(XVariant* var);
 XString* XVariant_toString(XVariant* var);
 XVariantList* XVariant_toList(XVariant* var);
+XMap* XVariant_toMap(XVariant* var);//XMap<XString*, XVariant*>
+XHash* XVariant_toHash(XVariant* var);//XHash<XString*, XVariant*>
 
 void XVariant_setValue(XVariant* var, const XVariant* newVar);
 void XVariant_setValue_uint8 (XVariant* var, uint8_t val);

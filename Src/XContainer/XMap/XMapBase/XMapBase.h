@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 #include"XFunctionCallback.h"
+#include"XEquality.h"
 #include"XPair.h"
 #define XMAPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))       //XMap容器虚函数表大小
 //XMap虚函数表枚举
@@ -14,6 +15,7 @@ XCLASS_DEFINE_ENUM(XMapBase,Erase),
 XCLASS_DEFINE_ENUM(XMapBase,Remove),
 XCLASS_DEFINE_ENUM(XMapBase,Value),
 XCLASS_DEFINE_ENUM(XMapBase,Find), 
+XCLASS_DEFINE_ENUM(XMapBase,Keys),
 XCLASS_DEFINE_END(XMapBase)
 typedef struct XMapBase
 {
@@ -36,6 +38,8 @@ void* XMapBase_value_base(XMapBase* this_map, const void* pvKey);
 #define XMapBase_Value_Base(this_map,key,ValueType) (*(ValueType*)XMap_value_base(this_map,&(key)))
 //查找数据，返回找到的XPair地址，没有返回NULL
 XPair* XMapBase_find_base(XMapBase* this_map, const void* pvKey);
+bool XMapBase_contains(XMapBase* this_map, const void* pvKey);
+XVector* XMapBase_keys_base(const XMapBase* this_map);
 //释放内存
 #define XMapBase_delete_base					XContainerObject_delete_base
 //清空，不是释放内存
@@ -54,9 +58,12 @@ XPair* XMapBase_find_base(XMapBase* this_map, const void* pvKey);
 void XMapBase_KeyDeleteMethod(void* args);
 //默认释放派生类的方法 value是派生的容器
 void XMapBase_ValueDeleteMethod(void* args);
+//默认释放XVariant value的方法
+void XMapBase_ValueXVariantDeleteMethod(void* args);
 //默认释放派生类的方法 key和value都是派生的容器
 void XMapBase_KeyValueDeleteMethod(void* args);
-
+//XStringXVariant释放
+void XMapBase_KeyXStringValueXVariantDeleteMethod(void* args);
 #ifdef __cplusplus
 }
 #endif

@@ -26,7 +26,7 @@ typedef  const bool(*XEquality)(const void* pvValue, const void* pvCompareValue)
 //容器for_each(容器循环遍历)回调函数
 typedef void (*XFor_each)(void* pvValue,void* args);
 //hash函数
-typedef size_t(*XHash)(const void* key, size_t len);
+typedef size_t(*XHashFunc)(const void* key, size_t len);
 
 //比较大小回调函数的标准准则
 bool XCompareRuleTwo_Standard(XCompare compare, const void* pvPrevValue, const void* pvNextValue);

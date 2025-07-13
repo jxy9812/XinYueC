@@ -39,21 +39,24 @@ void XVariantListTest()
 
 	
 		printf("--------------------------XVariant_toList测试-----------------------\n");
-		XVariant* varList=XVariant_create_list(list);
-		XVariantList* l= XVariant_toList(varList);
-		if (l)
 		{
-			printf("有%d个元素\n", XVariantList_getSize_base(l));
-			XVariant* temp = NULL;
-			for_each_iterator(l, XVariantList, it)
+			XVariant* varList = XVariant_create_list(list);
+			XVariantList* l = XVariant_toList(varList);
+			if (l)
 			{
-				temp = XVariantList_iterator_data(&it);
-				printf("%d\n", XVariant_toInt(temp));
+				printf("有%d个元素\n", XVariantList_getSize_base(l));
+				XVariant* temp = NULL;
+				for_each_iterator(l, XVariantList, it)
+				{
+					temp = XVariantList_iterator_data(&it);
+					printf("%d\n", XVariant_toInt(temp));
+				}
+				XVariantList_delete_base(l);
 			}
-			XVariantList_delete_base(l);
+
+			XVariant_delete(varList);
 		}
-		
-		XVariant_delete(varList);
+
 		XVariantList_delete_base(list);
 	}
 }

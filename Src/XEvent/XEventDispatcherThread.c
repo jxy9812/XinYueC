@@ -1,8 +1,8 @@
 ﻿#include"XEventDispatcherThread.h"
 #include"XEvent.h"
-#include"XHashMap.h"
-#include"XEquality.h"
 #include"XHash.h"
+#include"XEquality.h"
+#include"XHashFunc.h"
 #include"XObject.h"
 #include"XHashSet.h"
 #include"XTimerBase.h"
@@ -67,7 +67,7 @@ void XEventDispatcherThread_init(XEventDispatcherThread* dispatcher)
 	XEventDispatcher_init(dispatcher);
 	XClassGetVtable(dispatcher) = XEventDispatcherThread_class_init();
 	XEventDispatcher* d = dispatcher;
-	d->m_filter_cb = XHashMap_Create(XObject*,XHashMap*,XHash_murmur3_32,XEquality_ptr);
+	d->m_filter_cb = XHash_Create(XObject*,XHash*,XHash_murmur3_32,XEquality_ptr);
 	dispatcher->m_Objects= XHashSet_Create(XObject*, XHash_murmur3_32, XEquality_ptr);
 }
 
@@ -115,9 +115,9 @@ void VXEventDispatcher_delete(XEventDispatcherThread* dispatcher)
 		XMemory_free(event);//清空事件
 	}
 	XQueueBase_delete_base(d->m_queue);
-	for_each_iterator(d->m_filter_cb, XHashMap, it)
+	for_each_iterator(d->m_filter_cb, XHash, it)
 	{
-		XMapBase* pvMap = XPair_Second(XHashMap_iterator_data(&it), XMapBase*);
+		XMapBase* pvMap = XPair_Second(XHash_iterator_data(&it), XMapBase*);
 		XMapBase_delete_base(pvMap);
 	}
 	XMapBase_delete_base(d->m_filter_cb);
@@ -161,9 +161,9 @@ bool VXEventDispatcher_sendEvent(XEventDispatcherThread* dispatcher, XEventMin* 
 		}
 		else if (event->receiver == NULL)
 		{//接收者无指定
-			for_each_iterator(d->m_filter_cb, XHashMap, it)
+			for_each_iterator(d->m_filter_cb, XHash, it)
 			{
-				XMapBase* pvMap = XPair_Second(XHashMap_iterator_data(&it), XMapBase*);
+				XMapBase* pvMap = XPair_Second(XHash_iterator_data(&it), XMapBase*);
 				XEventCallback* c = XMapBase_value_base(pvMap, &(event->code));
 				if (c != NULL)
 				{//有回调函数
@@ -214,7 +214,7 @@ bool VXEventDispatcher_addEventCb(XEventDispatcherThread* dispatcher, XObject* r
 	XMapBase* p = NULL;
 	if (pvMap == NULL)
 	{
-		p = XHashMap_Create(int, XEventCallback,XHash_murmur3_32,XEquality_int);
+		p = XHash_Create(int, XEventCallback,XHash_murmur3_32,XEquality_int);
 		XMapBase_insert_base(d->m_filter_cb,&receiver, &p);
 	}
 	else

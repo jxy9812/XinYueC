@@ -1,4 +1,5 @@
 ﻿#include"XMapBase.h"
+#include"XVariant.h"
 #if XMap_ON
 XVtable* XMapBase_class_init()
 {
@@ -57,24 +58,49 @@ XPair* XMapBase_find_base(XMapBase* this_map, const void* pvKey)
 	return XClassGetVirtualFunc(this_map, EXMapBase_Find, void* (*)(XMapBase*, const void*))(this_map, pvKey);
 }
 
-void XMapBase_KeyDeleteMethod(void* args)
+bool XMapBase_contains(XMapBase* this_map, const void* pvKey)
 {
-	XPair* pair = (XPair*)args;
-	XContainerObject* object = *((XContainerObject**)XPair_second(pair));
-	XContainerObject_delete_base(object);
+	return XMapBase_find_base(this_map,pvKey)!=NULL;
 }
 
-void XMapBase_ValueDeleteMethod(void* args)
+XVector* XMapBase_keys_base(const XMapBase* this_map)
+{
+	if (ISNULL(this_map, "")  || ISNULL(XClassGetVtable(this_map), ""))
+		return NULL;
+	return XClassGetVirtualFunc(this_map, EXMapBase_Keys, void* (*)(const XMapBase*))(this_map);
+}
+
+void XMapBase_KeyDeleteMethod(void* args)
 {
 	XPair* pair = (XPair*)args;
 	XContainerObject* object = *((XContainerObject**)XPair_first(pair));
 	XContainerObject_delete_base(object);
 }
 
+void XMapBase_ValueDeleteMethod(void* args)
+{
+	XPair* pair = (XPair*)args;
+	XContainerObject* object = *((XContainerObject**)XPair_second(pair));
+	XContainerObject_delete_base(object);
+}
+
+void XMapBase_ValueXVariantDeleteMethod(void* args)
+{
+	XPair* pair = (XPair*)args;
+	XVariant* var = *((XVariant**)XPair_second(pair));
+	XVariant_delete(var);
+}
+
 void XMapBase_KeyValueDeleteMethod(void* args)
 {
 	XMapBase_KeyDeleteMethod(args);
 	XMapBase_ValueDeleteMethod(args);
+}
+
+void XMapBase_KeyXStringValueXVariantDeleteMethod(void* args)
+{
+	XMapBase_KeyDeleteMethod(args);
+	XMapBase_ValueXVariantDeleteMethod(args);
 }
 
 #endif

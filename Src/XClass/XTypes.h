@@ -21,6 +21,8 @@ typedef struct XSwitchDeviceBase XSwitchDeviceBase;
 typedef struct XMapBase XMapBase;
 typedef struct XTJCHMIComm XTJCHMIComm;
 typedef struct XPair XPair;
+typedef struct XMap XMap;
+typedef struct XHash XHash;
 typedef struct XString XString;
 typedef struct XListBase XListBase;
 typedef struct XVector XVector;

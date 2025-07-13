@@ -1,15 +1,15 @@
-﻿#include"XHashMap_Iterator.h"
-#if XHashMap_ON
-#include"XHashMap.h"
-XHashMap_iterator XHashMap_begin(XHashMap* this_map)
+﻿#include"XHash_Iterator.h"
+#if XHash_ON
+#include"XHash.h"
+XHash_iterator XHash_begin(XHash*this_map)
 {
-	XHashMap_iterator it = {0};
+	XHash_iterator it = {0};
 	if (this_map == NULL|| XContainerCapacity(this_map)==0)
 		return it;
-	XHashMapNode* node = NULL;
+	XHashNode* node = NULL;
 	for (size_t i = 0; i < XContainerCapacity(this_map); i++)
 	{
-		node = ((XHashMapNode**)XContainerDataPtr(this_map))[i];
+		node = ((XHashNode**)XContainerDataPtr(this_map))[i];
 		if (node != NULL)
 		{
 			it.node = node;
@@ -22,21 +22,21 @@ XHashMap_iterator XHashMap_begin(XHashMap* this_map)
 	return it;
 }
 
-XHashMap_iterator XHashMap_end(XHashMap* this_map)
+XHash_iterator XHash_end(XHash*this_map)
 {
-	XHashMap_iterator it = { 0 };
+	XHash_iterator it = { 0 };
 	if (this_map == NULL || XContainerCapacity(this_map) == 0)
 		return it;
 	it.index = XContainerCapacity(this_map);
 	return it;
 }
 
-void XHashMap_iterator_add(XHashMap* this_map, XHashMap_iterator* curent)
+void XHash_iterator_add(XHash*this_map, XHash_iterator* curent)
 {
-	//XHashMap_iterator it = { 0 };
+	//XHash_iterator it = { 0 };
 	if (this_map == NULL || curent==NULL|| XContainerCapacity(this_map) == 0)
 		return ;
-	XHashMapNode* node = curent->node;
+	XHashNode* node = curent->node;
 	if (node->next!=NULL)
 	{
 		curent->node = node->next;
@@ -44,7 +44,7 @@ void XHashMap_iterator_add(XHashMap* this_map, XHashMap_iterator* curent)
 	}
 	for (size_t i = curent->index+1; i < XContainerCapacity(this_map); i++)
 	{
-		node = ((XHashMapNode**)XContainerDataPtr(this_map))[i];
+		node = ((XHashNode**)XContainerDataPtr(this_map))[i];
 		if (node != NULL)
 		{
 			curent->node = node;
@@ -56,22 +56,22 @@ void XHashMap_iterator_add(XHashMap* this_map, XHashMap_iterator* curent)
 	curent->index= XContainerCapacity(this_map);
 }
 
-bool XHashMap_iterator_equality(XHashMap_iterator* itFirst, XHashMap_iterator* itSecond)
+bool XHash_iterator_equality(XHash_iterator* itFirst, XHash_iterator* itSecond)
 {
 	return (itFirst->index == itSecond->index)&&(itFirst->node==itSecond->node);
 }
 
-void XHashMap_iterator_for_each(XHashMap* this_map, XFor_each ForFunction, void* args)
+void XHash_iterator_for_each(XHash*this_map, XFor_each ForFunction, void* args)
 {
-	for_each_iterator(this_map, XHashMap, it)
+	for_each_iterator(this_map, XHash, it)
 	{
-		ForFunction(XHashMap_iterator_data(&it),args);
+		ForFunction(XHash_iterator_data(&it),args);
 	}
 }
 
-XPair* XHashMap_iterator_data(XHashMap_iterator* it)
+XPair* XHash_iterator_data(XHash_iterator* it)
 {
-	return ((XHashMapNode*)(it->node))->pair;
+	return ((XHashNode*)(it->node))->pair;
 }
 
 #endif

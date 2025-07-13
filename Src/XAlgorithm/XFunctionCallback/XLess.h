@@ -17,5 +17,5 @@ XDefineFunc_Define(XLess, float)
 XDefineFunc_Define(XLess, double)
 XDefineFunc_DefineTwo(XLess, long, double)
 
-
+XDefineFunc_Define(XLess, XString)
 #endif // !XFUNCTIONPOINTER_H

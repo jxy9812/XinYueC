@@ -7,10 +7,11 @@
 #include "XString.h"
 #include "XAlgorithm.h"
 #include "XVariantList.h"
-#include "XHashMap.h"
+#include "XHash.h"
+#include "XMap.h"
 #include <string.h>
 #include <stdlib.h>
-static XHashMap* global_equalityHash= NULL;//自定义数据比较函数哈希映射
+static XHash*global_equalityHash= NULL;//自定义数据比较函数哈希映射
 typedef struct XVariant
 {
 	int m_type;//类型
@@ -203,8 +204,8 @@ XVariant* XVariant_create_list(const XVariantList* list)
 	for_each_iterator(list, XVariantList,it)
 	{
 		temp = XVariantList_iterator_data(&it);
-		var->m_dataSize += temp->m_dataSize;
-		var->m_dataSize += (sizeof(XVariant)-sizeof(void*));
+		(var->m_dataSize) += temp->m_dataSize;
+		(var->m_dataSize) += (sizeof(XVariant) - sizeof(void*));
 	}
 	//开始申请空间
 	var->m_data = XMemory_malloc(var->m_dataSize);
@@ -223,6 +224,93 @@ XVariant* XVariant_create_list(const XVariantList* list)
 		ptr += variantSize;
 		memcpy(ptr,temp->m_data,temp->m_dataSize);
 		ptr += temp->m_dataSize;
+	}
+	return var;
+}
+//XMap<XString, XVariant>
+XVariant* XVariant_create_XMap(const XMap* map)
+{
+	if (map == NULL|| ((XMapBase*)map)->m_KeyEquality != XEquality_XString)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, 0, XVariantType_MapBase);
+	if (var == NULL)
+		return NULL;
+	//计算大小
+	XPair* pair = NULL;
+	for_each_iterator(map, XMap, it)
+	{
+		pair = XMap_iterator_data(&it);
+		XString* str = XPair_First(pair,XString*);
+		XVariant* v= XPair_Second(pair, XVariant*);
+		XPair p = {0};
+		p.m_firstTypeSize= XContainerSize(str);//XString大小
+		p.m_secondTypeSize = v->m_dataSize + (sizeof(XVariant) - sizeof(void*));
+		(var->m_dataSize) += XPair_getSize(&p);
+	}
+	//开始申请空间
+	var->m_data = XMemory_malloc(var->m_dataSize);
+	if (var->m_data == NULL)
+	{
+		XMemory_free(var);
+		return NULL;
+	}
+	//正式保存数据
+	uint8_t* ptr = var->m_data;
+	XPair copyPair = { 0 };
+	size_t pairTypeSize = (uint8_t*)(&(copyPair.m_first)) - ((uint8_t*)&copyPair);
+	size_t variantSize = sizeof(XVariant) - sizeof(void*);
+	for_each_iterator(map, XMap, it)
+	{
+		pair = XMap_iterator_data(&it);
+		XString* str = XPair_First(pair, XString*);
+		XVariant* v = XPair_Second(pair, XVariant*);
+		copyPair.m_firstTypeSize= XContainerSize(str);//XString大小
+		copyPair.m_secondTypeSize = v->m_dataSize + (sizeof(XVariant) - sizeof(void*));
+		//拷贝构建XPair结构
+		memcpy(ptr, &copyPair, pairTypeSize);
+		ptr += pairTypeSize;
+		//拷贝XString数据
+		memcpy(ptr,XContainerDataPtr(str), XContainerSize(str));
+		ptr += XContainerSize(str);
+		//拷贝数据
+		memcpy(ptr, v, variantSize);
+		ptr += variantSize;
+		memcpy(ptr, v->m_data, v->m_dataSize);
+		ptr += v->m_dataSize;
+	}
+	return var;
+}
+
+XVariant* XVariant_create_XHash(const XHash* hash)
+{
+	if (hash == NULL || ((XMapBase*)hash)->m_KeyEquality != XEquality_XString)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, 0, XVariantType_MapBase);
+	if (var == NULL)
+		return NULL;
+	//计算大小
+	XPair* pair = NULL;
+	for_each_iterator(hash, XHash, it)
+	{
+		pair = XHash_iterator_data(&it);
+		(var->m_dataSize) += XPair_getSize(pair);
+	}
+	//开始申请空间
+	var->m_data = XMemory_malloc(var->m_dataSize);
+	if (var->m_data == NULL)
+	{
+		XMemory_free(var);
+		return NULL;
+	}
+	//正式保存数据
+	uint8_t* ptr = var->m_data;
+	size_t pairSize = 0;
+	for_each_iterator(hash, XHash, it)
+	{
+		pair = XHash_iterator_data(&it);
+		pairSize = XPair_getSize(pair);
+		memcpy(ptr, pair, pairSize);
+		ptr += pairSize;
 	}
 	return var;
 }
@@ -435,6 +523,40 @@ XVariantList* XVariant_toList(XVariant* var)
 		temp = ptr;
 	}
 	return list;
+}
+
+XMap* XVariant_toMap(XVariant* var)
+{
+	if (var->m_type != XVariantType_MapBase)
+		return NULL;
+	XMap* map = XMap_Create(XString*, XVariant*,XEquality_XString,XLess_XString);
+	if (map == NULL)
+		return NULL;
+	XContainerSetDataDeleteMethod(map, XMapBase_KeyXStringValueXVariantDeleteMethod);
+	//正式保存数据
+	size_t variantSize = sizeof(XVariant) - sizeof(void*);
+	uint8_t* ptr = var->m_data;
+	XPair* temp = ptr;
+	XVariant* tv=NULL;
+	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
+	{
+		XString* str = XString_create(XPair_first(temp));
+		tv = XPair_second(temp);
+		XVariant* newVar = XVariant_create(NULL, 0, 0);
+
+		memcpy(newVar, tv, variantSize);
+		newVar->m_data = XMemory_malloc(tv->m_dataSize);
+		memcpy(newVar->m_data, ptr+ variantSize, tv->m_dataSize);
+		XMapBase_insert_base(map,&str,&newVar);
+		ptr += XPair_getSize(temp);
+		temp = ptr;
+	}
+}
+
+XHash* XVariant_toHash(XVariant* var)
+{
+	if (var->m_type != XVariantType_MapBase)
+		return NULL;
 }
 
 XPair* XVariant_toXPair(XVariant* var)
@@ -663,13 +785,14 @@ bool XVariant_equality(XVariant* var, XVariant* cmp)
 	case XVariantType_ByteArray:
 	{
 		XByteArray v = { 0 }, c = {0};
+		XByteArray* pv = &v, * pc = &c;
 		v.m_parent.m_parent.m_data = var->m_data;
 		v.m_parent.m_parent.m_capacity = var->m_dataSize;
 		v.m_parent.m_parent.m_size = var->m_dataSize;
 		c.m_parent.m_parent.m_data = cmp->m_data;
 		c.m_parent.m_parent.m_capacity = cmp->m_dataSize;
 		c.m_parent.m_parent.m_size = cmp->m_dataSize;
-		return XEquality_XByteArray(&v, &c);
+		return XEquality_XByteArray(&pv, &pc);
 	}
 	default:
 	{
@@ -677,7 +800,7 @@ bool XVariant_equality(XVariant* var, XVariant* cmp)
 		if(global_equalityHash==NULL)
 			return false;
 		//查找相等比较函数
-		XEquality*ePtr=XHashMap_value_base(global_equalityHash,&(var->m_type));
+		XEquality*ePtr=XHash_value_base(global_equalityHash,&(var->m_type));
 		if (ePtr)
 			return (*ePtr)(var->m_data,cmp->m_data);
 		return false;
@@ -691,9 +814,9 @@ void XVariant_addEquality(int type, XEquality equality)
 	if (type < XVariantType_User || equality == NULL)
 		return;
 	if (global_equalityHash == NULL)
-		global_equalityHash = XHashMap_Create(int, XEquality,XHash_murmur3_32,XEquality_int);
+		global_equalityHash = XHash_Create(int, XEquality,XHash_murmur3_32,XEquality_int);
 	if(global_equalityHash)
-		XHashMap_insert_base(global_equalityHash,&type,&equality);
+		XHash_insert_base(global_equalityHash,&type,&equality);
 }
 
 

@@ -13,6 +13,8 @@ static bool VXMap_remove(XMap* this_map, const void* key);
 static void* VXMap_value(XMap* this_map, const void* key);
 //查找数据，返回找到的XPair地址，没有返回NULL
 static XPair* VXMap_find(XMap* this_map, const void* key);
+//返回key数组
+static XVector* VXMapBase_keys(const XMapBase* this_map);
 //清空Map，释放内存
 static void VXMap_clear(XMap* this_map);
 //释放内存
@@ -30,7 +32,8 @@ XVtable* XMap_class_init()
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
 	void* table[] = {
-		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find
+		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find,
+		VXMapBase_keys
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -132,7 +135,16 @@ XPair* VXMap_find(XMap* this_map, const void* key)
 	return NULL;
 #endif
 }
+XVector* VXMapBase_keys(const XMapBase* this_map)
+{
 
+	XVector* v = XVector_create(this_map->m_keyTypeSize);
+	for_each_iterator(this_map, XMap, it)
+	{
+		XVector_push_back_base(v, XPair_first(XHash_iterator_data(&it)));
+	}
+	return v;
+}
 static void XMap_freeNodeData(XPair* pair, void* args)
 {
 	if (XContainerDataDeleteMethod(args) != NULL)

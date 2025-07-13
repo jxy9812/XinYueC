@@ -210,17 +210,17 @@ void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo)
     XVtableGetFunc(XContainerObject_class_init(), EXContainerObject_Swap, void(*)(XHashSet*, XHashSet*))(this_setOne, this_setTwo);
     XSwap(&(this_setOne->m_parent.m_KeyEquality), &(this_setTwo->m_parent.m_KeyEquality), sizeof(XEquality));
     XSwap(&(this_setOne->m_parent.m_keyTypeSize), &(this_setTwo->m_parent.m_keyTypeSize), sizeof(size_t));
-    XSwap(&(this_setOne->m_hash), &(this_setTwo->m_hash), sizeof(XHash));
+    XSwap(&(this_setOne->m_hash), &(this_setTwo->m_hash), sizeof(XHashFunc));
 }
 
-XHashSet* XHashSet_create(const size_t keyTypeSize, XHash hash, XEquality KeyEquality)
+XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality)
 {
     XHashSet* set = XMemory_malloc(sizeof(XHashSet));
     XHashSet_init(set, keyTypeSize, hash, KeyEquality);
     return set;
 }
 
-void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHash hash, XEquality KeyEquality)
+void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality)
 {
     if (this_set == NULL)
         return;

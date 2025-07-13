@@ -1,0 +1,26 @@
+﻿#include"XHash.h"
+#if XHash_ON
+#include"XMemory.h"
+#include<string.h>
+XHash*XHash_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality)
+{
+	XHash*map = XMemory_malloc(sizeof(XHash));
+	XHash_init(map,keyTypeSize,valTypeSize,hash,KeyEquality);
+	return map;
+}
+void XHash_init(XHash*this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality)
+{
+	if (this_map == NULL)
+		return;
+	XMapBase_init(this_map, keyTypeSize, valTypeSize, KeyEquality);
+	XClassGetVtable(this_map) = XHash_class_init();
+	this_map->m_hash = hash;
+	XContainerCapacity(this_map)= DEFAULT_CAPACITY;
+	size_t size = sizeof(XHashNode*) * XContainerCapacity(this_map);
+	XContainerDataPtr(this_map) = XMemory_malloc(size);
+	if (XContainerDataPtr(this_map) == NULL)
+		XMemory_free(this_map);
+	memset(XContainerDataPtr(this_map),0,size);
+}
+
+#endif
