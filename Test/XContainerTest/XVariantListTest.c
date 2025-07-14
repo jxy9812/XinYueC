@@ -55,7 +55,7 @@ void XVariantListTest()
 		}
 		printf("--------------------------XVariant_toMap测试-----------------------\n");
 		{
-			XMap* map = XMap_create_XStringXVariant();
+			XMap* map = XMap_create_XStringVariant();
 			{
 				XString* str = XString_create("6666");
 				XVariant* v = XVariant_create_int(9999);

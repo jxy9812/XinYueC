@@ -46,7 +46,7 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 //返回元素类型字节大小
 #define XMap_getTypeSize_base			XMapBase_getTypeSize_base
 
-XMap* XMap_create_XStringXVariant();
+XMap* XMap_create_XStringVariant();
 #ifdef __cplusplus
 }
 #endif

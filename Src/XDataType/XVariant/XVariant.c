@@ -548,7 +548,7 @@ XMap* XVariant_toMap(XVariant* var)
 {
 	if (var->m_type != XVariantType_MapBase)
 		return NULL;
-	XMap* map = XMap_create_XStringXVariant();
+	XMap* map = XMap_create_XStringVariant();
 	if (map == NULL)
 		return NULL;
 	//
@@ -576,7 +576,7 @@ XHash* XVariant_toHash(XVariant* var)
 {
 	if (var->m_type != XVariantType_MapBase)
 		return NULL;
-	XMap* hash = XHash_create_XStringXVariant();
+	XMap* hash = XHash_create_XStringVariant();
 	if (hash == NULL)
 		return NULL;
 	//
