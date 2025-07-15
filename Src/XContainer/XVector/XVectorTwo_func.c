@@ -82,7 +82,7 @@ void XVectorTwo_clear(const XVector* this_vector)
 	XVector_clear_base(this_vector);
 }
 
-void XVectorTwo_free(const XVector* this_vector)
+void XVectorTwo_delete(const XVector* this_vector)
 {
 	XVectorTwo_clear(this_vector);
 	XVector_delete_base(this_vector);

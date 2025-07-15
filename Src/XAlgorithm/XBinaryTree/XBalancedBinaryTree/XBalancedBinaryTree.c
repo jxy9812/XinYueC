@@ -3,7 +3,11 @@
 #include"XStack.h"
 XBBTreeNode* XBBTree_creation(const size_t TypeSize)
 {
-	struct XBBTreeNode* nodes = XBTree_creationNode(sizeof(XBBTreeNode),3,1,TypeSize);
+	//struct XBBTreeNode* nodes = XBTree_creationNode(sizeof(XBBTreeNode),3,1,TypeSize);
+	XBBTreeNode* nodes = XMemory_malloc(sizeof(XBBTreeNode));
+	if (nodes == NULL)
+		return NULL;
+	XBTreeNode_init(nodes, 3, 1, TypeSize);
 	nodes->maxLayer = 1;
 	return nodes;
 }
@@ -17,7 +21,7 @@ XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equa
 	XBBTreeNode* CurNode = this_root;//当前节点指针
 	while (CurNode!=NULL)
 	{
-		//printf("%d \n", XBTree_GetData(CurNode,0,int));
+		//printf("%d \n", XBTreeNode_GetParent(CurNode,0,int));
 		//if (equality(CurNode->XBTNode.data, LPData))
 		if(Rule(equality, CurNode, LPData))
 		{
@@ -26,11 +30,11 @@ XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equa
 		//else if (less(CurNode->XBTNode.data, LPData))
 		else if(Rule(less, CurNode, LPData))
 		{
-			CurNode = XBTree_GetRChild(CurNode);
+			CurNode = XBTreeNode_GetRChild(CurNode);
 		}
 		else
 		{
-			CurNode = XBTree_GetLChild(CurNode);
+			CurNode = XBTreeNode_GetLChild(CurNode);
 		}
 	}
 	return NULL;

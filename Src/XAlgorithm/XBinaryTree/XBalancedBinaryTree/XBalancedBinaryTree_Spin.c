@@ -26,7 +26,7 @@ XBBTreeNode* XBBTree_SpinRL(XBBTreeNode** this_root, XBBTreeNode* nodes)
 {
 	if (ISNULL(nodes, ""))
 		return NULL;
-	XBBTreeNode** ppThisRootRightChild = XBTree_GetTreeNode(nodes, XBTreeRChild);
+	XBBTreeNode** ppThisRootRightChild = XBTreeNode_getNodeRef(nodes, XBTreeRChild);
 	/**ppThisRootRightChild = */XBBTree_SpinRR(this_root ,*ppThisRootRightChild);
 	return XBBTree_SpinLL(this_root, nodes);
 }
@@ -35,7 +35,7 @@ XBBTreeNode* XBBTree_SpinLR(XBBTreeNode** this_root, XBBTreeNode* nodes)
 {
 	if (ISNULL(nodes, ""))
 		return NULL;
-	XBBTreeNode** ppThisRootLeftChild = XBTree_GetTreeNode(nodes, XBTreeLChild);
+	XBBTreeNode** ppThisRootLeftChild = XBTreeNode_getNodeRef(nodes, XBTreeLChild);
 	/**ppThisRootLeftChild =*/ XBBTree_SpinLL(this_root ,*ppThisRootLeftChild);
 	return XBBTree_SpinRR(this_root, nodes);
 }
@@ -44,17 +44,17 @@ XBBTreeNode* XBBTree_Spin(XBBTreeNode** this_root, XBBTreeNode* nodes)
 {
 	if (ISNULL(nodes, ""))
 		return NULL;
-	size_t leftLayer = XBBTree_GetLayerNumberThis(XBTree_GetLChild(nodes));
-	size_t rightLayer = XBBTree_GetLayerNumberThis(XBTree_GetRChild(nodes));
+	size_t leftLayer = XBBTree_GetLayerNumberThis(XBTreeNode_GetLChild(nodes));
+	size_t rightLayer = XBBTree_GetLayerNumberThis(XBTreeNode_GetRChild(nodes));
 	XBBTreeNode* newNode = nodes;
 	if (abs(leftLayer - rightLayer) > 1)
 	{
 		XBBTreeNode* centre = NULL;
 		if (leftLayer > rightLayer)//左边比右边高度大于1(右旋/左右旋)
 		{
-			centre = XBTree_GetLChild(nodes);
-			size_t centreLeft = XBBTree_GetLayerNumberThis(XBTree_GetLChild(centre));
-			size_t centreRight = XBBTree_GetLayerNumberThis(XBTree_GetRChild(centre));
+			centre = XBTreeNode_GetLChild(nodes);
+			size_t centreLeft = XBBTree_GetLayerNumberThis(XBTreeNode_GetLChild(centre));
+			size_t centreRight = XBBTree_GetLayerNumberThis(XBTreeNode_GetRChild(centre));
 			if (centreLeft > centreRight)//左大于右(右旋)
 				newNode=XBBTree_SpinRR(this_root,nodes);
 			else
@@ -62,9 +62,9 @@ XBBTreeNode* XBBTree_Spin(XBBTreeNode** this_root, XBBTreeNode* nodes)
 		}
 		else//左旋/右左旋
 		{
-			centre = XBTree_GetRChild(nodes);
-			size_t centreLeft = XBBTree_GetLayerNumberThis(XBTree_GetLChild(centre));
-			size_t centreRight = XBBTree_GetLayerNumberThis(XBTree_GetRChild(centre));
+			centre = XBTreeNode_GetRChild(nodes);
+			size_t centreLeft = XBBTree_GetLayerNumberThis(XBTreeNode_GetLChild(centre));
+			size_t centreRight = XBBTree_GetLayerNumberThis(XBTreeNode_GetRChild(centre));
 			if (centreLeft < centreRight)//右大于左(左旋)
 				newNode = XBBTree_SpinLL(this_root, nodes);
 			else

@@ -21,16 +21,16 @@ void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNode)
 	XRBTreeNode* LPpater = NULL;//父节点
 	XRBTreeNode* LPgrandpa = NULL;//祖父节点
 	XRBTreeNode* LPuncle = NULL;//叔叔节点
-	while ((LPpater=XBTree_GetParent(currentNode))&& XRBTree_IsRed(LPpater))
+	while ((LPpater=XBTreeNode_GetParent(currentNode))&& XRBTree_IsRed(LPpater))
 	{
-		LPgrandpa = XBTree_GetParent(LPpater);
-		if (LPpater == XBTree_GetLChild(LPgrandpa))//父节点是祖父的左孩子
+		LPgrandpa = XBTreeNode_GetParent(LPpater);
+		if (LPpater == XBTreeNode_GetLChild(LPgrandpa))//父节点是祖父的左孩子
 		{
-			LPuncle = XBTree_GetRChild(LPgrandpa);
+			LPuncle = XBTreeNode_GetRChild(LPgrandpa);
 			if (XRBTree_AdjustNoOne(&currentNode, LPpater, LPgrandpa, LPuncle))//叔叔节点是红色
 				continue;
 			//NO.2当前节点是其父节点的右孩子
-			if (currentNode == XBTree_GetRChild(LPpater))
+			if (currentNode == XBTreeNode_GetRChild(LPpater))
 			{
 				currentNode = LPpater;
 				LPpater = XBTree_SpinLL(this_root, LPpater);
@@ -44,11 +44,11 @@ void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNode)
 		}
 		else//父节点是祖父的右孩子
 		{
-			LPuncle = XBTree_GetLChild(LPgrandpa);
+			LPuncle = XBTreeNode_GetLChild(LPgrandpa);
 			if (XRBTree_AdjustNoOne(&currentNode, LPpater, LPgrandpa, LPuncle))//叔叔节点是红色
 				continue;
 			//NO.2当前节点是其父节点的左孩子
-			if (currentNode == XBTree_GetLChild(LPpater))
+			if (currentNode == XBTreeNode_GetLChild(LPpater))
 			{
 				currentNode = LPpater;
 				LPpater = XBTree_SpinRR(this_root, LPpater);
@@ -60,7 +60,7 @@ void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNode)
 				XBTree_SpinLL(this_root, LPgrandpa);
 			}
 		}
-		//LPpater = XBTree_GetParent(currentNode);
+		//LPpater = XBTreeNode_GetParent(currentNode);
 	}
 	XRBTree_SetBlack(*this_root);
 }

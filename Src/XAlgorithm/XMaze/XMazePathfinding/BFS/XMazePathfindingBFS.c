@@ -10,7 +10,7 @@ typedef struct XVector XVector;
 //创建一个节点
 static XBTreeNode* CreationBFSNode_XPoint(XPoint pos)
 {
-	XBTreeNode* nodes = XBTree_creationInsertData(&pos,1,sizeof(XPoint));
+	XBTreeNode* nodes = XBTree_createInsertData(&pos,1,sizeof(XPoint));
 	if (ISNULL(nodes, ""))
 		return NULL;
 	return nodes;
@@ -30,7 +30,7 @@ static XVector* GetXMazePath(const XBTreeNode* child)
 	while (current!=NULL)
 	{
 		XVector_push_front_base(Path, current->values);
-		current = *XBTree_GetTreeNode(current,XBTreeParent);
+		current = *XBTreeNode_getNodeRef(current,XBTreeParent);
 	}
 	return Path;
 }
@@ -50,7 +50,7 @@ static size_t insertChild(const XVector* maze, XBTreeNode* nodes, XVector* NextN
 	{
 		XPointStep* pCurrentPos = (XPointStep*)XStack_top_base(ChildAll);
 		XBTreeNode* childBFSNode = CreationBFSNode(pCurrentPos->x,pCurrentPos ->y);
-		*XBTree_GetTreeNode(childBFSNode, XBTreeParent) = nodes;
+		*XBTreeNode_getNodeRef(childBFSNode, XBTreeParent) = nodes;
 		XVector_push_back_base(nodes->nodes, &childBFSNode);
 		XVector_push_back_base(NextNodeArray, &childBFSNode);
 		XStack_pop_base(ChildAll);
@@ -92,8 +92,8 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 	XVector* Path = GetXMazePath(CurrentNode);
 	XVector_delete_base(CurrentNodeArray);
 	XVector_delete_base(NextNodeArray);
-	XVectorTwo_free(tempMaze);
-	XBTree_freeNodeAll(root);
+	XVectorTwo_delete(tempMaze);
+	XBTree_delete(root);
 	return Path;
 #else
 	IS_ON_DEBUG(XVector_ON);

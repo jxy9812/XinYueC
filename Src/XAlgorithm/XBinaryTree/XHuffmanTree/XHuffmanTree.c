@@ -48,7 +48,7 @@ void XHfmTree_clear(XHuffmanTree* tree)
 {
 	//释放哈夫曼树
 	if(tree->root!=NULL)
-		XBTree_freeNodeAll(tree->root);
+		XBTree_delete(tree->root);
 	tree->root = NULL;
 	//清空哈夫曼编码
 	XMap_iterator_for_each(tree->dictionaries, freeCode,NULL);

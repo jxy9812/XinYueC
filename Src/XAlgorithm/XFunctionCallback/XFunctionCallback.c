@@ -10,22 +10,12 @@ bool XCompareRuleTwo_Standard(XCompare compare, const void* LPrevValue, const vo
 
 bool XCompareRuleTwo_BinaryTree(XCompare compare, const void* LPrevValue, const void* LNextValue)
 {
-#if XVector_ON
-	return compare(XVector_at_base(((XBTreeNode*)LPrevValue)->values,0), XVector_at_base(((XBTreeNode*)LNextValue)->values, 0));
-#else
-	IS_ON_DEBUG(XVector_ON);
-	return false;
-#endif
+	return compare(((XBTreeNode*)LPrevValue)->values, ((XBTreeNode*)LNextValue)->values);
 }
 
 bool XCompareRuleTwo_XMap(XCompare compare, const void* LPrevValue, const void* LNextValue)
 {
-#if XVector_ON
-	return compare(XPair_first(*(XPair**)XVector_at_base(((XBTreeNode*)LPrevValue)->values,0)), XPair_first(*(XPair**)XVector_at_base(((XBTreeNode*)LNextValue)->values, 0)));
-#else
-	IS_ON_DEBUG(XVector_ON);
-	return false;
-#endif
+	return compare(XPair_first(*(XPair**)((XBTreeNode*)LPrevValue)->values), XPair_first(*(XPair**)((XBTreeNode*)LNextValue)->values));
 }
 
 bool XCompareRuleOne_Standard(XCompare compare, const void* Value, const void* CompareValue)
@@ -35,20 +25,10 @@ bool XCompareRuleOne_Standard(XCompare compare, const void* Value, const void* C
 
 bool XCompareRuleOne_BinaryTree(XCompare compare, const void* Value, const void* CompareValue)
 {
-#if XVector_ON
-	return compare(XVector_at_base(((XBTreeNode*)Value)->values,0), CompareValue);
-#else
-	IS_ON_DEBUG(XVector_ON);
-	return false;
-#endif
+	return compare(((XBTreeNode*)Value)->values, CompareValue);
 }
 
 bool XCompareRuleOne_XMap(XCompare compare, const void* Value, const void* CompareValue)
 {
-#if XVector_ON
-	return compare(XPair_first(*(XPair**)(XVector_at_base(((XBTreeNode*)Value)->values, 0))), CompareValue);
-#else
-	IS_ON_DEBUG(XVector_ON);
-	return false;
-#endif
+	return compare(XPair_first(*(XPair**)(((XBTreeNode*)Value)->values)), CompareValue);
 }

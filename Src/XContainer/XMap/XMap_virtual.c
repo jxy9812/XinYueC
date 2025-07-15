@@ -94,7 +94,7 @@ bool VXMap_remove(XMap* this_map, const void* key)
 	XRBTreeNode* nodes = XBBTree_findData(XContainerDataPtr(this_map), this_map->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
-		XPair* pair = *((XPair**)XVector_at_base(nodes->XBTNode.values, 0));
+		XPair* pair = XBTreeNode_GetData(nodes, 0, XPair*);
 		if (XContainerDataDeleteMethod(this_map) != NULL)
 			XContainerDataDeleteMethod(this_map)(pair);
 		XRBTree_erase(&XContainerDataPtr(this_map), this_map->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
@@ -133,7 +133,7 @@ XPair* VXMap_find(XMap* this_map, const void* key)
 	XBTreeNode* nodes = XBBTree_findData(XContainerDataPtr(this_map), this_map->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes == NULL)
 		return NULL;
-	XPair* pair = *(XPair**)XVector_at_base(nodes->values, 0);
+	XPair* pair = XBTreeNode_GetData(nodes,0, XPair*);
 	return pair;
 #else
 	IS_ON_DEBUG(XVector_ON);
@@ -161,7 +161,7 @@ void VXMap_clear(XMap* this_map)
 	if (XMap_isEmpty_base(this_map))
 		return;
 	XMap_iterator_for_each(this_map, XMap_freeNodeData, this_map);
-	XBTree_freeNodeAll(XContainerDataPtr(this_map));
+	XBTree_delete(XContainerDataPtr(this_map));
 	XContainerCapacity(this_map) = 0;
 	XContainerSize(this_map) = 0;
 	XContainerDataPtr(this_map) = NULL;

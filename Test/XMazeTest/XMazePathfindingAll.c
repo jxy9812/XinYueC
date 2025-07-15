@@ -23,7 +23,7 @@ void XMazePathfinding()
 			break;
 		else
 		{
-			XVectorTwo_free(maze);
+			XVectorTwo_delete(maze);
 		}
 	}
 	
@@ -53,7 +53,7 @@ void XMazePathfinding()
 	//	XMazePathPrintSleep(maze, path, "■", "  ", "★", 100);
 	//	//printf("当前方案有%d个点\n", XVector_size(path));
 	//}
-	//XVectorTwo_free(PathAll);
+	//XVectorTwo_delete(PathAll);
 	//system("pause");
 	//system("cls");
 
@@ -70,7 +70,7 @@ void XMazePathfinding()
 	//	XDelay(1000);
 	//	XMazePathPrintSleep(maze, path, "■", "  ", "★", 100);
 	//}
-	//XVectorTwo_free(PathAll);
+	//XVectorTwo_delete(PathAll);
 	
 	//XVector* Path = XMazePathfindingBFS(maze, start, dest);
 	XVector* Path = XMazePathfindingAStar(maze, start, dest,true);

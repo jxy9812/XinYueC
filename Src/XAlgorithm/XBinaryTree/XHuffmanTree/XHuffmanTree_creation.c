@@ -32,7 +32,7 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 	{
 		XHfmNode* LPNode = XPriorityQueue_Top_Base(queue, XHfmNode*);
 		XPriorityQueue_pop_base(queue);
-		//printf("ArgIsNULL:%s data:%d count:%d\n", XBTree_GetData(LPNode, 0, XHfmNodeData).code==0 ? "true" : "false", XBTree_GetData(LPNode, 0, XHfmNodeData).ch, XBTree_GetData(LPNode, 0, XHfmNodeData).count);
+		//printf("ArgIsNULL:%s data:%d count:%d\n", XBTreeNode_GetParent(LPNode, 0, XHfmNodeData).code==0 ? "true" : "false", XBTreeNode_GetParent(LPNode, 0, XHfmNodeData).ch, XBTreeNode_GetParent(LPNode, 0, XHfmNodeData).count);
 		if (LPleft == NULL)
 		{
 			LPleft = LPNode;
@@ -42,10 +42,10 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 			LPright = LPNode;
 			//创建空父节点，并建立关系
 			LPparent = XHfmTree_creationNode( 0, XHfmTree_GetNodeData(LPleft).count + XHfmTree_GetNodeData(LPright).count,NULL);
-			XBTree_SetLChild(LPparent, LPleft);
-			XBTree_SetRChild(LPparent, LPright);
-			XBTree_SetParent(LPleft, LPparent);
-			XBTree_SetParent(LPright, LPparent);
+			XBTreeNode_SetLChild(LPparent, LPleft);
+			XBTreeNode_SetRChild(LPparent, LPright);
+			XBTreeNode_SetParent(LPleft, LPparent);
+			XBTreeNode_SetParent(LPright, LPparent);
 			XPriorityQueue_push_base(queue, &LPparent);
 			LPleft = NULL;
 			LPright = NULL;
@@ -61,19 +61,20 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 }
 XHfmNode* XHfmTree_creationNode(unsigned char ch, size_t count, XVector* code)
 {
-	XBTreeNode* node = XBTree_CreationNode(XBTreeNode, 3, 1, XHfmNodeData);
+	//XBTreeNode* node = XBTree_CreationNode(XBTreeNode, 3, 1, XHfmNodeData);
+	XBTreeNode* node = XMemory_malloc(sizeof(XBTreeNode));
 	if (node == NULL)
-	{
 		return NULL;
-	}
-	XHfmNodeData* LPData = XBTree_Getdata(node, 0);
+	XBTreeNode_init(node,3,1, sizeof(XHfmNodeData));
+	//XHfmNodeData* LPData = XBTree_Getdata(node, 0);
+	XHfmNodeData* LPData = XBTreeNode_getData(node, 0);
 	//LPData->null = null;
 	LPData->ch = ch;
 	LPData->count = count;
 	LPData->code = code;
 	/*if (LPData->code == NULL)
 	{
-		XBTree_freeNode(node, false);
+		XBTreeNode_delete(node, false);
 		return NULL;
 	}*/
 	return node;

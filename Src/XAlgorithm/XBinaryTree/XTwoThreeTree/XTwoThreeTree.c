@@ -4,16 +4,18 @@
 XTTTreeNode* XTTTree_creationNode(const enum XTTTree_NodeNum nodeCount, const size_t TypeSize)
 {
 #if XVector_ON
-    XTTTreeNode* nodes = XBTree_creationNode(sizeof(XTTTreeNode), nodeCount + 1,1, TypeSize);
+    //XTTTreeNode* nodes = XBTree_creationNode(sizeof(XTTTreeNode), nodeCount + 1,1, TypeSize);
+    XTTTreeNode* nodes = XMemory_malloc(sizeof(XTTTreeNode));
     if (nodes == NULL)//初始化父类失败
         return NULL;
+    XBTreeNode_init(nodes, nodeCount + 1, 1, TypeSize);
     nodes->LpValueArray = NULL;
     if (nodeCount == XTTTree_TwoNode)
         return nodes;
     nodes->LpValueArray = XVector_create(TypeSize);
     if (nodes->LpValueArray == NULL)//创建数据数组失败
     {
-        XBTree_freeNode(nodes,false);
+        XBTreeNode_delete(nodes);
         return NULL;
     }
     //插入0值,初始化剩余的值
@@ -68,7 +70,7 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
 
 XTTTreeNode** XTTTree_Node(const XTTTreeNode* this_root, size_t nSel)
 {
-    return XBTree_GetTreeNode(this_root, nSel);
+    return XBTreeNode_getNodeRef(this_root, nSel);
 }
 
 void* XTTTree_data(const XTTTreeNode* this_root, size_t nSel)
@@ -98,7 +100,7 @@ void XTTTree_free(const XTTTreeNode* this_root)
         return 0;
     if (this_root->LpValueArray != NULL)
         XVector_delete_base(this_root->LpValueArray);
-    XBTree_freeNode(this_root, false);
+    XBTreeNode_delete(this_root);
 #else
     IS_ON_DEBUG(XVector_ON);
     return NULL;

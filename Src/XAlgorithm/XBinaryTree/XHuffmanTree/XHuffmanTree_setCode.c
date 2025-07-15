@@ -11,13 +11,13 @@ static void setCode(XHfmNode* root,XVector*code)
 {
 #if XVector_ON
 	XHfmNode* curentNode = root;
-	XHfmNode* parent = XBTree_GetParent(curentNode);
+	XHfmNode* parent = XBTreeNode_GetParent(curentNode);
 	char ch = 0;//哈夫曼编码
 	//循环找父
 	while (parent !=NULL)
 	{
 		//当前是其父节点的左孩子
-		if (curentNode == XBTree_GetLChild(parent))
+		if (curentNode == XBTreeNode_GetLChild(parent))
 		{
 			ch = 0;
 		}
@@ -27,7 +27,7 @@ static void setCode(XHfmNode* root,XVector*code)
 		}
 		XVector_push_back_base(code, &ch);
 		curentNode = parent;
-		parent= XBTree_GetParent(curentNode);
+		parent= XBTreeNode_GetParent(curentNode);
 	}
 	//将编码逆序
 	XReversed(XVector_front_base(code),XVector_getSize_base(code),sizeof(char));

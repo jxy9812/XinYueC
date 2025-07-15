@@ -27,7 +27,7 @@ size_t XVectorTwo_TypeSize(struct XVector* this_vector);
 //清空二位数组
 void XVectorTwo_clear(const struct XVector* this_vector);
 //释放二维数组内存
-void XVectorTwo_free(const struct XVector* this_vector);
+void XVectorTwo_delete(const struct XVector* this_vector);
 #ifdef __cplusplus
 }
 #endif

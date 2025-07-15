@@ -64,7 +64,7 @@ static XVector*  writeUnZipData(XHuffmanTree* tree, const char* data,const size_
 			char temp = (byteRead >> (7 - charReadIdx)) & 0x01;
 			if (temp == 0)//左边
 			{
-				if (writeUnZip(unzipData, currentNode = XBTree_GetLChild(currentNode)))
+				if (writeUnZip(unzipData, currentNode = XBTreeNode_GetLChild(currentNode)))
 				{
 					currentNode = root;
 					++count;
@@ -72,7 +72,7 @@ static XVector*  writeUnZipData(XHuffmanTree* tree, const char* data,const size_
 			}
 			else if (temp == 1)//右边
 			{
-				if (writeUnZip(unzipData, currentNode = XBTree_GetRChild(currentNode)))
+				if (writeUnZip(unzipData, currentNode = XBTreeNode_GetRChild(currentNode)))
 				{
 					currentNode = root;
 					count++;

@@ -3,7 +3,6 @@
 #define XTWOTHREETREE_H
 #include"XBinaryTreeObject.h"
 #include"XFunctionCallback.h"
-#include"XBinaryTreeObject_macro.h"
 //节点数
 enum  XTTTree_NodeNum
 {

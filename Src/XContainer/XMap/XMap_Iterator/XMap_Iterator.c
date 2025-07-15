@@ -13,8 +13,8 @@ XMap_iterator XMap_begin(XMap* this_map)
 		return it;
 	XRBTreeNode* current = XContainerDataPtr(this_map);
 	if (current == NULL) return it;
-	while (XBTree_GetLChild(current)!= NULL) {
-		current = XBTree_GetLChild(current);
+	while (XBTreeNode_GetLChild(current)!= NULL) {
+		current = XBTreeNode_GetLChild(current);
 	}
 	it.node = current;
 	return it;
@@ -34,10 +34,10 @@ void XMap_iterator_add(XMap* this_map, XMap_iterator* it)
 	if (this_map == NULL||it==NULL||it->node==NULL)
 		return ;
 	// 如果有右子树，找到右子树的最左节点
-	if (XBTree_GetRChild(it->node) != NULL) {
-		XRBTreeNode* current = XBTree_GetRChild(it->node);
-		while (XBTree_GetLChild(current) != NULL) {
-			current = XBTree_GetLChild(current);
+	if (XBTreeNode_GetRChild(it->node) != NULL) {
+		XRBTreeNode* current = XBTreeNode_GetRChild(it->node);
+		while (XBTreeNode_GetLChild(current) != NULL) {
+			current = XBTreeNode_GetLChild(current);
 		}
 		it->node = current;
 		return ;
@@ -45,10 +45,10 @@ void XMap_iterator_add(XMap* this_map, XMap_iterator* it)
 
 	// 否则向上回溯，直到找到一个作为左子节点的祖先
 	XRBTreeNode* current = it->node;
-	XRBTreeNode* parent = XBTree_GetParent(current);
-	while (parent != NULL && current == XBTree_GetRChild(parent)) {
+	XRBTreeNode* parent = XBTreeNode_GetParent(current);
+	while (parent != NULL && current == XBTreeNode_GetRChild(parent)) {
 		current = parent;
-		parent = XBTree_GetParent(parent);
+		parent = XBTreeNode_GetParent(parent);
 	}
 	it->node = parent;
 	return ;
@@ -71,7 +71,7 @@ XPair* XMap_iterator_data(XMap_iterator* it)
 {
 	if (it == NULL || it->node == NULL)
 		return NULL;
-	return XBTree_GetData(it->node,0, XPair*);
+	return XBTreeNode_GetData(it->node,0, XPair*);
 }
 
 

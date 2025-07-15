@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 //哈夫曼树获取节点数据
-#define XHfmTree_GetNodeData(node) XBTree_GetData(node, 0, XHfmNodeData)
+#define XHfmTree_GetNodeData(node) XBTreeNode_GetData(node, 0, XHfmNodeData)
 #ifdef __cplusplus
 }
 #endif

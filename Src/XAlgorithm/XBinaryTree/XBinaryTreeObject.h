@@ -8,7 +8,17 @@ extern "C" {
 #include<stdio.h>
 #include<stdbool.h>
 #include"XVector.h"
-#include"XBinaryTreeObject_macro.h"
+//获取节点
+#define XBTreeNode_GetParent(this_root) (((XBTreeNode**)(((XBTreeNode*)this_root)->nodes))[XBTreeParent])//二叉树-获取父节点(继承的子类均可以使用)
+#define XBTreeNode_GetLChild(this_root) (((XBTreeNode**)(((XBTreeNode*)this_root)->nodes))[XBTreeLChild])//二叉树-获取左孩子(继承的子类均可以使用)
+#define XBTreeNode_GetRChild(this_root) (((XBTreeNode**)(((XBTreeNode*)this_root)->nodes))[XBTreeRChild])//二叉树-获取右孩子(继承的子类均可以使用)
+//设置节点
+#define XBTreeNode_SetParent(this_root,node) (((XBTreeNode**)(((XBTreeNode*)this_root)->nodes))[XBTreeParent]=node)//二叉树-设置父节点(继承的子类均可以使用)
+#define XBTreeNode_SetLChild(this_root,node) (((XBTreeNode**)(((XBTreeNode*)this_root)->nodes))[XBTreeLChild]=node)//二叉树-设置左孩子(继承的子类均可以使用)
+#define XBTreeNode_SetRChild(this_root,node) (((XBTreeNode**)(((XBTreeNode*)this_root)->nodes))[XBTreeRChild]=node)//二叉树-设置右孩子(继承的子类均可以使用)
+//数据
+#define XBTreeNode_SetData(this_root,nSel,values) XBTreeNode_setData(this_root,nSel,&values)//二叉树-插入数据
+#define XBTreeNode_GetData(this_root,nSel,Type) (*((Type*)(XBTreeNode_getData(this_root,nSel))))//二叉树-获取数据(继承的子类均可以使用)
 //定义节点类型
 enum XBTreeNodeType
 {
@@ -26,30 +36,37 @@ enum XBTreeTraversing
 //二叉树节点
 typedef struct XBTreeNode
 {
-	XVector* nodes;//节点数组
-	XVector* values;//数据指针数组
+	uint8_t nodeCount;//节点数量
+	uint8_t valueCount;//值数量
+	size_t  valueTypeSize;//值类型大小
+	struct XBTreeNode** nodes;//节点数组
+	void* values;//数据指针数组
 }XBTreeNode;
-
-//创建初始化一个二叉树节点
-void* XBTree_creationNode(const size_t NodeTypeSize, const size_t nodeCount,const size_t dataCount,const size_t TypeSize);
-//创建初始化一个二叉树节点,并插入数据
-struct XBTreeNode* XBTree_creationInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize);
-//插入数据-不创建节点，传入节点
-const bool XBTree_insertData(struct XBTreeNode* this_root,const void* LPData,const size_t index, const size_t TypeSize);
-//释放一个树节点,parentSetNull父节点指向的指针置为空
-const bool XBTree_freeNode(struct XBTreeNode* this_root,const bool parentSetNull);
-//获取节点指针
-XBTreeNode** XBTree_GetTreeNode(XBTreeNode* this_root, const size_t nSel);
+//初始化
+void XBTreeNode_init(XBTreeNode* node,const uint8_t nodeCount, const uint8_t dataCount, const size_t dataTypeSize);
+XBTreeNode* XBTreeNode_create(const uint8_t nodeCount, const uint8_t dataCount, const size_t dataTypeSize);
+bool XBTreeNode_setData(XBTreeNode* this_root, const uint8_t index, const void* pvData);
 //获取数据
-void* XBTree_Getdata(XBTreeNode* this_root, const size_t nSel);
+void* XBTreeNode_getData(XBTreeNode* this_root,const uint8_t index);
+//设置一个节点指针
+bool XBTreeNode_setNode(XBTreeNode* this_root, const uint8_t nodeType, XBTreeNode* node);
+//获取节点指针
+XBTreeNode* XBTreeNode_getNode(XBTreeNode* this_root, const uint8_t nodeType);
+//获取节点指针引用
+XBTreeNode** XBTreeNode_getNodeRef(XBTreeNode* this_root, const uint8_t nodeType);//
+//获取节点在父节点指针的位置
+XBTreeNode** XBTreeNode_getChildrenParentRef(XBTreeNode* this_root);//
+//释放一个节点
+void XBTreeNode_delete(XBTreeNode* node);
+//递归释放整颗树
+void XBTree_delete(XBTreeNode* this_root);
+
+//创建初始化一个二叉树节点,并插入数据
+XBTreeNode* XBTree_createInsertData(const void* pvData, const size_t nodeArrySize, const size_t TypeSize);
 //二叉树遍历转数组存储
-XVector* XBTree_TraversingToXVector(struct XBTreeNode* this_root,const enum XBTreeTraversing Traversing);
-//释放整个树(当前节点及其所有子节点)
-const size_t XBTree_freeNodeAll(struct XBTreeNode* this_root);
-//查找在孩子在父节点指针的位置
-struct XBTreeNode** XBTree_findChildisParent(struct XBTreeNode* Child);
+XVector* XBTree_TraversingToXVector(XBTreeNode* this_root,const enum XBTreeTraversing Traversing);
 //替换孩子节点(将原孩子在父节点的指向修改为新的节点，并建立新的父子关系,旧节点的父指针指向空)
-bool XBTree_ReplacementChildNode(struct XBTreeNode* formerChild/*旧的*/, struct XBTreeNode* freshChild/*新的*/);
+bool XBTree_ReplacementChildNode(XBTreeNode* formerChild/*旧的*/, XBTreeNode* freshChild/*新的*/);
 //右旋
 XBTreeNode* XBTree_SpinRR(XBTreeNode** this_root, XBTreeNode* nodes);
 //左旋

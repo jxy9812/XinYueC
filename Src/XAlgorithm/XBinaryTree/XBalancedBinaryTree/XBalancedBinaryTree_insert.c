@@ -1,10 +1,11 @@
 ﻿#include "XBalancedBinaryTree.h"
 #include"XContainerObject.h"
-bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess less, XCompareRuleTwo lessRule, const void* LPData, const size_t TypeSize)
+bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess less, XCompareRuleTwo lessRule, const void* pvData, const size_t TypeSize)
 {
-	if (!XBTree_insertData(insertNode, LPData, 0,TypeSize))//插入数据
+	//if (!XBTree_insertData(insertNode, LPData, 0))//插入数据
+	if(!XBTreeNode_setData(insertNode,0,pvData))
 	{
-		XBTree_freeNode(insertNode, false);//插入失败释放创建的节点
+		XBTreeNode_delete(insertNode);//插入失败释放创建的节点
 		return false;
 	}
 	if (this_root == NULL|| *this_root == NULL)//如果没有根节点或根为空
@@ -20,11 +21,11 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess
 		if(lessRule(less, insertNode, currentNode))
 		//if (less(insertNode->XBTNode.data, currentNode->XBTNode.data))
 		{
-			XBTreeNode** ppLChild = XBTree_GetTreeNode(currentNode, XBTreeLChild);
+			XBTreeNode** ppLChild = XBTreeNode_getNodeRef(currentNode, XBTreeLChild);
 			if (*ppLChild == NULL)//建立关系
 			{
 				*ppLChild = insertNode;
-				XBTree_SetParent(insertNode, currentNode);
+				XBTreeNode_SetParent(insertNode, currentNode);
 				return true;
 			}
 			else
@@ -34,11 +35,11 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess
 		}
 		else//满足大于等于的情况
 		{
-			XBTreeNode** ppRChild = XBTree_GetTreeNode(currentNode, XBTreeRChild);
+			XBTreeNode** ppRChild = XBTreeNode_getNodeRef(currentNode, XBTreeRChild);
 			if (*ppRChild == NULL)//建立关系
 			{
 				*ppRChild = insertNode;
-				XBTree_SetParent(insertNode,currentNode);
+				XBTreeNode_SetParent(insertNode,currentNode);
 				return true;
 			}
 			else
@@ -47,7 +48,7 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess
 			}
 		}
 	}
-	XBTree_freeNode(insertNode, false);
+	XBTreeNode_delete(insertNode);
 	return false;
 }
 XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XLess less, XCompareRuleTwo lessRule, const void* LPData, const size_t TypeSize)
@@ -68,6 +69,6 @@ XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XLess less, XCompareRuleTwo
 		printf("节点插入失败\n");
 		return NULL;
 	}
-	XBBTree_SetLayerNumberAll(this_root, XBTree_GetParent(NewNode));
+	XBBTree_SetLayerNumberAll(this_root, XBTreeNode_GetParent(NewNode));
 	return NewNode;
 }

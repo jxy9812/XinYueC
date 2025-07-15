@@ -42,8 +42,10 @@ int main(int argc, char* args[])
 	//XDataFrameCommTest();
 	//XSocketTest();
 	//XHashSetTest();
-	XBinaryTreeObjectTest();
-	return;
+	//XBinaryTreeObjectTest();
+	//XRedBlackTreeTest();
+	//XMapTest();
+	//return;
 	XVariantListTest();
 
 	//XModbusTest();

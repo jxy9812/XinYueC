@@ -147,7 +147,7 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 		Path = GetXMazePath(CurrentNode);
 	XBinaryTreeObject_freeNode(root);
 	XVector_delete_base(CurrentNodeArray);
-	XVectorTwo_free(tempMaze);
+	XVectorTwo_delete(tempMaze);
 	return Path;
 #else
 	IS_ON_DEBUG(XVectorTwo_ON&& XVector_ON);

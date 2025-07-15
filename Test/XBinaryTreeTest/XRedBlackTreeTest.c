@@ -8,14 +8,14 @@
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
-	printf("%-3d ", XBTree_GetData(*(XBTreeNode**)LPVal,0,int));
+	printf("%-3d ", XBTreeNode_GetData(*(XBTreeNode**)LPVal,0,int));
 }
 static void traverse(void* LPVal, void* args)
 {
 	struct XRBTreeNode* currentNode = *(struct XRBTreeNode**)LPVal;
-	if (*XBTree_GetTreeNode(currentNode, XBTreeParent) == NULL)
+	if (*XBTreeNode_getNodeRef(currentNode, XBTreeParent) == NULL)
 		return;
-	if (XBTree_findChildisParent(currentNode) == NULL)
+	if (XBTreeNode_getChildrenParentRef(currentNode) == NULL)
 		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.values);
 	
 }

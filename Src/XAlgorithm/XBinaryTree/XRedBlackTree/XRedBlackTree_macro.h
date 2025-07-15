@@ -12,7 +12,7 @@ extern "C" {
 #define XRBTree_IsBlack(this_root) ((this_root)->color==XRBTreeBlack)//红黑树-是否是黑色
 #define XRBTree_IsRed(this_root) ((this_root)->color==XRBTreeRed)//红黑树-是否是红色
 //数据
-#define XRBTree_GetData(this_root,Type) XBTree_GetData(this_root,Type)//红黑树-获取数据
+#define XRBTree_GetData(this_root,Type) XBTreeNode_GetData(this_root,Type)//红黑树-获取数据
 
 #ifdef __cplusplus
 }

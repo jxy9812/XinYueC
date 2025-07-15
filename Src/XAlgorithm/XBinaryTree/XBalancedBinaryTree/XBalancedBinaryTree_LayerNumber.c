@@ -8,8 +8,8 @@ const size_t XBBTree_GetLayerNumberThis(const XBBTreeNode* this_root)
 }
 const size_t XBBTree_GetLayerNumberChild(const XBBTreeNode* this_root)
 {
-	size_t left = XBBTree_GetLayerNumberThis(XBTree_GetLChild(this_root));
-	size_t right = XBBTree_GetLayerNumberThis(XBTree_GetRChild(this_root));
+	size_t left = XBBTree_GetLayerNumberThis(XBTreeNode_GetLChild(this_root));
+	size_t right = XBBTree_GetLayerNumberThis(XBTreeNode_GetRChild(this_root));
 	return (left > right) ? left : right;
 }
 const size_t XBBTree_SetLayerNumberThis(XBBTreeNode* this_root)
@@ -24,7 +24,7 @@ const size_t XBBTree_SetLayerNumberAll(XBBTreeNode** this_root, XBBTreeNode* cur
 	{
 		currentNode->maxLayer = 1 + XBBTree_GetLayerNumberChild(currentNode);
 		currentNode = XBBTree_Spin(this_root, currentNode);
-		currentNode = XBTree_GetParent(currentNode);
+		currentNode = XBTreeNode_GetParent(currentNode);
 		++count;
 	}
 	return count;

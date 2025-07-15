@@ -92,7 +92,7 @@ void XMazePathPrint(const XVector* maze, XVector* mazePath, const char* Wall, co
 		*(int*)XVectorTwo_at_XPoint(tempMaze, CurPoint)= XMazePath;
 	}
 	Print(tempMaze, Wall, Route, Path);
-	XVectorTwo_free(tempMaze);
+	XVectorTwo_delete(tempMaze);
 #else
 		IS_ON_DEBUG(XVector_ON);
 #endif
@@ -119,7 +119,7 @@ void XMazePathPrintSleep(const XVector* maze, XVector* mazePath, const char* Wal
 		//延迟
 		XDelay(msec);
 	}
-	XVectorTwo_free(tempMaze);
+	XVectorTwo_delete(tempMaze);
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
@@ -128,7 +128,7 @@ void XMazePathPrintSleep(const XVector* maze, XVector* mazePath, const char* Wal
 void XMazeDelete(const struct XVector* maze)
 {
 #if XVector_ON
-	XVectorTwo_free(maze);
+	XVectorTwo_delete(maze);
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
