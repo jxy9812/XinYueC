@@ -7,6 +7,7 @@ extern "C" {
 #include"XTypes.h"
 #include<stdio.h>
 #include<stdbool.h>
+#include<stdint.h>
 #include"XVector.h"
 //获取节点
 #define XBTreeNode_GetParent(this_root) (((XBTreeNode**)(((XBTreeNode*)this_root)->nodes))[XBTreeParent])//二叉树-获取父节点(继承的子类均可以使用)

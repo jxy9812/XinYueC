@@ -11,7 +11,14 @@
 #include "XMap.h"
 #include <string.h>
 #include <stdlib.h>
-static XHash*global_equalityHash= NULL;//自定义数据比较函数哈希映射
+static XHash*global_typeProperty= NULL;//自定义数据属性哈希映射
+//类型属性
+typedef struct TypeProperty
+{
+	XEquality equality;//等于比较
+	char* typeName;//类型名字
+}TypeProperty;
+
 typedef struct XVariant
 {
 	int m_type;//类型
@@ -46,6 +53,16 @@ case XVariantType_Double:	return (t)XVariant_Data(var, double);\
 case XVariantType_ByteArray:return (t)XVariant_Data(var, t); \
 default:return 0;\
 }\
+//自定义的类型哈希表初始化
+static bool global_typeHash_init()
+{
+	if (global_typeProperty)
+		return true;
+	global_typeProperty = XHash_Create(int, TypeProperty, XHash_murmur3_32, XEquality_int);
+	if (global_typeProperty)
+		return true;
+	return false;
+}
 
 XVariant* XVariant_create(void* data, size_t size, int type)
 {
@@ -603,7 +620,7 @@ XHash* XVariant_toHash(XVariant* var)
 XPair* XVariant_toXPair(XVariant* var)
 {
 	if (var->m_type != XVariantType_Pair)
-		return 0;
+		return NULL;
 	XPair* pair = XMemory_malloc(var->m_dataSize);
 	if (pair)
 		memcpy(pair, XVariant_data(var),var->m_dataSize);
@@ -797,6 +814,48 @@ int XVariant_type(XVariant* var)
 	return var->m_type;
 }
 
+const char* XVariant_typeName(XVariant* var)
+{
+	if (var == NULL)
+		return NULL;
+	switch (var->m_type)
+	{
+	case XVariantType_Uint8: return     "uint8_t";
+	case XVariantType_Uint16:return     "uint16_t";
+	case XVariantType_Uint32:return     "uint32_t";
+	case XVariantType_Uint64:return     "uint64_t";
+	case XVariantType_Int8: return      "int8_t";
+	case XVariantType_Int16:return      "int16_t";
+	case XVariantType_Int32:return      "int32_t";
+	case XVariantType_Int64:return      "int64_t";
+	case XVariantType_Bool:return       "bool";
+	case XVariantType_Char:return       "char";
+	case XVariantType_UChar:return	    "unsigned char";
+	case XVariantType_Int:return	    "int";
+	case XVariantType_Size_t:return	    "size_t";
+	case XVariantType_Ptr:return        "void*";
+	case XVariantType_Float:return	    "float";
+	case XVariantType_Double:return	    "double";
+	case XVariantType_Pair:return       "XPair*";
+	case XVariantType_Point:return      "XPoint";
+	case XVariantType_ByteArray:return  "XByteArrat*";
+	case XVariantType_String:return		"XString*";
+	case XVariantType_List:return		"XVariantList*";
+	case XVariantType_MapBase:return    "XMapBase*";
+	default:
+	{
+		//其他自定义数据
+		if (global_typeProperty == NULL)
+			return NULL;
+		//查找
+		TypeProperty* pv = XHash_value_base(global_typeProperty, &(var->m_type));
+		if (pv)
+			return pv->typeName;
+		return NULL;
+	}
+	}
+}
+
 bool XVariant_equality(XVariant* var, XVariant* cmp)
 {
 	if(var==NULL||cmp==NULL||
@@ -835,29 +894,102 @@ bool XVariant_equality(XVariant* var, XVariant* cmp)
 		c.m_parent.m_parent.m_size = cmp->m_dataSize;
 		return XEquality_XByteArray(&pv, &pc);
 	}
+	case XVariantType_String:
+	{
+		XString v = { 0 }, c = { 0 };
+		XString* pv = &v, * pc = &c;
+		XContainerDataPtr(pv) = var->m_data;
+		XContainerCapacity (pv) = var->m_dataSize;
+		XContainerSize(pv) = var->m_dataSize;
+		XContainerDataPtr(pc) = cmp->m_data;
+		XContainerCapacity(pc) = cmp->m_dataSize;
+		XContainerSize(pc) = cmp->m_dataSize;
+		return XEquality_XString(&pv, &pc);
+	}
+	case XVariantType_List:
+	{
+		return false;//暂未实现
+	}
+	case XVariantType_MapBase:
+	{
+		return false;//暂未实现
+	}
 	default:
 	{
 		//其他自定义数据
-		if(global_equalityHash==NULL)
+		if(global_typeProperty==NULL)
 			return false;
 		//查找相等比较函数
-		XEquality*ePtr=XHash_value_base(global_equalityHash,&(var->m_type));
-		if (ePtr)
-			return (*ePtr)(var->m_data,cmp->m_data);
+		TypeProperty* pv =XHash_value_base(global_typeProperty,&(var->m_type));
+		if (pv&&pv->equality)
+			return (pv->equality)(var->m_data,cmp->m_data);
 		return false;
 	}
 	}
 
 }
 
-void XVariant_addEquality(int type, XEquality equality)
+void XVariant_setUserTypeName(int type, const char* typeName)
+{
+	if (type < XVariantType_User || typeName == NULL)
+		return;
+	if (!global_typeHash_init())
+		return;
+	TypeProperty* pv = XMapBase_value_base(global_typeProperty, &type);
+	if (pv == NULL)
+	{
+		size_t len = strlen(typeName) + 1;
+		TypeProperty property = { 0 };
+		property.typeName =XMemory_malloc(len);
+		if (property.typeName == NULL)
+			return;
+		memcpy(property.typeName,typeName,len);
+		XHash_insert_base(global_typeProperty, &type, &property);
+	}
+	else 
+	{
+		if (pv->typeName)
+			XMemory_free(pv->typeName);
+		size_t len = strlen(typeName) + 1;
+		pv->typeName = XMemory_malloc(len);
+		if (pv->typeName == NULL)
+			return;
+		memcpy(pv->typeName, typeName, len);
+	}
+}
+
+void XVariant_removeUserTypeProperty(int type)
+{
+	if (type < XVariantType_User)
+		return;
+	if (!global_typeHash_init())
+		return;
+	TypeProperty* pv = XMapBase_value_base(global_typeProperty, &type);
+	if (pv == NULL)
+		return;
+	if (pv->typeName)
+		XMemory_free(pv->typeName);
+	XMapBase_remove_base(global_typeProperty,&type);
+}
+
+void XVariant_setUserEquality(int type, XEquality equality)
 {
 	if (type < XVariantType_User || equality == NULL)
 		return;
-	if (global_equalityHash == NULL)
-		global_equalityHash = XHash_Create(int, XEquality,XHash_murmur3_32,XEquality_int);
-	if(global_equalityHash)
-		XHash_insert_base(global_equalityHash,&type,&equality);
+	if (!global_typeHash_init())
+		return;
+	TypeProperty* pv = XMapBase_value_base(global_typeProperty,&type);
+	if (pv == NULL)
+	{
+		TypeProperty property = { 0 };
+		property.equality = equality;
+		XHash_insert_base(global_typeProperty, &type, &property);
+	}
+	else
+	{
+		pv->equality = equality;
+	}
+
 }
 
 

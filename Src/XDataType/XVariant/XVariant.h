@@ -132,9 +132,14 @@ void XVariant_delete(XVariant* var);
 void XVariant_clear(XVariant* var);
 void XVariant_swap(XVariant* var,XVariant* other);
 int  XVariant_type(XVariant* var);
+const char* XVariant_typeName(XVariant* var);
 bool XVariant_equality(XVariant* var, XVariant* cmp);
-//添加自定义的数据相等比较回调函数
-void XVariant_addEquality(int type, XEquality equality);
+//设置自定义的数据相等比较回调函数
+void XVariant_setUserEquality(int type, XEquality equality);
+//设置自定义数据的类型名字
+void XVariant_setUserTypeName(int type, const char* typeName);
+//删除用户定义的类型属性
+void XVariant_removeUserTypeProperty(int type);
 /*
 * @brief  获取XVariant的数据
 * @param  var:XVariant指针
