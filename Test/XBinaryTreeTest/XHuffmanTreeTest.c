@@ -39,7 +39,7 @@ void XHuffmanTreeTest()
 
 	XVector_delete_base(gzipData);//释放返回的压缩数据
 	XVector_delete_base(unzipData);//释放解压后的压缩数据
-	XHfmTree_free(tree);//释放哈夫曼树
+	XHfmTree_delete(tree);//释放哈夫曼树
 
 
 #endif

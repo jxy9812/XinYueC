@@ -53,4 +53,16 @@ bool XSetBase_find_base(XSetBase* this_set, const void* pvKey)
     return XClassGetVirtualFunc(this_set, EXSetBase_Find, bool(*)(XSetBase*, const void*))(this_set, pvKey);
 }
 
+bool XSetBase_contains(XSetBase* this_set, const void* pvKey)
+{
+    return XSetBase_find_base(this_set,pvKey);
+}
+
+XVector* XSetBase_keys_base(const XSetBase* this_set)
+{
+    if (ISNULL(this_set, "") || ISNULL(XClassGetVtable(this_set), ""))
+        return NULL;
+    return XClassGetVirtualFunc(this_set, EXSetBase_Keys, void* (*)(const XSetBase*))(this_set);
+}
+
 #endif

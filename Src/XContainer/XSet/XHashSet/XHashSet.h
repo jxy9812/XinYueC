@@ -33,10 +33,12 @@ XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XEquality Ke
 #define XHashSet_Create(keyType, hash, KeyEquality) XHashSet_create(sizeof(keyType), hash, KeyEquality);
 // 初始化 XHashSet
 void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality);
-#define XHashSet_insert_base XSetBase_insert_base
-#define XHashSet_erase_base XSetBase_erase_base
-#define XHashSet_remove_base XSetBase_remove_base
-#define XHashSet_find_base XSetBase_find_base
+#define XHashSet_insert_base            XSetBase_insert_base
+#define XHashSet_erase_base             XSetBase_erase_base
+#define XHashSet_remove_base            XSetBase_remove_base
+#define XHashSet_find_base              XSetBase_find_base
+#define XHashSet_contains               XSetBase_contains
+#define XHashSet_keys_base              XSetBase_keys_base
 #define XHashSet_delete_base XSetBase_delete_base
     // 清空，不是释放内存
 #define XHashSet_clear_base XSetBase_clear_base

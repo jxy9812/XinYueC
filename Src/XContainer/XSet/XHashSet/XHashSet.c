@@ -1,6 +1,7 @@
 ﻿#include "XHashSet.h"
 #if XHashSet_ON
 #include "XAlgorithm.h"
+#include "XVector.h"
 #include <string.h>
 
 // Set插入数据
@@ -16,6 +17,8 @@ static void VXSet_clear(XHashSet* this_set);
 // 释放内存
 static void VXSet_delete(XHashSet* this_set);
 static void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo);
+static XVector* VXSetBase_keys(const XSetBase* this_set);
+
 // 私有函数：扩容哈希表
 static bool XHashSet_resize(XHashSet* set, size_t new_capacity);
 
@@ -31,7 +34,7 @@ XVtable* XHashSet_class_init()
         // 继承类
         XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
     void* table[] = {
-        VXSet_insert, VXSet_erase, VXSet_remove, VXSet_find
+        VXSet_insert, VXSet_erase, VXSet_remove, VXSet_find,VXSetBase_keys
     };
     // 追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -211,6 +214,16 @@ void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo)
     XSwap(&(this_setOne->m_parent.m_KeyEquality), &(this_setTwo->m_parent.m_KeyEquality), sizeof(XEquality));
     XSwap(&(this_setOne->m_parent.m_keyTypeSize), &(this_setTwo->m_parent.m_keyTypeSize), sizeof(size_t));
     XSwap(&(this_setOne->m_hash), &(this_setTwo->m_hash), sizeof(XHashFunc));
+}
+
+XVector* VXSetBase_keys(const XSetBase* this_set)
+{
+    XVector* v = XVector_create(this_set->m_keyTypeSize);
+    for_each_iterator(this_set, XHashSet, it)
+    {
+        XVector_push_back_base(v, XHashSet_iterator_data(&it));
+    }
+    return v;
 }
 
 XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality)

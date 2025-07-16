@@ -13,6 +13,7 @@ XCLASS_DEFINE_ENUM(XSetBase, Insert) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
 XCLASS_DEFINE_ENUM(XSetBase, Erase),
 XCLASS_DEFINE_ENUM(XSetBase, Remove),
 XCLASS_DEFINE_ENUM(XSetBase, Find),
+XCLASS_DEFINE_ENUM(XSetBase, Keys),
 XCLASS_DEFINE_END(XSetBase)
 typedef struct XSetBase
 {
@@ -32,6 +33,8 @@ void XSetBase_erase_base(XSetBase* this_set, const void* pvKey);
 bool XSetBase_remove_base(XSetBase* this_set, const void* pvKey);
 // 查找数据，返回是否找到
 bool XSetBase_find_base(XSetBase* this_set, const void* pvKey);
+bool XSetBase_contains(XSetBase* this_set, const void* pvKey);
+XVector* XSetBase_keys_base(const XSetBase* this_set);
 // 释放内存
 #define XSetBase_delete_base            XContainerObject_delete_base
 // 清空，不是释放内存

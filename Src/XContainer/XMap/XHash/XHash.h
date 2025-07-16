@@ -26,29 +26,29 @@ typedef struct XHash
 	XHashFunc     m_hash;//哈希函数
 }XHash;
 XVtable* XHash_class_init();
-//开辟一个XHash,初始化
+//创建一个XHash,初始化
 XHash* XHash_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality);
 #define XHash_Create(keyType,valType,hash,KeyEquality) XHash_create(sizeof(keyType),sizeof(valType),hash,KeyEquality)
-	//初始化 XHash
+//初始化 XHash
 void XHash_init(XHash* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality);
-#define XHash_insert_base					XMapBase_insert_base
+#define XHash_insert_base						XMapBase_insert_base
 #define XHash_erase_base						XMapBase_erase_base
-#define XHash_remove_base					XMapBase_remove_base
+#define XHash_remove_base						XMapBase_remove_base
 #define XHash_value_base						XMapBase_value_base
-#define XHash_find_base						XMapBase_find_base
-#define XHash_delete_base					XMapBase_delete_base
+#define XHash_find_base							XMapBase_find_base
+#define XHash_delete_base						XMapBase_delete_base
 //清空，不是释放内存
 #define XHash_clear_base						XMapBase_clear_base
 //检测是否为空，空为真 O(1)
-#define XHash_isEmpty_base					XMapBase_isEmpty_base
+#define XHash_isEmpty_base						XMapBase_isEmpty_base
 //返回元素的个数 O(1)						
-#define XHash_getSize_base					XMapBase_getSize_base
+#define XHash_getSize_base						XMapBase_getSize_base
 //返回当前向量所能容纳的最大元素个数			 
-#define XHash_getCapacity_base				XMapBase_getCapacity_base
+#define XHash_getCapacity_base					XMapBase_getCapacity_base
 //交换两个同类型向量的数据					
-#define XHash_swap_base						XMapBase_swap_base
+#define XHash_swap_base							XMapBase_swap_base
 //返回元素类型字节大小						
-#define XHash_getTypeSize_base				XMapBase_getTypeSize_base
+#define XHash_getTypeSize_base					XMapBase_getTypeSize_base
 
 XHash* XHash_create_XStringVariant();
 #ifdef __cplusplus

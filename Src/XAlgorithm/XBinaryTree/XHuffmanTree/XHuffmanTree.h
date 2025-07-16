@@ -36,7 +36,7 @@ XVector* XHfmTree_unzip(XHuffmanTree* tree, const char* data, const size_t size)
 //清空哈夫曼树
 void XHfmTree_clear(XHuffmanTree* tree);
 //释放哈夫曼树
-void XHfmTree_free(XHuffmanTree* tree);
+void XHfmTree_delete(XHuffmanTree* tree);
 #ifdef __cplusplus
 }
 #endif

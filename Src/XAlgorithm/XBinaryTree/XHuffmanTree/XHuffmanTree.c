@@ -55,7 +55,7 @@ void XHfmTree_clear(XHuffmanTree* tree)
 	XMap_clear_base(tree->dictionaries);
 }
 
-void XHfmTree_free(XHuffmanTree* tree)
+void XHfmTree_delete(XHuffmanTree* tree)
 {
 	XHfmTree_clear(tree);
 	XMap_delete_base(tree->dictionaries);
