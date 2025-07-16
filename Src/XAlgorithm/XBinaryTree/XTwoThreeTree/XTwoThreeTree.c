@@ -40,7 +40,7 @@ const enum  XTTTree_NodeNum XTTTree_NodeNum(const XTTTreeNode* this_root)
 #endif
 }
 
-const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, const void* LPData, const size_t TypeSize)
+const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, const void* pvData, const size_t TypeSize)
 {
 #if XVector_ON
     if (ISNULL(this_root, ""))
@@ -56,7 +56,7 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
         this_root->LpValueArray = XVector_create( TypeSize);//初始化值
     }
     //XVector_resize_base(this_root->LpValueArray, XVector_getSize_base(LPNode) + 1);//储存数据的扩容+1
-    XVector_push_back_base(this_root->LpValueArray, LPData);//插入数值扩容
+    XVector_push_back_base(this_root->LpValueArray, pvData);//插入数值扩容
     XVector_push_back_base(this_root->LpValueArray, this_root->object.values);//插入第一个数值
     XVector_sort_base(this_root->LpValueArray, less);//排序
     memcpy(this_root->object.values, XContainerDataPtr(this_root->LpValueArray), TypeSize);//将最小的拷贝回去
@@ -108,7 +108,7 @@ void XTTTree_free(const XTTTreeNode* this_root)
 #endif
 }
 
-XTTTreeNode* XTTTree_findData(XTTTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne equalityRule, void* LPData)
+XTTTreeNode* XTTTree_findData(XTTTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne equalityRule, void* pvData)
 {
     return NULL;
 }

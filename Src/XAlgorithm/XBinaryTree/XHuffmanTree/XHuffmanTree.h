@@ -16,7 +16,7 @@ typedef struct XHuffmanTree
 	XMap* dictionaries;//字典  key:char value: DictionaryValue
 }XHuffmanTree;
 //创建一个哈夫曼节点
-XHfmNode* XHfmTree_creationNode(unsigned char ch,size_t count, XVector* code);
+XHfmNode* XHfmTree_createNode(unsigned char ch,size_t count, XVector* code);
 //创建哈夫曼树初始化
 XHuffmanTree* XHfmTree_init();
 //根据字典创建树

@@ -187,12 +187,12 @@ void XBTree_delete(XBTreeNode* this_root)
 #endif
 }
 
-XBTreeNode* XBTree_createInsertData(const void* LPData, const size_t nodeArrySize, const size_t TypeSize)
+XBTreeNode* XBTree_createInsertData(const void* pvData, const size_t nodeArrySize, const size_t TypeSize)
 {
 	XBTreeNode* nodes = XBTreeNode_create( nodeArrySize,1,TypeSize);
 	if (ISNULL( nodes,"创建节点失败"))
 		return NULL;
-	XBTreeNode_setData(nodes,0, LPData);
+	XBTreeNode_setData(nodes,0, pvData);
 	//printf("插入的:%d\n", XBTreeNode_GetParent(nodes, 0, int));
 	return nodes;
 }

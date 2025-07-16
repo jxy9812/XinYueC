@@ -13,7 +13,7 @@ static void installQueue(XPair** LPpair, XPriorityQueue* queue)
 	//创建节点插入优先队列
 	unsigned char ch = XPair_First(*LPpair, unsigned char);
 	DictionaryValue dv = XPair_Second(*LPpair, DictionaryValue);
-	XHfmNode* node = XHfmTree_creationNode( ch, dv.count,dv.code);
+	XHfmNode* node = XHfmTree_createNode( ch, dv.count,dv.code);
 	XPriorityQueue_push_base(queue, &node);
 }
 #endif
@@ -41,7 +41,7 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 		{
 			LPright = LPNode;
 			//创建空父节点，并建立关系
-			LPparent = XHfmTree_creationNode( 0, XHfmTree_GetNodeData(LPleft).count + XHfmTree_GetNodeData(LPright).count,NULL);
+			LPparent = XHfmTree_createNode( 0, XHfmTree_GetNodeData(LPleft).count + XHfmTree_GetNodeData(LPright).count,NULL);
 			XBTreeNode_SetLChild(LPparent, LPleft);
 			XBTreeNode_SetRChild(LPparent, LPright);
 			XBTreeNode_SetParent(LPleft, LPparent);
@@ -59,20 +59,20 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 	return NULL;
 #endif
 }
-XHfmNode* XHfmTree_creationNode(unsigned char ch, size_t count, XVector* code)
+XHfmNode* XHfmTree_createNode(unsigned char ch, size_t count, XVector* code)
 {
 	//XBTreeNode* node = XBTree_CreationNode(XBTreeNode, 3, 1, XHfmNodeData);
 	XBTreeNode* node = XMemory_malloc(sizeof(XBTreeNode));
 	if (node == NULL)
 		return NULL;
 	XBTreeNode_init(node,3,1, sizeof(XHfmNodeData));
-	//XHfmNodeData* LPData = XBTree_Getdata(node, 0);
-	XHfmNodeData* LPData = XBTreeNode_getData(node, 0);
-	//LPData->null = null;
-	LPData->ch = ch;
-	LPData->count = count;
-	LPData->code = code;
-	/*if (LPData->code == NULL)
+	//XHfmNodeData* pvData = XBTree_Getdata(node, 0);
+	XHfmNodeData* pvData = XBTreeNode_getData(node, 0);
+	//pvData->null = null;
+	pvData->ch = ch;
+	pvData->count = count;
+	pvData->code = code;
+	/*if (pvData->code == NULL)
 	{
 		XBTreeNode_delete(node, false);
 		return NULL;
