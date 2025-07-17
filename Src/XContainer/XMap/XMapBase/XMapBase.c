@@ -6,7 +6,7 @@ XVtable* XMapBase_class_init()
 	return XContainerObject_class_init();
 }
 
-void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality)
+void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
 {
 	if (ISNULL(this_map, ""))
 		return NULL;
@@ -26,6 +26,7 @@ void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t va
 	XClassGetVtable(this_map) = XMapBase_class_init();
 	this_map->m_keyTypeSize = keyTypeSize;
 	this_map->m_KeyEquality = KeyEquality;
+	this_map->m_KeyLess = KeyLess;
 }
 bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue)
 {

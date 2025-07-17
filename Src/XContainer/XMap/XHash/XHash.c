@@ -2,17 +2,17 @@
 #if XHash_ON
 #include"XMemory.h"
 #include<string.h>
-XHash*XHash_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality)
+XHash*XHash_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess)
 {
 	XHash*map = XMemory_malloc(sizeof(XHash));
-	XHash_init(map,keyTypeSize,valTypeSize,hash,KeyEquality);
+	XHash_init(map,keyTypeSize,valTypeSize,hash,KeyEquality, KeyLess);
 	return map;
 }
-void XHash_init(XHash*this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality)
+void XHash_init(XHash*this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess)
 {
 	if (this_map == NULL)
 		return;
-	XMapBase_init(this_map, keyTypeSize, valTypeSize, KeyEquality);
+	XMapBase_init(this_map, keyTypeSize, valTypeSize, KeyEquality, KeyLess);
 	XClassGetVtable(this_map) = XHash_class_init();
 	this_map->m_hash = hash;
 	XContainerCapacity(this_map)= DEFAULT_CAPACITY;
@@ -26,7 +26,7 @@ void XHash_init(XHash*this_map, const size_t keyTypeSize, const size_t valTypeSi
 
 XHash* XHash_create_XStringVariant()
 {
-	XHash* hash = XHash_Create(XString*, XVariant*,XHash_murmur3_32, XEquality_XString);
+	XHash* hash = XHash_Create(XString*, XVariant*,XHash_murmur3_32, XEquality_XString,XLess_XString);
 	if (hash == NULL)
 		return NULL;
 	XContainerSetDataDeleteMethod(hash, XMapBase_KeyXStringValueXVariantDeleteMethod);

@@ -14,7 +14,7 @@ enum  XTTTree_NodeNum
 typedef struct XTTTreeNode
 {
 	XBTreeNode object;
-	XVector* LpValueArray;//XVector数据数组,值
+	XVector* pvValueArray;//XVector数据数组,值
 }XTTTreeNode;
 //创建初始化一个23树节点
 XTTTreeNode* XTTTree_creationNode(const enum XTTTree_NodeNum nodeCount,const size_t TypeSize);

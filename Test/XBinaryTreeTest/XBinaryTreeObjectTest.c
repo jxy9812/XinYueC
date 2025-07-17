@@ -4,8 +4,8 @@
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
-	//int* val = XVector_at_base(((XBTreeNode*)LPVal)->values, 0);
-	printf("%d ", XBTreeNode_GetData((*(XBTreeNode**)LPVal), 0,int));
+	//int* val = XVector_at_base(((XBTreeNode*)LPVal)->value, 0);
+	printf("%d ", XBTreeNode_GetData((*(XBTreeNode**)LPVal),int));
 }
 void XBinaryTreeObjectTest()
 {
@@ -48,7 +48,7 @@ void XBinaryTreeObjectTest()
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		printf("\n");
 		XVector_delete_base(TreePreorder);
-		XBTree_delete(root);
+		XBTree_delete(root,NULL,NULL);
 #else
 		IS_ON_DEBUG(XVector_ON);
 #endif

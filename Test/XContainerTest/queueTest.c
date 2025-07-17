@@ -26,10 +26,10 @@ void queueTest()
 #endif
 }
 #if	XPriorityQueue_ON
-static insertData(void* values ,void*args)
+static insertData(void* value ,void*args)
 {
-	XPriorityQueue_push_base(args, values);
-	printf("入队:%d 堆顶:%d\n", *(int*)values, *(int*)XPriorityQueue_top_base(args));
+	XPriorityQueue_push_base(args, value);
+	printf("入队:%d 堆顶:%d\n", *(int*)value, *(int*)XPriorityQueue_top_base(args));
 }
 #endif
 void XPriority_QueueTest()
@@ -49,8 +49,8 @@ void XPriority_QueueTest()
 	printf("\n队列循环出队:");
 	while (!XPriorityQueue_isEmpty_base(queue))
 	{
-		int* values = XPriorityQueue_top_base(queue);
-		printf("%d ", *values);
+		int* value = XPriorityQueue_top_base(queue);
+		printf("%d ", *value);
 		XPriorityQueue_pop_base(queue);
 	}
 	printf("\n");

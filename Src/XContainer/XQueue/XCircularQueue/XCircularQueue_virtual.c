@@ -8,7 +8,7 @@ static bool VXCircularQueue_isFull(const XCircularQueue* this_queue);
 static void VXCircularQueue_clear(XCircularQueue* this_queue);//清空
 static size_t VXCircularQueue_getSize(const XCircularQueue* this_queue);
 //插入到队列的队尾
-static bool VXCircularQueue_push(XCircularQueue* this_queue, void* LpValue);
+static bool VXCircularQueue_push(XCircularQueue* this_queue, void* pvValue);
 //出队
 static void VXCircularQueue_pop(XCircularQueue* this_queue);
 // 返回队头元素
@@ -76,7 +76,7 @@ size_t VXCircularQueue_getSize(const XCircularQueue* this_queue)
 
 }
 
-bool VXCircularQueue_push(XCircularQueue* this_queue, void* LpValue)
+bool VXCircularQueue_push(XCircularQueue* this_queue, void* pvValue)
 {
 	if (VXCircularQueue_isFull(this_queue))
 	{
@@ -105,7 +105,7 @@ bool VXCircularQueue_push(XCircularQueue* this_queue, void* LpValue)
 		XContainerCapacity(this_queue) = newSize;//改变容量大小
 		XContainerSize(this_queue) = newSize;
 	}
-	memcpy(((char*)XContainerDataPtr(this_queue))+this_queue->m_tail*XContainerTypeSize(this_queue),LpValue, XContainerTypeSize(this_queue));
+	memcpy(((char*)XContainerDataPtr(this_queue))+this_queue->m_tail*XContainerTypeSize(this_queue),pvValue, XContainerTypeSize(this_queue));
 	this_queue->m_tail = (this_queue->m_tail + 1) % XContainerSize(this_queue);//指针后移取模实现环形
 	return true;
 }

@@ -70,7 +70,7 @@ XPair* XMap_reverse_iterator_data(XMap_reverse_iterator* it)
 {
 	if (it == NULL || it->node == NULL)
 		return NULL;
-	return XBTreeNode_GetData(it->node, 0, XPair*);
+	return XBTreeNode_GetData(it->node,XPair*);
 }
 
 #endif

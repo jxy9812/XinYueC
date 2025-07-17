@@ -4,7 +4,7 @@
 #include<string.h>
 #include<stdlib.h>
 //插入到队列的队尾
-static void VXPriorityQueue_push(XPriorityQueue* this_queue, void* LpValue);
+static void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvValue);
 //出队
 static void VXPriorityQueue_pop(XPriorityQueue* this_queue);
 // 返回优先队列堆顶元素

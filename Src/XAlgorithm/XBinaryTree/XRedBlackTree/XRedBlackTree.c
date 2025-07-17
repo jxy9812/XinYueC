@@ -7,7 +7,7 @@ XRBTreeNode* XRBTree_create(const size_t TypeSize)
 	XRBTreeNode* node = XMemory_malloc(sizeof(XRBTreeNode));
 	if (ISNULL(node, "创建红黑树节点失败"))
 		return NULL;
-	XBTreeNode_init(node,3,1,TypeSize);
+	XBTreeNode_init(node,3,TypeSize);
 	XRBTree_SetRed(node);
 	return node;
 }
@@ -169,13 +169,11 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	{
 		LPreplace = XBTreeNode_GetLChild(LPreplace);
 	}
-	if (eraseNode->XBTNode.values)
-		//XVector_delete_base(eraseNode->XBTNode.values);
-		XMemory_free(eraseNode->XBTNode.values);
-	eraseNode->XBTNode.values = LPreplace->XBTNode.values;
-	eraseNode->XBTNode.valueCount = LPreplace->XBTNode.valueCount;
+	if (eraseNode->XBTNode.value)
+		XMemory_free(eraseNode->XBTNode.value);
+	eraseNode->XBTNode.value = LPreplace->XBTNode.value;
 	eraseNode->XBTNode.valueTypeSize = LPreplace->XBTNode.valueTypeSize;
-	LPreplace->XBTNode.values = NULL;
+	LPreplace->XBTNode.value = NULL;
 
 	LPchild = XBTreeNode_GetRChild(LPreplace);
 	LPparent = XBTreeNode_GetParent(LPreplace);
@@ -225,6 +223,30 @@ XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less, XEquality equali
 	if (count == 2)//两个孩子
 		TwoChild_erase(this_root, findErase);
 	return findErase;
+}
+
+XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne equalityRule, void* pvData)
+{
+	return XBBTree_findData(this_root,less,equality,equalityRule,pvData);
+	//if (this_root == NULL)//树是空的
+	//	return NULL;
+	//XRBTreeNode* CurNode = this_root;//当前节点指针
+	//while (CurNode != NULL)
+	//{
+	//	if (equalityRule(equality, CurNode, pvData))
+	//	{
+	//		return CurNode;
+	//	}
+	//	else if (equalityRule(less, CurNode, pvData))
+	//	{
+	//		CurNode = XBTreeNode_GetRChild(CurNode);
+	//	}
+	//	else
+	//	{
+	//		CurNode = XBTreeNode_GetLChild(CurNode);
+	//	}
+	//}
+	//return NULL;
 }
  
 /*                                                  插入函数                                           */

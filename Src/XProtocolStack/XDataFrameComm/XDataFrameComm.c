@@ -202,13 +202,13 @@ void XDataFrameComm_setSendValidCRC16_base(XDataFrameComm* comm, bool enableCRC1
 	XClassGetVirtualFunc(comm, EXDataFrameComm_SetSendValidCRC16, void(*)(XDataFrameComm*, bool))(comm, enableCRC16);
 }
 
-void XDataFrameComm_funcCodeMap_create(XDataFrameComm* comm, size_t codeSize, XEquality codeEquality)
+void XDataFrameComm_funcCodeMap_create(XDataFrameComm* comm, size_t codeSize, XEquality codeEquality, XLess codeLess)
 {
 	if (comm == NULL)
 		return;
 	if (comm->m_funcCodeMap != NULL)
 		XFuncCodeMap_delete(comm->m_funcCodeMap);
-	comm->m_funcCodeMap = XFuncCodeMap_create(codeSize, codeEquality);
+	comm->m_funcCodeMap = XFuncCodeMap_create(codeSize, codeEquality,codeLess);
 }
 
 void XDataFrameComm_addFuncCode(XDataFrameComm* comm, void* funcCode, XFuncCodeCb cb, void* userData)

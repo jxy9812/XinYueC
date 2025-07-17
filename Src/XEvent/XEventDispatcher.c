@@ -53,7 +53,7 @@ XEventDispatcher* XEventDispatcher_create(XQueueBase* queue, XMapBase* map_cb)
 
 XEventDispatcher* XEventDispatcher_createDefault(size_t queueCount)
 {
-	return XEventDispatcher_create(XCircularQueueAtomic_Create(XEventMin*, queueCount), XHash_Create(int, XEventCallback, XHash_murmur3_32, XEquality_int));
+	return XEventDispatcher_create(XCircularQueueAtomic_Create(XEventMin*, queueCount), XHash_Create(int, XEventCallback, XHash_murmur3_32, XEquality_int,XLess_int));
 }
 
 void XEventDispatcher_init(XEventDispatcher* dispatcher)

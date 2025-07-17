@@ -38,9 +38,9 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 		printf("KeyEquality相等比较函数NULL或KeyLess小于比较函数NULL");
 		return NULL;
 	}
-	XMapBase_init(this_map, keyTypeSize, valTypeSize, KeyEquality);
+	XMapBase_init(this_map, keyTypeSize, valTypeSize, KeyEquality,KeyLess);
 	XClassGetVtable(this_map) = XMap_class_init();
-	this_map->m_KeyLess = KeyLess;
+	//this_map->m_KeyLess = KeyLess;
 }
 
 XMap* XMap_create_XStringVariant()

@@ -17,7 +17,7 @@ static void VXString_insert(XString* this_string, const int64_t index, const cha
 //static void VXString_pop_front(XString* this_string);
 static void VXString_pop_back(XString* this_string);
 static void VXString_remove(XString* this_string, int64_t index, int64_t n);
-static void VXString_erase(XString* this_string, void* LpValue);
+static void VXString_erase(XString* this_string, void* pvValue);
 static void VXString_clear(XString* this_string);
 static bool VXString_empty(const XString* this_string);
 //返回当前字符串大小
@@ -365,7 +365,7 @@ void VXString_insert(XString* this_string, const int64_t index, const char* stri
 		return;
 	if (index<0 || index>=XContainerSize(this_string))
 		return;
-	//void XVector_inserts_base(XVector* this_vector, int64_t index, void* LpValue, size_t n);
+	//void XVector_inserts_base(XVector* this_vector, int64_t index, void* pvValue, size_t n);
 	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
 	XVtableGetFunc(XVector_class_init(), EXVector_Inserts, funcPtr)(this_string,index,string,strlen(string));
 }
@@ -397,14 +397,14 @@ void VXString_remove(XString* this_string, int64_t index, int64_t n)
 	XVtableGetFunc(XVector_class_init(), EXVector_Remove, funcPtr)(this_string, index, n);
 }
 
-void VXString_erase(XString* this_string, void* LpValue)
+void VXString_erase(XString* this_string, void* pvValue)
 {
 	if (VXString_empty(this_string))
 		return;
-	if ((char*)XContainerDataPtr(this_string) + XContainerSize(this_string) - 1 == LpValue)
+	if ((char*)XContainerDataPtr(this_string) + XContainerSize(this_string) - 1 == pvValue)
 		return;
 	typedef void (*funcPtr)(XVector*, void*);
-	XVtableGetFunc(XVector_class_init(), EXVector_Erase, funcPtr)(this_string, LpValue);
+	XVtableGetFunc(XVector_class_init(), EXVector_Erase, funcPtr)(this_string, pvValue);
 }
 
 void VXString_clear(XString* this_string)

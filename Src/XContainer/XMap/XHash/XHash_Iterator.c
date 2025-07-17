@@ -1,15 +1,25 @@
 ﻿#include"XHash_Iterator.h"
 #if XHash_ON
 #include"XHash.h"
+#include"XRedBlackTree.h"
 XHash_iterator XHash_begin(XHash*this_map)
 {
 	XHash_iterator it = {0};
 	if (this_map == NULL|| XContainerCapacity(this_map)==0)
 		return it;
-	XHashNode* node = NULL;
+	//XHashNode* node = NULL;
+	XRBTreeNode* node = NULL;
 	for (size_t i = 0; i < XContainerCapacity(this_map); i++)
 	{
-		node = ((XHashNode**)XContainerDataPtr(this_map))[i];
+		node= ((XRBTreeNode**)XContainerDataPtr(this_map))[i];
+		if (node == NULL)
+			continue;
+		while (XBTreeNode_GetLChild(node) != NULL) 
+		{
+			node = XBTreeNode_GetLChild(node);
+		}
+		
+		//node = ((XHashNode**)XContainerDataPtr(this_map))[i];
 		if (node != NULL)
 		{
 			it.node = node;
@@ -31,29 +41,71 @@ XHash_iterator XHash_end(XHash*this_map)
 	return it;
 }
 
-void XHash_iterator_add(XHash*this_map, XHash_iterator* curent)
+void XHash_iterator_add(XHash*this_map, XHash_iterator* it)
 {
 	//XHash_iterator it = { 0 };
-	if (this_map == NULL || curent==NULL|| XContainerCapacity(this_map) == 0)
+	if (this_map == NULL || it ==NULL|| XContainerCapacity(this_map) == 0)
 		return ;
-	XHashNode* node = curent->node;
-	if (node->next!=NULL)
-	{
-		curent->node = node->next;
-		return;//下一个节点找到了
+	// 如果有右子树，找到右子树的最左节点
+	if (XBTreeNode_GetRChild(it->node) != NULL) {
+		XRBTreeNode* current = XBTreeNode_GetRChild(it->node);
+		while (XBTreeNode_GetLChild(current) != NULL) {
+			current = XBTreeNode_GetLChild(current);
+		}
+		it->node = current;
+		return;
 	}
-	for (size_t i = curent->index+1; i < XContainerCapacity(this_map); i++)
+
+	// 否则向上回溯，直到找到一个作为左子节点的祖先
+	XRBTreeNode* current = it->node;
+	XRBTreeNode* parent = XBTreeNode_GetParent(current);
+	while (parent != NULL && current == XBTreeNode_GetRChild(parent)) {
+		current = parent;
+		parent = XBTreeNode_GetParent(parent);
+	}
+	it->node = parent;
+	if (it->node)
+		return;
+	for (size_t i = it->index+1; i < XContainerCapacity(this_map); i++)
 	{
-		node = ((XHashNode**)XContainerDataPtr(this_map))[i];
-		if (node != NULL)
+		it->node = ((XRBTreeNode**)XContainerDataPtr(this_map))[i];
+		if (it->node == NULL)
+			continue;
+		while (XBTreeNode_GetLChild(it->node) != NULL)
 		{
-			curent->node = node;
-			curent->index = i;
-			return;//下一个节点找到了
+			it->node = XBTreeNode_GetLChild(it->node);
+		}
+		if (it->node != NULL)
+		{
+			it->index = i;
+			return ;//下一个节点找到了
 		}
 	}
-	curent->node = NULL;
-	curent->index= XContainerCapacity(this_map);
+	if (it->node == NULL)
+	{
+		it->node = NULL;
+		it->index = XContainerCapacity(this_map);
+	}
+	//return;
+	//XHashNode* node = curent->node;
+	//if (node->next!=NULL)
+	//{
+	//	curent->node = node->next;
+	//	return;//下一个节点找到了
+	//}
+
+	//for (size_t i = curent->index+1; i < XContainerCapacity(this_map); i++)
+	//{
+	//	node = ((XHashNode**)XContainerDataPtr(this_map))[i];
+	//	if (node != NULL)
+	//	{
+	//		curent->node = node;
+	//		curent->index = i;
+	//		return;//下一个节点找到了
+	//	}
+	//}
+	//curent->node = NULL;
+	//curent->index= XContainerCapacity(this_map);
 }
 
 bool XHash_iterator_equality(XHash_iterator* itFirst, XHash_iterator* itSecond)
@@ -65,13 +117,17 @@ void XHash_iterator_for_each(XHash*this_map, XFor_each ForFunction, void* args)
 {
 	for_each_iterator(this_map, XHash, it)
 	{
+		//printf("index:%d\n",it.index);
 		ForFunction(XHash_iterator_data(&it),args);
 	}
 }
 
 XPair* XHash_iterator_data(XHash_iterator* it)
 {
-	return ((XHashNode*)(it->node))->pair;
+	if (it == NULL || it->node == NULL)
+		return NULL;
+	return XBTreeNode_GetData(it->node, XPair*);
+	//return ((XHashNode*)(it->node))->pair;
 }
 
 #endif

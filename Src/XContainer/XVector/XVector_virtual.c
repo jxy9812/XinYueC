@@ -7,15 +7,15 @@
 //声明
 #define VECTORNUM 4//初始数组大小
 static bool VXVector_resize(XVector* this_vector, size_t size);
-static void VXVector_push_front(XVector* this_vector, void* LpValue);
-static void VXVector_push_back(XVector* this_vector, void* LpValue);
-static void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n);
-static void VXVector_insert(XVector* this_vector, int64_t index, const void* LpValue);
+static void VXVector_push_front(XVector* this_vector, void* pvValue);
+static void VXVector_push_back(XVector* this_vector, void* pvValue);
+static void VXVector_inserts(XVector* this_vector, int64_t index, void* pvValue, size_t n);
+static void VXVector_insert(XVector* this_vector, int64_t index, const void* pvValue);
 static void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n);
 static void VXVector_append_array(XVector* this_vector, const void* begin, size_t n);
 static void VXVector_pop_front(XVector* this_vector);
 static void VXVector_pop_back(XVector* this_vector);
-static void VXVector_erase(XVector* this_vector, void* LpValue);
+static void VXVector_erase(XVector* this_vector, void* pvValue);
 static void VXVector_remove(XVector* this_vector, int64_t index, int64_t n);//删除数据 n<0 后面全部删除
 static void VXVector_clear(XVector* this_vector);
 static void VXVector_copy(XVector* this_One, const XVector* this_Two);
@@ -175,26 +175,26 @@ bool VXVector_resize(XVector* this_vector, size_t size)
 	//XContainerSize(this_vector) = size;//设置当前容器元素数量
 	return true;
 }
-void VXVector_push_front(XVector* this_vector, void* LpValue)
+void VXVector_push_front(XVector* this_vector, void* pvValue)
 {
 	if (XContainerObject_isEmpty_base(this_vector))
-		VXVector_push_back(this_vector, LpValue);
+		VXVector_push_back(this_vector, pvValue);
 	else
-		VXVector_insert(this_vector, 0, LpValue);
+		VXVector_insert(this_vector, 0, pvValue);
 }
-void VXVector_push_back(XVector* this_vector, void* LpValue)
+void VXVector_push_back(XVector* this_vector, void* pvValue)
 {
 	if (!VXVectorEnlargeCapacity(this_vector))
 		return;
 	char* ptr = (char*)XContainerDataPtr(this_vector) + XContainerTypeSize(this_vector) * XContainerSize(this_vector);
-	memcpy(ptr, LpValue, XContainerTypeSize(this_vector));
+	memcpy(ptr, pvValue, XContainerTypeSize(this_vector));
 	XContainerSize(this_vector)++;
 }
-void VXVector_insert(XVector* this_vector, int64_t index, const void* LpValue)
+void VXVector_insert(XVector* this_vector, int64_t index, const void* pvValue)
 {
-	VXVector_inserts(this_vector,index,LpValue,1);
+	VXVector_inserts(this_vector,index,pvValue,1);
 }
-void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t n)// 向量中指向元素p前增加n个相同的元素x
+void VXVector_inserts(XVector* this_vector, int64_t index, void* pvValue, size_t n)// 向量中指向元素p前增加n个相同的元素x
 {
 	const void* ptr = VXVector_at(this_vector, index);
 	size_t typeSize = XContainerTypeSize(this_vector);
@@ -208,7 +208,7 @@ void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t
 		{
 			if (!VXVectorEnlargeCapacity(this_vector))
 				break;
-			memcpy(VXVector_at(this_vector, sizen), (char*)LpValue+i*typeSize, typeSize);
+			memcpy(VXVector_at(this_vector, sizen), (char*)pvValue+i*typeSize, typeSize);
 			sizen++;
 			XContainerSize(this_vector)++;
 		}
@@ -219,7 +219,7 @@ void VXVector_inserts(XVector* this_vector, int64_t index, void* LpValue, size_t
 	{
 		for (size_t i = 0; i < n; i++)
 		{
-			XVector_push_back_base(this_vector, LpValue);
+			XVector_push_back_base(this_vector, pvValue);
 		}
 	}*/
 }
@@ -287,7 +287,7 @@ void VXVector_pop_back(XVector* this_vector)//删除向量中最后一个元素
 		XContainerDataDeleteMethod(this_vector)(XVector_back_base(this_vector));
 	--XContainerSize(this_vector);
 }
-void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
+void VXVector_erase(XVector* this_vector, void* pvValue)//删除指针数据
 {
 	if (XContainerObject_isEmpty_base(this_vector))
 		return ;
@@ -297,11 +297,11 @@ void VXVector_erase(XVector* this_vector, void* LpValue)//删除指针数据
 	{
 		--XContainerSize(this_vector);
 	}
-	else if(front <= LpValue && LpValue <= back && ((char*)LpValue - (char*)front)% typeSize==0)
+	else if(front <= pvValue && pvValue <= back && ((char*)pvValue - (char*)front)% typeSize==0)
 	{
 		if (XContainerDataDeleteMethod(this_vector) != NULL)
-			XContainerDataDeleteMethod(this_vector)(LpValue);
-		memcpy(LpValue, (char*)LpValue + typeSize, (size_t)((char*)back - (char*)LpValue));
+			XContainerDataDeleteMethod(this_vector)(pvValue);
+		memcpy(pvValue, (char*)pvValue + typeSize, (size_t)((char*)back - (char*)pvValue));
 		--XContainerSize(this_vector);
 	}
 }

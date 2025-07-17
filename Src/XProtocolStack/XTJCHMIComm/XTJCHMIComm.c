@@ -1,5 +1,6 @@
 ﻿#include"XTJCHMIComm.h"
 #include"XEquality.h"
+#include"XLess.h"
 #include"XVector.h"
 //获取功能码回调
 static bool XTJCHMIComm_GetFuncCodeCb(XDataFrameComm* comm, XByteArray* data, uint8_t* code);
@@ -21,7 +22,7 @@ void XTJCHMIComm_init(XTJCHMIComm* comm, XIODeviceBase* io)
 	XDataFrameComm_setCommMode_base(comm, XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm, XDFC_FRAME_END_MARKER);
 
-	XDataFrameComm_funcCodeMap_create(comm,sizeof(uint8_t),XEquality_uint8_t);
+	XDataFrameComm_funcCodeMap_create(comm,sizeof(uint8_t),XEquality_uint8_t,XLess_uint8_t);
 	XDataFrameComm_setGetFuncCodeCb(comm, XTJCHMIComm_GetFuncCodeCb);
 }
 

@@ -91,46 +91,45 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XBTreeNode* this_
 	return NULL;
 #endif
 }
-void XBTreeNode_init(XBTreeNode* node, const uint8_t nodeCount, const uint8_t dataCount, const size_t dataTypeSize)
+void XBTreeNode_init(XBTreeNode* node, const uint8_t nodeCount, const size_t dataTypeSize)
 {
-	if (node == NULL||nodeCount==0||dataCount==0||dataTypeSize==0)
+	if (node == NULL||nodeCount==0||dataTypeSize==0)
 		return;
 	node->nodes = XMemory_calloc(nodeCount,sizeof(XBTreeNode*));
 	if (node->nodes == NULL)
 		return;
 	node->nodeCount = nodeCount;
-	node->values= XMemory_calloc(dataCount, dataTypeSize);
-	if (node->values == NULL)
+	node->value = XMemory_calloc(1, dataTypeSize);
+	if (node->value == NULL)
 	{
 		XMemory_free(node->nodes);
 		node->nodes = NULL;
 		node->nodeCount = 0;
 		return;
 	}
-	node->valueCount = dataCount;
 	node->valueTypeSize = dataTypeSize;
 }
-XBTreeNode* XBTreeNode_create(const uint8_t nodeCount, const uint8_t dataCount, const size_t dataTypeSize)
+XBTreeNode* XBTreeNode_create(const uint8_t nodeCount, const size_t dataTypeSize)
 {
-	if (nodeCount == 0 || dataCount == 0 || dataTypeSize == 0)
+	if (nodeCount == 0 || dataTypeSize == 0)
 		return NULL;
 	XBTreeNode* node = XMemory_malloc(sizeof(XBTreeNode));
 	if (node)
-		XBTreeNode_init(node,nodeCount,dataCount,dataTypeSize);
+		XBTreeNode_init(node,nodeCount,dataTypeSize);
 	return node;
 }
-bool XBTreeNode_setData(XBTreeNode* this_root, const uint8_t index, const void* pvData)
+bool XBTreeNode_setData(XBTreeNode* this_root, const void* pvData)
 {
-	if(this_root==NULL||pvData==NULL|| this_root->valueTypeSize<=index)
+	if(this_root==NULL||pvData==NULL)
 		return false;
-	memcpy((uint8_t*)(this_root->values) + (this_root->valueTypeSize * index), pvData, this_root->valueTypeSize);
+	memcpy((uint8_t*)(this_root->value), pvData, this_root->valueTypeSize);
 	return true;
 }
-void* XBTreeNode_getData(XBTreeNode* this_root, const uint8_t index)
+void* XBTreeNode_getData(XBTreeNode* this_root)
 {
-	if (this_root == NULL || this_root->valueTypeSize <= index)
+	if (this_root == NULL )
 		return NULL;
-	return (uint8_t*)(this_root->values) + (this_root->valueTypeSize * index);
+	return (uint8_t*)(this_root->value);
 }
 bool XBTreeNode_setNode(XBTreeNode* this_root, const uint8_t nodeType, XBTreeNode* node)
 {
@@ -145,14 +144,22 @@ XBTreeNode* XBTreeNode_getNode(XBTreeNode* this_root, const uint8_t nodeType)
 		return NULL;
 	return ((XBTreeNode**)(this_root->nodes))[nodeType];
 }
-void XBTree_delete(XBTreeNode* this_root)
+void XBTree_delete(XBTreeNode* this_root, ValueDeleteMethod method, void* args)
 {
+	if (this_root == NULL)
+		return;
 	if (XBTreeNode_getNode(this_root, XBTreeLChild) == NULL && XBTreeNode_getNode(this_root, XBTreeRChild) == NULL)
 	{//根节点
 		if (this_root->nodes)
+		{
 			XMemory_free(this_root->nodes);
-		if (this_root->values)
-			XMemory_free(this_root->values);
+		}
+		if (this_root->value)
+		{
+			if (method)
+				method(this_root->value,args);
+			XMemory_free(this_root->value);
+		}
 		XMemory_free(this_root);
 		return;
 	}
@@ -176,6 +183,8 @@ void XBTree_delete(XBTreeNode* this_root)
 			if(node)
 				XStack_push_base(stack,&node );
 		}
+		if (currentNode->value!=NULL&& method!=NULL)
+			method(currentNode->value,args);
 		XBTreeNode_delete(currentNode);//释放当前节点
 		sum++;
 	}
@@ -189,10 +198,10 @@ void XBTree_delete(XBTreeNode* this_root)
 
 XBTreeNode* XBTree_createInsertData(const void* pvData, const size_t nodeArrySize, const size_t TypeSize)
 {
-	XBTreeNode* nodes = XBTreeNode_create( nodeArrySize,1,TypeSize);
+	XBTreeNode* nodes = XBTreeNode_create( nodeArrySize,TypeSize);
 	if (ISNULL( nodes,"创建节点失败"))
 		return NULL;
-	XBTreeNode_setData(nodes,0, pvData);
+	XBTreeNode_setData(nodes, pvData);
 	//printf("插入的:%d\n", XBTreeNode_GetParent(nodes, 0, int));
 	return nodes;
 }
@@ -203,8 +212,8 @@ void XBTreeNode_delete(XBTreeNode* node)
 		return;
 	if (node->nodes)
 		XMemory_free(node->nodes);
-	if (node->values)
-		XMemory_free(node->values);
+	if (node->value)
+		XMemory_free(node->value);
 	XMemory_free(node);
 }
 

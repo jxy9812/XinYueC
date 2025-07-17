@@ -58,7 +58,7 @@ static bool global_typeHash_init()
 {
 	if (global_typeProperty)
 		return true;
-	global_typeProperty = XHash_Create(int, TypeProperty, XHash_murmur3_32, XEquality_int);
+	global_typeProperty = XHash_Create(int, TypeProperty, XHash_murmur3_32, XEquality_int,XLess_int);
 	if (global_typeProperty)
 		return true;
 	return false;

@@ -58,7 +58,7 @@ void XModbus_init(XModbus* modbus, XIODeviceBase* io)
 
 	XObject_addEventFilter(modbus, XEVENT_ALL, XModbus_EvnetHandCb, modbus);
 
-	XDataFrameComm_funcCodeMap_create(modbus,sizeof(XModbusRecvMatch),XEquality_uint16_t);
+	XDataFrameComm_funcCodeMap_create(modbus,sizeof(XModbusRecvMatch),XEquality_uint16_t,XLess_uint16_t);
 	modbus->m_address = 1;
 	modbus->m_mode = XMB_NOT_MODE;
 }

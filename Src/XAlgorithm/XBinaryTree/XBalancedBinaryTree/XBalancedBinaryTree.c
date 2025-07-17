@@ -7,38 +7,11 @@ XBBTreeNode* XBBTree_create(const size_t TypeSize)
 	XBBTreeNode* nodes = XMemory_malloc(sizeof(XBBTreeNode));
 	if (nodes == NULL)
 		return NULL;
-	XBTreeNode_init(nodes, 3, 1, TypeSize);
+	XBTreeNode_init(nodes, 3,  TypeSize);
 	nodes->maxLayer = 1;
 	return nodes;
 }
 
-XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne Rule, void* pvData)
-{
-	/*if (ISNULL(this_root,"")))
-		return NULL; */
-	if (this_root == NULL)//树是空的
-		return NULL;
-	XBBTreeNode* CurNode = this_root;//当前节点指针
-	while (CurNode!=NULL)
-	{
-		//printf("%d \n", XBTreeNode_GetParent(CurNode,0,int));
-		//if (equality(CurNode->XBTNode.data, pvData))
-		if(Rule(equality, CurNode, pvData))
-		{
-			return CurNode;
-		}
-		//else if (less(CurNode->XBTNode.data, pvData))
-		else if(Rule(less, CurNode, pvData))
-		{
-			CurNode = XBTreeNode_GetRChild(CurNode);
-		}
-		else
-		{
-			CurNode = XBTreeNode_GetLChild(CurNode);
-		}
-	}
-	return NULL;
-}
 /*                                                  删除函数                                                       */
 //删除的是叶子节点
 static void* leaf_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
@@ -100,10 +73,10 @@ static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 
 	if (XBTreeNode_GetRChild(preCursor) == NULL)//LeftChildNode的孩子不存在右子树的情况
 	{
-		XMemory_free(eraseNode->XBTNode.values);//释放其数据
+		XMemory_free(eraseNode->XBTNode.value);//释放其数据
 		//与左子树数据交换
-		eraseNode->XBTNode.values = preCursor->XBTNode.values;
-		preCursor->XBTNode.values = NULL;
+		eraseNode->XBTNode.value = preCursor->XBTNode.value;
+		preCursor->XBTNode.value = NULL;
 
 		XBBTreeNode* freeNode = preCursor;
 		preCursor = XBTreeNode_GetLChild(preCursor);//左子树的左子树
@@ -118,10 +91,10 @@ static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 		{
 			preCursor = XBTreeNode_GetRChild(preCursor);
 		}
-		XMemory_free(eraseNode->XBTNode.values);//释放其数据
+		XMemory_free(eraseNode->XBTNode.value);//释放其数据
 		//与左子树数据交换
-		eraseNode->XBTNode.values = preCursor->XBTNode.values;
-		preCursor->XBTNode.values = NULL;
+		eraseNode->XBTNode.value = preCursor->XBTNode.value;
+		preCursor->XBTNode.value = NULL;
 
 		LPparent = XBTreeNode_GetParent(preCursor);
 		XBBTreeNode* freeNode = preCursor;
@@ -155,11 +128,33 @@ void* XBBTree_erase(XBBTreeNode** this_root, XLess less, XEquality equality, XCo
 	if (count == 2)//两个孩子
 		TwoChild_erase(this_root, findRet);
 }
+XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne equalityRule, void* pvData)
+{
+	if (this_root == NULL)//树是空的
+		return NULL;
+	XBBTreeNode* CurNode = this_root;//当前节点指针
+	while (CurNode != NULL)
+	{
+		if (equalityRule(equality, CurNode, pvData))
+		{
+			return CurNode;
+		}
+		else if (equalityRule(less, CurNode, pvData))
+		{
+			CurNode = XBTreeNode_GetRChild(CurNode);
+		}
+		else
+		{
+			CurNode = XBTreeNode_GetLChild(CurNode);
+		}
+	}
+	return NULL;
+}
 /*                                              插入                                           */
 bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess less, XCompareRuleTwo lessRule, const void* pvData, const size_t TypeSize)
 {
 	//if (!XBTree_insertData(insertNode, pvData, 0))//插入数据
-	if (!XBTreeNode_setData(insertNode, 0, pvData))
+	if (!XBTreeNode_setData(insertNode,pvData))
 	{
 		XBTreeNode_delete(insertNode);//插入失败释放创建的节点
 		return false;

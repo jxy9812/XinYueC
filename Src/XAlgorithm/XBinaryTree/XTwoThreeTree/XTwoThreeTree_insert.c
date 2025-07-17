@@ -6,7 +6,7 @@ XTTTreeNode* XTTTree_insert(XTTTreeNode** this_root, XLess less, XCompareRuleTwo
     if (ISNULL(nodes, ""))
         return NULL;
     //XBTree_insertData(nodes, pvData, 0);//插入数据
-    XBTreeNode_setData(nodes,0,pvData);
+    XBTreeNode_setData(nodes,pvData);
     if (this_root == NULL)//创建根节点
     {
         return nodes;

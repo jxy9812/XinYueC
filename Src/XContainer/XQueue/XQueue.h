@@ -26,7 +26,7 @@ XQueue* XQueue_create(size_t typeSize);
 #define XQueue_Create(Type) XQueue_create(sizeof(Type))
 void XQueue_init(XQueue* this_queue, size_t typeSize);
 //插入到队列的队尾
-void XQueue_push_base(XQueue* this_queue, void* LpValue);
+void XQueue_push_base(XQueue* this_queue, void* pvValue);
 #define XQueue_Push_Base(this_queue,type,value) {type t=value;XQueue_push_base(this_queue,&t);}
 //删除queue的队头元素
 void XQueue_pop_base(XQueue* this_queue);

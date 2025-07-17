@@ -27,10 +27,10 @@ typedef struct XHash
 }XHash;
 XVtable* XHash_class_init();
 //创建一个XHash,初始化
-XHash* XHash_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality);
-#define XHash_Create(keyType,valType,hash,KeyEquality) XHash_create(sizeof(keyType),sizeof(valType),hash,KeyEquality)
+XHash* XHash_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess);
+#define XHash_Create(keyType,valType,hash,KeyEquality,KeyLess) XHash_create(sizeof(keyType),sizeof(valType),hash,KeyEquality,KeyLess)
 //初始化 XHash
-void XHash_init(XHash* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality);
+void XHash_init(XHash* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess);
 #define XHash_insert_base						XMapBase_insert_base
 #define XHash_erase_base						XMapBase_erase_base
 #define XHash_remove_base						XMapBase_remove_base

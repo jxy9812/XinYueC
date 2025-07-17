@@ -6,7 +6,7 @@
 #include<stdlib.h>
 #include<string.h>
 typedef struct XVector XVector;
-#define GetXPoint(nodes) (*(XPoint*)nodes->values)
+#define GetXPoint(nodes) (*(XPoint*)nodes->value)
 //创建一个节点
 static XBTreeNode* CreationBFSNode_XPoint(XPoint pos)
 {
@@ -29,7 +29,7 @@ static XVector* GetXMazePath(const XBTreeNode* child)
 	XBTreeNode* current = child;
 	while (current!=NULL)
 	{
-		XVector_push_front_base(Path, current->values);
+		XVector_push_front_base(Path, current->value);
 		current = *XBTreeNode_getNodeRef(current,XBTreeParent);
 	}
 	return Path;
@@ -93,7 +93,7 @@ XVector* XMazePathfindingBFS(const XVector* maze, const XPoint start, const XPoi
 	XVector_delete_base(CurrentNodeArray);
 	XVector_delete_base(NextNodeArray);
 	XVectorTwo_delete(tempMaze);
-	XBTree_delete(root);
+	XBTree_delete(root,NULL,NULL);
 	return Path;
 #else
 	IS_ON_DEBUG(XVector_ON);

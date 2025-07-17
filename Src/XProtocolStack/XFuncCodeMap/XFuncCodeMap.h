@@ -14,7 +14,7 @@ typedef struct XFuncCodeNode
 }XFuncCodeNode;
 
 
-XFuncCodeMap* XFuncCodeMap_create(size_t codeSize, XEquality codeEquality);
+XFuncCodeMap* XFuncCodeMap_create(size_t codeSize, XEquality codeEquality,XLess codeLess);
 bool XFuncCodeMap_add(XFuncCodeMap* map, void* code, XFuncCodeCb cb, void* userData);
 bool XFuncCodeMap_remove(XFuncCodeMap* map, void* code);
 XFuncCodeNode* XFuncCodeMap_value(XFuncCodeMap* map, void* code);

@@ -9,13 +9,13 @@
 #include<stdlib.h>
 #include<time.h>
 #if XMap_ON
-static void ForPrint(void* values, void* args)
+static void ForPrint(void* value, void* args)
 {
-	printf("%d\n", *(int*)values);
+	printf("%d\n", *(int*)value);
 }
-static void insertMap(void* values, void* args)
+static void insertMap(void* value, void* args)
 {
-	XMap_insert_base(args, values, values);
+	XMap_insert_base(args, value, value);
 }
 #endif
 void XMapAndXVectorFindTest()

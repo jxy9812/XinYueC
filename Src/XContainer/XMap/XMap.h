@@ -7,14 +7,13 @@ extern "C" {
 #include"XMapBase.h"
 #include"XMap_Iterator.h"
 #include"XMap_reverse_iterator.h"
-#include"XLess.h"
 typedef struct XVector XVector;
 typedef struct XPair XPair;
 #define XMAP_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))       //XMap容器虚函数表大小
 typedef struct XMap
 {
 	XMapBase m_parent;//基本数据
-	XLess m_KeyLess;//key小于比较函数
+	//XLess m_KeyLess;//key小于比较函数
 }XMap;
 XVtable* XMap_class_init();
 //开辟一个Map,初始化

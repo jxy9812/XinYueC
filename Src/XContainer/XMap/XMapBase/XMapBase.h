@@ -6,6 +6,7 @@ extern "C" {
 #endif
 #include"XFunctionCallback.h"
 #include"XEquality.h"
+#include"XLess.h"
 #include"XPair.h"
 #define XMAPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))       //XMap容器虚函数表大小
 //XMap虚函数表枚举
@@ -22,10 +23,11 @@ typedef struct XMapBase
 	XContainerObject m_parent;//基本数据
 	size_t m_keyTypeSize;//key数据类型大小
 	XEquality m_KeyEquality;//key的相等比较函数
+	XLess m_KeyLess;//key小于比较函数
 }XMapBase;
 XVtable* XMapBase_class_init();
 //初始化 XMap
-void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality);
+void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality,XLess KeyLess);
 //Map插入数据
 bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue);
 #define XMapBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMap_insert_base(this_map,&k,&v);}

@@ -9,7 +9,7 @@ static bool VXCircularQueueAtomic_isFull(const XCircularQueueAtomic* this_queue)
 static void VXCircularQueueAtomic_clear(XCircularQueueAtomic* this_queue);//清空
 static size_t VXCircularQueueAtomic_getSize(const XCircularQueueAtomic* this_queue);
 //插入到队列的队尾
-static bool VXCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* LpValue);
+static bool VXCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* pvValue);
 //出队
 static void VXCircularQueueAtomic_pop(XCircularQueueAtomic* this_queue);
 // 返回队头元素
@@ -81,7 +81,7 @@ size_t VXCircularQueueAtomic_getSize(const XCircularQueueAtomic* this_queue)
     return (tail >= head) ? (tail - head) : (XContainerSize(this_queue) - head + tail);
 }
 
-bool VXCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* LpValue)
+bool VXCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* pvValue)
 {
     size_t tail, next_tail;
 
@@ -103,7 +103,7 @@ bool VXCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* LpValue)
     }
 
     // 安全写入数据
-    memcpy(((char*)XContainerDataPtr(this_queue)) + tail * XContainerTypeSize(this_queue), LpValue, XContainerTypeSize(this_queue));
+    memcpy(((char*)XContainerDataPtr(this_queue)) + tail * XContainerTypeSize(this_queue), pvValue, XContainerTypeSize(this_queue));
     return true;
 }
 
