@@ -48,9 +48,9 @@ int main(int argc, char* args[])
 	//XRedBlackTreeTest();
 	//XMapTest();
 	//return;
-	XVariantListTest();
+	//XVariantListTest();
 
-	//XModbusTest();
+	XModbusTest();
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
 	//XSerialPortTest();

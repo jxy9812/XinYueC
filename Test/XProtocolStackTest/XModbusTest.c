@@ -31,13 +31,16 @@ void XModbusTest()
     XSocket* socket = XSocket_create();
     XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
     XSerialPort_delete_base(serial);
+    
     XModbus* modbus = XModbus_create_RTU_SerialPort(socket,NULL,NULL);
     XModbus_setAddress(modbus,2);
     XModbus_setMode(modbus, XMB_RTU_MASTER);
     //XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);
+   // return;
     XModbusDigitalSwitch* ds = XModbusDigitalSwitch_create(modbus,0x01,8,8);
     //XModbusDigitalSwitch_bindModbus_RTU(ds,modbus);
     //XDataFrameComm_setCommMode_base(modbus,XDFC_COMM_MODE_FULL_DUPLEX);
+
     XModbusDigitalSwitch_setScanningPeriod(ds,50);
 
     {

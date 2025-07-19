@@ -16,8 +16,8 @@ typedef struct XEventMin
     bool accept;                  //接受事件
     int code;                     //事件类型代码
     size_t timestamp;             //事件发生时间
-    XObject* receiver;              //接收对象
-    void* userData;              // 可选的用户数据指针
+    XObject* receiver;            //接收对象
+    void* userData;               // 可选的用户数据指针
 }XEventMin;
 
 //完整事件

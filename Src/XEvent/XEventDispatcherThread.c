@@ -282,7 +282,7 @@ bool VXEventDispatcherThread_removeObject(XEventDispatcherThread* dispatcher, XO
 		if (pvCodeMap != NULL)
 		{//存在事件过滤
 			XMapBase_delete_base(*pvCodeMap);
-			XMapBase_remove_base(((XEventDispatcher*)dispatcher)->m_filter_cb,pvCodeMap);
+			XMapBase_remove_base(((XEventDispatcher*)dispatcher)->m_filter_cb, &object);
 		}
 		return true;
 	}	
