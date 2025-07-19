@@ -68,7 +68,7 @@ void XPWMDeviceSTM32_init(XPWMDeviceSTM32 *pwm)
 	if (pwm == NULL)
     	return;
 	memset(((XPWMDeviceBase*)pwm) + 1, 0, sizeof(XPWMDeviceSTM32) - sizeof(XPWMDeviceBase));
-	XPWMDeviceBase_init(pwm, NULL);
+	XPWMDeviceBase_init(pwm);
 	XClassGetVtable(pwm) = XPWMDeviceSTM32_class_init();
 }
 

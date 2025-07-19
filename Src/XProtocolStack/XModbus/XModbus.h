@@ -23,6 +23,8 @@ typedef struct XModbus
 XVtable* XModbus_class_init();
 //基础创建
 XModbus* XModbus_create(XIODeviceBase* io);
+//创建RTU协议的Modbus
+XModbus* XModbus_create_RTU(XIODeviceBase* io, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired);
 //用串口创建RTU 
 XModbus* XModbus_create_RTU_SerialPort(XSerialPortBase* serial, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired);
 void XModbus_init(XModbus* modbus, XIODeviceBase* io);

@@ -32,7 +32,7 @@ void XModbusTest()
     XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
     XSerialPort_delete_base(serial);
     
-    XModbus* modbus = XModbus_create_RTU_SerialPort(socket,NULL,NULL);
+    XModbus* modbus = XModbus_create_RTU(socket,NULL,NULL);
     XModbus_setAddress(modbus,2);
     XModbus_setMode(modbus, XMB_RTU_MASTER);
     //XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);

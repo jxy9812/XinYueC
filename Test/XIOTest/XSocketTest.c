@@ -10,7 +10,7 @@ void XSocketTest()
 	//XSocketBase_waitForConnected_base(socket, 3000);
 }
 #else
-void XSerialPortTest()
+void XSocketTest()
 {
 
 }

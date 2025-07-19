@@ -20,18 +20,29 @@ XModbus* XModbus_create(XIODeviceBase* io)
 	XModbus_init(comm, io);
 	return comm;
 }
-XModbus* XModbus_create_RTU_SerialPort(XSerialPortBase* serial, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired)
+XModbus* XModbus_create_RTU(XIODeviceBase* io, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired)
 {
-	if (serial == NULL)
+	if (io == NULL)
 		return NULL;
-	XModbus* modbus =XModbus_create(serial);
-	if(modbus ==NULL)
+	XModbus* modbus = XModbus_create(io);
+	if (modbus == NULL)
 		return NULL;
 	((XDataFrameComm*)modbus)->m_timerSendExpired = timerSendExpired;
 	((XDataFrameComm*)modbus)->m_timerRecvExpired = timerT35Expired;
 	XDataFrameComm_setCommMode_base(modbus, XDFC_COMM_MODE_HALF_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(modbus, XDFC_FRAME_END_TIMEOUT);
 	XDataFrameComm_setRecvValidCRC16_base(modbus, true);
+
+	uint32_t timerout = 2;
+	XTimerBase_setTimeout_base(((XDataFrameComm*)modbus)->m_timerRecvExpired, timerout);
+	XTimerBase_setTimeout_base(((XDataFrameComm*)modbus)->m_timerSendExpired, timerout * XMB_MASTER_RECV_WAIT_TIME);
+	return modbus;
+}
+XModbus* XModbus_create_RTU_SerialPort(XSerialPortBase* serial, XTimerBase* timerT35Expired, XTimerBase* timerSendExpired)
+{
+	if (serial == NULL)
+		return NULL;
+	XModbus* modbus= XModbus_create_RTU(serial, timerT35Expired, timerSendExpired);
 
 	uint32_t timerout = 3.5 * (10 + serial->m_parity) * 1000 / serial->m_baudRate;
 	if (timerout < 2)

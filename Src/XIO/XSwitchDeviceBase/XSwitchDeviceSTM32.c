@@ -34,7 +34,7 @@ void XSwitchDeviceSTM32_init(XSwitchDeviceSTM32 *sw)
 	if (sw == NULL)
     	return;
 	memset(((XSwitchDeviceBase*)sw) + 1, 0, sizeof(XSwitchDeviceSTM32) - sizeof(XSwitchDeviceBase));
-	XSwitchDeviceBase_init(sw, NULL);
+	XSwitchDeviceBase_init(sw);
 	XClassGetVtable(sw) = XSwitchDeviceSTM32_class_init();
 }
 //启用了F4系列

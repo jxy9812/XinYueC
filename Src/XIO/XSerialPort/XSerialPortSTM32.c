@@ -45,7 +45,7 @@ void XSerialPort_init(XSerialPort* serial)
     if (serial == NULL)
         return;
     memset(((XSerialPortBase*)serial) + 1, 0, sizeof(XSerialPort) - sizeof(XSerialPortBase));
-    XSerialPortBase_init(serial, NULL);
+    XSerialPortBase_init(serial);
     XClassGetVtable(serial) = XSerialPort_class_init();
 }
 #endif
