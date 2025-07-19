@@ -87,13 +87,12 @@ void VXMap_erase(XMap* this_map, const XPair* pPair)
 
 bool VXMap_remove(XMap* this_map, const void* key)
 {
-#if XVector_ON
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return false;
 	XRBTreeNode* nodes = XRBTree_findData(XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
-		XPair* pair = XBTreeNode_GetData(nodes,XPair*);
+		XPair* pair = XBTreeNode_GetData(nodes, XPair*);
 		if (XContainerDataDeleteMethod(this_map) != NULL)
 			XContainerDataDeleteMethod(this_map)(pair);
 		XRBTree_erase(&XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
@@ -103,9 +102,6 @@ bool VXMap_remove(XMap* this_map, const void* key)
 		return true;
 	}
 	return false;
-#else
-	IS_ON_DEBUG(XVector_ON);
-#endif
 }
 
 void* VXMap_value(XMap* this_map, const void* key)
@@ -120,7 +116,6 @@ void* VXMap_value(XMap* this_map, const void* key)
 
 XPair* VXMap_find(XMap* this_map, const void* key)
 {
-#if XVector_ON
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return NULL;
 	XBTreeNode* nodes = XRBTree_findData(XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
@@ -128,25 +123,20 @@ XPair* VXMap_find(XMap* this_map, const void* key)
 		return NULL;
 	XPair* pair = XBTreeNode_GetData(nodes, XPair*);
 	return pair;
-#else
-	IS_ON_DEBUG(XVector_ON);
-	return NULL;
-#endif
 }
 XVector* VXMapBase_keys(const XMapBase* this_map)
 {
-
 	XVector* v = XVector_create(this_map->m_keyTypeSize);
 	for_each_iterator(this_map, XMap, it)
 	{
-		XVector_push_back_base(v, XPair_first(XHash_iterator_data(&it)));
+		XVector_push_back_base(v, XPair_first(XMap_iterator_data(&it)));
 	}
 	return v;
 }
-static void XMap_freeNodeData(XPair** pair, void* args)
+static void XMap_freeNodeData(XPair** pair, XMap* this_map)
 {
-	if (XContainerDataDeleteMethod(args) != NULL)
-		XContainerDataDeleteMethod(args)(*pair);
+	if (XContainerDataDeleteMethod(this_map) != NULL)
+		XContainerDataDeleteMethod(this_map)(*pair);
 	XPair_delete(*pair);
 }
 void VXMap_clear(XMap* this_map)

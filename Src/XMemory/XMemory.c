@@ -32,9 +32,9 @@ void XMemory_setMallocMethod(MallocMethod method)
 	global_Memory.allocate = method;
 }
 
-void XMemory_free(void* pointer)
+void XMemory_free(void* ptr)
 {
-	global_Memory.deallocate(pointer);
+	global_Memory.deallocate(ptr);
 }
 
 void XMemory_setDeleteMethod(DeleteMethod method)
@@ -42,9 +42,9 @@ void XMemory_setDeleteMethod(DeleteMethod method)
 	global_Memory.deallocate = method;
 }
 
-void* XMemory_realloc(void* pointer, size_t size)
+void* XMemory_realloc(void* ptr, size_t size)
 {
-	return global_Memory.reallocate(pointer,size);
+	return global_Memory.reallocate(ptr,size);
 }
 
 void* XMemory_calloc(size_t count, size_t size)
@@ -67,21 +67,21 @@ void XMemory_setCallocMethod(CallocMethod method)
 	global_Memory.callocZero = method;
 }
 
-void* XMemory_reallocPack(void* pointer, size_t size)
+void* XMemory_reallocPack(void* ptr, size_t size)
 {
-	if (pointer == NULL)
+	if (ptr == NULL)
 		return XMemory_malloc(size);
 	if (size == 0)
 	{
-		XMemory_free(pointer);
+		XMemory_free(ptr);
 		return NULL;
 	}
-	void* ptr = XMemory_malloc(size);
-	if (ptr == NULL)
+	void* newPtr = XMemory_malloc(size);
+	if (newPtr == NULL)
 		return NULL;
-	memcpy(ptr,pointer,size);
-	XMemory_free(pointer);
-	return ptr;
+	memcpy(newPtr,ptr,size);
+	XMemory_free(ptr);
+	return newPtr;
 }
 
 void* XMemory_callocPack(size_t count, size_t size)

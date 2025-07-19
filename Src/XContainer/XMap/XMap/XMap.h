@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 #include"XMapBase.h"
-#include"XMap_Iterator.h"
+#include"XMap_iterator.h"
 #include"XMap_reverse_iterator.h"
 typedef struct XVector XVector;
 typedef struct XPair XPair;
@@ -13,11 +13,10 @@ typedef struct XPair XPair;
 typedef struct XMap
 {
 	XMapBase m_parent;//基本数据
-	//XLess m_KeyLess;//key小于比较函数
 }XMap;
 XVtable* XMap_class_init();
 //开辟一个Map,初始化
-XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess/*, XEquality ValEquality*/);
+XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess);
 #define XMap_Create(keyType,valType,KeyEquality,KeyLess) XMap_create(sizeof(keyType),sizeof(valType),KeyEquality,KeyLess)
 //初始化 XMap
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess);

@@ -7,8 +7,8 @@ extern "C" {
 #include<stdbool.h>
 #include"XDataStructConfig.h"
 typedef void* (*MallocMethod)(size_t size);
-typedef void (*DeleteMethod)(void* pointer);
-typedef void* (*ReallocMethod)(void* pointer, size_t size);
+typedef void (*DeleteMethod)(void* ptr);
+typedef void* (*ReallocMethod)(void* ptr, size_t size);
 typedef void* (*CallocMethod)(size_t count, size_t size);
 //内存管理
 typedef struct
@@ -24,12 +24,12 @@ void XMemory_setDeleteMethod(DeleteMethod method);
 void XMemory_setReallocMethod(ReallocMethod method);
 void XMemory_setCallocMethod(CallocMethod method);
 //XMemory_malloc XMemory_free配合实现XMemory_realloc  扩大内存拷贝时有一定隐患
-void* XMemory_reallocPack(void* pointer, size_t size);
+void* XMemory_reallocPack(void* ptr, size_t size);
 void* XMemory_callocPack(size_t count, size_t size);
 //内存管理
 void* XMemory_malloc(size_t size);
-void XMemory_free(void* pointer);
-void* XMemory_realloc(void* pointer, size_t size);
+void XMemory_free(void* ptr);
+void* XMemory_realloc(void* ptr, size_t size);
 void* XMemory_calloc(size_t count, size_t size);
 //realloc是否是空
 bool XMemory_realloc_isNULL();

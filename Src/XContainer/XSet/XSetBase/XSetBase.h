@@ -5,7 +5,8 @@
 extern "C" {
 #endif
 #include "XFunctionCallback.h"
-
+#include"XEquality.h"
+#include"XLess.h"
 #define XSETBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSetBase))       // XSet容器虚函数表大小
 // XSet虚函数表枚举
 XCLASS_DEFINE_BEGING(XSetBase)
@@ -18,19 +19,21 @@ XCLASS_DEFINE_END(XSetBase)
 typedef struct XSetBase
 {
     XContainerObject m_parent; // 基本数据
-    size_t m_keyTypeSize;      // key数据类型大小
     XEquality m_KeyEquality;   // key的相等比较函数
+    XLess m_KeyLess;//key小于比较函数
 } XSetBase;
 
 XVtable* XSetBase_class_init();
 // 初始化 XSet
-void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XEquality KeyEquality);
+void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XEquality KeyEquality, XLess KeyLess);
 // Set插入数据
 bool XSetBase_insert_base(XSetBase* this_set, const void* pvKey);
+#define XSetBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XSet_insert_base(this_map,&k,&v);}
 // Set删除数据
 void XSetBase_erase_base(XSetBase* this_set, const void* pvKey);
 // Set移除数据
 bool XSetBase_remove_base(XSetBase* this_set, const void* pvKey);
+#define XSetBase_Remove_Base(this_map,keyType,key) {keyType k=key;XSet_remove_base(this_map,&k);}
 // 查找数据，返回是否找到
 bool XSetBase_find_base(XSetBase* this_set, const void* pvKey);
 bool XSetBase_contains(XSetBase* this_set, const void* pvKey);

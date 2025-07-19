@@ -42,7 +42,7 @@ extern "C" {
 	void XListSLinkedAtomicSortTest();
 	void XListSLinkedAtomicIterator();
 	void XHashSetTest();
-
+	void XSetTest();
 	void XVariantListTest();
 #endif // DEMOTEST
 

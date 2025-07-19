@@ -42,11 +42,12 @@ int main(int argc, char* args[])
 	//XDataFrameCommTest();
 	//XSocketTest();
 	//XHashSetTest();
+	XSetTest();
 	//XBinaryTreeObjectTest();
 	//XRedBlackTreeTest();
 	//XMapTest();
 	//return;
-	XVariantListTest();
+	//XVariantListTest();
 
 	//XModbusTest();
 	//XCylinderTest();	

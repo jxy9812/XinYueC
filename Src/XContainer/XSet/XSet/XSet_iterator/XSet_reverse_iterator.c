@@ -1,12 +1,11 @@
-﻿#include "XMap_reverse_iterator.h"
-#if XMap_ON
-#include"XMap.h"
-#include"XVector.h"
+﻿#include "XSet_reverse_iterator.h"
+#if XSet_ON
+#include"XSet.h"
 #include"XRedBlackTree.h"
 
-XMap_reverse_iterator XMap_rbegin(XMap* this_map)
+XSet_reverse_iterator XSet_rbegin(XSet* this_map)
 {
-	XMap_reverse_iterator it = { 0 };
+	XSet_reverse_iterator it = { 0 };
 	if (this_map == NULL)
 		return it;
 	XRBTreeNode* current = XContainerDataPtr(this_map);
@@ -18,17 +17,17 @@ XMap_reverse_iterator XMap_rbegin(XMap* this_map)
 	return it;
 }
 
-XMap_reverse_iterator XMap_rend(XMap* this_map)
+XSet_reverse_iterator XSet_rend(XSet* this_map)
 {
 
-	XMap_reverse_iterator it = { 0 };
+	XSet_reverse_iterator it = { 0 };
 	if (this_map == NULL)
 		return it;
 	XRBTreeNode* this_root = XContainerDataPtr(this_map);
 	return it;
 }
 
-XMap_reverse_iterator* XMap_reverse_iterator_add(XMap* this_map, XMap_reverse_iterator* it)
+XSet_reverse_iterator* XSet_reverse_iterator_add(XSet* this_map, XSet_reverse_iterator* it)
 {
 	if (this_map == NULL || it == NULL || it->node == NULL)
 		return;
@@ -53,24 +52,24 @@ XMap_reverse_iterator* XMap_reverse_iterator_add(XMap* this_map, XMap_reverse_it
 	return;
 }
 
-bool XMap_reverse_iterator_equality(XMap_reverse_iterator* itFirst, XMap_reverse_iterator* itSecond)
+bool XSet_reverse_iterator_equality(XSet_reverse_iterator* itFirst, XSet_reverse_iterator* itSecond)
 {
 	return itFirst->node == itSecond->node;
 }
 
-void XMap_reverse_iterator_for_each(XMap* this_map, XFor_each ForFunction, void* args)
+void XSet_reverse_iterator_for_each(XSet* this_map, XFor_each ForFunction, void* args)
 {
-	for_each_reverse_iterator(this_map, XMap, it)
+	for_each_reverse_iterator(this_map, XSet, it)
 	{
-		ForFunction(XMap_reverse_iterator_data(&it), args);
+		ForFunction(XSet_reverse_iterator_data(&it), args);
 	}
 }
 
-XPair* XMap_reverse_iterator_data(XMap_reverse_iterator* it)
+void* XSet_reverse_iterator_data(XSet_reverse_iterator* it)
 {
 	if (it == NULL || it->node == NULL)
 		return NULL;
-	return XBTreeNode_GetData(it->node,XPair*);
+	return XBTreeNode_getData(it->node);
 }
 
 #endif

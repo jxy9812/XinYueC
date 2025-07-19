@@ -63,7 +63,7 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
         while (current)
         {
             XHashSetNode* next = current->next;
-            size_t index = set->m_hash(current->key, ((XSetBase*)set)->m_keyTypeSize) % new_capacity;
+            size_t index = set->m_hash(current->key, XContainerTypeSize(set)) % new_capacity;
             XHashSetNode* new_current = newData[index];
             if (new_current != NULL)
             {
@@ -100,7 +100,7 @@ bool VXSet_insert(XHashSet* this_set, const void* pvKey)
         }
     }
 
-    size_t index = this_set->m_hash(pvKey, ((XSetBase*)this_set)->m_keyTypeSize) % XContainerCapacity(this_set);
+    size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
     XHashSetNode* current = ((XHashSetNode**)XContainerDataPtr(this_set))[index];
 
     while (current)
@@ -116,8 +116,8 @@ bool VXSet_insert(XHashSet* this_set, const void* pvKey)
     if (new_node == NULL)
         return false;
 
-    new_node->key = XMemory_malloc(((XSetBase*)this_set)->m_keyTypeSize);
-    memcpy(new_node->key, pvKey, ((XSetBase*)this_set)->m_keyTypeSize);
+    new_node->key = XMemory_malloc(XContainerTypeSize(this_set));
+    memcpy(new_node->key, pvKey, XContainerTypeSize(this_set));
     new_node->next = ((XHashSetNode**)XContainerDataPtr(this_set))[index];
     ((XHashSetNode**)XContainerDataPtr(this_set))[index] = new_node;
     ++XContainerSize(this_set);
@@ -128,7 +128,7 @@ void VXSet_erase(XHashSet* this_set, const void* pvKey)
 {
     if (XSetBase_isEmpty_base(this_set))
         return;
-    size_t index = this_set->m_hash(pvKey, ((XSetBase*)this_set)->m_keyTypeSize) % XContainerCapacity(this_set);
+    size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
     XHashSetNode* current = ((XHashSetNode**)XContainerDataPtr(this_set))[index];
     XHashSetNode* prev = NULL;
 
@@ -165,7 +165,7 @@ bool VXSet_find(XHashSet* this_set, const void* pvKey)
 {
     if (XSetBase_isEmpty_base(this_set))
         return false;
-    size_t index = this_set->m_hash(pvKey, ((XSetBase*)this_set)->m_keyTypeSize) % XContainerCapacity(this_set);
+    size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
     XHashSetNode* current = ((XHashSetNode**)XContainerDataPtr(this_set))[index];
 
     while (current)
@@ -212,13 +212,13 @@ void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo)
     // 调用父类交换一部分
     XVtableGetFunc(XContainerObject_class_init(), EXContainerObject_Swap, void(*)(XHashSet*, XHashSet*))(this_setOne, this_setTwo);
     XSwap(&(this_setOne->m_parent.m_KeyEquality), &(this_setTwo->m_parent.m_KeyEquality), sizeof(XEquality));
-    XSwap(&(this_setOne->m_parent.m_keyTypeSize), &(this_setTwo->m_parent.m_keyTypeSize), sizeof(size_t));
+    XSwap(&XContainerTypeSize(this_setOne), & XContainerTypeSize(this_setTwo), sizeof(size_t));
     XSwap(&(this_setOne->m_hash), &(this_setTwo->m_hash), sizeof(XHashFunc));
 }
 
 XVector* VXSetBase_keys(const XSetBase* this_set)
 {
-    XVector* v = XVector_create(this_set->m_keyTypeSize);
+    XVector* v = XVector_create(XContainerTypeSize(this_set));
     for_each_iterator(this_set, XHashSet, it)
     {
         XVector_push_back_base(v, XHashSet_iterator_data(&it));
@@ -226,18 +226,18 @@ XVector* VXSetBase_keys(const XSetBase* this_set)
     return v;
 }
 
-XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality)
+XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess)
 {
     XHashSet* set = XMemory_malloc(sizeof(XHashSet));
-    XHashSet_init(set, keyTypeSize, hash, KeyEquality);
+    XHashSet_init(set, keyTypeSize, hash, KeyEquality,KeyLess);
     return set;
 }
 
-void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality)
+void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess)
 {
     if (this_set == NULL)
         return;
-    XSetBase_init(&this_set->m_parent, keyTypeSize, KeyEquality);
+    XSetBase_init(&this_set->m_parent, keyTypeSize, KeyEquality,KeyLess);
     XClassGetVtable(this_set) = XHashSet_class_init();
     this_set->m_hash = hash;
     XContainerCapacity(this_set) = DEFAULT_CAPACITY;

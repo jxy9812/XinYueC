@@ -135,11 +135,11 @@ XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equa
 	XBBTreeNode* CurNode = this_root;//当前节点指针
 	while (CurNode != NULL)
 	{
-		if (equalityRule(equality, CurNode, pvData))
+		if (equalityRule(equality, ((XBTreeNode*)CurNode)->value, pvData))
 		{
 			return CurNode;
 		}
-		else if (equalityRule(less, CurNode, pvData))
+		else if (equalityRule(less, ((XBTreeNode*)CurNode)->value, pvData))
 		{
 			CurNode = XBTreeNode_GetRChild(CurNode);
 		}
@@ -169,7 +169,7 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess
 	while (currentNode != NULL)
 	{
 		//满足小于往左边放
-		if (lessRule(less, insertNode, currentNode))
+		if (lessRule(less, ((XBTreeNode*)insertNode)->value, ((XBTreeNode*)currentNode)->value))
 			//if (less(insertNode->XBTNode.data, currentNode->XBTNode.data))
 		{
 			XBTreeNode** ppLChild = XBTreeNode_getNodeRef(currentNode, XBTreeLChild);

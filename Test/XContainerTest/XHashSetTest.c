@@ -17,7 +17,7 @@ void XHashSetTest()
 	//while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
-		XHashSet* set = XHashSet_Create(int,XHash_murmur3_32, XEquality_int);
+		XHashSet* set = XHashSet_Create(int,XHash_murmur3_32, XEquality_int,XLess_int);
 
 		for (size_t i = 0; i < 5; i++)
 		{
@@ -27,12 +27,12 @@ void XHashSetTest()
 		{
 			XHashSet_insert_base(set, &i);
 		}
-		printf("当前Set容器内数据数量:%d\n", XHashSet_getSize_base(set));
+		printf("当前XHashSet容器内数据数量:%d\n", XHashSet_getSize_base(set));
 
 		XHashSet_iterator_for_each(set, XFor_each_pair, NULL);
 
 		XHashSet_remove_base(set, arrayint + 2);
-		printf("当前Map容器内数据数量:%d\n", XHashSet_getSize_base(set));
+		printf("当前XHashSet容器内数据数量:%d\n", XHashSet_getSize_base(set));
 		XHashSet_iterator_for_each(set, XFor_each_pair, NULL);
 
 		if(XHashSet_find_base(set, arrayint + 1))

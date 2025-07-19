@@ -5,7 +5,7 @@ XVtable* XSetBase_class_init()
     return XContainerObject_class_init();
 }
 
-void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XEquality KeyEquality)
+void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XEquality KeyEquality, XLess KeyLess)
 {
     if (ISNULL(this_set, ""))
         return;
@@ -21,8 +21,9 @@ void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XEquality KeyEq
     }
     XContainerObject_init(&this_set->m_parent, keyTypeSize);
     XClassGetVtable(this_set) = XSetBase_class_init();
-    this_set->m_keyTypeSize = keyTypeSize;
-    this_set->m_KeyEquality = KeyEquality;
+    XContainerTypeSize(this_set)= keyTypeSize;
+    this_set->m_KeyEquality = KeyEquality; 
+    this_set->m_KeyLess = KeyLess;
 }
 
 bool XSetBase_insert_base(XSetBase* this_set, const void* pvKey)

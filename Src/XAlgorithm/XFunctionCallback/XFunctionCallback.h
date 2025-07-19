@@ -34,10 +34,13 @@ bool XCompareRuleTwo_Standard(XCompare compare, const void* pvPrevValue, const v
 bool XCompareRuleTwo_BinaryTree(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
 //比较大小回调函数的XMap准则
 bool XCompareRuleTwo_XMap(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
+//比较大小回调函数的XSet准则
+bool XCompareRuleTwo_XSet(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
 
 bool XCompareRuleOne_Standard(XCompare compare, const void* Value, const void* CompareValue);
 bool XCompareRuleOne_BinaryTree(XCompare compare, const void* Value, const void* CompareValue);
 bool XCompareRuleOne_XMap(XCompare compare, const void* Value, const void* CompareValue);
+bool XCompareRuleOne_XSet(XCompare compare, const void* Value, const void* CompareValue);
 #ifdef __cplusplus
 }
 #endif

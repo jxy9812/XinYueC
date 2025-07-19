@@ -1,14 +1,12 @@
-﻿#include"XMap_Iterator.h"
-#if XMap_ON
-#include"XMap.h"
-#include"XVector.h"
+﻿#include"XSet_Iterator.h"
+#if XSet_ON
+#include"XSet.h"
 #include"XRedBlackTree.h"
 
-
-XMap_iterator XMap_begin(XMap* this_map)
+XSet_iterator XSet_begin(XSet* this_map)
 {
 	//printf("开始\n");
-	XMap_iterator it = { 0 };
+	XSet_iterator it = { 0 };
 	if (this_map == NULL)
 		return it;
 	XRBTreeNode* current = XContainerDataPtr(this_map);
@@ -20,16 +18,16 @@ XMap_iterator XMap_begin(XMap* this_map)
 	return it;
 }
 
-XMap_iterator XMap_end(XMap* this_map)
+XSet_iterator XSet_end(XSet* this_map)
 {
-	XMap_iterator it = { 0 };
+	XSet_iterator it = { 0 };
 	if (this_map == NULL)
 		return it;
 	XRBTreeNode* this_root = XContainerDataPtr(this_map);
 	return it;
 }
 
-void XMap_iterator_add(XMap* this_map, XMap_iterator* it)
+void XSet_iterator_add(XSet* this_map, XSet_iterator* it)
 {
 	if (this_map == NULL||it==NULL||it->node==NULL)
 		return ;
@@ -54,24 +52,24 @@ void XMap_iterator_add(XMap* this_map, XMap_iterator* it)
 	return ;
 }
 
-bool XMap_iterator_equality(XMap_iterator* itFirst, XMap_iterator* itSecond)
+bool XSet_iterator_equality(XSet_iterator* itFirst, XSet_iterator* itSecond)
 {
 	return itFirst->node==itSecond->node;
 }
 
-void XMap_iterator_for_each(XMap* this_map, XFor_each ForFunction, void* args)
+void XSet_iterator_for_each(XSet* this_map, XFor_each ForFunction, void* args)
 {
-	for_each_iterator(this_map,XMap,it)
+	for_each_iterator(this_map,XSet,it)
 	{
-		ForFunction(XMap_iterator_data(&it), args);
+		ForFunction(XSet_iterator_data(&it), args);
 	}
 }
 
-XPair* XMap_iterator_data(XMap_iterator* it)
+void* XSet_iterator_data(XSet_iterator* it)
 {
 	if (it == NULL || it->node == NULL)
 		return NULL;
-	return XBTreeNode_GetData(it->node, XPair*);
+	return XBTreeNode_getData(it->node);
 }
 
 
