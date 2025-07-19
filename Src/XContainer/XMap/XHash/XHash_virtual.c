@@ -177,7 +177,7 @@ bool VXMap_remove(XHash*this_map, const void* pvKey)
 		XPair* pair = XBTreeNode_GetData(nodes, XPair*);
 		if (XContainerDataDeleteMethod(this_map) != NULL)
 			XContainerDataDeleteMethod(this_map)(pair);
-		XRBTree_erase(((XHashNode**)XContainerDataPtr(this_map)) + index, ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);
+		XRBTree_erase(((XRBTreeNode**)XContainerDataPtr(this_map)) + index, ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);
 		XPair_delete(pair);
 		--XContainerSize(this_map);
 		return true;
@@ -296,7 +296,7 @@ void VXMap_clear(XHash*this_map)
 			XMemory_free(deleteNode);
 		}*/
 	}
-	memset(XContainerDataPtr(this_map),0, sizeof(XHashNode*) * XContainerCapacity(this_map));
+	memset(XContainerDataPtr(this_map),0, sizeof(XRBTreeNode*) * XContainerCapacity(this_map));
 	XContainerSize(this_map)=0;
 }
 

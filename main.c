@@ -41,8 +41,8 @@ int main(int argc, char* args[])
 	//TJCHMICommTest();
 	//XDataFrameCommTest();
 	//XSocketTest();
-	//XHashSetTest();
-	XSetTest();
+	XHashSetTest();
+	//XSetTest();
 	//XBinaryTreeObjectTest();
 	//XRedBlackTreeTest();
 	//XMapTest();

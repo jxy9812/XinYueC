@@ -14,12 +14,6 @@ extern "C" {
 // 默认负载因子阈值
 #define DEFAULT_LOAD_FACTOR 0.75f
 #define XHASHSET_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSetBase))       // XHashSet容器虚函数表大小
-// 哈希节点
-typedef struct XHashSetNode
-{
-    void* key;           // 键
-    struct XHashSetNode* next;   // 指向下一个节点的指针
-} XHashSetNode;
 
 typedef struct XHashSet
 {

@@ -5,9 +5,9 @@
 #include"XLess.h"
 #include"XBalancedBinaryTree.h"
 
-static void XFor_each_pair(void* LPVal, void* args)
+static void XFor_each_pair(void* pvVal, void* args)
 {
-	int val = *((int*)LPVal);
+	int val = *((int*)pvVal);
 	printf("key:%d\n", val);
 }
 void XHashSetTest()

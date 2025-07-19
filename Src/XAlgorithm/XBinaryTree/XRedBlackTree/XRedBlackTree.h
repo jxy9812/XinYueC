@@ -14,7 +14,7 @@ extern "C" {
 #define XRBTree_IsRed(this_root) ((this_root)->color==XRBTreeRed)//红黑树-是否是红色
 //数据
 #define XRBTree_GetData(this_root,Type) XBTreeNode_GetData(this_root,Type)//红黑树-获取数据
-
+#define XRBTree_getData(this_root,Type) XBTreeNode_getData(this_root)//红黑树-获取数据指针
 //红黑树-颜色
 enum  XRBTreeColor
 {

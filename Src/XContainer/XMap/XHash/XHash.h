@@ -12,14 +12,8 @@ extern "C" {
 #define DEFAULT_CAPACITY 16
 // 默认负载因子阈值
 #define DEFAULT_LOAD_FACTOR 0.75f
-#define XHASHMAP_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))       //XHash容器虚函数表大小
-//哈希节点
-typedef struct XHashNode
-{
-	XPair* pair;//键值
-	struct XHashNode* next;   // 指向下一个节点的指针
-}XHashNode;
-//#define XHashNode_KeyPtr(node)
+#define XHASHMAP_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))       //XHash容器虚
+
 typedef struct XHash
 {
 	XMapBase m_parent;//基本数据

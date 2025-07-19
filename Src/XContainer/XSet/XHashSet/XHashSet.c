@@ -2,6 +2,7 @@
 #if XHashSet_ON
 #include "XAlgorithm.h"
 #include "XVector.h"
+#include "XRedBlackTree.h"
 #include <string.h>
 
 // Set插入数据
@@ -51,37 +52,40 @@ XVtable* XHashSet_class_init()
 // 私有函数：扩容哈希表
 static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
 {
-    size_t new_size = new_capacity * sizeof(XHashSetNode*);
-    XHashSetNode** newData = XMemory_malloc(new_size);
+    //printf("进入扩容\n");
+    size_t new_size = new_capacity * sizeof(XRBTreeNode*);
+    XRBTreeNode** newData = XMemory_malloc(new_size);
     memset(newData, 0, new_size);
     if (newData == NULL)
         return false;
 
+    // 遍历原哈希表
     for (size_t i = 0; i < XContainerCapacity(set); i++)
     {
-        XHashSetNode* current = ((XHashSetNode**)XContainerDataPtr(set))[i];
-        while (current)
+        XRBTreeNode* root = ((XRBTreeNode**)XContainerDataPtr(set))[i];
+        if (root != NULL)
         {
-            XHashSetNode* next = current->next;
-            size_t index = set->m_hash(current->key, XContainerTypeSize(set)) % new_capacity;
-            XHashSetNode* new_current = newData[index];
-            if (new_current != NULL)
+            // 遍历红黑树，将节点插入到新哈希表中
+            XVector* nodes = XBTree_TraversingToXVector(root, XBTreeInorder);
+            if (nodes != NULL)
             {
-                while (new_current->next)
+                for (size_t j = 0; j < XVector_getSize_base(nodes); j++)
                 {
-                    new_current = new_current->next;
+                    XRBTreeNode* node = ((XRBTreeNode**)XContainerDataPtr(nodes))[j];
+                    void*key = XRBTree_getData(node);
+                    size_t index = set->m_hash(key, XContainerTypeSize(set)) % new_capacity;
+
+                    // 将节点插入到新哈希表的相应红黑树中
+                    XRBTree_insert(&newData[index], ((XSetBase*)set)->m_KeyLess, XCompareRuleTwo_XSet, XRBTree_getData(node), XContainerTypeSize(set));
                 }
-                new_current->next = current;
+                XVector_delete_base(nodes);
             }
-            else
-            {
-                newData[index] = current;
-            }
-            current->next = NULL;
-            current = next;
+            // 删除原红黑树
+            XRBTree_delete(root, NULL, NULL);
         }
     }
 
+    // 释放原哈希表数组
     XMemory_free(XContainerDataPtr(set));
     XContainerDataPtr(set) = newData;
     XContainerCapacity(set) = new_capacity;
@@ -92,6 +96,7 @@ bool VXSet_insert(XHashSet* this_set, const void* pvKey)
 {
     if ((double)XContainerSize(this_set) / XContainerCapacity(this_set) >= DEFAULT_LOAD_FACTOR)
     {
+        //printf("XHashSet 扩容\n");
         size_t new_capacity = XContainerCapacity(this_set) * 2;
         if (!XHashSet_resize(this_set, new_capacity))
         {
@@ -101,64 +106,35 @@ bool VXSet_insert(XHashSet* this_set, const void* pvKey)
     }
 
     size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
-    XHashSetNode* current = ((XHashSetNode**)XContainerDataPtr(this_set))[index];
 
-    while (current)
-    {
-        if (this_set->m_parent.m_KeyEquality(current->key, pvKey))
-        {
-            return; // 元素已存在
-        }
-        current = current->next;
+    XRBTreeNode* current = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
+    if (current == NULL)
+    {//节点不存在
+        XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
+        ++XContainerSize(this_set);
     }
-
-    XHashSetNode* new_node = (XHashSetNode*)XMemory_malloc(sizeof(XHashSetNode));
-    if (new_node == NULL)
-        return false;
-
-    new_node->key = XMemory_malloc(XContainerTypeSize(this_set));
-    memcpy(new_node->key, pvKey, XContainerTypeSize(this_set));
-    new_node->next = ((XHashSetNode**)XContainerDataPtr(this_set))[index];
-    ((XHashSetNode**)XContainerDataPtr(this_set))[index] = new_node;
-    ++XContainerSize(this_set);
-    return true;
 }
 
 void VXSet_erase(XHashSet* this_set, const void* pvKey)
 {
-    if (XSetBase_isEmpty_base(this_set))
-        return;
-    size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
-    XHashSetNode* current = ((XHashSetNode**)XContainerDataPtr(this_set))[index];
-    XHashSetNode* prev = NULL;
-
-    while (current)
-    {
-        if (this_set->m_parent.m_KeyEquality(current->key, pvKey))
-        {
-            if (prev)
-            {
-                prev->next = current->next;
-            }
-            else
-            {
-                ((XHashSetNode**)XContainerDataPtr(this_set))[index] = current->next;
-            }
-            XMemory_free(current->key);
-            XMemory_free(current);
-            --XContainerSize(this_set);
-            return; // 释放成功
-        }
-
-        prev = current;
-        current = current->next;
-    }
+    XHashSet_remove_base(this_set, pvKey);
 }
 
 bool VXSet_remove(XHashSet* this_set, const void* pvKey)
 {
-    VXSet_erase(this_set, pvKey);
-    return true;
+    if (XSetBase_isEmpty_base(this_set))
+        return false;
+    size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
+    XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
+    if (node != NULL)
+    {
+        void* value = XBTreeNode_getData(node);
+        if (XContainerDataDeleteMethod(this_set) != NULL)
+            XContainerDataDeleteMethod(this_set)(value);
+        XRBTree_erase(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
+        --XContainerSize(this_set);
+        return true;
+    }
 }
 
 bool VXSet_find(XHashSet* this_set, const void* pvKey)
@@ -166,35 +142,24 @@ bool VXSet_find(XHashSet* this_set, const void* pvKey)
     if (XSetBase_isEmpty_base(this_set))
         return false;
     size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
-    XHashSetNode* current = ((XHashSetNode**)XContainerDataPtr(this_set))[index];
-
-    while (current)
-    {
-        if (this_set->m_parent.m_KeyEquality(current->key, pvKey))
-        {
-            return true;
-        }
-        current = current->next;
-    }
-    return false;
+    XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
+    return node != NULL;
 }
-
+static void XSet_freeNodeData(void* key, XHashSet* this_set)
+{
+    if (XContainerDataDeleteMethod(this_set) != NULL)
+        XContainerDataDeleteMethod(this_set)(key);
+}
 void VXSet_clear(XHashSet* this_set)
 {
-    XHashSetNode* deleteNode = NULL;
+    if (XHashSet_isEmpty_base(this_set))
+        return;
     for (size_t i = 0; i < XContainerCapacity(this_set); i++)
     {
-        XHashSetNode* current = ((XHashSetNode**)XContainerDataPtr(this_set))[i];
-
-        while (current)
-        {
-            deleteNode = current;
-            current = current->next;
-            XMemory_free(deleteNode->key);
-            XMemory_free(deleteNode);
-        }
+        XRBTreeNode* root = ((XRBTreeNode**)XContainerDataPtr(this_set))[i];
+        XBTree_delete(root, XSet_freeNodeData, this_set);
     }
-    memset(XContainerDataPtr(this_set), 0, sizeof(XHashSetNode*) * XContainerCapacity(this_set));
+    memset(XContainerDataPtr(this_set), 0, sizeof(XRBTreeNode*) * XContainerCapacity(this_set));
     XContainerSize(this_set) = 0;
 }
 
@@ -241,10 +206,13 @@ void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash,
     XClassGetVtable(this_set) = XHashSet_class_init();
     this_set->m_hash = hash;
     XContainerCapacity(this_set) = DEFAULT_CAPACITY;
-    size_t size = sizeof(XHashSetNode*) * XContainerCapacity(this_set);
+    size_t size = sizeof(XRBTreeNode*) * XContainerCapacity(this_set);
     XContainerDataPtr(this_set) = XMemory_malloc(size);
     if (XContainerDataPtr(this_set) == NULL)
+    {
         XMemory_free(this_set);
+        return;
+    }
     memset(XContainerDataPtr(this_set), 0, size);
 }
 
