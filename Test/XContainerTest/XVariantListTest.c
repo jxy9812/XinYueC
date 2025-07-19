@@ -13,6 +13,7 @@ void XVariantListTest()
 		XVariantList_push_back_base(list,var);
 		XVariantList_push_back_base(list, XVariant_create_int(80));
 		XVariantList_push_back_base(list, XVariant_create_str("9000"));
+		printf("当前类型:%s\n",XVariant_typeName(var));
 
 		XVariant* find = XVariant_create_int(8);
 		XVariant* ret=XVariantList_find_base(list,find);
@@ -21,10 +22,13 @@ void XVariantListTest()
 		XVariant_delete(find);
 
 		XVariant_setValue_double(var, 100.0);
+		printf("当前类型:%s\n", XVariant_typeName(var));
 		XVariant_setValue_bool(var, true);
+		printf("当前类型:%s\n", XVariant_typeName(var));
 		printf("%d\n", XVariant_toInt(var));
 
 		XVariant_setValue_str(var,"你好");
+		printf("当前类型:%s\n", XVariant_typeName(var));
 		XString* str= XVariant_toString(var);
 		if (str)
 		{
@@ -33,11 +37,13 @@ void XVariantListTest()
 		}
 
 		XVariant_setValue_str(var,"1000");
+	
 		printf("%d\n", XVariant_toInt(var));
 
 		printf("--------------------------XVariant_toList测试-----------------------\n");
 		{
 			XVariant* varList = XVariant_create_list(list);
+			printf("当前类型:%s\n", XVariant_typeName(varList));
 			XVariantList* l = XVariant_toList(varList);
 			if (l)
 			{
@@ -67,6 +73,7 @@ void XVariantListTest()
 				XMap_insert_base(map, &str, &v);
 			}
 			XVariant* varMap = XVariant_create_XMap(map);
+			printf("当前类型:%s\n", XVariant_typeName(varMap));
 			XMap_delete_base(map);
 			map=XVariant_toMap(varMap);
 			for_each_iterator(map,XMap,it)
