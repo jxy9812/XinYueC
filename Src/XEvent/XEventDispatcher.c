@@ -4,7 +4,7 @@
 #include<string.h>
 #include"XTimerBase.h"
 #include"XCircularQueueAtomic.h"
-#include"XHash.h"
+#include"XHashMap.h"
 #include"XEquality.h"
 #include"XListSLinked.h"
 #include"XObject.h"
@@ -53,7 +53,7 @@ XEventDispatcher* XEventDispatcher_create(XQueueBase* queue, XMapBase* map_cb)
 
 XEventDispatcher* XEventDispatcher_createDefault(size_t queueCount)
 {
-	return XEventDispatcher_create(XCircularQueueAtomic_Create(XEventMin*, queueCount), XHash_Create(int, XEventCallback, XHash_murmur3_32, XEquality_int,XLess_int));
+	return XEventDispatcher_create(XCircularQueueAtomic_Create(XEventMin*, queueCount), XHashMap_Create(int, XEventCallback, XHashMap_murmur3_32, XEquality_int,XLess_int));
 }
 
 void XEventDispatcher_init(XEventDispatcher* dispatcher)
@@ -141,9 +141,9 @@ bool VXEventDispatcher_sendEvent(XEventDispatcher* d, XEventMin* event)
 		}
 		else if (event->receiver == NULL)
 		{//接收者无指定
-			for_each_iterator(d->m_filter_cb, XHash, it)
+			for_each_iterator(d->m_filter_cb, XHashMap, it)
 			{
-				XMapBase* pvMap = XPair_Second(XHash_iterator_data(&it), XMapBase*);
+				XMapBase* pvMap = XPair_Second(XHashMap_iterator_data(&it), XMapBase*);
 				XEventCallback* c = XMapBase_value_base(pvMap, &(event->code));
 				if (c != NULL)
 				{//有回调函数

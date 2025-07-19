@@ -12,12 +12,12 @@ static void XFor_each_pair(void* pvVal, void* args)
 }
 void XHashSetTest()
 {
-#if XHash_ON
+#if XHashMap_ON
 	printf("XHashSet 测试\n");
 	//while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
-		XHashSet* set = XHashSet_Create(int,XHash_murmur3_32, XEquality_int,XLess_int);
+		XHashSet* set = XHashSet_Create(int,XHashMap_murmur3_32, XEquality_int,XLess_int);
 
 		for (size_t i = 0; i < 5; i++)
 		{

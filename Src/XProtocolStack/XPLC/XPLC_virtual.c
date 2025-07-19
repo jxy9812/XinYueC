@@ -1,5 +1,5 @@
 ﻿#include"XPLC.h"
-#include"XHash.h"
+#include"XHashMap.h"
 #include"XQueueBase.h"
 #include"XIODeviceBase.h"
 #include"XPLCTask.h"
@@ -81,9 +81,9 @@ bool VXPLC_removeIODevice(XPLC* plc, XIODeviceBase* io)
 {
 	int32_t id;
 	bool isFind = false;
-	for_each_iterator(plc->m_inIO, XHash, it)
+	for_each_iterator(plc->m_inIO, XHashMap, it)
 	{
-		XPair* node = XHash_iterator_data(&it);
+		XPair* node = XHashMap_iterator_data(&it);
 		if (XPair_Second(node, XIODeviceBase*) == io)
 		{
 			id = XPair_First(node, int32_t);
@@ -97,9 +97,9 @@ bool VXPLC_removeIODevice(XPLC* plc, XIODeviceBase* io)
 		XMapBase_remove_base(plc->m_inIO, &id);
 		return true;
 	}
-	for_each_iterator(plc->m_outIO, XHash, it)
+	for_each_iterator(plc->m_outIO, XHashMap, it)
 	{
-		XPair* node = XHash_iterator_data(&it);
+		XPair* node = XHashMap_iterator_data(&it);
 		if (XPair_Second(node, XIODeviceBase*) == io)
 		{
 			id = XPair_First(node, int32_t);
@@ -125,9 +125,9 @@ void VXPLC_poll(XPLC* plc)
 		{
 			while (task->m_lastTaskState!= XPLCT_State_ExitTask)
 			{
-				for_each_iterator(plc->m_inIO, XHash, it)
+				for_each_iterator(plc->m_inIO, XHashMap, it)
 				{
-					XPair* node = XHash_iterator_data(&it);
+					XPair* node = XHashMap_iterator_data(&it);
 					XIODeviceBase_poll_base(XPair_Second(node, XIODeviceBase*));
 				}
 				XPLCTask_poll_base(task);
@@ -140,15 +140,15 @@ void VXPLC_poll(XPLC* plc)
 
 void VXIODevice_delete(XPLC* plc)
 {
-	for_each_iterator(plc->m_inIO, XHash, it)
+	for_each_iterator(plc->m_inIO, XHashMap, it)
 	{
-		XPair* node = XHash_iterator_data(&it);
+		XPair* node = XHashMap_iterator_data(&it);
 		XIODeviceBase_delete_base(XPair_Second(node, XIODeviceBase*));
 	}
 	XContainerObject_delete_base(plc->m_inIO);
-	for_each_iterator(plc->m_outIO, XHash, it)
+	for_each_iterator(plc->m_outIO, XHashMap, it)
 	{
-		XPair* node = XHash_iterator_data(&it);
+		XPair* node = XHashMap_iterator_data(&it);
 		XIODeviceBase_delete_base(XPair_Second(node, XIODeviceBase*));
 	}
 	XContainerObject_delete_base(plc->m_outIO);

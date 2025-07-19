@@ -2,12 +2,12 @@
 #include "XVtable.h"
 #include "XMemory.h"
 #include "XEvent.h"
-#include "XHash.h"
+#include "XHashMap.h"
 #include "XHashSet.h"
 #include "XHashFunc.h"
 #include "XMutex.h"
 #include "XEventDispatcherThread.h"
-static XHash*threadMap=NULL;
+static XHashMap*threadMap=NULL;
 static XMutex* mutex=NULL;//互斥锁
 // 初始化 XThread 对象
 void XThread_init(XThread* Object)
@@ -27,7 +27,7 @@ XThread* XThread_currentThread()
 {
     if (threadMap == NULL)
     {
-        threadMap = XHash_Create(size_t,XThread*,XHash_murmur3_32,XEquality_size_t,XLess_size_t);
+        threadMap = XHashMap_Create(size_t,XThread*,XHashMap_murmur3_32,XEquality_size_t,XLess_size_t);
     }
     if (mutex == NULL)
     {
@@ -35,7 +35,7 @@ XThread* XThread_currentThread()
     }
     size_t id = XThread_currentThreadId();
     XMutex_lock_base(mutex);
-    XThread** ptr=XHash_value_base(threadMap, id);
+    XThread** ptr=XHashMap_value_base(threadMap, id);
     XMutex_unlock_base(mutex);
     if(ptr)
         return *ptr;
@@ -45,7 +45,7 @@ void XThread_mapRemove(XThread* Object)
 {
     size_t id = XThread_currentThreadId();
     XMutex_lock_base(mutex);
-    XHash_remove_base(threadMap,&id);
+    XHashMap_remove_base(threadMap,&id);
     XMutex_unlock_base(mutex);
 }
 // 创建 XThread 对象
@@ -62,7 +62,7 @@ XThread* XThread_create(void* (*start_routine)(void*), void* arg)
     if (threadMap == NULL)
         XThread_currentThread();//初始化
     size_t id = XThread_currentThreadId();
-    XHash_insert_base(threadMap,&id,&Object);
+    XHashMap_insert_base(threadMap,&id,&Object);
     return Object;
 }
 

@@ -1,10 +1,10 @@
-﻿#include"XHash_Iterator.h"
-#if XHash_ON
-#include"XHash.h"
+﻿#include"XHashMap_Iterator.h"
+#if XHashMap_ON
+#include"XHashMap.h"
 #include"XRedBlackTree.h"
-XHash_iterator XHash_begin(XHash*this_map)
+XHashMap_iterator XHashMap_begin(XHashMap*this_map)
 {
-	XHash_iterator it = {0};
+	XHashMap_iterator it = {0};
 	if (this_map == NULL|| XContainerCapacity(this_map)==0)
 		return it;
 	//XHashNode* node = NULL;
@@ -32,18 +32,18 @@ XHash_iterator XHash_begin(XHash*this_map)
 	return it;
 }
 
-XHash_iterator XHash_end(XHash*this_map)
+XHashMap_iterator XHashMap_end(XHashMap*this_map)
 {
-	XHash_iterator it = { 0 };
+	XHashMap_iterator it = { 0 };
 	if (this_map == NULL || XContainerCapacity(this_map) == 0)
 		return it;
 	it.index = XContainerCapacity(this_map);
 	return it;
 }
 
-void XHash_iterator_add(XHash*this_map, XHash_iterator* it)
+void XHashMap_iterator_add(XHashMap*this_map, XHashMap_iterator* it)
 {
-	//XHash_iterator it = { 0 };
+	//XHashMap_iterator it = { 0 };
 	if (this_map == NULL || it ==NULL|| XContainerCapacity(this_map) == 0)
 		return ;
 	// 如果有右子树，找到右子树的最左节点
@@ -108,21 +108,21 @@ void XHash_iterator_add(XHash*this_map, XHash_iterator* it)
 	//curent->index= XContainerCapacity(this_map);
 }
 
-bool XHash_iterator_equality(XHash_iterator* itFirst, XHash_iterator* itSecond)
+bool XHashMap_iterator_equality(XHashMap_iterator* itFirst, XHashMap_iterator* itSecond)
 {
 	return (itFirst->index == itSecond->index)&&(itFirst->node==itSecond->node);
 }
 
-void XHash_iterator_for_each(XHash*this_map, XFor_each ForFunction, void* args)
+void XHashMap_iterator_for_each(XHashMap*this_map, XFor_each ForFunction, void* args)
 {
-	for_each_iterator(this_map, XHash, it)
+	for_each_iterator(this_map, XHashMap, it)
 	{
 		//printf("index:%d\n",it.index);
-		ForFunction(XHash_iterator_data(&it),args);
+		ForFunction(XHashMap_iterator_data(&it),args);
 	}
 }
 
-XPair* XHash_iterator_data(XHash_iterator* it)
+XPair* XHashMap_iterator_data(XHashMap_iterator* it)
 {
 	if (it == NULL || it->node == NULL)
 		return NULL;

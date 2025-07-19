@@ -21,7 +21,7 @@ int main(int argc, char* args[])
 	//return;
 	//XTimerWheelTest();
 	//XListDLinkedIterator();
-	//XHashTest();
+	XHashMapTest();
 	//XMapTest();
 	//XListSLinkedAtomicTest();
 	//XListSLinkedAtomicSwapTest();
@@ -41,7 +41,7 @@ int main(int argc, char* args[])
 	//TJCHMICommTest();
 	//XDataFrameCommTest();
 	//XSocketTest();
-	XHashSetTest();
+	//XHashSetTest();
 	//XSetTest();
 	//XBinaryTreeObjectTest();
 	//XRedBlackTreeTest();

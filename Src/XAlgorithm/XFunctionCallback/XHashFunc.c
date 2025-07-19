@@ -83,14 +83,14 @@ static size_t murmur3_32(const void* key, size_t len, uint32_t seed)
     return h1;
 }
 
-size_t XHash_murmur3_32(const void* key, size_t len)
+size_t XHashMap_murmur3_32(const void* key, size_t len)
 {
     return murmur3_32(key, len, 0);
 }
 
 /* ========================= FNV-1a ========================= */
 
-size_t XHash_fnv1a_64(const void* key, size_t len) {
+size_t XHashMap_fnv1a_64(const void* key, size_t len) {
     const uint8_t* data = (const uint8_t*)key;
     uint64_t hash = 0xcbf29ce484222325ULL; // FNV偏移基数
     const uint64_t prime = 0x100000001b3ULL; // FNV素数
@@ -250,7 +250,7 @@ static uint64_t hash_len_32(const uint8_t* s, uint64_t mul)
 }
 
 // CityHash64 完整版
-size_t XHash_cityhash64(const void* key, size_t len) 
+size_t XHashMap_cityhash64(const void* key, size_t len) 
 {
     const uint8_t* s = (const uint8_t*)key;
     const uint64_t k0 = 0xc3a5c85c97cb3127ULL;

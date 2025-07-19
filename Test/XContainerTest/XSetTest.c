@@ -12,7 +12,7 @@ static void XFor_each_pair(void* LPVal, void* args)
 }
 void XSetTest()
 {
-#if XHash_ON
+#if XHashMap_ON
 	printf("XSet 测试\n");
 	//while (true)
 	{

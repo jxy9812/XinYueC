@@ -78,7 +78,7 @@ XVariant* XVariant_create_XString(XString* string);
 XVariant* XVariant_create_str(const char* str);
 XVariant* XVariant_create_list(const XVariantList* list);
 XVariant* XVariant_create_XMap(const XMap* map);//XMap<XString*, XVariant*>
-XVariant* XVariant_create_XHash(const XHash* map);//XHash<XString*, XVariant*>
+XVariant* XVariant_create_XHash(const XHashMap* map);//XHashMap<XString*, XVariant*>
 
 uint8_t  XVariant_toUint8 (XVariant* var);
 uint16_t XVariant_toUint16(XVariant* var);
@@ -102,7 +102,7 @@ XByteArray* XVariant_toByteArray(XVariant* var);
 XString* XVariant_toString(XVariant* var);
 XVariantList* XVariant_toList(XVariant* var);
 XMap* XVariant_toMap(XVariant* var);//XMap<XString*, XVariant*>
-XHash* XVariant_toHash(XVariant* var);//XHash<XString*, XVariant*>
+XHashMap* XVariant_toHash(XVariant* var);//XHashMap<XString*, XVariant*>
 
 void XVariant_setValue(XVariant* var, const XVariant* newVar);
 void XVariant_setValue_uint8 (XVariant* var, uint8_t val);

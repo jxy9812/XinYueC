@@ -1,6 +1,6 @@
 ﻿#include "XCoreApplication.h"
 #include "XMemory.h"
-#include "XHash.h"
+#include "XHashMap.h"
 #include "XEvent.h"
 #include "XHashFunc.h"
 #include "XHashSet.h"

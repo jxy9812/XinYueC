@@ -7,11 +7,11 @@
 #include "XString.h"
 #include "XAlgorithm.h"
 #include "XVariantList.h"
-#include "XHash.h"
+#include "XHashMap.h"
 #include "XMap.h"
 #include <string.h>
 #include <stdlib.h>
-static XHash*global_typeProperty= NULL;//自定义数据属性哈希映射
+static XHashMap*global_typeProperty= NULL;//自定义数据属性哈希映射
 //类型属性
 typedef struct TypeProperty
 {
@@ -58,7 +58,7 @@ static bool global_typeHash_init()
 {
 	if (global_typeProperty)
 		return true;
-	global_typeProperty = XHash_Create(int, TypeProperty, XHash_murmur3_32, XEquality_int,XLess_int);
+	global_typeProperty = XHashMap_Create(int, TypeProperty, XHashMap_murmur3_32, XEquality_int,XLess_int);
 	if (global_typeProperty)
 		return true;
 	return false;
@@ -298,7 +298,7 @@ XVariant* XVariant_create_XMap(const XMap* map)
 	return var;
 }
 
-XVariant* XVariant_create_XHash(const XHash* hash)
+XVariant* XVariant_create_XHash(const XHashMap* hash)
 {
 	if (hash == NULL || ((XMapBase*)hash)->m_KeyEquality != XEquality_XString)
 		return NULL;
@@ -307,9 +307,9 @@ XVariant* XVariant_create_XHash(const XHash* hash)
 		return NULL;
 	//计算大小
 	XPair* pair = NULL;
-	for_each_iterator(hash, XHash, it)
+	for_each_iterator(hash, XHashMap, it)
 	{
-		pair = XHash_iterator_data(&it);
+		pair = XHashMap_iterator_data(&it);
 		XString* str = XPair_First(pair, XString*);
 		XVariant* v = XPair_Second(pair, XVariant*);
 		XPair p = { 0 };
@@ -329,9 +329,9 @@ XVariant* XVariant_create_XHash(const XHash* hash)
 	XPair copyPair = { 0 };
 	size_t pairTypeSize = (uint8_t*)(&(copyPair.m_first)) - ((uint8_t*)&copyPair);
 	size_t variantSize = sizeof(XVariant) - sizeof(void*);
-	for_each_iterator(hash, XHash, it)
+	for_each_iterator(hash, XHashMap, it)
 	{
-		pair = XHash_iterator_data(&it);
+		pair = XHashMap_iterator_data(&it);
 		XString* str = XPair_First(pair, XString*);
 		XVariant* v = XPair_Second(pair, XVariant*);
 		copyPair.m_firstTypeSize = XContainerSize(str) + 1;//XString大小
@@ -589,11 +589,11 @@ XMap* XVariant_toMap(XVariant* var)
 	return map;
 }
 
-XHash* XVariant_toHash(XVariant* var)
+XHashMap* XVariant_toHash(XVariant* var)
 {
 	if (var->m_type != XVariantType_MapBase)
 		return NULL;
-	XMap* hash = XHash_create_XStringVariant();
+	XMap* hash = XHashMap_create_XStringVariant();
 	if (hash == NULL)
 		return NULL;
 	//
@@ -848,7 +848,7 @@ const char* XVariant_typeName(XVariant* var)
 		if (global_typeProperty == NULL)
 			return NULL;
 		//查找
-		TypeProperty* pv = XHash_value_base(global_typeProperty, &(var->m_type));
+		TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
 		if (pv)
 			return pv->typeName;
 		return NULL;
@@ -920,7 +920,7 @@ bool XVariant_equality(XVariant* var, XVariant* cmp)
 		if(global_typeProperty==NULL)
 			return false;
 		//查找相等比较函数
-		TypeProperty* pv =XHash_value_base(global_typeProperty,&(var->m_type));
+		TypeProperty* pv =XHashMap_value_base(global_typeProperty,&(var->m_type));
 		if (pv&&pv->equality)
 			return (pv->equality)(var->m_data,cmp->m_data);
 		return false;
@@ -944,7 +944,7 @@ void XVariant_setUserTypeName(int type, const char* typeName)
 		if (property.typeName == NULL)
 			return;
 		memcpy(property.typeName,typeName,len);
-		XHash_insert_base(global_typeProperty, &type, &property);
+		XHashMap_insert_base(global_typeProperty, &type, &property);
 	}
 	else 
 	{
@@ -983,7 +983,7 @@ void XVariant_setUserEquality(int type, XEquality equality)
 	{
 		TypeProperty property = { 0 };
 		property.equality = equality;
-		XHash_insert_base(global_typeProperty, &type, &property);
+		XHashMap_insert_base(global_typeProperty, &type, &property);
 	}
 	else
 	{

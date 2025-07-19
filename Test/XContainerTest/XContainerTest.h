@@ -32,7 +32,7 @@ extern "C" {
 	void XStringTest();
 	//map映射测试
 	void  XMapTest();
-	void XHashTest();
+	void XHashMapTest();
 	void XListSLinkedTest();
 	void XListSLinkedSwapTest();
 	void XListSLinkedIterator();
