@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 typedef  void* XHandle;//句柄
+typedef void* ptr;//指针类型
 typedef struct XPLCTask XPLCTask;
 typedef struct XObject XObject; 
 typedef struct XSetBase XSetBase;

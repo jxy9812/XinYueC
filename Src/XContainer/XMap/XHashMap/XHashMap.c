@@ -26,7 +26,7 @@ void XHashMap_init(XHashMap*this_map, const size_t keyTypeSize, const size_t val
 
 XHashMap* XHashMap_create_XStringVariant()
 {
-	XHashMap* hash = XHashMap_Create(XString*, XVariant*,XHashMap_murmur3_32, XEquality_XString,XLess_XString);
+	XHashMap* hash = XHashMap_Create(XString*, XVariant*, XEquality_XString,XLess_XString);
 	if (hash == NULL)
 		return NULL;
 	XContainerSetDataDeleteMethod(hash, XMapBase_KeyXStringValueXVariantDeleteMethod);

@@ -67,8 +67,8 @@ void XEventDispatcherThread_init(XEventDispatcherThread* dispatcher)
 	XEventDispatcher_init(dispatcher);
 	XClassGetVtable(dispatcher) = XEventDispatcherThread_class_init();
 	XEventDispatcher* d = dispatcher;
-	d->m_filter_cb = XHashMap_Create(XObject*,XHashMap*,XHashMap_murmur3_32,XEquality_ptr,XLess_ptr);
-	dispatcher->m_Objects= XHashSet_Create(XObject*, XHashMap_murmur3_32, XEquality_ptr, XLess_ptr);
+	d->m_filter_cb = XHashMap_Create(XObject*,XHashMap*,XEquality_ptr,XLess_ptr);
+	dispatcher->m_Objects= XHashSet_Create(XObject*, XEquality_ptr, XLess_ptr);
 }
 
 bool XEventDispatcherThread_addEventCb_base(XEventDispatcherThread* dispatcher, XObject* object, int code, XEventCB cb,void* userData)
@@ -214,7 +214,7 @@ bool VXEventDispatcher_addEventCb(XEventDispatcherThread* dispatcher, XObject* r
 	XMapBase* p = NULL;
 	if (pvMap == NULL)
 	{
-		p = XHashMap_Create(int, XEventCallback,XHashMap_murmur3_32,XEquality_int,XLess_int);
+		p = XHashMap_Create(int, XEventCallback,XEquality_int,XLess_int);
 		XMapBase_insert_base(d->m_filter_cb,&receiver, &p);
 	}
 	else
