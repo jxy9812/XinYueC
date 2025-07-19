@@ -44,11 +44,11 @@ bool XListBase_pop_back_base(XListBase* this_list)
 		return false;
 	XClassGetVirtualFunc(this_list, EXListBase_Pop_Back, bool(*)(XListBase*))(this_list);
 }
-void XListBase_erase_base(XListBase* this_list, XListBaseNode* node)
+void XListBase_erase_base(XListBase* this_list,const XListBase_iterator* it, XListBase_iterator* next)
 {
-	if (ISNULL(this_list, "") || ISNULL(node, "") || ISNULL(XClassGetVtable(this_list), ""))
+	if (ISNULL(this_list, "") || ISNULL(it, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return;
-	XClassGetVirtualFunc(this_list, EXListBase_Erase, void(*)(XListBase*, XListBaseNode*))(this_list,node);
+	XClassGetVirtualFunc(this_list, EXListBase_Erase, void(*)(XListBase*, XListBase_iterator*, XListBase_iterator*))(this_list, it,next);
 }
 bool XListBase_remove_base(XListBase* this_list, void* pvData)
 {

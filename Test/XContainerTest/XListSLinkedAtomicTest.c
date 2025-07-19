@@ -1,4 +1,4 @@
-#include"XDataStructTest.h"
+ï»¿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XListSLinkedAtomic.h"
 #include"XEquality.h"
@@ -20,19 +20,19 @@ void XListSLinkedAtomicSortTest()
 	for (size_t i = 0; i < size; i++)
 	{
 		int num = rand() % 1000;
-		XListBase_push_back_base(li, &num);//Î²²å
+		XListBase_push_back_base(li, &num);//å°¾æ’
 	}
-	printf("ÅÅĞòÇ°\n");
+	printf("æ’åºå‰\n");
 	XListSLinkedAtomic_iterator_for_each(li, ListFor_each, NULL); printf("\n");
 
 	clock_t  time_front = clock();
 	XListSLinkedAtomic_sort_base(li, XLess_int);
 	clock_t time_after = clock();
 
-	printf("ÅÅĞòºó\n");
+	printf("æ’åºå\n");
 	XListSLinkedAtomic_iterator_for_each(li, ListFor_each, NULL); printf("\n");
 
-	printf("%dËæ»úÊı£¬Á´±íÅÅĞòÔËĞĞÁË%dms\n", size, time_after - time_front);
+	printf("%déšæœºæ•°ï¼Œé“¾è¡¨æ’åºè¿è¡Œäº†%dms\n", size, time_after - time_front);
 	XListBase_delete_base(li);
 #endif
 }
@@ -45,7 +45,7 @@ void XListSLinkedAtomicIterator()
 	{
 		XListBase_push_back_base(li, arr + i);
 	}
-	printf("¿ªÊ¼ÕıÏò±éÀú\n");
+	printf("å¼€å§‹æ­£å‘éå†\n");
 	for_each_iterator(li, XListSLinkedAtomic, it)
 	{
 		printf("%d\n", XListSNodeAtomic_Data(it.node, int));
@@ -57,7 +57,7 @@ void XListSLinkedAtomicIterator()
 void XListSLinkedAtomicTest()
 {
 #if XList_ON
-	printf("XList ²âÊÔ\n");
+	printf("XList æµ‹è¯•\n");
 	XListSLinkedAtomic* list = XListSLinkedAtomic_create(sizeof(int));
 	list->m_parent.m_equality = XEquality_int;
 	printf("%s\n", XContainerObject_isEmpty_base(list) ? "empty" : "");
@@ -75,29 +75,29 @@ void XListSLinkedAtomicTest()
 	int findValue = 123;
 	//XList_insert_base(list, XList_at(list, &findValue), &x);
 
-	printf("ÔªËØ±éÀú\t"); XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL); printf("\n");
-	printf("Í·ÔªËØÎª£º%d\n", XListBase_Front_Base(list, int));
-	printf("Î²ÔªËØÎª£º%d\n", XListBase_Back_Base(list, int));
+	printf("å…ƒç´ éå†\t"); XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL); printf("\n");
+	printf("å¤´å…ƒç´ ä¸ºï¼š%d\n", XListBase_Front_Base(list, int));
+	printf("å°¾å…ƒç´ ä¸ºï¼š%d\n", XListBase_Back_Base(list, int));
 
 	XListSNodeAtomic* findNode = XListBase_find_base(list, arr + 2);
 	XListBase_insert_array_base(list, findNode, arr, 5);
-	printf("ÕÒµ½µÄÊı×Ö%d\n", XListSNodeAtomic_Data(findNode, int));
+	printf("æ‰¾åˆ°çš„æ•°å­—%d\n", XListSNodeAtomic_Data(findNode, int));
 	XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL); printf("\n");
 	XListBase_pop_front_base(list);
 	XListBase_pop_back_base(list);
-	XListBase_erase_base(list, findNode);
+	//XListBase_erase_base(list, findNode);
 
 	XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL); printf("\n");
 	//return;
 	int removeVlaue = 4;
 	XListBase_remove_base(list, &removeVlaue);
 	//XList_clear_base(list);
-	printf("É¾³ıÔªËØºó±éÀú\t"); XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL);
+	printf("åˆ é™¤å…ƒç´ åéå†\t"); XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL);
 	XListBase_delete_base(list);
 #endif
 }
 
-void XListSLinkedAtomicSwapTest()//½»»»º¯Êı²âÊÔ
+void XListSLinkedAtomicSwapTest()//äº¤æ¢å‡½æ•°æµ‹è¯•
 {
 #if XList_ON
 	XListSLinkedAtomic* li1 = XListSLinkedAtomic_create(sizeof(int));
@@ -106,9 +106,9 @@ void XListSLinkedAtomicSwapTest()//½»»»º¯Êı²âÊÔ
 	for (size_t i = 0; i < 10; i++)
 	{
 		num = i;
-		XListBase_push_back_base(li1, &num);//Î²²å
+		XListBase_push_back_base(li1, &num);//å°¾æ’
 	}
-	printf("li1ÔªËØ±éÀú\n");
+	printf("li1å…ƒç´ éå†\n");
 	XListSLinkedAtomic_iterator_for_each(li1, ListFor_each, NULL); printf("\n");
 
 	XListSLinkedAtomic* li2 = XListSLinkedAtomic_create(sizeof(int));
@@ -116,17 +116,17 @@ void XListSLinkedAtomicSwapTest()//½»»»º¯Êı²âÊÔ
 	for (size_t i = 0; i < 20; i++)
 	{
 		num = 20 - i;
-		XListBase_push_back_base(li2, &num);//Î²²å
+		XListBase_push_back_base(li2, &num);//å°¾æ’
 	}
-	printf("li2ÔªËØ±éÀú\n");
+	printf("li2å…ƒç´ éå†\n");
 	XListSLinkedAtomic_iterator_for_each(li2, ListFor_each, NULL); printf("\n");
 
 	XListBase_swap_base(li1, li2);
 
-	printf("½»»»ºóli1ÔªËØ±éÀú\n");
+	printf("äº¤æ¢åli1å…ƒç´ éå†\n");
 	XListSLinkedAtomic_iterator_for_each(li1, ListFor_each, NULL); printf("\n");
 
-	printf("½»»»ºóli2ÔªËØ±éÀú\n");
+	printf("äº¤æ¢åli2å…ƒç´ éå†\n");
 	XListSLinkedAtomic_iterator_for_each(li2, ListFor_each, NULL); printf("\n");
 	XListBase_delete_base(li1);
 	XListBase_delete_base(li2);

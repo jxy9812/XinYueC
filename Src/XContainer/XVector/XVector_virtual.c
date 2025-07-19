@@ -15,7 +15,7 @@ static void VXVector_insert_array(XVector* this_vector, int64_t index, const voi
 static void VXVector_append_array(XVector* this_vector, const void* begin, size_t n);
 static void VXVector_pop_front(XVector* this_vector);
 static void VXVector_pop_back(XVector* this_vector);
-static void VXVector_erase(XVector* this_vector, void* pvValue);
+static void VXVector_erase(XVector* this_vector, const XVector_iterator* it, XVector_iterator* next);
 static void VXVector_remove(XVector* this_vector, int64_t index, int64_t n);//删除数据 n<0 后面全部删除
 static void VXVector_clear(XVector* this_vector);
 static void VXVector_copy(XVector* this_One, const XVector* this_Two);
@@ -287,23 +287,39 @@ void VXVector_pop_back(XVector* this_vector)//删除向量中最后一个元素
 		XContainerDataDeleteMethod(this_vector)(XVector_back_base(this_vector));
 	--XContainerSize(this_vector);
 }
-void VXVector_erase(XVector* this_vector, void* pvValue)//删除指针数据
+void VXVector_erase(XVector* this_vector, const XVector_iterator* it, XVector_iterator* next)//删除指针数据
 {
-	if (XContainerObject_isEmpty_base(this_vector))
-		return ;
-	void* front = VXVector_front(this_vector),* back= VXVector_back(this_vector);
+	if (XVector_isEmpty_base(this_vector) || it->data == NULL)
+	{
+		if (next)
+			*next = XVector_end(this_vector);
+	}
+	void* pvValue = XVector_iterator_data(it);
+	void* front = XVector_front_base(this_vector),* back= XVector_back_base(this_vector);
 	size_t typeSize = XContainerTypeSize(this_vector);
-	if (XContainerSize(this_vector) == 1)
+	if (front <= pvValue && pvValue <= back && ((char*)pvValue - (char*)front) % typeSize == 0)
 	{
-		--XContainerSize(this_vector);
+		if (XContainerSize(this_vector) == 1)
+		{
+			XContainerSize(this_vector) = 0;
+			if (next)
+				*next = XVector_end(this_vector);
+		}
+		else
+		{
+			if (XContainerDataDeleteMethod(this_vector) != NULL)
+				XContainerDataDeleteMethod(this_vector)(pvValue);
+			--XContainerSize(this_vector);
+			if(pvValue== back&& next!=NULL)//不是最后一个
+				*next = XVector_end(this_vector);
+					
+			memcpy(pvValue, (char*)pvValue + typeSize, (size_t)((char*)back - (char*)pvValue));
+			if (next)
+				*next = *it;
+		}
 	}
-	else if(front <= pvValue && pvValue <= back && ((char*)pvValue - (char*)front)% typeSize==0)
-	{
-		if (XContainerDataDeleteMethod(this_vector) != NULL)
-			XContainerDataDeleteMethod(this_vector)(pvValue);
-		memcpy(pvValue, (char*)pvValue + typeSize, (size_t)((char*)back - (char*)pvValue));
-		--XContainerSize(this_vector);
-	}
+	if (next)
+		*next = XVector_end(this_vector);
 }
 void VXVector_remove(XVector* this_vector, int64_t index, int64_t n)//删除数据 n<0 后面全部删除
 {

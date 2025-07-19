@@ -5,13 +5,16 @@
 extern "C" {
 #endif
 #include"XContainerObject_iterator.h"
+#include"XVector_reverse_iterator.h"
 //声明
 XContainerTypeDeclare(XVariantList);
-//正向迭代器
-typedef struct XVariantList_reverse_iterator
-{
-	void* data;
-}XVariantList_reverse_iterator;
+//反向迭代器
+//typedef struct XVariantList_reverse_iterator
+//{
+//	void* data;
+//}XVariantList_reverse_iterator;
+
+typedef  XVector_reverse_iterator XVariantList_reverse_iterator;
 XVariantList_reverse_iterator XVariantList_rbegin(XVariantList* list);
 XVariantList_reverse_iterator XVariantList_rend(XVariantList* list);
 void XVariantList_reverse_iterator_add(XVariantList* list,XVariantList_reverse_iterator* it);

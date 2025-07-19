@@ -41,7 +41,6 @@ typedef struct XVector
 	XEquality m_equality;//相等比较函数
 }XVector;
 
-
 XVtable* XVector_class_init();
 //开辟一个动态数组,初始化 size_t
 XVector* XVector_create(size_t typeSize);
@@ -67,8 +66,8 @@ void XVector_append_array_base(XVector* this_vector, const void* begin, size_t n
 void XVector_pop_front_base(XVector* this_vector);
 //删除向量中最后一个元素
 void XVector_pop_back_base(XVector* this_vector);
-//删除指针处的数据(指针要在容器内)
-void XVector_erase_base(XVector* this_vector, void* pvValue);
+//删除迭代器数据，并返回下一个迭代器
+void XVector_erase_base(XVector* this_vector,const XVector_iterator* it, XVector_iterator*next);
 //删除数据 n<0 后面全部删除
 void XVector_remove_base(XVector* this_vector, int64_t index, int64_t n);
 //将this_Two拷贝到this_One

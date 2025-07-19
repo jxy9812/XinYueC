@@ -11,7 +11,7 @@ static size_t VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, 
 //删除
 static bool VXList_pop_front(XListSLinked* this_list);
 static bool VXList_pop_back(XListSLinked* this_list);
-static void* VXList_erase(XListSLinked* this_list, XListSNode* node);
+static void VXList_erase(XListSLinked* this_list, const XListSLinked_iterator* it, XListSLinked_iterator* next);
 static bool VXList_remove(XListSLinked* this_list, void* pvData);
 static void VXList_clear(XListSLinked* this_list);
 //遍历
@@ -231,64 +231,6 @@ size_t VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, const v
     XContainerCapacity(this_list) += count;
     return count;
 }
-
-bool VXList_pop_front(XListSLinked* this_list)
-{
-    XListSNode* head = XContainerDataPtr(this_list);
-    if (head == NULL)
-        return false;//链表是空的
-    if (XListBase_getSize_base(this_list) == 1)
-    {
-        XContainerDataPtr(this_list) = NULL;
-        this_list->m_tail = NULL;//更新指向的尾节点
-    }
-    else
-    {
-        XContainerDataPtr(this_list) = head->next;
-    }
-    if (XContainerDataDeleteMethod(this_list) != NULL)
-        XContainerDataDeleteMethod(this_list)(&(head->data));
-    //释放节点
-    XMemory_free(head);
-    //更新数量
-    --XContainerSize(this_list);
-    --XContainerCapacity(this_list);
-    return true;
-}
-
-bool VXList_pop_back(XListSLinked* this_list)
-{
-    XListSNode* tail = this_list->m_tail;
-    if (tail == NULL)
-        return false;
-    //printf("尾删中\n");
-    if (XListBase_getSize_base(this_list) == 1)
-    {
-        XContainerDataPtr(this_list) = NULL;
-        this_list->m_tail = NULL;//更新指向的尾节点
-    }
-    else
-    {
-        XListSNode* node = XContainerDataPtr(this_list);//当前节点
-        while (node)
-        {
-            if (node->next == tail)
-            {
-                node->next = NULL;
-                this_list->m_tail = node;//更新指向的尾节点
-                break;
-            }
-            node = node->next;
-        }
-    }
-    if (XContainerDataDeleteMethod(this_list) != NULL)
-        XContainerDataDeleteMethod(this_list)(&(tail->data));
-    XMemory_free(tail);
-    //更新数量
-    --XContainerSize(this_list);
-    --XContainerCapacity(this_list);
-    return true;
-}
 //删除一个节点
 static void removeNode(XListSLinked* this_list, XListSNode* prev, XListSNode* removeNode)
 {
@@ -314,10 +256,43 @@ static void removeNode(XListSLinked* this_list, XListSNode* prev, XListSNode* re
     --XContainerCapacity(this_list);
 }
 
-void* VXList_erase(XListSLinked* this_list, XListSNode* node)
+bool VXList_pop_front(XListSLinked* this_list)
 {
-    if (XListBase_isEmpty_base(this_list) || node == NULL)
-        return NULL;
+    XListSNode* head = XContainerDataPtr(this_list);
+    if (head == NULL)
+        return false;//链表是空的
+    removeNode(this_list,NULL, head);
+    return true;
+}
+
+bool VXList_pop_back(XListSLinked* this_list)
+{
+    XListSNode* tail = this_list->m_tail;
+    if (tail == NULL)
+        return false;
+    XListSNode* node = XContainerDataPtr(this_list);//当前节点
+    while (node)
+    {
+        if (node->next == tail)
+        {
+            removeNode(this_list, node, tail);
+            break;
+        }
+        node = node->next;
+    }
+    return true;
+}
+
+
+void VXList_erase(XListSLinked* this_list, const XListSLinked_iterator* it, XListSLinked_iterator* next)
+{
+    if (XListBase_isEmpty_base(this_list) || it->node == NULL)
+    {
+        if (next)
+            *next = XListSLinked_end(this_list);
+        return;
+    }
+    XListSNode* node = it->node;
     XListSNode* prev = NULL;//前一个节点
     XListSNode* curNode = XContainerDataPtr(this_list);//当前节点
     while (curNode)
@@ -326,12 +301,15 @@ void* VXList_erase(XListSLinked* this_list, XListSNode* node)
         {//找到要删除的节点了
             XListSNode* next = curNode->next;
             removeNode(this_list, prev, curNode);
-            return next;
+            if (next)
+                next->next = next;
+            return ;
         }
         prev = curNode;
         curNode = curNode->next;
     }
-    return NULL;
+    if (next)
+        *next = XListSLinked_end(this_list);
 }
 
 bool VXList_remove(XListSLinked* this_list, void* pvData)

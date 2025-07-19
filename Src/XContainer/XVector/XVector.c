@@ -82,12 +82,11 @@ void XVector_pop_back_base(XVector* this_vector)
 	XClassGetVirtualFunc(this_vector, EXVector_Pop_Back, funcPtr)(this_vector);
 }
 
-void XVector_erase_base(XVector* this_vector, void* pvValue)
+void XVector_erase_base(XVector* this_vector, const XVector_iterator* it, XVector_iterator* next)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
-	typedef void (*funcPtr)(XVector*, void*);
-	XClassGetVirtualFunc(this_vector, EXVector_Erase, funcPtr)(this_vector,pvValue);
+	XClassGetVirtualFunc(this_vector, EXVector_Erase, void(*)(XVector*, const XVector_iterator*, XVector_iterator*))(this_vector,it,next);
 }
 
 void XVector_remove_base(XVector* this_vector, int64_t index, int64_t n)

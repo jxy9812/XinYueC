@@ -21,23 +21,24 @@ int main(int argc, char* args[])
 	//return;
 	//XTimerWheelTest();
 	//XListDLinkedIterator();
-	XHashMapTest();
+	//XHashMapTest();
 	//XMapTest();
 	//XListSLinkedAtomicTest();
 	//XListSLinkedAtomicSwapTest();
 	//XListSLinkedAtomicSortTest();
 	//XListSLinkedAtomicIterator();
-	/*XListDLinkedTest();
-	XListDLinkedSortTest();
-	XListDLinkedIterator();
-	XListDLinkedSwapTest();
-	XListSLinkedTest();
-	XListSLinkedSwapTest();
-	XListSLinkedIterator();
-	XListSLinkedSortTest();
-	XPriority_QueueTest();
-	XPWMDeviceTest();
-	XVectorTest();*/
+	//XListDLinkedTest();
+	//
+	//XListDLinkedSortTest();
+	//XListDLinkedIterator();
+	//XListDLinkedSwapTest();
+	//XListSLinkedTest();
+	//XListSLinkedSwapTest();
+	//XListSLinkedIterator();
+	//XListSLinkedSortTest();
+	//XPriority_QueueTest();
+	//XPWMDeviceTest();
+	//XVectorTest();
 	//TJCHMICommTest();
 	//XDataFrameCommTest();
 	//XSocketTest();
@@ -47,7 +48,7 @@ int main(int argc, char* args[])
 	//XRedBlackTreeTest();
 	//XMapTest();
 	//return;
-	//XVariantListTest();
+	XVariantListTest();
 
 	//XModbusTest();
 	//XCylinderTest();	

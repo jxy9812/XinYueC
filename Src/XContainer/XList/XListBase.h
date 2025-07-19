@@ -8,6 +8,7 @@ extern "C" {
 #include<stdio.h>
 #include"XContainerObject.h"
 #include"XFunctionCallback.h"
+typedef struct XListBase_iterator XListBase_iterator;//链表迭代器抽象类型
 #define XLISTBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListBase))       //XList容器虚函数表大小
 //XList虚函数表枚举
 XCLASS_DEFINE_BEGING(XListBase)
@@ -49,7 +50,7 @@ bool  XListBase_pop_front_base(XListBase* this_list);
 //删除链表中最后一个元素
 bool  XListBase_pop_back_base(XListBase* this_list);
 //删除指定节点
-void  XListBase_erase_base(XListBase* this_list, XListBaseNode* node);
+void  XListBase_erase_base(XListBase* this_list,const XListBase_iterator* it,XListBase_iterator* next);
 //删除指定元素
 bool  XListBase_remove_base(XListBase* this_list, void* pvData);
 #define XListBase_Remove_Base(this_list,type,value){type t=value;XListBase_remove_base(this_list,&t);}

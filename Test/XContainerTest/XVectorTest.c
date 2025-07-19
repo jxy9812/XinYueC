@@ -44,7 +44,15 @@ void XVectorTest()
 	if(findRet!=NULL)
 	printf("找到的数字:%d\n", *findRet);
 	XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
-	XVector_erase_base(v,findRet); 
+	for (XVector_iterator it = XVector_begin(v), endIt = XVector_end(v); !XVector_iterator_equality(&it, &endIt);)
+	{
+		void* pValue=XVector_iterator_data(&it);
+		//printf("%d \n", *(int*)pValue);
+		if (*((int*)pValue) == 23)
+			XVector_erase_base(v, &it,&it);
+		else
+			XVector_iterator_add(v, &it);
+	}
 	XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	XVector_delete_base(v);
 

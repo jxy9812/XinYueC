@@ -85,7 +85,7 @@ void XListSLinkedTest()
 	XListSLinked_iterator_for_each(list, ListFor_each, NULL); printf("\n");
 	XListBase_pop_front_base(list);
 	XListBase_pop_back_base(list);
-	XListBase_erase_base(list, findNode);
+	//XListBase_erase_base(list, findNode);
 
 	XListSLinked_iterator_for_each(list, ListFor_each, NULL); printf("\n");
 	//return;
