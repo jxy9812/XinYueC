@@ -1,19 +1,19 @@
 ﻿#include"XRedBlackTree.h"
 #include"XClass.h"
 #include"XBalancedBinaryTree.h"
-XRBTreeNode* XRBTree_create(const size_t dataTypeSize)
+XRBTreeNode* XRBTree_create(const char* pvData, const size_t dataTypeSize)
 {
 	XRBTreeNode* node = XMemory_malloc(sizeof(XRBTreeNode));
 	if (ISNULL(node, "创建红黑树节点失败"))
 		return NULL;
-	XRBTree_init(node,dataTypeSize);
+	XRBTree_init(node,pvData, dataTypeSize);
 	return node;
 }
-void XRBTree_init(XRBTreeNode* this_root, const size_t dataTypeSize)
+void XRBTree_init(XRBTreeNode* this_root, const char* pvData, const size_t dataTypeSize)
 {
 	if (this_root == NULL)
 		return;
-	XBTreeNode_init(this_root, dataTypeSize);
+	XBTreeNode_init(this_root, pvData, dataTypeSize);
 	XRBTree_SetRed(this_root);
 }
 //当前节点的父节点是红色，且当前节点的祖父节点的另一一个子节点(叔叔节点)也是红色
@@ -232,9 +232,9 @@ XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less, XEquality equali
 	return findErase;
 }
 
-XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne equalityRule, void* pvData)
+XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne rule, void* pvData)
 {
-	return XBBTree_findData(this_root,less,equality,equalityRule,pvData);
+	return XBBTree_findData(this_root,less,equality, rule,pvData);
 	//if (this_root == NULL)//树是空的
 	//	return NULL;
 	//XRBTreeNode* CurNode = this_root;//当前节点指针
@@ -315,7 +315,7 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, XCompareRuleTwo
 		return NULL;
 	if (ISNULL(TypeSize, ""))
 		return NULL;
-	XRBTreeNode* nodes = XRBTree_create(TypeSize);//创建一个红黑树节点并且初始化,默认红色
+	XRBTreeNode* nodes = XRBTree_create(NULL, TypeSize);//创建一个红黑树节点并且初始化,默认红色
 	if (ISNULL(nodes, ""))
 		return NULL;
 	//DEBUG_PRINTF("nodes=%p\n",nodes);

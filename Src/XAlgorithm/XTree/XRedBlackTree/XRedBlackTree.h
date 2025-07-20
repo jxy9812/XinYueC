@@ -28,13 +28,13 @@ typedef struct XRBTreeNode
 	char color;		//颜色
 }XRBTreeNode;
 //红黑树-创建初始化一个节点
-XRBTreeNode* XRBTree_create(const size_t dataTypeSize);
-void XRBTree_init(XRBTreeNode* this_root, const size_t dataTypeSize);
+XRBTreeNode* XRBTree_create(const char* pvData,const size_t dataTypeSize);
+void XRBTree_init(XRBTreeNode* this_root, const char* pvData, const size_t dataTypeSize);
 //红黑树-自动创建节点，插入数据，并自动调整高度和旋转保证平衡
 XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, XCompareRuleTwo lessRule,const void* pvData, const size_t TypeSize);
 XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less,XEquality equality, XCompareRuleOne Rule, const void* pvData);
 //查找红黑树节点
-XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne equalityRule, void* pvData);
+XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne rule, void* pvData);
 //递归释放整颗树
 #define XRBTreeNode_delete							XBTreeNode_delete
 //递归释放整颗树

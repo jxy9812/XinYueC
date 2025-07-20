@@ -2,14 +2,14 @@
 #include"XVector.h"
 #include"XClass.h"
 #include<string.h>
-XTTTreeNode* XTTTree_create(const enum XTTTree_NodeNum nodeCount, const size_t TypeSize)
+XTTTreeNode* XTTTree_create(const enum XTTTree_NodeNum nodeCount, const char* pvData, const size_t TypeSize)
 {
 #if XVector_ON
     //XTTTreeNode* nodes = XBTree_creationNode(sizeof(XTTTreeNode), nodeCount + 1,1, TypeSize);
     XTTTreeNode* nodes = XMemory_malloc(sizeof(XTTTreeNode));
     if (nodes == NULL)//初始化父类失败
         return NULL;
-    XTreeNode_init(nodes, nodeCount + 1, TypeSize);
+    XTreeNode_init(nodes, nodeCount + 1,pvData, TypeSize);
     nodes->pvValueArray = NULL;
     if (nodeCount == XTTTree_TwoNode)
         return nodes;
@@ -115,11 +115,11 @@ XTTTreeNode* XTTTree_findData(XTTTreeNode* this_root, XLess less, XEquality equa
 
 XTTTreeNode* XTTTree_insert(XTTTreeNode** this_root, XLess less, XCompareRuleTwo lessRule, const void* pvData, const size_t TypeSize)
 {
-    XTTTreeNode* nodes = XTTTree_create(XTTTree_TwoNode, TypeSize);
+    XTTTreeNode* nodes = XTTTree_create(XTTTree_TwoNode,pvData, TypeSize);
     if (ISNULL(nodes, ""))
         return NULL;
     //XBTree_insertData(nodes, pvData, 0);//插入数据
-    XTreeNode_setData(nodes, pvData);
+   // XTreeNode_setData(nodes, pvData);
     if (this_root == NULL)//创建根节点
     {
         return nodes;

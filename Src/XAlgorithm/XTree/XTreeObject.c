@@ -6,7 +6,7 @@
 #include<string.h>
 //#include "XBinaryTree.h"
 
-void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, const size_t dataTypeSize)
+void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, const char* pvData, const size_t dataTypeSize)
 {
 	if (node == NULL||nodeCount==0||dataTypeSize==0)
 		return;
@@ -24,14 +24,16 @@ void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, const size_t dataT
 	}
 	node->dataTypeSize = dataTypeSize;
 	node->parentNode = NULL;
+	if (pvData)
+		memcpy(XTreeNode_GetDataPtr(node), pvData, dataTypeSize);
 }
-XTreeNode* XTreeNode_create(const uint8_t nodeCount, const size_t dataTypeSize)
+XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t dataTypeSize)
 {
 	if (nodeCount == 0 || dataTypeSize == 0)
 		return NULL;
 	XTreeNode* node = XMemory_malloc(sizeof(XTreeNode));
 	if (node)
-		XTreeNode_init(node,nodeCount,dataTypeSize);
+		XTreeNode_init(node,nodeCount,pvData,dataTypeSize);
 	return node;
 }
 bool XTreeNode_setData(XTreeNode* this_root, const void* pvData)
@@ -63,16 +65,6 @@ XTreeNode* XTreeNode_getChild(XTreeNode* this_root, const uint8_t nodeType)
 void XTree_delete(XTreeNode* this_root, XTreeNodeDataDeleteMethod method, void* args)
 {
 	XTree_delete_base(this_root, XTreeNode_delete,method,args);
-}
-
-XTreeNode* XBTree_createInsertData(const void* pvData, const size_t nodeArrySize, const size_t TypeSize)
-{
-	XTreeNode* nodes = XTreeNode_create( nodeArrySize,TypeSize);
-	if (ISNULL( nodes,"创建节点失败"))
-		return NULL;
-	XTreeNode_setData(nodes, pvData);
-	//printf("插入的:%d\n", XTreeNode_GetParent(nodes, 0, int));
-	return nodes;
 }
 
 void XTreeNode_delete(XTreeNode* node)

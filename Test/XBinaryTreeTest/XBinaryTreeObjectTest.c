@@ -15,18 +15,18 @@ void XBinaryTreeObjectTest()
 		int a[] = { 0,1,2,3,4,5,6,7 };
 		int* LPa = a;
 
-		XTreeNode* root = XBTree_createInsertData(LPa++, 3, sizeof(int));
+		XTreeNode* root = XBTreeNode_create(LPa++, sizeof(int));
 		XTreeNode* curNode = root;
-		*XTreeNode_getChildRef(curNode, XBTreeLChild) = XBTree_createInsertData(LPa++, 3, sizeof(int));
+		*XTreeNode_getChildRef(curNode, XBTreeLChild) = XBTreeNode_create(LPa++, sizeof(int));
 		//curNode->leftChild = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
 		curNode = *XTreeNode_getChildRef(curNode, XBTreeLChild);
-		*XTreeNode_getChildRef(curNode, XBTreeLChild) = XBTree_createInsertData(LPa++, 3, sizeof(int));
-		*XTreeNode_getChildRef(curNode, XBTreeRChild) = XBTree_createInsertData(LPa++, 3, sizeof(int));
+		*XTreeNode_getChildRef(curNode, XBTreeLChild) = XBTreeNode_create(LPa++, sizeof(int));
+		*XTreeNode_getChildRef(curNode, XBTreeRChild) = XBTreeNode_create(LPa++,sizeof(int));
 
-		*XTreeNode_getChildRef(root, XBTreeRChild) = XBTree_createInsertData(LPa++, 3, sizeof(int));
+		*XTreeNode_getChildRef(root, XBTreeRChild) = XBTreeNode_create(LPa++, sizeof(int));
 		curNode = *XTreeNode_getChildRef(root, XBTreeRChild);
-		*XTreeNode_getChildRef(curNode, XBTreeLChild) = XBTree_createInsertData(LPa++, 3, sizeof(int));
-		*XTreeNode_getChildRef(curNode, XBTreeRChild) = XBTree_createInsertData(LPa++, 3, sizeof(int));
+		*XTreeNode_getChildRef(curNode, XBTreeLChild) = XBTreeNode_create(LPa++, sizeof(int));
+		*XTreeNode_getChildRef(curNode, XBTreeRChild) = XBTreeNode_create(LPa++, sizeof(int));
 
 		//前序测试
 		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder);

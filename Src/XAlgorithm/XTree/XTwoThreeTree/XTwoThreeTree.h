@@ -32,7 +32,7 @@ typedef struct XTTTreeNode
 	XVector* pvValueArray;//XVector数据数组,值
 }XTTTreeNode;
 //创建初始化一个23树节点
-XTTTreeNode* XTTTree_create(const enum XTTTree_NodeNum nodeCount,const size_t TypeSize);
+XTTTreeNode* XTTTree_create(const enum XTTTree_NodeNum nodeCount, const char* pvData, const size_t TypeSize);
 //当前是几节点
 const enum  XTTTree_NodeNum  XTTTree_NodeNum(const XTTTreeNode* this_root);
 //升级当前节点

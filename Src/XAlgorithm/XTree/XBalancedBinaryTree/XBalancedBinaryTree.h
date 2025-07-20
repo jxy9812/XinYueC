@@ -14,7 +14,7 @@ typedef struct XBBTreeNode
 }XBBTreeNode;
 
 //创建初始化一个二叉树节点
-XBBTreeNode* XBBTree_create(const size_t TypeSize);
+XBBTreeNode* XBBTree_create(const char* pvData, const size_t TypeSize);
 //仅仅插入数据
 bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess less, XCompareRuleTwo lessRule, const void* pvData, const size_t TypeSize);
 //自动创建节点，插入数据，并自动调整高度和旋转保证平衡
@@ -22,7 +22,7 @@ XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XLess less, XCompareRuleTwo
 //二叉树删除节点
 void* XBBTree_erase(XBBTreeNode** this_root, XLess less, XEquality equality, XCompareRuleOne Rule, const void* pvData, const size_t TypeSize);
 //查找二叉树节点
-XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne equalityRule, void* pvData);
+XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne rule, void* pvData);
 //获取本身的高度(层数最大孩子高度+1(自己))
 const size_t XBBTree_GetLayerNumberThis(const XBBTreeNode* this_root);
 //获取左右两孩子中最大层数

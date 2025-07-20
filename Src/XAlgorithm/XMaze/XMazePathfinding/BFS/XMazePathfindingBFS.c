@@ -10,7 +10,7 @@ typedef struct XVector XVector;
 //创建一个节点
 static XTreeNode* CreationBFSNode_XPoint(XPoint pos)
 {
-	XTreeNode* nodes = XBTree_createInsertData(&pos,1,sizeof(XPoint));
+	XTreeNode* nodes = XBTreeNode_create(&pos,sizeof(XPoint));
 	if (ISNULL(nodes, ""))
 		return NULL;
 	return nodes;

@@ -1,13 +1,13 @@
 ﻿#include "XBalancedBinaryTree.h"
 #include"XContainerObject.h"
 #include"XStack.h"
-XBBTreeNode* XBBTree_create(const size_t TypeSize)
+XBBTreeNode* XBBTree_create(const char* pvData, const size_t TypeSize)
 {
 	//struct XBBTreeNode* nodes = XBTree_creationNode(sizeof(XBBTreeNode),3,1,TypeSize);
 	XBBTreeNode* nodes = XMemory_malloc(sizeof(XBBTreeNode));
 	if (nodes == NULL)
 		return NULL;
-	XTreeNode_init(nodes, 3,  TypeSize);
+	XTreeNode_init(nodes, 3, pvData, TypeSize);
 	nodes->maxLayer = 1;
 	return nodes;
 }
@@ -128,18 +128,18 @@ void* XBBTree_erase(XBBTreeNode** this_root, XLess less, XEquality equality, XCo
 	if (count == 2)//两个孩子
 		TwoChild_erase(this_root, findRet);
 }
-XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne equalityRule, void* pvData)
+XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne rule, void* pvData)
 {
 	if (this_root == NULL)//树是空的
 		return NULL;
 	XBBTreeNode* CurNode = this_root;//当前节点指针
 	while (CurNode != NULL)
 	{
-		if (equalityRule(equality, XTreeNode_GetDataPtr(CurNode), pvData))
+		if (rule(equality, XTreeNode_GetDataPtr(CurNode), pvData))
 		{
 			return CurNode;
 		}
-		else if (equalityRule(less, XTreeNode_GetDataPtr(CurNode), pvData))
+		else if (rule(less, XTreeNode_GetDataPtr(CurNode), pvData))
 		{
 			CurNode = XBTreeNode_GetRChild(CurNode);
 		}
@@ -211,7 +211,7 @@ XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XLess less, XCompareRuleTwo
 	if (ISNULL(TypeSize, ""))
 		return NULL;
 	//创建一个新的节点
-	XBBTreeNode* NewNode = XBBTree_create(TypeSize);
+	XBBTreeNode* NewNode = XBBTree_create(pvData, TypeSize);
 	if (ISNULL(NewNode, ""))
 		return NULL;
 	bool flag = XBBTree_insertAlign(this_root, NewNode, less, lessRule, pvData, TypeSize);

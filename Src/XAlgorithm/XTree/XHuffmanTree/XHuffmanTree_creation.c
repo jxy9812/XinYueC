@@ -65,7 +65,7 @@ XHfmNode* XHfmTree_createNode(unsigned char ch, size_t count, XVector* code)
 	XTreeNode* node = XMemory_malloc(sizeof(XTreeNode));
 	if (node == NULL)
 		return NULL;
-	XTreeNode_init(node,3,sizeof(XHfmNodeData));
+	XTreeNode_init(node,3,NULL, sizeof(XHfmNodeData));
 	//XHfmNodeData* pvData = XBTree_Getdata(node, 0);
 	XHfmNodeData* pvData = XTreeNode_getData(node);
 	//pvData->null = null;

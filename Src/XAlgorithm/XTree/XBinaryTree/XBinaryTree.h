@@ -4,9 +4,8 @@
 extern "C" {
 #endif
 #include "XTreeObject.h"
-#include "XFunctionCallback.h"
 //定义节点类型
-enum XTreeNodeType
+enum XBTreeNodeType
 {
 	XBTreeLChild,//二叉树-左孩子
 	XBTreeRChild, //二叉树-右孩子
@@ -23,6 +22,16 @@ typedef struct XBTreeNode
 {
 	XTreeNode m_parent;//树节点
 }XBTreeNode;
+
+XBTreeNode* XBTreeNode_create(const char* pvData,const size_t dataTypeSize);
+void XBTreeNode_init(XBTreeNode* node, const char* pvData, const size_t dataTypeSize);
+//二叉树遍历转数组存储
+XVector* XBTree_TraversingToXVector(XTreeNode* this_root, const enum XBTreeTraversing Traversing);
+//右旋
+XTreeNode* XBTree_SpinRR(XTreeNode** this_root, XTreeNode* nodes);
+//左旋
+XTreeNode* XBTree_SpinLL(XTreeNode** this_root, XTreeNode* nodes);
+
 //获取节点
 #define XBTreeNode_GetParent(this_root) XTreeNode_GetParent(this_root)//二叉树-获取父节点(继承的子类均可以使用)
 #define XBTreeNode_GetLChild(this_root) XTreeNode_GetChild(this_root,XBTreeLChild)//二叉树-获取左孩子(继承的子类均可以使用)
@@ -42,17 +51,6 @@ typedef struct XBTreeNode
 #define XBTreeNode_delete							XTreeNode_delete
 //递归释放整颗树
 #define XBTree_delete(this_root,method,args)		XTree_delete_base(this_root,XBTreeNode_delete,method,args)
-XBTreeNode* XBTreeNode_create(const size_t dataTypeSize);
-void XBTreeNode_init(XBTreeNode* node, const size_t dataTypeSize);
-//创建初始化一个二叉树节点,并插入数据
-XTreeNode* XBTree_createInsertData(const void* pvData, const size_t nodeArrySize, const size_t dataTypeSize);
-//二叉树遍历转数组存储
-XVector* XBTree_TraversingToXVector(XTreeNode* this_root, const enum XBTreeTraversing Traversing);
-
-//右旋
-XTreeNode* XBTree_SpinRR(XTreeNode** this_root, XTreeNode* nodes);
-//左旋
-XTreeNode* XBTree_SpinLL(XTreeNode** this_root, XTreeNode* nodes);
 #ifdef __cplusplus
 }
 #endif
