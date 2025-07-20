@@ -77,7 +77,7 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 					size_t index = map->m_hash(XPair_first(pair), ((XMapBase*)map)->m_keyTypeSize) % new_capacity;
 
 					// 将节点插入到新哈希表的相应红黑树中
-					XRBTree_insert(&newData[index], ((XMapBase*)map)->m_KeyLess, XCompareRuleTwo_XMap, XBTreeNode_getData(node), sizeof(XPair*));
+					XRBTree_insert(&newData[index], ((XMapBase*)map)->m_KeyLess, XCompareRuleTwo_XMap, XTreeNode_getData(node), sizeof(XPair*));
 				}
 				XVector_delete_base(nodes);
 			}
@@ -119,7 +119,7 @@ bool VXMap_insert(XHashMap*this_map, const void* pvKey, const void* pvValue)
 	}
 	else
 	{
-		XPair* pair = XBTreeNode_GetData(current,XPair*);
+		XPair* pair = XTreeNode_GetData(current,XPair*);
 		if (XContainerDataDeleteMethod(this_map) != NULL)
 			XContainerDataDeleteMethod(this_map)(pair);
 		XPair_insertSecond(pair, pvValue);
@@ -174,7 +174,7 @@ bool VXMap_remove(XHashMap*this_map, const void* pvKey)
 	XRBTreeNode* nodes = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_map))[index], ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);
 	if (nodes != NULL)
 	{
-		XPair* pair = XBTreeNode_GetData(nodes, XPair*);
+		XPair* pair = XTreeNode_GetData(nodes, XPair*);
 		if (XContainerDataDeleteMethod(this_map) != NULL)
 			XContainerDataDeleteMethod(this_map)(pair);
 		XRBTree_erase(((XRBTreeNode**)XContainerDataPtr(this_map)) + index, ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);
@@ -243,7 +243,7 @@ XPair* VXMap_find(XHashMap*this_map, const void* pvKey)
 	XRBTreeNode* nodes = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_map))[index], ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);
 	if (nodes == NULL)
 		return NULL;
-	XPair* pair = XBTreeNode_GetData(nodes, XPair*);
+	XPair* pair = XTreeNode_GetData(nodes, XPair*);
 	return pair;
 
 	/*XHashNode* current = ((XHashNode**)XContainerDataPtr(this_map))[index];
@@ -283,7 +283,7 @@ void VXMap_clear(XHashMap*this_map)
 	for (size_t i = 0; i < XContainerCapacity(this_map); i++)
 	{
 		XRBTreeNode* root= ((XRBTreeNode**)XContainerDataPtr(this_map))[i];
-		XBTree_delete(root, XMap_freeNodeData, this_map);
+		XTree_delete(root, XMap_freeNodeData, this_map);
 		//XHashNode* current = ((XHashNode**)XContainerDataPtr(this_map))[i];
 
 		/*while (current)

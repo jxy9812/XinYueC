@@ -32,7 +32,7 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 	{
 		XHfmNode* LPNode = XPriorityQueue_Top_Base(queue, XHfmNode*);
 		XPriorityQueue_pop_base(queue);
-		//printf("ArgIsNULL:%s data:%d count:%d\n", XBTreeNode_GetParent(LPNode, 0, XHfmNodeData).code==0 ? "true" : "false", XBTreeNode_GetParent(LPNode, 0, XHfmNodeData).ch, XBTreeNode_GetParent(LPNode, 0, XHfmNodeData).count);
+		//printf("ArgIsNULL:%s data:%d count:%d\n", XTreeNode_GetParent(LPNode, 0, XHfmNodeData).code==0 ? "true" : "false", XTreeNode_GetParent(LPNode, 0, XHfmNodeData).ch, XTreeNode_GetParent(LPNode, 0, XHfmNodeData).count);
 		if (LPleft == NULL)
 		{
 			LPleft = LPNode;
@@ -61,20 +61,20 @@ XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 }
 XHfmNode* XHfmTree_createNode(unsigned char ch, size_t count, XVector* code)
 {
-	//XBTreeNode* node = XBTree_CreationNode(XBTreeNode, 3, 1, XHfmNodeData);
-	XBTreeNode* node = XMemory_malloc(sizeof(XBTreeNode));
+	//XTreeNode* node = XBTree_CreationNode(XTreeNode, 3, 1, XHfmNodeData);
+	XTreeNode* node = XMemory_malloc(sizeof(XTreeNode));
 	if (node == NULL)
 		return NULL;
-	XBTreeNode_init(node,3,sizeof(XHfmNodeData));
+	XTreeNode_init(node,3,sizeof(XHfmNodeData));
 	//XHfmNodeData* pvData = XBTree_Getdata(node, 0);
-	XHfmNodeData* pvData = XBTreeNode_getData(node);
+	XHfmNodeData* pvData = XTreeNode_getData(node);
 	//pvData->null = null;
 	pvData->ch = ch;
 	pvData->count = count;
 	pvData->code = code;
 	/*if (pvData->code == NULL)
 	{
-		XBTreeNode_delete(node, false);
+		XTreeNode_delete(node, false);
 		return NULL;
 	}*/
 	return node;

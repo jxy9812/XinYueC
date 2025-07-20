@@ -6,7 +6,7 @@ extern "C" {
 #endif
 #include"XMaze.h"
 #include"XPoint.h"
-#include"XBinaryTreeObject.h"
+#include"XBinaryTree.h"
 //typedef struct BFSNode 
 //{
 //	XPoint pos;//坐标

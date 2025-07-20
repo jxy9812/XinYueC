@@ -128,7 +128,7 @@ bool VXSet_remove(XHashSet* this_set, const void* pvKey)
     XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
     if (node != NULL)
     {
-        void* value = XBTreeNode_getData(node);
+        void* value = XTreeNode_getData(node);
         if (XContainerDataDeleteMethod(this_set) != NULL)
             XContainerDataDeleteMethod(this_set)(value);
         XRBTree_erase(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
@@ -157,7 +157,7 @@ void VXSet_clear(XHashSet* this_set)
     for (size_t i = 0; i < XContainerCapacity(this_set); i++)
     {
         XRBTreeNode* root = ((XRBTreeNode**)XContainerDataPtr(this_set))[i];
-        XBTree_delete(root, XSet_freeNodeData, this_set);
+        XTree_delete(root, XSet_freeNodeData, this_set);
     }
     memset(XContainerDataPtr(this_set), 0, sizeof(XRBTreeNode*) * XContainerCapacity(this_set));
     XContainerSize(this_set) = 0;

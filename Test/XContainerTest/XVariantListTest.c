@@ -6,7 +6,7 @@
 void XVariantListTest()
 {
 	printf("--------------------------XVariantList测试-----------------------\n");
-	//while (true)
+	while (true)
 	{
 		XVariantList* list = XVariantList_create();
 		XVariant* var = XVariant_create_int(8);

@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-typedef XBTreeNode XHfmNode;//哈夫曼树节点
+typedef XTreeNode XHfmNode;//哈夫曼树节点
 //哈夫曼节点数据
 typedef struct XHfmNodeData
 {

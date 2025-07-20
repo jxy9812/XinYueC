@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 #include"XMap.h"
-#include"XBinaryTreeObject.h"
+#include"XBinaryTree.h"
 #include"XHuffmanTree_macro.h"
 #include"XHuffmanTree_node.h"
 #include"XHuffmanTree_dictionaries.h"

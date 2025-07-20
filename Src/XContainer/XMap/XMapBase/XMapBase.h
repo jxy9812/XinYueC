@@ -60,11 +60,11 @@ XVector* XMapBase_keys_base(const XMapBase* this_map);
 //默认释放派生类的方法 key是派生的容器
 void XMapBase_KeyDeleteMethod(void* args);
 //默认释放派生类的方法 value是派生的容器
-void XMapBase_ValueDeleteMethod(void* args);
+void XMapBase_XTreeNodeValueDeleteMethod(void* args);
 //默认释放XVariant value的方法
 void XMapBase_ValueXVariantDeleteMethod(void* args);
 //默认释放派生类的方法 key和value都是派生的容器
-void XMapBase_KeyValueDeleteMethod(void* args);
+void XMapBase_KeyXTreeNodeValueDeleteMethod(void* args);
 //XStringXVariant释放
 void XMapBase_KeyXStringValueXVariantDeleteMethod(void* args);
 #ifdef __cplusplus

@@ -69,7 +69,7 @@ void* XSet_iterator_data(XSet_iterator* it)
 {
 	if (it == NULL || it->node == NULL)
 		return NULL;
-	return XBTreeNode_getData(it->node);
+	return XBTreeNode_GetDataPtr(it->node);
 }
 
 

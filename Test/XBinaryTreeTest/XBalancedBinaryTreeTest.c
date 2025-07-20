@@ -6,14 +6,15 @@
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
-	printf("%d ", XBTreeNode_GetData(*(XBTreeNode**)LPVal,int));
+	printf("%d ", XTreeNode_GetData(*(XTreeNode**)LPVal,int));
 }
 void traverse(void* LPVal, void* args)
 {
 	struct XBBTreeNode* currentNode = *(struct XBBTreeNode**)LPVal;
-	if (*XBTreeNode_getNodeRef(currentNode,XBTreeParent) == NULL)
+	//if (*XTreeNode_getChildRef(currentNode,XTreeParent) == NULL)
+	if(XTreeNode_GetParent(currentNode)==NULL)
 		return;
-	if(XBTreeNode_getChildrenParentRef(currentNode)==NULL)
+	if(XTreeNode_getChildrenParentRef(currentNode)==NULL)
 		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.value);
 }
 void XBalancedBinaryTreeTest()
@@ -35,7 +36,7 @@ void XBalancedBinaryTreeTest()
 	int findVal = 456;
 	XBBTreeNode* findRet = XBBTree_findData(root, XLess_int, XEquality_int,XCompareRuleOne_BinaryTree,&findVal);
 	if(findRet!=NULL)
-	printf("找到的:%d\n", XBTreeNode_GetData(findRet,int));
+	printf("找到的:%d\n", XTreeNode_GetData(findRet,int));
 
 	//前序测试
 	XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder);

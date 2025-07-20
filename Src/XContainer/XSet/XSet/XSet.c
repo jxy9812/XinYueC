@@ -63,7 +63,7 @@ void VXSet_clear(XSet* this_set)
 {
 	if (XSet_isEmpty_base(this_set))
 		return;
-	XBTree_delete(XContainerDataPtr(this_set), XSet_freeNodeData, this_set);
+	XTree_delete(XContainerDataPtr(this_set), XSet_freeNodeData, this_set);
 	XContainerCapacity(this_set) = 0;
 	XContainerSize(this_set) = 0;
 	XContainerDataPtr(this_set) = NULL;
@@ -120,7 +120,7 @@ bool VXSet_find(XSet* this_set, const void* key)
 {
 	if (ISNULL(this_set, "") || ISNULL(key, ""))
 		return NULL;
-	XBTreeNode* node = XRBTree_findData(XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key);
+	XTreeNode* node = XRBTree_findData(XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key);
 	return node != NULL;
 }
 

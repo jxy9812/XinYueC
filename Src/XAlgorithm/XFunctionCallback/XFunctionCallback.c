@@ -1,6 +1,6 @@
 ﻿#include"XFunctionCallback.h"
 #include"XClass.h"
-#include"XBinaryTreeObject.h"
+#include"XTreeObject.h"
 #include"XPair.h"
 //小于回调函数的标准准则
 bool XCompareRuleTwo_Standard(XCompare compare, const void* pvPrevValue, const void* pvNextValue)

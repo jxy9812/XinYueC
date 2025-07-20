@@ -5,11 +5,11 @@
 extern "C" {
 #endif
 #include"XFunctionCallback.h"
-#include"XBinaryTreeObject.h"
+#include"XBinaryTree.h"
 //平衡二叉树节点
 typedef struct XBBTreeNode
 {
-	XBTreeNode XBTNode;//普通二叉树节点
+	XTreeNode XBTNode;//普通二叉树节点
 	size_t maxLayer;			//左右两孩子到自己中最大层数
 }XBBTreeNode;
 
