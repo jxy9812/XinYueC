@@ -7,18 +7,14 @@
 #include"XEventDispatcherThread.h"
 #include <windows.h>
 static bool VXThread_start(XThread* Object);
-static XHandle VXThread_getHandle(XThread* Object);
 static bool VXThread_wait(XThread* Object, unsigned long time);
 static bool VXThread_isFinished(const XThread* Object);
-static bool VXThread_isInterruptionRequested(const XThread* Object);
 static bool VXThread_isRunning(const XThread* Object);
 static int VXThread_loopLevel(const XThread* Object);
 static XThread_Priority VXThread_priority(const XThread* Object);
 static void VXThread_requestInterruption(XThread* Object);
-static void VXThread_setEventDispatcher(XThread* Object, XEventDispatcher* m_eventDispatcher);
 static void VXThread_setPriority(XThread* Object, XThread_Priority priority);
 static void VXThread_setStackSize(XThread* Object, uint32_t m_stackSize);
-static uint32_t VXThread_stackSize(const XThread* Object);
 
 static void VXThread_delete(XThread* Object);
 // 虚函数表初始化
@@ -31,13 +27,14 @@ XVtable* XThread_class_init()
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-
+        //继承类
+        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
         void* table[] = {
-         VXThread_start,VXThread_getHandle,VXThread_wait,
-         VXThread_isFinished,VXThread_isInterruptionRequested,
+         VXThread_start,VXThread_wait,
+         VXThread_isFinished,
          VXThread_isRunning,VXThread_loopLevel,VXThread_priority,
-         VXThread_requestInterruption,VXThread_setEventDispatcher,
-         VXThread_setPriority,VXThread_setStackSize,VXThread_stackSize
+         VXThread_requestInterruption,
+         VXThread_setPriority,VXThread_setStackSize
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
@@ -54,7 +51,7 @@ static DWORD WINAPI ThreadFunction(LPVOID lpParam) {
     XThread* Object = (XThread*)lpParam;
     //运行函数
     if (Object->m_start_routine)
-        Object->m_start_routine(Object);
+        Object->m_start_routine(Object->m_arg);
     //运行事件调度
     if (Object->m_eventDispatcher->m_Objects && !XSetBase_isEmpty_base(Object->m_eventDispatcher->m_Objects))
     {
@@ -78,13 +75,8 @@ bool VXThread_start(XThread* Object)
     {
         return false;
     }
-    XThread_setPriority(Object, XThread_priority(Object));
+    XThread_setPriority_base(Object, XThread_priority_base(Object));
     return true;
-}
-
-XHandle VXThread_getHandle(XThread* Object)
-{
-    return Object->m_handle;
 }
 
 bool VXThread_wait(XThread* Object, unsigned long time)
@@ -106,11 +98,6 @@ bool VXThread_isFinished(const XThread* Object)
         return (exitCode != STILL_ACTIVE);
     }
     return false;
-}
-
-bool VXThread_isInterruptionRequested(const XThread* Object)
-{
-    return Object->m_interruptionRequested;
 }
 
 bool VXThread_isRunning(const XThread* Object)
@@ -138,13 +125,6 @@ XThread_Priority VXThread_priority(const XThread* Object)
 void VXThread_requestInterruption(XThread* Object)
 {
     Object->m_interruptionRequested = true;
-}
-
-void VXThread_setEventDispatcher(XThread* Object, XEventDispatcher* m_eventDispatcher)
-{
-    if (Object->m_eventDispatcher != NULL)
-        XEventDispatcher_delete_base(Object->m_eventDispatcher);
-    Object->m_eventDispatcher = m_eventDispatcher;
 }
 
 void VXThread_setPriority(XThread* Object, XThread_Priority priority)
@@ -190,16 +170,11 @@ void VXThread_setStackSize(XThread* Object, uint32_t m_stackSize)
     Object->m_stackSize = m_stackSize;
 }
 
-uint32_t VXThread_stackSize(const XThread* Object)
-{
-    return Object->m_stackSize;
-}
-
 void VXThread_delete(XThread* Object)
 {
-    if (XThread_isRunning(Object))
-        XThread_requestInterruption(Object);
-    XThread_wait(Object,UINT32_MAX);
+    if (XThread_isRunning_base(Object))
+        XThread_requestInterruption_base(Object);
+    XThread_wait_base(Object,UINT32_MAX);
    /* if (Object->m_handle != NULL) 
     {
         CloseHandle(Object->m_handle);

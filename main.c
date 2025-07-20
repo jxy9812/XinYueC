@@ -50,9 +50,9 @@ int main(int argc, char* args[])
 	//return;
 	//XVariantListTest();
 
-	XModbusTest();
+	//XModbusTest();
 	//XCylinderTest();	
-	//XCircularQueueAtomicTest();
+	XCircularQueueAtomicTest();
 	//XSerialPortTest();
 	//stackTest();
 	//XStringTest();
