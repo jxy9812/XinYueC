@@ -107,7 +107,7 @@ bool VXSet_remove(XSet* this_set, const void* key)
 	{
 		if (XContainerDataDeleteMethod(this_set) != NULL)
 			XContainerDataDeleteMethod(this_set)(key);
-		XRBTree_erase(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key);
+		XRBTree_remove(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key, XSet_freeNodeData, this_set);
 
 		--XContainerCapacity(this_set);
 		--XContainerSize(this_set);

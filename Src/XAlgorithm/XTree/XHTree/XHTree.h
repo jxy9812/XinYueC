@@ -22,11 +22,10 @@ void XHTreeNode_init(XHTreeNode* node, const char* pvData, const size_t dataType
 XHTreeNode* XHTreeNode_addChild(XHTreeNode* parent, const char* pvData, const size_t dataTypeSize);
 //删除子节点(只找儿子不找孙子)
 bool XHTreeNode_removeChild(XHTreeNode* parent, XEquality equality, XCompareRuleOne rule, const void* pvData, XTreeNodeDataDeleteMethod method, void* args);
+//查找红黑树节点
+XHTreeNode* XHTreeNode_findData(XHTreeNode* parent, XEquality equality, XCompareRuleOne rule, void* pvData);
 // 前序遍历（根-子树）
 void preOrderTraversal(XHTreeNode* node, int depth);
-//XHTreeNode* XHTree_erase(XHTreeNode** this_root, XLess less, XEquality equality, XCompareRuleOne Rule, const void* pvData);
-////
-//XHTreeNode* XHTree_findData(XHTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne equalityRule, void* pvData);
 //释放一个节点(仅释放自己也不释放数据)
 #define XHTreeNode_delete								XTreeNode_delete
 //递归释放整颗树

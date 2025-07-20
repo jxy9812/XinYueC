@@ -20,6 +20,14 @@ static void VXMap_clear(XMap* this_map);
 //释放内存
 static void VXMap_delete(XMap* this_map);
 static void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
+
+static void XMap_freeNodeData(XPair** pair, XMap* this_map)
+{
+	if (XContainerDataDeleteMethod(this_map) != NULL)
+		XContainerDataDeleteMethod(this_map)(*pair);
+	XPair_delete(*pair);
+}
+
 XVtable* XMap_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -92,11 +100,7 @@ bool VXMap_remove(XMap* this_map, const void* key)
 	XRBTreeNode* nodes = XRBTree_findData(XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
-		XPair* pair = XTreeNode_GetData(nodes, XPair*);
-		if (XContainerDataDeleteMethod(this_map) != NULL)
-			XContainerDataDeleteMethod(this_map)(pair);
-		XRBTree_erase(&XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
-		XPair_delete(pair);
+		XRBTree_remove(&XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key, XMap_freeNodeData,this_map);
 		--XContainerCapacity(this_map);
 		--XContainerSize(this_map);
 		return true;
@@ -133,12 +137,7 @@ XVector* VXMapBase_keys(const XMapBase* this_map)
 	}
 	return v;
 }
-static void XMap_freeNodeData(XPair** pair, XMap* this_map)
-{
-	if (XContainerDataDeleteMethod(this_map) != NULL)
-		XContainerDataDeleteMethod(this_map)(*pair);
-	XPair_delete(*pair);
-}
+
 void VXMap_clear(XMap* this_map)
 {
 	if (XMap_isEmpty_base(this_map))

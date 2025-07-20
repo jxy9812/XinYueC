@@ -68,6 +68,22 @@ bool XHTreeNode_removeChild(XHTreeNode* parent, XEquality equality, XCompareRule
 	return false;
 }
 
+XHTreeNode* XHTreeNode_findData(XHTreeNode* parent,XEquality equality, XCompareRuleOne rule, void* pvData)
+{
+	if(parent==NULL)
+		return NULL;
+	XHTreeNode* child = XHTreeNode_GetFirstChild(parent);
+	while (child)
+	{
+		if (rule(equality, XTreeNode_GetDataPtr(child), pvData))
+		{//找到了
+			break;
+		}
+		child = XHTreeNode_GetNextSibling(child);
+	}
+	return child;
+}
+
 //bool XHTreeNode_removeChild(XHTreeNode* parent, XHTreeNode* child)
 //{
 //	if (parent == NULL|| child==NULL)

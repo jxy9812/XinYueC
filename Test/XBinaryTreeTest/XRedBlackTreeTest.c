@@ -50,7 +50,7 @@ void XRedBlackTreeTest()
 	//删除测试遍历插入的数组一个个查找删除，直至清空二叉树
 	for (size_t i = 0; i <sizeof(a) / sizeof(a[0]); i++)
 	{
-		XRBTree_erase(&root, XLess_int,XEquality_int,XCompareRuleOne_BinaryTree, a + i);
+		XRBTree_remove(&root, XLess_int,XEquality_int,XCompareRuleOne_BinaryTree, a + i,NULL,NULL);
 	}
 	if (root != NULL)
 	{

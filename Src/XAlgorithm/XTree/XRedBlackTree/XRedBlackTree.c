@@ -130,7 +130,7 @@ static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* nodes, XRBTree
 	}
 }
 //删除的是有一个孩子
-static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
+static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTreeNodeDataDeleteMethod method, void* args)
 {
 	XRBTreeNode* Pchild = XBTreeNode_GetLChild(eraseNode);//孩子节点
 	if (Pchild == NULL)
@@ -152,6 +152,8 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	}
 	if (Pchild != NULL)
 		XBTreeNode_SetParent(Pchild, parent);
+	if (method)
+		method(XTreeNode_GetDataPtr(eraseNode),args);
 	XTreeNode_delete(eraseNode);
 	if (color == XRBTreeBlack && *this_root != NULL)
 	{
@@ -161,7 +163,7 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 
 }
 //删除的是有两个孩子
-static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
+static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTreeNodeDataDeleteMethod method, void* args)
 {
 #if XVector_ON
 	XRBTreeNode* LPchild = NULL;//孩子节点
@@ -176,11 +178,8 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	if (XTreeNode_GetDataPtr(eraseNode))
 		XMemory_free(XTreeNode_GetDataPtr(eraseNode));
 	XTreeNode_SetDataPtr(eraseNode, XTreeNode_GetDataPtr(LPreplace));
-	//eraseNode->XBTNode.value = LPreplace->XBTNode.value;
 	XTreeNode_SetDataTypeSize(eraseNode, XTreeNode_GetDataTypeSize(LPreplace));
-	//eraseNode->XBTNode.valueTypeSize = LPreplace->XBTNode.valueTypeSize;
 	XTreeNode_SetDataPtr(LPreplace, NULL);
-	//LPreplace->XBTNode.value = NULL;
 
 	LPchild = XBTreeNode_GetRChild(LPreplace);
 	LPparent = XBTreeNode_GetParent(LPreplace);
@@ -202,6 +201,8 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	XBBTreeNode** parent = XTreeNode_getChildrenParentRef(LPreplace);
 	if (parent)
 		*parent = NULL;
+	if (method)
+		method(XTreeNode_GetDataPtr(LPreplace), args);
 	XTreeNode_delete(LPreplace);
 	if (color == XRBTreeBlack)
 	{
@@ -212,7 +213,7 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	IS_ON_DEBUG(XVector_ON);
 #endif
 }
-XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less, XEquality equality, XCompareRuleOne Rule, const void* pvData)
+XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XLess less, XEquality equality, XCompareRuleOne Rule, const void* pvData, XTreeNodeDataDeleteMethod method, void* args)
 {
 	if (ISNULL(this_root, ""))
 		return NULL;
@@ -226,9 +227,9 @@ XRBTreeNode* XRBTree_erase(XRBTreeNode** this_root, XLess less, XEquality equali
 	if (XBTreeNode_GetRChild(findErase) != NULL)
 		++count;
 	if (count < 2)//零或一个孩子
-		OneChild_erase(this_root, findErase);
+		OneChild_erase(this_root, findErase, method,args);
 	if (count == 2)//两个孩子
-		TwoChild_erase(this_root, findErase);
+		TwoChild_erase(this_root, findErase, method, args);
 	return findErase;
 }
 

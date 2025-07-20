@@ -23,6 +23,11 @@ static XVector* VXSetBase_keys(const XSetBase* this_set);
 // 私有函数：扩容哈希表
 static bool XHashSet_resize(XHashSet* set, size_t new_capacity);
 
+static void XSet_freeNodeData(void* key, XHashSet* this_set)
+{
+    if (XContainerDataDeleteMethod(this_set) != NULL)
+        XContainerDataDeleteMethod(this_set)(key);
+}
 XVtable* XHashSet_class_init()
 {
     XVTABLE_CREAT_DEFAULT
@@ -128,10 +133,7 @@ bool VXSet_remove(XHashSet* this_set, const void* pvKey)
     XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
     if (node != NULL)
     {
-        void* value = XTreeNode_getData(node);
-        if (XContainerDataDeleteMethod(this_set) != NULL)
-            XContainerDataDeleteMethod(this_set)(value);
-        XRBTree_erase(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
+        XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey, XSet_freeNodeData,this_set);
         --XContainerSize(this_set);
         return true;
     }
@@ -145,11 +147,7 @@ bool VXSet_find(XHashSet* this_set, const void* pvKey)
     XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
     return node != NULL;
 }
-static void XSet_freeNodeData(void* key, XHashSet* this_set)
-{
-    if (XContainerDataDeleteMethod(this_set) != NULL)
-        XContainerDataDeleteMethod(this_set)(key);
-}
+
 void VXSet_clear(XHashSet* this_set)
 {
     if (XHashSet_isEmpty_base(this_set))

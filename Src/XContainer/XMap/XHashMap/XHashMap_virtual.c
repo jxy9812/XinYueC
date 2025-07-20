@@ -22,8 +22,14 @@ static void VXMap_delete(XHashMap*this_map);
 static void VXMap_swap(XHashMap*this_mapOne, XHashMap*this_mapTwo);
 // 私有函数：扩容哈希表
 static bool XHashMap_resize(XHashMap*map, size_t new_capacity);
-#define XHashNode_GetSize(map)  (sizeof(size_t) * 2 + ((XMapBase*)map)->m_keyTypeSize + XContainerTypeSize(map)+sizeof(XHashNode*))
-//#define XHashNode_Next(map,node) *((XHashNode**)(((char*)node)+(sizeof(size_t) * 2 + ((XMapBase*)map)->m_keyTypeSize + XContainerTypeSize(map))))
+
+static void XMap_freeNodeData(XPair** pair, void* args)
+{
+	if (XContainerDataDeleteMethod(args) != NULL)
+		XContainerDataDeleteMethod(args)(*pair);
+	XPair_delete(*pair);
+}
+
 XVtable* XHashMap_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -174,11 +180,7 @@ bool VXMap_remove(XHashMap*this_map, const void* pvKey)
 	XRBTreeNode* nodes = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_map))[index], ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);
 	if (nodes != NULL)
 	{
-		XPair* pair = XTreeNode_GetData(nodes, XPair*);
-		if (XContainerDataDeleteMethod(this_map) != NULL)
-			XContainerDataDeleteMethod(this_map)(pair);
-		XRBTree_erase(((XRBTreeNode**)XContainerDataPtr(this_map)) + index, ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);
-		XPair_delete(pair);
+		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_map)) + index, ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey, XMap_freeNodeData,this_map);
 		--XContainerSize(this_map);
 		return true;
 	}
@@ -269,12 +271,7 @@ XVector* VXMapBase_keys(const XMapBase* this_map)
 	}
 	return v;
 }
-static void XMap_freeNodeData(XPair** pair, void* args)
-{
-	if (XContainerDataDeleteMethod(args) != NULL)
-		XContainerDataDeleteMethod(args)(*pair);
-	XPair_delete(*pair);
-}
+
 void VXMap_clear(XHashMap*this_map)
 {
 	if (XHashMap_isEmpty_base(this_map))
