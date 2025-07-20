@@ -3,15 +3,19 @@
 #include"XBalancedBinaryTree.h"
 XRBTreeNode* XRBTree_create(const size_t dataTypeSize)
 {
-	//XRBTreeNode* nodes = (XRBTreeNode*)XBTree_creationNode(sizeof(XRBTreeNode),3,1,dataTypeSize);
 	XRBTreeNode* node = XMemory_malloc(sizeof(XRBTreeNode));
 	if (ISNULL(node, "创建红黑树节点失败"))
 		return NULL;
-	XBTreeNode_init(node,dataTypeSize);
-	XRBTree_SetRed(node);
+	XRBTree_init(node,dataTypeSize);
 	return node;
 }
-
+void XRBTree_init(XRBTreeNode* this_root, const size_t dataTypeSize)
+{
+	if (this_root == NULL)
+		return;
+	XBTreeNode_init(this_root, dataTypeSize);
+	XRBTree_SetRed(this_root);
+}
 //当前节点的父节点是红色，且当前节点的祖父节点的另一一个子节点(叔叔节点)也是红色
 static bool XRBTree_AdjustNoOne(XRBTreeNode** currentNode, XRBTreeNode* LPpater, XRBTreeNode* LPgrandpa, XRBTreeNode* LPuncle)
 {

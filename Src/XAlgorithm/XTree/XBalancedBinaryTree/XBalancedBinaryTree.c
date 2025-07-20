@@ -73,10 +73,10 @@ static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 
 	if (XBTreeNode_GetRChild(preCursor) == NULL)//LeftChildNode的孩子不存在右子树的情况
 	{
-		XMemory_free(eraseNode->XBTNode.value);//释放其数据
+		XMemory_free(XTreeNode_GetDataPtr(eraseNode));//释放其数据
 		//与左子树数据交换
-		eraseNode->XBTNode.value = preCursor->XBTNode.value;
-		preCursor->XBTNode.value = NULL;
+		XTreeNode_SetDataPtr(eraseNode, XTreeNode_GetDataPtr(preCursor));
+		XTreeNode_SetDataPtr(preCursor,NULL);
 
 		XBBTreeNode* freeNode = preCursor;
 		preCursor = XBTreeNode_GetLChild(preCursor);//左子树的左子树
@@ -91,10 +91,10 @@ static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode)
 		{
 			preCursor = XBTreeNode_GetRChild(preCursor);
 		}
-		XMemory_free(eraseNode->XBTNode.value);//释放其数据
+		XMemory_free(XTreeNode_GetDataPtr(eraseNode));//释放其数据
 		//与左子树数据交换
-		eraseNode->XBTNode.value = preCursor->XBTNode.value;
-		preCursor->XBTNode.value = NULL;
+		XTreeNode_SetDataPtr(eraseNode, XTreeNode_GetDataPtr(preCursor));
+		XTreeNode_SetDataPtr(preCursor,NULL);
 
 		LPparent = XBTreeNode_GetParent(preCursor);
 		XBBTreeNode* freeNode = preCursor;
@@ -135,11 +135,11 @@ XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XLess less, XEquality equa
 	XBBTreeNode* CurNode = this_root;//当前节点指针
 	while (CurNode != NULL)
 	{
-		if (equalityRule(equality, ((XTreeNode*)CurNode)->value, pvData))
+		if (equalityRule(equality, XTreeNode_GetDataPtr(CurNode), pvData))
 		{
 			return CurNode;
 		}
-		else if (equalityRule(less, ((XTreeNode*)CurNode)->value, pvData))
+		else if (equalityRule(less, XTreeNode_GetDataPtr(CurNode), pvData))
 		{
 			CurNode = XBTreeNode_GetRChild(CurNode);
 		}
@@ -169,7 +169,7 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XLess
 	while (currentNode != NULL)
 	{
 		//满足小于往左边放
-		if (lessRule(less, ((XTreeNode*)insertNode)->value, ((XTreeNode*)currentNode)->value))
+		if (lessRule(less, XTreeNode_GetDataPtr(insertNode), XTreeNode_GetDataPtr(currentNode)))
 			//if (less(insertNode->XBTNode.data, currentNode->XBTNode.data))
 		{
 			XTreeNode** ppLChild = XTreeNode_getChildRef(currentNode, XBTreeLChild);

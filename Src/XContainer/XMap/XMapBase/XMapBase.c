@@ -78,7 +78,7 @@ void XMapBase_KeyDeleteMethod(void* args)
 	XContainerObject_delete_base(object);
 }
 
-void XMapBase_XTreeNodeValueDeleteMethod(void* args)
+void XMapBase_XTreeNodeDataDeleteMethod(void* args)
 {
 	XPair* pair = (XPair*)args;
 	XContainerObject* object = *((XContainerObject**)XPair_second(pair));
@@ -92,10 +92,10 @@ void XMapBase_ValueXVariantDeleteMethod(void* args)
 	XVariant_delete(var);
 }
 
-void XMapBase_KeyXTreeNodeValueDeleteMethod(void* args)
+void XMapBase_KeyXTreeNodeDataDeleteMethod(void* args)
 {
 	XMapBase_KeyDeleteMethod(args);
-	XMapBase_XTreeNodeValueDeleteMethod(args);
+	XMapBase_XTreeNodeDataDeleteMethod(args);
 }
 
 void XMapBase_KeyXStringValueXVariantDeleteMethod(void* args)

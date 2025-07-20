@@ -122,24 +122,6 @@ XVector* XBTree_TraversingToXVector(XTreeNode* this_root, const enum XBTreeTrave
 	}
 }
 
-XTreeNode** XTreeNode_getChildrenParentRef(struct XTreeNode* this_root)
-{
-	if (ISNULL(this_root, ""))
-		return NULL;
-	XTreeNode* Parent = XBTreeNode_GetParent(this_root);
-	XTreeNode* ParentToLChild = XBTreeNode_GetLChild(Parent);
-	XTreeNode* ParentToRChild = XBTreeNode_GetRChild(Parent);
-
-	if (Parent == NULL)
-		return NULL;
-	if (ParentToLChild == this_root)
-		return ((XTreeNode**)(Parent->nodes)) + XBTreeLChild;
-	if (ParentToRChild == this_root)
-		return ((XTreeNode**)(Parent->nodes)) + XBTreeRChild;
-	//ArgIsNULL(isNULLInfo(0, "在父节点找不到孩子"));
-	return NULL;
-}
-
 XTreeNode* XBTree_SpinRR(XTreeNode** this_root, XTreeNode* nodes)
 {
 	if (ISNULL(nodes, ""))

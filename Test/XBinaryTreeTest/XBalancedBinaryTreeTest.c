@@ -15,7 +15,7 @@ void traverse(void* LPVal, void* args)
 	if(XTreeNode_GetParent(currentNode)==NULL)
 		return;
 	if(XTreeNode_getChildrenParentRef(currentNode)==NULL)
-		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.value);
+		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.data);
 }
 void XBalancedBinaryTreeTest()
 {

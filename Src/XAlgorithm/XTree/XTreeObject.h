@@ -16,23 +16,24 @@ extern "C" {
 #define XTreeNode_SetParent(this_root,node)			((((XTreeNode*)this_root)->parentNode)=node)//树-设置父节点(继承的子类均可以使用)
 #define XTreeNode_SetChild(this_root,type,node)		(((XTreeNode**)(((XTreeNode*)this_root)->nodes))[type]=node)//树-设置孩子(继承的子类均可以使用)
 //数据
-#define XTreeNode_SetDataPtr(this_root,ptr)			(((XTreeNode*)this_root)->value=ptr)
+#define XTreeNode_SetDataPtr(this_root,ptr)			(((XTreeNode*)this_root)->data=ptr)
 #define XTreeNode_SetData(this_root,data)			XTreeNode_setData(this_root,&data)//树-插入数据
-#define XTreeNode_GetDataPtr(this_root)				(((XTreeNode*)this_root)->value)
+#define XTreeNode_GetDataPtr(this_root)				(((XTreeNode*)this_root)->data)
 #define XTreeNode_GetData(this_root,Type)			(*((Type*)(XTreeNode_GetDataPtr(this_root))))//树-获取数据(继承的子类均可以使用)
-#define XTreeNode_GetDataTypeSize(this_root)		(((XTreeNode*)this_root)->valueTypeSize)
-#define XTreeNode_SetDataTypeSize(this_root,size)	(((XTreeNode*)this_root)->valueTypeSize=size)
+#define XTreeNode_GetDataTypeSize(this_root)		(((XTreeNode*)this_root)->dataTypeSize)
+#define XTreeNode_SetDataTypeSize(this_root,size)	(((XTreeNode*)this_root)->dataTypeSize=size)
 //数据释放方法
-typedef void (*XTreeNodeValueDeleteMethod)(void* value,void* args);
-
+typedef void (*XTreeNodeDataDeleteMethod)(void* value,void* args);
+//节点释放方法
+typedef void (*XTreeNodeDeleteMethod)(XTreeNode* node);
 //树节点
 typedef struct XTreeNode
 {
 	uint8_t nodeCount;//节点数量
-	size_t  valueTypeSize;//值类型大小
+	size_t  dataTypeSize;//值类型大小
 	struct XTreeNode* parentNode;//父节点
 	struct XTreeNode** nodes;//节点数组
-	void* value;//数据
+	void* data;//数据
 }XTreeNode;
 //初始化
 void XTreeNode_init(XTreeNode* node,const uint8_t nodeCount, const size_t dataTypeSize);
@@ -48,13 +49,15 @@ XTreeNode* XTreeNode_getChild(XTreeNode* this_root, const uint8_t nodeType);
 XTreeNode** XTreeNode_getChildRef(XTreeNode* this_root, const uint8_t nodeType);//
 XTreeNode** XTreeNode_getParentRef(XTreeNode* this_root);
 //替换孩子节点(将原孩子在父节点的指向修改为新的节点，并建立新的父子关系,旧节点的父指针指向空)
-bool XBTree_ReplacementChildNode(XTreeNode* formerChild/*旧的*/, XTreeNode* freshChild/*新的*/);
+bool XTree_ReplacementChildNode(XTreeNode* formerChild/*旧的*/, XTreeNode* freshChild/*新的*/);
 //获取节点在父节点指针的位置
 XTreeNode** XTreeNode_getChildrenParentRef(XTreeNode* this_root);//
 //释放一个节点
 void XTreeNode_delete(XTreeNode* node);
+//递归释放整颗树派生类
+void XTree_delete_base(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod, XTreeNodeDataDeleteMethod dataMethod, void* args);
 //递归释放整颗树
-void XTree_delete(XTreeNode* this_root, XTreeNodeValueDeleteMethod method,void* args);
+void XTree_delete(XTreeNode* this_root, XTreeNodeDataDeleteMethod method,void* args);
 
 
 #ifdef __cplusplus

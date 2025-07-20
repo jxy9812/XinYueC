@@ -41,7 +41,7 @@ typedef struct XBTreeNode
 
 #define XBTreeNode_delete							XTreeNode_delete
 //递归释放整颗树
-#define XBTree_delete								XTree_delete
+#define XBTree_delete(this_root,method,args)		XTree_delete_base(this_root,XBTreeNode_delete,method,args)
 XBTreeNode* XBTreeNode_create(const size_t dataTypeSize);
 void XBTreeNode_init(XBTreeNode* node, const size_t dataTypeSize);
 //创建初始化一个二叉树节点,并插入数据

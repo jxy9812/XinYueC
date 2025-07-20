@@ -57,9 +57,9 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
     }
     //XVector_resize_base(this_root->pvValueArray, XVector_getSize_base(LPNode) + 1);//储存数据的扩容+1
     XVector_push_back_base(this_root->pvValueArray, pvData);//插入数值扩容
-    XVector_push_back_base(this_root->pvValueArray, this_root->object.value);//插入第一个数值
+    XVector_push_back_base(this_root->pvValueArray, XTreeNode_GetDataPtr(this_root));//插入第一个数值
     XVector_sort_base(this_root->pvValueArray, less);//排序
-    memcpy(this_root->object.value, XContainerDataPtr(this_root->pvValueArray), TypeSize);//将最小的拷贝回去
+    memcpy(XTreeNode_GetDataPtr(this_root), XContainerDataPtr(this_root->pvValueArray), TypeSize);//将最小的拷贝回去
     //XVector_erase_int(this_root, 0, 0);//删除重复的第一个
     XVector_pop_front_base(this_root);
     return XTTTree_NodeNum(this_root);
@@ -81,7 +81,7 @@ void* XTTTree_data(const XTTTreeNode* this_root, size_t nSel)
         return 0;
     if (/*this_root->pvValueArray == NULL||*/ nSel==0)//当前是二节点
     {
-        return this_root->object.value;
+        return XTreeNode_GetDataPtr(this_root);
     }
     if (!XVector_isEmpty_base(this_root->pvValueArray)&& nSel<3)
     {
