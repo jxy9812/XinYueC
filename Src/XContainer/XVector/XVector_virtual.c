@@ -23,7 +23,7 @@ static void VXVector_rcopy(XVector* this_One, const XVector* this_Two);
 static void* VXVector_at(const XVector* this_vector, int64_t index);
 static void* VXVector_front(const XVector* this_vector);
 static void* VXVector_back(const XVector* this_vector);
-static void* VXVector_find(const XVector* this_vector, const void* findVal);//查找数据，返回找到的指针，没有返回NULL
+static int64_t VXVector_find(const XVector* this_vector, const void* findVal);//查找数据，返回找到的指针，没有返回NULL
 static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
 XVtable* XVector_class_init()
 {
@@ -451,18 +451,18 @@ void* VXVector_back(const XVector* this_vector)//返回向量尾指针，指向�
 		return VXVector_front(this_vector);
 	return VXVector_at(this_vector,XContainerSize(this_vector)-1);
 }
-void* VXVector_find(const XVector* this_vector, const void* findVal)//查找数据，返回找到的指针，没有返回NULL
+int64_t VXVector_find(const XVector* this_vector, const void* findVal)//查找数据，返回找到的指针，没有返回NULL
 {
 	if (ISNULL(this_vector, "")|| ISNULL(this_vector->m_equality, ""))
-		return NULL;
+		return -1;
 	//for (XVector_iterator* it = XVector_begin(this_vector); it != XVector_end(this_vector); it = XVector_iterator_add(this_vector, it))
 	for (size_t i = 0; i < XContainerSize(this_vector); i++)
 	{
 		void* data = ((uint8_t*)XContainerDataPtr(this_vector)) + i * XContainerTypeSize(this_vector);
 		if (this_vector->m_equality(data, findVal))
-			return data;
+			return i;
 	}
-	return NULL;
+	return -1;
 }
 void VXVector_sort(XVector* this_vector, XCompare compare)//排序
 {

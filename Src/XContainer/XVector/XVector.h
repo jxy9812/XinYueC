@@ -83,8 +83,8 @@ void* XVector_front_base(const  XVector* this_vector);
 //返回向量尾指针，指向向量最后一个元素
 void* XVector_back_base(const  XVector* this_vector);
 #define XVector_Back_Base(vector,type) (*((type*)XVector_back_base(vector)))
-//查找数据，返回找到的指针，没有返回NULL
-void* XVector_find_base(const XVector* this_vector, const void* findVal);
+//查找数据，返回索引，-1找不到
+int64_t XVector_find_base(const XVector* this_vector, const void* findVal);
 //排序
 void  XVector_sort_base(XVector* this_vector, XCompare compare);
 //释放内存

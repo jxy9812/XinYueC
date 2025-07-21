@@ -145,12 +145,11 @@ void* XVector_back_base(const XVector* this_vector)
 	return XClassGetVirtualFunc(this_vector, EXVector_Back, funcPtr)(this_vector);
 }
 
-void* XVector_find_base(const XVector* this_vector,const void* findVal)
+int64_t XVector_find_base(const XVector* this_vector,const void* findVal)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return NULL;
-	typedef void* (*funcPtr)(XVector*, const void*);
-	return XClassGetVirtualFunc(this_vector, EXVector_Find, funcPtr)(this_vector,findVal);
+		return -1;
+	return XClassGetVirtualFunc(this_vector, EXVector_Find, int64_t(*)(XVector*, const void*))(this_vector,findVal);
 }
 
 void XVector_sort_base(XVector* this_vector, XCompare compare)

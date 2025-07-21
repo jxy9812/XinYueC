@@ -1,4 +1,4 @@
-﻿#include"XHTree.h"
+﻿#include"XHierarchicalTree.h"
 XHTreeNode* XHTreeNode_create(const char* pvData, const size_t dataTypeSize)
 {
 	if (dataTypeSize == 0)
@@ -16,20 +16,17 @@ void XHTreeNode_init(XHTreeNode* node, const char* pvData, const size_t dataType
 	XTreeNode_init(node, 2,pvData, dataTypeSize);
 }
 
-XHTreeNode* XHTreeNode_addChild(XHTreeNode* parent, const char* pvData, const size_t dataTypeSize)
+bool XHTreeNode_addNode(XHTreeNode* parent, XHTreeNode* child)
 {
-	if (parent == NULL)
-		return NULL;
-	XHTreeNode* child =XHTreeNode_create(pvData,dataTypeSize);
-	if(child==NULL)
-		return NULL;
-	XTreeNode_SetParent(child,parent);
+	if (parent == NULL || child == NULL)
+		return false;
+	XTreeNode_SetParent(child, parent);
 	// 将新节点添加为第一个子节点
-	if (XHTreeNode_GetFirstChild (parent) == NULL)
+	if (XHTreeNode_GetFirstChild(parent) == NULL)
 	{
-		XHTreeNode_SetFirstChild(parent,child);
+		XHTreeNode_SetFirstChild(parent, child);
 	}
-	else 
+	else
 	{
 		// 找到最后一个兄弟节点
 		XHTreeNode* sibling = XHTreeNode_GetFirstChild(parent);
@@ -37,9 +34,47 @@ XHTreeNode* XHTreeNode_addChild(XHTreeNode* parent, const char* pvData, const si
 		{
 			sibling = XHTreeNode_GetNextSibling(sibling);
 		}
-		XHTreeNode_SetNextSibling(sibling,child);
+		XHTreeNode_SetNextSibling(sibling, child);
 	}
-	return child;
+	return true;
+}
+
+XHTreeNode* XHTreeNode_addChild(XHTreeNode* parent, const char* pvData, const size_t dataTypeSize)
+{
+	if (parent == NULL)
+		return NULL;
+	return XHTreeNode_addNode(parent,XHTreeNode_create(pvData, dataTypeSize));
+}
+
+bool XHTreeNode_removeNode(XHTreeNode* node, XTreeNodeDataDeleteMethod method, void* args)
+{
+	if (node == NULL)
+		return;
+	XHTreeNode* parent = XHTreeNode_GetParent(node);
+	if (parent)
+	{
+		XHTreeNode* prev = XHTreeNode_GetFirstChild(parent);
+		if (prev == node)
+		{
+			XHTreeNode_SetFirstChild(parent, XHTreeNode_GetNextSibling(prev));
+		}
+		else
+		{
+			while (prev)
+			{
+				if (XHTreeNode_GetNextSibling(prev) == node)
+				{
+					XHTreeNode_SetNextSibling(prev, XHTreeNode_GetNextSibling(node));
+					break;
+				}
+				prev = XHTreeNode_GetNextSibling(prev);
+			}
+		}
+		
+	}
+	//递归释放
+	XHTree_delete(node, method, args);
+	return true;
 }
 
 bool XHTreeNode_removeChild(XHTreeNode* parent, XEquality equality, XCompareRuleOne rule, const void* pvData,XTreeNodeDataDeleteMethod method, void* args)
@@ -82,6 +117,25 @@ XHTreeNode* XHTreeNode_findData(XHTreeNode* parent,XEquality equality, XCompareR
 		child = XHTreeNode_GetNextSibling(child);
 	}
 	return child;
+}
+
+void XHTree_print(XHTreeNode* this_root, int depth)
+{
+	if (this_root == NULL)
+		return;
+	// 缩进表示层级
+	for (int i = 0; i < depth; i++) {
+		printf("  ");
+	}
+	//printf("%s\n", node->data);
+
+	// 递归遍历子节点
+	XHTreeNode* child = XHTreeNode_GetFirstChild(this_root);
+	while (child != NULL)
+	{
+		XHTree_print(child, depth + 1);
+		child = XHTreeNode_GetNextSibling(child);
+	}
 }
 
 //bool XHTreeNode_removeChild(XHTreeNode* parent, XHTreeNode* child)

@@ -32,6 +32,7 @@ XDefineFunc_Define(XEquality, float)
 XDefineFunc_Define(XEquality, double)
 XDefineFunc_DefineTwo(XEquality, long, double)
 //其他
+XDefineFunc_Define(XEquality,c_str)//
 XDefineFunc_Define(XEquality,XPair)//XPair
 XDefineFunc_Define(XEquality,XPoint)//XPoint
 XDefineFunc_Define(XEquality,XByteArray)//XByteArray*

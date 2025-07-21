@@ -1,5 +1,5 @@
-﻿#ifndef XHTREE_H
-#define XHTREE_H
+﻿#ifndef XHIERARCHICALTREE_H
+#define XHIERARCHICALTREE_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,14 +18,17 @@ typedef struct XHTreeNode
 //
 XHTreeNode* XHTreeNode_create(const char* pvData, const size_t dataTypeSize);
 void XHTreeNode_init(XHTreeNode* node, const char* pvData, const size_t dataTypeSize);
+bool XHTreeNode_addNode(XHTreeNode* parent, XHTreeNode* child);
 // 添加子节点
 XHTreeNode* XHTreeNode_addChild(XHTreeNode* parent, const char* pvData, const size_t dataTypeSize);
+//删除节点(从树中删除节点node)
+bool XHTreeNode_removeNode(XHTreeNode* node, XTreeNodeDataDeleteMethod method, void* args);
 //删除子节点(只找儿子不找孙子)
 bool XHTreeNode_removeChild(XHTreeNode* parent, XEquality equality, XCompareRuleOne rule, const void* pvData, XTreeNodeDataDeleteMethod method, void* args);
-//查找红黑树节点
+//查找节点
 XHTreeNode* XHTreeNode_findData(XHTreeNode* parent, XEquality equality, XCompareRuleOne rule, void* pvData);
 // 前序遍历（根-子树）
-void preOrderTraversal(XHTreeNode* node, int depth);
+void XHTree_print(XHTreeNode* this_root, int depth);
 //释放一个节点(仅释放自己也不释放数据)
 #define XHTreeNode_delete								XTreeNode_delete
 //递归释放整颗树

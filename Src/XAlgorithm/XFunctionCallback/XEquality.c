@@ -29,6 +29,10 @@ const bool XEquality_ptr(const void* pvPrevValue, const void* pvNextValue)
 {
 	return *(void**)pvPrevValue == *(void**)pvNextValue;
 }
+const bool XEquality_c_str(const void* pvPrevValue, const void* pvNextValue)
+{
+	return strcmp(pvPrevValue, pvNextValue)==0;
+}
 const bool XEquality_XPair(const void* pvPrevValue, const void* pvNextValue)
 {
 	if (XPair_getSize(pvPrevValue) != XPair_getSize(pvNextValue))

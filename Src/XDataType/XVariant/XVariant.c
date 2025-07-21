@@ -486,11 +486,6 @@ size_t XVariant_toSize_t(XVariant* var)
 void* XVariant_toPtr(XVariant* var)
 {
 	return (void*)XVariant_toSize_t(var);
-	/*if (var == NULL)
-		return 0;
-	switch (var->m_type) {
-	case XVariantType_Uint8: return (void*)(*((uint8_t*)(((XVariant*)var)->data))); case XVariantType_Uint16: return (void*)(*((uint16_t*)(((XVariant*)var)->data))); case XVariantType_Uint32: return (void*)(*((uint32_t*)(((XVariant*)var)->data))); case XVariantType_Uint64: return (void*)(*((uint64_t*)(((XVariant*)var)->data))); case XVariantType_Int8: return (void*)(*((int8_t*)(((XVariant*)var)->data))); case XVariantType_Int16: return (void*)(*((int16_t*)(((XVariant*)var)->data))); case XVariantType_Int32: return (void*)(*((int32_t*)(((XVariant*)var)->data))); case XVariantType_Int64: return (void*)(*((int64_t*)(((XVariant*)var)->data))); case XVariantType_Bool: return (void*)(*((_Bool*)(((XVariant*)var)->data))); case XVariantType_Char: return (void*)(*((char*)(((XVariant*)var)->data))); case XVariantType_UChar: return (void*)(*((unsigned char*)(((XVariant*)var)->data))); case XVariantType_Int: return (void*)(*((int*)(((XVariant*)var)->data))); case XVariantType_Size_t: return (void*)(*((size_t*)(((XVariant*)var)->data))); case XVariantType_Ptr: return (void*)(*((void**)(((XVariant*)var)->data))); default:return 0;
-	};*/
 }
 
 float XVariant_toFloat(XVariant* var)

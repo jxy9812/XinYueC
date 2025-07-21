@@ -9,6 +9,8 @@ typedef struct XPLCTask XPLCTask;
 typedef struct XTreeNode XTreeNode;
 typedef struct XObject XObject; 
 typedef struct XSetBase XSetBase;
+typedef struct XAction XAction;
+typedef struct XMenu XMenu;
 typedef struct XEventMin XEventMin; 
 typedef struct XThread XThread;
 typedef struct XEventDispatcherThread XEventDispatcherThread;
