@@ -6,7 +6,14 @@
 #include"XLess.h"
 #include"XGreater.h"
 #include"XVector.h"
-void queueTest()
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+//队列测试
+static void XQueueTest();
+//优先队列
+static void XPriorityQueueTest();
+void XQueueTest()
 {
 #if	XQueue_ON
 	printf("XQueue 测试\n");
@@ -24,6 +31,7 @@ void queueTest()
 	printf("\n");
 	XQueue_delete_base(queue);
 #endif
+	XCoreApplication_requestQuit();
 }
 #if	XPriorityQueue_ON
 static insertData(void* value ,void*args)
@@ -32,7 +40,7 @@ static insertData(void* value ,void*args)
 	printf("入队:%d 堆顶:%d\n", *(int*)value, *(int*)XPriorityQueue_top_base(args));
 }
 #endif
-void XPriority_QueueTest()
+void XPriorityQueueTest()
 {
 #if	XPriorityQueue_ON
 	printf("XPriority_QueueTest 测试\n");
@@ -57,5 +65,24 @@ void XPriority_QueueTest()
 	XPriorityQueue_delete_base(queue);
 	XVector_delete_base(v);
 #endif
+	XCoreApplication_requestQuit();
+}
+void XMenu_XQueueTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XQueue(普通队列)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XQueueTest);
+	}
+}
+void XMenu_XPriorityQueueTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XPriorityQueue(优先队列)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XPriorityQueueTest);
+	}
 }
 #endif

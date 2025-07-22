@@ -2,6 +2,10 @@
 #if DEMOTEST
 #include"XString.h"
 #include"XStringList.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+static void XStringTest();
 static void XFor_each_XString(void* LPVal, void* args)
 {
 	XString* string = LPVal;
@@ -56,6 +60,15 @@ void XStringTest()
 	XString_delete_base(str);
 #endif
 	}
+	XCoreApplication_requestQuit();
 }
-
+void XMenu_XStringTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("字符串(XString)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XStringTest);
+	}
+}
 #endif

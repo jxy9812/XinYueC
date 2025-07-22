@@ -4,12 +4,17 @@
 #include"XFunctionCallback.h"
 #include"XEquality.h"
 #include"XLess.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+static void XStringListTest();
 static void XFor_each_XString(void* LPVal, void* args)
 {
 	XString* string = LPVal;
 	//printf("测试\n");
 	printf("%s \n",XString_c_str(string) );
 }
+
 void XStringListTest()
 {
 #if XVector_ON
@@ -31,5 +36,15 @@ void XStringListTest()
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
+	XCoreApplication_requestQuit();
+}
+void XMenu_XStringListTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XStringList(字符串数组)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XStringListTest);
+	}
 }
 #endif

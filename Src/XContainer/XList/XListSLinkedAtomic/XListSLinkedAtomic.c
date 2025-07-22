@@ -286,13 +286,16 @@ bool VXListAtomic_pop_front(XListSLinkedAtomic* this_list) {
 }
 
 // 尾部删除
-bool VXListAtomic_pop_back(XListSLinkedAtomic* this_list) {
-    if (XListSLinkedAtomic_isEmpty_base(this_list)) return false;
+bool VXListAtomic_pop_back(XListSLinkedAtomic* this_list) 
+{
+    if (XListSLinkedAtomic_isEmpty_base(this_list))
+        return false;
 
     XListSNodeAtomic* tail;
     XListSNodeAtomic* prev;
 
-    while (1) {
+    while (true)
+    {
         tail = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_tail);
         if (tail == NULL) return false;  // 链表可能已变空
 
@@ -300,28 +303,32 @@ bool VXListAtomic_pop_back(XListSLinkedAtomic* this_list) {
         XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
 
         // 查找尾节点的前一个节点
-        while (current != NULL && current->next != tail) {
-            prev = current;
+        while (current != NULL && current->next != tail)
+        {
             current = current->next;
+            prev = current;
         }
 
         // 如果尾节点已被其他线程修改
-        if (tail != (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_tail)) {
+        if (tail != (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_tail)) 
+        {
             continue;
         }
 
         // 如果尾节点是头节点，说明链表即将变空
-        if (prev == NULL) {
-            if (XAtomic_compare_exchange_strong_ptr(
-                &this_list->m_head, (void**)&tail, NULL)) {
+        if (prev == NULL) 
+        {
+            if (XAtomic_compare_exchange_strong_ptr(&this_list->m_head, (void**)&tail, NULL)) 
+            {
                 XAtomic_store_ptr(&this_list->m_tail, NULL);
                 break;
             }
         }
-        else {
+        else 
+        {
             // 尝试将前一个节点的next设为NULL
-            if (XAtomic_compare_exchange_strong_ptr(
-                &prev->next, (void**)&tail, NULL)) {
+            if (XAtomic_compare_exchange_strong_ptr(&(prev->next), (void**)&tail, NULL))
+            {
                 XAtomic_store_ptr(&this_list->m_tail, prev);
                 break;
             }

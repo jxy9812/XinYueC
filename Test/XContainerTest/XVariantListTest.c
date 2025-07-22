@@ -3,10 +3,13 @@
 #include"XVariantList.h"
 #include"XString.h"
 #include"XMap.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 void XVariantListTest()
 {
 	printf("--------------------------XVariantList测试-----------------------\n");
-	while (true)
+	//while (true)
 	{
 		XVariantList* list = XVariantList_create();
 		XVariant* var = XVariant_create_int(8);
@@ -88,6 +91,15 @@ void XVariantListTest()
 		}
 		XVariantList_delete_base(list);
 	}
+	XCoreApplication_requestQuit();
 }
-
+void XMenu_XVariantListTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XVariantList(变体数组)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XVariantListTest);
+	}
+}
 #endif

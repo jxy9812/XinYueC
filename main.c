@@ -53,24 +53,14 @@ int main(int argc, char* args[])
 	//XCylinderTest();	
 	//XCircularQueueAtomicTest();
 	//XSerialPortTest();
-	//stackTest();
+	//XStackTest();
 	//XStringTest();
 	//XVectorTest();
 	//return;
 	return XCoreApplication_exec();
-	XStringListTest();
 	cJsonTest();
 	cJsonXContainerTest();
-	
-	stackTest();
-	queueTest();
-	XPriority_QueueTest();
-	XStringTest();
 	XRedBlackTreeTest();
-	XMapTest();
-	return;
-	
-
 	//XMapAndXVectorFindTest();
 	//XBinarySearchTest();
 	SortTest();

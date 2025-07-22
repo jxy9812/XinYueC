@@ -3,6 +3,12 @@
 #include<stdint.h>
 #include"XCircularQueueAtomic.h"
 #include"XThread.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+
+static void XCircularQueueAtomicTest();
+
 // 线程函数 1：输出 "Thread 1 is running"
 static void ThreadReceive(void* lpParam)
 {
@@ -47,6 +53,15 @@ void XCircularQueueAtomicTest()
 #else
 	IS_ON_DEBUG(XCircularQueueAtomic_ON);
 #endif
+	XCoreApplication_requestQuit();
 }
-
+void XMenu_XCircularQueueAtomicTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XCircularQueueAtomic(无锁环形队列)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XCircularQueueAtomicTest);
+	}
+}
 #endif

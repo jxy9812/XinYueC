@@ -4,7 +4,10 @@
 #include"XEquality.h"
 #include"XLess.h"
 #include"XBalancedBinaryTree.h"
-
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+static void XHashSetTest();
 static void XFor_each_pair(void* pvVal, void* args)
 {
 	int val = *((int*)pvVal);
@@ -40,7 +43,16 @@ void XHashSetTest()
 		XHashSet_clear_base(set);
 		XHashSet_delete_base(set);
 	}
-
 #endif
+	XCoreApplication_requestQuit();
+}
+void XMenu_XHashSetTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XHashSet(无序集合)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XHashSetTest);
+	}
 }
 #endif

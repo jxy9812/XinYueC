@@ -8,24 +8,37 @@ extern "C" {
 #if DEMOTEST
 	//容器主菜单
 	void XMenu_XContainerTest(XMenu* root);
-	void XMenu_XListTest(XMenu* root);
-	//双向循环链表菜单
-	void XMenu_XListDLinkedTest(XMenu* root);
-	//单向链表菜单
-	void XMenu_XListSLinkedTest(XMenu* root);
+
 	//数组
+	void XMenu_VectorTest(XMenu* root);
 	void XMenu_XVectorTest(XMenu* root);
+	void XMenu_XStringListTest(XMenu* root);
+	void XMenu_XVariantListTest(XMenu* root);
+
+	void XMenu_ListTest(XMenu* root);
+	void XMenu_XListDLinkedTest(XMenu* root);
+	void XMenu_XListSLinkedTest(XMenu* root);
+	void XMenu_XListSLinkedAtomicTest(XMenu* root);
+
 	//栈
 	void XMenu_XStackTest(XMenu* root);
-	//栈测试
-	void stackTest();
-	//优先队列
-	void XPriority_QueueTest();
-	//循环队列测试
-	void XCircularQueueTest();
-	void XCircularQueueAtomicTest();
-	//队列测试
-	void queueTest();
+	//队列
+	void XMenu_QueueTest(XMenu* root);
+	void XMenu_XCircularQueueTest(XMenu* root);
+	void XMenu_XCircularQueueAtomicTest(XMenu* root);
+	void XMenu_XPriorityQueueTest(XMenu* root);
+	void XMenu_XQueueTest(XMenu* root);
+	//映射 Map
+	void XMenu_MapTest(XMenu* root);
+	void XMenu_XMapTest(XMenu* root);
+	void XMenu_XHashMapTest(XMenu* root);
+	//集合 set
+	void XMenu_SetTest(XMenu* root);
+	void XMenu_XSetTest(XMenu* root);
+	void XMenu_XHashSetTest(XMenu* root);
+
+	//字符串
+	void XMenu_XStringTest(XMenu* root);
 
 	//字符串数组测试
 	void XStringListTest();

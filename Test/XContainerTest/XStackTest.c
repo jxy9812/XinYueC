@@ -4,7 +4,9 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
-void stackTest()
+//栈测试 XCoreApplication_requestQuit();
+static void XStackTest();
+void XStackTest()
 {
 #if XStack_ON
 	printf("XStack 测试\n");
@@ -42,11 +44,11 @@ void stackTest()
 }
 void XMenu_XStackTest(XMenu* root)
 {
-	XMenu* menu = XMenu_create("栈");
+	XMenu* menu = XMenu_create("XStack(栈)");
 	XMenu_addMenu(root, menu);
 	{
 		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, stackTest);
+		XAction_setAction(action, XStackTest);
 	}
 }
 #endif

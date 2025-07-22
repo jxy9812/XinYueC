@@ -70,7 +70,7 @@ void XVectorTest()
 }
 void XMenu_XVectorTest(XMenu* root)
 {
-	XMenu* menu = XMenu_create("数组");
+	XMenu* menu = XMenu_create("XVector(数组)");
 	XMenu_addMenu(root, menu);
 	{
 		XAction* action = XMenu_addAction(menu, "主测试");

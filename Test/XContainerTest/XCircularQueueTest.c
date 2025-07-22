@@ -1,6 +1,11 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XCircularQueue.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+//循环队列测试
+static void XCircularQueueTest();
 void XCircularQueueTest()
 {
 #if XCircularQueue_ON
@@ -33,6 +38,15 @@ void XCircularQueueTest()
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif
+	XCoreApplication_requestQuit();
 }
-
+void XMenu_XCircularQueueTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XCircularQueue(环形队列)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XCircularQueueTest);
+	}
+}
 #endif

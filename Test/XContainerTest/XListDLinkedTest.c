@@ -46,8 +46,8 @@ void XListDLinkedSortTest()
 
 	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
 	XListBase_delete_base(li);
-	XCoreApplication_requestQuit();
 #endif
+	XCoreApplication_requestQuit();
 }
 void XListDLinkedIterator()
 {
@@ -69,8 +69,8 @@ void XListDLinkedIterator()
 		printf("%d\n", XListDNode_Data(it.node, int));
 	}
 	XListBase_delete_base(li);
-	XCoreApplication_requestQuit();
 #endif
+	XCoreApplication_requestQuit();
 }
 
 void XListDLinkedTest()
@@ -109,8 +109,8 @@ void XListDLinkedTest()
 	//XList_clear_base(list);
 	printf("删除元素后遍历\t"); XListDLinked_iterator_for_each(list, ListFor_each, NULL);
 	XListBase_delete_base(list);
-	XCoreApplication_requestQuit();
 #endif
+	XCoreApplication_requestQuit();
 }
 
 void XListDLinkedSwapTest()//交换函数测试
@@ -146,8 +146,8 @@ void XListDLinkedSwapTest()//交换函数测试
 	XListDLinked_iterator_for_each(li2, ListFor_each, NULL); printf("\n");
 	XListBase_delete_base(li1);
 	XListBase_delete_base(li2);
-	XCoreApplication_requestQuit();
 #endif
+	XCoreApplication_requestQuit();
 }
 void XMenu_XListDLinkedTest(XMenu* root)
 {

@@ -4,7 +4,10 @@
 #include"XEquality.h"
 #include"XLess.h"
 #include"XBalancedBinaryTree.h"
-
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+static void XSetTest();
 static void XFor_each_pair(void* LPVal, void* args)
 {
 	int val = *((int*)LPVal);
@@ -40,7 +43,16 @@ void XSetTest()
 		XSet_clear_base(set);
 		XSet_delete_base(set);
 	}
-
+	XCoreApplication_requestQuit();
 #endif
+}
+void XMenu_XSetTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XSet(有序集合)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XSetTest);
+	}
 }
 #endif

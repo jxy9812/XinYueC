@@ -6,6 +6,13 @@
 #include<time.h>
 #include<stdio.h>
 #include<stdlib.h>
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+static void XListSLinkedAtomicSortTest();
+static void XListSLinkedAtomicIterator();
+static void XListSLinkedAtomicSwapTest();
+static void XListSLinkedAtomicTest();
 static void ListFor_each(void* LPVal, void* args)
 {
 	printf("%d ", *(int*)LPVal);
@@ -35,6 +42,7 @@ void XListSLinkedAtomicSortTest()
 	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
 	XListBase_delete_base(li);
 #endif
+	XCoreApplication_requestQuit();
 }
 void XListSLinkedAtomicIterator()
 {
@@ -52,6 +60,7 @@ void XListSLinkedAtomicIterator()
 	}
 	XListBase_delete_base(li);
 #endif
+	XCoreApplication_requestQuit();
 }
 
 void XListSLinkedAtomicTest()
@@ -95,6 +104,7 @@ void XListSLinkedAtomicTest()
 	printf("删除元素后遍历\t"); XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL);
 	XListBase_delete_base(list);
 #endif
+	XCoreApplication_requestQuit();
 }
 
 void XListSLinkedAtomicSwapTest()//交换函数测试
@@ -131,6 +141,27 @@ void XListSLinkedAtomicSwapTest()//交换函数测试
 	XListBase_delete_base(li1);
 	XListBase_delete_base(li2);
 #endif
+	XCoreApplication_requestQuit();
 }
-
+void XMenu_XListSLinkedAtomicTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XListSLinkedAtomic(单向无锁链表)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XListSLinkedAtomicTest);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "排序测试");
+		XAction_setAction(action, XListSLinkedAtomicSortTest);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "迭代器测试");
+		XAction_setAction(action, XListSLinkedAtomicIterator);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "交换测试");
+		XAction_setAction(action, XListSLinkedAtomicSwapTest);
+	}
+}
 #endif

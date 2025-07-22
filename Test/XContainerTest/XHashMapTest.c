@@ -4,7 +4,10 @@
 #include"XEquality.h"
 #include"XLess.h"
 #include"XBalancedBinaryTree.h"
-
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+static void XHashMapTest();
 static void XFor_each_pair(void* LPVal, void* args)
 {
 	XPair* pair = (XPair*)LPVal;
@@ -43,7 +46,16 @@ void XHashMapTest()
 		XHashMap_clear_base(map);
 		XHashMap_delete_base(map);
 	}
-	
 #endif
+	XCoreApplication_requestQuit();
+}
+void XMenu_XHashMapTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XHashMap(无序映射)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XHashMapTest);
+	}
 }
 #endif

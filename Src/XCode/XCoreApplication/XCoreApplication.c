@@ -68,10 +68,7 @@ XEventDispatcherThread* XCoreApplication_getEventDispatcher()
 
 void XCoreApplication_requestQuit()
 {
-	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
-	if (app == NULL)
-		return ;
-	app->m_quit = true;
+	XCoreApplication_global()->m_quit = true;
 }
 
 int XCoreApplication_exec()

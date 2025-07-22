@@ -4,7 +4,10 @@
 #include"XEquality.h"
 #include"XLess.h"
 #include"XBalancedBinaryTree.h"
-
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+static void XMapTest();
 static void XFor_each_pair(void* LPVal, void* args)
 {
 	XPair* pair = (XPair*)LPVal;
@@ -40,5 +43,15 @@ void XMapTest()
 		XMap_delete_base(map);
 	}
 #endif
+	XCoreApplication_requestQuit();
+}
+void XMenu_XMapTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XMap(有序映射)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XMapTest);
+	}
 }
 #endif
