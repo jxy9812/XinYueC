@@ -22,7 +22,7 @@ bool XMenu_removeAction(XMenu* menu, XAction* action);
 const XVector* XMenu_getActions(XMenu* menu);
 
 bool XMenu_addMenu(XMenu* menu, XMenu* newMenu);
-
+bool XMenu_removeMenu(XMenu* menu);
 XVector* XMenu_getMenus(XMenu* menu);
 void XMenu_delete(XMenu* menu);
 #ifdef __cplusplus

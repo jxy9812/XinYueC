@@ -1,6 +1,9 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XStack.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 void stackTest()
 {
 #if XStack_ON
@@ -35,6 +38,15 @@ void stackTest()
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif
+	XCoreApplication_requestQuit();
 }
-
+void XMenu_XStackTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("栈");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, stackTest);
+	}
+}
 #endif

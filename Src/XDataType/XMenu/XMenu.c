@@ -68,6 +68,7 @@ bool XMenu_removeAction(XMenu* menu, XAction* action)
 	if (index == -1)
 		return false;
 	XVector_remove_base(data->actions, index,1);
+	XAction_delete(action);
 	return true;
 }
 
@@ -90,6 +91,19 @@ bool XMenu_addMenu(XMenu* menu, XMenu* newMenu)
 	}
 	//XMenu_delete(newMenu);
 	return false;
+}
+
+bool XMenu_removeMenu(XMenu* menu)
+{
+	if (menu == NULL)
+		return false;
+	XHTreeNode* parent = XHTreeNode_GetParent(menu);
+	if(parent==NULL)
+	{
+		XMenu_delete(menu);
+		return true;
+	}
+	return XHTreeNode_removeNode(menu, DataDeleteMethod, NULL);
 }
 
 XVector* XMenu_getMenus(XMenu* menu)

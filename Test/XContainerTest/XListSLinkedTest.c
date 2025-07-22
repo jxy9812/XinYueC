@@ -3,9 +3,17 @@
 #include"XListSLinked.h"
 #include"XEquality.h"
 #include"XCompare.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 #include<time.h>
 #include<stdio.h>
 #include<stdlib.h>
+static void XListSLinkedTest();
+static void XListSLinkedSwapTest();
+static void XListSLinkedIterator();
+static void XListSLinkedSortTest();
+
 static void ListFor_each(void* LPVal, void* args)
 {
 	printf("%d ", *(int*)LPVal);
@@ -34,6 +42,7 @@ void XListSLinkedSortTest()
 
 	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
 	XListBase_delete_base(li);
+	XCoreApplication_requestQuit();
 #endif
 }
 void XListSLinkedIterator()
@@ -51,6 +60,7 @@ void XListSLinkedIterator()
 		printf("%d\n", XListSNode_Data(it.node, int));
 	}
 	XListBase_delete_base(li);
+	XCoreApplication_requestQuit();
 #endif
 }
 
@@ -94,6 +104,7 @@ void XListSLinkedTest()
 	//XList_clear_base(list);
 	printf("删除元素后遍历\t"); XListSLinked_iterator_for_each(list, ListFor_each, NULL);
 	XListBase_delete_base(list);
+	XCoreApplication_requestQuit();
 #endif
 }
 
@@ -130,7 +141,29 @@ void XListSLinkedSwapTest()//交换函数测试
 	XListSLinked_iterator_for_each(li2, ListFor_each, NULL); printf("\n");
 	XListBase_delete_base(li1);
 	XListBase_delete_base(li2);
+	XCoreApplication_requestQuit();
 #endif
+}
+void XMenu_XListSLinkedTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XListDLinked(单向链表)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XListSLinkedTest);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "排序测试");
+		XAction_setAction(action, XListSLinkedSortTest);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "迭代器测试");
+		XAction_setAction(action, XListSLinkedIterator);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "交换测试");
+		XAction_setAction(action, XListSLinkedSwapTest);
+	}
 }
 
 #endif

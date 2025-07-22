@@ -1,9 +1,8 @@
 ﻿#include"XDataStructTest.h"
 #include"XVector_iterator.h"
-#include"XClass.h"
+#include"XMenuTest.h"
 #include<stdio.h>
 #include<math.h>
-#include"XAtomic.h"
 #include"XCoreApplication.h"
 int main(int argc, char* args[])
 {
@@ -62,12 +61,6 @@ int main(int argc, char* args[])
 	XStringListTest();
 	cJsonTest();
 	cJsonXContainerTest();
-	//return;
-	XListDLinkedTest();
-	XListDLinkedSortTest();
-	XListDLinkedIterator();
-	XListDLinkedSwapTest();
-	XVectorTest();
 	
 	stackTest();
 	queueTest();

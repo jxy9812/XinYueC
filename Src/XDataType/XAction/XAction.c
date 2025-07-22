@@ -66,7 +66,7 @@ void XAction_delete(XAction* action)
 
 void XAction_trigger(XAction* action)
 {
-	if (action)
+	if (action->action)
 		action->action(action->data);
 }
 

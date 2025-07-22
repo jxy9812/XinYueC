@@ -4,6 +4,12 @@
 #include"XFunctionCallback.h"
 #include"XEquality.h"
 #include"XLess.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+//动态数组测试
+static void XVectorTest();
+
 static void XFor_each_int(void* LPVal)
 {
 	printf("%d \n", *(int*)LPVal);
@@ -40,9 +46,9 @@ void XVectorTest()
 	XVector_sort_base(v, XLess_int);*/
 	printf("排序数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	int findVal = 100;
-	int* findRet=XVector_find_base(v, &findVal);
-	if(findRet!=NULL)
-	printf("找到的数字:%d\n", *findRet);
+	int64_t index =XVector_find_base(v, &findVal);
+	if(index !=-1)
+		printf("找到的数字,索引号:%d\n", index);
 	XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");
 	for (XVector_iterator it = XVector_begin(v), endIt = XVector_end(v); !XVector_iterator_equality(&it, &endIt);)
 	{
@@ -60,5 +66,15 @@ void XVectorTest()
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
+	XCoreApplication_requestQuit();
+}
+void XMenu_XVectorTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("数组");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XVectorTest);
+	}
 }
 #endif
