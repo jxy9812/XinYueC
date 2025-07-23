@@ -6,6 +6,9 @@ extern "C" {
 #include"XDataStructConfig.h"
 #include"XClass.h"
 #if DEMOTEST
+	void XMenu_XTimerTest(XMenu* root);
+	void XMenu_XTimerWheelTest(XMenu* root);
+
 	void XTimerWheelTest();
 #endif // DEMOTEST
 

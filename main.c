@@ -43,7 +43,7 @@ int main(int argc, char* args[])
 	//XSocketTest();
 	//XHashSetTest();
 	//XSetTest();
-	//XBinaryTreeObjectTest();
+	//XBinaryTreeTest();
 	//XRedBlackTreeTest();
 	//XMapTest();
 	//return;
@@ -66,7 +66,6 @@ int main(int argc, char* args[])
 	SortTest();
 	//XMazeGeneratedTest();
 	//XMazePathfinding();
-	XBinaryTreeObjectTest();	
 	//XBalancedBinaryTreeTest();
 	
 #endif

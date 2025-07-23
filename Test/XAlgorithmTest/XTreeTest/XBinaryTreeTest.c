@@ -1,15 +1,18 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XBinaryTree.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
 	//int* val = XVector_at_base(((XTreeNode*)LPVal)->value, 0);
 	printf("%d ", XTreeNode_GetData((*(XTreeNode**)LPVal),int));
 }
-void XBinaryTreeObjectTest()
+void XBinaryTreeTest()
 {
-	while (true)
+	//while (true)
 	{
 #if XVector_ON
 		int a[] = { 0,1,2,3,4,5,6,7 };
@@ -53,6 +56,15 @@ void XBinaryTreeObjectTest()
 		IS_ON_DEBUG(XVector_ON);
 #endif
 	}
+	XCoreApplication_requestQuit();
 }
-
+void XMenu_XBinaryTreeTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XBinaryTree(二叉树)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XBinaryTreeTest);
+	}
+}
 #endif

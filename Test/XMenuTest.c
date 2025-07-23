@@ -6,32 +6,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-static void XMenu_XTreeTest(XMenu* root)
-{
-	XMenu* menu = XMenu_create("树结构");
-	XMenu_addMenu(root, menu);
-}
-static void XMenu_XIOTest(XMenu* root)
-{
-	XMenu* menu = XMenu_create("IO设备");
-	XMenu_addMenu(root, menu);
-}
-static void XMenu_XProtocolStackTest(XMenu* root)
-{
-	XMenu* menu = XMenu_create("协议栈");
-	XMenu_addMenu(root, menu);
-}
-static void XMenu_XTimerTest(XMenu* root)
-{
-	XMenu* menu = XMenu_create("定时器");
-	XMenu_addMenu(root, menu);
-}
-static void XMenu_XAlgorithmTest(XMenu* root)
-{
-	XMenu* menu = XMenu_create("算法");
-	XMenu_addMenu(root, menu);
-	XMenu_XTreeTest(menu);
-}
 XMenu* XMenuTest_create()
 {
 	XMenu* root = XMenu_create("测试代码");

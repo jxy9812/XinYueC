@@ -2,6 +2,9 @@
 #include"cJSON.h"
 #include"XMemory.h"
 #include"XString.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 #if DEMOTEST
 void cJsonTest()
 {
@@ -34,6 +37,7 @@ void cJsonTest()
     // 释放字符串和 cJSON 对象
     XMemory_free(json_str_modified);
     cJSON_Delete(root);
+    XCoreApplication_requestQuit();
 }
 //CJson容器测试
 void cJsonXContainerTest()
@@ -67,5 +71,15 @@ void cJsonXContainerTest()
     // 释放字符串和 cJSON 对象
     XString_delete_base(json_str_modified);
     cJSON_Delete(root);
+    XCoreApplication_requestQuit();
+}
+void XMenu_CJsonTest(XMenu* root)
+{
+    XMenu* menu = XMenu_create("CJson(Json)");
+    XMenu_addMenu(root, menu);
+    {
+        XAction* action = XMenu_addAction(menu, "主测试");
+        XAction_setAction(action, cJsonTest);
+    }
 }
 #endif

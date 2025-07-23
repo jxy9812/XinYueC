@@ -6,9 +6,13 @@ extern "C" {
 #include"XDataStructConfig.h"
 #include"XClass.h"
 #if DEMOTEST
+	void XMenu_XIOTest(XMenu* root);
+	void XMenu_XSerialPortTest(XMenu* root);
+	void XMenu_XSocketTest(XMenu* root);
+
+
+
 	void XPWMDeviceTest();
-	void XSerialPortTest();
-	void XSocketTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

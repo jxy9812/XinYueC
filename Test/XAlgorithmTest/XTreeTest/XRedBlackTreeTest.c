@@ -5,6 +5,9 @@
 #include"XEquality.h"
 #include"XFunctionCallback.h"
 #include<stdio.h>
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
@@ -68,6 +71,15 @@ void XRedBlackTreeTest()
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
+	XCoreApplication_requestQuit();
 }
-
+void XMenu_XRedBlackTreeTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XRedBlackTree(红黑树)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XRedBlackTreeTest);
+	}
+}
 #endif

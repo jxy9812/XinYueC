@@ -16,6 +16,7 @@ XVtable* XTJCHMIComm_class_init();
 XTJCHMIComm* XTJCHMIComm_create(XIODeviceBase* io);
 void  XTJCHMIComm_init(XTJCHMIComm* comm, XIODeviceBase* io);
 
+#define XTJCHMIComm_delete_base					XDataFrameComm_delete_base
 #define XTJCHMIComm_setRecvValidCRC16_base		XDataFrameComm_setRecvValidCRC16_base
 #define XTJCHMIComm_setSendValidCRC16_base		XDataFrameComm_setSendValidCRC16_base
 

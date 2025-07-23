@@ -7,6 +7,9 @@
 #include"XString.h"
 #include"XStringList.h"
 #include"XTimerGroupBase.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 #include <stdio.h>
 #include <stdlib.h>
 static void XFuncCodeCb0x1A(uint8_t code, void* obj, void* data, void* userData)
@@ -120,16 +123,22 @@ void TJCHMICommTest()
 	XDataFrameComm_addFuncCode(comm, &funcCode, XFuncCodeCb0x1A, NULL);
 	funcCode = 0x30;
 	XDataFrameComm_addFuncCode(comm, &funcCode, XFuncCodeCb0x30, NULL);
-	XDataFrameComm_connect_base(comm);
-	size_t speed = 1, current = XTimerBase_getCurrentTime();
-	/*while (true)
+	if (!XDataFrameComm_connect_base(comm))
 	{
-		if (XTimerBase_getCurrentTime() > current + 1000)
-		{
-			XDataFrameComm_sendTextFmt(comm, false,  "main.cuttingMotorSp.val=%d", speed++);
-			current = XTimerBase_getCurrentTime();
-		}
-		XDataFrameComm_poll_base(comm);
-		XTimerGroupBase_global_poll();
-	}*/
+		//XSerialPort_delete_base(USART);//内存管理已经被XTJCHMIComm接管
+		XTJCHMIComm_delete_base(comm);
+		XCoreApplication_requestQuit();
+		return;
+	}
+	//size_t speed = 1, current = XTimerBase_getCurrentTime();
+}
+
+void XMenu_TJCHMICommTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("TJCHMIComm(陶晶驰通信类)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, TJCHMICommTest);
+	}
 }

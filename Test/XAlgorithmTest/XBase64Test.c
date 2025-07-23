@@ -1,6 +1,9 @@
 ﻿#include"XAlgorithmTest.h"
 #include"XBase64.h"
 #include"XVector.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 void XBase64Test()
 {
 	printf("XBase64测试\n");
@@ -26,4 +29,14 @@ void XBase64Test()
 		XVector_delete_base(toBase);
 	if (fromBase64)
 		XVector_delete_base(fromBase64);
+	XCoreApplication_requestQuit();
+}
+void XMenu_XBase64Test(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XBase64(base64)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XBase64Test);
+	}
 }

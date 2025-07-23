@@ -57,7 +57,7 @@ void VXCommunicatorBase_delete(XCommunicatorBase* comm)
 	/*if (comm->m_timerGroup)
 		XTimerGroupBase_delete_base(comm->m_timerGroup);*/
 		// 释放父对象
-	XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(comm);
+	XVtableGetFunc(XObject_class_init(), EXClass_Delete, void(*)(XObject*))(comm);
 }
 
 bool VXCommunicatorBase_connect(XCommunicatorBase* comm)

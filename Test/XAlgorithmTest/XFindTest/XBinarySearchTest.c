@@ -4,6 +4,9 @@
 #include"XVector.h"
 #include"XLess.h"
 #include"XEquality.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 void XBinarySearchTest()
 {
 #if(XVector_ON)
@@ -20,5 +23,15 @@ void XBinarySearchTest()
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
+	XCoreApplication_requestQuit();
+}
+void XMenu_XBinarySearchTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XBinarySearch(二分查找)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XBinarySearchTest);
+	}
 }
 #endif

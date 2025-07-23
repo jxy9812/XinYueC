@@ -9,6 +9,10 @@
 #include"XModbusDigitalSwitch.h"
 #include"XSwitchDeviceModbus.h"
 #include"XSocket.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+
 static XSwitchDeviceModbus* SW;
 static void StateChangeCallback0(XSwitchDeviceBase* sw)
 {
@@ -112,6 +116,22 @@ void XModbusTest()
 
     //使能打开Modbus
    // XModbus_enable(modbus);
-    XModbus_connect_base(modbus);
-   // XModbusTest_threadReceiveCreate(modbus);
+    if (!XModbus_connect_base(modbus))
+    {
+        //XSerialPort_delete_base(USART);//内存管理已经被XModbus接管
+        XModbus_delete_base(modbus);
+        XCoreApplication_requestQuit();
+        return;
+    }
+}
+
+
+void XMenu_XModbusTest(XMenu* root)
+{
+    XMenu* menu = XMenu_create("XModbus(modbus)");
+    XMenu_addMenu(root, menu);
+    {
+        XAction* action = XMenu_addAction(menu, "主测试");
+        XAction_setAction(action, XModbusTest);
+    }
 }

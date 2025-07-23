@@ -3,6 +3,9 @@
 #include"XBalancedBinaryTree.h"
 #include"XLess.h"
 #include"XEquality.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
@@ -84,5 +87,16 @@ void XBalancedBinaryTreeTest()
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
+	XCoreApplication_requestQuit();
 }
+void XMenu_XBalancedBinaryTreeTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XBalancedBinaryTree(平衡二叉树)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XBalancedBinaryTreeTest);
+	}
+}
+
 #endif

@@ -1,6 +1,10 @@
 ﻿#include"XTimerTest.h"
 #include"XTimerGroupWheel.h"
 #include"XTimerWheel.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+
 static void Callback1(void* userData)
 {
 	static size_t current = 0;
@@ -38,7 +42,6 @@ void XTimerWheelTest()
 		XTimerWheel_setTimerCallback(timer,Callback1);
 		XTimerBase_setTimerGroup(timer,wheel);
 		XTimerWheel_start_base(timer);
-		//XTimerGroupBase_addTimer_base(wheel, timer);
 	
 	}
 	{
@@ -47,13 +50,16 @@ void XTimerWheelTest()
 		XTimerWheel_setInterval_base(timer, 49);
 		XTimerWheel_setTimeout_base(timer, 15);
 		XTimerWheel_setTimerCallback(timer, Callback2);
-		//XTimerGroupBase_addTimer_base(wheel, timer);
-		//仅从任务中删除，需要手动释放
-		//XTimerGroupWheel_removeTimer_base(wheel,timer);
+		//XTimerWheel_start_base(timer);
 	}
-	//XTimerGroupWheel_removeTimeWheel_base(wheel);
-	/*while (true)
+}
+
+void XMenu_XTimerWheelTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XTimerWheel(时间轮定时器)");
+	XMenu_addMenu(root, menu);
 	{
-		XTimerGroupWheel_poll_base(wheel);
-	}*/
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XTimerWheelTest);
+	}
 }

@@ -1,6 +1,9 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XHuffmanTree.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 #if XMap_ON
 static void for_each(void* LPVal, void* args)
 {
@@ -43,6 +46,15 @@ void XHuffmanTreeTest()
 
 
 #endif
+	XCoreApplication_requestQuit();
 }
-
+void XMenu_XHuffmanTreeTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XHuffmanTree(哈夫曼树)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XHuffmanTreeTest);
+	}
+}
 #endif

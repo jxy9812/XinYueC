@@ -56,7 +56,7 @@ void XString_append_base(XString* this_string, const char* str);
 void XString_append_string(XString* this_string, const XString* string);
 // 索引前开始插入字符串
 void XString_insert_base(XString* this_string, const int64_t index, const char* string);
-
+void XString_assign_base(XString* this_string, const char* string);
 // 返回字符串
 const char* XString_data(const XString* this_string);
 #define XString_c_str		XString_data

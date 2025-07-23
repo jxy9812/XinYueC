@@ -6,6 +6,21 @@ extern "C" {
 #include"XDataStructConfig.h"
 #include"XClass.h"
 #if DEMOTEST
+	void XMenu_XAlgorithmTest(XMenu* root);
+	//查询算法
+	void XMenu_FindTest(XMenu* root);
+	void XMenu_XBinarySearchTest(XMenu* root);
+	//树
+	void XMenu_XTreeTest(XMenu* root);
+	void XMenu_XBinaryTreeTest(XMenu* root);
+	void XMenu_XBalancedBinaryTreeTest(XMenu* root);
+	void XMenu_XHuffmanTreeTest(XMenu* root);
+	void XMenu_XRedBlackTreeTest(XMenu* root);
+	//CJson
+	void XMenu_CJsonTest(XMenu* root);
+	//Base64
+	void XMenu_XBase64Test(XMenu* root);
+
 	void cJsonTest();
 	void cJsonXContainerTest();
 	void XBase64Test();
