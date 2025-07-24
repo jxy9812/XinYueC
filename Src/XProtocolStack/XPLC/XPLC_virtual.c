@@ -9,7 +9,7 @@ static bool VXPLC_removeOutId(XPLC* plc, int32_t id);
 static bool VXPLC_removeInId(XPLC* plc, int32_t id);
 static bool VXPLC_removeIODevice(XPLC* plc, XIODeviceBase* io);
 static void VXPLC_poll(XPLC* plc);
-static void VXIODevice_delete(XPLC* task);
+static void VXIODevice_deinit(XPLC* task);
 XVtable* XPLC_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -29,7 +29,7 @@ XVtable* XPLC_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXPLC_poll);
 #if SHOWCONTAINERSIZE
 	printf("XPLCTask size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -138,7 +138,7 @@ void VXPLC_poll(XPLC* plc)
 	}
 }
 
-void VXIODevice_delete(XPLC* plc)
+void VXIODevice_deinit(XPLC* plc)
 {
 	for_each_iterator(plc->m_inIO, XHashMap, it)
 	{
@@ -146,10 +146,12 @@ void VXIODevice_delete(XPLC* plc)
 		XIODeviceBase_delete_base(XPair_Second(node, XIODeviceBase*));
 	}
 	XContainerObject_delete_base(plc->m_inIO);
+	plc->m_inIO = NULL;
 	for_each_iterator(plc->m_outIO, XHashMap, it)
 	{
 		XPair* node = XHashMap_iterator_data(&it);
 		XIODeviceBase_delete_base(XPair_Second(node, XIODeviceBase*));
 	}
 	XContainerObject_delete_base(plc->m_outIO);
+	plc->m_outIO = NULL;
 }

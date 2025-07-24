@@ -30,7 +30,7 @@ static XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray
 static bool  VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle);
 static void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
-static void VXDataFrameComm_delete(XDataFrameComm* comm);
+static void VXDataFrameComm_deinit(XDataFrameComm* comm);
 static void VXDataFrameComm_setTimerGroup(XDataFrameComm* comm, XTimerGroupBase* group);
 static void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 static void VXDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
@@ -60,7 +60,7 @@ XVtable* XDataFrameComm_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXDataFrameComm_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDataFrameComm_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXCommunicatorBase_poll);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Connect, VXCommunicatorBase_connect);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Disconnect, VXCommunicatorBase_disconnect);
@@ -595,10 +595,13 @@ void VXDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16)
 	}
 }
 
-void VXDataFrameComm_delete(XDataFrameComm* comm)
+void VXDataFrameComm_deinit(XDataFrameComm* comm)
 {
 	if (comm->m_sendFrameQueue)
+	{
 		XQueueBase_delete_base(comm->m_sendFrameQueue);
+		comm->m_sendFrameQueue;
+	}
 	if (comm->m_periodicSendList)
 	{
 		for_each_iterator(comm->m_periodicSendList, XListSLinked, it)
@@ -609,23 +612,45 @@ void VXDataFrameComm_delete(XDataFrameComm* comm)
 			XMemory_free(node);
 		}
 		XListBase_delete_base(comm->m_periodicSendList);
+		comm->m_periodicSendList;
 	}
 	if (comm->m_funcCodeMap)
+	{
 		XFuncCodeMap_delete(comm->m_funcCodeMap);
+		comm->m_funcCodeMap;
+	}
 	if (comm->m_sendFrameHead)
+	{
 		XVector_delete_base(comm->m_sendFrameHead);
+		comm->m_sendFrameHead = NULL;
+	}
 	if (comm->m_sendFrameTail)
+	{
 		XVector_delete_base(comm->m_sendFrameTail);
+		comm->m_sendFrameTail = NULL;
+	}
 	if (comm->m_recvFrameHead)
+	{
 		XVector_delete_base(comm->m_recvFrameHead);
+		comm->m_recvFrameHead = NULL;
+	}
 	if (comm->m_recvFrameTail)
+	{
 		XVector_delete_base(comm->m_recvFrameTail);
+		comm->m_recvFrameTail = NULL;
+	}
 	if (comm->m_timerRecvExpired)
+	{
 		XTimerBase_delete_base(comm->m_timerRecvExpired);
+		comm->m_timerRecvExpired = NULL;
+	}
 	if (comm->m_timerSendExpired)
+	{
 		XTimerBase_delete_base(comm->m_timerSendExpired);
+		comm->m_timerSendExpired = NULL;
+	}
 	//调用父类释放函数
-	XVtableGetFunc(XCommunicatorBase_class_init(), EXClass_Delete, void(*)(XCommunicatorBase*))(comm);
+	XVtableGetFunc(XCommunicatorBase_class_init(), EXClass_Deinit, void(*)(XCommunicatorBase*))(comm);
 }
 
 void VXDataFrameComm_setTimerGroup(XDataFrameComm* comm, XTimerGroupBase* group)

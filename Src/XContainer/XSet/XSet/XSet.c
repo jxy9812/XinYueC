@@ -17,7 +17,7 @@ static XVector* VXSetBase_keys(const XSetBase* this_set);
 //清空Set，释放内存
 static void VXSet_clear(XSet* this_set);
 //释放内存
-static void VXSet_delete(XSet* this_set);
+static void VXSet_deinit(XSet* this_set);
 static void VXSet_swap(XSet* this_setOne, XSet* this_setTwo);
 XVtable* XSet_class_init()
 {
@@ -38,7 +38,7 @@ XVtable* XSet_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXSet_clear);
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXSet_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSet_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXSet_swap);
 #if SHOWCONTAINERSIZE
 	printf("XSet size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -69,10 +69,10 @@ void VXSet_clear(XSet* this_set)
 	XContainerDataPtr(this_set) = NULL;
 }
 
-void VXSet_delete(XSet* this_set)
+void VXSet_deinit(XSet* this_set)
 {
 	XSet_clear_base(this_set);
-	XMemory_free(this_set);
+	//XMemory_free(this_set);
 }
 
 void VXSet_swap(XSet* this_setOne, XSet* this_setTwo)

@@ -18,7 +18,7 @@ static XVector* VXMapBase_keys(const XMapBase* this_map);
 //清空Map，释放内存
 static void VXMap_clear(XHashMap*this_map);
 //释放内存
-static void VXMap_delete(XHashMap*this_map);
+static void VXMap_deinit(XHashMap*this_map);
 static void VXMap_swap(XHashMap*this_mapOne, XHashMap*this_mapTwo);
 // 私有函数：扩容哈希表
 static bool XHashMap_resize(XHashMap*map, size_t new_capacity);
@@ -49,7 +49,7 @@ XVtable* XHashMap_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXMap_clear);
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXMap_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMap_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
 #if SHOWCONTAINERSIZE
 	printf("XHash size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -297,14 +297,17 @@ void VXMap_clear(XHashMap*this_map)
 	XContainerSize(this_map)=0;
 }
 
-void VXMap_delete(XHashMap*this_map)
+void VXMap_deinit(XHashMap*this_map)
 {
 
 	XHashMap_clear_base(this_map);
 	void* data = XContainerDataPtr(this_map);
 	if (data)
+	{
 		XMemory_free(data);
-	XMemory_free(this_map);
+		XContainerDataPtr(this_map) = NULL;
+	}
+	//XMemory_free(this_map);
 }
 
 void VXMap_swap(XHashMap*this_mapOne, XHashMap*this_mapTwo)

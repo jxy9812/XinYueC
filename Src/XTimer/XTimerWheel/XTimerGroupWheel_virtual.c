@@ -7,7 +7,7 @@
 #include"XEquality.h"
 #include"XMutex.h"
 
-static void VXTimerGroupWheel_delete(XTimerGroupWheel* group);
+static void VXTimerGroupWheel_deinit(XTimerGroupWheel* group);
 static bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerWheel* timer);
 static bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerWheel* timer);
 static void VXTimerGroupBase_poll(XTimerGroupWheel* group);
@@ -32,12 +32,12 @@ XVtable* XTimerGroupWheel_class_init()
     // 追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     // 重载
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXTimerGroupWheel_delete);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTimerGroupWheel_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXTimerGroupBase_poll);
     return XVTABLE_DEFAULT;
 }
 
-void VXTimerGroupWheel_delete(XTimerGroupWheel* group)
+void VXTimerGroupWheel_deinit(XTimerGroupWheel* group)
 {
     if (group->m_mutex)
         XMutex_lock_base(group->m_mutex);
@@ -47,16 +47,20 @@ void VXTimerGroupWheel_delete(XTimerGroupWheel* group)
         while (!XVector_isEmpty_base(group->m_timeWheel))
             XTimerGroupWheel_removeTimeWheel_base(group);
         XVector_delete_base(group->m_timeWheel);
+        group->m_timeWheel = NULL;
     }
 
     if (group->m_mutex)
         XMutex_unlock_base(group->m_mutex);
 
     if (group->m_mutex)
+    {
         XMutex_delete_base(group->m_mutex);
+        group->m_mutex = NULL;
+    }
 
     // 释放父对象
-    XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(group);
+    XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Deinit, void(*)(XIODeviceBase*))(group);
 }
 
 static void add_timer_to_wheel(XTimeWheel* wheel, XTimerWheel* timer, size_t ticks)

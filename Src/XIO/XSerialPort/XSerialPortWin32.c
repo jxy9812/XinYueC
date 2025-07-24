@@ -6,7 +6,7 @@
 #include <windows.h>
 // 告诉编译器链接 winmm.lib 库
 #pragma comment(lib, "winmm.lib")
-static void VXSerialPort_delete(XSerialPort* serial);
+static void VXSerialPort_deinit(XSerialPort* serial);
 static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode);
 static size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize);//写入
 static size_t VXIODevice_writeFull(XSerialPort* serial);//将剩余的数据刷入设备
@@ -28,7 +28,7 @@ XVtable* XSerialPort_class_init()
     //继承类
     XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
     //重载
-    XVTABLE_OVERLOAD_DEFAULT( EXClass_Delete, VXSerialPort_delete);
+    XVTABLE_OVERLOAD_DEFAULT( EXClass_Deinit, VXSerialPort_deinit);
     XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_Open, VXSerialPort_open);
     XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_Write, VXIODevice_write);
     XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_WriteFull, VXIODevice_writeFull);
@@ -64,12 +64,15 @@ void XSerialPort_init(XSerialPort* serial)
     memset(serial->m_ov,0, sizeof(OVERLAPPED));
 }
 
-void VXSerialPort_delete(XSerialPort* serial)
+void VXSerialPort_deinit(XSerialPort* serial)
 {
     if (serial->m_ov)
+    {
         XMemory_free(serial->m_ov);
+        serial->m_ov = NULL;
+    }
     // 释放父对象
-    XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(serial);
+    XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Deinit, void(*)(XIODeviceBase*))(serial);
 }
 
 bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)

@@ -28,7 +28,7 @@ static size_t VXIODeviceBase_getBytesToWrite(XSocket* so);
 static bool VXIODeviceBase_atEnd(XSocket* so);
 static void VXIODevice_setWriteBuffer(XSocket* so, size_t count);
 static void VXIODevice_setReadBuffer(XSocket* so, size_t count);
-static void VXIODevice_delete(XSocket* so);
+static void VXIODevice_deinit(XSocket* so);
 
 XVtable* XSocket_class_init()
 {
@@ -49,7 +49,7 @@ XVtable* XSocket_class_init()
     //追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_delete);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXIODevice_poll);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXIODevice_open);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXIODevice_close);
@@ -363,7 +363,7 @@ static void VXIODevice_setReadBuffer(XSocket* so, size_t count) {
     }
 }
 
-void VXIODevice_delete(XSocket* so)
+void VXIODevice_deinit(XSocket* so)
 {
     if (!so) return;
 
@@ -385,7 +385,8 @@ void VXIODevice_delete(XSocket* so)
         so->m_pollEvent = NULL;
     }
 
-    if (so->m_netEvents) {
+    if (so->m_netEvents)
+    {
         XMemory_free(so->m_netEvents);
         so->m_netEvents = NULL;
     }
@@ -396,11 +397,17 @@ void VXIODevice_delete(XSocket* so)
     {
         XSocketBase* socket = so;
         if (socket->m_peerAddress)
+        {
             XString_delete_base(socket->m_peerAddress);
+            socket->m_peerAddress = NULL;
+        }
         if (socket->m_peerName)
+        {
             XString_delete_base(socket->m_peerName);
+            socket->m_peerName = NULL;
+        }
         // 释放父对象
-        XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Delete, void(*)(XIODeviceBase*))(socket);
+        XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Deinit, void(*)(XIODeviceBase*))(socket);
     }
 }
 

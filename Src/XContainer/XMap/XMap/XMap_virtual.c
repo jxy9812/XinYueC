@@ -18,7 +18,7 @@ static XVector* VXMapBase_keys(const XMapBase* this_map);
 //清空Map，释放内存
 static void VXMap_clear(XMap* this_map);
 //释放内存
-static void VXMap_delete(XMap* this_map);
+static void VXMap_deinit(XMap* this_map);
 static void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
 
 static void XMap_freeNodeData(XPair** pair, XMap* this_map)
@@ -47,7 +47,7 @@ XVtable* XMap_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXMap_clear);
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete,VXMap_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit,VXMap_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
 #if SHOWCONTAINERSIZE
 	printf("XMap size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -149,10 +149,10 @@ void VXMap_clear(XMap* this_map)
 	XContainerDataPtr(this_map) = NULL;
 }
 
-void VXMap_delete(XMap* this_map)
+void VXMap_deinit(XMap* this_map)
 {
 	XMap_clear_base(this_map);
-	XMemory_free(this_map);
+	//XMemory_free(this_map);
 }
 
 void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo)

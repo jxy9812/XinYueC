@@ -50,6 +50,7 @@ typedef enum
 * @retval 返回新的XVariant
 */
 XVariant* XVariant_create(void* data, size_t dataSize,int type);
+void XVariant_init(XVariant*var, void* data, size_t dataSize, int type);
 //变量的方式直接创建
 #define XVariant_Create(data,type)    XVariant_create(&data,sizeof(data),type)
 /*					基础数据					*/			
@@ -129,6 +130,7 @@ void XVariant_setValue_XString(XVariant* var, const XString* string);
 void XVariant_setValue_str(XVariant* var, const char* str);
 
 void XVariant_delete(XVariant* var);
+void XVariant_deinit(XVariant* var);
 void XVariant_clear(XVariant* var);
 void XVariant_swap(XVariant* var,XVariant* other);
 int  XVariant_type(XVariant* var);

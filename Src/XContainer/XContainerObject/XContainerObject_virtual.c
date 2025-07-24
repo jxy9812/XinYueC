@@ -4,7 +4,7 @@
 #include"XVtable.h"
 #include<stdlib.h>
 //声明 
-static void VXContainerObject_delete(XContainerObject* Object);
+static void VXContainerObject_deinit(XContainerObject* Object);
 static bool VXContainerObject_isEmpty(const XContainerObject* Object);
 static size_t VXContainerObject_getSize(const XContainerObject* Object);
 static size_t VXContainerObject_getCapacity(const  XContainerObject* Object);
@@ -31,7 +31,7 @@ XVtable* XContainerObject_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXContainerObject_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXContainerObject_deinit);
 #if SHOWCONTAINERSIZE
 	printf("XContainerObject size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -80,19 +80,22 @@ void VXContainerObject_clear(XContainerObject* Object)
 	Object->m_size = 0;
 }
 
-void VXContainerObject_delete(XContainerObject* Object)
+void VXContainerObject_deinit(XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
 	//printf("准备释放\n");
 	XContainerObject_clear_base(Object);
-	XClassGetVtable(Object) = NULL;
+	//XClassGetVtable(Object) = NULL;
 	Object->m_capacity = 0;
 	Object->m_size = 0;
 	Object->m_typeSize = 0;
 	if (Object->m_data);
+	{
 		XMemory_free(Object->m_data);
-	XMemory_free(Object);
+		Object->m_data = NULL;
+	}
+	//XMemory_free(Object);
 }
 
 

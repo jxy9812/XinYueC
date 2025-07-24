@@ -29,7 +29,7 @@ XVtable* XSemaphore_class_init()
     //追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXMutex_delete);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMutex_delete);
 #if SHOWCONTAINERSIZE
     printf("XSemaphore size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -70,7 +70,7 @@ void VXMutex_delete(XSemaphore* mutex)
     if (mutex->m_semaphore)
         CloseHandle(mutex->m_semaphore);
     //调用父类释放方法
-    XVtableGetFunc(XClass_class_init(), EXClass_Delete, void(*)(XClass*));
+    XVtableGetFunc(XClass_class_init(), EXClass_Deinit, void(*)(XClass*));
 }
 
 bool VXSemaphore_lock(XSemaphore* mutex)

@@ -8,7 +8,7 @@
 #include"XEquality.h"
 #include"XListSLinked.h"
 #include"XObject.h"
-static void VXEventDispatcher_delete(XEventDispatcher* dispatcher);
+static void VXEventDispatcher_deinit(XEventDispatcher* dispatcher);
 static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin* event);
 static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin* event);
 static bool VXEventDispatcher_addEventCb(XEventDispatcher* dispatcher, int code, XEventCB cb,void* userData);
@@ -36,7 +36,7 @@ XVtable* XEventDispatcher_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXEventDispatcher_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXEventDispatcher_deinit);
 #if SHOWCONTAINERSIZE
 	printf("XEventDispatcher size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -100,18 +100,22 @@ void XEventDispatcher_handler_base(XEventDispatcher* dispatcher)
 	XClassGetVirtualFunc(dispatcher, EXEventDispatcher_Handler, void(*)(XEventDispatcher*))(dispatcher);
 }
 
-void VXEventDispatcher_delete(XEventDispatcher* dispatcher)
+void VXEventDispatcher_deinit(XEventDispatcher* dispatcher)
 {
 	if (dispatcher == NULL)
 		return;
-	XEventMin* event = NULL;
-	while (XQueueBase_receive_base(dispatcher->m_queue, &event))
-	{//释放之前先释放事件
-		XMemory_free(event);
+	if(dispatcher->m_queue)
+	{
+		XEventMin* event = NULL;
+		while (XQueueBase_receive_base(dispatcher->m_queue, &event))
+		{//释放之前先释放事件
+			XMemory_free(event);
+		}
+		XQueueBase_delete_base(dispatcher->m_queue);
 	}
-	XQueueBase_delete_base(dispatcher->m_queue);
-	XMapBase_delete_base(dispatcher->m_filter_cb);
-	XMemory_free(dispatcher);
+	if(dispatcher->m_filter_cb)
+		XMapBase_delete_base(dispatcher->m_filter_cb);
+	//XMemory_free(dispatcher);
 }
 
 bool VXEventDispatcher_sendEvent(XEventDispatcher* d, XEventMin* event)

@@ -12,7 +12,7 @@ typedef struct XEventCallback
 	XEventCB callback;             // 可选的回调函数
 	void* userData;              // 可选的用户数据指针
 }XEventCallback;
-static void VXEventDispatcher_delete(XEventDispatcherThread* dispatcher);
+static void VXEventDispatcher_deinit(XEventDispatcherThread* dispatcher);
 static bool VXEventDispatcher_sendEvent(XEventDispatcherThread* dispatcher, XEventMin* event);
 static bool VXEventDispatcher_postEvent(XEventDispatcherThread* dispatcher, XEventMin* event);
 static bool VXEventDispatcher_addEventCb(XEventDispatcherThread* dispatcher, XObject* receiver, int code, XEventCB cb, void* userData);
@@ -39,7 +39,7 @@ XVtable* XEventDispatcherThread_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXEventDispatcher_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXEventDispatcher_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXEventDispatcher_SendEvent, VXEventDispatcher_sendEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXEventDispatcher_PostEvent, VXEventDispatcher_postEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXEventDispatcher_AddEventCb, VXEventDispatcher_addEventCb);
@@ -106,32 +106,43 @@ bool XEventDispatcherThread_isEmptyObject_base(XEventDispatcherThread* dispatche
 	return XClassGetVirtualFunc(dispatcher, EXEventDispatcherThread_IsEmptyObject, bool (*)(XEventDispatcher*))(dispatcher);
 }
 
-void VXEventDispatcher_delete(XEventDispatcherThread* dispatcher)
+void VXEventDispatcher_deinit(XEventDispatcherThread* dispatcher)
 {
 	XEventMin* event = NULL;
 	XEventDispatcher* d = dispatcher;
-	while (XQueueBase_receive_base(d->m_queue, &event))
+	if(d->m_queue)
 	{
-		XMemory_free(event);//清空事件
+		while (XQueueBase_receive_base(d->m_queue, &event))
+		{
+			XMemory_free(event);//清空事件
+		}
+		XQueueBase_delete_base(d->m_queue);
+		d->m_queue = NULL;
 	}
-	XQueueBase_delete_base(d->m_queue);
-	for_each_iterator(d->m_filter_cb, XHashMap, it)
+	if(d->m_filter_cb)
 	{
-		XMapBase* pvMap = XPair_Second(XHashMap_iterator_data(&it), XMapBase*);
-		XMapBase_delete_base(pvMap);
+		for_each_iterator(d->m_filter_cb, XHashMap, it)
+		{
+			XMapBase* pvMap = XPair_Second(XHashMap_iterator_data(&it), XMapBase*);
+			XMapBase_delete_base(pvMap);
+		}
+		XMapBase_delete_base(d->m_filter_cb);
+		d->m_filter_cb = NULL;
 	}
-	XMapBase_delete_base(d->m_filter_cb);
+	if(dispatcher->m_Objects)
+	{
+		//释放管理的XObject类
+		XObject* object = NULL;
+		for_each_iterator(dispatcher->m_Objects, XHashSet, it)
+		{
+			object = *((XObject**)XHashSet_iterator_data(&it));
+			XObject_delete_base(object);
+		}
+		XSetBase_delete_base(dispatcher->m_Objects);
+		dispatcher->m_Objects = NULL;
+	}
 
-	//释放管理的XObject类
-	XObject* object = NULL;
-	for_each_iterator(dispatcher->m_Objects, XHashSet, it)
-	{
-		object = *((XObject**)XHashSet_iterator_data(&it));
-		XObject_delete_base(object);
-	}
-	XSetBase_delete_base(dispatcher->m_Objects);
-
-	XMemory_free(dispatcher);
+	//XMemory_free(dispatcher);
 }
 
 bool VXEventDispatcher_sendEvent(XEventDispatcherThread* dispatcher, XEventMin* event)

@@ -16,7 +16,7 @@ static bool VXSet_find(XHashSet* this_set, const void* pvKey);
 // 清空Set，释放内存
 static void VXSet_clear(XHashSet* this_set);
 // 释放内存
-static void VXSet_delete(XHashSet* this_set);
+static void VXSet_deinit(XHashSet* this_set);
 static void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo);
 static XVector* VXSetBase_keys(const XSetBase* this_set);
 
@@ -46,7 +46,7 @@ XVtable* XHashSet_class_init()
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     // 重载
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXSet_clear);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXSet_delete);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSet_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXSet_swap);
 #if SHOWCONTAINERSIZE
     printf("XHashSet size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -161,13 +161,15 @@ void VXSet_clear(XHashSet* this_set)
     XContainerSize(this_set) = 0;
 }
 
-void VXSet_delete(XHashSet* this_set)
+void VXSet_deinit(XHashSet* this_set)
 {
     VXSet_clear(this_set);
-    void* data = XContainerDataPtr(this_set);
-    if (data)
-        XMemory_free(data);
-    XMemory_free(this_set);
+    if(XContainerDataPtr(this_set))
+    {
+        XMemory_free(XContainerDataPtr(this_set));
+        XContainerDataPtr(this_set) = NULL;
+    }
+    //XMemory_free(this_set);
 }
 
 void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo)

@@ -64,29 +64,34 @@ static bool global_typeHash_init()
 	return false;
 }
 
-XVariant* XVariant_create(void* data, size_t size, int type)
+XVariant* XVariant_create(void* data, size_t dataSize, int type)
 {
 	XVariant* var = XMemory_malloc(sizeof(XVariant));
+	XVariant_init(var,data,dataSize,type);
+	return var;
+}
+
+void XVariant_init(XVariant* var, void* data, size_t dataSize, int type)
+{
 	if (var == NULL)
 		return NULL;
-	if(size>0)
+	if (dataSize > 0)
 	{
-		var->m_data = XMemory_malloc(size);
+		var->m_data = XMemory_malloc(dataSize);
 		if (var->m_data == NULL)
 		{
 			XMemory_free(var);
 			return NULL;
 		}
-		if(data!=NULL)
-			memcpy(XVariant_DataPtr(var), data, size);
+		if (data != NULL)
+			memcpy(XVariant_DataPtr(var), data, dataSize);
 	}
 	else
 	{
 		var->m_data = NULL;
 	}
 	var->m_type = type;
-	var->m_dataSize = size;
-	return var;
+	var->m_dataSize = dataSize;
 }
 
 XVariant* XVariant_create_uint8(uint8_t val)
@@ -782,11 +787,19 @@ void XVariant_setValue_str(XVariant* var, const char* str)
 
 void XVariant_delete(XVariant* var)
 {
+	XVariant_deinit(var);
+	XMemory_free(var);
+}
+
+void XVariant_deinit(XVariant* var)
+{
 	if (var == NULL)
 		return;
 	if (var->m_data)
+	{
 		XMemory_free(var->m_data);
-	XMemory_free(var);
+		var->m_data = NULL;
+	}
 }
 
 void XVariant_clear(XVariant* var)

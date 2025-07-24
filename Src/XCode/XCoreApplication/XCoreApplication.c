@@ -21,7 +21,7 @@ XVtable* XCoreApplication_class_init()
 #else
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
-		/*	void* table[] = { VXClass_free };
+		/*	void* table[] = { VXClass_delete };
 		XVTABLE_ADD_FUNC_LIST_DEFAULT(table);*/
 
 #if SHOWCONTAINERSIZE

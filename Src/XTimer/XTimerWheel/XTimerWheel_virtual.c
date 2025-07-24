@@ -5,7 +5,7 @@ static void VXTimerBase_start(XTimerWheel* timer);
 static void VXTimerBase_stop(XTimerWheel* timer);
 static void VXTimerBase_setTimeout(XTimerWheel* timer, size_t value);
 static void VXTimerBase_setInterval(XTimerWheel* timer, size_t value);
-static void VXTimerBase_delete(XTimerWheel* timer);
+static void VXTimerBase_deinit(XTimerWheel* timer);
 XVtable* XTimerWheel_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -25,17 +25,17 @@ XVtable* XTimerWheel_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXTimerBase_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTimerBase_deinit);
 #if SHOWCONTAINERSIZE
 	printf("XTimerWheel size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
 
-void VXTimerBase_delete(XTimerWheel* timer)
+void VXTimerBase_deinit(XTimerWheel* timer)
 {
 	XTimerWheel_stop_base(timer);
-	XMemory_free(timer);
+	//XMemory_free(timer);
 }
 
 

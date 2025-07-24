@@ -27,6 +27,7 @@ bool XObject_moveToThread(XObject* object, XThread* thread);
 bool XObject_postEvent(XObject* object, XEventMin* event);
 XThread* XObject_thread(XObject* object);
 XEventDispatcherThread* XObject_getEventDispatcher(XObject* object);
+#define XObject_deinit_base    XClass_deinit_base
 #define XObject_delete_base    XClass_delete_base
 #ifdef __cplusplus
 }

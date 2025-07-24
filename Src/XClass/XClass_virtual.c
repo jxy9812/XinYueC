@@ -1,7 +1,7 @@
 ﻿#include"XClass.h"
 #include"XVtable.h"
 #include"XMemory.h"
-static void VXClass_free(XClass* Object);
+static void VXClass_deinit(XClass* Object);
 XVtable* XClass_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -11,7 +11,7 @@ XVtable* XClass_class_init()
 #else
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
-	void* table[] = { VXClass_free };
+	void* table[] = { VXClass_deinit };
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
 #if SHOWCONTAINERSIZE
@@ -23,7 +23,7 @@ void XClass_init(XClass* Object)
 {
 	XClassGetVtable(Object) = XClass_class_init();
 }
-void VXClass_free(XClass* Object)
+
+void VXClass_deinit(XClass* Object)
 {
-	XMemory_free(Object);
 }

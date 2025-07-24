@@ -5,7 +5,7 @@
 #include "XCircularQueue.h"
 #include <string.h>
 #include <assert.h>
-static void VXCommunicatorBase_delete(XCommunicatorBase* comm);
+static void VXCommunicatorBase_deinit(XCommunicatorBase* comm);
 static bool VXCommunicatorBase_connect(XCommunicatorBase* comm);
 static bool VXCommunicatorBase_disconnect(XCommunicatorBase* comm);
 static size_t VXCommunicatorBase_send(XCommunicatorBase* comm, const void* data, size_t size);
@@ -40,7 +40,7 @@ XVtable* XCommunicatorBase_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXCommunicatorBase_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCommunicatorBase_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXCommunicatorBase_poll);
 #if SHOWCONTAINERSIZE
 	printf("XIODeviceBase size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -48,16 +48,22 @@ XVtable* XCommunicatorBase_class_init()
 	return XVTABLE_DEFAULT;
 }
 
-void VXCommunicatorBase_delete(XCommunicatorBase* comm)
+void VXCommunicatorBase_deinit(XCommunicatorBase* comm)
 {
 	if(comm->m_io)
+	{
 		XIODeviceBase_delete_base(comm->m_io);
+		comm->m_io = NULL;
+	}
 	if (comm->m_recvAsyncBuffer)
+	{
 		XVector_delete_base(comm->m_recvAsyncBuffer);
+		comm->m_recvAsyncBuffer = NULL;
+	}
 	/*if (comm->m_timerGroup)
 		XTimerGroupBase_delete_base(comm->m_timerGroup);*/
 		// 释放父对象
-	XVtableGetFunc(XObject_class_init(), EXClass_Delete, void(*)(XObject*))(comm);
+	XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(comm);
 }
 
 bool VXCommunicatorBase_connect(XCommunicatorBase* comm)

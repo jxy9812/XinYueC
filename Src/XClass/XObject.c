@@ -6,7 +6,7 @@
 #include "XCoreApplication.h"
 #include "XEventDispatcherThread.h"
 static void VXObject_poll(XObject* object);
-static void VXObject_delete(XObject* object);
+static void VXObject_deinit(XObject* object);
 XVtable* XObject_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -21,7 +21,7 @@ XVtable* XObject_class_init()
 	void* table[] = { VXObject_poll };
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXObject_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXObject_deinit);
 #if SHOWCONTAINERSIZE
 	printf("XObject size:%d\n", XVtable_size(XClassVtable));
 #endif
@@ -127,8 +127,8 @@ void VXObject_poll(XObject* object)
 {
 }
 
-void VXObject_delete(XObject* object)
+void VXObject_deinit(XObject* object)
 {
 	XEventDispatcherThread_removeObject_base(object->m_eventDispatcher,object);
-	XMemory_free(object);
+	//XMemory_free(object);
 }

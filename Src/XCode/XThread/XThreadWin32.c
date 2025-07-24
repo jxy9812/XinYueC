@@ -38,7 +38,7 @@ XVtable* XThread_class_init()
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXThread_delete);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXThread_delete);
 #if SHOWCONTAINERSIZE
     printf("XThread size:%d\n", XVtable_size(XThreadVtable));
 #endif

@@ -5,7 +5,7 @@
 #include <string.h>
 #include <assert.h>
 //声明 
-static void VXIODevice_delete(XIODeviceBase* io);
+static void VXIODevice_deinit(XIODeviceBase* io);
 static bool VXIODevice_open(XIODeviceBase* io, XIODeviceBaseMode mode);
 static size_t VXIODevice_write(XIODeviceBase* io, const char* data, size_t maxSize);//写入
 static size_t VXIODevice_writeFull(XIODeviceBase* io);//将剩余的数据刷入设备
@@ -40,21 +40,27 @@ XVtable* XIODeviceBase_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
 #if SHOWCONTAINERSIZE
 	printf("XIODeviceBase size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
-void VXIODevice_delete(XIODeviceBase* io)
+void VXIODevice_deinit(XIODeviceBase* io)
 {
 	XIODeviceBase_close_base(io);
 	if (io->m_writeBuffer)
+	{
 		XCircularQueue_delete_base(io->m_writeBuffer);
+		io->m_writeBuffer = NULL;
+	}
 	if (io->m_readBuffer)
+	{
 		XCircularQueue_delete_base(io->m_readBuffer);
+		io->m_readBuffer = NULL;
+	}
 	// 释放父对象
-	XVtableGetFunc(XObject_class_init(), EXClass_Delete, void(*)(XObject*))(io);
+	XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(io);
 }
 
 bool VXIODevice_open(XIODeviceBase* io, XIODeviceBaseMode mode)

@@ -24,20 +24,6 @@ void XTimerBase_init(XTimerBase* timer, XVtable* vtable)
 	timer->m_autoDelete = true;
 }
 
-
-void XTimerBase_delete_base(XTimerBase* timer)
-{
-	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
-		return;
-	XClassGetVirtualFunc(timer, EXClass_Delete, void(*)(XTimerBase*))(timer);
-	/*if (timer && timer->m_port.free)
-	{
-		XTimer_stop(timer);
-		timer->m_port.free(timer);
-		XMemory_free(timer);
-	}*/
-}
-
 void XTimerBase_start_base(XTimerBase* timer)
 {
 	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))

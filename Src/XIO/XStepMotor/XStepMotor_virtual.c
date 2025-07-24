@@ -3,7 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 //声明 
-static void VXStepMotor_delete(XStepMotor* motor);
+static void VXStepMotor_deinit(XStepMotor* motor);
 static bool VXStepMotor_isOpen(XStepMotor* motor);
 static void VXStepMotor_open(XStepMotor* motor);
 static bool VXStepMotor_isRunning(XStepMotor* motor);
@@ -43,7 +43,7 @@ XVtable* XStepMotor_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXStepMotor_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStepMotor_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, NULL);
 #if SHOWCONTAINERSIZE
 	printf("XStepMotor size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -67,16 +67,25 @@ void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBas
 	XObject_addEventFilter(motor, XEVENT_FUNC_RUN, XEventFuncRunCB, NULL);
 }
 
-void VXStepMotor_delete(XStepMotor* motor)
+void VXStepMotor_deinit(XStepMotor* motor)
 {
 	if (motor->m_ENA)
+	{
 		XSwitchDeviceBase_delete_base(motor->m_ENA);
+		motor->m_ENA=NULL;
+	}
 	if (motor->m_DIR)
+	{
 		XSwitchDeviceBase_delete_base(motor->m_DIR);
+		motor->m_DIR=NULL;
+	}
 	if (motor->m_PUL)
+	{
 		XPWMDeviceBase_delete_base(motor->m_PUL);
+		motor->m_PUL = NULL;
+	}
 	//调用父类释放方法
-	XVtableGetFunc(XClass_class_init(), EXClass_Delete,void(*)(XClass*));
+	XVtableGetFunc(XClass_class_init(), EXClass_Deinit,void(*)(XClass*));
 }
 
 bool VXStepMotor_isOpen(XStepMotor* motor)

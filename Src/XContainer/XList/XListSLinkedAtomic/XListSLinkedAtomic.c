@@ -17,7 +17,7 @@ static void* VXListAtomic_front(XListSLinkedAtomic* this_list);
 static void* VXListAtomic_back(XListSLinkedAtomic* this_list);
 static XListSNodeAtomic* VXListAtomic_find(const XListSLinkedAtomic* this_list, void* pvData);
 static void VXListAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare);
-static void VXListAtomic_delete(XListSLinkedAtomic* this_list);
+static void VXListAtomic_deinit(XListSLinkedAtomic* this_list);
 static void VXListSLinkedAtomic_swap(XListSLinkedAtomic* list1, XListSLinkedAtomic* list2);
 // 创建新节点
 static XListSNodeAtomic* createNode(XListSLinkedAtomic* this_list, void* pvData) {
@@ -58,7 +58,7 @@ XVtable* XListSLinkedAtomic_class_init()
     // 追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     // 重载
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXListAtomic_delete);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXListAtomic_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXListAtomic_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXListSLinkedAtomic_swap);
 #if SHOWCONTAINERSIZE
@@ -614,9 +614,9 @@ void VXListAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare) {
 }
 
 // 释放链表
-void VXListAtomic_delete(XListSLinkedAtomic* this_list) {
+void VXListAtomic_deinit(XListSLinkedAtomic* this_list) {
     VXListAtomic_clear(this_list);
-    XMemory_free(this_list);
+   //XMemory_free(this_list);
 }
 
 // 对外接口实现

@@ -18,7 +18,7 @@ static void VXPLCTask_setState(XPLCTask* task, uint16_t state);
 static void VXPLCTask_poll(XPLCTask* task);
 static void VXPLCTask_start(XPLCTask* task);//开始任务
 static void VXPLCTask_finish(XPLCTask* task);
-static void VXIODevice_delete(XPLCTask* task);
+static void VXIODevice_deinit(XPLCTask* task);
 
 static void StartTask(XPLCTask* task);
 static void RunTask(XPLCTask* task);
@@ -42,7 +42,7 @@ XVtable* XPLCTask_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXIODevice_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXPLCTask_poll);
 #if SHOWCONTAINERSIZE
 	printf("XPLCTask size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -109,16 +109,19 @@ void VXPLCTask_finish(XPLCTask* task)
 {
 	task->m_lastTaskState = XPLCT_State_Finish;
 }
-void VXIODevice_delete(XPLCTask* task)
+void VXIODevice_deinit(XPLCTask* task)
 {
 	if (task->m_lastTaskState != XPLCT_State_ExitTask)
 	{
 		FinishTask(task);//先结束任务清理资源
 	}
 	if (task->m_taskStateMap)
+	{
 		XMapBase_delete_base(task->m_taskStateMap);
+		task->m_taskStateMap = NULL;
+	}
 
-	XMemory_free(task);
+	//XMemory_free(task);
 }
 
 void StartTask(XPLCTask* task)

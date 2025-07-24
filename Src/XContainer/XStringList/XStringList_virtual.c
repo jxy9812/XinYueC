@@ -1,6 +1,6 @@
 ﻿#include"XStringList.h"
 #if XStringList_ON
-static void VXStringList_delete(XStringList* this_stringVector);
+static void VXStringList_deinit(XStringList* this_stringVector);
 static void VXStringList_push_front(XStringList* this_stringVector, XString* string);
 static void VXStringList_push_back(XStringList* this_stringVector, XString* string);
 static void VXStringList_insert(XStringList* this_stringVector, int64_t index, XString* string);
@@ -24,7 +24,7 @@ XVtable* XStringList_class_init()
 	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
 	//重写的函数
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Delete, VXStringList_delete);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStringList_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Front, VXStringList_push_front);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back, VXStringList_push_back);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Insert, VXStringList_insert);
@@ -48,11 +48,10 @@ XVtable* XStringList_class_init()
 
 #endif
 
-void VXStringList_delete(XStringList* this_stringVector)
+void VXStringList_deinit(XStringList* this_stringVector)
 {
-	
 	//调用父类释放
-	XVtableGetFunc(XVector_class_init(), EXClass_Delete, void (*)(XVector*))(this_stringVector);
+	XVtableGetFunc(XVector_class_init(), EXClass_Deinit, void (*)(XVector*))(this_stringVector);
 }
 
 void VXStringList_push_front(XStringList* this_stringVector, XString* string)
