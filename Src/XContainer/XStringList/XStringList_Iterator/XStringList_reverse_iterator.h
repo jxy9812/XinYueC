@@ -9,12 +9,12 @@ extern "C" {
 XContainerTypeDeclare(XStringList);
 //反向迭代器
 typedef XVector_reverse_iterator XStringList_reverse_iterator;
-XStringList_reverse_iterator XStringList_rbegin(XStringList* this_XStringList);
-XStringList_reverse_iterator XStringList_rend(XStringList* this_XStringList);
-void XStringList_reverse_iterator_add(XStringList* this_XStringList, XStringList_reverse_iterator* it);
-bool XStringList_reverse_iterator_equality(XStringList_reverse_iterator* itFirst, XStringList_reverse_iterator* itSecond);
-void XStringList_reverse_iterator_for_each(XStringList* this_XStringList, XFor_each ForFunction, void* args);
-void* XStringList_reverse_iterator_data(XStringList_reverse_iterator* it);
+#define XStringList_rbegin								XVector_rbegin
+#define XStringList_rend								XVector_rend
+#define XStringList_reverse_iterator_add				XVector_reverse_iterator_add
+#define XStringList_reverse_iterator_equality          XVector_reverse_iterator_equality
+#define XStringList_reverse_iterator_for_each			XVector_reverse_iterator_for_each
+#define XStringList_reverse_iterator_data				XVector_reverse_iterator_data
 #ifdef __cplusplus
 }
 #endif

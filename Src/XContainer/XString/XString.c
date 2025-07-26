@@ -76,8 +76,7 @@ void XString_append_base(XString* this_string, const char* str)
 {
 	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
-	typedef void (*funcPtr)(XString*, const char*);
-	XClassGetVirtualFunc(this_string, EXString_Append, funcPtr)(this_string, str);
+	XClassGetVirtualFunc(this_string, EXString_Append, void (*)(XString*, const char*))(this_string, str);
 }
 
 void XString_append_string(XString* this_string, const XString* string)
@@ -91,23 +90,24 @@ void XString_assign_base(XString* this_string, const char* string)
 {
 	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
-	typedef void (*funcPtr)(XString*, const char*);
-	XClassGetVirtualFunc(this_string, EXString_Assign, funcPtr)(this_string, string);
+	XClassGetVirtualFunc(this_string, EXString_Assign, void (*)(XString*, const char*))(this_string, string);
 }
 
 void XString_insert_base(XString* this_string, const int64_t index, const char* string)
 {
 	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), "")||ISNULL(string, ""))
 		return;
-	typedef void (*funcPtr)(XString*, int64_t, const char*);
-	XClassGetVirtualFunc(this_string, EXString_Insert, funcPtr)(this_string, index, string);
+	size_t n = strlen(string);
+	if(n>0)
+	{
+		XVector_insert_array_base(this_string, index, string,n );
+	}
 }
 const char* XString_data(const XString* this_string)
 {
 	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return NULL;
-	typedef const char* (*funcPtr)(const XString*);
-	return XClassGetVirtualFunc(this_string, EXString_Data, funcPtr)(this_string);
+	return XContainerDataPtr(this_string);
 }
 
 int64_t XString_find_first_of(const XString* this_string, const char* subStr)

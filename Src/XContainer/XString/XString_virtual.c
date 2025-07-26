@@ -13,8 +13,7 @@ static bool VXString_resize(XString* this_string, size_t len);
 static void VXString_push_back(XString* this_string, char c);
 //尾插
 static void VXString_append(XString* this_string, const char* string);
-static void VXString_insert(XString* this_string, const int64_t index, const char* string);
-//static void VXString_pop_front(XString* this_string);
+//static void VXString_insert(XString* this_string, const int64_t index, const char* string);
 static void VXString_pop_back(XString* this_string);
 static void VXString_remove(XString* this_string, int64_t index, int64_t n);
 static void VXString_erase(XString* this_string, void* pvValue);
@@ -24,8 +23,6 @@ static bool VXString_empty(const XString* this_string);
 static size_t VXString_size(const XString* this_string);
 // 赋值
 static void VXString_assign(XString* this_string, const char* string);
-// 返回字符串
-static const char* VXString_data(const XString* this_string);
 static int64_t VXString_find_first_of(const XString* this_string, const char* subStr);
 static int64_t VXString_find_last_of(const XString* this_string, const char* subStr);
 static int64_t VXString_find_first_not_of(const XString* this_string, const char* subStr);
@@ -41,7 +38,7 @@ XVtable* XString_class_init()
 #endif
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XVector_class_init());
-	void* table[] = { VXString_assign,VXString_data,
+	void* table[] = { VXString_assign,
 		VXString_find_first_of,VXString_find_last_of,
 		VXString_find_first_not_of,VXString_find_last_not_of
 	};
@@ -54,7 +51,6 @@ XVtable* XString_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Remove, VXString_remove);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back_Copy, VXString_push_back);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_append_Array_Copy, VXString_append);
-	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Insert_Copy, VXString_insert);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Resize, VXString_resize);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Pop_Back, VXString_pop_back);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXString_empty);
@@ -359,16 +355,16 @@ void VXString_append(XString* this_string, const char* str)
 	XContainerSize(this_string)= currentSize+len;
 }
 
-void VXString_insert(XString* this_string, const int64_t index, const char* string)
-{
-	if (ISNULL(this_string, "") || ISNULL(string, ""))
-		return;
-	if (index<0 || index>=XContainerSize(this_string))
-		return;
-	//void XVector_inserts_base(XVector* this_vector, int64_t index, void* pvValue, size_t n);
-	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
-	//XVtableGetFunc(XVector_class_init(), EXVector_Insert_Copy, funcPtr)(this_string,index,string,strlen(string));
-}
+//void VXString_insert(XString* this_string, const int64_t index, const char* string)
+//{
+//	if (ISNULL(this_string, "") || ISNULL(string, ""))
+//		return;
+//	if (index<0 || index>=XContainerSize(this_string))
+//		return;
+//	//void XVector_inserts_base(XVector* this_vector, int64_t index, void* pvValue, size_t n);
+//	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
+//	//XVtableGetFunc(XVector_class_init(), EXVector_Insert_Copy, funcPtr)(this_string,index,string,strlen(string));
+//}
 
 //void VXString_pop_front(XString* this_string)
 //{
@@ -439,13 +435,6 @@ void VXString_assign(XString* this_string, const char* string)
 		return;
 	VXString_clear(this_string);
 	VXString_append(this_string,string);
-}
-
-const char* VXString_data(const XString* this_string)
-{
-	if (ISNULL(this_string, ""))
-		return NULL;
-	return XContainerDataPtr(this_string);
 }
 
 int64_t VXString_find_first_of(const XString* this_string, const char* subStr)

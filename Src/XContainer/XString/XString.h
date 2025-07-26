@@ -6,42 +6,20 @@ extern "C" {
 #endif
 #include<stdbool.h>
 #include"XVector.h"
-#define XSTRING_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XVector)+6)       //XString容器虚函数表大小
+#define XSTRING_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XString))       //XString容器虚函数表大小
 //XVector虚函数表枚举
-enum XStringEnum
-{
-	EXString_Empty = EXContainerObject_IsEmpty,
-	EXString_Size = EXContainerObject_Size,
-	EXString_Resize = EXVector_Resize,
-	EXString_Push_Front,
-	EXString_Push_Back,
-	EXString_Inserts,
-	EXString_Insert,
-	EXString_InsertArray,
+XCLASS_DEFINE_BEGING(XString)
 	EXString_Append = EXVector_append_Array_Copy,
-	EXString_Pop_Front,
-	EXString_Pop_Back,
-	//EXString_Erase,
-	//EXString_Remove,
-	//EXString_Copy,
-	//EXString_Rcopy,
-	//EXString_At,
-	//EXString_Front,
-	//EXString_Back,
-	//EXString_Find,
-	//EXString_Sort,
-	EXString_Assign=EXVector_Sort+1,
-	EXString_Data,
+	EXString_Assign= XCLASS_VTABLE_GET_SIZE(XVector),
 	EXString_Find_First_Of,
 	EXString_Find_Last_Of,
 	EXString_Find_First_Not_Of,
 	EXString_Find_Last_Not_Of,
-};
+XCLASS_DEFINE_END(XString)
 
 typedef struct XString
 {
 	XVector m_vector;
-
 }XString;
 //初始化类
 XVtable* XString_class_init();

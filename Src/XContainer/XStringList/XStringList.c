@@ -1,6 +1,28 @@
 ﻿#include"XStringList.h"
 #if XStringList_ON
 #include<string.h>
+XVtable* XStringList_class_init()
+{
+	return XVector_class_init();
+//	XVTABLE_CREAT_DEFAULT
+//		//虚函数表初始化
+//#if VTABLE_ISSTACK
+//		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XStringList))
+//#else
+//		XVTABLE_HEAP_INIT_DEFAULT
+//#endif
+//		//继承类
+//		XVTABLE_INHERIT_DEFAULT(XVector_class_init());
+//	//void* table[] = { };
+//	//追加虚函数
+//	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+//
+//	//重写的函数
+//#if SHOWCONTAINERSIZE
+//	printf("XStringList size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+//#endif // SHOWCONTAINERSIZE
+//	return XVTABLE_DEFAULT;
+}
 XStringList* XStringList_create()
 {
 	XStringList* vector=XMemory_malloc(sizeof(XStringList));
@@ -12,47 +34,26 @@ void XStringList_init(XStringList* this_stringVector)
 {
 	if (this_stringVector == NULL)
 		return;
-	XVector_init(this_stringVector,sizeof(XString*));
+	XVector_init(this_stringVector,sizeof(XString));
 	XClassGetVtable(this_stringVector) = XStringList_class_init();
-	XContainerSetDataDeinitMethod(this_stringVector, XContainerDefaultDerivedClassDataDeleteMethod);
-}
-void XStringList_push_front_base(XStringList* this_stringVector, XString* string)
-{
-	XVector_push_front_base(this_stringVector,string);
+	XContainerSetDataCopyMethod(this_stringVector, XClass_copy_base);
+	XContainerSetDataMoveMethod(this_stringVector, XClass_move_base);
+	XContainerSetDataDeinitMethod(this_stringVector, XClass_deinit_base);
 }
 void XStringList_push_front_c_str(XStringList* this_stringVector, const char* str)
 {
-	XStringList_push_front_base(this_stringVector,XString_create(str));
-}
-void XStringList_push_back_base(XStringList* this_stringVector, XString* string)
-{
-	XVector_push_back_base(this_stringVector, string);
+	XString_Init(string,str);
+	XStringList_push_front_move_base(this_stringVector, string);
 }
 void XStringList_push_back_c_str(XStringList* this_stringVector, const char* str)
 {
-	XStringList_push_back_base(this_stringVector, XString_create(str));
-}
-void XStringList_insert_base(XStringList* this_stringVector, int64_t index, XString* string)
-{
-	XVector_insert(this_stringVector,index, string);
+	XString_Init(string, str);
+	XStringList_push_back_move_base(this_stringVector, string);
 }
 void XStringList_insert_c_str(XStringList* this_stringVector, int64_t index, const char* str)
 {
-	XStringList_insert_base(this_stringVector,index, XString_create(str));
-}
-XString* XStringList_at_base(const XStringList* this_stringVector, int64_t index)
-{
-	return XVector_at_base(this_stringVector,index);
-}
-
-XString* XStringList_front_base(const XStringList* this_stringVector)
-{
-	return XVector_front_base(this_stringVector);
-}
-
-XString* XStringList_back_base(const XStringList* this_stringVector)
-{
-	return XVector_back_base(this_stringVector);
+	XString_Init(string, str);
+	XStringList_insert_move_base(this_stringVector,index, string);
 }
 
 XString* XStringList_join(const XStringList* this_stringVector, const char* separator)

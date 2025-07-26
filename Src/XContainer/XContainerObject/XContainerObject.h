@@ -54,8 +54,6 @@ typedef struct XContainerObject
 #define XContainerSetDataMoveMethod(Object,method) (((XContainerObject*)(Object))->m_dataMoveMethod=method)//设置容器的数据移动方法
 #define XContainerDataDeinitMethod(Object) (((XContainerObject*)(Object))->m_dataDeinitMethod)//获取容器数据释放方法
 #define XContainerSetDataDeinitMethod(Object,method) (((XContainerObject*)(Object))->m_dataDeinitMethod=method)//设置容器的数据释放方法
-//默认释放派生类的方法
-void XContainerDefaultDerivedClassDataDeleteMethod(void* args);
 XVtable* XContainerObject_class_init();
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);
 #define XContainerObject_copy_base		XClass_copy_base

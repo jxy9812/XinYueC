@@ -10,7 +10,8 @@ extern "C" {
 //XStack虚函数表枚举
 enum XStackEnum
 {
-	EXStack_Push = EXVector_Push_Back_Copy,
+	EXStack_Push_Copy = EXVector_Push_Back_Copy,
+	EXStack_Push_Move = EXVector_Push_Back_Move,
 	EXStack_Pop= EXVector_Pop_Back,
 	EXStack_Top= EXVector_Back,
 };
@@ -27,6 +28,8 @@ void XStack_init(XStack* this_stack, size_t typeSize);
 // 压栈，增加元素 O(1)
 #define XStack_push_base			XVector_push_back_base
 #define XStack_Push_Base			XVector_Push_Back_Base
+#define XStack_push_move_base		XVector_push_back_move_base
+//#define XStack_Push_Base			XVector_Push_Back_Base
 //移除栈顶元素 O(1)
 #define XStack_pop_base			XVector_pop_back_base
 // 取得栈顶元素（但不删除）O(1)

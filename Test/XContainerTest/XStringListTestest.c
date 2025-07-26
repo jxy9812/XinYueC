@@ -7,7 +7,6 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
-static void XStringListTest();
 static void XFor_each_XString(void* LPVal, void* args)
 {
 	XString* string = LPVal;

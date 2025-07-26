@@ -14,11 +14,6 @@ static size_t VXContainerObject_getCapacity(const  XContainerObject* Object);
 static size_t VXContainerObject_getTypeSize(const XContainerObject* Object);
 static void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
 static void VXContainerObject_clear(XContainerObject* Object);
-void XContainerDefaultDerivedClassDataDeleteMethod(void* args)
-{
-	XContainerObject* object = *((XContainerObject**)args);
-	XContainerObject_delete_base(object);
-}
 XVtable* XContainerObject_class_init()
 {
 	XVTABLE_CREAT_DEFAULT

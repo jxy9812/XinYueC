@@ -10,12 +10,12 @@ XContainerTypeDeclare(XStringList);
 //正向迭代器
 typedef XVector_iterator XStringList_iterator ;
 typedef struct XString XString;
-XStringList_iterator XStringList_begin(XStringList* this_XStringList);
-XStringList_iterator XStringList_end(XStringList* this_XStringList);
-void XStringList_iterator_add(XStringList* this_XStringList, XStringList_iterator* it);
-bool XStringList_iterator_equality(XStringList_iterator* itFirst, XStringList_iterator* itSecond);
-void XStringList_iterator_for_each(XStringList* this_XStringList, XFor_each ForFunction, void* args);
-XString* XStringList_iterator_data(XStringList_iterator* it);
+#define XStringList_begin						XVector_begin
+#define XStringList_end							XVector_end
+#define XStringList_iterator_add				XVector_iterator_add
+#define XStringList_iterator_equality			XVector_iterator_equality
+#define XStringList_iterator_for_each			XVector_iterator_for_each
+#define XStringList_iterator_data				XVector_iterator_data
 #ifdef __cplusplus
 }
 #endif

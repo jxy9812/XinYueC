@@ -48,6 +48,7 @@ int main(int argc, char* args[])
 	//XMapTest();
 	//return;
 	//XVariantListTest();
+	//XStringListTest();
 	XMenuTest_run();
 	//XModbusTest();
 	//XCylinderTest();	
