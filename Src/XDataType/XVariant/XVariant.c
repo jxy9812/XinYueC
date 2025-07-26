@@ -871,12 +871,12 @@ const char* XVariant_typeName(XVariant* var)
 	case XVariantType_Ptr:return        "void*";
 	case XVariantType_Float:return	    "float";
 	case XVariantType_Double:return	    "double";
-	case XVariantType_Pair:return       "XPair*";
+	case XVariantType_Pair:return       "XPair";
 	case XVariantType_Point:return      "XPoint";
-	case XVariantType_ByteArray:return  "XByteArrat*";
-	case XVariantType_String:return		"XString*";
-	case XVariantType_List:return		"XVariantList*";
-	case XVariantType_MapBase:return    "XMapBase*";
+	case XVariantType_ByteArray:return  "XByteArrat";
+	case XVariantType_String:return		"XString";
+	case XVariantType_List:return		"XVariantList";
+	case XVariantType_MapBase:return    "XMapBase<XString,XVariant>";
 	default:
 	{
 		//其他自定义数据
