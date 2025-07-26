@@ -34,6 +34,10 @@ bool XQueueBase_receive_base(XQueueBase* this_queue, void* pvBuffer);
 #define XQueueBase_Top_Base(this_queue,Type) (*(Type*)XQueueBase_top_base(this_queue))
 void* XQueueBase_top_base(XQueueBase* this_queue);
 bool XQueueBase_isFull_base(XQueueBase* this_queue);
+
+#define XQueueBase_copy_base				XContainerObject_copy_base
+#define XQueueBase_move_base				XContainerObject_move_base
+#define XQueueBase_deinit_base				XContainerObject_deinit_base
 //释放内存
 #define XQueueBase_delete_base				XContainerObject_delete_base
 //清空，不是释放内存

@@ -37,6 +37,10 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue,bool autoExpansi
 #define XCircularQueue_Top_Base					XQueueBase_Top_Base
 #define XCircularQueue_top_base					XQueueBase_top_base
 #define XCircularQueue_isFull_base				XQueueBase_isFull_base
+
+#define XCircularQueue_copy_base				XQueueBase_copy_base
+#define XCircularQueue_move_base				XQueueBase_move_base
+#define XCircularQueue_deinit_base				XQueueBase_deinit_base
 //释放内存
 #define XCircularQueue_delete_base				XQueueBase_delete_base
 //清空，不是释放内存

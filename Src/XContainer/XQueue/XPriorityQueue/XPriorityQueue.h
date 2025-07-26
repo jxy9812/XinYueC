@@ -33,6 +33,10 @@ XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare);
 #define XPriorityQueue_Top_Base					XQueueBase_Top_Base
 #define XPriorityQueue_top_base					XQueueBase_top_base
 #define XPriorityQueue_isFull_base				XQueueBase_isFull_base
+
+#define XPriorityQueue_copy_base				XQueueBase_copy_base
+#define XPriorityQueue_move_base				XQueueBase_move_base
+#define XPriorityQueue_deinit_base				XQueueBase_deinit_base
 //释放内存
 #define XPriorityQueue_delete_base				XQueueBase_delete_base
 //清空，不是释放内存
