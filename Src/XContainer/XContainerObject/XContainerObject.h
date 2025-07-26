@@ -11,7 +11,11 @@ extern "C" {
 #include"XTypes.h"
 //#define DEBUG_ON 1
 //数据释放方法
-typedef void (*XCDataDeleteMethod)(void* args);
+typedef void (*XCDataDeinitMethod)(void* data);
+//数据拷贝
+typedef void (*XCDataCopyMethod)(void* data, const void* sData);
+//数据移动
+typedef void (*XCDataMoveMethod)(void* data, void* sData);
 
 #define XCONTAINEROBJECT_VTABLE_SIZE   (XCLASS_VTABLE_GET_SIZE(XContainerObject))      //容器基类虚函数表大小
 //XContainerObject虚函数表枚举
@@ -28,8 +32,10 @@ XCLASS_DEFINE_END(XContainerObject)
 typedef struct XContainerObject
 {
 	XClass m_parent;
+	XCDataCopyMethod m_dataCopyMethod;//数据拷贝方法
+	XCDataMoveMethod m_dataMoveMethod;//数据移动方法
+	XCDataDeinitMethod m_dataDeinitMethod;//数据释放方法
 	void* m_data;//指向容器数据的指针
-	XCDataDeleteMethod m_dataDeleteMethod;//数据释放方法
 	size_t  m_capacity;//当前容器能容纳的最大元素数量
 	size_t m_size;//当前容器内的元素个数
 	size_t m_typeSize;//类型占用字节数
@@ -42,12 +48,19 @@ typedef struct XContainerObject
 #define XContainerSize(Object) (((XContainerObject*)(Object))->m_size)//当前容器内的元素个数
 #define XContainerIsEmpty(Object) (XContainerSize(Object)==0)//当前容器是否时空的
 #define XContainerTypeSize(Object) (((XContainerObject*)(Object))->m_typeSize)//类型占用字节数
-#define XContainerDataDeleteMethod(Object) (((XContainerObject*)(Object))->m_dataDeleteMethod)//获取容器数据释放方法
-#define XContainerSetDataDeleteMethod(Object,method) (((XContainerObject*)(Object))->m_dataDeleteMethod=method)//设置容器的数据释放方法
+#define XContainerDataCopyMethod(Object) (((XContainerObject*)(Object))->m_dataCopyMethod)//获取容器数据拷贝方法
+#define XContainerSetDataCopyMethod(Object,method) (((XContainerObject*)(Object))->m_dataCopyMethod=method)//设置容器的数据拷贝方法
+#define XContainerDataMoveMethod(Object) (((XContainerObject*)(Object))->m_dataMoveMethod)//获取容器数据移动方法
+#define XContainerSetDataMoveMethod(Object,method) (((XContainerObject*)(Object))->m_dataMoveMethod=method)//设置容器的数据移动方法
+#define XContainerDataDeinitMethod(Object) (((XContainerObject*)(Object))->m_dataDeinitMethod)//获取容器数据释放方法
+#define XContainerSetDataDeinitMethod(Object,method) (((XContainerObject*)(Object))->m_dataDeinitMethod=method)//设置容器的数据释放方法
 //默认释放派生类的方法
 void XContainerDefaultDerivedClassDataDeleteMethod(void* args);
 XVtable* XContainerObject_class_init();
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);
+#define XContainerObject_copy_base		XClass_copy_base
+#define XContainerObject_move_base		XClass_move_base
+#define XContainerObject_deinit_base	XClass_deinit_base
 #define XContainerObject_delete_base	XClass_delete_base
 size_t XContainerObject_getSize_base(const XContainerObject* Object);
 bool XContainerObject_isEmpty_base(const XContainerObject* Object);

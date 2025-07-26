@@ -114,8 +114,8 @@ void VXCircularQueue_pop(XCircularQueue* this_queue)
 {
 	if (VXCircularQueue_isEmpty(this_queue))
 		return;
-	if (XContainerDataDeleteMethod(this_queue) != NULL)
-		XContainerDataDeleteMethod(this_queue)(VXCircularQueue_top(this_queue));
+	if (XContainerDataDeinitMethod(this_queue) != NULL)
+		XContainerDataDeinitMethod(this_queue)(VXCircularQueue_top(this_queue));
 	this_queue->m_head= (this_queue->m_head + 1) % XContainerSize(this_queue);//指针后移取模实现环形
 }
 
@@ -131,8 +131,8 @@ bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer)
 		return false;
 	void* pvTop = ((char*)XContainerDataPtr(this_queue)) + (this_queue->m_head * XContainerTypeSize(this_queue));
 	memcpy(pvBuffer, pvTop, XContainerTypeSize(this_queue));
-	if (XContainerDataDeleteMethod(this_queue) != NULL)
-		XContainerDataDeleteMethod(this_queue)(pvTop);
+	if (XContainerDataDeinitMethod(this_queue) != NULL)
+		XContainerDataDeinitMethod(this_queue)(pvTop);
 	this_queue->m_head = (this_queue->m_head + 1) % XContainerSize(this_queue);//指针后移取模实现环形
 	return true;
 }

@@ -30,7 +30,7 @@ const bool XLess_XString(const void* pvPrevValue, const void* pvNextValue)
 {
 	if (pvPrevValue == NULL || pvNextValue == NULL)
 		return false;
-	if (XString_getSize_base(*((XString**)pvPrevValue)) != XString_getSize_base(*((XString**)pvNextValue)))
+	if (XString_getSize_base(pvPrevValue) != XString_getSize_base(pvNextValue))
 		return false;
-	return strcmp(XContainerDataPtr(*((XString**)pvPrevValue)), XContainerDataPtr(*((XString**)pvNextValue))) <0;
+	return strcmp(XContainerDataPtr(pvPrevValue), XContainerDataPtr(pvNextValue)) <0;
 }

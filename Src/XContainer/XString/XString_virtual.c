@@ -52,9 +52,9 @@ XVtable* XString_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Erase, VXString_erase);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXString_clear);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Remove, VXString_remove);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back, VXString_push_back);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_append_Array, VXString_append);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_Insert, VXString_insert);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back_Copy, VXString_push_back);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_append_Array_Copy, VXString_append);
+	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Insert_Copy, VXString_insert);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Resize, VXString_resize);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Pop_Back, VXString_pop_back);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXString_empty);
@@ -260,7 +260,7 @@ void XString_insert_base(struct XString* this_XString, const int nSel, const cha
 	struct XString* string = (struct XString*)this_XString;
 	struct XVector* v = string->m_data;
 
-	//XVector_insert_base(v, nSel, str, str + strlen(str) - 1);
+	//XVector_insert(v, nSel, str, str + strlen(str) - 1);
 	((struct XString*)this_XString)->m_size += XString_charNumber(str);
 }
 
@@ -367,7 +367,7 @@ void VXString_insert(XString* this_string, const int64_t index, const char* stri
 		return;
 	//void XVector_inserts_base(XVector* this_vector, int64_t index, void* pvValue, size_t n);
 	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
-	XVtableGetFunc(XVector_class_init(), EXVector_Inserts, funcPtr)(this_string,index,string,strlen(string));
+	//XVtableGetFunc(XVector_class_init(), EXVector_Insert_Copy, funcPtr)(this_string,index,string,strlen(string));
 }
 
 //void VXString_pop_front(XString* this_string)
@@ -412,7 +412,8 @@ void VXString_clear(XString* this_string)
 	if (ISNULL(this_string, ""))
 		return;
 	XContainerSize(this_string)=0;
-	((char*)XContainerDataPtr(this_string))[0] = 0;
+	if(XContainerDataPtr(this_string))
+		((char*)XContainerDataPtr(this_string))[0] = 0;
 	/*typedef void (*funcPtr)(XVector*, void*);
 	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back, funcPtr)(this_string,"");*/
 }

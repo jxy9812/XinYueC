@@ -25,8 +25,8 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity);
 
 static void XSet_freeNodeData(void* key, XHashSet* this_set)
 {
-    if (XContainerDataDeleteMethod(this_set) != NULL)
-        XContainerDataDeleteMethod(this_set)(key);
+    if (XContainerDataDeinitMethod(this_set) != NULL)
+        XContainerDataDeinitMethod(this_set)(key);
 }
 XVtable* XHashSet_class_init()
 {

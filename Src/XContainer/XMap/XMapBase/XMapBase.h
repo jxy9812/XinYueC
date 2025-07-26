@@ -12,7 +12,8 @@ typedef struct XMapBase_iterator XMapBase_iterator;
 #define XMAPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))       //XMap容器虚函数表大小
 //XMap虚函数表枚举
 XCLASS_DEFINE_BEGING(XMapBase)
-XCLASS_DEFINE_ENUM(XMapBase,Insert)= XCLASS_VTABLE_GET_SIZE(XContainerObject),
+XCLASS_DEFINE_ENUM(XMapBase,Insert_Copy)= XCLASS_VTABLE_GET_SIZE(XContainerObject),
+XCLASS_DEFINE_ENUM(XMapBase,Insert_Move),
 XCLASS_DEFINE_ENUM(XMapBase,Erase),
 XCLASS_DEFINE_ENUM(XMapBase,Remove),
 XCLASS_DEFINE_ENUM(XMapBase,Value),
@@ -32,6 +33,8 @@ void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t va
 //Map插入数据
 bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue);
 #define XMapBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMap_insert_base(this_map,&k,&v);}
+bool XMapBase_insert_move_base(XMapBase* this_map, const void* pvKey, const void* pvValue);
+
 void XMapBase_erase_base(XMapBase* this_map, const XPair* pPair);
 //map删除数据
 bool XMapBase_remove_base(XMapBase* this_map, const void* pvKey);
@@ -58,15 +61,18 @@ XVector* XMapBase_keys_base(const XMapBase* this_map);
 //返回元素类型字节大小
 #define XMapBase_getTypeSize_base				XContainerObject_getTypeSize_base
 //默认释放派生类的方法 key是派生的容器
-void XMapBase_KeyDeleteMethod(void* args);
+void XMapBase_KeyClassDeinitMethod(XPair* pair);
 //默认释放派生类的方法 value是派生的容器
-void XMapBase_XTreeNodeDataDeleteMethod(void* args);
+void XMapBase_ValueClassDeinitMethod(XPair* pair);
 //默认释放XVariant value的方法
-void XMapBase_ValueXVariantDeleteMethod(void* args);
+void XMapBase_ValueXVariantDeleteMethod(XPair* pair);
 //默认释放派生类的方法 key和value都是派生的容器
-void XMapBase_KeyXTreeNodeDataDeleteMethod(void* args);
-//XStringXVariant释放
-void XMapBase_KeyXStringValueXVariantDeleteMethod(void* args);
+void XMapBase_ClassDeinitMethod(XPair* pair);
+
+void XMapBase_XVariantMapCopyMethod(XPair* pair, const XPair* src);
+void XMapBase_XVariantMapMoveMethod(XPair* pair, XPair* src);
+//XVariantMap释放
+void XMapBase_XVariantMapDeinitMethod(XPair* pair);
 #ifdef __cplusplus
 }
 #endif

@@ -203,8 +203,8 @@ size_t VXList_insert_array(XListSLinkedAtomic* this_list, XListSNodeAtomic* curN
             while (newListHead != NULL) {
                 XListSNodeAtomic* temp = newListHead;
                 newListHead = newListHead->next;
-                if (XContainerDataDeleteMethod(this_list) != NULL) {
-                    XContainerDataDeleteMethod(this_list)(&temp->data);
+                if (XContainerDataDeinitMethod(this_list) != NULL) {
+                    XContainerDataDeinitMethod(this_list)(&temp->data);
                 }
                 XMemory_free(temp);
             }
@@ -274,8 +274,8 @@ bool VXListAtomic_pop_front(XListSLinkedAtomic* this_list) {
     }
 
     // 释放节点内存
-    if (XContainerDataDeleteMethod(this_list) != NULL) {
-        XContainerDataDeleteMethod(this_list)(&oldHead->data);
+    if (XContainerDataDeinitMethod(this_list) != NULL) {
+        XContainerDataDeinitMethod(this_list)(&oldHead->data);
     }
     XMemory_free(oldHead);
 
@@ -336,8 +336,8 @@ bool VXListAtomic_pop_back(XListSLinkedAtomic* this_list)
     }
 
     // 释放节点内存
-    if (XContainerDataDeleteMethod(this_list) != NULL) {
-        XContainerDataDeleteMethod(this_list)(&tail->data);
+    if (XContainerDataDeinitMethod(this_list) != NULL) {
+        XContainerDataDeinitMethod(this_list)(&tail->data);
     }
     XMemory_free(tail);
 
@@ -366,8 +366,8 @@ void VXListAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node) {
                         XAtomic_store_ptr(&this_list->m_tail, next);
                     }
 
-                    if (XContainerDataDeleteMethod(this_list) != NULL) {
-                        XContainerDataDeleteMethod(this_list)(&current->data);
+                    if (XContainerDataDeinitMethod(this_list) != NULL) {
+                        XContainerDataDeinitMethod(this_list)(&current->data);
                     }
                     XMemory_free(current);
                     XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1);
@@ -384,8 +384,8 @@ void VXListAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node) {
                         XAtomic_store_ptr(&this_list->m_tail, prev);
                     }
 
-                    if (XContainerDataDeleteMethod(this_list) != NULL) {
-                        XContainerDataDeleteMethod(this_list)(&current->data);
+                    if (XContainerDataDeinitMethod(this_list) != NULL) {
+                        XContainerDataDeinitMethod(this_list)(&current->data);
                     }
                     XMemory_free(current);
                     XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1);
@@ -422,8 +422,8 @@ bool VXListAtomic_remove(XListSLinkedAtomic* this_list, void* pvData) {
                         XAtomic_store_ptr(&this_list->m_tail, next);
                     }
 
-                    if (XContainerDataDeleteMethod(this_list) != NULL) {
-                        XContainerDataDeleteMethod(this_list)(&current->data);
+                    if (XContainerDataDeinitMethod(this_list) != NULL) {
+                        XContainerDataDeinitMethod(this_list)(&current->data);
                     }
                     XMemory_free(current);
                     XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1);
@@ -440,8 +440,8 @@ bool VXListAtomic_remove(XListSLinkedAtomic* this_list, void* pvData) {
                         XAtomic_store_ptr(&this_list->m_tail, prev);
                     }
 
-                    if (XContainerDataDeleteMethod(this_list) != NULL) {
-                        XContainerDataDeleteMethod(this_list)(&current->data);
+                    if (XContainerDataDeinitMethod(this_list) != NULL) {
+                        XContainerDataDeinitMethod(this_list)(&current->data);
                     }
                     XMemory_free(current);
                     XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1);
@@ -464,8 +464,8 @@ void VXListAtomic_clear(XListSLinkedAtomic* this_list) {
     while (current != NULL) {
         XListSNodeAtomic* next = current->next;
 
-        if (XContainerDataDeleteMethod(this_list) != NULL) {
-            XContainerDataDeleteMethod(this_list)(&current->data);
+        if (XContainerDataDeinitMethod(this_list) != NULL) {
+            XContainerDataDeinitMethod(this_list)(&current->data);
         }
         XMemory_free(current);
 

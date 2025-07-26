@@ -5,6 +5,8 @@
 #include"XBalancedBinaryTree.h"
 #include"XRedBlackTree.h"
 #include"XAlgorithm.h"
+#include"XString.h"
+#include"XVariant.h"
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
@@ -42,13 +44,14 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 	XClassGetVtable(this_map) = XMap_class_init();
 	//this_map->m_KeyLess = KeyLess;
 }
-
-XMap* XMap_create_XStringVariant()
+XVariantMap* XMap_create_XVariantMap()
 {
-	XMap* map = XMap_Create(XString*, XVariant*, XEquality_XString, XLess_XString);
+	XMap* map = XMap_Create(XString, XVariant, XEquality_XString, XLess_XString);
 	if (map == NULL)
 		return NULL;
-	XContainerSetDataDeleteMethod(map, XMapBase_KeyXStringValueXVariantDeleteMethod);
+	XContainerSetDataCopyMethod(map, XMapBase_XVariantMapCopyMethod);
+	XContainerSetDataMoveMethod(map, XMapBase_XVariantMapMoveMethod);
+	XContainerSetDataDeinitMethod(map, XMapBase_XVariantMapDeinitMethod);
 	return map;
 }
 

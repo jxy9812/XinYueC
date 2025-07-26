@@ -10,7 +10,7 @@ extern "C" {
 //XStack虚函数表枚举
 enum XStackEnum
 {
-	EXStack_Push = EXVector_Push_Back,
+	EXStack_Push = EXVector_Push_Back_Copy,
 	EXStack_Pop= EXVector_Pop_Back,
 	EXStack_Top= EXVector_Back,
 };

@@ -9,6 +9,8 @@ typedef struct  XVtable;
 #define XCLASS_VTABLE_SIZE   XCLASS_VTABLE_GET_SIZE(XClass)      //虚函数表大小
 //XClass虚函数表枚举
 XCLASS_DEFINE_BEGING(XClass)
+XCLASS_DEFINE_ENUM(XClass, Copy),
+XCLASS_DEFINE_ENUM(XClass, Move),
 XCLASS_DEFINE_ENUM(XClass, Deinit),
 XCLASS_DEFINE_END(XClass)
 //容器基类
@@ -79,9 +81,12 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 #define XVTABLE_ADD_FUNC_LIST_DEFAULT(table)	XVTABLE_ADD_FUNC_LIST(XVTABLE_DEFAULT,table)
 /*								  类的创建主要用这些						*/
 XVtable* XClass_class_init();
-void XClass_init(XClass* Object);
-void XClass_deinit_base(XClass* Object);
-void XClass_delete_base(XClass* Object);
+void XClass_init(XClass* object);
+void XClass_deinit_base(XClass* object);
+void XClass_copy_base(XClass* object, const XClass* src);
+void XClass_move_base(XClass* object, XClass* src);
+void XClass_delete_base(XClass* object);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,6 +1,7 @@
 ﻿#include"XMapBase.h"
-#include"XVariant.h"
 #if XMap_ON
+#include"XVariant.h"
+#include"XString.h"
 XVtable* XMapBase_class_init()
 {
 	return XContainerObject_class_init();
@@ -32,7 +33,13 @@ bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvV
 {
 	if (ISNULL(this_map, "") || ISNULL(pvKey, "") || ISNULL(pvValue, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return false;
-	return XClassGetVirtualFunc(this_map, EXMapBase_Insert, bool(*)(XMapBase* ,const void*, const void*))(this_map, pvKey, pvValue);
+	return XClassGetVirtualFunc(this_map, EXMapBase_Insert_Copy, bool(*)(XMapBase* ,const void*, const void*))(this_map, pvKey, pvValue);
+}
+bool XMapBase_insert_move_base(XMapBase* this_map, const void* pvKey, const void* pvValue)
+{
+	if (ISNULL(this_map, "") || ISNULL(pvKey, "") || ISNULL(pvValue, "") || ISNULL(XClassGetVtable(this_map), ""))
+		return false;
+	return XClassGetVirtualFunc(this_map, EXMapBase_Insert_Move, bool(*)(XMapBase*, const void*, const void*))(this_map, pvKey, pvValue);
 }
 void XMapBase_erase_base(XMapBase* this_map, const XPair* pPair)
 {
@@ -71,37 +78,64 @@ XVector* XMapBase_keys_base(const XMapBase* this_map)
 	return XClassGetVirtualFunc(this_map, EXMapBase_Keys, void* (*)(const XMapBase*))(this_map);
 }
 
-void XMapBase_KeyDeleteMethod(void* args)
+void XMapBase_KeyClassDeinitMethod(XPair* pair)
 {
-	XPair* pair = (XPair*)args;
-	XContainerObject* object = *((XContainerObject**)XPair_first(pair));
-	XContainerObject_delete_base(object);
+	XClass* object = (XClass*)XPair_first(pair);
+	XClass_deinit_base(object);
 }
 
-void XMapBase_XTreeNodeDataDeleteMethod(void* args)
+void XMapBase_ValueClassDeinitMethod(XPair* pair)
 {
-	XPair* pair = (XPair*)args;
-	XContainerObject* object = *((XContainerObject**)XPair_second(pair));
-	XContainerObject_delete_base(object);
+	XClass* object = (XClass*)XPair_second(pair);
+	XClass_deinit_base(object);
 }
 
-void XMapBase_ValueXVariantDeleteMethod(void* args)
+void XMapBase_ValueXVariantDeleteMethod(XPair* pair)
 {
-	XPair* pair = (XPair*)args;
-	XVariant* var = *((XVariant**)XPair_second(pair));
-	XVariant_delete(var);
+	XVariant* var = (XVariant*)XPair_second(pair);
+	XVariant_deinit(var);
 }
 
-void XMapBase_KeyXTreeNodeDataDeleteMethod(void* args)
+void XMapBase_ClassDeinitMethod(XPair* pair)
 {
-	XMapBase_KeyDeleteMethod(args);
-	XMapBase_XTreeNodeDataDeleteMethod(args);
+	XMapBase_KeyClassDeinitMethod(pair);
+	XMapBase_ValueClassDeinitMethod(pair);
 }
 
-void XMapBase_KeyXStringValueXVariantDeleteMethod(void* args)
+void XMapBase_XVariantMapCopyMethod(XPair* pair, const XPair* src)
 {
-	XMapBase_KeyDeleteMethod(args);
-	XMapBase_ValueXVariantDeleteMethod(args);
+	XString* pKey = XPair_first(src);
+	XVariant* pVar = XPair_second(src);
+	if (((XClass*)XPair_first(pair))->m_vtable == NULL)
+	{//新插入
+		XString_copy_base(XPair_first(pair), pKey);
+		XVariant_copy(XPair_second(pair), pKey);
+	}
+	else
+	{
+		XVariant_copy(XPair_second(pair), pVar);
+	}
+}
+
+void XMapBase_XVariantMapMoveMethod(XPair* pair, XPair* src)
+{
+	XString* pKey = XPair_first(src);
+	XVariant* pVar = XPair_second(src);
+	if (((XClass*)XPair_first(pair))->m_vtable == NULL)
+	{//新插入
+		XString_move_base(XPair_first(pair), pKey);
+		XVariant_move(XPair_second(pair), pVar);
+	}
+	else
+	{
+		XVariant_move(XPair_second(pair), pVar);
+	}
+}
+
+void XMapBase_XVariantMapDeinitMethod(XPair* pair)
+{
+	XMapBase_KeyClassDeinitMethod(pair);
+	XMapBase_ValueXVariantDeleteMethod(pair);
 }
 
 #endif

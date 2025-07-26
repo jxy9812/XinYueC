@@ -11,14 +11,26 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 	return false;
 }
 
-void XClass_deinit_base(XClass* Object)
+void XClass_deinit_base(XClass* object)
 {
-	if (ISNULL(Object, "") || ISNULL(XClassGetVtable(Object), ""))
+	if (ISNULL(object, "") || ISNULL(XClassGetVtable(object), ""))
 		return;
-	XClassGetVirtualFunc(Object, EXClass_Deinit, void(*)(XClass*))(Object);
+	XClassGetVirtualFunc(object, EXClass_Deinit, void(*)(XClass*))(object);
 }
-void XClass_delete_base(XClass* Object)
+void XClass_copy_base(XClass* object, const XClass* src)
 {
-	XClass_deinit_base(Object);
-	XMemory_free(Object);
+	if (ISNULL(src, "") || ISNULL(XClassGetVtable(src), ""))
+		return;
+	XClassGetVirtualFunc(src, EXClass_Copy, void(*)(XClass*,const XClass*))(object,src);
+}
+void XClass_move_base(XClass* object, XClass* src)
+{
+	if (ISNULL(src, "") || ISNULL(XClassGetVtable(src), ""))
+		return;
+	XClassGetVirtualFunc(src, EXClass_Move, void(*)(XClass*, XClass*))(object,src);
+}
+void XClass_delete_base(XClass* object)
+{
+	XClass_deinit_base(object);
+	XMemory_free(object);
 }

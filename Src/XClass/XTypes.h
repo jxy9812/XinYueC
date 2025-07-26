@@ -47,7 +47,8 @@ typedef struct XVariant XVariant;
 typedef struct XSerialPortBase XSerialPortBase;
 typedef struct XVariantList XVariantList;
 typedef XMapBase XFuncCodeMap;
-
+typedef XMap XVariantMap;
+typedef XMap XVariantHashMap;
 #ifdef __cplusplus
 }
 #endif

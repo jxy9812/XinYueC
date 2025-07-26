@@ -155,12 +155,12 @@ bool VXCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuf
     memcpy(pvBuffer, pvTop, XContainerTypeSize(this_queue));
 
     // 如果有删除方法，则调用它
-    if (XContainerDataDeleteMethod(this_queue) != NULL) {
+    if (XContainerDataDeinitMethod(this_queue) != NULL) {
         // 创建一个临时副本用于删除
         void* temp = XMemory_malloc(XContainerTypeSize(this_queue));
         if (temp != NULL) {
             memcpy(temp, pvTop, XContainerTypeSize(this_queue));
-            XContainerDataDeleteMethod(this_queue)(temp);
+            XContainerDataDeinitMethod(this_queue)(temp);
             XMemory_free(temp);
         }
     }

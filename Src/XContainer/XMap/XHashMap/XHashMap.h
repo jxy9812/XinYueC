@@ -33,7 +33,7 @@ void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t va
 #define XHashMap_find_base							XMapBase_find_base
 #define XHashMap_delete_base						XMapBase_delete_base
 //清空，不是释放内存
-#define XHashMap_clear_base						XMapBase_clear_base
+#define XHashMap_clear_base							XMapBase_clear_base
 //检测是否为空，空为真 O(1)
 #define XHashMap_isEmpty_base						XMapBase_isEmpty_base
 //返回元素的个数 O(1)						
@@ -45,7 +45,7 @@ void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t va
 //返回元素类型字节大小						
 #define XHashMap_getTypeSize_base					XMapBase_getTypeSize_base
 
-XHashMap* XHashMap_create_XStringVariant();
+XVariantHashMap* XHashMap_create_XVariantHashMap();
 #ifdef __cplusplus
 }
 #endif

@@ -25,9 +25,9 @@ XVtable* XStringList_class_init()
 
 	//重写的函数
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStringList_deinit);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Front, VXStringList_push_front);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back, VXStringList_push_back);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_Insert, VXStringList_insert);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Front_Copy, VXStringList_push_front);
+	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back_Copy, VXStringList_push_back);
+	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Insert_Copy, VXStringList_insert);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_At, VXStringList_at);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Front, VXStringList_front);
 	XVTABLE_OVERLOAD_DEFAULT(EXVector_Back, VXStringList_back);
@@ -56,17 +56,17 @@ void VXStringList_deinit(XStringList* this_stringVector)
 
 void VXStringList_push_front(XStringList* this_stringVector, XString* string)
 {
-	XVtableGetFunc(XVector_class_init(),EXVector_Push_Front,void(*)(XVector*,void*))(this_stringVector,&string);
+	XVtableGetFunc(XVector_class_init(),EXVector_Push_Front_Copy,void(*)(XVector*,void*))(this_stringVector,&string);
 }
 
 void VXStringList_push_back(XStringList* this_stringVector, XString* string)
 {
-	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back, void(*)(XVector*, void*))(this_stringVector, &string);
+	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back_Copy, void(*)(XVector*, void*))(this_stringVector, &string);
 }
 
 void VXStringList_insert(XStringList* this_stringVector, int64_t index, XString* string)
 {
-	XVtableGetFunc(XVector_class_init(), EXVector_Insert, void(*)(XVector*,int64_t, void*))(this_stringVector, index, &string);
+	//XVtableGetFunc(XVector_class_init(), EXVector_Insert_Copy, void(*)(XVector*,int64_t, void*))(this_stringVector, index, &string);
 }
 
 XString* VXStringList_at(const XStringList* this_stringVector, int64_t index)

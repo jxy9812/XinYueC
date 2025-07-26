@@ -1,6 +1,8 @@
 ﻿#include"XHashMap.h"
 #if XHashMap_ON
 #include"XMemory.h"
+#include"XString.h"
+#include"XVariant.h"
 #include<string.h>
 XHashMap*XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess)
 {
@@ -24,12 +26,14 @@ void XHashMap_init(XHashMap*this_map, const size_t keyTypeSize, const size_t val
 		memset(XContainerDataPtr(this_map),0,size);
 }
 
-XHashMap* XHashMap_create_XStringVariant()
+XVariantHashMap* XHashMap_create_XVariantHashMap()
 {
-	XHashMap* hash = XHashMap_Create(XString*, XVariant*, XEquality_XString,XLess_XString);
+	XHashMap* hash = XHashMap_Create(XString, XVariant, XEquality_XString,XLess_XString);
 	if (hash == NULL)
 		return NULL;
-	XContainerSetDataDeleteMethod(hash, XMapBase_KeyXStringValueXVariantDeleteMethod);
+	XContainerSetDataCopyMethod(hash, XMapBase_XVariantMapCopyMethod);
+	XContainerSetDataMoveMethod(hash, XMapBase_XVariantMapMoveMethod);
+	XContainerSetDataDeinitMethod(hash, XMapBase_XVariantMapDeinitMethod);
 	return hash;
 }
 

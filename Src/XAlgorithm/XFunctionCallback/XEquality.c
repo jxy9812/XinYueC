@@ -45,9 +45,9 @@ const bool XEquality_XPoint(const void* pvPrevValue, const void* pvNextValue)
 }
 const bool XEquality_XByteArray(const void* pvPrevValue, const void* pvNextValue)
 {
-	if (XByteArray_getSize_base(*((XByteArray**)pvPrevValue)) != XByteArray_getSize_base(*((XByteArray**)pvNextValue)))
+	if (XByteArray_getSize_base(pvPrevValue) != XByteArray_getSize_base(pvNextValue))
 		return false;
-	return memcmp(XContainerDataPtr(*((XByteArray**)pvPrevValue)), XContainerDataPtr(*((XByteArray**)pvNextValue)), XByteArray_getSize_base(*((XByteArray**)pvPrevValue))) == 0;
+	return memcmp(XContainerDataPtr(pvPrevValue), XContainerDataPtr(pvNextValue), XByteArray_getSize_base(pvPrevValue)) == 0;
 }
 const bool XEquality_XString(const void* pvPrevValue, const void* pvNextValue)
 {

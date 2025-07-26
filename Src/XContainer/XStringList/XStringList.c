@@ -14,7 +14,7 @@ void XStringList_init(XStringList* this_stringVector)
 		return;
 	XVector_init(this_stringVector,sizeof(XString*));
 	XClassGetVtable(this_stringVector) = XStringList_class_init();
-	XContainerSetDataDeleteMethod(this_stringVector, XContainerDefaultDerivedClassDataDeleteMethod);
+	XContainerSetDataDeinitMethod(this_stringVector, XContainerDefaultDerivedClassDataDeleteMethod);
 }
 void XStringList_push_front_base(XStringList* this_stringVector, XString* string)
 {
@@ -34,7 +34,7 @@ void XStringList_push_back_c_str(XStringList* this_stringVector, const char* str
 }
 void XStringList_insert_base(XStringList* this_stringVector, int64_t index, XString* string)
 {
-	XVector_insert_base(this_stringVector,index, string);
+	XVector_insert(this_stringVector,index, string);
 }
 void XStringList_insert_c_str(XStringList* this_stringVector, int64_t index, const char* str)
 {

@@ -3,7 +3,10 @@
 #include"XAlgorithm.h"
 #include"XVtable.h"
 #include<stdlib.h>
-//声明 
+#include<string.h>
+//声明
+static void VXClass_copy(XContainerObject* object, const XContainerObject* src);
+static void VXClass_move(XContainerObject* object, XContainerObject* src);
 static void VXContainerObject_deinit(XContainerObject* Object);
 static bool VXContainerObject_isEmpty(const XContainerObject* Object);
 static size_t VXContainerObject_getSize(const XContainerObject* Object);
@@ -31,6 +34,8 @@ XVtable* XContainerObject_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXContainerObject_deinit);
 #if SHOWCONTAINERSIZE
 	printf("XContainerObject size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -78,6 +83,26 @@ void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* Objec
 void VXContainerObject_clear(XContainerObject* Object)
 {
 	Object->m_size = 0;
+}
+
+void VXClass_copy(XContainerObject* object, const XContainerObject* src)
+{
+	if (XContainerDataPtr(object))
+		XMemory_free(XContainerDataPtr(object));
+	memcpy(object,src,sizeof(XContainerObject));
+	XContainerDataPtr(object) = XMemory_malloc(XContainerSize(object)* XContainerTypeSize(object));
+	memcpy(XContainerDataPtr(object), XContainerDataPtr(src), XContainerSize(object) * XContainerTypeSize(object));
+	XContainerCapacity(object) = XContainerSize(object);
+}
+
+void VXClass_move(XContainerObject* object, XContainerObject* src)
+{
+	if (XContainerDataPtr(object))
+		XMemory_free(XContainerDataPtr(object));
+	memcpy(object, src, sizeof(XContainerObject));
+	XContainerDataPtr(src) = NULL;
+	XContainerCapacity(src) = 0;
+	XContainerSize(src)=0;
 }
 
 void VXContainerObject_deinit(XContainerObject* Object)

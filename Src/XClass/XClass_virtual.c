@@ -1,7 +1,10 @@
 ﻿#include"XClass.h"
 #include"XVtable.h"
 #include"XMemory.h"
-static void VXClass_deinit(XClass* Object);
+#include<string.h>
+static void VXClass_copy(XClass* object, const XClass* src);
+static void VXClass_move(XClass* object, XClass* src);
+static void VXClass_deinit(XClass* object);
 XVtable* XClass_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -11,7 +14,7 @@ XVtable* XClass_class_init()
 #else
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
-	void* table[] = { VXClass_deinit };
+	void* table[] = { VXClass_copy,VXClass_move,VXClass_deinit };
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
 #if SHOWCONTAINERSIZE
@@ -19,11 +22,21 @@ XVtable* XClass_class_init()
 #endif
 	return XVTABLE_DEFAULT;
 }
-void XClass_init(XClass* Object)
+void XClass_init(XClass* object)
 {
-	XClassGetVtable(Object) = XClass_class_init();
+	XClassGetVtable(object) = XClass_class_init();
 }
 
-void VXClass_deinit(XClass* Object)
+void VXClass_copy(XClass* object, const XClass* src)
+{
+	memcpy(object,src,sizeof(XClass));
+}
+
+void VXClass_move(XClass* object, XClass* src)
+{
+	memcpy(object, src, sizeof(XClass));
+}
+
+void VXClass_deinit(XClass* object)
 {
 }

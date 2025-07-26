@@ -84,7 +84,7 @@ void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvData)
 {
 	if (ISNULL(this_queue, "")|| ISNULL(pvData, ""))
 		return ;
-	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back,void(*)(XVector*,void*))(this_queue, pvData);
+	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back_Copy,void(*)(XVector*,void*))(this_queue, pvData);
 	//XVector_push_back_base(this_queue, pvData);
 	size_t size = XContainerSize(this_queue) - 1;
 	if (size > 0)//一个元素不用调整

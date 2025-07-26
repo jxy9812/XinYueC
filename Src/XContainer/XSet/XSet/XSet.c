@@ -56,8 +56,8 @@ XVector* VXSetBase_keys(const XSetBase* this_set)
 }
 static void XSet_freeNodeData(void* key, XSet* this_set)
 {
-	if (XContainerDataDeleteMethod(this_set) != NULL)
-		XContainerDataDeleteMethod(this_set)(key);
+	if (XContainerDataDeinitMethod(this_set) != NULL)
+		XContainerDataDeinitMethod(this_set)(key);
 }
 void VXSet_clear(XSet* this_set)
 {
@@ -105,8 +105,8 @@ bool VXSet_remove(XSet* this_set, const void* key)
 		return false;
 	if (XSetBase_contains(this_set, key))
 	{
-		if (XContainerDataDeleteMethod(this_set) != NULL)
-			XContainerDataDeleteMethod(this_set)(key);
+		if (XContainerDataDeinitMethod(this_set) != NULL)
+			XContainerDataDeinitMethod(this_set)(key);
 		XRBTree_remove(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key, XSet_freeNodeData, this_set);
 
 		--XContainerCapacity(this_set);

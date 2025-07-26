@@ -18,7 +18,7 @@ enum XStringEnum
 	EXString_Inserts,
 	EXString_Insert,
 	EXString_InsertArray,
-	EXString_Append = EXVector_append_Array,
+	EXString_Append = EXVector_append_Array_Copy,
 	EXString_Pop_Front,
 	EXString_Pop_Back,
 	//EXString_Erase,
@@ -50,7 +50,8 @@ XVtable* XString_class_init();
  XString* XString_create_fmt(const char* format, ...);
  XString* XString_create_with_length(const char* string,size_t len);
  //初始化 XVector
-void XString_init(XString* this_string);
+void XString_init(XString* this_string, const char* string);
+#define XString_Init(var,string)  XString _##var,*var=&_##var;XString_init(var,string)
 // 赋值
 void XString_append_base(XString* this_string, const char* str);
 void XString_append_string(XString* this_string, const XString* string);
@@ -65,6 +66,9 @@ int64_t XString_find_first_of(const XString* this_string, const char* subStr);
 int64_t XString_find_last_of(const XString* this_string, const char* subStr);
 int64_t XString_find_first_not_of(const XString* this_string, const char* subStr);
 int64_t XString_find_last_not_of(const XString* this_string, const char* subStr);
+#define XString_copy_base								XVector_copy_base
+#define XString_move_base								XVector_move_base
+#define XString_deinit_base								XVector_deinit_base
 //设置XString的大小，超过大小插入0值数据，小于删除数据
 #define XString_resize_base								XVector_resize_base
 //释放内存

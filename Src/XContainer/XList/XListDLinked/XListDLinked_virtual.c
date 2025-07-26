@@ -190,8 +190,8 @@ static bool removeNode(XListDLinked* this_list, XListDNode* node)
     XListDNode* prevNode = node->prev;//上一个节点
     if (node->data)
     {
-        if (XContainerDataDeleteMethod(this_list) != NULL)
-            XContainerDataDeleteMethod(this_list)(&(node->data));
+        if (XContainerDataDeinitMethod(this_list) != NULL)
+            XContainerDataDeinitMethod(this_list)(&(node->data));
     }
     XMemory_free(node);//释放节点
     if (XContainerSize(this_list) == 1)
@@ -271,8 +271,8 @@ void VXList_clear(XListDLinked* this_list)
     XListDNode* pnext = p->next;
     for (size_t i = 0; i < list->m_parent.m_size; i++)
     {
-        if (XContainerDataDeleteMethod(this_list) != NULL)
-            XContainerDataDeleteMethod(this_list)(&(p->data));
+        if (XContainerDataDeinitMethod(this_list) != NULL)
+            XContainerDataDeinitMethod(this_list)(&(p->data));
         pnext = p->next;
         //XMemory_free(p->data);
         XMemory_free(p);

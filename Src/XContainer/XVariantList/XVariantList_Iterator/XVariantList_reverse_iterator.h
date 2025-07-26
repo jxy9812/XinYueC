@@ -15,12 +15,12 @@ XContainerTypeDeclare(XVariantList);
 //}XVariantList_reverse_iterator;
 
 typedef  XVector_reverse_iterator XVariantList_reverse_iterator;
-XVariantList_reverse_iterator XVariantList_rbegin(XVariantList* list);
-XVariantList_reverse_iterator XVariantList_rend(XVariantList* list);
-void XVariantList_reverse_iterator_add(XVariantList* list,XVariantList_reverse_iterator* it);
-bool XVariantList_reverse_iterator_equality(XVariantList_reverse_iterator* itFirst, XVariantList_reverse_iterator* itSecond);
-void XVariantList_reverse_iterator_for_each(XVariantList* list, XFor_each ForFunction, void* args);
-XVariant* XVariantList_reverse_iterator_data(XVariantList_reverse_iterator* it);
+#define XVariantList_rbegin								XVector_rbegin
+#define XVariantList_rend								XVector_rend
+#define XVariantList_reverse_iterator_add				XVector_reverse_iterator_add
+#define XVariantList_reverse_iterator_equality          XVector_reverse_iterator_equality
+#define XVariantList_reverse_iterator_for_each			XVector_reverse_iterator_for_each
+#define XVariantList_reverse_iterator_data				XVector_reverse_iterator_data
 #ifdef __cplusplus
 }
 #endif

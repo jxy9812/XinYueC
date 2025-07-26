@@ -23,14 +23,16 @@ typedef struct XVariantList
 XVtable* XVariantList_class_init();
 XVariantList* XVariantList_create();
 void XVariantList_init(XVariantList* list);
-void XVariantList_push_front_base(XVariantList* list, XVariant* var);
-void XVariantList_push_back_base(XVariantList* list, XVariant* var);
-void XVariantList_insert_base(XVariantList* list, int64_t index, XVariant* var);
-// 返回
-XVariant* XVariantList_at_base(const XVariantList* list, int64_t index);
-XVariant* XVariantList_front_base(const XVariantList* list);
-XVariant* XVariantList_back_base(const XVariantList* list);
-XVariant* XVariantList_find_base(const XVariantList* list, const XVariant* findVal);
+#define XVariantList_push_front_base								XVector_push_front_base
+#define XVariantList_push_front_move_base							XVector_push_front_move_base
+#define XVariantList_push_back_base									XVector_push_back_base
+#define XVariantList_push_back_move_base							XVector_push_back_move_base
+#define XVariantList_insert											XVector_insert
+#define XVariantList_insert_move									XVector_insert_move
+#define XVariantList_at_base										XVector_at_base
+#define XVariantList_front_base										XVector_front_base
+#define XVariantList_back_base										XVector_back_base
+#define XVariantList_find_base										XVector_find_base
 #define XVariantList_delete_base									XVector_delete_base
 #define XVariantList_clear_base										XVector_clear_base
 #define	XVariantList_remove_base									XVector_remove_base

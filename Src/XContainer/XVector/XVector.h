@@ -16,17 +16,18 @@ extern "C" {
 //XVector虚函数表枚举
 XCLASS_DEFINE_BEGING(XVector)
 XCLASS_DEFINE_ENUM(XVector, Resize)=XCLASS_VTABLE_GET_SIZE(XContainerObject),
-XCLASS_DEFINE_ENUM(XVector, Push_Front),
-XCLASS_DEFINE_ENUM(XVector, Push_Back),
-XCLASS_DEFINE_ENUM(XVector, Inserts),
-XCLASS_DEFINE_ENUM(XVector, Insert),
-XCLASS_DEFINE_ENUM(XVector, Insert_Array),
-XCLASS_DEFINE_ENUM(XVector, append_Array),
+XCLASS_DEFINE_ENUM(XVector, Push_Front_Copy),
+XCLASS_DEFINE_ENUM(XVector, Push_Front_Move),
+XCLASS_DEFINE_ENUM(XVector, Push_Back_Copy),
+XCLASS_DEFINE_ENUM(XVector, Push_Back_Move),
+XCLASS_DEFINE_ENUM(XVector, Insert_Array_Copy),
+XCLASS_DEFINE_ENUM(XVector, Insert_Array_Move),
+XCLASS_DEFINE_ENUM(XVector, append_Array_Copy),
+XCLASS_DEFINE_ENUM(XVector, append_Array_Move),
 XCLASS_DEFINE_ENUM(XVector, Pop_Front),
 XCLASS_DEFINE_ENUM(XVector, Pop_Back),
 XCLASS_DEFINE_ENUM(XVector, Erase),
 XCLASS_DEFINE_ENUM(XVector, Remove),
-XCLASS_DEFINE_ENUM(XVector, Copy),
 XCLASS_DEFINE_ENUM(XVector, Rcopy),
 XCLASS_DEFINE_ENUM(XVector, At),
 XCLASS_DEFINE_ENUM(XVector, Front),
@@ -49,20 +50,29 @@ XVector* XVector_create(size_t typeSize);
 void XVector_init(XVector* this_vector, size_t typeSize);
 //设置XVector的大小，超过大小插入0值数据，小于删除数据
 bool XVector_resize_base(XVector* this_vector,size_t size);
+
 // 向量头部增加一个元素
 void XVector_push_front_base(XVector* this_vector, void* pvValue);
 #define XVector_Push_Front_Base(this_vector,type,value){type t=value;XVector_push_front_base(this_vector,&t);}
+void XVector_push_front_move_base(XVector* this_vector, void* pvValue);
+
 // 向量尾部增加一个元素
 void XVector_push_back_base(XVector* this_vector, void* pvValue);
 #define XVector_Push_Back_Base(this_vector,type,value){type t=value;XVector_push_back_base(this_vector,&t);}
+void XVector_push_back_move_base(XVector* this_vector, void* pvValue);
+
 // 向量中前增加一个元素
-void XVector_insert_base(XVector* this_vector, int64_t index, const void* pvValue);
-#define XVector_Insert_Base(this_vector,index,type,value){type t=value;XVector_insert_base(this_vector,index,&t);}
-// 向量中指向元素p前增加n个相同的元素x
-void XVector_inserts_base(XVector* this_vector, int64_t index, void* pvValue, size_t n);
+void XVector_insert(XVector* this_vector, int64_t index, const void* pvValue);
+#define XVector_Insert(this_vector,index,type,value){type t=value;XVector_insert(this_vector,index,&t);}
+void XVector_insert_move(XVector* this_vector, int64_t index, const void* pvValue);
+
 // 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2]间的数据
 void XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
+void XVector_insert_array_move_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
+//尾部追加数组
 void XVector_append_array_base(XVector* this_vector, const void* begin, size_t n);
+void XVector_append_array_move_base(XVector* this_vector, const void* begin, size_t n);
+
 void XVector_pop_front_base(XVector* this_vector);
 //删除向量中最后一个元素
 void XVector_pop_back_base(XVector* this_vector);
@@ -70,8 +80,6 @@ void XVector_pop_back_base(XVector* this_vector);
 void XVector_erase_base(XVector* this_vector,const XVector_iterator* it, XVector_iterator*next);
 //删除数据 n<0 后面全部删除
 void XVector_remove_base(XVector* this_vector, int64_t index, int64_t n);
-//将this_Two拷贝到this_One
-void XVector_copy_base(XVector* this_One, const XVector* this_Two);
 //将this_Two逆序拷贝到this_One
 void XVector_rcopy_base(XVector* this_One, const XVector* this_Two);
 // 返回元素的指针
@@ -87,6 +95,9 @@ void* XVector_back_base(const  XVector* this_vector);
 int64_t XVector_find_base(const XVector* this_vector, const void* findVal);
 //排序
 void  XVector_sort_base(XVector* this_vector, XCompare compare);
+#define XVector_copy_base				XContainerObject_copy_base
+#define XVector_move_base				XContainerObject_move_base
+#define XVector_deinit_base				XContainerObject_deinit_base
 //释放内存
 #define XVector_delete_base				XContainerObject_delete_base
 //清空vector的队列，不是释放内存

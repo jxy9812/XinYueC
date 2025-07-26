@@ -8,9 +8,7 @@
 XString* XString_create(const char* string)
 {
 	XString* this_string = XMemory_malloc(sizeof(XString));
-	XString_init(this_string);
-	if(string)
-		XString_append_base(this_string,string);
+	XString_init(this_string, string);
 	return this_string;
 }
 XString* XString_create_fmt(const char* format, ...)
@@ -48,7 +46,7 @@ XString* XString_create_with_length(const char* string, size_t len)
 	memcpy(XContainerDataPtr(this_string),string,len);
 	return this_string;
 }
-void XString_init(XString* this_string)
+void XString_init(XString* this_string, const char* string)
 {
 	if (ISNULL(this_string, "") )
 		return;
@@ -56,6 +54,8 @@ void XString_init(XString* this_string)
 	this_string->m_vector.m_equality = XEquality_char;
 	XClassGetVtable(this_string) = XString_class_init();
 	XString_resize_base(this_string,0);
+	if (string)
+		XString_append_base(this_string, string);
 }
 
 //void XString_push_front_base(XString* this_string, char c)

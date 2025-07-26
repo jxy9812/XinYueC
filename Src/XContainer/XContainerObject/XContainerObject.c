@@ -1,15 +1,13 @@
 ﻿#include"XContainerObject.h"
 #if XContainerObject_ON
+#include<string.h>
 void XContainerObject_init(XContainerObject* Object, size_t typeSize)
 {
 	if (ISNULL(Object, "") || ISNULL(typeSize, ""))
 		return;
+	memset(((XClass*)Object)+1,0,sizeof(XContainerObject)-sizeof(XClass));
 	XClass_init(Object);
 	XClassGetVtable(Object) = XContainerObject_class_init();
-	Object->m_data = NULL;
-	Object->m_dataDeleteMethod = NULL;
-	Object->m_capacity = 0;
-	Object->m_size = 0;
 	Object->m_typeSize = typeSize;
 }
 bool XContainerObject_isEmpty_base(const XContainerObject* Object)

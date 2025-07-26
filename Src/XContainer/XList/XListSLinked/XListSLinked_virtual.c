@@ -179,8 +179,8 @@ size_t VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, const v
             while (NewListHead != NULL) {
                 XListSNode* temp = NewListHead;
                 NewListHead = NewListHead->next;
-                if (XContainerDataDeleteMethod(this_list) != NULL) {
-                    XContainerDataDeleteMethod(this_list)(&temp->data);
+                if (XContainerDataDeinitMethod(this_list) != NULL) {
+                    XContainerDataDeinitMethod(this_list)(&temp->data);
                 }
                 XMemory_free(temp);
             }
@@ -248,8 +248,8 @@ static void removeNode(XListSLinked* this_list, XListSNode* prev, XListSNode* re
         if (prev)
             prev->next = NULL;
     }
-    if (XContainerDataDeleteMethod(this_list) != NULL)
-        XContainerDataDeleteMethod(this_list)(&(removeNode->data));
+    if (XContainerDataDeinitMethod(this_list) != NULL)
+        XContainerDataDeinitMethod(this_list)(&(removeNode->data));
     XMemory_free(removeNode);
     //更新数量
     --XContainerSize(this_list);
@@ -343,8 +343,8 @@ void VXList_clear(XListSLinked* this_list)
     {
         prev = node;
         node = node->next;
-        if (XContainerDataDeleteMethod(this_list) != NULL)
-            XContainerDataDeleteMethod(this_list)(&(prev->data));
+        if (XContainerDataDeinitMethod(this_list) != NULL)
+            XContainerDataDeinitMethod(this_list)(&(prev->data));
         XMemory_free(prev);
     }
     this_list->m_tail = NULL;

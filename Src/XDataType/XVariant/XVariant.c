@@ -19,13 +19,7 @@ typedef struct TypeProperty
 	char* typeName;//类型名字
 }TypeProperty;
 
-typedef struct XVariant
-{
-	int m_type;//类型
-	//XEquality m_equality;//相等比较函数
-	size_t m_dataSize;//数据大小
-	void* m_data;//数据
-}XVariant;
+
 
 #define XVariant_DataPtr(Var)    (((XVariant*)Var)->m_data)
 //#define XVariant_DataPtr(Var)  (&(((XVariant*)Var)->data))
@@ -250,7 +244,7 @@ XVariant* XVariant_create_list(const XVariantList* list)
 	return var;
 }
 //XMap<XString, XVariant>
-XVariant* XVariant_create_XMap(const XMap* map)
+XVariant* XVariant_create_XMap(const XVariantMap* map)
 {
 	if (map == NULL|| ((XMapBase*)map)->m_KeyEquality != XEquality_XString)
 		return NULL;
@@ -262,8 +256,8 @@ XVariant* XVariant_create_XMap(const XMap* map)
 	for_each_iterator(map, XMap, it)
 	{
 		pair = XMap_iterator_data(&it);
-		XString* str = XPair_First(pair,XString*);
-		XVariant* v= XPair_Second(pair, XVariant*);
+		XString* str = XPair_first(pair);
+		XVariant* v= XPair_second(pair);
 		XPair p = {0};
 		p.m_firstTypeSize= XContainerSize(str)+1;//XString大小
 		p.m_secondTypeSize = v->m_dataSize + (sizeof(XVariant) - sizeof(void*));
@@ -284,8 +278,8 @@ XVariant* XVariant_create_XMap(const XMap* map)
 	for_each_iterator(map, XMap, it)
 	{
 		pair = XMap_iterator_data(&it);
-		XString* str = XPair_First(pair, XString*);
-		XVariant* v = XPair_Second(pair, XVariant*);
+		XString* str = XPair_first(pair);
+		XVariant* v = XPair_second(pair);
 		copyPair.m_firstTypeSize= XContainerSize(str)+1;//XString大小
 		copyPair.m_secondTypeSize = v->m_dataSize + (sizeof(XVariant) - sizeof(void*));
 		//拷贝构建XPair结构
@@ -315,8 +309,8 @@ XVariant* XVariant_create_XHash(const XHashMap* hash)
 	for_each_iterator(hash, XHashMap, it)
 	{
 		pair = XHashMap_iterator_data(&it);
-		XString* str = XPair_First(pair, XString*);
-		XVariant* v = XPair_Second(pair, XVariant*);
+		XString* str = XPair_first(pair);
+		XVariant* v = XPair_second(pair);
 		XPair p = { 0 };
 		p.m_firstTypeSize = XContainerSize(str) + 1;//XString大小
 		p.m_secondTypeSize = v->m_dataSize + (sizeof(XVariant) - sizeof(void*));
@@ -337,8 +331,8 @@ XVariant* XVariant_create_XHash(const XHashMap* hash)
 	for_each_iterator(hash, XHashMap, it)
 	{
 		pair = XHashMap_iterator_data(&it);
-		XString* str = XPair_First(pair, XString*);
-		XVariant* v = XPair_Second(pair, XVariant*);
+		XString* str = XPair_first(pair);
+		XVariant* v = XPair_second(pair);
 		copyPair.m_firstTypeSize = XContainerSize(str) + 1;//XString大小
 		copyPair.m_secondTypeSize = v->m_dataSize + (sizeof(XVariant) - sizeof(void*));
 		//拷贝构建XPair结构
@@ -547,25 +541,26 @@ XVariantList* XVariant_toList(XVariant* var)
 	uint8_t* ptr = var->m_data;
 	size_t variantSize = sizeof(XVariant) - sizeof(void*);
 	XVariant* temp=ptr;
+	XVariant_Init(newVar, NULL, 0, 0);
 	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
 	{
-		XVariant* newVar = XVariant_create(NULL,0,0);
 		memcpy(newVar, temp, variantSize);
 		newVar->m_data = XMemory_malloc(temp->m_dataSize);
 		ptr += variantSize;
 		memcpy(newVar->m_data, ptr, temp->m_dataSize);
 		ptr += temp->m_dataSize;
-		XVariantList_push_back_base(list,newVar);
+		XVariantList_push_back_move_base(list,newVar);
 		temp = ptr;
 	}
+	XVariant_deinit(newVar);
 	return list;
 }
 
-XMap* XVariant_toMap(XVariant* var)
+XVariantMap* XVariant_toMap(XVariant* var)
 {
 	if (var->m_type != XVariantType_MapBase)
 		return NULL;
-	XMap* map = XMap_create_XStringVariant();
+	XVariantMap* map = XMap_create_XVariantMap();
 	if (map == NULL)
 		return NULL;
 	//
@@ -573,27 +568,32 @@ XMap* XVariant_toMap(XVariant* var)
 	uint8_t* ptr = var->m_data;
 	XPair* temp = ptr;
 	XVariant* tv=NULL;
+	XString_Init(str,NULL);
+	XVariant_Init(newVar, NULL, 0, 0);
 	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
 	{
-		XString* str = XString_create(XPair_first(temp));
+		//XString* str = XString_create(XPair_first(temp));
+		XString_assign_base(str, XPair_first(temp));
 		tv = XPair_second(temp);
-		XVariant* newVar = XVariant_create(NULL, 0, 0);
+		//XVariant* newVar = XVariant_create(NULL, 0, 0);
 
 		memcpy(newVar, tv, variantSize);
 		newVar->m_data = XMemory_malloc(tv->m_dataSize);
 		memcpy(newVar->m_data, ((uint8_t*)tv)+ variantSize, tv->m_dataSize);
-		XMapBase_insert_base(map,&str,&newVar);
+		XMapBase_insert_move_base(map,str,newVar);
 		ptr += XPair_getSize(temp);
 		temp = ptr;
 	}
+	XString_deinit_base(str);
+	XVariant_deinit(newVar);
 	return map;
 }
 
-XHashMap* XVariant_toHash(XVariant* var)
+XVariantHashMap* XVariant_toHash(XVariant* var)
 {
 	if (var->m_type != XVariantType_MapBase)
 		return NULL;
-	XMap* hash = XHashMap_create_XStringVariant();
+	XMap* hash = XHashMap_create_XVariantHashMap();
 	if (hash == NULL)
 		return NULL;
 	//
@@ -601,19 +601,24 @@ XHashMap* XVariant_toHash(XVariant* var)
 	uint8_t* ptr = var->m_data;
 	XPair* temp = ptr;
 	XVariant* tv = NULL;
+	XString_Init(str, NULL);
+	XVariant_Init(newVar, NULL, 0, 0);
 	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
 	{
-		XString* str = XString_create(XPair_first(temp));
+		//XString* str = XString_create(XPair_first(temp));
+		XString_assign_base(str, XPair_first(temp));
 		tv = XPair_second(temp);
-		XVariant* newVar = XVariant_create(NULL, 0, 0);
+		//XVariant* newVar = XVariant_create(NULL, 0, 0);
 
 		memcpy(newVar, tv, variantSize);
 		newVar->m_data = XMemory_malloc(tv->m_dataSize);
 		memcpy(newVar->m_data, ((uint8_t*)tv) + variantSize, tv->m_dataSize);
-		XMapBase_insert_base(hash, &str, &newVar);
+		XMapBase_insert_move_base(hash, str, newVar);
 		ptr += XPair_getSize(temp);
 		temp = ptr;
 	}
+	XString_deinit_base(str);
+	XVariant_deinit(newVar);
 	return hash;
 }
 
@@ -783,6 +788,28 @@ void XVariant_setValue_XString(XVariant* var, const XString* string)
 void XVariant_setValue_str(XVariant* var, const char* str)
 {
 	setValue(var, str, strlen(str)+1, XVariantType_String);
+}
+
+void XVariant_copy(XVariant* var, const XVariant* src)
+{
+	if (var == NULL || src == NULL)
+		return;
+	if (var->m_data)
+		XMemory_free(var->m_data);
+	memcpy(var,src,sizeof(XVariant));
+	var->m_data = XMemory_malloc(var->m_dataSize);
+	memcpy(var->m_data,src->m_data, var->m_dataSize);
+}
+
+void XVariant_move(XVariant* var, XVariant* src)
+{
+	if (var == NULL || src == NULL)
+		return;
+	if (var->m_data)
+		XMemory_free(var->m_data);
+	memcpy(var, src, sizeof(XVariant));
+	src->m_data = NULL;
+	src->m_dataSize = 0;
 }
 
 void XVariant_delete(XVariant* var)
