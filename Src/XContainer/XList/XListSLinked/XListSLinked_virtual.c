@@ -8,6 +8,11 @@ static XListSNode * VXList_push_front(XListSLinked * this_list, void* pvData);
 static XListSNode* VXList_push_back(XListSLinked* this_list, void* pvData);
 static bool VXList_insert(XListSLinked* this_list, XListSNode* curNode, void* pvData);
 static size_t VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, const void* array, size_t count);
+
+static XListSNode* VXList_push_front_move(XListSLinked* this_list, void* pvData);
+static XListSNode* VXList_push_back_move(XListSLinked* this_list, void* pvData);
+static bool VXList_insert_move(XListSLinked* this_list, XListSNode* curNode, void* pvData);
+static size_t VXList_insert_array_move(XListSLinked* this_list, XListSNode* curNode, const void* array, size_t count);
 //删除
 static bool VXList_pop_front(XListSLinked* this_list);
 static bool VXList_pop_back(XListSLinked* this_list);
@@ -36,7 +41,10 @@ XVtable* XListSLinked_class_init()
 
     void* table[] = {
         //插入
-        VXList_push_front,VXList_push_back,VXList_insert,VXList_insert_array,
+        VXList_push_front,VXList_push_front_move,
+        VXList_push_back,VXList_push_back_move,
+        VXList_insert,VXList_insert_move,
+        VXList_insert_array,VXList_insert_array_move,
         //删除
         VXList_pop_front,VXList_pop_back,VXList_erase,VXList_remove,
         //遍历
@@ -67,7 +75,15 @@ XListSNode* VXList_push_front(XListSLinked* this_list, void* pvData)
         perror("开辟节点失败");
         return NULL;
     }
-    memcpy(&(NewNode->data), pvData, XContainerTypeSize(this_list));//拷贝数据
+    if (XContainerDataCopyMethod(this_list))
+    {
+        memset(XListSNode_DataPtr(NewNode),0, XContainerTypeSize(this_list));
+        XContainerDataCopyMethod(this_list)(XListSNode_DataPtr(NewNode), pvData);
+    }
+    else
+    {
+        memcpy(XListSNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+    }
     XListSNode* head = XContainerDataPtr(this_list);//获取头指针
     XContainerDataPtr(this_list) = NewNode;//新节点成为新的头
     NewNode->next = head;//修改指向下一个节点为原先的头
@@ -88,7 +104,15 @@ XListSNode* VXList_push_back(XListSLinked* this_list, void* pvData)
         perror("开辟节点失败");
         return NULL;
     }
-    memcpy(&(NewNode->data), pvData, XContainerTypeSize(this_list));//拷贝数据
+    if (XContainerDataCopyMethod(this_list))
+    {
+        memset(XListSNode_DataPtr(NewNode), 0, XContainerTypeSize(this_list));
+        XContainerDataCopyMethod(this_list)(XListSNode_DataPtr(NewNode), pvData);
+    }
+    else
+    {
+        memcpy(XListSNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+    }
     if (this_list->m_tail)
         this_list->m_tail->next = NewNode;//尾指针指向新节点
     NewNode->next = NULL;//新节点指向NULL
@@ -128,7 +152,15 @@ bool VXList_insert(XListSLinked* this_list, XListSNode* curNode, void* pvData)
         perror("开辟节点失败");
         return false;
     }
-    memcpy(&(NewNode->data), pvData, XContainerTypeSize(this_list));//拷贝数据
+    if (XContainerDataCopyMethod(this_list))
+    {
+        memset(XListSNode_DataPtr(NewNode), 0, XContainerTypeSize(this_list));
+        XContainerDataCopyMethod(this_list)(XListSNode_DataPtr(NewNode), pvData);
+    }
+    else
+    {
+        memcpy(XListSNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+    }
     NewNode->next = node;//链接节点
     //更新节点信息
     if (prev == NULL)
@@ -186,7 +218,219 @@ size_t VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, const v
             }
             return 0;
         }
-        memcpy(&(NewListNode->data), ((char*)array) + i * XContainerTypeSize(this_list), XContainerTypeSize(this_list));//拷贝数据
+        if (XContainerDataCopyMethod(this_list))
+        {
+            memset(XListSNode_DataPtr(NewListNode), 0, XContainerTypeSize(this_list));
+            XContainerDataCopyMethod(this_list)(XListSNode_DataPtr(NewListNode), ((char*)array) + i * XContainerTypeSize(this_list));
+        }
+        else
+        {
+            memcpy(XListSNode_DataPtr(NewListNode), ((char*)array) + i * XContainerTypeSize(this_list), XContainerTypeSize(this_list));//拷贝数据
+        }
+       
+        if (NewListTail == NULL)
+        {//第一个节点
+            NewListTail = NewListNode;
+            NewListHead = NewListNode;
+        }
+        else
+        {
+            NewListTail->next = NewListNode;
+            NewListTail = NewListNode;
+        }
+    }
+    if (XContainerDataPtr(this_list) == NULL)
+    {//链表是空的情况
+        XContainerDataPtr(this_list) = NewListHead;//更新头节点
+        this_list->m_tail = NewListTail;//更新尾节点
+        NewListTail->next = NULL;
+        //更新数量
+        XContainerSize(this_list) += count;
+        XContainerCapacity(this_list) += count;
+        return count;
+    }
+
+    //开始将两个链表合并起来
+    if (curNode == NULL)
+    {//要插入到链表尾部	
+        this_list->m_tail->next = NewListHead;//链接头尾
+        this_list->m_tail = NewListTail;//更新尾节点
+        NewListTail->next = NULL;
+    }
+    else if (curNode == XContainerDataPtr(this_list))
+    {//插入到链表头
+        NewListTail->next = XContainerDataPtr(this_list);
+        XContainerDataPtr(this_list) = NewListHead;
+    }
+    else
+    {//插入到原先链表中间
+        prev->next = NewListHead;
+        NewListTail->next = node;
+    }
+    //更新数量
+    XContainerSize(this_list) += count;
+    XContainerCapacity(this_list) += count;
+    return count;
+}
+XListSNode* VXList_push_front_move(XListSLinked* this_list, void* pvData)
+{
+    XListBase* list = this_list;
+    XListSNode* NewNode = CreatNode(this_list);//新节点
+    if (NewNode == NULL)
+    {
+        perror("开辟节点失败");
+        return NULL;
+    }
+    if (XContainerDataMoveMethod(this_list))
+    {
+        memset(XListSNode_DataPtr(NewNode), 0, XContainerTypeSize(this_list));
+        XContainerDataMoveMethod(this_list)(XListSNode_DataPtr(NewNode), pvData);
+    }
+    else
+    {
+        memcpy(XListSNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+    }
+    XListSNode* head = XContainerDataPtr(this_list);//获取头指针
+    XContainerDataPtr(this_list) = NewNode;//新节点成为新的头
+    NewNode->next = head;//修改指向下一个节点为原先的头
+    if (XListBase_isEmpty_base(this_list))
+        this_list->m_tail = NewNode;
+    //更新记录数量
+    ++XContainerSize(this_list);
+    ++XContainerCapacity(this_list);
+    return NewNode;
+}
+XListSNode* VXList_push_back_move(XListSLinked* this_list, void* pvData)
+{
+    XListBase* list = this_list;
+    XListSNode* NewNode = CreatNode(this_list);//新节点
+    if (NewNode == NULL)
+    {
+        perror("开辟节点失败");
+        return NULL;
+    }
+    if (XContainerDataMoveMethod(this_list))
+    {
+        memset(XListSNode_DataPtr(NewNode), 0, XContainerTypeSize(this_list));
+        XContainerDataMoveMethod(this_list)(XListSNode_DataPtr(NewNode), pvData);
+    }
+    else
+    {
+        memcpy(XListSNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+    }
+    if (this_list->m_tail)
+        this_list->m_tail->next = NewNode;//尾指针指向新节点
+    NewNode->next = NULL;//新节点指向NULL
+    this_list->m_tail = NewNode;//更新记录的尾节点
+    if (XListBase_isEmpty_base(this_list))
+        XContainerDataPtr(this_list) = NewNode;
+    //更新记录数量
+    ++XContainerSize(this_list);
+    ++XContainerCapacity(this_list);
+    return NewNode;
+}
+bool VXList_insert_move(XListSLinked* this_list, XListSNode* curNode, void* pvData)
+{
+    if (curNode == NULL)
+    {
+        XListBase_push_back_move_base(this_list, pvData);
+        return true;
+    }
+    //遍历节点
+    XListSNode* prev = NULL;//前一个节点
+    XListSNode* node = XContainerDataPtr(this_list);//当前节点
+    while (node)
+    {
+        if (node == curNode)
+            break;//找到节点后跳出循环
+        //没找到看下一个
+        prev = node;
+        node = node->next;
+    }
+    if (node == NULL)
+        return false;//没找到插入失败
+    //创建一个新的节点
+    XListSNode* NewNode = CreatNode(this_list);//新节点
+    if (NewNode == NULL)
+    {
+        perror("开辟节点失败");
+        return false;
+    }
+    if (XContainerDataMoveMethod(this_list))
+    {
+        memset(XListSNode_DataPtr(NewNode), 0, XContainerTypeSize(this_list));
+        XContainerDataMoveMethod(this_list)(XListSNode_DataPtr(NewNode), pvData);
+    }
+    else
+    {
+        memcpy(XListSNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+    }
+    NewNode->next = node;//链接节点
+    //更新节点信息
+    if (prev == NULL)
+    {
+        XContainerDataPtr(this_list) = NewNode;//更新头节点
+    }
+    else
+    {
+        prev->next = NewNode;//
+    }
+    //更新记录数量
+    ++XContainerSize(this_list);
+    ++XContainerCapacity(this_list);
+    return true;
+}
+size_t VXList_insert_array_move(XListSLinked* this_list, XListSNode* curNode, const void* array, size_t count)
+{
+    //遍历节点
+    XListSNode* prev = NULL;//前一个节点
+    XListSNode* node = XContainerDataPtr(this_list);//当前节点
+    if (curNode != NULL)
+    {
+        while (node)
+        {
+            if (node == curNode)
+                break;//找到节点后跳出循环
+            //没找到看下一个
+            prev = node;
+            node = node->next;
+        }
+        if (node == NULL)
+            return 0;//没找到插入失败
+    }
+
+    //开始将数组数据构建成链表
+    XListSNode* NewListHead = NULL;
+    XListSNode* NewListNode = NULL;
+    XListSNode* NewListTail = NULL;
+    for (size_t i = 0; i < count; i++)
+    {
+        //创建一个新的节点
+        NewListNode = CreatNode(this_list);//新节点
+        if (NewListNode == NULL)
+        {
+            perror("开辟节点失败");
+            // 释放已创建的节点
+            while (NewListHead != NULL) {
+                XListSNode* temp = NewListHead;
+                NewListHead = NewListHead->next;
+                if (XContainerDataDeinitMethod(this_list) != NULL) {
+                    XContainerDataDeinitMethod(this_list)(&temp->data);
+                }
+                XMemory_free(temp);
+            }
+            return 0;
+        }
+        if (XContainerDataMoveMethod(this_list))
+        {
+            memset(XListSNode_DataPtr(NewListNode), 0, XContainerTypeSize(this_list));
+            XContainerDataMoveMethod(this_list)(XListSNode_DataPtr(NewListNode), ((char*)array) + i * XContainerTypeSize(this_list));
+        }
+        else
+        {
+            memcpy(XListSNode_DataPtr(NewListNode), ((char*)array) + i * XContainerTypeSize(this_list), XContainerTypeSize(this_list));//拷贝数据
+        }
+
         if (NewListTail == NULL)
         {//第一个节点
             NewListTail = NewListNode;

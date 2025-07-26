@@ -7,6 +7,7 @@
 
 // Set插入数据
 static bool VXSet_insert(XHashSet* this_set, const void* pvKey);
+static bool VXSet_insert_move(XHashSet* this_set, const void* pvKey);
 // Set删除数据
 static void VXSet_erase(XHashSet* this_set, const void* pvKey);
 // Set移除数据
@@ -40,7 +41,7 @@ XVtable* XHashSet_class_init()
         // 继承类
         XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
     void* table[] = {
-        VXSet_insert, VXSet_erase, VXSet_remove, VXSet_find,VXSetBase_keys
+        VXSet_insert, VXSet_insert_move,VXSet_erase, VXSet_remove, VXSet_find,VXSetBase_keys
     };
     // 追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -115,7 +116,50 @@ bool VXSet_insert(XHashSet* this_set, const void* pvKey)
     XRBTreeNode* current = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
     if (current == NULL)
     {//节点不存在
-        XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
+        if (XContainerDataCopyMethod(this_set))
+        {
+            void* temp = XMemory_calloc(1, XContainerTypeSize(this_set));
+            XContainerDataCopyMethod(temp, pvKey);
+            XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
+            XMemory_free(temp);
+        }
+        else
+        {
+            XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
+        }
+        ++XContainerSize(this_set);
+    }
+}
+
+bool VXSet_insert_move(XHashSet* this_set, const void* pvKey)
+{
+    if ((double)XContainerSize(this_set) / XContainerCapacity(this_set) >= DEFAULT_LOAD_FACTOR)
+    {
+        //printf("XHashSet 扩容\n");
+        size_t new_capacity = XContainerCapacity(this_set) * 2;
+        if (!XHashSet_resize(this_set, new_capacity))
+        {
+            printf("XHashSet 扩容失败\n");
+            return false;
+        }
+    }
+
+    size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
+
+    XRBTreeNode* current = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
+    if (current == NULL)
+    {//节点不存在
+        if (XContainerDataMoveMethod(this_set))
+        {
+            void* temp = XMemory_calloc(1, XContainerTypeSize(this_set));
+            XContainerDataMoveMethod(temp, pvKey);
+            XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
+            XMemory_free(temp);
+        }
+        else
+        {
+            XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
+        }
         ++XContainerSize(this_set);
     }
 }

@@ -11,7 +11,8 @@ extern "C" {
 //XQueue虚函数表枚举
 enum XQueueEnum
 {
-	EXQueue_Push = EXListBase_Push_Back,
+	EXQueue_Push_Copy = EXListBase_Push_Back_Copy,
+	EXQueue_Push_Move = EXListBase_Push_Back_Move,
 	EXQueue_Pop= EXListBase_Pop_Front,
 	EXQueue_Top = EXListBase_Front,
 };
@@ -28,6 +29,8 @@ void XQueue_init(XQueue* this_queue, size_t typeSize);
 //插入到队列的队尾
 void XQueue_push_base(XQueue* this_queue, void* pvValue);
 #define XQueue_Push_Base(this_queue,type,value) {type t=value;XQueue_push_base(this_queue,&t);}
+void XQueue_push_move_base(XQueue* this_queue, void* pvValue);
+#define XQueue_Push_Move_Base(this_queue,type,value) {type t=value;XQueue_push_move_base(this_queue,&t);}
 //删除queue的队头元素
 void XQueue_pop_base(XQueue* this_queue);
 // 返回队列的队头元素指针，但不删除该元素
@@ -40,9 +43,9 @@ void* XQueue_back_base(XQueue* this_queue);
 void* XQueue_top_base(XQueue* this_queue);
 #define XQueue_Top_Base(queue,type) (*((type*)XQueue_top_base(queue)))
 //释放内存
-#define XQueue_delete_base   XContainerObject_delete_base
+#define XQueue_delete_base			XContainerObject_delete_base
 //清空，不是释放内存
-#define XQueue_clear_base  XContainerObject_clear_base
+#define XQueue_clear_base			XContainerObject_clear_base
 //检测是否为空，空为真 O(1)
 #define XQueue_isEmpty_base			XContainerObject_isEmpty_base
 //返回元素的个数 O(1)

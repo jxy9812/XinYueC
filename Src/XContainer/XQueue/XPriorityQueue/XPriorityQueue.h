@@ -23,6 +23,8 @@ XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare);
 //api
 #define XPriorityQueue_Push_Base				XQueueBase_Push_Base
 #define XPriorityQueue_push_base				XQueueBase_push_base
+#define XPriorityQueue_Push_Move_Base			XQueueBase_Push_Move_Base
+#define XPriorityQueue_push_move_base			XQueueBase_push_move_base
 //出队
 #define XPriorityQueue_pop_base					XQueueBase_pop_base
 //接收数据并且出队	

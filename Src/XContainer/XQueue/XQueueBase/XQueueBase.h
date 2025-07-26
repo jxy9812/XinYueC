@@ -5,16 +5,16 @@
 extern "C" {
 #endif
 #include"XContainerObject.h"
-#define XQUEUEBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XContainerObject)+5)       //XQueueBase容器虚函数表大小
+#define XQUEUEBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XQueueBase))       //XQueueBase容器虚函数表大小
 //XQueueBase虚函数表枚举
-enum XQueueBaseEnum
-{
-	EXQueueBase_Push = XCLASS_VTABLE_GET_SIZE(XContainerObject),
-	EXQueueBase_Pop,
-	EXQueueBase_Top,
-	EXQueueBase_Receive,
-	EXQueueBase_IsFull
-};
+XCLASS_DEFINE_BEGING(XQueueBase)
+XCLASS_DEFINE_ENUM(XQueueBase, Push_Copy) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
+XCLASS_DEFINE_ENUM(XQueueBase, Push_Move),
+XCLASS_DEFINE_ENUM(XQueueBase, Pop),
+XCLASS_DEFINE_ENUM(XQueueBase, Top),
+XCLASS_DEFINE_ENUM(XQueueBase, Receive),
+XCLASS_DEFINE_ENUM(XQueueBase, IsFull),
+XCLASS_DEFINE_END(XQueueBase)
 //环形队列
 typedef struct XQueueBase
 {
@@ -23,6 +23,9 @@ typedef struct XQueueBase
 //插入到队列的队尾
 #define XQueueBase_Push_Base(this_queue,type,value){type t=value;XQueueBase_push_base(this_vector,&t);}
 bool XQueueBase_push_base(XQueueBase* this_queue, void* pvData);
+
+#define XQueueBase_Push_Move_Base(this_queue,type,value){type t=value;XQueueBase_push_move_base(this_vector,&t);}
+bool XQueueBase_push_move_base(XQueueBase* this_queue, void* pvData);
 //出队
 void XQueueBase_pop_base(XQueueBase* this_queue);
 //接收数据并且出队

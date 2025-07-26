@@ -27,6 +27,8 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue,bool autoExpansi
 //api
 #define XCircularQueue_Push_Base				XQueueBase_Push_Base
 #define XCircularQueue_push_base				XQueueBase_push_base
+#define XCircularQueue_Push_Move_Base			XQueueBase_Push_Move_Base
+#define XCircularQueue_push_move_base			XQueueBase_push_move_base
 //出队
 #define XCircularQueue_pop_base					XQueueBase_pop_base
 //接收数据并且出队	

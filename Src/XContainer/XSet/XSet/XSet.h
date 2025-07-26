@@ -22,6 +22,7 @@ void XSet_init(XSet* this_map, const size_t keyTypeSize, XEquality KeyEquality, 
 //Map插入数据
 #define XSet_insert_base				XSetBase_insert_base
 #define XSet_Insert_Base				XSetBase_Insert_Base
+#define XSet_insert_move_base			XSetBase_insert_move_base
 #define XSet_erase_base					XSetBase_erase_base
 #define XSet_remove_base				XSetBase_remove_base
 #define XSet_Remove_Base				XSetBase_Remove_Base

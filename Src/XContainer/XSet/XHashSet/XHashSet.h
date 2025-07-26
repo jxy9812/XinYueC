@@ -28,6 +28,7 @@ XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XEquality Ke
 // 初始化 XHashSet
 void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess);
 #define XHashSet_insert_base            XSetBase_insert_base
+#define XHashSet_insert_move_base       XSetBase_insert_move_base
 #define XHashSet_erase_base             XSetBase_erase_base
 #define XHashSet_remove_base            XSetBase_remove_base
 #define XHashSet_find_base              XSetBase_find_base

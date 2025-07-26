@@ -7,6 +7,7 @@
 
 //Set插入数据
 static bool VXSet_insert(XSet* this_set, const void* key);
+static bool VXSet_insert_move(XSet* this_set, const void* key);
 static void VXSet_erase(XSet* this_set, const void* key);
 //map删除数据
 static bool VXSet_remove(XSet* this_set, const void* key);
@@ -31,7 +32,7 @@ XVtable* XSet_class_init()
 		//继承类
 		XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
 	void* table[] = {
-		VXSet_insert,VXSet_erase,VXSet_remove,VXSet_find,
+		VXSet_insert,VXSet_insert_move,VXSet_erase,VXSet_remove,VXSet_find,
 		VXSetBase_keys
 	};
 	//追加虚函数
@@ -82,32 +83,65 @@ void VXSet_swap(XSet* this_setOne, XSet* this_setTwo)
 	XSwap(&((XSetBase*)this_setOne)->m_KeyLess, &((XSetBase*)this_setTwo)->m_KeyLess, sizeof(XLess));
 	XSwap(&XContainerTypeSize(this_setOne), &XContainerTypeSize(this_setTwo), sizeof(size_t));
 }
-bool VXSet_insert(XSet* this_set, const void* key)
+bool VXSet_insert(XSet* this_set, const void* pvKey)
 {
-	if (ISNULL(this_set, "") || ISNULL(key, "") )
-		return false;
-	if (!XSetBase_contains(this_set, key))//当前没有这个键值
+	//if (ISNULL(this_set, "") || ISNULL(pvKey, "") )
+	//	return false;
+	if (!XSetBase_contains(this_set, pvKey))//当前没有这个键值
 	{
-		XRBTree_insert(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, key, XContainerTypeSize(this_set));
+		if (XContainerDataCopyMethod(this_set))
+		{
+			void* temp = XMemory_calloc(1,XContainerTypeSize(this_set));
+			XContainerDataCopyMethod(temp, pvKey);
+			XRBTree_insert(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
+			XMemory_free(temp);
+		}
+		else
+		{
+			XRBTree_insert(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
+		}
+		
 		++XContainerCapacity(this_set);
 		++XContainerSize(this_set);
 	}
 	return true;
 }
 
-void VXSet_erase(XSet* this_set, const void* key)
+bool VXSet_insert_move(XSet* this_set, const void* pvKey)
+{
+	if (!XSetBase_contains(this_set, pvKey))//当前没有这个键值
+	{
+		if (XContainerDataMoveMethod(this_set))
+		{
+			void* temp = XMemory_calloc(1, XContainerTypeSize(this_set));
+			XContainerDataMoveMethod(temp, pvKey);
+			XRBTree_insert(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
+			XMemory_free(temp);
+		}
+		else
+		{
+			XRBTree_insert(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
+		}
+
+		++XContainerCapacity(this_set);
+		++XContainerSize(this_set);
+	}
+	return true;
+}
+
+void VXSet_erase(XSet* this_set, const void* pvKey)
 {
 }
 
-bool VXSet_remove(XSet* this_set, const void* key)
+bool VXSet_remove(XSet* this_set, const void* pvKey)
 {
-	if (ISNULL(this_set, "") || ISNULL(key, ""))
+	if (ISNULL(this_set, "") || ISNULL(pvKey, ""))
 		return false;
-	if (XSetBase_contains(this_set, key))
+	if (XSetBase_contains(this_set, pvKey))
 	{
 		if (XContainerDataDeinitMethod(this_set) != NULL)
-			XContainerDataDeinitMethod(this_set)(key);
-		XRBTree_remove(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key, XSet_freeNodeData, this_set);
+			XContainerDataDeinitMethod(this_set)(pvKey);
+		XRBTree_remove(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey, XSet_freeNodeData, this_set);
 
 		--XContainerCapacity(this_set);
 		--XContainerSize(this_set);

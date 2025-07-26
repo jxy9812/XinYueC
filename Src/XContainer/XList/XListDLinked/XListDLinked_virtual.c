@@ -6,8 +6,15 @@
 //插入
 static XListDNode * VXList_push_front(XListDLinked * this_list, void* pvData);
 static XListDNode* VXList_push_back(XListDLinked* this_list, void* pvData);
+static void VXList_inserts(XListDLinked* this_list, XListDNode* curNode, void* pvData, size_t n);
 static bool VXList_insert(XListDLinked* this_list, XListDNode* curNode, void* pvData);
 static size_t VXList_insert_array(XListDLinked* this_list, XListDNode* curNode, const void* begin, size_t n);
+
+static XListDNode* VXList_push_front_move(XListDLinked* this_list, void* pvData);
+static XListDNode* VXList_push_back_move(XListDLinked* this_list, void* pvData);
+static void VXList_inserts_move(XListDLinked* this_list, XListDNode* curNode, void* pvData, size_t n);
+static bool VXList_insert_move(XListDLinked* this_list, XListDNode* curNode, void* pvData);
+static size_t VXList_insert_array_move(XListDLinked* this_list, XListDNode* curNode, const void* begin, size_t n);
 //删除
 static bool VXList_pop_front(XListDLinked* this_list);
 static bool VXList_pop_back(XListDLinked* this_list);
@@ -36,7 +43,10 @@ XVtable* XListDLinked_class_init()
 
     void* table[] = {
         //插入
-        VXList_push_front,VXList_push_back,VXList_insert,VXList_insert_array,
+        VXList_push_front, VXList_push_front_move,
+        VXList_push_back,VXList_push_back_move,
+        VXList_insert,VXList_insert_move,
+        VXList_insert_array,VXList_insert_array_move,
         //删除
         VXList_pop_front,VXList_pop_back,VXList_erase,VXList_remove,
         //遍历
@@ -60,9 +70,9 @@ XVtable* XListDLinked_class_init()
 
 XListDNode* VXList_push_front(XListDLinked* this_list, void* pvData)
 {
-    if (ISNULL(this_list, ""))
-        return NULL;
-    XListBase* list = this_list;
+    /*if (ISNULL(this_list, ""))
+        return NULL;*/
+    //XListBase* list = this_list;
     XListDNode* NewNode = XListDLinked_push_back_base(this_list, pvData);
     if (NewNode)
     {
@@ -75,15 +85,22 @@ XListDNode* VXList_push_back(XListDLinked* this_list, void* pvData)
 {
     /*if (ISNULL(this_list, ""))
         return NULL;*/
-    XListBase* list = this_list;
+    //XListBase* list = this_list;
     XListDNode* NewNode = CreatNode(this_list);//新节点
     if (NewNode == NULL)
     {
         perror("开辟节点失败");
         return NULL;
     }
-    //NewNode->data = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
-    memcpy(&(NewNode->data), pvData, XContainerTypeSize(this_list));//拷贝数据
+    if (XContainerDataCopyMethod(this_list))
+    {
+        memset(XListDNode_DataPtr(NewNode), 0, XContainerTypeSize(this_list));
+        XContainerDataCopyMethod(this_list)(XListDNode_DataPtr(NewNode), pvData);
+    }
+    else
+    {
+        memcpy(XListDNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+    }
     if (XListBase_isEmpty_base(this_list))
     {
         XContainerDataPtr(this_list) = NewNode;
@@ -107,7 +124,7 @@ XListDNode* VXList_push_back(XListDLinked* this_list, void* pvData)
 
 void VXList_inserts(XListDLinked* this_list, XListDNode* curNode, void* pvData, size_t n)
 {
-    XListBase* list = this_list;
+    //XListBase* list = this_list;
     //if (ISNULL(this_list, ""))
     //    return;
     for (size_t i = 0; i < n; i++)
@@ -124,8 +141,16 @@ void VXList_inserts(XListDLinked* this_list, XListDNode* curNode, void* pvData, 
                 perror("开辟节点失败");
                 return;
             }
-            //newNode->data = XMemory_malloc(list->m_parent.m_typeSize);//开辟节点内储存数据的空间
-            memcpy(&(newNode->data), pvData, XContainerTypeSize(this_list));//拷贝数据
+           
+            if (XContainerDataCopyMethod(this_list))
+            {
+                memset(XListDNode_DataPtr(newNode), 0, XContainerTypeSize(this_list));
+                XContainerDataCopyMethod(this_list)(XListDNode_DataPtr(newNode), pvData);
+            }
+            else
+            {
+                memcpy(XListDNode_DataPtr(newNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+            }
 
             newNode->prev = left;
             newNode->next = curNode;
@@ -148,9 +173,6 @@ void VXList_inserts(XListDLinked* this_list, XListDNode* curNode, void* pvData, 
 
 bool VXList_insert(XListDLinked* this_list, XListDNode* curNode, void* pvData)
 {
-    /*if (ISNULL(this_list, ""))
-        return;*/
-    XListDLinked* list = this_list;
     if (curNode == NULL)
     {
         printf("节点指针不能为空\n");
@@ -162,9 +184,6 @@ bool VXList_insert(XListDLinked* this_list, XListDNode* curNode, void* pvData)
 
 size_t VXList_insert_array(XListDLinked* this_list, XListDNode* curNode, const void* array, size_t count)
 {
-    /*if (ISNULL(this_list, ""))
-        return;*/
-    XListBase* list = this_list;
     if (curNode == NULL)
     {//尾插
         for (size_t i = 0; i < count; i++)
@@ -177,6 +196,125 @@ size_t VXList_insert_array(XListDLinked* this_list, XListDNode* curNode, const v
         for (size_t i = 0; i < count; i++)
         {
             VXList_inserts(this_list, curNode, ((char*)array) + i * XContainerTypeSize(this_list), 1);
+        }
+    }
+    return count;
+}
+XListDNode* VXList_push_front_move(XListDLinked* this_list, void* pvData)
+{
+    XListDNode* NewNode = XListDLinked_push_back_move_base(this_list, pvData);
+    if (NewNode)
+    {
+        XContainerDataPtr(this_list) = NewNode;
+    }
+    return NewNode;
+}
+XListDNode* VXList_push_back_move(XListDLinked* this_list, void* pvData)
+{
+    XListDNode* NewNode = CreatNode(this_list);//新节点
+    if (NewNode == NULL)
+    {
+        perror("开辟节点失败");
+        return NULL;
+    }
+    if (XContainerDataMoveMethod(this_list))
+    {
+        memset(XListDNode_DataPtr(NewNode), 0, XContainerTypeSize(this_list));
+        XContainerDataMoveMethod(this_list)(XListDNode_DataPtr(NewNode), pvData);
+    }
+    else
+    {
+        memcpy(XListDNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+    }
+    if (XListBase_isEmpty_base(this_list))
+    {
+        XContainerDataPtr(this_list) = NewNode;
+        NewNode->next = NewNode;
+        NewNode->prev = NewNode;
+    }
+    else
+    {
+        XListDNode* pfront = XContainerDataPtr(this_list);//原头节点
+        XListDNode* pback = pfront->prev;//原尾节点
+        NewNode->next = pfront;
+        NewNode->prev = pback;
+        pfront->prev = NewNode;
+        pback->next = NewNode;
+    }
+    //更新记录数量
+    ++XContainerSize(this_list);
+    ++XContainerCapacity(this_list);
+    return NewNode;
+}
+void VXList_inserts_move(XListDLinked* this_list, XListDNode* curNode, void* pvData, size_t n)
+{
+    for (size_t i = 0; i < n; i++)
+    {
+        /*Node* pval = List_find(li, p);*/
+        if (curNode != NULL)
+        {
+            XListDNode* left = curNode->prev;
+            //XListDNode* right = left->next;
+
+            XListDNode* newNode = CreatNode(this_list);//新节点
+            if (newNode == NULL)
+            {
+                perror("开辟节点失败");
+                return;
+            }
+
+            if (XContainerDataMoveMethod(this_list))
+            {
+                memset(XListDNode_DataPtr(newNode), 0, XContainerTypeSize(this_list));
+                XContainerDataMoveMethod(this_list)(XListDNode_DataPtr(newNode), pvData);
+            }
+            else
+            {
+                memcpy(XListDNode_DataPtr(newNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+            }
+
+            newNode->prev = left;
+            newNode->next = curNode;
+            left->next = newNode;
+            curNode->prev = newNode;
+
+            if (curNode == XContainerDataPtr(this_list))
+            {
+                XContainerDataPtr(this_list) = newNode;
+            }
+            ++XContainerSize(this_list);
+            ++XContainerCapacity(this_list);
+        }
+        else
+        {
+            perror("插入的数找不到");
+        }
+    }
+}
+bool VXList_insert_move(XListDLinked* this_list, XListDNode* curNode, void* pvData)
+{
+    if (curNode == NULL)
+    {
+        printf("节点指针不能为空\n");
+        return false;
+    }
+    VXList_inserts_move(this_list, curNode, pvData, 1);
+    return true;
+}
+size_t VXList_insert_array_move(XListDLinked* this_list, XListDNode* curNode, const void* array, size_t count)
+{
+    if (curNode == NULL)
+    {//尾插
+        for (size_t i = 0; i < count; i++)
+        {
+            XListBase_push_back_move_base(this_list, ((char*)array) + i * XContainerTypeSize(this_list));
+        }
+    }
+    else
+    {
+        for (size_t i = 0; i < count; i++)
+        {
+            VXList_inserts_move(this_list, curNode, ((char*)array) + i * XContainerTypeSize(this_list), 1);
         }
     }
     return count;

@@ -24,6 +24,9 @@ XCircularQueueAtomic* XCircularQueueAtomic_create(size_t typeSize, size_t count)
 //api
 #define XCircularQueueAtomic_Push_Base					XCircularQueue_Push_Base
 #define XCircularQueueAtomic_push_base					XCircularQueue_push_base
+#define XCircularQueueAtomic_Push_Move_Base					XQueueBase_Push_Move_Base
+#define XCircularQueueAtomic_push_move_base					XQueueBase_push_move_base
+
 #define XCircularQueueAtomic_pop_base					XCircularQueue_pop_base
 //接收数据并且出队	
 #define XCircularQueueAtomic_receive_base				XCircularQueue_receive_base

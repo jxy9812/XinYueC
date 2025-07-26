@@ -34,6 +34,7 @@ void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t va
 bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue);
 #define XMapBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMap_insert_base(this_map,&k,&v);}
 bool XMapBase_insert_move_base(XMapBase* this_map, const void* pvKey, const void* pvValue);
+#define XMapBase_Insert_Move_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMapBase_insert_move_base(this_map,&k,&v);}
 
 void XMapBase_erase_base(XMapBase* this_map, const XPair* pPair);
 //map删除数据

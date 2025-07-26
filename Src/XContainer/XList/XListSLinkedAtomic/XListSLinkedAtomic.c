@@ -8,6 +8,12 @@ static XListSNodeAtomic * VXListAtomic_push_front(XListSLinkedAtomic * this_list
 static XListSNodeAtomic* VXListAtomic_push_back(XListSLinkedAtomic* this_list, void* pvData);
 static bool VXList_insert(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, void* pvData);
 static size_t VXList_insert_array(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, const void* array, size_t count);
+
+static XListSNodeAtomic* VXListAtomic_push_front_move(XListSLinkedAtomic* this_list, void* pvData);
+static XListSNodeAtomic* VXListAtomic_push_back_move(XListSLinkedAtomic* this_list, void* pvData);
+static bool VXList_insert_move(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, void* pvData);
+static size_t VXList_insert_array_move(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, const void* array, size_t count);
+
 static bool VXListAtomic_pop_front(XListSLinkedAtomic* this_list);
 static bool VXListAtomic_pop_back(XListSLinkedAtomic* this_list);
 static void VXListAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node);
@@ -47,7 +53,10 @@ XVtable* XListSLinkedAtomic_class_init()
 
     void* table[] = {
         // 插入操作
-        VXListAtomic_push_front, VXListAtomic_push_back,VXList_insert,VXList_insert_array,
+        VXListAtomic_push_front,VXListAtomic_push_front_move,
+        VXListAtomic_push_back,VXListAtomic_push_back_move,
+        VXList_insert,VXList_insert_move,
+        VXList_insert_array, VXList_insert_array_move,
         // 删除操作
         VXListAtomic_pop_front, VXListAtomic_pop_back, VXListAtomic_erase, VXListAtomic_remove,
         // 遍历操作
@@ -68,9 +77,22 @@ XVtable* XListSLinkedAtomic_class_init()
 }
 
 // 头部插入（多生产者安全）
-XListSNodeAtomic* VXListAtomic_push_front(XListSLinkedAtomic* this_list, void* pvData) {
-    XListSNodeAtomic* newNode = createNode(this_list, pvData);
-    if (newNode == NULL) return NULL;
+XListSNodeAtomic* VXListAtomic_push_front(XListSLinkedAtomic* this_list, void* pvData) 
+{
+    XListSNodeAtomic* newNode = NULL;
+    if (XContainerDataCopyMethod(this_list))
+    {
+        void* temp = XMemory_calloc(1, XContainerTypeSize(this_list));
+        XContainerDataCopyMethod(this_list)(temp, pvData);
+        newNode = createNode(this_list, temp);
+        XMemory_free(temp);
+    }
+    else
+    {
+        newNode = createNode(this_list, pvData);
+    }
+    if (newNode == NULL) 
+        return NULL;
 
     XListSNodeAtomic* oldHead;
     do {
@@ -91,9 +113,22 @@ XListSNodeAtomic* VXListAtomic_push_front(XListSLinkedAtomic* this_list, void* p
 }
 
 // 尾部插入（多生产者安全）
-XListSNodeAtomic* VXListAtomic_push_back(XListSLinkedAtomic* this_list, void* pvData) {
-    XListSNodeAtomic* newNode = createNode(this_list, pvData);
-    if (newNode == NULL) return NULL;
+XListSNodeAtomic* VXListAtomic_push_back(XListSLinkedAtomic* this_list, void* pvData)
+{
+    XListSNodeAtomic* newNode = NULL;
+    if (XContainerDataCopyMethod(this_list))
+    {
+        void* temp = XMemory_calloc(1, XContainerTypeSize(this_list));
+        XContainerDataCopyMethod(this_list)(temp, pvData);
+        newNode = createNode(this_list, temp);
+        XMemory_free(temp);
+    }
+    else
+    {
+        newNode = createNode(this_list, pvData);
+    }
+    if (newNode == NULL)
+        return NULL;
 
     XListSNodeAtomic* tail;
     while (1) {
@@ -150,8 +185,20 @@ bool VXList_insert(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, voi
     if (current == NULL) return false;
 
     // 创建新节点
-    XListSNodeAtomic* newNode = createNode(this_list, pvData);
-    if (newNode == NULL) return false;
+    XListSNodeAtomic* newNode = NULL;
+    if (XContainerDataCopyMethod(this_list))
+    {
+        void* temp = XMemory_calloc(1, XContainerTypeSize(this_list));
+        XContainerDataCopyMethod(this_list)(temp, pvData);
+        newNode = createNode(this_list, temp);
+        XMemory_free(temp);
+    }
+    else
+    {
+        newNode = createNode(this_list, pvData);
+    }
+    if (newNode == NULL)
+        return NULL;
 
     // 如果要插入的位置是头节点
     if (prev == NULL) {
@@ -196,14 +243,264 @@ size_t VXList_insert_array(XListSLinkedAtomic* this_list, XListSNodeAtomic* curN
     // 创建新链表
     XListSNodeAtomic* newListHead = NULL;
     XListSNodeAtomic* newListTail = NULL;
-    for (size_t i = 0; i < count; i++) {
-        XListSNodeAtomic* newNode = createNode(this_list, (void*)((char*)array + i * XContainerTypeSize(this_list)));
-        if (newNode == NULL) {
+    for (size_t i = 0; i < count; i++) 
+    {
+        XListSNodeAtomic* newNode = NULL;
+        if (XContainerDataCopyMethod(this_list))
+        {
+            void* temp = XMemory_calloc(1, XContainerTypeSize(this_list));
+            XContainerDataCopyMethod(this_list)(temp, (void*)((char*)array + i * XContainerTypeSize(this_list)));
+            newNode = createNode(this_list, temp);
+            XMemory_free(temp);
+        }
+        else
+        {
+            newNode = createNode(this_list, (void*)((char*)array + i * XContainerTypeSize(this_list)));
+        }
+        if (newNode == NULL) 
+        {
             // 如果创建节点失败，释放已创建的节点
-            while (newListHead != NULL) {
+            while (newListHead != NULL) 
+            {
                 XListSNodeAtomic* temp = newListHead;
                 newListHead = newListHead->next;
-                if (XContainerDataDeinitMethod(this_list) != NULL) {
+                if (XContainerDataDeinitMethod(this_list) != NULL)
+                {
+                    XContainerDataDeinitMethod(this_list)(&temp->data);
+                }
+                XMemory_free(temp);
+            }
+            return 0;
+        }
+        if (newListHead == NULL) {
+            newListHead = newNode;
+            newListTail = newNode;
+        }
+        else {
+            newListTail->next = newNode;
+            newListTail = newNode;
+        }
+    }
+    newListTail->next = NULL;
+
+    // 插入新链表
+    if (prev == NULL) {
+        // 插入到链表头部
+        do {
+            current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+            newListTail->next = current;
+        } while (!XAtomic_compare_exchange_strong_ptr(
+            &this_list->m_head, (void**)&current, newListHead));
+        if (current == NULL) {
+            XAtomic_store_ptr(&this_list->m_tail, newListTail);
+        }
+    }
+    else {
+        // 插入到指定节点前
+        do {
+            current = (XListSNodeAtomic*)XAtomic_load_ptr(&prev->next);
+            newListTail->next = current;
+        } while (!XAtomic_compare_exchange_strong_ptr(
+            &prev->next, (void**)&current, newListHead));
+        if (current == NULL) {
+            XAtomic_store_ptr(&this_list->m_tail, newListTail);
+        }
+    }
+
+    // 更新记录数量
+    XAtomic_fetch_add_size_t(&XContainerSize(this_list), count);
+    XAtomic_fetch_add_size_t(&XContainerCapacity(this_list), count);
+    return count;
+}
+
+XListSNodeAtomic* VXListAtomic_push_front_move(XListSLinkedAtomic* this_list, void* pvData)
+{
+    XListSNodeAtomic* newNode = NULL;
+    if (XContainerDataMoveMethod(this_list))
+    {
+        void* temp = XMemory_calloc(1, XContainerTypeSize(this_list));
+        XContainerDataMoveMethod(this_list)(temp, pvData);
+        newNode = createNode(this_list, temp);
+        XMemory_free(temp);
+    }
+    else
+    {
+        newNode = createNode(this_list, pvData);
+    }
+    if (newNode == NULL)
+        return NULL;
+
+    XListSNodeAtomic* oldHead;
+    do {
+        oldHead = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+        newNode->next = oldHead;
+    } while (!XAtomic_compare_exchange_strong_ptr(
+        &this_list->m_head, (void**)&oldHead, newNode));
+
+    // 如果链表原来是空的，更新尾指针
+    if (oldHead == NULL) {
+        XAtomic_store_ptr(&this_list->m_tail, newNode);
+    }
+
+    // 更新记录数量
+    XAtomic_fetch_add_size_t(&XContainerSize(this_list), 1);
+    XAtomic_fetch_add_size_t(&XContainerCapacity(this_list), 1);
+    return newNode;
+}
+
+XListSNodeAtomic* VXListAtomic_push_back_move(XListSLinkedAtomic* this_list, void* pvData)
+{
+    XListSNodeAtomic* newNode = NULL;
+    if (XContainerDataMoveMethod(this_list))
+    {
+        void* temp = XMemory_calloc(1, XContainerTypeSize(this_list));
+        XContainerDataMoveMethod(this_list)(temp, pvData);
+        newNode = createNode(this_list, temp);
+        XMemory_free(temp);
+    }
+    else
+    {
+        newNode = createNode(this_list, pvData);
+    }
+    if (newNode == NULL)
+        return NULL;
+
+    XListSNodeAtomic* tail;
+    while (1) {
+        tail = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_tail);
+
+        // 如果链表为空，尝试更新头指针
+        if (tail == NULL) {
+            if (XAtomic_compare_exchange_strong_ptr(
+                &this_list->m_head, (void**)&tail, newNode)) {
+                XAtomic_store_ptr(&this_list->m_tail, newNode);
+                break;
+            }
+        }
+        else {
+            // 尝试将新节点链接到尾部
+            XListSNodeAtomic* next = (XListSNodeAtomic*)XAtomic_load_ptr(&tail->next);
+            if (next == NULL) {
+                if (XAtomic_compare_exchange_strong_ptr(
+                    &tail->next, (void**)&next, newNode)) {
+                    // 链接成功后，尝试更新尾指针
+                    XAtomic_compare_exchange_strong_ptr(
+                        &this_list->m_tail, (void**)&tail, newNode);
+                    break;
+                }
+            }
+            else {
+                // 尾指针已过时，帮助推进
+                XAtomic_compare_exchange_strong_ptr(
+                    &this_list->m_tail, (void**)&tail, next);
+            }
+        }
+    }
+
+    // 更新记录数量
+    XAtomic_fetch_add_size_t(&XContainerSize(this_list), 1);
+    XAtomic_fetch_add_size_t(&XContainerCapacity(this_list), 1);
+    return newNode;
+}
+
+bool VXList_insert_move(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, void* pvData)
+{
+    if (this_list == NULL || curNode == NULL || pvData == NULL) return false;
+
+    XListSNodeAtomic* prev = NULL;
+    XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+
+    // 查找指定节点的前一个节点
+    while (current != NULL && current != curNode) {
+        prev = current;
+        current = (XListSNodeAtomic*)XAtomic_load_ptr(&current->next);
+    }
+
+    // 如果没有找到指定节点，直接返回
+    if (current == NULL) return false;
+
+    // 创建新节点
+    XListSNodeAtomic* newNode = NULL;
+    if (XContainerDataMoveMethod(this_list))
+    {
+        void* temp = XMemory_calloc(1, XContainerTypeSize(this_list));
+        XContainerDataMoveMethod(this_list)(temp, pvData);
+        newNode = createNode(this_list, temp);
+        XMemory_free(temp);
+    }
+    else
+    {
+        newNode = createNode(this_list, pvData);
+    }
+    if (newNode == NULL)
+        return NULL;
+
+    // 如果要插入的位置是头节点
+    if (prev == NULL) {
+        do {
+            current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+            newNode->next = current;
+        } while (!XAtomic_compare_exchange_strong_ptr(
+            &this_list->m_head, (void**)&current, newNode));
+    }
+    else {
+        // 插入到指定节点前
+        do {
+            current = (XListSNodeAtomic*)XAtomic_load_ptr(&prev->next);
+            newNode->next = current;
+        } while (!XAtomic_compare_exchange_strong_ptr(
+            &prev->next, (void**)&current, newNode));
+    }
+
+    // 更新记录数量
+    XAtomic_fetch_add_size_t(&XContainerSize(this_list), 1);
+    XAtomic_fetch_add_size_t(&XContainerCapacity(this_list), 1);
+    return true;
+}
+
+size_t VXList_insert_array_move(XListSLinkedAtomic* this_list, XListSNodeAtomic* curNode, const void* array, size_t count)
+{
+    if (this_list == NULL || array == NULL || count == 0) return 0;
+
+    XListSNodeAtomic* prev = NULL;
+    XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+
+    // 查找指定节点的前一个节点
+    if (curNode != NULL) {
+        while (current != NULL && current != curNode) {
+            prev = current;
+            current = (XListSNodeAtomic*)XAtomic_load_ptr(&current->next);
+        }
+        // 如果没有找到指定节点，直接返回
+        if (current == NULL) return 0;
+    }
+
+    // 创建新链表
+    XListSNodeAtomic* newListHead = NULL;
+    XListSNodeAtomic* newListTail = NULL;
+    for (size_t i = 0; i < count; i++)
+    {
+        XListSNodeAtomic* newNode = NULL;
+        if (XContainerDataMoveMethod(this_list))
+        {
+            void* temp = XMemory_calloc(1, XContainerTypeSize(this_list));
+            XContainerDataMoveMethod(this_list)(temp, (void*)((char*)array + i * XContainerTypeSize(this_list)));
+            newNode = createNode(this_list, temp);
+            XMemory_free(temp);
+        }
+        else
+        {
+            newNode = createNode(this_list, (void*)((char*)array + i * XContainerTypeSize(this_list)));
+        }
+        if (newNode == NULL)
+        {
+            // 如果创建节点失败，释放已创建的节点
+            while (newListHead != NULL)
+            {
+                XListSNodeAtomic* temp = newListHead;
+                newListHead = newListHead->next;
+                if (XContainerDataDeinitMethod(this_list) != NULL)
+                {
                     XContainerDataDeinitMethod(this_list)(&temp->data);
                 }
                 XMemory_free(temp);

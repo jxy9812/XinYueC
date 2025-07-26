@@ -4,7 +4,14 @@ bool XQueueBase_push_base(XQueueBase* this_queue, void* pvData)
 {
 	if (ISNULL(this_queue, "") || ISNULL(pvData, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return false;
-	return XClassGetVirtualFunc(this_queue, EXQueueBase_Push, bool (*)(XQueueBase*, void*))(this_queue, pvData);
+	return XClassGetVirtualFunc(this_queue, EXQueueBase_Push_Copy, bool (*)(XQueueBase*, void*))(this_queue, pvData);
+}
+
+bool XQueueBase_push_move_base(XQueueBase* this_queue, void* pvData)
+{
+	if (ISNULL(this_queue, "") || ISNULL(pvData, "") || ISNULL(XClassGetVtable(this_queue), ""))
+		return false;
+	return XClassGetVirtualFunc(this_queue, EXQueueBase_Push_Move, bool (*)(XQueueBase*, void*))(this_queue, pvData);
 }
 
 void XQueueBase_pop_base(XQueueBase* this_queue)

@@ -40,13 +40,19 @@ void XListSLinkedAtomic_init(XListSLinkedAtomic* this_list, size_t typeSize);
 //链表头部增加一个元素X
 #define XListSLinkedAtomic_push_front_base				    XListBase_push_front_base
 #define XListSLinkedAtomic_Push_Front_Base				    XListBase_Push_Front_Base
+#define XListSLinkedAtomic_push_front_move_base			    XListBase_push_front_move_base
+#define XListSLinkedAtomic_Push_Front_Move_Base			    XListBase_Push_Front_Move_Base
 // 链表尾部增加一个元素X
-#define XListSLinkedAtomic_push_back_base					XListBase_push_back_base
-#define XListSLinkedAtomic_Push_Back_Base					XListBase_Push_Back_Base
+#define XListSLinkedAtomic_push_back_base				    XListBase_push_back_base
+#define XListSLinkedAtomic_Push_Back_Base				    XListBase_Push_Back_Base
+#define XListSLinkedAtomic_push_back_move_base			    XListBase_push_back_move_base
+#define XListSLinkedAtomic_Push_Back_Move_Base			    XListBase_Push_Back_Move_Base
 //链表指定节点前插入1个数据
 #define XListSLinkedAtomic_insert_base					    XListBase_insert_base
+#define XListSLinkedAtomic_insert_move_base				    XListBase_insert_move_base
 // 链表中指向节点前插入另一个相同类型数组的数据，需要指出数组大小n
-#define XListSLinkedAtomic_insert_array_base				XListBase_insert_array_base
+#define XListSLinked_insert_array_base				        XListBase_insert_array_base
+#define XListSLinked_insert_array_move_base			        XListBase_insert_array_move_base
 //删除函数
 //删除链表中第一个元素
 #define XListSLinkedAtomic_pop_front_base					XListBase_pop_front_base

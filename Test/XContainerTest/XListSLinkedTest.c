@@ -146,7 +146,7 @@ void XListSLinkedSwapTest()//交换函数测试
 }
 void XMenu_XListSLinkedTest(XMenu* root)
 {
-	XMenu* menu = XMenu_create("XListDLinked(单向链表)");
+	XMenu* menu = XMenu_create("XListSLinked(单向链表)");
 	XMenu_addMenu(root, menu);
 	{
 		XAction* action = XMenu_addAction(menu, "主测试");

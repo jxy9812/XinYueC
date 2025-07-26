@@ -36,13 +36,19 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize);
 //链表头部增加一个元素X
 #define XListDLinked_push_front_base				XListBase_push_front_base
 #define XListDLinked_Push_Front_Base				XListBase_Push_Front_Base
+#define XListDLinked_push_front_move_base			XListBase_push_front_move_base
+#define XListDLinked_Push_Front_Move_Base			XListBase_Push_Front_Move_Base
 // 链表尾部增加一个元素X
 #define XListDLinked_push_back_base					XListBase_push_back_base
 #define XListDLinked_Push_Back_Base					XListBase_Push_Back_Base
+#define XListDLinked_push_back_move_base			XListBase_push_back_move_base
+#define XListDLinked_Push_Back_Move_Base			XListBase_Push_Back_Move_Base
 //链表指定节点前插入1个数据
 #define XListDLinked_insert_base					XListBase_insert_base
+#define XListDLinked_insert_move_base				XListBase_insert_move_base
 // 链表中指向节点前插入另一个相同类型数组的数据，需要指出数组大小n
-#define  XListDLinked_insert_array_base				XListBase_insert_array_base
+#define XListDLinked_insert_array_base				XListBase_insert_array_base
+#define XListDLinked_insert_array_move_base			XListBase_insert_array_move_base
 //删除函数
 //删除链表中第一个元素
 #define  XListDLinked_pop_front_base				XListBase_pop_front_base

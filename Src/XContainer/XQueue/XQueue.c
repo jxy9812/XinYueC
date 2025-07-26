@@ -23,8 +23,14 @@ void XQueue_push_base(XQueue* this_queue, void* pvValue)
 {
 	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return ;
-	typedef void (*funcPtr)(XQueue*, void*);
-	XClassGetVirtualFunc(this_queue, EXQueue_Push, funcPtr)(this_queue, pvValue);
+	XClassGetVirtualFunc(this_queue, EXQueue_Push_Copy, void (*)(XQueue*, void*))(this_queue, pvValue);
+}
+
+void XQueue_push_move_base(XQueue* this_queue, void* pvValue)
+{
+	if (ISNULL(this_queue, "") || ISNULL(XClassGetVtable(this_queue), ""))
+		return;
+	XClassGetVirtualFunc(this_queue, EXQueue_Push_Move, void (*)(XQueue*, void*))(this_queue, pvValue);
 }
 
 void XQueue_pop_base(XQueue* this_queue)

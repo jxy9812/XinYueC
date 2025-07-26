@@ -16,7 +16,7 @@ static void VXThread_requestInterruption(XThread* Object);
 static void VXThread_setPriority(XThread* Object, XThread_Priority priority);
 static void VXThread_setStackSize(XThread* Object, uint32_t m_stackSize);
 
-static void VXThread_delete(XThread* Object);
+static void VXThread_deinit(XThread* Object);
 // 虚函数表初始化
 XVtable* XThread_class_init()
 {
@@ -38,7 +38,7 @@ XVtable* XThread_class_init()
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXThread_delete);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXThread_deinit);
 #if SHOWCONTAINERSIZE
     printf("XThread size:%d\n", XVtable_size(XThreadVtable));
 #endif
@@ -170,7 +170,7 @@ void VXThread_setStackSize(XThread* Object, uint32_t m_stackSize)
     Object->m_stackSize = m_stackSize;
 }
 
-void VXThread_delete(XThread* Object)
+void VXThread_deinit(XThread* Object)
 {
     if (XThread_isRunning_base(Object))
         XThread_requestInterruption_base(Object);
@@ -183,7 +183,7 @@ void VXThread_delete(XThread* Object)
     if (Object->m_eventDispatcher)
         XEventDispatcher_delete_base(Object->m_eventDispatcher);
     XThread_mapRemove(Object);
-    XMemory_free(Object);
+    //XMemory_free(Object);
 }
 
 XHandle XThread_currentThreadId()

@@ -12,10 +12,14 @@ typedef struct XListBase_iterator XListBase_iterator;//链表迭代器抽象类�
 #define XLISTBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListBase))       //XList容器虚函数表大小
 //XList虚函数表枚举
 XCLASS_DEFINE_BEGING(XListBase)
-XCLASS_DEFINE_ENUM(XListBase, Push_Front)=XCLASS_VTABLE_GET_SIZE(XContainerObject),
-XCLASS_DEFINE_ENUM(XListBase, Push_Back),
-XCLASS_DEFINE_ENUM(XListBase, Insert),
-XCLASS_DEFINE_ENUM(XListBase, Insert_Array),
+XCLASS_DEFINE_ENUM(XListBase, Push_Front_Copy)=XCLASS_VTABLE_GET_SIZE(XContainerObject),
+XCLASS_DEFINE_ENUM(XListBase, Push_Front_Move),
+XCLASS_DEFINE_ENUM(XListBase, Push_Back_Copy),
+XCLASS_DEFINE_ENUM(XListBase, Push_Back_Move),
+XCLASS_DEFINE_ENUM(XListBase, Insert_Copy),
+XCLASS_DEFINE_ENUM(XListBase, Insert_Move),
+XCLASS_DEFINE_ENUM(XListBase, Insert_Array_Copy),
+XCLASS_DEFINE_ENUM(XListBase, Insert_Array_Move),
 XCLASS_DEFINE_ENUM(XListBase, Pop_Front),
 XCLASS_DEFINE_ENUM(XListBase, Pop_Back),
 XCLASS_DEFINE_ENUM(XListBase, Erase),
@@ -37,13 +41,19 @@ void XListBase_init(XListBase* this_list, size_t typeSize);
 //链表头部增加一个元素X
 XListBaseNode* XListBase_push_front_base(XListBase* this_list, void* pvData);
 #define XListBase_Push_Front_Base(this_list,type,value){type t=value;XListBase_push_front_base(this_list,&t);}
+XListBaseNode* XListBase_push_front_move_base(XListBase* this_list, void* pvData);
+#define XListBase_Push_Front_Move_Base(this_list,type,value){type t=value;XListBase_push_front_move_base(this_list,&t);}
 // 链表尾部增加一个元素X
 XListBaseNode* XListBase_push_back_base(XListBase* this_list, void* pvData);
 #define XListBase_Push_Back_Base(this_list,type,value){type t=value;XListBase_push_back_base(this_list,&t);}
+XListBaseNode* XListBase_push_back_move_base(XListBase* this_list, void* pvData);
+#define XListBase_Push_Back_Move_Base(this_list,type,value){type t=value;XListBase_push_back_move_base(this_list,&t);}
 //链表指定节点前插入1个数据
 bool XListBase_insert_base(XListBase* this_list, XListBaseNode* curNode, void* pvData);
+bool XListBase_insert_move_base(XListBase* this_list, XListBaseNode* curNode, void* pvData);
 // 链表中指向节点前插入另一个相同类型数组的数据，需要指出数组大小(元素数量)
 size_t  XListBase_insert_array_base(XListBase* this_list, XListBaseNode* curNode, const void* array, size_t count);
+size_t  XListBase_insert_array_move_base(XListBase* this_list, XListBaseNode* curNode, const void* array, size_t count);
 //删除函数
 //删除链表中第一个元素
 bool  XListBase_pop_front_base(XListBase* this_list);

@@ -36,7 +36,7 @@ void XCircularQueueAtomicTest()
 	//threadTest(queue);
 	int index = 0;
 	int value;
-	while (index<9999)
+	while (index<10000)
 	{
 		if (XCircularQueueAtomic_receive_base(queue, &value))
 		{

@@ -10,6 +10,7 @@ static void VXCircularQueueAtomic_clear(XCircularQueueAtomic* this_queue);//清�
 static size_t VXCircularQueueAtomic_getSize(const XCircularQueueAtomic* this_queue);
 //插入到队列的队尾
 static bool VXCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* pvValue);
+static bool VXCircularQueueAtomic_push_move(XCircularQueueAtomic* this_queue, void* pvValue);
 //出队
 static void VXCircularQueueAtomic_pop(XCircularQueueAtomic* this_queue);
 // 返回队头元素
@@ -27,7 +28,7 @@ XVtable* XCircularQueueAtomic_class_init()
 #endif
         //继承类
         XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
-    void* table[] = { VXCircularQueueAtomic_push,VXCircularQueueAtomic_pop,VXCircularQueueAtomic_top,VXCircularQueueAtomic_receive,VXCircularQueueAtomic_isFull };
+    void* table[] = { VXCircularQueueAtomic_push,VXCircularQueueAtomic_push_move,VXCircularQueueAtomic_pop,VXCircularQueueAtomic_top,VXCircularQueueAtomic_receive,VXCircularQueueAtomic_isFull };
     //追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
@@ -103,7 +104,49 @@ bool VXCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* pvValue)
     }
 
     // 安全写入数据
-    memcpy(((char*)XContainerDataPtr(this_queue)) + tail * XContainerTypeSize(this_queue), pvValue, XContainerTypeSize(this_queue));
+    if (XContainerDataCopyMethod(this_queue))
+    {
+        memset(((char*)XContainerDataPtr(this_queue)) + tail * XContainerTypeSize(this_queue), 0, XContainerTypeSize(this_queue));
+        XContainerDataCopyMethod(this_queue)(((char*)XContainerDataPtr(this_queue)) + tail * XContainerTypeSize(this_queue), pvValue);
+    }
+    else
+    {
+        memcpy(((char*)XContainerDataPtr(this_queue)) + tail * XContainerTypeSize(this_queue), pvValue, XContainerTypeSize(this_queue));
+    }
+    return true;
+}
+
+bool VXCircularQueueAtomic_push_move(XCircularQueueAtomic* this_queue, void* pvValue)
+{
+    size_t tail, next_tail;
+
+    // 循环尝试直到成功或队列满
+    while (1) {
+        tail = XAtomic_load_size_t(&(this_queue->m_tail));
+        next_tail = (tail + 1) % XContainerSize(this_queue);
+
+        // 检查队列是否已满（可能被其他生产者填满）
+        if (next_tail == XAtomic_load_size_t(&(this_queue->m_head)))
+            return false; // 队列已满
+
+        // 使用CAS操作尝试更新队尾索引
+        if (XAtomic_compare_exchange_strong_size_t(
+            &(this_queue->m_tail), &tail, next_tail)) {
+            break; // 成功获得写入权限
+        }
+        // 否则，表示其他线程已更新m_tail，重试
+    }
+
+    // 安全写入数据
+    if (XContainerDataMoveMethod(this_queue))
+    {
+        memset(((char*)XContainerDataPtr(this_queue)) + tail * XContainerTypeSize(this_queue), 0, XContainerTypeSize(this_queue));
+        XContainerDataMoveMethod(this_queue)(((char*)XContainerDataPtr(this_queue)) + tail * XContainerTypeSize(this_queue), pvValue);
+    }
+    else
+    {
+        memcpy(((char*)XContainerDataPtr(this_queue)) + tail * XContainerTypeSize(this_queue), pvValue, XContainerTypeSize(this_queue));
+    }
     return true;
 }
 

@@ -10,7 +10,8 @@ extern "C" {
 #define XSETBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSetBase))       // XSet容器虚函数表大小
 // XSet虚函数表枚举
 XCLASS_DEFINE_BEGING(XSetBase)
-XCLASS_DEFINE_ENUM(XSetBase, Insert) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
+XCLASS_DEFINE_ENUM(XSetBase, Insert_Copy) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
+XCLASS_DEFINE_ENUM(XSetBase, Insert_Move),
 XCLASS_DEFINE_ENUM(XSetBase, Erase),
 XCLASS_DEFINE_ENUM(XSetBase, Remove),
 XCLASS_DEFINE_ENUM(XSetBase, Find),
@@ -28,7 +29,10 @@ XVtable* XSetBase_class_init();
 void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XEquality KeyEquality, XLess KeyLess);
 // Set插入数据
 bool XSetBase_insert_base(XSetBase* this_set, const void* pvKey);
-#define XSetBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XSet_insert_base(this_map,&k,&v);}
+#define XSetBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XSetBase_insert_base(this_map,&k,&v);}
+bool XSetBase_insert_move_base(XSetBase* this_set, const void* pvKey);
+#define XSetBase_Insert_Move_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XSetBase_insert_move_base(this_map,&k,&v);}
+
 // Set删除数据
 void XSetBase_erase_base(XSetBase* this_set, const void* pvKey);
 // Set移除数据
