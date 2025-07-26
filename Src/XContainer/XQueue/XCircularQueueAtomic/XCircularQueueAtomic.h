@@ -35,23 +35,16 @@ XCircularQueueAtomic* XCircularQueueAtomic_create(size_t typeSize, size_t count)
 #define XCircularQueueAtomic_top_base					XCircularQueue_top_base
 #define XCircularQueueAtomic_isFull_base				XCircularQueue_isFull_base
 
-#define XCircularQueueAtomic_copy_base					XQueueBase_copy_base
-#define XCircularQueueAtomic_move_base					XQueueBase_move_base
-#define XCircularQueueAtomic_deinit_base				XQueueBase_deinit_base
-//释放内存
-#define XCircularQueueAtomic_delete_base				XCircularQueue_delete_base
-//清空，不是释放内存
-#define XCircularQueueAtomic_clear_base					XCircularQueue_clear_base
-//检测是否为空，空为真 O(1)
-#define XCircularQueueAtomic_isEmpty_base				XCircularQueue_isEmpty_base
-//返回元素的个数 O(1)
-#define XCircularQueueAtomic_getSize_base				XCircularQueue_getSize_base
-//返回当前向量所能容纳的最大元素个数
-#define XCircularQueueAtomic_getCapacity_base			XCircularQueue_getCapacity_base
-//交换两个同类型向量的数据
-#define XCircularQueueAtomic_swap_base					XCircularQueue_swap_base
-//返回元素类型字节大小
-#define XCircularQueueAtomic_getTypeSize_base			XCircularQueue_getTypeSize_base
+#define XCircularQueueAtomic_copy_base					XQueueBase_copy_base	
+#define XCircularQueueAtomic_move_base					XQueueBase_move_base	
+#define XCircularQueueAtomic_deinit_base				XQueueBase_deinit_base	
+#define XCircularQueueAtomic_delete_base				XQueueBase_delete_base	
+#define XCircularQueueAtomic_clear_base					XQueueBase_clear_base	
+#define XCircularQueueAtomic_isEmpty_base				XQueueBase_isEmpty_base	
+#define XCircularQueueAtomic_getSize_base				XQueueBase_getSize_base	
+#define XCircularQueueAtomic_getCapacity_base			XQueueBase_getCapacity_base
+#define XCircularQueueAtomic_swap_base					XQueueBase_swap_base	
+#define XCircularQueueAtomic_getTypeSize_base			XQueueBase_getTypeSize_base
 #ifdef __cplusplus
 }
 #endif

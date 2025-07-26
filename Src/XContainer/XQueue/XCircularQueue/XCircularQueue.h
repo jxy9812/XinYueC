@@ -38,22 +38,15 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue,bool autoExpansi
 #define XCircularQueue_top_base					XQueueBase_top_base
 #define XCircularQueue_isFull_base				XQueueBase_isFull_base
 
-#define XCircularQueue_copy_base				XQueueBase_copy_base
-#define XCircularQueue_move_base				XQueueBase_move_base
-#define XCircularQueue_deinit_base				XQueueBase_deinit_base
-//释放内存
-#define XCircularQueue_delete_base				XQueueBase_delete_base
-//清空，不是释放内存
-#define XCircularQueue_clear_base				XQueueBase_clear_base
-//检测是否为空，空为真 O(1)
-#define XCircularQueue_isEmpty_base				XQueueBase_isEmpty_base
-//返回元素的个数 O(1)
-#define XCircularQueue_getSize_base				XQueueBase_getSize_base
-//返回当前向量所能容纳的最大元素个数
+#define XCircularQueue_copy_base				XQueueBase_copy_base	
+#define XCircularQueue_move_base				XQueueBase_move_base	
+#define XCircularQueue_deinit_base				XQueueBase_deinit_base	
+#define XCircularQueue_delete_base				XQueueBase_delete_base	
+#define XCircularQueue_clear_base				XQueueBase_clear_base	
+#define XCircularQueue_isEmpty_base				XQueueBase_isEmpty_base	
+#define XCircularQueue_getSize_base				XQueueBase_getSize_base	
 #define XCircularQueue_getCapacity_base			XQueueBase_getCapacity_base
-//交换两个同类型向量的数据
-#define XCircularQueue_swap_base				XQueueBase_swap_base
-//返回元素类型字节大小
+#define XCircularQueue_swap_base				XQueueBase_swap_base	
 #define XCircularQueue_getTypeSize_base			XQueueBase_getTypeSize_base
 #ifdef __cplusplus
 }

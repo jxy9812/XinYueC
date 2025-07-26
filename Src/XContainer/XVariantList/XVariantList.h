@@ -33,17 +33,22 @@ void XVariantList_init(XVariantList* list);
 #define XVariantList_front_base										XVector_front_base
 #define XVariantList_back_base										XVector_back_base
 #define XVariantList_find_base										XVector_find_base
-#define XVariantList_delete_base									XVector_delete_base
-#define XVariantList_clear_base										XVector_clear_base
 #define	XVariantList_remove_base									XVector_remove_base
 #define XVariantList_erase_base										XVector_erase_base
 #define XVariantList_pop_back_base									XVector_pop_back_base
 #define	XVariantList_pop_front_base									XVector_pop_front_base
 #define	XVariantList_resize_base									XVector_resize_base
-#define XVariantList_isEmpty_base									XVector_isEmpty_base
-#define XVariantList_getSize_base									XVector_getSize_base
+
+#define XVariantList_copy_base										XVector_copy_base	
+#define XVariantList_move_base										XVector_move_base	
+#define XVariantList_deinit_base									XVector_deinit_base	
+#define XVariantList_delete_base									XVector_delete_base	
+#define XVariantList_clear_base										XVector_clear_base	
+#define XVariantList_isEmpty_base									XVector_isEmpty_base	
+#define XVariantList_getSize_base									XVector_getSize_base	
 #define XVariantList_getCapacity_base								XVector_getCapacity_base
-#define XVariantList_swap_base										XVector_swap_base
+#define XVariantList_swap_base										XVector_swap_base	
+#define XVariantList_getTypeSize_base								XVector_getTypeSize_base
 #ifdef __cplusplus
 }
 #endif

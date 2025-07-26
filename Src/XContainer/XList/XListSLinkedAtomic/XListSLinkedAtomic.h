@@ -74,20 +74,16 @@ void XListSLinkedAtomic_init(XListSLinkedAtomic* this_list, size_t typeSize);
 #define XListSLinkedAtomic_find_base						XListBase_find_base
 //排序
 #define XListSLinkedAtomic_sort_base						XListBase_sort
-//释放内存
-#define XListSLinkedAtomic_delete_base						XListBase_delete_base
-//清空List的队列，不是释放内存
-#define XListSLinkedAtomic_clear_base						XListBase_clear_base
-//检测List内是否为空，空为真 O(1)
-#define XListSLinkedAtomic_isEmpty_base					    XListBase_isEmpty_base
-//返回List内元素的个数 O(1)
-#define XListSLinkedAtomic_getSize_base					    XListBase_getSize_base
-//返回当前向量所能容纳的最大元素个数
-#define XListSLinkedAtomic_getCapacity_base				    XListBase_getCapacity_base
-//交换两个同类型向量的数据
-#define XListSLinkedAtomic_swap_base					    XListBase_swap_base
-//返回元素类型字节大小
-#define XListSLinkedAtomic_getTypeSize_base				    XListBase_getTypeSize_base
+#define XListSLinkedAtomic_copy_base				        XListBase_copy_base	
+#define XListSLinkedAtomic_move_base				        XListBase_move_base	
+#define XListSLinkedAtomic_deinit_base			            XListBase_deinit_base	
+#define XListSLinkedAtomic_delete_base			            XListBase_delete_base	
+#define XListSLinkedAtomic_clear_base			            XListBase_clear_base	
+#define XListSLinkedAtomic_isEmpty_base			            XListBase_isEmpty_base	
+#define XListSLinkedAtomic_getSize_base			            XListBase_getSize_base	
+#define XListSLinkedAtomic_getCapacity_base		            XListBase_getCapacity_base
+#define XListSLinkedAtomic_swap_base				        XListBase_swap_base	
+#define XListSLinkedAtomic_getTypeSize_base		            XListBase_getTypeSize_base
 #ifdef __cplusplus
 }
 #endif

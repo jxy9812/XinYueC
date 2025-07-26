@@ -29,19 +29,15 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 #define XMap_value_base					XMapBase_value_base
 #define XMap_Value_Base					XMapBase_Value_Base
 #define XMap_find_base					XMapBase_find_base
-//释放内存
-#define XMap_delete_base				XMapBase_delete_base
-//清空，不是释放内存
-#define XMap_clear_base					XMapBase_clear_base
-//检测是否为空，空为真 O(1)
-#define XMap_isEmpty_base				XMapBase_isEmpty_base
-//返回元素的个数 O(1)
-#define XMap_getSize_base				XMapBase_getSize_base
-//返回当前向量所能容纳的最大元素个数
+#define XMap_copy_base					XMapBase_copy_base	
+#define XMap_move_base					XMapBase_move_base	
+#define XMap_deinit_base				XMapBase_deinit_base	
+#define XMap_delete_base				XMapBase_delete_base	
+#define XMap_clear_base					XMapBase_clear_base	
+#define XMap_isEmpty_base				XMapBase_isEmpty_base	
+#define XMap_getSize_base				XMapBase_getSize_base	
 #define XMap_getCapacity_base			XMapBase_getCapacity_base
-//交换两个同类型向量的数据
-#define XMap_swap_base					XMapBase_swap_base
-//返回元素类型字节大小
+#define XMap_swap_base					XMapBase_swap_base	
 #define XMap_getTypeSize_base			XMapBase_getTypeSize_base
 
 XVariantMap* XMap_create_XVariantMap();

@@ -45,20 +45,17 @@ uint8_t* XByteArray_find_base(const XByteArray* array, const uint8_t findVal);
 #define XByteArray_back_base						XVector_back_base
 #define XByteArray_Back_Base(array)					XVector_Back_Base(array,uint8_t)	
 //排序
-#define XByteArray_sort_base						XVector_sort_base		
-//释放内存
-#define XByteArray_delete_base						XVector_delete_base
-//清空XByteArray的队列，不是释放内存
-#define XByteArray_clear_base						XVector_clear_base
-//检测XByteArray内是否为空，空为真 O(1)
-#define XByteArray_isEmpty_base						XVector_isEmpty_base
-//返回XByteArray内元素的个数 O(1)
-#define XByteArray_getSize_base						XVector_getSize_base
-//返回当前向量所能容纳的最大元素个数
+#define XByteArray_sort_base						XVector_sort_base
+#define XByteArray_rcopy_base						XVector_rcopy_base
+#define XByteArray_copy_base						XVector_copy_base	
+#define XByteArray_move_base						XVector_move_base	
+#define XByteArray_deinit_base						XVector_deinit_base	
+#define XByteArray_delete_base						XVector_delete_base	
+#define XByteArray_clear_base						XVector_clear_base	
+#define XByteArray_isEmpty_base						XVector_isEmpty_base	
+#define XByteArray_getSize_base						XVector_getSize_base	
 #define XByteArray_getCapacity_base					XVector_getCapacity_base
-//交换两个同类型向量的数据
-#define XByteArray_swap_base						XVector_swap_base
-//返回元素类型字节大小
+#define XByteArray_swap_base						XVector_swap_base	
 #define XByteArray_getTypeSize_base					XVector_getTypeSize_base
 
 

@@ -29,19 +29,15 @@ void XSet_init(XSet* this_map, const size_t keyTypeSize, XEquality KeyEquality, 
 #define XSet_find_base					XSetBase_find_base
 #define XSet_contains					XSetBase_contains
 #define XSet_keys_base					XSetBase_keys_base
-//释放内存
-#define XSet_delete_base				XSetBase_delete_base
-//清空，不是释放内存
-#define XSet_clear_base					XSetBase_clear_base
-//检测是否为空，空为真 O(1)
-#define XSet_isEmpty_base				XSetBase_isEmpty_base
-//返回元素的个数 O(1)
-#define XSet_getSize_base				XSetBase_getSize_base
-//返回当前向量所能容纳的最大元素个数
+#define XSet_copy_base				    XSetBase_copy_base	
+#define XSet_move_base				    XSetBase_move_base	
+#define XSet_deinit_base				XSetBase_deinit_base	
+#define XSet_delete_base				XSetBase_delete_base	
+#define XSet_clear_base				    XSetBase_clear_base	
+#define XSet_isEmpty_base				XSetBase_isEmpty_base	
+#define XSet_getSize_base				XSetBase_getSize_base	
 #define XSet_getCapacity_base			XSetBase_getCapacity_base
-//交换两个同类型向量的数据
-#define XSet_swap_base					XSetBase_swap_base
-//返回元素类型字节大小
+#define XSet_swap_base				    XSetBase_swap_base	
 #define XSet_getTypeSize_base			XSetBase_getTypeSize_base
 
 #ifdef __cplusplus

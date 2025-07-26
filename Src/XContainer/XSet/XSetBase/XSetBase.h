@@ -42,20 +42,16 @@ bool XSetBase_remove_base(XSetBase* this_set, const void* pvKey);
 bool XSetBase_find_base(XSetBase* this_set, const void* pvKey);
 bool XSetBase_contains(XSetBase* this_set, const void* pvKey);
 XVector* XSetBase_keys_base(const XSetBase* this_set);
-// 释放内存
-#define XSetBase_delete_base            XContainerObject_delete_base
-// 清空，不是释放内存
-#define XSetBase_clear_base             XContainerObject_clear_base
-// 检测是否为空，空为真 O(1)
-#define XSetBase_isEmpty_base           XContainerObject_isEmpty_base
-// 返回元素的个数 O(1)
-#define XSetBase_getSize_base           XContainerObject_getSize_base
-// 返回当前向量所能容纳的最大元素个数
-#define XSetBase_getCapacity_base       XContainerObject_getCapacity_base
-// 交换两个同类型向量的数据
-#define XSetBase_swap_base              XContainerObject_swap_base
-// 返回元素类型字节大小
-#define XSetBase_getTypeSize_base       XContainerObject_getTypeSize_base
+#define XSetBase_copy_base				    XContainerObject_copy_base	
+#define XSetBase_move_base				    XContainerObject_move_base	
+#define XSetBase_deinit_base				XContainerObject_deinit_base	
+#define XSetBase_delete_base				XContainerObject_delete_base	
+#define XSetBase_clear_base				    XContainerObject_clear_base	
+#define XSetBase_isEmpty_base				XContainerObject_isEmpty_base	
+#define XSetBase_getSize_base				XContainerObject_getSize_base	
+#define XSetBase_getCapacity_base			XContainerObject_getCapacity_base
+#define XSetBase_swap_base				    XContainerObject_swap_base	
+#define XSetBase_getTypeSize_base			XContainerObject_getTypeSize_base
 
 #ifdef __cplusplus
 }

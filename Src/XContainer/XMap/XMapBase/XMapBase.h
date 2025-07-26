@@ -47,20 +47,18 @@ void* XMapBase_value_base(XMapBase* this_map, const void* pvKey);
 XPair* XMapBase_find_base(XMapBase* this_map, const void* pvKey);
 bool XMapBase_contains(XMapBase* this_map, const void* pvKey);
 XVector* XMapBase_keys_base(const XMapBase* this_map);
-//释放内存
-#define XMapBase_delete_base					XContainerObject_delete_base
-//清空，不是释放内存
-#define XMapBase_clear_base						XContainerObject_clear_base
-//检测是否为空，空为真 O(1)
-#define XMapBase_isEmpty_base					XContainerObject_isEmpty_base
-//返回元素的个数 O(1)
-#define XMapBase_getSize_base					XContainerObject_getSize_base
-//返回当前Map所能容纳的最大元素个数
-#define XMapBase_getCapacity_base				XContainerObject_getCapacity_base
-//交换两个同类型Map的数据
-#define XMapBase_swap_base						XContainerObject_swap_base
-//返回元素类型字节大小
-#define XMapBase_getTypeSize_base				XContainerObject_getTypeSize_base
+#define XMapBase_copy_base				XContainerObject_copy_base	
+#define XMapBase_move_base				XContainerObject_move_base	
+#define XMapBase_deinit_base			XContainerObject_deinit_base	
+#define XMapBase_delete_base			XContainerObject_delete_base	
+#define XMapBase_clear_base				XContainerObject_clear_base	
+#define XMapBase_isEmpty_base			XContainerObject_isEmpty_base	
+#define XMapBase_getSize_base			XContainerObject_getSize_base	
+#define XMapBase_getCapacity_base		XContainerObject_getCapacity_base
+#define XMapBase_swap_base				XContainerObject_swap_base	
+#define XMapBase_getTypeSize_base		XContainerObject_getTypeSize_base
+
+
 //默认释放派生类的方法 key是派生的容器
 void XMapBase_KeyClassDeinitMethod(XPair* pair);
 //默认释放派生类的方法 value是派生的容器

@@ -44,25 +44,8 @@ int64_t XString_find_first_of(const XString* this_string, const char* subStr);
 int64_t XString_find_last_of(const XString* this_string, const char* subStr);
 int64_t XString_find_first_not_of(const XString* this_string, const char* subStr);
 int64_t XString_find_last_not_of(const XString* this_string, const char* subStr);
-#define XString_copy_base								XVector_copy_base
-#define XString_move_base								XVector_move_base
-#define XString_deinit_base								XVector_deinit_base
 //设置XString的大小，超过大小插入0值数据，小于删除数据
 #define XString_resize_base								XVector_resize_base
-//释放内存
-#define XString_delete_base								XVector_delete_base
-//清空vector的队列，不是释放内存
-#define XString_clear_base								XVector_clear_base
-//检测vector内是否为空，空为真 O(1)
-#define XString_isEmpty_base							XVector_isEmpty_base
-//返回vector内元素的个数 O(1)
-#define XString_getSize_base							XVector_getSize_base
-//返回当前向量所能容纳的最大元素个数
-#define XString_getCapacity_base						XVector_getCapacity_base
-//交换两个同类型向量的数据
-#define XString_swap_base								XVector_swap_base
-//返回元素类型字节大小
-#define XString_getTypeSize_base						XVector_getTypeSize_base
 //设置XString的大小，实际大小自动+1存/0
 #define XString_resize_base								XVector_resize_base
 //向字符串头增加一个字符
@@ -79,6 +62,17 @@ int64_t XString_find_last_not_of(const XString* this_string, const char* subStr)
 #define XString_remove_base								XVector_remove_base
 // 返回索引处字符
 #define XString_at(this_string,index)					XVector_At_Base(this_string,index,char)
+
+#define XString_copy_base								XVector_copy_base	
+#define XString_move_base								XVector_move_base	
+#define XString_deinit_base								XVector_deinit_base	
+#define XString_delete_base								XVector_delete_base	
+#define XString_clear_base								XVector_clear_base	
+#define XString_isEmpty_base							XVector_isEmpty_base	
+#define XString_getSize_base							XVector_getSize_base	
+#define XString_getCapacity_base						XVector_getCapacity_base
+#define XString_swap_base								XVector_swap_base	
+#define XString_getTypeSize_base						XVector_getTypeSize_base
 
 //转16进制显示
 XString* XString_to16HexString(const uint8_t* data, size_t dataSize);

@@ -35,22 +35,15 @@ XQueue* XQueue_create(size_t typeSize);
 #define XQueue_top_base					XQueueBase_top_base
 #define XQueue_isFull_base				XQueueBase_isFull_base
 
-#define XQueue_copy_base				XQueueBase_copy_base
-#define XQueue_move_base				XQueueBase_move_base
-#define XQueue_deinit_base				XQueueBase_deinit_base
-//释放内存
-#define XQueue_delete_base				XQueueBase_delete_base
-//清空，不是释放内存
-#define XQueue_clear_base				XQueueBase_clear_base
-//检测是否为空，空为真 O(1)
-#define XQueue_isEmpty_base				XQueueBase_isEmpty_base
-//返回元素的个数 O(1)
-#define XQueue_getSize_base				XQueueBase_getSize_base
-//返回当前向量所能容纳的最大元素个数
+#define XQueue_copy_base				XQueueBase_copy_base	
+#define XQueue_move_base				XQueueBase_move_base	
+#define XQueue_deinit_base				XQueueBase_deinit_base	
+#define XQueue_delete_base				XQueueBase_delete_base	
+#define XQueue_clear_base				XQueueBase_clear_base	
+#define XQueue_isEmpty_base				XQueueBase_isEmpty_base	
+#define XQueue_getSize_base				XQueueBase_getSize_base	
 #define XQueue_getCapacity_base			XQueueBase_getCapacity_base
-//交换两个同类型向量的数据
-#define XQueue_swap_base				XQueueBase_swap_base
-//返回元素类型字节大小
+#define XQueue_swap_base				XQueueBase_swap_base	
 #define XQueue_getTypeSize_base			XQueueBase_getTypeSize_base
 
 #ifdef __cplusplus

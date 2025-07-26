@@ -37,15 +37,22 @@ void XStringList_insert_c_str(XStringList* this_stringVector, int64_t index, con
 #define XStringList_back_base									XVector_back_base
 //字符串拼接
 XString* XStringList_join(const XStringList* this_stringVector, const char* separator);
-#define XStringList_move_base									XVector_move_base
-#define XStringList_copy_base									XVector_copy_base
-#define XStringList_delete_base									XVector_delete_base
-#define XStringList_clear_base									XVector_clear_base
 #define	XStringList_remove_base									XVector_remove_base
 #define XStringList_erase_base                                  XVector_erase_base
 #define XStringList_pop_back_base								XVector_pop_back_base
 #define	XStringList_pop_front_base								XVector_pop_front_base
 #define	XStringList_resize_base									XVector_resize_base
+
+#define XStringList_copy_base									XVector_copy_base	
+#define XStringList_move_base									XVector_move_base	
+#define XStringList_deinit_base									XVector_deinit_base	
+#define XStringList_delete_base									XVector_delete_base	
+#define XStringList_clear_base									XVector_clear_base	
+#define XStringList_isEmpty_base								XVector_isEmpty_base	
+#define XStringList_getSize_base								XVector_getSize_base	
+#define XStringList_getCapacity_base							XVector_getCapacity_base
+#define XStringList_swap_base									XVector_swap_base	
+#define XStringList_getTypeSize_base							XVector_getTypeSize_base
 #ifdef __cplusplus
 }
 #endif

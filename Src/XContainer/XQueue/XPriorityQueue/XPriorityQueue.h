@@ -34,22 +34,15 @@ XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare);
 #define XPriorityQueue_top_base					XQueueBase_top_base
 #define XPriorityQueue_isFull_base				XQueueBase_isFull_base
 
-#define XPriorityQueue_copy_base				XQueueBase_copy_base
-#define XPriorityQueue_move_base				XQueueBase_move_base
-#define XPriorityQueue_deinit_base				XQueueBase_deinit_base
-//释放内存
-#define XPriorityQueue_delete_base				XQueueBase_delete_base
-//清空，不是释放内存
-#define XPriorityQueue_clear_base				XQueueBase_clear_base
-//检测是否为空，空为真 O(1)
-#define XPriorityQueue_isEmpty_base				XQueueBase_isEmpty_base
-//返回元素的个数 O(1)
-#define XPriorityQueue_getSize_base				XQueueBase_getSize_base
-//返回当前向量所能容纳的最大元素个数
+#define XPriorityQueue_copy_base				XQueueBase_copy_base	
+#define XPriorityQueue_move_base				XQueueBase_move_base	
+#define XPriorityQueue_deinit_base				XQueueBase_deinit_base	
+#define XPriorityQueue_delete_base				XQueueBase_delete_base	
+#define XPriorityQueue_clear_base				XQueueBase_clear_base	
+#define XPriorityQueue_isEmpty_base				XQueueBase_isEmpty_base	
+#define XPriorityQueue_getSize_base				XQueueBase_getSize_base	
 #define XPriorityQueue_getCapacity_base			XQueueBase_getCapacity_base
-//交换两个同类型向量的数据
-#define XPriorityQueue_swap_base				XQueueBase_swap_base
-//返回元素类型字节大小
+#define XPriorityQueue_swap_base				XQueueBase_swap_base	
 #define XPriorityQueue_getTypeSize_base			XQueueBase_getTypeSize_base
 
 #ifdef __cplusplus

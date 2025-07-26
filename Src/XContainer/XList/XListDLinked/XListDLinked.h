@@ -70,20 +70,16 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize);
 #define XListDLinked_find_base						XListBase_find_base
 //排序
 #define XListDLinked_sort_base						XListBase_sort
-//释放内存
-#define XListDLinked_delete_base						XListBase_delete_base
-//清空XList的队列，不是释放内存
-#define XListDLinked_clear_base						XListBase_clear_base
-//检测XList内是否为空，空为真 O(1)
-#define XListDLinked_isEmpty_base					XListBase_isEmpty_base
-//返回XList内元素的个数 O(1)
-#define XListDLinked_getSize_base					XListBase_getSize_base
-//返回当前向量所能容纳的最大元素个数
-#define XListDLinked_getCapacity_base				XListBase_getCapacity_base
-//交换两个同类型向量的数据
-#define XListDLinked_swap_base						XListBase_swap_base
-//返回元素类型字节大小
-#define XListDLinked_getTypeSize_base				XListBase_getTypeSize_base
+#define XListDLinked_copy_base				        XListBase_copy_base	
+#define XListDLinked_move_base				        XListBase_move_base	
+#define XListDLinked_deinit_base			        XListBase_deinit_base	
+#define XListDLinked_delete_base			        XListBase_delete_base	
+#define XListDLinked_clear_base			            XListBase_clear_base	
+#define XListDLinked_isEmpty_base			        XListBase_isEmpty_base	
+#define XListDLinked_getSize_base			        XListBase_getSize_base	
+#define XListDLinked_getCapacity_base		        XListBase_getCapacity_base
+#define XListDLinked_swap_base				        XListBase_swap_base	
+#define XListDLinked_getTypeSize_base		        XListBase_getTypeSize_base
 #ifdef __cplusplus
 }
 #endif

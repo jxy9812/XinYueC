@@ -26,24 +26,22 @@ XHashMap* XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XH
 
 //初始化 XHash
 void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess);
-#define XHashMap_insert_base						XMapBase_insert_base
+#define XHashMap_insert_base					XMapBase_insert_base
 #define XHashMap_erase_base						XMapBase_erase_base
-#define XHashMap_remove_base						XMapBase_remove_base
+#define XHashMap_remove_base					XMapBase_remove_base
 #define XHashMap_value_base						XMapBase_value_base
-#define XHashMap_find_base							XMapBase_find_base
-#define XHashMap_delete_base						XMapBase_delete_base
-//清空，不是释放内存
-#define XHashMap_clear_base							XMapBase_clear_base
-//检测是否为空，空为真 O(1)
-#define XHashMap_isEmpty_base						XMapBase_isEmpty_base
-//返回元素的个数 O(1)						
-#define XHashMap_getSize_base						XMapBase_getSize_base
-//返回当前向量所能容纳的最大元素个数			 
-#define XHashMap_getCapacity_base					XMapBase_getCapacity_base
-//交换两个同类型向量的数据					
-#define XHashMap_swap_base							XMapBase_swap_base
-//返回元素类型字节大小						
-#define XHashMap_getTypeSize_base					XMapBase_getTypeSize_base
+#define XHashMap_find_base						XMapBase_find_base
+#define XHashMap_delete_base					XMapBase_delete_base
+#define XHashMap_copy_base						XMapBase_copy_base	
+#define XHashMap_move_base						XMapBase_move_base	
+#define XHashMap_deinit_base					XMapBase_deinit_base	
+#define XHashMap_delete_base					XMapBase_delete_base	
+#define XHashMap_clear_base						XMapBase_clear_base	
+#define XHashMap_isEmpty_base					XMapBase_isEmpty_base	
+#define XHashMap_getSize_base					XMapBase_getSize_base	
+#define XHashMap_getCapacity_base				XMapBase_getCapacity_base
+#define XHashMap_swap_base						XMapBase_swap_base	
+#define XHashMap_getTypeSize_base				XMapBase_getTypeSize_base
 
 XVariantHashMap* XHashMap_create_XVariantHashMap();
 #ifdef __cplusplus

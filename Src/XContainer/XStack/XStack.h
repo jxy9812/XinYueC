@@ -31,17 +31,20 @@ void XStack_init(XStack* this_stack, size_t typeSize);
 #define XStack_push_move_base		XVector_push_back_move_base
 //#define XStack_Push_Base			XVector_Push_Back_Base
 //移除栈顶元素 O(1)
-#define XStack_pop_base			XVector_pop_back_base
+#define XStack_pop_base				XVector_pop_back_base
 // 取得栈顶元素（但不删除）O(1)
-#define XStack_top_base          XVector_back_base
-#define XStack_Top_Base          XVector_Back_Base
+#define XStack_top_base				XVector_back_base
+#define XStack_Top_Base				 XVector_Back_Base
 //将this_stackTwo拷贝到this_stackOne
 #define XStack_copy_base			XVector_copy_base
 //将this_stackTwo逆序拷贝到this_stackOne
-#define XStack_rcopy_base		XVector_rcopy_base
+#define XStack_rcopy_base			XVector_rcopy_base
+#define XStack_copy_base			XVector_copy_base	
+#define XStack_move_base			XVector_move_base	
+#define XStack_deinit_base			XVector_deinit_base	
 #define XStack_delete_base			XVector_delete_base	
-#define XStack_clear_base		XVector_clear_base	
-#define XStack_isEmpty_base		XVector_isEmpty_base	
+#define XStack_clear_base			XVector_clear_base	
+#define XStack_isEmpty_base			XVector_isEmpty_base	
 #define XStack_getSize_base			XVector_getSize_base	
 #define XStack_getCapacity_base		XVector_getCapacity_base
 #define XStack_swap_base			XVector_swap_base	

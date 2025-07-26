@@ -95,23 +95,16 @@ void* XVector_back_base(const  XVector* this_vector);
 int64_t XVector_find_base(const XVector* this_vector, const void* findVal);
 //排序
 void  XVector_sort_base(XVector* this_vector, XCompare compare);
-#define XVector_copy_base				XContainerObject_copy_base
-#define XVector_move_base				XContainerObject_move_base
-#define XVector_deinit_base				XContainerObject_deinit_base
-//释放内存
-#define XVector_delete_base				XContainerObject_delete_base
-//清空vector的队列，不是释放内存
-#define XVector_clear_base				XContainerObject_clear_base
-//检测vector内是否为空，空为真 O(1)
-#define XVector_isEmpty_base			XContainerObject_isEmpty_base
-//返回vector内元素的个数 O(1)
-#define XVector_getSize_base			XContainerObject_getSize_base
-//返回当前向量所能容纳的最大元素个数
-#define XVector_getCapacity_base		XContainerObject_getCapacity_base
-//交换两个同类型向量的数据
-#define XVector_swap_base				XContainerObject_swap_base
-//返回元素类型字节大小
-#define XVector_getTypeSize_base		XContainerObject_getTypeSize_base
+#define XVector_copy_base				    XContainerObject_copy_base	
+#define XVector_move_base				    XContainerObject_move_base	
+#define XVector_deinit_base					XContainerObject_deinit_base	
+#define XVector_delete_base					XContainerObject_delete_base	
+#define XVector_clear_base				    XContainerObject_clear_base	
+#define XVector_isEmpty_base				XContainerObject_isEmpty_base	
+#define XVector_getSize_base				XContainerObject_getSize_base	
+#define XVector_getCapacity_base			XContainerObject_getCapacity_base
+#define XVector_swap_base				    XContainerObject_swap_base	
+#define XVector_getTypeSize_base			XContainerObject_getTypeSize_base
 
 //格式构造字符串
 bool XVector_format_text_core(XVector* vector, bool appendNull, const char* format, va_list args);

@@ -35,22 +35,15 @@ bool XQueueBase_receive_base(XQueueBase* this_queue, void* pvBuffer);
 void* XQueueBase_top_base(XQueueBase* this_queue);
 bool XQueueBase_isFull_base(XQueueBase* this_queue);
 
-#define XQueueBase_copy_base				XContainerObject_copy_base
-#define XQueueBase_move_base				XContainerObject_move_base
-#define XQueueBase_deinit_base				XContainerObject_deinit_base
-//释放内存
-#define XQueueBase_delete_base				XContainerObject_delete_base
-//清空，不是释放内存
-#define XQueueBase_clear_base				XContainerObject_clear_base
-//检测是否为空，空为真 O(1)
-#define XQueueBase_isEmpty_base				XContainerObject_isEmpty_base
-//返回元素的个数 O(1)
-#define XQueueBase_getSize_base				XContainerObject_getSize_base
-//返回当前向量所能容纳的最大元素个数
+#define XQueueBase_copy_base				XContainerObject_copy_base	
+#define XQueueBase_move_base				XContainerObject_move_base	
+#define XQueueBase_deinit_base				XContainerObject_deinit_base	
+#define XQueueBase_delete_base				XContainerObject_delete_base	
+#define XQueueBase_clear_base				XContainerObject_clear_base	
+#define XQueueBase_isEmpty_base				XContainerObject_isEmpty_base	
+#define XQueueBase_getSize_base				XContainerObject_getSize_base	
 #define XQueueBase_getCapacity_base			XContainerObject_getCapacity_base
-//交换两个同类型向量的数据
-#define XQueueBase_swap_base				XContainerObject_swap_base
-//返回元素类型字节大小
+#define XQueueBase_swap_base				XContainerObject_swap_base	
 #define XQueueBase_getTypeSize_base			XContainerObject_getTypeSize_base
 #ifdef __cplusplus
 }
