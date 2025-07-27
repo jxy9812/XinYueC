@@ -16,7 +16,8 @@ static bool VXSet_remove(XHashSet* this_set, const void* pvKey);
 static bool VXSet_find(XHashSet* this_set, const void* pvKey);
 // 清空Set，释放内存
 static void VXSet_clear(XHashSet* this_set);
-// 释放内存
+static void VXClass_copy(XHashSet* object, const XHashSet* src);
+static void VXClass_move(XHashSet* object, XHashSet* src);
 static void VXSet_deinit(XHashSet* this_set);
 static void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo);
 static XVector* VXSetBase_keys(const XSetBase* this_set);
@@ -47,6 +48,8 @@ XVtable* XHashSet_class_init()
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     // 重载
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXSet_clear);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSet_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXSet_swap);
 #if SHOWCONTAINERSIZE
@@ -203,6 +206,37 @@ void VXSet_clear(XHashSet* this_set)
     }
     memset(XContainerDataPtr(this_set), 0, sizeof(XRBTreeNode*) * XContainerCapacity(this_set));
     XContainerSize(this_set) = 0;
+}
+
+void VXClass_copy(XHashSet* object, const XHashSet* src)
+{
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XSetBase* set = src;
+        XHashSet_init(object,XContainerTypeSize(src), src->m_hash, set->m_KeyEquality, set->m_KeyLess);
+    }
+    else if (!XHashSet_isEmpty_base(object))
+    {
+        XHashSet_clear_base(object);
+    }
+    for_each_iterator(src, XHashSet, it)
+    {
+        XHashSet_insert_base(object, XHashSet_iterator_data(&it));
+    }
+}
+
+void VXClass_move(XHashSet* object, XHashSet* src)
+{
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XSetBase* set = src;
+        XHashSet_init(object, XContainerTypeSize(src), src->m_hash, set->m_KeyEquality, set->m_KeyLess);
+    }
+    else if (!XHashSet_isEmpty_base(object))
+    {
+        XHashSet_clear_base(object);
+    }
+    XSwap(object, src, sizeof(XHashSet));
 }
 
 void VXSet_deinit(XHashSet* this_set)

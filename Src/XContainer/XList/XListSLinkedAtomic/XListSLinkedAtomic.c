@@ -2,7 +2,8 @@
 #if XListSLinkedAtomic_ON
 #include <stdlib.h>
 #include <string.h>
-#include"XStack.h"
+#include "XStack.h"
+#include "XAlgorithm.h"
 // 内部函数声明
 static XListSNodeAtomic * VXListAtomic_push_front(XListSLinkedAtomic * this_list, void* pvData);
 static XListSNodeAtomic* VXListAtomic_push_back(XListSLinkedAtomic* this_list, void* pvData);
@@ -23,6 +24,8 @@ static void* VXListAtomic_front(XListSLinkedAtomic* this_list);
 static void* VXListAtomic_back(XListSLinkedAtomic* this_list);
 static XListSNodeAtomic* VXListAtomic_find(const XListSLinkedAtomic* this_list, void* pvData);
 static void VXListAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare);
+static void VXClass_copy(XListSLinkedAtomic* object, const XListSLinkedAtomic* src);
+static void VXClass_move(XListSLinkedAtomic* object, XListSLinkedAtomic* src);
 static void VXListAtomic_deinit(XListSLinkedAtomic* this_list);
 static void VXListSLinkedAtomic_swap(XListSLinkedAtomic* list1, XListSLinkedAtomic* list2);
 // 创建新节点
@@ -67,6 +70,8 @@ XVtable* XListSLinkedAtomic_class_init()
     // 追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     // 重载
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXListAtomic_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXListAtomic_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXListSLinkedAtomic_swap);
@@ -908,6 +913,35 @@ void VXListAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare) {
 #else
     IS_ON_DEBUG(XStack_ON);
 #endif
+}
+
+void VXClass_copy(XListSLinkedAtomic* object, const XListSLinkedAtomic* src)
+{
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XListSLinkedAtomic_init(object, XContainerTypeSize(src));
+    }
+    else if (!XListBase_isEmpty_base(object))
+    {
+        XListBase_clear_base(object);
+    }
+    for_each_iterator(src, XListSLinkedAtomic, it)
+    {
+        XListBase_push_back_base(object, XListSLinkedAtomic_iterator_data(&it));
+    }
+}
+
+void VXClass_move(XListSLinkedAtomic* object, XListSLinkedAtomic* src)
+{
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XListSLinkedAtomic_init(object, XContainerTypeSize(src));
+    }
+    else if (!XListBase_isEmpty_base(object))
+    {
+        XListBase_clear_base(object);
+    }
+    XSwap(object, src, sizeof(XListSLinkedAtomic));
 }
 
 // 释放链表

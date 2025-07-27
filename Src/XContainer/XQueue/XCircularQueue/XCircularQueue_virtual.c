@@ -15,6 +15,11 @@ static void VXCircularQueue_pop(XCircularQueue* this_queue);
 // 返回队头元素
 static void* VXCircularQueue_top(XCircularQueue* this_queue);
 static bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer);
+
+static void VXClass_copy(XCircularQueue* object, const XCircularQueue* src);
+static void VXClass_move(XCircularQueue* object, XCircularQueue* src);
+static void VXClass_deinit(XCircularQueue* this_queue);
+
 XVtable* XCircularQueue_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -33,6 +38,9 @@ XVtable* XCircularQueue_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty,VXCircularQueue_isEmpty);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXCircularQueue_clear);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Size,VXCircularQueue_getSize);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
 #if SHOWCONTAINERSIZE
 	printf("XCircularQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -186,5 +194,31 @@ bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer)
 		XContainerDataDeinitMethod(this_queue)(pvTop);
 	this_queue->m_head = (this_queue->m_head + 1) % XContainerSize(this_queue);//指针后移取模实现环形
 	return true;
+}
+void VXClass_copy(XCircularQueue* object, const XCircularQueue* src)
+{
+	XVtableGetFunc(XVector_class_init(), EXClass_Copy, void(*)(XVector*,const XVector*))(object, src);
+	object->m_autoExpansion = src->m_autoExpansion;
+	object->m_head = src->m_head;
+	object->m_tail = src->m_tail;
+}
+void VXClass_move(XCircularQueue* object, XCircularQueue* src)
+{
+	if (((XClass*)object)->m_vtable == NULL)
+	{
+		XCircularQueue_init(object,XContainerTypeSize(src), XContainerCapacity(src)-1);
+	}
+	else if (!XCircularQueue_isEmpty_base(object))
+	{
+		XCircularQueue_clear_base(object);
+	}
+	XSwap(object, src, sizeof(XCircularQueue));
+}
+void VXClass_deinit(XCircularQueue* this_queue)
+{
+	XVtableGetFunc(XVector_class_init(), EXClass_Deinit,void(*)(XVector*))(this_queue);
+	this_queue->m_autoExpansion = false;
+	this_queue->m_head = 0;
+	this_queue->m_tail = 0;
 }
 #endif

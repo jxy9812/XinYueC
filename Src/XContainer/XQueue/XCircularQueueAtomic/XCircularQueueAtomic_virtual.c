@@ -17,6 +17,10 @@ static void VXCircularQueueAtomic_pop(XCircularQueueAtomic* this_queue);
 static void* VXCircularQueueAtomic_top(XCircularQueueAtomic* this_queue);
 static bool VXCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuffer);
 
+static void VXClass_copy(XCircularQueueAtomic* object, const XCircularQueueAtomic* src);
+static void VXClass_move(XCircularQueueAtomic* object, XCircularQueueAtomic* src);
+static void VXClass_deinit(XCircularQueueAtomic* this_queue);
+
 XVtable* XCircularQueueAtomic_class_init()
 {
     XVTABLE_CREAT_DEFAULT
@@ -35,6 +39,9 @@ XVtable* XCircularQueueAtomic_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXCircularQueueAtomic_isEmpty);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXCircularQueueAtomic_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Size, VXCircularQueueAtomic_getSize);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit)
 #if SHOWCONTAINERSIZE
     printf("XCircularQueueAtomic size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -209,5 +216,29 @@ bool VXCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuf
     }
 
     return true;
+}
+void VXClass_copy(XCircularQueueAtomic* object, const XCircularQueueAtomic* src)
+{
+    XVtableGetFunc(XVector_class_init(), EXClass_Copy, void(*)(XVector*, const XVector*))(object, src);
+    object->m_head = src->m_head;
+    object->m_tail = src->m_tail;
+}
+void VXClass_move(XCircularQueueAtomic* object, XCircularQueueAtomic* src)
+{
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XCircularQueueAtomic_init(object, XContainerTypeSize(src), XContainerCapacity(src)-1);
+    }
+    else if (!XCircularQueueAtomic_isEmpty_base(object))
+    {
+        XCircularQueueAtomic_clear_base(object);
+    }
+    XSwap(object, src, sizeof(XCircularQueueAtomic));
+}
+void VXClass_deinit(XCircularQueueAtomic* this_queue)
+{
+    XVtableGetFunc(XVector_class_init(), EXClass_Deinit, void(*)(XVector*))(this_queue);
+    this_queue->m_head.value = 0;
+    this_queue->m_tail.value = 0;
 }
 #endif

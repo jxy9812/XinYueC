@@ -1,6 +1,7 @@
 ﻿#include"XListSLinked.h"
 #if XListSLinked_ON
 #include"XStack.h"
+#include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
 //插入
@@ -25,6 +26,8 @@ static void* VXList_back(XListSLinked* this_list);
 static XListSNode* VXList_find(const XListSLinked* this_list, void* pvData);
 //其他
 static void VXList_sort(XListSLinked* this_list, XCompare compare);
+static void VXClass_copy(XListSLinked* object, const XListSLinked* src);
+static void VXClass_move(XListSLinked* object, XListSLinked* src);
 static void VXList_deinit(XListSLinked* this_list);
 
 XVtable* XListSLinked_class_init()
@@ -55,6 +58,8 @@ XVtable* XListSLinked_class_init()
     //追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXList_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXList_clear);
 
@@ -729,6 +734,35 @@ void VXList_sort(XListSLinked* this_list, XCompare compare)
 #else
     IS_ON_DEBUG(XStack_ON);
 #endif
+}
+
+void VXClass_copy(XListSLinked* object, const XListSLinked* src)
+{
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XListSLinked_init(object, XContainerTypeSize(src));
+    }
+    else if (!XListBase_isEmpty_base(object))
+    {
+        XListBase_clear_base(object);
+    }
+    for_each_iterator(src, XListSLinked, it)
+    {
+        XListBase_push_back_base(object, XListSLinked_iterator_data(&it));
+    }
+}
+
+void VXClass_move(XListSLinked* object, XListSLinked* src)
+{
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XListSLinked_init(object, XContainerTypeSize(src));
+    }
+    else if (!XListBase_isEmpty_base(object))
+    {
+        XListBase_clear_base(object);
+    }
+    XSwap(object, src, sizeof(XListSLinked));
 }
 
 void VXList_deinit(XListSLinked* this_list)

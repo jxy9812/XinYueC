@@ -18,7 +18,8 @@ static XPair* VXMap_find(XMap* this_map, const void* key);
 static XVector* VXMapBase_keys(const XMapBase* this_map);
 //清空Map，释放内存
 static void VXMap_clear(XMap* this_map);
-//释放内存
+static void VXClass_copy(XMap* object, const XMap* src);
+static void VXClass_move(XMap* object, XMap* src);
 static void VXMap_deinit(XMap* this_map);
 static void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
 
@@ -48,6 +49,8 @@ XVtable* XMap_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXMap_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit,VXMap_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
 #if SHOWCONTAINERSIZE
@@ -201,6 +204,38 @@ void VXMap_clear(XMap* this_map)
 	XContainerCapacity(this_map) = 0;
 	XContainerSize(this_map) = 0;
 	XContainerDataPtr(this_map) = NULL;
+}
+
+void VXClass_copy(XMap* object, const XMap* src)
+{
+	if (((XClass*)object)->m_vtable == NULL)
+	{
+		XMapBase* map = src;
+		XMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), map->m_KeyEquality, map->m_KeyLess);
+	}
+	else if (!XMap_isEmpty_base(object))
+	{
+		XMap_clear_base(object);
+	}
+	for_each_iterator(src, XMap, it)
+	{
+		XPair* pair = XMap_iterator_data(&it);
+		XMapBase_insert_base(object, XPair_first(pair), XPair_second(pair));
+	}
+}
+
+void VXClass_move(XMap* object, XMap* src)
+{
+	if (((XClass*)object)->m_vtable == NULL)
+	{
+		XMapBase* map = src;
+		XMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), map->m_KeyEquality, map->m_KeyLess);
+	}
+	else if (!XMapBase_isEmpty_base(object))
+	{
+		XMapBase_clear_base(object);
+	}
+	XSwap(object, src, sizeof(XMap));
 }
 
 void VXMap_deinit(XMap* this_map)

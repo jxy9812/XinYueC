@@ -2,6 +2,7 @@
 #if XQueue_ON
 #include<stdlib.h>
 #include<string.h>
+#include"XAlgorithm.h"
 static bool VXQueue_isEmpty(const XQueue* this_queue);
 static bool VXQueue_isFull(const XQueue* this_queue);
 static void VXQueue_clear(XQueue* this_queue);//清空
@@ -14,6 +15,10 @@ static void VXQueue_pop(XQueue* this_queue);
 // 返回队头元素
 static void* VXQueue_top(XQueue* this_queue);
 static bool VXQueue_receive(XQueue* this_queue, void* pvBuffer);
+
+static void VXClass_copy(XQueue* object, const XQueue* src);
+static void VXClass_move(XQueue* object, XQueue* src);
+
 XQueue* XQueue_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
@@ -49,6 +54,8 @@ XVtable* XQueue_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXQueue_isEmpty);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXQueue_clear);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Size, VXQueue_getSize);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 #if SHOWCONTAINERSIZE
 	printf("XQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -104,4 +111,33 @@ bool VXQueue_receive(XQueue* this_queue, void* pvBuffer)
 	void* val=XQueue_top_base(this_queue);
 	memcpy(pvBuffer,val,XContainerTypeSize(this_queue));
 	return true;
+}
+
+void VXClass_copy(XQueue* object, const XQueue* src)
+{
+	if (((XClass*)object)->m_vtable == NULL)
+	{
+		XQueue_init(object, XContainerTypeSize(src));
+	}
+	else if (!XQueue_isEmpty_base(object))
+	{
+		XQueue_clear_base(object);
+	}
+	for_each_iterator(src, XListSLinked, it)
+	{
+		XQueue_push_base(object, XListSLinked_iterator_data(&it));
+	}
+}
+
+void VXClass_move(XQueue* object, XQueue* src)
+{
+	if (((XClass*)object)->m_vtable == NULL)
+	{
+		XQueue_init(object, XContainerTypeSize(src));
+	}
+	else if (!XQueue_isEmpty_base(object))
+	{
+		XQueue_clear_base(object);
+	}
+	XSwap(object, src, sizeof(XQueue));
 }

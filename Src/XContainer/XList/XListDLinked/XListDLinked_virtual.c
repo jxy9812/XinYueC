@@ -1,8 +1,10 @@
 ﻿#include"XListDLinked.h"
 #if XListDLinked_ON
 #include"XStack.h"
+#include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
+
 //插入
 static XListDNode * VXList_push_front(XListDLinked * this_list, void* pvData);
 static XListDNode* VXList_push_back(XListDLinked* this_list, void* pvData);
@@ -27,6 +29,8 @@ static void* VXList_back(XListDLinked* this_list);
 static XListDNode* VXList_find(const XListDLinked* this_list, void* pvData);
 //其他
 static void VXList_sort(XListDLinked* this_list, XCompare compare);
+static void VXClass_copy(XListDLinked* object, const XListDLinked* src);
+static void VXClass_move(XListDLinked* object, XListDLinked* src);
 static void VXList_deinit(XListDLinked* this_list);
 
 XVtable* XListDLinked_class_init()
@@ -57,6 +61,8 @@ XVtable* XListDLinked_class_init()
     //追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //重载
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXList_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXList_clear);
 
@@ -67,6 +73,35 @@ XVtable* XListDLinked_class_init()
 }
 
 #define CreatNode(this_list)   (XMemory_malloc(sizeof(XListDNode*)*2+XContainerTypeSize(this_list)))
+
+void VXClass_copy(XListDLinked* object, const XListDLinked* src)
+{
+    if(((XClass*)object)->m_vtable==NULL)
+    {
+        XListDLinked_init(object, XContainerTypeSize(src));
+    }
+    else if (!XListBase_isEmpty_base(object))
+    {
+        XListBase_clear_base(object);
+    }
+    for_each_iterator(src, XListDLinked,it)
+    {
+        XListBase_push_back_base(object,XListDLinked_iterator_data(&it));
+    }
+}
+
+void VXClass_move(XListDLinked* object, XListDLinked* src)
+{
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XListDLinked_init(object, XContainerTypeSize(src));
+    }
+    else if (!XListBase_isEmpty_base(object))
+    {
+        XListBase_clear_base(object);
+    }
+    XSwap(object, src, sizeof(XListDLinked));
+}
 
 XListDNode* VXList_push_front(XListDLinked* this_list, void* pvData)
 {

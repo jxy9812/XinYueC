@@ -17,7 +17,8 @@ static bool VXSet_find(XSet* this_set, const void* key);
 static XVector* VXSetBase_keys(const XSetBase* this_set);
 //清空Set，释放内存
 static void VXSet_clear(XSet* this_set);
-//释放内存
+static void VXClass_copy(XSet* object, const XSet* src);
+static void VXClass_move(XSet* object, XSet* src);
 static void VXSet_deinit(XSet* this_set);
 static void VXSet_swap(XSet* this_setOne, XSet* this_setTwo);
 XVtable* XSet_class_init()
@@ -39,6 +40,8 @@ XVtable* XSet_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXSet_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSet_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXSet_swap);
 #if SHOWCONTAINERSIZE
@@ -68,6 +71,37 @@ void VXSet_clear(XSet* this_set)
 	XContainerCapacity(this_set) = 0;
 	XContainerSize(this_set) = 0;
 	XContainerDataPtr(this_set) = NULL;
+}
+
+void VXClass_copy(XSet* object, const XSet* src)
+{
+	if (((XClass*)object)->m_vtable == NULL)
+	{
+		XSetBase* set = src;
+		XSet_init(object, XContainerTypeSize(src), set->m_KeyEquality, set->m_KeyLess);
+	}
+	else if (!XSet_isEmpty_base(object))
+	{
+		XSet_clear_base(object);
+	}
+	for_each_iterator(src, XSet, it)
+	{
+		XSet_insert_base(object, XSet_iterator_data(&it));
+	}
+}
+
+void VXClass_move(XSet* object, XSet* src)
+{
+	if (((XClass*)object)->m_vtable == NULL)
+	{
+		XSetBase* set = src;
+		XSet_init(object, XContainerTypeSize(src), set->m_KeyEquality, set->m_KeyLess);
+	}
+	else if (!XSet_isEmpty_base(object))
+	{
+		XSet_clear_base(object);
+	}
+	XSwap(object, src, sizeof(XSet));
 }
 
 void VXSet_deinit(XSet* this_set)
