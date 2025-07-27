@@ -43,7 +43,11 @@ XHTreeNode* XHTreeNode_addChild(XHTreeNode* parent, const char* pvData, const si
 {
 	if (parent == NULL)
 		return NULL;
-	return XHTreeNode_addNode(parent,XHTreeNode_create(pvData, dataTypeSize));
+	XHTreeNode* node=XHTreeNode_create(pvData, dataTypeSize);
+	if (XHTreeNode_addNode(parent, node))
+		return node;
+	XHTreeNode_delete(node);
+	return NULL;
 }
 
 bool XHTreeNode_removeNode(XHTreeNode* node, XTreeNodeDataDeleteMethod method, void* args)
