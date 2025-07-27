@@ -1,6 +1,7 @@
 ﻿#include"XStringList.h"
 #if XStringList_ON
 #include<string.h>
+#include"XString.h"
 XVtable* XStringList_class_init()
 {
 	return XVector_class_init();

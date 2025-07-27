@@ -11,7 +11,7 @@ static void XFor_each_XString(void* LPVal, void* args)
 {
 	XString* string = LPVal;
 	//printf("测试\n");
-	printf("%s \n",XString_c_str(string) );
+	//printf("%s \n",XString_c_str(string) );
 }
 
 void XStringListTest()
@@ -26,8 +26,8 @@ void XStringListTest()
 		XString* str = XStringList_join(stringList,"-");
 		if (str)
 		{
-			printf("连接:%s \n", XString_c_str(str));
-			XString_delete_base(str);
+			//printf("连接:%s \n", XString_c_str(str));
+			//XString_delete_base(str);
 		}
 		XStringList_iterator_for_each(stringList, XFor_each_XString, NULL);
 		XStringList_delete_base(stringList);

@@ -39,7 +39,7 @@ void XStringTest()
 	
 	XString* str = XString_create("你好");
 	XString_append_base(str, "111");
-	XString_push_front_base(str, '#');
+	//XString_push_front_base(str, '#');
 	XString_push_back_base(str, '!');
 	XString_insert_base(str,0,"12121ni_");
 	printf("%s\t char:%c\n", XString_data(str),XString_at(str,0));

@@ -6,7 +6,7 @@ extern "C" {
 #endif
 #include<stdio.h>
 #include<stdbool.h>
-#include"XString.h"
+#include"XVector.h"
 #include"XStringList_Iterator.h"
 #include"XStringList_reverse_iterator.h"
 #define XSTRINGVECTOR_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XStringList))       //XStringList容器虚函数表大小

@@ -1,19 +1,18 @@
 ﻿#include"XString.h"
 #if XString_ON
 #include<string.h>
-//判断是中文
-bool XString_isChinese(const char c);
-//返回字符串中字符数量，中文算一个
-size_t XString_charNumber(const char* str);
-//返回对应XVector的索引
-size_t XString_XVectorNsel(const struct XString* this_XString, const size_t nSel);
-//设置XString的大小，实际大小自动+1存/0
+static void VXString_detach(XString* str);
+static size_t utf8_to_unicode(const char* utf8, uint32_t* code_point);
+static size_t unicode_to_utf8(uint32_t code_point, char* utf8);
+static size_t unicode_to_utf16(uint32_t code_point, uint16_t* utf16);
+static uint32_t utf16_to_unicode(const uint16_t** utf16);
+//设置XString的大小
 static bool VXString_resize(XString* this_string, size_t len);
 //尾部增加一个字符
 static void VXString_push_back(XString* this_string, char c);
 //尾插
 static void VXString_append(XString* this_string, const char* string);
-//static void VXString_insert(XString* this_string, const int64_t index, const char* string);
+static void VXString_insert(XString* this_string, const int64_t index, const char* string);
 static void VXString_pop_back(XString* this_string);
 static void VXString_remove(XString* this_string, int64_t index, int64_t n);
 static void VXString_erase(XString* this_string, void* pvValue);
@@ -46,13 +45,13 @@ XVtable* XString_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
 	//重写的函数
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_Erase, VXString_erase);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXString_clear);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_Remove, VXString_remove);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back_Copy, VXString_push_back);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_append_Array_Copy, VXString_append);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_Resize, VXString_resize);
-	XVTABLE_OVERLOAD_DEFAULT(EXVector_Pop_Back, VXString_pop_back);
+	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Erase, VXString_erase);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXString_clear);
+	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Remove, VXString_remove);
+	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back_Copy, VXString_push_back);
+	//XVTABLE_OVERLOAD_DEFAULT(EXVector_append_Array_Copy, VXString_append);
+	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Resize, VXString_resize);
+	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Pop_Back, VXString_pop_back);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXString_empty);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Size, VXString_size);
 
@@ -61,357 +60,213 @@ XVtable* XString_class_init()
 #endif // SHOWCONTAINERSIZE
 	return XVTABLE_DEFAULT;
 }
-/*
-bool XString_isChinese(const char c)
+
+void VXString_detach(XString* str)
 {
-	return (c & 0x8000);//是中文;
-}
-size_t XString_charNumber(const char* str)
-{
-	size_t sum = 0;
-	for (size_t i = 0; i < strlen(str); i++)
+	if (str==NULL || XContainerDataPtr(str) ==NULL|| !str->m_is_shared)
+		return;
+
+	// 如果只有一个引用，不需要复制
+	if (*str->m_ref_count == 1) 
 	{
-		if (XString_isChinese(str[i]))
-			++i;
-		++sum;
+		str->m_is_shared = false;
+		XMemory_free(str->m_ref_count);
+		str->m_ref_count = NULL;
+		return;
 	}
-	return sum;
+
+	// 复制数据
+	uint16_t* new_data = (uint16_t*)XMemory_malloc(XContainerCapacity(str)* sizeof(uint16_t));
+	if (!new_data)
+		return;
+	memcpy(new_data, XContainerDataPtr(str), XContainerSize(str) * sizeof(uint16_t));
+
+	// 更新引用计数
+	(*str->m_ref_count)--;
+
+	// 更新当前对象
+	XContainerDataPtr(str) = new_data;
+	str->m_is_shared = false;
+	free(str->m_ref_count);
+	str->m_ref_count = NULL;
 }
 
-size_t XString_XVectorNsel(const struct XString* this_XString, const size_t nSel)
+size_t utf8_to_unicode(const char* utf8, uint32_t* code_point)
 {
-	if (ISNULL(this_XString, "")))
-		return;
-	if (nSel < 0)
-		return -1;
-	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	size_t VnSel = -1;
-	for (size_t i = 0; i < XVector_getSize_base(v) - 1; i++)
-	{
-		char c = *((char*)XVector_at_base(v, i));
-		if (XString_isChinese(c))
-			++i;
-		++VnSel;
-		if (VnSel == nSel)
-			return i;
+	if (!utf8 || !code_point) return 0;
+
+	uint8_t c = (uint8_t)*utf8;
+
+	if ((c & 0x80) == 0) {
+		// 1字节：0xxxxxxx
+		*code_point = c;
+		return 1;
 	}
-	return -1;
-}
+	else if ((c & 0xE0) == 0xC0) {
+		// 2字节：110xxxxx 10xxxxxx
+		if (!utf8[1]) return 0;
 
-//删除索引处字符
-bool XString_eraseOne(struct XString* this_XString, const int nSel)
-{
-	if (ISNULL(this_XString, "")))
-		return false;
-	if (nSel < 0)
-		return false;
-	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	size_t VnSel = XString_XVectorNsel(this_XString, nSel);
-	if (VnSel == -1)
-		return false;
-
-	int offset = 0;
-	if (XString_isChinese(*((char*)XVector_at_base(v, VnSel))))//是中文
-		++offset;
-	//XVector_erase_int(v, VnSel - offset, VnSel);
-	XVector_remove_base(v, VnSel - offset, offset);
-	((struct XString*)this_XString)->m_size -= 1;
-	return true;
-}
-//尾删
-void XString_pop_back_base(struct XString* this_XString)
-{
-	if (ISNULL(this_XString, "")))
-		return;
-	XString_eraseOne(this_XString, XString_getSize_base(this_XString) - 1);
-}
-//删除索引处开始的n个字符
-void XString_erase_base(struct XString* this_XString, const int nSel, const int n)
-{
-	if (ISNULL(this_XString, "")))
-		return;
-	if (nSel < 0 || n <= 0)
-		return;
-	for (size_t i = 0; i < n; i++)
-	{
-		if (!XString_eraseOne(this_XString, nSel))
-			break;
+		*code_point = ((c & 0x1F) << 6) | (utf8[1] & 0x3F);
+		return 2;
 	}
-}
-//清空字符串
-void XString_clear_base(struct XString* this_XString)
-{
-	if (ISNULL(this_XString, "")))
-		return;
-	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	int right = XVector_getSize_base(v) - 2;
-	if (right >= 0)
-		//XVector_erase_int(v, 0, right);
-		XVector_remove_base(v, 0, right);
-	((struct XString*)this_XString)->m_size = 0;
+	else if ((c & 0xF0) == 0xE0) {
+		// 3字节：1110xxxx 10xxxxxx 10xxxxxx
+		if (!utf8[1] || !utf8[2]) return 0;
+
+		*code_point = ((c & 0x0F) << 12) | ((utf8[1] & 0x3F) << 6) | (utf8[2] & 0x3F);
+		return 3;
+	}
+	else if ((c & 0xF8) == 0xF0) {
+		// 4字节：11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+		if (!utf8[1] || !utf8[2] || !utf8[3]) return 0;
+
+		*code_point = ((c & 0x07) << 18) | ((utf8[1] & 0x3F) << 12) |
+			((utf8[2] & 0x3F) << 6) | (utf8[3] & 0x3F);
+		return 4;
+	}
+
+	// 无效的UTF-8序列
+	return 0;
 }
 
-//查找函数
-int XString_find_first_of(const struct XString* this_XString, const char* subStr)
+size_t unicode_to_utf8(uint32_t code_point, char* utf8)
 {
-	if (ISNULL(this_XString, "")))
-		return NULL;
-	char* str = XString_data(this_XString);
-	size_t sLen = strlen(str);
-	size_t fLen = strlen(subStr);
-	for (size_t i = 0; i < sLen; i++)
-	{
-		for (size_t j = 0; j < fLen; j++)
-		{
-			if (str[i] == subStr[j])
-				return i;
+	if (!utf8) return 0;
+
+	if (code_point <= 0x7F) {
+		utf8[0] = (char)code_point;
+		return 1;
+	}
+	else if (code_point <= 0x7FF) {
+		utf8[0] = (char)(0xC0 | (code_point >> 6));
+		utf8[1] = (char)(0x80 | (code_point & 0x3F));
+		return 2;
+	}
+	else if (code_point <= 0xFFFF) {
+		utf8[0] = (char)(0xE0 | (code_point >> 12));
+		utf8[1] = (char)(0x80 | ((code_point >> 6) & 0x3F));
+		utf8[2] = (char)(0x80 | (code_point & 0x3F));
+		return 3;
+	}
+	else if (code_point <= 0x10FFFF) {
+		utf8[0] = (char)(0xF0 | (code_point >> 18));
+		utf8[1] = (char)(0x80 | ((code_point >> 12) & 0x3F));
+		utf8[2] = (char)(0x80 | ((code_point >> 6) & 0x3F));
+		utf8[3] = (char)(0x80 | (code_point & 0x3F));
+		return 4;
+	}
+
+	// 无效的Unicode码点
+	return 0;
+}
+
+size_t unicode_to_utf16(uint32_t code_point, uint16_t* utf16)
+{
+	if (!utf16) return 0;
+
+	if (code_point <= 0xFFFF) {
+		utf16[0] = (uint16_t)code_point;
+		return 1;
+	}
+	else if (code_point <= 0x10FFFF) {
+		// 转换为代理对
+		code_point -= 0x10000;
+		utf16[0] = (uint16_t)(UTF16_HIGH_SURROGATE_START + (code_point >> 10));
+		utf16[1] = (uint16_t)(UTF16_LOW_SURROGATE_START + (code_point & 0x3FF));
+		return 2;
+	}
+
+	// 无效的Unicode码点
+	return 0;
+}
+
+uint32_t utf16_to_unicode(const uint16_t** utf16)
+{
+	if (!utf16 || !*utf16) return 0;
+
+	uint16_t high = **utf16;
+
+	// 检查是否为高代理项
+	if (high >= UTF16_HIGH_SURROGATE_START && high <= UTF16_HIGH_SURROGATE_END) {
+		(*utf16)++;
+		uint16_t low = **utf16;
+
+		// 检查是否为低代理项
+		if (low >= UTF16_LOW_SURROGATE_START && low <= UTF16_LOW_SURROGATE_END) {
+			(*utf16)++;
+			return 0x10000 + ((high - UTF16_HIGH_SURROGATE_START) << 10) +
+				(low - UTF16_LOW_SURROGATE_START);
 		}
 	}
-	return -1;
-}
-int XString_find_last_of(const struct XString* this_XString, const char* subStr)
-{
-	if (ISNULL(this_XString, "")))
-		return NULL;
-	char* str = XString_data(this_XString);
-	size_t sLen = strlen(str);
-	size_t fLen = strlen(subStr);
-	for (size_t i = 0; i < sLen; i++)
-	{
-		for (size_t j = 0; j < fLen; j++)
-		{
-			if (str[sLen - i - 1] == subStr[j])
-				return sLen - i - 1;
-		}
-	}
-	return -1;
-}
-int XString_find_first_not_of(const struct XString* this_XString, const char* subStr)
-{
-	if (ISNULL(this_XString, "")))
-		return NULL;
-	char* str = XString_data(this_XString);
-	size_t sLen = strlen(str);
-	size_t fLen = strlen(subStr);
-	for (size_t i = 0; i < sLen; i++)
-	{
-		size_t n = 0;
-		for (size_t j = 0; j < fLen; j++)
-		{
-			if (str[i] == subStr[j])
-				break;
-			n++;
-		}
-		if (n == fLen)
-			return  i;
-	}
-	return -1;
-}
-int XString_find_last_not_of(const struct XString* this_XString, const char* subStr)
-{
-	if (ISNULL(this_XString, "")))
-		return NULL;
-	char* str = XString_data(this_XString);
-	size_t sLen = strlen(str);
-	size_t fLen = strlen(subStr);
-	for (size_t i = 0; i < sLen; i++)
-	{
-		size_t n = 0;
-		for (size_t j = 0; j < fLen; j++)
-		{
-			if (str[sLen - i - 1] == subStr[j])
-				break;
-			n++;
-		}
-		if (n == fLen)
-			return sLen - i - 1;
-	}
-	return -1;
+
+	// 不是代理对，返回单个码点
+	(*utf16)++;
+	return high;
 }
 
-//尾插
-void XString_append_base(struct XString* this_XString, const char* str)
+bool VXString_resize(XString* this_string, size_t capacity)
 {
-	if (ISNULL(this_XString, "")))
+	if (!this_string || capacity <= XContainerCapacity(this_string))
 		return;
-	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	XString_insert_base(this_XString, XVector_getSize_base(v) - 1, str);
-}
-// 赋值
-void XString_assign_base(struct XString* this_XString, const char* str)
-{
-	if (ISNULL(this_XString, "")))
-		return;
-	struct XVector* v = ((struct XString*)this_XString)->m_data;
-	XString_clear_base(this_XString);
-	XString_insert_base(this_XString, 0, str);
-}
-// 第索引处开始插入字符串
-void XString_insert_base(struct XString* this_XString, const int nSel, const char* str)
-{
-	if (ISNULL(this_XString, "")))
-		return;
-	if (str == NULL || nSel < 0)
-		return;
-	struct XString* string = (struct XString*)this_XString;
-	struct XVector* v = string->m_data;
 
-	//XVector_insert(v, nSel, str, str + strlen(str) - 1);
-	((struct XString*)this_XString)->m_size += XString_charNumber(str);
-}
+	VXString_detach(this_string);
 
-//判断函数
-bool XString_isEmpty_base(const struct XString* this_XString)
-{
-	if (ISNULL(this_XString, "")))
-		return NULL;
-	struct XString* string = (struct XString*)this_XString;
-	return string->m_size == 0;
-}
-//返回当前元素大小
-int XString_getSize_base(const struct XString* this_XString)
-{
-	if (ISNULL(this_XString, "")))
-		return NULL;
-	struct XString* string = (struct XString*)this_XString;
-	return string->m_size;
-}
-////返回当前容器的最大容量
-//int XString_capacity(const struct XString* this_XString)
-//{
-//	if (isObjectNULL(this_XString, "XString_capacity"))
-//		return NULL;
-//	struct XString* string = (struct XString*)this_XString;
-//	return XVector_getCapacity_base(string->m_data);
-//}
-//交换
-void XString_swap_base(struct XString* this_XStringOne, struct XString* this_XStringTwo)
-{
-	if (ISNULL(this_XStringOne, "")) || ArgIsNULL(isNULLInfo(this_XStringTwo, "")))
-		return NULL;
-	struct XString* stringOne = (struct XString*)this_XStringOne;
-	struct XString* stringTwo = (struct XString*)this_XStringTwo;
-	XVector_swap_base(stringOne->m_data, stringTwo->m_data);
-	XSwap(&stringOne->m_size, &stringTwo->m_size, sizeof(size_t));
-}
-//释放容器
-void XString_delete_base(const struct XString* this_XString)
-{
-	if (ISNULL(this_XString, "")))
-		return NULL;
-	struct XString* string = (struct XString*)this_XString;
-	XVector_delete_base(string->m_data);
-	XMemory_free(this_XString);
-}
-
-// 返回索引处字符
-char XString_at(const XString* this_XString, int nSel)
-{
-	if (ISNULL(this_XString, "")))
-		return NULL;
-	struct XString* string = (struct XString*)this_XString;
-	return *((char*)XVector_at_base(string->m_data, nSel));
-}
-// 返回字符串
-char* XString_data(const XString* this_XString)
-{
-	if (ISNULL(this_XString, "")))
-		return NULL;
-	struct XString* string = (struct XString*)this_XString;
-	return string->m_data->object.m_data;
-}
-*/
-
-bool VXString_resize(XString* this_string, size_t len)
-{
-	if (XVtableGetFunc(XVector_class_init(), EXVector_Resize, bool (*)(XVector*, size_t))(this_string, len + 1))
+	uint16_t* new_data = NULL;
+	if(!XMemory_realloc_isNULL())
 	{
-		((char*)XContainerDataPtr(this_string))[len]=0;
-		XContainerSize(this_string)=len;
-		return true;
+		new_data = (uint16_t*)XMemory_realloc(XContainerDataPtr(this_string), capacity * sizeof(uint16_t));
 	}
-	return false;
+	else
+	{
+		new_data = (uint16_t*)XMemory_malloc(capacity * sizeof(uint16_t));
+		memcpy(new_data, XContainerDataPtr(this_string), XContainerSize(this_string) * sizeof(uint16_t));
+		XMemory_free(XContainerDataPtr(this_string));
+	}
+	if (new_data)
+	{
+		XContainerDataPtr(this_string) = new_data;
+		XContainerCapacity(this_string) = capacity;
+	}
 }
 
 void VXString_push_back(XString* this_string, char c)
 {
-	if (ISNULL(this_string, "")||c==0)
-		return;
-	char arr[] = { c,0 };
-	VXString_append(this_string, arr);
+
 }
 
-void VXString_append(XString* this_string, const char* str)
+void VXString_append(XString* this_string, const char* utf8_str)
 {
-	if (ISNULL(this_string, "") || ISNULL(str, ""))
-		return;
-	size_t len = strlen(str);
-	if (len == 0)
-		return;
-	size_t currentSize = XContainerSize(this_string);
-	if(XContainerSize(this_string)+ len +1>XContainerCapacity(this_string))
-		VXString_resize(this_string, VXString_size(this_string)+strlen(str)+1);
-	strcat(XContainerDataPtr(this_string), str);
-	XContainerSize(this_string)= currentSize+len;
+
 }
 
-//void VXString_insert(XString* this_string, const int64_t index, const char* string)
-//{
-//	if (ISNULL(this_string, "") || ISNULL(string, ""))
-//		return;
-//	if (index<0 || index>=XContainerSize(this_string))
-//		return;
-//	//void XVector_inserts_base(XVector* this_vector, int64_t index, void* pvValue, size_t n);
-//	typedef void (*funcPtr)(XVector*, int64_t, void*, size_t);
-//	//XVtableGetFunc(XVector_class_init(), EXVector_Insert_Copy, funcPtr)(this_string,index,string,strlen(string));
-//}
+void VXString_insert(XString* this_string, const int64_t index, const char* string)
+{
+	
+}
 
-//void VXString_pop_front(XString* this_string)
-//{
-//	if (VXString_empty(this_string))
-//		return;
-//	typedef void (*funcPtr)(XVector*, void*);
-//	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back, funcPtr)(this_string, "");
-//}
+void VXString_pop_front(XString* this_string)
+{
+	
+}
 
 void VXString_pop_back(XString* this_string)
 {
-	if (VXString_empty(this_string))
-		return;
-	//void XVector_remove_base(XVector* this_vector, int64_t index, int64_t n);
-	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
-	XVtableGetFunc(XVector_class_init(), EXVector_Remove, funcPtr)(this_string,XContainerSize(this_string)-2,1);
+	
 }
 
 void VXString_remove(XString* this_string, int64_t index, int64_t n)
 {
-	if (VXString_empty(this_string))
-		return;
-	if (index < 0 || index >= XContainerSize(this_string)-1)
-		return;
-	typedef void (*funcPtr)(XVector*, int64_t, int64_t);
-	XVtableGetFunc(XVector_class_init(), EXVector_Remove, funcPtr)(this_string, index, n);
+	
 }
 
 void VXString_erase(XString* this_string, void* pvValue)
 {
-	if (VXString_empty(this_string))
-		return;
-	if ((char*)XContainerDataPtr(this_string) + XContainerSize(this_string) - 1 == pvValue)
-		return;
-	typedef void (*funcPtr)(XVector*, void*);
-	XVtableGetFunc(XVector_class_init(), EXVector_Erase, funcPtr)(this_string, pvValue);
+	
 }
 
 void VXString_clear(XString* this_string)
 {
-	if (ISNULL(this_string, ""))
-		return;
-	XContainerSize(this_string)=0;
-	if(XContainerDataPtr(this_string))
-		((char*)XContainerDataPtr(this_string))[0] = 0;
-	/*typedef void (*funcPtr)(XVector*, void*);
-	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back, funcPtr)(this_string,"");*/
+	
 }
 
 bool VXString_empty(const XString* this_string)
@@ -421,108 +276,48 @@ bool VXString_empty(const XString* this_string)
 
 size_t VXString_size(const XString* this_string)
 {
-	if (ISNULL(this_string, ""))
-		return 0;
-	size_t len = XContainerSize(this_string);
-	if (len == 0)
-		return 0;
-	return len -1;
+
 }
 
 void VXString_assign(XString* this_string, const char* string)
 {
-	if (ISNULL(this_string, "")|| ISNULL(string, ""))
-		return;
-	VXString_clear(this_string);
-	VXString_append(this_string,string);
+
 }
 
 int64_t VXString_find_first_of(const XString* this_string, const char* subStr)
 {
-	if (ISNULL(this_string, "")|| ISNULL(subStr, ""))
-		return -1;
-	char* ret = strstr(XContainerDataPtr(this_string),subStr);
-	if (ret == NULL)
-		return -1;
-	return ret - (char*)XContainerDataPtr(this_string);
-	/*char* str = XString_data(this_string);
-	size_t sLen = strlen(str);
-	size_t fLen = strlen(subStr);
-	for (size_t i = 0; i < sLen; i++)
-	{
-		for (size_t j = 0; j < fLen; j++)
-		{
-			if (str[i] == subStr[j])
-				return i;
-		}
-	}*/
-	//return -1;
 }
-static char* strrstr(const char* haystack, const char* needle) {
-	size_t haystack_len = strlen(haystack);
-	size_t needle_len = strlen(needle);
-
-	if (needle_len == 0) {
-		return (char*)haystack + haystack_len;
-	}
-
-	const char* last_occurrence = NULL;
-	const char* current_occurrence = haystack;
-
-	while ((current_occurrence = strstr(current_occurrence, needle)) != NULL) {
-		last_occurrence = current_occurrence;
-		current_occurrence += needle_len;
-	}
-
-	return (char*)last_occurrence;
-}
+//static char* strrstr(const char* haystack, const char* needle) {
+//	size_t haystack_len = strlen(haystack);
+//	size_t needle_len = strlen(needle);
+//
+//	if (needle_len == 0) {
+//		return (char*)haystack + haystack_len;
+//	}
+//
+//	const char* last_occurrence = NULL;
+//	const char* current_occurrence = haystack;
+//
+//	while ((current_occurrence = strstr(current_occurrence, needle)) != NULL) {
+//		last_occurrence = current_occurrence;
+//		current_occurrence += needle_len;
+//	}
+//
+//	return (char*)last_occurrence;
+//}
 int64_t VXString_find_last_of(const XString* this_string, const char* subStr)
 {
-	if (ISNULL(this_string, "") || ISNULL(subStr, ""))
-		return -1;
-	char* ret = strrstr(XContainerDataPtr(this_string), subStr);
-	if (ret == NULL)
-		return -1;
-	return ret - (char*)XContainerDataPtr(this_string);
+
 }
 
 int64_t VXString_find_first_not_of(const XString* this_string, const char* subStr)
 {
-	if (ISNULL(this_string, "") || ISNULL(subStr, ""))
-		return -1;
-	const char* haystack=XContainerDataPtr(this_string);
-	const char* needle=subStr;
-	size_t haystack_len = strlen(haystack);
-	size_t needle_len = strlen(needle);
 
-	if (needle_len == 0) {
-		return -1;
-	}
-
-	const char* last_occurrence = NULL;
-	const char* current_occurrence = haystack;
-
-	while ((current_occurrence = strstr(current_occurrence, needle)) != NULL) {
-		if (last_occurrence != NULL && current_occurrence > last_occurrence + needle_len)
-			return last_occurrence + needle_len;
-		last_occurrence = current_occurrence;
-		current_occurrence += needle_len;
-	}
-
-	return -1;
 }
 
 int64_t VXString_find_last_not_of(const XString* this_string, const char* subStr)
 {
-	if (ISNULL(this_string, "") || ISNULL(subStr, ""))
-		return -1;
-	int64_t index= VXString_find_last_of(this_string, subStr);
-	if (index == -1)
-		return 0;
-	size_t len = strlen(subStr);
-	if (index + len < VXString_size(this_string))
-		return index + len;
-	return -1;
+	
 }
 
 

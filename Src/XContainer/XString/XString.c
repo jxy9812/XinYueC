@@ -3,6 +3,7 @@
 #include<stdlib.h>
 #include<string.h>
 #include<stdarg.h>
+//#include<string.h>
 #include"XEquality.h"
 #include"XStringList.h"
 XString* XString_create(const char* string)
@@ -46,13 +47,20 @@ XString* XString_create_with_length(const char* string, size_t len)
 	memcpy(XContainerDataPtr(this_string),string,len);
 	return this_string;
 }
+static void XString_init_empty(XString* this_string)
+{
+	if (!this_string) 
+		return ;
+	XContainerObject_init(this_string,2);
+	memset(((XContainerObject*)this_string) + 1, 0, sizeof(XString) - sizeof(XContainerObject));
+	XClassGetVtable(this_string) = XString_class_init();
+}
 void XString_init(XString* this_string, const char* string)
 {
 	if (ISNULL(this_string, "") )
 		return;
-	XVector_init(this_string, sizeof(char));
-	this_string->m_vector.m_equality = XEquality_char;
-	XClassGetVtable(this_string) = XString_class_init();
+	XString_init_empty(this_string);
+	
 	XString_resize_base(this_string,0);
 	if (string)
 		XString_append_base(this_string, string);
@@ -76,7 +84,7 @@ void XString_append_base(XString* this_string, const char* str)
 {
 	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
 		return;
-	XClassGetVirtualFunc(this_string, EXString_Append, void (*)(XString*, const char*))(this_string, str);
+	//XClassGetVirtualFunc(this_string, EXString_Append, void (*)(XString*, const char*))(this_string, str);
 }
 
 void XString_append_string(XString* this_string, const XString* string)
@@ -140,6 +148,12 @@ int64_t XString_find_last_not_of(const XString* this_string, const char* subStr)
 		return -1;
 	typedef const char* (*funcPtr)(const XString*, const char*);
 	return XClassGetVirtualFunc(this_string, EXString_Find_Last_Not_Of, funcPtr)(this_string, subStr);
+}
+bool XString_resize_base(XString* this_string, size_t len)
+{
+	if (ISNULL(this_string, "") || ISNULL(XClassGetVtable(this_string), ""))
+		return false;
+	return XClassGetVirtualFunc(this_string, EXString_Resize, bool(*)(XString*,size_t))(this_string, len);
 }
 XString* XString_to16HexString(const uint8_t* data, size_t dataSize)
 {
