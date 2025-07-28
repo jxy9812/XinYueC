@@ -1,4 +1,4 @@
-﻿#include"XHashMap_Iterator.h"
+﻿#include"XHashMap_iterator.h"
 #if XHashMap_ON
 #include"XHashMap.h"
 #include"XRedBlackTree.h"

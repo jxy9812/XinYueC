@@ -7,7 +7,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
-static void XHashMapTest();
+//static void XHashMapTest();
 static void XFor_each_pair(void* LPVal, void* args)
 {
 	XPair* pair = (XPair*)LPVal;

@@ -7,7 +7,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
-static void XSetTest();
+//static void XSetTest();
 static void XFor_each_pair(void* LPVal, void* args)
 {
 	int val = *((int*)LPVal);

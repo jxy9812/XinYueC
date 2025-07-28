@@ -19,7 +19,7 @@ XVtable* XQueue_class_init();
 //队列初始化函数
 void XQueue_init(XQueue* this_queue, size_t typeSize);
 //队列创建函数
-#define XQueue_Create(Type,count) XQueue_create(sizeof(Type))
+#define XQueue_Create(Type) XQueue_create(sizeof(Type))
 XQueue* XQueue_create(size_t typeSize);
 //api
 #define XQueue_Push_Base				XQueueBase_Push_Base

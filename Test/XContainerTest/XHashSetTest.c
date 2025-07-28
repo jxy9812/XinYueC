@@ -7,7 +7,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
-static void XHashSetTest();
+//static void XHashSetTest();
 static void XFor_each_pair(void* pvVal, void* args)
 {
 	int val = *((int*)pvVal);

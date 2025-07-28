@@ -14,25 +14,25 @@ static void TimerCallback(XTimerBase* timer)
 	if (timer == pwmTimer.timer1)
 	{
 		state = true;
-		XTimer_startBase(pwmTimer.timer2);
+		XTimerBase_start_base(pwmTimer.timer2);
 	}
 	else
 	{
 		state = false;
-		XTimer_stopBase(pwmTimer.timer2);
+		XTimerBase_stop_base(pwmTimer.timer2);
 	}
 	printf("%s\n", state ? "高电平" : "低电平");
 }
 static bool XPWMDeviceOpen(XPWMDeviceBase* pwm, XIODeviceBaseMode mode)//打开IO设备
 {
 	printf("创建定时器\n");
-	pwmTimer.timer1 = XTimer_new_Win32ThreadpoolTimer();
+	//pwmTimer.timer1 = XTimer_new_Win32ThreadpoolTimer();
 	//XTimer_create(pwmTimer.timer1);
 	//pwmTimer.timer1->m_port.timerCallback = TimerCallback;
-	pwmTimer.timer2 = XTimer_new_Win32ThreadpoolTimer();
+	//pwmTimer.timer2 = XTimer_new_Win32ThreadpoolTimer();
 	//XTimer_create(pwmTimer.timer2);
 	//pwmTimer.timer2->m_port.timerCallback = TimerCallback;
-	pwm->m_userData = &pwmTimer;
+	//pwm->m_userData = &pwmTimer;
 	
 }
 static void XPWMDeviceStart(XPWMDeviceBase* pwm)

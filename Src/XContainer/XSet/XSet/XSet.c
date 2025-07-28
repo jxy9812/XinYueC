@@ -126,7 +126,7 @@ bool VXSet_insert(XSet* this_set, const void* pvKey)
 		if (XContainerDataCopyMethod(this_set))
 		{
 			void* temp = XMemory_calloc(1,XContainerTypeSize(this_set));
-			XContainerDataCopyMethod(temp, pvKey);
+			XContainerDataCopyMethod(this_set)(temp, pvKey);
 			XRBTree_insert(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
 			XMemory_free(temp);
 		}
@@ -148,7 +148,7 @@ bool VXSet_insert_move(XSet* this_set, const void* pvKey)
 		if (XContainerDataMoveMethod(this_set))
 		{
 			void* temp = XMemory_calloc(1, XContainerTypeSize(this_set));
-			XContainerDataMoveMethod(temp, pvKey);
+			XContainerDataMoveMethod(this_set)(temp, pvKey);
 			XRBTree_insert(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
 			XMemory_free(temp);
 		}

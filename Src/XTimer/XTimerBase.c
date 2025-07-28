@@ -168,6 +168,7 @@ static size_t(*global_getCurrentTime)() = GetCurrentTimeMillis;
 static void(*global_delay_ms)(size_t msec)=(void*)Sleep;
 #elif defined(__linux__) 
 #include <sys/time.h>
+#include <unistd.h>
 static size_t get_milliseconds() 
 {
 	struct timeval tv;
@@ -175,6 +176,7 @@ static size_t get_milliseconds()
 	return (size_t)tv.tv_sec * 1000LL + tv.tv_usec / 1000;
 }
 static size_t(*global_getCurrentTime)() = get_milliseconds;
+static void(*global_delay_ms)(size_t msec)=(void*)sleep;
 #elif defined(configUSE_FREERTOS) 
 #include"FreeRTOS.h"
 #include"task.h"

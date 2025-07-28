@@ -9,10 +9,10 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
-static void XListSLinkedAtomicSortTest();
-static void XListSLinkedAtomicIterator();
-static void XListSLinkedAtomicSwapTest();
-static void XListSLinkedAtomicTest();
+// static void XListSLinkedAtomicSortTest();
+// static void XListSLinkedAtomicIterator();
+// static void XListSLinkedAtomicSwapTest();
+// static void XListSLinkedAtomicTest();
 static void ListFor_each(void* LPVal, void* args)
 {
 	printf("%d ", *(int*)LPVal);

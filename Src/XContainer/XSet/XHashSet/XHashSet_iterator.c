@@ -1,4 +1,4 @@
-﻿#include "XHashSet_Iterator.h"
+﻿#include "XHashSet_iterator.h"
 #if XHashSet_ON
 #include "XHashSet.h"
 #include"XRedBlackTree.h"
