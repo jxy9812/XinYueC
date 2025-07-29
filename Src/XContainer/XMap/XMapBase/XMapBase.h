@@ -53,10 +53,10 @@ XVector* XMapBase_keys_base(const XMapBase* this_map);
 #define XMapBase_delete_base			XContainerObject_delete_base	
 #define XMapBase_clear_base				XContainerObject_clear_base	
 #define XMapBase_isEmpty_base			XContainerObject_isEmpty_base	
-#define XMapBase_getSize_base			XContainerObject_getSize_base	
-#define XMapBase_getCapacity_base		XContainerObject_getCapacity_base
+#define XMapBase_size_base			XContainerObject_size_base	
+#define XMapBase_capacity_base		XContainerObject_capacity_base
 #define XMapBase_swap_base				XContainerObject_swap_base	
-#define XMapBase_getTypeSize_base		XContainerObject_getTypeSize_base
+#define XMapBase_typeSize_base		XContainerObject_typeSize_base
 
 
 //默认释放派生类的方法 key是派生的容器

@@ -33,7 +33,7 @@ const enum  XTTTree_NodeNum XTTTree_NodeNum(const XTTTreeNode* this_root)
 #if XVector_ON
     if (ISNULL(this_root, ""))
         return 0;
-    return XVector_getSize_base(this_root->pvValueArray)+2;
+    return XVector_size_base(this_root->pvValueArray)+2;
 #else
     IS_ON_DEBUG(XVector_ON);
     return XTTTree_TwoNode;
@@ -47,7 +47,7 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
         return 0;
     XVector* LPNode = this_root->object.nodes;//储存节点指针的数组
     enum  XTTTree_NodeNum nodeNum = XTTTree_NodeNum(this_root);//当前是几节点
-    XVector_resize_base(LPNode, XVector_getSize_base(LPNode)+1);//储存指针的扩容+1
+    XVector_resize_base(LPNode, XVector_size_base(LPNode)+1);//储存指针的扩容+1
     if (nodeNum == XTTTree_TwoNode)//当前是二节点
     {
        /* XTTTreeNode* temp = *(XTTTreeNode**)XVector_back_base(this_root);
@@ -55,7 +55,7 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
         
         this_root->pvValueArray = XVector_create( TypeSize);//初始化值
     }
-    //XVector_resize_base(this_root->pvValueArray, XVector_getSize_base(LPNode) + 1);//储存数据的扩容+1
+    //XVector_resize_base(this_root->pvValueArray, XVector_size_base(LPNode) + 1);//储存数据的扩容+1
     XVector_push_back_base(this_root->pvValueArray, pvData);//插入数值扩容
     XVector_push_back_base(this_root->pvValueArray, XTreeNode_GetDataPtr(this_root));//插入第一个数值
     XVector_sort_base(this_root->pvValueArray, less);//排序

@@ -58,17 +58,17 @@ void* XVectorTwo_at_XPoint(const XVector* this_vector, const XPoint point)
 
 const size_t XVectorTwo_Row(const XVector* this_vector)
 {
-	return XVector_getSize_base(this_vector);//行
+	return XVector_size_base(this_vector);//行
 }
 
 const size_t XVectorTwo_List(const XVector* this_vector, const size_t row)
 {
-	return XVector_getSize_base(*(struct XVector**)XVector_at_base(this_vector, row));//列
+	return XVector_size_base(*(struct XVector**)XVector_at_base(this_vector, row));//列
 }
 
 size_t XVectorTwo_TypeSize(XVector* this_vector)
 {
-	return XVector_getTypeSize_base(*(struct XVector**)XContainerDataPtr(this_vector));
+	return XVector_typeSize_base(*(struct XVector**)XContainerDataPtr(this_vector));
 }
 
 void XVectorTwo_clear(const XVector* this_vector)

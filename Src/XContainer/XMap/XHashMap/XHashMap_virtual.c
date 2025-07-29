@@ -80,7 +80,7 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 			XVector* nodes = XBTree_TraversingToXVector(root, XBTreeInorder);
 			if (nodes != NULL)
 			{
-				for (size_t j = 0; j < XVector_getSize_base(nodes); j++)
+				for (size_t j = 0; j < XVector_size_base(nodes); j++)
 				{
 					XRBTreeNode* node = ((XRBTreeNode**)XContainerDataPtr(nodes))[j];
 					XPair* pair = XRBTree_GetData(node, XPair*);

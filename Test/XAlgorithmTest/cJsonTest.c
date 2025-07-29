@@ -66,7 +66,7 @@ void cJsonXContainerTest()
     }
 
     // 打印修改后的 JSON 字符串
-    printf("%s\n", XString_data(json_str_modified));
+    printf("%s\n", XString_c_str(json_str_modified));
 
     // 释放字符串和 cJSON 对象
     XString_delete_base(json_str_modified);

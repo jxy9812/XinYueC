@@ -37,7 +37,7 @@ void XVectorTest()
 		int n = arr[i];
 		XVector_Push_Front_Base(v,int,arr[i]);
 	}
-	//printf("当前Size:%d\n",XVector_getSize_base(v)); 
+	//printf("当前Size:%d\n",XVector_size_base(v)); 
 	XVector_Push_Front_Base(v,int,9999);
 	//XVector_append_array_base(v, arr, sizeof(arr) / sizeof(arr[0]));
 	/*printf("插入数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); printf("\n");

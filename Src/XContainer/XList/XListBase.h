@@ -80,10 +80,10 @@ void XListBase_sort(XListBase* this_list, XCompare compare);
 #define XListBase_delete_base			XContainerObject_delete_base	
 #define XListBase_clear_base			XContainerObject_clear_base	
 #define XListBase_isEmpty_base			XContainerObject_isEmpty_base	
-#define XListBase_getSize_base			XContainerObject_getSize_base	
-#define XListBase_getCapacity_base		XContainerObject_getCapacity_base
+#define XListBase_size_base			XContainerObject_size_base	
+#define XListBase_capacity_base		XContainerObject_capacity_base
 #define XListBase_swap_base				XContainerObject_swap_base	
-#define XListBase_getTypeSize_base		XContainerObject_getTypeSize_base
+#define XListBase_typeSize_base		XContainerObject_typeSize_base
 #ifdef __cplusplus
 }
 #endif

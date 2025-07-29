@@ -49,10 +49,10 @@ XString* XStringList_join(const XStringList* this_stringVector, const char* sepa
 #define XStringList_delete_base									XVector_delete_base	
 #define XStringList_clear_base									XVector_clear_base	
 #define XStringList_isEmpty_base								XVector_isEmpty_base	
-#define XStringList_getSize_base								XVector_getSize_base	
-#define XStringList_getCapacity_base							XVector_getCapacity_base
+#define XStringList_size_base								XVector_size_base	
+#define XStringList_capacity_base							XVector_capacity_base
 #define XStringList_swap_base									XVector_swap_base	
-#define XStringList_getTypeSize_base							XVector_getTypeSize_base
+#define XStringList_typeSize_base							XVector_typeSize_base
 #ifdef __cplusplus
 }
 #endif

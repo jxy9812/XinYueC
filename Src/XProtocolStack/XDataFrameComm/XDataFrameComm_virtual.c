@@ -246,7 +246,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 		{
 			if (comm->m_sendMode == XDFC_SEND_MODE_BYTE)
 			{
-				if (comm->m_sentBytes < XVector_getSize_base(frame))
+				if (comm->m_sentBytes < XVector_size_base(frame))
 				{//
 					XIODeviceBase_write_base(comm->m_parent.m_io, ((uint8_t*)XContainerDataPtr(frame)) + comm->m_sentBytes, 1);
 					XIODeviceBase_writeFull_base(comm->m_parent.m_io);

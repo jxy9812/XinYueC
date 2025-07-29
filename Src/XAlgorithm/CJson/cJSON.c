@@ -106,17 +106,17 @@ CJSON_PUBLIC(const char *) cJSON_GetErrorPtr(void)
 #if XString_ON
 CJSON_PUBLIC(cJSON*) cJSON_GetObjectItem_XString(const cJSON* const object, const XString* const string)
 {
-    return cJSON_GetObjectItem(object,XString_data(string));
+    return cJSON_GetObjectItem(object,XString_c_str(string));
 }
 
 CJSON_PUBLIC(cJSON*) cJSON_GetObjectItemCaseSensitive_XString(const cJSON* const object, const XString* const string)
 {
-    return cJSON_GetObjectItemCaseSensitive(object, XString_data(string));
+    return cJSON_GetObjectItemCaseSensitive(object, XString_c_str(string));
 }
 
 CJSON_PUBLIC(cJSON_bool) cJSON_HasObjectItem_XString(const cJSON* object, const XString* string)
 {
-    return  cJSON_HasObjectItem(object, XString_data(string));
+    return  cJSON_HasObjectItem(object, XString_c_str(string));
 }
 #endif
 
@@ -1218,7 +1218,7 @@ CJSON_PUBLIC(cJSON*) cJSON_Parse_XString(const XString* string)
 {
     if(string==NULL)
         return NULL;
-    return cJSON_ParseWithLength(XString_data(string),XString_getSize_base(string));
+    return cJSON_ParseWithLength(XString_c_str(string),XString_size_base(string));
 }
 #endif
 
@@ -2623,7 +2623,7 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateString(const char *string)
 #if XString_ON
 CJSON_PUBLIC(cJSON*) cJSON_CreateString_XString(const XString* string)
 {
-    return cJSON_CreateString(XString_data(string));
+    return cJSON_CreateString(XString_c_str(string));
 }
 #endif
 CJSON_PUBLIC(cJSON *) cJSON_CreateStringReference(const char *string)
@@ -2661,7 +2661,7 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateArrayReference(const cJSON *child) {
 #if XString_ON
 CJSON_PUBLIC(cJSON*) cJSON_CreateStringReference_XString(const XString* string)
 {
-    return cJSON_CreateStringReference(XString_data(string));
+    return cJSON_CreateStringReference(XString_c_str(string));
 }
 #endif
 CJSON_PUBLIC(cJSON *) cJSON_CreateRaw(const char *raw)
@@ -2705,7 +2705,7 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateObject(void)
 #if XString_ON
 CJSON_PUBLIC(cJSON*) cJSON_CreateRaw_XString(const XString* raw)
 {
-    return cJSON_CreateRaw(XString_data(raw));
+    return cJSON_CreateRaw(XString_c_str(raw));
 }
 #endif
 /* Create Arrays: */
@@ -2873,28 +2873,28 @@ CJSON_PUBLIC(cJSON*) cJSON_CreateIntArray_XVector_int(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return cJSON_CreateIntArray(XContainerDataPtr(vector), XVector_getSize_base(vector));
+    return cJSON_CreateIntArray(XContainerDataPtr(vector), XVector_size_base(vector));
 }
 
 CJSON_PUBLIC(cJSON*) cJSON_CreateFloatArray_XVector_float(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return  cJSON_CreateFloatArray(XContainerDataPtr(vector), XVector_getSize_base(vector));
+    return  cJSON_CreateFloatArray(XContainerDataPtr(vector), XVector_size_base(vector));
 }
 
 CJSON_PUBLIC(cJSON*) cJSON_CreateDoubleArray_XVector_double(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return cJSON_CreateDoubleArray(XContainerDataPtr(vector), XVector_getSize_base(vector));
+    return cJSON_CreateDoubleArray(XContainerDataPtr(vector), XVector_size_base(vector));
 }
 
 CJSON_PUBLIC(cJSON*) cJSON_CreateStringArray_XVector_char(const XVector* vector)
 {
     if (vector == NULL)
         return NULL;
-    return cJSON_CreateStringArray(XContainerDataPtr(vector), XVector_getSize_base(vector));
+    return cJSON_CreateStringArray(XContainerDataPtr(vector), XVector_size_base(vector));
 }
 
 #endif
@@ -2908,7 +2908,7 @@ CJSON_PUBLIC(cJSON*) cJSON_CreateStringArray_XVector_XString(const XVector* vect
     for_each_iterator(vector, XVector, it)
     {
         XString* str = *(XString**)XVector_iterator_data(&it);
-        cJSON* string= cJSON_CreateString(XString_data(str));
+        cJSON* string= cJSON_CreateString(XString_c_str(str));
         cJSON_AddItemToArray(array, string);
     }
     return array;

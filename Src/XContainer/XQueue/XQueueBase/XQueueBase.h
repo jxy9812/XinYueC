@@ -41,10 +41,10 @@ bool XQueueBase_isFull_base(XQueueBase* this_queue);
 #define XQueueBase_delete_base				XContainerObject_delete_base	
 #define XQueueBase_clear_base				XContainerObject_clear_base	
 #define XQueueBase_isEmpty_base				XContainerObject_isEmpty_base	
-#define XQueueBase_getSize_base				XContainerObject_getSize_base	
-#define XQueueBase_getCapacity_base			XContainerObject_getCapacity_base
+#define XQueueBase_size_base				XContainerObject_size_base	
+#define XQueueBase_capacity_base			XContainerObject_capacity_base
 #define XQueueBase_swap_base				XContainerObject_swap_base	
-#define XQueueBase_getTypeSize_base			XContainerObject_getTypeSize_base
+#define XQueueBase_typeSize_base			XContainerObject_typeSize_base
 #ifdef __cplusplus
 }
 #endif

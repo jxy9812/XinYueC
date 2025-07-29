@@ -44,10 +44,10 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue,bool autoExpansi
 #define XCircularQueue_delete_base				XQueueBase_delete_base	
 #define XCircularQueue_clear_base				XQueueBase_clear_base	
 #define XCircularQueue_isEmpty_base				XQueueBase_isEmpty_base	
-#define XCircularQueue_getSize_base				XQueueBase_getSize_base	
-#define XCircularQueue_getCapacity_base			XQueueBase_getCapacity_base
+#define XCircularQueue_size_base				XQueueBase_size_base	
+#define XCircularQueue_capacity_base			XQueueBase_capacity_base
 #define XCircularQueue_swap_base				XQueueBase_swap_base	
-#define XCircularQueue_getTypeSize_base			XQueueBase_getTypeSize_base
+#define XCircularQueue_typeSize_base			XQueueBase_typeSize_base
 #ifdef __cplusplus
 }
 #endif

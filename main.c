@@ -49,6 +49,8 @@ int main(int argc, char* args[])
 	//return;
 	//XVariantListTest();
 	//XStringListTest();
+	XStringTest();
+	return;
 	XMenuTest_run();
 	//XModbusTest();
 	//XCylinderTest();	

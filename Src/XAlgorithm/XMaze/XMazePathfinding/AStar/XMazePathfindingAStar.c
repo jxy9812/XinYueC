@@ -82,7 +82,7 @@ static size_t insertChild(const XVector* maze, const XPoint dest, AStarNode* nod
 		XStack_pop_base(ChildAll);
 	}
 	XStack_delete_base(ChildAll);
-	return XVector_getSize_base(nodes->child);
+	return XVector_size_base(nodes->child);
 #else
 	IS_ON_DEBUG(XStack_ON);
 	return 0;
@@ -132,7 +132,7 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 		XVector_sort_base(CurrentNodeArray, sortDescendingtCosts);
 		AStarNode** back = XVector_back_base(CurrentNodeArray);
 		CurrentNode = *back;
-		int nSel = XVector_getSize_base(CurrentNodeArray)-1;
+		int nSel = XVector_size_base(CurrentNodeArray)-1;
 		if (CurrentNode->pos.x == dest.x && CurrentNode->pos.y == dest.y)//判断是否到终点了
 		{
 			isFindEnd = true;

@@ -19,7 +19,7 @@ bool XContainerObject_isEmpty_base(const XContainerObject* Object)
 	return XClassGetVirtualFunc(Object, EXContainerObject_IsEmpty,funcPtr)(Object);
 }
 
-size_t XContainerObject_getSize_base(const  XContainerObject* Object)
+size_t XContainerObject_size_base(const  XContainerObject* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(XClassGetVtable(Object), ""))
 		return 0;
@@ -27,14 +27,14 @@ size_t XContainerObject_getSize_base(const  XContainerObject* Object)
 	return XClassGetVirtualFunc(Object, EXContainerObject_Size, funcPtr)(Object);
 }
 
-size_t XContainerObject_getCapacity_base(const  XContainerObject* Object)
+size_t XContainerObject_capacity_base(const  XContainerObject* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(XClassGetVtable(Object), ""))
 		return 0;
 	typedef size_t(*funcPtr)(const XContainerObject*);
 	return XClassGetVirtualFunc(Object, EXContainerObject_Capacity, funcPtr)(Object);
 }
-size_t XContainerObject_getTypeSize_base(const XContainerObject* Object)
+size_t XContainerObject_typeSize_base(const XContainerObject* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(XClassGetVtable(Object), ""))
 		return 0;

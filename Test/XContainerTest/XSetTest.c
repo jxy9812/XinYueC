@@ -30,12 +30,12 @@ void XSetTest()
 		{
 			XSet_insert_base(set, &i);
 		}
-		printf("当前Set容器内数据数量:%d\n", XSet_getSize_base(set));
+		printf("当前Set容器内数据数量:%d\n", XSet_size_base(set));
 
 		XSet_iterator_for_each(set, XFor_each_pair, NULL);
 
 		XSet_remove_base(set, arrayint + 2);
-		printf("当前Set容器内数据数量:%d\n", XSet_getSize_base(set));
+		printf("当前Set容器内数据数量:%d\n", XSet_size_base(set));
 		XSet_iterator_for_each(set, XFor_each_pair, NULL);
 
 		if (XSet_find_base(set, arrayint + 1))

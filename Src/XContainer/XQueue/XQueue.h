@@ -41,10 +41,10 @@ XQueue* XQueue_create(size_t typeSize);
 #define XQueue_delete_base				XQueueBase_delete_base	
 #define XQueue_clear_base				XQueueBase_clear_base	
 #define XQueue_isEmpty_base				XQueueBase_isEmpty_base	
-#define XQueue_getSize_base				XQueueBase_getSize_base	
-#define XQueue_getCapacity_base			XQueueBase_getCapacity_base
+#define XQueue_size_base				XQueueBase_size_base	
+#define XQueue_capacity_base			XQueueBase_capacity_base
 #define XQueue_swap_base				XQueueBase_swap_base	
-#define XQueue_getTypeSize_base			XQueueBase_getTypeSize_base
+#define XQueue_typeSize_base			XQueueBase_typeSize_base
 
 #ifdef __cplusplus
 }

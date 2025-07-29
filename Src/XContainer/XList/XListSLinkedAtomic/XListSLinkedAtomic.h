@@ -80,10 +80,10 @@ void XListSLinkedAtomic_init(XListSLinkedAtomic* this_list, size_t typeSize);
 #define XListSLinkedAtomic_delete_base			            XListBase_delete_base	
 #define XListSLinkedAtomic_clear_base			            XListBase_clear_base	
 #define XListSLinkedAtomic_isEmpty_base			            XListBase_isEmpty_base	
-#define XListSLinkedAtomic_getSize_base			            XListBase_getSize_base	
-#define XListSLinkedAtomic_getCapacity_base		            XListBase_getCapacity_base
+#define XListSLinkedAtomic_size_base			            XListBase_size_base	
+#define XListSLinkedAtomic_capacity_base		            XListBase_capacity_base
 #define XListSLinkedAtomic_swap_base				        XListBase_swap_base	
-#define XListSLinkedAtomic_getTypeSize_base		            XListBase_getTypeSize_base
+#define XListSLinkedAtomic_typeSize_base		            XListBase_typeSize_base
 #ifdef __cplusplus
 }
 #endif

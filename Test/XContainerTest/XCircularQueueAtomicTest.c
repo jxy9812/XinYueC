@@ -41,7 +41,7 @@ void XCircularQueueAtomicTest()
 		if (XCircularQueueAtomic_receive_base(queue, &value))
 		{
 
-			printf("index:%d %d size:%d\n",index++,value ,XCircularQueueAtomic_getSize_base(queue));
+			printf("index:%d %d size:%d\n",index++,value ,XCircularQueueAtomic_size_base(queue));
 			//XCircularQueueAtomic_pop_base(queue);
 		}
 	}

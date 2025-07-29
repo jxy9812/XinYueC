@@ -75,7 +75,7 @@ size_t XInterrupt_getCallbackSize(XInterrupt* interrupt, uint8_t index)
 		return 0;
 	if (interrupt->m_data[index] == NULL)
 		return 0;
-	return XListBase_getSize_base(interrupt->m_data[index]);
+	return XListBase_size_base(interrupt->m_data[index]);
 }
 #define XInterrupt_Create(name,size)\
 static XInterrupt name={0};static void*name##data[size];

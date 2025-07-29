@@ -39,7 +39,7 @@ XVtable* XContainerObject_class_init()
 }
 bool VXContainerObject_isEmpty(const XContainerObject* Object)
 {
-	return VXContainerObject_getSize(Object) == 0;
+	return XContainerSize(Object) == 0;
 }
 
 

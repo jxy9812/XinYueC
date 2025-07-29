@@ -66,9 +66,9 @@ static void XFuncCodeCb0x30(uint8_t code, void* obj, void* data, void* userData)
 				if (XContainerSize(strlist) == 3)
 				{
 					printf("%lf %lf %lf\n"
-						, XString_toDouble(XStringList_at_base(strlist, 0))
-						, XString_toDouble(XStringList_at_base(strlist, 1))
-						, XString_toDouble(XStringList_at_base(strlist, 2))
+						, XString_toDouble(XStringList_at_base(strlist, 0),NULL)
+						, XString_toDouble(XStringList_at_base(strlist, 1), NULL)
+						, XString_toDouble(XStringList_at_base(strlist, 2), NULL)
 					);
 				}
 				XStringList_delete_base(strlist);

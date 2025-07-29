@@ -54,7 +54,7 @@ void XVariantListTest()
 			XVariantList* l = XVariant_toList(varList);
 			if (l)
 			{
-				printf("有%d个元素\n", XVariantList_getSize_base(l));
+				printf("有%d个元素\n", XVariantList_size_base(l));
 				XVariant* temp = NULL;
 				for_each_iterator(l, XVariantList, it)
 				{

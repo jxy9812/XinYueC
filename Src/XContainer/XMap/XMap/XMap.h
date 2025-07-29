@@ -35,10 +35,10 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 #define XMap_delete_base				XMapBase_delete_base	
 #define XMap_clear_base					XMapBase_clear_base	
 #define XMap_isEmpty_base				XMapBase_isEmpty_base	
-#define XMap_getSize_base				XMapBase_getSize_base	
-#define XMap_getCapacity_base			XMapBase_getCapacity_base
+#define XMap_size_base				XMapBase_size_base	
+#define XMap_capacity_base			XMapBase_capacity_base
 #define XMap_swap_base					XMapBase_swap_base	
-#define XMap_getTypeSize_base			XMapBase_getTypeSize_base
+#define XMap_typeSize_base			XMapBase_typeSize_base
 
 XVariantMap* XMap_create_XVariantMap();
 #ifdef __cplusplus

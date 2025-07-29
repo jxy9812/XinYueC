@@ -30,12 +30,12 @@ void XHashSetTest()
 		{
 			XHashSet_insert_base(set, &i);
 		}
-		printf("当前XHashSet容器内数据数量:%d\n", XHashSet_getSize_base(set));
+		printf("当前XHashSet容器内数据数量:%d\n", XHashSet_size_base(set));
 
 		XHashSet_iterator_for_each(set, XFor_each_pair, NULL);
 
 		XHashSet_remove_base(set, arrayint + 2);
-		printf("当前XHashSet容器内数据数量:%d\n", XHashSet_getSize_base(set));
+		printf("当前XHashSet容器内数据数量:%d\n", XHashSet_size_base(set));
 		XHashSet_iterator_for_each(set, XFor_each_pair, NULL);
 
 		if(XHashSet_find_base(set, arrayint + 1))

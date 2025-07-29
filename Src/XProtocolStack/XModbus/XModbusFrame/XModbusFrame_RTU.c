@@ -9,7 +9,7 @@
 //CRC16校验设置  其他数据必须都设置好了,并且预留了两字节的CRC空间
 static XModbusFrame_set16Data(XByteArray* v)
 {
-	size_t size = XVector_getSize_base(v) - MB_SER_PDU_SIZE_CRC;
+	size_t size = XVector_size_base(v) - MB_SER_PDU_SIZE_CRC;
 	//设置crc校验
 	uint16_t crc16 = XCrc_get16(XContainerDataPtr(v), size);
 	XCrc_set16Data(XVector_at_base(v, size), crc16, 0);

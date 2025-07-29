@@ -28,7 +28,7 @@ void XCircularQueueTest()
 	}
 	while (!XCircularQueue_isEmpty_base(queue))
 	{
-		printf("%d size:%d\n", XCircularQueue_Top_Base(queue, int), XCircularQueue_getSize_base(queue));
+		printf("%d size:%d\n", XCircularQueue_Top_Base(queue, int), XCircularQueue_size_base(queue));
 		XCircularQueue_pop_base(queue);
 	}
 	

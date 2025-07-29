@@ -34,7 +34,7 @@ bool XModbusRegister_write_uint16_t(XModbusRegister* regFunc, uint16_t regAddres
 	if (regFunc == NULL || regFunc->parent.data == NULL)
 		return false;
 	XByteArray* data= regFunc->parent.data;
-	if(XVector_getSize_base(data)>regAddress)
+	if(XVector_size_base(data)>regAddress)
 	{
 		XVector_At_Base(data, regAddress, uint16_t) = value;
 		//printf("写入的值是:%d\n",value);
@@ -48,8 +48,8 @@ bool XModbusRegister_write(XModbusRegister* regFunc, uint16_t regAddress, uint16
 	if (regFunc == NULL || regFunc->parent.data == NULL|| writeArray==NULL||regCount==0)
 		return false;
 	XByteArray* data = regFunc->parent.data;
-	uint32_t dataSize = XVector_getSize_base(data);
-	//uint16_t typeSize = XVector_getTypeSize_base(data);
+	uint32_t dataSize = XVector_size_base(data);
+	//uint16_t typeSize = XVector_typeSize_base(data);
 	if (dataSize > regAddress && (dataSize * REGISTERSIZE) >= (regAddress * REGISTERSIZE + regCount* REGISTERSIZE))
 	{//开始写入
 		uint8_t* p= XVector_at_base(data, regAddress);
@@ -71,7 +71,7 @@ bool XModbusRegister_read(XModbusRegister* regFunc, uint16_t regAddress, uint16_
 		return false;
 	
 	XByteArray* data = regFunc->parent.data;
-	uint32_t dataSize = XVector_getSize_base(data);
+	uint32_t dataSize = XVector_size_base(data);
 	//检查寄存器地址和数量是否合法
 	if (dataSize < (regAddress+ regCount))
 		return false;

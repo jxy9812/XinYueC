@@ -60,10 +60,10 @@ void XContainerObject_init(XContainerObject* Object, size_t typeSize);
 #define XContainerObject_move_base		XClass_move_base
 #define XContainerObject_deinit_base	XClass_deinit_base
 #define XContainerObject_delete_base	XClass_delete_base
-size_t XContainerObject_getSize_base(const XContainerObject* Object);
+size_t XContainerObject_size_base(const XContainerObject* Object);
 bool XContainerObject_isEmpty_base(const XContainerObject* Object);
-size_t XContainerObject_getCapacity_base(const XContainerObject* Object);
-size_t XContainerObject_getTypeSize_base(const XContainerObject* Object);
+size_t XContainerObject_capacity_base(const XContainerObject* Object);
+size_t XContainerObject_typeSize_base(const XContainerObject* Object);
 void XContainerObject_swap_base(XContainerObject* ObjectOne, XContainerObject* ObjectTwo);
 void XContainerObject_clear_base(XContainerObject* Object);
 #ifdef __cplusplus

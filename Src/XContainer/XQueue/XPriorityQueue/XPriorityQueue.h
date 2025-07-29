@@ -40,10 +40,10 @@ XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare);
 #define XPriorityQueue_delete_base				XQueueBase_delete_base	
 #define XPriorityQueue_clear_base				XQueueBase_clear_base	
 #define XPriorityQueue_isEmpty_base				XQueueBase_isEmpty_base	
-#define XPriorityQueue_getSize_base				XQueueBase_getSize_base	
-#define XPriorityQueue_getCapacity_base			XQueueBase_getCapacity_base
+#define XPriorityQueue_size_base				XQueueBase_size_base	
+#define XPriorityQueue_capacity_base			XQueueBase_capacity_base
 #define XPriorityQueue_swap_base				XQueueBase_swap_base	
-#define XPriorityQueue_getTypeSize_base			XQueueBase_getTypeSize_base
+#define XPriorityQueue_typeSize_base			XQueueBase_typeSize_base
 
 #ifdef __cplusplus
 }

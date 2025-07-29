@@ -45,10 +45,10 @@ void XStack_init(XStack* this_stack, size_t typeSize);
 #define XStack_delete_base			XVector_delete_base	
 #define XStack_clear_base			XVector_clear_base	
 #define XStack_isEmpty_base			XVector_isEmpty_base	
-#define XStack_getSize_base			XVector_getSize_base	
-#define XStack_getCapacity_base		XVector_getCapacity_base
+#define XStack_size_base			XVector_size_base	
+#define XStack_capacity_base		XVector_capacity_base
 #define XStack_swap_base			XVector_swap_base	
-#define XStack_getTypeSize_base		XVector_getTypeSize_base
+#define XStack_typeSize_base		XVector_typeSize_base
 
 #ifdef __cplusplus
 }

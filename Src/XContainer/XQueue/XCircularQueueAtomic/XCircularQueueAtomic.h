@@ -41,10 +41,10 @@ XCircularQueueAtomic* XCircularQueueAtomic_create(size_t typeSize, size_t count)
 #define XCircularQueueAtomic_delete_base				XQueueBase_delete_base	
 #define XCircularQueueAtomic_clear_base					XQueueBase_clear_base	
 #define XCircularQueueAtomic_isEmpty_base				XQueueBase_isEmpty_base	
-#define XCircularQueueAtomic_getSize_base				XQueueBase_getSize_base	
-#define XCircularQueueAtomic_getCapacity_base			XQueueBase_getCapacity_base
+#define XCircularQueueAtomic_size_base				XQueueBase_size_base	
+#define XCircularQueueAtomic_capacity_base			XQueueBase_capacity_base
 #define XCircularQueueAtomic_swap_base					XQueueBase_swap_base	
-#define XCircularQueueAtomic_getTypeSize_base			XQueueBase_getTypeSize_base
+#define XCircularQueueAtomic_typeSize_base			XQueueBase_typeSize_base
 #ifdef __cplusplus
 }
 #endif

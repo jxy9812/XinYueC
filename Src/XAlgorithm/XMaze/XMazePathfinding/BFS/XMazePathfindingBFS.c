@@ -58,7 +58,7 @@ static size_t insertChild(const XVector* maze, XTreeNode* nodes, XVector* NextNo
 		XStack_pop_base(ChildAll);
 	}
 	XStack_delete_base(ChildAll);
-	return XVector_getSize_base(nodes->nodes)>1? XVector_getSize_base(nodes->nodes) -1:0;
+	return XVector_size_base(nodes->nodes)>1? XVector_size_base(nodes->nodes) -1:0;
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif

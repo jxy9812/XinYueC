@@ -33,12 +33,12 @@ void XHashMapTest()
 			size_t p = &arraychar[i%5];
 			XHashMap_insert_base(map, &i, &p);
 		}
-		printf("当前XHashMap容器内数据数量:%d\n", XHashMap_getSize_base(map));
+		printf("当前XHashMap容器内数据数量:%d\n", XHashMap_size_base(map));
 
 		XHashMap_iterator_for_each(map, XFor_each_pair, NULL);
 
 		XHashMap_remove_base(map, arrayint + 2);
-		printf("当前XHashMap容器内数据数量:%d\n", XHashMap_getSize_base(map));
+		printf("当前XHashMap容器内数据数量:%d\n", XHashMap_size_base(map));
 		XHashMap_iterator_for_each(map, XFor_each_pair, NULL);
 
 		XPair* pair = XHashMap_find_base(map, arrayint + 1);

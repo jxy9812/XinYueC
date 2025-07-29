@@ -247,14 +247,14 @@ XVector* XVector_create_text_fmt(bool appendNull, const char* format, ...)
 //	return XContainerObject_isEmpty_base(this_vector);
 //}
 //
-//size_t XVector_getSize_base(const XVector* this_vector)
+//size_t XVector_size_base(const XVector* this_vector)
 //{
-//	return XContainerObject_getSize_base(this_vector);
+//	return XContainerObject_size_base(this_vector);
 //}
 //
-//size_t XVector_getCapacity_base(const XVector* this_vector)
+//size_t XVector_capacity_base(const XVector* this_vector)
 //{
-//	return XContainerObject_getCapacity_base(this_vector);
+//	return XContainerObject_capacity_base(this_vector);
 //}
 //
 //void XVector_swap_base(XVector* this_vectorOne, XVector* this_vectorTwo)
@@ -262,8 +262,8 @@ XVector* XVector_create_text_fmt(bool appendNull, const char* format, ...)
 //	XContainerObject_swap_base(this_vectorOne,this_vectorTwo);
 //}
 //
-//size_t XVector_getTypeSize_base(XVector* this_vector)
+//size_t XVector_typeSize_base(XVector* this_vector)
 //{
-//	return XContainerObject_getTypeSize_base(this_vector);
+//	return XContainerObject_typeSize_base(this_vector);
 //}
 #endif

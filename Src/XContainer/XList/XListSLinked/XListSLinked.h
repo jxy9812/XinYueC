@@ -75,10 +75,10 @@ void XListSLinked_init(XListSLinked* this_list, size_t typeSize);
 #define XListSLinked_delete_base			        XListBase_delete_base	
 #define XListSLinked_clear_base			            XListBase_clear_base	
 #define XListSLinked_isEmpty_base			        XListBase_isEmpty_base	
-#define XListSLinked_getSize_base			        XListBase_getSize_base	
-#define XListSLinked_getCapacity_base		        XListBase_getCapacity_base
+#define XListSLinked_size_base			        XListBase_size_base	
+#define XListSLinked_capacity_base		        XListBase_capacity_base
 #define XListSLinked_swap_base				        XListBase_swap_base	
-#define XListSLinked_getTypeSize_base		        XListBase_getTypeSize_base
+#define XListSLinked_typeSize_base		        XListBase_typeSize_base
 #ifdef __cplusplus
 }
 #endif

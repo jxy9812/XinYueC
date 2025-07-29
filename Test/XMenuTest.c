@@ -73,7 +73,7 @@ void XMenuTest_show(XMenu* menu, int column)
 			data.data = menu;
 			XVector_push_back_base(v,&data);
 		}
-		size_t menuSize = XVector_getSize_base(menus);
+		size_t menuSize = XVector_size_base(menus);
 		for (int i = 0; i < menuSize; i++)
 		{
 			XMenu* child = XVector_At_Base(menus,i, XMenu*);
@@ -83,11 +83,11 @@ void XMenuTest_show(XMenu* menu, int column)
 			data.data = child;
 			XVector_push_back_base(v, &data);
 		}
-		for (int i = 0; i < XVector_getSize_base(actions); i++)
+		for (int i = 0; i < XVector_size_base(actions); i++)
 		{
 			XAction* child = XVector_At_Base(actions, i, XAction*);
 			printf("%02d--项目 %-30s\t", XContainerSize(v), XAction_getText(child));
-			if ((i + 1+ menuSize) % column == 0 || (i + 1+ menuSize) == XVector_getSize_base(actions))printf("\n");//换行
+			if ((i + 1+ menuSize) % column == 0 || (i + 1+ menuSize) == XVector_size_base(actions))printf("\n");//换行
 			data.action = trigger;
 			data.data = child;
 			XVector_push_back_base(v, &data);

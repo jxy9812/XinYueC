@@ -66,11 +66,11 @@ void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据�
 void XStackRCopyXVector(const XStack* stack, XVector* vector)
 {
 #if XStack_ON
-	size_t Size = XStack_getSize_base(stack);
+	size_t Size = XStack_size_base(stack);
 	if (Size == 0)
 		return;
 	XVector_clear_base(vector);
-	size_t TypeSize = XStack_getTypeSize_base(stack);
+	size_t TypeSize = XStack_typeSize_base(stack);
 	char* pTail = XStack_top_base(stack);//数组末尾元素
 	char* pHead = pTail- TypeSize*(Size-1);//数组头元素
 	/*XVECTOR* v = (XVECTOR*)vector;
@@ -91,11 +91,11 @@ void XStackRCopyXVector(const XStack* stack, XVector* vector)
 void XStackCopyXVector(const XStack* stack, XVector* vector)
 {
 #if XStack_ON
-	size_t Size = XStack_getSize_base(stack);
+	size_t Size = XStack_size_base(stack);
 	if (Size == 0)
 		return;
 	XVector_clear_base(vector);
-	size_t TypeSize = XStack_getTypeSize_base(stack);
+	size_t TypeSize = XStack_typeSize_base(stack);
 	char* pTail = XStack_top_base(stack);//数组末尾元素
 	char* pHead = pTail - TypeSize * (Size - 1);//数组头元素
 	

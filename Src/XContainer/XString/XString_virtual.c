@@ -1,324 +1,572 @@
 ﻿#include"XString.h"
 #if XString_ON
-#include<string.h>
-static void VXString_detach(XString* str);
-static size_t utf8_to_unicode(const char* utf8, uint32_t* code_point);
-static size_t unicode_to_utf8(uint32_t code_point, char* utf8);
-static size_t unicode_to_utf16(uint32_t code_point, uint16_t* utf16);
-static uint32_t utf16_to_unicode(const uint16_t** utf16);
-//设置XString的大小
-static bool VXString_resize(XString* this_string, size_t len);
-//尾部增加一个字符
-static void VXString_push_back(XString* this_string, char c);
-//尾插
-static void VXString_append(XString* this_string, const char* string);
-static void VXString_insert(XString* this_string, const int64_t index, const char* string);
-static void VXString_pop_back(XString* this_string);
-static void VXString_remove(XString* this_string, int64_t index, int64_t n);
-static void VXString_erase(XString* this_string, void* pvValue);
-static void VXString_clear(XString* this_string);
-static bool VXString_empty(const XString* this_string);
-//返回当前字符串大小
-static size_t VXString_size(const XString* this_string);
-// 赋值
-static void VXString_assign(XString* this_string, const char* string);
-static int64_t VXString_find_first_of(const XString* this_string, const char* subStr);
-static int64_t VXString_find_last_of(const XString* this_string, const char* subStr);
-static int64_t VXString_find_first_not_of(const XString* this_string, const char* subStr);
-static int64_t VXString_find_last_not_of(const XString* this_string, const char* subStr);
-XVtable* XString_class_init()
-{
-	XVTABLE_CREAT_DEFAULT
-	//虚函数表初始化
-#if VTABLE_ISSTACK
-	XVTABLE_STACK_INIT_DEFAULT(XSTRING_VTABLE_SIZE)
-#else
-	XVTABLE_HEAP_INIT_DEFAULT
-#endif
-	//继承类
-	XVTABLE_INHERIT_DEFAULT(XVector_class_init());
-	void* table[] = { VXString_assign,
-		VXString_find_first_of,VXString_find_last_of,
-		VXString_find_first_not_of,VXString_find_last_not_of
-	};
-	//追加虚函数
-	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+#include <string.h>
+#include <ctype.h>
+#include <limits.h>
+#include <math.h>
+#include "XAlgorithm.h"
+// 内部常量定义
+#define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
+#define XSTRING_MIN_CAPACITY 16  // 最小容量
 
-	//重写的函数
-	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Erase, VXString_erase);
-	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXString_clear);
-	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Remove, VXString_remove);
-	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Push_Back_Copy, VXString_push_back);
-	//XVTABLE_OVERLOAD_DEFAULT(EXVector_append_Array_Copy, VXString_append);
-	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Resize, VXString_resize);
-	//XVTABLE_OVERLOAD_DEFAULT(EXVector_Pop_Back, VXString_pop_back);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXString_empty);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Size, VXString_size);
+// 前向声明
+static uint32_t VXString_At(const XString* str, size_t index);
+static bool VXString_Append(XString* str, const char* utf8_str);
+static bool VXString_PushBack(XString* str, XChar ch);
+static bool VXString_PopBack(XString* str);
+static bool VXString_PushFront(XString* str, XChar ch);
+static bool VXString_PopFront(XString* str);
+static bool VXString_Assign(XString* str, const char* utf8_str);
+static bool VXString_Prepend(XString* str, const char* utf8_str);
+static bool VXString_Insert(XString* str, size_t pos, const char* utf8_str);
+static bool VXString_Remove(XString* str, size_t pos, size_t len);
+static bool VXString_Replace(XString* str, const char* before, const char* after);
+static int64_t VXString_IndexOf(const XString* str, const char* substr, size_t from);
+static int64_t VXString_LastIndexOf(const XString* str, const char* substr, size_t from);
+static int VXString_Compare(const XString* str1, const XString* str2);
+static bool VXString_Equals(const XString* str1, const XString* str2);
+static bool VXString_StartsWith(const XString* str, const char* prefix);
+static bool VXString_EndsWith(const XString* str, const char* suffix);
+static void VXClass_copy(XString* object, const XString* src);
+static void VXClass_move(XString* object, XString* src);
+static void VXClass_deinit(XString* str);
+static void VXContainerObject_clear(XString* str);
+
+// 内部辅助函数
+static const XChar* XString_cdata(const XString* str) {
+    return (const XChar*)XContainerDataPtr(str);
+}
+
+// 1. 获取指定位置的Unicode码点
+static uint32_t VXString_At(const XString* str, size_t index) {
+    if (!str || index >= XString_length_base(str)) return 0;
+
+    const XChar* xchars = XString_cdata(str);
+    // 处理代理对（高代理+低代理）
+    if (XChar_is_high_surrogate(&xchars[index]) &&
+        (index + 1 < XString_length_base(str)) &&
+        XChar_is_low_surrogate(&xchars[index + 1])) {
+        return XChar_surrogate_to_unicode(&xchars[index], &xchars[index + 1]);
+    }
+    return XChar_unicode(&xchars[index]);
+}
+
+// 2. 追加UTF-8字符串
+static bool VXString_Append(XString* str, const char* utf8_str) {
+    if (!str || !utf8_str) return false;
+
+    XChar temp[1024];
+    int xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, temp, 1023);
+    if (xchar_count <= 0) return false;
+
+    XString_detach(str);
+    size_t new_size = XString_length_base(str) + xchar_count;
+    XString_reserve(str, new_size);
+
+    XChar* data = XString_data(str);
+    memcpy(data + XString_length_base(str), temp, xchar_count * sizeof(XChar));
+    str->parent.m_size = new_size;
+
+    XMemory_free(str->m_utf8_cache);
+    str->m_utf8_cache = NULL;
+    return true;
+}
+
+// 3. 尾插单个XChar
+static bool VXString_PushBack(XString* str, XChar ch) {
+    if (!str) return false;
+
+    XString_detach(str);
+    size_t new_size = XString_length_base(str) + 1;
+    XString_reserve(str, new_size);
+
+    XChar* data = XString_data(str);
+    data[XString_length_base(str)] = ch;
+    str->parent.m_size = new_size;
+
+    XMemory_free(str->m_utf8_cache);
+    str->m_utf8_cache = NULL;
+    return true;
+}
+
+// 4. 尾删一个字符
+static bool VXString_PopBack(XString* str) {
+    if (!str || XString_isEmpty_base(str)) return false;
+
+    XString_detach(str);
+    str->parent.m_size -= 1;
+
+    XMemory_free(str->m_utf8_cache);
+    str->m_utf8_cache = NULL;
+    return true;
+}
+
+// 5. 头插单个XChar
+static bool VXString_PushFront(XString* str, XChar ch) {
+    if (!str) return false;
+
+    XString_detach(str);
+    size_t new_size = XString_length_base(str) + 1;
+    XString_reserve(str, new_size);
+
+    XChar* data = XString_data(str);
+    memmove(data + 1, data, XString_length_base(str) * sizeof(XChar));
+    data[0] = ch;
+    str->parent.m_size = new_size;
+
+    XMemory_free(str->m_utf8_cache);
+    str->m_utf8_cache = NULL;
+    return true;
+}
+
+// 6. 头删一个字符
+static bool VXString_PopFront(XString* str) {
+    if (!str || XString_isEmpty_base(str)) return false;
+
+    XString_detach(str);
+    size_t new_size = XString_length_base(str) - 1;
+
+    XChar* data = XString_data(str);
+    memmove(data, data + 1, new_size * sizeof(XChar));
+    str->parent.m_size = new_size;
+
+    XMemory_free(str->m_utf8_cache);
+    str->m_utf8_cache = NULL;
+    return true;
+}
+
+// 7. 替换为指定UTF-8字符串
+static bool VXString_Assign(XString* str, const char* utf8_str) {
+    if (!str) return false;
+
+    XString_clear_base(str);
+    if (!utf8_str || *utf8_str == '\0') return true;
+
+    XChar temp[1024];
+    int xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, temp, 1023);
+    if (xchar_count <= 0) return false;
+
+    XString_detach(str);
+    XString_reserve(str, xchar_count);
+
+    XChar* data = XString_data(str);
+    memcpy(data, temp, xchar_count * sizeof(XChar));
+    str->parent.m_size = xchar_count;
+
+    XMemory_free(str->m_utf8_cache);
+    str->m_utf8_cache = NULL;
+    return true;
+}
+
+// 8. 前置添加UTF-8字符串
+static bool VXString_Prepend(XString* str, const char* utf8_str) {
+    if (!str || !utf8_str) return false;
+
+    XString* original = XString_copy(str);
+    if (!original) return false;
+
+    XString_clear_base(str);
+    if (!XString_append_base(str, utf8_str)) {
+        XString_delete_base(original);
+        return false;
+    }
+
+    bool success = XString_append_base(str, XString_to_utf8(original));
+    XString_delete_base(original);
+    return success;
+}
+
+// 9. 在指定位置插入UTF-8字符串
+static bool VXString_Insert(XString* str, size_t pos, const char* utf8_str) {
+    if (!str || !utf8_str || pos > XString_length_base(str)) return false;
+
+    XString* insert_str = XString_create(utf8_str);
+    if (!insert_str) return false;
+    size_t insert_len = XString_length_base(insert_str);
+    if (insert_len == 0) {
+        XString_delete_base(insert_str);
+        return true;
+    }
+
+    XString_detach(str);
+    size_t original_size = XString_length_base(str);
+    size_t new_size = original_size + insert_len;
+
+    XString_reserve(str, new_size);
+    XChar* data = XString_data(str);
+
+    memmove(data + pos + insert_len, data + pos, (original_size - pos) * sizeof(XChar));
+    memcpy(data + pos, XString_cdata(insert_str), insert_len * sizeof(XChar));
+
+    str->parent.m_size = new_size;
+    XMemory_free(str->m_utf8_cache);
+    str->m_utf8_cache = NULL;
+
+    XString_delete_base(insert_str);
+    return true;
+}
+
+// 10. 移除指定范围字符
+static bool VXString_Remove(XString* str, size_t pos, size_t len) {
+    if (!str || pos >= XString_length_base(str) || len == 0) return false;
+
+    XString_detach(str);
+    size_t actual_len = (pos + len > XString_length_base(str))
+        ? (XString_length_base(str) - pos)
+        : len;
+    size_t new_size = XString_length_base(str) - actual_len;
+
+    XChar* data = XString_data(str);
+    memmove(data + pos, data + pos + actual_len, (new_size - pos) * sizeof(XChar));
+    str->parent.m_size = new_size;
+
+    XMemory_free(str->m_utf8_cache);
+    str->m_utf8_cache = NULL;
+    return true;
+}
+
+// 11. 替换子串
+static bool VXString_Replace(XString* str, const char* before, const char* after) {
+    if (!str || !before || !after) return false;
+
+    XString* before_str = XString_create(before);
+    XString* after_str = XString_create(after);
+    if (!before_str || !after_str) {
+        XString_delete_base(before_str);
+        XString_delete_base(after_str);
+        return false;
+    }
+
+    size_t before_len = XString_length_base(before_str);
+    size_t after_len = XString_length_base(after_str);
+    if (before_len == 0) {
+        XString_delete_base(before_str);
+        XString_delete_base(after_str);
+        return false;
+    }
+
+    int64_t pos = XString_index_of(str, before, 0);
+    while (pos != -1) {
+        if (!XString_remove(str, (size_t)pos, before_len)) break;
+        if (!XString_insert(str, (size_t)pos, after)) break;
+        pos = XString_index_of(str, before, (size_t)pos + after_len);
+    }
+
+    XString_delete_base(before_str);
+    XString_delete_base(after_str);
+    return true;
+}
+
+// 12. 查找子串首次出现位置
+static int64_t VXString_IndexOf(const XString* str, const char* substr, size_t from) {
+    if (!str || !substr || from >= XString_length_base(str)) return -1;
+
+    XString* substr_str = XString_create(substr);
+    if (!substr_str || XString_isEmpty_base(substr_str)) {
+        XString_delete_base(substr_str);
+        return (from <= XString_length_base(str)) ? (int64_t)from : -1;
+    }
+
+    size_t str_len = XString_length_base(str);
+    size_t substr_len = XString_length_base(substr_str);
+    const XChar* str_data = XString_cdata(str);
+    const XChar* substr_data = XString_cdata(substr_str);
+
+    for (size_t i = from; i <= str_len - substr_len; i++) {
+        bool match = true;
+        for (size_t j = 0; j < substr_len; j++) {
+            if (str_data[i + j].code != substr_data[j].code) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            XString_delete_base(substr_str);
+            return (int64_t)i;
+        }
+    }
+
+    XString_delete_base(substr_str);
+    return -1;
+}
+
+// 13. 查找子串最后出现位置
+static int64_t VXString_LastIndexOf(const XString* str, const char* substr, size_t from) {
+    if (!str || !substr) return -1;
+
+    XString* substr_str = XString_create(substr);
+    if (!substr_str || XString_isEmpty_base(substr_str)) {
+        XString_delete_base(substr_str);
+        return (int64_t)XString_length_base(str);
+    }
+
+    size_t str_len = XString_length_base(str);
+    size_t substr_len = XString_length_base(substr_str);
+    if (substr_len > str_len) {
+        XString_delete_base(substr_str);
+        return -1;
+    }
+
+    size_t end = (from >= str_len) ? (str_len - substr_len) : from;
+    const XChar* str_data = XString_cdata(str);
+    const XChar* substr_data = XString_cdata(substr_str);
+
+    for (int64_t i = (int64_t)end; i >= 0; i--) {
+        bool match = true;
+        for (size_t j = 0; j < substr_len; j++) {
+            if (str_data[i + j].code != substr_data[j].code) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            XString_delete_base(substr_str);
+            return i;
+        }
+    }
+
+    XString_delete_base(substr_str);
+    return -1;
+}
+
+// 14. 比较字符串
+static int VXString_Compare(const XString* str1, const XString* str2) {
+    if (!str1 && !str2) return 0;
+    if (!str1) return -1;
+    if (!str2) return 1;
+
+    size_t min_len = XString_length_base(str1) < XString_length_base(str2)
+        ? XString_length_base(str1)
+        : XString_length_base(str2);
+    const XChar* data1 = XString_cdata(str1);
+    const XChar* data2 = XString_cdata(str2);
+
+    for (size_t i = 0; i < min_len; i++) {
+        if (data1[i].code < data2[i].code) return -1;
+        if (data1[i].code > data2[i].code) return 1;
+    }
+
+    return (XString_length_base(str1) < XString_length_base(str2)) ? -1 :
+        (XString_length_base(str1) > XString_length_base(str2)) ? 1 : 0;
+}
+
+// 15. 判断字符串相等
+static bool VXString_Equals(const XString* str1, const XString* str2) {
+    return VXString_Compare(str1, str2) == 0;
+}
+
+// 16. 判断以指定前缀开始
+static bool VXString_StartsWith(const XString* str, const char* prefix) {
+    if (!str || !prefix) return false;
+
+    XString* prefix_str = XString_create(prefix);
+    if (!prefix_str) return false;
+
+    bool result = (XString_length_base(prefix_str) <= XString_length_base(str)) &&
+        (VXString_IndexOf(str, prefix, 0) == 0);
+    XString_delete_base(prefix_str);
+    return result;
+}
+
+// 17. 判断以指定后缀结束
+static bool VXString_EndsWith(const XString* str, const char* suffix) {
+    if (!str || !suffix) return false;
+
+    XString* suffix_str = XString_create(suffix);
+    if (!suffix_str) return false;
+
+    size_t str_len = XString_length_base(str);
+    size_t suffix_len = XString_length_base(suffix_str);
+    bool result = (suffix_len <= str_len) &&
+        (VXString_LastIndexOf(str, suffix, str_len - suffix_len) == (int64_t)(str_len - suffix_len));
+
+    XString_delete_base(suffix_str);
+    return result;
+}
+
+// 类方法：拷贝
+static void VXClass_copy(XString* object, const XString* src) {
+    memcpy(object, src, sizeof(XString));
+    object->m_ref_count = src->m_ref_count;
+    *object->m_ref_count += 1;
+    object->m_is_shared = true;
+    object->m_utf8_cache = NULL;
+}
+
+// 类方法：移动
+static void VXClass_move(XString* object, XString* src) 
+{
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XString_init(object,NULL,0);
+    }
+    else if( !XString_isEmpty_base(object))
+    {
+        XString_clear_base(object);
+    }
+    XSwap(object, src, sizeof(XString));
+   /// memset(src, 0, sizeof(XString));
+}
+
+// 类方法：销毁
+static void VXClass_deinit(XString* str) {
+    if (!str) return;
+
+    if (str->m_ref_count) {
+        *(str->m_ref_count) -= 1;
+        if (*(str->m_ref_count) == 0) {
+            if (XContainerDataPtr(str)) {
+                XMemory_free(XContainerDataPtr(str));
+                XContainerDataPtr(str) = NULL;
+            }
+            XMemory_free(str->m_ref_count);
+            str->m_ref_count = NULL;
+        }
+    }
+
+    XMemory_free(str->m_utf8_cache);
+    str->m_utf8_cache = NULL;
+    XVtableGetFunc(XContainerObject_class_init(), EXClass_Deinit, void(*)(XClass*))((XClass*)str);
+}
+
+// 容器方法：清空
+static void VXContainerObject_clear(XString* str) {
+    if (!str) return;
+
+    XString_detach(str);
+
+    if (XContainerDataPtr(str)) {
+        XMemory_free(XContainerDataPtr(str));
+        XContainerDataPtr(str) = NULL;
+        XContainerSize(str) = 0;
+        XContainerCapacity(str) = 0;
+    }
+
+    XMemory_free(str->m_utf8_cache);
+    str->m_utf8_cache = NULL;
+}
+
+// 字符串创建函数
+XString* XString_create(const char* utf8_str) {
+    return XString_create_with_length(utf8_str, utf8_str ? strlen(utf8_str) : 0);
+}
+
+XString* XString_create_with_length(const char* utf8_str, size_t len) {
+    XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    if (!str) return NULL;
+    XString_init(str, utf8_str, len);
+    return str;
+}
+
+XString* XString_create_fmt(const char* format, ...) {
+    if (!format) return NULL;
+
+    va_list args;
+    va_start(args, format);
+    char buf[1024];
+    vsnprintf(buf, sizeof(buf), format, args);
+    va_end(args);
+
+    return XString_create(buf);
+}
+
+XString* XString_create_unicode(uint32_t code_point) {
+    XString* str = XString_create("");
+    if (!str) return NULL;
+
+    XString_detach(str);
+    XString_reserve(str, 2);
+
+    XChar* data = XString_data(str);
+    if (code_point <= 0xFFFF) {
+        data[0] = XChar_from_unicode(code_point);
+        str->parent.m_size = 1;
+    }
+    else {
+        data[0] = XChar_from_unicode(code_point);
+        data[1] = XChar_from_unicode_low(code_point);
+        str->parent.m_size = 2;
+    }
+
+    return str;
+}
+
+XString* XString_copy(const XString* other) {
+    if (!other) return NULL;
+
+    XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    if (!str) return NULL;
+
+    VXClass_copy(str, other);
+    return str;
+}
+
+// 初始化函数
+void XString_init(XString* str, const char* utf8_str, size_t len) {
+    if (!str) return;
+    size_t actual_len = (len == 0 && utf8_str) ? strlen(utf8_str) : len;
+
+    XContainerObject_init(&str->parent, sizeof(XChar));
+    str->m_ref_count = (int*)XMemory_malloc(sizeof(int));
+    *str->m_ref_count = 1;
+    str->m_is_shared = false;
+    str->m_utf8_cache = NULL;
+
+    XClassGetVtable((XClass*)str) = XString_class_init();
+
+    if (utf8_str && actual_len > 0) {
+        int xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, NULL, 0);
+        if (xchar_count > 0) {
+            XString_reserve(str, xchar_count);
+            xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, XString_data(str), xchar_count);
+            str->parent.m_size = xchar_count;
+        }
+    }
+}
+
+// 虚函数表初始化
+XVtable* XString_class_init() {
+    XVTABLE_CREAT_DEFAULT
+
+#if VTABLE_ISSTACK
+        XVTABLE_STACK_INIT_DEFAULT(XSTRING_VTABLE_SIZE)
+#else
+        XVTABLE_HEAP_INIT_DEFAULT
+#endif
+
+        XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+
+    void* vtable_funcs[] = {
+        VXString_At,
+        VXString_Append,
+        VXString_PushBack,
+        VXString_PopBack,
+        VXString_PushFront,
+        VXString_PopFront,
+        VXString_Assign,
+        VXString_Prepend,
+        VXString_Insert,
+        VXString_Remove,
+        VXString_Replace,
+        VXString_IndexOf,
+        VXString_LastIndexOf,
+        VXString_Compare,
+        VXString_Equals,
+        VXString_StartsWith,
+        VXString_EndsWith
+    };
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(vtable_funcs);
+
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXContainerObject_clear);
 
 #if SHOWCONTAINERSIZE
-	printf("XString size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif // SHOWCONTAINERSIZE
-	return XVTABLE_DEFAULT;
+    printf("XString vtable size: %d\n", XSTRING_VTABLE_SIZE);
+#endif
+
+    return XVTABLE_DEFAULT;
 }
-
-void VXString_detach(XString* str)
-{
-	if (str==NULL || XContainerDataPtr(str) ==NULL|| !str->m_is_shared)
-		return;
-
-	// 如果只有一个引用，不需要复制
-	if (*str->m_ref_count == 1) 
-	{
-		str->m_is_shared = false;
-		XMemory_free(str->m_ref_count);
-		str->m_ref_count = NULL;
-		return;
-	}
-
-	// 复制数据
-	uint16_t* new_data = (uint16_t*)XMemory_malloc(XContainerCapacity(str)* sizeof(uint16_t));
-	if (!new_data)
-		return;
-	memcpy(new_data, XContainerDataPtr(str), XContainerSize(str) * sizeof(uint16_t));
-
-	// 更新引用计数
-	(*str->m_ref_count)--;
-
-	// 更新当前对象
-	XContainerDataPtr(str) = new_data;
-	str->m_is_shared = false;
-	free(str->m_ref_count);
-	str->m_ref_count = NULL;
-}
-
-size_t utf8_to_unicode(const char* utf8, uint32_t* code_point)
-{
-	if (!utf8 || !code_point) return 0;
-
-	uint8_t c = (uint8_t)*utf8;
-
-	if ((c & 0x80) == 0) {
-		// 1字节：0xxxxxxx
-		*code_point = c;
-		return 1;
-	}
-	else if ((c & 0xE0) == 0xC0) {
-		// 2字节：110xxxxx 10xxxxxx
-		if (!utf8[1]) return 0;
-
-		*code_point = ((c & 0x1F) << 6) | (utf8[1] & 0x3F);
-		return 2;
-	}
-	else if ((c & 0xF0) == 0xE0) {
-		// 3字节：1110xxxx 10xxxxxx 10xxxxxx
-		if (!utf8[1] || !utf8[2]) return 0;
-
-		*code_point = ((c & 0x0F) << 12) | ((utf8[1] & 0x3F) << 6) | (utf8[2] & 0x3F);
-		return 3;
-	}
-	else if ((c & 0xF8) == 0xF0) {
-		// 4字节：11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
-		if (!utf8[1] || !utf8[2] || !utf8[3]) return 0;
-
-		*code_point = ((c & 0x07) << 18) | ((utf8[1] & 0x3F) << 12) |
-			((utf8[2] & 0x3F) << 6) | (utf8[3] & 0x3F);
-		return 4;
-	}
-
-	// 无效的UTF-8序列
-	return 0;
-}
-
-size_t unicode_to_utf8(uint32_t code_point, char* utf8)
-{
-	if (!utf8) return 0;
-
-	if (code_point <= 0x7F) {
-		utf8[0] = (char)code_point;
-		return 1;
-	}
-	else if (code_point <= 0x7FF) {
-		utf8[0] = (char)(0xC0 | (code_point >> 6));
-		utf8[1] = (char)(0x80 | (code_point & 0x3F));
-		return 2;
-	}
-	else if (code_point <= 0xFFFF) {
-		utf8[0] = (char)(0xE0 | (code_point >> 12));
-		utf8[1] = (char)(0x80 | ((code_point >> 6) & 0x3F));
-		utf8[2] = (char)(0x80 | (code_point & 0x3F));
-		return 3;
-	}
-	else if (code_point <= 0x10FFFF) {
-		utf8[0] = (char)(0xF0 | (code_point >> 18));
-		utf8[1] = (char)(0x80 | ((code_point >> 12) & 0x3F));
-		utf8[2] = (char)(0x80 | ((code_point >> 6) & 0x3F));
-		utf8[3] = (char)(0x80 | (code_point & 0x3F));
-		return 4;
-	}
-
-	// 无效的Unicode码点
-	return 0;
-}
-
-size_t unicode_to_utf16(uint32_t code_point, uint16_t* utf16)
-{
-	if (!utf16) return 0;
-
-	if (code_point <= 0xFFFF) {
-		utf16[0] = (uint16_t)code_point;
-		return 1;
-	}
-	else if (code_point <= 0x10FFFF) {
-		// 转换为代理对
-		code_point -= 0x10000;
-		utf16[0] = (uint16_t)(UTF16_HIGH_SURROGATE_START + (code_point >> 10));
-		utf16[1] = (uint16_t)(UTF16_LOW_SURROGATE_START + (code_point & 0x3FF));
-		return 2;
-	}
-
-	// 无效的Unicode码点
-	return 0;
-}
-
-uint32_t utf16_to_unicode(const uint16_t** utf16)
-{
-	if (!utf16 || !*utf16) return 0;
-
-	uint16_t high = **utf16;
-
-	// 检查是否为高代理项
-	if (high >= UTF16_HIGH_SURROGATE_START && high <= UTF16_HIGH_SURROGATE_END) {
-		(*utf16)++;
-		uint16_t low = **utf16;
-
-		// 检查是否为低代理项
-		if (low >= UTF16_LOW_SURROGATE_START && low <= UTF16_LOW_SURROGATE_END) {
-			(*utf16)++;
-			return 0x10000 + ((high - UTF16_HIGH_SURROGATE_START) << 10) +
-				(low - UTF16_LOW_SURROGATE_START);
-		}
-	}
-
-	// 不是代理对，返回单个码点
-	(*utf16)++;
-	return high;
-}
-
-bool VXString_resize(XString* this_string, size_t capacity)
-{
-	if (!this_string || capacity <= XContainerCapacity(this_string))
-		return;
-
-	VXString_detach(this_string);
-
-	uint16_t* new_data = NULL;
-	if(!XMemory_realloc_isNULL())
-	{
-		new_data = (uint16_t*)XMemory_realloc(XContainerDataPtr(this_string), capacity * sizeof(uint16_t));
-	}
-	else
-	{
-		new_data = (uint16_t*)XMemory_malloc(capacity * sizeof(uint16_t));
-		memcpy(new_data, XContainerDataPtr(this_string), XContainerSize(this_string) * sizeof(uint16_t));
-		XMemory_free(XContainerDataPtr(this_string));
-	}
-	if (new_data)
-	{
-		XContainerDataPtr(this_string) = new_data;
-		XContainerCapacity(this_string) = capacity;
-	}
-}
-
-void VXString_push_back(XString* this_string, char c)
-{
-
-}
-
-void VXString_append(XString* this_string, const char* utf8_str)
-{
-
-}
-
-void VXString_insert(XString* this_string, const int64_t index, const char* string)
-{
-	
-}
-
-void VXString_pop_front(XString* this_string)
-{
-	
-}
-
-void VXString_pop_back(XString* this_string)
-{
-	
-}
-
-void VXString_remove(XString* this_string, int64_t index, int64_t n)
-{
-	
-}
-
-void VXString_erase(XString* this_string, void* pvValue)
-{
-	
-}
-
-void VXString_clear(XString* this_string)
-{
-	
-}
-
-bool VXString_empty(const XString* this_string)
-{
-	return VXString_size(this_string)==0;
-}
-
-size_t VXString_size(const XString* this_string)
-{
-
-}
-
-void VXString_assign(XString* this_string, const char* string)
-{
-
-}
-
-int64_t VXString_find_first_of(const XString* this_string, const char* subStr)
-{
-}
-//static char* strrstr(const char* haystack, const char* needle) {
-//	size_t haystack_len = strlen(haystack);
-//	size_t needle_len = strlen(needle);
-//
-//	if (needle_len == 0) {
-//		return (char*)haystack + haystack_len;
-//	}
-//
-//	const char* last_occurrence = NULL;
-//	const char* current_occurrence = haystack;
-//
-//	while ((current_occurrence = strstr(current_occurrence, needle)) != NULL) {
-//		last_occurrence = current_occurrence;
-//		current_occurrence += needle_len;
-//	}
-//
-//	return (char*)last_occurrence;
-//}
-int64_t VXString_find_last_of(const XString* this_string, const char* subStr)
-{
-
-}
-
-int64_t VXString_find_first_not_of(const XString* this_string, const char* subStr)
-{
-
-}
-
-int64_t VXString_find_last_not_of(const XString* this_string, const char* subStr)
-{
-	
-}
-
 
 #endif

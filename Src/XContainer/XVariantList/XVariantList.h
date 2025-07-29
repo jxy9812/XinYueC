@@ -45,10 +45,10 @@ void XVariantList_init(XVariantList* list);
 #define XVariantList_delete_base									XVector_delete_base	
 #define XVariantList_clear_base										XVector_clear_base	
 #define XVariantList_isEmpty_base									XVector_isEmpty_base	
-#define XVariantList_getSize_base									XVector_getSize_base	
-#define XVariantList_getCapacity_base								XVector_getCapacity_base
+#define XVariantList_size_base									XVector_size_base	
+#define XVariantList_capacity_base								XVector_capacity_base
 #define XVariantList_swap_base										XVector_swap_base	
-#define XVariantList_getTypeSize_base								XVector_getTypeSize_base
+#define XVariantList_typeSize_base								XVector_typeSize_base
 #ifdef __cplusplus
 }
 #endif

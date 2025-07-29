@@ -48,10 +48,10 @@ XVector* XSetBase_keys_base(const XSetBase* this_set);
 #define XSetBase_delete_base				XContainerObject_delete_base	
 #define XSetBase_clear_base				    XContainerObject_clear_base	
 #define XSetBase_isEmpty_base				XContainerObject_isEmpty_base	
-#define XSetBase_getSize_base				XContainerObject_getSize_base	
-#define XSetBase_getCapacity_base			XContainerObject_getCapacity_base
+#define XSetBase_size_base				XContainerObject_size_base	
+#define XSetBase_capacity_base			XContainerObject_capacity_base
 #define XSetBase_swap_base				    XContainerObject_swap_base	
-#define XSetBase_getTypeSize_base			XContainerObject_getTypeSize_base
+#define XSetBase_typeSize_base			XContainerObject_typeSize_base
 
 #ifdef __cplusplus
 }

@@ -201,7 +201,7 @@ void VXCommunicatorBase_getOption(XCommunicatorBase* comm, int optionId, void* v
 	{
 		if (comm->m_io != NULL &&comm->m_io->m_writeBuffer != NULL)
 		{
-			*((size_t*)value) = XCircularQueue_getSize_base(comm->m_io->m_writeBuffer);
+			*((size_t*)value) = XCircularQueue_size_base(comm->m_io->m_writeBuffer);
 			*size = sizeof(size_t);
 		}
 		break;
@@ -210,7 +210,7 @@ void VXCommunicatorBase_getOption(XCommunicatorBase* comm, int optionId, void* v
 	{
 		if (comm->m_io != NULL && comm->m_io->m_readBuffer != NULL)
 		{
-			*((size_t*)value) = XCircularQueue_getSize_base(comm->m_io->m_readBuffer);
+			*((size_t*)value) = XCircularQueue_size_base(comm->m_io->m_readBuffer);
 			*size = sizeof(size_t);
 		}
 		break;

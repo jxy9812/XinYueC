@@ -118,7 +118,7 @@ extern "C" {
 //是否完整的帧一起发送
  #define XMB_IS_COMP_SEND_FRAME					 (  1 )
  //接收帧显示
-#define XMB_RECV_FRAME_16HEX_SHOW				 (  1 )
+#define XMB_RECV_FRAME_16HEX_SHOW				 (  0 )
 #define XMB_RECV_FRAME_STR_SHOW				     (  0 )
  //发送帧显示
  #define XMB_SEND_FRAME_SHOW				     (  0 )

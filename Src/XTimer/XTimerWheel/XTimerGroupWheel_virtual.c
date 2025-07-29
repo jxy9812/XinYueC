@@ -260,7 +260,7 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
     while (tick > groupBase->m_current_tick)
     {
         XTimeWheel* wheel = XVector_front_base(group->m_timeWheel);
-        int current_slot = wheel->m_tick % XVector_getSize_base(wheel->m_slots);
+        int current_slot = wheel->m_tick % XVector_size_base(wheel->m_slots);
         // 处理当前槽的所有定时器
         XListSLinked* list = XVector_At_Base(wheel->m_slots, current_slot, XListSLinked*);
         if (list != NULL)

@@ -30,7 +30,7 @@ static void setCode(XHfmNode* root,XVector*code)
 		parent= XBTreeNode_GetParent(curentNode);
 	}
 	//将编码逆序
-	XReversed(XVector_front_base(code),XVector_getSize_base(code),sizeof(char));
+	XReversed(XVector_front_base(code),XVector_size_base(code),sizeof(char));
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif;

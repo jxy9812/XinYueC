@@ -673,16 +673,21 @@ int XChar_compare(const XChar* a, const XChar* b) {
 // UTF-8 转换实现
 // --------------------------
 int XChar_from_utf8(const uint8_t* utf8, XChar* out, size_t max_out) {
-    if (!utf8 || !out || max_out == 0) return -1;
+    if (!utf8) return -1;
 
     size_t count = 0;
     const uint8_t* p = utf8;
+    bool calculate_only = (out == NULL);
 
-    while (*p != '\0' && count < max_out) {
+    while (*p != '\0') {
         uint32_t unicode = 0;
         int bytes = 0;
+        // 在解析前打印当前字节（仅调试用）
+      /*  printf("当前字节: 0x%02X, 下1字节: 0x%02X, 下2字节: 0x%02X\n",
+            (unsigned int)*p,
+            (unsigned int)(p[1] & 0xFF),
+            (unsigned int)(p[2] & 0xFF));*/
 
-        // 解析UTF-8字节序列
         if ((*p & 0x80) == 0) {
             // 1字节：0xxxxxxx
             unicode = *p;
@@ -692,45 +697,56 @@ int XChar_from_utf8(const uint8_t* utf8, XChar* out, size_t max_out) {
             // 2字节：110xxxxx 10xxxxxx
             if (p[1] == '\0') return -1; // 不完整序列
             unicode = ((p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+            // 检查是否为有效的2字节编码（避免过度长编码）
+            if (unicode < 0x80) return -1;
             bytes = 2;
         }
         else if ((*p & 0xF0) == 0xE0) {
-            // 3字节：1110xxxx 10xxxxxx 10xxxxxx
+            // 3字节：1110xxxx 10xxxxxx 10xxxxxx（中文常用）
             if (p[1] == '\0' || p[2] == '\0') return -1;
             unicode = ((p[0] & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+            // 检查有效性（0x800 ~ 0xFFFF）
+            if (unicode < 0x800) return -1;
             bytes = 3;
         }
         else if ((*p & 0xF8) == 0xF0) {
-            // 4字节：11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+            // 4字节：11110xxx ...
             if (p[1] == '\0' || p[2] == '\0' || p[3] == '\0') return -1;
             unicode = ((p[0] & 0x07) << 18) | ((p[1] & 0x3F) << 12) |
                 ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+            if (unicode < 0x10000 || unicode > 0x10FFFF) return -1;
             bytes = 4;
         }
         else {
-            return -1; // 无效UTF-8
+            return -1; // 无效UTF-8前缀（如10xxxxxx开头的字节）
         }
 
-        // 转换为UTF-16（XChar）
-        if (unicode <= 0xFFFF) {
-            // 基本平面，直接存储
-            out[count].code = (uint16_t)unicode;
-            count++;
+        // 计算所需XChar数量
+        size_t needed = (unicode <= 0xFFFF) ? 1 : 2;
+
+        if (!calculate_only) {
+            if (count + needed > max_out) return -1; // 空间不足
+            // 写入XChar（处理代理对）
+            if (unicode <= 0xFFFF) {
+                out[count].code = (uint16_t)unicode;
+                count++;
+            }
+            else {
+                unicode -= 0x10000;
+                out[count].code = 0xD800 | (unicode >> 10);
+                out[count + 1].code = 0xDC00 | (unicode & 0x3FF);
+                count += 2;
+            }
         }
         else {
-            // 补充平面，转换为代理对
-            if (count + 1 >= max_out) return -1; // 空间不足
-            unicode -= 0x10000;
-            out[count].code = 0xD800 | (unicode >> 10);       // 高代理
-            out[count + 1].code = 0xDC00 | (unicode & 0x3FF); // 低代理
-            count += 2;
+            count += needed;
         }
 
         p += bytes;
     }
 
-    // 确保数组终止（如果有空间）
-    if (count < max_out) {
+    // 终止符处理
+    if (!calculate_only && count < max_out) {
         out[count].code = 0;
     }
 
@@ -907,10 +923,11 @@ int XChar_from_gbk(const char* gbk, XChar* out, size_t max_out) {
     return (int)count;
 }
 
-int XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk) {
-    if (!ch || !gbk || max_gbk == 0) return -1;
+int XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk)
+{
+    if (!ch) return -1; // 输入XChar数组为空，直接返回错误
 
-    // 先计算XChar数组长度（不含终止符）
+    // 计算XChar数组长度（不含终止符）
     size_t len = 0;
     while (ch[len].code != 0) len++;
 
@@ -923,29 +940,43 @@ int XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk) {
     }
     wcs[len] = L'\0';
 
-    // 转换为GBK
+    // 首次调用获取GBK所需长度（含终止符）
     int gbk_len = WideCharToMultiByte(
         CP_ACP,         // 目标代码页（GBK）
         0,              // 转换选项
         wcs,            // 输入宽字符串
-        -1,             // 自动计算长度
-        NULL,           // 输出缓冲区（先获取长度）
+        -1,             // 自动计算长度（含终止符）
+        NULL,           // 输出缓冲区为NULL时仅返回所需长度
         0,
         NULL,
         NULL
     );
-    if (gbk_len <= 0 || (size_t)gbk_len > max_gbk) {
+
+    if (gbk_len <= 0) {
         XMemory_free(wcs);
-        return -1;
+        return -1; // 转换失败
     }
 
+    // 若不需要实际转换（仅获取长度），直接返回有效字符数（不含终止符）
+    if (!gbk) {
+        XMemory_free(wcs);
+        return gbk_len - 1;
+    }
+
+    // 检查输出缓冲区是否足够
+    if ((size_t)gbk_len > max_gbk) {
+        XMemory_free(wcs);
+        return -1; // 缓冲区不足
+    }
+
+    // 执行实际转换
     if (WideCharToMultiByte(CP_ACP, 0, wcs, -1, gbk, gbk_len, NULL, NULL) <= 0) {
         XMemory_free(wcs);
-        return -1;
+        return -1; // 转换失败
     }
 
     XMemory_free(wcs);
-    return gbk_len - 1; // 减去终止符
+    return gbk_len - 1; // 返回有效字符数（不含终止符）
 }
 #endif
 

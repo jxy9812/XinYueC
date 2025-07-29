@@ -53,10 +53,10 @@ uint8_t* XByteArray_find_base(const XByteArray* array, const uint8_t findVal);
 #define XByteArray_delete_base						XVector_delete_base	
 #define XByteArray_clear_base						XVector_clear_base	
 #define XByteArray_isEmpty_base						XVector_isEmpty_base	
-#define XByteArray_getSize_base						XVector_getSize_base	
-#define XByteArray_getCapacity_base					XVector_getCapacity_base
+#define XByteArray_size_base						XVector_size_base	
+#define XByteArray_capacity_base					XVector_capacity_base
 #define XByteArray_swap_base						XVector_swap_base	
-#define XByteArray_getTypeSize_base					XVector_getTypeSize_base
+#define XByteArray_typeSize_base					XVector_typeSize_base
 
 
 #ifdef __cplusplus

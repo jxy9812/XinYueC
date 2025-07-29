@@ -51,7 +51,7 @@ void XPriorityQueueTest()
 	{
 		XVector_push_back_base(v, &i);
 	}
-	XDerangement(XContainerDataPtr(v),XVector_getSize_base(v), sizeof(int));
+	XDerangement(XContainerDataPtr(v),XVector_size_base(v), sizeof(int));
 	//printf("入队数据:");
 	XVector_iterator_for_each(v, insertData, queue);
 	printf("\n队列循环出队:");

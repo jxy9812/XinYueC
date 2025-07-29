@@ -116,9 +116,9 @@ size_t VXIODevice_writeFull(XIODeviceBase* io)
 	{
 		if (!XCircularQueue_isEmpty_base(io->m_writeBuffer))
 		{
-			count = XCircularQueue_getSize_base(io->m_writeBuffer);
+			count = XCircularQueue_size_base(io->m_writeBuffer);
 			io->m_port.writeBufferFull_funcPointer(io,io->m_writeBuffer);
-			count -= XCircularQueue_getSize_base(io->m_writeBuffer);
+			count -= XCircularQueue_size_base(io->m_writeBuffer);
 		}
 	}*/
 	return count;
@@ -145,14 +145,14 @@ size_t VXIODevice_getBytesAvailable(XIODeviceBase* io)
 {
 	if (io->m_readBuffer == NULL)
 		return 0;
-	return XQueueBase_getSize_base(io->m_readBuffer);
+	return XQueueBase_size_base(io->m_readBuffer);
 }
 
 size_t VXIODeviceBase_getBytesToWrite(XIODeviceBase* io)
 {
 	if (io->m_writeBuffer == NULL)
 		return 0;
-	return XQueueBase_getSize_base(io->m_writeBuffer);
+	return XQueueBase_size_base(io->m_writeBuffer);
 }
 
 bool VXIODeviceBase_atEnd(XIODeviceBase* io)
