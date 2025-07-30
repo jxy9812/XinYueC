@@ -23,21 +23,28 @@ XCLASS_DEFINE_ENUM(XString, Remove),
 XCLASS_DEFINE_ENUM(XString, Replace),
 XCLASS_DEFINE_ENUM(XString, IndexOf),
 XCLASS_DEFINE_ENUM(XString, LastIndexOf),
-XCLASS_DEFINE_ENUM(XString, Compare),
-XCLASS_DEFINE_ENUM(XString, Equals),
 XCLASS_DEFINE_ENUM(XString, StartsWith),
 XCLASS_DEFINE_ENUM(XString, EndsWith),
 XCLASS_DEFINE_END(XString)
-
 #define XSTRING_VTABLE_SIZE XCLASS_VTABLE_GET_SIZE(XString)
 
-        // 字符串结构定义（继承容器基类，内部存储XChar数组）
+enum XStringCacheType
+{
+    XStringCache_Local,
+    XStringCache_Utf8,
+    XStringCache_Utf16, 
+    XStringCache_Utf32,
+    XStringCache_Gbk,
+    XStringCache_Size,//数量
+};
+//字符串结构定义（继承容器基类，内部存储XChar数组）
+//内部使用UTF16储存,外部使用UTF8
 typedef struct XString 
  {
     XContainerObject parent;  // 继承容器基类（m_data指向XChar数组）
     bool m_is_shared;         // 共享标记（为true时修改需复制数据）
     int* m_ref_count;         // 引用计数（Copy-On-Write机制）
-    char* m_utf8_cache;       // UTF-8缓存（延迟生成，提高重复调用效率）
+    char** m_cache;//缓存
  } XString;
 
 // 构造函数
@@ -62,10 +69,10 @@ void XString_init(XString* str, const char* utf8_str, size_t len);
 
 // 基本操作（虚函数包装）
 #define XString_length_base                 XContainerObject_size_base
-// 获取可修改的内部XChar数组
-XChar* XString_data(XString* str);
-#define XString_c_str                       XString_to_utf8
-const char* XString_to_utf8(const XString* str);
+
+#define XString_c_str                       XString_toUtf8
+const char* XString_toUtf8(const XString* str);
+const char* XString_toLocal(const XString* str);
 uint32_t XString_at(const XString* str, size_t index);
 
 // 字符串操作（虚函数包装）
@@ -85,25 +92,25 @@ bool XString_pop_front_base(XString* str);                       // 头删一个
 int64_t XString_index_of(const XString* str, const char* substr, size_t from);
 int64_t XString_last_index_of(const XString* str, const char* substr, size_t from);
 
-// 比较操作（虚函数包装）
+// 比较操作 
 int XString_compare(const XString* str1, const XString* str2);
-bool XString_equals(const XString* str1, const XString* str2);
+bool XEquality_XString(const XString* str1, const XString* str2);
 bool XString_starts_with(const XString* str, const char* prefix);
 bool XString_ends_with(const XString* str, const char* suffix);
 
-// 转换操作（虚函数包装）
+// 转换操作
 XString* XString_toLower(const XString* str);
 XString* XString_toUpper(const XString* str);
 XString* XString_trimmed(const XString* str);
 int XString_toInt(const XString* str, bool* ok, int base);
 double XString_toDouble(const XString* str, bool* ok);
 
-// 其他功能（虚函数包装）
+// 其他功能
 XString* XString_left(const XString* str, size_t n);
 XString* XString_right(const XString* str, size_t n);
 XString* XString_mid(const XString* str, size_t pos, size_t n);
 void XString_reserve(XString* str, size_t capacity);
-// 在字符串操作部分添加函数声明
+
 // 按分隔符拆分字符串，返回字符串数组（需手动释放）
 XStringList* XString_split(const XString* str, const char* delimiter);
 // 按分隔符拆分字符串（限制最大拆分次数），返回字符串数组（需手动释放）
@@ -111,9 +118,13 @@ XStringList* XString_split_limit(const XString* str, const char* delimiter, size
 
 // 分离共享数据（Copy-On-Write机制）
 void XString_detach(XString* str);
-
+//释放缓存
+void XString_deinitCache(XString* str);
+//打印
 int XPrint(const XString* str);
-
+//打印utf8编码的字符串
+int XPrint_utf8(const char* utf8_str);
+int XPrint_utf8_fmt(const char* format, ...);
 // 虚函数表初始化
 XVtable* XString_class_init();
 

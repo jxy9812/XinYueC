@@ -36,7 +36,7 @@ XDefineFunc_Define(XEquality,c_str)//
 XDefineFunc_Define(XEquality,XPair)//XPair
 XDefineFunc_Define(XEquality,XPoint)//XPoint
 XDefineFunc_Define(XEquality,XByteArray)//XByteArray*
-XDefineFunc_Define(XEquality,XString)//XString*
+//XDefineFunc_Define(XEquality,XString)//XString*
 #ifdef __cplusplus
 }
 #endif

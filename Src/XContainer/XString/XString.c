@@ -2,23 +2,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include "XStringList.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 // 内部常量定义
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量（不含结束符）
 #define XString_cdata(str) ((const XChar*)XContainerDataPtr(str))
 
+// 获取可修改的内部XChar数组
+XChar* XString_data(XString* str);
+
+//初始化缓存
+static void XString_initCache(XString* str);
 // ------------------------------
 // 虚函数包装（对外接口）
 // ------------------------------
 
-const char* XString_to_utf8(const XString* str)
+const char* XString_toUtf8(const XString* str)
 {
     if (!str) return NULL;
 
     // 缓存已存在则直接返回
-    if (str->m_utf8_cache) return str->m_utf8_cache;
+    if (str->m_cache&& str->m_cache[XStringCache_Utf8]) return str->m_cache[XStringCache_Utf8];
 
     // 计算所需UTF-8缓冲区大小（包含结束符）
     size_t xchar_len = XString_length_base(str);
@@ -27,15 +39,57 @@ const char* XString_to_utf8(const XString* str)
     if (!utf8_buf) return NULL;
 
     // 调用XChar转换函数（使用内部结束符自动处理）
-    int result = XChar_to_utf8(XString_cdata(str), (uint8_t*)utf8_buf, utf8_max_len);
-    if (result <= 0) {
+    int64_t result = XChar_to_utf8(XString_cdata(str), (uint8_t*)utf8_buf, utf8_max_len);
+    if (result <= 0) 
+    {
         XMemory_free(utf8_buf);
-        return "";  // 转换失败返回空字符串
+        return NULL;  // 转换失败
     }
-
+    XString_initCache(str);
     // 缓存结果（内部保证线程安全）
-    ((XString*)str)->m_utf8_cache = utf8_buf;
+    str->m_cache[XStringCache_Utf8] = utf8_buf;
     return utf8_buf;
+}
+
+const char* XString_toLocal(const XString* str)
+{
+    if (!str) return NULL;
+
+    // 本地编码缓存已存在则直接返回
+    if (str->m_cache && str->m_cache[XStringCache_Local]) return str->m_cache[XStringCache_Local];
+
+#ifdef __linux__
+    // Linux下本地编码为UTF-8，直接指向UTF-8缓存
+    const char* utf8_str = XString_to_utf8(str);
+    if (utf8_str) 
+    {
+        XString_initCache(str);
+        // 共享UTF-8缓存地址
+        str->m_cache[XStringCache_Local] = (char*)utf8_str;
+    }
+    return utf8_str;
+#else
+    // Windows下需要转换为GBK
+    size_t xchar_len = XString_length_base(str);
+    // 计算所需本地编码缓冲区大小（包含结束符）
+    int64_t local_len = XChar_to_local(XString_cdata(str), NULL, 0);
+    if (local_len <= 0) return NULL;
+
+    size_t local_max_len = local_len + 1;  // 加终止符
+    char* local_buf = (char*)XMemory_malloc(local_max_len);
+    if (!local_buf) return NULL;
+
+    // 执行实际转换
+    int64_t result = XChar_to_local(XString_cdata(str), local_buf, local_max_len);
+    if (result <= 0) {
+        XMemory_free(local_buf);
+        return NULL;
+    }
+    XString_initCache(str);
+    // 缓存结果
+    str->m_cache[XStringCache_Local] = local_buf;
+    return local_buf;
+#endif
 }
 
 uint32_t XString_at(const XString* str, size_t index) {
@@ -108,14 +162,33 @@ int64_t XString_last_index_of(const XString* str, const char* substr, size_t fro
     return XClassGetVirtualFunc(str, EXString_LastIndexOf, int64_t(*)(const XString*, const char*, size_t))(str, substr, from);
 }
 
-int XString_compare(const XString* str1, const XString* str2) {
-    if (!str1) return -1;
-    return XClassGetVirtualFunc(str1, EXString_Compare, int (*) (const XString*, const XString*))(str1, str2);
+int XString_compare(const XString* str1, const XString* str2) 
+{
+    if (!str1 && !str2) 
+        return 0;
+    if (!str1)
+        return -1;
+    if (!str2)
+        return 1;
+
+    size_t min_len = XString_length_base(str1) < XString_length_base(str2)
+        ? XString_length_base(str1)
+        : XString_length_base(str2);
+    const XChar* data1 = XString_cdata(str1);
+    const XChar* data2 = XString_cdata(str2);
+
+    for (size_t i = 0; i < min_len; i++) {
+        if (data1[i].code < data2[i].code) return -1;
+        if (data1[i].code > data2[i].code) return 1;
+    }
+
+    return (XString_length_base(str1) < XString_length_base(str2)) ? -1 :
+        (XString_length_base(str1) > XString_length_base(str2)) ? 1 : 0;
 }
 
-bool XString_equals(const XString* str1, const XString* str2) {
-    if (!str1) return false;
-    return XClassGetVirtualFunc(str1, EXString_Equals, bool(*)(const XString*, const XString*))(str1, str2);
+bool XEquality_XString(const XString* str1, const XString* str2) 
+{
+    return XString_compare(str1, str2) == 0;
 }
 
 bool XString_starts_with(const XString* str, const char* prefix) {
@@ -140,8 +213,7 @@ XString* XString_toLower(const XString* str) {
     }
     data[XString_length_base(result)] = (XChar){ 0 };  // 更新结束符
 
-    XMemory_free(result->m_utf8_cache);
-    result->m_utf8_cache = NULL;
+    XString_deinitCache(result);
     return result;
 }
 
@@ -157,8 +229,7 @@ XString* XString_toUpper(const XString* str) {
     }
     data[XString_length_base(result)] = (XChar){ 0 };  // 更新结束符
 
-    XMemory_free(result->m_utf8_cache);
-    result->m_utf8_cache = NULL;
+    XString_deinitCache(result);
     return result;
 }
 
@@ -182,7 +253,7 @@ int XString_toInt(const XString* str, bool* ok, int base) {
     if (!str || !ok) return 0;
     *ok = false;
 
-    const char* utf8 = XString_to_utf8(str);
+    const char* utf8 = XString_toUtf8(str);
     char* endptr;
     long val = strtol(utf8, &endptr, base);
 
@@ -198,7 +269,7 @@ double XString_toDouble(const XString* str, bool* ok) {
     if (!str || !ok) return 0.0;
     *ok = false;
 
-    const char* utf8 = XString_to_utf8(str);
+    const char* utf8 = XString_toUtf8(str);
     char* endptr;
     double val = strtod(utf8, &endptr);
 
@@ -253,7 +324,8 @@ void XString_reserve(XString* str, size_t capacity)
     size_t new_capacity = (capacity < XSTRING_MIN_CAPACITY) ? XSTRING_MIN_CAPACITY : capacity;
     new_capacity += 1;  // 预留结束符位置
     XChar* new_data = (XChar*)XMemory_realloc(XString_data(str), new_capacity * sizeof(XChar));
-    if (new_data) {
+    if (new_data) 
+    {
         str->parent.m_data = new_data;
         str->parent.m_capacity = new_capacity;
         // 设置结束符（当前有效长度位置）
@@ -434,15 +506,168 @@ void XString_detach(XString* str)
     str->parent.m_capacity = new_capacity;
 }
 
+void XString_deinitCache(XString* str)
+{
+    if (str == NULL || str->m_cache == NULL)
+        return;
+    for (size_t i = 0; i < XStringCache_Size; i++)
+    {
+        XMemory_free(str->m_cache[i]);
+        str->m_cache[i] = NULL;
+    }
+}
+
 int XPrint(const XString* str)
 {
     if (str == NULL)
         return 0;
-    // 使用内部结束符，无需额外添加
-    size_t len = XChar_to_local(XString_cdata(str), NULL, 0);
-    char* buff = XMemory_malloc(len + 1);
-    len = XChar_to_local(XString_cdata(str), buff, len + 1);
-    printf("%s\n", buff);
-    XMemory_free(buff);
+    printf("%s\n", XString_toLocal(str));
+    //// 使用内部结束符，无需额外添加
+    //size_t len = XChar_to_local(XString_cdata(str), NULL, 0);
+    //char* buff = XMemory_malloc(len + 1);
+    //len = XChar_to_local(XString_cdata(str), buff, len + 1);
+    //printf("%s\n", buff);
+    //XMemory_free(buff);
     return XString_length_base(str);
+}
+
+int XPrint_utf8(const char* utf8_str) 
+{
+    if (!utf8_str) return 0;  // 空指针安全处理
+
+#ifdef _WIN32
+    // Windows平台：UTF-8 -> GBK 转换后输出
+    // 1. 计算所需GBK缓冲区大小
+    int64_t gbk_len = XUTF8_to_gbk(utf8_str, NULL, 0);
+    if (gbk_len <= 0) return 0;  // 转换失败
+
+    // 2. 分配GBK缓冲区（+1用于终止符）
+    char* gbk_buf = (char*)XMemory_malloc(gbk_len + 1);
+    if (!gbk_buf) return 0;
+
+    // 3. 执行UTF-8到GBK的转换
+    if (XUTF8_to_gbk(utf8_str, gbk_buf, gbk_len + 1) <= 0) {
+        XMemory_free(gbk_buf);
+        return 0;
+    }
+
+    // 4. 输出GBK字符串并释放资源
+    int result = printf("%s\n", gbk_buf);
+    XMemory_free(gbk_buf);
+    return result;
+
+#else
+    // Linux平台：直接输出UTF-8（系统默认支持）
+    // 先计算UTF-8长度（不含终止符）
+    //size_t len = 0;
+    //while (utf8_str[len] != '\0') len++;
+
+    //// 使用write系统调用直接输出（避免stdio缓冲问题）
+    //if (len > 0) {
+    //    write(STDOUT_FILENO, utf8_str, len);
+    //}
+    //write(STDOUT_FILENO, "\n", 1);  // 补充换行符
+    //return (int)(len + 1);  // 返回总输出字节数（含换行）
+    return printf("%s", utf8_str);
+#endif
+}
+
+int XPrint_utf8_fmt(const char* format, ...)
+{
+    if (!format) return 0;  // 空格式字符串安全处理
+
+    va_list args;
+    va_start(args, format);
+
+#ifdef _WIN32
+
+    // Windows平台：UTF-8格式化 -> 宽字符格式化 -> GBK输出
+    // 步骤1：先将UTF-8格式字符串转换为宽字符
+    int wfmt_len = MultiByteToWideChar(CP_UTF8, 0, format, -1, NULL, 0);
+    if (wfmt_len <= 0) {
+        va_end(args);
+        return 0;
+    }
+
+    wchar_t* wfmt = (wchar_t*)XMemory_malloc(wfmt_len * sizeof(wchar_t));
+    if (!wfmt) {
+        va_end(args);
+        return 0;
+    }
+
+    if (MultiByteToWideChar(CP_UTF8, 0, format, -1, wfmt, wfmt_len) <= 0) {
+        XMemory_free(wfmt);
+        va_end(args);
+        return 0;
+    }
+
+    // 步骤2：使用宽字符vswprintf格式化内容
+    int wbuf_len = _vscwprintf(wfmt, args) + 1;  // +1 包含终止符
+    wchar_t* wbuf = (wchar_t*)XMemory_malloc(wbuf_len * sizeof(wchar_t));
+    if (!wbuf) {
+        XMemory_free(wfmt);
+        va_end(args);
+        return 0;
+    }
+
+    vswprintf(wbuf, wbuf_len, wfmt, args);
+    XMemory_free(wfmt);  // 释放格式字符串缓冲区
+
+    // 步骤3：将宽字符结果转换为GBK
+    int gbk_len = WideCharToMultiByte(CP_ACP, 0, wbuf, -1, NULL, 0, NULL, NULL);
+    if (gbk_len <= 0) {
+        XMemory_free(wbuf);
+        va_end(args);
+        return 0;
+    }
+
+    char* gbk_buf = (char*)XMemory_malloc(gbk_len);
+    if (!gbk_buf) {
+        XMemory_free(wbuf);
+        va_end(args);
+        return 0;
+    }
+
+    WideCharToMultiByte(CP_ACP, 0, wbuf, -1, gbk_buf, gbk_len, NULL, NULL);
+    XMemory_free(wbuf);  // 释放宽字符缓冲区
+
+    // 步骤4：打印GBK字符串并清理
+    int result = printf("%s", gbk_buf);  // 补充换行符
+    XMemory_free(gbk_buf);
+    va_end(args);
+    return result;
+
+#else
+    // Linux平台：直接使用UTF-8格式化输出（不自动动添加换行符）
+     // 步骤1：精确计算格式化式化所需缓冲区大小（包含终止符）
+    int buf_len = vsnprintf(NULL, 0, format, args) + 1;  // +1 仅包含终止符
+    char* buf = (char*)XMemory_malloc(buf_len);
+    if (!buf) {
+        va_end(args);
+        return 0;
+    }
+
+    // 步骤2：执行格式化（直接写入缓冲区，不含需额外外处理换行）
+    int written = vsnprintf(buf, buf_len, format, args);
+    if (written < 0) {
+        XMemory_free(buf);
+        va_end(args);
+        return 0;
+    }
+
+    // 步骤3：输出结果（直接打印格式化后的内容）
+    int result = printf("%s", buf);
+
+    // 清理资源
+    XMemory_free(buf);
+    va_end(args);
+    return result;
+#endif
+}
+
+void XString_initCache(XString* str)
+{
+    if (str == NULL || str->m_cache != NULL)
+        return;
+    str->m_cache=XMemory_calloc(XStringCache_Size,sizeof(char*));
 }

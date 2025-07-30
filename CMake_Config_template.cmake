@@ -1,6 +1,14 @@
 ﻿if(MSVC)
-#在MSVC上必须指定 /Zc:__cplusplus 选项    
+    #在MSVC上必须指定 /Zc:__cplusplus 选项    
     add_compile_options(/Zc:__cplusplus)
+
+    # 针对 MSVC 编译器设置 UTF-8 编码
+    # 强制源码按 UTF-8 解析，且字符串字面量按 UTF-8 编码
+    add_compile_options("$<$<C_COMPILER_ID:MSVC>:/utf-8>")
+    add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
+    
+    # 可选：如果需要兼容旧版本 MSVC（2015 之前），可添加执行字符集声明
+    add_definitions(-D_UNICODE -DUNICODE)
 endif()
 if(WIN32)
     set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)#windows系统动态库生成lib文件命令

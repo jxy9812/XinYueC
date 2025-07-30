@@ -49,7 +49,7 @@ const bool XEquality_XByteArray(const void* pvPrevValue, const void* pvNextValue
 		return false;
 	return memcmp(XContainerDataPtr(pvPrevValue), XContainerDataPtr(pvNextValue), XByteArray_size_base(pvPrevValue)) == 0;
 }
-const bool XEquality_XString(const void* pvPrevValue, const void* pvNextValue)
-{
-	return XEquality_XByteArray(pvPrevValue,pvNextValue);
-}
+//const bool XEquality_XString(const void* pvPrevValue, const void* pvNextValue)
+//{
+//	return XEquality_XByteArray(pvPrevValue,pvNextValue);
+//}

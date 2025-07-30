@@ -672,7 +672,8 @@ int XChar_compare(const XChar* a, const XChar* b) {
 // --------------------------
 // UTF-8 转换实现
 // --------------------------
-int XChar_from_utf8(const uint8_t* utf8, XChar* out, size_t max_out) {
+int64_t XChar_from_utf8(const uint8_t* utf8, XChar* out, size_t max_out)
+{
     if (!utf8) return -1;
 
     size_t count = 0;
@@ -682,11 +683,11 @@ int XChar_from_utf8(const uint8_t* utf8, XChar* out, size_t max_out) {
     while (*p != '\0') {
         uint32_t unicode = 0;
         int bytes = 0;
-        // 在解析前打印当前字节（仅调试用）
-      /*  printf("当前字节: 0x%02X, 下1字节: 0x%02X, 下2字节: 0x%02X\n",
-            (unsigned int)*p,
-            (unsigned int)(p[1] & 0xFF),
-            (unsigned int)(p[2] & 0xFF));*/
+        //// 在解析前打印当前字节（仅调试用）
+        //printf("当前字节: 0x%02X, 下1字节: 0x%02X, 下2字节: 0x%02X\n",
+        //    (unsigned int)*p,
+        //    (unsigned int)(p[1] & 0xFF),
+        //    (unsigned int)(p[2] & 0xFF));
 
         if ((*p & 0x80) == 0) {
             // 1字节：0xxxxxxx
@@ -717,8 +718,11 @@ int XChar_from_utf8(const uint8_t* utf8, XChar* out, size_t max_out) {
             if (unicode < 0x10000 || unicode > 0x10FFFF) return -1;
             bytes = 4;
         }
-        else {
-            return -1; // 无效UTF-8前缀（如10xxxxxx开头的字节）
+        else 
+        {
+            p++;
+            continue;
+            //return -1; // 无效UTF-8前缀（如10xxxxxx开头的字节）
         }
 
         // 计算所需XChar数量
@@ -746,21 +750,24 @@ int XChar_from_utf8(const uint8_t* utf8, XChar* out, size_t max_out) {
     }
 
     // 终止符处理
-    if (!calculate_only && count < max_out) {
+    if (!calculate_only && count < max_out) 
+    {
         out[count].code = 0;
     }
 
-    return (int)count;
+    return count;
 }
 
-int XChar_to_utf8(const XChar* ch, uint8_t* utf8, size_t max_utf8) {
-    if (!ch || !utf8 || max_utf8 == 0) return -1;
+int64_t XChar_to_utf8(const XChar* ch, uint8_t* utf8, size_t max_utf8)
+{
+    if (!ch) return -1; // 输入字符为NULL直接返回错误
 
-    size_t bytes_written = 0;
+    size_t total_bytes = 0; // 总需字节数（不包含终止符）
     const XChar* p = ch;
 
-    while (p->code != 0 && bytes_written < max_utf8) {
+    while (p->code != 0) {
         uint32_t unicode;
+        size_t bytes_needed;
 
         // 处理代理对
         if (XChar_is_high_surrogate(p) && XChar_is_low_surrogate(p + 1)) {
@@ -772,110 +779,272 @@ int XChar_to_utf8(const XChar* ch, uint8_t* utf8, size_t max_utf8) {
             p++;
         }
 
-        // 转换为UTF-8字节序列
+        // 计算当前字符所需的UTF-8字节数
         if (unicode <= 0x7F) {
-            // 1字节
-            if (bytes_written + 1 > max_utf8) return -1;
-            utf8[bytes_written++] = (uint8_t)unicode;
+            bytes_needed = 1;
         }
         else if (unicode <= 0x7FF) {
-            // 2字节
-            if (bytes_written + 2 > max_utf8) return -1;
-            utf8[bytes_written++] = 0xC0 | (unicode >> 6);
-            utf8[bytes_written++] = 0x80 | (unicode & 0x3F);
+            bytes_needed = 2;
         }
         else if (unicode <= 0xFFFF) {
-            // 3字节
-            if (bytes_written + 3 > max_utf8) return -1;
-            utf8[bytes_written++] = 0xE0 | (unicode >> 12);
-            utf8[bytes_written++] = 0x80 | ((unicode >> 6) & 0x3F);
-            utf8[bytes_written++] = 0x80 | (unicode & 0x3F);
+            bytes_needed = 3;
         }
         else if (unicode <= 0x10FFFF) {
-            // 4字节
-            if (bytes_written + 4 > max_utf8) return -1;
-            utf8[bytes_written++] = 0xF0 | (unicode >> 18);
-            utf8[bytes_written++] = 0x80 | ((unicode >> 12) & 0x3F);
-            utf8[bytes_written++] = 0x80 | ((unicode >> 6) & 0x3F);
-            utf8[bytes_written++] = 0x80 | (unicode & 0x3F);
+            bytes_needed = 4;
         }
         else {
             return -1; // 无效Unicode码点
         }
+
+        // 如果是计算长度模式，累加总字节数
+        if (!utf8) {
+            total_bytes += bytes_needed;
+        }
+        else {
+            // 实际写入模式：检查空间是否足够
+            if (total_bytes + bytes_needed > max_utf8) {
+                return -1;
+            }
+
+            // 写入UTF-8字节序列
+            if (unicode <= 0x7F) {
+                utf8[total_bytes++] = (uint8_t)unicode;
+            }
+            else if (unicode <= 0x7FF) {
+                utf8[total_bytes++] = 0xC0 | (unicode >> 6);
+                utf8[total_bytes++] = 0x80 | (unicode & 0x3F);
+            }
+            else if (unicode <= 0xFFFF) {
+                utf8[total_bytes++] = 0xE0 | (unicode >> 12);
+                utf8[total_bytes++] = 0x80 | ((unicode >> 6) & 0x3F);
+                utf8[total_bytes++] = 0x80 | (unicode & 0x3F);
+            }
+            else if (unicode <= 0x10FFFF) {
+                utf8[total_bytes++] = 0xF0 | (unicode >> 18);
+                utf8[total_bytes++] = 0x80 | ((unicode >> 12) & 0x3F);
+                utf8[total_bytes++] = 0x80 | ((unicode >> 6) & 0x3F);
+                utf8[total_bytes++] = 0x80 | (unicode & 0x3F);
+            }
+        }
     }
 
-    // 确保字符串终止（如果有空间）
-    if (bytes_written < max_utf8) {
-        utf8[bytes_written] = '\0';
+    // 处理终止符（'\0'）
+    if (!utf8) 
+    {
+        //total_bytes += 1; // 额外加1字节存放终止符
+        return (int)total_bytes;
     }
-
-    return (int)bytes_written;
+    else 
+    {
+        // 确保有空间写入终止符
+        if (total_bytes < max_utf8) 
+        {
+            utf8[total_bytes] = '\0';
+        }
+        return total_bytes;
+    }
 }
 
 // --------------------------
-// UTF-32 转换实现
+// UTF-32 转换实现（支持输出为NULL时计算所需大小）
 // --------------------------
-int XChar_from_utf32(const uint32_t* utf32, XChar* out, size_t max_out) {
-    if (!utf32 || !out || max_out == 0) return -1;
+int64_t XChar_from_utf32(const uint32_t* utf32, XChar* out, size_t max_out)
+{
+    if (!utf32) return -1; // 输入为NULL直接返回错误
 
     size_t count = 0;
     const uint32_t* p = utf32;
+    bool calculate_only = (out == NULL);
 
-    while (*p != 0 && count < max_out) {
+    while (*p != 0)
+    {
         uint32_t code = *p++;
 
         if (code > 0x10FFFF) return -1; // 无效码点
 
-        if (code <= 0xFFFF) {
-            // 基本平面，直接存储
-            out[count].code = (uint16_t)code;
-            count++;
+        // 计算当前码点需要的XChar数量
+        size_t needed = (code <= 0xFFFF) ? 1 : 2;
+
+        // 仅计算大小时累加计数，不检查max_out（避免限制）
+        if (calculate_only)
+        {
+            count += needed;
         }
-        else {
-            // 补充平面，转换为代理对
-            if (count + 1 >= max_out) return -1;
-            code -= 0x10000;
-            out[count].code = 0xD800 | (code >> 10);       // 高代理
-            out[count + 1].code = 0xDC00 | (code & 0x3FF); // 低代理
-            count += 2;
+        // 实际写入时需检查空间是否足够
+        else
+        {
+            if (count + needed > max_out) return -1;
+
+            if (code <= 0xFFFF)
+            {
+                // 基本平面，直接存储
+                out[count].code = (uint16_t)code;
+                count++;
+            }
+            else
+            {
+                // 补充平面，转换为代理对
+                code -= 0x10000;
+                out[count].code = 0xD800 | (code >> 10);       // 高代理
+                out[count + 1].code = 0xDC00 | (code & 0x3FF); // 低代理
+                count += 2;
+            }
         }
     }
 
-    // 终止符
-    if (count < max_out) {
+    // 实际写入时添加终止符（不占用返回的count）
+    if (!calculate_only && count < max_out)
+    {
         out[count].code = 0;
     }
 
-    return (int)count;
+    // 返回值：仅为有效字符所需的XChar数量（不含终止符）
+    return count;
 }
 
-int XChar_to_utf32(const XChar* ch, uint32_t* utf32, size_t max_utf32) {
-    if (!ch || !utf32 || max_utf32 == 0) return -1;
+int64_t XChar_to_utf32(const XChar* ch, uint32_t* utf32, size_t max_utf32)
+{
+    if (!ch) return -1; // 输入为NULL直接返回错误
 
     size_t count = 0;
     const XChar* p = ch;
+    bool calculate_only = (utf32 == NULL);
 
-    while (p->code != 0 && count < max_utf32) {
-        uint32_t code;
+    while (p->code != 0)
+    {
+        // 计算当前XChar序列对应的UTF-32码点数量（恒为1）
+        size_t needed = 1;
 
-        if (XChar_is_high_surrogate(p) && XChar_is_low_surrogate(p + 1)) {
-            code = XChar_surrogate_to_unicode(p, p + 1);
-            p += 2;
+        // 仅计算大小时累加计数
+        if (calculate_only)
+        {
+            count += needed;
         }
-        else {
-            code = XChar_unicode(p);
+        // 实际写入时需检查空间是否足够
+        else
+        {
+            if (count + needed > max_utf32) return -1;
+        }
+
+        // 解析Unicode码点（无论是否计算模式，都需要推进指针）
+        if (XChar_is_high_surrogate(p) && XChar_is_low_surrogate(p + 1))
+        {
+            if (!calculate_only)
+            {
+                utf32[count] = XChar_surrogate_to_unicode(p, p + 1);
+            }
+            p += 2; // 跳过低代理
+        }
+        else
+        {
+            if (!calculate_only)
+            {
+                utf32[count] = XChar_unicode(p);
+            }
             p++;
         }
 
-        utf32[count++] = code;
+        // 实际写入时才累加计数（与计算模式保持一致）
+        if (!calculate_only)
+        {
+            count++;
+        }
     }
 
-    // 终止符
-    if (count < max_utf32) {
+    // 实际写入时添加终止符（不占用返回的count）
+    if (!calculate_only && count < max_utf32)
+    {
         utf32[count] = 0;
     }
 
-    return (int)count;
+    // 返回值：仅为有效字符所需的uint32_t数量（不含终止符）
+    return count;
+}
+
+// --------------------------
+// Latin-1 转 XChar（支持输出为NULL时计算大小）
+// --------------------------
+int64_t XChar_from_latin1(const uint8_t* latin1, XChar* out, size_t max_out)
+{
+    if (!latin1) return -1; // 输入为NULL直接返回错误
+
+    size_t count = 0;
+    const uint8_t* p = latin1;
+    bool calculate_only = (out == NULL);
+
+    while (*p != '\0') 
+    {
+        // 每个Latin-1字符对应1个XChar
+        size_t needed = 1;
+
+        if (calculate_only) 
+        {
+            // 仅计算大小：累加计数（不检查max_out）
+            count += needed;
+        }
+        else 
+        {
+            // 实际写入：检查空间是否充足（预留终止符位置）
+            if (count + needed >= max_out) return -1;
+            out[count].code = (uint16_t)*p; // 直接映射（0x00-0xFF）
+            count += needed;
+        }
+
+        p++;
+    }
+
+    // 实际写入时添加终止符（不占用返回的count）
+    if (!calculate_only && count < max_out) 
+    {
+        out[count].code = 0;
+    }
+
+    // 返回有效字符所需的XChar数量（不含终止符）
+    return count;
+}
+
+// --------------------------
+// XChar 转 Latin-1（支持输出为NULL时计算大小）
+// --------------------------
+int64_t XChar_to_latin1(const XChar* ch, uint8_t* latin1, size_t max_latin1) {
+    if (!ch) return -1; // 输入为NULL直接返回错误
+
+    size_t count = 0;
+    const XChar* p = ch;
+    bool calculate_only = (latin1 == NULL);
+
+    while (p->code != 0) 
+    {
+        // 检查是否超出Latin-1范围（0x00-0xFF）
+        if (p->code > 0xFF) return -1;
+
+        // 每个XChar对应1个Latin-1字节
+        size_t needed = 1;
+
+        if (calculate_only) 
+        {
+            // 仅计算大小：累加计数（不检查max_latin1）
+            count += needed;
+        }
+        else 
+        {
+            // 实际写入：检查空间是否充足（预留终止符位置）
+            if (count + needed >= max_latin1) return -1;
+            latin1[count] = (uint8_t)p->code;
+            count += needed;
+        }
+
+        p++;
+    }
+
+    // 实际写入时添加终止符（不占用返回的count）
+    if (!calculate_only && count < max_latin1) 
+    {
+        latin1[count] = '\0';
+    }
+
+    // 返回有效字符所需的字节数（不含终止符）
+    return count;
 }
 
 // --------------------------
@@ -884,21 +1053,40 @@ int XChar_to_utf32(const XChar* ch, uint32_t* utf32, size_t max_utf32) {
 #ifdef _WIN32
 // Windows平台GBK转换（依赖Windows API）
 #include <windows.h>
+// --------------------------
+// GBK 转 XChar（支持输出为NULL时计算大小）
+// --------------------------
+int64_t XChar_from_gbk(const char* gbk, XChar* out, size_t max_out) {
+    if (!gbk) return -1; // 输入为NULL直接返回错误
 
-int XChar_from_gbk(const char* gbk, XChar* out, size_t max_out) {
-    if (!gbk || !out || max_out == 0) return -1;
+    bool calculate_only = (out == NULL);
+    size_t count = 0;
 
-    // 先将GBK转换为UTF-16（Windows原生宽字符）
+    // 第一步：获取GBK转换为UTF-16（宽字符）的长度
     int wcs_len = MultiByteToWideChar(
-        CP_ACP,         // GBK对应代码页（CP_ACP为系统默认ANSI，通常是GBK）
+        CP_ACP,         // GBK对应代码页（系统默认ANSI）
         0,              // 转换选项
         gbk,            // 输入GBK字符串
         -1,             // 自动计算长度（含终止符）
-        NULL,           // 输出缓冲区（先获取长度）
+        NULL,           // 仅获取长度
         0
     );
-    if (wcs_len <= 0) return -1;
+    if (wcs_len <= 0) return -1; // 转换失败
 
+    // 计算有效字符对应的XChar数量（不含终止符）
+    size_t needed_xchars = (size_t)(wcs_len - 1); // 减去宽字符终止符
+
+    // 仅计算大小时，直接返回所需XChar数量（不含终止符）
+    if (calculate_only) {
+        return needed_xchars;
+    }
+
+    // 实际写入模式：检查输出缓冲区是否足够
+    if (needed_xchars > max_out) {
+        return -1; // 空间不足
+    }
+
+    // 第二步：实际转换为宽字符
     wchar_t* wcs = (wchar_t*)XMemory_malloc(wcs_len * sizeof(wchar_t));
     if (!wcs) return -1;
 
@@ -907,25 +1095,26 @@ int XChar_from_gbk(const char* gbk, XChar* out, size_t max_out) {
         return -1;
     }
 
-    // 复制到XChar数组（UTF-16兼容）
-    size_t count = 0;
-    while (count < max_out && count < (size_t)wcs_len - 1) { // 排除终止符
+    // 复制到XChar数组（UTF-16兼容，不含终止符）
+    for (count = 0; count < needed_xchars; count++) {
         out[count].code = (uint16_t)wcs[count];
-        count++;
     }
 
-    // 终止符
+    // 添加XChar终止符（不占用有效计数）
     if (count < max_out) {
         out[count].code = 0;
     }
 
     XMemory_free(wcs);
-    return (int)count;
+    return count;
 }
 
-int XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk)
+// --------------------------
+// XChar 转 GBK（支持输出为NULL时计算大小）
+// --------------------------
+int64_t XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk)
 {
-    if (!ch) return -1; // 输入XChar数组为空，直接返回错误
+    if (!ch) return -1; // 输入为NULL直接返回错误
 
     // 计算XChar数组长度（不含终止符）
     size_t len = 0;
@@ -935,48 +1124,56 @@ int XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk)
     wchar_t* wcs = (wchar_t*)XMemory_malloc((len + 1) * sizeof(wchar_t));
     if (!wcs) return -1;
 
-    for (size_t i = 0; i < len; i++) {
+    for (size_t i = 0; i < len; i++) 
+    {
         wcs[i] = (wchar_t)ch[i].code;
     }
-    wcs[len] = L'\0';
+    wcs[len] = L'\0'; // 宽字符终止符
 
-    // 首次调用获取GBK所需长度（含终止符）
-    int gbk_len = WideCharToMultiByte(
+    // 第一步：获取GBK所需长度（含终止符）
+    int64_t gbk_len = WideCharToMultiByte(
         CP_ACP,         // 目标代码页（GBK）
         0,              // 转换选项
         wcs,            // 输入宽字符串
         -1,             // 自动计算长度（含终止符）
-        NULL,           // 输出缓冲区为NULL时仅返回所需长度
+        NULL,           // 仅获取长度
         0,
         NULL,
         NULL
     );
 
-    if (gbk_len <= 0) {
+    if (gbk_len <= 0) 
+    {
         XMemory_free(wcs);
         return -1; // 转换失败
     }
 
-    // 若不需要实际转换（仅获取长度），直接返回有效字符数（不含终止符）
-    if (!gbk) {
+    // 有效字符数 = 总长度 - 1（减去GBK终止符）
+    int64_t valid_len = gbk_len - 1;
+
+    // 仅计算大小时，返回有效字符数（不含终止符）
+    if (!gbk)
+    {
         XMemory_free(wcs);
-        return gbk_len - 1;
+        return valid_len;
     }
 
-    // 检查输出缓冲区是否足够
-    if ((size_t)gbk_len > max_gbk) {
+    // 实际写入模式：检查缓冲区是否足够
+    if ((size_t)gbk_len > max_gbk) 
+    {
         XMemory_free(wcs);
-        return -1; // 缓冲区不足
+        return -1; // 空间不足
     }
 
-    // 执行实际转换
-    if (WideCharToMultiByte(CP_ACP, 0, wcs, -1, gbk, gbk_len, NULL, NULL) <= 0) {
+    // 第二步：执行实际转换
+    if (WideCharToMultiByte(CP_ACP, 0, wcs, -1, gbk, gbk_len, NULL, NULL) <= 0) 
+    {
         XMemory_free(wcs);
         return -1; // 转换失败
     }
 
     XMemory_free(wcs);
-    return gbk_len - 1; // 返回有效字符数（不含终止符）
+    return valid_len; // 返回有效字符数（不含终止符）
 }
 #endif
 
@@ -985,7 +1182,176 @@ int XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk)
 #include <iconv.h>
 #include <errno.h>
 
-int XChar_from_shiftjis(const char* sjis, XChar* out, size_t max_out) {
+// --------------------------
+// GBK转XChar（UTF-16）
+// --------------------------
+int64_t XChar_from_gbk(const char* gbk, XChar* out, size_t max_out) {
+    if (!gbk) return -1; // 输入为NULL直接返回错误
+
+    bool calculate_only = (out == NULL);
+    size_t count = 0;
+
+    // 1. 打开iconv转换描述符（GBK -> UTF-16LE，小端UTF-16，与XChar兼容）
+    iconv_t cd = iconv_open("UTF-16LE", "GBK");
+    if (cd == (iconv_t)-1) return -1;
+
+    // 2. 计算输入GBK字符串长度（不含终止符）
+    size_t in_len = strlen(gbk);
+    char* in_buf = (char*)gbk;
+    size_t remaining_in = in_len;
+
+    // 3. 计算所需XChar数量（仅计算模式）
+    if (calculate_only) {
+        // 临时缓冲区用于计算转换后长度
+        char temp_buf[4096];
+        char* out_buf = temp_buf;
+        size_t temp_out_len = sizeof(temp_buf);
+        size_t total_out = 0;
+
+        while (remaining_in > 0) {
+            size_t out_len = temp_out_len;
+            char* p = out_buf;
+            size_t ret = iconv(cd, &in_buf, &remaining_in, &p, &out_len);
+            if (ret == (size_t)-1 && errno != E2BIG) {
+                iconv_close(cd);
+                return -1; // 转换错误
+            }
+            total_out += (temp_out_len - out_len);
+        }
+        iconv_close(cd);
+        // UTF-16每个字符占2字节，因此XChar数量 = 总字节数 / 2
+        return (total_out / 2);
+    }
+
+    // 4. 实际转换模式：将GBK转换为XChar（UTF-16LE）
+    if (max_out == 0) {
+        iconv_close(cd);
+        return -1;
+    }
+
+    char* out_buf = (char*)out; // XChar与UTF-16LE字节兼容
+    size_t remaining_out = max_out * sizeof(XChar); // 总可用字节数
+
+    while (remaining_in > 0 && remaining_out > 0) {
+        char* in_ptr = in_buf;
+        char* out_ptr = out_buf;
+        size_t in_bytes = remaining_in;
+        size_t out_bytes = remaining_out;
+
+        size_t ret = iconv(cd, &in_ptr, &in_bytes, &out_ptr, &out_bytes);
+        if (ret == (size_t)-1) {
+            if (errno != E2BIG) { // 除了缓冲区不足外的错误
+                iconv_close(cd);
+                return -1;
+            }
+        }
+
+        // 计算转换的XChar数量（每2字节对应1个XChar）
+        size_t converted = (remaining_out - out_bytes) / sizeof(XChar);
+        count += converted;
+
+        // 更新剩余缓冲区
+        remaining_in -= (in_buf - in_ptr);
+        in_buf = in_ptr;
+        remaining_out = out_bytes;
+        out_buf = out_ptr;
+    }
+
+    // 添加终止符（不占用有效计数）
+    if (count < max_out) {
+        out[count].code = 0;
+    }
+
+    iconv_close(cd);
+    return count;
+}
+
+// --------------------------
+// XChar（UTF-16）转GBK
+// --------------------------
+int64_t XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk) {
+    if (!ch) return -1; // 输入为NULL直接返回错误
+
+    bool calculate_only = (gbk == NULL);
+    size_t count = 0;
+
+    // 1. 计算XChar数组长度（不含终止符）
+    size_t xchar_len = 0;
+    while (ch[xchar_len].code != 0) xchar_len++;
+
+    // 2. 打开iconv转换描述符（UTF-16LE -> GBK）
+    iconv_t cd = iconv_open("GBK", "UTF-16LE");
+    if (cd == (iconv_t)-1) return -1;
+
+    // 3. 准备输入缓冲区（XChar与UTF-16LE字节兼容）
+    char* in_buf = (char*)ch;
+    size_t remaining_in = xchar_len * sizeof(XChar);
+
+    // 4. 计算所需GBK字节数（仅计算模式）
+    if (calculate_only) {
+        char temp_buf[4096];
+        char* out_buf = temp_buf;
+        size_t temp_out_len = sizeof(temp_buf);
+        size_t total_out = 0;
+
+        while (remaining_in > 0) {
+            size_t out_len = temp_out_len;
+            char* p = out_buf;
+            size_t ret = iconv(cd, &in_buf, &remaining_in, &p, &out_len);
+            if (ret == (size_t)-1 && errno != E2BIG) {
+                iconv_close(cd);
+                return -1; // 转换错误
+            }
+            total_out += (temp_out_len - out_len);
+        }
+        iconv_close(cd);
+        return (int)total_out; // 返回有效字节数（不含终止符）
+    }
+
+    // 5. 实际转换模式：将XChar转换为GBK
+    if (max_gbk == 0) {
+        iconv_close(cd);
+        return -1;
+    }
+
+    char* out_buf = gbk;
+    size_t remaining_out = max_gbk - 1; // 预留终止符位置
+
+    while (remaining_in > 0 && remaining_out > 0) {
+        char* in_ptr = in_buf;
+        char* out_ptr = out_buf;
+        size_t in_bytes = remaining_in;
+        size_t out_bytes = remaining_out;
+
+        size_t ret = iconv(cd, &in_ptr, &in_bytes, &out_ptr, &out_bytes);
+        if (ret == (size_t)-1) {
+            if (errno != E2BIG) { // 除了缓冲区不足外的错误
+                iconv_close(cd);
+                return -1;
+            }
+        }
+
+        // 计算转换的GBK字节数
+        count += (remaining_out - out_bytes);
+
+        // 更新剩余缓冲区
+        remaining_in -= (in_buf - in_ptr);
+        in_buf = in_ptr;
+        remaining_out = out_bytes;
+        out_buf = out_ptr;
+    }
+
+    // 添加终止符（不占用有效计数）
+    if (count < max_gbk - 1) {
+        gbk[count] = '\0';
+    }
+
+    iconv_close(cd);
+    return count;
+}
+
+int64_t XChar_from_shiftjis(const char* sjis, XChar* out, size_t max_out)
+{
     if (!sjis || !out || max_out == 0) return -1;
 
     iconv_t cd = iconv_open("UTF-16LE", "SHIFT_JIS"); // 转换为UTF-16LE
@@ -1010,10 +1376,11 @@ int XChar_from_shiftjis(const char* sjis, XChar* out, size_t max_out) {
         out[count].code = 0;
     }
 
-    return (int)count;
+    return count;
 }
 
-int XChar_to_shiftjis(const XChar* ch, char* sjis, size_t max_sjis) {
+int64_t XChar_to_shiftjis(const XChar* ch, char* sjis, size_t max_sjis)
+{
     if (!ch || !sjis || max_sjis == 0) return -1;
 
     // 计算XChar数组长度（不含终止符）
@@ -1029,7 +1396,8 @@ int XChar_to_shiftjis(const XChar* ch, char* sjis, size_t max_sjis) {
     size_t out_len = max_sjis;
 
     size_t result = iconv(cd, &in_buf, &in_len, &out_buf, &out_len);
-    if (result == (size_t)-1 && errno != E2BIG) {
+    if (result == (size_t)-1 && errno != E2BIG) 
+    {
         iconv_close(cd);
         return -1;
     }
@@ -1037,28 +1405,165 @@ int XChar_to_shiftjis(const XChar* ch, char* sjis, size_t max_sjis) {
     iconv_close(cd);
 
     // 确保终止符
-    if (out_len > 0) {
+    if (out_len > 0) 
+    {
         *out_buf = '\0';
     }
 
-    return (int)(max_sjis - out_len - 1); // 减去终止符
+    return (max_sjis - out_len - 1); // 减去终止符
 }
 #endif
 
-int XChar_from_local(const char* local_str, XChar* out, size_t max_out)
+int64_t XChar_from_local(const char* local_str, XChar* out, size_t max_out)
 {
 #ifdef _WIN32
     return XChar_from_gbk(local_str,out,max_out);
 #elif defined(__linux__)
-    return XChar_from_shiftjis(local_str,out,max_out);
+    return XChar_from_utf8(local_str,out,max_out);
 #endif
 }
 
-int XChar_to_local(const XChar* ch, char* local_str, size_t max_local)
+int64_t XChar_to_local(const XChar* ch, char* local_str, size_t max_local)
 {
 #ifdef _WIN32
     return XChar_to_gbk(ch, local_str, max_local);
 #elif defined(__linux__)
-    return XChar_to_shiftjis(ch, local_str, max_local);
+    return XChar_to_utf8(ch, local_str, max_local);
+#endif
+}
+
+int64_t XUTF8_to_gbk(const char* utf8_str, char* gbk_buf, size_t max_len)
+{
+    if (!utf8_str) return -1;
+
+#ifdef _WIN32
+    // 步骤1：UTF-8转宽字符（UTF-16）
+    int64_t wcs_len = MultiByteToWideChar(
+        CP_UTF8,       // 源编码：UTF-8
+        0,             // 转换选项
+        utf8_str,      // 输入UTF-8字符串
+        -1,            // 自动计算长度（含终止符）
+        NULL,          // 仅获取长度
+        0
+    );
+    if (wcs_len <= 0) return -1;
+
+    // 分配宽字符缓冲区
+    wchar_t* wcs_buf = (wchar_t*)XMemory_malloc(wcs_len * sizeof(wchar_t));
+    if (!wcs_buf) return -1;
+
+    // 实际转换为宽字符
+    if (MultiByteToWideChar(CP_UTF8, 0, utf8_str, -1, wcs_buf, wcs_len) <= 0) {
+        XMemory_free(wcs_buf);
+        return -1;
+    }
+
+    // 步骤2：计算GBK长度或执行转换
+    int gbk_len;
+    if (!gbk_buf) {
+        // 仅计算长度：必须传入实际宽字符串才能得到正确结果
+        gbk_len = WideCharToMultiByte(
+            CP_ACP,       // 目标编码：GBK
+            0,            // 转换选项
+            wcs_buf,      // 传入实际宽字符串
+            -1,           // 自动计算长度（含终止符）
+            NULL,         // 仅获取长度
+            0,
+            NULL,
+            NULL
+        );
+        XMemory_free(wcs_buf);  // 提前释放宽字符缓冲区
+        return (gbk_len > 0) ? (gbk_len - 1) : -1;  // 减去终止符
+    }
+
+    // 实际转换到GBK缓冲区
+    if (max_len == 0) {
+        XMemory_free(wcs_buf);
+        return -1;
+    }
+
+    gbk_len = WideCharToMultiByte(
+        CP_ACP,       // 目标编码：GBK
+        0,            // 转换选项
+        wcs_buf,      // 输入宽字符串
+        -1,           // 自动计算长度
+        gbk_buf,      // 输出GBK缓冲区
+        (int)max_len, // 缓冲区大小
+        NULL,
+        NULL
+    );
+
+    XMemory_free(wcs_buf);  // 释放宽字符缓冲区
+
+    if (gbk_len <= 0) return -1;
+    return gbk_len - 1;  // 返回不含终止符的长度
+
+#else
+    // Linux平台：使用iconv系统库（保持不变）
+    iconv_t cd = iconv_open("GBK", "UTF-8");
+    if (cd == (iconv_t)-1) return -1;
+
+    // 计算输入UTF-8长度（不含终止符）
+    size_t in_len = strlen(utf8_str);
+    char* in_buf = (char*)utf8_str;
+    size_t remaining_in = in_len;
+
+    // 仅计算所需GBK长度
+    if (!gbk_buf) {
+        char temp[4096];
+        char* out_buf = temp;
+        size_t total = 0;
+        size_t temp_len = sizeof(temp);
+
+        while (remaining_in > 0) {
+            size_t out_len = temp_len;
+            char* p = out_buf;
+            size_t ret = iconv(cd, &in_buf, &remaining_in, &p, &out_len);
+            if (ret == (size_t)-1 && errno != E2BIG) {
+                iconv_close(cd);
+                return -1;
+            }
+            total += temp_len - out_len;
+        }
+        iconv_close(cd);
+        return total;
+    }
+
+    // 实际转换到GBK缓冲区
+    if (max_len == 0) {
+        iconv_close(cd);
+        return -1;
+    }
+
+    char* out_buf = gbk_buf;
+    size_t remaining_out = max_len - 1;  // 预留终止符位置
+    size_t total_out = 0;
+
+    while (remaining_in > 0 && remaining_out > 0) {
+        char* in_ptr = in_buf;
+        char* out_ptr = out_buf;
+        size_t in_bytes = remaining_in;
+        size_t out_bytes = remaining_out;
+
+        size_t ret = iconv(cd, &in_ptr, &in_bytes, &out_ptr, &out_bytes);
+        if (ret == (size_t)-1 && errno != E2BIG) {
+            iconv_close(cd);
+            return -1;
+        }
+
+        total_out += remaining_out - out_bytes;
+        remaining_in -= in_buf - in_ptr;
+        in_buf = in_ptr;
+        remaining_out = out_bytes;
+        out_buf = out_ptr;
+    }
+
+    // 添加终止符
+    if (total_out < max_len - 1) {
+        gbk_buf[total_out] = '\0';
+    }
+
+    iconv_close(cd);
+    return total_out;
 #endif
 }
