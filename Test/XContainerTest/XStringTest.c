@@ -21,7 +21,7 @@ void XStringTest()
 		XString* str = XString_create("你好-在吗");
 		if (str)
 		{
-			XStringList* v = XString_split(str, "-");
+			XStringList* v = XString_split(str, "-",XCharCaseInsensitive);
 			if (v)
 			{
 				XStringList_iterator_for_each(v, XFor_each_XString, NULL);
@@ -33,6 +33,9 @@ void XStringTest()
 	}
 	{
 		XString* str = XString_create_fmt("你好%d %d\n",121,9);
+		int64_t index= XString_index_of_utf8(str,"9",0,XCharCaseInsensitive);
+		if(index!=-1)
+			XPrint_utf8_fmt("找到了,index:%d\n",index);
 		XPrint(str);
 		XString_delete_base(str);
 	}

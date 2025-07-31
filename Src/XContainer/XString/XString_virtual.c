@@ -8,11 +8,13 @@
 // 内部常量定义
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量
+#define XString_cdata(str) ((const XChar*)XContainerDataPtr(str))
 // 获取可修改的内部XChar数组
 XChar* XString_data(XString* str);
+XString* XString_copy(const XString* other);
 
 // 前向声明
-static uint32_t VXString_At(const XString* str, size_t index);
+static XChar VXString_At(const XString* str, size_t index);
 static bool VXString_Append(XString* str, const char* utf8_str);
 static bool VXString_PushBack(XString* str, XChar ch);
 static bool VXString_PopBack(XString* str);
@@ -23,32 +25,25 @@ static bool VXString_Prepend(XString* str, const char* utf8_str);
 static bool VXString_Insert(XString* str, size_t pos, const char* utf8_str);
 static bool VXString_Remove(XString* str, size_t pos, size_t len);
 static bool VXString_Replace(XString* str, const char* before, const char* after);
-static int64_t VXString_IndexOf(const XString* str, const char* substr, size_t from);
-static int64_t VXString_LastIndexOf(const XString* str, const char* substr, size_t from);
-static bool VXString_StartsWith(const XString* str, const char* prefix);
-static bool VXString_EndsWith(const XString* str, const char* suffix);
 static void VXClass_copy(XString* object, const XString* src);
 static void VXClass_move(XString* object, XString* src);
 static void VXClass_deinit(XString* str);
 static void VXContainerObject_clear(XString* str);
 
-// 内部辅助函数
-static const XChar* XString_cdata(const XString* str) {
-    return (const XChar*)XContainerDataPtr(str);
-}
-
 // 1. 获取指定位置的Unicode码点
-static uint32_t VXString_At(const XString* str, size_t index) {
-    if (!str || index >= XString_length_base(str)) return 0;
+static XChar VXString_At(const XString* str, size_t index)
+{
+    if (!str || index >= XString_length_base(str)) return XChar_from(0);
 
     const XChar* xchars = XString_cdata(str);
-    // 处理代理对（高代理+低代理）
-    if (XChar_is_high_surrogate(&xchars[index]) &&
-        (index + 1 < XString_length_base(str)) &&
-        XChar_is_low_surrogate(&xchars[index + 1])) {
-        return XChar_surrogate_to_unicode(&xchars[index], &xchars[index + 1]);
-    }
-    return XChar_unicode(&xchars[index]);
+    return xchars[index];
+    //// 处理代理对（高代理+低代理）
+    //if (XChar_is_high_surrogate(&xchars[index]) &&
+    //    (index + 1 < XString_length_base(str)) &&
+    //    XChar_is_low_surrogate(&xchars[index + 1])) {
+    //    return XChar_surrogate_to_unicode(&xchars[index], &xchars[index + 1]);
+    //}
+    //return XChar_unicode(&xchars[index]);
 }
 
 // 2. 追加UTF-8字符串
@@ -75,7 +70,8 @@ static bool VXString_Append(XString* str, const char* utf8_str)
 }
 
 // 3. 尾插单个XChar
-static bool VXString_PushBack(XString* str, XChar ch) {
+static bool VXString_PushBack(XString* str, XChar ch) 
+{
     if (!str) return false;
 
     XString_detach(str);
@@ -236,7 +232,8 @@ static bool VXString_Remove(XString* str, size_t pos, size_t len) {
 }
 
 // 11. 替换子串
-static bool VXString_Replace(XString* str, const char* before, const char* after) {
+static bool VXString_Replace(XString* str, const char* before, const char* after, XCharCaseSensitivity cs) 
+{
     if (!str || !before || !after) return false;
 
     XString* before_str = XString_create(before);
@@ -255,119 +252,17 @@ static bool VXString_Replace(XString* str, const char* before, const char* after
         return false;
     }
 
-    int64_t pos = XString_index_of(str, before, 0);
+    int64_t pos = XString_index_of_utf8(str, before, 0,cs);
     while (pos != -1) {
         if (!XString_remove(str, (size_t)pos, before_len)) break;
         if (!XString_insert(str, (size_t)pos, after)) break;
-        pos = XString_index_of(str, before, (size_t)pos + after_len);
+        pos = XString_index_of_utf8(str, before, (size_t)pos + after_len,cs);
     }
 
     XString_delete_base(before_str);
     XString_delete_base(after_str);
     return true;
 }
-
-// 12. 查找子串首次出现位置
-static int64_t VXString_IndexOf(const XString* str, const char* substr, size_t from) {
-    if (!str || !substr || from >= XString_length_base(str)) return -1;
-
-    XString* substr_str = XString_create(substr);
-    if (!substr_str || XString_isEmpty_base(substr_str)) {
-        XString_delete_base(substr_str);
-        return (from <= XString_length_base(str)) ? (int64_t)from : -1;
-    }
-
-    size_t str_len = XString_length_base(str);
-    size_t substr_len = XString_length_base(substr_str);
-    const XChar* str_data = XString_cdata(str);
-    const XChar* substr_data = XString_cdata(substr_str);
-
-    for (size_t i = from; i <= str_len - substr_len; i++) {
-        bool match = true;
-        for (size_t j = 0; j < substr_len; j++) {
-            if (str_data[i + j].code != substr_data[j].code) {
-                match = false;
-                break;
-            }
-        }
-        if (match) {
-            XString_delete_base(substr_str);
-            return (int64_t)i;
-        }
-    }
-
-    XString_delete_base(substr_str);
-    return -1;
-}
-
-// 13. 查找子串最后出现位置
-static int64_t VXString_LastIndexOf(const XString* str, const char* substr, size_t from) {
-    if (!str || !substr) return -1;
-
-    XString* substr_str = XString_create(substr);
-    if (!substr_str || XString_isEmpty_base(substr_str)) {
-        XString_delete_base(substr_str);
-        return (int64_t)XString_length_base(str);
-    }
-
-    size_t str_len = XString_length_base(str);
-    size_t substr_len = XString_length_base(substr_str);
-    if (substr_len > str_len) {
-        XString_delete_base(substr_str);
-        return -1;
-    }
-
-    size_t end = (from >= str_len) ? (str_len - substr_len) : from;
-    const XChar* str_data = XString_cdata(str);
-    const XChar* substr_data = XString_cdata(substr_str);
-
-    for (int64_t i = (int64_t)end; i >= 0; i--) {
-        bool match = true;
-        for (size_t j = 0; j < substr_len; j++) {
-            if (str_data[i + j].code != substr_data[j].code) {
-                match = false;
-                break;
-            }
-        }
-        if (match) {
-            XString_delete_base(substr_str);
-            return i;
-        }
-    }
-
-    XString_delete_base(substr_str);
-    return -1;
-}
-
-// 16. 判断以指定前缀开始
-static bool VXString_StartsWith(const XString* str, const char* prefix) {
-    if (!str || !prefix) return false;
-
-    XString* prefix_str = XString_create(prefix);
-    if (!prefix_str) return false;
-
-    bool result = (XString_length_base(prefix_str) <= XString_length_base(str)) &&
-        (VXString_IndexOf(str, prefix, 0) == 0);
-    XString_delete_base(prefix_str);
-    return result;
-}
-
-// 17. 判断以指定后缀结束
-static bool VXString_EndsWith(const XString* str, const char* suffix) {
-    if (!str || !suffix) return false;
-
-    XString* suffix_str = XString_create(suffix);
-    if (!suffix_str) return false;
-
-    size_t str_len = XString_length_base(str);
-    size_t suffix_len = XString_length_base(suffix_str);
-    bool result = (suffix_len <= str_len) &&
-        (VXString_LastIndexOf(str, suffix, str_len - suffix_len) == (int64_t)(str_len - suffix_len));
-
-    XString_delete_base(suffix_str);
-    return result;
-}
-
 // 类方法：拷贝
 static void VXClass_copy(XString* object, const XString* src)
 {
@@ -462,6 +357,99 @@ XString* XString_create_with_length(const char* utf8_str, size_t len) {
     return str;
 }
 
+XString* XString_create_gbk(const char* gbk_str)
+{
+    if (!gbk_str) return NULL;
+    // 计算GBK字符串长度（不含终止符）
+    size_t len = 0;
+    while (gbk_str[len] != '\0') {
+        // GBK字符要么1字节（0x00-0x7F）要么2字节（高字节0x81-0xFE，低字节0x40-0xFE且不等于0x7F）
+        if ((uint8_t)gbk_str[len] < 0x80) {
+            len++;
+        }
+        else {
+            len += 2; // 跳过双字节字符的第二个字节
+        }
+    }
+    return XString_create_gbk_with_length(gbk_str, len);
+}
+
+XString* XString_create_gbk_fmt(const char* format, ...)
+{
+    if (!format) return NULL;
+
+    // 第一步：使用vsnprintf获取格式化后的GBK字符串长度
+    va_list args;
+    va_start(args, format);
+    int fmt_len = vsnprintf(NULL, 0, format, args);
+    va_end(args);
+    if (fmt_len <= 0) return NULL;
+
+    // 第二步：分配缓冲区并格式化GBK字符串
+    char* gbk_buf = (char*)XMemory_malloc(fmt_len + 1); // +1 用于终止符
+    if (!gbk_buf) return NULL;
+
+    va_start(args, format);
+    vsnprintf(gbk_buf, fmt_len + 1, format, args);
+    va_end(args);
+
+    // 第三步：通过已实现的函数创建XString
+    XString* str = XString_create_gbk(gbk_buf);
+    XMemory_free(gbk_buf); // 释放临时缓冲区
+
+    return str;
+}
+
+XString* XString_create_gbk_with_length(const char* gbk_str, size_t len)
+{
+    if (!gbk_str || len == 0) {
+        return NULL;
+    }
+
+    // 步骤1：创建带空终止符的临时GBK缓冲区（避免原函数越界读取）
+    char* temp_gbk = (char*)XMemory_malloc(len + 1); // +1 用于存储'\0'
+    if (!temp_gbk) {
+        return NULL;
+    }
+    memcpy(temp_gbk, gbk_str, len); // 复制指定长度的GBK数据
+    temp_gbk[len] = '\0'; // 添加空终止符，适配XChar_from_gbk的要求
+
+    // 步骤2：计算转换所需的XChar数量（首次调用获取长度）
+    int64_t xchar_count = XChar_from_gbk(temp_gbk, NULL, 0);
+    if (xchar_count <= 0) {
+        XMemory_free(temp_gbk); // 释放临时缓冲区
+        return NULL;
+    }
+
+    // 步骤3：创建并初始化XString
+    XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    if (!str) {
+        XMemory_free(temp_gbk);
+        return NULL;
+    }
+    XString_init(str, NULL, 0);
+
+    // 步骤4：预留足够空间（包含终止符）
+    XString_reserve(str, (size_t)xchar_count);
+
+    // 步骤5：执行实际转换（使用临时缓冲区）
+    XChar* data = XString_data(str);
+    xchar_count = XChar_from_gbk(temp_gbk, data, (size_t)xchar_count + 1); // +1 预留终止符位置
+    XMemory_free(temp_gbk); // 转换完成后释放临时缓冲区
+
+    if (xchar_count <= 0) {
+        XString_delete_base(str);
+        return NULL;
+    }
+
+    // 步骤6：设置长度和终止符
+    str->parent.m_size = (size_t)xchar_count;
+    data[xchar_count] = (XChar){ 0 };
+
+    XString_deinitCache(str);
+    return str;
+}
+
 XString* XString_create_fmt(const char* format, ...) {
     if (!format) return NULL;
 
@@ -472,37 +460,6 @@ XString* XString_create_fmt(const char* format, ...) {
     va_end(args);
 
     return XString_create(buf);
-}
-
-XString* XString_create_unicode(uint32_t code_point) {
-    XString* str = XString_create("");
-    if (!str) return NULL;
-
-    XString_detach(str);
-    XString_reserve(str, 2);
-
-    XChar* data = XString_data(str);
-    if (code_point <= 0xFFFF) {
-        data[0] = XChar_from_unicode(code_point);
-        str->parent.m_size = 1;
-    }
-    else {
-        data[0] = XChar_from_unicode(code_point);
-        data[1] = XChar_from_unicode_low(code_point);
-        str->parent.m_size = 2;
-    }
-
-    return str;
-}
-
-XString* XString_copy(const XString* other) {
-    if (!other) return NULL;
-
-    XString* str = (XString*)XMemory_malloc(sizeof(XString));
-    if (!str) return NULL;
-
-    VXClass_copy(str, other);
-    return str;
 }
 
 // 初始化函数
@@ -553,10 +510,6 @@ XVtable* XString_class_init() {
         VXString_Insert,
         VXString_Remove,
         VXString_Replace,
-        VXString_IndexOf,
-        VXString_LastIndexOf,
-        VXString_StartsWith,
-        VXString_EndsWith
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(vtable_funcs);
 

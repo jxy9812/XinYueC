@@ -8,124 +8,590 @@ extern "C" {
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdbool.h>
-// XString虚函数表枚举（继承XContainerObject）
-XCLASS_DEFINE_BEGING(XString)
-XCLASS_DEFINE_ENUM(XString, At) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
-XCLASS_DEFINE_ENUM(XString, Append),
-XCLASS_DEFINE_ENUM(XString, PushBack),    // 新增：尾插单个XChar
-XCLASS_DEFINE_ENUM(XString, PopBack),     // 新增：尾删单个XChar
-XCLASS_DEFINE_ENUM(XString, PushFront),   // 新增：头插单个XChar
-XCLASS_DEFINE_ENUM(XString, PopFront),    // 新增：头删单个XChar
-XCLASS_DEFINE_ENUM(XString, Assign),
-XCLASS_DEFINE_ENUM(XString, Prepend),
-XCLASS_DEFINE_ENUM(XString, Insert),
-XCLASS_DEFINE_ENUM(XString, Remove),
-XCLASS_DEFINE_ENUM(XString, Replace),
-XCLASS_DEFINE_ENUM(XString, IndexOf),
-XCLASS_DEFINE_ENUM(XString, LastIndexOf),
-XCLASS_DEFINE_ENUM(XString, StartsWith),
-XCLASS_DEFINE_ENUM(XString, EndsWith),
-XCLASS_DEFINE_END(XString)
-#define XSTRING_VTABLE_SIZE XCLASS_VTABLE_GET_SIZE(XString)
 
+/**
+ * @brief XString 类虚函数表枚举（继承自 XContainerObject）
+ * @details 定义 XString 类支持的所有虚函数索引，用于虚函数调用机制
+ */
+XCLASS_DEFINE_BEGING(XString)
+XCLASS_DEFINE_ENUM(XString, At) = XCLASS_VTABLE_GET_SIZE(XContainerObject),// 获取指定位置的 XChar 字符
+XCLASS_DEFINE_ENUM(XString, Append),        // 追加 UTF-8 字符串
+XCLASS_DEFINE_ENUM(XString, PushBack),      // 尾插单个 XChar 字符
+XCLASS_DEFINE_ENUM(XString, PopBack),       // 尾删单个字符
+XCLASS_DEFINE_ENUM(XString, PushFront),     // 头插单个 XChar 字符
+XCLASS_DEFINE_ENUM(XString, PopFront),      // 头删单个字符
+XCLASS_DEFINE_ENUM(XString, Assign),        // 替换为指定 UTF-8 字符串
+XCLASS_DEFINE_ENUM(XString, Prepend),       // 前置添加 UTF-8 字符串
+XCLASS_DEFINE_ENUM(XString, Insert),        // 在指定位置插入 UTF-8 字符串
+XCLASS_DEFINE_ENUM(XString, Remove),        // 移除指定范围的字符
+XCLASS_DEFINE_ENUM(XString, Replace),       // 替换子串（支持大小写敏感配置）
+XCLASS_DEFINE_END(XString)
+#define XSTRING_VTABLE_SIZE XCLASS_VTABLE_GET_SIZE(XString)  // XString 虚函数表大小
+
+/**
+ * @brief 字符串缓存类型枚举
+ * @details 定义 XString 内部缓存的编码类型，用于避免重复转换
+ */
 enum XStringCacheType
 {
-    XStringCache_Local,
-    XStringCache_Utf8,
-    XStringCache_Utf16, 
-    XStringCache_Utf32,
-    XStringCache_Gbk,
-    XStringCache_Size,//数量
+    XStringCache_Local,    // 本地编码缓存（Windows 为 GBK，Linux 为 UTF-8）
+    XStringCache_Utf8,     // UTF-8 编码缓存
+    XStringCache_Utf16,    // UTF-16 编码缓存（wchar_t 类型）
+    XStringCache_Utf32,    // UTF-32 编码缓存（uint32_t 类型）
+    XStringCache_Gbk,      // GBK 编码缓存
+    XStringCache_Size      // 缓存类型数量（用于数组大小定义）
 };
-//字符串结构定义（继承容器基类，内部存储XChar数组）
-//内部使用UTF16储存,外部使用UTF8
-typedef struct XString 
- {
-    XContainerObject parent;  // 继承容器基类（m_data指向XChar数组）
-    bool m_is_shared;         // 共享标记（为true时修改需复制数据）
-    int* m_ref_count;         // 引用计数（Copy-On-Write机制）
-    char** m_cache;//缓存
- } XString;
 
-// 构造函数
+/**
+ * @brief XString 字符串结构体（继承自容器基类）
+ * @details 内部以 UTF-16 编码（XChar 数组）存储字符串，支持 Copy-On-Write 机制，
+ *          维护多种编码的缓存以优化性能
+ */
+typedef struct XString
+{
+    XContainerObject parent;  // 继承容器基类，m_data 指向 XChar 数组（UTF-16 存储）
+    bool m_is_shared;         // 共享标记：为 true 时表示数据被共享，修改前需复制
+    int* m_ref_count;         // 引用计数：用于 Copy-On-Write 机制的资源管理
+    char** m_cache;           // 编码缓存数组：存储各类型编码的转换结果（索引对应 XStringCacheType）
+} XString;
+
+// -------------------------- 构造与初始化函数 --------------------------
+
+/**
+ * @brief 从 UTF-8 字符串创建 XString 对象
+ * @param utf8_str 输入的 UTF-8 字符串（NULL 则创建空字符串）
+ * @return 成功返回 XString 指针，失败返回 NULL
+ */
 XString* XString_create(const char* utf8_str);
+
+/**
+ * @brief 从格式化 UTF-8 字符串创建 XString 对象
+ * @param format 格式化字符串（类似 printf）
+ * @param ... 可变参数列表
+ * @return 成功返回 XString 指针，失败返回 NULL
+ */
 XString* XString_create_fmt(const char* format, ...);
+
+/**
+ * @brief 从指定长度的 UTF-8 字符串创建 XString 对象
+ * @param utf8_str 输入的 UTF-8 字符串
+ * @param len 字符串长度（字节数，不含终止符）
+ * @return 成功返回 XString 指针，失败返回 NULL
+ */
 XString* XString_create_with_length(const char* utf8_str, size_t len);
-XString* XString_create_unicode(uint32_t code_point);
-XString* XString_copy(const XString* other);
+
+/**
+ * @brief 从 GBK 字符串创建 XString 对象
+ * @param gbk_str 输入的 GBK 字符串（NULL 则创建空字符串）
+ * @return 成功返回 XString 指针，失败返回 NULL
+ */
+XString* XString_create_gbk(const char* gbk_str);
+
+/**
+ * @brief 从格式化 GBK 字符串创建 XString 对象
+ * @param format 格式化字符串（类似 printf）
+ * @param ... 可变参数列表
+ * @return 成功返回 XString 指针，失败返回 NULL
+ */
+XString* XString_create_gbk_fmt(const char* format, ...);
+
+/**
+ * @brief 从指定长度的 GBK 字符串创建 XString 对象
+ * @param gbk_str 输入的 GBK 字符串
+ * @param len 字符串长度（字节数，不含终止符）
+ * @return 成功返回 XString 指针，失败返回 NULL
+ */
+XString* XString_create_gbk_with_length(const char* gbk_str, size_t len);
+
+/**
+ * @brief 初始化 XString 对象
+ * @param str 待初始化的 XString 指针
+ * @param utf8_str 初始化用的 UTF-8 字符串（NULL 则初始化为空）
+ * @param len 字符串长度（字节数，0 则自动计算）
+ */
 void XString_init(XString* str, const char* utf8_str, size_t len);
+
+/**
+ * @brief 快速定义并初始化 XString 变量的宏
+ * @param name 变量名
+ * @param utf8_str 初始化用的 UTF-8 字符串
+ */
 #define XString_Init(name,utf8_str)  XString _##name,*name=&_##name;XString_init(name,utf8_str,0)
 
-#define XString_copy_base				    XContainerObject_copy_base	
-#define XString_move_base				    XContainerObject_move_base	
-#define XString_deinit_base					XContainerObject_deinit_base	
-#define XString_delete_base					XContainerObject_delete_base	
-#define XString_clear_base				    XContainerObject_clear_base	
-#define XString_isEmpty_base				XContainerObject_isEmpty_base	
-#define XString_size_base					XContainerObject_size_base	
-#define XString_capacity_base				XContainerObject_capacity_base
-#define XString_swap_base				    XContainerObject_swap_base	
-#define XString_typeSize_base				XContainerObject_typeSize_base
+     // -------------------------- 基础操作宏（继承自 XContainerObject） --------------------------
 
-// 基本操作（虚函数包装）
+#define XString_copy_base				    XContainerObject_copy_base	// 复制对象（基础实现）
+#define XString_move_base				    XContainerObject_move_base	// 移动对象（基础实现）
+#define XString_deinit_base					XContainerObject_deinit_base	// 销毁对象（基础实现）
+#define XString_delete_base					XContainerObject_delete_base	// 删除对象（释放内存）
+#define XString_clear_base				    XContainerObject_clear_base	// 清空字符串内容
+#define XString_isEmpty_base				XContainerObject_isEmpty_base	// 判断字符串是否为空
+#define XString_size_base					XContainerObject_size_base	// 获取字符串长度（字符数）
+#define XString_capacity_base				XContainerObject_capacity_base	// 获取当前容量（字符数）
+#define XString_swap_base				    XContainerObject_swap_base	// 交换两个字符串内容
+#define XString_typeSize_base				XContainerObject_typeSize_base	// 获取单个元素（XChar）的大小
+
+/**
+ * @brief 获取字符串长度（字符数，不含终止符）
+ * @note 等价于 XString_size_base，为字符串场景提供更直观的命名
+ */
 #define XString_length_base                 XContainerObject_size_base
 
-#define XString_c_str                       XString_toUtf8
-const char* XString_toUtf8(const XString* str);
-const char* XString_toLocal(const XString* str);
-uint32_t XString_at(const XString* str, size_t index);
+// -------------------------- 字符串数据访问函数 --------------------------
 
-// 字符串操作（虚函数包装）
-bool XString_append_base(XString* str, const char* utf8_str);  // 移除const，需修改原对象
-bool XString_assign_base(XString* str, const char* utf8_str);  // 新增：assign API
-bool XString_prepend(XString* str, const char* utf8_str);      // 移除const，需修改原对象
-bool XString_insert(XString* str, size_t pos, const char* utf8_str);  // 移除const
-bool XString_remove(XString* str, size_t pos, size_t len);     // 保持参数，修改返回值
-bool XString_replace(XString* str, const char* before, const char* after);  // 移除const
-// 在字符串操作部分添加函数声明
-bool XString_push_back_base(XString* str, XChar ch);  // 尾插
-bool XString_pop_back_base(XString* str);                        // 尾删一个字符
-bool XString_push_front_base(XString* str, XChar ch); // 头插
-bool XString_pop_front_base(XString* str);                       // 头删一个字符
+/**
+ * @brief 获取本地编码字符串（兼容 C 风格字符串）
+ * @note 等价于 XString_toLocal，为兼容 C 接口提供的宏
+ */
+#define XString_c_str                       XString_toLocal
 
-// 查找操作（虚函数包装）
-int64_t XString_index_of(const XString* str, const char* substr, size_t from);
-int64_t XString_last_index_of(const XString* str, const char* substr, size_t from);
+/**
+ * @brief 获取指定位置的 XChar 字符
+ * @param str XString 对象指针
+ * @param index 字符索引（从 0 开始）
+ * @return 成功返回对应 XChar，失败返回空字符（code=0）
+ */
+XChar XString_at(const XString* str, size_t index);
 
-// 比较操作 
-int XString_compare(const XString* str1, const XString* str2);
+/**
+ * @brief 获取内部存储的 Unicode 字符数组（XChar 数组）
+ * @param str XString 对象指针
+ * @return 常量 XChar 数组指针（以 code=0 终止）
+ */
+const XChar* XString_unicode(const XString* str);
+
+/**
+ * @brief 获取 UTF-16 编码的字符数组（uint16_t 类型）
+ * @param str XString 对象指针
+ * @return 常量 uint16_t 数组指针（以 0 终止）
+ */
+const uint16_t* XString_utf16(const XString* str);
+
+// -------------------------- 字符串修改操作函数 --------------------------
+
+/**
+ * @brief 追加 UTF-8 字符串到末尾
+ * @param str XString 对象指针
+ * @param utf8_str 待追加的 UTF-8 字符串
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_append_base(XString* str, const char* utf8_str);
+
+/**
+ * @brief 替换字符串内容为指定 UTF-8 字符串
+ * @param str XString 对象指针
+ * @param utf8_str 替换用的 UTF-8 字符串
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_assign_base(XString* str, const char* utf8_str);
+
+/**
+ * @brief 在字符串开头前置添加 UTF-8 字符串
+ * @param str XString 对象指针
+ * @param utf8_str 待前置的 UTF-8 字符串
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_prepend(XString* str, const char* utf8_str);
+
+/**
+ * @brief 在指定位置插入 UTF-8 字符串
+ * @param str XString 对象指针
+ * @param pos 插入位置（0 表示开头，>=长度表示末尾）
+ * @param utf8_str 待插入的 UTF-8 字符串
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_insert(XString* str, size_t pos, const char* utf8_str);
+
+/**
+ * @brief 移除指定范围的字符
+ * @param str XString 对象指针
+ * @param pos 起始位置
+ * @param len 移除的字符数
+ * @return 成功返回 true，失败返回 false（位置越界或长度为 0）
+ */
+bool XString_remove(XString* str, size_t pos, size_t len);
+
+/**
+ * @brief 替换字符串中的子串
+ * @param str XString 对象指针
+ * @param before 待替换的子串（UTF-8）
+ * @param after 替换后的子串（UTF-8）
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_replace(XString* str, const char* before, const char* after, XCharCaseSensitivity cs);
+
+/**
+ * @brief 在字符串末尾插入单个 XChar 字符
+ * @param str XString 对象指针
+ * @param ch 待插入的 XChar 字符
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_push_back_base(XString* str, XChar ch);
+
+/**
+ * @brief 删除字符串末尾的单个字符
+ * @param str XString 对象指针
+ * @return 成功返回 true，失败返回 false（字符串为空）
+ */
+bool XString_pop_back_base(XString* str);
+
+/**
+ * @brief 在字符串开头插入单个 XChar 字符
+ * @param str XString 对象指针
+ * @param ch 待插入的 XChar 字符
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_push_front_base(XString* str, XChar ch);
+
+/**
+ * @brief 删除字符串开头的单个字符
+ * @param str XString 对象指针
+ * @return 成功返回 true，失败返回 false（字符串为空）
+ */
+bool XString_pop_front_base(XString* str);
+
+// -------------------------- 字符串查找操作函数 --------------------------
+
+/**
+ * @brief 查找子串首次出现的位置
+ * @param str XString 对象指针
+ * @param substr 待查找的子串（XString 对象指针）
+ * @param from 起始查找位置
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 成功返回子串起始索引，失败返回 -1
+ */
+int64_t XString_index_of(const XString* str, const XString* substr, size_t from, XCharCaseSensitivity cs);
+/**
+ * @brief 查找子串首次出现的位置
+ * @param str XString 对象指针
+ * @param substr 待查找的子串（UTF-8）
+ * @param from 起始查找位置
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 成功返回子串起始索引，失败返回 -1
+ */
+int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t from, XCharCaseSensitivity cs);
+/**
+ * @brief 查找子串最后一次出现的位置
+ * @param str XString 对象指针
+ * @param substr 待查找的子串（XString 对象指针）
+ * @param from 起始查找位置（从后往前）
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 成功返回子串起始索引，失败返回 -1
+ */
+int64_t XString_last_index_of(const XString* str, const XString* substr, size_t from, XCharCaseSensitivity cs);
+/**
+ * @brief 查找子串最后一次出现的位置
+ * @param str XString 对象指针
+ * @param substr 待查找的子串（UTF-8）
+ * @param from 起始查找位置（从后往前）
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 成功返回子串起始索引，失败返回 -1
+ */
+int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_t from, XCharCaseSensitivity cs);
+
+// -------------------------- 字符串比较操作函数 --------------------------
+
+/**
+ * @brief 判断两个字符串是否相等（基于 XString_compare）
+ * @param str1 第一个 XString 对象指针
+ * @param str2 第二个 XString 对象指针
+ * @return 相等返回 true，否则返回 false
+ */
 bool XEquality_XString(const XString* str1, const XString* str2);
-bool XString_starts_with(const XString* str, const char* prefix);
-bool XString_ends_with(const XString* str, const char* suffix);
 
-// 转换操作
+/**
+ * @brief 比较两个字符串（字典序）
+ * @param str1 第一个 XString 对象指针
+ * @param str2 第二个 XString 对象指针
+ * @return 小于返回 -1，等于返回 0，大于返回 1
+ */
+int XString_compare(const XString* str1, const XString* str2);
+
+/**
+ * @brief 判断两个字符串是否相等（支持大小写敏感性）
+ * @param str1 第一个 XString 对象指针
+ * @param str2 第二个 XString 对象指针
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 相等返回 true，否则返回 false
+ */
+bool XString_equals(const XString* str1, const XString* str2, XCharCaseSensitivity cs);
+
+/**
+ * @brief 判断字符串是否以指定前缀开头
+ * @param str XString 对象指针
+ * @param prefix 前缀字符串（UTF-8）
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 是返回 true，否则返回 false
+ */
+bool XString_starts_with(const XString* str, const char* prefix, XCharCaseSensitivity cs);
+
+/**
+ * @brief 判断字符串是否以指定后缀结尾
+ * @param str XString 对象指针
+ * @param suffix 后缀字符串（UTF-8）
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 是返回 true，否则返回 false
+ */
+bool XString_ends_with(const XString* str, const char* suffix, XCharCaseSensitivity cs);
+
+// -------------------------- 编码转换函数 --------------------------
+
+/**
+ * @brief 转换为 UTF-8 编码字符串
+ * @param str XString 对象指针
+ * @return 成功返回常量 UTF-8 字符串指针（内部缓存），失败返回 NULL
+ */
+const char* XString_toUtf8(const XString* str);
+
+/**
+ * @brief 转换为 UTF-16 编码字符串（wchar_t 类型）
+ * @param str XString 对象指针
+ * @return 成功返回常量 wchar_t 数组指针（内部缓存），失败返回 NULL
+ */
+const wchar_t* XString_toUtf16(const XString* str);
+
+/**
+ * @brief 转换为 UTF-32 编码字符串（uint32_t 类型）
+ * @param str XString 对象指针
+ * @return 成功返回常量 uint32_t 数组指针（内部缓存），失败返回 NULL
+ */
+const uint32_t* XString_toUtf32(const XString* str);
+
+/**
+ * @brief 转换为 GBK 编码字符串
+ * @param str XString 对象指针
+ * @return 成功返回常量 GBK 字符串指针（内部缓存），失败返回 NULL
+ */
+const char* XString_toGbk(const XString* str);
+
+/**
+ * @brief 转换为本地编码字符串（Windows 为 GBK，Linux 为 UTF-8）
+ * @param str XString 对象指针
+ * @return 成功返回常量本地编码字符串指针（内部缓存），失败返回 NULL
+ */
+const char* XString_toLocal(const XString* str);
+
+// -------------------------- 字符串转换（大小写/修剪） --------------------------
+
+/**
+ * @brief 转换为小写字符串（创建新对象）
+ * @param str 源 XString 对象指针
+ * @return 成功返回新的 XString 指针（小写），失败返回 NULL
+ */
 XString* XString_toLower(const XString* str);
+
+/**
+ * @brief 转换为大写字符串（创建新对象）
+ * @param str 源 XString 对象指针
+ * @return 成功返回新的 XString 指针（大写），失败返回 NULL
+ */
 XString* XString_toUpper(const XString* str);
+
+/**
+ * @brief 修剪字符串前后的空白字符（创建新对象）
+ * @param str 源 XString 对象指针
+ * @return 成功返回新的 XString 指针（修剪后），失败返回 NULL
+ */
 XString* XString_trimmed(const XString* str);
+
+// -------------------------- 字符串转数值函数 --------------------------
+
+/**
+ * @brief 转换为 short 类型数值
+ * @param str XString 对象指针
+ * @param ok 输出参数：转换成功则为 true，否则为 false（可为 NULL）
+ * @param base 进制（2-36，0 表示自动识别）
+ * @return 转换结果（失败返回 0）
+ */
+short XString_toShort(const XString* str, bool* ok, int base);
+
+/**
+ * @brief 转换为 int 类型数值
+ * @param str XString 对象指针
+ * @param ok 输出参数：转换成功则为 true，否则为 false（可为 NULL）
+ * @param base 进制（2-36，0 表示自动识别）
+ * @return 转换结果（失败返回 0）
+ */
 int XString_toInt(const XString* str, bool* ok, int base);
+
+/**
+ * @brief 转换为 long 类型数值
+ * @param str XString 对象指针
+ * @param ok 输出参数：转换成功则为 true，否则为 false（可为 NULL）
+ * @param base 进制（2-36，0 表示自动识别）
+ * @return 转换结果（失败返回 0）
+ */
+long XString_toLong(const XString* str, bool* ok, int base);
+
+/**
+ * @brief 转换为 long long 类型数值
+ * @param str XString 对象指针
+ * @param ok 输出参数：转换成功则为 true，否则为 false（可为 NULL）
+ * @param base 进制（2-36，0 表示自动识别）
+ * @return 转换结果（失败返回 0）
+ */
+long long XString_toLongLong(const XString* str, bool* ok, int base);
+
+/**
+ * @brief 转换为 unsigned short 类型数值
+ * @param str XString 对象指针
+ * @param ok 输出参数：转换成功则为 true，否则为 false（可为 NULL）
+ * @param base 进制（2-36，0 表示自动识别）
+ * @return 转换结果（失败返回 0）
+ */
+unsigned short XString_toUShort(const XString* str, bool* ok, int base);
+
+/**
+ * @brief 转换为 unsigned int 类型数值
+ * @param str XString 对象指针
+ * @param ok 输出参数：转换成功则为 true，否则为 false（可为 NULL）
+ * @param base 进制（2-36，0 表示自动识别）
+ * @return 转换结果（失败返回 0）
+ */
+unsigned int XString_toUInt(const XString* str, bool* ok, int base);
+
+/**
+ * @brief 转换为 unsigned long 类型数值
+ * @param str XString 对象指针
+ * @param ok 输出参数：转换成功则为 true，否则为 false（可为 NULL）
+ * @param base 进制（2-36，0 表示自动识别）
+ * @return 转换结果（失败返回 0）
+ */
+unsigned long XString_toULong(const XString* str, bool* ok, int base);
+
+/**
+ * @brief 转换为 unsigned long long 类型数值
+ * @param str XString 对象指针
+ * @param ok 输出参数：转换成功则为 true，否则为 false（可为 NULL）
+ * @param base 进制（2-36，0 表示自动识别）
+ * @return 转换结果（失败返回 0）
+ */
+unsigned long long XString_toULongLong(const XString* str, bool* ok, int base);
+
+/**
+ * @brief 转换为 float 类型数值
+ * @param str XString 对象指针
+ * @param ok 输出参数：转换成功则为 true，否则为 false（可为 NULL）
+ * @return 转换结果（失败返回 0.0f）
+ */
+float XString_toFloat(const XString* str, bool* ok);
+
+/**
+ * @brief 转换为 double 类型数值
+ * @param str XString 对象指针
+ * @param ok 输出参数：转换成功则为 true，否则为 false（可为 NULL）
+ * @return 转换结果（失败返回 0.0）
+ */
 double XString_toDouble(const XString* str, bool* ok);
 
-// 其他功能
+// -------------------------- 子串与容量操作函数 --------------------------
+
+/**
+ * @brief 获取字符串左侧指定长度的子串
+ * @param str 源 XString 对象指针
+ * @param n 子串长度（超过原长则返回整个字符串）
+ * @return 成功返回新的 XString 指针（子串），失败返回 NULL
+ */
 XString* XString_left(const XString* str, size_t n);
+
+/**
+ * @brief 获取字符串右侧指定长度的子串
+ * @param str 源 XString 对象指针
+ * @param n 子串长度（超过原长则返回整个字符串）
+ * @return 成功返回新的 XString 指针（子串），失败返回 NULL
+ */
 XString* XString_right(const XString* str, size_t n);
+
+/**
+ * @brief 获取从指定位置开始的子串
+ * @param str 源 XString 对象指针
+ * @param pos 起始位置
+ * @param n 子串长度（0 表示到末尾）
+ * @return 成功返回新的 XString 指针（子串），失败返回 NULL
+ */
 XString* XString_mid(const XString* str, size_t pos, size_t n);
+
+/**
+ * @brief 预留指定容量的存储空间（优化性能）
+ * @param str XString 对象指针
+ * @param capacity 预分配的字符数（不含终止符）
+ */
 void XString_reserve(XString* str, size_t capacity);
 
-// 按分隔符拆分字符串，返回字符串数组（需手动释放）
-XStringList* XString_split(const XString* str, const char* delimiter);
-// 按分隔符拆分字符串（限制最大拆分次数），返回字符串数组（需手动释放）
-XStringList* XString_split_limit(const XString* str, const char* delimiter, size_t limit);
+/**
+ * @brief 将字符串截断到指定位置
+ * @param str XString 对象指针
+ * @param position 截断位置（截断后长度为 position）
+ */
+void XString_truncate(XString* str, size_t position);
 
-// 分离共享数据（Copy-On-Write机制）
+// -------------------------- 字符串拆分函数 --------------------------
+
+/**
+ * @brief 按分隔符拆分字符串为字符串列表
+ * @param str 源 XString 对象指针
+ * @param delimiter 分隔符（UTF-8）
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 成功返回 XStringList 指针（需手动释放），失败返回 NULL
+ */
+XStringList* XString_split(const XString* str, const char* delimiter, XCharCaseSensitivity cs);
+
+/**
+ * @brief 按分隔符拆分字符串（限制最大拆分次数）
+ * @param str 源 XString 对象指针
+ * @param delimiter 分隔符（UTF-8）
+ * @param limit 最大拆分次数（0 表示不限制）
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 成功返回 XStringList 指针（需手动释放），失败返回 NULL
+ */
+XStringList* XString_split_limit(const XString* str, const char* delimiter, size_t limit, XCharCaseSensitivity cs);
+
+// -------------------------- 内部机制辅助函数 --------------------------
+
+/**
+ * @brief 分离共享数据（Copy-On-Write 机制）
+ * @details 当字符串数据被共享时，复制一份独立数据供修改，避免影响其他对象
+ * @param str XString 对象指针
+ */
 void XString_detach(XString* str);
-//释放缓存
+
+/**
+ * @brief 释放所有编码缓存
+ * @param str XString 对象指针
+ */
 void XString_deinitCache(XString* str);
-//打印
+
+// -------------------------- 打印函数 --------------------------
+
+/**
+ * @brief 打印 XString 字符串（使用本地编码）
+ * @param str XString 对象指针
+ * @return 打印的字符数（参考 printf 返回值）
+ */
 int XPrint(const XString* str);
-//打印utf8编码的字符串
+
+/**
+ * @brief 打印 UTF-8 编码字符串
+ * @param utf8_str 待打印的 UTF-8 字符串
+ * @return 打印的字符数（参考 printf 返回值）
+ */
 int XPrint_utf8(const char* utf8_str);
+
+/**
+ * @brief 格式化打印 UTF-8 字符串
+ * @param format 格式化字符串（UTF-8）
+ * @param ... 可变参数列表
+ * @return 打印的字符数（参考 printf 返回值）
+ */
 int XPrint_utf8_fmt(const char* format, ...);
-// 虚函数表初始化
+
+// -------------------------- 虚函数表初始化 --------------------------
+
+/**
+ * @brief 初始化 XString 类的虚函数表
+ * @return 虚函数表指针
+ */
 XVtable* XString_class_init();
 
 #ifdef __cplusplus
