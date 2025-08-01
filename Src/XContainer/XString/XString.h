@@ -67,11 +67,11 @@ XString* XString_create_utf8(const char* utf8_str);
 
 /**
  * @brief 从格式化 UTF-8 字符串创建 XString 对象
- * @param format 格式化字符串（类似 printf）
+ * @param utf8_format 格式化字符串（类似 printf）
  * @param ... 可变参数列表
  * @return 成功返回 XString 指针，失败返回 NULL
  */
-XString* XString_create_fmt_utf8(const char* format, ...);
+XString* XString_create_fmt_utf8(const char* utf8_format, ...);
 
 /**
  * @brief 从指定长度的 UTF-8 字符串创建 XString 对象
@@ -90,11 +90,11 @@ XString* XString_create_gbk(const char* gbk_str);
 
 /**
  * @brief 从格式化 GBK 字符串创建 XString 对象
- * @param format 格式化字符串（类似 printf）
+ * @param gbk_format 格式化字符串（类似 printf）
  * @param ... 可变参数列表
  * @return 成功返回 XString 指针，失败返回 NULL
  */
-XString* XString_create_fmt_gbk(const char* format, ...);
+XString* XString_create_fmt_gbk(const char* gbk_format, ...);
 
 /**
  * @brief 从指定长度的 GBK 字符串创建 XString 对象
@@ -116,9 +116,36 @@ void XString_init(XString* str);
  * @brief 快速定义并初始化 XString 变量的宏
  * @param name 变量名
  * @param utf8_str 初始化用的 UTF-8 字符串
+ *
+ * 宏展开后执行以下操作：
+ * 1. 声明一个XString类型的实例_##name（通过##连接符生成唯一名称，避免冲突）
+ * 2. 声明一个XString指针name，并让它指向实例_##name
+ * 3. 调用XString_init初始化该XString对象
+ * 4. 调用XString_assign_utf8用格式化字符串给XString赋值
+ *
+ * 注意：
+ * - 该宏在栈上创建XString对象，无需手动调用XMemory_malloc分配内存
+ * - 使用完毕后需根据XString的内存管理规则进行清理（如调用XString_deinit等）
  */
-#define XString_Init(name,utf8_str)  XString _##name,*name=&_##name;XString_init(name);XString_assign_utf8(name,utf8_str)
-
+#define XString_Init_Utf8(name,utf8_str)  XString _##name,*name=&_##name;XString_init(name);XString_assign_utf8(name,utf8_str)
+ /**
+  * @brief 定义一个宏，用于快速初始化并格式化赋值XString对象
+  * @param name 要创建的XString对象指针名称（宏会自动生成对应的XString实例）
+  * @param utf8_format UTF-8格式字符串（用于格式化）
+  * @param ... 格式字符串对应的可变参数列表
+  *
+  * 宏展开后执行以下操作：
+  * 1. 声明一个XString类型的实例_##name（通过##连接符生成唯一名称，避免冲突）
+  * 2. 声明一个XString指针name，并让它指向实例_##name
+  * 3. 调用XString_init初始化该XString对象
+  * 4. 调用XString_assign_fmt_utf8用格式化字符串给XString赋值
+  *
+  * 注意：
+  * - 使用##__VA_ARGS__是为了兼容GCC等编译器，在可变参数为空时自动消除多余逗号
+  * - 该宏在栈上创建XString对象，无需手动调用XMemory_malloc分配内存
+  * - 使用完毕后需根据XString的内存管理规则进行清理（如调用XString_deinit等）
+  */
+#define XString_Init_Fmt_Utf8(name,utf8_format, ...)     XString _##name,*name=&_##name;XString_init(name);XString_assign_fmt_utf8(name,utf8_format,##__VA_ARGS__)
      // -------------------------- 基础操作宏（继承自 XContainerObject） --------------------------
 
 #define XString_copy_base				    XContainerObject_copy_base	// 复制对象（基础实现）
@@ -171,12 +198,28 @@ const uint16_t* XString_utf16(const XString* str);
 // -------------------------- 字符串修改操作函数 --------------------------
 
 /**
+ * @brief 追加 XString 字符串到末尾
+ * @param str XString 对象指针
+ * @param app_str 待追加的 XString字符串
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_append(XString* str, const XString* app_str);
+
+/**
  * @brief 追加 UTF-8 字符串到末尾
  * @param str XString 对象指针
  * @param utf8_str 待追加的 UTF-8 字符串
  * @return 成功返回 true，失败返回 false
  */
 bool XString_append_utf8(XString* str, const char* utf8_str);
+
+/**
+ * @brief 替换字符串内容为指定 XString 字符串
+ * @param str XString 对象指针
+ * @param ass_str 替换用的 XString 字符串
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_assign(XString* str, const XString* ass_str);
 
 /**
  * @brief 替换字符串内容为指定 UTF-8 字符串
@@ -187,12 +230,39 @@ bool XString_append_utf8(XString* str, const char* utf8_str);
 bool XString_assign_utf8(XString* str, const char* utf8_str);
 
 /**
+ * @brief 使用UTF-8格式字符串格式化赋值给XString
+ * @param str 目标XString对象指针
+ * @param utf8_format UTF-8格式字符串
+ * @param ... 格式字符串对应的可变参数列表
+ * @return 成功返回true，失败返回false
+ * @note 会覆盖str原有的内容，内部处理内存管理和编码转换
+ */
+bool XString_assign_fmt_utf8(XString* str, const char* utf8_format, ...);
+
+/**
+ * @brief 在字符串开头前置添加 XString 字符串
+ * @param str XString 对象指针
+ * @param pre_str 待前置的 XString 字符串
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_prepend(XString* str, const XString* pre_str);
+
+/**
  * @brief 在字符串开头前置添加 UTF-8 字符串
  * @param str XString 对象指针
  * @param utf8_str 待前置的 UTF-8 字符串
  * @return 成功返回 true，失败返回 false
  */
 bool XString_prepend_utf8(XString* str, const char* utf8_str);
+
+/**
+ * @brief 在指定位置插入 XString 字符串
+ * @param str XString 对象指针
+ * @param pos 插入位置（0 表示开头，>=长度表示末尾）
+ * @param in_str 待插入的 XString 字符串
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_insert(XString* str, size_t pos, const XString* in_str);
 
 /**
  * @brief 在指定位置插入 UTF-8 字符串
@@ -211,6 +281,16 @@ bool XString_insert_utf8(XString* str, size_t pos, const char* utf8_str);
  * @return 成功返回 true，失败返回 false（位置越界或长度为 0）
  */
 bool XString_remove(XString* str, size_t pos, size_t len);
+
+/**
+ * @brief 替换字符串中的子串
+ * @param str XString 对象指针
+ * @param before 待替换的子串（XString）
+ * @param after 替换后的子串（XString）
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 成功返回 true，失败返回 false
+ */
+bool XString_replace(XString* str, const XString* before, const XString* after, XCharCaseSensitivity cs);
 
 /**
  * @brief 替换字符串中的子串
@@ -321,11 +401,29 @@ bool XString_equals(const XString* str1, const XString* str2, XCharCaseSensitivi
 /**
  * @brief 判断字符串是否以指定前缀开头
  * @param str XString 对象指针
+ * @param prefix 前缀字符串（XString）
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 是返回 true，否则返回 false
+ */
+bool XString_starts_with(const XString* str, const XString* prefix, XCharCaseSensitivity cs);
+
+/**
+ * @brief 判断字符串是否以指定前缀开头
+ * @param str XString 对象指针
  * @param prefix 前缀字符串（UTF-8）
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
 bool XString_starts_with_utf8(const XString* str, const char* prefix, XCharCaseSensitivity cs);
+
+/**
+ * @brief 判断字符串是否以指定后缀结尾
+ * @param str XString 对象指针
+ * @param suffix 后缀字符串（XString）
+ * @param cs 大小写敏感性（区分/不区分）
+ * @return 是返回 true，否则返回 false
+ */
+bool XString_ends_with(const XString* str, const XString* suffix, XCharCaseSensitivity cs);
 
 /**
  * @brief 判断字符串是否以指定后缀结尾
@@ -517,8 +615,9 @@ XString* XString_mid(const XString* str, size_t pos, size_t n);
  * @brief 预留指定容量的存储空间（优化性能）
  * @param str XString 对象指针
  * @param capacity 预分配的字符数（不含终止符）
+ *  @return 成功返回 true，失败返回 false
  */
-void XString_reserve(XString* str, size_t capacity);
+bool XString_reserve(XString* str, size_t capacity);
 
 /**
  * @brief 将字符串截断到指定位置

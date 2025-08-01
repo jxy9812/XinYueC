@@ -71,7 +71,7 @@ void XVariantListTest()
 			//XMap* map = XMap_create_XVariantMap();
 			XVariantHashMap*  map=XHashMap_create_XVariantHashMap();
 			{
-				XString_Init(str,"6666");
+				XString_Init_Utf8(str,"6666");
 				XVariant* v = XVariant_create_int(9999);
 				XMapBase_insert_move_base(map, str, v);
 				XVariant_delete(v);

@@ -568,7 +568,7 @@ XVariantMap* XVariant_toMap(XVariant* var)
 	uint8_t* ptr = var->m_data;
 	XPair* temp = ptr;
 	XVariant* tv=NULL;
-	XString_Init(str,NULL);
+	XString_Init_Utf8(str,NULL);
 	XVariant_Init(newVar, NULL, 0, 0);
 	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
 	{
@@ -601,7 +601,7 @@ XVariantHashMap* XVariant_toHash(XVariant* var)
 	uint8_t* ptr = var->m_data;
 	XPair* temp = ptr;
 	XVariant* tv = NULL;
-	XString_Init(str, NULL);
+	XString_Init_Utf8(str, NULL);
 	XVariant_Init(newVar, NULL, 0, 0);
 	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
 	{

@@ -353,28 +353,6 @@ int64_t XChar_from_gbk(const char* gbk, XChar* out, size_t max_out);
  * @return 成功写入的字节数（不含终止符），失败返回-1
  */
 int64_t XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk);
-// --------------------------
-// 平台相关编码转换函数
-// --------------------------
-#ifdef __linux__
- /**
-  * @brief 将Shift-JIS编码字符串转换为XChar数组（Linux平台，依赖iconv）
-  * @param sjis Shift-JIS编码字符串（以NULL结尾）
-  * @param out 输出的XChar数组（以code=0为终止符）
-  * @param max_out 输出数组的最大容量（含终止符）
-  * @return 成功转换的XChar数量（不含终止符），失败返回-1
-  */
- int64_t XChar_from_shiftjis(const char* sjis, XChar* out, size_t max_out);
-
- /**
-  * @brief 将XChar数组转换为Shift-JIS编码字符串（Linux平台，依赖iconv）
-  * @param ch XChar数组（以code=0为终止符）
-  * @param sjis 输出的Shift-JIS编码字符串缓冲区
-  * @param max_sjis 输出缓冲区的最大容量（含终止符）
-  * @return 成功写入的字节数（不含终止符），失败返回-1
-  */
- int64_t XChar_to_shiftjis(const XChar* ch, char* sjis, size_t max_sjis);
-#endif
 
 // --------------------------
 // 本地编码转换函数

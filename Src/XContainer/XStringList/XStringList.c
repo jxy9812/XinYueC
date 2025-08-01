@@ -43,17 +43,17 @@ void XStringList_init(XStringList* this_stringVector)
 }
 void XStringList_push_front_c_str(XStringList* this_stringVector, const char* str)
 {
-	XString_Init(string,str);
+	XString_Init_Utf8(string,str);
 	XStringList_push_front_move_base(this_stringVector, string);
 }
 void XStringList_push_back_c_str(XStringList* this_stringVector, const char* str)
 {
-	XString_Init(string, str);
+	XString_Init_Utf8(string, str);
 	XStringList_push_back_move_base(this_stringVector, string);
 }
 void XStringList_insert_c_str(XStringList* this_stringVector, int64_t index, const char* str)
 {
-	XString_Init(string, str);
+	XString_Init_Utf8(string, str);
 	XStringList_insert_move_base(this_stringVector,index, string);
 }
 

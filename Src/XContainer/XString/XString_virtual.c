@@ -11,7 +11,6 @@
 #define XString_cdata(str) ((const XChar*)XContainerDataPtr(str))
 // 获取可修改的内部XChar数组
 XChar* XString_data(XString* str);
-XString* XString_copy(const XString* other);
 
 // 前向声明
 static XChar VXString_At(const XString* str, size_t index);
@@ -196,12 +195,29 @@ static void VXClass_deinit(XString* str) {
 }
 
 // 容器方法：清空
-static void VXContainerObject_clear(XString* str) {
+static void VXContainerObject_clear(XString* str)
+{
     if (!str) return;
 
-    XString_detach(str);
+    // 无需操作空字符串
+    if (XString_isEmpty_base(str)) 
+    {
+        XString_deinitCache(str); // 仅清理缓存
+        return;
+    }
 
-    if (XContainerDataPtr(str)) {
+    //XString_detach(str);
+    if (str->m_is_shared)
+    {
+        XContainerDataPtr(str) = NULL;
+        XContainerSize(str) = 0;
+        XContainerCapacity(str) = 0;
+        str->m_ref_count = (int*)XMemory_malloc(sizeof(int));
+        *str->m_ref_count = 1;
+        str->m_is_shared = false;
+    }
+    else if (XContainerDataPtr(str)) 
+    {
         XMemory_free(XContainerDataPtr(str));
         XContainerDataPtr(str) = NULL;
         XContainerSize(str) = 0;
