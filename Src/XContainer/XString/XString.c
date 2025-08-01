@@ -3,6 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <limits.h>
+#include <float.h>
+#include <math.h>
 #include "XStringList.h"
 
 #ifdef _WIN32
@@ -17,6 +20,20 @@
 #define XString_cdata(str) ((const XChar*)XContainerDataPtr(str))
 #define XString_copy        XString_create
 
+// -------------------------- 内部机制辅助函数 --------------------------
+
+/**
+ * @brief 分离共享数据（Copy-On-Write 机制）
+ * @details 当字符串数据被共享时，复制一份独立数据供修改，避免影响其他对象
+ * @param str XString 对象指针
+ */
+void XString_detach(XString* str);
+
+/**
+ * @brief 释放所有编码缓存
+ * @param str XString 对象指针
+ */
+void XString_deinitCache(XString* str);
 // 获取可修改的内部XChar数组
 XChar* XString_data(XString* str);
 // 辅助函数：计算KMP前缀表
@@ -174,7 +191,7 @@ XString* XString_create_fmt_utf8(const char* format, ...)
 void XString_init(XString* str)
 {
     if (!str) return;
-    XContainerObject_init(&str->parent, sizeof(XChar));
+    XContainerObject_init(str, sizeof(XChar));
     str->m_ref_count = (int*)XMemory_malloc(sizeof(int));
     *str->m_ref_count = 1;
     str->m_is_shared = false;
@@ -347,8 +364,34 @@ const char* XString_toLocal(const XString* str)
 XChar XString_at(const XString* str, size_t index) 
 {
     if (!str || index >= XString_length_base(str)) 
-        return XChar_from(0);
+        return XCharNULL;
     return XClassGetVirtualFunc(str, EXString_At, XChar(*)(const XString*, size_t))(str, index);
+}
+
+XChar XString_front(const XString* str)
+{
+    // 检查字符串指针有效性及是否为空
+    if (!str || XString_isEmpty_base(str)) 
+    {
+        return XCharNULL; // 返回空字符（code为0的XChar）
+    }
+
+    // 获取字符串的首个字符（索引为0）
+    return XString_at(str, 0);
+}
+
+XChar XString_back(const XString* str)
+{
+    // 检查字符串是否有效且非空
+    if (!str || XString_isEmpty_base(str)) 
+    {
+        return XCharNULL; // 返回空字符
+    }
+
+    // 获取字符串长度（不含终止符）
+    size_t len = XString_length_base(str);
+    // 返回最后一个字符（索引为长度-1）
+    return XString_at(str, len - 1);
 }
 
 const XChar* XString_unicode(const XString* str)
@@ -425,13 +468,13 @@ bool XString_append_utf8(XString* str, const char* utf8_str)
     if (result <= 0) {
         // 转换失败时恢复原长度和终止符
         XContainerSize(str) = current_size;
-        data[current_size].code = 0;
+        data[current_size]=XCharNULL;
         return false;
     }
 
     // 更新字符串长度和终止符
     XContainerSize(str) = new_size;
-    data[new_size].code = 0;
+    data[new_size]=XCharNULL;
 
     XString_deinitCache(str);
     return true;
@@ -469,7 +512,7 @@ bool XString_assign(XString* str, const XString* ass_str)
 
     // 更新长度和终止符
     XContainerSize(str) = ass_len;
-    dest_data[ass_len].code = 0;
+    dest_data[ass_len]=XCharNULL;
 
     // 清除缓存（内容已修改）
     XString_deinitCache(str);
@@ -502,13 +545,13 @@ bool XString_assign_utf8(XString* str, const char* utf8_str)
     if (result <= 0) {
         // 转换失败时保持清空状态
         XContainerSize(str) = 0;
-        data[0].code = 0;
+        data[0]=XCharNULL;
         return false;
     }
 
     // 设置长度和终止符
     XContainerSize(str) = (size_t)xchar_count;
-    data[xchar_count].code = 0;
+    data[xchar_count]=XCharNULL;
 
     XString_deinitCache(str);
     return true;
@@ -592,7 +635,7 @@ bool XString_prepend(XString* str, const XString* pre_str)
 
     // 更新长度和终止符
     XContainerSize(str) = new_len;
-    data[new_len].code = 0;
+    data[new_len]=XCharNULL;
 
     // 清除缓存（内容已修改）
     XString_deinitCache(str);
@@ -652,7 +695,7 @@ bool XString_insert(XString* str, size_t pos, const XString* in_str)
 
     // 更新长度和终止符
     XContainerSize(str) = new_len;
-    data[new_len].code = 0;
+    data[new_len]=XCharNULL;
 
     // 清除缓存（内容已修改）
     XString_deinitCache(str);
@@ -682,7 +725,7 @@ bool XString_insert_utf8(const XString* str, size_t pos, const char* utf8_str)
     memcpy(data + pos, XString_cdata(insert_str), insert_len * sizeof(XChar));
 
     XContainerSize(str) = new_size;
-    XString_data(str)[new_size].code = 0;
+    XString_data(str)[new_size]=XCharNULL;
 
     XString_deinitCache(str);
 
@@ -1098,6 +1141,54 @@ int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_
     return result;
 }
 
+bool XString_contains(const XString* str, const XString* substr, XCharCaseSensitivity cs)
+{
+    if (!str || !substr) return false;
+
+    size_t str_len = XString_length_base(str);
+    size_t substr_len = XString_length_base(substr);
+
+    // 子串为空时，任何字符串都视为包含空串
+    if (substr_len == 0) return true;
+    // 子串长于源字符串时，不可能包含
+    if (substr_len > str_len) return false;
+
+    const XChar* text = XString_cdata(str);       // 源字符串的XChar数组
+    const XChar* pattern = XString_cdata(substr); // 子串的XChar数组
+
+    // 分配KMP算法所需的前缀表
+    int* prefix = (int*)XMemory_malloc(substr_len * sizeof(int));
+    if (!prefix) return false;
+
+    // 计算前缀表（用于KMP搜索）
+    compute_prefix(pattern, substr_len, prefix, cs);
+
+    // 执行KMP搜索，从位置0开始查找
+    int64_t found_pos = kmp_search(text, str_len, pattern, substr_len, prefix, cs, 0);
+
+    // 释放前缀表内存
+    XMemory_free(prefix);
+
+    // 找到匹配位置则返回true
+    return found_pos != -1;
+}
+
+bool XString_contains_utf8(const XString* str, const char* utf8_substr, XCharCaseSensitivity cs)
+{
+    if (!utf8_substr) return false;
+
+    // 将UTF-8子串转换为XString以便统一处理
+    XString* substr = XString_create_utf8(utf8_substr);
+    if (!substr) return false;
+
+    // 调用核心实现
+    bool result = XString_contains(str, substr, cs);
+
+    // 释放临时创建的XString
+    XString_delete_base(substr);
+    return result;
+}
+
 int XString_compare(const XString* str1, const XString* str2) 
 {
     if (!str1 && !str2) 
@@ -1229,6 +1320,144 @@ bool XString_ends_with_utf8(const XString* str, const char* suffix, XCharCaseSen
 
     XString_delete_base(suffix_str);
     return result;
+}
+
+bool XString_isLower(const XString* str)
+{
+    if (!str || XString_isEmpty_base(str)) {
+        return false; // 空字符串返回false
+    }
+
+    size_t len = XString_length_base(str);
+    const XChar* chars = XString_cdata(str);
+    bool has_letter = false; // 标记是否存在可大小写转换的字母
+
+    for (size_t i = 0; i < len; ++i) {
+        const XChar* ch = &chars[i];
+        if (XChar_is_letter(ch)) { // 仅检查字母字符
+            has_letter = true;
+            if (!XChar_is_lower(ch)) { // 发现大写字母则直接返回false
+                return false;
+            }
+        }
+        // 忽略非字母字符（数字、符号等不影响结果）
+    }
+
+    // 必须至少包含一个字母字符且全为小写
+    return has_letter;
+}
+
+bool XString_isUpper(const XString* str)
+{
+    if (!str || XString_isEmpty_base(str)) {
+        return false; // 空字符串返回false
+    }
+
+    size_t len = XString_length_base(str);
+    const XChar* chars = XString_cdata(str);
+    bool has_letter = false; // 标记是否存在可大小写转换的字母
+
+    for (size_t i = 0; i < len; ++i) {
+        const XChar* ch = &chars[i];
+        // 跳过代理字符（已在XChar层级处理完整字符）
+        if (XChar_is_surrogate(ch)) {
+            continue;
+        }
+        if (XChar_is_letter(ch)) { // 仅检查字母字符
+            has_letter = true;
+            if (!XChar_is_upper(ch)) { // 发现小写字母则直接返回false
+                return false;
+            }
+        }
+        // 忽略非字母字符（数字、符号等不影响结果）
+    }
+
+    // 必须至少包含一个字母字符且全为大写
+    return has_letter;
+}
+
+bool XString_isNull(const XString* str)
+{
+    // 指针为NULL直接判定为null
+    if (!str) 
+    {
+        return true;
+    }
+
+    // 检查内部数据指针是否未初始化（根据XContainerObject结构特性）
+    // 结合XString_init逻辑，未初始化的对象其数据指针可能为NULL
+    if (XContainerDataPtr(str) == NULL) {
+        return true;
+    }
+
+    // 检查引用计数是否异常（未初始化的对象可能无引用计数）
+    if (str->m_ref_count == NULL) {
+        return true;
+    }
+
+    return false;
+}
+
+bool XString_isValidUtf16(const XString* str)
+{
+    if (!str || XString_isNull(str)) {
+        return false; // 空指针或未初始化字符串视为无效
+    }
+
+    size_t len = XString_length_base(str);
+    const XChar* chars = XString_cdata(str);
+
+    for (size_t i = 0; i < len; ++i) {
+        const XChar* ch = &chars[i];
+        // 检查高代理字符
+        if (XChar_is_high_surrogate(ch)) {
+            // 高代理后面必须跟一个低代理，且不能是最后一个字符
+            if (i + 1 >= len || !XChar_is_low_surrogate(&chars[i + 1])) {
+                return false;
+            }
+            i++; // 跳过下一个低代理，避免重复检查
+        }
+        // 检查孤立的低代理字符（前面没有高代理）
+        else if (XChar_is_low_surrogate(ch)) {
+            return false;
+        }
+        // 其他字符无需特殊处理（包括基本平面字符）
+    }
+
+    return true;
+}
+
+bool XString_isRightToLeft(const XString* str)
+{
+    if (!str || XString_isEmpty_base(str)) {
+        return false; // 空字符串或无效指针返回false
+    }
+
+    size_t len = XString_length_base(str);
+    const XChar* chars = XString_cdata(str);
+
+    // 遍历字符串中的每个字符，检查是否包含强RTL（从右到左）字符
+    for (size_t i = 0; i < len; ++i) {
+        const XChar* ch = &chars[i];
+        uint16_t code = ch->code;
+
+        // 检查是否属于强RTL字符范围（参考Unicode标准）
+        // 希伯来语及相关：0x0590-0x05FF
+        // 阿拉伯语及相关：0x0600-0x06FF
+        // 叙利亚语：0x0700-0x074F
+        // Thaana（马尔代夫语）：0x0780-0x07BF
+        // 阿拉伯语呈现形式：0xFB1D-0xFDFF、0xFE70-0xFEFF
+        if ((code >= 0x0590 && code <= 0x05FF) ||
+            (code >= 0x0600 && code <= 0x06FF) ||
+            (code >= 0x0700 && code <= 0x074F) ||
+            (code >= 0x0780 && code <= 0x07BF) ||
+            (code >= 0xFB1D && code <= 0xFDFF) ||
+            (code >= 0xFE70 && code <= 0xFEFF)) {
+            return true; // 发现RTL字符，立即返回true
+        }
+    }
+
+    return false; // 未发现任何RTL字符
 }
 
 XString* XString_toLower(const XString* str) {
@@ -1468,8 +1697,188 @@ double XString_toDouble(const XString* str, bool* ok) {
     }
     return 0.0;
 }
+// 字符映射表（用于进制转换）
+static const char g_digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
 
-XString* XString_left(const XString* str, size_t n) {
+/**
+ * @brief 无符号整数转换辅助函数（内部使用）
+ * @param str 目标XString对象
+ * @param num 要转换的无符号整数
+ * @param base 进制（2-36）
+ * @return 转换成功返回true，失败返回false
+ */
+static bool XString_setNum_unsigned(XString* str, unsigned long long num, int base) {
+    if (!str || base < 2 || base > 36) {
+        return false;
+    }
+
+    // 清空字符串
+    XString_clear_base(str);
+
+    // 处理0值特殊情况
+    if (num == 0) {
+        XChar zero = XCharNULL;
+        return XString_push_back_base(str, zero);
+    }
+
+    // 临时存储转换后的字符（逆序）
+    XChar temp[64];
+    size_t temp_len = 0;
+
+    // 转换为指定进制（逆序存储）
+    while (num > 0 && temp_len < sizeof(temp) / sizeof(XChar)) {
+        unsigned int remainder = num % base;
+        temp[temp_len++] = XChar_from(g_digits[remainder]);
+        num /= base;
+    }
+
+    // 将逆序字符反转后添加到字符串
+    for (int i = temp_len - 1; i >= 0; --i) {
+        if (!XString_push_back_base(str, temp[i])) {
+            return false;
+        }
+    }
+
+    return true;
+}
+bool XString_setNum_int(XString* str, int n, int base)
+{
+    if (base < 2 || base > 36) {
+        return false;
+    }
+
+    // 处理负数（仅10进制支持负数）
+    bool is_negative = (n < 0 && base == 10);
+    unsigned long long num;
+
+    // 处理最小负数溢出问题
+    if (is_negative) {
+        num = (unsigned long long)(-(long long)n); // 扩展为long long避免溢出
+    }
+    else {
+        num = (unsigned long long)n;
+    }
+
+    // 调用无符号转换函数
+    if (!XString_setNum_unsigned(str, num, base)) {
+        return false;
+    }
+
+    // 添加负号
+    if (is_negative) {
+        return XString_push_front_base(str, XChar_from('-'));
+    }
+
+    return true;
+}
+
+bool XString_setNum_uInt(XString* str, unsigned int n, int base)
+{
+    return XString_setNum_unsigned(str, (unsigned long long)n, base);
+}
+
+bool XString_setNum_long(XString* str, long n, int base)
+{
+    if (base < 2 || base > 36) {
+        return false;
+    }
+
+    bool is_negative = (n < 0 && base == 10);
+    unsigned long long num = is_negative ? (unsigned long long)(-n) : (unsigned long long)n;
+
+    if (!XString_setNum_unsigned(str, num, base)) {
+        return false;
+    }
+
+    if (is_negative) {
+        return XString_push_front_base(str, XChar_from('-'));
+    }
+
+    return true;
+}
+
+bool XString_setNum_uLong(XString* str, unsigned long n, int base)
+{
+    return XString_setNum_unsigned(str, (unsigned long long)n, base);
+}
+
+bool XString_setNum_llong(XString* str, long long n, int base)
+{
+    if (base < 2 || base > 36) {
+        return false;
+    }
+
+    bool is_negative = (n < 0 && base == 10);
+    unsigned long long num = is_negative ? (unsigned long long)(-n) : (unsigned long long)n;
+
+    if (!XString_setNum_unsigned(str, num, base)) {
+        return false;
+    }
+
+    if (is_negative) {
+        return XString_push_front_base(str, XChar_from('-'));
+    }
+
+    return true;
+}
+
+bool XString_setNum_uLLong(XString* str, unsigned long long n, int base)
+{
+    return XString_setNum_unsigned(str, n, base);
+}
+
+bool XString_setNum_float(XString* str, float f, char format, int precision)
+{
+    // 转换为double处理，避免精度损失
+    return XString_setNum_double(str, (double)f, format, precision);
+}
+
+bool XString_setNum_double(XString* str, double d, char format, int precision)
+{
+    if (!str) {
+        return false;
+    }
+
+    // 检查格式字符有效性，默认使用'g'
+    if (format != 'e' && format != 'E' && format != 'f' && format != 'F' &&
+        format != 'g' && format != 'G') {
+        format = 'g';
+    }
+
+    // 限制精度范围（0-30，超出范围使用默认值6）
+    if (precision < 0 || precision > 30) {
+        precision = 6;
+    }
+
+    // 处理特殊值（NaN和无穷大）
+    if (isnan(d)) {
+        return XString_assign_utf8(str, "nan");
+    }
+    if (isinf(d)) {
+        return XString_assign_utf8(str, d > 0 ? "inf" : "-inf");
+    }
+
+    // 构建格式字符串（例如："%.6g"、"%.2f"）
+    char fmt[16];
+    snprintf(fmt, sizeof(fmt), "%%.%d%c", precision, format);
+    if (fmt[0] == '\0') { // 格式字符串构建失败
+        return false;
+    }
+
+    // 格式化浮点数到缓冲区
+    char buf[256];
+    int len = snprintf(buf, sizeof(buf), fmt, d);
+    // 检查格式化结果（len需在有效范围内，且缓冲区未溢出）
+    if (len <= 0 || len >= (int)sizeof(buf)) {
+        return false;
+    }
+
+    // 赋值到XString
+    return XString_assign_utf8(str, buf);
+}
+
+XString* XString_left(const XString* str, size_t n)
+{
     if (!str || n == 0) return XString_create_utf8("");
     n = (n > XString_length_base(str)) ? XString_length_base(str) : n;
     return XString_mid(str, 0, n);
@@ -1506,21 +1915,60 @@ XString* XString_mid(const XString* str, size_t pos, size_t n)
 // 预分配空间（额外+1存储结束符）
 bool XString_reserve(XString* str, size_t capacity)
 {
-    if (!str || capacity <= XContainerCapacity(&str->parent)) return false;
+    if (!str || capacity <= XContainerCapacity(str)) 
+        return false;
 
     XString_detach(str);  // 确保可修改
-    // 新容量 = 实际需要容量 + 1（结束符），且不小于最小容量
+    // 新容量，且不小于最小容量
     size_t new_capacity = (capacity < XSTRING_MIN_CAPACITY) ? XSTRING_MIN_CAPACITY : capacity;
-    new_capacity += 1;  // 预留结束符位置
-    XChar* new_data = (XChar*)XMemory_realloc(XString_data(str), new_capacity * sizeof(XChar));
+    XChar* new_data = NULL;
+    // 实际需要容量= 新容量 + 1（结束符）
+    if (XString_cdata(str) == NULL)
+        new_data = XMemory_malloc((new_capacity + 1) * sizeof(XChar));
+    else
+        new_data = (XChar*)XMemory_realloc(XString_data(str), (new_capacity + 1) * sizeof(XChar));
+    
     if (new_data) 
     {
-        str->parent.m_data = new_data;
-        str->parent.m_capacity = new_capacity;
+        XContainerDataPtr(str)=new_data;
+        XContainerCapacity(str)=new_capacity;
         // 设置结束符（当前有效长度位置）
-        new_data[XString_length_base(str)] = (XChar){ 0 };
+        new_data[XString_length_base(str)] = XCharNULL;
     }
     return new_data != NULL;
+}
+
+void XString_resize(XString* str, size_t size)
+{
+    if (!str) return;
+
+    // 如果当前长度与目标长度相同，无需操作
+    size_t current_size = XString_length_base(str);
+    if (current_size == size) {
+        return;
+    }
+
+    XString_detach(str); // 确保拥有独立数据，避免影响共享实例
+
+    if (size > current_size) {
+        // 扩展字符串：预留空间并填充空字符
+        XString_reserve(str, size);
+        XChar* data = XString_data(str);
+        // 从当前末尾到新长度的位置填充空字符
+        for (size_t i = current_size; i < size; ++i) {
+            data[i] = XChar_from(0); // 空字符初始化
+        }
+    }
+    else {
+        // 缩短字符串：直接调整长度并设置新的终止符
+        // （无需修改原有数据，仅调整长度标记）
+    }
+
+    // 更新长度并设置终止符（无论扩展还是缩短）
+    XContainerSize(str) = size;
+    XString_data(str)[size]=XCharNULL; // 确保终止符存在
+
+    XString_deinitCache(str); // 失效缓存，因为内容已改变
 }
 
 void XString_truncate(XString* str, size_t position)

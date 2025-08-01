@@ -9,6 +9,20 @@
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量
 #define XString_cdata(str) ((const XChar*)XContainerDataPtr(str))
+
+/**
+ * @brief 分离共享数据（Copy-On-Write 机制）
+ * @details 当字符串数据被共享时，复制一份独立数据供修改，避免影响其他对象
+ * @param str XString 对象指针
+ */
+void XString_detach(XString* str);
+
+/**
+ * @brief 释放所有编码缓存
+ * @param str XString 对象指针
+ */
+void XString_deinitCache(XString* str);
+
 // 获取可修改的内部XChar数组
 XChar* XString_data(XString* str);
 
@@ -52,7 +66,7 @@ static bool VXString_PushBack(XString* str, XChar ch)
     data[XString_length_base(str)] = ch;
 
     XContainerSize(str) = new_size;
-    XString_data(str)[new_size].code = 0;
+    XString_data(str)[new_size]=XCharNULL;
 
     XString_deinitCache(str);
     return true;
@@ -66,7 +80,7 @@ static bool VXString_PopBack(XString* str)
     XString_detach(str);
 
     XContainerSize(str) -= 1;
-    XString_data(str)[XContainerSize(str)].code = 0;
+    XString_data(str)[XContainerSize(str)]=XCharNULL;
 
     XString_deinitCache(str);
     return true;
@@ -85,7 +99,7 @@ static bool VXString_PushFront(XString* str, XChar ch) {
     data[0] = ch;
 
     XContainerSize(str) = new_size;
-    XString_data(str)[new_size].code = 0;
+    XString_data(str)[new_size]=XCharNULL;
 
     XString_deinitCache(str);
     return true;
@@ -102,7 +116,7 @@ static bool VXString_PopFront(XString* str) {
     memmove(data, data + 1, new_size * sizeof(XChar));
 
     XContainerSize(str) = new_size;
-    XString_data(str)[new_size].code = 0;
+    XString_data(str)[new_size]=XCharNULL;
 
     XString_deinitCache(str);
     return true;
@@ -122,7 +136,7 @@ static bool VXString_Remove(XString* str, size_t pos, size_t len) {
     memmove(data + pos, data + pos + actual_len, (new_size - pos) * sizeof(XChar));
 
     XContainerSize(str) = new_size;
-    XString_data(str)[new_size].code = 0;
+    XString_data(str)[new_size]=XCharNULL;
 
     XString_deinitCache(str);
     return true;
@@ -166,7 +180,8 @@ static void VXClass_move(XString* object, XString* src)
 }
 
 // 类方法：销毁
-static void VXClass_deinit(XString* str) {
+static void VXClass_deinit(XString* str) 
+{
     if (!str) return;
 
     if (str->m_ref_count) 
@@ -218,10 +233,8 @@ static void VXContainerObject_clear(XString* str)
     }
     else if (XContainerDataPtr(str)) 
     {
-        XMemory_free(XContainerDataPtr(str));
-        XContainerDataPtr(str) = NULL;
         XContainerSize(str) = 0;
-        XContainerCapacity(str) = 0;
+        ((XChar*)XContainerDataPtr(str))[XString_length_base(str)] = XCharNULL;
     }
 
     XString_deinitCache(str);

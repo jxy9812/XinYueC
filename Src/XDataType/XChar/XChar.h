@@ -25,6 +25,8 @@ typedef struct XChar
 {
     uint16_t code;  // 存储UTF-16编码值（可能是代理对的一部分）
 } XChar;
+//XChar 空(0)
+#define XCharNULL   (XChar) { 0 }
 
 // --------------------------
 // XChar实例创建函数

@@ -182,6 +182,20 @@ void XString_init(XString* str);
 XChar XString_at(const XString* str, size_t index);
 
 /**
+ * @brief 获取XString的第一个字符
+ * @param str XString对象指针
+ * @return 返回第一个XChar字符，如果字符串为空或指针无效则返回空字符
+ * @note 与QString::front()行为一致，返回字符串的首字符
+ */
+XChar XString_front(const XString* str);
+
+/**
+ * @brief 获取XString的最后一个字符（类似QString::back()）
+ * @param str XString对象指针
+ * @return 返回最后一个XChar字符，如果字符串为空则返回空字符
+ */
+XChar XString_back(const XString* str);
+/**
  * @brief 获取内部存储的 Unicode 字符数组（XChar 数组）
  * @param str XString 对象指针
  * @return 常量 XChar 数组指针（以 code=0 终止）
@@ -370,7 +384,23 @@ int64_t XString_last_index_of(const XString* str, const XString* substr, size_t 
  * @return 成功返回子串起始索引，失败返回 -1
  */
 int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_t from, XCharCaseSensitivity cs);
-
+/**
+ * @brief 检查字符串是否包含指定子串
+ * @param str 源字符串
+ * @param substr 要查找的子串
+ * @param cs 大小写敏感性（XCharCaseSensitive/XCharCaseInsensitive）
+ * @return 包含返回true，否则返回false
+ * @note 行为类似QString::contains，支持大小写敏感/不敏感匹配
+ */
+bool XString_contains(const XString* str, const XString* substr, XCharCaseSensitivity cs);
+/**
+ * @brief 重载版本：检查字符串是否包含UTF-8编码的子串
+ * @param str 源字符串
+ * @param utf8_substr 要查找的UTF-8编码子串
+ * @param cs 大小写敏感性
+ * @return 包含返回true，否则返回false
+ */
+bool XString_contains_utf8(const XString* str, const char* utf8_substr, XCharCaseSensitivity cs);
 // -------------------------- 字符串比较操作函数 --------------------------
 
 /**
@@ -433,6 +463,45 @@ bool XString_ends_with(const XString* str, const XString* suffix, XCharCaseSensi
  * @return 是返回 true，否则返回 false
  */
 bool XString_ends_with_utf8(const XString* str, const char* suffix, XCharCaseSensitivity cs);
+
+/**
+ * @brief 判断检查当前检查字符串是否全部由小写字符组成
+ * @param str 要检查的XString对象指针
+ * @return 若字符串非空且所有可大小写转换的字符均为小写，返回true；否则返回false
+ * @note 空字符串返回false，忽略无法大小写转换的字符（如数字、符号等）
+ */
+bool XString_isLower(const XString* str);
+
+/**
+ * @brief 判断字符串是否全部由大写字符组成
+ * @param str 要检查的XString对象指针
+ * @return 若字符串非空且所有可大小写转换的字符均为大写，返回true；否则返回false
+ * @note 空字符串返回false，忽略无法大小写转换的字符（如数字、符号等）
+ */
+bool XString_isUpper(const XString* str);
+
+/**
+ * @brief 判断XString是否为null
+ * @param str 要检查的XString对象指针
+ * @return 若字符串指针为NULL或内部数据未初始化，返回true；否则返回false
+ * @note 与isEmpty()的区别：isNull()强调指针指针有效性或初始化状态，isEmpty()强调长度为0
+ */
+bool XString_isNull(const XString* str);
+
+/**
+ * @brief 检查字符串是否包含有效的UTF-16编码序列 * @param str 要检查的XString对象指针
+ * @return 若字符串是有效的UTF-16编码则返回true，否则返回false
+ * @note 检查代理对的完整性
+ */
+bool XString_isValidUtf16(const XString* str);
+
+/**
+ * @brief 判断字符串是否包含从右到左(RTL)书写的字符
+ * @param str 要检查的XString对象指针
+ * @return 若字符串包含强从右到左书写的字符，返回true；否则返回false
+ * @note 主要用于识别阿拉伯语、希伯来语等从右到左书写的文本
+ */
+bool XString_isRightToLeft(const XString* str);
 
 // -------------------------- 编码转换函数 --------------------------
 
@@ -584,6 +653,73 @@ float XString_toFloat(const XString* str, bool* ok);
  */
 double XString_toDouble(const XString* str, bool* ok);
 
+// -------------------------- 数值转字符串函数 --------------------------
+/**
+ * @brief 将int类型转换为字符串并设置XString
+ * @param str 目标XString对象
+ * @param n 要转换的整数
+ * @param base 进制（2-36，默认为10）
+ * @return 成功返回true，失败返回false
+ */
+bool XString_setNum_int(XString* str, int n, int base);
+/**
+ * @brief 将unsigned int类型转换为字符串并设置XString
+ * @param str 目标XString对象
+ * @param n 要转换的无符号整数
+ * @param base 进制（2-36，默认为10）
+ * @return 成功返回true，失败返回false
+ */
+bool XString_setNum_uInt(XString* str, unsigned int n, int base);
+/**
+ * @brief 将long类型转换为字符串并设置XString
+ * @param str 目标XString对象
+ * @param n 要转换的长整数
+ * @param base 进制（2-36，默认为10）
+ * @return 成功返回true，失败返回false
+ */
+bool XString_setNum_long(XString* str, long n, int base);
+/**
+ * @brief 将unsigned long类型转换为字符串并设置XString
+ * @param str 目标XString对象
+ * @param n 要转换的无符号长整数
+ * @param base 进制（2-36，默认为10）
+ * @return 成功返回true，失败返回false
+ */
+bool XString_setNum_uLong(XString* str, unsigned long n, int base);
+/**
+ * @brief 将long long类型转换为字符串并设置XString
+ * @param str 目标XString对象
+ * @param n 要转换的长长整数
+ * @param base 进制（2-36，默认为10）
+ * @return 成功返回true，失败返回false
+ */
+bool XString_setNum_llong(XString* str, long long n, int base);
+/**
+ * @brief 将unsigned long long类型转换为字符串并设置XString
+ * @param str 目标XString对象
+ * @param n 要转换的无符号长长整数
+ * @param base 进制（2-36，默认为10）
+ * @return 成功返回true，失败返回false
+ */
+bool XString_setNum_uLLong(XString* str, unsigned long long n, int base);
+/**
+ * @brief 将float类型转换为字符串并设置XString
+ * @param str 目标XString对象
+ * @param f 要转换的浮点数
+ * @param format 格式字符（'e'/'E'科学计数, 'f'/'F'固定点, 'g'/'G'自动选择）
+ * @param precision 精度（小数位数，默认为6）
+ * @return 成功返回true，失败返回false
+ */
+bool XString_setNum_float(XString* str, float f, char format, int precision);
+/**
+ * @brief 将double类型转换为字符串并设置XString
+ * @param str 目标XString对象
+ * @param d 要转换的双精度浮点数
+ * @param format 格式字符（'e'/'E'科学计数, 'f'/'F'固定点, 'g'/'G'自动选择）
+ * @param precision 精度（小数位数，默认为6）
+ * @return 成功返回true，失败返回false
+ */
+bool XString_setNum_double(XString* str, double d, char format, int precision);
 // -------------------------- 子串与容量操作函数 --------------------------
 
 /**
@@ -620,6 +756,14 @@ XString* XString_mid(const XString* str, size_t pos, size_t n);
 bool XString_reserve(XString* str, size_t capacity);
 
 /**
+ * @brief 调整XString的长度
+ * @param str 目标XString对象指针
+ * @param size 新的长度（以XChar为单位）
+ * @note 若新长度大于当前长度，将用空字符填充；若小于当前长度，将截断短字符串
+ */
+void XString_resize(XString* str, size_t size);
+
+/**
  * @brief 将字符串截断到指定位置
  * @param str XString 对象指针
  * @param position 截断位置（截断后长度为 position）
@@ -646,21 +790,6 @@ XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar
  * @return 成功返回 XStringList 指针（需手动释放），失败返回 NULL
  */
 XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter, size_t limit, XCharCaseSensitivity cs);
-
-// -------------------------- 内部机制辅助函数 --------------------------
-
-/**
- * @brief 分离共享数据（Copy-On-Write 机制）
- * @details 当字符串数据被共享时，复制一份独立数据供修改，避免影响其他对象
- * @param str XString 对象指针
- */
-void XString_detach(XString* str);
-
-/**
- * @brief 释放所有编码缓存
- * @param str XString 对象指针
- */
-void XString_deinitCache(XString* str);
 
 // -------------------------- 打印函数 --------------------------
 

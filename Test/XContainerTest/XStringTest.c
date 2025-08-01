@@ -27,9 +27,13 @@ void XStringTest()
 				XStringList_iterator_for_each(v, XFor_each_XString, NULL);
 				XStringList_delete_base(v);
 			}
-			XString_delete_base(str);
 		}
 		//continue;
+		XString_setNum_int(str,66666,2);
+		XPrint(str);
+		XString_setNum_double(str, 66666.153456,'f', 2);
+		XPrint(str);
+		XString_delete_base(str);
 	}
 	{
 		XString* str = XString_create_fmt_utf8("你好%d %d\n",121,9);
@@ -45,7 +49,7 @@ void XStringTest()
 	XString_append_utf8(str, "111");
 	//XString_push_front_base(str, '#');
 	//XString_push_back_base(str, '!');
-	//XString_insert_base(str,0,"12121ni_");
+	XString_insert_utf8(str,1,"12121ni_");
 	XPrint(str);
 	XString_pop_front_base(str);
 	XString_pop_back_base(str);
