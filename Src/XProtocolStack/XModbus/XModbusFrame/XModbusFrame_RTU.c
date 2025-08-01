@@ -454,13 +454,13 @@ XString* XModbusFrameRTU_to16HexString(XByteArray* frame)
 	if (frame && !XVector_isEmpty_base(frame))
 	{
 		XByteArray* vector = frame;
-		XString* str = XString_create(NULL);
+		XString* str = XString_create_utf8(NULL);
 		char buff[10];
 		//for (XVector_iterator* it = XVector_begin(vector); it != XVector_end(vector); it = XVector_iterator_add(vector, it))
 		for_each_iterator(vector, XVector, it)
 		{
 			sprintf(buff, "%02X ", *((uint8_t*)XVector_iterator_data(&it)));
-			XString_append_base(str, buff);
+			XString_append_utf8(str, buff);
 		}
 		XString_pop_back_base(str);
 		return str;

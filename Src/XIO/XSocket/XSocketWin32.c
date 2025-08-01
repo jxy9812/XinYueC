@@ -95,7 +95,7 @@ void VXSocketBase_connectToHost(XSocket* so, const char* hostName, uint16_t port
         return;
     XSocketBase* base = (XSocketBase*)so;
     XString_clear_base(base->m_peerName);
-    XString_append_base(base->m_peerName, hostName);
+    XString_append_utf8(base->m_peerName, hostName);
     base->m_peerPort = port;
     XIODeviceBase_open_base((XIODeviceBase*)so, mode);
 }
@@ -622,7 +622,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
             inet_ntop(AF_INET6, addrPtr, ipStr, sizeof(ipStr));
         }
 
-        base->m_peerAddress = XString_create(ipStr);
+        base->m_peerAddress = XString_create_utf8(ipStr);
         break;
     }
 

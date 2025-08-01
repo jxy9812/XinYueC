@@ -31,11 +31,11 @@ typedef struct XChar
 // --------------------------
 
 /**
- * @brief 从wchar_t创建XChar实例
- * @param code wchar_t类型的字符编码（通常为UTF-16）
+ * @brief 从uint16_t创建XChar实例
+ * @param code uint16_t类型的字符编码（通常为UTF-16）
  * @return 对应的XChar结构
  */
-XChar XChar_from(wchar_t code);
+XChar XChar_from(uint16_t code);
 
 /**
  * @brief 从Unicode码点创建XChar实例（处理基础平面和高代理）
@@ -276,21 +276,21 @@ int64_t XChar_to_utf8(const XChar* ch, uint8_t* utf8, size_t max_utf8);
 
 /**
  * @brief 从UTF-16编码字符串转换为XChar数组
- * @param utf16_str 待转换的UTF-16字符串（wchar_t类型，以L'\0'为终止符）
+ * @param utf16_str 待转换的UTF-16字符串（uint16_t类型，以L'\0'为终止符）
  * @param out_xchars 输出的XChar数组（以code=0为终止符）
  * @param max_count 输出数组的最大容量（含终止符）
  * @return 成功返回转换的XChar数量（不含终止符），失败返回-1
  */
-int64_t XChar_from_utf16(const wchar_t* utf16_str, XChar* out_xchars, size_t max_count);
+int64_t XChar_from_utf16(const uint16_t* utf16_str, XChar* out_xchars, size_t max_count);
 
 /**
  * @brief 将XChar数组转换为UTF-16编码字符串
  * @param xchars XChar数组（以code=0为终止符）
- * @param out_buf 输出的UTF-16字符串缓冲区（wchar_t类型）
+ * @param out_buf 输出的UTF-16字符串缓冲区（uint16_t类型）
  * @param buf_size 输出缓冲区的最大容量（含终止符）
- * @return 成功返回写入的wchar_t数量（不含终止符），失败返回-1
+ * @return 成功返回写入的uint16_t数量（不含终止符），失败返回-1
  */
-int64_t XChar_to_utf16(const XChar* xchars, wchar_t* out_buf, size_t buf_size);
+int64_t XChar_to_utf16(const XChar* xchars, uint16_t* out_buf, size_t buf_size);
 
 // --------------------------
 // UTF-32编码转换函数

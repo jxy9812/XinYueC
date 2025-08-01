@@ -15,16 +15,167 @@
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量（不含结束符）
 #define XString_cdata(str) ((const XChar*)XContainerDataPtr(str))
+#define XString_copy        XString_create
 
 // 获取可修改的内部XChar数组
 XChar* XString_data(XString* str);
-XString* XString_copy(const XString* other);
 
 //初始化缓存
 static void XString_initCache(XString* str);
-// ------------------------------
-// 虚函数包装（对外接口）
-// ------------------------------
+
+XString* XString_create(const XString* other)
+{
+    if (!other) return NULL;
+
+    XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    if (!str) return NULL;
+
+    XString_copy_base(str, other);
+    return str;
+}
+
+// 字符串创建函数
+XString* XString_create_utf8(const char* utf8_str) 
+{
+    return XString_create_with_length_utf8(utf8_str, utf8_str ? strlen(utf8_str) : 0);
+}
+
+XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
+{
+    XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    if (!str) return NULL;
+    XString_init(str);
+    size_t actual_len = (len == 0 && utf8_str) ? strlen(utf8_str) : len;
+    if (utf8_str && actual_len > 0)
+    {
+        int xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, NULL, 0);
+        if (xchar_count > 0) {
+            XString_reserve(str, xchar_count);
+            xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, XString_data(str), xchar_count + 1);
+            str->parent.m_size = xchar_count;
+        }
+    }
+    return str;
+}
+
+XString* XString_create_gbk(const char* gbk_str)
+{
+    if (!gbk_str) return NULL;
+    // 计算GBK字符串长度（不含终止符）
+    size_t len = 0;
+    while (gbk_str[len] != '\0') {
+        // GBK字符要么1字节（0x00-0x7F）要么2字节（高字节0x81-0xFE，低字节0x40-0xFE且不等于0x7F）
+        if ((uint8_t)gbk_str[len] < 0x80) {
+            len++;
+        }
+        else {
+            len += 2; // 跳过双字节字符的第二个字节
+        }
+    }
+    return XString_create_with_length_gbk(gbk_str, len);
+}
+
+XString* XString_create_fmt_gbk(const char* format, ...)
+{
+    if (!format) return NULL;
+
+    // 第一步：使用vsnprintf获取格式化后的GBK字符串长度
+    va_list args;
+    va_start(args, format);
+    int fmt_len = vsnprintf(NULL, 0, format, args);
+    va_end(args);
+    if (fmt_len <= 0) return NULL;
+
+    // 第二步：分配缓冲区并格式化GBK字符串
+    char* gbk_buf = (char*)XMemory_malloc(fmt_len + 1); // +1 用于终止符
+    if (!gbk_buf) return NULL;
+
+    va_start(args, format);
+    vsnprintf(gbk_buf, fmt_len + 1, format, args);
+    va_end(args);
+
+    // 第三步：通过已实现的函数创建XString
+    XString* str = XString_create_gbk(gbk_buf);
+    XMemory_free(gbk_buf); // 释放临时缓冲区
+
+    return str;
+}
+
+XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
+{
+    if (!gbk_str || len == 0) {
+        return NULL;
+    }
+
+    // 步骤1：创建带空终止符的临时GBK缓冲区（避免原函数越界读取）
+    char* temp_gbk = (char*)XMemory_malloc(len + 1); // +1 用于存储'\0'
+    if (!temp_gbk) {
+        return NULL;
+    }
+    memcpy(temp_gbk, gbk_str, len); // 复制指定长度的GBK数据
+    temp_gbk[len] = '\0'; // 添加空终止符，适配XChar_from_gbk的要求
+
+    // 步骤2：计算转换所需的XChar数量（首次调用获取长度）
+    int64_t xchar_count = XChar_from_gbk(temp_gbk, NULL, 0);
+    if (xchar_count <= 0) {
+        XMemory_free(temp_gbk); // 释放临时缓冲区
+        return NULL;
+    }
+
+    // 步骤3：创建并初始化XString
+    XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    if (!str) {
+        XMemory_free(temp_gbk);
+        return NULL;
+    }
+    XString_init(str);
+
+    // 步骤4：预留足够空间（包含终止符）
+    XString_reserve(str, (size_t)xchar_count);
+
+    // 步骤5：执行实际转换（使用临时缓冲区）
+    XChar* data = XString_data(str);
+    xchar_count = XChar_from_gbk(temp_gbk, data, (size_t)xchar_count + 1); // +1 预留终止符位置
+    XMemory_free(temp_gbk); // 转换完成后释放临时缓冲区
+
+    if (xchar_count <= 0) {
+        XString_delete_base(str);
+        return NULL;
+    }
+
+    // 步骤6：设置长度和终止符
+    str->parent.m_size = (size_t)xchar_count;
+    data[xchar_count] = (XChar){ 0 };
+
+    XString_deinitCache(str);
+    return str;
+}
+
+XString* XString_create_fmt_utf8(const char* format, ...) 
+{
+    if (!format) return NULL;
+
+    va_list args;
+    va_start(args, format);
+    char buf[1024];
+    vsnprintf(buf, sizeof(buf), format, args);
+    va_end(args);
+
+    return XString_create_utf8(buf);
+}
+
+// 初始化函数
+void XString_init(XString* str)
+{
+    if (!str) return;
+    XContainerObject_init(&str->parent, sizeof(XChar));
+    str->m_ref_count = (int*)XMemory_malloc(sizeof(int));
+    *str->m_ref_count = 1;
+    str->m_is_shared = false;
+    str->m_cache = NULL;
+
+    XClassGetVtable((XClass*)str) = XString_class_init();
+}
 
 const char* XString_toUtf8(const XString* str)
 {
@@ -52,13 +203,13 @@ const char* XString_toUtf8(const XString* str)
     return utf8_buf;
 }
 
-const wchar_t* XString_toUtf16(const XString* str)
+const uint16_t* XString_toUtf16(const XString* str)
 {
     if (!str) return NULL;
 
     // 检查缓存是否存在
     if (str->m_cache && str->m_cache[XStringCache_Utf16]) {
-        return (const wchar_t*)str->m_cache[XStringCache_Utf16];
+        return (const uint16_t*)str->m_cache[XStringCache_Utf16];
     }
 
     // 计算UTF-16所需缓冲区大小（包含终止符）
@@ -67,8 +218,8 @@ const wchar_t* XString_toUtf16(const XString* str)
     if (utf16_len <= 0) return NULL;
 
     // 分配缓冲区（+1用于终止符）
-    size_t buf_size = (size_t)utf16_len * sizeof(wchar_t) + sizeof(wchar_t);
-    wchar_t* utf16_buf = (wchar_t*)XMemory_malloc(buf_size);
+    size_t buf_size = (size_t)utf16_len * sizeof(uint16_t) + sizeof(uint16_t);
+    uint16_t* utf16_buf = (uint16_t*)XMemory_malloc(buf_size);
     if (!utf16_buf) return NULL;
 
     // 执行转换
@@ -206,30 +357,134 @@ const uint16_t* XString_utf16(const XString* str)
     if (!str) return NULL;
 
     // 利用已有的UTF-16转换缓存
-    const wchar_t* utf16_data = XString_toUtf16(str);
-    // 由于wchar_t在UTF-16场景下通常为16位，可直接转换为uint16_t指针
+    const uint16_t* utf16_data = XString_toUtf16(str);
+    // 由于uint16_t在UTF-16场景下通常为16位，可直接转换为uint16_t指针
     return (const uint16_t*)utf16_data;
 }
 
-bool XString_append_base(XString* str, const char* utf8_str) {
-    if (!str) return false;
-    return XClassGetVirtualFunc(str, EXString_Append, bool(*)(XString*, const char*))(str, utf8_str);
+bool XString_append_utf8(XString* str, const char* utf8_str) 
+{
+    if (!str || !utf8_str) return false;
+
+    // 先计算需要转换的XChar数量（不含终止符）
+    int64_t xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, NULL, 0);
+    if (xchar_count <= 0) return false;
+
+    XString_detach(str);
+    size_t current_size = XString_length_base(str);
+    size_t new_size = current_size + (size_t)xchar_count;
+
+    // 预留足够空间（包含终止符）
+    XString_reserve(str, new_size);
+
+    // 直接转换到目标缓冲区
+    XChar* data = XString_data(str);
+    int64_t result = XChar_from_utf8(
+        (const uint8_t*)utf8_str,
+        data + current_size,  // 直接写到当前字符串末尾
+        (size_t)xchar_count + 1  // 包含终止符的空间（实际不会覆盖原终止符）
+    );
+
+    if (result <= 0) {
+        // 转换失败时恢复原长度和终止符
+        XContainerSize(str) = current_size;
+        data[current_size].code = 0;
+        return false;
+    }
+
+    // 更新字符串长度和终止符
+    XContainerSize(str) = new_size;
+    data[new_size].code = 0;
+
+    XString_deinitCache(str);
+    return true;
 }
 
-bool XString_assign_base(XString* str, const char* utf8_str)
+bool XString_assign_utf8(XString* str, const char* utf8_str)
 {
     if (!str) return false;
-    return XClassGetVirtualFunc(str, EXString_Assign, bool(*)(XString*, const char*))(str, utf8_str);
+
+    XString_clear_base(str);
+    if (!utf8_str || *utf8_str == '\0') return true;
+
+    // 先计算需要转换的XChar数量（不含终止符）
+    int64_t xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, NULL, 0);
+    if (xchar_count <= 0) return false;
+
+    XString_detach(str);
+    // 预留足够空间（包含终止符）
+    XString_reserve(str, (size_t)xchar_count);
+
+    // 直接转换到目标缓冲区
+    XChar* data = XString_data(str);
+    int64_t result = XChar_from_utf8(
+        (const uint8_t*)utf8_str,
+        data,
+        (size_t)xchar_count + 1  // 包含终止符的空间
+    );
+
+    if (result <= 0) {
+        // 转换失败时保持清空状态
+        XContainerSize(str) = 0;
+        data[0].code = 0;
+        return false;
+    }
+
+    // 设置长度和终止符
+    XContainerSize(str) = (size_t)xchar_count;
+    data[xchar_count].code = 0;
+
+    XString_deinitCache(str);
+    return true;
 }
 
-bool XString_prepend(XString* str, const char* utf8_str) {
-    if (!str) return false;
-    return XClassGetVirtualFunc(str, EXString_Prepend, bool(*)(XString*, const char*))(str, utf8_str);
+bool XString_prepend_utf8(XString* str, const char* utf8_str) 
+{
+    if (!str || !utf8_str) return false;
+
+    XString* original = XString_copy(str);
+    if (!original) return false;
+
+    XString_clear_base(str);
+    if (!XString_append_utf8(str, utf8_str)) {
+        XString_delete_base(original);
+        return false;
+    }
+
+    bool success = XString_append_utf8(str, XString_toUtf8(original));
+    XString_delete_base(original);
+    return success;
 }
 
-bool XString_insert(const XString* str, size_t pos, const char* utf8_str) {
-    if (!str) return false;
-    return XClassGetVirtualFunc(str, EXString_Insert, bool(*)(XString*, size_t, const char*))((XString*)str, pos, utf8_str);
+bool XString_insert_utf8(const XString* str, size_t pos, const char* utf8_str) 
+{
+    if (!str || !utf8_str || pos > XString_length_base(str)) return false;
+
+    XString* insert_str = XString_create_utf8(utf8_str);
+    if (!insert_str) return false;
+    size_t insert_len = XString_length_base(insert_str);
+    if (insert_len == 0) {
+        XString_delete_base(insert_str);
+        return true;
+    }
+
+    XString_detach(str);
+    size_t original_size = XString_length_base(str);
+    size_t new_size = original_size + insert_len;
+
+    XString_reserve(str, new_size);
+    XChar* data = XString_data(str);
+
+    memmove(data + pos + insert_len, data + pos, (original_size - pos) * sizeof(XChar));
+    memcpy(data + pos, XString_cdata(insert_str), insert_len * sizeof(XChar));
+
+    XContainerSize(str) = new_size;
+    XString_data(str)[new_size].code = 0;
+
+    XString_deinitCache(str);
+
+    XString_delete_base(insert_str);
+    return true;
 }
 
 bool XString_remove(XString* str, size_t pos, size_t len) {
@@ -237,10 +492,36 @@ bool XString_remove(XString* str, size_t pos, size_t len) {
     return XClassGetVirtualFunc(str, EXString_Remove, bool (*)(XString*, size_t, size_t))(str, pos, len);
 }
 
-bool XString_replace(XString* str, const char* before, const char* after, XCharCaseSensitivity cs)
+bool XString_replace_utf8(XString* str, const char* before, const char* after, XCharCaseSensitivity cs)
 {
-    if (!str) return false;
-    return XClassGetVirtualFunc(str, EXString_Replace, bool(*)(XString*, const char*, const char*, XCharCaseSensitivity))(str, before, after,cs);
+    if (!str || !before || !after) return false;
+
+    XString* before_str = XString_create_utf8(before);
+    XString* after_str = XString_create_utf8(after);
+    if (!before_str || !after_str) {
+        XString_delete_base(before_str);
+        XString_delete_base(after_str);
+        return false;
+    }
+
+    size_t before_len = XString_length_base(before_str);
+    size_t after_len = XString_length_base(after_str);
+    if (before_len == 0) {
+        XString_delete_base(before_str);
+        XString_delete_base(after_str);
+        return false;
+    }
+
+    int64_t pos = XString_index_of_utf8(str, before, 0, cs);
+    while (pos != -1) {
+        if (!XString_remove(str, (size_t)pos, before_len)) break;
+        if (!XString_insert_utf8(str, (size_t)pos, after)) break;
+        pos = XString_index_of_utf8(str, before, (size_t)pos + after_len, cs);
+    }
+
+    XString_delete_base(before_str);
+    XString_delete_base(after_str);
+    return true;
 }
 
 // 尾插单个XChar
@@ -327,7 +608,7 @@ int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t fro
     if (!str || !substr) return -1;
 
     // 将substr转换为XString以便获取XChar数组
-    XString* substr_str = XString_create(substr);
+    XString* substr_str = XString_create_utf8(substr);
     if (!substr_str) return -1;
 
     size_t str_len = XString_length_base(str);
@@ -527,7 +808,7 @@ int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_
     if (!str || !substr) return -1;
 
     // 将substr转换为XString以便获取XChar数组
-    XString* substr_str = XString_create(substr);
+    XString* substr_str = XString_create_utf8(substr);
     if (!substr_str) return -1;
 
     size_t str_len = XString_length_base(str);
@@ -609,11 +890,11 @@ bool XEquality_XString(const XString* str1, const XString* str2)
     return XString_compare(str1, str2) == 0;
 }
 
-bool XString_starts_with(const XString* str, const char* prefix, XCharCaseSensitivity cs) 
+bool XString_starts_with_utf8(const XString* str, const char* prefix, XCharCaseSensitivity cs) 
 {
     if (!str || !prefix) return false;
 
-    XString* prefix_str = XString_create(prefix);
+    XString* prefix_str = XString_create_utf8(prefix);
     if (!prefix_str) return false;
 
     bool result = (XString_length_base(prefix_str) <= XString_length_base(str)) &&
@@ -622,11 +903,11 @@ bool XString_starts_with(const XString* str, const char* prefix, XCharCaseSensit
     return result;
 }
 
-bool XString_ends_with(const XString* str, const char* suffix, XCharCaseSensitivity cs)
+bool XString_ends_with_utf8(const XString* str, const char* suffix, XCharCaseSensitivity cs)
 {
     if (!str || !suffix) return false;
 
-    XString* suffix_str = XString_create(suffix);
+    XString* suffix_str = XString_create_utf8(suffix);
     if (!suffix_str) return false;
 
     size_t str_len = XString_length_base(str);
@@ -682,7 +963,7 @@ XString* XString_trimmed(const XString* str) {
     // 跳过后导空白
     while (end >= start && XChar_is_space(&data[end])) end--;
 
-    if (start > end) return XString_create("");  // 全是空白
+    if (start > end) return XString_create_utf8("");  // 全是空白
     return XString_mid(str, start, end - start + 1);
 }
 
@@ -877,13 +1158,13 @@ double XString_toDouble(const XString* str, bool* ok) {
 }
 
 XString* XString_left(const XString* str, size_t n) {
-    if (!str || n == 0) return XString_create("");
+    if (!str || n == 0) return XString_create_utf8("");
     n = (n > XString_length_base(str)) ? XString_length_base(str) : n;
     return XString_mid(str, 0, n);
 }
 
 XString* XString_right(const XString* str, size_t n) {
-    if (!str || n == 0) return XString_create("");
+    if (!str || n == 0) return XString_create_utf8("");
     size_t len = XString_length_base(str);
     n = (n > len) ? len : n;
     return XString_mid(str, len - n, n);
@@ -891,11 +1172,11 @@ XString* XString_right(const XString* str, size_t n) {
 
 XString* XString_mid(const XString* str, size_t pos, size_t n)
 {
-    if (!str || pos >= XString_length_base(str) || n == 0) return XString_create("");
+    if (!str || pos >= XString_length_base(str) || n == 0) return XString_create_utf8("");
 
     size_t len = XString_length_base(str);
     size_t actual_len = (pos + n > len) ? (len - pos) : n;
-    XString* result = XString_create("");
+    XString* result = XString_create_utf8("");
     if (!result) return NULL;
 
     XString_detach(result);
@@ -958,7 +1239,7 @@ static int64_t find_next_delimiter(const XString* str, const char* delimiter, si
 }
 
 // 按分隔符拆分字符串
-XStringList* XString_split(const XString* str, const char* delimiter, XCharCaseSensitivity cs) 
+XStringList* XString_split_utf8(const XString* str, const char* delimiter, XCharCaseSensitivity cs) 
 {
     if (!str || !delimiter) {
         return NULL;
@@ -1020,7 +1301,7 @@ XStringList* XString_split(const XString* str, const char* delimiter, XCharCaseS
 }
 
 // 按分隔符拆分字符串（限制最大拆分次数）
-XStringList* XString_split_limit(const XString* str, const char* delimiter, size_t limit, XCharCaseSensitivity cs)
+XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter, size_t limit, XCharCaseSensitivity cs)
 {
     if (!str || !delimiter || limit == 0) {
         return NULL;
@@ -1098,16 +1379,6 @@ XChar* XString_data(XString* str)
     if (!str) return NULL;
     XString_detach(str);  // 修改前确保分离
     return (XChar*)XContainerDataPtr(str);
-}
-XString* XString_copy(const XString* other)
-{
-    if (!other) return NULL;
-
-    XString* str = (XString*)XMemory_malloc(sizeof(XString));
-    if (!str) return NULL;
-
-    XString_copy_base(str, other);
-    return str;
 }
 
 // 分离共享数据（Copy-On-Write机制）
@@ -1209,7 +1480,7 @@ int XPrint_utf8_fmt(const char* format, ...)
         return 0;
     }
 
-    wchar_t* wfmt = (wchar_t*)XMemory_malloc(wfmt_len * sizeof(wchar_t));
+    uint16_t* wfmt = (uint16_t*)XMemory_malloc(wfmt_len * sizeof(uint16_t));
     if (!wfmt) {
         va_end(args);
         return 0;
@@ -1223,7 +1494,7 @@ int XPrint_utf8_fmt(const char* format, ...)
 
     // 步骤2：使用宽字符vswprintf格式化内容
     int wbuf_len = _vscwprintf(wfmt, args) + 1;  // +1 包含终止符
-    wchar_t* wbuf = (wchar_t*)XMemory_malloc(wbuf_len * sizeof(wchar_t));
+    uint16_t* wbuf = (uint16_t*)XMemory_malloc(wbuf_len * sizeof(uint16_t));
     if (!wbuf) {
         XMemory_free(wfmt);
         va_end(args);

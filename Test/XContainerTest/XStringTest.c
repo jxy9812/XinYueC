@@ -18,10 +18,10 @@ void XStringTest()
 #if XString_ON
 	XPrint_utf8("XString 测试\n");
 	{
-		XString* str = XString_create("你好-在吗");
+		XString* str = XString_create_utf8("你好-在吗");
 		if (str)
 		{
-			XStringList* v = XString_split(str, "-",XCharCaseInsensitive);
+			XStringList* v = XString_split_utf8(str, "-",XCharCaseInsensitive);
 			if (v)
 			{
 				XStringList_iterator_for_each(v, XFor_each_XString, NULL);
@@ -32,7 +32,7 @@ void XStringTest()
 		//continue;
 	}
 	{
-		XString* str = XString_create_fmt("你好%d %d\n",121,9);
+		XString* str = XString_create_fmt_utf8("你好%d %d\n",121,9);
 		int64_t index= XString_index_of_utf8(str,"9",0,XCharCaseInsensitive);
 		if(index!=-1)
 			XPrint_utf8_fmt("找到了,index:%d\n",index);
@@ -40,22 +40,22 @@ void XStringTest()
 		XString_delete_base(str);
 	}
 	
-	XString* str = XString_create("你好");
+	XString* str = XString_create_utf8("你好");
 	XPrint(str);
-	XString_append_base(str, "111");
+	XString_append_utf8(str, "111");
 	//XString_push_front_base(str, '#');
 	//XString_push_back_base(str, '!');
 	//XString_insert_base(str,0,"12121ni_");
 	XPrint(str);
 	XString_pop_front_base(str);
 	XString_pop_back_base(str);
-	XString_assign_base(str,"你好吗！");
+	XString_assign_utf8(str,"你好吗！");
 	XString_clear_base(str);
-	//XString_append_base(str, "  666\r\n");
+	//XString_append_utf8(str, "  666\r\n");
 	//printf("字符数量%d\n", XString_size(str));
-	//XString_assign_base(str, "草泥马");
+	//XString_assign_utf8(str, "草泥马");
 	XPrint_utf8_fmt("字符数量%d\n", XString_size_base(str));
-	XString_append_base(str, "你好呀");
+	XString_append_utf8(str, "你好呀");
 
 	//XString_erase_base(str, 3, 3);
 	XPrint_utf8_fmt("字符数量%d\n", XString_size_base(str));

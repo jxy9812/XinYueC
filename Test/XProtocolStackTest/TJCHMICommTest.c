@@ -60,7 +60,7 @@ static void XFuncCodeCb0x30(uint8_t code, void* obj, void* data, void* userData)
 		XString* str= cJSON_GetStringValue_XString(cuttingMotorSpeedDocking);
 		if (str != NULL)
 		{
-			XStringList* strlist = XString_split(str, "-",XCharCaseInsensitive);
+			XStringList* strlist = XString_split_utf8(str, "-",XCharCaseInsensitive);
 			if (strlist != NULL )
 			{
 				if (XContainerSize(strlist) == 3)

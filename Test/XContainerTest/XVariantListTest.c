@@ -77,7 +77,7 @@ void XVariantListTest()
 				XVariant_delete(v);
 			}
 			{
-				XString* str = XString_create("111");
+				XString* str = XString_create_utf8("111");
 				XVariant* v = XVariant_create_int(6666);
 				XMapBase_insert_move_base(map, str, v);
 				XString_delete_base(str);

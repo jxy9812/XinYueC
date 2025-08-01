@@ -526,7 +526,7 @@ XString* XVariant_toString(XVariant* var)
 	size_t len = var->m_dataSize;
 	if (((char*)XVariant_DataPtr(var))[len - 1] == 0)
 		len--;
-	XString* str = XString_create_with_length(XVariant_DataPtr(var),len);
+	XString* str = XString_create_with_length_utf8(XVariant_DataPtr(var),len);
 	return str;
 }
 
@@ -572,8 +572,8 @@ XVariantMap* XVariant_toMap(XVariant* var)
 	XVariant_Init(newVar, NULL, 0, 0);
 	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
 	{
-		//XString* str = XString_create(XPair_first(temp));
-		XString_assign_base(str, XPair_first(temp));
+		//XString* str = XString_create_utf8(XPair_first(temp));
+		XString_assign_utf8(str, XPair_first(temp));
 		tv = XPair_second(temp);
 		//XVariant* newVar = XVariant_create(NULL, 0, 0);
 
@@ -605,8 +605,8 @@ XVariantHashMap* XVariant_toHash(XVariant* var)
 	XVariant_Init(newVar, NULL, 0, 0);
 	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
 	{
-		//XString* str = XString_create(XPair_first(temp));
-		XString_assign_base(str, XPair_first(temp));
+		//XString* str = XString_create_utf8(XPair_first(temp));
+		XString_assign_utf8(str, XPair_first(temp));
 		tv = XPair_second(temp);
 		//XVariant* newVar = XVariant_create(NULL, 0, 0);
 

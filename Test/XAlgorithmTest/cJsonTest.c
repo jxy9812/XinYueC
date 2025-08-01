@@ -42,7 +42,7 @@ void cJsonTest()
 //CJson容器测试
 void cJsonXContainerTest()
 {
-    XString* json_str =XString_create( "{\"name\":\"Bob\",\"age\":40,\"city\":\"Chicago\"}");
+    XString* json_str =XString_create_utf8( "{\"name\":\"Bob\",\"age\":40,\"city\":\"Chicago\"}");
     // 解析 JSON 字符串
     cJSON* root = cJSON_Parse_XString(json_str);
     if (root == NULL) {

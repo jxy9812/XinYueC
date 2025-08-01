@@ -15,16 +15,11 @@ XString* XString_copy(const XString* other);
 
 // 前向声明
 static XChar VXString_At(const XString* str, size_t index);
-static bool VXString_Append(XString* str, const char* utf8_str);
 static bool VXString_PushBack(XString* str, XChar ch);
 static bool VXString_PopBack(XString* str);
 static bool VXString_PushFront(XString* str, XChar ch);
 static bool VXString_PopFront(XString* str);
-static bool VXString_Assign(XString* str, const char* utf8_str);
-static bool VXString_Prepend(XString* str, const char* utf8_str);
-static bool VXString_Insert(XString* str, size_t pos, const char* utf8_str);
 static bool VXString_Remove(XString* str, size_t pos, size_t len);
-static bool VXString_Replace(XString* str, const char* before, const char* after);
 static void VXClass_copy(XString* object, const XString* src);
 static void VXClass_move(XString* object, XString* src);
 static void VXClass_deinit(XString* str);
@@ -45,30 +40,6 @@ static XChar VXString_At(const XString* str, size_t index)
     //}
     //return XChar_unicode(&xchars[index]);
 }
-
-// 2. 追加UTF-8字符串
-static bool VXString_Append(XString* str, const char* utf8_str) 
-{
-    if (!str || !utf8_str) return false;
-
-    XChar temp[1024];
-    int xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, temp, 1023);
-    if (xchar_count <= 0) return false;
-
-    XString_detach(str);
-    size_t new_size = XString_length_base(str) + xchar_count;
-    XString_reserve(str, new_size);
-
-    XChar* data = XString_data(str);
-    memcpy(data + XString_length_base(str), temp, xchar_count * sizeof(XChar));
-    
-    XContainerSize(str)=new_size;
-    XString_data(str)[new_size].code=0;
-
-    XString_deinitCache(str);
-    return true;
-}
-
 // 3. 尾插单个XChar
 static bool VXString_PushBack(XString* str, XChar ch) 
 {
@@ -138,79 +109,6 @@ static bool VXString_PopFront(XString* str) {
     return true;
 }
 
-// 7. 替换为指定UTF-8字符串
-static bool VXString_Assign(XString* str, const char* utf8_str) {
-    if (!str) return false;
-
-    XString_clear_base(str);
-    if (!utf8_str || *utf8_str == '\0') return true;
-
-    XChar temp[1024];
-    int xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, temp, 1023);
-    if (xchar_count <= 0) return false;
-
-    XString_detach(str);
-    XString_reserve(str, xchar_count);
-
-    XChar* data = XString_data(str);
-    memcpy(data, temp, xchar_count * sizeof(XChar));
-
-    XContainerSize(str) = xchar_count;
-    XString_data(str)[xchar_count].code = 0;
-
-    XString_deinitCache(str);
-    return true;
-}
-
-// 8. 前置添加UTF-8字符串
-static bool VXString_Prepend(XString* str, const char* utf8_str) {
-    if (!str || !utf8_str) return false;
-
-    XString* original = XString_copy(str);
-    if (!original) return false;
-
-    XString_clear_base(str);
-    if (!XString_append_base(str, utf8_str)) {
-        XString_delete_base(original);
-        return false;
-    }
-
-    bool success = XString_append_base(str, XString_toUtf8(original));
-    XString_delete_base(original);
-    return success;
-}
-
-// 9. 在指定位置插入UTF-8字符串
-static bool VXString_Insert(XString* str, size_t pos, const char* utf8_str) {
-    if (!str || !utf8_str || pos > XString_length_base(str)) return false;
-
-    XString* insert_str = XString_create(utf8_str);
-    if (!insert_str) return false;
-    size_t insert_len = XString_length_base(insert_str);
-    if (insert_len == 0) {
-        XString_delete_base(insert_str);
-        return true;
-    }
-
-    XString_detach(str);
-    size_t original_size = XString_length_base(str);
-    size_t new_size = original_size + insert_len;
-
-    XString_reserve(str, new_size);
-    XChar* data = XString_data(str);
-
-    memmove(data + pos + insert_len, data + pos, (original_size - pos) * sizeof(XChar));
-    memcpy(data + pos, XString_cdata(insert_str), insert_len * sizeof(XChar));
-
-    XContainerSize(str) = new_size;
-    XString_data(str)[new_size].code = 0;
-
-    XString_deinitCache(str);
-
-    XString_delete_base(insert_str);
-    return true;
-}
-
 // 10. 移除指定范围字符
 static bool VXString_Remove(XString* str, size_t pos, size_t len) {
     if (!str || pos >= XString_length_base(str) || len == 0) return false;
@@ -231,45 +129,13 @@ static bool VXString_Remove(XString* str, size_t pos, size_t len) {
     return true;
 }
 
-// 11. 替换子串
-static bool VXString_Replace(XString* str, const char* before, const char* after, XCharCaseSensitivity cs) 
-{
-    if (!str || !before || !after) return false;
-
-    XString* before_str = XString_create(before);
-    XString* after_str = XString_create(after);
-    if (!before_str || !after_str) {
-        XString_delete_base(before_str);
-        XString_delete_base(after_str);
-        return false;
-    }
-
-    size_t before_len = XString_length_base(before_str);
-    size_t after_len = XString_length_base(after_str);
-    if (before_len == 0) {
-        XString_delete_base(before_str);
-        XString_delete_base(after_str);
-        return false;
-    }
-
-    int64_t pos = XString_index_of_utf8(str, before, 0,cs);
-    while (pos != -1) {
-        if (!XString_remove(str, (size_t)pos, before_len)) break;
-        if (!XString_insert(str, (size_t)pos, after)) break;
-        pos = XString_index_of_utf8(str, before, (size_t)pos + after_len,cs);
-    }
-
-    XString_delete_base(before_str);
-    XString_delete_base(after_str);
-    return true;
-}
 // 类方法：拷贝
 static void VXClass_copy(XString* object, const XString* src)
 {
     //printf("拷贝\n");
     if (((XClass*)object)->m_vtable == NULL)
     {
-        XString_init(object, NULL, 0);
+        XString_init(object);
     }
     else if (!XString_isEmpty_base(object))
     {
@@ -290,7 +156,7 @@ static void VXClass_move(XString* object, XString* src)
 {
     if (((XClass*)object)->m_vtable == NULL)
     {
-        XString_init(object,NULL,0);
+        XString_init(object);
     }
     else if( !XString_isEmpty_base(object))
     {
@@ -345,147 +211,6 @@ static void VXContainerObject_clear(XString* str) {
     XString_deinitCache(str);
 }
 
-// 字符串创建函数
-XString* XString_create(const char* utf8_str) {
-    return XString_create_with_length(utf8_str, utf8_str ? strlen(utf8_str) : 0);
-}
-
-XString* XString_create_with_length(const char* utf8_str, size_t len) {
-    XString* str = (XString*)XMemory_malloc(sizeof(XString));
-    if (!str) return NULL;
-    XString_init(str, utf8_str, len);
-    return str;
-}
-
-XString* XString_create_gbk(const char* gbk_str)
-{
-    if (!gbk_str) return NULL;
-    // 计算GBK字符串长度（不含终止符）
-    size_t len = 0;
-    while (gbk_str[len] != '\0') {
-        // GBK字符要么1字节（0x00-0x7F）要么2字节（高字节0x81-0xFE，低字节0x40-0xFE且不等于0x7F）
-        if ((uint8_t)gbk_str[len] < 0x80) {
-            len++;
-        }
-        else {
-            len += 2; // 跳过双字节字符的第二个字节
-        }
-    }
-    return XString_create_gbk_with_length(gbk_str, len);
-}
-
-XString* XString_create_gbk_fmt(const char* format, ...)
-{
-    if (!format) return NULL;
-
-    // 第一步：使用vsnprintf获取格式化后的GBK字符串长度
-    va_list args;
-    va_start(args, format);
-    int fmt_len = vsnprintf(NULL, 0, format, args);
-    va_end(args);
-    if (fmt_len <= 0) return NULL;
-
-    // 第二步：分配缓冲区并格式化GBK字符串
-    char* gbk_buf = (char*)XMemory_malloc(fmt_len + 1); // +1 用于终止符
-    if (!gbk_buf) return NULL;
-
-    va_start(args, format);
-    vsnprintf(gbk_buf, fmt_len + 1, format, args);
-    va_end(args);
-
-    // 第三步：通过已实现的函数创建XString
-    XString* str = XString_create_gbk(gbk_buf);
-    XMemory_free(gbk_buf); // 释放临时缓冲区
-
-    return str;
-}
-
-XString* XString_create_gbk_with_length(const char* gbk_str, size_t len)
-{
-    if (!gbk_str || len == 0) {
-        return NULL;
-    }
-
-    // 步骤1：创建带空终止符的临时GBK缓冲区（避免原函数越界读取）
-    char* temp_gbk = (char*)XMemory_malloc(len + 1); // +1 用于存储'\0'
-    if (!temp_gbk) {
-        return NULL;
-    }
-    memcpy(temp_gbk, gbk_str, len); // 复制指定长度的GBK数据
-    temp_gbk[len] = '\0'; // 添加空终止符，适配XChar_from_gbk的要求
-
-    // 步骤2：计算转换所需的XChar数量（首次调用获取长度）
-    int64_t xchar_count = XChar_from_gbk(temp_gbk, NULL, 0);
-    if (xchar_count <= 0) {
-        XMemory_free(temp_gbk); // 释放临时缓冲区
-        return NULL;
-    }
-
-    // 步骤3：创建并初始化XString
-    XString* str = (XString*)XMemory_malloc(sizeof(XString));
-    if (!str) {
-        XMemory_free(temp_gbk);
-        return NULL;
-    }
-    XString_init(str, NULL, 0);
-
-    // 步骤4：预留足够空间（包含终止符）
-    XString_reserve(str, (size_t)xchar_count);
-
-    // 步骤5：执行实际转换（使用临时缓冲区）
-    XChar* data = XString_data(str);
-    xchar_count = XChar_from_gbk(temp_gbk, data, (size_t)xchar_count + 1); // +1 预留终止符位置
-    XMemory_free(temp_gbk); // 转换完成后释放临时缓冲区
-
-    if (xchar_count <= 0) {
-        XString_delete_base(str);
-        return NULL;
-    }
-
-    // 步骤6：设置长度和终止符
-    str->parent.m_size = (size_t)xchar_count;
-    data[xchar_count] = (XChar){ 0 };
-
-    XString_deinitCache(str);
-    return str;
-}
-
-XString* XString_create_fmt(const char* format, ...) {
-    if (!format) return NULL;
-
-    va_list args;
-    va_start(args, format);
-    char buf[1024];
-    vsnprintf(buf, sizeof(buf), format, args);
-    va_end(args);
-
-    return XString_create(buf);
-}
-
-// 初始化函数
-void XString_init(XString* str, const char* utf8_str, size_t len) {
-    if (!str) return;
-    size_t actual_len = (len == 0 && utf8_str) ? strlen(utf8_str) : len;
-
-    XContainerObject_init(&str->parent, sizeof(XChar));
-    str->m_ref_count = (int*)XMemory_malloc(sizeof(int));
-    *str->m_ref_count = 1;
-    str->m_is_shared = false;
-    str->m_cache = NULL;
-
-    XClassGetVtable((XClass*)str) = XString_class_init();
-
-    if (utf8_str && actual_len > 0) 
-    {
-        int xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, NULL, 0);
-        if (xchar_count > 0) {
-            XString_reserve(str, xchar_count);
-            xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, XString_data(str), xchar_count+1);
-            str->parent.m_size = xchar_count;
-        }
-    }
-}
-
 // 虚函数表初始化
 XVtable* XString_class_init() {
     XVTABLE_CREAT_DEFAULT
@@ -500,16 +225,11 @@ XVtable* XString_class_init() {
 
     void* vtable_funcs[] = {
         VXString_At,
-        VXString_Append,
         VXString_PushBack,
         VXString_PopBack,
         VXString_PushFront,
         VXString_PopFront,
-        VXString_Assign,
-        VXString_Prepend,
-        VXString_Insert,
         VXString_Remove,
-        VXString_Replace,
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(vtable_funcs);
 

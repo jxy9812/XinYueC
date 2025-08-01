@@ -16,7 +16,7 @@
 #define UTF16_LOW_SURROGATE_END    0xDFFF
 #define UNICODE_MAX_CODEPOINT      0x10FFFF  // 最大有效Unicode码点
 
-XChar XChar_from(wchar_t code)
+XChar XChar_from(uint16_t code)
 {
     XChar ch = { code };
     return ch;
@@ -871,12 +871,12 @@ int64_t XChar_to_utf8(const XChar* ch, uint8_t* utf8, size_t max_utf8)
     }
 }
 
-int64_t XChar_from_utf16(const wchar_t* utf16_str, XChar* out_xchars, size_t max_count)
+int64_t XChar_from_utf16(const uint16_t* utf16_str, XChar* out_xchars, size_t max_count)
 {
     if (!utf16_str) return -1;
 
     int64_t xchar_count = 0;
-    const wchar_t* current = utf16_str;
+    const uint16_t* current = utf16_str;
 
     // 第一遍：计算所需XChar数量
     while (*current != L'\0') {
@@ -935,10 +935,10 @@ int64_t XChar_from_utf16(const wchar_t* utf16_str, XChar* out_xchars, size_t max
 // 参数：
 //   xchars - 输入的XChar数组（以空字符结尾）
 //   out_buf - 输出缓冲区（NULL时仅计算所需长度）
-//   buf_size - 输出缓冲区缓冲区大小大小（以wchar_t为单位）
+//   buf_size - 输出缓冲区缓冲区大小大小（以uint16_t为单位）
 // 返回值：
-//   成功时返回写入的wchar_t数量（不含终止符），失败时返回-1
-int64_t XChar_to_utf16(const XChar* xchars, wchar_t* out_buf, size_t buf_size) 
+//   成功时返回写入的uint16_t数量（不含终止符），失败时返回-1
+int64_t XChar_to_utf16(const XChar* xchars, uint16_t* out_buf, size_t buf_size) 
 {
     if (!xchars) return -1;
 
@@ -958,9 +958,9 @@ int64_t XChar_to_utf16(const XChar* xchars, wchar_t* out_buf, size_t buf_size)
 
     // 第二遍：直接复制（XChar.code本身就是UTF-16代码单元）
     current = xchars;
-    wchar_t* out = out_buf;
+    uint16_t* out = out_buf;
     while (current->code != 0) {
-        *out++ = current->code;  // 直接复制wchar_t值
+        *out++ = current->code;  // 直接复制uint16_t值
         current++;
     }
     *out = L'\0';  // 添加终止符
@@ -1208,7 +1208,7 @@ int64_t XChar_from_gbk(const char* gbk, XChar* out, size_t max_out) {
     }
 
     // 第二步：实际转换为宽字符
-    wchar_t* wcs = (wchar_t*)XMemory_malloc(wcs_len * sizeof(wchar_t));
+    uint16_t* wcs = (uint16_t*)XMemory_malloc(wcs_len * sizeof(uint16_t));
     if (!wcs) return -1;
 
     if (MultiByteToWideChar(CP_ACP, 0, gbk, -1, wcs, wcs_len) <= 0) {
@@ -1242,12 +1242,12 @@ int64_t XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk)
     while (ch[len].code != 0) len++;
 
     // 转换为Windows宽字符（UTF-16）
-    wchar_t* wcs = (wchar_t*)XMemory_malloc((len + 1) * sizeof(wchar_t));
+    uint16_t* wcs = (uint16_t*)XMemory_malloc((len + 1) * sizeof(uint16_t));
     if (!wcs) return -1;
 
     for (size_t i = 0; i < len; i++) 
     {
-        wcs[i] = (wchar_t)ch[i].code;
+        wcs[i] = (uint16_t)ch[i].code;
     }
     wcs[len] = L'\0'; // 宽字符终止符
 
@@ -1566,7 +1566,7 @@ int64_t XUTF8_to_gbk(const char* utf8_str, char* gbk_buf, size_t max_len)
     if (wcs_len <= 0) return -1;
 
     // 分配宽字符缓冲区
-    wchar_t* wcs_buf = (wchar_t*)XMemory_malloc(wcs_len * sizeof(wchar_t));
+    uint16_t* wcs_buf = (uint16_t*)XMemory_malloc(wcs_len * sizeof(uint16_t));
     if (!wcs_buf) return -1;
 
     // 实际转换为宽字符
@@ -1703,7 +1703,7 @@ int64_t XGBK_to_utf8(const char* gbk_str, char* utf8_buf, size_t max_len)
     if (wcs_len <= 0) return -1;
 
     // 分配宽字符缓冲区
-    wchar_t* wcs_buf = (wchar_t*)XMemory_malloc(wcs_len * sizeof(wchar_t));
+    uint16_t* wcs_buf = (uint16_t*)XMemory_malloc(wcs_len * sizeof(uint16_t));
     if (!wcs_buf) return -1;
 
     // 实际转换为宽字符

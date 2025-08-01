@@ -15,16 +15,11 @@ extern "C" {
  */
 XCLASS_DEFINE_BEGING(XString)
 XCLASS_DEFINE_ENUM(XString, At) = XCLASS_VTABLE_GET_SIZE(XContainerObject),// 获取指定位置的 XChar 字符
-XCLASS_DEFINE_ENUM(XString, Append),        // 追加 UTF-8 字符串
 XCLASS_DEFINE_ENUM(XString, PushBack),      // 尾插单个 XChar 字符
 XCLASS_DEFINE_ENUM(XString, PopBack),       // 尾删单个字符
 XCLASS_DEFINE_ENUM(XString, PushFront),     // 头插单个 XChar 字符
 XCLASS_DEFINE_ENUM(XString, PopFront),      // 头删单个字符
-XCLASS_DEFINE_ENUM(XString, Assign),        // 替换为指定 UTF-8 字符串
-XCLASS_DEFINE_ENUM(XString, Prepend),       // 前置添加 UTF-8 字符串
-XCLASS_DEFINE_ENUM(XString, Insert),        // 在指定位置插入 UTF-8 字符串
 XCLASS_DEFINE_ENUM(XString, Remove),        // 移除指定范围的字符
-XCLASS_DEFINE_ENUM(XString, Replace),       // 替换子串（支持大小写敏感配置）
 XCLASS_DEFINE_END(XString)
 #define XSTRING_VTABLE_SIZE XCLASS_VTABLE_GET_SIZE(XString)  // XString 虚函数表大小
 
@@ -56,13 +51,19 @@ typedef struct XString
 } XString;
 
 // -------------------------- 构造与初始化函数 --------------------------
+/**
+ * @brief 拷贝引用 XString 对象
+ * @param other 输入的XString对象
+ * @return 成功返回 XString 指针，失败返回 NULL
+ */
+XString* XString_create(const XString* other);
 
 /**
  * @brief 从 UTF-8 字符串创建 XString 对象
  * @param utf8_str 输入的 UTF-8 字符串（NULL 则创建空字符串）
  * @return 成功返回 XString 指针，失败返回 NULL
  */
-XString* XString_create(const char* utf8_str);
+XString* XString_create_utf8(const char* utf8_str);
 
 /**
  * @brief 从格式化 UTF-8 字符串创建 XString 对象
@@ -70,7 +71,7 @@ XString* XString_create(const char* utf8_str);
  * @param ... 可变参数列表
  * @return 成功返回 XString 指针，失败返回 NULL
  */
-XString* XString_create_fmt(const char* format, ...);
+XString* XString_create_fmt_utf8(const char* format, ...);
 
 /**
  * @brief 从指定长度的 UTF-8 字符串创建 XString 对象
@@ -78,7 +79,7 @@ XString* XString_create_fmt(const char* format, ...);
  * @param len 字符串长度（字节数，不含终止符）
  * @return 成功返回 XString 指针，失败返回 NULL
  */
-XString* XString_create_with_length(const char* utf8_str, size_t len);
+XString* XString_create_with_length_utf8(const char* utf8_str, size_t len);
 
 /**
  * @brief 从 GBK 字符串创建 XString 对象
@@ -93,7 +94,7 @@ XString* XString_create_gbk(const char* gbk_str);
  * @param ... 可变参数列表
  * @return 成功返回 XString 指针，失败返回 NULL
  */
-XString* XString_create_gbk_fmt(const char* format, ...);
+XString* XString_create_fmt_gbk(const char* format, ...);
 
 /**
  * @brief 从指定长度的 GBK 字符串创建 XString 对象
@@ -101,7 +102,7 @@ XString* XString_create_gbk_fmt(const char* format, ...);
  * @param len 字符串长度（字节数，不含终止符）
  * @return 成功返回 XString 指针，失败返回 NULL
  */
-XString* XString_create_gbk_with_length(const char* gbk_str, size_t len);
+XString* XString_create_with_length_gbk(const char* gbk_str, size_t len);
 
 /**
  * @brief 初始化 XString 对象
@@ -109,14 +110,14 @@ XString* XString_create_gbk_with_length(const char* gbk_str, size_t len);
  * @param utf8_str 初始化用的 UTF-8 字符串（NULL 则初始化为空）
  * @param len 字符串长度（字节数，0 则自动计算）
  */
-void XString_init(XString* str, const char* utf8_str, size_t len);
+void XString_init(XString* str);
 
 /**
  * @brief 快速定义并初始化 XString 变量的宏
  * @param name 变量名
  * @param utf8_str 初始化用的 UTF-8 字符串
  */
-#define XString_Init(name,utf8_str)  XString _##name,*name=&_##name;XString_init(name,utf8_str,0)
+#define XString_Init(name,utf8_str)  XString _##name,*name=&_##name;XString_init(name);XString_assign_utf8(name,utf8_str)
 
      // -------------------------- 基础操作宏（继承自 XContainerObject） --------------------------
 
@@ -175,7 +176,7 @@ const uint16_t* XString_utf16(const XString* str);
  * @param utf8_str 待追加的 UTF-8 字符串
  * @return 成功返回 true，失败返回 false
  */
-bool XString_append_base(XString* str, const char* utf8_str);
+bool XString_append_utf8(XString* str, const char* utf8_str);
 
 /**
  * @brief 替换字符串内容为指定 UTF-8 字符串
@@ -183,7 +184,7 @@ bool XString_append_base(XString* str, const char* utf8_str);
  * @param utf8_str 替换用的 UTF-8 字符串
  * @return 成功返回 true，失败返回 false
  */
-bool XString_assign_base(XString* str, const char* utf8_str);
+bool XString_assign_utf8(XString* str, const char* utf8_str);
 
 /**
  * @brief 在字符串开头前置添加 UTF-8 字符串
@@ -191,7 +192,7 @@ bool XString_assign_base(XString* str, const char* utf8_str);
  * @param utf8_str 待前置的 UTF-8 字符串
  * @return 成功返回 true，失败返回 false
  */
-bool XString_prepend(XString* str, const char* utf8_str);
+bool XString_prepend_utf8(XString* str, const char* utf8_str);
 
 /**
  * @brief 在指定位置插入 UTF-8 字符串
@@ -200,7 +201,7 @@ bool XString_prepend(XString* str, const char* utf8_str);
  * @param utf8_str 待插入的 UTF-8 字符串
  * @return 成功返回 true，失败返回 false
  */
-bool XString_insert(XString* str, size_t pos, const char* utf8_str);
+bool XString_insert_utf8(XString* str, size_t pos, const char* utf8_str);
 
 /**
  * @brief 移除指定范围的字符
@@ -219,7 +220,7 @@ bool XString_remove(XString* str, size_t pos, size_t len);
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回 true，失败返回 false
  */
-bool XString_replace(XString* str, const char* before, const char* after, XCharCaseSensitivity cs);
+bool XString_replace_utf8(XString* str, const char* before, const char* after, XCharCaseSensitivity cs);
 
 /**
  * @brief 在字符串末尾插入单个 XChar 字符
@@ -324,7 +325,7 @@ bool XString_equals(const XString* str1, const XString* str2, XCharCaseSensitivi
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
-bool XString_starts_with(const XString* str, const char* prefix, XCharCaseSensitivity cs);
+bool XString_starts_with_utf8(const XString* str, const char* prefix, XCharCaseSensitivity cs);
 
 /**
  * @brief 判断字符串是否以指定后缀结尾
@@ -333,7 +334,7 @@ bool XString_starts_with(const XString* str, const char* prefix, XCharCaseSensit
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
-bool XString_ends_with(const XString* str, const char* suffix, XCharCaseSensitivity cs);
+bool XString_ends_with_utf8(const XString* str, const char* suffix, XCharCaseSensitivity cs);
 
 // -------------------------- 编码转换函数 --------------------------
 
@@ -349,7 +350,7 @@ const char* XString_toUtf8(const XString* str);
  * @param str XString 对象指针
  * @return 成功返回常量 wchar_t 数组指针（内部缓存），失败返回 NULL
  */
-const wchar_t* XString_toUtf16(const XString* str);
+const uint16_t* XString_toUtf16(const XString* str);
 
 /**
  * @brief 转换为 UTF-32 编码字符串（uint32_t 类型）
@@ -535,7 +536,7 @@ void XString_truncate(XString* str, size_t position);
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回 XStringList 指针（需手动释放），失败返回 NULL
  */
-XStringList* XString_split(const XString* str, const char* delimiter, XCharCaseSensitivity cs);
+XStringList* XString_split_utf8(const XString* str, const char* delimiter, XCharCaseSensitivity cs);
 
 /**
  * @brief 按分隔符拆分字符串（限制最大拆分次数）
@@ -545,7 +546,7 @@ XStringList* XString_split(const XString* str, const char* delimiter, XCharCaseS
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回 XStringList 指针（需手动释放），失败返回 NULL
  */
-XStringList* XString_split_limit(const XString* str, const char* delimiter, size_t limit, XCharCaseSensitivity cs);
+XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter, size_t limit, XCharCaseSensitivity cs);
 
 // -------------------------- 内部机制辅助函数 --------------------------
 

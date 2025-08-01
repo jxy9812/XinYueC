@@ -64,14 +64,14 @@ XString* XStringList_join(const XStringList* this_stringVector, const char* sepa
 	size_t len = strlen(separator);
 	if (len == 0 || XString_isEmpty_base(this_stringVector))
 		return NULL;
-	XString* str = XString_create(NULL);
+	XString* str = XString_create_utf8(NULL);
 	for_each_iterator(this_stringVector, XStringList, it)
 	{
 		XString* s = XStringList_iterator_data(&it);
 		if (!XString_isEmpty_base(s))
 		{
-			XString_append_base(str, XString_c_str(s));
-			XString_append_base(str, separator);
+			XString_append_utf8(str, XString_c_str(s));
+			XString_append_utf8(str, separator);
 		}
 	}
 	XContainerSize(str) -= len;
