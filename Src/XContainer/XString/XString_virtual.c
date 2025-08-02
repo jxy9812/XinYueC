@@ -33,6 +33,7 @@ static bool VXString_PopBack(XString* str);
 static bool VXString_PushFront(XString* str, XChar ch);
 static bool VXString_PopFront(XString* str);
 static bool VXString_Remove(XString* str, size_t pos, size_t len);
+static void VXString_Erase(XString* str, const XString_iterator* it, XString_iterator* next);
 static void VXClass_copy(XString* object, const XString* src);
 static void VXClass_move(XString* object, XString* src);
 static void VXClass_deinit(XString* str);
@@ -140,6 +141,66 @@ static bool VXString_Remove(XString* str, size_t pos, size_t len) {
 
     XString_deinitCache(str);
     return true;
+}
+
+void VXString_Erase(XString* str, const XString_iterator* it, XString_iterator* next)
+{
+    // 检查参数有效性（str和it为必需参数，next可空）
+    if (!str || !it) {
+        return;
+    }
+
+    // 初始化下一个迭代器（若next非空）
+    if (next != NULL) 
+    {
+        *next = XString_end(str);
+    }
+
+    // 检查迭代器数据有效性
+    if (!it->data)
+    {
+        return;
+    }
+
+    // 获取字符串数据起始地址
+    XChar* data = (XChar*)XContainerDataPtr(str);
+    if (!data) 
+    {
+        return;
+    }
+
+    // 计算当前迭代器指向的字符位置
+    size_t pos = ((XChar*)it->data) - data;
+    size_t current_len = XString_length_base(str);
+
+    // 检查位置是否有效
+    if (pos >= current_len) {
+        return;
+    }
+
+    // 执行删除操作（删除当前位置的1个字符）
+    if (!XString_remove_base(str, pos, 1)) {
+        return;
+    }
+
+    // 若不需要返回下一个迭代器，直接返回
+    if (next == NULL) {
+        return;
+    }
+
+    // 删除后获取新的字符串数据和长度
+    XChar* new_data = (XChar*)XContainerDataPtr(str);
+    size_t new_len = XString_length_base(str);
+
+    // 设置下一个迭代器位置
+    if (new_data && pos < new_len) {
+        // 未到达末尾时，下一个位置为当前位置（原后续字符已前移）
+        next->data = new_data + pos;
+    }
+    else {
+        // 到达末尾时，下一个迭代器为结束迭代器
+        *next = XString_end(str);
+    }
 }
 
 // 类方法：拷贝
@@ -259,6 +320,7 @@ XVtable* XString_class_init() {
         VXString_PushFront,
         VXString_PopFront,
         VXString_Remove,
+        VXString_Erase,
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(vtable_funcs);
 

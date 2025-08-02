@@ -24,6 +24,7 @@ typedef struct XPWMDeviceBase XPWMDeviceBase;
 typedef struct XSwitchDeviceBase XSwitchDeviceBase;
 typedef struct XMapBase XMapBase;
 typedef struct XTJCHMIComm XTJCHMIComm;
+typedef struct XChar XChar;
 typedef struct XPair XPair;
 typedef struct XMap XMap;
 typedef struct XHashMap XHashMap;

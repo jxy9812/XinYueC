@@ -6,10 +6,28 @@
 #include"XAction.h"
 #include"XCoreApplication.h"
 //static void XStringTest();
-static void XFor_each_XString(void* LPVal, void* args)
+#if XString_ON
+static void XFor_each_XString(XString* str, void* args)
 {
-	XString* str = LPVal;
 	XPrint(str);
+}
+static void XFor_each_XChar(XChar* ch, void* args)
+{
+	XPrint_XChar(ch);
+	XPrint_utf8("\n");
+}
+//迭代器测试
+void XStringIteratorTest()
+{
+	XPrint_utf8("XString 正向迭代器测试\n");
+	XString* str = XString_create_utf8("正向迭代器");
+	XString_iterator_for_each(str, XFor_each_XChar,NULL);
+	XPrint_utf8("XString 反向迭代器测试\n");
+	XString_assign_utf8(str,"反向迭代器");
+	XString_reverse_iterator_for_each(str, XFor_each_XChar, NULL);
+	XString_delete_base(str);
+
+	XCoreApplication_requestQuit();
 }
 void XStringTest()
 {
@@ -29,7 +47,7 @@ void XStringTest()
 			}
 		}
 		//continue;
-		XString_setNum_int(str,66666,2);
+		XString_setNum_int(str,-6666699,2);
 		XPrint(str);
 		XString_setNum_double(str, 66666.153456,'f', 2);
 		XPrint(str);
@@ -75,9 +93,14 @@ void XMenu_XStringTest(XMenu* root)
 	XMenu* menu = XMenu_create("字符串(XString)");
 	XMenu_addMenu(root, menu);
 	{
-		const char* str = "主测试";
-		XAction* action = XMenu_addAction(menu, str);
+		XAction* action = XMenu_addAction(menu, "主测试");
 		XAction_setAction(action, XStringTest);
 	}
+	{
+		XAction* action = XMenu_addAction(menu, "迭代器测试");
+		XAction_setAction(action, XStringIteratorTest);
+	}
 }
+#endif
+
 #endif

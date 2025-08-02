@@ -733,9 +733,15 @@ bool XString_insert_utf8(const XString* str, size_t pos, const char* utf8_str)
     return true;
 }
 
-bool XString_remove(XString* str, size_t pos, size_t len) {
+bool XString_remove_base(XString* str, size_t pos, size_t len) {
     if (!str) return false;
     return XClassGetVirtualFunc(str, EXString_Remove, bool (*)(XString*, size_t, size_t))(str, pos, len);
+}
+
+void XString_erase_base(XString* str, const XString_iterator* it, XString_iterator* next)
+{
+    if (!str||!it) return ;
+    XClassGetVirtualFunc(str, EXString_Erase, bool (*)(XString*, const XString_iterator*,XString_iterator*))(str, it, next);
 }
 
 bool XString_replace(XString* str, const XString* before, const XString* after, XCharCaseSensitivity cs)
@@ -769,7 +775,7 @@ bool XString_replace(XString* str, const XString* before, const XString* after, 
 
         // 执行替换操作
         // 1. 移除原子串
-        if (!XString_remove(str, (size_t)pos, before_len)) 
+        if (!XString_remove_base(str, (size_t)pos, before_len)) 
         {
             XMemory_free(prefix);
             return false;
@@ -816,7 +822,7 @@ bool XString_replace_utf8(XString* str, const char* before, const char* after, X
 
     int64_t pos = XString_index_of_utf8(str, before, 0, cs);
     while (pos != -1) {
-        if (!XString_remove(str, (size_t)pos, before_len)) break;
+        if (!XString_remove_base(str, (size_t)pos, before_len)) break;
         if (!XString_insert_utf8(str, (size_t)pos, after)) break;
         pos = XString_index_of_utf8(str, before, (size_t)pos + after_len, cs);
     }
@@ -1741,19 +1747,20 @@ static bool XString_setNum_unsigned(XString* str, unsigned long long num, int ba
 
     return true;
 }
+
 bool XString_setNum_int(XString* str, int n, int base)
 {
-    if (base < 2 || base > 36) {
+    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
 
-    // 处理负数（仅10进制支持负数）
-    bool is_negative = (n < 0 && base == 10);
+    // 所有进制都支持负数（添加负号前缀）
+    bool is_negative = (n < 0);
     unsigned long long num;
 
-    // 处理最小负数溢出问题
+    // 处理最小负数溢出问题（使用long long扩展避免溢出）
     if (is_negative) {
-        num = (unsigned long long)(-(long long)n); // 扩展为long long避免溢出
+        num = (unsigned long long)(-(long long)n);
     }
     else {
         num = (unsigned long long)n;
@@ -1764,7 +1771,7 @@ bool XString_setNum_int(XString* str, int n, int base)
         return false;
     }
 
-    // 添加负号
+    // 添加负号（所有进制的负数都需要）
     if (is_negative) {
         return XString_push_front_base(str, XChar_from('-'));
     }
@@ -1779,11 +1786,11 @@ bool XString_setNum_uInt(XString* str, unsigned int n, int base)
 
 bool XString_setNum_long(XString* str, long n, int base)
 {
-    if (base < 2 || base > 36) {
+    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
 
-    bool is_negative = (n < 0 && base == 10);
+    bool is_negative = (n < 0);  // 所有进制支持负数
     unsigned long long num = is_negative ? (unsigned long long)(-n) : (unsigned long long)n;
 
     if (!XString_setNum_unsigned(str, num, base)) {
@@ -1804,11 +1811,11 @@ bool XString_setNum_uLong(XString* str, unsigned long n, int base)
 
 bool XString_setNum_llong(XString* str, long long n, int base)
 {
-    if (base < 2 || base > 36) {
+    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
 
-    bool is_negative = (n < 0 && base == 10);
+    bool is_negative = (n < 0);  // 所有进制支持负数
     unsigned long long num = is_negative ? (unsigned long long)(-n) : (unsigned long long)n;
 
     if (!XString_setNum_unsigned(str, num, base)) {
@@ -2244,95 +2251,70 @@ int XPrint_utf8(const char* utf8_str)
 
 int XPrint_utf8_fmt(const char* format, ...)
 {
-    if (!format) return 0;  // 空格式字符串安全处理
+    if (!format) return 0;
 
     va_list args;
     va_start(args, format);
 
+    // 步骤1：先将所有内容格式化为UTF-8字符串
+    // 1.1 计算所需UTF-8缓冲区大小
+    int utf8_len = vsnprintf(NULL, 0, format, args) + 1;  // +1 包含终止符
+    if (utf8_len <= 0)
+    {
+        va_end(args);
+        return 0;
+    }
+
+    // 1.2 分配缓冲区并格式化UTF-8内容
+    char* utf8_buf = (char*)XMemory_malloc(utf8_len);
+    if (!utf8_buf) 
+    {
+        va_end(args);
+        return 0;
+    }
+    vsnprintf(utf8_buf, utf8_len, format, args);
+    va_end(args);
+
+    // 步骤2：根据平台转换为本地编码并输出
+    int result = 0;
 #ifdef _WIN32
-
-    // Windows平台：UTF-8格式化 -> 宽字符格式化 -> GBK输出
-    // 步骤1：先将UTF-8格式字符串转换为宽字符
-    int wfmt_len = MultiByteToWideChar(CP_UTF8, 0, format, -1, NULL, 0);
-    if (wfmt_len <= 0) {
-        va_end(args);
+    // Windows：UTF-8 → GBK
+    int gbk_len = XUTF8_to_gbk(utf8_buf, NULL, 0);  // 获取所需GBK长度
+    if (gbk_len <= 0) 
+    {
+        XMemory_free(utf8_buf);
         return 0;
     }
 
-    uint16_t* wfmt = (uint16_t*)XMemory_malloc(wfmt_len * sizeof(uint16_t));
-    if (!wfmt) {
-        va_end(args);
+    char* gbk_buf = (char*)XMemory_malloc(gbk_len + 1);  // +1 终止符
+    if (!gbk_buf) 
+    {
+        XMemory_free(utf8_buf);
         return 0;
     }
 
-    if (MultiByteToWideChar(CP_UTF8, 0, format, -1, wfmt, wfmt_len) <= 0) {
-        XMemory_free(wfmt);
-        va_end(args);
-        return 0;
+    if (XUTF8_to_gbk(utf8_buf, gbk_buf, gbk_len + 1) > 0)
+    {
+        result = printf("%s", gbk_buf);  // 输出GBK
     }
-
-    // 步骤2：使用宽字符vswprintf格式化内容
-    int wbuf_len = _vscwprintf(wfmt, args) + 1;  // +1 包含终止符
-    uint16_t* wbuf = (uint16_t*)XMemory_malloc(wbuf_len * sizeof(uint16_t));
-    if (!wbuf) {
-        XMemory_free(wfmt);
-        va_end(args);
-        return 0;
-    }
-
-    vswprintf(wbuf, wbuf_len, wfmt, args);
-    XMemory_free(wfmt);  // 释放格式字符串缓冲区
-
-    // 步骤3：将宽字符结果转换为GBK
-    int gbk_len = WideCharToMultiByte(CP_ACP, 0, wbuf, -1, NULL, 0, NULL, NULL);
-    if (gbk_len <= 0) {
-        XMemory_free(wbuf);
-        va_end(args);
-        return 0;
-    }
-
-    char* gbk_buf = (char*)XMemory_malloc(gbk_len);
-    if (!gbk_buf) {
-        XMemory_free(wbuf);
-        va_end(args);
-        return 0;
-    }
-
-    WideCharToMultiByte(CP_ACP, 0, wbuf, -1, gbk_buf, gbk_len, NULL, NULL);
-    XMemory_free(wbuf);  // 释放宽字符缓冲区
-
-    // 步骤4：打印GBK字符串并清理
-    int result = printf("%s", gbk_buf);  // 补充换行符
     XMemory_free(gbk_buf);
-    va_end(args);
-    return result;
-
 #else
-    // Linux平台：直接使用UTF-8格式化输出（不自动动添加换行符）
-     // 步骤1：精确计算格式化式化所需缓冲区大小（包含终止符）
-    int buf_len = vsnprintf(NULL, 0, format, args) + 1;  // +1 仅包含终止符
-    char* buf = (char*)XMemory_malloc(buf_len);
-    if (!buf) {
-        va_end(args);
-        return 0;
-    }
-
-    // 步骤2：执行格式化（直接写入缓冲区，不含需额外外处理换行）
-    int written = vsnprintf(buf, buf_len, format, args);
-    if (written < 0) {
-        XMemory_free(buf);
-        va_end(args);
-        return 0;
-    }
-
-    // 步骤3：输出结果（直接打印格式化后的内容）
-    int result = printf("%s", buf);
-
-    // 清理资源
-    XMemory_free(buf);
-    va_end(args);
-    return result;
+    // Linux：直接输出UTF-8（本地编码兼容）
+    result = printf("%s", utf8_buf);
 #endif
+
+    XMemory_free(utf8_buf);
+    return result;
+}
+
+int XPrint_XChar(XChar* ch)
+{
+    if (!ch) return 0; // 空指针安全处理
+
+    XChar chs[] = { *ch,0 };
+    char buff[5] = { 0 };
+    XChar_to_local(&chs, buff, 5);
+    return printf(buff);
 }
 
 void XString_initCache(XString* str)

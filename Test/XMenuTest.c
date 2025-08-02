@@ -3,6 +3,7 @@
 #include "XMenu.h"
 #include "XCoreApplication.h"
 #include "XEventDispatcherThread.h"
+#include "XString.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,11 +44,11 @@ static void trigger(MenuData* data)
 {
 	if(data->data)
 	{
-		printf("\n开始---------------%s---------------\n", XAction_getText(data->data));
+		XPrint_utf8_fmt("\n开始---------------%s---------------\n", XAction_getText(data->data));
 		XCoreApplication_global()->m_quit = false;
 		XAction_trigger(data->data);
 		XCoreApplication_exec();//有初始化XObject派生类需要调用事件循环
-		printf("\n结束---------------%s---------------\n", XAction_getText(data->data));
+		XPrint_utf8_fmt("\n结束---------------%s---------------\n", XAction_getText(data->data));
 	}
 }
 void XMenuTest_show(XMenu* menu, int column)
@@ -63,12 +64,12 @@ void XMenuTest_show(XMenu* menu, int column)
 		XVector_clear_base(v);
 		XVector* actions = XMenu_getActions(menu);
 		XVector* menus = XMenu_getMenus(menu);
-		printf("\n---------------%s---------------\n", XMenu_getTitle(menu));
+		XPrint_utf8_fmt("\n---------------%s---------------\n", XMenu_getTitle(menu));
 		//判断是否右父菜单
 		parent = XTreeNode_GetParent(menu);
 		if (parent)
 		{
-			printf("%d 返回上级目录 -----返回\n",XContainerSize(v));
+			XPrint_utf8_fmt("%d 返回上级目录 -----返回\n",XContainerSize(v));
 			data.action = gotoParent;
 			data.data = menu;
 			XVector_push_back_base(v,&data);
@@ -77,7 +78,7 @@ void XMenuTest_show(XMenu* menu, int column)
 		for (int i = 0; i < menuSize; i++)
 		{
 			XMenu* child = XVector_At_Base(menus,i, XMenu*);
-			printf("%02d--菜单 %-30s\t", XContainerSize(v), XMenu_getTitle(child));
+			XPrint_utf8_fmt("%02d--菜单 %-30s\t", XContainerSize(v), XMenu_getTitle(child));
 			if ((i + 1) % column == 0 || (i + 1) == menuSize)printf("\n");//换行
 			data.action = gotoChild;
 			data.data = child;
@@ -86,22 +87,22 @@ void XMenuTest_show(XMenu* menu, int column)
 		for (int i = 0; i < XVector_size_base(actions); i++)
 		{
 			XAction* child = XVector_At_Base(actions, i, XAction*);
-			printf("%02d--项目 %-30s\t", XContainerSize(v), XAction_getText(child));
+			XPrint_utf8_fmt("%02d--项目 %-30s\t", XContainerSize(v), XAction_getText(child));
 			if ((i + 1+ menuSize) % column == 0 || (i + 1+ menuSize) == XVector_size_base(actions))printf("\n");//换行
 			data.action = trigger;
 			data.data = child;
 			XVector_push_back_base(v, &data);
 		}
 		XVector_delete_base(menus);
-		printf("---------------%s---------------\n", XMenu_getTitle(menu));
-		printf("请输入序号进行选择 0~%d,输入q退出\n", XContainerSize(v) - 1);
+		XPrint_utf8_fmt("---------------%s---------------\n", XMenu_getTitle(menu));
+		XPrint_utf8_fmt("请输入序号进行选择 0~%d,输入q退出\n", XContainerSize(v) - 1);
 		scanf("%s",command);
 		if (strcmp(command, "q") == 0)
 			exit(0);
 		int index=atoi(command);
 		if (index < 0 || index >= XContainerSize(v))
 		{
-			printf("序号不合法请重新选择\n");
+			XPrint_utf8_fmt("序号不合法请重新选择\n");
 			continue;
 		}
 		MenuData* pdata = XVector_at_base(v, index);

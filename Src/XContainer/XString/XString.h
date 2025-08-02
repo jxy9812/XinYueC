@@ -5,10 +5,11 @@
 extern "C" {
 #endif
 #include "XChar.h"
+#include "XString_iterator.h"
+#include "XString_reverse_iterator.h"
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdbool.h>
-
 /**
  * @brief XString 类虚函数表枚举（继承自 XContainerObject）
  * @details 定义 XString 类支持的所有虚函数索引，用于虚函数调用机制
@@ -20,6 +21,7 @@ XCLASS_DEFINE_ENUM(XString, PopBack),       // 尾删单个字符
 XCLASS_DEFINE_ENUM(XString, PushFront),     // 头插单个 XChar 字符
 XCLASS_DEFINE_ENUM(XString, PopFront),      // 头删单个字符
 XCLASS_DEFINE_ENUM(XString, Remove),        // 移除指定范围的字符
+XCLASS_DEFINE_ENUM(XString, Erase),         // 移除指定迭代器字符
 XCLASS_DEFINE_END(XString)
 #define XSTRING_VTABLE_SIZE XCLASS_VTABLE_GET_SIZE(XString)  // XString 虚函数表大小
 
@@ -49,6 +51,14 @@ typedef struct XString
     int* m_ref_count;         // 引用计数：用于 Copy-On-Write 机制的资源管理
     char** m_cache;           // 编码缓存数组：存储各类型编码的转换结果（索引对应 XStringCacheType）
 } XString;
+
+// -------------------------- 虚函数表初始化 --------------------------
+
+/**
+ * @brief 初始化 XString 类的虚函数表
+ * @return 虚函数表指针
+ */
+XVtable* XString_class_init();
 
 // -------------------------- 构造与初始化函数 --------------------------
 /**
@@ -294,8 +304,10 @@ bool XString_insert_utf8(XString* str, size_t pos, const char* utf8_str);
  * @param len 移除的字符数
  * @return 成功返回 true，失败返回 false（位置越界或长度为 0）
  */
-bool XString_remove(XString* str, size_t pos, size_t len);
+bool XString_remove_base(XString* str, size_t pos, size_t len);
 
+//删除迭代器数据，并返回下一个迭代器
+void XString_erase_base(XString* str, const XString_iterator* it, XString_iterator* next);
 /**
  * @brief 替换字符串中的子串
  * @param str XString 对象指针
@@ -815,13 +827,8 @@ int XPrint_utf8(const char* utf8_str);
  */
 int XPrint_utf8_fmt(const char* format, ...);
 
-// -------------------------- 虚函数表初始化 --------------------------
-
-/**
- * @brief 初始化 XString 类的虚函数表
- * @return 虚函数表指针
- */
-XVtable* XString_class_init();
+// 输出单个XChar字符
+int XPrint_XChar(XChar* ch);
 
 #ifdef __cplusplus
 }
