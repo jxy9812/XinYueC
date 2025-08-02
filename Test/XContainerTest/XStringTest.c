@@ -19,19 +19,95 @@ static void XFor_each_XChar(XChar* ch, void* args)
 //迭代器测试
 void XStringIteratorTest()
 {
-	XPrint_utf8("XString 正向迭代器测试\n");
-	XString* str = XString_create_utf8("正向迭代器");
-	XString_iterator_for_each(str, XFor_each_XChar,NULL);
-	XPrint_utf8("XString 反向迭代器测试\n");
-	XString_assign_utf8(str,"反向迭代器");
-	XString_reverse_iterator_for_each(str, XFor_each_XChar, NULL);
-	XString_delete_base(str);
+	while (true)
+	{
+		XPrint_utf8("XString 正向迭代器测试\n");
+		XString* str = XString_create_utf8("正向迭代器");
+		XString_iterator_for_each(str, XFor_each_XChar, NULL);
+		XPrint_utf8("XString 反向迭代器测试\n");
+		XString_assign_utf8(str, "反向迭代器");
+		XString_reverse_iterator_for_each(str, XFor_each_XChar, NULL);
+		XString_delete_base(str);
+	}
 
+	XCoreApplication_requestQuit();
+}
+//字符串 整数 测试
+void XStringNumTest()
+{
+	while (true)
+	{
+		XPrint_utf8("XString 字符串转整数测试\n");
+		XString* str = XString_create_utf8(NULL);
+		XString_assign_utf8(str, "66666");
+		XPrint_utf8_fmt("整数:%d\n", XString_toLongLong(str, NULL, 10));
+		XPrint_utf8_fmt("整数:%.2lf\n", XString_toDouble(str, NULL));
+		XPrint_utf8("XString 整数转字符串测试\n");
+		XString_setNum_int(str, -6666699, 2);
+		XPrint(str);
+		XPrint_utf8("\n");
+		XString_setNum_double(str, 66666.153456, 'f', 2);
+		XPrint(str);
+
+		XString_delete_base(str);
+	}
+
+	XCoreApplication_requestQuit();
+}
+void XStringOperateTest()
+{
+	while (true)
+	{
+		XPrint_utf8("XString 字符串操作测试\n");
+
+		XString* str = XString_create_utf8("这是一个字符串操作例子");
+		{
+			XString* mid = XString_mid(str, 2, 4);
+			if (mid)
+			{
+				XPrint(mid);
+				printf("\n");
+			}
+			XString_delete_base(mid);
+		}
+		{
+			int64_t index = XString_index_of_utf8(str, "例子", 0, XCharCaseInsensitive);
+			if (index != -1)
+				XPrint_utf8_fmt("找到了,index:%d\n", index);
+		}
+		{
+			if (XString_replace_utf8(str, "一", "1", XCharCaseInsensitive))
+			{
+				XPrint(str);
+				printf("\n");
+			}
+		}
+		XString_delete_base(str);
+	}
+	XCoreApplication_requestQuit();
+}
+void XStringCopyTest()
+{
+	while(true)
+	{
+		XString* str = XString_create_utf8("这是一个字符串拷贝引用测试");
+		XPrint(str); printf("\n");
+		XString* copy = XString_create(str);
+		//XPrint(copy); printf("\n");
+
+		XString_append_utf8(str,"追加测试");
+		XString_assign_utf8(str, "写时才复制");
+		XPrint(str); printf("\n");
+		XPrint(copy); printf("\n");
+
+		XString_delete_base(str);
+		XString_delete_base(copy);
+	}
 	XCoreApplication_requestQuit();
 }
 void XStringTest()
 {
-	//while(true)
+	while(true)
 	{
 #if XString_ON
 	XPrint_utf8("XString 测试\n");
@@ -46,21 +122,10 @@ void XStringTest()
 				XStringList_delete_base(v);
 			}
 		}
-		//continue;
-		XString_setNum_int(str,-6666699,2);
-		XPrint(str);
-		XString_setNum_double(str, 66666.153456,'f', 2);
-		XPrint(str);
+		
 		XString_delete_base(str);
 	}
-	{
-		XString* str = XString_create_fmt_utf8("你好%d %d\n",121,9);
-		int64_t index= XString_index_of_utf8(str,"9",0,XCharCaseInsensitive);
-		if(index!=-1)
-			XPrint_utf8_fmt("找到了,index:%d\n",index);
-		XPrint(str);
-		XString_delete_base(str);
-	}
+	
 	
 	XString* str = XString_create_utf8("你好");
 	XPrint(str);
@@ -99,6 +164,18 @@ void XMenu_XStringTest(XMenu* root)
 	{
 		XAction* action = XMenu_addAction(menu, "迭代器测试");
 		XAction_setAction(action, XStringIteratorTest);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "整数测试");
+		XAction_setAction(action, XStringNumTest);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "操作");
+		XAction_setAction(action, XStringOperateTest);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "拷贝");
+		XAction_setAction(action, XStringCopyTest);
 	}
 }
 #endif

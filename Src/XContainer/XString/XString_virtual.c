@@ -218,10 +218,12 @@ static void VXClass_copy(XString* object, const XString* src)
     XContainerDataPtr(object)= XContainerDataPtr(src);
     XContainerSize(object) = XContainerSize(src);
     XContainerCapacity(object) = XContainerCapacity(src);
+    if (object->m_ref_count)
+        XMemory_free(object->m_ref_count);
     object->m_ref_count = src->m_ref_count;
     *(object->m_ref_count) += 1;
 
-    object->m_is_shared = true;
+    //object->m_is_shared = true;
     object->m_cache = NULL;
 }
 
@@ -253,11 +255,12 @@ static void VXClass_deinit(XString* str)
             if (XContainerDataPtr(str)) 
             {
                 XMemory_free(XContainerDataPtr(str));
-                XContainerDataPtr(str) = NULL;
             }
             XMemory_free(str->m_ref_count);
-            str->m_ref_count = NULL;
+            
         }
+        str->m_ref_count = NULL;
+        XContainerDataPtr(str) = NULL;
     }
 
     //释放缓存
@@ -267,7 +270,11 @@ static void VXClass_deinit(XString* str)
         XMemory_free(str->m_cache);
         str->m_cache = NULL;
     }
-    XVtableGetFunc(XContainerObject_class_init(), EXClass_Deinit, void(*)(XClass*))((XClass*)str);
+
+    XContainerDataPtr(str) = NULL;
+    XContainerSize(str) = 0;
+    XContainerCapacity(str) =0;
+    //XVtableGetFunc(XContainerObject_class_init(), EXClass_Deinit, void(*)(XClass*))((XClass*)str);
 }
 
 // 容器方法：清空
@@ -283,16 +290,16 @@ static void VXContainerObject_clear(XString* str)
     }
 
     //XString_detach(str);
-    if (str->m_is_shared)
-    {
-        XContainerDataPtr(str) = NULL;
-        XContainerSize(str) = 0;
-        XContainerCapacity(str) = 0;
+    
+    if (*(str->m_ref_count)>1)
+    {//被其他对象拷贝引用了,将缓冲区交给其他对象管理
+        *(str->m_ref_count) -= 1;
         str->m_ref_count = (int*)XMemory_malloc(sizeof(int));
-        *str->m_ref_count = 1;
-        str->m_is_shared = false;
+        *(str->m_ref_count) = 1;
+        //str->m_is_shared = false;
+        XContainerDataPtr(str) = XMemory_malloc(sizeof(XChar)*(XContainerCapacity(str)+1));
     }
-    else if (XContainerDataPtr(str)) 
+    if (XContainerDataPtr(str)) 
     {
         XContainerSize(str) = 0;
         ((XChar*)XContainerDataPtr(str))[XString_length_base(str)] = XCharNULL;

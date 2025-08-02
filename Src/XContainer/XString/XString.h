@@ -47,7 +47,7 @@ enum XStringCacheType
 typedef struct XString
 {
     XContainerObject parent;  // 继承容器基类，m_data 指向 XChar 数组（UTF-16 存储）
-    bool m_is_shared;         // 共享标记：为 true 时表示数据被共享，修改前需复制
+    //bool m_is_shared;         // 共享标记：为 true 时表示数据被共享，修改前需复制
     int* m_ref_count;         // 引用计数：用于 Copy-On-Write 机制的资源管理
     char** m_cache;           // 编码缓存数组：存储各类型编码的转换结果（索引对应 XStringCacheType）
 } XString;

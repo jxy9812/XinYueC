@@ -18,7 +18,7 @@
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量（不含结束符）
 #define XString_cdata(str) ((const XChar*)XContainerDataPtr(str))
-#define XString_copy        XString_create
+//#define XString_copy        XString_create
 
 // -------------------------- 内部机制辅助函数 --------------------------
 
@@ -34,6 +34,8 @@ void XString_detach(XString* str);
  * @param str XString 对象指针
  */
 void XString_deinitCache(XString* str);
+
+static XString* XString_copy(const XString* other);
 // 获取可修改的内部XChar数组
 XChar* XString_data(XString* str);
 // 辅助函数：计算KMP前缀表
@@ -46,17 +48,31 @@ static int64_t kmp_search(const XChar* text, size_t n,const XChar* pattern, size
 //初始化缓存
 static void XString_initCache(XString* str);
 
-XString* XString_create(const XString* other)
+XString* XString_copy(const XString* other)
 {
     if (!other) return NULL;
 
     XString* str = (XString*)XMemory_malloc(sizeof(XString));
     if (!str) return NULL;
+    memset(str,0,sizeof(XString));
 
     XString_copy_base(str, other);
+
     return str;
 }
+XString* XString_create(const XString* other)
+{
+    return XString_copy(other);
+    //if (!other) return NULL;
 
+    //XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    //if (!str) return NULL;
+    //memset(str, 0, sizeof(XString));
+
+    //XString_copy_base(str, other);
+    ////XString_detach(str);
+    //return str;
+}
 // 字符串创建函数
 XString* XString_create_utf8(const char* utf8_str) 
 {
@@ -193,8 +209,8 @@ void XString_init(XString* str)
     if (!str) return;
     XContainerObject_init(str, sizeof(XChar));
     str->m_ref_count = (int*)XMemory_malloc(sizeof(int));
-    *str->m_ref_count = 1;
-    str->m_is_shared = false;
+    *(str->m_ref_count) = 1;
+    //str->m_is_shared = false;
     str->m_cache = NULL;
 
     XClassGetVtable((XClass*)str) = XString_class_init();
@@ -329,7 +345,7 @@ const char* XString_toLocal(const XString* str)
 
 #ifdef __linux__
     // Linux下本地编码为UTF-8，直接指向UTF-8缓存
-    const char* utf8_str = XString_to_utf8(str);
+    const char* utf8_str = XString_toUtf8(str);
     if (utf8_str) 
     {
         XString_initCache(str);
@@ -339,25 +355,10 @@ const char* XString_toLocal(const XString* str)
     return utf8_str;
 #else
     // Windows下需要转换为GBK
-    size_t xchar_len = XString_length_base(str);
-    // 计算所需本地编码缓冲区大小（包含结束符）
-    int64_t local_len = XChar_to_local(XString_cdata(str), NULL, 0);
-    if (local_len <= 0) return NULL;
-
-    size_t local_max_len = local_len + 1;  // 加终止符
-    char* local_buf = (char*)XMemory_malloc(local_max_len);
-    if (!local_buf) return NULL;
-
-    // 执行实际转换
-    int64_t result = XChar_to_local(XString_cdata(str), local_buf, local_max_len);
-    if (result <= 0) {
-        XMemory_free(local_buf);
-        return NULL;
-    }
-    XString_initCache(str);
-    // 缓存结果
-    str->m_cache[XStringCache_Local] = local_buf;
-    return local_buf;
+    const char* gbk_str = XString_toGbk(str);
+    if (gbk_str)  // 缓存结果
+    str->m_cache[XStringCache_Local] = gbk_str;
+    return gbk_str;
 #endif
 }
 
@@ -1520,18 +1521,16 @@ unsigned short XString_toUShort(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    if (ok) *ok = false;
+    // 无需提前设置ok为false，后续成功时再赋值
 
     const char* utf8 = XString_toUtf8(str);
     char* endptr;
     unsigned long val = strtoul(utf8, &endptr, base);
 
-    // 额外检查是否在unsigned short范围内
-    if (endptr != utf8 && *endptr == '\0' && val <= USHRT_MAX) {
-        if (ok) *ok = true;
-        return (unsigned short)val;
-    }
-    return 0;
+    // 额外检查转换有效性：必须有有效字符、完全转换且值在unsigned short范围内
+    const bool success = (endptr != utf8 && *endptr == '\0' && val <= USHRT_MAX);
+    if (ok) *ok = success;
+    return success ? (unsigned short)val : 0;
 }
 
 unsigned int XString_toUInt(const XString* str, bool* ok, int base)
@@ -1540,18 +1539,14 @@ unsigned int XString_toUInt(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    if (ok) *ok = false;
 
     const char* utf8 = XString_toUtf8(str);
     char* endptr;
     unsigned long val = strtoul(utf8, &endptr, base);
 
-    // 检查转换有效性：必须有有效字符、完全转换且值在unsigned int范围内
-    if (endptr != utf8 && *endptr == '\0' && val <= UINT_MAX) {
-        if (ok) *ok = true;
-        return (unsigned int)val;
-    }
-    return 0;
+    const bool success = (endptr != utf8 && *endptr == '\0' && val <= UINT_MAX);
+    if (ok) *ok = success;
+    return success ? (unsigned int)val : 0;
 }
 
 short XString_toShort(const XString* str, bool* ok, int base)
@@ -1560,34 +1555,29 @@ short XString_toShort(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    if (ok) *ok = false;
 
     const char* utf8 = XString_toUtf8(str);
     char* endptr;
     long val = strtol(utf8, &endptr, base);
 
-    // 检查转换有效性：必须有有效字符、完全转换且值在short范围内
-    if (endptr != utf8 && *endptr == '\0' && val >= SHRT_MIN && val <= SHRT_MAX) {
-        if (ok) *ok = true;
-        return (short)val;
-    }
-    return 0;
+    const bool success = (endptr != utf8 && *endptr == '\0' && val >= SHRT_MIN && val <= SHRT_MAX);
+    if (ok) *ok = success;
+    return success ? (short)val : 0;
 }
 
 int XString_toInt(const XString* str, bool* ok, int base) {
-    if (!str || !ok) return 0;
-    *ok = false;
+    if (!str) {
+        if (ok) *ok = false;
+        return 0;
+    }
 
     const char* utf8 = XString_toUtf8(str);
     char* endptr;
     long val = strtol(utf8, &endptr, base);
 
-    // 检查转换是否有效
-    if (endptr != utf8 && *endptr == '\0' && val >= INT_MIN && val <= INT_MAX) {
-        *ok = true;
-        return (int)val;
-    }
-    return 0;
+    const bool success = (endptr != utf8 && *endptr == '\0' && val >= INT_MIN && val <= INT_MAX);
+    if (ok) *ok = success;
+    return success ? (int)val : 0;
 }
 
 long XString_toLong(const XString* str, bool* ok, int base)
@@ -1596,18 +1586,14 @@ long XString_toLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    if (ok) *ok = false;
 
     const char* utf8 = XString_toUtf8(str);
     char* endptr;
     long val = strtol(utf8, &endptr, base);
 
-    // 检查转换有效性：必须有有效字符且完全转换，且值在long范围内
-    if (endptr != utf8 && *endptr == '\0') {
-        if (ok) *ok = true;
-        return val;
-    }
-    return 0;
+    const bool success = (endptr != utf8 && *endptr == '\0');
+    if (ok) *ok = success;
+    return success ? val : 0;
 }
 
 long long XString_toLongLong(const XString* str, bool* ok, int base)
@@ -1616,18 +1602,14 @@ long long XString_toLongLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    if (ok) *ok = false;
 
     const char* utf8 = XString_toUtf8(str);
     char* endptr;
     long long val = strtoll(utf8, &endptr, base);
 
-    // 检查转换有效性：必须有有效字符且完全转换
-    if (endptr != utf8 && *endptr == '\0') {
-        if (ok) *ok = true;
-        return val;
-    }
-    return 0;
+    const bool success = (endptr != utf8 && *endptr == '\0');
+    if (ok) *ok = success;
+    return success ? val : 0;
 }
 
 unsigned long XString_toULong(const XString* str, bool* ok, int base)
@@ -1636,18 +1618,14 @@ unsigned long XString_toULong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    if (ok) *ok = false;
 
     const char* utf8 = XString_toUtf8(str);
     char* endptr;
     unsigned long val = strtoul(utf8, &endptr, base);
 
-    // 检查转换有效性：必须有有效字符且完全转换
-    if (endptr != utf8 && *endptr == '\0') {
-        if (ok) *ok = true;
-        return val;
-    }
-    return 0;
+    const bool success = (endptr != utf8 && *endptr == '\0');
+    if (ok) *ok = success;
+    return success ? val : 0;
 }
 
 unsigned long long XString_toULongLong(const XString* str, bool* ok, int base)
@@ -1656,17 +1634,14 @@ unsigned long long XString_toULongLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    if (ok) *ok = false;
 
     const char* utf8 = XString_toUtf8(str);
     char* endptr;
     unsigned long long val = strtoull(utf8, &endptr, base);
 
-    if (endptr != utf8 && *endptr == '\0') {
-        if (ok) *ok = true;
-        return val;
-    }
-    return 0;
+    const bool success = (endptr != utf8 && *endptr == '\0');
+    if (ok) *ok = success;
+    return success ? val : 0;
 }
 
 float XString_toFloat(const XString* str, bool* ok)
@@ -1675,33 +1650,29 @@ float XString_toFloat(const XString* str, bool* ok)
         if (ok) *ok = false;
         return 0.0f;
     }
-    if (ok) *ok = false;
 
     const char* utf8 = XString_toUtf8(str);
     char* endptr;
     float val = strtof(utf8, &endptr);
 
-    // 检查转换有效性：必须有有效字符且完全转换
-    if (endptr != utf8 && *endptr == '\0') {
-        if (ok) *ok = true;
-        return val;
-    }
-    return 0.0f;
+    const bool success = (endptr != utf8 && *endptr == '\0');
+    if (ok) *ok = success;
+    return success ? val : 0.0f;
 }
 
 double XString_toDouble(const XString* str, bool* ok) {
-    if (!str || !ok) return 0.0;
-    *ok = false;
+    if (!str) {
+        if (ok) *ok = false;
+        return 0.0;
+    }
 
     const char* utf8 = XString_toUtf8(str);
     char* endptr;
     double val = strtod(utf8, &endptr);
 
-    if (endptr != utf8 && *endptr == '\0') {
-        *ok = true;
-        return val;
-    }
-    return 0.0;
+    const bool success = (endptr != utf8 && *endptr == '\0');
+    if (ok) *ok = success;
+    return success ? val : 0.0;
 }
 // 字符映射表（用于进制转换）
 static const char g_digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
@@ -1930,10 +1901,24 @@ bool XString_reserve(XString* str, size_t capacity)
     size_t new_capacity = (capacity < XSTRING_MIN_CAPACITY) ? XSTRING_MIN_CAPACITY : capacity;
     XChar* new_data = NULL;
     // 实际需要容量= 新容量 + 1（结束符）
-    if (XString_cdata(str) == NULL)
+    if (XString_cdata(str) == NULL || *(str->m_ref_count)> 1)
+    {
         new_data = XMemory_malloc((new_capacity + 1) * sizeof(XChar));
+        if (XString_cdata(str))
+        {
+            memcpy(new_data, XString_cdata(str),(XString_length_base(str)+1)*sizeof(XChar));
+        }
+        if (*(str->m_ref_count) > 1)
+        {
+            *(str->m_ref_count) -= 1;
+            str->m_ref_count = XMemory_malloc(sizeof(int));
+            *(str->m_ref_count) = 1;
+        }
+    }
     else
+    {
         new_data = (XChar*)XMemory_realloc(XString_data(str), (new_capacity + 1) * sizeof(XChar));
+    }
     
     if (new_data) 
     {
@@ -2152,18 +2137,18 @@ XChar* XString_data(XString* str)
 // 分离共享数据（Copy-On-Write机制）
 void XString_detach(XString* str)
 {
-    if (!str|| !str->m_is_shared) return;
+    if (!str/*|| !str->m_is_shared*/) return;
 
     // 1. 空字符串无需处理（无数据可共享）
     if (!XContainerDataPtr(str)) {
-        str->m_is_shared = false;
+       // str->m_is_shared = false;
         return;
     }
 
     // 2. 无共享引用时，直接标记为可修改，无需拷贝
     //    （引用计数为1说明没有其他持有者）
     if (*str->m_ref_count == 1) {
-        str->m_is_shared = false;
+       // str->m_is_shared = false;
         return;
     }
 
@@ -2185,7 +2170,7 @@ void XString_detach(XString* str)
 
     // 替换数据指针，标记为非共享
     XContainerDataPtr(str) = new_data;
-    str->m_is_shared = false;
+   // str->m_is_shared = false;
 
     // 缓存失效（数据已变更）
     XString_deinitCache(str);
@@ -2198,6 +2183,8 @@ void XString_deinitCache(XString* str)
     char* local = str->m_cache[0];
     for (size_t i = 1; i < XStringCache_Size; i++)
     {
+        if (str->m_cache[i] == NULL)
+            continue;
         XMemory_free(str->m_cache[i]);
         if (str->m_cache[i] == local)
             local = NULL;
@@ -2206,15 +2193,15 @@ void XString_deinitCache(XString* str)
     if (local != NULL)
     {
         XMemory_free(local);
-        str->m_cache[0] = NULL;
     }
+    str->m_cache[0] = NULL;
 }
 
 int XPrint(const XString* str)
 {
     if (str == NULL)
         return 0;
-    printf("%s\n", XString_toLocal(str));
+    printf("%s", XString_toLocal(str));
     return XString_length_base(str);
 }
 
@@ -2239,7 +2226,7 @@ int XPrint_utf8(const char* utf8_str)
     }
 
     // 4. 输出GBK字符串并释放资源
-    int result = printf("%s\n", gbk_buf);
+    int result = printf("%s", gbk_buf);
     XMemory_free(gbk_buf);
     return result;
 
