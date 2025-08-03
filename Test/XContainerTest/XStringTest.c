@@ -10,6 +10,7 @@
 static void XFor_each_XString(XString* str, void* args)
 {
 	XPrint(str);
+	printf("\n");
 }
 static void XFor_each_XChar(XChar* ch, void* args)
 {
@@ -107,7 +108,7 @@ void XStringCopyTest()
 }
 void XStringTest()
 {
-	while(true)
+	//while(true)
 	{
 #if XString_ON
 	XPrint_utf8("XString 测试\n");
@@ -125,7 +126,8 @@ void XStringTest()
 		
 		XString_delete_base(str);
 	}
-	
+	XCoreApplication_requestQuit();
+	return;
 	
 	XString* str = XString_create_utf8("你好");
 	XPrint(str);

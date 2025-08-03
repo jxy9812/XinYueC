@@ -257,20 +257,22 @@ int XChar_compare(const XChar* a, const XChar* b);
 /**
  * @brief 从UTF-8字节流解析出XChar（UTF-16）
  * @param utf8 输入的UTF-8字节流（以NULL结尾）
+ * @param input_size 输入数据大小（字节），0则自动检测NULL结尾
  * @param out 输出的XChar数组
  * @param max_out 输出数组的最大容量（含终止符）
  * @return 成功解析的XChar数量（不含终止符），失败返回-1
  */
-int64_t XChar_from_utf8(const uint8_t* utf8, XChar* out, size_t max_out);
+int64_t XChar_from_utf8(const uint8_t* utf8, size_t input_size, XChar* out, size_t max_out);
 
 /**
  * @brief 将XChar（UTF-16）转换为UTF-8字节流
  * @param ch XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
  * @param utf8 输出的UTF-8字节流
  * @param max_utf8 输出缓冲区的最大容量（含终止符）
  * @return 成功写入的字节数（不含终止符），失败返回-1
  */
-int64_t XChar_to_utf8(const XChar* ch, uint8_t* utf8, size_t max_utf8);
+int64_t XChar_to_utf8(const XChar* ch, size_t input_count, uint8_t* utf8, size_t max_utf8);
 
 // --------------------------
 // UTF-16编码转换函数
@@ -279,20 +281,22 @@ int64_t XChar_to_utf8(const XChar* ch, uint8_t* utf8, size_t max_utf8);
 /**
  * @brief 从UTF-16编码字符串转换为XChar数组
  * @param utf16_str 待转换的UTF-16字符串（uint16_t类型，以L'\0'为终止符）
+ * @param input_size 输入数据大小（uint16_t元素数），0则自动检测L'\0'结尾
  * @param out_xchars 输出的XChar数组（以code=0为终止符）
  * @param max_count 输出数组的最大容量（含终止符）
  * @return 成功返回转换的XChar数量（不含终止符），失败返回-1
  */
-int64_t XChar_from_utf16(const uint16_t* utf16_str, XChar* out_xchars, size_t max_count);
+int64_t XChar_from_utf16(const uint16_t* utf16_str, size_t input_size, XChar* out_xchars, size_t max_count);
 
 /**
  * @brief 将XChar数组转换为UTF-16编码字符串
  * @param xchars XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
  * @param out_buf 输出的UTF-16字符串缓冲区（uint16_t类型）
  * @param buf_size 输出缓冲区的最大容量（含终止符）
  * @return 成功返回写入的uint16_t数量（不含终止符），失败返回-1
  */
-int64_t XChar_to_utf16(const XChar* xchars, uint16_t* out_buf, size_t buf_size);
+int64_t XChar_to_utf16(const XChar* xchars, size_t input_count, uint16_t* out_buf, size_t buf_size);
 
 // --------------------------
 // UTF-32编码转换函数
@@ -301,20 +305,22 @@ int64_t XChar_to_utf16(const XChar* xchars, uint16_t* out_buf, size_t buf_size);
 /**
  * @brief 从UTF-32码点数组创建XChar数组（UTF-16）
  * @param utf32 输入的UTF-32码点数组（以0为终止符）
+ * @param input_count 输入码点数量，0则自动检测0终止符
  * @param out 输出的XChar数组（以code=0为终止符）
  * @param max_out 输出数组的最大容量（含终止符）
  * @return 成功转换的XChar数量（不含终止符），失败返回-1
  */
-int64_t XChar_from_utf32(const uint32_t* utf32, XChar* out, size_t max_out);
+int64_t XChar_from_utf32(const uint32_t* utf32, size_t input_count, XChar* out, size_t max_out);
 
 /**
  * @brief 将XChar数组（UTF-16）转换为UTF-32码点数组
  * @param ch XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
  * @param utf32 输出的UTF-32码点数组（以0为终止符）
  * @param max_utf32 输出数组的最大容量（含终止符）
  * @return 成功转换的码点数量（不含终止符），失败返回-1
  */
-int64_t XChar_to_utf32(const XChar* ch, uint32_t* utf32, size_t max_utf32);
+int64_t XChar_to_utf32(const XChar* ch, size_t input_count, uint32_t* utf32, size_t max_utf32);
 
 // --------------------------
 // Latin-1编码转换函数
@@ -323,38 +329,42 @@ int64_t XChar_to_utf32(const XChar* ch, uint32_t* utf32, size_t max_utf32);
 /**
  * @brief 从Latin1编码字符串转换为XChar数组
  * @param latin1 待转换的Latin1字符串（uint8_t类型，以'\0'为终止符）
+ * @param input_size 输入数据大小（字节），0则自动检测'\0'结尾
  * @param out 输出的XChar数组（以code=0为终止符）
  * @param max_out 输出数组的最大容量（含终止符）
  * @return 成功返回转换的XChar数量（不含终止符），失败返回-1
  */
-int64_t XChar_from_latin1(const uint8_t* latin1, XChar* out, size_t max_out);
+int64_t XChar_from_latin1(const uint8_t* latin1, size_t input_size, XChar* out, size_t max_out);
 
 /**
  * @brief 将XChar数组转换为Latin1编码字符串
  * @param ch XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
  * @param latin1 输出的Latin1字符串缓冲区（uint8_t类型）
  * @param max_latin1 输出缓冲区的最大容量（含终止符）
  * @return 成功返回写入的字节数（不含终止符），码点超出Latin1范围或失败返回-1
  */
-int64_t XChar_to_latin1(const XChar* ch, uint8_t* latin1, size_t max_latin1);
+int64_t XChar_to_latin1(const XChar* ch, size_t input_count, uint8_t* latin1, size_t max_latin1);
 
 /**
  * @brief 将GBK编码字符串转换为XChar数组（Windows平台）
  * @param gbk GBK编码字符串（以NULL结尾）
+ * @param input_size 输入数据大小（字节），0则自动检测NULL结尾
  * @param out 输出的XChar数组（以code=0为终止符）
  * @param max_out 输出数组的最大容量（含终止符）
  * @return 成功转换的XChar数量（不含终止符），失败返回-1
  */
-int64_t XChar_from_gbk(const char* gbk, XChar* out, size_t max_out);
+int64_t XChar_from_gbk(const char* gbk, size_t input_size, XChar* out, size_t max_out);
 
 /**
  * @brief 将XChar数组转换为GBK编码字符串（Windows平台）
  * @param ch XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
  * @param gbk 输出的GBK编码字符串缓冲区
  * @param max_gbk 输出缓冲区的最大容量（含终止符）
  * @return 成功写入的字节数（不含终止符），失败返回-1
  */
-int64_t XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk);
+int64_t XChar_to_gbk(const XChar* ch, size_t input_count, char* gbk, size_t max_gbk);
 
 // --------------------------
 // 本地编码转换函数
@@ -363,20 +373,22 @@ int64_t XChar_to_gbk(const XChar* ch, char* gbk, size_t max_gbk);
 /**
  * @brief 将本地编码字符串转换为XChar数组
  * @param local_str 本地编码字符串（Windows为GBK，Linux为UTF-8，以'\0'为终止符）
+ * @param input_size 输入数据大小（字节），0则自动检测'\0'结尾
  * @param out 输出的XChar数组（以code=0为终止符）
  * @param max_out 输出数组的最大容量（含终止符）
  * @return 成功返回转换的XChar数量（不含终止符），失败返回-1
  */
-int64_t XChar_from_local(const char* local_str, XChar* out, size_t max_out);
+int64_t XChar_from_local(const char* local_str, size_t input_size, XChar* out, size_t max_out);
 
 /**
  * @brief 将XChar数组转换为本地编码字符串
  * @param ch XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
  * @param local_str 输出的本地编码字符串缓冲区（Windows为GBK，Linux为UTF-8）
  * @param max_local 输出缓冲区的最大容量（含终止符）
  * @return 成功返回写入的字节数（不含终止符），失败返回-1
  */
-int64_t XChar_to_local(const XChar* ch, char* local_str, size_t max_local);
+int64_t XChar_to_local(const XChar* ch, size_t input_count, char* local_str, size_t max_local);
 
 // --------------------------
 // UTF-8与GBK互转函数（跨平台）
@@ -385,20 +397,22 @@ int64_t XChar_to_local(const XChar* ch, char* local_str, size_t max_local);
 /**
  * @brief UTF-8转GBK编码（跨平台实现）
  * @param utf8_str 输入UTF-8字符串（以'\0'结尾）
+ * @param input_size 输入数据大小（字节），0则自动检测'\0'结尾
  * @param gbk_buf 输出GBK缓冲区（NULL时仅计算所需大小）
  * @param max_len 输出缓冲区大小（含终止符）
  * @return 成功返回GBK字节数（不含终止符），失败返回-1
  */
-int64_t XUTF8_to_gbk(const char* utf8_str, char* gbk_buf, size_t max_len);
+int64_t XUTF8_to_gbk(const char* utf8_str, size_t input_size, char* gbk_buf, size_t max_len);
 
 /**
  * @brief GBK转UTF-8编码（跨平台实现）
  * @param gbk_str 输入GBK字符串（以'\0'结尾）
+ * @param input_size 输入数据大小（字节），0则自动检测'\0'结尾
  * @param utf8_buf 输出UTF-8缓冲区（NULL时仅计算所需大小）
  * @param max_len 输出缓冲区大小（含终止符）
  * @return 成功返回UTF-8字节数（不含终止符），失败返回-1
  */
-int64_t XGBK_to_utf8(const char* gbk_str, char* utf8_buf, size_t max_len);
+int64_t XGBK_to_utf8(const char* gbk_str, size_t input_size, char* utf8_buf, size_t max_len);
 
 #ifdef __cplusplus
 }
