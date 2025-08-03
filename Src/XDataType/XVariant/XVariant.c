@@ -194,18 +194,18 @@ XVariant* XVariant_create_byteArray(const void* data, size_t size)
 	return XVariant_create(data,size, XVariantType_ByteArray);
 }
 
-XVariant* XVariant_create_XString(XString* string)
+XVariant* XVariant_create_XString(XString* str)
 {
-	if(string==NULL)
+	if(str==NULL)
 		return NULL;
-	return XVariant_create(XContainerDataPtr(string), (XContainerSize(string) + 1)*sizeof(XChar), XVariantType_String);
+	return XVariant_create(XString_toUtf8(str),strlen(XString_toUtf8(str))+1, XVariantType_String);
 }
 
 XVariant* XVariant_create_utf8_str(const char* str)
 {
 	if (str == NULL)
 		return NULL;
-	return XVariant_create(str, strlen(str)+1, XVariantType_String);
+	return XVariant_create(str,strlen(str)+1, XVariantType_String);;
 }
 
 XVariant* XVariant_create_list(const XVariantList* list)
@@ -523,10 +523,7 @@ XString* XVariant_toString(XVariant* var)
 {
 	if (var->m_type != XVariantType_String&&var->m_type != XVariantType_ByteArray)
 		return NULL;
-	size_t len = var->m_dataSize;
-	if (((char*)XVariant_DataPtr(var))[len - 1] == 0)
-		len--;
-	XString* str = XString_create_with_length_utf8(XVariant_DataPtr(var),len);
+	XString* str = XString_create_utf8(XVariant_DataPtr(var));
 	return str;
 }
 
@@ -779,14 +776,16 @@ void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size)
 	setValue(var, data, size, XVariantType_ByteArray);
 }
 
-void XVariant_setValue_XString(XVariant* var, const XString* string)
+void XVariant_setValue_XString(XVariant* var, const XString* str)
 {
-	if (string)
-		setValue(var, XContainerDataPtr(string), XContainerSize(string), XVariantType_String);
+	if(str)
+		setValue(var,XString_toUtf8(str), strlen(XString_toUtf8(str)) + 1, XVariantType_String);
 }
 
-void XVariant_setValue_str(XVariant* var, const char* str)
+void XVariant_setValue_utf8_str(XVariant* var, const char* str)
 {
+	if (var == NULL || str == NULL)
+		return;
 	setValue(var, str, strlen(str)+1, XVariantType_String);
 }
 
