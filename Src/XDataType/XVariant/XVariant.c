@@ -7,6 +7,7 @@
 #include "XString.h"
 #include "XAlgorithm.h"
 #include "XVariantList.h"
+#include "XStringList.h"
 #include "XHashMap.h"
 #include "XMap.h"
 #include <string.h>
@@ -168,19 +169,19 @@ XVariant* XVariant_create_double(double val)
 	return XVariant_Create(val, XVariantType_Double);
 }
 
-XVariant* XVariant_create_XPair(const XPair* val)
+XVariant* XVariant_create_Pair(const XPair* val)
 {
 	if (val == NULL)
 		return NULL;
 	return XVariant_create(val, XPair_getSize(val), XVariantType_Pair);
 }
 
-XVariant* XVariant_create_XPoint(XPoint val)
+XVariant* XVariant_create_Point(XPoint val)
 {
 	return XVariant_Create(val, XVariantType_Point);
 }
 
-XVariant* XVariant_create_XByteArray(const XByteArray* array)
+XVariant* XVariant_create_ByteArray(const XByteArray* array)
 {
 	if (array == NULL)
 		return NULL;
@@ -194,7 +195,7 @@ XVariant* XVariant_create_byteArray(const void* data, size_t size)
 	return XVariant_create(data,size, XVariantType_ByteArray);
 }
 
-XVariant* XVariant_create_XString(XString* str)
+XVariant* XVariant_create_String(XString* str)
 {
 	if(str==NULL)
 		return NULL;
@@ -208,7 +209,44 @@ XVariant* XVariant_create_utf8_str(const char* str)
 	return XVariant_create(str,strlen(str)+1, XVariantType_String);;
 }
 
-XVariant* XVariant_create_list(const XVariantList* list)
+XVariant* XVariant_create_StringList(const XStringList* list)
+{
+	if (list == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, 0, XVariantType_StringList);
+	if (var == NULL)
+		return NULL;
+	//计算大小
+	XString* temp = NULL;
+	for_each_iterator(list, XStringList, it)
+	{
+		temp = XStringList_iterator_data(&it);
+		(var->m_dataSize) += sizeof(size_t);
+		(var->m_dataSize) += strlen(XString_toUtf8(temp));
+	}
+	//开始申请空间
+	var->m_data = XMemory_malloc(var->m_dataSize);
+	if (var->m_data == NULL)
+	{
+		XMemory_free(var);
+		return NULL;
+	}
+	//正式保存数据
+	uint8_t* ptr = var->m_data;
+	size_t len = 0;
+	for_each_iterator(list, XVariantList, it)
+	{
+		temp = XVariantList_iterator_data(&it);
+		len= strlen(XString_toUtf8(temp));//计算字符串长度
+		memcpy(ptr, &len, sizeof(size_t));//写入字符串长度
+		ptr += sizeof(size_t);
+		memcpy(ptr, XString_toUtf8(temp), len);//写入字符串
+		ptr += len;
+	}
+	return var;
+}
+
+XVariant* XVariant_create_List(const XVariantList* list)
 {
 	if (list == NULL)
 		return NULL;
@@ -244,7 +282,7 @@ XVariant* XVariant_create_list(const XVariantList* list)
 	return var;
 }
 //XMap<XString, XVariant>
-XVariant* XVariant_create_XMap(const XVariantMap* map)
+XVariant* XVariant_create_Map(const XVariantMap* map)
 {
 	if (map == NULL|| ((XMapBase*)map)->m_KeyEquality != XEquality_XString)
 		return NULL;
@@ -297,7 +335,7 @@ XVariant* XVariant_create_XMap(const XVariantMap* map)
 	return var;
 }
 
-XVariant* XVariant_create_XHash(const XHashMap* hash)
+XVariant* XVariant_create_Hash(const XHashMap* hash)
 {
 	if (hash == NULL || ((XMapBase*)hash)->m_KeyEquality != XEquality_XString)
 		return NULL;
@@ -527,6 +565,24 @@ XString* XVariant_toString(XVariant* var)
 	return str;
 }
 
+XStringList* XVariant_toStringList(XVariant* var)
+{
+	if (var->m_type != XVariantType_StringList)
+		return NULL;
+	XStringList* list = XStringList_create();
+	if (list == NULL)
+		return NULL;
+	//正式保存数据
+	uint8_t* ptr = var->m_data;
+	size_t len = 0;
+	XString_Init_Utf8(str,NULL);
+	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
+	{
+		len = *((size_t*)ptr);
+
+	}
+}
+
 XVariantList* XVariant_toList(XVariant* var)
 {
 	if (var->m_type != XVariantType_List)
@@ -619,7 +675,7 @@ XVariantHashMap* XVariant_toHash(XVariant* var)
 	return hash;
 }
 
-XPair* XVariant_toXPair(XVariant* var)
+XPair* XVariant_toPair(XVariant* var)
 {
 	if (var->m_type != XVariantType_Pair)
 		return NULL;
@@ -629,7 +685,7 @@ XPair* XVariant_toXPair(XVariant* var)
 	return pair;
 }
 
-XPoint XVariant_toXPoint(XVariant* var)
+XPoint XVariant_toPoint(XVariant* var)
 {
 	if (var->m_type != XVariantType_Point)
 	{
@@ -755,17 +811,17 @@ void XVariant_setValue_double(XVariant* var, double val)
 	setValue(var, &val, sizeof(double), XVariantType_Double);
 }
 
-void XVariant_setValue_XPair(XVariant* var, const XPair* pair)
+void XVariant_setValue_Pair(XVariant* var, const XPair* pair)
 {
 	setValue(var,pair,XPair_getSize(pair), XVariantType_Pair);
 }
 
-void XVariant_setValue_XPoint(XVariant* var, XPoint val)
+void XVariant_setValue_Point(XVariant* var, XPoint val)
 {
 	setValue(var,&val,sizeof(XPoint), XVariantType_Point);
 }
 
-void XVariant_setValue_XByteArray(XVariant* var, const XByteArray* array)
+void XVariant_setValue_ByteArray(XVariant* var, const XByteArray* array)
 {
 	if(array)
 		setValue(var, XContainerDataPtr(array), XContainerSize(array), XVariantType_ByteArray);
@@ -776,7 +832,7 @@ void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size)
 	setValue(var, data, size, XVariantType_ByteArray);
 }
 
-void XVariant_setValue_XString(XVariant* var, const XString* str)
+void XVariant_setValue_String(XVariant* var, const XString* str)
 {
 	if(str)
 		setValue(var,XString_toUtf8(str), strlen(XString_toUtf8(str)) + 1, XVariantType_String);
@@ -787,6 +843,10 @@ void XVariant_setValue_utf8_str(XVariant* var, const char* str)
 	if (var == NULL || str == NULL)
 		return;
 	setValue(var, str, strlen(str)+1, XVariantType_String);
+}
+
+void XVariant_setValue_StringList(XVariant* var, const XStringList* list)
+{
 }
 
 void XVariant_copy(XVariant* var, const XVariant* src)
@@ -874,6 +934,7 @@ const char* XVariant_typeName(XVariant* var)
 	case XVariantType_Point:return      "XPoint";
 	case XVariantType_ByteArray:return  "XByteArrat";
 	case XVariantType_String:return		"XString";
+	case XVariantType_StringList:return	"XStringList";
 	case XVariantType_List:return		"XVariantList";
 	case XVariantType_MapBase:return    "XMapBase<XString,XVariant>";
 	default:

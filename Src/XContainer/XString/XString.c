@@ -564,6 +564,53 @@ bool XString_assign_utf8(XString* str, const char* utf8_str)
     return true;
 }
 
+bool XString_assign_with_length_utf8(XString* str, const char* utf8_str, size_t len)
+{
+    // 参数合法性检查
+    if (!str || !utf8_str || len == 0) {
+        return false;
+    }
+
+    //// 1. 首先计算UTF-8字符串对应的XChar（UTF-16）数量
+    //// 用于预分配内存，提高效率
+    //const uint8_t* u8_data = (const uint8_t*)utf8_str;
+    //int64_t xchar_count = XChar_from_utf8(u8_data, NULL, len);
+
+    //// 检查转换是否成功（xchar_count <= 0表示转换失败或空字符串）
+    //if (xchar_count <= 0) {
+    //    // 清空现有内容，处理空字符串情况
+    //    XString_clear_base(str);
+    //    return xchar_count == 0; // 只有合法的空转换才返回true
+    //}
+
+    //// 2. 清空现有内容并预分配内存
+    //XString_clear_base(str);
+    //if (!XString_reserve_base(str, (size_t)xchar_count)) {
+    //    return false; // 内存分配失败
+    //}
+
+    //// 3. 执行UTF-8到XChar（UTF-16）的转换
+    //// 转换结果直接存入XString内部缓冲区
+    //int64_t converted = XChar_from_utf8(
+    //    u8_data,
+    //    XString_cdata_mut(str) + XString_length_base(str),
+    //    len
+    //);
+
+    //if (converted != xchar_count) {
+    //    // 转换结果与预期不符，清理并返回失败
+    //    XString_clear_base(str);
+    //    return false;
+    //}
+
+    //// 4. 更新字符串长度信息
+    //str->length = (size_t)xchar_count;
+    //// 确保字符串以null结尾
+    //XString_cdata_mut(str)[str->length] = 0;
+
+    //return true;
+}
+
 bool XString_assign_fmt_utf8(XString* str, const char* utf8_format, ...)
 {
     // 参数校验：目标字符串或格式字符串为空则直接返回失败

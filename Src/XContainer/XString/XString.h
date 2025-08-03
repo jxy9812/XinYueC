@@ -252,7 +252,15 @@ bool XString_assign(XString* str, const XString* ass_str);
  * @return 成功返回 true，失败返回 false
  */
 bool XString_assign_utf8(XString* str, const char* utf8_str);
-
+/**
+ * @brief 将指定长度的UTF-8字符串赋值给XString对象
+ * @param str 指向要赋值的XString对象的指针
+ * @param utf8_str 待赋值的UTF-8字符串指针
+ * @param len 要处理的UTF-8字符串长度（字节数）
+ * @return 成功返回true，失败返回false
+ * @note 仅处理前len个字节的UTF-8数据，自动忽略不完整的UTF-8序列
+ */
+bool XString_assign_with_length_utf8(XString* str, const char* utf8_str,size_t len);
 /**
  * @brief 使用UTF-8格式字符串格式化赋值给XString
  * @param str 目标XString对象指针

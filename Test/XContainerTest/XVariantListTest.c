@@ -49,7 +49,7 @@ void XVariantListTest()
 		
 		XPrint_utf8("--------------------------XVariant_toList测试-----------------------\n");
 		{
-			XVariant* varList = XVariant_create_list(list);
+			XVariant* varList = XVariant_create_List(list);
 			XPrint_utf8_fmt("当前类型:%s\n", XVariant_typeName(varList));
 			XVariantList* l = XVariant_toList(varList);
 			if (l)
@@ -86,7 +86,7 @@ void XVariantListTest()
 				XString_delete_base(str);
 				XVariant_delete(v);
 			}
-			XVariant* varMap = XVariant_create_XHash(map);
+			XVariant* varMap = XVariant_create_Hash(map);
 			XPrint_utf8_fmt("当前类型:%s\n", XVariant_typeName(varMap));
 			XMapBase_delete_base(map);
 			map=XVariant_toHash(varMap);
