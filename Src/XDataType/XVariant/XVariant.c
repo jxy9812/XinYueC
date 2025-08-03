@@ -198,10 +198,10 @@ XVariant* XVariant_create_XString(XString* string)
 {
 	if(string==NULL)
 		return NULL;
-	return XVariant_create(XContainerDataPtr(string), XContainerSize(string), XVariantType_String);
+	return XVariant_create(XContainerDataPtr(string), (XContainerSize(string) + 1)*sizeof(XChar), XVariantType_String);
 }
 
-XVariant* XVariant_create_str(const char* str)
+XVariant* XVariant_create_utf8_str(const char* str)
 {
 	if (str == NULL)
 		return NULL;

@@ -1,5 +1,6 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
+#include"XString.h"
 #include"XStringList.h"
 #include"XFunctionCallback.h"
 #include"XEquality.h"
@@ -7,30 +8,30 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
-static void XFor_each_XString(void* LPVal, void* args)
+static void XFor_each_XString(XString* string, void* args)
 {
-	XString* string = LPVal;
-	//printf("测试\n");
-	//printf("%s \n",XString_c_str(string) );
+	printf("%s \n",XString_c_str(string) );
 }
 
 void XStringListTest()
 {
 #if XVector_ON
-	//while (true)
+	while (true)
 	{
-		XStringList* stringList = XStringList_create();
-		XStringList_push_back_c_str(stringList, "你好");
-		XStringList_push_back_c_str(stringList, "非常好");
-		XStringList_push_back_c_str(stringList, "世界");
-		XString* str = XStringList_join(stringList,"-");
+		XStringList* list = XStringList_create();
+		XStringList_push_back_utf8(list, "你好");
+		XStringList_push_back_utf8(list, "非常好");
+		XStringList_push_back_utf8(list, "世界");
+		XStringList_insert_utf8(list,0,"彩虹猫");
+		XStringList_push_front_utf8(list, "星小白");
+		XString* str = XStringList_join_utf8(list,"-");
 		if (str)
 		{
-			//printf("连接:%s \n", XString_c_str(str));
-			//XString_delete_base(str);
+			XPrint_utf8_fmt("连接:%s \n", XString_toUtf8(str));
+			XString_delete_base(str);
 		}
-		XStringList_iterator_for_each(stringList, XFor_each_XString, NULL);
-		XStringList_delete_base(stringList);
+		XStringList_iterator_for_each(list, XFor_each_XString, NULL);
+		XStringList_delete_base(list);
 	}
 #else
 	IS_ON_DEBUG(XVector_ON);

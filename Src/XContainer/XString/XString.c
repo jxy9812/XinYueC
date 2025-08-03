@@ -41,7 +41,8 @@ XChar* XString_data(XString* str);
 // 辅助函数：计算KMP前缀表
 static void compute_prefix(const XChar* pattern, size_t m, int* prefix, XCharCaseSensitivity cs);
 // 辅助函数：KMP反向搜索（用于last_index_of）
-static int64_t kmp_reverse_search(const XChar* text, size_t n,const XChar* pattern, size_t m,XCharCaseSensitivity cs, size_t from);
+static int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, size_t m,
+    XCharCaseSensitivity cs, size_t start_idx);
 // 辅助函数：KMP正向搜索
 static int64_t kmp_search(const XChar* text, size_t n,const XChar* pattern, size_t m,const int* prefix, XCharCaseSensitivity cs,size_t from);
 
@@ -62,7 +63,9 @@ XString* XString_copy(const XString* other)
 }
 XString* XString_create(const XString* other)
 {
-    return XString_copy(other);
+    if(other)
+        return XString_copy(other);
+    return XString_create_utf8(NULL);
     //if (!other) return NULL;
 
     //XString* str = (XString*)XMemory_malloc(sizeof(XString));
@@ -960,56 +963,42 @@ int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t fro
     return result;
 }
 // 辅助函数：KMP反向搜索（用于last_index_of）
-int64_t kmp_reverse_search(const XChar* text, size_t n,
-    const XChar* pattern, size_t m,
-    XCharCaseSensitivity cs, size_t from) 
+int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, size_t m,
+    XCharCaseSensitivity cs, size_t start_idx)
 {
-    if (m == 0 || m > n) return -1;
-
-    // 计算最大可搜索起始位置（确保模式串能完全匹配）
-    size_t max_start = (from >= n) ? (n - m) :
-        (from >= m - 1) ? (from - m + 1) : 0;
-    if (max_start > n - m) max_start = n - m;
-
-    // 反转主串和模式串（为了复用正向KMP逻辑）
-    XChar* rev_text = (XChar*)XMemory_malloc(n * sizeof(XChar));
-    XChar* rev_pattern = (XChar*)XMemory_malloc(m * sizeof(XChar));
-    if (!rev_text || !rev_pattern) {
-        XMemory_free(rev_text);
-        XMemory_free(rev_pattern);
-        return -1;
-    }
-
-    // 填充反转后的数组
-    for (size_t i = 0; i < n; i++) {
-        rev_text[i] = text[n - 1 - i];
-    }
-    for (size_t i = 0; i < m; i++) {
-        rev_pattern[i] = pattern[m - 1 - i];
-    }
-
-    // 计算反转模式串的前缀表
+    // 计算前缀表（正向匹配用，与子串方向一致）
     int* prefix = (int*)XMemory_malloc(m * sizeof(int));
-    if (!prefix) {
-        XMemory_free(rev_text);
-        XMemory_free(rev_pattern);
-        return -1;
+    if (!prefix) return -1;
+    compute_prefix(pattern, m, prefix, cs);
+
+    int i = (int)start_idx;  // 主串当前起始位置（从start_idx开始）
+    int j = 0;               // 模式串匹配进度（从0开始，正向匹配）
+
+    // 从start_idx向前搜索，直到主串起始位置>=0
+    while (i >= 0) {
+        // 检查当前主串位置(i+j)与模式串位置j是否匹配
+        if (XChar_equals(&text[i + j], &pattern[j], cs)) {
+            j++;
+            if (j == (int)m) {
+                // 找到完整匹配，返回起始索引i
+                XMemory_free(prefix);
+                return i;
+            }
+        }
+        else {
+            if (j > 0) {
+                // 利用前缀表回溯模式串（减少重复比较）
+                j = prefix[j - 1];
+            }
+            else {
+                // j=0时不匹配，主串起始位置向前移一位
+                i--;
+            }
+        }
     }
-    compute_prefix(rev_pattern, m, prefix, cs);
 
-    // 搜索反转后的字符串（从0开始，因为已通过max_start限制范围）
-    int64_t rev_pos = kmp_search(rev_text, n, rev_pattern, m, prefix, cs, 0);
-
-    // 清理资源
+    // 未找到匹配
     XMemory_free(prefix);
-    XMemory_free(rev_text);
-    XMemory_free(rev_pattern);
-
-    // 转换为原字符串中的位置并检查是否在合法范围内
-    if (rev_pos != -1) {
-        int64_t original_pos = (n - m) - rev_pos;
-        return (original_pos >= 0 && (size_t)original_pos <= max_start) ? original_pos : -1;
-    }
     return -1;
 }
 
@@ -1050,72 +1039,49 @@ int64_t XString_index_of(const XString* str, const XString* substr, size_t from,
 
 int64_t XString_last_index_of(const XString* str, const XString* substr, size_t from, XCharCaseSensitivity cs)
 {
+    // 空指针检查
     if (!str || !substr) return -1;
 
+    // 获取字符串长度
     size_t str_len = XString_length_base(str);
     size_t substr_len = XString_length_base(substr);
 
-    // 处理空模式串
+    // 子串为空的特殊处理（返回from对应的实际索引）
     if (substr_len == 0) {
-        return (from < str_len) ? (int64_t)from : (int64_t)str_len;
+        // from=0对应最后一个字符的下一个位置（插入点），与标准库行为一致
+        size_t pos = (from >= str_len) ? 0 : (str_len - from);
+        return (int64_t)pos;
     }
 
-    // 模式串长于主串时直接返回-1
+    // 子串长于主串时无匹配可能
     if (substr_len > str_len) {
         return -1;
     }
 
+    // 计算子串可匹配的最大起始索引（主串中能放下子串的最左位置）
+    size_t max_start = str_len - substr_len;
+
+    // 将from（尾部偏移）转换为主串实际索引（头部偏移）
+    // from=0 → 主串最后一个字符位置（str_len-1），但需确保子串能放下
+    size_t start_idx;
+    if (from >= str_len) {
+        // from超出主串长度，从主串最左侧可匹配位置开始
+        start_idx = max_start;
+    }
+    else {
+        // 从尾部偏移from对应的位置开始，不超过max_start
+        start_idx = (str_len - 1 - from);
+        if (start_idx > max_start) {
+            start_idx = max_start; // 确保子串能完整放下
+        }
+    }
+
+    // 获取字符数据指针
     const XChar* text = XString_cdata(str);
     const XChar* pattern = XString_cdata(substr);
 
-    // 计算最大可搜索起始位置（确保模式串能完全匹配）
-    size_t max_start = (from >= str_len) ? (str_len - substr_len) :
-        (from >= substr_len - 1) ? (from - substr_len + 1) : 0;
-    if (max_start > str_len - substr_len) {
-        max_start = str_len - substr_len;
-    }
-
-    // 反转主串和模式串（为了复用KMP正向搜索逻辑）
-    XChar* rev_text = (XChar*)XMemory_malloc(str_len * sizeof(XChar));
-    XChar* rev_pattern = (XChar*)XMemory_malloc(substr_len * sizeof(XChar));
-    if (!rev_text || !rev_pattern) {
-        XMemory_free(rev_text);
-        XMemory_free(rev_pattern);
-        return -1;
-    }
-
-    // 填充反转后的数组
-    for (size_t i = 0; i < str_len; i++) {
-        rev_text[i] = text[str_len - 1 - i];
-    }
-    for (size_t i = 0; i < substr_len; i++) {
-        rev_pattern[i] = pattern[substr_len - 1 - i];
-    }
-
-    // 计算反转模式串的前缀表
-    int* prefix = (int*)XMemory_malloc(substr_len * sizeof(int));
-    if (!prefix) {
-        XMemory_free(rev_text);
-        XMemory_free(rev_pattern);
-        return -1;
-    }
-    compute_prefix(rev_pattern, substr_len, prefix, cs);
-
-    // 搜索反转后的字符串（从0开始，因为已通过max_start限制范围）
-    int64_t rev_pos = kmp_search(rev_text, str_len, rev_pattern, substr_len, prefix, cs, 0);
-
-    // 清理资源
-    XMemory_free(prefix);
-    XMemory_free(rev_text);
-    XMemory_free(rev_pattern);
-
-    // 转换为原字符串中的位置并检查是否在合法范围内
-    if (rev_pos != -1) {
-        int64_t original_pos = (str_len - substr_len) - rev_pos;
-        return (original_pos >= 0 && (size_t)original_pos <= max_start) ? original_pos : -1;
-    }
-
-    return -1;
+    // 调用修正后的KMP反向搜索
+    return kmp_reverse_search(text, str_len, pattern, substr_len, cs, start_idx);
 }
 
 int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_t from, XCharCaseSensitivity cs)
@@ -1141,11 +1107,29 @@ int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_
         return -1;
     }
 
+    // 计算子串可匹配的最大起始索引（主串中能放下子串的最左位置）
+    size_t max_start = str_len - substr_len;
+
+    // 将from（尾部偏移）转换为主串实际索引（头部偏移）
+    // from=0 → 主串最后一个字符位置（str_len-1），但需确保子串能放下
+    size_t start_idx;
+    if (from >= str_len) {
+        // from超出主串长度，从主串最左侧可匹配位置开始
+        start_idx = max_start;
+    }
+    else {
+        // 从尾部偏移from对应的位置开始，不超过max_start
+        start_idx = (str_len - 1 - from);
+        if (start_idx > max_start) {
+            start_idx = max_start; // 确保子串能完整放下
+        }
+    }
+
     const XChar* text = XString_cdata(str);
     const XChar* pattern = XString_cdata(substr_str);
 
-    // 执行反向KMP搜索
-    int64_t result = kmp_reverse_search(text, str_len, pattern, substr_len, cs, from);
+    // 执行反向KMP搜索（使用转换后的start_idx）
+    int64_t result = kmp_reverse_search(text, str_len, pattern, substr_len, cs, start_idx);
 
     XString_delete_base(substr_str);
     return result;

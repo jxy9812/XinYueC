@@ -83,7 +83,7 @@ XVariant* XVariant_create_XPoint(XPoint val);
 XVariant* XVariant_create_XByteArray(const XByteArray* array);
 XVariant* XVariant_create_byteArray(const void* data, size_t size);
 XVariant* XVariant_create_XString(XString* string);
-XVariant* XVariant_create_str(const char* str);
+XVariant* XVariant_create_utf8_str(const char* str);
 XVariant* XVariant_create_list(const XVariantList* list);
 XVariant* XVariant_create_XMap(const XVariantMap* map);//XMap<XString, XVariant>
 XVariant* XVariant_create_XHash(const XHashMap* map);//XHashMap<XString, XVariant>
