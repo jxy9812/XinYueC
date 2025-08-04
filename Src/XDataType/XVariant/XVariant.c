@@ -199,14 +199,14 @@ XVariant* XVariant_create_String(XString* str)
 {
 	if(str==NULL)
 		return NULL;
-	return XVariant_create(XString_toUtf8(str),strlen(XString_toUtf8(str))+1, XVariantType_String);
+	return XVariant_create(XString_toUtf8(str),strlen(XString_toUtf8(str)), XVariantType_String);
 }
 
 XVariant* XVariant_create_utf8_str(const char* str)
 {
 	if (str == NULL)
 		return NULL;
-	return XVariant_create(str,strlen(str)+1, XVariantType_String);;
+	return XVariant_create(str,strlen(str), XVariantType_String);
 }
 
 XVariant* XVariant_create_StringList(const XStringList* list)
@@ -216,6 +216,8 @@ XVariant* XVariant_create_StringList(const XStringList* list)
 	XVariant* var = XVariant_create(NULL, 0, XVariantType_StringList);
 	if (var == NULL)
 		return NULL;
+	XVariant_setValue_StringList(var,list);
+	return var;
 	//计算大小
 	XString* temp = NULL;
 	for_each_iterator(list, XStringList, it)
@@ -561,7 +563,7 @@ XString* XVariant_toString(XVariant* var)
 {
 	if (var->m_type != XVariantType_String&&var->m_type != XVariantType_ByteArray)
 		return NULL;
-	XString* str = XString_create_utf8(XVariant_DataPtr(var));
+	XString* str = XString_create_with_length_utf8(XVariant_DataPtr(var), var->m_dataSize);
 	return str;
 }
 
@@ -578,9 +580,14 @@ XStringList* XVariant_toStringList(XVariant* var)
 	XString_Init_Utf8(str,NULL);
 	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
 	{
-		len = *((size_t*)ptr);
-
+		len = *((size_t*)ptr);//获取字符串长度不包括结束符 0
+		ptr += sizeof(size_t);//指针偏移到utf8字符串首地址
+		XString_assign_with_length_utf8(str,ptr,len);//转XString对象
+		XStringList_push_back_move_base(list,str);//插入移动构造
+		ptr += len;//指针偏移到下一个字符串
 	}
+	XString_deinit_base(str);//释放
+	return list;
 }
 
 XVariantList* XVariant_toList(XVariant* var)
@@ -835,18 +842,52 @@ void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size)
 void XVariant_setValue_String(XVariant* var, const XString* str)
 {
 	if(str)
-		setValue(var,XString_toUtf8(str), strlen(XString_toUtf8(str)) + 1, XVariantType_String);
+		setValue(var,XString_toUtf8(str), strlen(XString_toUtf8(str)), XVariantType_String);
 }
 
 void XVariant_setValue_utf8_str(XVariant* var, const char* str)
 {
 	if (var == NULL || str == NULL)
 		return;
-	setValue(var, str, strlen(str)+1, XVariantType_String);
+	setValue(var, str, strlen(str), XVariantType_String);
 }
 
 void XVariant_setValue_StringList(XVariant* var, const XStringList* list)
 {
+	if (list == NULL|| var == NULL)
+		return ;
+	//初始化
+	if (var->m_data)
+		XMemory_free(var->m_data);
+	var->m_dataSize = 0;
+	var->m_type = XVariantType_StringList;
+	//计算大小
+	XString* temp = NULL;
+	for_each_iterator(list, XStringList, it)
+	{
+		temp = XStringList_iterator_data(&it);
+		(var->m_dataSize) += sizeof(size_t);
+		(var->m_dataSize) += strlen(XString_toUtf8(temp));
+	}
+	//开始申请空间
+	var->m_data = XMemory_malloc(var->m_dataSize);
+	if (var->m_data == NULL)
+	{
+		XMemory_free(var);
+		return NULL;
+	}
+	//正式保存数据
+	uint8_t* ptr = var->m_data;
+	size_t len = 0;
+	for_each_iterator(list, XVariantList, it)
+	{
+		temp = XVariantList_iterator_data(&it);
+		len = strlen(XString_toUtf8(temp));//计算字符串长度
+		memcpy(ptr, &len, sizeof(size_t));//写入字符串长度
+		ptr += sizeof(size_t);
+		memcpy(ptr, XString_toUtf8(temp), len);//写入字符串
+		ptr += len;
+	}
 }
 
 void XVariant_copy(XVariant* var, const XVariant* src)
