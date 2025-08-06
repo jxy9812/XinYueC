@@ -16,6 +16,7 @@ extern "C" {
 #define XMap_ON							1
 #define XHashMap_ON						1
 #define XString_ON						1
+#define XVariant_ON						1
 #define	XPriorityQueue_ON				1
 #define	XQueue_ON						1
 #define	XList_ON						1

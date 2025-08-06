@@ -925,6 +925,9 @@ void VXClass_copy(XListSLinkedAtomic* object, const XListSLinkedAtomic* src)
     {
         XListBase_clear_base(object);
     }
+    XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
+    XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
+    XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
     for_each_iterator(src, XListSLinkedAtomic, it)
     {
         XListBase_push_back_base(object, XListSLinkedAtomic_iterator_data(&it));

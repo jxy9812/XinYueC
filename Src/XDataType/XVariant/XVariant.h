@@ -12,7 +12,7 @@ extern "C" {
 #include<stdbool.h>
 typedef enum
 {
-	XVariantType_Other,//其他
+	XVariantType_NULL,//其他
 	XVariantType_Uint8,
 	XVariantType_Uint16,
 	XVariantType_Uint32,
@@ -62,6 +62,7 @@ XVariant* XVariant_create(void* data, size_t dataSize,int type);
 void XVariant_init(XVariant* var, void* data, size_t dataSize, int type);
 #define XVariant_Init(var,data,dataSize,type)  XVariant _##var,*var=&_##var;XVariant_init(var,data,dataSize,type)
 /*					基础数据					*/			
+XVariant* XVariant_create_null();
 XVariant* XVariant_create_uint8 (uint8_t val);
 XVariant* XVariant_create_uint16(uint16_t val);
 XVariant* XVariant_create_uint32(uint32_t val);
@@ -116,6 +117,7 @@ XVariantMap* XVariant_toMap(XVariant* var);//XMap<XString, XVariant>
 XVariantHashMap* XVariant_toHash(XVariant* var);//XHashMap<XString, XVariant>
 
 void XVariant_setValue(XVariant* var, const XVariant* newVar);
+void XVariant_setValue_null(XVariant* var);
 void XVariant_setValue_uint8 (XVariant* var, uint8_t val);
 void XVariant_setValue_uint16(XVariant* var, uint16_t val);
 void XVariant_setValue_uint32(XVariant* var, uint32_t val);

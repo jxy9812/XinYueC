@@ -108,6 +108,15 @@ void XStringCopyTest()
 }
 void XStringTest()
 {
+	//char* utf8 = "1234567890";
+	//XChar buff [100];
+	//XChar_from_utf8_stream(utf8,0,buff,100);
+	//for (size_t i = 0; i < 10; i++)
+	//{
+	//	printf("utf8:%d utf16:%d %d\n",utf8[i],buff[i].code, buff[i].code&(~0x80));//c & 0x80
+	//}
+	//
+	//return;
 	//while(true)
 	{
 #if XString_ON

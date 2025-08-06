@@ -84,6 +84,9 @@ void VXClass_copy(XListDLinked* object, const XListDLinked* src)
     {
         XListBase_clear_base(object);
     }
+    XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
+    XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
+    XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
     for_each_iterator(src, XListDLinked,it)
     {
         XListBase_push_back_base(object,XListDLinked_iterator_data(&it));

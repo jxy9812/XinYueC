@@ -29,16 +29,17 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 #define XMap_value_base					XMapBase_value_base
 #define XMap_Value_Base					XMapBase_Value_Base
 #define XMap_find_base					XMapBase_find_base
+#define XMap_contains					XMapBase_contains
 #define XMap_copy_base					XMapBase_copy_base	
 #define XMap_move_base					XMapBase_move_base	
 #define XMap_deinit_base				XMapBase_deinit_base	
 #define XMap_delete_base				XMapBase_delete_base	
 #define XMap_clear_base					XMapBase_clear_base	
 #define XMap_isEmpty_base				XMapBase_isEmpty_base	
-#define XMap_size_base				XMapBase_size_base	
-#define XMap_capacity_base			XMapBase_capacity_base
+#define XMap_size_base					XMapBase_size_base	
+#define XMap_capacity_base				XMapBase_capacity_base
 #define XMap_swap_base					XMapBase_swap_base	
-#define XMap_typeSize_base			XMapBase_typeSize_base
+#define XMap_typeSize_base				XMapBase_typeSize_base
 
 XVariantMap* XMap_create_XVariantMap();
 #ifdef __cplusplus

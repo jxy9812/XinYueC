@@ -57,8 +57,11 @@ uint8_t* XByteArray_find_base(const XByteArray* array, const uint8_t findVal);
 #define XByteArray_capacity_base					XVector_capacity_base
 #define XByteArray_swap_base						XVector_swap_base	
 #define XByteArray_typeSize_base					XVector_typeSize_base
-
-
+#define XByteArray_count_base						XVector_count_base			
+#define XByteArray_append_base						XVector_append_base			
+#define XByteArray_append_move_base					XVector_append_move_base	
+#define XByteArray_prepend_base						XVector_prepend_base	
+#define XByteArray_prepend_move_base				XVector_prepend_move_base
 #ifdef __cplusplus
 }
 #endif

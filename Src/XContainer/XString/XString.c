@@ -90,10 +90,10 @@ XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
     size_t actual_len = (len == 0 && utf8_str) ? strlen(utf8_str) : len;
     if (utf8_str && actual_len > 0)
     {
-        int xchar_count = XChar_from_utf8((const uint8_t*)utf8_str,len, NULL, 0);
+        int xchar_count = XChar_from_utf8_stream((const uint8_t*)utf8_str,len, NULL, 0);
         if (xchar_count > 0) {
             XString_reserve(str, xchar_count);
-            xchar_count = XChar_from_utf8((const uint8_t*)utf8_str,len, XString_data(str), xchar_count + 1);
+            xchar_count = XChar_from_utf8_stream((const uint8_t*)utf8_str,len, XString_data(str), xchar_count + 1);
             str->parent.m_size = xchar_count;
         }
     }
@@ -158,7 +158,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     temp_gbk[len] = '\0'; // 添加空终止符，适配XChar_from_gbk的要求
 
     // 步骤2：计算转换所需的XChar数量（首次调用获取长度）
-    int64_t xchar_count = XChar_from_gbk(temp_gbk, len, NULL, 0);
+    int64_t xchar_count = XChar_from_gbk_stream(temp_gbk, len, NULL, 0);
     if (xchar_count <= 0) {
         XMemory_free(temp_gbk); // 释放临时缓冲区
         return NULL;
@@ -177,7 +177,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
 
     // 步骤5：执行实际转换（使用临时缓冲区）
     XChar* data = XString_data(str);
-    xchar_count = XChar_from_gbk(temp_gbk, len, data, (size_t)xchar_count + 1); // +1 预留终止符位置
+    xchar_count = XChar_from_gbk_stream(temp_gbk, len, data, (size_t)xchar_count + 1); // +1 预留终止符位置
     XMemory_free(temp_gbk); // 转换完成后释放临时缓冲区
 
     if (xchar_count <= 0) {
@@ -230,7 +230,7 @@ const char* XString_toUtf8(const XString* str)
     if (str->m_cache&& str->m_cache[XStringCache_Utf8]) return str->m_cache[XStringCache_Utf8];
 
     // 计算所需UTF-8缓冲区大小（不包含结束符）
-    int64_t utf8_len = XChar_to_utf8(XString_cdata(str), XString_length_base(str), NULL, 0);
+    int64_t utf8_len = XChar_to_utf8_stream(XString_cdata(str), XString_length_base(str), NULL, 0);
     if (utf8_len <= 0) return NULL;
     
     // 分配缓冲区（+1用于终止符）
@@ -239,7 +239,7 @@ const char* XString_toUtf8(const XString* str)
     if (!utf8_buf) return NULL;
 
     // 调用XChar转换函数（使用内部结束符自动处理）
-    int64_t result = XChar_to_utf8(XString_cdata(str), XString_length_base(str), (uint8_t*)utf8_buf, utf8_len+1);
+    int64_t result = XChar_to_utf8_stream(XString_cdata(str), XString_length_base(str), (uint8_t*)utf8_buf, utf8_len+1);
     if (result <= 0) 
     {
         XMemory_free(utf8_buf);
@@ -261,7 +261,7 @@ const uint16_t* XString_toUtf16(const XString* str)
     }
 
     // 计算UTF-16所需缓冲区大小（包含终止符）
-    int64_t utf16_len = XChar_to_utf16(XString_cdata(str), XString_length_base(str), NULL, 0);
+    int64_t utf16_len = XChar_to_utf16_stream(XString_cdata(str), XString_length_base(str), NULL, 0);
     if (utf16_len <= 0) return NULL;
 
     // 分配缓冲区（+1用于终止符）
@@ -270,7 +270,7 @@ const uint16_t* XString_toUtf16(const XString* str)
     if (!utf16_buf) return NULL;
 
     // 执行转换
-    int64_t result = XChar_to_utf16(XString_cdata(str), XString_length_base(str), utf16_buf, utf16_len + 1);
+    int64_t result = XChar_to_utf16_stream(XString_cdata(str), XString_length_base(str), utf16_buf, utf16_len + 1);
     if (result <= 0) {
         XMemory_free(utf16_buf);
         return NULL;
@@ -292,7 +292,7 @@ const uint32_t* XString_toUtf32(const XString* str)
     }
 
     // 计算UTF-32所需缓冲区大小（包含终止符）
-    int64_t utf32_len = XChar_to_utf32(XString_cdata(str), XString_length_base(str), NULL, 0);
+    int64_t utf32_len = XChar_to_utf32_stream(XString_cdata(str), XString_length_base(str), NULL, 0);
     if (utf32_len <= 0) return NULL;
 
     // 分配缓冲区（+1用于终止符）
@@ -301,7 +301,7 @@ const uint32_t* XString_toUtf32(const XString* str)
     if (!utf32_buf) return NULL;
 
     // 执行转换
-    int64_t result = XChar_to_utf32(XString_cdata(str), XString_length_base(str), utf32_buf, utf32_len + 1);
+    int64_t result = XChar_to_utf32_stream(XString_cdata(str), XString_length_base(str), utf32_buf, utf32_len + 1);
     if (result <= 0) {
         XMemory_free(utf32_buf);
         return NULL;
@@ -323,7 +323,7 @@ const char* XString_toGbk(const XString* str)
     }
 
     // 计算GBK所需缓冲区大小（包含终止符）
-    int64_t gbk_len = XChar_to_gbk(XString_cdata(str), XString_length_base(str), NULL, 0);
+    int64_t gbk_len = XChar_to_gbk_stream(XString_cdata(str), XString_length_base(str), NULL, 0);
     if (gbk_len <= 0) return NULL;
 
     // 分配缓冲区（+1用于终止符）
@@ -332,7 +332,7 @@ const char* XString_toGbk(const XString* str)
     if (!gbk_buf) return NULL;
 
     // 执行转换
-    int64_t result = XChar_to_gbk(XString_cdata(str), XString_length_base(str), gbk_buf, gbk_max_len);
+    int64_t result = XChar_to_gbk_stream(XString_cdata(str), XString_length_base(str), gbk_buf, gbk_max_len);
     if (result <= 0) {
         XMemory_free(gbk_buf);
         return NULL;
@@ -456,7 +456,7 @@ bool XString_append_utf8(XString* str, const char* utf8_str)
     if (!str || !utf8_str) return false;
 
     // 先计算需要转换的XChar数量（不含终止符）
-    int64_t xchar_count = XChar_from_utf8((const uint8_t*)utf8_str,0, NULL, 0);
+    int64_t xchar_count = XChar_from_utf8_stream((const uint8_t*)utf8_str,0, NULL, 0);
     if (xchar_count <= 0) return false;
 
     XString_detach(str);
@@ -468,7 +468,7 @@ bool XString_append_utf8(XString* str, const char* utf8_str)
 
     // 直接转换到目标缓冲区
     XChar* data = XString_data(str);
-    int64_t result = XChar_from_utf8(
+    int64_t result = XChar_from_utf8_stream(
         (const uint8_t*)utf8_str,
         0,
         data + current_size,  // 直接写到当前字符串末尾
@@ -542,7 +542,7 @@ bool XString_assign_with_length_utf8(XString* str, const char* utf8_str, size_t 
     if (!utf8_str || *utf8_str == '\0') return true;
 
     // 先计算需要转换的XChar数量（不含终止符）
-    int64_t xchar_count = XChar_from_utf8((const uint8_t*)utf8_str, len, NULL, 0);
+    int64_t xchar_count = XChar_from_utf8_stream((const uint8_t*)utf8_str, len, NULL, 0);
     if (xchar_count <= 0) return false;
 
     XString_detach(str);
@@ -551,7 +551,7 @@ bool XString_assign_with_length_utf8(XString* str, const char* utf8_str, size_t 
 
     // 直接转换到目标缓冲区
     XChar* data = XString_data(str);
-    int64_t result = XChar_from_utf8(
+    int64_t result = XChar_from_utf8_stream(
         (const uint8_t*)utf8_str,
         len,
         data,
@@ -2223,7 +2223,7 @@ int XPrint_utf8(const char* utf8_str)
 #ifdef _WIN32
     // Windows平台：UTF-8 -> GBK 转换后输出
     // 1. 计算所需GBK缓冲区大小
-    int64_t gbk_len = XUTF8_to_gbk(utf8_str,0, NULL, 0);
+    int64_t gbk_len = XUTF8_to_gbk_stream(utf8_str,0, NULL, 0);
     if (gbk_len <= 0) return 0;  // 转换失败
 
     // 2. 分配GBK缓冲区（+1用于终止符）
@@ -2231,7 +2231,7 @@ int XPrint_utf8(const char* utf8_str)
     if (!gbk_buf) return 0;
 
     // 3. 执行UTF-8到GBK的转换
-    if (XUTF8_to_gbk(utf8_str,0, gbk_buf, gbk_len + 1) <= 0) {
+    if (XUTF8_to_gbk_stream(utf8_str,0, gbk_buf, gbk_len + 1) <= 0) {
         XMemory_free(gbk_buf);
         return 0;
     }
@@ -2277,7 +2277,7 @@ int XPrint_utf8_fmt(const char* format, ...)
     int result = 0;
 #ifdef _WIN32
     // Windows：UTF-8 → GBK
-    int gbk_len = XUTF8_to_gbk(utf8_buf,0, NULL, 0);  // 获取所需GBK长度
+    int gbk_len = XUTF8_to_gbk_stream(utf8_buf,0, NULL, 0);  // 获取所需GBK长度
     if (gbk_len <= 0) 
     {
         XMemory_free(utf8_buf);
@@ -2291,7 +2291,7 @@ int XPrint_utf8_fmt(const char* format, ...)
         return 0;
     }
 
-    if (XUTF8_to_gbk(utf8_buf, 0,gbk_buf, gbk_len + 1) > 0)
+    if (XUTF8_to_gbk_stream(utf8_buf, 0,gbk_buf, gbk_len + 1) > 0)
     {
         result = printf("%s", gbk_buf);  // 输出GBK
     }
@@ -2311,7 +2311,7 @@ int XPrint_XChar(XChar* ch)
 
     XChar chs[] = { *ch,0 };
     char buff[5] = { 0 };
-    XChar_to_local(&chs,1,buff, 5);
+    XChar_to_local_stream(&chs,1,buff, 5);
     return printf(buff);
 }
 

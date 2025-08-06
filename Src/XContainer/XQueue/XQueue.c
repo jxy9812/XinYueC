@@ -123,6 +123,9 @@ void VXClass_copy(XQueue* object, const XQueue* src)
 	{
 		XQueue_clear_base(object);
 	}
+	XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
+	XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
+	XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
 	for_each_iterator(src, XListSLinked, it)
 	{
 		XQueue_push_base(object, XListSLinked_iterator_data(&it));

@@ -130,6 +130,24 @@ static bool VXVectorEnlargeCapacity(XVector* this_vector)
 }
 void VXClass_copy(XVector* object, const XVector* src)
 {
+	if (((XClass*)object)->m_vtable == NULL)
+	{
+		XVector_init(object, XContainerTypeSize(src));
+	}
+	else if (!XVector_isEmpty_base(object))
+	{
+		XVector_clear_base(object);
+	}
+	XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
+	XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
+	XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
+	XVector_resize_base(object,XVector_size_base(src));
+	XContainerSize(object)=0;
+	for_each_iterator(src, XVector, it)
+	{
+		XVector_push_back_base(object, XVector_iterator_data(&it));
+	}
+	return;
 	if (((XClass*)object)->m_vtable != NULL)
 	{
 		size_t size = XContainerSize(src);

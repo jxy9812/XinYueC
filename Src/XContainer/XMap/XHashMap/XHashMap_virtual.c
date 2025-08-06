@@ -344,6 +344,9 @@ void VXClass_copy(XHashMap* object, const XHashMap* src)
 	{
 		XHashMap_clear_base(object);
 	}
+	XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
+	XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
+	XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
 	for_each_iterator(src, XHashMap, it)
 	{
 		XPair* pair = XHashMap_iterator_data(&it);

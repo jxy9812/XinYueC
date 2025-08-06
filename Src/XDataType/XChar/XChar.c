@@ -22,6 +22,11 @@ XChar XChar_from(uint16_t code)
     return ch;
 }
 
+uint8_t XChar_to_utf8(XChar ch)
+{
+    return ch.code & (~0x80);
+}
+
 // 创建XChar实例（高代理）
 XChar XChar_from_unicode(uint32_t unicode) {
     XChar ch = { 0 };
@@ -698,7 +703,7 @@ int XChar_compare(const XChar* a, const XChar* b) {
 // --------------------------
 // UTF-8 转换实现
 // --------------------------
-int64_t XChar_from_utf8(const uint8_t* utf8, size_t input_size, XChar* out, size_t max_out) {
+int64_t XChar_from_utf8_stream(const uint8_t* utf8, size_t input_size, XChar* out, size_t max_out) {
     if (!utf8) return -1;
 
     // 计算实际输入长度
@@ -816,7 +821,7 @@ int64_t XChar_from_utf8(const uint8_t* utf8, size_t input_size, XChar* out, size
     return (int64_t)out_idx;
 }
 
-int64_t XChar_to_utf8(const XChar* ch, size_t input_count, uint8_t* utf8, size_t max_utf8) {
+int64_t XChar_to_utf8_stream(const XChar* ch, size_t input_count, uint8_t* utf8, size_t max_utf8) {
     if (!ch) return -1;
 
     // 计算实际输入XChar数量
@@ -927,7 +932,7 @@ int64_t XChar_to_utf8(const XChar* ch, size_t input_count, uint8_t* utf8, size_t
 // UTF-16编码转换函数
 // --------------------------
 
-int64_t XChar_from_utf16(const uint16_t* utf16_str, size_t input_size, XChar* out_xchars, size_t max_count) {
+int64_t XChar_from_utf16_stream(const uint16_t* utf16_str, size_t input_size, XChar* out_xchars, size_t max_count) {
     if (!utf16_str) return -1;
 
     // 计算实际输入长度
@@ -972,7 +977,7 @@ int64_t XChar_from_utf16(const uint16_t* utf16_str, size_t input_size, XChar* ou
     return (int64_t)out_idx;
 }
 
-int64_t XChar_to_utf16(const XChar* xchars, size_t input_count, uint16_t* out_buf, size_t buf_size) {
+int64_t XChar_to_utf16_stream(const XChar* xchars, size_t input_count, uint16_t* out_buf, size_t buf_size) {
     if (!xchars) return -1;
 
     // 计算实际输入XChar数量
@@ -1019,7 +1024,7 @@ int64_t XChar_to_utf16(const XChar* xchars, size_t input_count, uint16_t* out_bu
 // UTF-32编码转换函数
 // --------------------------
 
-int64_t XChar_from_utf32(const uint32_t* utf32, size_t input_count, XChar* out, size_t max_out) {
+int64_t XChar_from_utf32_stream(const uint32_t* utf32, size_t input_count, XChar* out, size_t max_out) {
     if (!utf32) return -1;
 
     // 计算实际输入码点数量
@@ -1084,7 +1089,7 @@ int64_t XChar_from_utf32(const uint32_t* utf32, size_t input_count, XChar* out, 
     return (int64_t)out_idx;
 }
 
-int64_t XChar_to_utf32(const XChar* ch, size_t input_count, uint32_t* utf32, size_t max_utf32) {
+int64_t XChar_to_utf32_stream(const XChar* ch, size_t input_count, uint32_t* utf32, size_t max_utf32) {
     if (!ch) return -1;
 
     // 计算实际输入XChar数量
@@ -1144,7 +1149,7 @@ int64_t XChar_to_utf32(const XChar* ch, size_t input_count, uint32_t* utf32, siz
 // Latin-1编码转换函数
 // --------------------------
 
-int64_t XChar_from_latin1(const uint8_t* latin1, size_t input_size, XChar* out, size_t max_out) {
+int64_t XChar_from_latin1_stream(const uint8_t* latin1, size_t input_size, XChar* out, size_t max_out) {
     if (!latin1) return -1;
 
     // 计算实际输入长度
@@ -1187,7 +1192,7 @@ int64_t XChar_from_latin1(const uint8_t* latin1, size_t input_size, XChar* out, 
     return (int64_t)out_idx;
 }
 
-int64_t XChar_to_latin1(const XChar* ch, size_t input_count, uint8_t* latin1, size_t max_latin1) {
+int64_t XChar_to_latin1_stream(const XChar* ch, size_t input_count, uint8_t* latin1, size_t max_latin1) {
     if (!ch) return -1;
 
     // 计算实际输入XChar数量
@@ -1244,7 +1249,7 @@ int64_t XChar_to_latin1(const XChar* ch, size_t input_count, uint8_t* latin1, si
 // --------------------------
 // GBK 转 XChar（支持输出为NULL时计算大小）
 // --------------------------
-int64_t XChar_from_gbk(const char* gbk, size_t input_size, XChar* out, size_t max_out)
+int64_t XChar_from_gbk_stream(const char* gbk, size_t input_size, XChar* out, size_t max_out)
 {
     if (!gbk) return -1;
 
@@ -1356,7 +1361,7 @@ int64_t XChar_from_gbk(const char* gbk, size_t input_size, XChar* out, size_t ma
     return required;
 }
 
-int64_t XChar_to_gbk(const XChar* ch, size_t input_count, char* gbk, size_t max_gbk)
+int64_t XChar_to_gbk_stream(const XChar* ch, size_t input_count, char* gbk, size_t max_gbk)
 {
     if (!ch) return -1;
 
@@ -1466,27 +1471,27 @@ int64_t XChar_to_gbk(const XChar* ch, size_t input_count, char* gbk, size_t max_
     return required;
 }
 
-int64_t XChar_from_local(const char* local_str, size_t input_size, XChar* out, size_t max_out)
+int64_t XChar_from_local_stream(const char* local_str, size_t input_size, XChar* out, size_t max_out)
 {
 #ifdef _WIN32
     // Windows本地编码为GBK
-    return XChar_from_gbk(local_str, input_size, out, max_out);
+    return XChar_from_gbk_stream(local_str, input_size, out, max_out);
 #elif defined(__linux__)
     // Linux本地编码为UTF-8
-    return XChar_from_utf8((const uint8_t*)local_str, input_size, out, max_out);
+    return XChar_from_utf8_stream((const uint8_t*)local_str, input_size, out, max_out);
 #else
     return -1;
 #endif
 }
 
-int64_t XChar_to_local(const XChar* ch, size_t input_count, char* local_str, size_t max_local)
+int64_t XChar_to_local_stream(const XChar* ch, size_t input_count, char* local_str, size_t max_local)
 {
 #ifdef _WIN32
     // Windows本地编码为GBK
-    return XChar_to_gbk(ch, input_count, local_str, max_local);
+    return XChar_to_gbk_stream(ch, input_count, local_str, max_local);
 #elif defined(__linux__)
     // Linux本地编码为UTF-8
-    return XChar_to_utf8(ch, input_count, (uint8_t*)local_str, max_local);
+    return XChar_to_utf8_stream(ch, input_count, (uint8_t*)local_str, max_local);
 #else
     return -1;
 #endif
@@ -1494,7 +1499,7 @@ int64_t XChar_to_local(const XChar* ch, size_t input_count, char* local_str, siz
 // --------------------------
 // UTF-8与GBK互转函数（跨平台）
 // --------------------------
-int64_t XUTF8_to_gbk(const char* utf8_str, size_t input_size, char* gbk_buf, size_t max_len)
+int64_t XUTF8_to_gbk_stream(const char* utf8_str, size_t input_size, char* gbk_buf, size_t max_len)
 {
     if (!utf8_str) return -1;
 
@@ -1607,7 +1612,7 @@ return -1;
 #endif
 }
 
-int64_t XGBK_to_utf8(const char* gbk_str, size_t input_size, char* utf8_buf, size_t max_len)
+int64_t XGBK_to_utf8_stream(const char* gbk_str, size_t input_size, char* utf8_buf, size_t max_len)
 {
     if (!gbk_str) return -1;
 

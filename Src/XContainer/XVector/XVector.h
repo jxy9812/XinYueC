@@ -95,17 +95,25 @@ void* XVector_back_base(const  XVector* this_vector);
 int64_t XVector_find_base(const XVector* this_vector, const void* findVal);
 //排序
 void  XVector_sort_base(XVector* this_vector, XCompare compare);
-#define XVector_copy_base				    XContainerObject_copy_base	
-#define XVector_move_base				    XContainerObject_move_base	
-#define XVector_deinit_base					XContainerObject_deinit_base	
-#define XVector_delete_base					XContainerObject_delete_base	
-#define XVector_clear_base				    XContainerObject_clear_base	
-#define XVector_isEmpty_base				XContainerObject_isEmpty_base	
-#define XVector_size_base					XContainerObject_size_base	
-#define XVector_capacity_base				XContainerObject_capacity_base
-#define XVector_swap_base				    XContainerObject_swap_base	
-#define XVector_typeSize_base				XContainerObject_typeSize_base
 
+bool  XVector_replace(XVector* this_vector,int64_t index, void* pvValue);
+bool  XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue);
+#define XVector_copy_base							XContainerObject_copy_base	
+#define XVector_move_base							XContainerObject_move_base	
+#define XVector_deinit_base							XContainerObject_deinit_base	
+#define XVector_delete_base							XContainerObject_delete_base	
+#define XVector_clear_base							XContainerObject_clear_base	
+#define XVector_isEmpty_base						XContainerObject_isEmpty_base	
+#define XVector_size_base							XContainerObject_size_base	
+#define XVector_capacity_base						XContainerObject_capacity_base
+#define XVector_swap_base							XContainerObject_swap_base	
+#define XVector_typeSize_base						XContainerObject_typeSize_base
+#define XVector_count_base							XVector_size_base
+#define XVector_append_base							XVector_push_back_base
+#define XVector_append_move_base					XVector_push_back_move_base
+#define XVector_prepend_base						XVector_push_front_base
+#define XVector_prepend_move_base					XVector_push_front_move_base
+#define XVector_removeAt_base(vector,index)			XVector_remove_base(vector,index,1)
 //格式构造字符串
 bool XVector_format_text_core(XVector* vector, bool appendNull, const char* format, va_list args);
 bool XVector_append_text_fmt(XVector* this_vector, bool appendNull, const char* format, ...);

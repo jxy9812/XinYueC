@@ -217,6 +217,9 @@ void VXClass_copy(XMap* object, const XMap* src)
 	{
 		XMap_clear_base(object);
 	}
+	XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
+	XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
+	XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
 	for_each_iterator(src, XMap, it)
 	{
 		XPair* pair = XMap_iterator_data(&it);

@@ -89,6 +89,11 @@ void XVariant_init(XVariant* var, void* data, size_t dataSize, int type)
 	var->m_dataSize = dataSize;
 }
 
+XVariant* XVariant_create_null()
+{
+	return XVariant_create(NULL, 0,XVariantType_NULL);
+}
+
 XVariant* XVariant_create_uint8(uint8_t val)
 {
 	return XVariant_Create(val, XVariantType_Uint8);
@@ -701,7 +706,32 @@ XPoint XVariant_toPoint(XVariant* var)
 	}
 	return XVariant_Data(var, XPoint);
 }
-
+static void setValue(XVariant* var, void* data, size_t size, int type)
+{
+	if (var == NULL)
+		return;
+	if (var->m_data == NULL || var->m_dataSize != size)
+	{
+		if (var->m_data)
+		{
+			XMemory_free(var->m_data);
+			var->m_data = NULL;
+		}
+		if(size>0)
+		{
+			var->m_data = XMemory_malloc(size);
+		}
+		if (var->m_data == NULL&&size>0)
+		{//失败
+			var->m_dataSize = 0;
+			return;
+		}
+		var->m_dataSize = size;
+	}
+	if(XVariant_DataPtr(var)&&data&&size)
+		memcpy(XVariant_DataPtr(var), data, size);
+	var->m_type = type;
+}
 void XVariant_setValue(XVariant* var,const XVariant* newVar)
 {
 	if (var == NULL || newVar == NULL||newVar->m_data==NULL||newVar->m_dataSize==0)
@@ -719,24 +749,10 @@ void XVariant_setValue(XVariant* var,const XVariant* newVar)
 	var->m_dataSize = newVar->m_dataSize;
 	var->m_type = newVar->m_type;
 }
-static void setValue(XVariant* var, void* data, size_t size, int type)
+
+void XVariant_setValue_null(XVariant* var)
 {
-	if (var == NULL || data == NULL || size == 0)
-		return;
-	if (var->m_data == NULL || var->m_dataSize != size)
-	{
-		if (var->m_data)
-			XMemory_free(var->m_data);
-		var->m_data = XMemory_malloc(size);
-		if (var->m_data == NULL)
-		{
-			var->m_dataSize = 0;
-			return;
-		}
-		var->m_dataSize = size;
-	}
-	memcpy(XVariant_DataPtr(var),data,size);
-	var->m_type = type;
+	setValue(var, NULL, 0, XVariantType_NULL);
 }
 void XVariant_setValue_uint8(XVariant* var, uint8_t val)
 {

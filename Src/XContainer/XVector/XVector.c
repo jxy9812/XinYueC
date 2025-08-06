@@ -1,6 +1,7 @@
 ﻿#include"XVector.h"
 #if XVector_ON
 #include<stdlib.h>
+#include<string.h>
 XVector* XVector_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
@@ -172,6 +173,35 @@ void XVector_sort_base(XVector* this_vector, XCompare compare)
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
 	XClassGetVirtualFunc(this_vector, EXVector_Sort, void (*)(XVector*, XCompare))(this_vector, compare);
+}
+bool XVector_replace(XVector* this_vector, int64_t index, void* pvValue)
+{
+	if (this_vector = NULL|| index<-1 ||index>=XVector_count_base(this_vector) || pvValue == NULL)
+		return false;
+	void* oldValue = XVector_at_base(this_vector,index);
+	if (oldValue == NULL)
+		return false;
+	if (XContainerDataDeinitMethod(this_vector))
+		XContainerDataDeinitMethod(this_vector)(oldValue);
+	if (XContainerDataCopyMethod(this_vector))
+		XContainerDataCopyMethod(this_vector)(oldValue, pvValue);
+	else
+		memcpy(oldValue, pvValue,XContainerTypeSize(this_vector));
+
+}
+bool XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue)
+{
+	if (this_vector = NULL || index < -1 || index >= XVector_count_base(this_vector) || pvValue == NULL)
+		return false;
+	void* oldValue = XVector_at_base(this_vector, index);
+	if (oldValue == NULL)
+		return false;
+	if (XContainerDataDeinitMethod(this_vector))
+		XContainerDataDeinitMethod(this_vector)(oldValue);
+	if (XContainerDataMoveMethod(this_vector))
+		XContainerDataMoveMethod(this_vector)(oldValue, pvValue);
+	else
+		memcpy(oldValue, pvValue, XContainerTypeSize(this_vector));
 }
 // 内部核心函数：格式化文本并追加到向量
 bool XVector_format_text_core(XVector* vector, bool appendNull, const char* format, va_list args) 
