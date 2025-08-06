@@ -7,7 +7,7 @@
 //Map插入数据
 static bool VXMap_insert(XMap* this_map, const void* key, const void* pvValue);
 static bool VXMap_insert_move(XMap* this_map, const void* key, const void* pvValue);
-static void VXMap_erase(XMap* this_map, const XPair* LPpair);
+static void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next);
 //map删除数据
 static bool VXMap_remove(XMap* this_map, const void* key);
 //根据键值返回数据地址
@@ -143,11 +143,17 @@ bool VXMap_insert_move(XMap* this_map, const void* pvKey, const void* pvValue)
 	return true;
 }
 
-void VXMap_erase(XMap* this_map, const XPair* pPair)
+void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)
 {
 	/*if (ISNULL(this_map, "") || ISNULL(pair, ""))
 		return;*/
-	XMap_remove_base(this_map, XPair_first(pPair));
+	//XMap_remove_base(this_map, XPair_first(pPair));
+	if (XMap_isEmpty_base(this_map) || XMap_iterator_isEnd(it))
+	{
+		if (next)
+			*next = XMap_end(this_map);
+	}
+
 }
 
 bool VXMap_remove(XMap* this_map, const void* key)

@@ -30,6 +30,7 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 #define XMap_Value_Base					XMapBase_Value_Base
 #define XMap_find_base					XMapBase_find_base
 #define XMap_contains					XMapBase_contains
+#define	XMap_keys_base					XMapBase_keys_base
 #define XMap_copy_base					XMapBase_copy_base	
 #define XMap_move_base					XMapBase_move_base	
 #define XMap_deinit_base				XMapBase_deinit_base	

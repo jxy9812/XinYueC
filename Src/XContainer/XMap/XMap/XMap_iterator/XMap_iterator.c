@@ -22,12 +22,17 @@ XMap_iterator XMap_begin(XMap* this_map)
 XMap_iterator XMap_end(XMap* this_map)
 {
 	XMap_iterator it = { 0 };
-	if (this_map == NULL)
+	//if (this_map == NULL)
 		return it;
-	XRBTreeNode* this_root = XContainerDataPtr(this_map);
-	return it;
+	/*XRBTreeNode* this_root = XContainerDataPtr(this_map);
+	return it;*/
 }
-
+bool XMap_iterator_isEnd(XMap_iterator* it)
+{
+	if(it==NULL)
+		return false;
+	return it->node == NULL;
+}
 void XMap_iterator_add(XMap* this_map, XMap_iterator* it)
 {
 	if (this_map == NULL||it==NULL||it->node==NULL)

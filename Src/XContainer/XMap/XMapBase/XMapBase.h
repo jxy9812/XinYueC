@@ -36,7 +36,7 @@ bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvV
 bool XMapBase_insert_move_base(XMapBase* this_map, const void* pvKey, const void* pvValue);
 #define XMapBase_Insert_Move_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMapBase_insert_move_base(this_map,&k,&v);}
 
-void XMapBase_erase_base(XMapBase* this_map, const XPair* pPair);
+void XMapBase_erase_base(XMapBase* this_map, const XMapBase_iterator* it, XMapBase_iterator* next);
 //map删除数据
 bool XMapBase_remove_base(XMapBase* this_map, const void* pvKey);
 #define XMapBase_Remove_Base(this_map,keyType,key) {keyType k=key;XMap_remove_base(this_map,&k);}

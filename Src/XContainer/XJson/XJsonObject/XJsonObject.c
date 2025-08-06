@@ -1,157 +1,212 @@
-//#include "XJsonObject.h"
-//#include "XMemory.h"
-//#include "XMap.h"
-//
-//XJsonObject* XJsonObject_create(void) {
-//    XJsonObject* object = (XJsonObject*)XMemory_malloc(sizeof(XJsonObject));
-//    if (object) {
-//        // 假设XMap的键是XString*，值是XJsonValue*
-//        object->members = XMap_create(sizeof(XString*), sizeof(XJsonValue*));
-//        if (!object->members) {
-//            XMemory_free(object);
-//            return NULL;
-//        }
-//    }
-//    return object;
-//}
-//
-//void XJsonObject_delete(XJsonObject* object) 
-//{
-//    if (!object) return;
-//
-//    if (object->members) {
-//        // 遍历并删除所有键值对
-//        XMap_iterator it = XMap_begin(object->members);
-//        while (!XMapIterator_isEnd(&it)) {
-//            XString* key = *(XString**)XMapIterator_key(&it);
-//            XJsonValue* value = *(XJsonValue**)XMapIterator_value(&it);
-//
-//            XString_delete_base(key);
-//            XJsonValue_delete(value);
-//
-//            XMapIterator_next(&it);
-//        }
-//
-//        XMap_delete_base(object->members);
-//    }
-//
-//    XMemory_free(object);
-//}
-//
-//int XJsonObject_size(const XJsonObject* object) {
-//    return object && object->members ? XMap_size_base(object->members) : 0;
-//}
-//
-//bool XJsonObject_isEmpty(const XJsonObject* object) {
-//    return XJsonObject_size(object) == 0;
-//}
-//
-//void XJsonObject_clear(XJsonObject* object) {
-//    if (!object || !object->members) return;
-//
-//    // 先删除所有键值对
-//    XMapIterator it = XMap_begin(object->members);
-//    while (!XMapIterator_isEnd(&it)) {
-//        XString* key = *(XString**)XMapIterator_key(&it);
-//        XJsonValue* value = *(XJsonValue**)XMapIterator_value(&it);
-//
-//        XString_delete_base(key);
-//        XJsonValue_delete(value);
-//
-//        XMapIterator_next(&it);
-//    }
-//
-//    XMap_clear_base(object->members);
-//}
-//
-//bool XJsonObject_contains(const XJsonObject* object, const XString* key) {
-//    if (!object || !object->members || !key) return false;
-//    return XMap_contains(object->members, &key);
-//}
-//
-//XJsonValue* XJsonObject_value(XJsonObject* object, const XString* key) {
-//    if (!object || !object->members || !key) return NULL;
-//
-//    XMapIterator it = XMap_find(object->members, &key);
-//    if (XMapIterator_isEnd(&it)) {
-//        return NULL;
-//    }
-//
-//    return *(XJsonValue**)XMapIterator_value(&it);
-//}
-//
-//const XJsonValue* XJsonObject_value_const(const XJsonObject* object, const XString* key) {
-//    return XJsonObject_value((XJsonObject*)object, key);
-//}
-//
-//bool XJsonObject_insert(XJsonObject* object, const XString* key, XJsonValue* value) {
-//    if (!object || !object->members || !key || !value) return false;
-//
-//    // 先检查是否已存在该键，如果存在则删除旧值
-//    XJsonValue* oldValue = XJsonObject_value(object, key);
-//    if (oldValue) {
-//        XJsonValue_delete(oldValue);
-//
-//        // 同时删除旧键
-//        XMap_erase(object->members, &key);
-//    }
-//
-//    // 复制键并插入新值
-//    XString* keyCopy = XString_create(key);
-//    if (!keyCopy) return false;
-//
-//    return XMap_insert(object->members, &keyCopy, &value);
-//}
-//
-//bool XJsonObject_remove(XJsonObject* object, const XString* key) {
-//    if (!object || !object->members || !key) return false;
-//
-//    XMapIterator it = XMap_find(object->members, &key);
-//    if (XMapIterator_isEnd(&it)) {
-//        return false;
-//    }
-//
-//    // 删除键和值
-//    XString* keyToDelete = *(XString**)XMapIterator_key(&it);
-//    XJsonValue* valueToDelete = *(XJsonValue**)XMapIterator_value(&it);
-//
-//    XString_delete_base(keyToDelete);
-//    XJsonValue_delete(valueToDelete);
-//
-//    return XMap_erase(object->members, &key);
-//}
-//
-//void XJsonObject_removeAll(XJsonObject* object) {
-//    XJsonObject_clear(object);
-//}
-//
-//XVector* XJsonObject_keys(const XJsonObject* object) {
-//    if (!object || !object->members) return NULL;
-//
-//    XVector* keys = XVector_create(sizeof(XString*));
-//    if (!keys) return NULL;
-//
-//    XMapIterator it = XMap_begin(object->members);
-//    while (!XMapIterator_isEnd(&it)) {
-//        XString* key = *(XString**)XMapIterator_key(&it);
-//        XString* keyCopy = XString_create(key);
-//        if (keyCopy) {
-//            XVector_push_back_base(keys, &keyCopy);
-//        }
-//
-//        XMapIterator_next(&it);
-//    }
-//
-//    return keys;
-//}
-//
-//XString* XJsonObject_toString(const XJsonObject* object) {
-//    // 实际实现需要序列化对象为JSON字符串
-//    // 这里仅作为框架示例
-//    XString_Init_Utf8(result, "{...json object...}");
-//    return XString_create(result);
-//}
-//
+#include "XJsonObject.h"
+#include "XMemory.h"
+#include "XMap.h"
+#include "XVector.h"
+// XJsonValueMap释放
+static void XJsonValueMapCopyMethod(XPair* pair, const XPair* src);
+// XJsonValueMap移动
+static void XJsonValueMapMoveMethod(XPair* pair, const XPair* src);
+// XJsonValueMap拷贝
+static void XJsonValueMapDeinitMethod(XPair* pair);
+
+// 辅助函数：序列化XJsonValue
+void XJson_serialize_json_value(const XJsonValue* value, XString* output);
+// 辅助函数：转义字符串中的特殊字符
+void XJson_escape_string(const XString* str, XString* output);
+
+XJsonObject* XJsonObject_create(void)
+{
+	XJsonObject* object = (XJsonObject*)XMemory_malloc(sizeof(XJsonObject));
+	XMap_init(object,sizeof(XString),sizeof(XJsonValue),XEquality_XString,XLess_XString);
+	XContainerSetDataDeinitMethod(object, XJsonValueMapDeinitMethod);
+	XContainerSetDataCopyMethod(object, XJsonValueMapCopyMethod);
+	XContainerSetDataMoveMethod(object, XJsonValueMapMoveMethod);
+	return object;
+}
+
+// 辅助函数：转义字符串中的特殊字符
+void  XJson_escape_string(const XString* str, XString* output)
+{
+    if (!str || !output) return;
+
+    for_each_iterator(str, XString, it)
+    {
+        XChar* p = XString_iterator_data(&it);
+        switch (p->code) {
+        case '"':
+        {
+            XString_push_back_base(output, XChar_from('\\'));
+            XString_push_back_base(output, XChar_from('\"'));
+        }
+        /*XString_append_utf8(output, "\\\"");*/ break;
+        case '\\':
+        {
+            XString_push_back_base(output, XChar_from('\\'));
+            XString_push_back_base(output, XChar_from('\\'));
+        } /*XString_append_utf8(output, "\\\\");*/ break;
+        case '\b':
+        {
+            XString_push_back_base(output, XChar_from('\\'));
+            XString_push_back_base(output, XChar_from('b'));
+        }/*XString_append_utf8(output, "\\b"); */ break;
+        case '\f':
+        {
+            XString_push_back_base(output, XChar_from('\\'));
+            XString_push_back_base(output, XChar_from('f'));
+        }/*XString_append_utf8(output, "\\f");*/  break;
+        case '\n':
+        {
+            XString_push_back_base(output, XChar_from('\\'));
+            XString_push_back_base(output, XChar_from('n'));
+        }/*XString_append_utf8(output, "\\n"); */ break;
+        case '\r':
+        {
+            XString_push_back_base(output, XChar_from('\\'));
+            XString_push_back_base(output, XChar_from('r'));
+        }/* XString_append_utf8(output, "\\r"); */ break;
+        case '\t':
+        {
+            XString_push_back_base(output, XChar_from('\\'));
+            XString_push_back_base(output, XChar_from('t'));
+        }/*XString_append_utf8(output, "\\t");*/  break;
+        default:
+            // 对于非ASCII字符，保持原样（JSON允许UTF-8编码）
+            XString_push_back_base(output, *p);
+            break;
+        }
+    }
+}
+
+// 辅助函数：序列化XJsonValue
+void XJson_serialize_json_value(const XJsonValue* value, XString* output)
+{
+    if (!value || !output) return;
+
+    switch (XJsonValue_type(value)) {
+    case XJsonValue_Null:
+        XString_append_utf8(output, "null");
+        break;
+
+    case XJsonValue_Bool:
+        XString_append_utf8(output, XJsonValue_toBool(value, false) ? "true" : "false");
+        break;
+
+    case XJsonValue_Double: {
+        char buffer[64];
+        // 处理整数情况，避免显示为10.0这样的形式
+        double num = XJsonValue_toDouble(value, 0.0);
+        if (num == (long long)num) {
+            snprintf(buffer, sizeof(buffer), "%lld", (long long)num);
+        }
+        else {
+            snprintf(buffer, sizeof(buffer), "%g", num);
+        }
+        XString_append_utf8(output, buffer);
+        break;
+    }
+
+    case XJsonValue_String: {
+        const XString* str = XJsonValue_toString(value);
+        XString_append_utf8(output, "\"");
+        if (str)
+        {
+            XJson_escape_string(str, output);
+        }
+        XString_append_utf8(output, "\"");
+        break;
+    }
+
+    case XJsonValue_Array: {
+        const XJsonArray* array = XJsonValue_toArray(value);
+        XString* arrayStr = XJsonArray_toString(array);
+        if (arrayStr) {
+            XString_append(output, arrayStr);
+            XString_delete_base(arrayStr);
+        }
+        else {
+            XString_append_utf8(output, "[]");
+        }
+        break;
+    }
+
+    case XJsonValue_Object: {
+        const XJsonObject* object = XJsonValue_toObject(value);
+        /*   XString* objectStr = XJsonObject_toString(object);
+           if (objectStr) {
+               XString_append_string(output, objectStr);
+               XString_delete_base(objectStr);
+           }
+           else {
+               XString_append_utf8(output, "{}");
+           }*/
+        break;
+    }
+
+    default:
+        XString_append_utf8(output, "null");
+        break;
+    }
+}
+
+// 对象序列化实现
+XString* XJsonObject_toString(const XJsonObject* object) 
+{
+    if (!object || XJsonObject_isEmpty_base(object)) 
+    {
+        return XString_create_utf8("{}");
+    }
+
+    // 创建输出字符串
+    XString* output = XString_create_utf8("");
+    if (!output) return NULL;
+
+    // 开始对象
+    XString_append_utf8(output, "{");
+
+    // 获取所有键
+    XVector* keys = XJsonObject_keys_base(object);
+    if (!keys) 
+    {
+        XString_append_utf8(output, "}");
+        return output;
+    }
+
+    int keyCount = XVector_size_base(keys);
+    for (int i = 0; i < keyCount; i++) 
+    {
+        // 获取键
+        XString* key = (XString*)XVector_at_base(keys, i);
+        if (!key) 
+            continue;
+
+        // 序列化键
+        XString_append_utf8(output, "\"");
+        XJson_escape_string(key, output);
+        XString_append_utf8(output, "\": ");
+
+        // 序列化值
+        const XJsonValue* value = XJsonObject_value_base(object, key);
+        XJson_serialize_json_value(value, output);
+
+        // 添加逗号分隔（最后一个键值对除外）
+        if (i != keyCount - 1) {
+            XString_append_utf8(output, ", ");
+        }
+    }
+
+    // 释放键向量
+    for (int i = 0; i < keyCount; i++) {
+        XString* key = (XString*)XVector_at_base(keys, i);
+        XString_delete_base(key);
+    }
+    XVector_delete_base(keys);
+
+    // 结束对象
+    XString_append_utf8(output, "}");
+
+    return output;
+}
+
 //XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object) {
 //    if (!object) return NULL;
 //
@@ -195,3 +250,39 @@
 //
 //    return object;
 //}
+
+void XJsonValueMapCopyMethod(XPair* pair, const XPair* src)
+{
+	XString* pKey = XPair_first(src);
+	XJsonValue* pVar = XPair_second(src);
+	if (((XClass*)XPair_first(pair))->m_vtable == NULL)
+	{//新插入
+		XString_copy_base(XPair_first(pair), pKey);
+		XJsonValue_copy(XPair_second(pair), pKey);
+	}
+	else
+	{
+		XJsonValue_copy(XPair_second(pair), pVar);
+	}
+}
+
+void XJsonValueMapMoveMethod(XPair* pair, const XPair* src)
+{
+	XString* pKey = XPair_first(src);
+	XJsonValue* pVar = XPair_second(src);
+	if (((XClass*)XPair_first(pair))->m_vtable == NULL)
+	{//新插入
+		XString_move_base(XPair_first(pair), pKey);
+		XJsonValue_move(XPair_second(pair), pVar);
+	}
+	else
+	{
+		XJsonValue_move(XPair_second(pair), pVar);
+	}
+}
+
+void XJsonValueMapDeinitMethod(XPair* pair)
+{
+	XMapBase_KeyClassDeinitMethod(pair);
+	XJsonValue_deinit(XPair_second(pair));
+}

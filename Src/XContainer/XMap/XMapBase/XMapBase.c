@@ -41,11 +41,11 @@ bool XMapBase_insert_move_base(XMapBase* this_map, const void* pvKey, const void
 		return false;
 	return XClassGetVirtualFunc(this_map, EXMapBase_Insert_Move, bool(*)(XMapBase*, const void*, const void*))(this_map, pvKey, pvValue);
 }
-void XMapBase_erase_base(XMapBase* this_map, const XPair* pPair)
+void XMapBase_erase_base(XMapBase* this_map, const XMapBase_iterator* it, XMapBase_iterator* next)
 {
-	if (ISNULL(this_map, "") || ISNULL(pPair, "") || ISNULL(XClassGetVtable(this_map), ""))
+	if (ISNULL(this_map, "") || ISNULL(it, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return;
-	XClassGetVirtualFunc(this_map, EXMapBase_Erase, void(*)(XMapBase* ,const XPair*))(this_map, pPair);
+	XClassGetVirtualFunc(this_map, EXMapBase_Erase, void(*)(XMapBase* , const XMapBase_iterator* ,XMapBase_iterator*))(this_map, it,next);
 }
 bool XMapBase_remove_base(XMapBase* this_map, const void* pvKey)
 {

@@ -13,31 +13,34 @@ extern "C" {
 #error "XJsonObject requires XMap to be enabled in XDataStructConfig.h"
 #endif
 
-typedef struct XJsonObject {
-    XMap* members; // 键为XString*，值为XJsonValue*
+typedef struct XJsonObject 
+{
+    XMap members; // 键为XString，值为XJsonValue
 } XJsonObject;
 
 // 构造与析构
 XJsonObject* XJsonObject_create(void);
-void XJsonObject_delete(XJsonObject* object);
 
-// 基本操作
-int XJsonObject_size(const XJsonObject* object);
-bool XJsonObject_isEmpty(const XJsonObject* object);
-void XJsonObject_clear(XJsonObject* object);
-
-// 成员访问
-bool XJsonObject_contains(const XJsonObject* object, const XString* key);
-XJsonValue* XJsonObject_value(XJsonObject* object, const XString* key);
-const XJsonValue* XJsonObject_value_const(const XJsonObject* object, const XString* key);
-
-// 成员修改
-bool XJsonObject_insert(XJsonObject* object, const XString* key, XJsonValue* value);
-bool XJsonObject_remove(XJsonObject* object, const XString* key);
-void XJsonObject_removeAll(XJsonObject* object);
-
-// 键操作
-XVector* XJsonObject_keys(const XJsonObject* object); // 返回XString*的向量
+#define XJsonObject_insert_base				    XMap_insert_base
+#define XJsonObject_Insert_Base				    XMap_Insert_Base
+#define XJsonObject_erase_base					XMap_erase_base
+#define XJsonObject_remove_base				    XMap_remove_base
+#define XJsonObject_Remove_Base				    XMap_Remove_Base
+#define XJsonObject_value_base					XMap_value_base
+#define XJsonObject_Value_Base					XMap_Value_Base
+#define XJsonObject_find_base					XMap_find_base
+#define XJsonObject_contains					XMap_contains
+#define XJsonObject_keys_base					XMap_keys_base
+#define XJsonObject_copy_base					XMap_copy_base	
+#define XJsonObject_move_base					XMap_move_base	
+#define XJsonObject_deinit_base				    XMap_deinit_base	
+#define XJsonObject_delete_base				    XMap_delete_base	
+#define XJsonObject_clear_base					XMap_clear_base	
+#define XJsonObject_isEmpty_base				XMap_isEmpty_base	
+#define XJsonObject_size_base					XMap_size_base	
+#define XJsonObject_capacity_base				XMap_capacity_base
+#define XJsonObject_swap_base					XMap_swap_base	
+#define XJsonObject_typeSize_base				XMap_typeSize_base
 
 // 转换函数
 XString* XJsonObject_toString(const XJsonObject* object);
