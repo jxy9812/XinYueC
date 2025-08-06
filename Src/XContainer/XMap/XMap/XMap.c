@@ -49,9 +49,18 @@ XVariantMap* XMap_create_XVariantMap()
 	XMap* map = XMap_Create(XString, XVariant, XEquality_XString, XLess_XString);
 	if (map == NULL)
 		return NULL;
-	XContainerSetDataCopyMethod(map, XMapBase_XVariantMapCopyMethod);
+	/*XContainerSetDataCopyMethod(map, XMapBase_XVariantMapCopyMethod);
 	XContainerSetDataMoveMethod(map, XMapBase_XVariantMapMoveMethod);
-	XContainerSetDataDeinitMethod(map, XMapBase_XVariantMapDeinitMethod);
+	XContainerSetDataDeinitMethod(map, XMapBase_XVariantMapDeinitMethod);*/
+
+	XMapBaseSetKeyCopyMethod(map, XString_copy_base);
+	XMapBaseSetKeyMoveMethod(map, XString_move_base);
+	XMapBaseSetKeyDeinitMethod(map, XString_deinit_base);
+
+	XContainerSetDataCopyMethod(map, XVariant_copy);
+	XContainerSetDataMoveMethod(map, XVariant_move);
+	XContainerSetDataDeinitMethod(map, XVariant_deinit);
+
 	return map;
 }
 

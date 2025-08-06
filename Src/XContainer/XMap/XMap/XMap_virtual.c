@@ -23,13 +23,6 @@ static void VXClass_move(XMap* object, XMap* src);
 static void VXMap_deinit(XMap* this_map);
 static void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
 
-static void XMap_freeNodeData(XPair** pair, XMap* this_map)
-{
-	if (XContainerDataDeinitMethod(this_map) != NULL)
-		XContainerDataDeinitMethod(this_map)(*pair);
-	XPair_delete(*pair);
-}
-
 XVtable* XMap_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -58,21 +51,22 @@ XVtable* XMap_class_init()
 #endif // SHOWCONTAINERSIZE
 	return XVTABLE_DEFAULT;
 }
-
-bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue)
+static bool insert(XMap* this_map, const void* pvKey, const void* pvValue, XCDataCreatMethod keyCreatMethod, XCDataCreatMethod dataCreatMethod)
 {
 	/*if (ISNULL(this_map, "")|| ISNULL(pvKey, "")||ISNULL(pvValue, ""))
 		return false;*/
-	XPair* sPair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
-	XPair_insert(sPair, pvKey, pvValue);
 	XPair* pair = XMap_find_base(this_map, pvKey);
 	if (pair == NULL)//当前没有这个键值对
 	{
 		XPair* pair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
-		if (XContainerDataCopyMethod(this_map))
-			XContainerDataCopyMethod(this_map)(pair, sPair);
+		if (keyCreatMethod)
+			keyCreatMethod(XPair_first(pair), pvKey);
 		else
-			XPair_insert(pair, pvKey, pvValue);
+			XPair_insertFirst(pair, pvKey);
+		if (dataCreatMethod)
+			dataCreatMethod(XPair_second(pair), pvValue);
+		else
+			XPair_insertSecond(pair, pvValue);
 
 		//printf("创建的xpair pvKey:%d pvValue:%s\n",XPair_First(pair,int),XPair_second(LPpair));
 
@@ -84,63 +78,29 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue)
 	}
 	else//插入的已经存在键了
 	{
-		if (XContainerDataCopyMethod(this_map))
+		if (keyCreatMethod)
 		{
-			XContainerDataCopyMethod(this_map)(pair, sPair);
+			keyCreatMethod(XPair_second(pair), pvValue);
 		}
 		else
 		{
-			if (XContainerDataDeinitMethod(this_map) != NULL)
-				XContainerDataDeinitMethod(this_map)(pair);
-			XPair_insert(pair, pvKey, pvValue);
+			if (XContainerDataDeinitMethod(this_map))
+				XContainerDataDeinitMethod(this_map)(XPair_second(pair));
+
+			XPair_insertSecond(pair, pvValue);
 		}
-		
+
 	}
-	XPair_delete(sPair);
 	return true;
+}
+bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue)
+{
+	return insert(this_map,pvKey,pvValue, XMapBaseKeyCopyMethod(this_map), XContainerDataCopyMethod(this_map));
 }
 
 bool VXMap_insert_move(XMap* this_map, const void* pvKey, const void* pvValue)
 {
-	/*if (ISNULL(this_map, "") || ISNULL(pvKey, "") || ISNULL(pvValue, ""))
-		return false;*/
-	XPair* sPair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
-	XPair_insert(sPair, pvKey, pvValue);
-	XPair* pair = XMap_find_base(this_map, pvKey);
-	if (pair == NULL)//当前没有这个键值对
-	{
-		XPair* pair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
-		if (XContainerDataMoveMethod(this_map))
-			XContainerDataMoveMethod(this_map)(pair, sPair);
-		else
-			XPair_insert(pair, pvKey, pvValue);
-
-		//printf("创建的xpair pvKey:%d pvValue:%s\n",XPair_First(pair,int),XPair_second(LPpair));
-
-		XRBTree_insert(&XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
-
-		++XContainerCapacity(this_map);
-		++XContainerSize(this_map);
-	}
-	else//插入的已经存在键了
-	{
-		if (XContainerDataMoveMethod(this_map))
-		{
-			XContainerDataMoveMethod(this_map)(pair, sPair);
-		}
-		else
-		{
-			if (XContainerDataDeinitMethod(this_map) != NULL)
-				XContainerDataDeinitMethod(this_map)(pair);
-			XPair_insert(pair, pvKey, pvValue);
-		}
-
-	}
-	//将移动后的数据拷贝出去
-	memcpy(pvKey, XPair_first(sPair), ((XMapBase*)this_map)->m_keyTypeSize);
-	memcpy(pvValue, XPair_second(sPair), XContainerTypeSize(this_map));
-	XPair_delete(sPair);
-	return true;
+	return insert(this_map, pvKey, pvValue, XMapBaseKeyMoveMethod(this_map), XContainerDataMoveMethod(this_map));
 }
 
 void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)
@@ -163,7 +123,7 @@ bool VXMap_remove(XMap* this_map, const void* key)
 	XRBTreeNode* nodes = XRBTree_findData(XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
-		XRBTree_remove(&XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key, XMap_freeNodeData,this_map);
+		XRBTree_remove(&XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key, XMapBase_deleteNodeData,this_map);
 		--XContainerCapacity(this_map);
 		--XContainerSize(this_map);
 		return true;
@@ -194,6 +154,13 @@ XPair* VXMap_find(XMap* this_map, const void* key)
 XVector* VXMapBase_keys(const XMapBase* this_map)
 {
 	XVector* v = XVector_create(this_map->m_keyTypeSize);
+	XVector_resize_base(v, XMapBase_size_base(this_map));
+	XVector_clear_base(v);
+
+	XContainerSetDataCopyMethod(v, XMapBaseKeyCopyMethod(this_map));
+	XContainerSetDataMoveMethod(v, XMapBaseKeyMoveMethod(this_map));
+	XContainerSetDataDeinitMethod(v, XMapBaseKeyDeinitMethod(this_map));
+
 	for_each_iterator(this_map, XMap, it)
 	{
 		XVector_push_back_base(v, XPair_first(XMap_iterator_data(&it)));
@@ -205,8 +172,8 @@ void VXMap_clear(XMap* this_map)
 {
 	if (XMap_isEmpty_base(this_map))
 		return;
-	//XMap_iterator_for_each(this_map, XMap_freeNodeData, this_map);
-	XTree_delete(XContainerDataPtr(this_map), XMap_freeNodeData, this_map);
+	//XMap_iterator_for_each(this_map, XMapBase_deleteNodeData, this_map);
+	XTree_delete(XContainerDataPtr(this_map), XMapBase_deleteNodeData, this_map);
 	XContainerCapacity(this_map) = 0;
 	XContainerSize(this_map) = 0;
 	XContainerDataPtr(this_map) = NULL;
@@ -223,9 +190,14 @@ void VXClass_copy(XMap* object, const XMap* src)
 	{
 		XMap_clear_base(object);
 	}
+	XMapBaseSetKeyCopyMethod(object, XMapBaseKeyCopyMethod(src));
+	XMapBaseSetKeyMoveMethod(object, XMapBaseKeyMoveMethod(src));
+	XMapBaseSetKeyDeinitMethod(object, XMapBaseKeyDeinitMethod(src));
+
 	XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
 	XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
 	XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
+	
 	for_each_iterator(src, XMap, it)
 	{
 		XPair* pair = XMap_iterator_data(&it);
@@ -255,11 +227,12 @@ void VXMap_deinit(XMap* this_map)
 
 void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
 {
-	XVtableGetFunc(XVector_class_init(), EXContainerObject_Swap, void (*)(XContainerObject*, XContainerObject*))(this_mapOne, this_mapTwo);
-	//XContainerObject_swap_base(this_mapOne, this_mapTwo);
-	XSwap(&((XMapBase*)this_mapOne)->m_KeyEquality, &((XMapBase*)this_mapTwo)->m_KeyEquality, sizeof(XEquality));
-	XSwap(&((XMapBase*)this_mapOne)->m_KeyLess, &((XMapBase*)this_mapTwo)->m_KeyLess, sizeof(XLess));
-	XSwap(&((XMapBase*)this_mapOne)->m_keyTypeSize, &((XMapBase*)this_mapTwo)->m_keyTypeSize, sizeof(size_t));
+	XSwap(this_mapOne, this_mapTwo, sizeof(XMap));
+	//XVtableGetFunc(XVector_class_init(), EXContainerObject_Swap, void (*)(XContainerObject*, XContainerObject*))(this_mapOne, this_mapTwo);
+	////XContainerObject_swap_base(this_mapOne, this_mapTwo);
+	//XSwap(&((XMapBase*)this_mapOne)->m_KeyEquality, &((XMapBase*)this_mapTwo)->m_KeyEquality, sizeof(XEquality));
+	//XSwap(&((XMapBase*)this_mapOne)->m_KeyLess, &((XMapBase*)this_mapTwo)->m_KeyLess, sizeof(XLess));
+	//XSwap(&((XMapBase*)this_mapOne)->m_keyTypeSize, &((XMapBase*)this_mapTwo)->m_keyTypeSize, sizeof(size_t));
 }
 
 #endif

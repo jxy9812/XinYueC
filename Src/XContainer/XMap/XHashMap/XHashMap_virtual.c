@@ -7,7 +7,7 @@
 //Map插入数据
 static bool VXMap_insert(XHashMap*this_map, const void* pvKey, const void* pvValue);
 static bool VXMap_insert_move(XHashMap* this_map, const void* pvKey, const void* pvValue);
-static void VXMap_erase(XHashMap*this_map, const XPair* pPair);
+static void VXMap_erase(XHashMap* this_map, const XHashMap_iterator* it, XHashMap_iterator* next);
 //map删除数据
 static bool VXMap_remove(XHashMap*this_map, const void* pvKey);
 //根据键值返回数据地址
@@ -24,13 +24,6 @@ static void VXMap_deinit(XHashMap*this_map);
 static void VXMap_swap(XHashMap*this_mapOne, XHashMap*this_mapTwo);
 // 私有函数：扩容哈希表
 static bool XHashMap_resize(XHashMap*map, size_t new_capacity);
-
-static void XMap_freeNodeData(XPair** pair, void* args)
-{
-	if (XContainerDataDeinitMethod(args) != NULL)
-		XContainerDataDeinitMethod(args)(*pair);
-	XPair_delete(*pair);
-}
 
 XVtable* XHashMap_class_init()
 {
@@ -102,84 +95,7 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 	XContainerCapacity(map) = new_capacity;
 	return true;
 }
-bool VXMap_insert(XHashMap*this_map, const void* pvKey, const void* pvValue)
-{
-	
-    if ((double)XContainerSize(this_map) / XContainerCapacity(this_map) >= DEFAULT_LOAD_FACTOR)
-	{
-		//printf("XHash 扩容\n");
-        size_t new_capacity = XContainerCapacity(this_map) * 2;
-        if (!XHashMap_resize(this_map, new_capacity)) 
-		{
-			printf("XHash 扩容失败\n");
-            return false ;
-        }
-    }
-
-    size_t index = this_map->m_hash(pvKey, ((XMapBase*)this_map)->m_keyTypeSize) % XContainerCapacity(this_map);
-	XPair* sPair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
-	XPair_insert(sPair, pvKey, pvValue);
-	XPair* pair = XHashMap_find_base(this_map, pvKey);
-	/*XRBTreeNode* current = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_map))[index], ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);*/
-	if (pair == NULL)
-	{//节点不存在
-		XPair* pair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
-		if (XContainerDataCopyMethod(this_map))
-			XContainerDataCopyMethod(this_map)(pair, sPair);
-		else
-			XPair_insert(pair, pvKey, pvValue);
-		XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_map))+index, ((XMapBase*)this_map)->m_KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
-		//++XContainerCapacity(this_map);
-		++XContainerSize(this_map);
-	}
-	else
-	{
-		if (XContainerDataCopyMethod(this_map))
-		{
-			XContainerDataCopyMethod(this_map)(pair, sPair);
-		}
-		else
-		{
-			if (XContainerDataDeinitMethod(this_map) != NULL)
-				XContainerDataDeinitMethod(this_map)(pair);
-			XPair_insert(pair, pvKey, pvValue);
-		}
-		
-	}
-	XPair_delete(sPair);
-
-
-	//XHashNode* current = ((XHashNode**)XContainerDataPtr(this_map))[index];
-
- //   while (current) 
-	//{
- //       if (this_map->m_parent.m_KeyEquality(XPair_first(current->pair), pvKey)) 
-	//	{//有原先的键值
-	//		if (XContainerDataDeinitMethod(this_map) != NULL)
-	//			XContainerDataDeinitMethod(this_map)(current->pair);
-	//		XPair_insertSecond(current->pair, pvValue);
-	//		//拷贝键值
-	//		memcpy(((uint8_t*)(&(current->pair->m_first))), pvKey, current->pair->m_firstTypeSize);
- //           return true;
- //       }
- //       current = current->next;
- //   }
-	//XHashNode* new_node = (XHashNode*)XMemory_malloc(sizeof(XHashNode));
-	//if (new_node == NULL)
-	//	return false;
-
-	//XPair* pair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
-	//XPair_insertFirst(pair,pvKey);
-	//XPair_insertSecond(pair, pvValue);
-	//new_node->pair = pair;
-
-	//new_node->next= ((XHashNode**)XContainerDataPtr(this_map))[index];
-	//((XHashNode**)XContainerDataPtr(this_map))[index] = new_node;
-	//++XContainerSize(this_map);
-	return true;
-}
-
-bool VXMap_insert_move(XHashMap* this_map, const void* pvKey, const void* pvValue)
+static bool insert(XHashMap* this_map, const void* pvKey, const void* pvValue, XCDataCreatMethod keyCreatMethod, XCDataCreatMethod dataCreatMethod)
 {
 	if ((double)XContainerSize(this_map) / XContainerCapacity(this_map) >= DEFAULT_LOAD_FACTOR)
 	{
@@ -193,25 +109,27 @@ bool VXMap_insert_move(XHashMap* this_map, const void* pvKey, const void* pvValu
 	}
 
 	size_t index = this_map->m_hash(pvKey, ((XMapBase*)this_map)->m_keyTypeSize) % XContainerCapacity(this_map);
-	XPair* sPair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
-	XPair_insert(sPair, pvKey, pvValue);
 	XPair* pair = XHashMap_find_base(this_map, pvKey);
 	if (pair == NULL)
 	{//节点不存在
 		XPair* pair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
-		if (XContainerDataMoveMethod(this_map))
-			XContainerDataMoveMethod(this_map)(pair, sPair);
+		if (keyCreatMethod)
+			keyCreatMethod(XPair_first(pair), pvKey);
 		else
-			XPair_insert(pair, pvKey, pvValue);
+			XPair_insertFirst(pair, pvKey);
+		if (dataCreatMethod)
+			dataCreatMethod(XPair_second(pair), pvValue);
+		else
+			XPair_insertSecond(pair, pvValue);
 		XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_map)) + index, ((XMapBase*)this_map)->m_KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
 		//++XContainerCapacity(this_map);
 		++XContainerSize(this_map);
 	}
 	else
 	{
-		if (XContainerDataMoveMethod(this_map))
+		if (XContainerDataCopyMethod(this_map))
 		{
-			XContainerDataMoveMethod(this_map)(pair, sPair);
+			keyCreatMethod(XPair_second(pair), pvValue);
 		}
 		else
 		{
@@ -219,20 +137,25 @@ bool VXMap_insert_move(XHashMap* this_map, const void* pvKey, const void* pvValu
 				XContainerDataDeinitMethod(this_map)(pair);
 			XPair_insert(pair, pvKey, pvValue);
 		}
-		
+
 	}
-	//将移动后的数据拷贝出去
-	memcpy(pvKey, XPair_first(sPair), ((XMapBase*)this_map)->m_keyTypeSize);
-	memcpy(pvValue, XPair_second(sPair), XContainerTypeSize(this_map));
-	XPair_delete(sPair);
 	return true;
 }
+bool VXMap_insert(XHashMap*this_map, const void* pvKey, const void* pvValue)
+{
+	return insert(this_map, pvKey, pvValue, XMapBaseKeyCopyMethod(this_map), XContainerDataCopyMethod(this_map));
+}
 
-void VXMap_erase(XHashMap*this_map, const XPair* pPair)
+bool VXMap_insert_move(XHashMap* this_map, const void* pvKey, const void* pvValue)
+{
+	return insert(this_map, pvKey, pvValue, XMapBaseKeyMoveMethod(this_map), XContainerDataMoveMethod(this_map));
+}
+
+void VXMap_erase(XHashMap*this_map, const XHashMap_iterator* it, XHashMap_iterator* next)
 {
 	/*if (XMapBase_isEmpty_base(this_map))
 		return;*/
-	XHashMap_remove_base(this_map,XPair_first(pPair));
+	//XHashMap_remove_base(this_map,XPair_first(pPair));
 }
 
 bool VXMap_remove(XHashMap*this_map, const void* pvKey)
@@ -243,7 +166,7 @@ bool VXMap_remove(XHashMap*this_map, const void* pvKey)
 	XRBTreeNode* nodes = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_map))[index], ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);
 	if (nodes != NULL)
 	{
-		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_map)) + index, ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey, XMap_freeNodeData,this_map);
+		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_map)) + index, ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, pvKey, XMapBase_deleteNodeData,this_map);
 		--XContainerSize(this_map);
 		return true;
 	}
@@ -299,8 +222,14 @@ XPair* VXMap_find(XHashMap*this_map, const void* pvKey)
 
 XVector* VXMapBase_keys(const XMapBase* this_map)
 {
-	
 	XVector* v=XVector_create(this_map->m_keyTypeSize);
+	XVector_resize_base(v,XMapBase_size_base(this_map));
+	XVector_clear_base(v);
+
+	XContainerSetDataCopyMethod(v, XMapBaseKeyCopyMethod(this_map));
+	XContainerSetDataMoveMethod(v, XMapBaseKeyMoveMethod(this_map));
+	XContainerSetDataDeinitMethod(v, XMapBaseKeyDeinitMethod(this_map));
+
 	for_each_iterator(this_map, XHashMap, it)
 	{
 		XVector_push_back_base(v,XPair_first(XHashMap_iterator_data(&it)));
@@ -316,7 +245,7 @@ void VXMap_clear(XHashMap*this_map)
 	for (size_t i = 0; i < XContainerCapacity(this_map); i++)
 	{
 		XRBTreeNode* root= ((XRBTreeNode**)XContainerDataPtr(this_map))[i];
-		XTree_delete(root, XMap_freeNodeData, this_map);
+		XTree_delete(root, XMapBase_deleteNodeData, this_map);
 		//XHashNode* current = ((XHashNode**)XContainerDataPtr(this_map))[i];
 
 		/*while (current)
@@ -344,6 +273,10 @@ void VXClass_copy(XHashMap* object, const XHashMap* src)
 	{
 		XHashMap_clear_base(object);
 	}
+	XMapBaseSetKeyCopyMethod(object, XMapBaseKeyCopyMethod(src));
+	XMapBaseSetKeyMoveMethod(object, XMapBaseKeyMoveMethod(src));
+	XMapBaseSetKeyDeinitMethod(object, XMapBaseKeyDeinitMethod(src));
+
 	XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
 	XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
 	XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
@@ -383,10 +316,11 @@ void VXMap_deinit(XHashMap*this_map)
 
 void VXMap_swap(XHashMap*this_mapOne, XHashMap*this_mapTwo)
 {
-	//调用父类交换一部分
-	XVtableGetFunc(XContainerObject_class_init(), EXContainerObject_Swap, void(*)(XHashMap*, XHashMap*))(this_mapOne, this_mapTwo);
-	XSwap(&(this_mapOne->m_parent.m_KeyEquality), &(this_mapTwo->m_parent.m_KeyEquality), sizeof(XEquality));
-	XSwap(&(this_mapOne->m_parent.m_keyTypeSize), &(this_mapTwo->m_parent.m_keyTypeSize), sizeof(size_t));
-	XSwap(&(this_mapOne->m_hash), &(this_mapTwo->m_hash), sizeof(XHashFunc));
+	XSwap(this_mapOne, this_mapTwo,sizeof(XHashMap));
+	////调用父类交换一部分
+	//XVtableGetFunc(XContainerObject_class_init(), EXContainerObject_Swap, void(*)(XHashMap*, XHashMap*))(this_mapOne, this_mapTwo);
+	//XSwap(&(this_mapOne->m_parent.m_KeyEquality), &(this_mapTwo->m_parent.m_KeyEquality), sizeof(XEquality));
+	//XSwap(&(this_mapOne->m_parent.m_keyTypeSize), &(this_mapTwo->m_parent.m_keyTypeSize), sizeof(size_t));
+	//XSwap(&(this_mapOne->m_hash), &(this_mapTwo->m_hash), sizeof(XHashFunc));
 }
 #endif

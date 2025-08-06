@@ -12,10 +12,12 @@ extern "C" {
 //#define DEBUG_ON 1
 //数据释放方法
 typedef void (*XCDataDeinitMethod)(void* data);
+//数据创建
+typedef void (*XCDataCreatMethod)(void* data, const void* sData);
 //数据拷贝
-typedef void (*XCDataCopyMethod)(void* data, const void* sData);
+typedef  XCDataCreatMethod XCDataCopyMethod;
 //数据移动
-typedef void (*XCDataMoveMethod)(void* data, void* sData);
+typedef XCDataCreatMethod XCDataMoveMethod;
 
 #define XCONTAINEROBJECT_VTABLE_SIZE   (XCLASS_VTABLE_GET_SIZE(XContainerObject))      //容器基类虚函数表大小
 //XContainerObject虚函数表枚举

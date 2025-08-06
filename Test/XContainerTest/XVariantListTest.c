@@ -84,6 +84,7 @@ void XVariantListTest_list()
 		XVariant_delete(varList);
 		XVariantList_delete_base(list);
 	}
+	XCoreApplication_requestQuit();
 }
 void XVariantListTest_map()
 {
@@ -120,6 +121,7 @@ void XVariantListTest_map()
 		XMap_delete_base(map);
 		XVariant_delete(varMap);
 	}
+	XCoreApplication_requestQuit();
 }
 void XVariantListTest_stringList()
 {
@@ -142,6 +144,7 @@ void XVariantListTest_stringList()
 		}
 		XStringList_delete_base(list);
 	}
+	XCoreApplication_requestQuit();
 }
 void XMenu_XVariantListTest(XMenu* root)
 {

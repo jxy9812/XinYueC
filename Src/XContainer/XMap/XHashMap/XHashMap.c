@@ -31,9 +31,16 @@ XVariantHashMap* XHashMap_create_XVariantHashMap()
 	XHashMap* hash = XHashMap_Create(XString, XVariant, XEquality_XString,XLess_XString);
 	if (hash == NULL)
 		return NULL;
-	XContainerSetDataCopyMethod(hash, XMapBase_XVariantMapCopyMethod);
+	/*XContainerSetDataCopyMethod(hash, XMapBase_XVariantMapCopyMethod);
 	XContainerSetDataMoveMethod(hash, XMapBase_XVariantMapMoveMethod);
-	XContainerSetDataDeinitMethod(hash, XMapBase_XVariantMapDeinitMethod);
+	XContainerSetDataDeinitMethod(hash, XMapBase_XVariantMapDeinitMethod);*/
+	XMapBaseSetKeyCopyMethod(hash, XString_copy_base);
+	XMapBaseSetKeyMoveMethod(hash, XString_move_base);
+	XMapBaseSetKeyDeinitMethod(hash, XString_deinit_base);
+
+	XContainerSetDataCopyMethod(hash, XVariant_copy);
+	XContainerSetDataMoveMethod(hash, XVariant_move);
+	XContainerSetDataDeinitMethod(hash, XVariant_deinit);
 	return hash;
 }
 

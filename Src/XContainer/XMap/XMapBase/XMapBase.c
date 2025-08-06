@@ -28,6 +28,9 @@ void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t va
 	this_map->m_keyTypeSize = keyTypeSize;
 	this_map->m_KeyEquality = KeyEquality;
 	this_map->m_KeyLess = KeyLess;
+	this_map->m_keyCopyMethod = NULL;
+	this_map->m_keyMoveMethod = NULL;
+	this_map->m_keyDeinitMethod = NULL;
 }
 bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue)
 {
@@ -78,64 +81,15 @@ XVector* XMapBase_keys_base(const XMapBase* this_map)
 	return XClassGetVirtualFunc(this_map, EXMapBase_Keys, void* (*)(const XMapBase*))(this_map);
 }
 
-void XMapBase_KeyClassDeinitMethod(XPair* pair)
+void XMapBase_deleteNodeData(XPair** pair, XMapBase* this_map)
 {
-	XClass* object = (XClass*)XPair_first(pair);
-	XClass_deinit_base(object);
-}
+	if (XMapBaseKeyDeinitMethod(this_map))
+		XMapBaseKeyDeinitMethod(this_map)(XPair_first(*pair));
 
-void XMapBase_ValueClassDeinitMethod(XPair* pair)
-{
-	XClass* object = (XClass*)XPair_second(pair);
-	XClass_deinit_base(object);
-}
+	if (XContainerDataDeinitMethod(this_map))
+		XContainerDataDeinitMethod(this_map)(XPair_second(*pair));
 
-void XMapBase_ValueXVariantDeleteMethod(XPair* pair)
-{
-	XVariant* var = (XVariant*)XPair_second(pair);
-	XVariant_deinit(var);
-}
-
-void XMapBase_ClassDeinitMethod(XPair* pair)
-{
-	XMapBase_KeyClassDeinitMethod(pair);
-	XMapBase_ValueClassDeinitMethod(pair);
-}
-
-void XMapBase_XVariantMapCopyMethod(XPair* pair, const XPair* src)
-{
-	XString* pKey = XPair_first(src);
-	XVariant* pVar = XPair_second(src);
-	if (((XClass*)XPair_first(pair))->m_vtable == NULL)
-	{//新插入
-		XString_copy_base(XPair_first(pair), pKey);
-		XVariant_copy(XPair_second(pair), pKey);
-	}
-	else
-	{
-		XVariant_copy(XPair_second(pair), pVar);
-	}
-}
-
-void XMapBase_XVariantMapMoveMethod(XPair* pair, XPair* src)
-{
-	XString* pKey = XPair_first(src);
-	XVariant* pVar = XPair_second(src);
-	if (((XClass*)XPair_first(pair))->m_vtable == NULL)
-	{//新插入
-		XString_move_base(XPair_first(pair), pKey);
-		XVariant_move(XPair_second(pair), pVar);
-	}
-	else
-	{
-		XVariant_move(XPair_second(pair), pVar);
-	}
-}
-
-void XMapBase_XVariantMapDeinitMethod(XPair* pair)
-{
-	XMapBase_KeyClassDeinitMethod(pair);
-	XMapBase_ValueXVariantDeleteMethod(pair);
+	XPair_delete(*pair);
 }
 
 #endif

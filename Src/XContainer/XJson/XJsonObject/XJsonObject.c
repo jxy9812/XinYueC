@@ -2,12 +2,6 @@
 #include "XMemory.h"
 #include "XMap.h"
 #include "XVector.h"
-// XJsonValueMap释放
-static void XJsonValueMapCopyMethod(XPair* pair, const XPair* src);
-// XJsonValueMap移动
-static void XJsonValueMapMoveMethod(XPair* pair, const XPair* src);
-// XJsonValueMap拷贝
-static void XJsonValueMapDeinitMethod(XPair* pair);
 
 // 辅助函数：序列化XJsonValue
 void XJson_serialize_json_value(const XJsonValue* value, XString* output);
@@ -18,9 +12,14 @@ XJsonObject* XJsonObject_create(void)
 {
 	XJsonObject* object = (XJsonObject*)XMemory_malloc(sizeof(XJsonObject));
 	XMap_init(object,sizeof(XString),sizeof(XJsonValue),XEquality_XString,XLess_XString);
-	XContainerSetDataDeinitMethod(object, XJsonValueMapDeinitMethod);
-	XContainerSetDataCopyMethod(object, XJsonValueMapCopyMethod);
-	XContainerSetDataMoveMethod(object, XJsonValueMapMoveMethod);
+
+    XMapBaseSetKeyCopyMethod(object, XString_copy_base);
+    XMapBaseSetKeyMoveMethod(object, XString_move_base);
+    XMapBaseSetKeyDeinitMethod(object, XString_deinit_base);
+
+    XContainerSetDataCopyMethod(object, XJsonValue_copy);
+    XContainerSetDataMoveMethod(object, XJsonValue_move);
+    XContainerSetDataDeinitMethod(object, XJsonValue_deinit);
 	return object;
 }
 
@@ -195,10 +194,11 @@ XString* XJsonObject_toString(const XJsonObject* object)
     }
 
     // 释放键向量
-    for (int i = 0; i < keyCount; i++) {
+  /*  for (int i = 0; i < keyCount; i++) {
         XString* key = (XString*)XVector_at_base(keys, i);
         XString_delete_base(key);
-    }
+    }*/
+    //内置了释放数据的方法
     XVector_delete_base(keys);
 
     // 结束对象
@@ -250,39 +250,3 @@ XString* XJsonObject_toString(const XJsonObject* object)
 //
 //    return object;
 //}
-
-void XJsonValueMapCopyMethod(XPair* pair, const XPair* src)
-{
-	XString* pKey = XPair_first(src);
-	XJsonValue* pVar = XPair_second(src);
-	if (((XClass*)XPair_first(pair))->m_vtable == NULL)
-	{//新插入
-		XString_copy_base(XPair_first(pair), pKey);
-		XJsonValue_copy(XPair_second(pair), pKey);
-	}
-	else
-	{
-		XJsonValue_copy(XPair_second(pair), pVar);
-	}
-}
-
-void XJsonValueMapMoveMethod(XPair* pair, const XPair* src)
-{
-	XString* pKey = XPair_first(src);
-	XJsonValue* pVar = XPair_second(src);
-	if (((XClass*)XPair_first(pair))->m_vtable == NULL)
-	{//新插入
-		XString_move_base(XPair_first(pair), pKey);
-		XJsonValue_move(XPair_second(pair), pVar);
-	}
-	else
-	{
-		XJsonValue_move(XPair_second(pair), pVar);
-	}
-}
-
-void XJsonValueMapDeinitMethod(XPair* pair)
-{
-	XMapBase_KeyClassDeinitMethod(pair);
-	XJsonValue_deinit(XPair_second(pair));
-}

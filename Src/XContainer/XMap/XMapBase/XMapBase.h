@@ -26,6 +26,9 @@ typedef struct XMapBase
 	size_t m_keyTypeSize;//key数据类型大小
 	XEquality m_KeyEquality;//key的相等比较函数
 	XLess m_KeyLess;//key小于比较函数
+	XCDataCopyMethod m_keyCopyMethod;//key拷贝方法
+	XCDataMoveMethod m_keyMoveMethod;//key移动方法
+	XCDataDeinitMethod m_keyDeinitMethod;//key释放方法
 }XMapBase;
 XVtable* XMapBase_class_init();
 //初始化 XMap
@@ -59,19 +62,15 @@ XVector* XMapBase_keys_base(const XMapBase* this_map);
 #define XMapBase_typeSize_base			XContainerObject_typeSize_base
 
 
-//默认释放派生类的方法 key是派生的容器
-void XMapBase_KeyClassDeinitMethod(XPair* pair);
-//默认释放派生类的方法 value是派生的容器
-void XMapBase_ValueClassDeinitMethod(XPair* pair);
-//默认释放XVariant value的方法
-void XMapBase_ValueXVariantDeleteMethod(XPair* pair);
-//默认释放派生类的方法 key和value都是派生的容器
-void XMapBase_ClassDeinitMethod(XPair* pair);
+#define XMapBaseKeyCopyMethod(Map) (((XMapBase*)(Map))->m_keyCopyMethod)//获取容器键拷贝方法
+#define XMapBaseSetKeyCopyMethod(Map,method) (((XMapBase*)(Map))->m_keyCopyMethod=method)//设置容器的键拷贝方法
+#define XMapBaseKeyMoveMethod(Map) (((XMapBase*)(Map))->m_keyMoveMethod)//获取容器键移动方法
+#define XMapBaseSetKeyMoveMethod(Map,method) (((XMapBase*)(Map))->m_keyMoveMethod=method)//设置容器的键移动方法
+#define XMapBaseKeyDeinitMethod(Map) (((XMapBase*)(Map))->m_keyDeinitMethod)//获取容器键释放方法
+#define XMapBaseSetKeyDeinitMethod(Map,method) (((XMapBase*)(Map))->m_keyDeinitMethod=method)//设置容器的键释放方法
 
-void XMapBase_XVariantMapCopyMethod(XPair* pair, const XPair* src);
-void XMapBase_XVariantMapMoveMethod(XPair* pair, XPair* src);
-//XVariantMap释放
-void XMapBase_XVariantMapDeinitMethod(XPair* pair);
+//字典映射的节点释放方法
+void XMapBase_deleteNodeData(XPair** pair, XMapBase* this_map);
 #ifdef __cplusplus
 }
 #endif
