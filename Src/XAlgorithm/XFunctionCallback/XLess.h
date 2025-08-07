@@ -27,5 +27,4 @@ XDefineFunc_Define(XLess, int64_t)
 XDefineFunc_Define(XLess, size_t)
 XDefineFunc_Define(XLess, ptr)//void*
 
-XDefineFunc_Define(XLess, XString)
 #endif // !XFUNCTIONPOINTER_H

@@ -1,4 +1,4 @@
-//#include "XJsonDocument.h"
+ï»¿//#include "XJsonDocument.h"
 //#include "XMemory.h"
 //#include "XString.h"
 //
@@ -87,11 +87,11 @@
 //}
 //
 //XJsonDocument* XJsonDocument_fromString(const XString* json) {
-//    // Êµ¼ÊÊµÏÖĞèÒª½âÎöJSON×Ö·û´®
-//    // ÕâÀï½ö×÷Îª¿ò¼ÜÊ¾Àı
+//    // å®é™…å®ç°éœ€è¦è§£æJSONå­—ç¬¦ä¸²
+//    // è¿™é‡Œä»…ä½œä¸ºæ¡†æ¶ç¤ºä¾‹
 //    XJsonDocument* doc = XJsonDocument_create();
 //    if (doc && json) {
-//        // ½âÎöÂß¼­½«ÔÚÕâÀïÊµÏÖ
+//        // è§£æé€»è¾‘å°†åœ¨è¿™é‡Œå®ç°
 //    }
 //    return doc;
 //}

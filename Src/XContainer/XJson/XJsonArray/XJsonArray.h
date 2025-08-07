@@ -1,4 +1,4 @@
-#ifndef XJSONARRAY_H
+ï»¿#ifndef XJSONARRAY_H
 #define XJSONARRAY_H
 
 #ifdef __cplusplus
@@ -15,10 +15,10 @@ extern "C" {
 
 typedef struct XJsonArray 
 {
-    XVector elements; // ´æ´¢XJsonValue*µÄÏòÁ¿
+    XVector elements; // å­˜å‚¨XJsonValue*çš„å‘é‡
 } XJsonArray;
 
-// ¹¹ÔìÓëÎö¹¹
+// æ„é€ ä¸ææ„
 XJsonArray* XJsonArray_create(void);
 
 #define XJsonArray_rcopy_base						XVector_rcopy_base
@@ -42,11 +42,11 @@ XJsonArray* XJsonArray_create(void);
 #define XJsonArray_removeAt_base                    XVector_removeAt_base
 #define XJsonArray_replace                          XVector_replace
 #define XJsonArray_replace_move                     XVector_replace_move 
-// ÔªËØ·ÃÎÊ
+// å…ƒç´ è®¿é—®
 XJsonValue* XJsonArray_at(XJsonArray* array, int64_t index);
 const XJsonValue* XJsonArray_at_const(const XJsonArray* array, int64_t index);
 
-// ×ª»»º¯Êı
+// è½¬æ¢å‡½æ•°
 XString* XJsonArray_toString(const XJsonArray* array);
 XVariantList* XJsonArray_toVariantList(const XJsonArray* array);
 XJsonArray* XJsonArray_fromVariantList(const XVariantList* list);

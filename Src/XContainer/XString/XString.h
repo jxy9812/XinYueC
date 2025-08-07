@@ -431,6 +431,7 @@ bool XString_contains_utf8(const XString* str, const char* utf8_substr, XCharCas
  */
 bool XEquality_XString(const XString* str1, const XString* str2);
 
+const bool XLess_XString(const XString* str1, const XString* str2);
 /**
  * @brief 比较两个字符串（字典序）
  * @param str1 第一个 XString 对象指针

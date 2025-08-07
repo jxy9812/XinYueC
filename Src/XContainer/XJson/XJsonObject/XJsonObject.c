@@ -1,11 +1,12 @@
-#include "XJsonObject.h"
+ï»¿#include "XJsonObject.h"
+#include "XJsonArray.h"
 #include "XMemory.h"
 #include "XMap.h"
 #include "XVector.h"
 
-// ¸¨Öúº¯Êı£ºĞòÁĞ»¯XJsonValue
+// è¾…åŠ©å‡½æ•°ï¼šåºåˆ—åŒ–XJsonValue
 void XJson_serialize_json_value(const XJsonValue* value, XString* output);
-// ¸¨Öúº¯Êı£º×ªÒå×Ö·û´®ÖĞµÄÌØÊâ×Ö·û
+// è¾…åŠ©å‡½æ•°ï¼šè½¬ä¹‰å­—ç¬¦ä¸²ä¸­çš„ç‰¹æ®Šå­—ç¬¦
 void XJson_escape_string(const XString* str, XString* output);
 
 XJsonObject* XJsonObject_create(void)
@@ -23,7 +24,23 @@ XJsonObject* XJsonObject_create(void)
 	return object;
 }
 
-// ¸¨Öúº¯Êı£º×ªÒå×Ö·û´®ÖĞµÄÌØÊâ×Ö·û
+bool XJsonObject_insert_utf8(XJsonObject* object, const char* key, XJsonValue* value)
+{
+    XString* str = XString_create_utf8(key);
+    bool ret=XMap_insert_keyMove_base(object, str, value);
+    XString_delete_base(str);
+    return ret;
+}
+
+bool XJsonObject_insert_utf8_move(XJsonObject* object, const char* key, XJsonValue* value)
+{
+    XString* str = XString_create_utf8(key);
+    bool ret = XMap_insert_move_base(object, str, value);
+    XString_delete_base(str);
+    return ret;
+}
+
+// è¾…åŠ©å‡½æ•°ï¼šè½¬ä¹‰å­—ç¬¦ä¸²ä¸­çš„ç‰¹æ®Šå­—ç¬¦
 void  XJson_escape_string(const XString* str, XString* output)
 {
     if (!str || !output) return;
@@ -69,19 +86,20 @@ void  XJson_escape_string(const XString* str, XString* output)
             XString_push_back_base(output, XChar_from('t'));
         }/*XString_append_utf8(output, "\\t");*/  break;
         default:
-            // ¶ÔÓÚ·ÇASCII×Ö·û£¬±£³ÖÔ­Ñù£¨JSONÔÊĞíUTF-8±àÂë£©
+            // å¯¹äºéASCIIå­—ç¬¦ï¼Œä¿æŒåŸæ ·ï¼ˆJSONå…è®¸UTF-8ç¼–ç ï¼‰
             XString_push_back_base(output, *p);
             break;
         }
     }
 }
 
-// ¸¨Öúº¯Êı£ºĞòÁĞ»¯XJsonValue
+// è¾…åŠ©å‡½æ•°ï¼šåºåˆ—åŒ–XJsonValue
 void XJson_serialize_json_value(const XJsonValue* value, XString* output)
 {
     if (!value || !output) return;
 
-    switch (XJsonValue_type(value)) {
+    switch (XJsonValue_type(value)) 
+    {
     case XJsonValue_Null:
         XString_append_utf8(output, "null");
         break;
@@ -92,7 +110,7 @@ void XJson_serialize_json_value(const XJsonValue* value, XString* output)
 
     case XJsonValue_Double: {
         char buffer[64];
-        // ´¦ÀíÕûÊıÇé¿ö£¬±ÜÃâÏÔÊ¾Îª10.0ÕâÑùµÄĞÎÊ½
+        // å¤„ç†æ•´æ•°æƒ…å†µï¼Œé¿å…æ˜¾ç¤ºä¸º10.0è¿™æ ·çš„å½¢å¼
         double num = XJsonValue_toDouble(value, 0.0);
         if (num == (long long)num) {
             snprintf(buffer, sizeof(buffer), "%lld", (long long)num);
@@ -106,12 +124,12 @@ void XJson_serialize_json_value(const XJsonValue* value, XString* output)
 
     case XJsonValue_String: {
         const XString* str = XJsonValue_toString(value);
-        XString_append_utf8(output, "\"");
+        XString_push_back_base(output, XChar_from('\"'));
         if (str)
         {
             XJson_escape_string(str, output);
         }
-        XString_append_utf8(output, "\"");
+        XString_push_back_base(output, XChar_from('\"'));
         break;
     }
 
@@ -122,22 +140,30 @@ void XJson_serialize_json_value(const XJsonValue* value, XString* output)
             XString_append(output, arrayStr);
             XString_delete_base(arrayStr);
         }
-        else {
-            XString_append_utf8(output, "[]");
+        else 
+        {
+            XString_push_back_base(output, XChar_from('['));
+            XString_push_back_base(output, XChar_from(']'));
+          /*  XString_append_utf8(output, "[]");*/
         }
         break;
     }
 
-    case XJsonValue_Object: {
+    case XJsonValue_Object: 
+    {
         const XJsonObject* object = XJsonValue_toObject(value);
-        /*   XString* objectStr = XJsonObject_toString(object);
-           if (objectStr) {
-               XString_append_string(output, objectStr);
+           XString* objectStr = XJsonObject_toString(object);
+           if (objectStr) 
+           {
+               XString_append(output, objectStr);
                XString_delete_base(objectStr);
            }
-           else {
-               XString_append_utf8(output, "{}");
-           }*/
+           else 
+           {
+               XString_push_back_base(output, XChar_from('{'));
+               XString_push_back_base(output, XChar_from('}'));
+               //XString_append_utf8(output, "{}");
+           }
         break;
     }
 
@@ -147,7 +173,7 @@ void XJson_serialize_json_value(const XJsonValue* value, XString* output)
     }
 }
 
-// ¶ÔÏóĞòÁĞ»¯ÊµÏÖ
+// å¯¹è±¡åºåˆ—åŒ–å®ç°
 XString* XJsonObject_toString(const XJsonObject* object) 
 {
     if (!object || XJsonObject_isEmpty_base(object)) 
@@ -155,54 +181,49 @@ XString* XJsonObject_toString(const XJsonObject* object)
         return XString_create_utf8("{}");
     }
 
-    // ´´½¨Êä³ö×Ö·û´®
+    // åˆ›å»ºè¾“å‡ºå­—ç¬¦ä¸²
     XString* output = XString_create_utf8("");
     if (!output) return NULL;
 
-    // ¿ªÊ¼¶ÔÏó
-    XString_append_utf8(output, "{");
-
-    // »ñÈ¡ËùÓĞ¼ü
+    // å¼€å§‹å¯¹è±¡
+    //XString_append_utf8(output, "{");
+    XString_push_back_base(output, XChar_from('{'));
+    // è·å–æ‰€æœ‰é”®
     XVector* keys = XJsonObject_keys_base(object);
     if (!keys) 
     {
-        XString_append_utf8(output, "}");
+        XString_push_back_base(output, XChar_from('}'));
         return output;
     }
 
-    int keyCount = XVector_size_base(keys);
+    size_t keyCount = XVector_size_base(keys);
     for (int i = 0; i < keyCount; i++) 
     {
-        // »ñÈ¡¼ü
+        // è·å–é”®
         XString* key = (XString*)XVector_at_base(keys, i);
         if (!key) 
             continue;
 
-        // ĞòÁĞ»¯¼ü
-        XString_append_utf8(output, "\"");
+        // åºåˆ—åŒ–é”®
+        XString_push_back_base(output, XChar_from('\"'));
         XJson_escape_string(key, output);
-        XString_append_utf8(output, "\": ");
-
-        // ĞòÁĞ»¯Öµ
+        XString_push_back_base(output, XChar_from('\"'));
+        XString_push_back_base(output, XChar_from(':'));
+        // åºåˆ—åŒ–å€¼
         const XJsonValue* value = XJsonObject_value_base(object, key);
         XJson_serialize_json_value(value, output);
 
-        // Ìí¼Ó¶ººÅ·Ö¸ô£¨×îºóÒ»¸ö¼üÖµ¶Ô³ıÍâ£©
+        // æ·»åŠ é€—å·åˆ†éš”ï¼ˆæœ€åä¸€ä¸ªé”®å€¼å¯¹é™¤å¤–ï¼‰
         if (i != keyCount - 1) {
-            XString_append_utf8(output, ", ");
+            XString_push_back_base(output, XChar_from(','));
         }
     }
 
-    // ÊÍ·Å¼üÏòÁ¿
-  /*  for (int i = 0; i < keyCount; i++) {
-        XString* key = (XString*)XVector_at_base(keys, i);
-        XString_delete_base(key);
-    }*/
-    //ÄÚÖÃÁËÊÍ·ÅÊı¾İµÄ·½·¨
+    //å†…ç½®äº†é‡Šæ”¾æ•°æ®çš„æ–¹æ³•
     XVector_delete_base(keys);
 
-    // ½áÊø¶ÔÏó
-    XString_append_utf8(output, "}");
+    // ç»“æŸå¯¹è±¡
+    XString_push_back_base(output, XChar_from('}'));
 
     return output;
 }

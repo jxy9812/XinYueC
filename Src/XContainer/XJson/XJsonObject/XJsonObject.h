@@ -1,4 +1,4 @@
-#ifndef XJSONOBJECT_H
+ï»¿#ifndef XJSONOBJECT_H
 #define XJSONOBJECT_H
 
 #ifdef __cplusplus
@@ -15,13 +15,15 @@ extern "C" {
 
 typedef struct XJsonObject 
 {
-    XMap members; // ¼üÎªXString£¬ÖµÎªXJsonValue
+    XMap members; // é”®ä¸ºXStringï¼Œå€¼ä¸ºXJsonValue
 } XJsonObject;
 
-// ¹¹ÔìÓëÎö¹¹
+// æ„é€ ä¸ææ„
 XJsonObject* XJsonObject_create(void);
-
+bool XJsonObject_insert_utf8(XJsonObject* object, const char* key, XJsonValue* value);
+bool XJsonObject_insert_utf8_move(XJsonObject* object, const char* key, XJsonValue* value);
 #define XJsonObject_insert_base				    XMap_insert_base
+#define XJsonObject_insert_move_base		    XMap_insert_move_base
 #define XJsonObject_Insert_Base				    XMap_Insert_Base
 #define XJsonObject_erase_base					XMap_erase_base
 #define XJsonObject_remove_base				    XMap_remove_base
@@ -42,7 +44,7 @@ XJsonObject* XJsonObject_create(void);
 #define XJsonObject_swap_base					XMap_swap_base	
 #define XJsonObject_typeSize_base				XMap_typeSize_base
 
-// ×ª»»º¯Êı
+// è½¬æ¢å‡½æ•°
 XString* XJsonObject_toString(const XJsonObject* object);
 XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object);
 XJsonObject* XJsonObject_fromVariantMap(const XVariantMap* map);

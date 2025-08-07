@@ -1,4 +1,4 @@
-#ifndef XJSONDOCUMENT_H
+ï»¿#ifndef XJSONDOCUMENT_H
 #define XJSONDOCUMENT_H
 
 #ifdef __cplusplus
@@ -22,26 +22,26 @@ typedef struct XJsonDocument
     XJsonValue* root;
 } XJsonDocument;
 
-// ¹¹ÔìÓëÎö¹¹
+// æ„é€ ä¸ææ„
 XJsonDocument* XJsonDocument_create(void);
 XJsonDocument* XJsonDocument_create_object(XJsonObject* object);
 XJsonDocument* XJsonDocument_create_array(XJsonArray* array);
 void XJsonDocument_delete(XJsonDocument* document);
 
-// ¸ù¶ÔÏó²Ù×÷
+// æ ¹å¯¹è±¡æ“ä½œ
 XJsonValue* XJsonDocument_root(XJsonDocument* document);
 const XJsonValue* XJsonDocument_root_const(const XJsonDocument* document);
 void XJsonDocument_setRoot(XJsonDocument* document, XJsonValue* root);
 
-// ¶ÔÏóºÍÊı×é·ÃÎÊ
+// å¯¹è±¡å’Œæ•°ç»„è®¿é—®
 XJsonObject* XJsonDocument_object(XJsonDocument* document);
 XJsonArray* XJsonDocument_array(XJsonDocument* document);
 
-// ½âÎöÓëĞòÁĞ»¯
+// è§£æä¸åºåˆ—åŒ–
 XJsonDocument* XJsonDocument_fromString(const XString* json);
 XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentFormat format);
 
-// ÓëXVariant×ª»»
+// ä¸XVariantè½¬æ¢
 XVariant* XJsonDocument_toVariant(const XJsonDocument* document);
 XJsonDocument* XJsonDocument_fromVariant(const XVariant* variant);
 

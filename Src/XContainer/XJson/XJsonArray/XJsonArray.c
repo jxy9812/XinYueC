@@ -1,8 +1,8 @@
-#include "XJsonArray.h"
+ï»¿#include "XJsonArray.h"
 #include "XMemory.h"
 #include "XVariantList.h"
 #include "XJsonValue.h"
-// ¸¨Öúº¯Êı£ºĞòÁĞ»¯XJsonValue
+// è¾…åŠ©å‡½æ•°ï¼šåºåˆ—åŒ–XJsonValue
 void XJson_serialize_json_value(const XJsonValue* value, XString* output);
 
 XJsonArray* XJsonArray_create(void) 
@@ -15,16 +15,17 @@ XJsonArray* XJsonArray_create(void)
     return array;
 }
 
-// Êı×éĞòÁĞ»¯ÊµÏÖ
+// æ•°ç»„åºåˆ—åŒ–å®ç°
 XString* XJsonArray_toString(const XJsonArray* array) {
     if (!array) return NULL;
 
-    // ´´½¨Êä³ö×Ö·û´®
-    XString* output = XString_create_utf8("");
+    // åˆ›å»ºè¾“å‡ºå­—ç¬¦ä¸²
+    XString* output = XString_create(NULL);
     if (!output) return NULL;
 
-    // ¿ªÊ¼Êı×é
-    XString_append_utf8(output, "[");
+    // å¼€å§‹æ•°ç»„
+    //XString_append_utf8(output, "[");
+    XString_push_back_base(output, XChar_from('['));
 
     int size = XJsonArray_size_base(array);
     for (int i = 0; i < size; i++) {
@@ -36,15 +37,15 @@ XString* XJsonArray_toString(const XJsonArray* array) {
             XString_append_utf8(output, "null");
         }
 
-        // Ìí¼Ó¶ººÅ·Ö¸ô£¨×îºóÒ»¸öÔªËØ³ıÍâ£©
+        // æ·»åŠ é€—å·åˆ†éš”ï¼ˆæœ€åä¸€ä¸ªå…ƒç´ é™¤å¤–ï¼‰
         if (i != size - 1) {
-            XString_append_utf8(output, ", ");
+            //XString_append_utf8(output, ", ");
+            XString_push_back_base(output, XChar_from(','));
         }
     }
 
-    // ½áÊøÊı×é
-    XString_append_utf8(output, "]");
-
+    // ç»“æŸæ•°ç»„
+    XString_push_back_base(output, XChar_from(']'));
     return output;
 }
 //XVariantList* XJsonArray_toVariantList(const XJsonArray* array) {

@@ -1,4 +1,4 @@
-#include "XJsonValue.h"
+﻿#include "XJsonValue.h"
 #include "XJsonArray.h"
 #include "XMemory.h"
 #include "XVariantList.h"
@@ -175,7 +175,7 @@ XJsonObject* XJsonValue_toObject(const XJsonValue* value) {
 void XJsonValue_setNull(XJsonValue* value) {
     if (!value) return;
 
-    // �ͷŵ�ǰֵ
+    // 释放当前值
     XJsonValue temp = *value;
     *value = (XJsonValue){ .type = XJsonValue_Null };
 
@@ -316,7 +316,7 @@ XJsonValue* XJsonValue_fromVariant(const XVariant* variant) {
     //XVariantType type = XVariant_type(variant);
     //switch (type) {
     //case XVariantType_NULL:
-    //    // �Ѿ���null
+    //    // 已经是null
     //    break;
     //case XVariantType_Bool:
     //    XJsonValue_setBool(value, XVariant_toBool(variant));

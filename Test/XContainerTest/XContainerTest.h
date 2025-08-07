@@ -56,7 +56,8 @@ extern "C" {
 	void XSetTest();
 	void XVariantListTest();
 
-	void XJsonTest();
+	void XJsonArrayTest();
+	void XJsonObjectTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

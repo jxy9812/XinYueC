@@ -1,4 +1,4 @@
-#ifndef XJSONVALUE_H
+Ôªø#ifndef XJSONVALUE_H
 #define XJSONVALUE_H
 
 #ifdef __cplusplus
@@ -41,21 +41,21 @@ typedef struct XJsonValue
     } data;
 } XJsonValue;
 
-// ππ‘Ï∫Ø ˝
+// ÊûÑÈÄ†ÂáΩÊï∞
 XJsonValue* XJsonValue_create_null(void);
 XJsonValue* XJsonValue_create_bool(bool value);
 XJsonValue* XJsonValue_create_double(double value);
 XJsonValue* XJsonValue_create_string(const XString* string);
 XJsonValue* XJsonValue_create_array(XJsonArray* array);
 XJsonValue* XJsonValue_create_object(XJsonObject* object);
-//∏¥÷∆∫Õ“∆∂Ø
+//Â§çÂà∂ÂíåÁßªÂä®
 void XJsonValue_copy(XJsonValue* var, const XJsonValue* src);
 void XJsonValue_move(XJsonValue* var, XJsonValue* src);
-// Œˆππ∫Ø ˝
+// ÊûêÊûÑÂáΩÊï∞
 void XJsonValue_deinit(XJsonValue* value);
 void XJsonValue_delete(XJsonValue* value);
 
-// ¿‡–ÕºÏ≤È
+// Á±ªÂûãÊ£ÄÊü•
 XJsonValueType XJsonValue_type(const XJsonValue* value);
 bool XJsonValue_isNull(const XJsonValue* value);
 bool XJsonValue_isBool(const XJsonValue* value);
@@ -64,14 +64,14 @@ bool XJsonValue_isString(const XJsonValue* value);
 bool XJsonValue_isArray(const XJsonValue* value);
 bool XJsonValue_isObject(const XJsonValue* value);
 
-// ÷µªÒ»°
+// ÂÄºËé∑Âèñ
 bool XJsonValue_toBool(const XJsonValue* value, bool defaultValue);
 double XJsonValue_toDouble(const XJsonValue* value, double defaultValue);
 const XString* XJsonValue_toString(const XJsonValue* value);
 XJsonArray* XJsonValue_toArray(const XJsonValue* value);
 XJsonObject* XJsonValue_toObject(const XJsonValue* value);
 
-// ÷µ…Ë÷√
+// ÂÄºËÆæÁΩÆ
 void XJsonValue_setNull(XJsonValue* value);
 void XJsonValue_setBool(XJsonValue* value, bool b);
 void XJsonValue_setDouble(XJsonValue* value, double d);
@@ -82,7 +82,7 @@ void XJsonValue_setArray(XJsonValue* value, XJsonArray* a);
 void XJsonValue_setArray_move(XJsonValue* value, XJsonArray* a);
 void XJsonValue_setObject(XJsonValue* value, XJsonObject* o);
 
-// ”ÎXVariant◊™ªª
+// ‰∏éXVariantËΩ¨Êç¢
 XVariant* XJsonValue_toVariant(const XJsonValue* value);
 XJsonValue* XJsonValue_fromVariant(const XVariant* variant);
 

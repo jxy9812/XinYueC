@@ -22,6 +22,9 @@ XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XEquality 
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess);
 //Map插入数据
 #define XMap_insert_base				XMapBase_insert_base
+#define XMap_insert_move_base			XMapBase_insert_move_base
+#define XMap_insert_keyMove_base		XMapBase_insert_keyMove_base
+#define XMap_insert_valueMove_base		XMapBase_insert_valueMove_base
 #define XMap_Insert_Base				XMapBase_Insert_Base
 #define XMap_erase_base					XMapBase_erase_base
 #define XMap_remove_base				XMapBase_remove_base
