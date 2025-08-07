@@ -16,14 +16,10 @@ extern "C" {
 //XVector虚函数表枚举
 XCLASS_DEFINE_BEGING(XVector)
 XCLASS_DEFINE_ENUM(XVector, Resize)=XCLASS_VTABLE_GET_SIZE(XContainerObject),
-XCLASS_DEFINE_ENUM(XVector, Push_Front_Copy),
-XCLASS_DEFINE_ENUM(XVector, Push_Front_Move),
-XCLASS_DEFINE_ENUM(XVector, Push_Back_Copy),
-XCLASS_DEFINE_ENUM(XVector, Push_Back_Move),
-XCLASS_DEFINE_ENUM(XVector, Insert_Array_Copy),
-XCLASS_DEFINE_ENUM(XVector, Insert_Array_Move),
-XCLASS_DEFINE_ENUM(XVector, append_Array_Copy),
-XCLASS_DEFINE_ENUM(XVector, append_Array_Move),
+XCLASS_DEFINE_ENUM(XVector, Push_Front),
+XCLASS_DEFINE_ENUM(XVector, Push_Back),
+XCLASS_DEFINE_ENUM(XVector, Insert_Array),
+XCLASS_DEFINE_ENUM(XVector, append_Array),
 XCLASS_DEFINE_ENUM(XVector, Pop_Front),
 XCLASS_DEFINE_ENUM(XVector, Pop_Back),
 XCLASS_DEFINE_ENUM(XVector, Erase),
@@ -52,26 +48,26 @@ void XVector_init(XVector* this_vector, size_t typeSize);
 bool XVector_resize_base(XVector* this_vector,size_t size);
 
 // 向量头部增加一个元素
-void XVector_push_front_base(XVector* this_vector, void* pvValue);
+bool XVector_push_front_base(XVector* this_vector, void* pvValue);
 #define XVector_Push_Front_Base(this_vector,type,value){type t=value;XVector_push_front_base(this_vector,&t);}
-void XVector_push_front_move_base(XVector* this_vector, void* pvValue);
+bool XVector_push_front_move_base(XVector* this_vector, void* pvValue);
 
 // 向量尾部增加一个元素
-void XVector_push_back_base(XVector* this_vector, void* pvValue);
+bool XVector_push_back_base(XVector* this_vector, void* pvValue);
 #define XVector_Push_Back_Base(this_vector,type,value){type t=value;XVector_push_back_base(this_vector,&t);}
-void XVector_push_back_move_base(XVector* this_vector, void* pvValue);
+bool XVector_push_back_move_base(XVector* this_vector, void* pvValue);
 
 // 向量中前增加一个元素
-void XVector_insert(XVector* this_vector, int64_t index, const void* pvValue);
+bool XVector_insert(XVector* this_vector, int64_t index, const void* pvValue);
 #define XVector_Insert(this_vector,index,type,value){type t=value;XVector_insert(this_vector,index,&t);}
-void XVector_insert_move(XVector* this_vector, int64_t index, const void* pvValue);
+bool XVector_insert_move(XVector* this_vector, int64_t index, const void* pvValue);
 
 // 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2]间的数据
-void XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
-void XVector_insert_array_move_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
+bool XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
+bool XVector_insert_array_move_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
 //尾部追加数组
-void XVector_append_array_base(XVector* this_vector, const void* begin, size_t n);
-void XVector_append_array_move_base(XVector* this_vector, const void* begin, size_t n);
+bool XVector_append_array_base(XVector* this_vector, const void* begin, size_t n);
+bool XVector_append_array_move_base(XVector* this_vector, const void* begin, size_t n);
 
 void XVector_pop_front_base(XVector* this_vector);
 //删除向量中最后一个元素

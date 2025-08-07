@@ -8,8 +8,7 @@ static bool VXQueue_isFull(const XQueue* this_queue);
 static void VXQueue_clear(XQueue* this_queue);//清空
 static size_t VXQueue_getSize(const XQueue* this_queue);
 //插入到队列的队尾
-static bool VXQueue_push(XQueue* this_queue, void* pvValue);
-static bool VXQueue_push_move(XQueue* this_queue, void* pvValue);
+static bool VXQueue_push(XQueue* this_queue, void* pvValue, XCDataCreatMethod dataCreatMethod);
 //出队
 static void VXQueue_pop(XQueue* this_queue);
 // 返回队头元素
@@ -47,7 +46,7 @@ XVtable* XQueue_class_init()
 #endif
 		//继承类
 		XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
-	void* table[] = { VXQueue_push,VXQueue_push_move,VXQueue_pop,VXQueue_top,VXQueue_receive,VXQueue_isFull };
+	void* table[] = { VXQueue_push,VXQueue_pop,VXQueue_top,VXQueue_receive,VXQueue_isFull };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
@@ -84,14 +83,9 @@ size_t VXQueue_getSize(const XQueue* this_queue)
 	return XVtableGetFunc(XListSLinked_class_init(), EXContainerObject_Size, size_t (*)(XListSLinked*))(this_queue);
 }
 
-bool VXQueue_push(XQueue* this_queue, void* pvValue)
+bool VXQueue_push(XQueue* this_queue, void* pvValue, XCDataCreatMethod dataCreatMethod)
 {
-	return XVtableGetFunc(XListSLinked_class_init(), EXListBase_Push_Back_Copy, bool (*)(XListSLinked*,void*))(this_queue, pvValue);
-}
-
-bool VXQueue_push_move(XQueue* this_queue, void* pvValue)
-{
-	return XVtableGetFunc(XListSLinked_class_init(), EXListBase_Push_Back_Move, bool (*)(XListSLinked*, void*))(this_queue, pvValue);
+	return XVtableGetFunc(XListSLinked_class_init(), EXListBase_Push_Back, bool (*)(XListSLinked*,void*, XCDataCreatMethod))(this_queue, pvValue, dataCreatMethod);
 }
 
 void VXQueue_pop(XQueue* this_queue)

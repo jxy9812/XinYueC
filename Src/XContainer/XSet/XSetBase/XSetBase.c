@@ -30,14 +30,14 @@ bool XSetBase_insert_base(XSetBase* this_set, const void* pvKey)
 {
     if (ISNULL(this_set, "") || ISNULL(pvKey, "") || ISNULL(XClassGetVtable(this_set), ""))
         return false;
-    return XClassGetVirtualFunc(this_set, EXSetBase_Insert_Copy, bool(*)(XSetBase*, const void*))(this_set, pvKey);
+    return XClassGetVirtualFunc(this_set, EXSetBase_Insert, bool(*)(XSetBase*, const void*, XCDataCreatMethod))(this_set, pvKey, XContainerDataCopyMethod(this_set));
 }
 
 bool XSetBase_insert_move_base(XSetBase* this_set, const void* pvKey)
 {
     if (ISNULL(this_set, "") || ISNULL(pvKey, "") || ISNULL(XClassGetVtable(this_set), ""))
         return false;
-    return XClassGetVirtualFunc(this_set, EXSetBase_Insert_Move, bool(*)(XSetBase*, const void*))(this_set, pvKey);
+    return XClassGetVirtualFunc(this_set, EXSetBase_Insert, bool(*)(XSetBase*, const void*, XCDataCreatMethod))(this_set, pvKey, XContainerDataMoveMethod(this_set));
 }
 
 void XSetBase_erase_base(XSetBase* this_set, const void* pvKey)

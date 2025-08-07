@@ -19,78 +19,76 @@ bool XVector_resize_base(XVector* this_vector, size_t size)
 	XClassGetVirtualFunc(this_vector, EXVector_Resize, funcPtr)(this_vector, size);
 }
 
-void XVector_push_front_base(XVector* this_vector, void* pvValue)
+bool XVector_push_front_base(XVector* this_vector, void* pvValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return ;
-	typedef void (*funcPtr)(XVector*, void*);
-	XClassGetVirtualFunc(this_vector, EXVector_Push_Front_Copy, funcPtr)(this_vector, pvValue);
+		return false;
+	return XClassGetVirtualFunc(this_vector, EXVector_Push_Front, bool (*)(XVector*, void*, XCDataCreatMethod))(this_vector, pvValue, XContainerDataCopyMethod(this_vector));
 }
 
-void XVector_push_front_move_base(XVector* this_vector, void* pvValue)
+bool XVector_push_front_move_base(XVector* this_vector, void* pvValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return;
-	XClassGetVirtualFunc(this_vector, EXVector_Push_Front_Move, void (*)(XVector*, void*))(this_vector, pvValue);
+		return false;
+	return XClassGetVirtualFunc(this_vector, EXVector_Push_Front, bool (*)(XVector*, void*, XCDataCreatMethod))(this_vector, pvValue, XContainerDataMoveMethod(this_vector));
 }
 
-void XVector_push_back_base(XVector* this_vector, void* pvValue)
+bool XVector_push_back_base(XVector* this_vector, void* pvValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return ;
-	typedef void (*funcPtr)(XVector*, void*);
-	XClassGetVirtualFunc(this_vector, EXVector_Push_Back_Copy, funcPtr)(this_vector, pvValue);
+		return false;
+	return XClassGetVirtualFunc(this_vector, EXVector_Push_Back, bool (*)(XVector*, void*, XCDataCreatMethod))(this_vector, pvValue, XContainerDataCopyMethod(this_vector));
 }
 
-void XVector_push_back_move_base(XVector* this_vector, void* pvValue)
+bool XVector_push_back_move_base(XVector* this_vector, void* pvValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return;
-	XClassGetVirtualFunc(this_vector, EXVector_Push_Back_Move, void (*)(XVector*, void*))(this_vector, pvValue);
+		return false;
+	return XClassGetVirtualFunc(this_vector, EXVector_Push_Back, bool (*)(XVector*, void*, XCDataCreatMethod))(this_vector, pvValue, XContainerDataMoveMethod(this_vector));
 }
 
-void XVector_insert(XVector* this_vector, int64_t index, const void* pvValue)
+bool XVector_insert(XVector* this_vector, int64_t index, const void* pvValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return ;
-	XVector_insert_array_base(this_vector, index, pvValue, 1);
+		return false;
+	 return XVector_insert_array_base(this_vector, index, pvValue, 1);
 	//XClassGetVirtualFunc(this_vector, EXVector_Insert_Copy, void (*)(XVector*, int64_t, void*))(this_vector,index, pvValue);
 }
 
-void XVector_insert_move(XVector* this_vector, int64_t index, const void* pvValue)
+bool XVector_insert_move(XVector* this_vector, int64_t index, const void* pvValue)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return;
-	XVector_insert_array_move_base(this_vector, index, pvValue, 1);
+		return false;
+	return XVector_insert_array_move_base(this_vector, index, pvValue, 1);
 	//XClassGetVirtualFunc(this_vector, EXVector_Insert_Move, void (*)(XVector*, int64_t, void*))(this_vector, index, pvValue);
 }
 
-void XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n)
+bool XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n)
 {
 	if (ISNULL(this_vector, "")  || ISNULL(begin, "") || ISNULL(n, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return;
-	XClassGetVirtualFunc(this_vector, EXVector_Insert_Array_Copy, void (*)(XVector*, int64_t, void*, size_t))(this_vector, index, begin, n);
+		return false;
+	return XClassGetVirtualFunc(this_vector, EXVector_Insert_Array, bool (*)(XVector*, int64_t, void*, size_t, XCDataCreatMethod))(this_vector, index, begin, n, XContainerDataCopyMethod(this_vector));
 }
 
-void XVector_insert_array_move_base(XVector* this_vector, int64_t index, const void* begin, size_t n)
+bool XVector_insert_array_move_base(XVector* this_vector, int64_t index, const void* begin, size_t n)
 {
 	if (ISNULL(this_vector, "")  || ISNULL(begin, "") || ISNULL(n, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return;
-	XClassGetVirtualFunc(this_vector, EXVector_Insert_Array_Move, void (*)(XVector*, int64_t, void*, size_t))(this_vector, index, begin, n);
+		return false;
+	return XClassGetVirtualFunc(this_vector, EXVector_Insert_Array, bool (*)(XVector*, int64_t, void*, size_t, XCDataCreatMethod))(this_vector, index, begin, n, XContainerDataMoveMethod(this_vector));
 }
 
-void XVector_append_array_base(XVector* this_vector, const void* begin, size_t n)
+bool XVector_append_array_base(XVector* this_vector, const void* begin, size_t n)
 {
 	if (ISNULL(this_vector, "") || ISNULL(begin, "") || ISNULL(n, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return;
-	XClassGetVirtualFunc(this_vector, EXVector_append_Array_Copy, void (*)(XVector*, void*, size_t))(this_vector, begin, n);
+		return false;
+	return XClassGetVirtualFunc(this_vector, EXVector_append_Array, bool (*)(XVector*, void*, size_t, XCDataCreatMethod))(this_vector, begin, n, XContainerDataCopyMethod(this_vector));
 }
 
-void XVector_append_array_move_base(XVector* this_vector, const void* begin, size_t n)
+bool XVector_append_array_move_base(XVector* this_vector, const void* begin, size_t n)
 {
 	if (ISNULL(this_vector, "") || ISNULL(begin, "") || ISNULL(n, "") || ISNULL(XClassGetVtable(this_vector), ""))
-		return;
-	XClassGetVirtualFunc(this_vector, EXVector_append_Array_Move, void (*)(XVector*, void*, size_t))(this_vector, begin, n);
+		return false;
+	return XClassGetVirtualFunc(this_vector, EXVector_append_Array, bool (*)(XVector*, void*, size_t, XCDataCreatMethod))(this_vector, begin, n, XContainerDataMoveMethod(this_vector));
 }
 
 void XVector_pop_front_base(XVector* this_vector)

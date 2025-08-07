@@ -8,8 +8,7 @@ extern "C" {
 #define XQUEUEBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XQueueBase))       //XQueueBase容器虚函数表大小
 //XQueueBase虚函数表枚举
 XCLASS_DEFINE_BEGING(XQueueBase)
-XCLASS_DEFINE_ENUM(XQueueBase, Push_Copy) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
-XCLASS_DEFINE_ENUM(XQueueBase, Push_Move),
+XCLASS_DEFINE_ENUM(XQueueBase, Push) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
 XCLASS_DEFINE_ENUM(XQueueBase, Pop),
 XCLASS_DEFINE_ENUM(XQueueBase, Top),
 XCLASS_DEFINE_ENUM(XQueueBase, Receive),

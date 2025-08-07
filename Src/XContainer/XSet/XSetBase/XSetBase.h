@@ -10,8 +10,7 @@ extern "C" {
 #define XSETBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSetBase))       // XSet容器虚函数表大小
 // XSet虚函数表枚举
 XCLASS_DEFINE_BEGING(XSetBase)
-XCLASS_DEFINE_ENUM(XSetBase, Insert_Copy) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
-XCLASS_DEFINE_ENUM(XSetBase, Insert_Move),
+XCLASS_DEFINE_ENUM(XSetBase, Insert) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
 XCLASS_DEFINE_ENUM(XSetBase, Erase),
 XCLASS_DEFINE_ENUM(XSetBase, Remove),
 XCLASS_DEFINE_ENUM(XSetBase, Find),

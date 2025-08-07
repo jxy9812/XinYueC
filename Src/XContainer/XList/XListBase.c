@@ -12,49 +12,49 @@ XListBaseNode* XListBase_push_front_base(XListBase* this_list, void* pvData)
 {
 	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return NULL;
-	return XClassGetVirtualFunc(this_list, EXListBase_Push_Front_Copy, XListBaseNode*(*)(XListBase*, void*))(this_list, pvData);
+	return XClassGetVirtualFunc(this_list, EXListBase_Push_Front, XListBaseNode*(*)(XListBase*, void*, XCDataCreatMethod))(this_list, pvData, XContainerDataCopyMethod(this_list));
 }
 XListBaseNode* XListBase_push_front_move_base(XListBase* this_list, void* pvData)
 {
 	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return NULL;
-	return XClassGetVirtualFunc(this_list, EXListBase_Push_Front_Move, XListBaseNode * (*)(XListBase*, void*))(this_list, pvData);
+	return XClassGetVirtualFunc(this_list, EXListBase_Push_Front, XListBaseNode * (*)(XListBase*, void*, XCDataCreatMethod))(this_list, pvData,XContainerDataMoveMethod(this_list));
 }
 XListBaseNode* XListBase_push_back_base(XListBase* this_list, void* pvData)
 {
 	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return NULL;
-	return XClassGetVirtualFunc(this_list, EXListBase_Push_Back_Copy, XListBaseNode* (*)(XListBase*, void*))(this_list, pvData);
+	return XClassGetVirtualFunc(this_list, EXListBase_Push_Back, XListBaseNode* (*)(XListBase*, void*, XCDataCreatMethod))(this_list, pvData, XContainerDataCopyMethod(this_list));
 }
 XListBaseNode* XListBase_push_back_move_base(XListBase* this_list, void* pvData)
 {
 	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return NULL;
-	return XClassGetVirtualFunc(this_list, EXListBase_Push_Back_Move, XListBaseNode * (*)(XListBase*, void*))(this_list, pvData);
+	return XClassGetVirtualFunc(this_list, EXListBase_Push_Back, XListBaseNode * (*)(XListBase*, void*, XCDataCreatMethod))(this_list, pvData, XContainerDataMoveMethod(this_list));
 }
 bool XListBase_insert_base(XListBase* this_list, XListBaseNode* curNode, void* pvData)
 {
 	if (ISNULL(this_list, "") || ISNULL(curNode, "") || ISNULL(pvData, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return false;
-	return XClassGetVirtualFunc(this_list, EXListBase_Insert_Copy, bool(*)(XListBase*, XListBaseNode *, void*))(this_list, curNode,pvData);
+	return XClassGetVirtualFunc(this_list, EXListBase_Insert, bool(*)(XListBase*, XListBaseNode *, void*, XCDataCreatMethod))(this_list, curNode,pvData, XContainerDataCopyMethod(this_list));
 }
 bool XListBase_insert_move_base(XListBase* this_list, XListBaseNode* curNode, void* pvData)
 {
 	if (ISNULL(this_list, "") || ISNULL(curNode, "") || ISNULL(pvData, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return false;
-	return XClassGetVirtualFunc(this_list, EXListBase_Insert_Move, bool(*)(XListBase*, XListBaseNode*, void*))(this_list, curNode, pvData);
+	return XClassGetVirtualFunc(this_list, EXListBase_Insert, bool(*)(XListBase*, XListBaseNode*, void*, XCDataCreatMethod))(this_list, curNode, pvData, XContainerDataMoveMethod(this_list));
 }
-size_t XListBase_insert_array_base(XListBase* this_list, XListBaseNode* curNode, const void* array, size_t count)
+size_t XListBase_insert_array_base(XListBase* this_list, XListBaseNode* curNode,void* array, size_t count)
 {
 	if (ISNULL(this_list, "")  || ISNULL(array, "") || ISNULL(count, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return 0;
-	return XClassGetVirtualFunc(this_list, EXListBase_Insert_Array_Copy, size_t(*)(XListBase*, XListBaseNode*, const void*, size_t))(this_list, curNode, array, count);
+	return XClassGetVirtualFunc(this_list, EXListBase_Insert_Array, size_t(*)(XListBase*, XListBaseNode*,void*, size_t, XCDataCreatMethod))(this_list, curNode, array, count, XContainerDataCopyMethod(this_list));
 }
-size_t XListBase_insert_array_move_base(XListBase* this_list, XListBaseNode* curNode, const void* array, size_t count)
+size_t XListBase_insert_array_move_base(XListBase* this_list, XListBaseNode* curNode,void* array, size_t count)
 {
 	if (ISNULL(this_list, "") || ISNULL(array, "") || ISNULL(count, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return 0;
-	return XClassGetVirtualFunc(this_list, EXListBase_Insert_Array_Move, size_t(*)(XListBase*, XListBaseNode*, const void*, size_t))(this_list, curNode, array, count);
+	return XClassGetVirtualFunc(this_list, EXListBase_Insert_Array, size_t(*)(XListBase*, XListBaseNode*,void*, size_t, XCDataCreatMethod))(this_list, curNode, array, count, XContainerDataMoveMethod(this_list));
 }
 bool XListBase_pop_front_base(XListBase* this_list)
 {

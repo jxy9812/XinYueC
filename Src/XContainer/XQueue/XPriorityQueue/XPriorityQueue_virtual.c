@@ -4,8 +4,7 @@
 #include<string.h>
 #include<stdlib.h>
 //插入到队列的队尾
-static void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvValue);
-static void VXPriorityQueue_push_move(XPriorityQueue* this_queue, void* pvValue);
+static void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvValue, XCDataCreatMethod dataCreatMethod);
 //出队
 static void VXPriorityQueue_pop(XPriorityQueue* this_queue);
 // 返回优先队列堆顶元素
@@ -23,7 +22,7 @@ XVtable* XPriorityQueue_class_init()
 #endif
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
-	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_push_move,VXPriorityQueue_pop,VXPriorityQueue_top,VXPriorityQueue_receive,VXPriorityQueue_isFull };
+	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top,VXPriorityQueue_receive,VXPriorityQueue_isFull };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
@@ -81,23 +80,11 @@ static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize,
 	}
 }
 
-void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvData)
+void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvData, XCDataCreatMethod dataCreatMethod)
 {
 	if (ISNULL(this_queue, "")|| ISNULL(pvData, ""))
 		return ;
-	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back_Copy,void(*)(XVector*,void*))(this_queue, pvData);
-	//XVector_push_back_base(this_queue, pvData);
-	size_t size = XContainerSize(this_queue) - 1;
-	if (size > 0)//一个元素不用调整
-		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->m_compare);
-}
-
-void VXPriorityQueue_push_move(XPriorityQueue* this_queue, void* pvData)
-{
-	if (ISNULL(this_queue, "") || ISNULL(pvData, ""))
-		return;
-	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back_Move, void(*)(XVector*, void*))(this_queue, pvData);
-	//XVector_push_back_base(this_queue, pvData);
+	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back,void(*)(XVector*,void*, XCDataCreatMethod))(this_queue, pvData,dataCreatMethod);
 	size_t size = XContainerSize(this_queue) - 1;
 	if (size > 0)//一个元素不用调整
 		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->m_compare);
