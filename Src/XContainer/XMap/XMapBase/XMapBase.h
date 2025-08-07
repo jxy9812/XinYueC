@@ -12,8 +12,7 @@ typedef struct XMapBase_iterator XMapBase_iterator;
 #define XMAPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))       //XMap容器虚函数表大小
 //XMap虚函数表枚举
 XCLASS_DEFINE_BEGING(XMapBase)
-XCLASS_DEFINE_ENUM(XMapBase,Insert_Copy)= XCLASS_VTABLE_GET_SIZE(XContainerObject),
-XCLASS_DEFINE_ENUM(XMapBase,Insert_Move),
+XCLASS_DEFINE_ENUM(XMapBase,Insert)= XCLASS_VTABLE_GET_SIZE(XContainerObject),
 XCLASS_DEFINE_ENUM(XMapBase,Erase),
 XCLASS_DEFINE_ENUM(XMapBase,Remove),
 XCLASS_DEFINE_ENUM(XMapBase,Value),

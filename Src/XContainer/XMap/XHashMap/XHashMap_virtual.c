@@ -5,8 +5,7 @@
 #include"XRedBlackTree.h"
 #include<string.h>
 //Map插入数据
-static bool VXMap_insert(XHashMap*this_map, const void* pvKey, const void* pvValue);
-static bool VXMap_insert_move(XHashMap* this_map, const void* pvKey, const void* pvValue);
+static bool VXMap_insert(XHashMap* this_map, const void* pvKey, const void* pvValue, XCDataCreatMethod keyCreatMethod, XCDataCreatMethod dataCreatMethod);
 static void VXMap_erase(XHashMap* this_map, const XHashMap_iterator* it, XHashMap_iterator* next);
 //map删除数据
 static bool VXMap_remove(XHashMap*this_map, const void* pvKey);
@@ -37,7 +36,7 @@ XVtable* XHashMap_class_init()
 		//继承类
 		XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
 	void* table[] = {
-		VXMap_insert,VXMap_insert_move,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find,
+		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find,
 		VXMapBase_keys
 	};
 	//追加虚函数
@@ -95,7 +94,7 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 	XContainerCapacity(map) = new_capacity;
 	return true;
 }
-static bool insert(XHashMap* this_map, const void* pvKey, const void* pvValue, XCDataCreatMethod keyCreatMethod, XCDataCreatMethod dataCreatMethod)
+bool VXMap_insert(XHashMap* this_map, const void* pvKey, const void* pvValue, XCDataCreatMethod keyCreatMethod, XCDataCreatMethod dataCreatMethod)
 {
 	if ((double)XContainerSize(this_map) / XContainerCapacity(this_map) >= DEFAULT_LOAD_FACTOR)
 	{
@@ -140,15 +139,6 @@ static bool insert(XHashMap* this_map, const void* pvKey, const void* pvValue, X
 
 	}
 	return true;
-}
-bool VXMap_insert(XHashMap*this_map, const void* pvKey, const void* pvValue)
-{
-	return insert(this_map, pvKey, pvValue, XMapBaseKeyCopyMethod(this_map), XContainerDataCopyMethod(this_map));
-}
-
-bool VXMap_insert_move(XHashMap* this_map, const void* pvKey, const void* pvValue)
-{
-	return insert(this_map, pvKey, pvValue, XMapBaseKeyMoveMethod(this_map), XContainerDataMoveMethod(this_map));
 }
 
 void VXMap_erase(XHashMap*this_map, const XHashMap_iterator* it, XHashMap_iterator* next)

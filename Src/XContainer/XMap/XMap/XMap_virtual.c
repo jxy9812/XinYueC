@@ -5,8 +5,7 @@
 #include<stdlib.h>
 #include<string.h>
 //Map插入数据
-static bool VXMap_insert(XMap* this_map, const void* key, const void* pvValue);
-static bool VXMap_insert_move(XMap* this_map, const void* key, const void* pvValue);
+static bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue, XCDataCreatMethod keyCreatMethod, XCDataCreatMethod dataCreatMethod);
 static void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next);
 //map删除数据
 static bool VXMap_remove(XMap* this_map, const void* key);
@@ -35,7 +34,7 @@ XVtable* XMap_class_init()
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
 	void* table[] = {
-		VXMap_insert,VXMap_insert_move,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find,
+		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find,
 		VXMapBase_keys
 	};
 	//追加虚函数
@@ -51,7 +50,7 @@ XVtable* XMap_class_init()
 #endif // SHOWCONTAINERSIZE
 	return XVTABLE_DEFAULT;
 }
-static bool insert(XMap* this_map, const void* pvKey, const void* pvValue, XCDataCreatMethod keyCreatMethod, XCDataCreatMethod dataCreatMethod)
+bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue, XCDataCreatMethod keyCreatMethod, XCDataCreatMethod dataCreatMethod)
 {
 	/*if (ISNULL(this_map, "")|| ISNULL(pvKey, "")||ISNULL(pvValue, ""))
 		return false;*/
@@ -92,15 +91,6 @@ static bool insert(XMap* this_map, const void* pvKey, const void* pvValue, XCDat
 
 	}
 	return true;
-}
-bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue)
-{
-	return insert(this_map,pvKey,pvValue, XMapBaseKeyCopyMethod(this_map), XContainerDataCopyMethod(this_map));
-}
-
-bool VXMap_insert_move(XMap* this_map, const void* pvKey, const void* pvValue)
-{
-	return insert(this_map, pvKey, pvValue, XMapBaseKeyMoveMethod(this_map), XContainerDataMoveMethod(this_map));
 }
 
 void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)

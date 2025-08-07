@@ -36,13 +36,13 @@ bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvV
 {
 	if (ISNULL(this_map, "") || ISNULL(pvKey, "") || ISNULL(pvValue, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return false;
-	return XClassGetVirtualFunc(this_map, EXMapBase_Insert_Copy, bool(*)(XMapBase* ,const void*, const void*))(this_map, pvKey, pvValue);
+	return XClassGetVirtualFunc(this_map, EXMapBase_Insert, bool(*)(XMapBase* ,const void*, const void*, XCDataCreatMethod, XCDataCreatMethod))(this_map, pvKey, pvValue, XMapBaseKeyCopyMethod(this_map), XContainerDataCopyMethod(this_map));
 }
 bool XMapBase_insert_move_base(XMapBase* this_map, const void* pvKey, const void* pvValue)
 {
 	if (ISNULL(this_map, "") || ISNULL(pvKey, "") || ISNULL(pvValue, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return false;
-	return XClassGetVirtualFunc(this_map, EXMapBase_Insert_Move, bool(*)(XMapBase*, const void*, const void*))(this_map, pvKey, pvValue);
+	return XClassGetVirtualFunc(this_map, EXMapBase_Insert, bool(*)(XMapBase*, const void*, const void*, XCDataCreatMethod, XCDataCreatMethod))(this_map, pvKey, pvValue, XMapBaseKeyMoveMethod(this_map), XContainerDataMoveMethod(this_map));
 }
 void XMapBase_erase_base(XMapBase* this_map, const XMapBase_iterator* it, XMapBase_iterator* next)
 {
