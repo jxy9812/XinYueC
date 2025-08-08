@@ -20,9 +20,27 @@ typedef struct XJsonObject
 
 // 构造与析构
 XJsonObject* XJsonObject_create(void);
-bool XJsonObject_insert_utf8(XJsonObject* object, const char* key, XJsonValue* value);
-bool XJsonObject_insert_utf8_move(XJsonObject* object, const char* key, XJsonValue* value);
+XJsonObject* XJsonObject_create_copy(XJsonObject* copy);
+XJsonObject* XJsonObject_create_move(XJsonObject* move);
+void XJsonObject_init(XJsonObject* object);
+//插入
+bool XJsonObject_insert_keyUtf8_value(XJsonObject* object, const char* key, XJsonValue* value);
+bool XJsonObject_insert_keyUtf8_value_move(XJsonObject* object, const char* key, XJsonValue* value);
+bool XJsonObject_insert_keyUtf8_double(XJsonObject* object, const char* key, double d);
+bool XJsonObject_insert_keyUtf8_string(XJsonObject* object, const char* key,const XString* str);
+bool XJsonObject_insert_keyUtf8_string_move(XJsonObject* object, const char* key, XString* str);
+bool XJsonObject_insert_keyUtf8_utf8(XJsonObject* object, const char* key,const char*utf8);
+bool XJsonObject_insert_keyUtf8_null(XJsonObject* object, const char* key);
+bool XJsonObject_insert_keyUtf8_bool(XJsonObject* object, const char* key,bool b);
+bool XJsonObject_insert_keyUtf8_array(XJsonObject* object, const char* key,const XJsonArray* array);
+bool XJsonObject_insert_keyUtf8_array_move(XJsonObject* object, const char* key, XJsonArray* array);
+bool XJsonObject_insert_keyUtf8_object(XJsonObject* object, const char* key, const XJsonObject* value);
+bool XJsonObject_insert_keyUtf8_object_move(XJsonObject* object, const char* key, XJsonObject* value);
+//删除
+bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key);
+//key XString*  val XJsonValue*
 #define XJsonObject_insert_base				    XMap_insert_base
+//key XString*  val XJsonValue*
 #define XJsonObject_insert_move_base		    XMap_insert_move_base
 #define XJsonObject_Insert_Base				    XMap_Insert_Base
 #define XJsonObject_erase_base					XMap_erase_base

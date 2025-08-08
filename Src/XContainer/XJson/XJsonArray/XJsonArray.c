@@ -5,14 +5,39 @@
 // 辅助函数：序列化XJsonValue
 void XJson_serialize_json_value(const XJsonValue* value, XString* output);
 
-XJsonArray* XJsonArray_create(void) 
+XJsonArray* XJsonArray_create()
 {
     XJsonArray* array = (XJsonArray*)XMemory_malloc(sizeof(XJsonArray));
+    if (array == NULL)
+        return NULL;
+    XJsonArray_init(array);
+    return array;
+}
+
+XJsonArray* XJsonArray_create_copy(XJsonArray* copy)
+{
+    XJsonArray* array = XJsonArray_create();
+    if (array&& copy)
+        XJsonArray_copy_base(array,copy);
+    return array;
+}
+
+XJsonArray* XJsonArray_create_move(XJsonArray* move)
+{
+    XJsonArray* array = XJsonArray_create();
+    if (array && move)
+        XJsonArray_move_base(array, move);
+    return array;
+}
+
+void XJsonArray_init(XJsonArray* array)
+{
+    if (array==NULL)
+        return;
     XVector_init(array, sizeof(XJsonValue));
     XContainerSetDataDeinitMethod(array, XJsonValue_deinit);
     XContainerSetDataCopyMethod(array, XJsonValue_copy);
     XContainerSetDataMoveMethod(array, XJsonValue_move);
-    return array;
 }
 
 // 数组序列化实现

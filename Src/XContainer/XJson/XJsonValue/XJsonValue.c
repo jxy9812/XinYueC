@@ -1,62 +1,100 @@
 ﻿#include "XJsonValue.h"
 #include "XJsonArray.h"
+#include "XJsonObject.h"
 #include "XMemory.h"
 #include "XVariantList.h"
 #include "XAlgorithm.h"
 #include "XMap.h"
 #include <string.h>
-XJsonValue* XJsonValue_create_null(void) {
+XJsonValue* XJsonValue_create_null(void) 
+{
     XJsonValue* value = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
-    if (value) {
-        value->type = XJsonValue_Null;
-        memset(&value->data, 0, sizeof(value->data));
-    }
+    XJsonValue_init(value, XJsonValue_Null);
     return value;
 }
 
-XJsonValue* XJsonValue_create_bool(bool value) {
-    XJsonValue* val = XJsonValue_create_null();
-    if (val) {
-        val->type = XJsonValue_Bool;
+XJsonValue* XJsonValue_create_bool(bool value)
+{
+    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue_init(val, XJsonValue_Bool);
+    if (val) 
+    {
         val->data.boolean = value;
     }
     return val;
 }
 
-XJsonValue* XJsonValue_create_double(double value) {
-    XJsonValue* val = XJsonValue_create_null();
-    if (val) {
-        val->type = XJsonValue_Double;
+XJsonValue* XJsonValue_create_double(double value) 
+{
+    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue_init(val, XJsonValue_Double);
+    if (val)
+    {
         val->data.number = value;
     }
     return val;
 }
 
-XJsonValue* XJsonValue_create_string(const XString* string) {
-    XJsonValue* val = XJsonValue_create_null();
-    if (val && string) {
-        val->type = XJsonValue_String;
+XJsonValue* XJsonValue_create_string(const XString* string) 
+{
+    if (string == NULL)
+        return NULL;
+    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue_init(val, XJsonValue_String);
+    if (val)
+    {
         val->data.string = XString_create(string);
     }
     return val;
 }
 
-XJsonValue* XJsonValue_create_array(XJsonArray* array) {
-    XJsonValue* val = XJsonValue_create_null();
-    if (val && array) {
-        val->type = XJsonValue_Array;
-        val->data.array = array;
+XJsonValue* XJsonValue_create_array(XJsonArray* array) 
+{
+    if (array == NULL)
+        return NULL;
+    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue_init(val, XJsonValue_Array);
+    if (val)
+    {
+        val->data.array = XJsonArray_create_copy(array);
     }
     return val;
 }
 
-XJsonValue* XJsonValue_create_object(XJsonObject* object) {
-    XJsonValue* val = XJsonValue_create_null();
-    if (val && object) {
-        val->type = XJsonValue_Object;
-        val->data.object = object;
+XJsonValue* XJsonValue_create_object(XJsonObject* object) 
+{
+    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue_init(val, XJsonValue_Object);
+    if (val)
+    {
+        val->data.object = XJsonObject_create_copy(object);
     }
     return val;
+}
+
+XJsonValue* XJsonValue_create_copy(XJsonValue* copy)
+{
+    XJsonValue* value = XJsonValue_create_null();
+    if (value && copy)
+        XJsonValue_copy(value, copy);
+    return value;
+}
+
+XJsonValue* XJsonValue_create_move(XJsonValue* move)
+{
+    XJsonValue* value = XJsonValue_create_null();
+    if (value && move)
+        XJsonValue_move(value, move);
+    return value;
+}
+
+void XJsonValue_init(XJsonValue* var, XJsonValueType type)
+{
+    if (var) 
+    {
+        var->type = type;
+        memset(&var->data, 0, sizeof(var->data));
+    }
 }
 
 void XJsonValue_copy(XJsonValue* var, const XJsonValue* src)
@@ -71,8 +109,8 @@ void XJsonValue_copy(XJsonValue* var, const XJsonValue* src)
     case XJsonValue_Bool:var->data.boolean = src->data.boolean; break;
     case XJsonValue_Double:var->data.number = src->data.number; break;
     case XJsonValue_String:var->data.string=XString_create(src->data.string); break;
-    case XJsonValue_Array: var->data.array = XJsonArray_create(); XJsonArray_copy_base(var->data.array, src->data.array); break;
-    case XJsonValue_Object: break;
+    case XJsonValue_Array: var->data.array = XJsonArray_create_copy(src->data.array); break;
+    case XJsonValue_Object: var->data.object = XJsonArray_create_copy(src->data.object); break;
     default:
         break;
     };
@@ -107,7 +145,7 @@ void XJsonValue_deinit(XJsonValue* value)
      case XJsonValue_Object:
          if (value->data.object) 
          {
-            // XJsonObject_delete(value->data.object);
+             XJsonObject_delete_base(value->data.object);
          }
          break;
      default:
@@ -243,8 +281,7 @@ void XJsonValue_setArray(XJsonValue* value, XJsonArray* a)
 
     XJsonValue_setNull(value);
     value->type = XJsonValue_Array;
-    value->data.array = XJsonArray_create();
-    XJsonArray_copy_base(value->data.array,a);
+    value->data.array = XJsonArray_create_copy(a);
 }
 
 void XJsonValue_setArray_move(XJsonValue* value, XJsonArray* a)
@@ -256,14 +293,22 @@ void XJsonValue_setArray_move(XJsonValue* value, XJsonArray* a)
     value->data.array = a;
 }
 
-void XJsonValue_setObject(XJsonValue* value, XJsonObject* o) {
+void XJsonValue_setObject(XJsonValue* value, XJsonObject* o) 
+{
+    if (!value || !o) return;
+
+    XJsonValue_setNull(value);
+    value->type = XJsonValue_Object;
+    value->data.object = XJsonObject_create_copy(o);
+}
+void XJsonValue_setObject_move(XJsonValue* value, XJsonObject* o)
+{
     if (!value || !o) return;
 
     XJsonValue_setNull(value);
     value->type = XJsonValue_Object;
     value->data.object = o;
 }
-
 XVariant* XJsonValue_toVariant(const XJsonValue* value) 
 {
    /* if (!value) return NULL;

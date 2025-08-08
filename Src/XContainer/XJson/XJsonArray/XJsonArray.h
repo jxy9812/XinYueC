@@ -19,8 +19,10 @@ typedef struct XJsonArray
 } XJsonArray;
 
 // 构造与析构
-XJsonArray* XJsonArray_create(void);
-
+XJsonArray* XJsonArray_create();
+XJsonArray* XJsonArray_create_copy(XJsonArray* copy);
+XJsonArray* XJsonArray_create_move(XJsonArray* move);
+void XJsonArray_init(XJsonArray*array);
 #define XJsonArray_rcopy_base						XVector_rcopy_base
 #define XJsonArray_copy_base						XVector_copy_base	
 #define XJsonArray_move_base						XVector_move_base	

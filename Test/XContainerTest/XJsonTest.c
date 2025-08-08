@@ -27,18 +27,11 @@ void XJsonObjectTest()
 		XJsonValue_setBool(value, true);
 		XJsonArray_append_move_base(array, value);
 
-		/*{
-			XJsonValue_setArray(value, array);
-			XJsonArray_append_move_base(array, value);
-		}*/
-		XJsonValue_setDouble(value, 6666);
-		XJsonObject_insert_utf8_move(object, "数字", value);
 
-		XJsonValue_setArray(value, array);
-		XJsonObject_insert_utf8_move(object, "数组", value);
-
-		XJsonValue_setString_utf8(value, "测试");
-		XJsonObject_insert_utf8_move(object, "字符串", value);
+		XJsonObject_insert_keyUtf8_double(object, "数字", 66666);
+		XJsonObject_insert_keyUtf8_object(object,"对象", object);
+		XJsonObject_insert_keyUtf8_array(object, "数组", array);
+		XJsonObject_insert_keyUtf8_utf8(object, "字符串", "测试");
 
 
 

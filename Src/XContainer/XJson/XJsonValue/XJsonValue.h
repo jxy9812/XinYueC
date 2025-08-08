@@ -48,6 +48,11 @@ XJsonValue* XJsonValue_create_double(double value);
 XJsonValue* XJsonValue_create_string(const XString* string);
 XJsonValue* XJsonValue_create_array(XJsonArray* array);
 XJsonValue* XJsonValue_create_object(XJsonObject* object);
+XJsonValue* XJsonValue_create_copy(XJsonValue*copy);
+XJsonValue* XJsonValue_create_move(XJsonValue* move);
+void XJsonValue_init(XJsonValue* var, XJsonValueType type);
+#define XJsonValue_Init(var,type)  XJsonValue _##var,*var=&_##var;XJsonValue_init(var,type)
+
 //复制和移动
 void XJsonValue_copy(XJsonValue* var, const XJsonValue* src);
 void XJsonValue_move(XJsonValue* var, XJsonValue* src);
@@ -81,6 +86,7 @@ void XJsonValue_setString_utf8(XJsonValue* value, const char* utf8);
 void XJsonValue_setArray(XJsonValue* value, XJsonArray* a);
 void XJsonValue_setArray_move(XJsonValue* value, XJsonArray* a);
 void XJsonValue_setObject(XJsonValue* value, XJsonObject* o);
+void XJsonValue_setObject_move(XJsonValue* value, XJsonObject* o);
 
 // 与XVariant转换
 XVariant* XJsonValue_toVariant(const XJsonValue* value);
