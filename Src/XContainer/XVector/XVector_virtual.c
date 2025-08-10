@@ -9,10 +9,10 @@
 static void VXClass_copy(XVector* object, const XVector* src);
 static void VXClass_move(XVector* object, XVector* src);
 static bool VXVector_resize(XVector* this_vector, size_t size);
-static void VXVector_push_front(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod);
-static void VXVector_push_back(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod);
-static void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n, XCDataCreatMethod dataCreatMethod);
-static void VXVector_append_array(XVector* this_vector, const void* begin, size_t n, XCDataCreatMethod dataCreatMethod);
+static bool VXVector_push_front(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod);
+static bool VXVector_push_back(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod);
+static bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n, XCDataCreatMethod dataCreatMethod);
+static bool VXVector_append_array(XVector* this_vector, const void* begin, size_t n, XCDataCreatMethod dataCreatMethod);
 static void VXVector_pop_front(XVector* this_vector);
 static void VXVector_pop_back(XVector* this_vector);
 static void VXVector_erase(XVector* this_vector, const XVector_iterator* it, XVector_iterator* next);
@@ -241,17 +241,17 @@ bool VXVector_resize(XVector* this_vector, size_t size)
 	//XContainerSize(this_vector) = size;//设置当前容器元素数量
 	return true;
 }
-void VXVector_push_front(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod)
+bool VXVector_push_front(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod)
 {
 	if (XContainerObject_isEmpty_base(this_vector))
-		XVector_push_back_base(this_vector, pvValue);
+		return XVector_push_back_base(this_vector, pvValue);
 	else
-		XVector_insert(this_vector, 0, pvValue);
+		return XVector_insert(this_vector, 0, pvValue);
 }
-void VXVector_push_back(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod)
+bool VXVector_push_back(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod)
 {
 	if (!VXVectorEnlargeCapacity(this_vector))
-		return;
+		return false;
 	char* ptr = (char*)XContainerDataPtr(this_vector) + XContainerTypeSize(this_vector) * XContainerSize(this_vector);
 	if (dataCreatMethod)
 	{
@@ -263,8 +263,9 @@ void VXVector_push_back(XVector* this_vector, void* pvValue, XCDataCreatMethod d
 		memcpy(ptr, pvValue, XContainerTypeSize(this_vector));
 	}
 	XContainerSize(this_vector)++;
+	return true;
 }
-void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n, XCDataCreatMethod dataCreatMethod)// 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2)间的数据
+bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n, XCDataCreatMethod dataCreatMethod)// 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2)间的数据
 {
 	const void* ptr = VXVector_at(this_vector, index);
 	size_t typeSize = XContainerTypeSize(this_vector);
@@ -277,7 +278,11 @@ void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 		for (size_t i = 0; i < n; i++)
 		{
 			if (!VXVectorEnlargeCapacity(this_vector))
-				break;
+			{
+				memcpy(VXVector_at(this_vector, sizen), temp, size);
+				XMemory_free(temp);
+				return false;
+			}
 			if (dataCreatMethod)
 			{
 				memset(((char*)XContainerDataPtr(this_vector)) + typeSize * sizen, 0, XContainerTypeSize(this_vector));
@@ -293,6 +298,7 @@ void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 		memcpy(VXVector_at(this_vector, sizen), temp, size);
 		XMemory_free(temp);
 	}
+	return true;
 	/*else if(XContainerObject_isEmpty_base(this_vector))
 	{
 		for (size_t i = 0; i < n; i++)
@@ -301,12 +307,15 @@ void VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 		}
 	}*/
 }
-void VXVector_append_array(XVector* this_vector, const void* begin, size_t n, XCDataCreatMethod dataCreatMethod)
+bool VXVector_append_array(XVector* this_vector, const void* begin, size_t n, XCDataCreatMethod dataCreatMethod)
 {
 	size_t index = XContainerSize(this_vector);
 	//printf("数组Size:%d Capacity:%d n:%d\n", index, XContainerCapacity(this_vector),n);
-	if(XContainerSize(this_vector) + n> XContainerCapacity(this_vector))
-		VXVector_resize(this_vector,XContainerSize(this_vector)+n);
+	if (XContainerSize(this_vector) + n > XContainerCapacity(this_vector))
+	{
+		if (!VXVector_resize(this_vector, XContainerSize(this_vector) + n))
+			return false;
+	}
 	//printf("数组Size:%d Capacity:%d\n",XContainerSize(this_vector), XContainerCapacity(this_vector));
 	if (dataCreatMethod)
 	{
@@ -320,7 +329,7 @@ void VXVector_append_array(XVector* this_vector, const void* begin, size_t n, XC
 	{
 		memcpy((char*)XContainerDataPtr(this_vector) + index * XContainerTypeSize(this_vector), begin, n * XContainerTypeSize(this_vector));
 	}
-	
+	return true;
 	//XContainerSize(this_vector)+=n;
 }
 void VXVector_pop_front(XVector* this_vector)//删除向量中第一个元素

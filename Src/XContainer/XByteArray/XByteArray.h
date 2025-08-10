@@ -11,13 +11,14 @@ typedef struct XByteArray
 }XByteArray;
 XByteArray* XByteArray_create(size_t size);
 // 向量头部增加一个字节数据
-void XByteArray_push_front_base(XByteArray* array,const uint8_t byte);
+bool XByteArray_push_front_base(XByteArray* array,const uint8_t byte);
 // 向量尾部增加一个字节数据
-void XByteArray_push_back_base(XByteArray* array,const uint8_t byte);
+bool XByteArray_push_back_base(XByteArray* array,const uint8_t byte);
 // 向量中前增加一个元素
-void XByteArray_insert_base(XByteArray* array, int64_t index, const  uint8_t byte);
+bool XByteArray_insert_base(XByteArray* array, int64_t index, const  uint8_t byte);
 // 向量中指向元素p前增加n个相同的元素x
-void XByteArray_inserts_base(XByteArray* array, int64_t index, uint8_t byte, size_t n);
+bool XByteArray_inserts_base(XByteArray* array, int64_t index, uint8_t byte, size_t n);
+bool XByteArray_append_utf8(XByteArray* array, const char* utf8);
 //查找数据，返回找到的指针，没有返回NULL
 uint8_t* XByteArray_find_base(const XByteArray* array, const uint8_t findVal);
 #define XByteArray_resize_base						XVector_resize_base

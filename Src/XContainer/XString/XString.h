@@ -39,7 +39,12 @@ enum XStringCacheType
     XStringCache_Gbk,      // GBK 编码缓存
     XStringCache_Size      // 缓存类型数量（用于数组大小定义）
 };
-
+//字符串缓存
+typedef struct XStringCache
+{
+    char* m_data;//字符串数据
+    size_t m_length;//长度
+}XStringCache;
 /**
  * @brief XString 字符串结构体（继承自容器基类）
  * @details 内部以 UTF-16 编码（XChar 数组）存储字符串，支持 Copy-On-Write 机制，
@@ -49,7 +54,7 @@ typedef struct XString
 {
     XContainerObject parent;  // 继承容器基类，m_data 指向 XChar 数组（UTF-16 存储）
     XAtomic_int32_t* m_ref_count;         // 引用计数：用于 Copy-On-Write 机制的资源管理
-    char** m_cache;           // 编码缓存数组：存储各类型编码的转换结果（索引对应 XStringCacheType）
+    XStringCache* m_cache;           // 编码缓存数组：存储各类型编码的转换结果（索引对应 XStringCacheType）
 } XString;
 
 // -------------------------- 虚函数表初始化 --------------------------
@@ -532,35 +537,35 @@ bool XString_isRightToLeft(const XString* str);
  * @return 成功返回常量 UTF-8 字符串指针（内部缓存），失败返回 NULL
  */
 const char* XString_toUtf8(const XString* str);
-
+size_t XString_toUtf8_length(const XString* str);
 /**
  * @brief 转换为 UTF-16 编码字符串（wchar_t 类型）
  * @param str XString 对象指针
  * @return 成功返回常量 wchar_t 数组指针（内部缓存），失败返回 NULL
  */
 const uint16_t* XString_toUtf16(const XString* str);
-
+size_t XString_toUtf16_length(const XString* str);
 /**
  * @brief 转换为 UTF-32 编码字符串（uint32_t 类型）
  * @param str XString 对象指针
  * @return 成功返回常量 uint32_t 数组指针（内部缓存），失败返回 NULL
  */
 const uint32_t* XString_toUtf32(const XString* str);
-
+size_t XString_toUtf32_length(const XString* str);
 /**
  * @brief 转换为 GBK 编码字符串
  * @param str XString 对象指针
  * @return 成功返回常量 GBK 字符串指针（内部缓存），失败返回 NULL
  */
 const char* XString_toGbk(const XString* str);
-
+size_t XString_toGbk_length(const XString* str);
 /**
  * @brief 转换为本地编码字符串（Windows 为 GBK，Linux 为 UTF-8）
  * @param str XString 对象指针
  * @return 成功返回常量本地编码字符串指针（内部缓存），失败返回 NULL
  */
 const char* XString_toLocal(const XString* str);
-
+size_t XString_toUtfLocal_length(const XString* str);
 // -------------------------- 字符串转换（大小写/修剪） --------------------------
 
 /**

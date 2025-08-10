@@ -1,12 +1,14 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XString.h"
+#include"XByteArray.h"
 #include"XJsonObject.h"
 #include"XJsonArray.h"
 #include"XJsonValue.h"
+#include"XJsonDocument.h"
 void XJsonObjectTest()
 {
-	//while (true)
+	while (true)
 	{
 		XJsonValue* value = XJsonValue_create_null();
 		XJsonArray* array = XJsonArray_create();
@@ -44,6 +46,12 @@ void XJsonObjectTest()
 		XPrint(str);
 		printf("\n");
 		XString_delete_base(str);
+
+		XJsonDocument* doc = XJsonDocument_create_object(object);
+		XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Indented);
+		XPrint_utf8(XContainerDataPtr(json));
+		XByteArray_delete_base(json);
+		XJsonDocument_delete(doc);
 
 		XJsonArray_delete_base(array);
 		XJsonValue_delete(value);

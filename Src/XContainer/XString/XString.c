@@ -227,7 +227,7 @@ const char* XString_toUtf8(const XString* str)
     if (!str) return NULL;
 
     // 缓存已存在则直接返回
-    if (str->m_cache&& str->m_cache[XStringCache_Utf8]) return str->m_cache[XStringCache_Utf8];
+    if (str->m_cache&& str->m_cache[XStringCache_Utf8].m_data) return str->m_cache[XStringCache_Utf8].m_data;
 
     // 计算所需UTF-8缓冲区大小（不包含结束符）
     int64_t utf8_len = XChar_to_utf8_stream(XString_cdata(str), XString_length_base(str), NULL, 0);
@@ -247,8 +247,18 @@ const char* XString_toUtf8(const XString* str)
     }
     XString_initCache(str);
     // 缓存结果（内部保证线程安全）
-    str->m_cache[XStringCache_Utf8] = utf8_buf;
+    str->m_cache[XStringCache_Utf8].m_data = utf8_buf;
+    str->m_cache[XStringCache_Utf8].m_length = result;
     return utf8_buf;
+}
+
+size_t XString_toUtf8_length(const XString* str)
+{
+    if (!str)
+        return 0;
+    if (XString_toUtf8(str))
+        return str->m_cache[XStringCache_Utf8].m_length;
+    return 0;
 }
 
 const uint16_t* XString_toUtf16(const XString* str)
@@ -256,8 +266,9 @@ const uint16_t* XString_toUtf16(const XString* str)
     if (!str) return NULL;
 
     // 检查缓存是否存在
-    if (str->m_cache && str->m_cache[XStringCache_Utf16]) {
-        return (const uint16_t*)str->m_cache[XStringCache_Utf16];
+    if (str->m_cache && str->m_cache[XStringCache_Utf16].m_data) 
+    {
+        return (const uint16_t*)str->m_cache[XStringCache_Utf16].m_data;
     }
 
     // 计算UTF-16所需缓冲区大小（包含终止符）
@@ -278,8 +289,18 @@ const uint16_t* XString_toUtf16(const XString* str)
 
     // 初始化缓存并存储结果
     XString_initCache((XString*)str);  // 此处强制转换因const语义，实际内部不修改原字符串
-    str->m_cache[XStringCache_Utf16] = (char*)utf16_buf;
+    str->m_cache[XStringCache_Utf16].m_data = (char*)utf16_buf;
+    str->m_cache[XStringCache_Utf16].m_length = result;
     return utf16_buf;
+}
+
+size_t XString_toUtf16_length(const XString* str)
+{
+    if (!str)
+        return 0;
+    if (XString_toUtf16(str))
+        return str->m_cache[XStringCache_Utf16].m_length;
+    return 0;
 }
 
 const uint32_t* XString_toUtf32(const XString* str)
@@ -287,8 +308,9 @@ const uint32_t* XString_toUtf32(const XString* str)
     if (!str) return NULL;
 
     // 检查缓存是否存在
-    if (str->m_cache && str->m_cache[XStringCache_Utf32]) {
-        return (const uint32_t*)str->m_cache[XStringCache_Utf32];
+    if (str->m_cache && str->m_cache[XStringCache_Utf32].m_data) 
+    {
+        return (const uint32_t*)str->m_cache[XStringCache_Utf32].m_data;
     }
 
     // 计算UTF-32所需缓冲区大小（包含终止符）
@@ -309,8 +331,18 @@ const uint32_t* XString_toUtf32(const XString* str)
 
     // 初始化缓存并存储结果
     XString_initCache((XString*)str);
-    str->m_cache[XStringCache_Utf32] = (char*)utf32_buf;
+    str->m_cache[XStringCache_Utf32].m_data = (char*)utf32_buf;
+    str->m_cache[XStringCache_Utf32].m_length = result;
     return utf32_buf;
+}
+
+size_t XString_toUtf32_length(const XString* str)
+{
+    if (!str)
+        return 0;
+    if (XString_toUtf32(str))
+        return str->m_cache[XStringCache_Utf32].m_length;
+    return 0;
 }
 
 const char* XString_toGbk(const XString* str)
@@ -318,8 +350,8 @@ const char* XString_toGbk(const XString* str)
     if (!str) return NULL;
 
     // 检查缓存是否存在
-    if (str->m_cache && str->m_cache[XStringCache_Gbk]) {
-        return str->m_cache[XStringCache_Gbk];
+    if (str->m_cache && str->m_cache[XStringCache_Gbk].m_data) {
+        return str->m_cache[XStringCache_Gbk].m_data;
     }
 
     // 计算GBK所需缓冲区大小（包含终止符）
@@ -340,8 +372,17 @@ const char* XString_toGbk(const XString* str)
 
     // 初始化缓存并存储结果
     XString_initCache((XString*)str);
-    str->m_cache[XStringCache_Gbk] = gbk_buf;
+    str->m_cache[XStringCache_Gbk].m_data = gbk_buf;
     return gbk_buf;
+}
+
+size_t XString_toGbk_length(const XString* str)
+{
+    if (!str) 
+        return 0;
+    if (XString_toGbk(str)) 
+        return str->m_cache[XStringCache_Gbk].m_length;
+    return 0;
 }
 
 const char* XString_toLocal(const XString* str)
@@ -349,25 +390,33 @@ const char* XString_toLocal(const XString* str)
     if (!str) return NULL;
 
     // 本地编码缓存已存在则直接返回
-    if (str->m_cache && str->m_cache[XStringCache_Local]) return str->m_cache[XStringCache_Local];
+    if (str->m_cache && str->m_cache[XStringCache_Local].m_data) return str->m_cache[XStringCache_Local].m_data;
 
 #ifdef __linux__
     // Linux下本地编码为UTF-8，直接指向UTF-8缓存
-    const char* utf8_str = XString_toUtf8(str);
     if (utf8_str) 
     {
         XString_initCache(str);
         // 共享UTF-8缓存地址
-        str->m_cache[XStringCache_Local] = (char*)utf8_str;
+        str->m_cache[XStringCache_Local].m_data = XString_toUtf8(str);
+        str->m_cache[XStringCache_Local].m_length = XString_toUtf8_length(str);
     }
-    return utf8_str;
 #else
     // Windows下需要转换为GBK
-    const char* gbk_str = XString_toGbk(str);
-    if (gbk_str)  // 缓存结果
-    str->m_cache[XStringCache_Local] = gbk_str;
-    return gbk_str;
+    str->m_cache[XStringCache_Local].m_data = XString_toGbk(str);
+    str->m_cache[XStringCache_Local].m_length = XString_toGbk_length(str);
+
+    return str->m_cache[XStringCache_Local].m_data;
 #endif
+}
+
+size_t XString_toUtfLocal_length(const XString* str)
+{
+    if (!str)
+        return 0;
+    if (XString_toLocal(str))
+        return str->m_cache[XStringCache_Local].m_length;
+    return 0;
 }
 
 XChar XString_at(const XString* str, size_t index) 
@@ -2199,21 +2248,23 @@ void XString_deinitCache(XString* str)
 {
     if (str == NULL || str->m_cache == NULL)
         return;
-    char* local = str->m_cache[0];
+    char* local = str->m_cache[0].m_data;
     for (size_t i = 1; i < XStringCache_Size; i++)
     {
-        if (str->m_cache[i] == NULL)
+        if (str->m_cache[i].m_data == NULL)
             continue;
-        XMemory_free(str->m_cache[i]);
-        if (str->m_cache[i] == local)
+        XMemory_free(str->m_cache[i].m_data);
+        if (str->m_cache[i].m_data == local)
             local = NULL;
-        str->m_cache[i] = NULL;
+        str->m_cache[i].m_data = NULL;
+        str->m_cache[i].m_length = 0;
     }
     if (local != NULL)
     {
         XMemory_free(local);
     }
-    str->m_cache[0] = NULL;
+    str->m_cache[0].m_data = NULL;
+    str->m_cache[0].m_length = 0;
 }
 
 int XPrint(const XString* str)
@@ -2327,5 +2378,5 @@ void XString_initCache(XString* str)
 {
     if (str == NULL || str->m_cache != NULL)
         return;
-    str->m_cache=XMemory_calloc(XStringCache_Size,sizeof(char*));
+    str->m_cache=XMemory_calloc(XStringCache_Size,sizeof(XStringCache));
 }
