@@ -110,7 +110,7 @@ void XJsonValue_copy(XJsonValue* var, const XJsonValue* src)
     case XJsonValue_Double:var->data.number = src->data.number; break;
     case XJsonValue_String:var->data.string=XString_create(src->data.string); break;
     case XJsonValue_Array: var->data.array = XJsonArray_create_copy(src->data.array); break;
-    case XJsonValue_Object: var->data.object = XJsonArray_create_copy(src->data.object); break;
+    case XJsonValue_Object: var->data.object = XJsonObject_create_copy(src->data.object); break;
     default:
         break;
     };

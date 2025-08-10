@@ -49,7 +49,7 @@ XJsonValue* XJsonArray_at(XJsonArray* array, int64_t index);
 const XJsonValue* XJsonArray_at_const(const XJsonArray* array, int64_t index);
 
 // 转换函数
-XString* XJsonArray_toString(const XJsonArray* array,XJsonDocumentFormat format);
+XString* XJsonArray_toString(const XJsonArray* array, XJsonDocumentFormat format, XStack* stack);
 XVariantList* XJsonArray_toVariantList(const XJsonArray* array);
 XJsonArray* XJsonArray_fromVariantList(const XVariantList* list);
 #ifdef __cplusplus

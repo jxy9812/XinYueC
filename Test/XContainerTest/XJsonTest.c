@@ -29,14 +29,18 @@ void XJsonObjectTest()
 
 
 		XJsonObject_insert_keyUtf8_double(object, "数字", 66666);
-		XJsonObject_insert_keyUtf8_object(object,"对象", object);
+		//XJsonObject_insert_keyUtf8_object(object,"对象", object);
+
+		XJsonValue_setObject(value, object);
+		XJsonArray_append_move_base(array, value);
+
 		XJsonObject_insert_keyUtf8_array(object, "数组", array);
 		XJsonObject_insert_keyUtf8_utf8(object, "字符串", "测试");
 
 
 
 
-		XString* str = XJsonObject_toString(object, XJsonDocument_Indented);
+		XString* str = XJsonObject_toString(object, XJsonDocument_Indented,NULL);
 		XPrint(str);
 		printf("\n");
 		XString_delete_base(str);
@@ -81,7 +85,7 @@ void XJsonArrayTest()
 		}
 
 
-		XString* str = XJsonArray_toString(array, XJsonDocument_Indented);
+		XString* str = XJsonArray_toString(array, XJsonDocument_Indented,NULL);
 		XPrint(str);
 		printf("\n");
 		XString_delete_base(str);

@@ -3,6 +3,7 @@
 #include "XJsonObject.h"
 #include "XJsonArray.h"
 #include "XString.h"
+#include "XStack.h"
 #include "XMemory.h"
 // 辅助函数：转义字符串中的特殊字符
 void  XJson_escape_string(const XString* str, XString* output)
@@ -58,7 +59,7 @@ void  XJson_escape_string(const XString* str, XString* output)
 }
 
 // 辅助函数：序列化XJsonValue
-void XJson_serialize_json_value(const XJsonValue* value, XString* output, XJsonDocumentFormat format)
+void XJson_serialize_json_value(const XJsonValue* value, XString* output, XJsonDocumentFormat format, XStack* stack)
 {
     if (!value || !output) return;
 
@@ -74,7 +75,6 @@ void XJson_serialize_json_value(const XJsonValue* value, XString* output, XJsonD
 
     case XJsonValue_Double: {
         char buffer[64];
-        // 处理整数情况，避免显示为10.0这样的形式
         double num = XJsonValue_toDouble(value, 0.0);
         if (num == (long long)num) {
             snprintf(buffer, sizeof(buffer), "%lld", (long long)num);
@@ -89,8 +89,7 @@ void XJson_serialize_json_value(const XJsonValue* value, XString* output, XJsonD
     case XJsonValue_String: {
         const XString* str = XJsonValue_toString(value);
         XString_push_back_base(output, XChar_from('\"'));
-        if (str)
-        {
+        if (str) {
             XJson_escape_string(str, output);
         }
         XString_push_back_base(output, XChar_from('\"'));
@@ -99,34 +98,30 @@ void XJson_serialize_json_value(const XJsonValue* value, XString* output, XJsonD
 
     case XJsonValue_Array: {
         const XJsonArray* array = XJsonValue_toArray(value);
-        XString* arrayStr = XJsonArray_toString(array, format);
+        // 传递栈处理嵌套数组
+        XString* arrayStr = XJsonArray_toString(array, format,stack);
         if (arrayStr) {
             XString_append(output, arrayStr);
             XString_delete_base(arrayStr);
         }
-        else
-        {
+        else {
             XString_push_back_base(output, XChar_from('['));
             XString_push_back_base(output, XChar_from(']'));
-            /*  XString_append_utf8(output, "[]");*/
         }
         break;
     }
 
-    case XJsonValue_Object:
-    {
+    case XJsonValue_Object: {
         const XJsonObject* object = XJsonValue_toObject(value);
-        XString* objectStr = XJsonObject_toString(object,format);
-        if (objectStr)
-        {
+        // 传递栈处理嵌套对象
+        XString* objectStr = XJsonObject_toString(object, format, stack);
+        if (objectStr) {
             XString_append(output, objectStr);
             XString_delete_base(objectStr);
         }
-        else
-        {
+        else {
             XString_push_back_base(output, XChar_from('{'));
             XString_push_back_base(output, XChar_from('}'));
-            //XString_append_utf8(output, "{}");
         }
         break;
     }
@@ -136,7 +131,6 @@ void XJson_serialize_json_value(const XJsonValue* value, XString* output, XJsonD
         break;
     }
 }
-
 XJsonDocument* XJsonDocument_create(void)
 {
     XJsonDocument* doc = (XJsonDocument*)XMemory_malloc(sizeof(XJsonDocument));
@@ -326,6 +320,34 @@ bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object)
         document->root = XJsonValue_create_null();
     XJsonValue_setObject_move(document->root, object);
     return true;
+}
+
+XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentFormat format)
+{
+    if (!document || !document->root) return NULL;
+
+    // 创建顶层栈并初始化深度0
+    XStack* stack = XStack_Create(int);
+    XStack_Push_Base(stack,int,0);
+
+    XString* result = NULL;
+    switch (document->root->type) 
+    {
+    case XJsonValue_Object:
+        result = XJsonObject_toString(document->root->data.object, format, stack);
+        break;
+    case XJsonValue_Array:
+        result = XJsonArray_toString(document->root->data.array, format, stack);
+        break;
+    default:
+        // 处理基本类型（null/bool/number/string）
+        result = XString_create(NULL);
+        XJson_serialize_json_value(document->root, result, format, stack);
+        break;
+    }
+
+    XStack_delete_base(stack); // 销毁顶层栈
+    return result;
 }
 
 //XJsonDocument* XJsonDocument_fromString(const XString* json) {
