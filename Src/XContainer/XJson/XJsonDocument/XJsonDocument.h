@@ -5,17 +5,8 @@
 extern "C" {
 #endif
 
-#include "XDataStructConfig.h"
-#include "XJsonValue.h"
-#include "XJsonObject.h"
-#include "XJsonArray.h"
-#include "XString.h"
-
-typedef enum XJsonDocumentFormat 
-{
-    XJsonDocument_Indented,
-    XJsonDocument_Compact
-} XJsonDocumentFormat;
+#include "XJson.h"
+#include <stdbool.h>
 
 typedef struct XJsonDocument 
 {
@@ -26,6 +17,8 @@ typedef struct XJsonDocument
 XJsonDocument* XJsonDocument_create(void);
 XJsonDocument* XJsonDocument_create_object(XJsonObject* object);
 XJsonDocument* XJsonDocument_create_array(XJsonArray* array);
+void XJsonDocument_init(XJsonDocument* document);
+void XJsonDocument_deinit(XJsonDocument* document);
 void XJsonDocument_delete(XJsonDocument* document);
 
 // 根对象操作
@@ -34,13 +27,21 @@ const XJsonValue* XJsonDocument_root_const(const XJsonDocument* document);
 void XJsonDocument_setRoot(XJsonDocument* document, XJsonValue* root);
 
 // 对象和数组访问
+bool XJsonDocument_isArray(const XJsonDocument* document);
+bool XJsonDocument_isObject(const XJsonDocument* document);
+bool XJsonDocument_isNull(const XJsonDocument* document);
+bool XJsonDocument_isEmpty(const XJsonDocument* document);
 XJsonObject* XJsonDocument_object(XJsonDocument* document);
 XJsonArray* XJsonDocument_array(XJsonDocument* document);
+bool XJsonDocument_setArray(XJsonDocument* document, const XJsonArray*array);
+bool XJsonDocument_setObject(XJsonDocument* document, const XJsonObject* object);
+bool XJsonDocument_setArray_move(XJsonDocument* document, XJsonArray* array);
+bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object);
 
 // 解析与序列化
 XJsonDocument* XJsonDocument_fromString(const XString* json);
 XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentFormat format);
-
+XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFormat format);
 // 与XVariant转换
 XVariant* XJsonDocument_toVariant(const XJsonDocument* document);
 XJsonDocument* XJsonDocument_fromVariant(const XVariant* variant);

@@ -210,40 +210,27 @@ XJsonObject* XJsonValue_toObject(const XJsonValue* value) {
     return (value && value->type == XJsonValue_Object) ? value->data.object : NULL;
 }
 
-void XJsonValue_setNull(XJsonValue* value) {
+void XJsonValue_setNull(XJsonValue* value)
+{
     if (!value) return;
-
-    // 释放当前值
-    XJsonValue temp = *value;
-    *value = (XJsonValue){ .type = XJsonValue_Null };
-
-    switch (temp.type) {
-    case XJsonValue_String:
-        XString_delete_base(temp.data.string);
-        break;
-  /*  case XJsonValue_Array:
-        XJsonArray_delete(temp.data.array);
-        break;
-    case XJsonValue_Object:
-        XJsonObject_delete(temp.data.object);
-        break;*/
-    default:
-        break;
-    }
+    XJsonValue_deinit(value);
+    value->type = XJsonValue_Null;
 }
 
-void XJsonValue_setBool(XJsonValue* value, bool b) {
+void XJsonValue_setBool(XJsonValue* value, bool b) 
+{
     if (!value) return;
 
-    XJsonValue_setNull(value);
+    XJsonValue_deinit(value);
     value->type = XJsonValue_Bool;
     value->data.boolean = b;
 }
 
-void XJsonValue_setDouble(XJsonValue* value, double d) {
+void XJsonValue_setDouble(XJsonValue* value, double d) 
+{
     if (!value) return;
 
-    XJsonValue_setNull(value);
+    XJsonValue_deinit(value);
     value->type = XJsonValue_Double;
     value->data.number = d;
 }
@@ -252,7 +239,7 @@ void XJsonValue_setString(XJsonValue* value, const XString* s)
 {
     if (!value) return;
 
-    XJsonValue_setNull(value);
+    XJsonValue_deinit(value);
     value->type = XJsonValue_String;
     value->data.string = XString_create(s);
 }
@@ -261,7 +248,7 @@ void XJsonValue_setString_move(XJsonValue* value, const XString* s)
 {
     if (!value) return;
 
-    XJsonValue_setNull(value);
+    XJsonValue_deinit(value);
     value->type = XJsonValue_String;
     value->data.string = s;
 }
@@ -270,7 +257,7 @@ void XJsonValue_setString_utf8(XJsonValue* value, const char* utf8)
 {
     if (!value) return;
 
-    XJsonValue_setNull(value);
+    XJsonValue_deinit(value);
     value->type = XJsonValue_String;
     value->data.string = XString_create_utf8(utf8);
 }
@@ -279,7 +266,7 @@ void XJsonValue_setArray(XJsonValue* value, XJsonArray* a)
 {
     if (!value || !a) return;
 
-    XJsonValue_setNull(value);
+    XJsonValue_deinit(value);
     value->type = XJsonValue_Array;
     value->data.array = XJsonArray_create_copy(a);
 }
@@ -288,7 +275,7 @@ void XJsonValue_setArray_move(XJsonValue* value, XJsonArray* a)
 {
     if (!value || !a) return;
 
-    XJsonValue_setNull(value);
+    XJsonValue_deinit(value);
     value->type = XJsonValue_Array;
     value->data.array = a;
 }
@@ -297,7 +284,7 @@ void XJsonValue_setObject(XJsonValue* value, XJsonObject* o)
 {
     if (!value || !o) return;
 
-    XJsonValue_setNull(value);
+    XJsonValue_deinit(value);
     value->type = XJsonValue_Object;
     value->data.object = XJsonObject_create_copy(o);
 }
@@ -305,7 +292,7 @@ void XJsonValue_setObject_move(XJsonValue* value, XJsonObject* o)
 {
     if (!value || !o) return;
 
-    XJsonValue_setNull(value);
+    XJsonValue_deinit(value);
     value->type = XJsonValue_Object;
     value->data.object = o;
 }

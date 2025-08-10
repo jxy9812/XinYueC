@@ -3,7 +3,7 @@
 #include "XVariantList.h"
 #include "XJsonValue.h"
 // 辅助函数：序列化XJsonValue
-void XJson_serialize_json_value(const XJsonValue* value, XString* output);
+void XJson_serialize_json_value(const XJsonValue* value, XString* output, XJsonDocumentFormat format);
 
 XJsonArray* XJsonArray_create()
 {
@@ -41,7 +41,8 @@ void XJsonArray_init(XJsonArray* array)
 }
 
 // 数组序列化实现
-XString* XJsonArray_toString(const XJsonArray* array) {
+XString* XJsonArray_toString(const XJsonArray* array, XJsonDocumentFormat format) 
+{
     if (!array) return NULL;
 
     // 创建输出字符串
@@ -56,7 +57,7 @@ XString* XJsonArray_toString(const XJsonArray* array) {
     for (int i = 0; i < size; i++) {
         const XJsonValue* value = XJsonArray_at_const(array, i);
         if (value) {
-            XJson_serialize_json_value(value, output);
+            XJson_serialize_json_value(value, output,format);
         }
         else {
             XString_append_utf8(output, "null");

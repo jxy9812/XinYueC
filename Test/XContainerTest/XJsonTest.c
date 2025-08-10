@@ -6,7 +6,7 @@
 #include"XJsonValue.h"
 void XJsonObjectTest()
 {
-	while (true)
+	//while (true)
 	{
 		XJsonValue* value = XJsonValue_create_null();
 		XJsonArray* array = XJsonArray_create();
@@ -36,7 +36,7 @@ void XJsonObjectTest()
 
 
 
-		XString* str = XJsonObject_toString(object);
+		XString* str = XJsonObject_toString(object, XJsonDocument_Indented);
 		XPrint(str);
 		printf("\n");
 		XString_delete_base(str);
@@ -81,7 +81,7 @@ void XJsonArrayTest()
 		}
 
 
-		XString* str = XJsonArray_toString(array);
+		XString* str = XJsonArray_toString(array, XJsonDocument_Indented);
 		XPrint(str);
 		printf("\n");
 		XString_delete_base(str);

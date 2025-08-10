@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-#include "XDataStructConfig.h"
+#include "XJson.h"
 #include "XJsonValue.h"
 #include "XMap.h"
 
@@ -63,7 +63,7 @@ bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key);
 #define XJsonObject_typeSize_base				XMap_typeSize_base
 
 // 转换函数
-XString* XJsonObject_toString(const XJsonObject* object);
+XString* XJsonObject_toString(const XJsonObject* object, XJsonDocumentFormat format);
 XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object);
 XJsonObject* XJsonObject_fromVariantMap(const XVariantMap* map);
 

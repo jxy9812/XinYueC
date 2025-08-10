@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-#include "XDataStructConfig.h"
+#include "XJson.h"
 #include "XString.h"
 #include "XVariant.h"
 #include <stdbool.h>
@@ -26,8 +26,8 @@ typedef enum XJsonValueType
     XJsonValue_Object
 } XJsonValueType;
 
-typedef struct XJsonArray XJsonArray;
-typedef struct XJsonObject XJsonObject;
+//typedef struct XJsonArray XJsonArray;
+//typedef struct XJsonObject XJsonObject;
 
 typedef struct XJsonValue 
 {
