@@ -40,7 +40,9 @@ bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object);
 
 // 解析与序列化
 XJsonDocument* XJsonDocument_fromString(const XString* json);
+//优先使用XJsonDocument_toJson 
 XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentFormat format);
+//内部utf8编码适合传输
 XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFormat format);
 // 与XVariant转换
 XVariant* XJsonDocument_toVariant(const XJsonDocument* document);

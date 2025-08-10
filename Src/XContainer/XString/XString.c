@@ -197,13 +197,35 @@ XString* XString_create_fmt_utf8(const char* format, ...)
 {
     if (!format) return NULL;
 
-    va_list args;
+    va_list args, args_copy;
     va_start(args, format);
-    char buf[1024];
-    vsnprintf(buf, sizeof(buf), format, args);
-    va_end(args);
+    va_copy(args_copy, args);  // 复制参数列表用于二次调用
 
-    return XString_create_utf8(buf);
+    // 第一次调用：获取所需缓冲区大小（不写入数据）
+    int buf_size = vsnprintf(NULL, 0, format, args_copy);
+    va_end(args_copy);  // 释放复制的参数列表
+
+    if (buf_size < 0) {
+        va_end(args);    // 释放原始参数列表
+        return NULL;     // 格式化失败
+    }
+
+    // 分配缓冲区（+1 用于存储终止符'\0'）
+    char* buf = (char*)XMemory_malloc(buf_size + 1);
+    if (!buf) {
+        va_end(args);
+        return NULL;     // 内存分配失败
+    }
+
+    // 第二次调用：实际写入格式化后的字符串
+    vsnprintf(buf, buf_size + 1, format, args);
+    va_end(args);  // 释放原始参数列表
+
+    // 创建UTF-8编码的XString并释放临时缓冲区
+    XString* str = XString_create_utf8(buf);
+    XMemory_free(buf);
+
+    return str;
 }
 
 // 初始化函数

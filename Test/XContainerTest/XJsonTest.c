@@ -8,7 +8,7 @@
 #include"XJsonDocument.h"
 void XJsonObjectTest()
 {
-	while (true)
+	//while (true)
 	{
 		XJsonValue* value = XJsonValue_create_null();
 		XJsonArray* array = XJsonArray_create();
@@ -39,19 +39,21 @@ void XJsonObjectTest()
 		XJsonObject_insert_keyUtf8_array(object, "数组", array);
 		XJsonObject_insert_keyUtf8_utf8(object, "字符串", "测试");
 
+		/*XJsonObject_insert_keyUtf8_object(object, "嵌套", object);
+		XJsonObject_insert_keyUtf8_object(object, "嵌套1", object);
+		XJsonObject_insert_keyUtf8_object(object, "嵌套3", object);*/
 
 
-
-		XString* str = XJsonObject_toString(object, XJsonDocument_Indented,NULL);
+		XString* str = XJsonObject_toString(object, XJsonDocument_Indented);
 		XPrint(str);
 		printf("\n");
 		XString_delete_base(str);
-
-		XJsonDocument* doc = XJsonDocument_create_object(object);
-		XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Indented);
-		XPrint_utf8(XContainerDataPtr(json));
-		XByteArray_delete_base(json);
-		XJsonDocument_delete(doc);
+		//printf("\n\n\n\n\n\n");
+		//XJsonDocument* doc = XJsonDocument_create_object(object);
+		//XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Indented);
+		//XPrint_utf8(XContainerDataPtr(json));
+		//XByteArray_delete_base(json);
+		//XJsonDocument_delete(doc);
 
 		XJsonArray_delete_base(array);
 		XJsonValue_delete(value);
@@ -93,7 +95,7 @@ void XJsonArrayTest()
 		}
 
 
-		XString* str = XJsonArray_toString(array, XJsonDocument_Indented,NULL);
+		XString* str = XJsonArray_toString(array, XJsonDocument_Indented);
 		XPrint(str);
 		printf("\n");
 		XString_delete_base(str);
