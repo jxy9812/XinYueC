@@ -6,7 +6,43 @@
 #include "XString.h"
 #include "XStack.h"
 #include "XMemory.h"
+#include <ctype.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+/*                                  XJsonDocument_fromJson                                             */
+// 解析上下文：用于栈存储当前解析的容器（对象/数组）及状态
+typedef enum 
+{
+    CONTEXT_OBJECT,
+    CONTEXT_ARRAY
+} ContextType;
 
+typedef struct 
+{
+    ContextType type;
+    union {
+        XJsonObject* object;
+        XJsonArray* array;
+    } container;
+    XString* currentKey; // 仅用于对象解析时存储当前键
+} ParseContext;
+// 辅助函数：跳过空白字符
+static const char* skip_whitespace(const char* ptr, const char* end);
+// 辅助函数：解析字符串（处理转义字符）
+static XString* parse_string(const char** ptr, const char* end);
+// 辅助函数：解析数字
+static bool parse_number(const char** ptr, const char* end, double* out);
+// 辅助函数：解析关键字（true/false/null）
+static XJsonValue* parse_keyword(const char** ptr, const char* end);
+// 解析对象
+static XJsonValue* parse_object(const char** ptr, const char* end, XStack* stack);
+// 解析数组
+static XJsonValue* parse_array(const char** ptr, const char* end, XStack* stack);
+// 解析值（调度到对应类型的解析函数）
+static XJsonValue* parse_value(const char** ptr, const char* end, XStack* stack);
+
+/*                                  XJsonDocument_toJson                                             */                
 // 辅助函数：转义字符串并添加到字节数组（UTF-8）
 static void XJson_append_escaped_string_byteArray(const XString* str, XByteArray* output);
 // 辅助函数：添加缩进
@@ -220,6 +256,47 @@ XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentForm
     XString* str = XString_create_utf8(XContainerDataPtr(json));
     XByteArray_delete_base(json);
     return str;
+}
+
+XJsonDocument* XJsonDocument_fromJson(const XByteArray* json)
+{
+    if (!json || XByteArray_isEmpty_base(json)) return NULL;
+
+    const char* data = XContainerDataPtr(json);
+    const char* end = data + XByteArray_size_base(json)-1;
+    const char* ptr = data;
+
+    // 初始化解析栈
+    XStack* stack = XStack_create(sizeof(ParseContext));
+    if (!stack) return NULL;
+
+    // 解析根值
+    XJsonValue* root = parse_value(&ptr, end, stack);
+    if (!root) {
+        XStack_delete_base(stack);
+        return NULL;
+    }
+
+    // 检查是否解析完全
+    ptr = skip_whitespace(ptr, end);
+    if (ptr != end) {
+        XJsonValue_delete(root);
+        XStack_delete_base(stack);
+        return NULL;
+    }
+
+    // 创建文档
+    XJsonDocument* doc = XJsonDocument_create();
+    if (doc) {
+        XJsonDocument_setRoot(doc, root);
+    }
+    else {
+        XJsonValue_delete(root);
+    }
+
+    XStack_delete_base(stack);
+    return doc;
+
 }
 
 XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFormat format)
@@ -512,4 +589,362 @@ void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat format,
         XByteArray_append_array_base(output, "null", 4);
         break;
     }
+}
+
+const char* skip_whitespace(const char* ptr, const char* end)
+{
+    while (ptr < end && (isspace((unsigned char)*ptr))) {
+        ptr++;
+    }
+    return ptr;
+}
+
+XString* parse_string(const char** ptr, const char* end)
+{
+    if (*ptr >= end || **ptr != '"') return NULL;
+    (*ptr)++; // 跳过开头引号
+    const char* start = *ptr;
+    XString* str = XString_create(NULL);
+    XByteArray* buff = XByteArray_create(0);
+    while (*ptr < end && **ptr != '"') {
+        if (**ptr == '\\') {
+            // 处理转义字符
+            (*ptr)++;
+            if (*ptr >= end) break;
+
+            char escaped = '\0';
+            switch (**ptr) {
+            case '"':  escaped = '"'; break;
+            case '\\': escaped = '\\'; break;
+            case '/':  escaped = '/'; break;
+            case 'b':  escaped = '\b'; break;
+            case 'f':  escaped = '\f'; break;
+            case 'n':  escaped = '\n'; break;
+            case 'r':  escaped = '\r'; break;
+            case 't':  escaped = '\t'; break;
+            default:   // 非法转义，忽略
+                (*ptr)++;
+                continue;
+            }
+            if (!XByteArray_isEmpty_base(buff))
+            {
+                XString_append_with_length_utf8(str, XContainerDataPtr(buff), XContainerSize(buff));
+                XByteArray_clear_base(buff);
+            }
+            XString_append_char(str, XChar_from(escaped));
+            (*ptr)++;
+        }
+        else {
+            // 直接添加普通字符（UTF-8兼容）
+            XByteArray_push_back_base(buff, **ptr);
+            //XString_append_char(str, XChar_from(**ptr));
+            (*ptr)++;
+        }
+    }
+
+    if (*ptr >= end || **ptr != '"') {
+        XString_delete_base(str); // 未闭合的字符串
+        return NULL;
+    }
+    (*ptr)++; // 跳过结尾引号
+    if (!XByteArray_isEmpty_base(buff))
+        XString_append_with_length_utf8(str, XContainerDataPtr(buff), XContainerSize(buff));
+    XByteArray_delete_base(buff);
+    return str;
+}
+
+bool parse_number(const char** ptr, const char* end, double* out)
+{
+    if (!ptr || !*ptr || !end || !out || *ptr >= end) {
+        return false;
+    }
+
+    const char* start = *ptr;
+    char* endptr;
+
+    // 让strtod处理转换，同时获取有效数字的结束位置
+    errno = 0;
+    *out = strtod(start, &endptr);
+
+    // 检查是否有有效数字被解析
+    if (endptr == start) {
+        return false;
+    }
+
+    // 检查是否超出输入范围
+    if (endptr > end) {
+        return false;
+    }
+
+    // 检查转换错误（溢出等）
+    if (errno != 0) {
+        return false;
+    }
+
+    // 验证解析出的数字是否符合JSON规范
+    const char* current = start;
+    const char* num_end = endptr;
+
+    // 1. 检查符号
+    if (*current == '+' || *current == '-') {
+        current++;
+        if (current >= num_end) { // 不能只有符号
+            return false;
+        }
+    }
+
+    // 2. 检查整数部分或小数部分的起始
+    bool has_digits = false;
+    if (isdigit((unsigned char)*current)) {
+        has_digits = true;
+        // 检查前导零（仅允许单独的0）
+        if (*current == '0') {
+            current++;
+            if (current < num_end && isdigit((unsigned char)*current)) {
+                return false; // 不允许"0123"这样的前导零
+            }
+        }
+        else {
+            // 跳过其他数字
+            while (current < num_end && isdigit((unsigned char)*current)) {
+                current++;
+            }
+        }
+    }
+
+    // 3. 检查小数部分
+    if (current < num_end && *current == '.') {
+        current++;
+        // 小数点后必须有数字
+        if (current >= num_end || !isdigit((unsigned char)*current)) {
+            return false;
+        }
+        has_digits = true;
+        // 跳过小数部分数字
+        while (current < num_end && isdigit((unsigned char)*current)) {
+            current++;
+        }
+    }
+
+    // 必须有数字部分
+    if (!has_digits) {
+        return false;
+    }
+
+    // 4. 检查指数部分
+    if (current < num_end && (*current == 'e' || *current == 'E')) {
+        current++;
+        // 指数符号（可选）
+        if (current < num_end && (*current == '+' || *current == '-')) {
+            current++;
+        }
+        // 指数后必须有数字
+        if (current >= num_end || !isdigit((unsigned char)*current)) {
+            return false;
+        }
+        // 跳过指数部分数字
+        while (current < num_end && isdigit((unsigned char)*current)) {
+            current++;
+        }
+    }
+
+    // 确保所有字符都被验证（没有多余字符）
+    if (current != num_end) {
+        return false;
+    }
+
+    // 更新指针位置
+    *ptr = endptr;
+    return true;
+}
+
+XJsonValue* parse_keyword(const char** ptr, const char* end)
+{
+    if (*ptr + 4 <= end && strncmp(*ptr, "true", 4) == 0) {
+        *ptr += 4;
+        return XJsonValue_create_bool(true);
+    }
+    else if (*ptr + 5 <= end && strncmp(*ptr, "false", 5) == 0) {
+        *ptr += 5;
+        return XJsonValue_create_bool(false);
+    }
+    else if (*ptr + 4 <= end && strncmp(*ptr, "null", 4) == 0) {
+        *ptr += 4;
+        return XJsonValue_create_null();
+    }
+    return NULL;
+}
+
+XJsonValue* parse_value(const char** ptr, const char* end, XStack* stack)
+{
+    *ptr = skip_whitespace(*ptr, end);
+    if (*ptr >= end) return NULL;
+
+    switch (**ptr) {
+    case '{':
+        return parse_object(ptr, end, stack);
+    case '[':
+        return parse_array(ptr, end, stack);
+    case '"':
+    {
+        XString* str = parse_string(ptr, end);
+        if (!str) return NULL;
+        XJsonValue* val = XJsonValue_create_null();
+        XJsonValue_setString_move(val, str);
+        return val;
+    }
+    case 't':
+    case 'f':
+    case 'n':
+        return parse_keyword(ptr, end);
+    case '-':
+    case '0': case '1': case '2': case '3': case '4':
+    case '5': case '6': case '7': case '8': case '9':
+    {
+        double num;
+        if (parse_number(ptr, end, &num)) {
+            return XJsonValue_create_double(num);
+        }
+        return NULL;
+    }
+    default:
+        return NULL;
+    }
+}
+
+XJsonValue* parse_object(const char** ptr, const char* end, XStack* stack)
+{
+    if (*ptr >= end || **ptr != '{') return NULL;
+    (*ptr)++; // 跳过'{'
+    XJsonObject* obj = XJsonObject_create();
+    if (!obj) return NULL;
+
+    // 压入对象上下文
+    ParseContext ctx = {
+        .type = CONTEXT_OBJECT,
+        .container.object = obj,
+        .currentKey = NULL
+    };
+    XStack_Push_Base(stack, ParseContext, ctx);
+
+    bool expect_key = true;
+    while (*ptr < end) {
+        *ptr = skip_whitespace(*ptr, end);
+        if (*ptr >= end) break;
+
+        if (**ptr == '}') {
+            (*ptr)++; // 跳过'}'
+            XStack_pop_base(stack); // 弹出上下文
+            XJsonValue* value= XJsonValue_create_null();
+            XJsonValue_setObject_move(value, obj); // 转移所有权
+            //XJsonObject_delete_base(obj);
+            return value;
+        }
+
+        if (expect_key) {
+            // 解析键（必须是字符串）
+            XString* key = parse_string(ptr, end);
+   /*         XPrint(key);
+            printf("\n");*/
+            if (!key) goto error;
+
+            *ptr = skip_whitespace(*ptr, end);
+            if (*ptr >= end || **ptr != ':') {
+                XString_delete_base(key);
+                goto error;
+            }
+            (*ptr)++; // 跳过':'
+            *ptr = skip_whitespace(*ptr, end);
+
+            // 更新栈顶上下文的当前键
+            ParseContext* top = XStack_top_base(stack);
+            if (top->currentKey) XString_delete_base(top->currentKey);
+            top->currentKey = key;
+            expect_key = false;
+        }
+        else {
+            // 解析值
+            XJsonValue* value = parse_value(ptr, end, stack);
+            if (!value) goto error;
+
+            // 从栈顶获取当前键并插入对象
+            ParseContext* top = XStack_top_base(stack);
+            if (!top->currentKey) {
+                XJsonValue_delete(value);
+                goto error;
+            }
+
+            XJsonObject_insert_move_base(obj, top->currentKey, value);
+            XJsonValue_delete(value);
+            XString_delete_base(top->currentKey);
+            top->currentKey = NULL;
+
+            *ptr = skip_whitespace(*ptr, end);
+            if (*ptr < end && **ptr == ',') {
+                (*ptr)++; // 跳过','
+                expect_key = true;
+            }
+            else {
+                expect_key = false;
+            }
+        }
+    }
+
+error:
+    XJsonObject_delete_base(obj);
+    return NULL;
+}
+
+XJsonValue* parse_array(const char** ptr, const char* end, XStack* stack)
+{
+    if (*ptr >= end || **ptr != '[') return NULL;
+    (*ptr)++; // 跳过'['
+    XJsonArray* arr = XJsonArray_create();
+    if (!arr) return NULL;
+
+    // 压入数组上下文
+    ParseContext ctx = {
+        .type = CONTEXT_ARRAY,
+        .container.array = arr,
+        .currentKey = NULL
+    };
+    XStack_Push_Base(stack, ParseContext, ctx);
+
+    bool expect_element = true;
+    while (*ptr < end) {
+        *ptr = skip_whitespace(*ptr, end);
+        if (*ptr >= end) break;
+
+        if (**ptr == ']') {
+            (*ptr)++; // 跳过']'
+            XStack_pop_base(stack); // 弹出上下文
+            XJsonValue* value = XJsonValue_create_null();
+            XJsonValue_setArray_move(value, arr); // 转移所有权
+            return value;
+        }
+
+        if (expect_element) {
+            // 解析元素值
+            XJsonValue* elem = parse_value(ptr, end, stack);
+            if (!elem) goto error;
+
+            XJsonArray_append_move_base(arr, elem);
+            XJsonValue_delete(elem);
+            expect_element = false;
+
+            *ptr = skip_whitespace(*ptr, end);
+            if (*ptr < end && **ptr == ',') {
+                (*ptr)++; // 跳过','
+                expect_element = true;
+            }
+        }
+        else {
+            // 多余的逗号
+            goto error;
+        }
+    }
+
+error:
+    XJsonArray_delete_base(arr);
+    return NULL;
 }

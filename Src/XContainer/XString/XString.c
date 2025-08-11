@@ -561,6 +561,63 @@ bool XString_append_utf8(XString* str, const char* utf8_str)
     return true;
 }
 
+bool XString_append_with_length_utf8(XString* str, const char* utf8_str, size_t len)
+{
+    if (!str || !utf8_str) return false;
+
+    // 先计算需要转换的XChar数量（不含终止符）
+    int64_t xchar_count = XChar_from_utf8_stream((const uint8_t*)utf8_str, len, NULL, 0);
+    if (xchar_count <= 0) return false;
+
+    XString_detach(str);
+    size_t current_size = XString_length_base(str);
+    size_t new_size = current_size + (size_t)xchar_count;
+
+    // 预留足够空间（包含终止符）
+    XString_reserve(str, new_size);
+
+    // 直接转换到目标缓冲区
+    XChar* data = XString_data(str);
+    int64_t result = XChar_from_utf8_stream(
+        (const uint8_t*)utf8_str,
+        len,
+        data + current_size,  // 直接写到当前字符串末尾
+        (size_t)xchar_count + 1  // 包含终止符的空间（实际不会覆盖原终止符）
+    );
+
+    if (result <= 0) {
+        // 转换失败时恢复原长度和终止符
+        XContainerSize(str) = current_size;
+        data[current_size] = XCharNULL;
+        return false;
+    }
+
+    // 更新字符串长度和终止符
+    XContainerSize(str) = new_size;
+    data[new_size] = XCharNULL;
+
+    XString_deinitCache(str);
+    return true;
+}
+
+bool XString_append_char(XString* str, XChar ch)
+{
+    if (!str) return false;
+
+    XString_detach(str);
+    size_t new_size = XString_length_base(str) + 1;
+    XString_reserve(str, new_size);
+
+    XChar* data = XString_data(str);
+    data[XString_length_base(str)] = ch;
+
+    XContainerSize(str) = new_size;
+    XString_data(str)[new_size] = XCharNULL;
+
+    XString_deinitCache(str);
+    return true;
+}
+
 bool XString_assign(XString* str, const XString* ass_str)
 {
     if (!str || !ass_str) return false;

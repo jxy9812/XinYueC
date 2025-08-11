@@ -39,21 +39,26 @@ void XJsonObjectTest()
 		XJsonObject_insert_keyUtf8_array(object, "数组", array);
 		XJsonObject_insert_keyUtf8_utf8(object, "字符串", "测试");
 
-		/*XJsonObject_insert_keyUtf8_object(object, "嵌套", object);
-		XJsonObject_insert_keyUtf8_object(object, "嵌套1", object);
+		//XJsonObject_insert_keyUtf8_object(object, "嵌套", object);
+		/*XJsonObject_insert_keyUtf8_object(object, "嵌套1", object);
 		XJsonObject_insert_keyUtf8_object(object, "嵌套3", object);*/
 
 
-		XString* str = XJsonObject_toString(object, XJsonDocument_Indented);
+		
+		//printf("\n\n\n\n\n\n");
+		XJsonDocument* doc = XJsonDocument_create_object(object);
+		XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Compact);
+		XJsonDocument_delete(doc);
+		XPrint_utf8(XContainerDataPtr(json));
+		XPrint_utf8("\n开始从json文本转json对象\n");
+		doc = XJsonDocument_fromJson(json);
+		XByteArray_delete_base(json);
+
+		XString* str = XJsonDocument_toString(doc, XJsonDocument_Indented);
 		XPrint(str);
 		printf("\n");
 		XString_delete_base(str);
-		//printf("\n\n\n\n\n\n");
-		//XJsonDocument* doc = XJsonDocument_create_object(object);
-		//XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Indented);
-		//XPrint_utf8(XContainerDataPtr(json));
-		//XByteArray_delete_base(json);
-		//XJsonDocument_delete(doc);
+		XJsonDocument_delete(doc);
 
 		XJsonArray_delete_base(array);
 		XJsonValue_delete(value);
@@ -62,7 +67,7 @@ void XJsonObjectTest()
 }
 void XJsonArrayTest()
 {
-	while (true)
+	//while (true)
 	{
 		XJsonValue* value = XJsonValue_create_null();
 		XJsonArray* array = XJsonArray_create();

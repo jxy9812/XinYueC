@@ -241,7 +241,8 @@ bool XString_append(XString* str, const XString* app_str);
  * @return 成功返回 true，失败返回 false
  */
 bool XString_append_utf8(XString* str, const char* utf8_str);
-
+bool XString_append_with_length_utf8(XString* str, const char* utf8_str, size_t len);
+bool XString_append_char(XString* str,XChar ch);
 /**
  * @brief 替换字符串内容为指定 XString 字符串
  * @param str XString 对象指针
