@@ -27,6 +27,7 @@ void XJsonObject_init(XJsonObject* object);
 bool XJsonObject_insert_keyUtf8_value(XJsonObject* object, const char* key, XJsonValue* value);
 bool XJsonObject_insert_keyUtf8_value_move(XJsonObject* object, const char* key, XJsonValue* value);
 bool XJsonObject_insert_keyUtf8_double(XJsonObject* object, const char* key, double d);
+bool XJsonObject_insert_keyUtf8_int(XJsonObject* object, const char* key, int64_t i);
 bool XJsonObject_insert_keyUtf8_string(XJsonObject* object, const char* key,const XString* str);
 bool XJsonObject_insert_keyUtf8_string_move(XJsonObject* object, const char* key, XString* str);
 bool XJsonObject_insert_keyUtf8_utf8(XJsonObject* object, const char* key,const char*utf8);

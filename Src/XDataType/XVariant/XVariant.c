@@ -906,6 +906,10 @@ void XVariant_setValue_StringList(XVariant* var, const XStringList* list)
 	}
 }
 
+void XVariant_setValue_List(XVariant* var, const XVariantList* list)
+{
+}
+
 void XVariant_copy(XVariant* var, const XVariant* src)
 {
 	if (var == NULL || src == NULL)

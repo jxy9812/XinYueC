@@ -141,6 +141,7 @@ void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size);
 void XVariant_setValue_String(XVariant* var, const XString* string);
 void XVariant_setValue_utf8_str(XVariant* var, const char* str);
 void XVariant_setValue_StringList(XVariant* var, const XStringList* list);
+void XVariant_setValue_List(XVariant* var, const XVariantList* list);
 
 void XVariant_copy(XVariant* var, const XVariant* src);
 void XVariant_move(XVariant* var, XVariant* src);

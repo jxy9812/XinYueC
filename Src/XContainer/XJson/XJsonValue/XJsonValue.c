@@ -35,6 +35,17 @@ XJsonValue* XJsonValue_create_double(double value)
     return val;
 }
 
+XJsonValue* XJsonValue_create_int(int64_t value)
+{
+    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue_init(val, XJsonValue_Int);
+    if (val)
+    {
+        val->data.integer = value;
+    }
+    return val;
+}
+
 XJsonValue* XJsonValue_create_string(const XString* string) 
 {
     if (string == NULL)
@@ -108,6 +119,7 @@ void XJsonValue_copy(XJsonValue* var, const XJsonValue* src)
     {
     case XJsonValue_Bool:var->data.boolean = src->data.boolean; break;
     case XJsonValue_Double:var->data.number = src->data.number; break;
+    case XJsonValue_Int:var->data.integer = src->data.integer; break;
     case XJsonValue_String:var->data.string=XString_create_copy(src->data.string); break;
     case XJsonValue_Array: var->data.array = XJsonArray_create_copy(src->data.array); break;
     case XJsonValue_Object: var->data.object = XJsonObject_create_copy(src->data.object); break;
@@ -178,6 +190,11 @@ bool XJsonValue_isDouble(const XJsonValue* value) {
     return XJsonValue_type(value) == XJsonValue_Double;
 }
 
+bool XJsonValue_isInt(const XJsonValue* value)
+{
+    return XJsonValue_type(value) == XJsonValue_Int;
+}
+
 bool XJsonValue_isString(const XJsonValue* value) {
     return XJsonValue_type(value) == XJsonValue_String;
 }
@@ -198,7 +215,13 @@ double XJsonValue_toDouble(const XJsonValue* value, double defaultValue) {
     return (value && value->type == XJsonValue_Double) ? value->data.number : defaultValue;
 }
 
-const XString* XJsonValue_toString(const XJsonValue* value) {
+int64_t XJsonValue_toInt(const XJsonValue* value, int64_t defaultValue)
+{
+    return (value && value->type == XJsonValue_Int) ? value->data.integer : defaultValue;
+}
+
+const XString* XJsonValue_toString(const XJsonValue* value) 
+{
     return (value && value->type == XJsonValue_String) ? value->data.string : NULL;
 }
 
@@ -233,6 +256,15 @@ void XJsonValue_setDouble(XJsonValue* value, double d)
     XJsonValue_deinit(value);
     value->type = XJsonValue_Double;
     value->data.number = d;
+}
+
+void XJsonValue_setInt(XJsonValue* value, int64_t i)
+{
+    if (!value) return;
+
+    XJsonValue_deinit(value);
+    value->type = XJsonValue_Int;
+    value->data.integer = i;
 }
 
 void XJsonValue_setString(XJsonValue* value, const XString* s) 
@@ -298,37 +330,40 @@ void XJsonValue_setObject_move(XJsonValue* value, XJsonObject* o)
 }
 XVariant* XJsonValue_toVariant(const XJsonValue* value) 
 {
-   /* if (!value) return NULL;
+    if (!value) return NULL;
 
-    XVariant* variant = XVariant_create();
+    XVariant* variant = XVariant_create(NULL,0,0);
     if (!variant) return NULL;
 
     switch (value->type) 
     {
     case XJsonValue_Null:
-        XVariant_setNull(variant);
+        XVariant_setValue_null(variant);
         break;
     case XJsonValue_Bool:
-        XVariant_setBool(variant, value->data.boolean);
+        XVariant_setValue_bool(variant, value->data.boolean);
+        break;
+    case XJsonValue_Int:                 
+        XVariant_setValue_int64(variant, value->data.integer);
         break;
     case XJsonValue_Double:
-        XVariant_setDouble(variant, value->data.number);
+        XVariant_setValue_double(variant, value->data.number);
         break;
     case XJsonValue_String:
         if (value->data.string) {
-            XVariant_setString(variant, value->data.string);
+            XVariant_setValue_String(variant, value->data.string);
         }
         break;
     case XJsonValue_Array:
         if (value->data.array) {
-            XVariantList* list = XJsonArray_toVariantList(value->data.array);
-            XVariant_setList(variant, list);
+            //XVariantList* list = XJsonArray_toVariantList(value->data.array);
+            //XVariant_setValue_List(variant, list);
         }
         break;
     case XJsonValue_Object:
         if (value->data.object) {
-            XVariantMap* map = XJsonObject_toVariantMap(value->data.object);
-            XVariant_setMap(variant, map);
+            //XVariantMap* map = XJsonObject_toVariantMap(value->data.object);
+            //XVariant_setMap(variant, map);
         }
         break;
     default:
@@ -336,7 +371,7 @@ XVariant* XJsonValue_toVariant(const XJsonValue* value)
         return NULL;
     }
 
-    return variant;*/
+    return variant;
 }
 
 XJsonValue* XJsonValue_fromVariant(const XVariant* variant) {

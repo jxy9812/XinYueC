@@ -14,7 +14,7 @@ void XJsonObjectTest()
 		XJsonArray* array = XJsonArray_create();
 		XJsonObject* object = XJsonObject_create();
 
-		XJsonValue_setDouble(value, 100.0);
+		XJsonValue_setInt(value, 100);
 		XJsonArray_append_move_base(array, value);
 
 		XJsonValue_setDouble(value, 100.9999);
@@ -30,7 +30,7 @@ void XJsonObjectTest()
 		XJsonArray_append_move_base(array, value);
 
 
-		XJsonObject_insert_keyUtf8_double(object, "数字", 66666);
+		XJsonObject_insert_keyUtf8_int(object, "数字", 66666);
 		//XJsonObject_insert_keyUtf8_object(object,"对象", object);
 
 		XJsonValue_setObject(value, object);

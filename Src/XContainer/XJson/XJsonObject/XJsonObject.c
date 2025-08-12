@@ -77,6 +77,19 @@ bool XJsonObject_insert_keyUtf8_double(XJsonObject* object, const char* key, dou
     return ret;
 }
 
+bool XJsonObject_insert_keyUtf8_int(XJsonObject* object, const char* key, int64_t i)
+{
+    if (object == NULL || key == NULL)
+        return false;
+    XString_Init_Utf8(str, key);
+    XJsonValue_Init(value, XJsonValue_Int);
+    value->data.integer = i;
+    bool ret = XJsonObject_insert_move_base(object, str, value);
+    XString_deinit_base(str);
+    XJsonValue_deinit(value);
+    return ret;
+}
+
 bool XJsonObject_insert_keyUtf8_string(XJsonObject* object, const char* key, const XString* strValue)
 {
     if (object == NULL || key == NULL || strValue == NULL)

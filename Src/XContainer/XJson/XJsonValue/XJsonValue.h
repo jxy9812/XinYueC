@@ -21,6 +21,7 @@ typedef enum XJsonValueType
     XJsonValue_Null,
     XJsonValue_Bool,
     XJsonValue_Double,
+    XJsonValue_Int,
     XJsonValue_String,
     XJsonValue_Array,
     XJsonValue_Object
@@ -35,6 +36,7 @@ typedef struct XJsonValue
     union {
         bool boolean;
         double number;
+        int64_t integer;
         XString* string;
         XJsonArray* array;
         XJsonObject* object;
@@ -45,6 +47,7 @@ typedef struct XJsonValue
 XJsonValue* XJsonValue_create_null(void);
 XJsonValue* XJsonValue_create_bool(bool value);
 XJsonValue* XJsonValue_create_double(double value);
+XJsonValue* XJsonValue_create_int(int64_t value);
 XJsonValue* XJsonValue_create_string(const XString* string);
 XJsonValue* XJsonValue_create_array(XJsonArray* array);
 XJsonValue* XJsonValue_create_object(XJsonObject* object);
@@ -65,6 +68,7 @@ XJsonValueType XJsonValue_type(const XJsonValue* value);
 bool XJsonValue_isNull(const XJsonValue* value);
 bool XJsonValue_isBool(const XJsonValue* value);
 bool XJsonValue_isDouble(const XJsonValue* value);
+bool XJsonValue_isInt(const XJsonValue* value);
 bool XJsonValue_isString(const XJsonValue* value);
 bool XJsonValue_isArray(const XJsonValue* value);
 bool XJsonValue_isObject(const XJsonValue* value);
@@ -72,6 +76,7 @@ bool XJsonValue_isObject(const XJsonValue* value);
 // 值获取
 bool XJsonValue_toBool(const XJsonValue* value, bool defaultValue);
 double XJsonValue_toDouble(const XJsonValue* value, double defaultValue);
+int64_t XJsonValue_toInt(const XJsonValue* value, int64_t defaultValue);
 const XString* XJsonValue_toString(const XJsonValue* value);
 XJsonArray* XJsonValue_toArray(const XJsonValue* value);
 XJsonObject* XJsonValue_toObject(const XJsonValue* value);
@@ -80,6 +85,7 @@ XJsonObject* XJsonValue_toObject(const XJsonValue* value);
 void XJsonValue_setNull(XJsonValue* value);
 void XJsonValue_setBool(XJsonValue* value, bool b);
 void XJsonValue_setDouble(XJsonValue* value, double d);
+void XJsonValue_setInt(XJsonValue* value, int64_t i);
 void XJsonValue_setString(XJsonValue* value, const XString* s);
 void XJsonValue_setString_move(XJsonValue* value, const XString* s);
 void XJsonValue_setString_utf8(XJsonValue* value, const char* utf8);
