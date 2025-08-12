@@ -350,4 +350,5 @@ XVtable* XString_class_init() {
     return XVTABLE_DEFAULT;
 }
 
+
 #endif

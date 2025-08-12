@@ -18,7 +18,7 @@
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量（不含结束符）
 #define XString_cdata(str) ((const XChar*)XContainerDataPtr(str))
-//#define XString_copy        XString_create
+//#define XString_copy        XString_create_copy
 
 // -------------------------- 内部机制辅助函数 --------------------------
 
@@ -61,11 +61,16 @@ XString* XString_copy(const XString* other)
 
     return str;
 }
-XString* XString_create(const XString* other)
+XString* XString_create()
+{
+    return XString_create_utf8(NULL);
+}
+
+XString* XString_create_copy(const XString* other)
 {
     if(other)
         return XString_copy(other);
-    return XString_create_utf8(NULL);
+    return XString_create();
     //if (!other) return NULL;
 
     //XString* str = (XString*)XMemory_malloc(sizeof(XString));
@@ -75,6 +80,14 @@ XString* XString_create(const XString* other)
     //XString_copy_base(str, other);
     ////XString_detach(str);
     //return str;
+}
+XString* XString_create_move(XString* other)
+{
+    if (other==NULL)
+        return NULL;
+    XString* str= XString_create();
+    XString_move_base(str,other);
+    return str;
 }
 // 字符串创建函数
 XString* XString_create_utf8(const char* utf8_str) 

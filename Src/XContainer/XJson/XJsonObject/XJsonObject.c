@@ -83,7 +83,7 @@ bool XJsonObject_insert_keyUtf8_string(XJsonObject* object, const char* key, con
         return false;
     XString_Init_Utf8(str, key);
     XJsonValue_Init(value, XJsonValue_String);
-    value->data.string = XString_create(strValue);
+    value->data.string = XString_create_copy(strValue);
     bool ret = XJsonObject_insert_move_base(object, str, value);
     XString_deinit_base(str);
     XJsonValue_deinit(value);

@@ -66,7 +66,7 @@ XString* XStringList_join(const XStringList* strList, const XString* separator)
 		return NULL;
 	if (XString_isEmpty_base(separator))
 		return NULL;
-	XString* str = XString_create(NULL);
+	XString* str = XString_create_copy(NULL);
 	for_each_iterator(strList, XStringList, it)
 	{
 		XString* s = XStringList_iterator_data(&it);

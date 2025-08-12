@@ -248,6 +248,21 @@ bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object)
     XJsonValue_setObject_move(document->root, object);
     return true;
 }
+XJsonDocument* XJsonDocument_fromString(const XString* json)
+{
+    if (!json || XString_isEmpty_base(json)) return NULL;
+    XByteArray* buff = XByteArray_create(0);
+    //引用
+    XContainerDataPtr(buff)= XString_toUtf8(json);
+    XContainerSize(buff)= XString_toUtf8_length(json)+1;
+    XContainerCapacity(buff) = XContainerSize(buff) ;
+    XJsonDocument* doc = XJsonDocument_fromJson(buff);
+    XContainerDataPtr(buff) = NULL;
+    XContainerSize(buff) =0;
+    XContainerCapacity(buff) = 0;
+    XByteArray_delete_base(buff);
+    return doc;
+}
 
 XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentFormat format)
 {
@@ -604,7 +619,7 @@ XString* parse_string(const char** ptr, const char* end)
     if (*ptr >= end || **ptr != '"') return NULL;
     (*ptr)++; // 跳过开头引号
     const char* start = *ptr;
-    XString* str = XString_create(NULL);
+    XString* str = XString_create_copy(NULL);
     XByteArray* buff = XByteArray_create(0);
     while (*ptr < end && **ptr != '"') {
         if (**ptr == '\\') {
@@ -791,6 +806,7 @@ XJsonValue* parse_value(const char** ptr, const char* end, XStack* stack)
         if (!str) return NULL;
         XJsonValue* val = XJsonValue_create_null();
         XJsonValue_setString_move(val, str);
+        XString_delete_base(str);
         return val;
     }
     case 't':
@@ -837,7 +853,7 @@ XJsonValue* parse_object(const char** ptr, const char* end, XStack* stack)
             XStack_pop_base(stack); // 弹出上下文
             XJsonValue* value= XJsonValue_create_null();
             XJsonValue_setObject_move(value, obj); // 转移所有权
-            //XJsonObject_delete_base(obj);
+            XJsonObject_delete_base(obj);
             return value;
         }
 
@@ -920,6 +936,7 @@ XJsonValue* parse_array(const char** ptr, const char* end, XStack* stack)
             XStack_pop_base(stack); // 弹出上下文
             XJsonValue* value = XJsonValue_create_null();
             XJsonValue_setArray_move(value, arr); // 转移所有权
+            XJsonArray_delete_base(arr);
             return value;
         }
 

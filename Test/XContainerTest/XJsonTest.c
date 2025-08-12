@@ -47,7 +47,7 @@ void XJsonObjectTest()
 		
 		//printf("\n\n\n\n\n\n");
 		XJsonDocument* doc = XJsonDocument_create_object(object);
-		XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Compact);
+		XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Indented);
 		XJsonDocument_delete(doc);
 		XPrint_utf8(XContainerDataPtr(json));
 		XPrint_utf8("\n开始从json文本转json对象\n");

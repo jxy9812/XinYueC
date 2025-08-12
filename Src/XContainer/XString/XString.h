@@ -66,13 +66,15 @@ typedef struct XString
 XVtable* XString_class_init();
 
 // -------------------------- 构造与初始化函数 --------------------------
+XString* XString_create();
 /**
  * @brief 拷贝引用 XString 对象
  * @param other 输入的XString对象
  * @return 成功返回 XString 指针，失败返回 NULL
  */
-XString* XString_create(const XString* other);
+XString* XString_create_copy(const XString* other);
 
+XString* XString_create_move(XString* other);
 /**
  * @brief 从 UTF-8 字符串创建 XString 对象
  * @param utf8_str 输入的 UTF-8 字符串（NULL 则创建空字符串）

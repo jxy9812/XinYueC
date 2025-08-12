@@ -93,7 +93,7 @@ void XStringCopyTest()
 	{
 		XString* str = XString_create_utf8("这是一个字符串拷贝引用测试");
 		XPrint(str); printf("\n");
-		XString* copy = XString_create(str);
+		XString* copy = XString_create_copy(str);
 		//XPrint(copy); printf("\n");
 
 		XString_append_utf8(str,"追加测试");

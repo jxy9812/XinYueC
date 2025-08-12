@@ -43,7 +43,7 @@ XJsonValue* XJsonValue_create_string(const XString* string)
     XJsonValue_init(val, XJsonValue_String);
     if (val)
     {
-        val->data.string = XString_create(string);
+        val->data.string = XString_create_copy(string);
     }
     return val;
 }
@@ -108,7 +108,7 @@ void XJsonValue_copy(XJsonValue* var, const XJsonValue* src)
     {
     case XJsonValue_Bool:var->data.boolean = src->data.boolean; break;
     case XJsonValue_Double:var->data.number = src->data.number; break;
-    case XJsonValue_String:var->data.string=XString_create(src->data.string); break;
+    case XJsonValue_String:var->data.string=XString_create_copy(src->data.string); break;
     case XJsonValue_Array: var->data.array = XJsonArray_create_copy(src->data.array); break;
     case XJsonValue_Object: var->data.object = XJsonObject_create_copy(src->data.object); break;
     default:
@@ -241,7 +241,7 @@ void XJsonValue_setString(XJsonValue* value, const XString* s)
 
     XJsonValue_deinit(value);
     value->type = XJsonValue_String;
-    value->data.string = XString_create(s);
+    value->data.string = XString_create_copy(s);
 }
 
 void XJsonValue_setString_move(XJsonValue* value, const XString* s)
@@ -250,7 +250,7 @@ void XJsonValue_setString_move(XJsonValue* value, const XString* s)
 
     XJsonValue_deinit(value);
     value->type = XJsonValue_String;
-    value->data.string = s;
+    value->data.string = XString_create_move(s);
 }
 
 void XJsonValue_setString_utf8(XJsonValue* value, const char* utf8)
@@ -277,7 +277,7 @@ void XJsonValue_setArray_move(XJsonValue* value, XJsonArray* a)
 
     XJsonValue_deinit(value);
     value->type = XJsonValue_Array;
-    value->data.array = a;
+    value->data.array = XJsonArray_create_move(a);
 }
 
 void XJsonValue_setObject(XJsonValue* value, XJsonObject* o) 
@@ -294,7 +294,7 @@ void XJsonValue_setObject_move(XJsonValue* value, XJsonObject* o)
 
     XJsonValue_deinit(value);
     value->type = XJsonValue_Object;
-    value->data.object = o;
+    value->data.object = XJsonObject_create_move(o);
 }
 XVariant* XJsonValue_toVariant(const XJsonValue* value) 
 {
