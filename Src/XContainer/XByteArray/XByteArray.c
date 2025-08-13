@@ -15,6 +15,24 @@ XByteArray* XByteArray_create(size_t size)
 	return array;
 }
 
+XByteArray* XByteArray_create_copy(const XByteArray* other)
+{
+	if (other == NULL)
+		return NULL;
+	XByteArray* v = XByteArray_create(0);
+	XByteArray_copy_base(v, other);
+	return v;
+}
+
+XByteArray* XByteArray_create_move(XByteArray* other)
+{
+	if (other == NULL)
+		return NULL;
+	XByteArray* v = XByteArray_create(0);
+	XByteArray_move_base(v, other);
+	return v;
+}
+
 bool XByteArray_push_front_base(XByteArray* array, const uint8_t byte)
 {
 	return XVector_push_front_base(array,&byte);

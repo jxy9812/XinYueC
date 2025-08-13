@@ -41,6 +41,8 @@ typedef struct XVector
 XVtable* XVector_class_init();
 //开辟一个动态数组,初始化 size_t
 XVector* XVector_create(size_t typeSize);
+XVector* XVector_create_copy(const XVector* other);
+XVector* XVector_create_move(XVector* other);
 #define XVector_Create(Type) XVector_create(sizeof(Type))
 //初始化 XVector
 void XVector_init(XVector* this_vector, size_t typeSize);

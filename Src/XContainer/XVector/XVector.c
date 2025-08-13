@@ -11,6 +11,24 @@ XVector* XVector_create(size_t typeSize)
 	return this_vector;
 }
 
+XVector* XVector_create_copy(const XVector* other)
+{
+	if (other == NULL)
+		return NULL;
+	XVector*  v=XVector_create(XContainerTypeSize(other));
+	XVector_copy_base(v,other);
+	return v;
+}
+
+XVector* XVector_create_move(XVector* other)
+{
+	if (other == NULL)
+		return NULL;
+	XVector* v = XVector_create(XContainerTypeSize(other));
+	XVector_move_base(v, other);
+	return v;
+}
+
 bool XVector_resize_base(XVector* this_vector, size_t size)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
