@@ -40,6 +40,8 @@ extern "C" {
 	//字符串
 	void XMenu_XStringTest(XMenu* root);
 
+	void XMenu_XJsonTest(XMenu* root);
+
 	//字符串数组测试
 	void XStringListTest();
 	//字符串测试

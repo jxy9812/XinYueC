@@ -6,6 +6,9 @@
 #include"XJsonArray.h"
 #include"XJsonValue.h"
 #include"XJsonDocument.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
 void XJsonObjectTest()
 {
 	//while (true)
@@ -64,6 +67,7 @@ void XJsonObjectTest()
 		XJsonValue_delete(value);
 		XJsonObject_delete_base(object);
 	}
+	XCoreApplication_requestQuit();
 }
 void XJsonArrayTest()
 {
@@ -108,6 +112,19 @@ void XJsonArrayTest()
 		XJsonArray_delete_base(array);
 		XJsonValue_delete(value);
 	}
+	XCoreApplication_requestQuit();
 }
-
+void XMenu_XJsonTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XJson(json)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "XJsonObject");
+		XAction_setAction(action, XJsonObjectTest);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "XJsonArray");
+		XAction_setAction(action, XJsonArrayTest);
+	}
+}
 #endif

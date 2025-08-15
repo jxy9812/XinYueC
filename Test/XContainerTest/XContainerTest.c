@@ -13,6 +13,7 @@ void XMenu_XContainerTest(XMenu* root)
 	XMenu_QueueTest(menu);
 	XMenu_MapTest(menu);
 	XMenu_SetTest(menu);
+	XMenu_XJsonTest(menu);
 }
 void XMenu_VectorTest(XMenu* root)
 {

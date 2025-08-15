@@ -51,8 +51,97 @@ typedef struct XBsonValue
 XBsonValue* XBsonValue_create(XBsonType type);
 XBsonValue* XBsonValue_create_copy(const XBsonValue* other);
 XBsonValue* XBsonValue_create_move(XBsonValue* other);
+XBsonValue* XBsonValue_create_null(void);
+XBsonValue* XBsonValue_create_bool(bool value);
+XBsonValue* XBsonValue_create_double(double value);
+XBsonValue* XBsonValue_create_int32(int32_t value);
+XBsonValue* XBsonValue_create_int64(int64_t value);
+XBsonValue* XBsonValue_create_string(const XString* str);
+XBsonValue* XBsonValue_create_document(const XBsonDocument* doc);
+XBsonValue* XBsonValue_create_array(const XBsonArray* arr);
+XBsonValue* XBsonValue_create_binary(XBsonBinarySubtype subtype, const XByteArray* data);
+// 创建ObjectId类型BSON值（复制12字节ID）
+XBsonValue* XBsonValue_create_object_id(const uint8_t* oid);
+// 创建 datetime 类型BSON值（毫秒级时间戳）
+XBsonValue* XBsonValue_create_datetime(int64_t timestamp);
+// 创建正则表达式类型BSON值（复制模式和选项）
+XBsonValue* XBsonValue_create_regex(const XString* pattern, const XString* options);
+// 创建JavaScript代码类型BSON值（复制代码字符串）
+XBsonValue* XBsonValue_create_javascript(const XString* code);
+// 创建带作用域的JavaScript类型BSON值（复制代码和作用域文档）
+XBsonValue* XBsonValue_create_javascript_scope(const XString* code, const XBsonDocument* scope);
+// 创建timestamp类型BSON值（增量+时间戳）
+XBsonValue* XBsonValue_create_timestamp(uint32_t increment, uint32_t timestamp);
+// 创建decimal128类型BSON值（复制16字节十进制数据）
+XBsonValue* XBsonValue_create_decimal128(const uint8_t* decimal);
+// 创建MinKey类型BSON值
+XBsonValue* XBsonValue_create_min_key(void);
+// 创建MaxKey类型BSON值
+XBsonValue* XBsonValue_create_max_key(void);
 void XBsonValue_init(XBsonValue* value, XBsonType type);
 
+
+// 设置类型
+void XBsonValue_setNull(XBsonValue* value);
+void XBsonValue_setBool(XBsonValue* value, bool b);
+void XBsonValue_setDouble(XBsonValue* value, double d);
+void XBsonValue_setInt32(XBsonValue* value, int32_t i);
+void XBsonValue_setInt64(XBsonValue* value, int64_t i);
+void XBsonValue_setString(XBsonValue* value, const XString* str);
+void XBsonValue_setString_move(XBsonValue* value, XString* str);
+void XBsonValue_setDocument(XBsonValue* value, const XBsonDocument* doc);
+void XBsonValue_setDocument_move(XBsonValue* value, XBsonDocument* doc);
+void XBsonValue_setArray(XBsonValue* value, const XBsonArray* arr);
+void XBsonValue_setArray_move(XBsonValue* value, XBsonArray* arr);
+void XBsonValue_setBinary(XBsonValue* value, XBsonBinarySubtype subtype, const XByteArray* data);
+void XBsonValue_setBinary_move(XBsonValue* value, XBsonBinarySubtype subtype, XByteArray* data);
+void XBsonValue_setObjectId(XBsonValue* value, const uint8_t* oid);
+void XBsonValue_setDatetime(XBsonValue* value, int64_t timestamp);
+void XBsonValue_setRegex(XBsonValue* value, const XString* pattern, const XString* options);
+void XBsonValue_setJavascript(XBsonValue* value, const XString* code);
+void XBsonValue_setJavascript_scope(XBsonValue* value, const XString* code, const XBsonDocument* scope);
+void XBsonValue_setTimestamp(XBsonValue* value, uint32_t increment, uint32_t timestamp);
+void XBsonValue_setDecimal128(XBsonValue* value, const uint8_t* decimal);
+void XBsonValue_setMin_key(XBsonValue* value);
+void XBsonValue_setMax_key(XBsonValue* value);
+
+//to*系列
+bool XBsonValue_toBool(const XBsonValue* value, bool defaultValue);
+double XBsonValue_toDouble(const XBsonValue* value, double defaultValue);
+int32_t XBsonValue_toInt32(const XBsonValue* value, int32_t defaultValue);
+int64_t XBsonValue_toInt64(const XBsonValue* value, int64_t defaultValue);
+const XString* XBsonValue_toString(const XBsonValue* value);
+const XBsonDocument* XBsonValue_toDocument(const XBsonValue* value);
+const XBsonArray* XBsonValue_toArray(const XBsonValue* value);
+const XByteArray* XBsonValue_toBinary(const XBsonValue* value, XBsonBinarySubtype* outSubtype);
+// 获取ObjectId（类型不匹配返回NULL）
+const uint8_t* XBsonValue_toObjectId(const XBsonValue* value);
+// 获取datetime时间戳（类型不匹配返回默认值）
+int64_t XBsonValue_toDatetime(const XBsonValue* value, int64_t defaultValue);
+// 获取正则表达式模式（类型不匹配返回NULL）
+const XString* XBsonValue_toRegexPattern(const XBsonValue* value);
+// 获取正则表达式选项（类型不匹配返回NULL）
+const XString* XBsonValue_toRegexOptions(const XBsonValue* value);
+
+//is*系列
+bool XBsonValue_isNull(const XBsonValue* value);
+bool XBsonValue_isBool(const XBsonValue* value);
+bool XBsonValue_isDouble(const XBsonValue* value);
+bool XBsonValue_isInt32(const XBsonValue* value);
+bool XBsonValue_isInt64(const XBsonValue* value);
+bool XBsonValue_isString(const XBsonValue* value);
+bool XBsonValue_isDocument(const XBsonValue* value);
+bool XBsonValue_isArray(const XBsonValue* value);
+bool XBsonValue_isBinary(const XBsonValue* value);
+bool XBsonValue_isObjectId(const XBsonValue* value);
+bool XBsonValue_isDatetime(const XBsonValue* value);
+bool XBsonValue_isRegex(const XBsonValue* value);
+bool XBsonValue_isJavascript(const XBsonValue* value);
+bool XBsonValue_isJavascriptScope(const XBsonValue* value);
+bool XBsonValue_isTimestamp(const XBsonValue* value);
+bool XBsonValue_isDecimal128(const XBsonValue* value);
+bool XBsonValue_isMinKey(const XBsonValue* value);
+bool XBsonValue_isMaxKey(const XBsonValue* value);
 /**
  * 反初始化一个BSON值（释放内部资源，保留对象本身）
  * @param value 要反初始化的BSON值指针

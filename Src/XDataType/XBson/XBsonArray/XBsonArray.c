@@ -3,7 +3,8 @@
 #include "XStack.h"
 #include <string.h>
 
-XBsonArray* XBsonArray_create() {
+XBsonArray* XBsonArray_create() 
+{
     XBsonArray* array = (XBsonArray*)XMemory_malloc(sizeof(XBsonArray));
     if (array) {
         XBsonArray_init(array);
@@ -11,7 +12,8 @@ XBsonArray* XBsonArray_create() {
     return array;
 }
 
-XBsonArray* XBsonArray_create_copy(const XBsonArray* other) {
+XBsonArray* XBsonArray_create_copy(const XBsonArray* other)
+{
     if (!other) return NULL;
 
     XBsonArray* array = XBsonArray_create();
@@ -21,7 +23,8 @@ XBsonArray* XBsonArray_create_copy(const XBsonArray* other) {
     return array;
 }
 
-XBsonArray* XBsonArray_create_move(XBsonArray* other) {
+XBsonArray* XBsonArray_create_move(XBsonArray* other) 
+{
     if (!other) return NULL;
 
     XBsonArray* array = XBsonArray_create();
@@ -31,7 +34,8 @@ XBsonArray* XBsonArray_create_move(XBsonArray* other) {
     return array;
 }
 
-void XBsonArray_init(XBsonArray* array) {
+void XBsonArray_init(XBsonArray* array) 
+{
     if (!array) return;
 
     XVector_init(array, sizeof(XBsonValue));
@@ -40,7 +44,8 @@ void XBsonArray_init(XBsonArray* array) {
     XContainerSetDataMoveMethod(array, XBsonValue_move);
 }
 
-XJsonArray* XBsonArray_to_json_array(const XBsonArray* bson_arr) {
+XJsonArray* XBsonArray_to_json_array(const XBsonArray* bson_arr)
+{
     if (!bson_arr) return NULL;
 
   /*  XJsonArray* json_arr = XJsonArray_create();
@@ -57,7 +62,8 @@ XJsonArray* XBsonArray_to_json_array(const XBsonArray* bson_arr) {
     return json_arr;*/
 }
 
-void XBsonArray_from_json_array(XBsonArray* bson_arr, const XJsonArray* json_arr) {
+void XBsonArray_from_json_array(XBsonArray* bson_arr, const XJsonArray* json_arr) 
+{
     if (!bson_arr || !json_arr) return;
 
     /*XBsonArray_clear(bson_arr);
@@ -71,7 +77,8 @@ void XBsonArray_from_json_array(XBsonArray* bson_arr, const XJsonArray* json_arr
     }*/
 }
 
-XByteArray* XBsonArray_to_bytes(const XBsonArray* array) {
+XByteArray* XBsonArray_to_bytes(const XBsonArray* array) 
+{
     if (!array) return NULL;
 
     //// 先计算总大小

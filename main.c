@@ -51,8 +51,8 @@ int main(int argc, char* args[])
 	//XStringListTest();
 	//XStringTest();
 	//XJsonArrayTest();
-	XJsonObjectTest();
-	return;
+	//XJsonObjectTest();
+	//return;
 	XMenuTest_run();
 	//XModbusTest();
 	//XCylinderTest();	

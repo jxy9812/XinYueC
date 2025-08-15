@@ -9,7 +9,8 @@ extern "C" {
 #include "XBsonObject.h"
 #include "XJsonDocument.h"
 
-typedef struct XBsonDocument {
+typedef struct XBsonDocument 
+{
     XBsonObject object;
 } XBsonDocument;
 
@@ -36,16 +37,16 @@ void XBsonDocument_move(XBsonDocument* dest, XBsonDocument* src);
 #define XBsonDocument_contains(doc, key)     XBsonObject_contains(&(doc)->object, key)
 
 // 转换函数
-    XJsonDocument* XBsonDocument_to_json_document(const XBsonDocument* bson_doc);
-    XString* XBsonDocument_to_json_string(const XBsonDocument* bson_doc);
-    XJsonObject* XBsonDocument_to_json_object(const XBsonDocument* bson_doc);
+XJsonDocument* XBsonDocument_to_json_document(const XBsonDocument* bson_doc);
+XString* XBsonDocument_to_json_string(const XBsonDocument* bson_doc);
+XJsonObject* XBsonDocument_to_json_object(const XBsonDocument* bson_doc);
 
-    void XBsonDocument_from_json_document(XBsonDocument* bson_doc, const XJsonDocument* json_doc);
-    void XBsonDocument_from_json_object(XBsonDocument* bson_doc, const XJsonObject* json_obj);
+void XBsonDocument_from_json_document(XBsonDocument* bson_doc, const XJsonDocument* json_doc);
+void XBsonDocument_from_json_object(XBsonDocument* bson_doc, const XJsonObject* json_obj);
 
-    // 序列化与反序列化
-    XByteArray* XBsonDocument_to_bytes(const XBsonDocument* document);
-    bool XBsonDocument_from_bytes(XBsonDocument* document, const uint8_t* data, size_t size);
+// 序列化与反序列化
+XByteArray* XBsonDocument_to_bytes(const XBsonDocument* document);
+bool XBsonDocument_from_bytes(XBsonDocument* document, const uint8_t* data, size_t size);
 
 #ifdef __cplusplus
 }

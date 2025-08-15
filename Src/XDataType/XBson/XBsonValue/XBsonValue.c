@@ -59,6 +59,130 @@ XBsonValue* XBsonValue_create_move(XBsonValue* other) {
     return value;
 }
 
+XBsonValue* XBsonValue_create_null(void)
+{
+    XBsonValue* value = XBsonValue_create(XBSON_TYPE_NULL);
+    //XBsonValue_setNull(value);
+    return value;
+}
+
+XBsonValue* XBsonValue_create_bool(bool value)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setBool(val,value);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_double(double value)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setDouble(val, value);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_int32(int32_t value)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setInt32(val, value);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_int64(int64_t value)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setInt64(val, value);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_string(const XString* str)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setString(val, str);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_document(const XBsonDocument* doc)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setDocument(val, doc);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_array(const XBsonArray* arr)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setArray(val, arr);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_binary(XBsonBinarySubtype subtype, const XByteArray* data)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setBinary(val,subtype,data);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_object_id(const uint8_t* oid)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setObjectId(val, oid);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_datetime(int64_t timestamp)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setDatetime(val, timestamp);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_regex(const XString* pattern, const XString* options)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setRegex(val, pattern,options);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_javascript(const XString* code)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setJavascript(val, code);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_javascript_scope(const XString* code, const XBsonDocument* scope)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setJavascript_scope(val, code, scope);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_timestamp(uint32_t increment, uint32_t timestamp)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setTimestamp(val, increment,timestamp);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_decimal128(const uint8_t* decimal)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_NULL);
+    XBsonValue_setDecimal128(val, decimal);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_min_key(void)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_MIN_KEY);
+    return val;
+}
+
+XBsonValue* XBsonValue_create_max_key(void)
+{
+    XBsonValue* val = XBsonValue_create(XBSON_TYPE_MAX_KEY);
+    return val;
+}
+
 void XBsonValue_init(XBsonValue* value, XBsonType type) {
     if (!value) return;
 
@@ -88,6 +212,347 @@ void XBsonValue_init(XBsonValue* value, XBsonType type) {
     default:
         break;
     }
+}
+
+void XBsonValue_setNull(XBsonValue* value)
+{
+    if (!value) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_NULL;
+}
+
+void XBsonValue_setBool(XBsonValue* value, bool b)
+{
+    if (!value) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_BOOLEAN;
+    value->data.boolean = b;
+}
+
+void XBsonValue_setDouble(XBsonValue* value, double d)
+{
+    if (!value) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_DOUBLE;
+    value->data.dbl = d;
+}
+
+void XBsonValue_setInt32(XBsonValue* value, int32_t i)
+{
+    if (!value) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_INT32;
+    value->data.int32 = i;
+}
+
+void XBsonValue_setInt64(XBsonValue* value, int64_t i)
+{
+    if (!value) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_INT64;
+    value->data.int64 = i;
+}
+
+void XBsonValue_setString(XBsonValue* value, const XString* str)
+{
+    if (!value || !str) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_STRING;
+    value->data.str = XString_create_copy(str);
+}
+
+void XBsonValue_setString_move(XBsonValue* value, XString* str)
+{
+    if (!value || !str) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_STRING;
+    value->data.str = XString_create_move(str); //将数据转移
+}
+
+void XBsonValue_setDocument(XBsonValue* value, const XBsonDocument* doc)
+{
+    if (!value || !doc) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_DOCUMENT;
+    value->data.doc = XBsonDocument_create_copy(doc);
+}
+
+void XBsonValue_setDocument_move(XBsonValue* value, XBsonDocument* doc)
+{
+    if (!value || !doc) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_DOCUMENT;
+    value->data.doc = XBsonDocument_create_move(doc); // 
+}
+
+void XBsonValue_setArray(XBsonValue* value, const XBsonArray* arr)
+{
+    if (!value || !arr) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_ARRAY;
+    value->data.arr = XBsonArray_create_copy(arr);
+}
+
+void XBsonValue_setArray_move(XBsonValue* value, XBsonArray* arr)
+{
+    if (!value || !arr) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_ARRAY;
+    value->data.arr = XBsonArray_create_move(arr);
+}
+
+void XBsonValue_setBinary(XBsonValue* value, XBsonBinarySubtype subtype, const XByteArray* data)
+{
+    if (!value || !data) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_BINARY;
+    value->data.binary.subtype = subtype;
+    value->data.binary.data = XByteArray_create_copy(data);
+}
+
+void XBsonValue_setBinary_move(XBsonValue* value, XBsonBinarySubtype subtype, XByteArray* data)
+{
+    if (!value || !data) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_BINARY;
+    value->data.binary.subtype = subtype;
+    value->data.binary.data = XByteArray_create_move(data);
+}
+
+void XBsonValue_setObjectId(XBsonValue* value, const uint8_t* oid)
+{
+    if (!value || !oid) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_OBJECT_ID;
+    memcpy(value->data.oid, oid, 12);
+}
+
+void XBsonValue_setDatetime(XBsonValue* value, int64_t timestamp)
+{
+    if (!value) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_DATETIME;
+    value->data.datetime = timestamp;
+}
+
+void XBsonValue_setRegex(XBsonValue* value, const XString* pattern, const XString* options)
+{
+    if (!value || !pattern || !options) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_REGEX;
+    value->data.regex.pattern = XString_create_copy(pattern);
+    value->data.regex.options = XString_create_copy(options);
+}
+
+void XBsonValue_setJavascript(XBsonValue* value, const XString* code)
+{
+    if (!value || !code) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_JAVASCRIPT;
+    value->data.str = XString_create_copy(code);
+}
+
+void XBsonValue_setJavascript_scope(XBsonValue* value, const XString* code, const XBsonDocument* scope)
+{
+    if (!value || !code) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_JAVASCRIPT_SCOPE;
+    //value->data.str = XString_create_copy(code);
+    value->data.doc = XBsonDocument_create_copy(scope);
+}
+
+void XBsonValue_setTimestamp(XBsonValue* value, uint32_t increment, uint32_t timestamp)
+{
+    if (!value) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_TIMESTAMP;
+    value->data.ts.increment = increment;
+    value->data.ts.timestamp = timestamp;
+}
+
+void XBsonValue_setDecimal128(XBsonValue* value, const uint8_t* decimal)
+{
+    if (!value) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_DECIMAL128;
+    memcpy(value->data.decimal, decimal, 16);
+}
+
+void XBsonValue_setMin_key(XBsonValue* value)
+{
+    if (!value) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_MIN_KEY;
+}
+
+void XBsonValue_setMax_key(XBsonValue* value)
+{
+    if (!value) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_MAX_KEY;
+}
+
+bool XBsonValue_toBool(const XBsonValue* value, bool defaultValue)
+{
+    return (value && value->type == XBSON_TYPE_BOOLEAN) ? value->data.boolean : defaultValue;
+}
+
+double XBsonValue_toDouble(const XBsonValue* value, double defaultValue)
+{
+    return (value && value->type == XBSON_TYPE_DOUBLE) ? value->data.dbl : defaultValue;
+}
+
+int32_t XBsonValue_toInt32(const XBsonValue* value, int32_t defaultValue)
+{
+    return (value && value->type == XBSON_TYPE_INT32) ? value->data.int32 : defaultValue;
+}
+
+int64_t XBsonValue_toInt64(const XBsonValue* value, int64_t defaultValue)
+{
+    if (value && value->type == XBSON_TYPE_INT64) {
+        return value->data.int64;
+    }
+    else if (value && value->type == XBSON_TYPE_INT32) {
+        return (int64_t)value->data.int32;
+    }
+    return defaultValue;
+}
+
+const XString* XBsonValue_toString(const XBsonValue* value)
+{
+    return (value && (value->type == XBSON_TYPE_STRING || value->type == XBSON_TYPE_JAVASCRIPT))
+        ? value->data.str : NULL;
+}
+
+const XBsonDocument* XBsonValue_toDocument(const XBsonValue* value)
+{
+    return (value && (value->type == XBSON_TYPE_DOCUMENT || value->type == XBSON_TYPE_JAVASCRIPT_SCOPE))
+        ? value->data.doc : NULL;
+}
+
+const XBsonArray* XBsonValue_toArray(const XBsonValue* value)
+{
+    return (value && value->type == XBSON_TYPE_ARRAY) ? value->data.arr : NULL;
+}
+
+const XByteArray* XBsonValue_toBinary(const XBsonValue* value, XBsonBinarySubtype* outSubtype)
+{
+    if (value && value->type == XBSON_TYPE_BINARY) {
+        if (outSubtype) *outSubtype = value->data.binary.subtype;
+        return value->data.binary.data;
+    }
+    if (outSubtype) *outSubtype = XBSON_BINARY_GENERIC;
+    return NULL;
+}
+
+const uint8_t* XBsonValue_toObjectId(const XBsonValue* value)
+{
+    return (value && value->type == XBSON_TYPE_OBJECT_ID) ? value->data.oid : NULL;
+}
+
+int64_t XBsonValue_toDatetime(const XBsonValue* value, int64_t defaultValue)
+{
+    return (value && value->type == XBSON_TYPE_DATETIME) ? value->data.datetime : defaultValue;
+}
+
+const XString* XBsonValue_toRegexPattern(const XBsonValue* value)
+{
+    return (value && value->type == XBSON_TYPE_REGEX) ? value->data.regex.pattern : NULL;
+}
+
+const XString* XBsonValue_toRegexOptions(const XBsonValue* value)
+{
+    return (value && value->type == XBSON_TYPE_REGEX) ? value->data.regex.options : NULL;
+}
+
+bool XBsonValue_isNull(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_NULL;
+}
+
+bool XBsonValue_isBool(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_BOOLEAN;
+}
+
+bool XBsonValue_isDouble(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_DOUBLE;
+}
+
+bool XBsonValue_isInt32(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_INT32;
+}
+
+bool XBsonValue_isInt64(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_INT64;
+}
+
+bool XBsonValue_isString(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_STRING;
+}
+
+bool XBsonValue_isDocument(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_DOCUMENT;
+}
+
+bool XBsonValue_isArray(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_ARRAY;
+}
+
+bool XBsonValue_isBinary(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_BINARY;
+}
+
+bool XBsonValue_isObjectId(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_OBJECT_ID;
+}
+
+bool XBsonValue_isDatetime(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_DATETIME;
+}
+
+bool XBsonValue_isRegex(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_REGEX;
+}
+
+bool XBsonValue_isJavascript(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_JAVASCRIPT;
+}
+
+bool XBsonValue_isJavascriptScope(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_JAVASCRIPT_SCOPE;
+}
+
+bool XBsonValue_isTimestamp(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_TIMESTAMP;
+}
+
+bool XBsonValue_isDecimal128(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_DECIMAL128;
+}
+
+bool XBsonValue_isMinKey(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_MIN_KEY;
+}
+
+bool XBsonValue_isMaxKey(const XBsonValue* value)
+{
+    return XBsonValue_type(value) == XBSON_TYPE_MAX_KEY;
 }
 
 void XBsonValue_deinit(XBsonValue* value) {
