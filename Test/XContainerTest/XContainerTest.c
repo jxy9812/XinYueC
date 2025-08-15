@@ -14,6 +14,7 @@ void XMenu_XContainerTest(XMenu* root)
 	XMenu_MapTest(menu);
 	XMenu_SetTest(menu);
 	XMenu_XJsonTest(menu);
+	XMenu_XBsonTest(menu);
 }
 void XMenu_VectorTest(XMenu* root)
 {

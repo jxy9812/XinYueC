@@ -41,6 +41,7 @@ extern "C" {
 	void XMenu_XStringTest(XMenu* root);
 
 	void XMenu_XJsonTest(XMenu* root);
+	void XMenu_XBsonTest(XMenu* root);
 
 	//字符串数组测试
 	void XStringListTest();

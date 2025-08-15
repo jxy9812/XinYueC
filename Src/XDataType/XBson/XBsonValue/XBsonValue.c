@@ -1,6 +1,5 @@
 ﻿#include "XBsonValue.h"
 #include "XBsonArray.h"
-#include "XBsonObject.h"
 #include "XBsonDocument.h"
 #include "XMemory.h"
 #include "XJsonObject.h"
@@ -565,7 +564,7 @@ void XBsonValue_deinit(XBsonValue* value) {
         break;
     case XBSON_TYPE_DOCUMENT:
     case XBSON_TYPE_JAVASCRIPT_SCOPE:
-        XBsonDocument_delete(value->data.doc);
+        XBsonDocument_delete_base(value->data.doc);
         break;
     case XBSON_TYPE_ARRAY:
         XBsonArray_delete_base(value->data.arr);
@@ -742,7 +741,7 @@ XJsonValue* XBsonValue_to_json(const XBsonValue* bson_val) {
     }
     case XBSON_TYPE_JAVASCRIPT_SCOPE: {
         XJsonObject* js_obj = XJsonObject_create();
-        XJsonObject_insert_keyUtf8_string(js_obj, "$javascript", XBsonDocument_to_json_string(bson_val->data.doc));
+        //XJsonObject_insert_keyUtf8_string(js_obj, "$javascript", XBsonDocument_to_json_string(bson_val->data.doc));
         XJsonValue_setObject_move(json_val, js_obj);
         break;
     }

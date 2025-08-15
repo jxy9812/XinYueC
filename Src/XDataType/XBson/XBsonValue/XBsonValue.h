@@ -79,7 +79,7 @@ XBsonValue* XBsonValue_create_min_key(void);
 // 创建MaxKey类型BSON值
 XBsonValue* XBsonValue_create_max_key(void);
 void XBsonValue_init(XBsonValue* value, XBsonType type);
-
+#define XBsonValue_Init(var,type)  XBsonValue _##var,*var=&_##var;XBsonValue_init(var,type)
 
 // 设置类型
 void XBsonValue_setNull(XBsonValue* value);
