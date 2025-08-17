@@ -222,12 +222,12 @@ XString* XJsonObject_toString(const XJsonObject* object, XJsonDocumentFormat for
 {
     XJsonDocument* doc = XJsonDocument_create();
     //引用XJsonObject 
-    doc->root->data.object = object;
-    doc->root->type = XJsonValue_Object;
+    doc->root.data.object = object;
+    doc->root.type = XJsonValue_Object;
     XString* str= XJsonDocument_toString(doc,format);
     //恢复防止释放 XJsonObject
-    doc->root->data.object = NULL;
-    doc->root->type = XJsonValue_Invalid;
+    doc->root.data.object = NULL;
+    doc->root.type = XJsonValue_Invalid;
     XJsonDocument_delete(doc);
     return str;
 }

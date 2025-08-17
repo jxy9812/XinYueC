@@ -1,5 +1,5 @@
 ﻿#include "XJsonDocument.h"
-#include "XJsonValue.h"
+//#include "XJsonValue.h"
 #include "XJsonObject.h"
 #include "XJsonArray.h"
 #include "XByteArray.h"
@@ -89,7 +89,7 @@ XJsonDocument* XJsonDocument_create_object(XJsonObject* object)
     XJsonDocument* doc = XJsonDocument_create();
     if (doc) 
     {
-        XJsonValue_setObject(doc->root, object);
+        XJsonValue_setObject(doc, object);
     }
     return doc;
 }
@@ -100,7 +100,7 @@ XJsonDocument* XJsonDocument_create_array(XJsonArray* array) {
     XJsonDocument* doc = XJsonDocument_create();
     if (doc)
     {
-        XJsonValue_setArray(doc->root, array);
+        XJsonValue_setArray(doc, array);
     }
     return doc;
 }
@@ -109,23 +109,25 @@ void XJsonDocument_init(XJsonDocument* document)
 {
     if (document == NULL)
         return;
-    document->root = XJsonValue_create_null();
+    XJsonValue_init(document, XJsonValue_Null);
+    //document->root = XJsonValue_create_null();
 }
 
 void XJsonDocument_deinit(XJsonDocument* document)
 {
     if (!document) return;
-
-    if (document->root) 
+    XJsonValue_deinit(document);
+  /*  if (document->root) 
     {
         XJsonValue_delete(document->root);
         document->root = NULL;
-    }
+    }*/
 }
 
 void XJsonDocument_delete(XJsonDocument* document)
 {
     XJsonDocument_deinit(document);
+
     if(document)
         XMemory_free(document);
 }
@@ -134,25 +136,19 @@ void XJsonDocument_copy(XJsonDocument* doc, const XJsonDocument* src)
 {
     if (doc == NULL || src == NULL)
         return;
-    if (doc->root == NULL)
-        doc->root = XJsonValue_create_copy(src->root);
-    else
-        XJsonValue_copy(doc->root,src->root);
+    XJsonValue_copy(doc,src);
 }
 
 void XJsonDocument_move(XJsonDocument* doc, XJsonDocument* src)
 {
     if (doc == NULL || src == NULL)
         return;
-    if (doc->root == NULL)
-        doc->root = XJsonValue_create_move(src->root);
-    else
-        XJsonValue_move(doc->root, src->root);
+    XJsonValue_move(doc, src);
 }
 
 XJsonValue* XJsonDocument_root(XJsonDocument* document) 
 {
-    return document ? document->root : NULL;
+    return document ? document : NULL;
 }
 
 const XJsonValue* XJsonDocument_root_const(const XJsonDocument* document) 
@@ -160,36 +156,42 @@ const XJsonValue* XJsonDocument_root_const(const XJsonDocument* document)
     return XJsonDocument_root((XJsonDocument*)document);
 }
 
-void XJsonDocument_setRoot(XJsonDocument* document, XJsonValue* root) 
+void XJsonDocument_setRoot(XJsonDocument* document,const XJsonValue* root) 
 {
     if (!document || !root) return;
-
-    if (document->root)
+    XJsonValue_copy(document,root);
+    /*if (document->root)
     {
         XJsonValue_delete(document->root);
     }
-    document->root = root;
+    document->root = root;*/
+}
+
+void XJsonDocument_setRoot_move(XJsonDocument* document, XJsonValue* root)
+{
+    if (!document || !root) return;
+    XJsonValue_move(document, root);
 }
 
 bool XJsonDocument_isArray(const XJsonDocument* document)
 {
-    if (!document || !document->root) 
+    if (!document ) 
         return false;
-    return document->root->type == XJsonValue_Array;
+    return document->root.type == XJsonValue_Array;
 }
 
 bool XJsonDocument_isObject(const XJsonDocument* document)
 {
-    if (!document || !document->root)
+    if (!document )
         return false;
-    return document->root->type == XJsonValue_Object;
+    return document->root.type == XJsonValue_Object;
 }
 
 bool XJsonDocument_isNull(const XJsonDocument* document)
 {
-    if (!document || !document->root)
+    if (!document )
         return false;
-    switch (document->root->type)
+    switch (document->root.type)
     {
     case XJsonValue_Invalid:
     case XJsonValue_Null: return true;
@@ -201,15 +203,15 @@ bool XJsonDocument_isNull(const XJsonDocument* document)
 
 bool XJsonDocument_isEmpty(const XJsonDocument* document)
 {
-    if (!document || !document->root)
+    if (!document )
         return false;
-    switch (document->root->type)
+    switch (document->root.type)
     {
     case XJsonValue_Invalid:
     case XJsonValue_Null: return true;
-    case XJsonValue_String:return XString_isEmpty_base(document->root->data.string);
-    case XJsonValue_Array: return XJsonArray_isEmpty_base(document->root->data.array);
-    case XJsonValue_Object:return XJsonObject_isEmpty_base(document->root->data.object);
+    case XJsonValue_String:return XString_isEmpty_base(document->root.data.string);
+    case XJsonValue_Array: return XJsonArray_isEmpty_base(document->root.data.array);
+    case XJsonValue_Object:return XJsonObject_isEmpty_base(document->root.data.object);
     default:
         break;
     };
@@ -218,40 +220,37 @@ bool XJsonDocument_isEmpty(const XJsonDocument* document)
 
 XJsonObject* XJsonDocument_object(XJsonDocument* document) 
 {
-    if (!document || !document->root) return NULL;
+    if (!document ) return NULL;
 
-    if (document->root->type != XJsonValue_Object) 
+    if (document->root.type != XJsonValue_Object) 
     {
        /* XJsonObject* obj = XJsonObject_create();
         XJsonValue_setObject(document->root, obj);*/
         return NULL;
     }
 
-    return document->root->data.object;
+    return document->root.data.object;
 }
 
 XJsonArray* XJsonDocument_array(XJsonDocument* document) 
 {
-    if (!document || !document->root) return NULL;
+    if (!document ) return NULL;
 
-    if (document->root->type != XJsonValue_Array) {
+    if (document->root.type != XJsonValue_Array) {
      /*   XJsonArray* arr = XJsonArray_create();
         XJsonValue_setArray(document->root, arr);
         return arr;*/
         return NULL;
     }
 
-    return document->root->data.array;
+    return document->root.data.array;
 }
 
 bool XJsonDocument_setArray(XJsonDocument* document, const XJsonArray* array)
 {
     if (!document || array) 
         return false;
-    if (document->root)
-        XJsonValue_setArray(document->root, array);
-    else
-        document->root = XJsonValue_create_array(array);
+    XJsonValue_setArray(document, array);
     return true;
 }
 
@@ -259,10 +258,7 @@ bool XJsonDocument_setObject(XJsonDocument* document, const XJsonObject* object)
 {
     if (!document || object)
         return false;
-    if (document->root)
-        XJsonValue_setObject(document->root, object);
-    else
-        document->root = XJsonValue_create_object(object);
+    XJsonValue_setObject(document, object);
     return true;
 }
 
@@ -270,9 +266,7 @@ bool XJsonDocument_setArray_move(XJsonDocument* document, XJsonArray* array)
 {
     if (!document || array)
         return false;
-    if (document->root=NULL)
-        document->root = XJsonValue_create_null();
-    XJsonValue_setArray_move(document->root, array);
+    XJsonValue_setArray_move(document, array);
     return true;
 }
 
@@ -280,9 +274,7 @@ bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object)
 {
     if (!document || object)
         return false;
-    if (document->root = NULL)
-        document->root = XJsonValue_create_null();
-    XJsonValue_setObject_move(document->root, object);
+    XJsonValue_setObject_move(document, object);
     return true;
 }
 XJsonDocument* XJsonDocument_fromString(const XString* json)
@@ -303,7 +295,7 @@ XJsonDocument* XJsonDocument_fromString(const XString* json)
 
 XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentFormat format)
 {
-    if (!document || !document->root) return NULL;
+    if (!document ) return NULL;
     XByteArray* json = XJsonDocument_toJson(document, format);
     XString* str = XString_create_utf8(XContainerDataPtr(json));
     XByteArray_delete_base(json);
@@ -340,11 +332,9 @@ XJsonDocument* XJsonDocument_fromJson(const XByteArray* json)
     // 创建文档
     XJsonDocument* doc = XJsonDocument_create();
     if (doc) {
-        XJsonDocument_setRoot(doc, root);
+        XJsonDocument_setRoot_move(doc, root);
     }
-    else {
-        XJsonValue_delete(root);
-    }
+    XJsonValue_delete(root);
 
     XStack_delete_base(stack);
     return doc;
@@ -353,7 +343,7 @@ XJsonDocument* XJsonDocument_fromJson(const XByteArray* json)
 
 XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFormat format)
 {
-    if (!document || !document->root) return NULL;
+    if (!document ) return NULL;
 
     // 创建字节数组存储UTF-8结果
     XByteArray* output = XByteArray_create(0);
@@ -368,15 +358,15 @@ XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFor
     XStack_Push_Base(stack, int,0);
 
     // 根据根节点类型序列化
-    switch (document->root->type) {
+    switch (document->root.type) {
     case XJsonValue_Object:
-        XJsonObject_toByteArray(document->root->data.object, format, stack, output);
+        XJsonObject_toByteArray(document->root.data.object, format, stack, output);
         break;
     case XJsonValue_Array:
-        XJsonArray_toByteArray(document->root->data.array, format, stack, output);
+        XJsonArray_toByteArray(document->root.data.array, format, stack, output);
         break;
     default:
-        XJsonValue_toByteArray(document->root, format, stack, output);
+        XJsonValue_toByteArray(document, format, stack, output);
         break;
     }
     //添加结束符号
@@ -397,20 +387,20 @@ XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFor
 //}
 //
 //XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentFormat format) {
-//    if (!document || !document->root) return NULL;
+//    if (!document ) return NULL;
 //
-//    switch (document->root->type) {
+//    switch (document->root.type) {
 //    case XJsonValue_Object:
-//        return XJsonObject_toString(document->root->data.object);
+//        return XJsonObject_toString(document->root.data.object);
 //    case XJsonValue_Array:
-//        return XJsonArray_toString(document->root->data.array);
+//        return XJsonArray_toString(document->root.data.array);
 //    default:
 //        return NULL;
 //    }
 //}
 //
 //XVariant* XJsonDocument_toVariant(const XJsonDocument* document) {
-//    if (!document || !document->root) return NULL;
+//    if (!document ) return NULL;
 //    return XJsonValue_toVariant(document->root);
 //}
 //

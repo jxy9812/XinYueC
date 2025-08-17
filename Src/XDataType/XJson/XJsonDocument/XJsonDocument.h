@@ -5,12 +5,12 @@
 extern "C" {
 #endif
 
-#include "XJson.h"
+#include "XJsonValue.h"
 #include <stdbool.h>
 
 typedef struct XJsonDocument 
 {
-    XJsonValue* root;
+    XJsonValue root;
 } XJsonDocument;
 
 // 构造与析构
@@ -30,7 +30,8 @@ void XJsonDocument_move(XJsonDocument* doc, XJsonDocument* src);
 // 根对象操作
 XJsonValue* XJsonDocument_root(XJsonDocument* document);
 const XJsonValue* XJsonDocument_root_const(const XJsonDocument* document);
-void XJsonDocument_setRoot(XJsonDocument* document, XJsonValue* root);
+void XJsonDocument_setRoot(XJsonDocument* document,const XJsonValue* root);
+void XJsonDocument_setRoot_move(XJsonDocument* document, XJsonValue* root);
 
 // 对象和数组访问
 bool XJsonDocument_isArray(const XJsonDocument* document);

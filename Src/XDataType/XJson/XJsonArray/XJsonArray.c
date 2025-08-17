@@ -45,12 +45,12 @@ XString* XJsonArray_toString(const XJsonArray* array, XJsonDocumentFormat format
 {
     XJsonDocument* doc = XJsonDocument_create();
     //引用XJsonArray 
-    doc->root->data.array = array;
-    doc->root->type = XJsonValue_Array;
+    doc->root.data.array = array;
+    doc->root.type = XJsonValue_Array;
     XString* str = XJsonDocument_toString(doc, format);
     //恢复防止释放 XJsonArray
-    doc->root->data.array = NULL;
-    doc->root->type = XJsonValue_Invalid;
+    doc->root.data.array = NULL;
+    doc->root.type = XJsonValue_Invalid;
     XJsonDocument_delete(doc);
     return str;
 }
