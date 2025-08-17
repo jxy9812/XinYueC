@@ -268,6 +268,14 @@ void XBsonValue_setString_move(XBsonValue* value, XString* str)
     value->data.str = XString_create_move(str); //将数据转移
 }
 
+void XBsonValue_setString_utf8(XBsonValue* value, const char* utf8)
+{
+    if (!value || !utf8) return;
+    XBsonValue_deinit(value);
+    value->type = XBSON_TYPE_STRING;
+    value->data.str = XString_create_utf8(utf8);
+}
+
 void XBsonValue_setDocument(XBsonValue* value, const XBsonDocument* doc)
 {
     if (!value || !doc) return;
@@ -356,7 +364,7 @@ void XBsonValue_setJavascript_scope(XBsonValue* value, const XString* code, cons
     if (!value || !code) return;
     XBsonValue_deinit(value);
     value->type = XBSON_TYPE_JAVASCRIPT_SCOPE;
-    //value->data.str = XString_create_copy(code);
+    value->data.str = XString_create_copy(code);
     value->data.doc = XBsonDocument_create_copy(scope);
 }
 
@@ -877,56 +885,69 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
     }
 
     // 写入值
-    uint8_t* write_ptr = XByteArray_at_base(output, XByteArray_size_base(output));
+    //uint8_t* write_ptr = XByteArray_at_base(output, XByteArray_size_base(output));
 
     switch (value->type) {
     case XBSON_TYPE_DOUBLE: {
         double d = value->data.dbl;
-        memcpy(write_ptr, &d, 8);
-        write_ptr += 8;
+        XByteArray_append_array_base(output,&d,sizeof(double));
         break;
     }
     case XBSON_TYPE_STRING: {
-        uint32_t len = (uint32_t)XString_length_base(value->data.str) + 1; // 包含终止符
-        bson_write_uint32(&write_ptr, len);
-        memcpy(write_ptr, XString_toUtf8(value->data.str), len - 1);
-        write_ptr += len - 1;
-        *write_ptr++ = 0x00; // 字符串终止符
+        uint32_t len = (uint32_t)XString_toUtf8_length(XBsonValue_toString(value)) + 1; // 包含终止符
+        XByteArray_append_array_base(output, &len, sizeof(uint32_t));
+        XByteArray_append_array_base(output, XString_toUtf8( XBsonValue_toString(value)), len - 1);
+        XByteArray_push_back_base(output, 0x00);// 字符串终止符
+        //bson_write_uint32(&write_ptr, len);
+        //memcpy(write_ptr, XString_toUtf8(value->data.str), len - 1);
+        //write_ptr += len - 1;
+        //*write_ptr++ = 0x00; // 字符串终止符
         break;
     }
     case XBSON_TYPE_DOCUMENT: {
-        XByteArray* doc_data = XBsonDocument_to_bytes(value->data.doc);
-        memcpy(write_ptr, XContainerDataPtr(doc_data), XByteArray_size_base(doc_data));
-        write_ptr += XByteArray_size_base(doc_data);
+        XByteArray* doc_data = XBsonDocument_to_Bson(value->data.doc);
+        XByteArray_append_array_base(output, XContainerDataPtr(doc_data), XByteArray_size_base(doc_data));
+       /* memcpy(write_ptr, XContainerDataPtr(doc_data), XByteArray_size_base(doc_data));
+        write_ptr += XByteArray_size_base(doc_data);*/
         XByteArray_delete_base(doc_data);
         break;
     }
     case XBSON_TYPE_ARRAY: {
         XByteArray* arr_data = XBsonArray_to_bytes(value->data.arr);
-        memcpy(write_ptr, XContainerDataPtr(arr_data), XByteArray_size_base(arr_data));
-        write_ptr += XByteArray_size_base(arr_data);
+        XByteArray_append_array_base(output, XContainerDataPtr(arr_data), XByteArray_size_base(arr_data));
+        /*memcpy(write_ptr, XContainerDataPtr(arr_data), XByteArray_size_base(arr_data));
+        write_ptr += XByteArray_size_base(arr_data);*/
         XByteArray_delete_base(arr_data);
         break;
     }
     case XBSON_TYPE_BINARY: {
         uint32_t len = (uint32_t)XByteArray_size_base(value->data.binary.data);
-        bson_write_uint32(&write_ptr, len);
-        *write_ptr++ = (uint8_t)value->data.binary.subtype;
-        memcpy(write_ptr, XContainerDataPtr(value->data.binary.data), len);
-        write_ptr += len;
+        XByteArray_append_array_base(output, &len, sizeof(uint32_t));
+        XByteArray_push_back_base(output, (uint8_t)value->data.binary.subtype);
+        XByteArray_append_array_base(output, XContainerDataPtr(value->data.binary.data), len);
+        //bson_write_uint32(&write_ptr, len);
+        //*write_ptr++ = (uint8_t)value->data.binary.subtype;
+        //memcpy(write_ptr, XContainerDataPtr(value->data.binary.data), len);
+        //write_ptr += len;
         break;
     }
-    case XBSON_TYPE_OBJECT_ID: {
-        memcpy(write_ptr, value->data.oid, 12);
-        write_ptr += 12;
+    case XBSON_TYPE_OBJECT_ID: 
+    {
+        XByteArray_append_array_base(output, value->data.oid, 12);
+       /* memcpy(write_ptr, value->data.oid, 12);
+        write_ptr += 12;*/
         break;
     }
-    case XBSON_TYPE_BOOLEAN: {
-        *write_ptr++ = value->data.boolean ? 0x01 : 0x00;
+    case XBSON_TYPE_BOOLEAN: 
+    {
+        XByteArray_push_back_base(output, value->data.boolean ? 0x01 : 0x00);
+        //*write_ptr++ = value->data.boolean ? 0x01 : 0x00;
         break;
     }
-    case XBSON_TYPE_DATETIME: {
-        bson_write_uint64(&write_ptr, value->data.datetime);
+    case XBSON_TYPE_DATETIME: 
+    {
+        XByteArray_append_array_base(output, &(value->data.datetime), sizeof(uint64_t));
+        //bson_write_uint64(&write_ptr, value->data.datetime);
         break;
     }
     case XBSON_TYPE_NULL:
@@ -934,57 +955,73 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
         break;
     case XBSON_TYPE_REGEX: {
         const char* pattern = XString_toUtf8(value->data.regex.pattern);
-        size_t pattern_len = XString_length_base(value->data.regex.pattern);
-        memcpy(write_ptr, pattern, pattern_len);
-        write_ptr += pattern_len;
-        *write_ptr++ = 0x00;
+        size_t pattern_len = XString_toUtf8_length(value->data.regex.pattern);
+        XByteArray_append_array_base(output, pattern, pattern_len);
+        XByteArray_push_back_base(output,0x00);
+        //memcpy(write_ptr, pattern, pattern_len);
+        //write_ptr += pattern_len;
+        //*write_ptr++ = 0x00;
 
         const char* options = XString_toUtf8(value->data.regex.options);
-        size_t options_len = XString_length_base(value->data.regex.options);
-        memcpy(write_ptr, options, options_len);
+        size_t options_len = XString_toUtf8_length(value->data.regex.options);
+        XByteArray_append_array_base(output, options, options_len);
+        XByteArray_push_back_base(output, 0x00);
+        /*memcpy(write_ptr, options, options_len);
         write_ptr += options_len;
-        *write_ptr++ = 0x00;
+        *write_ptr++ = 0x00;*/
         break;
     }
     case XBSON_TYPE_JAVASCRIPT: {
-        uint32_t len = (uint32_t)XString_length_base(value->data.str) + 1;
-        bson_write_uint32(&write_ptr, len);
-        memcpy(write_ptr, XString_toUtf8(value->data.str), len - 1);
-        write_ptr += len - 1;
-        *write_ptr++ = 0x00;
+        uint32_t len = (uint32_t)XString_toUtf8_length(value->data.str) + 1;
+        XByteArray_append_array_base(output, &len,sizeof(uint32_t));
+        XByteArray_append_array_base(output, XString_toUtf8(value->data.str), len - 1);
+        XByteArray_push_back_base(output,0x00);
+        //bson_write_uint32(&write_ptr, len);
+        //memcpy(write_ptr, XString_toUtf8(value->data.str), len - 1);
+        //write_ptr += len - 1;
+        //*write_ptr++ = 0x00;
         break;
     }
     case XBSON_TYPE_JAVASCRIPT_SCOPE: {
         // 先写入JavaScript代码
-        uint32_t code_len = (uint32_t)XString_length_base(value->data.str) + 1;
-        bson_write_uint32(&write_ptr, code_len);
+        uint32_t code_len = (uint32_t)XString_toUtf8_length(value->data.str) + 1;
+        XByteArray_append_array_base(output, &code_len, sizeof(uint32_t));
+        XByteArray_append_array_base(output, XString_toUtf8(value->data.str), code_len - 1);
+        XByteArray_push_back_base(output,0x00);
+       /* bson_write_uint32(&write_ptr, code_len);
         memcpy(write_ptr, XString_toUtf8(value->data.str), code_len - 1);
         write_ptr += code_len - 1;
-        *write_ptr++ = 0x00;
+        *write_ptr++ = 0x00;*/
 
         // 再写入作用域文档
-        XByteArray* scope_data = XBsonDocument_to_bytes(value->data.doc);
-        memcpy(write_ptr, XContainerDataPtr(scope_data), XByteArray_size_base(scope_data));
-        write_ptr += XByteArray_size_base(scope_data);
+        XByteArray* scope_data = XBsonDocument_to_Bson(value->data.doc);
+        XByteArray_append_array_base(output, XContainerDataPtr(scope_data), XByteArray_size_base(scope_data));
+      /*  memcpy(write_ptr, XContainerDataPtr(scope_data), XByteArray_size_base(scope_data));
+        write_ptr += XByteArray_size_base(scope_data);*/
         XByteArray_delete_base(scope_data);
         break;
     }
     case XBSON_TYPE_INT32: {
-        bson_write_uint32(&write_ptr, (uint32_t)value->data.int32);
+        XByteArray_append_array_base(output, &(value->data.int32), sizeof(int32_t));
+        //bson_write_uint32(&write_ptr, (uint32_t)value->data.int32);
         break;
     }
     case XBSON_TYPE_TIMESTAMP: {
-        bson_write_uint32(&write_ptr, value->data.ts.increment);
-        bson_write_uint32(&write_ptr, value->data.ts.timestamp);
+        XByteArray_append_array_base(output, &(value->data.ts.increment), sizeof(uint32_t));
+        XByteArray_append_array_base(output, &(value->data.ts.timestamp), sizeof(uint32_t));
+      /*  bson_write_uint32(&write_ptr, value->data.ts.increment);
+        bson_write_uint32(&write_ptr, value->data.ts.timestamp);*/
         break;
     }
     case XBSON_TYPE_INT64: {
-        bson_write_uint64(&write_ptr, (uint64_t)value->data.int64);
+        XByteArray_append_array_base(output, &(value->data.int64), sizeof(uint64_t));
+        //bson_write_uint64(&write_ptr, (uint64_t)value->data.int64);
         break;
     }
     case XBSON_TYPE_DECIMAL128: {
-        memcpy(write_ptr, value->data.decimal, 16);
-        write_ptr += 16;
+        XByteArray_append_array_base(output, &(value->data.decimal), 16);
+        //memcpy(write_ptr, value->data.decimal, 16);
+        //write_ptr += 16;
         break;
     }
     case XBSON_TYPE_MIN_KEY:
@@ -996,7 +1033,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
     }
 
     // 调整输出缓冲区大小
-    XByteArray_resize_base(output, write_ptr - (uint8_t*)XContainerDataPtr(output));
+    //XByteArray_resize_base(output, write_ptr - (uint8_t*)XContainerDataPtr(output));
     return true;
 }
 
@@ -1052,7 +1089,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
 //        const uint8_t* doc_end = *ptr + len - 1; // 减去长度字段本身
 //        if (doc_end > end) goto error;
 //
-//        XBsonDocument_from_bytes(value->data.doc, *ptr, len);
+//        XBsonDocument_from_Bson(value->data.doc, *ptr, len);
 //        *ptr = doc_end + 1; // 跳过终止符
 //        break;
 //    }
@@ -1132,7 +1169,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
 //        const uint8_t* scope_end = *ptr + scope_len - 1;
 //        if (scope_end > end) goto error;
 //
-//        XBsonDocument_from_bytes(value->data.doc, *ptr, scope_len);
+//        XBsonDocument_from_Bson(value->data.doc, *ptr, scope_len);
 //        *ptr = scope_end + 1;
 //        break;
 //    }

@@ -17,8 +17,10 @@ typedef struct XBsonValue
     XBsonType type;  // 存储当前BSON值的类型
     union {          // 联合体，根据类型存储对应的数据
         double dbl;               // 当类型为XBSON_TYPE_DOUBLE时使用，存储双精度浮点数
-        XString* str;             // 当类型为XBSON_TYPE_STRING或XBSON_TYPE_JAVASCRIPT时使用，存储字串
-        struct XBsonDocument* doc;// 当类型为XBSON_TYPE_DOCUMENT或XBSON_TYPE_JAVASCRIPT_SCOPE时使用储档
+        struct{
+            XString* str;             // 当类型为XBSON_TYPE_STRING或XBSON_TYPE_JAVASCRIPT时使用，存储字串
+            struct XBsonDocument* doc;// 当类型为XBSON_TYPE_DOCUMENT或XBSON_TYPE_JAVASCRIPT_SCOPE时使用储档
+        };
         struct XBsonArray* arr;   // 当类型为XBSON_TYPE_ARRAY时使用，存储数组
         struct {                  // 当类型为XBSON_TYPE_BINARY时使用，存储二进制数据
             XBsonBinarySubtype subtype;  // 二进制子类型
@@ -89,6 +91,7 @@ void XBsonValue_setInt32(XBsonValue* value, int32_t i);
 void XBsonValue_setInt64(XBsonValue* value, int64_t i);
 void XBsonValue_setString(XBsonValue* value, const XString* str);
 void XBsonValue_setString_move(XBsonValue* value, XString* str);
+void XBsonValue_setString_utf8(XBsonValue* value, const char* utf8);
 void XBsonValue_setDocument(XBsonValue* value, const XBsonDocument* doc);
 void XBsonValue_setDocument_move(XBsonValue* value, XBsonDocument* doc);
 void XBsonValue_setArray(XBsonValue* value, const XBsonArray* arr);

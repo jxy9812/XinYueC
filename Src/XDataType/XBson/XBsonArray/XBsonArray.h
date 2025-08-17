@@ -9,8 +9,9 @@ extern "C" {
 #include "XVector.h"
 #include "XBsonValue.h"
 
-typedef struct XBsonArray {
-    XVector elements; // 存储 XBsonValue*
+typedef struct XBsonArray 
+{
+    XVector elements; // 存储 XBsonValue
 } XBsonArray;
 
 // 构造与析构
@@ -18,6 +19,7 @@ XBsonArray* XBsonArray_create();
 XBsonArray* XBsonArray_create_copy(const XBsonArray* other);
 XBsonArray* XBsonArray_create_move(XBsonArray* other);
 void XBsonArray_init(XBsonArray* array);
+#define XBsonArray_at_base							XVector_at_base
 #define XBsonArray_rcopy_base						XVector_rcopy_base
 #define XBsonArray_copy_base						XVector_copy_base	
 #define XBsonArray_move_base						XVector_move_base	

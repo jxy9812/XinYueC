@@ -18,23 +18,23 @@ typedef struct XBsonDocument
 XBsonDocument* XBsonDocument_create();
 XBsonDocument* XBsonDocument_create_copy(const XBsonDocument* other);
 XBsonDocument* XBsonDocument_create_move(XBsonDocument* other);
-void XBsonDocument_init(XBsonDocument* object);
-bool XBsonDocument_insert_keyUtf8_value(XBsonDocument* object, const char* key, XBsonValue* value);
-bool XBsonDocument_insert_keyUtf8_value_move(XBsonDocument* object, const char* key, XBsonValue* value);
-bool XBsonDocument_insert_keyUtf8_double(XBsonDocument* object, const char* key, double d);
-bool XBsonDocument_insert_keyUtf8_int32(XBsonDocument* object, const char* key, int32_t i);
-bool XBsonDocument_insert_keyUtf8_int64(XBsonDocument* object, const char* key, int64_t i);
-bool XBsonDocument_insert_keyUtf8_string(XBsonDocument* object, const char* key, const XString* str);
-bool XBsonDocument_insert_keyUtf8_string_move(XBsonDocument* object, const char* key, XString* str);
-bool XBsonDocument_insert_keyUtf8_utf8(XBsonDocument* object, const char* key, const char* utf8);
-bool XBsonDocument_insert_keyUtf8_null(XBsonDocument* object, const char* key);
-bool XBsonDocument_insert_keyUtf8_bool(XBsonDocument* object, const char* key, bool b);
-bool XBsonDocument_insert_keyUtf8_array(XBsonDocument* object, const char* key, const XBsonArray* array);
-bool XBsonDocument_insert_keyUtf8_array_move(XBsonDocument* object, const char* key, XBsonArray* array);
-bool XBsonDocument_insert_keyUtf8_object(XBsonDocument* object, const char* key, const XBsonDocument* doc);
-bool XBsonDocument_insert_keyUtf8_object_move(XBsonDocument* object, const char* key, XBsonDocument* doc);
+void XBsonDocument_init(XBsonDocument* doc);
+bool XBsonDocument_insert_keyUtf8_value(XBsonDocument* doc, const char* key, XBsonValue* value);
+bool XBsonDocument_insert_keyUtf8_value_move(XBsonDocument* doc, const char* key, XBsonValue* value);
+bool XBsonDocument_insert_keyUtf8_double(XBsonDocument* doc, const char* key, double d);
+bool XBsonDocument_insert_keyUtf8_int32(XBsonDocument* doc, const char* key, int32_t i);
+bool XBsonDocument_insert_keyUtf8_int64(XBsonDocument* doc, const char* key, int64_t i);
+bool XBsonDocument_insert_keyUtf8_string(XBsonDocument* doc, const char* key, const XString* str);
+bool XBsonDocument_insert_keyUtf8_string_move(XBsonDocument* doc, const char* key, XString* str);
+bool XBsonDocument_insert_keyUtf8_utf8(XBsonDocument* doc, const char* key, const char* utf8);
+bool XBsonDocument_insert_keyUtf8_null(XBsonDocument* doc, const char* key);
+bool XBsonDocument_insert_keyUtf8_bool(XBsonDocument* doc, const char* key, bool b);
+bool XBsonDocument_insert_keyUtf8_array(XBsonDocument* doc, const char* key, const XBsonArray* array);
+bool XBsonDocument_insert_keyUtf8_array_move(XBsonDocument* doc, const char* key, XBsonArray* array);
+bool XBsonDocument_insert_keyUtf8_document(XBsonDocument* doc, const char* key, const XBsonDocument* newDoc);
+bool XBsonDocument_insert_keyUtf8_document_move(XBsonDocument* doc, const char* key, XBsonDocument* newDoc);
 //删除
-bool XBsonDocument_remove_keyUtf8(XBsonDocument* object, const char* key);
+bool XBsonDocument_remove_keyUtf8(XBsonDocument* doc, const char* key);
 //key XString*  val XBsonValue*
 #define XBsonDocument_insert_base				    XMap_insert_base
 //key XString*  val XBsonValue*
@@ -64,8 +64,8 @@ XJsonObject* XBsonDocument_to_json_object(const XBsonDocument* bson_obj);
 void XBsonDocument_from_json_object(XBsonDocument* bson_obj, const XJsonObject* json_obj);
 
 // 序列化与反序列化
-XByteArray* XBsonDocument_to_bytes(const XBsonDocument* object);
-bool XBsonDocument_from_bytes(XBsonDocument* object, const uint8_t* data, size_t size);
+XByteArray* XBsonDocument_to_Bson(const XBsonDocument* doc);
+bool XBsonDocument_from_Bson(XBsonDocument* doc, const uint8_t* data, size_t size);
 
 #ifdef __cplusplus
 }

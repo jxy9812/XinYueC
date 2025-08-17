@@ -39,7 +39,7 @@ void XBsonArray_init(XBsonArray* array)
     if (!array) return;
 
     XVector_init(array, sizeof(XBsonValue));
-    XContainerSetDataDeinitMethod(array, XBsonValue_delete);
+    XContainerSetDataDeinitMethod(array, XBsonValue_deinit);
     XContainerSetDataCopyMethod(array, XBsonValue_copy);
     XContainerSetDataMoveMethod(array, XBsonValue_move);
 }
@@ -81,30 +81,31 @@ XByteArray* XBsonArray_to_bytes(const XBsonArray* array)
 {
     if (!array) return NULL;
 
-    //// 先计算总大小
-    //XByteArray* temp = XByteArray_create(0);
+    // 先计算总大小
+    XByteArray* temp = XByteArray_create(0);
 
-    //// 写入元素
-    //for (size_t i = 0; i < XBsonArray_size(array); i++) {
-    //    const XBsonValue* value = XBsonArray_at_const(array, i);
-    //    char key[32];
-    //    sprintf(key, "%zu", i); // 数组元素键为索引字符串
-    //    XBsonValue_serialize(value, key, temp);
-    //}
+    // 写入元素
+    for (size_t i = 0; i < XBsonArray_size_base(array); i++) {
+        const XBsonValue* value = XBsonArray_at_base(array, i);
+        char key[32];
+        sprintf(key, "%zu", i); // 数组元素键为索引字符串
+        XBsonValue_serialize(value, key, temp);
+    }
 
-    //// 添加终止符
-    //XByteArray_push_back_base(temp, 0x00);
+    // 添加终止符
+    XByteArray_push_back_base(temp, 0x00);
 
-    //// 计算总长度并创建最终缓冲区
-    //uint32_t total_len = (uint32_t)(XByteArray_size_base(temp) + 4); // 加上长度字段
-    //XByteArray* result = XByteArray_create(total_len);
+    // 计算总长度并创建最终缓冲区
+    uint32_t total_len = (uint32_t)(XByteArray_size_base(temp) + 4); // 加上长度字段
+    XByteArray* result = XByteArray_create(total_len);
 
-    //uint8_t* write_ptr = XContainerDataPtr(result);
+    uint8_t* write_ptr = XContainerDataPtr(result);
+    *((uint32_t*)write_ptr) = total_len;
     //bson_write_uint32(&write_ptr, total_len);
-    //memcpy(write_ptr, XContainerDataPtr(temp), XByteArray_size_base(temp));
+    memcpy(write_ptr+sizeof(uint32_t), XContainerDataPtr(temp), XByteArray_size_base(temp));
 
-    //XByteArray_delete_base(temp);
-    //return result;
+    XByteArray_delete_base(temp);
+    return result;
 }
 
 bool XBsonArray_from_bytes(XBsonArray* array, const uint8_t* data, size_t size) {
