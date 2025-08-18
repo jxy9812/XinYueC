@@ -1,5 +1,6 @@
 ﻿#include "XByteArray.h"
 #if XByteArray_ON
+#include "XString.h"
 #include "XEquality.h"
 #include <string.h>
 XByteArray* XByteArray_create(size_t size)
@@ -66,5 +67,32 @@ bool XByteArray_append_utf8(XByteArray* array, const char* utf8)
 uint8_t* XByteArray_find_base(const XByteArray* array, const uint8_t findVal)
 {
 	return XVector_find_base(array,&findVal);
+}
+XByteArray* XByteArray_to16HexUtf8(XByteArray* array)
+{
+	if (array == NULL || XByteArray_isEmpty_base(array))
+		return NULL;
+	XByteArray* bytes = XByteArray_create(0);
+	uint8_t temp[6];
+	for (size_t i = 0; i < XByteArray_size_base(array); i++)
+	{
+		sprintf(temp,"%02X ", XByteArray_At_Base(array, i));
+		XByteArray_append_array_base(bytes,temp,3);
+	}
+	XByteArray_Back_Base(bytes) = 0;
+	return bytes;
+}
+XString* XByteArray_to16HexString(XByteArray* array)
+{
+	if (array == NULL || XByteArray_isEmpty_base(array))
+		return NULL;
+	XString* str = XString_create();
+	uint8_t temp[6];
+	for (size_t i = 0; i < XByteArray_size_base(array); i++)
+	{
+		sprintf(temp, "%02X ", XByteArray_At_Base(array, i));
+		XString_append_with_length_utf8(str, temp,3);
+	}
+	return str;
 }
 #endif

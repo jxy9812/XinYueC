@@ -37,6 +37,8 @@ bool XJsonObject_insert_keyUtf8_array(XJsonObject* object, const char* key,const
 bool XJsonObject_insert_keyUtf8_array_move(XJsonObject* object, const char* key, XJsonArray* array);
 bool XJsonObject_insert_keyUtf8_object(XJsonObject* object, const char* key, const XJsonObject* value);
 bool XJsonObject_insert_keyUtf8_object_move(XJsonObject* object, const char* key, XJsonObject* value);
+
+bool XJsonObject_insert_value_move(XJsonObject* object, const XString* key, XJsonValue* value);
 //删除
 bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key);
 //key XString*  val XJsonValue*
@@ -65,6 +67,9 @@ bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key);
 
 // 转换函数
 XString* XJsonObject_toString(const XJsonObject* object, XJsonDocumentFormat format);
+//内部utf8编码适合传输
+XByteArray* XJsonObject_toJson(const XJsonObject* object, XJsonDocumentFormat format);
+
 XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object);
 XJsonObject* XJsonObject_fromVariantMap(const XVariantMap* map);
 

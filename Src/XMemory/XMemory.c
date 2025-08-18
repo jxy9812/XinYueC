@@ -57,6 +57,37 @@ bool XMemory_realloc_isNULL()
 	return global_Memory.reallocate==NULL;
 }
 
+bool XMemory_read_data(const uint8_t* read, XMemoryByteOrder readOrder, uint8_t* memBuff, size_t size)
+{
+	// 参数合法性检查：输入/输出指针为空或数据长度为0时返回失败
+	if (read == NULL || memBuff == NULL || size == 0)
+		return false;
+
+	// 根据当前系统字节序和输入数据字节序判断是否需要转换
+#if IS_BIG_ENDIAN  // 当前系统是大端字节序
+	// 若输入数据是小端字节序，则需要转换（大端 <-> 小端）
+	if (readOrder == XMEMORY_BYTE_ORDER_LITTLE_ENDIAN)
+#else  // 当前系统是小端字节序（默认分支）
+	// 若输入数据是大端字节序，则需要转换（小端 <-> 大端）
+	if (readOrder == XMEMORY_BYTE_ORDER_BIG_ENDIAN)
+#endif
+	{
+		// 字节序转换：反转字节顺序（低地址字节与高地址字节互换）
+		// 例：输入 [0x12, 0x34, 0x56]（3字节）-> 输出 [0x56, 0x34, 0x12]
+		for (size_t i = 0; i < size; i++)
+		{
+			memBuff[i] = read[size - 1 - i];  // 第i个位置存储原数据的倒数第i个字节
+		}
+	}
+	else
+	{
+		// 无需转换：输入数据字节序与当前系统一致，直接拷贝
+		memcpy(memBuff, read, size);
+	}
+
+	return true;
+}
+
 void XMemory_setReallocMethod(ReallocMethod method)
 {
 	global_Memory.reallocate = method;

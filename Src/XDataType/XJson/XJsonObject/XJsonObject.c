@@ -206,6 +206,17 @@ bool XJsonObject_insert_keyUtf8_object_move(XJsonObject* object, const char* key
     return ret;
 }
 
+bool XJsonObject_insert_value_move(XJsonObject* object, const XString* key, XJsonValue* value)
+{
+    if (object == NULL || key == NULL || value == NULL)
+        return false;
+    XString_Init_Utf8(str, NULL);
+    XString_assign(str,key);
+    bool ret = XJsonObject_insert_move_base(object, str, value);
+    XString_deinit_base(str);
+    return ret;
+}
+
 bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key)
 {
     if (object == NULL || key == NULL)
@@ -230,6 +241,19 @@ XString* XJsonObject_toString(const XJsonObject* object, XJsonDocumentFormat for
     doc->root.type = XJsonValue_Invalid;
     XJsonDocument_delete(doc);
     return str;
+}
+XByteArray* XJsonObject_toJson(const XJsonObject* object, XJsonDocumentFormat format)
+{
+    XJsonDocument* doc = XJsonDocument_create();
+    //引用XJsonObject 
+    doc->root.data.object = object;
+    doc->root.type = XJsonValue_Object;
+    XByteArray* json = XJsonDocument_toJson(doc, format);
+    //恢复防止释放 XJsonObject
+    doc->root.data.object = NULL;
+    doc->root.type = XJsonValue_Invalid;
+    XJsonDocument_delete(doc);
+    return json;
 }
 //XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object) {
 //    if (!object) return NULL;

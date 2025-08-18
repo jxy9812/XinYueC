@@ -316,6 +316,10 @@ bool VXVector_append_array(XVector* this_vector, const void* begin, size_t n, XC
 		if (!VXVector_resize(this_vector, XContainerSize(this_vector) + n))
 			return false;
 	}
+	else
+	{
+		XContainerSize(this_vector) += n;
+	}
 	//printf("数组Size:%d Capacity:%d\n",XContainerSize(this_vector), XContainerCapacity(this_vector));
 	if (dataCreatMethod)
 	{
@@ -330,7 +334,6 @@ bool VXVector_append_array(XVector* this_vector, const void* begin, size_t n, XC
 		memcpy((char*)XContainerDataPtr(this_vector) + index * XContainerTypeSize(this_vector), begin, n * XContainerTypeSize(this_vector));
 	}
 	return true;
-	//XContainerSize(this_vector)+=n;
 }
 void VXVector_pop_front(XVector* this_vector)//删除向量中第一个元素
 {

@@ -33,6 +33,7 @@ bool XBsonDocument_insert_keyUtf8_array(XBsonDocument* doc, const char* key, con
 bool XBsonDocument_insert_keyUtf8_array_move(XBsonDocument* doc, const char* key, XBsonArray* array);
 bool XBsonDocument_insert_keyUtf8_document(XBsonDocument* doc, const char* key, const XBsonDocument* newDoc);
 bool XBsonDocument_insert_keyUtf8_document_move(XBsonDocument* doc, const char* key, XBsonDocument* newDoc);
+bool XBsonDocument_insert_value_move(XBsonDocument* doc, const XString* key, XBsonValue* value);
 //删除
 bool XBsonDocument_remove_keyUtf8(XBsonDocument* doc, const char* key);
 //key XString*  val XBsonValue*
@@ -62,11 +63,14 @@ bool XBsonDocument_remove_keyUtf8(XBsonDocument* doc, const char* key);
 // 转换函数
 XJsonObject* XBsonDocument_to_json_object(const XBsonDocument* bson_obj);
 void XBsonDocument_from_json_object(XBsonDocument* bson_obj, const XJsonObject* json_obj);
+// 将XBsonDocument转换为JSON（UTF-8）
+XByteArray* XBsonDocument_toJson(const XBsonDocument* bson_doc, XJsonDocumentFormat format);
+XString* XBsonDocument_toJson_string(const XBsonDocument* bson_doc, XJsonDocumentFormat format);
 
 // 序列化与反序列化
 XByteArray* XBsonDocument_to_Bson(const XBsonDocument* doc);
-bool XBsonDocument_from_Bson(XBsonDocument* doc, const uint8_t* data, size_t size);
-
+XBsonDocument* XBsonDocument_from_Bson(XByteArray* data);
+bool XBsonDocument_from_bytes(XBsonDocument* doc, const uint8_t* data, size_t size);
 #ifdef __cplusplus
 }
 #endif
