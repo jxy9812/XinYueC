@@ -7,29 +7,6 @@
 #include <string.h>
 #include <stdio.h>
 
-// 字节序转换函数
-static uint32_t bson_read_uint32(const uint8_t** ptr) {
-    uint32_t val = *(const uint32_t*)*ptr;
-    *ptr += 4;
-    return val;
-}
-
-static uint64_t bson_read_uint64(const uint8_t** ptr) {
-    uint64_t val = *(const uint64_t*)*ptr;
-    *ptr += 8;
-    return val;
-}
-
-static void bson_write_uint32(uint8_t** ptr, uint32_t val) {
-    *(uint32_t*)*ptr = val;
-    *ptr += 4;
-}
-
-static void bson_write_uint64(uint8_t** ptr, uint64_t val) {
-    *(uint64_t*)*ptr = val;
-    *ptr += 8;
-}
-
 XBsonValue* XBsonValue_create(XBsonType type) {
     XBsonValue* value = (XBsonValue*)XMemory_malloc(sizeof(XBsonValue));
     if (value) {

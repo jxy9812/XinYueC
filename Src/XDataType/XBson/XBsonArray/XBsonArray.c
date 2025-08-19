@@ -106,7 +106,7 @@ XByteArray* XBsonArray_to_bytes(const XBsonArray* array)
     if (!array||XBsonArray_isEmpty_base(array)) return NULL;
 
     // 先计算总大小
-    XByteArray* temp = XByteArray_create(0);
+    XByteArray* bytes = XByteArray_create(4);//预留总长度4字节
 
     // 写入元素
     for (size_t i = 0; i < XBsonArray_size_base(array); i++)
@@ -114,23 +114,14 @@ XByteArray* XBsonArray_to_bytes(const XBsonArray* array)
         const XBsonValue* value = XBsonArray_at_base(array, i);
         char key[32];
         sprintf(key, "%zu", i); // 数组元素键为索引字符串
-        XBsonValue_serialize(value, key, temp);
+        XBsonValue_serialize(value, key, bytes);
     }
 
     // 添加终止符
-    XByteArray_push_back_base(temp, 0x00);
-
-    // 计算总长度并创建最终缓冲区
-    uint32_t total_len = (uint32_t)(XByteArray_size_base(temp) + 4); // 加上长度字段
-    XByteArray* result = XByteArray_create(total_len);
-
-    uint8_t* write_ptr = XContainerDataPtr(result);
-    //*((uint32_t*)write_ptr) = total_len;
-    XMemory_write_data(write_ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, &total_len, sizeof(uint32_t));
-    memcpy(write_ptr+sizeof(uint32_t), XContainerDataPtr(temp), XByteArray_size_base(temp));
-
-    XByteArray_delete_base(temp);
-    return result;
+    XByteArray_push_back_base(bytes, 0x00);
+    //开头写入总长度
+    XMemory_write_data(XContainerDataPtr(bytes), XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, &XContainerSize(bytes), sizeof(uint32_t));
+    return bytes;
 }
 
 bool XBsonArray_from_bytes(XBsonArray* array, const uint8_t* data, size_t size) {

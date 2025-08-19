@@ -353,7 +353,7 @@ XByteArray* XBsonDocument_toBson(const XBsonDocument* doc)
     if (!doc) return NULL;
 
     // 先计算总大小
-    XByteArray* temp = XByteArray_create(0);
+    XByteArray* bytes = XByteArray_create(4);//预留总长度4字节大小
 
     // 写入成员
     for_each_iterator(doc,XMap,it)
@@ -362,25 +362,14 @@ XByteArray* XBsonDocument_toBson(const XBsonDocument* doc)
         const XString* key = XPair_first(pair);
         const XBsonValue* value =XPair_second(pair);
 
-        XBsonValue_serialize(value, XString_toUtf8(key), temp);
+        XBsonValue_serialize(value, XString_toUtf8(key), bytes);
     }
 
     // 添加终止符
-    XByteArray_push_back_base(temp, 0x00);
-
-    // 计算总长度并创建最终缓冲区
-    uint32_t total_len = (uint32_t)(XByteArray_size_base(temp) + 4); // 加上长度字段
-    XByteArray* result = XByteArray_create(total_len);
-
-    uint8_t* write_ptr = XContainerDataPtr(result);
-    //bson_write_uint32(&write_ptr, total_len);
-    XMemory_write_data(write_ptr,XMEMORY_BYTE_ORDER_LITTLE_ENDIAN,&total_len,sizeof(uint32_t));
-    // *((uint32_t*)write_ptr) = total_len;
-    write_ptr += sizeof(uint32_t);
-    memcpy(write_ptr, XContainerDataPtr(temp), XByteArray_size_base(temp));
-
-    XByteArray_delete_base(temp);
-    return result;
+    XByteArray_push_back_base(bytes, 0x00);
+    //开头写入总长度
+    XMemory_write_data(XContainerDataPtr(bytes),XMEMORY_BYTE_ORDER_LITTLE_ENDIAN,&XContainerSize(bytes), sizeof(uint32_t));
+    return bytes;
 }
 
 XBsonDocument* XBsonDocument_fromBson(XByteArray* data) {
