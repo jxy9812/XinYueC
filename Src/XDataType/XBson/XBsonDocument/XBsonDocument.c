@@ -266,7 +266,7 @@ bool XBsonDocument_remove_keyUtf8(XBsonDocument* doc, const char* key)
     return ret;
 }
 
-XJsonObject* XBsonDocument_to_json_object(const XBsonDocument* bson_obj) 
+XJsonObject* XBsonDocument_toJsonObject(const XBsonDocument* bson_obj) 
 {
     if (!bson_obj) return NULL;
 
@@ -292,13 +292,12 @@ XJsonObject* XBsonDocument_to_json_object(const XBsonDocument* bson_obj)
     return json_obj;
 }
 
-void XBsonDocument_from_json_object(XBsonDocument* bson_obj, const XJsonObject* json_obj) {
-    if (!bson_obj || !json_obj) return;
-
-    XBsonDocument_clear_base(bson_obj);
-
-   /* XMapIterator it = XMap_begin(&json_obj->members);
-    while (!XMapIterator_isEnd(&it)) {*/
+XBsonDocument* XBsonDocument_fromJsonObject(const XJsonObject* json_obj) 
+{
+    if(!json_obj|| XJsonObject_isEmpty_base(json_obj))
+        return NULL;
+    XBsonDocument* bson_obj= XBsonDocument_create();
+    if (!bson_obj) return NULL;
     for_each_iterator(json_obj, XMap, it)
     {
         XPair* pair = XMap_iterator_data(&it);
@@ -312,6 +311,7 @@ void XBsonDocument_from_json_object(XBsonDocument* bson_obj, const XJsonObject* 
             XBsonValue_delete(bson_val);
         }
     }
+    return bson_obj;
 }
 
 XByteArray* XBsonDocument_toJson(const XBsonDocument* bson_doc, XJsonDocumentFormat format)
@@ -319,7 +319,7 @@ XByteArray* XBsonDocument_toJson(const XBsonDocument* bson_doc, XJsonDocumentFor
     if (!bson_doc) return NULL;
 
     // 1. 将BSON文档转换为JSON对象
-    XJsonObject* json_obj = XBsonDocument_to_json_object(bson_doc);
+    XJsonObject* json_obj = XBsonDocument_toJsonObject(bson_doc);
     if (!json_obj) return NULL;
 
     // 2. 将JSON对象转换为JSON字符串
@@ -336,7 +336,7 @@ XString* XBsonDocument_toJson_string(const XBsonDocument* bson_doc, XJsonDocumen
     if (!bson_doc) return NULL;
 
     // 1. 将BSON文档转换为JSON对象
-    XJsonObject* json_obj = XBsonDocument_to_json_object(bson_doc);
+    XJsonObject* json_obj = XBsonDocument_toJsonObject(bson_doc);
     if (!json_obj) return NULL;
 
     // 2. 将JSON对象转换为JSON字符串
@@ -348,7 +348,7 @@ XString* XBsonDocument_toJson_string(const XBsonDocument* bson_doc, XJsonDocumen
     return json;
 }
 
-XByteArray* XBsonDocument_to_Bson(const XBsonDocument* doc) 
+XByteArray* XBsonDocument_toBson(const XBsonDocument* doc) 
 {
     if (!doc) return NULL;
 
@@ -374,7 +374,8 @@ XByteArray* XBsonDocument_to_Bson(const XBsonDocument* doc)
 
     uint8_t* write_ptr = XContainerDataPtr(result);
     //bson_write_uint32(&write_ptr, total_len);
-    *((uint32_t*)write_ptr) = total_len;
+    XMemory_write_data(write_ptr,XMEMORY_BYTE_ORDER_LITTLE_ENDIAN,&total_len,sizeof(uint32_t));
+    // *((uint32_t*)write_ptr) = total_len;
     write_ptr += sizeof(uint32_t);
     memcpy(write_ptr, XContainerDataPtr(temp), XByteArray_size_base(temp));
 
@@ -382,7 +383,7 @@ XByteArray* XBsonDocument_to_Bson(const XBsonDocument* doc)
     return result;
 }
 
-XBsonDocument* XBsonDocument_from_Bson(XByteArray* data) {
+XBsonDocument* XBsonDocument_fromBson(XByteArray* data) {
     if (!data || XContainerSize(data) < 5) return NULL; // 最小BSON对象: 4字节长度 + 1字节终止符
 
     XBsonDocument* doc = XBsonDocument_create();

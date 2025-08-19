@@ -61,15 +61,17 @@ bool XBsonDocument_remove_keyUtf8(XBsonDocument* doc, const char* key);
 #define XBsonDocument_typeSize_base				    XMap_typeSize_base
 
 // 转换函数
-XJsonObject* XBsonDocument_to_json_object(const XBsonDocument* bson_obj);
-void XBsonDocument_from_json_object(XBsonDocument* bson_obj, const XJsonObject* json_obj);
+XJsonObject* XBsonDocument_toJsonObject(const XBsonDocument* bson_obj);
+XBsonDocument* XBsonDocument_fromJsonObject(const XJsonObject* json_obj);
 // 将XBsonDocument转换为JSON（UTF-8）
 XByteArray* XBsonDocument_toJson(const XBsonDocument* bson_doc, XJsonDocumentFormat format);
 XString* XBsonDocument_toJson_string(const XBsonDocument* bson_doc, XJsonDocumentFormat format);
 
 // 序列化与反序列化
-XByteArray* XBsonDocument_to_Bson(const XBsonDocument* doc);
-XBsonDocument* XBsonDocument_from_Bson(XByteArray* data);
+XByteArray* XBsonDocument_toBson(const XBsonDocument* doc);
+XBsonDocument* XBsonDocument_fromBson(XByteArray* data);
+
+
 bool XBsonDocument_from_bytes(XBsonDocument* doc, const uint8_t* data, size_t size);
 #ifdef __cplusplus
 }

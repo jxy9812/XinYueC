@@ -1,7 +1,8 @@
 ﻿#include "XJsonDocument.h"
-//#include "XJsonValue.h"
 #include "XJsonObject.h"
 #include "XJsonArray.h"
+#include "XBsonDocument.h"
+#include "XBsonArray.h"
 #include "XByteArray.h"
 #include "XString.h"
 #include "XStack.h"
@@ -94,6 +95,18 @@ XJsonDocument* XJsonDocument_create_object(XJsonObject* object)
     return doc;
 }
 
+XJsonDocument* XJsonDocument_create_object_move(XJsonObject* object)
+{
+    if (!object) return NULL;
+
+    XJsonDocument* doc = XJsonDocument_create();
+    if (doc)
+    {
+        XJsonValue_setObject_move(doc, object);
+    }
+    return doc;
+}
+
 XJsonDocument* XJsonDocument_create_array(XJsonArray* array) {
     if (!array) return NULL;
 
@@ -101,6 +114,18 @@ XJsonDocument* XJsonDocument_create_array(XJsonArray* array) {
     if (doc)
     {
         XJsonValue_setArray(doc, array);
+    }
+    return doc;
+}
+
+XJsonDocument* XJsonDocument_create_array_move(XJsonArray* array)
+{
+    if (!array) return NULL;
+
+    XJsonDocument* doc = XJsonDocument_create();
+    if (doc)
+    {
+        XJsonValue_setArray_move(doc, array);
     }
     return doc;
 }
@@ -374,6 +399,68 @@ XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFor
     // 清理资源
     XStack_delete_base(stack);
     return output;
+}
+
+XJsonDocument* XJsonDocument_fromBson_document(const XByteArray* bson)
+{
+    if(bson==NULL||XByteArray_isEmpty_base(bson))
+        return NULL;
+    XBsonDocument* doc= XBsonDocument_fromBson(bson);
+    if (doc == NULL)
+        return NULL;
+    XJsonObject* object= XBsonDocument_toJsonObject(doc);
+    if (object == NULL)
+    {
+        XBsonDocument_delete_base(doc);
+        return NULL;
+    }
+    XJsonDocument* jsonDoc = XJsonDocument_create_object_move(object);
+    XJsonObject_delete_base(object);
+    return jsonDoc;
+}
+
+XJsonDocument* XJsonDocument_fromBson_array(const XByteArray* bson)
+{
+    if (bson == NULL || XByteArray_isEmpty_base(bson))
+        return NULL;
+    XBsonArray* array = XBsonArray_fromBson(bson);
+    if (array == NULL)
+        return NULL;
+    XJsonArray* jsonArr = XBsonArray_toJsonArray(array);
+    if (jsonArr == NULL)
+    {
+        XBsonArray_delete_base(array);
+        return NULL;
+    }
+    XJsonDocument* jsonDoc = XJsonDocument_create_array_move(jsonArr);
+    XJsonArray_delete_base(jsonArr);
+    return jsonDoc;
+}
+
+XByteArray* XJsonDocument_toBson(const XJsonDocument* document)
+{
+    if(!document||XJsonDocument_isEmpty(document))
+        return NULL;
+    XByteArray* bytes = NULL;
+    if (XJsonDocument_isObject(document))
+    {
+       XBsonDocument* bsonDoc= XBsonDocument_fromJsonObject(XJsonDocument_object(document));
+       if (bsonDoc)
+       {
+           bytes = XBsonDocument_toBson(bsonDoc);
+           XBsonDocument_delete_base(bsonDoc);
+       }
+    }
+    else if (XJsonDocument_isArray(document))
+    {
+        XBsonArray* bsonArr = XBsonArray_fromJsonArray(XJsonDocument_array(document));
+        if (bsonArr)
+        {
+            bytes = XBsonArray_toBson(bsonArr);
+            XBsonArray_delete_base(bsonArr);
+        }
+    }
+    return bytes;
 }
 
 //XJsonDocument* XJsonDocument_fromString(const XString* json) {

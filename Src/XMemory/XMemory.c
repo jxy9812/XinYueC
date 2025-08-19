@@ -57,10 +57,10 @@ bool XMemory_realloc_isNULL()
 	return global_Memory.reallocate==NULL;
 }
 
-bool XMemory_read_data(const uint8_t* read, XMemoryByteOrder readOrder, uint8_t* memBuff, size_t size)
+bool XMemory_read_data(const uint8_t* src, XMemoryByteOrder readOrder, uint8_t* out, size_t size)
 {
 	// 参数合法性检查：输入/输出指针为空或数据长度为0时返回失败
-	if (read == NULL || memBuff == NULL || size == 0)
+	if (src == NULL || out == NULL || size == 0)
 		return false;
 
 	// 根据当前系统字节序和输入数据字节序判断是否需要转换
@@ -76,22 +76,22 @@ bool XMemory_read_data(const uint8_t* read, XMemoryByteOrder readOrder, uint8_t*
 		// 例：输入 [0x12, 0x34, 0x56]（3字节）-> 输出 [0x56, 0x34, 0x12]
 		for (size_t i = 0; i < size; i++)
 		{
-			memBuff[i] = read[size - 1 - i];  // 第i个位置存储原数据的倒数第i个字节
+			out[i] = src[size - 1 - i];  // 第i个位置存储原数据的倒数第i个字节
 		}
 	}
 	else
 	{
 		// 无需转换：输入数据字节序与当前系统一致，直接拷贝
-		memcpy(memBuff, read, size);
+		memcpy(out, src, size);
 	}
 
 	return true;
 }
 
-bool XMemory_write_data(uint8_t* write, XMemoryByteOrder writeOrder, const uint8_t* memBuff, size_t size)
+bool XMemory_write_data(uint8_t* write, XMemoryByteOrder writeOrder, const uint8_t* in, size_t size)
 {
 	// 参数合法性检查：输入/输出指针为空或数据长度为0时返回失败
-	if (write == NULL || memBuff == NULL || size == 0)
+	if (write == NULL || in == NULL || size == 0)
 		return false;
 
 	// 根据当前系统字节序和输入数据字节序判断是否需要转换
@@ -107,13 +107,13 @@ bool XMemory_write_data(uint8_t* write, XMemoryByteOrder writeOrder, const uint8
 		// 例：输入 [0x12, 0x34, 0x56]（3字节）-> 输出 [0x56, 0x34, 0x12]
 		for (size_t i = 0; i < size; i++)
 		{
-			write[size - 1 - i]=memBuff[i];  // 第i个位置存储原数据的倒数第i个字节
+			write[size - 1 - i]=in[i];  // 第i个位置存储原数据的倒数第i个字节
 		}
 	}
 	else
 	{
 		// 无需转换：输入数据字节序与当前系统一致，直接拷贝
-		memcpy(write,memBuff, size);
+		memcpy(write,in, size);
 	}
 
 	return true;

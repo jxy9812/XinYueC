@@ -33,14 +33,14 @@ void XBsonDocumentTest()
 
 
 		XBsonDocument_insert_keyUtf8_int32(doc, "数字", 66666);
-		//XBsonDocument_insert_keyUtf8_document(doc,"对象", doc);
+		XBsonDocument_insert_keyUtf8_document(doc,"对象", doc);
 
 		/*XBsonValue_setDocument(value, doc);
 		XBsonArray_append_move_base(array, value);*/
 
 		
 
-		//XBsonDocument_insert_keyUtf8_array(doc, "数组", array);
+		XBsonDocument_insert_keyUtf8_array(doc, "数组", array);
 		XBsonDocument_insert_keyUtf8_utf8(doc, "字符串", "测试");
 
 
@@ -52,7 +52,7 @@ void XBsonDocumentTest()
 
 		
 		//printf("\n\n\n\n\n\n");
-		XByteArray* bson = XBsonDocument_to_Bson(doc);
+		XByteArray* bson = XBsonDocument_toBson(doc);
 		{
 			XByteArray* utf8=XByteArray_to16HexUtf8(bson);
 			XPrint_utf8_fmt("%s\n",XContainerDataPtr(utf8));
@@ -61,7 +61,7 @@ void XBsonDocumentTest()
 		XBsonDocument_delete_base(doc);
 		/*XPrint_utf8(XContainerDataPtr(bson));
 		XPrint_utf8("\n开始从bson文本转bson对象\n");*/
-		doc = XBsonDocument_from_Bson(bson);
+		doc = XBsonDocument_fromBson(bson);
 		XByteArray_delete_base(bson);
 
 		XString* str = XBsonDocument_toJson_string(doc, XJsonDocument_Indented);

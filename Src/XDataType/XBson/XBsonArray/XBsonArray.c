@@ -45,7 +45,7 @@ void XBsonArray_init(XBsonArray* array)
     XContainerSetDataMoveMethod(array, XBsonValue_move);
 }
 
-XJsonArray* XBsonArray_to_json_array(const XBsonArray* bson_arr)
+XJsonArray* XBsonArray_toJsonArray(const XBsonArray* bson_arr)
 {
     if (!bson_arr) return NULL;
 
@@ -64,11 +64,13 @@ XJsonArray* XBsonArray_to_json_array(const XBsonArray* bson_arr)
     return json_arr;
 }
 
-void XBsonArray_from_json_array(XBsonArray* bson_arr, const XJsonArray* json_arr) 
+XBsonArray* XBsonArray_fromJsonArray(const XJsonArray* json_arr)
 {
-    if (!bson_arr || !json_arr) return;
-
-    XBsonArray_clear_base(bson_arr);
+    if (!json_arr||XJsonArray_isEmpty_base(json_arr)) 
+        return NULL;
+    XBsonArray* bson_arr = XBsonArray_create();
+    if (!bson_arr)
+        return NULL;
 
     for (size_t i = 0; i < XJsonArray_size_base(json_arr); i++) {
         const XJsonValue* json_val = XJsonArray_at_const(json_arr, i);
@@ -78,17 +80,37 @@ void XBsonArray_from_json_array(XBsonArray* bson_arr, const XJsonArray* json_arr
             XBsonValue_delete(bson_val);
         }
     }
+    return bson_arr;
+}
+
+XByteArray* XBsonArray_toBson(const XBsonArray* array)
+{
+    return XBsonArray_to_bytes(array);
+}
+
+XBsonArray* XBsonArray_fromBson(XByteArray* data)
+{
+    if(!data||XByteArray_isEmpty_base(data))
+        return NULL;
+    XBsonArray* array = XBsonArray_create();
+    if (!XBsonArray_from_bytes(array, XContainerDataPtr(data), XContainerSize(data)))
+    {
+        XBsonArray_delete_base(array);
+        return NULL;
+    }
+    return array;
 }
 
 XByteArray* XBsonArray_to_bytes(const XBsonArray* array) 
 {
-    if (!array) return NULL;
+    if (!array||XBsonArray_isEmpty_base(array)) return NULL;
 
     // 先计算总大小
     XByteArray* temp = XByteArray_create(0);
 
     // 写入元素
-    for (size_t i = 0; i < XBsonArray_size_base(array); i++) {
+    for (size_t i = 0; i < XBsonArray_size_base(array); i++)
+    {
         const XBsonValue* value = XBsonArray_at_base(array, i);
         char key[32];
         sprintf(key, "%zu", i); // 数组元素键为索引字符串
@@ -103,8 +125,8 @@ XByteArray* XBsonArray_to_bytes(const XBsonArray* array)
     XByteArray* result = XByteArray_create(total_len);
 
     uint8_t* write_ptr = XContainerDataPtr(result);
-    *((uint32_t*)write_ptr) = total_len;
-    //bson_write_uint32(&write_ptr, total_len);
+    //*((uint32_t*)write_ptr) = total_len;
+    XMemory_write_data(write_ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, &total_len, sizeof(uint32_t));
     memcpy(write_ptr+sizeof(uint32_t), XContainerDataPtr(temp), XByteArray_size_base(temp));
 
     XByteArray_delete_base(temp);

@@ -18,7 +18,9 @@ XJsonDocument* XJsonDocument_create(void);
 XJsonDocument* XJsonDocument_create_copy(XJsonDocument* copy);
 XJsonDocument* XJsonDocument_create_move(XJsonDocument* move);
 XJsonDocument* XJsonDocument_create_object(XJsonObject* object);
+XJsonDocument* XJsonDocument_create_object_move(XJsonObject* object);
 XJsonDocument* XJsonDocument_create_array(XJsonArray* array);
+XJsonDocument* XJsonDocument_create_array_move(XJsonArray* array);
 void XJsonDocument_init(XJsonDocument* document);
 void XJsonDocument_deinit(XJsonDocument* document);
 void XJsonDocument_delete(XJsonDocument* document);
@@ -54,11 +56,9 @@ XJsonDocument* XJsonDocument_fromJson(const XByteArray* json);
 //内部utf8编码适合传输
 XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFormat format);
 
-XJsonDocument* XJsonDocument_fromBson(const XByteArray* bson);
+XJsonDocument* XJsonDocument_fromBson_document(const XByteArray* bson);
+XJsonDocument* XJsonDocument_fromBson_array(const XByteArray* bson);
 XByteArray* XJsonDocument_toBson(const XJsonDocument* document);
-
-XByteArray* XJson_toBson(const XByteArray* json);
-XByteArray* XBson_toJson(const XByteArray* bson);
 
 // 与XVariant转换
 XVariant* XJsonDocument_toVariant(const XJsonDocument* document);

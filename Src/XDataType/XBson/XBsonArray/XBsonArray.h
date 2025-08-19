@@ -42,10 +42,13 @@ void XBsonArray_init(XBsonArray* array);
 #define XBsonArray_replace                          XVector_replace
 #define XBsonArray_replace_move                     XVector_replace_move 
 // 转换函数
-XJsonArray* XBsonArray_to_json_array(const XBsonArray* bson_arr);
-void XBsonArray_from_json_array(XBsonArray* bson_arr, const XJsonArray* json_arr);
+XJsonArray* XBsonArray_toJsonArray(const XBsonArray* bson_arr);
+XBsonArray* XBsonArray_fromJsonArray(const XJsonArray* json_arr);
 
 // 序列化与反序列化
+XByteArray* XBsonArray_toBson(const XBsonArray* array);
+XBsonArray* XBsonArray_fromBson(XByteArray* data);
+
 XByteArray* XBsonArray_to_bytes(const XBsonArray* array);
 bool XBsonArray_from_bytes(XBsonArray* array, const uint8_t* data, size_t size);
 
