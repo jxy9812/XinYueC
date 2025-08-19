@@ -35,13 +35,13 @@ void XBsonDocumentTest()
 		XBsonDocument_insert_keyUtf8_int32(doc, "数字", 66666);
 		//XBsonDocument_insert_keyUtf8_document(doc,"对象", doc);
 
-	/*	XBsonValue_setDocument(value, doc);
+		/*XBsonValue_setDocument(value, doc);
 		XBsonArray_append_move_base(array, value);*/
 
 		
 
 		//XBsonDocument_insert_keyUtf8_array(doc, "数组", array);
-		//XBsonDocument_insert_keyUtf8_utf8(doc, "字符串", "测试");
+		XBsonDocument_insert_keyUtf8_utf8(doc, "字符串", "测试");
 
 
 
