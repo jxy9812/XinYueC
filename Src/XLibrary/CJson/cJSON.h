@@ -4,20 +4,13 @@
 上述版权声明和本许可声明应包含在该软件的所有副本或实质性部分中。
 本软件按 “原样” 提供，不提供任何形式的明示或暗示的保证，包括但不限于适销性、特定用途适用性和非侵权性的保证。在任何情况下，作者或版权所有者均不对任何索赔、损害赔偿或其他责任负责，无论这些责任是因合同、侵权或其他原因引起的，还是因使用或其他方式处理本软件而产生的。
 */
-
+#include"XDataStructConfig.h"
 #ifndef cJSON__h
 #define cJSON__h
 
 #ifdef __cplusplus
 extern "C"
 {
-#endif
-#include"XDataStructConfig.h"
-#if XString_ON
-typedef struct XString XString;
-#endif
-#if XVector_ON
-typedef struct XVector XVector;
 #endif
 
 #if !defined(__WINDOWS__) && (defined(WIN32) || defined(WIN64) || defined(_MSC_VER) || defined(_WIN32))
@@ -134,10 +127,6 @@ CJSON_PUBLIC(cJSON *) cJSON_ParseWithLength(const char *value, size_t buffer_len
 / 如果你在 return_parse_end 中提供了一个指针，且解析失败，那么 return_parse_end 将包含指向错误位置的指针，这与 cJSON_GetErrorPtr() 的返回结果一致。 */
 CJSON_PUBLIC(cJSON *) cJSON_ParseWithOpts(const char *value, const char **return_parse_end, cJSON_bool require_null_terminated);
 CJSON_PUBLIC(cJSON *) cJSON_ParseWithLengthOpts(const char *value, size_t buffer_length, const char **return_parse_end, cJSON_bool require_null_terminated);
-#if XString_ON
-//解析json文本返回对象
-CJSON_PUBLIC(cJSON*) cJSON_Parse_XString(const XString* string);
-#endif
 
 /* 将一个 cJSON 实体渲染为文本，以便进行传输或存储。 */
 CJSON_PUBLIC(char *) cJSON_Print(const cJSON *item);
@@ -150,12 +139,6 @@ CJSON_PUBLIC(char *) cJSON_PrintBuffered(const cJSON *item, int prebuffer, cJSON
 CJSON_PUBLIC(cJSON_bool) cJSON_PrintPreallocated(cJSON *item, char *buffer, const int length, const cJSON_bool format);
 /* 删除一个 cJSON 实体以及所有的子实体。 */
 CJSON_PUBLIC(void) cJSON_Delete(cJSON *item);
-#if XString_ON
-//将一个 cJSON 实体渲染为文本XString，以便进行传输或存储
-CJSON_PUBLIC(XString*) cJSON_Print_XString(const cJSON* item);
-/* 将一个 cJSON 实体渲染为无任何格式的文本XString，用于传输或存储。 */
-CJSON_PUBLIC(XString*) cJSON_PrintUnformatted_XString(const cJSON* item);
-#endif
 
 /* 返回数组（或对象）中元素的数量。 */
 CJSON_PUBLIC(int) cJSON_GetArraySize(const cJSON *array);
@@ -168,21 +151,10 @@ CJSON_PUBLIC(cJSON *) cJSON_GetObjectItemCaseSensitive(const cJSON * const objec
 CJSON_PUBLIC(cJSON_bool) cJSON_HasObjectItem(const cJSON *object, const char *string);
 /* 用于分析解析失败的情况。此函数会返回一个指向解析错误位置的指针。你可能需要往前查看几个字符才能理解错误的含义。当 cJSON_Parse() 返回 0 时该指针有定义；当 cJSON_Parse() 成功时，该指针为 0（即空指针）。 */
 CJSON_PUBLIC(const char *) cJSON_GetErrorPtr(void);
-#if XString_ON
-/* 从对象中获取名为 “string” 的项。此操作不区分大小写。 */
-CJSON_PUBLIC(cJSON*) cJSON_GetObjectItem_XString(const cJSON* const object, const XString* const string);
-CJSON_PUBLIC(cJSON*) cJSON_GetObjectItemCaseSensitive_XString(const cJSON* const object, const XString* const string);
-//检查一个 cJSON 对象中是否包含指定键的项
-CJSON_PUBLIC(cJSON_bool) cJSON_HasObjectItem_XString(const cJSON* object, const XString* string);
-#endif
 
 /* 检查项的类型并返回其值 */
 CJSON_PUBLIC(char *) cJSON_GetStringValue(const cJSON * const item);
 CJSON_PUBLIC(double) cJSON_GetNumberValue(const cJSON * const item);
-#if XString_ON
-/* 检查项的类型并返回其值   成功将拷贝,推荐使用原版*/ 
-CJSON_PUBLIC(XString*) cJSON_GetStringValue_XString(const cJSON* const item);
-#endif
 
 
 /* 这些函数用于检查一个项的类型。 */
@@ -204,28 +176,17 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateFalse(void);
 CJSON_PUBLIC(cJSON *) cJSON_CreateBool(cJSON_bool boolean);
 CJSON_PUBLIC(cJSON *) cJSON_CreateNumber(double num);
 CJSON_PUBLIC(cJSON *) cJSON_CreateString(const char *string);
-#if XString_ON
-/* 这些调用会创建一个具有相应类型的 cJSON 项。 */
-CJSON_PUBLIC(cJSON*) cJSON_CreateString_XString(const XString* string);
-#endif
 
 /* 原始的 JSON 数据 */
 CJSON_PUBLIC(cJSON *) cJSON_CreateRaw(const char *raw);
 CJSON_PUBLIC(cJSON *) cJSON_CreateArray(void);
 CJSON_PUBLIC(cJSON *) cJSON_CreateObject(void);
-#if XString_ON
-CJSON_PUBLIC(cJSON*) cJSON_CreateRaw_XString(const XString* raw);
-#endif
 
 /* 创建一个字符串项，其中 valuestring 引用一个字符串，这样该字符串不会在调用 cJSON_Delete 时被释放。 */
 CJSON_PUBLIC(cJSON *) cJSON_CreateStringReference(const char *string);
 /* 创建一个对象或数组，该对象或数组仅引用其元素，这样在调用 cJSON_Delete 时，这些元素不会被释放。 */
 CJSON_PUBLIC(cJSON *) cJSON_CreateObjectReference(const cJSON *child);
 CJSON_PUBLIC(cJSON *) cJSON_CreateArrayReference(const cJSON *child);
-#if XString_ON
-/* 创建一个字符串项，其中 valuestring 引用一个字符串，这样该字符串不会在调用 cJSON_Delete 时被释放。 */
-CJSON_PUBLIC(cJSON*) cJSON_CreateStringReference_XString(const XString* string);
-#endif
 
 
 /* 这些工具函数用于创建一个包含 count 个元素的数组。
@@ -234,18 +195,6 @@ CJSON_PUBLIC(cJSON *) cJSON_CreateIntArray(const int *numbers, int count);
 CJSON_PUBLIC(cJSON *) cJSON_CreateFloatArray(const float *numbers, int count);
 CJSON_PUBLIC(cJSON *) cJSON_CreateDoubleArray(const double *numbers, int count);
 CJSON_PUBLIC(cJSON *) cJSON_CreateStringArray(const char *const *strings, int count);
-#if XVector_ON
-//将数组转成JSON对象
-CJSON_PUBLIC(cJSON*) cJSON_CreateIntArray_XVector_int(const XVector* vector);
-CJSON_PUBLIC(cJSON*) cJSON_CreateFloatArray_XVector_float(const XVector* vector);
-CJSON_PUBLIC(cJSON*) cJSON_CreateDoubleArray_XVector_double(const XVector* vector);
-//XVector(char*)数组
-CJSON_PUBLIC(cJSON*) cJSON_CreateStringArray_XVector_char(const XVector* vector);
-#endif
-#if XString_ON
-//XVector(XString*)数组
-CJSON_PUBLIC(cJSON*) cJSON_CreateStringArray_XVector_XString(const XVector* vector);
-#endif
 
 /* 将一个项追加到指定的数组或对象中。 */
 CJSON_PUBLIC(cJSON_bool) cJSON_AddItemToArray(cJSON *array, cJSON *item);

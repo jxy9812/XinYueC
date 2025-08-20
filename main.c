@@ -64,7 +64,6 @@ int main(int argc, char* args[])
 	//return;
 	return XCoreApplication_exec();
 	cJsonTest();
-	cJsonXContainerTest();
 	XRedBlackTreeTest();
 	//XMapAndXVectorFindTest();
 	//XBinarySearchTest();

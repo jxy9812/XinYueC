@@ -16,7 +16,7 @@ void XBsonDocumentTest()
 		XBsonArray* array = XBsonArray_create();
 		XBsonDocument* doc = XBsonDocument_create();
 
-		XBsonValue_setInt32(value, 100);
+		XBsonValue_setInt32(value, -100);
 		XBsonArray_append_move_base(array, value);
 
 		XBsonValue_setDouble(value, 100.9999);
@@ -32,7 +32,7 @@ void XBsonDocumentTest()
 		XBsonArray_append_move_base(array, value);
 
 
-		XBsonDocument_insert_keyUtf8_int32(doc, "数字", 66666);
+		XBsonDocument_insert_keyUtf8_int64(doc, "数字", 66666999999);
 		XBsonDocument_insert_keyUtf8_document(doc,"对象", doc);
 
 		/*XBsonValue_setDocument(value, doc);
