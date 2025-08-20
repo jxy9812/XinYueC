@@ -18,6 +18,8 @@ typedef void (*XCDataCreatMethod)(void* data, const void* sData);
 typedef  XCDataCreatMethod XCDataCopyMethod;
 //数据移动
 typedef XCDataCreatMethod XCDataMoveMethod;
+//数据清除
+typedef XCDataDeinitMethod XCDataClearMethod;
 
 #define XCONTAINEROBJECT_VTABLE_SIZE   (XCLASS_VTABLE_GET_SIZE(XContainerObject))      //容器基类虚函数表大小
 //XContainerObject虚函数表枚举

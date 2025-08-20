@@ -7,6 +7,7 @@ extern "C" {
 #include"XPoint.h"
 #include"XFunctionCallback.h"
 #include"XEquality.h"
+#include"XContainerObject.h"
 #include<stdio.h>
 #include<stdint.h>
 #include<stdbool.h>
@@ -42,7 +43,6 @@ typedef enum
 typedef struct XVariant
 {
 	int m_type;//类型
-	//XEquality m_equality;//相等比较函数
 	size_t m_dataSize;//数据大小
 	void* m_data;//数据
 }XVariant;
@@ -57,6 +57,8 @@ typedef struct XVariant
 * @retval 返回新的XVariant
 */
 XVariant* XVariant_create(void* data, size_t dataSize,int type);
+XVariant* XVariant_create_copy(const XVariant* copy);
+XVariant* XVariant_create_move(XVariant* move);
 //变量的方式直接创建
 #define XVariant_Create(data,type)    XVariant_create(&data,sizeof(data),type)
 void XVariant_init(XVariant* var, void* data, size_t dataSize, int type);
@@ -85,7 +87,7 @@ XVariant* XVariant_create_Point(XPoint val);
 XVariant* XVariant_create_ByteArray(const XByteArray* array);
 XVariant* XVariant_create_byteArray(const void* data, size_t size);
 XVariant* XVariant_create_String(XString* string);
-XVariant* XVariant_create_utf8_str(const char* str);
+XVariant* XVariant_create_utf8_str(const char* utf8);
 XVariant* XVariant_create_StringList(const XStringList* list);
 XVariant* XVariant_create_List(const XVariantList* list);
 XVariant* XVariant_create_Map(const XVariantMap* map);//XMap<XString, XVariant>
@@ -152,8 +154,11 @@ void XVariant_swap(XVariant* var,XVariant* other);
 int  XVariant_type(XVariant* var);
 const char* XVariant_typeName(XVariant* var);
 bool XVariant_equality(XVariant* var, XVariant* cmp);
+
 //设置自定义的数据相等比较回调函数
 void XVariant_setUserEquality(int type, XEquality equality);
+//设置用户数据方法
+void XVariant_setUserDataMethod(int type, XCDataCopyMethod copyMethod, XCDataMoveMethod moveMethod, XCDataClearMethod clearMethod, XCDataDeinitMethod deinitMethod);
 //设置自定义数据的类型名字
 void XVariant_setUserTypeName(int type, const char* typeName);
 //删除用户定义的类型属性

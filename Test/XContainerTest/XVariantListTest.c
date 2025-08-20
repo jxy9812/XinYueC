@@ -19,16 +19,18 @@ void XVariantListTest()
 		XVariant_setValue_int(var,80);
 		XVariantList_push_back_base(list, var);
 		XVariant_setValue_utf8_str(var, "9000");
+		
 		XVariantList_push_back_base(list, var);
 		XPrint_utf8_fmt("当前类型:%s\n",XVariant_typeName(var));
 
-		XVariant* find = XVariant_create_int(8);
+		/*XVariant* find = XVariant_create_int(8);
 		XVariant* ret=XVariantList_find_base(list,find);
 		if (ret)
 			XPrint_utf8_fmt("找到了:%p\n",ret);
-		XVariant_delete(find);
+		XVariant_delete(find);*/
 
 		XVariant_setValue_double(var, 100.0);
+
 		XPrint_utf8_fmt("当前类型:%s\n", XVariant_typeName(var));
 		XVariant_setValue_bool(var, true);
 		XPrint_utf8_fmt("当前类型:%s\n", XVariant_typeName(var));
@@ -40,7 +42,7 @@ void XVariantListTest()
 		if (str)
 		{
 			XPrint_utf8_fmt("%s\n",XString_toUtf8(str));
-			XString_delete_base(str);
+			//XString_delete_base(str);
 		}
 
 		XVariant_setValue_utf8_str(var,"1000");

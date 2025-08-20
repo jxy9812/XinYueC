@@ -5,10 +5,10 @@
 #include <string.h>
 XByteArray* XByteArray_create(size_t size)
 {
-	XByteArray* array = XVector_Create(uint8_t);
+	XByteArray* array = XMemory_malloc(sizeof(XByteArray));
 	if (array == NULL)
 		return NULL;
-	array->m_parent.m_equality = XEquality_uint8_t;
+	XByteArray_init(array);
 	if (size!=0)
 	{
 		XVector_resize_base(array,size);
@@ -32,6 +32,14 @@ XByteArray* XByteArray_create_move(XByteArray* other)
 	XByteArray* v = XByteArray_create(0);
 	XByteArray_move_base(v, other);
 	return v;
+}
+
+void XByteArray_init(XByteArray* array)
+{
+	if (array == NULL)
+		return;
+	XVector_init(array,sizeof(uint8_t));
+	array->m_parent.m_equality = XEquality_uint8_t;
 }
 
 bool XByteArray_push_front_base(XByteArray* array, const uint8_t byte)

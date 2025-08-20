@@ -12,6 +12,7 @@ typedef struct XByteArray
 XByteArray* XByteArray_create(size_t size);
 XByteArray* XByteArray_create_copy(const XByteArray* other);
 XByteArray* XByteArray_create_move(XByteArray* other);
+void XByteArray_init(XByteArray* array);
 // 向量头部增加一个字节数据
 bool XByteArray_push_front_base(XByteArray* array,const uint8_t byte);
 // 向量尾部增加一个字节数据
