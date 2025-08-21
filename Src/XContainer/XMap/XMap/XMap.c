@@ -26,6 +26,26 @@ XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XEquality 
 	XMap_init(this_map,keyTypeSize,valTypeSize,KeyEquality,KeyLess);
 	return this_map;
 }
+XMap* XMap_create_copy(const XMap* other)
+{
+	if (other == NULL)
+		return NULL;
+	XMap* map = XMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), ((XMapBase*)other)->m_KeyEquality, ((XMapBase*)other)->m_KeyLess);
+	if (map == NULL)
+		return NULL;
+	XMap_copy_base(map, other);
+	return map;
+}
+XMap* XMap_create_move(XMap* other)
+{
+	if (other == NULL)
+		return NULL;
+	XMap* map = XMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), ((XMapBase*)other)->m_KeyEquality, ((XMapBase*)other)->m_KeyLess);
+	if (map == NULL)
+		return NULL;
+	XMap_move_base(map, other);
+	return map;
+}
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
 {
 	if (ISNULL(this_map, ""))

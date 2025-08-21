@@ -23,11 +23,11 @@ void XVariantListTest()
 		XVariantList_push_back_base(list, var);
 		XPrint_utf8_fmt("当前类型:%s\n",XVariant_typeName(var));
 
-		/*XVariant* find = XVariant_create_int(8);
+		XVariant* find = XVariant_create_int(8);
 		XVariant* ret=XVariantList_find_base(list,find);
 		if (ret)
 			XPrint_utf8_fmt("找到了:%p\n",ret);
-		XVariant_delete(find);*/
+		XVariant_delete(find);
 
 		XVariant_setValue_double(var, 100.0);
 
@@ -42,12 +42,13 @@ void XVariantListTest()
 		if (str)
 		{
 			XPrint_utf8_fmt("%s\n",XString_toUtf8(str));
-			//XString_delete_base(str);
+			XString_delete_base(str);
 		}
 
 		XVariant_setValue_utf8_str(var,"1000");
 	
 		XPrint_utf8_fmt("%d\n", XVariant_toInt(var));
+
 		XVariant_delete(var);
 		
 		XVariantList_delete_base(list);
@@ -68,7 +69,7 @@ void XVariantListTest_list()
 		XVariantList_push_back_base(list, var);
 		XVariant_delete(var);
 
-		XVariant* varList = XVariant_create_List(list);
+		XVariant* varList = XVariant_create_list(list);
 		XPrint_utf8_fmt("当前类型:%s\n", XVariant_typeName(varList));
 		XVariantList* toList = XVariant_toList(varList);
 		if (toList)
@@ -109,7 +110,7 @@ void XVariantListTest_map()
 			XString_delete_base(str);
 			XVariant_delete(v);
 		}
-		XVariant* varMap = XVariant_create_Hash(map);
+		XVariant* varMap = XVariant_create_hash(map);
 		XPrint_utf8_fmt("当前类型:%s\n", XVariant_typeName(varMap));
 		XMapBase_delete_base(map);
 		map = XVariant_toHash(varMap);

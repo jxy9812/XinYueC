@@ -15,6 +15,11 @@ typedef struct XPair//pair是将2个数据组合成一组数据，当需要这�
 //开辟一个XPair,初始化
 #define XPair_Create(firstType,secondType) XPair_create(sizeof(firstType),sizeof(secondType))
 XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize);
+XPair* XPair_create_copy(const XPair* other);
+XPair* XPair_create_move(XPair* other);
+
+void XPair_copy(XPair* this_pair,const XPair* copy);
+void XPair_move(XPair* this_pair, XPair* move);
 //插入数据
 #define XPair_Insert(this_pair,firstData,secondData) XPair_insert(this_pair,&firstData,&secondData)
 void XPair_insert(XPair* this_pair, void* firstData, void* secondData);

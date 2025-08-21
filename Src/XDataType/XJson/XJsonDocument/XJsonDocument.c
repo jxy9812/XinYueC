@@ -739,7 +739,7 @@ XString* Json_parse_string(const char** ptr, const char* end)
     if (*ptr >= end || **ptr != '"') return NULL;
     (*ptr)++; // 跳过开头引号
     const char* start = *ptr;
-    XString* str = XString_create_copy(NULL);
+    XString* str = XString_create();
     XByteArray* buff = XByteArray_create(0);
     while (*ptr < end && **ptr != '"') {
         if (**ptr == '\\') {

@@ -10,6 +10,26 @@ XHashMap*XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHa
 	XHashMap_init(map,keyTypeSize,valTypeSize,hash,KeyEquality, KeyLess);
 	return map;
 }
+XHashMap* XHashMap_create_copy(const XHashMap* other)
+{
+	if (other == NULL)
+		return NULL;
+	XHashMap* hash = XHashMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), other->m_hash, ((XMapBase*)other)->m_KeyEquality, ((XMapBase*)other)->m_KeyLess);
+	if (hash == NULL)
+		return NULL;
+	XHashMap_copy_base(hash, other);
+	return hash;
+}
+XHashMap* XHashMap_create_move(XHashMap* other)
+{
+	if (other == NULL)
+		return NULL;
+	XHashMap* hash = XHashMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), other->m_hash, ((XMapBase*)other)->m_KeyEquality, ((XMapBase*)other)->m_KeyLess);
+	if (hash == NULL)
+		return NULL;
+	XHashMap_move_base(hash, other);
+	return hash;
+}
 void XHashMap_init(XHashMap*this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess)
 {
 	if (this_map == NULL)

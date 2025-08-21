@@ -48,7 +48,6 @@ case XVariantType_Size_t:	return (t)XVariant_Data(var, size_t);\
 case XVariantType_Ptr:		return (t)XVariant_Data(var, void*);\
 case XVariantType_Float:	return (t)XVariant_Data(var, float);\
 case XVariantType_Double:	return (t)XVariant_Data(var, double);\
-case XVariantType_ByteArray:return (t)XVariant_Data(var, t); \
 default:return 0;\
 }\
 //自定义的类型哈希表初始化
@@ -215,6 +214,28 @@ XVariant* XVariant_create_ByteArray(const XByteArray* array)
 	return var;
 }
 
+XVariant* XVariant_create_ByteArray_move(XByteArray* array)
+{
+	if (array == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, sizeof(XByteArray), XVariantType_ByteArray);
+	XByteArray_init(XVariant_DataPtr(var));
+	XByteArray_move_base(XVariant_DataPtr(var), array);
+	return var;
+}
+
+XVariant* XVariant_create_ByteArray_ref(XByteArray* array)
+{
+	if (array == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, 0, XVariantType_ByteArray);
+	if (var == NULL)
+		return NULL;
+	var->m_data = array;
+	var->m_dataSize = sizeof(XByteArray);
+	return var;
+}
+
 XVariant* XVariant_create_byteArray(const void* data, size_t size)
 {
 	if (data == NULL||size==0)
@@ -236,6 +257,28 @@ XVariant* XVariant_create_String(XString* str)
 	return var;
 }
 
+XVariant* XVariant_create_String_move(XString* str)
+{
+	if (str == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, sizeof(XString), XVariantType_String);
+	XString_init(XVariant_DataPtr(var));
+	XString_move_base(XVariant_DataPtr(var), str);
+	return var;
+}
+
+XVariant* XVariant_create_String_ref(XString* str)
+{
+	if (str == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, 0, XVariantType_String);
+	if (var == NULL)
+		return NULL;
+	var->m_data = str;
+	var->m_dataSize = sizeof(XString);
+	return var;
+}
+
 XVariant* XVariant_create_utf8_str(const char* utf8)
 {
 	if (utf8 == NULL)
@@ -250,190 +293,144 @@ XVariant* XVariant_create_StringList(const XStringList* list)
 {
 	if (list == NULL)
 		return NULL;
-	XVariant* var = XVariant_create(NULL, 0, XVariantType_StringList);
-	if (var == NULL)
-		return NULL;
-	XVariant_setValue_StringList(var,list);
-	return var;
-	//计算大小
-	XString* temp = NULL;
-	for_each_iterator(list, XStringList, it)
-	{
-		temp = XStringList_iterator_data(&it);
-		(var->m_dataSize) += sizeof(size_t);
-		(var->m_dataSize) += strlen(XString_toUtf8(temp));
-	}
-	//开始申请空间
-	var->m_data = XMemory_malloc(var->m_dataSize);
-	if (var->m_data == NULL)
-	{
-		XMemory_free(var);
-		return NULL;
-	}
-	//正式保存数据
-	uint8_t* ptr = var->m_data;
-	size_t len = 0;
-	for_each_iterator(list, XVariantList, it)
-	{
-		temp = XVariantList_iterator_data(&it);
-		len= strlen(XString_toUtf8(temp));//计算字符串长度
-		memcpy(ptr, &len, sizeof(size_t));//写入字符串长度
-		ptr += sizeof(size_t);
-		memcpy(ptr, XString_toUtf8(temp), len);//写入字符串
-		ptr += len;
-	}
+	XVariant* var = XVariant_create(NULL, sizeof(XStringList), XVariantType_StringList);
+	XStringList_init(XVariant_DataPtr(var));
+	XStringList_copy_base(XVariant_DataPtr(var), list);
 	return var;
 }
 
-XVariant* XVariant_create_List(const XVariantList* list)
+XVariant* XVariant_create_StringList_move(XStringList* list)
 {
 	if (list == NULL)
 		return NULL;
-	XVariant* var = XVariant_create(NULL,0, XVariantType_List);
+	XVariant* var = XVariant_create(NULL, sizeof(XStringList), XVariantType_StringList);
+	XStringList_init(XVariant_DataPtr(var));
+	XStringList_move_base(XVariant_DataPtr(var), list);
+	return var;
+}
+
+XVariant* XVariant_create_StringList_ref(XStringList* list)
+{
+	if (list == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, 0, XVariantType_StringList);
 	if (var == NULL)
 		return NULL;
-	//计算大小
-	XVariant* temp = NULL;
-	for_each_iterator(list, XVariantList,it)
-	{
-		temp = XVariantList_iterator_data(&it);
-		(var->m_dataSize) += temp->m_dataSize;
-		(var->m_dataSize) += (sizeof(XVariant) - sizeof(void*));
-	}
-	//开始申请空间
-	var->m_data = XMemory_malloc(var->m_dataSize);
-	if (var->m_data == NULL)
-	{
-		XMemory_free(var);
+	var->m_data = list;
+	var->m_dataSize = sizeof(XStringList);
+	return var;
+}
+
+XVariant* XVariant_create_list(const XVariantList* list)
+{
+	if (list == NULL)
 		return NULL;
-	}
-	//正式保存数据
-	uint8_t* ptr = var->m_data;
-	size_t variantSize = sizeof(XVariant) - sizeof(void*);
-	for_each_iterator(list, XVariantList, it)
-	{
-		temp = XVariantList_iterator_data(&it);
-		memcpy(ptr,temp, variantSize);
-		ptr += variantSize;
-		memcpy(ptr,temp->m_data,temp->m_dataSize);
-		ptr += temp->m_dataSize;
-	}
+	XVariant* var = XVariant_create(NULL, sizeof(XVariantList), XVariantType_List);
+	XVariantList_init(XVariant_DataPtr(var));
+	XVariantList_copy_base(XVariant_DataPtr(var), list);
+	return var;
+}
+XVariant* XVariant_create_list_move(XVariantList* list)
+{
+	if (list == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, sizeof(XVariantList), XVariantType_List);
+	XVariantList_init(XVariant_DataPtr(var));
+	XVariantList_move_base(XVariant_DataPtr(var), list);
+	return var;
+}
+XVariant* XVariant_create_list_ref(XVariantList* list)
+{
+	if (list == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, 0, XVariantType_List);
+	if (var == NULL)
+		return NULL;
+	var->m_data = list;
+	var->m_dataSize = sizeof(XVariantList);
 	return var;
 }
 //XMap<XString, XVariant>
-XVariant* XVariant_create_Map(const XVariantMap* map)
+XVariant* XVariant_create_map(const XVariantMap* map)
 {
-	if (map == NULL|| ((XMapBase*)map)->m_KeyEquality != XEquality_XString)
+	if (map == NULL)
 		return NULL;
-	XVariant* var = XVariant_create(NULL, 0, XVariantType_MapBase);
-	if (var == NULL)
-		return NULL;
-	//计算大小
-	XPair* pair = NULL;
-	for_each_iterator(map, XMap, it)
-	{
-		pair = XMap_iterator_data(&it);
-		XString* str = XPair_first(pair);
-		XVariant* v= XPair_second(pair);
-		XPair p = {0};
-		p.m_firstTypeSize= XContainerSize(str)+1;//XString大小
-		p.m_secondTypeSize = v->m_dataSize + (sizeof(XVariant) - sizeof(void*));
-		(var->m_dataSize) += XPair_getSize(&p);
-	}
-	//开始申请空间
-	var->m_data = XMemory_malloc(var->m_dataSize);
-	if (var->m_data == NULL)
-	{
-		XMemory_free(var);
-		return NULL;
-	}
-	//正式保存数据
-	uint8_t* ptr = var->m_data;
-	XPair copyPair = { 0 };
-	size_t pairTypeSize = (uint8_t*)(&(copyPair.m_first)) - ((uint8_t*)&copyPair);
-	size_t variantSize = sizeof(XVariant) - sizeof(void*);
-	for_each_iterator(map, XMap, it)
-	{
-		pair = XMap_iterator_data(&it);
-		XString* str = XPair_first(pair);
-		XVariant* v = XPair_second(pair);
-		copyPair.m_firstTypeSize= XContainerSize(str)+1;//XString大小
-		copyPair.m_secondTypeSize = v->m_dataSize + (sizeof(XVariant) - sizeof(void*));
-		//拷贝构建XPair结构
-		memcpy(ptr, &copyPair, pairTypeSize);
-		ptr += pairTypeSize;
-		//拷贝XString数据
-		memcpy(ptr,XContainerDataPtr(str), XContainerSize(str)+1);
-		ptr += (XContainerSize(str)+1);
-		//拷贝数据
-		memcpy(ptr, v, variantSize);
-		ptr += variantSize;
-		memcpy(ptr, v->m_data, v->m_dataSize);
-		ptr += v->m_dataSize;
-	}
+	XVariant* var = XVariant_create(NULL, sizeof(XVariantMap), XVariantType_Map);
+	XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize,XContainerTypeSize(map), ((XMapBase*)map)->m_KeyEquality, ((XMapBase*)map)->m_KeyLess);
+	XMap_copy_base(XVariant_DataPtr(var), map);
 	return var;
 }
 
-XVariant* XVariant_create_Hash(const XHashMap* hash)
+XVariant* XVariant_create_map_move(XVariantMap* map)
 {
-	if (hash == NULL || ((XMapBase*)hash)->m_KeyEquality != XEquality_XString)
+	if (map == NULL)
 		return NULL;
-	XVariant* var = XVariant_create(NULL, 0, XVariantType_MapBase);
-	if (var == NULL)
-		return NULL;
-	//计算大小
-	XPair* pair = NULL;
-	for_each_iterator(hash, XHashMap, it)
-	{
-		pair = XHashMap_iterator_data(&it);
-		XString* str = XPair_first(pair);
-		XVariant* v = XPair_second(pair);
-		XPair p = { 0 };
-		p.m_firstTypeSize = XContainerSize(str) + 1;//XString大小
-		p.m_secondTypeSize = v->m_dataSize + (sizeof(XVariant) - sizeof(void*));
-		(var->m_dataSize) += XPair_getSize(&p);
-	}
-	//开始申请空间
-	var->m_data = XMemory_malloc(var->m_dataSize);
-	if (var->m_data == NULL)
-	{
-		XMemory_free(var);
-		return NULL;
-	}
-	//正式保存数据
-	uint8_t* ptr = var->m_data;
-	XPair copyPair = { 0 };
-	size_t pairTypeSize = (uint8_t*)(&(copyPair.m_first)) - ((uint8_t*)&copyPair);
-	size_t variantSize = sizeof(XVariant) - sizeof(void*);
-	for_each_iterator(hash, XHashMap, it)
-	{
-		pair = XHashMap_iterator_data(&it);
-		XString* str = XPair_first(pair);
-		XVariant* v = XPair_second(pair);
-		copyPair.m_firstTypeSize = XContainerSize(str) + 1;//XString大小
-		copyPair.m_secondTypeSize = v->m_dataSize + (sizeof(XVariant) - sizeof(void*));
-		//拷贝构建XPair结构
-		memcpy(ptr, &copyPair, pairTypeSize);
-		ptr += pairTypeSize;
-		//拷贝XString数据
-		memcpy(ptr, XContainerDataPtr(str), XContainerSize(str) + 1);
-		ptr += (XContainerSize(str) + 1);
-		//拷贝数据
-		memcpy(ptr, v, variantSize);
-		ptr += variantSize;
-		memcpy(ptr, v->m_data, v->m_dataSize);
-		ptr += v->m_dataSize;
-	}
+	XVariant* var = XVariant_create(NULL, sizeof(XVariantMap), XVariantType_Map);
+	XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize, XContainerTypeSize(map), ((XMapBase*)map)->m_KeyEquality, ((XMapBase*)map)->m_KeyLess);
+	XMap_move_base(XVariant_DataPtr(var), map);
 	return var;
 }
 
+XVariant* XVariant_create_map_ref(XVariantMap* map)
+{
+	if (map == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, 0, XVariantType_Map);
+	if (var == NULL)
+		return NULL;
+	var->m_data = map;
+	var->m_dataSize = sizeof(XVariantMap);
+	return var;
+}
+
+XVariant* XVariant_create_hash(const XHashMap* hash)
+{
+	if (hash == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, sizeof(XHashMap), XVariantType_Hash);
+	XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash,((XMapBase*)hash)->m_KeyEquality, ((XMapBase*)hash)->m_KeyLess);
+	XHashMap_copy_base(XVariant_DataPtr(var), hash);
+	return var;
+}
+XVariant* XVariant_create_hash_move(XHashMap* hash)
+{
+	if (hash == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, sizeof(XHashMap), XVariantType_Hash);
+	XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, ((XMapBase*)hash)->m_KeyEquality, ((XMapBase*)hash)->m_KeyLess);
+	XHashMap_move_base(XVariant_DataPtr(var), hash);
+	return var;
+}
+XVariant* XVariant_create_hash_ref(XHashMap* hash)
+{
+	if (hash == NULL)
+		return NULL;
+	XVariant* var = XVariant_create(NULL, 0, XVariantType_Hash);
+	if (var == NULL)
+		return NULL;
+	var->m_data = hash;
+	var->m_dataSize = sizeof(XHashMap);
+	return var;
+}
+//转引用
+void* XVariant_toRef(XVariant* var, XVariantType type)
+{
+	if (var == NULL || var->m_type != type || var->m_dataSize == 0)
+		return NULL;
+	return XVariant_DataPtr(var);
+}
 uint8_t XVariant_toUint8(XVariant* var)
 {
 	if (var == NULL)
 		return 0;
 	if (var->m_type == XVariantType_String)
-		return strtoul(XVariant_DataPtr(var), NULL, 10);
+		return XString_toUShort(XVariant_DataPtr(var), NULL, 10);
 	to_value(var, uint8_t);
+}
+
+uint8_t* XVariant_toUint8_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Uint8);
 }
 
 uint16_t XVariant_toUint16(XVariant* var)
@@ -441,8 +438,13 @@ uint16_t XVariant_toUint16(XVariant* var)
 	if (var == NULL)
 		return 0;
 	if (var->m_type == XVariantType_String)
-		return strtoul(XVariant_DataPtr(var), NULL, 10);
+		return XString_toUShort(XVariant_DataPtr(var), NULL, 10);
 	to_value(var, uint16_t);
+}
+
+uint16_t* XVariant_toUint16_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Uint16);
 }
 
 uint32_t XVariant_toUint32(XVariant* var)
@@ -450,8 +452,13 @@ uint32_t XVariant_toUint32(XVariant* var)
 	if (var == NULL)
 		return 0;
 	if (var->m_type == XVariantType_String)
-		return strtoul(XVariant_DataPtr(var), NULL, 10);
+		return XString_toULong(XVariant_DataPtr(var), NULL, 10);
 	to_value(var, uint32_t);
+}
+
+uint32_t* XVariant_toUint32_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Uint32);
 }
 
 uint64_t XVariant_toUint64(XVariant* var)
@@ -459,8 +466,13 @@ uint64_t XVariant_toUint64(XVariant* var)
 	if (var == NULL)
 		return 0;
 	if (var->m_type == XVariantType_String)
-		return strtoull(XVariant_DataPtr(var), NULL, 10);
+		return XString_toULongLong(XVariant_DataPtr(var), NULL, 10);
 	to_value(var, uint64_t);
+}
+
+uint64_t* XVariant_toUint64_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Uint64);
 }
 
 int8_t XVariant_toInt8(XVariant* var)
@@ -468,8 +480,13 @@ int8_t XVariant_toInt8(XVariant* var)
 	if (var == NULL)
 		return 0;
 	if (var->m_type == XVariantType_String)
-		return strtol(XVariant_DataPtr(var), NULL, 10);
+		return XString_toShort(XVariant_DataPtr(var), NULL, 10);
 	to_value(var, int8_t);
+}
+
+int8_t* XVariant_toInt8_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Int8);
 }
 
 int16_t XVariant_toInt16(XVariant* var)
@@ -477,8 +494,13 @@ int16_t XVariant_toInt16(XVariant* var)
 	if (var == NULL)
 		return 0;
 	if (var->m_type == XVariantType_String)
-		return strtol(XVariant_DataPtr(var), NULL, 10);
+		return XString_toShort(XVariant_DataPtr(var), NULL, 10);
 	to_value(var, int16_t);
+}
+
+int16_t* XVariant_toInt16_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Int16);
 }
 
 int32_t XVariant_toInt32(XVariant* var)
@@ -486,8 +508,13 @@ int32_t XVariant_toInt32(XVariant* var)
 	if (var == NULL)
 		return 0;
 	if (var->m_type == XVariantType_String)
-		return strtol(XVariant_DataPtr(var), NULL, 10);
+		return XString_toLong(XVariant_DataPtr(var), NULL, 10);
 	to_value(var, int32_t);
+}
+
+int32_t* XVariant_toInt32_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Int32);
 }
 
 int64_t XVariant_toInt64(XVariant* var)
@@ -495,8 +522,13 @@ int64_t XVariant_toInt64(XVariant* var)
 	if (var == NULL)
 		return 0;
 	if (var->m_type == XVariantType_String)
-		return strtoll(XVariant_DataPtr(var), NULL, 10);
+		return XString_toLongLong(XVariant_DataPtr(var), NULL, 10);
 	to_value(var, int64_t);
+}
+
+int64_t* XVariant_toInt64_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Int64);
 }
 
 bool XVariant_toBool(XVariant* var)
@@ -506,11 +538,21 @@ bool XVariant_toBool(XVariant* var)
 	to_value(var, bool);
 }
 
+bool* XVariant_toBool_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Bool);
+}
+
 char XVariant_toChar(XVariant* var)
 {
 	if (var == NULL)
 		return 0;
 	to_value(var, char);
+}
+
+char* XVariant_toChar_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Char);
 }
 
 unsigned char XVariant_toUChar(XVariant* var)
@@ -520,6 +562,11 @@ unsigned char XVariant_toUChar(XVariant* var)
 	to_value(var, unsigned char);
 }
 
+unsigned char* XVariant_toUChar_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_UChar);
+}
+
 int XVariant_toInt(XVariant* var)
 {
 	if (var == NULL)
@@ -527,27 +574,11 @@ int XVariant_toInt(XVariant* var)
 	if (var->m_type == XVariantType_String)
 		return XString_toInt(XVariant_DataPtr(var),NULL,10);
 	to_value(var, int);
-	/*switch (var->m_type)
-	{
-		case XVariantType_Uint8:	return (int)XVariant_Data(var, uint8_t);
-		case XVariantType_Uint16:	return (int)XVariant_Data(var, uint16_t);
-		case XVariantType_Uint32:	return (int)XVariant_Data(var, uint32_t);
-		case XVariantType_Uint64:	return (int)XVariant_Data(var, uint64_t);
-		case XVariantType_Int8:		return (int)XVariant_Data(var, int8_t);
-		case XVariantType_Int16:	return (int)XVariant_Data(var, int16_t);
-		case XVariantType_Int32:	return (int)XVariant_Data(var, int32_t);
-		case XVariantType_Int64:	return (int)XVariant_Data(var, int64_t);
-		case XVariantType_Bool:		return (int)XVariant_Data(var, bool);
-		case XVariantType_Char:		return (int)XVariant_Data(var, char);
-		case XVariantType_UChar:	return (int)XVariant_Data(var, unsigned char);
-		case XVariantType_Int:		return XVariant_Data(var, int);
-		case XVariantType_Size_t:	return (int)XVariant_Data(var, size_t);
-		case XVariantType_Ptr:		return (int)XVariant_Data(var, void*);
-		case XVariantType_Float:	return (int)XVariant_Data(var, float);
-		case XVariantType_Double:	return (int)XVariant_Data(var, double);
-		
-		default:return 0;
-	}*/
+}
+
+int* XVariant_toInt_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Int);
 }
 
 size_t XVariant_toSize_t(XVariant* var)
@@ -559,9 +590,19 @@ size_t XVariant_toSize_t(XVariant* var)
 	to_value(var, size_t);
 }
 
+size_t* XVariant_toSize_t_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Size_t);
+}
+
 void* XVariant_toPtr(XVariant* var)
 {
 	return (void*)XVariant_toSize_t(var);
+}
+
+void** XVariant_toPtr_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Ptr);
 }
 
 float XVariant_toFloat(XVariant* var)
@@ -569,10 +610,15 @@ float XVariant_toFloat(XVariant* var)
 	if (var == NULL)
 		return 0;
 	if (var->m_type == XVariantType_String)
-		return strtof(XVariant_DataPtr(var), NULL);
+		return XString_toFloat(XVariant_DataPtr(var), NULL);
 	switch (var->m_type) {
 	case XVariantType_Uint8: return (float)(*((uint8_t*)(((XVariant*)var)->m_data))); case XVariantType_Uint16: return (float)(*((uint16_t*)(((XVariant*)var)->m_data))); case XVariantType_Uint32: return (float)(*((uint32_t*)(((XVariant*)var)->m_data))); case XVariantType_Uint64: return (float)(*((uint64_t*)(((XVariant*)var)->m_data))); case XVariantType_Int8: return (float)(*((int8_t*)(((XVariant*)var)->m_data))); case XVariantType_Int16: return (float)(*((int16_t*)(((XVariant*)var)->m_data))); case XVariantType_Int32: return (float)(*((int32_t*)(((XVariant*)var)->m_data))); case XVariantType_Int64: return (float)(*((int64_t*)(((XVariant*)var)->m_data))); case XVariantType_Bool: return (float)(*((_Bool*)(((XVariant*)var)->m_data))); case XVariantType_Char: return (float)(*((char*)(((XVariant*)var)->m_data))); case XVariantType_UChar: return (float)(*((unsigned char*)(((XVariant*)var)->m_data))); case XVariantType_Int: return (float)(*((int*)(((XVariant*)var)->m_data))); case XVariantType_Size_t: return (float)(*((size_t*)(((XVariant*)var)->m_data))); case XVariantType_Float: return (float)(*((float*)(((XVariant*)var)->m_data))); case XVariantType_Double: return (float)(*((double*)(((XVariant*)var)->m_data))); default:return 0;
 	};
+}
+
+float* XVariant_toFloat_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Float);
 }
 
 double XVariant_toDouble(XVariant* var)
@@ -580,149 +626,85 @@ double XVariant_toDouble(XVariant* var)
 	if (var == NULL)
 		return 0;
 	if (var->m_type == XVariantType_String)
-		return strtod(XVariant_DataPtr(var), NULL);
+		return XString_toDouble(XVariant_DataPtr(var), NULL);
 	switch (var->m_type) {
 	case XVariantType_Uint8: return (double)(*((uint8_t*)(((XVariant*)var)->m_data))); case XVariantType_Uint16: return (double)(*((uint16_t*)(((XVariant*)var)->m_data))); case XVariantType_Uint32: return (double)(*((uint32_t*)(((XVariant*)var)->m_data))); case XVariantType_Uint64: return (double)(*((uint64_t*)(((XVariant*)var)->m_data))); case XVariantType_Int8: return (double)(*((int8_t*)(((XVariant*)var)->m_data))); case XVariantType_Int16: return (double)(*((int16_t*)(((XVariant*)var)->m_data))); case XVariantType_Int32: return (double)(*((int32_t*)(((XVariant*)var)->m_data))); case XVariantType_Int64: return (double)(*((int64_t*)(((XVariant*)var)->m_data))); case XVariantType_Bool: return (double)(*((_Bool*)(((XVariant*)var)->m_data))); case XVariantType_Char: return (double)(*((char*)(((XVariant*)var)->m_data))); case XVariantType_UChar: return (double)(*((unsigned char*)(((XVariant*)var)->m_data))); case XVariantType_Int: return (double)(*((int*)(((XVariant*)var)->m_data))); case XVariantType_Size_t: return (double)(*((size_t*)(((XVariant*)var)->m_data))); case XVariantType_Float: return (double)(*((float*)(((XVariant*)var)->m_data))); case XVariantType_Double: return (double)(*((double*)(((XVariant*)var)->m_data))); default:return 0;
 	};
 }
+double* XVariant_toDouble_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Double);
+}
+
 
 XByteArray* XVariant_toByteArray(XVariant* var)
 {
-	if (var == NULL||var->m_dataSize==0)
-		return NULL;
-	return XVariant_DataPtr(var);
+	return XByteArray_create_copy(XVariant_toByteArray_ref(var));
+}
+
+XByteArray* XVariant_toByteArray_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_ByteArray);
 }
 
 XString* XVariant_toString(XVariant* var)
 {
-	if (var->m_type != XVariantType_String)
-		return NULL;
-	return XVariant_DataPtr(var);
+	return XString_create_copy(XVariant_toString_ref(var));
+}
+
+XString* XVariant_toString_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_String);
 }
 
 XStringList* XVariant_toStringList(XVariant* var)
 {
-	if (var->m_type != XVariantType_StringList)
-		return NULL;
-	XStringList* list = XStringList_create();
-	if (list == NULL)
-		return NULL;
-	//正式保存数据
-	uint8_t* ptr = var->m_data;
-	size_t len = 0;
-	XString_Init_Utf8(str,NULL);
-	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
-	{
-		len = *((size_t*)ptr);//获取字符串长度不包括结束符 0
-		ptr += sizeof(size_t);//指针偏移到utf8字符串首地址
-		XString_assign_with_length_utf8(str,ptr,len);//转XString对象
-		XStringList_push_back_move_base(list,str);//插入移动构造
-		ptr += len;//指针偏移到下一个字符串
-	}
-	XString_deinit_base(str);//释放
-	return list;
+	return XStringList_create_copy(XVariant_toStringList_ref(var));
+}
+
+XStringList* XVariant_toStringList_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_StringList);
 }
 
 XVariantList* XVariant_toList(XVariant* var)
 {
-	if (var->m_type != XVariantType_List)
-		return NULL;
-	XVariantList* list = XVariantList_create();
-	if (list == NULL)
-		return NULL;
-	//正式保存数据
-	uint8_t* ptr = var->m_data;
-	size_t variantSize = sizeof(XVariant) - sizeof(void*);
-	XVariant* temp=ptr;
-	XVariant_Init(newVar, NULL, 0, 0);
-	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
-	{
-		memcpy(newVar, temp, variantSize);
-		newVar->m_data = XMemory_malloc(temp->m_dataSize);
-		ptr += variantSize;
-		memcpy(newVar->m_data, ptr, temp->m_dataSize);
-		ptr += temp->m_dataSize;
-		XVariantList_push_back_move_base(list,newVar);
-		temp = ptr;
-	}
-	XVariant_deinit(newVar);
-	return list;
+	return XVariantList_create_copy(XVariant_toList_ref(var));
+}
+
+XVariantList* XVariant_toList_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_List);
 }
 
 XVariantMap* XVariant_toMap(XVariant* var)
 {
-	if (var->m_type != XVariantType_MapBase)
-		return NULL;
-	XVariantMap* map = XMap_create_XVariantMap();
-	if (map == NULL)
-		return NULL;
-	//
-	size_t variantSize = sizeof(XVariant) - sizeof(void*);
-	uint8_t* ptr = var->m_data;
-	XPair* temp = ptr;
-	XVariant* tv=NULL;
-	XString_Init_Utf8(str,NULL);
-	XVariant_Init(newVar, NULL, 0, 0);
-	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
-	{
-		//XString* str = XString_create_utf8(XPair_first(temp));
-		XString_assign_utf8(str, XPair_first(temp));
-		tv = XPair_second(temp);
-		//XVariant* newVar = XVariant_create(NULL, 0, 0);
+	return XMap_create_copy(XVariant_toMap_ref(var));
+}
 
-		memcpy(newVar, tv, variantSize);
-		newVar->m_data = XMemory_malloc(tv->m_dataSize);
-		memcpy(newVar->m_data, ((uint8_t*)tv)+ variantSize, tv->m_dataSize);
-		XMapBase_insert_move_base(map,str,newVar);
-		ptr += XPair_getSize(temp);
-		temp = ptr;
-	}
-	XString_deinit_base(str);
-	XVariant_deinit(newVar);
-	return map;
+XVariantMap* XVariant_toMap_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Map);
 }
 
 XVariantHashMap* XVariant_toHash(XVariant* var)
 {
-	if (var->m_type != XVariantType_MapBase)
-		return NULL;
-	XMap* hash = XHashMap_create_XVariantHashMap();
-	if (hash == NULL)
-		return NULL;
-	//
-	size_t variantSize = sizeof(XVariant) - sizeof(void*);
-	uint8_t* ptr = var->m_data;
-	XPair* temp = ptr;
-	XVariant* tv = NULL;
-	XString_Init_Utf8(str, NULL);
-	XVariant_Init(newVar, NULL, 0, 0);
-	while (ptr < ((uint8_t*)var->m_data) + var->m_dataSize)
-	{
-		//XString* str = XString_create_utf8(XPair_first(temp));
-		XString_assign_utf8(str, XPair_first(temp));
-		tv = XPair_second(temp);
-		//XVariant* newVar = XVariant_create(NULL, 0, 0);
+	return XHashMap_create_copy(XVariant_toHash_ref(var));
+}
 
-		memcpy(newVar, tv, variantSize);
-		newVar->m_data = XMemory_malloc(tv->m_dataSize);
-		memcpy(newVar->m_data, ((uint8_t*)tv) + variantSize, tv->m_dataSize);
-		XMapBase_insert_move_base(hash, str, newVar);
-		ptr += XPair_getSize(temp);
-		temp = ptr;
-	}
-	XString_deinit_base(str);
-	XVariant_deinit(newVar);
-	return hash;
+XVariantHashMap* XVariant_toHash_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Hash);
 }
 
 XPair* XVariant_toPair(XVariant* var)
 {
-	if (var->m_type != XVariantType_Pair)
-		return NULL;
-	XPair* pair = XMemory_malloc(var->m_dataSize);
-	if (pair)
-		memcpy(pair, XVariant_data(var),var->m_dataSize);
-	return pair;
+	return XPair_create_copy(XVariant_toPair_ref(var));
+}
+
+XPair* XVariant_toPair_ref(XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_Pair);
 }
 
 XPoint XVariant_toPoint(XVariant* var)
@@ -741,7 +723,6 @@ static void setValue(XVariant* var, void* data, size_t size, int type)
 	if (var->m_data && var->m_type != type)
 	{
 		XVariant_deinit(var);
-		//var->m_data = NULL;
 	}
 	if (var->m_data == NULL || var->m_dataSize != size)
 	{
@@ -762,20 +743,10 @@ static void setValue(XVariant* var, void* data, size_t size, int type)
 }
 void XVariant_setValue(XVariant* var,const XVariant* newVar)
 {
-	if (var == NULL || newVar == NULL||newVar->m_data==NULL||newVar->m_dataSize==0)
-		return;
-	if (var->m_data != NULL)
-	{
-		XMemory_free(var->m_data);
-		var->m_data = NULL;
-		var->m_dataSize = 0;
-	}
-	var->m_data=XMemory_malloc(newVar->m_dataSize);
-	if (var->m_data == NULL)
-		return;
-	memcpy(var->m_data,newVar->m_data,newVar->m_dataSize);
-	var->m_dataSize = newVar->m_dataSize;
-	var->m_type = newVar->m_type;
+	/*if (var == NULL || newVar == NULL||newVar->m_data==NULL||newVar->m_dataSize==0)
+		return;*/
+	return XVariant_copy(var, newVar);
+		//setValue(var,NULL,);
 }
 
 void XVariant_setValue_null(XVariant* var)
@@ -872,7 +843,7 @@ void XVariant_setValue_Point(XVariant* var, XPoint val)
 	setValue(var,&val,sizeof(XPoint), XVariantType_Point);
 }
 
-void XVariant_setValue_ByteArray(XVariant* var, const XByteArray* array)
+static void setValue_ByteArray(XVariant* var, XByteArray* array, XCDataCreatMethod dataCreatMethod)
 {
 	if (var == NULL || array == NULL)
 		return;
@@ -881,7 +852,26 @@ void XVariant_setValue_ByteArray(XVariant* var, const XByteArray* array)
 		setValue(var, NULL, sizeof(XByteArray), XVariantType_ByteArray);
 		XByteArray_init(XVariant_DataPtr(var));
 	}
-	XByteArray_copy_base(XVariant_DataPtr(var), array);
+	dataCreatMethod(XVariant_DataPtr(var), array);
+}
+
+void XVariant_setValue_ByteArray(XVariant* var, const XByteArray* array)
+{
+	setValue_ByteArray(var, array, XByteArray_copy_base);
+}
+void XVariant_setValue_ByteArray_move(XVariant* var,XByteArray* array)
+{
+	setValue_ByteArray(var,array, XByteArray_move_base);
+}
+
+void XVariant_setValue_ByteArray_ref(XVariant* var, XByteArray* array)
+{
+	if (var == NULL || array == NULL)
+		return;
+	XVariant_deinit(var);
+	var->m_data = array;
+	var->m_dataSize = sizeof(XByteArray);
+	var->m_type = XVariantType_ByteArray;
 }
 
 void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size)
@@ -897,7 +887,7 @@ void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size)
 	memcpy(XContainerDataPtr(XVariant_DataPtr(var)), data, size);
 }
 
-void XVariant_setValue_String(XVariant* var, const XString* str)
+static void setValue_String(XVariant* var, const XString* str, XCDataCreatMethod dataCreatMethod)
 {
 	if (var == NULL || str == NULL)
 		return;
@@ -906,7 +896,27 @@ void XVariant_setValue_String(XVariant* var, const XString* str)
 		setValue(var, NULL, sizeof(XString), XVariantType_String);
 		XString_init(XVariant_DataPtr(var));
 	}
-	XString_copy_base(XVariant_DataPtr(var), str);
+	dataCreatMethod(XVariant_DataPtr(var), str);
+}
+
+void XVariant_setValue_String(XVariant* var, const XString* str)
+{
+	setValue_String(var,str,XString_copy_base);
+}
+
+void XVariant_setValue_String_move(XVariant* var, XString* str)
+{
+	setValue_String(var, str, XString_move_base);
+}
+
+void XVariant_setValue_String_ref(XVariant* var, XString* str)
+{
+	if (var == NULL || str == NULL)
+		return;
+	XVariant_deinit(var);
+	var->m_data = str;
+	var->m_dataSize = sizeof(XString);
+	var->m_type = XVariantType_String;
 }
 
 void XVariant_setValue_utf8_str(XVariant* var, const char* utf8)
@@ -921,46 +931,132 @@ void XVariant_setValue_utf8_str(XVariant* var, const char* utf8)
 	XString_assign_utf8(XVariant_DataPtr(var), utf8);
 }
 
-void XVariant_setValue_StringList(XVariant* var, const XStringList* list)
+static void setValue_StringList(XVariant* var, const XStringList* list, XCDataCreatMethod dataCreatMethod)
 {
-	if (list == NULL|| var == NULL)
-		return ;
-	//初始化
-	if (var->m_data)
-		XMemory_free(var->m_data);
-	var->m_dataSize = 0;
-	var->m_type = XVariantType_StringList;
-	//计算大小
-	XString* temp = NULL;
-	for_each_iterator(list, XStringList, it)
+	if (var == NULL || list == NULL)
+		return;
+	if (var->m_type != XVariantType_StringList)
 	{
-		temp = XStringList_iterator_data(&it);
-		(var->m_dataSize) += sizeof(size_t);
-		(var->m_dataSize) += strlen(XString_toUtf8(temp));
+		setValue(var, NULL, sizeof(XStringList), XVariantType_StringList);
+		XStringList_init(XVariant_DataPtr(var));
 	}
-	//开始申请空间
-	var->m_data = XMemory_malloc(var->m_dataSize);
-	if (var->m_data == NULL)
-	{
-		XMemory_free(var);
-		return NULL;
-	}
-	//正式保存数据
-	uint8_t* ptr = var->m_data;
-	size_t len = 0;
-	for_each_iterator(list, XVariantList, it)
-	{
-		temp = XVariantList_iterator_data(&it);
-		len = strlen(XString_toUtf8(temp));//计算字符串长度
-		memcpy(ptr, &len, sizeof(size_t));//写入字符串长度
-		ptr += sizeof(size_t);
-		memcpy(ptr, XString_toUtf8(temp), len);//写入字符串
-		ptr += len;
-	}
+	dataCreatMethod(XVariant_DataPtr(var), list);
 }
 
-void XVariant_setValue_List(XVariant* var, const XVariantList* list)
+void XVariant_setValue_StringList(XVariant* var, const XStringList* list)
 {
+	setValue_StringList(var,list, XStringList_copy_base);
+}
+
+void XVariant_setValue_StringList_move(XVariant* var, XStringList* list)
+{
+	setValue_StringList(var, list, XStringList_move_base);
+}
+
+void XVariant_setValue_StringList_ref(XVariant* var, XStringList* list)
+{
+	if (var == NULL || list == NULL)
+		return;
+	XVariant_deinit(var);
+	var->m_data = list;
+	var->m_dataSize = sizeof(XStringList);
+	var->m_type = XVariantType_StringList;
+}
+
+static void setValue_list(XVariant* var, const XVariantList* list, XCDataCreatMethod dataCreatMethod)
+{
+	if (var == NULL || list == NULL)
+		return;
+	if (var->m_type != XVariantType_List)
+	{
+		setValue(var, NULL, sizeof(XVariantList), XVariantType_List);
+		XVariantList_init(XVariant_DataPtr(var));
+	}
+	dataCreatMethod(XVariant_DataPtr(var), list);
+}
+
+void XVariant_setValue_list(XVariant* var, const XVariantList* list)
+{
+	setValue_list(var,list, XVariantList_copy_base);
+}
+
+void XVariant_setValue_list_move(XVariant* var, XVariantList* list)
+{
+	setValue_list(var, list, XVariantList_move_base);
+}
+
+void XVariant_setValue_list_ref(XVariant* var, XVariantList* list)
+{
+	if (var == NULL || list == NULL)
+		return;
+	XVariant_deinit(var);
+	var->m_data = list;
+	var->m_dataSize = sizeof(XVariantList);
+	var->m_type = XVariantType_List;
+}
+
+static void setValue_map(XVariant* var, const XVariantMap* map, XCDataCreatMethod dataCreatMethod)
+{
+	if (var == NULL || map == NULL)
+		return;
+	if (var->m_type != XVariantType_Map)
+	{
+		setValue(var, NULL, sizeof(XVariantMap), XVariantType_Map);
+		XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize, XContainerTypeSize(map), ((XMapBase*)map)->m_KeyEquality, ((XMapBase*)map)->m_KeyLess);
+	}
+	dataCreatMethod(XVariant_DataPtr(var), map);
+}
+
+void XVariant_setValue_map(XVariant* var, const XVariantMap* map)
+{
+	setValue_map(var,map, XMap_copy_base);
+}
+
+void XVariant_setValue_map_move(XVariant* var, XVariantMap* map)
+{
+	setValue_map(var, map, XMap_move_base);
+}
+
+void XVariant_setValue_map_ref(XVariant* var, XVariantMap* map)
+{
+	if (var == NULL || map == NULL)
+		return;
+	XVariant_deinit(var);
+	var->m_data = map;
+	var->m_dataSize = sizeof(XVariantMap);
+	var->m_type = XVariantType_Map;
+}
+
+static void setValue_hash(XVariant* var, const XVariantHashMap* hash, XCDataCreatMethod dataCreatMethod)
+{
+	if (var == NULL || hash == NULL)
+		return;
+	if (var->m_type != XVariantType_Hash)
+	{
+		setValue(var, NULL, sizeof(XVariantHashMap), XVariantType_Hash);
+		XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, ((XMapBase*)hash)->m_KeyEquality, ((XMapBase*)hash)->m_KeyLess);
+	}
+	dataCreatMethod(XVariant_DataPtr(var), hash);
+}
+
+void XVariant_setValue_hash(XVariant* var, const XVariantHashMap* hash)
+{
+	setValue_hash(var,hash, XHashMap_copy_base);
+}
+
+void XVariant_setValue_hash_move(XVariant* var, XVariantHashMap* hash)
+{
+	setValue_hash(var, hash, XHashMap_move_base);
+}
+
+void XVariant_setValue_hash_ref(XVariant* var, XVariantHashMap* hash)
+{
+	if (var == NULL || hash == NULL)
+		return;
+	XVariant_deinit(var);
+	var->m_data = hash;
+	var->m_dataSize = sizeof(XVariantHashMap);
+	var->m_type = XVariantType_Hash;
 }
 
 void XVariant_copy(XVariant* var, const XVariant* src)
@@ -973,8 +1069,9 @@ void XVariant_copy(XVariant* var, const XVariant* src)
 	{
 		var->m_data = XMemory_calloc(1,src->m_dataSize);
 		var->m_dataSize = src->m_dataSize;
+		var->m_type = src->m_type;
 	}
-	switch (var->m_type)
+	switch (src->m_type)
 	{
 		case XVariantType_Uint8:
 		case XVariantType_Uint16:
@@ -997,17 +1094,22 @@ void XVariant_copy(XVariant* var, const XVariant* src)
 		case XVariantType_ByteArray:
 		case XVariantType_String:
 		case XVariantType_List:
-		case XVariantType_MapBase:XContainerObject_copy_base(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
+		case XVariantType_Map:XContainerObject_copy_base(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
 		default:
 		{
 			//其他自定义数据
-			if (global_typeProperty == NULL)
-				return false;
-			//查找相等比较函数
-			TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
-			if (pv && pv->copyMethod)
+			if (global_typeProperty != NULL)
 			{
-				pv->copyMethod(XVariant_DataPtr(var), XVariant_DataPtr(src));
+				//查找相等比较函数
+				TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
+				if (pv && pv->copyMethod)
+				{
+					pv->copyMethod(XVariant_DataPtr(var), XVariant_DataPtr(src));
+				}
+				else
+				{
+					memcpy(XVariant_DataPtr(var), XVariant_DataPtr(src), src->m_dataSize);
+				}
 			}
 			else
 			{
@@ -1027,6 +1129,7 @@ void XVariant_move(XVariant* var, XVariant* src)
 	{
 		var->m_data = XMemory_calloc(1, src->m_dataSize);
 		var->m_dataSize = src->m_dataSize;
+		var->m_type = src->m_type;
 	}
 	switch (var->m_type)
 	{
@@ -1047,25 +1150,32 @@ void XVariant_move(XVariant* var, XVariant* src)
 	case XVariantType_Float:
 	case XVariantType_Double:
 	case XVariantType_Pair:
-	case XVariantType_Point:memcpy(XVariant_DataPtr(var), XVariant_DataPtr(src), src->m_dataSize); break;
+	case XVariantType_Point:memcpy(XVariant_DataPtr(var), XVariant_DataPtr(src), src->m_dataSize); memset(XVariant_DataPtr(src), 0, src->m_dataSize); break;
 	case XVariantType_ByteArray:
 	case XVariantType_String:
 	case XVariantType_List:
-	case XVariantType_MapBase:XContainerObject_move_base(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
+	case XVariantType_Map:XContainerObject_move_base(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
 	default:
 	{
 		//其他自定义数据
-		if (global_typeProperty == NULL)
-			return false;
-		//查找相等比较函数
-		TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
-		if (pv && pv->moveMethod)
+		if (global_typeProperty != NULL)
 		{
-			pv->moveMethod(XVariant_DataPtr(var), XVariant_DataPtr(src));
+			//查找相等比较函数
+			TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
+			if (pv && pv->moveMethod)
+			{
+				pv->moveMethod(XVariant_DataPtr(var), XVariant_DataPtr(src));
+			}
+			else
+			{
+				memcpy(XVariant_DataPtr(var), XVariant_DataPtr(src), src->m_dataSize);
+				memset(XVariant_DataPtr(src), 0, src->m_dataSize);
+			}
 		}
 		else
 		{
 			memcpy(XVariant_DataPtr(var), XVariant_DataPtr(src), src->m_dataSize);
+			memset(XVariant_DataPtr(src),0, src->m_dataSize);
 		}
 	}
 	}
@@ -1104,17 +1214,18 @@ void XVariant_deinit(XVariant* var)
 		case XVariantType_ByteArray:
 		case XVariantType_String:
 		case XVariantType_List:
-		case XVariantType_MapBase:XContainerObject_deinit_base(XVariant_DataPtr(var)); break;
+		case XVariantType_Map:XContainerObject_deinit_base(XVariant_DataPtr(var)); break;
 		default:
 		{
 			//其他自定义数据
-			if (global_typeProperty == NULL)
-				return false;
-			//查找相等比较函数
-			TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
-			if (pv && pv->deinitMethod)
+			if (global_typeProperty != NULL)
 			{
-				pv->deinitMethod(XVariant_DataPtr(var));
+				//查找相等比较函数
+				TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
+				if (pv && pv->deinitMethod)
+				{
+					pv->deinitMethod(XVariant_DataPtr(var));
+				}
 			}
 		}
 	}
@@ -1149,17 +1260,22 @@ void XVariant_clear(XVariant* var)
 		case XVariantType_ByteArray:
 		case XVariantType_String:
 		case XVariantType_List:
-		case XVariantType_MapBase:XContainerObject_clear_base(XVariant_DataPtr(var)); break;
+		case XVariantType_Map:XContainerObject_clear_base(XVariant_DataPtr(var)); break;
 		default:
 		{
 			//其他自定义数据
-			if (global_typeProperty == NULL)
-				return false;
-			//查找相等比较函数
-			TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
-			if (pv && pv->clearMethod)
+			if (global_typeProperty != NULL)
 			{
-				pv->clearMethod(XVariant_DataPtr(var));
+				//查找相等比较函数
+				TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
+				if (pv && pv->clearMethod)
+				{
+					pv->clearMethod(XVariant_DataPtr(var));
+				}
+				else
+				{
+					memset(XVariant_DataPtr(var), 0, var->m_dataSize);
+				}
 			}
 			else
 			{
@@ -1209,7 +1325,8 @@ const char* XVariant_typeName(XVariant* var)
 	case XVariantType_String:return		"XString";
 	case XVariantType_StringList:return	"XStringList";
 	case XVariantType_List:return		"XVariantList";
-	case XVariantType_MapBase:return    "XMapBase<XString,XVariant>";
+	case XVariantType_Map:return		"XMap<XString,XVariant>";
+	case XVariantType_Hash:return		"XHashMap<XString,XVariant>";
 	default:
 	{
 		//其他自定义数据
@@ -1250,35 +1367,13 @@ bool XVariant_equality(XVariant* var, XVariant* cmp)
 	case XVariantType_Double:return XEquality_double(var->m_data, cmp->m_data);
 	case XVariantType_Pair:return XEquality_XPair(var->m_data, cmp->m_data);
 	case XVariantType_Point:return XEquality_XPoint(var->m_data, cmp->m_data);
-	case XVariantType_ByteArray:
-	{
-		XByteArray v = { 0 }, c = {0};
-		XByteArray* pv = &v, * pc = &c;
-		v.m_parent.m_parent.m_data = var->m_data;
-		v.m_parent.m_parent.m_capacity = var->m_dataSize;
-		v.m_parent.m_parent.m_size = var->m_dataSize;
-		c.m_parent.m_parent.m_data = cmp->m_data;
-		c.m_parent.m_parent.m_capacity = cmp->m_dataSize;
-		c.m_parent.m_parent.m_size = cmp->m_dataSize;
-		return XEquality_XByteArray(&pv, &pc);
-	}
-	case XVariantType_String:
-	{
-		XString v = { 0 }, c = { 0 };
-		XString* pv = &v, * pc = &c;
-		XContainerDataPtr(pv) = var->m_data;
-		XContainerCapacity (pv) = var->m_dataSize;
-		XContainerSize(pv) = var->m_dataSize;
-		XContainerDataPtr(pc) = cmp->m_data;
-		XContainerCapacity(pc) = cmp->m_dataSize;
-		XContainerSize(pc) = cmp->m_dataSize;
-		return XEquality_XString(&pv, &pc);
-	}
+	case XVariantType_ByteArray:return XEquality_XByteArray(var->m_data, cmp->m_data);
+	case XVariantType_String:return XEquality_XString(var->m_data, cmp->m_data);
 	case XVariantType_List:
 	{
 		return false;//暂未实现
 	}
-	case XVariantType_MapBase:
+	case XVariantType_Map:
 	{
 		return false;//暂未实现
 	}

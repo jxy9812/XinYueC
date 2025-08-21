@@ -22,6 +22,8 @@ typedef struct XVariantList
 //初始化类
 XVtable* XVariantList_class_init();
 XVariantList* XVariantList_create();
+XVariantList* XVariantList_create_copy(const XVariantList* other);
+XVariantList* XVariantList_create_move(XVariantList* other);
 void XVariantList_init(XVariantList* list);
 #define XVariantList_push_front_base								XVector_push_front_base
 #define XVariantList_push_front_move_base							XVector_push_front_move_base
@@ -45,10 +47,10 @@ void XVariantList_init(XVariantList* list);
 #define XVariantList_delete_base									XVector_delete_base	
 #define XVariantList_clear_base										XVector_clear_base	
 #define XVariantList_isEmpty_base									XVector_isEmpty_base	
-#define XVariantList_size_base									XVector_size_base	
-#define XVariantList_capacity_base								XVector_capacity_base
+#define XVariantList_size_base										XVector_size_base	
+#define XVariantList_capacity_base									XVector_capacity_base
 #define XVariantList_swap_base										XVector_swap_base	
-#define XVariantList_typeSize_base								XVector_typeSize_base
+#define XVariantList_typeSize_base									XVector_typeSize_base
 #ifdef __cplusplus
 }
 #endif

@@ -37,7 +37,8 @@ typedef enum
 	XVariantType_String,//XString
 	XVariantType_StringList,//XStringList
 	XVariantType_List,//XVariantList
-	XVariantType_MapBase,//XMapBase<XString, XVariant>
+	XVariantType_Map,//XMap<XString, XVariant>
+	XVariantType_Hash,//XHashMap<XString, XVariant>
 	XVariantType_User,//用户定义类型
 }XVariantType;
 typedef struct XVariant
@@ -85,38 +86,74 @@ XVariant* XVariant_create_double(double val);
 XVariant* XVariant_create_Pair(const XPair* val);
 XVariant* XVariant_create_Point(XPoint val);
 XVariant* XVariant_create_ByteArray(const XByteArray* array);
+XVariant* XVariant_create_ByteArray_move(XByteArray* array);
+XVariant* XVariant_create_ByteArray_ref(XByteArray* array);
 XVariant* XVariant_create_byteArray(const void* data, size_t size);
-XVariant* XVariant_create_String(XString* string);
+XVariant* XVariant_create_String(XString* str);
+XVariant* XVariant_create_String_move(XString* str);
+XVariant* XVariant_create_String_ref(XString* str);
 XVariant* XVariant_create_utf8_str(const char* utf8);
 XVariant* XVariant_create_StringList(const XStringList* list);
-XVariant* XVariant_create_List(const XVariantList* list);
-XVariant* XVariant_create_Map(const XVariantMap* map);//XMap<XString, XVariant>
-XVariant* XVariant_create_Hash(const XHashMap* map);//XHashMap<XString, XVariant>
+XVariant* XVariant_create_StringList_move(XStringList* list);
+XVariant* XVariant_create_StringList_ref(XStringList* list);
+XVariant* XVariant_create_list(const XVariantList* list);
+XVariant* XVariant_create_list_move(XVariantList* list);
+XVariant* XVariant_create_list_ref(XVariantList* list);
+XVariant* XVariant_create_map(const XVariantMap* map);//XMap<XString, XVariant>
+XVariant* XVariant_create_map_move(XVariantMap* map);//XMap<XString, XVariant>
+XVariant* XVariant_create_map_ref(XVariantMap* map);//XMap<XString, XVariant>
+XVariant* XVariant_create_hash(const XHashMap* hash);//XHashMap<XString, XVariant>
+XVariant* XVariant_create_hash_move(XHashMap* hash);//XHashMap<XString, XVariant>
+XVariant* XVariant_create_hash_ref(XHashMap* hash);//XHashMap<XString, XVariant>
 
-uint8_t  XVariant_toUint8 (XVariant* var);
+void*  XVariant_toRef(XVariant* var, XVariantType type);
+uint8_t  XVariant_toUint8(XVariant* var);
+uint8_t* XVariant_toUint8_ref(XVariant* var);
 uint16_t XVariant_toUint16(XVariant* var);
+uint16_t*XVariant_toUint16_ref(XVariant* var);
 uint32_t XVariant_toUint32(XVariant* var);
+uint32_t*XVariant_toUint32_ref(XVariant* var);
 uint64_t XVariant_toUint64(XVariant* var);
+uint64_t*XVariant_toUint64_ref(XVariant* var);
 int8_t  XVariant_toInt8 (XVariant* var);
+int8_t* XVariant_toInt8_ref(XVariant* var);
 int16_t XVariant_toInt16(XVariant* var);
+int16_t*XVariant_toInt16_ref(XVariant* var);
 int32_t XVariant_toInt32(XVariant* var);
+int32_t*XVariant_toInt32_ref(XVariant* var);
 int64_t XVariant_toInt64(XVariant* var);
+int64_t*XVariant_toInt64_ref(XVariant* var);
 bool XVariant_toBool(XVariant* var);
+bool*XVariant_toBool_ref(XVariant* var);
 char XVariant_toChar(XVariant* var);
+char*XVariant_toChar_ref(XVariant* var);
 unsigned char XVariant_toUChar(XVariant* var);
+unsigned char*XVariant_toUChar_ref(XVariant* var);
 int XVariant_toInt(XVariant* var);
+int* XVariant_toInt_ref(XVariant* var);
 size_t XVariant_toSize_t(XVariant* var);
+size_t*XVariant_toSize_t_ref(XVariant* var);
 void* XVariant_toPtr(XVariant* var);
+void**XVariant_toPtr_ref(XVariant* var);
 float XVariant_toFloat(XVariant* var);
+float*XVariant_toFloat_ref(XVariant* var);
 double XVariant_toDouble(XVariant* var);
+double*XVariant_toDouble_ref(XVariant* var);
 XPair* XVariant_toPair(XVariant* var);
+XPair* XVariant_toPair_ref(XVariant* var);
 XPoint XVariant_toPoint(XVariant* var);
 XByteArray* XVariant_toByteArray(XVariant* var);
+XByteArray* XVariant_toByteArray_ref(XVariant* var);
 XString* XVariant_toString(XVariant* var);
+XString* XVariant_toString_ref(XVariant* var);
 XStringList* XVariant_toStringList(XVariant* var);
+XStringList* XVariant_toStringList_ref(XVariant* var);
 XVariantList* XVariant_toList(XVariant* var);
+XVariantList* XVariant_toList_ref(XVariant* var);
 XVariantMap* XVariant_toMap(XVariant* var);//XMap<XString, XVariant>
+XVariantMap* XVariant_toMap_ref(XVariant* var);//XMap<XString, XVariant>
 XVariantHashMap* XVariant_toHash(XVariant* var);//XHashMap<XString, XVariant>
+XVariantHashMap* XVariant_toHash_ref(XVariant* var);//XHashMap<XString, XVariant>
 
 void XVariant_setValue(XVariant* var, const XVariant* newVar);
 void XVariant_setValue_null(XVariant* var);
@@ -139,11 +176,25 @@ void XVariant_setValue_double(XVariant* var, double val);
 void XVariant_setValue_Pair(XVariant* var, const XPair* pair);
 void XVariant_setValue_Point(XVariant* var, XPoint val);
 void XVariant_setValue_ByteArray(XVariant* var,const XByteArray* array);
+void XVariant_setValue_ByteArray_move(XVariant* var, XByteArray* array);
+void XVariant_setValue_ByteArray_ref(XVariant* var, XByteArray* array);
 void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size);
-void XVariant_setValue_String(XVariant* var, const XString* string);
+void XVariant_setValue_String(XVariant* var, const XString* str);
+void XVariant_setValue_String_move(XVariant* var,XString* str);
+void XVariant_setValue_String_ref(XVariant* var, XString* str);
 void XVariant_setValue_utf8_str(XVariant* var, const char* str);
 void XVariant_setValue_StringList(XVariant* var, const XStringList* list);
-void XVariant_setValue_List(XVariant* var, const XVariantList* list);
+void XVariant_setValue_StringList_move(XVariant* var,XStringList* list);
+void XVariant_setValue_StringList_ref(XVariant* var, XStringList* list);
+void XVariant_setValue_list(XVariant* var, const XVariantList* list);
+void XVariant_setValue_list_move(XVariant* var,XVariantList* list);
+void XVariant_setValue_list_ref(XVariant* var, XVariantList* list);
+void XVariant_setValue_map(XVariant* var, const XVariantMap* map);
+void XVariant_setValue_map_move(XVariant* var,XVariantMap* map);
+void XVariant_setValue_map_ref(XVariant* var, XVariantMap* map);
+void XVariant_setValue_hash(XVariant* var, const XVariantHashMap* hash);
+void XVariant_setValue_hash_move(XVariant* var, XVariantHashMap* hash);
+void XVariant_setValue_hash_ref(XVariant* var, XVariantHashMap* hash);
 
 void XVariant_copy(XVariant* var, const XVariant* src);
 void XVariant_move(XVariant* var, XVariant* src);

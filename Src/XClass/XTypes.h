@@ -53,7 +53,7 @@ typedef struct XJsonObject XJsonObject;
 typedef struct XJsonValue XJsonValue;
 typedef XMapBase XFuncCodeMap;
 typedef XMap XVariantMap;
-typedef XMap XVariantHashMap;
+typedef XHashMap XVariantHashMap;
 #ifdef __cplusplus
 }
 #endif

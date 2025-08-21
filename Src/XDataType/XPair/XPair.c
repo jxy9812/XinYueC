@@ -1,5 +1,6 @@
 ﻿#include"XPair.h"
 #include"XContainerObject.h"
+//#include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
 XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize)
@@ -16,6 +17,43 @@ XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize)
 	if (ISNULL(this_pair, "初始化pair结构体失败"))
 		return NULL;
 	return this_pair;
+}
+
+XPair* XPair_create_copy(const XPair* other)
+{
+	if (other == NULL)
+		return NULL;
+	XPair* pair = XPair_create(other->m_firstTypeSize, other->m_secondTypeSize);
+	if(pair==NULL)
+		return NULL;
+	XPair_copy(pair,other);
+	return pair;
+}
+
+XPair* XPair_create_move(XPair* other)
+{
+	if (other == NULL)
+		return NULL;
+	XPair* pair = XPair_create(other->m_firstTypeSize, other->m_secondTypeSize);
+	if (pair == NULL)
+		return NULL;
+	XPair_move(pair, other);
+	return pair;
+}
+
+void XPair_copy(XPair* this_pair, const XPair* copy)
+{
+	if (this_pair == NULL || copy == NULL||this_pair->m_firstTypeSize!=copy->m_firstTypeSize||this_pair->m_secondTypeSize!=copy->m_secondTypeSize)
+		return;
+	memcpy(&(this_pair->m_first), &(copy->m_first), copy->m_firstTypeSize + copy->m_secondTypeSize);
+}
+
+void XPair_move(XPair* this_pair, XPair* move)
+{
+	if (this_pair == NULL || move == NULL || this_pair->m_firstTypeSize != move->m_firstTypeSize || this_pair->m_secondTypeSize != move->m_secondTypeSize)
+		return;
+	memcpy(&(this_pair->m_first), &(move->m_first), move->m_firstTypeSize + move->m_secondTypeSize);
+	memset(&(move->m_first),0, move->m_firstTypeSize + move->m_secondTypeSize);
 }
 
 void XPair_insert(XPair* this_pair, void* firstData, void* secondData)

@@ -35,7 +35,6 @@ void XString_detach(XString* str);
  */
 void XString_deinitCache(XString* str);
 
-static XString* XString_copy(const XString* other);
 // 获取可修改的内部XChar数组
 XChar* XString_data(XString* str);
 // 辅助函数：计算KMP前缀表
@@ -49,18 +48,6 @@ static int64_t kmp_search(const XChar* text, size_t n,const XChar* pattern, size
 //初始化缓存
 static void XString_initCache(XString* str);
 
-XString* XString_copy(const XString* other)
-{
-    if (!other) return NULL;
-
-    XString* str = (XString*)XMemory_malloc(sizeof(XString));
-    if (!str) return NULL;
-    memset(str,0,sizeof(XString));
-
-    XString_copy_base(str, other);
-
-    return str;
-}
 XString* XString_create()
 {
     return XString_create_utf8(NULL);
@@ -68,18 +55,15 @@ XString* XString_create()
 
 XString* XString_create_copy(const XString* other)
 {
-    if(other)
-        return XString_copy(other);
-    return XString_create();
-    //if (!other) return NULL;
+    if (other == NULL)
+        return NULL;
+    XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    if (!str) return NULL;
+    memset(str, 0, sizeof(XString));
 
-    //XString* str = (XString*)XMemory_malloc(sizeof(XString));
-    //if (!str) return NULL;
-    //memset(str, 0, sizeof(XString));
+    XString_copy_base(str, other);
 
-    //XString_copy_base(str, other);
-    ////XString_detach(str);
-    //return str;
+    return str;
 }
 XString* XString_create_move(XString* other)
 {
@@ -803,7 +787,7 @@ bool XString_prepend_utf8(XString* str, const char* utf8_str)
 {
     if (!str || !utf8_str) return false;
 
-    XString* original = XString_copy(str);
+    XString* original = XString_create_copy(str);
     if (!original) return false;
 
     XString_clear_base(str);
@@ -1615,7 +1599,7 @@ bool XString_isRightToLeft(const XString* str)
 XString* XString_toLower(const XString* str) {
     if (!str) return NULL;
 
-    XString* result = XString_copy(str);
+    XString* result = XString_create_copy(str);
     XString_detach(result);  // 确保可修改
 
     XChar* data = XString_data(result);
@@ -1631,7 +1615,7 @@ XString* XString_toLower(const XString* str) {
 XString* XString_toUpper(const XString* str) {
     if (!str) return NULL;
 
-    XString* result = XString_copy(str);
+    XString* result = XString_create_copy(str);
     XString_detach(result);  // 确保可修改
 
     XChar* data = XString_data(result);
@@ -1645,7 +1629,7 @@ XString* XString_toUpper(const XString* str) {
 }
 
 XString* XString_trimmed(const XString* str) {
-    if (!str || XString_isEmpty_base(str)) return XString_copy(str);
+    if (!str || XString_isEmpty_base(str)) return XString_create_copy(str);
 
     const XChar* data = XContainerDataPtr(str);
     size_t start = 0;

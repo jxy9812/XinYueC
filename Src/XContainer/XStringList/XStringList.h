@@ -33,6 +33,8 @@ XVtable* XStringList_class_init();
  * @return 成功返回新创建的XStringList指针，失败返回NULL
  */
 XStringList* XStringList_create();
+XStringList* XStringList_create_copy(const XStringList* other);
+XStringList* XStringList_create_move(XStringList* other);
 
 /**
  * @brief 初始化栈上分配的XStringList对象

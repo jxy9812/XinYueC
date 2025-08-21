@@ -357,7 +357,7 @@ XVariant* XJsonValue_toVariant(const XJsonValue* value)
     case XJsonValue_Array:
         if (value->data.array) {
             //XVariantList* list = XJsonArray_toVariantList(value->data.array);
-            //XVariant_setValue_List(variant, list);
+            //XVariant_setValue_list(variant, list);
         }
         break;
     case XJsonValue_Object:
@@ -401,7 +401,7 @@ XJsonValue* XJsonValue_fromVariant(const XVariant* variant) {
     //    XJsonValue_setArray(value, array);
     //    break;
     //}
-    //case XVariantType_MapBase:
+    //case XVariantType_Map:
     //{
     //    XJsonObject* object = XJsonObject_fromVariantMap(XVariant_toMap(variant));
     //    XJsonValue_setObject(value, object);

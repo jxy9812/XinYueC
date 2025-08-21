@@ -31,6 +31,26 @@ XStringList* XStringList_create()
 	
 	return vector;
 }
+XStringList* XStringList_create_copy(const XStringList* other)
+{
+	if (other == NULL)
+		return NULL;
+	XStringList* list = XStringList_create();
+	if(list==NULL)
+		return NULL;
+	XStringList_copy_base(list,other);
+	return list;
+}
+XStringList* XStringList_create_move(XStringList* other)
+{
+	if (other == NULL)
+		return NULL;
+	XStringList* list = XStringList_create();
+	if (list == NULL)
+		return NULL;
+	XStringList_move_base(list, other);
+	return list;
+}
 void XStringList_init(XStringList* strList)
 {
 	if (strList == NULL)
@@ -66,7 +86,7 @@ XString* XStringList_join(const XStringList* strList, const XString* separator)
 		return NULL;
 	if (XString_isEmpty_base(separator))
 		return NULL;
-	XString* str = XString_create_copy(NULL);
+	XString* str = XString_create();
 	for_each_iterator(strList, XStringList, it)
 	{
 		XString* s = XStringList_iterator_data(&it);

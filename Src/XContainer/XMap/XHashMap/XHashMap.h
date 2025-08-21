@@ -22,6 +22,8 @@ typedef struct XHashMap
 XVtable* XHashMap_class_init();
 //创建一个XHashMap,初始化
 XHashMap* XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess);
+XHashMap* XHashMap_create_copy(const XHashMap* other);
+XHashMap* XHashMap_create_move(XHashMap* other);
 #define XHashMap_Create(keyType,valType,KeyEquality,KeyLess) XHashMap_create(sizeof(keyType),sizeof(valType),XHashMap_murmur3_32,KeyEquality,KeyLess)
 
 //初始化 XHash
