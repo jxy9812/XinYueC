@@ -18,7 +18,7 @@ typedef enum {
     XBSON_TYPE_ARRAY = 0x04,          // 数组类型
     XBSON_TYPE_BINARY = 0x05,         // 二进制数据类型
     XBSON_TYPE_OBJECT_ID = 0x07,      // 对象ID类型
-    XBSON_TYPE_BOOLEAN = 0x08,        // 布尔类型
+    XBSON_TYPE_BOOL = 0x08,             // 布尔类型
     XBSON_TYPE_DATETIME = 0x09,       // 日期时间类型
     XBSON_TYPE_NULL = 0x0A,           // 空值类型
     XBSON_TYPE_REGEX = 0x0B,          // 正则表达式类型

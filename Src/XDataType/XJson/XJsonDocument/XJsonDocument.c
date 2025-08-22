@@ -157,6 +157,11 @@ void XJsonDocument_delete(XJsonDocument* document)
         XMemory_free(document);
 }
 
+void XJsonDocument_clear(XJsonDocument* document)
+{
+    XJsonValue_clear(document);
+}
+
 void XJsonDocument_copy(XJsonDocument* doc, const XJsonDocument* src)
 {
     if (doc == NULL || src == NULL)

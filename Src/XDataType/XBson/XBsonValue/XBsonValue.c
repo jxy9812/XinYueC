@@ -201,7 +201,7 @@ void XBsonValue_setBool(XBsonValue* value, bool b)
 {
     if (!value) return;
     XBsonValue_deinit(value);
-    value->type = XBSON_TYPE_BOOLEAN;
+    value->type = XBSON_TYPE_BOOL;
     value->data.boolean = b;
 }
 
@@ -378,7 +378,7 @@ void XBsonValue_setMax_key(XBsonValue* value)
 
 bool XBsonValue_toBool(const XBsonValue* value, bool defaultValue)
 {
-    return (value && value->type == XBSON_TYPE_BOOLEAN) ? value->data.boolean : defaultValue;
+    return (value && value->type == XBSON_TYPE_BOOL) ? value->data.boolean : defaultValue;
 }
 
 double XBsonValue_toDouble(const XBsonValue* value, double defaultValue)
@@ -456,7 +456,7 @@ bool XBsonValue_isNull(const XBsonValue* value)
 
 bool XBsonValue_isBool(const XBsonValue* value)
 {
-    return XBsonValue_type(value) == XBSON_TYPE_BOOLEAN;
+    return XBsonValue_type(value) == XBSON_TYPE_BOOL;
 }
 
 bool XBsonValue_isDouble(const XBsonValue* value)
@@ -539,7 +539,8 @@ bool XBsonValue_isMaxKey(const XBsonValue* value)
     return XBsonValue_type(value) == XBSON_TYPE_MAX_KEY;
 }
 
-void XBsonValue_deinit(XBsonValue* value) {
+void XBsonValue_deinit(XBsonValue* value) 
+{
     if (!value) return;
 
     switch (value->type) {
@@ -576,6 +577,37 @@ void XBsonValue_delete(XBsonValue* value) {
     }
 }
 
+void XBsonValue_clear(XBsonValue* value)
+{
+    if (!value) return;
+
+    switch (value->type) 
+    {
+    case XBSON_TYPE_NULL:break;
+    case XBSON_TYPE_STRING:
+    case XBSON_TYPE_JAVASCRIPT:
+        XString_clear_base(value->data.str);
+        break;
+    case XBSON_TYPE_DOCUMENT:
+    case XBSON_TYPE_JAVASCRIPT_SCOPE:
+        XBsonDocument_clear_base(value->data.doc);
+        break;
+    case XBSON_TYPE_ARRAY:
+        XBsonArray_clear_base(value->data.arr);
+        break;
+    case XBSON_TYPE_BINARY:
+        XByteArray_clear_base(value->data.binary.data);
+        break;
+    case XBSON_TYPE_REGEX:
+        XString_clear_base(value->data.regex.pattern);
+        XString_clear_base(value->data.regex.options);
+        break;
+    default:
+        memset(value->data.decimal,0,16);
+        break;
+    }
+}
+
 void XBsonValue_copy(XBsonValue* dest, const XBsonValue* src) {
     if (!dest || !src || dest == src) return;
 
@@ -604,7 +636,7 @@ void XBsonValue_copy(XBsonValue* dest, const XBsonValue* src) {
     case XBSON_TYPE_OBJECT_ID:
         memcpy(dest->data.oid, src->data.oid, 12);
         break;
-    case XBSON_TYPE_BOOLEAN:
+    case XBSON_TYPE_BOOL:
         dest->data.boolean = src->data.boolean;
         break;
     case XBSON_TYPE_DATETIME:
@@ -703,7 +735,7 @@ XJsonValue* XBsonValue_to_json(const XBsonValue* bson_val) {
         XJsonObject_delete_base(oid_obj);
         break;
     }
-    case XBSON_TYPE_BOOLEAN:
+    case XBSON_TYPE_BOOL:
         XJsonValue_setBool(json_val, bson_val->data.boolean);
         break;
     case XBSON_TYPE_DATETIME: {
@@ -791,7 +823,7 @@ XBsonValue* XBsonValue_from_json(const XJsonValue* json_val)
     switch (XJsonValue_type(json_val)) 
     {
     case XJsonValue_Bool:
-        bson_val = XBsonValue_create(XBSON_TYPE_BOOLEAN);
+        bson_val = XBsonValue_create(XBSON_TYPE_BOOL);
         bson_val->data.boolean = XJsonValue_toBool(json_val, false);
         break;
     case XJsonValue_Double:
@@ -944,7 +976,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
         write_ptr += 12;*/
         break;
     }
-    case XBSON_TYPE_BOOLEAN: 
+    case XBSON_TYPE_BOOL: 
     {
         XByteArray_push_back_base(output, value->data.boolean ? 0x01 : 0x00);
         //*write_ptr++ = value->data.boolean ? 0x01 : 0x00;
@@ -1150,7 +1182,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
         memcpy(value->data.oid, *ptr, 12);
         (*ptr) += 12;
         break;
-    case XBSON_TYPE_BOOLEAN:
+    case XBSON_TYPE_BOOL:
         if (*ptr + 1 > end) goto error;
         value->data.boolean = **ptr != 0x00;
         (*ptr)++;

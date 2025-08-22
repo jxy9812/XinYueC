@@ -62,6 +62,7 @@ void XJsonValue_move(XJsonValue* var, XJsonValue* src);
 // 析构函数
 void XJsonValue_deinit(XJsonValue* value);
 void XJsonValue_delete(XJsonValue* value);
+void XJsonValue_clear(XJsonValue* value);
 
 // 类型检查
 XJsonValueType XJsonValue_type(const XJsonValue* value);

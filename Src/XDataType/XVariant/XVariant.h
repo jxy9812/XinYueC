@@ -39,6 +39,13 @@ typedef enum
 	XVariantType_List,//XVariantList
 	XVariantType_Map,//XMap<XString, XVariant>
 	XVariantType_Hash,//XHashMap<XString, XVariant>
+	XVariantType_JsonDocument,
+	XVariantType_JsonArray,
+	XVariantType_JsonObject,
+	XVariantType_JsonValue,
+	XVariantType_BsonArray,
+	XVariantType_BsonDocument,
+	XVariantType_BsonValue,
 	XVariantType_User,//用户定义类型
 }XVariantType;
 typedef struct XVariant
@@ -105,55 +112,92 @@ XVariant* XVariant_create_map_ref(XVariantMap* map);//XMap<XString, XVariant>
 XVariant* XVariant_create_hash(const XHashMap* hash);//XHashMap<XString, XVariant>
 XVariant* XVariant_create_hash_move(XHashMap* hash);//XHashMap<XString, XVariant>
 XVariant* XVariant_create_hash_ref(XHashMap* hash);//XHashMap<XString, XVariant>
+XVariant* XVariant_create_JsonDocument(const XJsonDocument* doc);
+XVariant* XVariant_create_JsonDocument_move(XJsonDocument* doc);
+XVariant* XVariant_create_JsonDocument_ref(XJsonDocument* doc);
+XVariant* XVariant_create_JsonArray(const XJsonArray* arr);
+XVariant* XVariant_create_JsonArray_move(XJsonArray* arr);
+XVariant* XVariant_create_JsonArray_ref(XJsonArray* arr);
+XVariant* XVariant_create_JsonObject(const XJsonObject* obj);
+XVariant* XVariant_create_JsonObject_move(XJsonObject* obj);
+XVariant* XVariant_create_JsonObject_ref(XJsonObject* obj);
+XVariant* XVariant_create_JsonValue(const XJsonValue* val);
+XVariant* XVariant_create_JsonValue_move(XJsonValue* val);
+XVariant* XVariant_create_JsonValue_ref(XJsonValue* val);
+XVariant* XVariant_create_BsonDocument(const XBsonDocument* doc);
+XVariant* XVariant_create_BsonDocument_move(XBsonDocument* doc);
+XVariant* XVariant_create_BsonDocument_ref(XBsonDocument* doc);
+XVariant* XVariant_create_BsonArray(const XBsonArray* arr);
+XVariant* XVariant_create_BsonArray_move(XBsonArray* arr);
+XVariant* XVariant_create_BsonArray_ref(XBsonArray* arr);
+XVariant* XVariant_create_BsonValue(const XBsonValue* val);
+XVariant* XVariant_create_BsonValue_move(XBsonValue* val);
+XVariant* XVariant_create_BsonValue_ref(XBsonValue* val);
 
-void*  XVariant_toRef(XVariant* var, XVariantType type);
-uint8_t  XVariant_toUint8(XVariant* var);
-uint8_t* XVariant_toUint8_ref(XVariant* var);
-uint16_t XVariant_toUint16(XVariant* var);
-uint16_t*XVariant_toUint16_ref(XVariant* var);
-uint32_t XVariant_toUint32(XVariant* var);
-uint32_t*XVariant_toUint32_ref(XVariant* var);
-uint64_t XVariant_toUint64(XVariant* var);
-uint64_t*XVariant_toUint64_ref(XVariant* var);
-int8_t  XVariant_toInt8 (XVariant* var);
-int8_t* XVariant_toInt8_ref(XVariant* var);
-int16_t XVariant_toInt16(XVariant* var);
-int16_t*XVariant_toInt16_ref(XVariant* var);
-int32_t XVariant_toInt32(XVariant* var);
-int32_t*XVariant_toInt32_ref(XVariant* var);
-int64_t XVariant_toInt64(XVariant* var);
-int64_t*XVariant_toInt64_ref(XVariant* var);
-bool XVariant_toBool(XVariant* var);
-bool*XVariant_toBool_ref(XVariant* var);
-char XVariant_toChar(XVariant* var);
-char*XVariant_toChar_ref(XVariant* var);
-unsigned char XVariant_toUChar(XVariant* var);
-unsigned char*XVariant_toUChar_ref(XVariant* var);
-int XVariant_toInt(XVariant* var);
-int* XVariant_toInt_ref(XVariant* var);
-size_t XVariant_toSize_t(XVariant* var);
-size_t*XVariant_toSize_t_ref(XVariant* var);
-void* XVariant_toPtr(XVariant* var);
-void**XVariant_toPtr_ref(XVariant* var);
-float XVariant_toFloat(XVariant* var);
-float*XVariant_toFloat_ref(XVariant* var);
-double XVariant_toDouble(XVariant* var);
-double*XVariant_toDouble_ref(XVariant* var);
-XPair* XVariant_toPair(XVariant* var);
-XPair* XVariant_toPair_ref(XVariant* var);
-XPoint XVariant_toPoint(XVariant* var);
-XByteArray* XVariant_toByteArray(XVariant* var);
-XByteArray* XVariant_toByteArray_ref(XVariant* var);
-XString* XVariant_toString(XVariant* var);
-XString* XVariant_toString_ref(XVariant* var);
-XStringList* XVariant_toStringList(XVariant* var);
-XStringList* XVariant_toStringList_ref(XVariant* var);
-XVariantList* XVariant_toList(XVariant* var);
-XVariantList* XVariant_toList_ref(XVariant* var);
-XVariantMap* XVariant_toMap(XVariant* var);//XMap<XString, XVariant>
-XVariantMap* XVariant_toMap_ref(XVariant* var);//XMap<XString, XVariant>
-XVariantHashMap* XVariant_toHash(XVariant* var);//XHashMap<XString, XVariant>
-XVariantHashMap* XVariant_toHash_ref(XVariant* var);//XHashMap<XString, XVariant>
+
+void*  XVariant_toRef(const XVariant* var, XVariantType type);
+uint8_t  XVariant_toUint8(const XVariant* var);
+uint8_t* XVariant_toUint8_ref(const XVariant* var);
+uint16_t XVariant_toUint16(const XVariant* var);
+uint16_t*XVariant_toUint16_ref(const XVariant* var);
+uint32_t XVariant_toUint32(const XVariant* var);
+uint32_t*XVariant_toUint32_ref(const XVariant* var);
+uint64_t XVariant_toUint64(const XVariant* var);
+uint64_t*XVariant_toUint64_ref(const XVariant* var);
+int8_t  XVariant_toInt8 (const XVariant* var);
+int8_t* XVariant_toInt8_ref(const XVariant* var);
+int16_t XVariant_toInt16(const XVariant* var);
+int16_t*XVariant_toInt16_ref(const XVariant* var);
+int32_t XVariant_toInt32(const XVariant* var);
+int32_t*XVariant_toInt32_ref(const XVariant* var);
+int64_t XVariant_toInt64(const XVariant* var);
+int64_t*XVariant_toInt64_ref(const XVariant* var);
+bool XVariant_toBool(const XVariant* var);
+bool*XVariant_toBool_ref(const XVariant* var);
+char XVariant_toChar(const XVariant* var);
+char*XVariant_toChar_ref(const XVariant* var);
+unsigned char XVariant_toUChar(const XVariant* var);
+unsigned char*XVariant_toUChar_ref(const XVariant* var);
+int XVariant_toInt(const XVariant* var);
+int* XVariant_toInt_ref(const XVariant* var);
+size_t XVariant_toSize_t(const XVariant* var);
+size_t*XVariant_toSize_t_ref(const XVariant* var);
+void* XVariant_toPtr(const XVariant* var);
+void**XVariant_toPtr_ref(const XVariant* var);
+float XVariant_toFloat(const XVariant* var);
+float*XVariant_toFloat_ref(const XVariant* var);
+double XVariant_toDouble(const XVariant* var);
+double*XVariant_toDouble_ref(const XVariant* var);
+XPair* XVariant_toPair(const XVariant* var);
+XPair* XVariant_toPair_ref(const XVariant* var);
+XPoint XVariant_toPoint(const XVariant* var);
+XByteArray* XVariant_toByteArray(const XVariant* var);
+XByteArray* XVariant_toByteArray_ref(const XVariant* var);
+XString* XVariant_toString(const XVariant* var);
+XString* XVariant_toString_ref(const XVariant* var);
+XStringList* XVariant_toStringList(const XVariant* var);
+XStringList* XVariant_toStringList_ref(const XVariant* var);
+XVariantList* XVariant_toList(const XVariant* var);
+XVariantList* XVariant_toList_ref(const XVariant* var);
+XVariantMap* XVariant_toMap(const XVariant* var);//XMap<XString, XVariant>
+XVariantMap* XVariant_toMap_ref(const XVariant* var);//XMap<XString, XVariant>
+XVariantHashMap* XVariant_toHash(const XVariant* var);//XHashMap<XString, XVariant>
+XVariantHashMap* XVariant_toHash_ref(const XVariant* var);//XHashMap<XString, XVariant>
+XJsonDocument* XVariant_toJsonDocument(const XVariant* var);
+XJsonDocument* XVariant_toJsonDocument_ref(const XVariant* var);
+XJsonArray* XVariant_toJsonArray(const XVariant* var);
+XJsonArray* XVariant_toJsonArray_ref(const XVariant* var);
+XJsonObject* XVariant_toJsonObject(const XVariant* var);
+XJsonObject* XVariant_toJsonObject_ref(const XVariant* var);
+XJsonValue* XVariant_toJsonValue(const XVariant* var);
+XJsonValue* XVariant_toJsonValue_ref(const XVariant* var);
+XBsonDocument* XVariant_toBsonDocument(const XVariant* var);
+XBsonDocument* XVariant_toBsonDocument_ref(const XVariant* var);
+XBsonArray* XVariant_toBsonArray(const XVariant* var);
+XBsonArray* XVariant_toBsonArray_ref(const XVariant* var);
+XBsonValue* XVariant_toBsonValue(const XVariant* var);
+XBsonValue* XVariant_toBsonValue_ref(const XVariant* var);
+
 
 void XVariant_setValue(XVariant* var, const XVariant* newVar);
 void XVariant_setValue_null(XVariant* var);
@@ -195,6 +239,27 @@ void XVariant_setValue_map_ref(XVariant* var, XVariantMap* map);
 void XVariant_setValue_hash(XVariant* var, const XVariantHashMap* hash);
 void XVariant_setValue_hash_move(XVariant* var, XVariantHashMap* hash);
 void XVariant_setValue_hash_ref(XVariant* var, XVariantHashMap* hash);
+void XVariant_setValue_JsonDocument(XVariant* var, const XJsonDocument* doc);
+void XVariant_setValue_JsonDocument_move(XVariant* var, XJsonDocument* doc);
+void XVariant_setValue_JsonDocument_ref(XVariant* var, XJsonDocument* doc);
+void XVariant_setValue_JsonArray(XVariant* var, const XJsonArray* arr);
+void XVariant_setValue_JsonArray_move(XVariant* var, XJsonArray* arr);
+void XVariant_setValue_JsonArray_ref(XVariant* var, XJsonArray* arr);
+void XVariant_setValue_JsonObject(XVariant* var, const XJsonObject* obj);
+void XVariant_setValue_JsonObject_move(XVariant* var, XJsonObject* obj);
+void XVariant_setValue_JsonObject_ref(XVariant* var, XJsonObject* obj);
+void XVariant_setValue_JsonValue(XVariant* var, const XJsonValue* val);
+void XVariant_setValue_JsonValue_move(XVariant* var, XJsonValue* val);
+void XVariant_setValue_JsonValue_ref(XVariant* var, XJsonValue* val);
+void XVariant_setValue_BsonDocument(XVariant* var, const XBsonDocument* doc);
+void XVariant_setValue_BsonDocument_move(XVariant* var, XBsonDocument* doc);
+void XVariant_setValue_BsonDocument_ref(XVariant* var, XBsonDocument* doc);
+void XVariant_setValue_BsonArray(XVariant* var, const XBsonArray* arr);
+void XVariant_setValue_BsonArray_move(XVariant* var, XBsonArray* arr);
+void XVariant_setValue_BsonArray_ref(XVariant* var, XBsonArray* arr);
+void XVariant_setValue_BsonValue(XVariant* var, const XBsonValue* val);
+void XVariant_setValue_BsonValue_move(XVariant* var, XBsonValue* val);
+void XVariant_setValue_BsonValue_ref(XVariant* var, XBsonValue* val);
 
 void XVariant_copy(XVariant* var, const XVariant* src);
 void XVariant_move(XVariant* var, XVariant* src);

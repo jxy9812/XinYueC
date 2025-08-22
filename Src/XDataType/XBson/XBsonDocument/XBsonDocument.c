@@ -173,7 +173,7 @@ bool XBsonDocument_insert_keyUtf8_bool(XBsonDocument* doc, const char* key, bool
     if (doc == NULL || key == NULL)
         return false;
     XString_Init_Utf8(str, key);
-    XBsonValue_Init(value, XBSON_TYPE_BOOLEAN);
+    XBsonValue_Init(value, XBSON_TYPE_BOOL);
     value->data.boolean = b;
     bool ret = XBsonDocument_insert_move_base(doc, str, value);
     XString_deinit_base(str);

@@ -24,6 +24,7 @@ XJsonDocument* XJsonDocument_create_array_move(XJsonArray* array);
 void XJsonDocument_init(XJsonDocument* document);
 void XJsonDocument_deinit(XJsonDocument* document);
 void XJsonDocument_delete(XJsonDocument* document);
+void XJsonDocument_clear(XJsonDocument* document);
 
 //拷贝移动
 void XJsonDocument_copy(XJsonDocument* doc, const XJsonDocument* src);
@@ -62,7 +63,6 @@ XByteArray* XJsonDocument_toBson(const XJsonDocument* document);
 
 // 与XVariant转换
 XVariant* XJsonDocument_toVariant(const XJsonDocument* document);
-XJsonDocument* XJsonDocument_fromVariant(const XVariant* variant);
 
 #ifdef __cplusplus
 }

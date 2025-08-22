@@ -174,6 +174,38 @@ void XJsonValue_delete(XJsonValue* value)
     XMemory_free(value);
 }
 
+void XJsonValue_clear(XJsonValue* value)
+{
+    if (!value) return;
+
+    switch (value->type)
+    {
+    case XJsonValue_Invalid:
+    case XJsonValue_Null:break;
+    case XJsonValue_String:
+        if (value->data.string)
+        {
+            XString_clear_base(value->data.string);
+        }
+        break;
+    case XJsonValue_Array:
+        if (value->data.array)
+        {
+            XJsonArray_clear_base(value->data.array);
+        }
+        break;
+    case XJsonValue_Object:
+        if (value->data.object)
+        {
+            XJsonObject_clear_base(value->data.object);
+        }
+        break;
+    default:
+        value->data.integer = 0;
+        break;
+    }
+}
+
 XJsonValueType XJsonValue_type(const XJsonValue* value) {
     return value ? value->type : XJsonValue_Invalid;
 }

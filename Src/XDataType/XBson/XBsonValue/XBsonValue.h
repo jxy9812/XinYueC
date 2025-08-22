@@ -157,6 +157,8 @@ void XBsonValue_deinit(XBsonValue* value);
  */
 void XBsonValue_delete(XBsonValue* value);
 
+void XBsonValue_clear(XBsonValue* value);
+
 // 拷贝与移动操作
 /**
  * 将源BSON值复制到目标BSON值（深拷贝）
@@ -171,6 +173,7 @@ void XBsonValue_copy(XBsonValue* dest, const XBsonValue* src);
  * @param src 源BSON值指针
  */
 void XBsonValue_move(XBsonValue* dest, XBsonValue* src);
+
 
 // 类型检查函数
 /**
