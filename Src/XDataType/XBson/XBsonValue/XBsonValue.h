@@ -225,6 +225,11 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
  */
 XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XString** key_out);
 
+// 与XVariant转换
+XVariant* XBsonValue_toVariant(const XBsonValue* value);
+XVariant* XBsonValue_toVariant_move(XBsonValue* value);
+XVariant* XBsonValue_toVariant_ref(XBsonValue* value);
+
 #ifdef __cplusplus
 }
 #endif

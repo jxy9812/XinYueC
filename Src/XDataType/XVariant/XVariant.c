@@ -468,88 +468,39 @@ XVariant* XVariant_create_JsonValue_ref(XJsonValue* val)
 }
 XVariant* XVariant_create_BsonDocument(const XBsonDocument* doc)
 {
-	if (doc == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XBsonDocument), XVariantType_BsonDocument);
-	XBsonDocument_init(XVariant_DataPtr(var));
-	XBsonDocument_copy_base(XVariant_DataPtr(var), doc);
-	return var;
+	return XBsonDocument_toVariant(doc);
 }
 XVariant* XVariant_create_BsonDocument_move(XBsonDocument* doc)
 {
-	if (doc == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XBsonDocument), XVariantType_BsonDocument);
-	XBsonDocument_init(XVariant_DataPtr(var));
-	XBsonDocument_move_base(XVariant_DataPtr(var), doc);
-	return var;
+	return XBsonDocument_toVariant_move(doc);
 }
 XVariant* XVariant_create_BsonDocument_ref(XBsonDocument* doc)
 {
-	if (doc == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, 0, XVariantType_BsonDocument);
-	if (var == NULL)
-		return NULL;
-	var->m_data = doc;
-	var->m_dataSize = sizeof(XBsonDocument);
-	return var;
+	return XBsonDocument_toVariant_ref(doc);
 }
 XVariant* XVariant_create_BsonArray(const XBsonArray* arr)
 {
-	if (arr == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XBsonArray), XVariantType_BsonArray);
-	XBsonArray_init(XVariant_DataPtr(var));
-	XBsonArray_copy_base(XVariant_DataPtr(var), arr);
-	return var;
+	return XBsonArray_toVariant(arr);
 }
 XVariant* XVariant_create_BsonArray_move(XBsonArray* arr)
 {
-	if (arr == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XBsonArray), XVariantType_BsonArray);
-	XBsonArray_init(XVariant_DataPtr(var));
-	XBsonArray_move_base(XVariant_DataPtr(var), arr);
-	return var;
+	return XBsonArray_toVariant_move(arr);
 }
 XVariant* XVariant_create_BsonArray_ref(XBsonArray* arr)
 {
-	if (arr == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XBsonArray), XVariantType_BsonArray);
-	XBsonArray_init(XVariant_DataPtr(var));
-	XBsonArray_move_base(XVariant_DataPtr(var), arr);
-	return var;
+	return XBsonArray_toVariant_ref(arr);
 }
 XVariant* XVariant_create_BsonValue(const XBsonValue* val)
 {
-	if (val == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XBsonValue), XVariantType_BsonValue);
-	XBsonValue_init(XVariant_DataPtr(var), val->type);
-	XBsonValue_copy(XVariant_DataPtr(var), val);
-	return var;
+	return XBsonValue_toVariant(val);
 }
 XVariant* XVariant_create_BsonValue_move(XBsonValue* val)
 {
-	if (val == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XBsonValue), XVariantType_BsonValue);
-	XBsonValue_init(XVariant_DataPtr(var), val->type);
-	XBsonValue_copy(XVariant_DataPtr(var), val);
-	return var;
+	return XBsonValue_toVariant_move(val);
 }
 XVariant* XVariant_create_BsonValue_ref(XBsonValue* val)
 {
-	if (val == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, 0, XVariantType_BsonValue);
-	if (var == NULL)
-		return NULL;
-	var->m_data = val;
-	var->m_dataSize = sizeof(XBsonValue);
-	return var;
+	return XBsonValue_toVariant_ref(val);
 }
 //转引用
 void* XVariant_toRef(const XVariant* var, XVariantType type)

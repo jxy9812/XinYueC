@@ -444,3 +444,69 @@ bool XBsonDocument_from_bytes(XBsonDocument* doc, const uint8_t* data, size_t si
 
     return true;
 }
+
+XVariantMap* XBsonDocument_toVariantMap(const XBsonDocument* doc)
+{
+    if (doc == NULL)
+        return NULL;
+    XVariantMap* map = XMap_create_XVariantMap();
+    XPair* pair = NULL;
+    XVariant* var = NULL;
+    for_each_iterator(doc, XMap, it)
+    {
+        pair = XMap_iterator_data(&it);
+        var = XBsonValue_toVariant(XPair_second(pair));
+        XMap_insert_valueMove_base(map, XPair_first(pair), var);
+        XVariant_delete(var);
+    }
+    return map;
+}
+
+XVariantMap* XBsonDocument_toVariantMap_move(XBsonDocument* doc)
+{
+    if (doc == NULL)
+        return NULL;
+    XVariantMap* map = XMap_create_XVariantMap();
+    XPair* pair = NULL;
+    XVariant* var = NULL;
+    for_each_iterator(doc, XMap, it)
+    {
+        pair = XMap_iterator_data(&it);
+        var = XBsonValue_toVariant_move(XPair_second(pair));
+        XMap_insert_valueMove_base(map, XPair_first(pair), var);
+        XVariant_delete(var);
+    }
+    return map;
+}
+
+XVariant* XBsonDocument_toVariant(const XBsonDocument* doc)
+{
+    if (doc == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XBsonDocument), XVariantType_BsonDocument);
+    XBsonDocument_init((((XVariant*)var)->m_data));
+    XBsonDocument_copy_base((((XVariant*)var)->m_data), doc);
+    return var;
+}
+
+XVariant* XBsonDocument_toVariant_move(XBsonDocument* doc)
+{
+    if (doc == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XBsonDocument), XVariantType_BsonDocument);
+    XBsonDocument_init((((XVariant*)var)->m_data));
+    XBsonDocument_move_base((((XVariant*)var)->m_data), doc);
+    return var;
+}
+
+XVariant* XBsonDocument_toVariant_ref(XBsonDocument* doc)
+{
+    if (doc == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, 0, XVariantType_BsonDocument);
+    if (var == NULL)
+        return NULL;
+    var->m_data = doc;
+    var->m_dataSize = sizeof(XBsonDocument);
+    return var;
+}

@@ -1286,3 +1286,35 @@ error:
     }
     return NULL;
 }
+
+XVariant* XBsonValue_toVariant(const XBsonValue* val)
+{
+    if (val == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XBsonValue), XVariantType_BsonValue);
+    XBsonValue_init((((XVariant*)var)->m_data), val->type);
+    XBsonValue_copy((((XVariant*)var)->m_data), val);
+    return var;
+}
+
+XVariant* XBsonValue_toVariant_move(XBsonValue* val)
+{
+    if (val == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XBsonValue), XVariantType_BsonValue);
+    XBsonValue_init((((XVariant*)var)->m_data), val->type);
+    XBsonValue_copy((((XVariant*)var)->m_data), val);
+    return var;
+}
+
+XVariant* XBsonValue_toVariant_ref(XBsonValue* val)
+{
+    if (val == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, 0, XVariantType_BsonValue);
+    if (var == NULL)
+        return NULL;
+    var->m_data = val;
+    var->m_dataSize = sizeof(XBsonValue);
+    return var;
+}

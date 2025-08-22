@@ -73,6 +73,14 @@ XBsonDocument* XBsonDocument_fromBson(XByteArray* data);
 
 
 bool XBsonDocument_from_bytes(XBsonDocument* doc, const uint8_t* data, size_t size);
+
+XVariantMap* XBsonDocument_toVariantMap(const XBsonDocument* doc);
+XVariantMap* XBsonDocument_toVariantMap_move(XBsonDocument* doc);
+// 与XVariant转换
+XVariant* XBsonDocument_toVariant(const XBsonDocument* doc);
+XVariant* XBsonDocument_toVariant_move(XBsonDocument* doc);
+XVariant* XBsonDocument_toVariant_ref(XBsonDocument* doc);
+
 #ifdef __cplusplus
 }
 #endif

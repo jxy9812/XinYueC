@@ -2,6 +2,7 @@
 #include "XJsonArray.h"
 #include "XMemory.h"
 #include "XStack.h"
+#include "XVariantList.h"
 #include <string.h>
 
 XBsonArray* XBsonArray_create() 
@@ -198,4 +199,70 @@ bool XBsonArray_from_bytes(XBsonArray* array, const uint8_t* data, size_t size) 
     }
 
     return true;
+}
+
+XVariantList* XBsonArray_toVariantList(const XBsonArray* arr)
+{
+    if (arr == NULL)
+        return NULL;
+    XVariantList* list = XVariantList_create();
+    XBsonValue* value = NULL;
+    XVariant* var = NULL;
+    for_each_iterator(arr, XVector, it)
+    {
+        value = XVector_iterator_data(&it);
+        var = XBsonValue_toVariant(value);
+        XVariantList_push_back_move_base(list, var);
+        XVariant_delete(var);
+    }
+    return list;
+}
+
+XVariantList* XBsonArray_toVariantList_move(XBsonArray* arr)
+{
+    if (arr == NULL)
+        return NULL;
+    XVariantList* list = XVariantList_create();
+    XBsonValue* value = NULL;
+    XVariant* var = NULL;
+    for_each_iterator(arr, XVector, it)
+    {
+        value = XVector_iterator_data(&it);
+        var = XBsonValue_toVariant_move(value);
+        XVariantList_push_back_move_base(list, var);
+        XVariant_delete(var);
+    }
+    return list;
+}
+
+XVariant* XBsonArray_toVariant(const XBsonArray* arr)
+{
+    if (arr == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XBsonArray), XVariantType_BsonArray);
+    XBsonArray_init(var->m_data);
+    XBsonArray_copy_base(var->m_data, arr);
+    return var;
+}
+
+XVariant* XBsonArray_toVariant_move(XBsonArray* arr)
+{
+    if (arr == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XBsonArray), XVariantType_BsonArray);
+    XBsonArray_init(var->m_data);
+    XBsonArray_move_base(var->m_data, arr);
+    return var;
+}
+
+XVariant* XBsonArray_toVariant_ref(XBsonArray* arr)
+{
+    if (arr == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, 0, XVariantType_BsonArray);
+    if (var == NULL)
+        return NULL;
+    var->m_data = arr;
+    var->m_dataSize = sizeof(XBsonArray);
+    return var;
 }

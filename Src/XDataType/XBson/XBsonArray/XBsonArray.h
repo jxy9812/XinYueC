@@ -52,6 +52,13 @@ XBsonArray* XBsonArray_fromBson(XByteArray* data);
 XByteArray* XBsonArray_to_bytes(const XBsonArray* array);
 bool XBsonArray_from_bytes(XBsonArray* array, const uint8_t* data, size_t size);
 
+XVariantList* XBsonArray_toVariantList(const XBsonArray* array);
+XVariantList* XBsonArray_toVariantList_move(XBsonArray* array);
+// 与XVariant转换
+XVariant* XBsonArray_toVariant(const XBsonArray* array);
+XVariant* XBsonArray_toVariant_move(XBsonArray* array);
+XVariant* XBsonArray_toVariant_ref(XBsonArray* array);
+
 #ifdef __cplusplus
 }
 #endif
