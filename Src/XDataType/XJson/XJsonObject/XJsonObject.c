@@ -255,6 +255,67 @@ XByteArray* XJsonObject_toJson(const XJsonObject* object, XJsonDocumentFormat fo
     XJsonDocument_delete(doc);
     return json;
 }
+XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object)
+{
+    if (object == NULL)
+        return NULL;
+    XVariantMap* map = XMap_create_XVariantMap();
+    XPair* pair=NULL;
+    XVariant* var = NULL;
+    for_each_iterator(object, XMap, it)
+    {
+        pair = XMap_iterator_data(&it);
+        var = XJsonValue_toVariant(XPair_second(pair));
+        XMap_insert_valueMove_base(map,XPair_first(pair),var);
+        XVariant_delete(var);
+    }
+    return map;
+}
+XVariantMap* XJsonObject_toVariantMap_move(XJsonObject* object)
+{
+    if (object == NULL)
+        return NULL;
+    XVariantMap* map = XMap_create_XVariantMap();
+    XPair* pair = NULL;
+    XVariant* var = NULL;
+    for_each_iterator(object, XMap, it)
+    {
+        pair = XMap_iterator_data(&it);
+        var = XJsonValue_toVariant_move(XPair_second(pair));
+        XMap_insert_valueMove_base(map, XPair_first(pair), var);
+        XVariant_delete(var);
+    }
+    return map;
+}
+XVariant* XJsonObject_toVariant(const XJsonObject* obj)
+{
+    if (obj == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XJsonObject), XVariantType_JsonObject);
+    XJsonObject_init(var->m_data);
+    XJsonObject_copy_base(var->m_data, obj);
+    return var;
+}
+XVariant* XJsonObject_toVariant_move(XJsonObject* obj)
+{
+    if (obj == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XJsonObject), XVariantType_JsonObject);
+    XJsonObject_init(var->m_data);
+    XJsonObject_move_base(var->m_data, obj);
+    return var;
+}
+XVariant* XJsonObject_toVariant_ref(XJsonObject* obj)
+{
+    if (obj == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonObject);
+    if (var == NULL)
+        return NULL;
+    var->m_data = obj;
+    var->m_dataSize = sizeof(XJsonObject);
+    return var;
+}
 //XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object) {
 //    if (!object) return NULL;
 //

@@ -71,8 +71,11 @@ XString* XJsonObject_toString(const XJsonObject* object, XJsonDocumentFormat for
 XByteArray* XJsonObject_toJson(const XJsonObject* object, XJsonDocumentFormat format);
 
 XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object);
-XJsonObject* XJsonObject_fromVariantMap(const XVariantMap* map);
-
+XVariantMap* XJsonObject_toVariantMap_move(XJsonObject* object);
+// 与XVariant转换
+XVariant* XJsonObject_toVariant(const XJsonObject* object);
+XVariant* XJsonObject_toVariant_move(XJsonObject* object);
+XVariant* XJsonObject_toVariant_ref(XJsonObject* object);
 #ifdef __cplusplus
 }
 #endif

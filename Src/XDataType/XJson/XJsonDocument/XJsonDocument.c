@@ -468,6 +468,38 @@ XByteArray* XJsonDocument_toBson(const XJsonDocument* document)
     return bytes;
 }
 
+XVariant* XJsonDocument_toVariant(const XJsonDocument* doc)
+{
+    if (doc == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XJsonDocument), XVariantType_JsonDocument);
+    XJsonDocument_init(var->m_data);
+    XJsonDocument_copy(var->m_data, doc);
+    return var;
+}
+
+XVariant* XJsonDocument_toVariant_move(XJsonDocument* doc)
+{
+    if (doc == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XJsonDocument), XVariantType_JsonDocument);
+    XJsonDocument_init(var->m_data);
+    XJsonDocument_move(var->m_data, doc);
+    return var;
+}
+
+XVariant* XJsonDocument_toVariant_ref(XJsonDocument* doc)
+{
+    if (doc == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonDocument);
+    if (var == NULL)
+        return NULL;
+    var->m_data = doc;
+    var->m_dataSize = sizeof(XJsonDocument);
+    return var;
+}
+
 //XJsonDocument* XJsonDocument_fromString(const XString* json) {
 //    // 实际实现需要解析JSON字符串
 //    // 这里仅作为框架示例

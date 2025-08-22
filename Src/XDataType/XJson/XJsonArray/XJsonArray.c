@@ -54,6 +54,67 @@ XString* XJsonArray_toString(const XJsonArray* array, XJsonDocumentFormat format
     XJsonDocument_delete(doc);
     return str;
 }
+XVariantList* XJsonArray_toVariantList(const XJsonArray* arr)
+{
+    if (arr == NULL)
+        return NULL;
+    XVariantList* list = XVariantList_create();
+    XJsonValue* value = NULL;
+    XVariant* var = NULL;
+    for_each_iterator(arr, XVector, it)
+    {
+        value = XVector_iterator_data(&it);
+        var=XJsonValue_toVariant(value);
+        XVariantList_push_back_move_base(list,var);
+        XVariant_delete(var);
+    }
+    return list;
+}
+XVariantList* XJsonArray_toVariantList_move(XJsonArray* arr)
+{
+    if (arr == NULL)
+        return NULL;
+    XVariantList* list = XVariantList_create();
+    XJsonValue* value = NULL;
+    XVariant* var = NULL;
+    for_each_iterator(arr, XVector, it)
+    {
+        value = XVector_iterator_data(&it);
+        var = XJsonValue_toVariant_move(value);
+        XVariantList_push_back_move_base(list, var);
+        XVariant_delete(var);
+    }
+    return list;
+}
+XVariant* XJsonArray_toVariant(const XJsonArray* arr)
+{
+    if (arr == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XJsonArray), XVariantType_JsonArray);
+    XJsonArray_init(var->m_data);
+    XJsonArray_copy_base(var->m_data, arr);
+    return var;
+}
+XVariant* XJsonArray_toVariant_move(XJsonArray* arr)
+{
+    if (arr == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XJsonArray), XVariantType_JsonArray);
+    XJsonArray_init(var->m_data);
+    XJsonArray_move_base(var->m_data, arr);
+    return var;
+}
+XVariant* XJsonArray_toVariant_ref(XJsonArray* arr)
+{
+    if (arr == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonArray);
+    if (var == NULL)
+        return NULL;
+    var->m_data = arr;
+    var->m_dataSize = sizeof(XJsonArray);
+    return var;
+}
 //XVariantList* XJsonArray_toVariantList(const XJsonArray* array) {
 //    if (!array) return NULL;
 //

@@ -360,50 +360,36 @@ void XJsonValue_setObject_move(XJsonValue* value, XJsonObject* o)
     value->type = XJsonValue_Object;
     value->data.object = XJsonObject_create_move(o);
 }
-XVariant* XJsonValue_toVariant(const XJsonValue* value) 
+XVariant* XJsonValue_toVariant(const XJsonValue* val)
 {
-    if (!value) return NULL;
-
-    XVariant* variant = XVariant_create(NULL,0,0);
-    if (!variant) return NULL;
-
-    switch (value->type) 
-    {
-    case XJsonValue_Null:
-        XVariant_setValue_null(variant);
-        break;
-    case XJsonValue_Bool:
-        XVariant_setValue_bool(variant, value->data.boolean);
-        break;
-    case XJsonValue_Int:                 
-        XVariant_setValue_int64(variant, value->data.integer);
-        break;
-    case XJsonValue_Double:
-        XVariant_setValue_double(variant, value->data.number);
-        break;
-    case XJsonValue_String:
-        if (value->data.string) {
-            XVariant_setValue_String(variant, value->data.string);
-        }
-        break;
-    case XJsonValue_Array:
-        if (value->data.array) {
-            //XVariantList* list = XJsonArray_toVariantList(value->data.array);
-            //XVariant_setValue_list(variant, list);
-        }
-        break;
-    case XJsonValue_Object:
-        if (value->data.object) {
-            //XVariantMap* map = XJsonObject_toVariantMap(value->data.object);
-            //XVariant_setMap(variant, map);
-        }
-        break;
-    default:
-        XVariant_delete(variant);
+    if (val == NULL)
         return NULL;
-    }
+    XVariant* var = XVariant_create(NULL, sizeof(XJsonValue), XVariantType_JsonValue);
+    XJsonValue_init(var->m_data, val->type);
+    XJsonValue_copy(var->m_data, val);
+    return var;
+}
 
-    return variant;
+XVariant* XJsonValue_toVariant_move(XJsonValue* val)
+{
+    if (val == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, sizeof(XJsonValue), XVariantType_JsonValue);
+    XJsonValue_init(var->m_data, val->type);
+    XJsonValue_move(var->m_data, val);
+    return var;
+}
+
+XVariant* XJsonValue_toVariant_ref(XJsonValue* val)
+{
+    if (val == NULL)
+        return NULL;
+    XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonValue);
+    if (var == NULL)
+        return NULL;
+    var->m_data = val;
+    var->m_dataSize = sizeof(XJsonValue);
+    return var;
 }
 
 XJsonValue* XJsonValue_fromVariant(const XVariant* variant) {

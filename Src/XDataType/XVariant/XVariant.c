@@ -420,119 +420,51 @@ XVariant* XVariant_create_hash_ref(XHashMap* hash)
 }
 XVariant* XVariant_create_JsonDocument(const XJsonDocument* doc)
 {
-	if (doc == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XJsonDocument), XVariantType_JsonDocument);
-	XJsonDocument_init(XVariant_DataPtr(var));
-	XJsonDocument_copy(XVariant_DataPtr(var), doc);
-	return var;
+	return XJsonDocument_toVariant(doc);
 }
 XVariant* XVariant_create_JsonDocument_move(XJsonDocument* doc)
 {
-	if (doc == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XJsonDocument), XVariantType_JsonDocument);
-	XJsonDocument_init(XVariant_DataPtr(var));
-	XJsonDocument_move(XVariant_DataPtr(var), doc);
-	return var;
+	return XJsonDocument_toVariant_move(doc);
 }
 XVariant* XVariant_create_JsonDocument_ref(XJsonDocument* doc)
 {
-	if (doc == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonDocument);
-	if (var == NULL)
-		return NULL;
-	var->m_data = doc;
-	var->m_dataSize = sizeof(XJsonDocument);
-	return var;
+	return XJsonDocument_toVariant_ref(doc);
 }
 XVariant* XVariant_create_JsonArray(const XJsonArray* arr)
 {
-	if (arr == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XJsonArray), XVariantType_JsonArray);
-	XJsonArray_init(XVariant_DataPtr(var));
-	XJsonArray_copy_base(XVariant_DataPtr(var), arr);
-	return var;
+	return XJsonArray_toVariant(arr);
 }
 XVariant* XVariant_create_JsonArray_move(XJsonArray* arr)
 {
-	if (arr == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XJsonArray), XVariantType_JsonArray);
-	XJsonArray_init(XVariant_DataPtr(var));
-	XJsonArray_move_base(XVariant_DataPtr(var), arr);
-	return var;
+	return XJsonArray_toVariant_move(arr);
 }
 XVariant* XVariant_create_JsonArray_ref(XJsonArray* arr)
 {
-	if (arr == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonArray);
-	if (var == NULL)
-		return NULL;
-	var->m_data = arr;
-	var->m_dataSize = sizeof(XJsonArray);
-	return var;
+	return XJsonArray_toVariant_ref(arr);
 }
 XVariant* XVariant_create_JsonObject(const XJsonObject* obj)
 {
-	if (obj == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XJsonObject), XVariantType_JsonObject);
-	XJsonObject_init(XVariant_DataPtr(var));
-	XJsonObject_copy_base(XVariant_DataPtr(var), obj);
-	return var;
+	return XJsonObject_toVariant(obj);
 }
 XVariant* XVariant_create_JsonObject_move(XJsonObject* obj)
 {
-	if (obj == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XJsonObject), XVariantType_JsonObject);
-	XJsonObject_init(XVariant_DataPtr(var));
-	XJsonObject_move_base(XVariant_DataPtr(var), obj);
-	return var;
+	return XJsonObject_toVariant_move(obj);
 }
 XVariant* XVariant_create_JsonObject_ref(XJsonObject* obj)
 {
-	if (obj == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonObject);
-	if (var == NULL)
-		return NULL;
-	var->m_data = obj;
-	var->m_dataSize = sizeof(XJsonObject);
-	return var;
+	return XJsonObject_toVariant_ref(obj);
 }
 XVariant* XVariant_create_JsonValue(const XJsonValue* val)
 {
-	if (val == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XJsonValue), XVariantType_JsonValue);
-	XJsonValue_init(XVariant_DataPtr(var), val->type);
-	XJsonValue_copy(XVariant_DataPtr(var), val);
-	return var;
+	return XJsonValue_toVariant(val);
 }
 XVariant* XVariant_create_JsonValue_move(XJsonValue* val)
 {
-	if (val == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, sizeof(XJsonValue), XVariantType_JsonValue);
-	XJsonValue_init(XVariant_DataPtr(var), val->type);
-	XJsonValue_move(XVariant_DataPtr(var), val);
-	return var;
+	return XJsonValue_toVariant_move(val);
 }
 XVariant* XVariant_create_JsonValue_ref(XJsonValue* val)
 {
-	if (val == NULL)
-		return NULL;
-	XVariant* var = XVariant_create(NULL, 0, XVariantType_JsonValue);
-	if (var == NULL)
-		return NULL;
-	var->m_data = val;
-	var->m_dataSize = sizeof(XJsonValue);
-	return var;
+	return XJsonValue_toVariant_ref(val);
 }
 XVariant* XVariant_create_BsonDocument(const XBsonDocument* doc)
 {

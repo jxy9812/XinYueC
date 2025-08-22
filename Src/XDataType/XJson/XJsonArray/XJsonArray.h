@@ -15,7 +15,7 @@ extern "C" {
 
 typedef struct XJsonArray 
 {
-    XVector elements; // 存储XJsonValue*的向量
+    XVector elements; // 存储XJsonValue的向量
 } XJsonArray;
 
 // 构造与析构
@@ -50,8 +50,13 @@ const XJsonValue* XJsonArray_at_const(const XJsonArray* array, int64_t index);
 
 // 转换函数
 XString* XJsonArray_toString(const XJsonArray* array, XJsonDocumentFormat format);
+
 XVariantList* XJsonArray_toVariantList(const XJsonArray* array);
-XJsonArray* XJsonArray_fromVariantList(const XVariantList* list);
+XVariantList* XJsonArray_toVariantList_move(XJsonArray* array);
+// 与XVariant转换
+XVariant* XJsonArray_toVariant(const XJsonArray* array);
+XVariant* XJsonArray_toVariant_move(XJsonArray* array);
+XVariant* XJsonArray_toVariant_ref(XJsonArray* array);
 #ifdef __cplusplus
 }
 #endif

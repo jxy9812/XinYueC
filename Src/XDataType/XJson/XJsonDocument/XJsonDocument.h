@@ -63,6 +63,8 @@ XByteArray* XJsonDocument_toBson(const XJsonDocument* document);
 
 // 与XVariant转换
 XVariant* XJsonDocument_toVariant(const XJsonDocument* document);
+XVariant* XJsonDocument_toVariant_move(XJsonDocument* document);
+XVariant* XJsonDocument_toVariant_ref(XJsonDocument* document);
 
 #ifdef __cplusplus
 }

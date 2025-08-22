@@ -97,8 +97,8 @@ void XJsonValue_setObject_move(XJsonValue* value, XJsonObject* o);
 
 // 与XVariant转换
 XVariant* XJsonValue_toVariant(const XJsonValue* value);
-XJsonValue* XJsonValue_fromVariant(const XVariant* variant);
-
+XVariant* XJsonValue_toVariant_move(XJsonValue* value);
+XVariant* XJsonValue_toVariant_ref(XJsonValue* value);
 #ifdef __cplusplus
 }
 #endif
