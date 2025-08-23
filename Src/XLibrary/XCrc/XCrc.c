@@ -1,6 +1,8 @@
 ﻿#include"XCrc.h"
 #if XCrc_ON
 #include"XAlgorithm.h"
+#include <stddef.h>
+#include <stdint.h>
 #if XCrc16_ON
 /* ----------------------- 平台相关头文件 --------------------------------*/
 // CRC16 表
@@ -100,14 +102,49 @@ bool XVector_append_crc16(XVector* data, XCRCByteOrder order)
 }
 #endif // XVector_ON
 #endif // XCrc16_ON
-/*                                            crc32                               */
+/* ----------------------- CRC32 实现（纯C优化版本）-----------------------*/
+#define GF2_DIM 32
 #if XCrc32_ON
-/* 静态CRC表，用于查表法优化计算 */
-static uint32_t crc_table[256];
+// 大端模式下批量处理32字节（8个4字节字）的宏定义
+#define DOBIG32 \
+    c = crc_table[4][(c >> 24) ^ (*buf4 >> 24)] ^ (c << 8); \
+    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 16) & 0xff)] ^ (c << 8); \
+    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 8) & 0xff)] ^ (c << 8); \
+    c = crc_table[4][(c >> 24) ^ (*buf4 & 0xff)] ^ (c << 8); \
+    buf4++; \
+    c = crc_table[4][(c >> 24) ^ (*buf4 >> 24)] ^ (c << 8); \
+    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 16) & 0xff)] ^ (c << 8); \
+    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 8) & 0xff)] ^ (c << 8); \
+    c = crc_table[4][(c >> 24) ^ (*buf4 & 0xff)] ^ (c << 8); \
+    buf4++
+
+// 小端模式：一次处理4字节（DOLIT4）
+#define DOLIT4 \
+    c = crc_table[0][(c ^ *buf4) & 0xff] ^ (c >> 8); \
+    c = crc_table[1][(c ^ (*buf4 >> 8)) & 0xff] ^ (c >> 8); \
+    c = crc_table[2][(c ^ (*buf4 >> 16)) & 0xff] ^ (c >> 8); \
+    c = crc_table[3][(c ^ (*buf4 >> 24)) & 0xff] ^ (c >> 8); \
+    buf4++
+
+// 小端模式：一次处理32字节（8个4字节，DOLIT32）
+#define DOLIT32 \
+    DOLIT4; DOLIT4; DOLIT4; DOLIT4; \
+    DOLIT4; DOLIT4; DOLIT4; DOLIT4
+
+// 大端模式：一次处理4字节（DOBIG4）
+#define DOBIG4 \
+    c = crc_table[4][(c >> 24) ^ (*buf4 >> 24)] ^ (c << 8); \
+    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 16) & 0xff)] ^ (c << 8); \
+    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 8) & 0xff)] ^ (c << 8); \
+    c = crc_table[4][(c >> 24) ^ (*buf4 & 0xff)] ^ (c << 8); \
+    buf4++
+
+/* 扩展CRC表支持批量处理（8个子表） */
+static uint32_t crc_table[8][256];
 static int table_initialized = 0;
 static XCRC32Polynomial current_polynomial = XCRC32_IEEE_802_3;
 
-/* 常用CRC32多项式常量 */
+/* 常用CRC32多项式/初始值/输出异或值（保持不变） */
 static const uint32_t CRC32_POLYNOMIALS[] = {
     0x04C11DB7,  /* XCRC32_IEEE_802_3 */
     0x1EDC6F41,  /* XCRC32_CASTAGNOLI */
@@ -117,76 +154,182 @@ static const uint32_t CRC32_POLYNOMIALS[] = {
     0x04C11DB7   /* XCRC32_POSIX */
 };
 
-/* 常用CRC32初始值 */
 static const uint32_t CRC32_INIT_VALUES[] = {
-    0xFFFFFFFF,  /* XCRC32_IEEE_802_3 */
-    0xFFFFFFFF,  /* XCRC32_CASTAGNOLI */
-    0xFFFFFFFF,  /* XCRC32_KOOPMAN */
-    0xFFFFFFFF,  /* XCRC32_ISO_HDLC */
-    0xFFFFFFFF,  /* XCRC32_MPEG2 */
-    0xFFFFFFFF   /* XCRC32_POSIX */
+    0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
 };
 
-/* 常用CRC32异或输出值 */
 static const uint32_t CRC32_XOROUT_VALUES[] = {
-    0xFFFFFFFF,  /* XCRC32_IEEE_802_3 */
-    0xFFFFFFFF,  /* XCRC32_CASTAGNOLI */
-    0xFFFFFFFF,  /* XCRC32_KOOPMAN */
-    0xFFFFFFFF,  /* XCRC32_ISO_HDLC */
-    0x00000000,  /* XCRC32_MPEG2 */
-    0xFFFFFFFF   /* XCRC32_POSIX */
+    0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00000000, 0xFFFFFFFF
 };
+
+/* 字节序交换辅助宏（纯C实现） */
+#define ZSWAP32(c) ((((c) >> 24) & 0xff) | (((c) >> 8) & 0xff00) | \
+                    (((c) << 8) & 0xff0000) | (((c) << 24) & 0xff000000))
+
+/* 批量处理宏定义 */
+#ifdef BYFOUR
+#define DOLIT4 \
+    c ^= *buf4++; \
+    c = crc_table[0][c & 0xff] ^ crc_table[1][(c >> 8) & 0xff] ^ \
+        crc_table[2][(c >> 16) & 0xff] ^ crc_table[3][c >> 24];
+
+#define DOLIT32 \
+    DOLIT4; DOLIT4; DOLIT4; DOLIT4; DOLIT4; DOLIT4; DOLIT4; DOLIT4;
+
+#define DOBIG4 \
+    c ^= ZSWAP32(*buf4++); \
+    c = crc_table[4][c & 0xff] ^ crc_table[5][(c >> 8) & 0xff] ^ \
+        crc_table[6][(c >> 16) & 0xff] ^ crc_table[7][c >> 24];
+
+#define DOBIG32 \
+    DOBIG4; DOBIG4; DOBIG4; DOBIG4; DOBIG4; DOBIG4; DOBIG4; DOBIG4;
+#endif
+
+/* 小端模式批量处理（纯C函数） */
+static uint32_t crc32_little(uint32_t crc, const uint8_t* buf, size_t len) {
+    register uint32_t c = crc;
+    register const uint32_t* buf4;
+
+    while (len && ((ptrdiff_t)buf & 3)) {
+        c = crc_table[0][(c ^ *buf++) & 0xff] ^ (c >> 8);
+        len--;
+    }
+
+    buf4 = (const uint32_t*)buf;
+    while (len >= 32) {
+        DOLIT32;
+        len -= 32;
+    }
+    while (len >= 4) {
+        DOLIT4;
+        len -= 4;
+    }
+    buf = (const uint8_t*)buf4;
+
+    if (len) do {
+        c = crc_table[0][(c ^ *buf++) & 0xff] ^ (c >> 8);
+    } while (--len);
+
+    return c;
+}
+
+/* 大端模式批量处理（纯C函数） */
+static uint32_t crc32_big(uint32_t crc, const uint8_t* buf, size_t len) {
+    register uint32_t c = ZSWAP32(crc);
+    register const uint32_t* buf4;
+
+    while (len && ((ptrdiff_t)buf & 3)) {
+        c = crc_table[4][(c >> 24) ^ *buf++] ^ (c << 8);
+        len--;
+    }
+
+    buf4 = (const uint32_t*)buf;
+    while (len >= 32) {
+        DOBIG32;
+        len -= 32;
+    }
+    while (len >= 4) {
+        DOBIG4;
+        len -= 4;
+    }
+    buf = (const uint8_t*)buf4;
+
+    if (len) do {
+        c = crc_table[4][(c >> 24) ^ *buf++] ^ (c << 8);
+    } while (--len);
+
+    return ZSWAP32(c);
+}
+
+/* GF(2)矩阵乘法（纯C实现） */
+static uint32_t gf2_matrix_times(uint32_t* mat, uint32_t vec) {
+    uint32_t sum = 0;
+    while (vec) {
+        if (vec & 1) sum ^= *mat;
+        vec >>= 1;
+        mat++;
+    }
+    return sum;
+}
+
+/* GF(2)矩阵平方（纯C实现） */
+static void gf2_matrix_square(uint32_t* square, uint32_t* mat) {
+    int n;
+    for (n = 0; n < 32; n++) {
+        square[n] = gf2_matrix_times(mat, mat[n]);
+    }
+}
 
 /**
- * 初始化CRC32查找表
+ * 初始化CRC32查找表（支持批量处理）
  */
 void XCrc32_init_table(XCRC32Polynomial polynomial) {
     uint32_t poly = CRC32_POLYNOMIALS[polynomial];
-    int i, j;
+    int n, k;
 
-    /* 如果多项式未变且表已初始化，则直接返回 */
     if (table_initialized && polynomial == current_polynomial) {
         return;
     }
 
     current_polynomial = polynomial;
 
-    for (i = 0; i < 256; i++) {
-        uint32_t crc = i;
-        for (j = 0; j < 8; j++) {
-            if (crc & 1) {
-                crc = (crc >> 1) ^ poly;
-            }
-            else {
-                crc = crc >> 1;
-            }
+    /* 生成基础表 */
+    for (n = 0; n < 256; n++) {
+        uint32_t c = n;
+        for (k = 0; k < 8; k++) {
+            c = c & 1 ? (c >> 1) ^ poly : c >> 1;
         }
-        crc_table[i] = crc;
+        crc_table[0][n] = c;
     }
+
+#ifdef BYFOUR
+    /* 生成批量处理用扩展表 */
+    for (n = 0; n < 256; n++) {
+        uint32_t c = crc_table[0][n];
+        crc_table[4][n] = ZSWAP32(c);
+
+        for (k = 1; k < 4; k++) {
+            c = crc_table[0][c & 0xff] ^ (c >> 8);
+            crc_table[k][n] = c;
+            crc_table[k + 4][n] = ZSWAP32(c);
+        }
+    }
+#endif
 
     table_initialized = 1;
 }
 
 /**
- * 计算数据的CRC32校验值
+ * 计算数据的CRC32校验值（整合批量处理优化）
  */
 uint32_t XCrc32_calculate(const uint8_t* data, size_t length, XCRCByteOrder order) {
     uint32_t crc = CRC32_INIT_VALUES[current_polynomial];
-    size_t i;
 
-    /* 确保表已初始化 */
     if (!table_initialized) {
         XCrc32_init_table(current_polynomial);
     }
 
-    for (i = 0; i < length; i++) {
-        crc = (crc >> 8) ^ crc_table[(crc & 0xFF) ^ data[i]];
+#ifdef BYFOUR
+    if (sizeof(void*) == sizeof(ptrdiff_t)) {
+        uint32_t endian = 1;
+        crc = ~crc;
+        if (*(uint8_t*)&endian)  // 小端模式
+            crc = crc32_little(crc, data, length);
+        else  // 大端模式
+            crc = crc32_big(crc, data, length);
+        crc = ~crc;
     }
+    else {
+#endif
+        /* 标准逐字节处理 */
+        for (size_t i = 0; i < length; i++) {
+            crc = (crc >> 8) ^ crc_table[0][(crc & 0xFF) ^ data[i]];
+        }
+#ifdef BYFOUR
+    }
+#endif
 
-    /* 应用最终异或值 */
     crc ^= CRC32_XOROUT_VALUES[current_polynomial];
-
-    /* 根据字节序调整 */
     return XCrc32_finalize(crc, order);
 }
 
@@ -194,18 +337,27 @@ uint32_t XCrc32_calculate(const uint8_t* data, size_t length, XCRCByteOrder orde
  * 更新CRC32校验值（用于流式计算）
  */
 uint32_t XCrc32_update(uint32_t crc, const uint8_t* data, size_t length) {
-    size_t i;
-
-    /* 确保表已初始化 */
     if (!table_initialized) {
         XCrc32_init_table(current_polynomial);
     }
 
-    for (i = 0; i < length; i++) {
-        crc = (crc >> 8) ^ crc_table[(crc & 0xFF) ^ data[i]];
+#ifdef BYFOUR
+    if (sizeof(void*) == sizeof(ptrdiff_t)) {
+        uint32_t endian = 1;
+        if (*(uint8_t*)&endian)
+            return crc32_little(crc, data, length);
+        else
+            return crc32_big(crc, data, length);
     }
-
-    return crc;
+    else {
+#endif
+        for (size_t i = 0; i < length; i++) {
+            crc = (crc >> 8) ^ crc_table[0][(crc & 0xFF) ^ data[i]];
+        }
+        return crc;
+#ifdef BYFOUR
+    }
+#endif
 }
 
 /**
@@ -214,10 +366,6 @@ uint32_t XCrc32_update(uint32_t crc, const uint8_t* data, size_t length) {
 uint32_t XCrc32_finalize(uint32_t crc, XCRCByteOrder order) {
     uint32_t result = crc;
 
-    /* 应用最终异或值 */
-    result ^= CRC32_XOROUT_VALUES[current_polynomial];
-
-    /* 根据字节序调整 */
     if (order == XCRC_BYTE_ORDER_BIG_ENDIAN) {
         result = ((result << 24) & 0xFF000000) |
             ((result << 8) & 0x00FF0000) |
@@ -229,10 +377,53 @@ uint32_t XCrc32_finalize(uint32_t crc, XCRCByteOrder order) {
 }
 
 /**
- * 设置当前使用的CRC32多项式
+ * CRC32拼接功能（纯C实现）
  */
-void crc32_set_polynomial(XCRC32Polynomial polynomial) {
-    XCrc32_init_table(polynomial);
+uint32_t XCrc32_combine(uint32_t crc1, uint32_t crc2, size_t len2) {
+    uint32_t even[GF2_DIM], odd[GF2_DIM];
+    uint32_t row, poly = CRC32_POLYNOMIALS[current_polynomial];
+    int n;
+
+    if (len2 <= 0) return crc1;
+
+    /* 初始化矩阵 */
+    odd[0] = poly;
+    row = 1;
+    for (n = 1; n < GF2_DIM; n++) {
+        odd[n] = row;
+        row <<= 1;
+    }
+
+    /* 矩阵平方运算 */
+    gf2_matrix_square(even, odd);
+    gf2_matrix_square(odd, even);
+
+    /* 应用长度算子 */
+    do {
+        gf2_matrix_square(even, odd);
+        if (len2 & 1) {
+            crc1 = gf2_matrix_times(even, crc1);
+        }
+        len2 >>= 1;
+
+        if (len2 == 0) break;
+
+        gf2_matrix_square(odd, even);
+        if (len2 & 1) {
+            crc1 = gf2_matrix_times(odd, crc1);
+        }
+        len2 >>= 1;
+    } while (len2 != 0);
+
+    return crc1 ^ crc2;
 }
-#endif
-#endif
+
+///**
+// * 设置当前使用的CRC32多项式
+// */
+//void crc32_set_polynomial(XCRC32Polynomial polynomial) {
+//    XCrc32_init_table(polynomial);
+//}
+
+#endif // XCrc32_ON
+#endif // XCrc_ON

@@ -1,4 +1,5 @@
-﻿#include"XAlgorithmTest.h"
+﻿#include"XLibraryTest.h"
+#include"XString.h"
 #include"XBase64.h"
 #include"XVector.h"
 #include"XMenu.h"
@@ -6,7 +7,7 @@
 #include"XCoreApplication.h"
 void XBase64Test()
 {
-	printf("XBase64测试\n");
+	XPrint_utf8("XBase64测试\n");
 	char buff[] = "adss12313212345555555555456456";
 	XVector* sour = XVector_Create(uint8_t), *toBase=NULL,* fromBase64=NULL;
 	XVector_append_array_base(sour,buff,sizeof(buff));
@@ -14,13 +15,13 @@ void XBase64Test()
 	{
 		toBase = XVector_toBase64(sour);
 		if (toBase)
-			printf("转Base64:%s\n", XContainerDataPtr(toBase));
+			XPrint_utf8_fmt("转Base64:%s\n", XContainerDataPtr(toBase));
 	}
 	if (toBase)
 	{
 		fromBase64 = XVector_fromBase64(toBase);
 		if (fromBase64)
-			printf("还原Base64:%s\n", XContainerDataPtr(fromBase64));
+			XPrint_utf8_fmt("还原Base64:%s\n", XContainerDataPtr(fromBase64));
 	}
 
 	if (sour)

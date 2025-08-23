@@ -1,13 +1,14 @@
-﻿#include"XAlgorithmTest.h"
+﻿#include"XLibraryTest.h"
 #include"XMenu.h"
-void XMenu_XAlgorithmTest(XMenu* root)
+void XMenu_XLibraryTest(XMenu* root)
 {
-	XMenu* menu = XMenu_create("算法");
+	XMenu* menu = XMenu_create("库");
 	XMenu_addMenu(root, menu);
 	XMenu_FindTest(menu);
 	XMenu_XTreeTest(menu);
 	XMenu_CJsonTest(menu);
 	XMenu_XBase64Test(menu);
+	XMenu_zlibTest(menu);
 }
 
 void XMenu_XTreeTest(XMenu* root)

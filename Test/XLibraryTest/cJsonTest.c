@@ -1,4 +1,4 @@
-﻿#include"XAlgorithmTest.h"
+﻿#include"XLibraryTest.h"
 #include"cJSON.h"
 #include"XMemory.h"
 #include"XString.h"

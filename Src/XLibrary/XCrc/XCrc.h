@@ -69,6 +69,10 @@ typedef enum
   * @return 调整后的CRC值
   */
  uint32_t XCrc32_finalize(uint32_t crc, XCRCByteOrder order);
+ /**
+ * CRC32拼接功能（纯C实现）
+ */
+ uint32_t XCrc32_combine(uint32_t crc1, uint32_t crc2, size_t len2);
 #endif // XCrc32_ON
 
 #ifdef __cplusplus

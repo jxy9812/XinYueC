@@ -10,7 +10,7 @@ extern "C" {
 #include"XProtocolStackTest.h"
 #include"XIOTest.h"
 #include"XTimerTest.h"
-#include"XAlgorithmTest.h"
+#include"XLibraryTest.h"
 #if DEMOTEST
 	//排序算法测试
 	void SortTest();
