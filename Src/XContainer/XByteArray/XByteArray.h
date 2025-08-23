@@ -71,6 +71,13 @@ uint8_t* XByteArray_find_base(const XByteArray* array, const uint8_t findVal);
 XByteArray* XByteArray_to16HexUtf8(XByteArray* array);
 //转16进制字符串
 XString* XByteArray_to16HexString(XByteArray* array);
+//转base64
+XByteArray* XByteArray_toBase64(XByteArray* array);
+XByteArray* XByteArray_fromBase64(XByteArray* base64);
+//压缩
+XByteArray* XByteArray_toCompress(XByteArray* sData);
+//解压
+XByteArray* XByteArray_toDecompress(XByteArray* sData);
 #ifdef __cplusplus
 }
 #endif

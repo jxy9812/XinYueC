@@ -42,10 +42,6 @@ int XBase64_encode(const uint8_t* input, size_t input_len, char* output, size_t*
  */
 int XBase64_decode(const char* input, size_t input_len, uint8_t* output, size_t* output_len);
 
-#if XVector_ON
-XVector* XVector_toBase64(XVector* data);
-XVector* XVector_fromBase64(XVector* base64);
-#endif
 #ifdef __cplusplus
 }
 #endif

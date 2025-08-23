@@ -142,41 +142,4 @@ int XBase64_decode(const char* input, size_t input_len, uint8_t* output, size_t*
     *output_len = j; // 返回实际写入的长度
     return 0; // 成功
 }
-#if XVector_ON
-#include"XVector.h"
-XVector* XVector_toBase64(XVector* data)
-{
-    if (data == NULL || XVector_isEmpty_base(data))
-        return NULL;
-    XVector* base64 = XVector_Create(uint8_t);
-    if (base64 == NULL)
-        return NULL;
-    XVector_resize_base(base64, XBase64_encoded_size(XContainerSize(data)));
-    size_t len = XContainerSize(base64);
-    if (XBase64_encode(XContainerDataPtr(data), XContainerSize(data), XContainerDataPtr(base64), &len) != 0)
-    {
-        XVector_delete_base(base64);
-        return NULL;
-    }
-    XContainerSize(base64) = len;
-    return base64;
-}
-XVector* XVector_fromBase64(XVector* base64)
-{
-    if (base64 == NULL || XVector_isEmpty_base(base64))
-        return NULL;
-    XVector* data = XVector_Create(uint8_t);
-    if (data == NULL)
-        return NULL;
-    XVector_resize_base(data, XBase64_decoded_size(XContainerDataPtr(base64),XContainerSize(base64)));
-    size_t len = XContainerSize(data);
-    if (XBase64_decode(XContainerDataPtr(base64), XContainerSize(base64) , XContainerDataPtr(data) ,&len) != 0)
-    {
-        XVector_delete_base(data);
-        return NULL;
-    }
-    XContainerSize(data) = len;
-    return data;
-}
-#endif
 #endif

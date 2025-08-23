@@ -103,4 +103,129 @@ XString* XByteArray_to16HexString(XByteArray* array)
 	}
 	return str;
 }
+
+#include"XBase64.h"
+XByteArray* XByteArray_toBase64(XByteArray* array)
+{
+	if (array == NULL || XByteArray_isEmpty_base(array))
+		return NULL;
+	XByteArray* base64 = XByteArray_create(0);
+	if (base64 == NULL)
+		return NULL;
+	XByteArray_resize_base(base64, XBase64_encoded_size(XContainerSize(array)));
+	size_t len = XContainerSize(base64);
+	if (XBase64_encode(XContainerDataPtr(array), XContainerSize(array), XContainerDataPtr(base64), &len) != 0)
+	{
+		XByteArray_delete_base(base64);
+		return NULL;
+	}
+	XContainerSize(base64) = len;
+	return base64;
+}
+XByteArray* XByteArray_fromBase64(XByteArray* base64)
+{
+	if (base64 == NULL || XByteArray_isEmpty_base(base64))
+		return NULL;
+	XByteArray* data = XByteArray_create(0);
+	if (data == NULL)
+		return NULL;
+	XByteArray_resize_base(data, XBase64_decoded_size(XContainerDataPtr(base64), XContainerSize(base64)));
+	size_t len = XContainerSize(data);
+	if (XBase64_decode(XContainerDataPtr(base64), XContainerSize(base64), XContainerDataPtr(data), &len) != 0)
+	{
+		XByteArray_delete_base(data);
+		return NULL;
+	}
+	XContainerSize(data) = len;
+	return data;
+}
+
+#include"zlib.h"
+XByteArray* XByteArray_toCompress(XByteArray* sData)
+{
+	if (sData == NULL || XByteArray_isEmpty_base(sData))
+		return NULL;
+
+	// 获取输入数据
+	const uint8_t* input_data = XContainerDataPtr(sData);
+	uLongf input_len = XContainerSize(sData);
+
+	// 计算压缩缓冲区所需的最大大小
+	uLongf output_len = compressBound(input_len);
+
+	// 创建压缩结果缓冲区
+	XByteArray* compressed = XByteArray_create(output_len);
+	if (compressed == NULL)
+		return NULL;
+
+	uint8_t* output_data = XContainerDataPtr(compressed);
+
+	// 执行压缩
+	int ret = compress(output_data, &output_len, input_data, input_len);
+	if (ret != Z_OK)
+	{
+		XByteArray_delete_base(compressed);
+		return NULL;
+	}
+
+	// 调整实际大小
+	XContainerSize(compressed) = output_len;
+	return compressed;
+}
+XByteArray* XByteArray_toDecompress(XByteArray* sData)
+{
+	if (sData == NULL || XByteArray_isEmpty_base(sData))
+		return NULL;
+
+	// 获取压缩数据
+	const uint8_t* input_data = XContainerDataPtr(sData);
+	uLongf input_len = XContainerSize(sData);
+
+	// 初始解压缓冲区大小（设为输入大小的4倍，可根据实际情况调整）
+	uLongf output_len = input_len * 4;
+	XByteArray* decompressed = XByteArray_create(output_len);
+	if (decompressed == NULL)
+		return NULL;
+
+	int ret;
+	const int max_attempts = 10; // 最大尝试次数，避免无限循环
+	int attempts = 0;
+
+	while (attempts < max_attempts)
+	{
+		uint8_t* output_data = XContainerDataPtr(decompressed);
+		uLongf current_output_len = output_len;
+
+		// 执行解压
+		ret = uncompress(output_data, &current_output_len, input_data, input_len);
+
+		if (ret == Z_OK)
+		{
+			// 解压成功，调整大小并返回
+			XContainerSize(decompressed) = current_output_len;
+			return decompressed;
+		}
+		else if (ret == Z_BUF_ERROR)
+		{
+			// 缓冲区不足，尝试更大的缓冲区
+			output_len *= 2;
+			if (!XByteArray_resize_base(decompressed, output_len))
+			{
+				XByteArray_delete_base(decompressed);
+				return NULL;
+			}
+			attempts++;
+		}
+		else
+		{
+			// 其他错误（如数据损坏）
+			XByteArray_delete_base(decompressed);
+			return NULL;
+		}
+	}
+
+	// 超过最大尝试次数
+	XByteArray_delete_base(decompressed);
+	return NULL;
+}
 #endif

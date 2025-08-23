@@ -105,39 +105,7 @@ bool XVector_append_crc16(XVector* data, XCRCByteOrder order)
 /* ----------------------- CRC32 实现（纯C优化版本）-----------------------*/
 #define GF2_DIM 32
 #if XCrc32_ON
-// 大端模式下批量处理32字节（8个4字节字）的宏定义
-#define DOBIG32 \
-    c = crc_table[4][(c >> 24) ^ (*buf4 >> 24)] ^ (c << 8); \
-    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 16) & 0xff)] ^ (c << 8); \
-    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 8) & 0xff)] ^ (c << 8); \
-    c = crc_table[4][(c >> 24) ^ (*buf4 & 0xff)] ^ (c << 8); \
-    buf4++; \
-    c = crc_table[4][(c >> 24) ^ (*buf4 >> 24)] ^ (c << 8); \
-    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 16) & 0xff)] ^ (c << 8); \
-    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 8) & 0xff)] ^ (c << 8); \
-    c = crc_table[4][(c >> 24) ^ (*buf4 & 0xff)] ^ (c << 8); \
-    buf4++
-
-// 小端模式：一次处理4字节（DOLIT4）
-#define DOLIT4 \
-    c = crc_table[0][(c ^ *buf4) & 0xff] ^ (c >> 8); \
-    c = crc_table[1][(c ^ (*buf4 >> 8)) & 0xff] ^ (c >> 8); \
-    c = crc_table[2][(c ^ (*buf4 >> 16)) & 0xff] ^ (c >> 8); \
-    c = crc_table[3][(c ^ (*buf4 >> 24)) & 0xff] ^ (c >> 8); \
-    buf4++
-
-// 小端模式：一次处理32字节（8个4字节，DOLIT32）
-#define DOLIT32 \
-    DOLIT4; DOLIT4; DOLIT4; DOLIT4; \
-    DOLIT4; DOLIT4; DOLIT4; DOLIT4
-
-// 大端模式：一次处理4字节（DOBIG4）
-#define DOBIG4 \
-    c = crc_table[4][(c >> 24) ^ (*buf4 >> 24)] ^ (c << 8); \
-    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 16) & 0xff)] ^ (c << 8); \
-    c = crc_table[4][(c >> 24) ^ ((*buf4 >> 8) & 0xff)] ^ (c << 8); \
-    c = crc_table[4][(c >> 24) ^ (*buf4 & 0xff)] ^ (c << 8); \
-    buf4++
+#define BYFOUR
 
 /* 扩展CRC表支持批量处理（8个子表） */
 static uint32_t crc_table[8][256];
@@ -258,6 +226,11 @@ static void gf2_matrix_square(uint32_t* square, uint32_t* mat) {
     for (n = 0; n < 32; n++) {
         square[n] = gf2_matrix_times(mat, mat[n]);
     }
+}
+
+uint32_t** XCrc32_get_crc_table()
+{
+    return crc_table;
 }
 
 /**
