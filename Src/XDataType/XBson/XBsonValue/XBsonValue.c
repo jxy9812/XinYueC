@@ -931,9 +931,9 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
         XByteArray_append_array_base(output, XString_toUtf8( XBsonValue_toString(value)), len - 1);
         XByteArray_push_back_base(output, 0x00);// 字符串终止符
 
-       /* XPrint_utf8(key);
+       /* XPrintf_utf8(key);
         printf("\t");
-        XPrint(XBsonValue_toString(value));
+        XPrintf_string(XBsonValue_toString(value));
         printf("\n");*/
         //bson_write_uint32(&write_ptr, len);
         //memcpy(write_ptr, XString_toUtf8(value->data.str), len - 1);
@@ -1103,7 +1103,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
         if (*ptr >= end) return NULL;
 
         key = XString_create_with_length_utf8(key_start, *ptr - (const uint8_t*)key_start);
-      /*  XPrint(key);
+      /*  XPrintf_string(key);
         printf("\n");*/
         (*ptr)++; // 跳过终止符
     }

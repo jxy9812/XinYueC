@@ -10,6 +10,7 @@
 #include"XEquality.h"
 #include"XTimerBase.h"
 #include"XEventDispatcherThread.h"
+#include"XPrintf.h"
 #include<string.h>
 #include<stdarg.h>
 XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
@@ -300,12 +301,12 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 	XByteArray* frame = ev->frame;
 	/*	if (!XQueueBase_receive_base(comm->m_recvFrameQueue, &v))
 			return;*/
-	//printf("接收帧\n");
+	//XPrintf_utf8_fmt("接收帧\n");
 #if XDFC_RECV_FRAME_16HEX_SHOW
 	XString* str = XString_to16HexString(XContainerDataPtr(frame), XContainerSize(frame));
 	if (str != NULL)
 	{
-		printf("\n16进制接收帧:%s\n", XString_c_str(str));
+		XPrintf_utf8_fmt("\n16进制接收帧:%s\n", XString_c_str(str));
 		XString_delete_base(str);
 	}
 #endif // XDFC_RECV_FRAME_16HEX_SHOW
@@ -314,12 +315,12 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 	{
 		char c = 0;
 		XVector_push_back_base(frame, &c);
-		printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
+		XPrintf_utf8_fmt("\nString接收帧:%s\n", XContainerDataPtr(frame));
 		--XContainerSize(frame);
 	}
 	else
 	{
-		printf("\nString接收帧:%s\n", XContainerDataPtr(frame));
+		XPrintf_utf8_fmt("\nString接收帧:%s\n", XContainerDataPtr(frame));
 	}
 #endif // XDFC_RECV_FRAME_STR_SHOW
 	XDataFrameComm* comm = event->receiver;
@@ -335,7 +336,7 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 //功能码事件回调
 void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 {
-	//printf("功能码事件\n");
+	//XPrintf_utf8_fmt("功能码事件\n");
 	XEventFuncCode* ev = event;
 	XByteArray* frame = ev->m_parent.frame;
 	XDataFrameComm* comm = event->userData;
@@ -367,7 +368,7 @@ bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* ev)
 	{//添加失败，队列满了
 		XMemory_free(ev);
 #if XDFC_QUEUE_FULL_SHOW
-		printf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
+		XPrintf_utf8_fmt("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
 #endif
 		return false;
 	}
@@ -377,9 +378,9 @@ void XDataFrameComm_EvnetHandCb(XEventMin* event)
 {
 #if XDFC_EVENT_HANDLE_SHOW
 #if XDFC_ENUM_TO_STRING
-	printf("准备处理事件:%s\n", XDataFrameComm_EventType_toString(event->code));
+	XPrintf_utf8_fmt("准备处理事件:%s\n", XDataFrameComm_EventType_toString(event->code));
 #else
-	printf("准备处理事件:%d\n", eEvent);
+	XPrintf_utf8_fmt("准备处理事件:%d\n", eEvent);
 #endif
 #endif // MB_EVENT_SHOH
 	switch (event->code)

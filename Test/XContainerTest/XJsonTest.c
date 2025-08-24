@@ -52,13 +52,13 @@ void XJsonObjectTest()
 		XJsonDocument* doc = XJsonDocument_create_object(object);
 		XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Indented);
 		XJsonDocument_delete(doc);
-		XPrint_utf8(XContainerDataPtr(json));
-		XPrint_utf8("\n开始从json文本转json对象\n");
+		XPrintf_utf8(XContainerDataPtr(json));
+		XPrintf_utf8("\n开始从json文本转json对象\n");
 		doc = XJsonDocument_fromJson(json);
 		XByteArray_delete_base(json);
 
 		XString* str = XJsonDocument_toString(doc, XJsonDocument_Indented);
-		XPrint(str);
+		XPrintf_string(str);
 		printf("\n");
 		XString_delete_base(str);
 		XJsonDocument_delete(doc);
@@ -105,7 +105,7 @@ void XJsonArrayTest()
 
 
 		XString* str = XJsonArray_toString(array, XJsonDocument_Indented);
-		XPrint(str);
+		XPrintf_string(str);
 		printf("\n");
 		XString_delete_base(str);
 

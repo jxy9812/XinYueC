@@ -28,6 +28,7 @@ typedef struct XDebug {
     bool auto_newline;          // 自动换行
     bool is_active;             // 是否激活
     bool show_location;         // 显示文件位置信息
+    bool auto_space;            // 自动空格区分变量（新增）
     const char* file;           // 当前文件
     const char* function;       // 当前函数
     int line;                   // 当前行号
@@ -38,7 +39,7 @@ typedef struct XDebug {
 XDebug* XDebug_create_with_location(const char* file, const char* function, int line);
 
 // 销毁XDebug实例
-void XDebug_destroy(XDebug* debug);
+void XDebug_delete(XDebug* debug);
 
 // 设置输出目标
 XDebug* XDebug_setTarget(XDebug* debug, XDebugTarget target, int fd);
@@ -48,6 +49,9 @@ XDebug* XDebug_setAutoNewline(XDebug* debug, bool enable);
 
 // 启用/禁用位置信息显示
 XDebug* XDebug_setShowLocation(XDebug* debug, bool enable);
+
+// 新增：设置是否自动添加空格
+XDebug* XDebug_setAutoSpace(XDebug* debug, bool enable);
 
 // 基础输出函数
 XDebug* XDebug_write(XDebug* debug, const char* data, size_t len);
@@ -94,7 +98,7 @@ XDebug* XDebug_reset(XDebug* debug);          // 重置缓冲区
 #define XDebug_end(debug) do { \
     if (debug) { \
         XDebug_flush(debug); \
-        XDebug_destroy(debug); \
+        XDebug_delete(debug); \
     } \
 } while(0)
 
@@ -116,10 +120,11 @@ typedef struct XDebug XDebug;
 
 #define XDebug_create() NULL
 #define XDebug_create_with_location(...) NULL
-#define XDebug_destroy(debug) do {} while(0)
+#define XDebug_delete(debug) do {} while(0)
 #define XDebug_setTarget(debug, ...) (debug)
 #define XDebug_setAutoNewline(debug, ...) (debug)
 #define XDebug_setShowLocation(debug, ...) (debug)
+#define XDebug_setAutoSpace(debug, ...) (debug)
 #define XDebug_write(debug, ...) (debug)
 #define XDebug_puts(debug, ...) (debug)
 #define XDebug_putc(debug, ...) (debug)
@@ -157,5 +162,7 @@ typedef struct XDebug XDebug;
 #define xdebug_loc() NULL
 
 #endif  // DEBUG_ON || _DEBUG
+
+
 
 #endif  // XDEBUG_H

@@ -7,10 +7,11 @@
 void XDebugTest()
 {
 	XDebug* ctx = xdebug();
+	XDebug_setAutoSpace(ctx,true);
 	XDebug_setShowLocation(ctx, true);
 	//XDebug_s(ctx, "Basic types: ");
 	XDebug_int32(ctx, 123);
-	XDebug_space(ctx);
+	//XDebug_space(ctx);
 	XDebug_float(ctx, 3.14f);
 	XDebug_ptr(ctx,ctx);
 	XDebug_end(ctx); // 释放

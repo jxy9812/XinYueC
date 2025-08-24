@@ -27,7 +27,7 @@ void XStringListTest()
 		XString* str = XStringList_join_utf8(list,"-");
 		if (str)
 		{
-			XPrint_utf8_fmt("连接:%s \n", XString_toUtf8(str));
+			XPrintf_utf8_fmt("连接:%s \n", XString_toUtf8(str));
 			XString_delete_base(str);
 		}
 		XStringList_iterator_for_each(list, XFor_each_XString, NULL);

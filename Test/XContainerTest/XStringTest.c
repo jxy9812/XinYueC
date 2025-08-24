@@ -9,23 +9,23 @@
 #if XString_ON
 static void XFor_each_XString(XString* str, void* args)
 {
-	XPrint(str);
+	XPrintf_string(str);
 	printf("\n");
 }
 static void XFor_each_XChar(XChar* ch, void* args)
 {
-	XPrint_XChar(ch);
-	XPrint_utf8("\n");
+	XPrintf_char(ch);
+	XPrintf_utf8("\n");
 }
 //迭代器测试
 void XStringIteratorTest()
 {
 	while (true)
 	{
-		XPrint_utf8("XString 正向迭代器测试\n");
+		XPrintf_utf8("XString 正向迭代器测试\n");
 		XString* str = XString_create_utf8("正向迭代器");
 		XString_iterator_for_each(str, XFor_each_XChar, NULL);
-		XPrint_utf8("XString 反向迭代器测试\n");
+		XPrintf_utf8("XString 反向迭代器测试\n");
 		XString_assign_utf8(str, "反向迭代器");
 		XString_reverse_iterator_for_each(str, XFor_each_XChar, NULL);
 		XString_delete_base(str);
@@ -38,17 +38,17 @@ void XStringNumTest()
 {
 	while (true)
 	{
-		XPrint_utf8("XString 字符串转整数测试\n");
+		XPrintf_utf8("XString 字符串转整数测试\n");
 		XString* str = XString_create_utf8(NULL);
 		XString_assign_utf8(str, "66666");
-		XPrint_utf8_fmt("整数:%d\n", XString_toLongLong(str, NULL, 10));
-		XPrint_utf8_fmt("整数:%.2lf\n", XString_toDouble(str, NULL));
-		XPrint_utf8("XString 整数转字符串测试\n");
+		XPrintf_utf8_fmt("整数:%d\n", XString_toLongLong(str, NULL, 10));
+		XPrintf_utf8_fmt("整数:%.2lf\n", XString_toDouble(str, NULL));
+		XPrintf_utf8("XString 整数转字符串测试\n");
 		XString_setNum_int(str, -6666699, 2);
-		XPrint(str);
-		XPrint_utf8("\n");
+		XPrintf_string(str);
+		XPrintf_utf8("\n");
 		XString_setNum_double(str, 66666.153456, 'f', 2);
-		XPrint(str);
+		XPrintf_string(str);
 
 		XString_delete_base(str);
 	}
@@ -59,14 +59,14 @@ void XStringOperateTest()
 {
 	while (true)
 	{
-		XPrint_utf8("XString 字符串操作测试\n");
+		XPrintf_utf8("XString 字符串操作测试\n");
 
 		XString* str = XString_create_utf8("这是一个字符串操作例子");
 		{
 			XString* mid = XString_mid(str, 2, 4);
 			if (mid)
 			{
-				XPrint(mid);
+				XPrintf_string(mid);
 				printf("\n");
 			}
 			XString_delete_base(mid);
@@ -74,12 +74,12 @@ void XStringOperateTest()
 		{
 			int64_t index = XString_index_of_utf8(str, "例子", 0, XCharCaseInsensitive);
 			if (index != -1)
-				XPrint_utf8_fmt("找到了,index:%d\n", index);
+				XPrintf_utf8_fmt("找到了,index:%d\n", index);
 		}
 		{
 			if (XString_replace_utf8(str, "一", "1", XCharCaseInsensitive))
 			{
-				XPrint(str);
+				XPrintf_string(str);
 				printf("\n");
 			}
 		}
@@ -92,14 +92,14 @@ void XStringCopyTest()
 	while(true)
 	{
 		XString* str = XString_create_utf8("这是一个字符串拷贝引用测试");
-		XPrint(str); printf("\n");
+		XPrintf_string(str); printf("\n");
 		XString* copy = XString_create_copy(str);
-		//XPrint(copy); printf("\n");
+		//XPrintf_string(copy); printf("\n");
 
 		XString_append_utf8(str,"追加测试");
 		XString_assign_utf8(str, "写时才复制");
-		XPrint(str); printf("\n");
-		XPrint(copy); printf("\n");
+		XPrintf_string(str); printf("\n");
+		XPrintf_string(copy); printf("\n");
 
 		XString_delete_base(str);
 		XString_delete_base(copy);
@@ -120,7 +120,7 @@ void XStringTest()
 	//while(true)
 	{
 #if XString_ON
-	XPrint_utf8("XString 测试\n");
+	XPrintf_utf8("XString 测试\n");
 	{
 		XString* str = XString_create_utf8("你好-在吗");
 		if (str)
@@ -139,12 +139,12 @@ void XStringTest()
 	return;
 	
 	XString* str = XString_create_utf8("你好");
-	XPrint(str);
+	XPrintf_string(str);
 	XString_append_utf8(str, "111");
 	//XString_push_front_base(str, '#');
 	//XString_push_back_base(str, '!');
 	XString_insert_utf8(str,1,"12121ni_");
-	XPrint(str);
+	XPrintf_string(str);
 	XString_pop_front_base(str);
 	XString_pop_back_base(str);
 	XString_assign_utf8(str,"你好吗！");
@@ -152,13 +152,13 @@ void XStringTest()
 	//XString_append_utf8(str, "  666\r\n");
 	//printf("字符数量%d\n", XString_size(str));
 	//XString_assign_utf8(str, "草泥马");
-	XPrint_utf8_fmt("字符数量%d\n", XString_size_base(str));
+	XPrintf_utf8_fmt("字符数量%d\n", XString_size_base(str));
 	XString_append_utf8(str, "你好呀");
 
 	//XString_erase_base(str, 3, 3);
-	XPrint_utf8_fmt("字符数量%d\n", XString_size_base(str));
+	XPrintf_utf8_fmt("字符数量%d\n", XString_size_base(str));
 	//XString_erase_base(str, 0, 4);
-	XPrint(str);
+	XPrintf_string(str);
 	XString_delete_base(str);
 #endif
 	}

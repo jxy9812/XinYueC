@@ -7,7 +7,7 @@
 #include"XCoreApplication.h"
 void XBase64Test()
 {
-	XPrint_utf8("XBase64测试\n");
+	XPrintf_utf8("XBase64测试\n");
 	char buff[] = "adss12313212345555555555456456";
 	XByteArray* sour = XByteArray_create(0), *toBase=NULL,* fromBase64=NULL;
 	XByteArray_append_array_base(sour,buff,sizeof(buff));
@@ -15,13 +15,13 @@ void XBase64Test()
 	{
 		toBase = XByteArray_toBase64(sour);
 		if (toBase)
-			XPrint_utf8_fmt("转Base64:%s\n", XContainerDataPtr(toBase));
+			XPrintf_utf8_fmt("转Base64:%s\n", XContainerDataPtr(toBase));
 	}
 	if (toBase)
 	{
 		fromBase64 = XByteArray_fromBase64(toBase);
 		if (fromBase64)
-			XPrint_utf8_fmt("还原Base64:%s\n", XContainerDataPtr(fromBase64));
+			XPrintf_utf8_fmt("还原Base64:%s\n", XContainerDataPtr(fromBase64));
 	}
 
 	if (sour)

@@ -9,10 +9,11 @@
 static void XDebug_init(XDebug* debug, const char* file, const char* function, int line) {
     XVector_init(&debug->buffer, sizeof(char));
     debug->target = XDEBUG_TARGET_STDOUT;
-    //debug->file_fd = STDOUT_FILENO;
+    debug->file_fd = 1;
     debug->auto_newline = true;
     debug->is_active = true;
     debug->show_location = false;
+    debug->auto_space = false;  // 默认不自动添加空格（新增）
     debug->file = file;
     debug->function = function;
     debug->line = line;
@@ -28,7 +29,7 @@ XDebug* XDebug_create_with_location(const char* file, const char* function, int 
 }
 
 // 销毁XDebug实例
-void XDebug_destroy(XDebug* debug) {
+void XDebug_delete(XDebug* debug) {
     if (!debug) return;
 
     XVector_deinit_base(&debug->buffer);
@@ -57,6 +58,12 @@ XDebug* XDebug_setAutoNewline(XDebug* debug, bool enable) {
 XDebug* XDebug_setShowLocation(XDebug* debug, bool enable) {
     if (!debug || !debug->is_active) return debug;
     debug->show_location = enable;
+    return debug;
+}
+
+XDebug* XDebug_setAutoSpace(XDebug* debug, bool enable) {
+    if (!debug || !debug->is_active) return debug;
+    debug->auto_space = enable;
     return debug;
 }
 
@@ -119,92 +126,169 @@ XDebug* XDebug_vprintf(XDebug* debug, const char* format, va_list args) {
 }
 
 // 布尔值输出
-XDebug* XDebug_bool(XDebug* debug, bool value) {
-    return XDebug_puts(debug, value ? "true" : "false");
+XDebug* XDebug_bool(XDebug* debug, bool value) 
+{
+    XDebug_puts(debug, value ? "true" : "false");
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 // 字符输出
 XDebug* XDebug_char(XDebug* debug, char value) {
-    return XDebug_printf(debug, "%c", value);
+    XDebug_printf(debug, "%c", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 // 8位整数输出
 XDebug* XDebug_int8(XDebug* debug, int8_t value) {
-    return XDebug_printf(debug, "%hhd", value);
+    XDebug_printf(debug, "%hhd", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 XDebug* XDebug_uint8(XDebug* debug, uint8_t value) {
-    return XDebug_printf(debug, "%hhu", value);
+    XDebug_printf(debug, "%hhu", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 // 16位整数输出
 XDebug* XDebug_int16(XDebug* debug, int16_t value) {
-    return XDebug_printf(debug, "%hd", value);
+    XDebug_printf(debug, "%hd", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 XDebug* XDebug_uint16(XDebug* debug, uint16_t value) {
-    return XDebug_printf(debug, "%hu", value);
+    XDebug_printf(debug, "%hu", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 // 32位整数输出
 XDebug* XDebug_int32(XDebug* debug, int32_t value) {
-    return XDebug_printf(debug, "%d", value);
+    XDebug_printf(debug, "%d", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 XDebug* XDebug_uint32(XDebug* debug, uint32_t value) {
-    return XDebug_printf(debug, "%u", value);
+    XDebug_printf(debug, "%u", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 // 64位整数输出
 XDebug* XDebug_int64(XDebug* debug, int64_t value) {
-    return XDebug_printf(debug, "%lld", value);
+    XDebug_printf(debug, "%lld", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 XDebug* XDebug_uint64(XDebug* debug, uint64_t value) {
-    return XDebug_printf(debug, "%llu", value);
+    XDebug_printf(debug, "%lld", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 // 浮点数输出
 XDebug* XDebug_float(XDebug* debug, float value) {
-    return XDebug_printf(debug, "%f", value);
+    XDebug_printf(debug, "%f", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 XDebug* XDebug_double(XDebug* debug, double value) {
-    return XDebug_printf(debug, "%lf", value);
+    XDebug_printf(debug, "%lf", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 // 指针输出
 XDebug* XDebug_ptr(XDebug* debug, const void* ptr) {
-    return XDebug_printf(debug, "%p", ptr);
+    XDebug_printf(debug, "%p", ptr);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 // 十六进制输出
 XDebug* XDebug_hex(XDebug* debug, uint64_t value) {
-    return XDebug_printf(debug, "0x%llx", value);
+    XDebug_printf(debug, "0x%llx", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 XDebug* XDebug_hex8(XDebug* debug, uint8_t value) {
-    return XDebug_printf(debug, "0x%02x", value);
+    XDebug_printf(debug, "0x%02x", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 XDebug* XDebug_hex16(XDebug* debug, uint16_t value) {
-    return XDebug_printf(debug, "0x%04x", value);
+    XDebug_printf(debug, "0x%04x", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 XDebug* XDebug_hex32(XDebug* debug, uint32_t value) {
-    return XDebug_printf(debug, "0x%08x", value);
+    XDebug_printf(debug, "0x%08x", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 XDebug* XDebug_hex64(XDebug* debug, uint64_t value) {
-    return XDebug_printf(debug, "0x%016llx", value);
+    XDebug_printf(debug, "0x%016llx", value);
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 // XString输出
 XDebug* XDebug_XString(XDebug* debug, const XString* str) {
     if (!str) return XDebug_puts(debug, "(null XString)");
-    return XDebug_printf(debug, "\"%s\" (length: %zu)",
-        XString_toUtf8(str),
-        XString_toUtf8_length(str));
+    XDebug_printf(debug, "\"%s\" (length: %zu)",
+        XString_toLocal(str),
+        XString_length_base(str));
+    if (debug->auto_space) {  // 新增
+        XDebug_space(debug);
+    }
+    return debug;
 }
 
 // XVector输出（需要元素打印函数）
@@ -314,8 +398,8 @@ XDebug* XDebug_flush(XDebug* debug) {
         break;
     case XDEBUG_TARGET_FILE:
         if (debug->file_fd != -1) {
-            write(debug->file_fd, location, strlen(location));
-            write(debug->file_fd, final_output, final_len);
+        /*    write(debug->file_fd, location, strlen(location));
+            write(debug->file_fd, final_output, final_len);*/
         }
         break;
     case XDEBUG_TARGET_BUFFER:
