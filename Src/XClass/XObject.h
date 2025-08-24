@@ -15,6 +15,7 @@ typedef struct XObject
 {
     XClass m_parent;//父对象
     XEventDispatcherThread* m_eventDispatcher; // 事件调度器
+    XSignalSlot* m_signalSlot;//信号与槽控制
 }XObject;//
 XVtable* XObject_class_init();
 XObject* XObject_create();

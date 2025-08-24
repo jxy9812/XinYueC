@@ -12,6 +12,7 @@ XMenu* XMenuTest_create()
 	XMenu* root = XMenu_create("测试代码");
 	XMenu_XLibraryTest(root);
 	XMenu_XContainerTest(root);
+	XMenu_XCodeTest(root);
 	XMenu_XIOTest(root);
 	XMenu_XProtocolStackTest(root);
 	XMenu_XTimerTest(root);

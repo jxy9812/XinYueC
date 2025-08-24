@@ -9,6 +9,7 @@ extern "C" {
 #include"XContainerTest.h"
 #include"XProtocolStackTest.h"
 #include"XIOTest.h"
+#include"XCodeTest.h"
 #include"XTimerTest.h"
 #include"XLibraryTest.h"
 #if DEMOTEST

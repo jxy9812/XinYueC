@@ -5,6 +5,7 @@
 #include "XSetBase.h"
 #include "XCoreApplication.h"
 #include "XEventDispatcherThread.h"
+#include "XSignalSlot.h"
 static void VXObject_poll(XObject* object);
 static void VXObject_deinit(XObject* object);
 XVtable* XObject_class_init()
@@ -53,6 +54,8 @@ void XObject_init(XObject* object)
 	if (d == NULL)
 		return;
 	XEventDispatcherThread_addObject_base(d,object);
+	//信号与槽初始化
+	object->m_signalSlot = XSignalSlot_create(object);
 }
 
 void XObject_poll_base(XObject* object)
@@ -130,5 +133,7 @@ void VXObject_poll(XObject* object)
 void VXObject_deinit(XObject* object)
 {
 	XEventDispatcherThread_removeObject_base(object->m_eventDispatcher,object);
-	//XMemory_free(object);
+	//释放信号与槽
+	XSignalSlot_delete(object->m_signalSlot);
+	object->m_signalSlot = NULL;
 }

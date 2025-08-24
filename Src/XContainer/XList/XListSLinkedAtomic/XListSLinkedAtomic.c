@@ -12,7 +12,7 @@ static size_t VXList_insert_array(XListSLinkedAtomic* this_list, XListSNodeAtomi
 
 static bool VXListAtomic_pop_front(XListSLinkedAtomic* this_list);
 static bool VXListAtomic_pop_back(XListSLinkedAtomic* this_list);
-static void VXListAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node);
+static void VXListAtomic_erase(XListSLinkedAtomic* this_list, const XListSLinkedAtomic_iterator* it, XListSLinkedAtomic_iterator* next);
 static bool VXListAtomic_remove(XListSLinkedAtomic* this_list, void* pvData);
 static void VXListAtomic_clear(XListSLinkedAtomic* this_list);
 static void* VXListAtomic_front(XListSLinkedAtomic* this_list);
@@ -409,16 +409,21 @@ bool VXListAtomic_pop_back(XListSLinkedAtomic* this_list)
 }
 
 // 删除指定节点
-void VXListAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node) {
-    if (XListSLinkedAtomic_isEmpty_base(this_list) || node == NULL) return;
+void VXListAtomic_erase(XListSLinkedAtomic* this_list, const XListSLinkedAtomic_iterator* it, XListSLinkedAtomic_iterator* nextIt) 
+{
+    if (XListSLinkedAtomic_isEmpty_base(this_list) || it == NULL) return;
 
+    XListSNodeAtomic* node = it->node;
     XListSNodeAtomic* prev = NULL;
     XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
 
-    while (current != NULL) {
-        if (current == node) {
+    while (current != NULL)
+    {
+        if (current == node) 
+        {
             // 如果要删除的是头节点
-            if (prev == NULL) {
+            if (prev == NULL) 
+            {
                 XListSNodeAtomic* next = current->next;
                 if (XAtomic_compare_exchange_strong_ptr(
                     &this_list->m_head, (void**)&current, next)) {
@@ -433,13 +438,17 @@ void VXListAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node) {
                     XMemory_free(current);
                     XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1);
                     XAtomic_fetch_sub_size_t(&XContainerCapacity(this_list), 1);
+                    if (nextIt)
+                        nextIt->node = next;
                 }
             }
-            else {
+            else 
+            {
                 // 不是头节点
                 XListSNodeAtomic* next = current->next;
                 if (XAtomic_compare_exchange_strong_ptr(
-                    &prev->next, (void**)&current, next)) {
+                    &prev->next, (void**)&current, next)) 
+                {
                     // 如果删除的是尾节点，更新尾指针
                     if (current == (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_tail)) {
                         XAtomic_store_ptr(&this_list->m_tail, prev);
@@ -451,6 +460,8 @@ void VXListAtomic_erase(XListSLinkedAtomic* this_list, XListSNodeAtomic* node) {
                     XMemory_free(current);
                     XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1);
                     XAtomic_fetch_sub_size_t(&XContainerCapacity(this_list), 1);
+                    if (nextIt)
+                        nextIt->node = next;
                 }
             }
             return;

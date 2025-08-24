@@ -8,6 +8,7 @@
 static void XSerialPortTest();
 #ifdef WIN32
 #include <windows.h>
+#include "XCodeTest.h"
 // 告诉编译器链接 winmm.lib 库
 #pragma comment(lib, "winmm.lib")
 static char* UTF8ToLocal(const char* utf8Str) {
@@ -103,6 +104,7 @@ void XSerialPortTest()
     }
 }
 #endif
+
 void XMenu_XSerialPortTest(XMenu* root)
 {
     XMenu* menu = XMenu_create("XSerialPort(串口)");
