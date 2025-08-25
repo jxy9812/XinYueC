@@ -72,7 +72,7 @@ bool VXCommunicatorBase_connect(XCommunicatorBase* comm)
 		return false;
 	if (comm->m_io->m_mode != XIODeviceBase_NotOpen)
 		return true;
-	if (XIODeviceBase_isOpen(comm->m_io))
+	if (XIODeviceBase_isOpen_base(comm->m_io))
 		return true;
 	return XIODeviceBase_open_base(comm->m_io,XIODeviceBase_ReadWrite);
 }
@@ -90,7 +90,7 @@ bool VXCommunicatorBase_isConnected(XCommunicatorBase* comm)
 {
 	if (comm->m_io == NULL)
 		return false;
-	return XIODeviceBase_isOpen(comm->m_io);
+	return XIODeviceBase_isOpen_base(comm->m_io);
 }
 
 size_t VXCommunicatorBase_send(XCommunicatorBase* comm, const void* data, size_t size)

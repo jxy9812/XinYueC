@@ -116,7 +116,7 @@ void VXSerialPort_NVIC_Init(XSerialPort* serial)
 }
 bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
 {
-    if (XSerialPort_isOpen(serial))
+    if (XSerialPort_isOpen_base(serial))
         return true;//已经打开了
     uint8_t portIndex = ((XSerialPortBase*)serial)->m_portNum - 1;
     if (openUsart[portIndex] != NULL || (!(mode & XIODeviceBase_ReadOnly | mode & XIODeviceBase_WriteOnly)))
@@ -260,7 +260,7 @@ size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize)
 }
 void VXIODevice_close(XSerialPort* serial)
 {
-    if (!XSerialPort_isOpen(serial))
+    if (!XSerialPort_isOpen_base(serial))
         return true;//已经关闭了
     XIODeviceBase_writeFull_base(serial);
     USART_ITConfig(serial->USARTX, USART_IT_RXNE, DISABLE);//关闭接收相关中断

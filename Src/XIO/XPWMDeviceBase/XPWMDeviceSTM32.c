@@ -285,7 +285,7 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
  {
 	if(pwm==NULL)
 		return;
-	if(open&&XIODeviceBase_isOpen(pwm))
+	if(open&&XIODeviceBase_isOpen_base(pwm))
 	{
 		// 使能定时器  更新中断
     	TIM_ITConfig(pwm->m_TIMX, TIM_IT_Update, ENABLE);

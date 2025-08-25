@@ -40,7 +40,7 @@ XSwitchDeviceBaseTriggerMode XSwitchDeviceBase_getTriggerMode(XSwitchDeviceBase*
 void XSwitchDeviceBase_setState_base(XSwitchDeviceBase* sw,bool state);
 //获取状态
 bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw);
-#define XSwitchDeviceBase_isOpen			 XIODeviceBase_isOpen
+#define XSwitchDeviceBase_isOpen			 XIODeviceBase_isOpen_base
 #define XSwitchDeviceBase_open_base			 XIODeviceBase_open_base
 #define XSwitchDeviceBase_close_base		 XIODeviceBase_close_base
 #define XSwitchDeviceBase_setDevice_base	 XIODeviceBase_setDevice_base

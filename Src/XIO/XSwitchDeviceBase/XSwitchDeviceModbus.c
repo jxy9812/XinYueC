@@ -58,7 +58,7 @@ void XSwitchDeviceModbus_init(XSwitchDeviceModbus* sw)
 
 bool VXIODevice_open(XSwitchDeviceModbus* sw, XIODeviceBaseMode mode)
 {
-	if (XIODeviceBase_isOpen(sw))
+	if (XIODeviceBase_isOpen_base(sw))
 		return true;//已经打开了
 	if (!(mode & XIODeviceBase_ReadOnly || mode & XIODeviceBase_WriteOnly))
 		return false;
@@ -95,7 +95,7 @@ size_t VXIODevice_read(XSwitchDeviceModbus* sw, char* data, size_t maxSize)
 
 void VXIODevice_close(XSwitchDeviceModbus* sw)
 {
-	if (!XIODeviceBase_isOpen(sw))
+	if (!XIODeviceBase_isOpen_base(sw))
 		return;
 	XModbusDigitalSwitch_XSwitchDeviceModbusClose(sw->m_ds,sw, ((XIODeviceBase*)sw)->m_mode,sw->m_portNum);
 	((XIODeviceBase*)sw)->m_mode = XIODeviceBase_NotOpen;

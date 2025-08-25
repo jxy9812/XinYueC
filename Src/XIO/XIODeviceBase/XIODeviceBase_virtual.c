@@ -7,6 +7,7 @@
 //声明 
 static void VXIODevice_deinit(XIODeviceBase* io);
 static bool VXIODevice_open(XIODeviceBase* io, XIODeviceBaseMode mode);
+static bool VXIODevice_isOpen(XIODeviceBase* io);
 static size_t VXIODevice_write(XIODeviceBase* io, const char* data, size_t maxSize);//写入
 static size_t VXIODevice_writeFull(XIODeviceBase* io);//将剩余的数据刷入设备
 static size_t VXIODevice_read(XIODeviceBase* io, char* data, size_t maxSize);//读取
@@ -30,7 +31,7 @@ XVtable* XIODeviceBase_class_init()
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 	void* table[] = {
-		VXIODevice_open,VXIODevice_write,
+		VXIODevice_open,VXIODevice_isOpen,VXIODevice_write,
 		VXIODevice_writeFull,VXIODevice_read,
 		VXIODevice_getBytesAvailable,VXIODeviceBase_getBytesToWrite,
 		VXIODeviceBase_atEnd,VXIODevice_close,
@@ -76,6 +77,11 @@ bool VXIODevice_open(XIODeviceBase* io, XIODeviceBaseMode mode)
 	//	return true;
 	//}
 	return false;
+}
+
+bool VXIODevice_isOpen(XIODeviceBase* io)
+{
+	return io->m_mode != XIODeviceBase_NotOpen;
 }
 
 size_t VXIODevice_write(XIODeviceBase* io, const char* data, size_t maxSize)

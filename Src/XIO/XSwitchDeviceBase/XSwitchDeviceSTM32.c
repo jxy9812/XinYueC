@@ -51,7 +51,7 @@ XSwitchDeviceSTM32 *XSwitchDeviceSTM32_create(XSwitchGPIO *gpio)
 }
 bool VXIODevice_open(XSwitchDeviceSTM32 *sw, XIODeviceBaseMode mode)
 {
-	if (XIODeviceBase_isOpen(sw))
+	if (XIODeviceBase_isOpen_base(sw))
      	return true;//已经打开了
 	if(!(mode&XIODeviceBase_ReadOnly||mode&XIODeviceBase_WriteOnly))
     	return false;
@@ -115,7 +115,7 @@ size_t VXIODevice_read(XSwitchDeviceSTM32 *sw, char *data, size_t maxSize)
 
 void VXIODevice_close(XSwitchDeviceSTM32 *sw)
 {
-	if(XIODeviceBase_isOpen(sw))
+	if(XIODeviceBase_isOpen_base(sw))
 	{
 		XSwitchDeviceBase_setState_base(sw,false);
 	}

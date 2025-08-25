@@ -48,7 +48,7 @@ bool XPWMDeviceBase_isRunning_base(XPWMDeviceBase* pwm);
 size_t XPWMDeviceBase_getFrequency_base(XPWMDeviceBase* pwm);
 //占空比 T(s)=1/F(HZ)*D(0`100)/100   电平翻转周期
 uint8_t XPWMDeviceBase_getDutyCycle_base(XPWMDeviceBase* pwm);
-#define XPWMDeviceBase_isOpen			XIODeviceBase_isOpen
+#define XPWMDeviceBase_isOpen			XIODeviceBase_isOpen_base
 #define XPWMDeviceBase_open_base		XIODeviceBase_open_base
 #define XPWMDeviceBase_close_base		XIODeviceBase_close_base
 #define XPWMDeviceBase_setDevice_base   XIODeviceBase_setDevice_base

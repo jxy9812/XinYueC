@@ -5,6 +5,7 @@
 #include "XEvent.h"
 #include "XTimerBase.h"
 #include "XEventDispatcher.h"
+#include "XPrintf.h"
 #include <string.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -19,6 +20,7 @@ static const char* VXSocketBase_localAddress(XSocket* so);
 static uint16_t VXSocketBase_localPort(XSocket* so);
 static void VXIODevice_poll(XSocket* so);
 static bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode);
+static bool VXIODevice_isOpen(XSocket* so);
 static bool VXIODevice_close(XSocket* so);
 static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize);
 static size_t VXIODevice_writeFull(XSocket* so);
@@ -39,8 +41,8 @@ XVtable* XSocket_class_init()
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        //继承类
-        XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
+    //继承类
+    XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
     void* table[] = {
         VXSocketBase_connectToHost, VXSocketBase_disconnectFromHost,
         VXSocketBase_waitForConnected, VXSocketBase_waitForDisconnected,
@@ -52,6 +54,7 @@ XVtable* XSocket_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXIODevice_poll);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXIODevice_open);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_IsOpen, VXIODevice_isOpen);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXIODevice_close);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write, VXIODevice_write);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_WriteFull, VXIODevice_writeFull);
@@ -62,7 +65,7 @@ XVtable* XSocket_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
 #if SHOWCONTAINERSIZE
-    printf("XSocket size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+    XPrintf_utf8_fmt("XSocket size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
     return XVTABLE_DEFAULT;
 }
@@ -340,7 +343,7 @@ static void VXIODevice_setWriteBuffer(XSocket* so, size_t count) {
 
     if (result == SOCKET_ERROR) {
         // 处理错误
-        printf("设置发送缓冲区失败: %d\n", WSAGetLastError());
+        XPrintf_utf8_fmt("设置发送缓冲区失败: %d\n", WSAGetLastError());
     }
 }
 
@@ -359,7 +362,7 @@ static void VXIODevice_setReadBuffer(XSocket* so, size_t count) {
 
     if (result == SOCKET_ERROR) {
         // 处理错误
-        printf("设置接收缓冲区失败: %d\n", WSAGetLastError());
+        XPrintf_utf8_fmt("设置接收缓冲区失败: %d\n", WSAGetLastError());
     }
 }
 
@@ -368,7 +371,7 @@ void VXIODevice_deinit(XSocket* so)
     if (!so) return;
 
     // 确保设备已关闭
-    if (XIODeviceBase_isOpen((XIODeviceBase*)so)) {
+    if (XIODeviceBase_isOpen_base((XIODeviceBase*)so)) {
         VXIODevice_close(so);
     }
 
@@ -476,8 +479,11 @@ void VXIODevice_poll(XSocket* so)
 
 bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
 {
-    if (XIODeviceBase_isOpen((XIODeviceBase*)so))
+    if (XIODeviceBase_isOpen_base((XIODeviceBase*)so)|| so->m_parent.m_state == XSOCKET_HOST_LOOKUP_STATE || so->m_parent.m_state == XSOCKET_CONNECTING_STATE)
         return true;
+    //至少要读或者写
+    if (!(mode & XIODeviceBase_ReadOnly || mode & XIODeviceBase_WriteOnly))
+        return false;
     if (XSocket_state((XSocketBase*)so) != XSOCKET_UNCONNECTED_STATE)
         return false;
     XSocketBase* base = (XSocketBase*)so;
@@ -489,7 +495,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
     WSADATA wsaData;
     result = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (result != 0) {
-        printf("WSAStartup failed: %d\n", result);
+        XPrintf_utf8_fmt("WSAStartup failed: %d\n", result);
         return false;
     }
 
@@ -497,7 +503,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
     if (so->m_pollEvent == NULL) {
         so->m_pollEvent = WSACreateEvent();
         if (so->m_pollEvent == WSA_INVALID_EVENT) {
-            printf("WSACreateEvent failed\n");
+            XPrintf_utf8_fmt("WSACreateEvent failed\n");
             WSACleanup(); // 释放Winsock资源
             return false;
         }
@@ -539,10 +545,10 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
     sprintf(portStr, "%hu", base->m_peerPort);
 
     // 解析服务器地址和端口
-    printf("正在解析服务器地址: %s:%s\n", XString_c_str(base->m_peerName), portStr);
+    XPrintf_utf8_fmt("正在解析服务器地址: %s:%s\n", XString_c_str(base->m_peerName), portStr);
     result = getaddrinfo(XString_c_str(base->m_peerName), portStr, &hints, &(so->m_addrInfo));
     if (result != 0) {
-        printf("getaddrinfo failed: %d\n", result);
+        XPrintf_utf8_fmt("getaddrinfo failed: %d\n", result);
         base->m_state = XSOCKET_UNCONNECTED_STATE;
         WSACleanup(); // 释放Winsock资源
         return false;
@@ -557,7 +563,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         // 创建套接字
         so->m_socket = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
         if (so->m_socket == INVALID_SOCKET) {
-            printf("socket failed: %d\n", WSAGetLastError());
+            XPrintf_utf8_fmt("socket failed: %d\n", WSAGetLastError());
             addr = addr->ai_next;
             continue;
         }
@@ -565,7 +571,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         // 设置套接字为非阻塞模式
         unsigned long nonBlocking = 1;
         if (ioctlsocket(so->m_socket, FIONBIO, &nonBlocking) == SOCKET_ERROR) {
-            printf("ioctlsocket failed: %d\n", WSAGetLastError());
+            XPrintf_utf8_fmt("ioctlsocket failed: %d\n", WSAGetLastError());
             closesocket(so->m_socket);
             so->m_socket = INVALID_SOCKET;
             addr = addr->ai_next;
@@ -575,7 +581,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         // 注册网络事件
         long events = FD_READ | FD_WRITE | FD_CLOSE | FD_CONNECT;
         if (WSAEventSelect(so->m_socket, so->m_pollEvent, events) == SOCKET_ERROR) {
-            printf("WSAEventSelect failed: %d\n", WSAGetLastError());
+            XPrintf_utf8_fmt("WSAEventSelect failed: %d\n", WSAGetLastError());
             closesocket(so->m_socket);
             so->m_socket = INVALID_SOCKET;
             addr = addr->ai_next;
@@ -588,7 +594,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
             if (result == SOCKET_ERROR) {
                 int error = WSAGetLastError();
                 if (error != WSAEWOULDBLOCK) {
-                    printf("connect failed: %d\n", error);
+                    XPrintf_utf8_fmt("connect failed: %d\n", error);
                     closesocket(so->m_socket);
                     so->m_socket = INVALID_SOCKET;
                     addr = addr->ai_next;
@@ -644,13 +650,16 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         return false;
     }
 
-    ((XIODeviceBase*)so)->m_mode = XIODeviceBase_ReadWrite;
+    ((XIODeviceBase*)so)->m_mode = mode;
     return true;
 }
-
+bool VXIODevice_isOpen(XSocket* so)
+{
+    return (((XIODeviceBase*)so)->m_mode != XIODeviceBase_NotOpen)&&so->m_parent.m_state== XSOCKET_CONNECTED_STATE;
+}
 bool VXIODevice_close(XSocket* so)
 {
-    if (!so || !XIODeviceBase_isOpen((XIODeviceBase*)so))
+    if (!so || !XIODeviceBase_isOpen_base((XIODeviceBase*)so))
         return false;
 
     XSocketBase* base = (XSocketBase*)so;

@@ -314,7 +314,7 @@ void VXIODevice_close(XSerialPort* serial)
     if (serial == NULL || serial->m_hSerial == INVALID_HANDLE_VALUE)
         return ;
     XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (XIODeviceBase_isOpen(io))
+    if (XIODeviceBase_isOpen_base(io))
     { //开始关闭串口
         // 1. 取消所有未完成的异步操作
         if (!CancelIoEx(serial->m_hSerial, &(serial->m_ov)))
@@ -349,7 +349,7 @@ void VXIODevice_poll(XSerialPort* serial)
 }
 void VXIODevice_setWriteBuffer(XSerialPort* serial, size_t count)
 {
-    if (XIODeviceBase_isOpen(serial))
+    if (XIODeviceBase_isOpen_base(serial))
     {
         // 配置串口缓冲区
         if (!SetupComm(serial->m_hSerial, serial->m_readBufferSize, count)) {
@@ -362,7 +362,7 @@ void VXIODevice_setWriteBuffer(XSerialPort* serial, size_t count)
 }
 void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count)
 {
-    if (XIODeviceBase_isOpen(serial))
+    if (XIODeviceBase_isOpen_base(serial))
     {
         // 配置串口缓冲区
         if (!SetupComm(serial->m_hSerial, count, serial->m_writeBufferSize)) {

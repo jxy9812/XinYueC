@@ -76,11 +76,11 @@ bool XIODeviceBase_atEnd_base(XIODeviceBase* io)
 	return XClassGetVirtualFunc(io, EXIODeviceBase_AtEnd, bool(*)(XIODeviceBase*))(io);
 }
 
-bool XIODeviceBase_isOpen(XIODeviceBase* io)
+bool XIODeviceBase_isOpen_base(XIODeviceBase* io)
 {
 	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return false;
-	return io->m_mode != XIODeviceBase_NotOpen;
+	return XClassGetVirtualFunc(io, EXIODeviceBase_IsOpen, bool(*)(XIODeviceBase*))(io);
 }
 
 bool XIODeviceBase_open_base(XIODeviceBase* io, XIODeviceBaseMode mode)

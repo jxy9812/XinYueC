@@ -156,7 +156,7 @@ XSocketState XSocket_state(const XSocketBase* socket);
  * @brief 宏定义：复用XIODeviceBase的isOpen方法
  * @note 判断套接字是否处于打开状态
  */
-#define XSocket_isOpen					XIODeviceBase_isOpen
+#define XSocket_isOpen_base					XIODeviceBase_isOpen_base
 
 /**
 * @brief 宏定义：复用XIODeviceBase的open_base方法

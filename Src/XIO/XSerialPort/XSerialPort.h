@@ -66,7 +66,7 @@ bool XSerialPort_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint
 #define XSerialPort_read_base                                     XIODeviceBase_read_base
 #define XSerialPort_getBytesAvailable_base                        XIODeviceBase_getBytesAvailable_base
 #define XSerialPort_getBytesToWrite_base                          XIODeviceBase_getBytesToWrite_base
-#define XSerialPort_isOpen                                        XIODeviceBase_isOpen
+#define XSerialPort_isOpen_base                                   XIODeviceBase_isOpen_base
 #define XSerialPort_close_base                                    XIODeviceBase_close_base
 #define XSerialPort_poll_base                                     XIODeviceBase_poll_base
 #define XSerialPort_writeFull_base                                XIODeviceBase_writeFull_base

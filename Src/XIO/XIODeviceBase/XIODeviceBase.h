@@ -9,7 +9,8 @@ extern "C" {
 #define XIODEVICEBASE_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XIODeviceBase))       //XIODeviceBase虚函数表大小
 //XContainerObject虚函数表枚举
 XCLASS_DEFINE_BEGING(XIODeviceBase)
-XCLASS_DEFINE_ENUM(XIODeviceBase, Open)= XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_ENUM(XIODeviceBase,Open)= XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_ENUM(XIODeviceBase,IsOpen),
 XCLASS_DEFINE_ENUM(XIODeviceBase,Write),
 XCLASS_DEFINE_ENUM(XIODeviceBase,WriteFull),
 XCLASS_DEFINE_ENUM(XIODeviceBase,Read),
@@ -59,7 +60,7 @@ size_t XIODeviceBase_getBytesAvailable_base(XIODeviceBase* io);
 size_t XIODeviceBase_getBytesToWrite_base(XIODeviceBase* io);
 //是否到达末尾
 bool XIODeviceBase_atEnd_base(XIODeviceBase* io);
-bool XIODeviceBase_isOpen(XIODeviceBase* io);
+bool XIODeviceBase_isOpen_base(XIODeviceBase* io);
 //打开设备		必须要重载
 bool XIODeviceBase_open_base(XIODeviceBase* io, XIODeviceBaseMode mode);
 //关闭设备      需重载

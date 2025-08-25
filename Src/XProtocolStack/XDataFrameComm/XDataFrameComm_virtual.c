@@ -8,6 +8,7 @@
 #include"XTimerWheel.h"
 #include"XString.h"
 #include"XListSLinked.h"
+#include"XPrintf.h"
 #include<assert.h>
 #include<string.h>
 #include<stdlib.h>
@@ -503,6 +504,8 @@ XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XByteArray* data)
 //定期发送的定时器回调函数
 static void SendDataPeriodicCb(PeriodicNode* node)
 {
+	if (!XDataFrameComm_isConnected_base(node->comm))
+		return;//还未连接上不发送
 	XByteArray* v =XByteArray_create(0);
 	if (v == NULL)
 		return;
