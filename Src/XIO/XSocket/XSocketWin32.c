@@ -145,11 +145,20 @@ void VXSocketBase_waitForConnected(XSocketBase* so, int msecs)
     if (networkEvents.lNetworkEvents & FD_CONNECT) {
         if (networkEvents.iErrorCode[FD_CONNECT_BIT] != 0) {
             // 连接错误
-            so->m_state = XSOCKET_UNCONNECTED_STATE;
+            if (so->m_state!= XSOCKET_UNCONNECTED_STATE)
+            {
+                so->m_state = XSOCKET_UNCONNECTED_STATE;
+                XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+            }
+            
         }
         else {
             // 连接成功
-            so->m_state = XSOCKET_CONNECTED_STATE;
+            if (so->m_state != XSOCKET_CONNECTED_STATE)
+            {
+                so->m_state = XSOCKET_CONNECTED_STATE;
+                XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+            }
         }
     }
 
@@ -188,8 +197,13 @@ void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs)
         return;
     }
 
-    if (networkEvents.lNetworkEvents & FD_CLOSE) {
-        so->m_state = XSOCKET_UNCONNECTED_STATE;
+    if (networkEvents.lNetworkEvents & FD_CLOSE) 
+    {
+        if (so->m_state != XSOCKET_UNCONNECTED_STATE)
+        {
+            so->m_state = XSOCKET_UNCONNECTED_STATE;
+            XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+        }
     }
 
     WSACloseEvent(event);
@@ -444,33 +458,45 @@ void VXIODevice_poll(XSocket* so)
         if (netEvents->lNetworkEvents & FD_CONNECT) {
             if (netEvents->iErrorCode[FD_CONNECT_BIT] != 0) {
                 // 连接错误
-                XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_ERROR, XTimerBase_getCurrentTime());
-               // event->userData = eventData;
-                XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
-                ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+               /* XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_ERROR, XTimerBase_getCurrentTime());
+                XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);*/
+                if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
+                {
+                    ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+                    XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+                }
             }
             else {
                 // 连接成功
-                XEventMin* event = XEventMin_create(so,XEVENT_SOCKET_CONNECTED, XTimerBase_getCurrentTime());
-                //event->userData = eventData;
-                XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
-                ((XSocketBase*)so)->m_state = XSOCKET_CONNECTED_STATE;
+               /* XEventMin* event = XEventMin_create(so,XEVENT_SOCKET_CONNECTED, XTimerBase_getCurrentTime());
+                XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);*/
+                if (((XSocketBase*)so)->m_state != XSOCKET_CONNECTED_STATE)
+                {
+                    ((XSocketBase*)so)->m_state = XSOCKET_CONNECTED_STATE;
+                    XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+                }
+                XSocket_connected_signal(so);
             }
         }
 
         if (netEvents->lNetworkEvents & FD_CLOSE) {
             // 连接关闭
-            XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_DISCONNECTED, XTimerBase_getCurrentTime());
-           // event->userData = eventData;
-            XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
-            ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+           // XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_DISCONNECTED, XTimerBase_getCurrentTime());
+           //// event->userData = eventData;
+           // XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
+            if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
+            {
+                ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+                XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+            }
+            XSocket_disconnected_signal(so);
         }
 
         if (netEvents->lNetworkEvents & FD_READ) {
             // 有数据可读
-            XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_DATA_READY, XTimerBase_getCurrentTime());
-            //event->userData = eventData;
-            XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
+            //XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_DATA_READY, XTimerBase_getCurrentTime());
+            ////event->userData = eventData;
+            //XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
         }
 
         // 可以添加对FD_WRITE事件的处理...
@@ -488,7 +514,11 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         return false;
     XSocketBase* base = (XSocketBase*)so;
     // 更新状态
-    base->m_state = XSOCKET_HOST_LOOKUP_STATE;
+    if (((XSocketBase*)so)->m_state != XSOCKET_HOST_LOOKUP_STATE)
+    {
+        ((XSocketBase*)so)->m_state = XSOCKET_HOST_LOOKUP_STATE;
+        XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+    }
     int result;
 
     // 初始化 Winsock
@@ -535,7 +565,11 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         hints.ai_protocol = IPPROTO_SCTP;
         break;
     default:
-        base->m_state = XSOCKET_UNCONNECTED_STATE;
+        if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
+        {
+            ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+            XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+        }
         WSACleanup(); // 释放Winsock资源
         return false;
     }
@@ -549,13 +583,21 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
     result = getaddrinfo(XString_c_str(base->m_peerName), portStr, &hints, &(so->m_addrInfo));
     if (result != 0) {
         XPrintf_utf8_fmt("getaddrinfo failed: %d\n", result);
-        base->m_state = XSOCKET_UNCONNECTED_STATE;
+        if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
+        {
+            ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+            XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+        }
         WSACleanup(); // 释放Winsock资源
         return false;
     }
 
     // 尝试连接
-    base->m_state = XSOCKET_CONNECTING_STATE;
+    if (((XSocketBase*)so)->m_state != XSOCKET_CONNECTING_STATE)
+    {
+        ((XSocketBase*)so)->m_state = XSOCKET_CONNECTING_STATE;
+        XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+    }
     struct addrinfo* addr = so->m_addrInfo;
     bool connected = false;
 
@@ -645,7 +687,11 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
             so->m_addrInfo = NULL;
         }
 
-        base->m_state = XSOCKET_UNCONNECTED_STATE;
+        if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
+        {
+            ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+            XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+        }
         WSACleanup(); // 释放Winsock资源
         return false;
     }
@@ -663,8 +709,11 @@ bool VXIODevice_close(XSocket* so)
         return false;
 
     XSocketBase* base = (XSocketBase*)so;
-    base->m_state = XSOCKET_CLOSING_STATE;
-
+    if (((XSocketBase*)so)->m_state != XSOCKET_CLOSING_STATE)
+    {
+        ((XSocketBase*)so)->m_state = XSOCKET_CLOSING_STATE;
+        XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+    }
     // 关闭套接字相关资源
     if (so->m_socket != INVALID_SOCKET) {
         shutdown(so->m_socket, SD_BOTH);
@@ -678,7 +727,11 @@ bool VXIODevice_close(XSocket* so)
     }
 
     // 更新状态
-    base->m_state = XSOCKET_UNCONNECTED_STATE;
+    if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
+    {
+        ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+        XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+    }
     ((XIODeviceBase*)so)->m_mode = XIODeviceBase_NotOpen;
 
     // 注意：这里不释放m_pollEvent和m_netEvents，因为对象可能被重用

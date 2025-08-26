@@ -15,7 +15,12 @@
 #include"XPrintf.h"
 static deinit_slot(XObject* sender, XObject* receiver, void* args)
 {
-    XPrintf_utf8("串口释放\n");
+    XPrintf_utf8_fmt("sender:%p receiver:%p 串口释放\n",sender,receiver);
+}
+
+static connected_slot(XObject* sender, XObject* receiver, void* args)
+{
+    XPrintf_utf8_fmt("sender:%p receiver:%p 网络已连接\n", sender, receiver);
 }
 static XSwitchDeviceModbus* SW;
 static void StateChangeCallback0(XSwitchDeviceBase* sw)
@@ -38,6 +43,7 @@ void XModbusTest()
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
     XSocket* socket = XSocket_create();
+    XObject_connect(socket, XSocket_connected_signal(NULL), socket, connected_slot, XConnectionType_Auto);
     XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
     //XObject_delete_event(serial);
     XSerialPort_delete_base(serial);

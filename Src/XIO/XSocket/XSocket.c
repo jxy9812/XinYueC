@@ -2,8 +2,9 @@
 #include"XMemory.h"
 #include"XString.h"
 #include"XEvent.h"
-#include "XEventDispatcher.h"
+#include"XEventDispatcher.h"
 #include<string.h>
+#include <stdarg.h>
 
 void XSocketBase_init(XSocketBase* socket)
 {
@@ -99,4 +100,31 @@ XSocketState XSocket_state(const XSocketBase* socket)
     if (socket)
         return socket->m_state;
     return XSOCKET_UNCONNECTED_STATE;
+}
+
+void* XSocket_connected_signal(XSocket* socket)
+{
+    if(socket)
+        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_connected_signal, NULL);
+    return XSocket_connected_signal;
+}
+
+void* XSocket_disconnected_signal(XSocket* socket)
+{
+    if (socket)
+        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_disconnected_signal, NULL);
+    return XSocket_disconnected_signal;
+}
+
+void* XSocket_stateChanged_signal(XSocket* socket, ...)
+{
+    if (socket)
+    {
+        va_list args;
+        va_start(args, socket);  // 通过最后一个固定参数n定位可变参数
+        XSocketState num = va_arg(args, XSocketState);
+        va_end(args);
+        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_stateChanged_signal, (size_t)num);
+    }
+    return XSocket_stateChanged_signal;
 }
