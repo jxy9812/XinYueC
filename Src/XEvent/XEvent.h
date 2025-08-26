@@ -8,6 +8,8 @@ extern "C" {
 #include<stdbool.h>
 #include"XTypes.h"
 #include"XEventType.h"
+#include"XSignalSlot.h"
+#include"XAtomic.h"
 //事件回调函数
 typedef void (*XEventCB)(XEventMin* event);
 //迷你事件
@@ -17,7 +19,7 @@ typedef struct XEventMin
     int code;                     //事件类型代码
     size_t timestamp;             //事件发生时间
     XObject* receiver;            //接收对象
-    void* userData;               // 可选的用户数据指针
+    void* userData;               //可选的用户数据指针
 }XEventMin;
 
 //完整事件
@@ -48,10 +50,28 @@ typedef struct XEventFunc
     XEventMin event;
     void (*func)(void* userData);//需要执行的函数
     void* args;//参数
+    bool oneAccept;
 }XEventFunc;
 XEventFunc* XEventFunc_create(XObject* receiver, void (*func)(void*),void* args);
+//创建函数事件执行一次就接收不在继续传播
+XEventFunc* XEventFunc_create_oneAccept(XObject* receiver, void (*func)(void*), void* args);
 //函数执行回调
 void XEventFuncRunCB(XEventFunc* event);//XEVENT_FUNC_RUN
+
+
+//槽函数调用事件
+typedef struct XEventSlotFunc
+{
+    XEventMin event;
+    XSlotFunc func;//需要执行的函数
+    XObject* sender;
+    void* args;//参数
+    XAtomic_int32_t* ref_count;//参数是否是XVariant 只读引用
+}XEventSlotFunc;
+
+XEventSlotFunc* XEventSlotFunc_create(XObject* sender,XObject* receiver, XSlotFunc func, void* args, XAtomic_int32_t* ref_count);
+//函数执行回调
+void XEventSlotFuncRunCB(XEventSlotFunc* event);//XEVENT_FUNC_RUN
 #ifdef __cplusplus
 }
 #endif	

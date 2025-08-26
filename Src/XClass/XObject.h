@@ -7,6 +7,7 @@ extern "C" {
 #include<stdbool.h>
 #include"XClass.h"
 #include"XEvent.h"
+#include"XSignalSlot.h"
 XCLASS_DEFINE_BEGING(XObject)
 XCLASS_DEFINE_ENUM(XObject, Poll) = XCLASS_VTABLE_GET_SIZE(XClass),
 //XCLASS_DEFINE_ENUM(XObject, AddEventFilter),
@@ -28,8 +29,17 @@ bool XObject_moveToThread(XObject* object, XThread* thread);
 bool XObject_postEvent(XObject* object, XEventMin* event);
 XThread* XObject_thread(XObject* object);
 XEventDispatcherThread* XObject_getEventDispatcher(XObject* object);
+//信号与槽
+XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type);
+
+//slot: void deinit_slot(XObject* sender, XObject* receiver, void* args)
+void* XObject_deinit_signal(XObject* object);
+
 #define XObject_deinit_base    XClass_deinit_base
 #define XObject_delete_base    XClass_delete_base
+//事件中调用延迟释放
+void XObject_deinit_event(XObject* object);
+void XObject_delete_event(XObject* object);
 #ifdef __cplusplus
 }
 #endif

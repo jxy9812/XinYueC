@@ -19,7 +19,9 @@ typedef enum
     XEVENT_SOCKET_DATA_READY =  1003,
     XEVENT_SOCKET_ERROR=        1004,
     //函数运行
-    XEVENT_FUNC_RUN=1100
+    XEVENT_FUNC_RUN=1100,
+    XEVENT_SLOT_RUN,//槽函数调用
+    XEVENT_USER//用户事件
 }XEventType;
 
 

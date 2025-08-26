@@ -10,7 +10,7 @@ extern "C" {
 // 前置声明
 typedef struct XSignal XSignal;
 typedef struct XConnection XConnection;
-typedef (*XSlotFunc)(XObject* receiver, void* args);
+typedef (*XSlotFunc)(XObject* sender,XObject* receiver, void* args);
 typedef enum XConnectionType
 {
     XConnectionType_Auto = 0,
@@ -67,7 +67,15 @@ void XSignalSlot_disconnect(XConnection* conn);
  * @param signal 信号指针
  * @param args 传递给槽函数的参数（通过void*传递任意类型）
  */
-void XSignalSlot_emit(XSignalSlot* manager, size_t signal, void* args);
+void XSignalSlot_emit(XSignalSlot* manager, size_t signal,const void* args);
+
+/**
+ * @brief 触发信号，通知所有关联的槽函数
+ * @param signal 信号指针
+ * @param args 传递给槽函数的参数（通过const XVariant*传递任意类型）调用所有槽后自动释放 只读不能修改
+ */
+void XSignalSlot_emit_variant(XSignalSlot* manager, size_t signal,const XVariant* args);
+
 #ifdef __cplusplus
 }
 #endif

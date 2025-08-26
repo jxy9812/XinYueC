@@ -6,6 +6,7 @@
 #include "XCoreApplication.h"
 #include "XEventDispatcherThread.h"
 #include "XSignalSlot.h"
+#include <stdarg.h>
 static void VXObject_poll(XObject* object);
 static void VXObject_deinit(XObject* object);
 XVtable* XObject_class_init()
@@ -55,7 +56,8 @@ void XObject_init(XObject* object)
 		return;
 	XEventDispatcherThread_addObject_base(d,object);
 	//信号与槽初始化
-	object->m_signalSlot = XSignalSlot_create(object);
+	object->m_signalSlot = NULL;
+	XObject_addEventFilter(object, XEVENT_SLOT_RUN, XEventSlotFuncRunCB, NULL);
 }
 
 void XObject_poll_base(XObject* object)
@@ -126,14 +128,55 @@ XEventDispatcherThread* XObject_getEventDispatcher(XObject* object)
 	return NULL;
 }
 
+XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
+{
+	if(object==NULL)
+		return NULL;
+	if(object->m_signalSlot==NULL)
+		object->m_signalSlot = XSignalSlot_create(object);
+	return XSignalSlot_connect(object->m_signalSlot,signal,receiver,slot_func,type);
+}
+
+void* XObject_deinit_signal(XObject* object)
+{
+	if(object)
+	{
+		XSignalSlot_emit(object->m_signalSlot, XObject_deinit_signal, NULL);
+	}
+	return XObject_deinit_signal;
+	
+}
+
+void XObject_deinit_event(XObject* object)
+{
+	if (object == NULL)
+		return;
+	XObject_postEvent(object, XEventFunc_create_oneAccept(object, XObject_deinit_base, object));
+}
+
+void XObject_delete_event(XObject* object)
+{
+	if (object == NULL)
+		return;
+	XObject_postEvent(object, XEventFunc_create_oneAccept(object, XObject_delete_base, object));
+}
+
 void VXObject_poll(XObject* object)
 {
 }
 
 void VXObject_deinit(XObject* object)
 {
+	//发送释放信号
+	XObject_deinit_signal(object);
+	//处理剩余的所有事件,防止遗漏
+	XEventDispatcherThread_handler_base(object->m_eventDispatcher);
+	//删除此对象在调度器上的注册
 	XEventDispatcherThread_removeObject_base(object->m_eventDispatcher,object);
 	//释放信号与槽
-	XSignalSlot_delete(object->m_signalSlot);
-	object->m_signalSlot = NULL;
+	if(object->m_signalSlot)
+	{
+		XSignalSlot_delete(object->m_signalSlot);
+		object->m_signalSlot = NULL;
+	}
 }

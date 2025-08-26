@@ -12,7 +12,11 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
-
+#include"XPrintf.h"
+static deinit_slot(XObject* sender, XObject* receiver, void* args)
+{
+    XPrintf_utf8("串口释放\n");
+}
 static XSwitchDeviceModbus* SW;
 static void StateChangeCallback0(XSwitchDeviceBase* sw)
 {
@@ -30,10 +34,12 @@ static void StateChangeCallback2(XSwitchDeviceBase* sw)
 void XModbusTest()
 {
     XSerialPortBase* serial = XSerialPort_create();
+    XObject_connect(serial, XObject_deinit_signal(NULL), serial, deinit_slot, XConnectionType_Auto);
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
     XSocket* socket = XSocket_create();
     XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
+    //XObject_delete_event(serial);
     XSerialPort_delete_base(serial);
     
     XModbus* modbus = XModbus_create_RTU(socket,NULL,NULL);

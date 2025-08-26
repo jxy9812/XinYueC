@@ -4,6 +4,7 @@
 #include"XListSLinked.h"
 #include"XListSLinkedAtomic.h"
 #include"XObject.h"
+#include"XVariant.h"
 static const bool XEquality_XConnection(const XConnection* pvPrevValue, const XConnection* pvNextValue)
 {
 	return (pvPrevValue->receiver == pvNextValue->receiver) && (pvPrevValue->signal == pvNextValue->signal) && (pvPrevValue->slot_func == pvNextValue->slot_func) && (pvPrevValue->type == pvNextValue->type);
@@ -95,6 +96,8 @@ XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* re
 	XConnection* ptr=XListBase_back_base(signalObj->connList);
 	if (receiver)
 	{//存在接收对象 添加绑定的信号
+		if(receiver->m_signalSlot==NULL)
+			receiver->m_signalSlot = XSignalSlot_create(receiver);
 		XListBase_push_back_base(receiver->m_signalSlot->bindSignalList, &ptr);
 	}
 	return ptr;
@@ -114,18 +117,24 @@ void XSignalSlot_disconnect(XConnection* conn)
 	}
 }
 //信号发射时，槽函数会立即被调用
-static void Direct_emit(XConnection* conn, void* args)
+static void Direct_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count)
 {
+	if (ref_count) 
+		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	if(conn->slot_func)
-		conn->slot_func(conn->receiver,args);
+		conn->slot_func(conn->signal->sender, conn->receiver,args);
+	if (ref_count)
+		XAtomic_fetch_sub_int32(ref_count, 1);
 }
 //槽函数会在接收者线程的事件循环回归控制时被调用。槽函数在接收者所属线程中执行。
-static void Queued_emit(XConnection* conn, void* args)
+static void Queued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count)
 {
 	if (conn->receiver == NULL)
 		return;
+	if (ref_count)
+		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	//向接收者对象投递函数事件
-	XObject_postEvent(conn->receiver, XEventFunc_create(conn->receiver,conn->slot_func,args));
+	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver,conn->slot_func,args,ref_count));
 }
 ////等待槽函数
 //static void waitSlot()
@@ -133,25 +142,31 @@ static void Queued_emit(XConnection* conn, void* args)
 //
 //}
 //（槽函数在接收者线程执行），区别在于发送信号的线程会阻塞，直到槽函数执行完成后才继续。
-static void BlockingQueued_emit(XConnection* conn, void* args)
+static void BlockingQueued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count)
 {
 	if (conn->receiver == NULL)
 		return;
+	if (ref_count)
+		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	//向接收者对象投递函数事件
-	XObject_postEvent(conn->receiver, XEventFunc_create(conn->receiver, conn->slot_func, args));
+	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver, conn->slot_func, args, ref_count));
 }
 //若接收者与发送信号的线程处于同一线程，则使用 Qt::DirectConnection（直接连接）；否则，使用 Qt::QueuedConnection（队列连接）。连接类型会在信号发射时动态确定。
-static void Auto_emit(XConnection* conn, void* args)
+static void Auto_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count)
 {
 	if (conn->receiver == NULL)
-		return;
-	XObject* send = conn->signal->sender;
-	if (XObject_thread(send) == XObject_thread(conn->receiver))
-		Direct_emit(conn, args);
+	{
+		Direct_emit(conn, args, ref_count);
+	}
 	else
-		Queued_emit(conn,args);
+	{
+		if (XObject_thread(conn->signal->sender) == XObject_thread(conn->receiver))
+			Direct_emit(conn, args, ref_count);
+		else
+			Queued_emit(conn, args, ref_count);
+	}
 }
-void XSignalSlot_emit(XSignalSlot* manager, size_t signal, void* args)
+void XSignalSlot_emit(XSignalSlot* manager, size_t signal, const void* args)
 {
 	if (manager == NULL)
 		return;
@@ -164,10 +179,10 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal, void* args)
 		conn=XListSLinkedAtomic_iterator_data(&it);
 		switch (conn->type)
 		{
-		case XConnectionType_Auto:Auto_emit(conn, args); break;
-		case XConnectionType_Direct:Direct_emit(conn, args); break;
-		case XConnectionType_Queued:Queued_emit(conn, args); break;
-		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args); break;
+		case XConnectionType_Auto:Auto_emit(conn, args,NULL); break;
+		case XConnectionType_Direct:Direct_emit(conn, args,NULL); break;
+		case XConnectionType_Queued:Queued_emit(conn, args,NULL); break;
+		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args,NULL); break;
 		}
 		//是否是单次链接
 		if ((conn->type)& XConnectionType_SingleShot)
@@ -178,5 +193,49 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal, void* args)
 		{
 			XListSLinkedAtomic_iterator_add(signalObj->connList, &it);
 		}
+	}
+}
+
+void XSignalSlot_emit_variant(XSignalSlot* manager, size_t signal, const XVariant* args)
+{
+	if (manager == NULL)
+		return;
+	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
+	if (signalObj == NULL)
+		return;//没有这个信号
+	XConnection* conn = NULL;
+	XAtomic_int32_t* ref_count = NULL;
+	if (args)
+	{
+		ref_count = (XAtomic_int32_t*)XMemory_malloc(sizeof(XAtomic_int32_t));
+		if (ref_count)
+			XAtomic_store_int32(ref_count, 0);  // 使用原子存储初始化
+	}
+	
+	for (XListSLinkedAtomic_iterator it = XListSLinkedAtomic_begin(signalObj->connList), endIt = XListSLinkedAtomic_end(signalObj->connList); !XListSLinkedAtomic_iterator_equality(&it, &endIt); )
+	{
+		conn = XListSLinkedAtomic_iterator_data(&it);
+		switch (conn->type)
+		{
+		case XConnectionType_Auto:Auto_emit(conn, args, ref_count); break;
+		case XConnectionType_Direct:Direct_emit(conn, args, ref_count); break;
+		case XConnectionType_Queued:Queued_emit(conn, args, ref_count); break;
+		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args, ref_count); break;
+		}
+		//是否是单次链接
+		if ((conn->type) & XConnectionType_SingleShot)
+		{//取消链接
+			XListBase_erase_base(signalObj->connList, &it, &it);
+		}
+		else
+		{
+			XListSLinkedAtomic_iterator_add(signalObj->connList, &it);
+		}
+	}
+	if (ref_count&&XAtomic_load_int32(ref_count) == 0)
+	{//该释放了
+		if (args)
+			XVariant_delete(args);
+		XMemory_free(ref_count);
 	}
 }
