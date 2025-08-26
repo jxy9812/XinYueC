@@ -67,7 +67,7 @@ static bool VXString_PushBack(XString* str, XChar ch)
     data[XString_length_base(str)] = ch;
 
     XContainerSize(str) = new_size;
-    XString_data(str)[new_size]=XCharNULL;
+    XString_data(str)[new_size]=0;
 
     XString_deinitCache(str);
     return true;
@@ -81,7 +81,7 @@ static bool VXString_PopBack(XString* str)
     XString_detach(str);
 
     XContainerSize(str) -= 1;
-    XString_data(str)[XContainerSize(str)]=XCharNULL;
+    XString_data(str)[XContainerSize(str)]=0;
 
     XString_deinitCache(str);
     return true;
@@ -100,7 +100,7 @@ static bool VXString_PushFront(XString* str, XChar ch) {
     data[0] = ch;
 
     XContainerSize(str) = new_size;
-    XString_data(str)[new_size]=XCharNULL;
+    XString_data(str)[new_size]=0;
 
     XString_deinitCache(str);
     return true;
@@ -117,7 +117,7 @@ static bool VXString_PopFront(XString* str) {
     memmove(data, data + 1, new_size * sizeof(XChar));
 
     XContainerSize(str) = new_size;
-    XString_data(str)[new_size]=XCharNULL;
+    XString_data(str)[new_size]=0;
 
     XString_deinitCache(str);
     return true;
@@ -137,7 +137,7 @@ static bool VXString_Remove(XString* str, size_t pos, size_t len) {
     memmove(data + pos, data + pos + actual_len, (new_size - pos) * sizeof(XChar));
 
     XContainerSize(str) = new_size;
-    XString_data(str)[new_size]=XCharNULL;
+    XString_data(str)[new_size]=0;
 
     XString_deinitCache(str);
     return true;
@@ -309,7 +309,7 @@ static void VXContainerObject_clear(XString* str)
     if (XContainerDataPtr(str)) 
     {
         XContainerSize(str) = 0;
-        ((XChar*)XContainerDataPtr(str))[XString_length_base(str)] = XCharNULL;
+        ((XChar*)XContainerDataPtr(str))[XString_length_base(str)] = 0;
     }
 
     XString_deinitCache(str);

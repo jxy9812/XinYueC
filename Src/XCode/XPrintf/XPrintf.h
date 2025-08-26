@@ -5,6 +5,7 @@ extern "C" {
 #endif
 #include"XDataStructConfig.h"
 #include"XTypes.h"
+#include"XChar.h"
 #include<stdio.h>
 #include<stdint.h>
 // -------------------------- 打印函数 --------------------------

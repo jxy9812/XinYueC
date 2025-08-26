@@ -21,12 +21,7 @@ typedef enum XCharCaseSensitivity
  * @brief XChar字符结构
  * 用于存储UTF-16编码的字符单元，可能是单个字符或代理对的一部分
  */
-typedef struct XChar
-{
-    uint16_t code;  // 存储UTF-16编码值（可能是代理对的一部分）
-} XChar;
-//XChar 空(0)
-#define XCharNULL   (XChar) { 0 }
+typedef  uint16_t  XChar;
 
 // --------------------------
 // XChar实例创建函数
@@ -64,7 +59,7 @@ XChar XChar_from_unicode_low(uint32_t unicode);
  * @param ch XChar指针（不可为NULL）
  * @return 对应的Unicode码点，ch为NULL时返回0
  */
-uint32_t XChar_unicode(const XChar* ch);
+uint32_t XChar_unicode(const XChar ch);
 
 // --------------------------
 // 字符类型判断函数
@@ -75,77 +70,77 @@ uint32_t XChar_unicode(const XChar* ch);
  * @param ch XChar指针
  * @return 是字母返回true，否则返回false
  */
-bool XChar_is_letter(const XChar* ch);
+bool XChar_is_letter(const XChar ch);
 
 /**
  * @brief 判断XChar是否为数字字符
  * @param ch XChar指针
  * @return 是数字返回true，否则返回false
  */
-bool XChar_is_digit(const XChar* ch);
+bool XChar_is_digit(const XChar ch);
 
 /**
  * @brief 判断XChar是否为空白字符
  * @param ch XChar指针
  * @return 是空白字符返回true，否则返回false
  */
-bool XChar_is_space(const XChar* ch);
+bool XChar_is_space(const XChar ch);
 
 /**
  * @brief 判断XChar是否为标点符号
  * @param ch XChar指针
  * @return 是标点符号返回true，否则返回false
  */
-bool XChar_is_punct(const XChar* ch);
+bool XChar_is_punct(const XChar ch);
 
 /**
  * @brief 判断XChar是否为大写字母
  * @param ch XChar指针
  * @return 是大写字母返回true，否则返回false
  */
-bool XChar_is_upper(const XChar* ch);
+bool XChar_is_upper(const XChar ch);
 
 /**
  * @brief 判断XChar是否为小写字母
  * @param ch XChar指针
  * @return 是小写字母返回true，否则返回false
  */
-bool XChar_is_lower(const XChar* ch);
+bool XChar_is_lower(const XChar ch);
 
 /**
  * @brief 判断XChar是否为控制字符
  * @param ch XChar指针
  * @return 是控制字符返回true，否则返回false
  */
-bool XChar_is_control(const XChar* ch);
+bool XChar_is_control(const XChar ch);
 
 /**
  * @brief 判断XChar是否为符号字符
  * @param ch XChar指针
  * @return 是符号字符返回true，否则返回false
  */
-bool XChar_is_symbol(const XChar* ch);
+bool XChar_is_symbol(const XChar ch);
 
 /**
  * @brief 判断XChar是否为表情符号
  * @param ch XChar指针
  * @return 是表情符号返回true，否则返回false
  */
-bool XChar_is_emoji(const XChar* ch);
+bool XChar_is_emoji(const XChar ch);
 
 /**
  * @brief 判断XChar是否为全角字符
  * @param ch XChar指针
  * @return 是全角字符返回true，否则返回false
  */
-bool XChar_is_fullwidth(const XChar* ch);
+bool XChar_is_fullwidth(const XChar ch);
 
 /**
  * @brief 判断XChar是否为半角字符
  * @param ch XChar指针
  * @return 是半角字符返回true，否则返回false
  */
-bool XChar_is_halfwidth(const XChar* ch);
+bool XChar_is_halfwidth(const XChar ch);
 
 // --------------------------
 // 字符转换函数
@@ -156,28 +151,28 @@ bool XChar_is_halfwidth(const XChar* ch);
  * @param ch 源XChar指针
  * @return 转换后的大写XChar
  */
-XChar XChar_to_upper(const XChar* ch);
+XChar XChar_to_upper(const XChar ch);
 
 /**
  * @brief 将XChar转换为小写形式
  * @param ch 源XChar指针
  * @return 转换后的小写XChar
  */
-XChar XChar_to_lower(const XChar* ch);
+XChar XChar_to_lower(const XChar ch);
 
 /**
  * @brief 将半角字符转换为全角字符
  * @param ch 源XChar指针（半角字符）
  * @return 转换后的全角XChar
  */
-XChar XChar_to_fullwidth(const XChar* ch);
+XChar XChar_to_fullwidth(const XChar ch);
 
 /**
  * @brief 将全角字符转换为半角字符
  * @param ch 源XChar指针（全角字符）
  * @return 转换后的半角XChar
  */
-XChar XChar_to_halfwidth(const XChar* ch);
+XChar XChar_to_halfwidth(const XChar ch);
 
 // --------------------------
 // 数字值转换函数
@@ -188,7 +183,7 @@ XChar XChar_to_halfwidth(const XChar* ch);
  * @param ch XChar指针（应为数字字符）
  * @return 对应的整数数值，非数字字符返回-1
  */
-int XChar_digit_value(const XChar* ch);
+int XChar_digit_value(const XChar ch);
 
 // --------------------------
 // 代理对相关函数
@@ -199,21 +194,21 @@ int XChar_digit_value(const XChar* ch);
  * @param ch XChar指针
  * @return 是高代理返回true，否则返回false
  */
-bool XChar_is_high_surrogate(const XChar* ch);
+bool XChar_is_high_surrogate(const XChar ch);
 
 /**
  * @brief 判断XChar是否为低代理
  * @param ch XChar指针
  * @return 是低代理返回true，否则返回false
  */
-bool XChar_is_low_surrogate(const XChar* ch);
+bool XChar_is_low_surrogate(const XChar ch);
 
 /**
  * @brief 判断XChar是否为代理（高代理或低代理）
  * @param ch XChar指针
  * @return 是代理返回true，否则返回false
  */
-bool XChar_is_surrogate(const XChar* ch);
+bool XChar_is_surrogate(const XChar ch);
 
 /**
  * @brief 将高代理和低代理转换为Unicode码点
@@ -221,7 +216,7 @@ bool XChar_is_surrogate(const XChar* ch);
  * @param low 低代理XChar指针
  * @return 对应的Unicode码点，无效代理对返回0
  */
-uint32_t XChar_surrogate_to_unicode(const XChar* high, const XChar* low);
+uint32_t XChar_surrogate_to_unicode(const XChar high, const XChar low);
 
 // --------------------------
 // 字符比较函数
@@ -233,7 +228,7 @@ uint32_t XChar_surrogate_to_unicode(const XChar* high, const XChar* low);
  * @param b 第二个XChar指针
  * @return 相等返回true，否则返回false
  */
-bool XEquality_XChar(const XChar* a, const XChar* b);
+bool XEquality_XChar(const XChar a, const XChar b);
 
 /**
  * @brief 比较两个XChar是否相等（支持大小写敏感性）
@@ -242,7 +237,7 @@ bool XEquality_XChar(const XChar* a, const XChar* b);
  * @param cs 大小写敏感性（区分/不区分大小写）
  * @return 相等返回true，否则返回false
  */
-bool XChar_equals(const XChar* a, const XChar* b, XCharCaseSensitivity cs);
+bool XChar_equals(const XChar a, const XChar b, XCharCaseSensitivity cs);
 
 /**
  * @brief 比较两个XChar的大小
@@ -250,7 +245,7 @@ bool XChar_equals(const XChar* a, const XChar* b, XCharCaseSensitivity cs);
  * @param b 第二个XChar指针
  * @return a < b返回-1，a > b返回1，相等返回0
  */
-int XChar_compare(const XChar* a, const XChar* b);
+int XChar_compare(const XChar a, const XChar b);
 
 // --------------------------
 // UTF-8编码转换函数

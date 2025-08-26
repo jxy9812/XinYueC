@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 #include"XContainerObject_iterator.h"
+#include"XChar.h"
 //声明
 XContainerTypeDeclare(XString);
 //正向迭代器

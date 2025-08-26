@@ -24,7 +24,7 @@ XChar XChar_from(uint16_t code)
 
 uint8_t XChar_to_utf8(XChar ch)
 {
-    return ch.code & (~0x80);
+    return ch& (~0x80);
 }
 
 // 创建XChar实例（高代理）
@@ -38,13 +38,13 @@ XChar XChar_from_unicode(uint32_t unicode) {
             (unicode >= UTF16_LOW_SURROGATE_START && unicode <= UTF16_LOW_SURROGATE_END)) {
             return ch; // 代理范围视为无效
         }
-        ch.code = (uint16_t)unicode;
+        ch = (uint16_t)unicode;
         return ch;
     }
 
     // 补充平面字符（生成高代理）
     unicode -= SURROGATE_OFFSET;
-    ch.code = (uint16_t)(UTF16_HIGH_SURROGATE_START + (unicode >> 10));
+    ch = (uint16_t)(UTF16_HIGH_SURROGATE_START + (unicode >> 10));
     return ch;
 }
 
@@ -54,20 +54,18 @@ XChar XChar_from_unicode_low(uint32_t unicode) {
     if (unicode < 0x10000 || unicode > UNICODE_MAX_CODEPOINT) return ch;
 
     unicode -= SURROGATE_OFFSET;
-    ch.code = (uint16_t)(UTF16_LOW_SURROGATE_START + (unicode & 0x3FF));
+    ch = (uint16_t)(UTF16_LOW_SURROGATE_START + (unicode & 0x3FF));
     return ch;
 }
 
 // 获取Unicode码点（单字符/高代理）
-uint32_t XChar_unicode(const XChar* ch) {
-    if (!ch) return 0;
-    return ch->code;
+uint32_t XChar_unicode(const XChar ch) {
+    return ch;
 }
 
 // 判断是否为字母（扩展多语言支持）
-bool XChar_is_letter(const XChar* ch) {
-    if (!ch) return false;
-    uint16_t code = ch->code;
+bool XChar_is_letter(const XChar ch) {
+    uint16_t code = ch;
 
     // 基本拉丁字母
     if ((code >= 'A' && code <= 'Z') || (code >= 'a' && code <= 'z'))
@@ -99,9 +97,8 @@ bool XChar_is_letter(const XChar* ch) {
 }
 
 // 判断是否为数字（完善中文数字和范围）
-bool XChar_is_digit(const XChar* ch) {
-    if (!ch) return false;
-    uint16_t code = ch->code;
+bool XChar_is_digit(const XChar ch) {
+    uint16_t code = ch;
 
     // 基本拉丁数字
     if (code >= '0' && code <= '9') return true;
@@ -151,9 +148,9 @@ bool XChar_is_digit(const XChar* ch) {
 }
 
 // 数字字符转整数 value
-int XChar_digit_value(const XChar* ch) {
+int XChar_digit_value(const XChar ch) {
     if (!ch || !XChar_is_digit(ch)) return -1;
-    uint16_t code = ch->code;
+    uint16_t code = ch;
 
     // 基本拉丁数字
     if (code >= '0' && code <= '9') return code - '0';
@@ -208,9 +205,8 @@ int XChar_digit_value(const XChar* ch) {
 }
 
 // 判断是否为空白字符（扩展范围）
-bool XChar_is_space(const XChar* ch) {
-    if (!ch) return false;
-    uint16_t code = ch->code;
+bool XChar_is_space(const XChar  ch) {
+    uint16_t code = ch;
 
     // ASCII空白
     if (code == ' ' || code == '\t' || code == '\n' ||
@@ -228,9 +224,8 @@ bool XChar_is_space(const XChar* ch) {
 }
 
 // 判断是否为标点符号（精确范围）
-bool XChar_is_punct(const XChar* ch) {
-    if (!ch) return false;
-    uint16_t code = ch->code;
+bool XChar_is_punct(const XChar ch) {
+    uint16_t code = ch;
 
     // ASCII标点
     if ((code >= 0x21 && code <= 0x2F) ||
@@ -255,9 +250,8 @@ bool XChar_is_punct(const XChar* ch) {
 }
 
 // 判断是否为小写字母
-bool XChar_is_lower(const XChar* ch) {
-    if (!ch) return false;
-    uint16_t code = ch->code;
+bool XChar_is_lower(const XChar ch) {
+    uint16_t code = ch;
 
     // ASCII小写
     if (code >= 'a' && code <= 'z') return true;
@@ -287,9 +281,9 @@ bool XChar_is_lower(const XChar* ch) {
 }
 
 // 判断是否为大写字母
-bool XChar_is_upper(const XChar* ch) {
+bool XChar_is_upper(const XChar ch) {
     if (!ch) return false;
-    uint16_t code = ch->code;
+    uint16_t code = ch;
 
     // ASCII大写
     if (code >= 'A' && code <= 'Z') return true;
@@ -319,239 +313,236 @@ bool XChar_is_upper(const XChar* ch) {
 }
 
 // 转换为大写字母
-XChar XChar_to_upper(const XChar* ch) {
-    if (!ch) return (XChar) { 0 }; // 空指针安全处理
-    XChar result = *ch;
+XChar XChar_to_upper(const XChar ch) {
+    XChar result = ch;
     if (!XChar_is_lower(ch)) return result;
 
     // ASCII小写转大写
-    if (ch->code >= 'a' && ch->code <= 'z') {
-        result.code -= 32;
+    if (ch>= 'a' && ch <= 'z') {
+        result -= 32;
         return result;
     }
 
     // 特殊字符映射
-    switch (ch->code) {
+    switch (ch) {
         // 拉丁扩展
-    case 0x00DF: result.code = 0x1E9E; break; // ß -> ẞ
-    case 0x00E0: result.code = 0x00C0; break; // à -> À
-    case 0x00E1: result.code = 0x00C1; break; // á -> Á
-    case 0x00E2: result.code = 0x00C2; break; // â -> Â
-    case 0x00E3: result.code = 0x00C3; break; // ã -> Ã
-    case 0x00E4: result.code = 0x00C4; break; // ä -> Ä
-    case 0x00E5: result.code = 0x00C5; break; // å -> Å
-    case 0x00E6: result.code = 0x00C6; break; // æ -> Æ
-    case 0x00E7: result.code = 0x00C7; break; // ç -> Ç
-    case 0x00E8: result.code = 0x00C8; break; // è -> È
-    case 0x00E9: result.code = 0x00C9; break; // é -> É
-    case 0x00EA: result.code = 0x00CA; break; // ê -> Ê
-    case 0x00EB: result.code = 0x00CB; break; // ë -> Ë
-    case 0x00EC: result.code = 0x00CC; break; // ì -> Ì
-    case 0x00ED: result.code = 0x00CD; break; // í -> Í
-    case 0x00EE: result.code = 0x00CE; break; // î -> Î
-    case 0x00EF: result.code = 0x00CF; break; // ï -> Ï
-    case 0x00F0: result.code = 0x00D0; break; // ð -> Ð
-    case 0x00F1: result.code = 0x00D1; break; // ñ -> Ñ
-    case 0x00F2: result.code = 0x00D2; break; // ò -> Ò
-    case 0x00F3: result.code = 0x00D3; break; // ó -> Ó
-    case 0x00F4: result.code = 0x00D4; break; // ô -> Ô
-    case 0x00F5: result.code = 0x00D5; break; // õ -> Õ
-    case 0x00F6: result.code = 0x00D6; break; // ö -> Ö
-    case 0x00F8: result.code = 0x00D8; break; // ø -> Ø
-    case 0x00F9: result.code = 0x00D9; break; // ù -> Ù
-    case 0x00FA: result.code = 0x00DA; break; // ú -> Ú
-    case 0x00FB: result.code = 0x00DB; break; // û -> Û
-    case 0x00FC: result.code = 0x00DC; break; // ü -> Ü
-    case 0x00FD: result.code = 0x00DD; break; // ý -> Ý
-    case 0x00FE: result.code = 0x00DE; break; // þ -> Þ
+    case 0x00DF: result = 0x1E9E; break; // ß -> ẞ
+    case 0x00E0: result = 0x00C0; break; // à -> À
+    case 0x00E1: result = 0x00C1; break; // á -> Á
+    case 0x00E2: result = 0x00C2; break; // â -> Â
+    case 0x00E3: result = 0x00C3; break; // ã -> Ã
+    case 0x00E4: result = 0x00C4; break; // ä -> Ä
+    case 0x00E5: result = 0x00C5; break; // å -> Å
+    case 0x00E6: result = 0x00C6; break; // æ -> Æ
+    case 0x00E7: result = 0x00C7; break; // ç -> Ç
+    case 0x00E8: result = 0x00C8; break; // è -> È
+    case 0x00E9: result = 0x00C9; break; // é -> É
+    case 0x00EA: result = 0x00CA; break; // ê -> Ê
+    case 0x00EB: result = 0x00CB; break; // ë -> Ë
+    case 0x00EC: result = 0x00CC; break; // ì -> Ì
+    case 0x00ED: result = 0x00CD; break; // í -> Í
+    case 0x00EE: result = 0x00CE; break; // î -> Î
+    case 0x00EF: result = 0x00CF; break; // ï -> Ï
+    case 0x00F0: result = 0x00D0; break; // ð -> Ð
+    case 0x00F1: result = 0x00D1; break; // ñ -> Ñ
+    case 0x00F2: result = 0x00D2; break; // ò -> Ò
+    case 0x00F3: result = 0x00D3; break; // ó -> Ó
+    case 0x00F4: result = 0x00D4; break; // ô -> Ô
+    case 0x00F5: result = 0x00D5; break; // õ -> Õ
+    case 0x00F6: result = 0x00D6; break; // ö -> Ö
+    case 0x00F8: result = 0x00D8; break; // ø -> Ø
+    case 0x00F9: result = 0x00D9; break; // ù -> Ù
+    case 0x00FA: result = 0x00DA; break; // ú -> Ú
+    case 0x00FB: result = 0x00DB; break; // û -> Û
+    case 0x00FC: result = 0x00DC; break; // ü -> Ü
+    case 0x00FD: result = 0x00DD; break; // ý -> Ý
+    case 0x00FE: result = 0x00DE; break; // þ -> Þ
 
         // 希腊字母
-    case 0x03B1: result.code = 0x0391; break; // α -> Α
-    case 0x03B2: result.code = 0x0392; break; // β -> Β
-    case 0x03B3: result.code = 0x0393; break; // γ -> Γ
-    case 0x03B4: result.code = 0x0394; break; // δ -> Δ
-    case 0x03B5: result.code = 0x0395; break; // ε -> Ε
-    case 0x03B6: result.code = 0x0396; break; // ζ -> Ζ
-    case 0x03B7: result.code = 0x0397; break; // η -> Η
-    case 0x03B8: result.code = 0x0398; break; // θ -> Θ
-    case 0x03B9: result.code = 0x0399; break; // ι -> Ι
-    case 0x03BA: result.code = 0x039A; break; // κ -> Κ
-    case 0x03BB: result.code = 0x039B; break; // λ -> Λ
-    case 0x03BC: result.code = 0x039C; break; // μ -> Μ
-    case 0x03BD: result.code = 0x039D; break; // ν -> Ν
-    case 0x03BE: result.code = 0x039E; break; // ξ -> Ξ
-    case 0x03BF: result.code = 0x039F; break; // ο -> Ο
-    case 0x03C0: result.code = 0x03A0; break; // π -> Π
-    case 0x03C1: result.code = 0x03A1; break; // ρ -> Ρ
-    case 0x03C2: case 0x03C3: result.code = 0x03A3; break; // ς/σ -> Σ
-    case 0x03C4: result.code = 0x03A4; break; // τ -> Τ
-    case 0x03C5: result.code = 0x03A5; break; // υ -> Υ
-    case 0x03C6: result.code = 0x03A6; break; // φ -> Φ
-    case 0x03C7: result.code = 0x03A7; break; // χ -> Χ
-    case 0x03C8: result.code = 0x03A8; break; // ψ -> Ψ
-    case 0x03C9: result.code = 0x03A9; break; // ω -> Ω
+    case 0x03B1: result = 0x0391; break; // α -> Α
+    case 0x03B2: result = 0x0392; break; // β -> Β
+    case 0x03B3: result = 0x0393; break; // γ -> Γ
+    case 0x03B4: result = 0x0394; break; // δ -> Δ
+    case 0x03B5: result = 0x0395; break; // ε -> Ε
+    case 0x03B6: result = 0x0396; break; // ζ -> Ζ
+    case 0x03B7: result = 0x0397; break; // η -> Η
+    case 0x03B8: result = 0x0398; break; // θ -> Θ
+    case 0x03B9: result = 0x0399; break; // ι -> Ι
+    case 0x03BA: result = 0x039A; break; // κ -> Κ
+    case 0x03BB: result = 0x039B; break; // λ -> Λ
+    case 0x03BC: result = 0x039C; break; // μ -> Μ
+    case 0x03BD: result = 0x039D; break; // ν -> Ν
+    case 0x03BE: result = 0x039E; break; // ξ -> Ξ
+    case 0x03BF: result = 0x039F; break; // ο -> Ο
+    case 0x03C0: result = 0x03A0; break; // π -> Π
+    case 0x03C1: result = 0x03A1; break; // ρ -> Ρ
+    case 0x03C2: 
+    case 0x03C3: result = 0x03A3; break; // ς/σ -> Σ
+    case 0x03C4: result = 0x03A4; break; // τ -> Τ
+    case 0x03C5: result = 0x03A5; break; // υ -> Υ
+    case 0x03C6: result = 0x03A6; break; // φ -> Φ
+    case 0x03C7: result = 0x03A7; break; // χ -> Χ
+    case 0x03C8: result = 0x03A8; break; // ψ -> Ψ
+    case 0x03C9: result = 0x03A9; break; // ω -> Ω
 
         // 西里尔字母
-    case 0x0430: result.code = 0x0410; break; // а -> А
-    case 0x0431: result.code = 0x0411; break; // б -> Б
-    case 0x0432: result.code = 0x0412; break; // в -> В
-    case 0x0433: result.code = 0x0413; break; // г -> Г
-    case 0x0434: result.code = 0x0414; break; // д -> Д
-    case 0x0435: result.code = 0x0415; break; // е -> Е
-    case 0x0436: result.code = 0x0416; break; // ж -> Ж
-    case 0x0437: result.code = 0x0417; break; // з -> З
-    case 0x0438: result.code = 0x0418; break; // и -> И
-    case 0x0439: result.code = 0x0419; break; // й -> Й
-    case 0x043a: result.code = 0x041a; break; // к -> К
-    case 0x043b: result.code = 0x041b; break; // л -> Л
-    case 0x043c: result.code = 0x041c; break; // м -> М
-    case 0x043d: result.code = 0x041d; break; // н -> Н
-    case 0x043e: result.code = 0x041e; break; // о -> О
-    case 0x043f: result.code = 0x041f; break; // п -> П
-    case 0x0440: result.code = 0x0420; break; // р -> Р
-    case 0x0441: result.code = 0x0421; break; // с -> С
-    case 0x0442: result.code = 0x0422; break; // т -> Т
-    case 0x0443: result.code = 0x0423; break; // у -> У
-    case 0x0444: result.code = 0x0424; break; // ф -> Ф
-    case 0x0445: result.code = 0x0425; break; // х -> Х
-    case 0x0446: result.code = 0x0426; break; // ц -> Ц
-    case 0x0447: result.code = 0x0427; break; // ч -> Ч
-    case 0x0448: result.code = 0x0428; break; // ш -> Ш
-    case 0x0449: result.code = 0x0429; break; // щ -> Щ
-    case 0x044a: result.code = 0x042a; break; // ъ -> Ъ
-    case 0x044b: result.code = 0x042b; break; // ы -> Ы
-    case 0x044c: result.code = 0x042c; break; // ь -> Ь
-    case 0x044d: result.code = 0x042d; break; // э -> Э
-    case 0x044e: result.code = 0x042e; break; // ю -> Ю
-    case 0x044f: result.code = 0x042f; break; // я -> Я
+    case 0x0430: result = 0x0410; break; // а -> А
+    case 0x0431: result = 0x0411; break; // б -> Б
+    case 0x0432: result = 0x0412; break; // в -> В
+    case 0x0433: result = 0x0413; break; // г -> Г
+    case 0x0434: result = 0x0414; break; // д -> Д
+    case 0x0435: result = 0x0415; break; // е -> Е
+    case 0x0436: result = 0x0416; break; // ж -> Ж
+    case 0x0437: result = 0x0417; break; // з -> З
+    case 0x0438: result = 0x0418; break; // и -> И
+    case 0x0439: result = 0x0419; break; // й -> Й
+    case 0x043a: result = 0x041a; break; // к -> К
+    case 0x043b: result = 0x041b; break; // л -> Л
+    case 0x043c: result = 0x041c; break; // м -> М
+    case 0x043d: result = 0x041d; break; // н -> Н
+    case 0x043e: result = 0x041e; break; // о -> О
+    case 0x043f: result = 0x041f; break; // п -> П
+    case 0x0440: result = 0x0420; break; // р -> Р
+    case 0x0441: result = 0x0421; break; // с -> С
+    case 0x0442: result = 0x0422; break; // т -> Т
+    case 0x0443: result = 0x0423; break; // у -> У
+    case 0x0444: result = 0x0424; break; // ф -> Ф
+    case 0x0445: result = 0x0425; break; // х -> Х
+    case 0x0446: result = 0x0426; break; // ц -> Ц
+    case 0x0447: result = 0x0427; break; // ч -> Ч
+    case 0x0448: result = 0x0428; break; // ш -> Ш
+    case 0x0449: result = 0x0429; break; // щ -> Щ
+    case 0x044a: result = 0x042a; break; // ъ -> Ъ
+    case 0x044b: result = 0x042b; break; // ы -> Ы
+    case 0x044c: result = 0x042c; break; // ь -> Ь
+    case 0x044d: result = 0x042d; break; // э -> Э
+    case 0x044e: result = 0x042e; break; // ю -> Ю
+    case 0x044f: result = 0x042f; break; // я -> Я
     }
 
     return result;
 }
 
 // 转换为小写字母
-XChar XChar_to_lower(const XChar* ch) {
-    if (!ch) return (XChar) { 0 }; // 空指针安全处理
-    XChar result = *ch;
+XChar XChar_to_lower(const XChar ch) {
+    XChar result = ch;
     if (!XChar_is_upper(ch)) return result;
 
     // ASCII大写转小写
-    if (ch->code >= 'A' && ch->code <= 'Z') {
-        result.code += 32;
+    if (ch >= 'A' && ch <= 'Z') {
+        result += 32;
         return result;
     }
 
     // 特殊字符映射
-    switch (ch->code) {
+    switch (ch) {
         // 拉丁扩展
-    case 0x1E9E: result.code = 0x00DF; break; // ẞ -> ß
-    case 0x00C0: result.code = 0x00E0; break; // À -> à
-    case 0x00C1: result.code = 0x00E1; break; // Á -> á
-    case 0x00C2: result.code = 0x00E2; break; // Â -> â
-    case 0x00C3: result.code = 0x00E3; break; // Ã -> ã
-    case 0x00C4: result.code = 0x00E4; break; // Ä -> ä
-    case 0x00C5: result.code = 0x00E5; break; // Å -> å
-    case 0x00C6: result.code = 0x00E6; break; // Æ -> æ
-    case 0x00C7: result.code = 0x00E7; break; // Ç -> ç
-    case 0x00C8: result.code = 0x00E8; break; // È -> è
-    case 0x00C9: result.code = 0x00E9; break; // É -> é
-    case 0x00CA: result.code = 0x00EA; break; // Ê -> ê
-    case 0x00CB: result.code = 0x00EB; break; // Ë -> ë
-    case 0x00CC: result.code = 0x00EC; break; // Ì -> ì
-    case 0x00CD: result.code = 0x00ED; break; // Í -> í
-    case 0x00CE: result.code = 0x00EE; break; // Î -> î
-    case 0x00CF: result.code = 0x00EF; break; // Ï -> ï
-    case 0x00D0: result.code = 0x00F0; break; // Ð -> ð
-    case 0x00D1: result.code = 0x00F1; break; // Ñ -> ñ
-    case 0x00D2: result.code = 0x00F2; break; // Ò -> ò
-    case 0x00D3: result.code = 0x00F3; break; // Ó -> ó
-    case 0x00D4: result.code = 0x00F4; break; // Ô -> ô
-    case 0x00D5: result.code = 0x00F5; break; // Õ -> õ
-    case 0x00D6: result.code = 0x00F6; break; // Ö -> ö
-    case 0x00D8: result.code = 0x00F8; break; // Ø -> ø
-    case 0x00D9: result.code = 0x00F9; break; // Ù -> ù
-    case 0x00DA: result.code = 0x00FA; break; // Ú -> ú
-    case 0x00DB: result.code = 0x00FB; break; // Û -> û
-    case 0x00DC: result.code = 0x00FC; break; // Ü -> ü
-    case 0x00DD: result.code = 0x00FD; break; // Ý -> ý
-    case 0x00DE: result.code = 0x00FE; break; // Þ -> þ
+    case 0x1E9E: result = 0x00DF; break; // ẞ -> ß
+    case 0x00C0: result = 0x00E0; break; // À -> à
+    case 0x00C1: result = 0x00E1; break; // Á -> á
+    case 0x00C2: result = 0x00E2; break; // Â -> â
+    case 0x00C3: result = 0x00E3; break; // Ã -> ã
+    case 0x00C4: result = 0x00E4; break; // Ä -> ä
+    case 0x00C5: result = 0x00E5; break; // Å -> å
+    case 0x00C6: result = 0x00E6; break; // Æ -> æ
+    case 0x00C7: result = 0x00E7; break; // Ç -> ç
+    case 0x00C8: result = 0x00E8; break; // È -> è
+    case 0x00C9: result = 0x00E9; break; // É -> é
+    case 0x00CA: result = 0x00EA; break; // Ê -> ê
+    case 0x00CB: result = 0x00EB; break; // Ë -> ë
+    case 0x00CC: result = 0x00EC; break; // Ì -> ì
+    case 0x00CD: result = 0x00ED; break; // Í -> í
+    case 0x00CE: result = 0x00EE; break; // Î -> î
+    case 0x00CF: result = 0x00EF; break; // Ï -> ï
+    case 0x00D0: result = 0x00F0; break; // Ð -> ð
+    case 0x00D1: result = 0x00F1; break; // Ñ -> ñ
+    case 0x00D2: result = 0x00F2; break; // Ò -> ò
+    case 0x00D3: result = 0x00F3; break; // Ó -> ó
+    case 0x00D4: result = 0x00F4; break; // Ô -> ô
+    case 0x00D5: result = 0x00F5; break; // Õ -> õ
+    case 0x00D6: result = 0x00F6; break; // Ö -> ö
+    case 0x00D8: result = 0x00F8; break; // Ø -> ø
+    case 0x00D9: result = 0x00F9; break; // Ù -> ù
+    case 0x00DA: result = 0x00FA; break; // Ú -> ú
+    case 0x00DB: result = 0x00FB; break; // Û -> û
+    case 0x00DC: result = 0x00FC; break; // Ü -> ü
+    case 0x00DD: result = 0x00FD; break; // Ý -> ý
+    case 0x00DE: result = 0x00FE; break; // Þ -> þ
 
         // 希腊字母
-    case 0x0391: result.code = 0x03B1; break; // Α -> α
-    case 0x0392: result.code = 0x03B2; break; // Β -> β
-    case 0x0393: result.code = 0x03B3; break; // Γ -> γ
-    case 0x0394: result.code = 0x03B4; break; // Δ -> δ
-    case 0x0395: result.code = 0x03B5; break; // Ε -> ε
-    case 0x0396: result.code = 0x03B6; break; // Ζ -> ζ
-    case 0x0397: result.code = 0x03B7; break; // Η -> η
-    case 0x0398: result.code = 0x03B8; break; // Θ -> θ
-    case 0x0399: result.code = 0x03B9; break; // Ι -> ι
-    case 0x039A: result.code = 0x03BA; break; // Κ -> κ
-    case 0x039B: result.code = 0x03BB; break; // Λ -> λ
-    case 0x039C: result.code = 0x03BC; break; // Μ -> μ
-    case 0x039D: result.code = 0x03BD; break; // Ν -> ν
-    case 0x039E: result.code = 0x03BE; break; // Ξ -> ξ
-    case 0x039F: result.code = 0x03BF; break; // Ο -> ο
-    case 0x03A0: result.code = 0x03C0; break; // Π -> π
-    case 0x03A1: result.code = 0x03C1; break; // Ρ -> ρ
-    case 0x03A3: result.code = 0x03C3; break; // Σ -> σ
-    case 0x03A4: result.code = 0x03C4; break; // Τ -> τ
-    case 0x03A5: result.code = 0x03C5; break; // Υ -> υ
-    case 0x03A6: result.code = 0x03C6; break; // Φ -> φ
-    case 0x03A7: result.code = 0x03C7; break; // Χ -> χ
-    case 0x03A8: result.code = 0x03C8; break; // Ψ -> ψ
-    case 0x03A9: result.code = 0x03C9; break; // Ω -> ω
+    case 0x0391: result = 0x03B1; break; // Α -> α
+    case 0x0392: result = 0x03B2; break; // Β -> β
+    case 0x0393: result = 0x03B3; break; // Γ -> γ
+    case 0x0394: result = 0x03B4; break; // Δ -> δ
+    case 0x0395: result = 0x03B5; break; // Ε -> ε
+    case 0x0396: result = 0x03B6; break; // Ζ -> ζ
+    case 0x0397: result = 0x03B7; break; // Η -> η
+    case 0x0398: result = 0x03B8; break; // Θ -> θ
+    case 0x0399: result = 0x03B9; break; // Ι -> ι
+    case 0x039A: result = 0x03BA; break; // Κ -> κ
+    case 0x039B: result = 0x03BB; break; // Λ -> λ
+    case 0x039C: result = 0x03BC; break; // Μ -> μ
+    case 0x039D: result = 0x03BD; break; // Ν -> ν
+    case 0x039E: result = 0x03BE; break; // Ξ -> ξ
+    case 0x039F: result = 0x03BF; break; // Ο -> ο
+    case 0x03A0: result = 0x03C0; break; // Π -> π
+    case 0x03A1: result = 0x03C1; break; // Ρ -> ρ
+    case 0x03A3: result = 0x03C3; break; // Σ -> σ
+    case 0x03A4: result = 0x03C4; break; // Τ -> τ
+    case 0x03A5: result = 0x03C5; break; // Υ -> υ
+    case 0x03A6: result = 0x03C6; break; // Φ -> φ
+    case 0x03A7: result = 0x03C7; break; // Χ -> χ
+    case 0x03A8: result = 0x03C8; break; // Ψ -> ψ
+    case 0x03A9: result = 0x03C9; break; // Ω -> ω
 
         // 西里尔字母
-    case 0x0410: result.code = 0x0430; break; // А -> а
-    case 0x0411: result.code = 0x0431; break; // Б -> б
-    case 0x0412: result.code = 0x0432; break; // В -> в
-    case 0x0413: result.code = 0x0433; break; // Г -> г
-    case 0x0414: result.code = 0x0434; break; // Д -> д
-    case 0x0415: result.code = 0x0435; break; // Е -> е
-    case 0x0416: result.code = 0x0436; break; // Ж -> ж
-    case 0x0417: result.code = 0x0437; break; // З -> з
-    case 0x0418: result.code = 0x0438; break; // И -> и
-    case 0x0419: result.code = 0x0439; break; // Й -> й
-    case 0x041A: result.code = 0x043A; break; // К -> к
-    case 0x041B: result.code = 0x043B; break; // Л -> л
-    case 0x041C: result.code = 0x043C; break; // М -> м
-    case 0x041D: result.code = 0x043D; break; // Н -> н
-    case 0x041E: result.code = 0x043E; break; // О -> о
-    case 0x041F: result.code = 0x043F; break; // П -> п
-    case 0x0420: result.code = 0x0440; break; // Р -> р
-    case 0x0421: result.code = 0x0441; break; // С -> с
-    case 0x0422: result.code = 0x0442; break; // Т -> т
-    case 0x0423: result.code = 0x0443; break; // У -> у
-    case 0x0424: result.code = 0x0444; break; // Ф -> ф
-    case 0x0425: result.code = 0x0445; break; // Х -> х
-    case 0x0426: result.code = 0x0446; break; // Ц -> ц
-    case 0x0427: result.code = 0x0447; break; // Ч -> ч
-    case 0x0428: result.code = 0x0448; break; // Ш -> ш
-    case 0x0429: result.code = 0x0449; break; // Щ -> щ
-    case 0x042A: result.code = 0x044A; break; // Ъ -> ъ
-    case 0x042B: result.code = 0x044B; break; // Ы -> ы
-    case 0x042C: result.code = 0x044C; break; // Ь -> ь
-    case 0x042D: result.code = 0x044D; break; // Э -> э
-    case 0x042E: result.code = 0x044E; break; // Ю -> ю
-    case 0x042F: result.code = 0x044F; break; // Я -> я
+    case 0x0410: result = 0x0430; break; // А -> а
+    case 0x0411: result = 0x0431; break; // Б -> б
+    case 0x0412: result = 0x0432; break; // В -> в
+    case 0x0413: result = 0x0433; break; // Г -> г
+    case 0x0414: result = 0x0434; break; // Д -> д
+    case 0x0415: result = 0x0435; break; // Е -> е
+    case 0x0416: result = 0x0436; break; // Ж -> ж
+    case 0x0417: result = 0x0437; break; // З -> з
+    case 0x0418: result = 0x0438; break; // И -> и
+    case 0x0419: result = 0x0439; break; // Й -> й
+    case 0x041A: result = 0x043A; break; // К -> к
+    case 0x041B: result = 0x043B; break; // Л -> л
+    case 0x041C: result = 0x043C; break; // М -> м
+    case 0x041D: result = 0x043D; break; // Н -> н
+    case 0x041E: result = 0x043E; break; // О -> о
+    case 0x041F: result = 0x043F; break; // П -> п
+    case 0x0420: result = 0x0440; break; // Р -> р
+    case 0x0421: result = 0x0441; break; // С -> с
+    case 0x0422: result = 0x0442; break; // Т -> т
+    case 0x0423: result = 0x0443; break; // У -> у
+    case 0x0424: result = 0x0444; break; // Ф -> ф
+    case 0x0425: result = 0x0445; break; // Х -> х
+    case 0x0426: result = 0x0446; break; // Ц -> ц
+    case 0x0427: result = 0x0447; break; // Ч -> ч
+    case 0x0428: result = 0x0448; break; // Ш -> ш
+    case 0x0429: result = 0x0449; break; // Щ -> щ
+    case 0x042A: result = 0x044A; break; // Ъ -> ъ
+    case 0x042B: result = 0x044B; break; // Ы -> ы
+    case 0x042C: result = 0x044C; break; // Ь -> ь
+    case 0x042D: result = 0x044D; break; // Э -> э
+    case 0x042E: result = 0x044E; break; // Ю -> ю
+    case 0x042F: result = 0x044F; break; // Я -> я
     }
 
     return result;
 }
 
 // 新增：判断控制字符
-bool XChar_is_control(const XChar* ch) {
-    if (!ch) return false;
-    uint16_t code = ch->code;
+bool XChar_is_control(const XChar ch) {
+    uint16_t code = ch;
     return (code >= 0x0000 && code <= 0x001F) ||  // C0控制字符
         (code >= 0x007F && code <= 0x009F);    // C1控制字符
 }
 
 // 新增：判断符号字符
-bool XChar_is_symbol(const XChar* ch) {
-    if (!ch) return false;
-    uint16_t code = ch->code;
+bool XChar_is_symbol(const XChar ch) {
+    uint16_t code = ch;
 
     // 数学符号
     if ((code >= 0x2200 && code <= 0x22FF) ||
@@ -572,9 +563,8 @@ bool XChar_is_symbol(const XChar* ch) {
 }
 
 // 新增：判断表情符号
-bool XChar_is_emoji(const XChar* ch) {
-    if (!ch) return false;
-    uint16_t code = ch->code;
+bool XChar_is_emoji(const XChar ch) {
+    uint16_t code = ch;
 
     // 表情符号主范围
     if ((code >= 0x1F600 && code <= 0x1F64F) ||  // 情感表情
@@ -587,9 +577,8 @@ bool XChar_is_emoji(const XChar* ch) {
 }
 
 // 新增：判断全角字符
-bool XChar_is_fullwidth(const XChar* ch) {
-    if (!ch) return false;
-    uint16_t code = ch->code;
+bool XChar_is_fullwidth(const XChar ch) {
+    uint16_t code = ch;
     // 全角ASCII范围、中文、日文、韩文等
     return (code >= 0xFF01 && code <= 0xFFEF) ||
         (code >= 0x4E00 && code <= 0x9FFF) ||
@@ -598,29 +587,27 @@ bool XChar_is_fullwidth(const XChar* ch) {
 }
 
 // 新增：判断半角字符
-bool XChar_is_halfwidth(const XChar* ch) {
-    if (!ch) return false;
-    uint16_t code = ch->code;
+bool XChar_is_halfwidth(const XChar ch) {
+    uint16_t code = ch;
     // 基本ASCII和半角符号
     return (code >= 0x0020 && code <= 0x007E) ||
         (code >= 0xFF61 && code <= 0xFF9F);  // 半角片假名
 }
 
 // 新增：半角转全角
-XChar XChar_to_fullwidth(const XChar* ch) {
-    if (!ch) return (XChar) { 0 };
-    XChar result = *ch;
-    uint16_t code = ch->code;
+XChar XChar_to_fullwidth(const XChar ch) {
+    XChar result = ch;
+    uint16_t code = ch;
 
     // 半角ASCII转全角
     if (code >= 0x20 && code <= 0x7E) {
-        result.code = code + 0xFEE0;
+        result = code + 0xFEE0;
         return result;
     }
 
     // 半角片假名转全角
     if (code >= 0xFF61 && code <= 0xFF9F) {
-        result.code = code + 0x0040;
+        result = code + 0x0040;
         return result;
     }
 
@@ -628,20 +615,19 @@ XChar XChar_to_fullwidth(const XChar* ch) {
 }
 
 // 新增：全角转半角
-XChar XChar_to_halfwidth(const XChar* ch) {
-    if (!ch) return (XChar) { 0 };
-    XChar result = *ch;
-    uint16_t code = ch->code;
+XChar XChar_to_halfwidth(const XChar ch) {
+    XChar result = ch;
+    uint16_t code = ch;
 
     // 全角ASCII转半角
     if (code >= 0xFF01 && code <= 0xFF5E) {
-        result.code = code - 0xFEE0;
+        result = code - 0xFEE0;
         return result;
     }
 
     // 全角片假名转半角
     if (code >= 0xFFA1 && code <= 0xFFDF) {
-        result.code = code - 0x0040;
+        result = code - 0x0040;
         return result;
     }
 
@@ -649,53 +635,49 @@ XChar XChar_to_halfwidth(const XChar* ch) {
 }
 
 // 代理对相关判断
-bool XChar_is_high_surrogate(const XChar* ch) {
-    return ch && (ch->code >= UTF16_HIGH_SURROGATE_START &&
-        ch->code <= UTF16_HIGH_SURROGATE_END);
+bool XChar_is_high_surrogate(const XChar ch) {
+    return ch && (ch >= UTF16_HIGH_SURROGATE_START &&
+        ch <= UTF16_HIGH_SURROGATE_END);
 }
 
-bool XChar_is_low_surrogate(const XChar* ch) {
-    return ch && (ch->code >= UTF16_LOW_SURROGATE_START &&
-        ch->code <= UTF16_LOW_SURROGATE_END);
+bool XChar_is_low_surrogate(const XChar ch) {
+    return ch && (ch >= UTF16_LOW_SURROGATE_START &&
+        ch <= UTF16_LOW_SURROGATE_END);
 }
 
-bool XChar_is_surrogate(const XChar* ch) {
+bool XChar_is_surrogate(const XChar ch) {
     return XChar_is_high_surrogate(ch) || XChar_is_low_surrogate(ch);
 }
 
 // 从代理对获取完整Unicode码点
-uint32_t XChar_surrogate_to_unicode(const XChar* high, const XChar* low) {
-    if (!high || !low || !XChar_is_high_surrogate(high) || !XChar_is_low_surrogate(low)) {
+uint32_t XChar_surrogate_to_unicode(const XChar high, const XChar low) {
+    if (!XChar_is_high_surrogate(high) || !XChar_is_low_surrogate(low)) {
         return 0;
     }
-    uint32_t high_val = high->code - UTF16_HIGH_SURROGATE_START;
-    uint32_t low_val = low->code - UTF16_LOW_SURROGATE_START;
+    uint32_t high_val = high - UTF16_HIGH_SURROGATE_START;
+    uint32_t low_val = low - UTF16_LOW_SURROGATE_START;
     return (high_val << 10) + low_val + SURROGATE_OFFSET;
 }
 
 // 字符比较
-bool XEquality_XChar(const XChar* a, const XChar* b) {
-    if (!a || !b) return false; // 空指针比较为false
-    return a->code == b->code;
+bool XEquality_XChar(const XChar a, const XChar b) {
+    return a == b;
 }
 
-bool XChar_equals(const XChar* a, const XChar* b, XCharCaseSensitivity cs)
+bool XChar_equals(const XChar a, const XChar b, XCharCaseSensitivity cs)
 {
     if (cs == XCharCaseSensitive) {
-        return a->code == b->code;
+        return a == b;
     }
     else {
         XChar a_lower = XChar_to_lower(a);
         XChar b_lower = XChar_to_lower(b);
-        return a_lower.code == b_lower.code;
+        return a_lower == b_lower;
     }
 }
 
-int XChar_compare(const XChar* a, const XChar* b) {
-    if (!a && !b) return 0;
-    if (!a) return -1;
-    if (!b) return 1;
-    return (a->code > b->code) ? 1 : (a->code < b->code ? -1 : 0);
+int XChar_compare(const XChar a, const XChar b) {
+    return (a> b) ? 1 : (a < b ? -1 : 0);
 }
 
 
@@ -812,7 +794,7 @@ int64_t XChar_from_utf8_stream(const uint8_t* utf8, size_t input_size, XChar* ou
 
     // 添加终止符
     if (out_idx < max_out) {
-        out[out_idx] = XCharNULL;
+        out[out_idx] = 0;
     }
     else {
         return -1; // 缓冲区不足
@@ -828,7 +810,7 @@ int64_t XChar_to_utf8_stream(const XChar* ch, size_t input_count, uint8_t* utf8,
     size_t ch_count = 0;
     if (input_count == 0) {
         // 自动检测终止符
-        while (ch[ch_count].code != 0) {
+        while (ch[ch_count] != 0) {
             ch_count++;
         }
     }
@@ -836,7 +818,7 @@ int64_t XChar_to_utf8_stream(const XChar* ch, size_t input_count, uint8_t* utf8,
         // 使用指定数量，但不超过终止符位置
         ch_count = input_count;
         for (size_t i = 0; i < input_count; i++) {
-            if (ch[i].code == 0) {
+            if (ch[i] == 0) {
                 ch_count = i;
                 break;
             }
@@ -847,11 +829,11 @@ int64_t XChar_to_utf8_stream(const XChar* ch, size_t input_count, uint8_t* utf8,
     if (!utf8 || max_utf8 == 0) {
         size_t byte_count = 0;
         for (size_t i = 0; i < ch_count; i++) {
-            uint32_t code = ch[i].code;
+            uint32_t code = ch[i];
 
             // 处理代理对
-            if (XChar_is_high_surrogate(&ch[i]) && i + 1 < ch_count) {
-                code = XChar_surrogate_to_unicode(&ch[i], &ch[i + 1]);
+            if (XChar_is_high_surrogate(ch[i]) && i + 1 < ch_count) {
+                code = XChar_surrogate_to_unicode(ch[i], ch[i + 1]);
                 i++; // 跳过低代理
             }
 
@@ -877,11 +859,11 @@ int64_t XChar_to_utf8_stream(const XChar* ch, size_t input_count, uint8_t* utf8,
     // 实际转换
     size_t out_idx = 0;
     for (size_t i = 0; i < ch_count && out_idx + 1 < max_utf8; i++) {
-        uint32_t code = ch[i].code;
+        uint32_t code = ch[i];
 
         // 处理代理对
-        if (XChar_is_high_surrogate(&ch[i]) && i + 1 < ch_count) {
-            code = XChar_surrogate_to_unicode(&ch[i], &ch[i + 1]);
+        if (XChar_is_high_surrogate(ch[i]) && i + 1 < ch_count) {
+            code = XChar_surrogate_to_unicode(ch[i], ch[i + 1]);
             i++; // 跳过低代理
         }
 
@@ -968,7 +950,7 @@ int64_t XChar_from_utf16_stream(const uint16_t* utf16_str, size_t input_size, XC
 
     // 添加终止符
     if (out_idx < max_count) {
-        out_xchars[out_idx] = XCharNULL;
+        out_xchars[out_idx] = 0;
     }
     else {
         return -1;
@@ -983,14 +965,14 @@ int64_t XChar_to_utf16_stream(const XChar* xchars, size_t input_count, uint16_t*
     // 计算实际输入XChar数量
     size_t xchar_count = 0;
     if (input_count == 0) {
-        while (xchars[xchar_count].code != 0) {
+        while (xchars[xchar_count] != 0) {
             xchar_count++;
         }
     }
     else {
         xchar_count = input_count;
         for (size_t i = 0; i < input_count; i++) {
-            if (xchars[i].code == 0) {
+            if (xchars[i] == 0) {
                 xchar_count = i;
                 break;
             }
@@ -1005,7 +987,7 @@ int64_t XChar_to_utf16_stream(const XChar* xchars, size_t input_count, uint16_t*
     // 实际转换
     size_t out_idx = 0;
     while (out_idx < xchar_count && out_idx + 1 < buf_size) {
-        out_buf[out_idx] = xchars[out_idx].code;
+        out_buf[out_idx] = xchars[out_idx];
         out_idx++;
     }
 
@@ -1080,7 +1062,7 @@ int64_t XChar_from_utf32_stream(const uint32_t* utf32, size_t input_count, XChar
 
     // 添加终止符
     if (out_idx < max_out) {
-        out[out_idx] = XCharNULL;
+        out[out_idx] = 0;
     }
     else {
         return -1;
@@ -1095,14 +1077,14 @@ int64_t XChar_to_utf32_stream(const XChar* ch, size_t input_count, uint32_t* utf
     // 计算实际输入XChar数量
     size_t ch_count = 0;
     if (input_count == 0) {
-        while (ch[ch_count].code != 0) {
+        while (ch[ch_count] != 0) {
             ch_count++;
         }
     }
     else {
         ch_count = input_count;
         for (size_t i = 0; i < input_count; i++) {
-            if (ch[i].code == 0) {
+            if (ch[i] == 0) {
                 ch_count = i;
                 break;
             }
@@ -1113,7 +1095,7 @@ int64_t XChar_to_utf32_stream(const XChar* ch, size_t input_count, uint32_t* utf
     if (!utf32 || max_utf32 == 0) {
         size_t utf32_count = 0;
         for (size_t i = 0; i < ch_count; i++) {
-            if (XChar_is_high_surrogate(&ch[i]) && i + 1 < ch_count) {
+            if (XChar_is_high_surrogate(ch[i]) && i + 1 < ch_count) {
                 i++; // 跳过低代理
             }
             utf32_count++;
@@ -1125,12 +1107,12 @@ int64_t XChar_to_utf32_stream(const XChar* ch, size_t input_count, uint32_t* utf
     size_t out_idx = 0;
     for (size_t i = 0; i < ch_count && out_idx + 1 < max_utf32; i++) {
         uint32_t code;
-        if (XChar_is_high_surrogate(&ch[i]) && i + 1 < ch_count) {
-            code = XChar_surrogate_to_unicode(&ch[i], &ch[i + 1]);
+        if (XChar_is_high_surrogate(ch[i]) && i + 1 < ch_count) {
+            code = XChar_surrogate_to_unicode(ch[i], ch[i + 1]);
             i++; // 跳过低代理
         }
         else {
-            code = ch[i].code;
+            code = ch[i];
         }
         utf32[out_idx++] = code;
     }
@@ -1183,7 +1165,7 @@ int64_t XChar_from_latin1_stream(const uint8_t* latin1, size_t input_size, XChar
 
     // 添加终止符
     if (out_idx < max_out) {
-        out[out_idx] = XCharNULL;
+        out[out_idx] = 0;
     }
     else {
         return -1;
@@ -1198,14 +1180,14 @@ int64_t XChar_to_latin1_stream(const XChar* ch, size_t input_count, uint8_t* lat
     // 计算实际输入XChar数量
     size_t ch_count = 0;
     if (input_count == 0) {
-        while (ch[ch_count].code != 0) {
+        while (ch[ch_count] != 0) {
             ch_count++;
         }
     }
     else {
         ch_count = input_count;
         for (size_t i = 0; i < input_count; i++) {
-            if (ch[i].code == 0) {
+            if (ch[i] == 0) {
                 ch_count = i;
                 break;
             }
@@ -1214,7 +1196,7 @@ int64_t XChar_to_latin1_stream(const XChar* ch, size_t input_count, uint8_t* lat
 
     // 检查是否有超出Latin1范围的码点
     for (size_t i = 0; i < ch_count; i++) {
-        if (ch[i].code > 0xFF) {
+        if (ch[i] > 0xFF) {
             return -1; // 超出范围
         }
     }
@@ -1227,7 +1209,7 @@ int64_t XChar_to_latin1_stream(const XChar* ch, size_t input_count, uint8_t* lat
     // 实际转换
     size_t out_idx = 0;
     while (out_idx < ch_count && out_idx + 1 < max_latin1) {
-        latin1[out_idx] = (uint8_t)ch[out_idx].code;
+        latin1[out_idx] = (uint8_t)ch[out_idx];
         out_idx++;
     }
 
@@ -1276,7 +1258,7 @@ int64_t XChar_from_gbk_stream(const char* gbk, size_t input_size, XChar* out, si
     if (actual_len == 0) {
         // 空字符串处理
         if (out && max_out > 0) {
-            out[0] = XCharNULL;
+            out[0] = 0;
         }
         return 0;
     }
@@ -1307,7 +1289,7 @@ int64_t XChar_from_gbk_stream(const char* gbk, size_t input_size, XChar* out, si
     }
 
     // 添加终止符
-    out[wchar_count - 1] = XCharNULL;
+    out[wchar_count - 1] = 0;
 
 #elif defined(__linux__)
     // Linux平台使用iconv
@@ -1352,7 +1334,7 @@ int64_t XChar_from_gbk_stream(const char* gbk, size_t input_size, XChar* out, si
 
     // 添加终止符
     size_t converted = (max_out * 2 - out_left) / 2;
-    out[converted] = XCharNULL;
+    out[converted] = 0;
     required = (int64_t)converted;
 
     iconv_close(cd);
@@ -1369,14 +1351,14 @@ int64_t XChar_to_gbk_stream(const XChar* ch, size_t input_count, char* gbk, size
     size_t actual_count = input_count;
     if (input_count == 0) {
         // 自动检测终止符
-        while (ch[actual_count].code != 0) {
+        while (ch[actual_count] != 0) {
             actual_count++;
         }
     }
     else {
         // 使用指定大小，但不超过终止符位置
         for (size_t i = 0; i < input_count; i++) {
-            if (ch[i].code == 0) {
+            if (ch[i] == 0) {
                 actual_count = i;
                 break;
             }
