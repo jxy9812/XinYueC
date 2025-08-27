@@ -40,7 +40,7 @@ XVtable* XTimerGroupWheel_class_init()
 void VXTimerGroupWheel_deinit(XTimerGroupWheel* group)
 {
     if (group->m_mutex)
-        XMutex_lock_base(group->m_mutex);
+        XMutex_lock(group->m_mutex);
 
     if (group->m_timeWheel != NULL)
     {
@@ -51,11 +51,11 @@ void VXTimerGroupWheel_deinit(XTimerGroupWheel* group)
     }
 
     if (group->m_mutex)
-        XMutex_unlock_base(group->m_mutex);
+        XMutex_unlock(group->m_mutex);
 
     if (group->m_mutex)
     {
-        XMutex_delete_base(group->m_mutex);
+        XMutex_delete(group->m_mutex);
         group->m_mutex = NULL;
     }
 
@@ -108,12 +108,12 @@ bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerWheel* timer)
     parent->m_timerGroup = group;
 
     if (group->m_mutex)
-        XMutex_lock_base(group->m_mutex);
+        XMutex_lock(group->m_mutex);
 
     bool result = addTimer(group, timer, timeout_ticks);
 
     if (group->m_mutex)
-        XMutex_unlock_base(group->m_mutex);
+        XMutex_unlock(group->m_mutex);
 
     return result;
 }
@@ -124,7 +124,7 @@ bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerWheel* timer)
         return false;
 
     if (group->m_mutex)
-        XMutex_lock_base(group->m_mutex);
+        XMutex_lock(group->m_mutex);
 
     XListSLinked_remove_base(timer->m_list, &timer);
     timer->m_list = NULL;
@@ -133,7 +133,7 @@ bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerWheel* timer)
         XTimerBase_delete_base(timer);
 
     if (group->m_mutex)
-        XMutex_unlock_base(group->m_mutex);
+        XMutex_unlock(group->m_mutex);
 
     return true;
 }
@@ -151,12 +151,12 @@ void VXTimerGroupWheel_addTimeWheel(XTimerGroupWheel* group, size_t slotsCount)
     XVector_resize_base(wheel.m_slots, slotsCount);
 
     if (group->m_mutex)
-        XMutex_lock_base(group->m_mutex);
+        XMutex_lock(group->m_mutex);
 
     XVector_push_back_base(group->m_timeWheel, &wheel);
 
     if (group->m_mutex)
-        XMutex_unlock_base(group->m_mutex);
+        XMutex_unlock(group->m_mutex);
 }
 
 void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
@@ -165,7 +165,7 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
         return;
 
     if (group->m_mutex)
-        XMutex_lock_base(group->m_mutex);
+        XMutex_lock(group->m_mutex);
 
     XTimeWheel* wheel = XVector_back_base(group->m_timeWheel);
     if (wheel->m_slots != NULL)
@@ -181,10 +181,10 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
                 {
                     XTimerWheel* timer = XListSNode_Data(node, XTimerWheel*);
                     if (group->m_mutex)
-                        XMutex_unlock_base(group->m_mutex);
+                        XMutex_unlock(group->m_mutex);
                     XTimerBase_delete_base(timer);
                     if (group->m_mutex)
-                        XMutex_lock_base(group->m_mutex);
+                        XMutex_lock(group->m_mutex);
                     node = node->next;
                 }
                 XListSLinked_delete_base(list);
@@ -195,7 +195,7 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
     XVector_pop_back_base(group->m_timeWheel);
 
     if (group->m_mutex)
-        XMutex_unlock_base(group->m_mutex);
+        XMutex_unlock(group->m_mutex);
 }
 
 // 将定时器从高级轮降级到低级轮
@@ -206,7 +206,7 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
         return;
 
    /* if (group->m_mutex)
-        XMutex_lock_base(group->m_mutex);*/
+        XMutex_lock(group->m_mutex);*/
 
     for (XListSLinked_iterator* it = XContainerDataPtr(list); it != NULL; it = ((XListSNode*)it)->next)
     {
@@ -224,10 +224,10 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
             if (remaining_ticks < ticksCompare)
             {
                 if (group->m_mutex)
-                    XMutex_unlock_base(group->m_mutex);
+                    XMutex_unlock(group->m_mutex);
                 add_timer_to_wheel(wheel, timer, remaining_ticks / wheelSize);
                 if (group->m_mutex)
-                    XMutex_lock_base(group->m_mutex);
+                    XMutex_lock(group->m_mutex);
                 break;
             }
             wheelSize *= XContainerSize(wheel->m_slots);
@@ -237,7 +237,7 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
     XListSLinked_clear_base(list);
 
   /*  if (group->m_mutex)
-        XMutex_unlock_base(group->m_mutex);*/
+        XMutex_unlock(group->m_mutex);*/
 }
 
 void VXTimerGroupBase_poll(XTimerGroupWheel* group)
@@ -254,7 +254,7 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
     }
 
     if (group->m_mutex)
-        XMutex_lock_base(group->m_mutex);
+        XMutex_lock(group->m_mutex);
 
     // 处理时间跳跃：循环推进多个滴答
     while (tick > groupBase->m_current_tick)
@@ -273,7 +273,7 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
             XContainerCapacity(list) = 0;
 
             if (group->m_mutex)
-                XMutex_unlock_base(group->m_mutex);
+                XMutex_unlock(group->m_mutex);
 
             for (XListSLinked_iterator* it = XContainerDataPtr(&cList); it != NULL; it = ((XListSNode*)it)->next)
             {
@@ -291,10 +291,10 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
                     size_t timeout_ticks = timerBase->m_interval / group->m_parent.m_precision;
                     timer->m_expire_ticks = groupBase->m_current_tick + timeout_ticks;
                     if (group->m_mutex)
-                        XMutex_lock_base(group->m_mutex);
+                        XMutex_lock(group->m_mutex);
                     addTimer(group, timer, timeout_ticks);
                     if (group->m_mutex)
-                        XMutex_unlock_base(group->m_mutex);
+                        XMutex_unlock(group->m_mutex);
                 }
                 else if (((XTimerBase*)timer)->m_autoDelete)
                 {
@@ -311,7 +311,7 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
             XListSLinked_clear_base(&cList);
 
             if (group->m_mutex)
-                XMutex_lock_base(group->m_mutex);
+                XMutex_lock(group->m_mutex);
         }
         // 低级轮向前推进
         ++wheel->m_tick;
@@ -339,5 +339,5 @@ void VXTimerGroupBase_poll(XTimerGroupWheel* group)
     }
 
     if (group->m_mutex)
-        XMutex_unlock_base(group->m_mutex);
+        XMutex_unlock(group->m_mutex);
 }

@@ -1,4 +1,5 @@
-﻿#ifndef XWAITCONDITION_H
+﻿
+#ifndef XWAITCONDITION_H
 #define XWAITCONDITION_H
 
 #ifdef __cplusplus
@@ -6,34 +7,13 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
-#include "XMutex.h"  // 依赖互斥锁接口
+#include <stdint.h>
+#include "XMutex.h"  // 依赖互斥锁
 
-// 平台无关结构体声明
+// 只声明结构体，不定义具体实现
 typedef struct XWaitCondition XWaitCondition;
-
-// 平台相关句柄定义（内部使用，用户无需关心）
-#ifdef _WIN32
-#include <windows.h>
-typedef CONDITION_VARIABLE XWaitConditionHandle;
-#elif defined(configUSE_FREERTOS)
-#include "FreeRTOS.h"
-#include "semphr.h"
-    typedef struct {
-        SemaphoreHandle_t sem;       // 信号量
-        volatile int wait_count;     // 等待线程数
-        StaticSemaphore_t sem_buf;   // 静态信号量缓冲区
-    } XWaitConditionHandle;
-#else
-#include <pthread.h>
-    typedef pthread_cond_t XWaitConditionHandle;
-#endif
-
-// 条件变量结构体（不依赖XClass，无继承）
-struct XWaitCondition 
-{
-    XWaitConditionHandle handle;  // 平台相关句柄
-};
-
+//获取此类型的大小
+size_t XWaitCondition_getTypeSize();
 /**
  * @brief 初始化条件变量（栈对象）
  * @param cond 待初始化的XWaitCondition指针

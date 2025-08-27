@@ -31,12 +31,12 @@ XThread* XThread_currentThread()
     }
     if (mutex == NULL)
     {
-        mutex = XMutex_create(NULL);
+        mutex = XMutex_create(XMutex_Normal);
     }
     size_t id = XThread_currentThreadId();
-    XMutex_lock_base(mutex);
+    XMutex_lock(mutex);
     XThread** ptr=XHashMap_value_base(threadMap, id);
-    XMutex_unlock_base(mutex);
+    XMutex_unlock(mutex);
     if(ptr)
         return *ptr;
     return NULL;
@@ -44,9 +44,9 @@ XThread* XThread_currentThread()
 void XThread_mapRemove(XThread* Object)
 {
     size_t id = XThread_currentThreadId();
-    XMutex_lock_base(mutex);
+    XMutex_lock(mutex);
     XHashMap_remove_base(threadMap,&id);
-    XMutex_unlock_base(mutex);
+    XMutex_unlock(mutex);
 }
 // 创建 XThread 对象
 XThread* XThread_create(void (*start_routine)(void*), void* arg)

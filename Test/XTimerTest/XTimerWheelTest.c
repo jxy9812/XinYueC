@@ -4,12 +4,12 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
-
+#include"XPrintf.h"
 static void Callback1(void* userData)
 {
 	static size_t current = 0;
 
-	printf("定时器1触发:%d ms\n",XTimerBase_getCurrentTime()-current);
+	XPrintf_utf8_fmt("定时器1触发:%d ms\n",XTimerBase_getCurrentTime()-current);
 	current = XTimerBase_getCurrentTime();
 
 	/*XTimerWheel* timer = XTimerWheel_create();
@@ -23,13 +23,13 @@ static void Callback2(void* userData)
 {
 	static size_t current = 0;
 
-	printf("定时器2触发:%d ms\n", XTimerBase_getCurrentTime() - current);
+	XPrintf_utf8_fmt("定时器2触发:%d ms\n", XTimerBase_getCurrentTime() - current);
 	current = XTimerBase_getCurrentTime();
 }
 
 void XTimerWheelTest()
 {
-	printf("时间轮定时器测试\n");
+	XPrintf_utf8_fmt("时间轮定时器测试\n");
 	XTimerGroupWheel* wheel=XTimerGroupWheel_create(1);
 	XTimerGroupWheel_addTimeWheel_base(wheel,10);
 	XTimerGroupWheel_addTimeWheel_base(wheel,10);

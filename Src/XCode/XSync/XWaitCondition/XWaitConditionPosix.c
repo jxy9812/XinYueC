@@ -1,17 +1,28 @@
-﻿#ifdef __linux__
+﻿#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 #include "XWaitCondition.h"
 #include "XMemory.h"
 #include <pthread.h>
 #include <errno.h>
 #include <time.h>
+
+// POSIX平台具体结构体定义
+struct XWaitCondition {
+    pthread_cond_t cond;
+};
+
+size_t XWaitCondition_getTypeSize()
+{
+    return sizeof(struct XWaitCondition);
+}
+
 void XWaitCondition_init(XWaitCondition* cond) {
     if (cond == NULL) return;
-    pthread_cond_init(&cond->handle, NULL);
+    pthread_cond_init(&cond->cond, NULL);
 }
 
 void XWaitCondition_deinit(XWaitCondition* cond) {
     if (cond == NULL) return;
-    pthread_cond_destroy(&cond->handle);
+    pthread_cond_destroy(&cond->cond);
 }
 
 XWaitCondition* XWaitCondition_create() {
@@ -28,12 +39,16 @@ void XWaitCondition_delete(XWaitCondition* cond) {
     XMemory_free(cond);
 }
 
-bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int timeout) {
+bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int32_t timeout) {
     if (cond == NULL || mutex == NULL) return false;
+
+    // 获取POSIX互斥锁句柄
+    pthread_mutex_t* pthread_mutex = (pthread_mutex_t*)XMutex_getNativeHandle(mutex);
+    if (!pthread_mutex) return false;
 
     if (timeout == -1) {
         // 无限等待：原子释放锁并等待
-        return pthread_cond_wait(&cond->handle, (pthread_mutex_t*)mutex->m_mutex) == 0;
+        return pthread_cond_wait(&cond->cond, pthread_mutex) == 0;
     }
     else {
         // 超时等待：转换毫秒为timespec（绝对时间）
@@ -49,18 +64,18 @@ bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int timeout) {
         }
 
         // 原子释放锁并等待超时
-        return pthread_cond_timedwait(&cond->handle, (pthread_mutex_t*)mutex->m_mutex, &ts) == 0;
+        return pthread_cond_timedwait(&cond->cond, pthread_mutex, &ts) == 0;
     }
 }
 
 void XWaitCondition_wakeOne(XWaitCondition* cond) {
     if (cond == NULL) return;
-    pthread_cond_signal(&cond->handle);
+    pthread_cond_signal(&cond->cond);
 }
 
 void XWaitCondition_wakeAll(XWaitCondition* cond) {
     if (cond == NULL) return;
-    pthread_cond_broadcast(&cond->handle);
+    pthread_cond_broadcast(&cond->cond);
 }
 
 #endif

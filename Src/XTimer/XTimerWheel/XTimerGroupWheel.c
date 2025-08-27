@@ -1,7 +1,7 @@
 ﻿#include"XTimerGroupWheel.h"
 #include"XMemory.h"
 #include"XVector.h"
-#include"XSemaphore.h"
+#include"XMutex.h"
 #include<string.h>
 XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision)
 {
@@ -46,11 +46,11 @@ void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex)
 	if (group == NULL)
 	{
 		if(mutex)
-			XMutex_delete_base(mutex);
+			XMutex_delete(mutex);
 		return;
 	}
 	if (group->m_mutex)
-		XMutex_delete_base(group->m_mutex);
+		XMutex_delete(group->m_mutex);
 	group->m_mutex = mutex;
 }
 void XTimerGroupWheel_setGlobal()
@@ -62,5 +62,5 @@ void XTimerGroupWheel_setGlobal()
 	XTimerGroupWheel_addTimeWheel_base(group,100);
 	XTimerGroupWheel_addTimeWheel_base(group,100);
 	XTimerGroupBase_setGlobal(group);
-	XTimerGroupWheel_setMutex(group, XSemaphore_create(NULL));
+	XTimerGroupWheel_setMutex(group, XMutex_create(XMutex_Normal));
 }
