@@ -94,7 +94,7 @@ XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* re
 	//添加
 	XListBase_push_back_base(signalObj->connList,&conn);
 	XConnection* ptr=XListBase_back_base(signalObj->connList);
-	if (receiver)
+	if (receiver&&receiver!= manager->obj)
 	{//存在接收对象 添加绑定的信号
 		if(receiver->m_signalSlot==NULL)
 			receiver->m_signalSlot = XSignalSlot_create(receiver);
@@ -177,7 +177,7 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal, const void* args)
 	for (XListSLinkedAtomic_iterator it = XListSLinkedAtomic_begin(signalObj->connList), endIt = XListSLinkedAtomic_end(signalObj->connList); !XListSLinkedAtomic_iterator_equality(&it, &endIt); )
 	{
 		conn=XListSLinkedAtomic_iterator_data(&it);
-		switch (conn->type)
+		switch (conn->type & (~XConnectionType_SingleShot))
 		{
 		case XConnectionType_Auto:Auto_emit(conn, args,NULL); break;
 		case XConnectionType_Direct:Direct_emit(conn, args,NULL); break;

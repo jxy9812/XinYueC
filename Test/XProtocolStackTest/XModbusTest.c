@@ -40,6 +40,7 @@ void XModbusTest()
 {
     XSerialPortBase* serial = XSerialPort_create();
     XObject_connect(serial, XObject_deinit_signal(NULL), serial, deinit_slot, XConnectionType_Auto);
+    XObject_connect(serial, XObject_deinit_signal(NULL), serial, deinit_slot, XConnectionType_Auto| XConnectionType_SingleShot);
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
     XSocket* socket = XSocket_create();
