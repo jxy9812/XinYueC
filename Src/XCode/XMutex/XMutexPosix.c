@@ -1,9 +1,11 @@
-﻿#ifdef _WIN32
+﻿#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 #include "XMutex.h"
 #include "XMemory.h"
-#include <windows.h>
+#include <pthread.h>
+#include <time.h>
 #include <stdio.h>
-typedef CRITICAL_SECTION XMutexHandle;  // Windows 用临界区（与条件变量匹配）
+typedef pthread_mutex_t XMutexHandle;    // POSIX 用 pthread 互斥锁
+
 // 虚函数实现
 static void VXMutex_deinit(XMutex* mutex);
 static bool VXMutex_lock(XMutex* mutex);
@@ -29,14 +31,14 @@ XVtable* XMutex_class_init() {
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMutex_deinit);
 
 #if SHOWCONTAINERSIZE
-    printf("XMutexWin32 size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+    printf("XMutexPosix size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
     return XVTABLE_DEFAULT;
 }
 
 // 创建堆对象
 XMutex* XMutex_create(const char* name) {
-    (void)name;  // 忽略名称（Windows 临界区无需命名）
+    (void)name;  // 忽略名称（POSIX 互斥锁无需命名）
     XMutex* mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
     if (mutex) {
         XMutex_init(mutex, name);
@@ -51,17 +53,21 @@ void XMutex_init(XMutex* mutex, const char* name) {
     XClass_init(&mutex->m_parent);
     XClassGetVtable(mutex) = XMutex_class_init();
 
-    // 分配并初始化临界区（与 XWaitCondition 匹配）
+    // 分配并初始化 pthread 互斥锁
     mutex->m_mutex = (XMutexHandle*)XMemory_malloc(sizeof(XMutexHandle));
     if (mutex->m_mutex) {
-        InitializeCriticalSection(mutex->m_mutex);
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);  // 支持递归锁
+        pthread_mutex_init(mutex->m_mutex, &attr);
+        pthread_mutexattr_destroy(&attr);
     }
 }
 
 // 销毁对象
 static void VXMutex_deinit(XMutex* mutex) {
     if (!mutex || !mutex->m_mutex) return;
-    DeleteCriticalSection(mutex->m_mutex);  // 销毁临界区
+    pthread_mutex_destroy(mutex->m_mutex);  // 销毁互斥锁
     XMemory_free(mutex->m_mutex);
     mutex->m_mutex = NULL;
     // 调用父类析构
@@ -71,36 +77,29 @@ static void VXMutex_deinit(XMutex* mutex) {
 // 无限等待上锁
 static bool VXMutex_lock(XMutex* mutex) {
     if (!mutex || !mutex->m_mutex) return false;
-    EnterCriticalSection(mutex->m_mutex);  // 进入临界区（阻塞等待）
-    return true;
+    return pthread_mutex_lock(mutex->m_mutex) == 0;
 }
 
-// 超时等待上锁（Windows 临界区不直接支持超时，用 TryEnterCriticalSection 模拟）
+// 超时等待上锁
 static bool VXMutex_lock_wait(XMutex* mutex, size_t timeout) {
     if (!mutex || !mutex->m_mutex) return false;
 
-    const DWORD interval = 10;  // 轮询间隔（毫秒）
-    DWORD start = GetTickCount();
-
-    while (true) {
-        // 尝试上锁
-        if (TryEnterCriticalSection(mutex->m_mutex)) {
-            return true;
-        }
-        // 检查超时
-        if (GetTickCount() - start >= timeout) {
-            return false;
-        }
-        // 短暂休眠后重试
-        Sleep(interval);
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);  // 用单调时钟（不受系统时间调整影响）
+    ts.tv_sec += timeout / 1000;
+    ts.tv_nsec += (timeout % 1000) * 1000000;  // 毫秒转纳秒
+    if (ts.tv_nsec >= 1000000000) {
+        ts.tv_sec += 1;
+        ts.tv_nsec -= 1000000000;
     }
+
+    return pthread_mutex_timedlock(mutex->m_mutex, &ts) == 0;
 }
 
 // 解锁
 static bool VXMutex_unlock(XMutex* mutex) {
     if (!mutex || !mutex->m_mutex) return false;
-    LeaveCriticalSection(mutex->m_mutex);  // 离开临界区
-    return true;
+    return pthread_mutex_unlock(mutex->m_mutex) == 0;
 }
 
 #endif
