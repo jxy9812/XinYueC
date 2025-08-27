@@ -15,12 +15,12 @@
 #include"XPrintf.h"
 static deinit_slot(XObject* sender, XObject* receiver, void* args)
 {
-    XPrintf_utf8_fmt("sender:%p receiver:%p 串口释放\n",sender,receiver);
+    XPrintf("sender:%p receiver:%p 串口释放\n",sender,receiver);
 }
 
 static connected_slot(XObject* sender, XObject* receiver, void* args)
 {
-    XPrintf_utf8_fmt("sender:%p receiver:%p 网络已连接\n", sender, receiver);
+    XPrintf("sender:%p receiver:%p 网络已连接\n", sender, receiver);
 }
 static XSwitchDeviceModbus* SW;
 static void StateChangeCallback0(XSwitchDeviceBase* sw)

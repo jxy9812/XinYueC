@@ -13,9 +13,9 @@ void zlibTest()
 	char compress_buff[100] = {0};
 	char decompress_buff[100] = { 0 };
 	int out_len=zlib_compress(str,strlen(str)+1,compress_buff,sizeof(compress_buff));
-	XPrintf_utf8_fmt("压缩后大小:%d\n",out_len);
+	XPrintf("压缩后大小:%d\n",out_len);
 	out_len = zlib_decompress(compress_buff, out_len, decompress_buff, sizeof(decompress_buff));
-	XPrintf_utf8_fmt("解压后大小:%d\t数据:%s\n", out_len, decompress_buff);
+	XPrintf("解压后大小:%d\t数据:%s\n", out_len, decompress_buff);
 	XCoreApplication_requestQuit();
 }
 void zlibByteArrayTest()
@@ -25,9 +25,9 @@ void zlibByteArrayTest()
 	XByteArray* data = XByteArray_create(0);
 	XByteArray_append_array_base(data, str, strlen(str) + 1);
 	XByteArray* compress_buff = XByteArray_toCompress(data);
-	XPrintf_utf8_fmt("压缩后大小:%d\n", XByteArray_size_base(compress_buff));
+	XPrintf("压缩后大小:%d\n", XByteArray_size_base(compress_buff));
 	XByteArray* decompress_buff = XByteArray_toDecompress(compress_buff);
-	XPrintf_utf8_fmt("解压后大小:%d\t数据:%s\n", XByteArray_size_base(decompress_buff), XContainerDataPtr(decompress_buff));
+	XPrintf("解压后大小:%d\t数据:%s\n", XByteArray_size_base(decompress_buff), XContainerDataPtr(decompress_buff));
 	XByteArray_delete_base(data);
 	XByteArray_delete_base(compress_buff);
 	XByteArray_delete_base(decompress_buff);

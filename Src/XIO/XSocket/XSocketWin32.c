@@ -65,7 +65,7 @@ XVtable* XSocket_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
 #if SHOWCONTAINERSIZE
-    XPrintf_utf8_fmt("XSocket size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+    XPrintf("XSocket size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
     return XVTABLE_DEFAULT;
 }
@@ -357,7 +357,7 @@ static void VXIODevice_setWriteBuffer(XSocket* so, size_t count) {
 
     if (result == SOCKET_ERROR) {
         // 处理错误
-        XPrintf_utf8_fmt("设置发送缓冲区失败: %d\n", WSAGetLastError());
+        XPrintf("设置发送缓冲区失败: %d\n", WSAGetLastError());
     }
 }
 
@@ -376,7 +376,7 @@ static void VXIODevice_setReadBuffer(XSocket* so, size_t count) {
 
     if (result == SOCKET_ERROR) {
         // 处理错误
-        XPrintf_utf8_fmt("设置接收缓冲区失败: %d\n", WSAGetLastError());
+        XPrintf("设置接收缓冲区失败: %d\n", WSAGetLastError());
     }
 }
 
@@ -525,7 +525,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
     WSADATA wsaData;
     result = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (result != 0) {
-        XPrintf_utf8_fmt("WSAStartup failed: %d\n", result);
+        XPrintf("WSAStartup failed: %d\n", result);
         return false;
     }
 
@@ -533,7 +533,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
     if (so->m_pollEvent == NULL) {
         so->m_pollEvent = WSACreateEvent();
         if (so->m_pollEvent == WSA_INVALID_EVENT) {
-            XPrintf_utf8_fmt("WSACreateEvent failed\n");
+            XPrintf("WSACreateEvent failed\n");
             WSACleanup(); // 释放Winsock资源
             return false;
         }
@@ -579,10 +579,10 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
     sprintf(portStr, "%hu", base->m_peerPort);
 
     // 解析服务器地址和端口
-    XPrintf_utf8_fmt("正在解析服务器地址: %s:%s\n", XString_c_str(base->m_peerName), portStr);
+    XPrintf("正在解析服务器地址: %s:%s\n", XString_c_str(base->m_peerName), portStr);
     result = getaddrinfo(XString_c_str(base->m_peerName), portStr, &hints, &(so->m_addrInfo));
     if (result != 0) {
-        XPrintf_utf8_fmt("getaddrinfo failed: %d\n", result);
+        XPrintf("getaddrinfo failed: %d\n", result);
         if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
         {
             ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
@@ -605,7 +605,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         // 创建套接字
         so->m_socket = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
         if (so->m_socket == INVALID_SOCKET) {
-            XPrintf_utf8_fmt("socket failed: %d\n", WSAGetLastError());
+            XPrintf("socket failed: %d\n", WSAGetLastError());
             addr = addr->ai_next;
             continue;
         }
@@ -613,7 +613,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         // 设置套接字为非阻塞模式
         unsigned long nonBlocking = 1;
         if (ioctlsocket(so->m_socket, FIONBIO, &nonBlocking) == SOCKET_ERROR) {
-            XPrintf_utf8_fmt("ioctlsocket failed: %d\n", WSAGetLastError());
+            XPrintf("ioctlsocket failed: %d\n", WSAGetLastError());
             closesocket(so->m_socket);
             so->m_socket = INVALID_SOCKET;
             addr = addr->ai_next;
@@ -623,7 +623,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         // 注册网络事件
         long events = FD_READ | FD_WRITE | FD_CLOSE | FD_CONNECT;
         if (WSAEventSelect(so->m_socket, so->m_pollEvent, events) == SOCKET_ERROR) {
-            XPrintf_utf8_fmt("WSAEventSelect failed: %d\n", WSAGetLastError());
+            XPrintf("WSAEventSelect failed: %d\n", WSAGetLastError());
             closesocket(so->m_socket);
             so->m_socket = INVALID_SOCKET;
             addr = addr->ai_next;
@@ -636,7 +636,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
             if (result == SOCKET_ERROR) {
                 int error = WSAGetLastError();
                 if (error != WSAEWOULDBLOCK) {
-                    XPrintf_utf8_fmt("connect failed: %d\n", error);
+                    XPrintf("connect failed: %d\n", error);
                     closesocket(so->m_socket);
                     so->m_socket = INVALID_SOCKET;
                     addr = addr->ai_next;

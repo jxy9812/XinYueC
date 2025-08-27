@@ -39,7 +39,7 @@ int XPrintf_utf8(const char* utf8_str)
 #endif
 }
 
-int XPrintf_utf8_fmt(const char* format, ...)
+int XPrintf(const char* format, ...)
 {
     if (!format) return 0;
 

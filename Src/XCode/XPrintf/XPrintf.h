@@ -30,7 +30,7 @@ int XPrintf_utf8(const char* utf8_str);
  * @param ... 可变参数列表
  * @return 打印的字符数（参考 printf 返回值）
  */
-int XPrintf_utf8_fmt(const char* format, ...);
+int XPrintf(const char* format, ...);
 
 // 输出单个XChar字符
 int XPrintf_char(XChar* ch);

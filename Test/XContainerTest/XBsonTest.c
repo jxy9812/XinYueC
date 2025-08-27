@@ -55,7 +55,7 @@ void XBsonDocumentTest()
 		XByteArray* bson = XBsonDocument_toBson(doc);
 		{
 			XByteArray* utf8=XByteArray_to16HexUtf8(bson);
-			XPrintf_utf8_fmt("%s\n",XContainerDataPtr(utf8));
+			XPrintf("%s\n",XContainerDataPtr(utf8));
 			XByteArray_delete_base(utf8);
 		}
 		XBsonDocument_delete_base(doc);

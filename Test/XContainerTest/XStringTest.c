@@ -41,8 +41,8 @@ void XStringNumTest()
 		XPrintf_utf8("XString 字符串转整数测试\n");
 		XString* str = XString_create_utf8(NULL);
 		XString_assign_utf8(str, "66666");
-		XPrintf_utf8_fmt("整数:%d\n", XString_toLongLong(str, NULL, 10));
-		XPrintf_utf8_fmt("整数:%.2lf\n", XString_toDouble(str, NULL));
+		XPrintf("整数:%d\n", XString_toLongLong(str, NULL, 10));
+		XPrintf("整数:%.2lf\n", XString_toDouble(str, NULL));
 		XPrintf_utf8("XString 整数转字符串测试\n");
 		XString_setNum_int(str, -6666699, 2);
 		XPrintf_string(str);
@@ -74,7 +74,7 @@ void XStringOperateTest()
 		{
 			int64_t index = XString_index_of_utf8(str, "例子", 0, XCharCaseInsensitive);
 			if (index != -1)
-				XPrintf_utf8_fmt("找到了,index:%d\n", index);
+				XPrintf("找到了,index:%d\n", index);
 		}
 		{
 			if (XString_replace_utf8(str, "一", "1", XCharCaseInsensitive))
@@ -152,11 +152,11 @@ void XStringTest()
 	//XString_append_utf8(str, "  666\r\n");
 	//printf("字符数量%d\n", XString_size(str));
 	//XString_assign_utf8(str, "草泥马");
-	XPrintf_utf8_fmt("字符数量%d\n", XString_size_base(str));
+	XPrintf("字符数量%d\n", XString_size_base(str));
 	XString_append_utf8(str, "你好呀");
 
 	//XString_erase_base(str, 3, 3);
-	XPrintf_utf8_fmt("字符数量%d\n", XString_size_base(str));
+	XPrintf("字符数量%d\n", XString_size_base(str));
 	//XString_erase_base(str, 0, 4);
 	XPrintf_string(str);
 	XString_delete_base(str);

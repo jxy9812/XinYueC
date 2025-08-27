@@ -67,7 +67,7 @@ XVtable* XDataFrameComm_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Disconnect, VXCommunicatorBase_disconnect);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_SetTimerGroup, VXDataFrameComm_setTimerGroup);
 #if SHOWCONTAINERSIZE
-	XPrintf_utf8_fmt("XDataFrameComm size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+	XPrintf("XDataFrameComm size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
@@ -200,7 +200,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			{//检测结束标志
 				if (comm->m_recvFrameTail == NULL || XVector_isEmpty_base(comm->m_recvFrameTail))
 					{
-						XPrintf_utf8_fmt("当前设置是判断结束标志模式,但是未设置帧结束标志,程序无法知道帧结束\n"
+						XPrintf("当前设置是判断结束标志模式,但是未设置帧结束标志,程序无法知道帧结束\n"
 							"XDataFrameComm_setRecvFrameTail_base (设置接收帧尾)\n"
 							"XDataFrameComm_setFrameEndType_base (切换帧尾结束方式)\n");
 						exit(-1);
@@ -221,7 +221,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 }
 void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 {
-	//XPrintf_utf8_fmt("检查是否可以发送\n");
+	//XPrintf("检查是否可以发送\n");
 	 //以下可以发送数据
 	XQueueBase* queue = comm->m_sendFrameQueue;
 	if (XQueueBase_isEmpty_base(queue))
@@ -261,7 +261,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 				XIODeviceBase_writeFull_base(comm->m_parent.m_io);
 			}
 			//发送完成
-			//XPrintf_utf8_fmt("设置发送帧尾巴\n");
+			//XPrintf("设置发送帧尾巴\n");
 			if (comm->m_sendFrameTail)
 			{//当存在发送帧尾先发送帧尾
 				XIODeviceBase_write_base(comm->m_parent.m_io, XContainerDataPtr(comm->m_sendFrameTail), XContainerSize(comm->m_sendFrameTail));
@@ -271,7 +271,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			XString* str = XString_to16HexString(XContainerDataPtr(frame), XContainerSize(frame));
 			if (str != NULL)
 			{
-				XPrintf_utf8_fmt("\n16进制发送帧:%s\n", XString_c_str(str));
+				XPrintf("\n16进制发送帧:%s\n", XString_c_str(str));
 				XString_delete_base(str);
 			}
 #endif // 
@@ -281,7 +281,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 				char c = 0;
 				XVector_push_back_base(frame, &c);
 			}
-			XPrintf_utf8_fmt("\nString发送帧:%s\n", XContainerDataPtr(frame));
+			XPrintf("\nString发送帧:%s\n", XContainerDataPtr(frame));
 #endif // 
 			//发送完成释放资源
 			XQueueBase_pop_base(queue);
@@ -307,7 +307,7 @@ static void  RecvSendData(XDataFrameComm* comm)
 	{
 		if (comm->m_eSndState == XDFC_STATE_TX_XMIT || XIODeviceBase_getBytesAvailable_base(((XCommunicatorBase*)comm)->m_io) == 0)
 		{
-			//XPrintf_utf8_fmt("半双工通信中,发送数据\n");
+			//XPrintf("半双工通信中,发送数据\n");
 			if (comm->m_eRcvState == XDFC_STATE_RX_IDLE && comm->m_eSndState != XDFC_STATE_TX_END)
 			{
 				//VXDataFrameComm_SendFrameFSM(comm);
@@ -316,7 +316,7 @@ static void  RecvSendData(XDataFrameComm* comm)
 		}
 		else if (comm->m_eSndState == XDFC_STATE_TX_IDLE)
 		{
-			//XPrintf_utf8_fmt("半双工通信中,接收数据\n");
+			//XPrintf("半双工通信中,接收数据\n");
 			XClassGetVirtualFunc(comm,EXDataFrameComm_RecvFrameFSM, void (*)(XDataFrameComm *))(comm);
 			//VXDataFrameComm_RecvFrameFSM(comm);
 		}
@@ -408,7 +408,7 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 		{
 			if (((XCommunicatorBase*)comm)->m_timerGroup == NULL)
 			{
-				XPrintf_utf8_fmt("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
+				XPrintf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
 				exit(-1);
 			}
 			XTimerBase* timer = XTimerWheel_create();
@@ -457,7 +457,7 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 		{
 			if (((XCommunicatorBase*)comm)->m_timerGroup == NULL)
 			{
-				XPrintf_utf8_fmt("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
+				XPrintf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
 				exit(-1);
 			}
 			XTimerBase* timer = XTimerWheel_create();
@@ -494,7 +494,7 @@ XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XByteArray* data)
 	if (!XQueueBase_push_base(comm->m_sendFrameQueue, &data))
 	{
 #if XDFC_QUEUE_FULL_SHOW
-		XPrintf_utf8_fmt("发送队列溢出当前最大:%d,建议增大队列,调整:XDFC_FRAME_SEND_QUEUE_COUNT\n", XDFC_FRAME_SEND_QUEUE_COUNT);
+		XPrintf("发送队列溢出当前最大:%d,建议增大队列,调整:XDFC_FRAME_SEND_QUEUE_COUNT\n", XDFC_FRAME_SEND_QUEUE_COUNT);
 #endif
 		XVector_delete_base(data);
 		return XDFC_ENORES;
@@ -513,7 +513,7 @@ static void SendDataPeriodicCb(PeriodicNode* node)
 	if (!XQueueBase_push_base(node->comm->m_sendFrameQueue, &v))
 	{
 #if XDFC_QUEUE_FULL_SHOW
-		XPrintf_utf8_fmt("发送队列溢出当前最大:%d,建议增大队列,调整:XDFC_FRAME_SEND_QUEUE_COUNT\n", XDFC_FRAME_SEND_QUEUE_COUNT);
+		XPrintf("发送队列溢出当前最大:%d,建议增大队列,调整:XDFC_FRAME_SEND_QUEUE_COUNT\n", XDFC_FRAME_SEND_QUEUE_COUNT);
 #endif
 		XVector_delete_base(v);
 		return XDFC_ENORES;
@@ -743,7 +743,7 @@ void VXDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data,
 {
 	if (comm == NULL)
 		return;
-	//XPrintf_utf8_fmt("设置发送帧尾巴\n");
+	//XPrintf("设置发送帧尾巴\n");
 	if (data == NULL)
 	{//关掉发送帧尾
 		if (comm->m_sendFrameTail != NULL)

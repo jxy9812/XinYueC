@@ -7,7 +7,7 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 {
 	if (args == NULL)
 	{
-		XPrintf_utf8_fmt("%s\n参数:%s是NULL\t函数名:%s\n文件路径:%s\n正在编译文件的行号:%d\n", str, argsName, funcName, filePath, line);
+		XPrintf("%s\n参数:%s是NULL\t函数名:%s\n文件路径:%s\n正在编译文件的行号:%d\n", str, argsName, funcName, filePath, line);
 		return true;
 	}
 	return false;
