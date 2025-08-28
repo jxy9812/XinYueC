@@ -8,7 +8,8 @@ extern "C" {
 #include"XEquality.h"
 #include"XLess.h"
 #include"XPair.h"
-typedef struct XMapBase_iterator XMapBase_iterator;
+#include"XMapBase_iterator.h"
+//typedef struct XMapBase_iterator XMapBase_iterator;
 #define XMAPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))       //XMap容器虚函数表大小
 //XMap虚函数表枚举
 XCLASS_DEFINE_BEGING(XMapBase)

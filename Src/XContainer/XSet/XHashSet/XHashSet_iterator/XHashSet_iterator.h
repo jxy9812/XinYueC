@@ -4,14 +4,17 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "XContainerObject_iterator.h"
-#include "XFunctionCallback.h"
+#include "XSetBase_iterator.h"
 XContainerTypeDeclare(XHashSet);
-
-typedef struct
+//typedef  XSetBase_iterator  XHashSet_iterator;
+typedef struct XHashSet_iterator
 {
-    size_t index; // 当前 index
-    void* node;   // 当前节点
+    union //访问方便实际两个变量是一个
+    {
+        void* node;   // 当前节点
+        XSetBase_iterator parent;
+    };
+    size_t index; // 当前index
 } XHashSet_iterator;
 
 XHashSet_iterator XHashSet_begin(XHashSet* this_set);

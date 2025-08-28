@@ -4,9 +4,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "XFunctionCallback.h"
+#include"XFunctionCallback.h"
 #include"XEquality.h"
 #include"XLess.h"
+#include"XSetBase_iterator.h"
+//typedef struct XSetBase_iterator XSetBase_iterator;
 #define XSETBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSetBase))       // XSet容器虚函数表大小
 // XSet虚函数表枚举
 XCLASS_DEFINE_BEGING(XSetBase)
@@ -33,7 +35,7 @@ bool XSetBase_insert_move_base(XSetBase* this_set, const void* pvKey);
 #define XSetBase_Insert_Move_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XSetBase_insert_move_base(this_map,&k,&v);}
 
 // Set删除数据
-void XSetBase_erase_base(XSetBase* this_set, const void* pvKey);
+void XSetBase_erase_base(XSetBase* this_set, const XSetBase_iterator* it, XSetBase_iterator* next);
 // Set移除数据
 bool XSetBase_remove_base(XSetBase* this_set, const void* pvKey);
 #define XSetBase_Remove_Base(this_map,keyType,key) {keyType k=key;XSet_remove_base(this_map,&k);}

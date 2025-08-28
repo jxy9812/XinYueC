@@ -40,10 +40,10 @@ void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash,
 #define XHashSet_delete_base				XSetBase_delete_base	
 #define XHashSet_clear_base				    XSetBase_clear_base	
 #define XHashSet_isEmpty_base				XSetBase_isEmpty_base	
-#define XHashSet_size_base				XSetBase_size_base	
-#define XHashSet_capacity_base			XSetBase_capacity_base
+#define XHashSet_size_base				    XSetBase_size_base	
+#define XHashSet_capacity_base			    XSetBase_capacity_base
 #define XHashSet_swap_base				    XSetBase_swap_base	
-#define XHashSet_typeSize_base			XSetBase_typeSize_base
+#define XHashSet_typeSize_base			    XSetBase_typeSize_base
 
 #ifdef __cplusplus
 }

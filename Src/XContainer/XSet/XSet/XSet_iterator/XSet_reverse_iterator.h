@@ -4,14 +4,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XContainerObject_iterator.h"
-#include"XFunctionCallback.h"
+#include"XSet_iterator.h"
 XContainerTypeDeclare(XSet);
-XContainerTypeDeclare(XPair);
-typedef struct XSet_reverse_iterator
-{
-	void* node;//当前节点
-}XSet_reverse_iterator;
+typedef  XSetBase_iterator  XSet_reverse_iterator;
+
 XSet_reverse_iterator XSet_rbegin(XSet* this_map);
 XSet_reverse_iterator XSet_rend(XSet* this_map);
 bool XSet_reverse_iterator_isRend(const XSet_reverse_iterator* it);

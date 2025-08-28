@@ -7,7 +7,7 @@
 
 //Set插入数据
 static bool VXSet_insert(XSet* this_set, const void* key, XCDataCreatMethod dataCreatMethod);
-static void VXSet_erase(XSet* this_set, const void* key);
+static void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* next);
 //map删除数据
 static bool VXSet_remove(XSet* this_set, const void* key);
 //查找数据，返回找到的XPair地址，没有返回NULL
@@ -140,8 +140,56 @@ bool VXSet_insert(XSet* this_set, const void* pvKey, XCDataCreatMethod dataCreat
 	return true;
 }
 
-void VXSet_erase(XSet* this_set, const void* pvKey)
+void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* next)
 {
+	// 检查参数有效性：容器为空、迭代器为空或迭代器已指向末尾
+	if (XSet_iterator_isEnd(it))
+	{
+		if (next != NULL)
+			*next = XSet_end(this_set);
+		return;
+	}
+
+	// 保存当前节点的下一个节点（删除前先获取，避免删除后迭代器失效）
+	XSet_iterator next_it = *it;
+	XSet_iterator_add(this_set, &next_it);
+
+	// 获取当前迭代器指向的红黑树节点
+	XRBTreeNode* current_node = (XRBTreeNode*)it->node;
+	if (!current_node)
+	{
+		if (next != NULL)
+			*next = next_it;
+		return;
+	}
+
+	// 获取当前节点存储的键值
+	void* current_key = XBTreeNode_GetDataPtr(current_node);
+	if (!current_key)
+	{
+		if (next != NULL)
+			*next = next_it;
+		return;
+	}
+
+	// 从红黑树中删除当前节点
+	XRBTree_remove(
+		&XContainerDataPtr(this_set),                  // 红黑树根节点地址
+		((XSetBase*)this_set)->m_KeyLess,              // 键比较函数
+		((XSetBase*)this_set)->m_KeyEquality,          // 键相等判断函数
+		XCompareRuleOne_XSet,                           // 比较规则
+		current_key,                                   // 要删除的键值
+		XSet_freeNodeData,                             // 节点数据释放回调
+		this_set                                       // 传递容器作为额外参数
+	);
+
+	// 更新容器大小信息
+	--XContainerCapacity(this_set);
+	--XContainerSize(this_set);
+
+	// 设置下一个迭代器
+	if (next != NULL)
+		*next = next_it;
 }
 
 bool VXSet_remove(XSet* this_set, const void* pvKey)

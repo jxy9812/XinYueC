@@ -4,14 +4,10 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XContainerObject_iterator.h"
-#include"XFunctionCallback.h"
+#include"XMapBase_iterator.h"
 XContainerTypeDeclare(XMap);
-XContainerTypeDeclare(XPair);
-typedef struct XMap_iterator
-{
-	void* node;//当前节点
-}XMap_iterator;
+typedef  XMapBase_iterator  XMap_iterator;
+
 XMap_iterator XMap_begin(XMap* this_map);
 XMap_iterator XMap_end(XMap* this_map);
 bool XMap_iterator_isEnd(const XMap_iterator* it);

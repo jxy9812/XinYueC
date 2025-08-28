@@ -8,7 +8,7 @@
 // Set插入数据
 static bool VXSet_insert(XHashSet* this_set, const void* pvKey, XCDataCreatMethod dataCreatMethod);
 // Set删除数据
-static void VXSet_erase(XHashSet* this_set, const void* pvKey);
+static void VXSet_erase(XHashSet* this_set, const XHashSet_iterator* it, XHashSet_iterator* next);
 // Set移除数据
 static bool VXSet_remove(XHashSet* this_set, const void* pvKey);
 // 查找数据，返回是否找到
@@ -133,9 +133,56 @@ bool VXSet_insert(XHashSet* this_set, const void* pvKey, XCDataCreatMethod dataC
     }
 }
 
-void VXSet_erase(XHashSet* this_set, const void* pvKey)
+void VXSet_erase(XHashSet* this_set, const XHashSet_iterator* it, XHashSet_iterator* next)
 {
-    XHashSet_remove_base(this_set, pvKey);
+    // 检查参数有效性：容器为空、迭代器为空或迭代器已指向末尾
+    if (XHashSet_iterator_isEnd(it))
+    {
+        if (next != NULL)
+            *next = XHashSet_end(this_set);
+        return;
+    }
+
+    // 预存下一个迭代器（删除当前节点前先获取，避免迭代器失效）
+    XHashSet_iterator next_it = *it;
+    XHashSet_iterator_add(this_set, &next_it);
+
+    // 获取当前迭代器指向的红黑树节点
+    XRBTreeNode* current_node = (XRBTreeNode*)it->node;
+    if (!current_node)
+    {
+        if (next != NULL)
+            *next = next_it;
+        return;
+    }
+
+    // 获取当前节点存储的键值
+    void* current_key = XBTreeNode_GetDataPtr(current_node);
+    if (!current_key)
+    {
+        if (next != NULL)
+            *next = next_it;
+        return;
+    }
+
+    // 从哈希表对应桶的红黑树中删除节点
+    // 哈希表存储的是红黑树根节点数组，需传入对应桶的根节点地址
+    XRBTree_remove(
+        &((XRBTreeNode**)XContainerDataPtr(this_set))[it->index],  // 对应桶的红黑树根节点指针
+        ((XSetBase*)this_set)->m_KeyLess,                          // 键比较函数
+        ((XSetBase*)this_set)->m_KeyEquality,                      // 键相等判断函数
+        XCompareRuleOne_XSet,                                       // 比较规则
+        current_key,                                               // 要删除的键值
+        XSet_freeNodeData,                                         // 节点数据释放回调
+        this_set                                                   // 传递容器作为额外参数
+    );
+
+    // 更新容器大小（哈希表容量不随元素删除改变，仅更新元素数量）
+    --XContainerSize(this_set);
+
+    // 设置下一个迭代器
+    if (next != NULL)
+        *next = next_it;
 }
 
 bool VXSet_remove(XHashSet* this_set, const void* pvKey)

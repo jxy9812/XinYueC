@@ -4,15 +4,18 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XContainerObject_iterator.h"
-#include"XFunctionCallback.h"
+#include"XMapBase_iterator.h"
 XContainerTypeDeclare(XHashMap);
-XContainerTypeDeclare(XPair);
-typedef struct
+//typedef  XMapBase_iterator  XMapBase_iterator;
+typedef struct XHashMap_iterator
 {
-	size_t index;//当前index;
-	void* node;//当前节点
-}XHashMap_iterator;
+    union //访问方便实际两个变量是一个
+    {
+        void* node;   // 当前节点
+        XMapBase_iterator parent;
+    };
+    size_t index; // 当前index
+} XHashMap_iterator;
 
 XHashMap_iterator XHashMap_begin(XHashMap* this_map);
 XHashMap_iterator XHashMap_end(XHashMap* this_map);

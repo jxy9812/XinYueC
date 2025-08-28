@@ -35,10 +35,10 @@ void XSet_init(XSet* this_map, const size_t keyTypeSize, XEquality KeyEquality, 
 #define XSet_delete_base				XSetBase_delete_base	
 #define XSet_clear_base				    XSetBase_clear_base	
 #define XSet_isEmpty_base				XSetBase_isEmpty_base	
-#define XSet_size_base				XSetBase_size_base	
-#define XSet_capacity_base			XSetBase_capacity_base
+#define XSet_size_base					XSetBase_size_base	
+#define XSet_capacity_base				XSetBase_capacity_base
 #define XSet_swap_base				    XSetBase_swap_base	
-#define XSet_typeSize_base			XSetBase_typeSize_base
+#define XSet_typeSize_base				XSetBase_typeSize_base
 
 #ifdef __cplusplus
 }
