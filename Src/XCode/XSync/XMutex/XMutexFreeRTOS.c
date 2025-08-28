@@ -16,15 +16,15 @@ size_t XMutex_geTypetSize()
 {
     return sizeof(struct XMutex);
 }
-// 内部辅助函数：获取平台相关句柄（供XWaitCondition使用）
-void* XMutex_getNativeHandle(XMutex* mutex) {
-    return mutex ? (void*)mutex->sem : NULL;
-}
+//// 内部辅助函数：获取平台相关句柄（供XWaitCondition使用）
+//void* XMutex_getNativeHandle(XMutex* mutex) {
+//    return mutex ? (void*)mutex->sem : NULL;
+//}
 
-void XMutex_init(XMutex* mutex, XMutex_Type type) {
+void XMutex_init(XMutex* mutex) {
     if (!mutex) return;
 
-    mutex->type = type;
+    mutex->type = XMutex_Normal;
     mutex->recursive_count = 0;
     mutex->owner_task = NULL;
 
@@ -42,10 +42,11 @@ void XMutex_deinit(XMutex* mutex) {
     mutex->sem = NULL;
 }
 
-XMutex* XMutex_create(XMutex_Type type) {
+XMutex* XMutex_create() 
+{
     XMutex* mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
     if (mutex) {
-        XMutex_init(mutex, type);
+        XMutex_init(mutex);
         if (!mutex->sem) {
             XMemory_free(mutex);
             return NULL;
@@ -116,5 +117,8 @@ void XMutex_unlock(XMutex* mutex) {
 bool XMutex_isRecursive(XMutex* mutex) {
     return mutex ? (mutex->type == XMutex_Recursive) : false;
 }
-
+XMutex_Type XMutex_type(XMutex* mutex)
+{
+    return mutex->type;
+}
 #endif

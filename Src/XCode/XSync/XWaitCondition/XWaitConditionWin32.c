@@ -40,7 +40,7 @@ bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int32_t timeout) {
     if (cond == NULL || mutex == NULL) return false;
 
     // 获取Windows临界区句柄
-    CRITICAL_SECTION* cs = (CRITICAL_SECTION*)XMutex_getNativeHandle(mutex);
+    CRITICAL_SECTION* cs = (CRITICAL_SECTION*)mutex;
     if (!cs) return false;
 
     // 转换超时时间（INFINITE表示无限等待）

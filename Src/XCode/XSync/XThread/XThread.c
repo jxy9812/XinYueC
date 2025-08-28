@@ -31,7 +31,7 @@ XThread* XThread_currentThread()
     }
     if (mutex == NULL)
     {
-        mutex = XMutex_create(XMutex_Normal);
+        mutex = XMutex_create();
     }
     size_t id = XThread_currentThreadId();
     XMutex_lock(mutex);

@@ -43,7 +43,7 @@ bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int32_t timeout) {
     if (cond == NULL || mutex == NULL) return false;
 
     // 获取POSIX互斥锁句柄
-    pthread_mutex_t* pthread_mutex = (pthread_mutex_t*)XMutex_getNativeHandle(mutex);
+    pthread_mutex_t* pthread_mutex = (pthread_mutex_t*)mutex;
     if (!pthread_mutex) return false;
 
     if (timeout == -1) {

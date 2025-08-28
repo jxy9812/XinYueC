@@ -62,5 +62,5 @@ void XTimerGroupWheel_setGlobal()
 	XTimerGroupWheel_addTimeWheel_base(group,100);
 	XTimerGroupWheel_addTimeWheel_base(group,100);
 	XTimerGroupBase_setGlobal(group);
-	XTimerGroupWheel_setMutex(group, XMutex_create(XMutex_Normal));
+	XTimerGroupWheel_setMutex(group, XMutex_create());
 }

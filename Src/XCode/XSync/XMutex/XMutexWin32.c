@@ -1,5 +1,5 @@
 ﻿#ifdef _WIN32
-#include "XMutex.h"
+#include "XRecursiveMutex.h"
 #include "XMemory.h"
 #include <windows.h>
 
@@ -14,15 +14,33 @@ size_t XMutex_geTypetSize()
 {
     return sizeof(struct XMutex);
 }
-// 内部辅助函数：获取平台相关句柄（供XWaitCondition使用）
-void* XMutex_getNativeHandle(XMutex* mutex) {
-    return mutex ? &mutex->cs : NULL;
-}
-
-void XMutex_init(XMutex* mutex, XMutex_Type type) {
+//// 内部辅助函数：获取平台相关句柄（供XWaitCondition使用）
+//void* XMutex_getNativeHandle(XMutex* mutex) {
+//    return mutex ? &mutex->cs : NULL;
+//}
+void XRecursiveMutex_init(XRecursiveMutex* mutex)
+{
     if (!mutex) return;
 
-    mutex->type = type;
+    mutex->type = XMutex_Recursive;
+    mutex->recursive_count = 0;
+    mutex->owner_thread = 0;
+    InitializeCriticalSection(&mutex->cs);
+}
+XRecursiveMutex* XRecursiveMutex_create()
+{
+    XMutex* mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
+    if (mutex) 
+    {
+        XRecursiveMutex_init(mutex);
+    }
+    return mutex;
+}
+void XMutex_init(XMutex* mutex)
+{
+    if (!mutex) return;
+
+    mutex->type = XMutex_Normal;
     mutex->recursive_count = 0;
     mutex->owner_thread = 0;
     InitializeCriticalSection(&mutex->cs);
@@ -33,10 +51,11 @@ void XMutex_deinit(XMutex* mutex) {
     DeleteCriticalSection(&mutex->cs);
 }
 
-XMutex* XMutex_create(XMutex_Type type) {
+XMutex* XMutex_create() 
+{
     XMutex* mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
     if (mutex) {
-        XMutex_init(mutex, type);
+        XMutex_init(mutex);
     }
     return mutex;
 }
@@ -141,5 +160,8 @@ void XMutex_unlock(XMutex* mutex) {
 bool XMutex_isRecursive(XMutex* mutex) {
     return mutex ? (mutex->type == XMutex_Recursive) : false;
 }
-
+XMutex_Type XMutex_type(XMutex* mutex)
+{
+    return mutex->type;
+}
 #endif
