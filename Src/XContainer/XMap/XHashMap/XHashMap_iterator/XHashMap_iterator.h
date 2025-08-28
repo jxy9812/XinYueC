@@ -16,8 +16,9 @@ typedef struct
 
 XHashMap_iterator XHashMap_begin(XHashMap* this_map);
 XHashMap_iterator XHashMap_end(XHashMap* this_map);
+bool XHashMap_iterator_isEnd( const XHashMap_iterator* it);
 void XHashMap_iterator_add(XHashMap* this_map, XHashMap_iterator* it);
-bool XHashMap_iterator_equality(XHashMap_iterator* itFirst, XHashMap_iterator* itSecond);
+bool XHashMap_iterator_equality(const XHashMap_iterator* itFirst, const XHashMap_iterator* itSecond);
 void XHashMap_iterator_for_each(XHashMap* this_map, XFor_each ForFunction, void* args);
 XPair* XHashMap_iterator_data(XHashMap_iterator* it);
 #ifdef __cplusplus

@@ -14,7 +14,7 @@ typedef struct XMap_iterator
 }XMap_iterator;
 XMap_iterator XMap_begin(XMap* this_map);
 XMap_iterator XMap_end(XMap* this_map);
-bool XMap_iterator_isEnd(XMap_iterator* it);
+bool XMap_iterator_isEnd(const XMap_iterator* it);
 void XMap_iterator_add(XMap* this_map, XMap_iterator* it);
 bool XMap_iterator_equality(XMap_iterator* itFirst, XMap_iterator* itSecond);
 void XMap_iterator_for_each(XMap* this_map, XFor_each ForFunction, void* args);

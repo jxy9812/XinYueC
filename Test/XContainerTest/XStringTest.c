@@ -5,6 +5,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 //static void XStringTest();
 #if XString_ON
 static void XFor_each_XString(XString* str, void* args)

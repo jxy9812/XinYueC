@@ -21,13 +21,18 @@ XMap_reverse_iterator XMap_rend(XMap* this_map)
 {
 
 	XMap_reverse_iterator it = { 0 };
-	if (this_map == NULL)
+	//if (this_map == NULL)
 		return it;
-	XRBTreeNode* this_root = XContainerDataPtr(this_map);
-	return it;
+	/*XRBTreeNode* this_root = XContainerDataPtr(this_map);
+	return it;*/
 }
 
-XMap_reverse_iterator* XMap_reverse_iterator_add(XMap* this_map, XMap_reverse_iterator* it)
+bool XMap_reverse_iterator_isRend(const XMap_reverse_iterator* it)
+{
+	return it ? (it->node == NULL) : false;
+}
+
+void XMap_reverse_iterator_add(XMap* this_map, XMap_reverse_iterator* it)
 {
 	if (this_map == NULL || it == NULL || it->node == NULL)
 		return;

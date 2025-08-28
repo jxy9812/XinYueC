@@ -7,16 +7,17 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 //static void XHashMapTest();
 static void XFor_each_pair(void* LPVal, void* args)
 {
 	XPair* pair = (XPair*)LPVal;
-	printf("key:%d val:%s\n", XPair_First(pair,int), XPair_Second(pair,char*));
+	XPrintf("key:%d val:%s\n", XPair_First(pair,int), XPair_Second(pair,char*));
 }
 void XHashMapTest()
 {
 #if XHashMap_ON
-	printf("XHashMap 测试\n");
+	XPrintf("XHashMap 测试\n");
 	//while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
@@ -33,16 +34,16 @@ void XHashMapTest()
 			size_t p = &arraychar[i%5];
 			XHashMap_insert_base(map, &i, &p);
 		}
-		printf("当前XHashMap容器内数据数量:%d\n", XHashMap_size_base(map));
+		XPrintf("当前XHashMap容器内数据数量:%d\n", XHashMap_size_base(map));
 
 		XHashMap_iterator_for_each(map, XFor_each_pair, NULL);
 
 		XHashMap_remove_base(map, arrayint + 2);
-		printf("当前XHashMap容器内数据数量:%d\n", XHashMap_size_base(map));
+		XPrintf("当前XHashMap容器内数据数量:%d\n", XHashMap_size_base(map));
 		XHashMap_iterator_for_each(map, XFor_each_pair, NULL);
 
 		XPair* pair = XHashMap_find_base(map, arrayint + 1);
-		printf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair, char*));
+		XPrintf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair, char*));
 		XHashMap_clear_base(map);
 		XHashMap_delete_base(map);
 	}

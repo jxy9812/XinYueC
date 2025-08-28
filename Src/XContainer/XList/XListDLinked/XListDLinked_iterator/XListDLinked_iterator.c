@@ -18,6 +18,11 @@ XListDLinked_iterator XListDLinked_end(XListDLinked* this_list)
 	return it;
 }
 
+bool XListDLinked_iterator_isEnd(const XListDLinked_iterator* it)
+{
+	return it ? (it->node == NULL) : false;
+}
+
 void XListDLinked_iterator_add(XListDLinked* this_list,XListDLinked_iterator*it)
 {
 	if (ISNULL(this_list, "XListDLinked_iterator_add  struct XListDLinked*"))

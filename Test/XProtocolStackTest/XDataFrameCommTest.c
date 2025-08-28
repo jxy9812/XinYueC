@@ -6,9 +6,10 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 void XDataFrameCommTest()
 {
-	printf("开始创建串口\n");
+	XPrintf("开始创建串口\n");
 	XSerialPortBase* USART = XSerialPort_create(); 
 	USART->m_baudRate = 115200;
 	USART->m_portNum = 20;

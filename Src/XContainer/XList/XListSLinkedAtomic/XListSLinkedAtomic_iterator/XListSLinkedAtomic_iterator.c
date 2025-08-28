@@ -19,6 +19,11 @@ XListSLinkedAtomic_iterator XListSLinkedAtomic_end(XListSLinkedAtomic* this_list
     return it;
 }
 
+bool XListSLinkedAtomic_iterator_isEnd(const XListSLinkedAtomic_iterator* it)
+{
+    return it ? (it->node == NULL) : false;
+}
+
 void XListSLinkedAtomic_iterator_add(XListSLinkedAtomic* this_list, XListSLinkedAtomic_iterator* it)
 {
     if (this_list == NULL || it == NULL || it->node == NULL)

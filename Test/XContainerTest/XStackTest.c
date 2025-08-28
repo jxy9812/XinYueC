@@ -4,12 +4,13 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 //栈测试 XCoreApplication_requestQuit();
 static void XStackTest();
 void XStackTest()
 {
 #if XStack_ON
-	printf("XStack 测试\n");
+	XPrintf("XStack 测试\n");
 	XStack* s = XStack_Create(int);
 	int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
 
@@ -20,7 +21,7 @@ void XStackTest()
 	}
 	while (!XStack_isEmpty_base(s))
 	{
-		printf("%d\n",XStack_Top_Base(s,int));
+		XPrintf("%d\n",XStack_Top_Base(s,int));
 		XStack_pop_base(s);
 	}
 	XStack_delete_base(s);
@@ -33,7 +34,7 @@ void XStackTest()
 	}
 	while (!XStack_isEmpty_base(string))
 	{
-		printf("%s\n", XStack_top_base(string));
+		XPrintf("%s\n", XStack_top_base(string));
 		XStack_pop_base(string);
 	}
 	XStack_delete_base(string);

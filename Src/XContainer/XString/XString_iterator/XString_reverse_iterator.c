@@ -1,4 +1,4 @@
-#include "XString_reverse_iterator.h"
+ï»¿#include "XString_reverse_iterator.h"
 #if  XString_ON
 #include "XString.h"
 XString_reverse_iterator XString_rbegin(XString* str)
@@ -14,6 +14,11 @@ XString_reverse_iterator XString_rend(XString* str)
 	return  (XString_reverse_iterator) { 0 };
 }
 
+bool XString_reverse_iterator_isRend(const XString_reverse_iterator* it)
+{
+	return it ? (it->data == NULL) : false;
+}
+
 void XString_reverse_iterator_add(XString* str, XString_reverse_iterator* it)
 {
 	if (ISNULL(str, "") || ISNULL(it, ""))
@@ -24,12 +29,12 @@ void XString_reverse_iterator_add(XString* str, XString_reverse_iterator* it)
 		return;
 	}
 	XChar* front = ((XChar*)XContainerDataPtr(str));
-	if (it->data == front)//Èç¹ûÊÇµÚÒ»¸öÔªËØ±íÊ¾±éÀúÍê³ÉÁË
+	if (it->data == front)//å¦‚æœæ˜¯ç¬¬ä¸€ä¸ªå…ƒç´ è¡¨ç¤ºéå†å®Œæˆäº†
 	{
 		it->data = NULL;
 		return;
 	}
-	((XChar*)it->data) -=1;//Ö¸ÏòÉÏÒ»¸öÔªËØ
+	((XChar*)it->data) -=1;//æŒ‡å‘ä¸Šä¸€ä¸ªå…ƒç´ 
 }
 
 bool XString_reverse_iterator_equality(XString_reverse_iterator* itFirst, XString_reverse_iterator* itSecond)

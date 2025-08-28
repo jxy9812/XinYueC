@@ -17,6 +17,11 @@ XListDLinked_reverse_iterator XListDLinked_rend(XListDLinked* this_list)
 	return it;
 }
 
+bool XListDLinked_reverse_iterator_isEnd(const XListDLinked_reverse_iterator* it)
+{
+	return it ? (it->node == NULL) : false;
+}
+
 void XListDLinked_reverse_iterator_add(XListDLinked* this_list, XListDLinked_reverse_iterator* it)
 {
 	if (ISNULL(this_list, "XListDLinked_iterator_add  struct XListDLinked*"))

@@ -8,6 +8,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 void XBsonDocumentTest()
 {
 	//while (true)

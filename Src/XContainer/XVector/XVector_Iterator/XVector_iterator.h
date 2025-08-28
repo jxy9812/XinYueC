@@ -14,6 +14,7 @@ typedef struct XVector_iterator
 }XVector_iterator;
 XVector_iterator XVector_begin(XVector* this_vector);
 XVector_iterator XVector_end(XVector* this_vector);
+bool XVector_iterator_isEnd(const XVector_iterator* it);
 void XVector_iterator_add(XVector* this_vector, XVector_iterator*it);
 bool XVector_iterator_equality(XVector_iterator* itFirst, XVector_iterator* itSecond);
 void XVector_iterator_for_each(XVector* this_vector, XFor_each ForFunction, void* args);

@@ -5,13 +5,14 @@
 #include"XSort.h"
 #include"XLess.h"
 #include"XEquality.h"
+#include"XPrintf.h"
 #include<stdio.h>
 #include<stdlib.h>
 #include<time.h>
 #if XMap_ON
 static void ForPrint(void* value, void* args)
 {
-	printf("%d\n", *(int*)value);
+	XPrintf("%d\n", *(int*)value);
 }
 static void insertMap(void* value, void* args)
 {
@@ -29,12 +30,12 @@ void XMapAndXVectorFindTest()
 	{
 		XVector_push_back_base(VArray,&i);
 	}
-	printf("打乱前\n");
+	XPrintf("打乱前\n");
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
 	XDerangement(XContainerDataPtr(VArray), count, sizeof(size_t));
-	printf("打乱后\n");
+	XPrintf("打乱后\n");
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
-	printf("使用排序后\n");
+	XPrintf("使用排序后\n");
 	XVector_sort_base(VArray,XLess_int);
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
 
@@ -47,12 +48,12 @@ void XMapAndXVectorFindTest()
 	clock_t vector_start = clock();
 	size_t* Vret=XVector_find_base(VArray, &findNum);
 	clock_t vector_end = clock();
-	printf("XVector查询数据:%d 用时%dms\n", *Vret, vector_end- vector_start);
+	XPrintf("XVector查询数据:%d 用时%dms\n", *Vret, vector_end- vector_start);
 
 	clock_t map_start = clock();
 	size_t* mret = XMap_value_base(map,&findNum);
 	clock_t map_end = clock();
-	printf("XMap查询数据:%d 用时%dms\n", *mret, map_end - map_start);
+	XPrintf("XMap查询数据:%d 用时%dms\n", *mret, map_end - map_start);
 #endif
 }
 

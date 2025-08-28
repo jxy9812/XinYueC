@@ -14,6 +14,7 @@ typedef struct XSet_iterator
 }XSet_iterator;
 XSet_iterator XSet_begin(XSet* this_map);
 XSet_iterator XSet_end(XSet* this_map);
+bool XSet_iterator_isEnd(const XSet_iterator* it);
 void XSet_iterator_add(XSet* this_map, XSet_iterator* it);
 bool XSet_iterator_equality(XSet_iterator* itFirst, XSet_iterator* itSecond);
 void XSet_iterator_for_each(XSet* this_map, XFor_each ForFunction, void* args);

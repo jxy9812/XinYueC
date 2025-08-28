@@ -38,6 +38,11 @@ XHashSet_iterator XHashSet_end(XHashSet* this_set)
     return it;
 }
 
+bool XHashSet_iterator_isEnd(const XHashSet_iterator* it)
+{
+	return it ? (it->node == NULL) : false;
+}
+
 void XHashSet_iterator_add(XHashSet* this_set, XHashSet_iterator* it)
 {
 	if (this_set == NULL || it == NULL || XContainerCapacity(this_set) == 0)

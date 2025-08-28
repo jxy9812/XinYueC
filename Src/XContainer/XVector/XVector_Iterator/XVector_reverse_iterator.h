@@ -14,6 +14,7 @@ typedef struct XVector_reverse_iterator
 }XVector_reverse_iterator;
 XVector_reverse_iterator XVector_rbegin(XVector* this_vector);
 XVector_reverse_iterator XVector_rend(XVector* this_vector);
+bool XVector_reverse_iterator_isRend(const XVector_reverse_iterator* it);
 void XVector_reverse_iterator_add(XVector* this_vector,XVector_reverse_iterator* it);
 bool XVector_reverse_iterator_equality(XVector_reverse_iterator* itFirst, XVector_reverse_iterator* itSecond);
 void XVector_reverse_iterator_for_each(XVector* this_vector, XFor_each ForFunction, void* args);

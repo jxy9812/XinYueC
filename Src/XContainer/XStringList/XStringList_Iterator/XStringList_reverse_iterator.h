@@ -11,8 +11,9 @@ XContainerTypeDeclare(XStringList);
 typedef XVector_reverse_iterator XStringList_reverse_iterator;
 #define XStringList_rbegin								XVector_rbegin
 #define XStringList_rend								XVector_rend
+#define XStringList_reverse_iterator_isRend				XVector_reverse_iterator_isRend
 #define XStringList_reverse_iterator_add				XVector_reverse_iterator_add
-#define XStringList_reverse_iterator_equality          XVector_reverse_iterator_equality
+#define XStringList_reverse_iterator_equality           XVector_reverse_iterator_equality
 #define XStringList_reverse_iterator_for_each			XVector_reverse_iterator_for_each
 #define XStringList_reverse_iterator_data				XVector_reverse_iterator_data
 #ifdef __cplusplus

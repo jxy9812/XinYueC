@@ -15,6 +15,7 @@ typedef struct XListDLinked_iterator
 }XListDLinked_iterator;
 XListDLinked_iterator XListDLinked_begin(XListDLinked* this_list);
 XListDLinked_iterator XListDLinked_end(XListDLinked* this_list);
+bool XListDLinked_iterator_isEnd(const XListDLinked_iterator* it);
 void XListDLinked_iterator_add(XListDLinked* this_list,XListDLinked_iterator*it);
 bool XListDLinked_iterator_equality(XListDLinked_iterator* itFirst, XListDLinked_iterator* itSecond);
 void XListDLinked_iterator_for_each(XListDLinked* this_list, XFor_each ForFunction, void* args);

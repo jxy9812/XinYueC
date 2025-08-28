@@ -7,18 +7,19 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 //static void XMapTest();
 static void XFor_each_pair(void* LPVal, void* args)
 {
 	XPair* pair = (XPair*)LPVal;
-	printf("key:%d val:%s\n", XPair_First(pair,int), XPair_Second(pair,char*));
+	XPrintf("key:%d val:%s\n", XPair_First(pair,int), XPair_Second(pair,char*));
 }
 void XMapTest()
 {
 #if XMap_ON
-	while (1)
+	//while (1)
 	{
-		printf("XMap 测试\n");
+		XPrintf("XMap 测试\n");
 		int arrayint[] = { 1,23,456,5,23 };
 		char arraychar[][100] = { "琦神","星小白","章鱼哥","123dfsadsadsad","玩蛇" };
 		XMap* map = XMap_Create(int, char*, XEquality_int, XLess_int);
@@ -29,16 +30,16 @@ void XMapTest()
 			//char* str = &arraychar[i];
 			//XMap_insert_base(map, &arrayint[i], &str);
 		}
-		printf("当前Map容器内数据数量:%d\n", XMap_size_base(map));
+		XPrintf("当前Map容器内数据数量:%d\n", XMap_size_base(map));
 		XMap_iterator_for_each(map, XFor_each_pair, NULL);
 
 		XMap_remove_base(map, arrayint + 2);
 		XMap_Remove_Base(map, int, arrayint[2]);
-		printf("当前Map容器内数据数量:%d\n", XMap_size_base(map));
+		XPrintf("当前Map容器内数据数量:%d\n", XMap_size_base(map));
 		XMap_reverse_iterator_for_each(map, XFor_each_pair, NULL);
 
 		XPair* pair = XMap_find_base(map, arrayint);
-		printf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair, char*));
+		XPrintf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair, char*));
 		XMap_clear_base(map);
 		XMap_delete_base(map);
 	}

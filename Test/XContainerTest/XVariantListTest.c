@@ -8,6 +8,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 void XVariantListTest()
 {
 	XPrintf_utf8("--------------------------XVariantList测试-----------------------\n");

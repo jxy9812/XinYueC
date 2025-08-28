@@ -8,9 +8,10 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 static void XFor_each_XString(XString* string, void* args)
 {
-	printf("%s \n",XString_c_str(string) );
+	XPrintf("%s \n",XString_c_str(string) );
 }
 
 void XStringListTest()

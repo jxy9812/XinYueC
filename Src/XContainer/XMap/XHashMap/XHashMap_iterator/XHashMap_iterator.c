@@ -41,6 +41,11 @@ XHashMap_iterator XHashMap_end(XHashMap*this_map)
 	return it;
 }
 
+bool XHashMap_iterator_isEnd(const XHashMap_iterator* it)
+{
+	return it ? (it->node == NULL) : false;
+}
+
 void XHashMap_iterator_add(XHashMap*this_map, XHashMap_iterator* it)
 {
 	//XHashMap_iterator it = { 0 };
@@ -108,7 +113,7 @@ void XHashMap_iterator_add(XHashMap*this_map, XHashMap_iterator* it)
 	//curent->index= XContainerCapacity(this_map);
 }
 
-bool XHashMap_iterator_equality(XHashMap_iterator* itFirst, XHashMap_iterator* itSecond)
+bool XHashMap_iterator_equality(const XHashMap_iterator* itFirst, const XHashMap_iterator* itSecond)
 {
 	return (itFirst->index == itSecond->index)&&(itFirst->node==itSecond->node);
 }

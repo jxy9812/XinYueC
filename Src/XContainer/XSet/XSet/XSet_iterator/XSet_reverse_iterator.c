@@ -27,6 +27,11 @@ XSet_reverse_iterator XSet_rend(XSet* this_map)
 	return it;
 }
 
+bool XSet_reverse_iterator_isRend(const XSet_reverse_iterator* it)
+{
+	return it ? (it->node == NULL) : false;
+}
+
 XSet_reverse_iterator* XSet_reverse_iterator_add(XSet* this_map, XSet_reverse_iterator* it)
 {
 	if (this_map == NULL || it == NULL || it->node == NULL)

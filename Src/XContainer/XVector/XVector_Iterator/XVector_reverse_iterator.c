@@ -17,6 +17,11 @@ XVector_reverse_iterator XVector_rend(XVector* this_vector)
 	return it;
 }
 
+bool XVector_reverse_iterator_isRend(const XVector_reverse_iterator* it)
+{
+	return it ? (it->data == NULL) : false;
+}
+
 void XVector_reverse_iterator_add(XVector* this_vector,XVector_reverse_iterator* it)
 {
 	if (ISNULL(this_vector, "")|| ISNULL(it, ""))

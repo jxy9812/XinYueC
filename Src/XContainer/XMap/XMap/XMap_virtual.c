@@ -95,15 +95,46 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue, XCData
 
 void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)
 {
-	/*if (ISNULL(this_map, "") || ISNULL(pair, ""))
-		return;*/
-	//XMap_remove_base(this_map, XPair_first(pPair));
-	if (XMap_isEmpty_base(this_map) || XMap_iterator_isEnd(it))
+	// 检查参数有效性：容器为空、迭代器为空或迭代器已指向末尾
+	if (ISNULL(this_map, "") || ISNULL(it, "") || XMap_iterator_isEnd((XMap_iterator*)it))
 	{
-		if (next)
+		if (next != NULL)
 			*next = XMap_end(this_map);
+		return;
 	}
 
+	// 保存当前节点的下一个节点（删除前先获取，避免删除后迭代器失效）
+	XMap_iterator next_it = *it;
+	XMap_iterator_add(this_map, &next_it);
+
+	// 获取当前迭代器指向的节点和键值对
+	XRBTreeNode* current_node = (XRBTreeNode*)it->node;
+	XPair* current_pair = XBTreeNode_GetData(current_node, XPair*);
+	if (ISNULL(current_pair, ""))
+	{
+		if (next != NULL)
+			*next = next_it;
+		return;
+	}
+
+	// 从红黑树中删除当前节点
+	XRBTree_remove(
+		&XContainerDataPtr(this_map),
+		((XMapBase*)this_map)->m_KeyLess,
+		((XMapBase*)this_map)->m_KeyEquality,
+		XCompareRuleOne_XMap,
+		XPair_first(current_pair),  // 传入键用于查找删除
+		XMapBase_deleteNodeData,    // 释放节点数据的回调
+		this_map                    // 传递容器作为额外参数
+	);
+
+	// 更新容器大小信息
+	--XContainerCapacity(this_map);
+	--XContainerSize(this_map);
+
+	// 设置下一个迭代器
+	if (next != NULL)
+		*next = next_it;
 }
 
 bool VXMap_remove(XMap* this_map, const void* key)

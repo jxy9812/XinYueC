@@ -6,6 +6,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 #include<time.h>
 #include<stdio.h>
 #include<stdlib.h>
@@ -16,7 +17,7 @@ static void XListSLinkedSortTest();
 
 static void ListFor_each(void* LPVal, void* args)
 {
-	printf("%d ", *(int*)LPVal);
+	XPrintf("%d ", *(int*)LPVal);
 }
 void XListSLinkedSortTest()
 {
@@ -30,17 +31,17 @@ void XListSLinkedSortTest()
 		int num = rand() % 1000;
 		XListBase_push_back_base(li, &num);//尾插
 	}
-	printf("排序前\n");
-	XListSLinked_iterator_for_each(li, ListFor_each, NULL); printf("\n");
+	XPrintf("排序前\n");
+	XListSLinked_iterator_for_each(li, ListFor_each, NULL); XPrintf("\n");
 
 	clock_t  time_front = clock();
 	XListSLinked_sort_base(li, XLess_int);
 	clock_t time_after = clock();
 
-	printf("排序后\n");
-	XListSLinked_iterator_for_each(li, ListFor_each, NULL); printf("\n");
+	XPrintf("排序后\n");
+	XListSLinked_iterator_for_each(li, ListFor_each, NULL); XPrintf("\n");
 
-	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
+	XPrintf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
 	XListBase_delete_base(li);
 #endif
 	XCoreApplication_requestQuit();
@@ -54,10 +55,10 @@ void XListSLinkedIterator()
 	{
 		XListBase_push_back_base(li, arr + i);
 	}
-	printf("开始正向遍历\n");
+	XPrintf("开始正向遍历\n");
 	for_each_iterator(li, XListSLinked,it)
 	{
-		printf("%d\n", XListSNode_Data(it.node, int));
+		XPrintf("%d\n", XListSNode_Data(it.node, int));
 	}
 	XListBase_delete_base(li);
 #endif
@@ -67,11 +68,11 @@ void XListSLinkedIterator()
 void XListSLinkedTest()
 {
 #if XList_ON
-	printf("XList 测试\n");
+	XPrintf("XList 测试\n");
 	XListSLinked* list = XListSLinked_create(sizeof(int));
 	list->m_parent.m_equality = XEquality_int;
-	printf("%s\n", XContainerObject_isEmpty_base(list)?"empty":"");
-	printf("%d\n", XContainerObject_size_base(list));
+	XPrintf("%s\n", XContainerObject_isEmpty_base(list)?"empty":"");
+	XPrintf("%d\n", XContainerObject_size_base(list));
 
 
 
@@ -85,24 +86,24 @@ void XListSLinkedTest()
 	int findValue = 123;
 	//XList_insert_base(list, XList_at(list, &findValue), &x);
 
-	printf("元素遍历\t"); XListSLinked_iterator_for_each(list, ListFor_each, NULL); printf("\n");
-	printf("头元素为：%d\n", XListBase_Front_Base(list, int));
-	printf("尾元素为：%d\n", XListBase_Back_Base(list, int));
+	XPrintf("元素遍历\t"); XListSLinked_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
+	XPrintf("头元素为：%d\n", XListBase_Front_Base(list, int));
+	XPrintf("尾元素为：%d\n", XListBase_Back_Base(list, int));
 	
 	XListSNode* findNode = XListBase_find_base(list, arr + 2);
 	XListBase_insert_array_base(list, findNode, arr, 5);
-	printf("找到的数字%d\n", XListSNode_Data(findNode,int));
-	XListSLinked_iterator_for_each(list, ListFor_each, NULL); printf("\n");
+	XPrintf("找到的数字%d\n", XListSNode_Data(findNode,int));
+	XListSLinked_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
 	XListBase_pop_front_base(list);
 	XListBase_pop_back_base(list);
 	//XListBase_erase_base(list, findNode);
 
-	XListSLinked_iterator_for_each(list, ListFor_each, NULL); printf("\n");
+	XListSLinked_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
 	//return;
 	int removeVlaue = 4;
 	XListBase_remove_base(list, &removeVlaue);
 	//XList_clear_base(list);
-	printf("删除元素后遍历\t"); XListSLinked_iterator_for_each(list, ListFor_each, NULL);
+	XPrintf("删除元素后遍历\t"); XListSLinked_iterator_for_each(list, ListFor_each, NULL);
 	XListBase_delete_base(list);
 #endif
 	XCoreApplication_requestQuit();
@@ -119,8 +120,8 @@ void XListSLinkedSwapTest()//交换函数测试
 		num = i;
 		XListBase_push_back_base(li1, &num);//尾插
 	}
-	printf("li1元素遍历\n");
-	XListSLinked_iterator_for_each(li1, ListFor_each, NULL); printf("\n");
+	XPrintf("li1元素遍历\n");
+	XListSLinked_iterator_for_each(li1, ListFor_each, NULL); XPrintf("\n");
 
 	XListSLinked* li2 = XListSLinked_create(sizeof(int));
 
@@ -129,16 +130,16 @@ void XListSLinkedSwapTest()//交换函数测试
 		num = 20 - i;
 		XListBase_push_back_base(li2, &num);//尾插
 	}
-	printf("li2元素遍历\n");
-	XListSLinked_iterator_for_each(li2, ListFor_each, NULL); printf("\n");
+	XPrintf("li2元素遍历\n");
+	XListSLinked_iterator_for_each(li2, ListFor_each, NULL); XPrintf("\n");
 
 	XListBase_swap_base(li1, li2);
 
-	printf("交换后li1元素遍历\n");
-	XListSLinked_iterator_for_each(li1, ListFor_each, NULL); printf("\n");
+	XPrintf("交换后li1元素遍历\n");
+	XListSLinked_iterator_for_each(li1, ListFor_each, NULL); XPrintf("\n");
 
-	printf("交换后li2元素遍历\n");
-	XListSLinked_iterator_for_each(li2, ListFor_each, NULL); printf("\n");
+	XPrintf("交换后li2元素遍历\n");
+	XListSLinked_iterator_for_each(li2, ListFor_each, NULL); XPrintf("\n");
 	XListBase_delete_base(li1);
 	XListBase_delete_base(li2);
 #endif

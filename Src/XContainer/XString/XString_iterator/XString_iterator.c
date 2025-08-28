@@ -1,4 +1,4 @@
-#include "XString_iterator.h"
+ï»¿#include "XString_iterator.h"
 #if  XString_ON
 #include "XString.h"
 XString_iterator XString_begin(XString* str)
@@ -17,6 +17,10 @@ XString_iterator XString_end(XString* str)
 	XString_iterator it = { 0 };
 	return it;
 }
+bool XString_iterator_isEnd(const XString_iterator* it)
+{
+	return it ? (it->data == NULL) : false;
+}
 void XString_iterator_add(XString* str, XString_iterator* it)
 {
 	if (ISNULL(str, "") || ISNULL(it, ""))
@@ -27,12 +31,12 @@ void XString_iterator_add(XString* str, XString_iterator* it)
 		return;
 	}
 	XChar* back = ((XChar*)XContainerDataPtr(str)) + (XString_length_base(str)-1);
-	if (it->data == back)//Èç¹ûÊÇ×îºóÒ»¸öÔªËØÔò·µ»Ø¿Õ±íÊ¾±éÀúÍê³ÉÁË
+	if (it->data == back)//å¦‚æœæ˜¯æœ€åä¸€ä¸ªå…ƒç´ åˆ™è¿”å›ç©ºè¡¨ç¤ºéå†å®Œæˆäº†
 	{
 		it->data = NULL;
 		return;
 	}
-	((XChar*)it->data) += 1;//Ö¸ÏòÏÂÒ»¸öÔªËØ
+	((XChar*)it->data) += 1;//æŒ‡å‘ä¸‹ä¸€ä¸ªå…ƒç´ 
 }
 bool XString_iterator_equality(XString_iterator* itFirst, XString_iterator* itSecond)
 {

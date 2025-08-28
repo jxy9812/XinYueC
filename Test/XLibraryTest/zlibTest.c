@@ -6,6 +6,7 @@
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include<string.h>
+#include"XPrintf.h"
 void zlibTest()
 {
     XPrintf_utf8("zlib 压缩测试\n");

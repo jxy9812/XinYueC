@@ -20,6 +20,11 @@ XVector_iterator XVector_end(XVector* this_vector)
 	return it;
 }
 
+bool XVector_iterator_isEnd(const XVector_iterator* it)
+{
+	return it ? (it->data == NULL) : false;
+}
+
 void XVector_iterator_add(XVector* this_vector,XVector_iterator*it)
 {
 	if (ISNULL(this_vector, "") || ISNULL(it, ""))

@@ -7,16 +7,17 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 //static void XHashSetTest();
 static void XFor_each_pair(void* pvVal, void* args)
 {
 	int val = *((int*)pvVal);
-	printf("key:%d\n", val);
+	XPrintf("key:%d\n", val);
 }
 void XHashSetTest()
 {
 #if XHashMap_ON
-	printf("XHashSet 测试\n");
+	XPrintf("XHashSet 测试\n");
 	//while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
@@ -30,16 +31,16 @@ void XHashSetTest()
 		{
 			XHashSet_insert_base(set, &i);
 		}
-		printf("当前XHashSet容器内数据数量:%d\n", XHashSet_size_base(set));
+		XPrintf("当前XHashSet容器内数据数量:%d\n", XHashSet_size_base(set));
 
 		XHashSet_iterator_for_each(set, XFor_each_pair, NULL);
 
 		XHashSet_remove_base(set, arrayint + 2);
-		printf("当前XHashSet容器内数据数量:%d\n", XHashSet_size_base(set));
+		XPrintf("当前XHashSet容器内数据数量:%d\n", XHashSet_size_base(set));
 		XHashSet_iterator_for_each(set, XFor_each_pair, NULL);
 
 		if(XHashSet_find_base(set, arrayint + 1))
-			printf("查询到:key:%d \n", arrayint[1]);
+			XPrintf("查询到:key:%d \n", arrayint[1]);
 		XHashSet_clear_base(set);
 		XHashSet_delete_base(set);
 	}

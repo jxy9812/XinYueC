@@ -15,6 +15,7 @@ typedef struct XListSLinkedAtomic_iterator
 
 XListSLinkedAtomic_iterator XListSLinkedAtomic_begin(XListSLinkedAtomic* this_list);
 XListSLinkedAtomic_iterator XListSLinkedAtomic_end(XListSLinkedAtomic* this_list);
+bool XListSLinkedAtomic_iterator_isEnd(const XListSLinkedAtomic_iterator* it);
 void XListSLinkedAtomic_iterator_add(XListSLinkedAtomic* this_list, XListSLinkedAtomic_iterator* it);
 bool XListSLinkedAtomic_iterator_equality(XListSLinkedAtomic_iterator* itFirst, XListSLinkedAtomic_iterator* itSecond);
 void XListSLinkedAtomic_iterator_for_each(XListSLinkedAtomic* this_list, XFor_each ForFunction, void* args);

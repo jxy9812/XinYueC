@@ -17,6 +17,7 @@ XContainerTypeDeclare(XVariantList);
 typedef  XVector_iterator XVariantList_iterator;
 #define XVariantList_begin						XVector_begin
 #define XVariantList_end						XVector_end
+#define XVariantList_iterator_isEnd				XVector_iterator_isEnd
 #define XVariantList_iterator_add				XVector_iterator_add
 #define XVariantList_iterator_equality          XVector_iterator_equality
 #define XVariantList_iterator_for_each			XVector_iterator_for_each

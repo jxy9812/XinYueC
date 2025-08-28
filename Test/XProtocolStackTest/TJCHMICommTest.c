@@ -9,22 +9,23 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 #include <stdio.h>
 #include <stdlib.h>
 static void XFuncCodeCb0x1A(uint8_t code, void* obj, void* data, void* userData)
 {
 	XVector* v = data;
-	printf("0x1a功能码调用\n");
+	XPrintf("0x1a功能码调用\n");
 }
 static void XFuncCodeCb0x30(uint8_t code, void* obj, void* data, void* userData)
 {
 	XVector* v = data;
-	printf("0x30功能码调用\n");
+	XPrintf("0x30功能码调用\n");
 	
 }
 void TJCHMICommTest()
 {
-	printf("开始创建串口\n");
+	XPrintf("开始创建串口\n");
 	XSerialPortBase* USART = XSerialPort_create();
 	USART->m_baudRate = 115200;
 	USART->m_portNum = 20;

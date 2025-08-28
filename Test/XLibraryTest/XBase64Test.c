@@ -5,6 +5,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 void XBase64Test()
 {
 	XPrintf_utf8("XBase64测试\n");

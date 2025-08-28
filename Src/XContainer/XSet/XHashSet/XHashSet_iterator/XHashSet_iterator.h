@@ -16,6 +16,7 @@ typedef struct
 
 XHashSet_iterator XHashSet_begin(XHashSet* this_set);
 XHashSet_iterator XHashSet_end(XHashSet* this_set);
+bool XHashSet_iterator_isEnd(const XHashSet_iterator* it);
 void XHashSet_iterator_add(XHashSet* this_set, XHashSet_iterator* it);
 bool XHashSet_iterator_equality(XHashSet_iterator* itFirst, XHashSet_iterator* itSecond);
 void XHashSet_iterator_for_each(XHashSet* this_set, XFor_each ForFunction, void* args);

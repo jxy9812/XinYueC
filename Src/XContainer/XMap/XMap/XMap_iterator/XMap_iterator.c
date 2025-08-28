@@ -27,11 +27,9 @@ XMap_iterator XMap_end(XMap* this_map)
 	/*XRBTreeNode* this_root = XContainerDataPtr(this_map);
 	return it;*/
 }
-bool XMap_iterator_isEnd(XMap_iterator* it)
+bool XMap_iterator_isEnd(const XMap_iterator* it)
 {
-	if(it==NULL)
-		return false;
-	return it->node == NULL;
+	return it ? (it->node == NULL) : false;
 }
 void XMap_iterator_add(XMap* this_map, XMap_iterator* it)
 {

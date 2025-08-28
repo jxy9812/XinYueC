@@ -4,12 +4,13 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 //循环队列测试
 static void XCircularQueueTest();
 void XCircularQueueTest()
 {
 #if XCircularQueue_ON
-	printf("循环队列 测试\n");
+	XPrintf("循环队列 测试\n");
 	XCircularQueue* queue = XCircularQueue_Create(int,5);
 	int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
 
@@ -28,12 +29,12 @@ void XCircularQueueTest()
 	}
 	while (!XCircularQueue_isEmpty_base(queue))
 	{
-		printf("%d size:%d\n", XCircularQueue_Top_Base(queue, int), XCircularQueue_size_base(queue));
+		XPrintf("%d size:%d\n", XCircularQueue_Top_Base(queue, int), XCircularQueue_size_base(queue));
 		XCircularQueue_pop_base(queue);
 	}
 	
 	XCircularQueue_delete_base(queue);
-	printf("循环队列 空\n");
+	XPrintf("循环队列 空\n");
 	
 #else
 	IS_ON_DEBUG(XStack_ON);

@@ -12,6 +12,7 @@ typedef XVector_iterator XStringList_iterator ;
 typedef struct XString XString;
 #define XStringList_begin						XVector_begin
 #define XStringList_end							XVector_end
+#define XStringList_iterator_isEnd				XVector_iterator_isEnd
 #define XStringList_iterator_add				XVector_iterator_add
 #define XStringList_iterator_equality			XVector_iterator_equality
 #define XStringList_iterator_for_each			XVector_iterator_for_each

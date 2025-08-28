@@ -5,6 +5,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 #if DEMOTEST
 void cJsonTest()
 {
@@ -32,7 +33,7 @@ void cJsonTest()
     }
 
     // 打印修改后的 JSON 字符串
-    printf("%s\n", json_str_modified);
+    XPrintf("%s\n", json_str_modified);
 
     // 释放字符串和 cJSON 对象
     XMemory_free(json_str_modified);

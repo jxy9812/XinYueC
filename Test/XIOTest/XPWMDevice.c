@@ -2,6 +2,7 @@
 #if DEMOTEST
 #include"XPWMDeviceBase.h"
 #include"XTimerBase.h"
+#include"XPrintf.h"
 static struct XPWMDeviceTimer
 {
 	XTimerBase* timer1;//一个周期
@@ -21,11 +22,11 @@ static void TimerCallback(XTimerBase* timer)
 		state = false;
 		XTimerBase_stop_base(pwmTimer.timer2);
 	}
-	printf("%s\n", state ? "高电平" : "低电平");
+	XPrintf("%s\n", state ? "高电平" : "低电平");
 }
 static bool XPWMDeviceOpen(XPWMDeviceBase* pwm, XIODeviceBaseMode mode)//打开IO设备
 {
-	printf("创建定时器\n");
+	XPrintf("创建定时器\n");
 	//pwmTimer.timer1 = XTimer_new_Win32ThreadpoolTimer();
 	//XTimer_create(pwmTimer.timer1);
 	//pwmTimer.timer1->m_port.timerCallback = TimerCallback;
@@ -38,7 +39,7 @@ static bool XPWMDeviceOpen(XPWMDeviceBase* pwm, XIODeviceBaseMode mode)//打开I
 static void XPWMDeviceStart(XPWMDeviceBase* pwm)
 {
 	//((struct XPWMDeviceTimer*)(pwm->data))->timer1->m_interval = 1.0 / (pwm->m_frequency) * 1000;
-	//printf("启动定时器:%f\n", ((struct XPWMDeviceTimer*)(pwm->data))->timer1->interval * (pwm->m_dutyCycle) / 100.0);
+	//XPrintf("启动定时器:%f\n", ((struct XPWMDeviceTimer*)(pwm->data))->timer1->interval * (pwm->m_dutyCycle) / 100.0);
 	//((struct XPWMDeviceTimer*)(pwm->data))->timer2->m_interval = ((struct XPWMDeviceTimer*)(pwm->data))->timer1->m_interval * (pwm->m_dutyCycle) / 100.0;
 	//XTimer_startBase(((struct XPWMDeviceTimer*)(pwm->data))->timer1);
 }

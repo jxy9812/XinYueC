@@ -27,6 +27,11 @@ XSet_iterator XSet_end(XSet* this_map)
 	return it;
 }
 
+bool XSet_iterator_isEnd(const XSet_iterator* it)
+{
+	return it ? (it->node == NULL) : false;
+}
+
 void XSet_iterator_add(XSet* this_map, XSet_iterator* it)
 {
 	if (this_map == NULL||it==NULL||it->node==NULL)

@@ -9,6 +9,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 //队列测试
 static void XQueueTest();
 //优先队列
@@ -16,7 +17,7 @@ static void XPriorityQueueTest();
 void XQueueTest()
 {
 #if	XQueue_ON
-	printf("XQueue 测试\n");
+	XPrintf("XQueue 测试\n");
 	XQueue* queue = XQueue_Create(int);
 	int array[] = { 0,1,2,3,4,5,6,7,8,9 };
 	for (size_t i = 0; i < sizeof(array)/sizeof(array[0]); i++)
@@ -25,10 +26,10 @@ void XQueueTest()
 	}
 	while (!XQueue_isEmpty_base(queue))
 	{
-		printf("%d ", XQueue_Top_Base(queue,int));
+		XPrintf("%d ", XQueue_Top_Base(queue,int));
 		XQueue_pop_base(queue);
 	}
-	printf("\n");
+	XPrintf("\n");
 	XQueue_delete_base(queue);
 #endif
 	XCoreApplication_requestQuit();
@@ -37,13 +38,13 @@ void XQueueTest()
 static insertData(void* value ,void*args)
 {
 	XPriorityQueue_push_base(args, value);
-	printf("入队:%d 堆顶:%d\n", *(int*)value, *(int*)XPriorityQueue_top_base(args));
+	XPrintf("入队:%d 堆顶:%d\n", *(int*)value, *(int*)XPriorityQueue_top_base(args));
 }
 #endif
 void XPriorityQueueTest()
 {
 #if	XPriorityQueue_ON
-	printf("XPriority_QueueTest 测试\n");
+	XPrintf("XPriority_QueueTest 测试\n");
 	//XPriorityQueue* queue=XPriorityQueue_create(sizeof(int),XLess_int);//小堆，先出小的
 	XPriorityQueue* queue = XPriorityQueue_create(sizeof(int), XGreater_int);//大堆，先出大的
 	XVector* v = XVector_Create(int);
@@ -52,16 +53,16 @@ void XPriorityQueueTest()
 		XVector_push_back_base(v, &i);
 	}
 	XDerangement(XContainerDataPtr(v),XVector_size_base(v), sizeof(int));
-	//printf("入队数据:");
+	//XPrintf("入队数据:");
 	XVector_iterator_for_each(v, insertData, queue);
-	printf("\n队列循环出队:");
+	XPrintf("\n队列循环出队:");
 	while (!XPriorityQueue_isEmpty_base(queue))
 	{
 		int* value = XPriorityQueue_top_base(queue);
-		printf("%d ", *value);
+		XPrintf("%d ", *value);
 		XPriorityQueue_pop_base(queue);
 	}
-	printf("\n");
+	XPrintf("\n");
 	XPriorityQueue_delete_base(queue);
 	XVector_delete_base(v);
 #endif

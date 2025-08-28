@@ -6,10 +6,11 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
+#include"XPrintf.h"
 //打印节点的数据
 static void printTreeNode(void* LPVal, void* args)
 {
-	printf("%d ", XTreeNode_GetData(*(XTreeNode**)LPVal,int));
+	XPrintf("%d ", XTreeNode_GetData(*(XTreeNode**)LPVal,int));
 }
 void traverse(void* LPVal, void* args)
 {
@@ -18,7 +19,7 @@ void traverse(void* LPVal, void* args)
 	if(XTreeNode_GetParent(currentNode)==NULL)
 		return;
 	if(XTreeNode_getChildrenParentRef(currentNode)==NULL)
-		printf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.data);
+		XPrintf("找不到：%d \n\n\n\n\n\n", *(int*)currentNode->XBTNode.data);
 }
 void XBalancedBinaryTreeTest()
 {
@@ -39,29 +40,29 @@ void XBalancedBinaryTreeTest()
 	int findVal = 456;
 	XBBTreeNode* findRet = XBBTree_findData(root, XLess_int, XEquality_int,XCompareRuleOne_BinaryTree,&findVal);
 	if(findRet!=NULL)
-	printf("找到的:%d\n", XTreeNode_GetData(findRet,int));
+	XPrintf("找到的:%d\n", XTreeNode_GetData(findRet,int));
 
 	//前序测试
 	XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder);
-	printf("前序遍历:%d\n", XVector_size_base(TreePreorder));
+	XPrintf("前序遍历:%d\n", XVector_size_base(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
-	printf("\n");
+	XPrintf("\n");
 	XVector_delete_base(TreePreorder);
 
 	//中序测试
 	TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder);
-	printf("中序遍历:%d\n", XVector_size_base(TreePreorder));
+	XPrintf("中序遍历:%d\n", XVector_size_base(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
-	printf("size:%d\n",XVector_size_base(TreePreorder));
+	XPrintf("size:%d\n",XVector_size_base(TreePreorder));
 	XVector_delete_base(TreePreorder);
 
 	//后序测试
 	TreePreorder = XBTree_TraversingToXVector(root, XBTreePostorder);
-	printf("后序遍历::%d\n", XVector_size_base(TreePreorder));
+	XPrintf("后序遍历::%d\n", XVector_size_base(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
-	printf("\n");
+	XPrintf("\n");
 	XVector_delete_base(TreePreorder);
-	printf("高度%d\n", root->maxLayer);
+	XPrintf("高度%d\n", root->maxLayer);
 
 	//删除测试遍历插入的数组一个个查找删除，直至清空二叉树
 	for (size_t i = 0; i < sizeof(a) / sizeof(a[0]); i++)
@@ -73,16 +74,16 @@ void XBalancedBinaryTreeTest()
 	TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder);
 	if(TreePreorder!=NULL)
 	{
-		printf("中序遍历:%d\n", XVector_size_base(TreePreorder));
+		XPrintf("中序遍历:%d\n", XVector_size_base(TreePreorder));
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
-		printf("\n");
-		printf("size:%d\n", XVector_size_base(TreePreorder));
+		XPrintf("\n");
+		XPrintf("size:%d\n", XVector_size_base(TreePreorder));
 		XVector_delete_base(TreePreorder);
-		printf("高度%d\n", root->maxLayer);
+		XPrintf("高度%d\n", root->maxLayer);
 	}
 	else
 	{
-		printf("二叉树是空的\n");
+		XPrintf("二叉树是空的\n");
 	}
 #else
 	IS_ON_DEBUG(XVector_ON);

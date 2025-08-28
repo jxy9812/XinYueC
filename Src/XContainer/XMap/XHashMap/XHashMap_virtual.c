@@ -141,11 +141,48 @@ bool VXMap_insert(XHashMap* this_map, const void* pvKey, const void* pvValue, XC
 	return true;
 }
 
-void VXMap_erase(XHashMap*this_map, const XHashMap_iterator* it, XHashMap_iterator* next)
+void VXMap_erase(XHashMap* this_map, const XHashMap_iterator* it, XHashMap_iterator* next)
 {
-	/*if (XMapBase_isEmpty_base(this_map))
-		return;*/
-	//XHashMap_remove_base(this_map,XPair_first(pPair));
+	// 检查参数有效性
+	if (ISNULL(this_map, "") || ISNULL(it, "") ||
+		XHashMap_iterator_isEnd((XHashMap_iterator*)it))
+	{
+		if (next != NULL)
+			*next = XHashMap_end(this_map);
+		return;
+	}
+
+	// 预存下一个迭代器（删除当前节点前先获取）
+	XHashMap_iterator next_it = *it;
+	XHashMap_iterator_add(this_map, &next_it);
+
+	// 获取当前节点数据
+	XRBTreeNode* current_node = (XRBTreeNode*)it->node;
+	XPair* current_pair = XBTreeNode_GetData(current_node, XPair*);
+	if (ISNULL(current_pair, ""))
+	{
+		if (next != NULL)
+			*next = next_it;
+		return;
+	}
+
+	// 从哈希表的对应红黑树中删除节点
+	XRBTree_remove(
+		&((XRBTreeNode**)XContainerDataPtr(this_map))[it->index],  // 对应桶的红黑树根节点地址
+		((XMapBase*)this_map)->m_KeyLess,                          // 键比较函数
+		((XMapBase*)this_map)->m_KeyEquality,                      // 键相等判断函数
+		XCompareRuleOne_XMap,                                       // 比较规则
+		XPair_first(current_pair),                                 // 要删除的键
+		XMapBase_deleteNodeData,                                   // 节点数据释放回调
+		this_map                                                   // 传递容器作为额外参数
+	);
+
+	// 更新容器大小
+	--XContainerSize(this_map);
+
+	// 设置下一个迭代器
+	if (next != NULL)
+		*next = next_it;
 }
 
 bool VXMap_remove(XHashMap*this_map, const void* pvKey)
