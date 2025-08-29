@@ -90,9 +90,9 @@ void XListSLinkedTest()
 	XPrintf("头元素为：%d\n", XListBase_Front_Base(list, int));
 	XPrintf("尾元素为：%d\n", XListBase_Back_Base(list, int));
 	
-	XListSNode* findNode = XListBase_find_base(list, arr + 2);
+	/*XListSNode* findNode = XListBase_find_base(list, arr + 2);
 	XListBase_insert_array_base(list, findNode, arr, 5);
-	XPrintf("找到的数字%d\n", XListSNode_Data(findNode,int));
+	XPrintf("找到的数字%d\n", XListSNode_Data(findNode,int));*/
 	XListSLinked_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
 	XListBase_pop_front_base(list);
 	XListBase_pop_back_base(list);

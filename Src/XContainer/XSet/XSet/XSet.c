@@ -11,7 +11,7 @@ static void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* 
 //map删除数据
 static bool VXSet_remove(XSet* this_set, const void* key);
 //查找数据，返回找到的XPair地址，没有返回NULL
-static bool VXSet_find(XSet* this_set, const void* key);
+static bool VXSet_find(XSet* this_set, const void* key, XSet_iterator* it);
 //返回key数组
 static XVector* VXSetBase_keys(const XSetBase* this_set);
 //清空Set，释放内存
@@ -209,12 +209,24 @@ bool VXSet_remove(XSet* this_set, const void* pvKey)
 	return false;
 }
 
-bool VXSet_find(XSet* this_set, const void* key)
+bool VXSet_find(XSet* this_set, const void* key, XSet_iterator* it)
 {
-	if (ISNULL(this_set, "") || ISNULL(key, ""))
-		return NULL;
+	if (XSet_isEmpty_base(this_set))
+	{
+		if (it)
+			*it = XSet_end(this_set);
+		return false;
+	}
 	XTreeNode* node = XRBTree_findData(XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key);
-	return node != NULL;
+	if (node == NULL)
+	{
+		if (it)
+			*it = XSet_end(this_set);
+		return false;
+	}
+	if (it)
+		it->node = node;
+	return true;
 }
 
 

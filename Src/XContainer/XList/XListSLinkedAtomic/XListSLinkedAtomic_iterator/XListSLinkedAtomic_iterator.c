@@ -28,7 +28,7 @@ void XListSLinkedAtomic_iterator_add(XListSLinkedAtomic* this_list, XListSLinked
 {
     if (this_list == NULL || it == NULL || it->node == NULL)
         return;
-    it->node = it->node->next;
+    it->node = ((XListSNodeAtomic*)it->node)->next;
 }
 
 bool XListSLinkedAtomic_iterator_equality(XListSLinkedAtomic_iterator* itFirst, XListSLinkedAtomic_iterator* itSecond)
@@ -53,7 +53,7 @@ void* XListSLinkedAtomic_iterator_data(XListSLinkedAtomic_iterator* it)
 {
     if (it == NULL || it->node == NULL)
         return NULL;
-    return &it->node->data;
+    return &((XListSNodeAtomic*)it->node)->data;
 }
 
 #endif

@@ -39,7 +39,7 @@ void XSetTest()
 		XPrintf("当前Set容器内数据数量:%d\n", XSet_size_base(set));
 		XSet_iterator_for_each(set, XFor_each_pair, NULL);
 
-		if (XSet_find_base(set, arrayint + 1))
+		if (XSet_contains(set, arrayint + 1))
 			XPrintf("查询到:key:%d \n", arrayint[1]);
 		XSet_clear_base(set);
 		XSet_delete_base(set);

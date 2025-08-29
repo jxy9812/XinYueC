@@ -8,7 +8,7 @@ extern "C" {
 #include<stdio.h>
 #include"XContainerObject.h"
 #include"XFunctionCallback.h"
-typedef struct XListBase_iterator XListBase_iterator;//链表迭代器抽象类型
+#include"XListBase_iterator.h"
 #define XLISTBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListBase))       //XList容器虚函数表大小
 //XList虚函数表枚举
 XCLASS_DEFINE_BEGING(XListBase)
@@ -68,18 +68,19 @@ void* XListBase_front_base(XListBase* this_list);
 void* XListBase_back_base(XListBase* this_list);
 #define XListBase_Back_Base(list,Type) (*(Type*)XListBase_back_base(list))
 //查找数据，返回找到的节点，没有返回NULL
-XListBaseNode* XListBase_find_base(const  XListBase* this_list, const void* findVal);
-void XListBase_sort(XListBase* this_list, XCompare compare);
+bool XListBase_find_base(const  XListBase* this_list, const void* findVal, XListBase_iterator* it);
+bool XListBase_contains(const XListBase* this_list, const void* value);
+void XListBase_sort_base(XListBase* this_list, XCompare compare);
 #define XListBase_copy_base				XContainerObject_copy_base	
 #define XListBase_move_base				XContainerObject_move_base	
 #define XListBase_deinit_base			XContainerObject_deinit_base	
 #define XListBase_delete_base			XContainerObject_delete_base	
 #define XListBase_clear_base			XContainerObject_clear_base	
 #define XListBase_isEmpty_base			XContainerObject_isEmpty_base	
-#define XListBase_size_base			XContainerObject_size_base	
-#define XListBase_capacity_base		XContainerObject_capacity_base
+#define XListBase_size_base				XContainerObject_size_base	
+#define XListBase_capacity_base			XContainerObject_capacity_base
 #define XListBase_swap_base				XContainerObject_swap_base	
-#define XListBase_typeSize_base		XContainerObject_typeSize_base
+#define XListBase_typeSize_base			XContainerObject_typeSize_base
 #ifdef __cplusplus
 }
 #endif

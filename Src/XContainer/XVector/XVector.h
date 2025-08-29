@@ -89,13 +89,57 @@ void* XVector_front_base(const  XVector* this_vector);
 //返回向量尾指针，指向向量最后一个元素
 void* XVector_back_base(const  XVector* this_vector);
 #define XVector_Back_Base(vector,type) (*((type*)XVector_back_base(vector)))
-//查找数据，返回索引，-1找不到
-int64_t XVector_find_base(const XVector* this_vector, const void* findVal);
+//查找数据，获取迭代器
+bool XVector_find_base(const XVector* this_vector, const void* findVal, XVector_iterator* it);
+bool XVector_contains(const XVector* this_vector, const void* value);
+/**
+ * @brief 查找元素在XVector中的索引位置
+ * @param this_vector 目标向量
+ * @param value 要查找的元素值
+ * @param from 起始查找位置（默认为0）
+ * @return 找到返回索引，未找到返回-1
+ */
+int64_t XVector_indexOf(const XVector* this_vector, const void* value, int64_t from);
+/**
+ * @brief 从指定位置开始反向查找元素在XVector中最后出现的索引
+ * @param this_vector 目标向量
+ * @param value 要查找的元素值
+ * @param from 起始查找位置（默认为-1，表示从最后一个元素开始）
+ * @return 找到返回索引，未找到返回-1
+ */
+int64_t XVector_lastIndexOf(const XVector* this_vector, const void* value, int64_t from);
+/**
+ * @brief 获取XVector中最后n个元素组成的新向量
+ * @param this_vector 源向量
+ * @param n 要获取的元素数量
+ * @return 包含最后n个元素的新XVector，失败返回NULL
+ * @note 若n大于向量大小，则返回整个向量的拷贝；若n<=0，返回空向量
+ */
+XVector* XVector_last(const XVector* this_vector, int64_t n);
+/**
+ * @brief 获取XVector中从指定位置开始的子向量
+ * @param this_vector 源向量
+ * @param pos 起始位置索引（从0开始）
+ * @param length 要获取的元素数量（默认为-1，表示获取从pos到末尾的所有元素）
+ * @return 包含子向量的新XVector，失败返回NULL
+ * @note 若pos超出范围或length为0，返回空向量；若length超出剩余元素数量，返回从pos到末尾的所有元素
+ */
+XVector* XVector_mid(const XVector* this_vector, int64_t pos, int64_t length);
+/**
+ * @brief 获取XVector中前n个元素组成的新向量
+ * @param this_vector 源向量
+ * @param n 要获取的元素数量
+ * @return 包含前n个元素的新XVector，失败返回NULL
+ * @note 若n <= 0，返回空向量；若n大于向量大小，返回整个向量的拷贝
+ */
+XVector* XVector_first(const XVector* this_vector, int64_t n);
+
 //排序
 void  XVector_sort_base(XVector* this_vector, XCompare compare);
 
 bool  XVector_replace(XVector* this_vector,int64_t index, void* pvValue);
 bool  XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue);
+
 #define XVector_copy_base							XContainerObject_copy_base	
 #define XVector_move_base							XContainerObject_move_base	
 #define XVector_deinit_base							XContainerObject_deinit_base	
@@ -107,6 +151,7 @@ bool  XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue);
 #define XVector_swap_base							XContainerObject_swap_base	
 #define XVector_typeSize_base						XContainerObject_typeSize_base
 #define XVector_count_base							XVector_size_base
+#define XVector_length_base							XVector_size_base
 #define XVector_append_base							XVector_push_back_base
 #define XVector_append_move_base					XVector_push_back_move_base
 #define XVector_prepend_base						XVector_push_front_base

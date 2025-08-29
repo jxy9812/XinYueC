@@ -40,7 +40,7 @@ void XSetBase_erase_base(XSetBase* this_set, const XSetBase_iterator* it, XSetBa
 bool XSetBase_remove_base(XSetBase* this_set, const void* pvKey);
 #define XSetBase_Remove_Base(this_map,keyType,key) {keyType k=key;XSet_remove_base(this_map,&k);}
 // 查找数据，返回是否找到
-bool XSetBase_find_base(XSetBase* this_set, const void* pvKey);
+bool XSetBase_find_base(XSetBase* this_set, const void* pvKey, XSetBase_iterator* it);
 bool XSetBase_contains(XSetBase* this_set, const void* pvKey);
 XVector* XSetBase_keys_base(const XSetBase* this_set);
 #define XSetBase_copy_base				    XContainerObject_copy_base	
@@ -49,10 +49,10 @@ XVector* XSetBase_keys_base(const XSetBase* this_set);
 #define XSetBase_delete_base				XContainerObject_delete_base	
 #define XSetBase_clear_base				    XContainerObject_clear_base	
 #define XSetBase_isEmpty_base				XContainerObject_isEmpty_base	
-#define XSetBase_size_base				XContainerObject_size_base	
-#define XSetBase_capacity_base			XContainerObject_capacity_base
+#define XSetBase_size_base				    XContainerObject_size_base	
+#define XSetBase_capacity_base			    XContainerObject_capacity_base
 #define XSetBase_swap_base				    XContainerObject_swap_base	
-#define XSetBase_typeSize_base			XContainerObject_typeSize_base
+#define XSetBase_typeSize_base			    XContainerObject_typeSize_base
 
 #ifdef __cplusplus
 }

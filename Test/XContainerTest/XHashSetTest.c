@@ -39,7 +39,7 @@ void XHashSetTest()
 		XPrintf("当前XHashSet容器内数据数量:%d\n", XHashSet_size_base(set));
 		XHashSet_iterator_for_each(set, XFor_each_pair, NULL);
 
-		if(XHashSet_find_base(set, arrayint + 1))
+		if(XHashSet_contains(set, arrayint + 1))
 			XPrintf("查询到:key:%d \n", arrayint[1]);
 		XHashSet_clear_base(set);
 		XHashSet_delete_base(set);

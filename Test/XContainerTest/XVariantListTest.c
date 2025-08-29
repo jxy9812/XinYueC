@@ -25,9 +25,9 @@ void XVariantListTest()
 		XPrintf("当前类型:%s\n",XVariant_typeName(var));
 
 		XVariant* find = XVariant_create_int(8);
-		XVariant* ret=XVariantList_find_base(list,find);
-		if (ret)
-			XPrintf("找到了:%p\n",ret);
+		int64_t index = XVector_indexOf(list,find,0);
+		if (index!=-1)
+			XPrintf("找到了index:%d\n",index);
 		XVariant_delete(find);
 
 		XVariant_setValue_double(var, 100.0);

@@ -35,7 +35,7 @@ void XListSLinked_iterator_add(XListSLinked* this_list,XListSLinked_iterator*it)
 	//	it->node = NULL;
 	//	return;
 	//}
-	it->node = (XListSNode*)(it->node)->next;//指向下一个元素
+	it->node = ((XListSNode*)(it->node))->next;//指向下一个元素
 }
 
 bool XListSLinked_iterator_equality(XListSLinked_iterator* itFirst, XListSLinked_iterator* itSecond)

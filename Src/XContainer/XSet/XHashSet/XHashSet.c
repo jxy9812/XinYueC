@@ -6,13 +6,13 @@
 #include <string.h>
 
 // Set插入数据
-static bool VXSet_insert(XHashSet* this_set, const void* pvKey, XCDataCreatMethod dataCreatMethod);
+static bool VXSet_insert(XHashSet* this_set, const void* key, XCDataCreatMethod dataCreatMethod);
 // Set删除数据
 static void VXSet_erase(XHashSet* this_set, const XHashSet_iterator* it, XHashSet_iterator* next);
 // Set移除数据
-static bool VXSet_remove(XHashSet* this_set, const void* pvKey);
+static bool VXSet_remove(XHashSet* this_set, const void* key);
 // 查找数据，返回是否找到
-static bool VXSet_find(XHashSet* this_set, const void* pvKey);
+static bool VXSet_find(XHashSet* this_set, const void* key, XHashSet_iterator* it);
 // 清空Set，释放内存
 static void VXSet_clear(XHashSet* this_set);
 static void VXClass_copy(XHashSet* object, const XHashSet* src);
@@ -100,7 +100,7 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
     return true;
 }
 
-bool VXSet_insert(XHashSet* this_set, const void* pvKey, XCDataCreatMethod dataCreatMethod)
+bool VXSet_insert(XHashSet* this_set, const void* key, XCDataCreatMethod dataCreatMethod)
 {
     if ((double)XContainerSize(this_set) / XContainerCapacity(this_set) >= DEFAULT_LOAD_FACTOR)
     {
@@ -113,21 +113,21 @@ bool VXSet_insert(XHashSet* this_set, const void* pvKey, XCDataCreatMethod dataC
         }
     }
 
-    size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
+    size_t index = this_set->m_hash(key, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
 
-    XRBTreeNode* current = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
+    XRBTreeNode* current = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key);
     if (current == NULL)
     {//节点不存在
         if (dataCreatMethod)
         {
             void* temp = XMemory_calloc(1, XContainerTypeSize(this_set));
-            dataCreatMethod(temp, pvKey);
+            dataCreatMethod(temp, key);
             XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
             XMemory_free(temp);
         }
         else
         {
-            XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
+            XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, key, XContainerTypeSize(this_set));
         }
         ++XContainerSize(this_set);
     }
@@ -185,27 +185,39 @@ void VXSet_erase(XHashSet* this_set, const XHashSet_iterator* it, XHashSet_itera
         *next = next_it;
 }
 
-bool VXSet_remove(XHashSet* this_set, const void* pvKey)
+bool VXSet_remove(XHashSet* this_set, const void* key)
 {
     if (XSetBase_isEmpty_base(this_set))
         return false;
-    size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
-    XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
+    size_t index = this_set->m_hash(key, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
+    XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key);
     if (node != NULL)
     {
-        XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey, XSet_freeNodeData,this_set);
+        XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key, XSet_freeNodeData,this_set);
         --XContainerSize(this_set);
         return true;
     }
 }
 
-bool VXSet_find(XHashSet* this_set, const void* pvKey)
+bool VXSet_find(XHashSet* this_set, const void* key,XHashSet_iterator* it)
 {
     if (XSetBase_isEmpty_base(this_set))
+    {
+        if (it)
+            *it = XHashSet_end(this_set);
         return false;
-    size_t index = this_set->m_hash(pvKey, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
-    XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey);
-    return node != NULL;
+    }
+    size_t index = this_set->m_hash(key, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
+    XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key);
+    if (node == NULL)
+    {
+        if (it)
+            *it = XHashSet_end(this_set);
+        return false;
+    }
+    if (it)
+        it->node = node;
+    return true;
 }
 
 void VXSet_clear(XHashSet* this_set)

@@ -177,11 +177,162 @@ void* XVector_back_base(const XVector* this_vector)
 	return XClassGetVirtualFunc(this_vector, EXVector_Back, void* (*)(XVector*))(this_vector);
 }
 
-int64_t XVector_find_base(const XVector* this_vector,const void* findVal)
+bool XVector_find_base(const XVector* this_vector,const void* findVal, XVector_iterator* it)
 {
-	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
+	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), "")|| ISNULL(findVal, ""))
+		return false;
+	return XClassGetVirtualFunc(this_vector, EXVector_Find, bool(*)(XVector*, const void*, XVector_iterator*))(this_vector,findVal,it);
+}
+
+bool XVector_contains(const XVector* this_vector, const void* value)
+{
+	return XVector_find_base(this_vector,value,NULL);
+}
+
+int64_t XVector_indexOf(const XVector* this_vector, const void* value, int64_t from)
+{
+	// 参数合法性检查
+	if (ISNULL(this_vector, "XVector is NULL") ||
+		ISNULL(value, "Value is NULL") ||
+		from < 0 ||
+		from >= (int64_t)XVector_size_base(this_vector))
+	{
 		return -1;
-	return XClassGetVirtualFunc(this_vector, EXVector_Find, int64_t(*)(XVector*, const void*))(this_vector,findVal);
+	}
+
+	size_t typeSize = XContainerTypeSize(this_vector);
+	size_t size = XVector_size_base(this_vector);
+	const char* data = (const char*)XContainerDataPtr(this_vector);
+
+	// 使用内存比较查找元素
+	for (size_t i = from; i < size; ++i)
+	{
+		const void* element = &data[i * typeSize];
+		if (this_vector->m_equality)
+		{
+			if(this_vector->m_equality(element, value))
+				return (int64_t)i;
+		}
+		else if (memcmp(element, value, typeSize) == 0)
+		{
+			return (int64_t)i;
+		}
+	}
+
+	// 未找到元素
+	return -1;
+}
+
+int64_t XVector_lastIndexOf(const XVector* this_vector, const void* value, int64_t from)
+{
+	// 参数合法性检查
+	if (ISNULL(this_vector, "XVector is NULL") ||
+		ISNULL(value, "Value is NULL"))
+	{
+		return -1;
+	}
+
+	size_t typeSize = XContainerTypeSize(this_vector);
+	size_t size = XVector_size_base(this_vector);
+	if (size == 0) return -1; // 空容器直接返回
+
+	// 处理from参数（默认为-1表示从最后一个元素开始）
+	int64_t startIndex;
+	if (from < 0) {
+		startIndex = (int64_t)size - 1; // 从最后一个元素开始
+	}
+	else {
+		// 确保起始位置不超过容器范围
+		startIndex = (from >= (int64_t)size) ? (int64_t)size - 1 : from;
+	}
+
+	const char* data = (const char*)XContainerDataPtr(this_vector);
+
+	// 从起始位置开始向前查找
+	for (int64_t i = startIndex; i >= 0; --i)
+	{
+		const void* element = &data[(size_t)i * typeSize];
+		if (this_vector->m_equality)
+		{
+			if (this_vector->m_equality(element, value))
+				return (int64_t)i;
+		}
+		else if (memcmp(element, value, typeSize) == 0)
+		{
+			return (int64_t)i;
+		}
+	}
+
+	// 未找到元素
+	return -1;
+}
+
+XVector* XVector_last(const XVector* this_vector, int64_t n)
+{
+	return XVector_mid(this_vector,XContainerSize(this_vector)-n,-1);
+}
+
+XVector* XVector_mid(const XVector* this_vector, int64_t pos, int64_t length)
+{
+	// 参数合法性检查
+	if (ISNULL(this_vector, "XVector is NULL"))
+		return NULL;
+
+	size_t typeSize = XContainerTypeSize(this_vector);
+	size_t totalSize = XVector_size_base(this_vector);
+	// 创建新向量
+	XVector* result = XVector_create(typeSize);
+	XContainerSetDataCopyMethod(result, XContainerDataCopyMethod(this_vector));
+	XContainerSetDataMoveMethod(result, XContainerDataMoveMethod(this_vector));
+	XContainerSetDataDeinitMethod(result, XContainerDataDeinitMethod(this_vector));
+	if (ISNULL(result, "Failed to create XVector"))
+		return NULL;
+
+	// 处理起始位置越界情况
+	if (pos < 0 || (size_t)pos >= totalSize) {
+		return result; // 返回空向量
+	}
+
+	// 计算实际要获取的元素数量
+	size_t remaining = totalSize - (size_t)pos;
+	size_t actualLength;
+
+	if (length < 0) {
+		actualLength = remaining; // length为-1时取剩余所有元素
+	}
+	else if ((size_t)length >= remaining) {
+		actualLength = remaining; // 超出剩余数量时取剩余所有元素
+	}
+	else {
+		actualLength = (size_t)length; // 正常情况取指定长度
+	}
+
+	// 处理长度为0的情况
+	if (actualLength == 0) {
+		return result; // 返回空向量
+	}
+
+	// 获取源数据指针
+	const char* srcData = (const char*)XContainerDataPtr(this_vector);
+
+	// 使用push_back逐个添加子元素
+	for (size_t i = 0; i < actualLength; ++i) {
+		// 计算当前元素在源向量中的位置
+		const void* element = srcData + (pos + i) * typeSize;
+
+		// 使用push_back API添加元素
+		if (!XVector_push_back_base(result, element)) {
+			XVector_delete_base(result);
+			return NULL;
+		}
+	}
+
+	return result;
+}
+
+XVector* XVector_first(const XVector* this_vector, int64_t n)
+{
+	return XVector_mid(this_vector, 0, n);
 }
 
 void XVector_sort_base(XVector* this_vector, XCompare compare)

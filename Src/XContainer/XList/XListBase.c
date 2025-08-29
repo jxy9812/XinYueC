@@ -92,13 +92,17 @@ void* XListBase_back_base(XListBase* this_list)
 		return NULL;
 	return XClassGetVirtualFunc(this_list, EXListBase_Back, void* (*)(XListBase*))(this_list);
 }
-XListBaseNode* XListBase_find_base(const XListBase* this_list, const void* findVal)
+bool XListBase_find_base(const XListBase* this_list, const void* findVal, XListBase_iterator* it)
 {
 	if (ISNULL(this_list, "") || ISNULL(findVal, "") || ISNULL(XClassGetVtable(this_list), ""))
-		return NULL;
-	return XClassGetVirtualFunc(this_list, EXListBase_Find, void* (*)(XListBase*, const void*))(this_list, findVal);
+		return false;
+	return XClassGetVirtualFunc(this_list, EXListBase_Find, bool(*)(XListBase*, const void*, XListBase_iterator*))(this_list, findVal,it);
 }
-void XListBase_sort(XListBase* this_list, XCompare compare)
+bool XListBase_contains(const XListBase* this_list, const void* value)
+{
+	return XListBase_find_base(this_list,value,NULL);
+}
+void XListBase_sort_base(XListBase* this_list, XCompare compare)
 {
 	if (ISNULL(this_list, "") || ISNULL(compare, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return NULL;

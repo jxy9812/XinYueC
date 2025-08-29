@@ -73,7 +73,7 @@ void XListSLinkedAtomic_init(XListSLinkedAtomic* this_list, size_t typeSize);
 //查找数据，返回找到的节点，没有返回NULL
 #define XListSLinkedAtomic_find_base						XListBase_find_base
 //排序
-#define XListSLinkedAtomic_sort_base						XListBase_sort
+#define XListSLinkedAtomic_sort_base						XListBase_sort_base
 #define XListSLinkedAtomic_copy_base				        XListBase_copy_base	
 #define XListSLinkedAtomic_move_base				        XListBase_move_base	
 #define XListSLinkedAtomic_deinit_base			            XListBase_deinit_base	

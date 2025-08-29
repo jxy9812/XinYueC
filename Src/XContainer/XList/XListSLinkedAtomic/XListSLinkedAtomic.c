@@ -17,7 +17,7 @@ static bool VXListAtomic_remove(XListSLinkedAtomic* this_list, void* pvData);
 static void VXListAtomic_clear(XListSLinkedAtomic* this_list);
 static void* VXListAtomic_front(XListSLinkedAtomic* this_list);
 static void* VXListAtomic_back(XListSLinkedAtomic* this_list);
-static XListSNodeAtomic* VXListAtomic_find(const XListSLinkedAtomic* this_list, void* pvData);
+static bool VXListAtomic_find(const XListSLinkedAtomic* this_list, void* pvData, XListSLinkedAtomic_iterator* it);
 static void VXListAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare);
 static void VXClass_copy(XListSLinkedAtomic* object, const XListSLinkedAtomic* src);
 static void VXClass_move(XListSLinkedAtomic* object, XListSLinkedAtomic* src);
@@ -565,20 +565,39 @@ void* VXListAtomic_back(XListSLinkedAtomic* this_list) {
 }
 
 // 查找数据
-XListSNodeAtomic* VXListAtomic_find(const XListSLinkedAtomic* this_list, void* pvData) {
-    if (XListSLinkedAtomic_isEmpty_base(this_list)) return NULL;
-    if (((XListBase*)this_list)->m_equality == NULL) return NULL;
+bool VXListAtomic_find(const XListSLinkedAtomic* this_list, void* pvData, XListSLinkedAtomic_iterator* it) 
+{
+    if (XListSLinkedAtomic_isEmpty_base(this_list))
+    {
+        if (it)
+            *it = XListSLinkedAtomic_end(this_list);
+        return false;
+    }
 
     XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
 
-    while (current != NULL) {
-        if (((XListBase*)this_list)->m_equality(&current->data, pvData)) {
-            return current;
+    while (current != NULL) 
+    {
+        if (((XListBase*)this_list)->m_equality)
+        {
+            if (((XListBase*)this_list)->m_equality(XListSNodeAtomic_DataPtr(current), pvData))
+            {
+                if (it)
+                    it->node = current;
+                return true;
+            }
+        }
+        else if (memcmp(XListSNodeAtomic_DataPtr(current), pvData,XContainerTypeSize(this_list))==0)
+        {
+            if (it)
+                it->node = current;
+            return true;
         }
         current = current->next;
     }
-
-    return NULL;
+    if (it)
+        *it = XListSLinkedAtomic_end(this_list);
+    return false;
 }
 
 // 找到链表尾部节点

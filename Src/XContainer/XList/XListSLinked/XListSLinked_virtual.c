@@ -18,7 +18,7 @@ static void VXList_clear(XListSLinked* this_list);
 //遍历
 static void* VXList_front(XListSLinked* this_list);
 static void* VXList_back(XListSLinked* this_list);
-static XListSNode* VXList_find(const XListSLinked* this_list, void* pvData);
+static bool VXList_find(const XListSLinked* this_list, void* pvData, XListSLinked_iterator* it);
 //其他
 static void VXList_sort(XListSLinked* this_list, XCompare compare);
 static void VXClass_copy(XListSLinked* object, const XListSLinked* src);
@@ -408,22 +408,37 @@ void* VXList_back(XListSLinked* this_list)
     return NULL;
 }
 
-XListSNode* VXList_find(const XListSLinked* this_list, void* pvData)
+bool VXList_find(const XListSLinked* this_list, void* pvData, XListSLinked_iterator* it)
 {
     if (XListBase_isEmpty_base(this_list))
-        return NULL;
-    if (((XListBase*)this_list)->m_equality == NULL)
-        return NULL;
+    {
+        if (it)
+            *it = XListSLinked_end(this_list);
+        return false;
+    }
     XListSNode* node = XContainerDataPtr(this_list);//当前节点
     while (node)
     {
-        if (((XListBase*)this_list)->m_equality(&(node->data), pvData))
-        {//找到了
-            return node;
+        if (((XListBase*)this_list)->m_equality)
+        {
+            if (((XListBase*)this_list)->m_equality(XListSNode_DataPtr(node), pvData))
+            {
+                if (it)
+                    it->node = node;
+                return true;
+            }
+        }
+        else if (memcmp(XListSNode_DataPtr(node), pvData, XContainerTypeSize(this_list)) == 0)
+        {
+            if (it)
+                it->node = node;
+            return true;
         }
         node = node->next;
     }
-    return NULL;
+    if (it)
+        *it = XListSLinked_end(this_list);
+    return false;
 }
 // 找到链表尾部节点
 static XListSNode* findTail(XListSNode* head) {

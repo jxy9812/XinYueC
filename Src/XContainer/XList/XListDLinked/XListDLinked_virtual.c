@@ -21,7 +21,7 @@ static void VXList_clear(XListDLinked* this_list);
 //遍历
 static void* VXList_front(XListDLinked* this_list);
 static void* VXList_back(XListDLinked* this_list);
-static XListDNode* VXList_find(const XListDLinked* this_list, void* pvData);
+static bool VXList_find(const XListDLinked* this_list, void* pvData, XListDLinked_iterator* it);
 //其他
 static void VXList_sort(XListDLinked* this_list, XCompare compare);
 static void VXClass_copy(XListDLinked* object, const XListDLinked* src);
@@ -298,7 +298,7 @@ void VXList_erase(XListDLinked* this_list, const XListDLinked_iterator* it, XLis
     }
     else if (next)
     {
-        next->node = (XListDNode*)(it->node)->next;//指向下一个元素
+        next->node = ((XListDNode*)(it->node))->next;//指向下一个元素
     }
     //正式删除
     removeNode(this_list, it->node);
@@ -309,9 +309,10 @@ bool VXList_remove(XListDLinked* this_list, void* pvData)
     if (ISNULL(pvData, ""))
         return false;
     XListDLinked* list = this_list;
-    XListDNode* node = XListDLinked_find_base(this_list, pvData);
-    if (node==NULL)
+    XListDLinked_iterator* it;
+    if (!XListDLinked_find_base(this_list, pvData,&it))
         return false;
+    XListDNode* node = it->node;
     removeNode(this_list,node);
     return true;
 }
@@ -351,17 +352,37 @@ void* VXList_back(XListDLinked* this_list)
     return NULL;
 }
 
-XListDNode* VXList_find(const XListDLinked* this_list, void* pvData)
+bool VXList_find(const XListDLinked* this_list, void* pvData, XListDLinked_iterator* it)
 {
-    XListBase* list = this_list;
-    if (ISNULL(list->m_equality, "") || ISNULL(pvData, ""))
-        return NULL;
-    for_each_iterator(list, XListDLinked, it)
+    if (XListBase_isEmpty_base(this_list))
     {
-        if (list->m_equality(XListDLinked_iterator_data(&it), pvData))
-            return it.node;
+        if (it)
+            *it = XListDLinked_end(this_list);
+        return false;
     }
-    return NULL;
+    XListDNode* node = XContainerDataPtr(this_list);//当前节点
+    for_each_iterator(this_list, XListDLinked, forIt)
+    {
+        void* curr=XListDLinked_iterator_data(&forIt);
+        if (((XListBase*)this_list)->m_equality)
+        {
+            if (((XListBase*)this_list)->m_equality(curr, pvData))
+            {
+                if (it)
+                    *it = forIt;
+                return true;
+            }
+        }
+        else if (memcmp(curr, pvData, XContainerTypeSize(this_list)) == 0)
+        {
+            if (it)
+                *it = forIt;
+            return true;
+        }
+    }
+    if (it)
+        *it = XListDLinked_end(this_list);
+    return false;
 }
 //其他
 

@@ -54,16 +54,16 @@ bool XSetBase_remove_base(XSetBase* this_set, const void* pvKey)
     return XClassGetVirtualFunc(this_set, EXSetBase_Remove, bool(*)(XSetBase*, const void*))(this_set, pvKey);
 }
 
-bool XSetBase_find_base(XSetBase* this_set, const void* pvKey)
+bool XSetBase_find_base(XSetBase* this_set, const void* pvKey, XSetBase_iterator* it)
 {
     if (ISNULL(this_set, "") || ISNULL(pvKey, "") || ISNULL(XClassGetVtable(this_set), ""))
         return false;
-    return XClassGetVirtualFunc(this_set, EXSetBase_Find, bool(*)(XSetBase*, const void*))(this_set, pvKey);
+    return XClassGetVirtualFunc(this_set, EXSetBase_Find, bool(*)(XSetBase*, const void*, XSetBase_iterator*))(this_set, pvKey,it);
 }
 
 bool XSetBase_contains(XSetBase* this_set, const void* pvKey)
 {
-    return XSetBase_find_base(this_set,pvKey);
+    return XSetBase_find_base(this_set,pvKey,NULL);
 }
 
 XVector* XSetBase_keys_base(const XSetBase* this_set)

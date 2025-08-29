@@ -69,7 +69,7 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize);
 //查找数据，返回找到的节点，没有返回NULL
 #define XListDLinked_find_base						XListBase_find_base
 //排序
-#define XListDLinked_sort_base						XListBase_sort
+#define XListDLinked_sort_base						XListBase_sort_base
 #define XListDLinked_copy_base				        XListBase_copy_base	
 #define XListDLinked_move_base				        XListBase_move_base	
 #define XListDLinked_deinit_base			        XListBase_deinit_base	

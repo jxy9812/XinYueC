@@ -4,14 +4,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XContainerObject_iterator.h"
+#include"XListBase_iterator.h"
 XContainerTypeDeclare(XListSLinkedAtomic);
 XContainerTypeDeclare(XListSNodeAtomic);
 // 正向迭代器
-typedef struct XListSLinkedAtomic_iterator
-{
-    XListSNodeAtomic* node;
-} XListSLinkedAtomic_iterator;
+typedef XListBase_iterator XListSLinkedAtomic_iterator;
 
 XListSLinkedAtomic_iterator XListSLinkedAtomic_begin(XListSLinkedAtomic* this_list);
 XListSLinkedAtomic_iterator XListSLinkedAtomic_end(XListSLinkedAtomic* this_list);

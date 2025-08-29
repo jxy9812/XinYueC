@@ -72,10 +72,11 @@ bool XByteArray_append_utf8(XByteArray* array, const char* utf8)
 	return XByteArray_append_array_base(array,utf8,len);
 }
 
-uint8_t* XByteArray_find_base(const XByteArray* array, const uint8_t findVal)
+bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteArray_iterator* it)
 {
-	return XVector_find_base(array,&findVal);
+	return XVector_find_base(array,&findVal,it);
 }
+
 XByteArray* XByteArray_to16HexUtf8(XByteArray* array)
 {
 	if (array == NULL || XByteArray_isEmpty_base(array))

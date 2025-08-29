@@ -4,15 +4,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XContainerObject_iterator.h"
-#include"XFunctionCallback.h"
+#include"XListBase_iterator.h"
 XContainerTypeDeclare(XListDLinked);
 XContainerTypeDeclare(XListDNode);
 //反向迭代器
-typedef struct XListDLinked_reverse_iterator
-{
-	XListDNode* node;
-}XListDLinked_reverse_iterator;
+typedef XListBase_iterator XListDLinked_reverse_iterator;
+
 XListDLinked_reverse_iterator XListDLinked_rbegin(XListDLinked* this_list);
 XListDLinked_reverse_iterator XListDLinked_rend(XListDLinked* this_list);
 bool XListDLinked_reverse_iterator_isEnd(const XListDLinked_reverse_iterator* it);

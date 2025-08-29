@@ -64,7 +64,7 @@ bool XMenu_removeAction(XMenu* menu, XAction* action)
 	if (menu == NULL||action==NULL)
 		return false;
 	XMenuData* data = XTreeNode_getData(menu);
-	int64_t index=XVector_find_base(data->actions,&action);
+	int64_t index= XVector_indexOf(data->actions,&action,0);
 	if (index == -1)
 		return false;
 	XVector_remove_base(data->actions, index,1);

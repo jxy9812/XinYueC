@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 #include"XVector.h"
+#include"XByteArray_iterator.h"
+#include"XByteArray_reverse_iterator.h"
 typedef struct XByteArray
 {
 	XVector m_parent;
@@ -23,7 +25,7 @@ bool XByteArray_insert_base(XByteArray* array, int64_t index, const  uint8_t byt
 bool XByteArray_inserts_base(XByteArray* array, int64_t index, uint8_t byte, size_t n);
 bool XByteArray_append_utf8(XByteArray* array, const char* utf8);
 //查找数据，返回找到的指针，没有返回NULL
-uint8_t* XByteArray_find_base(const XByteArray* array, const uint8_t findVal);
+bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteArray_iterator* it);
 #define XByteArray_resize_base						XVector_resize_base
 // 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2]间的数据
 #define XByteArray_insert_array_base				XVector_insert_array_base

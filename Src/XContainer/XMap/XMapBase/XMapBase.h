@@ -35,23 +35,23 @@ XVtable* XMapBase_class_init();
 //初始化 XMap
 void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality,XLess KeyLess);
 //Map插入数据
-bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue);
+bool XMapBase_insert_base(XMapBase* this_map, const void* key, const void* pvValue);
 #define XMapBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMap_insert_base(this_map,&k,&v);}
-bool XMapBase_insert_move_base(XMapBase* this_map,void* pvKey,void* pvValue);
+bool XMapBase_insert_move_base(XMapBase* this_map,void* key,void* pvValue);
 #define XMapBase_Insert_Move_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMapBase_insert_move_base(this_map,&k,&v);}
-bool XMapBase_insert_keyMove_base(XMapBase* this_map,void* pvKey, const void* pvValue);
-bool XMapBase_insert_valueMove_base(XMapBase* this_map, const void* pvKey,void* pvValue);
+bool XMapBase_insert_keyMove_base(XMapBase* this_map,void* key, const void* pvValue);
+bool XMapBase_insert_valueMove_base(XMapBase* this_map, const void* key,void* pvValue);
 
 void XMapBase_erase_base(XMapBase* this_map, const XMapBase_iterator* it, XMapBase_iterator* next);
 //map删除数据
-bool XMapBase_remove_base(XMapBase* this_map, const void* pvKey);
+bool XMapBase_remove_base(XMapBase* this_map, const void* key);
 #define XMapBase_Remove_Base(this_map,keyType,key) {keyType k=key;XMap_remove_base(this_map,&k);}
 //根据键值返回数据地址
-void* XMapBase_value_base(XMapBase* this_map, const void* pvKey);
+void* XMapBase_value_base(XMapBase* this_map, const void* key);
 #define XMapBase_Value_Base(this_map,key,ValueType) (*(ValueType*)XMap_value_base(this_map,&(key)))
 //查找数据，返回找到的迭代器
-bool XMapBase_find_base(XMapBase* this_map, const void* pvKey, XMapBase_iterator* it);
-bool XMapBase_contains(XMapBase* this_map, const void* pvKey);
+bool XMapBase_find_base(const XMapBase* this_map, const void* key, XMapBase_iterator* it);
+bool XMapBase_contains(const XMapBase* this_map, const void* key);
 XVector* XMapBase_keys_base(const XMapBase* this_map);
 XVector* XMapBase_values_base(const XMapBase* this_map);
 #define XMapBase_copy_base				XContainerObject_copy_base	

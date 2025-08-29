@@ -48,15 +48,16 @@ void XInterrupt_addCallback(XInterrupt* interrupt, uint8_t index, InterruptCallb
 		((XListSLinked*)interrupt->m_data[index])->m_parent.m_equality = XEquality_XInterrupt;
 	}
 	list = interrupt->m_data[index];
-	XListSNode* node = XListSLinked_find_base(list, &callback);
+	XListBase_iterator* it;
+	
 	XInterruptNode i = { callback,userData };
-	if (node == NULL)
+	if (!XListSLinked_find_base(list, &callback,&it))
 	{//插入
 		XListSLinked_push_back_base(list, &i);
 	}
 	else
 	{//更新
-		XListSNode_Data(node, XInterruptNode) = i;
+		*((XInterruptNode*)XListSLinked_iterator_data(&it)) = i;
 	}
 }
 void XInterrupt_removeCallback(XInterrupt* interrupt, uint8_t index, InterruptCallback callback, void* userData)

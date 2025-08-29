@@ -47,7 +47,7 @@ void XVectorTest()
 	XVector_sort_base(v, XLess_int);*/
 	XPrintf("排序数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
 	int findVal = 100;
-	int64_t index =XVector_find_base(v, &findVal);
+	int64_t index = XVector_indexOf(v, &findVal,0);
 	if(index !=-1)
 		XPrintf("找到的数字,索引号:%d\n", index);
 	XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");

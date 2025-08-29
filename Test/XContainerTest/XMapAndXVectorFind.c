@@ -46,9 +46,9 @@ void XMapAndXVectorFindTest()
 	//性能测试
 	size_t findNum = count / 2;
 	clock_t vector_start = clock();
-	size_t* Vret=XVector_find_base(VArray, &findNum);
-	clock_t vector_end = clock();
-	XPrintf("XVector查询数据:%d 用时%dms\n", *Vret, vector_end- vector_start);
+	//size_t* Vret=XVector_find_base(VArray, &findNum);
+	//clock_t vector_end = clock();
+	//XPrintf("XVector查询数据:%d 用时%dms\n", *Vret, vector_end- vector_start);
 
 	clock_t map_start = clock();
 	size_t* mret = XMap_value_base(map,&findNum);
