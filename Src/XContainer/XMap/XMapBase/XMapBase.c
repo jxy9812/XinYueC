@@ -74,16 +74,16 @@ void* XMapBase_value_base(XMapBase* this_map, const void* pvKey)
 		return NULL;
 	return XClassGetVirtualFunc(this_map, EXMapBase_Value, void*(*)(XMapBase* ,const void*))(this_map, pvKey);
 }
-XPair* XMapBase_find_base(XMapBase* this_map, const void* pvKey)
+bool XMapBase_find_base(XMapBase* this_map, const void* pvKey, XMapBase_iterator* it)
 {
 	if (ISNULL(this_map, "") || ISNULL(pvKey, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return NULL;
-	return XClassGetVirtualFunc(this_map, EXMapBase_Find, void* (*)(XMapBase*, const void*))(this_map, pvKey);
+	return XClassGetVirtualFunc(this_map, EXMapBase_Find, bool (*)(XMapBase*, const void*, XMapBase_iterator*))(this_map, pvKey,it);
 }
 
 bool XMapBase_contains(XMapBase* this_map, const void* pvKey)
 {
-	return XMapBase_find_base(this_map,pvKey)!=NULL;
+	return XMapBase_find_base(this_map,pvKey,NULL);
 }
 
 XVector* XMapBase_keys_base(const XMapBase* this_map)
@@ -91,6 +91,13 @@ XVector* XMapBase_keys_base(const XMapBase* this_map)
 	if (ISNULL(this_map, "")  || ISNULL(XClassGetVtable(this_map), ""))
 		return NULL;
 	return XClassGetVirtualFunc(this_map, EXMapBase_Keys, void* (*)(const XMapBase*))(this_map);
+}
+
+XVector* XMapBase_values_base(const XMapBase* this_map)
+{
+	if (ISNULL(this_map, "") || ISNULL(XClassGetVtable(this_map), ""))
+		return NULL;
+	return XClassGetVirtualFunc(this_map, EXMapBase_Values, void* (*)(const XMapBase*))(this_map);
 }
 
 void XMapBase_deleteNodeData(XPair** pair, XMapBase* this_map)

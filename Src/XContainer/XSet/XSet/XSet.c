@@ -174,13 +174,13 @@ void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* next)
 
 	// 从红黑树中删除当前节点
 	XRBTree_remove(
-		&XContainerDataPtr(this_set),                  // 红黑树根节点地址
-		((XSetBase*)this_set)->m_KeyLess,              // 键比较函数
-		((XSetBase*)this_set)->m_KeyEquality,          // 键相等判断函数
-		XCompareRuleOne_XSet,                           // 比较规则
-		current_key,                                   // 要删除的键值
-		XSet_freeNodeData,                             // 节点数据释放回调
-		this_set                                       // 传递容器作为额外参数
+		&XContainerDataPtr(this_set),                   // 红黑树根节点地址
+		((XSetBase*)this_set)->m_KeyLess,						// 键比较函数
+		((XSetBase*)this_set)->m_KeyEquality,					// 键相等判断函数
+		XCompareRuleOne_XSet,									// 比较规则
+		current_key,										// 要删除的键值
+		XSet_freeNodeData,								// 节点数据释放回调
+		this_set											// 传递容器作为额外参数
 	);
 
 	// 更新容器大小信息

@@ -19,6 +19,7 @@ XCLASS_DEFINE_ENUM(XMapBase,Remove),
 XCLASS_DEFINE_ENUM(XMapBase,Value),
 XCLASS_DEFINE_ENUM(XMapBase,Find), 
 XCLASS_DEFINE_ENUM(XMapBase,Keys),
+XCLASS_DEFINE_ENUM(XMapBase,Values),
 XCLASS_DEFINE_END(XMapBase)
 typedef struct XMapBase
 {
@@ -48,10 +49,11 @@ bool XMapBase_remove_base(XMapBase* this_map, const void* pvKey);
 //根据键值返回数据地址
 void* XMapBase_value_base(XMapBase* this_map, const void* pvKey);
 #define XMapBase_Value_Base(this_map,key,ValueType) (*(ValueType*)XMap_value_base(this_map,&(key)))
-//查找数据，返回找到的XPair地址，没有返回NULL
-XPair* XMapBase_find_base(XMapBase* this_map, const void* pvKey);
+//查找数据，返回找到的迭代器
+bool XMapBase_find_base(XMapBase* this_map, const void* pvKey, XMapBase_iterator* it);
 bool XMapBase_contains(XMapBase* this_map, const void* pvKey);
 XVector* XMapBase_keys_base(const XMapBase* this_map);
+XVector* XMapBase_values_base(const XMapBase* this_map);
 #define XMapBase_copy_base				XContainerObject_copy_base	
 #define XMapBase_move_base				XContainerObject_move_base	
 #define XMapBase_deinit_base			XContainerObject_deinit_base	

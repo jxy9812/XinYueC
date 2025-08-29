@@ -45,7 +45,7 @@ void XWaitCondition_delete(XWaitCondition* cond);
  * @param timeout 超时时间（毫秒），-1表示无限等待
  * @return 成功唤醒返回true，超时返回false
  */
-bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int timeout);
+bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int32_t timeout);
 
 /**
  * @brief 唤醒一个等待的线程

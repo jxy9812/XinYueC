@@ -40,10 +40,10 @@ void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t va
 #define XHashMap_delete_base					XMapBase_delete_base	
 #define XHashMap_clear_base						XMapBase_clear_base	
 #define XHashMap_isEmpty_base					XMapBase_isEmpty_base	
-#define XHashMap_size_base					XMapBase_size_base	
-#define XHashMap_capacity_base				XMapBase_capacity_base
+#define XHashMap_size_base						XMapBase_size_base	
+#define XHashMap_capacity_base					XMapBase_capacity_base
 #define XHashMap_swap_base						XMapBase_swap_base	
-#define XHashMap_typeSize_base				XMapBase_typeSize_base
+#define XHashMap_typeSize_base					XMapBase_typeSize_base
 
 XVariantHashMap* XHashMap_create_XVariantHashMap();
 #ifdef __cplusplus

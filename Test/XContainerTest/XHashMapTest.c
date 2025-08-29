@@ -42,8 +42,8 @@ void XHashMapTest()
 		XPrintf("当前XHashMap容器内数据数量:%d\n", XHashMap_size_base(map));
 		XHashMap_iterator_for_each(map, XFor_each_pair, NULL);
 
-		XPair* pair = XHashMap_find_base(map, arrayint + 1);
-		XPrintf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair, char*));
+		/*XPair* pair = XHashMap_find_base(map, arrayint + 1,NULL);
+		XPrintf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair, char*));*/
 		XHashMap_clear_base(map);
 		XHashMap_delete_base(map);
 	}
