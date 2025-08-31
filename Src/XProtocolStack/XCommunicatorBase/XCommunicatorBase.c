@@ -1,5 +1,6 @@
 ﻿#include"XCommunicatorBase.h"
 #include"XTimerGroupWheel.h"
+#include"XThread.h"
 #include<string.h>
 void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io)
 {
@@ -8,7 +9,7 @@ void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io)
     XObject_init(comm);
     XClassGetVtable(comm) = XCommunicatorBase_class_init();
     comm->m_io = io;
-    comm->m_timerGroup = XTimerGroupBase_global();
+    comm->m_timerGroup = XThread_currentTimerGroup();
     //comm->m_timerGroup = XTimerGroupWheel_create(1);
     //comm->m_opt_timeout = ~(comm->m_opt_timeout);//取反最大值
   

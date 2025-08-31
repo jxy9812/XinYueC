@@ -14,14 +14,15 @@ typedef struct XCoreApplication
     int m_argc;
     char** m_argv;
   
-    XEventDispatcherThread* m_eventDispatcher;//事件调度器
+    XEventLoop* m_eventLoop;//事件调度器
 }XCoreApplication;//
 XVtable* XCoreApplication_class_init();
 XCoreApplication* XCoreApplication_global();
 XCoreApplication* XCoreApplication_create(int argc, char** argv);
 void XCoreApplication_init(XCoreApplication* app, int argc, char** argv);
 //获取事件调度器
-XEventDispatcherThread* XCoreApplication_getEventDispatcher();
+XEventDispatcher* XCoreApplication_getDispatcher();
+XTimerGroupBase* XCoreApplication_getTimerGroup();
 //请求退出
 void XCoreApplication_requestQuit();
 //进入事件循环

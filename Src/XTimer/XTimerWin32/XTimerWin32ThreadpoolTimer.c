@@ -10,7 +10,7 @@
 static VOID CALLBACK TimerCallbackThreadpoolTimer(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_TIMER Timer)
 {
 	XTimerBase* timer = ((XTimerBase*)Context);
-	XTimerBase_out(timer);
+	XTimerBase_out_base(timer);
 }
 static void XTimerCreateWin32ThreadpoolTimer(XTimerBase* timer)
 {

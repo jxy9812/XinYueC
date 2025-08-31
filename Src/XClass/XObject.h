@@ -15,7 +15,7 @@ XCLASS_DEFINE_END(XObject)
 typedef struct XObject
 {
     XClass m_parent;//父对象
-    XEventDispatcherThread* m_eventDispatcher; // 事件调度器
+    XEventDispatcher* m_eventDispatcher; // 事件调度器
     XSignalSlot* m_signalSlot;//信号与槽控制
 }XObject;//
 XVtable* XObject_class_init();
@@ -28,10 +28,12 @@ bool XObject_moveToThread(XObject* object, XThread* thread);
 //给Object投递事件
 bool XObject_postEvent(XObject* object, XEventMin* event);
 XThread* XObject_thread(XObject* object);
-XEventDispatcherThread* XObject_getEventDispatcher(XObject* object);
+XEventDispatcher* XObject_getEventDispatcher(XObject* object);
 //信号与槽
 XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type);
 
+bool XObject_disconnect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func);
+bool XObject_disconnect_conn(XConnection* conn);
 //slot: void deinit_slot(XObject* sender, XObject* receiver, void* args)
 void* XObject_deinit_signal(XObject* object);
 

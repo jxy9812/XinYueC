@@ -18,12 +18,23 @@ typedef enum
     XEVENT_SOCKET_DISCONNECTED= 1002,
     XEVENT_SOCKET_DATA_READY =  1003,
     XEVENT_SOCKET_ERROR=        1004,
-    //函数运行
-    XEVENT_FUNC_RUN=1100,
-    XEVENT_SLOT_RUN,//槽函数调用
-    XEVENT_USER//用户事件
+    XEVENT_TIMER,          // 定时器事件
+    XEVENT_SOCKET,
+    XEVENT_KEY,            // 键盘事件
+    XEVENT_MOUSE,          // 鼠标事件
+    XEVENT_FUNC_RUN,       // 函数运行事件
+    XEVENT_SLOT_RUN,       // 槽函数运行事件
+    XEVENT_USER = 1000     // 用户自定义事件起始值
 }XEventType;
-
+// 事件优先级
+typedef enum {
+    XEVENT_PRIORITY_LOWEST=0,
+    XEVENT_PRIORITY_LOW ,
+    XEVENT_PRIORITY_NORMAL,
+    XEVENT_PRIORITY_HIGH,
+    XEVENT_PRIORITY_HIGHEST,
+    XEVENT_PRIORITY_COUNT // 优先级数量
+} XEventPriority;
 
 #ifdef __cplusplus
 }

@@ -9,7 +9,7 @@ extern "C" {
 #include"XTimerBase.h"
 typedef struct XTimerGroupWheel XTimerGroupWheel;
 typedef struct XListSLinked XListSLinked;
-#define XTIMERWHEEL_VTABLE_SIZE (XTIMERBASE_VTABLE_SIZE)       //XTimerWheel虚函数表大小
+#define XTIMERWHEEL_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimerBase))       //XTimerWheel虚函数表大小
 // 定时器节点结构
 typedef struct XTimerWheel 
 {
@@ -26,8 +26,8 @@ void XTimerWheel_init(XTimerWheel* timer);
 //设置定时时间
 #define XTimerWheel_setTimeout_base XTimerBase_setTimeout_base
 #define XTimerWheel_setInterval_base XTimerBase_setInterval_base
-#define XTimerWheel_setUserData XTimerBase_setUserData
-#define XTimerWheel_setTimerCallback XTimerBase_setTimerCallback
+#define XTimerWheel_setUserData XTimerBase_setUserData_user
+#define XTimerWheel_setTimerCallback XTimerBase_setTimerCallback_base
 #define XTimerWheel_setGroup XTimerBase_setTimerId
 // 是否为周期性任务
 #define XTimerWheel_isPeriodic XTimerBase_isPeriodic
@@ -37,7 +37,7 @@ void XTimerWheel_init(XTimerWheel* timer);
 #define XTimerWheel_getGroup XTimerBase_getTimerId
 #define XTimerWheel_getUserData XTimerBase_getUserData
 //超时回调函数
-#define XTimerWheel_out XTimerBase_out
+#define XTimerWheel_out_base XTimerBase_out_base
 #ifdef __cplusplus
 }
 #endif

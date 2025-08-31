@@ -6,7 +6,9 @@
 #include "XHashSet.h"
 #include "XHashFunc.h"
 #include "XMutex.h"
-#include "XEventDispatcherThread.h"
+#include "XEventLoop.h"
+#include "XEventDispatcher.h"
+#include "XCoreApplication.h"
 static XHashMap*threadMap=NULL;
 static XMutex* mutex=NULL;//互斥锁
 // 初始化 XThread 对象
@@ -20,8 +22,7 @@ void XThread_init(XThread* Object)
     Object->loopLevel = 0;
     Object->m_priority = XThread_NormalPriority;
     Object->m_stackSize = 512;
-    Object->m_eventDispatcher =NULL;
-    Object->m_eventDispatcher = XEventDispatcherThread_create(30);
+    Object->m_eventLoop = XEventLoop_create_thread();
 }
 XThread* XThread_currentThread()
 {
@@ -40,6 +41,14 @@ XThread* XThread_currentThread()
     if(ptr)
         return *ptr;
     return NULL;
+}
+XEventDispatcher* XThread_currentDispatcher()
+{
+    return XThread_getDispatcher(XThread_currentThread());
+}
+XTimerGroupBase* XThread_currentTimerGroup()
+{
+    return XThread_getTimerGroup(XThread_currentThread());
 }
 void XThread_mapRemove(XThread* Object)
 {
@@ -79,11 +88,18 @@ bool XThread_wait_base(XThread* Object, unsigned long time)
 }
 
 // 获取事件调度器
-XEventDispatcherThread* XThread_eventDispatcher(const XThread* Object)
+XEventDispatcher* XThread_getDispatcher(const XThread* Object)
 {
     if (Object)
-        return Object->m_eventDispatcher;
-    return NULL;
+        return Object->m_eventLoop? Object->m_eventLoop->m_dispatcher:NULL;
+    return XCoreApplication_getDispatcher();
+}
+
+XTimerGroupBase* XThread_getTimerGroup(const XThread* Object)
+{
+    if (Object)
+        return Object->m_eventLoop ? Object->m_eventLoop->m_timerGroup : NULL;
+    return XCoreApplication_getTimerGroup();
 }
 
 // 判断线程是否结束
@@ -125,9 +141,11 @@ void XThread_requestInterruption_base(XThread* Object)
 // 设置事件调度器
 void XThread_setEventDispatcher(XThread* Object, XEventDispatcher* eventDispatcher)
 {
-    if (Object->m_eventDispatcher != NULL)
-        XEventDispatcher_delete_base(Object->m_eventDispatcher);
-    Object->m_eventDispatcher = eventDispatcher;
+    if (Object->m_eventLoop == NULL)
+        return;
+    if (Object->m_eventLoop->m_dispatcher != NULL)
+        XEventDispatcher_delete_base(Object->m_eventLoop->m_dispatcher);
+    Object->m_eventLoop->m_dispatcher = eventDispatcher;
 }
 
 // 设置线程优先级

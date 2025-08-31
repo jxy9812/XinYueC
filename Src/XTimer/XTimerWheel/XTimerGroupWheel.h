@@ -35,9 +35,22 @@ void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision);
 void XTimerGroupWheel_addTimeWheel_base(XTimerGroupWheel* group,size_t slotsCount);
 void XTimerGroupWheel_removeTimeWheel_base(XTimerGroupWheel* group);
 void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex);
+/**
+ * @brief 检查是否有活跃的定时器
+ * @param group 定时器组轮
+ * @return 是否有活跃定时器
+ */
+bool XTimerGroupWheel_hasActiveTimers(const XTimerGroupWheel* group);
+
+/**
+ * @brief 获取下一个定时器超时时间
+ * @param group 定时器组轮
+ * @return 下一个超时时间（毫秒）
+ */
+uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group);
 #define XTimerGroupWheel_addTimer_base				XTimerGroupBase_addTimer_base
 #define XTimerGroupWheel_removeTimer_base			XTimerGroupBase_removeTimer_base
-#define XTimerGroupWheel_poll_base					XTimerGroupBase_poll_base
+#define XTimerGroupWheel_handler_base					XTimerGroupBase_handler_base
 #define XTimerGroupWheel_delete_base				XTimerGroupBase_delete_base
 //如果全局定时器组不存在就创建默认的三级时间轮(1-1000s)
 void XTimerGroupWheel_setGlobal();

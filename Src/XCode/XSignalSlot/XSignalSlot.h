@@ -7,6 +7,7 @@ extern "C" {
 #include"XTypes.h"
 #include<stdio.h>
 #include<stdint.h>
+#include<stdbool.h>
 // 前置声明
 typedef struct XSignal XSignal;
 typedef struct XConnection XConnection;
@@ -56,11 +57,12 @@ void XSignalSlot_delete(XSignalSlot* manager);
  * @return 连接对象指针（可用于后续断开连接）
  */
 XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type);
+bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc slot_func);
 /**
  * @brief 断开信号与槽的连接
  * @param conn 要断开的连接（由signal_connect返回）
  */
-void XSignalSlot_disconnect(XConnection* conn);
+bool XSignalSlot_disconnect_conn(XConnection* conn);
 
 /**
  * @brief 触发信号，通知所有关联的槽函数

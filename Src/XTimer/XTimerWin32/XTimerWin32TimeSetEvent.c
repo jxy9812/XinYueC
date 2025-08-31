@@ -8,7 +8,7 @@
 static void CALLBACK TimerCallbackTimeSetEvent(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2)
 {
 	XTimerBase* timer = ((XTimerBase*)dwUser);
-	XTimerBase_out(timer);
+	XTimerBase_out_base(timer);
 }
 static void XTimerStartWin32TimeSetEvent(XTimerBase* timer)
 {

@@ -6,28 +6,27 @@ extern "C" {
 #include<stdbool.h>
 #include<stdint.h>
 #include<stdio.h>
-#include"XClass.h"
+#include"XObject.h"
 typedef void (*XTimerBaseCallback)(void* userData);
 typedef struct XTimerBase XTimerBase;
 typedef struct XTimerGroupBase XTimerGroupBase;
-#define XTIMERBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XClass)+4)       //XTimerBase虚函数表大小
-enum XTimerBaseVtableEnum
-{
-	EXTimerBase_Start= XCLASS_VTABLE_GET_SIZE(XClass),
-	EXTimerBase_Stop,
-	EXTimerBase_SetTimeOut,
-	EXTimerBase_SetInterval,
-	//EXTimerBase_IsPeriodic,
-	//EXTimerBase_IsRun,
-	//EXTimerBase_GetInterval,
-	//EXTimerBase_GetTimerId,
-};
+#define XTIMERBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XObject)+4)       //XTimerBase虚函数表大小
+XCLASS_DEFINE_BEGING(XTimerBase)
+XCLASS_DEFINE_ENUM(XTimerBase,Start) = XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_ENUM(XTimerBase,Stop),
+XCLASS_DEFINE_ENUM(XTimerBase,SetTimerCallback),
+XCLASS_DEFINE_ENUM(XTimerBase,SetUserData),
+XCLASS_DEFINE_ENUM(XTimerBase,SetTimeOut),
+XCLASS_DEFINE_ENUM(XTimerBase,SetInterval),
+XCLASS_DEFINE_ENUM(XTimerBase,Out),
+XCLASS_DEFINE_END(XTimerBase)
 //定时器抽象
 typedef struct XTimerBase
 {
-	XClass m_parent;//类
+	XObject m_parent;//类
 	bool m_autoDelete;//自动释放
 	bool m_isRun;//是否运行
+	bool m_singleShot;              // 是否为单次定时器
 	size_t m_timeout;//首次超时时间
 	size_t m_interval;//定时间隔
 	size_t timerId;//定时器id
@@ -44,10 +43,11 @@ void XTimerBase_stop_base(XTimerBase* timer);
 //设置定时时间
 void XTimerBase_setTimeout_base(XTimerBase* timer, size_t value);
 void XTimerBase_setInterval_base(XTimerBase* timer, size_t value);
-void XTimerBase_setUserData(XTimerBase* timer, void* userData);
-void XTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
+void XTimerBase_setUserData_user(XTimerBase* timer, void* userData);
+void XTimerBase_setTimerCallback_base(XTimerBase* timer, XTimerBaseCallback callback);
 void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId);
 void XTimerBase_setAutoDelete(XTimerBase* timer, bool del);
+void XTimerBase_setSingleShote(XTimerBase* timer, bool ss);
 void XTimerBase_setTimerGroup(XTimerBase* timer, XTimerGroupBase* group);
 // 是否为周期性任务
 bool XTimerBase_isPeriodic(XTimerBase* timer);
@@ -59,7 +59,7 @@ void*  XTimerBase_getUserData(XTimerBase* timer);
 bool   XTimerBase_isAutoDelete(XTimerBase* timer);
 XTimerGroupBase* XTimerBase_getTimerGroup(XTimerBase* timer);
 //超时回调函数
-void XTimerBase_out(XTimerBase* timer);
+void XTimerBase_out_base(XTimerBase* timer);
 
 /*                              以毫秒为单位的时间锉                                     */
 //当前时间  累计添加

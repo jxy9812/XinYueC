@@ -9,7 +9,7 @@
 #include"XString.h"
 #include"XEquality.h"
 #include"XTimerBase.h"
-#include"XEventDispatcherThread.h"
+#include"XEventDispatcher.h"
 #include"XPrintf.h"
 #include<string.h>
 #include<stdarg.h>
@@ -280,7 +280,7 @@ XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t t
 	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
 	if (ev == NULL)
 		return NULL;
-	XEventMin_init(ev, object, eventCode, timestamp);
+	XEventMin_init(ev, object, eventCode, timestamp, XEVENT_PRIORITY_NORMAL);
 	ev->frame = frame;
 	return ev;
 }
@@ -289,7 +289,7 @@ XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t tim
 	XEventFuncCode* ev = XMemory_malloc(sizeof(XEventFuncCode));
 	if (ev == NULL)
 		return NULL;
-	XEventMin_init(ev, object, eventCode, timestamp);
+	XEventMin_init(ev, object, eventCode, timestamp, XEVENT_PRIORITY_NORMAL);
 	ev->m_parent.frame = frame;
 	ev->funcCode = funcCode;
 	return ev;
@@ -363,8 +363,8 @@ bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* ev)
 {
 	if (comm == NULL || ev == NULL)
 		return false;
-	if(!XEventDispatcherThread_postEvent_base(XObject_getEventDispatcher(comm),ev))
-	//if (!XEventDispatcher_addEvent(comm->m_eventDispatcher, ev))
+	if(!XEventDispatcher_postEvent_base(XObject_getEventDispatcher(comm),ev))
+	//if (!XEventDispatcher_addEvent(comm->m_eventLoop, ev))
 	{//添加失败，队列满了
 		XMemory_free(ev);
 #if XDFC_QUEUE_FULL_SHOW

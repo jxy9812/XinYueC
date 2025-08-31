@@ -103,18 +103,40 @@ XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* re
 	return ptr;
 }
 
-void XSignalSlot_disconnect(XConnection* conn)
+bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc slot_func)
 {
-	if (conn==NULL)
-		return;
+	if(manager==NULL||slot_func==NULL)
+		return false;
+	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
+	if (signalObj == NULL)
+		return false;
+	//判断是否重复添加
+	XConnection conn = { .signal = signalObj,.receiver = receiver,.slot_func = slot_func };
+	for_each_iterator(signalObj->connList, XListSLinkedAtomic, it)
+	{
+		if (Equality_Connection(XListSLinkedAtomic_iterator_data(&it), &conn))
+		{//找到了
+			XConnection* ptr = XListSLinkedAtomic_iterator_data(&it);
+			return XSignalSlot_disconnect_conn(ptr);
+		}
+	}
+	return false;
+}
+
+bool XSignalSlot_disconnect_conn(XConnection* conn)
+{
+	if (conn == NULL)
+		return false;
 	XSignal* signalObj = conn->signal;
 	if (signalObj == NULL)
-		return;
-	XListBase_remove_base(signalObj->connList, conn);
+		return false;
 	if (conn->receiver)
 	{//存在接收对象
-		XListBase_remove_base(conn->receiver->m_signalSlot->bindSignalList,&conn);
+		XListBase_remove_base(conn->receiver->m_signalSlot->bindSignalList, &conn);
 	}
+
+	XListBase_remove_base(signalObj->connList, conn);
+	return true;
 }
 //信号发射时，槽函数会立即被调用
 static void Direct_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count)
@@ -134,7 +156,7 @@ static void Queued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_coun
 	if (ref_count)
 		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	//向接收者对象投递函数事件
-	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver,conn->slot_func,args,ref_count));
+	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver,conn->slot_func,args,ref_count, XEVENT_PRIORITY_NORMAL));
 }
 ////等待槽函数
 //static void waitSlot()
@@ -149,7 +171,7 @@ static void BlockingQueued_emit(XConnection* conn, void* args, XAtomic_int32_t* 
 	if (ref_count)
 		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	//向接收者对象投递函数事件
-	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver, conn->slot_func, args, ref_count));
+	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver, conn->slot_func, args, ref_count, XEVENT_PRIORITY_NORMAL));
 }
 //若接收者与发送信号的线程处于同一线程，则使用 Qt::DirectConnection（直接连接）；否则，使用 Qt::QueuedConnection（队列连接）。连接类型会在信号发射时动态确定。
 static void Auto_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count)

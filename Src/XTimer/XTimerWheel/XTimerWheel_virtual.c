@@ -3,9 +3,12 @@
 #include"XMemory.h"
 static void VXTimerBase_start(XTimerWheel* timer);
 static void VXTimerBase_stop(XTimerWheel* timer);
+static void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
+static void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
 static void VXTimerBase_setTimeout(XTimerWheel* timer, size_t value);
 static void VXTimerBase_setInterval(XTimerWheel* timer, size_t value);
 static void VXTimerBase_deinit(XTimerWheel* timer);
+static void VXTimerBase_out(XTimerBase* timer);
 XVtable* XTimerWheel_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -16,11 +19,11 @@ XVtable* XTimerWheel_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 		//继承类
-		XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+		XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 	void* table[] = {
-	VXTimerBase_start,VXTimerBase_stop,
-	VXTimerBase_setTimeout,VXTimerBase_setInterval
-
+	VXTimerBase_start,VXTimerBase_stop,VXTimerBase_setTimerCallback,VXTimerBase_setUserData,
+	VXTimerBase_setTimeout,VXTimerBase_setInterval,
+	VXTimerBase_out
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -35,7 +38,17 @@ XVtable* XTimerWheel_class_init()
 void VXTimerBase_deinit(XTimerWheel* timer)
 {
 	XTimerWheel_stop_base(timer);
-	//XMemory_free(timer);
+	//调用父类释放函数
+	XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(timer);
+}
+
+void VXTimerBase_out(XTimerBase* timer)
+{
+	if (timer == NULL)
+		return;
+	++timer->number;
+	if (timer->m_timerCallback != NULL)
+		timer->m_timerCallback(timer->m_userData);
 }
 
 
@@ -58,6 +71,16 @@ void VXTimerBase_stop(XTimerWheel* timer)
 			XTimerGroupBase_removeTimer_base(timer->m_parent.m_timerGroup, timer);
 		timer->m_parent.m_isRun = false;
 	}
+}
+
+void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback)
+{
+	timer->m_timerCallback = callback;
+}
+
+void VXTimerBase_setUserData(XTimerBase* timer, void* userData)
+{
+	timer->m_userData = userData;
 }
 
 void VXTimerBase_setTimeout(XTimerWheel* timer, size_t value)

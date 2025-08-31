@@ -49,7 +49,7 @@ XCLASS_DEFINE_END(XThread)
     int loopLevel;               /**< 线程循环级别 */
     XThread_Priority m_priority;   /**< 线程优先级 */
     uint32_t m_stackSize;          /**< 线程栈大小 */
-    XEventDispatcherThread* m_eventDispatcher;       /**< 事件调度器指针 */
+    XEventLoop* m_eventLoop;            // 关联的事件循环
     void (*m_start_routine)(void*);
     void* m_arg;
 } XThread;
@@ -101,8 +101,8 @@ bool XThread_start_base(XThread* Object);
  * @param Object 指向常量XThread对象的指针
  * @retval 返回事件调度器的指针
  */
-XEventDispatcherThread* XThread_eventDispatcher(const XThread* Object);
-
+XEventDispatcher* XThread_getDispatcher(const XThread* Object);
+XTimerGroupBase* XThread_getTimerGroup(const XThread* Object);
 /**
  * @brief 判断XThread对象对应的线程是否结束
  * @param Object 指向常量XThread对象的指针
@@ -179,6 +179,8 @@ uint32_t XThread_stackSize(const XThread* Object);
 #define XThread_delete_base XClass_delete_base
 
 XThread* XThread_currentThread();
+XEventDispatcher* XThread_currentDispatcher();
+XTimerGroupBase* XThread_currentTimerGroup();
 XHandle XThread_currentThreadId();
 
 //不是给用户的内部API

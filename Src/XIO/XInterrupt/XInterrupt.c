@@ -57,7 +57,7 @@ void XInterrupt_addCallback(XInterrupt* interrupt, uint8_t index, InterruptCallb
 	}
 	else
 	{//更新
-		*((XInterruptNode*)XListSLinked_iterator_data(&it)) = i;
+		XListSNode_Data(it->node, XInterruptNode) = i;
 	}
 }
 void XInterrupt_removeCallback(XInterrupt* interrupt, uint8_t index, InterruptCallback callback, void* userData)

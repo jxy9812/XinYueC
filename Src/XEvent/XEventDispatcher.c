@@ -1,216 +1,556 @@
-﻿#include"XEvent.h"
-#include"XEventDispatcher.h"
-#include"XMemory.h"
-#include<string.h>
-#include"XTimerBase.h"
-#include"XCircularQueueAtomic.h"
-#include"XHashMap.h"
-#include"XEquality.h"
-#include"XListSLinked.h"
-#include"XObject.h"
+﻿#include "XEventDispatcher.h"
+#include "XMemory.h"
+#include "XHashMap.h"
+#include "XEquality.h"
+#include "XHashFunc.h"
+#include "XObject.h"
+#include "XTimerGroupWheel.h"
+#include "XCircularQueueAtomic.h"
+#include "XListSLinked.h"
+#include "XWaitCondition.h"
+
+// 事件回调结构
+typedef struct XEventCallback {
+    XEventCB callback;             // 回调函数
+    void* userData;                // 用户数据
+} XEventCallback;
+// 静态函数声明
 static void VXEventDispatcher_deinit(XEventDispatcher* dispatcher);
 static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin* event);
 static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin* event);
-static bool VXEventDispatcher_addEventCb(XEventDispatcher* dispatcher, int code, XEventCB cb,void* userData);
-static bool VXEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, int code);
+static bool VXEventDispatcher_addEventCb(XEventDispatcher* dispatcher, XObject* receiver, int code, XEventCB cb, void* userData);
+static bool VXEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, XObject* receiver, int code);
 static void VXEventDispatcher_handler(XEventDispatcher* dispatcher);
-typedef struct XEventCallback
-{
-	XEventCB callback;             // 可选的回调函数
-	void* userData;              // 可选的用户数据指针
-}XEventCallback;
-XVtable* XEventDispatcher_class_init()
-{
-	XVTABLE_CREAT_DEFAULT
-		//虚函数表初始化
+static bool VXEventDispatcher_registerTimer(XEventDispatcher* dispatcher, XTimerBase* timer, uint64_t interval, bool singleShot);
+static bool VXEventDispatcher_unregisterTimer(XEventDispatcher* dispatcher, XTimerBase* timer);
+static bool VXEventDispatcher_registerSocketNotifier(XEventDispatcher* dispatcher, XSocketNotifier* notifier);
+static bool VXEventDispatcher_unregisterSocketNotifier(XEventDispatcher* dispatcher, XSocketNotifier* notifier);
+static void VXEventDispatcher_wakeUp(XEventDispatcher* dispatcher);
+static uint32_t VXEventDispatcher_getSupportedEvents(XEventDispatcher* dispatcher);
+
+/**
+ * @brief 初始化事件调度器的虚函数表
+ * @return 初始化后的虚函数表
+ */
+XVtable* XEventDispatcher_class_init() {
+    XVTABLE_CREAT_DEFAULT
+
 #if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XEventDispatcher))
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XEventDispatcher))
 #else
-		XVTABLE_HEAP_INIT_DEFAULT
+        XVTABLE_HEAP_INIT_DEFAULT
 #endif
-		//继承类
-		XVTABLE_INHERIT_DEFAULT(XClass_class_init());
-	void* table[] = { VXEventDispatcher_sendEvent,VXEventDispatcher_postEvent,
-	VXEventDispatcher_addEventCb,VXEventDispatcher_removeEventCb,VXEventDispatcher_handler
-	};
-	//追加虚函数
-	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXEventDispatcher_deinit);
+
+        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+
+    void* table[] = {
+        VXEventDispatcher_sendEvent,
+        VXEventDispatcher_postEvent,
+        VXEventDispatcher_addEventCb,
+        VXEventDispatcher_removeEventCb,
+        VXEventDispatcher_handler,
+        VXEventDispatcher_registerTimer,
+        VXEventDispatcher_unregisterTimer,
+        VXEventDispatcher_registerSocketNotifier,
+        VXEventDispatcher_unregisterSocketNotifier,
+        VXEventDispatcher_wakeUp,
+        VXEventDispatcher_getSupportedEvents
+    };
+
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXEventDispatcher_deinit);
+
 #if SHOWCONTAINERSIZE
-	printf("XEventDispatcher size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+    printf("XEventDispatcher size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
-	return XVTABLE_DEFAULT;
-}
-XEventDispatcher* XEventDispatcher_create(XQueueBase* queue, XMapBase* map_cb)
-{
-	XEventDispatcher* dispatcher = XMemory_malloc(sizeof(XEventDispatcher));
-	XEventDispatcher_init(dispatcher);
-	dispatcher->m_queue = queue;
-	dispatcher->m_filter_cb = map_cb;
-	return dispatcher;
+
+    return XVTABLE_DEFAULT;
 }
 
-XEventDispatcher* XEventDispatcher_createDefault(size_t queueCount)
+/**
+ * @brief 创建事件调度器实例
+ * @param queueSize 事件队列大小
+ * @return 新创建的事件调度器实例
+ */
+XEventDispatcher* XEventDispatcher_create(size_t queueSize) 
 {
-	return XEventDispatcher_create(XCircularQueueAtomic_Create(XEventMin*, queueCount), XHashMap_Create(int, XEventCallback, XEquality_int,XLess_int));
+    XEventDispatcher* dispatcher = XMemory_malloc(sizeof(XEventDispatcher));
+    if (dispatcher) {
+        XEventDispatcher_init(dispatcher,queueSize);
+    }
+    return dispatcher;
 }
 
-void XEventDispatcher_init(XEventDispatcher* dispatcher)
-{
-	if (dispatcher == NULL)
-		return dispatcher;
-	memset(((XClass*)dispatcher)+1,0,sizeof(XEventDispatcher)-sizeof(XClass));
-	XClass_init(dispatcher);
-	XClassGetVtable(dispatcher) = XEventDispatcher_class_init();
+/**
+ * @brief 初始化事件调度器
+ * @param dispatcher 要初始化的事件调度器
+ * @param queueSize 事件队列大小
+ */
+void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
+    if (!dispatcher) return;
+
+    XClass_init(&dispatcher->m_parent);
+    XClassGetVtable(dispatcher) = XEventDispatcher_class_init();
+
+    // 初始化多个优先级事件队列（无锁环形队列）
+    for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) {
+        dispatcher->m_queues[i] = XCircularQueueAtomic_create(sizeof(XEventMin*), queueSize);
+    }
+
+    // 初始化事件过滤器映射表
+    dispatcher->m_filter_cb = XHashMap_Create(XObject*, XHashMap*,
+        XEquality_ptr, XLess_ptr);
+
+    // 初始化套接字通知器列表
+    dispatcher->m_socketNotifiers = XListSLinked_create(sizeof(XSocketNotifier*));
+
+    // 初始化互斥锁
+    dispatcher->m_mutex = XMutex_create();
+
+    // 初始化事件循环指针
+    dispatcher->m_eventLoop = NULL;
 }
 
-bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEventMin* event)
-{
-	if (ISNULL(dispatcher, "") || ISNULL(event, "") || ISNULL(XClassGetVtable(dispatcher), ""))
-		return false;
-	return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_SendEvent , bool (*)(XEventDispatcher*, XEventMin*))(dispatcher, event);
+/**
+ * @brief 发送事件（同步处理）
+ * @param dispatcher 事件调度器
+ * @param event 要发送的事件
+ * @return 事件是否被处理
+ */
+static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin* event) {
+    if (!dispatcher || !event) return false;
+
+    XMutex_lock(dispatcher->m_mutex);
+
+    bool handled = false;
+    event->accept = false;
+
+    // 查找事件过滤器
+    if (event->receiver) {
+        XMapBase** pvCodeMap = XMapBase_value_base(dispatcher->m_filter_cb, &(event->receiver));
+        if (pvCodeMap != NULL) {
+            XEventCallback* c = XMapBase_value_base(*pvCodeMap, &(event->code));
+            if (c != NULL) {
+                // 调用回调函数处理事件
+                event->userData = c->userData;
+                c->callback(event);
+                handled = true;
+            }
+
+            // 如果事件未被接受，尝试使用通用过滤器
+            if (!event->accept) {
+                int allCode = XEVENT_ALL;
+                XEventCallback* allCallback = XMapBase_value_base(*pvCodeMap, &allCode);
+                if (allCallback != NULL) {
+                    event->userData = allCallback->userData;
+                    allCallback->callback(event);
+                    handled = true;
+                }
+            }
+        }
+    }
+    else {
+        // 广播事件到所有接收器
+        for_each_iterator(dispatcher->m_filter_cb, XHashMap, it) {
+            XMapBase* pvMap = XPair_Second(XHashMap_iterator_data(&it), XMapBase*);
+            XEventCallback* c = XMapBase_value_base(pvMap, &(event->code));
+            if (c != NULL) {
+                event->userData = c->userData;
+                c->callback(event);
+                handled = true;
+                if (event->accept) break;
+            }
+
+            // 尝试通用过滤器
+            if (!event->accept) {
+                int allCode = XEVENT_ALL;
+                XEventCallback* allCallback = XMapBase_value_base(pvMap, &allCode);
+                if (allCallback != NULL) {
+                    event->userData = allCallback->userData;
+                    allCallback->callback(event);
+                    handled = true;
+                    if (event->accept) break;
+                }
+            }
+        }
+    }
+
+    XMutex_unlock(dispatcher->m_mutex);
+    return handled;
 }
 
-bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* event)
-{
-	if (ISNULL(dispatcher, "") || ISNULL(event, "") || ISNULL(XClassGetVtable(dispatcher), ""))
-		return false;
-	return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_PostEvent, bool (*)(XEventDispatcher*, XEventMin*))(dispatcher, event);
+/**
+ * @brief 投递事件（异步处理）
+ * @param dispatcher 事件调度器
+ * @param event 要投递的事件
+ * @return 事件是否成功加入队列
+ */
+static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin* event) {
+    if (!dispatcher || !event) return false;
+
+    // 设置时间戳（如果未设置）
+    if (event->timestamp == 0) {
+        event->timestamp = XTimerBase_getCurrentTime();
+    }
+
+    // 确保优先级在有效范围内
+    XEventPriority priority = event->priority;
+    if (priority < 0 || priority >= XEVENT_PRIORITY_COUNT) 
+    {
+        priority = XEVENT_PRIORITY_NORMAL; // 默认使用正常优先级
+    }
+
+    // 将事件放入对应优先级的队列
+    bool success = XCircularQueueAtomic_push_base(dispatcher->m_queues[priority], &event);
+
+    // 如果成功加入队列，唤醒事件循环
+    if (success) {
+        VXEventDispatcher_wakeUp(dispatcher);
+    }
+    else {
+        // 队列已满，释放事件
+        XMemory_free(event);
+    }
+
+    return success;
 }
 
-bool XEventDispatcher_addEventCb_base(XEventDispatcher* dispatcher, int code,XEventCB cb, void* userData)
-{
-	if (ISNULL(dispatcher, "") ||  ISNULL(XClassGetVtable(dispatcher), ""))
-		return false;
-	return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_AddEventCb, bool (*)(XEventDispatcher*,int, XEventCB, void*))(dispatcher, code, cb,userData);
+/**
+ * @brief 添加事件过滤器
+ * @param dispatcher 事件调度器
+ * @param receiver 接收对象
+ * @param code 事件类型
+ * @param cb 事件回调函数
+ * @param userData 用户数据
+ * @return 是否添加成功
+ */
+static bool VXEventDispatcher_addEventCb(XEventDispatcher* dispatcher, XObject* receiver,
+    int code, XEventCB cb, void* userData) {
+    if (!dispatcher || !receiver || !cb) return false;
+
+    XMutex_lock(dispatcher->m_mutex);
+
+    // 查找或创建接收器的事件映射
+    XMapBase** pvMap = XMapBase_value_base(dispatcher->m_filter_cb, &receiver);
+    XMapBase* p = NULL;
+
+    if (!pvMap) {
+        p = XHashMap_Create(int, XEventCallback, XEquality_int, XHashMap_murmur3_32);
+        XMapBase_insert_base(dispatcher->m_filter_cb, &receiver, &p);
+    }
+    else {
+        p = *pvMap;
+    }
+
+    // 添加事件回调
+    XEventCallback c = { cb, userData };
+    XMapBase_insert_base(p, &code, &c);
+
+    XMutex_unlock(dispatcher->m_mutex);
+    return true;
 }
 
-bool XEventDispatcher_removeEventCb_base(XEventDispatcher* dispatcher,int code)
-{
-	if (ISNULL(dispatcher, "") ||ISNULL(XClassGetVtable(dispatcher), ""))
-		return false;
-	return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_RemoveEventCb, bool (*)(XEventDispatcher*, int))(dispatcher, code);
+/**
+ * @brief 移除事件过滤器
+ * @param dispatcher 事件调度器
+ * @param receiver 接收对象
+ * @param code 事件类型
+ * @return 是否移除成功
+ */
+static bool VXEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, XObject* receiver, int code) {
+    if (!dispatcher || !receiver) return false;
+
+    XMutex_lock(dispatcher->m_mutex);
+
+    XMapBase** pvMap = XMapBase_value_base(dispatcher->m_filter_cb, &receiver);
+    if (!pvMap) {
+        XMutex_unlock(dispatcher->m_mutex);
+        return false;
+    }
+
+    bool result = XMapBase_remove_base(*pvMap, &code);
+
+    // 如果接收器没有更多事件过滤器，移除整个映射
+    if (XMapBase_isEmpty_base(*pvMap)) {
+        XMapBase_delete_base(*pvMap);
+        XMapBase_remove_base(dispatcher->m_filter_cb, &receiver);
+    }
+
+    XMutex_unlock(dispatcher->m_mutex);
+    return result;
 }
 
-void XEventDispatcher_handler_base(XEventDispatcher* dispatcher)
-{
-	if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
-		return ;
-	XClassGetVirtualFunc(dispatcher, EXEventDispatcher_Handler, void(*)(XEventDispatcher*))(dispatcher);
+/**
+ * @brief 处理事件队列中的事件
+ * @param dispatcher 事件调度器
+ */
+static void VXEventDispatcher_handler(XEventDispatcher* dispatcher) {
+    if (!dispatcher) return;
+
+    // 按优先级从高到低处理事件队列
+    for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) {
+        XCircularQueueAtomic* queue = dispatcher->m_queues[XEVENT_PRIORITY_COUNT-1-i];
+        while (!XCircularQueueAtomic_isEmpty_base(queue)) {
+            XEventMin* event = NULL;
+            if (XCircularQueueAtomic_receive_base(queue, &event)) {
+                if (event) {
+                    VXEventDispatcher_sendEvent(dispatcher, event);
+                    XMemory_free(event);
+                }
+            }
+        }
+    }
+
+    // 处理其他任务（如定时器、套接字通知等）
+    // ...
+
+    // 处理套接字通知器
+    //XListSLinkedNode* node = XListSLinked_first(dispatcher->m_socketNotifiers);
+    //while (node) {
+    //    XSocketNotifier* notifier = *(XSocketNotifier**)XListSLinkedNode_data(node);
+    //    if (notifier && notifier->enabled) {
+    //        // 这里应该有平台相关的套接字检查代码
+    //        // 简化实现：直接发送事件
+    //        XEventMin* event = XEventMin_create(notifier->receiver, notifier->eventType,
+    //            XTimerBase_getCurrentTime(), XEVENT_PRIORITY_NORMAL);
+    //        if (event) {
+    //            XMutex_unlock(dispatcher->m_mutex);
+    //            VXEventDispatcher_sendEvent(dispatcher, event);
+    //            XMemory_free(event);
+    //            XMutex_lock(dispatcher->m_mutex);
+    //        }
+    //    }
+    //    node = XListSLinkedNode_next(node);
+    //}
+
 }
 
-void VXEventDispatcher_deinit(XEventDispatcher* dispatcher)
-{
-	if (dispatcher == NULL)
-		return;
-	if(dispatcher->m_queue)
-	{
-		XEventMin* event = NULL;
-		while (XQueueBase_receive_base(dispatcher->m_queue, &event))
-		{//释放之前先释放事件
-			XMemory_free(event);
-		}
-		XQueueBase_delete_base(dispatcher->m_queue);
-	}
-	if(dispatcher->m_filter_cb)
-		XMapBase_delete_base(dispatcher->m_filter_cb);
-	//XMemory_free(dispatcher);
+/**
+ * @brief 注册定时器
+ * @param dispatcher 事件调度器
+ * @param timer 定时器对象
+ * @param interval 时间间隔（毫秒）
+ * @param singleShot 是否为单次定时器
+ * @return 是否注册成功
+ */
+static bool VXEventDispatcher_registerTimer(XEventDispatcher* dispatcher, XTimerBase* timer,
+    uint64_t interval, bool singleShot) {
+    if (!dispatcher || !timer || !dispatcher->m_eventLoop) return false;
+
+    XTimerGroupWheel* timerGroup = XEventLoop_getTimerGroup(dispatcher->m_eventLoop);
+    if (!timerGroup) return false;
+
+    // 设置定时器属性
+    timer->m_interval = interval;
+    timer->m_timeout = interval;
+    timer->m_singleShot = singleShot;
+    timer->m_isRun = true;
+
+    // 添加到定时器组
+    return XTimerGroupWheel_addTimer_base(timerGroup, timer);
 }
 
-bool VXEventDispatcher_sendEvent(XEventDispatcher* d, XEventMin* event)
-{
-	//XEventDispatcher* d = dispatcher;
-	if (!event->accept)
-	{
-		XMapBase** pvCodeMap = XMapBase_value_base(d->m_filter_cb, &(event->receiver));
-		if (pvCodeMap != NULL)
-		{
-			XEventCallback* c = XMapBase_value_base(*pvCodeMap, &(event->code));
-			if (c != NULL)
-			{//有回调函数
-				event->userData = c->userData;
-				c->callback(event);
-			}
-			if (!event->accept)
-			{//接收全部事件
-				int code = XEVENT_ALL;
-				XEventCallback* callback = XMapBase_value_base(*pvCodeMap, &code);
-				if (callback != NULL)
-				{//有回调函数
-					event->userData = callback->userData;
-					callback->callback(event);
-				}
-			}
-		}
-		else if (event->receiver == NULL)
-		{//接收者无指定
-			for_each_iterator(d->m_filter_cb, XHashMap, it)
-			{
-				XMapBase* pvMap = XPair_Second(XHashMap_iterator_data(&it), XMapBase*);
-				XEventCallback* c = XMapBase_value_base(pvMap, &(event->code));
-				if (c != NULL)
-				{//有回调函数
-					event->userData = c->userData;
-					c->callback(event);
-					if (event->accept)
-						break;
-				}
-				if (!event->accept)
-				{//接收全部事件
-					int code = XEVENT_ALL;
-					XEventCallback* callback = XMapBase_value_base(pvMap, &code);
-					if (callback != NULL)
-					{//有回调函数
-						event->userData = callback->userData;
-						callback->callback(event);
-						if (event->accept)
-							break;
-					}
-				}
-			}
-		}
-	}
-	//if(event->accept)//
-	XMemory_free(event);//事件被接受，执行完了释放
-	return true;
+/**
+ * @brief 注销定时器
+ * @param dispatcher 事件调度器
+ * @param timer 定时器对象
+ * @return 是否注销成功
+ */
+static bool VXEventDispatcher_unregisterTimer(XEventDispatcher* dispatcher, XTimerBase* timer) {
+    if (!dispatcher || !timer || !dispatcher->m_eventLoop) return false;
+
+    XTimerGroupWheel* timerGroup = XEventLoop_getTimerGroup(dispatcher->m_eventLoop);
+    if (!timerGroup) return false;
+
+    // 从定时器组移除
+    bool result = XTimerGroupWheel_removeTimer_base(timerGroup, timer);
+    timer->m_isRun = false;
+    return result;
 }
 
-bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin* event)
-{
-	if (dispatcher == NULL || event == NULL)
-		return false;
-	if (XEvent_Timestamp(event) == 0)//修正事件发生时间
-		XEvent_Timestamp(event) = XTimerBase_getCurrentTime();
-	return XQueueBase_push_base(dispatcher->m_queue, &event);
+/**
+ * @brief 注册套接字通知器
+ * @param dispatcher 事件调度器
+ * @param notifier 套接字通知器
+ * @return 是否注册成功
+ */
+static bool VXEventDispatcher_registerSocketNotifier(XEventDispatcher* dispatcher, XSocketNotifier* notifier) {
+    if (!dispatcher || !notifier) return false;
+
+    XMutex_lock(dispatcher->m_mutex);
+    bool result = XListSLinked_push_back_base(dispatcher->m_socketNotifiers, &notifier);
+    notifier->enabled = true;
+    XMutex_unlock(dispatcher->m_mutex);
+
+    return result;
 }
 
-bool VXEventDispatcher_addEventCb(XEventDispatcher* dispatcher, int code, XEventCB cb, void* userData)
-{
-	if (dispatcher == NULL || cb == NULL)
-		return false;
-	XEventCallback c = { cb,userData };
-	XMapBase_insert_base(dispatcher->m_filter_cb, &code, &c);
-	return true;
+/**
+ * @brief 注销套接字通知器
+ * @param dispatcher 事件调度器
+ * @param notifier 套接字通知器
+ * @return 是否注销成功
+ */
+static bool VXEventDispatcher_unregisterSocketNotifier(XEventDispatcher* dispatcher, XSocketNotifier* notifier) {
+    if (!dispatcher || !notifier) return false;
+
+    XMutex_lock(dispatcher->m_mutex);
+    bool result = XListSLinked_remove_base(dispatcher->m_socketNotifiers, &notifier);
+    notifier->enabled = false;
+    XMutex_unlock(dispatcher->m_mutex);
+
+    return result;
 }
 
-bool VXEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, int code)
-{
-	if (dispatcher == NULL)
-		return false;
-	XMapBase_remove_base(dispatcher->m_filter_cb, &code);
-	return true;
+/**
+ * @brief 唤醒事件循环
+ * @param dispatcher 事件调度器
+ */
+static void VXEventDispatcher_wakeUp(XEventDispatcher* dispatcher) {
+    if (!dispatcher || !dispatcher->m_eventLoop) return;
+    XEventLoop_wakeUp_base(dispatcher->m_eventLoop);
 }
 
-void VXEventDispatcher_handler(XEventDispatcher* dispatcher)
-{
-	if (dispatcher == NULL)
-		return;
-	XEventMin* event = NULL;
-	while (XQueueBase_receive_base(dispatcher->m_queue, &event))
-	{
-		if (event == NULL)
-			continue;
-		VXEventDispatcher_sendEvent(dispatcher, event);
-	}
+/**
+ * @brief 获取支持的事件类型
+ * @param dispatcher 事件调度器
+ * @return 支持的事件类型掩码
+ */
+static uint32_t VXEventDispatcher_getSupportedEvents(XEventDispatcher* dispatcher) {
+    // 返回支持的所有事件类型
+    return (1 << XEVENT_TIMER) | (1 << XEVENT_SOCKET) | (1 << XEVENT_FUNC_RUN) | (1 << XEVENT_SLOT_RUN);
+}
+
+/**
+ * @brief 释放事件调度器资源
+ * @param dispatcher 事件调度器
+ */
+static void VXEventDispatcher_deinit(XEventDispatcher* dispatcher) {
+    if (!dispatcher) return;
+
+    // 释放所有事件队列
+    for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) {
+        if (dispatcher->m_queues[i]) {
+            // 清空队列并释放
+            XCircularQueueAtomic_clear_base(dispatcher->m_queues[i]);
+            XCircularQueueAtomic_delete_base(dispatcher->m_queues[i]);
+            dispatcher->m_queues[i] = NULL;
+        }
+    }
+
+    // 清理事件过滤器
+    if (dispatcher->m_filter_cb) {
+        for_each_iterator(dispatcher->m_filter_cb, XHashMap, it) {
+            XMapBase* pvMap = XPair_Second(XHashMap_iterator_data(&it), XMapBase*);
+            XMapBase_delete_base(pvMap);
+        }
+        XMapBase_delete_base(dispatcher->m_filter_cb);
+        dispatcher->m_filter_cb = NULL;
+    }
+
+    // 清理套接字通知器
+    if (dispatcher->m_socketNotifiers) {
+        XListSLinked_clear_base(dispatcher->m_socketNotifiers);
+        XListSLinked_delete_base(dispatcher->m_socketNotifiers);
+        dispatcher->m_socketNotifiers = NULL;
+    }
+
+    // 销毁互斥锁
+    if (dispatcher->m_mutex) {
+        XMutex_delete(dispatcher->m_mutex);
+        dispatcher->m_mutex = NULL;
+    }
+
+    dispatcher->m_eventLoop = NULL;
+}
+
+/**
+ * @brief 设置关联的事件循环
+ * @param dispatcher 事件调度器
+ * @param loop 事件循环
+ */
+void XEventDispatcher_setEventLoop(XEventDispatcher* dispatcher, XEventLoop* loop) {
+    if (dispatcher) {
+        dispatcher->m_eventLoop = loop;
+    }
+}
+
+/**
+ * @brief 获取关联的事件循环
+ * @param dispatcher 事件调度器
+ * @return 事件循环
+ */
+XEventLoop* XEventDispatcher_getEventLoop(XEventDispatcher* dispatcher) {
+    return dispatcher ? dispatcher->m_eventLoop : NULL;
+}
+
+// 基础函数实现
+bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEventMin* event) {
+    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
+        return false;
+    return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_SendEvent,
+        bool (*)(XEventDispatcher*, XEventMin*))(dispatcher, event);
+}
+
+bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* event) {
+    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
+        return false;
+    return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_PostEvent,
+        bool (*)(XEventDispatcher*, XEventMin*))(dispatcher, event);
+}
+
+bool XEventDispatcher_addEventCb_base(XEventDispatcher* dispatcher, XObject* receiver, int code, XEventCB cb, void* userData) {
+    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
+        return false;
+    return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_AddEventCb,
+        bool (*)(XEventDispatcher*, XObject*, int, XEventCB, void*))(dispatcher, receiver, code, cb, userData);
+}
+
+bool XEventDispatcher_removeEventCb_base(XEventDispatcher* dispatcher, XObject* receiver, int code) {
+    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
+        return false;
+    return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_RemoveEventCb,
+        bool (*)(XEventDispatcher*, XObject*, int))(dispatcher, receiver, code);
+}
+
+void XEventDispatcher_handler_base(XEventDispatcher* dispatcher) {
+    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
+        return;
+    XClassGetVirtualFunc(dispatcher, EXEventDispatcher_Handler,
+        void (*)(XEventDispatcher*))(dispatcher);
+}
+
+bool XEventDispatcher_registerTimer_base(XEventDispatcher* dispatcher, XTimerBase* timer, uint64_t interval, bool singleShot) {
+    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
+        return false;
+    return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_RegisterTimer,
+        bool (*)(XEventDispatcher*, XTimerBase*, uint64_t, bool))(dispatcher, timer, interval, singleShot);
+}
+
+bool XEventDispatcher_unregisterTimer_base(XEventDispatcher* dispatcher, XTimerBase* timer) {
+    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
+        return false;
+    return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_UnregisterTimer,
+        bool (*)(XEventDispatcher*, XTimerBase*))(dispatcher, timer);
+}
+
+bool XEventDispatcher_registerSocketNotifier_base(XEventDispatcher* dispatcher, XSocketNotifier* notifier) {
+    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
+        return false;
+    return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_RegisterSocketNotifier,
+        bool (*)(XEventDispatcher*, XSocketNotifier*))(dispatcher, notifier);
+}
+
+bool XEventDispatcher_unregisterSocketNotifier_base(XEventDispatcher* dispatcher, XSocketNotifier* notifier) {
+    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
+        return false;
+    return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_UnregisterSocketNotifier,
+        bool (*)(XEventDispatcher*, XSocketNotifier*))(dispatcher, notifier);
+}
+
+void XEventDispatcher_wakeUp_base(XEventDispatcher* dispatcher) {
+    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
+        return;
+    XClassGetVirtualFunc(dispatcher, EXEventDispatcher_WakeUp,
+        void (*)(XEventDispatcher*))(dispatcher);
 }

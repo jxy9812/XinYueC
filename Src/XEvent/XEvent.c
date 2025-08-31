@@ -8,24 +8,38 @@
 #include"XListSLinked.h"
 #include"XObject.h"
 #include"XVariant.h"
-XEventMin* XEventMin_create(XObject* receiver,int code, size_t timestamp)
+
+XEventMin* XEventMin_create(XObject* receiver, XEventType code, size_t timestamp, XEventPriority priority)
 {
 	XEventMin* event = XMemory_malloc(sizeof(XEventMin));
-	XEventMin_init(event, receiver,code,timestamp);
+	XEventMin_init(event, receiver, code, timestamp, priority);
 	return event;
 }
-void XEventMin_init(XEventMin* event, XObject* receiver,int code, size_t timestamp)
+void XEventMin_init(XEventMin* event, XObject* receiver, XEventType code, size_t timestamp, XEventPriority priority)
 {
 	if (event)
 	{
 		event->accept = false;
 		event->code = code;
-		event->timestamp = timestamp;
+		event->timestamp = timestamp ? timestamp : XTimerBase_getCurrentTime();
 		event->userData = NULL;
 		event->receiver = receiver;
+		event->priority = priority;
+		event->spontaneous = false;
 	}
 }
-XEvent* XEvent_create(void* eventData, size_t eventDataSize)
+XTimerEvent* XTimerEvent_create(XObject* receiver, XTimerBase* timer, size_t timestamp)
+{
+	XTimerEvent* event = XMemory_malloc(sizeof(XTimerEvent));
+	if (event)
+	{
+		XEventMin_init(&event->event, receiver, XEVENT_TIMER, timestamp, XEVENT_PRIORITY_NORMAL);
+		event->timer = timer;
+		event->event.spontaneous = true;
+	}
+	return event;
+}
+XEvent* XEvent_create(void* eventData, size_t eventDataSize, XObject* receiver, XEventType code, size_t timestamp, XEventPriority priority)
 {
 	if (eventDataSize < sizeof(void*))
 		eventDataSize = sizeof(void*);
@@ -33,52 +47,55 @@ XEvent* XEvent_create(void* eventData, size_t eventDataSize)
 	XEvent* event = XMemory_malloc(size);
 	if (event != NULL)
 	{
+		XEventMin_init(&event->event, receiver, code, timestamp, priority);
 		if (eventData)
 		{
-			memset(event, 0, sizeof(XEvent) - sizeof(void*));
 			memcpy(XEvent_DataPtr(event), eventData, eventDataSize);
 		}
 		else
 		{
-			memset(event, 0, size);
+			memset(XEvent_DataPtr(event), 0, eventDataSize);
 		}
+		event->status = 0;
 	}
 	return event;
 }
 
-XEventFunc* XEventFunc_create(XObject* receiver, void(*func)(void*), void* args)
+XEventFunc* XEventFunc_create(XObject* receiver, void(*func)(void*), void* args, XEventPriority priority)
 {
 	XEventFunc* event = XMemory_malloc(sizeof(XEventFunc));
-	XEventMin_init(event, receiver, XEVENT_FUNC_RUN, 0);
-	//XEvent_UserData(event)=userData;
-	event->func = func;
-	event->args = args;
-	event->oneAccept = false;
+	if (event)
+	{
+		XEventMin_init(&event->event, receiver, XEVENT_FUNC_RUN, 0, priority);
+		event->func = func;
+		event->args = args;
+		event->oneAccept = false;
+	}
 	return event;
 }
 
-XEventFunc* XEventFunc_create_oneAccept(XObject* receiver, void(*func)(void*), void* args)
+XEventFunc* XEventFunc_create_oneAccept(XObject* receiver, void(*func)(void*), void* args, XEventPriority priority)
 {
-	XEventFunc* event = XEventFunc_create(receiver,func,args);
-	event->oneAccept = true;
+	XEventFunc* event = XEventFunc_create(receiver, func, args, priority);
+	if (event)
+		event->oneAccept = true;
 	return event;
 }
-
 
 void XEventFuncRunCB(XEventFunc* event)
 {
-	if (event->func)
+	if (event && event->func)
 		event->func(event->args);
-	if (event->oneAccept)
+	if (event && event->oneAccept)
 		event->event.accept = true;
 }
 
-XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func, void* args, XAtomic_int32_t* ref_count)
+XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func, void* args, XAtomic_int32_t* ref_count, XEventPriority priority)
 {
 	XEventSlotFunc* event = XMemory_malloc(sizeof(XEventSlotFunc));
 	if (event == NULL)
 		return NULL;
-	XEventMin_init(event, receiver, XEVENT_SLOT_RUN, 0);
+	XEventMin_init(&event->event, receiver, XEVENT_SLOT_RUN, 0, priority);
 	event->sender = sender;
 	event->func = func;
 	event->args = args;
@@ -86,20 +103,19 @@ XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotF
 	return event;
 }
 
-
 void XEventSlotFuncRunCB(XEventSlotFunc* event)
 {
-	if (event->func)
-		event->func(event->sender,event->event.receiver,event->args);
-	if (event->ref_count)
+	if (event && event->func)
+		event->func(event->sender, event->event.receiver, event->args);
+
+	if (event && event->ref_count)
 	{
-		XAtomic_int32_t* ref_count = event->ref_count;
-		XAtomic_fetch_sub_int32(ref_count, 1);
-		if (XAtomic_load_int32(ref_count) == 0)
-		{//该释放了
+		XAtomic_fetch_sub_int32(event->ref_count, 1);
+		if (XAtomic_load_int32(event->ref_count) == 0)
+		{
 			if (event->args)
 				XVariant_delete(event->args);
-			XMemory_free(ref_count);
+			XMemory_free(event->ref_count);
 		}
 	}
 }

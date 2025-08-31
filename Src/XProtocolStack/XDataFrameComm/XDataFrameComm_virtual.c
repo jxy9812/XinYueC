@@ -79,7 +79,7 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 	
 	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_parent.m_recvAsyncBuffer))
 	{
-		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_FRAME_ERROR, 0));
+		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_FRAME_ERROR, 0, XEVENT_PRIORITY_NORMAL));
 		return;//校验没通过
 	}
 	XByteArray* v =XByteArray_create(0);
@@ -162,7 +162,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-				XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0));
+				XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0, XEVENT_PRIORITY_NORMAL));
 				return;
 			}
 			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
@@ -186,7 +186,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-				XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0));
+				XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0, XEVENT_PRIORITY_NORMAL));
 				return;
 			}
 			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
@@ -296,7 +296,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			{
 				comm->m_eSndState = XDFC_STATE_TX_IDLE;  // 切换到发送空闲状态
 			}
-			XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_FRAME_SENT, 0));
+			XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_FRAME_SENT, 0, XEVENT_PRIORITY_NORMAL));
 			break;
 		}
 	}
@@ -412,8 +412,8 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 				exit(-1);
 			}
 			XTimerBase* timer = XTimerWheel_create();
-			XTimerBase_setTimerCallback(timer, TimerSendExpired);
-			XTimerBase_setUserData(timer, comm);
+			XTimerBase_setTimerCallback_base(timer, TimerSendExpired);
+			XTimerBase_setUserData_user(timer, comm);
 			XTimerBase_setAutoDelete(timer,false);
 			XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 			XTimerBase_setTimeout_base(timer, XDFC_HALF_DUPLEX_SEND_WAIT_TIME);
@@ -427,7 +427,7 @@ static void TimerRecvExpired(XDataFrameComm* comm)
 {  //接收超时等待
 	switch (comm->m_eRcvState) {
 	case XDFC_STATE_RX_INIT:  // 初始状态超时（总线空闲，进入IDLE）
-		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_READY, 0));
+		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_READY, 0, XEVENT_PRIORITY_NORMAL));
 		break;
 
 	case XDFC_STATE_RX_RCV:   // 接收中状态超时（帧接收完成）
@@ -435,7 +435,7 @@ static void TimerRecvExpired(XDataFrameComm* comm)
 		break;
 
 	case XDFC_STATE_RX_ERROR: // 错误状态超时（忽略）
-		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0));
+		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0, XEVENT_PRIORITY_NORMAL));
 		break;
 	case XDFC_STATE_RX_IDLE: //接收空闲
 		break;
@@ -461,8 +461,8 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 				exit(-1);
 			}
 			XTimerBase* timer = XTimerWheel_create();
-			XTimerBase_setTimerCallback(timer, TimerRecvExpired);
-			XTimerBase_setUserData(timer, comm);
+			XTimerBase_setTimerCallback_base(timer, TimerRecvExpired);
+			XTimerBase_setUserData_user(timer, comm);
 			XTimerBase_setAutoDelete(timer, false);
 			XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 			XTimerBase_setTimeout_base(timer, XDFC_FRAME_END_TIMEOUT_TIME);
@@ -546,8 +546,8 @@ XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data,
 	XTimerBase_setTimeout_base(timer, time);
 	XTimerBase_setInterval_base(timer, time);
 	XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
-	XTimerBase_setUserData(timer, node);
-	XTimerBase_setTimerCallback(timer, SendDataPeriodicCb);
+	XTimerBase_setUserData_user(timer, node);
+	XTimerBase_setTimerCallback_base(timer, SendDataPeriodicCb);
 	XTimerBase_start_base(timer);
 	return node;
 }

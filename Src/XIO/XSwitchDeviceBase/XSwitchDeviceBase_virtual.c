@@ -48,7 +48,7 @@ void VXSwitchDevice_setState(XSwitchDeviceBase* sw, bool state)
 			
 			if (sw->m_stateChangeCallback)
 			{
-				XObject_postEvent(sw, XEventFunc_create(sw, sw->m_stateChangeCallback, sw));
+				XObject_postEvent(sw, XEventFunc_create(sw, sw->m_stateChangeCallback, sw, XEVENT_PRIORITY_NORMAL));
 			}
 		}
 	}
@@ -92,7 +92,7 @@ void VXIODevice_poll(XSwitchDeviceBase* sw)
 			sw->m_state = sw->m_buffer;
 			if (sw->m_stateChangeCallback)
 			{
-				XObject_postEvent(sw, XEventFunc_create(sw, sw->m_stateChangeCallback, sw));
+				XObject_postEvent(sw, XEventFunc_create(sw, sw->m_stateChangeCallback, sw, XEVENT_PRIORITY_NORMAL));
 			}
 		}
 	}

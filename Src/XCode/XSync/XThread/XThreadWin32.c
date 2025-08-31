@@ -4,7 +4,7 @@
 #include"XHashSet.h"
 #include"XMemory.h"
 #include"XObject.h"
-#include"XEventDispatcherThread.h"
+#include"XEventLoop.h"
 #include <windows.h>
 static bool VXThread_start(XThread* Object);
 static bool VXThread_wait(XThread* Object, unsigned long time);
@@ -53,13 +53,15 @@ static DWORD WINAPI ThreadFunction(LPVOID lpParam) {
     if (Object->m_start_routine)
         Object->m_start_routine(Object->m_arg);
     //运行事件调度
-    if (Object->m_eventDispatcher->m_Objects && !XSetBase_isEmpty_base(Object->m_eventDispatcher->m_Objects))
+    if(Object->loopLevel)
+        XEventLoop_exec_base(Object->m_eventLoop);
+ /*   if (Object->m_eventDispatcher->m_Objects && !XSetBase_isEmpty_base(Object->m_eventDispatcher->m_Objects))
     {
         while (!(Object->m_interruptionRequested))
         {
             XEventDispatcherThread_handler_base(Object->m_eventDispatcher);
         }
-    }
+    }*/
     Object->m_finished = true;
     return 0;
 }
@@ -180,8 +182,8 @@ void VXThread_deinit(XThread* Object)
         CloseHandle(Object->m_handle);
        Object->m_handle = NULL;
     }*/
-    if (Object->m_eventDispatcher)
-        XEventDispatcher_delete_base(Object->m_eventDispatcher);
+    if (Object->m_eventLoop)
+        XEventLoop_delete_base(Object->m_eventLoop);
     XThread_mapRemove(Object);
     //XMemory_free(Object);
 }

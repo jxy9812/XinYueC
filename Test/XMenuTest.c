@@ -2,7 +2,6 @@
 #include "XMenuTest.h"
 #include "XMenu.h"
 #include "XCoreApplication.h"
-#include "XEventDispatcherThread.h"
 #include "XString.h"
 #include <string.h>
 #include <stdio.h>

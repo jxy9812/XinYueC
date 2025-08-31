@@ -8,7 +8,7 @@
 #include "XMutex.h"
 #include "XObject.h"
 #include "XTimerGroupWheel.h"
-#include "XEventDispatcherThread.h"
+#include "XEventLoop.h"
 // 全局应用程序实例指针
 static XCoreApplication* g_app = NULL;
 
@@ -39,8 +39,9 @@ XCoreApplication* XCoreApplication_create(int argc, char** argv)
 {
 	if(g_app!=NULL)
 		return g_app;
-	g_app = XMemory_malloc(sizeof(XCoreApplication));
-	XCoreApplication_init(g_app, argc,argv);
+	XCoreApplication* app = XMemory_malloc(sizeof(XCoreApplication));
+	XCoreApplication_init(app, argc,argv);
+	g_app = app;
 	return g_app;
 }
 
@@ -53,17 +54,26 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 	app->m_argc = argc;
 	app->m_argv = argv;
 	app->m_quit = false;
-	app->m_eventDispatcher = XEventDispatcherThread_create(30);
-	//初始化一些全局类
-	XTimerGroupWheel_setGlobal();
+	app->m_eventLoop = XEventLoop_create_thread();
+	//app->m_eventLoop = XEventDispatcherThread_create(30);
+	////初始化一些全局类
+	//XTimerGroupWheel_setGlobal();
 }
 
-XEventDispatcherThread* XCoreApplication_getEventDispatcher()
+XEventDispatcher* XCoreApplication_getDispatcher()
 {
 	XCoreApplication* app=XCoreApplication_create(NULL,NULL);
-	if (app == NULL)
+	if (app == NULL||app->m_eventLoop==NULL)
 		return NULL;
-	return app->m_eventDispatcher;
+	return app->m_eventLoop->m_dispatcher;
+}
+
+XTimerGroupBase* XCoreApplication_getTimerGroup()
+{
+	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
+	if (app == NULL || app->m_eventLoop == NULL)
+		return NULL;
+	return app->m_eventLoop->m_timerGroup;
 }
 
 void XCoreApplication_requestQuit()
@@ -76,9 +86,10 @@ int XCoreApplication_exec()
 	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
 	if (app == NULL)
 		return -1;
-	while (!(app->m_quit))
+	XEventLoop_exec_base(app->m_eventLoop);
+	/*while (!(app->m_quit))
 	{
-		XEventDispatcherThread_handler_base(app->m_eventDispatcher);
-	}
+		XEventDispatcherThread_handler_base(app->m_eventLoop);
+	}*/
 	return 0;
 }

@@ -19,7 +19,7 @@ void XTimerBase_init(XTimerBase* timer, XVtable* vtable)
 		return;
 	//开始初始化
 	memset(timer, 0, sizeof(XTimerBase));
-	XClass_init(timer);
+	XObject_init(timer);
 	XClassGetVtable(timer) = vtable;
 	timer->m_autoDelete = true;
 }
@@ -62,15 +62,17 @@ void XTimerBase_setInterval_base(XTimerBase* timer, size_t value)
 	/*if(timer->setInterval)
 		timer->setInterval(timer);*/
 }
-void XTimerBase_setUserData(XTimerBase* timer, void* userData)
+void XTimerBase_setUserData_user(XTimerBase* timer, void* userData)
 {
-	if (timer)
-		timer->m_userData = userData;
+	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
+		return;
+	XClassGetVirtualFunc(timer, EXTimerBase_SetUserData, void(*)(XTimerBase*, void*))(timer, userData);
 }
-void XTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback)
+void XTimerBase_setTimerCallback_base(XTimerBase* timer, XTimerBaseCallback callback)
 {
-	if (timer)
-		timer->m_timerCallback = callback;
+	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
+		return;
+	XClassGetVirtualFunc(timer, EXTimerBase_SetTimerCallback, void(*)(XTimerBase*, XTimerBaseCallback))(timer, callback);
 }
 void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId)
 {
@@ -81,6 +83,11 @@ void XTimerBase_setAutoDelete(XTimerBase* timer, bool del)
 {
 	if (timer)
 		timer->m_autoDelete = del;
+}
+void XTimerBase_setSingleShote(XTimerBase* timer, bool ss)
+{
+	if (timer)
+		timer->m_singleShot = ss;
 }
 void XTimerBase_setTimerGroup(XTimerBase* timer, XTimerGroupBase* group)
 {
@@ -135,13 +142,11 @@ XTimerGroupBase* XTimerBase_getTimerGroup(XTimerBase* timer)
 		return timer->m_timerGroup;
 	return NULL;
 }
-void XTimerBase_out(XTimerBase* timer)
+void XTimerBase_out_base(XTimerBase* timer)
 {
-	if (timer == NULL)
+	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
 		return;
-	++timer->number;
-	if(timer->m_timerCallback != NULL)
-		timer->m_timerCallback(timer->m_userData);
+	XClassGetVirtualFunc(timer, EXTimerBase_Out, void(*)(XTimerBase*))(timer);
 }
 //
 #ifdef WIN32

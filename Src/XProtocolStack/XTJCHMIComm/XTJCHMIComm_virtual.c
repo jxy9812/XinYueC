@@ -108,7 +108,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 		{
 			comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-			XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0));
+			XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0, XEVENT_PRIORITY_NORMAL));
 			return;
 		}
 		XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
@@ -132,7 +132,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 		{
 			comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-			XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0));
+			XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0, XEVENT_PRIORITY_NORMAL));
 			return;
 		}
 		XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区

@@ -1,6 +1,7 @@
 ﻿#include"XTimerGroupWheel.h"
 #include"XMemory.h"
 #include"XVector.h"
+#include"XListSLinked.h"
 #include"XMutex.h"
 #include<string.h>
 XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision)
@@ -52,6 +53,119 @@ void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex)
 	if (group->m_mutex)
 		XMutex_delete(group->m_mutex);
 	group->m_mutex = mutex;
+}
+bool XTimerGroupWheel_hasActiveTimers(const XTimerGroupWheel* group)
+{
+	if (group == NULL || group->m_timeWheel == NULL)
+		return false;
+
+	// 加锁保证线程安全
+	if (group->m_mutex)
+		XMutex_lock(group->m_mutex);
+
+	bool hasActive = false;
+	size_t wheelCount = XVector_size_base(group->m_timeWheel);
+
+	// 遍历所有时间轮
+	for (size_t i = 0; i < wheelCount; ++i)
+	{
+		XTimeWheel* wheel = XVector_at_base(group->m_timeWheel, i);
+		if (wheel == NULL || wheel->m_slots == NULL)
+			continue;
+
+		// 遍历当前时间轮的所有槽
+		size_t slotCount = XVector_size_base(wheel->m_slots);
+		for (size_t j = 0; j < slotCount; ++j)
+		{
+			XListSLinked** slotList = XVector_at_base(wheel->m_slots, j);
+			if (slotList == NULL || *slotList == NULL)
+				continue;
+
+			// 检查槽内链表是否有活跃定时器
+			if (XContainerSize(*slotList) > 0)
+			{
+				hasActive = true;
+				goto end_check; // 找到活跃定时器，提前退出
+			}
+		}
+	}
+
+end_check:
+	// 解锁
+	if (group->m_mutex)
+		XMutex_unlock(group->m_mutex);
+
+	return hasActive;
+}
+uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
+{
+	if (group == NULL || group->m_timeWheel == NULL)
+		return 0;
+
+	// 加锁保证线程安全
+	if (group->m_mutex)
+		XMutex_lock(group->m_mutex);
+
+	uint64_t next_timeout = 0;
+	uint64_t min_expire_ticks = UINT64_MAX;
+	const size_t current_tick = group->m_parent.m_current_tick;
+	const uint16_t precision = group->m_parent.m_precision;
+
+	// 遍历所有时间轮
+	const size_t wheel_count = XVector_size_base(group->m_timeWheel);
+	for (size_t i = 0; i < wheel_count; ++i)
+	{
+		XTimeWheel* wheel = XVector_at_base(group->m_timeWheel, i);
+		if (wheel == NULL || wheel->m_slots == NULL)
+			continue;
+
+		// 遍历当前时间轮的所有槽
+		const size_t slot_count = XVector_size_base(wheel->m_slots);
+		for (size_t j = 0; j < slot_count; ++j)
+		{
+			XListSLinked** slot_list_ptr = XVector_at_base(wheel->m_slots, j);
+			if (slot_list_ptr == NULL || *slot_list_ptr == NULL)
+				continue;
+
+			// 遍历槽内的定时器链表
+			XListSLinked* list = *slot_list_ptr;
+			XListSLinked_iterator it = XListSLinked_begin(list);
+			while (XListSLinked_iterator_isEnd(&it))
+			{
+				XTimerWheel* timer = *((XTimerWheel**)XListSLinked_iterator_data(&it));
+				// 只考虑运行中的定时器
+				if (timer != NULL && XTimerBase_isRunning(&timer->m_parent))
+				{
+					// 记录最小的到期滴答数
+					if (timer->m_expire_ticks < min_expire_ticks)
+					{
+						min_expire_ticks = timer->m_expire_ticks;
+					}
+				}
+				XListSLinked_iterator_add(&it,&it);
+			}
+		}
+	}
+
+	// 计算下一个超时时间（毫秒）
+	if (min_expire_ticks != UINT64_MAX)
+	{
+		if (min_expire_ticks > current_tick)
+		{
+			next_timeout = (min_expire_ticks - current_tick) * precision;
+		}
+		else
+		{
+			// 已经超时的定时器，返回0表示立即处理
+			next_timeout = 0;
+		}
+	}
+
+	// 解锁
+	if (group->m_mutex)
+		XMutex_unlock(group->m_mutex);
+
+	return next_timeout;
 }
 void XTimerGroupWheel_setGlobal()
 {

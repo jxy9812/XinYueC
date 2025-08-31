@@ -10,7 +10,9 @@ extern "C" {
 #include"XEventType.h"
 #include"XSignalSlot.h"
 #include"XAtomic.h"
-//事件回调函数
+// 事件过滤器函数类型
+//typedef bool (*XEventFilter)(XObject* obj, XEventMin* event);
+// 事件回调函数类型
 typedef void (*XEventCB)(XEventMin* event);
 //迷你事件
 typedef struct XEventMin
@@ -20,8 +22,15 @@ typedef struct XEventMin
     size_t timestamp;             //事件发生时间
     XObject* receiver;            //接收对象
     void* userData;               //可选的用户数据指针
+    XEventPriority priority;      // 事件优先级
+    bool spontaneous;             // 是否为自发事件(非用户触发)
 }XEventMin;
-
+// 定时器事件
+typedef struct XTimerEvent 
+{
+    XEventMin event;
+    XTimerBase* timer;            // 定时器指针作为ID
+} XTimerEvent;
 //完整事件
 typedef struct XEvent
 {
@@ -30,10 +39,44 @@ typedef struct XEvent
     uint8_t status;               // 事件状态
     void* data;//事件数据
 }XEvent;
-//创建一个迷你事件
-XEventMin* XEventMin_create(XObject* receiver,int code, size_t timestamp);
-void XEventMin_init(XEventMin* event, XObject* receiver,int code, size_t timestamp);
-XEvent* XEvent_create(void* eventData,size_t eventDataSize);
+/**
+ * @brief 创建基础事件
+ * @param receiver 事件接收对象
+ * @param code 事件类型
+ * @param timestamp 时间戳，0表示使用当前时间
+ * @param priority 事件优先级
+ * @return 新创建的基础事件
+ */
+XEventMin* XEventMin_create(XObject* receiver, XEventType code, size_t timestamp, XEventPriority priority);
+/**
+ * @brief 初始化基础事件
+ * @param event 要初始化的事件
+ * @param receiver 事件接收对象
+ * @param code 事件类型
+ * @param timestamp 时间戳，0表示使用当前时间
+ * @param priority 事件优先级
+ */
+void XEventMin_init(XEventMin* event, XObject* receiver, XEventType code, size_t timestamp, XEventPriority priority);
+/**
+ * @brief 创建定时器事件
+ * @param receiver 事件接收对象
+ * @param timer 定时器指针
+ * @param timestamp 时间戳
+ * @return 新创建的定时器事件
+ */
+XTimerEvent* XTimerEvent_create(XObject* receiver, XTimerBase* timer, size_t timestamp);
+/**
+ * @brief 创建通用事件
+ * @param eventData 事件数据
+ * @param eventDataSize 事件数据大小
+ * @param receiver 事件接收对象
+ * @param code 事件类型
+ * @param timestamp 时间戳，0表示使用当前时间
+ * @param priority 事件优先级
+ * @return 新创建的通用事件
+ */
+XEvent* XEvent_create(void* eventData, size_t eventDataSize, XObject* receiver,
+    XEventType code, size_t timestamp, XEventPriority priority);
 #define XEvent_AcceptState(event)               (((XEventMin*)event)->accept)
 #define XEvent_Accept(event)                    (XEvent_AcceptState(event)=true)
 #define XEvent_Ignore(event)                    (XEvent_AcceptState(event)=false)
@@ -48,30 +91,64 @@ XEvent* XEvent_create(void* eventData,size_t eventDataSize);
 typedef struct XEventFunc
 {
     XEventMin event;
-    void (*func)(void* userData);//需要执行的函数
-    void* args;//参数
-    bool oneAccept;
+    void (*func)(void* userData); // 需要执行的函数
+    void* args;                   // 函数参数
+    bool oneAccept;               // 是否执行一次后就接受事件
 }XEventFunc;
-XEventFunc* XEventFunc_create(XObject* receiver, void (*func)(void*),void* args);
-//创建函数事件执行一次就接收不在继续传播
-XEventFunc* XEventFunc_create_oneAccept(XObject* receiver, void (*func)(void*), void* args);
-//函数执行回调
-void XEventFuncRunCB(XEventFunc* event);//XEVENT_FUNC_RUN
+/**
+ * @brief 创建函数事件
+ * @param receiver 事件接收对象
+ * @param func 要执行的函数
+ * @param args 函数参数
+ * @param priority 事件优先级
+ * @return 新创建的函数事件
+ */
+XEventFunc* XEventFunc_create(XObject* receiver, void (*func)(void*), void* args, XEventPriority priority);
+/**
+ * @brief 创建一次性函数事件
+ * @param receiver 事件接收对象
+ * @param func 要执行的函数
+ * @param args 函数参数
+ * @param priority 事件优先级
+ * @return 新创建的一次性函数事件
+ */
+XEventFunc* XEventFunc_create_oneAccept(XObject* receiver, void (*func)(void*), void* args, XEventPriority priority);
+
+/**
+ * @brief 执行函数事件的回调
+ * @param event 函数事件
+ */
+void XEventFuncRunCB(XEventFunc* event);
 
 
 //槽函数调用事件
 typedef struct XEventSlotFunc
 {
     XEventMin event;
-    XSlotFunc func;//需要执行的函数
-    XObject* sender;
-    void* args;//参数
-    XAtomic_int32_t* ref_count;//参数是否是XVariant 只读引用
+    XSlotFunc func;               // 需要执行的槽函数
+    XObject* sender;              // 发送者对象
+    void* args;                   // 函数参数
+    XAtomic_int32_t* ref_count;   // 参数引用计数
 }XEventSlotFunc;
 
-XEventSlotFunc* XEventSlotFunc_create(XObject* sender,XObject* receiver, XSlotFunc func, void* args, XAtomic_int32_t* ref_count);
-//函数执行回调
-void XEventSlotFuncRunCB(XEventSlotFunc* event);//XEVENT_FUNC_RUN
+/**
+ * @brief 创建槽函数事件
+ * @param sender 发送者对象
+ * @param receiver 接收者对象
+ * @param func 槽函数
+ * @param args 函数参数
+ * @param ref_count 参数引用计数
+ * @param priority 事件优先级
+ * @return 新创建的槽函数事件
+ */
+XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func,
+    void* args, XAtomic_int32_t* ref_count, XEventPriority priority);
+
+/**
+ * @brief 执行槽函数事件的回调
+ * @param event 槽函数事件
+ */
+void XEventSlotFuncRunCB(XEventSlotFunc* event);
 #ifdef __cplusplus
 }
 #endif	
