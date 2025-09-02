@@ -35,7 +35,8 @@ typedef struct XScheduleEntity {
     uint64_t vruntime;            // 虚拟运行时间（CFS策略专用）：用于衡量任务"应该"运行的时间，决定调度优先级
     uint64_t runtime;             // 实际运行时间：任务累计占用CPU的实际时间
     uint64_t slice;               // 时间片大小（RR策略专用）：每次分配的CPU时间上限（单位由XTimerBase_getCurrentTime决定）
-    void* data;                   // 关联数据：指向实际任务对象（如线程、事件等）
+    void (*run)(void*);           // 实体执行函数
+    void* data;                   // 执行函数参数
 } XScheduleEntity;
 
 /**
@@ -55,18 +56,21 @@ XCLASS_DEFINE_END(XDispatcher)
 
 /**
  * @brief 调度器基类
- * 负责管理调度实体、执行调度算法，是任务调度的核心控制器
+ * 管理调度实体，时间相关字段单位均为毫秒（依赖XTimerBase_getCurrentTime()）
  */
 typedef struct XDispatcher {
-    XClass m_parent;                  // 父类（继承XClass，支持面向对象特性）
-    XSchedulePolicy policy;           // 全局调度策略：调度器默认使用的算法
-    XSet* ready_entities;             // 就绪队列：存储所有处于就绪状态的实体（红黑树实现，按策略排序）
-    XScheduleEntity* current_entity;  // 当前运行实体：指向正在占用CPU的实体
-    XMutex* mutex;                    // 互斥锁：保护调度器内部数据（如就绪队列）的线程安全访问
-    uint64_t clock;                   // 调度器时钟：记录上次调度的时间（用于计算实体运行时间）
+    XClass m_parent;                  // 父类（继承XClass）
+    XSchedulePolicy policy;           // 全局调度策略
+    union {
+        XQueueBase* fifo_queue;       // FIFO/RR就绪队列（队列结构，保证顺序）
+        XSet* cfs_tree;               // CFS就绪队列（红黑树，按vruntime排序）
+    } ready_entities;                 // 按策略复用不同数据结构
+    XScheduleEntity* current_entity;  // 当前运行实体
+    XMutex* mutex;                    // 线程安全锁
+    uint64_t last_sched_time;         // 上次调度时间（毫秒，用于计算运行时长）
     // CFS相关参数
-    uint64_t min_vruntime;            // 最小虚拟运行时间：用于初始化新CFS实体的vruntime
-    int nr_running;                   // 运行实体数量：处于就绪或运行状态的实体总数
+    uint64_t min_vruntime;            // 最小虚拟运行时间（毫秒）
+    int nr_running;                   // 就绪+运行实体总数
 } XDispatcher;
 
 /**
