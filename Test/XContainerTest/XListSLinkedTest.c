@@ -1,7 +1,6 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XListSLinked.h"
-#include"XEquality.h"
 #include"XCompare.h"
 #include"XMenu.h"
 #include"XAction.h"
@@ -23,6 +22,7 @@ void XListSLinkedSortTest()
 {
 #if XList_ON
 	XListSLinked* li = XListSLinked_create(sizeof(int));
+	XContainerSetCompare(li,XCompare_int);
 	int size = 10;
 	srand((unsigned int)time(NULL));
 	//int* p1 = XMemory_malloc(sizeof(int) * size);
@@ -35,7 +35,7 @@ void XListSLinkedSortTest()
 	XListSLinked_iterator_for_each(li, ListFor_each, NULL); XPrintf("\n");
 
 	clock_t  time_front = clock();
-	XListSLinked_sort_base(li, XLess_int);
+	XListSLinked_sort_base(li, XSORT_ASC);
 	clock_t time_after = clock();
 
 	XPrintf("排序后\n");
@@ -70,7 +70,8 @@ void XListSLinkedTest()
 #if XList_ON
 	XPrintf("XList 测试\n");
 	XListSLinked* list = XListSLinked_create(sizeof(int));
-	list->m_parent.m_equality = XEquality_int;
+	//list->m_parent.m_equality = XEquality_int;
+	XContainerCompare(list, XCompare_int);
 	XPrintf("%s\n", XContainerObject_isEmpty_base(list)?"empty":"");
 	XPrintf("%d\n", XContainerObject_size_base(list));
 

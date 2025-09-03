@@ -1,8 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XHashSet.h"
-#include"XEquality.h"
-#include"XLess.h"
+#include"XCompare.h"
 #include"XBalancedBinaryTree.h"
 #include"XMenu.h"
 #include"XAction.h"
@@ -21,7 +20,7 @@ void XHashSetTest()
 	//while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
-		XHashSet* set = XHashSet_Create(int, XEquality_int,XLess_int);
+		XHashSet* set = XHashSet_Create(int,XCompare_int);
 
 		for (size_t i = 0; i < 5; i++)
 		{

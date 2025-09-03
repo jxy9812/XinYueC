@@ -1,5 +1,5 @@
 ﻿#include "XVariantList.h"
-//static bool equality(XVariant** var, XVariant** cmp)
+//static bool compare(XVariant** var, XVariant** cmp)
 //{
 //	if (var == NULL || cmp == NULL)
 //		return false;
@@ -51,5 +51,6 @@ void XVariantList_init(XVariantList* list)
 	XContainerSetDataCopyMethod(list, XVariant_copy);
 	XContainerSetDataMoveMethod(list, XVariant_move);
 	XContainerSetDataDeinitMethod(list, XVariant_deinit);
-	list->m_vector.m_equality = XVariant_equality;
+	XContainerSetCompare(list, XCompare_ptr);
+	//list->m_vector.m_equality = XVariant_equality;
 }

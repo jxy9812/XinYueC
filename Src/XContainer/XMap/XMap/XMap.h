@@ -16,12 +16,12 @@ typedef struct XMap
 }XMap;
 XVtable* XMap_class_init();
 //开辟一个Map,初始化
-XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess);
+XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XCompare compare);
 XMap* XMap_create_copy(const XMap* other);
 XMap* XMap_create_move(XMap* other);
-#define XMap_Create(keyType,valType,KeyEquality,KeyLess) XMap_create(sizeof(keyType),sizeof(valType),KeyEquality,KeyLess)
+#define XMap_Create(keyType,valType,compare) XMap_create(sizeof(keyType),sizeof(valType),compare)
 //初始化 XMap
-void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess);
+void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare);
 //Map插入数据
 #define XMap_insert_base				XMapBase_insert_base
 #define XMap_insert_move_base			XMapBase_insert_move_base

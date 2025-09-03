@@ -21,13 +21,13 @@ typedef struct XHashMap
 }XHashMap;
 XVtable* XHashMap_class_init();
 //创建一个XHashMap,初始化
-XHashMap* XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess);
+XHashMap* XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare);
 XHashMap* XHashMap_create_copy(const XHashMap* other);
 XHashMap* XHashMap_create_move(XHashMap* other);
-#define XHashMap_Create(keyType,valType,KeyEquality,KeyLess) XHashMap_create(sizeof(keyType),sizeof(valType),XHashMap_murmur3_32,KeyEquality,KeyLess)
+#define XHashMap_Create(keyType,valType,compare) XHashMap_create(sizeof(keyType),sizeof(valType),XHashMap_murmur3_32,compare)
 
 //初始化 XHash
-void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess);
+void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare);
 #define XHashMap_insert_base					XMapBase_insert_base
 #define XHashMap_erase_base						XMapBase_erase_base
 #define XHashMap_remove_base					XMapBase_remove_base

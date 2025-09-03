@@ -23,7 +23,7 @@ static void* VXList_front(XListDLinked* this_list);
 static void* VXList_back(XListDLinked* this_list);
 static bool VXList_find(const XListDLinked* this_list, void* pvData, XListDLinked_iterator* it);
 //其他
-static void VXList_sort(XListDLinked* this_list, XCompare compare);
+static void VXList_sort(XListDLinked* this_list, XSortOrder order);
 static void VXClass_copy(XListDLinked* object, const XListDLinked* src);
 static void VXClass_move(XListDLinked* object, XListDLinked* src);
 static void VXList_deinit(XListDLinked* this_list);
@@ -364,9 +364,9 @@ bool VXList_find(const XListDLinked* this_list, void* pvData, XListDLinked_itera
     for_each_iterator(this_list, XListDLinked, forIt)
     {
         void* curr=XListDLinked_iterator_data(&forIt);
-        if (((XListBase*)this_list)->m_equality)
+        if (XContainerCompare(this_list))
         {
-            if (((XListBase*)this_list)->m_equality(curr, pvData))
+            if (XContainerCompare(this_list)(curr, pvData)==XCompare_Equality)
             {
                 if (it)
                     *it = forIt;
@@ -393,18 +393,21 @@ void VXList_deinit(XListDLinked* this_list)
 }
 //排序
 //一次快排
-static struct XListDNode* List_OneSort(XListDNode* ListHead, XListDNode* ListTail, const size_t type, bool(*Sort)(const void* LPrevValue, const void* LNextValue))
+static struct XListDNode* List_OneSort(XListDNode* ListHead, XListDNode* ListTail, const size_t type, XCompare compare, XSortOrder order)
 {
 
     char* compareVal = XMemory_malloc(type);
     if (compareVal == NULL)
         return NULL;
     memcpy(compareVal, &(ListHead->data), type);
+    int32_t cmp;
     while (ListHead != ListTail)
     {
         while (ListHead != ListTail)//右边开始往左边找
         {
-            if (!Sort(&(ListTail->data), compareVal))
+            //if (!Sort(&(ListTail->data), compareVal))
+            cmp = compare(&(ListTail->data), compareVal);
+            if (!((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))//排序比较函数
             {
                 ListTail = ListTail->prev;
             }
@@ -416,7 +419,9 @@ static struct XListDNode* List_OneSort(XListDNode* ListHead, XListDNode* ListTai
         }
         while (ListHead != ListTail)//左边开始往右边找
         {
-            if (Sort(&(ListHead->data), compareVal))
+            //if (Sort(&(ListHead->data), compareVal))
+            cmp = compare(&(ListHead->data), compareVal);
+            if (((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))//排序比较函数
             {
                 ListHead = ListHead->next;
             }
@@ -434,10 +439,10 @@ static struct XListDNode* List_OneSort(XListDNode* ListHead, XListDNode* ListTai
 
 }
 
-void VXList_sort(XListDLinked* this_list, XCompare compare)
+void VXList_sort(XListDLinked* this_list, XSortOrder order)
 {
 #if XStack_ON
-    if (ISNULL(this_list, "") || XListBase_isEmpty_base(this_list))
+    if (ISNULL(this_list, "") || XListBase_isEmpty_base(this_list) || XContainerCompare(this_list) == NULL)
         return;
     XListBase* list = this_list;
     XListDNode* ListHead = XContainerDataPtr(this_list);//链表第一个节点
@@ -453,7 +458,7 @@ void VXList_sort(XListDLinked* this_list, XCompare compare)
         XListDNode* ListTail = *((struct XListDNode**)XStack_top_base(stack));
         XStack_pop_base(stack);
         //单次排序
-        XListDNode* ListMiddle = List_OneSort(ListHead, ListTail, list->m_parent.m_typeSize, compare);
+        XListDNode* ListMiddle = List_OneSort(ListHead, ListTail, list->m_parent.m_typeSize, XContainerCompare(this_list),order);
         //判断左区间是否存在
         if (ListHead != ListMiddle && ListHead->next != ListMiddle)
         {

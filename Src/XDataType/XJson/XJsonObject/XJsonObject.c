@@ -33,7 +33,7 @@ void XJsonObject_init(XJsonObject* object)
 {
     if (object == NULL)
         return;
-    XMap_init(object, sizeof(XString), sizeof(XJsonValue), XEquality_XString, XLess_XString);
+    XMap_init(object, sizeof(XString), sizeof(XJsonValue), XString_compare);
 
     XMapBaseSetKeyCopyMethod(object, XString_copy_base);
     XMapBaseSetKeyMoveMethod(object, XString_move_base);

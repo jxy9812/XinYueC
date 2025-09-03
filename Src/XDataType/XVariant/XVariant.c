@@ -21,7 +21,7 @@ static XHashMap*global_typeProperty= NULL;//自定义数据属性哈希映射
 //类型属性
 typedef struct TypeProperty
 {
-	XEquality			equality;//等于比较
+	XEquality			compare;//等于比较
 	XCDataCopyMethod	copyMethod;//数据拷贝方法
 	XCDataMoveMethod	moveMethod;//数据移动方法
 	XCDataDeinitMethod  deinitMethod;//数据释放方法
@@ -61,7 +61,7 @@ static bool global_typeHash_init()
 {
 	if (global_typeProperty)
 		return true;
-	global_typeProperty = XHashMap_Create(int, TypeProperty, XEquality_int,XLess_int);
+	global_typeProperty = XHashMap_Create(int, TypeProperty, XCompare_int);
 	if (global_typeProperty)
 		return true;
 	return false;
@@ -362,7 +362,7 @@ XVariant* XVariant_create_map(const XVariantMap* map)
 	if (map == NULL)
 		return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XVariantMap), XVariantType_Map);
-	XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize,XContainerTypeSize(map), ((XMapBase*)map)->m_KeyEquality, ((XMapBase*)map)->m_KeyLess);
+	XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize,XContainerTypeSize(map), XContainerCompare(map));
 	XMap_copy_base(XVariant_DataPtr(var), map);
 	return var;
 }
@@ -372,7 +372,7 @@ XVariant* XVariant_create_map_move(XVariantMap* map)
 	if (map == NULL)
 		return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XVariantMap), XVariantType_Map);
-	XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize, XContainerTypeSize(map), ((XMapBase*)map)->m_KeyEquality, ((XMapBase*)map)->m_KeyLess);
+	XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize, XContainerTypeSize(map), XContainerCompare(map));
 	XMap_move_base(XVariant_DataPtr(var), map);
 	return var;
 }
@@ -394,7 +394,7 @@ XVariant* XVariant_create_hash(const XHashMap* hash)
 	if (hash == NULL)
 		return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XHashMap), XVariantType_Hash);
-	XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash,((XMapBase*)hash)->m_KeyEquality, ((XMapBase*)hash)->m_KeyLess);
+	XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, XContainerCompare(hash));
 	XHashMap_copy_base(XVariant_DataPtr(var), hash);
 	return var;
 }
@@ -403,7 +403,7 @@ XVariant* XVariant_create_hash_move(XHashMap* hash)
 	if (hash == NULL)
 		return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XHashMap), XVariantType_Hash);
-	XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, ((XMapBase*)hash)->m_KeyEquality, ((XMapBase*)hash)->m_KeyLess);
+	XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, XContainerCompare(hash));
 	XHashMap_move_base(XVariant_DataPtr(var), hash);
 	return var;
 }
@@ -1163,7 +1163,7 @@ static void setValue_map(XVariant* var, const XVariantMap* map, XCDataCreatMetho
 	if (var->m_type != XVariantType_Map)
 	{
 		setValue(var, NULL, sizeof(XVariantMap), XVariantType_Map);
-		XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize, XContainerTypeSize(map), ((XMapBase*)map)->m_KeyEquality, ((XMapBase*)map)->m_KeyLess);
+		XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize, XContainerTypeSize(map), XContainerCompare(map));
 	}
 	dataCreatMethod(XVariant_DataPtr(var), map);
 }
@@ -1195,7 +1195,7 @@ static void setValue_hash(XVariant* var, const XVariantHashMap* hash, XCDataCrea
 	if (var->m_type != XVariantType_Hash)
 	{
 		setValue(var, NULL, sizeof(XVariantHashMap), XVariantType_Hash);
-		XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, ((XMapBase*)hash)->m_KeyEquality, ((XMapBase*)hash)->m_KeyLess);
+		XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, XContainerCompare(hash));
 	}
 	dataCreatMethod(XVariant_DataPtr(var), hash);
 }
@@ -1761,34 +1761,34 @@ const char* XVariant_typeName(XVariant* var)
 	}
 }
 
-bool XVariant_equality(XVariant* var, XVariant* cmp)
+int32_t XVariant_compare(XVariant* var, XVariant* cmp)
 {
-	if(var==NULL||cmp==NULL||
-		var->m_type!=cmp->m_type||
-		var->m_dataSize!=cmp->m_dataSize)
+	if (var == NULL || cmp == NULL ||
+		var->m_type != cmp->m_type ||
+		var->m_dataSize != cmp->m_dataSize)
 		return false;
 	switch (var->m_type)
 	{
-	case XVariantType_Uint8:return XEquality_uint8_t(var->m_data, cmp->m_data);
-	case XVariantType_Uint16:return XEquality_uint16_t(var->m_data, cmp->m_data);
-	case XVariantType_Uint32:return XEquality_uint32_t(var->m_data, cmp->m_data);
-	case XVariantType_Uint64:return XEquality_uint64_t(var->m_data, cmp->m_data);
-	case XVariantType_Int8:return XEquality_int8_t(var->m_data, cmp->m_data);
-	case XVariantType_Int16:return XEquality_int16_t(var->m_data, cmp->m_data);
-	case XVariantType_Int32:return XEquality_int32_t(var->m_data, cmp->m_data);
-	case XVariantType_Int64:return XEquality_int64_t(var->m_data, cmp->m_data);
-	case XVariantType_Bool:return XEquality_bool(var->m_data, cmp->m_data);
-	case XVariantType_Char:return XEquality_char(var->m_data, cmp->m_data);
-	case XVariantType_UChar:return XEquality_unsigned_char(var->m_data, cmp->m_data);
-	case XVariantType_Int:return XEquality_int(var->m_data, cmp->m_data);
-	case XVariantType_Size_t:return XEquality_size_t(var->m_data, cmp->m_data);
-	case XVariantType_Ptr:return XEquality_ptr(var->m_data, cmp->m_data);
-	case XVariantType_Float:return XEquality_float(var->m_data, cmp->m_data);
-	case XVariantType_Double:return XEquality_double(var->m_data, cmp->m_data);
-	case XVariantType_Pair:return XEquality_XPair(var->m_data, cmp->m_data);
-	case XVariantType_Point:return XEquality_XPoint(var->m_data, cmp->m_data);
-	case XVariantType_ByteArray:return XEquality_XByteArray(var->m_data, cmp->m_data);
-	case XVariantType_String:return XEquality_XString(var->m_data, cmp->m_data);
+	case XVariantType_Uint8:return XCompare_uint8_t(var->m_data, cmp->m_data);
+	case XVariantType_Uint16:return XCompare_uint16_t(var->m_data, cmp->m_data);
+	case XVariantType_Uint32:return XCompare_uint32_t(var->m_data, cmp->m_data);
+	case XVariantType_Uint64:return XCompare_uint64_t(var->m_data, cmp->m_data);
+	case XVariantType_Int8:return XCompare_int8_t(var->m_data, cmp->m_data);
+	case XVariantType_Int16:return XCompare_int16_t(var->m_data, cmp->m_data);
+	case XVariantType_Int32:return XCompare_int32_t(var->m_data, cmp->m_data);
+	case XVariantType_Int64:return XCompare_int64_t(var->m_data, cmp->m_data);
+	case XVariantType_Bool:return XCompare_bool(var->m_data, cmp->m_data);
+	case XVariantType_Char:return XCompare_char(var->m_data, cmp->m_data);
+	case XVariantType_UChar:return XCompare_unsigned_char(var->m_data, cmp->m_data);
+	case XVariantType_Int:return XCompare_int(var->m_data, cmp->m_data);
+	case XVariantType_Size_t:return XCompare_size_t(var->m_data, cmp->m_data);
+	case XVariantType_Ptr:return XCompare_ptr(var->m_data, cmp->m_data);
+	case XVariantType_Float:return XCompare_float(var->m_data, cmp->m_data);
+	case XVariantType_Double:return XCompare_double(var->m_data, cmp->m_data);
+	case XVariantType_Pair:return XPair_compare(var->m_data, cmp->m_data);
+	case XVariantType_Point:return XPoint_compare(var->m_data, cmp->m_data);
+	case XVariantType_ByteArray:return XByteArray_compare(var->m_data, cmp->m_data);
+	case XVariantType_String:return XString_compare(var->m_data, cmp->m_data);
 	case XVariantType_List:
 	{
 		return false;//暂未实现
@@ -1800,16 +1800,15 @@ bool XVariant_equality(XVariant* var, XVariant* cmp)
 	default:
 	{
 		//其他自定义数据
-		if(global_typeProperty==NULL)
+		if (global_typeProperty == NULL)
 			return false;
 		//查找相等比较函数
-		TypeProperty* pv =XHashMap_value_base(global_typeProperty,&(var->m_type));
-		if (pv&&pv->equality)
-			return (pv->equality)(var->m_data,cmp->m_data);
+		TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
+		if (pv && pv->compare)
+			return (pv->compare)(var->m_data, cmp->m_data);
 		return false;
 	}
 	}
-
 }
 
 void XVariant_setUserTypeName(int type, const char* typeName)
@@ -1855,9 +1854,9 @@ void XVariant_removeUserTypeProperty(int type)
 	XMapBase_remove_base(global_typeProperty,&type);
 }
 
-void XVariant_setUserEquality(int type, XEquality equality)
+void XVariant_setUserCompare(int type, XCompare compare)
 {
-	if (type < XVariantType_User || equality == NULL)
+	if (type < XVariantType_User || compare == NULL)
 		return;
 	if (!global_typeHash_init())
 		return;
@@ -1865,12 +1864,12 @@ void XVariant_setUserEquality(int type, XEquality equality)
 	if (pv == NULL)
 	{
 		TypeProperty property = { 0 };
-		property.equality = equality;
+		property.compare = compare;
 		XHashMap_insert_base(global_typeProperty, &type, &property);
 	}
 	else
 	{
-		pv->equality = equality;
+		pv->compare = compare;
 	}
 
 }

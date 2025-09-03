@@ -3,8 +3,6 @@
 #include"XMap.h"
 #include"XVector.h"
 #include"XSort.h"
-#include"XLess.h"
-#include"XEquality.h"
 #include"XPrintf.h"
 #include<stdio.h>
 #include<stdlib.h>
@@ -24,7 +22,8 @@ void XMapAndXVectorFindTest()
 #if XMap_ON&&XVector_ON
 	//创建乱序的数组
 	XVector* VArray = XVector_create(sizeof(size_t));
-	VArray->m_equality = XEquality_size_t;
+	XContainerSetCompare(VArray, XCompare_size_t);
+	//VArray->m_equality = XEquality_size_t;
 	int count = 1000000;//测试数据量
 	for (size_t i = 0; i < count; i++)
 	{
@@ -36,10 +35,10 @@ void XMapAndXVectorFindTest()
 	XPrintf("打乱后\n");
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
 	XPrintf("使用排序后\n");
-	XVector_sort_base(VArray,XLess_int);
+	XVector_sort_base(VArray, XSORT_ASC);
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);
 
-	XMap* map = XMap_create(sizeof(size_t), sizeof(size_t),XEquality_int,XLess_int);
+	XMap* map = XMap_create(sizeof(size_t), sizeof(size_t),XCompare_size_t);
 	//map插入Vector的数据
 	XVector_iterator_for_each(VArray, insertMap, map);
 

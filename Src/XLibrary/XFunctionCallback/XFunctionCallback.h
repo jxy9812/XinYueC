@@ -8,13 +8,7 @@ extern "C" {
 #include<stdint.h>
 #include<stdio.h>
 #include"XTypes.h"
-//比较大小函数指针-回调函数
-typedef  const bool(*XCompare)(const void* pvPrevValue, const void* pvNextValue);
-
-//比较大小的-回调函数自定义准则，第一个自定义
-typedef  const bool(*XCompareRuleOne)(XCompare compare, const void* pvValue, const void* pvCompareValue);
-//比较大小的-回调函数自定义准则,两个自定义
-typedef  const bool(*XCompareRuleTwo)(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
+#include"XCompare.h"
 
 //小于-比较的-回调函数(LPrevValue<LNextValue为真)
 typedef  const bool(*XLess)(const void* LPrevValue, const void* pvNextValue);
@@ -29,18 +23,18 @@ typedef void (*XFor_each)(void* pvValue,void* args);
 typedef size_t(*XHashFunc)(const void* key, size_t len);
 
 //比较大小回调函数的标准准则
-bool XCompareRuleTwo_Standard(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
+int32_t XCompareRuleTwo_Standard(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
 //比较大小回调函数的二叉树准则
-bool XCompareRuleTwo_BinaryTree(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
+int32_t XCompareRuleTwo_BinaryTree(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
 //比较大小回调函数的XMap准则
-bool XCompareRuleTwo_XMap(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
+int32_t XCompareRuleTwo_XMap(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
 //比较大小回调函数的XSet准则
-bool XCompareRuleTwo_XSet(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
+int32_t XCompareRuleTwo_XSet(XCompare compare, const void* pvPrevValue, const void* pvNextValue);
 
-bool XCompareRuleOne_Standard(XCompare compare, const void* Value, const void* CompareValue);
-bool XCompareRuleOne_BinaryTree(XCompare compare, const void* Value, const void* CompareValue);
-bool XCompareRuleOne_XMap(XCompare compare, const void* Value, const void* CompareValue);
-bool XCompareRuleOne_XSet(XCompare compare, const void* Value, const void* CompareValue);
+int32_t XCompareRuleOne_Standard(XCompare compare, const void* Value, const void* CompareValue);
+int32_t XCompareRuleOne_BinaryTree(XCompare compare, const void* Value, const void* CompareValue);
+int32_t XCompareRuleOne_XMap(XCompare compare, const void* Value, const void* CompareValue);
+int32_t XCompareRuleOne_XSet(XCompare compare, const void* Value, const void* CompareValue);
 #ifdef __cplusplus
 }
 #endif

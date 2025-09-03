@@ -7,7 +7,6 @@ extern "C" {
 #include "XFunctionCallback.h"
 #include "XSetBase.h"
 #include "XHashFunc.h"
-#include "XEquality.h"
 #include "XHashSet_iterator.h"
 // 默认初始容量
 #define DEFAULT_CAPACITY 16
@@ -23,10 +22,10 @@ typedef struct XHashSet
 
 XVtable* XHashSet_class_init();
 // 开辟一个XHashSet,初始化
-XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess);
-#define XHashSet_Create(keyType, KeyEquality,KeyLess) XHashSet_create(sizeof(keyType), XHashMap_murmur3_32, KeyEquality,KeyLess);
+XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XCompare compare);
+#define XHashSet_Create(keyType, compare) XHashSet_create(sizeof(keyType), XHashMap_murmur3_32, compare);
 // 初始化 XHashSet
-void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess);
+void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash, XCompare compare);
 #define XHashSet_insert_base                XSetBase_insert_base
 #define XHashSet_insert_move_base           XSetBase_insert_move_base
 #define XHashSet_erase_base                 XSetBase_erase_base

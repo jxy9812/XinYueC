@@ -431,14 +431,6 @@ bool XString_contains(const XString* str, const XString* substr, XCharCaseSensit
 bool XString_contains_utf8(const XString* str, const char* utf8_substr, XCharCaseSensitivity cs);
 // -------------------------- 字符串比较操作函数 --------------------------
 
-/**
- * @brief 判断两个字符串是否相等（基于 XString_compare）
- * @param str1 第一个 XString 对象指针
- * @param str2 第二个 XString 对象指针
- * @return 相等返回 true，否则返回 false
- */
-bool XEquality_XString(const XString* str1, const XString* str2);
-
 const bool XLess_XString(const XString* str1, const XString* str2);
 /**
  * @brief 比较两个字符串（字典序）
@@ -446,7 +438,7 @@ const bool XLess_XString(const XString* str1, const XString* str2);
  * @param str2 第二个 XString 对象指针
  * @return 小于返回 -1，等于返回 0，大于返回 1
  */
-int XString_compare(const XString* str1, const XString* str2);
+int32_t XString_compare(const XString* str1, const XString* str2);
 
 /**
  * @brief 判断两个字符串是否相等（支持大小写敏感性）

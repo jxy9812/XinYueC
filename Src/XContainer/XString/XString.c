@@ -1317,7 +1317,7 @@ bool XString_contains_utf8(const XString* str, const char* utf8_substr, XCharCas
     return result;
 }
 
-int XString_compare(const XString* str1, const XString* str2) 
+int32_t XString_compare(const XString* str1, const XString* str2) 
 {
     if (!str1 && !str2) 
         return 0;
@@ -1390,14 +1390,6 @@ bool XString_starts_with(const XString* str, const XString* prefix, XCharCaseSen
 
     return true;
 }
-bool XEquality_XString(const XString* str1, const XString* str2) 
-{
-    return XString_compare(str1, str2) == 0;
-   /* if (XString_length_base(str1) != XString_length_base(str2))
-        return false;
-    return memcmp(XString_data(str1), XString_data(str2), XString_length_base(str1) * sizeof(XChar)) == 0;*/
-}
-
 const bool XLess_XString(const XString* str1, const XString* str2)
 {
     return XString_compare(str1, str2) <0;

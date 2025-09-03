@@ -28,7 +28,7 @@ XCLASS_DEFINE_END(XListBase)
 typedef struct XListBase
 {
 	XContainerObject m_parent;
-	XEquality m_equality;//相等比较函数
+	//XEquality m_equality;//相等比较函数
 }XListBase;
 typedef struct XListBaseNode XListBaseNode;
 //初始化 链表
@@ -70,7 +70,7 @@ void* XListBase_back_base(XListBase* this_list);
 //查找数据，返回找到的节点，没有返回NULL
 bool XListBase_find_base(const  XListBase* this_list, const void* findVal, XListBase_iterator* it);
 bool XListBase_contains(const XListBase* this_list, const void* value);
-void XListBase_sort_base(XListBase* this_list, XCompare compare);
+void XListBase_sort_base(XListBase* this_list, XSortOrder order);
 #define XListBase_copy_base				XContainerObject_copy_base	
 #define XListBase_move_base				XContainerObject_move_base	
 #define XListBase_deinit_base			XContainerObject_deinit_base	

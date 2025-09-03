@@ -1,7 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XSort.h"
-#include"XLess.h"
+#include"XCompare.h"
 #include"XPrintf.h"
 void SortTest()
 {

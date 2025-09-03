@@ -6,7 +6,7 @@ void XListBase_init(XListBase* this_list, size_t typeSize)
 		return;
 	XContainerObject_init(this_list, typeSize);
 	XClassGetVtable(this_list) = XContainerObject_class_init();
-	this_list->m_equality = NULL;
+	//this_list->m_equality = NULL;
 }
 XListBaseNode* XListBase_push_front_base(XListBase* this_list, void* pvData)
 {
@@ -102,10 +102,10 @@ bool XListBase_contains(const XListBase* this_list, const void* value)
 {
 	return XListBase_find_base(this_list,value,NULL);
 }
-void XListBase_sort_base(XListBase* this_list, XCompare compare)
+void XListBase_sort_base(XListBase* this_list, XSortOrder order)
 {
-	if (ISNULL(this_list, "") || ISNULL(compare, "") || ISNULL(XClassGetVtable(this_list), ""))
+	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return NULL;
-	return XClassGetVirtualFunc(this_list, EXListBase_Sort, void* (*)(XListBase*, XCompare))(this_list,compare);
+	return XClassGetVirtualFunc(this_list, EXListBase_Sort, void* (*)(XListBase*, XSortOrder))(this_list, order);
 }
 #endif

@@ -5,7 +5,7 @@ XVtable* XSetBase_class_init()
     return XContainerObject_class_init();
 }
 
-void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XEquality KeyEquality, XLess KeyLess)
+void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XCompare compare)
 {
     if (ISNULL(this_set, ""))
         return;
@@ -14,16 +14,15 @@ void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XEquality KeyEq
         printf("类型参数不能为0");
         return;
     }
-    if (KeyEquality == NULL)
+    if (compare == NULL)
     {
-        printf("KeyEquality相等比较函数NULL");
+        printf("compare比较函数NULL");
         return;
     }
     XContainerObject_init(&this_set->m_parent, keyTypeSize);
     XClassGetVtable(this_set) = XSetBase_class_init();
     XContainerTypeSize(this_set)= keyTypeSize;
-    this_set->m_KeyEquality = KeyEquality; 
-    this_set->m_KeyLess = KeyLess;
+    XContainerSetCompare(this_set,compare);
 }
 
 bool XSetBase_insert_base(XSetBase* this_set, const void* pvKey)

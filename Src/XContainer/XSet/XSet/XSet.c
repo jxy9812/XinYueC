@@ -76,8 +76,7 @@ void VXClass_copy(XSet* object, const XSet* src)
 {
 	if (((XClass*)object)->m_vtable == NULL)
 	{
-		XSetBase* set = src;
-		XSet_init(object, XContainerTypeSize(src), set->m_KeyEquality, set->m_KeyLess);
+		XSet_init(object, XContainerTypeSize(src), XContainerCompare(src));
 	}
 	else if (!XSet_isEmpty_base(object))
 	{
@@ -93,8 +92,7 @@ void VXClass_move(XSet* object, XSet* src)
 {
 	if (((XClass*)object)->m_vtable == NULL)
 	{
-		XSetBase* set = src;
-		XSet_init(object, XContainerTypeSize(src), set->m_KeyEquality, set->m_KeyLess);
+		XSet_init(object, XContainerTypeSize(src), XContainerCompare(src));
 	}
 	else if (!XSet_isEmpty_base(object))
 	{
@@ -175,8 +173,7 @@ void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* next)
 	// 从红黑树中删除当前节点
 	XRBTree_remove(
 		&XContainerDataPtr(this_set),                   // 红黑树根节点地址
-		((XSetBase*)this_set)->m_KeyLess,						// 键比较函数
-		((XSetBase*)this_set)->m_KeyEquality,					// 键相等判断函数
+		((XContainerObject*)this_set)->m_compare,
 		XCompareRuleOne_XSet,									// 比较规则
 		current_key,										// 要删除的键值
 		XSet_freeNodeData,								// 节点数据释放回调
@@ -200,7 +197,7 @@ bool VXSet_remove(XSet* this_set, const void* pvKey)
 	{
 		if (XContainerDataDeinitMethod(this_set) != NULL)
 			XContainerDataDeinitMethod(this_set)(pvKey);
-		XRBTree_remove(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, pvKey, XSet_freeNodeData, this_set);
+		XRBTree_remove(&XContainerDataPtr(this_set), ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, pvKey, XSet_freeNodeData, this_set);
 
 		--XContainerCapacity(this_set);
 		--XContainerSize(this_set);
@@ -217,7 +214,7 @@ bool VXSet_find(XSet* this_set, const void* key, XSet_iterator* it)
 			*it = XSet_end(this_set);
 		return false;
 	}
-	XTreeNode* node = XRBTree_findData(XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, ((XSetBase*)this_set)->m_KeyEquality, XCompareRuleOne_XSet, key);
+	XTreeNode* node = XRBTree_findData(XContainerDataPtr(this_set), ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
 	if (node == NULL)
 	{
 		if (it)
@@ -230,24 +227,24 @@ bool VXSet_find(XSet* this_set, const void* key, XSet_iterator* it)
 }
 
 
-XSet* XSet_create(const size_t keyTypeSize, XEquality KeyEquality, XLess KeyLess)
+XSet* XSet_create(const size_t keyTypeSize, XCompare compare)
 {
 	if (keyTypeSize == 0)
 	{
 		printf("类型参数不能为0");
 		return NULL;
 	}
-	if (KeyEquality == NULL || KeyLess == NULL)
+	if (compare == NULL)
 	{
-		printf("KeyEquality相等比较函数NULL或KeyLess小于比较函数NULL");
+		printf("compare比较函数NULL");
 		return NULL;
 	}
 	XSet* this_set = (XSet*)XMemory_malloc(sizeof(XSet));
-	XSet_init(this_set, keyTypeSize, KeyEquality, KeyLess);
+	XSet_init(this_set, keyTypeSize, compare);
 	return this_set;
 }
 
-void XSet_init(XSet* this_set, const size_t keyTypeSize, XEquality KeyEquality, XLess KeyLess)
+void XSet_init(XSet* this_set, const size_t keyTypeSize, XCompare compare)
 {
 	if (ISNULL(this_set, ""))
 		return NULL;
@@ -256,12 +253,12 @@ void XSet_init(XSet* this_set, const size_t keyTypeSize, XEquality KeyEquality, 
 		printf("类型参数不能为0");
 		return NULL;
 	}
-	if (KeyEquality == NULL || KeyLess == NULL)
+	if (compare == NULL)
 	{
-		printf("KeyEquality相等比较函数NULL或KeyLess小于比较函数NULL");
+		printf("compare比较函数NULL");
 		return NULL;
 	}
-	XSetBase_init(this_set, keyTypeSize, KeyEquality, KeyLess);
+	XSetBase_init(this_set, keyTypeSize, compare);
 	XClassGetVtable(this_set) = XSet_class_init();
 }
 

@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 #include"XTreeObject.h"
-#include"XFunctionCallback.h"
+#include"XCompare.h"
 //23树-获取父节点
 #define XTTTree_GetParent(this_root)			(*XTreeNode_getNodeRef(this_root, XTreeParent))
 //23树-获取节点,0是指向父节点
@@ -36,7 +36,7 @@ XTTTreeNode* XTTTree_create(const enum XTTTree_NodeNum nodeCount, const char* pv
 //当前是几节点
 const enum  XTTTree_NodeNum  XTTTree_NodeNum(const XTTTreeNode* this_root);
 //升级当前节点
-const enum  XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less,const void* pvData, const size_t TypeSize);
+const enum  XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XCompare compare,const void* pvData, const size_t TypeSize);
 //返回节点指针的地址
 XTTTreeNode** XTTTree_Node(const XTTTreeNode* this_root, size_t nSel);
 //返回数据指针

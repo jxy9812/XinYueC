@@ -1,6 +1,5 @@
 ﻿#include"XInterrupt.h"
 #include"XListSLinked.h"
-#include"XEquality.h"
 #include<string.h>
 typedef struct XInterruptNode
 {
@@ -29,6 +28,12 @@ static const _Bool XEquality_XInterrupt(const void* LPrevValue, const void* LNex
 {
 	return (((XInterruptNode*)LPrevValue)->callback == ((XInterruptNode*)LNextValue)->callback) && (((XInterruptNode*)LPrevValue)->userData == ((XInterruptNode*)LNextValue)->userData);
 }
+static int32_t XInterrupt_compare(const void* LPrevValue, const void* LNextValue)
+{
+	if((((XInterruptNode*)LPrevValue)->callback == ((XInterruptNode*)LNextValue)->callback) && (((XInterruptNode*)LPrevValue)->userData == ((XInterruptNode*)LNextValue)->userData))
+	return XCompare_Equality;
+	return XCompare_Other;
+}
 void XInterrupt_init_stack(XInterrupt* interrupt, void** data, size_t size)
 {
 	if (interrupt == NULL || interrupt->m_data != NULL)
@@ -45,7 +50,8 @@ void XInterrupt_addCallback(XInterrupt* interrupt, uint8_t index, InterruptCallb
 	if (interrupt->m_data[index] == NULL)
 	{
 		interrupt->m_data[index] = XListSLinked_Create(XInterruptNode);
-		((XListSLinked*)interrupt->m_data[index])->m_parent.m_equality = XEquality_XInterrupt;
+		//((XListSLinked*)interrupt->m_data[index])->m_parent.m_equality = XEquality_XInterrupt;
+		XContainerSetCompare(((XListSLinked*)interrupt->m_data[index]),XInterrupt_compare);
 	}
 	list = interrupt->m_data[index];
 	XListBase_iterator* it;

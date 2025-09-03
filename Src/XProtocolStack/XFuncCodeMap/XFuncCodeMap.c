@@ -1,8 +1,8 @@
 ﻿#include "XFuncCodeMap.h"
 #include "XHashMap.h"
-XFuncCodeMap* XFuncCodeMap_create(size_t codeSize, XEquality codeEquality, XLess codeLess)
+XFuncCodeMap* XFuncCodeMap_create(size_t codeSize, XEquality codeEquality, XCompare codeCompare)
 {
-	XHashMap* hash = XHashMap_create(codeSize, sizeof(XFuncCodeNode), XHashMap_murmur3_32, codeEquality, codeLess);
+	XHashMap* hash = XHashMap_create(codeSize, sizeof(XFuncCodeNode), XHashMap_murmur3_32, codeCompare);
 	return hash;
 }
 

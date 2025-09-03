@@ -28,7 +28,7 @@ XThread* XThread_currentThread()
 {
     if (threadMap == NULL)
     {
-        threadMap = XHashMap_Create(size_t,XThread*,XEquality_size_t,XLess_size_t);
+        threadMap = XHashMap_Create(size_t,XThread*,XCompare_size_t);
     }
     if (mutex == NULL)
     {

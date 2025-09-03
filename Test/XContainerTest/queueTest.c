@@ -3,8 +3,6 @@
 #include"XQueue.h"
 #include"XPriorityQueue.h"
 #include"XSort.h"
-#include"XLess.h"
-#include"XGreater.h"
 #include"XVector.h"
 #include"XMenu.h"
 #include"XAction.h"
@@ -46,7 +44,7 @@ void XPriorityQueueTest()
 #if	XPriorityQueue_ON
 	XPrintf("XPriority_QueueTest 测试\n");
 	//XPriorityQueue* queue=XPriorityQueue_create(sizeof(int),XLess_int);//小堆，先出小的
-	XPriorityQueue* queue = XPriorityQueue_create(sizeof(int), XGreater_int);//大堆，先出大的
+	XPriorityQueue* queue = XPriorityQueue_create(sizeof(int), XCompare_int);//大堆，先出大的
 	XVector* v = XVector_Create(int);
 	for (size_t i = 0; i < 10; i++)
 	{

@@ -80,7 +80,7 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 					size_t index = map->m_hash(XPair_first(pair), ((XMapBase*)map)->m_keyTypeSize) % new_capacity;
 
 					// 将节点插入到新哈希表的相应红黑树中
-					XRBTree_insert(&newData[index], ((XMapBase*)map)->m_KeyLess, XCompareRuleTwo_XMap, XTreeNode_getData(node), sizeof(XPair*));
+					XRBTree_insert(&newData[index], XContainerCompare(map), XCompareRuleTwo_XMap, XTreeNode_getData(node), sizeof(XPair*));
 				}
 				XVector_delete_base(nodes);
 			}
@@ -122,7 +122,7 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue, X
 			dataCreatMethod(XPair_second(pair), pvValue);
 		else
 			XPair_insertSecond(pair, pvValue);
-		XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XMapBase*)this_hash)->m_KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
+		XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, XContainerCompare(this_hash), XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
 		//++XContainerCapacity(this_hash);
 		++XContainerSize(this_hash);
 	}
@@ -172,8 +172,7 @@ void VXMap_erase(XHashMap* this_hash, const XHashMap_iterator* it, XHashMap_iter
 	// 从哈希表的对应红黑树中删除节点
 	XRBTree_remove(
 		&((XRBTreeNode**)XContainerDataPtr(this_hash))[it->index],  // 对应桶的红黑树根节点地址
-		((XMapBase*)this_hash)->m_KeyLess,                          // 键比较函数
-		((XMapBase*)this_hash)->m_KeyEquality,                      // 键相等判断函数
+		((XContainerObject*)this_hash)->m_compare,
 		XCompareRuleOne_XMap,                                       // 比较规则
 		XPair_first(current_pair),                                 // 要删除的键
 		XMapBase_deleteNodeData,                                   // 节点数据释放回调
@@ -193,10 +192,10 @@ bool VXMap_remove(XHashMap*this_hash, const void* pvKey)
 	if (XMapBase_isEmpty_base(this_hash))
 		return false;
 	size_t index = this_hash->m_hash(pvKey, ((XMapBase*)this_hash)->m_keyTypeSize) % XContainerCapacity(this_hash);
-	XRBTreeNode* nodes = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XMapBase*)this_hash)->m_KeyLess, ((XMapBase*)this_hash)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);
+	XRBTreeNode* nodes = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
 	if (nodes != NULL)
 	{
-		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XMapBase*)this_hash)->m_KeyLess, ((XMapBase*)this_hash)->m_KeyEquality, XCompareRuleOne_XMap, pvKey, XMapBase_deleteNodeData,this_hash);
+		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, XMapBase_deleteNodeData,this_hash);
 		--XContainerSize(this_hash);
 		return true;
 	}
@@ -227,7 +226,7 @@ bool VXMap_find(XHashMap*this_hash, const void* pvKey, XHashMap_iterator* it)
 		return false;
 	}
 	size_t index = this_hash->m_hash(pvKey, ((XMapBase*)this_hash)->m_keyTypeSize) % XContainerCapacity(this_hash);
-	XRBTreeNode* nodes = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XMapBase*)this_hash)->m_KeyLess, ((XMapBase*)this_hash)->m_KeyEquality, XCompareRuleOne_XMap, pvKey);
+	XRBTreeNode* nodes = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
 	if (nodes == NULL)
 	{
 		if (it)
@@ -293,7 +292,7 @@ void VXClass_copy(XHashMap* object, const XHashMap* src)
 	if (((XClass*)object)->m_vtable == NULL)
 	{
 		XMapBase* map = src;
-		XHashMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), src->m_hash, map->m_KeyEquality, map->m_KeyLess);
+		XHashMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), src->m_hash, XContainerCompare(map));
 	}
 	else if (!XHashMap_isEmpty_base(object))
 	{
@@ -318,7 +317,7 @@ void VXClass_move(XHashMap* object, XHashMap* src)
 	if (((XClass*)object)->m_vtable == NULL)
 	{
 		XMapBase* map = src;
-		XHashMap_init(object, map->m_keyTypeSize ,XContainerTypeSize(src),src->m_hash,map->m_KeyEquality,map->m_KeyLess);
+		XHashMap_init(object, map->m_keyTypeSize ,XContainerTypeSize(src),src->m_hash, XContainerCompare(map));
 	}
 	else if (!XMapBase_isEmpty_base(object))
 	{

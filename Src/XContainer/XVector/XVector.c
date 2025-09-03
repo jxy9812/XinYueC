@@ -208,9 +208,9 @@ int64_t XVector_indexOf(const XVector* this_vector, const void* value, int64_t f
 	for (size_t i = from; i < size; ++i)
 	{
 		const void* element = &data[i * typeSize];
-		if (this_vector->m_equality)
+		if (XContainerCompare(this_vector))
 		{
-			if(this_vector->m_equality(element, value))
+			if(XContainerCompare(this_vector)(element, value)==XCompare_Equality)
 				return (int64_t)i;
 		}
 		else if (memcmp(element, value, typeSize) == 0)
@@ -252,9 +252,9 @@ int64_t XVector_lastIndexOf(const XVector* this_vector, const void* value, int64
 	for (int64_t i = startIndex; i >= 0; --i)
 	{
 		const void* element = &data[(size_t)i * typeSize];
-		if (this_vector->m_equality)
+		if (XContainerCompare(this_vector))
 		{
-			if (this_vector->m_equality(element, value))
+			if (XContainerCompare(this_vector)(element, value)==XCompare_Equality)
 				return (int64_t)i;
 		}
 		else if (memcmp(element, value, typeSize) == 0)
@@ -335,11 +335,11 @@ XVector* XVector_first(const XVector* this_vector, int64_t n)
 	return XVector_mid(this_vector, 0, n);
 }
 
-void XVector_sort_base(XVector* this_vector, XCompare compare)
+void XVector_sort_base(XVector* this_vector, XSortOrder order)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return ;
-	XClassGetVirtualFunc(this_vector, EXVector_Sort, void (*)(XVector*, XCompare))(this_vector, compare);
+	XClassGetVirtualFunc(this_vector, EXVector_Sort, void (*)(XVector*, XSortOrder))(this_vector, order);
 }
 bool XVector_replace(XVector* this_vector, int64_t index, void* pvValue)
 {

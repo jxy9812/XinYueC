@@ -18,7 +18,7 @@ static void VXListAtomic_clear(XListSLinkedAtomic* this_list);
 static void* VXListAtomic_front(XListSLinkedAtomic* this_list);
 static void* VXListAtomic_back(XListSLinkedAtomic* this_list);
 static bool VXListAtomic_find(const XListSLinkedAtomic* this_list, void* pvData, XListSLinkedAtomic_iterator* it);
-static void VXListAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare);
+static void VXListAtomic_sort(XListSLinkedAtomic* this_list, XSortOrder order);
 static void VXClass_copy(XListSLinkedAtomic* object, const XListSLinkedAtomic* src);
 static void VXClass_move(XListSLinkedAtomic* object, XListSLinkedAtomic* src);
 static void VXListAtomic_deinit(XListSLinkedAtomic* this_list);
@@ -476,14 +476,15 @@ void VXListAtomic_erase(XListSLinkedAtomic* this_list, const XListSLinkedAtomic_
 bool VXListAtomic_remove(XListSLinkedAtomic* this_list, void* pvData) {
     if (XListSLinkedAtomic_isEmpty_base(this_list))
         return false;
-    if (((XListBase*)this_list)->m_equality == NULL)
+    if (XContainerCompare(this_list) == NULL)
         return false;
 
     XListSNodeAtomic* prev = NULL;
     XListSNodeAtomic* current = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
 
     while (current != NULL) {
-        if (((XListBase*)this_list)->m_equality(&current->data, pvData)) {
+        if (XContainerCompare(this_list)(&current->data, pvData)==XCompare_Equality)
+        {
             // 如果要删除的是头节点
             if (prev == NULL) {
                 XListSNodeAtomic* next = current->next;
@@ -578,9 +579,9 @@ bool VXListAtomic_find(const XListSLinkedAtomic* this_list, void* pvData, XListS
 
     while (current != NULL) 
     {
-        if (((XListBase*)this_list)->m_equality)
+        if (XContainerCompare(this_list))
         {
-            if (((XListBase*)this_list)->m_equality(XListSNodeAtomic_DataPtr(current), pvData))
+            if (XContainerCompare(this_list)(XListSNodeAtomic_DataPtr(current), pvData)==XCompare_Equality)
             {
                 if (it)
                     it->node = current;
@@ -609,7 +610,8 @@ static XListSNodeAtomic* findTail(XListSNodeAtomic* head) {
 }
 
 // 单向链表的一次快排（分区函数）
-static XListSNodeAtomic* List_OneSort(XListSNodeAtomic* left, XListSNodeAtomic* right, size_t typeSize, XCompare compare) {
+static XListSNodeAtomic* List_OneSort(XListSNodeAtomic* left, XListSNodeAtomic* right, size_t typeSize, XCompare compare, XSortOrder order) 
+{
     if (left == NULL || right == NULL || left == right)
         return left;
 
@@ -619,9 +621,12 @@ static XListSNodeAtomic* List_OneSort(XListSNodeAtomic* left, XListSNodeAtomic* 
 
     XListSNodeAtomic* i = left;    // 分区点
     XListSNodeAtomic* j = (XListSNodeAtomic*)XAtomic_load_ptr(&left->next);
-
+    int32_t cmp;
     while (j != NULL) {
-        if (compare(&(j->data), pivot)) {
+        //if (compare(&(j->data), pivot)) 
+        cmp = compare(&(j->data), pivot);
+        if (((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))//排序比较函数
+        {
             i = (XListSNodeAtomic*)XAtomic_load_ptr(&i->next);
             // 交换i和j的数据
             void* temp = XMemory_malloc(typeSize);
@@ -646,9 +651,9 @@ static XListSNodeAtomic* List_OneSort(XListSNodeAtomic* left, XListSNodeAtomic* 
 }
 
 // 链表排序
-void VXListAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare) {
+void VXListAtomic_sort(XListSLinkedAtomic* this_list, XSortOrder order) {
 #if XStack_ON
-    if (XListSLinkedAtomic_isEmpty_base(this_list))
+    if (XListSLinkedAtomic_isEmpty_base(this_list) || XContainerCompare(this_list) == NULL)
         return;
 
     XListSNodeAtomic* head = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
@@ -676,7 +681,7 @@ void VXListAtomic_sort(XListSLinkedAtomic* this_list, XCompare compare) {
             continue;
 
         // 执行一次快排
-        XListSNodeAtomic* pivot = List_OneSort(h, t, XContainerTypeSize(this_list), compare);
+        XListSNodeAtomic* pivot = List_OneSort(h, t, XContainerTypeSize(this_list), XContainerCompare(this_list), order);
 
         // 处理左子区间
         if (h != pivot) {

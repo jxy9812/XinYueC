@@ -20,7 +20,7 @@ static void* VXList_front(XListSLinked* this_list);
 static void* VXList_back(XListSLinked* this_list);
 static bool VXList_find(const XListSLinked* this_list, void* pvData, XListSLinked_iterator* it);
 //其他
-static void VXList_sort(XListSLinked* this_list, XCompare compare);
+static void VXList_sort(XListSLinked* this_list, XSortOrder order);
 static void VXClass_copy(XListSLinked* object, const XListSLinked* src);
 static void VXClass_move(XListSLinked* object, XListSLinked* src);
 static void VXList_deinit(XListSLinked* this_list);
@@ -357,13 +357,13 @@ bool VXList_remove(XListSLinked* this_list, void* pvData)
 {
     if (XListBase_isEmpty_base(this_list))
         return false;
-    if (((XListBase*)this_list)->m_equality == NULL)
+    if (XContainerCompare(this_list) == NULL)
         return false;
     XListSNode* prev = NULL;//前一个节点
     XListSNode* curNode = XContainerDataPtr(this_list);//当前节点
     while (curNode)
     {
-        if (((XListBase*)this_list)->m_equality(&(curNode->data), pvData))
+        if (XContainerCompare(this_list)(&(curNode->data), pvData)==XCompare_Equality)
         {//找到了
             removeNode(this_list, prev, curNode);
             return true;
@@ -419,9 +419,9 @@ bool VXList_find(const XListSLinked* this_list, void* pvData, XListSLinked_itera
     XListSNode* node = XContainerDataPtr(this_list);//当前节点
     while (node)
     {
-        if (((XListBase*)this_list)->m_equality)
+        if (XContainerCompare(this_list))
         {
-            if (((XListBase*)this_list)->m_equality(XListSNode_DataPtr(node), pvData))
+            if (XContainerCompare(this_list)(XListSNode_DataPtr(node), pvData)==XCompare_Equality)
             {
                 if (it)
                     it->node = node;
@@ -448,7 +448,8 @@ static XListSNode* findTail(XListSNode* head) {
     return head;
 }
 // 单向链表的一次快排（分区函数）
-static XListSNode* List_OneSort(XListSNode* left, XListSNode* right, size_t typeSize, XCompare compare) {
+static XListSNode* List_OneSort(XListSNode* left, XListSNode* right, size_t typeSize, XCompare compare, XSortOrder order) 
+{
     if (left == NULL || right == NULL || left == right)
         return left;
 
@@ -458,9 +459,12 @@ static XListSNode* List_OneSort(XListSNode* left, XListSNode* right, size_t type
 
     XListSNode* i = left;    // 分区点
     XListSNode* j = left->next;
-
+    int32_t cmp;
     while (j != NULL) {
-        if (compare(&(j->data), pivot)) {
+        //if (compare(&(j->data), pivot)) 
+        cmp = compare(&(j->data), pivot);
+        if (((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))//排序比较函数
+        {
             i = i->next;
             // 交换i和j的数据
 
@@ -484,10 +488,10 @@ static XListSNode* List_OneSort(XListSNode* left, XListSNode* right, size_t type
 
     return i;  // 返回分区点
 }
-void VXList_sort(XListSLinked* this_list, XCompare compare)
+void VXList_sort(XListSLinked* this_list, XSortOrder order)
 {
 #if XStack_ON
-    if (XListBase_isEmpty_base(this_list))
+    if (XListBase_isEmpty_base(this_list)|| XContainerCompare(this_list)==NULL)
         return;
     //printf("进入排序\n");
     XListSNode* head = XContainerDataPtr(this_list);
@@ -515,7 +519,7 @@ void VXList_sort(XListSLinked* this_list, XCompare compare)
             continue;
 
         // 执行一次快排
-        XListSNode* pivot = List_OneSort(h, t, XContainerTypeSize(this_list), compare);
+        XListSNode* pivot = List_OneSort(h, t, XContainerTypeSize(this_list), XContainerCompare(this_list),order);
 
         // 处理左子区间
         if (h != pivot) {

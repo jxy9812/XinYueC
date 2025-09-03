@@ -2,9 +2,6 @@
 #if DEMOTEST
 #include"XString.h"
 #include"XStringList.h"
-#include"XFunctionCallback.h"
-#include"XEquality.h"
-#include"XLess.h"
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"

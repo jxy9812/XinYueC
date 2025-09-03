@@ -4,7 +4,6 @@
 #include"XVector.h"
 #include"XMemory.h"
 #include"XStack.h"
-#include"XEquality.h"
 #include"XMutex.h"
 
 static void VXTimerGroupWheel_deinit(XTimerGroupWheel* group);
@@ -71,7 +70,8 @@ static void add_timer_to_wheel(XTimeWheel* wheel, XTimerWheel* timer, size_t tic
     {
         // 当前不存在链表
         *pvList = XListSLinked_Create(XTimerWheel*);
-        (*pvList)->m_parent.m_equality = XEquality_size_t;
+       // (*pvList)->m_parent.m_equality = XEquality_size_t;
+        XContainerSetCompare(*pvList,XCompare_Equality);
     }
     XListSLinked_push_front_base(*pvList, &timer);
     timer->m_list = *pvList;

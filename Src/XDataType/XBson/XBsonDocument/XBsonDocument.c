@@ -38,7 +38,7 @@ void XBsonDocument_init(XBsonDocument* doc) {
     if (!doc) return;
 
     XMap_init(doc, sizeof(XString), sizeof(XBsonValue),
-        XEquality_XString, XLess_XString);
+        XString_compare);
 
     XMapBaseSetKeyCopyMethod(doc, XString_copy_base);
     XMapBaseSetKeyMoveMethod(doc, XString_move_base);

@@ -1,8 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XHashMap.h"
-#include"XEquality.h"
-#include"XLess.h"
+#include"XCompare.h"
 #include"XBalancedBinaryTree.h"
 #include"XMenu.h"
 #include"XAction.h"
@@ -22,7 +21,7 @@ void XHashMapTest()
 	{
 		int arrayint[] = { 1,23,456,5,23 };
 		char arraychar[][100] = { "琦神","星小白","章鱼哥","你好啊111hjhj1","玩蛇" };
-		XHashMap* map = XHashMap_Create(int, char*, XEquality_int,XLess_int);
+		XHashMap* map = XHashMap_Create(int, char*, XCompare_int);
 
 		for (size_t i = 0; i < 5; i++)
 		{

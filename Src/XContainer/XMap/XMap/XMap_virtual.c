@@ -71,7 +71,7 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue, XCData
 
 		//printf("创建的xpair pvKey:%d pvValue:%s\n",XPair_First(pair,int),XPair_second(LPpair));
 
-		XRBTree_insert(&XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
+		XRBTree_insert(&XContainerDataPtr(this_map), XContainerCompare(this_map), XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
 
 		++XContainerCapacity(this_map);
 		++XContainerSize(this_map);
@@ -123,8 +123,7 @@ void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)
 	// 从红黑树中删除当前节点
 	XRBTree_remove(
 		&XContainerDataPtr(this_map),
-		((XMapBase*)this_map)->m_KeyLess,
-		((XMapBase*)this_map)->m_KeyEquality,
+		((XContainerObject*)this_map)->m_compare,
 		XCompareRuleOne_XMap,
 		XPair_first(current_pair),  // 传入键用于查找删除
 		XMapBase_deleteNodeData,    // 释放节点数据的回调
@@ -144,10 +143,10 @@ bool VXMap_remove(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return false;
-	XRBTreeNode* nodes = XRBTree_findData(XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
+	XRBTreeNode* nodes = XRBTree_findData(XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
-		XRBTree_remove(&XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key, XMapBase_deleteNodeData,this_map);
+		XRBTree_remove(&XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key, XMapBase_deleteNodeData,this_map);
 		--XContainerCapacity(this_map);
 		--XContainerSize(this_map);
 		return true;
@@ -178,7 +177,7 @@ bool VXMap_find(XMap* this_map, const void* key, XMap_iterator* it)
 			*it = XMap_end(this_map);
 		return false;
 	}
-	XTreeNode* nodes = XRBTree_findData(XContainerDataPtr(this_map), ((XMapBase*)this_map)->m_KeyLess, ((XMapBase*)this_map)->m_KeyEquality, XCompareRuleOne_XMap, key);
+	XTreeNode* nodes = XRBTree_findData(XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key);
 	if (nodes == NULL)
 	{
 		if (it)
@@ -239,7 +238,7 @@ void VXClass_copy(XMap* object, const XMap* src)
 	if (((XClass*)object)->m_vtable == NULL)
 	{
 		XMapBase* map = src;
-		XMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), map->m_KeyEquality, map->m_KeyLess);
+		XMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), XContainerCompare(map));
 	}
 	else if (!XMap_isEmpty_base(object))
 	{
@@ -265,7 +264,7 @@ void VXClass_move(XMap* object, XMap* src)
 	if (((XClass*)object)->m_vtable == NULL)
 	{
 		XMapBase* map = src;
-		XMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), map->m_KeyEquality, map->m_KeyLess);
+		XMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), XContainerCompare(map));
 	}
 	else if (!XMapBase_isEmpty_base(object))
 	{

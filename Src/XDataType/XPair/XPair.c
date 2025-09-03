@@ -105,3 +105,13 @@ void XPair_delete(XPair* this_pair)
 {
 	XMemory_free(this_pair);
 }
+
+int32_t XPair_compare(const XPair* lhs, const XPair* rhs)
+{
+	if ((lhs->m_first == rhs->m_first)&& 
+		(lhs->m_second == rhs->m_second)&&
+		memcmp(XPair_first(lhs), XPair_first(rhs), lhs->m_first)==0&&
+		memcmp(XPair_second(lhs), XPair_second(rhs), lhs->m_second)==0)
+		return XCompare_Equality;
+	return XCompare_Other;
+}

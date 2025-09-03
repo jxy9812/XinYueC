@@ -103,11 +103,12 @@ void XDispatcher_init(XDispatcher* dispatcher, XSchedulePolicy policy)
     // 根据策略初始化就绪队列
     if (policy == X_SCHED_FIFO || policy == X_SCHED_RR) {
         dispatcher->ready_entities.fifo_queue = XQueue_create(sizeof(XScheduleEntity*));
-        ((XListBase*)dispatcher->ready_entities.fifo_queue)->m_equality = ScheduleEquality;
+        //((XListBase*)dispatcher->ready_entities.fifo_queue)->m_equality = ScheduleEquality;
+        XContainerSetCompare(dispatcher->ready_entities.fifo_queue, XScheduleEntity_compare);
     }
     else {
         dispatcher->ready_entities.cfs_tree = XSet_create(sizeof(XScheduleEntity*),
-            ScheduleEquality, ScheduleLess);
+            XScheduleEntity_compare);
     }
 }
 
@@ -339,11 +340,12 @@ static void VXDispatcher_setPolicy(XDispatcher* dispatcher, XSchedulePolicy poli
     dispatcher->policy = policy;
     if (policy == X_SCHED_FIFO || policy == X_SCHED_RR) {
         dispatcher->ready_entities.fifo_queue = XQueue_create(sizeof(XScheduleEntity*));
-        ((XListBase*)dispatcher->ready_entities.fifo_queue)->m_equality = ScheduleEquality;
+        //((XListBase*)dispatcher->ready_entities.fifo_queue)->m_equality = ScheduleEquality;
+        XContainerSetCompare(dispatcher->ready_entities.fifo_queue, XScheduleEntity_compare);
     }
     else {
         dispatcher->ready_entities.cfs_tree = XSet_create(sizeof(XScheduleEntity*),
-            ScheduleEquality, ScheduleLess);
+            XScheduleEntity_compare);
     }
     XMutex_unlock(dispatcher->mutex);
 }

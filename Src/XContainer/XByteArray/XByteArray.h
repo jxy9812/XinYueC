@@ -69,6 +69,8 @@ bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteA
 #define XByteArray_prepend_base						XVector_prepend_base	
 #define XByteArray_prepend_move_base				XVector_prepend_move_base
 
+int32_t XByteArray_compare(const XByteArray* lhs, const XByteArray* rhs);
+
 //转16进制utf8字符串
 XByteArray* XByteArray_to16HexUtf8(XByteArray* array);
 //转16进制字符串

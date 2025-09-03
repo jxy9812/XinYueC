@@ -223,14 +223,6 @@ uint32_t XChar_surrogate_to_unicode(const XChar high, const XChar low);
 // --------------------------
 
 /**
- * @brief 判断两个XChar是否相等（默认区分大小写）
- * @param a 第一个XChar指针
- * @param b 第二个XChar指针
- * @return 相等返回true，否则返回false
- */
-bool XEquality_XChar(const XChar a, const XChar b);
-
-/**
  * @brief 比较两个XChar是否相等（支持大小写敏感性）
  * @param a 第一个XChar指针
  * @param b 第二个XChar指针
@@ -245,7 +237,7 @@ bool XChar_equals(const XChar a, const XChar b, XCharCaseSensitivity cs);
  * @param b 第二个XChar指针
  * @return a < b返回-1，a > b返回1，相等返回0
  */
-int XChar_compare(const XChar a, const XChar b);
+int32_t XChar_compare(const XChar a, const XChar b);
 
 // --------------------------
 // UTF-8编码转换函数

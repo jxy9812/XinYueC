@@ -1,7 +1,6 @@
 ﻿#include "XEventDispatcher.h"
 #include "XMemory.h"
 #include "XHashMap.h"
-#include "XEquality.h"
 #include "XHashFunc.h"
 #include "XObject.h"
 #include "XTimerGroupWheel.h"
@@ -99,7 +98,7 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
 
     // 初始化事件过滤器映射表
     dispatcher->m_filter_cb = XHashMap_Create(XObject*, XHashMap*,
-        XEquality_ptr, XLess_ptr);
+        XCompare_ptr);
 
     // 初始化套接字通知器列表
     dispatcher->m_socketNotifiers = XListSLinked_create(sizeof(XSocketNotifier*));
@@ -235,7 +234,7 @@ static bool VXEventDispatcher_addEventCb(XEventDispatcher* dispatcher, XObject* 
     XMapBase* p = NULL;
 
     if (!pvMap) {
-        p = XHashMap_Create(int, XEventCallback, XEquality_int, XHashMap_murmur3_32);
+        p = XHashMap_Create(int, XEventCallback, XCompare_int);
         XMapBase_insert_base(dispatcher->m_filter_cb, &receiver, &p);
     }
     else {

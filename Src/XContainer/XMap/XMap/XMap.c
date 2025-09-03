@@ -10,27 +10,27 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
-XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
+XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XCompare compare)
 {
 	if (keyTypeSize == 0 || valTypeSize == 0)
 	{
 		printf("类型参数不能为0");
 		return NULL;
 	}
-	if (KeyEquality == NULL || KeyLess == NULL)
+	if (compare == NULL)
 	{
-		printf("KeyEquality相等比较函数NULL或KeyLess小于比较函数NULL");
+		printf("compare比较函数NULL");
 		return NULL;
 	}
 	XMap* this_map = (XMap*)XMemory_malloc(sizeof(XMap));
-	XMap_init(this_map,keyTypeSize,valTypeSize,KeyEquality,KeyLess);
+	XMap_init(this_map,keyTypeSize,valTypeSize, compare);
 	return this_map;
 }
 XMap* XMap_create_copy(const XMap* other)
 {
 	if (other == NULL)
 		return NULL;
-	XMap* map = XMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), ((XMapBase*)other)->m_KeyEquality, ((XMapBase*)other)->m_KeyLess);
+	XMap* map = XMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), XContainerCompare(other));
 	if (map == NULL)
 		return NULL;
 	XMap_copy_base(map, other);
@@ -40,13 +40,13 @@ XMap* XMap_create_move(XMap* other)
 {
 	if (other == NULL)
 		return NULL;
-	XMap* map = XMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), ((XMapBase*)other)->m_KeyEquality, ((XMapBase*)other)->m_KeyLess);
+	XMap* map = XMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), XContainerCompare(other));
 	if (map == NULL)
 		return NULL;
 	XMap_move_base(map, other);
 	return map;
 }
-void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality, XLess KeyLess)
+void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare)
 {
 	if (ISNULL(this_map, ""))
 		return NULL;
@@ -55,18 +55,18 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 		printf("类型参数不能为0");
 		return NULL;
 	}
-	if (KeyEquality == NULL || KeyLess == NULL)
+	if (compare == NULL)
 	{
-		printf("KeyEquality相等比较函数NULL或KeyLess小于比较函数NULL");
+		printf("compare比较函数NULL");
 		return NULL;
 	}
-	XMapBase_init(this_map, keyTypeSize, valTypeSize, KeyEquality,KeyLess);
+	XMapBase_init(this_map, keyTypeSize, valTypeSize, compare);
 	XClassGetVtable(this_map) = XMap_class_init();
 	//this_map->m_KeyLess = KeyLess;
 }
 XVariantMap* XMap_create_XVariantMap()
 {
-	XMap* map = XMap_Create(XString, XVariant, XEquality_XString, XLess_XString);
+	XMap* map = XMap_Create(XString, XVariant, XString_compare);
 	if (map == NULL)
 		return NULL;
 	/*XContainerSetDataCopyMethod(map, XMapBase_XVariantMapCopyMethod);

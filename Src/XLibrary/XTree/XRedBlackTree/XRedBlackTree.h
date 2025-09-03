@@ -31,10 +31,10 @@ typedef struct XRBTreeNode
 XRBTreeNode* XRBTree_create(const char* pvData,const size_t dataTypeSize);
 void XRBTree_init(XRBTreeNode* this_root, const char* pvData, const size_t dataTypeSize);
 //红黑树-自动创建节点，插入数据，并自动调整高度和旋转保证平衡
-XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, XCompareRuleTwo lessRule,const void* pvData, const size_t TypeSize);
-XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XLess less,XEquality equality, XCompareRuleOne Rule,const void* pvData, XTreeNodeDataDeleteMethod method, void* args);
+XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule,const void* pvData, const size_t TypeSize);
+XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule,const void* pvData, XTreeNodeDataDeleteMethod method, void* args);
 //查找红黑树节点
-XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne rule, void* pvData);
+XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData);
 //递归释放整颗树
 #define XRBTreeNode_delete							XBTreeNode_delete
 //递归释放整颗树

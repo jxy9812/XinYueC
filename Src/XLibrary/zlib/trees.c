@@ -1,4 +1,4 @@
-/* trees.c -- output deflated data using Huffman coding
+﻿/* trees.c -- output deflated data using Huffman coding
  * Copyright (C) 1995-2017 Jean-loup Gailly
  * detect_data_type() function provided freely by Cosmin Truta, 2006
  * For conditions of distribution and use, see copyright notice in zlib.h
@@ -1052,7 +1052,7 @@ int ZLIB_INTERNAL _tr_tally (s, dist, lc)
     }
 #endif
     return (s->last_lit == s->lit_bufsize-1);
-    /* We avoid equality with lit_bufsize because of wraparound at 64K
+    /* We avoid compare with lit_bufsize because of wraparound at 64K
      * on 16 bit machines and because stored blocks are restricted to
      * 64K-1 bytes.
      */

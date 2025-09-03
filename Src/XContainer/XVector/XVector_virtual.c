@@ -23,7 +23,7 @@ static void* VXVector_at(const XVector* this_vector, int64_t index);
 static void* VXVector_front(const XVector* this_vector);
 static void* VXVector_back(const XVector* this_vector);
 static bool VXVector_find(const XVector* this_vector, const void* findVal, XVector_iterator* it);//查找数据,返回迭代器
-static void VXVector_sort(XVector* this_vector, XCompare compare);//排序
+static void VXVector_sort(XVector* this_vector, XSortOrder order);//排序
 XVtable* XVector_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -67,7 +67,7 @@ void XVector_init(XVector* this_vector, size_t typeSize)
 		return;
 	XContainerObject_init(this_vector, typeSize);
 	XClassGetVtable(this_vector)=XVector_class_init();
-	this_vector->m_equality = NULL;
+	//this_vector->m_equality = NULL;
 }
 //检测是否需要扩容
 static bool VXVectorEnlargeCapacity(XVector* this_vector)
@@ -503,9 +503,9 @@ bool VXVector_find(const XVector* this_vector, const void* findVal, XVector_iter
 	for (size_t i = 0; i < XContainerSize(this_vector); i++)
 	{
 		void* data = ((uint8_t*)XContainerDataPtr(this_vector)) + i * XContainerTypeSize(this_vector);
-		if (this_vector->m_equality)
+		if (XContainerCompare(this_vector))
 		{
-			if (this_vector->m_equality(data, findVal))
+			if (XContainerCompare(this_vector)(data, findVal)==XCompare_Equality)
 			{
 				if (it)
 					it->data = data;
@@ -524,10 +524,10 @@ bool VXVector_find(const XVector* this_vector, const void* findVal, XVector_iter
 		*it = XVector_end(this_vector);
 	return false;
 }
-void VXVector_sort(XVector* this_vector, XCompare compare)//排序
+void VXVector_sort(XVector* this_vector, XSortOrder order)//排序
 {
 	if (XContainerSize(this_vector)>1)
-		XQuicPitSort_Stack(XContainerDataPtr(this_vector),XContainerSize(this_vector), XContainerTypeSize(this_vector), compare);
+		XQuicPitSort_Stack(XContainerDataPtr(this_vector),XContainerSize(this_vector), XContainerTypeSize(this_vector),XContainerCompare(this_vector), order);
 }
 
 #endif

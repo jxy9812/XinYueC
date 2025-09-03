@@ -213,11 +213,11 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTre
 	IS_ON_DEBUG(XVector_ON);
 #endif
 }
-XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XLess less, XEquality equality, XCompareRuleOne Rule, const void* pvData, XTreeNodeDataDeleteMethod method, void* args)
+XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const void* pvData, XTreeNodeDataDeleteMethod method, void* args)
 {
 	if (ISNULL(this_root, ""))
 		return NULL;
-	XRBTreeNode* findErase = XBBTree_findData(*this_root, less, equality, Rule, pvData);//删除的节点
+	XRBTreeNode* findErase = XBBTree_findData(*this_root, compare, Rule, pvData);//删除的节点
 	//DEBUG_PRINTF("findErase=%p", findErase);
 	if (findErase == NULL)
 		return NULL;//要删除的节点没找到
@@ -233,15 +233,15 @@ XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XLess less, XEquality equal
 	return findErase;
 }
 
-XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XLess less, XEquality equality, XCompareRuleOne rule, void* pvData)
+XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData)
 {
-	return XBBTree_findData(this_root,less,equality, rule,pvData);
+	return XBBTree_findData(this_root, compare, rule,pvData);
 	//if (this_root == NULL)//树是空的
 	//	return NULL;
 	//XRBTreeNode* CurNode = this_root;//当前节点指针
 	//while (CurNode != NULL)
 	//{
-	//	if (equalityRule(equality, CurNode, pvData))
+	//	if (equalityRule(compare, CurNode, pvData))
 	//	{
 	//		return CurNode;
 	//	}
@@ -307,10 +307,10 @@ static void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNo
 	}
 	XRBTree_SetBlack(*this_root);
 }
-XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, XCompareRuleTwo lessRule, const void* pvData, const size_t TypeSize)
+XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t TypeSize)
 {
 	//DEBUG_PRINTF("less=%p pvData=%p dataTypeSize=%u\n",less,pvData,dataTypeSize);
-	if (ISNULL(less, ""))
+	if (ISNULL(compare, ""))
 		return NULL;
 	if (ISNULL(pvData, ""))
 		return NULL;
@@ -320,7 +320,7 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XLess less, XCompareRuleTwo
 	if (ISNULL(nodes, ""))
 		return NULL;
 	//DEBUG_PRINTF("nodes=%p\n",nodes);
-	bool flag = XBBTree_insertAlign(this_root, nodes, less, lessRule, pvData, TypeSize);//将数据插入到节点，并且链接
+	bool flag = XBBTree_insertAlign(this_root, nodes, compare, lessRule, pvData, TypeSize);//将数据插入到节点，并且链接
 	if (!flag)
 	{
 		printf("节点插入失败\n");

@@ -9,6 +9,7 @@ extern "C" {
 #include<stdbool.h>
 #include"XMemory.h"
 #include"XTypes.h"
+#include"XCompare.h"
 //#define DEBUG_ON 1
 //数据释放方法
 typedef void (*XCDataDeinitMethod)(void* data);
@@ -39,6 +40,7 @@ typedef struct XContainerObject
 	XCDataCopyMethod m_dataCopyMethod;//数据拷贝方法
 	XCDataMoveMethod m_dataMoveMethod;//数据移动方法
 	XCDataDeinitMethod m_dataDeinitMethod;//数据释放方法
+	XCompare m_compare;//比较大小方法
 	void* m_data;//指向容器数据的指针
 	size_t  m_capacity;//当前容器能容纳的最大元素数量
 	size_t m_size;//当前容器内的元素个数
@@ -58,6 +60,8 @@ typedef struct XContainerObject
 #define XContainerSetDataMoveMethod(Object,method) (((XContainerObject*)(Object))->m_dataMoveMethod=method)//设置容器的数据移动方法
 #define XContainerDataDeinitMethod(Object) (((XContainerObject*)(Object))->m_dataDeinitMethod)//获取容器数据释放方法
 #define XContainerSetDataDeinitMethod(Object,method) (((XContainerObject*)(Object))->m_dataDeinitMethod=method)//设置容器的数据释放方法
+#define XContainerCompare(Object,compare)		(((XContainerObject*)(Object))->m_compare)
+#define XContainerSetCompare(Object,compare)    (((XContainerObject*)(Object))->m_compare=compare)
 XVtable* XContainerObject_class_init();
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);
 #define XContainerObject_copy_base		XClass_copy_base

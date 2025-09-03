@@ -123,13 +123,14 @@ XVector* XMazePathfindingAStar(const XVector* maze, const XPoint start, const XP
 	XVector* tempMaze = XVectorTwo_copy(maze);//备份
 	AStarNode* root = CreationAStarNode_XPoint(start);//根节点
 	XVector* CurrentNodeArray = XVector_create( sizeof(AStarNode*));//当前节点数组
+	XContainerSetCompare(CurrentNodeArray,sortDescendingtCosts);
 	XVector_push_back_base(CurrentNodeArray, &root);//入根节点
 
 	AStarNode* CurrentNode = NULL;//当前遍历的节点
 	bool isFindEnd = false;//找到终点标记
 	while (!isFindEnd && !XVector_isEmpty_base(CurrentNodeArray))
 	{
-		XVector_sort_base(CurrentNodeArray, sortDescendingtCosts);
+		XVector_sort_base(CurrentNodeArray,XSORT_ASC );
 		AStarNode** back = XVector_back_base(CurrentNodeArray);
 		CurrentNode = *back;
 		int nSel = XVector_size_base(CurrentNodeArray)-1;

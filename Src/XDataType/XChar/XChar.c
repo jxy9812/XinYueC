@@ -659,11 +659,6 @@ uint32_t XChar_surrogate_to_unicode(const XChar high, const XChar low) {
     return (high_val << 10) + low_val + SURROGATE_OFFSET;
 }
 
-// 字符比较
-bool XEquality_XChar(const XChar a, const XChar b) {
-    return a == b;
-}
-
 bool XChar_equals(const XChar a, const XChar b, XCharCaseSensitivity cs)
 {
     if (cs == XCharCaseSensitive) {
@@ -676,7 +671,7 @@ bool XChar_equals(const XChar a, const XChar b, XCharCaseSensitivity cs)
     }
 }
 
-int XChar_compare(const XChar a, const XChar b) {
+int32_t XChar_compare(const XChar a, const XChar b) {
     return (a> b) ? 1 : (a < b ? -1 : 0);
 }
 

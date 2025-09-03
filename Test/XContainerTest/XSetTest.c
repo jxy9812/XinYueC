@@ -1,8 +1,6 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XSet.h"
-#include"XEquality.h"
-#include"XLess.h"
 #include"XBalancedBinaryTree.h"
 #include"XMenu.h"
 #include"XAction.h"
@@ -21,7 +19,7 @@ void XSetTest()
 	//while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
-		XSet* set = XSet_Create(int, XEquality_int, XLess_int);
+		XSet* set = XSet_Create(int, XCompare_int);
 
 		for (size_t i = 0; i < 5; i++)
 		{

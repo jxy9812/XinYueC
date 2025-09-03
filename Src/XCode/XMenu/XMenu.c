@@ -1,6 +1,5 @@
 ﻿#include "XMenu.h"
 #include "XMemory.h"
-#include "XEquality.h"
 #include "XVector.h"
 #include <string.h>
 
@@ -146,7 +145,7 @@ void XMenuData_init(XMenuData* data, const char* title)
 	}
 	data->title = str;
 	data->actions = XVector_create(sizeof(XAction*));
-	data->actions->m_equality = XEquality_ptr;
+	XContainerSetCompare(data->actions, XCompare_ptr);
 }
 
 void XMenuData_setTitle(XMenuData* data, const char* title)

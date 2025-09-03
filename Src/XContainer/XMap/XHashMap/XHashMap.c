@@ -4,17 +4,17 @@
 #include"XString.h"
 #include"XVariant.h"
 #include<string.h>
-XHashMap*XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess)
+XHashMap*XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare)
 {
 	XHashMap*map = XMemory_malloc(sizeof(XHashMap));
-	XHashMap_init(map,keyTypeSize,valTypeSize,hash,KeyEquality, KeyLess);
+	XHashMap_init(map,keyTypeSize,valTypeSize,hash,compare);
 	return map;
 }
 XHashMap* XHashMap_create_copy(const XHashMap* other)
 {
 	if (other == NULL)
 		return NULL;
-	XHashMap* hash = XHashMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), other->m_hash, ((XMapBase*)other)->m_KeyEquality, ((XMapBase*)other)->m_KeyLess);
+	XHashMap* hash = XHashMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), other->m_hash,XContainerCompare(other));
 	if (hash == NULL)
 		return NULL;
 	XHashMap_copy_base(hash, other);
@@ -24,17 +24,17 @@ XHashMap* XHashMap_create_move(XHashMap* other)
 {
 	if (other == NULL)
 		return NULL;
-	XHashMap* hash = XHashMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), other->m_hash, ((XMapBase*)other)->m_KeyEquality, ((XMapBase*)other)->m_KeyLess);
+	XHashMap* hash = XHashMap_create(((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), other->m_hash,XContainerCompare(other));
 	if (hash == NULL)
 		return NULL;
 	XHashMap_move_base(hash, other);
 	return hash;
 }
-void XHashMap_init(XHashMap*this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XEquality KeyEquality, XLess KeyLess)
+void XHashMap_init(XHashMap*this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare)
 {
 	if (this_map == NULL)
 		return;
-	XMapBase_init(this_map, keyTypeSize, valTypeSize, KeyEquality, KeyLess);
+	XMapBase_init(this_map, keyTypeSize, valTypeSize,compare);
 	XClassGetVtable(this_map) = XHashMap_class_init();
 	this_map->m_hash = hash;
 	XContainerCapacity(this_map)= DEFAULT_CAPACITY;
@@ -48,7 +48,7 @@ void XHashMap_init(XHashMap*this_map, const size_t keyTypeSize, const size_t val
 
 XVariantHashMap* XHashMap_create_XVariantHashMap()
 {
-	XHashMap* hash = XHashMap_Create(XString, XVariant, XEquality_XString,XLess_XString);
+	XHashMap* hash = XHashMap_Create(XString, XVariant, XString_compare);
 	if (hash == NULL)
 		return NULL;
 	/*XContainerSetDataCopyMethod(hash, XMapBase_XVariantMapCopyMethod);

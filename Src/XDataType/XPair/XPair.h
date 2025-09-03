@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 #include<stdio.h>
+#include<stdint.h>
 #include"XTypes.h"
 typedef struct XPair//pair是将2个数据组合成一组数据，当需要这样的需求时就可以使用pair
 {
@@ -39,6 +40,8 @@ void* XPair_second(XPair* this_pair);
 size_t XPair_getSize(XPair* this_pair);
 //释放
 void XPair_delete(XPair* this_pair);
+
+int32_t XPair_compare(const XPair* lhs, const XPair* rhs);
 #ifdef __cplusplus
 }
 #endif

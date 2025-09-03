@@ -1,7 +1,6 @@
 ﻿#include "XByteArray.h"
 #if XByteArray_ON
 #include "XString.h"
-#include "XEquality.h"
 #include <string.h>
 XByteArray* XByteArray_create(size_t size)
 {
@@ -39,7 +38,8 @@ void XByteArray_init(XByteArray* array)
 	if (array == NULL)
 		return;
 	XVector_init(array,sizeof(uint8_t));
-	array->m_parent.m_equality = XEquality_uint8_t;
+	XContainerSetCompare(array, XCompare_uint8_t);
+	//array->m_parent.m_equality = XEquality_uint8_t;
 }
 
 bool XByteArray_push_front_base(XByteArray* array, const uint8_t byte)
@@ -75,6 +75,22 @@ bool XByteArray_append_utf8(XByteArray* array, const char* utf8)
 bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteArray_iterator* it)
 {
 	return XVector_find_base(array,&findVal,it);
+}
+
+int32_t XByteArray_compare(const XByteArray* lhs, const XByteArray* rhs)
+{
+	if(XContainerSize(lhs)< XContainerSize(rhs))
+		return XCompare_Less;
+	if (XContainerSize(lhs) > XContainerSize(rhs))
+		return XCompare_Greater;
+	if (XByteArray_isEmpty_base(lhs) && XByteArray_isEmpty_base(rhs))
+		return XCompare_Equality;
+	int cmp = memcmp(XContainerDataPtr(lhs), XContainerDataPtr(rhs), XContainerSize(lhs));
+	if(cmp==0)
+		return XCompare_Equality;
+	if(cmp<0)
+		return XCompare_Less;
+	return XCompare_Greater;
 }
 
 XByteArray* XByteArray_to16HexUtf8(XByteArray* array)

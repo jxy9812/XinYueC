@@ -4,7 +4,6 @@
 #include "XEvent.h"
 #include "XHashFunc.h"
 #include "XHashSet.h"
-#include "XEquality.h"
 #include "XMutex.h"
 #include "XObject.h"
 #include "XTimerGroupWheel.h"
@@ -79,6 +78,7 @@ XTimerGroupBase* XCoreApplication_getTimerGroup()
 void XCoreApplication_requestQuit()
 {
 	XCoreApplication_global()->m_quit = true;
+	XEventLoop_quit_base(XCoreApplication_global()->m_eventLoop,0);
 }
 
 int XCoreApplication_exec()
@@ -86,7 +86,8 @@ int XCoreApplication_exec()
 	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
 	if (app == NULL)
 		return -1;
-	XEventLoop_exec_base(app->m_eventLoop);
+	if(!(app->m_quit))
+		XEventLoop_exec_base(app->m_eventLoop);
 	/*while (!(app->m_quit))
 	{
 		XEventDispatcherThread_handler_base(app->m_eventLoop);

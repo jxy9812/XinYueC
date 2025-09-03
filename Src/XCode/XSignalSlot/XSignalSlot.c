@@ -9,6 +9,12 @@ static const bool XEquality_XConnection(const XConnection* pvPrevValue, const XC
 {
 	return (pvPrevValue->receiver == pvNextValue->receiver) && (pvPrevValue->signal == pvNextValue->signal) && (pvPrevValue->slot_func == pvNextValue->slot_func) && (pvPrevValue->type == pvNextValue->type);
 }
+static const int32_t XConnection_compare(const XConnection* pvPrevValue, const XConnection* pvNextValue)
+{
+	if((pvPrevValue->receiver == pvNextValue->receiver) && (pvPrevValue->signal == pvNextValue->signal) && (pvPrevValue->slot_func == pvNextValue->slot_func) && (pvPrevValue->type == pvNextValue->type))
+		return XCompare_Equality;
+	return XCompare_Other;
+}
 XSignalSlot* XSignalSlot_create(XObject* obj)
 {
 	XSignalSlot* manager = XNew(XSignalSlot);
@@ -21,9 +27,10 @@ void XSignalSlot_init(XSignalSlot* manager, XObject* obj)
 	if (manager == NULL)
 		return NULL;
 	manager->obj = obj;
-	manager->signalMap = XMap_Create(size_t, XSignal,XEquality_size_t,XLess_size_t);
+	manager->signalMap = XMap_Create(size_t, XSignal,XCompare_size_t);
 	manager->bindSignalList = XListSLinkedAtomic_Create(XConnection*);
-	manager->bindSignalList->m_equality = XEquality_ptr;
+	XContainerSetCompare(manager->bindSignalList, XCompare_ptr);
+	//manager->bindSignalList->m_equality = XEquality_ptr;
 }
 void XSignalSlot_deinit(XSignalSlot* manager)
 {
@@ -80,7 +87,8 @@ XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* re
 	if (signalObj == NULL)
 	{
 		XSignal insert = {.sender=manager->obj,.type= signal,.connList= XListSLinkedAtomic_Create(XConnection)};
-		insert.connList->m_equality = XEquality_XConnection;
+		//insert.connList->m_equality = XEquality_XConnection;
+		XContainerSetCompare(insert.connList, XConnection_compare);
 		XMap_insert_base(manager->signalMap, &signal, &insert);
 		signalObj = XMapBase_value_base(manager->signalMap, &signal);
 	}

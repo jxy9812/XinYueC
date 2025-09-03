@@ -35,7 +35,7 @@ XCLASS_DEFINE_END(XVector)
 typedef struct XVector
 {
 	XContainerObject m_parent;
-	XEquality m_equality;//相等比较函数
+	//XEquality m_equality;//相等比较函数
 }XVector;
 
 XVtable* XVector_class_init();
@@ -135,7 +135,7 @@ XVector* XVector_mid(const XVector* this_vector, int64_t pos, int64_t length);
 XVector* XVector_first(const XVector* this_vector, int64_t n);
 
 //排序
-void  XVector_sort_base(XVector* this_vector, XCompare compare);
+void  XVector_sort_base(XVector* this_vector, XSortOrder order);
 
 bool  XVector_replace(XVector* this_vector,int64_t index, void* pvValue);
 bool  XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue);

@@ -2,8 +2,6 @@
 #if DEMOTEST
 #include"XFind.h"
 #include"XVector.h"
-#include"XLess.h"
-#include"XEquality.h"
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
@@ -19,7 +17,7 @@ void XBinarySearchTest()
 		XVector_push_back_base(VArray, &i);
 	}
 	int findVal = 9999999;
-	int* ret=XBinarySearch(XContainerDataPtr(VArray), count,sizeof(size_t),XLess_int,XEquality_int,&findVal);
+	int* ret=XBinarySearch(XContainerDataPtr(VArray), count,sizeof(size_t),XCompare_int,&findVal);
 	XPrintf("二分查找到值:%d", *ret);
 #else
 	IS_ON_DEBUG(XVector_ON);

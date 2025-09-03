@@ -1,9 +1,10 @@
 ﻿#include"XAlgorithm.h"
 #include"XSort.h"
+#include"XMemory.h"
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
-void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompare compare )
+void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompare compare, XSortOrder order)
 {
 	char* temp = XMemory_malloc(nSize * TypeSize);//开辟临时数组
 
@@ -17,6 +18,7 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 	char* end = begin + TypeSize * (nSize - 1);//数组尾指针，指向最后一个元素
 	char* LpOne = NULL;//第一组遍历指针指向头
 	char* LpTwo = NULL;//第二组遍历指针指向头
+	int32_t cmp;
 	while (gap < nSize)
 	{
 		char* begtmp = temp;
@@ -49,7 +51,9 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 			{
 				if (LpOne <= righta && LpTwo <= rightb)//两个数组均有数的时候
 				{
-					if (compare(LpOne, LpTwo))//比较的数符合排序标准
+					//if (compare(LpOne, LpTwo))//比较的数符合排序标准
+					cmp = compare(LpOne, LpTwo);
+					if (((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))//排序比较函数
 					{
 						XSwap(LpOne, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素

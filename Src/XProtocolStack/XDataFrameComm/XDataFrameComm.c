@@ -7,7 +7,6 @@
 #include"XIODeviceBase.h"
 #include"XListSLinked.h"
 #include"XString.h"
-#include"XEquality.h"
 #include"XTimerBase.h"
 #include"XEventDispatcher.h"
 #include"XPrintf.h"
@@ -40,8 +39,8 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 
 	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XByteArray*, XDFC_FRAME_SEND_QUEUE_COUNT);
 	comm->m_periodicSendList = XListSLinked_Create(void*);
-	comm->m_periodicSendList->m_equality = XEquality_ptr;
-
+	//comm->m_periodicSendList->m_equality = XEquality_ptr;
+	XContainerCompare(comm->m_periodicSendList, XCompare_ptr);
 	XObject_addEventFilter(comm, XEVENT_ALL, XDataFrameComm_EvnetHandCb,comm);
 
 	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);
@@ -203,13 +202,13 @@ void XDataFrameComm_setSendValidCRC16_base(XDataFrameComm* comm, bool enableCRC1
 	XClassGetVirtualFunc(comm, EXDataFrameComm_SetSendValidCRC16, void(*)(XDataFrameComm*, bool))(comm, enableCRC16);
 }
 
-void XDataFrameComm_funcCodeMap_create(XDataFrameComm* comm, size_t codeSize, XEquality codeEquality, XLess codeLess)
+void XDataFrameComm_funcCodeMap_create(XDataFrameComm* comm, size_t codeSize, XCompare codeCompare)
 {
 	if (comm == NULL)
 		return;
 	if (comm->m_funcCodeMap != NULL)
 		XFuncCodeMap_delete(comm->m_funcCodeMap);
-	comm->m_funcCodeMap = XFuncCodeMap_create(codeSize, codeEquality,codeLess);
+	comm->m_funcCodeMap = XFuncCodeMap_create(codeSize, codeCompare);
 }
 
 void XDataFrameComm_addFuncCode(XDataFrameComm* comm, void* funcCode, XFuncCodeCb cb, void* userData)

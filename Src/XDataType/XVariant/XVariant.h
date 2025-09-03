@@ -5,8 +5,7 @@ extern "C" {
 #endif
 #include"XTypes.h"
 #include"XPoint.h"
-#include"XFunctionCallback.h"
-#include"XEquality.h"
+#include"XCompare.h"
 #include"XContainerObject.h"
 #include<stdio.h>
 #include<stdint.h>
@@ -269,10 +268,11 @@ void XVariant_clear(XVariant* var);
 void XVariant_swap(XVariant* var,XVariant* other);
 int  XVariant_type(XVariant* var);
 const char* XVariant_typeName(XVariant* var);
-bool XVariant_equality(XVariant* var, XVariant* cmp);
 
-//设置自定义的数据相等比较回调函数
-void XVariant_setUserEquality(int type, XEquality equality);
+int32_t XVariant_compare(XVariant* var, XVariant* cmp);
+
+//设置自定义的数据比较回调函数
+void XVariant_setUserCompare(int type, XCompare compare);
 //设置用户数据方法
 void XVariant_setUserDataMethod(int type, XCDataCopyMethod copyMethod, XCDataMoveMethod moveMethod, XCDataClearMethod clearMethod, XCDataDeinitMethod deinitMethod);
 //设置自定义数据的类型名字

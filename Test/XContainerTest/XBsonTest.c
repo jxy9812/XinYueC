@@ -111,13 +111,13 @@ void XBsonArrayTest()
 		}
 
 
-		/*XString* str = XBsonArray_toString(array, XBsonDocument_Indented);
+	/*	XString* str = XBsonArray_toString(array, XBsonDocument_Indented);
 		XPrintf_string(str);
 		printf("\n");
-		XString_delete_base(str);*/
+		XString_delete_base(str);
 
 		XBsonArray_delete_base(array);
-		XBsonValue_delete(value);
+		XBsonValue_delete(value);*/
 	}
 	XCoreApplication_requestQuit();
 }

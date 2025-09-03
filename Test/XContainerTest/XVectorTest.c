@@ -2,8 +2,6 @@
 #if DEMOTEST
 #include"XVector.h"
 #include"XFunctionCallback.h"
-#include"XEquality.h"
-#include"XLess.h"
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
@@ -28,7 +26,8 @@ void XVectorTest()
 #if XVector_ON
 	XPrintf("XVector 测试\n");
 	XVector* v = XVector_Create(int);
-	v->m_equality = XEquality_int;
+	XContainerSetCompare(v, XCompare_int);
+	//v->m_equality = XEquality_int;
 	//XVector_resize_base(v,11);
 	int arr[]={100,123,456,4,8496,3,321,23,3,132,0};
 	
@@ -43,8 +42,8 @@ void XVectorTest()
 	//XVector_append_array_base(v, arr, sizeof(arr) / sizeof(arr[0]));
 	/*XPrintf("插入数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
 	XVector_remove_base(v, 2, 10);
-	XPrintf("删除数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
-	XVector_sort_base(v, XLess_int);*/
+	XPrintf("删除数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");*/
+	XVector_sort_base(v, XSORT_ASC);
 	XPrintf("排序数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
 	int findVal = 100;
 	int64_t index = XVector_indexOf(v, &findVal,0);

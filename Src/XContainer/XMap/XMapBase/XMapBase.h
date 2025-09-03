@@ -4,9 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XFunctionCallback.h"
-#include"XEquality.h"
-#include"XLess.h"
+#include"XCompare.h"
 #include"XPair.h"
 #include"XMapBase_iterator.h"
 //typedef struct XMapBase_iterator XMapBase_iterator;
@@ -25,15 +23,15 @@ typedef struct XMapBase
 {
 	XContainerObject m_parent;//基本数据
 	size_t m_keyTypeSize;//key数据类型大小
-	XEquality m_KeyEquality;//key的相等比较函数
-	XLess m_KeyLess;//key小于比较函数
+	//XEquality m_KeyEquality;//key的相等比较函数
+	//XLess m_KeyLess;//key小于比较函数
 	XCDataCopyMethod m_keyCopyMethod;//key拷贝方法
 	XCDataMoveMethod m_keyMoveMethod;//key移动方法
 	XCDataDeinitMethod m_keyDeinitMethod;//key释放方法
 }XMapBase;
 XVtable* XMapBase_class_init();
 //初始化 XMap
-void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XEquality KeyEquality,XLess KeyLess);
+void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare);
 //Map插入数据
 bool XMapBase_insert_base(XMapBase* this_map, const void* key, const void* pvValue);
 #define XMapBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMap_insert_base(this_map,&k,&v);}

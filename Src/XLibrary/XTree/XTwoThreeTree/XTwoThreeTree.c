@@ -40,7 +40,7 @@ const enum  XTTTree_NodeNum XTTTree_NodeNum(const XTTTreeNode* this_root)
 #endif
 }
 
-const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, const void* pvData, const size_t TypeSize)
+const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XCompare compare, const void* pvData, const size_t TypeSize)
 {
 #if XVector_ON
     if (ISNULL(this_root, ""))
@@ -54,11 +54,12 @@ const enum XTTTree_NodeNum XTTTree_NodeUp(XTTTreeNode* this_root, XLess less, co
         XVector_push_back_base(this_root,&temp);*/
         
         this_root->pvValueArray = XVector_create( TypeSize);//初始化值
+        XContainerSetCompare(this_root->pvValueArray,compare);
     }
     //XVector_resize_base(this_root->pvValueArray, XVector_size_base(LPNode) + 1);//储存数据的扩容+1
     XVector_push_back_base(this_root->pvValueArray, pvData);//插入数值扩容
     XVector_push_back_base(this_root->pvValueArray, XTreeNode_GetDataPtr(this_root));//插入第一个数值
-    XVector_sort_base(this_root->pvValueArray, less);//排序
+    XVector_sort_base(this_root->pvValueArray, XSORT_ASC);//排序
     memcpy(XTreeNode_GetDataPtr(this_root), XContainerDataPtr(this_root->pvValueArray), TypeSize);//将最小的拷贝回去
     //XVector_erase_int(this_root, 0, 0);//删除重复的第一个
     XVector_pop_front_base(this_root);

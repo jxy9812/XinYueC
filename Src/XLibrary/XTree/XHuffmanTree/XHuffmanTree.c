@@ -1,7 +1,6 @@
 ﻿#include"XHuffmanTree.h"
 #if XMap_ON
-#include"XEquality.h"
-#include"XLess.h"
+#include"XCompare.h"
 #include<stdlib.h>
 XHuffmanTree* XHfmTree_init()
 {
@@ -11,7 +10,7 @@ XHuffmanTree* XHfmTree_init()
 		return NULL;
 	}
 	tree->root = NULL;
-	tree->dictionaries = XMap_Create(char, DictionaryValue,XEquality_char,XLess_char);
+	tree->dictionaries = XMap_Create(char, DictionaryValue,XCompare_char);
 	if (ISNULL(tree->dictionaries, "申请哈夫曼树字典失败"))
 	{
 		return NULL;

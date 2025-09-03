@@ -4,9 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XFunctionCallback.h"
-#include"XEquality.h"
-#include"XLess.h"
+#include"XCompare.h"
 #include"XSetBase_iterator.h"
 //typedef struct XSetBase_iterator XSetBase_iterator;
 #define XSETBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSetBase))       // XSet容器虚函数表大小
@@ -27,7 +25,7 @@ typedef struct XSetBase
 
 XVtable* XSetBase_class_init();
 // 初始化 XSet
-void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XEquality KeyEquality, XLess KeyLess);
+void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XCompare compare);
 // Set插入数据
 bool XSetBase_insert_base(XSetBase* this_set, const void* pvKey);
 #define XSetBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XSetBase_insert_base(this_map,&k,&v);}

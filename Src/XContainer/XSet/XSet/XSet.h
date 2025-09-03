@@ -15,10 +15,10 @@ typedef struct XSet
 }XSet;
 XVtable* XSet_class_init();
 //开辟一个Map,初始化
-XSet* XSet_create(const size_t keyTypeSize, XEquality KeyEquality, XLess KeyLess);
-#define XSet_Create(keyType,KeyEquality,KeyLess) XSet_create(sizeof(keyType),KeyEquality,KeyLess)
+XSet* XSet_create(const size_t keyTypeSize, XCompare compare);
+#define XSet_Create(keyType,compare) XSet_create(sizeof(keyType),compare)
 //初始化 XSet
-void XSet_init(XSet* this_map, const size_t keyTypeSize, XEquality KeyEquality, XLess KeyLess);
+void XSet_init(XSet* this_map, const size_t keyTypeSize, XCompare compare);
 //Map插入数据
 #define XSet_insert_base				XSetBase_insert_base
 #define XSet_Insert_Base				XSetBase_Insert_Base

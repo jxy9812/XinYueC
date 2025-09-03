@@ -1,8 +1,7 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XMap.h"
-#include"XEquality.h"
-#include"XLess.h"
+#include"XCompare.h"
 #include"XBalancedBinaryTree.h"
 #include"XMenu.h"
 #include"XAction.h"
@@ -22,7 +21,7 @@ void XMapTest()
 		XPrintf("XMap 测试\n");
 		int arrayint[] = { 1,23,456,5,23 };
 		char arraychar[][100] = { "琦神","星小白","章鱼哥","123dfsadsadsad","玩蛇" };
-		XMap* map = XMap_Create(int, char*, XEquality_int, XLess_int);
+		XMap* map = XMap_Create(int, char*, XCompare_int);
 
 		for (size_t i = 0; i < 5; i++)
 		{

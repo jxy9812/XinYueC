@@ -2,7 +2,6 @@
 #include "XMemory.h"
 #include "XHashMap.h"
 #include "XHashFunc.h"
-#include "XEquality.h"
 #include <string.h>
 #include <assert.h>
 #include <limits.h>
@@ -56,7 +55,7 @@ void XPLCTask_init(XPLCTask* task)
 	memset(((XClass*)task) + 1, 0, sizeof(XPLCTask) - sizeof(XClass));
 	XObject_init(task);
 	XClassGetVtable(task) = XPLCTask_class_init();
-	task->m_taskStateMap = XHashMap_Create(int32_t, TaskStateNode,XEquality_int,XLess_int);
+	task->m_taskStateMap = XHashMap_Create(int32_t, TaskStateNode,XCompare_int);
 	task->m_runTaskState = INT_MIN;
 	task->m_lastTaskState = XPLCT_State_ExitTask;//默认退出任务状态
 }

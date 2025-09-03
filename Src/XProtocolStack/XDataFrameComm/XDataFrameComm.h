@@ -83,7 +83,7 @@ void XDataFrameComm_setSendValidCb(XDataFrameComm* comm, XSendValidCb cb);//发�
 void XDataFrameComm_setRecvValidCRC16_base(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
 void XDataFrameComm_setSendValidCRC16_base(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
 /*功能码*/
-void XDataFrameComm_funcCodeMap_create(XDataFrameComm* comm,size_t codeSize, XEquality codeEquality, XLess codeLess);
+void XDataFrameComm_funcCodeMap_create(XDataFrameComm* comm,size_t codeSize, XCompare codeCompare);
 void XDataFrameComm_addFuncCode(XDataFrameComm* comm, void* funcCode, XFuncCodeCb cb,void* userData);
 void XDataFrameComm_removeFuncCode(XDataFrameComm* comm, void* funcCode);
 void XDataFrameComm_clearFuncCode(XDataFrameComm* comm);
