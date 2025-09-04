@@ -27,6 +27,7 @@ typedef struct XTJCHMIComm XTJCHMIComm;
 typedef struct XEventLoop  XEventLoop;
 typedef struct XPair XPair;
 typedef struct XMap XMap;
+typedef struct XPriorityQueue XPriorityQueue;
 typedef struct XHashMap XHashMap;
 typedef struct XString XString;
 typedef struct XListBase XListBase;

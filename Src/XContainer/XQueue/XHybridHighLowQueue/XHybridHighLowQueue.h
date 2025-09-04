@@ -7,22 +7,27 @@ extern "C" {
 #include<stdio.h>
 #include<stdbool.h>
 #include"XQueueBase.h"
-#define XQUEUE_VTABLE_SIZE (XQUEUEBASE_VTABLE_SIZE)       //XQueue容器虚函数表大小
-
+#define XHYBRIDHIGHLOWQUEUE_VTABLE_SIZE (XQUEUEBASE_VTABLE_SIZE)       //XQueue容器虚函数表大小
+// 混合队列结构
 typedef struct XHybridHighLowQueue
 {
-    // 高频数据队列（原子环形队列，固定优先级）
-    XCircularQueueAtomic high_freq_queues[HIGH_FREQ_PRIORITY_COUNT];
+    XContainerObject m_parent;//
+    XCompare m_comparePriority;//优先级数据比较大小方法
+    size_t m_typeSizePriority;//优先级类型占用字节数
+    //Priority
+    //// 高频数据队列（原子环形队列，固定优先级）
+    //XCircularQueueAtomic high_freq_queues[HIGH_FREQ_PRIORITY_COUNT];
+    void* mapPriority;//映射优先级队列
     // 低频数据队列（优先队列，动态优先级）
     XPriorityQueue* low_freq_queue;
 }XHybridHighLowQueue;
 //初始化类
 XVtable* XHybridHighLowQueue_class_init();
 //队列初始化函数
-void XHybridHighLowQueue_init(XQueue* this_queue, size_t typeSize);
+void XHybridHighLowQueue_init(XHybridHighLowQueue* this_queue, size_t typeSize);
 //队列创建函数
 #define XHybridHighLowQueue_Create(Type) XHybridHighLowQueue_create(sizeof(Type))
-XQueue* XHybridHighLowQueue_create(size_t typeSize);
+XHybridHighLowQueue* XHybridHighLowQueue_create(size_t typeSize);
 	//api
 #define XHybridHighLowQueue_Push_Base				XQueueBase_Push_Base
 #define XHybridHighLowQueue_push_base				XQueueBase_push_base

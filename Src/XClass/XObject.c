@@ -105,6 +105,7 @@ bool XObject_postEvent(XObject* object, XEventMin* event, XEventPriority priorit
 {
 	if (object == NULL || event == NULL)
 		return false;
+	event->receiver = object;
 	return XEventDispatcher_postEvent_base(object->m_eventDispatcher,event, priority);
 }
 

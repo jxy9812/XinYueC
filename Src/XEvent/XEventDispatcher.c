@@ -16,7 +16,7 @@ typedef struct XEventCallback {
 // 静态函数声明
 static void VXEventDispatcher_deinit(XEventDispatcher* dispatcher);
 static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin* event);
-static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin* event);
+static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin* event, XEventPriority priority);
 static bool VXEventDispatcher_addEventCb(XEventDispatcher* dispatcher, XObject* receiver, int code, XEventCB cb, void* userData);
 static bool VXEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, XObject* receiver, int code);
 static void VXEventDispatcher_handler(XEventDispatcher* dispatcher);
@@ -184,7 +184,7 @@ static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin*
  * @param event 要投递的事件
  * @return 事件是否成功加入队列
  */
-static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin* event) {
+static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin* event,XEventPriority priority) {
     if (!dispatcher || !event) return false;
 
     // 设置时间戳（如果未设置）
@@ -193,7 +193,6 @@ static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin*
     }
 
     // 确保优先级在有效范围内
-    XEventPriority priority;
     if (priority < 0 || priority >= XEVENT_PRIORITY_COUNT) 
     {
         priority = XEVENT_PRIORITY_NORMAL; // 默认使用正常优先级
