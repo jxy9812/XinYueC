@@ -11,7 +11,6 @@ extern "C" {
 typedef struct XPriorityQueue
 {
 	XVector m_vector;//基本数据
-	XCompare m_compare;//比较准则
 }XPriorityQueue;
 //初始化类
 XVtable* XPriorityQueue_class_init();

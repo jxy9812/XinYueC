@@ -87,7 +87,7 @@ void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvData, XCDataCreatM
 	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back,void(*)(XVector*,void*, XCDataCreatMethod))(this_queue, pvData,dataCreatMethod);
 	size_t size = XContainerSize(this_queue) - 1;
 	if (size > 0)//一个元素不用调整
-		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->m_compare);
+		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, XContainerCompare(this_queue));
 }
 
 void VXPriorityQueue_pop(XPriorityQueue* this_queue)
@@ -101,7 +101,7 @@ void VXPriorityQueue_pop(XPriorityQueue* this_queue)
 	if (arrSize > 1)
 	{
 		memcpy(LParr, LParr + (arrSize - 1) * TypeSize, TypeSize);
-		AdjustDwon(LParr, arrSize, TypeSize, 0, this_queue->m_compare);
+		AdjustDwon(LParr, arrSize, TypeSize, 0, XContainerCompare(this_queue));
 	}
 	--XContainerSize(this_queue);
 }
