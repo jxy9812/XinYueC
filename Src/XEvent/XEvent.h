@@ -22,7 +22,6 @@ typedef struct XEventMin
     size_t timestamp;             //事件发生时间
     XObject* receiver;            //接收对象
     void* userData;               //可选的用户数据指针
-    XEventPriority priority;      // 事件优先级
     bool spontaneous;             // 是否为自发事件(非用户触发)
 }XEventMin;
 // 定时器事件
@@ -47,7 +46,7 @@ typedef struct XEvent
  * @param priority 事件优先级
  * @return 新创建的基础事件
  */
-XEventMin* XEventMin_create(XObject* receiver, XEventType code, size_t timestamp, XEventPriority priority);
+XEventMin* XEventMin_create(XObject* receiver, XEventType code, size_t timestamp);
 /**
  * @brief 初始化基础事件
  * @param event 要初始化的事件
@@ -56,7 +55,7 @@ XEventMin* XEventMin_create(XObject* receiver, XEventType code, size_t timestamp
  * @param timestamp 时间戳，0表示使用当前时间
  * @param priority 事件优先级
  */
-void XEventMin_init(XEventMin* event, XObject* receiver, XEventType code, size_t timestamp, XEventPriority priority);
+void XEventMin_init(XEventMin* event, XObject* receiver, XEventType code, size_t timestamp);
 /**
  * @brief 创建定时器事件
  * @param receiver 事件接收对象
@@ -76,7 +75,7 @@ XTimerEvent* XTimerEvent_create(XObject* receiver, XTimerBase* timer, size_t tim
  * @return 新创建的通用事件
  */
 XEvent* XEvent_create(void* eventData, size_t eventDataSize, XObject* receiver,
-    XEventType code, size_t timestamp, XEventPriority priority);
+    XEventType code, size_t timestamp);
 #define XEvent_AcceptState(event)               (((XEventMin*)event)->accept)
 #define XEvent_Accept(event)                    (XEvent_AcceptState(event)=true)
 #define XEvent_Ignore(event)                    (XEvent_AcceptState(event)=false)
@@ -103,7 +102,7 @@ typedef struct XEventFunc
  * @param priority 事件优先级
  * @return 新创建的函数事件
  */
-XEventFunc* XEventFunc_create(XObject* receiver, void (*func)(void*), void* args, XEventPriority priority);
+XEventFunc* XEventFunc_create(XObject* receiver, void (*func)(void*), void* args);
 /**
  * @brief 创建一次性函数事件
  * @param receiver 事件接收对象
@@ -112,7 +111,7 @@ XEventFunc* XEventFunc_create(XObject* receiver, void (*func)(void*), void* args
  * @param priority 事件优先级
  * @return 新创建的一次性函数事件
  */
-XEventFunc* XEventFunc_create_oneAccept(XObject* receiver, void (*func)(void*), void* args, XEventPriority priority);
+XEventFunc* XEventFunc_create_oneAccept(XObject* receiver, void (*func)(void*), void* args);
 
 /**
  * @brief 执行函数事件的回调
@@ -142,7 +141,7 @@ typedef struct XEventSlotFunc
  * @return 新创建的槽函数事件
  */
 XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func,
-    void* args, XAtomic_int32_t* ref_count, XEventPriority priority);
+    void* args, XAtomic_int32_t* ref_count);
 
 /**
  * @brief 执行槽函数事件的回调

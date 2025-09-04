@@ -101,11 +101,11 @@ bool XObject_moveToThread(XObject* object, XThread* thread)
 	return true;
 }
 
-bool XObject_postEvent(XObject* object, XEventMin* event)
+bool XObject_postEvent(XObject* object, XEventMin* event, XEventPriority priority)
 {
 	if (object == NULL || event == NULL)
 		return false;
-	return XEventDispatcher_postEvent_base(object->m_eventDispatcher,event);
+	return XEventDispatcher_postEvent_base(object->m_eventDispatcher,event, priority);
 }
 
 XThread* XObject_thread(XObject* object)
@@ -159,14 +159,14 @@ void XObject_deinit_event(XObject* object)
 {
 	if (object == NULL)
 		return;
-	XObject_postEvent(object, XEventFunc_create_oneAccept(object, XObject_deinit_base, object, XEVENT_PRIORITY_NORMAL));
+	XObject_postEvent(object, XEventFunc_create_oneAccept(object, XObject_deinit_base, object), XEVENT_PRIORITY_LOWEST);
 }
 
 void XObject_delete_event(XObject* object)
 {
 	if (object == NULL)
 		return;
-	XObject_postEvent(object, XEventFunc_create_oneAccept(object, XObject_delete_base, object, XEVENT_PRIORITY_NORMAL));
+	XObject_postEvent(object, XEventFunc_create_oneAccept(object, XObject_delete_base, object), XEVENT_PRIORITY_LOWEST);
 }
 
 void VXObject_poll(XObject* object)

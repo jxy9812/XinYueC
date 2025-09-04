@@ -26,7 +26,7 @@ bool XObject_addEventFilter(XObject* object, int code, XEventCB cb,void* userDat
 bool XObject_removeEventFilter(XObject* object, int code);
 bool XObject_moveToThread(XObject* object, XThread* thread);
 //给Object投递事件
-bool XObject_postEvent(XObject* object, XEventMin* event);
+bool XObject_postEvent(XObject* object, XEventMin* event, XEventPriority priority);
 XThread* XObject_thread(XObject* object);
 XEventDispatcher* XObject_getEventDispatcher(XObject* object);
 //信号与槽

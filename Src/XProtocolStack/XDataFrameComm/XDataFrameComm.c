@@ -279,7 +279,7 @@ XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t t
 	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
 	if (ev == NULL)
 		return NULL;
-	XEventMin_init(ev, object, eventCode, timestamp, XEVENT_PRIORITY_NORMAL);
+	XEventMin_init(ev, object, eventCode, timestamp);
 	ev->frame = frame;
 	return ev;
 }
@@ -288,7 +288,7 @@ XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t tim
 	XEventFuncCode* ev = XMemory_malloc(sizeof(XEventFuncCode));
 	if (ev == NULL)
 		return NULL;
-	XEventMin_init(ev, object, eventCode, timestamp, XEVENT_PRIORITY_NORMAL);
+	XEventMin_init(ev, object, eventCode, timestamp);
 	ev->m_parent.frame = frame;
 	ev->funcCode = funcCode;
 	return ev;
@@ -362,7 +362,7 @@ bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* ev)
 {
 	if (comm == NULL || ev == NULL)
 		return false;
-	if(!XEventDispatcher_postEvent_base(XObject_getEventDispatcher(comm),ev))
+	if(!XEventDispatcher_postEvent_base(XObject_getEventDispatcher(comm),ev, XEVENT_PRIORITY_NORMAL))
 	//if (!XEventDispatcher_addEvent(comm->m_eventLoop, ev))
 	{//添加失败，队列满了
 		XMemory_free(ev);

@@ -93,7 +93,7 @@ bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEventMin* ev
  * @param event 要投递的事件
  * @return 事件是否成功加入队列
  */
-bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* event);
+bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* event, XEventPriority priority);
 
 /**
  * @brief 添加事件过滤器

@@ -65,7 +65,7 @@ void VXPWMDevice_start(XPWMDeviceBase* pwm)
 		pwm->m_isRun = true;
 		if (pwm->m_runChangeCallback)
 		{
-			XObject_postEvent(pwm, XEventFunc_create(pwm, pwm->m_runChangeCallback, pwm, XEVENT_PRIORITY_NORMAL));
+			XObject_postEvent(pwm, XEventFunc_create(pwm, pwm->m_runChangeCallback, pwm), XEVENT_PRIORITY_NORMAL);
 		}
 	}
 }
@@ -82,7 +82,7 @@ void VXPWMDevice_stop(XPWMDeviceBase* pwm)
 			pwm->m_isRun = false;
 			if (pwm->m_runChangeCallback)
 			{
-				XObject_postEvent(pwm, XEventFunc_create(pwm, pwm->m_runChangeCallback, pwm, XEVENT_PRIORITY_NORMAL));
+				XObject_postEvent(pwm, XEventFunc_create(pwm, pwm->m_runChangeCallback, pwm), XEVENT_PRIORITY_NORMAL);
 			}
 		}
 	}

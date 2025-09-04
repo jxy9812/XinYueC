@@ -193,7 +193,7 @@ static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin*
     }
 
     // 确保优先级在有效范围内
-    XEventPriority priority = event->priority;
+    XEventPriority priority;
     if (priority < 0 || priority >= XEVENT_PRIORITY_COUNT) 
     {
         priority = XEVENT_PRIORITY_NORMAL; // 默认使用正常优先级
@@ -491,11 +491,11 @@ bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEventMin* ev
         bool (*)(XEventDispatcher*, XEventMin*))(dispatcher, event);
 }
 
-bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* event) {
+bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* event, XEventPriority priority) {
     if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
         return false;
     return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_PostEvent,
-        bool (*)(XEventDispatcher*, XEventMin*))(dispatcher, event);
+        bool (*)(XEventDispatcher*, XEventMin*, XEventPriority))(dispatcher, event, priority);
 }
 
 bool XEventDispatcher_addEventCb_base(XEventDispatcher* dispatcher, XObject* receiver, int code, XEventCB cb, void* userData) {
