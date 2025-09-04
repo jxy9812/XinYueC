@@ -21,7 +21,7 @@ static void installQueue(XPair** LPpair, XPriorityQueue* queue)
 XHfmNode* XHfmTree_DictionariesToCreationTree(XMap* dictionaries)
 {
 #if XPriorityQueue_ON
-	XPriorityQueue* queue = XPriorityQueue_Create(XHfmNode*, Less);
+	XPriorityQueue* queue = XPriorityQueue_Create(XHfmNode*, Less,XSORT_ASC);
 	//原始字典生成单独的节点插入优先队列
 	XMap_iterator_for_each(dictionaries, installQueue, queue);
 	//生成哈夫曼树

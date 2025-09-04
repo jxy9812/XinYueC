@@ -11,14 +11,15 @@ extern "C" {
 typedef struct XPriorityQueue
 {
 	XVector m_vector;//基本数据
+	XSortOrder m_order;//
 }XPriorityQueue;
 //初始化类
 XVtable* XPriorityQueue_class_init();
 //初始化 队列
-void XPriorityQueue_init(XPriorityQueue* this_queue, size_t typeSize, XCompare compare);
+void XPriorityQueue_init(XPriorityQueue* this_queue, size_t typeSize, XCompare compare, XSortOrder order);
 //队列初始化函数
-XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare);
-#define XPriorityQueue_Create(Type,compare) XPriorityQueue_create(sizeof(Type),compare)
+XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare, XSortOrder order);
+#define XPriorityQueue_Create(Type,compare,order) XPriorityQueue_create(sizeof(Type),compare,order)
 //api
 #define XPriorityQueue_Push_Base				XQueueBase_Push_Base
 #define XPriorityQueue_push_base				XQueueBase_push_base

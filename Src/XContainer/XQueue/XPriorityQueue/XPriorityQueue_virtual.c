@@ -32,16 +32,19 @@ XVtable* XPriorityQueue_class_init()
 	return XVTABLE_DEFAULT;
 }
 //插入向上调整
-static void AdjustUp(void* LParray, const size_t TypeSize, size_t childNSel, XCompare compare)
+static void AdjustUp(void* LParray, const size_t TypeSize, size_t childNSel, XCompare compare, XSortOrder order)
 {
 	size_t parentNSel = (childNSel - 1) / 2;//父亲节点,索引下标
 	char* LPparent = NULL;//父亲的元素地址
 	char* LPchild = NULL;//孩子的元素地址
+	int32_t cmp;
 	while (true)
 	{
 		LPparent = (char*)LParray + parentNSel * TypeSize;
 		LPchild = (char*)LParray + childNSel * TypeSize;
-		if (compare(LPchild, LPparent))
+		cmp = compare(LPchild, LPparent);
+		if (((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))
+		//if (compare(LPchild, LPparent))
 		{
 			XSwap(LPchild, LPparent, TypeSize);
 		}
@@ -52,9 +55,10 @@ static void AdjustUp(void* LParray, const size_t TypeSize, size_t childNSel, XCo
 	}
 }
 //向下调整
-static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize, size_t parentNSel, XCompare compare)
+static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize, size_t parentNSel, XCompare compare, XSortOrder order)
 {
 	size_t child = parentNSel * 2 + 1;//默认左孩子
+	int32_t cmp;
 	while (child < nSize)
 	{
 		char* LPparent = (char*)LParray + parentNSel * TypeSize;//父亲当前指针
@@ -62,12 +66,16 @@ static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize,
 		if (child + 1 < nSize)//右孩子存在时
 		{
 			char* LPRchild = LPchild + TypeSize;//右孩子指针
-			if (!compare(LPchild, LPRchild))//排序比较函数，选出大的那个
+			cmp = compare(LPchild, LPRchild);
+			if (!((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))
+			//if (!compare(LPchild, LPRchild))//排序比较函数，选出大的那个
 			{
 				LPchild = LPRchild;//右孩子大，默认孩子指向右孩子
 			}
 		}
-		if (compare(LPchild, LPparent))//排序比较函数
+		cmp = compare(LPchild, LPparent);
+		if (((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))
+		//if (compare(LPchild, LPparent))//排序比较函数
 		{
 			XSwap(LPchild, LPparent, TypeSize);//交换函数
 			parentNSel = child;//父亲节点更新
@@ -87,7 +95,7 @@ void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvData, XCDataCreatM
 	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back,void(*)(XVector*,void*, XCDataCreatMethod))(this_queue, pvData,dataCreatMethod);
 	size_t size = XContainerSize(this_queue) - 1;
 	if (size > 0)//一个元素不用调整
-		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, XContainerCompare(this_queue));
+		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, XContainerCompare(this_queue), this_queue->m_order);
 }
 
 void VXPriorityQueue_pop(XPriorityQueue* this_queue)
@@ -101,7 +109,7 @@ void VXPriorityQueue_pop(XPriorityQueue* this_queue)
 	if (arrSize > 1)
 	{
 		memcpy(LParr, LParr + (arrSize - 1) * TypeSize, TypeSize);
-		AdjustDwon(LParr, arrSize, TypeSize, 0, XContainerCompare(this_queue));
+		AdjustDwon(LParr, arrSize, TypeSize, 0, XContainerCompare(this_queue),this_queue->m_order);
 	}
 	--XContainerSize(this_queue);
 }
