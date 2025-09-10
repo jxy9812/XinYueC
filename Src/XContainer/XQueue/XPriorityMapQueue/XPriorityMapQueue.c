@@ -1,16 +1,228 @@
 ﻿#include "XPriorityMapQueue.h"
 #include "XPriorityQueue.h"
+#include "XCircularQueue.h"
 #include "XMap.h"
+#include <string.h>
+#define GetMap(queue)				((XMapBase*)XContainerDataPtr(queue)) //获取map
+#define GetPrioritySize(queue)		GetMap(queue)->m_keyTypeSize
+//插入到队列的队尾
+static void VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue, XCDataCreatMethod priorityCreatMethod, XCDataCreatMethod dataCreatMethod);
+//出队
+static void VXPriorityQueue_pop(XPriorityMapQueue* this_queue);
+// 返回优先队列堆顶元素
+static void* VXPriorityQueue_top(XPriorityMapQueue* this_queue);
+static bool VXPriorityQueue_receive(XPriorityMapQueue* this_queue, void* pvBuffer);
+static bool VXPriorityQueue_isFull(const XPriorityMapQueue* this_queue);
+static void VXClass_deinit(XPriorityMapQueue* this_queue);
 XVtable* XPriorityMapQueue_class_init()
 {
-    return NULL;
+	XVTABLE_CREAT_DEFAULT
+		//虚函数表初始化
+#if VTABLE_ISSTACK
+		XVTABLE_STACK_INIT_DEFAULT(XPRIORITYMAPQUEUE_VTABLE_SIZE)
+#else
+		XVTABLE_HEAP_INIT_DEFAULT
+#endif
+	//继承类
+	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top,VXPriorityQueue_receive,VXPriorityQueue_isFull };
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
+
+#if SHOWCONTAINERSIZE
+	printf("XPriorityMapQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif // SHOWCONTAINERSIZE
+	return XVTABLE_DEFAULT;
 }
-void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize, XCompare priorityCom, size_t typeSize)
+void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize, XCompare priorityCom, XSortOrder priorityOrder, size_t typeSize)
 {
 	if (ISNULL(this_queue, "") || ISNULL(typeSize, ""))
 		return;
 	XContainerObject_init(this_queue, typeSize);
 	XClassGetVtable(this_queue) = XPriorityMapQueue_class_init();
-	XContainerDataPtr(this_queue)= XMap_create(prioritySize, typeSize, priorityCom);
-	//this_queue->low_freq_queue = XPriorityQueue_create();
+	XContainerDataPtr(this_queue)= XMap_create(prioritySize, sizeof(XCircularQueue), priorityCom);
+	XContainerSetDataMoveMethod(GetMap(this_queue), XCircularQueue_move_base);
+	XContainerSetDataCopyMethod(GetMap(this_queue), XCircularQueue_copy_base);
+	XContainerSetDataDeinitMethod(GetMap(this_queue), XCircularQueue_deinit_base);
+
+	this_queue->low_freq_queue = XPriorityQueue_create(prioritySize+typeSize, priorityCom, priorityOrder);
+	this_queue->mapPriority = NULL;
+}
+
+XPriorityMapQueue* XPriorityMapQueue_create(size_t prioritySize, XCompare priorityCom, XSortOrder priorityOrder, size_t typeSize)
+{
+	if (ISNULL(prioritySize, "")|| ISNULL(priorityCom, "") || ISNULL(typeSize, ""))
+		return NULL;
+	XPriorityMapQueue* this_queue = XMemory_malloc(sizeof(XPriorityMapQueue));
+	XPriorityMapQueue_init(this_queue, prioritySize, priorityCom, typeSize, priorityOrder);
+	return this_queue;
+}
+
+void VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue, XCDataCreatMethod priorityCreatMethod, XCDataCreatMethod dataCreatMethod)
+{
+	if (!XMap_isEmpty_base(GetMap(this_queue)))
+	{//存在高频队列
+		XCircularQueue* queue=XMap_value_base(GetMap(this_queue), pvPriority);
+		if (queue != NULL)
+		{//此优先级数据有对应的高频队列插入
+			XVtableGetFunc(XCircularQueue_class_init(), EXQueueBase_Push, bool (*)(XQueueBase*, void*, XCDataCreatMethod))(this_queue, pvValue, dataCreatMethod);
+			return;
+		}
+	}
+	//没有高频队列或没有对应的都插入到堆队列
+	uint8_t* data = XMemory_malloc(XContainerTypeSize(this_queue->low_freq_queue));
+	if (priorityCreatMethod)
+		priorityCreatMethod(data, pvPriority);
+	else
+		memcpy(data, pvPriority, GetPrioritySize(this_queue));
+	if (dataCreatMethod)
+		dataCreatMethod(data + GetPrioritySize(this_queue), pvValue);
+	else
+		memcpy(data + GetPrioritySize(this_queue), pvValue, XContainerTypeSize(GetMap(this_queue)));
+	XPriorityQueue_push_base(this_queue->low_freq_queue, data);
+	//更新修改的数据
+	if (priorityCreatMethod&& dataCreatMethod)
+	{
+		memcpy(pvPriority, data, GetPrioritySize(this_queue));
+		memcpy(pvValue, data + GetPrioritySize(this_queue), XContainerTypeSize(GetMap(this_queue)));
+	}
+	XMemory_free(data);
+}
+//根据优先级获取映射队列  如果队头是映射队列返回真，不是返回假
+static bool getMapQueue(XPriorityMapQueue* this_queue,XCircularQueue** getCq)
+{
+	if (this_queue->mapPriority)
+	{
+		void* priorityMap = NULL;//遍历找到最高或最低的优先级
+		XCircularQueue* cq = NULL;//环形队列
+		void* priority = XPriorityQueue_top_base(this_queue->low_freq_queue);//堆队列的优先级数据
+		for (size_t i = 0; i < XContainerSize(GetMap(this_queue)); i++)
+		{
+			cq = XPair_second(((XPair**)this_queue->mapPriority)[i]);
+			if (XContainerObject_isEmpty_base(cq))
+				continue;//跳过当前
+			priorityMap = XPair_first(((XPair**)this_queue->mapPriority)[i]);
+			break;//找到了跳出循环
+		}
+		//两种队列都找到了数据
+		if (priorityMap && priority)
+		{
+			//查看堆队列的数据
+			int32_t com = XContainerCompare(this_queue->low_freq_queue)(priorityMap, priority);
+			if ((com == XCompare_Less && this_queue->low_freq_queue->m_order == XSORT_ASC) || (com == XCompare_Greater && this_queue->low_freq_queue->m_order == XSORT_DESC))
+			{//选择堆队列
+				if (getCq)
+					*getCq = cq;
+				return true;
+			}
+			//else
+			//{//选择映射的普通队列
+			//	return false;
+			//}
+
+
+		}
+
+	}
+	if (getCq)
+		*getCq = NULL;
+	return false;
+}
+void VXPriorityQueue_pop(XPriorityMapQueue* this_queue)
+{
+	XCircularQueue* getCq=NULL;
+	if (getMapQueue(this_queue, &getCq))
+	{
+		XQueueBase_pop_base(getCq);
+	}
+	else
+	{
+		XQueueBase_pop_base(this_queue->low_freq_queue);
+	}
+
+	//if (this_queue->mapPriority)
+	//{
+	//	void* priorityMap = NULL;//遍历找到最高或最低的优先级
+	//	XCircularQueue* cq = NULL;//环形队列
+	//	void* priority = XPriorityQueue_top_base(this_queue->low_freq_queue);//堆队列的优先级数据
+	//	for (size_t i = 0; i <XContainerSize(GetMap(this_queue)); i++)
+	//	{
+	//		cq = XPair_second(((XPair**)this_queue->mapPriority)[i]);
+	//		if (XContainerObject_isEmpty_base(cq))
+	//			continue;//跳过当前
+	//		priorityMap = XPair_first(((XPair**)this_queue->mapPriority)[i]);
+	//		break;//找到了跳出循环
+	//	}
+	//	//两种队列都找到了数据
+	//	if(priorityMap&& priority)
+	//	{
+	//		//查看堆队列的数据
+	//		int32_t com = XContainerCompare(this_queue->low_freq_queue)(priority, priorityMap);
+	//		if ((com == XCompare_Less && this_queue->low_freq_queue->m_order == XSORT_ASC) || (com == XCompare_Greater && this_queue->low_freq_queue->m_order == XSORT_DESC))
+	//		{//选择堆队列
+
+	//		}
+	//		else
+	//		{//选择映射的普通队列
+
+	//		}
+
+
+	//	}
+
+	//}
+}
+
+void* VXPriorityQueue_top(XPriorityMapQueue* this_queue)
+{
+	XCircularQueue* getCq = NULL;
+	if (getMapQueue(this_queue, &getCq))
+	{
+		return XQueueBase_top_base(getCq);
+	}
+	else
+	{
+		uint8_t data= XQueueBase_top_base(this_queue->low_freq_queue);
+		if(data==NULL)
+			return NULL;
+		return data + GetPrioritySize(this_queue);
+	}
+}
+
+bool VXPriorityQueue_receive(XPriorityMapQueue* this_queue, void* pvBuffer)
+{
+	XCircularQueue* getCq = NULL;
+	if (getMapQueue(this_queue, &getCq))
+	{
+		return XQueueBase_receive_base(getCq, pvBuffer);
+	}
+	else
+	{
+		uint8_t data = XQueueBase_top_base(this_queue->low_freq_queue);
+		if (data == NULL)
+			return false;
+		if (pvBuffer)
+		{
+			memcpy(pvBuffer, data + GetPrioritySize(this_queue), XContainerTypeSize(this_queue));
+			memset(data + GetPrioritySize(this_queue),0, XContainerTypeSize(this_queue));//防止被pop释放数据
+		}
+		XQueueBase_pop_base(this_queue->low_freq_queue);
+		 //data + GetPrioritySize(this_queue);
+		return true;
+	}
+}
+
+bool VXPriorityQueue_isFull(const XPriorityMapQueue* this_queue)
+{
+	return false;
+}
+
+void VXClass_deinit(XPriorityMapQueue* this_queue)
+{
+	if (GetMap(this_queue))
+		XMap_delete_base(GetMap(this_queue));
+
+	XPriorityQueue_delete_base(this_queue->low_freq_queue);
 }

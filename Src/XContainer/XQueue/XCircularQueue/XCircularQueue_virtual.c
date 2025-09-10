@@ -8,7 +8,7 @@ static bool VXCircularQueue_isFull(const XCircularQueue* this_queue);
 static void VXCircularQueue_clear(XCircularQueue* this_queue);//清空
 static size_t VXCircularQueue_getSize(const XCircularQueue* this_queue);
 //插入到队列的队尾
-static bool VXCircularQueue_push(XCircularQueue* this_queue, void* pvValue);
+static bool VXCircularQueue_push(XCircularQueue* this_queue, void* pvValue, XCDataCreatMethod dataCreatMethod);
 //出队
 static void VXCircularQueue_pop(XCircularQueue* this_queue);
 // 返回队头元素

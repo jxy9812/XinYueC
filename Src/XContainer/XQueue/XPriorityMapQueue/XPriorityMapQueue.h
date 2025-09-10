@@ -7,13 +7,13 @@ extern "C" {
 #include<stdio.h>
 #include<stdbool.h>
 #include"XQueueBase.h"
-#define XPriorityMapQueue_VTABLE_SIZE (XQUEUEBASE_VTABLE_SIZE)       //XQueue容器虚函数表大小
+#define XPRIORITYMAPQUEUE_VTABLE_SIZE (XQUEUEBASE_VTABLE_SIZE)       //XQueue容器虚函数表大小
 // 优先级映射队列结构
 typedef struct XPriorityMapQueue
 {
     XContainerObject m_parent;//
-    XCompare m_comparePriority;//优先级数据比较大小方法
-    size_t m_typeSizePriority;//优先级类型占用字节数
+    //XCompare m_comparePriority;//优先级数据比较大小方法
+    //size_t m_typeSizePriority;//优先级类型占用字节数
     //Priority
     //// 高频数据队列（原子环形队列，固定优先级）
     //XCircularQueueAtomic high_freq_queues[HIGH_FREQ_PRIORITY_COUNT];
@@ -24,10 +24,10 @@ typedef struct XPriorityMapQueue
 //初始化类
 XVtable* XPriorityMapQueue_class_init();
 //队列初始化函数
-void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize,XCompare priorityCom, size_t typeSize);
+void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize,XCompare priorityCom, XSortOrder priorityOrder, size_t typeSize);
 //队列创建函数
 #define XPriorityMapQueue_Create(Type) XPriorityMapQueue_create(sizeof(Type))
-XPriorityMapQueue* XPriorityMapQueue_create(size_t typeSize);
+XPriorityMapQueue* XPriorityMapQueue_create(size_t prioritySize, XCompare priorityCom, XSortOrder priorityOrder, size_t typeSize);
 	//api
 #define XPriorityMapQueue_Push_Base				XQueueBase_Push_Base
 #define XPriorityMapQueue_push_base				XQueueBase_push_base
