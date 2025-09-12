@@ -60,6 +60,13 @@ XPriorityMapQueue* XPriorityMapQueue_create(size_t prioritySize, XCompare priori
 	return this_queue;
 }
 
+void XPriorityMapQueue_addFifoQueue(XPriorityMapQueue* this_queue, void* priority, size_t queueSize)
+{
+	if (this_queue == NULL || priority == NULL|| queueSize==0)
+		return;
+
+}
+
 void VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue, XCDataCreatMethod priorityCreatMethod, XCDataCreatMethod dataCreatMethod)
 {
 	if (!XMap_isEmpty_base(GetMap(this_queue)))

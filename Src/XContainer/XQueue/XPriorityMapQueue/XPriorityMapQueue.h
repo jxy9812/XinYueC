@@ -28,7 +28,9 @@ void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize,X
 //队列创建函数
 #define XPriorityMapQueue_Create(Type) XPriorityMapQueue_create(sizeof(Type))
 XPriorityMapQueue* XPriorityMapQueue_create(size_t prioritySize, XCompare priorityCom, XSortOrder priorityOrder, size_t typeSize);
-	//api
+void XPriorityMapQueue_addFifoQueue(XPriorityMapQueue* this_queue, void* priority, size_t queueSize);
+void XPriorityMapQueue_removeFifoQueue(XPriorityMapQueue* this_queue, void* priority);
+//api
 #define XPriorityMapQueue_Push_Base				XQueueBase_Push_Base
 #define XPriorityMapQueue_push_base				XQueueBase_push_base
 #define XPriorityMapQueue_Push_Move_Base			XQueueBase_Push_Move_Base
