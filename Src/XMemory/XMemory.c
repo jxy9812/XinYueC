@@ -57,7 +57,7 @@ bool XMemory_realloc_isNULL()
 	return global_Memory.reallocate==NULL;
 }
 
-bool XMemory_read_data(const uint8_t* src, XMemoryByteOrder readOrder, uint8_t* out, size_t size)
+bool XMemory_read_data(const uint8_t* src, XByteOrder readOrder, uint8_t* out, size_t size)
 {
 	// 参数合法性检查：输入/输出指针为空或数据长度为0时返回失败
 	if (src == NULL || out == NULL || size == 0)
@@ -66,10 +66,10 @@ bool XMemory_read_data(const uint8_t* src, XMemoryByteOrder readOrder, uint8_t* 
 	// 根据当前系统字节序和输入数据字节序判断是否需要转换
 #if IS_BIG_ENDIAN  // 当前系统是大端字节序
 	// 若输入数据是小端字节序，则需要转换（大端 <-> 小端）
-	if (readOrder == XMEMORY_BYTE_ORDER_LITTLE_ENDIAN)
+	if (readOrder == XBYTE_ORDER_LITTLE_ENDIAN)
 #else  // 当前系统是小端字节序（默认分支）
 	// 若输入数据是大端字节序，则需要转换（小端 <-> 大端）
-	if (readOrder == XMEMORY_BYTE_ORDER_BIG_ENDIAN)
+	if (readOrder == XBYTE_ORDER_BIG_ENDIAN)
 #endif
 	{
 		// 字节序转换：反转字节顺序（低地址字节与高地址字节互换）
@@ -88,7 +88,7 @@ bool XMemory_read_data(const uint8_t* src, XMemoryByteOrder readOrder, uint8_t* 
 	return true;
 }
 
-bool XMemory_write_data(uint8_t* write, XMemoryByteOrder writeOrder, const uint8_t* in, size_t size)
+bool XMemory_write_data(uint8_t* write, XByteOrder writeOrder, const uint8_t* in, size_t size)
 {
 	// 参数合法性检查：输入/输出指针为空或数据长度为0时返回失败
 	if (write == NULL || in == NULL || size == 0)
@@ -97,10 +97,10 @@ bool XMemory_write_data(uint8_t* write, XMemoryByteOrder writeOrder, const uint8
 	// 根据当前系统字节序和输入数据字节序判断是否需要转换
 #if IS_BIG_ENDIAN  // 当前系统是大端字节序
 	// 若输入数据是小端字节序，则需要转换（大端 <-> 小端）
-	if (readOrder == XMEMORY_BYTE_ORDER_LITTLE_ENDIAN)
+	if (readOrder == XBYTE_ORDER_LITTLE_ENDIAN)
 #else  // 当前系统是小端字节序（默认分支）
 	// 若输入数据是大端字节序，则需要转换（小端 <-> 大端）
-	if (writeOrder == XMEMORY_BYTE_ORDER_BIG_ENDIAN)
+	if (writeOrder == XBYTE_ORDER_BIG_ENDIAN)
 #endif
 	{
 		// 字节序转换：反转字节顺序（低地址字节与高地址字节互换）

@@ -920,13 +920,13 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
     switch (value->type) {
     case XBSON_TYPE_DOUBLE: {
         //double d = value->data.dbl;
-        double d=0.0; XMemory_write_data(&d, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, &(value->data.dbl), sizeof(double));;
+        double d=0.0; XMemory_write_data(&d, XBYTE_ORDER_LITTLE_ENDIAN, &(value->data.dbl), sizeof(double));;
         XByteArray_append_array_base(output,&d,sizeof(double));
         break;
     }
     case XBSON_TYPE_STRING: {
         uint32_t len = (uint32_t)XString_toUtf8_length(XBsonValue_toString(value)) + 1; // 包含终止符
-        XMemory_Write_Var(&len, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, temp, uint32_t);
+        XMemory_Write_Var(&len, XBYTE_ORDER_LITTLE_ENDIAN, temp, uint32_t);
         XByteArray_append_array_base(output, &temp, sizeof(uint32_t));
         XByteArray_append_array_base(output, XString_toUtf8( XBsonValue_toString(value)), len - 1);
         XByteArray_push_back_base(output, 0x00);// 字符串终止符
@@ -959,7 +959,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
     }
     case XBSON_TYPE_BINARY: {
         uint32_t len = (uint32_t)XByteArray_size_base(value->data.binary.data);
-        XMemory_Write_Var(&len, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, temp, uint32_t);
+        XMemory_Write_Var(&len, XBYTE_ORDER_LITTLE_ENDIAN, temp, uint32_t);
         XByteArray_append_array_base(output, &temp, sizeof(uint32_t));
         XByteArray_push_back_base(output, (uint8_t)value->data.binary.subtype);
         XByteArray_append_array_base(output, XContainerDataPtr(value->data.binary.data), len);
@@ -984,7 +984,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
     }
     case XBSON_TYPE_DATETIME: 
     {
-        XMemory_Write_Var(&(value->data.datetime), XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, temp, uint64_t);
+        XMemory_Write_Var(&(value->data.datetime), XBYTE_ORDER_LITTLE_ENDIAN, temp, uint64_t);
         XByteArray_append_array_base(output, &temp, sizeof(uint64_t));
         //bson_write_uint64(&write_ptr, value->data.datetime);
         break;
@@ -1012,7 +1012,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
     }
     case XBSON_TYPE_JAVASCRIPT: {
         uint32_t len = (uint32_t)XString_toUtf8_length(value->data.str) + 1;
-        XMemory_Write_Var(&len, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, temp, uint32_t);
+        XMemory_Write_Var(&len, XBYTE_ORDER_LITTLE_ENDIAN, temp, uint32_t);
         XByteArray_append_array_base(output, &temp,sizeof(uint32_t));
         XByteArray_append_array_base(output, XString_toUtf8(value->data.str), len - 1);
         XByteArray_push_back_base(output,0x00);
@@ -1025,7 +1025,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
     case XBSON_TYPE_JAVASCRIPT_SCOPE: {
         // 先写入JavaScript代码
         uint32_t code_len = (uint32_t)XString_toUtf8_length(value->data.str) + 1;
-        XMemory_Write_Var(&code_len, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, temp, uint32_t);
+        XMemory_Write_Var(&code_len, XBYTE_ORDER_LITTLE_ENDIAN, temp, uint32_t);
         XByteArray_append_array_base(output, &temp, sizeof(uint32_t));
         XByteArray_append_array_base(output, XString_toUtf8(value->data.str), code_len - 1);
         XByteArray_push_back_base(output,0x00);
@@ -1044,16 +1044,16 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
     }
     case XBSON_TYPE_INT32: 
     {
-        XMemory_Write_Var(&(value->data.int32), XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, temp, int32_t);
+        XMemory_Write_Var(&(value->data.int32), XBYTE_ORDER_LITTLE_ENDIAN, temp, int32_t);
         XByteArray_append_array_base(output, &temp, sizeof(int32_t));
         //bson_write_uint32(&write_ptr, (uint32_t)value->data.int32);
         break;
     }
     case XBSON_TYPE_TIMESTAMP: 
     {
-        XMemory_Write_Var(&(value->data.ts.increment), XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, increment, uint32_t);
+        XMemory_Write_Var(&(value->data.ts.increment), XBYTE_ORDER_LITTLE_ENDIAN, increment, uint32_t);
         XByteArray_append_array_base(output, &increment, sizeof(uint32_t));
-        XMemory_Write_Var(&(value->data.ts.timestamp), XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, timestamp, uint32_t);
+        XMemory_Write_Var(&(value->data.ts.timestamp), XBYTE_ORDER_LITTLE_ENDIAN, timestamp, uint32_t);
         XByteArray_append_array_base(output, &timestamp, sizeof(uint32_t));
       /*  bson_write_uint32(&write_ptr, value->data.ts.increment);
         bson_write_uint32(&write_ptr, value->data.ts.timestamp);*/
@@ -1061,7 +1061,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* 
     }
     case XBSON_TYPE_INT64: 
     {
-        XMemory_Write_Var(&(value->data.int64), XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, temp, int64_t);
+        XMemory_Write_Var(&(value->data.int64), XBYTE_ORDER_LITTLE_ENDIAN, temp, int64_t);
         XByteArray_append_array_base(output, &temp, sizeof(int64_t));
         //bson_write_uint64(&write_ptr, (uint64_t)value->data.int64);
         break;
@@ -1126,14 +1126,14 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
     {
     case XBSON_TYPE_DOUBLE:
         if (*ptr + 8 > end) goto error;
-        XMemory_read_data(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, &(value->data.dbl), sizeof(double));
+        XMemory_read_data(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, &(value->data.dbl), sizeof(double));
         *ptr += 8;
         break;
     case XBSON_TYPE_STRING: {
         if (*ptr + 4 > end) goto error;
         //uint32_t len = *((uint32_t*)ptr);
-        XMemory_Read_Var(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN,len,uint32_t);
-        //XMemory_read_data(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, &(value->data.dbl), sizeof(double));
+        XMemory_Read_Var(*ptr, XBYTE_ORDER_LITTLE_ENDIAN,len,uint32_t);
+        //XMemory_read_data(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, &(value->data.dbl), sizeof(double));
         (*ptr) += sizeof(uint32_t);
         if (*ptr + len > end) goto error;
         XString_assign_with_length_utf8(value->data.str, (const char*)*ptr, len - 1);
@@ -1143,7 +1143,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
     case XBSON_TYPE_DOCUMENT: {
         if (*ptr + 4 > end) goto error;
         //uint32_t len = *((uint32_t*)ptr);
-        XMemory_Read_Var(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, len, uint32_t);
+        XMemory_Read_Var(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, len, uint32_t);
         //(*ptr) += sizeof(uint32_t);
         const uint8_t* doc_end = *ptr + len - 1; // 减去长度字段本身
         if (doc_end > end) goto error;
@@ -1154,7 +1154,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
     case XBSON_TYPE_ARRAY: {
         if (*ptr + 4 > end) goto error;
         //uint32_t len = *((uint32_t*)ptr);
-        XMemory_Read_Var(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, len, uint32_t);
+        XMemory_Read_Var(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, len, uint32_t);
         //(*ptr) += sizeof(uint32_t);
         const uint8_t* arr_end = *ptr + len - 1;
         if (arr_end > end) goto error;
@@ -1166,7 +1166,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
     case XBSON_TYPE_BINARY: {
         if (*ptr + 5 > end) goto error; // 4字节长度 + 1字节子类型
         //uint32_t len = *((uint32_t*)ptr);
-        XMemory_Read_Var(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, len, uint32_t);
+        XMemory_Read_Var(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, len, uint32_t);
         (*ptr) += sizeof(uint32_t);
         value->data.binary.subtype = (XBsonBinarySubtype) * *ptr;
         (*ptr)++;
@@ -1190,7 +1190,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
     case XBSON_TYPE_DATETIME:
         if (*ptr + 8 > end) goto error;
         //value->data.datetime = *((uint64_t*)ptr);
-        XMemory_read_data(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, &(value->data.datetime), sizeof(uint64_t));
+        XMemory_read_data(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, &(value->data.datetime), sizeof(uint64_t));
         (*ptr) += sizeof(uint64_t);
         break;
     case XBSON_TYPE_NULL:
@@ -1215,7 +1215,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
     case XBSON_TYPE_JAVASCRIPT: {
         if (*ptr + 4 > end) goto error;
         //uint32_t len = *((uint32_t*)ptr);
-        XMemory_Read_Var(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, len, uint32_t);
+        XMemory_Read_Var(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, len, uint32_t);
         (*ptr) += sizeof(uint32_t);
         if (*ptr + len > end) goto error;
         XString_assign_with_length_utf8(value->data.str, (const char*)*ptr, len - 1);
@@ -1225,7 +1225,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
     case XBSON_TYPE_JAVASCRIPT_SCOPE: {
         if (*ptr + 4 > end) goto error;
         //uint32_t code_len = *((uint32_t*)ptr);
-        XMemory_Read_Var(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, code_len, uint32_t);
+        XMemory_Read_Var(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, code_len, uint32_t);
         (*ptr) += sizeof(uint32_t);
         if (*ptr + code_len > end) goto error;
         XString_assign_with_length_utf8(value->data.str, (const char*)*ptr, code_len - 1);
@@ -1234,7 +1234,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
         // 解析作用域文档
         if (*ptr + 4 > end) goto error;
         //uint32_t scope_len = *((uint32_t*)ptr);
-        XMemory_Read_Var(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, scope_len, uint32_t);
+        XMemory_Read_Var(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, scope_len, uint32_t);
         (*ptr) += sizeof(uint32_t);
         const uint8_t* scope_end = *ptr + scope_len - 1;
         if (scope_end > end) goto error;
@@ -1245,21 +1245,21 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XStr
     }
     case XBSON_TYPE_INT32:
         if (*ptr + 4 > end) goto error;
-        XMemory_read_data(*ptr,XMEMORY_BYTE_ORDER_LITTLE_ENDIAN,&(value->data.int32), sizeof(int32_t));
+        XMemory_read_data(*ptr,XBYTE_ORDER_LITTLE_ENDIAN,&(value->data.int32), sizeof(int32_t));
         (*ptr) += sizeof(int32_t);
         break;
     case XBSON_TYPE_TIMESTAMP:
         if (*ptr + 8 > end) goto error;
-        XMemory_read_data(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, &(value->data.ts.increment), sizeof(uint32_t));
+        XMemory_read_data(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, &(value->data.ts.increment), sizeof(uint32_t));
         //value->data.ts.increment = *((uint32_t*)ptr);
         (*ptr) += sizeof(uint32_t);
-        XMemory_read_data(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, &(value->data.ts.timestamp), sizeof(uint32_t));
+        XMemory_read_data(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, &(value->data.ts.timestamp), sizeof(uint32_t));
         //value->data.ts.timestamp = *((uint32_t*)ptr);
         (*ptr) += sizeof(uint32_t);
         break;
     case XBSON_TYPE_INT64:
         if (*ptr + 8 > end) goto error;
-        XMemory_read_data(*ptr, XMEMORY_BYTE_ORDER_LITTLE_ENDIAN, &(value->data.int64), sizeof(int64_t));
+        XMemory_read_data(*ptr, XBYTE_ORDER_LITTLE_ENDIAN, &(value->data.int64), sizeof(int64_t));
         //value->data.int64 = *((int64_t*)ptr);
         (*ptr) += sizeof(int64_t);
         break;

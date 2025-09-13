@@ -20,6 +20,7 @@ XCLASS_DEFINE_EXTEND_END(XBitArray, XContainerObject)
 typedef struct XBitArray
 {
 	XContainerObject m_parent; // 继承自容器基类，包含数据、大小、容量等元信息
+	XBitOrder m_bitOrder;
 } XBitArray;
 
 
@@ -113,7 +114,42 @@ bool XBitArray_append(XBitArray* array, const XBitArray* other);
  * @return 操作成功返回true，索引越界等失败情况返回false
  */
 bool  XBitArray_clearBits(XBitArray* array, size_t index);
+/**
+ * @brief 从指定索引开始写入指定比特数的数据（从uint8数组读取）
+ * @param array 比特数组对象
+ * @param startIndex 起始写入索引（从0开始）
+ * @param bitCount 要写入的比特数量
+ * @param src 源uint8数组（每个元素包含8个比特）
+ * @param srcByteLen 源数组的字节长度（需确保能提供至少bitCount个比特）
+ * @return 操作成功返回true，失败返回false（参数无效或空间不足）
+ * @note 写入规则：从src[0]的高位到低位依次读取比特，写入到array的startIndex开始位置
+ */
+bool XBitArray_writeBits(XBitArray* array, size_t startIndex, size_t bitCount, const uint8_t* src, size_t srcByteLen);
+/**
+ * @brief 从指定索引开始读取指定比特数的数据（写入到uint8数组）
+ * @param array 比特数组对象
+ * @param startIndex 起始读取索引（从0开始）
+ * @param bitCount 要读取的比特数量
+ * @param dest 目标uint8数组（存储读取的比特，每个元素包含8个比特）
+ * @param destByteLen 目标数组的字节长度（需确保能容纳至少bitCount个比特）
+ * @return 操作成功返回true，失败返回false（参数无效或空间不足）
+ * @note 读取规则：从array的startIndex开始读取比特，依次写入dest[0]的高位到低位
+ */
+bool XBitArray_readBits(const XBitArray* array, size_t startIndex, size_t bitCount, uint8_t* dest, size_t destByteLen);
+/**
+ * @brief 设置比特数组的默认比特序（影响后续读写操作的比特存储模式）
+ * @param array 比特数组对象
+ * @param bitOrder 要设置的比特序（XBIT_ORDER_MSB_FIRST 或 XBIT_ORDER_LSB_FIRST）
+ * @return 操作成功返回true（参数有效），失败返回false（空指针）
+ */
+bool XBitArray_setBitOrder(XBitArray* array, XBitOrder bitOrder);
 
+/**
+ * @brief 获取当前比特数组的默认比特序
+ * @param array 比特数组对象
+ * @return 当前比特序（默认返回XBIT_ORDER_DEFAULT）
+ */
+XBitOrder XBitArray_getBitOrder(const XBitArray* array);
 /**
  * @brief 获取XBitArray内部存储的原始比特数据指针，对应QBitArray::bits()
  * @param array 目标比特数组对象

@@ -39,10 +39,19 @@ bool XMemory_realloc_isNULL();
 //内存字节顺序
 typedef enum
 {
-	XMEMORY_BYTE_ORDER_LITTLE_ENDIAN = 0,  /**< 小端序：低字节在前，高字节在后 (LE) */
-	XMEMORY_BYTE_ORDER_BIG_ENDIAN,        /**< 大端序：高字节在前，低字节在后 (BE) */
-	XMEMORY_BYTE_ORDER_NATIVE            /**< 本机字节序：使用当前系统的默认字节序 */
-}XMemoryByteOrder;
+	XBYTE_ORDER_LITTLE_ENDIAN = 0,  /**< 小端序：低字节在前，高字节在后 (LE) */
+	XBYTE_ORDER_BIG_ENDIAN,        /**< 大端序：高字节在前，低字节在后 (BE) */
+	XBYTE_ORDER_NATIVE            /**< 本机字节序：使用当前系统的默认字节序 */
+}XByteOrder;
+/*                比特存储顺序配置                          */
+/**
+ * @brief 比特存储顺序枚举（控制字节内比特的高低位存储模式）
+ */
+typedef enum {
+	XBIT_ORDER_MSB_FIRST = 0,  /**< 高位在前（Most Significant Bit First）：字节的第7位为第一个比特 */
+	XBIT_ORDER_LSB_FIRST,       /**< 低位在前（Least Significant Bit First）：字节的第0位为第一个比特 */
+	XBIT_ORDER_DEFAULT  //默认 XBIT_ORDER_LSB_FIRST
+} XBitOrder;
 /**
  * @brief 将指定字节序的数据流按据到内存缓冲区，并根据字节序转换
  *
@@ -58,7 +67,7 @@ typedef enum
  *         - true：转换成功（含无需转换的情况）
  *         - false：参数无效（空指针或长度为0）
  */
-bool XMemory_read_data(const uint8_t* src, XMemoryByteOrder readOrder, uint8_t* out,size_t size);
+bool XMemory_read_data(const uint8_t* src, XByteOrder readOrder, uint8_t* out,size_t size);
 
 /**
  * @brief 内存缓冲区保存指定字节序的数据流，并根据字节序转换
@@ -75,7 +84,7 @@ bool XMemory_read_data(const uint8_t* src, XMemoryByteOrder readOrder, uint8_t* 
  *         - true：转换成功（含无需转换的情况）
  *         - false：参数无效（空指针或长度为0）
  */
-bool XMemory_write_data(uint8_t* write, XMemoryByteOrder writeOrder,const uint8_t* in, size_t size);
+bool XMemory_write_data(uint8_t* write, XByteOrder writeOrder,const uint8_t* in, size_t size);
 #define XMemory_Read_Var(src,readOrder,varName,varType) varType varName; XMemory_read_data(src,readOrder,&varName,sizeof(varType));
 #define XMemory_Write_Var(in,writeOrder,varName,varType) varType varName; XMemory_write_data(&varName,writeOrder,in,sizeof(varType));
 #ifdef __cplusplus

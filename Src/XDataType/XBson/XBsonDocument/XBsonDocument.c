@@ -368,7 +368,7 @@ XByteArray* XBsonDocument_toBson(const XBsonDocument* doc)
     // 添加终止符
     XByteArray_push_back_base(bytes, 0x00);
     //开头写入总长度
-    XMemory_write_data(XContainerDataPtr(bytes),XMEMORY_BYTE_ORDER_LITTLE_ENDIAN,&XContainerSize(bytes), sizeof(uint32_t));
+    XMemory_write_data(XContainerDataPtr(bytes),XBYTE_ORDER_LITTLE_ENDIAN,&XContainerSize(bytes), sizeof(uint32_t));
     return bytes;
 }
 

@@ -32,7 +32,8 @@ XBitArray* XBitArray_create_move(XBitArray* other) {
     return array;
 }
 
-void XBitArray_init(XBitArray* array, size_t initialBitCount) {
+void XBitArray_init(XBitArray* array, size_t initialBitCount)
+{
     if (!array) return;
     // 初始化基类（类型大小设为1，便于按字节管理）
     XContainerObject_init(array, 1);
@@ -46,6 +47,7 @@ void XBitArray_init(XBitArray* array, size_t initialBitCount) {
         XContainerCapacity(array) = initialBytes * 8; // 容量以比特为单位
         XContainerSize(array) = initialBitCount;      // 初始比特数
     }
+    array->m_bitOrder = XBIT_ORDER_LSB_FIRST;
 }
 
 bool XBitArray_setBit(XBitArray* array, size_t index, bool value)
@@ -54,7 +56,7 @@ bool XBitArray_setBit(XBitArray* array, size_t index, bool value)
 
     uint8_t* data = (uint8_t*)XContainerDataPtr(array);
     size_t byteIdx = index / 8;
-    uint8_t bitMask = 1 << (7 - (index % 8)); // 高位在前存储
+    uint8_t bitMask = (array->m_bitOrder == XBIT_ORDER_MSB_FIRST) ? 1 << (7 - (index % 8)) : 1 << ((index % 8));//1 << (7-(index % 8))
 
     if (value) {
         data[byteIdx] |= bitMask;
@@ -71,7 +73,7 @@ bool XBitArray_getBit(const XBitArray* array, size_t index)
 
     const uint8_t* data = (const uint8_t*)XContainerDataPtr(array);
     size_t byteIdx = index / 8;
-    uint8_t bitMask = 1 << (7 - (index % 8));
+    uint8_t bitMask = (array->m_bitOrder == XBIT_ORDER_MSB_FIRST) ? 1 << (7-(index % 8)): 1 << ((index % 8));//1 << (7-(index % 8))
 
     return (data[byteIdx] & bitMask) != 0;
 }
@@ -82,7 +84,7 @@ bool XBitArray_toggleBit(XBitArray* array, size_t index)
 
     uint8_t* data = (uint8_t*)XContainerDataPtr(array);
     size_t byteIdx = index / 8;
-    uint8_t bitMask = 1 << (7 - (index % 8));
+    uint8_t bitMask = (array->m_bitOrder == XBIT_ORDER_MSB_FIRST) ? 1 << (7 - (index % 8)) : 1 << ((index % 8));
 
     data[byteIdx] ^= bitMask;
     return true;
@@ -161,6 +163,222 @@ bool  XBitArray_clearBits(XBitArray* array, size_t index)
     return true;
 }
 
+bool XBitArray_writeBits(XBitArray* array, size_t startIndex, size_t bitCount, const uint8_t* src, size_t srcByteLen)
+{
+    // 参数有效性检查
+    if (!array || !src || bitCount == 0 || srcByteLen == 0) {
+        return false;
+    }
+    // 源数据可提供的最大比特数检查
+    size_t maxSrcBits = srcByteLen * 8;
+    if (bitCount > maxSrcBits) {
+        return false;
+    }
+    // 计算需要的总容量并扩容
+    size_t requiredSize = startIndex + bitCount;
+    if (requiredSize > XBitArray_capacity_base(array)) {
+        if (!XBitArray_resize(array, requiredSize)) {
+            return false;
+        }
+    }
+    else if (requiredSize > XBitArray_count(array)) {
+        XContainerSize(array) = requiredSize;
+    }
+
+    uint8_t* data = (uint8_t*)XContainerDataPtr(array);
+    XBitOrder bitOrder = array->m_bitOrder;
+    size_t startByte = startIndex / 8;
+    size_t bitOffset; // 起始位在字节内的偏移（0-7，对应实际存储的位位置）
+
+    // 根据比特序计算起始位在字节中的实际偏移
+    if (bitOrder == XBIT_ORDER_MSB_FIRST) {
+        bitOffset = 7 - (startIndex % 8); // MSB优先：字节高位对应低索引
+    }
+    else {
+        bitOffset = startIndex % 8; // LSB优先：字节低位对应低索引
+    }
+
+    // 情况1：完全字节对齐（起始偏移为0且总比特数为8的倍数）
+    if (bitOffset == 0 && (bitCount % 8) == 0) {
+        size_t byteCount = bitCount / 8;
+        memcpy(data + startByte, src, byteCount);
+        return true;
+    }
+
+    // 情况2：部分对齐或完全不对齐，分三段处理
+    size_t processed = 0;
+
+    // 处理起始处非对齐的比特
+    size_t startBits = 8 - bitOffset;
+    if (startBits > bitCount) {
+        startBits = bitCount; // 剩余比特不足一个完整字节
+    }
+    if (startBits > 0) {
+        for (size_t i = 0; i < startBits; i++) {
+            // 计算源比特位置
+            size_t srcByteIdx = i / 8;
+            uint8_t srcBitPos = (bitOrder == XBIT_ORDER_MSB_FIRST) ?
+                (7 - (i % 8)) : (i % 8);
+            bool bitVal = (src[srcByteIdx] >> srcBitPos) & 1;
+
+            // 计算目标比特位置
+            uint8_t targetBitPos = bitOffset + i;
+            if (bitVal) {
+                data[startByte] |= (1 << targetBitPos);
+            }
+            else {
+                data[startByte] &= ~(1 << targetBitPos);
+            }
+        }
+        processed += startBits;
+        startByte++; // 起始字节已处理完，移至下一字节
+    }
+
+    // 批量处理中间对齐的完整字节
+    size_t remaining = bitCount - processed;
+    if (remaining >= 8) {
+        size_t alignedBytes = remaining / 8;
+        size_t srcStartByte = processed / 8;
+        memcpy(data + startByte, src + srcStartByte, alignedBytes);
+        processed += alignedBytes * 8;
+        startByte += alignedBytes;
+    }
+
+    // 处理结束处非对齐的比特
+    remaining = bitCount - processed;
+    if (remaining > 0) {
+        for (size_t i = 0; i < remaining; i++) {
+            // 计算源比特位置
+            size_t srcByteIdx = (processed + i) / 8;
+            uint8_t srcBitPos = (bitOrder == XBIT_ORDER_MSB_FIRST) ?
+                (7 - ((processed + i) % 8)) : ((processed + i) % 8);
+            bool bitVal = (src[srcByteIdx] >> srcBitPos) & 1;
+
+            // 计算目标比特位置（当前字节内从0开始）
+            uint8_t targetBitPos = (bitOrder == XBIT_ORDER_MSB_FIRST) ?
+                (7 - i) : i;
+            if (bitVal) {
+                data[startByte] |= (1 << targetBitPos);
+            }
+            else {
+                data[startByte] &= ~(1 << targetBitPos);
+            }
+        }
+    }
+
+    return true;
+}
+
+bool XBitArray_readBits(const XBitArray* array, size_t startIndex, size_t bitCount, uint8_t* dest, size_t destByteLen) {
+    // 参数有效性检查
+    if (!array || !dest || bitCount == 0 || destByteLen == 0) {
+        return false;
+    }
+    // 读取范围越界检查
+    if (startIndex + bitCount > XBitArray_count(array)) {
+        return false;
+    }
+    // 目标缓冲区空间检查
+    size_t requiredBytes = (bitCount + 7) / 8;
+    if (destByteLen < requiredBytes) {
+        return false;
+    }
+    // 初始化目标缓冲区（清空有效字节）
+    memset(dest, 0, requiredBytes);
+
+    const uint8_t* data = (const uint8_t*)XContainerDataPtr(array);
+    XBitOrder bitOrder = array->m_bitOrder;
+    size_t startByte = startIndex / 8;
+    size_t bitOffset; // 起始位在字节内的偏移（0-7，对应实际存储的位位置）
+
+    // 根据比特序计算起始位在字节中的实际偏移
+    if (bitOrder == XBIT_ORDER_MSB_FIRST) {
+        bitOffset = 7 - (startIndex % 8);
+    }
+    else {
+        bitOffset = startIndex % 8;
+    }
+
+    // 情况1：完全字节对齐（起始偏移为0且总比特数为8的倍数）
+    if (bitOffset == 0 && (bitCount % 8) == 0) {
+        size_t byteCount = bitCount / 8;
+        memcpy(dest, data + startByte, byteCount);
+        return true;
+    }
+
+    // 情况2：部分对齐或完全不对齐，分三段处理
+    size_t processed = 0;
+
+    // 处理起始处非对齐的比特
+    size_t startBits = 8 - bitOffset;
+    if (startBits > bitCount) {
+        startBits = bitCount;
+    }
+    if (startBits > 0) {
+        for (size_t i = 0; i < startBits; i++) {
+            // 从源数据读取比特
+            uint8_t srcBitPos = bitOffset + i;
+            bool bitVal = (data[startByte] >> srcBitPos) & 1;
+
+            // 写入目标缓冲区
+            size_t destByteIdx = i / 8;
+            uint8_t destBitPos = (bitOrder == XBIT_ORDER_MSB_FIRST) ?
+                (7 - (i % 8)) : (i % 8);
+            if (bitVal) {
+                dest[destByteIdx] |= (1 << destBitPos);
+            }
+        }
+        processed += startBits;
+        startByte++;
+    }
+
+    // 批量处理中间对齐的完整字节
+    size_t remaining = bitCount - processed;
+    if (remaining >= 8) {
+        size_t alignedBytes = remaining / 8;
+        size_t destStartByte = processed / 8;
+        memcpy(dest + destStartByte, data + startByte, alignedBytes);
+        processed += alignedBytes * 8;
+        startByte += alignedBytes;
+    }
+
+    // 处理结束处非对齐的比特
+    remaining = bitCount - processed;
+    if (remaining > 0) {
+        for (size_t i = 0; i < remaining; i++) {
+            // 从源数据读取比特
+            uint8_t srcBitPos = (bitOrder == XBIT_ORDER_MSB_FIRST) ?
+                (7 - i) : i;
+            bool bitVal = (data[startByte] >> srcBitPos) & 1;
+
+            // 写入目标缓冲区
+            size_t destByteIdx = (processed + i) / 8;
+            uint8_t destBitPos = (bitOrder == XBIT_ORDER_MSB_FIRST) ?
+                (7 - ((processed + i) % 8)) : ((processed + i) % 8);
+            if (bitVal) {
+                dest[destByteIdx] |= (1 << destBitPos);
+            }
+        }
+    }
+
+    return true;
+}
+bool XBitArray_setBitOrder(XBitArray* array, XBitOrder bitOrder)
+{
+    if (!array) return false;
+    // 检查比特序参数有效性
+    if (bitOrder != XBIT_ORDER_MSB_FIRST && bitOrder != XBIT_ORDER_LSB_FIRST) {
+        return false;
+    }
+    array->m_bitOrder = bitOrder;
+    return true;
+}
+
+XBitOrder XBitArray_getBitOrder(const XBitArray* array)
+{
+    if (!array) return XBIT_ORDER_DEFAULT; // 空指针返回默认值
+    return array->m_bitOrder;
+}
 const char* XBitArray_bits(const XBitArray* array)
 {
     if (!array) {

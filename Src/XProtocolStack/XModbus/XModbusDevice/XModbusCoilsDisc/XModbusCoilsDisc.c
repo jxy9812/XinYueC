@@ -1,8 +1,9 @@
 ﻿#include "XModbusCoilsDisc.h"
 #include "XMemory.h"
 #include "XByteArray.h"
-#include"XModbusFrame.h"
-#include"XModbus.h"
+#include "XModbusFrame.h"
+#include "XModbus.h"
+#include "XBitArray.h"
 #include <string.h>
 /*
 * @brief  一个字节中按偏移量设置一个比特位
@@ -24,12 +25,13 @@ XModbusCoilsDisc* XModbusCoilsDisc_create(uint16_t count)
 {
     if (count == 0)
         return NULL;
-    uint16_t size = (count % 8 == 0) ? (count / 8) : ((count / 8) + 1);
+    //uint16_t size = (count % 8 == 0) ? (count / 8) : ((count / 8) + 1);
     XModbusCoilsDisc* ptr = XMemory_malloc(sizeof(XModbusCoilsDisc));
     XModbusDeviceObject_init(ptr);
     ptr->count = count;
-    ptr->parent.data = XVector_Create(uint8_t);
-    XVector_resize_base(ptr->parent.data, size);
+    ptr->parent.data = XBitArray_create(count);
+    XBitArray_setBitOrder(ptr->parent.data, XBIT_ORDER_LSB_FIRST);
+    //XVector_resize_base(ptr->parent.data, size);
     return ptr;
 }
 
@@ -38,7 +40,7 @@ void XModbusCoilsDisc_delete(XModbusCoilsDisc* pRegHandler)
     if (pRegHandler)
     {
         if (pRegHandler->parent.data)
-            XVector_delete_base(pRegHandler->parent.data);
+            XBitArray_delete_base(pRegHandler->parent.data);
         XMemory_free(pRegHandler);
     }
 }
@@ -46,19 +48,19 @@ bool XModbusCoilsDisc_write_bool(XModbusCoilsDisc* pRegHandler, uint16_t address
 {
     if (!pRegHandler || !pRegHandler->parent.data || address >= pRegHandler->count)
         return false;
+    return XBitArray_setBit(pRegHandler->parent.data,address,state);
+    //uint8_t* data = XContainerDataPtr(pRegHandler->parent.data);
+    //uint16_t byte_index = address / 8;
+    //uint8_t bit_index = address % 8;
 
-    uint8_t* data = XContainerDataPtr(pRegHandler->parent.data);
-    uint16_t byte_index = address / 8;
-    uint8_t bit_index = address % 8;
+    //if (state) {
+    //    data[byte_index] |= (1 << bit_index);  // 设置位为1
+    //}
+    //else {
+    //    data[byte_index] &= ~(1 << bit_index); // 设置位为0
+    //}
 
-    if (state) {
-        data[byte_index] |= (1 << bit_index);  // 设置位为1
-    }
-    else {
-        data[byte_index] &= ~(1 << bit_index); // 设置位为0
-    }
-
-    return true;
+    //return true;
 }
 // 定义MIN宏
 #ifndef MIN
@@ -68,6 +70,7 @@ bool XModbusCoilsDisc_write(XModbusCoilsDisc* pRegHandler, uint16_t address, uin
 {
     if (!pRegHandler || !pRegHandler->parent.data || !writeArray || !count)
         return false;
+   return  XBitArray_writeBits(pRegHandler->parent.data, address, count, writeArray, (count + 7)/8);
 
     uint16_t max_address = address + count;
     if (max_address > pRegHandler->count)
@@ -128,7 +131,7 @@ bool XModbusCoilsDisc_read(XModbusCoilsDisc* pRegHandler, uint16_t address, uint
 {
     if (!pRegHandler || !pRegHandler->parent.data || !readArray || !count)
         return false;
-
+    return XBitArray_readBits(pRegHandler->parent.data,address,count,readArray,readArraySize);
     uint16_t max_address = address + count;
     if (max_address > pRegHandler->count)
         return false;
@@ -191,12 +194,12 @@ bool XModbusCoilsDisc_at(XModbusCoilsDisc* pRegHandler, uint16_t regAddress)
 {
     if (!pRegHandler || !pRegHandler->parent.data || regAddress >= pRegHandler->count)
         return false;
-
-    const uint8_t* data = XContainerDataPtr(pRegHandler->parent.data);
+    return XBitArray_at(pRegHandler->parent.data, regAddress);
+   /* const uint8_t* data = XContainerDataPtr(pRegHandler->parent.data);
     uint16_t byte_index = regAddress / 8;
     uint8_t bit_index = regAddress % 8;
 
-    return (data[byte_index] & (1 << bit_index)) != 0;
+    return (data[byte_index] & (1 << bit_index)) != 0;*/
 }
 
 void XModbusCoilsDisc_0x01_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* device)
