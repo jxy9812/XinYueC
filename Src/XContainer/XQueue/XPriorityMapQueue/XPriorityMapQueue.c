@@ -68,6 +68,11 @@ static void mapPriority(XPriorityMapQueue* this_queue)
 {
 	if (this_queue->mapPriority)
 		XMemory_free(this_queue->mapPriority);
+	if (XMap_isEmpty_base(GetMap(this_queue)))
+	{
+		this_queue->mapPriority = NULL;
+		return;
+	}
 	this_queue->mapPriority = XMemory_malloc(sizeof(XPair*)*XMapBase_size_base(GetMap(this_queue)));
 	if (this_queue->mapPriority == NULL)
 		return;
@@ -117,7 +122,7 @@ bool XPriorityMapQueue_removeFifoQueue(XPriorityMapQueue* this_queue, void* prio
 	if (!XMapBase_find_base(GetMap(this_queue), priority,&it))
 		return false;//要删除的不存在
 	XMapBaseSetKeyDeinitMethod(GetMap(this_queue), this_queue->m_priorityCopyMethod);
-	XCircularQueue* queue = XMap_iterator_data(&it);
+	XCircularQueue* queue = XPair_second(XMap_iterator_data(&it));
 	XContainerSetDataDeinitMethod(queue, XContainerDataDeinitMethod(this_queue));
 	bool is_ok = XMapBase_remove_base(GetMap(this_queue), priority);//将自动释放fifo队列，但是保存的数据如果有申请动态内存将会有内存泄漏风险，需要提前释放掉
 	mapPriority(this_queue);
@@ -147,7 +152,7 @@ bool VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void*
 		{//此优先级数据有对应的高频队列插入
 			++XContainerSize(this_queue);
 			++XContainerCapacity(this_queue);
-			return XVtableGetFunc(XCircularQueue_class_init(), EXQueueBase_Push, bool (*)(XQueueBase*, void*, XCDataCreatMethod))(this_queue, pvValue, dataCreatMethod);
+			return XClassGetVirtualFunc(queue, EXQueueBase_Push, bool (*)(XQueueBase*, void*, XCDataCreatMethod))(queue, pvValue, dataCreatMethod);
 		}
 	}
 	//没有高频队列或没有对应的都插入到堆队列
@@ -206,6 +211,12 @@ static bool getMapQueue(XPriorityMapQueue* this_queue,XCircularQueue** getCq)
 			//}
 
 
+		}
+		else if(priorityMap)
+		{
+			if (getCq)
+				*getCq = cq;
+			return true;
 		}
 
 	}

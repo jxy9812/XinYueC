@@ -12,22 +12,26 @@
 static void XPriorityMapQueueTest();
 void XPriorityMapQueueTest()
 {
-#if	XQueue_ON
 	XPrintf("XPriorityMapQueue 测试\n");
-	XPriorityMapQueue* queue = XPriorityMapQueue_Create(int,int,XCompare_int,XSORT_ASC);
-	int array[] = { 0,1,2,3,4,5,6,7,8,9 };
-	for (size_t i = 0; i < sizeof(array) / sizeof(array[0]); i++)
+	while (true)
 	{
-		XPriorityMapQueue_push_base(queue, array + i,array + i);
+		XPriorityMapQueue* queue = XPriorityMapQueue_Create(int, int, XCompare_int, XSORT_ASC);
+		int p = 1;
+		XPriorityMapQueue_addFifoQueue(queue,&p,10);
+		XPriorityMapQueue_removeFifoQueue(queue, &p);
+		int array[] = { 0,1,2,3,4,5,6,7,8,9 };
+		for (size_t i = 0; i < sizeof(array) / sizeof(array[0]); i++)
+		{
+			XPriorityMapQueue_push_base(queue, &p, array + i);
+		}
+		while (!XQueue_isEmpty_base(queue))
+		{
+			XPrintf("%d ", XQueue_Top_Base(queue, int));
+			XQueue_pop_base(queue);
+		}
+		XPrintf("\n");
+		XQueue_delete_base(queue);
 	}
-	while (!XQueue_isEmpty_base(queue))
-	{
-		XPrintf("%d ", XQueue_Top_Base(queue, int));
-		XQueue_pop_base(queue);
-	}
-	XPrintf("\n");
-	XQueue_delete_base(queue);
-#endif
 	XCoreApplication_requestQuit();
 }
 
