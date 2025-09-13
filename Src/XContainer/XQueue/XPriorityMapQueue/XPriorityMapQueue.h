@@ -29,7 +29,7 @@ XVtable* XPriorityMapQueue_class_init();
 //队列初始化函数
 void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize,XCompare priorityCom, XSortOrder priorityOrder, size_t typeSize);
 //队列创建函数
-#define XPriorityMapQueue_Create(Type) XPriorityMapQueue_create(sizeof(Type))
+#define XPriorityMapQueue_Create(priority,data,priorityCom,priorityOrder) XPriorityMapQueue_create(sizeof(priority),priorityCom,priorityOrder,sizeof(data))
 XPriorityMapQueue* XPriorityMapQueue_create(size_t prioritySize, XCompare priorityCom, XSortOrder priorityOrder, size_t typeSize);
 bool XPriorityMapQueue_addFifoQueue(XPriorityMapQueue* this_queue, void* priority, size_t queueSize);
 bool XPriorityMapQueue_removeFifoQueue(XPriorityMapQueue* this_queue, void* priority);

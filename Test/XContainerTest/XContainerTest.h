@@ -28,6 +28,7 @@ extern "C" {
 	void XMenu_XCircularQueueAtomicTest(XMenu* root);
 	void XMenu_XPriorityQueueTest(XMenu* root);
 	void XMenu_XQueueTest(XMenu* root);
+	void XMenu_XPriorityMapQueueTest(XMenu* root);
 	//映射 Map
 	void XMenu_MapTest(XMenu* root);
 	void XMenu_XMapTest(XMenu* root);

@@ -40,6 +40,7 @@ void XMenu_QueueTest(XMenu* root)
 	XMenu_XCircularQueueAtomicTest(menu);
 	XMenu_XPriorityQueueTest(menu);
 	XMenu_XQueueTest(menu);
+	XMenu_XPriorityMapQueueTest(menu);
 }
 void XMenu_MapTest(XMenu* root)
 {

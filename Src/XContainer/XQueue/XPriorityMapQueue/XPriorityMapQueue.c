@@ -6,14 +6,14 @@
 #define GetMap(queue)				((XMapBase*)XContainerDataPtr(queue)) //获取map
 #define GetPrioritySize(queue)		GetMap(queue)->m_keyTypeSize
 //插入到队列的队尾
-static void VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue, XCDataCreatMethod priorityCreatMethod, XCDataCreatMethod dataCreatMethod);
+static bool VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue, XCDataCreatMethod priorityCreatMethod, XCDataCreatMethod dataCreatMethod);
 //出队
 static void VXPriorityQueue_pop(XPriorityMapQueue* this_queue);
 // 返回优先队列堆顶元素
 static void* VXPriorityQueue_top(XPriorityMapQueue* this_queue);
 static bool VXPriorityQueue_receive(XPriorityMapQueue* this_queue, void* pvBuffer);
 static bool VXPriorityQueue_isFull(const XPriorityMapQueue* this_queue);
-static bool VXPriorityQueue_isEmpty(const XPriorityMapQueue* this_queue);
+//static bool VXPriorityQueue_isEmpty(const XPriorityMapQueue* this_queue);
 static void VXClass_deinit(XPriorityMapQueue* this_queue);
 XVtable* XPriorityMapQueue_class_init()
 {
@@ -31,7 +31,7 @@ XVtable* XPriorityMapQueue_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXPriorityQueue_isEmpty);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXPriorityQueue_isEmpty);
 #if SHOWCONTAINERSIZE
 	printf("XPriorityMapQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -48,6 +48,9 @@ void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize, 
 	XContainerSetDataCopyMethod(GetMap(this_queue), XCircularQueue_copy_base);
 	XContainerSetDataDeinitMethod(GetMap(this_queue), XCircularQueue_deinit_base);
 
+	this_queue->m_priorityCopyMethod = NULL;
+	this_queue->m_priorityMoveMethod = NULL;
+	this_queue->m_priorityDeinitMethod = NULL;
 	this_queue->low_freq_queue = XPriorityQueue_create(prioritySize+typeSize, priorityCom, priorityOrder);
 	this_queue->mapPriority = NULL;
 }
@@ -57,7 +60,7 @@ XPriorityMapQueue* XPriorityMapQueue_create(size_t prioritySize, XCompare priori
 	if (ISNULL(prioritySize, "")|| ISNULL(priorityCom, "") || ISNULL(typeSize, ""))
 		return NULL;
 	XPriorityMapQueue* this_queue = XMemory_malloc(sizeof(XPriorityMapQueue));
-	XPriorityMapQueue_init(this_queue, prioritySize, priorityCom, typeSize, priorityOrder);
+	XPriorityMapQueue_init(this_queue, prioritySize, priorityCom, priorityOrder, typeSize);
 	return this_queue;
 }
 //进行一次映射
@@ -73,14 +76,14 @@ static void mapPriority(XPriorityMapQueue* this_queue)
 	{
 		for_each_iterator(GetMap(this_queue), XMap, it)
 		{
-			((XPair**)this_queue->mapPriority)[i] = XMap_iterator_data(&it);
+			((XPair**)this_queue->mapPriority)[index++] = XMap_iterator_data(&it);
 		}
 	}
 	else
 	{
 		for_each_reverse_iterator(GetMap(this_queue), XMap, it)
 		{
-			((XPair**)this_queue->mapPriority)[i] = XMap_reverse_iterator_data(&it);
+			((XPair**)this_queue->mapPriority)[index++] = XMap_reverse_iterator_data(&it);
 		}
 	}
 }
@@ -135,19 +138,21 @@ bool XPriorityMapQueue_push_move_base(XPriorityMapQueue* this_queue, void* pvPri
 	return XClassGetVirtualFunc(this_queue, EXQueueBase_Push, bool (*)(XQueueBase*, void*, void*, XCDataCreatMethod, XCDataCreatMethod))(this_queue, pvPriority, pvValue,this_queue->m_priorityMoveMethod, XContainerDataMoveMethod(this_queue));
 }
 
-void VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue, XCDataCreatMethod priorityCreatMethod, XCDataCreatMethod dataCreatMethod)
+bool VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue, XCDataCreatMethod priorityCreatMethod, XCDataCreatMethod dataCreatMethod)
 {
 	if (!XMap_isEmpty_base(GetMap(this_queue)))
 	{//存在高频队列
 		XCircularQueue* queue=XMap_value_base(GetMap(this_queue), pvPriority);
 		if (queue != NULL)
 		{//此优先级数据有对应的高频队列插入
-			XVtableGetFunc(XCircularQueue_class_init(), EXQueueBase_Push, bool (*)(XQueueBase*, void*, XCDataCreatMethod))(this_queue, pvValue, dataCreatMethod);
-			return;
+			++XContainerSize(this_queue);
+			++XContainerCapacity(this_queue);
+			return XVtableGetFunc(XCircularQueue_class_init(), EXQueueBase_Push, bool (*)(XQueueBase*, void*, XCDataCreatMethod))(this_queue, pvValue, dataCreatMethod);
 		}
 	}
 	//没有高频队列或没有对应的都插入到堆队列
 	uint8_t* data = XMemory_malloc(XContainerTypeSize(this_queue->low_freq_queue));
+	//XMap* map = GetMap(this_queue);
 	if (priorityCreatMethod)
 		priorityCreatMethod(data, pvPriority);
 	else
@@ -155,15 +160,18 @@ void VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void*
 	if (dataCreatMethod)
 		dataCreatMethod(data + GetPrioritySize(this_queue), pvValue);
 	else
-		memcpy(data + GetPrioritySize(this_queue), pvValue, XContainerTypeSize(GetMap(this_queue)));
+		memcpy(data + GetPrioritySize(this_queue), pvValue, XContainerTypeSize((this_queue)));
 	XPriorityQueue_push_base(this_queue->low_freq_queue, data);
 	//更新修改的数据
 	if (priorityCreatMethod&& dataCreatMethod)
 	{
 		memcpy(pvPriority, data, GetPrioritySize(this_queue));
-		memcpy(pvValue, data + GetPrioritySize(this_queue), XContainerTypeSize(GetMap(this_queue)));
+		memcpy(pvValue, data + GetPrioritySize(this_queue), XContainerTypeSize((this_queue)));
 	}
 	XMemory_free(data);
+	++XContainerSize(this_queue);
+	++XContainerCapacity(this_queue);
+	return true;
 }
 //根据优先级获取映射队列  如果队头是映射队列返回真，不是返回假
 static bool getMapQueue(XPriorityMapQueue* this_queue,XCircularQueue** getCq)
@@ -232,7 +240,8 @@ void VXPriorityQueue_pop(XPriorityMapQueue* this_queue)
 
 		//XQueueBase_pop_base(this_queue->low_freq_queue);
 	}
-
+	--XContainerSize(this_queue);
+	--XContainerCapacity(this_queue);
 	//if (this_queue->mapPriority)
 	//{
 	//	void* priorityMap = NULL;//遍历找到最高或最低的优先级
@@ -275,7 +284,7 @@ void* VXPriorityQueue_top(XPriorityMapQueue* this_queue)
 	}
 	else
 	{
-		uint8_t data= XQueueBase_top_base(this_queue->low_freq_queue);
+		uint8_t* data= XQueueBase_top_base(this_queue->low_freq_queue);
 		if(data==NULL)
 			return NULL;
 		return data + GetPrioritySize(this_queue);
@@ -287,6 +296,8 @@ bool VXPriorityQueue_receive(XPriorityMapQueue* this_queue, void* pvBuffer)
 	XCircularQueue* getCq = NULL;
 	if (getMapQueue(this_queue, &getCq))
 	{
+		--XContainerSize(this_queue);
+		--XContainerCapacity(this_queue);
 		return XQueueBase_receive_base(getCq, pvBuffer);
 	}
 	else
@@ -303,6 +314,9 @@ bool VXPriorityQueue_receive(XPriorityMapQueue* this_queue, void* pvBuffer)
 			this_queue->m_priorityDeinitMethod(data);
 		XQueueBase_pop_base(this_queue->low_freq_queue);
 		 //data + GetPrioritySize(this_queue);
+
+		--XContainerSize(this_queue);
+		--XContainerCapacity(this_queue);
 		return true;
 	}
 }
@@ -312,12 +326,12 @@ bool VXPriorityQueue_isFull(const XPriorityMapQueue* this_queue)
 	return false;
 }
 
-bool VXPriorityQueue_isEmpty(const XPriorityMapQueue* this_queue)
-{
-	if (getMapQueue(this_queue, NULL))
-		return false;
-	return XQueueBase_isEmpty_base(this_queue->low_freq_queue);
-}
+//bool VXPriorityQueue_isEmpty(const XPriorityMapQueue* this_queue)
+//{
+//	if (getMapQueue(this_queue, NULL))
+//		return false;
+//	return XQueueBase_isEmpty_base(this_queue->low_freq_queue);
+//}
 
 void VXClass_deinit(XPriorityMapQueue* this_queue)
 {
