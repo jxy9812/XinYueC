@@ -17,11 +17,15 @@ typedef struct XObject
     XClass m_parent;//父对象
     XEventDispatcher* m_eventDispatcher; // 事件调度器
     XSignalSlot* m_signalSlot;//信号与槽控制
+    XTimerBase* m_poolTimer;//轮询定时器
 }XObject;//
 XVtable* XObject_class_init();
 XObject* XObject_create();
 void XObject_init(XObject* object);
 void XObject_poll_base(XObject* object);
+void XObject_setPollingInterval(XObject* object,size_t interval);
+
+
 bool XObject_addEventFilter(XObject* object, int code, XEventCB cb,void* userData);
 bool XObject_removeEventFilter(XObject* object, int code);
 bool XObject_moveToThread(XObject* object, XThread* thread);

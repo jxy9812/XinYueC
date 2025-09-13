@@ -47,7 +47,8 @@ XVtable* XThread_class_init()
 
 
 // 线程函数包装器，用于调用事件调度器
-static DWORD WINAPI ThreadFunction(LPVOID lpParam) {
+static DWORD WINAPI ThreadFunction(LPVOID lpParam) 
+{
     XThread* Object = (XThread*)lpParam;
     //运行函数
     if (Object->m_start_routine)

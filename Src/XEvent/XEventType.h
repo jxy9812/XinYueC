@@ -28,12 +28,12 @@ typedef enum
 }XEventType;
 // 事件优先级
 typedef enum {
-    XEVENT_PRIORITY_LOWEST=0,
-    XEVENT_PRIORITY_LOW ,
-    XEVENT_PRIORITY_NORMAL,
-    XEVENT_PRIORITY_HIGH,
-    XEVENT_PRIORITY_HIGHEST,
-    XEVENT_PRIORITY_COUNT // 优先级数量
+    XEVENT_PRIORITY_LOWEST = 0,  // 最低优先级
+    XEVENT_PRIORITY_LOW,         // 低优先级
+    XEVENT_PRIORITY_NORMAL,      // 正常优先级
+    XEVENT_PRIORITY_HIGH,        // 高优先级
+    XEVENT_PRIORITY_HIGHEST,     // 最高优先级
+    XEVENT_PRIORITY_COUNT        // 优先级数量（用于计数）
 } XEventPriority;
 
 #ifdef __cplusplus

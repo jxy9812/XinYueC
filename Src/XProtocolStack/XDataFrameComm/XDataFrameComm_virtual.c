@@ -95,13 +95,14 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 
 void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 {
-	if (XIODeviceBase_getBytesAvailable_base(((XCommunicatorBase*)comm)->m_io) == 0)
-		return;//没有可以接收的
-	uint8_t           ucByte;
-	XIODeviceBase_read_base(comm->m_parent.m_io, &ucByte, 1);
-	XByteArray* recvVector = comm->m_parent.m_recvAsyncBuffer;
-	switch (comm->m_eRcvState)//if (mode == XDFC_FRAME_END_TIMEOUT)
+	while (XIODeviceBase_getBytesAvailable_base(((XCommunicatorBase*)comm)->m_io))
 	{
+		//return;//没有可以接收的
+		uint8_t           ucByte;
+		XIODeviceBase_read_base(comm->m_parent.m_io, &ucByte, 1);
+		XByteArray* recvVector = comm->m_parent.m_recvAsyncBuffer;
+		switch (comm->m_eRcvState)//if (mode == XDFC_FRAME_END_TIMEOUT)
+		{
 		case XDFC_STATE_RX_INIT:  // 初始状态（等待总线空闲）
 		{
 			if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
@@ -127,27 +128,27 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			{
 				//comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
 			}
-			
+
 		}
 		case XDFC_STATE_RX_IDLE:  // 空闲状态（接收到新帧起始字节）
 		{
-			XContainerSize(recvVector)=0;  // 重置接收缓冲区位置
+			XContainerSize(recvVector) = 0;  // 重置接收缓冲区位置
 			XVector_push_back_base(recvVector, &ucByte);  // 存储第一个字节
-			if (comm->m_recvFrameHead&&!XVector_isEmpty_base(comm->m_recvFrameHead))
+			if (comm->m_recvFrameHead && !XVector_isEmpty_base(comm->m_recvFrameHead))
 			{//存在接收帧头
 				if (memcmp(XContainerDataPtr(recvVector), XContainerDataPtr(comm->m_recvFrameHead), 1) != 0)
 				{//比较第一个
 					return;//第一个就不一样 重新来过
-					}
+				}
 				if (XContainerSize(comm->m_recvFrameHead) == 1)
-					{
-							comm->m_eRcvState = XDFC_STATE_RX_RCV;//切换到接收数据中
-						}
-						else
-						{
-							comm->m_eRcvState = XDFC_STATE_RX_HEAD;//切换到接收帧头中
-						}
-					}
+				{
+					comm->m_eRcvState = XDFC_STATE_RX_RCV;//切换到接收数据中
+				}
+				else
+				{
+					comm->m_eRcvState = XDFC_STATE_RX_HEAD;//切换到接收帧头中
+				}
+			}
 			else
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_RCV;//切换到接收数据中
@@ -162,12 +163,12 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-				XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0));
+				XDataFrameComm_sendEvent(comm, XEventMin_create(comm, XDFC_RX_BUFFER_OVERFLOW, 0));
 				return;
 			}
 			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
 			size_t size = XContainerSize(recvVector);
-			if (memcmp((uint8_t*)(XContainerDataPtr(recvVector)) + size - 1, ((uint8_t*)XContainerDataPtr(comm->m_recvFrameHead))+ size-1, 1) != 0)
+			if (memcmp((uint8_t*)(XContainerDataPtr(recvVector)) + size - 1, ((uint8_t*)XContainerDataPtr(comm->m_recvFrameHead)) + size - 1, 1) != 0)
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
 				return;//校验失败重新开始
@@ -186,38 +187,43 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-				XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0));
+				XDataFrameComm_sendEvent(comm, XEventMin_create(comm, XDFC_RX_BUFFER_OVERFLOW, 0));
 				return;
 			}
 			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
-
-			if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
-			{
-				XTimerBase_start_base(comm->m_timerRecvExpired);
-				return;
-			}
-			else if (comm->m_frameEndMode == XDFC_FRAME_END_MARKER)
-			{//检测结束标志
-				if (comm->m_recvFrameTail == NULL || XVector_isEmpty_base(comm->m_recvFrameTail))
-					{
-						XPrintf("当前设置是判断结束标志模式,但是未设置帧结束标志,程序无法知道帧结束\n"
-							"XDataFrameComm_setRecvFrameTail_base (设置接收帧尾)\n"
-							"XDataFrameComm_setFrameEndType_base (切换帧尾结束方式)\n");
-						exit(-1);
-						return;
-					}
-				size_t size = XContainerSize(comm->m_recvFrameTail);
-				if ((XContainerSize(recvVector) >= size) && memcmp((uint8_t*)(XContainerDataPtr(recvVector)) + XContainerSize(recvVector) - size, XContainerDataPtr(comm->m_recvFrameTail), size) == 0)
-					{//检测到帧结束标志
-						XContainerSize(recvVector) -= size;//缓冲区删除结束标志
-						if (XContainerSize(recvVector) != 0)
-							XDataFrameComm_recvValid(comm);
-						comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
-					}
-				}
 			break;
 		}
+		}
 	}
+	if (comm->m_eRcvState == XDFC_STATE_RX_RCV)
+	{
+		if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
+		{
+			XTimerBase_start_base(comm->m_timerRecvExpired);
+			//return;
+		}
+		else if (comm->m_frameEndMode == XDFC_FRAME_END_MARKER)
+		{//检测结束标志
+			if (comm->m_recvFrameTail == NULL || XVector_isEmpty_base(comm->m_recvFrameTail))
+			{
+				XPrintf("当前设置是判断结束标志模式,但是未设置帧结束标志,程序无法知道帧结束\n"
+					"XDataFrameComm_setRecvFrameTail_base (设置接收帧尾)\n"
+					"XDataFrameComm_setFrameEndType_base (切换帧尾结束方式)\n");
+				exit(-1);
+				return;
+			}
+			size_t size = XContainerSize(comm->m_recvFrameTail);
+			XByteArray* recvVector = comm->m_parent.m_recvAsyncBuffer;
+			if ((XContainerSize(recvVector) >= size) && memcmp((uint8_t*)(XContainerDataPtr(recvVector)) + XContainerSize(recvVector) - size, XContainerDataPtr(comm->m_recvFrameTail), size) == 0)
+			{//检测到帧结束标志
+				XContainerSize(recvVector) -= size;//缓冲区删除结束标志
+				if (XContainerSize(recvVector) != 0)
+					XDataFrameComm_recvValid(comm);
+				comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
+			}
+		}
+	}
+
 }
 void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 {
@@ -268,11 +274,11 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 				XIODeviceBase_writeFull_base(comm->m_parent.m_io);
 			}
 #if XDFC_SEND_FRAME_16HEX_SHOW
-			XString* str = XString_to16HexString(XContainerDataPtr(frame), XContainerSize(frame));
+			XByteArray* str = XByteArray_to16HexUtf8(frame);
 			if (str != NULL)
 			{
-				XPrintf("\n16进制发送帧:%s\n", XString_c_str(str));
-				XString_delete_base(str);
+				XPrintf("\n16进制发送帧:%s\n", XContainerDataPtr(str));
+				XByteArray_delete_base(str);
 			}
 #endif // 
 #if XDFC_SEND_FRAME_STR_SHOW
@@ -331,7 +337,7 @@ static void  RecvSendData(XDataFrameComm* comm)
 }
 void VXCommunicatorBase_poll(XDataFrameComm* comm)
 {
-	if (comm->m_state != XDFC_STATE_ENABLED)
+	if (comm->m_state != XDFC_STATE_ENABLED||!XIODeviceBase_isOpen_base(comm->m_parent.m_io))
 		return;//协议栈还未准备好
 	RecvSendData(comm);
 }
@@ -383,6 +389,7 @@ static void TimerSendExpired(XDataFrameComm* comm)
 {
 	//发完一帧数据总线等待
 	//if (comm->m_eSndState == XDFC_STATE_TX_END)
+	//XPrintf("发送完一帧数据\n");
 	{
 		comm->m_eSndState = XDFC_STATE_TX_IDLE;
 		XTimerBase_stop_base( comm->m_timerSendExpired);  // 关闭定时器
@@ -413,7 +420,7 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 			}
 			XTimerBase* timer = XTimerWheel_create();
 			XTimerBase_setTimerCallback_base(timer, TimerSendExpired);
-			XTimerBase_setUserData_user(timer, comm);
+			XTimerBase_setUserData_base(timer, comm);
 			XTimerBase_setAutoDelete(timer,false);
 			XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 			XTimerBase_setTimeout_base(timer, XDFC_HALF_DUPLEX_SEND_WAIT_TIME);
@@ -425,6 +432,7 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 }
 static void TimerRecvExpired(XDataFrameComm* comm)
 {  //接收超时等待
+	//XPrintf("超时\n");
 	switch (comm->m_eRcvState) {
 	case XDFC_STATE_RX_INIT:  // 初始状态超时（总线空闲，进入IDLE）
 		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_READY, 0));
@@ -462,10 +470,11 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 			}
 			XTimerBase* timer = XTimerWheel_create();
 			XTimerBase_setTimerCallback_base(timer, TimerRecvExpired);
-			XTimerBase_setUserData_user(timer, comm);
+			XTimerBase_setUserData_base(timer, comm);
 			XTimerBase_setAutoDelete(timer, false);
 			XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 			XTimerBase_setTimeout_base(timer, XDFC_FRAME_END_TIMEOUT_TIME);
+			XTimerBase_setInterval_base(timer, XDFC_FRAME_END_TIMEOUT_TIME);
 			comm->m_timerRecvExpired = timer;
 		}
 	}
@@ -546,7 +555,7 @@ XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data,
 	XTimerBase_setTimeout_base(timer, time);
 	XTimerBase_setInterval_base(timer, time);
 	XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
-	XTimerBase_setUserData_user(timer, node);
+	XTimerBase_setUserData_base(timer, node);
 	XTimerBase_setTimerCallback_base(timer, SendDataPeriodicCb);
 	XTimerBase_start_base(timer);
 	return node;

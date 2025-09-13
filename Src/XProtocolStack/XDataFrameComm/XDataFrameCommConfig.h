@@ -17,9 +17,9 @@ extern "C" {
 //接收缓冲区默认大小
 #define XDFC_RECV_BUFFER_SIZE						 (  1024 )
 //半双工下发送等待时间
-#define XDFC_HALF_DUPLEX_SEND_WAIT_TIME             (2)
+#define XDFC_HALF_DUPLEX_SEND_WAIT_TIME             (10)
 //一帧数据接收结束事件
-#define XDFC_FRAME_END_TIMEOUT_TIME					(2)
+#define XDFC_FRAME_END_TIMEOUT_TIME					(10)
 //主站接收返回超时时间 (ms)
 #define XDFC_MASTER_RECV_OUT_TIME					(  1000 )
 //是否完整的帧一起发送
@@ -27,11 +27,11 @@ extern "C" {
 //定期发送的帧是否要拷贝
 #define XDFC_SEND_FRAME_REGULARLY_COPY				 (  1 )
 //接收帧16进制显示
-#define XDFC_RECV_FRAME_16HEX_SHOW					 (  0 )
+#define XDFC_RECV_FRAME_16HEX_SHOW					 (  1 )
 //接收帧字符串显示
 #define XDFC_RECV_FRAME_STR_SHOW					 (  0 )
  //发送帧16进制显示
-#define XDFC_SEND_FRAME_16HEX_SHOW					 (  0 )
+#define XDFC_SEND_FRAME_16HEX_SHOW					 (  1 )
 //发送帧字符串显示
 #define XDFC_SEND_FRAME_STR_SHOW					 (  0 )
 //枚举可以转String

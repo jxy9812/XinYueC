@@ -264,7 +264,7 @@ static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize) {
     if (so == NULL || data == NULL || so->m_socket == INVALID_SOCKET) {
         return 0;
     }
-
+    //printf("%02X %d\n", *((uint8_t*)data), *((uint8_t*)data));
     size_t sent = 0;
     while (sent < maxSize) {
         int result = send(so->m_socket, data + sent, (int)(maxSize - sent), 0);
@@ -323,6 +323,7 @@ static size_t VXIODevice_getBytesAvailable(XSocket* so) {
     if (ioctlsocket(so->m_socket, FIONREAD, &bytesAvailable) == SOCKET_ERROR) {
         return 0;
     }
+    //if(bytesAvailable)XPrintf("可读取数据:%d\n", bytesAvailable);
     return (size_t)bytesAvailable;
 }
 

@@ -36,6 +36,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	}
 	XCommunicatorBase_recvAsync_base(comm, XDFC_RECV_BUFFER_SIZE);
 	comm->m_state = XDFC_STATE_NOT_INITIALIZED;
+	comm->m_sendMode = XDFC_SEND_MODE_WHOLE;
 
 	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XByteArray*, XDFC_FRAME_SEND_QUEUE_COUNT);
 	comm->m_periodicSendList = XListSLinked_Create(void*);
@@ -59,6 +60,14 @@ XDFC_ErrorCode XDataFrameComm_setFrameEndType_base(XDataFrameComm* comm, XDFC_Fr
 	if (ISNULL(comm, "") || ISNULL(XClassGetVtable(comm), ""))
 		return XDFC_EINVAL;
 	return XClassGetVirtualFunc(comm, EXDataFrameComm_SetFrameEndType, XDFC_ErrorCode(*)(XDataFrameComm*, XDFC_FrameEndType))(comm, mode);
+}
+
+XDFC_ErrorCode XDataFrameComm_setSendMode(XDataFrameComm* comm, XDFC_SendMode mode)
+{
+	if (comm->m_state == XDFC_STATE_ENABLED)
+		return XDFC_EILLSTATE;//协议栈启动中不支持修改
+	comm->m_sendMode = mode;
+	return XDFC_ENOERR;
 }
 
 XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XByteArray* data)
@@ -302,11 +311,11 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 			return;*/
 	//XPrintf("接收帧\n");
 #if XDFC_RECV_FRAME_16HEX_SHOW
-	XString* str = XString_to16HexString(XContainerDataPtr(frame), XContainerSize(frame));
+	XByteArray* str = XByteArray_to16HexUtf8(frame);
 	if (str != NULL)
 	{
-		XPrintf("\n16进制接收帧:%s\n", XString_c_str(str));
-		XString_delete_base(str);
+		XPrintf("\n16进制接收帧:%s\n", XContainerDataPtr(str));
+		XByteArray_delete_base(str);
 	}
 #endif // XDFC_RECV_FRAME_16HEX_SHOW
 #ifdef XDFC_RECV_FRAME_STR_SHOW

@@ -62,7 +62,7 @@ void XTimerBase_setInterval_base(XTimerBase* timer, size_t value)
 	/*if(timer->setInterval)
 		timer->setInterval(timer);*/
 }
-void XTimerBase_setUserData_user(XTimerBase* timer, void* userData)
+void XTimerBase_setUserData_base(XTimerBase* timer, void* userData)
 {
 	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
 		return;

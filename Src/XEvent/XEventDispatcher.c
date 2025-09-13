@@ -7,6 +7,7 @@
 #include "XCircularQueueAtomic.h"
 #include "XListSLinked.h"
 #include "XWaitCondition.h"
+#include "XPriorityMapQueue.h"
 
 // 事件回调结构
 typedef struct XEventCallback {
@@ -92,9 +93,11 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
     XClassGetVtable(dispatcher) = XEventDispatcher_class_init();
 
     // 初始化多个优先级事件队列（无锁环形队列）
-    for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) {
-        dispatcher->m_queues[i] = XCircularQueueAtomic_create(sizeof(XEventMin*), queueSize);
-    }
+    dispatcher->m_queue = XPriorityMapQueue_Create(sizeof(int), sizeof(XEventMin*),XCompare_int, XSORT_DESC);
+    int priority = XEVENT_PRIORITY_NORMAL;
+    XPriorityMapQueue_addFifoQueue(dispatcher->m_queue,&priority, queueSize);
+    priority = XEVENT_PRIORITY_HIGHEST;
+    XPriorityMapQueue_addFifoQueue(dispatcher->m_queue, &priority, queueSize);
 
     // 初始化事件过滤器映射表
     dispatcher->m_filter_cb = XHashMap_Create(XObject*, XHashMap*,
@@ -199,8 +202,10 @@ static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin*
     }
 
     // 将事件放入对应优先级的队列
-    bool success = XCircularQueueAtomic_push_base(dispatcher->m_queues[priority], &event);
-
+    int p = priority;
+    XMutex_lock(dispatcher->m_mutex);
+    bool success = XPriorityMapQueue_push_base(dispatcher->m_queue,&p, &event);
+    XMutex_unlock(dispatcher->m_mutex);
     // 如果成功加入队列，唤醒事件循环
     if (success) {
         VXEventDispatcher_wakeUp(dispatcher);
@@ -282,12 +287,26 @@ static bool VXEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, XObjec
  * @brief 处理事件队列中的事件
  * @param dispatcher 事件调度器
  */
-static void VXEventDispatcher_handler(XEventDispatcher* dispatcher) {
+static void VXEventDispatcher_handler(XEventDispatcher* dispatcher) 
+{
     if (!dispatcher) return;
-
+    XMutex_lock(dispatcher->m_mutex);
+    while (!XPriorityMapQueue_isEmpty_base(dispatcher->m_queue))
+    {
+        XEventMin* event = NULL;
+        if (XPriorityMapQueue_receive_base(dispatcher->m_queue, &event))
+        {
+            if (event) 
+            {
+                VXEventDispatcher_sendEvent(dispatcher, event);
+                XMemory_free(event);
+            }
+        }
+    }
+    XMutex_unlock(dispatcher->m_mutex);
     // 按优先级从高到低处理事件队列
-    for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) {
-        XCircularQueueAtomic* queue = dispatcher->m_queues[XEVENT_PRIORITY_COUNT-1-i];
+   /* for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) {
+        XCircularQueueAtomic* queue = dispatcher->m_queue[XEVENT_PRIORITY_COUNT-1-i];
         while (!XCircularQueueAtomic_isEmpty_base(queue)) {
             XEventMin* event = NULL;
             if (XCircularQueueAtomic_receive_base(queue, &event)) {
@@ -297,7 +316,7 @@ static void VXEventDispatcher_handler(XEventDispatcher* dispatcher) {
                 }
             }
         }
-    }
+    }*/
 
     // 处理其他任务（如定时器、套接字通知等）
     // ...
@@ -427,13 +446,20 @@ static void VXEventDispatcher_deinit(XEventDispatcher* dispatcher) {
     if (!dispatcher) return;
 
     // 释放所有事件队列
-    for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) {
-        if (dispatcher->m_queues[i]) {
-            // 清空队列并释放
-            XCircularQueueAtomic_clear_base(dispatcher->m_queues[i]);
-            XCircularQueueAtomic_delete_base(dispatcher->m_queues[i]);
-            dispatcher->m_queues[i] = NULL;
-        }
+    //for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) {
+    //    if (dispatcher->m_queue[i]) {
+    //        // 清空队列并释放
+    //        XCircularQueueAtomic_clear_base(dispatcher->m_queue[i]);
+    //        XCircularQueueAtomic_delete_base(dispatcher->m_queue[i]);
+    //        dispatcher->m_queue[i] = NULL;
+    //    }
+    //}
+    //先把事件处理完
+    if(dispatcher->m_queue)
+    {
+        VXEventDispatcher_handler(dispatcher);
+        XQueueBase_delete_base(dispatcher->m_queue);
+        dispatcher->m_queue = NULL;
     }
 
     // 清理事件过滤器

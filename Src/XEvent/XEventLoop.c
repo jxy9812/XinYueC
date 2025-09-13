@@ -261,13 +261,15 @@ static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsF
 static bool VXEventLoop_hasPendingEvents(XEventLoop* loop) {
     if (!loop) return false;
 
-    for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) 
+    /*for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) 
     {
-        if (loop->m_dispatcher->m_queues[i]&& !XQueueBase_isEmpty_base(loop->m_dispatcher->m_queues[i]))
+        if (loop->m_dispatcher->m_queue[i]&& !XQueueBase_isEmpty_base(loop->m_dispatcher->m_queue[i]))
         {
             return true;
         }
-    }
+    }*/
+    if (!XQueueBase_isEmpty_base(loop->m_dispatcher->m_queue))
+        return true;
     // 检查事件队列和定时器
     return XTimerGroupWheel_hasActiveTimers(loop->m_timerGroup);
 }

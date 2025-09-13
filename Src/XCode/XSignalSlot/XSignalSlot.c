@@ -164,7 +164,7 @@ static void Queued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_coun
 	if (ref_count)
 		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	//向接收者对象投递函数事件
-	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver,conn->slot_func,args,ref_count), XEVENT_PRIORITY_HIGH);
+	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver,conn->slot_func,args,ref_count), XEVENT_PRIORITY_NORMAL);
 }
 ////等待槽函数
 //static void waitSlot()

@@ -62,6 +62,7 @@ XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io);
 void XDataFrameComm_init(XDataFrameComm* comm,XIODeviceBase* io);
 XDFC_ErrorCode XDataFrameComm_setCommMode_base(XDataFrameComm* comm, XDFC_CommMode mode);
 XDFC_ErrorCode XDataFrameComm_setFrameEndType_base(XDataFrameComm* comm, XDFC_FrameEndType mode);
+XDFC_ErrorCode XDataFrameComm_setSendMode(XDataFrameComm* comm, XDFC_SendMode mode);
 //发送数据
 XDFC_ErrorCode XDataFrameComm_sendData_base(XDataFrameComm* comm, XByteArray* data);
 //发送字符串

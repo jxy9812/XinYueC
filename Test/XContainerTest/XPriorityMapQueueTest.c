@@ -13,16 +13,17 @@ static void XPriorityMapQueueTest();
 void XPriorityMapQueueTest()
 {
 	XPrintf("XPriorityMapQueue 测试\n");
-	while (true)
+	//while (true)
 	{
 		XPriorityMapQueue* queue = XPriorityMapQueue_Create(int, int, XCompare_int, XSORT_ASC);
 		int p = 1;
 		XPriorityMapQueue_addFifoQueue(queue,&p,10);
-		XPriorityMapQueue_removeFifoQueue(queue, &p);
+		//XPriorityMapQueue_removeFifoQueue(queue, &p);
 		int array[] = { 0,1,2,3,4,5,6,7,8,9 };
 		for (size_t i = 0; i < sizeof(array) / sizeof(array[0]); i++)
 		{
-			XPriorityMapQueue_push_base(queue, &p, array + i);
+			XPriorityMapQueue_addFifoQueue(queue, array + i, 10);
+			XPriorityMapQueue_push_base(queue, array + i, array + i);
 		}
 		while (!XQueue_isEmpty_base(queue))
 		{

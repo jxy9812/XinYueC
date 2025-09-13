@@ -26,7 +26,7 @@ void XTimerWheel_init(XTimerWheel* timer);
 //设置定时时间
 #define XTimerWheel_setTimeout_base XTimerBase_setTimeout_base
 #define XTimerWheel_setInterval_base XTimerBase_setInterval_base
-#define XTimerWheel_setUserData XTimerBase_setUserData_user
+#define XTimerWheel_setUserData XTimerBase_setUserData_base
 #define XTimerWheel_setTimerCallback XTimerBase_setTimerCallback_base
 #define XTimerWheel_setGroup XTimerBase_setTimerId
 // 是否为周期性任务

@@ -307,9 +307,13 @@ bool VXPriorityQueue_receive(XPriorityMapQueue* this_queue, void* pvBuffer)
 	XCircularQueue* getCq = NULL;
 	if (getMapQueue(this_queue, &getCq))
 	{
-		--XContainerSize(this_queue);
-		--XContainerCapacity(this_queue);
-		return XQueueBase_receive_base(getCq, pvBuffer);
+		if(XQueueBase_receive_base(getCq, pvBuffer))
+		{
+			--XContainerSize(this_queue);
+			--XContainerCapacity(this_queue);
+			return true;
+		}
+		return false;
 	}
 	else
 	{

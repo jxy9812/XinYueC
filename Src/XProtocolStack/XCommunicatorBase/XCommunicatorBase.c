@@ -12,7 +12,7 @@ void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io)
     comm->m_timerGroup = XThread_currentTimerGroup();
     //comm->m_timerGroup = XTimerGroupWheel_create(1);
     //comm->m_opt_timeout = ~(comm->m_opt_timeout);//取反最大值
-  
+    XObject_setPollingInterval(comm, 2);
 }
 
 void XCommunicatorBase_setTimerGroup_base(XCommunicatorBase* comm, XTimerGroupBase* group)

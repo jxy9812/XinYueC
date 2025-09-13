@@ -7,6 +7,7 @@
 #include "XSignalSlot.h"
 #include "XEventDispatcher.h"
 #include "XMapBase.h"
+#include "XTimerWheel.h"
 #include <stdarg.h>
 static void VXObject_poll(XObject* object);
 static void VXObject_deinit(XObject* object);
@@ -52,6 +53,9 @@ void XObject_init(XObject* object)
 	//信号与槽初始化
 	object->m_signalSlot = NULL;
 	XObject_addEventFilter(object, XEVENT_SLOT_RUN, XEventSlotFuncRunCB, NULL);
+
+	//定时器
+	object->m_poolTimer = NULL;
 }
 
 void XObject_poll_base(XObject* object)
@@ -59,6 +63,30 @@ void XObject_poll_base(XObject* object)
 	if (ISNULL(object, "") || ISNULL(XClassGetVtable(object), ""))
 		return;
 	XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*))(object);
+}
+
+void XObject_setPollingInterval(XObject* object, size_t interval)
+{
+	if (object == NULL)
+		return;
+	if (interval == 0&& object->m_poolTimer)
+	{//关闭轮询
+		XTimerBase_delete_base(object->m_poolTimer);
+		object->m_poolTimer = NULL;
+		return;
+	}
+	if (object->m_poolTimer == NULL)
+	{
+		object->m_poolTimer = XTimerWheel_create();
+		XTimerBase_setAutoDelete(object->m_poolTimer,false);
+		XTimerBase_setTimerCallback_base(object->m_poolTimer,XObject_poll_base);
+		XTimerBase_setUserData_base(object->m_poolTimer,object);
+		XTimerBase_setSingleShote(object->m_poolTimer, false);
+		XTimerBase_setTimerGroup(object->m_poolTimer, XThread_currentTimerGroup());
+	}
+	XTimerBase_setTimeout_base(object->m_poolTimer, interval);
+	XTimerBase_setInterval_base(object->m_poolTimer, interval);
+	XTimerBase_start_base(object->m_poolTimer);
 }
 
 bool XObject_addEventFilter(XObject* object, int code, XEventCB cb, void* userData)
@@ -185,5 +213,10 @@ void VXObject_deinit(XObject* object)
 	{
 		XSignalSlot_delete(object->m_signalSlot);
 		object->m_signalSlot = NULL;
+	}
+	if (object->m_poolTimer)
+	{
+		XTimerBase_delete_base(object->m_poolTimer);
+		object->m_poolTimer = NULL;
 	}
 }

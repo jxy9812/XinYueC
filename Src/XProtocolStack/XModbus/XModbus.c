@@ -3,10 +3,11 @@
 #include "XModbusConfig.h"
 #include "XModbusProto.h"
 #include "XCircularQueueAtomic.h"
-#include"XEventDispatcher.h"
+#include "XEventDispatcher.h"
 #include "XTimerWheel.h"
 #include "XSerialPort.h"
 #include "XMapBase.h"
+#include "XByteArray.h"
 #include <string.h>
 
 static void XModbus_EvnetHandCb(XEventMin* event);
@@ -223,11 +224,11 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 	XEventRecvFrame* ev = event;
 	XByteArray* frame = ev->frame;
 #if XMB_RECV_FRAME_16HEX_SHOW
-	XString* str = XString_to16HexString(XContainerDataPtr(frame), XContainerSize(frame));
+	XByteArray* str = XByteArray_to16HexUtf8(frame);
 	if (str != NULL)
 	{
-		printf("\n16进制接收帧:%s\n", XString_c_str(str));
-		XString_delete_base(str);
+		XPrintf("\n16进制接收帧:%s\n", XContainerDataPtr(str));
+		XByteArray_delete_base(str);
 	}
 #endif // XDFC_RECV_FRAME_16HEX_SHOW
 #if XMB_RECV_FRAME_STR_SHOW

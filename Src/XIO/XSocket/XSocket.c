@@ -15,6 +15,8 @@ void XSocketBase_init(XSocketBase* socket)
    
     socket->m_peerName = XString_create_utf8(NULL);
     socket->m_peerAddress = XString_create_utf8(NULL);
+
+    XObject_setPollingInterval(socket,100);
 }
 
 void XSocket_connectToHost_base(XSocketBase* socket, const char* hostName, uint16_t port, XIODeviceBaseMode mode)

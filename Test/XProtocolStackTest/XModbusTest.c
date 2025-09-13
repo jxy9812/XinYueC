@@ -13,6 +13,7 @@
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
+#include"XTimerBase.h"
 static deinit_slot(XObject* sender, XObject* receiver, void* args)
 {
     XPrintf("sender:%p receiver:%p 串口释放\n",sender,receiver);
@@ -50,6 +51,7 @@ void XModbusTest()
     XSerialPort_delete_base(serial);
     
     XModbus* modbus = XModbus_create_RTU(socket,NULL,NULL);
+    //XDataFrameComm_setSendMod();
     XModbus_setAddress(modbus,2);
     XModbus_setMode(modbus, XMB_RTU_MASTER);
     //XModbus_setRecvHandMode(modbus, XMB_RecvHand_CodeOnly);
@@ -119,7 +121,7 @@ void XModbusTest()
         XMODBUS_UINT8_SET_BITS(&State, 7, 1);
 
         XModbusFrameRTU_setFrameData_0x0F_request(frame, 0x01,0x0, 8, &State);
-        //XModbus_sendData_base(modbus, frame);
+        XModbus_sendData_base(modbus, frame);
     }
     {
         XVector* frame = XVector_Create(uint8_t);
@@ -136,6 +138,7 @@ void XModbusTest()
         XCoreApplication_requestQuit();
         return;
     }
+    //XTimerBase_delay_ms(100);
 }
 
 

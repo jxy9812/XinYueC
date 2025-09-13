@@ -52,7 +52,7 @@ typedef struct XSocketNotifier {
  */
 typedef struct XEventDispatcher {
     XClass m_parent;                    // 父类
-    XCircularQueueAtomic* m_queues[XEVENT_PRIORITY_COUNT];       // 多个优先级的事件队列
+    XPriorityMapQueue* m_queue;         // 多个优先级的事件队列
     XMapBase* m_filter_cb;              // 事件过滤器映射表
     XListSLinked* m_socketNotifiers;    // 套接字通知器列表
     XMutex* m_mutex;                    // 互斥锁，保证线程安全
