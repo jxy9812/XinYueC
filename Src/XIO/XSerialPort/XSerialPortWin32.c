@@ -316,6 +316,7 @@ void VXIODevice_close(XSerialPort* serial)
     XIODeviceBase* io = (XIODeviceBase*)serial;
     if (XIODeviceBase_isOpen_base(io))
     { //开始关闭串口
+        XIODeviceBase_aboutToClose_signal(io);
         // 1. 取消所有未完成的异步操作
         if (!CancelIoEx(serial->m_hSerial, &(serial->m_ov)))
         {
@@ -340,6 +341,7 @@ void VXIODevice_poll(XSerialPort* serial)
 {
     if (serial == NULL)
         return ;
+    if (VXIODevice_getBytesAvailable(serial))XIODeviceBase_readyRead_signal(serial);
    // char buff[1024];
    // size_t bytesRead =XSerialPort_read(serial, buff,1024);
     //将接收到的数据保存到缓冲区

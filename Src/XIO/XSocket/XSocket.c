@@ -4,7 +4,7 @@
 #include"XEvent.h"
 #include"XEventDispatcher.h"
 #include<string.h>
-#include <stdarg.h>
+#include<stdarg.h>
 
 void XSocketBase_init(XSocketBase* socket)
 {
@@ -124,9 +124,9 @@ void* XSocket_stateChanged_signal(XSocket* socket, ...)
     {
         va_list args;
         va_start(args, socket);  // 通过最后一个固定参数n定位可变参数
-        XSocketState num = va_arg(args, XSocketState);
+        XSocketState state = va_arg(args, XSocketState);
         va_end(args);
-        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_stateChanged_signal, (size_t)num);
+        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_stateChanged_signal, (size_t)state);
     }
     return XSocket_stateChanged_signal;
 }

@@ -1,0 +1,466 @@
+﻿#ifdef __linux__ || defined(__APPLE__) || defined(__BSD__)
+#include "XSocketPosix.h"
+#include "XMemory.h"
+#include "XString.h"
+#include "XEvent.h"
+#include "XTimerBase.h"
+#include "XEventDispatcher.h"
+#include "XPrintf.h"
+#include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <netdb.h>
+#include <poll.h>
+#include <arpa/inet.h>
+#include <errno.h>
+
+// 前向声明所有虚函数
+static void VXSocketBase_connectToHost(XSocket * so, const char* hostName, uint16_t port, XIODeviceBaseMode mode);
+static void VXSocketBase_disconnectFromHost(XSocketBase* so);
+static void VXSocketBase_waitForConnected(XSocketBase* so, int msecs);
+static void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs);
+static const char* VXSocketBase_localAddress(XSocket* so);
+static uint16_t VXSocketBase_localPort(XSocket* so);
+static void VXIODevice_poll(XSocket* so);
+static bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode);
+static bool VXIODevice_isOpen(XSocket* so);
+static bool VXIODevice_close(XSocket* so);
+static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize);
+static size_t VXIODevice_writeFull(XSocket* so);
+static size_t VXIODevice_read(XSocket* so, char* data, size_t maxSize);
+static size_t VXIODevice_getBytesAvailable(XSocket* so);
+static size_t VXIODeviceBase_getBytesToWrite(XSocket* so);
+static bool VXIODeviceBase_atEnd(XSocket* so);
+static void VXIODevice_setWriteBuffer(XSocket* so, size_t count);
+static void VXIODevice_setReadBuffer(XSocket* so, size_t count);
+static void VXIODevice_deinit(XSocket* so);
+
+XVtable* XSocket_class_init()
+{
+    XVTABLE_CREAT_DEFAULT
+#if VTABLE_ISSTACK
+        XVTABLE_STACK_INIT_DEFAULT(XSOCKETBASE_VTABLE_SIZE)
+#else
+        XVTABLE_HEAP_INIT_DEFAULT
+#endif
+        // 继承父类虚函数表
+        XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
+
+    void* table[] = {
+        VXSocketBase_connectToHost,
+        VXSocketBase_disconnectFromHost,
+        VXSocketBase_waitForConnected,
+        VXSocketBase_waitForDisconnected,
+        VXSocketBase_localAddress,
+        VXSocketBase_localPort
+    };
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+
+    // 重载IO设备虚函数
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXIODevice_poll);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXIODevice_open);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_IsOpen, VXIODevice_isOpen);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXIODevice_close);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write, VXIODevice_write);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_WriteFull, VXIODevice_writeFull);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read, VXIODevice_read);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesAvailable, VXIODevice_getBytesAvailable);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesToWrite, VXIODeviceBase_getBytesToWrite);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_AtEnd, VXIODeviceBase_atEnd);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
+
+#if SHOWCONTAINERSIZE
+    XPrintf("XSocket(Linux) size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
+    return XVTABLE_DEFAULT;
+}
+
+XSocket* XSocket_create()
+{
+    XSocket* so = XMemory_malloc(sizeof(XSocket));
+    XSocket_init(so);
+    return so;
+}
+
+void XSocket_init(XSocket* so)
+{
+    if (so == NULL)
+        return;
+    memset(((XSocketBase*)so) + 1, 0, sizeof(XSocket) - sizeof(XSocketBase));
+    XSocketBase_init((XSocketBase*)so);
+    XClassGetVtable(so) = XSocket_class_init();
+
+    // 初始化Linux socket成员
+    so->m_socket = -1;
+    so->m_addrInfo = NULL;
+    so->m_pollfd.fd = -1;
+    so->m_pollfd.events = 0;
+    so->m_pollfd.revents = 0;
+    so->m_netEvents = 0;
+}
+
+static bool create_socket(XSocket* so)
+{
+    int domain = AF_INET;
+    int type = (XSocket_socketType((XSocketBase*)so) == XSOCKET_TYPE_TCP) ? SOCK_STREAM : SOCK_DGRAM;
+    int protocol = (XSocket_socketType((XSocketBase*)so) == XSOCKET_TYPE_TCP) ? IPPROTO_TCP : IPPROTO_UDP;
+
+    // 如果需要IPv6支持，这里可以添加判断
+    if (((XSocketBase*)so)->m_ipv6Enabled) {
+        domain = AF_INET6;
+    }
+
+    so->m_socket = socket(domain, type | SOCK_NONBLOCK, protocol);
+    if (so->m_socket == -1) {
+        return false;
+    }
+
+    so->m_pollfd.fd = so->m_socket;
+    return true;
+}
+
+static void VXSocketBase_connectToHost(XSocket* so, const char* hostName, uint16_t port, XIODeviceBaseMode mode)
+{
+    if (XSocket_state((XSocketBase*)so) != XSOCKET_UNCONNECTED_STATE || !hostName)
+        return;
+
+    XSocketBase* base = (XSocketBase*)so;
+    XString_clear_base(base->m_peerName);
+    XString_append_utf8(base->m_peerName, hostName);
+    base->m_peerPort = port;
+
+    // 创建socket
+    if (!create_socket(so)) {
+        return;
+    }
+
+    // 解析主机名
+    struct addrinfo hints, * res;
+    char portStr[6];
+    snprintf(portStr, sizeof(portStr), "%hu", port);
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = base->m_ipv6Enabled ? AF_UNSPEC : AF_INET;
+    hints.ai_socktype = (base->m_socketType == XSOCKET_TYPE_TCP) ? SOCK_STREAM : SOCK_DGRAM;
+
+    if (getaddrinfo(hostName, portStr, &hints, &res) != 0) {
+        close(so->m_socket);
+        so->m_socket = -1;
+        return;
+    }
+
+    so->m_addrInfo = res;
+    base->m_state = XSOCKET_CONNECTING_STATE;
+    XSocket_stateChanged_signal(so, base->m_state);
+
+    // 发起非阻塞连接
+    if (connect(so->m_socket, res->ai_addr, res->ai_addrlen) == -1) {
+        if (errno != EINPROGRESS && errno != EWOULDBLOCK) {
+            freeaddrinfo(res);
+            so->m_addrInfo = NULL;
+            close(so->m_socket);
+            so->m_socket = -1;
+            base->m_state = XSOCKET_UNCONNECTED_STATE;
+            XSocket_stateChanged_signal(so, base->m_state);
+            return;
+        }
+    }
+
+    XIODeviceBase_open_base((XIODeviceBase*)so, mode);
+}
+
+static void VXSocketBase_disconnectFromHost(XSocketBase* so)
+{
+    if (so && so->m_state != XSOCKET_UNCONNECTED_STATE) {
+        VXIODevice_close((XSocket*)so);
+    }
+}
+
+static void VXSocketBase_waitForConnected(XSocketBase* so, int msecs)
+{
+    if (!so || so->m_state != XSOCKET_CONNECTING_STATE) return;
+
+    XSocket* linuxSo = (XSocket*)so;
+    if (linuxSo->m_socket == -1) return;
+
+    struct pollfd pfd;
+    pfd.fd = linuxSo->m_socket;
+    pfd.events = POLLOUT;
+    pfd.revents = 0;
+
+    int ret = poll(&pfd, 1, msecs);
+    if (ret <= 0) {
+        // 超时或错误
+        return;
+    }
+
+    if (pfd.revents & POLLOUT) {
+        // 检查连接是否成功
+        int error = 0;
+        socklen_t len = sizeof(error);
+        if (getsockopt(linuxSo->m_socket, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+            so->m_state = XSOCKET_CONNECTED_STATE;
+            XSocket_stateChanged_signal(linuxSo, so->m_state);
+            XSocket_connected_signal(linuxSo);
+        }
+        else {
+            so->m_state = XSOCKET_UNCONNECTED_STATE;
+            XSocket_stateChanged_signal(linuxSo, so->m_state);
+        }
+    }
+}
+
+static void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs)
+{
+    if (!so || so->m_state == XSOCKET_UNCONNECTED_STATE) return;
+
+    XSocket* linuxSo = (XSocket*)so;
+    if (linuxSo->m_socket == -1) return;
+
+    struct pollfd pfd;
+    pfd.fd = linuxSo->m_socket;
+    pfd.events = POLLIN | POLLRDHUP;
+    pfd.revents = 0;
+
+    int ret = poll(&pfd, 1, msecs);
+    if (ret <= 0) {
+        return;
+    }
+
+    if (pfd.revents & (POLLRDHUP | POLLHUP | POLLERR)) {
+        so->m_state = XSOCKET_UNCONNECTED_STATE;
+        XSocket_stateChanged_signal(linuxSo, so->m_state);
+        XSocket_disconnected_signal(linuxSo);
+    }
+}
+
+static const char* VXSocketBase_localAddress(XSocket* so)
+{
+    XSocketBase* base = (XSocketBase*)so;
+    if (!so || so->m_socket == -1) return NULL;
+
+    static char localIP[46];
+    struct sockaddr_storage localAddr;
+    socklen_t addrLen = sizeof(localAddr);
+
+    if (getsockname(so->m_socket, (struct sockaddr*)&localAddr, &addrLen) == -1) {
+        return NULL;
+    }
+
+    if (localAddr.ss_family == AF_INET) {
+        struct sockaddr_in* ipv4 = (struct sockaddr_in*)&localAddr;
+        inet_ntop(AF_INET, &ipv4->sin_addr, localIP, sizeof(localIP));
+    }
+    else if (localAddr.ss_family == AF_INET6) {
+        struct sockaddr_in6* ipv6 = (struct sockaddr_in6*)&localAddr;
+        inet_ntop(AF_INET6, &ipv6->sin6_addr, localIP, sizeof(localIP));
+    }
+    else {
+        return NULL;
+    }
+
+    return localIP;
+}
+
+static uint16_t VXSocketBase_localPort(XSocket* so)
+{
+    if (!so || so->m_socket == -1) return 0;
+
+    struct sockaddr_storage localAddr;
+    socklen_t addrLen = sizeof(localAddr);
+
+    if (getsockname(so->m_socket, (struct sockaddr*)&localAddr, &addrLen) == -1) {
+        return 0;
+    }
+
+    if (localAddr.ss_family == AF_INET) {
+        struct sockaddr_in* ipv4 = (struct sockaddr_in*)&localAddr;
+        return ntohs(ipv4->sin_port);
+    }
+    else if (localAddr.ss_family == AF_INET6) {
+        struct sockaddr_in6* ipv6 = (struct sockaddr_in6*)&localAddr;
+        return ntohs(ipv6->sin6_port);
+    }
+
+    return 0;
+}
+
+static bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
+{
+    if (!so || so->m_socket != -1) return false;
+    // 已经在connectToHost中创建了socket，这里只设置模式
+    ((XIODeviceBase*)so)->m_mode = mode;
+    return true;
+}
+
+static bool VXIODevice_isOpen(XSocket* so)
+{
+    return so && so->m_socket != -1;
+}
+
+static bool VXIODevice_close(XSocket* so)
+{
+    if (!so || so->m_socket == -1) return false;
+
+    close(so->m_socket);
+    so->m_socket = -1;
+    so->m_pollfd.fd = -1;
+
+    if (so->m_addrInfo) {
+        freeaddrinfo(so->m_addrInfo);
+        so->m_addrInfo = NULL;
+    }
+
+    XSocketBase* base = (XSocketBase*)so;
+    if (base->m_state != XSOCKET_UNCONNECTED_STATE) {
+        base->m_state = XSOCKET_UNCONNECTED_STATE;
+        XSocket_stateChanged_signal(so, base->m_state);
+        XSocket_disconnected_signal(so);
+    }
+
+    ((XIODeviceBase*)so)->m_mode = XIODeviceBaseNotOpen;
+    return true;
+}
+
+static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize)
+{
+    if (!so || !data || so->m_socket == -1) return 0;
+
+    ssize_t sent = send(so->m_socket, data, maxSize, 0);
+    if (sent == -1) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            // 发生错误，关闭连接
+            VXIODevice_close(so);
+        }
+        return 0;
+    }
+    // 发送完成后，触发 bytesWritten 信号，传递实际写入的字节数
+    if (sent > 0) {
+        // 将 XSocket 转换为父类 XIODeviceBase 指针，调用信号函数
+        XIODeviceBase_bytesWritten_signal((XIODeviceBase*)so, sent);
+    }
+    return (size_t)sent;
+}
+
+static size_t VXIODevice_writeFull(XSocket* so)
+{
+    // 简单实现，实际可能需要处理缓冲
+    return 0;
+}
+
+static size_t VXIODevice_read(XSocket* so, char* data, size_t maxSize)
+{
+    if (!so || !data || so->m_socket == -1) return 0;
+
+    ssize_t recvd = recv(so->m_socket, data, maxSize, 0);
+    if (recvd == -1) {
+        if (errno != EAGAIN && errno != EWOULDBLOCK) {
+            VXIODevice_close(so);
+        }
+        return 0;
+    }
+    else if (recvd == 0) {
+        // 连接关闭
+        VXIODevice_close(so);
+        return 0;
+    }
+    return (size_t)recvd;
+}
+
+static size_t VXIODevice_getBytesAvailable(XSocket* so)
+{
+    if (!so || so->m_socket == -1) return 0;
+
+    int available;
+    socklen_t len = sizeof(available);
+    if (getsockopt(so->m_socket, SOL_SOCKET, SO_RCVBUF, &available, &len) == -1) {
+        return 0;
+    }
+    return (size_t)available;
+}
+
+static size_t VXIODeviceBase_getBytesToWrite(XSocket* so)
+{
+    if (!so || so->m_socket == -1) return 0;
+
+    int pending;
+    socklen_t len = sizeof(pending);
+    if (getsockopt(so->m_socket, SOL_SOCKET, SO_SNDBUF, &pending, &len) == -1) {
+        return 0;
+    }
+    return (size_t)pending;
+}
+
+static bool VXIODeviceBase_atEnd(XSocket* so)
+{
+    return !VXIODevice_isOpen(so) && VXIODevice_getBytesAvailable(so) == 0;
+}
+
+static void VXIODevice_setWriteBuffer(XSocket* so, size_t count)
+{
+    if (so && so->m_socket != -1) {
+        int bufSize = (int)count;
+        setsockopt(so->m_socket, SOL_SOCKET, SO_SNDBUF, &bufSize, sizeof(bufSize));
+    }
+}
+
+static void VXIODevice_setReadBuffer(XSocket* so, size_t count)
+{
+    if (so && so->m_socket != -1) {
+        int bufSize = (int)count;
+        setsockopt(so->m_socket, SOL_SOCKET, SO_RCVBUF, &bufSize, sizeof(bufSize));
+    }
+}
+
+static void VXIODevice_poll(XSocket* so)
+{
+    if (!so || so->m_socket == -1) return;
+
+    so->m_pollfd.events = 0;
+    if (((XIODeviceBase*)so)->m_mode & XIODeviceBaseReadMode) {
+        so->m_pollfd.events |= POLLIN;
+    }
+    if (((XIODeviceBase*)so)->m_mode & XIODeviceBaseWriteMode) {
+        so->m_pollfd.events |= POLLOUT;
+    }
+
+    int ret = poll(&so->m_pollfd, 1, 0);
+    if (ret <= 0) return;
+
+    XSocketBase* base = (XSocketBase*)so;
+    if (so->m_pollfd.revents & POLLOUT) {
+        if (base->m_state == XSOCKET_CONNECTING_STATE) {
+            // 检查连接结果
+            int error = 0;
+            socklen_t len = sizeof(error);
+            if (getsockopt(so->m_socket, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+                base->m_state = XSOCKET_CONNECTED_STATE;
+                XSocket_stateChanged_signal(so, base->m_state);
+                XSocket_connected_signal(so);
+            }
+            else {
+                base->m_state = XSOCKET_UNCONNECTED_STATE;
+                XSocket_stateChanged_signal(so, base->m_state);
+            }
+        }
+    }
+
+    if (so->m_pollfd.revents & (POLLIN | POLLPRI)) {
+        // 数据可读，触发读事件（可根据需要添加信号发射）
+    }
+
+    if (so->m_pollfd.revents & (POLLERR | POLLHUP | POLLRDHUP)) {
+        // 连接错误或关闭
+        VXIODevice_close(so);
+    }
+}
+
+static void VXIODevice_deinit(XSocket* so)
+{
+    if (!so) return;
+    VXIODevice_close(so);
+    XMemory_free(so);
+}
+
+#endif

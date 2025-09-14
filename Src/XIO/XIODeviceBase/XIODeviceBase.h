@@ -68,7 +68,10 @@ bool XIODeviceBase_close_base(XIODeviceBase* io);
 //将剩余的数据刷入设备   需重载
 size_t XIODeviceBase_writeFull_base(XIODeviceBase* io);
 #define XIODeviceBase_poll_base   XObject_poll_base    
-
+/*                                              信号  ·                   */
+void* XIODeviceBase_aboutToClose_signal(XIODeviceBase* io);
+void* XIODeviceBase_readyRead_signal(XIODeviceBase* io);
+void* XIODeviceBase_bytesWritten_signal(XIODeviceBase* io,...);//size_t bytes
 #ifdef __cplusplus
 }
 #endif

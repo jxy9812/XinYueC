@@ -1,0 +1,31 @@
+﻿#ifdef __linux__ || defined(__APPLE__) || defined(__BSD__)
+#ifndef XSOCKETPOSIX_H
+#define XSOCKETPOSIX_H
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include "XSocket.h"
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+typedef struct XSocket
+{
+    XSocketBase m_parent;       // 父对象
+    int         m_socket;       // Linux socket描述符
+    struct addrinfo* m_addrInfo;// 地址信息
+    struct pollfd m_pollfd;     // 轮询事件结构
+    short       m_netEvents;    // 网络事件掩码
+} XSocket;
+
+// 初始化类
+XVtable* XSocket_class_init();
+// 创建套接字
+XSocket* XSocket_create();
+// 初始化套接字
+void XSocket_init(XSocket* socket);
+
+#ifdef __cplusplus
+}
+#endif
+#endif
+#endif

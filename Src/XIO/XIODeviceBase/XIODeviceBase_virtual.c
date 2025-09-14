@@ -169,6 +169,7 @@ bool VXIODeviceBase_atEnd(XIODeviceBase* io)
 bool VXIODevice_close(XIODeviceBase* io)
 {
 	XIODeviceBase_writeFull_base(io);
+	XIODeviceBase_aboutToClose_signal(io);
 	return true;
 }
 

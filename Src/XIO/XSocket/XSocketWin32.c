@@ -1,5 +1,6 @@
 ﻿#ifdef WIN32
 #include "XSocketWin32.h"
+#include "XCircularQueue.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XEvent.h"
@@ -280,6 +281,11 @@ static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize) {
         }
         sent += result;
     }
+    // 发送完成后，触发 bytesWritten 信号，传递实际写入的字节数
+    if (sent > 0) {
+        // 将 XSocket 转换为父类 XIODeviceBase 指针，调用信号函数
+        XIODeviceBase_bytesWritten_signal((XIODeviceBase*)so, sent);
+    }
     return sent;
 }
 
@@ -289,8 +295,60 @@ static size_t VXIODevice_writeFull(XSocket* so) {
         return 0;
     }
 
-    // 这里假设没有额外的缓冲区需要刷新，直接返回 0
-    return 0;
+    XIODeviceBase* io = (XIODeviceBase*)so; // 转换为父类IO设备指针
+    XCircularQueue* writeBuffer = io->m_writeBuffer;
+
+    // 缓冲区不存在或为空，直接返回
+    if (writeBuffer == NULL || XCircularQueue_isEmpty_base(writeBuffer)) {
+        return 0;
+    }
+
+    size_t totalSent = 0; // 总发送字节数
+    size_t elemSize = XCircularQueue_typeSize_base(writeBuffer); // 单个元素的大小
+    char* elemBuffer = XMemory_malloc(elemSize); // 临时存储单个元素
+    if (elemBuffer == NULL) {
+        return 0;
+    }
+
+    // 循环发送缓冲区中的所有元素
+    while (!XCircularQueue_isEmpty_base(writeBuffer)) {
+        // 读取队头元素（不移除，用于发送）
+        void* topElem = XCircularQueue_top_base(writeBuffer);
+        if (topElem == NULL) {
+            break; // 队头为空，退出循环
+        }
+
+        // 发送元素数据
+        size_t sent = 0;
+        while (sent < elemSize) {
+            int result = send(so->m_socket, (char*)topElem + sent, (int)(elemSize - sent), 0);
+            if (result == SOCKET_ERROR) {
+                int err = WSAGetLastError();
+                if (err == WSAEWOULDBLOCK) {
+                    // 非阻塞模式下暂时无法发送，等待10ms后重试
+                    Sleep(10);
+                    continue;
+                }
+                else {
+                    // 其他错误：释放资源并返回已发送字节数
+                    XPrintf("发送失败，错误码: %d\n", err);
+                    XMemory_free(elemBuffer);
+                    return totalSent;
+                }
+            }
+            sent += result;
+        }
+
+        // 发送成功：移除队头元素，累计总发送量
+        XCircularQueue_pop_base(writeBuffer);
+        totalSent += elemSize;
+
+        // 触发 bytesWritten 信号，通知本次发送的字节数
+        XIODeviceBase_bytesWritten_signal(io, elemSize);
+    }
+
+    XMemory_free(elemBuffer);
+    return totalSent;
 }
 
 // 读取数据
@@ -493,8 +551,10 @@ void VXIODevice_poll(XSocket* so)
             XSocket_disconnected_signal(so);
         }
 
-        if (netEvents->lNetworkEvents & FD_READ) {
+        if (netEvents->lNetworkEvents & FD_READ) 
+        {
             // 有数据可读
+            XIODeviceBase_readyRead_signal(so);
             //XEventMin* event = XEventMin_create(so, XEVENT_SOCKET_DATA_READY, XTimerBase_getCurrentTime());
             ////event->userData = eventData;
             //XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
@@ -706,9 +766,9 @@ bool VXIODevice_isOpen(XSocket* so)
 }
 bool VXIODevice_close(XSocket* so)
 {
-    if (!so || !XIODeviceBase_isOpen_base((XIODeviceBase*)so))
-        return false;
-
+    if (!XIODeviceBase_isOpen_base((XIODeviceBase*)so))
+        return true;
+    XIODeviceBase_aboutToClose_signal(so);
     XSocketBase* base = (XSocketBase*)so;
     if (((XSocketBase*)so)->m_state != XSOCKET_CLOSING_STATE)
     {

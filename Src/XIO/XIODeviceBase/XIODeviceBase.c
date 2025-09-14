@@ -1,6 +1,7 @@
 ﻿#include "XIODeviceBase.h"
 #include "XMemory.h"
-#include<string.h>
+#include <string.h>
+#include <stdarg.h>
 XIODeviceBase* XIODeviceBase_create()
 {
 	/*if (port == NULL)
@@ -101,4 +102,31 @@ size_t XIODeviceBase_writeFull_base(XIODeviceBase* io)
 	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return 0;
 	return XClassGetVirtualFunc(io, EXIODeviceBase_WriteFull, bool(*)(XIODeviceBase*))(io);
+}
+
+void* XIODeviceBase_aboutToClose_signal(XIODeviceBase* io)
+{
+	if (io)
+		XSignalSlot_emit(((XObject*)io)->m_signalSlot, XIODeviceBase_aboutToClose_signal, NULL);
+	return XIODeviceBase_aboutToClose_signal;
+}
+
+void* XIODeviceBase_readyRead_signal(XIODeviceBase* io)
+{
+	if (io)
+		XSignalSlot_emit(((XObject*)io)->m_signalSlot, XIODeviceBase_readyRead_signal, NULL);
+	return XIODeviceBase_readyRead_signal;
+}
+
+void* XIODeviceBase_bytesWritten_signal(XIODeviceBase* io, ...)
+{
+	if (io)
+	{
+		va_list args;
+		va_start(args, io);  // 通过最后一个固定参数n定位可变参数
+		size_t bytes = va_arg(args, size_t);
+		va_end(args);
+		XSignalSlot_emit(((XObject*)io)->m_signalSlot, XIODeviceBase_bytesWritten_signal, (size_t)bytes);
+	}
+	return XIODeviceBase_bytesWritten_signal;
 }

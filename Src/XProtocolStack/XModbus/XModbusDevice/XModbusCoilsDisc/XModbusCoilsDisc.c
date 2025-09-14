@@ -31,7 +31,6 @@ XModbusCoilsDisc* XModbusCoilsDisc_create(uint16_t count)
     ptr->count = count;
     ptr->parent.data = XBitArray_create(count);
     XBitArray_setBitOrder(ptr->parent.data, XBIT_ORDER_LSB_FIRST);
-    //XVector_resize_base(ptr->parent.data, size);
     return ptr;
 }
 
@@ -49,18 +48,6 @@ bool XModbusCoilsDisc_write_bool(XModbusCoilsDisc* pRegHandler, uint16_t address
     if (!pRegHandler || !pRegHandler->parent.data || address >= pRegHandler->count)
         return false;
     return XBitArray_setBit(pRegHandler->parent.data,address,state);
-    //uint8_t* data = XContainerDataPtr(pRegHandler->parent.data);
-    //uint16_t byte_index = address / 8;
-    //uint8_t bit_index = address % 8;
-
-    //if (state) {
-    //    data[byte_index] |= (1 << bit_index);  // 设置位为1
-    //}
-    //else {
-    //    data[byte_index] &= ~(1 << bit_index); // 设置位为0
-    //}
-
-    //return true;
 }
 // 定义MIN宏
 #ifndef MIN
@@ -71,60 +58,6 @@ bool XModbusCoilsDisc_write(XModbusCoilsDisc* pRegHandler, uint16_t address, uin
     if (!pRegHandler || !pRegHandler->parent.data || !writeArray || !count)
         return false;
    return  XBitArray_writeBits(pRegHandler->parent.data, address, count, writeArray, (count + 7)/8);
-
-    uint16_t max_address = address + count;
-    if (max_address > pRegHandler->count)
-        return false;
-
-    uint8_t* data = XContainerDataPtr(pRegHandler->parent.data);
-    uint16_t byte_count = (max_address + 7) / 8 - (address / 8);
-
-    // 计算起始位偏移
-    uint8_t bit_offset = address % 8;
-
-    // 情况1: 完全字节对齐 - 直接整字节复制
-    if (bit_offset == 0 && count % 8 == 0) {
-        memcpy(data + (address / 8), writeArray, byte_count);
-        return true;
-    }
-
-    // 情况2: 部分对齐或完全不对齐 - 优化处理
-    uint16_t processed = 0;
-
-    // 处理起始处可能的非对齐位
-    if (bit_offset) {
-        uint16_t bits_to_process = MIN(8 - bit_offset, count);
-        for (uint16_t i = 0; i < bits_to_process; i++) {
-            uint8_t bit_val = (writeArray[i / 8] >> (i % 8)) & 1;
-            if (bit_val) data[address / 8] |= (1 << (bit_offset + i));
-            else data[address / 8] &= ~(1 << (bit_offset + i));
-        }
-        processed += bits_to_process;
-    }
-
-    // 批量复制中间对齐的字节
-    uint16_t aligned_bytes = (count - processed) / 8;
-    if (aligned_bytes) {
-        uint16_t src_idx = processed / 8;
-        uint16_t dst_idx = (address + processed) / 8;
-        memcpy(data + dst_idx, writeArray + src_idx, aligned_bytes);
-        processed += aligned_bytes * 8;
-    }
-
-    // 处理结束处可能的非对齐位
-    if (processed < count) {
-        uint16_t remaining = count - processed;
-        uint16_t src_idx = processed / 8;
-        uint16_t dst_idx = (address + processed) / 8;
-
-        for (uint16_t i = 0; i < remaining; i++) {
-            uint8_t bit_val = (writeArray[src_idx + i / 8] >> (i % 8)) & 1;
-            if (bit_val) data[dst_idx] |= (1 << i);
-            else data[dst_idx] &= ~(1 << i);
-        }
-    }
-
-    return true;
 }
 
 bool XModbusCoilsDisc_read(XModbusCoilsDisc* pRegHandler, uint16_t address, uint16_t count, uint8_t* readArray, uint16_t readArraySize)
@@ -132,62 +65,6 @@ bool XModbusCoilsDisc_read(XModbusCoilsDisc* pRegHandler, uint16_t address, uint
     if (!pRegHandler || !pRegHandler->parent.data || !readArray || !count)
         return false;
     return XBitArray_readBits(pRegHandler->parent.data,address,count,readArray,readArraySize);
-    uint16_t max_address = address + count;
-    if (max_address > pRegHandler->count)
-        return false;
-
-    const uint8_t* data = XContainerDataPtr(pRegHandler->parent.data);
-    uint16_t bytes_needed = (count + 7) / 8;
-
-    if (readArraySize < bytes_needed)
-        return false;
-
-    memset(readArray, 0, bytes_needed);
-
-    // 计算起始位偏移
-    uint8_t bit_offset = address % 8;
-
-    // 情况1: 完全字节对齐 - 直接整字节复制
-    if (bit_offset == 0 && count % 8 == 0) {
-        memcpy(readArray, data + (address / 8), bytes_needed);
-        return true;
-    }
-
-    // 情况2: 部分对齐或完全不对齐 - 优化处理
-    uint16_t processed = 0;
-
-    // 处理起始处可能的非对齐位
-    if (bit_offset) {
-        uint16_t bits_to_process = MIN(8 - bit_offset, count);
-        for (uint16_t i = 0; i < bits_to_process; i++) {
-            uint8_t bit_val = (data[address / 8] >> (bit_offset + i)) & 1;
-            if (bit_val) readArray[i / 8] |= (1 << (i % 8));
-        }
-        processed += bits_to_process;
-    }
-
-    // 批量复制中间对齐的字节
-    uint16_t aligned_bytes = (count - processed) / 8;
-    if (aligned_bytes) {
-        uint16_t src_idx = (address + processed) / 8;
-        uint16_t dst_idx = processed / 8;
-        memcpy(readArray + dst_idx, data + src_idx, aligned_bytes);
-        processed += aligned_bytes * 8;
-    }
-
-    // 处理结束处可能的非对齐位
-    if (processed < count) {
-        uint16_t remaining = count - processed;
-        uint16_t src_idx = (address + processed) / 8;
-        uint16_t dst_idx = processed / 8;
-
-        for (uint16_t i = 0; i < remaining; i++) {
-            uint8_t bit_val = (data[src_idx] >> i) & 1;
-            if (bit_val) readArray[dst_idx + i / 8] |= (1 << (i % 8));
-        }
-    }
-
-    return true;
 }
 
 bool XModbusCoilsDisc_at(XModbusCoilsDisc* pRegHandler, uint16_t regAddress)
@@ -195,11 +72,6 @@ bool XModbusCoilsDisc_at(XModbusCoilsDisc* pRegHandler, uint16_t regAddress)
     if (!pRegHandler || !pRegHandler->parent.data || regAddress >= pRegHandler->count)
         return false;
     return XBitArray_at(pRegHandler->parent.data, regAddress);
-   /* const uint8_t* data = XContainerDataPtr(pRegHandler->parent.data);
-    uint16_t byte_index = regAddress / 8;
-    uint8_t bit_index = regAddress % 8;
-
-    return (data[byte_index] & (1 << bit_index)) != 0;*/
 }
 
 void XModbusCoilsDisc_0x01_RTU_masterRecvHandCb(XModbusRecvMatch* math, XModbus* modbus, XModbusFrame* recvFrame, XModbusDeviceObject* device)
