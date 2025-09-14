@@ -1,5 +1,6 @@
 ﻿#include"XTimer.h"
 #include"XThread.h"
+#include"XMemory.h"
 #include<string.h>
 //static void VXTimerBase_start(XTimer* timer);
 static void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callback);

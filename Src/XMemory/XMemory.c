@@ -3,10 +3,7 @@
 #ifdef _WIN32
 #include<stdlib.h>
 static XMemory global_Memory = { malloc,free,realloc,calloc };
-#elif defined(__linux__)
-#include<stdlib.h>
-static XMemory global_Memory = { malloc,free,realloc,calloc };
-#elif defined(__APPLE__) && defined(__MACH__)
+#elif defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 #include<stdlib.h>
 static XMemory global_Memory = { malloc,free,realloc,calloc };
 #elif defined(configUSE_FREERTOS) 

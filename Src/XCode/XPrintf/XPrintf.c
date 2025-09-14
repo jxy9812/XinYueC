@@ -44,39 +44,44 @@ int XPrintf(const char* format, ...)
     if (!format) return 0;
 
     va_list args;
-    va_start(args, format);
+    va_start(args, format);  // 初始化原始参数列表
 
-    // 步骤1：先将所有内容格式化为UTF-8字符串
-    // 1.1 计算所需UTF-8缓冲区大小
-    int utf8_len = vsnprintf(NULL, 0, format, args) + 1;  // +1 包含终止符
+    // 步骤1：计算所需UTF-8缓冲区大小（使用复制的参数列表）
+    va_list args_copy;       // 定义用于复制的参数列表
+    va_copy(args_copy, args); // 复制原始参数列表
+    int utf8_len = vsnprintf(NULL, 0, format, args_copy) + 1;  // 用复制的列表计算长度
+    va_end(args_copy);       // 释放复制的列表（必须在使用后结束）
+
     if (utf8_len <= 0)
     {
-        va_end(args);
+        va_end(args);        // 释放原始列表
         return 0;
     }
 
-    // 1.2 分配缓冲区并格式化UTF-8内容
+    // 1.2 分配缓冲区并格式化UTF-8内容（使用原始参数列表）
     char* utf8_buf = (char*)XMemory_malloc(utf8_len);
     if (!utf8_buf)
     {
         va_end(args);
         return 0;
     }
-    vsnprintf(utf8_buf, utf8_len, format, args);
-    va_end(args);
 
-    // 步骤2：根据平台转换为本地编码并输出
+    // 第二次调用使用原始参数列表（未被消耗）
+    vsnprintf(utf8_buf, utf8_len, format, args);
+    va_end(args);  // 释放原始列表
+
+    // 步骤2：根据平台转换为本地编码并输出（后续逻辑不变）
     int result = 0;
 #ifdef _WIN32
-    // Windows：UTF-8 → GBK
-    int gbk_len = XUTF8_to_gbk_stream(utf8_buf, 0, NULL, 0);  // 获取所需GBK长度
+    // Windows：UTF-8 → GBK（保持不变）
+    int gbk_len = XUTF8_to_gbk_stream(utf8_buf, 0, NULL, 0);
     if (gbk_len <= 0)
     {
         XMemory_free(utf8_buf);
         return 0;
     }
 
-    char* gbk_buf = (char*)XMemory_malloc(gbk_len + 1);  // +1 终止符
+    char* gbk_buf = (char*)XMemory_malloc(gbk_len + 1);
     if (!gbk_buf)
     {
         XMemory_free(utf8_buf);
@@ -85,11 +90,11 @@ int XPrintf(const char* format, ...)
 
     if (XUTF8_to_gbk_stream(utf8_buf, 0, gbk_buf, gbk_len + 1) > 0)
     {
-        result = printf("%s", gbk_buf);  // 输出GBK
+        result = printf("%s", gbk_buf);
     }
     XMemory_free(gbk_buf);
 #else
-    // Linux：直接输出UTF-8（本地编码兼容）
+    // Linux：直接输出UTF-8
     result = printf("%s", utf8_buf);
 #endif
 

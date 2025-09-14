@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "xdatastructtest.h": "c",
+        "xdatastructconfig.h": "c",
+        "xcodetest.h": "c",
+        "xiotest.h": "c",
+        "xmemory.h": "c",
+        "xserialport.h": "c"
+    }
+}

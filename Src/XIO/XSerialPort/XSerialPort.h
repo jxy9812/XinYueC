@@ -74,6 +74,8 @@ bool XSerialPort_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint
 //以下是平台的具体实现
 #ifdef WIN32
 #include"XSerialPortWin32.h"
+#elif defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
+#include "XSerialPortPosix.h"  // Linux/BSD平台套接字实现
 #elif defined(USE_STDPERIPH_DRIVER) 
 #include"XSerialPortSTM32.h"
 #endif

@@ -12,6 +12,7 @@
 #include <netdb.h>
 #include <poll.h>
 #include <arpa/inet.h>
+#include <sys/ioctl.h>  // 包含 FIONREAD 定义
 #include <errno.h>
 
 // 前向声明所有虚函数
@@ -131,42 +132,7 @@ static void VXSocketBase_connectToHost(XSocket* so, const char* hostName, uint16
     XString_append_utf8(base->m_peerName, hostName);
     base->m_peerPort = port;
 
-    // 创建socket
-    if (!create_socket(so)) {
-        return;
-    }
-
-    // 解析主机名
-    struct addrinfo hints, * res;
-    char portStr[6];
-    snprintf(portStr, sizeof(portStr), "%hu", port);
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = base->m_ipv6Enabled ? AF_UNSPEC : AF_INET;
-    hints.ai_socktype = (base->m_socketType == XSOCKET_TYPE_TCP) ? SOCK_STREAM : SOCK_DGRAM;
-
-    if (getaddrinfo(hostName, portStr, &hints, &res) != 0) {
-        close(so->m_socket);
-        so->m_socket = -1;
-        return;
-    }
-
-    so->m_addrInfo = res;
-    base->m_state = XSOCKET_CONNECTING_STATE;
-    XSocket_stateChanged_signal(so, base->m_state);
-
-    // 发起非阻塞连接
-    if (connect(so->m_socket, res->ai_addr, res->ai_addrlen) == -1) {
-        if (errno != EINPROGRESS && errno != EWOULDBLOCK) {
-            freeaddrinfo(res);
-            so->m_addrInfo = NULL;
-            close(so->m_socket);
-            so->m_socket = -1;
-            base->m_state = XSOCKET_UNCONNECTED_STATE;
-            XSocket_stateChanged_signal(so, base->m_state);
-            return;
-        }
-    }
-
+    
     XIODeviceBase_open_base((XIODeviceBase*)so, mode);
 }
 
@@ -288,15 +254,52 @@ static uint16_t VXSocketBase_localPort(XSocket* so)
 
 static bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
 {
-    if (!so || so->m_socket != -1) return false;
-    // 已经在connectToHost中创建了socket，这里只设置模式
+    if (!so) return false;
+    if (XIODeviceBase_isOpen_base(so))return true;
+    // 创建socket
+    if (!create_socket(so)) {
+        return false;
+    }
+    XSocketBase* base = (XSocketBase*)so;
+    // 解析主机名
+    struct addrinfo hints, * res;
+    char portStr[6];
+    snprintf(portStr, sizeof(portStr), "%hu", base->m_peerPort);
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = base->m_ipv6Enabled ? AF_UNSPEC : AF_INET;
+    hints.ai_socktype = (base->m_socketType == XSOCKET_TYPE_TCP) ? SOCK_STREAM : SOCK_DGRAM;
+
+    if (getaddrinfo(XString_toUtf8(base->m_peerName), portStr, &hints, &res) != 0) {
+        close(so->m_socket);
+        so->m_socket = -1;
+        return false;
+    }
+
+    so->m_addrInfo = res;
+    base->m_state = XSOCKET_CONNECTING_STATE;
+    XSocket_stateChanged_signal(so, base->m_state);
+
+    // 发起非阻塞连接
+    if (connect(so->m_socket, res->ai_addr, res->ai_addrlen) == -1) {
+        if (errno != EINPROGRESS && errno != EWOULDBLOCK) {
+            freeaddrinfo(res);
+            so->m_addrInfo = NULL;
+            close(so->m_socket);
+            so->m_socket = -1;
+            base->m_state = XSOCKET_UNCONNECTED_STATE;
+            XSocket_stateChanged_signal(so, base->m_state);
+            return false;
+        }
+    }
+
     ((XIODeviceBase*)so)->m_mode = mode;
     return true;
 }
 
 static bool VXIODevice_isOpen(XSocket* so)
 {
-    return so && so->m_socket != -1;
+    //return so && so->m_socket != -1;
+     return (((XIODeviceBase*)so)->m_mode != XIODeviceBase_NotOpen)&&so->m_parent.m_state== XSOCKET_CONNECTED_STATE;
 }
 
 static bool VXIODevice_close(XSocket* so)
@@ -464,14 +467,18 @@ static size_t VXIODevice_read(XSocket* so, char* data, size_t maxSize)
 
 static size_t VXIODevice_getBytesAvailable(XSocket* so)
 {
-    if (!so || so->m_socket == -1) return 0;
-
-    int available;
-    socklen_t len = sizeof(available);
-    if (getsockopt(so->m_socket, SOL_SOCKET, SO_RCVBUF, &available, &len) == -1) {
+     if (!so || so->m_socket == -1) {
         return 0;
     }
-    return (size_t)available;
+
+    int available = 0;
+    // 使用 FIONREAD 命令获取可读取的字节数，结果存入 available
+    if (ioctl(so->m_socket, FIONREAD, &available) == -1) {
+        return 0;
+    }
+
+    // 确保返回值非负（FIONREAD 通常返回非负值，但做一次安全处理）
+    return (available < 0) ? 0 : (size_t)available;
 }
 
 static size_t VXIODeviceBase_getBytesToWrite(XSocket* so)
@@ -509,6 +516,8 @@ static void VXIODevice_setReadBuffer(XSocket* so, size_t count)
 
 static void VXIODevice_poll(XSocket* so)
 {
+    //printf("轮询中\n");
+    
     if (!so || so->m_socket == -1) return;
 
     so->m_pollfd.events = 0;
@@ -539,7 +548,6 @@ static void VXIODevice_poll(XSocket* so)
             }
         }
     }
-
     if (so->m_pollfd.revents & (POLLIN | POLLPRI)) {
         // 数据可读，触发读事件（可根据需要添加信号发射）
         XIODeviceBase_readyRead_signal(so);

@@ -1,15 +1,24 @@
 {
     "configurations": [
         {
-            "name": "(Windows) 启动",
-            "type": "cppvsdbg",
+            "name": "(Linux) 启动",  // 修改名称以区分平台
+            "type": "cppdbg",       // Linux 下使用 gdb 调试器，类型为 cppdbg
             "request": "launch",
-            "program": "${workspaceFolder}/bin/Xin_Yue_C.exe",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${fileDirname}",
-            "environment": [],
-            "console": "externalTerminal"
+            "program": "${workspaceFolder}/bin/Xin_Yue_C",  // 去掉 .exe 后缀（Linux 可执行文件无此后缀）
+            "args": [],             // 程序运行参数（按需添加）
+            "stopAtEntry": false,   // 是否在入口处暂停（true 表示暂停）
+            "cwd": "${workspaceFolder}/bin",  // 工作目录，建议设为程序所在目录（避免相对路径问题）
+            "environment": [],      // 环境变量（按需添加，如 LD_LIBRARY_PATH 等）
+            "console": "integratedTerminal",  // 使用 VS Code 集成终端（可选 externalTerminal）
+            "MIMode": "gdb",        // 调试器模式为 gdb
+            "miDebuggerPath": "/usr/bin/gdb",  // gdb 路径（Linux 通常默认在此位置，若不同需修改）
+            "setupCommands": [      // gdb 额外配置（如启用变量美观打印）
+                {
+                    "description": "为 gdb 启用整齐打印",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
         }
     ],
     "version": "2.0.0"

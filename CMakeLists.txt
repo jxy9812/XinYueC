@@ -30,7 +30,7 @@ add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${PUBLIC_HDRS})
 #添加参加编译的文件
 add_executable(${PROJECT_NAME}
 ${TEST_FILE}
-"main.c"
+"./main.c"
  )
  target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME})
 
