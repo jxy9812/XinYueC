@@ -54,8 +54,8 @@ XVtable* XThread_class_init() {
 // 线程函数包装器
 static void ThreadFunction(void* arg) 
 {
-	XThread_mapInsert(Object);
 	XThread* Object = (XThread*)arg;
+	XThread_mapInsert(Object);
 	if (!Object) {
 		DEBUG_PRINTF("Invalid thread object");
 		vTaskDelete(NULL);

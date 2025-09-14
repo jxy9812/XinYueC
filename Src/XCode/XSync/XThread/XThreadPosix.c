@@ -62,8 +62,8 @@ XVtable* XThread_class_init() {
 // 线程函数包装器
 static void* ThreadFunction(void* arg) 
 {
-    XThread_mapInsert(Object);
     XThread* Object = (XThread*)arg;
+    XThread_mapInsert(Object);
     // 执行用户线程函数
     if (Object->m_start_routine) {
         Object->m_start_routine(Object->m_arg);

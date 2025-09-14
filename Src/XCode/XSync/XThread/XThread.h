@@ -9,7 +9,8 @@
  * @brief 线程优先级枚举
  * 定义了不同的线程优先级选项
  */
-    typedef enum {
+typedef enum 
+{
     XThread_IdlePriority,         /**< 空闲优先级 */
     XThread_LowestPriority,       /**< 最低优先级 */
     XThread_LowPriority,          /**< 低优先级 */
