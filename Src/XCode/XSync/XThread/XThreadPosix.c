@@ -19,7 +19,8 @@
 #include <unistd.h>
 #include <time.h>
 #include <stdio.h>
-
+void XThread_mapInsert(XThread* Object);
+void XThread_mapRemove(XThread* Object);
 // 前向声明虚函数
 static bool VXThread_start(XThread* Object);
 static bool VXThread_wait(XThread* Object, unsigned long time);
@@ -59,7 +60,9 @@ XVtable* XThread_class_init() {
 }
 
 // 线程函数包装器
-static void* ThreadFunction(void* arg) {
+static void* ThreadFunction(void* arg) 
+{
+    XThread_mapInsert(Object);
     XThread* Object = (XThread*)arg;
     // 执行用户线程函数
     if (Object->m_start_routine) {
@@ -80,6 +83,7 @@ static void* ThreadFunction(void* arg) {
     // }
     // 标记线程结束
     Object->m_finished = true;
+    XThread_mapRemove(Object);
     return NULL;
 }
 

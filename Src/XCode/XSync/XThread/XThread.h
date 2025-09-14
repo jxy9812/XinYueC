@@ -185,8 +185,6 @@ XEventDispatcher* XThread_currentDispatcher();
 XTimerGroupBase* XThread_currentTimerGroup();
 XHandle XThread_currentThreadId();
 
-//不是给用户的内部API
-void XThread_mapRemove(XThread* Object);
 #ifdef __cplusplus
 }
 #endif

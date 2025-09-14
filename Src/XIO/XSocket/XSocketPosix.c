@@ -485,12 +485,13 @@ static size_t VXIODeviceBase_getBytesToWrite(XSocket* so)
 {
     if (!so || so->m_socket == -1) return 0;
 
-    int pending;
-    socklen_t len = sizeof(pending);
-    if (getsockopt(so->m_socket, SOL_SOCKET, SO_SNDBUF, &pending, &len) == -1) {
+    int pending = 0;
+    // TIOCOUTQ：获取输出队列中未发送的字节数，结果存入 pending
+    if (ioctl(so->m_socket, TIOCOUTQ, &pending) == -1) {
         return 0;
     }
-    return (size_t)pending;
+    // 确保返回值非负（TIOCOUTQ 通常返回非负值，做安全处理）
+    return (pending < 0) ? 0 : (size_t)pending;
 }
 
 static bool VXIODeviceBase_atEnd(XSocket* so)

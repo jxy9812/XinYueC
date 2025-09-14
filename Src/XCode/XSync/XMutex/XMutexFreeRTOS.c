@@ -1,4 +1,4 @@
-﻿#ifdef configUSE_FREERTOS
+﻿#ifdef __FreeRTOS__
 #include "XMutex.h"
 #include "XMemory.h"
 #include "FreeRTOS.h"

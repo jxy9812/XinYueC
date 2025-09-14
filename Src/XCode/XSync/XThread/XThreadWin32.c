@@ -6,6 +6,9 @@
 #include"XObject.h"
 #include"XEventLoop.h"
 #include <windows.h>
+void XThread_mapInsert(XThread* Object);
+void XThread_mapRemove(XThread* Object);
+
 static bool VXThread_start(XThread* Object);
 static bool VXThread_wait(XThread* Object, unsigned long time);
 static bool VXThread_isFinished(const XThread* Object);
@@ -51,6 +54,7 @@ XVtable* XThread_class_init()
 static DWORD WINAPI ThreadFunction(LPVOID lpParam) 
 {
     XThread* Object = (XThread*)lpParam;
+    XThread_mapInsert(Object);
     //运行函数
     if (Object->m_start_routine)
         Object->m_start_routine(Object->m_arg);
@@ -65,6 +69,7 @@ static DWORD WINAPI ThreadFunction(LPVOID lpParam)
         }
     }*/
     Object->m_finished = true;
+    XThread_mapRemove(Object);
     return 0;
 }
 
@@ -199,7 +204,6 @@ void VXThread_deinit(XThread* Object)
     }
     if (Object->m_eventLoop)
         XEventLoop_delete_base(Object->m_eventLoop);
-    XThread_mapRemove(Object);
     //XMemory_free(Object);
 }
 

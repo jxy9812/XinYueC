@@ -6,7 +6,7 @@ static XMemory global_Memory = { malloc,free,realloc,calloc };
 #elif defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 #include<stdlib.h>
 static XMemory global_Memory = { malloc,free,realloc,calloc };
-#elif defined(configUSE_FREERTOS) 
+#elif defined(__FreeRTOS__) 
 #include"FreeRTOS.h"
 static XMemory global_Memory = { pvPortMalloc,vPortFree,XMemory_reallocPack,XMemory_callocPack };
 #else

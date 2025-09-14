@@ -54,11 +54,20 @@ XTimerGroupBase* XThread_currentTimerGroup()
 {
     return XThread_getTimerGroup(XThread_currentThread());
 }
-void XThread_mapRemove(XThread* Object)
+void XThread_mapInsert(XThread* Object)
 {
+    if (Object == NULL)return;
     size_t id = XThread_currentThreadId();
     XMutex_lock(mutex);
-    XHashMap_remove_base(threadMap,&id);
+    XHashMap_insert_base(threadMap, &id, &Object);
+    XMutex_unlock(mutex);
+}
+void XThread_mapRemove(XThread* Object)
+{
+    if (Object == NULL)return;
+    size_t id = XThread_currentThreadId();
+    XMutex_lock(mutex);
+    XHashMap_remove_base(threadMap, &id);
     XMutex_unlock(mutex);
 }
 // 创建 XThread 对象
@@ -74,8 +83,7 @@ XThread* XThread_create(void (*start_routine)(void*), void* arg)
 
     if (threadMap == NULL)
         XThread_currentThread();//初始化
-    size_t id = XThread_currentThreadId();
-    XHashMap_insert_base(threadMap,&id,&Object);
+   
     return Object;
 }
 

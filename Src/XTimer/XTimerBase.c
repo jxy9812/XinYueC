@@ -182,7 +182,7 @@ static size_t get_milliseconds()
 }
 static size_t(*global_getCurrentTime)() = get_milliseconds;
 static void(*global_delay_ms)(size_t msec)=(void*)sleep;
-#elif defined(configUSE_FREERTOS) 
+#elif defined(__FreeRTOS__) 
 #include"FreeRTOS.h"
 #include"task.h"
 static size_t GetCurrentTime()
