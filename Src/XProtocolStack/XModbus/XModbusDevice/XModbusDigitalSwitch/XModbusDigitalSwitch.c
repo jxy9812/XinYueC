@@ -204,6 +204,7 @@ bool XModbusDigitalSwitch_XSwitchDeviceModbusOpen(XModbusDigitalSwitch* ds, XSwi
 		}
 		XVector_At_Base(ds->m_ioOutList, portNum, XSwitchDeviceModbus*)=sw;
 	}
+	return true;
 }
 void XModbusDigitalSwitch_XSwitchDeviceModbusClose(XModbusDigitalSwitch* ds, XSwitchDeviceModbus* sw, XIODeviceBaseMode mode, uint16_t portNum)
 {

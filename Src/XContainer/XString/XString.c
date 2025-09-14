@@ -409,8 +409,9 @@ const char* XString_toLocal(const XString* str)
     if (!str) return NULL;
 
     // 本地编码缓存已存在则直接返回
-    if (str->m_cache && str->m_cache[XStringCache_Local].m_data) return str->m_cache[XStringCache_Local].m_data;
-
+    if (str->m_cache && str->m_cache[XStringCache_Local].m_data) 
+        return str->m_cache[XStringCache_Local].m_data;
+    XString_initCache(str);
 #ifdef __linux__
     // Linux下本地编码为UTF-8，直接指向UTF-8缓存
     // 共享UTF-8缓存地址
@@ -420,9 +421,8 @@ const char* XString_toLocal(const XString* str)
     // Windows下需要转换为GBK
     str->m_cache[XStringCache_Local].m_data = XString_toGbk(str);
     str->m_cache[XStringCache_Local].m_length = XString_toGbk_length(str);
-
-    return str->m_cache[XStringCache_Local].m_data;
 #endif
+ return str->m_cache[XStringCache_Local].m_data;
 }
 
 size_t XString_toUtfLocal_length(const XString* str)
