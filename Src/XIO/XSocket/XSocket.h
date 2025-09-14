@@ -239,7 +239,7 @@ XSocketState XSocket_state(const XSocketBase* socket);
 /*                                              信号  ·                   */
 void* XSocket_connected_signal(XSocket* socket);//连接上
 void* XSocket_disconnected_signal(XSocket* socket);//连接断开
-void* XSocket_stateChanged_signal(XSocket* socket,...);//状态改变信号  XSocketState state
+void* XSocket_stateChanged_signal(XSocket* socket, XSocketState state);//状态改变信号  XSocketState state
 // 平台相关实现包含
 #ifdef WIN32
 #include"XSocketWin32.h"  // Windows平台套接字实现

@@ -30,7 +30,7 @@ void XTimerTest()
 	XTimer* timer = XTimer_create();
 	XTimer_setInterval_base(timer, 100);
 	XTimer_setTimeout_base(timer, 50);
-	XConnection* conn=XObject_connect(timer,XTimer_timeout_signal(NULL),NULL, timerSlotFunc,XConnectionType_Auto);
+	XConnection* conn=XObject_connect(timer,XSignal(XTimer_timeout_signal),NULL, timerSlotFunc,XConnectionType_Auto);
 	/*XObject_disconnect_conn(conn);
 	XObject_disconnect(timer, XTimer_timeout_signal(NULL), NULL, timerSlotFunc);*/
 	//XTimer_callOnTimeout(timer,NULL, timerSlotFunc, XConnectionType_Auto);

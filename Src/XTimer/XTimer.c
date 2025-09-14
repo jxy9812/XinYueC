@@ -73,7 +73,7 @@ void* XTimer_timeout_signal(XTimer* timer)
 void XTimer_callOnTimeout(XTimer* timer, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
 {
 	if(timer&& slot_func)
-		XObject_connect(timer, XTimer_timeout_signal(NULL), receiver, slot_func, XConnectionType_Auto);
+		XObject_connect(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, XConnectionType_Auto);
 }
 
 void XTimer_singleShot(size_t msec, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
@@ -84,7 +84,7 @@ void XTimer_singleShot(size_t msec, XObject* receiver, XSlotFunc slot_func, XCon
 	XTimer_setTimeout_base(timer, msec);
 	XTimerBase_setAutoDelete(timer,true);
 	XTimerBase_setSingleShote(timer, true);
-	XObject_connect(timer, XTimer_timeout_signal(NULL), receiver, slot_func, type);
+	XObject_connect(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, type);
 	XTimer_start_base(timer);
 }
 

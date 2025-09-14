@@ -35,14 +35,16 @@ XThread* XObject_thread(XObject* object);
 XEventDispatcher* XObject_getEventDispatcher(XObject* object);
 //信号与槽
 XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type);
+#define XObject_deinit_base    XClass_deinit_base
+#define XObject_delete_base    XClass_delete_base
 
+//信号绑定辅助宏
+#define XSignal(signal)      ((void*(*)(XObject*))signal)(NULL)
 bool XObject_disconnect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func);
 bool XObject_disconnect_conn(XConnection* conn);
 //slot: void deinit_slot(XObject* sender, XObject* receiver, void* args)
 void* XObject_deinit_signal(XObject* object);
 
-#define XObject_deinit_base    XClass_deinit_base
-#define XObject_delete_base    XClass_delete_base
 //事件中调用延迟释放
 void XObject_deinit_event(XObject* object);
 void XObject_delete_event(XObject* object);

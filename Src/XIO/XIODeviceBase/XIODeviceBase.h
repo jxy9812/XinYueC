@@ -73,7 +73,7 @@ size_t XIODeviceBase_writeFull_base(XIODeviceBase* io);
 /*                                              信号  ·                   */
 void* XIODeviceBase_aboutToClose_signal(XIODeviceBase* io);
 void* XIODeviceBase_readyRead_signal(XIODeviceBase* io);
-void* XIODeviceBase_bytesWritten_signal(XIODeviceBase* io,...);//size_t bytes
+void* XIODeviceBase_bytesWritten_signal(XIODeviceBase* io, size_t bytes);
 #ifdef __cplusplus
 }
 #endif

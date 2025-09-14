@@ -118,14 +118,10 @@ void* XSocket_disconnected_signal(XSocket* socket)
     return XSocket_disconnected_signal;
 }
 
-void* XSocket_stateChanged_signal(XSocket* socket, ...)
+void* XSocket_stateChanged_signal(XSocket* socket, XSocketState state)
 {
     if (socket)
     {
-        va_list args;
-        va_start(args, socket);  // 通过最后一个固定参数n定位可变参数
-        XSocketState state = va_arg(args, XSocketState);
-        va_end(args);
         XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_stateChanged_signal, (size_t)state);
     }
     return XSocket_stateChanged_signal;

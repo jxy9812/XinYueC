@@ -23,6 +23,10 @@ static connected_slot(XObject* sender, XObject* receiver, void* args)
 {
     XPrintf("sender:%p receiver:%p 网络已连接\n", sender, receiver);
 }
+static stateChanged_slot(XObject* sender, XObject* receiver, XSocketState state)
+{
+    XPrintf("sender:%p receiver:%p 状态改变:%d\n", sender, receiver,state);
+}
 static XSwitchDeviceModbus* SW;
 static void StateChangeCallback0(XSwitchDeviceBase* sw)
 {
@@ -40,13 +44,14 @@ static void StateChangeCallback2(XSwitchDeviceBase* sw)
 void XModbusTest()
 {
     XSerialPortBase* serial = XSerialPort_create();
-    XObject_connect(serial, XObject_deinit_signal(NULL), serial, deinit_slot, XConnectionType_Auto);
-    XObject_connect(serial, XObject_deinit_signal(NULL), serial, deinit_slot, XConnectionType_Auto| XConnectionType_Unique);
+    XObject_connect(serial, XSignal(XObject_deinit_signal), serial, deinit_slot, XConnectionType_Auto);
+    XObject_connect(serial, XSignal(XObject_deinit_signal), serial, deinit_slot, XConnectionType_Auto| XConnectionType_Unique);
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
     XSocket* socket = XSocket_create();
     //XIODeviceBase_setWriteBuffer_base(socket,512);
-    XObject_connect(socket, XSocket_connected_signal(NULL), socket, connected_slot, XConnectionType_Auto);
+    XObject_connect(socket, XSignal(XSocket_connected_signal), socket, connected_slot, XConnectionType_Auto);
+    XObject_connect(socket, XSignal(XSocket_stateChanged_signal), socket, stateChanged_slot, XConnectionType_Auto);
     XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
     //XObject_delete_event(serial);
     XSerialPort_delete_base(serial);

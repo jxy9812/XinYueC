@@ -118,14 +118,10 @@ void* XIODeviceBase_readyRead_signal(XIODeviceBase* io)
 	return XIODeviceBase_readyRead_signal;
 }
 
-void* XIODeviceBase_bytesWritten_signal(XIODeviceBase* io, ...)
+void* XIODeviceBase_bytesWritten_signal(XIODeviceBase* io, size_t bytes)
 {
 	if (io)
 	{
-		va_list args;
-		va_start(args, io);  // 通过最后一个固定参数n定位可变参数
-		size_t bytes = va_arg(args, size_t);
-		va_end(args);
 		XSignalSlot_emit(((XObject*)io)->m_signalSlot, XIODeviceBase_bytesWritten_signal, (size_t)bytes);
 	}
 	return XIODeviceBase_bytesWritten_signal;
