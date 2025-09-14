@@ -409,7 +409,7 @@ static size_t VXIODevice_writeFull(XSocket* so)
 
     while (available > 0) {
         // 替换：获取队头元素指针
-        const char* bufferData = XQueueBase_front_base(io->m_writeBuffer);
+        const char* bufferData = XQueueBase_top_base(io->m_writeBuffer);
         if (bufferData == NULL) {
             break;
         }

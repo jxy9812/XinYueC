@@ -1,4 +1,10 @@
 ﻿#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
+// 在包含任何头文件之前定义 POSIX 特性宏
+#define _POSIX_C_SOURCE 200809L  // 或更高版本，确保包含 CLOCK_MONOTONIC 定义
+#define SCHED_IDLE SCHED_OTHER
+#if defined(__APPLE__) || defined(__BSD__)
+#define _BSD_SOURCE  // 部分 BSD 系统（如 macOS）需要此宏
+#endif
 #include "XThread.h"
 #include "XEvent.h"
 #include "XHashSet.h"
@@ -64,14 +70,14 @@ static void* ThreadFunction(void* arg) {
         XEventLoop_exec_base(Object->m_eventLoop);
     }
     // 处理事件调度器逻辑
-    if (Object->m_eventLoop && Object->m_eventLoop->m_dispatcher) {
-        XEventDispatcher* dispatcher = Object->m_eventLoop->m_dispatcher;
-        if (dispatcher->m_Objects && !XSetBase_isEmpty_base(dispatcher->m_Objects)) {
-            while (!Object->m_interruptionRequested) {
-                XEventDispatcherThread_handler_base(dispatcher);
-            }
-        }
-    }
+    // if (Object->m_eventLoop && Object->m_eventLoop->m_dispatcher) {
+    //     XEventDispatcher* dispatcher = Object->m_eventLoop->m_dispatcher;
+    //     if (dispatcher->m_Objects && !XSetBase_isEmpty_base(dispatcher->m_Objects)) {
+    //         while (!Object->m_interruptionRequested) {
+    //             XEventDispatcherThread_handler_base(dispatcher);
+    //         }
+    //     }
+    // }
     // 标记线程结束
     Object->m_finished = true;
     return NULL;
