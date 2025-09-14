@@ -60,7 +60,7 @@ typedef struct XContainerObject
 #define XContainerSetDataMoveMethod(Object,method) (((XContainerObject*)(Object))->m_dataMoveMethod=method)//设置容器的数据移动方法
 #define XContainerDataDeinitMethod(Object) (((XContainerObject*)(Object))->m_dataDeinitMethod)//获取容器数据释放方法
 #define XContainerSetDataDeinitMethod(Object,method) (((XContainerObject*)(Object))->m_dataDeinitMethod=method)//设置容器的数据释放方法
-#define XContainerCompare(Object,compare)		(((XContainerObject*)(Object))->m_compare)
+#define XContainerCompare(Object)		(((XContainerObject*)(Object))->m_compare)
 #define XContainerSetCompare(Object,compare)    (((XContainerObject*)(Object))->m_compare=compare)
 XVtable* XContainerObject_class_init();
 void XContainerObject_init(XContainerObject* Object, size_t typeSize);

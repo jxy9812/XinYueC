@@ -357,7 +357,7 @@ void VXClass_deinit(XPriorityMapQueue* this_queue)
 	if (GetMap(this_queue))
 	{
 		XMap_delete_base(GetMap(this_queue));
-		GetMap(this_queue) = NULL;
+		XContainerDataPtr(this_queue) = NULL;
 	}
 	if(this_queue->low_freq_queue)
 	{

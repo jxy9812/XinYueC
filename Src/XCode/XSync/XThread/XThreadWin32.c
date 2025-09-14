@@ -15,7 +15,8 @@ static XThread_Priority VXThread_priority(const XThread* Object);
 static void VXThread_requestInterruption(XThread* Object);
 static void VXThread_setPriority(XThread* Object, XThread_Priority priority);
 static void VXThread_setStackSize(XThread* Object, uint32_t m_stackSize);
-
+// 新增强制终止线程的函数（需添加到虚函数表）
+static bool VXThread_terminate(XThread* Object);
 static void VXThread_deinit(XThread* Object);
 // 虚函数表初始化
 XVtable* XThread_class_init()
@@ -32,7 +33,7 @@ XVtable* XThread_class_init()
         void* table[] = {
          VXThread_start,VXThread_wait,
          VXThread_isFinished,
-         VXThread_isRunning,VXThread_loopLevel,VXThread_priority,
+         VXThread_isRunning,VXThread_loopLevel,VXThread_priority,VXThread_terminate,
          VXThread_requestInterruption,
          VXThread_setPriority,VXThread_setStackSize
     };
@@ -163,7 +164,10 @@ void VXThread_setPriority(XThread* Object, XThread_Priority priority)
         break;
     }
     if (Object->m_handle != NULL) {
-        SetThreadPriority(Object->m_handle, winPriority);
+        if (!SetThreadPriority(Object->m_handle, winPriority)) {
+            // 可选：记录错误日志，如GetLastError()
+             printf("Failed to set thread priority: %d\n", GetLastError());
+        }
     }
     Object->m_priority = priority;
 }
@@ -173,16 +177,26 @@ void VXThread_setStackSize(XThread* Object, uint32_t m_stackSize)
     Object->m_stackSize = m_stackSize;
 }
 
+bool VXThread_terminate(XThread* Object)
+{
+    if (Object->m_handle != NULL && XThread_isRunning_base(Object)) {
+        if (!TerminateThread(Object->m_handle, 0))
+            return false;
+        Object->m_finished = true;
+    }
+    return true;
+}
+
 void VXThread_deinit(XThread* Object)
 {
     if (XThread_isRunning_base(Object))
         XThread_requestInterruption_base(Object);
     XThread_wait_base(Object,UINT32_MAX);
-   /* if (Object->m_handle != NULL) 
+    if (Object->m_handle != NULL) 
     {
         CloseHandle(Object->m_handle);
-       Object->m_handle = NULL;
-    }*/
+        Object->m_handle = NULL;
+    }
     if (Object->m_eventLoop)
         XEventLoop_delete_base(Object->m_eventLoop);
     XThread_mapRemove(Object);

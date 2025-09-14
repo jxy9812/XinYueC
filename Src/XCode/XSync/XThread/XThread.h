@@ -31,6 +31,7 @@ XCLASS_DEFINE_ENUM(XThread, IsFinished),
 XCLASS_DEFINE_ENUM(XThread, IsRunning),
 XCLASS_DEFINE_ENUM(XThread, LoopLevel),
 XCLASS_DEFINE_ENUM(XThread, Priority),
+XCLASS_DEFINE_ENUM(XThread, Terminate),
 XCLASS_DEFINE_ENUM(XThread, RequestInterruption),
 XCLASS_DEFINE_ENUM(XThread, SetPriority),
 XCLASS_DEFINE_ENUM(XThread, SetStackSize),
@@ -40,7 +41,7 @@ XCLASS_DEFINE_END(XThread)
  * @brief 线程类
  * 表示一个线程对象，包含线程的基本属性和状态
  */
-    typedef struct XThread
+typedef struct XThread
 {
     XClass m_base;                 /**< 基类 */
     XHandle m_handle;              /**< 线程句柄 */
@@ -171,7 +172,8 @@ void XThread_setStackSize_base(XThread* Object, uint32_t stackSize);
  * @retval 返回线程的栈大小
  */
 uint32_t XThread_stackSize(const XThread* Object);
-
+//强制终止线程
+bool XThread_terminate_base(XThread* Object);
 /**
  * @brief 删除XThread对象
  * 等价于调用XClass_delete_base

@@ -41,7 +41,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XByteArray*, XDFC_FRAME_SEND_QUEUE_COUNT);
 	comm->m_periodicSendList = XListSLinked_Create(void*);
 	//comm->m_periodicSendList->m_equality = XEquality_ptr;
-	XContainerCompare(comm->m_periodicSendList, XCompare_ptr);
+	XContainerSetCompare(comm->m_periodicSendList, XCompare_ptr);
 	XObject_addEventFilter(comm, XEVENT_ALL, XDataFrameComm_EvnetHandCb,comm);
 
 	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);

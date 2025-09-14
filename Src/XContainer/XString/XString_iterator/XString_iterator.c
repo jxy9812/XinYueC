@@ -36,7 +36,7 @@ void XString_iterator_add(XString* str, XString_iterator* it)
 		it->data = NULL;
 		return;
 	}
-	((XChar*)it->data) += 1;//指向下一个元素
+	it->data = ((XChar*)(it->data)) + 1;//指向下一个元素
 }
 bool XString_iterator_equality(XString_iterator* itFirst, XString_iterator* itSecond)
 {

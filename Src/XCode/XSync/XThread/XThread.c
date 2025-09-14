@@ -42,6 +42,10 @@ XThread* XThread_currentThread()
         return *ptr;
     return NULL;
 }
+bool XThread_terminate_base(XThread* Object)
+{
+    return XClassGetVirtualFunc(Object, EXThread_Terminate, bool(*)(const XThread*))(Object);
+}
 XEventDispatcher* XThread_currentDispatcher()
 {
     return XThread_getDispatcher(XThread_currentThread());

@@ -15,7 +15,7 @@
 #include <errno.h>
 
 // 前向声明所有虚函数
-static void VXSocketBase_connectToHost(XSocket * so, const char* hostName, uint16_t port, XIODeviceBaseMode mode);
+static void VXSocketBase_connectToHost(XSocket* so, const char* hostName, uint16_t port, XIODeviceBaseMode mode);
 static void VXSocketBase_disconnectFromHost(XSocketBase* so);
 static void VXSocketBase_waitForConnected(XSocketBase* so, int msecs);
 static void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs);
@@ -319,10 +319,9 @@ static bool VXIODevice_close(XSocket* so)
         XSocket_disconnected_signal(so);
     }
 
-    ((XIODeviceBase*)so)->m_mode = XIODeviceBaseNotOpen;
+    ((XIODeviceBase*)so)->m_mode = XIODeviceBase_NotOpen;
     return true;
 }
-
 static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize)
 {
     if (so == NULL || data == NULL || so->m_socket == -1) {
@@ -364,7 +363,11 @@ static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize)
     // 有写入缓冲区，先写入缓冲区
     size_t bytesToWrite = maxSize;
     while (bytesToWrite > 0) {
-        size_t freeSpace = XCircularQueue_getFreeSpace(io->m_writeBuffer);
+        // 替换：获取空闲空间 = 总容量 - 已使用大小
+        size_t capacity = XQueueBase_capacity_base(io->m_writeBuffer);
+        size_t used = XQueueBase_size_base(io->m_writeBuffer);
+        size_t freeSpace = capacity - used;
+
         if (freeSpace == 0) {
             // 缓冲区满，尝试发送部分数据
             size_t sent = VXIODevice_writeFull(so);
@@ -376,7 +379,10 @@ static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize)
         }
 
         size_t writeSize = (bytesToWrite < freeSpace) ? bytesToWrite : freeSpace;
-        XCircularQueue_write(io->m_writeBuffer, data + totalSent, writeSize);
+        // 替换：循环写入缓冲区（单个元素入队）
+        for (size_t i = 0; i < writeSize; i++) {
+            XQueueBase_push_base(io->m_writeBuffer, &(data[totalSent + i]));
+        }
         totalSent += writeSize;
         bytesToWrite -= writeSize;
     }
@@ -398,11 +404,12 @@ static size_t VXIODevice_writeFull(XSocket* so)
     }
 
     size_t totalSent = 0;
-    size_t available = XCircularQueue_getUsedSpace(io->m_writeBuffer);
+    // 替换：获取已使用空间
+    size_t available = XQueueBase_size_base(io->m_writeBuffer);
 
     while (available > 0) {
-        // 从缓冲区读取数据（不移动读指针）
-        const char* bufferData = XCircularQueue_peek(io->m_writeBuffer);
+        // 替换：获取队头元素指针
+        const char* bufferData = XQueueBase_front_base(io->m_writeBuffer);
         if (bufferData == NULL) {
             break;
         }
@@ -415,13 +422,15 @@ static size_t VXIODevice_writeFull(XSocket* so)
             }
             else {
                 // 发生错误，清空缓冲区并返回已发送字节数
-                XCircularQueue_clear(io->m_writeBuffer);
+                XQueueBase_clear_base(io->m_writeBuffer); // 替换：清空队列
                 return totalSent;
             }
         }
 
-        // 移动读指针，更新统计
-        XCircularQueue_moveReadPtr(io->m_writeBuffer, result);
+        // 替换：移动读指针（出队result个元素）
+        for (size_t i = 0; i < (size_t)result; i++) {
+            XQueueBase_pop_base(io->m_writeBuffer);
+        }
         totalSent += result;
         available -= result;
     }
@@ -503,10 +512,10 @@ static void VXIODevice_poll(XSocket* so)
     if (!so || so->m_socket == -1) return;
 
     so->m_pollfd.events = 0;
-    if (((XIODeviceBase*)so)->m_mode & XIODeviceBaseReadMode) {
+    if (((XIODeviceBase*)so)->m_mode & XIODeviceBase_ReadOnly) {
         so->m_pollfd.events |= POLLIN;
     }
-    if (((XIODeviceBase*)so)->m_mode & XIODeviceBaseWriteMode) {
+    if (((XIODeviceBase*)so)->m_mode & XIODeviceBase_WriteOnly) {
         so->m_pollfd.events |= POLLOUT;
     }
 

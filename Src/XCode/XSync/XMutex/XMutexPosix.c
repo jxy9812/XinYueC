@@ -1,5 +1,5 @@
 ﻿#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
-#include "XMutex.h"
+#include "XRecursiveMutex.h"
 #include "XMemory.h"
 #include <pthread.h>
 #include <time.h>
@@ -18,7 +18,34 @@ size_t XMutex_geTypetSize()
 //void* XMutex_getNativeHandle(XMutex* mutex) {
 //    return mutex ? &mutex->mutex : NULL;
 //}
+void XRecursiveMutex_init(XRecursiveMutex* mutex)
+{
+    if (!mutex) return;
 
+    mutex->type = XMutex_Recursive;
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+
+    // 设置互斥锁类型
+    if (mutex->type == XMutex_Recursive) {
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    }
+    else {
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
+    }
+
+    pthread_mutex_init(&mutex->mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+}
+XRecursiveMutex* XRecursiveMutex_create()
+{
+    XMutex* mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
+    if (mutex)
+    {
+        XRecursiveMutex_init(mutex);
+    }
+    return mutex;
+}
 void XMutex_init(XMutex* mutex) {
     if (!mutex) return;
 
@@ -27,7 +54,7 @@ void XMutex_init(XMutex* mutex) {
     pthread_mutexattr_init(&attr);
 
     // 设置互斥锁类型
-    if (type == XMutex_Recursive) {
+    if (mutex->type == XMutex_Recursive) {
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
     }
     else {

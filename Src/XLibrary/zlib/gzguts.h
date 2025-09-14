@@ -29,7 +29,10 @@
 #ifndef _POSIX_SOURCE
 #  define _POSIX_SOURCE
 #endif
-//#include <fcntl.h>
+
+#ifdef __linux__ || defined(__APPLE__) || defined(__BSD__)
+#include <fcntl.h>
+#endif
 
 #ifdef _WIN32
 #  include <stddef.h>

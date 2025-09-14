@@ -34,7 +34,7 @@ void XString_reverse_iterator_add(XString* str, XString_reverse_iterator* it)
 		it->data = NULL;
 		return;
 	}
-	((XChar*)it->data) -=1;//指向上一个元素
+	it->data = ((XChar*)(it->data)) - 1;//指向上一个元素
 }
 
 bool XString_reverse_iterator_equality(XString_reverse_iterator* itFirst, XString_reverse_iterator* itSecond)

@@ -4,9 +4,14 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+// 在包含<poll.h>前添加宏定义
+#define _GNU_SOURCE  // 启用GNU扩展（POLLRDHUP最初是GNU扩展）
+// 或定义POSIX标准版本（需系统支持POSIX.1-2008及以上）
+// #define _POSIX_C_SOURCE 200809L
 #include "XSocket.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <poll.h>
 
 typedef struct XSocket
 {

@@ -413,13 +413,9 @@ const char* XString_toLocal(const XString* str)
 
 #ifdef __linux__
     // Linux下本地编码为UTF-8，直接指向UTF-8缓存
-    if (utf8_str) 
-    {
-        XString_initCache(str);
-        // 共享UTF-8缓存地址
-        str->m_cache[XStringCache_Local].m_data = XString_toUtf8(str);
-        str->m_cache[XStringCache_Local].m_length = XString_toUtf8_length(str);
-    }
+    // 共享UTF-8缓存地址
+    str->m_cache[XStringCache_Local].m_data = XString_toUtf8(str);
+    str->m_cache[XStringCache_Local].m_length = XString_toUtf8_length(str);
 #else
     // Windows下需要转换为GBK
     str->m_cache[XStringCache_Local].m_data = XString_toGbk(str);
@@ -843,7 +839,7 @@ bool XString_insert(XString* str, size_t pos, const XString* in_str)
     return true;
 }
 
-bool XString_insert_utf8(const XString* str, size_t pos, const char* utf8_str) 
+bool XString_insert_utf8(XString* str, size_t pos, const char* utf8_str) 
 {
     if (!str || !utf8_str || pos > XString_length_base(str)) return false;
 
