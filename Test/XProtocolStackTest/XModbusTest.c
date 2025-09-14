@@ -45,6 +45,7 @@ void XModbusTest()
     serial->m_baudRate = 38400;
     serial->m_portNum = 2;
     XSocket* socket = XSocket_create();
+    //XIODeviceBase_setWriteBuffer_base(socket,512);
     XObject_connect(socket, XSocket_connected_signal(NULL), socket, connected_slot, XConnectionType_Auto);
     XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
     //XObject_delete_event(serial);

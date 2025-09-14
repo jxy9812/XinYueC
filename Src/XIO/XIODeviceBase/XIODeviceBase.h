@@ -6,6 +6,8 @@ extern "C" {
 #include<stdint.h>
 #include<stdbool.h>
 #include"XObject.h"
+//缓冲区大小
+#define XBuffSize						256
 #define XIODEVICEBASE_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XIODeviceBase))       //XIODeviceBase虚函数表大小
 //XContainerObject虚函数表枚举
 XCLASS_DEFINE_BEGING(XIODeviceBase)

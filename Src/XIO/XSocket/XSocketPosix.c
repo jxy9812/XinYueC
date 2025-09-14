@@ -302,7 +302,7 @@ static bool VXIODevice_isOpen(XSocket* so)
 static bool VXIODevice_close(XSocket* so)
 {
     if (!so || so->m_socket == -1) return false;
-
+    XIODeviceBase_aboutToClose_signal(so);
     close(so->m_socket);
     so->m_socket = -1;
     so->m_pollfd.fd = -1;
@@ -325,28 +325,113 @@ static bool VXIODevice_close(XSocket* so)
 
 static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize)
 {
-    if (!so || !data || so->m_socket == -1) return 0;
-
-    ssize_t sent = send(so->m_socket, data, maxSize, 0);
-    if (sent == -1) {
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {
-            // 发生错误，关闭连接
-            VXIODevice_close(so);
-        }
+    if (so == NULL || data == NULL || so->m_socket == -1) {
         return 0;
     }
-    // 发送完成后，触发 bytesWritten 信号，传递实际写入的字节数
-    if (sent > 0) {
-        // 将 XSocket 转换为父类 XIODeviceBase 指针，调用信号函数
-        XIODeviceBase_bytesWritten_signal((XIODeviceBase*)so, sent);
+
+    XIODeviceBase* io = (XIODeviceBase*)so;
+    // 检查设备是否允许写入
+    if (!(io->m_mode & XIODeviceBase_WriteOnly)) {
+        return 0;
     }
-    return (size_t)sent;
+
+    size_t totalSent = 0;
+
+    // 无写入缓冲区，直接发送
+    if (io->m_writeBuffer == NULL) {
+        while (totalSent < maxSize) {
+            ssize_t result = send(so->m_socket, data + totalSent,
+                (maxSize - totalSent), 0);
+            if (result == -1) {
+                // 非阻塞模式下暂时无法发送，退出循环
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                }
+                else {
+                    // 其他错误，返回已发送字节数
+                    return totalSent;
+                }
+            }
+            totalSent += result;
+        }
+        // 发送成功后触发字节写入信号
+        if (totalSent > 0) {
+            XIODeviceBase_bytesWritten_signal(io, totalSent);
+        }
+        return totalSent;
+    }
+
+    // 有写入缓冲区，先写入缓冲区
+    size_t bytesToWrite = maxSize;
+    while (bytesToWrite > 0) {
+        size_t freeSpace = XCircularQueue_getFreeSpace(io->m_writeBuffer);
+        if (freeSpace == 0) {
+            // 缓冲区满，尝试发送部分数据
+            size_t sent = VXIODevice_writeFull(so);
+            if (sent == 0) {
+                // 无法发送且缓冲区满，返回已写入缓冲区的字节数
+                break;
+            }
+            continue;
+        }
+
+        size_t writeSize = (bytesToWrite < freeSpace) ? bytesToWrite : freeSpace;
+        XCircularQueue_write(io->m_writeBuffer, data + totalSent, writeSize);
+        totalSent += writeSize;
+        bytesToWrite -= writeSize;
+    }
+
+    // 尝试发送缓冲区数据
+    VXIODevice_writeFull(so);
+    return totalSent;
 }
 
 static size_t VXIODevice_writeFull(XSocket* so)
 {
-    // 简单实现，实际可能需要处理缓冲
-    return 0;
+    if (so == NULL || so->m_socket == -1) {
+        return 0;
+    }
+
+    XIODeviceBase* io = (XIODeviceBase*)so;
+    if (!(io->m_mode & XIODeviceBase_WriteOnly) || io->m_writeBuffer == NULL) {
+        return 0;
+    }
+
+    size_t totalSent = 0;
+    size_t available = XCircularQueue_getUsedSpace(io->m_writeBuffer);
+
+    while (available > 0) {
+        // 从缓冲区读取数据（不移动读指针）
+        const char* bufferData = XCircularQueue_peek(io->m_writeBuffer);
+        if (bufferData == NULL) {
+            break;
+        }
+
+        ssize_t result = send(so->m_socket, bufferData, available, 0);
+        if (result == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // 非阻塞模式下暂时无法发送，退出循环
+                break;
+            }
+            else {
+                // 发生错误，清空缓冲区并返回已发送字节数
+                XCircularQueue_clear(io->m_writeBuffer);
+                return totalSent;
+            }
+        }
+
+        // 移动读指针，更新统计
+        XCircularQueue_moveReadPtr(io->m_writeBuffer, result);
+        totalSent += result;
+        available -= result;
+    }
+
+    // 触发字节写入信号
+    if (totalSent > 0) {
+        XIODeviceBase_bytesWritten_signal(io, totalSent);
+    }
+
+    return totalSent;
 }
 
 static size_t VXIODevice_read(XSocket* so, char* data, size_t maxSize)
@@ -448,11 +533,13 @@ static void VXIODevice_poll(XSocket* so)
 
     if (so->m_pollfd.revents & (POLLIN | POLLPRI)) {
         // 数据可读，触发读事件（可根据需要添加信号发射）
+        XIODeviceBase_readyRead_signal(so);
     }
 
     if (so->m_pollfd.revents & (POLLERR | POLLHUP | POLLRDHUP)) {
         // 连接错误或关闭
         VXIODevice_close(so);
+        XSocket_disconnected_signal(so);
     }
 }
 

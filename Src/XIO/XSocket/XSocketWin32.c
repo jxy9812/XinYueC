@@ -261,36 +261,70 @@ uint16_t VXSocketBase_localPort(XSocket* so)
 }
 
 // 写入数据
-static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize) {
+static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize) 
+{
     if (so == NULL || data == NULL || so->m_socket == INVALID_SOCKET) {
         return 0;
     }
-    //printf("%02X %d\n", *((uint8_t*)data), *((uint8_t*)data));
-    size_t sent = 0;
-    while (sent < maxSize) {
-        int result = send(so->m_socket, data + sent, (int)(maxSize - sent), 0);
-        if (result == SOCKET_ERROR) {
-            if (WSAGetLastError() == WSAEWOULDBLOCK) {
-                // 非阻塞模式下，暂时无法发送数据
+
+    XIODeviceBase* io = (XIODeviceBase*)so; // 转换为父类IO设备指针
+    // 检查设备是否允许写入
+    if (!(io->m_mode & XIODeviceBase_WriteOnly)) {
+        return 0;
+    }
+
+    size_t totalSent = 0;
+
+    // 情况1：无写入缓冲区，直接发送（兼容原有逻辑）
+    if (io->m_writeBuffer == NULL) {
+        while (totalSent < maxSize) {
+            int result = send(so->m_socket, data + totalSent, (int)(maxSize - totalSent), 0);
+            if (result == SOCKET_ERROR) {
+                if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                    // 非阻塞模式下暂时无法发送，退出循环
+                    break;
+                }
+                else {
+                    // 其他错误，返回已发送字节数
+                    return totalSent;
+                }
+            }
+            totalSent += result;
+        }
+        // 直接发送成功后触发信号
+        if (totalSent > 0) {
+            XIODeviceBase_bytesWritten_signal(io, totalSent);
+        }
+        return totalSent;
+    }
+
+    // 情况2：有写入缓冲区，先写入队列再按需刷写
+    while (totalSent < maxSize) {
+        // 尝试将数据写入缓冲区（按字节入队，适配环形队列的char类型）
+        if (XCircularQueue_push_base(io->m_writeBuffer, data + totalSent)) {
+            totalSent++; // 成功写入1字节
+        }
+        else {
+            // 缓冲区满，先刷写缓冲区
+            size_t flushed = VXIODevice_writeFull(so);
+            if (flushed == 0) {
+                // 刷写失败（如非阻塞暂时无法发送），退出循环
                 break;
             }
-            else {
-                // 发生其他错误
-                return sent;
-            }
         }
-        sent += result;
     }
-    // 发送完成后，触发 bytesWritten 信号，传递实际写入的字节数
-    if (sent > 0) {
-        // 将 XSocket 转换为父类 XIODeviceBase 指针，调用信号函数
-        XIODeviceBase_bytesWritten_signal((XIODeviceBase*)so, sent);
+
+    // 若缓冲区仍有空间，尝试刷写一次（非必须，可根据需求调整）
+    if (totalSent > 0 && !XCircularQueue_isFull_base(io->m_writeBuffer)) {
+        VXIODevice_writeFull(so);
     }
-    return sent;
+
+    return totalSent; // 返回写入缓冲区的总字节数
 }
 
 // 将剩余的数据刷入设备
-static size_t VXIODevice_writeFull(XSocket* so) {
+static size_t VXIODevice_writeFull(XSocket* so) 
+{
     if (so == NULL || so->m_socket == INVALID_SOCKET) {
         return 0;
     }
@@ -304,50 +338,63 @@ static size_t VXIODevice_writeFull(XSocket* so) {
     }
 
     size_t totalSent = 0; // 总发送字节数
-    size_t elemSize = XCircularQueue_typeSize_base(writeBuffer); // 单个元素的大小
-    char* elemBuffer = XMemory_malloc(elemSize); // 临时存储单个元素
-    if (elemBuffer == NULL) {
-        return 0;
-    }
+    char elemBuffer[XBuffSize];
+    size_t elemSize;
 
-    // 循环发送缓冲区中的所有元素
+    // 循环发送缓冲区中的数据
     while (!XCircularQueue_isEmpty_base(writeBuffer)) {
-        // 读取队头元素（不移除，用于发送）
-        void* topElem = XCircularQueue_top_base(writeBuffer);
-        if (topElem == NULL) {
-            break; // 队头为空，退出循环
+        elemSize = 0;
+        // 从环形队列读取数据到临时缓冲区（最多XBuffSize字节）
+        while (elemSize < XBuffSize &&
+            XCircularQueue_receive_base(writeBuffer, &elemBuffer[elemSize])) {
+            elemSize++; // 成功读取1字节，累加计数
         }
 
-        // 发送元素数据
-        size_t sent = 0;
-        while (sent < elemSize) {
-            int result = send(so->m_socket, (char*)topElem + sent, (int)(elemSize - sent), 0);
-            if (result == SOCKET_ERROR) {
-                int err = WSAGetLastError();
-                if (err == WSAEWOULDBLOCK) {
-                    // 非阻塞模式下暂时无法发送，等待10ms后重试
-                    Sleep(10);
-                    continue;
+        if (elemSize == 0) {
+            break; // 未读取到数据，退出循环
+        }
+
+        // 发送临时缓冲区中的数据
+        int sentBytes = send(so->m_socket, elemBuffer, (int)elemSize, 0);
+        if (sentBytes == SOCKET_ERROR) {
+            int err = WSAGetLastError();
+            if (err == WSAEWOULDBLOCK) {
+                // 非阻塞模式下暂时无法发送，将未发送的数据放回缓冲区
+                for (size_t i = 0; i < elemSize; i++) {
+                    XCircularQueue_push_base(writeBuffer, &elemBuffer[i]);
                 }
-                else {
-                    // 其他错误：释放资源并返回已发送字节数
-                    XPrintf("发送失败，错误码: %d\n", err);
-                    XMemory_free(elemBuffer);
-                    return totalSent;
-                }
+                // 短暂等待后重试（避免CPU空转）
+                Sleep(10);
+                break; // 退出本次循环，等待下次poll触发再试
             }
-            sent += result;
+            else {
+                // 其他错误：将未发送的数据放回缓冲区，返回已发送字节数
+                XPrintf("发送失败，错误码: %d\n", err);
+              /*  for (size_t i = 0; i < elemSize; i++) {
+                    XCircularQueue_push_base(writeBuffer, &elemBuffer[i]);
+                }*/
+                return totalSent;
+            }
         }
-
-        // 发送成功：移除队头元素，累计总发送量
-        XCircularQueue_pop_base(writeBuffer);
-        totalSent += elemSize;
-
-        // 触发 bytesWritten 信号，通知本次发送的字节数
-        XIODeviceBase_bytesWritten_signal(io, elemSize);
+        else if (sentBytes < (int)elemSize) {
+            // 部分发送成功，将未发送的剩余数据放回缓冲区
+            size_t unsent = elemSize - sentBytes;
+            /*for (size_t i = 0; i < unsent; i++) {
+                XCircularQueue_push_base(writeBuffer, &elemBuffer[sentBytes + i]);
+            }*/
+            totalSent += sentBytes;
+            // 触发信号通知已发送的字节数
+            XIODeviceBase_bytesWritten_signal(io, sentBytes);
+            break; // 部分发送后退出，等待下次再试
+        }
+        else {
+            // 全部发送成功
+            totalSent += elemSize;
+            // 触发信号通知已发送的字节数
+            XIODeviceBase_bytesWritten_signal(io, elemSize);
+        }
     }
 
-    XMemory_free(elemBuffer);
     return totalSent;
 }
 
