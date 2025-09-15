@@ -17,9 +17,8 @@ void XIODeviceBase_init(XIODeviceBase* io)
 	if (ISNULL(io, ""))
 		return;
 	//开始初始化
-	memset(io, 0, sizeof(XIODeviceBase));
+	memset(((XObject*)io)+1, 0, sizeof(XIODeviceBase)-sizeof(XObject));
 	XObject_init(io);
-	XIODeviceBase_class_init();
 	XClassGetVtable(io) = XIODeviceBase_class_init();
 	XObject_addEventFilter(io, XEVENT_FUNC_RUN, XEventFuncRunCB,NULL);
 }

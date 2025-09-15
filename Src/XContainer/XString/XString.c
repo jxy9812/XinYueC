@@ -412,15 +412,15 @@ const char* XString_toLocal(const XString* str)
     if (str->m_cache && str->m_cache[XStringCache_Local].m_data) 
         return str->m_cache[XStringCache_Local].m_data;
     XString_initCache(str);
-#ifdef __linux__
+#ifdef _WIN32
+    // Windows下需要转换为GBK
+    str->m_cache[XStringCache_Local].m_data = XString_toGbk(str);
+    str->m_cache[XStringCache_Local].m_length = XString_toGbk_length(str);
+#else
     // Linux下本地编码为UTF-8，直接指向UTF-8缓存
     // 共享UTF-8缓存地址
     str->m_cache[XStringCache_Local].m_data = XString_toUtf8(str);
     str->m_cache[XStringCache_Local].m_length = XString_toUtf8_length(str);
-#else
-    // Windows下需要转换为GBK
-    str->m_cache[XStringCache_Local].m_data = XString_toGbk(str);
-    str->m_cache[XStringCache_Local].m_length = XString_toGbk_length(str);
 #endif
  return str->m_cache[XStringCache_Local].m_data;
 }
