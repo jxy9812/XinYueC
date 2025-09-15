@@ -167,14 +167,3 @@ uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
 
 	return next_timeout;
 }
-void XTimerGroupWheel_setGlobal()
-{
-	if (XTimerGroupBase_global() != NULL)
-		return;
-	XTimerGroupWheel* group = XTimerGroupWheel_create(1);
-	XTimerGroupWheel_addTimeWheel_base(group,100);
-	XTimerGroupWheel_addTimeWheel_base(group,100);
-	XTimerGroupWheel_addTimeWheel_base(group,100);
-	XTimerGroupBase_setGlobal(group);
-	XTimerGroupWheel_setMutex(group, XMutex_create());
-}

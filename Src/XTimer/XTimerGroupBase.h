@@ -25,10 +25,6 @@ bool XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerBase* timer);
 bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerBase* timer);
 void XTimerGroupBase_handler_base(XTimerGroupBase* group);
 #define XTimerGroupBase_delete_base XClass_delete_base
-//设置
-void XTimerGroupBase_setGlobal(XTimerGroupBase* group);
-XTimerGroupBase* XTimerGroupBase_global();
-void XTimerGroupBase_global_poll();
 #ifdef __cplusplus
 }
 #endif

@@ -31,21 +31,3 @@ void XTimerGroupBase_handler_base(XTimerGroupBase* group)
 	XClassGetVirtualFunc(group, EXTimerGroupBase_Handler,
 		void (*)(XTimerGroupBase*))(group);
 }
-static XTimerGroupBase* global_timerGroup=NULL;
-void XTimerGroupBase_setGlobal(XTimerGroupBase* group)
-{
-	if (global_timerGroup != NULL)
-		XTimerGroupBase_delete_base(global_timerGroup);
-	global_timerGroup = group;
-}
-
-XTimerGroupBase* XTimerGroupBase_global()
-{
-	return global_timerGroup;
-}
-
-void XTimerGroupBase_global_poll()
-{
-	if (global_timerGroup)
-		XTimerGroupBase_handler_base(global_timerGroup);
-}
