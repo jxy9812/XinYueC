@@ -334,5 +334,19 @@ static void VXThread_deinit(XThread* Object) {
 XHandle XThread_currentThreadId() {
     return (XHandle)pthread_self();
 }
+// 创建 XThread 对象
+XThread* XThread_create(void (*start_routine)(void*), void* arg)
+{
+    XThread* Object = (XThread*)XMemory_malloc(sizeof(XThread));
+    if (Object == NULL) {
+        return NULL;
+    }
+    XThread_init(Object);
+    Object->m_start_routine = start_routine;
+    Object->m_arg = arg;
 
+    XThread_currentThread();//初始化
+
+    return Object;
+}
 #endif

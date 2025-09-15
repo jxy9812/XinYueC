@@ -262,7 +262,7 @@ void VXIODevice_close(XSerialPort* serial)
 {
     if (!XSerialPort_isOpen_base(serial))
         return true;//已经关闭了
-    XIODeviceBase_aboutToClose_signal(io);
+    XIODeviceBase_aboutToClose_signal(serial);
     XIODeviceBase_writeFull_base(serial);
     USART_ITConfig(serial->USARTX, USART_IT_RXNE, DISABLE);//关闭接收相关中断
     USART_Cmd(serial->USARTX, DISABLE);  //关闭串口

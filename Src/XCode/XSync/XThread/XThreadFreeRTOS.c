@@ -25,9 +25,12 @@ static void VXThread_deinit(XThread* Object);
 static bool VXThread_terminate(XThread* Object);
 // FreeRTOS 线程扩展数据结构
 typedef struct {
+	XThread m_class;
 	SemaphoreHandle_t completion_sem; // 线程完成信号量
+#if defined(configSUPPORT_STATIC_ALLOCATION)&&configSUPPORT_STATIC_ALLOCATION
 	StaticSemaphore_t completion_sem_buf; // 静态信号量缓冲区
-} XThreadFreeRTOSData;
+#endif
+} XThreadFreeRTOS;
 // 虚函数表初始化
 XVtable* XThread_class_init() {
 	XVTABLE_CREAT_DEFAULT
@@ -52,7 +55,7 @@ XVtable* XThread_class_init() {
 	return XVTABLE_DEFAULT;
 }
 // 线程函数包装器
-static void ThreadFunction(void* arg) 
+static void ThreadFunction(void* arg)
 {
 	XThread* Object = (XThread*)arg;
 	XThread_mapInsert(Object);
@@ -71,9 +74,8 @@ static void ThreadFunction(void* arg)
 	}
 	// 标记线程结束并释放信号量
 	Object->m_finished = true;
-	XThreadFreeRTOSData* threadData = (XThreadFreeRTOSData*)Object->m_userData;
-	if (threadData && threadData->completion_sem) {
-		xSemaphoreGive(threadData->completion_sem);
+	if (((XThreadFreeRTOS*)Object)->completion_sem) {
+		xSemaphoreGive(((XThreadFreeRTOS*)Object)->completion_sem);
 	}
 	// 从线程映射中移除
 	XThread_mapRemove(Object);
@@ -111,20 +113,17 @@ static bool VXThread_start(XThread* Object) {
 		DEBUG_PRINTF("Invalid thread object or already started");
 		return false;
 	}
-	// 初始化线程扩展数据
-	XThreadFreeRTOSData* threadData = (XThreadFreeRTOSData*)XMemory_malloc(sizeof(XThreadFreeRTOSData));
-	if (!threadData) {
-		DEBUG_PRINTF("Failed to allocate thread data");
-		return false;
-	}
+#if defined(configSUPPORT_STATIC_ALLOCATION)&&configSUPPORT_STATIC_ALLOCATION
 	// 使用静态信号量缓冲区创建二进制信号量
-	threadData->completion_sem = xSemaphoreCreateBinaryStatic(&threadData->completion_sem_buf);
-	if (!threadData->completion_sem) {
+	((XThreadFreeRTOS*)Object)->completion_sem = xSemaphoreCreateBinaryStatic(&(((XThreadFreeRTOS*)Object)->completion_sem_buf));
+#else
+	((XThreadFreeRTOS*)Object)->completion_sem = xSemaphoreCreateBinary();
+#endif
+	if (!((XThreadFreeRTOS*)Object)->completion_sem) {
 		DEBUG_PRINTF("Failed to create completion semaphore");
-		XMemory_free(threadData);
 		return false;
 	}
-	Object->m_userData = threadData;
+
 	// 转换栈大小（FreeRTOS 栈大小单位为字）
 	uint32_t stackWords = Object->m_stackSize / sizeof(StackType_t);
 	if (stackWords < configMINIMAL_STACK_SIZE) {
@@ -143,9 +142,8 @@ static bool VXThread_start(XThread* Object) {
 	);
 	if (result != pdPASS) {
 		DEBUG_PRINTF("Failed to create task, error: %d", result);
-		vSemaphoreDelete(threadData->completion_sem);
-		XMemory_free(threadData);
-		Object->m_userData = NULL;
+		vSemaphoreDelete(((XThreadFreeRTOS*)Object)->completion_sem);
+		((XThreadFreeRTOS*)Object)->completion_sem = NULL;
 		return false;
 	}
 	Object->m_handle = (XHandle)taskHandle;
@@ -154,13 +152,12 @@ static bool VXThread_start(XThread* Object) {
 }
 // 等待线程结束
 static bool VXThread_wait(XThread* Object, unsigned long time) {
-	if (!Object || Object->m_handle == 0 || !Object->m_userData) {
+	if (!Object || Object->m_handle == 0) {
 		DEBUG_PRINTF("Invalid thread object or not running");
 		return false;
 	}
-	XThreadFreeRTOSData* threadData = (XThreadFreeRTOSData*)Object->m_userData;
 	TickType_t ticks = (time == UINT32_MAX) ? portMAX_DELAY : pdMS_TO_TICKS(time);
-	BaseType_t result = xSemaphoreTake(threadData->completion_sem, ticks);
+	BaseType_t result = xSemaphoreTake(((XThreadFreeRTOS*)Object)->completion_sem, ticks);
 	if (result != pdTRUE) {
 		DEBUG_PRINTF("Thread wait timed out or failed");
 		return false;
@@ -200,12 +197,10 @@ static bool VXThread_terminate(XThread* Object) {
 	Object->m_finished = true;
 	Object->m_handle = 0;
 	// 清理资源
-	if (Object->m_userData) {
-		XThreadFreeRTOSData* threadData = (XThreadFreeRTOSData*)Object->m_userData;
-		vSemaphoreDelete(threadData->completion_sem);
-		XMemory_free(threadData);
-		Object->m_userData = NULL;
-	}
+	//if (Object->m_userData) {
+	vSemaphoreDelete(((XThreadFreeRTOS*)Object)->completion_sem);
+	((XThreadFreeRTOS*)Object)->completion_sem = NULL;
+	//}
 	DEBUG_PRINTF("Thread terminated");
 	return true;
 }
@@ -268,5 +263,21 @@ static void VXThread_deinit(XThread* Object) {
 // 获取当前线程 ID（使用任务句柄作为唯一标识）
 XHandle XThread_currentThreadId() {
 	return (XHandle)xTaskGetCurrentTaskHandle();
+}
+
+// 创建 XThread 对象
+XThread* XThread_create(void (*start_routine)(void*), void* arg)
+{
+	XThread* Object = (XThreadFreeRTOS*)XMemory_malloc(sizeof(XThreadFreeRTOS));
+	if (Object == NULL) {
+		return NULL;
+	}
+	XThread_init(Object);
+	Object->m_start_routine = start_routine;
+	Object->m_arg = arg;
+
+	XThread_currentThread();//初始化
+	((XThreadFreeRTOS*)Object)->completion_sem = NULL;
+	return Object;
 }
 #endif

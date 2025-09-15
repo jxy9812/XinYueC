@@ -1,5 +1,5 @@
 ﻿#ifdef __FreeRTOS__
-#include "XMutex.h"
+#include "XRecursiveMutex.h"
 #include "XMemory.h"
 #include "FreeRTOS.h"
 #include "semphr.h"
@@ -16,10 +16,35 @@ size_t XMutex_geTypetSize()
 {
     return sizeof(struct XMutex);
 }
-//// 内部辅助函数：获取平台相关句柄（供XWaitCondition使用）
-//void* XMutex_getNativeHandle(XMutex* mutex) {
-//    return mutex ? (void*)mutex->sem : NULL;
-//}
+
+void XRecursiveMutex_init(XRecursiveMutex* mutex) 
+{
+    if (!mutex) return;
+
+    mutex->type = XMutex_Recursive;
+    mutex->recursive_count = 0;
+    mutex->owner_task = NULL;
+
+    if (mutex->type == XMutex_Recursive) {
+        mutex->sem = xSemaphoreCreateRecursiveMutex();
+    }
+    else {
+        mutex->sem = xSemaphoreCreateMutex();
+    }
+}
+
+XRecursiveMutex* XRecursiveMutex_create()
+{
+    XMutex* mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
+    if (mutex) {
+        XRecursiveMutex_init(mutex);
+        if (!mutex->sem) {
+            XMemory_free(mutex);
+            return NULL;
+        }
+    }
+    return mutex;
+}
 
 void XMutex_init(XMutex* mutex) {
     if (!mutex) return;
@@ -28,7 +53,7 @@ void XMutex_init(XMutex* mutex) {
     mutex->recursive_count = 0;
     mutex->owner_task = NULL;
 
-    if (type == XMutex_Recursive) {
+    if (mutex->type == XMutex_Recursive) {
         mutex->sem = xSemaphoreCreateRecursiveMutex();
     }
     else {

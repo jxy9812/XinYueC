@@ -4,12 +4,13 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
-
 // FreeRTOS平台具体结构体定义
 struct XWaitCondition {
     SemaphoreHandle_t sem;
     volatile int32_t wait_count;
+#if defined(configSUPPORT_STATIC_ALLOCATION)&&configSUPPORT_STATIC_ALLOCATION
     StaticSemaphore_t sem_buf;
+#endif
 };
 
 size_t XWaitCondition_getTypeSize()
@@ -21,7 +22,16 @@ void XWaitCondition_init(XWaitCondition* cond) {
     if (cond == NULL) return;
     cond->wait_count = 0;
     // 创建二进制信号量（初始为0）
+#if defined(configSUPPORT_STATIC_ALLOCATION)&&configSUPPORT_STATIC_ALLOCATION
     cond->sem = xSemaphoreCreateBinaryStatic(&cond->sem_buf);
+#else
+    cond->sem = xSemaphoreCreateBinary();
+    // （可选）检查动态分配是否成功
+    if (cond->sem == NULL) {
+        // 处理内存分配失败（如断言、日志等）
+        configASSERT(false);
+    }
+#endif
 }
 
 void XWaitCondition_deinit(XWaitCondition* cond) {
@@ -87,5 +97,4 @@ void XWaitCondition_wakeAll(XWaitCondition* cond) {
         xSemaphoreGive(cond->sem);
     }
 }
-
 #endif

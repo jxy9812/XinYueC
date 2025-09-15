@@ -1,9 +1,34 @@
-/* gzlib.c -- zlib functions common to reading and writing gzip files
+﻿/* gzlib.c -- zlib functions common to reading and writing gzip files
  * Copyright (C) 2004-2017 Mark Adler
  * For conditions of distribution and use, see copyright notice in zlib.h
  */
 
 #include "gzguts.h"
+/*                                  补充裸机环境缺失的文件模式宏                      */ 
+#ifndef O_RDONLY
+#define O_RDONLY  0x00  // 只读模式
+#endif
+
+#ifndef O_WRONLY
+#define O_WRONLY  0x01  // 只写模式
+#endif
+
+#ifndef O_RDWR
+#define O_RDWR    0x02  // 读写模式
+#endif
+
+#ifndef O_CREAT
+#define O_CREAT   0x04  // 若文件不存在则创建
+#endif
+
+#ifndef O_TRUNC
+#define O_TRUNC   0x08  // 截断文件（清空内容）
+#endif
+
+#ifndef O_APPEND
+#define O_APPEND  0x10  // 追加模式（写入数据到文件末尾）
+#endif
+/*                                  补充裸机环境缺失的文件模式宏                      */
 
 #if defined(_WIN32) && !defined(__BORLANDC__) && !defined(__MINGW32__)
 #  define LSEEK _lseeki64
