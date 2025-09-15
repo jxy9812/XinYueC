@@ -5,6 +5,8 @@
 #include<stdlib.h>
 #include<string.h>
 //插入
+static bool VXListBase_push_front_node(XListSLinked* this_list, XListSNode* node);
+static bool VXListBase_push_back_node(XListSLinked* this_list, XListSNode* node);
 static XListSNode * VXList_push_front(XListSLinked * this_list, void* pvData, XCDataCreatMethod dataCreatMethod);
 static XListSNode* VXList_push_back(XListSLinked* this_list, void* pvData, XCDataCreatMethod dataCreatMethod);
 static bool VXList_insert(XListSLinked* this_list, XListSNode* curNode, void* pvData, XCDataCreatMethod dataCreatMethod);
@@ -39,8 +41,8 @@ XVtable* XListSLinked_class_init()
 
     void* table[] = {
         //插入
-        VXList_push_front,
-        VXList_push_back,
+        VXList_push_front,VXListBase_push_front_node,
+        VXList_push_back,VXListBase_push_back_node,
         VXList_insert,
         VXList_insert_array,
         //删除
@@ -66,33 +68,58 @@ XVtable* XListSLinked_class_init()
 
 #define CreatNode(this_list)   (XMemory_malloc(sizeof(XListSNode*)+XContainerTypeSize(this_list)))
 
+bool VXListBase_push_front_node(XListSLinked* this_list, XListSNode* node)
+{
+    if (this_list == NULL || node == NULL)
+        return false;
+    XListSNode* head = XContainerDataPtr(this_list);//获取头指针
+    XContainerDataPtr(this_list) = node;//新节点成为新的头
+    node->next = head;//修改指向下一个节点为原先的头
+    if (XListBase_isEmpty_base(this_list))
+        this_list->m_tail = node;
+    //更新记录数量
+    ++XContainerSize(this_list);
+    ++XContainerCapacity(this_list);
+    return true;
+}
+
+bool VXListBase_push_back_node(XListSLinked* this_list, XListSNode* node)
+{
+    if (this_list == NULL || node == NULL)
+        return false;
+    if (this_list->m_tail)
+        this_list->m_tail->next = node;//尾指针指向新节点
+    node->next = NULL;//新节点指向NULL
+    this_list->m_tail = node;//更新记录的尾节点
+    if (XListBase_isEmpty_base(this_list))
+        XContainerDataPtr(this_list) = node;
+    //更新记录数量
+    ++XContainerSize(this_list);
+    ++XContainerCapacity(this_list);
+    return true;
+}
+
 XListSNode* VXList_push_front(XListSLinked* this_list, void* pvData, XCDataCreatMethod dataCreatMethod)
 {
     XListBase* list = this_list;
-    XListSNode* NewNode = CreatNode(this_list);//新节点
-    if (NewNode == NULL)
+    XListSNode* newNode = CreatNode(this_list);//新节点
+    if (newNode == NULL)
     {
         perror("开辟节点失败");
         return NULL;
     }
     if (dataCreatMethod)
     {
-        memset(XListSNode_DataPtr(NewNode),0, XContainerTypeSize(this_list));
-        dataCreatMethod(XListSNode_DataPtr(NewNode), pvData);
+        memset(XListSNode_DataPtr(newNode),0, XContainerTypeSize(this_list));
+        dataCreatMethod(XListSNode_DataPtr(newNode), pvData);
     }
     else
     {
-        memcpy(XListSNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+        memcpy(XListSNode_DataPtr(newNode), pvData, XContainerTypeSize(this_list));//拷贝数据
     }
-    XListSNode* head = XContainerDataPtr(this_list);//获取头指针
-    XContainerDataPtr(this_list) = NewNode;//新节点成为新的头
-    NewNode->next = head;//修改指向下一个节点为原先的头
-    if (XListBase_isEmpty_base(this_list))
-        this_list->m_tail = NewNode;
-    //更新记录数量
-    ++XContainerSize(this_list);
-    ++XContainerCapacity(this_list);
-    return NewNode;
+    if(VXListBase_push_front_node(this_list,newNode))
+        return newNode;
+    return NULL;
 }
 
 XListSNode* VXList_push_back(XListSLinked* this_list, void* pvData, XCDataCreatMethod dataCreatMethod)
@@ -113,16 +140,9 @@ XListSNode* VXList_push_back(XListSLinked* this_list, void* pvData, XCDataCreatM
     {
         memcpy(XListSNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
     }
-    if (this_list->m_tail)
-        this_list->m_tail->next = NewNode;//尾指针指向新节点
-    NewNode->next = NULL;//新节点指向NULL
-    this_list->m_tail = NewNode;//更新记录的尾节点
-    if (XListBase_isEmpty_base(this_list))
-        XContainerDataPtr(this_list) = NewNode;
-    //更新记录数量
-    ++XContainerSize(this_list);
-    ++XContainerCapacity(this_list);
-    return NewNode;
+    if (VXListBase_push_back_node(this_list, NewNode))
+        return NewNode;
+    return NULL;
 }
 
 bool VXList_insert(XListSLinked* this_list, XListSNode* curNode, void* pvData, XCDataCreatMethod dataCreatMethod)

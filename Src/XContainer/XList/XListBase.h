@@ -9,11 +9,14 @@ extern "C" {
 #include"XContainerObject.h"
 #include"XFunctionCallback.h"
 #include"XListBase_iterator.h"
+//typedef struct XListBaseNode XListBaseNode;
 #define XLISTBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListBase))       //XList容器虚函数表大小
 //XList虚函数表枚举
 XCLASS_DEFINE_BEGING(XListBase)
 XCLASS_DEFINE_ENUM(XListBase, Push_Front)=XCLASS_VTABLE_GET_SIZE(XContainerObject),
+XCLASS_DEFINE_ENUM(XListBase, Push_Front_Node),
 XCLASS_DEFINE_ENUM(XListBase, Push_Back),
+XCLASS_DEFINE_ENUM(XListBase, Push_Back_Node),
 XCLASS_DEFINE_ENUM(XListBase, Insert),
 XCLASS_DEFINE_ENUM(XListBase, Insert_Array),
 XCLASS_DEFINE_ENUM(XListBase, Pop_Front),
@@ -35,11 +38,13 @@ typedef struct XListBaseNode XListBaseNode;
 void XListBase_init(XListBase* this_list, size_t typeSize);
 //插入函数
 //链表头部增加一个元素X
+bool XListBase_push_front_node_base(XListBase* list, XListBaseNode* node);
 XListBaseNode* XListBase_push_front_base(XListBase* this_list, void* pvData);
 #define XListBase_Push_Front_Base(this_list,type,value){type t=value;XListBase_push_front_base(this_list,&t);}
 XListBaseNode* XListBase_push_front_move_base(XListBase* this_list, void* pvData);
 #define XListBase_Push_Front_Move_Base(this_list,type,value){type t=value;XListBase_push_front_move_base(this_list,&t);}
 // 链表尾部增加一个元素X
+bool XListBase_push_back_node_base(XListBase* list, XListBaseNode* node);
 XListBaseNode* XListBase_push_back_base(XListBase* this_list, void* pvData);
 #define XListBase_Push_Back_Base(this_list,type,value){type t=value;XListBase_push_back_base(this_list,&t);}
 XListBaseNode* XListBase_push_back_move_base(XListBase* this_list, void* pvData);

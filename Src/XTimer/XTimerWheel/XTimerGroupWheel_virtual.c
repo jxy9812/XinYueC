@@ -275,8 +275,7 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
         XListSLinked* list = XVector_At_Base(wheel->m_slots, current_slot, XListSLinked*);
         if (list != NULL)
         {
-            // 转移链表数据
-            XListSLinked cList = *list;
+            XListSNode* head = XContainerDataPtr(list);//获取头节点
             list->m_tail = NULL;
             XContainerDataPtr(list) = NULL;
             XContainerSize(list) = 0;
@@ -284,10 +283,11 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
 
             if (group->m_mutex)
                 XMutex_unlock(group->m_mutex);
-
-            for (XListSLinked_iterator* it = XContainerDataPtr(&cList); it != NULL; it = ((XListSNode*)it)->next)
+            XListSNode* prev,*node=head;
+            while (node!= NULL)
             {
-                XTimerWheel* timer = XListSNode_Data(it, XTimerWheel*);
+                prev = node;
+                XTimerWheel* timer = XListSNode_Data(node, XTimerWheel*);
                 bool isdelete = true;
                 if (timer->m_expire_ticks <= groupBase->m_current_tick && XTimerBase_isRunning(timer))
                 {
@@ -326,10 +326,12 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
                 //    ((XTimerBase*)timer)->m_isRun = false;
                 //    timer->m_list = NULL;
                 //}
+                node = node->next;
+                XMemory_free(prev);
             }
 
             // 清空当前槽的链表
-            XListSLinked_clear_base(&cList);
+            //XListSLinked_clear_base(&cList);
 
             if (group->m_mutex)
                 XMutex_lock(group->m_mutex);

@@ -4,7 +4,8 @@
 #include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
-
+static bool VXListBase_push_front_node(XListDLinked* this_list, XListDNode* node);
+static bool VXListBase_push_back_node(XListDLinked* this_list, XListDNode* node);
 //插入
 static XListDNode * VXList_push_front(XListDLinked * this_list, void* pvData, XCDataCreatMethod dataCreatMethod);
 static XListDNode* VXList_push_back(XListDLinked* this_list, void* pvData, XCDataCreatMethod dataCreatMethod);
@@ -42,8 +43,8 @@ XVtable* XListDLinked_class_init()
 
     void* table[] = {
         //插入
-        VXList_push_front,
-        VXList_push_back,
+        VXList_push_front,VXListBase_push_front_node,
+        VXList_push_back,VXListBase_push_back_node,
         VXList_insert,
         VXList_insert_array,
         //删除
@@ -101,12 +102,48 @@ void VXClass_move(XListDLinked* object, XListDLinked* src)
     XSwap(object, src, sizeof(XListDLinked));
 }
 
+bool VXListBase_push_front_node(XListDLinked* this_list, XListDNode* node)
+{
+    if (this_list == NULL || node == NULL)
+        return false;
+    if (VXListBase_push_back_node(this_list, node))
+    {
+        XContainerDataPtr(this_list) = node;
+    }
+    return false;
+}
+
+bool VXListBase_push_back_node(XListDLinked* this_list, XListDNode* node)
+{
+    if (this_list == NULL || node == NULL)
+        return false;
+    if (XListBase_isEmpty_base(this_list))
+    {
+        XContainerDataPtr(this_list) = node;
+        node->next = node;
+        node->prev = node;
+    }
+    else
+    {
+        XListDNode* pfront = XContainerDataPtr(this_list);//原头节点
+        XListDNode* pback = pfront->prev;//原尾节点
+        node->next = pfront;
+        node->prev = pback;
+        pfront->prev = node;
+        pback->next = node;
+    }
+    //更新记录数量
+    ++XContainerSize(this_list);
+    ++XContainerCapacity(this_list);
+    return true;
+}
+
 XListDNode* VXList_push_front(XListDLinked* this_list, void* pvData, XCDataCreatMethod dataCreatMethod)
 {
     /*if (ISNULL(this_list, ""))
         return NULL;*/
     //XListBase* list = this_list;
-   // XListDNode* NewNode = XListDLinked_push_back_base(this_list, pvData);
+   // XListDNode* node = XListDLinked_push_back_base(this_list, pvData);
     XListDNode* NewNode = XClassGetVirtualFunc(this_list, EXListBase_Push_Back, XListBaseNode * (*)(XListBase*, void*, XCDataCreatMethod))(this_list, pvData, dataCreatMethod);
     if (NewNode)
     {
@@ -120,40 +157,24 @@ XListDNode* VXList_push_back(XListDLinked* this_list, void* pvData, XCDataCreatM
     /*if (ISNULL(this_list, ""))
         return NULL;*/
     //XListBase* list = this_list;
-    XListDNode* NewNode = CreatNode(this_list);//新节点
-    if (NewNode == NULL)
+    XListDNode* newNode = CreatNode(this_list);//新节点
+    if (newNode == NULL)
     {
         perror("开辟节点失败");
         return NULL;
     }
     if (dataCreatMethod)
     {
-        memset(XListDNode_DataPtr(NewNode), 0, XContainerTypeSize(this_list));
-        dataCreatMethod(XListDNode_DataPtr(NewNode), pvData);
+        memset(XListDNode_DataPtr(newNode), 0, XContainerTypeSize(this_list));
+        dataCreatMethod(XListDNode_DataPtr(newNode), pvData);
     }
     else
     {
-        memcpy(XListDNode_DataPtr(NewNode), pvData, XContainerTypeSize(this_list));//拷贝数据
+        memcpy(XListDNode_DataPtr(newNode), pvData, XContainerTypeSize(this_list));//拷贝数据
     }
-    if (XListBase_isEmpty_base(this_list))
-    {
-        XContainerDataPtr(this_list) = NewNode;
-        NewNode->next = NewNode;
-        NewNode->prev = NewNode;
-    }
-    else
-    {
-        XListDNode* pfront = XContainerDataPtr(this_list);//原头节点
-        XListDNode* pback = pfront->prev;//原尾节点
-        NewNode->next = pfront;
-        NewNode->prev = pback;
-        pfront->prev = NewNode;
-        pback->next = NewNode;
-    }
-    //更新记录数量
-    ++XContainerSize(this_list);
-    ++XContainerCapacity(this_list);
-    return NewNode;
+    if (VXListBase_push_back_node(this_list, newNode))
+        return newNode;
+    return NULL;
 }
 
 void VXList_inserts(XListDLinked* this_list, XListDNode* curNode, void* pvData, size_t n, XCDataCreatMethod dataCreatMethod)

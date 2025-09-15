@@ -33,11 +33,13 @@ XListSLinked* XListSLinked_create(size_t typeSize);
 void XListSLinked_init(XListSLinked* this_list, size_t typeSize);
 //插入函数
 //链表头部增加一个元素X
+#define XListSLinked_push_front_node_base			XListBase_push_front_node_base
 #define XListSLinked_push_front_base				XListBase_push_front_base
 #define XListSLinked_Push_Front_Base				XListBase_Push_Front_Base
 #define XListSLinked_push_front_move_base			XListBase_push_front_move_base
 #define XListSLinked_Push_Front_Move_Base			XListBase_Push_Front_Move_Base
 // 链表尾部增加一个元素X
+#define XListSLinked_push_back_node_base			XListBase_push_back_node_base
 #define XListSLinked_push_back_base					XListBase_push_back_base
 #define XListSLinked_Push_Back_Base					XListBase_Push_Back_Base
 #define XListSLinked_push_back_move_base			XListBase_push_back_move_base

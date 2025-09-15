@@ -8,6 +8,12 @@ void XListBase_init(XListBase* this_list, size_t typeSize)
 	XClassGetVtable(this_list) = XContainerObject_class_init();
 	//this_list->m_equality = NULL;
 }
+bool XListBase_push_front_node_base(XListBase* this_list, XListBaseNode* node)
+{
+	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
+		return false;
+	return XClassGetVirtualFunc(this_list, EXListBase_Push_Front_Node,bool(*)(XListBase*, XListBaseNode*))(this_list, node);
+}
 XListBaseNode* XListBase_push_front_base(XListBase* this_list, void* pvData)
 {
 	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
@@ -19,6 +25,12 @@ XListBaseNode* XListBase_push_front_move_base(XListBase* this_list, void* pvData
 	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return NULL;
 	return XClassGetVirtualFunc(this_list, EXListBase_Push_Front, XListBaseNode * (*)(XListBase*, void*, XCDataCreatMethod))(this_list, pvData,XContainerDataMoveMethod(this_list));
+}
+bool XListBase_push_back_node_base(XListBase* this_list, XListBaseNode* node)
+{
+	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
+		return false;
+	return XClassGetVirtualFunc(this_list, EXListBase_Push_Back_Node,bool(*)(XListBase*, XListBaseNode*))(this_list, node);
 }
 XListBaseNode* XListBase_push_back_base(XListBase* this_list, void* pvData)
 {
