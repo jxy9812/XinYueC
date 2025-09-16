@@ -27,16 +27,12 @@ void XThread_init(XThread* Object)
 XThread* XThread_currentThread()
 {
     if (threadMap == NULL)
-    {
-        threadMap = XHashMap_Create(size_t,XThread*,XCompare_size_t);
-    }
+        threadMap = XHashMap_Create(size_t, XThread*, XCompare_size_t);
     if (mutex == NULL)
-    {
         mutex = XMutex_create();
-    }
     size_t id = XThread_currentThreadId();
     XMutex_lock(mutex);
-    XThread** ptr=XHashMap_value_base(threadMap, id);
+    XThread** ptr=XHashMap_value_base(threadMap, &id);
     XMutex_unlock(mutex);
     if(ptr)
         return *ptr;

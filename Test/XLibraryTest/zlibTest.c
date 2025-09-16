@@ -7,11 +7,12 @@
 #include"XCoreApplication.h"
 #include<string.h>
 #include"XPrintf.h"
+char compress_buff[100] = { 0 };
 void zlibTest()
 {
     XPrintf_utf8("zlib 压缩测试\n");
 	const char* str = "aaaaaaaaaaaaaa6666666";
-	char compress_buff[100] = {0};
+
 	char decompress_buff[100] = { 0 };
 	int out_len=zlib_compress(str,strlen(str)+1,compress_buff,sizeof(compress_buff));
 	XPrintf("压缩后大小:%d\n",out_len);

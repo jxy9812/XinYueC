@@ -189,7 +189,7 @@ void ZLIB_INTERNAL zmemzero(dest, len)
 
 #  define MY_ZCALLOC
 
-/* Turbo C malloc() does not allow dynamic allocation of 64K bytes
+/* Turbo CXMemory_ malloc() does not allow dynamic allocation of 64K bytes
  * and farmalloc(64K) returns a pointer with an offset of 8, so we
  * must fix the pointer. Warning: the pointer must be put back to its
  * original form in order to free it, use zcfree().
@@ -309,8 +309,8 @@ voidpf ZLIB_INTERNAL zcalloc (voidpf opaque, unsigned items, unsigned size)
 //    unsigned size;
 {
     (void)opaque;
-    return sizeof(uInt) > 2 ? (voidpf)malloc(items * size) :
-                              (voidpf)calloc(items, size);
+    return sizeof(uInt) > 2 ? (voidpf)XMemory_malloc(items * size) :
+                              (voidpf)XMemory_calloc(items, size);
 }
 
 void ZLIB_INTERNAL zcfree (voidpf opaque, voidpf ptr)
@@ -318,7 +318,7 @@ void ZLIB_INTERNAL zcfree (voidpf opaque, voidpf ptr)
 //    voidpf ptr;
 {
     (void)opaque;
-    free(ptr);
+   XMemory_free(ptr);
 }
 #else
 voidpf ZLIB_INTERNAL zcalloc (voidpf opaque, unsigned items, unsigned size)
@@ -338,7 +338,7 @@ void ZLIB_INTERNAL zcfree (voidpf opaque, voidpf ptr)
 {
     (void)opaque;
     XMemory_free(ptr);
-//    free(ptr);
+//   XMemory_free(ptr);
 }
 #endif
 #endif /* MY_ZCALLOC */

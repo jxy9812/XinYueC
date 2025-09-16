@@ -1,8 +1,8 @@
-/* gzread.c -- zlib functions for reading gzip files
+﻿/* gzread.c -- zlib functions for reading gzip files
  * Copyright (C) 2004, 2005, 2010, 2011, 2012, 2013, 2016 Mark Adler
  * For conditions of distribution and use, see copyright notice in zlib.h
  */
-
+#include "XMemory.h"
 #include "gzguts.h"
 
 /* Local functions */
@@ -96,11 +96,11 @@ local int gz_look(state)
     /* allocate read buffers and inflate memory */
     if (state->size == 0) {
         /* allocate buffers */
-        state->in = (unsigned char *)malloc(state->want);
-        state->out = (unsigned char *)malloc(state->want << 1);
+        state->in = (unsigned char *)XMemory_malloc(state->want);
+        state->out = (unsigned char *)XMemory_malloc(state->want << 1);
         if (state->in == NULL || state->out == NULL) {
-            free(state->out);
-            free(state->in);
+           XMemory_free(state->out);
+           XMemory_free(state->in);
             gz_error(state, Z_MEM_ERROR, "out of memory");
             return -1;
         }
@@ -113,8 +113,8 @@ local int gz_look(state)
         state->strm.avail_in = 0;
         state->strm.next_in = Z_NULL;
         if (inflateInit2(&(state->strm), 15 + 16) != Z_OK) {    /* gunzip */
-            free(state->out);
-            free(state->in);
+           XMemory_free(state->out);
+           XMemory_free(state->in);
             state->size = 0;
             gz_error(state, Z_MEM_ERROR, "out of memory");
             return -1;
@@ -642,13 +642,13 @@ int ZEXPORT gzclose_r(file)
     /* free memory and close file */
     if (state->size) {
         inflateEnd(&(state->strm));
-        free(state->out);
-        free(state->in);
+       XMemory_free(state->out);
+       XMemory_free(state->in);
     }
     err = state->err == Z_BUF_ERROR ? Z_BUF_ERROR : Z_OK;
     gz_error(state, Z_OK, NULL);
-    free(state->path);
+   XMemory_free(state->path);
     ret = close(state->fd);
-    free(state);
+   XMemory_free(state);
     return ret ? Z_ERRNO : err;
 }

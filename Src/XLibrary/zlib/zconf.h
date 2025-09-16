@@ -289,7 +289,7 @@ typedef unsigned long z_size_t;
 #define MAX_WBITS   15  /* 默认值，对应32K字节的LZ77滑动窗口 */
 // 嵌入式系统使用优化参数（1K窗口，内存优先）
 #else
-#define MAX_WBITS   8   /* 适配嵌入式设备，对应1K字节的LZ77滑动窗口，节省RAM */
+#define MAX_WBITS   9   /* 适配嵌入式设备，对应1K字节的LZ77滑动窗口，节省RAM */
 #endif
 #endif
 

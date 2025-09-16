@@ -61,8 +61,8 @@ static bool addReadOwner(struct XReadWriteLock* rwlock, DWORD threadId) {
             rwlock->readRecursionCounts, newCapacity * sizeof(int));
 
         if (!newOwners || !newCounts) {
-            free(newOwners);
-            free(newCounts);
+           XMemory_free(newOwners);
+           XMemory_free(newCounts);
             return false;
         }
 
@@ -125,8 +125,8 @@ void XReadWriteLock_deinit(XReadWriteLock* rwlock) {
 
     CloseHandle(rwlock->readEvent);
     CloseHandle(rwlock->writeEvent);
-    free(rwlock->readOwners);
-    free(rwlock->readRecursionCounts);
+   XMemory_free(rwlock->readOwners);
+   XMemory_free(rwlock->readRecursionCounts);
 
     rwlock->readOwners = NULL;
     rwlock->readRecursionCounts = NULL;
