@@ -43,10 +43,10 @@ bool XMapBase_insert_valueMove_base(XMapBase* this_map, const void* key,void* pv
 void XMapBase_erase_base(XMapBase* this_map, const XMapBase_iterator* it, XMapBase_iterator* next);
 //map删除数据
 bool XMapBase_remove_base(XMapBase* this_map, const void* key);
-#define XMapBase_Remove_Base(this_map,keyType,key) {keyType k=key;XMap_remove_base(this_map,&k);}
+#define XMapBase_Remove_Base(this_map,keyType,key) {keyType k=key;XMapBase_remove_base(this_map,&k);}
 //根据键值返回数据地址
 void* XMapBase_value_base(XMapBase* this_map, const void* key);
-#define XMapBase_Value_Base(this_map,key,ValueType) (*(ValueType*)XMap_value_base(this_map,&(key)))
+#define XMapBase_Value_Base(this_map,key,valueType) (*(valueType*)XMapBase_value_base(this_map,&(key)))
 //查找数据，返回找到的迭代器
 bool XMapBase_find_base(const XMapBase* this_map, const void* key, XMapBase_iterator* it);
 bool XMapBase_contains(const XMapBase* this_map, const void* key);

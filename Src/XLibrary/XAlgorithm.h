@@ -5,7 +5,6 @@ extern "C" {
 #endif
 #include<stdio.h>
 #include<stdint.h>
-#include"XStringOperation.h"
 typedef struct XStack XStack;
 typedef struct XVector XVector;
 #ifdef _WIN32

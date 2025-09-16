@@ -7,6 +7,7 @@
 #include "XString.h"
 #include "XStack.h"
 #include "XMemory.h"
+#include "XNumStrConv.h"
 #include <ctype.h>
 #include <inttypes.h>
 #include <stdlib.h>
@@ -725,21 +726,26 @@ void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat format,
         }
         break;
     case XJsonValue_Int: {
-        char buf[32];
-        snprintf(buf, sizeof(buf), "%" PRId64, value->data.integer);
+        char buf[32]="0";
+        //snprintf(buf, sizeof(buf), "%" PRId64, value->data.integer);
+        int64_to_str(value->data.integer, buf, sizeof(buf));
         XByteArray_append_utf8(output, buf);
         break;
         
     }
     case XJsonValue_Double: {
         // 转换数字为字符串（UTF-8）
-        char buffer[64];
+        char buffer[64]="0";
         double num = XJsonValue_toDouble(value, 0.0);
-        if (num == (long long)num) {
-            snprintf(buffer, sizeof(buffer), "%lld", (long long)num);
+        if (num == (long long)num) 
+        {
+            //snprintf(buffer, sizeof(buffer), "%lld", (long long)num);
+            int64_to_str((long long)num, buffer, sizeof(buffer));
         }
-        else {
-            snprintf(buffer, sizeof(buffer), "%g", num);
+        else 
+        {
+            //snprintf(buffer, sizeof(buffer), "%g", num);
+            double_to_str(num, buffer, sizeof(buffer), -1);
         }
         XByteArray_append_utf8(output, buffer);
         break;
