@@ -109,10 +109,12 @@ void VXSet_deinit(XSet* this_set)
 
 void VXSet_swap(XSet* this_setOne, XSet* this_setTwo)
 {
-	XVtableGetFunc(XVector_class_init(), EXContainerObject_Swap, void (*)(XContainerObject*, XContainerObject*))(this_setOne, this_setTwo);
+	/*XVtableGetFunc(XVector_class_init(), EXContainerObject_Swap, void (*)(XContainerObject*, XContainerObject*))(this_setOne, this_setTwo);
 	XSwap(&((XSetBase*)this_setOne)->m_KeyEquality, &((XSetBase*)this_setTwo)->m_KeyEquality, sizeof(XEquality));
 	XSwap(&((XSetBase*)this_setOne)->m_KeyLess, &((XSetBase*)this_setTwo)->m_KeyLess, sizeof(XLess));
-	XSwap(&XContainerTypeSize(this_setOne), &XContainerTypeSize(this_setTwo), sizeof(size_t));
+	XSwap(&XContainerTypeSize(this_setOne), &XContainerTypeSize(this_setTwo), sizeof(size_t));*/
+
+	XSwap(this_setOne,this_setTwo,sizeof(XSet));
 }
 bool VXSet_insert(XSet* this_set, const void* pvKey, XCDataCreatMethod dataCreatMethod)
 {
@@ -124,12 +126,12 @@ bool VXSet_insert(XSet* this_set, const void* pvKey, XCDataCreatMethod dataCreat
 		{
 			void* temp = XMemory_calloc(1,XContainerTypeSize(this_set));
 			dataCreatMethod(temp, pvKey);
-			XRBTree_insert(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
+			XRBTree_insert(&XContainerDataPtr(this_set), XContainerCompare(this_set), XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
 			XMemory_free(temp);
 		}
 		else
 		{
-			XRBTree_insert(&XContainerDataPtr(this_set), ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
+			XRBTree_insert(&XContainerDataPtr(this_set), XContainerCompare(this_set), XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
 		}
 		
 		++XContainerCapacity(this_set);

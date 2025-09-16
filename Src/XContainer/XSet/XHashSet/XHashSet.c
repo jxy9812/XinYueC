@@ -84,7 +84,7 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
                     size_t index = set->m_hash(key, XContainerTypeSize(set)) % new_capacity;
 
                     // 将节点插入到新哈希表的相应红黑树中
-                    XRBTree_insert(&newData[index], ((XSetBase*)set)->m_KeyLess, XCompareRuleTwo_XSet, XRBTree_getData(node), XContainerTypeSize(set));
+                    XRBTree_insert(&newData[index], XContainerCompare(set), XCompareRuleTwo_XSet, XRBTree_getData(node), XContainerTypeSize(set));
                 }
                 XVector_delete_base(nodes);
             }
@@ -122,12 +122,12 @@ bool VXSet_insert(XHashSet* this_set, const void* key, XCDataCreatMethod dataCre
         {
             void* temp = XMemory_calloc(1, XContainerTypeSize(this_set));
             dataCreatMethod(temp, key);
-            XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
+            XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, XContainerCompare(this_set), XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
             XMemory_free(temp);
         }
         else
         {
-            XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XSetBase*)this_set)->m_KeyLess, XCompareRuleTwo_XSet, key, XContainerTypeSize(this_set));
+            XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, XContainerCompare(this_set), XCompareRuleTwo_XSet, key, XContainerTypeSize(this_set));
         }
         ++XContainerSize(this_set);
     }
@@ -275,10 +275,11 @@ void VXSet_deinit(XHashSet* this_set)
 void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo)
 {
     // 调用父类交换一部分
-    XVtableGetFunc(XContainerObject_class_init(), EXContainerObject_Swap, void(*)(XHashSet*, XHashSet*))(this_setOne, this_setTwo);
-    XSwap(&(this_setOne->m_parent.m_KeyEquality), &(this_setTwo->m_parent.m_KeyEquality), sizeof(XEquality));
-    XSwap(&XContainerTypeSize(this_setOne), & XContainerTypeSize(this_setTwo), sizeof(size_t));
-    XSwap(&(this_setOne->m_hash), &(this_setTwo->m_hash), sizeof(XHashFunc));
+    //XVtableGetFunc(XContainerObject_class_init(), EXContainerObject_Swap, void(*)(XHashSet*, XHashSet*))(this_setOne, this_setTwo);
+    //XSwap(&(this_setOne->m_parent.m_KeyEquality), &(this_setTwo->m_parent.m_KeyEquality), sizeof(XEquality));
+   // XSwap(&XContainerTypeSize(this_setOne), & XContainerTypeSize(this_setTwo), sizeof(size_t));
+    //XSwap(&(this_setOne->m_hash), &(this_setTwo->m_hash), sizeof(XHashFunc));
+    XSwap(this_setOne,this_setTwo,sizeof(XHashSet));
 }
 
 XVector* VXSetBase_keys(const XSetBase* this_set)
