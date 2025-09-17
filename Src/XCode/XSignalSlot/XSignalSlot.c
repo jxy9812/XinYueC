@@ -308,9 +308,9 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args)
 {
 	if (manager == NULL)
 		return;
-	if (manager->sendMode == XSIGNAL_SEND_QUEUED && manager->obj)
+	if (manager->sendMode == XSIGNAL_SEND_QUEUED && manager->obj&&manager->obj->m_eventLoop)
 	{//在队列中发送
-		XEventDispatcher_postSignal(manager->obj->m_eventDispatcher, emit,manager,signal,args);
+		XEventLoop_postSendSignal(manager->obj->m_eventLoop, emit,manager,signal,args);
 		return;
 	}
 	emit(manager,signal,args);
@@ -320,9 +320,9 @@ void XSignalSlot_emit_variant(XSignalSlot* manager, size_t signal,XVariant* args
 {
 	if (manager == NULL)
 		return;
-	if (manager->sendMode == XSIGNAL_SEND_QUEUED&& manager->obj)
+	if (manager->sendMode == XSIGNAL_SEND_QUEUED&& manager->obj&& manager->obj->m_eventLoop)
 	{//在队列中发送
-		XEventDispatcher_postSignal(manager->obj->m_eventDispatcher, emit_variant, manager, signal, args);
+		XEventLoop_postSendSignal(manager->obj->m_eventLoop, emit_variant, manager, signal, args);
 		return;
 	}
 	emit_variant(manager, signal, args);

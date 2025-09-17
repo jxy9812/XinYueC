@@ -4,7 +4,6 @@
 #include "XHashFunc.h"
 #include "XObject.h"
 #include "XTimerGroupWheel.h"
-#include "XCircularQueueAtomic.h"
 #include "XListSLinked.h"
 #include "XWaitCondition.h"
 #include "XPriorityMapQueue.h"
@@ -13,16 +12,6 @@ typedef struct XEventCallback {
     XEventCB callback;             // 回调函数
     void* userData;                // 用户数据
 } XEventCallback;
-
-//typedef struct XSignalSlot XSignalData;
-//处理队列信号数据
-typedef struct XSignalData
-{
-    void (*sendFunc)(XSignalSlot*, size_t,void*);
-    XSignalSlot* signalSlot;
-    size_t signal;
-    void* args;
-}XSignalData;
 
 // 静态函数声明
 static void VXEventDispatcher_deinit(XEventDispatcher* dispatcher);
@@ -101,9 +90,6 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
 
     XClass_init(&dispatcher->m_parent);
     XClassGetVtable(dispatcher) = XEventDispatcher_class_init();
-
-    //初始化信号队列
-    dispatcher->m_signalQueue = XCircularQueueAtomic_create(sizeof(XSignalData), queueSize);
 
     // 初始化多个优先级事件队列（无锁环形队列）
     dispatcher->m_queue = XPriorityMapQueue_Create(sizeof(int), sizeof(XEventMin*),XCompare_int, XSORT_DESC);
@@ -303,13 +289,7 @@ static bool VXEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, XObjec
 static void VXEventDispatcher_handler(XEventDispatcher* dispatcher) 
 {
     if (!dispatcher) return;
-    //先处理是否有信号需要在队列中发送
-    XSignalData data;
-    while (XQueueBase_receive_base(dispatcher->m_signalQueue, &data))
-    {
-        if(data.sendFunc)
-            data.sendFunc(data.signalSlot,data.signal,data.args);//发送信号
-    }
+    
     //处理事件
     XMutex_lock(dispatcher->m_mutex);
     XEventMin* event = NULL;
@@ -542,19 +522,32 @@ bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* ev
         bool (*)(XEventDispatcher*, XEventMin*, XEventPriority))(dispatcher, event, priority);
 }
 
-bool XEventDispatcher_postSignal(XEventDispatcher* dispatcher, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args)
-{
-    if(!dispatcher||dispatcher->m_signalQueue==NULL)
-        return false;
-    XSignalData data = {.sendFunc = sendFunc,.signalSlot = signalSlot,.signal=signal,.args=args};
-    return XQueueBase_push_base(dispatcher->m_signalQueue,&data);
-}
-
 bool XEventDispatcher_addEventCb_base(XEventDispatcher* dispatcher, XObject* receiver, int code, XEventCB cb, void* userData) {
     if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
         return false;
     return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_AddEventCb,
         bool (*)(XEventDispatcher*, XObject*, int, XEventCB, void*))(dispatcher, receiver, code, cb, userData);
+}
+bool XEventDispatcher_object_move(XEventDispatcher* source, XEventDispatcher* dest, XObject* object)
+{
+    if (!source || !dest || !object) return false;
+
+    XMapBase* p = NULL;
+    XMutex_lock(source->m_mutex);
+    // 查找或创建接收器的事件映射
+    XMapBase** pvMap = XMapBase_value_base(source->m_filter_cb, &object);
+    if (pvMap)
+    {
+        p = *pvMap;
+        XMapBase_remove_base(source->m_filter_cb,&p);//从源调度器删除
+    }
+    XMutex_unlock(source->m_mutex);
+    if (p)
+    {
+        XMutex_lock(dest->m_mutex);
+        XMapBase_insert_base(dest->m_filter_cb, &object,&p);//插入新的调度器
+        XMutex_unlock(dest->m_mutex);
+    }
 }
 
 bool XEventDispatcher_removeEventCb_base(XEventDispatcher* dispatcher, XObject* receiver, int code) {

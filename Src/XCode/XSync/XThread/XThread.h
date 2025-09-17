@@ -104,6 +104,7 @@ bool XThread_start_base(XThread* Object);
  * @retval 返回事件调度器的指针
  */
 XEventDispatcher* XThread_getDispatcher(const XThread* Object);
+XEventLoop* XThread_getEventLoop(const XThread* Object);
 XTimerGroupBase* XThread_getTimerGroup(const XThread* Object);
 /**
  * @brief 判断XThread对象对应的线程是否结束
@@ -182,6 +183,7 @@ bool XThread_terminate_base(XThread* Object);
 #define XThread_delete_base XClass_delete_base
 
 XThread* XThread_currentThread();
+XEventLoop* XThread_currentEventLoop();
 XEventDispatcher* XThread_currentDispatcher();
 XTimerGroupBase* XThread_currentTimerGroup();
 XHandle XThread_currentThreadId();

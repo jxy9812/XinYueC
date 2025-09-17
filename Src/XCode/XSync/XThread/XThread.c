@@ -22,7 +22,7 @@ void XThread_init(XThread* Object)
     Object->loopLevel = 0;
     Object->m_priority = XThread_NormalPriority;
     Object->m_stackSize = 512;
-    Object->m_eventLoop = XEventLoop_create_thread();
+    Object->m_eventLoop = XEventLoop_create();
 }
 XThread* XThread_currentThread()
 {
@@ -41,6 +41,10 @@ XThread* XThread_currentThread()
 bool XThread_terminate_base(XThread* Object)
 {
     return XClassGetVirtualFunc(Object, EXThread_Terminate, bool(*)(const XThread*))(Object);
+}
+XEventLoop* XThread_currentEventLoop()
+{
+    return XThread_getEventLoop(XThread_currentThread());
 }
 XEventDispatcher* XThread_currentDispatcher()
 {
@@ -86,6 +90,13 @@ XEventDispatcher* XThread_getDispatcher(const XThread* Object)
     if (Object)
         return Object->m_eventLoop? Object->m_eventLoop->m_dispatcher:NULL;
     return XCoreApplication_getDispatcher();
+}
+
+XEventLoop* XThread_getEventLoop(const XThread* Object)
+{
+    if (Object)
+        return Object->m_eventLoop;
+    return XCoreApplication_getEventLoop();
 }
 
 XTimerGroupBase* XThread_getTimerGroup(const XThread* Object)

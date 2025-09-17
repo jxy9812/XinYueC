@@ -53,7 +53,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 	app->m_argc = argc;
 	app->m_argv = argv;
 	app->m_quit = false;
-	app->m_eventLoop = XEventLoop_create_thread();
+	app->m_eventLoop = XEventLoop_create();
 	//app->m_eventLoop = XEventDispatcherThread_create(30);
 	////初始化一些全局类
 	//XTimerGroupWheel_setGlobal();
@@ -61,10 +61,14 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 
 XEventDispatcher* XCoreApplication_getDispatcher()
 {
-	XCoreApplication* app=XCoreApplication_create(NULL,NULL);
-	if (app == NULL||app->m_eventLoop==NULL)
-		return NULL;
-	return app->m_eventLoop->m_dispatcher;
+	XCoreApplication* app = XCoreApplication_global();
+	return app ? (app->m_eventLoop? app->m_eventLoop->m_dispatcher:NULL) : NULL;
+}
+
+XEventLoop* XCoreApplication_getEventLoop()
+{
+	XCoreApplication* app = XCoreApplication_global();
+	return app?app->m_eventLoop:NULL;
 }
 
 XTimerGroupBase* XCoreApplication_getTimerGroup()

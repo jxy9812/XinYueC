@@ -43,13 +43,12 @@ void XObject_init(XObject* object)
 {
 	if (object == NULL)
 		return;
-	object->m_eventDispatcher = NULL;
+	object->m_eventLoop = NULL;
 	XThread* thread = XThread_currentThread();
-	XEventDispatcher* d= XThread_currentDispatcher();
+	XEventLoop* d= XThread_currentEventLoop();
 	if (d == NULL)
 		return;
-	//XEventDispatcherThread_addObject_base(d,object);
-	object->m_eventDispatcher = d;
+	object->m_eventLoop = d;
 	//信号与槽初始化
 	object->m_signalSlot = NULL;
 	XObject_addEventFilter(object, XEVENT_SLOT_RUN, XEventSlotFuncRunCB, NULL);
@@ -107,34 +106,24 @@ bool XObject_removeEventFilter(XObject* object, int code)
 
 bool XObject_moveToThread(XObject* object, XThread* thread)
 {
-	XEventDispatcher* sourceD = object->m_eventDispatcher;//源调度器
-	XEventDispatcher* targetD = NULL;//目标调度器
-	if (thread == NULL)
-	{//移动到主线程
-		targetD = XCoreApplication_getDispatcher();
-	}
-	else
+	//处理剩余的所有事件,防止遗漏
+	if (object->m_eventLoop&& object->m_eventLoop->m_dispatcher)
 	{
-		targetD = XThread_getDispatcher(thread);
+		//XEventDispatcher_handler_base(object->m_eventLoop->m_dispatcher);
+		if (XEventDispatcher_object_move(object->m_eventLoop->m_dispatcher, XThread_getDispatcher(thread), object))
+		{
+			object->m_eventLoop = thread->m_eventLoop;//更新事件循环
+		}
 	}
-	////转移事件过滤
-	//XMapBase** pvCodeMap = XMapBase_value_base(((XEventDispatcher*)sourceD)->m_filter_cb, &object);
-	//if (pvCodeMap != NULL)
-	//{//存在事件过滤
-	//	XMapBase_insert_base(((XEventDispatcher*)targetD)->m_filter_cb, &object, pvCodeMap);
-	//	XMapBase_remove_base(((XEventDispatcher*)sourceD)->m_filter_cb, &object);
-	//}
-	//XEventDispatcherThread_removeObject_base(sourceD, object);//源事件调度器删除
-	//XEventDispatcherThread_addObject_base(targetD, object);
-	return true;
+	return false;
 }
 
 bool XObject_postEvent(XObject* object, XEventMin* event, XEventPriority priority)
 {
-	if (object == NULL || event == NULL)
+	if (object == NULL || object->m_eventLoop || event == NULL)
 		return false;
 	event->receiver = object;
-	return XEventDispatcher_postEvent_base(object->m_eventDispatcher,event, priority);
+	return XEventDispatcher_postEvent_base(object->m_eventLoop->m_dispatcher,event, priority);
 }
 
 XThread* XObject_thread(XObject* object)
@@ -146,8 +135,8 @@ XThread* XObject_thread(XObject* object)
 
 XEventDispatcher* XObject_getEventDispatcher(XObject* object)
 {
-	if(object)
-		return object->m_eventDispatcher;
+	if(object&& object->m_eventLoop)
+		return object->m_eventLoop->m_dispatcher;
 	return NULL;
 }
 
@@ -223,7 +212,8 @@ void VXObject_deinit(XObject* object)
 	//发送释放信号
 	XObject_deinit_signal(object);
 	//处理剩余的所有事件,防止遗漏
-	XEventDispatcher_handler_base(object->m_eventDispatcher);
+	if(object->m_eventLoop&& object->m_eventLoop->m_dispatcher)
+		XEventDispatcher_handler_base(object->m_eventLoop->m_dispatcher);
 	//释放信号与槽
 	if(object->m_signalSlot)
 	{

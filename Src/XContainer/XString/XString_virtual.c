@@ -250,8 +250,7 @@ static void VXClass_deinit(XString* str)
     if (str->m_ref_count) 
     {
         // 原子减少原引用计数（若减到0，原数据会被其他持有者释放）
-        int32_t old_ref = XAtomic_fetch_sub_int32(str->m_ref_count, 1);
-        if (XAtomic_load_int32(str->m_ref_count) == 0)
+        if (XAtomic_fetch_sub_int32(str->m_ref_count, 1) == 0)
         {
             if (XContainerDataPtr(str)) 
             {

@@ -6,7 +6,19 @@
 #include "XQueueBase.h"
 #include "XThread.h"
 #include "XCoreApplication.h"
+#include "XCircularQueueAtomic.h"
+#include "XAtomic.h"
 //#include "XWindow.h"  // 假设存在窗口相关定义
+
+//typedef struct XSignalSlot XSignalData;
+//处理队列信号数据
+typedef struct XSignalData
+{
+    void (*sendFunc)(XSignalSlot*, size_t, void*);
+    XSignalSlot* signalSlot;
+    size_t signal;
+    void* args;
+}XSignalData;
 
 static void VXEventLoop_deinit(XEventLoop* loop);
 static int VXEventLoop_exec(XEventLoop* loop);
@@ -57,38 +69,13 @@ XEventLoop* XEventLoop_create() {
     return loop;
 }
 
-XEventLoop* XEventLoop_create_thread()
-{
-    XEventLoop* loop = XMemory_malloc(sizeof(XEventLoop));
-    XClass_init(&loop->m_parent);
-    XClassGetVtable(loop) = XEventLoop_class_init();
-
-    // 初始化互斥锁和条件变量
-    loop->m_mutex = XMutex_create();
-    loop->m_condition = XWaitCondition_create();
-
-    loop->m_dispatcher = XEventDispatcher_create(XEventLoop_QueueSize);
-    XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
-
-    // 初始化定时器组
-    loop->m_timerGroup = XTimerGroupWheel_create(1);
-    XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup,100);//0~100ms    -1ms
-    XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup,10);//100ms~1S    -100ms
-    XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup,10);//1S~10S      -1s
-    XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup,10);//10~100S     -10s
-    XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup,10);//100~1000s   -100s
-    loop->m_state = XEventLoop_Suspended;
-    loop->m_exitCode = 0;
-    loop->m_quitOnLastWindowClosed = true;
-    return loop;
-}
-
 /**
  * @brief 初始化事件循环
  * @param loop 要初始化的事件循环
  * @param dispatcher 关联的事件调度器，NULL则创建默认调度器
  */
-void XEventLoop_init(XEventLoop* loop) {
+void XEventLoop_init(XEventLoop* loop)
+{
     if (loop == NULL) return;
 
     XClass_init(&loop->m_parent);
@@ -97,29 +84,38 @@ void XEventLoop_init(XEventLoop* loop) {
     // 初始化互斥锁和条件变量
     loop->m_mutex = XMutex_create();
     loop->m_condition = XWaitCondition_create();
-
-    XThread* thread = XThread_currentThread();
-    XEventDispatcher* d = NULL;
-    if (thread == NULL)
-    {//当前是主线程
-        d = XCoreApplication_getDispatcher();
+    //线程级别的事件循环
+    XEventLoop* threadLoop = XThread_currentEventLoop();
+  
+    if (threadLoop)
+    {//当前已经有线程事件循环了，引用它的数据
+        loop->m_dispatcher = threadLoop->m_dispatcher;
+        loop->m_timerGroup = threadLoop->m_timerGroup;
+        loop->m_sendSignalQueue = threadLoop->m_sendSignalQueue;
+        loop->m_ref_count = threadLoop->m_ref_count;
+        XAtomic_fetch_add_int32(loop->m_ref_count, 1);  // 原子加1
     }
-    else
+    else //初始化 
     {
-        d = XThread_getDispatcher(thread);
-    }
-    // 使用提供的调度器或创建默认调度器
-    if (d) {
-        loop->m_dispatcher = d;
-    }
-    else {
-        loop->m_dispatcher = XEventDispatcher_create(1024);
-    }
-    XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
+        // 初始化原子引用计数（初始值为1）
+        loop->m_ref_count = (XAtomic_int32_t*)XMemory_malloc(sizeof(XAtomic_int32_t));
+        if (loop->m_ref_count)
+        {
+            XAtomic_store_int32(loop->m_ref_count, 1);  // 使用原子存储初始化
+        }
+        //初始化信号队列
+        loop->m_sendSignalQueue = XCircularQueueAtomic_create(sizeof(XSignalData), XEventLoop_QueueSize);
 
-    // 初始化定时器组
-    loop->m_timerGroup = XTimerGroupWheel_create(1);
-
+        loop->m_dispatcher = XEventDispatcher_create(XEventLoop_QueueSize);
+        XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
+        // 初始化定时器组
+        loop->m_timerGroup = XTimerGroupWheel_create(1);
+        XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup, 100);//0~100ms    -1ms
+        XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup, 10);//100ms~1S    -100ms
+        XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup, 10);//1S~10S      -1s
+        XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup, 10);//10~100S     -10s
+        XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup, 10);//100~1000s   -100s
+    }
     loop->m_state = XEventLoop_Suspended;
     loop->m_exitCode = 0;
     loop->m_quitOnLastWindowClosed = true;
@@ -165,7 +161,15 @@ static int VXEventLoop_exec(XEventLoop* loop) {
     loop->m_state = XEventLoop_Running;
     loop->m_exitCode = 0;
 
-    while (loop->m_state == XEventLoop_Running) {
+    while (loop->m_state == XEventLoop_Running)
+    {
+        //先处理是否有信号需要在队列中发送
+        XSignalData data;
+        while (XQueueBase_receive_base(loop->m_sendSignalQueue, &data))
+        {
+            if (data.sendFunc)
+                data.sendFunc(data.signalSlot, data.signal, data.args);//发送信号
+        }
         // 处理定时器事件
         XTimerGroupWheel_handler_base(loop->m_timerGroup);
 
@@ -288,21 +292,37 @@ static uint64_t VXEventLoop_calculateNextTimeout(XEventLoop* loop) {
  * @brief 释放事件循环资源
  * @param loop 事件循环实例
  */
-static void VXEventLoop_deinit(XEventLoop* loop) {
-    if (!loop) return;
+static void VXEventLoop_deinit(XEventLoop* loop) 
+{
+   if (!loop) return;
+   // 原子减少原引用计数（若减到0，原数据会被其他持有者释放）
+   if(XAtomic_fetch_sub_int32(loop->m_ref_count, 1) == 1)
+   {
+       // 释放定时器组
+       if (loop->m_timerGroup) {
+           XTimerGroupWheel_delete_base(loop->m_timerGroup);
+           loop->m_timerGroup = NULL;
+       }
 
-    // 释放定时器组
-    if (loop->m_timerGroup) {
-        XTimerGroupWheel_delete_base(loop->m_timerGroup);
-        loop->m_timerGroup = NULL;
-    }
-
-    // 释放放事件调度器
-    if (loop->m_dispatcher) {
-        XEventDispatcher_delete_base(loop->m_dispatcher);
-        loop->m_dispatcher = NULL;
-    }
-
+       // 释放放事件调度器
+       if (loop->m_dispatcher) {
+           XEventDispatcher_delete_base(loop->m_dispatcher);
+           loop->m_dispatcher = NULL;
+       }
+       if (loop->m_sendSignalQueue)
+       {
+           XQueueBase_delete_base(loop->m_sendSignalQueue);
+           loop->m_sendSignalQueue = NULL;
+       }
+       XMemory_free(loop->m_ref_count);
+       loop->m_ref_count = NULL;
+   }
+   else
+   {
+       loop->m_timerGroup = NULL;
+       loop->m_dispatcher = NULL;
+       loop->m_ref_count = NULL;
+   }
     // 销毁互斥锁和条件变量
     XMutex_delete(loop->m_mutex);
     XWaitCondition_delete(loop->m_condition);
@@ -336,4 +356,12 @@ bool XEventLoop_hasPendingEvents_base(XEventLoop* loop) {
     if (ISNULL(loop, "") || ISNULL(XClassGetVtable(loop), ""))
         return false;
     return XClassGetVirtualFunc(loop, EXEventLoop_HasPendingEvents, bool (*)(XEventLoop*))(loop);
+}
+
+bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args)
+{
+    if (!loop || loop->m_sendSignalQueue == NULL)
+        return false;
+    XSignalData data = { .sendFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args };
+    return XQueueBase_push_base(loop->m_sendSignalQueue, &data);
 }

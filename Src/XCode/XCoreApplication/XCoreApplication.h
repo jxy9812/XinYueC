@@ -22,6 +22,7 @@ XCoreApplication* XCoreApplication_create(int argc, char** argv);
 void XCoreApplication_init(XCoreApplication* app, int argc, char** argv);
 //获取事件调度器
 XEventDispatcher* XCoreApplication_getDispatcher();
+XEventLoop* XCoreApplication_getEventLoop();
 XTimerGroupBase* XCoreApplication_getTimerGroup();
 //请求退出
 void XCoreApplication_requestQuit();
