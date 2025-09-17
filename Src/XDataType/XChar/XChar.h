@@ -403,6 +403,228 @@ int64_t XUTF8_to_gbk_stream(const char* utf8_str, size_t input_size, char* gbk_b
  */
 int64_t XGBK_to_utf8_stream(const char* gbk_str, size_t input_size, char* utf8_buf, size_t max_len);
 
+/**
+ * @brief 获取XChar数组（UTF-16字符串）的实际长度
+ *
+ * 该函数用于计算XChar数组（UTF-16编码字符串）的有效长度，规则如下：
+ * - 当input_count为0时：无视缓冲区范围，遍历数组直到遇到终止符（code=0），返回终止符前的字符数
+ * - 当input_count>0时：将input_count视为缓冲区大小，在不越界的前提下查找终止符，返回"终止符位置"与"input_count"的较小值
+ *   （即若缓冲区中存在终止符，返回终止符前的字符数；若缓冲区中无终止符，返回整个缓冲区大小）
+ *
+ * @param xchars 待处理的XChar数组（UTF-16字符串，以code=0为终止符）
+ * @param input_count 外部提供的缓冲区大小（XChar元素数量），0表示不限制范围
+ * @return size_t 实际有效字符数（不含终止符），若xchars为NULL则返回0
+ */
+size_t XChar_get_input_length_stream(const XChar* xchars, size_t input_count);
+
+/*                                  数值与字符串互转                                */
+
+/**
+ * @brief 将XChar数组(UTF-16)转换为short整数
+ * @param xchars 输入的XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
+ * @param base 进制（2-36）
+ * @param success 输出参数，转换成功则设为true，否则false
+ * @return 转换后的short值，失败返回0
+ */
+short XChar_to_short_stream(const XChar* xchars, size_t input_count, int base, bool* success);
+
+/**
+ * @brief 将XChar数组(UTF-16)转换为int整数
+ * @param xchars 输入的XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
+ * @param base 进制（2-36）
+ * @param success 输出参数，转换成功则设为true，否则false
+ * @return 转换后的int值，失败返回0
+ */
+int XChar_to_int_stream(const XChar* xchars, size_t input_count, int base, bool* success);
+
+/**
+ * @brief 将XChar数组(UTF-16)转换为long整数
+ * @param xchars 输入的XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
+ * @param base 进制（2-36）
+ * @param success 输出参数，转换成功则设为true，否则false
+ * @return 转换后的long值，失败返回0
+ */
+long XChar_to_long_stream(const XChar* xchars, size_t input_count, int base, bool* success);
+
+/**
+ * @brief 将XChar数组(UTF-16)转换为long long整数
+ * @param xchars 输入的XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
+ * @param base 进制（2-36）
+ * @param success 输出参数，转换成功则设为true，否则false
+ * @return 转换后的long long值，失败返回0
+ */
+long long XChar_to_longlong_stream(const XChar* xchars, size_t input_count, int base, bool* success);
+
+/**
+ * @brief 将XChar数组(UTF-16)转换为unsigned short整数
+ * @param xchars 输入的XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
+ * @param base 进制（2-36）
+ * @param success 输出参数，转换成功则设为true，否则false
+ * @return 转换后的unsigned short值，失败返回0
+ */
+unsigned short XChar_to_ushort_stream(const XChar* xchars, size_t input_count, int base, bool* success);
+
+/**
+ * @brief 将XChar数组(UTF-16)转换为unsigned int整数
+ * @param xchars 输入的XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
+ * @param base 进制（2-36）
+ * @param success 输出参数，转换成功则设为true，否则false
+ * @return 转换后的unsigned int值，失败返回0
+ */
+unsigned int XChar_to_uint_stream(const XChar* xchars, size_t input_count, int base, bool* success);
+
+/**
+ * @brief 将XChar数组(UTF-16)转换为unsigned long整数
+ * @param xchars 输入的XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
+ * @param base 进制（2-36）
+ * @param success 输出参数，转换成功则设为true，否则false
+ * @return 转换后的unsigned long值，失败返回0
+ */
+unsigned long XChar_to_ulong_stream(const XChar* xchars, size_t input_count, int base, bool* success);
+
+/**
+ * @brief 将XChar数组(UTF-16)转换为unsigned long long整数
+ * @param xchars 输入的XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
+ * @param base 进制（2-36）
+ * @param success 输出参数，转换成功则设为true，否则false
+ * @return 转换后的unsigned long long值，失败返回0
+ */
+unsigned long long XChar_to_ulonglong_stream(const XChar* xchars, size_t input_count, int base, bool* success);
+
+/**
+ * @brief 将XChar数组(UTF-16)转换为float浮点数
+ * @param xchars 输入的XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
+ * @param success 输出参数，转换成功则设为true，否则false
+ * @return 转换后的float值，失败返回0.0f
+ */
+float XChar_to_float_stream(const XChar* xchars, size_t input_count, bool* success);
+
+/**
+ * @brief 将XChar数组(UTF-16)转换为double浮点数
+ * @param xchars 输入的XChar数组（以code=0为终止符）
+ * @param input_count 输入XChar数量，0则自动检测code=0终止符
+ * @param success 输出参数，转换成功则设为true，否则false
+ * @return 转换后的double值，失败返回0.0
+ */
+double XChar_to_double_stream(const XChar* xchars, size_t input_count, bool* success);
+
+/**
+ * @brief short转UTF-16数组（支持2-36进制）
+ * @param value 待转换的short值
+ * @param base 进制（2-36）
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param uppercase 字母是否大写（16-36进制时生效）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+int64_t XChar_from_short_stream(short value, int base, XChar* out, size_t max_out, bool uppercase);
+
+/**
+ * @brief int转UTF-16数组（支持2-36进制）
+ * @param value 待转换的int值
+ * @param base 进制（2-36）
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param uppercase 字母是否大写（16-36进制时生效）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+int64_t XChar_from_int_stream(int value, int base, XChar* out, size_t max_out, bool uppercase);
+
+/**
+ * @brief long转UTF-16数组（支持2-36进制）
+ * @param value 待转换的long值
+ * @param base 进制（2-36）
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param uppercase 字母是否大写（16-36进制时生效）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+int64_t XChar_from_long_stream(long value, int base, XChar* out, size_t max_out, bool uppercase);
+
+/**
+ * @brief long long转UTF-16数组（支持2-36进制）
+ * @param value 待转换的long long值
+ * @param base 进制（2-36）
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param uppercase 字母是否大写（16-36进制时生效）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+int64_t XChar_from_longlong_stream(long long value, int base, XChar* out, size_t max_out, bool uppercase);
+
+/**
+ * @brief unsigned short转UTF-16数组（支持2-36进制）
+ * @param value 待转换的unsigned short值
+ * @param base 进制（2-36）
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param uppercase 字母是否大写（16-36进制时生效）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+int64_t XChar_from_ushort_stream(unsigned short value, int base, XChar* out, size_t max_out, bool uppercase);
+
+/**
+ * @brief unsigned int转UTF-16数组（支持2-36进制）
+ * @param value 待转换的unsigned int值
+ * @param base 进制（2-36）
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param uppercase 字母是否大写（16-36进制时生效）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+int64_t XChar_from_uint_stream(unsigned int value, int base, XChar* out, size_t max_out, bool uppercase);
+
+/**
+ * @brief unsigned long转UTF-16数组（支持2-36进制）
+ * @param value 待转换的unsigned long值
+ * @param base 进制（2-36）
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param uppercase 字母是否大写（16-36进制时生效）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+int64_t XChar_from_ulong_stream(unsigned long value, int base, XChar* out, size_t max_out, bool uppercase);
+
+/**
+ * @brief unsigned long long转UTF-16数组（支持2-36进制）
+ * @param value 待转换的unsigned long long值
+ * @param base 进制（2-36）
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param uppercase 字母是否大写（16-36进制时生效）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+int64_t XChar_from_ulonglong_stream(unsigned long long value, int base, XChar* out, size_t max_out, bool uppercase);
+
+/**
+ * @brief float转UTF-16数组
+ * @param value 待转换的float值
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param precision 小数部分精度（-1=自动：小数值6位，大数值5位）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+int64_t XChar_from_float_stream(float value, XChar* out, size_t max_out, int precision);
+
+/**
+ * @brief double转UTF-16数组
+ * @param value 待转换的double值
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param precision 小数部分精度（-1=自动：小数值6位，大数值5位）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+int64_t XChar_from_double_stream(double value, XChar* out, size_t max_out, int precision);
+
 #ifdef __cplusplus
 }
 #endif

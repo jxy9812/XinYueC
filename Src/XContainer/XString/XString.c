@@ -1628,7 +1628,7 @@ XString* XString_trimmed(const XString* str) {
     // 跳过后导空白
     while (end >= start && XChar_is_space(data[end])) end--;
 
-    if (start > end) return XString_create_utf8("");  // 全是空白
+    if (start > end) return XString_create();  // 全是空白
     return XString_mid(str, start, end - start + 1);
 }
 
@@ -1672,14 +1672,7 @@ short XString_toShort(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-
-    const char* utf8 = XString_toUtf8(str);
-    char* endptr;
-    long val = strtol(utf8, &endptr, base);
-
-    const bool success = (endptr != utf8 && *endptr == '\0' && val >= SHRT_MIN && val <= SHRT_MAX);
-    if (ok) *ok = success;
-    return success ? (short)val : 0;
+    return XChar_to_short_stream(XContainerDataPtr(str),XContainerSize(str),base,ok);
 }
 
 int XString_toInt(const XString* str, bool* ok, int base) {
@@ -1687,14 +1680,7 @@ int XString_toInt(const XString* str, bool* ok, int base) {
         if (ok) *ok = false;
         return 0;
     }
-
-    const char* utf8 = XString_toUtf8(str);
-    char* endptr;
-    long val = strtol(utf8, &endptr, base);
-
-    const bool success = (endptr != utf8 && *endptr == '\0' && val >= INT_MIN && val <= INT_MAX);
-    if (ok) *ok = success;
-    return success ? (int)val : 0;
+    return XChar_to_int_stream(XContainerDataPtr(str), XContainerSize(str), base, ok);
 }
 
 long XString_toLong(const XString* str, bool* ok, int base)
@@ -1703,14 +1689,7 @@ long XString_toLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-
-    const char* utf8 = XString_toUtf8(str);
-    char* endptr;
-    long val = strtol(utf8, &endptr, base);
-
-    const bool success = (endptr != utf8 && *endptr == '\0');
-    if (ok) *ok = success;
-    return success ? val : 0;
+    return XChar_to_long_stream(XContainerDataPtr(str), XContainerSize(str), base, ok);
 }
 
 long long XString_toLongLong(const XString* str, bool* ok, int base)
@@ -1719,14 +1698,7 @@ long long XString_toLongLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-
-    const char* utf8 = XString_toUtf8(str);
-    char* endptr;
-    long long val = strtoll(utf8, &endptr, base);
-
-    const bool success = (endptr != utf8 && *endptr == '\0');
-    if (ok) *ok = success;
-    return success ? val : 0;
+    return XChar_to_longlong_stream(XContainerDataPtr(str), XContainerSize(str), base, ok);
 }
 
 unsigned long XString_toULong(const XString* str, bool* ok, int base)
@@ -1735,14 +1707,7 @@ unsigned long XString_toULong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-
-    const char* utf8 = XString_toUtf8(str);
-    char* endptr;
-    unsigned long val = strtoul(utf8, &endptr, base);
-
-    const bool success = (endptr != utf8 && *endptr == '\0');
-    if (ok) *ok = success;
-    return success ? val : 0;
+    return XChar_to_ulong_stream(XContainerDataPtr(str), XContainerSize(str), base, ok);
 }
 
 unsigned long long XString_toULongLong(const XString* str, bool* ok, int base)
@@ -1751,14 +1716,7 @@ unsigned long long XString_toULongLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-
-    const char* utf8 = XString_toUtf8(str);
-    char* endptr;
-    unsigned long long val = strtoull(utf8, &endptr, base);
-
-    const bool success = (endptr != utf8 && *endptr == '\0');
-    if (ok) *ok = success;
-    return success ? val : 0;
+    return XChar_to_ulonglong_stream(XContainerDataPtr(str), XContainerSize(str), base, ok);
 }
 
 float XString_toFloat(const XString* str, bool* ok)
@@ -1767,14 +1725,7 @@ float XString_toFloat(const XString* str, bool* ok)
         if (ok) *ok = false;
         return 0.0f;
     }
-
-    const char* utf8 = XString_toUtf8(str);
-    char* endptr;
-    float val = strtof(utf8, &endptr);
-
-    const bool success = (endptr != utf8 && *endptr == '\0');
-    if (ok) *ok = success;
-    return success ? val : 0.0f;
+    return XChar_to_float_stream(XContainerDataPtr(str), XContainerSize(str), ok);
 }
 
 double XString_toDouble(const XString* str, bool* ok) {
@@ -1782,14 +1733,7 @@ double XString_toDouble(const XString* str, bool* ok) {
         if (ok) *ok = false;
         return 0.0;
     }
-
-    const char* utf8 = XString_toUtf8(str);
-    char* endptr;
-    double val = strtod(utf8, &endptr);
-
-    const bool success = (endptr != utf8 && *endptr == '\0');
-    if (ok) *ok = success;
-    return success ? val : 0.0;
+    return XChar_to_double_stream(XContainerDataPtr(str), XContainerSize(str), ok);
 }
 // 字符映射表（用于进制转换）
 static const char g_digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
@@ -1835,13 +1779,12 @@ static bool XString_setNum_unsigned(XString* str, unsigned long long num, int ba
 
     return true;
 }
-
 bool XString_setNum_int(XString* str, int n, int base)
 {
     if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
-
+    //XChar_from_int_stream(n,base,);
     // 所有进制都支持负数（添加负号前缀）
     bool is_negative = (n < 0);
     unsigned long long num;

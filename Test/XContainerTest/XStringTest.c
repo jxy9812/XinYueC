@@ -37,7 +37,7 @@ void XStringIteratorTest()
 //字符串 整数 测试
 void XStringNumTest()
 {
-	while (true)
+	//while (true)
 	{
 		XPrintf_utf8("XString 字符串转整数测试\n");
 		XString* str = XString_create_utf8(NULL);
