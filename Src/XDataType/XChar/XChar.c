@@ -2,6 +2,7 @@
 #include "XMemory.h"
 #include <float.h>
 #include <math.h> 
+#include <limits.h>
 #ifdef _WIN32
 // Windows平台GBK转换（依赖Windows API）
 #include <windows.h>
@@ -1709,7 +1710,8 @@ int64_t XGBK_to_utf8_stream(const char* gbk_str, size_t input_size, char* utf8_b
  * @param input_count 外部提供的缓冲区大小（XChar元素数量），0表示不限制范围
  * @return size_t 有效字符数（不含终止符），xchars为NULL时返回0
  */
-static size_t XChar_get_input_length_stream(const XChar* xchars, size_t input_count) {
+size_t XChar_get_input_length_stream(const XChar* xchars, size_t input_count) 
+{
     if (!xchars) return 0;
 
     if (input_count == 0) {
