@@ -15,11 +15,6 @@ typedef struct XPriorityMapQueue
     XCDataCopyMethod m_priorityCopyMethod;//数据拷贝方法
     XCDataMoveMethod m_priorityMoveMethod;//数据移动方法
     XCDataDeinitMethod m_priorityDeinitMethod;//数据释放方法
-    //XCompare m_comparePriority;//优先级数据比较大小方法
-    //size_t m_typeSizePriority;//优先级类型占用字节数
-    //Priority
-    //// 高频数据队列（原子环形队列，固定优先级）
-    //XCircularQueueAtomic high_freq_queues[HIGH_FREQ_PRIORITY_COUNT];
     void* mapPriority;//映射优先级队列
     // 低频数据队列（优先队列，动态优先级）
     XPriorityQueue* low_freq_queue;
@@ -33,11 +28,15 @@ void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize,X
 XPriorityMapQueue* XPriorityMapQueue_create(size_t prioritySize, XCompare priorityCom, XSortOrder priorityOrder, size_t typeSize);
 bool XPriorityMapQueue_addFifoQueue(XPriorityMapQueue* this_queue, void* priority, size_t queueSize);
 bool XPriorityMapQueue_removeFifoQueue(XPriorityMapQueue* this_queue, void* priority);
+
 //api
 #define XPriorityMapQueue_Push_Base				    XQueueBase_Push_Base
 bool XPriorityMapQueue_push_base(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue);
 bool XPriorityMapQueue_push_move_base(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue);
 #define XPriorityMapQueue_Push_Move_Base			XQueueBase_Push_Move_Base
+//插入fifo队列(内部是无锁环形队列)
+bool XPriorityMapQueue_push_fifo(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue);
+bool XPriorityMapQueue_push_fifo_move(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue);
 //出队
 #define XPriorityMapQueue_pop_base					XQueueBase_pop_base
 //接收数据并且出队	

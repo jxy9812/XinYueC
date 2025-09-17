@@ -1,6 +1,6 @@
 ﻿#include "XPriorityMapQueue.h"
 #include "XPriorityQueue.h"
-#include "XCircularQueue.h"
+#include "XCircularQueueAtomic.h"
 #include "XMap.h"
 #include <string.h>
 #define GetMap(queue)				((XMapBase*)XContainerDataPtr(queue)) //获取map
@@ -99,7 +99,7 @@ bool XPriorityMapQueue_addFifoQueue(XPriorityMapQueue* this_queue, void* priorit
 		return false;
 	if (XMapBase_value_base(GetMap(this_queue), priority))
 		return false;//已经添加了
-	XCircularQueue* queue = XCircularQueue_create(XContainerTypeSize(this_queue),queueSize);
+	XCircularQueue* queue = XCircularQueueAtomic_create(XContainerTypeSize(this_queue),queueSize);
 	if (queue == NULL)
 		return false;
 	/*XContainerSetDataMoveMethod(queue, XContainerDataMoveMethod(this_queue));
@@ -141,6 +141,26 @@ bool XPriorityMapQueue_push_move_base(XPriorityMapQueue* this_queue, void* pvPri
 	if (ISNULL(this_queue, "") || ISNULL(pvPriority, "") || ISNULL(pvValue, "") || ISNULL(XClassGetVtable(this_queue), ""))
 		return false;
 	return XClassGetVirtualFunc(this_queue, EXQueueBase_Push, bool (*)(XQueueBase*, void*, void*, XCDataCreatMethod, XCDataCreatMethod))(this_queue, pvPriority, pvValue,this_queue->m_priorityMoveMethod, XContainerDataMoveMethod(this_queue));
+}
+
+bool XPriorityMapQueue_push_fifo(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue)
+{
+	if(!this_queue||!pvPriority||!pvValue|| !this_queue->mapPriority)
+		return false;
+	XQueueBase* queue = XMap_value_base(GetMap(this_queue), pvPriority);
+	if (queue == NULL)
+		return false;
+	return XQueueBase_push_base(queue, pvValue);
+}
+
+bool XPriorityMapQueue_push_fifo_move(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue)
+{
+	if (!this_queue || !pvPriority || !pvValue || !this_queue->mapPriority)
+		return false;
+	XQueueBase* queue = XMap_value_base(GetMap(this_queue), pvPriority);
+	if (queue == NULL)
+		return false;
+	return XQueueBase_push_move_base(queue, pvValue);
 }
 
 bool VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue, XCDataCreatMethod priorityCreatMethod, XCDataCreatMethod dataCreatMethod)
