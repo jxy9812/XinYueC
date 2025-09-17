@@ -1,6 +1,7 @@
 ﻿#include "XChar.h"
 #include "XMemory.h"
 #include <float.h>
+#include <math.h> 
 #ifdef _WIN32
 // Windows平台GBK转换（依赖Windows API）
 #include <windows.h>
@@ -2088,125 +2089,299 @@ static int64_t XChar_from_signed_num(long long value, int base, XChar* out, size
 }
 
 /**
- * @brief 浮点数转UTF-16数组（核心辅助函数）
- * @param value 待转换的浮点数
- * @param out 输出缓冲区（NULL时返回所需长度）
- * @param max_out 输出缓冲区最大容量（XChar数量）
- * @param precision 小数部分精度（-1=自动：小数值6位，大数值用科学计数法5位）
- * @return int64_t 成功：out非空返回实际写入长度（不含终止符），out空返回所需长度；失败返回-1
+ * @brief 辅助函数：计算无符号整数的十进制位数（无数学库依赖，100%精确）
+ * @param num 待计算的无符号整数
+ * @return size_t 十进制位数（如num=0返回1，num=123返回3）
  */
-static int64_t XChar_from_floating_point(double value, XChar* out, size_t max_out, int precision) {
-    // 特殊值处理（NaN/无穷大）
-    if (value != value) { // NaN
-        const size_t nan_len = 3; // "NaN"
+static size_t calc_uint_decimal_len(unsigned long long num) {
+    if (num == 0) return 1;
+    size_t len = 0;
+    while (num > 0) {
+        len++;
+        num /= 10;  // 十进制右移，计数位数
+    }
+    return len;
+}
+
+/**
+ * @brief 浮点数转UTF-16数组（核心辅助函数，修复长度计算异常问题）
+ * @param value 待转换的浮点数
+ * @param format 格式控制字符：'f'/'F'（固定点）、'e'/'E'（科学计数）、'g'/'G'（自动）
+ * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
+ * @param max_out 输出缓冲区最大容量（XChar数量）
+ * @param precision 小数/有效数字精度（-1=自动：f=6位，e=5位，g=6位；最大限制为30）
+ * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
+ */
+static int64_t XChar_from_floating_point(double value, char format, XChar* out, size_t max_out, int precision) {
+    // --------------------------
+    // 1. 入参合法性校验（增强版）
+    // --------------------------
+    // 格式校验：仅允许 f/F/e/E/g/G
+    const bool is_valid_format = (format == 'f' || format == 'F' ||
+        format == 'e' || format == 'E' ||
+        format == 'g' || format == 'G');
+    if (!is_valid_format) return -1;
+    // out为NULL时，max_out必须为0（避免参数矛盾）
+    if (out == NULL && max_out != 0) return -1;
+    // 特殊值处理（NaN/无穷大，不受格式影响）
+    if (isnan(value)) {  // 替代value != value，更明确（需<math.h>）
+        const size_t nan_len = 3;
         if (out == NULL) return nan_len;
         if (max_out < nan_len) return -1;
-
         out[0] = 'N'; out[1] = 'a'; out[2] = 'N';
         if (max_out >= nan_len + 1) out[nan_len] = 0;
         return nan_len;
     }
-    if (value > DBL_MAX) { // 正无穷
-        const size_t inf_len = 3; // "Inf"
+    if (isinf(value)) {  // 替代value > DBL_MAX，更准确（需<math.h>）
+        const size_t inf_len = (value > 0) ? 3 : 4;  // 正无穷3位，负无穷4位
         if (out == NULL) return inf_len;
         if (max_out < inf_len) return -1;
-
-        out[0] = 'I'; out[1] = 'n'; out[2] = 'f';
+        if (value < 0) out[0] = '-';  // 负号
+        const XChar inf_str[] = { 'I', 'n', 'f' };
+        for (size_t i = 0; i < 3; i++) {
+            out[(value < 0 ? 1 : 0) + i] = inf_str[i];
+        }
         if (max_out >= inf_len + 1) out[inf_len] = 0;
         return inf_len;
     }
-    if (value < -DBL_MAX) { // 负无穷
-        const size_t neg_inf_len = 4; // "-Inf"
-        if (out == NULL) return neg_inf_len;
-        if (max_out < neg_inf_len) return -1;
 
-        out[0] = '-'; out[1] = 'I'; out[2] = 'n'; out[3] = 'f';
-        if (max_out >= neg_inf_len + 1) out[neg_inf_len] = 0;
-        return neg_inf_len;
-    }
-
-    // 自动精度调整（precision=-1时）
+    // --------------------------
+    // 2. 基础参数初始化（修复精度限制）
+    // --------------------------
+    const bool is_negative = (value < 0.0 && !isnan(value) && !isinf(value));  // 排除-0.0
+    const double abs_val = is_negative ? -value : value;
     int final_prec = precision;
+    const bool use_upper = (format == 'F' || format == 'E' || format == 'G');
+
+    // 自动精度 + 精度最大值限制（避免长度溢出，double有效精度约15-17位）
     if (final_prec < 0) {
-        final_prec = (value < 1e6 && value >= 1e-6) ? 6 : 5;
+        if (format == 'f' || format == 'F') final_prec = 6;
+        if (format == 'e' || format == 'E') final_prec = 5;
+        if (format == 'g' || format == 'G') final_prec = 6;
     }
+    const size_t MAX_PRECISION = 30;  // 限制最大精度（超过无意义）
+    if (final_prec > (int)MAX_PRECISION) final_prec = (int)MAX_PRECISION;
+    if (final_prec < 0) final_prec = 0;
 
-    // 分解浮点数组成部分
-    bool is_negative = (value < 0);
-    double abs_val = is_negative ? -value : value;
-    unsigned long long int_part = (unsigned long long)abs_val;
-    double frac_part = abs_val - int_part;
+    // --------------------------
+    // 3. 按格式计算核心参数（修复整数位数计算）
+    // --------------------------
+    unsigned long long int_part = 0;
+    double frac_part = 0.0;
+    int exponent = 0;
+    bool use_scientific = false;
 
-    // 计算各部分所需长度
-    size_t sign_len = is_negative ? 1 : 0; // 符号位（负号1，正号0）
-    size_t int_len = 0;                    // 整数部分长度
-
-    // 计算整数部分长度（int_part=0时为1，否则循环计算）
-    if (int_part == 0) {
-        int_len = 1;
+    // 统一处理abs_val=0的情况（避免分支错误）
+    if (abs_val == 0.0) {
+        int_part = 0;
+        frac_part = 0.0;
+        exponent = 0;
+        use_scientific = (format == 'e' || format == 'E');  // e格式强制科学计数
     }
     else {
-        unsigned long long temp = int_part;
-        while (temp > 0) {
-            temp /= 10;
-            int_len++;
+        if (format == 'f' || format == 'F') {
+            // 固定点：直接拆分整数/小数（修复int_part计算）
+            int_part = (unsigned long long)abs_val;
+            frac_part = abs_val - (double)int_part;  // 避免浮点数精度误差
+        }
+        else if (format == 'e' || format == 'E') {
+            // 科学计数：标准化为 [1.0, 10.0) × 10^exponent（修复指数计算）
+            use_scientific = true;
+            exponent = (int)floor(log10(abs_val));  // 计算指数（如123.456→2）
+            const double scaled_val = abs_val / pow(10.0, exponent);  // 标准化到[1,10)
+            int_part = (unsigned long long)scaled_val;
+            frac_part = scaled_val - (double)int_part;
+        }
+        else if (format == 'g' || format == 'G') {
+            // 自动格式：判断阈值（|log10(abs_val)| ≥ final_prec 则用科学计数）
+            const double log10_val = log10(abs_val);
+            use_scientific = (fabs(log10_val) >= (double)final_prec || log10_val < -4.0);
+
+            if (use_scientific) {
+                // 按科学计数处理（同e格式）
+                exponent = (int)floor(log10_val);
+                const double scaled_val = abs_val / pow(10.0, exponent);
+                int_part = (unsigned long long)scaled_val;
+                frac_part = scaled_val - (double)int_part;
+                final_prec = (final_prec > 0) ? (final_prec - 1) : 0;  // 有效数字-1（整数占1位）
+            }
+            else {
+                // 按固定点处理（同f格式）
+                int_part = (unsigned long long)abs_val;
+                frac_part = abs_val - (double)int_part;
+                // 精度=有效数字-整数位数（如123.456，有效数字4→小数位1）
+                const size_t int_len = calc_uint_decimal_len(int_part);
+                final_prec = (int)(final_prec - int_len);
+                if (final_prec < 0) final_prec = 0;
+            }
         }
     }
 
-    // 小数部分长度（含小数点）：precision>0时为1（小数点）+precision（小数位），否则0
-    size_t frac_len = (final_prec > 0) ? (1 + final_prec) : 0;
+    // --------------------------
+    // 4. 计算总所需长度（修复核心：精确计算各部分长度）
+    // --------------------------
+    const size_t sign_len = is_negative ? 1 : 0;  // 符号位（负1正0）
+    const size_t int_len = calc_uint_decimal_len(int_part);  // 整数位数（无数学库依赖）
+    size_t frac_len = 0;  // 小数部分长度（含小数点）
+    size_t exp_len = 0;   // 指数部分长度（含e/E+符号+数字）
 
-    // 总所需长度 = 符号位 + 整数部分 + 小数部分
-    size_t req_len = sign_len + int_len + frac_len;
+    // 计算小数长度（f/e格式：1+final_prec；g格式：去末尾0后长度）
+    if (final_prec > 0) {
+        frac_len = 1 + (size_t)final_prec;  // 基础长度：1个小数点 + final_prec个小数位
 
-    // 情况1：out为NULL，直接返回所需长度
-    if (out == NULL) return (int64_t)req_len;
+        // g格式特殊处理：去除末尾0和多余小数点
+        if (format == 'g' || format == 'G') {
+            // 模拟小数部分，找到最后一个非零数字位置
+            double temp_frac = frac_part;
+            size_t last_non_zero = 0;
+            for (int i = 0; i < final_prec; i++) {
+                temp_frac *= 10.0;
+                const int digit = (int)temp_frac;
+                if (digit != 0) last_non_zero = (size_t)i;  // 更新最后非零位置
+                temp_frac -= (double)digit;
+            }
+            // 无有效小数位（如0.000）→ 去掉小数点
+            if (last_non_zero == 0 && temp_frac < 0.5) {  // 四舍五入后仍为0
+                frac_len = 0;
+            }
+            else {
+                // 有效小数位：last_non_zero + 1（如0.1203→last_non_zero=3→4位小数）
+                frac_len = 1 + (last_non_zero + 1);
+            }
+        }
+    }
 
-    // 情况2：out非空，检查缓冲区是否足够
+    // 计算指数长度（e/g格式：e/E + 符号 + 至少2位数字）
+    if (use_scientific) {
+        exp_len = 1 + 1 + 2;  // 1(e/E) + 1(±) + 2(数字，如02)
+        // 指数绝对值≥100→数字部分加1位（如123→3位）
+        if (abs(exponent) >= 100) exp_len++;
+        // 指数为0→特殊处理（如1.23e00→无需额外长度）
+        if (exponent == 0) exp_len = 1 + 1 + 2;  // 固定3位（e+00）
+    }
+
+    // 总长度 = 符号 + 整数 + 小数 + 指数（无溢出风险）
+    const size_t req_len = sign_len + int_len + frac_len + exp_len;
+
+    // out为NULL时，直接返回精确计算的长度（修复后不会异常大）
+    if (out == NULL) {
+        return (req_len <= (size_t)INT64_MAX) ? (int64_t)req_len : -1;  // 避免长度溢出int64_t
+    }
+
+    // --------------------------
+    // 5. 填充输出缓冲区（原有逻辑保留，确保正确性）
+    // --------------------------
     if (max_out < req_len) return -1;
-
-    // 填充缓冲区（按：符号→整数→小数的顺序）
     size_t pos = 0;
 
-    // 1. 填充符号位
+    // 5.1 填充符号位
     if (is_negative) out[pos++] = '-';
 
-    // 2. 填充整数部分
+    // 5.2 填充整数部分（逆序计算→正序写入）
     if (int_part == 0) {
         out[pos++] = '0';
     }
     else {
-        // 逆序计算→正序写入
-        XChar int_buf[64] = { 0 }; // 足够存64位整数的十进制表示
+        XChar int_buf[64] = { 0 };  // 足够存ULLONG_MAX（19位）
         size_t buf_idx = 0;
-        unsigned long long temp = int_part;
-        while (temp > 0) {
-            int_buf[buf_idx++] = '0' + (int)(temp % 10);
-            temp /= 10;
+        unsigned long long temp_int = int_part;
+        while (temp_int > 0) {
+            int_buf[buf_idx++] = '0' + (int)(temp_int % 10);
+            temp_int /= 10;
         }
-        // 正序复制到out
+        // 正序复制
         for (size_t i = 0; i < buf_idx; i++) {
             out[pos++] = int_buf[buf_idx - 1 - i];
         }
     }
 
-    // 3. 填充小数部分（若有）
-    if (final_prec > 0) {
-        out[pos++] = '.'; // 小数点
-        for (int i = 0; i < final_prec; i++) {
-            frac_part *= 10;
-            unsigned int digit = (unsigned int)frac_part;
+    // 5.3 填充小数部分（含四舍五入）
+    if (frac_len > 0) {
+        out[pos++] = '.';
+        double temp_frac = frac_part;
+        const size_t actual_frac_len = frac_len - 1;  // 实际小数位数（不含小数点）
+        int round_carry = 0;  // 四舍五入进位标记
+
+        // 第一步：计算四舍五入是否需要进位
+        for (size_t i = 0; i < actual_frac_len; i++) {
+            temp_frac *= 10.0;
+            const int digit = (int)temp_frac;
+            if (i == actual_frac_len - 1) {
+                // 最后一位：看小数点后一位是否≥5（需进位）
+                const double next_frac = temp_frac - (double)digit;
+                round_carry = (next_frac >= 0.5) ? 1 : 0;
+            }
+            temp_frac -= (double)digit;
+        }
+
+        // 第二步：填充小数位并处理进位
+        temp_frac = frac_part;
+        for (size_t i = 0; i < actual_frac_len; i++) {
+            temp_frac *= 10.0;
+            int digit = (int)temp_frac;
+            // 最后一位加进位
+            if (i == actual_frac_len - 1) digit += round_carry;
+
+            // 处理进位（如digit=10→写0，前一位加1）
+            if (digit >= 10) {
+                digit = 0;
+                // 回溯小数部分进位
+                if (pos > sign_len + int_len) {
+                    pos--;
+                    while (pos > sign_len + int_len && out[pos] == '9') {
+                        out[pos] = '0';
+                        pos--;
+                    }
+                    out[pos] += 1;
+                    pos++;
+                }
+            }
+
             out[pos++] = '0' + digit;
-            frac_part -= digit;
+            temp_frac -= (double)digit;
         }
     }
 
-    // 有空间则添加终止符（不占返回长度）
-    if (max_out > req_len) out[req_len] = 0;
+    // 5.4 填充指数部分
+    if (use_scientific) {
+        // 填充e/E
+        out[pos++] = use_upper ? 'E' : 'e';
+        // 填充指数符号
+        const bool exp_neg = (exponent < 0);
+        out[pos++] = exp_neg ? '-' : '+';
+        const int abs_exp = exp_neg ? -exponent : exponent;
+
+        // 填充指数数字（确保至少2位，不足补前导0）
+        XChar exp_buf[4] = { 0 };
+        size_t exp_buf_idx = 0;
+        int temp_exp = abs_exp;
+        if (temp_exp == 0) {
+            exp_buf[exp_buf_idx++] = '0';
+        }
+        else {
+            while (temp_exp > 0) {
+                exp_buf[exp_buf_idx++] = '0' + (temp_exp % 10);
+                temp_exp /= 10;
+            }
+        }
+        // 补前导0（如exp=5→05，exp=123→123）
+        const size_t exp_digit_min = 2;
+        while (exp_buf_idx < exp_digit_min) {
+            exp_buf[exp_buf_idx++] = '0';
+        }
+        // 正序复制
+        for (size_t i = 0; i < exp_buf_idx; i++) {
+            out[pos++] = exp_buf[exp_buf_idx - 1 - i];
+        }
+    }
+
+    // 6. 添加终止符（缓冲区足够时）
+    if (max_out > req_len) {
+        out[req_len] = 0;
+    }
 
     return (int64_t)req_len;
 }
-
 
 // --------------------------
 // 上层接口：XChar数组→数值类型
@@ -2482,25 +2657,27 @@ int64_t XChar_from_ulonglong_stream(unsigned long long value, int base, XChar* o
 }
 
 /**
- * @brief float转UTF-16数组
+ * @brief float转UTF-16数组（支持多格式）
  * @param value 待转换的float值
+ * @param format 格式控制字符：'f'/'F'（固定点）、'e'/'E'（科学计数）、'g'/'G'（自动）
  * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
  * @param max_out 输出缓冲区最大容量（XChar数量）
- * @param precision 小数部分精度（-1=自动：小数值6位，大数值5位）
+ * @param precision 小数/有效数字精度（-1=自动：f=6位，e=5位，g=6位）
  * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
  */
-int64_t XChar_from_float_stream(float value, XChar* out, size_t max_out, int precision) {
-    return XChar_from_floating_point((double)value, out, max_out, precision);
+int64_t XChar_from_float_stream(float value, char format, XChar* out, size_t max_out, int precision) {
+    return XChar_from_floating_point((double)value, format, out, max_out, precision);
 }
 
 /**
- * @brief double转UTF-16数组
+ * @brief double转UTF-16数组（支持多格式）
  * @param value 待转换的double值
+ * @param format 格式控制字符：'f'/'F'（固定点）、'e'/'E'（科学计数）、'g'/'G'（自动）
  * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
  * @param max_out 输出缓冲区最大容量（XChar数量）
- * @param precision 小数部分精度（-1=自动：小数值6位，大数值5位）
+ * @param precision 小数/有效数字精度（-1=自动：f=6位，e=5位，g=6位）
  * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
  */
-int64_t XChar_from_double_stream(double value, XChar* out, size_t max_out, int precision) {
-    return XChar_from_floating_point(value, out, max_out, precision);
+int64_t XChar_from_double_stream(double value, char format, XChar* out, size_t max_out, int precision) {
+    return XChar_from_floating_point(value, format, out, max_out, precision);
 }

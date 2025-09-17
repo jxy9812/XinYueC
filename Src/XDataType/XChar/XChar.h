@@ -606,24 +606,26 @@ int64_t XChar_from_ulong_stream(unsigned long value, int base, XChar* out, size_
 int64_t XChar_from_ulonglong_stream(unsigned long long value, int base, XChar* out, size_t max_out, bool uppercase);
 
 /**
- * @brief float转UTF-16数组
+ * @brief float转UTF-16数组（支持多格式）
  * @param value 待转换的float值
+ * @param format 格式控制字符：'f'/'F'（固定点）、'e'/'E'（科学计数）、'g'/'G'（自动）
  * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
  * @param max_out 输出缓冲区最大容量（XChar数量）
- * @param precision 小数部分精度（-1=自动：小数值6位，大数值5位）
+ * @param precision 小数/有效数字精度（-1=自动：f=6位，e=5位，g=6位）
  * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
  */
-int64_t XChar_from_float_stream(float value, XChar* out, size_t max_out, int precision);
+int64_t XChar_from_float_stream(float value, char format, XChar* out, size_t max_out, int precision);
 
 /**
- * @brief double转UTF-16数组
+ * @brief double转UTF-16数组（支持多格式）
  * @param value 待转换的double值
+ * @param format 格式控制字符：'f'/'F'（固定点）、'e'/'E'（科学计数）、'g'/'G'（自动）
  * @param out 输出缓冲区（NULL时返回所需长度，不含终止符）
  * @param max_out 输出缓冲区最大容量（XChar数量）
- * @param precision 小数部分精度（-1=自动：小数值6位，大数值5位）
+ * @param precision 小数/有效数字精度（-1=自动：f=6位，e=5位，g=6位）
  * @return int64_t 成功：out非空返回实际写入长度，out空返回所需长度；失败返回-1
  */
-int64_t XChar_from_double_stream(double value, XChar* out, size_t max_out, int precision);
+int64_t XChar_from_double_stream(double value, char format, XChar* out, size_t max_out, int precision);
 
 #ifdef __cplusplus
 }

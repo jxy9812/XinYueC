@@ -4,8 +4,6 @@
 #include <string.h>
 #include <stdarg.h>
 #include <limits.h>
-#include <float.h>
-#include <math.h>
 #include "XStringList.h"
 
 #ifdef _WIN32
@@ -1735,84 +1733,29 @@ double XString_toDouble(const XString* str, bool* ok) {
     }
     return XChar_to_double_stream(XContainerDataPtr(str), XContainerSize(str), ok);
 }
-// 字符映射表（用于进制转换）
-static const char g_digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
 
-/**
- * @brief 无符号整数转换辅助函数（内部使用）
- * @param str 目标XString对象
- * @param num 要转换的无符号整数
- * @param base 进制（2-36）
- * @return 转换成功返回true，失败返回false
- */
-static bool XString_setNum_unsigned(XString* str, unsigned long long num, int base) {
-    if (!str || base < 2 || base > 36) {
-        return false;
-    }
-
-    // 清空字符串
-    XString_clear_base(str);
-
-    // 处理0值特殊情况
-    if (num == 0) {
-        XChar zero = 0;
-        return XString_push_back_base(str, zero);
-    }
-
-    // 临时存储转换后的字符（逆序）
-    XChar temp[64];
-    size_t temp_len = 0;
-
-    // 转换为指定进制（逆序存储）
-    while (num > 0 && temp_len < sizeof(temp) / sizeof(XChar)) {
-        unsigned int remainder = num % base;
-        temp[temp_len++] = XChar_from(g_digits[remainder]);
-        num /= base;
-    }
-
-    // 将逆序字符反转后添加到字符串
-    for (int i = temp_len - 1; i >= 0; --i) {
-        if (!XString_push_back_base(str, temp[i])) {
-            return false;
-        }
-    }
-
-    return true;
-}
 bool XString_setNum_int(XString* str, int n, int base)
 {
     if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
-    //XChar_from_int_stream(n,base,);
-    // 所有进制都支持负数（添加负号前缀）
-    bool is_negative = (n < 0);
-    unsigned long long num;
-
-    // 处理最小负数溢出问题（使用long long扩展避免溢出）
-    if (is_negative) {
-        num = (unsigned long long)(-(long long)n);
-    }
-    else {
-        num = (unsigned long long)n;
-    }
-
-    // 调用无符号转换函数
-    if (!XString_setNum_unsigned(str, num, base)) {
+    int64_t len=XChar_from_int_stream(n,base,NULL,0,true);
+    if (len == -1)
         return false;
-    }
-
-    // 添加负号（所有进制的负数都需要）
-    if (is_negative) {
-        return XString_push_front_base(str, XChar_from('-'));
-    }
-
-    return true;
+    XString_resize(str,len);
+    return XChar_from_int_stream(n, base, XString_data(str), len+1, true)!=-1;
 }
 
 bool XString_setNum_uInt(XString* str, unsigned int n, int base)
 {
-    return XString_setNum_unsigned(str, (unsigned long long)n, base);
+    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
+        return false;
+    }
+    int64_t len = XChar_from_uint_stream(n, base, NULL, 0, true);
+    if (len == -1)
+        return false;
+    XString_resize(str, len);
+    return XChar_from_uint_stream(n, base, XString_data(str), len + 1, true) != -1;
 }
 
 bool XString_setNum_long(XString* str, long n, int base)
@@ -1820,24 +1763,23 @@ bool XString_setNum_long(XString* str, long n, int base)
     if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
-
-    bool is_negative = (n < 0);  // 所有进制支持负数
-    unsigned long long num = is_negative ? (unsigned long long)(-n) : (unsigned long long)n;
-
-    if (!XString_setNum_unsigned(str, num, base)) {
+    int64_t len = XChar_from_long_stream(n, base, NULL, 0, true);
+    if (len == -1)
         return false;
-    }
-
-    if (is_negative) {
-        return XString_push_front_base(str, XChar_from('-'));
-    }
-
-    return true;
+    XString_resize(str, len);
+    return XChar_from_long_stream(n, base, XString_data(str), len + 1, true) != -1;
 }
 
 bool XString_setNum_uLong(XString* str, unsigned long n, int base)
 {
-    return XString_setNum_unsigned(str, (unsigned long long)n, base);
+    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
+        return false;
+    }
+    int64_t len = XChar_from_ulong_stream(n, base, NULL, 0, true);
+    if (len == -1)
+        return false;
+    XString_resize(str, len);
+    return XChar_from_ulong_stream(n, base, XString_data(str), len + 1, true) != -1;
 }
 
 bool XString_setNum_llong(XString* str, long long n, int base)
@@ -1845,28 +1787,35 @@ bool XString_setNum_llong(XString* str, long long n, int base)
     if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
-
-    bool is_negative = (n < 0);  // 所有进制支持负数
-    unsigned long long num = is_negative ? (unsigned long long)(-n) : (unsigned long long)n;
-
-    if (!XString_setNum_unsigned(str, num, base)) {
+    int64_t len = XChar_from_ulonglong_stream(n, base, NULL, 0, true);
+    if (len == -1)
         return false;
-    }
-
-    if (is_negative) {
-        return XString_push_front_base(str, XChar_from('-'));
-    }
-
-    return true;
+    XString_resize(str, len);
+    return XChar_from_ulonglong_stream(n, base, XString_data(str), len + 1, true) != -1;
 }
 
 bool XString_setNum_uLLong(XString* str, unsigned long long n, int base)
 {
-    return XString_setNum_unsigned(str, n, base);
+    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
+        return false;
+    }
+    int64_t len = XChar_from_ulonglong_stream(n, base, NULL, 0, true);
+    if (len == -1)
+        return false;
+    XString_resize(str, len);
+    return XChar_from_ulonglong_stream(n, base, XString_data(str), len + 1, true) != -1;
 }
 
 bool XString_setNum_float(XString* str, float f, char format, int precision)
 {
+    if (!str ) { 
+        return false;
+    }
+    int64_t len = XChar_from_float_stream((double)f,format,NULL,0,precision);
+    if (len == -1)
+        return false;
+    XString_resize(str, len);
+    return XChar_from_float_stream((double)f, format, XString_data(str), len + 1, precision) != -1;
     // 转换为double处理，避免精度损失
     return XString_setNum_double(str, (double)f, format, precision);
 }
@@ -1876,43 +1825,11 @@ bool XString_setNum_double(XString* str, double d, char format, int precision)
     if (!str) {
         return false;
     }
-
-    // 检查格式字符有效性，默认使用'g'
-    if (format != 'e' && format != 'E' && format != 'f' && format != 'F' &&
-        format != 'g' && format != 'G') {
-        format = 'g';
-    }
-
-    // 限制精度范围（0-30，超出范围使用默认值6）
-    if (precision < 0 || precision > 30) {
-        precision = 6;
-    }
-
-    // 处理特殊值（NaN和无穷大）
-    if (isnan(d)) {
-        return XString_assign_utf8(str, "nan");
-    }
-    if (isinf(d)) {
-        return XString_assign_utf8(str, d > 0 ? "inf" : "-inf");
-    }
-
-    // 构建格式字符串（例如："%.6g"、"%.2f"）
-    char fmt[16];
-    snprintf(fmt, sizeof(fmt), "%%.%d%c", precision, format);
-    if (fmt[0] == '\0') { // 格式字符串构建失败
+    int64_t len = XChar_from_double_stream(d, format, NULL, 0, precision);
+    if (len == -1)
         return false;
-    }
-
-    // 格式化浮点数到缓冲区
-    char buf[256];
-    int len = snprintf(buf, sizeof(buf), fmt, d);
-    // 检查格式化结果（len需在有效范围内，且缓冲区未溢出）
-    if (len <= 0 || len >= (int)sizeof(buf)) {
-        return false;
-    }
-
-    // 赋值到XString
-    return XString_assign_utf8(str, buf);
+    XString_resize(str, len);
+    return XChar_from_double_stream(d, format, XString_data(str), len + 1, precision) != -1;
 }
 
 XString* XString_left(const XString* str, size_t n)
