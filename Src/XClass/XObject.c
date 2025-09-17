@@ -174,6 +174,22 @@ bool XObject_disconnect_conn(XConnection* conn)
 	return XSignalSlot_disconnect_conn(conn);
 }
 
+bool XObject_setSignalSendMode(XObject* object, XSignalSendMode mode)
+{
+	if(!object)
+		return false;
+	if (object->m_signalSlot == NULL)
+		object->m_signalSlot = XSignalSlot_create(object);
+	return XSignalSlot_setSendMode(object->m_signalSlot,mode);
+}
+
+XSignalSendMode XObject_getSignalSendMode(XObject* object)
+{
+	if (!object)
+		return XSIGNAL_SEND_INVALID;
+	return XSignalSlot_getSendMode(object->m_signalSlot);
+}
+
 void* XObject_deinit_signal(XObject* object)
 {
 	if(object)

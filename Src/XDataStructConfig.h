@@ -59,8 +59,14 @@ extern "C" {
 #define	XVectorTwo_ON					0
 #define	XStringVector_ON				0
 #endif
-
-
+// 事件循环调度器的队列大小
+#ifndef XEventLoop_QueueSize
+#if defined(_WIN32) || defined(_WIN64) || defined(__linux__) || defined(__APPLE__)
+#define XEventLoop_QueueSize      512 
+#else
+#define XEventLoop_QueueSize      64   /* 适配嵌入式设备节省RAM */
+#endif
+#endif // !XEventLoop_QueueSize
 
 #define IS_ON_DEBUG(on)						ISNULL(on,"此函数需要开启"#on",在XDataStructConfig.h")
 

@@ -67,7 +67,7 @@ XEventLoop* XEventLoop_create_thread()
     loop->m_mutex = XMutex_create();
     loop->m_condition = XWaitCondition_create();
 
-    loop->m_dispatcher = XEventDispatcher_create(256);
+    loop->m_dispatcher = XEventDispatcher_create(XEventLoop_QueueSize);
     XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
 
     // 初始化定时器组

@@ -29,7 +29,8 @@ void* XMemory_reallocPack(void* ptr, size_t size);
 void* XMemory_callocPack(size_t count, size_t size);
 
 //内存管理
-#define XNew(obj)   XMemory_malloc(sizeof(obj))
+#define XNew(obj)			XMemory_malloc(sizeof(obj))
+#define XDelete(ptr)		XMemory_free(ptr);
 void* XMemory_malloc(size_t size);
 void XMemory_free(void* ptr);
 void* XMemory_realloc(void* ptr, size_t size);

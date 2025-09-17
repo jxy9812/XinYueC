@@ -35,13 +35,22 @@ XThread* XObject_thread(XObject* object);
 XEventDispatcher* XObject_getEventDispatcher(XObject* object);
 //信号与槽
 XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type);
-#define XObject_deinit_base    XClass_deinit_base
-#define XObject_delete_base    XClass_delete_base
-
 //信号绑定辅助宏
 #define XSignal(signal)      ((void*(*)(XObject*))signal)(NULL)
 bool XObject_disconnect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func);
 bool XObject_disconnect_conn(XConnection* conn);
+/**
+ * @brief 为信号设置发送模式(设置为队列模式后,可以在中断中发送信号,无锁发送)
+ * @param object 对象实例（不能为空）
+ * @param mode 要设置的发送模式（XSignalSendMode枚举值）
+ * @return true表示设置成功，false表示失败（如manager为空、signal无效等）
+ */
+bool XObject_setSignalSendMode(XObject* object, XSignalSendMode mode);
+XSignalSendMode XObject_getSignalSendMode(XObject* object);
+
+#define XObject_deinit_base    XClass_deinit_base
+#define XObject_delete_base    XClass_delete_base
+
 //slot: void deinit_slot(XObject* sender, XObject* receiver, void* args)
 void* XObject_deinit_signal(XObject* object);
 

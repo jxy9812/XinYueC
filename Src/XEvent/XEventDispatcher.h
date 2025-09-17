@@ -53,6 +53,7 @@ typedef struct XSocketNotifier {
 typedef struct XEventDispatcher {
     XClass m_parent;                    // 父类
     XPriorityMapQueue* m_queue;         // 多个优先级的事件队列
+    XCircularQueueAtomic* m_signalQueue;//信号队列
     XMapBase* m_filter_cb;              // 事件过滤器映射表
     XListSLinked* m_socketNotifiers;    // 套接字通知器列表
     XMutex* m_mutex;                    // 互斥锁，保证线程安全
@@ -94,7 +95,16 @@ bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEventMin* ev
  * @return 事件是否成功加入队列
  */
 bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* event, XEventPriority priority);
-
+/**
+ * @brief 投递信号发送（异步处理）
+ * @param dispatcher 事件调度器
+ * @param sendFunc 信号发送函数
+ * @param signalSlot 信号槽
+ * @param signal 信号
+ * @param args 参数
+ * @return 是否成功加入队列
+ */
+bool XEventDispatcher_postSignal(XEventDispatcher* dispatcher, void (*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args);
 /**
  * @brief 添加事件过滤器
  * @param dispatcher 事件调度器
