@@ -24,7 +24,7 @@ XObject* XObject_create();
 void XObject_init(XObject* object);
 void XObject_poll_base(XObject* object);
 void XObject_setPollingInterval(XObject* object,size_t interval);
-
+//
 bool XObject_addEventFilter(XObject* object, int code, XEventCB cb,void* userData);
 bool XObject_removeEventFilter(XObject* object, int code);
 bool XObject_moveToThread(XObject* object, XThread* thread);

@@ -24,6 +24,10 @@ typedef enum
     XEVENT_MOUSE,          // 鼠标事件
     XEVENT_FUNC_RUN,       // 函数运行事件
     XEVENT_SLOT_RUN,       // 槽函数运行事件
+    XEVENT_TRANSITION,         // 状态转换事件 - 新增
+    XEVENT_SIGNAL_TRIGGERED,   // 信号触发事件
+    XEVENT_STATE_ENTERED,      // 状态进入事件
+    XEVENT_STATE_EXITED,        // 状态退出事件
     XEVENT_USER = 1000     // 用户自定义事件起始值
 }XEventType;
 // 事件优先级
