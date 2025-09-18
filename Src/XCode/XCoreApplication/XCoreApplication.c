@@ -54,9 +54,18 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 	app->m_argv = argv;
 	app->m_quit = false;
 	app->m_eventLoop = XEventLoop_create();
-	//app->m_eventLoop = XEventDispatcherThread_create(30);
-	////初始化一些全局类
-	//XTimerGroupWheel_setGlobal();
+
+
+	// 初始化定时器组
+	XTimerGroupBase* group= XTimerGroupWheel_create(1);
+	XTimerGroupWheel_setMutex(group, XMutex_create());
+	XTimerGroupWheel_addTimeWheel_base(group, 100);//0~100ms    -1ms
+	XTimerGroupWheel_addTimeWheel_base(group, 10);//100ms~1S    -100ms
+	XTimerGroupWheel_addTimeWheel_base(group, 10);//1S~10S      -1s
+	XTimerGroupWheel_addTimeWheel_base(group, 10);//10~100S     -10s
+	XTimerGroupWheel_addTimeWheel_base(group, 10);//100~1000s   -100s
+
+	app->m_timerGroup = group;
 }
 
 XEventDispatcher* XCoreApplication_getDispatcher()
@@ -73,10 +82,10 @@ XEventLoop* XCoreApplication_getEventLoop()
 
 XTimerGroupBase* XCoreApplication_getTimerGroup()
 {
-	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
+	XCoreApplication* app = XCoreApplication_global();
 	if (app == NULL || app->m_eventLoop == NULL)
 		return NULL;
-	return app->m_eventLoop->m_timerGroup;
+	return app->m_timerGroup;
 }
 
 void XCoreApplication_requestQuit()
@@ -87,14 +96,16 @@ void XCoreApplication_requestQuit()
 
 int XCoreApplication_exec()
 {
-	XCoreApplication* app = XCoreApplication_create(NULL, NULL);
+	XCoreApplication* app = XCoreApplication_global();
 	if (app == NULL)
 		return -1;
-	if(!(app->m_quit))
-		XEventLoop_exec_base(app->m_eventLoop);
-	/*while (!(app->m_quit))
+	//准备启动事件循环
+	app->m_eventLoop->m_state= XEventLoop_Running;
+	while (!(app->m_quit)&& app->m_eventLoop->m_state == XEventLoop_Running)
 	{
-		XEventDispatcherThread_handler_base(app->m_eventLoop);
-	}*/
+		// 处理定时器事件
+		XTimerGroupWheel_handler_base(app->m_timerGroup);
+		XEventLoop_processEvents_base(app->m_eventLoop, XEventLoop_AllEvents);
+	}
 	return 0;
 }

@@ -7,7 +7,7 @@
 #include "XSignalSlot.h"
 #include "XEventDispatcher.h"
 #include "XMapBase.h"
-#include "XTimerWheel.h"
+#include "XTimer.h"
 #include <stdarg.h>
 static void VXObject_poll(XObject* object);
 static void VXObject_deinit(XObject* object);
@@ -76,12 +76,12 @@ void XObject_setPollingInterval(XObject* object, size_t interval)
 	}
 	if (object->m_poolTimer == NULL)
 	{
-		object->m_poolTimer = XTimerWheel_create();
+		object->m_poolTimer = XTimer_create();
 		XTimerBase_setAutoDelete(object->m_poolTimer,false);
 		XTimerBase_setTimerCallback_base(object->m_poolTimer,XObject_poll_base);
 		XTimerBase_setUserData_base(object->m_poolTimer,object);
 		XTimerBase_setSingleShote(object->m_poolTimer, false);
-		XTimerBase_setTimerGroup(object->m_poolTimer, XThread_currentTimerGroup());
+		//XTimerBase_setTimerGroup(object->m_poolTimer, XThread_currentTimerGroup());
 	}
 	XTimerBase_setTimeout_base(object->m_poolTimer, interval);
 	XTimerBase_setInterval_base(object->m_poolTimer, interval);

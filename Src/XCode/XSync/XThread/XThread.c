@@ -50,10 +50,6 @@ XEventDispatcher* XThread_currentDispatcher()
 {
     return XThread_getDispatcher(XThread_currentThread());
 }
-XTimerGroupBase* XThread_currentTimerGroup()
-{
-    return XThread_getTimerGroup(XThread_currentThread());
-}
 void XThread_mapInsert(XThread* Object)
 {
     if (Object == NULL)return;
@@ -97,13 +93,6 @@ XEventLoop* XThread_getEventLoop(const XThread* Object)
     if (Object)
         return Object->m_eventLoop;
     return XCoreApplication_getEventLoop();
-}
-
-XTimerGroupBase* XThread_getTimerGroup(const XThread* Object)
-{
-    if (Object)
-        return Object->m_eventLoop ? Object->m_eventLoop->m_timerGroup : NULL;
-    return XCoreApplication_getTimerGroup();
 }
 
 // 判断线程是否结束

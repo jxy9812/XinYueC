@@ -42,7 +42,6 @@ typedef struct XEventLoop
 {
     XClass m_parent;                  // 父类
     XEventDispatcher* m_dispatcher;   // 关联的事件调度器
-    XTimerGroupWheel* m_timerGroup;   // 定时器组
     XCircularQueueAtomic* m_sendSignalQueue;//信号发送队列
     XEventLoopState m_state;          // 事件循环状态
     XWaitCondition* m_condition;      // 等待条件变量
@@ -78,7 +77,6 @@ void XEventLoop_init(XEventLoop* loop);
  * @return 退出代码
  */
 int XEventLoop_exec_base(XEventLoop* loop);
-
 /**
  * @brief 退出事件循环
  * @param loop 事件循环实例
@@ -121,13 +119,6 @@ bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, s
  * @return 事件调度器
  */
 XEventDispatcher* XEventLoop_getDispatcher(XEventLoop* loop);
-
-/**
- * @brief 获取事件循环关联的定时器组
- * @param loop 事件循环实例
- * @return 定时器组
- */
-XTimerGroupWheel* XEventLoop_getTimerGroup(XEventLoop* loop);
 
 /**
  * @brief 设置当最后一个窗口关闭时是否退出事件循环

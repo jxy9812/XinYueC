@@ -20,8 +20,6 @@ static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin*
 static bool VXEventDispatcher_addEventCb(XEventDispatcher* dispatcher, XObject* receiver, int code, XEventCB cb, void* userData);
 static bool VXEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, XObject* receiver, int code);
 static void VXEventDispatcher_handler(XEventDispatcher* dispatcher);
-static bool VXEventDispatcher_registerTimer(XEventDispatcher* dispatcher, XTimerBase* timer, uint64_t interval, bool singleShot);
-static bool VXEventDispatcher_unregisterTimer(XEventDispatcher* dispatcher, XTimerBase* timer);
 static bool VXEventDispatcher_registerSocketNotifier(XEventDispatcher* dispatcher, XSocketNotifier* notifier);
 static bool VXEventDispatcher_unregisterSocketNotifier(XEventDispatcher* dispatcher, XSocketNotifier* notifier);
 static void VXEventDispatcher_wakeUp(XEventDispatcher* dispatcher);
@@ -48,8 +46,6 @@ XVtable* XEventDispatcher_class_init() {
         VXEventDispatcher_addEventCb,
         VXEventDispatcher_removeEventCb,
         VXEventDispatcher_handler,
-        VXEventDispatcher_registerTimer,
-        VXEventDispatcher_unregisterTimer,
         VXEventDispatcher_registerSocketNotifier,
         VXEventDispatcher_unregisterSocketNotifier,
         VXEventDispatcher_wakeUp,
@@ -342,49 +338,6 @@ static void VXEventDispatcher_handler(XEventDispatcher* dispatcher)
 }
 
 /**
- * @brief 注册定时器
- * @param dispatcher 事件调度器
- * @param timer 定时器对象
- * @param interval 时间间隔（毫秒）
- * @param singleShot 是否为单次定时器
- * @return 是否注册成功
- */
-static bool VXEventDispatcher_registerTimer(XEventDispatcher* dispatcher, XTimerBase* timer,
-    uint64_t interval, bool singleShot) {
-    if (!dispatcher || !timer || !dispatcher->m_eventLoop) return false;
-
-    XTimerGroupWheel* timerGroup = XEventLoop_getTimerGroup(dispatcher->m_eventLoop);
-    if (!timerGroup) return false;
-
-    // 设置定时器属性
-    timer->m_interval = interval;
-    timer->m_timeout = interval;
-    timer->m_singleShot = singleShot;
-    timer->m_isRun = true;
-
-    // 添加到定时器组
-    return XTimerGroupWheel_addTimer_base(timerGroup, timer);
-}
-
-/**
- * @brief 注销定时器
- * @param dispatcher 事件调度器
- * @param timer 定时器对象
- * @return 是否注销成功
- */
-static bool VXEventDispatcher_unregisterTimer(XEventDispatcher* dispatcher, XTimerBase* timer) {
-    if (!dispatcher || !timer || !dispatcher->m_eventLoop) return false;
-
-    XTimerGroupWheel* timerGroup = XEventLoop_getTimerGroup(dispatcher->m_eventLoop);
-    if (!timerGroup) return false;
-
-    // 从定时器组移除
-    bool result = XTimerGroupWheel_removeTimer_base(timerGroup, timer);
-    timer->m_isRun = false;
-    return result;
-}
-
-/**
  * @brief 注册套接字通知器
  * @param dispatcher 事件调度器
  * @param notifier 套接字通知器
@@ -562,20 +515,6 @@ void XEventDispatcher_handler_base(XEventDispatcher* dispatcher) {
         return;
     XClassGetVirtualFunc(dispatcher, EXEventDispatcher_Handler,
         void (*)(XEventDispatcher*))(dispatcher);
-}
-
-bool XEventDispatcher_registerTimer_base(XEventDispatcher* dispatcher, XTimerBase* timer, uint64_t interval, bool singleShot) {
-    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
-        return false;
-    return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_RegisterTimer,
-        bool (*)(XEventDispatcher*, XTimerBase*, uint64_t, bool))(dispatcher, timer, interval, singleShot);
-}
-
-bool XEventDispatcher_unregisterTimer_base(XEventDispatcher* dispatcher, XTimerBase* timer) {
-    if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
-        return false;
-    return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_UnregisterTimer,
-        bool (*)(XEventDispatcher*, XTimerBase*))(dispatcher, timer);
 }
 
 bool XEventDispatcher_registerSocketNotifier_base(XEventDispatcher* dispatcher, XSocketNotifier* notifier) {

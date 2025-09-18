@@ -105,7 +105,6 @@ bool XThread_start_base(XThread* Object);
  */
 XEventDispatcher* XThread_getDispatcher(const XThread* Object);
 XEventLoop* XThread_getEventLoop(const XThread* Object);
-XTimerGroupBase* XThread_getTimerGroup(const XThread* Object);
 /**
  * @brief 判断XThread对象对应的线程是否结束
  * @param Object 指向常量XThread对象的指针
@@ -185,7 +184,6 @@ bool XThread_terminate_base(XThread* Object);
 XThread* XThread_currentThread();
 XEventLoop* XThread_currentEventLoop();
 XEventDispatcher* XThread_currentDispatcher();
-XTimerGroupBase* XThread_currentTimerGroup();
 XHandle XThread_currentThreadId();
 
 #ifdef __cplusplus

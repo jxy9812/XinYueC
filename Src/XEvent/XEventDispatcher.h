@@ -18,8 +18,6 @@ XCLASS_DEFINE_BEGING(XEventDispatcher)
     EXEventDispatcher_AddEventCb,   // 添加事件过滤器
     EXEventDispatcher_RemoveEventCb,// 移除事件过滤器
     EXEventDispatcher_Handler,          // 处理事件
-    EXEventDispatcher_RegisterTimer,    // 注册定时器
-    EXEventDispatcher_UnregisterTimer,  // 注销定时器
     EXEventDispatcher_RegisterSocketNotifier, // 注册套接字通知器
     EXEventDispatcher_UnregisterSocketNotifier, // 注销套接字通知器
     EXEventDispatcher_WakeUp,           // 唤醒事件循环
@@ -120,24 +118,6 @@ bool XEventDispatcher_removeEventCb_base(XEventDispatcher* dispatcher, XObject* 
  * @param dispatcher 事件调度器
  */
 void XEventDispatcher_handler_base(XEventDispatcher* dispatcher);
-
-/**
- * @brief 注册定时器
- * @param dispatcher 事件调度器
- * @param timer 定时器对象
- * @param interval 时间间隔（毫秒）
- * @param singleShot 是否为单次定时器
- * @return 是否注册成功
- */
-bool XEventDispatcher_registerTimer_base(XEventDispatcher* dispatcher, XTimerBase* timer, uint64_t interval, bool singleShot);
-
-/**
- * @brief 注销定时器
- * @param dispatcher 事件调度器
- * @param timer 定时器对象
- * @return 是否注销成功
- */
-bool XEventDispatcher_unregisterTimer_base(XEventDispatcher* dispatcher, XTimerBase* timer);
 
 /**
  * @brief 注册套接字通知器

@@ -26,7 +26,6 @@ static void VXEventLoop_quit(XEventLoop* loop, int exitCode);
 static void VXEventLoop_wakeUp(XEventLoop* loop);
 static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags);
 static bool VXEventLoop_hasPendingEvents(XEventLoop* loop);
-static uint64_t VXEventLoop_calculateNextTimeout(XEventLoop* loop);
 
 /**
  * @brief 初始化事件循环类的虚函数表
@@ -90,7 +89,6 @@ void XEventLoop_init(XEventLoop* loop)
     if (threadLoop)
     {//当前已经有线程事件循环了，引用它的数据
         loop->m_dispatcher = threadLoop->m_dispatcher;
-        loop->m_timerGroup = threadLoop->m_timerGroup;
         loop->m_sendSignalQueue = threadLoop->m_sendSignalQueue;
         loop->m_ref_count = threadLoop->m_ref_count;
         XAtomic_fetch_add_int32(loop->m_ref_count, 1);  // 原子加1
@@ -108,13 +106,6 @@ void XEventLoop_init(XEventLoop* loop)
 
         loop->m_dispatcher = XEventDispatcher_create(XEventLoop_QueueSize);
         XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
-        // 初始化定时器组
-        loop->m_timerGroup = XTimerGroupWheel_create(1);
-        XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup, 100);//0~100ms    -1ms
-        XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup, 10);//100ms~1S    -100ms
-        XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup, 10);//1S~10S      -1s
-        XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup, 10);//10~100S     -10s
-        XTimerGroupWheel_addTimeWheel_base(loop->m_timerGroup, 10);//100~1000s   -100s
     }
     loop->m_state = XEventLoop_Suspended;
     loop->m_exitCode = 0;
@@ -128,15 +119,6 @@ void XEventLoop_init(XEventLoop* loop)
  */
 XEventDispatcher* XEventLoop_getDispatcher(XEventLoop* loop) {
     return loop ? loop->m_dispatcher : NULL;
-}
-
-/**
- * @brief 获取事件循环关联的定时器组
- * @param loop 事件循环实例
- * @return 定时器组
- */
-XTimerGroupWheel* XEventLoop_getTimerGroup(XEventLoop* loop) {
-    return loop ? loop->m_timerGroup : NULL;
 }
 
 /**
@@ -163,16 +145,6 @@ static int VXEventLoop_exec(XEventLoop* loop) {
 
     while (loop->m_state == XEventLoop_Running)
     {
-        //先处理是否有信号需要在队列中发送
-        XSignalData data;
-        while (XQueueBase_receive_base(loop->m_sendSignalQueue, &data))
-        {
-            if (data.sendFunc)
-                data.sendFunc(data.signalSlot, data.signal, data.args);//发送信号
-        }
-        // 处理定时器事件
-        XTimerGroupWheel_handler_base(loop->m_timerGroup);
-
         // 处理事件
         VXEventLoop_processEvents(loop, XEventLoop_AllEvents);
 
@@ -234,9 +206,16 @@ static void VXEventLoop_wakeUp(XEventLoop* loop) {
  * @param loop 事件循环对象
  * @param flags 事件处理标志
  */
-static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags) {
+static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags) 
+{
     if (!loop || !loop->m_dispatcher || loop->m_state != XEventLoop_Running) return;
-
+    //先处理是否有信号需要在队列中发送
+    XSignalData data;
+    while (XQueueBase_receive_base(loop->m_sendSignalQueue, &data))
+    {
+        if (data.sendFunc)
+            data.sendFunc(data.signalSlot, data.signal, data.args);//发送信号
+    }
     // 根据标志志处理不同类型的事件
     if (flags & XEventLoop_ExcludeUserInputEvents) {
         // 排除用户输入事件的处理逻辑
@@ -274,18 +253,7 @@ static bool VXEventLoop_hasPendingEvents(XEventLoop* loop) {
     }*/
     if (!XQueueBase_isEmpty_base(loop->m_dispatcher->m_queue))
         return true;
-    // 检查事件队列和定时器
-    return XTimerGroupWheel_hasActiveTimers(loop->m_timerGroup);
-}
-
-/**
- * @brief 计算下一个定时器超时时间
- * @param loop 事件循环实例
- * @return 下一个超时时间（毫秒），0表示无定时器
- */
-static uint64_t VXEventLoop_calculateNextTimeout(XEventLoop* loop) {
-    if (!loop || !loop->m_timerGroup) return 0;
-    return XTimerGroupWheel_getNextTimeout(loop->m_timerGroup);
+    return false;
 }
 
 /**
@@ -298,12 +266,6 @@ static void VXEventLoop_deinit(XEventLoop* loop)
    // 原子减少原引用计数（若减到0，原数据会被其他持有者释放）
    if(XAtomic_fetch_sub_int32(loop->m_ref_count, 1) == 1)
    {
-       // 释放定时器组
-       if (loop->m_timerGroup) {
-           XTimerGroupWheel_delete_base(loop->m_timerGroup);
-           loop->m_timerGroup = NULL;
-       }
-
        // 释放放事件调度器
        if (loop->m_dispatcher) {
            XEventDispatcher_delete_base(loop->m_dispatcher);
@@ -319,7 +281,6 @@ static void VXEventLoop_deinit(XEventLoop* loop)
    }
    else
    {
-       loop->m_timerGroup = NULL;
        loop->m_dispatcher = NULL;
        loop->m_ref_count = NULL;
    }

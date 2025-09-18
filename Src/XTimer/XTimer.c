@@ -1,5 +1,5 @@
 ﻿#include"XTimer.h"
-#include"XThread.h"
+#include"XCoreApplication.h"
 #include"XMemory.h"
 #include<string.h>
 //static void VXTimerBase_start(XTimer* timer);
@@ -44,7 +44,7 @@ XTimer* XTimer_create()
 }
 static void TimerCallback(void* userData)
 {
-	XObject_postEvent(userData,XEventMin_create(userData,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
+	XObject_postEvent(userData,XEventMin_create(NULL,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
 }
 static void TimerOutCb(XEventMin* event)
 {
@@ -61,7 +61,7 @@ void XTimer_init(XTimer* timer)
 	memset(((XTimerWheel*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerWheel));
 	XTimerWheel_init(timer);
 	XClassGetVtable(timer) = XTimer_class_init();
-	XTimerBase_setTimerGroup(timer, XThread_currentTimerGroup());
+	XTimerBase_setTimerGroup(timer, XCoreApplication_getTimerGroup());
 	XObject_addEventFilter(timer, XEVENT_TIMEROUT, TimerOutCb,NULL);
 	((XTimerBase*)timer)->m_timerCallback = TimerCallback;
 	((XTimerBase*)timer)->m_userData = timer;
