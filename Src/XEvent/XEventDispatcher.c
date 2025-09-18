@@ -3,7 +3,6 @@
 #include "XHashMap.h"
 #include "XHashFunc.h"
 #include "XObject.h"
-#include "XTimerGroupWheel.h"
 #include "XListSLinked.h"
 #include "XWaitCondition.h"
 #include "XPriorityMapQueue.h"

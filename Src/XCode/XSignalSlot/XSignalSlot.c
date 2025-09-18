@@ -4,7 +4,7 @@
 #include"XListSLinked.h"
 #include"XListSLinkedAtomic.h"
 #include"XObject.h"
-#include"XEventDispatcher.h"
+#include"XCoreApplication.h"
 #include"XVariant.h"
 #include"XMutex.h"
 static const bool XEquality_XConnection(const XConnection* pvPrevValue, const XConnection* pvNextValue)
@@ -310,7 +310,7 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args)
 		return;
 	if (manager->sendMode == XSIGNAL_SEND_QUEUED && manager->obj&&manager->obj->m_eventLoop)
 	{//在队列中发送
-		XEventLoop_postSendSignal(manager->obj->m_eventLoop, emit,manager,signal,args);
+		XCoreApplication_postSendSignal(emit,manager,signal,args);
 		return;
 	}
 	emit(manager,signal,args);
@@ -322,7 +322,7 @@ void XSignalSlot_emit_variant(XSignalSlot* manager, size_t signal,XVariant* args
 		return;
 	if (manager->sendMode == XSIGNAL_SEND_QUEUED&& manager->obj&& manager->obj->m_eventLoop)
 	{//在队列中发送
-		XEventLoop_postSendSignal(manager->obj->m_eventLoop, emit_variant, manager, signal, args);
+		XCoreApplication_postSendSignal(emit_variant, manager, signal, args);
 		return;
 	}
 	emit_variant(manager, signal, args);

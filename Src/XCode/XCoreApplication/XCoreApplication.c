@@ -8,6 +8,17 @@
 #include "XObject.h"
 #include "XTimerGroupWheel.h"
 #include "XEventLoop.h"
+#include "XCircularQueueAtomic.h"
+//typedef struct XSignalSlot XSignalData;
+//处理队列信号数据
+typedef struct XSignalData
+{
+	void (*sendFunc)(XSignalSlot*, size_t, void*);
+	XSignalSlot* signalSlot;
+	size_t signal;
+	void* args;
+}XSignalData;
+
 // 全局应用程序实例指针
 static XCoreApplication* g_app = NULL;
 
@@ -66,6 +77,9 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 	XTimerGroupWheel_addTimeWheel_base(group, 10);//100~1000s   -100s
 
 	app->m_timerGroup = group;
+
+	//初始化信号队列
+	app->m_sendSignalQueue = XCircularQueueAtomic_create(sizeof(XSignalData), XEventLoop_QueueSize);
 }
 
 XEventDispatcher* XCoreApplication_getDispatcher()
@@ -101,11 +115,26 @@ int XCoreApplication_exec()
 		return -1;
 	//准备启动事件循环
 	app->m_eventLoop->m_state= XEventLoop_Running;
+	XSignalData data;
 	while (!(app->m_quit)&& app->m_eventLoop->m_state == XEventLoop_Running)
 	{
+		//先处理是否有信号需要在队列中发送
+		while (XQueueBase_receive_base(app->m_sendSignalQueue, &data))
+		{
+			if (data.sendFunc)
+				data.sendFunc(data.signalSlot, data.signal, data.args);//发送信号
+		}
 		// 处理定时器事件
 		XTimerGroupWheel_handler_base(app->m_timerGroup);
 		XEventLoop_processEvents_base(app->m_eventLoop, XEventLoop_AllEvents);
 	}
 	return 0;
+}
+bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args)
+{
+	XCoreApplication* app = XCoreApplication_global();
+	if (!app || app->m_sendSignalQueue == NULL)
+		return false;
+	XSignalData data = { .sendFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args };
+	return XQueueBase_push_base(app->m_sendSignalQueue, &data);
 }

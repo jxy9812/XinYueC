@@ -6,19 +6,8 @@
 #include "XQueueBase.h"
 #include "XThread.h"
 #include "XCoreApplication.h"
-#include "XCircularQueueAtomic.h"
 #include "XAtomic.h"
 //#include "XWindow.h"  // 假设存在窗口相关定义
-
-//typedef struct XSignalSlot XSignalData;
-//处理队列信号数据
-typedef struct XSignalData
-{
-    void (*sendFunc)(XSignalSlot*, size_t, void*);
-    XSignalSlot* signalSlot;
-    size_t signal;
-    void* args;
-}XSignalData;
 
 static void VXEventLoop_deinit(XEventLoop* loop);
 static int VXEventLoop_exec(XEventLoop* loop);
@@ -89,7 +78,6 @@ void XEventLoop_init(XEventLoop* loop)
     if (threadLoop)
     {//当前已经有线程事件循环了，引用它的数据
         loop->m_dispatcher = threadLoop->m_dispatcher;
-        loop->m_sendSignalQueue = threadLoop->m_sendSignalQueue;
         loop->m_ref_count = threadLoop->m_ref_count;
         XAtomic_fetch_add_int32(loop->m_ref_count, 1);  // 原子加1
     }
@@ -101,8 +89,7 @@ void XEventLoop_init(XEventLoop* loop)
         {
             XAtomic_store_int32(loop->m_ref_count, 1);  // 使用原子存储初始化
         }
-        //初始化信号队列
-        loop->m_sendSignalQueue = XCircularQueueAtomic_create(sizeof(XSignalData), XEventLoop_QueueSize);
+        
 
         loop->m_dispatcher = XEventDispatcher_create(XEventLoop_QueueSize);
         XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
@@ -209,13 +196,7 @@ static void VXEventLoop_wakeUp(XEventLoop* loop) {
 static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags) 
 {
     if (!loop || !loop->m_dispatcher || loop->m_state != XEventLoop_Running) return;
-    //先处理是否有信号需要在队列中发送
-    XSignalData data;
-    while (XQueueBase_receive_base(loop->m_sendSignalQueue, &data))
-    {
-        if (data.sendFunc)
-            data.sendFunc(data.signalSlot, data.signal, data.args);//发送信号
-    }
+    
     // 根据标志志处理不同类型的事件
     if (flags & XEventLoop_ExcludeUserInputEvents) {
         // 排除用户输入事件的处理逻辑
@@ -271,11 +252,6 @@ static void VXEventLoop_deinit(XEventLoop* loop)
            XEventDispatcher_delete_base(loop->m_dispatcher);
            loop->m_dispatcher = NULL;
        }
-       if (loop->m_sendSignalQueue)
-       {
-           XQueueBase_delete_base(loop->m_sendSignalQueue);
-           loop->m_sendSignalQueue = NULL;
-       }
        XMemory_free(loop->m_ref_count);
        loop->m_ref_count = NULL;
    }
@@ -317,12 +293,4 @@ bool XEventLoop_hasPendingEvents_base(XEventLoop* loop) {
     if (ISNULL(loop, "") || ISNULL(XClassGetVtable(loop), ""))
         return false;
     return XClassGetVirtualFunc(loop, EXEventLoop_HasPendingEvents, bool (*)(XEventLoop*))(loop);
-}
-
-bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args)
-{
-    if (!loop || loop->m_sendSignalQueue == NULL)
-        return false;
-    XSignalData data = { .sendFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args };
-    return XQueueBase_push_base(loop->m_sendSignalQueue, &data);
 }
