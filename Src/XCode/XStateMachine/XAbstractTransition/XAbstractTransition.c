@@ -3,7 +3,7 @@
 #include "XState.h"
 #include "XMemory.h"
 
-void XAbstractTransition_init(XAbstractTransition* transition) {
+void XAbstractTransition_init(XAbstractTransition* transition, XTransitionType type) {
     if (!transition) return;
 
     XObject_init(&transition->parent);
@@ -11,6 +11,7 @@ void XAbstractTransition_init(XAbstractTransition* transition) {
     transition->targetState = NULL;
     transition->condition = NULL;
     transition->userData = NULL;
+    transition->type = type;
 }
 
 void XAbstractTransition_destroy(XAbstractTransition* transition) {
@@ -82,7 +83,7 @@ bool XAbstractTransition_execute(XAbstractTransition* transition, XStateMachine*
     }
 
     // 发送转换触发信号
-    XObject_emitSignal(&transition->parent, "triggered()", NULL);
+    //XObject_emitSignal(&transition->parent, "triggered()", NULL);
 
     // 执行状态转换
     return XStateMachine_transition(machine, transition->sourceState, transition->targetState);

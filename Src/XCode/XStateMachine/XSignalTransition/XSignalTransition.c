@@ -24,7 +24,7 @@ XSignalTransition* XSignalTransition_create(XObject* sender, const char* signal)
 void XSignalTransition_init(XSignalTransition* transition, XObject* sender, const char* signal) {
     if (!transition) return;
 
-    XAbstractTransition_init(&transition->parent);
+    XAbstractTransition_init(&transition->parent, XSignalTransitionType);
     transition->sender = sender;
     transition->signal = signal ? strdup(signal) : NULL;
     transition->connection = NULL;

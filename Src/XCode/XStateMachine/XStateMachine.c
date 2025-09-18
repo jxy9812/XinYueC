@@ -106,7 +106,7 @@ bool XStateMachine_start(XStateMachine* machine) {
     machine->status = XStateMachineRunning;
 
     // 发送启动信号
-    XObject_emitSignal(&machine->parent, "started()", NULL);
+    //XObject_emitSignal(&machine->parent, "started()", NULL);
 
     return true;
 }
@@ -124,20 +124,20 @@ void XStateMachine_stop(XStateMachine* machine) {
     machine->status = XStateMachineStopped;
 
     // 发送停止信号
-    XObject_emitSignal(&machine->parent, "stopped()", NULL);
+    //XObject_emitSignal(&machine->parent, "stopped()", NULL);
 }
 
 void XStateMachine_pause(XStateMachine* machine) {
     if (machine && machine->status == XStateMachineRunning) {
         machine->status = XStateMachinePaused;
-        XObject_emitSignal(&machine->parent, "paused()", NULL);
+       // XObject_emitSignal(&machine->parent, "paused()", NULL);
     }
 }
 
 void XStateMachine_resume(XStateMachine* machine) {
     if (machine && machine->status == XStateMachinePaused) {
         machine->status = XStateMachineRunning;
-        XObject_emitSignal(&machine->parent, "resumed()", NULL);
+        //XObject_emitSignal(&machine->parent, "resumed()", NULL);
     }
 }
 
@@ -173,7 +173,8 @@ bool XStateMachine_handleEvent(XStateMachine* machine, const XEvent* event) {
                 XAbstractTransition* transition = XState_transition(basicState, j);
 
                 // 事件转换特殊处理
-                if (transition->parent.type == XEventTransitionType) {
+                //if (transition->parent.type == XEventTransitionType)
+                {
                     eventHandled = XEventTransition_processEvent(
                         (XEventTransition*)transition, machine, event
                     );
@@ -199,7 +200,7 @@ bool XStateMachine_transition(XStateMachine* machine, XAbstractState* source, XA
     XStateMachine_enterState(machine, target);
 
     // 发送转换完成信号
-    XObject_emitSignal(&machine->parent, "transitioned()", NULL);
+    //XObject_emitSignal(&machine->parent, "transitioned()", NULL);
 
     return true;
 }

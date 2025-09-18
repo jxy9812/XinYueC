@@ -90,7 +90,7 @@ void XAbstractState_onEntered(XAbstractState* state, XStateMachine* machine) {
     }
 
     // 发送状态进入信号
-    XObject_emitSignal(&state->parent, "entered()", NULL);
+    //XObject_emitSignal(&state->parent, "entered()", NULL);
 }
 
 void XAbstractState_onExited(XAbstractState* state, XStateMachine* machine) {
@@ -105,7 +105,7 @@ void XAbstractState_onExited(XAbstractState* state, XStateMachine* machine) {
     state->isRunning = false;
 
     // 发送状态退出信号
-    XObject_emitSignal(&state->parent, "exited()", NULL);
+    //XObject_emitSignal(&state->parent, "exited()", NULL);
 }
 
 void XAbstractState_setEnteredCallback(XAbstractState* state, XStateEnteredCallback callback) {

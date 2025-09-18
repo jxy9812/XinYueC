@@ -44,10 +44,14 @@ XTimer* XTimer_create()
 }
 static void TimerCallback(void* userData)
 {
-	XTimer* timer = userData;
+	XObject_postEvent(userData,XEventMin_create(userData,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
+}
+static void TimerOutCb(XEventMin* event)
+{
+	XTimer* timer = event->receiver;
 	if (timer->callback)
 		timer->callback(NULL);
-	XTimer_timeout_signal(timer);
+	XTimer_timeout_signal(event->receiver);
 }
 void XTimer_init(XTimer* timer)
 {
@@ -58,7 +62,7 @@ void XTimer_init(XTimer* timer)
 	XTimerWheel_init(timer);
 	XClassGetVtable(timer) = XTimer_class_init();
 	XTimerBase_setTimerGroup(timer, XThread_currentTimerGroup());
-
+	XObject_addEventFilter(timer, XEVENT_TIMEROUT, TimerOutCb,NULL);
 	((XTimerBase*)timer)->m_timerCallback = TimerCallback;
 	((XTimerBase*)timer)->m_userData = timer;
 }

@@ -11,10 +11,10 @@ static void XSignalTransition_triggered(XObject* sender, XObject* receiver, void
     XSignalTransition* trans = (XSignalTransition*)receiver;
     if (trans && trans->parent.source && ((XAbstractState*)trans->parent.source)->machine) {
         // 创建一个虚拟事件触发转换
-        XEvent event = {
-            .type = XEVENT_SIGNAL_TRIGGERED,
-            .sender = sender,
-            .data = args
+        XEventMin event = {
+            .code = XEVENT_SIGNAL_TRIGGERED,
+            .receiver = receiver,
+            .userData= args
         };
         if (XTransition_check((XTransition*)trans, ((XAbstractState*)trans->parent.source)->machine, &event)) {
             XTransition_trigger((XTransition*)trans, ((XAbstractState*)trans->parent.source)->machine, &event);
@@ -51,7 +51,7 @@ void XTransition_init(XTransition* transition, XState* source, XState* target) {
     if (!transition || !source || !target) return;
 
     XObject_init((XObject*)transition);
-    ((XObject*)transition)->m_vtable = XTransition_class_init();
+    XClassGetVtable(transition) = XTransition_class_init();
 
     transition->source = source;
     transition->target = target;
@@ -76,37 +76,37 @@ void XTransition_destroy(XTransition* transition) {
     XMemory_free(transition);
 }
 
-XEventTransition* XEventTransition_create(XState* source, XState* target, XEventType event_type) {
-    if (!source || !target) return NULL;
+//XEventTransition* XEventTransition_create(XState* source, XState* target, XEventType event_type) {
+//    if (!source || !target) return NULL;
+//
+//    XEventTransition* transition = (XEventTransition*)XMemory_malloc(sizeof(XEventTransition));
+//    if (!transition) return NULL;
+//
+//    XTransition_init((XTransition*)transition, source, target);
+//    transition->event_type = event_type;
+//
+//    return transition;
+//}
 
-    XEventTransition* transition = (XEventTransition*)XMemory_malloc(sizeof(XEventTransition));
-    if (!transition) return NULL;
-
-    XTransition_init((XTransition*)transition, source, target);
-    transition->event_type = event_type;
-
-    return transition;
-}
-
-XSignalTransition* XSignalTransition_create(XState* source, XState* target,
-    XObject* sender, const char* signal) {  // 修正信号类型为const char*
-    if (!source || !target || !sender || !signal) return NULL;
-
-    XSignalTransition* transition = (XSignalTransition*)XMemory_malloc(sizeof(XSignalTransition));
-    if (!transition) return NULL;
-
-    XTransition_init((XTransition*)transition, source, target);
-    transition->sender = sender;
-    transition->signal = strdup(signal);  // 存储信号字符串
-
-    // 连接到信号（修正参数类型）
-    transition->connection = XObject_connect(sender, signal,
-        (XObject*)transition,
-        XSignalTransition_triggered,
-        XConnectionType_Direct);
-
-    return transition;
-}
+//XSignalTransition* XSignalTransition_create(XState* source, XState* target,
+//    XObject* sender, const char* signal) {  // 修正信号类型为const char*
+//    if (!source || !target || !sender || !signal) return NULL;
+//
+//    XSignalTransition* transition = (XSignalTransition*)XMemory_malloc(sizeof(XSignalTransition));
+//    if (!transition) return NULL;
+//
+//    XTransition_init((XTransition*)transition, source, target);
+//    transition->sender = sender;
+//    transition->signal = strdup(signal);  // 存储信号字符串
+//
+//    // 连接到信号（修正参数类型）
+//    transition->connection = XObject_connect(sender, signal,
+//        (XObject*)transition,
+//        XSignalTransition_triggered,
+//        XConnectionType_Direct);
+//
+//    return transition;
+//}
 
 void XTransition_setCondition(XTransition* transition, XTransitionCondition condition) {
     if (transition) {
@@ -144,9 +144,10 @@ bool XTransition_check(const XTransition* transition, XStateMachine* machine, co
     }
 
     // 对于事件转换，检查事件类型
-    if (transition->parent.type == XEVENT_TRANSITION) {
+    //if (transition->parent.type == XEVENT_TRANSITION)
+    {
         XEventTransition* evt_trans = (XEventTransition*)transition;
-        if (evt_trans->event_type != event->type) {
+        if (evt_trans->event_type != event->event.code) {
             return false;
         }
     }
@@ -174,9 +175,9 @@ void XTransition_trigger(XTransition* transition, XStateMachine* machine, const 
     XState_activate(transition->target, machine);
 
     // 发送转换触发信号
-    XObject_postEvent((XObject*)transition,
-        XEventSignal_create(XTransition_Signal_triggered, NULL, NULL),
-        XEVENT_PRIORITY_NORMAL);
+    //XObject_postEvent((XObject*)transition,
+       // XEventSignal_create(XTransition_Signal_triggered, NULL, NULL),
+        //XEVENT_PRIORITY_NORMAL);
 }
 
 XConnection* XTransition_connect(XTransition* transition, XTransitionSignal signal,

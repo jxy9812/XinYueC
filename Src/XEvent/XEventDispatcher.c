@@ -434,7 +434,7 @@ static void VXEventDispatcher_wakeUp(XEventDispatcher* dispatcher) {
  */
 static uint32_t VXEventDispatcher_getSupportedEvents(XEventDispatcher* dispatcher) {
     // 返回支持的所有事件类型
-    return (1 << XEVENT_TIMER) | (1 << XEVENT_SOCKET) | (1 << XEVENT_FUNC_RUN) | (1 << XEVENT_SLOT_RUN);
+    return (1 << XEVENT_TIMEROUT) | (1 << XEVENT_SOCKET) | (1 << XEVENT_FUNC_RUN) | (1 << XEVENT_SLOT_RUN);
 }
 
 /**

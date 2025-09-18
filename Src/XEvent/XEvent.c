@@ -31,7 +31,7 @@ XTimerEvent* XTimerEvent_create(XObject* receiver, XTimerBase* timer, size_t tim
 	XTimerEvent* event = XMemory_malloc(sizeof(XTimerEvent));
 	if (event)
 	{
-		XEventMin_init(&event->event, receiver, XEVENT_TIMER, timestamp);
+		XEventMin_init(&event->event, receiver, XEVENT_TIMEROUT, timestamp);
 		event->timer = timer;
 		event->event.spontaneous = true;
 	}

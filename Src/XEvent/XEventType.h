@@ -18,7 +18,7 @@ typedef enum
     XEVENT_SOCKET_DISCONNECTED= 1002,
     XEVENT_SOCKET_DATA_READY =  1003,
     XEVENT_SOCKET_ERROR=        1004,
-    XEVENT_TIMER,          // 定时器事件
+    XEVENT_TIMEROUT,          // 定时器事件
     XEVENT_SOCKET,
     XEVENT_KEY,            // 键盘事件
     XEVENT_MOUSE,          // 鼠标事件

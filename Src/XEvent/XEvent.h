@@ -148,6 +148,7 @@ XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotF
  * @param event 槽函数事件
  */
 void XEventSlotFuncRunCB(XEventSlotFunc* event);
+
 #ifdef __cplusplus
 }
 #endif	

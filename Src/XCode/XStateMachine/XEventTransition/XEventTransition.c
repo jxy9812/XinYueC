@@ -24,7 +24,7 @@ XEventTransition* XEventTransition_create(XEventType eventType) {
 void XEventTransition_init(XEventTransition* transition, XEventType eventType) {
     if (!transition) return;
 
-    XAbstractTransition_init(&transition->parent);
+    XAbstractTransition_init(&transition->parent, XEventTransitionType);
     transition->eventType = eventType;
 
     // 注册事件过滤器
@@ -54,7 +54,7 @@ bool XEventTransition_processEvent(XEventTransition* transition, XStateMachine* 
     if (!transition || !machine || !event) return false;
 
     // 检查事件类型是否匹配
-    if (event->type != transition->eventType) {
+    if (event->event.code != transition->eventType) {
         return false;
     }
 

@@ -1,11 +1,14 @@
 ﻿#ifndef XTRANSITION_H
 #define XTRANSITION_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include <stdint.h>
 #include <stdbool.h>
 #include "XObject.h"
 #include "XEvent.h"
-
+XCLASS_DEFINE_BEGING(XTransition)
+XCLASS_DEFINE_EXTEND_END(XTransition,XObject)
 // 前向声明
 typedef struct XState XState;
 typedef struct XStateMachine XStateMachine;
@@ -70,9 +73,7 @@ typedef enum {
     XTransition_Signal_triggered  // 转换触发信号
 } XTransitionSignal;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+
 
     /**
      * @brief 创建基础转换
@@ -96,25 +97,25 @@ extern "C" {
      */
     void XTransition_destroy(XTransition* transition);
 
-    /**
-     * @brief 创建事件转换
-     * @param source 源状态
-     * @param target 目标状态
-     * @param event_type 触发事件类型
-     * @return 新创建的事件转换，失败返回NULL
-     */
-    XEventTransition* XEventTransition_create(XState* source, XState* target, XEventType event_type);
+    ///**
+    // * @brief 创建事件转换
+    // * @param source 源状态
+    // * @param target 目标状态
+    // * @param event_type 触发事件类型
+    // * @return 新创建的事件转换，失败返回NULL
+    // */
+    //XEventTransition* XEventTransition_create(XState* source, XState* target, XEventType event_type);
 
-    /**
-     * @brief 创建信号转换
-     * @param source 源状态
-     * @param target 目标状态
-     * @param sender 信号发送者
-     * @param signal 信号标识
-     * @return 新创建的信号转换，失败返回NULL
-     */
-    XSignalTransition* XSignalTransition_create(XState* source, XState* target,
-        XObject* sender, size_t signal);
+    ///**
+    // * @brief 创建信号转换
+    // * @param source 源状态
+    // * @param target 目标状态
+    // * @param sender 信号发送者
+    // * @param signal 信号标识
+    // * @return 新创建的信号转换，失败返回NULL
+    // */
+    //XSignalTransition* XSignalTransition_create(XState* source, XState* target,
+    //    XObject* sender, size_t signal);
 
     /**
      * @brief 设置转换条件

@@ -120,7 +120,7 @@ bool XObject_moveToThread(XObject* object, XThread* thread)
 
 bool XObject_postEvent(XObject* object, XEventMin* event, XEventPriority priority)
 {
-	if (object == NULL || object->m_eventLoop || event == NULL)
+	if (object == NULL || object->m_eventLoop==NULL || event == NULL)
 		return false;
 	event->receiver = object;
 	return XEventDispatcher_postEvent_base(object->m_eventLoop->m_dispatcher,event, priority);

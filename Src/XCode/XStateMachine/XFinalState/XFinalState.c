@@ -1,4 +1,4 @@
-#include "XFinalState.h"
+ï»¿#include "XFinalState.h"
 #include "XStateMachine.h"
 #include "XMemory.h"
 
@@ -24,13 +24,13 @@ void XFinalState_destroy(XFinalState* state) {
 void XFinalState_activate(XFinalState* state, XStateMachine* machine) {
     if (!state || !machine) return;
 
-    // ¼¤»î×îÖÕ×´Ì¬
+    // æ¿€æ´»æœ€ç»ˆçŠ¶æ€
     XAbstractState_onEntered(&state->parent, machine);
 
-    // ·¢ËÍ×´Ì¬»úÍê³ÉÐÅºÅ
-    XObject_emitSignal((XObject*)machine, "finished()", NULL);
+    // å‘é€çŠ¶æ€æœºå®Œæˆä¿¡å·
+    //XObject_emitSignal((XObject*)machine, "finished()", NULL);
 
-    // ¼ì²éÊÇ·ñÊÇ¶¥²ã×îÖÕ×´Ì¬£¬Èç¹ûÊÇÔòÍ£Ö¹×´Ì¬»ú
+    // æ£€æŸ¥æ˜¯å¦æ˜¯é¡¶å±‚æœ€ç»ˆçŠ¶æ€ï¼Œå¦‚æžœæ˜¯åˆ™åœæ­¢çŠ¶æ€æœº
     XState* parent = XAbstractState_parentState(&state->parent);
     if (!parent || !XAbstractState_parentState((XAbstractState*)parent)) {
         XStateMachine_stop(machine);
