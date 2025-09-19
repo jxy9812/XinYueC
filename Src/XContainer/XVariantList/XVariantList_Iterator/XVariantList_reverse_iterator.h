@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XVARIANTLIST_REVERSE_ITERATOR_H)&& XVariantList_ON
 #define XVARIANTLIST_REVERSE_ITERATOR_H
 #ifdef __cplusplus

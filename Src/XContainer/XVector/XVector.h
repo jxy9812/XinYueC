@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XVECTOR_H)&& XVector_ON
 #define XVECTOR_H
 #ifdef __cplusplus

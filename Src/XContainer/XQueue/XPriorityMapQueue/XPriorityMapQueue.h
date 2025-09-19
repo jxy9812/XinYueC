@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XPriorityMapQueue_H)&& XQueue_ON
 #define XPriorityMapQueue_H
 #ifdef __cplusplus

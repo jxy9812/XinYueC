@@ -12,7 +12,7 @@
 #include "XObject.h"
 #include "XEventLoop.h"
 #include "XEventDispatcher.h"
-#include "XDataStructConfig.h"
+#include "CXinYueConfig.h"
 #include <pthread.h>
 #include <sched.h>
 #include <errno.h>

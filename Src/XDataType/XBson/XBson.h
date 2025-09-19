@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-#include "XDataStructConfig.h"
+#include "CXinYueConfig.h"
 #include "XTypes.h"
 #include "XString.h"
 #include "XByteArray.h"

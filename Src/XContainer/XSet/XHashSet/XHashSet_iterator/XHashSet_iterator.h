@@ -1,4 +1,4 @@
-﻿#include "XDataStructConfig.h"
+﻿#include "CXinYueConfig.h"
 #if !defined(XHASHSET_ITERATOR_H) && XHashSet_ON
 #define XHASHSET_ITERATOR_H
 #ifdef __cplusplus

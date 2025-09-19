@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "XDataStructConfig.h"
+#include "CXinYueConfig.h"
 #include "XTypes.h"
 typedef enum XJsonDocumentFormat
 {

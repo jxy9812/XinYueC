@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XCIRCULARQUEUE_H)&& XCircularQueue_ON
 #define XCIRCULARQUEUE_H
 #ifdef __cplusplus

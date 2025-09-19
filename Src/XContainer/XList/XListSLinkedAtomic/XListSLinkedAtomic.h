@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XLISTSLINKEDATOMIC_H)&& XListSLinkedAtomic_ON
 #define XLISTSLINKEDATOMIC_H
 #ifdef __cplusplus

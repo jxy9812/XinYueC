@@ -6,7 +6,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdarg.h>
-#include "XDataStructConfig.h"
+#include "CXinYueConfig.h"
 #include "XMemory.h"
 #include "XVector.h"
 #include "XString.h"

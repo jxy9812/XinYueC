@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 #include"XVtable.h"
-#include"XDataStructConfig.h"
+#include"CXinYueConfig.h"
 typedef struct  XVtable;
 #define XCLASS_VTABLE_SIZE   XCLASS_VTABLE_GET_SIZE(XClass)      //虚函数表大小
 //XClass虚函数表枚举

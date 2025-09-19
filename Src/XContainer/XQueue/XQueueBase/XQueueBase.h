@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XQUEUEBASE_H)&& XQueue_ON
 #define XQUEUEBASE_H
 #ifdef __cplusplus

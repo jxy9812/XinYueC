@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XMAPBASE_ITERATOR_ITERATOR_H)
 #define XMAPBASE_ITERATOR_ITERATOR_H
 #ifdef __cplusplus

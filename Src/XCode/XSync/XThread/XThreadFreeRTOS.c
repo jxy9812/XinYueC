@@ -6,7 +6,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
-#include "XDataStructConfig.h"
+#include "CXinYueConfig.h"
 
 void XThread_mapInsert(XThread* Object);
 void XThread_mapRemove(XThread* Object);

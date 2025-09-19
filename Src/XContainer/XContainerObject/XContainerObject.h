@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #include"XClass.h"
 #if !defined(XCONTAINEROBJECT_H)&& XContainerObject_ON
 #define XCONTAINEROBJECT_H

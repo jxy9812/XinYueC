@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XCONTAINEROBJECT_ITERATOR_H)&& XContainerObject_ON
 #define XCONTAINEROBJECT_ITERATOR_H
 #ifdef __cplusplus

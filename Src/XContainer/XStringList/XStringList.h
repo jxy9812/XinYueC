@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XSTRINGLIST_H)&& XStringList_ON
 #define XSTRINGLIST_H
 

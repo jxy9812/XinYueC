@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XSIGNALSLOTMANAGER_H)
 #define XSIGNALSLOTMANAGER_H
 #ifdef __cplusplus

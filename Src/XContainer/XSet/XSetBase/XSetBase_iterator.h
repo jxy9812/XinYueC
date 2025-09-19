@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XSETBASE_ITERATOR_H)
 #define XSETBASE_ITERATOR_H
 #ifdef __cplusplus

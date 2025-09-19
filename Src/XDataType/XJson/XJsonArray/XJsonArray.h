@@ -10,7 +10,7 @@ extern "C" {
 #include "XVector.h"
 
 #if !XVector_ON
-#error "XJsonArray requires XVector to be enabled in XDataStructConfig.h"
+#error "XJsonArray requires XVector to be enabled in CXinYueConfig.h"
 #endif
 
 typedef struct XJsonArray 

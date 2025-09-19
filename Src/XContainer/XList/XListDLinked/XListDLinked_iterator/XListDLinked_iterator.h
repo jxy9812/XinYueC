@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XLISTDLINKED_ITERATOR_H)&& XListDLinked_ON
 #define XLISTDLINKED_ITERATOR_H
 #ifdef __cplusplus

@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XMAP_REVERSE_ITERATOR_H)&& XMap_ON
 #define XMAP_REVERSE_ITERATOR_H
 #ifdef __cplusplus

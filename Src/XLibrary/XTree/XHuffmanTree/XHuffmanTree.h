@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "XDataStructConfig.h"
+#include "CXinYueConfig.h"
 #if XMap_ON
 #include "XMap.h"
 #include "XBinaryTree.h"

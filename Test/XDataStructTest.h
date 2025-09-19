@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XDataStructConfig.h"
+#include"CXinYueConfig.h"
 #include"XClass.h"
 //#include"XContainerTest/XContainerTest.h"
 #include"XContainerTest.h"

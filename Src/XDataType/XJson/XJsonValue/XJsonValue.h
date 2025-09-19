@@ -12,7 +12,7 @@ extern "C" {
 #include <stdint.h>
 
 #if !XString_ON || !XVariant_ON
-#error "XJsonValue requires XString and XVariant to be enabled in XDataStructConfig.h"
+#error "XJsonValue requires XString and XVariant to be enabled in CXinYueConfig.h"
 #endif
 
 typedef enum XJsonValueType 

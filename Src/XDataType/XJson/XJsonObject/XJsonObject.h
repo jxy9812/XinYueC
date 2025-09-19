@@ -10,7 +10,7 @@ extern "C" {
 #include "XMap.h"
 
 #if !XMap_ON
-#error "XJsonObject requires XMap to be enabled in XDataStructConfig.h"
+#error "XJsonObject requires XMap to be enabled in CXinYueConfig.h"
 #endif
 
 typedef struct XJsonObject 

@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XCRC_H)&& XCrc_ON
 #define XCRC_H
 #ifdef __cplusplus

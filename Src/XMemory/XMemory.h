@@ -6,7 +6,7 @@ extern "C" {
 #include<stdio.h>
 #include<stdbool.h>
 #include<stdint.h>
-#include"XDataStructConfig.h"
+#include"CXinYueConfig.h"
 typedef void* (*MallocMethod)(size_t size);
 typedef void (*DeleteMethod)(void* ptr);
 typedef void* (*ReallocMethod)(void* ptr, size_t size);

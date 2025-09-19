@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XDataStructConfig.h"
+#include"CXinYueConfig.h"
 #include"XClass.h"
 #if DEMOTEST
 	void XMenu_XIOTest(XMenu* root);

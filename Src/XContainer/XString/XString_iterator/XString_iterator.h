@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XSTRING_ITERATOR_H)&& XString_ON
 #define XSTRING_ITERATOR_H
 #ifdef __cplusplus

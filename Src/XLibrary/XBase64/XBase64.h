@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XBASE64_H)&& XBase64_ON
 #define XBASE64_H
 #ifdef __cplusplus

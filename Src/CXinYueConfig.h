@@ -1,5 +1,5 @@
-﻿#ifndef XDATASTRUCTCONFIG_H
-#define XDATASTRUCTCONFIG_H
+﻿#ifndef CXINYUECONFIG_H
+#define CXINYUECONFIG_H
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -68,7 +68,7 @@ extern "C" {
 #endif
 #endif // !XEventLoop_QueueSize
 
-#define IS_ON_DEBUG(on)						ISNULL(on,"此函数需要开启"#on",在XDataStructConfig.h")
+#define IS_ON_DEBUG(on)						ISNULL(on,"此函数需要开启"#on",在CXinYueConfig.h")
 
 #ifdef DEBUG_ON
 #if ((DEBUG_ON) && defined(_DEBUG))

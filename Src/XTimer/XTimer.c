@@ -50,7 +50,7 @@ static void TimerOutCb(XEventMin* event)
 {
 	XTimer* timer = event->receiver;
 	if (timer->callback)
-		timer->callback(NULL);
+		timer->callback(timer->m_userData);
 	XTimer_timeout_signal(event->receiver);
 }
 void XTimer_init(XTimer* timer)

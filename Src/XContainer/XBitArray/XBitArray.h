@@ -1,4 +1,4 @@
-﻿#include"XDataStructConfig.h"
+﻿#include"CXinYueConfig.h"
 #if !defined(XBITARRAY_H) && XBitArray_ON
 #define XBITARRAY_H
 #ifdef __cplusplus
