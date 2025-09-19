@@ -12,7 +12,7 @@ extern "C" {
 /**
  * @brief 事件循环状态枚举
  */
-typedef enum 
+typedef enum
 {
     XEventLoop_Running,    // 运行中
     XEventLoop_Quit,       // 已退出
@@ -21,7 +21,7 @@ typedef enum
 /**
  * @brief 事件处理标志
  */
-typedef enum 
+typedef enum
 {
     XEventLoop_AllEvents = 0x00,         // 处理所有事件
     XEventLoop_ExcludeUserInputEvents = 0x01,  // 排除用户输入事件
@@ -39,10 +39,12 @@ XCLASS_DEFINE_END(XEventLoop)
 /**
  * @brief 事件循环类，负责处理事件队列和定时器
  */
-typedef struct XEventLoop 
+typedef struct XEventLoop
 {
     XClass m_parent;                  // 父类
     XEventDispatcher* m_dispatcher;   // 关联的事件调度器
+    XCircularQueueAtomic* m_sendSignalQueue;//信号发送队列(引用XCoreApplication)
+    XTimerGroupWheel* m_timerGroup;   // 定时器组(引用XCoreApplication)
     XEventLoopState m_state;          // 事件循环状态
     XWaitCondition* m_condition;      // 等待条件变量
     XMutex* m_mutex;                  // 互斥锁
@@ -103,7 +105,16 @@ void XEventLoop_processEvents_base(XEventLoop* loop, XEventLoopProcessEventsFlag
  * @return 是否有待处理的事件
  */
 bool XEventLoop_hasPendingEvents_base(XEventLoop* loop);
-
+/**
+ * @brief 投递信号发送（异步处理）
+ * @param loop 事件循环调度器
+ * @param sendFunc 信号发送函数
+ * @param signalSlot 信号槽
+ * @param signal 信号
+ * @param args 参数
+ * @return 是否成功加入队列
+ */
+bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args);
 /**
  * @brief 获取事件循环关联的调度器
  * @param loop 事件循环实例

@@ -6,8 +6,20 @@
 #include "XQueueBase.h"
 #include "XThread.h"
 #include "XCoreApplication.h"
+#include "XCircularQueueAtomic.h"
+#include "XTimerGroupWheel.h"
 #include "XAtomic.h"
 //#include "XWindow.h"  // 假设存在窗口相关定义
+
+//typedef struct XSignalSlot XSignalData;
+//处理队列信号数据
+typedef struct XSignalData
+{
+    void (*sendFunc)(XSignalSlot*, size_t, void*);
+    XSignalSlot* signalSlot;
+    size_t signal;
+    void* args;
+}XSignalData;
 
 static void VXEventLoop_deinit(XEventLoop* loop);
 static int VXEventLoop_exec(XEventLoop* loop);
@@ -74,7 +86,7 @@ void XEventLoop_init(XEventLoop* loop)
     loop->m_condition = XWaitCondition_create();
     //线程级别的事件循环
     XEventLoop* threadLoop = XThread_currentEventLoop();
-  
+
     if (threadLoop)
     {//当前已经有线程事件循环了，引用它的数据
         loop->m_dispatcher = threadLoop->m_dispatcher;
@@ -89,14 +101,24 @@ void XEventLoop_init(XEventLoop* loop)
         {
             XAtomic_store_int32(loop->m_ref_count, 1);  // 使用原子存储初始化
         }
-        
-
         loop->m_dispatcher = XEventDispatcher_create(XEventLoop_QueueSize);
         XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
+
+        if (!XCoreApplication_global())
+            loop->m_sendSignalQueue = XCircularQueueAtomic_create(sizeof(XSignalData), XEventLoop_QueueSize);
     }
     loop->m_state = XEventLoop_Suspended;
     loop->m_exitCode = 0;
     loop->m_quitOnLastWindowClosed = true;
+    //初始化信号队列
+    if (XCoreApplication_global())
+        loop->m_sendSignalQueue = XCoreApplication_global()->m_sendSignalQueue;
+ 
+    //初始化定时器组,只在主线程事件循环中使用
+    if (XThread_currentThread() == NULL)
+        loop->m_timerGroup = XCoreApplication_getTimerGroup();
+    else
+        loop->m_timerGroup = NULL;
 }
 
 /**
@@ -193,10 +215,19 @@ static void VXEventLoop_wakeUp(XEventLoop* loop) {
  * @param loop 事件循环对象
  * @param flags 事件处理标志
  */
-static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags) 
+static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags)
 {
     if (!loop || !loop->m_dispatcher || loop->m_state != XEventLoop_Running) return;
-    
+    //先处理是否有信号需要在队列中发送
+    XSignalData data;
+    while (XQueueBase_receive_base(loop->m_sendSignalQueue, &data))
+    {
+        if (data.sendFunc)
+            data.sendFunc(data.signalSlot, data.signal, data.args);//发送信号
+    }
+    // 处理定时器事件
+    if(loop->m_timerGroup)
+        XTimerGroupWheel_handler_base(loop->m_timerGroup);
     // 根据标志志处理不同类型的事件
     if (flags & XEventLoop_ExcludeUserInputEvents) {
         // 排除用户输入事件的处理逻辑
@@ -225,7 +256,7 @@ static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsF
 static bool VXEventLoop_hasPendingEvents(XEventLoop* loop) {
     if (!loop) return false;
 
-    /*for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++) 
+    /*for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++)
     {
         if (loop->m_dispatcher->m_queue[i]&& !XQueueBase_isEmpty_base(loop->m_dispatcher->m_queue[i]))
         {
@@ -241,25 +272,25 @@ static bool VXEventLoop_hasPendingEvents(XEventLoop* loop) {
  * @brief 释放事件循环资源
  * @param loop 事件循环实例
  */
-static void VXEventLoop_deinit(XEventLoop* loop) 
+static void VXEventLoop_deinit(XEventLoop* loop)
 {
-   if (!loop) return;
-   // 原子减少原引用计数（若减到0，原数据会被其他持有者释放）
-   if(XAtomic_fetch_sub_int32(loop->m_ref_count, 1) == 1)
-   {
-       // 释放放事件调度器
-       if (loop->m_dispatcher) {
-           XEventDispatcher_delete_base(loop->m_dispatcher);
-           loop->m_dispatcher = NULL;
-       }
-       XMemory_free(loop->m_ref_count);
-       loop->m_ref_count = NULL;
-   }
-   else
-   {
-       loop->m_dispatcher = NULL;
-       loop->m_ref_count = NULL;
-   }
+    if (!loop) return;
+    // 原子减少原引用计数（若减到0，原数据会被其他持有者释放）
+    if (XAtomic_fetch_sub_int32(loop->m_ref_count, 1) == 1)
+    {
+        // 释放放事件调度器
+        if (loop->m_dispatcher) {
+            XEventDispatcher_delete_base(loop->m_dispatcher);
+            loop->m_dispatcher = NULL;
+        }
+        XMemory_free(loop->m_ref_count);
+        loop->m_ref_count = NULL;
+    }
+    else
+    {
+        loop->m_dispatcher = NULL;
+        loop->m_ref_count = NULL;
+    }
     // 销毁互斥锁和条件变量
     XMutex_delete(loop->m_mutex);
     XWaitCondition_delete(loop->m_condition);
@@ -293,4 +324,12 @@ bool XEventLoop_hasPendingEvents_base(XEventLoop* loop) {
     if (ISNULL(loop, "") || ISNULL(XClassGetVtable(loop), ""))
         return false;
     return XClassGetVirtualFunc(loop, EXEventLoop_HasPendingEvents, bool (*)(XEventLoop*))(loop);
+}
+
+bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args)
+{
+    if (!loop || loop->m_sendSignalQueue == NULL)
+        return false;
+    XSignalData data = { .sendFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args };
+    return XQueueBase_push_base(loop->m_sendSignalQueue, &data);
 }
