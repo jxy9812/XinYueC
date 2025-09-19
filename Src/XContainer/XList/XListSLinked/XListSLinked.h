@@ -15,6 +15,7 @@ typedef struct XListSNode
 	struct XListSNode* next;//指向下一个
 	void* data;//储存的数据指针
 }XListSNode;
+#define XListSNode_Create(type)   (XMemory_malloc(sizeof(XListSNode*)+sizeof(type)))
 #define XListSNode_DataPtr(Node)  (&(((XListSNode*)Node)->data))
 //获取链表节点中的数据
 #define XListSNode_Data(Node,Type) (*((Type*)XListSNode_DataPtr(Node)))

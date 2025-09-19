@@ -66,7 +66,7 @@ void XObject_poll_base(XObject* object)
 
 void XObject_setPollingInterval(XObject* object, size_t interval)
 {
-	if (object == NULL)
+	if (object == NULL|| XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*))==NULL)
 		return;
 	if (interval == 0&& object->m_poolTimer)
 	{//关闭轮询

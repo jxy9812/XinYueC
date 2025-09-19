@@ -14,8 +14,8 @@ typedef struct XListSLinked XListSLinked;
 typedef struct XTimerWheel 
 {
 	XTimerBase m_parent;
-	size_t m_expire_ticks;     // 到期时间戳（毫秒）
-	XListSLinked* m_list;//加入的链表
+	//size_t m_expire_ticks;     // 到期时间戳（毫秒）
+	//XListSLinked* m_list;//加入的链表
 } XTimerWheel;
 XVtable* XTimerWheel_class_init();
 XTimerWheel* XTimerWheel_create();

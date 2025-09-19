@@ -29,8 +29,10 @@ typedef struct XTimerBase
 	bool m_singleShot;              // 是否为单次定时器
 	size_t m_timeout;//首次超时时间
 	size_t m_interval;//定时间隔
+	size_t m_expire_ticks;     // 到期时间戳（毫秒）
 	size_t timerId;//定时器id
 	XTimerGroupBase* m_timerGroup;//定时器组
+	void* m_data;//定时器数据
 	void* m_userData;
 	XTimerBaseCallback m_timerCallback; // 回调函数
 	size_t number;//超时次数

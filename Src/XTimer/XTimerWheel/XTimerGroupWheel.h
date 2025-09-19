@@ -28,6 +28,7 @@ typedef struct XTimerGroupWheel
 	XTimerGroupBase m_parent;//继承
 	XVector* m_timeWheel;//多时间轮	/XVector<XTimeWheel>
 	XMutex* m_mutex;//互斥锁
+	size_t m_size;
 }XTimerGroupWheel;
 XVtable* XTimerGroupWheel_class_init();
 XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision);

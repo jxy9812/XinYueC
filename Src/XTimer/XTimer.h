@@ -11,7 +11,7 @@ extern "C" {
 //
 typedef struct XTimer 
 {
-	XTimerWheel m_parent;
+	XTimerBase m_parent;
 	XTimerBaseCallback callback;
 	void* m_userData;
 } XTimer;

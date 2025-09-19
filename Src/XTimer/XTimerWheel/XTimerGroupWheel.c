@@ -26,6 +26,7 @@ void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision)
 	//初始化数据
 	group->m_timeWheel = XVector_Create(XTimeWheel);
 	group->m_parent.m_current_tick = XTimerBase_getCurrentTime() / group->m_parent.m_precision;
+	group->m_size = 0;
 }
 
 void XTimerGroupWheel_addTimeWheel_base(XTimerGroupWheel* group, size_t slotsCount)
@@ -137,9 +138,9 @@ uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
 				if (timer != NULL && XTimerBase_isRunning(&timer->m_parent))
 				{
 					// 记录最小的到期滴答数
-					if (timer->m_expire_ticks < min_expire_ticks)
+					if (((XTimerBase*)timer)->m_expire_ticks < min_expire_ticks)
 					{
-						min_expire_ticks = timer->m_expire_ticks;
+						min_expire_ticks = ((XTimerBase*)timer)->m_expire_ticks;
 					}
 				}
 				XListSLinked_iterator_add(&it,&it);

@@ -58,7 +58,7 @@ void VXTimerBase_start(XTimerWheel* timer)
 		XTimerBase_stop_base(timer);
 	if (timer->m_parent.m_timerGroup)
 		XTimerGroupBase_addTimer_base(timer->m_parent.m_timerGroup, timer);
-	if (timer->m_list)
+	if (timer->m_parent.m_data)
 		timer->m_parent.m_isRun = true;
 	
 }
@@ -67,7 +67,7 @@ void VXTimerBase_stop(XTimerWheel* timer)
 {
 	if(timer->m_parent.m_isRun)
 	{
-		if (timer->m_list)
+		if (timer->m_parent.m_data)
 			XTimerGroupBase_removeTimer_base(timer->m_parent.m_timerGroup, timer);
 		timer->m_parent.m_isRun = false;
 	}
