@@ -44,8 +44,8 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 	if (XIODeviceBase_getBytesAvailable_base(((XCommunicatorBase*)comm)->m_io) == 0)
 		return;//没有可以接收的
 	uint8_t           ucByte;
-	XIODeviceBase_read_base(comm->m_parent.m_io, &ucByte, 1);
-	XVector* recvVector = comm->m_parent.m_recvAsyncBuffer;
+	XIODeviceBase_read_base(comm->m_class.m_io, &ucByte, 1);
+	XVector* recvVector = comm->m_class.m_recvAsyncBuffer;
 	switch (comm->m_eRcvState)//if (mode == XDFC_FRAME_END_TIMEOUT)
 	{
 	case XDFC_STATE_RX_INIT:  // 初始状态（等待总线空闲）
@@ -203,15 +203,15 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 
 void XDataFrameComm_recvValid(XDataFrameComm* comm)
 {
-	if (XVector_isEmpty_base(comm->m_parent.m_recvAsyncBuffer))
+	if (XVector_isEmpty_base(comm->m_class.m_recvAsyncBuffer))
 		return;//数据缓冲区是空的也就没必要继续了
 
-	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_parent.m_recvAsyncBuffer))
+	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_class.m_recvAsyncBuffer))
 		return;//校验没通过
 	XVector* v = XVector_Create(uint8_t);
 	if (v == NULL)
 		return;
-	XVector_copy_base(v, comm->m_parent.m_recvAsyncBuffer);
+	XVector_copy_base(v, comm->m_class.m_recvAsyncBuffer);
 
 	if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
 	{

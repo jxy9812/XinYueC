@@ -298,7 +298,7 @@ XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t tim
 	if (ev == NULL)
 		return NULL;
 	XEventMin_init(ev, object, eventCode, timestamp);
-	ev->m_parent.frame = frame;
+	ev->m_class.frame = frame;
 	ev->funcCode = funcCode;
 	return ev;
 }
@@ -346,7 +346,7 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 {
 	//XPrintf("功能码事件\n");
 	XEventFuncCode* ev = event;
-	XByteArray* frame = ev->m_parent.frame;
+	XByteArray* frame = ev->m_class.frame;
 	XDataFrameComm* comm = event->userData;
 	XFuncCodeNode* node = NULL;
 	if (comm->m_funcCodeMap != NULL)
@@ -355,14 +355,14 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 	}
 	if (node==NULL)
 	{
-		ev->m_parent.frame = NULL;
+		ev->m_class.frame = NULL;
 		XVector_delete_base(frame);//释放帧数据以免内存泄露
 		XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 		return;
 	}
 	if(node->cb!=NULL)
 		node->cb(ev->funcCode,comm, frame,node->userData);
-	ev->m_parent.frame = NULL;
+	ev->m_class.frame = NULL;
 	ev->funcCode = NULL;
 	XVector_delete_base(frame);//释放帧数据以免内存泄露
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放

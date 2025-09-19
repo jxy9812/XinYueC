@@ -5,7 +5,7 @@
 #include"XEvent.h"
 #include"XEventDispatcher.h"
 #include"XDataFrameCommConfig.h"
-#include"XTimerWheel.h"
+#include"XTimerTimeWheel.h"
 #include"XString.h"
 #include"XListSLinked.h"
 #include"XPrintf.h"
@@ -16,7 +16,7 @@ typedef struct
 {
 	XDataFrameComm* comm;
 	XByteArray* data;
-	XTimerWheel* timer;
+	XTimerTimeWheel* timer;
 }PeriodicNode;//定时发送的节点
 static void XDataFrameComm_recvValid(XDataFrameComm* comm);//接收校验
 static void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm);
@@ -74,10 +74,10 @@ XVtable* XDataFrameComm_class_init()
 
 void XDataFrameComm_recvValid(XDataFrameComm* comm)
 {
-	if (XVector_isEmpty_base(comm->m_parent.m_recvAsyncBuffer))
+	if (XVector_isEmpty_base(comm->m_class.m_recvAsyncBuffer))
 		return;//数据缓冲区是空的也就没必要继续了
 	
-	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_parent.m_recvAsyncBuffer))
+	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_class.m_recvAsyncBuffer))
 	{
 		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_FRAME_ERROR, 0));
 		return;//校验没通过
@@ -85,7 +85,7 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 	XByteArray* v =XByteArray_create(0);
 	if (v == NULL)
 		return;
-	XVector_copy_base(v, comm->m_parent.m_recvAsyncBuffer);
+	XVector_copy_base(v, comm->m_class.m_recvAsyncBuffer);
 
 	if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
 	{
@@ -99,8 +99,8 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 	{
 		//return;//没有可以接收的
 		uint8_t           ucByte;
-		XIODeviceBase_read_base(comm->m_parent.m_io, &ucByte, 1);
-		XByteArray* recvVector = comm->m_parent.m_recvAsyncBuffer;
+		XIODeviceBase_read_base(comm->m_class.m_io, &ucByte, 1);
+		XByteArray* recvVector = comm->m_class.m_recvAsyncBuffer;
 		switch (comm->m_eRcvState)//if (mode == XDFC_FRAME_END_TIMEOUT)
 		{
 		case XDFC_STATE_RX_INIT:  // 初始状态（等待总线空闲）
@@ -213,7 +213,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				return;
 			}
 			size_t size = XContainerSize(comm->m_recvFrameTail);
-			XByteArray* recvVector = comm->m_parent.m_recvAsyncBuffer;
+			XByteArray* recvVector = comm->m_class.m_recvAsyncBuffer;
 			if ((XContainerSize(recvVector) >= size) && memcmp((uint8_t*)(XContainerDataPtr(recvVector)) + XContainerSize(recvVector) - size, XContainerDataPtr(comm->m_recvFrameTail), size) == 0)
 			{//检测到帧结束标志
 				XContainerSize(recvVector) -= size;//缓冲区删除结束标志
@@ -243,8 +243,8 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			}
 			if (comm->m_sendFrameHead)
 			{//当存在发送帧头先发送帧头
-				XIODeviceBase_write_base(comm->m_parent.m_io, XContainerDataPtr(comm->m_sendFrameHead), XContainerSize(comm->m_sendFrameHead));
-				XIODeviceBase_writeFull_base(comm->m_parent.m_io);
+				XIODeviceBase_write_base(comm->m_class.m_io, XContainerDataPtr(comm->m_sendFrameHead), XContainerSize(comm->m_sendFrameHead));
+				XIODeviceBase_writeFull_base(comm->m_class.m_io);
 			}
 			comm->m_eSndState = XDFC_STATE_TX_XMIT;
 			break;
@@ -255,23 +255,23 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			{
 				if (comm->m_sentBytes < XVector_size_base(frame))
 				{//
-					XIODeviceBase_write_base(comm->m_parent.m_io, ((uint8_t*)XContainerDataPtr(frame)) + comm->m_sentBytes, 1);
-					XIODeviceBase_writeFull_base(comm->m_parent.m_io);
+					XIODeviceBase_write_base(comm->m_class.m_io, ((uint8_t*)XContainerDataPtr(frame)) + comm->m_sentBytes, 1);
+					XIODeviceBase_writeFull_base(comm->m_class.m_io);
 					++comm->m_sentBytes;
 					return;
 				}
 			}
 			else//整体一起发送
 			{
-				XIODeviceBase_write_base(comm->m_parent.m_io, XContainerDataPtr(frame), XContainerSize(frame));
-				XIODeviceBase_writeFull_base(comm->m_parent.m_io);
+				XIODeviceBase_write_base(comm->m_class.m_io, XContainerDataPtr(frame), XContainerSize(frame));
+				XIODeviceBase_writeFull_base(comm->m_class.m_io);
 			}
 			//发送完成
 			//XPrintf("设置发送帧尾巴\n");
 			if (comm->m_sendFrameTail)
 			{//当存在发送帧尾先发送帧尾
-				XIODeviceBase_write_base(comm->m_parent.m_io, XContainerDataPtr(comm->m_sendFrameTail), XContainerSize(comm->m_sendFrameTail));
-				XIODeviceBase_writeFull_base(comm->m_parent.m_io);
+				XIODeviceBase_write_base(comm->m_class.m_io, XContainerDataPtr(comm->m_sendFrameTail), XContainerSize(comm->m_sendFrameTail));
+				XIODeviceBase_writeFull_base(comm->m_class.m_io);
 			}
 #if XDFC_SEND_FRAME_16HEX_SHOW
 			XByteArray* str = XByteArray_to16HexUtf8(frame);
@@ -337,7 +337,7 @@ static void  RecvSendData(XDataFrameComm* comm)
 }
 void VXCommunicatorBase_poll(XDataFrameComm* comm)
 {
-	if (comm->m_state != XDFC_STATE_ENABLED||!XIODeviceBase_isOpen_base(comm->m_parent.m_io))
+	if (comm->m_state != XDFC_STATE_ENABLED||!XIODeviceBase_isOpen_base(comm->m_class.m_io))
 		return;//协议栈还未准备好
 	RecvSendData(comm);
 }
@@ -418,7 +418,7 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 				XPrintf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
 				exit(-1);
 			}
-			XTimerBase* timer = XTimerWheel_create();
+			XTimerBase* timer = XTimerTimeWheel_create();
 			XTimerBase_setTimerCallback_base(timer, TimerSendExpired);
 			XTimerBase_setUserData_base(timer, comm);
 			XTimerBase_setAutoDelete(timer,false);
@@ -468,7 +468,7 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 				XPrintf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
 				exit(-1);
 			}
-			XTimerBase* timer = XTimerWheel_create();
+			XTimerBase* timer = XTimerTimeWheel_create();
 			XTimerBase_setTimerCallback_base(timer, TimerRecvExpired);
 			XTimerBase_setUserData_base(timer, comm);
 			XTimerBase_setAutoDelete(timer, false);
@@ -538,7 +538,7 @@ XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data,
 	{
 		return NULL;
 	}
-	XTimerWheel* timer = XTimerWheel_create();
+	XTimerTimeWheel* timer = XTimerTimeWheel_create();
 	if (timer == NULL)
 	{
 		XMemory_free(node);

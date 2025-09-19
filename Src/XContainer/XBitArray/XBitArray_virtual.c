@@ -57,27 +57,27 @@ void VXBitArray_copy(XBitArray* dest, const XBitArray* src) {
     }
 
     // 复制基类元数据
-    dest->m_parent.m_size = src->m_parent.m_size;
-    dest->m_parent.m_capacity = src->m_parent.m_capacity;
-    dest->m_parent.m_typeSize = src->m_parent.m_typeSize;
-    dest->m_parent.m_dataCopyMethod = src->m_parent.m_dataCopyMethod;
-    dest->m_parent.m_dataMoveMethod = src->m_parent.m_dataMoveMethod;
-    dest->m_parent.m_dataDeinitMethod = src->m_parent.m_dataDeinitMethod;
+    dest->m_class.m_size = src->m_class.m_size;
+    dest->m_class.m_capacity = src->m_class.m_capacity;
+    dest->m_class.m_typeSize = src->m_class.m_typeSize;
+    dest->m_class.m_dataCopyMethod = src->m_class.m_dataCopyMethod;
+    dest->m_class.m_dataMoveMethod = src->m_class.m_dataMoveMethod;
+    dest->m_class.m_dataDeinitMethod = src->m_class.m_dataDeinitMethod;
 }
 
 void VXBitArray_move(XBitArray* dest, XBitArray* src) {
     if (!dest || !src) return;
 
     // 释放目标原有数据
-    if (dest->m_parent.m_data) {
-        XMemory_free(dest->m_parent.m_data);
+    if (dest->m_class.m_data) {
+        XMemory_free(dest->m_class.m_data);
     }
 
     // 移动数据
-    dest->m_parent = src->m_parent;
-    src->m_parent.m_data = NULL;
-    src->m_parent.m_size = 0;
-    src->m_parent.m_capacity = 0;
+    dest->m_class = src->m_class;
+    src->m_class.m_data = NULL;
+    src->m_class.m_size = 0;
+    src->m_class.m_capacity = 0;
 }
 
 void VXBitArray_deinit(XBitArray* array) {
@@ -89,7 +89,7 @@ void VXBitArray_deinit(XBitArray* array) {
     }
     XContainerSize(array) = 0;
     XContainerCapacity(array) = 0;
-    //array->m_parent.m_typeSize = 0;
+    //array->m_class.m_typeSize = 0;
 }
 
 /**

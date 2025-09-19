@@ -25,7 +25,7 @@ void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision)
 	XClassGetVtable(group) = XTimerGroupWheel_class_init();
 	//初始化数据
 	group->m_timeWheel = XVector_Create(XTimeWheel);
-	group->m_parent.m_current_tick = XTimerBase_getCurrentTime() / group->m_parent.m_precision;
+	group->m_class.m_current_tick = XTimerBase_getCurrentTime() / group->m_class.m_precision;
 	group->m_size = 0;
 }
 
@@ -109,8 +109,8 @@ uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
 
 	uint64_t next_timeout = 0;
 	uint64_t min_expire_ticks = UINT64_MAX;
-	const size_t current_tick = group->m_parent.m_current_tick;
-	const uint16_t precision = group->m_parent.m_precision;
+	const size_t current_tick = group->m_class.m_current_tick;
+	const uint16_t precision = group->m_class.m_precision;
 
 	// 遍历所有时间轮
 	const size_t wheel_count = XVector_size_base(group->m_timeWheel);
@@ -133,9 +133,9 @@ uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
 			XListSLinked_iterator it = XListSLinked_begin(list);
 			while (XListSLinked_iterator_isEnd(&it))
 			{
-				XTimerWheel* timer = *((XTimerWheel**)XListSLinked_iterator_data(&it));
+				XTimerTimeWheel* timer = *((XTimerTimeWheel**)XListSLinked_iterator_data(&it));
 				// 只考虑运行中的定时器
-				if (timer != NULL && XTimerBase_isRunning(&timer->m_parent))
+				if (timer != NULL && XTimerBase_isRunning(&timer->m_class))
 				{
 					// 记录最小的到期滴答数
 					if (((XTimerBase*)timer)->m_expire_ticks < min_expire_ticks)

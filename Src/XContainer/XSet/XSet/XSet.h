@@ -11,7 +11,7 @@ typedef struct XVector XVector;
 #define XSET_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSetBase))       //XSet容器虚函数表大小
 typedef struct XSet
 {
-	XSetBase m_parent;//基本数据
+	XSetBase m_class;//基本数据
 }XSet;
 XVtable* XSet_class_init();
 //开辟一个Map,初始化

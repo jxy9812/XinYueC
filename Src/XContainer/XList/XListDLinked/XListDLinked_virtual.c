@@ -343,9 +343,9 @@ void VXList_clear(XListDLinked* this_list)
     if (XContainerObject_isEmpty_base(this_list))
         return;
     XListBase* list = this_list;
-    XListDNode* p = list->m_parent.m_data;
+    XListDNode* p = list->m_class.m_data;
     XListDNode* pnext = p->next;
-    for (size_t i = 0; i < list->m_parent.m_size; i++)
+    for (size_t i = 0; i < list->m_class.m_size; i++)
     {
         if (XContainerDataDeinitMethod(this_list) != NULL)
             XContainerDataDeinitMethod(this_list)(&(p->data));
@@ -354,9 +354,9 @@ void VXList_clear(XListDLinked* this_list)
         XMemory_free(p);
         p = pnext;
     }
-    list->m_parent.m_size = 0;
-    list->m_parent.m_capacity = 0;
-    list->m_parent.m_data = NULL;
+    list->m_class.m_size = 0;
+    list->m_class.m_capacity = 0;
+    list->m_class.m_data = NULL;
 }
 
 void* VXList_front(XListDLinked* this_list)
@@ -479,7 +479,7 @@ void VXList_sort(XListDLinked* this_list, XSortOrder order)
         XListDNode* ListTail = *((struct XListDNode**)XStack_top_base(stack));
         XStack_pop_base(stack);
         //单次排序
-        XListDNode* ListMiddle = List_OneSort(ListHead, ListTail, list->m_parent.m_typeSize, XContainerCompare(this_list),order);
+        XListDNode* ListMiddle = List_OneSort(ListHead, ListTail, list->m_class.m_typeSize, XContainerCompare(this_list),order);
         //判断左区间是否存在
         if (ListHead != ListMiddle && ListHead->next != ListMiddle)
         {

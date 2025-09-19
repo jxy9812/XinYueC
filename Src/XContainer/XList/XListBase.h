@@ -30,7 +30,7 @@ XCLASS_DEFINE_ENUM(XListBase, Sort),
 XCLASS_DEFINE_END(XListBase)
 typedef struct XListBase
 {
-	XContainerObject m_parent;
+	XContainerObject m_class;
 	//XEquality m_equality;//相等比较函数
 }XListBase;
 typedef struct XListBaseNode XListBaseNode;

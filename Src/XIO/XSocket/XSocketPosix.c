@@ -299,7 +299,7 @@ static bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
 static bool VXIODevice_isOpen(XSocket* so)
 {
     //return so && so->m_socket != -1;
-     return (((XIODeviceBase*)so)->m_mode != XIODeviceBase_NotOpen)&&so->m_parent.m_state== XSOCKET_CONNECTED_STATE;
+     return (((XIODeviceBase*)so)->m_mode != XIODeviceBase_NotOpen)&&so->m_class.m_state== XSOCKET_CONNECTED_STATE;
 }
 
 static bool VXIODevice_close(XSocket* so)

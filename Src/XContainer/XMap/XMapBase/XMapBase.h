@@ -21,7 +21,7 @@ XCLASS_DEFINE_ENUM(XMapBase,Values),
 XCLASS_DEFINE_END(XMapBase)
 typedef struct XMapBase
 {
-	XContainerObject m_parent;//基本数据
+	XContainerObject m_class;//基本数据
 	size_t m_keyTypeSize;//key数据类型大小
 	//XEquality m_KeyEquality;//key的相等比较函数
 	//XLess m_KeyLess;//key小于比较函数

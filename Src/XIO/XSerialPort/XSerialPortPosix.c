@@ -1,4 +1,4 @@
-#ifdef __linux__ || defined(__APPLE__) || defined(__BSD__)
+﻿#ifdef __linux__ || defined(__APPLE__) || defined(__BSD__)
 #include "XSerialPortPosix.h"
 #include "XCircularQueue.h"
 #include "XMemory.h"
@@ -82,7 +82,7 @@ void XSerialPort_init(XSerialPort* serial) {
     if (!serial) return;
     // 初始化父类及成员
     memset(((XSerialPortBase*)serial) + 1, 0, sizeof(XSerialPort) - sizeof(XSerialPortBase));
-    XSerialPortBase_init(&serial->m_parent);
+    XSerialPortBase_init(&serial->m_class);
     XClassGetVtable(serial) = XSerialPort_class_init();
     serial->m_fd = -1; // 初始化为无效文件描述符
     serial->m_readBufferSize = 1024;  // 默认读缓冲区大小
@@ -100,7 +100,7 @@ static void VXSerialPort_deinit(XSerialPort* serial) {
 // 打开并配置串口
 static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
     if (!serial) return false;
-    XSerialPortBase* parent = &serial->m_parent;
+    XSerialPortBase* parent = &serial->m_class;
 
     // 生成串口设备路径（如 /dev/ttyUSB0 或 /dev/ttyS0）
     char portPath[32];
@@ -242,7 +242,7 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
         return false;
     }
 
-    parent->m_parent.m_mode = mode;
+    parent->m_class.m_mode = mode;
     return true;
 }
 
@@ -333,7 +333,7 @@ static void VXIODevice_close(XSerialPort* serial) {
     tcsetattr(serial->m_fd, TCSANOW, &serial->m_oldTios);
     close(serial->m_fd);
     serial->m_fd = -1;
-    serial->m_parent.m_parent.m_mode = 0; // 重置模式
+    serial->m_class.m_class.m_mode = 0; // 重置模式
 }
 
 // 轮询处理（用于非阻塞模式）

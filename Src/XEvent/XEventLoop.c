@@ -78,7 +78,7 @@ void XEventLoop_init(XEventLoop* loop)
 {
     if (loop == NULL) return;
 
-    XClass_init(&loop->m_parent);
+    XClass_init(&loop->m_class);
     XClassGetVtable(loop) = XEventLoop_class_init();
 
     // 初始化互斥锁和条件变量

@@ -1,6 +1,6 @@
 ﻿#include"XTimerTest.h"
 #include"XTimerGroupWheel.h"
-#include"XTimerWheel.h"
+#include"XTimerTimeWheel.h"
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
@@ -13,11 +13,11 @@ static void Callback1(void* userData)
 	XPrintf("定时器1触发:%d ms\n",XTimerBase_getCurrentTime()-current);
 	current = XTimerBase_getCurrentTime();
 
-	/*XTimerWheel* timer = XTimerWheel_create();
-	XTimerWheel_setUserData(timer, userData);
-	XTimerWheel_setTimeout_base(timer, 5);
-	XTimerWheel_setTimerCallback(timer, Callback1);
-	XTimerWheel_start_base(timer);
+	/*XTimerTimeWheel* timer = XTimerTimeWheel_create();
+	XTimerTimeWheel_setUserData(timer, userData);
+	XTimerTimeWheel_setTimeout_base(timer, 5);
+	XTimerTimeWheel_setTimerCallback(timer, Callback1);
+	XTimerTimeWheel_start_base(timer);
 	XTimerGroupBase_addTimer_base(userData, timer);*/
 }
 static void Callback2(void* userData)
@@ -28,7 +28,7 @@ static void Callback2(void* userData)
 	current = XTimerBase_getCurrentTime();
 }
 
-void XTimerWheelTest()
+void XTimerTimeWheelTest()
 {
 	XPrintf("时间轮定时器测试\n");
 	XTimerGroupWheel* wheel= XTimerGroupWheel_create(1);
@@ -37,34 +37,34 @@ void XTimerWheelTest()
 	XTimerGroupWheel_addTimeWheel_base(wheel,10);
 	XTimerGroupWheel_addTimeWheel_base(wheel,10);
 	{
-		XTimerWheel* timer = XTimerWheel_create();
-		XTimerWheel_setUserData(timer, wheel);
-		XTimerWheel_setInterval_base(timer,2);
-		XTimerWheel_setTimeout_base(timer, 5);
-		XTimerWheel_setTimerCallback(timer,Callback1);
+		XTimerTimeWheel* timer = XTimerTimeWheel_create();
+		XTimerTimeWheel_setUserData(timer, wheel);
+		XTimerTimeWheel_setInterval_base(timer,2);
+		XTimerTimeWheel_setTimeout_base(timer, 5);
+		XTimerTimeWheel_setTimerCallback(timer,Callback1);
 		XTimerBase_setTimerGroup(timer, wheel);
-		XTimerWheel_start_base(timer);
+		XTimerTimeWheel_start_base(timer);
 	
 	}
 	{
-		XTimerWheel* timer = XTimerWheel_create();
+		XTimerTimeWheel* timer = XTimerTimeWheel_create();
 		XTimerBase* parentTimer = (XTimerBase*)timer;
-		XTimerWheel_setInterval_base(timer, 49);
-		XTimerWheel_setTimeout_base(timer, 15);
-		XTimerWheel_setTimerCallback(timer, Callback2);
+		XTimerTimeWheel_setInterval_base(timer, 49);
+		XTimerTimeWheel_setTimeout_base(timer, 15);
+		XTimerTimeWheel_setTimerCallback(timer, Callback2);
 		XTimerBase_setTimerGroup(timer, wheel);
-		XTimerWheel_start_base(timer);
+		XTimerTimeWheel_start_base(timer);
 		XTimerBase_delete_base(timer);
 	}
 	while(true) XTimerGroupWheel_handler_base(wheel);
 }
 
-void XMenu_XTimerWheelTest(XMenu* root)
+void XMenu_XTimerTimeWheelTest(XMenu* root)
 {
-	XMenu* menu = XMenu_create("XTimerWheel(时间轮定时器)");
+	XMenu* menu = XMenu_create("XTimerTimeWheel(时间轮定时器)");
 	XMenu_addMenu(root, menu);
 	{
 		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XTimerWheelTest);
+		XAction_setAction(action, XTimerTimeWheelTest);
 	}
 }

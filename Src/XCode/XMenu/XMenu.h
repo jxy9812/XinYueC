@@ -9,7 +9,7 @@ extern "C" {
 //菜单
 typedef struct XMenu
 {
-	XHTreeNode m_parent;
+	XHTreeNode m_class;
 }XMenu;
 
 XMenu* XMenu_create(const char* title);

@@ -22,7 +22,7 @@ typedef struct XPWMGPIO
 //pwm设备
 typedef struct XPWMDeviceSTM32
 {
-	XPWMDeviceBase m_parent;//父对象
+	XPWMDeviceBase m_class;//父对象
 	XPWMGPIO m_gpio;//gpio
 	uint32_t m_TIMX;//定时器
 	uint8_t m_oc;//通道数

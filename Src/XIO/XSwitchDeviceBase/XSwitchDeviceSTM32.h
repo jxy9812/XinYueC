@@ -20,7 +20,7 @@ typedef struct XSwitchGPIO
 //开关设备
 typedef struct XSwitchDeviceSTM32
 {
-	XSwitchDeviceBase m_parent;//父对象
+	XSwitchDeviceBase m_class;//父对象
 	XSwitchGPIO m_gpio;
 }XSwitchDeviceSTM32;
 //初始化类

@@ -6,12 +6,12 @@ extern "C" {
 #include<stdbool.h>
 #include<stdint.h>
 #include<stdio.h>
-#include"XTimerWheel.h"
-#define XTIMER_VTABLE_SIZE (XTIMERWHEEL_VTABLE_SIZE)       //XTimer虚函数表大小
+#include"XTimerTimeWheel.h"
+#define XTIMER_VTABLE_SIZE (XTIMERTIMEWHEEL_VTABLE_SIZE)       //XTimer虚函数表大小
 //
 typedef struct XTimer 
 {
-	XTimerBase m_parent;
+	XTimerBase m_class;
 	XTimerBaseCallback callback;
 	void* m_userData;
 } XTimer;

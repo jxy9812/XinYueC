@@ -39,7 +39,7 @@ void XByteArray_init(XByteArray* array)
 		return;
 	XVector_init(array,sizeof(uint8_t));
 	XContainerSetCompare(array, XCompare_uint8_t);
-	//array->m_parent.m_equality = XEquality_uint8_t;
+	//array->m_class.m_equality = XEquality_uint8_t;
 }
 
 bool XByteArray_push_front_base(XByteArray* array, const uint8_t byte)

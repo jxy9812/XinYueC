@@ -7,10 +7,10 @@ extern "C" {
 #include<stdint.h>
 #include<stdio.h>
 #include"XTimerGroupBase.h"
-#include"XTimerWheel.h"
+#include"XTimerTimeWheel.h"
 typedef struct XListSLinked XListSLinked;
 typedef struct XVector XVector;
-typedef struct XTimerWheel  XTimerWheel;
+typedef struct XTimerTimeWheel  XTimerTimeWheel;
 typedef struct XTimerGroupWheel XTimerGroupWheel;
 #define XTIMEGROUPWHEEL_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimerGroupWheel))       //XTimeGroupWheel虚函数表大小
 XCLASS_DEFINE_BEGING(XTimerGroupWheel)
@@ -20,12 +20,12 @@ XCLASS_DEFINE_END(XTimerGroupWheel)
 // 单个时间轮结构
 typedef struct XTimeWheel {
 	size_t m_tick;						// 当前滴答计数
-	XVector* m_slots;					// 槽数组，每个槽是一个链表头 /XVector<XListSLinked<XTimerWheel*>>
+	XVector* m_slots;					// 槽数组，每个槽是一个链表头 /XVector<XListSLinked<XTimerTimeWheel*>>
 } XTimeWheel;
 //定时器轮组
 typedef struct XTimerGroupWheel
 {
-	XTimerGroupBase m_parent;//继承
+	XTimerGroupBase m_class;//继承
 	XVector* m_timeWheel;//多时间轮	/XVector<XTimeWheel>
 	XMutex* m_mutex;//互斥锁
 	size_t m_size;

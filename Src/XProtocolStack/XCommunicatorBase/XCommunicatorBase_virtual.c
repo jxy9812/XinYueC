@@ -115,7 +115,7 @@ size_t VXCommunicatorBase_recv(XCommunicatorBase* comm, void* data, size_t maxSi
 	if (comm->m_io == NULL)
 		return 0;
 	size_t size = 0,readSize=0;
-	XTimerWheel* timer = NULL;
+	XTimerTimeWheel* timer = NULL;
 	if (comm->m_opt_timeout != 0)
 	{//设置了超时时间
 		comm->m_currentTimeout = XTimerBase_getCurrentTime();

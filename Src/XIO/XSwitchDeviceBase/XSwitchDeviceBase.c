@@ -2,7 +2,7 @@
 #include"XMemory.h"
 #include<string.h>
 #define Parent(ptr) ((XIODeviceBase*)(ptr))
-#define Port(ptr)  ((XSwitchDevice_PortFunc*)(ptr->m_parent.m_port))
+#define Port(ptr)  ((XSwitchDevice_PortFunc*)(ptr->m_class.m_port))
 XSwitchDeviceBase* XSwitchDeviceBase_create()
 {
 	XSwitchDeviceBase* sw = XMemory_malloc(sizeof(XSwitchDeviceBase));

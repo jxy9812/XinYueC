@@ -49,7 +49,7 @@ typedef struct XSocketNotifier {
  * 负责事件的发送、投递、过滤和处理，是事件循环的核心组件
  */
 typedef struct XEventDispatcher {
-    XClass m_parent;                    // 父类
+    XClass m_class;                    // 父类
     XPriorityMapQueue* m_queue;         // 多个优先级的事件队列
     XMapBase* m_filter_cb;              // 事件过滤器映射表
     XListSLinked* m_socketNotifiers;    // 套接字通知器列表

@@ -89,7 +89,7 @@ void XDispatcher_init(XDispatcher* dispatcher, XSchedulePolicy policy)
     if (!dispatcher) return;
 
     // 初始化基类
-    XClass_init(&dispatcher->m_parent);
+    XClass_init(&dispatcher->m_class);
     XClassGetVtable(dispatcher) = XDispatcher_class_init();
 
     // 初始化成员变量

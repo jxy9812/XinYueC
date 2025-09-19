@@ -9,7 +9,7 @@ extern "C" {
 #include"XByteArray_reverse_iterator.h"
 typedef struct XByteArray
 {
-	XVector m_parent;
+	XVector m_class;
 }XByteArray;
 XByteArray* XByteArray_create(size_t size);
 XByteArray* XByteArray_create_copy(const XByteArray* other);

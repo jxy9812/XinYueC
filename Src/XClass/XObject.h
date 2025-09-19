@@ -14,7 +14,7 @@ XCLASS_DEFINE_ENUM(XObject, Poll) = XCLASS_VTABLE_GET_SIZE(XClass),
 XCLASS_DEFINE_END(XObject)
 typedef struct XObject
 {
-    XClass m_parent;//父对象
+    XClass m_class;//父对象
     XEventLoop* m_eventLoop; // 绑定的事件循环
     XSignalSlot* m_signalSlot;//信号与槽控制
     XTimerBase* m_poolTimer;//轮询定时器

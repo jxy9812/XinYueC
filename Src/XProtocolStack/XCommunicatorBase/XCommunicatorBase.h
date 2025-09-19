@@ -25,7 +25,7 @@ XCLASS_DEFINE_END(XCommunicatorBase)
 //通信基础类
 typedef struct XCommunicatorBase
 {
-	XObject m_parent;//继承类
+	XObject m_class;//继承类
 	uint16_t m_opt_timeout;//操作超时时间（毫秒），影响 Send/Receive 的阻塞时长。
 	size_t   m_currentTimeout;//调用阻塞函数的时候记录开始时间 
 	XIODeviceBase* m_io;//io设备

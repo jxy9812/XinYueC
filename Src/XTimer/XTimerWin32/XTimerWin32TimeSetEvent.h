@@ -9,7 +9,7 @@ extern "C" {
 //定时器TimeSetEvent 封装
 typedef struct XTimerWin32TimeSetEvent
 {
-	XTimerBase m_parent;//类
+	XTimerBase m_class;//类
 	
 }XTimerWin32TimeSetEvent;
 XVtable* XTimerWin32TimeSetEvent_class_init();

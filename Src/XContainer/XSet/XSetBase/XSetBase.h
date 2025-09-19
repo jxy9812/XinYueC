@@ -18,7 +18,7 @@ XCLASS_DEFINE_ENUM(XSetBase, Keys),
 XCLASS_DEFINE_END(XSetBase)
 typedef struct XSetBase
 {
-    XContainerObject m_parent; // 基本数据
+    XContainerObject m_class; // 基本数据
     //XEquality m_KeyEquality;   // key的相等比较函数
     //XLess m_KeyLess;//key小于比较函数
 } XSetBase;

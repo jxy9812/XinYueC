@@ -19,7 +19,7 @@ XCLASS_DEFINE_EXTEND_END(XBitArray, XContainerObject)
 // 继承自XContainerObject基类，实现比特级别的存储与操作
 typedef struct XBitArray
 {
-	XContainerObject m_parent; // 继承自容器基类，包含数据、大小、容量等元信息
+	XContainerObject m_class; // 继承自容器基类，包含数据、大小、容量等元信息
 	XBitOrder m_bitOrder;
 } XBitArray;
 

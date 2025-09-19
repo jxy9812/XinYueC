@@ -7,9 +7,9 @@ extern "C" {
 #include"XClass.h"
 #if DEMOTEST
 	void XMenu_XTimerTest(XMenu* root);
-	void XMenu_XTimerWheelTest(XMenu* root);
+	void XMenu_XTimerTimeWheelTest(XMenu* root);
 
-	void XTimerWheelTest();
+	void XTimerTimeWheelTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

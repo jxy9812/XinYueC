@@ -30,7 +30,7 @@ XVtable* XSwitchDeviceBase_class_init()
 
 void VXSwitchDevice_setState(XSwitchDeviceBase* sw, bool state)
 {
-	if (sw && ((sw->m_parent.m_mode) & XIODeviceBase_WriteOnly))
+	if (sw && ((sw->m_class.m_mode) & XIODeviceBase_WriteOnly))
 	{
 		if (sw->m_state != state)
 		{
@@ -63,7 +63,7 @@ bool VXSwitchDevice_getState(XSwitchDeviceBase* sw)
 
 void VXIODevice_poll(XSwitchDeviceBase* sw)
 {
-	if (sw->m_parent.m_mode & XIODeviceBase_ReadOnly)
+	if (sw->m_class.m_mode & XIODeviceBase_ReadOnly)
 	{
 		//扫描保存状态
 		//bool state = sw->m_buffer;

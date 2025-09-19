@@ -47,7 +47,7 @@ typedef enum {
  */
 typedef struct XSocketBase
 {
-	XIODeviceBase m_parent;//父对象
+	XIODeviceBase m_class;//父对象
     XSocketState m_state;//
     XSocketType m_socketType;
     XString* m_peerName;//远程主机名

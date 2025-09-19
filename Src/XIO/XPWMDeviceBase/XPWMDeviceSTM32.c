@@ -90,7 +90,7 @@ typedef struct TIM
 static XPWMDeviceSTM32* openTIM[TIM_COUNT] = { 0 };
 void VXPWMDevice_setFrequency(XPWMDeviceSTM32 *pwm, size_t f)
 {
-	pwm->m_parent.m_frequency = f;
+	pwm->m_class.m_frequency = f;
 	uint32_t value=pwm->m_countFrequency/(f);
 	((TIM_TypeDef *) pwm->m_TIMX)->ARR=value-1;//设置溢出装载值
     //TIM9->ARR=value-1;//设置溢出装载值
@@ -100,8 +100,8 @@ void VXPWMDevice_setDutyCycle(XPWMDeviceSTM32 *pwm, uint8_t d)
 {
 	if (pwm != NULL && d >= 0 && d <= 100)
 	{
-		pwm->m_parent.m_dutyCycle=d;
-		uint32_t value=pwm->m_countFrequency/(pwm->m_parent.m_frequency);
+		pwm->m_class.m_dutyCycle=d;
+		uint32_t value=pwm->m_countFrequency/(pwm->m_class.m_frequency);
 		switch (pwm->m_oc)
 		{
 			case 1:(((TIM_TypeDef *) pwm->m_TIMX)->CCR1)=(value)*((d)/100.0);break;
@@ -115,31 +115,31 @@ void VXPWMDevice_setDutyCycle(XPWMDeviceSTM32 *pwm, uint8_t d)
 }
 void VXPWMDevice_start(XPWMDeviceSTM32 *pwm)
 {
-	if(!pwm->m_parent.m_isRun)
+	if(!pwm->m_class.m_isRun)
 	{
 		TIM_Cmd(pwm->m_TIMX, ENABLE);
-		pwm->m_parent.m_isRun = true;
-		if (pwm->m_parent.m_runChangeCallback)
+		pwm->m_class.m_isRun = true;
+		if (pwm->m_class.m_runChangeCallback)
 		{
 			if (XIODeviceBase_CallbackQueue(pwm))
-				XIODeviceBase_callbackQueue_push(pwm, pwm->m_parent.m_runChangeCallback);
+				XIODeviceBase_callbackQueue_push(pwm, pwm->m_class.m_runChangeCallback);
 			else
-				pwm->m_parent.m_runChangeCallback(pwm);
+				pwm->m_class.m_runChangeCallback(pwm);
 		}
 	}
 }
 void VXPWMDevice_stop(XPWMDeviceSTM32 *pwm)
 {
-	if (pwm->m_parent.m_isRun)
+	if (pwm->m_class.m_isRun)
 	{//如果运行则执行关闭
 		TIM_Cmd(pwm->m_TIMX, DISABLE);
-		pwm->m_parent.m_isRun = false;
-		if (pwm->m_parent.m_runChangeCallback)
+		pwm->m_class.m_isRun = false;
+		if (pwm->m_class.m_runChangeCallback)
 		{
 			if (XIODeviceBase_CallbackQueue(pwm))
-				XIODeviceBase_callbackQueue_push(pwm, pwm->m_parent.m_runChangeCallback);
+				XIODeviceBase_callbackQueue_push(pwm, pwm->m_class.m_runChangeCallback);
 			else
-				pwm->m_parent.m_runChangeCallback(pwm);
+				pwm->m_class.m_runChangeCallback(pwm);
 		}
 	}
 }
@@ -329,7 +329,7 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
  }
  size_t VXIODevice_write(XPWMDeviceSTM32 *pwm, const char *data, size_t maxSize)
  {
-     if (pwm->m_parent.m_parent.m_mode & XIODeviceBase_WriteOnly) {
+     if (pwm->m_class.m_class.m_mode & XIODeviceBase_WriteOnly) {
          GPIO_WriteBit(pwm->m_gpio.GPIOX, pwm->m_gpio.GPIO_Pin_X, *((bool *)data));
          return 1;
      }
@@ -338,12 +338,12 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
 
 size_t VXIODevice_read(XPWMDeviceSTM32 *pwm, char *data, size_t maxSize)
 {
-    if(pwm->m_parent.m_parent.m_mode&XIODeviceBase_ReadOnly)
+    if(pwm->m_class.m_class.m_mode&XIODeviceBase_ReadOnly)
 	{
 		*((bool*)data)=GPIO_ReadInputDataBit(pwm->m_gpio.GPIOX,pwm->m_gpio.GPIO_Pin_X);
 		return 1;
 	}
-	else  if(pwm->m_parent.m_parent.m_mode&XIODeviceBase_WriteOnly)
+	else  if(pwm->m_class.m_class.m_mode&XIODeviceBase_WriteOnly)
 	{
 		*((bool*)data)=GPIO_ReadOutputDataBit(pwm->m_gpio.GPIOX,pwm->m_gpio.GPIO_Pin_X);
 		return 1;

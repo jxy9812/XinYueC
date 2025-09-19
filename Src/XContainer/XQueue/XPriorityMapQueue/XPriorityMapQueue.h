@@ -11,7 +11,7 @@ extern "C" {
 // 优先级映射队列结构
 typedef struct XPriorityMapQueue
 {
-    XContainerObject m_parent;//
+    XContainerObject m_class;//
     XCDataCopyMethod m_priorityCopyMethod;//数据拷贝方法
     XCDataMoveMethod m_priorityMoveMethod;//数据移动方法
     XCDataDeinitMethod m_priorityDeinitMethod;//数据释放方法

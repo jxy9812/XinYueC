@@ -104,7 +104,7 @@ void VXIODevice_close(XSwitchDeviceModbus* sw)
 void VXIODevice_poll(XSwitchDeviceModbus* sw)
 {
 	XSwitchDeviceBase* base = sw;
-	if (base->m_parent.m_mode & XIODeviceBase_ReadOnly)
+	if (base->m_class.m_mode & XIODeviceBase_ReadOnly)
 	{
 		//读取当前电平状态
 		bool trigger;

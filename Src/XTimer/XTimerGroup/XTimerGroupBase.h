@@ -15,7 +15,7 @@ XCLASS_DEFINE_ENUM(XTimerGroupBase,Handler),
 XCLASS_DEFINE_END(XTimerGroupBase)
 typedef struct XTimerGroupBase
 {
-	XClass m_parent;
+	XClass m_class;
 	uint16_t m_precision;		//精度 毫秒   
 	size_t m_current_tick;      // 当前系统滴答
 }XTimerGroupBase;

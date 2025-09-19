@@ -23,7 +23,7 @@ XCLASS_DEFINE_END(XTimerBase)
 //定时器抽象
 typedef struct XTimerBase
 {
-	XObject m_parent;//类
+	XObject m_class;//类
 	bool m_autoDelete;//自动释放
 	bool m_isRun;//是否运行
 	bool m_singleShot;              // 是否为单次定时器

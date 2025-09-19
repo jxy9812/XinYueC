@@ -276,7 +276,7 @@ void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo)
 {
     // 调用父类交换一部分
     //XVtableGetFunc(XContainerObject_class_init(), EXContainerObject_Swap, void(*)(XHashSet*, XHashSet*))(this_setOne, this_setTwo);
-    //XSwap(&(this_setOne->m_parent.m_KeyEquality), &(this_setTwo->m_parent.m_KeyEquality), sizeof(XEquality));
+    //XSwap(&(this_setOne->m_class.m_KeyEquality), &(this_setTwo->m_class.m_KeyEquality), sizeof(XEquality));
    // XSwap(&XContainerTypeSize(this_setOne), & XContainerTypeSize(this_setTwo), sizeof(size_t));
     //XSwap(&(this_setOne->m_hash), &(this_setTwo->m_hash), sizeof(XHashFunc));
     XSwap(this_setOne,this_setTwo,sizeof(XHashSet));
@@ -303,7 +303,7 @@ void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash,
 {
     if (this_set == NULL)
         return;
-    XSetBase_init(&this_set->m_parent, keyTypeSize,compare);
+    XSetBase_init(&this_set->m_class, keyTypeSize,compare);
     XClassGetVtable(this_set) = XHashSet_class_init();
     this_set->m_hash = hash;
     XContainerCapacity(this_set) = DEFAULT_CAPACITY;

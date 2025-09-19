@@ -16,7 +16,7 @@ int main(int argc, char* args[])
 	//XStringTest();
 	//XBase64Test();
 	//return;
-	//XTimerWheelTest();
+	//XTimerTimeWheelTest();
 	//XListDLinkedIterator();
 	//XHashMapTest();
 	//XMapTest();

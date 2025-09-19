@@ -83,7 +83,7 @@ XEventDispatcher* XEventDispatcher_create(size_t queueSize)
 void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
     if (!dispatcher) return;
 
-    XClass_init(&dispatcher->m_parent);
+    XClass_init(&dispatcher->m_class);
     XClassGetVtable(dispatcher) = XEventDispatcher_class_init();
 
     // 初始化多个优先级事件队列（无锁环形队列）

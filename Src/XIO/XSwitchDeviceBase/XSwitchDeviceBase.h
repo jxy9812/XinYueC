@@ -19,7 +19,7 @@ typedef enum//触发方式
 //开关设备
 typedef struct XSwitchDeviceBase
 {
-	XIODeviceBase m_parent;//父对象
+	XIODeviceBase m_class;//父对象
 	bool m_buffer;//存储状态
 	bool m_state;//状态   开或关
 	XSwitchDeviceBaseTriggerMode m_triggerMode;//触发方式

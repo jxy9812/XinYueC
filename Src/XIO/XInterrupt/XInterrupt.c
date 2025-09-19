@@ -50,7 +50,7 @@ void XInterrupt_addCallback(XInterrupt* interrupt, uint8_t index, InterruptCallb
 	if (interrupt->m_data[index] == NULL)
 	{
 		interrupt->m_data[index] = XListSLinked_Create(XInterruptNode);
-		//((XListSLinked*)interrupt->m_data[index])->m_parent.m_equality = XEquality_XInterrupt;
+		//((XListSLinked*)interrupt->m_data[index])->m_class.m_equality = XEquality_XInterrupt;
 		XContainerSetCompare(((XListSLinked*)interrupt->m_data[index]),XInterrupt_compare);
 	}
 	list = interrupt->m_data[index];

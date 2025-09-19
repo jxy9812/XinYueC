@@ -37,7 +37,7 @@ typedef struct XByteArray XByteArray;
 typedef struct XTimerGroupWheel XTimerGroupWheel;
 typedef struct XQueueBase XQueueBase;
 typedef struct XTimerBase XTimerBase;
-typedef struct XTimerWheel XTimerWheel;
+typedef struct XTimerTimeWheel XTimerTimeWheel;
 typedef struct XEventDispatcher XEventDispatcher;
 typedef struct XTimerGroupBase XTimerGroupBase;
 typedef struct XDataFrameComm  XDataFrameComm;

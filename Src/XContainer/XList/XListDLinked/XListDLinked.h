@@ -23,7 +23,7 @@ typedef struct XListDNode
 //双向循环链表
 typedef struct XListDLinked
 {
-	XListBase m_parent;
+	XListBase m_class;
 }XListDLinked;
 //初始化类
 XVtable* XListDLinked_class_init();

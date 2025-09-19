@@ -445,7 +445,7 @@ static bool VXIODeviceBase_atEnd(XSocket* so) {
     }
 
     // 简单判断，如果连接关闭则认为到达末尾
-    return so->m_parent.m_state == XSOCKET_UNCONNECTED_STATE;
+    return so->m_class.m_state == XSOCKET_UNCONNECTED_STATE;
 }
 
 // 设置写入缓冲区
@@ -613,7 +613,7 @@ void VXIODevice_poll(XSocket* so)
 
 bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
 {
-    if (XIODeviceBase_isOpen_base((XIODeviceBase*)so)|| so->m_parent.m_state == XSOCKET_HOST_LOOKUP_STATE || so->m_parent.m_state == XSOCKET_CONNECTING_STATE)
+    if (XIODeviceBase_isOpen_base((XIODeviceBase*)so)|| so->m_class.m_state == XSOCKET_HOST_LOOKUP_STATE || so->m_class.m_state == XSOCKET_CONNECTING_STATE)
         return true;
     //至少要读或者写
     if (!(mode & XIODeviceBase_ReadOnly || mode & XIODeviceBase_WriteOnly))
@@ -809,7 +809,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
 }
 bool VXIODevice_isOpen(XSocket* so)
 {
-    return (((XIODeviceBase*)so)->m_mode != XIODeviceBase_NotOpen)&&so->m_parent.m_state== XSOCKET_CONNECTED_STATE;
+    return (((XIODeviceBase*)so)->m_mode != XIODeviceBase_NotOpen)&&so->m_class.m_state== XSOCKET_CONNECTED_STATE;
 }
 bool VXIODevice_close(XSocket* so)
 {

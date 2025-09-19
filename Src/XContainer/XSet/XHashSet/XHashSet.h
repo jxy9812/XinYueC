@@ -16,7 +16,7 @@ extern "C" {
 
 typedef struct XHashSet
 {
-    XSetBase      m_parent;   // 基本数据
+    XSetBase      m_class;   // 基本数据
     XHashFunc     m_hash;    // 哈希函数
 } XHashSet;
 

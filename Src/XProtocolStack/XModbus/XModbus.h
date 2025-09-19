@@ -16,7 +16,7 @@ XCLASS_DEFINE_END(XModbus)
 
 typedef struct XModbus
 {
-    XDataFrameComm m_parent;
+    XDataFrameComm m_class;
     uint8_t    m_address;         // Modbus 主机地址（1-247，0 为广播地址，255 保留）
     XModbusMode m_mode;//模式
 }XModbus;

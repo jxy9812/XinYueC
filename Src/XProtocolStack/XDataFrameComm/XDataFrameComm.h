@@ -32,7 +32,7 @@ XCLASS_DEFINE_END(XDataFrameComm)
 //数据帧通信类
 typedef struct XDataFrameComm
 {
-	XCommunicatorBase m_parent;//继承类
+	XCommunicatorBase m_class;//继承类
     XDFC_State     m_state;//状态
     XDFC_CommMode  m_commMode;//通信模式
     XDFC_FrameEndType m_frameEndMode;//帧结束模式
@@ -110,13 +110,13 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event);//通过调用设置事件�
 bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* event);//向事件队列追加一个事件
 typedef struct XEventRecvFrame
 {
-    XEventMin m_parent;//
+    XEventMin m_class;//
     XByteArray* frame;//帧数据
 }XEventRecvFrame;//接收帧事件
 XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t timestamp,XByteArray* frame);
 typedef struct XEventFuncCode
 {
-    XEventRecvFrame m_parent;//
+    XEventRecvFrame m_class;//
     void* funcCode;//功能码
 }XEventFuncCode;//执行功能码事件
 XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t timestamp, XByteArray* frame, void* funcCode);

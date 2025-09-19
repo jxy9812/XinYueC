@@ -22,7 +22,7 @@ typedef struct XListSNode
 //单链表
 typedef struct XListSLinked
 {
-	XListBase m_parent;
+	XListBase m_class;
 	XListSNode* m_tail;            // 尾节点指针
 }XListSLinked;
 //初始化类

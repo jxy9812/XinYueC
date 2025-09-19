@@ -80,7 +80,7 @@ void XListDLinkedTest()
 	XPrintf("XList 测试\n");
 	XListDLinked* list = XListDLinked_create(sizeof(int));
 	XContainerSetCompare(list,XCompare_int);
-	//list->m_parent.m_equality = XEquality_int;
+	//list->m_class.m_equality = XEquality_int;
 	//XPrintf("%s\n", XContainerObject_empty(list)?"empty":"");
 	//XPrintf("%d\n", XContainerObject_size_base(list));
 

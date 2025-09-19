@@ -7,7 +7,7 @@ extern "C" {
 #include"XSocket.h"
 typedef struct XSocket
 {
-    XSocketBase m_parent;//父对象
+    XSocketBase m_class;//父对象
     size_t  m_socket;
     void* m_addrInfo;  // 地址信息             //struct addrinfo* m_addrInfo;  // 地址信息
     void* m_pollEvent; // 新增：轮询事件对象   //WSAEVENT m_pollEvent;        // 新增：轮询事件对象

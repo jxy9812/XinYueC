@@ -9,7 +9,7 @@ extern "C" {
 //定时器ThreadpoolTimer 封装
 typedef struct XTimerWin32ThreadpoolTimer
 {
-	XTimerBase m_parent;//类
+	XTimerBase m_class;//类
 }XTimerWin32ThreadpoolTimer;
 XVtable* XTimerWin32ThreadpoolTimer_class_init();
 XTimerWin32ThreadpoolTimer* XTimerXTimerWin32ThreadpoolTimer_create();

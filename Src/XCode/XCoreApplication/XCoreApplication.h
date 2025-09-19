@@ -9,7 +9,7 @@ extern "C" {
 //
 typedef struct XCoreApplication
 {
-    XClass m_parent;//父对象
+    XClass m_class;//父对象
     bool m_quit;//是否退出
     int m_argc;
     char** m_argv;

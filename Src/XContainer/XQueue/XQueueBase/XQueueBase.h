@@ -17,7 +17,7 @@ XCLASS_DEFINE_END(XQueueBase)
 //环形队列
 typedef struct XQueueBase
 {
-	XContainerObject m_parent;
+	XContainerObject m_class;
 }XQueueBase;
 //插入到队列的队尾
 #define XQueueBase_Push_Base(this_queue,type,value){type t=value;XQueueBase_push_base(this_vector,&t);}

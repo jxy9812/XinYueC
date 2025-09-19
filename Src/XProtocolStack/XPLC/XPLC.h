@@ -17,7 +17,7 @@ XCLASS_DEFINE_ENUM(XPLC, RemoveIODevice),
 XCLASS_DEFINE_END(XPLC)
 typedef struct XPLC
 {
-	XObject m_parent;//继承类
+	XObject m_class;//继承类
 	XMapBase* m_outIO;//输出
 	XMapBase* m_inIO;//输入
 	XQueueBase* m_taskQueue;//任务队列

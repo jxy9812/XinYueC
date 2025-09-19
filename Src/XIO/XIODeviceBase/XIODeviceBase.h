@@ -41,7 +41,7 @@ typedef enum /*XIODeviceBase*/
 //IO设备
 typedef struct XIODeviceBase
 {
-	XObject m_parent;//继承类
+	XObject m_class;//继承类
 	void* device;//设备
 	uint16_t m_mode;//打开模式
 	XCircularQueue* m_writeBuffer;//写入缓冲区

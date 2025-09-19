@@ -1,4 +1,5 @@
 ﻿#include"XTimer.h"
+#if XTIMER_IS_TIMEWHEEL
 #include"XCoreApplication.h"
 #include"XMemory.h"
 #include<string.h>
@@ -12,12 +13,12 @@ XVtable* XTimer_class_init()
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
 #if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XTIMERWHEEL_VTABLE_SIZE)
+		XVTABLE_STACK_INIT_DEFAULT(XTIMERTIMEWHEEL_VTABLE_SIZE)
 #else
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XTimerWheel_class_init());
+	XVTABLE_INHERIT_DEFAULT(XTimerTimeWheel_class_init());
 	//void* table[] = 
 	//{
 
@@ -58,8 +59,8 @@ void XTimer_init(XTimer* timer)
 	if (timer == NULL)
 		return;
 	//初始化父类以外的数据
-	memset(((XTimerWheel*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerWheel));
-	XTimerWheel_init(timer);
+	memset(((XTimerTimeWheel*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerTimeWheel));
+	XTimerTimeWheel_init(timer);
 	XClassGetVtable(timer) = XTimer_class_init();
 	XTimerBase_setTimerGroup(timer, XCoreApplication_getTimerGroup());
 	XObject_addEventFilter(timer, XEVENT_TIMEROUT, TimerOutCb,NULL);
@@ -105,12 +106,15 @@ void VXTimerBase_setUserData(XTimer* timer, void* userData)
 void VXTimerBase_deinit(XTimer* timer)
 {
 	//调用父类释放函数
-	XVtableGetFunc(XTimerWheel_class_init(), EXClass_Deinit, void(*)(XTimerWheel*))(timer);
+	XVtableGetFunc(XTimerTimeWheel_class_init(), EXClass_Deinit, void(*)(XTimerTimeWheel*))(timer);
 }
 
 void VXTimerBase_out(XTimer* timer)
 {
 	//调用父类释放函数
-	XVtableGetFunc(XTimerWheel_class_init(), EXTimerBase_Out, void(*)(XTimerWheel*))(timer);
+	XVtableGetFunc(XTimerTimeWheel_class_init(), EXTimerBase_Out, void(*)(XTimerTimeWheel*))(timer);
 	//XTimer_timeout_signal(timer);
 }
+
+
+#endif

@@ -36,7 +36,7 @@ XCLASS_DEFINE_END(XContainerObject)
 //容器基类
 typedef struct XContainerObject
 {
-	XClass m_parent;
+	XClass m_class;
 	XCDataCopyMethod m_dataCopyMethod;//数据拷贝方法
 	XCDataMoveMethod m_dataMoveMethod;//数据移动方法
 	XCDataDeinitMethod m_dataDeinitMethod;//数据释放方法

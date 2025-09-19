@@ -20,7 +20,7 @@ typedef struct XUsartGPIO
 //stm32串口设备
 typedef struct XSerialPort
 {
-    XSerialPortBase m_parent;//父对象
+    XSerialPortBase m_class;//父对象
 #ifdef USE_STDPERIPH_DRIVER
     uint32_t  USARTX;
     XUsartGPIO TX;

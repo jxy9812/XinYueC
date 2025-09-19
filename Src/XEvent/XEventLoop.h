@@ -41,7 +41,7 @@ XCLASS_DEFINE_END(XEventLoop)
  */
 typedef struct XEventLoop
 {
-    XClass m_parent;                  // 父类
+    XClass m_class;                  // 父类
     XEventDispatcher* m_dispatcher;   // 关联的事件调度器
     XCircularQueueAtomic* m_sendSignalQueue;//信号发送队列(引用XCoreApplication)
     XTimerGroupWheel* m_timerGroup;   // 定时器组(引用XCoreApplication)

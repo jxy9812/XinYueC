@@ -94,24 +94,24 @@ void VXSerialPort_NVIC_Init(XSerialPort* serial)
         USART_ITConfig(serial->USARTX, USART_IT_RXNE, ENABLE);//开启相关中断
         NVIC_InitTypeDef NVIC_InitStructure;
         //Usart1 NVIC 配置
-        if (serial->m_parent.m_portNum == 1)
+        if (serial->m_class.m_portNum == 1)
             NVIC_InitStructure.NVIC_IRQChannel = USART1_IRQn;//串口1中断通道
-        else if (serial->m_parent.m_portNum == 2)
+        else if (serial->m_class.m_portNum == 2)
             NVIC_InitStructure.NVIC_IRQChannel = USART2_IRQn;//串口2中断通道
-        else if (serial->m_parent.m_portNum == 3)
+        else if (serial->m_class.m_portNum == 3)
             NVIC_InitStructure.NVIC_IRQChannel = USART3_IRQn;//串口3中断通道
-        else if (serial->m_parent.m_portNum == 6)
+        else if (serial->m_class.m_portNum == 6)
             NVIC_InitStructure.NVIC_IRQChannel = USART6_IRQn;//串口6中断通道
         NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 6;//抢占优先级
         NVIC_InitStructure.NVIC_IRQChannelSubPriority = 0;		//子优先级
         NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE;			//IRQ通道使能
         NVIC_Init(&NVIC_InitStructure);	//根据指定的参数初始化VIC寄存器、
-        XInterrupt_addUSARTxCallback(serial->m_parent.m_portNum, USARTCallback, serial);
+        XInterrupt_addUSARTxCallback(serial->m_class.m_portNum, USARTCallback, serial);
     }
     else
     {
         USART_ITConfig(serial->USARTX, USART_IT_RXNE, DISABLE);//关闭接收相关中断
-        XInterrupt_removeUSARTxCallback(serial->m_parent.m_portNum, USARTCallback, serial);
+        XInterrupt_removeUSARTxCallback(serial->m_class.m_portNum, USARTCallback, serial);
     }
 }
 bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
@@ -267,7 +267,7 @@ void VXIODevice_close(XSerialPort* serial)
     USART_ITConfig(serial->USARTX, USART_IT_RXNE, DISABLE);//关闭接收相关中断
     USART_Cmd(serial->USARTX, DISABLE);  //关闭串口
     serial->USARTX = NULL;
-    openUsart[serial->m_parent.m_portNum - 1] = NULL;
+    openUsart[serial->m_class.m_portNum - 1] = NULL;
     ((XIODeviceBase*)serial)->m_mode = XIODeviceBase_NotOpen;
 }
 void USARTCallback(XSerialPort* serial)
@@ -275,7 +275,7 @@ void USARTCallback(XSerialPort* serial)
     if (USART_GetITStatus(serial->USARTX, USART_IT_RXNE) != RESET)
     {
         uint8_t r = USART_ReceiveData(serial->USARTX);
-        XQueueBase_push_base(((XIODeviceBase*)openUsart[serial->m_parent.m_portNum - 1])->m_readBuffer, &r); \
+        XQueueBase_push_base(((XIODeviceBase*)openUsart[serial->m_class.m_portNum - 1])->m_readBuffer, &r); \
     }
 }
 void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count)

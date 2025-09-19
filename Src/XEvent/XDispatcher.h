@@ -59,7 +59,7 @@ XCLASS_DEFINE_END(XDispatcher)
  * 管理调度实体，时间相关字段单位均为毫秒（依赖XTimerBase_getCurrentTime()）
  */
 typedef struct XDispatcher {
-    XClass m_parent;                  // 父类（继承XClass）
+    XClass m_class;                  // 父类（继承XClass）
     XSchedulePolicy policy;           // 全局调度策略
     union {
         XQueueBase* fifo_queue;       // FIFO/RR就绪队列（队列结构，保证顺序）

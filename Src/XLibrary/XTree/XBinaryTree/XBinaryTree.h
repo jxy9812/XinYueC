@@ -20,7 +20,7 @@ enum XBTreeTraversing
 //二叉树节点
 typedef struct XBTreeNode
 {
-	XTreeNode m_parent;//树节点
+	XTreeNode m_class;//树节点
 }XBTreeNode;
 
 XBTreeNode* XBTreeNode_create(const char* pvData,const size_t dataTypeSize);

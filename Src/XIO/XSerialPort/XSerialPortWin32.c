@@ -187,7 +187,7 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
     //    return false;
     //}
     serial->m_hSerial = hSerial;
-    parent->m_parent.m_mode = mode;
+    parent->m_class.m_mode = mode;
    
     //serial->m_ov.hEvent = serial->m_hEvent;  // 使用已创建的事件句柄
     return true;

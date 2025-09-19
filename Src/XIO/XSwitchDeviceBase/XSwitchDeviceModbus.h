@@ -8,7 +8,7 @@ extern "C" {
 //开关设备
 typedef struct XSwitchDeviceModbus
 {
-	XSwitchDeviceBase m_parent;//父对象
+	XSwitchDeviceBase m_class;//父对象
 	XModbusDigitalSwitch* m_ds;
 	uint16_t m_portNum;//端口号
 }XSwitchDeviceModbus;

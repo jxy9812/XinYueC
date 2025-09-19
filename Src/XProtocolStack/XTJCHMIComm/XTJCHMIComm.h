@@ -10,7 +10,7 @@ XCLASS_DEFINE_BEGING(XTJCHMIComm)
 XCLASS_DEFINE_EXTEND_END(XTJCHMIComm, XDataFrameComm)
 typedef struct XTJCHMIComm
 {
-	XDataFrameComm m_parent;
+	XDataFrameComm m_class;
 }XTJCHMIComm;
 XVtable* XTJCHMIComm_class_init();
 XTJCHMIComm* XTJCHMIComm_create(XIODeviceBase* io);

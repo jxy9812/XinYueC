@@ -37,7 +37,7 @@ typedef enum
 typedef struct XStepMotor XStepMotor;
 typedef struct XStepMotor
 {
-	XObject m_parent;//继承类
+	XObject m_class;//继承类
 	uint16_t m_currentSpeed;//当前转速
 	uint16_t m_pulsesPerRevolution;//每转脉冲数
 	uint64_t m_currentPulses;//当前脉冲数 

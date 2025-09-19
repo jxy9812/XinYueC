@@ -46,7 +46,7 @@ typedef enum
 //串口设备抽象类
 typedef struct XSerialPortBase
 {
-    XIODeviceBase m_parent;//父对象
+    XIODeviceBase m_class;//父对象
     uint8_t m_portNum;//端口号
     uint32_t m_baudRate;//波特率
     XSerialPortDataBits m_dataBits;//数据位

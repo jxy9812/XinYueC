@@ -21,7 +21,7 @@ typedef struct XPWMDeviceBase XPWMDeviceBase;
 //pwm设备
 typedef struct XPWMDeviceBase
 {
-	XIODeviceBase m_parent;//父对象
+	XIODeviceBase m_class;//父对象
 	bool m_isRun;//是否运行
 	uint8_t m_dutyCycle;//占空比
 	size_t m_frequency;//频率

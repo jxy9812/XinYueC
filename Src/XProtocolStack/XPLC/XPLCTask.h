@@ -30,7 +30,7 @@ typedef enum
 }XPLCTaskState;
 typedef struct XPLCTask
 {
-	XObject m_parent;//继承类
+	XObject m_class;//继承类
 	int32_t m_lastTaskState;//上一次状态 用来缓存
 	int32_t m_runTaskState;//任务运行中的状态
 	void* m_taskNode;//缓存的任务节点

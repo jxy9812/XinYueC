@@ -3,6 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include"XTimerConfig.h"
 #define IS_BIG_ENDIAN                   0 //当前是大端吗     默认是小端
 //数据结构配置文件
 #define VTABLE_ISSTACK					1//虚函数表定义在栈上

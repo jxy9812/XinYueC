@@ -69,7 +69,7 @@ void XListSLinkedAtomicTest()
 #if XList_ON
 	XPrintf("XList 测试\n");
 	XListSLinkedAtomic* list = XListSLinkedAtomic_create(sizeof(int));
-	//list->m_parent.m_equality = XEquality_int;
+	//list->m_class.m_equality = XEquality_int;
 	XContainerSetCompare(list, XCompare_int);
 	XPrintf("%s\n", XContainerObject_isEmpty_base(list) ? "empty" : "");
 	XPrintf("%d\n", XContainerObject_size_base(list));

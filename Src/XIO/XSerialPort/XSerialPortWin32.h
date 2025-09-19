@@ -11,7 +11,7 @@ extern "C" {
 //串口设备
 typedef struct XSerialPort
 {
-    XSerialPortBase m_parent;//父对象
+    XSerialPortBase m_class;//父对象
     size_t m_readBufferSize;//
     size_t m_writeBufferSize;//
     void* m_hSerial;

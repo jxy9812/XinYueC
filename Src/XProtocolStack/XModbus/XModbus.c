@@ -4,7 +4,7 @@
 #include "XModbusProto.h"
 #include "XCircularQueueAtomic.h"
 #include "XEventDispatcher.h"
-#include "XTimerWheel.h"
+#include "XTimerTimeWheel.h"
 #include "XSerialPort.h"
 #include "XMapBase.h"
 #include "XByteArray.h"
@@ -190,7 +190,7 @@ void XModbus_EvnetExecuteCb(XEventMin* event)
 {
 	//printf("功能码事件\n");
 	XEventFuncCode* ev = event;
-	XModbusFrame* frame = ev->m_parent.frame;
+	XModbusFrame* frame = ev->m_class.frame;
 	XDataFrameComm* comm = event->userData;
 	XFuncCodeNode* node = NULL;
 	XModbusRecvMatch math = *((XModbusRecvMatch*)ev->funcCode);
@@ -212,7 +212,7 @@ void XModbus_EvnetExecuteCb(XEventMin* event)
 	if (node != NULL && node->cb != NULL)
 		node->cb(ev->funcCode, comm, frame, node->userData);
 end:
-	ev->m_parent.frame = NULL;
+	ev->m_class.frame = NULL;
 	//XVector_delete_base(frame);//释放帧数据以免内存泄露
 	XModbusFrame_delete(frame);
 	XFuncCodeMap_deleteCode(ev->funcCode);
