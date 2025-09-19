@@ -46,14 +46,16 @@ void XTimerWheelTest()
 		XTimerWheel_start_base(timer);
 	
 	}
-	//{
-	//	XTimerWheel* timer = XTimerWheel_create();
-	//	XTimerBase* parentTimer = (XTimerBase*)timer;
-	//	XTimerWheel_setInterval_base(timer, 49);
-	//	XTimerWheel_setTimeout_base(timer, 15);
-	//	XTimerWheel_setTimerCallback(timer, Callback2);
-	//	//XTimerWheel_start_base(timer);
-	//}
+	{
+		XTimerWheel* timer = XTimerWheel_create();
+		XTimerBase* parentTimer = (XTimerBase*)timer;
+		XTimerWheel_setInterval_base(timer, 49);
+		XTimerWheel_setTimeout_base(timer, 15);
+		XTimerWheel_setTimerCallback(timer, Callback2);
+		XTimerBase_setTimerGroup(timer, wheel);
+		XTimerWheel_start_base(timer);
+		XTimerBase_delete_base(timer);
+	}
 	while(true) XTimerGroupWheel_handler_base(wheel);
 }
 

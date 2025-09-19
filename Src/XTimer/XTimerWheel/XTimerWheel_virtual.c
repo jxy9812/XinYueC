@@ -37,6 +37,8 @@ XVtable* XTimerWheel_class_init()
 
 void VXTimerBase_deinit(XTimerWheel* timer)
 {
+	//先设置不自动释放，否则可能在stop的时候自动释放导致指针越界
+	XTimerBase_setAutoDelete(timer,false);
 	XTimerWheel_stop_base(timer);
 	//调用父类释放函数
 	XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(timer);
