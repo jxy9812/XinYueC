@@ -56,7 +56,7 @@ void XAbstractTransition_setTargetState(XAbstractTransition* transition, XAbstra
     }
 }
 
-void XAbstractTransition_setCondition(XAbstractTransition* transition, XTransitionCondition condition) {
+void XAbstractTransition_setCondition(XAbstractTransition* transition, XAbstractTransitionCondition condition) {
     if (transition) {
         transition->condition = condition;
     }

@@ -23,7 +23,7 @@ typedef enum {
  * @param event 事件
  * @return 满足条件返回true，否则返回false
  */
-typedef bool (*XTransitionCondition)(const void* transition, const XEvent* event);
+typedef bool (*XAbstractTransitionCondition)(const void* transition, const XEvent* event);
 
 /**
  * @brief 抽象转换类，所有转换的基类
@@ -33,7 +33,7 @@ typedef struct XAbstractTransition {
     XTransitionType type;          // 转换类型
     XAbstractState* sourceState;   // 源状态
     XAbstractState* targetState;   // 目标状态
-    XTransitionCondition condition; // 转换条件
+    XAbstractTransitionCondition condition; // 转换条件
     void* userData;                // 用户数据
 } XAbstractTransition;
 
@@ -83,7 +83,7 @@ void XAbstractTransition_setTargetState(XAbstractTransition* transition, XAbstra
  * @param transition 转换实例
  * @param condition 条件函数
  */
-void XAbstractTransition_setCondition(XAbstractTransition* transition, XTransitionCondition condition);
+void XAbstractTransition_setCondition(XAbstractTransition* transition, XAbstractTransitionCondition condition);
 
 /**
  * @brief 检查转换条件是否满足

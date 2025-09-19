@@ -75,117 +75,104 @@ typedef enum {
 
 
 
-    /**
-     * @brief 创建基础转换
-     * @param source 源状态
-     * @param target 目标状态
-     * @return 新创建的转换，失败返回NULL
-     */
-    XTransition* XTransition_create(XState* source, XState* target);
-
-    /**
-     * @brief 初始化转换
-     * @param transition 要初始化的转换
-     * @param source 源状态
-     * @param target 目标状态
-     */
-    void XTransition_init(XTransition* transition, XState* source, XState* target);
-
-    /**
-     * @brief 销毁转换
-     * @param transition 要销毁的转换
-     */
-    void XTransition_destroy(XTransition* transition);
-
-    ///**
-    // * @brief 创建事件转换
-    // * @param source 源状态
-    // * @param target 目标状态
-    // * @param event_type 触发事件类型
-    // * @return 新创建的事件转换，失败返回NULL
-    // */
-    //XEventTransition* XEventTransition_create(XState* source, XState* target, XEventType event_type);
-
-    ///**
-    // * @brief 创建信号转换
-    // * @param source 源状态
-    // * @param target 目标状态
-    // * @param sender 信号发送者
-    // * @param signal 信号标识
-    // * @return 新创建的信号转换，失败返回NULL
-    // */
-    //XSignalTransition* XSignalTransition_create(XState* source, XState* target,
-    //    XObject* sender, size_t signal);
-
-    /**
-     * @brief 设置转换条件
-     * @param transition 转换实例
-     * @param condition 条件函数
-     */
-    void XTransition_setCondition(XTransition* transition, XTransitionCondition condition);
-
-    /**
-     * @brief 设置转换动作
-     * @param transition 转换实例
-     * @param action 动作函数
-     */
-    void XTransition_setAction(XTransition* transition, XTransitionAction action);
-
-    /**
-     * @brief 设置转换是否启用
-     * @param transition 转换实例
-     * @param enabled 是否启用
-     */
-    void XTransition_setEnabled(XTransition* transition, bool enabled);
-
-    /**
-     * @brief 检查转换是否启用
-     * @param transition 转换实例
-     * @return 启用返回true，否则返回false
-     */
-    bool XTransition_isEnabled(const XTransition* transition);
-
-    /**
-     * @brief 获取源状态
-     * @param transition 转换实例
-     * @return 源状态
-     */
-    XState* XTransition_source(const XTransition* transition);
-
-    /**
-     * @brief 获取目标状态
-     * @param transition 转换实例
-     * @return 目标状态
-     */
-    XState* XTransition_target(const XTransition* transition);
-
-    /**
-     * @brief 检查转换是否可以触发
-     * @param transition 转换实例
-     * @param machine 状态机实例
-     * @param event 事件
-     * @return 可以触发返回true，否则返回false
-     */
-    bool XTransition_check(const XTransition* transition, XStateMachine* machine, const XEvent* event);
-
-    /**
-     * @brief 触发转换
-     * @param transition 转换实例
-     * @param machine 状态机实例
-     * @param event 事件
-     */
-    void XTransition_trigger(XTransition* transition, XStateMachine* machine, const XEvent* event);
-
-    /**
-     * @brief 连接转换信号到槽函数
-     * @param transition 转换实例
-     * @param signal 信号枚举值
-     * @param receiver 接收对象
-     * @param slot 槽函数
-     * @param type 连接类型
-     * @return 连接对象，失败返回NULL
-     */
-    XConnection* XTransition_connect(XTransition* transition, XTransitionSignal signal,
+/**
+ * @brief 创建基础转换
+ * @param source 源状态
+ * @param target 目标状态
+ * @return 新创建的转换，失败返回NULL
+ */
+XTransition* XTransition_create(XState* source, XState* target);
+/**
+ * @brief 初始化转换
+ * @param transition 要初始化的转换
+ * @param source 源状态
+ * @param target 目标状态
+ */
+void XTransition_init(XTransition* transition, XState* source, XState* target);
+/**
+ * @brief 销毁转换
+ * @param transition 要销毁的转换
+ */
+void XTransition_destroy(XTransition* transition);
+///**
+// * @brief 创建事件转换
+// * @param source 源状态
+// * @param target 目标状态
+// * @param event_type 触发事件类型
+// * @return 新创建的事件转换，失败返回NULL
+// */
+//XEventTransition* XEventTransition_create(XState* source, XState* target, XEventType event_type);
+///**
+// * @brief 创建信号转换
+// * @param source 源状态
+// * @param target 目标状态
+// * @param sender 信号发送者
+// * @param signal 信号标识
+// * @return 新创建的信号转换，失败返回NULL
+// */
+//XSignalTransition* XSignalTransition_create(XState* source, XState* target,
+//    XObject* sender, size_t signal);
+/**
+ * @brief 设置转换条件
+ * @param transition 转换实例
+ * @param condition 条件函数
+ */
+void XTransition_setCondition(XTransition* transition, XTransitionCondition condition);
+/**
+ * @brief 设置转换动作
+ * @param transition 转换实例
+ * @param action 动作函数
+ */
+void XTransition_setAction(XTransition* transition, XTransitionAction action);
+/**
+ * @brief 设置转换是否启用
+ * @param transition 转换实例
+ * @param enabled 是否启用
+ */
+void XTransition_setEnabled(XTransition* transition, bool enabled);
+/**
+ * @brief 检查转换是否启用
+ * @param transition 转换实例
+ * @return 启用返回true，否则返回false
+ */
+bool XTransition_isEnabled(const XTransition* transition);
+/**
+ * @brief 获取源状态
+ * @param transition 转换实例
+ * @return 源状态
+ */
+XState* XTransition_source(const XTransition* transition);
+/**
+ * @brief 获取目标状态
+ * @param transition 转换实例
+ * @return 目标状态
+ */
+XState* XTransition_target(const XTransition* transition);
+/**
+ * @brief 检查转换是否可以触发
+ * @param transition 转换实例
+ * @param machine 状态机实例
+ * @param event 事件
+ * @return 可以触发返回true，否则返回false
+ */
+bool XTransition_check(const XTransition* transition, XStateMachine* machine, const XEvent* event);
+/**
+ * @brief 触发转换
+ * @param transition 转换实例
+ * @param machine 状态机实例
+ * @param event 事件
+ */
+void XTransition_trigger(XTransition* transition, XStateMachine* machine, const XEvent* event);
+/**
+ * @brief 连接转换信号到槽函数
+ * @param transition 转换实例
+ * @param signal 信号枚举值
+ * @param receiver 接收对象
+ * @param slot 槽函数
+ * @param type 连接类型
+ * @return 连接对象，失败返回NULL
+ */
+XConnection* XTransition_connect(XTransition* transition, XTransitionSignal signal,
         XObject* receiver, XSlotFunc slot, XConnectionType type);
 
 #ifdef __cplusplus

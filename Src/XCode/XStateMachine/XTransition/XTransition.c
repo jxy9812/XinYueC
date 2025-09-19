@@ -108,7 +108,8 @@ void XTransition_destroy(XTransition* transition) {
 //    return transition;
 //}
 
-void XTransition_setCondition(XTransition* transition, XTransitionCondition condition) {
+void XTransition_setCondition(XTransition* transition, XTransitionCondition condition) 
+{
     if (transition) {
         transition->condition = condition;
     }
@@ -154,7 +155,7 @@ bool XTransition_check(const XTransition* transition, XStateMachine* machine, co
 
     // 检查条件（如果有）
     if (transition->condition) {
-        return transition->condition(transition, machine, event);
+        return transition->condition(transition,machine, event);
     }
 
     return true;
