@@ -1,7 +1,11 @@
 ﻿#include"XTimerBase.h"
 #include"XMemory.h"
 #include<string.h>
-
+void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
+void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
+void VXTimerBase_setTimeout(XTimerBase* timer, size_t value);
+void VXTimerBase_setInterval(XTimerBase* timer, size_t value);
+void VXTimerBase_out(XTimerBase* timer);
 XTimerBase* XTimerBase_create(XVtable* vtable)
 {
 	if (vtable == NULL)
@@ -148,7 +152,33 @@ void XTimerBase_out_base(XTimerBase* timer)
 		return;
 	XClassGetVirtualFunc(timer, EXTimerBase_Out, void(*)(XTimerBase*))(timer);
 }
-//
+void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback)
+{
+	timer->m_timerCallback = callback;
+}
+
+void VXTimerBase_setUserData(XTimerBase* timer, void* userData)
+{
+	timer->m_userData = userData;
+}
+
+void VXTimerBase_setTimeout(XTimerBase* timer, size_t value)
+{
+	timer->m_timeout = value;
+}
+
+void VXTimerBase_setInterval(XTimerBase* timer, size_t value)
+{
+	timer->m_interval = value;
+}
+void VXTimerBase_out(XTimerBase* timer)
+{
+	if (timer == NULL)
+		return;
+	++timer->number;
+	if (timer->m_timerCallback != NULL)
+		timer->m_timerCallback(timer->m_userData);
+}
 #ifdef WIN32
 #include <windows.h>
 // 告诉编译器链接 winmm.lib 库

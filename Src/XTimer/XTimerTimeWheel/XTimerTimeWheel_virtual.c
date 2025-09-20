@@ -1,25 +1,26 @@
 ﻿#include"XTimerTimeWheel.h"
 #include"XTimerGroupBase.h"
 #include"XMemory.h"
+void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
+void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
+void VXTimerBase_setTimeout(XTimerBase* timer, size_t value);
+void VXTimerBase_setInterval(XTimerBase* timer, size_t value);
+void VXTimerBase_out(XTimerBase* timer);
 static void VXTimerBase_start(XTimerTimeWheel* timer);
 static void VXTimerBase_stop(XTimerTimeWheel* timer);
-static void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
-static void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
-static void VXTimerBase_setTimeout(XTimerTimeWheel* timer, size_t value);
-static void VXTimerBase_setInterval(XTimerTimeWheel* timer, size_t value);
 static void VXTimerBase_deinit(XTimerTimeWheel* timer);
-static void VXTimerBase_out(XTimerBase* timer);
+
 XVtable* XTimerTimeWheel_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
 #if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XTIMERTIMEWHEEL_VTABLE_SIZE)
+	XVTABLE_STACK_INIT_DEFAULT(XTIMERTIMEWHEEL_VTABLE_SIZE)
 #else
-		XVTABLE_HEAP_INIT_DEFAULT
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
-		//继承类
-		XVTABLE_INHERIT_DEFAULT(XObject_class_init());
+	//继承类
+	XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 	void* table[] = {
 	VXTimerBase_start,VXTimerBase_stop,VXTimerBase_setTimerCallback,VXTimerBase_setUserData,
 	VXTimerBase_setTimeout,VXTimerBase_setInterval,
@@ -44,16 +45,6 @@ void VXTimerBase_deinit(XTimerTimeWheel* timer)
 	XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(timer);
 }
 
-void VXTimerBase_out(XTimerBase* timer)
-{
-	if (timer == NULL)
-		return;
-	++timer->number;
-	if (timer->m_timerCallback != NULL)
-		timer->m_timerCallback(timer->m_userData);
-}
-
-
 void VXTimerBase_start(XTimerTimeWheel* timer)
 {
 	if (timer->m_class.m_isRun)
@@ -75,23 +66,5 @@ void VXTimerBase_stop(XTimerTimeWheel* timer)
 	}
 }
 
-void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback)
-{
-	timer->m_timerCallback = callback;
-}
 
-void VXTimerBase_setUserData(XTimerBase* timer, void* userData)
-{
-	timer->m_userData = userData;
-}
-
-void VXTimerBase_setTimeout(XTimerTimeWheel* timer, size_t value)
-{
-	timer->m_class.m_timeout = value;
-}
-
-void VXTimerBase_setInterval(XTimerTimeWheel* timer, size_t value)
-{
-	timer->m_class.m_interval = value;
-}
 

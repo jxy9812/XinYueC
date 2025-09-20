@@ -10,7 +10,7 @@ extern "C" {
 typedef void (*XTimerBaseCallback)(void* userData);
 typedef struct XTimerBase XTimerBase;
 typedef struct XTimerGroupBase XTimerGroupBase;
-#define XTIMERBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XObject)+4)       //XTimerBase虚函数表大小
+#define XTIMERBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimerBase))       //XTimerBase虚函数表大小
 XCLASS_DEFINE_BEGING(XTimerBase)
 XCLASS_DEFINE_ENUM(XTimerBase,Start) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XTimerBase,Stop),

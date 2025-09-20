@@ -6,7 +6,7 @@ extern "C" {
 #include<stdbool.h>
 #include<stdint.h>
 #include<stdio.h>
-#include"XTimerTimeWheel.h"
+#include"XTimerBase.h"
 #define XTIMER_VTABLE_SIZE (XTIMERTIMEWHEEL_VTABLE_SIZE)       //XTimer虚函数表大小
 //
 typedef struct XTimer 
