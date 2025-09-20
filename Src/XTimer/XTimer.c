@@ -61,7 +61,7 @@ void XTimer_init(XTimer* timer)
 	XTimerWin32ThreadpoolTimer_init(timer);
 #endif
 	XClassGetVtable(timer) = XTimer_class_init();
-	XTimerBase_setTimerGroup(timer, XCoreApplication_getTimerGroup());
+	XObject_setParent(timer, XCoreApplication_getTimerGroup());
 	XObject_addEventFilter(timer, XEVENT_TIMEROUT, TimerOutCb, NULL);
 	((XTimerBase*)timer)->m_timerCallback = TimerCallback;
 	((XTimerBase*)timer)->m_userData = timer;
@@ -85,6 +85,7 @@ void TimerOutCb(XEventMin* event)
 	if (timer->callback)
 		timer->callback(timer->m_userData);
 	XTimer_timeout_signal(event->receiver);
+	XEvent_Accept(event);
 }
 void* XTimer_timeout_signal(XTimer* timer)
 {

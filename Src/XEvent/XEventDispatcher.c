@@ -113,12 +113,14 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
  * @param event 要发送的事件
  * @return 事件是否被处理
  */
-static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin* event) {
+static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin* event)
+{
     if (!dispatcher || !event) return false;
 
     XMutex_lock(dispatcher->m_mutex);
 
-    bool handled = false;
+    bool isDelete = true;
+    bool handled = false;//事件是否被处理
     event->accept = false;
 
     // 查找事件过滤器
@@ -142,6 +144,11 @@ static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin*
                     allCallback->callback(event);
                     handled = true;
                 }
+            }
+            if (!XEvent_AcceptState(event) && XObject_isEventBubbling(event->receiver) && event->receiver->m_parent)//未被接受事件向上冒泡
+            {
+                XObject_postEvent(event->receiver->m_parent, event, XEVENT_PRIORITY_NORMAL);//向父对象投递事件
+                isDelete = false;
             }
         }
     }
@@ -172,6 +179,8 @@ static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin*
     }
 
     XMutex_unlock(dispatcher->m_mutex);
+    if (isDelete)
+        XMemory_free(event);
     return handled;
 }
 
@@ -293,7 +302,7 @@ static void VXEventDispatcher_handler(XEventDispatcher* dispatcher)
         if (event)
         {
             VXEventDispatcher_sendEvent(dispatcher, event);
-            XMemory_free(event);
+            //XMemory_free(event);
         }
     }
     XMutex_unlock(dispatcher->m_mutex);

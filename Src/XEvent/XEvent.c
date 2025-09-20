@@ -85,7 +85,7 @@ void XEventFuncRunCB(XEventFunc* event)
 	if (event && event->func)
 		event->func(event->args);
 	if (event && event->oneAccept)
-		event->event.accept = true;
+		XEvent_Accept(event);
 }
 
 XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func, void* args, XAtomic_int32_t* ref_count)
@@ -116,5 +116,6 @@ void XEventSlotFuncRunCB(XEventSlotFunc* event)
 			XMemory_free(event->ref_count);
 		}
 	}
+	XEvent_Accept(event);
 }
 

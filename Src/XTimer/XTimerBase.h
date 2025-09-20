@@ -31,7 +31,7 @@ typedef struct XTimerBase
 	size_t m_interval;//定时间隔
 	size_t m_expire_ticks;     // 到期时间戳（毫秒）
 	size_t timerId;//定时器id
-	XTimerGroupBase* m_timerGroup;//定时器组
+	//XTimerGroupBase* m_timerGroup;//定时器组
 	void* m_data;//定时器数据
 	void* m_userData;
 	XTimerBaseCallback m_timerCallback; // 回调函数
@@ -51,7 +51,6 @@ void XTimerBase_setTimerCallback_base(XTimerBase* timer, XTimerBaseCallback call
 void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId);
 void XTimerBase_setAutoDelete(XTimerBase* timer, bool del);
 void XTimerBase_setSingleShote(XTimerBase* timer, bool ss);
-void XTimerBase_setTimerGroup(XTimerBase* timer, XTimerGroupBase* group);
 // 是否为周期性任务
 bool XTimerBase_isPeriodic(XTimerBase* timer);
 bool XTimerBase_isRunning(XTimerBase* timer);
@@ -60,7 +59,7 @@ size_t XTimerBase_getInterval(XTimerBase* timer);
 size_t XTimerBase_getTimerId(XTimerBase* timer);
 void*  XTimerBase_getUserData(XTimerBase* timer);
 bool   XTimerBase_isAutoDelete(XTimerBase* timer);
-XTimerGroupBase* XTimerBase_getTimerGroup(XTimerBase* timer);
+//XTimerGroupBase* XTimerBase_getTimerGroup(XTimerBase* timer);
 //超时回调函数
 void XTimerBase_out_base(XTimerBase* timer);
 

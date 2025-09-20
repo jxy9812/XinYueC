@@ -13,15 +13,15 @@ extern "C" {
 
 // 事件调度器虚函数表索引
 XCLASS_DEFINE_BEGING(XEventDispatcher)
-    EXEventDispatcher_SendEvent = XCLASS_VTABLE_GET_SIZE(XClass),        // 发送事件（同步）
-    EXEventDispatcher_PostEvent,        // 投递事件（异步）
-    EXEventDispatcher_AddEventCb,   // 添加事件过滤器
-    EXEventDispatcher_RemoveEventCb,// 移除事件过滤器
-    EXEventDispatcher_Handler,          // 处理事件
-    EXEventDispatcher_RegisterSocketNotifier, // 注册套接字通知器
-    EXEventDispatcher_UnregisterSocketNotifier, // 注销套接字通知器
-    EXEventDispatcher_WakeUp,           // 唤醒事件循环
-    EXEventDispatcher_GetSupportedEvents,// 获取支持的事件类型
+EXEventDispatcher_SendEvent = XCLASS_VTABLE_GET_SIZE(XClass),        // 发送事件（同步）
+EXEventDispatcher_PostEvent,        // 投递事件（异步）
+EXEventDispatcher_AddEventCb,   // 添加事件过滤器
+EXEventDispatcher_RemoveEventCb,// 移除事件过滤器
+EXEventDispatcher_Handler,          // 处理事件
+EXEventDispatcher_RegisterSocketNotifier, // 注册套接字通知器
+EXEventDispatcher_UnregisterSocketNotifier, // 注销套接字通知器
+EXEventDispatcher_WakeUp,           // 唤醒事件循环
+EXEventDispatcher_GetSupportedEvents,// 获取支持的事件类型
 XCLASS_DEFINE_END(XEventDispatcher)
 
 /**

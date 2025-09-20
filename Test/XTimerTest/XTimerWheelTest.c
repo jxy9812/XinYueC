@@ -42,7 +42,7 @@ void XTimerTimeWheelTest()
 		XTimerTimeWheel_setInterval_base(timer,2);
 		XTimerTimeWheel_setTimeout_base(timer, 5);
 		XTimerTimeWheel_setTimerCallback(timer,Callback1);
-		XTimerBase_setTimerGroup(timer, wheel);
+		XObject_setParent(timer, wheel);
 		XTimerTimeWheel_start_base(timer);
 	
 	}
@@ -52,7 +52,7 @@ void XTimerTimeWheelTest()
 		XTimerTimeWheel_setInterval_base(timer, 49);
 		XTimerTimeWheel_setTimeout_base(timer, 15);
 		XTimerTimeWheel_setTimerCallback(timer, Callback2);
-		XTimerBase_setTimerGroup(timer, wheel);
+		XObject_setParent(timer, wheel);
 		XTimerTimeWheel_start_base(timer);
 		XTimerBase_delete_base(timer);
 	}

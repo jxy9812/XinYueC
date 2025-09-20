@@ -150,7 +150,7 @@ bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer)
     // 计算超时时间（转换为）
     size_t timeout_ticks = parent->m_timeout / group->m_class.m_precision;
     ((XTimerBase*)timer)->m_expire_ticks = group->m_class.m_current_tick + timeout_ticks;
-    parent->m_timerGroup = group;
+    XObject_setParent(timer, group);
 
     if (group->m_mutex)
         XMutex_lock(group->m_mutex);

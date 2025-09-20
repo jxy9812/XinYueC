@@ -422,7 +422,7 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 			XTimerBase_setTimerCallback_base(timer, TimerSendExpired);
 			XTimerBase_setUserData_base(timer, comm);
 			XTimerBase_setAutoDelete(timer,false);
-			XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
+			XObject_setParent(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 			XTimerBase_setTimeout_base(timer, XDFC_HALF_DUPLEX_SEND_WAIT_TIME);
 			comm->m_timerSendExpired = timer;
 		}
@@ -472,7 +472,7 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 			XTimerBase_setTimerCallback_base(timer, TimerRecvExpired);
 			XTimerBase_setUserData_base(timer, comm);
 			XTimerBase_setAutoDelete(timer, false);
-			XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
+			XObject_setParent(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 			XTimerBase_setTimeout_base(timer, XDFC_FRAME_END_TIMEOUT_TIME);
 			XTimerBase_setInterval_base(timer, XDFC_FRAME_END_TIMEOUT_TIME);
 			comm->m_timerRecvExpired = timer;
@@ -554,7 +554,7 @@ XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data,
 	XListBase_push_back_base(comm->m_periodicSendList,&node);
 	XTimerBase_setTimeout_base(timer, time);
 	XTimerBase_setInterval_base(timer, time);
-	XTimerBase_setTimerGroup(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
+	XObject_setParent(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 	XTimerBase_setUserData_base(timer, node);
 	XTimerBase_setTimerCallback_base(timer, SendDataPeriodicCb);
 	XTimerBase_start_base(timer);

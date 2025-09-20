@@ -93,11 +93,6 @@ void XTimerBase_setSingleShote(XTimerBase* timer, bool ss)
 	if (timer)
 		timer->m_singleShot = ss;
 }
-void XTimerBase_setTimerGroup(XTimerBase* timer, XTimerGroupBase* group)
-{
-	if (timer)
-		timer->m_timerGroup = group;
-}
 bool XTimerBase_isPeriodic(XTimerBase* timer)
 {
 	if (timer)
@@ -140,12 +135,12 @@ bool XTimerBase_isAutoDelete(XTimerBase* timer)
 		return timer->m_autoDelete;
 	return false;
 }
-XTimerGroupBase* XTimerBase_getTimerGroup(XTimerBase* timer)
-{
-	if (timer)
-		return timer->m_timerGroup;
-	return NULL;
-}
+//XTimerGroupBase* XTimerBase_getTimerGroup(XTimerBase* timer)
+//{
+//	if (timer)
+//		return XObject_getParent(timer);
+//	return NULL;
+//}
 void XTimerBase_out_base(XTimerBase* timer)
 {
 	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))

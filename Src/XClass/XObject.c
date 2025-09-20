@@ -81,11 +81,37 @@ void XObject_setPollingInterval(XObject* object, size_t interval)
 		XTimerBase_setTimerCallback_base(object->m_poolTimer,XObject_poll_base);
 		XTimerBase_setUserData_base(object->m_poolTimer,object);
 		XTimerBase_setSingleShote(object->m_poolTimer, false);
-		//XTimerBase_setTimerGroup(object->m_poolTimer, XThread_currentTimerGroup());
+		//XObject_setParent(object->m_poolTimer, XThread_currentTimerGroup());
 	}
 	XTimerBase_setTimeout_base(object->m_poolTimer, interval);
 	XTimerBase_setInterval_base(object->m_poolTimer, interval);
 	XTimerBase_start_base(object->m_poolTimer);
+}
+
+void XObject_setParent(XObject* object, XObject* parent)
+{
+	if (object)
+		object->m_parent = parent;
+}
+
+XObject* XObject_getParent(XObject* object)
+{
+	if (object)
+		return object->m_parent;
+	return NULL;
+}
+
+void XObject_setEventBubblingEnabled(XObject* object, bool enable)
+{
+	if (object)
+		object->m_isEventBubblingEnabled = enable;
+}
+
+bool XObject_isEventBubbling(XObject* object)
+{
+	if (object)
+		return object->m_isEventBubblingEnabled;
+	return false;
 }
 
 bool XObject_addEventFilter(XObject* object, int code, XEventCB cb, void* userData)
