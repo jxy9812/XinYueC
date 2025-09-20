@@ -5,6 +5,8 @@
 #include"XTimerTimeWheel.h"
 #elif XTIMER_IS_TIMESETEVENT
 #include"XTimerWin32TimeSetEvent.h"
+#elif XTIMER_IS_THREADPOOLTIMER
+#include "XTimerWin32ThreadpoolTimer.h"
 #endif
 #include<string.h>
 static void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callback);
@@ -25,6 +27,8 @@ XVtable* XTimer_class_init()
 	XVTABLE_INHERIT_DEFAULT(XTimerTimeWheel_class_init());
 #elif XTIMER_IS_TIMESETEVENT
 	XVTABLE_INHERIT_DEFAULT(XTimerWin32TimeSetEvent_class_init());
+#elif XTIMER_IS_THREADPOOLTIMER
+	XVTABLE_INHERIT_DEFAULT(XTimerWin32ThreadpoolTimer_class_init());
 #endif
 	//void* table[] = 
 	//{
@@ -53,6 +57,8 @@ void XTimer_init(XTimer* timer)
 	XTimerTimeWheel_init(timer);
 #elif XTIMER_IS_TIMESETEVENT
 	XTimerWin32TimeSetEvent_init(timer);
+#elif XTIMER_IS_THREADPOOLTIMER
+	XTimerWin32ThreadpoolTimer_init(timer);
 #endif
 	XClassGetVtable(timer) = XTimer_class_init();
 	XTimerBase_setTimerGroup(timer, XCoreApplication_getTimerGroup());

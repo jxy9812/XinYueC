@@ -1,8 +1,15 @@
 ﻿#ifdef WIN32
-#include"XTimerWin32TimeSetEvent.h"
 #include"XMemory.h"
 #include <windows.h>
 #include "XTimerWin32ThreadpoolTimer.h"
+void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
+void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
+void VXTimerBase_setTimeout(XTimerBase* timer, size_t value);
+static void VXTimerBase_setInterval(XTimerWin32ThreadpoolTimer* timer, size_t value);
+void VXTimerBase_out(XTimerBase* timer);
+static void VXTimerBase_start(XTimerBase* timer);
+static void VXTimerBase_stop(XTimerBase* timer);
+static void VXTimerBase_deinit(XTimerBase* timer);
 // 告诉编译器链接 winmm.lib 库
 #pragma comment(lib, "winmm.lib")
 
@@ -12,19 +19,7 @@ static VOID CALLBACK TimerCallbackThreadpoolTimer(PTP_CALLBACK_INSTANCE Instance
 	XTimerBase* timer = ((XTimerBase*)Context);
 	XTimerBase_out_base(timer);
 }
-static void XTimerCreateWin32ThreadpoolTimer(XTimerBase* timer)
-{
-	//printf("创建定时器\n");
-	if (timer == NULL)
-		return;
-	// 创建线程池计时器
-	timer->timerId = CreateThreadpoolTimer(
-		TimerCallbackThreadpoolTimer,      // 回调函数
-		timer,         // 传递给回调函数的上下文
-		NULL                // 使用默认环境
-	);
-}
-static void XTimerStartWin32ThreadpoolTimer(XTimerBase* timer)
+void VXTimerBase_start(XTimerBase* timer)
 {
 	//printf("启动定时器\n");
 	XTimerBase_stop_base(timer);
@@ -46,7 +41,7 @@ static void XTimerStartWin32ThreadpoolTimer(XTimerBase* timer)
 	timer->m_isRun = true;
 	//timer->m_isPeriodic = true;
 }
-static void XTimerStopWin32ThreadpoolTimer(XTimerBase* timer)
+void VXTimerBase_stop(XTimerBase* timer)
 {
 	//printf("停止定时器\n");
 	if (timer->timerId&& XTimerBase_isRunning(timer))
@@ -55,9 +50,9 @@ static void XTimerStopWin32ThreadpoolTimer(XTimerBase* timer)
 		timer->m_isRun = false;
 	}
 }
-static void XTimerDeleteWin32ThreadpoolTimer(XTimerBase* timer)
+void VXTimerBase_deinit(XTimerBase* timer)
 {
-	XTimerStopWin32ThreadpoolTimer(timer);
+	VXTimerBase_stop(timer);
 	if (timer->timerId)
 	{
 		// 等待所有回调完成
@@ -65,11 +60,11 @@ static void XTimerDeleteWin32ThreadpoolTimer(XTimerBase* timer)
 		// 清理资源
 		CloseThreadpoolTimer(((PTP_TIMER)(timer->timerId)));
 	}
-	XMemory_free(timer);
+	//XMemory_free(timer);
 }
-static void XTimerSetIntervalWin32ThreadpoolTimer(XTimerBase* timer, size_t value)
+void VXTimerBase_setInterval(XTimerWin32ThreadpoolTimer* timer, size_t value)
 {
-	timer->m_interval = value;
+	((XTimerBase*)timer)->m_interval = value;
 	if (XTimerBase_isRunning(timer))
 	{
 		XTimerBase_start_base(timer);
@@ -85,12 +80,16 @@ XVtable* XTimerWin32ThreadpoolTimer_class_init()
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	//XVTABLE_INHERIT_DEFAULT(XClass_class_init());
-		void* table[] = { 
-		XTimerDeleteWin32ThreadpoolTimer,XTimerStartWin32ThreadpoolTimer,
-		XTimerStopWin32ThreadpoolTimer,XTimerSetIntervalWin32ThreadpoolTimer };
+	XVTABLE_INHERIT_DEFAULT(XObject_class_init());
+	void* table[] = {
+	VXTimerBase_start,VXTimerBase_stop,VXTimerBase_setTimerCallback,VXTimerBase_setUserData,
+	VXTimerBase_setTimeout,VXTimerBase_setInterval,
+	VXTimerBase_out
+	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTimerBase_deinit);
 #if SHOWCONTAINERSIZE
 	printf("XTimerWin32ThreadpoolTimer size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -102,7 +101,6 @@ XTimerWin32ThreadpoolTimer* XTimerXTimerWin32ThreadpoolTimer_create()
 	if (timer == NULL)
 		return NULL;
 	XTimerWin32ThreadpoolTimer_class_init(timer);
-	XTimerCreateWin32ThreadpoolTimer(timer);
 	return timer;
 }
 
@@ -111,8 +109,19 @@ void XTimerWin32ThreadpoolTimer_init(XTimerWin32ThreadpoolTimer* timer)
 	if (ISNULL(timer, ""))
 		return;
 	//开始初始化
-	memset(timer, 0, sizeof(XTimerWin32ThreadpoolTimer));
+	//初始化父类以外的数据
+	memset(((XTimerBase*)timer) + 1, 0, sizeof(XTimerWin32ThreadpoolTimer) - sizeof(XTimerBase));
+	XTimerBase_init(timer, NULL);
 	XClassGetVtable(timer) = XTimerWin32ThreadpoolTimer_class_init();
+
+	if (timer == NULL)
+		return;
+	// 创建线程池计时器
+	((XTimerBase*)timer)->timerId = CreateThreadpoolTimer(
+		TimerCallbackThreadpoolTimer,      // 回调函数
+		timer,         // 传递给回调函数的上下文
+		NULL                // 使用默认环境
+	);
 }
 
 #endif

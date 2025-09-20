@@ -10,9 +10,9 @@ extern "C" {
 #if !XTIMER_IS_TIMEWHEEL
 //Windows平台下XTimer下的实现方法
 #ifdef WIN32
-//以下二选一不然报错重定义
-#define XTIMER_IS_THREADPOOLTIMER			1		//配置为XTimerWin32ThreadpoolTimer
+//从上到下优先级
 #define XTIMER_IS_TIMESETEVENT				1		//配置为XTimerWin32TimeSetEvent
+#define XTIMER_IS_THREADPOOLTIMER			1		//配置为XTimerWin32ThreadpoolTimer
 //Posix平台
 #elif defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 //FreeRTOS嵌入式平台
