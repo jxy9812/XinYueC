@@ -1,5 +1,6 @@
 ﻿#include"XTimerTimeWheel.h"
 #include"XTimerGroupBase.h"
+#include"XCoreApplication.h"
 #include"XMemory.h"
 void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
 void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
@@ -49,8 +50,9 @@ void VXTimerBase_start(XTimerTimeWheel* timer)
 {
 	if (timer->m_class.m_isRun)
 		XTimerBase_stop_base(timer);
-	if (XObject_getParent(timer))
-		XTimerGroupBase_addTimer_base(XObject_getParent(timer), timer);
+	if (!XObject_getParent(timer))//如果没设置使用全局区的时间轮组管理
+		XObject_setParent(timer,XCoreApplication_getTimerGroup());
+	XTimerGroupBase_addTimer_base(XObject_getParent(timer), timer);
 	if (timer->m_class.m_data)
 		timer->m_class.m_isRun = true;
 	

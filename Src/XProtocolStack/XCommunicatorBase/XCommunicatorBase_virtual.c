@@ -16,7 +16,6 @@ static bool VXCommunicatorBase_isConnected(XCommunicatorBase* comm);
 static void VXCommunicatorBase_poll(XCommunicatorBase* comm);
 static void VXCommunicatorBase_setOption(XCommunicatorBase* comm, int optionId, const void* value, size_t size);
 static void VXCommunicatorBase_getOption(XCommunicatorBase* comm, int optionId, void* value, size_t* size);
-static void VXCommunicatorBase_setTimerGroup(XCommunicatorBase* comm, XTimerGroupBase* group);
 XVtable* XCommunicatorBase_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -34,8 +33,7 @@ XVtable* XCommunicatorBase_class_init()
 		VXCommunicatorBase_send,VXCommunicatorBase_recv,
 		VXCommunicatorBase_sendAsync,VXCommunicatorBase_recvAsync,
 		VXCommunicatorBase_isConnected,
-		VXCommunicatorBase_setOption,VXCommunicatorBase_getOption,
-		VXCommunicatorBase_setTimerGroup
+		VXCommunicatorBase_setOption,VXCommunicatorBase_getOption
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -162,16 +160,27 @@ bool VXCommunicatorBase_recvAsync(XCommunicatorBase* comm, size_t maxSize)
 }
 static void recvAsync(XCommunicatorBase* comm)
 {
-	if (comm->m_io && comm->m_recvAsyncBuffer && comm->m_recvDataCallback)
+	if (comm->m_io && comm->m_recvAsyncBuffer)
 	{//开启了异步接收
 		size_t size = XIODeviceBase_getBytesAvailable_base(comm->m_io);
 		if (size == 0)
 			return;
-		size_t buffSize = XContainerCapacity(comm->m_recvAsyncBuffer);
-		XContainerSize(comm->m_recvAsyncBuffer) = 0;
-		size_t readSize = XIODeviceBase_read_base(comm->m_io, XContainerDataPtr(comm->m_recvAsyncBuffer), (buffSize > size) ? size : buffSize);
-		if (readSize > 0)
-			comm->m_recvDataCallback(XContainerDataPtr(comm->m_recvAsyncBuffer), readSize,comm->m_userData);
+		size_t buffCapacity = XContainerCapacity(comm->m_recvAsyncBuffer);
+		size_t buffSize = XContainerSize(comm->m_recvAsyncBuffer);
+		//XContainerSize(comm->m_recvAsyncBuffer) = 0;
+		if(XVector_size_base(comm->m_recvAsyncBuffer)< buffCapacity)
+		{
+			size_t readSize = XIODeviceBase_read_base(comm->m_io, ((uint8_t*)XContainerDataPtr(comm->m_recvAsyncBuffer))+buffSize, buffCapacity-buffSize);
+			if (readSize == 0)
+				return;
+			XContainerSize(comm->m_recvAsyncBuffer) += readSize;
+			if (XContainerSize(comm->m_recvAsyncBuffer) >= buffCapacity)
+			{//缓冲区已满
+
+			}
+		}
+		//if (readSize > 0)
+			//comm->m_recvDataCallback(XContainerDataPtr(comm->m_recvAsyncBuffer), readSize,comm->m_userData);
 	}
 }
 void VXCommunicatorBase_poll(XCommunicatorBase* comm)
@@ -218,10 +227,4 @@ void VXCommunicatorBase_getOption(XCommunicatorBase* comm, int optionId, void* v
 	default:
 		break;
 	}
-}
-
-void VXCommunicatorBase_setTimerGroup(XCommunicatorBase* comm, XTimerGroupBase* group)
-{
-	if (comm)
-		comm->m_timerGroup = group;
 }

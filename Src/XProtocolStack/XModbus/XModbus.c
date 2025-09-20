@@ -260,7 +260,7 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 	XDataFrameComm* comm = event->receiver;
 	void* math = XFuncCodeMap_createCode(comm->m_funcCodeMap);
 	{
-		if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, math) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(event->receiver,XDFC_EXECUTE, 0, modbusFrame, math))))
+		if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, math) && XDataFrameComm_postEvent(comm, XEventFuncCode_create(event->receiver,XDFC_EXECUTE, 0, modbusFrame, math))))
 		{//没有功能码处理或获取失败 直接释放
 			//XVector_delete_base(frame);//释放帧数据以免内存泄露
 			XModbusFrame_delete(modbusFrame);

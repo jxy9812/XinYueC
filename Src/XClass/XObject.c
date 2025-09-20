@@ -52,7 +52,7 @@ void XObject_init(XObject* object)
 	//信号与槽初始化
 	object->m_signalSlot = NULL;
 	XObject_addEventFilter(object, XEVENT_SLOT_RUN, XEventSlotFuncRunCB, NULL);
-
+	XObject_addEventFilter(object, XEVENT_FUNC_RUN, XEventFuncRunCB, NULL);
 	//定时器
 	object->m_poolTimer = NULL;
 }
@@ -219,14 +219,14 @@ void XObject_deinit_event(XObject* object)
 {
 	if (object == NULL)
 		return;
-	XObject_postEvent(object, XEventFunc_create_oneAccept(object, XObject_deinit_base, object), XEVENT_PRIORITY_LOWEST);
+	XObject_postEvent(object, XEventFunc_create_oneAccept(XObject_deinit_base, object), XEVENT_PRIORITY_LOWEST);
 }
 
 void XObject_delete_event(XObject* object)
 {
 	if (object == NULL)
 		return;
-	XObject_postEvent(object, XEventFunc_create_oneAccept(object, XObject_delete_base, object), XEVENT_PRIORITY_LOWEST);
+	XObject_postEvent(object, XEventFunc_create_oneAccept(XObject_delete_base, object), XEVENT_PRIORITY_LOWEST);
 }
 
 void VXObject_poll(XObject* object)

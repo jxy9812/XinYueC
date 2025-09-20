@@ -333,7 +333,7 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 #endif // XDFC_RECV_FRAME_STR_SHOW
 	XDataFrameComm* comm = event->receiver;
 	void* funcCode = XFuncCodeMap_createCode(comm->m_funcCodeMap);
-	if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, funcCode) && XDataFrameComm_sendEvent(comm, XEventFuncCode_create(event->receiver, XDFC_EXECUTE, 0, frame, funcCode))))
+	if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, funcCode) && XDataFrameComm_postEvent(comm, XEventFuncCode_create(event->receiver, XDFC_EXECUTE, 0, frame, funcCode))))
 	{//没有功能码处理或获取失败 直接释放
 		XVector_delete_base(frame);
 		XFuncCodeMap_deleteCode(funcCode);
@@ -367,7 +367,7 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 	XVector_delete_base(frame);//释放帧数据以免内存泄露
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
-bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* ev)
+bool XDataFrameComm_postEvent(XDataFrameComm* comm, XEventMin* ev)
 {
 	if (comm == NULL || ev == NULL)
 		return false;

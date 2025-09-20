@@ -107,7 +107,7 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event);//通过调用设置
 //执行功能码事件回调
 void XDataFrameComm_EvnetExecuteCb(XEventMin* event);//通过调用设置事件处理函数重写
 /*以下是自定义的事件类型*/
-bool XDataFrameComm_sendEvent(XDataFrameComm* comm, XEventMin* event);//向事件队列追加一个事件
+bool XDataFrameComm_postEvent(XDataFrameComm* comm, XEventMin* event);//向事件队列追加一个事件
 typedef struct XEventRecvFrame
 {
     XEventMin m_class;//

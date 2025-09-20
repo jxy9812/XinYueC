@@ -26,17 +26,17 @@ void XEventMin_init(XEventMin* event, XObject* receiver, XEventType code, size_t
 		event->spontaneous = false;
 	}
 }
-XTimerEvent* XTimerEvent_create(XObject* receiver, XTimerBase* timer, size_t timestamp)
-{
-	XTimerEvent* event = XMemory_malloc(sizeof(XTimerEvent));
-	if (event)
-	{
-		XEventMin_init(&event->event, receiver, XEVENT_TIMEROUT, timestamp);
-		event->timer = timer;
-		event->event.spontaneous = true;
-	}
-	return event;
-}
+//XTimerEvent* XTimerEvent_create(XObject* receiver, XTimerBase* timer, size_t timestamp)
+//{
+//	XTimerEvent* event = XMemory_malloc(sizeof(XTimerEvent));
+//	if (event)
+//	{
+//		XEventMin_init(&event->event, receiver, XEVENT_TIMEROUT, timestamp);
+//		event->timer = timer;
+//		event->event.spontaneous = true;
+//	}
+//	return event;
+//}
 XEvent* XEvent_create(void* eventData, size_t eventDataSize, XObject* receiver, XEventType code, size_t timestamp)
 {
 	if (eventDataSize < sizeof(void*))
@@ -59,12 +59,12 @@ XEvent* XEvent_create(void* eventData, size_t eventDataSize, XObject* receiver, 
 	return event;
 }
 
-XEventFunc* XEventFunc_create(XObject* receiver, void(*func)(void*), void* args)
+XEventFunc* XEventFunc_create(void(*func)(void*), void* args)
 {
 	XEventFunc* event = XMemory_malloc(sizeof(XEventFunc));
 	if (event)
 	{
-		XEventMin_init(&event->event, receiver, XEVENT_FUNC_RUN, 0);
+		XEventMin_init(&event->event, NULL, XEVENT_FUNC_RUN, 0);
 		event->func = func;
 		event->args = args;
 		event->oneAccept = false;
@@ -72,9 +72,9 @@ XEventFunc* XEventFunc_create(XObject* receiver, void(*func)(void*), void* args)
 	return event;
 }
 
-XEventFunc* XEventFunc_create_oneAccept(XObject* receiver, void(*func)(void*), void* args)
+XEventFunc* XEventFunc_create_oneAccept(void(*func)(void*), void* args)
 {
-	XEventFunc* event = XEventFunc_create(receiver, func, args);
+	XEventFunc* event = XEventFunc_create(func, args);
 	if (event)
 		event->oneAccept = true;
 	return event;

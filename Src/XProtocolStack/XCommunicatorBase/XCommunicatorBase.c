@@ -10,19 +10,9 @@ void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io)
     XObject_init(comm);
     XClassGetVtable(comm) = XCommunicatorBase_class_init();
     comm->m_io = io;
-    comm->m_timerGroup = XCoreApplication_getTimerGroup();
-    //comm->m_timerGroup = XTimerGroupWheel_create(1);
-    //comm->m_opt_timeout = ~(comm->m_opt_timeout);//取反最大值
+   
     XObject_setPollingInterval(comm, 2);
 }
-
-void XCommunicatorBase_setTimerGroup_base(XCommunicatorBase* comm, XTimerGroupBase* group)
-{
-    if (ISNULL(comm, "") || ISNULL(XClassGetVtable(comm), ""))
-        return ;
-    XClassGetVirtualFunc(comm, EXCommunicatorBase_SetTimerGroup, bool(*)(XCommunicatorBase*, XTimerGroupBase*))(comm,group);
-}
-
 bool XCommunicatorBase_connect_base(XCommunicatorBase* comm)
 {
     if (ISNULL(comm, "") || ISNULL(XClassGetVtable(comm), ""))

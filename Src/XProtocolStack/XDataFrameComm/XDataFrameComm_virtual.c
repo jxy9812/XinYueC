@@ -32,7 +32,6 @@ static bool  VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandl
 static void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_deinit(XDataFrameComm* comm);
-static void VXDataFrameComm_setTimerGroup(XDataFrameComm* comm, XTimerGroupBase* group);
 static void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 static void VXDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
 static void VXDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize);
@@ -65,7 +64,6 @@ XVtable* XDataFrameComm_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXCommunicatorBase_poll);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Connect, VXCommunicatorBase_connect);
 	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_Disconnect, VXCommunicatorBase_disconnect);
-	XVTABLE_OVERLOAD_DEFAULT(EXCommunicatorBase_SetTimerGroup, VXDataFrameComm_setTimerGroup);
 #if SHOWCONTAINERSIZE
 	XPrintf("XDataFrameComm size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -79,7 +77,7 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 	
 	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_class.m_recvAsyncBuffer))
 	{
-		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_FRAME_ERROR, 0));
+		XDataFrameComm_postEvent(comm, XEventMin_create(comm,XDFC_RX_FRAME_ERROR, 0));
 		return;//校验没通过
 	}
 	XByteArray* v =XByteArray_create(0);
@@ -87,7 +85,7 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 		return;
 	XVector_copy_base(v, comm->m_class.m_recvAsyncBuffer);
 
-	if (!XDataFrameComm_sendEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
+	if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
 	{
 		XVector_delete_base(v);//释放数组防止内存泄露
 	}
@@ -113,7 +111,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
 				//发送一个事件
-				XDataFrameComm_sendEvent(comm, XDFC_READY);
+				XDataFrameComm_postEvent(comm, XDFC_READY);
 			}
 			break;
 		}
@@ -163,7 +161,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-				XDataFrameComm_sendEvent(comm, XEventMin_create(comm, XDFC_RX_BUFFER_OVERFLOW, 0));
+				XDataFrameComm_postEvent(comm, XEventMin_create(comm, XDFC_RX_BUFFER_OVERFLOW, 0));
 				return;
 			}
 			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
@@ -187,7 +185,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			if (XContainerSize(recvVector) >= XContainerCapacity(recvVector))
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_ERROR;  // 缓冲区溢出，标记错误状态
-				XDataFrameComm_sendEvent(comm, XEventMin_create(comm, XDFC_RX_BUFFER_OVERFLOW, 0));
+				XDataFrameComm_postEvent(comm, XEventMin_create(comm, XDFC_RX_BUFFER_OVERFLOW, 0));
 				return;
 			}
 			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
@@ -302,7 +300,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			{
 				comm->m_eSndState = XDFC_STATE_TX_IDLE;  // 切换到发送空闲状态
 			}
-			XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_FRAME_SENT, 0));
+			XDataFrameComm_postEvent(comm, XEventMin_create(comm,XDFC_FRAME_SENT, 0));
 			break;
 		}
 	}
@@ -385,14 +383,20 @@ bool VXCommunicatorBase_disconnect(XDataFrameComm* comm)
 	}
 	return false;
 }
+//在各自事件循环中触发
+static void SendExpired(XDataFrameComm* comm)
+{
+	comm->m_eSndState = XDFC_STATE_TX_IDLE;
+	XTimerBase_stop_base(comm->m_timerSendExpired);  // 关闭定时器
+}
+//定时器触发
 static void TimerSendExpired(XDataFrameComm* comm)
 {
 	//发完一帧数据总线等待
 	//if (comm->m_eSndState == XDFC_STATE_TX_END)
 	//XPrintf("发送完一帧数据\n");
 	{
-		comm->m_eSndState = XDFC_STATE_TX_IDLE;
-		XTimerBase_stop_base( comm->m_timerSendExpired);  // 关闭定时器
+		XObject_postEvent(comm, XEventFunc_create_oneAccept(SendExpired,comm),XEVENT_PRIORITY_NORMAL);
 	}
 }
 XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode mode)
@@ -413,16 +417,10 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 		
 		if (comm->m_timerSendExpired==NULL)
 		{
-			if (((XCommunicatorBase*)comm)->m_timerGroup == NULL)
-			{
-				XPrintf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
-				exit(-1);
-			}
 			XTimerBase* timer = XTimerTimeWheel_create();
 			XTimerBase_setTimerCallback_base(timer, TimerSendExpired);
 			XTimerBase_setUserData_base(timer, comm);
 			XTimerBase_setAutoDelete(timer,false);
-			XObject_setParent(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 			XTimerBase_setTimeout_base(timer, XDFC_HALF_DUPLEX_SEND_WAIT_TIME);
 			comm->m_timerSendExpired = timer;
 		}
@@ -430,12 +428,14 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 	comm->m_commMode = mode;
 	return XDFC_ENOERR;
 }
-static void TimerRecvExpired(XDataFrameComm* comm)
-{  //接收超时等待
+//在各自事件循环中触发
+static void RecvExpired(XDataFrameComm* comm)
+{
+	//接收超时等待
 	//XPrintf("超时\n");
 	switch (comm->m_eRcvState) {
 	case XDFC_STATE_RX_INIT:  // 初始状态超时（总线空闲，进入IDLE）
-		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_READY, 0));
+		XDataFrameComm_postEvent(comm, XEventMin_create(comm, XDFC_READY, 0));
 		break;
 
 	case XDFC_STATE_RX_RCV:   // 接收中状态超时（帧接收完成）
@@ -443,7 +443,7 @@ static void TimerRecvExpired(XDataFrameComm* comm)
 		break;
 
 	case XDFC_STATE_RX_ERROR: // 错误状态超时（忽略）
-		XDataFrameComm_sendEvent(comm, XEventMin_create(comm,XDFC_RX_BUFFER_OVERFLOW, 0));
+		XDataFrameComm_postEvent(comm, XEventMin_create(comm, XDFC_RX_BUFFER_OVERFLOW, 0));
 		break;
 	case XDFC_STATE_RX_IDLE: //接收空闲
 		break;
@@ -454,6 +454,11 @@ static void TimerRecvExpired(XDataFrameComm* comm)
 	comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
 	XTimerBase_stop_base(comm->m_timerRecvExpired);  // 关闭定时器
 }
+//定时器触发
+static void TimerRecvExpired(XDataFrameComm* comm)
+{  
+	XObject_postEvent(comm, XEventFunc_create_oneAccept(RecvExpired, comm), XEVENT_PRIORITY_NORMAL);
+}
 XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameEndType mode)
 {
 	if (comm->m_state == XDFC_STATE_ENABLED)
@@ -463,16 +468,10 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 		
 		if (comm->m_timerRecvExpired == NULL)
 		{
-			if (((XCommunicatorBase*)comm)->m_timerGroup == NULL)
-			{
-				XPrintf("请先调用XCommunicatorBase_setTimerGroup_base 设置定时器组\n");
-				exit(-1);
-			}
 			XTimerBase* timer = XTimerTimeWheel_create();
 			XTimerBase_setTimerCallback_base(timer, TimerRecvExpired);
 			XTimerBase_setUserData_base(timer, comm);
 			XTimerBase_setAutoDelete(timer, false);
-			XObject_setParent(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 			XTimerBase_setTimeout_base(timer, XDFC_FRAME_END_TIMEOUT_TIME);
 			XTimerBase_setInterval_base(timer, XDFC_FRAME_END_TIMEOUT_TIME);
 			comm->m_timerRecvExpired = timer;
@@ -482,8 +481,6 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 	{//设置为标志结束
 		if (comm->m_timerRecvExpired)
 		{
-			//XTimerBase_delete_base(comm->m_timerRecvExpired);
-			//comm->m_timerRecvExpired = NULL;
 			XTimerBase_stop_base(comm->m_timerRecvExpired);
 		}
 	}
@@ -554,7 +551,6 @@ XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data,
 	XListBase_push_back_base(comm->m_periodicSendList,&node);
 	XTimerBase_setTimeout_base(timer, time);
 	XTimerBase_setInterval_base(timer, time);
-	XObject_setParent(timer, ((XCommunicatorBase*)comm)->m_timerGroup);
 	XTimerBase_setUserData_base(timer, node);
 	XTimerBase_setTimerCallback_base(timer, SendDataPeriodicCb);
 	XTimerBase_start_base(timer);
@@ -664,20 +660,6 @@ void VXDataFrameComm_deinit(XDataFrameComm* comm)
 	//调用父类释放函数
 	XVtableGetFunc(XCommunicatorBase_class_init(), EXClass_Deinit, void(*)(XCommunicatorBase*))(comm);
 }
-
-void VXDataFrameComm_setTimerGroup(XDataFrameComm* comm, XTimerGroupBase* group)
-{
-	XTimerGroupBase* g = ((XCommunicatorBase*)comm)->m_timerGroup;
-	if (g != NULL)
-	{
-		if (comm->m_timerRecvExpired)
-			XTimerGroupBase_removeTimer_base(g, comm->m_timerRecvExpired);
-		if (comm->m_timerSendExpired)
-			XTimerGroupBase_removeTimer_base(g, comm->m_timerSendExpired);
-	}
-	XVtableGetFunc(XCommunicatorBase_class_init(), EXCommunicatorBase_SetTimerGroup, bool(*)(XCommunicatorBase*, XTimerGroupBase*))(comm, group);
-}
-
 void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data, uint8_t dataSize)
 {
 	if (comm == NULL)

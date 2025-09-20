@@ -198,7 +198,7 @@ void VXStepMotor_stop(XStepMotor* motor)
 			//motor->m_currentSpeed = 0;
 			if (motor->m_speedChangeCb)
 			{
-				XObject_postEvent(motor,XEventFunc_create(motor, motor->m_speedChangeCb,motor), XEVENT_PRIORITY_NORMAL);
+				XObject_postEvent(motor,XEventFunc_create(motor->m_speedChangeCb,motor), XEVENT_PRIORITY_NORMAL);
 			}
 		}
 	}
@@ -223,7 +223,7 @@ void VXStepMotor_setSpeed(XStepMotor* motor, double speed)
 			XPWMDeviceBase_setDutyCycle_base(motor->m_PUL, motor->m_PUL->m_dutyCycle);
 		if (VXStepMotor_isRunning(motor)&&motor->m_speedChangeCb!=NULL)
 		{
-			XObject_postEvent(motor, XEventFunc_create(motor, motor->m_speedChangeCb, motor), XEVENT_PRIORITY_NORMAL);
+			XObject_postEvent(motor, XEventFunc_create(motor->m_speedChangeCb, motor), XEVENT_PRIORITY_NORMAL);
 		}
 	}
 }

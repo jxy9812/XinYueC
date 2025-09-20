@@ -18,18 +18,18 @@ typedef void (*XEventCB)(XEventMin* event);
 typedef struct XEventMin
 {
     bool accept;                  //接受事件
+    bool spontaneous;             // 是否为自发事件(非用户触发)
     int code;                     //事件类型代码
     size_t timestamp;             //事件发生时间
     XObject* receiver;            //接收对象
     void* userData;               //可选的用户数据指针
-    bool spontaneous;             // 是否为自发事件(非用户触发)
 }XEventMin;
-// 定时器事件
-typedef struct XTimerEvent 
-{
-    XEventMin event;
-    XTimerBase* timer;            // 定时器指针作为ID
-} XTimerEvent;
+//// 定时器事件
+//typedef struct XTimerEvent 
+//{
+//    XEventMin event;
+//    XTimerBase* timer;            // 定时器指针作为ID
+//} XTimerEvent;
 //完整事件
 typedef struct XEvent
 {
@@ -56,14 +56,14 @@ XEventMin* XEventMin_create(XObject* receiver, XEventType code, size_t timestamp
  * @param priority 事件优先级
  */
 void XEventMin_init(XEventMin* event, XObject* receiver, XEventType code, size_t timestamp);
-/**
- * @brief 创建定时器事件
- * @param receiver 事件接收对象
- * @param timer 定时器指针
- * @param timestamp 时间戳
- * @return 新创建的定时器事件
- */
-XTimerEvent* XTimerEvent_create(XObject* receiver, XTimerBase* timer, size_t timestamp);
+///**
+// * @brief 创建定时器事件
+// * @param receiver 事件接收对象
+// * @param timer 定时器指针
+// * @param timestamp 时间戳
+// * @return 新创建的定时器事件
+// */
+//XTimerEvent* XTimerEvent_create(XObject* receiver, XTimerBase* timer, size_t timestamp);
 /**
  * @brief 创建通用事件
  * @param eventData 事件数据
@@ -102,7 +102,7 @@ typedef struct XEventFunc
  * @param priority 事件优先级
  * @return 新创建的函数事件
  */
-XEventFunc* XEventFunc_create(XObject* receiver, void (*func)(void*), void* args);
+XEventFunc* XEventFunc_create(void (*func)(void*), void* args);
 /**
  * @brief 创建一次性函数事件
  * @param receiver 事件接收对象
@@ -111,7 +111,7 @@ XEventFunc* XEventFunc_create(XObject* receiver, void (*func)(void*), void* args
  * @param priority 事件优先级
  * @return 新创建的一次性函数事件
  */
-XEventFunc* XEventFunc_create_oneAccept(XObject* receiver, void (*func)(void*), void* args);
+XEventFunc* XEventFunc_create_oneAccept(void (*func)(void*), void* args);
 
 /**
  * @brief 执行函数事件的回调
