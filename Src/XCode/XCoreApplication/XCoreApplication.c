@@ -9,7 +9,7 @@
 #include "XTimerGroupWheel.h"
 #include "XEventLoop.h"
 #include "XCircularQueueAtomic.h"
-//typedef struct XSignalSlot XSignalData;
+//typedef struct XSignalSlot XEventData;
 // 全局应用程序实例指针
 static XCoreApplication* g_app = NULL;
 
@@ -56,7 +56,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 	app->m_argv = argv;
 	app->m_quit = false;
 	app->m_eventLoop = XEventLoop_create();
-	app->m_sendSignalQueue = app->m_eventLoop->m_sendSignalQueue;
+	app->m_postQueue = app->m_eventLoop->m_postQueue;
 
 	// 初始化定时器组
 	XTimerGroupBase* group= XTimerGroupWheel_create(1);
@@ -109,9 +109,18 @@ int XCoreApplication_exec()
 	}
 	return 0;
 }
-bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args)
+bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XEventPriority priority)
 {
 	XCoreApplication* app = XCoreApplication_global();
-	if (!app || app->m_sendSignalQueue == NULL)
+	if (!app || app->m_postQueue == NULL)
 		return false;
+	return XEventLoop_postSendSignal(app->m_eventLoop, sendFunc,signalSlot,signal,args,priority);
+}
+
+bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* args, XEventPriority priority)
+{
+	XCoreApplication* app = XCoreApplication_global();
+	if (!app || app->m_postQueue == NULL)
+		return false;
+	return XEventLoop_postFunc(app->m_eventLoop, receiver, func, args,priority);
 }

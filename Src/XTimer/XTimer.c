@@ -90,7 +90,7 @@ void TimerOutCb(XEventMin* event)
 void* XTimer_timeout_signal(XTimer* timer)
 {
 	if (timer)
-		XSignalSlot_emit(((XObject*)timer)->m_signalSlot, XTimer_timeout_signal, NULL);
+		XSignalSlot_emit(((XObject*)timer)->m_signalSlot, XTimer_timeout_signal, NULL, XEVENT_PRIORITY_NORMAL);
 	return XTimer_timeout_signal;
 }
 

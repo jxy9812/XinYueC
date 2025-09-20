@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 #include"XTypes.h"
+#include"XEventType.h"
 #include<stdio.h>
 #include<stdint.h>
 #include<stdbool.h>
@@ -18,10 +19,10 @@ typedef (*XSlotFunc)(XObject* sender,XObject* receiver, void* args);
  */
 typedef enum 
 {
-    XSIGNAL_SEND_INVALID,  //无效模式
-    XSIGNAL_SEND_DIRECT,   // 直接发送模式：在发送线程中立即执行槽函数（同步调用）
-    XSIGNAL_SEND_QUEUED    // 队列发送模式：将信号放入接收者的消息队列，由接收者线程异步执行槽函数
-} XSignalSendMode;
+    XEVENT_SEND_INVALID,  //无效模式
+    XEVENT_SEND_DIRECT,   // 直接发送模式：在发送线程中立即执行槽函数（同步调用）
+    XEVENT_SEND_QUEUED    // 队列发送模式：将信号放入接收者的消息队列，由接收者线程异步执行槽函数
+} XEventSendMode;
 typedef enum XConnectionType
 {
     XConnectionType_Auto = 0,
@@ -51,7 +52,7 @@ typedef struct XSignal
 typedef struct XSignalSlot
 {
     XObject* obj;//管理者/发送者
-    XSignalSendMode sendMode;//发送模式
+    XEventSendMode sendMode;//发送模式
     XMap* signalMap;//信号列表
     XListBase* bindSignalList;//接收对象列表 绑定的其他对象信号
     XMutex* mutex;            //用于同步的互斥锁
@@ -68,8 +69,8 @@ void XSignalSlot_delete(XSignalSlot* manager);
  * @param mode 要设置的发送模式（XSignalSendMode枚举值）
  * @return true表示设置成功，false表示失败（如manager为空、signal无效等）
  */
-bool XSignalSlot_setSendMode(XSignalSlot* manager,XSignalSendMode mode);
-XSignalSendMode XSignalSlot_getSendMode(XSignalSlot* manager);
+bool XSignalSlot_setSendMode(XSignalSlot* manager,XEventSendMode mode);
+XEventSendMode XSignalSlot_getSendMode(XSignalSlot* manager);
 /**
  * @brief 连接信号与槽
  * @param signal 信号指针
@@ -90,14 +91,14 @@ bool XSignalSlot_disconnect_conn(XConnection* conn);
  * @param signal 信号指针
  * @param args 传递给槽函数的参数（通过void*传递任意类型）
  */
-void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args);
+void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPriority priority);
 
 /**
  * @brief 触发信号，通知所有关联的槽函数
  * @param signal 信号指针
  * @param args 传递给槽函数的参数（通过const XVariant*传递任意类型）调用所有槽后自动释放 只读不能修改
  */
-void XSignalSlot_emit_variant(XSignalSlot* manager, size_t signal,XVariant* args);
+void XSignalSlot_emit_variant(XSignalSlot* manager, size_t signal,XVariant* args, XEventPriority priority);
 
 #ifdef __cplusplus
 }

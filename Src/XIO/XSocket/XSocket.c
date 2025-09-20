@@ -107,14 +107,14 @@ XSocketState XSocket_state(const XSocketBase* socket)
 void* XSocket_connected_signal(XSocket* socket)
 {
     if(socket)
-        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_connected_signal, NULL);
+        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_connected_signal, NULL, XEVENT_PRIORITY_NORMAL);
     return XSocket_connected_signal;
 }
 
 void* XSocket_disconnected_signal(XSocket* socket)
 {
     if (socket)
-        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_disconnected_signal, NULL);
+        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_disconnected_signal, NULL, XEVENT_PRIORITY_NORMAL);
     return XSocket_disconnected_signal;
 }
 
@@ -122,7 +122,7 @@ void* XSocket_stateChanged_signal(XSocket* socket, XSocketState state)
 {
     if (socket)
     {
-        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_stateChanged_signal, (size_t)state);
+        XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_stateChanged_signal, (size_t)state, XEVENT_PRIORITY_NORMAL);
     }
     return XSocket_stateChanged_signal;
 }

@@ -5,6 +5,7 @@ extern "C" {
 #endif
 #include "XClass.h"
 #include "XWaitCondition.h"
+#include "XEventType.h"
 #include "XAtomic.h"
 #include <stdint.h>
 #include <stdbool.h>
@@ -43,7 +44,7 @@ typedef struct XEventLoop
 {
     XClass m_class;                  // 父类
     XEventDispatcher* m_dispatcher;   // 关联的事件调度器
-    XCircularQueueAtomic* m_sendSignalQueue;//信号发送队列(引用XCoreApplication)
+    XCircularQueueAtomic* m_postQueue;//信号发送队列(引用XCoreApplication)
     XTimerGroupWheel* m_timerGroup;   // 定时器组(引用XCoreApplication)
     XEventLoopState m_state;          // 事件循环状态
     XWaitCondition* m_condition;      // 等待条件变量
@@ -108,13 +109,15 @@ bool XEventLoop_hasPendingEvents_base(XEventLoop* loop);
 /**
  * @brief 投递信号发送（异步处理）
  * @param loop 事件循环调度器
- * @param sendFunc 信号发送函数
+ * @param sendSignalFunc 信号发送函数
  * @param signalSlot 信号槽
  * @param signal 信号
  * @param args 参数
  * @return 是否成功加入队列
  */
-bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args);
+bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XEventPriority priority);
+//投递函数(异步投递)
+bool XEventLoop_postFunc(XEventLoop* loop, XObject* receiver, void(*func)(void*), void* args, XEventPriority priority);
 /**
  * @brief 获取事件循环关联的调度器
  * @param loop 事件循环实例

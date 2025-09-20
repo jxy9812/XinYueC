@@ -55,6 +55,7 @@ void XObject_init(XObject* object)
 	XObject_addEventFilter(object, XEVENT_FUNC_RUN, XEventFuncRunCB, NULL);
 	//定时器
 	object->m_poolTimer = NULL;
+	object->m_isEventBubblingEnabled = false;
 }
 
 void XObject_poll_base(XObject* object)
@@ -152,6 +153,21 @@ bool XObject_postEvent(XObject* object, XEventMin* event, XEventPriority priorit
 	return XEventDispatcher_postEvent_base(object->m_eventLoop->m_dispatcher,event, priority);
 }
 
+bool XObject_postFunc(XObject* object, void(*func)(void*), void* args, XEventSendMode mode, XEventPriority priority)
+{
+	if (object == NULL || object->m_eventLoop == NULL || func == NULL|| mode== XEVENT_SEND_INVALID)
+		return false;
+	if (mode == XEVENT_SEND_DIRECT)
+	{
+		//投递函数
+		return XObject_postEvent(object, XEventFunc_create(func,args), XEVENT_PRIORITY_NORMAL);
+	}
+	else if (mode == XEVENT_SEND_QUEUED)
+	{//投递到队列，等待主线程事件循环中调用
+		return XCoreApplication_postFunc(object,func,args, priority);
+	}
+}
+
 XThread* XObject_thread(XObject* object)
 {
 	if(object==NULL)
@@ -189,7 +205,7 @@ bool XObject_disconnect_conn(XConnection* conn)
 	return XSignalSlot_disconnect_conn(conn);
 }
 
-bool XObject_setSignalSendMode(XObject* object, XSignalSendMode mode)
+bool XObject_setSignalSendMode(XObject* object, XEventSendMode mode)
 {
 	if(!object)
 		return false;
@@ -198,10 +214,10 @@ bool XObject_setSignalSendMode(XObject* object, XSignalSendMode mode)
 	return XSignalSlot_setSendMode(object->m_signalSlot,mode);
 }
 
-XSignalSendMode XObject_getSignalSendMode(XObject* object)
+XEventSendMode XObject_getSignalSendMode(XObject* object)
 {
 	if (!object)
-		return XSIGNAL_SEND_INVALID;
+		return XEVENT_SEND_INVALID;
 	return XSignalSlot_getSendMode(object->m_signalSlot);
 }
 
@@ -209,7 +225,7 @@ void* XObject_deinit_signal(XObject* object)
 {
 	if(object)
 	{
-		XSignalSlot_emit(object->m_signalSlot, XObject_deinit_signal, NULL);
+		XSignalSlot_emit(object->m_signalSlot, XObject_deinit_signal, NULL,XEVENT_PRIORITY_NORMAL);
 	}
 	return XObject_deinit_signal;
 	

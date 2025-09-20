@@ -11,15 +11,24 @@
 #include "XAtomic.h"
 //#include "XWindow.h"  // 假设存在窗口相关定义
 
-//typedef struct XSignalSlot XSignalData;
-//处理队列信号数据
+//typedef struct XSignalSlot XEventData;
+//处理队列信号/函数数据
 typedef struct XSignalData
 {
-    void (*sendFunc)(XSignalSlot*, size_t, void*);
-    XSignalSlot* signalSlot;
-    size_t signal;
+    XSignalSlot* signalSlot;//控制区分是发送信号函数投递函数执行
+    union
+    {
+        void (*sendSignalFunc)(XSignalSlot*, size_t, void*, XEventPriority priority);//发送信号的函数
+        void (*run_func)(void* args);//需要被执行的函数
+    };
+    union 
+    {
+        size_t signal;
+        XObject* object;
+    };
     void* args;
-}XSignalData;
+    XEventPriority priority;
+}XEventData;//底层都是事件驱动
 
 static void VXEventLoop_deinit(XEventLoop* loop);
 static int VXEventLoop_exec(XEventLoop* loop);
@@ -105,14 +114,14 @@ void XEventLoop_init(XEventLoop* loop)
         XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
 
         if (!XCoreApplication_global())
-            loop->m_sendSignalQueue = XCircularQueueAtomic_create(sizeof(XSignalData), XEventLoop_QueueSize);
+            loop->m_postQueue = XCircularQueueAtomic_create(sizeof(XEventData), XEventLoop_QueueSize);
     }
     loop->m_state = XEventLoop_Suspended;
     loop->m_exitCode = 0;
     loop->m_quitOnLastWindowClosed = true;
     //初始化信号队列
     if (XCoreApplication_global())
-        loop->m_sendSignalQueue = XCoreApplication_global()->m_sendSignalQueue;
+        loop->m_postQueue = XCoreApplication_global()->m_postQueue;
  
     //初始化定时器组,只在主线程事件循环中使用
     if (XThread_currentThread() == NULL)
@@ -219,11 +228,18 @@ static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsF
 {
     if (!loop || !loop->m_dispatcher || loop->m_state != XEventLoop_Running) return;
     //先处理是否有信号需要在队列中发送
-    XSignalData data;
-    while (XQueueBase_receive_base(loop->m_sendSignalQueue, &data))
+    XEventData data;
+    while (XQueueBase_receive_base(loop->m_postQueue, &data))
     {
-        if (data.sendFunc)
-            data.sendFunc(data.signalSlot, data.signal, data.args);//发送信号
+        if(data.signalSlot)
+        {//发送信号
+            if (data.sendSignalFunc)
+                data.sendSignalFunc(data.signalSlot, data.signal, data.args,data.priority);//发送信号
+        }
+        else
+        {//投递函数
+            XObject_postEvent(data.object,XEventFunc_create(data.run_func,data.args), data.priority);
+        }
     }
     // 处理定时器事件
     if(loop->m_timerGroup)
@@ -326,10 +342,18 @@ bool XEventLoop_hasPendingEvents_base(XEventLoop* loop) {
     return XClassGetVirtualFunc(loop, EXEventLoop_HasPendingEvents, bool (*)(XEventLoop*))(loop);
 }
 
-bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args)
+bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XEventPriority priority)
 {
-    if (!loop || loop->m_sendSignalQueue == NULL)
+    if (!loop || loop->m_postQueue == NULL)
         return false;
-    XSignalData data = { .sendFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args };
-    return XQueueBase_push_base(loop->m_sendSignalQueue, &data);
+    XEventData data = { .sendSignalFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args,.priority=priority };
+    return XQueueBase_push_base(loop->m_postQueue, &data);
+}
+
+bool XEventLoop_postFunc(XEventLoop* loop, XObject* receiver, void(*func)(void*), void* args, XEventPriority priority)
+{
+    if (loop == NULL ||  func == NULL)
+        return false;
+    XEventData data = { .run_func = func,.signalSlot = NULL,.object = receiver,.args = args,.priority=priority };
+    return XQueueBase_push_base(loop->m_postQueue, &data);
 }
