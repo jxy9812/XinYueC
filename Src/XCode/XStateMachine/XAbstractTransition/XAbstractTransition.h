@@ -7,6 +7,7 @@
 // 前向声明
 typedef struct XEvent XEvent;
 typedef struct XStateMachine XStateMachine;
+typedef struct XAbstractTransition XAbstractTransition;
 
 /**
  * @brief 转换类型枚举，标识不同的转换子类
@@ -23,7 +24,7 @@ typedef enum {
  * @param event 事件
  * @return 满足条件返回true，否则返回false
  */
-typedef bool (*XAbstractTransitionCondition)(const void* transition, const XEvent* event);
+typedef bool (*XAbstractTransitionCondition)(const XAbstractTransition* transition, const XEvent* event);
 
 /**
  * @brief 抽象转换类，所有转换的基类

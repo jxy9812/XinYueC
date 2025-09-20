@@ -145,7 +145,7 @@ bool XTransition_check(const XTransition* transition, XStateMachine* machine, co
     }
 
     // 对于事件转换，检查事件类型
-    //if (transition->parent.type == XEVENT_TRANSITION)
+    //if (transition->m_class.type == XEVENT_TRANSITION)
     {
         XEventTransition* evt_trans = (XEventTransition*)transition;
         if (evt_trans->event_type != event->event.code) {

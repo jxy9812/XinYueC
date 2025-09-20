@@ -23,7 +23,7 @@ static XAbstractStatePrivate* XAbstractState_private(const XAbstractState* state
 void XAbstractState_init(XAbstractState* state, XStateType type) {
     if (!state) return;
 
-    XObject_init(&state->parent);
+    XClass_init(&state->m_class);
     state->type = type;
     state->parentState = NULL;
     state->machine = NULL;
@@ -42,7 +42,7 @@ void XAbstractState_destroy(XAbstractState* state) {
     XMemory_free(state->privateData);
     state->privateData = NULL;
 
-    XObject_deinit_base(&state->parent);
+    XObject_deinit_base(&state->m_class);
 }
 
 XStateType XAbstractState_type(const XAbstractState* state) {
@@ -90,7 +90,7 @@ void XAbstractState_onEntered(XAbstractState* state, XStateMachine* machine) {
     }
 
     // 发送状态进入信号
-    //XObject_emitSignal(&state->parent, "entered()", NULL);
+    //XObject_emitSignal(&state->m_class, "entered()", NULL);
 }
 
 void XAbstractState_onExited(XAbstractState* state, XStateMachine* machine) {
@@ -105,7 +105,7 @@ void XAbstractState_onExited(XAbstractState* state, XStateMachine* machine) {
     state->isRunning = false;
 
     // 发送状态退出信号
-    //XObject_emitSignal(&state->parent, "exited()", NULL);
+    //XObject_emitSignal(&state->m_class, "exited()", NULL);
 }
 
 void XAbstractState_setEnteredCallback(XAbstractState* state, XStateEnteredCallback callback) {

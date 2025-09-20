@@ -100,11 +100,11 @@ static void VXSerialPort_deinit(XSerialPort* serial) {
 // 打开并配置串口
 static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
     if (!serial) return false;
-    XSerialPortBase* parent = &serial->m_class;
+    XSerialPortBase* m_class = &serial->m_class;
 
     // 生成串口设备路径（如 /dev/ttyUSB0 或 /dev/ttyS0）
     char portPath[32];
-    snprintf(portPath, sizeof(portPath), "/dev/ttyUSB%d", parent->m_portNum);
+    snprintf(portPath, sizeof(portPath), "/dev/ttyUSB%d", m_class->m_portNum);
 
     // 关闭已打开的串口
     if (serial->m_fd != -1) {
@@ -148,9 +148,9 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
 
     // 配置新参数
     struct termios tios = serial->m_oldTios;
-    speed_t baud = get_baud_rate(parent->m_baudRate);
+    speed_t baud = get_baud_rate(m_class->m_baudRate);
     if (baud == B0) {
-        XPrintf("不支持的波特率: %u\n", parent->m_baudRate);
+        XPrintf("不支持的波特率: %u\n", m_class->m_baudRate);
         close(serial->m_fd);
         serial->m_fd = -1;
         return false;
@@ -162,20 +162,20 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
 
     // 配置数据位、停止位、校验位
     tios.c_cflag &= ~(CSIZE | PARENB | PARODD | CSTOPB); // 清除现有设置
-    switch (parent->m_dataBits) {
+    switch (m_class->m_dataBits) {
         case SP_DB_Five: tios.c_cflag |= CS5; break;
         case SP_DB_Six: tios.c_cflag |= CS6; break;
         case SP_DB_Seven: tios.c_cflag |= CS7; break;
         case SP_DB_Eight: tios.c_cflag |= CS8; break;
         default: 
-            XPrintf("不支持的数据位: %d\n", parent->m_dataBits);
+            XPrintf("不支持的数据位: %d\n", m_class->m_dataBits);
             close(serial->m_fd);
             serial->m_fd = -1;
             return false;
     }
 
     // 校验位设置
-    switch (parent->m_parity) {
+    switch (m_class->m_parity) {
         case SP_PAR_NONE:
             tios.c_cflag &= ~PARENB; // 无校验
             break;
@@ -186,14 +186,14 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
             tios.c_cflag |= PARENB; // 偶校验（不设置PARODD）
             break;
         default:
-            XPrintf("不支持的校验位: %d\n", parent->m_parity);
+            XPrintf("不支持的校验位: %d\n", m_class->m_parity);
             close(serial->m_fd);
             serial->m_fd = -1;
             return false;
     }
 
     // 停止位设置
-    switch (parent->m_stopBits) {
+    switch (m_class->m_stopBits) {
         case SP_ST_One:
             tios.c_cflag &= ~CSTOPB; // 1位停止位
             break;
@@ -201,7 +201,7 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
             tios.c_cflag |= CSTOPB; // 2位停止位
             break;
         default:
-            XPrintf("不支持的停止位: %d\n", parent->m_stopBits);
+            XPrintf("不支持的停止位: %d\n", m_class->m_stopBits);
             close(serial->m_fd);
             serial->m_fd = -1;
             return false;
@@ -210,7 +210,7 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
     // 流控制设置
     tios.c_cflag &= ~CRTSCTS; // 清除硬件流控制
     tios.c_iflag &= ~(IXON | IXOFF | IXANY); // 清除软件流控制
-    switch (parent->m_flowControl) {
+    switch (m_class->m_flowControl) {
         case SP_FC_Hardware:
             tios.c_cflag |= CRTSCTS; // 硬件流控制（RTS/CTS）
             break;
@@ -242,7 +242,7 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
         return false;
     }
 
-    parent->m_class.m_mode = mode;
+    m_class->m_class.m_mode = mode;
     return true;
 }
 

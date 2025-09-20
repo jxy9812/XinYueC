@@ -58,10 +58,10 @@ bool XEventTransition_processEvent(XEventTransition* transition, XStateMachine* 
         return false;
     }
 
-    // 检查转换条件
-    if (!XAbstractTransition_checkCondition(&transition->parent, event)) {
-        return false;
-    }
+    //// 检查转换条件
+    //if (!XAbstractTransition_checkCondition(&transition->m_class, event)) {
+    //    return false;
+    //}
 
     // 执行转换
     return XAbstractTransition_execute(&transition->parent, machine, event);

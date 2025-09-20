@@ -1,7 +1,7 @@
 ﻿#ifndef XABSTRACTSTATE_H
 #define XABSTRACTSTATE_H
 
-#include "../XObject.h"
+#include "XClass.h"
 
 // 前向声明
 typedef struct XStateMachine XStateMachine;
@@ -21,7 +21,7 @@ typedef enum {
  * @brief 抽象状态类，所有状态的基类
  */
 typedef struct XAbstractState {
-    XObject parent;                // 继承XObject
+    XClass m_class;                // 继承XObject
     XStateType type;               // 状态类型
     XState* parentState;           // 父状态
     XStateMachine* machine;        // 所属状态机
@@ -74,7 +74,7 @@ XState* XAbstractState_parentState(const XAbstractState* state);
 /**
  * @brief 设置父状态
  * @param state 状态实例
- * @param parent 父状态
+ * @param m_class 父状态
  */
 void XAbstractState_setParentState(XAbstractState* state, XState* parent);
 

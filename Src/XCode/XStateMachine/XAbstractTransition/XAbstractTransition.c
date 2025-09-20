@@ -83,7 +83,7 @@ bool XAbstractTransition_execute(XAbstractTransition* transition, XStateMachine*
     }
 
     // 发送转换触发信号
-    //XObject_emitSignal(&transition->parent, "triggered()", NULL);
+    //XObject_emitSignal(&transition->m_class, "triggered()", NULL);
 
     // 执行状态转换
     return XStateMachine_transition(machine, transition->sourceState, transition->targetState);

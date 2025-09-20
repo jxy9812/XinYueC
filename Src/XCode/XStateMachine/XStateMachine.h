@@ -1,7 +1,7 @@
 ﻿#ifndef XSTATEMACHINE_H
 #define XSTATEMACHINE_H
 
-#include "../XObject.h"
+#include "XObject.h"
 #include "XAbstractState.h"
 #include "XAbstractTransition.h"
 
@@ -17,7 +17,8 @@ typedef enum {
 /**
  * @brief 状态机类，管理状态和转换
  */
-typedef struct XStateMachine {
+typedef struct XStateMachine 
+{
     XObject parent;                  // 继承XObject
     XAbstractState* initialState;    // 初始状态
     XAbstractState** activeStates;   // 当前激活的状态列表
