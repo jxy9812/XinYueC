@@ -371,8 +371,7 @@ bool XDataFrameComm_postEvent(XDataFrameComm* comm, XEventMin* ev)
 {
 	if (comm == NULL || ev == NULL)
 		return false;
-	if(!XEventDispatcher_postEvent_base(XObject_getEventDispatcher(comm),ev, XEVENT_PRIORITY_NORMAL))
-	//if (!XEventDispatcher_addEvent(comm->m_eventLoop, ev))
+	if(!XObject_postEvent(comm,ev, XEVENT_PRIORITY_NORMAL))
 	{//添加失败，队列满了
 		XMemory_free(ev);
 #if XDFC_QUEUE_FULL_SHOW

@@ -58,8 +58,6 @@ void VXCommunicatorBase_deinit(XCommunicatorBase* comm)
 		XVector_delete_base(comm->m_recvAsyncBuffer);
 		comm->m_recvAsyncBuffer = NULL;
 	}
-	/*if (comm->m_timerGroup)
-		XTimerGroupBase_delete_base(comm->m_timerGroup);*/
 		// 释放父对象
 	XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(comm);
 }
@@ -72,16 +70,24 @@ bool VXCommunicatorBase_connect(XCommunicatorBase* comm)
 		return true;
 	if (XIODeviceBase_isOpen_base(comm->m_io))
 		return true;
-	return XIODeviceBase_open_base(comm->m_io,XIODeviceBase_ReadWrite);
+	if (XIODeviceBase_open_base(comm->m_io, XIODeviceBase_ReadWrite))
+	{
+		XCommunicatorBase_connect_signal(comm);
+		return true;
+	}
+	return false;
 }
 
 bool VXCommunicatorBase_disconnect(XCommunicatorBase* comm)
 {
-	if (comm->m_io == NULL)
+	if (comm->m_io == NULL|| !VXCommunicatorBase_isConnected(comm))
 		return false;
-	if (comm->m_io->m_mode != XIODeviceBase_NotOpen)
-		return XIODeviceBase_close_base(comm->m_io);
-	return true;
+	if (XIODeviceBase_close_base(comm->m_io))
+	{
+		XCommunicatorBase_disconnect_signal(comm);
+		return true;
+	}
+	return false;
 }
 
 bool VXCommunicatorBase_isConnected(XCommunicatorBase* comm)
@@ -113,7 +119,7 @@ size_t VXCommunicatorBase_recv(XCommunicatorBase* comm, void* data, size_t maxSi
 	if (comm->m_io == NULL)
 		return 0;
 	size_t size = 0,readSize=0;
-	XTimerTimeWheel* timer = NULL;
+	//XTimerTimeWheel* timer = NULL;
 	if (comm->m_opt_timeout != 0)
 	{//设置了超时时间
 		comm->m_currentTimeout = XTimerBase_getCurrentTime();
@@ -176,7 +182,7 @@ static void recvAsync(XCommunicatorBase* comm)
 			XContainerSize(comm->m_recvAsyncBuffer) += readSize;
 			if (XContainerSize(comm->m_recvAsyncBuffer) >= buffCapacity)
 			{//缓冲区已满
-
+				XCommunicatorBase_recvBuffFull_signal(comm,comm->m_recvAsyncBuffer);
 			}
 		}
 		//if (readSize > 0)

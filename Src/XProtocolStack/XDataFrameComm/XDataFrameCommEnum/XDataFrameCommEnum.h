@@ -62,8 +62,8 @@ typedef enum {
     XDFC_FRAME_END_MARKER    // 帧标志结束
 } XDFC_FrameEndType;
 #if XDFC_ENUM_TO_STRING
-    //XDataFrameComm协议栈事件类型转string字符串常量输出
-    const char* XDataFrameComm_EventType_toString(XDFC_EventType type);
+//XDataFrameComm协议栈事件类型转string字符串常量输出
+const char* XDataFrameComm_EventType_toString(XDFC_EventType type);
 #endif // XMB_ENUM_TO_STRING
 
 #ifdef __cplusplus

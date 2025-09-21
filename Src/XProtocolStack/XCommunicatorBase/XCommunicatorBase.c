@@ -74,3 +74,24 @@ void XCommunicatorBase_getOption_base(XCommunicatorBase* comm, int optionId, voi
         return;
     XClassGetVirtualFunc(comm, EXCommunicatorBase_GetOption, void(*)(XCommunicatorBase*, int, void*, size_t))(comm, optionId, value, size);
 }
+
+void* XCommunicatorBase_connect_signal(XCommunicatorBase* comm)
+{
+    if (comm)
+        XObject_emitSignal(comm, XCommunicatorBase_connect_signal,NULL,XEVENT_PRIORITY_NORMAL);
+    return XCommunicatorBase_connect_signal;
+}
+
+void* XCommunicatorBase_disconnect_signal(XCommunicatorBase* comm)
+{
+    if (comm)
+        XObject_emitSignal(comm, XCommunicatorBase_disconnect_signal, NULL, XEVENT_PRIORITY_NORMAL);
+    return XCommunicatorBase_disconnect_signal;
+}
+
+void* XCommunicatorBase_recvBuffFull_signal(XCommunicatorBase* comm, XVector* buffer)
+{
+    if (comm)
+        XObject_emitSignal(comm, XCommunicatorBase_recvBuffFull_signal, buffer, XEVENT_PRIORITY_NORMAL);
+    return XCommunicatorBase_recvBuffFull_signal;
+}

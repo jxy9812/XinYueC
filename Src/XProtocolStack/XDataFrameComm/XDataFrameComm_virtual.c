@@ -69,14 +69,14 @@ XVtable* XDataFrameComm_class_init()
 #endif
 	return XVTABLE_DEFAULT;
 }
-
+//接受数据验证
 void XDataFrameComm_recvValid(XDataFrameComm* comm)
 {
 	if (XVector_isEmpty_base(comm->m_class.m_recvAsyncBuffer))
 		return;//数据缓冲区是空的也就没必要继续了
 	
 	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_class.m_recvAsyncBuffer))
-	{
+	{//真验证失败,错误帧
 		XDataFrameComm_postEvent(comm, XEventMin_create(comm,XDFC_RX_FRAME_ERROR, 0));
 		return;//校验没通过
 	}

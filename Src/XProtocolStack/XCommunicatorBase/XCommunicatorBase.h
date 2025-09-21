@@ -40,10 +40,7 @@ typedef struct XCommunicatorBase
 	uint16_t m_opt_timeout;//操作超时时间（毫秒），影响 Send/Receive 的阻塞时长。
 	size_t   m_currentTimeout;//调用阻塞函数的时候记录开始时间 
 	XIODeviceBase* m_io;//io设备
-	//void* m_userData;//用户数据
-	//RecvDataCallback m_recvDataCallback;//接收数据回调函数
 	XVector* m_recvAsyncBuffer;//异步接收数据的缓冲区
-	//XTimerGroupBase* m_timerGroup;//定时器组,默认使用主线程的全局时间轮定时器组管理
 }XCommunicatorBase;
 XVtable* XCommunicatorBase_class_init();
 void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io);
@@ -58,7 +55,10 @@ void XCommunicatorBase_setOption_base(XCommunicatorBase* comm, int optionId, con
 void XCommunicatorBase_getOption_base(XCommunicatorBase* comm, int optionId, void* value, size_t* size);
 #define XCommunicatorBase_delete_base			XObject_delete_base
 #define XCommunicatorBase_poll_base				XObject_poll_base
-
+/*										信号											*/	
+void* XCommunicatorBase_connect_signal(XCommunicatorBase* comm);
+void* XCommunicatorBase_disconnect_signal(XCommunicatorBase* comm);
+void* XCommunicatorBase_recvBuffFull_signal(XCommunicatorBase* comm, XVector* buffer);
 #ifdef __cplusplus
 }
 #endif
