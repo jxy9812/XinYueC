@@ -1,6 +1,7 @@
 ﻿#include "XState.h"
 #include "XMemory.h"
 #include "XStack.h"
+#include "XSignalTransition.h"
 #include <string.h>
 #define INITIAL_CAPACITY 4
 bool XStateMachine_isActive(const XStateMachine* machine, const XAbstractState* state);
@@ -274,8 +275,17 @@ void VXState_setMachine(XState* state, XStateMachine* machine)
             {
                 XStack_push_base(stack, state->m_childStates + i);
             }
-            //如果是信号转化条件，检查链接信号与槽
-            /*if(state->)*/
+            ////如果是信号转化条件，检查链接信号与槽
+            //for (size_t i = 0; i < state->m_transitionCount; i++)
+            //{
+            //    if (XClassGetVtable(state->m_transitions[i]) == XSignalTransition_class_init())
+            //    {//当前是信号转换类
+            //        XSignalTransition* transition = state->m_transitions[i];
+            //        if (transition->m_connection|| !transition->m_sender)
+            //            continue;
+            //        transition->m_connection=XSignalTransition_connect(transition,transition->m_sender,transition->m_signal,machine,XConnectionType_Auto);
+            //    }
+            //}
         }
         ((XAbstractState*)current)->m_machine = machine;
     }

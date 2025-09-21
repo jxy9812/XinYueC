@@ -8,11 +8,11 @@ XVtable* XAbstractTransition_class_init()
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XClass))
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XAbstractTransition))
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+        XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 
   /*  void* table[] =
     {
@@ -20,6 +20,7 @@ XVtable* XAbstractTransition_class_init()
 
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);*/
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, XAbstractTransition_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, NULL);
 #if SHOWCONTAINERSIZE
     printf("XAbstractTransition size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -29,7 +30,8 @@ XVtable* XAbstractTransition_class_init()
 void XAbstractTransition_init(XAbstractTransition* transition, XTransitionType type) {
     if (!transition) return;
     memset(((XClass*)transition)+1,0,sizeof(XAbstractTransition)-sizeof(XClass));
-    XClass_init(transition);
+    XObject_init(transition);
+    XClassGetVtable(transition) = XAbstractTransition_class_init();
     //transition->m_sourceState = NULL;
     //transition->m_targetState = NULL;
     //transition->m_condition = NULL;
@@ -73,23 +75,23 @@ void XAbstractTransition_setCondition(XAbstractTransition* transition, XAbstract
     }
 }
 
-bool XAbstractTransition_checkCondition(const XAbstractTransition* transition, const XEvent* event) {
+bool XAbstractTransition_checkCondition(const XAbstractTransition* transition) {
     if (!transition) return false;
 
     // 如果没有条件，默认返回true
     if (!transition->m_condition) return true;
-
     // 调用条件函数
-    return transition->m_condition(transition, event);
+    return transition->m_condition(transition);
 }
 
-bool XAbstractTransition_execute(XAbstractTransition* transition, XStateMachine* machine, const XEvent* event) {
+bool XAbstractTransition_execute(XAbstractTransition* transition, XStateMachine* machine) {
     if (!transition || !machine || !transition->m_sourceState || !transition->m_targetState) {
         return false;
     }
 
     // 检查条件是否满足
-    if (!XAbstractTransition_checkCondition(transition, event)) {
+    if (!XAbstractTransition_checkCondition(transition)) 
+    {
         return false;
     }
 
@@ -118,4 +120,6 @@ void XAbstractTransition_deinit(XAbstractTransition* transition)
         XState_removeTransition((XState*)transition->m_sourceState, transition);
         transition->m_sourceState = NULL;
     }
+    //调用父类释放函数
+    XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(transition);
 }

@@ -4,7 +4,8 @@
 extern "C" {
 #endif
 #include "XAbstractState.h"
-
+XCLASS_DEFINE_BEGING(XHistoryState)
+XCLASS_DEFINE_EXTEND_END(XHistoryState, XAbstractState);
 /**
  * @brief 历史状态类型枚举
  */
@@ -23,6 +24,7 @@ typedef struct XHistoryState {
     XAbstractState* m_storedState;    // 存储的历史状态
 } XHistoryState;
 
+XVtable* XHistoryState_class_init();
 /**
  * @brief 创建历史状态实例
  * @param m_type 历史状态类型
@@ -41,7 +43,8 @@ void XHistoryState_init(XHistoryState* state, XHistoryStateType type);
  * @brief 销毁历史状态
  * @param state 历史状态实例
  */
-void XHistoryState_destroy(XHistoryState* state);
+#define XHistoryState_delete_base       XAbstractState_delete_base
+#define XHistoryState_deinit_base       XAbstractState_deinit_base
 
 /**
  * @brief 获取历史状态类型

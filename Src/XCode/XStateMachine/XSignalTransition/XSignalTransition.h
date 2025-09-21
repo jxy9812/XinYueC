@@ -16,10 +16,11 @@ XCLASS_DEFINE_EXTEND_END(XSignalTransition, XAbstractTransition);
 typedef struct XSignalTransition {
     XAbstractTransition m_class;  // 继承XAbstractTransition
     XObject* m_sender;             // 信号发送者
-    size_t m_signal;          // 信号
+    size_t m_signal;               // 信号
+    void* m_signalArgs;            //来自信号的参数
     XConnection* m_connection;     // 信号连接
 } XSignalTransition;
-
+XVtable* XSignalTransition_class_init();
 XSignalTransition* XSignalTransition_create();
 /**
  * @brief 创建信号转换实例
@@ -59,7 +60,7 @@ XObject* XSignalTransition_sender(const XSignalTransition* transition);
 const char* XSignalTransition_signal(const XSignalTransition* transition);
 
 //链接信号
-bool XSignalTransition_connect(XSignalTransition* transition, XObject* sender, size_t signal, XStateMachine* machine,XConnectionType type);
+bool XSignalTransition_connect(XSignalTransition* transition, XObject* sender, size_t signal,XConnectionType type);
 #ifdef __cplusplus
 }
 #endif

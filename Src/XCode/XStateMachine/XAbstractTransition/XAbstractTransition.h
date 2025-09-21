@@ -11,8 +11,9 @@ typedef struct XEvent XEvent;
 typedef struct XStateMachine XStateMachine;
 typedef struct XAbstractTransition XAbstractTransition;
 XCLASS_DEFINE_BEGING(XAbstractTransition)
-XCLASS_DEFINE_ENUM(XAbstractTransition, OnEntered) = XCLASS_VTABLE_GET_SIZE(XClass),
-XCLASS_DEFINE_END(XAbstractTransition)
+XCLASS_DEFINE_EXTEND_END(XAbstractTransition, XObject);
+//XCLASS_DEFINE_ENUM(XAbstractTransition, OnEntered) = XCLASS_VTABLE_GET_SIZE(XClass),
+//XCLASS_DEFINE_END(XAbstractTransition)
 /**
  * @brief 转换类型枚举，标识不同的转换子类
  */
@@ -28,13 +29,13 @@ typedef enum {
  * @param event 事件
  * @return 满足条件返回true，否则返回false
  */
-typedef bool (*XAbstractTransitionCondition)(const XAbstractTransition* transition, const XEvent* event);
+typedef bool (*XAbstractTransitionCondition)(const XAbstractTransition* transition);
 
 /**
  * @brief 抽象转换类，所有转换的基类
  */
 typedef struct XAbstractTransition {
-    XClass m_class;                // 继承XObject
+    XObject m_class;                 // 继承XObject
     XTransitionType m_type;          // 转换类型
     XAbstractState* m_sourceState;   // 源状态
     XAbstractState* m_targetState;   // 目标状态
@@ -94,19 +95,17 @@ void XAbstractTransition_setCondition(XAbstractTransition* transition, XAbstract
 /**
  * @brief 检查转换条件是否满足
  * @param transition 转换实例
- * @param event 事件
  * @return 满足返回true，否则返回false
  */
-bool XAbstractTransition_checkCondition(const XAbstractTransition* transition, const XEvent* event);
+bool XAbstractTransition_checkCondition(const XAbstractTransition* transition);
 
 /**
  * @brief 执行转换
  * @param transition 转换实例
  * @param m_machine 状态机
- * @param event 触发事件
  * @return 成功返回true，否则返回false
  */
-bool XAbstractTransition_execute(XAbstractTransition* transition, XStateMachine* machine, const XEvent* event);
+bool XAbstractTransition_execute(XAbstractTransition* transition, XStateMachine* machine);
 
 /**
  * @brief 设置用户数据

@@ -7,13 +7,38 @@ static void XSignalTransition_onSignalTriggered(XSignalTransition* transition, X
 static void signalSlotCallback(XObject* sender, XObject* receiver, void* args) 
 {
     XSignalTransition* transition = (XSignalTransition*)receiver;
-    XStateMachine* machine = (XStateMachine*)args;
-
-    if (transition && machine) {
+    XStateMachine* machine = NULL;
+    if (transition->m_class.m_sourceState)
+        machine = transition->m_class.m_sourceState->m_machine;
+    if (transition && machine)
+    {
+        transition->m_signalArgs = args;
         XSignalTransition_onSignalTriggered(transition, machine);
+        transition->m_signalArgs = NULL;
     }
 }
+static void XSignalTransition_deinit(XSignalTransition* transition);
+XVtable* XSignalTransition_class_init()
+{
+    XVTABLE_CREAT_DEFAULT
+#if VTABLE_ISSTACK
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XAbstractTransition))
+#else
+        XVTABLE_HEAP_INIT_DEFAULT
+#endif
+        XVTABLE_INHERIT_DEFAULT(XAbstractTransition_class_init());
 
+    /*  void* table[] =
+      {
+      };
+
+      XVTABLE_ADD_FUNC_LIST_DEFAULT(table);*/
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, XSignalTransition_deinit);
+#if SHOWCONTAINERSIZE
+    printf("XSignalTransition size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
+    return XVTABLE_DEFAULT;
+}
 XSignalTransition* XSignalTransition_create() 
 {
     XSignalTransition* transition = (XSignalTransition*)XMemory_malloc(sizeof(XSignalTransition));
@@ -26,8 +51,7 @@ XSignalTransition* XSignalTransition_create()
 XSignalTransition* XSignalTransition_create_signal(XObject* sender, size_t signal)
 {
     XSignalTransition* transition = XSignalTransition_create();
-    transition->m_sender = sender;
-    transition->m_signal = signal;
+    XSignalTransition_connect(transition,sender,signal,XConnectionType_Queued);
     return transition;
 }
 
@@ -35,31 +59,14 @@ void XSignalTransition_init(XSignalTransition* transition)
 {
     if (!transition) return;
 
-    XAbstractTransition_init(&transition->m_class, XSignalTransitionType);
+    XAbstractTransition_init(transition, XSignalTransitionType);
+    XClassGetVtable(transition) = XSignalTransition_class_init();
     transition->m_sender = NULL;
     transition->m_signal = NULL;
     transition->m_connection = NULL;
 
     transition->m_connection = NULL;
 }
-
-//void XSignalTransition_destroy(XSignalTransition* transition) {
-//    if (!transition) return;
-//
-//    // 断开信号连接
-//    if (transition->m_connection) {
-//        XObject_disconnect_conn(transition->m_connection);
-//        transition->m_connection = NULL;
-//    }
-//
-//    // 释放信号名称
-//    if (transition->m_signal) {
-//        free((void*)transition->m_signal);
-//        transition->m_signal =0;
-//    }
-//
-//    //XAbstractTransition_destroy(&transition->m_class);
-//}
 
 XObject* XSignalTransition_sender(const XSignalTransition* transition) {
     return transition ? transition->m_sender : NULL;
@@ -69,13 +76,16 @@ const char* XSignalTransition_signal(const XSignalTransition* transition) {
     return transition ? transition->m_signal : NULL;
 }
 
-bool XSignalTransition_connect(XSignalTransition* transition, XObject* sender, size_t signal, XStateMachine* machine,XConnectionType type)
+bool XSignalTransition_connect(XSignalTransition* transition, XObject* sender, size_t signal,XConnectionType type)
 {
-    if(!transition||!machine)
+    if(!transition)
         return false;
-    transition->m_sender = sender;
-    transition->m_signal = signal;
-    transition->m_connection=XObject_connect(sender?sender:machine,signal, machine, signalSlotCallback,type);
+    transition->m_connection=XObject_connect(sender?sender:transition,signal, transition, signalSlotCallback,type);
+    if (transition->m_connection)
+    {
+        transition->m_sender = sender;
+        transition->m_signal = signal;
+    }
     return transition->m_connection != NULL;
 }
 
@@ -84,5 +94,18 @@ void XSignalTransition_onSignalTriggered(XSignalTransition* transition, XStateMa
     if (!transition || !machine) return;
 
     // 执行转换
-    XAbstractTransition_execute(&transition->m_class, machine, NULL);
+    XAbstractTransition_execute(transition, machine);
+}
+
+void XSignalTransition_deinit(XSignalTransition* transition)
+{
+     // 断开信号连接
+    if (transition->m_connection) 
+    {
+        XObject_disconnect_conn(transition->m_connection);
+        transition->m_connection = NULL;
+    }
+    transition->m_signal = 0;
+    //调用父类释放函数
+    XVtableGetFunc(XAbstractTransition_class_init(), EXClass_Deinit, void(*)(XAbstractTransition*))(transition);
 }

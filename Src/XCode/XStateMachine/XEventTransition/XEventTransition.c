@@ -17,11 +17,11 @@ XVtable* XEventTransition_class_init()
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XAbstractTransition))
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XEventTransition))
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+        XVTABLE_INHERIT_DEFAULT(XAbstractTransition_class_init());
 
     /*  void* table[] =
       {
@@ -46,9 +46,9 @@ XEventTransition* XEventTransition_create(XEventType eventType) {
 void XEventTransition_init(XEventTransition* transition, XEventType eventType) {
     if (!transition) return;
 
-    XAbstractTransition_init(&transition->m_class, XEventTransitionType);
+    XAbstractTransition_init(transition, XEventTransitionType);
     transition->m_eventType = eventType;
-
+    XClassGetVtable(transition) = XEventTransition_class_init();
     // 注册事件过滤器
     // 注意：实际使用时需要在添加到状态机时完成事件过滤注册
 }
@@ -78,11 +78,14 @@ bool XEventTransition_processEvent(XEventTransition* transition, XStateMachine* 
     //}
 
     // 执行转换
-    return XAbstractTransition_execute(transition, machine, event);
+    transition->m_event = event;
+    bool is_ok=XAbstractTransition_execute(transition, machine);
+    transition->m_event = NULL;
+    return is_ok;
 }
 
 void XEventTransition_deinit(XEventTransition* transition)
 {
     //调用父类释放函数
-    XVtableGetFunc(XAbstractState_class_init(), EXClass_Deinit, void(*)(XEventTransition*))(transition);
+    XVtableGetFunc(XAbstractTransition_class_init(), EXClass_Deinit, void(*)(XAbstractState*))(transition);
 }

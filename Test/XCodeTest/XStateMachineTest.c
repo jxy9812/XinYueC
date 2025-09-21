@@ -29,17 +29,19 @@ static void FinalStatExitedCallback(XAbstractState* state) {
 }
 
 // 修正条件函数名称，明确是B到最终状态的转换
-static bool BtoFinal(const XAbstractTransition* transition, const XEvent* event) {
+static bool BtoFinal(const XAbstractTransition* transition) 
+{
     XPrintf("B转换到Final条件\n");
     return true;
 }
 //释放槽函数
 static void deleteSlot(XObject* sender, XObject* receiver, void* args)
 {
+    XPrintf("释放资源\n");
     XStateMachine* machine = sender;
     XState_delete_base(machine->m_initialState);
     XStateMachine_delete_base(sender);
-    XPrintf("释放资源\n");
+    
     XCoreApplication_quit();
 }
 void XStateMachineEventTest() 
@@ -94,15 +96,15 @@ void XStateMachineEventTest()
         if(isWhile)XCoreApplication_exec();
     } while (isWhile);
 }
+
 void XStateMachineSignalTest()
 {
     bool isWhile = false;
     do
     {
-        XPrintf("XStateMachine 事件测试\n");
+        XPrintf("XStateMachine 信号测试\n");
         XStateMachine* machine = XStateMachine_create();
         XObject_connect(machine, XSignal(XStateMachine_stop_signal), machine, deleteSlot, XConnectionType_Queued);
-        XObject_addEventFilter(machine, XEVENT_TRANSITION, XStateMachine_handleEventCB, machine);
         // 创建状态
         XState* stateA = XState_create();
         XState* stateB = XState_create();
@@ -122,7 +124,7 @@ void XStateMachineSignalTest()
         XState_setInitialState(stateA, (XAbstractState*)stateB);
 
         // 修正1：转换源状态为stateB，目标状态为finalState
-        XSignalTransition* transition = XSignalTransition_create();
+        XSignalTransition* transition = XSignalTransition_create_signal(machine,XSignal(XStateMachine_start_signal));
         XAbstractTransition_setTargetState(transition, (XAbstractState*)finalState);  // 目标改为最终状态
         XAbstractTransition_setCondition(transition, BtoFinal);
         XState_addTransition(stateB, (XAbstractTransition*)transition);  // 源状态改为stateB
@@ -134,16 +136,13 @@ void XStateMachineSignalTest()
         // 启动状态机
         XStateMachine_start(machine);  // 预期：A进入 → B进入
 
-        // 触发事件
-        XObject_postEvent(machine, XEventMin_create(machine, XEVENT_TRANSITION, 0), XEVENT_PRIORITY_NORMAL);
-
         // 清理资源
         /*现在无法清理资源，deleteSlot 用信号和槽的方式异步清理*/
         //XState_delete_base(stateA);  // 自动销毁子状态和转换
         //XFinalState_destroy(finalState);
         //XStateMachine_delete_base(m_machine);
         //XCoreApplication_quit();
-        //if (isWhile)
+        if (isWhile)
             XCoreApplication_exec();
     } while (isWhile);
 }
