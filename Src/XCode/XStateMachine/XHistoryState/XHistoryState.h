@@ -1,6 +1,8 @@
 ﻿#ifndef XHISTORYSTATE_H
 #define XHISTORYSTATE_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include "XAbstractState.h"
 
 /**
@@ -75,5 +77,7 @@ void XHistoryState_storeState(XHistoryState* state, XAbstractState* storedState)
  * @param m_machine 所属状态机
  */
 void XHistoryState_activate(XHistoryState* state, XStateMachine* machine);
-
+#ifdef __cplusplus
+}
+#endif
 #endif // XHISTORYSTATE_H

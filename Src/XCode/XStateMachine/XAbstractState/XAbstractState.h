@@ -1,6 +1,8 @@
 ﻿#ifndef XABSTRACTSTATE_H
 #define XABSTRACTSTATE_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include "XClass.h"
 
 // 前向声明
@@ -139,5 +141,7 @@ void XAbstractState_setEnteredCallback(XAbstractState* state, XStateEnteredCallb
  * @param callback 回调函数
  */
 void XAbstractState_setExitedCallback(XAbstractState* state, XStateExitedCallback callback);
-
+#ifdef __cplusplus
+}
+#endif
 #endif // XABSTRACTSTATE_H

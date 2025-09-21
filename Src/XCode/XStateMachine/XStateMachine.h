@@ -1,6 +1,8 @@
 ﻿#ifndef XSTATEMACHINE_H
 #define XSTATEMACHINE_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include "XObject.h"
 #include "XAbstractState.h"
 #include "XAbstractTransition.h"
@@ -178,5 +180,7 @@ void* XStateMachine_start_signal(XStateMachine* machine);
 void* XStateMachine_stop_signal(XStateMachine* machine);
 void* XStateMachine_pause_signal(XStateMachine* machine);
 void* XStateMachine_resume_signal(XStateMachine* machine);
-
+#ifdef __cplusplus
+}
+#endif
 #endif // XSTATEMACHINE_H

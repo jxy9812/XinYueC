@@ -10,6 +10,7 @@ void XMenu_XCodeTest(XMenu* root);
 void XMenu_XDebugTest(XMenu* root);
 void XMenu_XStateMachineTest(XMenu* root);
 void XStateMachineEventTest();
+void XStateMachineSignalTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

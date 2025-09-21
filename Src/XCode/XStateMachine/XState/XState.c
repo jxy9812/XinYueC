@@ -142,7 +142,7 @@ void VXState_deinit(XState* state)
 
     // 移除所有转换
     for (size_t i = 0; i < state->m_transitionCount; i++) {
-        XAbstractTransition_destroy(state->m_transitions[i]);
+        XAbstractTransition_delete_base(state->m_transitions[i]);
     }
     XMemory_free(state->m_transitions);
     state->m_transitions = NULL;
@@ -269,10 +269,13 @@ void VXState_setMachine(XState* state, XStateMachine* machine)
         XStack_pop_base(stack);
         if(XClassGetVtable(current) == XState_class_init())//看虚函数表判断是否是XState类
         {
-            for (size_t i = 0; i < ((XState*)current)->m_childCount; i++)
+            XState* state=((XState*)current);
+            for (size_t i = 0; i < state->m_childCount; i++)
             {
-                XStack_push_base(stack, ((XState*)current)->m_childStates + i);
+                XStack_push_base(stack, state->m_childStates + i);
             }
+            //如果是信号转化条件，检查链接信号与槽
+            /*if(state->)*/
         }
         ((XAbstractState*)current)->m_machine = machine;
     }

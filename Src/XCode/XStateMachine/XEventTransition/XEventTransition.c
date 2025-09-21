@@ -1,7 +1,7 @@
 ﻿#include "XEventTransition.h"
 #include "XStateMachine.h"
 #include "XMemory.h"
-
+static void XEventTransition_deinit(XEventTransition* transition);
 // 事件过滤回调函数
 static bool eventFilterCallback(XObject* object, XEvent* event, void* userData) {
     XEventTransition* transition = (XEventTransition*)userData;
@@ -11,6 +11,28 @@ static bool eventFilterCallback(XObject* object, XEvent* event, void* userData) 
         return XEventTransition_processEvent(transition, machine, event);
     }
     return false;
+}
+
+XVtable* XEventTransition_class_init()
+{
+    XVTABLE_CREAT_DEFAULT
+#if VTABLE_ISSTACK
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XAbstractTransition))
+#else
+        XVTABLE_HEAP_INIT_DEFAULT
+#endif
+        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+
+    /*  void* table[] =
+      {
+      };
+
+      XVTABLE_ADD_FUNC_LIST_DEFAULT(table);*/
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, XEventTransition_deinit);
+#if SHOWCONTAINERSIZE
+    printf("XEventTransition size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
+    return XVTABLE_DEFAULT;
 }
 
 XEventTransition* XEventTransition_create(XEventType eventType) {
@@ -31,14 +53,6 @@ void XEventTransition_init(XEventTransition* transition, XEventType eventType) {
     // 注意：实际使用时需要在添加到状态机时完成事件过滤注册
 }
 
-void XEventTransition_destroy(XEventTransition* transition) {
-    if (!transition) return;
-
-    // 移除事件过滤器
-    // 注意：实际使用时需要在从状态机移除时完成
-
-    XAbstractTransition_destroy(&transition->m_class);
-}
 
 XEventType XEventTransition_eventType(const XEventTransition* transition) {
     return transition ? transition->m_eventType : 0;
@@ -65,4 +79,10 @@ bool XEventTransition_processEvent(XEventTransition* transition, XStateMachine* 
 
     // 执行转换
     return XAbstractTransition_execute(transition, machine, event);
+}
+
+void XEventTransition_deinit(XEventTransition* transition)
+{
+    //调用父类释放函数
+    XVtableGetFunc(XAbstractState_class_init(), EXClass_Deinit, void(*)(XEventTransition*))(transition);
 }

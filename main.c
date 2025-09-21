@@ -51,7 +51,8 @@ int main(int argc, char* args[])
 	//XJsonArrayTest();
 	//XJsonObjectTest();
 	//return;
-	XMenuTest_run();
+	XStateMachineSignalTest();
+	return XMenuTest_run();
 	//XStateMachineEventTest();
 	return XCoreApplication_exec();
 	cJsonTest();

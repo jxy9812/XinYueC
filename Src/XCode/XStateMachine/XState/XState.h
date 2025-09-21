@@ -1,11 +1,14 @@
 ﻿#ifndef XSTATE_H
 #define XSTATE_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include "XAbstractState.h"
 #include "XAbstractTransition.h"
 XCLASS_DEFINE_BEGING(XState)
-XCLASS_DEFINE_ENUM(XState, NULL) = XCLASS_VTABLE_GET_SIZE(XAbstractState),
-XCLASS_DEFINE_END(XState)
+XCLASS_DEFINE_EXTEND_END(XState, XAbstractState);
+//XCLASS_DEFINE_ENUM(XState, NULL) = XCLASS_VTABLE_GET_SIZE(XAbstractState),
+//XCLASS_DEFINE_END(XState)
 /**
  * @brief 基础状态类，可包含子状态和转换
  */
@@ -128,5 +131,7 @@ void XState_activate_base(XState* state);
  * @param m_machine 所属状态机
  */
 void XState_deactivate_base(XState* state);
-
+#ifdef __cplusplus
+}
+#endif
 #endif // XSTATE_H

@@ -1,6 +1,8 @@
 ﻿#ifndef XFINALSTATE_H
 #define XFINALSTATE_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include "XAbstractState.h"
 
 /**
@@ -34,5 +36,7 @@ void XFinalState_destroy(XFinalState* state);
  * @param m_machine 所属状态机
  */
 void XFinalState_activate(XFinalState* state, XStateMachine* machine);
-
+#ifdef __cplusplus
+}
+#endif
 #endif // XFINALSTATE_H

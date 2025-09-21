@@ -1,6 +1,8 @@
 ﻿#ifndef XABSTRACTTRANSITION_H
 #define XABSTRACTTRANSITION_H
-
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include "XObject.h"
 #include "XAbstractState.h"
 
@@ -8,7 +10,9 @@
 typedef struct XEvent XEvent;
 typedef struct XStateMachine XStateMachine;
 typedef struct XAbstractTransition XAbstractTransition;
-
+XCLASS_DEFINE_BEGING(XAbstractTransition)
+XCLASS_DEFINE_ENUM(XAbstractTransition, OnEntered) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_END(XAbstractTransition)
 /**
  * @brief 转换类型枚举，标识不同的转换子类
  */
@@ -37,7 +41,7 @@ typedef struct XAbstractTransition {
     XAbstractTransitionCondition m_condition; // 转换条件
     void* m_userData;                // 用户数据
 } XAbstractTransition;
-
+XVtable* XAbstractTransition_class_init();
 /**
  * @brief 初始化抽象转换
  * @param transition 转换实例
@@ -49,7 +53,8 @@ void XAbstractTransition_init(XAbstractTransition* transition, XTransitionType t
  * @brief 销毁抽象转换
  * @param transition 转换实例
  */
-void XAbstractTransition_destroy(XAbstractTransition* transition);
+#define XAbstractTransition_delete_base       XClass_delete_base
+#define XAbstractTransition_deinit_base       XClass_deinit_base
 
 /**
  * @brief 获取源状态
@@ -116,5 +121,7 @@ void XAbstractTransition_setUserData(XAbstractTransition* transition, void* data
  * @return 用户数据指针
  */
 void* XAbstractTransition_userData(const XAbstractTransition* transition);
-
+#ifdef __cplusplus
+}
+#endif
 #endif // XABSTRACTTRANSITION_H

@@ -10,6 +10,7 @@ extern "C" {
 typedef struct XMenu
 {
 	XHTreeNode m_class;
+	void* m_userData;
 }XMenu;
 
 XMenu* XMenu_create(const char* title);

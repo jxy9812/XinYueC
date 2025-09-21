@@ -3,6 +3,29 @@
 #include "XState.h"
 #include "XMemory.h"
 #include <string.h>
+static void XAbstractTransition_deinit(XAbstractTransition* transition);
+XVtable* XAbstractTransition_class_init()
+{
+    XVTABLE_CREAT_DEFAULT
+#if VTABLE_ISSTACK
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XClass))
+#else
+        XVTABLE_HEAP_INIT_DEFAULT
+#endif
+        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+
+  /*  void* table[] =
+    {
+    };
+
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);*/
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, XAbstractTransition_deinit);
+#if SHOWCONTAINERSIZE
+    printf("XAbstractTransition size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
+    return XVTABLE_DEFAULT;
+}
+
 void XAbstractTransition_init(XAbstractTransition* transition, XTransitionType type) {
     if (!transition) return;
     memset(((XClass*)transition)+1,0,sizeof(XAbstractTransition)-sizeof(XClass));
@@ -12,18 +35,6 @@ void XAbstractTransition_init(XAbstractTransition* transition, XTransitionType t
     //transition->m_condition = NULL;
     //transition->m_userData = NULL;
     transition->m_type = type;
-}
-
-void XAbstractTransition_destroy(XAbstractTransition* transition) {
-    if (!transition) return;
-
-    // 从源状态中移除转换
-    if (transition->m_sourceState && transition->m_sourceState->m_type == XStateType_Basic) {
-        XState_removeTransition((XState*)transition->m_sourceState, transition);
-    }
-
-    XObject_deinit_base(&transition->m_class);
-    XMemory_free(transition);
 }
 
 XAbstractState* XAbstractTransition_sourceState(const XAbstractTransition* transition) {
@@ -97,4 +108,14 @@ void XAbstractTransition_setUserData(XAbstractTransition* transition, void* data
 
 void* XAbstractTransition_userData(const XAbstractTransition* transition) {
     return transition ? transition->m_userData : NULL;
+}
+
+void XAbstractTransition_deinit(XAbstractTransition* transition)
+{
+    // 从源状态中移除转换
+    if (transition->m_sourceState && transition->m_sourceState->m_type == XStateType_Basic) 
+    {
+        XState_removeTransition((XState*)transition->m_sourceState, transition);
+        transition->m_sourceState = NULL;
+    }
 }

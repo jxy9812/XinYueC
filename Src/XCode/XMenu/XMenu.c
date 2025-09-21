@@ -30,6 +30,7 @@ void XMenu_init(XMenu* menu, const char* title)
 	XMenuData data = { 0 };
 	XMenuData_init(&data,title);
 	XHTreeNode_init(menu, &data, sizeof(XMenuData));
+	menu->m_userData = NULL;
 }
 
 void XMenu_setTitle(XMenu* menu, const char* title)

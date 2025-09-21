@@ -3,6 +3,7 @@
 #include "XMenu.h"
 #include "XCoreApplication.h"
 #include "XString.h"
+#include "XPrintf.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,10 +45,11 @@ static void trigger(MenuData* data)
 {
 	if(data->data)
 	{
+		XMenu* menu = *(data->menu);
 		XPrintf("\n开始---------------%s---------------\n", XAction_getText(data->data));
 		XCoreApplication_global()->m_quit = false;
 		XAction_trigger(data->data);
-		XCoreApplication_exec();//有初始化XObject派生类需要调用事件循环
+		*((int*)(&(menu->m_userData)))=XCoreApplication_exec();//有初始化XObject派生类需要调用事件循环
 		XPrintf("\n结束---------------%s---------------\n", XAction_getText(data->data));
 	}
 }
@@ -110,8 +112,11 @@ void XMenuTest_show(XMenu* menu, int column)
 	}
 }
 
-void XMenuTest_run()
+int XMenuTest_run()
 {
 	XMenu* menu = XMenuTest_create();
-	XMenuTest_show(menu,1);
+	XMenuTest_show(menu, 1);
+	int code = *((int*)(&(menu->m_userData)));
+	XMenu_delete(menu);
+	return code;
 }

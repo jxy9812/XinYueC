@@ -14,51 +14,52 @@ static void signalSlotCallback(XObject* sender, XObject* receiver, void* args)
     }
 }
 
-XSignalTransition* XSignalTransition_create(XObject* sender, const char* signal) {
+XSignalTransition* XSignalTransition_create() 
+{
     XSignalTransition* transition = (XSignalTransition*)XMemory_malloc(sizeof(XSignalTransition));
     if (transition) {
-        XSignalTransition_init(transition, sender, signal);
+        XSignalTransition_init(transition);
     }
     return transition;
 }
 
-void XSignalTransition_init(XSignalTransition* transition, XObject* sender, const char* signal) {
+XSignalTransition* XSignalTransition_create_signal(XObject* sender, size_t signal)
+{
+    XSignalTransition* transition = XSignalTransition_create();
+    transition->m_sender = sender;
+    transition->m_signal = signal;
+    return transition;
+}
+
+void XSignalTransition_init(XSignalTransition* transition) 
+{
     if (!transition) return;
 
     XAbstractTransition_init(&transition->m_class, XSignalTransitionType);
-    transition->m_sender = sender;
-    transition->m_signal = signal ? strdup(signal) : NULL;
+    transition->m_sender = NULL;
+    transition->m_signal = NULL;
     transition->m_connection = NULL;
 
-    // 连接信号（修正参数类型）
-    if (sender && signal) {
-        transition->m_connection = XObject_connect(
-            sender,
-            signal,  // 直接传递字符串信号
-            (XObject*)&transition->m_class,
-            (XSlotFunc)signalSlotCallback,
-            XConnectionType_Auto
-        );
-    }
+    transition->m_connection = NULL;
 }
 
-void XSignalTransition_destroy(XSignalTransition* transition) {
-    if (!transition) return;
-
-    // 断开信号连接
-    if (transition->m_connection) {
-        XObject_disconnect_conn(transition->m_connection);
-        transition->m_connection = NULL;
-    }
-
-    // 释放信号名称
-    if (transition->m_signal) {
-        free((void*)transition->m_signal);
-        transition->m_signal =0;
-    }
-
-    XAbstractTransition_destroy(&transition->m_class);
-}
+//void XSignalTransition_destroy(XSignalTransition* transition) {
+//    if (!transition) return;
+//
+//    // 断开信号连接
+//    if (transition->m_connection) {
+//        XObject_disconnect_conn(transition->m_connection);
+//        transition->m_connection = NULL;
+//    }
+//
+//    // 释放信号名称
+//    if (transition->m_signal) {
+//        free((void*)transition->m_signal);
+//        transition->m_signal =0;
+//    }
+//
+//    //XAbstractTransition_destroy(&transition->m_class);
+//}
 
 XObject* XSignalTransition_sender(const XSignalTransition* transition) {
     return transition ? transition->m_sender : NULL;

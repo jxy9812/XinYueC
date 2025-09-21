@@ -7,6 +7,7 @@
 #include"XState.h"
 #include"XFinalState.h"
 #include"XEventTransition.h"
+#include"XSignalTransition.h"
 #include"XPrintf.h"
 static void StateAEnteredCallback(XAbstractState* state) {
     XPrintf("A进入状态 %p\n", state);
@@ -43,7 +44,7 @@ static void deleteSlot(XObject* sender, XObject* receiver, void* args)
 }
 void XStateMachineEventTest() 
 {
-    bool isWhile = true;
+    bool isWhile = false;
     do
     {
         XPrintf("XStateMachine 事件测试\n");
@@ -93,6 +94,59 @@ void XStateMachineEventTest()
         if(isWhile)XCoreApplication_exec();
     } while (isWhile);
 }
+void XStateMachineSignalTest()
+{
+    bool isWhile = false;
+    do
+    {
+        XPrintf("XStateMachine 事件测试\n");
+        XStateMachine* machine = XStateMachine_create();
+        XObject_connect(machine, XSignal(XStateMachine_stop_signal), machine, deleteSlot, XConnectionType_Queued);
+        XObject_addEventFilter(machine, XEVENT_TRANSITION, XStateMachine_handleEventCB, machine);
+        // 创建状态
+        XState* stateA = XState_create();
+        XState* stateB = XState_create();
+        XFinalState* finalState = XFinalState_create();  // 最终状态
+
+        // 设置回调
+        XAbstractState_setEnteredCallback(finalState, FinalStateEnteredCallback);
+        XAbstractState_setExitedCallback(finalState, FinalStatExitedCallback);
+        XAbstractState_setEnteredCallback((XAbstractState*)stateA, StateAEnteredCallback);
+        XAbstractState_setExitedCallback((XAbstractState*)stateA, StateAExitedCallback);
+        XAbstractState_setEnteredCallback((XAbstractState*)stateB, StateBEnteredCallback);
+        XAbstractState_setExitedCallback((XAbstractState*)stateB, StateBExitedCallback);
+
+        // 配置父子关系：stateA包含stateB和finalState，初始子状态为stateB
+        XState_addState(stateA, (XAbstractState*)stateB);
+        XState_addState(stateA, (XAbstractState*)finalState);  // 添加最终状态作为子状态
+        XState_setInitialState(stateA, (XAbstractState*)stateB);
+
+        // 修正1：转换源状态为stateB，目标状态为finalState
+        XSignalTransition* transition = XSignalTransition_create();
+        XAbstractTransition_setTargetState(transition, (XAbstractState*)finalState);  // 目标改为最终状态
+        XAbstractTransition_setCondition(transition, BtoFinal);
+        XState_addTransition(stateB, (XAbstractTransition*)transition);  // 源状态改为stateB
+
+        // 配置状态机
+        XStateMachine_addState(machine, (XAbstractState*)stateA);
+        XStateMachine_setInitialState(machine, (XAbstractState*)stateA);
+
+        // 启动状态机
+        XStateMachine_start(machine);  // 预期：A进入 → B进入
+
+        // 触发事件
+        XObject_postEvent(machine, XEventMin_create(machine, XEVENT_TRANSITION, 0), XEVENT_PRIORITY_NORMAL);
+
+        // 清理资源
+        /*现在无法清理资源，deleteSlot 用信号和槽的方式异步清理*/
+        //XState_delete_base(stateA);  // 自动销毁子状态和转换
+        //XFinalState_destroy(finalState);
+        //XStateMachine_delete_base(m_machine);
+        //XCoreApplication_quit();
+        //if (isWhile)
+            XCoreApplication_exec();
+    } while (isWhile);
+}
 void XMenu_XStateMachineTest(XMenu* root)
 {
 	XMenu* menu = XMenu_create("XStateMachine(状态机)");
@@ -101,4 +155,8 @@ void XMenu_XStateMachineTest(XMenu* root)
 		XAction* action = XMenu_addAction(menu, "Event测试");
 		XAction_setAction(action, XStateMachineEventTest);
 	}
+    {
+        XAction* action = XMenu_addAction(menu, "Signal测试");
+        XAction_setAction(action, XStateMachineSignalTest);
+    }
 }
