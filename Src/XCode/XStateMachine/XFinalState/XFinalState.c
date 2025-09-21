@@ -17,7 +17,7 @@ void XFinalState_init(XFinalState* state) {
 
 void XFinalState_destroy(XFinalState* state) {
     if (!state) return;
-    XAbstractState_destroy(&state->parent);
+    XAbstractState_delete_base(&state->parent);
     XMemory_free(state);
 }
 
@@ -25,7 +25,7 @@ void XFinalState_activate(XFinalState* state, XStateMachine* machine) {
     if (!state || !machine) return;
 
     // 激活最终状态
-    XAbstractState_onEntered(&state->parent);
+    XAbstractState_onEntered_base(&state->parent);
 
     // 发送状态机完成信号
     //XObject_emitSignal((XObject*)machine, "finished()", NULL);

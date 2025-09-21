@@ -3,18 +3,23 @@
 
 #include "XAbstractState.h"
 #include "XAbstractTransition.h"
-
+XCLASS_DEFINE_BEGING(XState)
+XCLASS_DEFINE_ENUM(XState, NULL) = XCLASS_VTABLE_GET_SIZE(XAbstractState),
+XCLASS_DEFINE_END(XState)
 /**
  * @brief 基础状态类，可包含子状态和转换
  */
 typedef struct XState {
     XAbstractState parent;         // 继承XAbstractState
+    struct XAbstractState** childStates;// 子状态列表
+    size_t childCount;             // 子状态数量
+    size_t childCapacity;          // 子状态容量
     XAbstractTransition** transitions;  // 转换列表
     size_t transitionCount;        // 转换数量
     size_t transitionCapacity;     // 转换容量
     XAbstractState* initialState;  // 初始子状态
 } XState;
-
+XVtable* XState_class_init();
 /**
  * @brief 创建状态实例
  * @return 新创建的状态实例，失败返回NULL
@@ -31,7 +36,8 @@ void XState_init(XState* state);
  * @brief 销毁状态
  * @param state 状态实例
  */
-void XState_destroy(XState* state);
+#define XState_delete_base       XAbstractState_delete_base
+#define XState_deinit_base       XAbstractState_deinit_base
 
 /**
  * @brief 添加子状态
@@ -114,13 +120,13 @@ XAbstractState* XState_initialState(const XState* state);
  * @param state 状态实例
  * @param machine 所属状态机
  */
-void XState_activate(XState* state, XStateMachine* machine);
+void XState_activate_base(XState* state);
 
 /**
  * @brief 状态失活时调用
  * @param state 状态实例
  * @param machine 所属状态机
  */
-void XState_deactivate(XState* state, XStateMachine* machine);
+void XState_deactivate_base(XState* state);
 
 #endif // XSTATE_H

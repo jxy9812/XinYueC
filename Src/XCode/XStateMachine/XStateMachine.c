@@ -80,7 +80,7 @@ bool XStateMachine_addState(XStateMachine* machine, XAbstractState* state) {
     {
         // 这里不需要实际存储状态，状态通过父状态关系管理
         //((XAbstractState*)state)->machine = machine;
-        XAbstractState_setMachine(state,machine);
+        XAbstractState_setMachine_base(state,machine);
     }
 
     return true;
@@ -374,7 +374,7 @@ static void XStateMachine_enterState(XStateMachine* machine, XAbstractState* sta
     // 特殊处理不同类型的状态
     switch (state->type) {
     case XStateType_Basic:
-        XState_activate((XState*)state, machine);
+        XState_activate_base((XState*)state);
         break;
     case XStateType_Final:
         XFinalState_activate((XFinalState*)state, machine);
@@ -384,7 +384,7 @@ static void XStateMachine_enterState(XStateMachine* machine, XAbstractState* sta
         break;
     case XStateType_Parallel:
         // 并行状态处理（类似于基本状态，但需要激活所有子状态）
-        XState_activate((XState*)state, machine);
+        XState_activate_base((XState*)state);
         break;
     }
 
@@ -398,7 +398,7 @@ static void XStateMachine_exitState(XStateMachine* machine, XAbstractState* stat
     }
 
     // 退出状态
-    XAbstractState_onExited(state);
+    XAbstractState_onExited_base(state);
 
     // 对于历史状态，存储当前子状态
     if (state->parentState && ((XAbstractState*)state->parentState)->type == XStateType_History) {
@@ -409,10 +409,11 @@ static void XStateMachine_exitState(XStateMachine* machine, XAbstractState* stat
     XStateMachine_removeActiveState(machine, state);
 
     // 退出子状态（历史状态和最终状态没有子状态）
-    if (state->type == XStateType_Basic || state->type == XStateType_Parallel) {
+    if (state->type == XStateType_Basic || state->type == XStateType_Parallel) 
+    {
         XState* basicState = (XState*)state;
-        for (size_t i = 0; i < XAbstractState_childCount(basicState); i++) {
-            XAbstractState* child = XAbstractState_child(basicState, i);
+        for (size_t i = 0; i < XState_childCount(basicState); i++) {
+            XAbstractState* child = XState_child(basicState, i);
             XStateMachine_exitState(machine, child);
         }
     }

@@ -6,7 +6,12 @@
 // 前向声明
 typedef struct XStateMachine XStateMachine;
 typedef struct XState XState;
-
+XCLASS_DEFINE_BEGING(XAbstractState)
+XCLASS_DEFINE_ENUM(XAbstractState, OnEntered) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XAbstractState, OnExited),
+XCLASS_DEFINE_ENUM(XAbstractState, SetMachine),
+XCLASS_DEFINE_ENUM(XAbstractState, SetParentState),
+XCLASS_DEFINE_END(XAbstractState)
 /**
  * @brief 状态类型枚举
  */
@@ -25,9 +30,6 @@ typedef struct XAbstractState
     XClass m_class;                // 继承XObject
     XStateType type;               // 状态类型
     XState* parentState;           // 父状态
-    struct XAbstractState** childStates;  // 子状态列表
-    size_t childCount;             // 子状态数量
-    size_t childCapacity;          // 子状态容量
     XStateMachine* machine;        // 所属状态机
     bool isRunning;                // 是否处于激活状态
     void* userData;                // 用户数据
@@ -47,7 +49,7 @@ typedef void (*XStateEnteredCallback)(XAbstractState* state);
  * @param machine 所属状态机
  */
 typedef void (*XStateExitedCallback)(XAbstractState* state);
-
+XVtable* XAbstractState_class_init();
 /**
  * @brief 初始化抽象状态
  * @param state 状态实例
@@ -59,7 +61,8 @@ void XAbstractState_init(XAbstractState* state, XStateType type);
  * @brief 销毁抽象状态
  * @param state 状态实例
  */
-void XAbstractState_destroy(XAbstractState* state);
+#define XAbstractState_delete_base       XClass_delete_base
+#define XAbstractState_deinit_base       XClass_deinit_base
 
 /**
  * @brief 获取状态类型
@@ -67,10 +70,7 @@ void XAbstractState_destroy(XAbstractState* state);
  * @return 状态类型
  */
 XStateType XAbstractState_type(const XAbstractState* state);
-bool XAbstractState_addState(XAbstractState* state, XAbstractState* child);
-bool XAbstractState_removeState(XAbstractState* state, XAbstractState* child);
-size_t XAbstractState_childCount(const XAbstractState* state);
-XAbstractState* XAbstractState_child(const XAbstractState* state, size_t index);
+
 /**
  * @brief 获取父状态
  * @param state 状态实例
@@ -83,9 +83,9 @@ XState* XAbstractState_parentState(const XAbstractState* state);
  * @param state 状态实例
  * @param m_class 父状态
  */
-void XAbstractState_setParentState(XAbstractState* state, XAbstractState* parent);
+void XAbstractState_setParentState_base(XAbstractState* state, XAbstractState* parent);
 
-void XAbstractState_setMachine(XAbstractState* state, XStateMachine* machine);
+void XAbstractState_setMachine_base(XAbstractState* state, XStateMachine* machine);
 /**
  * @brief 获取所属状态机
  * @param state 状态实例
@@ -118,13 +118,13 @@ void* XAbstractState_userData(const XAbstractState* state);
  * @brief 状态进入事件
  * @param state 状态实例
  */
-void XAbstractState_onEntered(XAbstractState* state);
+void XAbstractState_onEntered_base(XAbstractState* state);
 
 /**
  * @brief 状态退出事件
  * @param state 状态实例
  */
-void XAbstractState_onExited(XAbstractState* state);
+void XAbstractState_onExited_base(XAbstractState* state);
 
 /**
  * @brief 设置状态进入回调

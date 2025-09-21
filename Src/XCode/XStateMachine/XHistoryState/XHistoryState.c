@@ -22,7 +22,7 @@ void XHistoryState_init(XHistoryState* state, XHistoryStateType type) {
 
 void XHistoryState_destroy(XHistoryState* state) {
     if (!state) return;
-    XAbstractState_destroy(&state->parent);
+    XAbstractState_delete_base(&state->parent);
     XMemory_free(state);
 }
 
@@ -50,7 +50,7 @@ void XHistoryState_activate(XHistoryState* state, XStateMachine* machine) {
     if (!state || !machine) return;
 
     // 激活历史状态本身
-    XAbstractState_onEntered(&state->parent);
+    XAbstractState_onEntered_base(&state->parent);
 
     // 确定要恢复的状态
     XAbstractState* target = state->storedState;
@@ -61,10 +61,10 @@ void XHistoryState_activate(XHistoryState* state, XStateMachine* machine) {
     // 如果找到目标状态，激活它
     if (target) {
         if (target->type == XStateType_Basic) {
-            XState_activate((XState*)target, machine);
+            XState_activate_base((XState*)target);
         }
         else {
-            XAbstractState_onEntered(target);
+            XAbstractState_onEntered_base(target);
         }
     }
 }

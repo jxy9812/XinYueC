@@ -170,10 +170,10 @@ void XTransition_trigger(XTransition* transition, XStateMachine* machine, const 
     }
 
     // 退出源状态（使用状态自身的失活方法）
-    XState_deactivate(transition->source, machine);
+    XState_deactivate_base(transition->source);
 
     // 进入目标状态（使用状态自身的激活方法）
-    XState_activate(transition->target, machine);
+    XState_activate_base(transition->target);
 
     // 发送转换触发信号
     //XObject_postEvent((XObject*)transition,

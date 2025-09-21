@@ -235,7 +235,7 @@ void* XObject_deinit_signal(XObject* object)
 {
 	if(object)
 	{
-		XSignalSlot_emit(object->m_signalSlot, XObject_deinit_signal, NULL,XEVENT_PRIORITY_NORMAL);
+		XObject_emitSignal(object, XObject_deinit_signal, NULL,XEVENT_PRIORITY_LOWEST);
 	}
 	return XObject_deinit_signal;
 	

@@ -45,7 +45,7 @@ void XStateMachine_init(XStateMachine* machine);
  * @param machine 状态机实例
  */
 #define XStateMachine_delete_base       XObject_delete_base
-#define XStateMachine_deinit_base       XObject_deinit_event
+#define XStateMachine_deinit_base       XObject_deinit_base
 
 /**
  * @brief 设置初始状态

@@ -41,8 +41,8 @@ void XStateMachineTest() {
     XAbstractState_setExitedCallback((XAbstractState*)stateB, StateBExitedCallback);
 
     // 配置父子关系：stateA包含stateB和finalState，初始子状态为stateB
-    XAbstractState_addState(stateA, (XAbstractState*)stateB);
-    XAbstractState_addState(stateA, (XAbstractState*)finalState);  // 添加最终状态作为子状态
+    XState_addState(stateA, (XAbstractState*)stateB);
+    XState_addState(stateA, (XAbstractState*)finalState);  // 添加最终状态作为子状态
     XState_setInitialState(stateA, (XAbstractState*)stateB);
 
     // 修正1：转换源状态为stateB，目标状态为finalState
