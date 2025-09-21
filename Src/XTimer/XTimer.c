@@ -11,7 +11,7 @@
 #include<string.h>
 static void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callback);
 static void VXTimerBase_setUserData(XTimer* timer, void* userData);
-static void TimerOutCb(XEventMin* event);
+static void TimerOutCb(XEvent* event);
 static  void TimerCallback(void* userData);
 XVtable* XTimer_class_init()
 {
@@ -77,9 +77,9 @@ XTimer* XTimer_create()
 }
 void TimerCallback(void* userData)
 {
-	XObject_postEvent(userData,XEventMin_create(NULL,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
+	XObject_postEvent(userData,XEvent_create(NULL,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
 }
-void TimerOutCb(XEventMin* event)
+void TimerOutCb(XEvent* event)
 {
 	XTimer* timer = event->receiver;
 	if (timer->callback)

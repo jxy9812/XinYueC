@@ -83,7 +83,7 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize);
  * @param event 要发送的事件
  * @return 事件是否被处理
  */
-bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEventMin* event);
+bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEvent* event);
 
 /**
  * @brief 投递事件（异步处理）
@@ -91,7 +91,7 @@ bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEventMin* ev
  * @param event 要投递的事件
  * @return 事件是否成功加入队列
  */
-bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* event, XEventPriority priority);
+bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEvent* event, XEventPriority priority);
 /**
  * @brief 添加事件过滤器
  * @param dispatcher 事件调度器

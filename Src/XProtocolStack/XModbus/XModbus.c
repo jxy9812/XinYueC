@@ -10,7 +10,7 @@
 #include "XByteArray.h"
 #include <string.h>
 
-static void XModbus_EvnetHandCb(XEventMin* event);
+static void XModbus_EvnetHandCb(XEvent* event);
 static bool RTU_GetFuncCodeCb_AddressCode(XModbus* modbus, XByteArray* data, XModbusRecvMatch* math);
 XModbus* XModbus_create(XIODeviceBase* io)
 {
@@ -186,7 +186,7 @@ void XModbus_sendFramePeriodicMaster(XModbus* modbus, XModbusFrame* frame, uint3
 }
 
 //功能码事件回调
-void XModbus_EvnetExecuteCb(XEventMin* event)
+void XModbus_EvnetExecuteCb(XEvent* event)
 {
 	//printf("功能码事件\n");
 	XEventFuncCode* ev = event;
@@ -219,7 +219,7 @@ end:
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
 //接收到完整帧事件
-void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
+void XModbus_EvnetFrame_ReceivedCb(XEvent* event)
 {
 	XEventRecvFrame* ev = event;
 	XByteArray* frame = ev->frame;
@@ -271,7 +271,7 @@ void XModbus_EvnetFrame_ReceivedCb(XEventMin* event)
 	ev->frame = NULL;
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
-void XModbus_EvnetHandCb(XEventMin* event)
+void XModbus_EvnetHandCb(XEvent* event)
 {
 #if XMB_EVENT_HANDLE_SHOW
 #if XMB_ENUM_TO_STRING

@@ -15,7 +15,7 @@ XCLASS_DEFINE_EXTEND_END(XEventTransition, XAbstractTransition);
 typedef struct XEventTransition {
     XAbstractTransition m_class;  // 继承XAbstractTransition
     XEventType m_eventType;        // 事件类型
-    XEventMin* m_event;//当前事件
+    XEvent* m_event;//当前事件
 } XEventTransition;
 XVtable* XEventTransition_class_init();
 /**

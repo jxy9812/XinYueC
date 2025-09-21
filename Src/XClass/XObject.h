@@ -34,7 +34,7 @@ bool XObject_addEventFilter(XObject* object, int code, XEventCB cb,void* userDat
 bool XObject_removeEventFilter(XObject* object, int code);
 bool XObject_moveToThread(XObject* object, XThread* thread);
 //给Object投递事件
-bool XObject_postEvent(XObject* object, XEventMin* event, XEventPriority priority);
+bool XObject_postEvent(XObject* object, XEvent* event, XEventPriority priority);
 //给Object投递函数(ps异步,将在事件循环中执行)
 bool XObject_postFunc(XObject* object, void (*func)(void*), void* args,XEventSendMode mode, XEventPriority priority);
 XThread* XObject_thread(XObject* object);

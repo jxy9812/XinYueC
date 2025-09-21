@@ -85,7 +85,7 @@ void XStateMachineEventTest()
         XStateMachine_start(machine);  // 预期：A进入 → B进入
 
         // 触发事件
-        XObject_postEvent(machine, XEventMin_create(machine, XEVENT_TRANSITION, 0), XEVENT_PRIORITY_NORMAL);
+        XObject_postEvent(machine, XEvent_create(machine, XEVENT_TRANSITION, 0), XEVENT_PRIORITY_NORMAL);
         
         // 清理资源
         /*现在无法清理资源，deleteSlot 用信号和槽的方式异步清理*/

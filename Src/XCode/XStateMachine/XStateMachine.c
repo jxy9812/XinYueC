@@ -161,9 +161,9 @@ void XStateMachine_resume(XStateMachine* machine) {
 XStateMachineStatus XStateMachine_status(const XStateMachine* machine) {
     return machine ? machine->m_status : XStateMachineStopped;
 }
-//void (*XEventCB)(XEventMin* event)
+//void (*XEventCB)(XEvent* event)
 //处理事件的回调
-void XStateMachine_handleEventCB(const XEventMin* event) {
+void XStateMachine_handleEventCB(const XEvent* event) {
     if (!event) {
         return ;
     }

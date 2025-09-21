@@ -68,7 +68,7 @@ bool XEventTransition_processEvent(XEventTransition* transition, XStateMachine* 
     if (!transition || !machine || !event) return false;
 
     // 检查事件类型是否匹配
-    if (event->event.code != transition->m_eventType) {
+    if (event->code != transition->m_eventType) {
         return false;
     }
 
