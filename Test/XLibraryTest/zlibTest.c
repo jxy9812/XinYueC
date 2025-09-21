@@ -18,7 +18,7 @@ void zlibTest()
 	XPrintf("压缩后大小:%d\n",out_len);
 	out_len = zlib_decompress(compress_buff, out_len, decompress_buff, sizeof(decompress_buff));
 	XPrintf("解压后大小:%d\t数据:%s\n", out_len, decompress_buff);
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void zlibByteArrayTest()
 {
@@ -33,7 +33,7 @@ void zlibByteArrayTest()
 	XByteArray_delete_base(data);
 	XByteArray_delete_base(compress_buff);
 	XByteArray_delete_base(decompress_buff);
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_zlibTest(XMenu* root)
 {

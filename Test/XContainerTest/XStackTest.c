@@ -41,7 +41,7 @@ void XStackTest()
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XStackTest(XMenu* root)
 {

@@ -238,7 +238,7 @@ typedef struct XDebug XDebug;
 #define XDebug_reset(debug) (debug)
 #define XDebug_end(debug) do {} while(0)
 #define xdebug() NULL
-#define xdebug_if(condition) NULL
+#define xdebug_if(m_condition) NULL
 #define xdebug_loc() NULL
 
 //流控制

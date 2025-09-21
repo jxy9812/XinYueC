@@ -32,7 +32,7 @@ void XStringIteratorTest()
 		XString_delete_base(str);
 	}
 
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 //字符串 整数 测试
 void XStringNumTest()
@@ -54,7 +54,7 @@ void XStringNumTest()
 		XString_delete_base(str);
 	}
 
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XStringOperateTest()
 {
@@ -86,7 +86,7 @@ void XStringOperateTest()
 		}
 		XString_delete_base(str);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XStringCopyTest()
 {
@@ -105,7 +105,7 @@ void XStringCopyTest()
 		XString_delete_base(str);
 		XString_delete_base(copy);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XStringTest()
 {
@@ -136,7 +136,7 @@ void XStringTest()
 		
 		XString_delete_base(str);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 	return;
 	
 	XString* str = XString_create_utf8("你好");
@@ -163,7 +163,7 @@ void XStringTest()
 	XString_delete_base(str);
 #endif
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XStringTest(XMenu* root)
 {

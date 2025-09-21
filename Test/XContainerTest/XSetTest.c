@@ -42,7 +42,7 @@ void XSetTest()
 		XSet_clear_base(set);
 		XSet_delete_base(set);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 #endif
 }
 void XMenu_XSetTest(XMenu* root)

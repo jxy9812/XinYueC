@@ -12,7 +12,7 @@ void XSerialPortTest()
     if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 2, 115200, SP_PAR_NONE))
     {
         XSerialPort_delete_base(serial);
-        XCoreApplication_requestQuit();
+        XCoreApplication_quit();
         return;
     }
     //XSerialPortBase_setReadBuffer_base(serial,1024);

@@ -53,7 +53,7 @@ void XCircularQueueAtomicTest()
 #else
 	IS_ON_DEBUG(XCircularQueueAtomic_ON);
 #endif
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XCircularQueueAtomicTest(XMenu* root)
 {

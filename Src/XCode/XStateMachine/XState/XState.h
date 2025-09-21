@@ -10,14 +10,14 @@ XCLASS_DEFINE_END(XState)
  * @brief 基础状态类，可包含子状态和转换
  */
 typedef struct XState {
-    XAbstractState parent;         // 继承XAbstractState
-    struct XAbstractState** childStates;// 子状态列表
-    size_t childCount;             // 子状态数量
-    size_t childCapacity;          // 子状态容量
-    XAbstractTransition** transitions;  // 转换列表
-    size_t transitionCount;        // 转换数量
-    size_t transitionCapacity;     // 转换容量
-    XAbstractState* initialState;  // 初始子状态
+    XAbstractState m_class;         // 继承XAbstractState
+    struct XAbstractState** m_childStates;// 子状态列表
+    size_t m_childCount;             // 子状态数量
+    size_t m_childCapacity;          // 子状态容量
+    XAbstractTransition** m_transitions;  // 转换列表
+    size_t m_transitionCount;        // 转换数量
+    size_t m_transitionCapacity;     // 转换容量
+    XAbstractState* m_initialState;  // 初始子状态
 } XState;
 XVtable* XState_class_init();
 /**
@@ -104,7 +104,7 @@ XAbstractTransition* XState_transition(const XState* state, size_t index);
 /**
  * @brief 设置初始子状态
  * @param state 父状态
- * @param initialState 初始子状态
+ * @param m_initialState 初始子状态
  */
 void XState_setInitialState(XState* state, XAbstractState* initialState);
 
@@ -118,14 +118,14 @@ XAbstractState* XState_initialState(const XState* state);
 /**
  * @brief 状态激活时调用
  * @param state 状态实例
- * @param machine 所属状态机
+ * @param m_machine 所属状态机
  */
 void XState_activate_base(XState* state);
 
 /**
  * @brief 状态失活时调用
  * @param state 状态实例
- * @param machine 所属状态机
+ * @param m_machine 所属状态机
  */
 void XState_deactivate_base(XState* state);
 

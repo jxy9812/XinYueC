@@ -18,7 +18,7 @@ XVtable* XCoreApplication_class_init()
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
 #if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XClass))
+		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XObject))
 #else
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
@@ -50,7 +50,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 {
 	if (app == NULL)
 		return;
-	XClass_init(app);
+	XObject_init(app);
 	XClassGetVtable(app) = XCoreApplication_class_init();
 	app->m_argc = argc;
 	app->m_argv = argv;
@@ -91,10 +91,17 @@ XTimerGroupBase* XCoreApplication_getTimerGroup()
 	return app->m_timerGroup;
 }
 
-void XCoreApplication_requestQuit()
+void XCoreApplication_quit()
 {
 	XCoreApplication_global()->m_quit = true;
 	XEventLoop_quit_base(XCoreApplication_global()->m_eventLoop,0);
+}
+
+void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags)
+{
+	XCoreApplication* app = XCoreApplication_global();
+	if(app)
+		XEventLoop_processEvents_base(app->m_eventLoop, flags);
 }
 
 int XCoreApplication_exec()
@@ -102,6 +109,7 @@ int XCoreApplication_exec()
 	XCoreApplication* app = XCoreApplication_global();
 	if (app == NULL)
 		return -1;
+	app->m_quit = false;
 	//准备启动事件循环
 	if(!(app->m_quit))
 	{
@@ -123,4 +131,11 @@ bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* args
 	if (!app || app->m_postQueue == NULL)
 		return false;
 	return XEventLoop_postFunc(app->m_eventLoop, receiver, func, args,priority);
+}
+
+void* XCoreApplication_aboutToQuit_signal(XCoreApplication* app)
+{
+	if (app)
+		XObject_emitSignal(app, XCoreApplication_aboutToQuit_signal,NULL,XEVENT_PRIORITY_LOWEST);
+	return XCoreApplication_aboutToQuit_signal;
 }

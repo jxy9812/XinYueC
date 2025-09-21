@@ -24,8 +24,8 @@ XEventTransition* XEventTransition_create(XEventType eventType) {
 void XEventTransition_init(XEventTransition* transition, XEventType eventType) {
     if (!transition) return;
 
-    XAbstractTransition_init(&transition->parent, XEventTransitionType);
-    transition->eventType = eventType;
+    XAbstractTransition_init(&transition->m_class, XEventTransitionType);
+    transition->m_eventType = eventType;
 
     // 注册事件过滤器
     // 注意：实际使用时需要在添加到状态机时完成事件过滤注册
@@ -37,16 +37,16 @@ void XEventTransition_destroy(XEventTransition* transition) {
     // 移除事件过滤器
     // 注意：实际使用时需要在从状态机移除时完成
 
-    XAbstractTransition_destroy(&transition->parent);
+    XAbstractTransition_destroy(&transition->m_class);
 }
 
 XEventType XEventTransition_eventType(const XEventTransition* transition) {
-    return transition ? transition->eventType : 0;
+    return transition ? transition->m_eventType : 0;
 }
 
 void XEventTransition_setEventType(XEventTransition* transition, XEventType eventType) {
     if (transition) {
-        transition->eventType = eventType;
+        transition->m_eventType = eventType;
     }
 }
 
@@ -54,7 +54,7 @@ bool XEventTransition_processEvent(XEventTransition* transition, XStateMachine* 
     if (!transition || !machine || !event) return false;
 
     // 检查事件类型是否匹配
-    if (event->event.code != transition->eventType) {
+    if (event->event.code != transition->m_eventType) {
         return false;
     }
 

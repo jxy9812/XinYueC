@@ -31,7 +31,7 @@ void XBase64Test()
 		XByteArray_delete_base(toBase);
 	if (fromBase64)
 		XByteArray_delete_base(fromBase64);
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XBase64Test(XMenu* root)
 {

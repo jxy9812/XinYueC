@@ -47,7 +47,7 @@ void XHuffmanTreeTest()
 
 
 #endif
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XHuffmanTreeTest(XMenu* root)
 {

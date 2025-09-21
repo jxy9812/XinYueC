@@ -12,26 +12,26 @@ XFinalState* XFinalState_create() {
 
 void XFinalState_init(XFinalState* state) {
     if (!state) return;
-    XAbstractState_init(&state->parent, XStateType_Final);
+    XAbstractState_init(&state->m_class, XStateType_Final);
 }
 
 void XFinalState_destroy(XFinalState* state) {
     if (!state) return;
-    XAbstractState_delete_base(&state->parent);
-    XMemory_free(state);
+    XAbstractState_delete_base(&state->m_class);
+   //XMemory_free(state);
 }
 
 void XFinalState_activate(XFinalState* state, XStateMachine* machine) {
     if (!state || !machine) return;
 
     // 激活最终状态
-    XAbstractState_onEntered_base(&state->parent);
+    XAbstractState_onEntered_base(&state->m_class);
 
     // 发送状态机完成信号
-    //XObject_emitSignal((XObject*)machine, "finished()", NULL);
+    //XObject_emitSignal((XObject*)m_machine, "finished()", NULL);
 
     // 检查是否是顶层最终状态，如果是则停止状态机
-    XState* parent = XAbstractState_parentState(&state->parent);
+    XState* parent = XAbstractState_parentState(&state->m_class);
     if (!parent || !XAbstractState_parentState((XAbstractState*)parent)) {
         XStateMachine_stop(machine);
     }

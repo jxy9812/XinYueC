@@ -141,7 +141,7 @@ void XModbusTest()
     {
         //XSerialPort_delete_base(USART);//内存管理已经被XModbus接管
         XModbus_delete_base(modbus);
-        XCoreApplication_requestQuit();
+        XCoreApplication_quit();
         return;
     }
     //XTimerBase_delay_ms(100);

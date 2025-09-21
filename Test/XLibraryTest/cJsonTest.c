@@ -38,7 +38,7 @@ void cJsonTest()
     // 释放字符串和 cJSON 对象
     XMemory_free(json_str_modified);
     cJSON_Delete(root);
-    XCoreApplication_requestQuit();
+    XCoreApplication_quit();
 }
 
 void XMenu_CJsonTest(XMenu* root)

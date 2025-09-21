@@ -2,9 +2,10 @@
 #include "XStateMachine.h"
 #include "XMemory.h"
 #include <string.h>
-
+static void XSignalTransition_onSignalTriggered(XSignalTransition* transition, XStateMachine* machine);
 // 信号槽回调函数
-static void signalSlotCallback(XObject* sender, XObject* receiver, void* args) {
+static void signalSlotCallback(XObject* sender, XObject* receiver, void* args) 
+{
     XSignalTransition* transition = (XSignalTransition*)receiver;
     XStateMachine* machine = (XStateMachine*)args;
 
@@ -24,17 +25,17 @@ XSignalTransition* XSignalTransition_create(XObject* sender, const char* signal)
 void XSignalTransition_init(XSignalTransition* transition, XObject* sender, const char* signal) {
     if (!transition) return;
 
-    XAbstractTransition_init(&transition->parent, XSignalTransitionType);
-    transition->sender = sender;
-    transition->signal = signal ? strdup(signal) : NULL;
-    transition->connection = NULL;
+    XAbstractTransition_init(&transition->m_class, XSignalTransitionType);
+    transition->m_sender = sender;
+    transition->m_signal = signal ? strdup(signal) : NULL;
+    transition->m_connection = NULL;
 
     // 连接信号（修正参数类型）
     if (sender && signal) {
-        transition->connection = XObject_connect(
+        transition->m_connection = XObject_connect(
             sender,
             signal,  // 直接传递字符串信号
-            (XObject*)&transition->parent,
+            (XObject*)&transition->m_class,
             (XSlotFunc)signalSlotCallback,
             XConnectionType_Auto
         );
@@ -45,31 +46,42 @@ void XSignalTransition_destroy(XSignalTransition* transition) {
     if (!transition) return;
 
     // 断开信号连接
-    if (transition->connection) {
-        XObject_disconnect_conn(transition->connection);
-        transition->connection = NULL;
+    if (transition->m_connection) {
+        XObject_disconnect_conn(transition->m_connection);
+        transition->m_connection = NULL;
     }
 
     // 释放信号名称
-    if (transition->signal) {
-        free((void*)transition->signal);
-        transition->signal = NULL;
+    if (transition->m_signal) {
+        free((void*)transition->m_signal);
+        transition->m_signal =0;
     }
 
-    XAbstractTransition_destroy(&transition->parent);
+    XAbstractTransition_destroy(&transition->m_class);
 }
 
 XObject* XSignalTransition_sender(const XSignalTransition* transition) {
-    return transition ? transition->sender : NULL;
+    return transition ? transition->m_sender : NULL;
 }
 
 const char* XSignalTransition_signal(const XSignalTransition* transition) {
-    return transition ? transition->signal : NULL;
+    return transition ? transition->m_signal : NULL;
 }
 
-void XSignalTransition_onSignalTriggered(XSignalTransition* transition, XStateMachine* machine) {
+bool XSignalTransition_connect(XSignalTransition* transition, XObject* sender, size_t signal, XStateMachine* machine,XConnectionType type)
+{
+    if(!transition||!machine)
+        return false;
+    transition->m_sender = sender;
+    transition->m_signal = signal;
+    transition->m_connection=XObject_connect(sender?sender:machine,signal, machine, signalSlotCallback,type);
+    return transition->m_connection != NULL;
+}
+
+void XSignalTransition_onSignalTriggered(XSignalTransition* transition, XStateMachine* machine) 
+{
     if (!transition || !machine) return;
 
     // 执行转换
-    XAbstractTransition_execute(&transition->parent, machine, NULL);
+    XAbstractTransition_execute(&transition->m_class, machine, NULL);
 }

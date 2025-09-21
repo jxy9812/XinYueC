@@ -28,32 +28,32 @@ typedef enum {
 typedef struct XAbstractState 
 {
     XClass m_class;                // 继承XObject
-    XStateType type;               // 状态类型
-    XState* parentState;           // 父状态
-    XStateMachine* machine;        // 所属状态机
-    bool isRunning;                // 是否处于激活状态
-    void* userData;                // 用户数据
-    void* privateData;             // 私有数据(内部使用)
+    XStateType m_type;               // 状态类型
+    XState* m_parentState;           // 父状态
+    XStateMachine* m_machine;        // 所属状态机
+    bool m_isRunning;                // 是否处于激活状态
+    void* m_userData;                // 用户数据
+    void* m_privateData;             // 私有数据(内部使用)
 } XAbstractState;
 
 /**
  * @brief 状态进入事件回调函数
  * @param state 状态实例
- * @param machine 所属状态机
+ * @param m_machine 所属状态机
  */
 typedef void (*XStateEnteredCallback)(XAbstractState* state);
 
 /**
  * @brief 状态退出事件回调函数
  * @param state 状态实例
- * @param machine 所属状态机
+ * @param m_machine 所属状态机
  */
 typedef void (*XStateExitedCallback)(XAbstractState* state);
 XVtable* XAbstractState_class_init();
 /**
  * @brief 初始化抽象状态
  * @param state 状态实例
- * @param type 状态类型
+ * @param m_type 状态类型
  */
 void XAbstractState_init(XAbstractState* state, XStateType type);
 

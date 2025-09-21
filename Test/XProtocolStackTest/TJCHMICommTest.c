@@ -44,7 +44,7 @@ void TJCHMICommTest()
 	{
 		//XSerialPort_delete_base(USART);//内存管理已经被XTJCHMIComm接管
 		XTJCHMIComm_delete_base(comm);
-		XCoreApplication_requestQuit();
+		XCoreApplication_quit();
 		return;
 	}
 	//size_t speed = 1, current = XTimerBase_getCurrentTime();

@@ -44,7 +44,7 @@ void XHashSetTest()
 		XHashSet_delete_base(set);
 	}
 #endif
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XHashSetTest(XMenu* root)
 {

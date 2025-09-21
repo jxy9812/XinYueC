@@ -8,7 +8,8 @@ extern "C" {
 #if DEMOTEST
 void XMenu_XCodeTest(XMenu* root);
 void XMenu_XDebugTest(XMenu* root);
-void XStateMachineTest();
+void XMenu_XStateMachineTest(XMenu* root);
+void XStateMachineEventTest();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

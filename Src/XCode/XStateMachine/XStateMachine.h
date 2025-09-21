@@ -19,13 +19,13 @@ typedef enum {
  */
 typedef struct XStateMachine 
 {
-    XObject parent;                  // 继承XObject
-    XAbstractState* initialState;    // 初始状态
-    XAbstractState** activeStates;   // 当前激活的状态列表
-    size_t activeStateCount;         // 激活状态数量
-    size_t activeStateCapacity;      // 激活状态容量
-    XStateMachineStatus status;      // 状态机状态
-    void* userData;                  // 用户数据
+    XObject m_class;                  // 继承XObject
+    XAbstractState* m_initialState;    // 初始状态
+    XAbstractState** m_activeStates;   // 当前激活的状态列表
+    size_t m_activeStateCount;         // 激活状态数量
+    size_t m_activeStateCapacity;      // 激活状态容量
+    XStateMachineStatus m_status;      // 状态机状态
+    void* m_userData;                  // 用户数据
 } XStateMachine;
 XVtable* XStateMachine_class_init();
 /**
@@ -36,34 +36,34 @@ XStateMachine* XStateMachine_create();
 
 /**
  * @brief 初始化状态机
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  */
 void XStateMachine_init(XStateMachine* machine);
 
 /**
  * @brief 销毁状态机
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  */
 #define XStateMachine_delete_base       XObject_delete_base
 #define XStateMachine_deinit_base       XObject_deinit_base
 
 /**
  * @brief 设置初始状态
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @param state 初始状态
  */
 void XStateMachine_setInitialState(XStateMachine* machine, XAbstractState* state);
 
 /**
  * @brief 获取初始状态
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @return 初始状态指针
  */
 XAbstractState* XStateMachine_initialState(const XStateMachine* machine);
 
 /**
  * @brief 添加状态
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @param state 要添加的状态
  * @return 成功返回true，失败返回false
  */
@@ -71,7 +71,7 @@ bool XStateMachine_addState(XStateMachine* machine, XAbstractState* state);
 
 /**
  * @brief 移除状态
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @param state 要移除的状态
  * @return 成功返回true，失败返回false
  */
@@ -79,32 +79,32 @@ bool XStateMachine_removeState(XStateMachine* machine, XAbstractState* state);
 
 /**
  * @brief 启动状态机
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @return 成功返回true，失败返回false
  */
 bool XStateMachine_start(XStateMachine* machine);
 
 /**
  * @brief 停止状态机
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  */
 void XStateMachine_stop(XStateMachine* machine);
 
 /**
  * @brief 暂停状态机
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  */
 void XStateMachine_pause(XStateMachine* machine);
 
 /**
  * @brief 恢复状态机运行
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  */
 void XStateMachine_resume(XStateMachine* machine);
 
 /**
  * @brief 获取状态机当前状态
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @return 状态机状态
  */
 XStateMachineStatus XStateMachine_status(const XStateMachine* machine);
@@ -118,7 +118,7 @@ void XStateMachine_handleEventCB(const XEventMin* event);
 
 /**
  * @brief 执行状态转换
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @param source 源状态
  * @param target 目标状态
  * @return 成功返回true，失败返回false
@@ -127,14 +127,14 @@ bool XStateMachine_transition(XStateMachine* machine, XAbstractState* source, XA
 
 /**
  * @brief 获取当前激活的状态数量
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @return 激活状态数量
  */
 size_t XStateMachine_activeStateCount(const XStateMachine* machine);
 
 /**
  * @brief 获取指定索引的激活状态
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @param index 索引
  * @return 激活状态指针，索引无效返回NULL
  */
@@ -142,28 +142,28 @@ XAbstractState* XStateMachine_activeState(const XStateMachine* machine, size_t i
 
 /**
  * @brief 检查状态机是否处于运行状态
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @return 运行中返回true，否则返回false
  */
 bool XStateMachine_isRunning(const XStateMachine* machine);
 
 /**
  * @brief 检查状态机是否已完成（到达最终状态）
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @return 已完成返回true，否则返回false
  */
 bool XStateMachine_isFinished(const XStateMachine* machine);
 
 /**
  * @brief 设置用户数据
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @param data 用户数据指针
  */
 void XStateMachine_setUserData(XStateMachine* machine, void* data);
 
 /**
  * @brief 获取用户数据
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @return 用户数据指针
  */
 void* XStateMachine_userData(const XStateMachine* machine);

@@ -47,11 +47,11 @@ static void XAbstractState_private_init(XAbstractState* state) {
     XAbstractStatePrivate* d = XMemory_malloc(sizeof(XAbstractStatePrivate));
     d->enteredCallback = NULL;
     d->exitedCallback = NULL;
-    state->privateData = d;  // 存储私有数据
+    state->m_privateData = d;  // 存储私有数据
 }
 
 static XAbstractStatePrivate* XAbstractState_private(const XAbstractState* state) {
-    return (XAbstractStatePrivate*)state->privateData;
+    return (XAbstractStatePrivate*)state->m_privateData;
 }
 
 void XAbstractState_init(XAbstractState* state, XStateType type) {
@@ -59,37 +59,37 @@ void XAbstractState_init(XAbstractState* state, XStateType type) {
 
     XClass_init(state);
     XClassGetVtable(state) = XAbstractState_class_init();
-    state->type = type;
-    state->parentState = NULL;
-    state->machine = NULL;
-    state->isRunning = false;
-    state->userData = NULL;
-    state->privateData = NULL;
-    //state->childCapacity = 0;
-    //state->childStates = 0;
-    //state->childCount = 0;
+    state->m_type = type;
+    state->m_parentState = NULL;
+    state->m_machine = NULL;
+    state->m_isRunning = false;
+    state->m_userData = NULL;
+    state->m_privateData = NULL;
+    //state->m_childCapacity = 0;
+    //state->m_childStates = 0;
+    //state->m_childCount = 0;
 
     // 初始化私有数据
     XAbstractState_private_init(state);
 }
 void VXAbstractState_onEntered(XAbstractState* state)
 {
-    if (!state || state->isRunning || !state->machine || !XStateMachine_isRunning(state->machine)) return;
+    if (!state || state->m_isRunning || !state->m_machine || !XStateMachine_isRunning(state->m_machine)) return;
 
-    state->isRunning = true;
+    state->m_isRunning = true;
 
     // 触发进入回调
     XAbstractStatePrivate* d = XAbstractState_private(state);
     if (d->enteredCallback) {
         d->enteredCallback(state);
     }
-    XStateMachine_addActiveState(state->machine, state);
+    XStateMachine_addActiveState(state->m_machine, state);
     // 发送状态进入信号
-    XStateMachine_entered_signal(state->machine, state);
+    XStateMachine_entered_signal(state->m_machine, state);
 }
 void VXAbstractState_onExited(XAbstractState* state)
 {
-    if (!state || !state->isRunning || !state->machine || !XStateMachine_isRunning(state->machine)) return;
+    if (!state || !state->m_isRunning || !state->m_machine || !XStateMachine_isRunning(state->m_machine)) return;
    
     // 触发退出回调
     XAbstractStatePrivate* d = XAbstractState_private(state);
@@ -97,37 +97,37 @@ void VXAbstractState_onExited(XAbstractState* state)
         d->exitedCallback(state);
     }
 
-    state->isRunning = false;
-    XStateMachine_removeActiveState(state->machine, state);
+    state->m_isRunning = false;
+    XStateMachine_removeActiveState(state->m_machine, state);
     // 发送状态退出信号
-    XStateMachine_exited_signal(state->machine, state);
+    XStateMachine_exited_signal(state->m_machine, state);
 }
 void VXAbstractState_setMachine(XAbstractState* state, XStateMachine* machine)
 {
-    state->machine = machine;
+    state->m_machine = machine;
 }
 void VXAbstractState_setParentState(XAbstractState* state, XAbstractState* parent)
 {
-    if (state->parentState == parent)
+    if (state->m_parentState == parent)
         return;
-    state->parentState = parent;
-    XAbstractState_setMachine_base(state, parent->machine);
+    state->m_parentState = parent;
+    XAbstractState_setMachine_base(state, parent->m_machine);
 }
 void VXAbstractState_deinit(XAbstractState* state)
 {
     if (!state) return;
    
     // 释放私有数据
-    XMemory_free(state->privateData);
-    state->privateData = NULL;
+    XMemory_free(state->m_privateData);
+    state->m_privateData = NULL;
     memset(state,0,sizeof(state));
 }
 XStateType XAbstractState_type(const XAbstractState* state) {
-    return state ? state->type : XStateType_Basic;
+    return state ? state->m_type : XStateType_Basic;
 }
 
 XState* XAbstractState_parentState(const XAbstractState* state) {
-    return state ? state->parentState : NULL;
+    return state ? state->m_parentState : NULL;
 }
 
 void XAbstractState_setParentState_base(XAbstractState* state, XAbstractState* parent)
@@ -145,21 +145,21 @@ void XAbstractState_setMachine_base(XAbstractState* state, XStateMachine* machin
 }
 
 XStateMachine* XAbstractState_machine(const XAbstractState* state) {
-    return state ? state->machine : NULL;
+    return state ? state->m_machine : NULL;
 }
 
 bool XAbstractState_isRunning(const XAbstractState* state) {
-    return state ? state->isRunning : false;
+    return state ? state->m_isRunning : false;
 }
 
 void XAbstractState_setUserData(XAbstractState* state, void* data) {
     if (state) {
-        state->userData = data;  // 仅设置用户数据，不影响私有数据
+        state->m_userData = data;  // 仅设置用户数据，不影响私有数据
     }
 }
 
 void* XAbstractState_userData(const XAbstractState* state) {
-    return state ? state->userData : NULL;
+    return state ? state->m_userData : NULL;
 }
 
 void XAbstractState_onEntered_base(XAbstractState* state) 

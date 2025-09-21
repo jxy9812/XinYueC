@@ -43,7 +43,7 @@ void XMapTest()
 		XMap_delete_base(map);
 	}
 #endif
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XMapTest(XMenu* root)
 {

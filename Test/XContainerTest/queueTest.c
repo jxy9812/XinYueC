@@ -30,7 +30,7 @@ void XQueueTest()
 	XPrintf("\n");
 	XQueue_delete_base(queue);
 #endif
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 #if	XPriorityQueue_ON
 static insertData(void* value ,void*args)
@@ -64,7 +64,7 @@ void XPriorityQueueTest()
 	XPriorityQueue_delete_base(queue);
 	XVector_delete_base(v);
 #endif
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XQueueTest(XMenu* root)
 {

@@ -39,7 +39,7 @@ void XCircularQueueTest()
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XCircularQueueTest(XMenu* root)
 {

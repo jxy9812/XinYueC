@@ -30,18 +30,18 @@ typedef bool (*XAbstractTransitionCondition)(const XAbstractTransition* transiti
  * @brief 抽象转换类，所有转换的基类
  */
 typedef struct XAbstractTransition {
-    XObject parent;                // 继承XObject
-    XTransitionType type;          // 转换类型
-    XAbstractState* sourceState;   // 源状态
-    XAbstractState* targetState;   // 目标状态
-    XAbstractTransitionCondition condition; // 转换条件
-    void* userData;                // 用户数据
+    XClass m_class;                // 继承XObject
+    XTransitionType m_type;          // 转换类型
+    XAbstractState* m_sourceState;   // 源状态
+    XAbstractState* m_targetState;   // 目标状态
+    XAbstractTransitionCondition m_condition; // 转换条件
+    void* m_userData;                // 用户数据
 } XAbstractTransition;
 
 /**
  * @brief 初始化抽象转换
  * @param transition 转换实例
- * @param type 转换类型
+ * @param m_type 转换类型
  */
 void XAbstractTransition_init(XAbstractTransition* transition, XTransitionType type);
 
@@ -82,7 +82,7 @@ void XAbstractTransition_setTargetState(XAbstractTransition* transition, XAbstra
 /**
  * @brief 设置转换条件
  * @param transition 转换实例
- * @param condition 条件函数
+ * @param m_condition 条件函数
  */
 void XAbstractTransition_setCondition(XAbstractTransition* transition, XAbstractTransitionCondition condition);
 
@@ -97,7 +97,7 @@ bool XAbstractTransition_checkCondition(const XAbstractTransition* transition, c
 /**
  * @brief 执行转换
  * @param transition 转换实例
- * @param machine 状态机
+ * @param m_machine 状态机
  * @param event 触发事件
  * @return 成功返回true，否则返回false
  */

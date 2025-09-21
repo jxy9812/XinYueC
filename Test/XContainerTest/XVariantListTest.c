@@ -54,7 +54,7 @@ void XVariantListTest()
 		
 		XVariantList_delete_base(list);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XVariantListTest_list()
 {
@@ -88,7 +88,7 @@ void XVariantListTest_list()
 		XVariant_delete(varList);
 		XVariantList_delete_base(list);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XVariantListTest_map()
 {
@@ -125,7 +125,7 @@ void XVariantListTest_map()
 		XMap_delete_base(map);
 		XVariant_delete(varMap);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XVariantListTest_stringList()
 {
@@ -148,7 +148,7 @@ void XVariantListTest_stringList()
 		}
 		XStringList_delete_base(list);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XVariantListTest(XMenu* root)
 {

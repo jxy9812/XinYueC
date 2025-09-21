@@ -68,7 +68,7 @@ void XJsonObjectTest()
 		XJsonValue_delete(value);
 		XJsonObject_delete_base(object);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XJsonArrayTest()
 {
@@ -113,7 +113,7 @@ void XJsonArrayTest()
 		XJsonArray_delete_base(array);
 		XJsonValue_delete(value);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XJsonTest(XMenu* root)
 {

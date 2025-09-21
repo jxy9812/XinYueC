@@ -17,7 +17,7 @@ typedef struct XTransition XTransition;
 /**
  * @brief 转换条件函数类型
  * @param transition 转换实例
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @param event 事件
  * @return 条件满足返回true，否则返回false
  */
@@ -27,7 +27,7 @@ typedef bool (*XTransitionCondition)(const XTransition* transition,
 /**
  * @brief 转换动作函数类型
  * @param transition 转换实例
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @param event 事件
  */
 typedef void (*XTransitionAction)(XTransition* transition,
@@ -51,7 +51,7 @@ typedef struct XTransition {
  * 由特定事件触发的转换
  */
 typedef struct XEventTransition {
-    XTransition parent;         // 继承XTransition
+    XTransition m_class;         // 继承XTransition
     XEventType event_type;      // 触发事件类型
 } XEventTransition;
 
@@ -60,10 +60,10 @@ typedef struct XEventTransition {
  * 由特定信号触发的转换
  */
 typedef struct XSignalTransition {
-    XTransition parent;         // 继承XTransition
-    XObject* sender;            // 信号发送者
-    size_t signal;              // 信号标识
-    XConnection* connection;    // 信号连接
+    XTransition m_class;         // 继承XTransition
+    XObject* m_sender;            // 信号发送者
+    size_t m_signal;              // 信号标识
+    XConnection* m_connection;    // 信号连接
 } XSignalTransition;
 
 /**
@@ -106,16 +106,16 @@ void XTransition_destroy(XTransition* transition);
 // * @brief 创建信号转换
 // * @param source 源状态
 // * @param target 目标状态
-// * @param sender 信号发送者
-// * @param signal 信号标识
+// * @param m_sender 信号发送者
+// * @param m_signal 信号标识
 // * @return 新创建的信号转换，失败返回NULL
 // */
 //XSignalTransition* XSignalTransition_create(XState* source, XState* target,
-//    XObject* sender, size_t signal);
+//    XObject* m_sender, size_t m_signal);
 /**
  * @brief 设置转换条件
  * @param transition 转换实例
- * @param condition 条件函数
+ * @param m_condition 条件函数
  */
 void XTransition_setCondition(XTransition* transition, XTransitionCondition condition);
 /**
@@ -151,7 +151,7 @@ XState* XTransition_target(const XTransition* transition);
 /**
  * @brief 检查转换是否可以触发
  * @param transition 转换实例
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @param event 事件
  * @return 可以触发返回true，否则返回false
  */
@@ -159,17 +159,17 @@ bool XTransition_check(const XTransition* transition, XStateMachine* machine, co
 /**
  * @brief 触发转换
  * @param transition 转换实例
- * @param machine 状态机实例
+ * @param m_machine 状态机实例
  * @param event 事件
  */
 void XTransition_trigger(XTransition* transition, XStateMachine* machine, const XEvent* event);
 /**
  * @brief 连接转换信号到槽函数
  * @param transition 转换实例
- * @param signal 信号枚举值
+ * @param m_signal 信号枚举值
  * @param receiver 接收对象
  * @param slot 槽函数
- * @param type 连接类型
+ * @param m_type 连接类型
  * @return 连接对象，失败返回NULL
  */
 XConnection* XTransition_connect(XTransition* transition, XTransitionSignal signal,

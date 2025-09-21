@@ -52,24 +52,24 @@ void XStateMachine_init(XStateMachine* machine) {
     memset(((XObject*)machine) + 1, 0, sizeof(XStateMachine) - sizeof(XObject));
     XObject_init(machine);
     XClassGetVtable(machine) = XStateMachine_class_init();
-    machine->initialState = NULL;
-    machine->activeStateCapacity = INITIAL_STATE_CAPACITY;
-    machine->activeStates = (XAbstractState**)XMemory_malloc(
-        sizeof(XAbstractState*) * machine->activeStateCapacity
+    machine->m_initialState = NULL;
+    machine->m_activeStateCapacity = INITIAL_STATE_CAPACITY;
+    machine->m_activeStates = (XAbstractState**)XMemory_malloc(
+        sizeof(XAbstractState*) * machine->m_activeStateCapacity
     );
-    machine->activeStateCount = 0;
-    machine->status = XStateMachineStopped;
-    machine->userData = NULL;
+    machine->m_activeStateCount = 0;
+    machine->m_status = XStateMachineStopped;
+    machine->m_userData = NULL;
 }
 
 void XStateMachine_setInitialState(XStateMachine* machine, XAbstractState* state) {
     if (machine) {
-        machine->initialState = state;
+        machine->m_initialState = state;
     }
 }
 
 XAbstractState* XStateMachine_initialState(const XStateMachine* machine) {
-    return machine ? machine->initialState : NULL;
+    return machine ? machine->m_initialState : NULL;
 }
 
 bool XStateMachine_addState(XStateMachine* machine, XAbstractState* state) {
@@ -79,8 +79,10 @@ bool XStateMachine_addState(XStateMachine* machine, XAbstractState* state) {
     if (!XAbstractState_parentState(state)) 
     {
         // 这里不需要实际存储状态，状态通过父状态关系管理
-        //((XAbstractState*)state)->machine = machine;
+        //((XAbstractState*)state)->m_machine = m_machine;
         XAbstractState_setMachine_base(state,machine);
+        if (machine->m_initialState == NULL)
+            machine->m_initialState = state;
     }
 
     return true;
@@ -95,28 +97,28 @@ bool XStateMachine_removeState(XStateMachine* machine, XAbstractState* state) {
     }
 
     // 清除状态机引用
-    if (((XAbstractState*)state)->machine == machine) {
-        ((XAbstractState*)state)->machine = NULL;
+    if (((XAbstractState*)state)->m_machine == machine) {
+        ((XAbstractState*)state)->m_machine = NULL;
     }
 
     return true;
 }
 
 bool XStateMachine_start(XStateMachine* machine) {
-    if (!machine || machine->status != XStateMachineStopped || !machine->initialState) {
+    if (!machine || machine->m_status != XStateMachineStopped || !machine->m_initialState) {
         return false;
     }
     // 设置状态机为运行状态
-    machine->status = XStateMachineRunning;
+    machine->m_status = XStateMachineRunning;
 
     // 清空当前激活状态
-    for (size_t i = 0; i < machine->activeStateCount; i++) {
-        XStateMachine_exitState(machine, machine->activeStates[i]);
+    for (size_t i = 0; i < machine->m_activeStateCount; i++) {
+        XStateMachine_exitState(machine, machine->m_activeStates[i]);
     }
-    machine->activeStateCount = 0;
+    machine->m_activeStateCount = 0;
 
     // 进入初始状态
-    XStateMachine_enterState(machine, machine->initialState);
+    XStateMachine_enterState(machine, machine->m_initialState);
 
   
 
@@ -127,37 +129,37 @@ bool XStateMachine_start(XStateMachine* machine) {
 }
 
 void XStateMachine_stop(XStateMachine* machine) {
-    if (!machine || machine->status == XStateMachineStopped) return;
+    if (!machine || machine->m_status == XStateMachineStopped) return;
 
     // 退出所有激活状态
-    for (size_t i = 0; i < machine->activeStateCount; i++) {
-        XStateMachine_exitState(machine, machine->activeStates[i]);
+    for (size_t i = 0; i < machine->m_activeStateCount; i++) {
+        XStateMachine_exitState(machine, machine->m_activeStates[i]);
     }
-    machine->activeStateCount = 0;
+    machine->m_activeStateCount = 0;
 
     // 设置状态机为停止状态
-    machine->status = XStateMachineStopped;
+    machine->m_status = XStateMachineStopped;
 
     // 发送停止信号
     XStateMachine_stop_signal(machine);
 }
 
 void XStateMachine_pause(XStateMachine* machine) {
-    if (machine && machine->status == XStateMachineRunning) {
-        machine->status = XStateMachinePaused;
+    if (machine && machine->m_status == XStateMachineRunning) {
+        machine->m_status = XStateMachinePaused;
         XStateMachine_pause_signal(machine);
     }
 }
 
 void XStateMachine_resume(XStateMachine* machine) {
-    if (machine && machine->status == XStateMachinePaused) {
-        machine->status = XStateMachineRunning;
+    if (machine && machine->m_status == XStateMachinePaused) {
+        machine->m_status = XStateMachineRunning;
         XStateMachine_resume_signal(machine);
     }
 }
 
 XStateMachineStatus XStateMachine_status(const XStateMachine* machine) {
-    return machine ? machine->status : XStateMachineStopped;
+    return machine ? machine->m_status : XStateMachineStopped;
 }
 //void (*XEventCB)(XEventMin* event)
 //处理事件的回调
@@ -166,16 +168,16 @@ void XStateMachine_handleEventCB(const XEventMin* event) {
         return ;
     }
     XStateMachine* machine = event->userData;
-    if(!machine || machine->status != XStateMachineRunning) return ;
+    if(!machine || machine->m_status != XStateMachineRunning) return ;
 
     // 保存当前激活状态的快照，防止处理过程中状态变化影响遍历
     XAbstractState** snapshot = (XAbstractState**)XMemory_malloc(
-        sizeof(XAbstractState*) * machine->activeStateCount
+        sizeof(XAbstractState*) * machine->m_activeStateCount
     );
     if (!snapshot) return ;
 
-    memcpy(snapshot, machine->activeStates, sizeof(XAbstractState*) * machine->activeStateCount);
-    size_t snapshotCount = machine->activeStateCount;
+    memcpy(snapshot, machine->m_activeStates, sizeof(XAbstractState*) * machine->m_activeStateCount);
+    size_t snapshotCount = machine->m_activeStateCount;
     bool eventHandled = false;
 
     // 处理事件：检查所有激活状态的转换
@@ -183,7 +185,7 @@ void XStateMachine_handleEventCB(const XEventMin* event) {
         XAbstractState* state = snapshot[i];
 
         // 仅处理基本状态的转换
-        if (state->type == XStateType_Basic) {
+        if (state->m_type == XStateType_Basic) {
             XState* basicState = (XState*)state;
 
             // 检查所有转换
@@ -191,7 +193,7 @@ void XStateMachine_handleEventCB(const XEventMin* event) {
                 XAbstractTransition* transition = XState_transition(basicState, j);
 
                 // 事件转换特殊处理
-                if (transition->type == XEventTransitionType)
+                if (transition->m_type == XEventTransitionType)
                 {
                     eventHandled = XEventTransition_processEvent(
                         (XEventTransition*)transition, machine, event
@@ -207,7 +209,7 @@ void XStateMachine_handleEventCB(const XEventMin* event) {
 }
 
 bool XStateMachine_transition(XStateMachine* machine, XAbstractState* source, XAbstractState* target) {
-    if (!machine || !source || !target || machine->status != XStateMachineRunning) {
+    if (!machine || !source || !target || machine->m_status != XStateMachineRunning) {
         return false;
     }
 
@@ -218,30 +220,30 @@ bool XStateMachine_transition(XStateMachine* machine, XAbstractState* source, XA
     XStateMachine_enterState(machine, target);
 
     // 发送转换完成信号
-    //XObject_emitSignal(&machine->m_class, "transitioned()", NULL);
+    //XObject_emitSignal(&m_machine->m_class, "transitioned()", NULL);
 
     return true;
 }
 
 size_t XStateMachine_activeStateCount(const XStateMachine* machine) {
-    return machine ? machine->activeStateCount : 0;
+    return machine ? machine->m_activeStateCount : 0;
 }
 
 XAbstractState* XStateMachine_activeState(const XStateMachine* machine, size_t index) {
-    if (!machine || index >= machine->activeStateCount) return NULL;
-    return machine->activeStates[index];
+    if (!machine || index >= machine->m_activeStateCount) return NULL;
+    return machine->m_activeStates[index];
 }
 
 bool XStateMachine_isRunning(const XStateMachine* machine) {
-    return machine && machine->status == XStateMachineRunning;
+    return machine && machine->m_status == XStateMachineRunning;
 }
 
 bool XStateMachine_isFinished(const XStateMachine* machine) {
-    if (!machine || machine->activeStateCount == 0) return false;
+    if (!machine || machine->m_activeStateCount == 0) return false;
 
     // 检查所有激活状态是否都是最终状态
-    for (size_t i = 0; i < machine->activeStateCount; i++) {
-        if (machine->activeStates[i]->type != XStateType_Final) {
+    for (size_t i = 0; i < machine->m_activeStateCount; i++) {
+        if (machine->m_activeStates[i]->m_type != XStateType_Final) {
             return false;
         }
     }
@@ -250,12 +252,12 @@ bool XStateMachine_isFinished(const XStateMachine* machine) {
 
 void XStateMachine_setUserData(XStateMachine* machine, void* data) {
     if (machine) {
-        machine->userData = data;
+        machine->m_userData = data;
     }
 }
 
 void* XStateMachine_userData(const XStateMachine* machine) {
-    return machine ? machine->userData : NULL;
+    return machine ? machine->m_userData : NULL;
 }
 
 void* XStateMachine_entered_signal(XStateMachine* machine, XAbstractState* state)
@@ -304,8 +306,8 @@ void* XStateMachine_resume_signal(XStateMachine* machine)
 bool XStateMachine_isActive(const XStateMachine* machine, const XAbstractState* state) {
     if (!machine || !state) return false;
 
-    for (size_t i = 0; i < machine->activeStateCount; i++) {
-        if (machine->activeStates[i] == state) {
+    for (size_t i = 0; i < machine->m_activeStateCount; i++) {
+        if (machine->m_activeStates[i] == state) {
             return true;
         }
     }
@@ -318,29 +320,29 @@ void XStateMachine_addActiveState(XStateMachine* machine, XAbstractState* state)
     }
 
     // 扩容
-    if (machine->activeStateCount >= machine->activeStateCapacity) {
-        size_t newCapacity = machine->activeStateCapacity * 2;
+    if (machine->m_activeStateCount >= machine->m_activeStateCapacity) {
+        size_t newCapacity = machine->m_activeStateCapacity * 2;
         XAbstractState** newStates = (XAbstractState**)XMemory_realloc(
-            machine->activeStates, sizeof(XAbstractState*) * newCapacity
+            machine->m_activeStates, sizeof(XAbstractState*) * newCapacity
         );
         if (!newStates) return;
 
-        machine->activeStates = newStates;
-        machine->activeStateCapacity = newCapacity;
+        machine->m_activeStates = newStates;
+        machine->m_activeStateCapacity = newCapacity;
     }
 
-    machine->activeStates[machine->activeStateCount++] = state;
+    machine->m_activeStates[machine->m_activeStateCount++] = state;
 }
 
 void XStateMachine_removeActiveState(XStateMachine* machine, XAbstractState* state) {
     if (!machine || !state) return;
 
-    for (size_t i = 0; i < machine->activeStateCount; i++) {
-        if (machine->activeStates[i] == state) {
+    for (size_t i = 0; i < machine->m_activeStateCount; i++) {
+        if (machine->m_activeStates[i] == state) {
             // 前移元素
-            machine->activeStateCount--;
-            for (size_t j = i; j < machine->activeStateCount; j++) {
-                machine->activeStates[j] = machine->activeStates[j + 1];
+            machine->m_activeStateCount--;
+            for (size_t j = i; j < machine->m_activeStateCount; j++) {
+                machine->m_activeStates[j] = machine->m_activeStates[j + 1];
             }
             break;
         }
@@ -355,7 +357,7 @@ void VXStateMachine_deinit(XStateMachine* machine)
     XStateMachine_stop(machine);
 
     // 释放激活状态列表
-    XMemory_free(machine->activeStates);
+    XMemory_free(machine->m_activeStates);
     //调用父类释放函数
     XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(machine);
 }
@@ -372,7 +374,7 @@ static void XStateMachine_enterState(XStateMachine* machine, XAbstractState* sta
     }
 
     // 特殊处理不同类型的状态
-    switch (state->type) {
+    switch (state->m_type) {
     case XStateType_Basic:
         XState_activate_base((XState*)state);
         break;
@@ -401,15 +403,15 @@ static void XStateMachine_exitState(XStateMachine* machine, XAbstractState* stat
     XAbstractState_onExited_base(state);
 
     // 对于历史状态，存储当前子状态
-    if (state->parentState && ((XAbstractState*)state->parentState)->type == XStateType_History) {
-        XHistoryState_storeState((XHistoryState*)state->parentState, state);
+    if (state->m_parentState && ((XAbstractState*)state->m_parentState)->m_type == XStateType_History) {
+        XHistoryState_storeState((XHistoryState*)state->m_parentState, state);
     }
 
     // 从激活状态列表移除
     XStateMachine_removeActiveState(machine, state);
 
     // 退出子状态（历史状态和最终状态没有子状态）
-    if (state->type == XStateType_Basic || state->type == XStateType_Parallel) 
+    if (state->m_type == XStateType_Basic || state->m_type == XStateType_Parallel) 
     {
         XState* basicState = (XState*)state;
         for (size_t i = 0; i < XState_childCount(basicState); i++) {

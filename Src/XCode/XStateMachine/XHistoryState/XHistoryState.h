@@ -15,15 +15,15 @@ typedef enum {
  * @brief 历史状态类，用于保存父状态的历史激活状态
  */
 typedef struct XHistoryState {
-    XAbstractState parent;          // 继承XAbstractState
-    XHistoryStateType historyType;  // 历史状态类型
-    XAbstractState* defaultState;   // 默认状态
-    XAbstractState* storedState;    // 存储的历史状态
+    XAbstractState m_class;          // 继承XAbstractState
+    XHistoryStateType m_historyType;  // 历史状态类型
+    XAbstractState* m_defaultState;   // 默认状态
+    XAbstractState* m_storedState;    // 存储的历史状态
 } XHistoryState;
 
 /**
  * @brief 创建历史状态实例
- * @param type 历史状态类型
+ * @param m_type 历史状态类型
  * @return 新创建的历史状态实例，失败返回NULL
  */
 XHistoryState* XHistoryState_create(XHistoryStateType type);
@@ -31,7 +31,7 @@ XHistoryState* XHistoryState_create(XHistoryStateType type);
 /**
  * @brief 初始化历史状态
  * @param state 历史状态实例
- * @param type 历史状态类型
+ * @param m_type 历史状态类型
  */
 void XHistoryState_init(XHistoryState* state, XHistoryStateType type);
 
@@ -51,7 +51,7 @@ XHistoryStateType XHistoryState_historyType(const XHistoryState* state);
 /**
  * @brief 设置默认状态
  * @param state 历史状态实例
- * @param defaultState 默认状态
+ * @param m_defaultState 默认状态
  */
 void XHistoryState_setDefaultState(XHistoryState* state, XAbstractState* defaultState);
 
@@ -65,14 +65,14 @@ XAbstractState* XHistoryState_defaultState(const XHistoryState* state);
 /**
  * @brief 存储当前激活状态
  * @param state 历史状态实例
- * @param storedState 要存储的状态
+ * @param m_storedState 要存储的状态
  */
 void XHistoryState_storeState(XHistoryState* state, XAbstractState* storedState);
 
 /**
  * @brief 激活历史状态
  * @param state 历史状态实例
- * @param machine 所属状态机
+ * @param m_machine 所属状态机
  */
 void XHistoryState_activate(XHistoryState* state, XStateMachine* machine);
 

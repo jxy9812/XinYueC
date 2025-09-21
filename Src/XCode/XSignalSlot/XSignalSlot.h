@@ -73,7 +73,7 @@ bool XSignalSlot_setSendMode(XSignalSlot* manager,XEventSendMode mode);
 XEventSendMode XSignalSlot_getSendMode(XSignalSlot* manager);
 /**
  * @brief 连接信号与槽
- * @param signal 信号指针
+ * @param m_signal 信号指针
  * @param receiver 槽函数所属的接收者对象
  * @param slot_func 槽函数
  * @return 连接对象指针（可用于后续断开连接）
@@ -88,14 +88,14 @@ bool XSignalSlot_disconnect_conn(XConnection* conn);
 
 /**
  * @brief 触发信号，通知所有关联的槽函数
- * @param signal 信号指针
+ * @param m_signal 信号指针
  * @param args 传递给槽函数的参数（通过void*传递任意类型）
  */
 void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPriority priority);
 
 /**
  * @brief 触发信号，通知所有关联的槽函数
- * @param signal 信号指针
+ * @param m_signal 信号指针
  * @param args 传递给槽函数的参数（通过const XVariant*传递任意类型）调用所有槽后自动释放 只读不能修改
  */
 void XSignalSlot_emit_variant(XSignalSlot* manager, size_t signal,XVariant* args, XEventPriority priority);

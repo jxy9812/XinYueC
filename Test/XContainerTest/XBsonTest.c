@@ -74,7 +74,7 @@ void XBsonDocumentTest()
 		XBsonValue_delete(value);
 		XBsonDocument_delete_base(doc);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XBsonArrayTest()
 {
@@ -119,7 +119,7 @@ void XBsonArrayTest()
 		XBsonArray_delete_base(array);
 		XBsonValue_delete(value);*/
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 void XMenu_XBsonTest(XMenu* root)
 {

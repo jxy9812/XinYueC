@@ -57,7 +57,7 @@ XEventSendMode XObject_getSignalSendMode(XObject* object);
 #define XObject_deinit_base    XClass_deinit_base
 #define XObject_delete_base    XClass_delete_base
 void XObject_emitSignal(XObject* object, size_t signal, void* args, XEventPriority priority);
-//slot: void deinit_slot(XObject* sender, XObject* receiver, void* args)
+//slot: void deinit_slot(XObject* m_sender, XObject* receiver, void* args)
 void* XObject_deinit_signal(XObject* object);
 
 //事件中调用延迟释放

@@ -1,37 +1,37 @@
-#ifndef XFINALSTATE_H
+ï»¿#ifndef XFINALSTATE_H
 #define XFINALSTATE_H
 
 #include "XAbstractState.h"
 
 /**
- * @brief ×îÖÕ×´Ì¬Àà£¬±íÊ¾×´Ì¬»úÖĞµÄÖÕÖ¹×´Ì¬
+ * @brief æœ€ç»ˆçŠ¶æ€ç±»ï¼Œè¡¨ç¤ºçŠ¶æ€æœºä¸­çš„ç»ˆæ­¢çŠ¶æ€
  */
 typedef struct XFinalState {
-    XAbstractState parent;  // ¼Ì³ĞXAbstractState
+    XAbstractState m_class;  // ç»§æ‰¿XAbstractState
 } XFinalState;
 
 /**
- * @brief ´´½¨×îÖÕ×´Ì¬ÊµÀı
- * @return ĞÂ´´½¨µÄ×îÖÕ×´Ì¬ÊµÀı£¬Ê§°Ü·µ»ØNULL
+ * @brief åˆ›å»ºæœ€ç»ˆçŠ¶æ€å®ä¾‹
+ * @return æ–°åˆ›å»ºçš„æœ€ç»ˆçŠ¶æ€å®ä¾‹ï¼Œå¤±è´¥è¿”å›NULL
  */
 XFinalState* XFinalState_create();
 
 /**
- * @brief ³õÊ¼»¯×îÖÕ×´Ì¬
- * @param state ×îÖÕ×´Ì¬ÊµÀı
+ * @brief åˆå§‹åŒ–æœ€ç»ˆçŠ¶æ€
+ * @param state æœ€ç»ˆçŠ¶æ€å®ä¾‹
  */
 void XFinalState_init(XFinalState* state);
 
 /**
- * @brief Ïú»Ù×îÖÕ×´Ì¬
- * @param state ×îÖÕ×´Ì¬ÊµÀı
+ * @brief é”€æ¯æœ€ç»ˆçŠ¶æ€
+ * @param state æœ€ç»ˆçŠ¶æ€å®ä¾‹
  */
 void XFinalState_destroy(XFinalState* state);
 
 /**
- * @brief ¼¤»î×îÖÕ×´Ì¬
- * @param state ×îÖÕ×´Ì¬ÊµÀı
- * @param machine ËùÊô×´Ì¬»ú
+ * @brief æ¿€æ´»æœ€ç»ˆçŠ¶æ€
+ * @param state æœ€ç»ˆçŠ¶æ€å®ä¾‹
+ * @param m_machine æ‰€å±çŠ¶æ€æœº
  */
 void XFinalState_activate(XFinalState* state, XStateMachine* machine);
 

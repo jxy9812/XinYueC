@@ -33,7 +33,7 @@ void XPriorityMapQueueTest()
 		XPrintf("\n");
 		XQueue_delete_base(queue);
 	}
-	XCoreApplication_requestQuit();
+	XCoreApplication_quit();
 }
 
 void XMenu_XPriorityMapQueueTest(XMenu* root)
