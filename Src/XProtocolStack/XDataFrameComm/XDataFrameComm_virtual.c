@@ -80,14 +80,9 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 		XDataFrameComm_postEvent(comm, XEvent_create(comm,XDFC_RX_FRAME_ERROR, 0));
 		return;//校验没通过
 	}
-	XByteArray* v =XByteArray_create(0);
-	if (v == NULL)
-		return;
-	XVector_copy_base(v, comm->m_class.m_recvAsyncBuffer);
-
-	if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
+	if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm, XDFC_FRAME_RECEIVED, 0, comm->m_class.m_recvAsyncBuffer)))
 	{
-		XVector_delete_base(v);//释放数组防止内存泄露
+		//释放数组防止内存泄露
 	}
 }
 

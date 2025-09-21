@@ -29,16 +29,16 @@ void XEvent_init(XEvent* event, XObject* receiver, XEventType code, size_t times
 	}
 }
 
-void XEvent_deinit(XEvent* event)
+void XEvent_deinit(XEvent* ev)
 {
-	if (event && event->deinit)
-		event->deinit(event);
+	if (ev && ev->deinit)
+		ev->deinit(ev);
 }
 
-void XEvent_delete(XEvent* event)
+void XEvent_delete(XEvent* ev)
 {
-	XEvent_deinit(event);
-	XMemory_free(event);
+	XEvent_deinit(ev);
+	XMemory_free(ev);
 }
 
 XEventFunc* XEventFunc_create(void(*func)(void*), void* args)

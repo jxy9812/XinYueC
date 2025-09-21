@@ -282,14 +282,25 @@ void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer)
 	comm->m_timerSendExpired = timer;
 
 }
-
+static void XEventRecvFrame_deinit(XEventRecvFrame* ev)
+{
+	if (ev->frame)
+	{
+		XByteArray_delete_base(ev->frame);
+		ev->frame = NULL;
+	}
+}
 XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t timestamp,XByteArray* frame)
 {
 	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
 	if (ev == NULL)
 		return NULL;
 	XEvent_init(ev, object, eventCode, timestamp);
-	ev->frame = frame;
+	XByteArray* v = XByteArray_create(0);
+	if(v&&frame)
+		XByteArray_copy_base(v, frame);
+	ev->frame = v;
+	ev->m_class.deinit = XEventRecvFrame_deinit;
 	return ev;
 }
 XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t timestamp, XByteArray* frame, void* funcCode)
@@ -373,7 +384,7 @@ bool XDataFrameComm_postEvent(XDataFrameComm* comm, XEvent* ev)
 		return false;
 	if(!XObject_postEvent(comm,ev, XEVENT_PRIORITY_NORMAL))
 	{//添加失败，队列满了
-		XMemory_free(ev);
+		XEvent_delete(ev);
 #if XDFC_QUEUE_FULL_SHOW
 		XPrintf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
 #endif

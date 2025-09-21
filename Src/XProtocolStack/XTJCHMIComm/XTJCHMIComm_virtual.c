@@ -152,13 +152,9 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				XContainerSize(recvVector) -= sizeof(tail);//缓冲区删除结束标志
 				if (XContainerSize(recvVector) != 0)
 				{
-					XVector* v = XVector_Create(uint8_t);
-					if (v == NULL)
-						return;
-					XVector_copy_base(v, recvVector);
-					if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
+					if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, recvVector)))
 					{
-						XVector_delete_base(v);//释放数组防止内存泄露
+						//XVector_delete_base(v);//释放数组防止内存泄露
 					}
 				}
 				comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
@@ -170,14 +166,10 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				XContainerSize(recvVector) -= sizeof(tailCrc);//缓冲区删除结束标志
 				if (XContainerSize(recvVector) != 0 && XCrc_get16(XContainerDataPtr(recvVector), XContainerSize(recvVector)) == 0)
 				{
-					XVector* v = XVector_Create(uint8_t);
-					if (v == NULL)
-						return;
 					XContainerSize(recvVector) -=2;//缓冲区删除CRC
-					XVector_copy_base(v, recvVector);
-					if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
+					if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, recvVector)))
 					{
-						XVector_delete_base(v);//释放数组防止内存泄露
+						//XVector_delete_base(v);//释放数组防止内存泄露
 					}
 				}
 				comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
@@ -208,14 +200,9 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 
 	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_class.m_recvAsyncBuffer))
 		return;//校验没通过
-	XVector* v = XVector_Create(uint8_t);
-	if (v == NULL)
-		return;
-	XVector_copy_base(v, comm->m_class.m_recvAsyncBuffer);
-
-	if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v)))
+	if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, comm->m_class.m_recvAsyncBuffer)))
 	{
-		XVector_delete_base(v);//释放数组防止内存泄露
+		//XVector_delete_base(v);//释放数组防止内存泄露
 	}
 }
 void VXDataFrameComm_setRecvValidCRC16(XTJCHMIComm* comm, bool enableCRC16)
