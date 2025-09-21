@@ -1,128 +1,125 @@
-#ifndef XSTATE_H
+ï»¿#ifndef XSTATE_H
 #define XSTATE_H
 
 #include "XAbstractState.h"
 #include "XAbstractTransition.h"
 
 /**
- * @brief »ù´¡×´Ì¬Àà£¬¿É°üº¬×Ó×´Ì¬ºÍ×ª»»
+ * @brief åŸºç¡€çŠ¶æ€ç±»ï¼Œå¯åŒ…å«å­çŠ¶æ€å’Œè½¬æ¢
  */
 typedef struct XState {
-    XAbstractState parent;         // ¼Ì³ĞXAbstractState
-    XAbstractState** childStates;  // ×Ó×´Ì¬ÁĞ±í
-    size_t childCount;             // ×Ó×´Ì¬ÊıÁ¿
-    size_t childCapacity;          // ×Ó×´Ì¬ÈİÁ¿
-    XAbstractTransition** transitions;  // ×ª»»ÁĞ±í
-    size_t transitionCount;        // ×ª»»ÊıÁ¿
-    size_t transitionCapacity;     // ×ª»»ÈİÁ¿
-    XAbstractState* initialState;  // ³õÊ¼×Ó×´Ì¬
+    XAbstractState parent;         // ç»§æ‰¿XAbstractState
+    XAbstractTransition** transitions;  // è½¬æ¢åˆ—è¡¨
+    size_t transitionCount;        // è½¬æ¢æ•°é‡
+    size_t transitionCapacity;     // è½¬æ¢å®¹é‡
+    XAbstractState* initialState;  // åˆå§‹å­çŠ¶æ€
 } XState;
 
 /**
- * @brief ´´½¨×´Ì¬ÊµÀı
- * @return ĞÂ´´½¨µÄ×´Ì¬ÊµÀı£¬Ê§°Ü·µ»ØNULL
+ * @brief åˆ›å»ºçŠ¶æ€å®ä¾‹
+ * @return æ–°åˆ›å»ºçš„çŠ¶æ€å®ä¾‹ï¼Œå¤±è´¥è¿”å›NULL
  */
 XState* XState_create();
 
 /**
- * @brief ³õÊ¼»¯×´Ì¬
- * @param state ×´Ì¬ÊµÀı
+ * @brief åˆå§‹åŒ–çŠ¶æ€
+ * @param state çŠ¶æ€å®ä¾‹
  */
 void XState_init(XState* state);
 
 /**
- * @brief Ïú»Ù×´Ì¬
- * @param state ×´Ì¬ÊµÀı
+ * @brief é”€æ¯çŠ¶æ€
+ * @param state çŠ¶æ€å®ä¾‹
  */
 void XState_destroy(XState* state);
 
 /**
- * @brief Ìí¼Ó×Ó×´Ì¬
- * @param state ¸¸×´Ì¬
- * @param child ÒªÌí¼ÓµÄ×Ó×´Ì¬
- * @return ³É¹¦·µ»Øtrue£¬Ê§°Ü·µ»Øfalse
+ * @brief æ·»åŠ å­çŠ¶æ€
+ * @param state çˆ¶çŠ¶æ€
+ * @param child è¦æ·»åŠ çš„å­çŠ¶æ€
+ * @return æˆåŠŸè¿”å›trueï¼Œå¤±è´¥è¿”å›false
  */
 bool XState_addState(XState* state, XAbstractState* child);
 
 /**
- * @brief ÒÆ³ı×Ó×´Ì¬
- * @param state ¸¸×´Ì¬
- * @param child ÒªÒÆ³ıµÄ×Ó×´Ì¬
- * @return ³É¹¦·µ»Øtrue£¬Ê§°Ü·µ»Øfalse
+ * @brief ç§»é™¤å­çŠ¶æ€
+ * @param state çˆ¶çŠ¶æ€
+ * @param child è¦ç§»é™¤çš„å­çŠ¶æ€
+ * @return æˆåŠŸè¿”å›trueï¼Œå¤±è´¥è¿”å›false
  */
 bool XState_removeState(XState* state, XAbstractState* child);
 
 /**
- * @brief »ñÈ¡×Ó×´Ì¬ÊıÁ¿
- * @param state ×´Ì¬ÊµÀı
- * @return ×Ó×´Ì¬ÊıÁ¿
+ * @brief è·å–å­çŠ¶æ€æ•°é‡
+ * @param state çŠ¶æ€å®ä¾‹
+ * @return å­çŠ¶æ€æ•°é‡
  */
 size_t XState_childCount(const XState* state);
 
 /**
- * @brief »ñÈ¡Ö¸¶¨Ë÷ÒıµÄ×Ó×´Ì¬
- * @param state ×´Ì¬ÊµÀı
- * @param index Ë÷Òı
- * @return ×Ó×´Ì¬Ö¸Õë£¬Ë÷ÒıÎŞĞ§·µ»ØNULL
+ * @brief è·å–æŒ‡å®šç´¢å¼•çš„å­çŠ¶æ€
+ * @param state çŠ¶æ€å®ä¾‹
+ * @param index ç´¢å¼•
+ * @return å­çŠ¶æ€æŒ‡é’ˆï¼Œç´¢å¼•æ— æ•ˆè¿”å›NULL
  */
 XAbstractState* XState_child(const XState* state, size_t index);
 
 /**
- * @brief Ìí¼Ó×ª»»
- * @param state Ô´×´Ì¬
- * @param transition ÒªÌí¼ÓµÄ×ª»»
- * @return ³É¹¦·µ»Øtrue£¬Ê§°Ü·µ»Øfalse
+ * @brief æ·»åŠ è½¬æ¢
+ * @param state æºçŠ¶æ€
+ * @param transition è¦æ·»åŠ çš„è½¬æ¢
+ * @return æˆåŠŸè¿”å›trueï¼Œå¤±è´¥è¿”å›false
  */
 bool XState_addTransition(XState* state, XAbstractTransition* transition);
 
 /**
- * @brief ÒÆ³ı×ª»»
- * @param state Ô´×´Ì¬
- * @param transition ÒªÒÆ³ıµÄ×ª»»
- * @return ³É¹¦·µ»Øtrue£¬Ê§°Ü·µ»Øfalse
+ * @brief ç§»é™¤è½¬æ¢
+ * @param state æºçŠ¶æ€
+ * @param transition è¦ç§»é™¤çš„è½¬æ¢
+ * @return æˆåŠŸè¿”å›trueï¼Œå¤±è´¥è¿”å›false
  */
 bool XState_removeTransition(XState* state, XAbstractTransition* transition);
 
 /**
- * @brief »ñÈ¡×ª»»ÊıÁ¿
- * @param state ×´Ì¬ÊµÀı
- * @return ×ª»»ÊıÁ¿
+ * @brief è·å–è½¬æ¢æ•°é‡
+ * @param state çŠ¶æ€å®ä¾‹
+ * @return è½¬æ¢æ•°é‡
  */
 size_t XState_transitionCount(const XState* state);
 
 /**
- * @brief »ñÈ¡Ö¸¶¨Ë÷ÒıµÄ×ª»»
- * @param state ×´Ì¬ÊµÀı
- * @param index Ë÷Òı
- * @return ×ª»»Ö¸Õë£¬Ë÷ÒıÎŞĞ§·µ»ØNULL
+ * @brief è·å–æŒ‡å®šç´¢å¼•çš„è½¬æ¢
+ * @param state çŠ¶æ€å®ä¾‹
+ * @param index ç´¢å¼•
+ * @return è½¬æ¢æŒ‡é’ˆï¼Œç´¢å¼•æ— æ•ˆè¿”å›NULL
  */
 XAbstractTransition* XState_transition(const XState* state, size_t index);
 
 /**
- * @brief ÉèÖÃ³õÊ¼×Ó×´Ì¬
- * @param state ¸¸×´Ì¬
- * @param initialState ³õÊ¼×Ó×´Ì¬
+ * @brief è®¾ç½®åˆå§‹å­çŠ¶æ€
+ * @param state çˆ¶çŠ¶æ€
+ * @param initialState åˆå§‹å­çŠ¶æ€
  */
 void XState_setInitialState(XState* state, XAbstractState* initialState);
 
 /**
- * @brief »ñÈ¡³õÊ¼×Ó×´Ì¬
- * @param state ×´Ì¬ÊµÀı
- * @return ³õÊ¼×Ó×´Ì¬Ö¸Õë
+ * @brief è·å–åˆå§‹å­çŠ¶æ€
+ * @param state çŠ¶æ€å®ä¾‹
+ * @return åˆå§‹å­çŠ¶æ€æŒ‡é’ˆ
  */
 XAbstractState* XState_initialState(const XState* state);
 
 /**
- * @brief ×´Ì¬¼¤»îÊ±µ÷ÓÃ
- * @param state ×´Ì¬ÊµÀı
- * @param machine ËùÊô×´Ì¬»ú
+ * @brief çŠ¶æ€æ¿€æ´»æ—¶è°ƒç”¨
+ * @param state çŠ¶æ€å®ä¾‹
+ * @param machine æ‰€å±çŠ¶æ€æœº
  */
 void XState_activate(XState* state, XStateMachine* machine);
 
 /**
- * @brief ×´Ì¬Ê§»îÊ±µ÷ÓÃ
- * @param state ×´Ì¬ÊµÀı
- * @param machine ËùÊô×´Ì¬»ú
+ * @brief çŠ¶æ€å¤±æ´»æ—¶è°ƒç”¨
+ * @param state çŠ¶æ€å®ä¾‹
+ * @param machine æ‰€å±çŠ¶æ€æœº
  */
 void XState_deactivate(XState* state, XStateMachine* machine);
 

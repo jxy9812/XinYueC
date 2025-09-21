@@ -9,16 +9,16 @@
 #include"XEventTransition.h"
 #include"XPrintf.h"
 static void StateAEnteredCallback(XAbstractState* state, XStateMachine* machine) {
-    XPrintf("A进入状态 %p %p\n", state, XStateMachine_initialState(machine));
+    XPrintf("A进入状态 %p\n", state);
 }
 static void StateAExitedCallback(XAbstractState* state, XStateMachine* machine) {
-    XPrintf("A退出状态 %p %p\n", state, XStateMachine_initialState(machine));
+    XPrintf("A退出状态 %p\n", state);
 }
 static void StateBEnteredCallback(XAbstractState* state, XStateMachine* machine) {
-    XPrintf("B进入状态 %p %p\n", state, XStateMachine_initialState(machine));
+    XPrintf("B进入状态 %p \n", state);
 }
 static void StateBExitedCallback(XAbstractState* state, XStateMachine* machine) {
-    XPrintf("B退出状态 %p %p\n", state, XStateMachine_initialState(machine));
+    XPrintf("B退出状态 %p\n", state);
 }
 // 修正条件函数名称，明确是B到最终状态的转换
 static bool BtoFinal(const XAbstractTransition* transition, const XEvent* event) {
@@ -28,6 +28,7 @@ static bool BtoFinal(const XAbstractTransition* transition, const XEvent* event)
 
 void XStateMachineTest() {
     XStateMachine* machine = XStateMachine_create();
+    XObject_addEventFilter(machine, XEVENT_TRANSITION,XStateMachine_handleEventCB, machine);
     // 创建状态
     XState* stateA = XState_create();
     XState* stateB = XState_create();
@@ -40,8 +41,8 @@ void XStateMachineTest() {
     XAbstractState_setExitedCallback((XAbstractState*)stateB, StateBExitedCallback);
 
     // 配置父子关系：stateA包含stateB和finalState，初始子状态为stateB
-    XState_addState(stateA, (XAbstractState*)stateB);
-    XState_addState(stateA, (XAbstractState*)finalState);  // 添加最终状态作为子状态
+    XAbstractState_addState(stateA, (XAbstractState*)stateB);
+    XAbstractState_addState(stateA, (XAbstractState*)finalState);  // 添加最终状态作为子状态
     XState_setInitialState(stateA, (XAbstractState*)stateB);
 
     // 修正1：转换源状态为stateB，目标状态为finalState
@@ -58,14 +59,14 @@ void XStateMachineTest() {
     XStateMachine_start(machine);  // 预期：A进入 → B进入
 
     // 触发事件
-    XEvent event = { .event.code = XEVENT_TRANSITION };
-    XStateMachine_handleEvent(machine, &event);  // 触发B→Final转换
-
+    //XEvent event = { .event.code = XEVENT_TRANSITION };
+    //XStateMachine_handleEvent(machine, &event);  // 触发B→Final转换
+    XObject_postEvent(machine,XEventMin_create(machine, XEVENT_TRANSITION,0),XEVENT_PRIORITY_NORMAL);
     // 清理资源
     //XState_destroy(stateA);  // 自动销毁子状态和转换
     //XFinalState_destroy(finalState);
     //XStateMachine_destroy(machine);
-    XCoreApplication_requestQuit();
+    //XCoreApplication_requestQuit();
 }
 void XMenu_XStateMachineTest(XMenu* root)
 {

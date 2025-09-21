@@ -50,7 +50,7 @@ void XHistoryState_activate(XHistoryState* state, XStateMachine* machine) {
     if (!state || !machine) return;
 
     // 激活历史状态本身
-    XAbstractState_onEntered(&state->parent, machine);
+    XAbstractState_onEntered(&state->parent);
 
     // 确定要恢复的状态
     XAbstractState* target = state->storedState;
@@ -64,7 +64,7 @@ void XHistoryState_activate(XHistoryState* state, XStateMachine* machine) {
             XState_activate((XState*)target, machine);
         }
         else {
-            XAbstractState_onEntered(target, machine);
+            XAbstractState_onEntered(target);
         }
     }
 }

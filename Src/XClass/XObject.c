@@ -9,6 +9,7 @@
 #include "XMapBase.h"
 #include "XTimer.h"
 #include <stdarg.h>
+#include <string.h>
 static void VXObject_poll(XObject* object);
 static void VXObject_deinit(XObject* object);
 XVtable* XObject_class_init()
@@ -43,19 +44,22 @@ void XObject_init(XObject* object)
 {
 	if (object == NULL)
 		return;
-	object->m_eventLoop = NULL;
+	memset(((XClass*)object)+1,0,sizeof(XObject)-sizeof(XClass));
+	XClass_init(object);
+	XClassGetVtable(object) = XObject_class_init();
+	//object->m_eventLoop = NULL;
 	XThread* thread = XThread_currentThread();
 	XEventLoop* d= XThread_currentEventLoop();
 	if (d == NULL)
 		return;
 	object->m_eventLoop = d;
 	//信号与槽初始化
-	object->m_signalSlot = NULL;
+	//object->m_signalSlot = NULL;
 	XObject_addEventFilter(object, XEVENT_SLOT_RUN, XEventSlotFuncRunCB, NULL);
 	XObject_addEventFilter(object, XEVENT_FUNC_RUN, XEventFuncRunCB, NULL);
 	//定时器
-	object->m_poolTimer = NULL;
-	object->m_isEventBubblingEnabled = false;
+	//object->m_poolTimer = NULL;
+	//object->m_isEventBubblingEnabled = false;
 }
 
 void XObject_poll_base(XObject* object)
@@ -219,6 +223,12 @@ XEventSendMode XObject_getSignalSendMode(XObject* object)
 	if (!object)
 		return XEVENT_SEND_INVALID;
 	return XSignalSlot_getSendMode(object->m_signalSlot);
+}
+
+void XObject_emitSignal(XObject* object, size_t signal, void* args, XEventPriority priority)
+{
+	if(object)
+		XSignalSlot_emit(object->m_signalSlot, signal, args, priority);
 }
 
 void* XObject_deinit_signal(XObject* object)

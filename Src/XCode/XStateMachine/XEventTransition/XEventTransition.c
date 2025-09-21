@@ -64,5 +64,5 @@ bool XEventTransition_processEvent(XEventTransition* transition, XStateMachine* 
     //}
 
     // 执行转换
-    return XAbstractTransition_execute(&transition->parent, machine, event);
+    return XAbstractTransition_execute(transition, machine, event);
 }

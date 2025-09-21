@@ -1,8 +1,11 @@
 ﻿#include "XState.h"
 #include "XMemory.h"
 #include <string.h>
-
 #define INITIAL_CAPACITY 4
+bool XStateMachine_isActive(const XStateMachine* machine, const XAbstractState* state);
+void XStateMachine_addActiveState(XStateMachine* machine, XAbstractState* state);
+void XStateMachine_removeActiveState(XStateMachine* machine, XAbstractState* state);
+
 
 XState* XState_create() {
     XState* state = (XState*)XMemory_malloc(sizeof(XState));
@@ -16,11 +19,7 @@ void XState_init(XState* state) {
     if (!state) return;
 
     XAbstractState_init(&state->parent, XStateType_Basic);
-    state->childCapacity = INITIAL_CAPACITY;
-    state->childStates = (XAbstractState**)XMemory_malloc(
-        sizeof(XAbstractState*) * state->childCapacity
-    );
-    state->childCount = 0;
+   
 
     state->transitionCapacity = INITIAL_CAPACITY;
     state->transitions = (XAbstractTransition**)XMemory_malloc(
@@ -34,11 +33,7 @@ void XState_init(XState* state) {
 void XState_destroy(XState* state) {
     if (!state) return;
 
-    // 移除所有子状态
-    for (size_t i = 0; i < state->childCount; i++) {
-        XAbstractState_destroy(state->childStates[i]);
-    }
-    XMemory_free(state->childStates);
+    
 
     // 移除所有转换
     for (size_t i = 0; i < state->transitionCount; i++) {
@@ -50,63 +45,9 @@ void XState_destroy(XState* state) {
     XMemory_free(state);
 }
 
-bool XState_addState(XState* state, XAbstractState* child) {
-    if (!state || !child) return false;
 
-    // 检查是否已存在
-    for (size_t i = 0; i < state->childCount; i++) {
-        if (state->childStates[i] == child) {
-            return false;
-        }
-    }
 
-    // 扩容
-    if (state->childCount >= state->childCapacity) {
-        size_t newCapacity = state->childCapacity * 2;
-        XAbstractState** newChildren = (XAbstractState**)XMemory_realloc(
-            state->childStates, sizeof(XAbstractState*) * newCapacity
-        );
-        if (!newChildren) return false;
 
-        state->childStates = newChildren;
-        state->childCapacity = newCapacity;
-    }
-
-    // 添加子状态并设置父状态
-    state->childStates[state->childCount++] = child;
-    XAbstractState_setParentState(child, state);
-
-    return true;
-}
-
-bool XState_removeState(XState* state, XAbstractState* child) {
-    if (!state || !child) return false;
-
-    for (size_t i = 0; i < state->childCount; i++) {
-        if (state->childStates[i] == child) {
-            // 前移元素
-            state->childCount--;
-            for (size_t j = i; j < state->childCount; j++) {
-                state->childStates[j] = state->childStates[j + 1];
-            }
-
-            // 清除子状态的父状态
-            XAbstractState_setParentState(child, NULL);
-            return true;
-        }
-    }
-
-    return false;
-}
-
-size_t XState_childCount(const XState* state) {
-    return state ? state->childCount : 0;
-}
-
-XAbstractState* XState_child(const XState* state, size_t index) {
-    if (!state || index >= state->childCount) return NULL;
-    return state->childStates[index];
-}
 
 bool XState_addTransition(XState* state, XAbstractTransition* transition) {
     if (!state || !transition) return false;
@@ -167,7 +108,10 @@ XAbstractTransition* XState_transition(const XState* state, size_t index) {
 }
 
 void XState_setInitialState(XState* state, XAbstractState* initialState) {
-    if (state) {
+    if (state) 
+    {
+        if (initialState)
+            XAbstractState_addState(state,initialState);
         state->initialState = initialState;
     }
 }
@@ -180,7 +124,7 @@ void XState_activate(XState* state, XStateMachine* machine) {
     if (!state || !machine) return;
 
     // 激活当前状态
-    XAbstractState_onEntered(&state->parent, machine);
+    XAbstractState_onEntered(&state->parent);
 
     // 如果有初始子状态，激活它
     if (state->initialState) {
@@ -188,28 +132,18 @@ void XState_activate(XState* state, XStateMachine* machine) {
         if (state->initialState->type == XStateType_Basic) {
             XState_activate((XState*)state->initialState, machine);
         }
-        else {
+       /* else {
             XAbstractState_onEntered(state->initialState, machine);
-        }
+        }*/
     }
+    //XStateMachine_addActiveState(machine, state);
 }
 
 void XState_deactivate(XState* state, XStateMachine* machine) {
     if (!state || !machine) return;
 
-    // 失活所有子状态
-    for (size_t i = 0; i < state->childCount; i++) {
-        XAbstractState* child = state->childStates[i];
-        if (child->isRunning) {
-            if (child->type == XStateType_Basic) {
-                XState_deactivate((XState*)child, machine);
-            }
-            else {
-                XAbstractState_onExited(child, machine);
-            }
-        }
-    }
-
+    
+    //XStateMachine_removeActiveState(state->machine, state);
     // 失活当前状态
-    XAbstractState_onExited(&state->parent, machine);
+    XAbstractState_onExited(&state->parent);
 }

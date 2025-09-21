@@ -25,7 +25,7 @@ void XFinalState_activate(XFinalState* state, XStateMachine* machine) {
     if (!state || !machine) return;
 
     // 激活最终状态
-    XAbstractState_onEntered(&state->parent, machine);
+    XAbstractState_onEntered(&state->parent);
 
     // 发送状态机完成信号
     //XObject_emitSignal((XObject*)machine, "finished()", NULL);

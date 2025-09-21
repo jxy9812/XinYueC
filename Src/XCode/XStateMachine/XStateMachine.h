@@ -27,7 +27,7 @@ typedef struct XStateMachine
     XStateMachineStatus status;      // 状态机状态
     void* userData;                  // 用户数据
 } XStateMachine;
-
+XVtable* XStateMachine_class_init();
 /**
  * @brief 创建状态机实例
  * @return 新创建的状态机实例，失败返回NULL
@@ -44,7 +44,8 @@ void XStateMachine_init(XStateMachine* machine);
  * @brief 销毁状态机
  * @param machine 状态机实例
  */
-void XStateMachine_destroy(XStateMachine* machine);
+#define XStateMachine_delete_base       XObject_delete_base
+#define XStateMachine_deinit_base       XObject_deinit_event
 
 /**
  * @brief 设置初始状态
@@ -109,12 +110,11 @@ void XStateMachine_resume(XStateMachine* machine);
 XStateMachineStatus XStateMachine_status(const XStateMachine* machine);
 
 /**
- * @brief 处理事件
- * @param machine 状态机实例
+ * @brief 事件过滤回调函数  
  * @param event 要处理的事件
- * @return 事件被处理返回true，否则返回false
+ * @return 
  */
-bool XStateMachine_handleEvent(XStateMachine* machine, const XEvent* event);
+void XStateMachine_handleEventCB(const XEventMin* event);
 
 /**
  * @brief 执行状态转换
@@ -167,5 +167,16 @@ void XStateMachine_setUserData(XStateMachine* machine, void* data);
  * @return 用户数据指针
  */
 void* XStateMachine_userData(const XStateMachine* machine);
+
+/*                                                          信号                                                          */    
+//状态进入信号
+void* XStateMachine_entered_signal(XStateMachine* machine, XAbstractState* state);
+//状态退出信号
+void* XStateMachine_exited_signal(XStateMachine* machine, XAbstractState* state);
+
+void* XStateMachine_start_signal(XStateMachine* machine);
+void* XStateMachine_stop_signal(XStateMachine* machine);
+void* XStateMachine_pause_signal(XStateMachine* machine);
+void* XStateMachine_resume_signal(XStateMachine* machine);
 
 #endif // XSTATEMACHINE_H
