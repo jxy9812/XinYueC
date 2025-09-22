@@ -40,7 +40,7 @@ XVariantList* XVariantList_create_move(XVariantList* other)
 ////释放数据方法
 //static void DataDeleteMethod(XVariant* var)
 //{
-//	XVariant_deinit(var);
+//	XVariant_deinit_base(var);
 //}
 void XVariantList_init(XVariantList* list)
 {
@@ -48,9 +48,9 @@ void XVariantList_init(XVariantList* list)
 		return;
 	XVector_init(list, sizeof(XVariant));
 	XClassGetVtable(list) = XVariantList_class_init();
-	XContainerSetDataCopyMethod(list, XVariant_copy);
-	XContainerSetDataMoveMethod(list, XVariant_move);
-	XContainerSetDataDeinitMethod(list, XVariant_deinit);
+	XContainerSetDataCopyMethod(list, XVariant_copy_base);
+	XContainerSetDataMoveMethod(list, XVariant_move_base);
+	XContainerSetDataDeinitMethod(list, XVariant_deinit_base);
 	XContainerSetCompare(list, XCompare_ptr);
 	//list->m_vector.m_equality = XVariant_equality;
 }

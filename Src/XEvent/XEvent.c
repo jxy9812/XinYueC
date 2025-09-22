@@ -93,7 +93,7 @@ void XEventSlotFuncRunCB(XEventSlotFunc* event)
 		if (XAtomic_fetch_sub_int32(event->ref_count, 1) == 1)
 		{
 			if (event->args)
-				XVariant_delete(event->args);
+				XVariant_delete_base(event->args);
 			XMemory_free(event->ref_count);
 		}
 	}

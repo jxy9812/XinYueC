@@ -213,7 +213,7 @@ XVariantList* XBsonArray_toVariantList(const XBsonArray* arr)
         value = XVector_iterator_data(&it);
         var = XBsonValue_toVariant(value);
         XVariantList_push_back_move_base(list, var);
-        XVariant_delete(var);
+        XVariant_delete_base(var);
     }
     return list;
 }
@@ -230,7 +230,7 @@ XVariantList* XBsonArray_toVariantList_move(XBsonArray* arr)
         value = XVector_iterator_data(&it);
         var = XBsonValue_toVariant_move(value);
         XVariantList_push_back_move_base(list, var);
-        XVariant_delete(var);
+        XVariant_delete_base(var);
     }
     return list;
 }

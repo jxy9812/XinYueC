@@ -49,7 +49,7 @@ void XAction_setData(XAction* action, XVariant* data)
 	if (action == NULL)
 		return;
 	if (action->data)
-		XVariant_delete(action->data);
+		XVariant_delete_base(action->data);
 	action->data = data;
 }
 
@@ -60,7 +60,7 @@ void XAction_delete(XAction* action)
 	if (action->text)
 		XMemory_free(action->text);
 	if (action->data)
-		XVariant_delete(action->data);
+		XVariant_delete_base(action->data);
 	XMemory_free(action);
 }
 

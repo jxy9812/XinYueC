@@ -28,7 +28,7 @@ void XVariantListTest()
 		int64_t index = XVector_indexOf(list,find,0);
 		if (index!=-1)
 			XPrintf("找到了index:%d\n",index);
-		XVariant_delete(find);
+		XVariant_delete_base(find);
 
 		XVariant_setValue_double(var, 100.0);
 
@@ -50,7 +50,7 @@ void XVariantListTest()
 	
 		XPrintf("%d\n", XVariant_toInt(var));
 
-		XVariant_delete(var);
+		XVariant_delete_base(var);
 		
 		XVariantList_delete_base(list);
 	}
@@ -68,7 +68,7 @@ void XVariantListTest_list()
 		XVariantList_push_back_base(list, var);
 		XVariant_setValue_utf8_str(var, "9000");
 		XVariantList_push_back_base(list, var);
-		XVariant_delete(var);
+		XVariant_delete_base(var);
 
 		XVariant* varList = XVariant_create_list(list);
 		XPrintf("当前类型:%s\n", XVariant_typeName(varList));
@@ -85,7 +85,7 @@ void XVariantListTest_list()
 			XVariantList_delete_base(toList);
 		}
 
-		XVariant_delete(varList);
+		XVariant_delete_base(varList);
 		XVariantList_delete_base(list);
 	}
 	XCoreApplication_quit();
@@ -101,7 +101,7 @@ void XVariantListTest_map()
 			XString_Init_Utf8(str, "6666");
 			XVariant* v = XVariant_create_int(9999);
 			XMapBase_insert_move_base(map, str, v);
-			XVariant_delete(v);
+			XVariant_delete_base(v);
 			XString_deinit_base(str);
 		}
 		{
@@ -109,7 +109,7 @@ void XVariantListTest_map()
 			XVariant* v = XVariant_create_int(6666);
 			XMapBase_insert_move_base(map, str, v);
 			XString_delete_base(str);
-			XVariant_delete(v);
+			XVariant_delete_base(v);
 		}
 		XVariant* varMap = XVariant_create_hash(map);
 		XPrintf("当前类型:%s\n", XVariant_typeName(varMap));
@@ -123,7 +123,7 @@ void XVariantListTest_map()
 			XPrintf("key:%s val:%d\n", XString_c_str(str), XVariant_toInt(var));
 		}
 		XMap_delete_base(map);
-		XVariant_delete(varMap);
+		XVariant_delete_base(varMap);
 	}
 	XCoreApplication_quit();
 }
@@ -141,7 +141,7 @@ void XVariantListTest_stringList()
 		XVariant* var = XVariant_create_StringList(list);
 		XStringList_delete_base(list);
 		list=XVariant_toStringList(var);
-		XVariant_delete(var);
+		XVariant_delete_base(var);
 		for_each_iterator(list, XStringList, it)
 		{
 			printf("%s \n", XString_c_str(XStringList_iterator_data(&it)));

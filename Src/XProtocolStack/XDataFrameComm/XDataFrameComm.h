@@ -98,6 +98,8 @@ void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer)
 #define XDataFrameComm_disconnect_base             XCommunicatorBase_disconnect_base
 #define XDataFrameComm_isConnected_base            XCommunicatorBase_isConnected_base
 #define XDataFrameComm_delete_base                 XCommunicatorBase_delete_base
+/*                                          信号                                          */
+void* XDataFrameComm_frame_signal(XDataFrameComm* comm,XByteArray* data);
 /*以下是默认的回调函数*/
 
 //默认的事件处理回调(全部事件)
@@ -120,6 +122,9 @@ typedef struct XEventFuncCode
     void* funcCode;//功能码
 }XEventFuncCode;//执行功能码事件
 XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t timestamp, XByteArray* frame, void* funcCode);
+
+
+
 #ifdef __cplusplus
 }
 #endif

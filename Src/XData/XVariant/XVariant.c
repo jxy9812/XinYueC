@@ -66,6 +66,29 @@ static bool global_typeHash_init()
 		return true;
 	return false;
 }
+static void VXVariant_move(XVariant* var, XVariant* src);
+static void VXVariant_copy(XVariant* var, XVariant* src);
+static void VXVariant_deinit(XVariant* var);
+XVtable* XVariant_class_init()
+{
+	XVTABLE_CREAT_DEFAULT
+		//虚函数表初始化
+#if VTABLE_ISSTACK
+		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XClass))
+#else
+		XVTABLE_HEAP_INIT_DEFAULT
+#endif
+	//	void* table[] = { VXClass_copy,VXClass_move,VXClass_deinit };
+	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXVariant_move);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXVariant_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXVariant_deinit);
+#if SHOWCONTAINERSIZE
+	printf("XVariant size:%d\n", XVtable_size(XClassVtable));
+#endif
+	return XVTABLE_DEFAULT;
+}
 
 XVariant* XVariant_create(void* data, size_t dataSize, int type)
 {
@@ -78,7 +101,7 @@ XVariant* XVariant_create_copy(const XVariant* copy)
 {
 	XJsonArray* var = XVariant_create_null();
 	if (var && copy)
-		XVariant_copy(var, copy);
+		XVariant_copy_base(var, copy);
 	return var;
 }
 
@@ -86,7 +109,7 @@ XVariant* XVariant_create_move(XVariant* move)
 {
 	XJsonArray* var = XVariant_create_null();
 	if (var && move)
-		XVariant_move(var, move);
+		XVariant_move_base(var, move);
 	return var;
 }
 
@@ -94,6 +117,8 @@ void XVariant_init(XVariant* var, void* data, size_t dataSize, int type)
 {
 	if (var == NULL)
 		return NULL;
+	XClass_init(var);
+	XClassGetVtable(var) = XVariant_class_init();
 	if (dataSize > 0)
 	{
 		var->m_data = XMemory_malloc(dataSize);
@@ -883,7 +908,7 @@ static void setValue(XVariant* var, void* data, size_t size, int type)
 		return;
 	if (var->m_data && var->m_type != type)
 	{
-		XVariant_deinit(var);
+		XVariant_deinit_base(var);
 	}
 	if (var->m_data == NULL || var->m_dataSize != size)
 	{
@@ -906,7 +931,7 @@ void XVariant_setValue(XVariant* var,const XVariant* newVar)
 {
 	/*if (var == NULL || newVar == NULL||newVar->m_data==NULL||newVar->m_dataSize==0)
 		return;*/
-	return XVariant_copy(var, newVar);
+	return XVariant_copy_base(var, newVar);
 		//setValue(var,NULL,);
 }
 
@@ -1029,7 +1054,7 @@ void XVariant_setValue_ByteArray_ref(XVariant* var, XByteArray* array)
 {
 	if (var == NULL || array == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = array;
 	var->m_dataSize = sizeof(XByteArray);
 	var->m_type = XVariantType_ByteArray;
@@ -1074,7 +1099,7 @@ void XVariant_setValue_String_ref(XVariant* var, XString* str)
 {
 	if (var == NULL || str == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = str;
 	var->m_dataSize = sizeof(XString);
 	var->m_type = XVariantType_String;
@@ -1118,7 +1143,7 @@ void XVariant_setValue_StringList_ref(XVariant* var, XStringList* list)
 {
 	if (var == NULL || list == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = list;
 	var->m_dataSize = sizeof(XStringList);
 	var->m_type = XVariantType_StringList;
@@ -1150,7 +1175,7 @@ void XVariant_setValue_list_ref(XVariant* var, XVariantList* list)
 {
 	if (var == NULL || list == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = list;
 	var->m_dataSize = sizeof(XVariantList);
 	var->m_type = XVariantType_List;
@@ -1182,7 +1207,7 @@ void XVariant_setValue_map_ref(XVariant* var, XVariantMap* map)
 {
 	if (var == NULL || map == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = map;
 	var->m_dataSize = sizeof(XVariantMap);
 	var->m_type = XVariantType_Map;
@@ -1214,7 +1239,7 @@ void XVariant_setValue_hash_ref(XVariant* var, XVariantHashMap* hash)
 {
 	if (var == NULL || hash == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = hash;
 	var->m_dataSize = sizeof(XVariantHashMap);
 	var->m_type = XVariantType_Hash;
@@ -1246,7 +1271,7 @@ void XVariant_setValue_JsonDocument_ref(XVariant* var, XJsonDocument* doc)
 {
 	if (var == NULL || doc == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = doc;
 	var->m_dataSize = sizeof(XJsonDocument);
 	var->m_type = XVariantType_JsonDocument;
@@ -1278,7 +1303,7 @@ void XVariant_setValue_JsonArray_ref(XVariant* var, XJsonArray* arr)
 {
 	if (var == NULL || arr == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = arr;
 	var->m_dataSize = sizeof(XJsonArray);
 	var->m_type = XVariantType_JsonArray;
@@ -1310,7 +1335,7 @@ void XVariant_setValue_JsonObject_ref(XVariant* var, XJsonObject* obj)
 {
 	if (var == NULL || obj == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = obj;
 	var->m_dataSize = sizeof(XJsonObject);
 	var->m_type = XVariantType_JsonObject;
@@ -1342,7 +1367,7 @@ void XVariant_setValue_JsonValue_ref(XVariant* var, XJsonValue* val)
 {
 	if (var == NULL || val == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = val;
 	var->m_dataSize = sizeof(XJsonValue);
 	var->m_type = XVariantType_JsonValue;
@@ -1374,7 +1399,7 @@ void XVariant_setValue_BsonDocument_ref(XVariant* var, XBsonDocument* doc)
 {
 	if (var == NULL || doc == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = doc;
 	var->m_dataSize = sizeof(XBsonDocument);
 	var->m_type = XVariantType_BsonDocument;
@@ -1406,7 +1431,7 @@ void XVariant_setValue_BsonArray_ref(XVariant* var, XBsonArray* arr)
 {
 	if (var == NULL || arr == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = arr;
 	var->m_dataSize = sizeof(XBsonArray);
 	var->m_type = XVariantType_BsonArray;
@@ -1438,18 +1463,18 @@ void XVariant_setValue_BsonValue_ref(XVariant* var, XBsonValue* val)
 {
 	if (var == NULL || val == NULL)
 		return;
-	XVariant_deinit(var);
+	XVariant_deinit_base(var);
 	var->m_data = val;
 	var->m_dataSize = sizeof(XBsonValue);
 	var->m_type = XVariantType_BsonValue;
 }
 
-void XVariant_copy(XVariant* var, const XVariant* src)
+void VXVariant_copy(XVariant* var, const XVariant* src)
 {
 	if (var == NULL || src == NULL)
 		return;
 	if (var->m_type != src->m_type)
-		XVariant_deinit(var);//
+		XVariant_deinit_base(var);//
 	if (XVariant_DataPtr(var) == NULL)
 	{
 		var->m_data = XMemory_calloc(1,src->m_dataSize);
@@ -1511,12 +1536,12 @@ void XVariant_copy(XVariant* var, const XVariant* src)
 	}
 }
 
-void XVariant_move(XVariant* var, XVariant* src)
+void VXVariant_move(XVariant* var, XVariant* src)
 {
 	if (var == NULL || src == NULL)
 		return;
 	if (var->m_type != src->m_type)
-		XVariant_deinit(var);//
+		XVariant_deinit_base(var);//
 	if (XVariant_DataPtr(var) == NULL)
 	{
 		var->m_data = XMemory_calloc(1, src->m_dataSize);
@@ -1580,13 +1605,7 @@ void XVariant_move(XVariant* var, XVariant* src)
 	}
 }
 
-void XVariant_delete(XVariant* var)
-{
-	XVariant_deinit(var);
-	XMemory_free(var);
-}
-
-void XVariant_deinit(XVariant* var)
+void VXVariant_deinit(XVariant* var)
 {
 	if (var == NULL|| XVariant_DataPtr(var)==NULL)
 		return;

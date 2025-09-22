@@ -66,7 +66,7 @@ XVariantList* XJsonArray_toVariantList(const XJsonArray* arr)
         value = XVector_iterator_data(&it);
         var=XJsonValue_toVariant(value);
         XVariantList_push_back_move_base(list,var);
-        XVariant_delete(var);
+        XVariant_delete_base(var);
     }
     return list;
 }
@@ -82,7 +82,7 @@ XVariantList* XJsonArray_toVariantList_move(XJsonArray* arr)
         value = XVector_iterator_data(&it);
         var = XJsonValue_toVariant_move(value);
         XVariantList_push_back_move_base(list, var);
-        XVariant_delete(var);
+        XVariant_delete_base(var);
     }
     return list;
 }

@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XTypes.h"
+#include"XClass.h"
 #include"XPoint.h"
 #include"XCompare.h"
 #include"XContainerObject.h"
@@ -49,10 +49,12 @@ typedef enum
 }XVariantType;
 typedef struct XVariant
 {
+	XClass m_class;
 	int m_type;//类型
 	size_t m_dataSize;//数据大小
 	void* m_data;//数据
 }XVariant;
+XVtable* XVariant_class_init();
 /*
 * @brief  创建一个XVariant数据
 * 当传入data参数时，函数会复制数据内容；若传入NULL，则仅分配内存空间，
@@ -260,10 +262,11 @@ void XVariant_setValue_BsonValue(XVariant* var, const XBsonValue* val);
 void XVariant_setValue_BsonValue_move(XVariant* var, XBsonValue* val);
 void XVariant_setValue_BsonValue_ref(XVariant* var, XBsonValue* val);
 
-void XVariant_copy(XVariant* var, const XVariant* src);
-void XVariant_move(XVariant* var, XVariant* src);
-void XVariant_delete(XVariant* var);
-void XVariant_deinit(XVariant* var);
+#define XVariant_copy_base XClass_copy_base
+#define XVariant_move_base XClass_move_base
+#define XVariant_deinit_base XClass_deinit_base
+#define XVariant_delete_base XClass_delete_base
+
 void XVariant_clear(XVariant* var);
 void XVariant_swap(XVariant* var,XVariant* other);
 int  XVariant_type(XVariant* var);

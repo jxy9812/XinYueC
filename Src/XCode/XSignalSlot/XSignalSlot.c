@@ -299,7 +299,7 @@ static void emit_variant(XSignalSlot* manager, size_t signal, XVariant* args, XE
 	if (ref_count && XAtomic_load_int32(ref_count) == 0)
 	{//该释放了
 		if (args)
-			XVariant_delete(args);
+			XClass_delete_base(args);
 		XMemory_free(ref_count);
 	}
 	XMutex_unlock(manager->mutex);  // 解锁

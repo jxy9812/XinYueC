@@ -77,9 +77,9 @@ XVariantMap* XMap_create_XVariantMap()
 	XMapBaseSetKeyMoveMethod(map, XString_move_base);
 	XMapBaseSetKeyDeinitMethod(map, XString_deinit_base);
 
-	XContainerSetDataCopyMethod(map, XVariant_copy);
-	XContainerSetDataMoveMethod(map, XVariant_move);
-	XContainerSetDataDeinitMethod(map, XVariant_deinit);
+	XContainerSetDataCopyMethod(map, XVariant_copy_base);
+	XContainerSetDataMoveMethod(map, XVariant_move_base);
+	XContainerSetDataDeinitMethod(map, XVariant_deinit_base);
 
 	return map;
 }

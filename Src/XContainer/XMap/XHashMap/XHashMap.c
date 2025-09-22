@@ -58,9 +58,9 @@ XVariantHashMap* XHashMap_create_XVariantHashMap()
 	XMapBaseSetKeyMoveMethod(hash, XString_move_base);
 	XMapBaseSetKeyDeinitMethod(hash, XString_deinit_base);
 
-	XContainerSetDataCopyMethod(hash, XVariant_copy);
-	XContainerSetDataMoveMethod(hash, XVariant_move);
-	XContainerSetDataDeinitMethod(hash, XVariant_deinit);
+	XContainerSetDataCopyMethod(hash, XVariant_copy_base);
+	XContainerSetDataMoveMethod(hash, XVariant_move_base);
+	XContainerSetDataDeinitMethod(hash, XVariant_deinit_base);
 	return hash;
 }
 

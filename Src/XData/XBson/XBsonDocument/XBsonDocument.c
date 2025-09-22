@@ -457,7 +457,7 @@ XVariantMap* XBsonDocument_toVariantMap(const XBsonDocument* doc)
         pair = XMap_iterator_data(&it);
         var = XBsonValue_toVariant(XPair_second(pair));
         XMap_insert_valueMove_base(map, XPair_first(pair), var);
-        XVariant_delete(var);
+        XVariant_delete_base(var);
     }
     return map;
 }
@@ -474,7 +474,7 @@ XVariantMap* XBsonDocument_toVariantMap_move(XBsonDocument* doc)
         pair = XMap_iterator_data(&it);
         var = XBsonValue_toVariant_move(XPair_second(pair));
         XMap_insert_valueMove_base(map, XPair_first(pair), var);
-        XVariant_delete(var);
+        XVariant_delete_base(var);
     }
     return map;
 }
