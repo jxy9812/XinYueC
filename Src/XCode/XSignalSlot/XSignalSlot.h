@@ -98,7 +98,7 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPrio
  * @param m_signal 信号指针
  * @param args 传递给槽函数的参数（通过const XVariant*传递任意类型）调用所有槽后自动释放 只读不能修改
  */
-void XSignalSlot_emit_variant(XSignalSlot* manager, size_t signal,XVariant* args, XEventPriority priority);
+void XSignalSlot_emit_class(XSignalSlot* manager, size_t signal,XClass* args, XEventPriority priority);
 
 #ifdef __cplusplus
 }

@@ -5,6 +5,8 @@ extern "C" {
 #endif
 typedef  void* XHandle;//句柄
 typedef void* ptr;//指针类型
+typedef struct XClass XClass;
+typedef struct XSemaphore XSemaphore;
 typedef struct XPLCTask XPLCTask;
 typedef struct XTreeNode XTreeNode;
 typedef struct XObject XObject; 

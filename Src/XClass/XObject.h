@@ -16,7 +16,8 @@ typedef struct XObject
     XClass m_class;//继承类
     bool m_isEventBubblingEnabled;//事件冒泡
     XObject* m_parent;//父对象
-    XEventLoop* m_eventLoop; // 绑定的事件循环
+    XThread* m_thread;//所属线程
+    //XEventLoop* m_eventLoop; // 绑定的事件循环
     XSignalSlot* m_signalSlot;//信号与槽控制
     XTimerBase* m_poolTimer;//轮询定时器
 }XObject;//
@@ -39,6 +40,7 @@ bool XObject_postEvent(XObject* object, XEvent* event, XEventPriority priority);
 bool XObject_postFunc(XObject* object, void (*func)(void*), void* args,XEventSendMode mode, XEventPriority priority);
 XThread* XObject_thread(XObject* object);
 XEventDispatcher* XObject_getEventDispatcher(XObject* object);
+XEventLoop* XObject_getEventLoop(XObject* object);
 //信号与槽
 XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type);
 //信号绑定辅助宏

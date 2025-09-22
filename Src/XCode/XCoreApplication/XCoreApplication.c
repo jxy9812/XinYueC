@@ -40,9 +40,7 @@ XCoreApplication* XCoreApplication_create(int argc, char** argv)
 {
 	if(g_app!=NULL)
 		return g_app;
-	XCoreApplication* app = XMemory_malloc(sizeof(XCoreApplication));
-	XCoreApplication_init(app, argc,argv);
-	g_app = app;
+	XCoreApplication_init(XMemory_malloc(sizeof(XCoreApplication)), argc,argv);
 	return g_app;
 }
 
@@ -52,6 +50,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 		return;
 	XObject_init(app);
 	XClassGetVtable(app) = XCoreApplication_class_init();
+
 	app->m_argc = argc;
 	app->m_argv = argv;
 	app->m_quit = false;
@@ -68,7 +67,10 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 	XTimerGroupWheel_addTimeWheel_base(group, 10);//100~1000s   -100s
 	app->m_timerGroup = group;
 	app->m_eventLoop->m_timerGroup = group;
-	
+
+	g_app = app;
+	XObject_addEventFilter(app, XEVENT_SLOT_RUN, XEventSlotFuncRunCB, NULL);//绑定信号与槽的功能
+	XObject_addEventFilter(app, XEVENT_FUNC_RUN, XEventFuncRunCB, NULL);//绑定函数运行功能
 }
 
 XEventDispatcher* XCoreApplication_getDispatcher()

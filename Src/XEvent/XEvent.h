@@ -96,6 +96,7 @@ typedef struct XEventSlotFunc
     XObject* sender;              // 发送者对象
     void* args;                   // 函数参数
     XAtomic_int32_t* ref_count;   // 参数引用计数
+    XSemaphore* sem;              //信号量
 }XEventSlotFunc;
 
 /**
@@ -109,7 +110,7 @@ typedef struct XEventSlotFunc
  * @return 新创建的槽函数事件
  */
 XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func,
-    void* args, XAtomic_int32_t* ref_count);
+    void* args, XAtomic_int32_t* ref_count, XSemaphore* sem);
 
 /**
  * @brief 执行槽函数事件的回调

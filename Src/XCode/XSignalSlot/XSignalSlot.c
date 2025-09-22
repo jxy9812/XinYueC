@@ -5,8 +5,9 @@
 #include"XListSLinkedAtomic.h"
 #include"XObject.h"
 #include"XCoreApplication.h"
-#include"XVariant.h"
 #include"XMutex.h"
+#include"XThread.h"
+#include"XSemaphore.h"
 static const bool XEquality_XConnection(const XConnection* pvPrevValue, const XConnection* pvNextValue)
 {
 	return (pvPrevValue->receiver == pvNextValue->receiver) && (pvPrevValue->signal == pvNextValue->signal) && (pvPrevValue->slot_func == pvNextValue->slot_func) && (pvPrevValue->type == pvNextValue->type);
@@ -33,7 +34,7 @@ void XSignalSlot_init(XSignalSlot* manager, XObject* obj)
 	manager->signalMap = XMap_Create(size_t, XSignal,XCompare_size_t);
 	manager->bindSignalList = XListSLinkedAtomic_Create(XConnection*);
 	XContainerSetCompare(manager->bindSignalList, XCompare_ptr);
-	// 初始化互斥锁（递归锁，支持同一线程多次加锁）
+	// 初始化互斥锁
 	manager->mutex = XMutex_create();
 }
 void XSignalSlot_deinit(XSignalSlot* manager)
@@ -97,7 +98,7 @@ XEventSendMode XSignalSlot_getSendMode(XSignalSlot* manager)
 }
 static const bool Equality_Connection(const XConnection* pvPrevValue, const XConnection* pvNextValue)
 {
-	return (pvPrevValue->receiver == pvNextValue->receiver) && (pvPrevValue->signal == pvNextValue->signal) && (pvPrevValue->slot_func == pvNextValue->slot_func);
+	return ((pvNextValue->receiver) ? (pvPrevValue->receiver == pvNextValue->receiver) : true) && (pvPrevValue->signal == pvNextValue->signal) && ((pvNextValue->slot_func) ? (pvPrevValue->slot_func == pvNextValue->slot_func):true);
 }
 XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
 {
@@ -137,32 +138,7 @@ XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* re
 	XMutex_unlock(manager->mutex);  // 解锁
 	return ptr;
 }
-
-bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc slot_func)
-{
-	if(manager==NULL||slot_func==NULL)
-		return false;
-	XMutex_lock(manager->mutex);  // 加锁
-	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
-	if (signalObj == NULL)
-		return false;
-	//判断是否重复添加
-	XConnection conn = { .signal = signalObj,.receiver = receiver,.slot_func = slot_func };
-	for_each_iterator(signalObj->connList, XListSLinkedAtomic, it)
-	{
-		if (Equality_Connection(XListSLinkedAtomic_iterator_data(&it), &conn))
-		{//找到了
-			XConnection* ptr = XListSLinkedAtomic_iterator_data(&it);
-			bool is_ok= XSignalSlot_disconnect_conn(ptr);
-			XMutex_unlock(manager->mutex);  // 解锁
-			return is_ok;
-		}
-	}
-	XMutex_unlock(manager->mutex);  // 解锁
-	return false;
-}
-
-bool XSignalSlot_disconnect_conn(XConnection* conn)
+static bool disconnect_conn(XConnection* conn)
 {
 	if (conn == NULL)
 		return false;
@@ -176,6 +152,55 @@ bool XSignalSlot_disconnect_conn(XConnection* conn)
 
 	XListBase_remove_base(signalObj->connList, conn);
 	return true;
+}
+bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc slot_func)
+{
+	if(manager==NULL||slot_func==NULL)
+		return false;
+	XMutex_lock(manager->mutex);  // 加锁
+	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
+	if (signalObj == NULL)
+		return false;
+	XMutex* mutex = NULL;
+	//判断是否重复添加
+	XConnection conn = { .signal = signalObj,.receiver = receiver,.slot_func = slot_func };
+	for_each_iterator(signalObj->connList, XListSLinkedAtomic, it)
+	{
+		if (Equality_Connection(XListSLinkedAtomic_iterator_data(&it), &conn))
+		{//找到了
+			XConnection* conn = XListSLinkedAtomic_iterator_data(&it);
+			if (conn->receiver && conn->receiver->m_signalSlot)
+				mutex = conn->receiver->m_signalSlot->mutex;
+			if(mutex!= manager->mutex)
+				XMutex_lock(mutex);  // 加锁
+			bool is_ok= disconnect_conn(conn);
+			if (mutex != manager->mutex)
+				XMutex_unlock(mutex);  // 解锁
+			XMutex_unlock(manager->mutex);  // 解锁
+			return is_ok;
+		}
+	}
+	XMutex_unlock(manager->mutex);  // 解锁
+	return false;
+}
+
+bool XSignalSlot_disconnect_conn(XConnection* conn)
+{
+	if (conn == NULL)
+		return false;
+	XMutex* mutexSend=NULL,*mutexReceiver = NULL;
+	if (conn->signal && conn->signal->sender&& conn->signal->sender->m_signalSlot)
+		mutexSend = conn->signal->sender->m_signalSlot->mutex;
+	if (conn->receiver && conn->receiver->m_signalSlot)
+		mutexReceiver = conn->signal->sender->m_signalSlot->mutex;
+	if (mutexSend == mutexReceiver)
+		mutexReceiver = NULL;
+	XMutex_lock(mutexSend);  // 加锁
+	XMutex_lock(mutexReceiver);  // 加锁
+	bool is_ok = disconnect_conn(conn);
+	XMutex_unlock(mutexSend);  // 解锁
+	XMutex_unlock(mutexReceiver);  // 解锁
+	return is_ok;
 }
 //信号发射时，槽函数会立即被调用
 static void Direct_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count)
@@ -195,22 +220,31 @@ static void Queued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_coun
 	if (ref_count)
 		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	//向接收者对象投递函数事件
-	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver,conn->slot_func,args,ref_count), priority);
+	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver,conn->slot_func,args,ref_count,NULL), priority);
 }
-////等待槽函数
-//static void waitSlot()
-//{
-//
-//}
+
 //（槽函数在接收者线程执行），区别在于发送信号的线程会阻塞，直到槽函数执行完成后才继续。
-static void BlockingQueued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count)
+static void BlockingQueued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count, XEventPriority priority)
 {
 	if (conn->receiver == NULL)
 		return;
+	//当前发送线程和接收线程是同一个不允许，会有死锁问题
+	if (XThread_currentThread()==conn->receiver->m_thread)
+	{
+		// 相同线程：直接报错或返回，避免死锁
+		XPrintf("BlockingQueued: 发送线程与接收者线程相同，可能导致死锁\n");
+		return;  // 或触发断言：XASSERT(false, "线程相同错误");
+	}
 	if (ref_count)
 		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
-	//向接收者对象投递函数事件
-	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver, conn->slot_func, args, ref_count), XEVENT_PRIORITY_HIGH);
+	//使用信号量进行同步
+	XSemaphore* sem = XSemaphore_create(1,1);
+	if (!sem)
+		return;
+	//向接收者对象投递信号事件
+	XObject_postEvent(conn->receiver, XEventSlotFunc_create(conn->signal->sender, conn->receiver, conn->slot_func, args, ref_count, sem), priority);
+	XSemaphore_acquire(sem,1);//阻塞等待其他线程处理
+	XSemaphore_delete(sem);//释放信号量
 }
 //若接收者与发送信号的线程处于同一线程，则使用 Qt::DirectConnection（直接连接）；否则，使用 Qt::QueuedConnection（队列连接）。连接类型会在信号发射时动态确定。
 static void Auto_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count, XEventPriority priority)
@@ -245,7 +279,7 @@ static void emit(XSignalSlot* manager, size_t signal, void* args, XEventPriority
 		case XConnectionType_Auto:Auto_emit(conn, args, NULL,priority); break;
 		case XConnectionType_Direct:Direct_emit(conn, args, NULL); break;
 		case XConnectionType_Queued:Queued_emit(conn, args, NULL,priority); break;
-		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args, NULL); break;
+		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args, NULL, priority); break;
 		}
 		//是否是单次链接
 		if ((conn->type) & XConnectionType_SingleShot)
@@ -259,7 +293,7 @@ static void emit(XSignalSlot* manager, size_t signal, void* args, XEventPriority
 	}
 	XMutex_unlock(manager->mutex);  // 解锁
 }
-static void emit_variant(XSignalSlot* manager, size_t signal, XVariant* args, XEventPriority priority)
+static void emit_class(XSignalSlot* manager, size_t signal, XClass* args, XEventPriority priority)
 {
 	if (manager == NULL)
 		return;
@@ -284,7 +318,7 @@ static void emit_variant(XSignalSlot* manager, size_t signal, XVariant* args, XE
 		case XConnectionType_Auto:Auto_emit(conn, args, ref_count,priority); break;
 		case XConnectionType_Direct:Direct_emit(conn, args, ref_count); break;
 		case XConnectionType_Queued:Queued_emit(conn, args, ref_count,priority); break;
-		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args, ref_count); break;
+		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args, ref_count, priority); break;
 		}
 		//是否是单次链接
 		if ((conn->type) & XConnectionType_SingleShot)
@@ -308,7 +342,7 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPrio
 {
 	if (manager == NULL)
 		return;
-	if (manager->sendMode == XEVENT_SEND_QUEUED && manager->obj&&manager->obj->m_eventLoop)
+	if (manager->sendMode == XEVENT_SEND_QUEUED)
 	{//在队列中发送
 		XCoreApplication_postSendSignal(emit,manager,signal,args,priority);
 		return;
@@ -316,14 +350,14 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPrio
 	emit(manager,signal,args, priority);
 }
 
-void XSignalSlot_emit_variant(XSignalSlot* manager, size_t signal,XVariant* args, XEventPriority priority)
+void XSignalSlot_emit_class(XSignalSlot* manager, size_t signal, XClass* args, XEventPriority priority)
 {
 	if (manager == NULL)
 		return;
-	if (manager->sendMode == XEVENT_SEND_QUEUED&& manager->obj&& manager->obj->m_eventLoop)
+	if (manager->sendMode == XEVENT_SEND_QUEUED)
 	{//在队列中发送
-		XCoreApplication_postSendSignal(emit_variant, manager, signal, args,priority);
+		XCoreApplication_postSendSignal(emit_class, manager, signal, args,priority);
 		return;
 	}
-	emit_variant(manager, signal, args, priority);
+	emit_class(manager, signal, args, priority);
 }

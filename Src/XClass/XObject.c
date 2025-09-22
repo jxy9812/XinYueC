@@ -47,12 +47,7 @@ void XObject_init(XObject* object)
 	memset(((XClass*)object)+1,0,sizeof(XObject)-sizeof(XClass));
 	XClass_init(object);
 	XClassGetVtable(object) = XObject_class_init();
-	//object->m_eventLoop = NULL;
-	XThread* thread = XThread_currentThread();
-	XEventLoop* d= XThread_currentEventLoop();
-	if (d == NULL)
-		return;
-	object->m_eventLoop = d;
+	object->m_thread = XThread_currentThread();
 	//信号与槽初始化
 	//object->m_signalSlot = NULL;
 	XObject_addEventFilter(object, XEVENT_SLOT_RUN, XEventSlotFuncRunCB, NULL);
@@ -124,7 +119,9 @@ bool XObject_addEventFilter(XObject* object, int code, XEventCB cb, void* userDa
 	if (object == NULL)
 		return false;
 	XEventDispatcher* d = XObject_getEventDispatcher(object);
-	return XEventDispatcher_addEventCb_base(d, object, code, cb, userData);
+	if(d)
+		return XEventDispatcher_addEventCb_base(d, object, code, cb, userData);
+	return false;
 }
 
 bool XObject_removeEventFilter(XObject* object, int code)
@@ -137,13 +134,17 @@ bool XObject_removeEventFilter(XObject* object, int code)
 
 bool XObject_moveToThread(XObject* object, XThread* thread)
 {
+	if (!object||object->m_thread==thread)
+		return false;
+	XEventDispatcher* dispatcher = XObject_getEventDispatcher(object);
 	//处理剩余的所有事件,防止遗漏
-	if (object->m_eventLoop&& object->m_eventLoop->m_dispatcher)
+	if (dispatcher)
 	{
 		//XEventDispatcher_handler_base(object->m_eventLoop->m_dispatcher);
-		if (XEventDispatcher_object_move(object->m_eventLoop->m_dispatcher, XThread_getDispatcher(thread), object))
+		if (XEventDispatcher_object_move(dispatcher, XThread_getDispatcher(thread), object))
 		{
-			object->m_eventLoop = thread->m_eventLoop;//更新事件循环
+			object->m_thread = thread;
+			return true;
 		}
 	}
 	return false;
@@ -151,15 +152,15 @@ bool XObject_moveToThread(XObject* object, XThread* thread)
 
 bool XObject_postEvent(XObject* object, XEvent* event, XEventPriority priority)
 {
-	if (object == NULL || object->m_eventLoop==NULL || event == NULL)
+	if (object == NULL || event == NULL)
 		return false;
 	event->receiver = object;
-	return XEventDispatcher_postEvent_base(object->m_eventLoop->m_dispatcher,event, priority);
+	return XEventDispatcher_postEvent_base(XObject_getEventDispatcher(object), event, priority);
 }
 
 bool XObject_postFunc(XObject* object, void(*func)(void*), void* args, XEventSendMode mode, XEventPriority priority)
 {
-	if (object == NULL || object->m_eventLoop == NULL || func == NULL|| mode== XEVENT_SEND_INVALID)
+	if (object == NULL|| func == NULL|| mode== XEVENT_SEND_INVALID)
 		return false;
 	if (mode == XEVENT_SEND_DIRECT)
 	{
@@ -176,14 +177,26 @@ XThread* XObject_thread(XObject* object)
 {
 	if(object==NULL)
 		return NULL;
-	return XThread_currentThread();
+	return object->m_thread;
 }
 
 XEventDispatcher* XObject_getEventDispatcher(XObject* object)
 {
-	if(object&& object->m_eventLoop)
-		return object->m_eventLoop->m_dispatcher;
+	if (!object)
+		return NULL;
+	XEventLoop* loop=XObject_getEventLoop(object);
+	if (loop)
+		return loop->m_dispatcher;
 	return NULL;
+}
+
+XEventLoop* XObject_getEventLoop(XObject* object)
+{
+	if(object==NULL)
+		return NULL;
+	if (object->m_thread)
+		return object->m_thread->m_eventLoop;
+	return XCoreApplication_getEventLoop();
 }
 
 XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
@@ -264,8 +277,9 @@ void VXObject_deinit(XObject* object)
 	//发送释放信号
 	XObject_deinit_signal(object);
 	//处理剩余的所有事件,防止遗漏
-	if(object->m_eventLoop&& object->m_eventLoop->m_dispatcher)
-		XEventDispatcher_handler_base(object->m_eventLoop->m_dispatcher);
+	XEventDispatcher* dispatcher=XObject_getEventDispatcher(object);
+	if(dispatcher)
+		XEventDispatcher_handler_base(dispatcher);
 	//释放信号与槽
 	if(object->m_signalSlot)
 	{

@@ -7,7 +7,7 @@
 #include"XListSLinked.h"
 #include"XObject.h"
 #include"XVariant.h"
-
+#include"XSemaphore.h"
 XEvent* XEvent_create(XObject* receiver, XEventType code, size_t timestamp)
 {
 	XEvent* event = XMemory_malloc(sizeof(XEvent));
@@ -70,7 +70,7 @@ void XEventFuncRunCB(XEventFunc* event)
 		XEvent_Accept(event);
 }
 
-XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func, void* args, XAtomic_int32_t* ref_count)
+XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func, void* args, XAtomic_int32_t* ref_count,XSemaphore* sem)
 {
 	XEventSlotFunc* event = XMemory_malloc(sizeof(XEventSlotFunc));
 	if (event == NULL)
@@ -80,15 +80,18 @@ XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotF
 	event->func = func;
 	event->args = args;
 	event->ref_count = ref_count;
+	event->sem = sem;
 	return event;
 }
 
 void XEventSlotFuncRunCB(XEventSlotFunc* event)
 {
-	if (event && event->func)
+	if (!event)
+		return;
+	if (event->func)
 		event->func(event->sender, event->event.receiver, event->args);
 
-	if (event && event->ref_count)
+	if (event->ref_count)
 	{
 		if (XAtomic_fetch_sub_int32(event->ref_count, 1) == 1)
 		{
@@ -97,6 +100,8 @@ void XEventSlotFuncRunCB(XEventSlotFunc* event)
 			XMemory_free(event->ref_count);
 		}
 	}
+	if (event->sem)
+		XSemaphore_release(event->sem,1);
 	XEvent_Accept(event);
 }
 
