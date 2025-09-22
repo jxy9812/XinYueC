@@ -43,7 +43,7 @@ void XModbus_removeRecvHand_AddressOnly(XModbus* modbus, uint8_t modbusAddress);
 void XModbus_removeRecvHand_AddressCode(XModbus* modbus, uint8_t modbusAddress, uint8_t modbusCode);
 
 void XModbus_sendFrame(XModbus* modbus, XModbusFrame* frame);
-
+//主站模式下设置帧轮询
 void XModbus_sendFramePeriodicMaster(XModbus* modbus, XModbusFrame* frame, uint32_t time);
 #define XModbus_connect_base                        XCommunicatorBase_connect_base
 #define XModbus_disconnect_base                     XCommunicatorBase_disconnect_base

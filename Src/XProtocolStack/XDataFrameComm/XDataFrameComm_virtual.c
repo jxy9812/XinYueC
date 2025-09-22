@@ -5,7 +5,7 @@
 #include"XEvent.h"
 #include"XEventDispatcher.h"
 #include"XDataFrameCommConfig.h"
-#include"XTimerTimeWheel.h"
+#include"XTimer.h"
 #include"XString.h"
 #include"XListSLinked.h"
 #include"XPrintf.h"
@@ -16,7 +16,7 @@ typedef struct
 {
 	XDataFrameComm* comm;
 	XByteArray* data;
-	XTimerTimeWheel* timer;
+	XTimer* timer;
 }PeriodicNode;//定时发送的节点
 static void XDataFrameComm_recvValid(XDataFrameComm* comm);//接收校验
 static void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm);
@@ -27,7 +27,7 @@ static bool VXCommunicatorBase_disconnect(XDataFrameComm* comm);
 static XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode mode);
 static XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameEndType mode);
 static XDFC_ErrorCode VXDataFrameComm_sendData(XDataFrameComm* comm, XByteArray* data);
-static XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data, uint32_t time);
+static XHandle VXDataFrameComm_addPeriodicData(XDataFrameComm* comm, XByteArray* data, uint32_t time);
 static bool  VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle);
 static void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16);//接收验证数据使用CRC16，小端添加在数据末尾帧尾前
 static void VXDataFrameComm_setSendValidCRC16(XDataFrameComm* comm, bool enableCRC16);//发送数据添加验证用CRC16，小端添加在数据末尾帧尾前
@@ -51,7 +51,7 @@ XVtable* XDataFrameComm_class_init()
 	{
 		VXDataFrameComm_SendFrameFSM,VXDataFrameComm_RecvFrameFSM,
 		VXDataFrameComm_setCommMode,VXDataFrameComm_setFrameEndType,
-		VXDataFrameComm_sendData,VXDataFrameComm_sendPeriodicData,
+		VXDataFrameComm_sendData,VXDataFrameComm_addPeriodicData,
 		VXDataFrameComm_setRecvValidCRC16,VXDataFrameComm_setSendValidCRC16,
 		VXDataFrameComm_setRecvFrameHead,VXDataFrameComm_setRecvFrameTail,
 		VXDataFrameComm_setSendFrameHead,VXDataFrameComm_setSendFrameTail,
@@ -76,7 +76,7 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 		return;//数据缓冲区是空的也就没必要继续了
 	
 	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_class.m_recvAsyncBuffer))
-	{//真验证失败,错误帧
+	{//帧验证失败,错误帧
 		XDataFrameComm_postEvent(comm, XEvent_create(comm,XDFC_RX_FRAME_ERROR, 0));
 		return;//校验没通过
 	}
@@ -84,6 +84,8 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 	{
 		//释放数组防止内存泄露
 	}
+	//发送帧信号
+	XDataFrameComm_frameReceived_signal(comm, comm->m_class.m_recvAsyncBuffer);
 }
 
 void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
@@ -523,7 +525,7 @@ static void SendDataPeriodicCb(PeriodicNode* node)
 	}
 	//XDataFrameComm_sendData_base(XPair_First(pair, XDataFrameComm*),v);
 }
-XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data, uint32_t time)
+XHandle VXDataFrameComm_addPeriodicData(XDataFrameComm* comm, XByteArray* data, uint32_t time)
 {
 	if (XVector_isEmpty_base(data))
 		return NULL;
@@ -532,7 +534,7 @@ XHandle VXDataFrameComm_sendPeriodicData(XDataFrameComm* comm, XByteArray* data,
 	{
 		return NULL;
 	}
-	XTimerTimeWheel* timer = XTimerTimeWheel_create();
+	XTimer* timer = XTimer_create();
 	if (timer == NULL)
 	{
 		XMemory_free(node);

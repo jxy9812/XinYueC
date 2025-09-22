@@ -99,7 +99,7 @@ void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer)
 #define XDataFrameComm_isConnected_base            XCommunicatorBase_isConnected_base
 #define XDataFrameComm_delete_base                 XCommunicatorBase_delete_base
 /*                                          信号                                          */
-void* XDataFrameComm_frame_signal(XDataFrameComm* comm,XByteArray* data);
+void* XDataFrameComm_frameReceived_signal(XDataFrameComm* comm,XByteArray* data);
 /*以下是默认的回调函数*/
 
 //默认的事件处理回调(全部事件)

@@ -353,7 +353,11 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPrio
 void XSignalSlot_emit_class(XSignalSlot* manager, size_t signal, XClass* args, XEventPriority priority)
 {
 	if (manager == NULL)
+	{
+		if (args)
+			XClass_delete_base(args);
 		return;
+	}
 	if (manager->sendMode == XEVENT_SEND_QUEUED)
 	{//在队列中发送
 		XCoreApplication_postSendSignal(emit_class, manager, signal, args,priority);

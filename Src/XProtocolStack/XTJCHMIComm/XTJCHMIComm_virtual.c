@@ -23,7 +23,7 @@ XVtable* XTJCHMIComm_class_init()
 	//{
 	//	VXDataFrameComm_SendFrameFSM,VXDataFrameComm_RecvFrameFSM,
 	//	VXDataFrameComm_setCommMode,VXDataFrameComm_setFrameEndType,
-	//	VXDataFrameComm_sendData,VXDataFrameComm_sendPeriodicData,
+	//	VXDataFrameComm_sendData,VXDataFrameComm_addPeriodicData,
 	//	VXDataFrameComm_removePeriodicSendData
 	//};
 	////追加虚函数

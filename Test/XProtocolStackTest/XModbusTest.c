@@ -67,7 +67,7 @@ void XModbusTest()
     //XDataFrameComm_setCommMode_base(modbus,XDFC_COMM_MODE_FULL_DUPLEX);
 
     XModbusDigitalSwitch_setScanningPeriod(ds,30);
-
+    XModbusDigitalSwitch_setScanningPeriod(ds, 200);
     {
         XSwitchDeviceModbus* sw0 = XSwitchDeviceModbus_create(ds, 0);
         XSwitchDeviceBase_open_base(sw0, XIODeviceBase_WriteOnly);
