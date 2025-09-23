@@ -2,6 +2,7 @@
 #include "XMemory.h"
 #include "XStack.h"
 #include "XSignalTransition.h"
+#include "XHistoryState.h"
 #include <string.h>
 #define INITIAL_CAPACITY 4
 bool XStateMachine_isActive(const XStateMachine* machine, const XAbstractState* state);
@@ -242,6 +243,16 @@ void VXState_onEntered(XState* state)
 void VXState_onExited(XState* state)
 {
     if (!state||!state->m_class.m_machine) return;
+
+    // 退出前，通知所有子历史状态存储当前状态（核心修改）
+    for (size_t i = 0; i < state->m_childCount; i++) {
+        XAbstractState* child = state->m_childStates[i];
+        if (child->m_type == XStateType_History) 
+        {
+            XHistoryState* history = (XHistoryState*)child;
+            XHistoryState_storeCurrentState(history);  // 触发存储
+        }
+    }
 
     // 失活所有子状态
     for (size_t i = 0; i < state->m_childCount; i++) {

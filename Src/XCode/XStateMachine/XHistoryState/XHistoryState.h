@@ -17,11 +17,13 @@ typedef enum {
 /**
  * @brief 历史状态类，用于保存父状态的历史激活状态
  */
-typedef struct XHistoryState {
-    XAbstractState m_class;          // 继承XAbstractState
-    XHistoryStateType m_historyType;  // 历史状态类型
-    XAbstractState* m_defaultState;   // 默认状态
-    XAbstractState* m_storedState;    // 存储的历史状态
+typedef struct XHistoryState
+{
+    XAbstractState m_class;          // 继承基类
+    XHistoryStateType m_historyType;  // 历史类型
+    XAbstractState* m_defaultState;   // 默认恢复状态（对应Qt的defaultState）
+    XAbstractState* m_storedShallow;  // 浅层历史存储的直接子状态
+    XVector* m_storedDeep;           // 深层历史存储的状态链（XAbstractState*列表）
 } XHistoryState;
 
 XVtable* XHistoryState_class_init();
@@ -73,7 +75,7 @@ XAbstractState* XHistoryState_defaultState(const XHistoryState* state);
  * @param m_storedState 要存储的状态
  */
 void XHistoryState_storeState(XHistoryState* state, XAbstractState* storedState);
-
+void XHistoryState_storeCurrentState(XHistoryState* state);
 /**
  * @brief 激活历史状态
  * @param state 历史状态实例
