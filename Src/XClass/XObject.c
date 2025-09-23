@@ -244,10 +244,10 @@ void XObject_emitSignal(XObject* object, size_t signal, void* args, XEventPriori
 		XSignalSlot_emit(object->m_signalSlot, signal, args, priority);
 }
 
-void XObject_emitSignal_class(XObject* object, size_t signal, XClass* args, XEventPriority priority)
+void XObject_emitSignal_class(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority)
 {
 	if (object)
-		XSignalSlot_emit_class(object->m_signalSlot, signal, args, priority);
+		XSignalSlot_emit_class(object->m_signalSlot, signal, args, ref_count, priority);
 }
 
 void* XObject_deinit_signal(XObject* object)

@@ -57,7 +57,7 @@ size_t XAtomic_load_size_t(const XAtomic_size_t* var);
  * @return 原子变量的当前指针值
  * @note 原子性保证：读取操作不会被中断，保证读取到完整的值
  */
-void* XAtomic_load_ptr(const XAtomic_ptr_t* var);
+void* XAtomic_load_ptr(const XAtomic_ptr* var);
 #ifdef __cplusplus
 }
 #endif

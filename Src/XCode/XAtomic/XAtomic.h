@@ -22,37 +22,39 @@ typedef struct { volatile bool value; } XAtomic_bool;
  * @brief 原子32位有符号整数类型定义
  * @note 内部包含一个volatile修饰的32位有符号整数，确保多线程环境下的可见性
  */
-typedef struct { volatile int32_t value; } XAtomic_int32_t;
+typedef struct XAtomic_int32_t { volatile int32_t value; } XAtomic_int32_t;
 
 /**
  * @brief 原子32位无符号整数类型定义
  * @note 内部包含一个volatile修饰的32位无符号整数，确保多线程环境下的可见性
  */
-typedef struct { volatile uint32_t value; }  XAtomic_uint32_t;
+typedef struct XAtomic_uint32_t { volatile uint32_t value; }  XAtomic_uint32_t;
 
 /**
  * @brief 原子64位有符号整数类型定义
  * @note 内部包含一个volatile修饰的64位有符号整数，确保多线程环境下的可见性
  */
-typedef struct { volatile int64_t value; }  XAtomic_int64_t;
+typedef struct XAtomic_int64_t { volatile int64_t value; }  XAtomic_int64_t;
 
 /**
  * @brief 原子64位无符号整数类型定义
  * @note 内部包含一个volatile修饰的64位无符号整数，确保多线程环境下的可见性
  */
-typedef struct { volatile uint64_t value; }  XAtomic_uint64_t;
+typedef struct XAtomic_uint64_t { volatile uint64_t value; }  XAtomic_uint64_t;
 
 /**
  * @brief 原子size_t类型定义
  * @note 内部包含一个volatile修饰的size_t类型值，确保多线程环境下的可见性
  */
-typedef struct { volatile size_t value; }  XAtomic_size_t;
+typedef struct XAtomic_size_t { volatile size_t value; }  XAtomic_size_t;
 
 /**
  * @brief 原子指针类型定义
  * @note 内部包含一个volatile修饰的void*指针，确保多线程环境下的可见性
  */
-typedef struct { volatile void* value; }  XAtomic_ptr_t;
+typedef struct { volatile void* value; }  XAtomic_ptr;
+#define XAtomic_create(type)    XMemory_calloc(1,sizeof(XAtomic_##type))
+#define XAtomic_delete(p)       XMemory_free(p)
 
 #include"XAtomic_load.h"
 #include"XAtomic_store.h"

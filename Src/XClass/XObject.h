@@ -17,7 +17,6 @@ typedef struct XObject
     bool m_isEventBubblingEnabled;//事件冒泡
     XObject* m_parent;//父对象
     XThread* m_thread;//所属线程
-    //XEventLoop* m_eventLoop; // 绑定的事件循环
     XSignalSlot* m_signalSlot;//信号与槽控制
     XTimerBase* m_poolTimer;//轮询定时器
 }XObject;//
@@ -59,7 +58,7 @@ XEventSendMode XObject_getSignalSendMode(XObject* object);
 #define XObject_deinit_base    XClass_deinit_base
 #define XObject_delete_base    XClass_delete_base
 void XObject_emitSignal(XObject* object, size_t signal, void* args, XEventPriority priority);
-void XObject_emitSignal_class(XObject* object, size_t signal, XClass* args, XEventPriority priority);
+void XObject_emitSignal_class(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority);
 //slot: void deinit_slot(XObject* m_sender, XObject* receiver, void* args)
 void* XObject_deinit_signal(XObject* object);
 

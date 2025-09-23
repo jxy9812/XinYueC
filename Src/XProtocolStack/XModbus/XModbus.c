@@ -251,8 +251,6 @@ void XModbus_EvnetFrame_ReceivedCb(XEvent* event)
 	if (!XModbusFrame_parseData(modbusFrame, frame))
 	{//解析失败了
 		XModbusFrame_delete(modbusFrame);
-		ev->frame = NULL;
-		XVector_delete_base(frame);
 		XEvent_Accept(ev);
 		return;
 	}
@@ -262,13 +260,15 @@ void XModbus_EvnetFrame_ReceivedCb(XEvent* event)
 	{
 		if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, math) && XDataFrameComm_postEvent(comm, XEventFuncCode_create(event->receiver,XDFC_EXECUTE, 0, modbusFrame, math))))
 		{//没有功能码处理或获取失败 直接释放
-			//XVector_delete_base(frame);//释放帧数据以免内存泄露
 			XModbusFrame_delete(modbusFrame);
 			XFuncCodeMap_deleteCode(math);
 		}
+		else
+		{
+			ev->frame = NULL;//发送事件成功,转移所有权
+		}
 	}
-	//XVector_delete_base(frame);
-	ev->frame = NULL;
+
 	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
 void XModbus_EvnetHandCb(XEvent* event)

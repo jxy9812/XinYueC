@@ -27,6 +27,7 @@ typedef struct XSignalData
         XObject* object;
     };
     void* args;
+    XAtomic_int32_t* ref_count;//参数引用次数
     XEventPriority priority;
 }XEventData;//底层都是事件驱动
 
@@ -342,11 +343,11 @@ bool XEventLoop_hasPendingEvents_base(XEventLoop* loop) {
     return XClassGetVirtualFunc(loop, EXEventLoop_HasPendingEvents, bool (*)(XEventLoop*))(loop);
 }
 
-bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XEventPriority priority)
+bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XAtomic_int32_t* ref_count, XEventPriority priority)
 {
     if (!loop || loop->m_postQueue == NULL)
         return false;
-    XEventData data = { .sendSignalFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args,.priority=priority };
+    XEventData data = { .sendSignalFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args,.ref_count=ref_count, .priority=priority };
     return XQueueBase_push_base(loop->m_postQueue, &data);
 }
 

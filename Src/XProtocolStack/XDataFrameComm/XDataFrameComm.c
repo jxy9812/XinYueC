@@ -284,22 +284,38 @@ void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer)
 }
 static void XEventRecvFrame_deinit(XEventRecvFrame* ev)
 {
+	if (ev->ref_count && XAtomic_fetch_sub_int32(ev->ref_count, 1) > 1)
+		return;
 	if (ev->frame)
 	{
 		XByteArray_delete_base(ev->frame);
 		ev->frame = NULL;
 	}
+	if (ev->ref_count)
+	{
+		XAtomic_delete(ev->ref_count);
+		ev->ref_count = NULL;
+	}
 }
-XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t timestamp,XByteArray* frame)
+XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t timestamp,XByteArray* frame, XAtomic_int32_t* ref_count)
 {
 	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
 	if (ev == NULL)
 		return NULL;
 	XEvent_init(ev, object, eventCode, timestamp);
-	XByteArray* v = XByteArray_create(0);
-	if(v&&frame)
-		XByteArray_copy_base(v, frame);
-	ev->frame = v;
+	
+	if(!ref_count)
+	{
+		XByteArray* v = XByteArray_create(0);
+		if (v && frame)
+			XByteArray_copy_base(v, frame);
+		ev->frame = v;
+	}
+	else
+	{
+		ev->frame = frame;
+	}
+	ev->ref_count = ref_count;
 	ev->m_class.deinit = XEventRecvFrame_deinit;
 	return ev;
 }
@@ -392,10 +408,10 @@ bool XDataFrameComm_postEvent(XDataFrameComm* comm, XEvent* ev)
 	}
 	return true;
 }
-void* XDataFrameComm_frameReceived_signal(XDataFrameComm* comm, XByteArray* data)
+void* XDataFrameComm_frameReceived_signal(XDataFrameComm* comm, XByteArray* data, XAtomic_int32_t* ref_count)
 {
 	if (comm && ((XObject*)comm)->m_signalSlot)
-		XObject_emitSignal_class(comm, XDataFrameComm_frameReceived_signal, XByteArray_create_copy(data),XEVENT_PRIORITY_NORMAL);
+		XObject_emitSignal_class(comm, XDataFrameComm_frameReceived_signal, XByteArray_create_copy(data), ref_count,XEVENT_PRIORITY_NORMAL);
 	return XDataFrameComm_frameReceived_signal;
 }
 void XDataFrameComm_EvnetHandCb(XEvent* event)

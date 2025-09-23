@@ -60,6 +60,7 @@ typedef struct XBsonArray XBsonArray;
 typedef struct XBsonDocument XBsonDocument;
 typedef struct XBsonValue XBsonValue;
 typedef struct XSignalSlot XSignalSlot;
+typedef struct XAtomic_int32_t XAtomic_int32_t;
 typedef XMapBase XFuncCodeMap;
 typedef XMap XVariantMap;
 typedef XHashMap XVariantHashMap;

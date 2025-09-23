@@ -25,8 +25,8 @@ typedef struct XListSNodeAtomic {
 typedef struct XListSLinkedAtomic
 {
     XListBase m_class;               // 继承自链表基类
-    XAtomic_ptr_t m_head;             // 头节点指针（原子类型）
-    XAtomic_ptr_t m_tail;             // 尾节点指针（原子类型）
+    XAtomic_ptr m_head;             // 头节点指针（原子类型）
+    XAtomic_ptr m_tail;             // 尾节点指针（原子类型）
 } XListSLinkedAtomic;
 
 // 类初始化函数

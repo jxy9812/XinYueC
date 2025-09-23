@@ -262,7 +262,38 @@ static void Auto_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count,
 	}
 }
 
-static void emit(XSignalSlot* manager, size_t signal, void* args, XEventPriority priority)
+//static void emit(XSignalSlot* manager, size_t signal, void* args, XEventPriority priority)
+//{
+//	if (manager == NULL)
+//		return;
+//	XMutex_lock(manager->mutex);  // 加锁
+//	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
+//	if (signalObj == NULL)
+//		return;//没有这个信号
+//	XConnection* conn = NULL;
+//	for (XListSLinkedAtomic_iterator it = XListSLinkedAtomic_begin(signalObj->connList), endIt = XListSLinkedAtomic_end(signalObj->connList); !XListSLinkedAtomic_iterator_equality(&it, &endIt); )
+//	{
+//		conn = XListSLinkedAtomic_iterator_data(&it);
+//		switch (conn->type & (~XConnectionType_SingleShot))
+//		{
+//		case XConnectionType_Auto:Auto_emit(conn, args, NULL,priority); break;
+//		case XConnectionType_Direct:Direct_emit(conn, args, NULL); break;
+//		case XConnectionType_Queued:Queued_emit(conn, args, NULL,priority); break;
+//		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args, NULL, priority); break;
+//		}
+//		//是否是单次链接
+//		if ((conn->type) & XConnectionType_SingleShot)
+//		{//取消链接
+//			XListBase_erase_base(signalObj->connList, &it, &it);
+//		}
+//		else
+//		{
+//			XListSLinkedAtomic_iterator_add(signalObj->connList, &it);
+//		}
+//	}
+//	XMutex_unlock(manager->mutex);  // 解锁
+//}
+static void emit_class(XSignalSlot* manager, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority)
 {
 	if (manager == NULL)
 		return;
@@ -271,45 +302,8 @@ static void emit(XSignalSlot* manager, size_t signal, void* args, XEventPriority
 	if (signalObj == NULL)
 		return;//没有这个信号
 	XConnection* conn = NULL;
-	for (XListSLinkedAtomic_iterator it = XListSLinkedAtomic_begin(signalObj->connList), endIt = XListSLinkedAtomic_end(signalObj->connList); !XListSLinkedAtomic_iterator_equality(&it, &endIt); )
-	{
-		conn = XListSLinkedAtomic_iterator_data(&it);
-		switch (conn->type & (~XConnectionType_SingleShot))
-		{
-		case XConnectionType_Auto:Auto_emit(conn, args, NULL,priority); break;
-		case XConnectionType_Direct:Direct_emit(conn, args, NULL); break;
-		case XConnectionType_Queued:Queued_emit(conn, args, NULL,priority); break;
-		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args, NULL, priority); break;
-		}
-		//是否是单次链接
-		if ((conn->type) & XConnectionType_SingleShot)
-		{//取消链接
-			XListBase_erase_base(signalObj->connList, &it, &it);
-		}
-		else
-		{
-			XListSLinkedAtomic_iterator_add(signalObj->connList, &it);
-		}
-	}
-	XMutex_unlock(manager->mutex);  // 解锁
-}
-static void emit_class(XSignalSlot* manager, size_t signal, XClass* args, XEventPriority priority)
-{
-	if (manager == NULL)
-		return;
-	XMutex_lock(manager->mutex);  // 加锁
-	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
-	if (signalObj == NULL)
-		return;//没有这个信号
-	XConnection* conn = NULL;
-	XAtomic_int32_t* ref_count = NULL;
-	if (args)
-	{
-		ref_count = (XAtomic_int32_t*)XMemory_malloc(sizeof(XAtomic_int32_t));
-		if (ref_count)
-			XAtomic_store_int32(ref_count, 0);  // 使用原子存储初始化
-	}
-
+	if (ref_count)
+		XAtomic_fetch_add_int32(ref_count, 1);  // 使用原子存储++
 	for (XListSLinkedAtomic_iterator it = XListSLinkedAtomic_begin(signalObj->connList), endIt = XListSLinkedAtomic_end(signalObj->connList); !XListSLinkedAtomic_iterator_equality(&it, &endIt); )
 	{
 		conn = XListSLinkedAtomic_iterator_data(&it);
@@ -330,7 +324,7 @@ static void emit_class(XSignalSlot* manager, size_t signal, XClass* args, XEvent
 			XListSLinkedAtomic_iterator_add(signalObj->connList, &it);
 		}
 	}
-	if (ref_count && XAtomic_load_int32(ref_count) == 0)
+	if (ref_count && XAtomic_fetch_sub_int32(ref_count,1) == 1)
 	{//该释放了
 		if (args)
 			XClass_delete_base(args);
@@ -342,26 +336,35 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPrio
 {
 	if (manager == NULL)
 		return;
+	//if (manager->sendMode == XEVENT_SEND_QUEUED)
+	//{//在队列中发送
+	//	XCoreApplication_postSendSignal(emit,manager,signal,args,priority);
+	//	return;
+	//}
+	//emit(manager,signal,args, priority);
+
 	if (manager->sendMode == XEVENT_SEND_QUEUED)
 	{//在队列中发送
-		XCoreApplication_postSendSignal(emit,manager,signal,args,priority);
+		XCoreApplication_postSendSignal(emit_class, manager, signal, args, NULL, priority);
 		return;
 	}
-	emit(manager,signal,args, priority);
+	emit_class(manager, signal, args,NULL, priority);
 }
 
-void XSignalSlot_emit_class(XSignalSlot* manager, size_t signal, XClass* args, XEventPriority priority)
+void XSignalSlot_emit_class(XSignalSlot* manager, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority)
 {
 	if (manager == NULL)
 	{
-		if (args)
+		if (args&& !ref_count)
 			XClass_delete_base(args);
 		return;
 	}
+	if(ref_count==NULL)
+		ref_count = XAtomic_create(int32_t);
 	if (manager->sendMode == XEVENT_SEND_QUEUED)
 	{//在队列中发送
-		XCoreApplication_postSendSignal(emit_class, manager, signal, args,priority);
+		XCoreApplication_postSendSignal(emit_class, manager, signal, args, ref_count,priority);
 		return;
 	}
-	emit_class(manager, signal, args, priority);
+	emit_class(manager, signal, args, ref_count, priority);
 }

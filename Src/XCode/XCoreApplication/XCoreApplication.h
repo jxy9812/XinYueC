@@ -40,7 +40,7 @@ int XCoreApplication_exec();
  * @param args 参数
  * @return 是否成功加入队列
  */
-bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XEventPriority priority);
+bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XAtomic_int32_t* ref_count, XEventPriority priority);
 //投递函数(异步投递)
 bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* args, XEventPriority priority);
 

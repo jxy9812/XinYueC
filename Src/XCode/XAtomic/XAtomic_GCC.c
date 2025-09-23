@@ -121,7 +121,7 @@ size_t XAtomic_load_size_t(const XAtomic_size_t* var)
 #endif
 }
 
-void* XAtomic_load_ptr(const XAtomic_ptr_t* var)
+void* XAtomic_load_ptr(const XAtomic_ptr* var)
 {
     return __atomic_load_n(&(var->value), __ATOMIC_SEQ_CST);
 }
@@ -141,7 +141,7 @@ void XAtomic_store_uint32(XAtomic_uint32_t* var, uint32_t value)
     __atomic_store_n(&(var->value), value, __ATOMIC_SEQ_CST);
 }
 
-void XAtomic_store_ptr(XAtomic_ptr_t* var, void* value)
+void XAtomic_store_ptr(XAtomic_ptr* var, void* value)
 {
     __atomic_store_n(&(var->value), value, __ATOMIC_SEQ_CST);
 }
@@ -180,7 +180,7 @@ size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value)
 #endif
 }
 
-void* XAtomic_exchange_ptr(XAtomic_ptr_t* var, void* value)
+void* XAtomic_exchange_ptr(XAtomic_ptr* var, void* value)
 {
     return __atomic_exchange_n(&(var->value), value, __ATOMIC_SEQ_CST);
 }
@@ -224,7 +224,7 @@ bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expecte
 #endif
 }
 
-bool XAtomic_compare_exchange_strong_ptr(XAtomic_ptr_t* var, void** expected, void* desired)
+bool XAtomic_compare_exchange_strong_ptr(XAtomic_ptr* var, void** expected, void* desired)
 {
     return __atomic_compare_exchange_n(
         &(var->value), expected, desired, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);

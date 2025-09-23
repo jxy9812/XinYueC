@@ -119,12 +119,12 @@ int XCoreApplication_exec()
 	}
 	return 0;
 }
-bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XEventPriority priority)
+bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XAtomic_int32_t* ref_count, XEventPriority priority)
 {
 	XCoreApplication* app = XCoreApplication_global();
 	if (!app || app->m_postQueue == NULL)
 		return false;
-	return XEventLoop_postSendSignal(app->m_eventLoop, sendFunc,signalSlot,signal,args,priority);
+	return XEventLoop_postSendSignal(app->m_eventLoop, sendFunc,signalSlot,signal,args, ref_count,priority);
 }
 
 bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* args, XEventPriority priority)

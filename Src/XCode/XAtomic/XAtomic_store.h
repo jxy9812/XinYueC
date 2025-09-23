@@ -57,7 +57,7 @@ void XAtomic_store_size_t(XAtomic_size_t* var, size_t value);
  * @param value 要存储的新指针值
  * @note 原子性保证：写入操作不会被中断，保证写入的完整性
  */
-void XAtomic_store_ptr(XAtomic_ptr_t* var, void* value);
+void XAtomic_store_ptr(XAtomic_ptr* var, void* value);
 #ifdef __cplusplus
 }
 #endif

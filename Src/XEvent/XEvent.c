@@ -70,6 +70,18 @@ void XEventFuncRunCB(XEventFunc* event)
 		XEvent_Accept(event);
 }
 
+static void XEventSlotFunc_deinit(XEventSlotFunc* ev)
+{
+	if (ev->ref_count)
+	{
+		if (XAtomic_fetch_sub_int32(ev->ref_count, 1) == 1)
+		{
+			if (ev->args)
+				XVariant_delete_base(ev->args);
+			XMemory_free(ev->ref_count);
+		}
+	}
+}
 XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func, void* args, XAtomic_int32_t* ref_count,XSemaphore* sem)
 {
 	XEventSlotFunc* event = XMemory_malloc(sizeof(XEventSlotFunc));
@@ -81,6 +93,7 @@ XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotF
 	event->args = args;
 	event->ref_count = ref_count;
 	event->sem = sem;
+	((XEvent*)event)->deinit = XEventSlotFunc_deinit;
 	return event;
 }
 
@@ -91,17 +104,17 @@ void XEventSlotFuncRunCB(XEventSlotFunc* event)
 	if (event->func)
 		event->func(event->sender, event->event.receiver, event->args);
 
-	if (event->ref_count)
-	{
-		if (XAtomic_fetch_sub_int32(event->ref_count, 1) == 1)
-		{
-			if (event->args)
-				XVariant_delete_base(event->args);
-			XMemory_free(event->ref_count);
-		}
-	}
+	//if (event->ref_count)
+	//{
+	//	if (XAtomic_fetch_sub_int32(event->ref_count, 1) == 1)
+	//	{
+	//		if (event->args)
+	//			XVariant_delete_base(event->args);
+	//		XMemory_free(event->ref_count);
+	//	}
+	//}
 	if (event->sem)
-		XSemaphore_release(event->sem,1);
+		XSemaphore_release(event->sem, 1);
 	XEvent_Accept(event);
 }
 

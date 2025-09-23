@@ -80,12 +80,16 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 		XDataFrameComm_postEvent(comm, XEvent_create(comm,XDFC_RX_FRAME_ERROR, 0));
 		return;//校验没通过
 	}
-	if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm, XDFC_FRAME_RECEIVED, 0, comm->m_class.m_recvAsyncBuffer)))
+	XByteArray* v = XByteArray_create_copy(comm->m_class.m_recvAsyncBuffer);
+	if (v == NULL)
+		return;
+	XAtomic_int32_t* atomic = XAtomic_create(int32_t);
+	if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm, XDFC_FRAME_RECEIVED, 0,v, atomic)))
 	{
 		//释放数组防止内存泄露
 	}
 	//发送帧信号
-	XDataFrameComm_frameReceived_signal(comm, comm->m_class.m_recvAsyncBuffer);
+	XDataFrameComm_frameReceived_signal(comm,v, atomic);
 }
 
 void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)

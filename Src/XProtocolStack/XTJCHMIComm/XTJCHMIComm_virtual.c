@@ -2,6 +2,7 @@
 #include"XVector.h"
 #include"XTimerBase.h"
 #include"XCrc.h"
+#include"XByteArray.h"
 #include<string.h>
 static void XDataFrameComm_recvValid(XDataFrameComm* comm);
 static void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm);
@@ -152,10 +153,16 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				XContainerSize(recvVector) -= sizeof(tail);//缓冲区删除结束标志
 				if (XContainerSize(recvVector) != 0)
 				{
-					if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, recvVector)))
+					XByteArray* v = XByteArray_create_copy(recvVector);
+					if (v == NULL)
+						return;
+					XAtomic_int32_t* atomic = XAtomic_create(int32_t);
+					if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v,atomic)))
 					{
 						//XVector_delete_base(v);//释放数组防止内存泄露
 					}
+					//发送帧信号
+					XDataFrameComm_frameReceived_signal(comm,  v, atomic);
 				}
 				comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
 				return ;
@@ -167,10 +174,16 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				if (XContainerSize(recvVector) != 0 && XCrc_get16(XContainerDataPtr(recvVector), XContainerSize(recvVector)) == 0)
 				{
 					XContainerSize(recvVector) -=2;//缓冲区删除CRC
-					if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, recvVector)))
+					XByteArray* v = XByteArray_create_copy(recvVector);
+					if (v == NULL)
+						return;
+					XAtomic_int32_t* atomic = XAtomic_create(int32_t);
+					if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, v,atomic)))
 					{
 						//XVector_delete_base(v);//释放数组防止内存泄露
 					}
+					//发送帧信号
+					XDataFrameComm_frameReceived_signal(comm, v, atomic);
 				}
 				comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
 				return;
@@ -200,10 +213,16 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 
 	if (comm->m_recvValidCb != NULL && !comm->m_recvValidCb(comm,comm->m_class.m_recvAsyncBuffer))
 		return;//校验没通过
-	if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0, comm->m_class.m_recvAsyncBuffer)))
+	XByteArray* v = XByteArray_create_copy(comm->m_class.m_recvAsyncBuffer);
+	if (v == NULL)
+		return;
+	XAtomic_int32_t* atomic = XAtomic_create(int32_t);
+	if (!XDataFrameComm_postEvent(comm, XEventRecvFrame_create(comm,XDFC_FRAME_RECEIVED, 0,v,atomic)))
 	{
 		//XVector_delete_base(v);//释放数组防止内存泄露
 	}
+	//发送帧信号
+	XDataFrameComm_frameReceived_signal(comm, v, atomic);
 }
 void VXDataFrameComm_setRecvValidCRC16(XTJCHMIComm* comm, bool enableCRC16)
 {

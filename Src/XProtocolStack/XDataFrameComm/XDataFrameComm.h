@@ -99,7 +99,7 @@ void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer)
 #define XDataFrameComm_isConnected_base            XCommunicatorBase_isConnected_base
 #define XDataFrameComm_delete_base                 XCommunicatorBase_delete_base
 /*                                          信号                                          */
-void* XDataFrameComm_frameReceived_signal(XDataFrameComm* comm,XByteArray* data);
+void* XDataFrameComm_frameReceived_signal(XDataFrameComm* comm,XByteArray* data, XAtomic_int32_t* ref_count);
 /*以下是默认的回调函数*/
 
 //默认的事件处理回调(全部事件)
@@ -114,8 +114,10 @@ typedef struct XEventRecvFrame
 {
     XEvent m_class;//
     XByteArray* frame;//帧数据
+    XAtomic_int32_t* ref_count;//引用次数
 }XEventRecvFrame;//接收帧事件
-XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t timestamp,XByteArray* frame);
+//ref_count存在的时候frame是引用的方式，否则就是拷贝的方式
+XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t timestamp,XByteArray* frame, XAtomic_int32_t* ref_count);
 typedef struct XEventFuncCode
 {
     XEventRecvFrame m_class;//

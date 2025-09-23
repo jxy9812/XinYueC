@@ -90,15 +90,18 @@ bool XSignalSlot_disconnect_conn(XConnection* conn);
  * @brief 触发信号，通知所有关联的槽函数
  * @param m_signal 信号指针
  * @param args 传递给槽函数的参数（通过void*传递任意类型）
+ * @param priority  信号与槽队列连接的时候的优先级(内部走的是事件投递)
  */
 void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPriority priority);
 
 /**
  * @brief 触发信号，通知所有关联的槽函数
  * @param m_signal 信号指针
- * @param args 传递给槽函数的参数（通过const XVariant*传递任意类型）调用所有槽后自动释放 只读不能修改
+ * @param args 传递给槽函数的参数（通过const XClass*传递任意类型）调用所有槽后自动释放 只读不能修改
+ * @param ref_count 优化参数,传入NULL,内部自己创建管理，外部传入可以与事件共享参数，而不用拷贝，谁最后谁释放参数
+ * @param priority  信号与槽队列连接的时候的优先级(内部走的是事件投递)
  */
-void XSignalSlot_emit_class(XSignalSlot* manager, size_t signal,XClass* args, XEventPriority priority);
+void XSignalSlot_emit_class(XSignalSlot* manager, size_t signal,XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority);
 
 #ifdef __cplusplus
 }
