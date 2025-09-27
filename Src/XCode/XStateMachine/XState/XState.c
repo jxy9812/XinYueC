@@ -9,8 +9,8 @@ bool XStateMachine_isActive(const XStateMachine* machine, const XAbstractState* 
 void XStateMachine_addActiveState(XStateMachine* machine, XAbstractState* state);
 void XStateMachine_removeActiveState(XStateMachine* machine, XAbstractState* state);
 
-static void VXState_onEntered(XState* state);
-static void VXState_onExited(XState* state);
+static void VXState_activate(XState* state);
+static void VXState_deactivate(XState* state);
 static void VXState_setMachine(XState* state, XStateMachine* machine);
 static void VXState_setParentState(XState* state, XAbstractState* parent);
 static void VXState_deinit(XState* state);
@@ -26,13 +26,13 @@ XVtable* XState_class_init()
 
    /* void* table[] =
     {
-        VXAbstractState_onEntered,VXAbstractState_onExited
+        VXAbstractState_activate,VXAbstractState_deactivate
     };
 
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);*/
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXState_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_OnEntered, VXState_onEntered);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_OnExited, VXState_onExited);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_Activate, VXState_activate);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_Deactivate, VXState_deactivate);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_SetMachine, VXState_setMachine);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_SetParentState, VXState_setParentState);
 #if SHOWCONTAINERSIZE
@@ -64,6 +64,7 @@ void XState_init(XState* state) {
     state->m_childCapacity = 0;
     state->m_childStates = 0;
     state->m_childCount = 0;
+    state->m_skipInitialState = false;
 }
 bool XState_removeState(XState* state, XAbstractState* child)
 {
@@ -244,54 +245,51 @@ void XState_setInitialState(XState* state, XAbstractState* initialState) {
 XAbstractState* XState_initialState(const XState* state) {
     return state ? state->m_initialState : NULL;
 }
-void VXState_onEntered(XState* state)
+void VXState_activate(XState* state)
 {
     // 激活当前状态
-    //XAbstractState_onEntered_base(state);
-    XVtableGetFunc(XAbstractState_class_init(), EXAbstractState_OnEntered ,void(*)(XAbstractState*))(state);
+    //XAbstractState_activate_base(state);
+    XVtableGetFunc(XAbstractState_class_init(), EXAbstractState_Activate ,void(*)(XAbstractState*))(state);
 
-    // 如果有初始子状态，激活它
-    if (state->m_initialState) {
-        // 递归激活子状态
+    // 仅在不跳过且有初始状态时激活
+    if (!state->m_skipInitialState && state->m_initialState) {
         if (state->m_initialState->m_type == XStateType_Basic) {
             XState_activate_base((XState*)state->m_initialState);
         }
-        /* else {
-             XAbstractState_onEntered_base(state->m_initialState, m_machine);
-         }*/
     }
+    // 激活后重置标记
+    state->m_skipInitialState = false;
 }
 
-void VXState_onExited(XState* state)
-{
-    if (!state||!state->m_class.m_machine) return;
+/**
+ * @brief 状态退出时的处理函数
+ * 修复点：确保在退出前正确存储历史状态
+ */
+void VXState_deactivate(XState* state) {
+    if (!state || !state->m_class.m_machine) return;
 
-    // 退出前，通知所有子历史状态存储当前状态（核心修改）
+    // 退出前存储历史状态（关键修复：确保在子状态退出前存储）
     for (size_t i = 0; i < state->m_childCount; i++) {
         XAbstractState* child = state->m_childStates[i];
-        if (child->m_type == XStateType_History) 
-        {
+        if (child->m_type == XStateType_History) {
             XHistoryState* history = (XHistoryState*)child;
-            XHistoryState_storeCurrentState(history);  // 触发存储
+            // 强制存储当前状态，此时子状态仍处于运行状态
+            XHistoryState_storeCurrentState(history);
         }
     }
 
-    // 失活所有子状态
+    // 退出所有子状态
     for (size_t i = 0; i < state->m_childCount; i++) {
         XAbstractState* child = state->m_childStates[i];
         if (child->m_isRunning) {
-            /* if (child->m_type == XStateType_Basic) {
-                 XAbstractState_onExited_base((XState*)child);
-             }
-             else */
-            {
-                XAbstractState_onExited_base(child);
-            }
+            XAbstractState_deactivate_base(child);
         }
     }
-    //state->m_initialState = NULL;
-    XVtableGetFunc(XAbstractState_class_init(), EXAbstractState_OnExited, void(*)(XAbstractState*))(state);
+
+    // 调用父类退出函数
+    XVtableGetFunc(XAbstractState_class_init(), EXAbstractState_Deactivate, void(*)(XAbstractState*))(state);
 }
+
 void VXState_setMachine(XState* state, XStateMachine* machine)
 {
     //设置子状态所属的状态机
@@ -340,11 +338,11 @@ void XState_activate_base(XState* state)
 {
     if (!state) return;
 
-    XAbstractState_onEntered_base(state);
+    XAbstractState_activate_base(state);
     //XStateMachine_addActiveState(m_machine, state);
 }
 
 void XState_deactivate_base(XState* state)
 {
-    XAbstractState_onExited_base(state);
+    XAbstractState_deactivate_base(state);
 }

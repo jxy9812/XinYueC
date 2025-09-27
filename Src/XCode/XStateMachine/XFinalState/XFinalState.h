@@ -37,7 +37,7 @@ void XFinalState_init(XFinalState* state);
  * @param state 最终状态实例
  * @param m_machine 所属状态机
  */
-void XFinalState_activate(XFinalState* state, XStateMachine* machine);
+void XFinalState_activate(XFinalState* state);
 #ifdef __cplusplus
 }
 #endif

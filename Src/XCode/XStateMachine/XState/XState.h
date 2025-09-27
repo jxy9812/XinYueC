@@ -12,8 +12,10 @@ XCLASS_DEFINE_EXTEND_END(XState, XAbstractState);
 /**
  * @brief 基础状态类，可包含子状态和转换
  */
-typedef struct XState {
+typedef struct XState
+{
     XAbstractState m_class;         // 继承XAbstractState
+    bool m_skipInitialState; // 临时跳过初始状态激活
     struct XAbstractState** m_childStates;// 子状态列表
     size_t m_childCount;             // 子状态数量
     size_t m_childCapacity;          // 子状态容量

@@ -10,8 +10,8 @@
 #define INITIAL_STATE_CAPACITY 4
 
 // 私有函数声明
-static void XStateMachine_enterState(XStateMachine* machine, XAbstractState* state);
-static void XStateMachine_exitState(XStateMachine* machine, XAbstractState* state);
+void XStateMachine_enterState(XStateMachine* machine, XAbstractState* state);
+void XStateMachine_exitState(XStateMachine* machine, XAbstractState* state);
 bool XStateMachine_isActive(const XStateMachine* machine, const XAbstractState* state);
 void XStateMachine_addActiveState(XStateMachine* machine, XAbstractState* state);
 void XStateMachine_removeActiveState(XStateMachine* machine, XAbstractState* state);
@@ -208,52 +208,83 @@ void XStateMachine_handleEventCB(const XEvent* event) {
     //return eventHandled;
 }
 
-// 新增辅助函数：判断target是否是source的后代（子状态或更深层的子状态）
-static bool isDescendant(XAbstractState* source, XAbstractState* target) {
-    if (!source || !target) return false;
-    XAbstractState* parent = XAbstractState_parentState(target);
+// 辅助函数：判断状态是否为另一个状态的后代
+static bool isDescendant(XAbstractState* ancestor, XAbstractState* descendant) {
+    if (!ancestor || !descendant) return false;
+    if (ancestor == descendant) return true;
+
+    XAbstractState* parent = XAbstractState_parentState(descendant);
     while (parent) {
-        if (parent == source) return true; // 找到祖先为source
+        if (parent == ancestor) return true;
         parent = XAbstractState_parentState(parent);
     }
     return false;
 }
 
+/**
+ * @brief 状态机转换逻辑
+ * 修复点：深层历史恢复时避免父状态异常退出
+ */
 bool XStateMachine_transition(XStateMachine* machine, XAbstractState* source, XAbstractState* target) {
     if (!machine || !source || !target || machine->m_status != XStateMachineRunning) {
         return false;
     }
 
-    // 解析历史状态为实际目标
     XAbstractState* actualTarget = target;
+    XVector* deepHistoryChain = NULL;
+    bool isDeepHistory = false;
+
+    // 解析历史状态
     if (target->m_type == XStateType_History) {
-        actualTarget = XHistoryState_activate((XHistoryState*)target);
+        XHistoryState* history = (XHistoryState*)target;
+        actualTarget = XHistoryState_getActivatedTarget(history);;
+
+        if (history->m_historyType == XHistoryStateType_Deep) {
+            deepHistoryChain = XHistoryState_storedDeep(history);
+            isDeepHistory = true;
+        }
+
         if (!actualTarget) return false;
     }
 
-    // 关键修正：判断目标是否是源状态的后代
+    // 判断目标是否为源状态的后代
     bool targetIsDescendant = isDescendant(source, actualTarget);
 
-    // 仅在目标不是后代时，才退出源状态（避免退出父状态）
-    if (!targetIsDescendant) {
+    // 处理退出逻辑：深层历史不退出源状态（修复点）
+    if (!targetIsDescendant && !isDeepHistory) {
         XStateMachine_exitState(machine, source);
     }
-    else {
-        // 目标是后代：仅退出源状态的当前活跃子状态（不退出源状态）
-        if (source->m_type == XStateType_Basic) {
-            XState* basicSource = (XState*)source;
-            // 退出所有活跃的直接子状态
-            for (size_t i = 0; i < XState_childCount(basicSource); i++) {
-                XAbstractState* child = XState_child(basicSource, i);
-                if (child->m_isRunning) {
-                    XStateMachine_exitState(machine, child);
-                }
+    else if (source->m_type == XStateType_Basic) {
+        XState* basicSource = (XState*)source;
+        for (size_t i = 0; i < XState_childCount(basicSource); i++) {
+            XAbstractState* child = XState_child(basicSource, i);
+            if (child->m_isRunning && !isDescendant(child, actualTarget)) {
+                XStateMachine_exitState(machine, child);
             }
         }
     }
 
-    // 进入实际目标状态（如果是后代，源状态已激活，无需重新进入）
-    XStateMachine_enterState(machine, actualTarget);
+    // 激活深层历史链
+    if (deepHistoryChain && XVector_size_base(deepHistoryChain) > 0) {
+        // 按顺序激活链中所有状态（从顶层到深层）
+        for (size_t i = 0; i < XVector_size_base(deepHistoryChain); i++) {
+            XAbstractState** statePtr = XVector_at_base(deepHistoryChain, i);
+            XAbstractState* stateInChain = *statePtr;
+
+            if (!stateInChain || stateInChain->m_isRunning) continue;
+
+            // 对于基本状态，跳过初始状态激活，避免覆盖历史
+            if (stateInChain->m_type == XStateType_Basic) {
+                ((XState*)stateInChain)->m_skipInitialState = true;
+            }
+
+            XStateMachine_enterState(machine, stateInChain);
+        }
+    }
+    else {
+        // 非深层历史：激活实际目标
+        XStateMachine_enterState(machine, actualTarget);
+    }
 
     return true;
 }
@@ -395,7 +426,7 @@ void VXStateMachine_deinit(XStateMachine* machine)
     XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(machine);
 }
 
-static void XStateMachine_enterState(XStateMachine* machine, XAbstractState* state) {
+void XStateMachine_enterState(XStateMachine* machine, XAbstractState* state) {
     if (!machine || !state || XStateMachine_isActive(machine, state)) {
         return;
     }
@@ -412,10 +443,10 @@ static void XStateMachine_enterState(XStateMachine* machine, XAbstractState* sta
         XState_activate_base((XState*)state);
         break;
     case XStateType_Final:
-        XFinalState_activate((XFinalState*)state, machine);
+        XFinalState_activate((XFinalState*)state);
         break;
-    case XStateType_History:
-        XHistoryState_activate((XHistoryState*)state);
+ /*   case XStateType_History:
+        XHistoryState_activate_base((XHistoryState*)state);*/
         break;
     case XStateType_Parallel:
         // 并行状态处理（类似于基本状态，但需要激活所有子状态）
@@ -427,13 +458,13 @@ static void XStateMachine_enterState(XStateMachine* machine, XAbstractState* sta
     XStateMachine_addActiveState(machine, state);
 }
 
-static void XStateMachine_exitState(XStateMachine* machine, XAbstractState* state) {
+void XStateMachine_exitState(XStateMachine* machine, XAbstractState* state) {
     if (!machine || !state || !XStateMachine_isActive(machine, state)) {
         return;
     }
 
     // 退出状态
-    XAbstractState_onExited_base(state);
+    XAbstractState_deactivate_base(state);
 
     // 对于历史状态，存储当前子状态
     if (state->m_parentState && ((XAbstractState*)state->m_parentState)->m_type == XStateType_History) {

@@ -9,8 +9,8 @@ extern "C" {
 typedef struct XStateMachine XStateMachine;
 typedef struct XState XState;
 XCLASS_DEFINE_BEGING(XAbstractState)
-XCLASS_DEFINE_ENUM(XAbstractState, OnEntered) = XCLASS_VTABLE_GET_SIZE(XClass),
-XCLASS_DEFINE_ENUM(XAbstractState, OnExited),
+XCLASS_DEFINE_ENUM(XAbstractState, Activate) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XAbstractState, Deactivate),
 XCLASS_DEFINE_ENUM(XAbstractState, SetMachine),
 XCLASS_DEFINE_ENUM(XAbstractState, SetParentState),
 XCLASS_DEFINE_END(XAbstractState)
@@ -120,13 +120,13 @@ void* XAbstractState_userData(const XAbstractState* state);
  * @brief 状态进入事件
  * @param state 状态实例
  */
-void XAbstractState_onEntered_base(XAbstractState* state);
+void XAbstractState_activate_base(XAbstractState* state);
 
 /**
  * @brief 状态退出事件
  * @param state 状态实例
  */
-void XAbstractState_onExited_base(XAbstractState* state);
+void XAbstractState_deactivate_base(XAbstractState* state);
 
 /**
  * @brief 设置状态进入回调

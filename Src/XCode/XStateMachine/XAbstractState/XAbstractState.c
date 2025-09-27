@@ -14,8 +14,8 @@ typedef struct {
     XStateEnteredCallback enteredCallback;
     XStateExitedCallback exitedCallback;
 } XAbstractStatePrivate;
-static void VXAbstractState_onEntered(XAbstractState* state);
-static void VXAbstractState_onExited(XAbstractState* state);
+static void VXAbstractState_activate(XAbstractState* state);
+static void VXAbstractState_deactivate(XAbstractState* state);
 static void VXAbstractState_setMachine(XAbstractState* state, XStateMachine* machine);
 static void VXAbstractState_setParentState(XAbstractState* state, XAbstractState* parent);
 static void VXAbstractState_deinit(XAbstractState* state);
@@ -31,7 +31,7 @@ XVtable* XAbstractState_class_init()
 
     void* table[] = 
     {
-        VXAbstractState_onEntered,VXAbstractState_onExited,
+        VXAbstractState_activate,VXAbstractState_deactivate,
         VXAbstractState_setMachine,VXAbstractState_setParentState
     };
 
@@ -72,7 +72,7 @@ void XAbstractState_init(XAbstractState* state, XStateType type) {
     // 初始化私有数据
     XAbstractState_private_init(state);
 }
-void VXAbstractState_onEntered(XAbstractState* state)
+void VXAbstractState_activate(XAbstractState* state)
 {
     if (!state || state->m_isRunning || !state->m_machine || !XStateMachine_isRunning(state->m_machine)) return;
 
@@ -87,7 +87,7 @@ void VXAbstractState_onEntered(XAbstractState* state)
     // 发送状态进入信号
     XStateMachine_entered_signal(state->m_machine, state);
 }
-void VXAbstractState_onExited(XAbstractState* state)
+void VXAbstractState_deactivate(XAbstractState* state)
 {
     if (!state || !state->m_isRunning || !state->m_machine || !XStateMachine_isRunning(state->m_machine)) return;
    
@@ -162,18 +162,18 @@ void* XAbstractState_userData(const XAbstractState* state) {
     return state ? state->m_userData : NULL;
 }
 
-void XAbstractState_onEntered_base(XAbstractState* state) 
+void XAbstractState_activate_base(XAbstractState* state) 
 {
     if (ISNULL(state, "") || ISNULL(XClassGetVtable(state), ""))
         return;
-    XClassGetVirtualFunc(state, EXAbstractState_OnEntered, void(*)(XAbstractState*))(state);  
+    XClassGetVirtualFunc(state, EXAbstractState_Activate, void(*)(XAbstractState*))(state);  
 }
 
-void XAbstractState_onExited_base(XAbstractState* state)
+void XAbstractState_deactivate_base(XAbstractState* state)
 {
     if (ISNULL(state, "") || ISNULL(XClassGetVtable(state), ""))
         return;
-    XClassGetVirtualFunc(state, EXAbstractState_OnExited, void(*)(XAbstractState*))(state);
+    XClassGetVirtualFunc(state, EXAbstractState_Deactivate, void(*)(XAbstractState*))(state);
 }
 
 void XAbstractState_setEnteredCallback(XAbstractState* state, XStateEnteredCallback callback) {
