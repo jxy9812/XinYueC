@@ -85,6 +85,25 @@ bool XState_removeState(XState* state, XAbstractState* child)
 
     return false;
 }
+// 新增：判断某个状态是否是当前状态的子状态（包括间接子状态）
+bool XState_isChild(const XState* state, const XAbstractState* child)
+{
+    if (!state || !child) return false;
+
+    // 检查直接子状态
+    for (size_t i = 0; i < state->m_childCount; i++) {
+        if (state->m_childStates[i] == child) {
+            return true;
+        }
+        // 递归检查间接子状态（仅基本状态有子状态）
+        if (state->m_childStates[i]->m_type == XStateType_Basic) {
+            if (XState_isChild((XState*)state->m_childStates[i], child)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 size_t XState_childCount(const XState* state)
 {
     return state ? state->m_childCount : 0;
@@ -131,6 +150,8 @@ bool XState_addState(XState* state, XAbstractState* child)
     state->m_childStates[state->m_childCount++] = child;
     XAbstractState_setParentState_base(child, state);
     ((XAbstractState*)child)->m_machine = ((XAbstractState*)state)->m_machine;
+  /*  if(state->m_initialState==NULL)
+        state->m_initialState = child;*/
     return true;
 }
 void VXState_deinit(XState* state)
@@ -176,7 +197,8 @@ bool XState_addTransition(XState* state, XAbstractTransition* transition) {
 
     // 添加转换
     state->m_transitions[state->m_transitionCount++] = transition;
-    XAbstractTransition_setSourceState(transition, (XAbstractState*)state);
+    if(transition->m_sourceState!= state)
+        XAbstractTransition_setSourceState(transition, (XAbstractState*)state);
 
     return true;
 }
@@ -267,7 +289,7 @@ void VXState_onExited(XState* state)
             }
         }
     }
-
+    //state->m_initialState = NULL;
     XVtableGetFunc(XAbstractState_class_init(), EXAbstractState_OnExited, void(*)(XAbstractState*))(state);
 }
 void VXState_setMachine(XState* state, XStateMachine* machine)

@@ -11,6 +11,7 @@ void XMenu_XDebugTest(XMenu* root);
 void XMenu_XStateMachineTest(XMenu* root);
 void XStateMachineEventTest();
 void XStateMachineSignalTest();
+void XHistoryState_Test();
 #endif // DEMOTEST
 
 #ifdef __cplusplus

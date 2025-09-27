@@ -79,9 +79,9 @@ void XHistoryState_storeCurrentState(XHistoryState* state);
 /**
  * @brief 激活历史状态
  * @param state 历史状态实例
- * @param m_machine 所属状态机
  */
-void XHistoryState_activate(XHistoryState* state, XStateMachine* machine);
+ // 在函数声明区域添加
+XAbstractState* XHistoryState_activate(XHistoryState* state);
 #ifdef __cplusplus
 }
 #endif

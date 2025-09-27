@@ -58,6 +58,8 @@ bool XState_addState(XState* state, XAbstractState* child);
  */
 bool XState_removeState(XState* state, XAbstractState* child);
 
+bool XState_isChild(const XState* state, const XAbstractState* child);
+
 /**
  * @brief 获取子状态数量
  * @param state 状态实例

@@ -208,19 +208,52 @@ void XStateMachine_handleEventCB(const XEvent* event) {
     //return eventHandled;
 }
 
+// 新增辅助函数：判断target是否是source的后代（子状态或更深层的子状态）
+static bool isDescendant(XAbstractState* source, XAbstractState* target) {
+    if (!source || !target) return false;
+    XAbstractState* parent = XAbstractState_parentState(target);
+    while (parent) {
+        if (parent == source) return true; // 找到祖先为source
+        parent = XAbstractState_parentState(parent);
+    }
+    return false;
+}
+
 bool XStateMachine_transition(XStateMachine* machine, XAbstractState* source, XAbstractState* target) {
     if (!machine || !source || !target || machine->m_status != XStateMachineRunning) {
         return false;
     }
 
-    // 退出源状态及其子状态
-    XStateMachine_exitState(machine, source);
+    // 解析历史状态为实际目标
+    XAbstractState* actualTarget = target;
+    if (target->m_type == XStateType_History) {
+        actualTarget = XHistoryState_activate((XHistoryState*)target);
+        if (!actualTarget) return false;
+    }
 
-    // 进入目标状态及其所需的父状态
-    XStateMachine_enterState(machine, target);
+    // 关键修正：判断目标是否是源状态的后代
+    bool targetIsDescendant = isDescendant(source, actualTarget);
 
-    // 发送转换完成信号
-    //XObject_emitSignal(&m_machine->m_class, "transitioned()", NULL);
+    // 仅在目标不是后代时，才退出源状态（避免退出父状态）
+    if (!targetIsDescendant) {
+        XStateMachine_exitState(machine, source);
+    }
+    else {
+        // 目标是后代：仅退出源状态的当前活跃子状态（不退出源状态）
+        if (source->m_type == XStateType_Basic) {
+            XState* basicSource = (XState*)source;
+            // 退出所有活跃的直接子状态
+            for (size_t i = 0; i < XState_childCount(basicSource); i++) {
+                XAbstractState* child = XState_child(basicSource, i);
+                if (child->m_isRunning) {
+                    XStateMachine_exitState(machine, child);
+                }
+            }
+        }
+    }
+
+    // 进入实际目标状态（如果是后代，源状态已激活，无需重新进入）
+    XStateMachine_enterState(machine, actualTarget);
 
     return true;
 }
@@ -382,7 +415,7 @@ static void XStateMachine_enterState(XStateMachine* machine, XAbstractState* sta
         XFinalState_activate((XFinalState*)state, machine);
         break;
     case XStateType_History:
-        XHistoryState_activate((XHistoryState*)state, machine);
+        XHistoryState_activate((XHistoryState*)state);
         break;
     case XStateType_Parallel:
         // 并行状态处理（类似于基本状态，但需要激活所有子状态）
