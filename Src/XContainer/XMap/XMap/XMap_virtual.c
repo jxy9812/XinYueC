@@ -143,7 +143,7 @@ bool VXMap_remove(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return false;
-	XRBTreeNode* nodes = XRBTree_findData(XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key);
+	XRBTreeNode* nodes = XRBTree_findNode(XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
 		XRBTree_remove(&XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key, XMapBase_deleteNodeData,this_map);
@@ -177,7 +177,7 @@ bool VXMap_find(XMap* this_map, const void* key, XMap_iterator* it)
 			*it = XMap_end(this_map);
 		return false;
 	}
-	XTreeNode* nodes = XRBTree_findData(XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key);
+	XTreeNode* nodes = XRBTree_findNode(XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key);
 	if (nodes == NULL)
 	{
 		if (it)

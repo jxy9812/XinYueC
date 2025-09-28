@@ -216,7 +216,7 @@ XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareR
 {
 	if (ISNULL(this_root, ""))
 		return NULL;
-	XRBTreeNode* findErase = XBBTree_findData(*this_root, compare, Rule, pvData);//删除的节点
+	XRBTreeNode* findErase = XBBTree_findNode(*this_root, compare, Rule, pvData);//删除的节点
 	//DEBUG_PRINTF("findErase=%p", findErase);
 	if (findErase == NULL)
 		return NULL;//要删除的节点没找到
@@ -232,9 +232,9 @@ XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareR
 	return findErase;
 }
 
-XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData)
+XRBTreeNode* XRBTree_findNode(XRBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData)
 {
-	return XBBTree_findData(this_root, compare, rule,pvData);
+	return XBBTree_findNode(this_root, compare, rule,pvData);
 	//if (this_root == NULL)//树是空的
 	//	return NULL;
 	//XRBTreeNode* CurNode = this_root;//当前节点指针

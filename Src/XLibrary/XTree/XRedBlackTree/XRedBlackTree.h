@@ -34,7 +34,7 @@ void XRBTree_init(XRBTreeNode* this_root, const char* pvData, const size_t dataT
 XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule,const void* pvData, const size_t TypeSize);
 XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule,const void* pvData, XTreeNodeDataDeleteMethod method, void* args);
 //查找红黑树节点
-XRBTreeNode* XRBTree_findData(XRBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData);
+XRBTreeNode* XRBTree_findNode(XRBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData);
 //递归释放整颗树
 #define XRBTreeNode_delete							XBTreeNode_delete
 //递归释放整颗树

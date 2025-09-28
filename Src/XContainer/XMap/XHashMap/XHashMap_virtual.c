@@ -192,7 +192,7 @@ bool VXMap_remove(XHashMap*this_hash, const void* pvKey)
 	if (XMapBase_isEmpty_base(this_hash))
 		return false;
 	size_t index = this_hash->m_hash(pvKey, ((XMapBase*)this_hash)->m_keyTypeSize) % XContainerCapacity(this_hash);
-	XRBTreeNode* nodes = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
+	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
 	if (nodes != NULL)
 	{
 		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, XMapBase_deleteNodeData,this_hash);
@@ -226,7 +226,7 @@ bool VXMap_find(XHashMap*this_hash, const void* pvKey, XHashMap_iterator* it)
 		return false;
 	}
 	size_t index = this_hash->m_hash(pvKey, ((XMapBase*)this_hash)->m_keyTypeSize) % XContainerCapacity(this_hash);
-	XRBTreeNode* nodes = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
+	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
 	if (nodes == NULL)
 	{
 		if (it)

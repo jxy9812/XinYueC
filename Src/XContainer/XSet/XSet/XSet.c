@@ -216,7 +216,7 @@ bool VXSet_find(XSet* this_set, const void* key, XSet_iterator* it)
 			*it = XSet_end(this_set);
 		return false;
 	}
-	XTreeNode* node = XRBTree_findData(XContainerDataPtr(this_set), ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
+	XTreeNode* node = XRBTree_findNode(XContainerDataPtr(this_set), ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
 	if (node == NULL)
 	{
 		if (it)

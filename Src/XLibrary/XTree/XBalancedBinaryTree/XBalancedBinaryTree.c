@@ -113,7 +113,7 @@ void* XBBTree_erase(XBBTreeNode** this_root, XCompare compare, XCompareRuleOne R
 {
 	if (ISNULL(this_root, ""))
 		return NULL;
-	XBBTreeNode* findRet = XBBTree_findData(*this_root, compare, Rule, pvData);
+	XBBTreeNode* findRet = XBBTree_findNode(*this_root, compare, Rule, pvData);
 	if (findRet == NULL)
 		return NULL;//要删除的节点没找到
 	size_t count = 0;
@@ -128,7 +128,7 @@ void* XBBTree_erase(XBBTreeNode** this_root, XCompare compare, XCompareRuleOne R
 	if (count == 2)//两个孩子
 		TwoChild_erase(this_root, findRet);
 }
-XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData)
+XBBTreeNode* XBBTree_findNode(XBBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData)
 {
 	if (this_root == NULL)//树是空的
 		return NULL;

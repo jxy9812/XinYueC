@@ -1,7 +1,6 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
 #include"XSet.h"
-#include"XBalancedBinaryTree.h"
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"

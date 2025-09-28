@@ -4,8 +4,6 @@
 #include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
-//#include "XBinaryTree.h"
-
 void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, const char* pvData, const size_t typeSize)
 {
 	if (node == NULL||nodeCount==0||typeSize==0)

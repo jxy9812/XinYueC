@@ -23,8 +23,8 @@ typedef struct XBTreeNode
 	XTreeNode m_class;//树节点
 }XBTreeNode;
 
-XBTreeNode* XBTreeNode_create(const char* pvData,const size_t dataTypeSize);
-void XBTreeNode_init(XBTreeNode* node, const char* pvData, const size_t dataTypeSize);
+XBTreeNode* XBTreeNode_create(const char* pvData,const size_t typeSize);
+void XBTreeNode_init(XBTreeNode* node, const char* pvData, const size_t typeSize);
 //二叉树遍历转数组存储
 XVector* XBTree_TraversingToXVector(XTreeNode* this_root, const enum XBTreeTraversing Traversing);
 //右旋
@@ -45,8 +45,6 @@ XTreeNode* XBTree_SpinLL(XTreeNode** this_root, XTreeNode* nodes);
 #define XBTreeNode_SetData							XTreeNode_SetData
 #define XBTreeNode_GetDataPtr						XTreeNode_GetDataPtr
 #define XBTreeNode_GetData							XTreeNode_GetData
-#define XBTreeNode_GetDataTypeSize					XTreeNode_GetDataTypeSize
-#define XBTreeNode_SetDataTypeSize					XTreeNode_SetDataTypeSize
 
 #define XBTreeNode_delete							XTreeNode_delete
 //递归释放整颗树

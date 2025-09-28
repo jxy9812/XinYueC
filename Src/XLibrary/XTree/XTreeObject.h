@@ -56,8 +56,6 @@ void XTree_delete(XTreeNode* this_root, XTreeNodeDataDeleteMethod method,void* a
 #define XTreeNode_SetData(this_root,data)			XTreeNode_setData(this_root,&data)//树-插入数据
 #define XTreeNode_GetDataPtr(this_root)				(((XTreeNode*)this_root)->data)
 #define XTreeNode_GetData(this_root,Type)			(*((Type*)(XTreeNode_GetDataPtr(this_root))))//树-获取数据(继承的子类均可以使用)
-#define XTreeNode_GetDataTypeSize(this_root)		(((XTreeNode*)this_root)->typeSize)
-#define XTreeNode_SetDataTypeSize(this_root,size)	(((XTreeNode*)this_root)->typeSize=size)
 #ifdef __cplusplus
 }
 #endif

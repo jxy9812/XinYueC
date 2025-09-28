@@ -115,7 +115,7 @@ bool VXSet_insert(XHashSet* this_set, const void* key, XCDataCreatMethod dataCre
 
     size_t index = this_set->m_hash(key, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
 
-    XRBTreeNode* current = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
+    XRBTreeNode* current = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
     if (current == NULL)
     {//节点不存在
         if (dataCreatMethod)
@@ -189,7 +189,7 @@ bool VXSet_remove(XHashSet* this_set, const void* key)
     if (XSetBase_isEmpty_base(this_set))
         return false;
     size_t index = this_set->m_hash(key, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
-    XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
+    XRBTreeNode* node = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
     if (node != NULL)
     {
         XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key, XSet_freeNodeData,this_set);
@@ -207,7 +207,7 @@ bool VXSet_find(XHashSet* this_set, const void* key,XHashSet_iterator* it)
         return false;
     }
     size_t index = this_set->m_hash(key, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
-    XRBTreeNode* node = XRBTree_findData(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
+    XRBTreeNode* node = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
     if (node == NULL)
     {
         if (it)

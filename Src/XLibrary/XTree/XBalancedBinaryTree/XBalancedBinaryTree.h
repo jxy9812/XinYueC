@@ -22,7 +22,7 @@ XBBTreeNode* XBBTree_insert(XBBTreeNode** this_root, XCompare compare, XCompareR
 //二叉树删除节点
 void* XBBTree_erase(XBBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const void* pvData, const size_t TypeSize);
 //查找二叉树节点
-XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData);
+XBBTreeNode* XBBTree_findNode(XBBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData);
 //获取本身的高度(层数最大孩子高度+1(自己))
 const size_t XBBTree_GetLayerNumberThis(const XBBTreeNode* this_root);
 //获取左右两孩子中最大层数

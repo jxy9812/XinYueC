@@ -36,7 +36,7 @@ void XBalancedBinaryTreeTest()
 		XVector_delete_base(TreePreorder);
 	}
 	int findVal = 456;
-	XBBTreeNode* findRet = XBBTree_findData(root, XCompare_int,XCompareRuleOne_BinaryTree,&findVal);
+	XBBTreeNode* findRet = XBBTree_findNode(root, XCompare_int,XCompareRuleOne_BinaryTree,&findVal);
 	if(findRet!=NULL)
 	XPrintf("找到的:%d\n", XTreeNode_GetData(findRet,int));
 
