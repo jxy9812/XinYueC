@@ -154,7 +154,7 @@ XBBTreeNode* XBBTree_findData(XBBTreeNode* this_root, XCompare compare, XCompare
 bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t TypeSize)
 {
 	//if (!XBTree_insertData(insertNode, pvData, 0))//插入数据
-	if (!XTreeNode_setData(insertNode,pvData))
+	if (!XTreeNode_setData(insertNode,pvData, TypeSize))
 	{
 		XTreeNode_delete(insertNode);//插入失败释放创建的节点
 		return false;

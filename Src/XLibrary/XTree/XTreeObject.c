@@ -6,15 +6,15 @@
 #include<string.h>
 //#include "XBinaryTree.h"
 
-void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, const char* pvData, const size_t dataTypeSize)
+void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, const char* pvData, const size_t typeSize)
 {
-	if (node == NULL||nodeCount==0||dataTypeSize==0)
+	if (node == NULL||nodeCount==0||typeSize==0)
 		return;
 	node->nodes = XMemory_calloc(nodeCount,sizeof(XTreeNode*));
 	if (node->nodes == NULL)
 		return;
 	node->nodeCount = nodeCount;
-	XTreeNode_GetDataPtr(node) = XMemory_calloc(1, dataTypeSize);
+	XTreeNode_GetDataPtr(node) = XMemory_calloc(1, typeSize);
 	if (XTreeNode_GetDataPtr(node) == NULL)
 	{
 		XMemory_free(node->nodes);
@@ -22,25 +22,25 @@ void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, const char* pvData
 		node->nodeCount = 0;
 		return;
 	}
-	node->dataTypeSize = dataTypeSize;
+	//node->typeSize = typeSize;
 	node->parentNode = NULL;
 	if (pvData)
-		memcpy(XTreeNode_GetDataPtr(node), pvData, dataTypeSize);
+		memcpy(XTreeNode_GetDataPtr(node), pvData, typeSize);
 }
-XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t dataTypeSize)
+XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t typeSize)
 {
-	if (nodeCount == 0 || dataTypeSize == 0)
+	if (nodeCount == 0 || typeSize == 0)
 		return NULL;
 	XTreeNode* node = XMemory_malloc(sizeof(XTreeNode));
 	if (node)
-		XTreeNode_init(node,nodeCount,pvData,dataTypeSize);
+		XTreeNode_init(node,nodeCount,pvData,typeSize);
 	return node;
 }
-bool XTreeNode_setData(XTreeNode* this_root, const void* pvData)
+bool XTreeNode_setData(XTreeNode* this_root, const void* pvData, size_t typeSize)
 {
 	if(this_root==NULL||pvData==NULL)
 		return false;
-	memcpy((uint8_t*)(XTreeNode_GetDataPtr(this_root)), pvData, this_root->dataTypeSize);
+	memcpy((uint8_t*)(XTreeNode_GetDataPtr(this_root)), pvData, typeSize);
 	return true;
 }
 void* XTreeNode_getData(XTreeNode* this_root)

@@ -178,7 +178,6 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTre
 	if (XTreeNode_GetDataPtr(eraseNode))
 		XMemory_free(XTreeNode_GetDataPtr(eraseNode));
 	XTreeNode_SetDataPtr(eraseNode, XTreeNode_GetDataPtr(LPreplace));
-	XTreeNode_SetDataTypeSize(eraseNode, XTreeNode_GetDataTypeSize(LPreplace));
 	XTreeNode_SetDataPtr(LPreplace, NULL);
 
 	LPchild = XBTreeNode_GetRChild(LPreplace);

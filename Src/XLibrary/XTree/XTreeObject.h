@@ -17,15 +17,14 @@ typedef void (*XTreeNodeDeleteMethod)(XTreeNode* node);
 typedef struct XTreeNode
 {
 	uint8_t nodeCount;//节点数量
-	size_t  dataTypeSize;//值类型大小
 	struct XTreeNode* parentNode;//父节点
 	struct XTreeNode** nodes;//节点数组
 	void* data;//数据
 }XTreeNode;
 //初始化
-XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t dataTypeSize);
-void XTreeNode_init(XTreeNode* node,const uint8_t nodeCount, const char* pvData, const size_t dataTypeSize);
-bool XTreeNode_setData(XTreeNode* this_root, const void* pvData);
+XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t typeSize);
+void XTreeNode_init(XTreeNode* node,const uint8_t nodeCount, const char* pvData, const size_t typeSize);
+bool XTreeNode_setData(XTreeNode* this_root, const void* pvData, size_t typeSize);
 //获取数据
 void* XTreeNode_getData(XTreeNode* this_root);
 //设置一个节点指针
@@ -57,8 +56,8 @@ void XTree_delete(XTreeNode* this_root, XTreeNodeDataDeleteMethod method,void* a
 #define XTreeNode_SetData(this_root,data)			XTreeNode_setData(this_root,&data)//树-插入数据
 #define XTreeNode_GetDataPtr(this_root)				(((XTreeNode*)this_root)->data)
 #define XTreeNode_GetData(this_root,Type)			(*((Type*)(XTreeNode_GetDataPtr(this_root))))//树-获取数据(继承的子类均可以使用)
-#define XTreeNode_GetDataTypeSize(this_root)		(((XTreeNode*)this_root)->dataTypeSize)
-#define XTreeNode_SetDataTypeSize(this_root,size)	(((XTreeNode*)this_root)->dataTypeSize=size)
+#define XTreeNode_GetDataTypeSize(this_root)		(((XTreeNode*)this_root)->typeSize)
+#define XTreeNode_SetDataTypeSize(this_root,size)	(((XTreeNode*)this_root)->typeSize=size)
 #ifdef __cplusplus
 }
 #endif
