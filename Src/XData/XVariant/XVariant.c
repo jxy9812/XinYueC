@@ -67,7 +67,7 @@ static bool global_typeHash_init()
 	return false;
 }
 static void VXVariant_move(XVariant* var, XVariant* src);
-static void VXVariant_copy(XVariant* var, XVariant* src);
+static void VXVariant_copy(XVariant* var, const XVariant* src);
 static void VXVariant_deinit(XVariant* var);
 XVtable* XVariant_class_init()
 {
