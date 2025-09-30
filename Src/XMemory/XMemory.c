@@ -8,7 +8,7 @@ static XMemory global_Memory = { malloc,free,realloc,calloc };
 static XMemory global_Memory = { malloc,free,realloc,calloc };
 #elif defined(__FreeRTOS__) 
 #include"FreeRTOS.h"
-static XMemory global_Memory = { pvPortMalloc,vPortFree,XMemory_reallocPack,XMemory_callocPack };
+static XMemory global_Memory = { pvPortMalloc,vPortFree,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc };
 #else
 static XMemory global_Memory = { 0 };
 #endif
@@ -126,7 +126,7 @@ void XMemory_setCallocMethod(CallocMethod method)
 	global_Memory.callocZero = method;
 }
 
-void* XMemory_reallocPack(void* ptr, size_t size)
+void* XMemory_realloc_isMalloc(void* ptr, size_t size)
 {
 	if (ptr == NULL)
 		return XMemory_malloc(size);
@@ -143,7 +143,7 @@ void* XMemory_reallocPack(void* ptr, size_t size)
 	return newPtr;
 }
 
-void* XMemory_callocPack(size_t count, size_t size)
+void* XMemory_calloc_isMalloc(size_t count, size_t size)
 {
 	void* ptr = XMemory_malloc(count*size);
 	if (ptr)

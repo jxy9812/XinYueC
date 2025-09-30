@@ -50,12 +50,12 @@ void XHuffmanTreeTest()
 	XCoreApplication_quit();
 }
 void XMenu_XHuffmanTreeTest(XMenu* root)
-{
-	XMenu* menu = XMenu_create("XHuffmanTree(哈夫曼树)");
+{//哈夫曼树目前实现有问题
+	/*XMenu* menu = XMenu_create("XHuffmanTree(哈夫曼树)");
 	XMenu_addMenu(root, menu);
 	{
 		XAction* action = XMenu_addAction(menu, "主测试");
 		XAction_setAction(action, XHuffmanTreeTest);
-	}
+	}*/
 }
 #endif

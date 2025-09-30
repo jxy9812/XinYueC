@@ -25,12 +25,16 @@ void XMemory_setDeleteMethod(DeleteMethod method);
 void XMemory_setReallocMethod(ReallocMethod method);
 void XMemory_setCallocMethod(CallocMethod method);
 //XMemory_malloc XMemory_free配合实现XMemory_realloc  扩大内存拷贝时有一定隐患
-void* XMemory_reallocPack(void* ptr, size_t size);
-void* XMemory_callocPack(size_t count, size_t size);
+void* XMemory_realloc_isMalloc(void* ptr, size_t size);
+void* XMemory_calloc_isMalloc(size_t count, size_t size);
 
 //内存管理
-#define XNew(obj)			XMemory_malloc(sizeof(obj))
-#define XDelete(ptr)		XMemory_free(ptr);
+#define XNew(obj)						XMemory_malloc(sizeof(obj))
+#define XDelete(ptr)					XMemory_free(ptr);
+#define XMalloc							XMemory_malloc
+#define XFree							XMemory_free
+#define XRealloc						XMemory_realloc
+#define XCalloc							XMemory_calloc
 void* XMemory_malloc(size_t size);
 void XMemory_free(void* ptr);
 void* XMemory_realloc(void* ptr, size_t size);

@@ -23,10 +23,13 @@ typedef struct XObject
 XVtable* XObject_class_init();
 XObject* XObject_create();
 void XObject_init(XObject* object);
+//轮询函数
 void XObject_poll_base(XObject* object);
+//设置轮询间隔
 void XObject_setPollingInterval(XObject* object,size_t interval);
 void XObject_setParent(XObject* object, XObject* parent);
 XObject* XObject_getParent(XObject* object);
+//是否开启事件冒泡
 void XObject_setEventBubblingEnabled(XObject* object, bool enable);//处理事件未被接受则会转发到父对象
 bool XObject_isEventBubbling(XObject* object);
 //
