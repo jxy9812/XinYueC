@@ -11,7 +11,7 @@ typedef struct XEventCallback {
     XEventCB callback;             // 回调函数
     void* userData;                // 用户数据
 } XEventCallback;
-
+bool sendEvent(XEventDispatcher* dispatcher, XEvent* event);
 // 静态函数声明
 static void VXEventDispatcher_deinit(XEventDispatcher* dispatcher);
 static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEvent* event);
@@ -116,8 +116,15 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
 static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEvent* event)
 {
     if (!dispatcher || !event) return false;
-
+    bool handled = false;//事件是否被处理
     XMutex_lock(dispatcher->m_mutex);
+    handled = sendEvent(dispatcher,event);
+    XMutex_unlock(dispatcher->m_mutex);
+    return handled;
+}
+bool sendEvent(XEventDispatcher* dispatcher, XEvent* event)
+{
+    if (!dispatcher || !event) return false;
 
     bool isDelete = true;
     bool handled = false;//事件是否被处理
@@ -178,7 +185,7 @@ static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEvent* ev
         }
     }
 
-    XMutex_unlock(dispatcher->m_mutex);
+    
     if (isDelete)
         XEvent_delete(event);
     return handled;
@@ -301,7 +308,7 @@ static void VXEventDispatcher_handler(XEventDispatcher* dispatcher)
     {
         if (event)
         {
-            VXEventDispatcher_sendEvent(dispatcher, event);
+            sendEvent(dispatcher, event);
             //XMemory_free(event);
         }
     }
