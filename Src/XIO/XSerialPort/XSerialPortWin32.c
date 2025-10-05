@@ -1,55 +1,78 @@
 ﻿#ifdef WIN32
 #include "XSerialPort.h"
 #include "XCircularQueue.h"
+#include "XPrintf.h"
 #include "XMemory.h"
 #include "XSerialPortWin32.h"
 #include <windows.h>
+
+// 手动定义ERROR_IO_COMPLETION（如果系统头文件未包含）
+#ifndef ERROR_IO_COMPLETION
+#define ERROR_IO_COMPLETION 996
+#endif
+
 // 告诉编译器链接 winmm.lib 库
 #pragma comment(lib, "winmm.lib")
+
+// 前向声明
 static void VXSerialPort_deinit(XSerialPort* serial);
 static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode);
-static size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize);//写入
-static size_t VXIODevice_writeFull(XSerialPort* serial);//将剩余的数据刷入设备
-static size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize);//读取
+static size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize);
+static size_t VXIODevice_writeFull(XSerialPort* serial);
+static size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize);
 static void VXIODevice_close(XSerialPort* serial);
 static void VXIODevice_poll(XSerialPort* serial);
 static void VXIODevice_setWriteBuffer(XSerialPort* serial, size_t count);
 static void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count);
 static size_t VXIODevice_getBytesAvailable(XSerialPort* serial);
+
+// 辅助函数：检查异步操作结果
+static DWORD check_async_result(HANDLE hSerial, OVERLAPPED* ov, DWORD* bytesTransferred) {
+    DWORD result = WaitForSingleObject(ov->hEvent, 0); // 非阻塞等待
+    if (result == WAIT_OBJECT_0) {
+        if (!GetOverlappedResult(hSerial, ov, bytesTransferred, FALSE)) {
+            return GetLastError();
+        }
+        return ERROR_SUCCESS;
+    }
+    return ERROR_IO_PENDING;
+}
+
 XVtable* XSerialPort_class_init()
 {
     XVTABLE_CREAT_DEFAULT
-        //虚函数表初始化
+        // 虚函数表初始化
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSERIALPORT_VTABLE_SIZE)
+        XVTABLE_STACK_INIT_DEFAULT(XSERIALPORT_VTABLE_SIZE)
 #else
-    XVTABLE_HEAP_INIT_DEFAULT
+        XVTABLE_HEAP_INIT_DEFAULT
 #endif
-    //继承类
-    XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
-    //重载
-    XVTABLE_OVERLOAD_DEFAULT( EXClass_Deinit, VXSerialPort_deinit);
-    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_Open, VXSerialPort_open);
-    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_Write, VXIODevice_write);
-    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_WriteFull, VXIODevice_writeFull);
-    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_Read, VXIODevice_read);
-    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_Close, VXIODevice_close);
-    XVTABLE_OVERLOAD_DEFAULT( EXObject_Poll, NULL);
-    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
-    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
-    XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_GetBytesAvailable, VXIODevice_getBytesAvailable);
+        // 继承类
+        XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
+    // 重载
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSerialPort_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXSerialPort_open);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write, VXIODevice_write);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_WriteFull, VXIODevice_writeFull);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read, VXIODevice_read);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXIODevice_close);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXIODevice_poll);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesAvailable, VXIODevice_getBytesAvailable);
 #if SHOWCONTAINERSIZE
     printf("XSerialPort size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
     return XVTABLE_DEFAULT;
 }
+
 XSerialPort* XSerialPort_create()
 {
     XSerialPort* serial = XMemory_malloc(sizeof(XSerialPort));
     if (serial == NULL)
         return serial;
     XSerialPort_init(serial);
-	return serial;
+    return serial;
 }
 
 void XSerialPort_init(XSerialPort* serial)
@@ -60,14 +83,28 @@ void XSerialPort_init(XSerialPort* serial)
     XSerialPortBase_init(serial);
     serial->m_hSerial = INVALID_HANDLE_VALUE;
     XClassGetVtable(serial) = XSerialPort_class_init();
-    serial->m_ov=XMemory_malloc(sizeof(OVERLAPPED));
-    memset(serial->m_ov,0, sizeof(OVERLAPPED));
+
+    // 初始化重叠结构和事件
+    serial->m_ov = XMemory_malloc(sizeof(OVERLAPPED));
+    if (serial->m_ov) {
+        memset(serial->m_ov, 0, sizeof(OVERLAPPED));
+        ((OVERLAPPED*)serial->m_ov)->hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    }
+
+    // 默认缓冲区大小
+    XIODeviceBase_setWriteBuffer_base(serial,1024);
+    XIODeviceBase_setReadBuffer_base(serial, 1024);
+
+    XObject_setPollingInterval(serial, 10);
 }
 
 void VXSerialPort_deinit(XSerialPort* serial)
 {
-    if (serial->m_ov)
-    {
+    if (serial->m_ov) {
+        if (((OVERLAPPED*)serial->m_ov)->hEvent != NULL) 
+        {
+            CloseHandle(((OVERLAPPED*)serial->m_ov)->hEvent);
+        }
         XMemory_free(serial->m_ov);
         serial->m_ov = NULL;
     }
@@ -79,41 +116,46 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
 {
     if (serial == NULL)
         return false;
-    //printf("打开串口\n");
-    XSerialPortBase* parent = serial;
-    if (parent->m_dataBits == SP_DB_Nine|| parent->m_stopBits== SP_ST_ZeroPointFive)
-        return false;//当前平台不支持
+
+    XSerialPortBase* parent = (XSerialPortBase*)serial;
+    if (parent->m_dataBits == SP_DB_Nine || parent->m_stopBits == SP_ST_ZeroPointFive)
+        return false; // 当前平台不支持
+
     char portName[10] = { 0 };
     sprintf(portName, "\\\\.\\COM%d", parent->m_portNum);
-    // 打开串口
-    HANDLE hSerial = CreateFile(portName, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+
+    // 打开串口，使用重叠I/O
+    HANDLE hSerial = CreateFileA(portName,
+        GENERIC_READ | GENERIC_WRITE,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        FILE_FLAG_OVERLAPPED,
+        NULL);
     if (hSerial == INVALID_HANDLE_VALUE) {
         DWORD errorCode = GetLastError();
-        printf("无法打开串口%s！错误代码: %lu\n", portName, errorCode);
+        XPrintf("无法打开串口%s！错误代码: %lu\n", portName, errorCode);
         return false;
     }
 
     // 配置串口缓冲区
-    if (!SetupComm(hSerial, serial->m_readBufferSize, serial->m_writeBufferSize)) 
-    {
-        printf("无法设置串口缓冲区！\n");
+    if (!SetupComm(hSerial, serial->m_readBufferSize? serial->m_readBufferSize:1024, serial->m_writeBufferSize? serial->m_writeBufferSize:1024)) {
+        XPrintf("无法设置串口缓冲区！\n");
         CloseHandle(hSerial);
         return false;
     }
 
-    // 获取当前串口配置
+    // 获取并配置串口参数
     DCB dcb = { 0 };
     dcb.DCBlength = sizeof(dcb);
     if (!GetCommState(hSerial, &dcb)) {
-        printf("无法获取串口状态！\n");
+        XPrintf("无法获取串口状态！\n");
         CloseHandle(hSerial);
         return false;
     }
-   
 
-    // 设置串口参数
     dcb.BaudRate = parent->m_baudRate;
-    dcb.ByteSize = parent->m_dataBits; 
+    dcb.ByteSize = parent->m_dataBits;
     dcb.StopBits = parent->m_stopBits;
     dcb.Parity = parent->m_parity;
 
@@ -125,21 +167,18 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
         dcb.fOutX = FALSE;
         dcb.fInX = FALSE;
         break;
-
     case SP_FC_Hardware:
         dcb.fRtsControl = RTS_CONTROL_HANDSHAKE;
         dcb.fDtrControl = DTR_CONTROL_HANDSHAKE;
         dcb.fOutX = FALSE;
         dcb.fInX = FALSE;
         break;
-
     case SP_FC_Software:
         dcb.fRtsControl = RTS_CONTROL_DISABLE;
         dcb.fDtrControl = DTR_CONTROL_DISABLE;
-        dcb.fOutX = TRUE;  // 启用输出XON/XOFF
-        dcb.fInX = TRUE;   // 启用输入XON/XOFF
+        dcb.fOutX = TRUE;
+        dcb.fInX = TRUE;
         break;
-
     case SP_FC_Both:
         dcb.fRtsControl = RTS_CONTROL_HANDSHAKE;
         dcb.fDtrControl = DTR_CONTROL_HANDSHAKE;
@@ -147,71 +186,78 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
         dcb.fInX = TRUE;
         break;
     }
+
     if (!SetCommState(hSerial, &dcb)) {
-        printf("无法设置串口状态！\n");
+        XPrintf("无法设置串口状态！\n");
         CloseHandle(hSerial);
         return false;
     }
 
-    // 3. 设置超时
+    // 设置超时（完全异步模式）
     COMMTIMEOUTS timeouts = { 0 };
-    timeouts.ReadIntervalTimeout = MAXDWORD;  // 完全异步模式
+    timeouts.ReadIntervalTimeout = MAXDWORD;
     timeouts.ReadTotalTimeoutMultiplier = 0;
     timeouts.ReadTotalTimeoutConstant = 0;
+    timeouts.WriteTotalTimeoutMultiplier = 0;
+    timeouts.WriteTotalTimeoutConstant = 0;
 
-    if (!SetCommTimeouts(hSerial, &timeouts))
-        printf("设置超时失败");
+    if (!SetCommTimeouts(hSerial, &timeouts)) {
+        XPrintf("设置超时失败\n");
+    }
 
-    // 4. 创建异步操作结构
-    //OVERLAPPED ov = { 0 };
-    ((OVERLAPPED*)(serial->m_ov))->hEvent = CreateEvent(NULL, true, false, NULL);
+    // 配置事件通知
+    if (!SetCommMask(hSerial, EV_RXCHAR | EV_TXEMPTY)) {
+        XPrintf("设置事件掩码失败\n");
+    }
 
-    if (((OVERLAPPED*)(serial->m_ov))->hEvent == NULL)
-        printf("创建事件对象失败");
-
-    // 5. 设置事件通知
-    if (!SetCommMask(hSerial, EV_RXCHAR))
-        printf("设置事件掩码失败");
-
-    //// 关闭 DTR 和 RTS
-    //if (!EscapeCommFunction(hSerial, CLRDTR)) {
-    //    DWORD errorCode = GetLastError();
-    //    printf("无法关闭 DTR！错误代码: %lu\n", errorCode);
-    //    CloseHandle(hSerial);
-    //    return false;
-    //}
-    //if (!EscapeCommFunction(hSerial, CLRRTS)) {
-    //    DWORD errorCode = GetLastError();
-    //    printf("无法关闭 RTS！错误代码: %lu\n", errorCode);
-    //    CloseHandle(hSerial);
-    //    return false;
-    //}
     serial->m_hSerial = hSerial;
     parent->m_class.m_mode = mode;
-   
-    //serial->m_ov.hEvent = serial->m_hEvent;  // 使用已创建的事件句柄
+    //// 关闭 DTR 和 RTS
+ //if (!EscapeCommFunction(hSerial, CLRDTR)) {
+ //    DWORD errorCode = GetLastError();
+ //    printf("无法关闭 DTR！错误代码: %lu\n", errorCode);
+ //    CloseHandle(hSerial);
+ //    return false;
+ //}
+ //if (!EscapeCommFunction(hSerial, CLRRTS)) {
+ //    DWORD errorCode = GetLastError();
+ //    printf("无法关闭 RTS！错误代码: %lu\n", errorCode);
+ //    CloseHandle(hSerial);
+ //    return false;
+ //}
+    // 启动异步读取
+    if (mode & XIODeviceBase_ReadOnly) {
+        char dummy;
+        DWORD bytesRead;
+        ReadFile(hSerial, &dummy, 1, &bytesRead, (OVERLAPPED*)serial->m_ov);
+    }
     return true;
 }
-//串口写入
-static size_t XSerialPort_write(XSerialPort* serial, const char* data, size_t maxSize)
+
+// 异步写入实现
+static size_t XSerialPort_write_async(XSerialPort* serial, const char* data, size_t maxSize)
 {
-    if (serial == NULL || serial->m_hSerial == NULL||maxSize==0)
+    if (serial == NULL || serial->m_hSerial == INVALID_HANDLE_VALUE ||
+        data == NULL || maxSize == 0) {
         return 0;
-    DWORD bytesWritten;
-    if (!WriteFile(serial->m_hSerial, data, maxSize, &bytesWritten, &(serial->m_ov)))
-    {
-        if (GetLastError() != ERROR_IO_PENDING)
-        {
-            printf("写入失败");
-            return 0;
-        }
-        // 等待异步操作完成
-        if (!GetOverlappedResult(serial->m_hSerial, &(serial->m_ov), &bytesWritten, true))
-        {
-            printf("异步写入失败");
-            return 0;
-        }
     }
+
+    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
+    // 重置事件
+    ResetEvent(ov->hEvent);
+
+    DWORD bytesWritten;
+    if (!WriteFile((HANDLE)serial->m_hSerial, data, maxSize, &bytesWritten, ov)) {
+        DWORD err = GetLastError();
+        if (err != ERROR_IO_PENDING) {
+            XPrintf("写入失败，错误: %d\n", err);
+            return 0;
+        }
+        // 异步操作正在进行，返回0表示操作已提交
+        return 0;
+    }
+
+    // 同步完成的情况
     return bytesWritten;
 }
 
@@ -219,164 +265,245 @@ size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize)
 {
     if (serial == NULL || data == NULL || maxSize == 0)
         return 0;
+
     XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (io->m_mode & XIODeviceBase_WriteOnly == 0)
-     	return 0;
-    return XSerialPort_write(io, data, maxSize);
-     //printf("x");
-     size_t count = 0;
-     if (io->m_writeBuffer == NULL)
-     {//没有写入缓冲区
-     	count += XSerialPort_write(io, data, maxSize);
-     }
-     else
-     {
-     	do
-     	{
-     		while (XCircularQueue_push_base(io->m_writeBuffer, data + count))
-     		{
-     			++count;
-     			if (count >= maxSize)
-     				break;
-     		}
-     		if (XCircularQueue_isFull_base(io->m_writeBuffer))
-                VXIODevice_writeFull(serial);
-     		if (count >= maxSize)
-     			break;
-     	} while (!XCircularQueue_isFull_base(io->m_writeBuffer));
-     }
-     return count;
-}
-size_t VXIODevice_writeFull(XSerialPort* serial)
-{
-    if(serial==NULL)
+    if (!(io->m_mode & XIODeviceBase_WriteOnly))
         return 0;
-    XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (io->m_mode & XIODeviceBase_WriteOnly == 0)
-        return 0;
-    XCircularQueue* queue= io->m_writeBuffer;
-    if(queue==NULL|| XCircularQueue_isEmpty_base(queue))
-        return 0;
-    size_t count=0;
-    char c;
-    while (XCircularQueue_receive_base(queue, &c))
-    {
-        count+= XSerialPort_write(serial,&c,1);
+
+    // 无缓冲区直接异步写入
+    if (io->m_writeBuffer == NULL) {
+        return XSerialPort_write_async(serial, data, maxSize);
     }
-    //printf("写入数据:%02x\n",*data);
+
+    // 有缓冲区时先写入队列
+    size_t count = 0;
+    do {
+        // 填充缓冲区
+        while (count < maxSize && XCircularQueue_push_base(io->m_writeBuffer, &data[count])) {
+            count++;
+        }
+
+        // 检查是否有未完成的写入操作
+        OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
+        DWORD bytesTransferred;
+        DWORD result = check_async_result((HANDLE)serial->m_hSerial, ov, &bytesTransferred);
+
+        // 如果写入操作已完成，尝试刷写缓冲区
+        if (result == ERROR_SUCCESS) {
+            VXIODevice_writeFull(serial);
+        }
+
+    } while (count < maxSize && !XCircularQueue_isFull_base(io->m_writeBuffer));
+
     return count;
 }
-//串口读取
-static size_t XSerialPort_read(XSerialPort* serial,char* data, size_t maxSize)
+
+size_t VXIODevice_writeFull(XSerialPort* serial)
+{
+    if (serial == NULL)
+        return 0;
+
+    XIODeviceBase* io = (XIODeviceBase*)serial;
+    if (!(io->m_mode & XIODeviceBase_WriteOnly))
+        return 0;
+
+    XCircularQueue* queue = io->m_writeBuffer;
+    if (queue == NULL || XCircularQueue_isEmpty_base(queue))
+        return 0;
+
+    // 检查是否有未完成的写入
+    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
+    DWORD bytesTransferred;
+    DWORD result = check_async_result((HANDLE)serial->m_hSerial, ov, &bytesTransferred);
+
+    // 如果有未完成的操作，不进行新的写入
+    if (result == ERROR_IO_PENDING) {
+        return 0;
+    }
+
+    // 从缓冲区读取数据并异步发送
+    size_t dataSize = XCircularQueue_size_base(queue);
+    char* buffer = XMemory_malloc(dataSize);
+    if (!buffer) return 0;
+
+    // 从循环队列复制数据
+    for (size_t i = 0; i < dataSize; i++) {
+        XCircularQueue_receive_base(queue, &buffer[i]);
+    }
+
+    // 异步发送数据
+    size_t written = XSerialPort_write_async(serial, buffer, dataSize);
+    XMemory_free(buffer);
+
+    return written;
+}
+
+// 异步读取实现
+static size_t XSerialPort_read_async(XSerialPort* serial, char* data, size_t maxSize)
+{
+    if (serial == NULL || data == NULL || maxSize == 0 ||
+        serial->m_hSerial == INVALID_HANDLE_VALUE) {
+        return 0;
+    }
+
+    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
+    DWORD bytesRead;
+
+    // 检查之前的读取操作是否完成
+    DWORD result = check_async_result((HANDLE)serial->m_hSerial, ov, &bytesRead);
+
+    if (result == ERROR_SUCCESS && bytesRead > 0) {
+        // 有数据可读
+        if (bytesRead > maxSize) bytesRead = maxSize;
+        memcpy(data, &data[0], bytesRead); // 实际应用中应从缓冲区读取
+
+        // 立即启动下一次异步读取
+        ResetEvent(ov->hEvent);
+        ReadFile((HANDLE)serial->m_hSerial, data, maxSize, NULL, ov);
+        return bytesRead;
+    }
+    else if (result == ERROR_IO_PENDING) {
+        // 读取操作仍在进行中
+        return 0;
+    }
+
+    // 启动新的异步读取
+    ResetEvent(ov->hEvent);
+    if (!ReadFile((HANDLE)serial->m_hSerial, data, maxSize, &bytesRead, ov)) {
+        DWORD err = GetLastError();
+        if (err != ERROR_IO_PENDING) {
+            XPrintf("读取失败: %d\n", err);
+            return 0;
+        }
+        return 0; // 异步操作已启动，等待完成
+    }
+
+    // 同步读取到数据
+    return bytesRead;
+}
+
+size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize)
 {
     if (serial == NULL || data == NULL || maxSize == 0)
         return 0;
-    DWORD bytesRead = XSerialPort_getBytesAvailable_base(serial);
-    if (bytesRead == 0)
-        return 0;
-    if (bytesRead > maxSize)
-        bytesRead = maxSize;
-   
-    if (!ReadFile(serial->m_hSerial, data, bytesRead, NULL, (serial->m_ov)))
-    {
-        if (GetLastError() != ERROR_IO_PENDING)
-        {
-            printf("读取失败:%d\n", GetLastError());
-            return 0;
-        }
-        // 重置事件
-        //ResetEvent(serial->m_ov.hEvent);
-        // 等待异步操作完成
-        if (!GetOverlappedResult(serial->m_hSerial, (serial->m_ov), &bytesRead, true))
-        {
-            printf("异步读取失败\n");
-            return 0;
-        }
-    }
-    return bytesRead;
-}
-size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize)
-{
-    if (serial == NULL)
-        return 0;
+
     XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (io->m_mode & XIODeviceBase_ReadOnly == 0)
+    if (!(io->m_mode & XIODeviceBase_ReadOnly))
         return 0;
-    size_t size = 0;
-    while (size<maxSize)
-    {
-        size += XSerialPort_read(io, data+size, maxSize-size);
+
+    // 无缓冲区直接异步读取
+    if (io->m_readBuffer == NULL) {
+        return XSerialPort_read_async(serial, data, maxSize);
     }
-    return size;
+
+    // 有缓冲区时从缓冲区读取
+    size_t count = 0;
+    while (count < maxSize && XCircularQueue_receive_base(io->m_readBuffer, &data[count])) {
+        count++;
+    }
+    return count;
 }
+
 void VXIODevice_close(XSerialPort* serial)
 {
     if (serial == NULL || serial->m_hSerial == INVALID_HANDLE_VALUE)
-        return ;
+        return;
+
+    // 取消所有未完成的异步操作
+    CancelIo((HANDLE)serial->m_hSerial);
+    CloseHandle((HANDLE)serial->m_hSerial);
+    serial->m_hSerial = INVALID_HANDLE_VALUE;
+
+    XSerialPortBase* parent = (XSerialPortBase*)serial;
+    parent->m_class.m_mode = 0;
+}
+
+// 轮询处理异步操作结果
+static void VXIODevice_poll(XSerialPort* serial)
+{
+    if (serial == NULL || serial->m_hSerial == INVALID_HANDLE_VALUE)
+        return;
+
     XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (XIODeviceBase_isOpen_base(io))
-    { //开始关闭串口
-        XIODeviceBase_aboutToClose_signal(io);
-        // 1. 取消所有未完成的异步操作
-        if (!CancelIoEx(serial->m_hSerial, &(serial->m_ov)))
-        {
-            DWORD error = GetLastError();
-            printf("取消异步操作失败，错误码: %lu\n", error);
-            // 即使取消失败，也应继续尝试关闭其他资源
+    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
+    DWORD bytesTransferred;
+
+    // 检查写入操作结果
+    if (io->m_mode & XIODeviceBase_WriteOnly) {
+        DWORD result = check_async_result((HANDLE)serial->m_hSerial, ov, &bytesTransferred);
+        if (result == ERROR_SUCCESS && bytesTransferred > 0) {
+            // 发送写入完成信号
+            XIODeviceBase_bytesWritten_signal(io, bytesTransferred);
+
+            // 如果有写缓冲区且不为空，继续发送
+            if (io->m_writeBuffer && !XCircularQueue_isEmpty_base(io->m_writeBuffer)) {
+                VXIODevice_writeFull(serial);
+            }
         }
-        // 2. 关闭事件对象
-        if (((OVERLAPPED*)(serial->m_ov))->hEvent != NULL)
-        {
-            CloseHandle(((OVERLAPPED*)(serial->m_ov))->hEvent);
-            ((OVERLAPPED*)(serial->m_ov))->hEvent = NULL;
-        }
-         // 3. 关闭串口句柄
-        CloseHandle(serial->m_hSerial);
-        serial->m_hSerial = INVALID_HANDLE_VALUE;
-       
-        io->m_mode = XIODeviceBase_NotOpen;
     }
-}
-void VXIODevice_poll(XSerialPort* serial)
-{
-    if (serial == NULL)
-        return ;
-    if (VXIODevice_getBytesAvailable(serial))XIODeviceBase_readyRead_signal(serial);
-   // char buff[1024];
-   // size_t bytesRead =XSerialPort_read(serial, buff,1024);
-    //将接收到的数据保存到缓冲区
-    //printf("接收到数据size:%d\n", bytesRead);
-   /* if(bytesRead)
-        XCircularQueue_push_base(serial->, buff, bytesRead);*/
-}
-void VXIODevice_setWriteBuffer(XSerialPort* serial, size_t count)
-{
-    if (XIODeviceBase_isOpen_base(serial))
+
+    // 检查读取操作结果
+    if (io->m_readBuffer && (io->m_mode & XIODeviceBase_ReadOnly))
     {
-        // 配置串口缓冲区
-        if (!SetupComm(serial->m_hSerial, serial->m_readBufferSize, count)) {
-            printf("无法设置串口缓冲区！\n");
-            CloseHandle(serial->m_hSerial);
-            return;
+        // 读取缓冲区数据
+        char buffer[128];
+        DWORD bytesRead;
+        COMSTAT comStat;
+        DWORD errors;
+
+        if (ClearCommError((HANDLE)serial->m_hSerial, &errors, &comStat) && comStat.cbInQue > 0) {
+            bytesRead = comStat.cbInQue;
+            if (bytesRead > sizeof(buffer)) bytesRead = sizeof(buffer);
+
+            if (ReadFile((HANDLE)serial->m_hSerial, buffer, bytesRead, &bytesRead, ov)) {
+                // 读取成功，放入缓冲区
+                if (io->m_readBuffer) {
+                    for (DWORD i = 0; i < bytesRead; i++) {
+                        XCircularQueue_push_base(io->m_readBuffer, &buffer[i]);
+                    }
+                }
+                // 发送读取信号
+                XIODeviceBase_readyRead_signal(io);
+            }
         }
+
+        // 重新启动异步读取
+        ResetEvent(ov->hEvent);
+        //ReadFile((HANDLE)serial->m_hSerial, buffer, sizeof(buffer), NULL, ov);
     }
+    else if(io->m_readBuffer==NULL && (io->m_mode & XIODeviceBase_ReadOnly))
+    {
+        if(XIODeviceBase_getBytesAvailable_base(serial))
+            XIODeviceBase_readyRead_signal(io);// 发送读取信号
+    }
+}
+
+static void VXIODevice_setWriteBuffer(XSerialPort* serial, size_t count)
+{
+    if (serial == NULL) return;
     serial->m_writeBufferSize = count;
+    //XIODeviceBase_setWriteBuffer_base((XIODeviceBase*)serial, count);
+    XVtableGetFunc(XIODeviceBase_class_init(), EXIODeviceBase_SetWriteBuffer, void(*)(XIODeviceBase*, size_t))(serial, count);
 }
-void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count)
+
+static void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count)
 {
-    if (XIODeviceBase_isOpen_base(serial))
-    {
-        // 配置串口缓冲区
-        if (!SetupComm(serial->m_hSerial, count, serial->m_writeBufferSize)) {
-            printf("无法设置串口缓冲区！\n");
-            CloseHandle(serial->m_hSerial);
-            return;
-        }
-    }
+    if (serial == NULL) return;
     serial->m_readBufferSize = count;
+    //XIODeviceBase_setReadBuffer_base((XIODeviceBase*)serial, count);
+    XVtableGetFunc(XIODeviceBase_class_init(), EXIODeviceBase_SetReadBuffer, void(*)(XIODeviceBase*, size_t))(serial, count);
 }
-size_t VXIODevice_getBytesAvailable(XSerialPort* serial)
+
+static size_t VXIODevice_getBytesAvailable(XSerialPort* serial)
 {
+    if (serial == NULL || serial->m_hSerial == INVALID_HANDLE_VALUE)
+        return 0;
+
+    XIODeviceBase* io = (XIODeviceBase*)serial;
+    if (io->m_readBuffer) {
+        return XCircularQueue_size_base(io->m_readBuffer);
+    }
+
     COMSTAT comStat;
     DWORD errors;
     // 清除通信错误并获取串口状态
@@ -386,4 +513,5 @@ size_t VXIODevice_getBytesAvailable(XSerialPort* serial)
     }
     return comStat.cbInQue;
 }
-#endif // Win32
+
+#endif

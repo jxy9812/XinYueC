@@ -32,7 +32,7 @@ XObject* XObject_getParent(XObject* object);
 //是否开启事件冒泡
 void XObject_setEventBubblingEnabled(XObject* object, bool enable);//处理事件未被接受则会转发到父对象
 bool XObject_isEventBubbling(XObject* object);
-//
+//添加事件过滤器
 bool XObject_addEventFilter(XObject* object, int code, XEventCB cb,void* userData);
 bool XObject_removeEventFilter(XObject* object, int code);
 bool XObject_moveToThread(XObject* object, XThread* thread);
