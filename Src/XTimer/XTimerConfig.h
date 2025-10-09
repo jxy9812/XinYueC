@@ -6,7 +6,7 @@ extern "C" {
 //XTimer类的配置文件
 
 //XTimer定时器类实现方法设置
-#define XTIMER_IS_TIMEWHEEL					1		//配置为XTimerTimeWheel 高优先级 通用跨平台,高效，响应速度快,有点占内存  
+#define XTIMER_IS_TIMEWHEEL					0		//配置为XTimerTimeWheel 高优先级 通用跨平台,高效，响应速度快,有点占内存  
 #if !XTIMER_IS_TIMEWHEEL
 //Windows平台下XTimer下的实现方法
 #ifdef WIN32

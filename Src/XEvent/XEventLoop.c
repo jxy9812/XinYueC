@@ -49,7 +49,7 @@ XVtable* XEventLoop_class_init() {
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+        XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 
     void* table[] = {
         VXEventLoop_exec,
@@ -88,7 +88,7 @@ void XEventLoop_init(XEventLoop* loop)
 {
     if (loop == NULL) return;
 
-    XClass_init(&loop->m_class);
+    XObject_init(&loop->m_class);
     XClassGetVtable(loop) = XEventLoop_class_init();
 
     // 初始化互斥锁和条件变量

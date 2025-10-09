@@ -18,6 +18,33 @@ static VOID CALLBACK TimerCallbackThreadpoolTimer(PTP_CALLBACK_INSTANCE Instance
 {
 	XTimerBase* timer = ((XTimerBase*)Context);
 	XTimerBase_out_base(timer);
+	if (timer->m_singleShot)
+	{
+		XTimerBase_stop_base(timer);
+		if (timer->m_autoDelete)
+			XTimerBase_delete_base(timer);
+	}
+	else if (!((XTimerWin32ThreadpoolTimer*)timer)->m_twoCb)
+	{
+		VXTimerBase_stop(timer);
+		((XTimerWin32ThreadpoolTimer*)timer)->m_twoCb = true;
+		// 设置计时器立即启动，每1000ms触发一次
+		if (timer == NULL || timer->timerId == 0)
+			return;
+		ULONGLONG dueTime = 0; // 立即启动
+		DWORD period = timer->m_interval;   // 1000ms = 1秒
+		DWORD tolerance = 0;   // 允许的触发时间偏差（毫秒）
+
+		// 转换dueTime为FILETIME格式（相对于1601年1月1日的100纳秒间隔数）
+		FILETIME ftDueTime;
+		dueTime = -((ULONGLONG)dueTime * 10000); // 转换为100纳秒间隔
+		ftDueTime.dwLowDateTime = (DWORD)(dueTime & 0xFFFFFFFF);
+		ftDueTime.dwHighDateTime = (DWORD)(dueTime >> 32);
+
+		// 启动计时器
+		SetThreadpoolTimer(((PTP_TIMER)(timer->timerId)), &ftDueTime, period, tolerance);
+		timer->m_isRun = true;
+	}
 }
 void VXTimerBase_start(XTimerBase* timer)
 {
@@ -27,7 +54,7 @@ void VXTimerBase_start(XTimerBase* timer)
 	if (timer == NULL || timer->timerId == 0)
 		return;
 	ULONGLONG dueTime = 0; // 立即启动
-	DWORD period = timer->m_interval;   // 1000ms = 1秒
+	DWORD period = timer->m_timeout;   // 1000ms = 1秒
 	DWORD tolerance = 0;   // 允许的触发时间偏差（毫秒）
 
 	// 转换dueTime为FILETIME格式（相对于1601年1月1日的100纳秒间隔数）
@@ -48,6 +75,7 @@ void VXTimerBase_stop(XTimerBase* timer)
 	{
 		SetThreadpoolTimer(((PTP_TIMER)(timer->timerId)), NULL, 0, 0);
 		timer->m_isRun = false;
+		((XTimerWin32ThreadpoolTimer*)timer)->m_twoCb = false;
 	}
 }
 void VXTimerBase_deinit(XTimerBase* timer)

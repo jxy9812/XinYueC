@@ -8,13 +8,7 @@ extern "C" {
 #include<stdio.h>
 #include"XTimerBase.h"
 #define XTIMER_VTABLE_SIZE (XTIMERTIMEWHEEL_VTABLE_SIZE)       //XTimer虚函数表大小
-//
-typedef struct XTimer 
-{
-	XTimerBase m_class;
-	XTimerBaseCallback callback;
-	void* m_userData;
-} XTimer;
+
 XVtable* XTimer_class_init();
 XTimer* XTimer_create();
 void XTimer_init(XTimer* timer);

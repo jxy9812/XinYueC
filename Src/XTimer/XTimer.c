@@ -13,6 +13,20 @@ static void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callb
 static void VXTimerBase_setUserData(XTimer* timer, void* userData);
 static void TimerOutCb(XEvent* event);
 static  void TimerCallback(void* userData);
+
+typedef struct XTimer
+{
+#if XTIMER_IS_TIMEWHEEL
+	XTimerTimeWheel m_class;
+#elif XTIMER_IS_TIMESETEVENT
+	XTimerWin32TimeSetEvent	m_class;
+#elif XTIMER_IS_THREADPOOLTIMER
+	XTimerWin32ThreadpoolTimer	m_class;
+#endif
+	XTimerBaseCallback callback;
+	void* m_userData;
+} XTimer;
+
 XVtable* XTimer_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -52,12 +66,14 @@ void XTimer_init(XTimer* timer)
 	if (timer == NULL)
 		return;
 	//初始化父类以外的数据
-	memset(((XTimerBase*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerBase));
 #if XTIMER_IS_TIMEWHEEL
+	memset(((XTimerTimeWheel*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerTimeWheel));
 	XTimerTimeWheel_init(timer);
 #elif XTIMER_IS_TIMESETEVENT
+	memset(((XTimerWin32TimeSetEvent*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerWin32TimeSetEvent));
 	XTimerWin32TimeSetEvent_init(timer);
 #elif XTIMER_IS_THREADPOOLTIMER
+	memset(((XTimerWin32ThreadpoolTimer*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerWin32ThreadpoolTimer));
 	XTimerWin32ThreadpoolTimer_init(timer);
 #endif
 	XClassGetVtable(timer) = XTimer_class_init();

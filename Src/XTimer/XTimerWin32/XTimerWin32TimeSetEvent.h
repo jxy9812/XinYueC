@@ -10,6 +10,7 @@ extern "C" {
 typedef struct XTimerWin32TimeSetEvent
 {
 	XTimerBase m_class;//类
+	bool m_twoCb;//是否第二次回调标记
 }XTimerWin32TimeSetEvent;
 XVtable* XTimerWin32TimeSetEvent_class_init();
 XTimerWin32TimeSetEvent* XTimerWin32TimeSetEvent_create();

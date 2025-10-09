@@ -17,13 +17,32 @@ static void CALLBACK TimerCallbackTimeSetEvent(UINT uID, UINT uMsg, DWORD_PTR dw
 {
 	XTimerBase* timer = ((XTimerBase*)dwUser);
 	XTimerBase_out_base(timer);
+	if (timer->m_singleShot)
+	{
+		XTimerBase_stop_base(timer);
+		if (timer->m_autoDelete)
+			XTimerBase_delete_base(timer);
+	}
+	else if(!((XTimerWin32TimeSetEvent*)timer)->m_twoCb)
+	{
+		VXTimerBase_stop(timer);
+		((XTimerWin32TimeSetEvent*)timer)->m_twoCb = true;
+		timer->timerId = timeSetEvent(
+			timer->m_interval,           // 触发间隔毫秒
+			1,             // 精度1毫秒
+			TimerCallbackTimeSetEvent, // 回调函数
+			timer,             // 不传递用户数据
+			TIME_PERIODIC  // 周期性触发
+		);
+		timer->m_isRun = true;
+	}
 }
 void VXTimerBase_start(XTimerBase* timer)
 {
 	//printf("启动定时器\n");
 	XTimerBase_stop_base(timer);
 	timer->timerId = timeSetEvent(
-		timer->m_interval,           // 触发间隔毫秒
+		timer->m_timeout,           // 触发间隔毫秒
 		1,             // 精度1毫秒
 		TimerCallbackTimeSetEvent, // 回调函数
 		timer,             // 不传递用户数据
@@ -41,6 +60,7 @@ void VXTimerBase_stop(XTimerBase* timer)
 		timeKillEvent(timer->timerId);
 		timer->timerId = 0;
 		timer->m_isRun = false;
+		((XTimerWin32TimeSetEvent*)timer)->m_twoCb = false;
 	}
 }
 void VXTimerBase_deinit(XTimerBase* timer)
