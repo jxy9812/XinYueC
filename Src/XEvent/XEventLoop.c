@@ -18,7 +18,7 @@ typedef struct XSignalData
     XSignalSlot* signalSlot;//控制区分是发送信号函数投递函数执行
     union
     {
-        void (*sendSignalFunc)(XSignalSlot*, size_t, void*, XEventPriority priority);//发送信号的函数
+        void (*sendSignalFunc)(XSignalSlot*, size_t, void*, XAtomic_int32_t* ,XEventPriority);//发送信号的函数
         void (*run_func)(void* args);//需要被执行的函数
     };
     union 
@@ -227,7 +227,7 @@ static void VXEventLoop_wakeUp(XEventLoop* loop) {
  */
 static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags)
 {
-    if (!loop || !loop->m_dispatcher || loop->m_state != XEventLoop_Running) return;
+    if (!loop || !loop->m_dispatcher /*|| loop->m_state != XEventLoop_Running*/) return;
     //先处理是否有信号需要在队列中发送
     XEventData data;
     while (XQueueBase_receive_base(loop->m_postQueue, &data))
@@ -235,11 +235,11 @@ static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsF
         if(data.signalSlot)
         {//发送信号
             if (data.sendSignalFunc)
-                data.sendSignalFunc(data.signalSlot, data.signal, data.args,data.priority);//发送信号
+                data.sendSignalFunc(data.signalSlot, data.signal, data.args,data.ref_count,data.priority);//发送信号
         }
         else
         {//投递函数
-            XObject_postEvent(data.object,XEventFunc_create(data.run_func,data.args), data.priority);
+            XObject_postEvent(data.object,XEventFunc_create_oneAccept(data.run_func,data.args), data.priority);
         }
     }
     // 处理定时器事件
@@ -310,7 +310,11 @@ static void VXEventLoop_deinit(XEventLoop* loop)
     }
     // 销毁互斥锁和条件变量
     XMutex_delete(loop->m_mutex);
+    loop->m_mutex = NULL;
     XWaitCondition_delete(loop->m_condition);
+    loop->m_condition = NULL;
+    // 释放父对象
+    XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(loop);
 }
 
 // 基础函数实现

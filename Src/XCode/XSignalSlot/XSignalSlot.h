@@ -52,7 +52,7 @@ typedef struct XSignal
 typedef struct XSignalSlot
 {
     XObject* obj;//管理者/发送者
-    XEventSendMode sendMode;//发送模式
+    //XEventSendMode sendMode;//发送模式
     XMap* signalMap;//信号列表
     XListBase* bindSignalList;//接收对象列表 绑定的其他对象信号
     XMutex* mutex;            //用于同步的互斥锁
@@ -63,14 +63,6 @@ void XSignalSlot_init(XSignalSlot* manager, XObject* obj);
 void XSignalSlot_deinit(XSignalSlot* manager);
 void XSignalSlot_delete(XSignalSlot* manager);
 
-/**
- * @brief 为信号设置发送模式
- * @param manager 信号槽管理器实例（不能为空）
- * @param mode 要设置的发送模式（XSignalSendMode枚举值）
- * @return true表示设置成功，false表示失败（如manager为空、signal无效等）
- */
-bool XSignalSlot_setSendMode(XSignalSlot* manager,XEventSendMode mode);
-XEventSendMode XSignalSlot_getSendMode(XSignalSlot* manager);
 /**
  * @brief 连接信号与槽
  * @param m_signal 信号指针
@@ -93,7 +85,7 @@ bool XSignalSlot_disconnect_conn(XConnection* conn);
  * @param priority  信号与槽队列连接的时候的优先级(内部走的是事件投递)
  */
 void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPriority priority);
-
+void XSignalSlot_emit_queue(XSignalSlot* manager, size_t signal, void* args, XEventPriority priority);
 /**
  * @brief 触发信号，通知所有关联的槽函数
  * @param m_signal 信号指针
@@ -102,7 +94,7 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPrio
  * @param priority  信号与槽队列连接的时候的优先级(内部走的是事件投递)
  */
 void XSignalSlot_emit_class(XSignalSlot* manager, size_t signal,XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority);
-
+void XSignalSlot_emit_class_queue(XSignalSlot* manager, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority);
 #ifdef __cplusplus
 }
 #endif

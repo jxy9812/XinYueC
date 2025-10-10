@@ -79,7 +79,7 @@ static void add_timer_to_wheel_node(XTimeWheel* wheel, XListSNode* node, size_t 
         node->next = head;
         *pvList = node;
     }
-    XListSNode_Data(node, XTimerBase*)->m_data = pvList;
+    XListSNode_Data(node, XTimerTimeWheel*)->m_list = pvList;
 }
 static void add_timer_to_wheel(XTimeWheel* wheel, XTimerTimeWheel* timer, size_t ticks)
 {
@@ -101,7 +101,7 @@ static void add_timer_to_wheel(XTimeWheel* wheel, XTimerTimeWheel* timer, size_t
         *pvList = node;
     }
     
-    ((XTimerBase*)timer)->m_data = pvList;
+    ((XTimerTimeWheel*)timer)->m_list = pvList;
 }
 static bool addTimer_node(XTimerGroupWheel* group, XListSNode* node, size_t timeout_ticks)
 {
@@ -149,7 +149,7 @@ bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer)
     group->m_class.m_current_tick = XTimerBase_getCurrentTime() / group->m_class.m_precision;
     // 计算超时时间（转换为）
     size_t timeout_ticks = parent->m_timeout / group->m_class.m_precision;
-    ((XTimerBase*)timer)->m_expire_ticks = group->m_class.m_current_tick + timeout_ticks;
+    ((XTimerTimeWheel*)timer)->m_expire_ticks = group->m_class.m_current_tick + timeout_ticks;
     XObject_setParent(timer, group);
 
     if (group->m_mutex)
@@ -166,13 +166,13 @@ bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer)
 
 bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer)
 {
-    if (((XTimerBase*)timer)->m_data == NULL)
+    if (((XTimerTimeWheel*)timer)->m_list == NULL)
         return false;
 
     if (group->m_mutex)
         XMutex_lock(group->m_mutex);
-    //if(XListSLinked_remove_base(((XTimerBase*)timer)->m_data, &timer))
-    XListSNode** pvHead = ((XTimerBase*)timer)->m_data;
+    //if(XListSLinked_remove_base(((XTimerTimeWheel*)timer)->m_list, &timer))
+    XListSNode** pvHead = ((XTimerTimeWheel*)timer)->m_list;
     if (pvHead)
     {
         XListSNode* head = *pvHead;
@@ -187,7 +187,7 @@ bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerTimeWheel* time
                 else
                     *pvHead = curNode->next;//证明当前是头节点
                 XMemory_free(curNode);
-                ((XTimerBase*)timer)->m_data = NULL;
+                ((XTimerTimeWheel*)timer)->m_list = NULL;
                 --group->m_size;
                 break;
             }
@@ -278,9 +278,9 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
         XTimerTimeWheel* timer = XListSNode_Data(node, XTimerTimeWheel*);
 
         // 计算剩余ticks（距离到期的滴答数）
-        size_t remaining_ticks = ((XTimerBase*)timer)->m_expire_ticks - group->m_class.m_current_tick;
+        size_t remaining_ticks = ((XTimerTimeWheel*)timer)->m_expire_ticks - group->m_class.m_current_tick;
         bool isdelete = false;
-        if (((XTimerBase*)timer)->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick && XTimerBase_isRunning(timer))
+        if (((XTimerTimeWheel*)timer)->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick && XTimerBase_isRunning(timer))
         {
             // 已到期，直接触发
             if (group->m_mutex) XMutex_unlock(group->m_mutex);
@@ -290,7 +290,7 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
             {
                 // 有定时间隔的重新添加
                 size_t timeout_ticks = ((XTimerBase*)timer)->m_interval / group->m_class.m_precision;
-                ((XTimerBase*)timer)->m_expire_ticks = ((XTimerGroupBase*)group)->m_current_tick + timeout_ticks;
+                ((XTimerTimeWheel*)timer)->m_expire_ticks = ((XTimerGroupBase*)group)->m_current_tick + timeout_ticks;
                 addTimer_node(group, node, timeout_ticks);
             }
             else if(((XTimerBase*)timer)->m_singleShot&& ((XTimerBase*)timer)->m_autoDelete)
@@ -298,7 +298,7 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
                 isdelete = true;
             }
         }
-        else  if (((XTimerBase*)timer)->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick && !XTimerBase_isRunning(timer))
+        else  if (((XTimerTimeWheel*)timer)->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick && !XTimerBase_isRunning(timer))
         {
             isdelete = true;
         }
@@ -370,9 +370,9 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
                 next = node->next;
                 XTimerTimeWheel* timer = XListSNode_Data(node, XTimerTimeWheel*);
                 bool isdelete = true;
-                if (((XTimerBase*)timer)->m_expire_ticks <= groupBase->m_current_tick && XTimerBase_isRunning(timer))
+                if (((XTimerTimeWheel*)timer)->m_expire_ticks <= groupBase->m_current_tick && XTimerBase_isRunning(timer))
                 {
-                    ((XTimerBase*)timer)->m_data = NULL;
+                    ((XTimerTimeWheel*)timer)->m_list = NULL;
                     if (group->m_mutex) XMutex_unlock(group->m_mutex);
                     XTimerBase_out_base(timer);
                     if (group->m_mutex) XMutex_lock(group->m_mutex);
@@ -380,7 +380,7 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
                     {
                         // 有定时间隔的重新添加
                         size_t timeout_ticks = ((XTimerBase*)timer)->m_interval / group->m_class.m_precision;
-                        ((XTimerBase*)timer)->m_expire_ticks = groupBase->m_current_tick + timeout_ticks;
+                        ((XTimerTimeWheel*)timer)->m_expire_ticks = groupBase->m_current_tick + timeout_ticks;
                        /* if (group->m_mutex)
                             XMutex_lock(group->m_mutex);*/
                         addTimer_node(group, node, timeout_ticks);
@@ -393,7 +393,7 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
                 {
                     /*if (group->m_mutex)
                         XMutex_lock(group->m_mutex);*/
-                    size_t timeout_ticks = ((XTimerBase*)timer)->m_expire_ticks- groupBase->m_current_tick ;
+                    size_t timeout_ticks = ((XTimerTimeWheel*)timer)->m_expire_ticks- groupBase->m_current_tick ;
                     addTimer_node(group, node, timeout_ticks);
                     /*if (group->m_mutex)
                         XMutex_unlock(group->m_mutex);*/

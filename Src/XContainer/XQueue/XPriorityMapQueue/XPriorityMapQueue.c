@@ -337,7 +337,7 @@ bool VXPriorityQueue_receive(XPriorityMapQueue* this_queue, void* pvBuffer)
 	}
 	else
 	{
-		uint8_t data = XQueueBase_top_base(this_queue->low_freq_queue);
+		uint8_t* data = XQueueBase_top_base(this_queue->low_freq_queue);
 		if (data == NULL)
 			return false;
 		if (pvBuffer)

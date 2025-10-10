@@ -11,7 +11,7 @@
 #include<string.h>
 static void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callback);
 static void VXTimerBase_setUserData(XTimer* timer, void* userData);
-static void TimerOutCb(XEvent* event);
+static void TimerOutEventCb(XEvent* event);
 static  void TimerCallback(void* userData);
 
 typedef struct XTimer
@@ -78,7 +78,7 @@ void XTimer_init(XTimer* timer)
 #endif
 	XClassGetVtable(timer) = XTimer_class_init();
 	XObject_setParent(timer, XCoreApplication_getTimerGroup());
-	XObject_addEventFilter(timer, XEVENT_TIMEROUT, TimerOutCb, NULL);
+	XObject_addEventFilter(timer, XEVENT_TIMEROUT, TimerOutEventCb, NULL);
 	((XTimerBase*)timer)->m_timerCallback = TimerCallback;
 	((XTimerBase*)timer)->m_userData = timer;
 }
@@ -95,12 +95,17 @@ void TimerCallback(void* userData)
 {
 	XObject_postEvent(userData,XEvent_create(NULL,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
 }
-void TimerOutCb(XEvent* event)
+void TimerOutEventCb(XEvent* event)
 {
+	XPrintf("触发\n");
 	XTimer* timer = event->receiver;
 	if (timer->callback)
 		timer->callback(timer->m_userData);
 	XTimer_timeout_signal(event->receiver);
+
+	//检测是否需要自动删除
+	/*if (((XTimerBase*)timer)->m_autoDelete)
+		XObject_delete_base(timer);*/
 	XEvent_Accept(event);
 }
 void* XTimer_timeout_signal(XTimer* timer)

@@ -46,7 +46,7 @@ XEventFunc* XEventFunc_create(void(*func)(void*), void* args)
 	XEventFunc* event = XMemory_malloc(sizeof(XEventFunc));
 	if (event)
 	{
-		XEvent_init(&event->event, NULL, XEVENT_FUNC_RUN, 0);
+		XEvent_init(event, NULL, XEVENT_FUNC_RUN, 0);
 		event->func = func;
 		event->args = args;
 		event->oneAccept = false;

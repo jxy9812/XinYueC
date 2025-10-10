@@ -6,6 +6,7 @@
 #include "XListSLinked.h"
 #include "XWaitCondition.h"
 #include "XPriorityMapQueue.h"
+#include "XTimerBase.h"
 // 事件回调结构
 typedef struct XEventCallback {
     XEventCB callback;             // 回调函数
@@ -217,8 +218,10 @@ static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEvent* ev
     bool success = XPriorityMapQueue_push_base(dispatcher->m_queue,&p, &event);
     XMutex_unlock(dispatcher->m_mutex);
     // 如果成功加入队列，唤醒事件循环
-    if (success) {
-        VXEventDispatcher_wakeUp(dispatcher);
+    if (success)
+    {
+        if(XPriorityMapQueue_size_base(dispatcher->m_queue) == 1)
+            VXEventDispatcher_wakeUp(dispatcher);
     }
     else {
         // 队列已满，释放事件

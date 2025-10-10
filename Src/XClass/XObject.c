@@ -223,22 +223,6 @@ bool XObject_disconnect_conn(XConnection* conn)
 	return XSignalSlot_disconnect_conn(conn);
 }
 
-bool XObject_setSignalSendMode(XObject* object, XEventSendMode mode)
-{
-	if(!object)
-		return false;
-	if (object->m_signalSlot == NULL)
-		object->m_signalSlot = XSignalSlot_create(object);
-	return XSignalSlot_setSendMode(object->m_signalSlot,mode);
-}
-
-XEventSendMode XObject_getSignalSendMode(XObject* object)
-{
-	if (!object)
-		return XEVENT_SEND_INVALID;
-	return XSignalSlot_getSendMode(object->m_signalSlot);
-}
-
 void XObject_emitSignal(XObject* object, size_t signal, void* args, XEventPriority priority)
 {
 	if(object)
@@ -249,6 +233,18 @@ void XObject_emitSignal_class(XObject* object, size_t signal, XClass* args, XAto
 {
 	if (object)
 		XSignalSlot_emit_class(object->m_signalSlot, signal, args, ref_count, priority);
+}
+
+void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, XEventPriority priority)
+{
+	if (object)
+		XSignalSlot_emit_queue(object->m_signalSlot, signal, args, priority);
+}
+
+void XObject_emitSignal_class_queue(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority)
+{
+	if (object)
+		XSignalSlot_emit_class_queue(object->m_signalSlot, signal, args, ref_count, priority);
 }
 
 void* XObject_deinit_signal(XObject* object)
@@ -284,9 +280,10 @@ void VXObject_deinit(XObject* object)
 	//发送释放信号
 	XObject_deinit_signal(object);
 	//处理剩余的所有事件,防止遗漏
-	XEventDispatcher* dispatcher=XObject_getEventDispatcher(object);
+	/*XEventDispatcher* dispatcher=XObject_getEventDispatcher(object);
 	if(dispatcher)
-		XEventDispatcher_handler_base(dispatcher);
+		XEventDispatcher_handler_base(dispatcher);*/
+	XEventLoop_processEvents_base(XObject_getEventLoop(object), XEventLoop_AllEvents);
 	//释放信号与槽
 	if(object->m_signalSlot)
 	{
