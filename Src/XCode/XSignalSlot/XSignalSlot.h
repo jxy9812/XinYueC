@@ -12,7 +12,7 @@ extern "C" {
 // 前置声明
 typedef struct XSignal XSignal;
 typedef struct XConnection XConnection;
-typedef (*XSlotFunc)(XObject* sender,XObject* receiver, void* args);
+typedef (*XSlotFunc)(XObject* receiver, void* args, XObject* sender);
 /**
  * @brief 信号发送模式枚举
  * 定义信号从发送到执行槽函数的不同处理方式

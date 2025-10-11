@@ -102,10 +102,6 @@ void TimerOutEventCb(XEvent* event)
 	if (timer->callback)
 		timer->callback(timer->m_userData);
 	XTimer_timeout_signal(event->receiver);
-
-	//检测是否需要自动删除
-	/*if (((XTimerBase*)timer)->m_autoDelete)
-		XObject_delete_base(timer);*/
 	XEvent_Accept(event);
 }
 void* XTimer_timeout_signal(XTimer* timer)

@@ -21,7 +21,7 @@ static void Callback(void* userData)
 	XTimerTimeWheel_start_base(timer);
 	XTimerGroupBase_addTimer_base(userData, timer);*/
 }
-static void  timerSlotFunc(XObject* sender, XObject* receiver, void* args)
+static void  timerSlotFunc(XObject* receiver, void* args, XObject* sender)
 {
 	Callback(NULL);
 	XEventLoop_quit_base(receiver,0);
@@ -42,13 +42,15 @@ void XTimerTest()
 		//XTimer_callOnTimeout(timer,NULL, timerSlotFunc, XConnectionType_Auto);
 		//XTimer_singleShot(100, NULL, timerSlotFunc, XConnectionType_Auto);
 		XEventLoop* loop = XEventLoop_create();
-		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, timerSlotFunc, XConnectionType_Auto);
+		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+		XObject_connect(timer, XSignal(XTimer_timeout_signal), NULL, Callback, XConnectionType_Auto);
+		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_delete_base, XConnectionType_Auto);
 		XTimer_start_base(timer);
 		XPrintf("事件循环等待\n");
 		XEventLoop_exec_base(loop);
 		XPrintf("事件循环结束\n");
 		
-		XEventLoop_delete_base(loop);
+		//XEventLoop_delete_base(loop);
 		//XTimer_delete_base(timer);
 	}
 

@@ -195,7 +195,7 @@ static void Direct_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_coun
 	if (ref_count) 
 		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	if(conn->slot_func)
-		conn->slot_func(conn->signal->sender, conn->receiver,args);
+		conn->slot_func(conn->receiver,args, conn->signal->sender);
 	if (ref_count)
 		XAtomic_fetch_sub_int32(ref_count, 1);
 }

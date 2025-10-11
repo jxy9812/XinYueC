@@ -9,7 +9,7 @@
 #include "XTimerGroupWheel.h"
 #include "XEventLoop.h"
 #include "XCircularQueueAtomic.h"
-//typedef struct XSignalSlot XEventData;
+//typedef struct XSignalSlot PostData;
 // 全局应用程序实例指针
 static XCoreApplication* g_app = NULL;
 

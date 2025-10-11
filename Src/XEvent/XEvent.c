@@ -102,7 +102,7 @@ void XEventSlotFuncRunCB(XEventSlotFunc* event)
 	if (!event)
 		return;
 	if (event->func)
-		event->func(event->sender, event->event.receiver, event->args);
+		event->func(event->event.receiver, event->args, event->sender);
 
 	//if (event->ref_count)
 	//{

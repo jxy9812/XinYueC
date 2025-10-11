@@ -14,16 +14,16 @@
 #include"XCoreApplication.h"
 #include"XPrintf.h"
 #include"XTimerBase.h"
-static void deinit_slot(XObject* sender, XObject* receiver, void* args)
+static void deinit_slot(XObject* receiver, void* args, XObject* sender)
 {
     XPrintf("sender:%p receiver:%p 串口释放\n",sender,receiver);
 }
 
-static void connected_slot(XObject* sender, XObject* receiver, void* args)
+static void connected_slot(XObject* receiver, void* args, XObject* sender)
 {
     XPrintf("sender:%p receiver:%p 网络已连接\n", sender, receiver);
 }
-static void stateChanged_slot(XObject* sender, XObject* receiver, XSocketState state)
+static void stateChanged_slot(XObject* receiver, XSocketState state, XObject* sender)
 {
     XPrintf("sender:%p receiver:%p 状态改变:%d\n", sender, receiver,state);
 }

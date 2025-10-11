@@ -68,7 +68,7 @@ void XObject_emitSignal(XObject* object, size_t signal, void* args, XEventPriori
 void XObject_emitSignal_class(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority);
 void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, XEventPriority priority);
 void XObject_emitSignal_class_queue(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority);
-//slot: void deinit_slot(XObject* m_sender, XObject* receiver, void* args)
+//slot: void deinit_slot(XObject* receiver, void* args,XObject* m_sender)
 void* XObject_deinit_signal(XObject* object);
 
 #ifdef __cplusplus
