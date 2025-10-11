@@ -136,7 +136,7 @@ void XEventLoop_setQuitOnLastWindowClosed(XEventLoop* loop, bool quit);
  * @brief 释放事件循环资源
  * @param loop 事件循环实例
  */
-#define XEventLoop_delete_base    XClass_delete_base
+#define XEventLoop_delete_base    XObject_delete_base
 
 #ifdef __cplusplus
 }

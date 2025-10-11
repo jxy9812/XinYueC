@@ -97,7 +97,7 @@ void TimerCallback(void* userData)
 }
 void TimerOutEventCb(XEvent* event)
 {
-	XPrintf("触发\n");
+	//XPrintf("触发\n");
 	XTimer* timer = event->receiver;
 	if (timer->callback)
 		timer->callback(timer->m_userData);

@@ -33,7 +33,7 @@ void XTimerTest()
 	{
 		XTimer* timer = XTimer_create();
 		XTimer_setInterval_base(timer, 10);
-		XTimer_setTimeout_base(timer, 500);
+		XTimer_setTimeout_base(timer, 50);
 		XTimerBase_setSingleShote(timer, true);
 	
 		//XConnection* conn=XObject_connect(timer,XSignal(XTimer_timeout_signal),timer, timerSlotFunc,XConnectionType_Queued);
@@ -49,7 +49,7 @@ void XTimerTest()
 		XPrintf("事件循环结束\n");
 		
 		XEventLoop_delete_base(loop);
-		XTimer_delete_base(timer);
+		//XTimer_delete_base(timer);
 	}
 
 	XCoreApplication_quit();

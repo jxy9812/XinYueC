@@ -77,7 +77,7 @@ static void XEventSlotFunc_deinit(XEventSlotFunc* ev)
 		if (XAtomic_fetch_sub_int32(ev->ref_count, 1) == 1)
 		{
 			if (ev->args)
-				XVariant_delete_base(ev->args);
+				XClass_delete_base(ev->args);
 			XMemory_free(ev->ref_count);
 		}
 	}

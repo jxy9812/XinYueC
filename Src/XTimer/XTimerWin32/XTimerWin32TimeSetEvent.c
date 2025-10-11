@@ -21,9 +21,8 @@ static void CALLBACK TimerCallbackTimeSetEvent(UINT uID, UINT uMsg, DWORD_PTR dw
 	if (timer->m_singleShot)
 	{
 		XTimerBase_stop_base(timer);
-		//if (((XTimerBase*)timer)->m_autoDelete)
-		//	//XObject_delete_event(timer);
-		//	XEventLoop_postFunc(XObject_getEventLoop(timer),timer, XObject_delete_base,timer,XEVENT_PRIORITY_LOWEST);
+		if (((XTimerBase*)timer)->m_autoDelete)
+			XObject_delete_base(timer);
 	}
 	else if(!((XTimerWin32TimeSetEvent*)timer)->m_twoCb)
 	{

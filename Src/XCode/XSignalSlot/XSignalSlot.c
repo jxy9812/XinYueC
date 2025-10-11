@@ -287,7 +287,10 @@ static void emit_class(XSignalSlot* manager, size_t signal, XClass* args, XAtomi
 	XMutex_lock(manager->mutex);  // 加锁
 	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
 	if (signalObj == NULL)
-		return;//没有这个信号
+	{
+		XMutex_unlock(manager->mutex);  // 解锁
+		return;//没有连接的信号
+	}
 	XConnection* conn = NULL;
 	if (ref_count)
 		XAtomic_fetch_add_int32(ref_count, 1);  // 使用原子存储++
