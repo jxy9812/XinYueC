@@ -5,8 +5,9 @@
 void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
 void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
 void VXTimerBase_setTimeout(XTimerBase* timer, size_t value);
-static void VXTimerBase_setInterval(XTimerWin32TimeSetEvent* timer, size_t value);
 void VXTimerBase_out(XTimerBase* timer);
+
+static void VXTimerBase_setInterval(XTimerWin32TimeSetEvent* timer, size_t value);
 static void VXTimerBase_start(XTimerBase* timer);
 static void VXTimerBase_stop(XTimerBase* timer);
 static void VXTimerBase_deinit(XTimerBase* timer);

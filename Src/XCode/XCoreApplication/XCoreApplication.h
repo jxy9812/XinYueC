@@ -15,8 +15,8 @@ typedef struct XCoreApplication
     bool m_quit;//是否退出
     int m_argc;
     char** m_argv;
-    XCircularQueueAtomic* m_postQueue;//信号发送队列
-    XTimerGroupWheel* m_timerGroup;   // 定时器组
+    //XCircularQueueAtomic* m_postQueue;//信号发送队列
+    //XTimerGroupWheel* m_timerGroup;   // 定时器组
     XEventLoop* m_eventLoop;//事件调度器
 }XCoreApplication;//
 XVtable* XCoreApplication_class_init();

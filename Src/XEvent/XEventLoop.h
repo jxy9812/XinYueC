@@ -46,6 +46,7 @@ typedef struct XEventLoop
     XEventDispatcher* m_dispatcher;   // 关联的事件调度器
     XCircularQueueAtomic* m_postQueue;//信号发送队列(引用XCoreApplication)
     XTimerGroupWheel* m_timerGroup;   // 定时器组(引用XCoreApplication)
+    XEpoll* m_epoll;//
     XEventLoopState m_state;          // 事件循环状态
     XWaitCondition* m_condition;      // 等待条件变量
     XMutex* m_mutex;                  // 互斥锁

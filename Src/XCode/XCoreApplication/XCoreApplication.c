@@ -55,18 +55,18 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 	app->m_argv = argv;
 	app->m_quit = false;
 	app->m_eventLoop = XEventLoop_create();
-	app->m_postQueue = app->m_eventLoop->m_postQueue;
+	//app->m_postQueue = app->m_eventLoop->m_postQueue;
 
 	// 初始化定时器组
-	XTimerGroupBase* group= XTimerGroupWheel_create(1);
-	XTimerGroupWheel_setMutex(group, XMutex_create());
-	XTimerGroupWheel_addTimeWheel_base(group, 100);//0~100ms    -1ms
-	XTimerGroupWheel_addTimeWheel_base(group, 10);//100ms~1S    -100ms
-	XTimerGroupWheel_addTimeWheel_base(group, 10);//1S~10S      -1s
-	XTimerGroupWheel_addTimeWheel_base(group, 10);//10~100S     -10s
-	XTimerGroupWheel_addTimeWheel_base(group, 10);//100~1000s   -100s
-	app->m_timerGroup = group;
-	app->m_eventLoop->m_timerGroup = group;
+	//XTimerGroupBase* group= XTimerGroupWheel_create(1);
+	//XTimerGroupWheel_setMutex(group, XMutex_create());
+	//XTimerGroupWheel_addTimeWheel_base(group, 100);//0~100ms    -1ms
+	//XTimerGroupWheel_addTimeWheel_base(group, 10);//100ms~1S    -100ms
+	//XTimerGroupWheel_addTimeWheel_base(group, 10);//1S~10S      -1s
+	//XTimerGroupWheel_addTimeWheel_base(group, 10);//10~100S     -10s
+	//XTimerGroupWheel_addTimeWheel_base(group, 10);//100~1000s   -100s
+	//app->m_timerGroup = group;
+	//app->m_eventLoop->m_timerGroup = group;
 
 	g_app = app;
 	XObject_addEventFilter(app, XEVENT_SLOT_RUN, XEventSlotFuncRunCB, NULL);//绑定信号与槽的功能
@@ -90,7 +90,7 @@ XTimerGroupBase* XCoreApplication_getTimerGroup()
 	XCoreApplication* app = XCoreApplication_global();
 	if (app == NULL || app->m_eventLoop == NULL)
 		return NULL;
-	return app->m_timerGroup;
+	return app->m_eventLoop->m_timerGroup;
 }
 
 void XCoreApplication_quit()
@@ -122,7 +122,7 @@ int XCoreApplication_exec()
 bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XAtomic_int32_t* ref_count, XEventPriority priority)
 {
 	XCoreApplication* app = XCoreApplication_global();
-	if (!app || app->m_postQueue == NULL)
+	if (!app )
 		return false;
 	return XEventLoop_postSendSignal(app->m_eventLoop, sendFunc,signalSlot,signal,args, ref_count,priority);
 }
@@ -130,7 +130,7 @@ bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*
 bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* args, XEventPriority priority)
 {
 	XCoreApplication* app = XCoreApplication_global();
-	if (!app || app->m_postQueue == NULL)
+	if (!app )
 		return false;
 	return XEventLoop_postFunc(app->m_eventLoop, receiver, func, args,priority);
 }
