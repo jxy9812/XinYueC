@@ -23,7 +23,7 @@ XVtable* XObject_class_init()
 #endif
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XClass_class_init());
-	void* table[] = { VXObject_poll };
+	void* table[] = { VXObject_poll};
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXObject_deinit);
@@ -223,20 +223,57 @@ bool XObject_disconnect_conn(XConnection* conn)
 	return XSignalSlot_disconnect_conn(conn);
 }
 
-bool XObject_setSignalSendMode(XObject* object, XEventSendMode mode)
-{
-	if(!object)
-		return false;
-	if (object->m_signalSlot == NULL)
-		object->m_signalSlot = XSignalSlot_create(object);
-	return XSignalSlot_setSendMode(object->m_signalSlot,mode);
-}
 
-XEventSendMode XObject_getSignalSendMode(XObject* object)
+static void deinit(XObject* object)
 {
-	if (!object)
-		return XEVENT_SEND_INVALID;
-	return XSignalSlot_getSendMode(object->m_signalSlot);
+	if (XAtomic_fetch_sub_uint32(&object->m_eventCount, 1) == 1)
+	{//正式释放
+		XClassGetVirtualFunc(object, EXClass_Deinit, void(*)(XObject*))(object);
+	}
+	else
+	{//重新投递
+		XAtomic_fetch_add_int32(&object->m_eventCount, 1);
+		XObject_postEvent(object, XEventFunc_create_oneAccept(deinit, object), XEVENT_PRIORITY_LOWEST);
+	}
+}
+void XObject_deinit_base(XObject* object)
+{
+	if (object == NULL)return;
+	if (XAtomic_load_bool(&object->m_deleteState))
+		return;//已经标记为释放了
+	bool state = false;
+	if (!XAtomic_compare_exchange_strong_bool(&object->m_deleteState, &state, true))
+		return;//其他线程抢先提交了释放
+	//发送释放信号
+	XObject_deinit_signal(object);
+	XAtomic_fetch_add_int32(&object->m_eventCount, 1);
+	XObject_postEvent(object, XEventFunc_create_oneAccept(deinit, object), XEVENT_PRIORITY_LOWEST);
+}
+static void delete(XObject* object)
+{
+	if (XAtomic_fetch_sub_uint32(&object->m_eventCount, 1) == 1)
+	{//正式释放
+		XClassGetVirtualFunc(object, EXClass_Deinit, void(*)(XObject*))(object);
+		XMemory_free(object);
+	}
+	else
+	{//重新投递
+		XAtomic_fetch_add_int32(&object->m_eventCount, 1);
+		XObject_postEvent(object, XEventFunc_create_oneAccept(delete, object), XEVENT_PRIORITY_LOWEST);
+	}
+}
+void XObject_delete_base(XObject* object)
+{
+	if (object == NULL)return;
+	if (XAtomic_load_bool(&object->m_deleteState))
+		return;//已经标记为释放了
+	bool state = false;
+	if (!XAtomic_compare_exchange_strong_bool(&object->m_deleteState, &state, true))
+		return;//其他线程抢先提交了释放
+	//发送释放信号
+	XObject_deinit_signal(object);
+	XAtomic_fetch_add_int32(&object->m_eventCount, 1);
+	XObject_postEvent(object, XEventFunc_create_oneAccept(delete, object), XEVENT_PRIORITY_LOWEST);
 }
 
 void XObject_emitSignal(XObject* object, size_t signal, void* args, XEventPriority priority)
@@ -251,6 +288,18 @@ void XObject_emitSignal_class(XObject* object, size_t signal, XClass* args, XAto
 		XSignalSlot_emit_class(object->m_signalSlot, signal, args, ref_count, priority);
 }
 
+void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, XEventPriority priority)
+{
+	if (object)
+		XSignalSlot_emit_queue(object->m_signalSlot, signal, args, priority);
+}
+
+void XObject_emitSignal_class_queue(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority)
+{
+	if (object)
+		XSignalSlot_emit_class_queue(object->m_signalSlot, signal, args, ref_count, priority);
+}
+
 void* XObject_deinit_signal(XObject* object)
 {
 	if(object)
@@ -261,32 +310,17 @@ void* XObject_deinit_signal(XObject* object)
 	
 }
 
-void XObject_deinit_event(XObject* object)
-{
-	if (object == NULL)
-		return;
-	XObject_postEvent(object, XEventFunc_create_oneAccept(XObject_deinit_base, object), XEVENT_PRIORITY_LOWEST);
-}
-
-void XObject_delete_event(XObject* object)
-{
-	if (object == NULL)
-		return;
-	XObject_postEvent(object, XEventFunc_create_oneAccept(XObject_delete_base, object), XEVENT_PRIORITY_LOWEST);
-}
-
 void VXObject_poll(XObject* object)
 {
 }
 
 void VXObject_deinit(XObject* object)
 {
-	//发送释放信号
-	XObject_deinit_signal(object);
 	//处理剩余的所有事件,防止遗漏
-	XEventDispatcher* dispatcher=XObject_getEventDispatcher(object);
+	/*XEventDispatcher* dispatcher=XObject_getEventDispatcher(object);
 	if(dispatcher)
-		XEventDispatcher_handler_base(dispatcher);
+		XEventDispatcher_handler_base(dispatcher);*/
+	//XEventLoop_processEvents_base(XObject_getEventLoop(object), XEventLoop_AllEvents);
 	//释放信号与槽
 	if(object->m_signalSlot)
 	{

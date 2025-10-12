@@ -29,7 +29,6 @@ void XSignalSlot_init(XSignalSlot* manager, XObject* obj)
 {
 	if (manager == NULL)
 		return NULL;
-	manager->sendMode = XEVENT_SEND_DIRECT;
 	manager->obj = obj;
 	manager->signalMap = XMap_Create(size_t, XSignal,XCompare_size_t);
 	manager->bindSignalList = XListSLinkedAtomic_Create(XConnection*);
@@ -64,7 +63,7 @@ void XSignalSlot_deinit(XSignalSlot* manager)
 	//清除链接的信号
 	for_each_iterator(manager->bindSignalList, XListSLinkedAtomic, it)
 	{
-		XConnection* conn = XListSLinkedAtomic_iterator_data(&it);
+		XConnection* conn = (*(XConnection**)XListSLinkedAtomic_iterator_data(&it));
 		XSignal* signalObj = conn->signal;
 		if (signalObj == NULL)
 			continue;
@@ -83,18 +82,6 @@ void XSignalSlot_delete(XSignalSlot* manager)
 {
 	XSignalSlot_deinit(manager);
 	XDelete(manager);
-}
-bool XSignalSlot_setSendMode(XSignalSlot* manager, XEventSendMode mode)
-{
-	if(!manager)
-		return false;
-	manager->sendMode = mode;
-}
-XEventSendMode XSignalSlot_getSendMode(XSignalSlot* manager)
-{
-	if(!manager)
-		return XEVENT_SEND_INVALID;
-	return manager->sendMode;
 }
 static const bool Equality_Connection(const XConnection* pvPrevValue, const XConnection* pvNextValue)
 {
@@ -208,7 +195,7 @@ static void Direct_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_coun
 	if (ref_count) 
 		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	if(conn->slot_func)
-		conn->slot_func(conn->signal->sender, conn->receiver,args);
+		conn->slot_func(conn->receiver,args, conn->signal->sender);
 	if (ref_count)
 		XAtomic_fetch_sub_int32(ref_count, 1);
 }
@@ -300,7 +287,10 @@ static void emit_class(XSignalSlot* manager, size_t signal, XClass* args, XAtomi
 	XMutex_lock(manager->mutex);  // 加锁
 	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
 	if (signalObj == NULL)
-		return;//没有这个信号
+	{
+		XMutex_unlock(manager->mutex);  // 解锁
+		return;//没有连接的信号
+	}
 	XConnection* conn = NULL;
 	if (ref_count)
 		XAtomic_fetch_add_int32(ref_count, 1);  // 使用原子存储++
@@ -336,19 +326,14 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal,void* args, XEventPrio
 {
 	if (manager == NULL)
 		return;
-	//if (manager->sendMode == XEVENT_SEND_QUEUED)
-	//{//在队列中发送
-	//	XCoreApplication_postSendSignal(emit,manager,signal,args,priority);
-	//	return;
-	//}
-	//emit(manager,signal,args, priority);
-
-	if (manager->sendMode == XEVENT_SEND_QUEUED)
-	{//在队列中发送
-		XCoreApplication_postSendSignal(emit_class, manager, signal, args, NULL, priority);
-		return;
-	}
 	emit_class(manager, signal, args,NULL, priority);
+}
+
+void XSignalSlot_emit_queue(XSignalSlot* manager, size_t signal, void* args, XEventPriority priority)
+{
+	if (manager == NULL)
+		return;
+	XCoreApplication_postSendSignal(emit_class, manager, signal, args, NULL, priority);
 }
 
 void XSignalSlot_emit_class(XSignalSlot* manager, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority)
@@ -361,10 +346,18 @@ void XSignalSlot_emit_class(XSignalSlot* manager, size_t signal, XClass* args, X
 	}
 	if(ref_count==NULL)
 		ref_count = XAtomic_create(int32_t);
-	if (manager->sendMode == XEVENT_SEND_QUEUED)
-	{//在队列中发送
-		XCoreApplication_postSendSignal(emit_class, manager, signal, args, ref_count,priority);
+	emit_class(manager, signal, args, ref_count, priority);
+}
+
+void XSignalSlot_emit_class_queue(XSignalSlot* manager, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority)
+{
+	if (manager == NULL)
+	{
+		if (args && !ref_count)
+			XClass_delete_base(args);
 		return;
 	}
-	emit_class(manager, signal, args, ref_count, priority);
+	if (ref_count == NULL)
+		ref_count = XAtomic_create(int32_t);
+	XCoreApplication_postSendSignal(emit_class, manager, signal, args, ref_count, priority);
 }

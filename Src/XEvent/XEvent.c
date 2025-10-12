@@ -46,7 +46,7 @@ XEventFunc* XEventFunc_create(void(*func)(void*), void* args)
 	XEventFunc* event = XMemory_malloc(sizeof(XEventFunc));
 	if (event)
 	{
-		XEvent_init(&event->event, NULL, XEVENT_FUNC_RUN, 0);
+		XEvent_init(event, NULL, XEVENT_FUNC_RUN, 0);
 		event->func = func;
 		event->args = args;
 		event->oneAccept = false;
@@ -77,7 +77,7 @@ static void XEventSlotFunc_deinit(XEventSlotFunc* ev)
 		if (XAtomic_fetch_sub_int32(ev->ref_count, 1) == 1)
 		{
 			if (ev->args)
-				XVariant_delete_base(ev->args);
+				XClass_delete_base(ev->args);
 			XMemory_free(ev->ref_count);
 		}
 	}
@@ -102,7 +102,7 @@ void XEventSlotFuncRunCB(XEventSlotFunc* event)
 	if (!event)
 		return;
 	if (event->func)
-		event->func(event->sender, event->event.receiver, event->args);
+		event->func(event->event.receiver, event->args, event->sender);
 
 	//if (event->ref_count)
 	//{

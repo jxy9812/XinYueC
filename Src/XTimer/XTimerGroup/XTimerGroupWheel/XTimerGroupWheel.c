@@ -138,9 +138,9 @@ uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
 				if (timer != NULL && XTimerBase_isRunning(&timer->m_class))
 				{
 					// 记录最小的到期滴答数
-					if (((XTimerBase*)timer)->m_expire_ticks < min_expire_ticks)
+					if (((XTimerTimeWheel*)timer)->m_expire_ticks < min_expire_ticks)
 					{
-						min_expire_ticks = ((XTimerBase*)timer)->m_expire_ticks;
+						min_expire_ticks = ((XTimerTimeWheel*)timer)->m_expire_ticks;
 					}
 				}
 				XListSLinked_iterator_add(&it,&it);

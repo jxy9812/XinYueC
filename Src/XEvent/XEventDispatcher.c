@@ -6,12 +6,14 @@
 #include "XListSLinked.h"
 #include "XWaitCondition.h"
 #include "XPriorityMapQueue.h"
+#include "XTimerBase.h"
+#include "XRecursiveMutex.h"
 // 事件回调结构
 typedef struct XEventCallback {
     XEventCB callback;             // 回调函数
     void* userData;                // 用户数据
 } XEventCallback;
-
+bool sendEvent(XEventDispatcher* dispatcher, XEvent* event);
 // 静态函数声明
 static void VXEventDispatcher_deinit(XEventDispatcher* dispatcher);
 static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEvent* event);
@@ -101,7 +103,7 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
     dispatcher->m_socketNotifiers = XListSLinked_create(sizeof(XSocketNotifier*));
 
     // 初始化互斥锁
-    dispatcher->m_mutex = XMutex_create();
+    dispatcher->m_mutex = XRecursiveMutex_create();
 
     // 初始化事件循环指针
     dispatcher->m_eventLoop = NULL;
@@ -116,8 +118,15 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
 static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEvent* event)
 {
     if (!dispatcher || !event) return false;
-
+    bool handled = false;//事件是否被处理
     XMutex_lock(dispatcher->m_mutex);
+    handled = sendEvent(dispatcher,event);
+    XMutex_unlock(dispatcher->m_mutex);
+    return handled;
+}
+bool sendEvent(XEventDispatcher* dispatcher, XEvent* event)
+{
+    if (!dispatcher || !event) return false;
 
     bool isDelete = true;
     bool handled = false;//事件是否被处理
@@ -178,7 +187,7 @@ static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEvent* ev
         }
     }
 
-    XMutex_unlock(dispatcher->m_mutex);
+    
     if (isDelete)
         XEvent_delete(event);
     return handled;
@@ -208,10 +217,15 @@ static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEvent* ev
     int p = priority;
     XMutex_lock(dispatcher->m_mutex);
     bool success = XPriorityMapQueue_push_base(dispatcher->m_queue,&p, &event);
+    //接受线程事件数量+1
+    if (success&&event->receiver)
+        XAtomic_fetch_add_int32(&event->receiver->m_eventCount, 1);  // 原子加1
     XMutex_unlock(dispatcher->m_mutex);
     // 如果成功加入队列，唤醒事件循环
-    if (success) {
-        VXEventDispatcher_wakeUp(dispatcher);
+    if (success)
+    {
+        if(XPriorityMapQueue_size_base(dispatcher->m_queue) == 1)
+            VXEventDispatcher_wakeUp(dispatcher);
     }
     else {
         // 队列已满，释放事件
@@ -301,7 +315,9 @@ static void VXEventDispatcher_handler(XEventDispatcher* dispatcher)
     {
         if (event)
         {
-            VXEventDispatcher_sendEvent(dispatcher, event);
+            if (event->receiver)
+                XAtomic_fetch_sub_uint32(&event->receiver->m_eventCount, 1);
+            sendEvent(dispatcher, event);
             //XMemory_free(event);
         }
     }

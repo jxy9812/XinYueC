@@ -4,6 +4,8 @@
 #include"XTimer.h"
 #include"XThread.h"
 #include"XTimerGroupWheel.h"
+#include"XEventLoop.h"
+#include"XCoreApplication.h"
 static size_t currentTimer = 0;
 static void Callback(void* userData)
 {
@@ -19,23 +21,40 @@ static void Callback(void* userData)
 	XTimerTimeWheel_start_base(timer);
 	XTimerGroupBase_addTimer_base(userData, timer);*/
 }
-static void  timerSlotFunc(XObject* sender, XObject* receiver, void* args)
+static void  timerSlotFunc(XObject* receiver, void* args, XObject* sender)
 {
 	Callback(NULL);
+	XEventLoop_quit_base(receiver,0);
 }
 void XTimerTest()
 {
-	currentTimer = XTimerBase_getCurrentTime();
+	currentTimer = XTimerBase_getCurrentTime();	
+	while (true)//测试内存是否泄漏
+	{
+		XTimer* timer = XTimer_create();
+		XTimer_setInterval_base(timer, 10);
+		XTimer_setTimeout_base(timer, 50);
+		XTimerBase_setSingleShote(timer, true);
+	
+		//XConnection* conn=XObject_connect(timer,XSignal(XTimer_timeout_signal),timer, timerSlotFunc,XConnectionType_Queued);
+		//XObject_disconnect_conn(conn);
+		//XObject_disconnect(timer, XSignal(XTimer_timeout_signal), NULL, timerSlotFunc);
+		//XTimer_callOnTimeout(timer,NULL, timerSlotFunc, XConnectionType_Auto);
+		//XTimer_singleShot(100, NULL, timerSlotFunc, XConnectionType_Auto);
+		XEventLoop* loop = XEventLoop_create();
+		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+		XObject_connect(timer, XSignal(XTimer_timeout_signal), NULL, Callback, XConnectionType_Auto);
+		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_delete_base, XConnectionType_Auto);
+		XTimer_start_base(timer);
+		XPrintf("事件循环等待\n");
+		XEventLoop_exec_base(loop);
+		XPrintf("事件循环结束\n");
+		
+		//XEventLoop_delete_base(loop);
+		//XTimer_delete_base(timer);
+	}
 
-	XTimer* timer = XTimer_create();
-	XTimer_setInterval_base(timer, 10);
-	XTimer_setTimeout_base(timer, 50);
-	XConnection* conn=XObject_connect(timer,XSignal(XTimer_timeout_signal),timer, timerSlotFunc,XConnectionType_Queued);
-	//XObject_disconnect_conn(conn);
-	XObject_disconnect(timer, XSignal(XTimer_timeout_signal), NULL, timerSlotFunc);
-	XTimer_callOnTimeout(timer,NULL, timerSlotFunc, XConnectionType_Auto);
-	//XTimer_singleShot(100, NULL, timerSlotFunc, XConnectionType_Auto);
-	XTimer_start_base(timer);
+	XCoreApplication_quit();
 }
 void XMenu_XTimerTest(XMenu* root)
 {

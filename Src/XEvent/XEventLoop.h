@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "XClass.h"
+#include "XObject.h"
 #include "XWaitCondition.h"
 #include "XEventType.h"
 #include "XAtomic.h"
@@ -19,6 +19,7 @@ typedef enum
     XEventLoop_Quit,       // 已退出
     XEventLoop_Suspended   // 已暂停
 } XEventLoopState;
+
 /**
  * @brief 事件处理标志
  */
@@ -30,7 +31,7 @@ typedef enum
     XEventLoop_WaitForMoreEvents = 0x04   // 等待更多事件
 } XEventLoopProcessEventsFlags;
 XCLASS_DEFINE_BEGING(XEventLoop)
-XCLASS_DEFINE_ENUM(XEventLoop, Exec) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XEventLoop, Exec) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XEventLoop, Quit),
 XCLASS_DEFINE_ENUM(XEventLoop, WakeUp),
 XCLASS_DEFINE_ENUM(XEventLoop, ProcessEvents),
@@ -42,7 +43,7 @@ XCLASS_DEFINE_END(XEventLoop)
  */
 typedef struct XEventLoop
 {
-    XClass m_class;                  // 父类
+    XObject m_class;                  // 父类
     XEventDispatcher* m_dispatcher;   // 关联的事件调度器
     XCircularQueueAtomic* m_postQueue;//信号发送队列(引用XCoreApplication)
     XTimerGroupWheel* m_timerGroup;   // 定时器组(引用XCoreApplication)
@@ -137,7 +138,7 @@ void XEventLoop_setQuitOnLastWindowClosed(XEventLoop* loop, bool quit);
  * @brief 释放事件循环资源
  * @param loop 事件循环实例
  */
-#define XEventLoop_delete_base    XClass_delete_base
+#define XEventLoop_delete_base    XObject_delete_base
 
 #ifdef __cplusplus
 }

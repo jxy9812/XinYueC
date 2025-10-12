@@ -173,6 +173,7 @@ void VXTimerBase_out(XTimerBase* timer)
 	++timer->number;
 	if (timer->m_timerCallback != NULL)
 		timer->m_timerCallback(timer->m_userData);
+
 }
 #ifdef WIN32
 #include <windows.h>

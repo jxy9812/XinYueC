@@ -11,25 +11,35 @@
 #include "XAtomic.h"
 //#include "XWindow.h"  // 假设存在窗口相关定义
 
-//typedef struct XSignalSlot XEventData;
-//处理队列信号/函数数据
-typedef struct XSignalData
+//投递类型
+typedef enum PostType
 {
-    XSignalSlot* signalSlot;//控制区分是发送信号函数投递函数执行
+    Post_SignalSlot,
+    //Post_Event,
+    Post_Func,
+}PostType;
+//投递的数据
+typedef struct PostData
+{
+    PostType type;
     union
     {
-        void (*sendSignalFunc)(XSignalSlot*, size_t, void*, XEventPriority priority);//发送信号的函数
-        void (*run_func)(void* args);//需要被执行的函数
-    };
-    union 
-    {
-        size_t signal;
-        XObject* object;
+        struct 
+        {
+            XSignalSlot* signalSlot;//控制区分是发送信号函数投递函数执行
+            void (*sendSignalFunc)(XSignalSlot*, size_t, void*, XAtomic_int32_t*, XEventPriority);//发送信号的函数
+            size_t signal;
+        };
+        struct
+        {
+            void (*run_func)(void* args);//需要被执行的函数
+            XObject* object;
+        };
     };
     void* args;
     XAtomic_int32_t* ref_count;//参数引用次数
     XEventPriority priority;
-}XEventData;//底层都是事件驱动
+}PostData;//
 
 static void VXEventLoop_deinit(XEventLoop* loop);
 static int VXEventLoop_exec(XEventLoop* loop);
@@ -49,7 +59,7 @@ XVtable* XEventLoop_class_init() {
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+        XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 
     void* table[] = {
         VXEventLoop_exec,
@@ -88,7 +98,7 @@ void XEventLoop_init(XEventLoop* loop)
 {
     if (loop == NULL) return;
 
-    XClass_init(&loop->m_class);
+    XObject_init(&loop->m_class);
     XClassGetVtable(loop) = XEventLoop_class_init();
 
     // 初始化互斥锁和条件变量
@@ -115,7 +125,7 @@ void XEventLoop_init(XEventLoop* loop)
         XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
 
         if (!XCoreApplication_global())
-            loop->m_postQueue = XCircularQueueAtomic_create(sizeof(XEventData), XEventLoop_QueueSize);
+            loop->m_postQueue = XCircularQueueAtomic_create(sizeof(PostData), XEventLoop_QueueSize);
     }
     loop->m_state = XEventLoop_Suspended;
     loop->m_exitCode = 0;
@@ -227,19 +237,22 @@ static void VXEventLoop_wakeUp(XEventLoop* loop) {
  */
 static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags)
 {
-    if (!loop || !loop->m_dispatcher || loop->m_state != XEventLoop_Running) return;
+    if (!loop || !loop->m_dispatcher /*|| loop->m_state != XEventLoop_Running*/) return;
     //先处理是否有信号需要在队列中发送
-    XEventData data;
+    PostData data;
     while (XQueueBase_receive_base(loop->m_postQueue, &data))
     {
-        if(data.signalSlot)
-        {//发送信号
-            if (data.sendSignalFunc)
-                data.sendSignalFunc(data.signalSlot, data.signal, data.args,data.priority);//发送信号
-        }
-        else
-        {//投递函数
-            XObject_postEvent(data.object,XEventFunc_create(data.run_func,data.args), data.priority);
+        switch (data.type) 
+        {
+            case Post_SignalSlot:
+            {//发送信号
+                if (data.sendSignalFunc)
+                    data.sendSignalFunc(data.signalSlot, data.signal, data.args, data.ref_count, data.priority);//发送信号
+            }break;
+            case Post_Func:
+            {//投递函数
+                XObject_postEvent(data.object, XEventFunc_create_oneAccept(data.run_func, data.args), data.priority);
+            }break;
         }
     }
     // 处理定时器事件
@@ -310,7 +323,11 @@ static void VXEventLoop_deinit(XEventLoop* loop)
     }
     // 销毁互斥锁和条件变量
     XMutex_delete(loop->m_mutex);
+    loop->m_mutex = NULL;
     XWaitCondition_delete(loop->m_condition);
+    loop->m_condition = NULL;
+    // 释放父对象
+    XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(loop);
 }
 
 // 基础函数实现
@@ -347,7 +364,7 @@ bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, s
 {
     if (!loop || loop->m_postQueue == NULL)
         return false;
-    XEventData data = { .sendSignalFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args,.ref_count=ref_count, .priority=priority };
+    PostData data = {.type=Post_SignalSlot, .sendSignalFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args,.ref_count=ref_count, .priority=priority };
     return XQueueBase_push_base(loop->m_postQueue, &data);
 }
 
@@ -355,6 +372,6 @@ bool XEventLoop_postFunc(XEventLoop* loop, XObject* receiver, void(*func)(void*)
 {
     if (loop == NULL ||  func == NULL)
         return false;
-    XEventData data = { .run_func = func,.signalSlot = NULL,.object = receiver,.args = args,.priority=priority };
+    PostData data = { .type = Post_Func, .run_func = func,.signalSlot = NULL,.object = receiver,.args = args,.priority=priority };
     return XQueueBase_push_base(loop->m_postQueue, &data);
 }

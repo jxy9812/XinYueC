@@ -10,6 +10,7 @@ extern "C" {
 typedef struct XTimerWin32ThreadpoolTimer
 {
 	XTimerBase m_class;//类
+	bool m_twoCb;//是否第二次回调标记
 }XTimerWin32ThreadpoolTimer;
 XVtable* XTimerWin32ThreadpoolTimer_class_init();
 XTimerWin32ThreadpoolTimer* XTimerXTimerWin32ThreadpoolTimer_create();

@@ -1,6 +1,7 @@
 ﻿#ifdef WIN32
 #include"XTimerWin32TimeSetEvent.h"
 #include"XMemory.h"
+#include"XEventLoop.h"
 #include <windows.h>
 void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
 void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
@@ -18,18 +19,38 @@ static void CALLBACK TimerCallbackTimeSetEvent(UINT uID, UINT uMsg, DWORD_PTR dw
 {
 	XTimerBase* timer = ((XTimerBase*)dwUser);
 	XTimerBase_out_base(timer);
+	if (timer->m_singleShot)
+	{
+		XTimerBase_stop_base(timer);
+		if (((XTimerBase*)timer)->m_autoDelete)
+			XObject_delete_base(timer);
+	}
+	else if(!((XTimerWin32TimeSetEvent*)timer)->m_twoCb)
+	{
+		VXTimerBase_stop(timer);
+		((XTimerWin32TimeSetEvent*)timer)->m_twoCb = true;
+		timer->timerId = timeSetEvent(
+			timer->m_interval,           // 触发间隔毫秒
+			1,             // 精度1毫秒
+			TimerCallbackTimeSetEvent, // 回调函数
+			timer,             // 不传递用户数据
+			TIME_PERIODIC  // 周期性触发
+		);
+		timer->m_isRun = true;
+	}
 }
 void VXTimerBase_start(XTimerBase* timer)
 {
-	//printf("启动定时器\n");
+	
 	XTimerBase_stop_base(timer);
 	timer->timerId = timeSetEvent(
-		timer->m_interval,           // 触发间隔毫秒
+		timer->m_timeout,           // 触发间隔毫秒
 		1,             // 精度1毫秒
 		TimerCallbackTimeSetEvent, // 回调函数
-		timer,             // 不传递用户数据
-		TIME_PERIODIC  // 周期性触发
+		timer,             // 传递用户数据
+		timer->m_singleShot? TIME_ONESHOT:TIME_PERIODIC  // 周期性触发
 	);
+	//XPrintf("启动定时器:timer:%d mm id:%d\n", timer->m_timeout, timer->timerId);
 	timer->m_isRun = true;
 	//timer->m_isPeriodic = true;
 }
@@ -40,13 +61,18 @@ void VXTimerBase_stop(XTimerBase* timer)
 	{
 		// 关闭定时器
 		timeKillEvent(timer->timerId);
+		//XPrintf("停止定时器: id:%d\n", timer->timerId);
 		timer->timerId = 0;
 		timer->m_isRun = false;
+		((XTimerWin32TimeSetEvent*)timer)->m_twoCb = false;
 	}
 }
 void VXTimerBase_deinit(XTimerBase* timer)
 {
+	//XPrintf("释放定时器\n");
 	VXTimerBase_stop(timer);
+	// 释放父对象
+	XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(timer);
 }
 void VXTimerBase_setInterval(XTimerWin32TimeSetEvent* timer, size_t value)
 {

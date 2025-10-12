@@ -271,7 +271,7 @@ void VXIODevice_close(XSerialPort* serial)
     ((XIODeviceBase*)serial)->m_mode = XIODeviceBase_NotOpen;
 }
 void USARTCallback(XSerialPort* serial)
-{
+{//中断中调用
     if (USART_GetITStatus(serial->USARTX, USART_IT_RXNE) != RESET)
     {
         uint8_t r = USART_ReceiveData(serial->USARTX);
