@@ -6,7 +6,9 @@ extern "C" {
 typedef enum
 {
     XEVENT_ALL,//全部事件
-    XEVENT_READY=100,                   /*!< 启动完成事件 */
+    XEVENT_READY=100,                   //可读事件
+    XEVENT_WRITE,                       //可写事件
+    XEVENT_READY_CLOSE,                  //关闭事件
     XEVENT_FRAME_RECEIVED,              /*!< 接收到完整帧事件 */
     XEVENT_RX_BUFFER_OVERFLOW,          /*!< 接收缓冲区溢出 >*/
     XEVENT_RX_FRAME_ERROR,              /*!< 接收帧错误 >*/

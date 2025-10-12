@@ -67,8 +67,15 @@ extern "C" {
 #else
 #define XEventLoop_QueueSize      64   /* 适配嵌入式设备节省RAM */
 #endif
-#endif // !XEventLoop_QueueSize
+#endif
 
+#ifndef XEpoll_Size
+#if defined(_WIN32) || defined(_WIN64) || defined(__linux__) || defined(__APPLE__)
+#define XEpoll_Size      256 
+#else
+#define XEpoll_Size      32   /* 适配嵌入式设备节省RAM */
+#endif
+#endif
 #define IS_ON_DEBUG(on)						ISNULL(on,"此函数需要开启"#on",在CXinYueConfig.h")
 
 #ifdef DEBUG_ON

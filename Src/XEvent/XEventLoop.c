@@ -5,6 +5,7 @@
 #include "XTimerBase.h"
 #include "XQueueBase.h"
 #include "XThread.h"
+#include "XEpoll.h"
 #include "XCoreApplication.h"
 #include "XCircularQueueAtomic.h"
 #include "XTimerGroupWheel.h"
@@ -125,20 +126,41 @@ void XEventLoop_init(XEventLoop* loop)
         XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
 
         if (!XCoreApplication_global())
+        {
             loop->m_postQueue = XCircularQueueAtomic_create(sizeof(PostData), XEventLoop_QueueSize);
+            // 初始化定时器组
+            XTimerGroupBase* group= XTimerGroupWheel_create(1);
+            XTimerGroupWheel_setMutex(group, XMutex_create());
+            XTimerGroupWheel_addTimeWheel_base(group, 100);//0~100ms    -1ms
+            XTimerGroupWheel_addTimeWheel_base(group, 10);//100ms~1S    -100ms
+            XTimerGroupWheel_addTimeWheel_base(group, 10);//1S~10S      -1s
+            XTimerGroupWheel_addTimeWheel_base(group, 10);//10~100S     -10s
+            XTimerGroupWheel_addTimeWheel_base(group, 10);//100~1000s   -100s
+            loop->m_timerGroup = group;
+            loop->m_epoll = XEpoll_create(XEpoll_Size);
+        }
     }
     loop->m_state = XEventLoop_Suspended;
     loop->m_exitCode = 0;
     loop->m_quitOnLastWindowClosed = true;
     //初始化信号队列
     if (XCoreApplication_global())
-        loop->m_postQueue = XCoreApplication_global()->m_postQueue;
+    {
+        loop->m_postQueue = XCoreApplication_getEventLoop()->m_postQueue;
+        //初始化定时器组,只在主线程事件循环中使用
+        if (XThread_currentThread() == NULL)
+        {
+            loop->m_timerGroup = XCoreApplication_getTimerGroup();
+            loop->m_epoll = XCoreApplication_getEventLoop()->m_epoll;
+        }
+        else
+        {
+            loop->m_timerGroup = NULL;
+            loop->m_epoll = NULL;
+        }
+    }
  
-    //初始化定时器组,只在主线程事件循环中使用
-    if (XThread_currentThread() == NULL)
-        loop->m_timerGroup = XCoreApplication_getTimerGroup();
-    else
-        loop->m_timerGroup = NULL;
+   
 }
 
 /**
@@ -258,6 +280,22 @@ static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsF
     // 处理定时器事件
     if(loop->m_timerGroup)
         XTimerGroupWheel_handler_base(loop->m_timerGroup);
+    if (loop->m_epoll)
+    {
+        static XEpollEvent events[XEpoll_Size];
+        int count = XEpoll_wait(loop->m_epoll,events, XEpoll_Size,0);
+        for (size_t i = 0; i < count; i++)
+        {
+            XEpollEvent* event = events+i;
+            XObject* object = event->data;
+            if (event->events & XEPOLLIN|| event->events & XEPOLLPRI)
+                XObject_postEvent(object,XEvent_create(object,XEVENT_READY,0),XEVENT_PRIORITY_NORMAL);
+            if (event->events & XEPOLLOUT)
+                XObject_postEvent(object, XEvent_create(object, XEVENT_WRITE, 0), XEVENT_PRIORITY_NORMAL);
+            if (event->events & XEPOLLRDHUP)
+                XObject_postEvent(object, XEvent_create(object, XEVENT_READY_CLOSE, 0), XEVENT_PRIORITY_NORMAL);
+        }
+    }
     // 根据标志志处理不同类型的事件
     if (flags & XEventLoop_ExcludeUserInputEvents) {
         // 排除用户输入事件的处理逻辑
