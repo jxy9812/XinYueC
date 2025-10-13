@@ -7,6 +7,7 @@
 #include "XTimerBase.h"
 #include "XEventDispatcher.h"
 #include "XPrintf.h"
+#include "XCoreApplication.h"
 #include <string.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -87,10 +88,10 @@ void XSocket_init(XSocket* so)
     XClassGetVtable(so) = XSocket_class_init();
 
     // 初始化网络事件结构
-    so->m_netEvents = XMemory_malloc(sizeof(WSANETWORKEVENTS));
+   /* so->m_netEvents = XMemory_malloc(sizeof(WSANETWORKEVENTS));
     if (so->m_netEvents) {
         memset(so->m_netEvents, 0, sizeof(WSANETWORKEVENTS));
-    }
+    }*/
 }
 
 void VXSocketBase_connectToHost(XSocket* so, const char* hostName, uint16_t port, XIODeviceBaseMode mode)
@@ -503,16 +504,16 @@ void VXIODevice_deinit(XSocket* so)
     }
 
     // 清理事件对象和网络事件结构
-    if (so->m_pollEvent != NULL) {
+   /* if (so->m_pollEvent != NULL) {
         WSACloseEvent(so->m_pollEvent);
         so->m_pollEvent = NULL;
-    }
+    }*/
 
-    if (so->m_netEvents)
+    /*if (so->m_netEvents)
     {
         XMemory_free(so->m_netEvents);
         so->m_netEvents = NULL;
-    }
+    }*/
 
     // 清理Winsock（仅在删除对象时调用一次）
     WSACleanup();
@@ -536,79 +537,80 @@ void VXIODevice_deinit(XSocket* so)
 
 void VXIODevice_poll(XSocket* so)
 {
-    if (!so || so->m_socket == INVALID_SOCKET || !so->m_netEvents) return;
+    return;
+    //if (!so || so->m_socket == INVALID_SOCKET || !so->m_netEvents) return;
 
-    // 首次调用时初始化事件对象
-    if (so->m_pollEvent == NULL) {
-        so->m_pollEvent = WSACreateEvent();
-        if (so->m_pollEvent == WSA_INVALID_EVENT) {
-            return;
-        }
-    }
+    //// 首次调用时初始化事件对象
+    //if (so->m_pollEvent == NULL) {
+    //    so->m_pollEvent = WSACreateEvent();
+    //    if (so->m_pollEvent == WSA_INVALID_EVENT) {
+    //        return;
+    //    }
+    //}
 
-    // 使用WSAWaitForMultipleEvents进行非阻塞轮询
-    DWORD result = WSAWaitForMultipleEvents(1, &so->m_pollEvent, FALSE, 0, FALSE);
+    //// 使用WSAWaitForMultipleEvents进行非阻塞轮询
+    //DWORD result = WSAWaitForMultipleEvents(1, &so->m_pollEvent, FALSE, 0, FALSE);
 
-    if (result == WSA_WAIT_FAILED) {
-        return;
-    }
+    //if (result == WSA_WAIT_FAILED) {
+    //    return;
+    //}
 
-    // 如果有事件发生
-    if (result == WSA_WAIT_EVENT_0) {
-        if (WSAEnumNetworkEvents(so->m_socket, so->m_pollEvent, so->m_netEvents) == SOCKET_ERROR) {
-            return;
-        }
-        WSANETWORKEVENTS* netEvents = so->m_netEvents;
+    //// 如果有事件发生
+    //if (result == WSA_WAIT_EVENT_0) {
+    //    if (WSAEnumNetworkEvents(so->m_socket, so->m_pollEvent, so->m_netEvents) == SOCKET_ERROR) {
+    //        return;
+    //    }
+    //    WSANETWORKEVENTS* netEvents = so->m_netEvents;
 
-        // 根据不同的网络事件类型，创建相应的事件并添加到事件调度器
-        if (netEvents->lNetworkEvents & FD_CONNECT) {
-            if (netEvents->iErrorCode[FD_CONNECT_BIT] != 0) {
-                // 连接错误
-               /* XEvent* event = XEvent_create(so, XEVENT_SOCKET_ERROR, XTimerBase_getCurrentTime());
-                XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);*/
-                if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
-                {
-                    ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
-                    XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
-                }
-            }
-            else {
-                // 连接成功
-               /* XEvent* event = XEvent_create(so,XEVENT_SOCKET_CONNECTED, XTimerBase_getCurrentTime());
-                XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);*/
-                if (((XSocketBase*)so)->m_state != XSOCKET_CONNECTED_STATE)
-                {
-                    ((XSocketBase*)so)->m_state = XSOCKET_CONNECTED_STATE;
-                    XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
-                }
-                XSocket_connected_signal(so);
-            }
-        }
+    //    // 根据不同的网络事件类型，创建相应的事件并添加到事件调度器
+    //    if (netEvents->lNetworkEvents & FD_CONNECT) {
+    //        if (netEvents->iErrorCode[FD_CONNECT_BIT] != 0) {
+    //            // 连接错误
+    //           /* XEvent* event = XEvent_create(so, XEVENT_SOCKET_ERROR, XTimerBase_getCurrentTime());
+    //            XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);*/
+    //            if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
+    //            {
+    //                ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+    //                XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+    //            }
+    //        }
+    //        else {
+    //            // 连接成功
+    //           /* XEvent* event = XEvent_create(so,XEVENT_SOCKET_CONNECTED, XTimerBase_getCurrentTime());
+    //            XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);*/
+    //            if (((XSocketBase*)so)->m_state != XSOCKET_CONNECTED_STATE)
+    //            {
+    //                ((XSocketBase*)so)->m_state = XSOCKET_CONNECTED_STATE;
+    //                XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+    //            }
+    //            XSocket_connected_signal(so);
+    //        }
+    //    }
 
-        if (netEvents->lNetworkEvents & FD_CLOSE) {
-            // 连接关闭
-           // XEvent* event = XEvent_create(so, XEVENT_SOCKET_DISCONNECTED, XTimerBase_getCurrentTime());
-           //// event->userData = eventData;
-           // XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
-            if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
-            {
-                ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
-                XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
-            }
-            XSocket_disconnected_signal(so);
-        }
+    //    if (netEvents->lNetworkEvents & FD_CLOSE) {
+    //        // 连接关闭
+    //       // XEvent* event = XEvent_create(so, XEVENT_SOCKET_DISCONNECTED, XTimerBase_getCurrentTime());
+    //       //// event->userData = eventData;
+    //       // XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
+    //        if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
+    //        {
+    //            ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+    //            XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+    //        }
+    //        XSocket_disconnected_signal(so);
+    //    }
 
-        if (netEvents->lNetworkEvents & FD_READ) 
-        {
-            // 有数据可读
-            XIODeviceBase_readyRead_signal(so);
-            //XEvent* event = XEvent_create(so, XEVENT_SOCKET_DATA_READY, XTimerBase_getCurrentTime());
-            ////event->userData = eventData;
-            //XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
-        }
+    //    if (netEvents->lNetworkEvents & FD_READ) 
+    //    {
+    //        // 有数据可读
+    //        XIODeviceBase_readyRead_signal(so);
+    //        //XEvent* event = XEvent_create(so, XEVENT_SOCKET_DATA_READY, XTimerBase_getCurrentTime());
+    //        ////event->userData = eventData;
+    //        //XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
+    //    }
 
-        // 可以添加对FD_WRITE事件的处理...
-    }
+    //    // 可以添加对FD_WRITE事件的处理...
+    //}
 }
 
 bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
@@ -637,15 +639,15 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         return false;
     }
 
-    // 关键修改：确保事件对象在使用前已创建
-    if (so->m_pollEvent == NULL) {
-        so->m_pollEvent = WSACreateEvent();
-        if (so->m_pollEvent == WSA_INVALID_EVENT) {
-            XPrintf("WSACreateEvent failed\n");
-            WSACleanup(); // 释放Winsock资源
-            return false;
-        }
-    }
+    //// 关键修改：确保事件对象在使用前已创建
+    //if (so->m_pollEvent == NULL) {
+    //    so->m_pollEvent = WSACreateEvent();
+    //    if (so->m_pollEvent == WSA_INVALID_EVENT) {
+    //        XPrintf("WSACreateEvent failed\n");
+    //        WSACleanup(); // 释放Winsock资源
+    //        return false;
+    //    }
+    //}
 
     // 准备地址解析
     struct addrinfo hints;
@@ -727,16 +729,17 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
             addr = addr->ai_next;
             continue;
         }
-
+        XEventLoop_addFd(XCoreApplication_getEventLoop(),so, so->m_socket, XEVENT_READY| XEVENT_WRITE);
+        
         // 注册网络事件
-        long events = FD_READ | FD_WRITE | FD_CLOSE | FD_CONNECT;
+       /* long events = FD_READ | FD_WRITE | FD_CLOSE | FD_CONNECT;
         if (WSAEventSelect(so->m_socket, so->m_pollEvent, events) == SOCKET_ERROR) {
             XPrintf("WSAEventSelect failed: %d\n", WSAGetLastError());
             closesocket(so->m_socket);
             so->m_socket = INVALID_SOCKET;
             addr = addr->ai_next;
             continue;
-        }
+        }*/
 
         // 对于TCP套接字，尝试连接
         if (base->m_socketType == XSOCKET_TYPE_TCP) {
@@ -813,15 +816,16 @@ bool VXIODevice_isOpen(XSocket* so)
 }
 bool VXIODevice_close(XSocket* so)
 {
-    if (!XIODeviceBase_isOpen_base((XIODeviceBase*)so))
+    if ((((XIODeviceBase*)so)->m_mode == XIODeviceBase_NotOpen))
         return true;
-    XIODeviceBase_aboutToClose_signal(so);
     XSocketBase* base = (XSocketBase*)so;
-    if (((XSocketBase*)so)->m_state != XSOCKET_CLOSING_STATE)
+    if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTED_STATE)
     {
+        XIODeviceBase_aboutToClose_signal(so);
         ((XSocketBase*)so)->m_state = XSOCKET_CLOSING_STATE;
         XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
     }
+    XEventLoop_removeFd(XCoreApplication_getEventLoop(),so->m_socket);
     // 关闭套接字相关资源
     if (so->m_socket != INVALID_SOCKET) {
         shutdown(so->m_socket, SD_BOTH);
@@ -830,9 +834,9 @@ bool VXIODevice_close(XSocket* so)
     }
 
     // 停止事件选择
-    if (so->m_pollEvent != NULL) {
+  /*  if (so->m_pollEvent != NULL) {
         WSAEventSelect(so->m_socket, so->m_pollEvent, 0);
-    }
+    }*/
 
     // 更新状态
     if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)

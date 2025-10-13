@@ -5,6 +5,38 @@
 #include"XEventDispatcher.h"
 #include<string.h>
 #include<stdarg.h>
+//写入事件回调
+static void WriteEventCB(XEvent* event)
+{
+    XSocket* so = event->receiver;
+    if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTING_STATE)
+    {
+        ((XSocketBase*)so)->m_state = XSOCKET_CONNECTED_STATE;
+        XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+        XSocket_connected_signal(so);
+    }
+
+}
+//读取事件回调
+static void ReadEventCB(XEvent* event)
+{
+    XSocket* so = event->receiver;
+    if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTED_STATE)
+    {
+        XIODeviceBase_readyRead_signal(so);
+    }
+}
+static void ErrorEventCB(XEvent* event)
+{
+    XSocket* so = event->receiver;
+    if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTED_STATE)
+    {
+        ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
+        XSocket_disconnected_signal(so);
+        XSocket_stateChanged_signal(so, XSOCKET_UNCONNECTED_STATE);
+        XIODeviceBase_close_base(so);
+    }
+}
 
 void XSocketBase_init(XSocketBase* socket)
 {
@@ -16,7 +48,10 @@ void XSocketBase_init(XSocketBase* socket)
     socket->m_peerName = XString_create_utf8(NULL);
     socket->m_peerAddress = XString_create_utf8(NULL);
 
-    XObject_setPollingInterval(socket,50);
+    //XObject_setPollingInterval(socket,50);
+    XObject_addEventFilter(socket, XEVENT_WRITE, WriteEventCB, NULL);
+    XObject_addEventFilter(socket, XEVENT_READY, ReadEventCB, NULL);
+    XObject_addEventFilter(socket, XEVENT_ERROR, ErrorEventCB, NULL);
 }
 
 void XSocket_connectToHost_base(XSocketBase* socket, const char* hostName, uint16_t port, XIODeviceBaseMode mode)

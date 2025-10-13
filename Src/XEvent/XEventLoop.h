@@ -140,6 +140,8 @@ void XEventLoop_setQuitOnLastWindowClosed(XEventLoop* loop, bool quit);
  */
 #define XEventLoop_delete_base    XObject_delete_base
 
+bool XEventLoop_addFd(XEventLoop* loop, XObject* object, int fd, XEventType events);
+bool XEventLoop_removeFd(XEventLoop* loop, int fd);
 #ifdef __cplusplus
 }
 #endif

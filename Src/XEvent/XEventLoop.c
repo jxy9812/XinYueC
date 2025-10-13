@@ -183,6 +183,27 @@ void XEventLoop_setQuitOnLastWindowClosed(XEventLoop* loop, bool quit) {
     }
 }
 
+bool XEventLoop_addFd(XEventLoop* loop, XObject* object, int fd, XEventType events)
+{
+    if (!loop || !loop->m_epoll|| events>0x16)
+        return false;
+    XEpollEvent event = {.fd=fd,.data=object,.events=0};
+    if (events & XEVENT_READY)
+        event.events |= XEPOLLIN;
+    if (events & XEVENT_WRITE)
+        event.events |= XEPOLLOUT;
+    /*if (events & XEVENT_ERROR)
+        event.events |= XEPOLLRDHUP;*/
+   return XEpoll_ctl(loop->m_epoll, XEPOLL_CTL_ADD,fd,&event)==0;
+}
+
+bool XEventLoop_removeFd(XEventLoop* loop, int fd)
+{
+    if (!loop || !loop->m_epoll)
+        return false;
+    return XEpoll_ctl(loop->m_epoll, XEPOLL_CTL_DEL, fd,NULL) == 0;
+}
+
 /**
  * @brief 启动事件循环
  * @param loop 事件循环实例
@@ -292,8 +313,8 @@ static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsF
                 XObject_postEvent(object,XEvent_create(object,XEVENT_READY,0),XEVENT_PRIORITY_NORMAL);
             if (event->events & XEPOLLOUT)
                 XObject_postEvent(object, XEvent_create(object, XEVENT_WRITE, 0), XEVENT_PRIORITY_NORMAL);
-            if (event->events & XEPOLLRDHUP)
-                XObject_postEvent(object, XEvent_create(object, XEVENT_READY_CLOSE, 0), XEVENT_PRIORITY_NORMAL);
+            if (event->events & XEPOLLERR)
+                XObject_postEvent(object, XEvent_create(object, XEVENT_ERROR, 0), XEVENT_PRIORITY_NORMAL);
         }
     }
     // 根据标志志处理不同类型的事件

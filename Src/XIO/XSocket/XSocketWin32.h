@@ -10,8 +10,8 @@ typedef struct XSocket
     XSocketBase m_class;//父对象
     size_t  m_socket;
     void* m_addrInfo;  // 地址信息             //struct addrinfo* m_addrInfo;  // 地址信息
-    void* m_pollEvent; // 新增：轮询事件对象   //WSAEVENT m_pollEvent;        // 新增：轮询事件对象
-    void* m_netEvents; // 网络事件结构         //WSANETWORKEVENTS* m_netEvents; // 网络事件结构
+    //void* m_pollEvent; // 新增：轮询事件对象   //WSAEVENT m_pollEvent;        // 新增：轮询事件对象
+    //void* m_netEvents; // 网络事件结构         //WSANETWORKEVENTS* m_netEvents; // 网络事件结构
 }XSocket;
 //初始化类
 XVtable* XSocket_class_init();

@@ -6,9 +6,9 @@ extern "C" {
 typedef enum
 {
     XEVENT_ALL,//全部事件
-    XEVENT_READY=100,                   //可读事件
-    XEVENT_WRITE,                       //可写事件
-    XEVENT_READY_CLOSE,                  //关闭事件
+    XEVENT_READY=0x01,                   //可读事件
+    XEVENT_WRITE=0x04,                       //可写事件
+    XEVENT_ERROR=0x08,                  //错误事件
     XEVENT_FRAME_RECEIVED,              /*!< 接收到完整帧事件 */
     XEVENT_RX_BUFFER_OVERFLOW,          /*!< 接收缓冲区溢出 >*/
     XEVENT_RX_FRAME_ERROR,              /*!< 接收帧错误 >*/
@@ -16,10 +16,10 @@ typedef enum
     XEVENT_FRAME_SENT,                  /*!< 帧发送完成事件 */
 
     /*套接字事件*/
-    XEVENT_SOCKET_CONNECTED =   1001,
-    XEVENT_SOCKET_DISCONNECTED= 1002,
-    XEVENT_SOCKET_DATA_READY =  1003,
-    XEVENT_SOCKET_ERROR=        1004,
+    XEVENT_SOCKET_CONNECTED,
+    XEVENT_SOCKET_DISCONNECTED,
+    XEVENT_SOCKET_DATA_READY,
+    XEVENT_SOCKET_ERROR,
     XEVENT_TIMEROUT,          // 定时器事件
     XEVENT_SOCKET,
     XEVENT_KEY,            // 键盘事件
@@ -30,7 +30,7 @@ typedef enum
     XEVENT_SIGNAL_TRIGGERED,   // 信号触发事件
     XEVENT_STATE_ENTERED,      // 状态进入事件
     XEVENT_STATE_EXITED,        // 状态退出事件
-    XEVENT_USER = 1000     // 用户自定义事件起始值
+    XEVENT_USER     // 用户自定义事件起始值
 }XEventType;
 // 事件优先级
 typedef enum {

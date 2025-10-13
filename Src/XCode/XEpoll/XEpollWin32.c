@@ -33,11 +33,11 @@ struct XEpoll {
 };
 
 // 哈希表比较和哈希函数
-static int XCompare_int(const void* a, const void* b) {
-    const int* ia = (const int*)a;
-    const int* ib = (const int*)b;
-    return (*ia - *ib);
-}
+//static int XCompare_int(const void* a, const void* b) {
+//    const int* ia = (const int*)a;
+//    const int* ib = (const int*)b;
+//    return (*ia - *ib);
+//}
 
 static uint32_t XHash_int(const void* key) {
     const int* k = (const int*)key;
@@ -108,9 +108,8 @@ bool XEpoll_init(XEpoll* epoll, int size) {
     }
 
     // 初始化fd映射表
-    epoll->fdToIndexMap = XHashMap_create(
-        sizeof(int), sizeof(int),
-        XCompare_int, XHash_int
+    epoll->fdToIndexMap = XHashMap_Create(int,int,
+        XCompare_int
     );
     if (!epoll->fdToIndexMap) {
         XMemory_free(epoll->used_indices);
@@ -177,7 +176,7 @@ void XEpoll_delete(XEpoll* epoll) {
 }
 
 int XEpoll_ctl(XEpoll* epoll, int op, int fd, XEpollEvent* event) {
-    if (!epoll || fd < 0 || !event) {
+    if (!epoll || fd < 0) {
         errno = EINVAL;
         return -1;
     }
@@ -193,6 +192,11 @@ int XEpoll_ctl(XEpoll* epoll, int op, int fd, XEpollEvent* event) {
 
     switch (op) {
     case XEPOLL_CTL_ADD:
+        if(!event)
+        {
+            errno = EINVAL;
+            return -1;
+        }
         if (index != -1) {  // 已存在
             errno = EEXIST;
             return -1;
@@ -223,6 +227,11 @@ int XEpoll_ctl(XEpoll* epoll, int op, int fd, XEpollEvent* event) {
         break;
 
     case XEPOLL_CTL_MOD:
+        if (!event)
+        {
+            errno = EINVAL;
+            return -1;
+        }
         if (index == -1) {  // 不存在
             errno = ENOENT;
             return -1;
@@ -307,11 +316,16 @@ int XEpoll_wait(XEpoll* epoll, XEpollEvent* events, int maxevents, int timeout) 
 
             // 转换返回事件类型
             events[event_count].events = 0;
-            if (epoll->pollfds[i].revents & POLLIN)  events[event_count].events |= XEPOLLIN;
-            if (epoll->pollfds[i].revents & POLLOUT) events[event_count].events |= XEPOLLOUT;
-            if (epoll->pollfds[i].revents & POLLPRI) events[event_count].events |= XEPOLLPRI;
-            if (epoll->pollfds[i].revents & POLLERR) events[event_count].events |= XEPOLLERR;
-            if (epoll->pollfds[i].revents & POLLHUP) events[event_count].events |= XEPOLLHUP;
+            if (epoll->pollfds[i].revents & POLLIN) 
+                events[event_count].events |= XEPOLLIN;
+            if (epoll->pollfds[i].revents & POLLOUT) 
+                events[event_count].events |= XEPOLLOUT;
+            if (epoll->pollfds[i].revents & POLLPRI)
+                events[event_count].events |= XEPOLLPRI;
+            if (epoll->pollfds[i].revents & POLLERR) 
+                events[event_count].events |= XEPOLLERR;
+            if (epoll->pollfds[i].revents & POLLHUP)
+                events[event_count].events |= XEPOLLHUP;
 
             event_count++;
         }
