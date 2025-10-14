@@ -24,7 +24,8 @@ static void Callback(void* userData)
 static void  timerSlotFunc(XObject* receiver, void* args, XObject* sender)
 {
 	Callback(NULL);
-	XEventLoop_quit_base(receiver,0);
+	if(receiver)
+		XEventLoop_quit_base(receiver,0);
 }
 void XTimerTest()
 {
@@ -39,7 +40,9 @@ void XTimerTest()
 		//XConnection* conn=XObject_connect(timer,XSignal(XTimer_timeout_signal),timer, timerSlotFunc,XConnectionType_Queued);
 		//XObject_disconnect_conn(conn);
 		//XObject_disconnect(timer, XSignal(XTimer_timeout_signal), NULL, timerSlotFunc);
-		//XTimer_callOnTimeout(timer,NULL, timerSlotFunc, XConnectionType_Auto);
+		XTimer_callOnTimeout(timer,NULL, timerSlotFunc, XConnectionType_Auto);
+		// XTimer_start_base(timer);
+		// return;
 		//XTimer_singleShot(100, NULL, timerSlotFunc, XConnectionType_Auto);
 		XEventLoop* loop = XEventLoop_create();
 		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);

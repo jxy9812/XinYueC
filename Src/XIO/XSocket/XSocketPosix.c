@@ -5,6 +5,7 @@
 #include "XEvent.h"
 #include "XTimerBase.h"
 #include "XEventDispatcher.h"
+#include "XCoreApplication.h"
 #include "XPrintf.h"
 #include <string.h>
 #include <unistd.h>
@@ -96,10 +97,10 @@ void XSocket_init(XSocket* so)
     // 初始化Linux socket成员
     so->m_socket = -1;
     so->m_addrInfo = NULL;
-    so->m_pollfd.fd = -1;
-    so->m_pollfd.events = 0;
-    so->m_pollfd.revents = 0;
-    so->m_netEvents = 0;
+    // so->m_pollfd.fd = -1;
+    // so->m_pollfd.events = 0;
+    // so->m_pollfd.revents = 0;
+    // so->m_netEvents = 0;
 }
 
 static bool create_socket(XSocket* so)
@@ -117,8 +118,8 @@ static bool create_socket(XSocket* so)
     if (so->m_socket == -1) {
         return false;
     }
-
-    so->m_pollfd.fd = so->m_socket;
+     XEventLoop_addFd(XCoreApplication_getEventLoop(),so, so->m_socket, XEVENT_READY| XEVENT_WRITE);
+    //so->m_pollfd.fd = so->m_socket;
     return true;
 }
 
@@ -304,18 +305,31 @@ static bool VXIODevice_isOpen(XSocket* so)
 
 static bool VXIODevice_close(XSocket* so)
 {
-    if (!so || so->m_socket == -1) return false;
-    XIODeviceBase_aboutToClose_signal(so);
-    close(so->m_socket);
-    so->m_socket = -1;
-    so->m_pollfd.fd = -1;
+     if ((((XIODeviceBase*)so)->m_mode == XIODeviceBase_NotOpen))
+     return true;
+    XSocketBase* base = (XSocketBase*)so;
+    // if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTED_STATE)
+    // {
+    //     XIODeviceBase_aboutToClose_signal(so);
+    //     ((XSocketBase*)so)->m_state = XSOCKET_CLOSING_STATE;
+    //     XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
+    // }
+ 
+    if(so->m_socket!=-1)
+    {
+        XIODeviceBase_aboutToClose_signal(so);
+        XEventLoop_removeFd(XCoreApplication_getEventLoop(),so->m_socket);
+        close(so->m_socket);
+        so->m_socket = -1;
+    }
+    
+    //so->m_pollfd.fd = -1;
 
     if (so->m_addrInfo) {
         freeaddrinfo(so->m_addrInfo);
         so->m_addrInfo = NULL;
     }
 
-    XSocketBase* base = (XSocketBase*)so;
     if (base->m_state != XSOCKET_UNCONNECTED_STATE) {
         base->m_state = XSOCKET_UNCONNECTED_STATE;
         XSocket_stateChanged_signal(so, base->m_state);
@@ -517,48 +531,48 @@ static void VXIODevice_setReadBuffer(XSocket* so, size_t count)
 
 static void VXIODevice_poll(XSocket* so)
 {
-    //printf("轮询中\n");
+    //printf("XSocket轮询\n");
     
-    if (!so || so->m_socket == -1) return;
+    // if (!so || so->m_socket == -1) return;
 
-    so->m_pollfd.events = 0;
-    if (((XIODeviceBase*)so)->m_mode & XIODeviceBase_ReadOnly) {
-        so->m_pollfd.events |= POLLIN;
-    }
-    if (((XIODeviceBase*)so)->m_mode & XIODeviceBase_WriteOnly) {
-        so->m_pollfd.events |= POLLOUT;
-    }
+    // so->m_pollfd.events = 0;
+    // if (((XIODeviceBase*)so)->m_mode & XIODeviceBase_ReadOnly) {
+    //     so->m_pollfd.events |= POLLIN;
+    // }
+    // if (((XIODeviceBase*)so)->m_mode & XIODeviceBase_WriteOnly) {
+    //     so->m_pollfd.events |= POLLOUT;
+    // }
 
-    int ret = poll(&so->m_pollfd, 1, 0);
-    if (ret <= 0) return;
+    // int ret = poll(&so->m_pollfd, 1, 0);
+    // if (ret <= 0) return;
 
-    XSocketBase* base = (XSocketBase*)so;
-    if (so->m_pollfd.revents & POLLOUT) {
-        if (base->m_state == XSOCKET_CONNECTING_STATE) {
-            // 检查连接结果
-            int error = 0;
-            socklen_t len = sizeof(error);
-            if (getsockopt(so->m_socket, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
-                base->m_state = XSOCKET_CONNECTED_STATE;
-                XSocket_stateChanged_signal(so, base->m_state);
-                XSocket_connected_signal(so);
-            }
-            else {
-                base->m_state = XSOCKET_UNCONNECTED_STATE;
-                XSocket_stateChanged_signal(so, base->m_state);
-            }
-        }
-    }
-    if (so->m_pollfd.revents & (POLLIN | POLLPRI)) {
-        // 数据可读，触发读事件（可根据需要添加信号发射）
-        XIODeviceBase_readyRead_signal(so);
-    }
+    // XSocketBase* base = (XSocketBase*)so;
+    // if (so->m_pollfd.revents & POLLOUT) {
+    //     if (base->m_state == XSOCKET_CONNECTING_STATE) {
+    //         // 检查连接结果
+    //         int error = 0;
+    //         socklen_t len = sizeof(error);
+    //         if (getsockopt(so->m_socket, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+    //             base->m_state = XSOCKET_CONNECTED_STATE;
+    //             XSocket_stateChanged_signal(so, base->m_state);
+    //             XSocket_connected_signal(so);
+    //         }
+    //         else {
+    //             base->m_state = XSOCKET_UNCONNECTED_STATE;
+    //             XSocket_stateChanged_signal(so, base->m_state);
+    //         }
+    //     }
+    // }
+    // if (so->m_pollfd.revents & (POLLIN | POLLPRI)) {
+    //     // 数据可读，触发读事件（可根据需要添加信号发射）
+    //     XIODeviceBase_readyRead_signal(so);
+    // }
 
-    if (so->m_pollfd.revents & (POLLERR | POLLHUP | POLLRDHUP)) {
-        // 连接错误或关闭
-        VXIODevice_close(so);
-        XSocket_disconnected_signal(so);
-    }
+    // if (so->m_pollfd.revents & (POLLERR | POLLHUP | POLLRDHUP)) {
+    //     // 连接错误或关闭
+    //     VXIODevice_close(so);
+    //     XSocket_disconnected_signal(so);
+    // }
 }
 
 static void VXIODevice_deinit(XSocket* so)

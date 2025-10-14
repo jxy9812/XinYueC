@@ -147,7 +147,8 @@ void XTimerBase_out_base(XTimerBase* timer)
 		return;
 	XClassGetVirtualFunc(timer, EXTimerBase_Out, void(*)(XTimerBase*))(timer);
 }
-void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback)
+
+void VXTimerBase_setTimerCallback(XTimerBase *timer, XTimerBaseCallback callback)
 {
 	timer->m_timerCallback = callback;
 }

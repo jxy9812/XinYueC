@@ -230,7 +230,7 @@ static void VXESP8266_processResponse(XESP8266Device* device) {
         if (hasOk) {
             device->m_operationResult = true;
             XTimer_stop_base(device->m_timeoutTimer);
-            XEvent_set(device->m_waitEvent);
+            //XEvent_set(device->m_waitEvent);
         }
         break;
 
@@ -243,7 +243,7 @@ static void VXESP8266_processResponse(XESP8266Device* device) {
                 (void*)XESP8266_Status_Connected,
                 0);
             XTimer_stop_base(device->m_timeoutTimer);
-            XEvent_set(device->m_waitEvent);
+            //XEvent_set(device->m_waitEvent);
         }
         else if (hasError) {
             device->m_wifiStatus = XESP8266_Status_Error;
@@ -253,7 +253,7 @@ static void VXESP8266_processResponse(XESP8266Device* device) {
                 (void*)XESP8266_Status_Error,
                 0);
             XTimer_stop_base(device->m_timeoutTimer);
-            XEvent_set(device->m_waitEvent);
+            //XEvent_set(device->m_waitEvent);
         }
         break;
 
@@ -266,7 +266,7 @@ static void VXESP8266_processResponse(XESP8266Device* device) {
                 (void*)XESP8266_Status_Connected,
                 0);
             XTimer_stop_base(device->m_timeoutTimer);
-            XEvent_set(device->m_waitEvent);
+            //XEvent_set(device->m_waitEvent);
         }
         else if (hasError) {
             device->m_serverStatus = XESP8266_Status_Error;
@@ -276,7 +276,7 @@ static void VXESP8266_processResponse(XESP8266Device* device) {
                 (void*)XESP8266_Status_Error,
                 0);
             XTimer_stop_base(device->m_timeoutTimer);
-            XEvent_set(device->m_waitEvent);
+            //XEvent_set(device->m_waitEvent);
         }
         break;
 

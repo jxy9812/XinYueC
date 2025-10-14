@@ -18,8 +18,8 @@ typedef struct XSocket
     XSocketBase m_class;       // 父对象
     int         m_socket;       // Linux socket描述符
     struct addrinfo* m_addrInfo;// 地址信息
-    struct pollfd m_pollfd;     // 轮询事件结构
-    short       m_netEvents;    // 网络事件掩码
+    //struct pollfd m_pollfd;     // 轮询事件结构
+    //short       m_netEvents;    // 网络事件掩码
 } XSocket;
 
 // 初始化类

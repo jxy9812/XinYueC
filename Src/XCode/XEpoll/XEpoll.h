@@ -17,7 +17,7 @@ extern "C" {
 #define XEPOLLHUP     0x010          // 挂起事件（自动触发）
 #define XEPOLLRDHUP   0x2000         // 读端关闭事件
 #define XEPOLLONESHOT 0x40000000     // 一次性事件
-#define EPOLLET       0x80000000     // 边缘触发模式
+//#define EPOLLET       0x80000000     // 边缘触发模式
 
 // 操作类型
 #define XEPOLL_CTL_ADD 1             // 添加事件

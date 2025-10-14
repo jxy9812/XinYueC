@@ -7,6 +7,8 @@
 #include"XTimerWin32TimeSetEvent.h"
 #elif XTIMER_IS_THREADPOOLTIMER
 #include "XTimerWin32ThreadpoolTimer.h"
+#elif XTIMER_IS_TIMERFD
+#include "XTimerPosixTimerFd.h"
 #endif
 #include<string.h>
 static void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callback);
@@ -22,6 +24,8 @@ typedef struct XTimer
 	XTimerWin32TimeSetEvent	m_class;
 #elif XTIMER_IS_THREADPOOLTIMER
 	XTimerWin32ThreadpoolTimer	m_class;
+#elif XTIMER_IS_TIMERFD 
+	XTimerPosixTimerFd	m_class;
 #endif
 	XTimerBaseCallback callback;
 	void* m_userData;
@@ -43,6 +47,8 @@ XVtable* XTimer_class_init()
 	XVTABLE_INHERIT_DEFAULT(XTimerWin32TimeSetEvent_class_init());
 #elif XTIMER_IS_THREADPOOLTIMER
 	XVTABLE_INHERIT_DEFAULT(XTimerWin32ThreadpoolTimer_class_init());
+#elif XTIMER_IS_TIMERFD
+	XVTABLE_INHERIT_DEFAULT(XTimerPosixTimerFd_class_init());
 #endif
 	//void* table[] = 
 	//{
@@ -75,6 +81,9 @@ void XTimer_init(XTimer* timer)
 #elif XTIMER_IS_THREADPOOLTIMER
 	memset(((XTimerWin32ThreadpoolTimer*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerWin32ThreadpoolTimer));
 	XTimerWin32ThreadpoolTimer_init(timer);
+#elif XTIMER_IS_TIMERFD
+	memset(((XTimerPosixTimerFd*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerPosixTimerFd));
+	XTimerPosixTimerFd_init(timer);
 #endif
 	XClassGetVtable(timer) = XTimer_class_init();
 	XObject_setParent(timer, XCoreApplication_getTimerGroup());

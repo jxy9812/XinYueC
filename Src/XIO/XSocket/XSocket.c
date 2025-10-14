@@ -49,6 +49,7 @@ void XSocketBase_init(XSocketBase* socket)
     socket->m_peerAddress = XString_create_utf8(NULL);
 
     //XObject_setPollingInterval(socket,50);
+    // return;
     XObject_addEventFilter(socket, XEVENT_WRITE, WriteEventCB, NULL);
     XObject_addEventFilter(socket, XEVENT_READY, ReadEventCB, NULL);
     XObject_addEventFilter(socket, XEVENT_ERROR, ErrorEventCB, NULL);

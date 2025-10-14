@@ -8,6 +8,7 @@
 #include"XTimer.h"
 #include"XString.h"
 #include"XListSLinked.h"
+#include"XTimerTimeWheel.h"
 #include"XPrintf.h"
 #include<assert.h>
 #include<string.h>
@@ -336,8 +337,10 @@ static void  RecvSendData(XDataFrameComm* comm)
 }
 void VXCommunicatorBase_poll(XDataFrameComm* comm)
 {
+	//printf("轮询\n");
 	if (comm->m_state != XDFC_STATE_ENABLED||!XIODeviceBase_isOpen_base(comm->m_class.m_io))
 		return;//协议栈还未准备好
+	
 	RecvSendData(comm);
 }
 bool VXCommunicatorBase_connect(XDataFrameComm* comm)
