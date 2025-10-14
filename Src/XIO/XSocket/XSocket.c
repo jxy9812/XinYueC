@@ -1,10 +1,13 @@
 ﻿#include"XSocket.h"
 #include"XMemory.h"
 #include"XString.h"
+#include"XTimer.h"
 #include"XEvent.h"
 #include"XEventDispatcher.h"
 #include<string.h>
 #include<stdarg.h>
+void VXSocketBase_waitForConnected(XSocketBase* so, int msecs);
+void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs);
 //写入事件回调
 static void WriteEventCB(XEvent* event)
 {
@@ -26,6 +29,7 @@ static void ReadEventCB(XEvent* event)
         XIODeviceBase_readyRead_signal(so);
     }
 }
+//错误事件回调
 static void ErrorEventCB(XEvent* event)
 {
     XSocket* so = event->receiver;
@@ -161,4 +165,58 @@ void* XSocket_stateChanged_signal(XSocket* socket, XSocketState state)
         XSignalSlot_emit(((XObject*)socket)->m_signalSlot, XSocket_stateChanged_signal, (size_t)state, XEVENT_PRIORITY_NORMAL);
     }
     return XSocket_stateChanged_signal;
+}
+
+
+void VXSocketBase_waitForConnected(XSocketBase* so, int msecs)
+{
+    if (!so || so->m_state != XSOCKET_CONNECTING_STATE) return;
+    XEventLoop* loop = XEventLoop_create();
+    XTimer* timer = NULL;
+    XObject_connect(so, XSignal(XSocket_connected_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+    if (msecs > 0)
+    {
+        timer = XTimer_create();
+        XTimer_setInterval_base(timer, msecs);
+        XTimer_setTimeout_base(timer, msecs);
+        XTimerBase_setSingleShote(timer, true);
+        XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+        XTimer_start_base(timer);
+    }
+    if (so->m_state == XSOCKET_CONNECTING_STATE)
+    {
+        XEventLoop_exec_base(loop);
+    }
+    else
+    {
+        XTimer_delete_base(timer);
+    }
+    XEventLoop_delete_base(loop);
+}
+
+void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs)
+{
+    if (!so || so->m_state == XSOCKET_UNCONNECTED_STATE) return;
+
+    XEventLoop* loop = XEventLoop_create();
+    XTimer* timer = NULL;
+    XObject_connect(so, XSignal(XSocket_disconnected_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+    if (msecs > 0)
+    {
+        timer = XTimer_create();
+        XTimer_setInterval_base(timer, msecs);
+        XTimer_setTimeout_base(timer, msecs);
+        XTimerBase_setSingleShote(timer, true);
+        XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+        XTimer_start_base(timer);
+    }
+    if (so->m_state == XSOCKET_CONNECTED_STATE)
+    {
+        XEventLoop_exec_base(loop);
+    }
+    else
+    {
+        XTimer_delete_base(timer);
+    }
+    XEventLoop_delete_base(loop);
 }

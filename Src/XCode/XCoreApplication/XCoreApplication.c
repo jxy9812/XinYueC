@@ -6,6 +6,7 @@
 #include "XHashSet.h"
 #include "XMutex.h"
 #include "XObject.h"
+#include "XString.h"
 #include "XTimerGroupWheel.h"
 #include "XEventLoop.h"
 #include "XCircularQueueAtomic.h"
@@ -55,6 +56,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv)
 	app->m_argv = argv;
 	app->m_quit = false;
 	app->m_eventLoop = XEventLoop_create();
+	app->cmdParser = XCommandLineParser_create();  // 初始化命令行解析器
 	//app->m_postQueue = app->m_eventLoop->m_postQueue;
 
 	// 初始化定时器组
@@ -117,6 +119,7 @@ int XCoreApplication_exec()
 	{
 		return XEventLoop_exec_base(app->m_eventLoop);
 	}
+	XCoreApplication_aboutToQuit_signal(app);
 	return 0;
 }
 bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XAtomic_int32_t* ref_count, XEventPriority priority)
@@ -134,6 +137,77 @@ bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* args
 		return false;
 	return XEventLoop_postFunc(app->m_eventLoop, receiver, func, args,priority);
 }
+
+bool XCoreApplication_addFd(XObject* object, int fd, XEventType events)
+{
+	return XEventLoop_addFd(XCoreApplication_getEventLoop(), object, fd, events);
+}
+
+bool XCoreApplication_removeFd(int fd)
+{
+	return XEventLoop_removeFd(XCoreApplication_getEventLoop(), fd);
+}
+
+XCommandLineParser* XCoreApplication_getCommandLineParser(XCoreApplication* app) {
+	return app ? app->cmdParser : NULL;
+}
+
+void XCoreApplication_addCommandLineOption(XCoreApplication* app,
+	const char* shortName,
+	const char* longName,
+	const char* description,
+	bool requiresValue) {
+	if (app && app->cmdParser) {
+		XCommandLineParser_addOption(app->cmdParser, shortName, longName, description, requiresValue);
+	}
+}
+
+bool XCoreApplication_parseCommandLine(XCoreApplication* app) {
+	if (!app || !app->cmdParser) return false;
+	return XCommandLineParser_parse(app->cmdParser, app->m_argc, app->m_argv);
+}
+
+bool XCoreApplication_hasOption(XCoreApplication* app, const char* option) {
+	if (!app || !app->cmdParser) return false;
+	return XCommandLineParser_hasOption(app->cmdParser, option);
+}
+
+const char* XCoreApplication_getOptionValue(XCoreApplication* app, const char* option) {
+	if (!app || !app->cmdParser) return NULL;
+	return XCommandLineParser_getOptionValue(app->cmdParser, option);
+}
+
+XVector* XCoreApplication_positionalArguments(XCoreApplication* app) {
+	if (!app || !app->cmdParser) return NULL;
+	return XCommandLineParser_positionalArguments(app->cmdParser);
+}
+
+void XCoreApplication_printHelpAndExit(XCoreApplication* app, const char* description) {
+	if (!app || !app->cmdParser) return;
+	XString* help = XCommandLineParser_helpText(app->cmdParser, description);
+	XPrintf_string(help);
+	XString_delete_base(help);
+	XCoreApplication_quit();
+}
+
+void XCoreApplication_printVersionAndExit(XCoreApplication* app, const char* version) {
+	if (!app || !app->cmdParser) return;
+	XString* ver = XCommandLineParser_versionText(app->cmdParser, version);
+	XPrintf_string(ver);
+	XString_delete_base(ver);
+	XCoreApplication_quit();
+}
+
+// 完善析构函数，释放解析器
+void XCoreApplication_delete(XCoreApplication* app) {
+	if (app) {
+		XCommandLineParser_delete(app->cmdParser);  // 释放解析器
+		XEventLoop_delete_base(app->m_eventLoop);
+		XMemory_free(app);
+		if (g_app == app) g_app = NULL;
+	}
+}
+
 
 void* XCoreApplication_aboutToQuit_signal(XCoreApplication* app)
 {

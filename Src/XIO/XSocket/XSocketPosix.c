@@ -16,11 +16,14 @@
 #include <sys/ioctl.h>  // 包含 FIONREAD 定义
 #include <errno.h>
 
+void VXSocketBase_waitForConnected(XSocketBase* so, int msecs);
+void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs);
+
 // 前向声明所有虚函数
 static void VXSocketBase_connectToHost(XSocket* so, const char* hostName, uint16_t port, XIODeviceBaseMode mode);
 static void VXSocketBase_disconnectFromHost(XSocketBase* so);
-static void VXSocketBase_waitForConnected(XSocketBase* so, int msecs);
-static void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs);
+//static void VXSocketBase_waitForConnected(XSocketBase* so, int msecs);
+//static void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs);
 static const char* VXSocketBase_localAddress(XSocket* so);
 static uint16_t VXSocketBase_localPort(XSocket* so);
 static void VXIODevice_poll(XSocket* so);
@@ -118,7 +121,7 @@ static bool create_socket(XSocket* so)
     if (so->m_socket == -1) {
         return false;
     }
-     XEventLoop_addFd(XCoreApplication_getEventLoop(),so, so->m_socket, XEVENT_READY| XEVENT_WRITE);
+    XCoreApplication_addFd(so, so->m_socket, XEVENT_READY | XEVENT_WRITE);
     //so->m_pollfd.fd = so->m_socket;
     return true;
 }
@@ -144,63 +147,63 @@ static void VXSocketBase_disconnectFromHost(XSocketBase* so)
     }
 }
 
-static void VXSocketBase_waitForConnected(XSocketBase* so, int msecs)
-{
-    if (!so || so->m_state != XSOCKET_CONNECTING_STATE) return;
-
-    XSocket* linuxSo = (XSocket*)so;
-    if (linuxSo->m_socket == -1) return;
-
-    struct pollfd pfd;
-    pfd.fd = linuxSo->m_socket;
-    pfd.events = POLLOUT;
-    pfd.revents = 0;
-
-    int ret = poll(&pfd, 1, msecs);
-    if (ret <= 0) {
-        // 超时或错误
-        return;
-    }
-
-    if (pfd.revents & POLLOUT) {
-        // 检查连接是否成功
-        int error = 0;
-        socklen_t len = sizeof(error);
-        if (getsockopt(linuxSo->m_socket, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
-            so->m_state = XSOCKET_CONNECTED_STATE;
-            XSocket_stateChanged_signal(linuxSo, so->m_state);
-            XSocket_connected_signal(linuxSo);
-        }
-        else {
-            so->m_state = XSOCKET_UNCONNECTED_STATE;
-            XSocket_stateChanged_signal(linuxSo, so->m_state);
-        }
-    }
-}
-
-static void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs)
-{
-    if (!so || so->m_state == XSOCKET_UNCONNECTED_STATE) return;
-
-    XSocket* linuxSo = (XSocket*)so;
-    if (linuxSo->m_socket == -1) return;
-
-    struct pollfd pfd;
-    pfd.fd = linuxSo->m_socket;
-    pfd.events = POLLIN | POLLRDHUP;
-    pfd.revents = 0;
-
-    int ret = poll(&pfd, 1, msecs);
-    if (ret <= 0) {
-        return;
-    }
-
-    if (pfd.revents & (POLLRDHUP | POLLHUP | POLLERR)) {
-        so->m_state = XSOCKET_UNCONNECTED_STATE;
-        XSocket_stateChanged_signal(linuxSo, so->m_state);
-        XSocket_disconnected_signal(linuxSo);
-    }
-}
+//static void VXSocketBase_waitForConnected(XSocketBase* so, int msecs)
+//{
+//    if (!so || so->m_state != XSOCKET_CONNECTING_STATE) return;
+//
+//    XSocket* linuxSo = (XSocket*)so;
+//    if (linuxSo->m_socket == -1) return;
+//
+//    struct pollfd pfd;
+//    pfd.fd = linuxSo->m_socket;
+//    pfd.events = POLLOUT;
+//    pfd.revents = 0;
+//
+//    int ret = poll(&pfd, 1, msecs);
+//    if (ret <= 0) {
+//        // 超时或错误
+//        return;
+//    }
+//
+//    if (pfd.revents & POLLOUT) {
+//        // 检查连接是否成功
+//        int error = 0;
+//        socklen_t len = sizeof(error);
+//        if (getsockopt(linuxSo->m_socket, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+//            so->m_state = XSOCKET_CONNECTED_STATE;
+//            XSocket_stateChanged_signal(linuxSo, so->m_state);
+//            XSocket_connected_signal(linuxSo);
+//        }
+//        else {
+//            so->m_state = XSOCKET_UNCONNECTED_STATE;
+//            XSocket_stateChanged_signal(linuxSo, so->m_state);
+//        }
+//    }
+//}
+//
+//static void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs)
+//{
+//    if (!so || so->m_state == XSOCKET_UNCONNECTED_STATE) return;
+//
+//    XSocket* linuxSo = (XSocket*)so;
+//    if (linuxSo->m_socket == -1) return;
+//
+//    struct pollfd pfd;
+//    pfd.fd = linuxSo->m_socket;
+//    pfd.events = POLLIN | POLLRDHUP;
+//    pfd.revents = 0;
+//
+//    int ret = poll(&pfd, 1, msecs);
+//    if (ret <= 0) {
+//        return;
+//    }
+//
+//    if (pfd.revents & (POLLRDHUP | POLLHUP | POLLERR)) {
+//        so->m_state = XSOCKET_UNCONNECTED_STATE;
+//        XSocket_stateChanged_signal(linuxSo, so->m_state);
+//        XSocket_disconnected_signal(linuxSo);
+//    }
+//}
 
 static const char* VXSocketBase_localAddress(XSocket* so)
 {
@@ -318,7 +321,7 @@ static bool VXIODevice_close(XSocket* so)
     if(so->m_socket!=-1)
     {
         XIODeviceBase_aboutToClose_signal(so);
-        XEventLoop_removeFd(XCoreApplication_getEventLoop(),so->m_socket);
+        XCoreApplication_removeFd(so->m_socket);
         close(so->m_socket);
         so->m_socket = -1;
     }

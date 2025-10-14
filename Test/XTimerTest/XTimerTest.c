@@ -40,7 +40,7 @@ void XTimerTest()
 		//XConnection* conn=XObject_connect(timer,XSignal(XTimer_timeout_signal),timer, timerSlotFunc,XConnectionType_Queued);
 		//XObject_disconnect_conn(conn);
 		//XObject_disconnect(timer, XSignal(XTimer_timeout_signal), NULL, timerSlotFunc);
-		XTimer_callOnTimeout(timer,NULL, timerSlotFunc, XConnectionType_Auto);
+		//XTimer_callOnTimeout(timer,NULL, timerSlotFunc, XConnectionType_Auto);
 		// XTimer_start_base(timer);
 		// return;
 		//XTimer_singleShot(100, NULL, timerSlotFunc, XConnectionType_Auto);
@@ -53,7 +53,7 @@ void XTimerTest()
 		XEventLoop_exec_base(loop);
 		XPrintf("事件循环结束\n");
 		
-		//XEventLoop_delete_base(loop);
+		XEventLoop_delete_base(loop);
 		//XTimer_delete_base(timer);
 	}
 
