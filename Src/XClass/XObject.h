@@ -64,6 +64,8 @@ void XObject_deinit_base(XObject* object);
  */
 void XObject_delete_base(XObject* object);
 
+//精简信号发射
+#define EmitSignal(object,signal,args,priority) if(object)XObject_emitSignal(object,signal,args,priority);return signal
 void XObject_emitSignal(XObject* object, size_t signal, void* args, XEventPriority priority);
 void XObject_emitSignal_class(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority);
 void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, XEventPriority priority);

@@ -71,8 +71,8 @@ void XObject_setPollingInterval(XObject* object, size_t interval)
 	//间隔是0的时候关闭轮询
 	if (interval == 0&& object->m_poolTimer)
 	{//关闭轮询
-		XTimerBase_delete_base(object->m_poolTimer);
-		object->m_poolTimer = NULL;
+		XTimerBase_stop_base(object->m_poolTimer);
+		//object->m_poolTimer = NULL;
 		return;
 	}
 	if (object->m_poolTimer == NULL)
@@ -82,7 +82,6 @@ void XObject_setPollingInterval(XObject* object, size_t interval)
 		XTimerBase_setTimerCallback_base(object->m_poolTimer,XObject_poll_base);
 		XTimerBase_setUserData_base(object->m_poolTimer,object);
 		XTimerBase_setSingleShote(object->m_poolTimer, false);
-		//XObject_setParent(object->m_poolTimer, XThread_currentTimerGroup());
 	}
 	XTimerBase_setTimeout_base(object->m_poolTimer, interval);
 	XTimerBase_setInterval_base(object->m_poolTimer, interval);

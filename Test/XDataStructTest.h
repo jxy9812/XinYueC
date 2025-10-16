@@ -6,12 +6,7 @@ extern "C" {
 #include"CXinYueConfig.h"
 #include"XClass.h"
 //#include"XContainerTest/XContainerTest.h"
-#include"XContainerTest.h"
-#include"XProtocolStackTest.h"
-#include"XIOTest.h"
-#include"XCodeTest.h"
-#include"XTimerTest.h"
-#include"XLibraryTest.h"
+
 #if DEMOTEST
 	//排序算法测试
 	void SortTest();

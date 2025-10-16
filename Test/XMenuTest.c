@@ -7,6 +7,13 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include"XContainerTest.h"
+#include"XProtocolStackTest.h"
+#include"XIOTest.h"
+#include"XCodeTest.h"
+#include"XTimerTest.h"
+#include"XLibraryTest.h"
+#include"XDeviceTest.h"
 XMenu* XMenuTest_create()
 {
 	XMenu* root = XMenu_create("测试代码");
@@ -14,6 +21,7 @@ XMenu* XMenuTest_create()
 	XMenu_XContainerTest(root);
 	XMenu_XCodeTest(root);
 	XMenu_XIOTest(root);
+	XMenu_XDeviceTest(root);
 	XMenu_XProtocolStackTest(root);
 	XMenu_XTimerTest(root);
 	return root;

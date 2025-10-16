@@ -95,7 +95,6 @@ void XSerialPort_init(XSerialPort* serial)
     XIODeviceBase_setWriteBuffer_base(serial,1024);
     XIODeviceBase_setReadBuffer_base(serial, 1024);
 
-    XObject_setPollingInterval(serial, 10);
 }
 
 void VXSerialPort_deinit(XSerialPort* serial)
@@ -231,6 +230,7 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
         DWORD bytesRead;
         ReadFile(hSerial, &dummy, 1, &bytesRead, (OVERLAPPED*)serial->m_ov);
     }
+    XObject_setPollingInterval(serial, 10);
     return true;
 }
 
@@ -416,6 +416,7 @@ void VXIODevice_close(XSerialPort* serial)
 
     XSerialPortBase* parent = (XSerialPortBase*)serial;
     parent->m_class.m_mode = 0;
+    XObject_setPollingInterval(serial, 0);
 }
 
 // 轮询处理异步操作结果

@@ -102,6 +102,7 @@ XTimer* XTimer_create()
 }
 void TimerCallback(void* userData)
 {
+
 	XObject_postEvent(userData,XEvent_create(NULL,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
 }
 void TimerOutEventCb(XEvent* event)
