@@ -2,7 +2,7 @@
 #include "XEventDispatcher.h"
 #include "XEvent.h"
 #include "XMemory.h"
-#include "XTimerBase.h"
+#include "XTimer.h"
 #include "XQueueBase.h"
 #include "XThread.h"
 #include "XEpoll.h"
@@ -105,6 +105,7 @@ void XEventLoop_init(XEventLoop* loop)
     // 初始化互斥锁和条件变量
     loop->m_mutex = XMutex_create();
     loop->m_condition = XWaitCondition_create();
+    loop->m_deley = NULL;
     //线程级别的事件循环
     XEventLoop* threadLoop = XThread_currentEventLoop();
 
@@ -112,6 +113,7 @@ void XEventLoop_init(XEventLoop* loop)
     {//当前已经有线程事件循环了，引用它的数据
         loop->m_dispatcher = threadLoop->m_dispatcher;
         loop->m_ref_count = threadLoop->m_ref_count;
+        loop->m_deley = threadLoop->m_deley;
         XAtomic_fetch_add_int32(loop->m_ref_count, 1);  // 原子加1
     }
     else //初始化 
@@ -124,7 +126,6 @@ void XEventLoop_init(XEventLoop* loop)
         }
         loop->m_dispatcher = XEventDispatcher_create(XEventLoop_QueueSize);
         XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
-
         if (!XCoreApplication_global())
         {
             loop->m_postQueue = XCircularQueueAtomic_create(sizeof(PostData), XEventLoop_QueueSize);
@@ -202,6 +203,27 @@ bool XEventLoop_removeFd(XEventLoop* loop, int fd)
     if (!loop || !loop->m_epoll)
         return false;
     return XEpoll_ctl(loop->m_epoll, XEPOLL_CTL_DEL, fd,NULL) == 0;
+}
+
+void XEventLoop_delay(size_t msec)
+{
+    XEventLoop* loop = XThread_currentEventLoop();
+    if (loop == NULL)
+        return;
+    XTimer* timer = loop->m_deley;
+    if(loop->m_deley==NULL)
+    {
+        timer = XTimer_create();
+        loop->m_deley = timer;
+        XTimerBase_setAutoDelete(timer, false);
+        XTimerBase_setSingleShote(timer, true);
+        XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+    }
+ 
+    XTimer_setTimeout_base(timer,msec);
+    XTimer_setInterval_base(timer, msec);
+    XTimer_start_base(timer);
+    XEventLoop_exec_base(loop);
 }
 
 /**
@@ -368,9 +390,15 @@ static void VXEventLoop_deinit(XEventLoop* loop)
     if (XAtomic_fetch_sub_int32(loop->m_ref_count, 1) == 1)
     {
         // 释放放事件调度器
-        if (loop->m_dispatcher) {
+        if (loop->m_dispatcher)
+        {
             XEventDispatcher_delete_base(loop->m_dispatcher);
             loop->m_dispatcher = NULL;
+        }
+        if (loop->m_deley)
+        {
+            XTimer_delete_base(loop->m_deley);
+            loop->m_deley = NULL;
         }
         XMemory_free(loop->m_ref_count);
         loop->m_ref_count = NULL;

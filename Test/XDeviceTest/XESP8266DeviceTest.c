@@ -15,13 +15,14 @@ void XESP8266WifiTest(XMenu* root)
         return;
     }
 	XESP8266Wifi* wifi=XESP8266Wifi_create(serial);
- /*   if (!XESP8266Wifi_testAT(wifi))
+    if (!XESP8266Wifi_testAT(wifi))
         goto delete;
-    XPrintf("测试AT成功\n");*/
+    XPrintf("测试AT成功\n");
+    //XEventLoop_delay(500);
     XESP8266Wifi_setMode(wifi, XESP8266_Mode_STA_AP);
-
-    XESP8266Wifi_configAP(wifi,"8266","12345678",6, XESP8266_Encrypt_WPA_WPA2_PSK);
-    //XESP8266Wifi_reset(wifi);
+    //XEventLoop_delay(500);
+    XESP8266Wifi_configAP(wifi,"ESP8266","12345678",6, XESP8266_Encrypt_None);
+    XESP8266Wifi_reset(wifi);
     return;
 delete:
     XPrintf("ESP8266测试失败了，释放资源中\n");

@@ -205,7 +205,7 @@ static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XE
     snprintf(atCmd, sizeof(atCmd), "%s\r\n", cmd);
    
     size_t sent = VXESP8266_write(device, atCmd, strlen(atCmd));
-
+    XIODeviceBase_writeFull_base(device->m_io);
     if (sent != strlen(atCmd)) {
         DEBUG_PRINTF("AT command send failed: %s", cmd);
         return false;

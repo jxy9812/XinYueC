@@ -14,7 +14,7 @@ void XPLC_init(XPLC* plc)
 		return;
 	XObject_init(plc);
 	XClassGetVtable(plc) = XPLC_class_init();
-	XPLC_setDelayMsCb(plc, XTimerBase_delay_ms);
+	//XPLC_setDelayMsCb(plc, XTimerBase_delay_ms);
 	XPLC_setScanPeriod(plc,10);
 }
 

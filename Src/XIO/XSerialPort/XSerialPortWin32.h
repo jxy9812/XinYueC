@@ -15,7 +15,8 @@ typedef struct XSerialPort
     size_t m_readBufferSize;//
     size_t m_writeBufferSize;//
     void* m_hSerial;
-    void* m_ov;  //OVERLAPPED m_ov;
+    void* m_ovRead;             // 读操作重叠结构
+    void* m_ovWrite;            // 写操作重叠结构
 }XSerialPort;//串口
 XVtable* XSerialPort_class_init();
 XSerialPort* XSerialPort_create();

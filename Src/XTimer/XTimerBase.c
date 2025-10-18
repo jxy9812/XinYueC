@@ -197,7 +197,6 @@ static size_t GetCurrentTimeMillis() {
 	return (uli.QuadPart - EPOCH_OFFSET) / 10000;
 }
 static size_t(*global_getCurrentTime)() = GetCurrentTimeMillis;
-static void(*global_delay_ms)(size_t msec)=(void*)Sleep;
 #elif defined(__linux__) 
 #include <sys/time.h>
 #include <unistd.h>
@@ -254,15 +253,4 @@ size_t XTimerBase_getCurrentTime()
 void XTimerBase_setCurrentTimeFunc(size_t(*get)())
 {
 	global_getCurrentTime = get;
-}
-
-void XTimerBase_setDelayMsFunc(void(*delay)(const size_t msec))
-{
-	global_delay_ms = delay;
-}
-
-void XTimerBase_delay_ms(const size_t delay_ms)
-{
-	if (global_delay_ms)
-		global_delay_ms(delay_ms);
 }

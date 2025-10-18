@@ -84,13 +84,20 @@ void XSerialPort_init(XSerialPort* serial)
     serial->m_hSerial = INVALID_HANDLE_VALUE;
     XClassGetVtable(serial) = XSerialPort_class_init();
 
-    // 初始化重叠结构和事件
-    serial->m_ov = XMemory_malloc(sizeof(OVERLAPPED));
-    if (serial->m_ov) {
-        memset(serial->m_ov, 0, sizeof(OVERLAPPED));
-        ((OVERLAPPED*)serial->m_ov)->hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    // 初始化读操作的OVERLAPPED和事件
+    serial->m_ovRead = XMemory_malloc(sizeof(OVERLAPPED));
+    if (serial->m_ovRead) {
+        memset(serial->m_ovRead, 0, sizeof(OVERLAPPED));
+        ((OVERLAPPED*)serial->m_ovRead)->hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
     }
 
+    // 初始化写操作的OVERLAPPED和事件
+    serial->m_ovWrite = XMemory_malloc(sizeof(OVERLAPPED));
+    if (serial->m_ovWrite) {
+        memset(serial->m_ovWrite, 0, sizeof(OVERLAPPED));
+        ((OVERLAPPED*)serial->m_ovWrite)->hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    }
+  
     // 默认缓冲区大小
     XIODeviceBase_setWriteBuffer_base(serial,1024);
     XIODeviceBase_setReadBuffer_base(serial, 1024);
@@ -99,14 +106,19 @@ void XSerialPort_init(XSerialPort* serial)
 
 void VXSerialPort_deinit(XSerialPort* serial)
 {
-    if (serial->m_ov) {
-        if (((OVERLAPPED*)serial->m_ov)->hEvent != NULL) 
-        {
-            CloseHandle(((OVERLAPPED*)serial->m_ov)->hEvent);
-        }
-        XMemory_free(serial->m_ov);
-        serial->m_ov = NULL;
+    // 释放读事件
+    if (serial->m_ovRead) {
+        CloseHandle(((OVERLAPPED*)serial->m_ovRead)->hEvent);
+        XMemory_free(serial->m_ovRead);
+        serial->m_ovRead = NULL;
     }
+    // 释放写事件
+    if (serial->m_ovWrite) {
+        CloseHandle(((OVERLAPPED*)serial->m_ovWrite)->hEvent);
+        XMemory_free(serial->m_ovWrite);
+        serial->m_ovWrite = NULL;
+    }
+
     // 释放父对象
     XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Deinit, void(*)(XIODeviceBase*))(serial);
 }
@@ -228,7 +240,8 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
     if (mode & XIODeviceBase_ReadOnly) {
         char dummy;
         DWORD bytesRead;
-        ReadFile(hSerial, &dummy, 1, &bytesRead, (OVERLAPPED*)serial->m_ov);
+        ReadFile(hSerial, &dummy, 1, &bytesRead, (OVERLAPPED*)serial->m_ovRead);
+        ReadFile(hSerial, &dummy, 1, &bytesRead, (OVERLAPPED*)serial->m_ovWrite);
     }
     XObject_setPollingInterval(serial, 10);
     return true;
@@ -242,7 +255,7 @@ static size_t XSerialPort_write_async(XSerialPort* serial, const char* data, siz
         return 0;
     }
 
-    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
+    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ovWrite;
     // 重置事件
     ResetEvent(ov->hEvent);
 
@@ -284,9 +297,8 @@ size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize)
         }
 
         // 检查是否有未完成的写入操作
-        OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
         DWORD bytesTransferred;
-        DWORD result = check_async_result((HANDLE)serial->m_hSerial, ov, &bytesTransferred);
+        DWORD result = check_async_result((HANDLE)serial->m_hSerial, serial->m_ovWrite, &bytesTransferred);
 
         // 如果写入操作已完成，尝试刷写缓冲区
         if (result == ERROR_SUCCESS) {
@@ -312,10 +324,9 @@ size_t VXIODevice_writeFull(XSerialPort* serial)
         return 0;
 
     // 检查是否有未完成的写入
-    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
+    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ovWrite;
     DWORD bytesTransferred;
     DWORD result = check_async_result((HANDLE)serial->m_hSerial, ov, &bytesTransferred);
-
     // 如果有未完成的操作，不进行新的写入
     if (result == ERROR_IO_PENDING) {
         return 0;
@@ -346,7 +357,7 @@ static size_t XSerialPort_read_async(XSerialPort* serial, char* data, size_t max
         return 0;
     }
 
-    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
+    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ovRead;
     DWORD bytesRead;
 
     // 检查之前的读取操作是否完成
@@ -354,12 +365,12 @@ static size_t XSerialPort_read_async(XSerialPort* serial, char* data, size_t max
 
     if (result == ERROR_SUCCESS && bytesRead > 0) {
         // 有数据可读
-        if (bytesRead > maxSize) bytesRead = maxSize;
-        memcpy(data, &data[0], bytesRead); // 实际应用中应从缓冲区读取
+        //if (bytesRead > maxSize) bytesRead = maxSize;
+        ////memcpy(data, &data[0], bytesRead); // 实际应用中应从缓冲区读取
 
         // 立即启动下一次异步读取
         ResetEvent(ov->hEvent);
-        ReadFile((HANDLE)serial->m_hSerial, data, maxSize, NULL, ov);
+        ReadFile((HANDLE)serial->m_hSerial, data, maxSize, &bytesRead, ov);
         return bytesRead;
     }
     else if (result == ERROR_IO_PENDING) {
@@ -426,12 +437,12 @@ static void VXIODevice_poll(XSerialPort* serial)
         return;
 
     XIODeviceBase* io = (XIODeviceBase*)serial;
-    OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
+    //OVERLAPPED* ov = (OVERLAPPED*)serial->m_ov;
     DWORD bytesTransferred;
 
     // 检查写入操作结果
     if (io->m_mode & XIODeviceBase_WriteOnly) {
-        DWORD result = check_async_result((HANDLE)serial->m_hSerial, ov, &bytesTransferred);
+        DWORD result = check_async_result((HANDLE)serial->m_hSerial, serial->m_ovWrite, &bytesTransferred);
         if (result == ERROR_SUCCESS && bytesTransferred > 0) {
             // 发送写入完成信号
             XIODeviceBase_bytesWritten_signal(io, bytesTransferred);
@@ -456,7 +467,7 @@ static void VXIODevice_poll(XSerialPort* serial)
             bytesRead = comStat.cbInQue;
             if (bytesRead > sizeof(buffer)) bytesRead = sizeof(buffer);
 
-            if (ReadFile((HANDLE)serial->m_hSerial, buffer, bytesRead, &bytesRead, ov)) {
+            if (ReadFile((HANDLE)serial->m_hSerial, buffer, bytesRead, &bytesRead, serial->m_ovRead)) {
                 // 读取成功，放入缓冲区
                 if (io->m_readBuffer) {
                     for (DWORD i = 0; i < bytesRead; i++) {
@@ -469,7 +480,7 @@ static void VXIODevice_poll(XSerialPort* serial)
         }
 
         // 重新启动异步读取
-        ResetEvent(ov->hEvent);
+        ResetEvent(serial->m_ovRead);
         //ReadFile((HANDLE)serial->m_hSerial, buffer, sizeof(buffer), NULL, ov);
     }
     else if(io->m_readBuffer==NULL && (io->m_mode & XIODeviceBase_ReadOnly))

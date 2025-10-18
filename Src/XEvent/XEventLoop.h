@@ -52,6 +52,7 @@ typedef struct XEventLoop
     XWaitCondition* m_condition;      // 等待条件变量
     XMutex* m_mutex;                  // 互斥锁
     XAtomic_int32_t* m_ref_count;         // 引用计数：用于 Copy-On-Write 机制的资源管理
+    XTimer* m_deley;
     int m_exitCode;                   // 退出代码
     bool m_quitOnLastWindowClosed;    // 当最后一个窗口关闭时退出
 } XEventLoop;
@@ -142,6 +143,8 @@ void XEventLoop_setQuitOnLastWindowClosed(XEventLoop* loop, bool quit);
 
 bool XEventLoop_addFd(XEventLoop* loop, XObject* object, int fd, XEventType events);
 bool XEventLoop_removeFd(XEventLoop* loop, int fd);
+//定时器延迟
+void XEventLoop_delay(size_t msec);
 #ifdef __cplusplus
 }
 #endif
