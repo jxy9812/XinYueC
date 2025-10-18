@@ -64,19 +64,20 @@ typedef enum {
  * @brief AT指令操作类型
  */
 typedef enum {
-    XESP8266_Op_None,
-    XESP8266_Op_TestAT,
-    XESP8266_Op_Reset,
-    XESP8266_Op_SetMode,
-    XESP8266_Op_ConnectWiFi,
-    XESP8266_Op_DisconnectWiFi,
-    XESP8266_Op_ConfigAP,
-    XESP8266_Op_ConnectServer,
-    XESP8266_Op_DisconnectServer,
-    XESP8266_Op_StartServer,
-    XESP8266_Op_StopServer,
-    XESP8266_Op_EnterTransparent,
-    XESP8266_Op_ExitTransparent
+    XESP8266_Op_None,               // 无操作
+    XESP8266_Op_TestAT,             // 测试AT指令
+    XESP8266_Op_Reset,              // 重置模块
+    XESP8266_Op_SetMode,            // 设置工作模式
+    XESP8266_Op_ConnectWiFi,        // 连接WiFi
+    XESP8266_Op_DisconnectWiFi,     // 断开WiFi连接
+    XESP8266_Op_ConfigAP,           // 配置AP模式
+    XESP8266_Op_ConnectServer,      // 连接服务器
+    XESP8266_Op_DisconnectServer,   // 断开服务器连接
+    XESP8266_Op_WriteData,          // 写入数据
+    XESP8266_Op_StartServer,        // 启动服务器
+    XESP8266_Op_StopServer,         // 停止服务器
+    XESP8266_Op_EnterTransparent,   // 进入透传模式
+    XESP8266_Op_ExitTransparent     // 退出透传模式
 } XESP8266WifiOpType;
 
 /**
@@ -98,6 +99,7 @@ typedef struct XESP8266Wifi {
     XEventLoop* m_loop;
     XESP8266WifiOpType m_currentOp;           // 当前操作类型
     char m_responseBuffer[512];           // 响应临时缓冲区
+    //char m_cmd[128];//cmd缓冲区
     size_t m_responseLen;                 // 响应数据长度
 } XESP8266Wifi;
 

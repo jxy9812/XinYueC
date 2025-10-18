@@ -118,7 +118,6 @@ void VXSerialPort_deinit(XSerialPort* serial)
         XMemory_free(serial->m_ovWrite);
         serial->m_ovWrite = NULL;
     }
-
     // 释放父对象
     XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Deinit, void(*)(XIODeviceBase*))(serial);
 }
@@ -417,7 +416,7 @@ size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize)
 
 void VXIODevice_close(XSerialPort* serial)
 {
-    if (serial == NULL || serial->m_hSerial == INVALID_HANDLE_VALUE)
+    if (serial == NULL || serial->m_hSerial == INVALID_HANDLE_VALUE||!XIODeviceBase_isOpen_base(serial))
         return;
 
     // 取消所有未完成的异步操作
@@ -425,9 +424,8 @@ void VXIODevice_close(XSerialPort* serial)
     CloseHandle((HANDLE)serial->m_hSerial);
     serial->m_hSerial = INVALID_HANDLE_VALUE;
 
-    XSerialPortBase* parent = (XSerialPortBase*)serial;
-    parent->m_class.m_mode = 0;
     XObject_setPollingInterval(serial, 0);
+    ((XIODeviceBase*)serial)->m_mode = XIODeviceBase_NotOpen;
 }
 
 // 轮询处理异步操作结果
