@@ -16,6 +16,7 @@ void XESP8266WifiTest(XMenu* root)
         return;
     }
 	XESP8266Wifi* wifi=XESP8266Wifi_create(serial);
+    XESP8266Wifi_setMultiConnMode(wifi,true);
     if (!XESP8266Wifi_testAT(wifi))
         goto delete;
     XPrintf("测试AT成功\n");
@@ -30,13 +31,14 @@ void XESP8266WifiTest(XMenu* root)
         goto delete;
     XPrintf("连接Wifi成功\n");
     XEventLoop_delay(3000);
-    if (!XESP8266Wifi_connectServer(wifi, XESP8266_Protocol_TCP, "192.168.1.51", 6666))
+    int conn = XESP8266Wifi_connectServer(wifi, XESP8266_Protocol_TCP, "192.168.1.51", 6666,-1);
+    if (conn==-1)
         goto delete;
     XPrintf("连接服务器成功\n");
     
     char str[] = "你好\r\n";
     XEventLoop_delay(500);
-    XESP8266Wifi_sendData(wifi, str,strlen(str));
+    XESP8266Wifi_sendData(wifi, conn,str,strlen(str));
     return;
 delete:
     XPrintf("ESP8266测试失败了，释放资源中\n");

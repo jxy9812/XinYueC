@@ -68,6 +68,7 @@ typedef enum {
     XESP8266_Op_TestAT,             // 测试AT指令
     XESP8266_Op_Reset,              // 重置模块
     XESP8266_Op_SetMode,            // 设置工作模式
+    XESP8266_Op_SetMultiConnMode,   // 设置多连接模式
     XESP8266_Op_ConnectWiFi,        // 连接WiFi
     XESP8266_Op_DisconnectWiFi,     // 断开WiFi连接
     XESP8266_Op_ConfigAP,           // 配置AP模式
@@ -79,7 +80,21 @@ typedef enum {
     XESP8266_Op_EnterTransparent,   // 进入透传模式
     XESP8266_Op_ExitTransparent     // 退出透传模式
 } XESP8266WifiOpType;
+// 最大支持连接数（ESP8266固件通常支持5个）
+#define XESP8266_MAX_CONNS 5
 
+/**
+ * 单个连接的信息
+ */
+typedef struct 
+{
+    int connId;                   // 连接ID（0~4）
+    char ip[16];                  // 对端IP
+    uint16_t port;                // 对端端口
+    XESP8266WifiProtocol protocol;// 协议（TCP/UDP）
+    XESP8266WifiStatus status;    // 连接状态
+    bool isServer;                // 是否为服务器模式下的客户端连接
+} XESP8266ConnInfo;
 /**
  * @brief ESP8266设备结构体
  */
@@ -101,6 +116,10 @@ typedef struct XESP8266Wifi {
     char m_responseBuffer[512];           // 响应临时缓冲区
     //char m_cmd[128];//cmd缓冲区
     size_t m_responseLen;                 // 响应数据长度
+
+    XESP8266ConnInfo m_connections[XESP8266_MAX_CONNS];  // 连接数组
+    int m_activeConnCount;                // 活跃连接数
+    bool m_multiConnMode;                 // 多连接模式标志（AT+CIPMUX=1）
 } XESP8266Wifi;
 
 /**
@@ -132,7 +151,13 @@ bool XESP8266Wifi_testAT(XESP8266Wifi* device);
  * @return 操作是否成功发起
  */
 bool XESP8266Wifi_reset(XESP8266Wifi* device);
-
+/**
+ * 开启/关闭多连接模式（必须在连接服务器前调用）
+ * @param device 设备指针
+ * @param enable true=开启多连接，false=关闭
+ * @return 操作是否成功
+ */
+bool XESP8266Wifi_setMultiConnMode(XESP8266Wifi* device, bool enable);
 /**
  * @brief 设置工作模式（异步）
  * @param device XESP8266Wifi对象指针
@@ -173,16 +198,16 @@ bool XESP8266Wifi_configAP(XESP8266Wifi* device, const char* ssid, const char* p
     int channel, XESP8266WifiEncryption encrypt);
 
 /**
- * @brief 连接到服务器（异步）
- * @details 发送"AT+CIPSTART"指令，连接结果通过serverStatusChanged信号通知
- * @param device XESP8266Wifi对象指针
- * @param protocol 协议类型(TCP/UDP)
- * @param ip 服务器IP地址
+ * 连接到服务器（多连接版本）
+ * @param device 设备指针
+ * @param protocol 协议类型
+ * @param ip 服务器IP
  * @param port 服务器端口
- * @return 操作是否成功发起
+ * @param connId 连接ID（0~4，-1表示自动分配）
+ * @return 成功返回连接ID，失败返回-1
  */
-bool XESP8266Wifi_connectServer(XESP8266Wifi* device, XESP8266WifiProtocol protocol,
-    const char* ip, uint16_t port);
+int XESP8266Wifi_connectServer(XESP8266Wifi* device, XESP8266WifiProtocol protocol,
+    const char* ip, uint16_t port, int connId);
 
 /**
  * @brief 断开服务器连接（异步）
@@ -191,7 +216,13 @@ bool XESP8266Wifi_connectServer(XESP8266Wifi* device, XESP8266WifiProtocol proto
  * @return 操作是否成功发起
  */
 bool XESP8266Wifi_disconnectServer(XESP8266Wifi* device);
-
+/**
+ * 断开指定连接
+ * @param device 设备指针
+ * @param connId 连接ID
+ * @return 是否成功
+ */
+bool XESP8266Wifi_disconnectConn(XESP8266Wifi* device, int connId);
 /**
  * @brief 开启服务器模式（异步）
  * @details 发送"AT+CIPSERVER"指令，开启TCP/UDP服务器
@@ -211,14 +242,14 @@ bool XESP8266Wifi_startServer(XESP8266Wifi* device, XESP8266WifiProtocol protoco
 bool XESP8266Wifi_stopServer(XESP8266Wifi* device);
 
 /**
- * @brief 发送数据（异步）
- * @details 透传模式下直接发送数据；非透传模式下使用"AT+CIPSEND"指令发送
- * @param device XESP8266Wifi对象指针
- * @param data 要发送的数据
+ * 向指定连接发送数据
+ * @param device 设备指针
+ * @param connId 连接ID（0~4）
+ * @param data 数据
  * @param size 数据大小
- * @return 操作是否成功发起
+ * @return 是否发送成功
  */
-bool XESP8266Wifi_sendData(XESP8266Wifi* device, const void* data, size_t size);
+bool XESP8266Wifi_sendData(XESP8266Wifi* device, int connId, const void* data, size_t size);
 
 /**
  * @brief 进入透传模式（异步）
