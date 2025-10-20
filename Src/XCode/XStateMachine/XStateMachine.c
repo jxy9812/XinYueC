@@ -327,42 +327,42 @@ void* XStateMachine_userData(const XStateMachine* machine) {
 void* XStateMachine_entered_signal(XStateMachine* machine, XAbstractState* state)
 {
     if (machine)
-        XObject_emitSignal(machine, XStateMachine_entered_signal, state, XEVENT_PRIORITY_NORMAL);
+        XObject_emitSignal(machine, XStateMachine_entered_signal, state,NULL,NULL, XEVENT_PRIORITY_NORMAL);
     return XStateMachine_entered_signal;
 }
 
 void* XStateMachine_exited_signal(XStateMachine* machine, XAbstractState* state)
 {
     if (machine)
-        XObject_emitSignal(machine, XStateMachine_exited_signal, state, XEVENT_PRIORITY_NORMAL);
+        XObject_emitSignal(machine, XStateMachine_exited_signal, state, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return XStateMachine_exited_signal;
 }
 
 void* XStateMachine_start_signal(XStateMachine* machine)
 {
     if (machine)
-        XObject_emitSignal(machine, XStateMachine_start_signal, NULL, XEVENT_PRIORITY_NORMAL);
+        XObject_emitSignal(machine, XStateMachine_start_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return XStateMachine_start_signal;
 }
 
 void* XStateMachine_stop_signal(XStateMachine* machine)
 {
     if (machine)
-        XObject_emitSignal(machine, XStateMachine_stop_signal, NULL, XEVENT_PRIORITY_NORMAL);
+        XObject_emitSignal(machine, XStateMachine_stop_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return XStateMachine_stop_signal;
 }
 
 void* XStateMachine_pause_signal(XStateMachine* machine)
 {
     if (machine)
-        XObject_emitSignal(machine, XStateMachine_pause_signal, NULL, XEVENT_PRIORITY_NORMAL);
+        XObject_emitSignal(machine, XStateMachine_pause_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return XStateMachine_pause_signal;
 }
 
 void* XStateMachine_resume_signal(XStateMachine* machine)
 {
     if (machine)
-        XObject_emitSignal(machine, XStateMachine_resume_signal, NULL, XEVENT_PRIORITY_NORMAL);
+        XObject_emitSignal(machine, XStateMachine_resume_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return XStateMachine_resume_signal;
 }
 

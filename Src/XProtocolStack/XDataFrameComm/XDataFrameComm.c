@@ -411,9 +411,7 @@ bool XDataFrameComm_postEvent(XDataFrameComm* comm, XEvent* ev)
 }
 void* XDataFrameComm_frameReceived_signal(XDataFrameComm* comm, XByteArray* data, XAtomic_int32_t* ref_count)
 {
-	if (comm && ((XObject*)comm)->m_signalSlot)
-		XObject_emitSignal_class(comm, XDataFrameComm_frameReceived_signal, XByteArray_create_copy(data), ref_count,XEVENT_PRIORITY_NORMAL);
-	return XDataFrameComm_frameReceived_signal;
+	EmitSignal(comm, XDataFrameComm_frameReceived_signal, XByteArray_create_copy(data), XByteArray_delete_base, ref_count, XEVENT_PRIORITY_NORMAL);
 }
 void XDataFrameComm_EvnetHandCb(XEvent* event)
 {

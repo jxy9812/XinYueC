@@ -106,14 +106,14 @@ size_t XIODeviceBase_writeFull_base(XIODeviceBase* io)
 void* XIODeviceBase_aboutToClose_signal(XIODeviceBase* io)
 {
 	if (io)
-		XSignalSlot_emit(((XObject*)io)->m_signalSlot, XIODeviceBase_aboutToClose_signal, NULL, XEVENT_PRIORITY_NORMAL);
+		XObject_emitSignal(io, XIODeviceBase_aboutToClose_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 	return XIODeviceBase_aboutToClose_signal;
 }
 
 void* XIODeviceBase_readyRead_signal(XIODeviceBase* io)
 {
 	if (io)
-		XSignalSlot_emit(((XObject*)io)->m_signalSlot, XIODeviceBase_readyRead_signal, NULL, XEVENT_PRIORITY_NORMAL);
+		XObject_emitSignal(io, XIODeviceBase_readyRead_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 	return XIODeviceBase_readyRead_signal;
 }
 
@@ -121,7 +121,7 @@ void* XIODeviceBase_bytesWritten_signal(XIODeviceBase* io, size_t bytes)
 {
 	if (io)
 	{
-		XSignalSlot_emit(((XObject*)io)->m_signalSlot, XIODeviceBase_bytesWritten_signal, (size_t)bytes, XEVENT_PRIORITY_NORMAL);
+		XObject_emitSignal(io, XIODeviceBase_bytesWritten_signal, (size_t)bytes, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 	}
 	return XIODeviceBase_bytesWritten_signal;
 }

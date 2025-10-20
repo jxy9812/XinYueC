@@ -42,7 +42,7 @@ bool XObject_moveToThread(XObject* object, XThread* thread);
 //给Object投递事件
 bool XObject_postEvent(XObject* object, XEvent* event, XEventPriority priority);
 //给Object投递函数(ps异步,将在事件循环中执行)
-bool XObject_postFunc(XObject* object, void (*func)(void*), void* args,XEventSendMode mode, XEventPriority priority);
+bool XObject_postFunc(XObject* object, void (*func)(void*), void* args, void(*del)(void*),XEventSendMode mode, XEventPriority priority);
 XThread* XObject_thread(XObject* object);
 XEventDispatcher* XObject_getEventDispatcher(XObject* object);
 XEventLoop* XObject_getEventLoop(XObject* object);
@@ -65,11 +65,10 @@ void XObject_deinit_base(XObject* object);
 void XObject_delete_base(XObject* object);
 
 //精简信号发射
-#define EmitSignal(object,signal,args,priority) if(object)XObject_emitSignal(object,signal,args,priority);return signal
-void XObject_emitSignal(XObject* object, size_t signal, void* args, XEventPriority priority);
-void XObject_emitSignal_class(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority);
-void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, XEventPriority priority);
-void XObject_emitSignal_class_queue(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority);
+#define EmitSignal(object,signal,args,del,ref_count,priority) if(object)XObject_emitSignal(object,signal,args,del,ref_count,priority);return signal
+#define EmitSignalQueue(object,signal,args,del,ref_count,priority) if(object)XObject_emitSignal_queue(object,signal,args,del,ref_count,priority);return signal
+void XObject_emitSignal(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority);
+void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority);
 //slot: void deinit_slot(XObject* receiver, void* args,XObject* m_sender)
 void* XObject_deinit_signal(XObject* object);
 

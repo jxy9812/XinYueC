@@ -88,7 +88,7 @@ void  XAtomic_memory_barrier_release();
  * @note 此宏直接对原子变量的内部值进行赋值，非原子操作，应在多线程访问前调用
 */
 #define XAtomic_init(var, v) do { (var).value = (v); } while(0)
-
+#define XAtomic_delete			XMemory_free
 #ifdef __cplusplus
 }
 #endif

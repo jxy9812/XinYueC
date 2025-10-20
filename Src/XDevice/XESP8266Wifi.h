@@ -102,15 +102,15 @@ typedef struct XESP8266Wifi {
     XIODeviceBase m_class;                // 继承XIODeviceBase
     XIODeviceBase* m_io;                  // 底层IO设备(外部传入)
     XESP8266WifiStatus m_wifiStatus;          // WiFi连接状态
-    XESP8266WifiStatus m_serverStatus;        // 服务器连接状态
+    //XESP8266WifiStatus m_serverStatus;        // 服务器连接状态
     XTimerBase* m_timeoutTimer;           // 超时定时器
     XString* m_ssid;                      // WiFi名称缓存
     XString* m_password;                  // WiFi密码缓存
-    XString* m_serverIP;                  // 服务器IP缓存
-    uint16_t m_serverPort;                // 服务器端口缓存
+    //XString* m_serverIP;                  // 服务器IP缓存
+    //uint16_t m_serverPort;                // 服务器端口缓存
     bool m_transparentMode;               // 透传模式标志
     bool m_operationResult;               // 操作结果
-    XESP8266WifiProtocol m_protocol;          // 协议类型缓存
+    //XESP8266WifiProtocol m_protocol;          // 协议类型缓存
     XEventLoop* m_loop;
     XESP8266WifiOpType m_currentOp;           // 当前操作类型
     char m_responseBuffer[512];           // 响应临时缓冲区
@@ -118,6 +118,8 @@ typedef struct XESP8266Wifi {
     size_t m_responseLen;                 // 响应数据长度
 
     XESP8266ConnInfo m_connections[XESP8266_MAX_CONNS];  // 连接数组
+    int m_pendingConnId;              // 等待结果的连接ID
+    XESP8266WifiStatus m_pendingStatus; // 等待的连接结果状态
     int m_activeConnCount;                // 活跃连接数
     bool m_multiConnMode;                 // 多连接模式标志（AT+CIPMUX=1）
 } XESP8266Wifi;

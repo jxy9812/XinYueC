@@ -3,8 +3,19 @@
 #include<stdio.h>
 #include<math.h>
 #include"XCoreApplication.h"
+static void test(int a, char b)
+{
+	printf("a:%p var:%d b:%p b:%c\n",&a,a,&b,b);
+}
 int main(int argc, char* args[])
 {
+	char data[10];
+	*((int*)data) = 1;
+	*((char*)data+4) = 'c';
+	void (*p)(int data)= test;
+	test(1,'c');
+	p(data);
+
 	XCoreApplication* app = XCoreApplication_create(argc,args);
 	// 设置应用描述
 	XCoreApplication_setApplicationDescription(app, "示例命令行工具");

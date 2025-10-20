@@ -105,7 +105,7 @@ int XCoreApplication_exec();
  * @return 成功返回true，失败返回false
  */
 bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*),
-    XSignalSlot* signalSlot, size_t signal, void* args,
+    XSignalSlot* signalSlot, size_t signal, void* args, void(*del)(void*),
     XAtomic_int32_t* ref_count, XEventPriority priority);
 
 /**
@@ -116,7 +116,7 @@ bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*
  * @param priority 事件优先级
  * @return 成功返回true，失败返回false
  */
-bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* args, XEventPriority priority);
+bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* args, void(*del)(void*), XEventPriority priority);
 
 /**
  * @brief 添加文件描述符到事件循环

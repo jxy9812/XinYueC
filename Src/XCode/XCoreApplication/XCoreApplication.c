@@ -184,22 +184,23 @@ int XCoreApplication_exec() {
 }
 
 bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*),
-    XSignalSlot* signalSlot, size_t signal, void* args,
-    XAtomic_int32_t* ref_count, XEventPriority priority) {
+    XSignalSlot* signalSlot, size_t signal, void* args, void(*del)(void*),
+    XAtomic_int32_t* ref_count, XEventPriority priority) 
+{
     XCoreApplication* app = XCoreApplication_global();
     if (!app || !app->m_eventLoop)
         return false;
 
     return XEventLoop_postSendSignal(app->m_eventLoop, sendFunc, signalSlot, signal,
-        args, ref_count, priority);
+        args, del,ref_count, priority);
 }
 
-bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* args, XEventPriority priority) {
+bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* args, void(*del)(void*), XEventPriority priority) {
     XCoreApplication* app = XCoreApplication_global();
     if (!app || !app->m_eventLoop)
         return false;
 
-    return XEventLoop_postFunc(app->m_eventLoop, receiver, func, args, priority);
+    return XEventLoop_postFunc(app->m_eventLoop, receiver, func, args, del,priority);
 }
 
 bool XCoreApplication_addFd(XObject* object, int fd, XEventType events) {
@@ -268,10 +269,7 @@ void XCoreApplication_printVersionAndExit(XCoreApplication* app, const char* ver
     XCoreApplication_quit();
 }
 
-void* XCoreApplication_aboutToQuit_signal(XCoreApplication* app) {
-    if (app)
-    {
-        XObject_emitSignal(app, XCoreApplication_aboutToQuit_signal, NULL, XEVENT_PRIORITY_LOWEST);
-    }
-    return XCoreApplication_aboutToQuit_signal;
+void* XCoreApplication_aboutToQuit_signal(XCoreApplication* app) 
+{
+    EmitSignal(app, XCoreApplication_aboutToQuit_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
 }

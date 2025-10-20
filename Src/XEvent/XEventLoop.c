@@ -38,6 +38,7 @@ typedef struct PostData
         };
     };
     void* args;
+    void(*del)(void*);              // 参数释放方式
     XAtomic_int32_t* ref_count;//参数引用次数
     XEventPriority priority;
 }PostData;//
@@ -447,18 +448,18 @@ bool XEventLoop_hasPendingEvents_base(XEventLoop* loop) {
     return XClassGetVirtualFunc(loop, EXEventLoop_HasPendingEvents, bool (*)(XEventLoop*))(loop);
 }
 
-bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, XAtomic_int32_t* ref_count, XEventPriority priority)
+bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority)
 {
     if (!loop || loop->m_postQueue == NULL)
         return false;
-    PostData data = {.type=Post_SignalSlot, .sendSignalFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args,.ref_count=ref_count, .priority=priority };
+    PostData data = {.type=Post_SignalSlot, .sendSignalFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args,.del=del,.ref_count=ref_count, .priority=priority };
     return XQueueBase_push_base(loop->m_postQueue, &data);
 }
 
-bool XEventLoop_postFunc(XEventLoop* loop, XObject* receiver, void(*func)(void*), void* args, XEventPriority priority)
+bool XEventLoop_postFunc(XEventLoop* loop, XObject* receiver, void(*func)(void*), void* args, void(*del)(void*), XEventPriority priority)
 {
     if (loop == NULL ||  func == NULL)
         return false;
-    PostData data = { .type = Post_Func, .run_func = func,.signalSlot = NULL,.object = receiver,.args = args,.priority=priority };
+    PostData data = { .type = Post_Func, .run_func = func,.signalSlot = NULL,.object = receiver,.args = args,.del=del,.priority=priority };
     return XQueueBase_push_base(loop->m_postQueue, &data);
 }

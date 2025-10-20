@@ -401,7 +401,7 @@ static void TimerSendExpired(XDataFrameComm* comm)
 	//XPrintf("发送完一帧数据\n");
 	{
 		//XObject_postEvent(comm, XEventFunc_create_oneAccept(SendExpired,comm),XEVENT_PRIORITY_NORMAL);
-		XObject_postFunc(comm, SendExpired, comm, XEVENT_SEND_DIRECT, XEVENT_PRIORITY_NORMAL);
+		XObject_postFunc(comm, SendExpired, comm,NULL, XEVENT_SEND_DIRECT, XEVENT_PRIORITY_NORMAL);
 	}
 }
 XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode mode)
@@ -463,7 +463,7 @@ static void RecvExpired(XDataFrameComm* comm)
 static void TimerRecvExpired(XDataFrameComm* comm)
 {  
 	//XObject_postEvent(comm, XEventFunc_create_oneAccept(RecvExpired, comm), XEVENT_PRIORITY_NORMAL);
-	XObject_postFunc(comm, RecvExpired, comm, XEVENT_SEND_DIRECT, XEVENT_PRIORITY_NORMAL);
+	XObject_postFunc(comm, RecvExpired, comm, NULL,XEVENT_SEND_DIRECT, XEVENT_PRIORITY_NORMAL);
 }
 XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameEndType mode)
 {

@@ -158,18 +158,18 @@ bool XObject_postEvent(XObject* object, XEvent* event, XEventPriority priority)
 	return XEventDispatcher_postEvent_base(XObject_getEventDispatcher(object), event, priority);
 }
 
-bool XObject_postFunc(XObject* object, void(*func)(void*), void* args, XEventSendMode mode, XEventPriority priority)
+bool XObject_postFunc(XObject* object, void(*func)(void*), void* args, void(*del)(void*), XEventSendMode mode, XEventPriority priority)
 {
 	if (object == NULL|| func == NULL|| mode== XEVENT_SEND_INVALID)
 		return false;
 	if (mode == XEVENT_SEND_DIRECT)
 	{
 		//投递函数
-		return XObject_postEvent(object, XEventFunc_create(func,args), XEVENT_PRIORITY_NORMAL);
+		return XObject_postEvent(object, XEventFunc_create(func,args), priority);
 	}
 	else if (mode == XEVENT_SEND_QUEUED)
 	{//投递到队列，等待主线程事件循环中调用
-		return XCoreApplication_postFunc(object,func,args, priority);
+		return XCoreApplication_postFunc(object,func,args,del, priority);
 	}
 }
 
@@ -275,38 +275,21 @@ void XObject_delete_base(XObject* object)
 	XObject_postEvent(object, XEventFunc_create_oneAccept(delete, object), XEVENT_PRIORITY_LOWEST);
 }
 
-void XObject_emitSignal(XObject* object, size_t signal, void* args, XEventPriority priority)
+void XObject_emitSignal(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority)
 {
 	if(object)
-		XSignalSlot_emit(object->m_signalSlot, signal, args, priority);
+		XSignalSlot_emit(object->m_signalSlot, signal, args,del, ref_count,priority);
 }
 
-void XObject_emitSignal_class(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority)
+void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority)
 {
 	if (object)
-		XSignalSlot_emit_class(object->m_signalSlot, signal, args, ref_count, priority);
-}
-
-void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, XEventPriority priority)
-{
-	if (object)
-		XSignalSlot_emit_queue(object->m_signalSlot, signal, args, priority);
-}
-
-void XObject_emitSignal_class_queue(XObject* object, size_t signal, XClass* args, XAtomic_int32_t* ref_count, XEventPriority priority)
-{
-	if (object)
-		XSignalSlot_emit_class_queue(object->m_signalSlot, signal, args, ref_count, priority);
+		XSignalSlot_emit_queue(object->m_signalSlot, signal, args, del, ref_count,priority);
 }
 
 void* XObject_deinit_signal(XObject* object)
 {
-	if(object)
-	{
-		XObject_emitSignal(object, XObject_deinit_signal, NULL,XEVENT_PRIORITY_LOWEST);
-	}
-	return XObject_deinit_signal;
-	
+	EmitSignal(object, XObject_deinit_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
 }
 
 void VXObject_poll(XObject* object)

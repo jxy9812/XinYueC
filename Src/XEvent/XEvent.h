@@ -60,6 +60,7 @@ typedef struct XEventFunc
     XEvent event;
     void (*func)(void* userData); // 需要执行的函数
     void* args;                   // 函数参数
+    void(*del)(void*);              // 参数释放方式
     bool oneAccept;               // 是否执行一次后就接受事件
 }XEventFunc;
 /**
@@ -95,6 +96,7 @@ typedef struct XEventSlotFunc
     XSlotFunc func;               // 需要执行的槽函数
     XObject* sender;              // 发送者对象
     void* args;                   // 函数参数
+    void(*del)(void*);              // 参数释放方式
     XAtomic_int32_t* ref_count;   // 参数引用计数
     XSemaphore* sem;              //信号量
 }XEventSlotFunc;
@@ -110,7 +112,7 @@ typedef struct XEventSlotFunc
  * @return 新创建的槽函数事件
  */
 XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func,
-    void* args, XAtomic_int32_t* ref_count, XSemaphore* sem);
+    void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XSemaphore* sem);
 
 /**
  * @brief 执行槽函数事件的回调

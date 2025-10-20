@@ -40,6 +40,11 @@ void XEvent_delete(XEvent* ev)
 	XEvent_deinit(ev);
 	XMemory_free(ev);
 }
+static void  XEventFunc_deinit(XEventFunc* ev)
+{
+	if (ev->args && ev->del)
+		ev->del(ev->args);
+}
 
 XEventFunc* XEventFunc_create(void(*func)(void*), void* args)
 {
@@ -50,6 +55,7 @@ XEventFunc* XEventFunc_create(void(*func)(void*), void* args)
 		event->func = func;
 		event->args = args;
 		event->oneAccept = false;
+		((XEvent*)event)->deinit = XEventFunc_deinit;
 	}
 	return event;
 }
@@ -76,13 +82,13 @@ static void XEventSlotFunc_deinit(XEventSlotFunc* ev)
 	{
 		if (XAtomic_fetch_sub_int32(ev->ref_count, 1) == 1)
 		{
-			if (ev->args)
-				XClass_delete_base(ev->args);
-			XMemory_free(ev->ref_count);
+			if (ev->args&&ev->del)
+				ev->del(ev->args);
+			XAtomic_delete(ev->ref_count);
 		}
 	}
 }
-XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func, void* args, XAtomic_int32_t* ref_count,XSemaphore* sem)
+XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func, void* args, void(*deinit)(void*), XAtomic_int32_t* ref_count,XSemaphore* sem)
 {
 	XEventSlotFunc* event = XMemory_malloc(sizeof(XEventSlotFunc));
 	if (event == NULL)
@@ -91,6 +97,7 @@ XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotF
 	event->sender = sender;
 	event->func = func;
 	event->args = args;
+	event->del = deinit;
 	event->ref_count = ref_count;
 	event->sem = sem;
 	((XEvent*)event)->deinit = XEventSlotFunc_deinit;
