@@ -116,7 +116,7 @@ void TimerOutEventCb(XEvent* event)
 }
 void* XTimer_timeout_signal(XTimer* timer)
 {
-	EmitSignal(timer, XTimer_timeout_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+	XEmitSignal(timer, XTimer_timeout_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void XTimer_callOnTimeout(XTimer* timer, XObject* receiver, XSlotFunc slot_func, XConnectionType type)

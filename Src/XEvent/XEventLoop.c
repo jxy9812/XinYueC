@@ -317,7 +317,7 @@ static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsF
             }break;
             case Post_Func:
             {//投递函数
-                XObject_postEvent(data.object, XEventFunc_create_oneAccept(data.run_func, data.args), data.priority);
+                XObject_postEvent(data.object, XEventFunc_create_oneAccept(data.run_func, data.args, data.del), data.priority);
             }break;
         }
     }

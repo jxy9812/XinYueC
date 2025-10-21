@@ -71,16 +71,17 @@ typedef struct XEventFunc
  * @param priority 事件优先级
  * @return 新创建的函数事件
  */
-XEventFunc* XEventFunc_create(void (*func)(void*), void* args);
+XEventFunc* XEventFunc_create(void (*func)(void*), void* args, void(*del)(void*));
 /**
  * @brief 创建一次性函数事件
  * @param receiver 事件接收对象
  * @param func 要执行的函数
  * @param args 函数参数
+ * @param del  函数参数释放规则
  * @param priority 事件优先级
  * @return 新创建的一次性函数事件
  */
-XEventFunc* XEventFunc_create_oneAccept(void (*func)(void*), void* args);
+XEventFunc* XEventFunc_create_oneAccept(void (*func)(void*), void* args, void(*del)(void*));
 
 /**
  * @brief 执行函数事件的回调
@@ -106,7 +107,8 @@ typedef struct XEventSlotFunc
  * @param sender 发送者对象
  * @param receiver 接收者对象
  * @param func 槽函数
- * @param args 函数参数
+ * @param args 槽函数参数
+ * @param del  槽函数参数释放规则
  * @param ref_count 参数引用计数
  * @param priority 事件优先级
  * @return 新创建的槽函数事件

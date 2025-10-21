@@ -46,7 +46,7 @@ static void  XEventFunc_deinit(XEventFunc* ev)
 		ev->del(ev->args);
 }
 
-XEventFunc* XEventFunc_create(void(*func)(void*), void* args)
+XEventFunc* XEventFunc_create(void(*func)(void*), void* args, void(*del)(void*))
 {
 	XEventFunc* event = XMemory_malloc(sizeof(XEventFunc));
 	if (event)
@@ -55,14 +55,15 @@ XEventFunc* XEventFunc_create(void(*func)(void*), void* args)
 		event->func = func;
 		event->args = args;
 		event->oneAccept = false;
+		event->del = del;
 		((XEvent*)event)->deinit = XEventFunc_deinit;
 	}
 	return event;
 }
 
-XEventFunc* XEventFunc_create_oneAccept(void(*func)(void*), void* args)
+XEventFunc* XEventFunc_create_oneAccept(void(*func)(void*), void* args, void(*del)(void*))
 {
-	XEventFunc* event = XEventFunc_create(func, args);
+	XEventFunc* event = XEventFunc_create(func, args, del);
 	if (event)
 		event->oneAccept = true;
 	return event;
@@ -88,7 +89,7 @@ static void XEventSlotFunc_deinit(XEventSlotFunc* ev)
 		}
 	}
 }
-XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func, void* args, void(*deinit)(void*), XAtomic_int32_t* ref_count,XSemaphore* sem)
+XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotFunc func, void* args, void(*del)(void*), XAtomic_int32_t* ref_count,XSemaphore* sem)
 {
 	XEventSlotFunc* event = XMemory_malloc(sizeof(XEventSlotFunc));
 	if (event == NULL)
@@ -97,7 +98,7 @@ XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotF
 	event->sender = sender;
 	event->func = func;
 	event->args = args;
-	event->del = deinit;
+	event->del = del;
 	event->ref_count = ref_count;
 	event->sem = sem;
 	((XEvent*)event)->deinit = XEventSlotFunc_deinit;

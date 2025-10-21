@@ -146,17 +146,17 @@ XSocketState XSocket_state(const XSocketBase* socket)
 
 void* XSocket_connected_signal(XSocket* socket)
 {
-    EmitSignal(socket, XSocket_connected_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(socket, XSocket_connected_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XSocket_disconnected_signal(XSocket* socket)
 {
-    EmitSignal(socket, XSocket_disconnected_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(socket, XSocket_disconnected_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XSocket_stateChanged_signal(XSocket* socket, XSocketState state)
 {
-    EmitSignal(socket, XSocket_stateChanged_signal, (size_t)state, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(socket, XSocket_stateChanged_signal, (size_t)state, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 

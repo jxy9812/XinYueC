@@ -271,5 +271,5 @@ void XCoreApplication_printVersionAndExit(XCoreApplication* app, const char* ver
 
 void* XCoreApplication_aboutToQuit_signal(XCoreApplication* app) 
 {
-    EmitSignal(app, XCoreApplication_aboutToQuit_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
+    XEmitSignal(app, XCoreApplication_aboutToQuit_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
 }

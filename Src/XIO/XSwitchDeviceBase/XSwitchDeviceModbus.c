@@ -123,7 +123,7 @@ void VXIODevice_poll(XSwitchDeviceModbus* sw)
 			base->m_state = state;
 			if (base->m_stateChangeCallback)
 			{
-				XObject_postEvent(sw, XEventFunc_create(base->m_stateChangeCallback, sw), XEVENT_PRIORITY_NORMAL);
+				XObject_postEvent(sw, XEventFunc_create(base->m_stateChangeCallback, sw, NULL), XEVENT_PRIORITY_NORMAL);
 			}
 		}
 	}

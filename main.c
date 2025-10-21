@@ -3,18 +3,18 @@
 #include<stdio.h>
 #include<math.h>
 #include"XCoreApplication.h"
-static void test(int a, char b)
-{
-	printf("a:%p var:%d b:%p b:%c\n",&a,a,&b,b);
-}
+#include <stdarg.h>
+#include"XVarList.h"
+
 int main(int argc, char* args[])
 {
-	char data[10];
-	*((int*)data) = 1;
-	*((char*)data+4) = 'c';
-	void (*p)(int data)= test;
-	test(1,'c');
-	p(data);
+	int n = 8,n1=666;
+	XVarList* list=XVarList_Create(XVar(int,n));
+	n = XVarList_arg(list,int);
+	printf("%d\n",n);
+	n = XVarList_arg(list, int);
+	printf("%d\n", n);
+	XVarList_delete(list);
 
 	XCoreApplication* app = XCoreApplication_create(argc,args);
 	// 设置应用描述

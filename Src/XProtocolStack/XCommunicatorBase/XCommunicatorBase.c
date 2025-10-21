@@ -77,15 +77,15 @@ void XCommunicatorBase_getOption_base(XCommunicatorBase* comm, int optionId, voi
 
 void* XCommunicatorBase_connect_signal(XCommunicatorBase* comm)
 {
-    EmitSignal(comm, XCommunicatorBase_connect_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(comm, XCommunicatorBase_connect_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XCommunicatorBase_disconnect_signal(XCommunicatorBase* comm)
 {
-    EmitSignal(comm, XCommunicatorBase_disconnect_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(comm, XCommunicatorBase_disconnect_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XCommunicatorBase_recvBuffFull_signal(XCommunicatorBase* comm, XVector* buffer)
 {
-    EmitSignal(comm, XCommunicatorBase_recvBuffFull_signal, buffer, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(comm, XCommunicatorBase_recvBuffFull_signal, buffer, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }

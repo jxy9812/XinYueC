@@ -717,12 +717,12 @@ bool XESP8266Wifi_waitForServerConnected(XESP8266Wifi* device, int msecs) {
 // 信号实现
 void* XESP8266Wifi_wifiStatusChanged_signal(XESP8266Wifi* device, XESP8266WifiStatus status) 
 {
-    EmitSignal(device, XESP8266Wifi_wifiStatusChanged_signal, (void*)status,NULL,NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(device, XESP8266Wifi_wifiStatusChanged_signal, (void*)status,NULL,NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XESP8266Wifi_serverStatusChanged_signal(XESP8266Wifi* device, XESP8266WifiStatus status) 
 {
-    EmitSignal(device, XESP8266Wifi_serverStatusChanged_signal, (void*)status,NULL,NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(device, XESP8266Wifi_serverStatusChanged_signal, (void*)status,NULL,NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XESP8266Wifi_dataReceived_signal(XESP8266Wifi* device, const char* data, size_t size) {
@@ -734,25 +734,26 @@ void* XESP8266Wifi_dataReceived_signal(XESP8266Wifi* device, const char* data, s
 }
 
 void* XESP8266Wifi_atResponse_signal(XESP8266Wifi* device, const char* response) {
-    EmitSignal(device, XESP8266Wifi_atResponse_signal, response, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(device, XESP8266Wifi_atResponse_signal, response, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XESP8266Wifi_error_signal(XESP8266Wifi* device, int errorCode, const char* errorMsg) 
 {
-    EmitSignal(device, XESP8266Wifi_error_signal, (void*)errorCode, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XVarList* list = XVarList_Create(XVar(int,errorCode),XVar(char*,errorMsg));
+    XEmitSignal(device, XESP8266Wifi_error_signal, list, XVarList_delete, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XESP8266Wifi_ok_signal(XESP8266Wifi* device)
 {
-    EmitSignal(device, XESP8266Wifi_ok_signal,NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(device, XESP8266Wifi_ok_signal,NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XESP8266Wifi_connect_signal(XESP8266Wifi* device)
 {
-    EmitSignal(device, XESP8266Wifi_connect_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(device, XESP8266Wifi_connect_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XESP8266Wifi_disconnect_signal(XESP8266Wifi* device)
 {
-    EmitSignal(device, XESP8266Wifi_disconnect_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(device, XESP8266Wifi_disconnect_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }

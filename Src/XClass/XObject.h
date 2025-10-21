@@ -9,6 +9,7 @@ extern "C" {
 #include"XEvent.h"
 #include"XSignalSlot.h"
 #include"XAtomic.h"
+#include"XVarList.h"
 XCLASS_DEFINE_BEGING(XObject)
 XCLASS_DEFINE_ENUM(XObject, Poll) = XCLASS_VTABLE_GET_SIZE(XClass),
 XCLASS_DEFINE_END(XObject)
@@ -64,13 +65,15 @@ void XObject_deinit_base(XObject* object);
  */
 void XObject_delete_base(XObject* object);
 
-//精简信号发射
-#define EmitSignal(object,signal,args,del,ref_count,priority) if(object)XObject_emitSignal(object,signal,args,del,ref_count,priority);return signal
-#define EmitSignalQueue(object,signal,args,del,ref_count,priority) if(object)XObject_emitSignal_queue(object,signal,args,del,ref_count,priority);return signal
-void XObject_emitSignal(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority);
-void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority);
 //slot: void deinit_slot(XObject* receiver, void* args,XObject* m_sender)
 void* XObject_deinit_signal(XObject* object);
+
+//精简信号发射
+#define XEmitSignal(object,signal,args,del,ref_count,priority) if(object)XObject_emitSignal(object,signal,args,del,ref_count,priority);return signal
+#define XEmitSignalQueue(object,signal,args,del,ref_count,priority) if(object)XObject_emitSignal_queue(object,signal,args,del,ref_count,priority);return signal
+void XObject_emitSignal(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority);
+void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority);
+
 
 #ifdef __cplusplus
 }

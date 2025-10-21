@@ -165,7 +165,7 @@ bool XObject_postFunc(XObject* object, void(*func)(void*), void* args, void(*del
 	if (mode == XEVENT_SEND_DIRECT)
 	{
 		//投递函数
-		return XObject_postEvent(object, XEventFunc_create(func,args), priority);
+		return XObject_postEvent(object, XEventFunc_create(func,args, NULL), priority);
 	}
 	else if (mode == XEVENT_SEND_QUEUED)
 	{//投递到队列，等待主线程事件循环中调用
@@ -227,12 +227,12 @@ static void deinit(XObject* object)
 {
 	if (XAtomic_fetch_sub_uint32(&object->m_eventCount, 1) == 1)
 	{//正式释放
-		XClassGetVirtualFunc(object, EXClass_Deinit, void(*)(XObject*))(object);
+		XClass_deinit_base(object);
 	}
 	else
 	{//重新投递
 		XAtomic_fetch_add_int32(&object->m_eventCount, 1);
-		XObject_postEvent(object, XEventFunc_create_oneAccept(deinit, object), XEVENT_PRIORITY_LOWEST);
+		XObject_postEvent(object, XEventFunc_create_oneAccept(deinit, object, NULL), XEVENT_PRIORITY_LOWEST);
 	}
 }
 void XObject_deinit_base(XObject* object)
@@ -246,19 +246,18 @@ void XObject_deinit_base(XObject* object)
 	//发送释放信号
 	XObject_deinit_signal(object);
 	XAtomic_fetch_add_int32(&object->m_eventCount, 1);
-	XObject_postEvent(object, XEventFunc_create_oneAccept(deinit, object), XEVENT_PRIORITY_LOWEST);
+	XObject_postEvent(object, XEventFunc_create_oneAccept(deinit, object, NULL), XEVENT_PRIORITY_LOWEST);
 }
 static void delete(XObject* object)
 {
 	if (XAtomic_fetch_sub_uint32(&object->m_eventCount, 1) == 1)
 	{//正式释放
-		XClassGetVirtualFunc(object, EXClass_Deinit, void(*)(XObject*))(object);
-		XMemory_free(object);
+		XClass_delete_base(object);
 	}
 	else
 	{//重新投递
 		XAtomic_fetch_add_int32(&object->m_eventCount, 1);
-		XObject_postEvent(object, XEventFunc_create_oneAccept(delete, object), XEVENT_PRIORITY_LOWEST);
+		XObject_postEvent(object, XEventFunc_create_oneAccept(delete, object, NULL), XEVENT_PRIORITY_LOWEST);
 	}
 }
 void XObject_delete_base(XObject* object)
@@ -272,7 +271,7 @@ void XObject_delete_base(XObject* object)
 	//发送释放信号
 	XObject_deinit_signal(object);
 	XAtomic_fetch_add_int32(&object->m_eventCount, 1);
-	XObject_postEvent(object, XEventFunc_create_oneAccept(delete, object), XEVENT_PRIORITY_LOWEST);
+	XObject_postEvent(object, XEventFunc_create_oneAccept(delete, object, NULL), XEVENT_PRIORITY_LOWEST);
 }
 
 void XObject_emitSignal(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority)
@@ -289,7 +288,7 @@ void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, void(*
 
 void* XObject_deinit_signal(XObject* object)
 {
-	EmitSignal(object, XObject_deinit_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
+	XEmitSignal(object, XObject_deinit_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
 }
 
 void VXObject_poll(XObject* object)
