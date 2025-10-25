@@ -25,7 +25,7 @@ typedef struct XVarList
 XVarList* XVarList_create(uint8_t count,...);
 #define XVarList_delete			XMemory_free
 //初始化指针指向开头
-#define XVarList_start(list)	*((uint8_t**)list) = list+sizeof(uint8_t*)
+#define XVarList_start(list)	*((uint8_t**)list) = (uint8_t*)list+sizeof(uint8_t*)
 //获取当前指向的参数指针
 #define XVarList_argPtr(list)	*((uint8_t**)list)
 //向后偏移

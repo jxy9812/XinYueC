@@ -10,6 +10,7 @@ int main(int argc, char* args[])
 {
 	int n = 8,n1=666;
 	XVarList* list=XVarList_Create(XVar(int,n));
+	XVarList_start(list);
 	n = XVarList_arg(list,int);
 	printf("%d\n",n);
 	n = XVarList_arg(list, int);

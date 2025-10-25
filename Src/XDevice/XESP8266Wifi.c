@@ -3,12 +3,10 @@
 #include "XString.h"
 #include "XTimer.h"
 #include "XEventLoop.h"
-#include <string.h>
+#include<string.h>
 
-#define AT_RESPONSE_OK "OK"
-#define AT_RESPONSE_ERROR "ERROR"
-#define AT_RESPONSE_CONNECT "CONNECT"
-#define AT_RESPONSE_DISCONNECT "DISCONNECT"
+void VXESP8266_processResponse(XESP8266Wifi* device);
+
 
 // 前向声明
 static bool VXESP8266_open(XESP8266Wifi* device, XIODeviceBaseMode mode);
@@ -16,7 +14,7 @@ static bool VXESP8266_close(XESP8266Wifi* device);
 static size_t VXESP8266_write(XESP8266Wifi* device, const char* data, size_t maxSize);
 static size_t VXESP8266_read(XESP8266Wifi* device, char* data, size_t maxSize);
 static size_t VXESP8266_getBytesAvailable(XESP8266Wifi* device);
-static void VXESP8266_processResponse(XESP8266Wifi* device);
+
 
 static void VXESP8266_deinit(XESP8266Wifi* device);
 static void VXESP8266_timeoutCallback(void* userData);
@@ -196,7 +194,7 @@ static size_t VXESP8266_getBytesAvailable(XESP8266Wifi* device) {
 /**
  * @brief 发送AT指令通用函数
  */
-static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XESP8266WifiOpType op, int timeout) {
+static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XESP8266WifiOpType op, int msecs) {
     if (ISNULL(device, "device is NULL") || ISNULL(cmd, "cmd is NULL"))
         return false;
 
@@ -221,166 +219,28 @@ static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XE
     }
 
     // 启动超时定时器
-    if (timeout > 0) 
+    if (msecs > 0) 
     {
        /* XConnection*timeroutComm= XObject_connect(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit_base, XConnectionType_Auto);
         XConnection* okComm = XObject_connect(device,XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit_base, XConnectionType_Auto);
         XConnection* errComm = XObject_connect(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit_base, XConnectionType_Auto);*/
         
-        XTimer_setInterval_base(device->m_timeoutTimer, timeout);
-        XTimer_setTimeout_base(device->m_timeoutTimer, timeout);
+        XTimer_setInterval_base(device->m_timeoutTimer, msecs);
+        XTimer_setTimeout_base(device->m_timeoutTimer, msecs);
         XTimer_start_base(device->m_timeoutTimer);
         XEventLoop_exec_base(device->m_loop);
         //XObject_disconnect_conn(timeroutComm);
         //XObject_disconnect_conn(okComm);
         //XObject_disconnect_conn(errComm);
     }
-
-    return device->m_operationResult;
+    else if(msecs==-1)
+    {//-1无限等待
+        XEventLoop_exec_base(device->m_loop);
+    }
+    if(msecs>0|| msecs == -1)
+        return device->m_operationResult;
+    return true;
 }
-
-/**
- * @brief 处理AT指令响应
- */
-static void VXESP8266_processResponse(XESP8266Wifi* device) 
-{
-    if (ISNULL(device, "device is NULL")) return;
-
-    // 读取底层设备数据
-    size_t available = VXESP8266_getBytesAvailable(device);
-    if (available == 0) return;
-
-    // 读取数据到响应缓冲区
-    if (device->m_responseLen + available < sizeof(device->m_responseBuffer) - 1) {
-        available = VXESP8266_read(device,
-            device->m_responseBuffer + device->m_responseLen,
-            available);
-        device->m_responseLen += available;
-        device->m_responseBuffer[device->m_responseLen] = '\0';
-        XPrintf("\n%s\n", device->m_responseBuffer);
-        
-    }
-
-    // 透传模式下直接转发数据
-    if (device->m_transparentMode) {
-      /*  XObject_emitSignal(device,
-            XESP8266Wifi_dataReceived_signal,
-            (void*)device->m_responseBuffer,
-            device->m_responseLen);
-        device->m_responseLen = 0;
-        return;*/
-    }
-
-    // 检查是否包含OK或ERROR
-    bool hasOk = (strstr(device->m_responseBuffer, AT_RESPONSE_OK) != NULL);
-    bool hasError = (strstr(device->m_responseBuffer, AT_RESPONSE_ERROR) != NULL);
-    bool hasConnect = (strstr(device->m_responseBuffer, AT_RESPONSE_CONNECT) != NULL);
-    bool hasDisconnect = (strstr(device->m_responseBuffer, AT_RESPONSE_DISCONNECT) != NULL);
-
-    // 触发响应信号
-    XESP8266Wifi_atResponse_signal(device, (void*)device->m_responseBuffer);
-
-    // 根据当前操作类型处理响应
-    switch (device->m_currentOp) 
-    {
-    case XESP8266_Op_TestAT:
-    case XESP8266_Op_SetMultiConnMode:
-    case XESP8266_Op_SetMode:
-    case XESP8266_Op_WriteData:
-        if (hasOk) {
-            device->m_operationResult = true;
-            XTimer_stop_base(device->m_timeoutTimer);
-            XESP8266Wifi_ok_signal(device);
-        }
-        break;
-    case XESP8266_Op_ConnectWiFi:
-        if (hasDisconnect)
-        {//重新尝试连接
-            *strstr(device->m_responseBuffer, "WIFI") = 0;
-            XIODeviceBase_write_base(device->m_io, device->m_responseBuffer, strlen(device->m_responseBuffer));
-            device->m_responseLen = 0;
-            return;
-        }
-        else if (hasOk|| hasConnect) {
-            // 连接成功
-            device->m_wifiStatus = XESP8266_Status_Connected;
-            device->m_operationResult = true;
-            XESP8266Wifi_wifiStatusChanged_signal(device, XESP8266_Status_Connected);
-            XESP8266Wifi_ok_signal(device);
-            XTimer_stop_base(device->m_timeoutTimer);
-        }
-        else if (hasError) 
-        {
-            device->m_wifiStatus = XESP8266_Status_Error;
-            device->m_operationResult = false;
-            XESP8266Wifi_wifiStatusChanged_signal(device, XESP8266_Status_Error);
-            XESP8266Wifi_error_signal(device,-1,"连接失败");
-            XTimer_stop_base(device->m_timeoutTimer);
-        }
-        break;
-
-    case XESP8266_Op_ConnectServer:
-        int connId = device->m_pendingConnId;
-        XTimer_stop_base(device->m_timeoutTimer);
-        if (hasConnect || hasOk) {
-            device->m_connections[connId].status = XESP8266_Status_Connected;
-            device->m_pendingStatus = XESP8266_Status_Connected;
-            device->m_activeConnCount++;
-            //device->m_serverStatus = XESP8266_Status_Connected;
-            device->m_operationResult = true;
-            XESP8266Wifi_serverStatusChanged_signal(device, XESP8266_Status_Connected);
-
-            XESP8266Wifi_ok_signal(device);
-            XESP8266Wifi_connect_signal(device);
-        }
-        else if (hasError) {
-            //device->m_serverStatus = XESP8266_Status_Error;
-            device->m_operationResult = false;
-            XESP8266Wifi_serverStatusChanged_signal(device, XESP8266_Status_Error);
-        }
-        break;
-
-        // 其他操作类型的响应处理...
-    default:
-        break;
-    }
-    // 非透传模式下处理多连接数据/状态
-    if (!device->m_transparentMode) {
-        // 解析服务器模式下的客户端连接（如："0,CONNECT" 表示ID=0的客户端连接）
-        if (strstr(device->m_responseBuffer, "CONNECT") != NULL) {
-            int connId = -1;
-            if (sscanf(device->m_responseBuffer, "%d,CONNECT", &connId) == 1) {
-                if (connId >= 0 && connId < XESP8266_MAX_CONNS) {
-                    device->m_connections[connId].connId = connId;
-                    device->m_connections[connId].status = XESP8266_Status_Connected;
-                    device->m_connections[connId].isServer = true;  // 服务器端的客户端连接
-                    device->m_activeConnCount++;
-                    // 触发客户端连接信号（可自定义信号传递connId）
-                    //XESP8266Wifi_clientConnected_signal(device, connId);
-                }
-            }
-        }
-
-        // 解析数据接收（如："+IPD,<connId>,<len>:data"）
-        char* ipd = strstr(device->m_responseBuffer, "+IPD,");
-        if (ipd != NULL) {
-            int connId, len;
-            if (sscanf(ipd, "+IPD,%d,%d:", &connId, &len) == 2) {
-                char* data = ipd + strlen("+IPD,%d,%d:") + 2;  // 定位到数据部分
-                // 触发带连接ID的数据接收信号
-                //XESP8266Wifi_dataReceivedWithConnId_signal(device, connId, data, len);
-            }
-        }
-    }
-    // 处理完成后清空缓冲区（非透传模式）
-    if (hasOk || hasError || hasConnect || hasDisconnect) 
-    {
-        memset(device->m_responseBuffer, 0, device->m_responseLen<sizeof(device->m_responseBuffer)? device->m_responseLen: sizeof(device->m_responseBuffer));
-        device->m_responseLen = 0;
-        device->m_currentOp = XESP8266_Op_None;
-    }
-}
-
 
 /**
  * @brief 超时回调函数
@@ -421,72 +281,83 @@ static void VXESP8266_timeoutCallback(void* userData)
 }
 
 // 具体AT指令实现
-bool XESP8266Wifi_testAT(XESP8266Wifi* device) {
-    return XESP8266Wifi_sendATCommand(device, "AT", XESP8266_Op_TestAT, 1000);
-}
-
-bool XESP8266Wifi_reset(XESP8266Wifi* device) {
+bool XESP8266Wifi_testAT(XESP8266Wifi* device, int msecs) 
+{
     if (ISNULL(device, "device is NULL")) return false;
-    device->m_wifiStatus = XESP8266_Status_Disconnected;
-    //device->m_serverStatus = XESP8266_Status_Disconnected;
-    return XESP8266Wifi_sendATCommand(device, "AT+RST", XESP8266_Op_Reset, 3000);
+    return XESP8266Wifi_sendATCommand(device, "AT", XESP8266_Op_TestAT, msecs);
 }
 
-bool XESP8266Wifi_setMultiConnMode(XESP8266Wifi* device, bool enable) {
+bool XESP8266Wifi_reset(XESP8266Wifi* device, int msecs)
+{
+    if (ISNULL(device, "device is NULL")) return false;
+    bool result = XESP8266Wifi_sendATCommand(device, "AT+RST", XESP8266_Op_Reset, msecs);
+    if (result)
+    {
+        device->m_wifiStatus = XESP8266_Status_Disconnected;
+        // 断开所有连接
+        for (int i = 0; i < XESP8266_MAX_CONNS; i++) {
+            device->m_connections[i].status = XESP8266_Status_Disconnected;
+            device->m_connections[i].connId = -1;
+        }
+        device->m_activeConnCount = 0;
+    }
+    return result;
+}
+
+bool XESP8266Wifi_setMultiConnMode(XESP8266Wifi* device, bool enable, int msecs) 
+{
     if (ISNULL(device, "device is NULL")) return false;
     char cmd[15];
     snprintf(cmd, sizeof(cmd), "AT+CIPMUX=%d", enable ? 1 : 0);
-    bool result = XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_SetMultiConnMode, 2000);
+    bool result = XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_SetMultiConnMode, msecs);
     if (result) {
         device->m_multiConnMode = enable;
     }
     return result;
 }
 
-bool XESP8266Wifi_setMode(XESP8266Wifi* device, XESP8266WifiMode mode) {
+bool XESP8266Wifi_setMode(XESP8266Wifi* device, XESP8266WifiMode mode, int msecs) 
+{
     if (ISNULL(device, "device is NULL")) return false;
     char cmd[15];
     snprintf(cmd, sizeof(cmd), "AT+CWMODE=%d", mode);
-    return XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_SetMode, 2000);
+    return XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_SetMode, msecs);
 }
 
-bool XESP8266Wifi_connectWiFi(XESP8266Wifi* device, const char* ssid, const char* password) 
+bool XESP8266Wifi_connectWiFi(XESP8266Wifi* device, const char* ssid, const char* password, int msecs)
 {
     if (ISNULL(device, "device is NULL") || ISNULL(ssid, "ssid is NULL") || ISNULL(password, "password is NULL"))
         return false;
 
-    //device->m_wifiStatus = XESP8266_Status_Connecting;
-    //XObject_emitSignal(device,
-    //    XESP8266Wifi_wifiStatusChanged_signal,
-    //    (void*)XESP8266_Status_Connecting,
-    //    0);
+    device->m_wifiStatus = XESP8266_Status_Connecting;
+    XESP8266Wifi_wifiStatusChanged_signal(device, XESP8266_Status_Connecting);
 
     XString_assign_utf8(device->m_ssid, ssid);
     XString_assign_utf8(device->m_password, password);
-
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "AT+CWJAP=\"%s\",\"%s\"", ssid, password);
-    return XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_ConnectWiFi, 5000);
+    return XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_ConnectWiFi, msecs);
 }
 
-bool XESP8266Wifi_disconnectWiFi(XESP8266Wifi* device) {
+bool XESP8266Wifi_disconnectWiFi(XESP8266Wifi* device, int msecs) 
+{
     if (ISNULL(device, "device is NULL")) return false;
-    device->m_wifiStatus = XESP8266_Status_Disconnected;
-    return XESP8266Wifi_sendATCommand(device, "AT+CWQAP", XESP8266_Op_DisconnectWiFi, 3000);
+    //device->m_wifiStatus = XESP8266_Status_Disconnected;
+    return XESP8266Wifi_sendATCommand(device, "AT+CWQAP", XESP8266_Op_DisconnectWiFi, msecs);
 }
 
 bool XESP8266Wifi_configAP(XESP8266Wifi* device, const char* ssid, const char* password,
-    int channel, XESP8266WifiEncryption encrypt) {
+    int channel, XESP8266WifiEncryption encrypt, int msecs) {
     if (ISNULL(device, "device is NULL") || ISNULL(ssid, "ssid is NULL") || ISNULL(password, "password is NULL"))
         return false;
 
     char cmd[128];
     snprintf(cmd, sizeof(cmd), "AT+CWSAP=\"%s\",\"%s\",%d,%d", ssid, password, channel, encrypt);
-    return XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_ConfigAP, 2000);
+    return XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_ConfigAP, msecs);
 }
 
 int XESP8266Wifi_connectServer(XESP8266Wifi* device, XESP8266WifiProtocol protocol,
-    const char* ip, uint16_t port, int connId)
+    const char* ip, uint16_t port, int connId, int msecs)
 {
     if (ISNULL(device, "device is NULL") ||
         ISNULL(ip, "ip is NULL") || port == 0) {
@@ -496,16 +367,22 @@ int XESP8266Wifi_connectServer(XESP8266Wifi* device, XESP8266WifiProtocol protoc
     if (!device->m_multiConnMode)
     {
         //device->m_serverStatus = XESP8266_Status_Connecting;
-        XESP8266Wifi_serverStatusChanged_signal(device, XESP8266_Status_Connecting);
-        //XString_assign_utf8(device->m_serverIP, ip);
-        //device->m_serverPort = port;
-        //device->m_protocol = protocol;
+        device->m_connections[actualConnId].connId = actualConnId;
+        strncpy(device->m_connections[actualConnId].ip, ip, sizeof(device->m_connections[actualConnId].ip) - 1);
+        device->m_connections[actualConnId].port = port;
+        device->m_connections[actualConnId].protocol = protocol;
+        device->m_connections[actualConnId].status = XESP8266_Status_Connecting;
+        device->m_pendingConnId = actualConnId; // 标记为等待结果的连接
+        device->m_pendingStatus = XESP8266_Status_Connecting; // 初始化等待状态
+        XESP8266Wifi_serverStatusChanged_signal(device, actualConnId, XESP8266_Status_Connecting);
 
         char cmd[128];
         const char* proto = (protocol == XESP8266_Protocol_TCP) ? "TCP" : "UDP";
         snprintf(cmd, sizeof(cmd), "AT+CIPSTART=\"%s\",\"%s\",%d", proto, ip, port);
-        XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_ConnectServer, 0);
-        return XESP8266_MAX_CONNS;
+        XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_ConnectServer, msecs);
+        if (msecs)
+            return device->m_pendingStatus == XESP8266_Status_Connected ? actualConnId : -1;
+        return actualConnId;
     }
     else
     {
@@ -537,8 +414,9 @@ int XESP8266Wifi_connectServer(XESP8266Wifi* device, XESP8266WifiProtocol protoc
     device->m_connections[actualConnId].protocol = protocol;
     device->m_connections[actualConnId].status = XESP8266_Status_Connecting;
     device->m_pendingConnId = actualConnId; // 标记为等待结果的连接
-    device->m_pendingStatus = XESP8266_Status_Disconnected; // 初始化等待状态
+    device->m_pendingStatus = XESP8266_Status_Connecting; // 初始化等待状态
     
+    XESP8266Wifi_serverStatusChanged_signal(device, actualConnId, XESP8266_Status_Connecting);
 
     // 构建连接AT指令（多连接模式需要指定连接ID）
     char cmd[128];
@@ -555,48 +433,58 @@ int XESP8266Wifi_connectServer(XESP8266Wifi* device, XESP8266WifiProtocol protoc
     }
 
     // 发送AT指令（非阻塞：不进入事件循环，仅发送指令）
-    bool sendOk = XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_ConnectServer, 0);
+    bool sendOk = XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_ConnectServer, msecs);
     if (!sendOk) {
         device->m_connections[actualConnId].connId = -1; // 发送失败，释放连接ID
         return -1;
     }
 
-    return actualConnId; // 返回连接ID，用于后续等待
+    if (msecs)
+        return device->m_pendingStatus == XESP8266_Status_Connected ? actualConnId : -1;
+    return actualConnId;
 }
 
-bool XESP8266Wifi_disconnectServer(XESP8266Wifi* device) {
-    if (ISNULL(device, "device is NULL")) return false;
-    //device->m_serverStatus = XESP8266_Status_Disconnected;
-    return XESP8266Wifi_sendATCommand(device, "AT+CIPCLOSE", XESP8266_Op_DisconnectServer, 2000);
-}
-
-bool XESP8266Wifi_disconnectConn(XESP8266Wifi* device, int connId)
+bool XESP8266Wifi_disconnectConn(XESP8266Wifi* device, int connId, int msecs)
 {
-    if (ISNULL(device, "device is NULL") || connId < 0 || connId >= XESP8266_MAX_CONNS ||
-        device->m_connections[connId].connId == -1) {
-        return false;
-    }
-
-    // 发送断开指定连接指令：AT+CIPCLOSE=<connId>
+    if (ISNULL(device, "device is NULL")) return false;
     char cmd[32];
-    snprintf(cmd, sizeof(cmd), "AT+CIPCLOSE=%d", connId);
-    bool result = XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_DisconnectServer, 2000);
-    if (result) {
+    if (!device->m_multiConnMode)
+    {
+        connId = 0;
+        snprintf(cmd, sizeof(cmd), "AT+CIPCLOSE", connId);
+    }
+    else
+    {
+        if (connId < 0 || connId >= XESP8266_MAX_CONNS ||
+            device->m_connections[connId].connId == -1) {
+            return false;
+        }
+       
+        snprintf(cmd, sizeof(cmd), "AT+CIPCLOSE=%d", connId);
+    }
+    device->m_pendingConnId = connId;
+    // 发送断开指定连接指令：AT+CIPCLOSE=<connId>
+    bool result = XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_DisconnectServer, msecs);
+    if (result&& msecs)
+    {
+        device->m_connections[connId].connId = -1;
         device->m_connections[connId].status = XESP8266_Status_Disconnected;
         device->m_activeConnCount--;
     }
     return result;
 }
 
-bool XESP8266Wifi_startServer(XESP8266Wifi* device, XESP8266WifiProtocol protocol, uint16_t port) {
+bool XESP8266Wifi_startServer(XESP8266Wifi* device, XESP8266WifiProtocol protocol, uint16_t port, int msecs) 
+{
     if (ISNULL(device, "device is NULL")) return false;
     char cmd[64];
     snprintf(cmd, sizeof(cmd), "AT+CIPSERVER=1,%d", port);
-    return XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_StartServer, 2000);
+    return XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_StartServer, msecs);
 }
 
-bool XESP8266Wifi_stopServer(XESP8266Wifi* device) {
-    return XESP8266Wifi_sendATCommand(device, "AT+CIPSERVER=0", XESP8266_Op_StopServer, 2000);
+bool XESP8266Wifi_stopServer(XESP8266Wifi* device, int msecs)
+{
+    return XESP8266Wifi_sendATCommand(device, "AT+CIPSERVER=0", XESP8266_Op_StopServer, msecs);
 }
 
 bool XESP8266Wifi_sendData(XESP8266Wifi* device, int connId, const void* data, size_t size) {
@@ -647,17 +535,18 @@ bool XESP8266Wifi_sendData(XESP8266Wifi* device, int connId, const void* data, s
     }
 }
 
-bool XESP8266Wifi_enterTransparentMode(XESP8266Wifi* device) {
+bool XESP8266Wifi_enterTransparentMode(XESP8266Wifi* device, int msecs)
+{
     if (ISNULL(device, "device is NULL")) return false;
 
     // 先设置透传模式
-    if (!XESP8266Wifi_sendATCommand(device, "AT+CIPMODE=1", XESP8266_Op_None, 1000)) {
+    if (!XESP8266Wifi_sendATCommand(device, "AT+CIPMODE=1", XESP8266_Op_SetTransparent, msecs)) {
         return false;
     }
     //XEventLoop_delay(100);
 
     // 进入透传
-    if (!XESP8266Wifi_sendATCommand(device, "AT+CIPSEND", XESP8266_Op_EnterTransparent, 1000)) {
+    if (!XESP8266Wifi_sendATCommand(device, "AT+CIPSEND", XESP8266_Op_EnterTransparent, msecs)) {
         return false;
     }
 
@@ -665,7 +554,8 @@ bool XESP8266Wifi_enterTransparentMode(XESP8266Wifi* device) {
     return true;
 }
 
-bool XESP8266Wifi_exitTransparentMode(XESP8266Wifi* device) {
+bool XESP8266Wifi_exitTransparentMode(XESP8266Wifi* device, int msecs) 
+{
     if (ISNULL(device, "device is NULL") || !device->m_transparentMode)
         return false;
 
@@ -674,7 +564,7 @@ bool XESP8266Wifi_exitTransparentMode(XESP8266Wifi* device) {
     if (sent != 3) return false;
 
     // 等待退出完成
-    //XEventLoop_delay(100);
+    XEventLoop_delay(msecs);
     device->m_transparentMode = false;
     return true;
 }
@@ -693,25 +583,58 @@ XESP8266WifiStatus XESP8266Wifi_getServerStatus(XESP8266Wifi* device) {
 bool XESP8266Wifi_waitForWiFiConnected(XESP8266Wifi* device, int msecs) {
     if (ISNULL(device, "device is NULL")) return false;
 
-    if (device->m_wifiStatus == XESP8266_Status_Connected) {
+    if (device->m_wifiStatus == XESP8266_Status_Connected)
         return true;
+    if (device->m_wifiStatus != XESP8266_Status_Connecting)
+        return false;
+    if (msecs > 0)
+    {
+        XTimer_setInterval_base(device->m_timeoutTimer, msecs);
+        XTimer_setTimeout_base(device->m_timeoutTimer, msecs);
+        XTimer_start_base(device->m_timeoutTimer);
+        XEventLoop_exec_base(device->m_loop);
     }
-
-    /*XEvent_reset(device->m_waitEvent);
-    bool result = XEvent_wait(device->m_waitEvent, msecs);
-    return result && device->m_operationResult;*/
+    return  device->m_wifiStatus == XESP8266_Status_Connected;
 }
 
-bool XESP8266Wifi_waitForServerConnected(XESP8266Wifi* device, int msecs) {
+bool XESP8266Wifi_waitForServerConnected(XESP8266Wifi* device, int msecs)
+{
     if (ISNULL(device, "device is NULL")) return false;
-
-   /* if (device->m_serverStatus == XESP8266_Status_Connected) {
+    if (device->m_pendingStatus== XESP8266_Status_Connected)
         return true;
-    }*/
+    if (device->m_pendingStatus != XESP8266_Status_Connecting)
+        return false;
+    if(msecs>0)
+    {
+        XTimer_setInterval_base(device->m_timeoutTimer, msecs);
+        XTimer_setTimeout_base(device->m_timeoutTimer, msecs);
+        XTimer_start_base(device->m_timeoutTimer);
+        XEventLoop_exec_base(device->m_loop);
+    }
+    return  device->m_pendingStatus == XESP8266_Status_Connected;
+}
 
-   /* XEvent_reset(device->m_waitEvent);
-    bool result = XEvent_wait(device->m_waitEvent, msecs);
-    return result && device->m_operationResult;*/
+bool XESP8266Wifi_waitForDisconnectConn(XESP8266Wifi* device, int connId, int msecs)
+{
+    if (ISNULL(device, "device is NULL"))
+        return false;
+    if (!device->m_multiConnMode)
+    {
+        connId = 0;
+    }
+    // 检查连接是否已断开
+    if (device->m_connections[connId].status == XESP8266_Status_Disconnected)
+        return true;
+    device->m_pendingConnId = connId;
+    // 设置超时
+    if (msecs > 0)
+    {
+        XTimer_setInterval_base(device->m_timeoutTimer, msecs);
+        XTimer_setTimeout_base(device->m_timeoutTimer, msecs);
+        XTimer_start_base(device->m_timeoutTimer);
+        XEventLoop_exec_base(device->m_loop);
+    }
+    return device->m_connections[connId].status == XESP8266_Status_Disconnected;
 }
 
 // 信号实现
@@ -720,40 +643,57 @@ void* XESP8266Wifi_wifiStatusChanged_signal(XESP8266Wifi* device, XESP8266WifiSt
     XEmitSignal(device, XESP8266Wifi_wifiStatusChanged_signal, (void*)status,NULL,NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-void* XESP8266Wifi_serverStatusChanged_signal(XESP8266Wifi* device, XESP8266WifiStatus status) 
+void* XESP8266Wifi_serverStatusChanged_signal(XESP8266Wifi* device, int connId, XESP8266WifiStatus status)
 {
-    XEmitSignal(device, XESP8266Wifi_serverStatusChanged_signal, (void*)status,NULL,NULL, XEVENT_PRIORITY_NORMAL);
+    XVarList* list = XVarList_Create(XVar(int,connId), XVar(XESP8266WifiStatus,status));
+    XEmitSignal(device, XESP8266Wifi_serverStatusChanged_signal, list, XVarList_delete,NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-void* XESP8266Wifi_dataReceived_signal(XESP8266Wifi* device, const char* data, size_t size) {
-    if (device) {
-       /* XSignalSlot_emit(((XObject*)device)->m_signalSlot, XESP8266Wifi_dataReceived_signal,
-            (size_t)data, size, XEVENT_PRIORITY_NORMAL);*/
-    }
-    return XESP8266Wifi_dataReceived_signal;
+void* XESP8266Wifi_dataReceived_signal(XESP8266Wifi* device, const char* data, size_t size) 
+{
+    XVarList* list = XVarList_Create(XVar(char*, data), XVar(size_t, size));
+    XEmitSignal(device, XESP8266Wifi_dataReceived_signal, list, XVarList_delete, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-void* XESP8266Wifi_atResponse_signal(XESP8266Wifi* device, const char* response) {
+void* XESP8266Wifi_atResponse_signal(XESP8266Wifi* device, const char* response)
+{
     XEmitSignal(device, XESP8266Wifi_atResponse_signal, response, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
-
+static void error_signal_data_delete(XVarList* list)
+{
+    if (!list) return;
+    XVarList_start(list);
+    XVarList_argOffset(list, int);
+    char* msg=XVarList_arg(list,char*);
+    if(msg)
+        XMemory_free(msg);
+    XVarList_delete(list);
+}
 void* XESP8266Wifi_error_signal(XESP8266Wifi* device, int errorCode, const char* errorMsg) 
 {
-    XVarList* list = XVarList_Create(XVar(int,errorCode),XVar(char*,errorMsg));
-    XEmitSignal(device, XESP8266Wifi_error_signal, list, XVarList_delete, NULL, XEVENT_PRIORITY_NORMAL);
+    if (device)
+    {
+        size_t len = strlen(errorMsg);
+        char* msg = len ? XMemory_malloc(len + 1) : NULL;
+        if (msg)
+            strcpy(msg, errorMsg);
+        XVarList* list = XVarList_Create(XVar(int, errorCode), XVar(char*, msg));
+        XObject_emitSignal(device, XESP8266Wifi_error_signal, list, error_signal_data_delete, ((void*)0), XEVENT_PRIORITY_NORMAL);
+    }
+    return XESP8266Wifi_error_signal;
 }
 
 void* XESP8266Wifi_ok_signal(XESP8266Wifi* device)
 {
-    XEmitSignal(device, XESP8266Wifi_ok_signal,NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(device, XESP8266Wifi_ok_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-void* XESP8266Wifi_connect_signal(XESP8266Wifi* device)
+void* XESP8266Wifi_connect_signal(XESP8266Wifi* device, int connId)
 {
-    XEmitSignal(device, XESP8266Wifi_connect_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(device, XESP8266Wifi_connect_signal, connId, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-void* XESP8266Wifi_disconnect_signal(XESP8266Wifi* device)
+void* XESP8266Wifi_disconnect_signal(XESP8266Wifi* device, int connId)
 {
-    XEmitSignal(device, XESP8266Wifi_disconnect_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(device, XESP8266Wifi_disconnect_signal, connId, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }

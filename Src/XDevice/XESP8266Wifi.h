@@ -77,6 +77,7 @@ typedef enum {
     XESP8266_Op_WriteData,          // 写入数据
     XESP8266_Op_StartServer,        // 启动服务器
     XESP8266_Op_StopServer,         // 停止服务器
+    XESP8266_Op_SetTransparent,   // 进入透传模式
     XESP8266_Op_EnterTransparent,   // 进入透传模式
     XESP8266_Op_ExitTransparent     // 退出透传模式
 } XESP8266WifiOpType;
@@ -102,19 +103,14 @@ typedef struct XESP8266Wifi {
     XIODeviceBase m_class;                // 继承XIODeviceBase
     XIODeviceBase* m_io;                  // 底层IO设备(外部传入)
     XESP8266WifiStatus m_wifiStatus;          // WiFi连接状态
-    //XESP8266WifiStatus m_serverStatus;        // 服务器连接状态
     XTimerBase* m_timeoutTimer;           // 超时定时器
     XString* m_ssid;                      // WiFi名称缓存
     XString* m_password;                  // WiFi密码缓存
-    //XString* m_serverIP;                  // 服务器IP缓存
-    //uint16_t m_serverPort;                // 服务器端口缓存
     bool m_transparentMode;               // 透传模式标志
     bool m_operationResult;               // 操作结果
-    //XESP8266WifiProtocol m_protocol;          // 协议类型缓存
     XEventLoop* m_loop;
     XESP8266WifiOpType m_currentOp;           // 当前操作类型
     char m_responseBuffer[512];           // 响应临时缓冲区
-    //char m_cmd[128];//cmd缓冲区
     size_t m_responseLen;                 // 响应数据长度
 
     XESP8266ConnInfo m_connections[XESP8266_MAX_CONNS];  // 连接数组
@@ -139,65 +135,72 @@ void XESP8266Wifi_init(XESP8266Wifi* device, XIODeviceBase* io);
 XESP8266Wifi* XESP8266Wifi_create(XIODeviceBase* io);
 
 /**
- * @brief 测试AT指令是否正常工作（异步）
+ * @brief 测试AT指令是否正常工作
  * @details 发送"AT"指令，成功会触发atResponse信号返回"OK"
  * @param device XESP8266Wifi对象指针
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 操作是否成功发起
  */
-bool XESP8266Wifi_testAT(XESP8266Wifi* device);
+bool XESP8266Wifi_testAT(XESP8266Wifi* device, int msecs);
 
 /**
- * @brief 重启模块（异步）
+ * @brief 重启模块
  * @details 发送"AT+RST"指令，模块重启后会触发atResponse信号
  * @param device XESP8266Wifi对象指针
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 操作是否成功发起
  */
-bool XESP8266Wifi_reset(XESP8266Wifi* device);
+bool XESP8266Wifi_reset(XESP8266Wifi* device, int msecs);
 /**
  * 开启/关闭多连接模式（必须在连接服务器前调用）
  * @param device 设备指针
  * @param enable true=开启多连接，false=关闭
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 操作是否成功
  */
-bool XESP8266Wifi_setMultiConnMode(XESP8266Wifi* device, bool enable);
+bool XESP8266Wifi_setMultiConnMode(XESP8266Wifi* device, bool enable, int msecs);
 /**
- * @brief 设置工作模式（异步）
+ * @brief 设置工作模式
  * @param device XESP8266Wifi对象指针
  * @param mode 工作模式(XESP8266WifiMode)
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 操作是否成功发起
  */
-bool XESP8266Wifi_setMode(XESP8266Wifi* device, XESP8266WifiMode mode);
+bool XESP8266Wifi_setMode(XESP8266Wifi* device, XESP8266WifiMode mode, int msecs);
 
 /**
- * @brief 连接到WiFi网络（异步）
+ * @brief 连接到WiFi网络
  * @details 发送"AT+CWJAP"指令，连接结果通过wifiStatusChanged信号通知
  * @param device XESP8266Wifi对象指针
  * @param ssid WiFi名称
  * @param password WiFi密码
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 操作是否成功发起
  */
-bool XESP8266Wifi_connectWiFi(XESP8266Wifi* device, const char* ssid, const char* password);
+bool XESP8266Wifi_connectWiFi(XESP8266Wifi* device, const char* ssid, const char* password, int msecs);
 
 /**
- * @brief 断开WiFi连接（异步）
+ * @brief 断开WiFi连接
  * @details 发送"AT+CWQAP"指令，断开结果通过wifiStatusChanged信号通知
  * @param device XESP8266Wifi对象指针
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 操作是否成功发起
  */
-bool XESP8266Wifi_disconnectWiFi(XESP8266Wifi* device);
+bool XESP8266Wifi_disconnectWiFi(XESP8266Wifi* device, int msecs);
 
 /**
- * @brief 配置AP模式参数（异步）
+ * @brief 配置AP模式参数
  * @details 发送"AT+CWSAP"指令，配置AP名称、密码等参数
  * @param device XESP8266Wifi对象指针
  * @param ssid AP名称（字符串，最大长度32字节）
  * @param password AP密码(至少8位，当加密方式为None时可忽略)
  * @param channel 信道(1-13，常用1、6、11以避免信道干扰)
  * @param encrypt 加密方式(XESP8266WifiEncryption枚举，指定WiFi加密协议)
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 操作是否成功发起（true表示指令已发送，false表示发送失败）
  */
 bool XESP8266Wifi_configAP(XESP8266Wifi* device, const char* ssid, const char* password,
-    int channel, XESP8266WifiEncryption encrypt);
+    int channel, XESP8266WifiEncryption encrypt, int msecs);
 
 /**
  * 连接到服务器（多连接版本）
@@ -206,42 +209,40 @@ bool XESP8266Wifi_configAP(XESP8266Wifi* device, const char* ssid, const char* p
  * @param ip 服务器IP
  * @param port 服务器端口
  * @param connId 连接ID（0~4，-1表示自动分配）
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 成功返回连接ID，失败返回-1
  */
 int XESP8266Wifi_connectServer(XESP8266Wifi* device, XESP8266WifiProtocol protocol,
-    const char* ip, uint16_t port, int connId);
+    const char* ip, uint16_t port, int connId, int msecs);
 
 /**
- * @brief 断开服务器连接（异步）
+ * @brief 断开连接
  * @details 发送"AT+CIPCLOSE"指令，断开结果通过serverStatusChanged信号通知
  * @param device XESP8266Wifi对象指针
+ * @param connId 连接ID (非多连接此参数无效)
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 操作是否成功发起
  */
-bool XESP8266Wifi_disconnectServer(XESP8266Wifi* device);
+bool XESP8266Wifi_disconnectConn(XESP8266Wifi* device, int connId, int msecs);
 /**
- * 断开指定连接
- * @param device 设备指针
- * @param connId 连接ID
- * @return 是否成功
- */
-bool XESP8266Wifi_disconnectConn(XESP8266Wifi* device, int connId);
-/**
- * @brief 开启服务器模式（异步）
+ * @brief 开启服务器模式
  * @details 发送"AT+CIPSERVER"指令，开启TCP/UDP服务器
  * @param device XESP8266Wifi对象指针
  * @param protocol 协议类型(TCP/UDP)
  * @param port 服务器端口
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 操作是否成功发起
  */
-bool XESP8266Wifi_startServer(XESP8266Wifi* device, XESP8266WifiProtocol protocol, uint16_t port);
+bool XESP8266Wifi_startServer(XESP8266Wifi* device, XESP8266WifiProtocol protocol, uint16_t port, int msecs);
 
 /**
- * @brief 关闭服务器模式（异步）
+ * @brief 关闭服务器模式
  * @details 发送"AT+CIPSERVER=0"指令，关闭服务器
  * @param device XESP8266Wifi对象指针
+ * @param msecs  等待时间，-1无限等待，0立即返回
  * @return 操作是否成功发起
  */
-bool XESP8266Wifi_stopServer(XESP8266Wifi* device);
+bool XESP8266Wifi_stopServer(XESP8266Wifi* device, int msecs);
 
 /**
  * 向指定连接发送数据
@@ -259,7 +260,7 @@ bool XESP8266Wifi_sendData(XESP8266Wifi* device, int connId, const void* data, s
  * @param device XESP8266Wifi对象指针
  * @return 操作是否成功发起
  */
-bool XESP8266Wifi_enterTransparentMode(XESP8266Wifi* device);
+bool XESP8266Wifi_enterTransparentMode(XESP8266Wifi* device, int msecs);
 
 /**
  * @brief 退出透传模式（异步）
@@ -267,7 +268,7 @@ bool XESP8266Wifi_enterTransparentMode(XESP8266Wifi* device);
  * @param device XESP8266Wifi对象指针
  * @return 操作是否成功发起
  */
-bool XESP8266Wifi_exitTransparentMode(XESP8266Wifi* device);
+bool XESP8266Wifi_exitTransparentMode(XESP8266Wifi* device, int msecs);
 
 /**
  * @brief 获取当前WiFi连接状态
@@ -300,6 +301,15 @@ bool XESP8266Wifi_waitForWiFiConnected(XESP8266Wifi* device, int msecs);
 bool XESP8266Wifi_waitForServerConnected(XESP8266Wifi* device, int msecs);
 
 /**
+ * @brief 同步等待断开指定连接完成
+ * @param device 设备指针
+ * @param connId 连接ID
+ * @param timeout 超时时间(ms)
+ * @return 操作是否成功
+ */
+bool XESP8266Wifi_waitForDisconnectConn(XESP8266Wifi* device, int connId, int timeout);
+
+/**
  * @brief 信号：WiFi连接状态变化
  * @param device XESP8266Wifi对象指针
  * @param status 新的连接状态
@@ -313,7 +323,7 @@ void* XESP8266Wifi_wifiStatusChanged_signal(XESP8266Wifi* device, XESP8266WifiSt
  * @param status 新的连接状态
  * @return 信号标识
  */
-void* XESP8266Wifi_serverStatusChanged_signal(XESP8266Wifi* device, XESP8266WifiStatus status);
+void* XESP8266Wifi_serverStatusChanged_signal(XESP8266Wifi* device, int connId,XESP8266WifiStatus status);
 
 /**
  * @brief 信号：接收到数据
@@ -342,8 +352,8 @@ void* XESP8266Wifi_atResponse_signal(XESP8266Wifi* device, const char* response)
 void* XESP8266Wifi_error_signal(XESP8266Wifi* device, int errorCode, const char* errorMsg);
 
 void* XESP8266Wifi_ok_signal(XESP8266Wifi* device);
-void* XESP8266Wifi_connect_signal(XESP8266Wifi* device);
-void* XESP8266Wifi_disconnect_signal(XESP8266Wifi* device);
+void* XESP8266Wifi_connect_signal(XESP8266Wifi* device, int connId);
+void* XESP8266Wifi_disconnect_signal(XESP8266Wifi* device, int connId);
 // 基础方法宏定义
 #define XESP8266Wifi_delete_base        XIODeviceBase_delete_base
 #define XESP8266Wifi_poll_base          XObject_poll_base
