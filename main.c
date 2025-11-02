@@ -95,7 +95,7 @@ int main(int argc, char* args[])
 	return XMenuTest_run();
 	//XStateMachineEventTest();
 	return XCoreApplication_exec();
-	cJsonTest();
+	//cJsonTest();
 	XRedBlackTreeTest();
 	//XMapAndXVectorFindTest();
 	//XBinarySearchTest();
