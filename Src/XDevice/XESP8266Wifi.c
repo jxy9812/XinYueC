@@ -171,7 +171,8 @@ XESP8266Wifi* XESP8266Wifi_create(XIODeviceBase* io) {
 void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count)
 {
     XESP8266Wifi* device = io;
-    for (size_t i = 0; i < XESP8266_MAX_CONNS; i++)
+    io->m_writeBuffer = count;
+   /* for (size_t i = 0; i < XESP8266_MAX_CONNS; i++)
     {
         if (count != 0)
         {
@@ -183,14 +184,15 @@ void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count)
             XCircularQueueAtomic_delete_base(device->m_connections[i].m_writeBuffer);
             device->m_connections[i].m_writeBuffer = NULL;
         }
-    }
+    }*/
    
 }
 
 void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count)
 {
     XESP8266Wifi* device = io;
-    for (size_t i = 0; i < XESP8266_MAX_CONNS; i++)
+    io->m_readBuffer = count;
+   /* for (size_t i = 0; i < XESP8266_MAX_CONNS; i++)
     {
         if (count != 0)
         {
@@ -202,7 +204,7 @@ void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count)
             XCircularQueueAtomic_delete_base(device->m_connections[i].m_readBuffer);
             device->m_connections[i].m_readBuffer = NULL;
         }
-    }
+    }*/
 }
 size_t VXIODevice_getBytesAvailable(XIODeviceBase* io)
 {
@@ -556,9 +558,21 @@ bool XESP8266Wifi_disconnectConn(XESP8266Wifi* device, int connId, int msecs)
 bool XESP8266Wifi_startServer(XESP8266Wifi* device, XESP8266WifiProtocol protocol, uint16_t port, int msecs) 
 {
     if (ISNULL(device, "device is NULL")) return false;
-    char cmd[64];
-    snprintf(cmd, sizeof(cmd), "AT+CIPSERVER=1,%d", port);
-    return XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_StartServer, msecs);
+    if (!device->m_multiConnMode)//服务器必须开启多连接模式
+    {
+        XESP8266Wifi_setMultiConnMode(device, true, msecs);
+        XEventLoop_delay(100);
+    }
+    if(protocol== XESP8266_Protocol_TCP)
+    {
+        char cmd[64];
+        snprintf(cmd, sizeof(cmd), "AT+CIPSERVER=1,%d", port);
+        return XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_StartServer, msecs);
+    }
+    else
+    {
+        return XESP8266Wifi_connectServer(device, protocol,"0.0.0.0", port,-1,msecs);
+    }
 }
 
 bool XESP8266Wifi_stopServer(XESP8266Wifi* device, int msecs)
@@ -837,7 +851,7 @@ void* XESP8266Wifi_serverStatusChanged_signal(XESP8266Wifi* device, int connId, 
 void* XESP8266Wifi_readyRead_signal(XESP8266Wifi* device, int connId)
 {
     //XVarList* list = XVarList_Create(XVar(int, connId), XVar(char*, data), XVar(size_t, size));
-    XEmitSignal(device, XESP8266Wifi_readyRead_signal, connId, XVarList_delete, NULL, XEVENT_PRIORITY_NORMAL);
+    XEmitSignal(device, XESP8266Wifi_readyRead_signal, connId, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XESP8266Wifi_atResponse_signal(XESP8266Wifi* device, const char* response)

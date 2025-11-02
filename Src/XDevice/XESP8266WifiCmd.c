@@ -26,8 +26,12 @@ static bool ConnectServer(XESP8266Wifi* device);
 static bool DisconnectServer(XESP8266Wifi* device);
 //有新的客户端连接处理
 static bool ConnectClient(XESP8266Wifi* device);
+//有客户端断开连接
+static bool ClosedClient(XESP8266Wifi* device);
 //接受到新的数据
 static bool recvData(XESP8266Wifi* device,char*data);
+//设置缓冲区
+static void setBuffer(XESP8266Wifi* device, int connId);
 bool g_ok(XESP8266Wifi* device)
 {
     char* hasOk = AT_RESPONSE_OK;
@@ -210,7 +214,7 @@ bool ConnectServer(XESP8266Wifi* device)
         device->m_connections[connId].status = XESP8266_Status_Connected;
         device->m_pendingStatus = XESP8266_Status_Connected;
         device->m_activeConnCount++;
-        //device->m_serverStatus = XESP8266_Status_Connected;
+        setBuffer(device,connId);//设置缓冲区
         device->m_operationResult = true;
         XESP8266Wifi_serverStatusChanged_signal(device, connId, XESP8266_Status_Connected);
 
@@ -259,33 +263,55 @@ bool DisconnectServer(XESP8266Wifi* device)
 }
 bool ConnectClient(XESP8266Wifi* device)
 {
+    char* connect = strstr(device->m_responseBuffer, ",CONNECT");
     // 解析服务器模式下的客户端连接（如："0,CONNECT" 表示ID=0的客户端连接）
-    if (strstr(device->m_responseBuffer, "CONNECT") != NULL) {
+    if (connect != NULL)
+    {
         int connId = -1;
-        if (sscanf(device->m_responseBuffer, "%d,CONNECT", &connId) == 1) {
+        if (sscanf((connect - 1 >= device->m_responseBuffer)? connect - 1: device->m_responseBuffer, "%d,CONNECT", &connId) == 1) {
             if (connId >= 0 && connId < XESP8266_MAX_CONNS) {
                 device->m_connections[connId].connId = connId;
                 device->m_connections[connId].status = XESP8266_Status_Connected;
                 device->m_connections[connId].isServer = true;  // 服务器端的客户端连接
                 device->m_activeConnCount++;
+                setBuffer(device,connId);
                 // 触发客户端连接信号（可自定义信号传递connId）
-                //XESP8266Wifi_clientConnected_signal(device, connId);
+                XESP8266Wifi_connect_signal(device, connId);
                 return true;
             }
         }
     }
-
-    //// 解析数据接收（如："+IPD,<connId>,<len>:data"）
-    //char* ipd = strstr(device->m_responseBuffer, "+IPD,");
-    //if (ipd != NULL) {
-    //    int connId, len;
-    //    if (sscanf(ipd, "+IPD,%d,%d:", &connId, &len) == 2) {
-    //        char* data = ipd + strlen("+IPD,%d,%d:") + 2;  // 定位到数据部分
-    //        // 触发带连接ID的数据接收信号
-    //        //XESP8266Wifi_dataReceivedWithConnId_signal(device, connId, data, len);
-    //        return true;
-    //    }
-    //}
+    return false;
+}
+bool ClosedClient(XESP8266Wifi* device)
+{
+    if (strstr(device->m_responseBuffer, "CLOSED") != NULL)
+    {
+        int connId = -1;
+        if (sscanf(device->m_responseBuffer, "%d,CLOSED", &connId) == 1) {
+            if (connId >= 0 && connId < XESP8266_MAX_CONNS) 
+            {
+                XESP8266ConnInfo* info = device->m_connections + connId;
+                info->connId = connId;
+                info->status = XESP8266_Status_Disconnected;
+                info->isServer = true;  // 服务器端的客户端连接
+                if (info->m_readBuffer)
+                {
+                    XQueueBase_delete_base(info->m_readBuffer);
+                    info->m_readBuffer = NULL;
+                }
+                if (info->m_writeBuffer)
+                {
+                    XQueueBase_delete_base(info->m_writeBuffer);
+                    info->m_writeBuffer = NULL;
+                }
+                device->m_activeConnCount--;
+                // 触发客户端连接信号（可自定义信号传递connId）
+                XESP8266Wifi_disconnect_signal(device, connId);
+                return true;
+            }
+        }
+    }
     return false;
 }
 bool recvData(XESP8266Wifi* device, char* buffer)
@@ -360,6 +386,51 @@ bool recvData(XESP8266Wifi* device, char* buffer)
     }
     
     return true;
+}
+void setBuffer(XESP8266Wifi* device, int connId)
+{
+    //读取缓冲区
+    {
+        size_t count = ((XIODeviceBase*)device)->m_readBuffer;
+        //创建对应的缓冲区
+        if (count == 0 && device->m_connections[connId].m_readBuffer)
+        {//设置无需缓冲区
+            XQueueBase_delete_base(device->m_connections[connId].m_readBuffer);
+            device->m_connections[connId].m_readBuffer = NULL;
+        }
+        else if (count > 0)
+        {
+            //存在缓冲区，但是跟设置的不一样
+            if (device->m_connections[connId].m_readBuffer && count != XCircularQueueAtomic_size_base(device->m_connections[connId].m_readBuffer))
+            {
+                XQueueBase_delete_base(device->m_connections[connId].m_readBuffer);
+                device->m_connections[connId].m_readBuffer = NULL;
+            }
+            if (device->m_connections[connId].m_readBuffer == NULL)
+                device->m_connections[connId].m_readBuffer = XCircularQueueAtomic_Create(char, count);
+        }
+    }
+    //写入缓冲区
+    {
+        size_t count = ((XIODeviceBase*)device)->m_writeBuffer;
+        //创建对应的缓冲区
+        if (count == 0 && device->m_connections[connId].m_writeBuffer)
+        {//设置无需缓冲区
+            XQueueBase_delete_base(device->m_connections[connId].m_writeBuffer);
+            device->m_connections[connId].m_writeBuffer = NULL;
+        }
+        else if (count > 0)
+        {
+            //存在缓冲区，但是跟设置的不一样
+            if (device->m_connections[connId].m_writeBuffer && count != XCircularQueueAtomic_size_base(device->m_connections[connId].m_writeBuffer))
+            {
+                XQueueBase_delete_base(device->m_connections[connId].m_writeBuffer);
+                device->m_connections[connId].m_writeBuffer = NULL;
+            }
+            if (device->m_connections[connId].m_writeBuffer == NULL)
+                device->m_connections[connId].m_writeBuffer = XCircularQueueAtomic_Create(char, count);
+        }
+    }
 }
 /**
  * @brief 处理AT指令响应
@@ -438,10 +509,12 @@ void VXESP8266_processResponse(XESP8266Wifi* device)
         default:
             break;
         }
-        // 非透传模式下处理多连接数据/状态
+        // 非透传模式下处理多连接状态
         if (!hand && !device->m_transparentMode)
         {
             hand = ConnectClient(device);
+            if(!hand)
+                hand = ClosedClient(device);
         }
     }
     // 处理完成后清空缓冲区（非透传模式）
