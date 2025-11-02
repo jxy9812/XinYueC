@@ -3,10 +3,11 @@
 #include "XString.h"
 #include "XTimer.h"
 #include "XEventLoop.h"
-#include<string.h>
+#include "XCircularQueueAtomic.h"
+#include "XThread.h"
+#include <string.h>
 
 void VXESP8266_processResponse(XESP8266Wifi* device);
-
 
 // 前向声明
 static bool VXESP8266_open(XESP8266Wifi* device, XIODeviceBaseMode mode);
@@ -14,7 +15,10 @@ static bool VXESP8266_close(XESP8266Wifi* device);
 static size_t VXESP8266_write(XESP8266Wifi* device, const char* data, size_t maxSize);
 static size_t VXESP8266_read(XESP8266Wifi* device, char* data, size_t maxSize);
 static size_t VXESP8266_getBytesAvailable(XESP8266Wifi* device);
-
+static void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count);
+static void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count);
+static size_t VXIODevice_getBytesAvailable(XIODeviceBase* io);
+static size_t VXIODeviceBase_getBytesToWrite(XIODeviceBase* io);
 
 static void VXESP8266_deinit(XESP8266Wifi* device);
 static void VXESP8266_timeoutCallback(void* userData);
@@ -38,6 +42,11 @@ XVtable* XESP8266Wifi_class_init() {
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read, VXESP8266_read);
     XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesAvailable, VXESP8266_getBytesAvailable);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXESP8266_deinit);
+
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesAvailable, VXIODevice_getBytesAvailable);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesToWrite, VXIODeviceBase_getBytesToWrite);
 #if SHOWCONTAINERSIZE
     printf("XESP8266Wifi size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -83,6 +92,9 @@ void XESP8266Wifi_init(XESP8266Wifi* device, XIODeviceBase* io) {
         device->m_connections[i].connId = -1;  // -1表示未使用
         device->m_connections[i].status = XESP8266_Status_Disconnected;
         device->m_connections[i].isServer = false;
+        device->m_connections[i].remaining_recv_size = 0; 
+        device->m_connections[i].m_readBuffer = NULL;
+        device->m_connections[i].m_writeBuffer = NULL;
         memset(device->m_connections[i].ip, 0, sizeof(device->m_connections[i].ip));
         device->m_connections[i].port = 0;
     }
@@ -125,6 +137,24 @@ void VXESP8266_deinit(XESP8266Wifi* device)
         XEventLoop_delete_base(device->m_loop);
         device->m_loop = NULL;
     }
+    for (int i = 0; i < XESP8266_MAX_CONNS; i++) {
+        device->m_connections[i].connId = -1;  // -1表示未使用
+        device->m_connections[i].status = XESP8266_Status_Disconnected;
+        device->m_connections[i].isServer = false;
+        device->m_connections[i].remaining_recv_size = 0;
+        if (device->m_connections[i].m_readBuffer)
+        {
+            XQueueBase_delete_base(device->m_connections[i].m_readBuffer);
+            device->m_connections[i].m_readBuffer = NULL;
+        }
+        if (device->m_connections[i].m_writeBuffer)
+        {
+            XQueueBase_delete_base(device->m_connections[i].m_writeBuffer);
+            device->m_connections[i].m_writeBuffer = NULL;
+        }
+        memset(device->m_connections[i].ip, 0, sizeof(device->m_connections[i].ip));
+        device->m_connections[i].port = 0;
+    }
     // 释放父对象
     XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Deinit, void(*)(XIODeviceBase*))(device);
 }
@@ -138,7 +168,50 @@ XESP8266Wifi* XESP8266Wifi_create(XIODeviceBase* io) {
     XESP8266Wifi_init(device, io);
     return device;
 }
+void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count)
+{
+    XESP8266Wifi* device = io;
+    for (size_t i = 0; i < XESP8266_MAX_CONNS; i++)
+    {
+        if (count != 0)
+        {
+            if (device->m_connections[i].m_writeBuffer == NULL)
+                device->m_connections[i].m_writeBuffer = XCircularQueueAtomic_Create(char, count);
+        }
+        else if (device->m_connections[i].m_writeBuffer != NULL)
+        {
+            XCircularQueueAtomic_delete_base(device->m_connections[i].m_writeBuffer);
+            device->m_connections[i].m_writeBuffer = NULL;
+        }
+    }
+   
+}
 
+void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count)
+{
+    XESP8266Wifi* device = io;
+    for (size_t i = 0; i < XESP8266_MAX_CONNS; i++)
+    {
+        if (count != 0)
+        {
+            if (device->m_connections[i].m_readBuffer == NULL)
+                device->m_connections[i].m_readBuffer = XCircularQueueAtomic_Create(char, count);
+        }
+        else if (device->m_connections[i].m_readBuffer != NULL)
+        {
+            XCircularQueueAtomic_delete_base(device->m_connections[i].m_readBuffer);
+            device->m_connections[i].m_readBuffer = NULL;
+        }
+    }
+}
+size_t VXIODevice_getBytesAvailable(XIODeviceBase* io)
+{
+    return XESP8266Wifi_getBytesAvailable(io,0);
+}
+size_t VXIODeviceBase_getBytesToWrite(XIODeviceBase* io)
+{
+    return XESP8266Wifi_getBytesToWrite(io, 0);
+}
 /**
  * @brief 打开设备
  */
@@ -162,23 +235,25 @@ static bool VXESP8266_close(XESP8266Wifi* device) {
 /**
  * @brief 写入数据
  */
-static size_t VXESP8266_write(XESP8266Wifi* device, const char* data, size_t maxSize) {
+static size_t VXESP8266_write(XESP8266Wifi* device, const char* data, size_t maxSize) 
+{
     if (ISNULL(device, "device is NULL") || ISNULL(device->m_io, "m_io is NULL") ||
         ISNULL(data, "data is NULL") || maxSize == 0)
         return 0;
 
-    return XIODeviceBase_write_base(device->m_io, data, maxSize);
+    return XESP8266Wifi_write(device, 0,data, maxSize,1000);
 }
 
 /**
  * @brief 读取数据
  */
-static size_t VXESP8266_read(XESP8266Wifi* device, char* data, size_t maxSize) {
+static size_t VXESP8266_read(XESP8266Wifi* device, char* data, size_t maxSize) 
+{
     if (ISNULL(device, "device is NULL") || ISNULL(device->m_io, "m_io is NULL") ||
         ISNULL(data, "data is NULL") || maxSize == 0)
         return 0;
 
-    return XIODeviceBase_read_base(device->m_io, data, maxSize);
+    return XESP8266Wifi_read(device,0, data, maxSize,0);
 }
 
 /**
@@ -194,8 +269,9 @@ static size_t VXESP8266_getBytesAvailable(XESP8266Wifi* device) {
 /**
  * @brief 发送AT指令通用函数
  */
-static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XESP8266WifiOpType op, int msecs) {
-    if (ISNULL(device, "device is NULL") || ISNULL(cmd, "cmd is NULL"))
+static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XESP8266WifiOpType op, int msecs) 
+{
+    if (ISNULL(device, "device is NULL") /*|| ISNULL(cmd, "cmd is NULL")*/)
         return false;
 
     // 停止当前超时定时器
@@ -208,14 +284,17 @@ static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XE
     device->m_responseLen = 0;
     memset(device->m_responseBuffer, 0, sizeof(device->m_responseBuffer));
     device->m_operationResult = false;
-    // 发送AT指令（添加回车换行）
-    char atCmd[256];
-    snprintf(atCmd, sizeof(atCmd), "%s\r\n", cmd);
-   
-    size_t sent = XIODeviceBase_write_base(device->m_io, atCmd, strlen(atCmd));
-    if (sent != strlen(atCmd)) {
-        DEBUG_PRINTF("AT command send failed: %s", cmd);
-        return false;
+    if(cmd)
+    {
+        // 发送AT指令（添加回车换行）
+        char atCmd[256];
+        snprintf(atCmd, sizeof(atCmd), "%s\r\n", cmd);
+
+        size_t sent = XIODeviceBase_write_base(device->m_io, atCmd, strlen(atCmd));
+        if (sent != strlen(atCmd)) {
+            DEBUG_PRINTF("AT command send failed: %s", cmd);
+            return false;
+        }
     }
 
     // 启动超时定时器
@@ -487,52 +566,155 @@ bool XESP8266Wifi_stopServer(XESP8266Wifi* device, int msecs)
     return XESP8266Wifi_sendATCommand(device, "AT+CIPSERVER=0", XESP8266_Op_StopServer, msecs);
 }
 
-bool XESP8266Wifi_sendData(XESP8266Wifi* device, int connId, const void* data, size_t size) {
+size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, size_t size, int msecs)
+{
     if (ISNULL(device, "device is NULL") || ISNULL(data, "data is NULL") || size == 0) 
     {
-        return false;
+        return 0;
     }
     if (!device->m_multiConnMode)
-    {
+    {//非多连接模式
         if (device->m_transparentMode) {
             // 透传模式直接发送
-            return VXESP8266_write(device, data, size) == size;
+            return XIODeviceBase_write_base(device->m_io, data, size);
         }
         else {
             // 非透传模式使用AT指令
             char cmd[32];
             snprintf(cmd, sizeof(cmd), "AT+CIPSEND=%d", (int)size);
-            if (!XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_WriteData, 1000)) {
-                return false;
+            if (!XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_WriteData, msecs)) {
+                return 0;
             }
             // 等待"> "提示符（简单处理，实际可能需要更复杂的等待逻辑）
             //XEventLoop_delay(100);
-            return VXESP8266_write(device, data, size) == size;
+            if (XIODeviceBase_write_base(device->m_io, data, size) == size)
+            {
+                if (XESP8266Wifi_sendATCommand(device, NULL, XESP8266_Op_WriteData, msecs)) 
+                {
+                    return size;
+                }
+            }
+            
+           // XEventLoop_delay(100);
+            return 0;
         }
     }
     if (connId < 0 || connId >= XESP8266_MAX_CONNS ||
         device->m_connections[connId].status != XESP8266_Status_Connected)
-        return false;
+        return 0;
     if (device->m_transparentMode) {
         // 多连接透传需先指定连接：AT+CIPSEND=<connId>
         char cmd[32];
         snprintf(cmd, sizeof(cmd), "AT+CIPSEND=%d", connId);
-        if (!XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_WriteData, 1000)) {
-            return false;
+        if (!XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_WriteData, msecs)) {
+            return 0;
         }
         // 透传模式发送数据
-        return VXESP8266_write(device, data, size) == size;
+        return XIODeviceBase_write_base(device->m_io, data, size) == size;
     }
     else {
         // 非透传模式：AT+CIPSEND=<connId>,<size>
         char cmd[32];
         snprintf(cmd, sizeof(cmd), "AT+CIPSEND=%d,%d", connId, (int)size);
-        if (!XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_WriteData, 1000)) {
-            return false;
+        if (!XESP8266Wifi_sendATCommand(device, cmd, XESP8266_Op_WriteData, msecs)) {
+            return 0;
         }
         // 发送实际数据
-        return VXESP8266_write(device, data, size) == size;
+        if (XIODeviceBase_write_base(device->m_io, data, size) == size)
+        {
+            if (XESP8266Wifi_sendATCommand(device, NULL, XESP8266_Op_WriteData, msecs))
+            {
+                return size;
+            }
+        }
+        return 0;
+        //return XIODeviceBase_write_base(device->m_io, data, size);
     }
+}
+
+size_t XESP8266Wifi_read(XESP8266Wifi* device, int connId, void* data, size_t size, int msecs)
+{
+    if (ISNULL(device, "device is NULL") || ISNULL(data, "data is NULL") || size == 0)
+    {
+        return 0;
+    }
+    if (!device->m_multiConnMode)
+    {
+        connId = 0;//修正id 单连接默认0
+    }
+    else if (connId < 0 || connId >= XESP8266_MAX_CONNS /*||device->m_connections[connId].status != XESP8266_Status_Connected*/)
+    {
+        return 0;//超出范围
+    }
+    XCircularQueue* queue= device->m_connections[connId].m_readBuffer;//获取缓冲区队列
+    if (!queue)
+        return 0;//缓冲区不存在无法获取数据
+    size_t remaining_size = size;//剩余需要的字节大小
+    size_t queueSize = XQueueBase_size_base(queue);//当前接收缓冲区的数据大小
+    size_t recvSize = remaining_size > queueSize ? queueSize : remaining_size;//当前所要接收的数据大小
+    for (size_t i = 0; i < recvSize; i++)
+    {
+        XQueueBase_receive_base(queue, ((char*)data)+(size-remaining_size)+i);
+    }
+    remaining_size -= recvSize;//计算剩余大小
+    if (remaining_size == 0)
+        return size;//所需大小已全部接收
+    if (msecs <= 0)
+        return size - remaining_size;//立即结束，返回当前获取的数据大小
+    //延迟等待
+    size_t current= XTimerBase_getCurrentTime();
+    while (XTimerBase_getCurrentTime()< current+ msecs)
+    {
+        XEventLoop_processEvents_base(XThread_currentEventLoop(), XEventLoop_AllEvents);
+        if (remaining_size && XQueueBase_receive_base(queue, ((char*)data) + (size - remaining_size)))
+        {
+            --remaining_size;
+            if (remaining_size == 0)
+                return size;//接收完毕
+        }
+    }
+    //延迟结束返回
+    return size - remaining_size;
+}
+
+size_t XESP8266Wifi_getBytesAvailable(XESP8266Wifi* device, int connId)
+{
+    if (ISNULL(device, "device is NULL"))
+    {
+        return 0;
+    }
+    if (!device->m_multiConnMode)
+    {
+        connId = 0;//修正id 单连接默认0
+    }
+    else if (connId < 0 || connId >= XESP8266_MAX_CONNS /*||device->m_connections[connId].status != XESP8266_Status_Connected*/)
+    {
+        return 0;//超出范围
+    }
+    XCircularQueue* queue = device->m_connections[connId].m_readBuffer;//获取缓冲区队列
+    if (!queue)
+        return 0;//缓冲区不存在无法获取数据
+    return XCircularQueue_size_base(queue);
+}
+
+size_t XESP8266Wifi_getBytesToWrite(XESP8266Wifi* device, int connId)
+{
+    if (ISNULL(device, "device is NULL"))
+    {
+        return 0;
+    }
+    if (!device->m_multiConnMode)
+    {
+        connId = 0;//修正id 单连接默认0
+    }
+    else if (connId < 0 || connId >= XESP8266_MAX_CONNS /*||device->m_connections[connId].status != XESP8266_Status_Connected*/)
+    {
+        return 0;//超出范围
+    }
+    XCircularQueue* queue = device->m_connections[connId].m_writeBuffer;//获取缓冲区队列
+    if (!queue)
+        return 0;//缓冲区不存在无法获取数据
+    return XCircularQueue_size_base(queue);
 }
 
 bool XESP8266Wifi_enterTransparentMode(XESP8266Wifi* device, int msecs)
@@ -560,11 +742,14 @@ bool XESP8266Wifi_exitTransparentMode(XESP8266Wifi* device, int msecs)
         return false;
 
     // 发送+++退出透传（无回车）
-    size_t sent = VXESP8266_write(device, "+++", 3);
+    size_t sent = XIODeviceBase_write_base(device->m_io, "+++", 3);
     if (sent != 3) return false;
-
+    XEventLoop_delay(100);
+    if (!XESP8266Wifi_sendATCommand(device, "AT+CIPMODE=0", XESP8266_Op_SetTransparent, msecs)) {
+        return false;
+    }
     // 等待退出完成
-    XEventLoop_delay(msecs);
+    //XEventLoop_delay(msecs);
     device->m_transparentMode = false;
     return true;
 }
@@ -649,10 +834,10 @@ void* XESP8266Wifi_serverStatusChanged_signal(XESP8266Wifi* device, int connId, 
     XEmitSignal(device, XESP8266Wifi_serverStatusChanged_signal, list, XVarList_delete,NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-void* XESP8266Wifi_dataReceived_signal(XESP8266Wifi* device, const char* data, size_t size) 
+void* XESP8266Wifi_readyRead_signal(XESP8266Wifi* device, int connId)
 {
-    XVarList* list = XVarList_Create(XVar(char*, data), XVar(size_t, size));
-    XEmitSignal(device, XESP8266Wifi_dataReceived_signal, list, XVarList_delete, NULL, XEVENT_PRIORITY_NORMAL);
+    //XVarList* list = XVarList_Create(XVar(int, connId), XVar(char*, data), XVar(size_t, size));
+    XEmitSignal(device, XESP8266Wifi_readyRead_signal, connId, XVarList_delete, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XESP8266Wifi_atResponse_signal(XESP8266Wifi* device, const char* response)

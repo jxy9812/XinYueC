@@ -1,6 +1,7 @@
 ﻿#include"XESP8266Wifi.h"
 #include "XTimer.h"
 #include "XEventLoop.h"
+#include "XCircularQueueAtomic.h"
 #include <string.h>
 #define AT_RESPONSE_OK          (strstr(device->m_responseBuffer, "OK"))
 #define AT_RESPONSE_ERROR       (strstr(device->m_responseBuffer, "ERROR"))
@@ -9,7 +10,7 @@
 static bool g_ok(XESP8266Wifi* device);
 static bool g_error(XESP8266Wifi* device);
 
-
+static bool Reset(XESP8266Wifi* device);
 static bool TestAT(XESP8266Wifi* device);
 static bool SetMultiConnMode(XESP8266Wifi* device);
 static bool SetMode(XESP8266Wifi* device);
@@ -25,7 +26,8 @@ static bool ConnectServer(XESP8266Wifi* device);
 static bool DisconnectServer(XESP8266Wifi* device);
 //有新的客户端连接处理
 static bool ConnectClient(XESP8266Wifi* device);
-
+//接受到新的数据
+static bool recvData(XESP8266Wifi* device,char*data);
 bool g_ok(XESP8266Wifi* device)
 {
     char* hasOk = AT_RESPONSE_OK;
@@ -50,6 +52,14 @@ bool g_error(XESP8266Wifi* device)
         XEventLoop_quit_base(device->m_loop, -1);
         return true;
     }
+    return false;
+}
+bool Reset(XESP8266Wifi* device)
+{
+    if (g_ok(device))
+        return true;
+    if (g_error(device))
+        return true;
     return false;
 }
 bool TestAT(XESP8266Wifi* device)
@@ -82,7 +92,11 @@ bool WriteData(XESP8266Wifi* device)
     if (g_ok(device))
         return true;
     if (g_error(device))
+    {
+ /*       char* hasError = (strstr(device->m_responseBuffer, "ERROR"));
+        if (hasError)*/
         return true;
+    }
     return false;
 }
 bool ConfigAP(XESP8266Wifi* device)
@@ -127,7 +141,8 @@ bool EnterTransparent(XESP8266Wifi* device)
 }
 bool ConnectWiFi(XESP8266Wifi* device)
 {
-    if (AT_RESPONSE_OK || AT_RESPONSE_CONNECT)
+    char* hasDisconnect = AT_RESPONSE_DISCONNECT;
+    if (!hasDisconnect && (AT_RESPONSE_OK || AT_RESPONSE_CONNECT))
     {
         device->m_wifiStatus = XESP8266_Status_Connected;
         XESP8266Wifi_wifiStatusChanged_signal(device, XESP8266_Status_Connected);
@@ -139,7 +154,7 @@ bool ConnectWiFi(XESP8266Wifi* device)
 
         return true;
     }
-    char* hasDisconnect=AT_RESPONSE_DISCONNECT;
+   
     char* hasError = hasDisconnect?false: AT_RESPONSE_ERROR;
     char* hasClosed = hasError ? false : (strstr(device->m_responseBuffer, "CLOSED"));
     if (hasDisconnect || hasError|| hasClosed)
@@ -190,7 +205,7 @@ bool ConnectServer(XESP8266Wifi* device)
 {
     int connId = device->m_pendingConnId;
 
-    if (AT_RESPONSE_OK || AT_RESPONSE_CONNECT)
+    if (/*AT_RESPONSE_OK ||*/ AT_RESPONSE_CONNECT)
     {
         device->m_connections[connId].status = XESP8266_Status_Connected;
         device->m_pendingStatus = XESP8266_Status_Connected;
@@ -260,18 +275,91 @@ bool ConnectClient(XESP8266Wifi* device)
         }
     }
 
+    //// 解析数据接收（如："+IPD,<connId>,<len>:data"）
+    //char* ipd = strstr(device->m_responseBuffer, "+IPD,");
+    //if (ipd != NULL) {
+    //    int connId, len;
+    //    if (sscanf(ipd, "+IPD,%d,%d:", &connId, &len) == 2) {
+    //        char* data = ipd + strlen("+IPD,%d,%d:") + 2;  // 定位到数据部分
+    //        // 触发带连接ID的数据接收信号
+    //        //XESP8266Wifi_dataReceivedWithConnId_signal(device, connId, data, len);
+    //        return true;
+    //    }
+    //}
+    return false;
+}
+bool recvData(XESP8266Wifi* device, char* buffer)
+{
     // 解析数据接收（如："+IPD,<connId>,<len>:data"）
-    char* ipd = strstr(device->m_responseBuffer, "+IPD,");
-    if (ipd != NULL) {
-        int connId, len;
-        if (sscanf(ipd, "+IPD,%d,%d:", &connId, &len) == 2) {
-            char* data = ipd + strlen("+IPD,%d,%d:") + 2;  // 定位到数据部分
-            // 触发带连接ID的数据接收信号
-            //XESP8266Wifi_dataReceivedWithConnId_signal(device, connId, data, len);
+    if (device->m_currentOp == XESP8266_Op_RecvData)
+    {
+        int size = device->m_connections[device->m_pendingConnId].remaining_recv_size > device->m_responseLen ? device->m_responseLen : device->m_connections[device->m_pendingConnId].remaining_recv_size;
+        //存在接收缓冲区，压入缓冲区队列
+        if (device->m_connections[device->m_pendingConnId].m_readBuffer)
+        {
+            for (size_t i = 0; i < size; i++)
+            {
+                XQueueBase_push_base(device->m_connections[device->m_pendingConnId].m_readBuffer, buffer + i);
+            }
+        }
+        XESP8266Wifi_readyRead_signal(device, device->m_pendingConnId);
+        if (device->m_connections[device->m_pendingConnId].remaining_recv_size > device->m_responseLen)
+        {
+            device->m_connections[device->m_pendingConnId].remaining_recv_size -= device->m_responseLen;
+            device->m_responseLen = 0;
+            device->m_currentOp = XESP8266_Op_RecvData;
+            return false;
+        }
+        else
+        {
+            device->m_connections[device->m_pendingConnId].remaining_recv_size = 0;
             return true;
         }
     }
-    return false;
+    else
+    {
+        char* ipd = strstr(buffer, "+IPD,");
+        if (ipd == NULL)
+            return false;
+        int connId=0, len=0;
+        char* data = NULL;
+        if (device->m_multiConnMode)
+        {
+            if (sscanf(ipd, "+IPD,%d,%d:", &connId, &len) == 2) 
+            {
+                data = strstr(ipd, ":") + 1;  // 定位到数据部分
+            }
+        }
+        else
+        {
+           /* int len;*///+IPD,5:esp32
+            if (sscanf(ipd, "+IPD,%d:", &len) == 1)
+            {
+               data = strstr(ipd, ":") + 1;  // 定位到数据部分
+            }
+        }
+        device->m_pendingConnId = connId;
+        device->m_connections[connId].remaining_recv_size = (len - (device->m_responseLen - (buffer - device->m_responseBuffer) - (data - buffer)));
+        int size = len - device->m_connections[connId].remaining_recv_size;
+        //存在接收缓冲区，压入缓冲区队列
+        if (device->m_connections[connId].m_readBuffer)
+        {
+            for (size_t i = 0; i < size; i++)
+            {
+                XQueueBase_push_base(device->m_connections[connId].m_readBuffer, data + i);
+            }
+        }
+        // 触发带连接ID的数据接收信号
+        XESP8266Wifi_readyRead_signal(device, connId);
+        if (device->m_connections[connId].remaining_recv_size)
+        {
+            device->m_responseLen = 0;
+            device->m_currentOp = XESP8266_Op_RecvData;
+            return false;
+        }
+    }
+    
+    return true;
 }
 /**
  * @brief 处理AT指令响应
@@ -281,7 +369,7 @@ void VXESP8266_processResponse(XESP8266Wifi* device)
     if (ISNULL(device, "device is NULL")) return;
 
     // 读取底层设备数据
-    size_t available = XIODeviceBase_getBytesAvailable_base(device);
+    size_t available = XIODeviceBase_getBytesAvailable_base(device->m_io);
     if (available == 0) return;
 
     // 读取数据到响应缓冲区
@@ -292,49 +380,74 @@ void VXESP8266_processResponse(XESP8266Wifi* device)
             available);
         device->m_responseLen += available;
         device->m_responseBuffer[device->m_responseLen] = '\0';
-        XPrintf("\n%s\n", device->m_responseBuffer);
+        XPrintf("\n||<<%s>>||\n", device->m_responseBuffer);
 
     }
-
+    bool hand = false;
     // 透传模式下直接转发数据
     if (device->m_transparentMode)
     {
-        XESP8266Wifi_dataReceived_signal(device, device->m_responseBuffer, device->m_responseLen);
+        int connId = 0;
+        if (device->m_connections[connId].m_readBuffer)
+        {
+            for (size_t i = 0; i < device->m_responseLen; i++)
+            {
+                XQueueBase_push_base(device->m_connections[connId].m_readBuffer, device->m_responseBuffer + i);
+            }
+        }
+        XESP8266Wifi_readyRead_signal(device, connId/*,device->m_responseBuffer, device->m_responseLen*/);
         device->m_responseLen = 0;
         return;
     }
-    // 触发响应信号
-    XESP8266Wifi_atResponse_signal(device, (void*)device->m_responseBuffer);
-    bool hand = false;
-    // 根据当前操作类型处理响应
-    switch (device->m_currentOp)
+    else if (device->m_currentOp == XESP8266_Op_RecvData)
     {
-    case XESP8266_Op_TestAT:hand = TestAT(device); break;
-    case XESP8266_Op_SetMultiConnMode:hand = SetMultiConnMode(device); break;
-    case XESP8266_Op_SetMode:hand = SetMode(device); break;
-    case XESP8266_Op_WriteData:hand = WriteData(device); break;
-    case XESP8266_Op_ConfigAP:hand = ConfigAP(device); break;
-    case XESP8266_Op_StartServer:hand = StartServer(device); break;
-    case XESP8266_Op_StopServer:hand = StopServer(device); break;
-    case XESP8266_Op_SetTransparent:hand = SetTransparent(device); break;
-    case XESP8266_Op_EnterTransparent:hand = EnterTransparent(device); break;
-    case XESP8266_Op_ConnectWiFi:hand = ConnectWiFi(device); break;
-    case XESP8266_Op_DisconnectWiFi:hand = DisconnectWiFi(device); break;
-    case XESP8266_Op_ConnectServer:hand = ConnectServer(device); break;
-    case XESP8266_Op_DisconnectServer:hand = DisconnectServer(device); break;
-      
-    default:
-        break;
+        hand = recvData(device, device->m_responseBuffer);
     }
-    // 非透传模式下处理多连接数据/状态
-    if (!hand&&!device->m_transparentMode)
+    else
     {
-        hand = ConnectClient(device);
+        char* IPD = strstr(device->m_responseBuffer, "+IPD,");
+        if (IPD)
+        {//接受数据响应
+            hand= recvData(device, IPD);
+        }
+    }
+    if(!hand)
+    {
+        // 触发响应信号
+        XESP8266Wifi_atResponse_signal(device, (void*)device->m_responseBuffer);
+
+
+        // 根据当前操作类型处理响应
+        switch (device->m_currentOp)
+        {
+        case XESP8266_Op_Reset:hand = Reset(device); break;
+        case XESP8266_Op_TestAT:hand = TestAT(device); break;
+        case XESP8266_Op_SetMultiConnMode:hand = SetMultiConnMode(device); break;
+        case XESP8266_Op_SetMode:hand = SetMode(device); break;
+        case XESP8266_Op_WriteData:hand = WriteData(device); break;
+        case XESP8266_Op_ConfigAP:hand = ConfigAP(device); break;
+        case XESP8266_Op_StartServer:hand = StartServer(device); break;
+        case XESP8266_Op_StopServer:hand = StopServer(device); break;
+        case XESP8266_Op_SetTransparent:hand = SetTransparent(device); break;
+        case XESP8266_Op_EnterTransparent:hand = EnterTransparent(device); break;
+        case XESP8266_Op_ConnectWiFi:hand = ConnectWiFi(device); break;
+        case XESP8266_Op_DisconnectWiFi:hand = DisconnectWiFi(device); break;
+        case XESP8266_Op_ConnectServer:hand = ConnectServer(device); break;
+        case XESP8266_Op_DisconnectServer:hand = DisconnectServer(device); break;
+
+        default:
+            break;
+        }
+        // 非透传模式下处理多连接数据/状态
+        if (!hand && !device->m_transparentMode)
+        {
+            hand = ConnectClient(device);
+        }
     }
     // 处理完成后清空缓冲区（非透传模式）
     if (hand)
     {
-        memset(device->m_responseBuffer, 0, device->m_responseLen < sizeof(device->m_responseBuffer) ? device->m_responseLen : sizeof(device->m_responseBuffer));
+        //memset(device->m_responseBuffer, 0, device->m_responseLen < sizeof(device->m_responseBuffer) ? device->m_responseLen : sizeof(device->m_responseBuffer));
         device->m_responseLen = 0;
         device->m_currentOp = XESP8266_Op_None;
     }
