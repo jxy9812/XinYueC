@@ -10,6 +10,7 @@ extern "C" {
 #endif
 
 /* Status of Disk Functions */
+typedef unsigned char   BYTE;
 typedef BYTE	DSTATUS;
 
 /* Results of Disk Functions */

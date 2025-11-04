@@ -38,8 +38,11 @@ void ff_memfree (void* mblock)
 #ifdef _WIN32
 #define OS_TYPE	0	/* 0:Win32, 1:uITRON4.0, 2:uC/OS-II, 3:FreeRTOS, 4:CMSIS-RTOS */
 #elif defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
-#define OS_TYPE	3
+#define OS_TYPE	5
 #elif defined(__FreeRTOS__) 
+#define OS_TYPE	3	/* 3:FreeRTOS */
+#else
+#define OS_TYPE	-1	/* 未定义系统 */
 #endif
 
 #if   OS_TYPE == 0	/* Win32 */
@@ -63,6 +66,14 @@ static SemaphoreHandle_t Mutex[FF_VOLUMES + 1];	/* Table of mutex handle */
 #elif OS_TYPE == 4	/* CMSIS-RTOS */
 #include "cmsis_os.h"
 static osMutexId Mutex[FF_VOLUMES + 1];	/* Table of mutex ID */
+#elif OS_TYPE == 5	/* Linux/macOS/BSD（新增：POSIX 系统） */
+#include <pthread.h>	/* 包含 POSIX 线程库头文件 */
+#include <errno.h>
+
+/* 定义互斥锁数组（pthread_mutex_t 是 POSIX 互斥锁类型） */
+static pthread_mutex_t Mutex[FF_VOLUMES + 1];
+/* 标记互斥锁是否已初始化（避免重复初始化/删除） */
+static int MutexInited[FF_VOLUMES + 1] = {0};
 
 #endif
 
@@ -105,7 +116,20 @@ int ff_mutex_create (	/* Returns 1:Function succeeded or 0:Could not create the 
 
 	Mutex[vol] = osMutexCreate(osMutex(cmsis_os_mutex));
 	return (int)(Mutex[vol] != NULL);
+#elif OS_TYPE == 5	/* Linux/macOS/BSD（新增：POSIX 互斥锁创建） */
+	if (MutexInited[vol]) {
+		return 1;	/* 已初始化，直接返回成功 */
+	}
 
+	/* 初始化互斥锁（默认属性） */
+	int ret = pthread_mutex_init(&Mutex[vol], NULL);
+	if (ret == 0) {
+		MutexInited[vol] = 1;	/* 标记为已初始化 */
+		return 1;
+	} else {
+		fprintf(stderr, "pthread_mutex_init failed: %s\n", strerror(ret));
+		return 0;
+	}
 #endif
 }
 
@@ -137,7 +161,17 @@ void ff_mutex_delete (	/* Returns 1:Function succeeded or 0:Could not delete due
 
 #elif OS_TYPE == 4	/* CMSIS-RTOS */
 	osMutexDelete(Mutex[vol]);
+#elif OS_TYPE == 5	/* Linux/macOS/BSD（新增：POSIX 互斥锁删除） */
+	if (!MutexInited[vol]) {
+		return;	/* 未初始化，无需删除 */
+	}
 
+	/* 销毁互斥锁 */
+	int ret = pthread_mutex_destroy(&Mutex[vol]);
+	if (ret != 0) {
+		fprintf(stderr, "pthread_mutex_destroy failed: %s\n", strerror(ret));
+	}
+	MutexInited[vol] = 0;	/* 标记为未初始化 */
 #endif
 }
 
@@ -170,7 +204,33 @@ int ff_mutex_take (	/* Returns 1:Succeeded or 0:Timeout */
 
 #elif OS_TYPE == 4	/* CMSIS-RTOS */
 	return (int)(osMutexWait(Mutex[vol], FF_FS_TIMEOUT) == osOK);
+#elif OS_TYPE == 5	/* Linux/macOS/BSD（新增：POSIX 互斥锁获取） */
+	if (!MutexInited[vol]) {
+		return 0;	/* 未初始化，获取失败 */
+	}
 
+	/* 等待互斥锁（带超时） */
+	struct timespec timeout;
+	clock_gettime(CLOCK_REALTIME, &timeout);	/* 获取当前时间 */
+	/* 计算超时时间：当前时间 + FF_FS_TIMEOUT（单位：毫秒 → 纳秒） */
+	timeout.tv_nsec += FF_FS_TIMEOUT * 1000000;
+	/* 处理纳秒进位（1秒=1e9纳秒） */
+	if (timeout.tv_nsec >= 1000000000) {
+		timeout.tv_sec += 1;
+		timeout.tv_nsec -= 1000000000;
+	}
+
+	/* 带超时获取互斥锁（pthread_mutex_timedlock 是 POSIX 标准函数） */
+	int ret = pthread_mutex_timedlock(&Mutex[vol], &timeout);
+	if (ret == 0) {
+		return 1;	/* 获取成功 */
+	} else if (ret == ETIMEDOUT) {
+		fprintf(stderr, "pthread_mutex_timedlock timeout\n");
+		return 0;	/* 超时失败 */
+	} else {
+		fprintf(stderr, "pthread_mutex_timedlock failed: %s\n", strerror(ret));
+		return 0;	/* 其他错误 */
+	}
 #endif
 }
 
@@ -200,6 +260,16 @@ void ff_mutex_give (
 
 #elif OS_TYPE == 4	/* CMSIS-RTOS */
 	osMutexRelease(Mutex[vol]);
+#elif OS_TYPE == 5	/* Linux/macOS/BSD（新增：POSIX 互斥锁释放） */
+	if (!MutexInited[vol]) {
+		return;	/* 未初始化，无需释放 */
+	}
+
+	/* 释放互斥锁 */
+	int ret = pthread_mutex_unlock(&Mutex[vol]);
+	if (ret != 0) {
+		fprintf(stderr, "pthread_mutex_unlock failed: %s\n", strerror(ret));
+	}
 
 #endif
 }

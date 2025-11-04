@@ -1,4 +1,5 @@
 ﻿#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
+#include "ff.h"			/* FatFs头文件 */
 #include "diskio.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <linux/fs.h>  // 仅Linux需要，用于BLKSSZGET等宏
+#include <time.h>  // 用于 Linux 时间函数
 #include <errno.h>
 
 /* 配置选项 */
@@ -219,14 +221,40 @@ DRESULT disk_ioctl(
         return RES_OK;
 
     case GET_SECTOR_COUNT:
-        // 返回总扇区数
-        struct stat st;
-        if (fstat(fd, &st) < 0)
-            return RES_ERROR;
-        // 总扇区数 = 设备总大小 / 扇区大小
-        *(DWORD*)buff = (DWORD)(st.st_size / *(WORD*)buff); // 依赖GET_SECTOR_SIZE的结果
-        return RES_OK;
+{
+    // 1. 先获取扇区大小（确保已执行过 GET_SECTOR_SIZE，或主动获取）
+    WORD sector_size;
+    // 调用 GET_SECTOR_SIZE 逻辑获取扇区大小（避免依赖外部调用顺序）
+    #if USE_PHYSICAL_DISK
+        if (ioctl(fd, BLKSSZGET, &sector_size) != 0) {
+            sector_size = SECTOR_SIZE; // 失败时使用默认值（如 512）
+            fprintf(stderr, "警告：获取物理磁盘扇区大小失败，使用默认值 %d\n", sector_size);
+        }
+    #else
+        sector_size = SECTOR_SIZE; // 镜像文件使用预设值
+    #endif
 
+    // 2. 检查扇区大小是否为 0（容错）
+    if (sector_size == 0) {
+        fprintf(stderr, "错误：扇区大小为 0，无法计算总扇区数\n");
+        return RES_ERROR;
+    }
+
+    // 3. 获取设备总大小并检查有效性
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        fprintf(stderr, "错误：获取设备大小失败: %s\n", strerror(errno));
+        return RES_ERROR;
+    }
+    if (st.st_size <= 0) {
+        fprintf(stderr, "错误：设备总大小无效（%lld 字节）\n", (long long)st.st_size);
+        return RES_ERROR;
+    }
+
+    // 4. 安全计算总扇区数（确保除法有效）
+    *(DWORD*)buff = (DWORD)(st.st_size / sector_size);
+    return RES_OK;
+}
     case GET_BLOCK_SIZE:
         // 返回擦除块大小（扇区数，这里简单返回8）
         *(DWORD*)buff = 8;
@@ -245,5 +273,27 @@ void disk_deinitialize(BYTE pdrv) {
         close(dev_fds[pdrv]);
         dev_fds[pdrv] = -1;
     }
+}
+
+/* 获取当前时间，格式符合 FatFs 要求 */
+DWORD get_fattime(void) {
+    time_t now;
+    struct tm *t;
+
+    // 获取当前系统时间（UTC 时间戳）
+    time(&now);
+    // 转换为本地时间（包含年月日时分秒）
+    t = localtime(&now);
+    if (t == NULL) {
+        return 0;  // 出错时返回默认时间（1980-01-01 00:00:00）
+    }
+
+    // 按 FatFs 格式拼接时间（注意年份是相对于 1980 年）
+    return    ((t->tm_year - 80) << 25)  // 年（1980 + (t->tm_year-80)）
+            | ((t->tm_mon + 1) << 21)     // 月（tm_mon 是 0-11，+1 转为 1-12）
+            | (t->tm_mday << 16)          // 日（1-31）
+            | (t->tm_hour << 11)          // 时（0-23）
+            | (t->tm_min << 5)            // 分（0-59）
+            | (t->tm_sec >> 1);           // 秒/2（0-29，因为 5 位最多表示 31）
 }
 #endif
