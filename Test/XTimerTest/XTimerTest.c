@@ -36,7 +36,8 @@ void XTimerTest()
 		XTimer_setInterval_base(timer, 10);
 		XTimer_setTimeout_base(timer, 50);
 		XTimerBase_setSingleShote(timer, true);
-	
+		XTimerBase_setAutoDelete(timer, true);
+
 		//XConnection* conn=XObject_connect(timer,XSignal(XTimer_timeout_signal),timer, timerSlotFunc,XConnectionType_Queued);
 		//XObject_disconnect_conn(conn);
 		//XObject_disconnect(timer, XSignal(XTimer_timeout_signal), NULL, timerSlotFunc);

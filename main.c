@@ -8,6 +8,8 @@
 
 int main(int argc, char* args[])
 {
+	fatfs_test();
+
 	int n = 8,n1=666;
 	XVarList* list=XVarList_Create(XVar(int,n));
 	XVarList_start(list);

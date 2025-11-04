@@ -40,6 +40,10 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
     # Windows 系统通常不需要链接额外的数学库（数学函数在 msvcrt 等默认库中）
     # 若有特殊需求可在此添加 Windows 特定链接逻辑
     target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME})
+
+    # 操作物理磁盘需要管理员权限，通过清单文件请求UAC提权
+    #set_target_properties(${PROJECT_NAME} PROPERTIES
+     #   LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
 endif()
 
 #安装
