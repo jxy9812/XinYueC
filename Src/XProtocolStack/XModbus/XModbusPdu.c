@@ -6,7 +6,8 @@
 // 虚函数重载
 static void VXModbusPdu_deinit(XModbusPdu* pdu);
 
-XVtable* XModbusPdu_class_init(void) {
+XVtable* XModbusPdu_class_init(void) 
+{
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
         XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XClass))
@@ -21,6 +22,21 @@ XVtable* XModbusPdu_class_init(void) {
     printf("XModbusPdu size: %zu\n", sizeof(XModbusPdu));
 #endif
     return XVTABLE_DEFAULT;
+}
+
+XVtable* XModbusRequest_class_init(void)
+{
+    return XModbusPdu_class_init();
+}
+
+XVtable* XModbusResponse_class_init(void)
+{
+    return XModbusPdu_class_init();
+}
+
+XVtable* XModbusExceptionResponse_class_init(void)
+{
+    return XModbusResponse_class_init();
 }
 
 // --- 创建与初始化 ---
@@ -71,6 +87,123 @@ void XModbusPdu_init_with_code_and_data(XModbusPdu* pdu, XModbusPdu_FunctionCode
     }
 }
 
+XModbusRequest* XModbusRequest_create(void)
+{
+    XModbusRequest* req = (XModbusRequest*)XMemory_malloc(sizeof(XModbusRequest));
+    if (req) XModbusRequest_init(req);
+    return req;
+}
+
+XModbusRequest* XModbusRequest_create_with_code(XModbusPdu_FunctionCode code)
+{
+    XModbusRequest* req = XModbusRequest_create();
+    if (req) XModbusRequest_init_with_code(req, code);
+    return req;
+}
+
+XModbusRequest* XModbusRequest_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t size)
+{
+    XModbusRequest* req = XModbusRequest_create();
+    if (req) XModbusRequest_init_with_code_and_data(req, code, data, size);
+    return req;
+}
+
+void XModbusRequest_init(XModbusRequest* req)
+{
+    if (!req) return;
+    XModbusPdu_init(&req->m_base);
+    XClassGetVtable(&req->m_base.m_class) = XModbusRequest_class_init();
+}
+
+void XModbusRequest_init_with_code(XModbusRequest* req, XModbusPdu_FunctionCode code)
+{
+    XModbusRequest_init(req);
+    if (req) req->m_base.m_code = code;
+}
+
+void XModbusRequest_init_with_code_and_data(XModbusRequest* req, XModbusPdu_FunctionCode code, const uint8_t* data, size_t size)
+{
+    XModbusRequest_init_with_code(req, code);
+    if (req && data && size > 0) {
+        XByteArray_append_array_base(req->m_base.m_data, data, size);
+    }
+}
+
+XModbusResponse* XModbusResponse_create(void)
+{
+    XModbusResponse* resp = (XModbusResponse*)XMemory_malloc(sizeof(XModbusResponse));
+    if (resp) XModbusResponse_init(resp);
+    return resp;
+}
+XModbusResponse* XModbusResponse_create_with_code(XModbusPdu_FunctionCode code) {
+    XModbusResponse* resp = XModbusResponse_create();
+    if (resp) XModbusResponse_init_with_code(resp, code);
+    return resp;
+}
+
+XModbusResponse* XModbusResponse_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t size) {
+    XModbusResponse* resp = XModbusResponse_create();
+    if (resp) XModbusResponse_init_with_code_and_data(resp, code, data, size);
+    return resp;
+}
+
+void XModbusResponse_init(XModbusResponse* resp) {
+    if (!resp) return;
+    XModbusPdu_init(&resp->m_base);
+    XClassGetVtable(&resp->m_base.m_class) = XModbusResponse_class_init();
+}
+
+void XModbusResponse_init_with_code(XModbusResponse* resp, XModbusPdu_FunctionCode code) {
+    XModbusResponse_init(resp);
+    if (resp) resp->m_base.m_code = code;
+}
+
+void XModbusResponse_init_with_code_and_data(XModbusResponse* resp, XModbusPdu_FunctionCode code, const uint8_t* data, size_t size) {
+    XModbusResponse_init_with_code(resp, code);
+    if (resp && data && size > 0) {
+        XByteArray_append_array_base(resp->m_base.m_data, data, size);
+    }
+}
+XModbusExceptionResponse* XModbusExceptionResponse_create(void) {
+    XModbusExceptionResponse* exc = (XModbusExceptionResponse*)XMemory_malloc(sizeof(XModbusExceptionResponse));
+    if (exc) XModbusExceptionResponse_init(exc);
+    return exc;
+}
+
+XModbusExceptionResponse* XModbusExceptionResponse_create_with_function_and_exception(
+    XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode) {
+    XModbusExceptionResponse* exc = XModbusExceptionResponse_create();
+    if (exc) {
+        XModbusExceptionResponse_init_with_function_and_exception(exc, functionCode, exceptionCode);
+    }
+    return exc;
+}
+
+void XModbusExceptionResponse_init(XModbusExceptionResponse* exc) {
+    if (!exc) return;
+    XModbusResponse_init(&exc->m_base);
+    XClassGetVtable(&exc->m_base.m_base.m_class) = XModbusExceptionResponse_class_init();
+}
+
+void XModbusExceptionResponse_init_with_function_and_exception(
+    XModbusExceptionResponse* exc, XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode) {
+    XModbusExceptionResponse_init(exc);
+    if (exc) {
+        // 设置带异常位的功能码
+        XModbusPdu_FunctionCode excCode = (XModbusPdu_FunctionCode)(functionCode | XMODBUS_PDU_EXCEPTION_BYTE);
+        exc->m_base.m_base.m_code = excCode;
+        // 设置异常码为数据
+        uint8_t ec = (uint8_t)exceptionCode;
+        XByteArray_clear_base(exc->m_base.m_base.m_data);
+        XByteArray_append_array_base(exc->m_base.m_base.m_data, &ec, 1);
+    }
+}
+void XModbusExceptionResponse_setExceptionCode(XModbusExceptionResponse* exc, XModbusPdu_ExceptionCode ec) {
+    if (!exc) return;
+    uint8_t code = (uint8_t)ec;
+    XByteArray_clear_base(exc->m_base.m_base.m_data);
+    XByteArray_append_array_base(exc->m_base.m_base.m_data, &code, 1);
+}
 // --- 析构 ---
 static void VXModbusPdu_deinit(XModbusPdu* pdu) {
     if (!pdu) return;
@@ -131,30 +264,4 @@ void XModbusPdu_setData(XModbusPdu* pdu, const uint8_t* newData, size_t size) {
     if (newData && size > 0) {
         XByteArray_append_array_base(pdu->m_data, newData, size);
     }
-}
-
-// --- 异常响应特殊处理 ---
-XModbusPdu* XModbusExceptionResponse_create(XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode) {
-    XModbusPdu* pdu = XModbusPdu_create();
-    if (pdu) {
-        XModbusExceptionResponse_init(pdu, functionCode, exceptionCode);
-    }
-    return pdu;
-}
-
-void XModbusExceptionResponse_init(XModbusPdu* pdu, XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode) {
-    if (!pdu) return;
-    XModbusPdu_init(pdu);
-    // Set function code with exception bit
-    XModbusPdu_FunctionCode excCode = (XModbusPdu_FunctionCode)(functionCode | XMODBUS_PDU_EXCEPTION_BYTE);
-    XModbusPdu_setFunctionCode(pdu, excCode);
-    // Set exception code as data
-    uint8_t ec = (uint8_t)exceptionCode;
-    XModbusPdu_setData(pdu, &ec, 1);
-}
-
-void XModbusExceptionResponse_setExceptionCode(XModbusPdu* pdu, XModbusPdu_ExceptionCode ec) {
-    if (!pdu) return;
-    uint8_t code = (uint8_t)ec;
-    XModbusPdu_setData(pdu, &code, 1);
 }

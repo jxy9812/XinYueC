@@ -28,7 +28,7 @@ XVtable* XObject_class_init()
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXObject_deinit);
 #if SHOWCONTAINERSIZE
-	printf("XObject size:%d\n", XVtable_size(XClassVtable));
+	printf("XObject size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }

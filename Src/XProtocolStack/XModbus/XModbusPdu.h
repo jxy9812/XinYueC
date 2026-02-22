@@ -73,16 +73,29 @@ extern "C" {
         XByteArray* m_data;                 ///< PDU 数据部分 (不包含功能码)
     } XModbusPdu;
 
-    // 为清晰起见，提供类型别名 (Conceptually different, but same underlying type in C)
-    typedef XModbusPdu XModbusRequest;
-    typedef XModbusPdu XModbusResponse;
-    typedef XModbusPdu XModbusExceptionResponse;
 
-    /******************************************************************************************
-     * 类初始化/实例创建接口
-     ******************************************************************************************/
+    // =============== 派生类：XModbusRequest ===============
+    typedef struct XModbusRequest {
+        XModbusPdu m_base; // 必须是第一个成员！
+    } XModbusRequest;
 
+    // =============== 派生类：XModbusResponse ===============
+    typedef struct XModbusResponse {
+        XModbusPdu m_base; // 必须是第一个成员！
+    } XModbusResponse;
+
+    // =============== 派生类：XModbusExceptionResponse ===============
+    typedef struct XModbusExceptionResponse {
+        XModbusResponse m_base; // 继承自 Response
+    } XModbusExceptionResponse;
+
+    // =============== 虚表声明 ===============
     XVtable* XModbusPdu_class_init(void);
+    XVtable* XModbusRequest_class_init(void);
+    XVtable* XModbusResponse_class_init(void);
+    XVtable* XModbusExceptionResponse_class_init(void);
+    // =============== 创建/初始化函数 ===============
+// --- XModbusPdu ---
     XModbusPdu* XModbusPdu_create(void);
     XModbusPdu* XModbusPdu_create_copy(XModbusPdu* pdu);
     XModbusPdu* XModbusPdu_create_with_code(XModbusPdu_FunctionCode code);
@@ -90,7 +103,31 @@ extern "C" {
     void XModbusPdu_init(XModbusPdu* pdu);
     void XModbusPdu_init_with_code(XModbusPdu* pdu, XModbusPdu_FunctionCode code);
     void XModbusPdu_init_with_code_and_data(XModbusPdu* pdu, XModbusPdu_FunctionCode code, const uint8_t* data, size_t dataSize);
+    
+    // --- XModbusRequest ---
+    XModbusRequest* XModbusRequest_create(void);
+    XModbusRequest* XModbusRequest_create_with_code(XModbusPdu_FunctionCode code);
+    XModbusRequest* XModbusRequest_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t size);
+    void XModbusRequest_init(XModbusRequest* req);
+    void XModbusRequest_init_with_code(XModbusRequest* req, XModbusPdu_FunctionCode code);
+    void XModbusRequest_init_with_code_and_data(XModbusRequest* req, XModbusPdu_FunctionCode code, const uint8_t* data, size_t size);
 
+    // --- XModbusResponse ---
+    XModbusResponse* XModbusResponse_create(void);
+    XModbusResponse* XModbusResponse_create_with_code(XModbusPdu_FunctionCode code);
+    XModbusResponse* XModbusResponse_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t size);
+    void XModbusResponse_init(XModbusResponse* resp);
+    void XModbusResponse_init_with_code(XModbusResponse* resp, XModbusPdu_FunctionCode code);
+    void XModbusResponse_init_with_code_and_data(XModbusResponse* resp, XModbusPdu_FunctionCode code, const uint8_t* data, size_t size);
+
+    // --- XModbusExceptionResponse ---
+    XModbusExceptionResponse* XModbusExceptionResponse_create(void);
+    XModbusExceptionResponse* XModbusExceptionResponse_create_with_function_and_exception(
+        XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode);
+    void XModbusExceptionResponse_init(XModbusExceptionResponse* exc);
+    void XModbusExceptionResponse_init_with_function_and_exception(
+        XModbusExceptionResponse* exc, XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode);
+    void XModbusExceptionResponse_setExceptionCode(XModbusExceptionResponse* exc, XModbusPdu_ExceptionCode ec);
     /******************************************************************************************
      * 核心查询与操作接口 (对齐 QModbusPdu)
      ******************************************************************************************/
@@ -148,23 +185,29 @@ extern "C" {
     void XModbusPdu_setData(XModbusPdu* pdu, const uint8_t* newData, size_t size);
 
     /******************************************************************************************
-     * 特殊构造函数 (对齐 QModbusExceptionResponse)
-     ******************************************************************************************/
-
-     /**
-      * @brief 创建一个异常响应 PDU
-      */
-    XModbusPdu* XModbusExceptionResponse_create(XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode);
-    void XModbusExceptionResponse_init(XModbusPdu* pdu, XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode);
-    void XModbusExceptionResponse_setExceptionCode(XModbusPdu* pdu, XModbusPdu_ExceptionCode ec);
-
-    /******************************************************************************************
      * 内存管理宏
      ******************************************************************************************/
-#define XModbusPdu_copy_base            XClass_copy_base
-#define XModbusPdu_move_base            XClass_move_base
-#define XModbusPdu_deinit_base          XClass_deinit_base
-#define XModbusPdu_delete_base          XClass_delete_base
+#define XModbusPdu_copy_base                XClass_copy_base
+#define XModbusPdu_move_base                XClass_move_base
+#define XModbusPdu_deinit_base              XClass_deinit_base
+#define XModbusPdu_delete_base              XClass_delete_base
+
+#define XModbusRequest_copy_base            XModbusPdu_copy_base            
+#define XModbusRequest_move_base            XModbusPdu_move_base            
+#define XModbusRequest_deinit_base          XModbusPdu_deinit_base          
+#define XModbusRequest_delete_base          XModbusPdu_delete_base          
+
+#define XModbusResponse_copy_base            XModbusPdu_copy_base            
+#define XModbusResponse_move_base            XModbusPdu_move_base            
+#define XModbusResponse_deinit_base          XModbusPdu_deinit_base          
+#define XModbusResponse_delete_base          XModbusPdu_delete_base 
+
+
+#define XModbusExceptionResponse_copy_base       XModbusResponse_copy_base         
+#define XModbusExceptionResponse_move_base       XModbusResponse_move_base  
+#define XModbusExceptionResponse_deinit_base     XModbusResponse_deinit_base
+#define XModbusExceptionResponse_delete_base     XModbusResponse_delete_base
+
 
 #ifdef __cplusplus
 }

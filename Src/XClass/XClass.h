@@ -87,6 +87,8 @@ void XClass_copy_base(XClass* object, const XClass* src);
 void XClass_move_base(XClass* object, XClass* src);
 void XClass_deinit_base(XClass* object);
 void XClass_delete_base(XClass* object);
+// 释放父对象
+#define 	Deinit_Parent(Type,obj)   (XVtableGetFunc(Type##_class_init(), EXClass_Deinit, void(*)(Type*))(obj))
 
 #ifdef __cplusplus
 }
