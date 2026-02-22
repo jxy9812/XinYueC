@@ -178,7 +178,7 @@ void XBsonValue_init(XBsonValue* value, XBsonType type) {
         value->data.arr = XBsonArray_create();
         break;
     case XBSON_TYPE_BINARY:
-        value->data.binary.data = XByteArray_create(0);
+        value->data.binary.data = XByteArray_create();
         value->data.binary.subtype = XBSON_BINARY_GENERIC;
         break;
     case XBSON_TYPE_REGEX:

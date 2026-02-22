@@ -31,8 +31,8 @@ XVector m_class;  ///< 继承自XVector基类，包含数据存储、大小、�
 * @param size 初始字节数量（若为0则创建空数组）
 * @return 成功返回XByteArray实例指针，失败返回NULL（内存分配失败）
 */
-XByteArray* XByteArray_create(size_t size);
-
+XByteArray* XByteArray_create();
+XByteArray* XByteArray_create_with_data(const char* data,size_t size);
 /**
 * @brief 基于已有XByteArray创建深拷贝实例
 * @param other 被复制的XByteArray实例指针（不可为NULL）

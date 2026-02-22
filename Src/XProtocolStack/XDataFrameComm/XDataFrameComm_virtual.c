@@ -518,7 +518,7 @@ static void SendDataPeriodicCb(PeriodicNode* node)
 {
 	if (!XDataFrameComm_isConnected_base(node->comm))
 		return;//还未连接上不发送
-	XByteArray* v =XByteArray_create(0);
+	XByteArray* v =XByteArray_create();
 	if (v == NULL)
 		return;
 	XVector_copy_base(v, node->data);
@@ -682,7 +682,7 @@ void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data,
 	{//设置接收帧头判断
 		if (comm->m_recvFrameHead == NULL)
 		{
-			XByteArray* v =XByteArray_create(0);
+			XByteArray* v =XByteArray_create();
 			XVector_append_array_base(v, data, dataSize);
 			comm->m_recvFrameHead = v;
 
@@ -706,7 +706,7 @@ void VXDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data,
 	{//设置接收帧尾判断
 		if (comm->m_recvFrameTail == NULL)
 		{
-			XByteArray* v =XByteArray_create(0);
+			XByteArray* v =XByteArray_create();
 			XVector_append_array_base(v, data, dataSize);
 			comm->m_recvFrameTail = v;
 		}
@@ -729,7 +729,7 @@ void VXDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data,
 	{//设置发送帧头
 		if (comm->m_sendFrameHead == NULL)
 		{
-			XByteArray* v =XByteArray_create(0);
+			XByteArray* v =XByteArray_create();
 			XVector_append_array_base(v, data, dataSize);
 			comm->m_sendFrameHead = v;
 		}
@@ -753,7 +753,7 @@ void VXDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data,
 	{//设置发送帧尾
 		if (comm->m_sendFrameTail == NULL)
 		{
-			XByteArray* v =XByteArray_create(0);
+			XByteArray* v =XByteArray_create();
 			XVector_append_array_base(v, data, dataSize);
 			comm->m_sendFrameTail = v;
 		}

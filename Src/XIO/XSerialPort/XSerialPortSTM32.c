@@ -161,39 +161,39 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
     //USART1 初始化设置
     USART_InitStructure.USART_BaudRate = ((XSerialPortBase*)serial)->m_baudRate;//波特率设置
     //数据位设置
-    if (((XSerialPortBase*)serial)->m_dataBits == SP_DB_Nine)
+    if (((XSerialPortBase*)serial)->m_dataBits == XSerialPort_Data9)
         USART_InitStructure.USART_WordLength = USART_WordLength_9b;//字长为9位数据格式
     else
         USART_InitStructure.USART_WordLength = USART_WordLength_8b;//字长为8位数据格式
     //停止位设置
-    if (((XSerialPortBase*)serial)->m_stopBits == SP_ST_One)
+    if (((XSerialPortBase*)serial)->m_stopBits == XSerialPort_OneStop)
         USART_InitStructure.USART_StopBits = USART_StopBits_1;//一个停止位
-    else if (((XSerialPortBase*)serial)->m_stopBits == SP_ST_ZeroPointFive)
+    else if (((XSerialPortBase*)serial)->m_stopBits == XSerialPort__ZeroPointFive)
         USART_InitStructure.USART_StopBits = USART_StopBits_0_5;//0.5个停止位
-    else if (((XSerialPortBase*)serial)->m_stopBits == SP_ST_OnePointFive)
+    else if (((XSerialPortBase*)serial)->m_stopBits == XSerialPort_OneAndHalfStop)
         USART_InitStructure.USART_StopBits = USART_StopBits_1_5;//1.5个停止位
-    else if (((XSerialPortBase*)serial)->m_stopBits == SP_ST_Two)
+    else if (((XSerialPortBase*)serial)->m_stopBits == XSerialPort_TwoStop)
         USART_InitStructure.USART_StopBits = USART_StopBits_2;//2个停止位
     //奇偶校验位
-    if (((XSerialPortBase*)serial)->m_parity == SP_PAR_NONE)
+    if (((XSerialPortBase*)serial)->m_parity == XSerialPort_NoParity)
     {
         USART_InitStructure.USART_Parity = USART_Parity_No;//无奇偶校验位
         USART_ITConfig(usart[portIndex].USARTX, USART_IT_PE, DISABLE);//关闭奇偶校验错中断
     }
-    else if (((XSerialPortBase*)serial)->m_parity == SP_PAR_ODD)
+    else if (((XSerialPortBase*)serial)->m_parity == XSerialPort_OddParity)
     {
         USART_InitStructure.USART_Parity = USART_Parity_Odd;//奇校验位
         USART_ITConfig(usart[portIndex].USARTX, USART_IT_PE, ENABLE);//使能奇偶校验错中断
     }
-    else if (((XSerialPortBase*)serial)->m_parity == SP_PAR_EVEN)
+    else if (((XSerialPortBase*)serial)->m_parity == XSerialPort_EvenParity)
     {
         USART_InitStructure.USART_Parity = USART_Parity_Even;//偶校验位
         USART_ITConfig(usart[portIndex].USARTX, USART_IT_PE, ENABLE);//使能奇偶校验错中断
     }
     //硬件数据流控制
-    if (((XSerialPortBase*)serial)->m_flowControl == SP_FC_None)
+    if (((XSerialPortBase*)serial)->m_flowControl == XSerialPort_NoFlowControl)
         USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;//无硬件数据流控制
-    else if (((XSerialPortBase*)serial)->m_flowControl == SP_FC_Hardware)
+    else if (((XSerialPortBase*)serial)->m_flowControl == XSerialPort_HardwareControl)
         USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_RTS_CTS;//硬件流控制（RTS/CTS）
     //收发模式
     USART_InitStructure.USART_Mode = ((mode & XIODeviceBase_ReadOnly) ? USART_Mode_Rx : 0) | ((mode & XIODeviceBase_WriteOnly) ? USART_Mode_Tx : 0);	//收发模式

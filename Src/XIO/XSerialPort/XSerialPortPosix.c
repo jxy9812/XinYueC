@@ -163,10 +163,10 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
     // 配置数据位、停止位、校验位
     tios.c_cflag &= ~(CSIZE | PARENB | PARODD | CSTOPB); // 清除现有设置
     switch (m_class->m_dataBits) {
-        case SP_DB_Five: tios.c_cflag |= CS5; break;
-        case SP_DB_Six: tios.c_cflag |= CS6; break;
-        case SP_DB_Seven: tios.c_cflag |= CS7; break;
-        case SP_DB_Eight: tios.c_cflag |= CS8; break;
+        case XSerialPort_Data5: tios.c_cflag |= CS5; break;
+        case XSerialPort_Data6: tios.c_cflag |= CS6; break;
+        case XSerialPort_Data7: tios.c_cflag |= CS7; break;
+        case XSerialPort_Data8: tios.c_cflag |= CS8; break;
         default: 
             XPrintf("不支持的数据位: %d\n", m_class->m_dataBits);
             close(serial->m_fd);
@@ -176,13 +176,13 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
 
     // 校验位设置
     switch (m_class->m_parity) {
-        case SP_PAR_NONE:
+        case XSerialPort_NoParity:
             tios.c_cflag &= ~PARENB; // 无校验
             break;
-        case SP_PAR_ODD:
+        case XSerialPort_OddParity:
             tios.c_cflag |= (PARENB | PARODD); // 奇校验
             break;
-        case SP_PAR_EVEN:
+        case XSerialPort_EvenParity:
             tios.c_cflag |= PARENB; // 偶校验（不设置PARODD）
             break;
         default:
@@ -194,10 +194,10 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
 
     // 停止位设置
     switch (m_class->m_stopBits) {
-        case SP_ST_One:
+        case XSerialPort_OneStop:
             tios.c_cflag &= ~CSTOPB; // 1位停止位
             break;
-        case SP_ST_Two:
+        case XSerialPort_TwoStop:
             tios.c_cflag |= CSTOPB; // 2位停止位
             break;
         default:
@@ -211,13 +211,13 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
     tios.c_cflag &= ~CRTSCTS; // 清除硬件流控制
     tios.c_iflag &= ~(IXON | IXOFF | IXANY); // 清除软件流控制
     switch (m_class->m_flowControl) {
-        case SP_FC_Hardware:
+        case XSerialPort_HardwareControl:
             tios.c_cflag |= CRTSCTS; // 硬件流控制（RTS/CTS）
             break;
-        case SP_FC_Software:
+        case XSerialPort_SoftwareControl:
             tios.c_iflag |= (IXON | IXOFF | IXANY); // 软件流控制（XON/XOFF）
             break;
-        case SP_FC_None:
+        case XSerialPort_NoFlowControl:
         default:
             break; // 无流控制
     }

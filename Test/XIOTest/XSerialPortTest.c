@@ -23,7 +23,7 @@ static void readyRead_slot(XObject* sender, XObject* receiver, void* args)
 void XSerialPortTest()
 {
     XSerialPortBase* serial = XSerialPort_create();
-    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 6, 115200, SP_PAR_NONE))
+    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 20, 115200, XSerialPort_NoParity))
     {
         XSerialPort_delete_base(serial);
         XCoreApplication_quit();

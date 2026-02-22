@@ -311,7 +311,7 @@ bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object)
 XJsonDocument* XJsonDocument_fromString(const XString* json)
 {
     if (!json || XString_isEmpty_base(json)) return NULL;
-    XByteArray* buff = XByteArray_create(0);
+    XByteArray* buff = XByteArray_create();
     //引用
     XContainerDataPtr(buff)= XString_toUtf8(json);
     XContainerSize(buff)= XString_toUtf8_length(json)+1;
@@ -377,7 +377,7 @@ XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFor
     if (!document ) return NULL;
 
     // 创建字节数组存储UTF-8结果
-    XByteArray* output = XByteArray_create(0);
+    XByteArray* output = XByteArray_create();
     if (!output) return NULL;
 
     // 创建栈管理嵌套深度（存储int类型的深度值）
@@ -783,7 +783,7 @@ XString* Json_parse_string(const char** ptr, const char* end)
     (*ptr)++; // 跳过开头引号
     const char* start = *ptr;
     XString* str = XString_create();
-    XByteArray* buff = XByteArray_create(0);
+    XByteArray* buff = XByteArray_create();
     while (*ptr < end && **ptr != '"') {
         if (**ptr == '\\') {
             // 处理转义字符

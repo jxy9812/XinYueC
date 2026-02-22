@@ -23,7 +23,7 @@ static void dataReceived_signal(XObject* receiver, int connId, XObject* sender)
 static void XESP8266Wifi_TCP_Client_Test(XMenu* root)
 {
 	XSerialPort* serial =XSerialPort_create();
-    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 8, 115200, SP_PAR_NONE))
+    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 8, 115200, XSerialPort_NoParity))
     {
         XSerialPort_delete_base(serial);
         XCoreApplication_quit();
@@ -77,7 +77,7 @@ delete:
 static void XESP8266Wifi_TCP_Server_Test(XMenu* root)
 {
     XSerialPort* serial = XSerialPort_create();
-    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 8, 115200, SP_PAR_NONE))
+    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 8, 115200, XSerialPort_NoParity))
     {
         XSerialPort_delete_base(serial);
         XCoreApplication_quit();

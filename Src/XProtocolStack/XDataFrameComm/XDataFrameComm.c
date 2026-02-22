@@ -82,7 +82,7 @@ XDFC_ErrorCode XDataFrameComm_sendText(XDataFrameComm* comm, bool appendNull, co
 {
 	if (ISNULL(comm, "") || ISNULL(str, "")|| ISNULL(XClassGetVtable(comm), ""))
 		return XDFC_EINVAL;
-	XByteArray* data =XByteArray_create(0);
+	XByteArray* data =XByteArray_create();
 	if (data == NULL)
 		return XDFC_ENORES;
 	XVector_append_array_base(data, str, strlen(str) + (appendNull ? 1 : 0));
@@ -93,7 +93,7 @@ XDFC_ErrorCode XDataFrameComm_sendTextFmt(XDataFrameComm* comm, bool appendNull,
 {
 	if (ISNULL(comm, "") || ISNULL(format, "") || ISNULL(XClassGetVtable(comm), ""))
 		return XDFC_EINVAL;
-	XByteArray* data =XByteArray_create(0);
+	XByteArray* data =XByteArray_create();
 	if (data == NULL)
 		return XDFC_ENORES;
 	va_list args;
@@ -120,7 +120,7 @@ XHandle XDataFrameComm_addPeriodicSendText(XDataFrameComm* comm, bool appendNull
 {
 	if (ISNULL(comm, "") || ISNULL(str, "") || ISNULL(time, "") || ISNULL(XClassGetVtable(comm), ""))
 		return NULL;
-	XByteArray* data =XByteArray_create(0);
+	XByteArray* data =XByteArray_create();
 	if (data == NULL)
 		return NULL;
 	XVector_append_array_base(data, str, strlen(str) + (appendNull ? 1 : 0));
@@ -131,7 +131,7 @@ XHandle XDataFrameComm_addPeriodicSendTextFmt(XDataFrameComm* comm, bool appendN
 {
 	if (ISNULL(comm, "") || ISNULL(format, "") || ISNULL(time, "") || ISNULL(XClassGetVtable(comm), ""))
 		return NULL;
-	XByteArray* data =XByteArray_create(0);
+	XByteArray* data =XByteArray_create();
 	if (data == NULL)
 		return XDFC_ENORES;
 	va_list args;
@@ -307,7 +307,7 @@ XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t t
 	
 	if(!ref_count)
 	{
-		XByteArray* v = XByteArray_create(0);
+		XByteArray* v = XByteArray_create();
 		if (v && frame)
 			XByteArray_copy_base(v, frame);
 		ev->frame = v;

@@ -2,16 +2,24 @@
 #if XByteArray_ON
 #include "XString.h"
 #include <string.h>
-XByteArray* XByteArray_create(size_t size)
+XByteArray* XByteArray_create()
 {
 	XByteArray* array = XMemory_malloc(sizeof(XByteArray));
 	if (array == NULL)
 		return NULL;
 	XByteArray_init(array);
-	if (size!=0)
-	{
-		XVector_resize_base(array,size);
-	}
+	return array;
+}
+
+XByteArray* XByteArray_create_with_data(const char* data,size_t size)
+{
+	XByteArray* array=XByteArray_create();
+	if (!array)return;
+	//if (size != 0)
+	//{
+	//	XVector_resize_base(array, size);
+	//}
+	XByteArray_append_array_base(array,data,size);
 	return array;
 }
 
@@ -19,7 +27,7 @@ XByteArray* XByteArray_create_copy(const XByteArray* other)
 {
 	if (other == NULL)
 		return NULL;
-	XByteArray* v = XByteArray_create(0);
+	XByteArray* v = XByteArray_create();
 	XByteArray_copy_base(v, other);
 	return v;
 }
@@ -28,7 +36,7 @@ XByteArray* XByteArray_create_move(XByteArray* other)
 {
 	if (other == NULL)
 		return NULL;
-	XByteArray* v = XByteArray_create(0);
+	XByteArray* v = XByteArray_create();
 	XByteArray_move_base(v, other);
 	return v;
 }
@@ -97,7 +105,7 @@ XByteArray* XByteArray_to16HexUtf8(XByteArray* array)
 {
 	if (array == NULL || XByteArray_isEmpty_base(array))
 		return NULL;
-	XByteArray* bytes = XByteArray_create(0);
+	XByteArray* bytes = XByteArray_create();
 	uint8_t temp[6];
 	for (size_t i = 0; i < XByteArray_size_base(array); i++)
 	{
@@ -126,7 +134,7 @@ XByteArray* XByteArray_toBase64(XByteArray* array)
 {
 	if (array == NULL || XByteArray_isEmpty_base(array))
 		return NULL;
-	XByteArray* base64 = XByteArray_create(0);
+	XByteArray* base64 = XByteArray_create();
 	if (base64 == NULL)
 		return NULL;
 	XByteArray_resize_base(base64, XBase64_encoded_size(XContainerSize(array)));
@@ -143,7 +151,7 @@ XByteArray* XByteArray_fromBase64(XByteArray* base64)
 {
 	if (base64 == NULL || XByteArray_isEmpty_base(base64))
 		return NULL;
-	XByteArray* data = XByteArray_create(0);
+	XByteArray* data = XByteArray_create();
 	if (data == NULL)
 		return NULL;
 	XByteArray_resize_base(data, XBase64_decoded_size(XContainerDataPtr(base64), XContainerSize(base64)));

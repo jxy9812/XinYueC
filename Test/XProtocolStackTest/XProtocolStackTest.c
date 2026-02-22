@@ -7,5 +7,5 @@ void XMenu_XProtocolStackTest(XMenu* root)
 	XMenu_addMenu(root, menu);
 	XMenu_XDataFrameCommTest(menu);
 	XMenu_TJCHMICommTest(menu);
-	XMenu_XModbusTest(menu);
+	//XMenu_XModbusTest(menu);
 }
