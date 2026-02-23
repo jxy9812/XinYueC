@@ -3,7 +3,7 @@
 #include"XVector.h"
 //获取功能码回调
 static bool XTJCHMIComm_GetFuncCodeCb(XDataFrameComm* comm, XByteArray* data, uint8_t* code);
-XTJCHMIComm* XTJCHMIComm_create(XIODeviceBase* io)
+XTJCHMIComm* XTJCHMIComm_create(XIODevice* io)
 {
 	if (io == NULL)
 		return NULL;
@@ -12,7 +12,7 @@ XTJCHMIComm* XTJCHMIComm_create(XIODeviceBase* io)
 	return comm;
 }
 
-void XTJCHMIComm_init(XTJCHMIComm* comm, XIODeviceBase* io)
+void XTJCHMIComm_init(XTJCHMIComm* comm, XIODevice* io)
 {
 	if (comm == NULL || io == NULL)
 		return;

@@ -56,7 +56,7 @@ void XPWMDeviceTest()
 	//XPWMDeviceBase* pwm = XPWMDeviceBase_create(&port);
 	//XPWMDeviceBase_setFrequency_base(pwm,5);
 	//XPWMDeviceBase_setDutyCycle_base(pwm, 50);
-	//XIODeviceBase_open_base(pwm, XIODeviceBase_ReadWrite);
+	//XIODevice_open_base(pwm, XIODevice_ReadWrite);
 	//XPWMDeviceBase_start_base(pwm);
 	while (true);
 }

@@ -16,7 +16,7 @@ XVtable* XSwitchDeviceBase_class_init()
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
+	XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
 	void* table[] = { VXSwitchDevice_setState,VXSwitchDevice_getState };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -30,7 +30,7 @@ XVtable* XSwitchDeviceBase_class_init()
 
 void VXSwitchDevice_setState(XSwitchDeviceBase* sw, bool state)
 {
-	if (sw && ((sw->m_class.m_mode) & XIODeviceBase_WriteOnly))
+	if (sw && ((sw->m_class.m_openMode) & XIODevice_WriteOnly))
 	{
 		if (sw->m_state != state)
 		{
@@ -43,7 +43,7 @@ void VXSwitchDevice_setState(XSwitchDeviceBase* sw, bool state)
 				ISNULL(0, "发生错误"); break;
 				break;
 			}
-			XIODeviceBase_write_base(sw, &trigger, sizeof(bool));
+			XIODevice_write(sw, &trigger, sizeof(bool));
 			sw->m_state = state;
 			
 			if (sw->m_stateChangeCallback)
@@ -63,14 +63,14 @@ bool VXSwitchDevice_getState(XSwitchDeviceBase* sw)
 
 void VXIODevice_poll(XSwitchDeviceBase* sw)
 {
-	if (sw->m_class.m_mode & XIODeviceBase_ReadOnly)
+	if (sw->m_class.m_openMode & XIODevice_ReadOnly)
 	{
 		//扫描保存状态
 		//bool state = sw->m_buffer;
 		
 		//读取当前电平状态
 		bool trigger;
-		XIODeviceBase_read_base(sw, &trigger, 1);
+		XIODevice_read(sw, &trigger, 1);
 		bool state;
 		switch (sw->m_triggerMode)
 		{

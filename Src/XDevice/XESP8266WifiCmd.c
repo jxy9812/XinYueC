@@ -184,7 +184,7 @@ bool ConnectWiFi(XESP8266Wifi* device)
             }
         }
        
-        XIODeviceBase_write_base(device->m_io, device->m_responseBuffer, strlen(device->m_responseBuffer));
+        XIODevice_write(device->m_io, device->m_responseBuffer, strlen(device->m_responseBuffer));
         device->m_responseLen = 0;
         return false;
     }
@@ -228,7 +228,7 @@ bool ConnectServer(XESP8266Wifi* device)
         //device->m_operationResult = false;
         XESP8266Wifi_serverStatusChanged_signal(device, connId, XESP8266_Status_Error);
         *strstr(device->m_responseBuffer, "ERROR") = 0;
-        XIODeviceBase_write_base(device->m_io, device->m_responseBuffer, strlen(device->m_responseBuffer));
+        XIODevice_write(device->m_io, device->m_responseBuffer, strlen(device->m_responseBuffer));
         device->m_responseLen = 0;
         return false;
     }
@@ -389,48 +389,48 @@ bool recvData(XESP8266Wifi* device, char* buffer)
 }
 void setBuffer(XESP8266Wifi* device, int connId)
 {
-    //读取缓冲区
-    {
-        size_t count = ((XIODeviceBase*)device)->m_readBuffer;
-        //创建对应的缓冲区
-        if (count == 0 && device->m_connections[connId].m_readBuffer)
-        {//设置无需缓冲区
-            XQueueBase_delete_base(device->m_connections[connId].m_readBuffer);
-            device->m_connections[connId].m_readBuffer = NULL;
-        }
-        else if (count > 0)
-        {
-            //存在缓冲区，但是跟设置的不一样
-            if (device->m_connections[connId].m_readBuffer && count != XCircularQueueAtomic_size_base(device->m_connections[connId].m_readBuffer))
-            {
-                XQueueBase_delete_base(device->m_connections[connId].m_readBuffer);
-                device->m_connections[connId].m_readBuffer = NULL;
-            }
-            if (device->m_connections[connId].m_readBuffer == NULL)
-                device->m_connections[connId].m_readBuffer = XCircularQueueAtomic_Create(char, count);
-        }
-    }
-    //写入缓冲区
-    {
-        size_t count = ((XIODeviceBase*)device)->m_writeBuffer;
-        //创建对应的缓冲区
-        if (count == 0 && device->m_connections[connId].m_writeBuffer)
-        {//设置无需缓冲区
-            XQueueBase_delete_base(device->m_connections[connId].m_writeBuffer);
-            device->m_connections[connId].m_writeBuffer = NULL;
-        }
-        else if (count > 0)
-        {
-            //存在缓冲区，但是跟设置的不一样
-            if (device->m_connections[connId].m_writeBuffer && count != XCircularQueueAtomic_size_base(device->m_connections[connId].m_writeBuffer))
-            {
-                XQueueBase_delete_base(device->m_connections[connId].m_writeBuffer);
-                device->m_connections[connId].m_writeBuffer = NULL;
-            }
-            if (device->m_connections[connId].m_writeBuffer == NULL)
-                device->m_connections[connId].m_writeBuffer = XCircularQueueAtomic_Create(char, count);
-        }
-    }
+    ////读取缓冲区
+    //{
+    //    size_t count = ((XIODevice*)device)->m_readBuffer;
+    //    //创建对应的缓冲区
+    //    if (count == 0 && device->m_connections[connId].m_readBuffer)
+    //    {//设置无需缓冲区
+    //        XQueueBase_delete_base(device->m_connections[connId].m_readBuffer);
+    //        device->m_connections[connId].m_readBuffer = NULL;
+    //    }
+    //    else if (count > 0)
+    //    {
+    //        //存在缓冲区，但是跟设置的不一样
+    //        if (device->m_connections[connId].m_readBuffer && count != XCircularQueueAtomic_size_base(device->m_connections[connId].m_readBuffer))
+    //        {
+    //            XQueueBase_delete_base(device->m_connections[connId].m_readBuffer);
+    //            device->m_connections[connId].m_readBuffer = NULL;
+    //        }
+    //        if (device->m_connections[connId].m_readBuffer == NULL)
+    //            device->m_connections[connId].m_readBuffer = XCircularQueueAtomic_Create(char, count);
+    //    }
+    //}
+    ////写入缓冲区
+    //{
+    //    size_t count = ((XIODevice*)device)->m_writeBuffer;
+    //    //创建对应的缓冲区
+    //    if (count == 0 && device->m_connections[connId].m_writeBuffer)
+    //    {//设置无需缓冲区
+    //        XQueueBase_delete_base(device->m_connections[connId].m_writeBuffer);
+    //        device->m_connections[connId].m_writeBuffer = NULL;
+    //    }
+    //    else if (count > 0)
+    //    {
+    //        //存在缓冲区，但是跟设置的不一样
+    //        if (device->m_connections[connId].m_writeBuffer && count != XCircularQueueAtomic_size_base(device->m_connections[connId].m_writeBuffer))
+    //        {
+    //            XQueueBase_delete_base(device->m_connections[connId].m_writeBuffer);
+    //            device->m_connections[connId].m_writeBuffer = NULL;
+    //        }
+    //        if (device->m_connections[connId].m_writeBuffer == NULL)
+    //            device->m_connections[connId].m_writeBuffer = XCircularQueueAtomic_Create(char, count);
+    //    }
+    //}
 }
 /**
  * @brief 处理AT指令响应
@@ -440,13 +440,13 @@ void VXESP8266_processResponse(XESP8266Wifi* device)
     if (ISNULL(device, "device is NULL")) return;
 
     // 读取底层设备数据
-    size_t available = XIODeviceBase_getBytesAvailable_base(device->m_io);
+    size_t available = XIODevice_bytesAvailable_base(device->m_io);
     if (available == 0) return;
 
     // 读取数据到响应缓冲区
     if (device->m_responseLen + available < sizeof(device->m_responseBuffer) - 1) 
     {
-        available = XIODeviceBase_read_base(device->m_io,
+        available = XIODevice_read(device->m_io,
             device->m_responseBuffer + device->m_responseLen,
             available);
         device->m_responseLen += available;

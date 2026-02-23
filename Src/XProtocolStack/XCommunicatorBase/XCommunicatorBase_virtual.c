@@ -41,7 +41,7 @@ XVtable* XCommunicatorBase_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCommunicatorBase_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXCommunicatorBase_poll);
 #if SHOWCONTAINERSIZE
-	printf("XIODeviceBase size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+	printf("XIODevice size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
@@ -50,7 +50,7 @@ void VXCommunicatorBase_deinit(XCommunicatorBase* comm)
 {
 	if(comm->m_io)
 	{
-		XIODeviceBase_delete_base(comm->m_io);
+		XIODevice_delete_base(comm->m_io);
 		comm->m_io = NULL;
 	}
 	if (comm->m_recvAsyncBuffer)
@@ -66,11 +66,11 @@ bool VXCommunicatorBase_connect(XCommunicatorBase* comm)
 {
 	if(comm->m_io==NULL)
 		return false;
-	if (comm->m_io->m_mode != XIODeviceBase_NotOpen)
+	if (comm->m_io->m_openMode != XIODevice_NotOpen)
 		return true;
-	if (XIODeviceBase_isOpen_base(comm->m_io))
+	if (XIODevice_isOpen(comm->m_io))
 		return true;
-	if (XIODeviceBase_open_base(comm->m_io, XIODeviceBase_ReadWrite))
+	if (XIODevice_open_base(comm->m_io, XIODevice_ReadWrite))
 	{
 		XCommunicatorBase_connect_signal(comm);
 		return true;
@@ -82,19 +82,16 @@ bool VXCommunicatorBase_disconnect(XCommunicatorBase* comm)
 {
 	if (comm->m_io == NULL|| !VXCommunicatorBase_isConnected(comm))
 		return false;
-	if (XIODeviceBase_close_base(comm->m_io))
-	{
-		XCommunicatorBase_disconnect_signal(comm);
-		return true;
-	}
-	return false;
+	XIODevice_close_base(comm->m_io);
+	XCommunicatorBase_disconnect_signal(comm);
+	return true;
 }
 
 bool VXCommunicatorBase_isConnected(XCommunicatorBase* comm)
 {
 	if (comm->m_io == NULL)
 		return false;
-	return XIODeviceBase_isOpen_base(comm->m_io);
+	return XIODevice_isOpen(comm->m_io);
 }
 
 size_t VXCommunicatorBase_send(XCommunicatorBase* comm, const void* data, size_t size)
@@ -102,16 +99,7 @@ size_t VXCommunicatorBase_send(XCommunicatorBase* comm, const void* data, size_t
 	if (comm->m_io == NULL)
 		return 0;
 	
-	if (comm->m_io->m_writeBuffer != NULL)
-	{//存在缓冲区
-		XIODeviceBase_writeFull_base(comm->m_io);
-		XIODeviceBase_write_base(comm->m_io, data, size);
-		return  XIODeviceBase_writeFull_base(comm->m_io);
-	}
-	else
-	{
-		return XIODeviceBase_write_base(comm->m_io, data, size);
-	}
+	return XIODevice_write(comm->m_io, data, size);
 	
 }
 size_t VXCommunicatorBase_recv(XCommunicatorBase* comm, void* data, size_t maxSize)
@@ -126,10 +114,10 @@ size_t VXCommunicatorBase_recv(XCommunicatorBase* comm, void* data, size_t maxSi
 	}
 	while (size < maxSize)
 	{
-		readSize = XIODeviceBase_getBytesAvailable_base(comm->m_io);
+		readSize = XIODevice_bytesAvailable_base(comm->m_io);
 		if (readSize > 0)
 		{
-			size += XIODeviceBase_read_base(comm->m_io, ((char*)data) + size, (maxSize - size) > readSize ? readSize : (maxSize - size));
+			size += XIODevice_read(comm->m_io, ((char*)data) + size, (maxSize - size) > readSize ? readSize : (maxSize - size));
 		}
 		else if (comm->m_opt_timeout != 0 && (comm->m_currentTimeout + comm->m_opt_timeout) < XTimerBase_getCurrentTime())
 		{//超时退出
@@ -143,7 +131,7 @@ bool VXCommunicatorBase_sendAsync(XCommunicatorBase* comm, const void* data, siz
 {
 	if (comm->m_io == NULL)
 		return false;
-	return XIODeviceBase_write_base(comm->m_io, data, size)==size;
+	return XIODevice_write(comm->m_io, data, size)==size;
 }
 
 bool VXCommunicatorBase_recvAsync(XCommunicatorBase* comm, size_t maxSize)
@@ -168,7 +156,7 @@ static void recvAsync(XCommunicatorBase* comm)
 {
 	if (comm->m_io && comm->m_recvAsyncBuffer)
 	{//开启了异步接收
-		size_t size = XIODeviceBase_getBytesAvailable_base(comm->m_io);
+		size_t size = XIODevice_bytesAvailable_base(comm->m_io);
 		if (size == 0)
 			return;
 		size_t buffCapacity = XContainerCapacity(comm->m_recvAsyncBuffer);
@@ -176,7 +164,7 @@ static void recvAsync(XCommunicatorBase* comm)
 		//XContainerSize(comm->m_recvAsyncBuffer) = 0;
 		if(XVector_size_base(comm->m_recvAsyncBuffer)< buffCapacity)
 		{
-			size_t readSize = XIODeviceBase_read_base(comm->m_io, ((uint8_t*)XContainerDataPtr(comm->m_recvAsyncBuffer))+buffSize, buffCapacity-buffSize);
+			size_t readSize = XIODevice_read(comm->m_io, ((uint8_t*)XContainerDataPtr(comm->m_recvAsyncBuffer))+buffSize, buffCapacity-buffSize);
 			if (readSize == 0)
 				return;
 			XContainerSize(comm->m_recvAsyncBuffer) += readSize;
@@ -200,8 +188,12 @@ void VXCommunicatorBase_setOption(XCommunicatorBase* comm, int optionId, const v
 	switch (optionId)
 	{
 	case OPT_TIMEOUT: if (size == sizeof(uint16_t))comm->m_opt_timeout = *((uint16_t*)value); break;
-		case OPT_SEND_BUFFER_SIZE:if (comm->m_io&&size==sizeof(size_t)) {XIODeviceBase_setWriteBuffer_base(comm->m_io, *((size_t*)value));} break;
-		case OPT_RECV_BUFFER_SIZE:if (comm->m_io && size == sizeof(size_t)) { XIODeviceBase_setReadBuffer_base(comm->m_io, *((size_t*)value)); } break;
+		case OPT_SEND_BUFFER_SIZE:if (comm->m_io&&size==sizeof(size_t)) 
+		//{XIODevice_setWriteBuffer_base(comm->m_io, *((size_t*)value));}
+								 break;
+		case OPT_RECV_BUFFER_SIZE:if (comm->m_io && size == sizeof(size_t)) 
+		//{ XIODevice_setReadBuffer_base(comm->m_io, *((size_t*)value)); } 
+								 break;
 		default:
 			break;
 	}
@@ -214,20 +206,20 @@ void VXCommunicatorBase_getOption(XCommunicatorBase* comm, int optionId, void* v
 	case OPT_TIMEOUT:  *((uint16_t*)value) = comm->m_opt_timeout; *size = sizeof(uint16_t); break;
 	case OPT_SEND_BUFFER_SIZE:
 	{
-		if (comm->m_io != NULL &&comm->m_io->m_writeBuffer != NULL)
+		/*if (comm->m_io != NULL &&comm->m_io->m_writeBuffer != NULL)
 		{
 			*((size_t*)value) = XCircularQueue_size_base(comm->m_io->m_writeBuffer);
 			*size = sizeof(size_t);
-		}
+		}*/
 		break;
 	}
 	case OPT_RECV_BUFFER_SIZE:
 	{
-		if (comm->m_io != NULL && comm->m_io->m_readBuffer != NULL)
+		/*if (comm->m_io != NULL && comm->m_io->m_readBuffer != NULL)
 		{
 			*((size_t*)value) = XCircularQueue_size_base(comm->m_io->m_readBuffer);
 			*size = sizeof(size_t);
-		}
+		}*/
 		break;
 	}
 	default:

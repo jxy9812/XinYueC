@@ -49,18 +49,18 @@ XVtable* XSerialPort_class_init() {
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
     // 继承父类虚函数表
-    XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
+    XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
     // 重载虚函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSerialPort_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXSerialPort_open);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write, VXIODevice_write);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_WriteFull, VXIODevice_writeFull);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read, VXIODevice_read);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXIODevice_close);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXSerialPort_open);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Write, VXIODevice_write);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteFull, VXIODevice_writeFull);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Read, VXIODevice_read);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXIODevice_close);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXIODevice_poll);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesAvailable, VXIODevice_getBytesAvailable);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SetWriteBuffer, VXIODevice_setWriteBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SetReadBuffer, VXIODevice_setReadBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_GetBytesAvailable, VXIODevice_getBytesAvailable);
 
 #if SHOWCONTAINERSIZE
     XPrintf("XSerialPort(Posix) size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -94,7 +94,7 @@ static void VXSerialPort_deinit(XSerialPort* serial) {
     if (!serial) return;
     VXIODevice_close(serial); // 确保关闭串口
     // 释放父类资源
-    XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Deinit, void(*)(XIODeviceBase*))(serial);
+    XVtableGetFunc(XIODevice_class_init(), EXClass_Deinit, void(*)(XIODevice*))(serial);
 }
 
 // 打开并配置串口
@@ -116,13 +116,13 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
     int flags = O_NOCTTY;  // 先初始化基础标志（不预先设置读写标志）
 
     // 根据模式设置读写标志（互斥逻辑）
-    if (mode & XIODeviceBase_ReadWrite) {
+    if (mode & XIODevice_ReadWrite) {
         // 读写模式（同时包含 ReadOnly 和 WriteOnly）
         flags |= O_RDWR;
-    } else if (mode & XIODeviceBase_ReadOnly) {
+    } else if (mode & XIODevice_ReadOnly) {
         // 只读模式
         flags |= O_RDONLY;
-    } else if (mode & XIODeviceBase_WriteOnly) {
+    } else if (mode & XIODevice_WriteOnly) {
         // 只写模式
         flags |= O_WRONLY;
     } else {
@@ -242,7 +242,7 @@ static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
         return false;
     }
 
-    m_class->m_class.m_mode = mode;
+    m_class->m_class.m_openMode = mode;
     return true;
 }
 
@@ -251,8 +251,8 @@ static size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t max
     if (!serial || !data || maxSize == 0 || serial->m_fd == -1) {
         return 0;
     }
-    XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (!(io->m_mode & XIODeviceBase_WriteOnly)) {
+    XIODevice* io = (XIODevice*)serial;
+    if (!(io->m_openMode & XIODevice_WriteOnly)) {
         return 0;
     }
 
@@ -268,10 +268,10 @@ static size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t max
         while (count < maxSize && XCircularQueue_push_base(io->m_writeBuffer, data + count)) {
             count++;
         }
-        // 缓冲区满时刷写
-        if (XCircularQueue_isFull_base(io->m_writeBuffer)) {
-            VXIODevice_writeFull(serial);
-        }
+        //// 缓冲区满时刷写
+        //if (XCircularQueue_isFull_base(io->m_writeBuffer)) {
+        //    VXIODevice_writeFull(serial);
+        //}
     } while (count < maxSize && !XCircularQueue_isFull_base(io->m_writeBuffer));
 
     return count;
@@ -282,8 +282,8 @@ static size_t VXIODevice_writeFull(XSerialPort* serial) {
     if (!serial || serial->m_fd == -1) {
         return 0;
     }
-    XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (!(io->m_mode & XIODeviceBase_WriteOnly) || !io->m_writeBuffer) {
+    XIODevice* io = (XIODevice*)serial;
+    if (!(io->m_openMode & XIODevice_WriteOnly) || !io->m_writeBuffer) {
         return 0;
     }
 
@@ -306,8 +306,8 @@ static size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize) {
     if (!serial || !data || maxSize == 0 || serial->m_fd == -1) {
         return 0;
     }
-    XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (!(io->m_mode & XIODeviceBase_ReadOnly)) {
+    XIODevice* io = (XIODevice*)serial;
+    if (!(io->m_openMode & XIODevice_ReadOnly)) {
         return 0;
     }
 
@@ -333,7 +333,7 @@ static void VXIODevice_close(XSerialPort* serial) {
     tcsetattr(serial->m_fd, TCSANOW, &serial->m_oldTios);
     close(serial->m_fd);
     serial->m_fd = -1;
-    serial->m_class.m_class.m_mode = 0; // 重置模式
+    serial->m_class.m_class.m_openMode = 0; // 重置模式
 }
 
 // 轮询处理（用于非阻塞模式）
@@ -341,10 +341,10 @@ static void VXIODevice_poll(XSerialPort* serial) {
     if (!serial || serial->m_fd == -1) {
         return;
     }
-    XIODeviceBase* io = (XIODeviceBase*)serial;
+    XIODevice* io = (XIODevice*)serial;
 
     // 读取数据到缓冲区
-    if (io->m_readBuffer && (io->m_mode & XIODeviceBase_ReadOnly)) {
+    if (io->m_readBuffer && (io->m_openMode & XIODevice_ReadOnly)) {
         char buf[128];
         ssize_t n = read(serial->m_fd, buf, sizeof(buf));
         if (n > 0) {
@@ -355,23 +355,23 @@ static void VXIODevice_poll(XSerialPort* serial) {
     }
 
     // 处理写缓冲区
-    if (io->m_writeBuffer && (io->m_mode & XIODeviceBase_WriteOnly)) {
+ /*   if (io->m_writeBuffer && (io->m_openMode & XIODevice_WriteOnly)) {
         VXIODevice_writeFull(serial);
-    }
+    }*/
 }
 
 // 设置写缓冲区大小
 static void VXIODevice_setWriteBuffer(XSerialPort* serial, size_t count) {
     if (!serial) return;
     serial->m_writeBufferSize = count;
-    XIODeviceBase_setWriteBuffer_base((XIODeviceBase*)serial, count);
+    //XIODevice_setWriteBuffer_base((XIODevice*)serial, count);
 }
 
 // 设置读缓冲区大小
 static void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count) {
     if (!serial) return;
     serial->m_readBufferSize = count;
-    XIODeviceBase_setReadBuffer_base((XIODeviceBase*)serial, count);
+    //XIODevice_setReadBuffer_base((XIODevice*)serial, count);
 }
 
 // 获取可用字节数（接收缓冲区）
@@ -380,13 +380,13 @@ static size_t VXIODevice_getBytesAvailable(XSerialPort* serial) {
         return 0;
     }
     // 无缓冲区时查询内核缓冲区
-    if (!((XIODeviceBase*)serial)->m_readBuffer) {
+    if (!((XIODevice*)serial)->m_readBuffer) {
         int bytes;
         ioctl(serial->m_fd, FIONREAD, &bytes);
         return (size_t)bytes;
     }
     // 有缓冲区时查询队列
-    return XCircularQueue_size_base(((XIODeviceBase*)serial)->m_readBuffer);
+    return XCircularQueue_size_base(((XIODevice*)serial)->m_readBuffer);
 }
 
 #endif // Posix 平台

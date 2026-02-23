@@ -4,7 +4,7 @@
 #include"XMapBase.h"
 #include"XCircularQueueAtomic.h"
 #include"XDataFrameCommConfig.h"
-#include"XIODeviceBase.h"
+#include"XIODevice.h"
 #include"XListSLinked.h"
 #include"XString.h"
 #include"XTimerBase.h"
@@ -12,7 +12,7 @@
 #include"XPrintf.h"
 #include<string.h>
 #include<stdarg.h>
-XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
+XDataFrameComm* XDataFrameComm_create(XIODevice* io)
 {
 	if (io == NULL)
 		return NULL;
@@ -20,7 +20,7 @@ XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io)
 	XDataFrameComm_init(comm, io);
 	return comm;
 }
-void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
+void XDataFrameComm_init(XDataFrameComm* comm, XIODevice* io)
 {
 	if (comm == NULL||io==NULL)
 		return ;
@@ -31,8 +31,8 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 
 	if (io != NULL)
 	{
-		XIODeviceBase_setReadBuffer_base(io, XDFC_DEVICE_RECV_BUFFER_SIZE);
-		XIODeviceBase_setWriteBuffer_base(io, XDFC_DEVICE_SEND_BUFFER_SIZE);
+		//XIODevice_setReadBuffer_base(io, XDFC_DEVICE_RECV_BUFFER_SIZE);
+		//XIODevice_setWriteBuffer_base(io, XDFC_DEVICE_SEND_BUFFER_SIZE);
 	}
 	XCommunicatorBase_recvAsync_base(comm, XDFC_RECV_BUFFER_SIZE);
 	comm->m_state = XDFC_STATE_NOT_INITIALIZED;
@@ -46,7 +46,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODeviceBase* io)
 
 	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm,XDFC_FRAME_END_TIMEOUT);
-	//XObject_connect(io,XSignal(XIODeviceBase_readyRead_signal),comm,XObject_poll_base,XConnectionType_Auto);
+	//XObject_connect(io,XSignal(XIODevice_readyRead_signal),comm,XObject_poll_base,XConnectionType_Auto);
 }
 
 XDFC_ErrorCode XDataFrameComm_setCommMode_base(XDataFrameComm* comm, XDFC_CommMode mode)

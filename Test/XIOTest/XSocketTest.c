@@ -9,7 +9,7 @@ static void XSocketTest();
 void XSocketTest()
 {
 	XSocket* socket = XSocket_create();
-	XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
+	XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODevice_ReadWrite);
 	//XSocketBase_waitForConnected_base(socket, 3000);
 }
 void XMenu_XSocketTest(XMenu* root)

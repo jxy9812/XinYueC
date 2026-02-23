@@ -18,8 +18,8 @@ void XPWMDeviceBase_init(XPWMDeviceBase* pwm)
 	if (pwm == NULL )
 		return ;
 	//初始化父类以外的数据
-	memset(((XIODeviceBase*)pwm)+1, 0, sizeof(XPWMDeviceBase) - sizeof(XIODeviceBase));
-	XIODeviceBase_init(pwm);
+	memset(((XIODevice*)pwm)+1, 0, sizeof(XPWMDeviceBase) - sizeof(XIODevice));
+	XIODevice_init(pwm);
 	//开始初始化
 	XPWMDeviceBase_class_init();
 	XClassGetVtable(pwm) = XPWMDeviceBase_class_init();

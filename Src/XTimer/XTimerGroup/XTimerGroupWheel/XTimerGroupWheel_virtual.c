@@ -59,7 +59,7 @@ void VXTimerGroupWheel_deinit(XTimerGroupWheel* group)
     }
 
     // 释放父对象
-    XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Deinit, void(*)(XIODeviceBase*))(group);
+    XVtableGetFunc(XIODevice_class_init(), EXClass_Deinit, void(*)(XIODevice*))(group);
 }
 
 static void add_timer_to_wheel_node(XTimeWheel* wheel, XListSNode* node, size_t ticks)

@@ -23,14 +23,14 @@ static void dataReceived_signal(XObject* receiver, int connId, XObject* sender)
 static void XESP8266Wifi_TCP_Client_Test(XMenu* root)
 {
 	XSerialPort* serial =XSerialPort_create();
-    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 8, 115200, XSerialPort_NoParity))
+    if (!XSerialPort_open_base(serial, XIODevice_ReadWrite))
     {
         XSerialPort_delete_base(serial);
         XCoreApplication_quit();
         return;
     }
 	XESP8266Wifi* wifi=XESP8266Wifi_create(serial);
-    XIODeviceBase_setReadBuffer_base(wifi,1024);
+    //XIODevice_setReadBuffer_base(wifi,1024);
     XObject_connect(wifi,XSignal(XESP8266Wifi_error_signal),NULL, errorSlot,XConnectionType_Auto);
     XObject_connect(wifi, XSignal(XESP8266Wifi_readyRead_signal), wifi, dataReceived_signal, XConnectionType_Queued);
     //XESP8266Wifi_reset(wifi,3000);
@@ -77,14 +77,14 @@ delete:
 static void XESP8266Wifi_TCP_Server_Test(XMenu* root)
 {
     XSerialPort* serial = XSerialPort_create();
-    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 8, 115200, XSerialPort_NoParity))
+    if (!XSerialPort_open_base(serial, XIODevice_ReadWrite))
     {
         XSerialPort_delete_base(serial);
         XCoreApplication_quit();
         return;
     }
     XESP8266Wifi* wifi = XESP8266Wifi_create(serial);
-    XIODeviceBase_setReadBuffer_base(wifi, 1024);
+    //XIODevice_setReadBuffer_base(wifi, 1024);
     XObject_connect(wifi, XSignal(XESP8266Wifi_error_signal), NULL, errorSlot, XConnectionType_Auto);
     XObject_connect(wifi, XSignal(XESP8266Wifi_readyRead_signal), wifi, dataReceived_signal, XConnectionType_Queued);
     XESP8266Wifi_reset(wifi,3000);

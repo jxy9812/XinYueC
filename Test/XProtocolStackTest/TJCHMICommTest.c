@@ -27,10 +27,9 @@ void TJCHMICommTest()
 {
 	XPrintf("开始创建串口\n");
 	XSerialPortBase* USART = XSerialPort_create();
-	USART->m_baudRate = 115200;
-	USART->m_portNum = 20;
-	XIODeviceBase_setReadBuffer_base(USART, 1024);
-	XIODeviceBase_setWriteBuffer_base(USART, 1024);
+
+	//XIODevice_setReadBuffer_base(USART, 1024);
+	//XIODevice_setWriteBuffer_base(USART, 1024);
 	XTJCHMIComm* comm = XTJCHMIComm_create(USART);
 	XDataFrameComm_setFrameEndType_base(comm, XDFC_FRAME_END_MARKER);
 	XDataFrameComm_setSendValidCRC16_base(comm, true);

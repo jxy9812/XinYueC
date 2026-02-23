@@ -95,11 +95,11 @@ void XDataFrameComm_recvValid(XDataFrameComm* comm)
 
 void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 {
-	while (XIODeviceBase_getBytesAvailable_base(((XCommunicatorBase*)comm)->m_io))
+	while (XIODevice_bytesAvailable_base(((XCommunicatorBase*)comm)->m_io))
 	{
 		//return;//没有可以接收的
 		uint8_t           ucByte;
-		XIODeviceBase_read_base(comm->m_class.m_io, &ucByte, 1);
+		XIODevice_read(comm->m_class.m_io, &ucByte, 1);
 		XByteArray* recvVector = comm->m_class.m_recvAsyncBuffer;
 		switch (comm->m_eRcvState)//if (mode == XDFC_FRAME_END_TIMEOUT)
 		{
@@ -243,8 +243,8 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			}
 			if (comm->m_sendFrameHead)
 			{//当存在发送帧头先发送帧头
-				XIODeviceBase_write_base(comm->m_class.m_io, XContainerDataPtr(comm->m_sendFrameHead), XContainerSize(comm->m_sendFrameHead));
-				XIODeviceBase_writeFull_base(comm->m_class.m_io);
+				XIODevice_write(comm->m_class.m_io, XContainerDataPtr(comm->m_sendFrameHead), XContainerSize(comm->m_sendFrameHead));
+				//XIODevice_writeFull_base(comm->m_class.m_io);
 			}
 			comm->m_eSndState = XDFC_STATE_TX_XMIT;
 			break;
@@ -255,23 +255,23 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			{
 				if (comm->m_sentBytes < XVector_size_base(frame))
 				{//
-					XIODeviceBase_write_base(comm->m_class.m_io, ((uint8_t*)XContainerDataPtr(frame)) + comm->m_sentBytes, 1);
-					XIODeviceBase_writeFull_base(comm->m_class.m_io);
+					XIODevice_write(comm->m_class.m_io, ((uint8_t*)XContainerDataPtr(frame)) + comm->m_sentBytes, 1);
+					//XIODevice_writeFull_base(comm->m_class.m_io);
 					++comm->m_sentBytes;
 					return;
 				}
 			}
 			else//整体一起发送
 			{
-				XIODeviceBase_write_base(comm->m_class.m_io, XContainerDataPtr(frame), XContainerSize(frame));
-				XIODeviceBase_writeFull_base(comm->m_class.m_io);
+				XIODevice_write(comm->m_class.m_io, XContainerDataPtr(frame), XContainerSize(frame));
+				//XIODevice_writeFull_base(comm->m_class.m_io);
 			}
 			//发送完成
 			//XPrintf("设置发送帧尾巴\n");
 			if (comm->m_sendFrameTail)
 			{//当存在发送帧尾先发送帧尾
-				XIODeviceBase_write_base(comm->m_class.m_io, XContainerDataPtr(comm->m_sendFrameTail), XContainerSize(comm->m_sendFrameTail));
-				XIODeviceBase_writeFull_base(comm->m_class.m_io);
+				XIODevice_write(comm->m_class.m_io, XContainerDataPtr(comm->m_sendFrameTail), XContainerSize(comm->m_sendFrameTail));
+				//XIODevice_writeFull_base(comm->m_class.m_io);
 			}
 #if XDFC_SEND_FRAME_16HEX_SHOW
 			XByteArray* str = XByteArray_to16HexUtf8(frame);
@@ -311,7 +311,7 @@ static void  RecvSendData(XDataFrameComm* comm)
 {
 	if (comm->m_commMode == XDFC_COMM_MODE_HALF_DUPLEX)
 	{
-		if (comm->m_eSndState == XDFC_STATE_TX_XMIT || XIODeviceBase_getBytesAvailable_base(((XCommunicatorBase*)comm)->m_io) == 0)
+		if (comm->m_eSndState == XDFC_STATE_TX_XMIT || XIODevice_bytesAvailable_base(((XCommunicatorBase*)comm)->m_io) == 0)
 		{
 			//XPrintf("半双工通信中,发送数据\n");
 			if (comm->m_eRcvState == XDFC_STATE_RX_IDLE && comm->m_eSndState != XDFC_STATE_TX_END)
@@ -338,7 +338,7 @@ static void  RecvSendData(XDataFrameComm* comm)
 void VXCommunicatorBase_poll(XDataFrameComm* comm)
 {
 	//printf("轮询\n");
-	if (comm->m_state != XDFC_STATE_ENABLED||!XIODeviceBase_isOpen_base(comm->m_class.m_io))
+	if (comm->m_state != XDFC_STATE_ENABLED||!XIODevice_isOpen(comm->m_class.m_io))
 		return;//协议栈还未准备好
 	
 	RecvSendData(comm);

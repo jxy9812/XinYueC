@@ -55,7 +55,7 @@ void XModbusClient_init(XModbusClient* client) {
 static void VXModbusClient_deinit(XModbusClient* client) {
     if (!client) return;
     // 调用基类析构
-    Deinit_Parent(XModbusDevice, client);
+    XClass_Deinit_Parent(XModbusDevice, client);
 }
 
 // ================== 辅助函数：根据XModbusDataUnit构建请求PDU ==================

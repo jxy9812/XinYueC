@@ -5,7 +5,7 @@ extern "C" {
 #endif
 #include<stdint.h>
 #include<stdbool.h>
-#include"XIODeviceBase.h"
+#include"XIODevice.h"
 #include"XTypes.h"
 typedef void (*RecvDataCallback)(const void* data, size_t size, void* userData);
 #define XCOMMUNICATORBASE_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XCommunicatorBase))       //XCommunicatorBase虚函数表大小
@@ -39,11 +39,11 @@ typedef struct XCommunicatorBase
 	XObject m_class;//继承类
 	uint16_t m_opt_timeout;//操作超时时间（毫秒），影响 Send/Receive 的阻塞时长。
 	size_t   m_currentTimeout;//调用阻塞函数的时候记录开始时间 
-	XIODeviceBase* m_io;//io设备
+	XIODevice* m_io;//io设备
 	XVector* m_recvAsyncBuffer;//异步接收数据的缓冲区
 }XCommunicatorBase;
 XVtable* XCommunicatorBase_class_init();
-void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io);
+void XCommunicatorBase_init(XCommunicatorBase* comm, XIODevice* io);
 bool XCommunicatorBase_connect_base(XCommunicatorBase* comm);
 bool  XCommunicatorBase_disconnect_base(XCommunicatorBase* comm);
 bool  XCommunicatorBase_isConnected_base(XCommunicatorBase* comm);

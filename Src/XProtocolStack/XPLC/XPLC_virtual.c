@@ -1,13 +1,13 @@
 ﻿#include"XPLC.h"
 #include"XHashMap.h"
 #include"XQueueBase.h"
-#include"XIODeviceBase.h"
+#include"XIODevice.h"
 #include"XPLCTask.h"
-static bool VXPLC_addOutIODevice(XPLC* plc, int32_t id, XIODeviceBase* io);
-static bool VXPLC_addInIODevice(XPLC* plc, int32_t id, XIODeviceBase* io);
+static bool VXPLC_addOutIODevice(XPLC* plc, int32_t id, XIODevice* io);
+static bool VXPLC_addInIODevice(XPLC* plc, int32_t id, XIODevice* io);
 static bool VXPLC_removeOutId(XPLC* plc, int32_t id);
 static bool VXPLC_removeInId(XPLC* plc, int32_t id);
-static bool VXPLC_removeIODevice(XPLC* plc, XIODeviceBase* io);
+static bool VXPLC_removeIODevice(XPLC* plc, XIODevice* io);
 static void VXPLC_poll(XPLC* plc);
 static void VXIODevice_deinit(XPLC* task);
 XVtable* XPLC_class_init()
@@ -37,54 +37,54 @@ XVtable* XPLC_class_init()
 	return XVTABLE_DEFAULT;
 }
 
-bool VXPLC_addOutIODevice(XPLC* plc, int32_t id, XIODeviceBase* io)
+bool VXPLC_addOutIODevice(XPLC* plc, int32_t id, XIODevice* io)
 {
 	if(io==NULL)
 		return false;
-	XIODeviceBase* findIo=XMapBase_value_base(plc->m_outIO, &id);
+	XIODevice* findIo=XMapBase_value_base(plc->m_outIO, &id);
 	if (findIo != NULL)
-		XIODeviceBase_delete_base(findIo);
+		XIODevice_delete_base(findIo);
 	XMapBase_insert_base(plc->m_outIO,&id,&io);
 	return true;
 }
 
-bool VXPLC_addInIODevice(XPLC* plc, int32_t id, XIODeviceBase* io)
+bool VXPLC_addInIODevice(XPLC* plc, int32_t id, XIODevice* io)
 {
 	if (io == NULL)
 		return false;
-	XIODeviceBase* findIo = XMapBase_value_base(plc->m_inIO, &id);
+	XIODevice* findIo = XMapBase_value_base(plc->m_inIO, &id);
 	if (findIo != NULL)
-		XIODeviceBase_delete_base(findIo);
+		XIODevice_delete_base(findIo);
 	XMapBase_insert_base(plc->m_inIO, &id, &io);
 	return true;
 }
 
 bool VXPLC_removeOutId(XPLC* plc, int32_t id)
 {
-	XIODeviceBase* findIo = XMapBase_value_base(plc->m_outIO, &id);
+	XIODevice* findIo = XMapBase_value_base(plc->m_outIO, &id);
 	if (findIo != NULL)
-		XIODeviceBase_delete_base(findIo);
+		XIODevice_delete_base(findIo);
 	XMapBase_remove_base(plc->m_outIO, &id);
 	return true;
 }
 
 bool VXPLC_removeInId(XPLC* plc, int32_t id)
 {
-	XIODeviceBase* findIo = XMapBase_value_base(plc->m_inIO, &id);
+	XIODevice* findIo = XMapBase_value_base(plc->m_inIO, &id);
 	if (findIo != NULL)
-		XIODeviceBase_delete_base(findIo);
+		XIODevice_delete_base(findIo);
 	XMapBase_remove_base(plc->m_inIO, &id);
 	return true;
 }
 
-bool VXPLC_removeIODevice(XPLC* plc, XIODeviceBase* io)
+bool VXPLC_removeIODevice(XPLC* plc, XIODevice* io)
 {
 	int32_t id;
 	bool isFind = false;
 	for_each_iterator(plc->m_inIO, XHashMap, it)
 	{
 		XPair* node = XHashMap_iterator_data(&it);
-		if (XPair_Second(node, XIODeviceBase*) == io)
+		if (XPair_Second(node, XIODevice*) == io)
 		{
 			id = XPair_First(node, int32_t);
 			isFind = true;
@@ -93,14 +93,14 @@ bool VXPLC_removeIODevice(XPLC* plc, XIODeviceBase* io)
 	}
 	if (isFind)
 	{
-		XIODeviceBase_delete_base(io);
+		XIODevice_delete_base(io);
 		XMapBase_remove_base(plc->m_inIO, &id);
 		return true;
 	}
 	for_each_iterator(plc->m_outIO, XHashMap, it)
 	{
 		XPair* node = XHashMap_iterator_data(&it);
-		if (XPair_Second(node, XIODeviceBase*) == io)
+		if (XPair_Second(node, XIODevice*) == io)
 		{
 			id = XPair_First(node, int32_t);
 			isFind = true;
@@ -109,7 +109,7 @@ bool VXPLC_removeIODevice(XPLC* plc, XIODeviceBase* io)
 	}
 	if (isFind)
 	{
-		XIODeviceBase_delete_base(io);
+		XIODevice_delete_base(io);
 		XMapBase_remove_base(plc->m_outIO, &id);
 		return true;
 	}
@@ -128,7 +128,7 @@ void VXPLC_poll(XPLC* plc)
 				for_each_iterator(plc->m_inIO, XHashMap, it)
 				{
 					XPair* node = XHashMap_iterator_data(&it);
-					XIODeviceBase_poll_base(XPair_Second(node, XIODeviceBase*));
+					XIODevice_poll_base(XPair_Second(node, XIODevice*));
 				}
 				XPLCTask_poll_base(task);
 				if (plc->m_delay_ms_cb != NULL && plc->m_delay_ms != 0)
@@ -143,14 +143,14 @@ void VXIODevice_deinit(XPLC* plc)
 	for_each_iterator(plc->m_inIO, XHashMap, it)
 	{
 		XPair* node = XHashMap_iterator_data(&it);
-		XIODeviceBase_delete_base(XPair_Second(node, XIODeviceBase*));
+		XIODevice_delete_base(XPair_Second(node, XIODevice*));
 	}
 	XContainerObject_delete_base(plc->m_inIO);
 	plc->m_inIO = NULL;
 	for_each_iterator(plc->m_outIO, XHashMap, it)
 	{
 		XPair* node = XHashMap_iterator_data(&it);
-		XIODeviceBase_delete_base(XPair_Second(node, XIODeviceBase*));
+		XIODevice_delete_base(XPair_Second(node, XIODevice*));
 	}
 	XContainerObject_delete_base(plc->m_outIO);
 	plc->m_outIO = NULL;

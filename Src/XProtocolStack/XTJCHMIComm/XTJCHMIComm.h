@@ -13,8 +13,8 @@ typedef struct XTJCHMIComm
 	XDataFrameComm m_class;
 }XTJCHMIComm;
 XVtable* XTJCHMIComm_class_init();
-XTJCHMIComm* XTJCHMIComm_create(XIODeviceBase* io);
-void  XTJCHMIComm_init(XTJCHMIComm* comm, XIODeviceBase* io);
+XTJCHMIComm* XTJCHMIComm_create(XIODevice* io);
+void  XTJCHMIComm_init(XTJCHMIComm* comm, XIODevice* io);
 
 #define XTJCHMIComm_delete_base					XDataFrameComm_delete_base
 #define XTJCHMIComm_setRecvValidCRC16_base		XDataFrameComm_setRecvValidCRC16_base

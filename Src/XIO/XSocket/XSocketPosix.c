@@ -34,8 +34,8 @@ static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize);
 static size_t VXIODevice_writeFull(XSocket* so);
 static size_t VXIODevice_read(XSocket* so, char* data, size_t maxSize);
 static size_t VXIODevice_getBytesAvailable(XSocket* so);
-static size_t VXIODeviceBase_getBytesToWrite(XSocket* so);
-static bool VXIODeviceBase_atEnd(XSocket* so);
+static size_t VXIODevice_getBytesToWrite(XSocket* so);
+static bool VXIODevice_atEnd(XSocket* so);
 static void VXIODevice_setWriteBuffer(XSocket* so, size_t count);
 static void VXIODevice_setReadBuffer(XSocket* so, size_t count);
 static void VXIODevice_deinit(XSocket* so);
@@ -49,7 +49,7 @@ XVtable* XSocket_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         // 继承父类虚函数表
-        XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
+        XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
 
     void* table[] = {
         VXSocketBase_connectToHost,
@@ -64,17 +64,17 @@ XVtable* XSocket_class_init()
     // 重载IO设备虚函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXIODevice_poll);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXIODevice_open);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_IsOpen, VXIODevice_isOpen);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXIODevice_close);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write, VXIODevice_write);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_WriteFull, VXIODevice_writeFull);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read, VXIODevice_read);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesAvailable, VXIODevice_getBytesAvailable);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesToWrite, VXIODeviceBase_getBytesToWrite);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_AtEnd, VXIODeviceBase_atEnd);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXIODevice_open);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_IsOpen, VXIODevice_isOpen);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXIODevice_close);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Write, VXIODevice_write);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteFull, VXIODevice_writeFull);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Read, VXIODevice_read);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_GetBytesAvailable, VXIODevice_getBytesAvailable);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_GetBytesToWrite, VXIODevice_getBytesToWrite);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_AtEnd, VXIODevice_atEnd);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SetWriteBuffer, VXIODevice_setWriteBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SetReadBuffer, VXIODevice_setReadBuffer);
 
 #if SHOWCONTAINERSIZE
     XPrintf("XSocket(Linux) size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -137,7 +137,7 @@ static void VXSocketBase_connectToHost(XSocket* so, const char* hostName, uint16
     base->m_peerPort = port;
 
     
-    XIODeviceBase_open_base((XIODeviceBase*)so, mode);
+    XIODevice_open_base((XIODevice*)so, mode);
 }
 
 static void VXSocketBase_disconnectFromHost(XSocketBase* so)
@@ -259,7 +259,7 @@ static uint16_t VXSocketBase_localPort(XSocket* so)
 static bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
 {
     if (!so) return false;
-    if (XIODeviceBase_isOpen_base(so))return true;
+    if (XIODevice_isOpen(so))return true;
     // 创建socket
     if (!create_socket(so)) {
         return false;
@@ -296,31 +296,31 @@ static bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
         }
     }
 
-    ((XIODeviceBase*)so)->m_mode = mode;
+    ((XIODevice*)so)->m_openMode = mode;
     return true;
 }
 
 static bool VXIODevice_isOpen(XSocket* so)
 {
     //return so && so->m_socket != -1;
-     return (((XIODeviceBase*)so)->m_mode != XIODeviceBase_NotOpen)&&so->m_class.m_state== XSOCKET_CONNECTED_STATE;
+     return (((XIODevice*)so)->m_openMode != XIODevice_NotOpen)&&so->m_class.m_state== XSOCKET_CONNECTED_STATE;
 }
 
 static bool VXIODevice_close(XSocket* so)
 {
-     if ((((XIODeviceBase*)so)->m_mode == XIODeviceBase_NotOpen))
+     if ((((XIODevice*)so)->m_openMode == XIODevice_NotOpen))
      return true;
     XSocketBase* base = (XSocketBase*)so;
     // if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTED_STATE)
     // {
-    //     XIODeviceBase_aboutToClose_signal(so);
+    //     XIODevice_aboutToClose_signal(so);
     //     ((XSocketBase*)so)->m_state = XSOCKET_CLOSING_STATE;
     //     XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
     // }
  
     if(so->m_socket!=-1)
     {
-        XIODeviceBase_aboutToClose_signal(so);
+        XIODevice_aboutToClose_signal(so);
         XCoreApplication_removeFd(so->m_socket);
         close(so->m_socket);
         so->m_socket = -1;
@@ -339,7 +339,7 @@ static bool VXIODevice_close(XSocket* so)
         XSocket_disconnected_signal(so);
     }
 
-    ((XIODeviceBase*)so)->m_mode = XIODeviceBase_NotOpen;
+    ((XIODevice*)so)->m_openMode = XIODevice_NotOpen;
     return true;
 }
 static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize)
@@ -348,9 +348,9 @@ static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize)
         return 0;
     }
 
-    XIODeviceBase* io = (XIODeviceBase*)so;
+    XIODevice* io = (XIODevice*)so;
     // 检查设备是否允许写入
-    if (!(io->m_mode & XIODeviceBase_WriteOnly)) {
+    if (!(io->m_openMode & XIODevice_WriteOnly)) {
         return 0;
     }
 
@@ -375,7 +375,7 @@ static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize)
         }
         // 发送成功后触发字节写入信号
         if (totalSent > 0) {
-            XIODeviceBase_bytesWritten_signal(io, totalSent);
+            XIODevice_bytesWritten_signal(io, totalSent);
         }
         return totalSent;
     }
@@ -390,11 +390,11 @@ static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize)
 
         if (freeSpace == 0) {
             // 缓冲区满，尝试发送部分数据
-            size_t sent = VXIODevice_writeFull(so);
-            if (sent == 0) {
-                // 无法发送且缓冲区满，返回已写入缓冲区的字节数
-                break;
-            }
+            //size_t sent = VXIODevice_writeFull(so);
+            //if (sent == 0) {
+            //    // 无法发送且缓冲区满，返回已写入缓冲区的字节数
+            //    break;
+            //}
             continue;
         }
 
@@ -408,7 +408,7 @@ static size_t VXIODevice_write(XSocket* so, const char* data, size_t maxSize)
     }
 
     // 尝试发送缓冲区数据
-    VXIODevice_writeFull(so);
+    //VXIODevice_writeFull(so);
     return totalSent;
 }
 
@@ -418,8 +418,8 @@ static size_t VXIODevice_writeFull(XSocket* so)
         return 0;
     }
 
-    XIODeviceBase* io = (XIODeviceBase*)so;
-    if (!(io->m_mode & XIODeviceBase_WriteOnly) || io->m_writeBuffer == NULL) {
+    XIODevice* io = (XIODevice*)so;
+    if (!(io->m_openMode & XIODevice_WriteOnly) || io->m_writeBuffer == NULL) {
         return 0;
     }
 
@@ -457,7 +457,7 @@ static size_t VXIODevice_writeFull(XSocket* so)
 
     // 触发字节写入信号
     if (totalSent > 0) {
-        XIODeviceBase_bytesWritten_signal(io, totalSent);
+        XIODevice_bytesWritten_signal(io, totalSent);
     }
 
     return totalSent;
@@ -498,7 +498,7 @@ static size_t VXIODevice_getBytesAvailable(XSocket* so)
     return (available < 0) ? 0 : (size_t)available;
 }
 
-static size_t VXIODeviceBase_getBytesToWrite(XSocket* so)
+static size_t VXIODevice_getBytesToWrite(XSocket* so)
 {
     if (!so || so->m_socket == -1) return 0;
 
@@ -511,7 +511,7 @@ static size_t VXIODeviceBase_getBytesToWrite(XSocket* so)
     return (pending < 0) ? 0 : (size_t)pending;
 }
 
-static bool VXIODeviceBase_atEnd(XSocket* so)
+static bool VXIODevice_atEnd(XSocket* so)
 {
     return !VXIODevice_isOpen(so) && VXIODevice_getBytesAvailable(so) == 0;
 }
@@ -539,10 +539,10 @@ static void VXIODevice_poll(XSocket* so)
     // if (!so || so->m_socket == -1) return;
 
     // so->m_pollfd.events = 0;
-    // if (((XIODeviceBase*)so)->m_mode & XIODeviceBase_ReadOnly) {
+    // if (((XIODevice*)so)->m_openMode & XIODevice_ReadOnly) {
     //     so->m_pollfd.events |= POLLIN;
     // }
-    // if (((XIODeviceBase*)so)->m_mode & XIODeviceBase_WriteOnly) {
+    // if (((XIODevice*)so)->m_openMode & XIODevice_WriteOnly) {
     //     so->m_pollfd.events |= POLLOUT;
     // }
 
@@ -568,7 +568,7 @@ static void VXIODevice_poll(XSocket* so)
     // }
     // if (so->m_pollfd.revents & (POLLIN | POLLPRI)) {
     //     // 数据可读，触发读事件（可根据需要添加信号发射）
-    //     XIODeviceBase_readyRead_signal(so);
+    //     XIODevice_readyRead_signal(so);
     // }
 
     // if (so->m_pollfd.revents & (POLLERR | POLLHUP | POLLRDHUP)) {

@@ -15,10 +15,10 @@ static bool VXESP8266_close(XESP8266Wifi* device);
 static size_t VXESP8266_write(XESP8266Wifi* device, const char* data, size_t maxSize);
 static size_t VXESP8266_read(XESP8266Wifi* device, char* data, size_t maxSize);
 static size_t VXESP8266_getBytesAvailable(XESP8266Wifi* device);
-static void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count);
-static void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count);
-static size_t VXIODevice_getBytesAvailable(XIODeviceBase* io);
-static size_t VXIODeviceBase_getBytesToWrite(XIODeviceBase* io);
+static void VXIODevice_setWriteBuffer(XIODevice* io, size_t count);
+static void VXIODevice_setReadBuffer(XIODevice* io, size_t count);
+static size_t VXIODevice_getBytesAvailable(XIODevice* io);
+static size_t VXIODevice_getBytesToWrite(XIODevice* io);
 
 static void VXESP8266_deinit(XESP8266Wifi* device);
 static void VXESP8266_timeoutCallback(void* userData);
@@ -34,19 +34,19 @@ XVtable* XESP8266Wifi_class_init() {
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         // 继承XIODeviceBase
-        XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
+        XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
     // 重载虚函数
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXESP8266_open);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXESP8266_close);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write, VXESP8266_write);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read, VXESP8266_read);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesAvailable, VXESP8266_getBytesAvailable);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXESP8266_open);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXESP8266_close);
+   /* XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Write, VXESP8266_write);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Read, VXESP8266_read);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_GetBytesAvailable, VXESP8266_getBytesAvailable);*/
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXESP8266_deinit);
 
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesAvailable, VXIODevice_getBytesAvailable);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_GetBytesToWrite, VXIODeviceBase_getBytesToWrite);
+   /* XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SetReadBuffer, VXIODevice_setReadBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SetWriteBuffer, VXIODevice_setWriteBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_GetBytesAvailable, VXIODevice_getBytesAvailable);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_GetBytesToWrite, VXIODevice_getBytesToWrite);*/
 #if SHOWCONTAINERSIZE
     printf("XESP8266Wifi size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -56,12 +56,12 @@ XVtable* XESP8266Wifi_class_init() {
 /**
  * @brief 初始化ESP8266设备
  */
-void XESP8266Wifi_init(XESP8266Wifi* device, XIODeviceBase* io) {
+void XESP8266Wifi_init(XESP8266Wifi* device, XIODevice* io) {
     if (ISNULL(device, "device is NULL")) return;
 
     // 初始化父类
     memset(((XObject*)device) + 1, 0, sizeof(XESP8266Wifi) - sizeof(XObject));
-    XIODeviceBase_init(&device->m_class);
+    XIODevice_init(&device->m_class);
 
     // 初始化成员变量
     device->m_io = io;
@@ -102,7 +102,7 @@ void XESP8266Wifi_init(XESP8266Wifi* device, XIODeviceBase* io) {
     // 绑定底层设备的readyRead信号
     if (device->m_io) {
         XObject_connect(device->m_io,
-            XIODeviceBase_readyRead_signal,
+            XIODevice_readyRead_signal,
             device,
             VXESP8266_processResponse,XConnectionType_Auto);
     }
@@ -156,22 +156,22 @@ void VXESP8266_deinit(XESP8266Wifi* device)
         device->m_connections[i].port = 0;
     }
     // 释放父对象
-    XVtableGetFunc(XIODeviceBase_class_init(), EXClass_Deinit, void(*)(XIODeviceBase*))(device);
+    XVtableGetFunc(XIODevice_class_init(), EXClass_Deinit, void(*)(XIODevice*))(device);
 }
 
 /**
  * @brief 创建ESP8266设备实例
  */
-XESP8266Wifi* XESP8266Wifi_create(XIODeviceBase* io) {
+XESP8266Wifi* XESP8266Wifi_create(XIODevice* io) {
     XESP8266Wifi* device = XMemory_malloc(sizeof(XESP8266Wifi));
     if (ISNULL(device, "malloc failed")) return NULL;
     XESP8266Wifi_init(device, io);
     return device;
 }
-void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count)
+void VXIODevice_setWriteBuffer(XIODevice* io, size_t count)
 {
     XESP8266Wifi* device = io;
-    io->m_writeBuffer = count;
+    //io->m_writeBuffer = count;
    /* for (size_t i = 0; i < XESP8266_MAX_CONNS; i++)
     {
         if (count != 0)
@@ -188,10 +188,10 @@ void VXIODevice_setWriteBuffer(XIODeviceBase* io, size_t count)
    
 }
 
-void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count)
+void VXIODevice_setReadBuffer(XIODevice* io, size_t count)
 {
     XESP8266Wifi* device = io;
-    io->m_readBuffer = count;
+    //io->m_readBuffer = count;
    /* for (size_t i = 0; i < XESP8266_MAX_CONNS; i++)
     {
         if (count != 0)
@@ -206,11 +206,11 @@ void VXIODevice_setReadBuffer(XIODeviceBase* io, size_t count)
         }
     }*/
 }
-size_t VXIODevice_getBytesAvailable(XIODeviceBase* io)
+size_t VXIODevice_getBytesAvailable(XIODevice* io)
 {
     return XESP8266Wifi_getBytesAvailable(io,0);
 }
-size_t VXIODeviceBase_getBytesToWrite(XIODeviceBase* io)
+size_t VXIODevice_getBytesToWrite(XIODevice* io)
 {
     return XESP8266Wifi_getBytesToWrite(io, 0);
 }
@@ -221,7 +221,7 @@ static bool VXESP8266_open(XESP8266Wifi* device, XIODeviceBaseMode mode) {
     if (ISNULL(device, "device is NULL") || ISNULL(device->m_io, "m_io is NULL"))
         return false;
 
-    return XIODeviceBase_open_base(device->m_io, mode);
+    return XIODevice_open_base(device->m_io, mode);
 }
 
 /**
@@ -231,7 +231,7 @@ static bool VXESP8266_close(XESP8266Wifi* device) {
     if (ISNULL(device, "device is NULL") || ISNULL(device->m_io, "m_io is NULL"))
         return false;
 
-    return XIODeviceBase_close_base(device->m_io);
+    return XIODevice_close_base(device->m_io);
 }
 
 /**
@@ -265,7 +265,7 @@ static size_t VXESP8266_getBytesAvailable(XESP8266Wifi* device) {
     if (ISNULL(device, "device is NULL") || ISNULL(device->m_io, "m_io is NULL"))
         return 0;
 
-    return XIODeviceBase_getBytesAvailable_base(device->m_io);
+    return XIODevice_bytesAvailable_base(device->m_io);
 }
 
 /**
@@ -292,7 +292,7 @@ static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XE
         char atCmd[256];
         snprintf(atCmd, sizeof(atCmd), "%s\r\n", cmd);
 
-        size_t sent = XIODeviceBase_write_base(device->m_io, atCmd, strlen(atCmd));
+        size_t sent = XIODevice_write(device->m_io, atCmd, strlen(atCmd));
         if (sent != strlen(atCmd)) {
             DEBUG_PRINTF("AT command send failed: %s", cmd);
             return false;
@@ -590,7 +590,7 @@ size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, si
     {//非多连接模式
         if (device->m_transparentMode) {
             // 透传模式直接发送
-            return XIODeviceBase_write_base(device->m_io, data, size);
+            return XIODevice_write(device->m_io, data, size);
         }
         else {
             // 非透传模式使用AT指令
@@ -601,7 +601,7 @@ size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, si
             }
             // 等待"> "提示符（简单处理，实际可能需要更复杂的等待逻辑）
             //XEventLoop_delay(100);
-            if (XIODeviceBase_write_base(device->m_io, data, size) == size)
+            if (XIODevice_write(device->m_io, data, size) == size)
             {
                 if (XESP8266Wifi_sendATCommand(device, NULL, XESP8266_Op_WriteData, msecs)) 
                 {
@@ -624,7 +624,7 @@ size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, si
             return 0;
         }
         // 透传模式发送数据
-        return XIODeviceBase_write_base(device->m_io, data, size) == size;
+        return XIODevice_write(device->m_io, data, size) == size;
     }
     else {
         // 非透传模式：AT+CIPSEND=<connId>,<size>
@@ -634,7 +634,7 @@ size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, si
             return 0;
         }
         // 发送实际数据
-        if (XIODeviceBase_write_base(device->m_io, data, size) == size)
+        if (XIODevice_write(device->m_io, data, size) == size)
         {
             if (XESP8266Wifi_sendATCommand(device, NULL, XESP8266_Op_WriteData, msecs))
             {
@@ -642,7 +642,7 @@ size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, si
             }
         }
         return 0;
-        //return XIODeviceBase_write_base(device->m_io, data, size);
+        //return XIODevice_write(device->m_io, data, size);
     }
 }
 
@@ -756,7 +756,7 @@ bool XESP8266Wifi_exitTransparentMode(XESP8266Wifi* device, int msecs)
         return false;
 
     // 发送+++退出透传（无回车）
-    size_t sent = XIODeviceBase_write_base(device->m_io, "+++", 3);
+    size_t sent = XIODevice_write(device->m_io, "+++", 3);
     if (sent != 3) return false;
     XEventLoop_delay(100);
     if (!XESP8266Wifi_sendATCommand(device, "AT+CIPMODE=0", XESP8266_Op_SetTransparent, msecs)) {

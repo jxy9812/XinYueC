@@ -20,10 +20,10 @@ XVtable *XSwitchDeviceSTM32_class_init()
 	// //追加虚函数
 	// XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open,VXIODevice_open);
-	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write,VXIODevice_write);
-	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read,VXIODevice_read);
-	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close,VXIODevice_close);
+	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open,VXIODevice_open);
+	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Write,VXIODevice_write);
+	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Read,VXIODevice_read);
+	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close,VXIODevice_close);
 #if SHOWCONTAINERSIZE
 	printf("XSwitchDeviceSTM32 size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -51,17 +51,17 @@ XSwitchDeviceSTM32 *XSwitchDeviceSTM32_create(XSwitchGPIO *gpio)
 }
 bool VXIODevice_open(XSwitchDeviceSTM32 *sw, XIODeviceBaseMode mode)
 {
-	if (XIODeviceBase_isOpen_base(sw))
+	if (XIODevice_isOpen(sw))
      	return true;//已经打开了
-	if(!(mode&XIODeviceBase_ReadOnly||mode&XIODeviceBase_WriteOnly))
+	if(!(mode&XIODevice_ReadOnly||mode&XIODevice_WriteOnly))
     	return false;
 	GPIO_InitTypeDef GPIO_InitStructure; //定义结构体变量
 	RCC_AHB1PeriphClockCmd(sw->m_gpio.GPIO_Clock,ENABLE); //使能端口时钟
-	if(mode&XIODeviceBase_ReadOnly)
+	if(mode&XIODevice_ReadOnly)
 	{
 		GPIO_InitStructure.GPIO_Mode=GPIO_Mode_IN; //输入模式
 	}
-	else if(mode&XIODeviceBase_WriteOnly)
+	else if(mode&XIODevice_WriteOnly)
 	{
 		GPIO_InitStructure.GPIO_Mode=GPIO_Mode_OUT; //输出模式
 		GPIO_InitStructure.GPIO_Speed=GPIO_Speed_100MHz;//速度为100M
@@ -71,7 +71,7 @@ bool VXIODevice_open(XSwitchDeviceSTM32 *sw, XIODeviceBaseMode mode)
 	GPIO_InitStructure.GPIO_PuPd=sw->m_gpio.GPIO_PuPd;//下拉 低电平
 	GPIO_Init(sw->m_gpio.GPIOX,&GPIO_InitStructure); //初始化结构体
 	//输出模式下设置默认电平
-	if(mode&XIODeviceBase_WriteOnly)
+	if(mode&XIODevice_WriteOnly)
 	{
 		if(sw->m_gpio.GPIO_PuPd==GPIO_PuPd_DOWN)
 		{
@@ -84,13 +84,13 @@ bool VXIODevice_open(XSwitchDeviceSTM32 *sw, XIODeviceBaseMode mode)
 			//sw->m_class.m_state=true;
 		}
 	}
-	((XIODeviceBase*)sw)->m_mode=mode;
+	((XIODevice*)sw)->m_openMode=mode;
 	return true;
 }
 
 size_t VXIODevice_write(XSwitchDeviceSTM32 *sw, const char *data, size_t maxSize)
 {
-	if(((XIODeviceBase*)sw)->m_mode&XIODeviceBase_WriteOnly)
+	if(((XIODevice*)sw)->m_openMode&XIODevice_WriteOnly)
 	{
 		GPIO_WriteBit(sw->m_gpio.GPIOX,sw->m_gpio.GPIO_Pin_X,*((bool*)data));
 		return 1;
@@ -100,12 +100,12 @@ size_t VXIODevice_write(XSwitchDeviceSTM32 *sw, const char *data, size_t maxSize
 
 size_t VXIODevice_read(XSwitchDeviceSTM32 *sw, char *data, size_t maxSize)
 {
-    if(((XIODeviceBase*)sw)->m_mode&XIODeviceBase_ReadOnly)
+    if(((XIODevice*)sw)->m_openMode&XIODevice_ReadOnly)
 	{
 		*((bool*)data)=GPIO_ReadInputDataBit(sw->m_gpio.GPIOX,sw->m_gpio.GPIO_Pin_X);
 		return 1;
 	}
-	else  if(((XIODeviceBase*)sw)->m_mode&XIODeviceBase_WriteOnly)
+	else  if(((XIODevice*)sw)->m_openMode&XIODevice_WriteOnly)
 	{
 		*((bool*)data)=GPIO_ReadOutputDataBit(sw->m_gpio.GPIOX,sw->m_gpio.GPIO_Pin_X);
 		return 1;
@@ -115,7 +115,7 @@ size_t VXIODevice_read(XSwitchDeviceSTM32 *sw, char *data, size_t maxSize)
 
 void VXIODevice_close(XSwitchDeviceSTM32 *sw)
 {
-	if(XIODeviceBase_isOpen_base(sw))
+	if(XIODevice_isOpen(sw))
 	{
 		XSwitchDeviceBase_setState_base(sw,false);
 	}

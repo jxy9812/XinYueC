@@ -26,7 +26,7 @@ static void ReadEventCB(XEvent* event)
     XSocket* so = event->receiver;
     if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTED_STATE)
     {
-        XIODeviceBase_readyRead_signal(so);
+        XIODevice_readyRead_signal(so);
     }
 }
 //错误事件回调
@@ -38,7 +38,7 @@ static void ErrorEventCB(XEvent* event)
         ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
         XSocket_disconnected_signal(so);
         XSocket_stateChanged_signal(so, XSOCKET_UNCONNECTED_STATE);
-        XIODeviceBase_close_base(so);
+        XIODevice_close_base(so);
     }
 }
 
@@ -46,8 +46,8 @@ void XSocketBase_init(XSocketBase* socket)
 {
     if (socket == NULL)
         return;
-    memset(((XIODeviceBase*)socket) + 1, 0, sizeof(XSocketBase) - sizeof(XIODeviceBase));
-    XIODeviceBase_init(socket);
+    memset(((XIODevice*)socket) + 1, 0, sizeof(XSocketBase) - sizeof(XIODevice));
+    XIODevice_init(socket);
    
     socket->m_peerName = XString_create_utf8(NULL);
     socket->m_peerAddress = XString_create_utf8(NULL);

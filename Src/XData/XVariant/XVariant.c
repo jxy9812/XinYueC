@@ -1540,69 +1540,20 @@ void VXVariant_move(XVariant* var, XVariant* src)
 {
 	if (var == NULL || src == NULL)
 		return;
-	if (var->m_type != src->m_type)
+	if (var->m_data!=NULL)
 		XVariant_deinit_base(var);//
+	if (var->m_class.m_vtable == NULL)
+		var->m_class = src->m_class;
 	if (XVariant_DataPtr(var) == NULL)
 	{
-		var->m_data = XMemory_calloc(1, src->m_dataSize);
+		var->m_data = src->m_data;
+		src->m_data = NULL;
 		var->m_dataSize = src->m_dataSize;
+		src->m_dataSize = 0;
 		var->m_type = src->m_type;
+		src->m_type = XVariantType_NULL;
 	}
-	switch (var->m_type)
-	{
-	case XVariantType_Uint8:
-	case XVariantType_Uint16:
-	case XVariantType_Uint32:
-	case XVariantType_Uint64:
-	case XVariantType_Int8:
-	case XVariantType_Int16:
-	case XVariantType_Int32:
-	case XVariantType_Int64:
-	case XVariantType_Bool:
-	case XVariantType_Char:
-	case XVariantType_UChar:
-	case XVariantType_Int:
-	case XVariantType_Size_t:
-	case XVariantType_Ptr:
-	case XVariantType_Float:
-	case XVariantType_Double:
-	case XVariantType_Pair:
-	case XVariantType_Point:memcpy(XVariant_DataPtr(var), XVariant_DataPtr(src), src->m_dataSize); memset(XVariant_DataPtr(src), 0, src->m_dataSize); break;
-	case XVariantType_ByteArray:
-	case XVariantType_String:
-	case XVariantType_List:
-	case XVariantType_Map:
-	case XVariantType_JsonObject:
-	case XVariantType_JsonArray:
-	case XVariantType_BsonArray:
-	case XVariantType_BsonDocument:XContainerObject_move_base(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
-	case XVariantType_JsonDocument:XJsonDocument_move(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
-	case XVariantType_JsonValue:XJsonValue_move(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
-	case XVariantType_BsonValue:XBsonValue_move(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
-	default:
-	{
-		//其他自定义数据
-		if (global_typeProperty != NULL)
-		{
-			//查找相等比较函数
-			TypeProperty* pv = XHashMap_value_base(global_typeProperty, &(var->m_type));
-			if (pv && pv->moveMethod)
-			{
-				pv->moveMethod(XVariant_DataPtr(var), XVariant_DataPtr(src));
-			}
-			else
-			{
-				memcpy(XVariant_DataPtr(var), XVariant_DataPtr(src), src->m_dataSize);
-				memset(XVariant_DataPtr(src), 0, src->m_dataSize);
-			}
-		}
-		else
-		{
-			memcpy(XVariant_DataPtr(var), XVariant_DataPtr(src), src->m_dataSize);
-			memset(XVariant_DataPtr(src),0, src->m_dataSize);
-		}
-	}
-	}
+	
 }
 
 void VXVariant_deinit(XVariant* var)

@@ -6,7 +6,7 @@ static void VXModbusDevice_deinit(XModbusDevice* dev);
 struct XModbusDevicePrivate 
 {
     XVariant* params[XModbusDevice_NetworkAddressParameter + 1]; // Size based on enum
-    XIODeviceBase* io_device; ///< 底层IO设备，对应 QModbusDevice::device()
+    XIODevice* io_device; ///< 底层IO设备，对应 QModbusDevice::device()
 };
 
 // ----------------- Private Helper Functions -----------------
@@ -114,7 +114,7 @@ void VXModbusDevice_deinit(XModbusDevice* dev) {
     }
 
     // Call base class destructor
-   Deinit_Parent(XObject,(XObject*)dev);
+   XClass_Deinit_Parent(XObject,(XObject*)dev);
 }
 
 // ----------------- Public API Implementation -----------------
@@ -174,7 +174,7 @@ XString* XModbusDevice_errorString(const XModbusDevice* dev) {
     return XString_create_fmt_utf8("%s", errorToString(dev->m_error));
 }
 
-XIODeviceBase* XModbusDevice_device(const XModbusDevice* dev)
+XIODevice* XModbusDevice_device(const XModbusDevice* dev)
 {
     if (!dev || !dev->m_d) return NULL;
     return dev->m_d->io_device; // <<<--- 直接返回指针

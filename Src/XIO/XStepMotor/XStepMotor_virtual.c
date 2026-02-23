@@ -103,11 +103,11 @@ bool VXStepMotor_isOpen(XStepMotor* motor)
 void VXStepMotor_open(XStepMotor* motor)
 {
 	if(motor->m_PUL)
-		XPWMDeviceBase_open_base(motor->m_PUL, XIODeviceBase_WriteOnly);
+		XPWMDeviceBase_open_base(motor->m_PUL, XIODevice_WriteOnly);
 	if (motor->m_ENA)
-		XSwitchDeviceBase_open_base(motor->m_ENA, XIODeviceBase_WriteOnly);
+		XSwitchDeviceBase_open_base(motor->m_ENA, XIODevice_WriteOnly);
 	if (motor->m_DIR)
-		XSwitchDeviceBase_open_base(motor->m_DIR, XIODeviceBase_WriteOnly);
+		XSwitchDeviceBase_open_base(motor->m_DIR, XIODevice_WriteOnly);
 }
 
 bool VXStepMotor_isRunning(XStepMotor* motor)
@@ -153,21 +153,21 @@ void VXStepMotor_IRQHandler(XStepMotor* motor)
 
 void VXStepMotor_setDevice(XStepMotor* motor, void* device)
 {
-	if (motor->m_PUL)
-	{
-		XIODeviceBase_setDevice_base(motor->m_PUL, device);
-		//XIODeviceBase_setCallbackQueue(motor->m_PUL, XIODeviceBase_CallbackQueue(motor));
-	}
-	if (motor->m_ENA)
-	{
-		XIODeviceBase_setDevice_base(motor->m_ENA, device);
-		//XIODeviceBase_setCallbackQueue(motor->m_ENA, XIODeviceBase_CallbackQueue(motor));
-	}
-	if (motor->m_DIR)
-	{
-		XIODeviceBase_setDevice_base(motor->m_DIR, device);
-		//XIODeviceBase_setCallbackQueue(motor->m_DIR, XIODeviceBase_CallbackQueue(motor));
-	}
+	//if (motor->m_PUL)
+	//{
+	//	XIODevice_setDevice_base(motor->m_PUL, device);
+	//	//XIODevice_setCallbackQueue(motor->m_PUL, XIODevice_CallbackQueue(motor));
+	//}
+	//if (motor->m_ENA)
+	//{
+	//	XIODevice_setDevice_base(motor->m_ENA, device);
+	//	//XIODevice_setCallbackQueue(motor->m_ENA, XIODevice_CallbackQueue(motor));
+	//}
+	//if (motor->m_DIR)
+	//{
+	//	XIODevice_setDevice_base(motor->m_DIR, device);
+	//	//XIODevice_setCallbackQueue(motor->m_DIR, XIODevice_CallbackQueue(motor));
+	//}
 }
 
 void VXStepMotor_setENA(XStepMotor* motor, bool isEnabled)

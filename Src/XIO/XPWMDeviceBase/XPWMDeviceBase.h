@@ -3,12 +3,12 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XIODeviceBase.h"
-#define XPWMDEVICE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODeviceBase)+7)       //XPWMDevice虚函数表大小
+#include"XIODevice.h"
+#define XPWMDEVICE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODevice)+7)       //XPWMDevice虚函数表大小
 //XPWMDevice虚函数表枚举
 enum XPWMDeviceVtableEnum
 {
-	EXPWMDeviceBase_SetFrequency = XCLASS_VTABLE_GET_SIZE(XIODeviceBase),
+	EXPWMDeviceBase_SetFrequency = XCLASS_VTABLE_GET_SIZE(XIODevice),
 	EXPWMDeviceBase_SetDutyCycle,
 	EXPWMDeviceBase_Start,
 	EXPWMDeviceBase_Stop,
@@ -21,7 +21,7 @@ typedef struct XPWMDeviceBase XPWMDeviceBase;
 //pwm设备
 typedef struct XPWMDeviceBase
 {
-	XIODeviceBase m_class;//父对象
+	XIODevice m_class;//父对象
 	bool m_isRun;//是否运行
 	uint8_t m_dutyCycle;//占空比
 	size_t m_frequency;//频率
@@ -48,12 +48,12 @@ bool XPWMDeviceBase_isRunning_base(XPWMDeviceBase* pwm);
 size_t XPWMDeviceBase_getFrequency_base(XPWMDeviceBase* pwm);
 //占空比 T(s)=1/F(HZ)*D(0`100)/100   电平翻转周期
 uint8_t XPWMDeviceBase_getDutyCycle_base(XPWMDeviceBase* pwm);
-#define XPWMDeviceBase_isOpen			XIODeviceBase_isOpen_base
-#define XPWMDeviceBase_open_base		XIODeviceBase_open_base
-#define XPWMDeviceBase_close_base		XIODeviceBase_close_base
-#define XPWMDeviceBase_setDevice_base   XIODeviceBase_setDevice_base
-#define XPWMDeviceBase_delete_base		XIODeviceBase_delete_base
-#define XPWMDeviceBase_poll_base		XIODeviceBase_poll_base
+#define XPWMDeviceBase_isOpen			XIODevice_isOpen
+#define XPWMDeviceBase_open_base		XIODevice_open_base
+#define XPWMDeviceBase_close_base		XIODevice_close_base
+#define XPWMDeviceBase_setDevice_base   XIODevice_setDevice_base
+#define XPWMDeviceBase_delete_base		XIODevice_delete_base
+#define XPWMDeviceBase_poll_base		XIODevice_poll_base
 
 #if defined(USE_STDPERIPH_DRIVER) 
 #include"XPWMDeviceSTM32.h"

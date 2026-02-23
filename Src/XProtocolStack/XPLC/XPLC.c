@@ -18,18 +18,18 @@ void XPLC_init(XPLC* plc)
 	XPLC_setScanPeriod(plc,10);
 }
 
-bool XPLC_addOutIODevice_base(XPLC* plc, int32_t id, XIODeviceBase* io)
+bool XPLC_addOutIODevice_base(XPLC* plc, int32_t id, XIODevice* io)
 {
 	if (ISNULL(plc, "") || ISNULL(XClassGetVtable(plc), ""))
 		return false;
-	return XClassGetVirtualFunc(plc, EXPLC_AddOutIODevice, bool(*)(XPLC*, int32_t, XIODeviceBase*))(plc,id, io);
+	return XClassGetVirtualFunc(plc, EXPLC_AddOutIODevice, bool(*)(XPLC*, int32_t, XIODevice*))(plc,id, io);
 }
 
-bool XPLC_addInIODevice_base(XPLC* plc, int32_t id,XIODeviceBase* io)
+bool XPLC_addInIODevice_base(XPLC* plc, int32_t id,XIODevice* io)
 {
 	if (ISNULL(plc, "") || ISNULL(XClassGetVtable(plc), ""))
 		return false;
-	return XClassGetVirtualFunc(plc, EXPLC_AddInIODevice, bool(*)(XPLC*, int32_t, XIODeviceBase*))(plc, id,io);
+	return XClassGetVirtualFunc(plc, EXPLC_AddInIODevice, bool(*)(XPLC*, int32_t, XIODevice*))(plc, id,io);
 }
 
 bool XPLC_removeOutId_base(XPLC* plc, int32_t id)
@@ -46,11 +46,11 @@ bool XPLC_removeInId_base(XPLC* plc, int32_t id)
 	return XClassGetVirtualFunc(plc, EXPLC_RemoveInId, bool(*)(XPLC*, int32_t))(plc, id);
 }
 
-bool XPLC_removeIODevice_base(XPLC* plc, XIODeviceBase* io)
+bool XPLC_removeIODevice_base(XPLC* plc, XIODevice* io)
 {
 	if (ISNULL(plc, "") || ISNULL(XClassGetVtable(plc), ""))
 		return false;
-	return XClassGetVirtualFunc(plc, EXPLC_RemoveIODevice, bool(*)(XPLC*, XIODeviceBase*))(plc, io);
+	return XClassGetVirtualFunc(plc, EXPLC_RemoveIODevice, bool(*)(XPLC*, XIODevice*))(plc, io);
 }
 
 void XPLC_setScanPeriod(XPLC* plc, uint16_t delay_ms)

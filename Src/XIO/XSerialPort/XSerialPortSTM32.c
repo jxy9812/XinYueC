@@ -23,17 +23,17 @@ XVtable* XSerialPort_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         //继承类
-        XVTABLE_INHERIT_DEFAULT(XIODeviceBase_class_init());
+        XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
     //重载
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open, VXSerialPort_open);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write, VXIODevice_write);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_WriteFull, VXIODevice_writeFull);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read, VXIODevice_read);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close, VXIODevice_close);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXSerialPort_open);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Write, VXIODevice_write);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteFull, VXIODevice_writeFull);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Read, VXIODevice_read);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXIODevice_close);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, NULL);
-    //XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_SetWriteBuffer, VXIODevice_setWriteBuffer);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_SetReadBuffer, VXIODevice_setReadBuffer);
-    //XVTABLE_OVERLOAD_DEFAULT( EXIODeviceBase_GetBytesAvailable, VXIODevice_getBytesAvailable);
+    //XVTABLE_OVERLOAD_DEFAULT( EXIODevice_SetWriteBuffer, VXIODevice_setWriteBuffer);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SetReadBuffer, VXIODevice_setReadBuffer);
+    //XVTABLE_OVERLOAD_DEFAULT( EXIODevice_GetBytesAvailable, VXIODevice_getBytesAvailable);
 #if SHOWCONTAINERSIZE
     printf("XSerialPort size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -89,7 +89,7 @@ void VXSerialPort_NVIC_Init(XSerialPort* serial)
     if (serial == NULL || serial->USARTX == 0)
         return;
     USART_ClearFlag(serial->USARTX, USART_FLAG_TC);
-    if (((XIODeviceBase*)serial)->m_readBuffer != NULL)
+    if (((XIODevice*)serial)->m_readBuffer != NULL)
     {
         USART_ITConfig(serial->USARTX, USART_IT_RXNE, ENABLE);//开启相关中断
         NVIC_InitTypeDef NVIC_InitStructure;
@@ -116,10 +116,10 @@ void VXSerialPort_NVIC_Init(XSerialPort* serial)
 }
 bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
 {
-    if (XSerialPort_isOpen_base(serial))
+    if (XSerialPort_isOpen(serial))
         return true;//已经打开了
     uint8_t portIndex = ((XSerialPortBase*)serial)->m_portNum - 1;
-    if (openUsart[portIndex] != NULL || (!(mode & XIODeviceBase_ReadOnly | mode & XIODeviceBase_WriteOnly)))
+    if (openUsart[portIndex] != NULL || (!(mode & XIODevice_ReadOnly | mode & XIODevice_WriteOnly)))
         return false;//已经被打开了打开失败
 
     Usart Usart1 = { GPIO_AF_USART1,USART1,RCC_APB2Periph_USART1 };
@@ -196,21 +196,21 @@ bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode)
     else if (((XSerialPortBase*)serial)->m_flowControl == XSerialPort_HardwareControl)
         USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_RTS_CTS;//硬件流控制（RTS/CTS）
     //收发模式
-    USART_InitStructure.USART_Mode = ((mode & XIODeviceBase_ReadOnly) ? USART_Mode_Rx : 0) | ((mode & XIODeviceBase_WriteOnly) ? USART_Mode_Tx : 0);	//收发模式
+    USART_InitStructure.USART_Mode = ((mode & XIODevice_ReadOnly) ? USART_Mode_Rx : 0) | ((mode & XIODevice_WriteOnly) ? USART_Mode_Tx : 0);	//收发模式
     USART_Init(usart[portIndex].USARTX, &USART_InitStructure); //初始化串口
 
     USART_Cmd(usart[portIndex].USARTX, ENABLE);  //使能串口
 
     serial->USARTX = usart[portIndex].USARTX;
-    ((XIODeviceBase*)serial)->m_mode = mode;
+    ((XIODevice*)serial)->m_openMode = mode;
     openUsart[portIndex] = serial;
     VXSerialPort_NVIC_Init(serial);
     return true;
 }
 size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize)
 {
-    XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (io->m_mode & XIODeviceBase_WriteOnly == 0)
+    XIODevice* io = (XIODevice*)serial;
+    if (io->m_openMode & XIODevice_WriteOnly == 0)
         return 0;
     if (io->m_writeBuffer == NULL)
     {//没有写入缓冲区
@@ -223,11 +223,11 @@ size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize)
         return maxSize;
     }
     //调用父类方法初始化缓冲区
-    return XVtableGetFunc(XIODeviceBase_class_init(), EXIODeviceBase_Write, size_t(*)(XSerialPort*, const char*, size_t))(serial, data, maxSize);
+    return XVtableGetFunc(XIODevice_class_init(), EXIODevice_Write, size_t(*)(XSerialPort*, const char*, size_t))(serial, data, maxSize);
 }
 size_t VXIODevice_writeFull(XSerialPort* serial)
 {
-    XIODeviceBase* io = serial;
+    XIODevice* io = serial;
     if (io->m_writeBuffer == NULL)
         return 0;
     char c;
@@ -243,8 +243,8 @@ size_t VXIODevice_writeFull(XSerialPort* serial)
 }
 size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize)
 {
-    XIODeviceBase* io = (XIODeviceBase*)serial;
-    if (io->m_mode & XIODeviceBase_ReadOnly == 0)
+    XIODevice* io = (XIODevice*)serial;
+    if (io->m_openMode & XIODevice_ReadOnly == 0)
         return 0;
     if (io->m_readBuffer == NULL)
     {//没有输入缓冲区
@@ -256,32 +256,32 @@ size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize)
         return 0;
     }
     //调用父类方法初始化缓冲区
-    return XVtableGetFunc(XIODeviceBase_class_init(), EXIODeviceBase_Read, size_t(*)(XSerialPort*, char*, size_t))(serial, data, maxSize);
+    return XVtableGetFunc(XIODevice_class_init(), EXIODevice_Read, size_t(*)(XSerialPort*, char*, size_t))(serial, data, maxSize);
 }
 void VXIODevice_close(XSerialPort* serial)
 {
-    if (!XSerialPort_isOpen_base(serial))
+    if (!XSerialPort_isOpen(serial))
         return true;//已经关闭了
-    XIODeviceBase_aboutToClose_signal(serial);
-    XIODeviceBase_writeFull_base(serial);
+    XIODevice_aboutToClose_signal(serial);
+    XIODevice_writeFull_base(serial);
     USART_ITConfig(serial->USARTX, USART_IT_RXNE, DISABLE);//关闭接收相关中断
     USART_Cmd(serial->USARTX, DISABLE);  //关闭串口
     serial->USARTX = NULL;
     openUsart[serial->m_class.m_portNum - 1] = NULL;
-    ((XIODeviceBase*)serial)->m_mode = XIODeviceBase_NotOpen;
+    ((XIODevice*)serial)->m_openMode = XIODevice_NotOpen;
 }
 void USARTCallback(XSerialPort* serial)
 {//中断中调用
     if (USART_GetITStatus(serial->USARTX, USART_IT_RXNE) != RESET)
     {
         uint8_t r = USART_ReceiveData(serial->USARTX);
-        XQueueBase_push_base(((XIODeviceBase*)openUsart[serial->m_class.m_portNum - 1])->m_readBuffer, &r); \
+        XQueueBase_push_base(((XIODevice*)openUsart[serial->m_class.m_portNum - 1])->m_readBuffer, &r); \
     }
 }
 void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count)
 {
     //调用父类方法初始化缓冲区
-    XVtableGetFunc(XIODeviceBase_class_init(), EXIODeviceBase_SetReadBuffer, void(*)(XSerialPort*, size_t))(serial, count);
+    XVtableGetFunc(XIODevice_class_init(), EXIODevice_SetReadBuffer, void(*)(XSerialPort*, size_t))(serial, count);
     VXSerialPort_NVIC_Init(serial);
 }
 #endif

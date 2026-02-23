@@ -5,7 +5,7 @@
 extern "C" {
 #endif
 
-#include "XIODeviceBase.h"
+#include "XIODevice.h"
 //#include "XString.h"
 #include "XEvent.h"
 
@@ -16,7 +16,7 @@ extern "C" {
  * 同时提供同步等待方法。不维护独立接收缓冲区，直接使用底层IO设备的缓冲区
  */
 XCLASS_DEFINE_BEGING(XESP8266Wifi)
-XCLASS_DEFINE_ENUM(XESP8266Wifi, ProcessResponse) = XCLASS_VTABLE_GET_SIZE(XIODeviceBase), // 处理AT指令响应
+XCLASS_DEFINE_ENUM(XESP8266Wifi, ProcessResponse) = XCLASS_VTABLE_GET_SIZE(XIODevice), // 处理AT指令响应
 XCLASS_DEFINE_END(XESP8266Wifi)
 
 /**
@@ -103,8 +103,8 @@ typedef struct
  */
 typedef struct XESP8266Wifi 
 {
-    XIODeviceBase m_class;                // 继承XIODeviceBase
-    XIODeviceBase* m_io;                  // 底层IO设备(外部传入)
+    XIODevice m_class;                // 继承XIODeviceBase
+    XIODevice* m_io;                  // 底层IO设备(外部传入)
     XESP8266WifiStatus m_wifiStatus;          // WiFi连接状态
     XTimerBase* m_timeoutTimer;           // 超时定时器
     XString* m_ssid;                      // WiFi名称缓存
@@ -127,14 +127,14 @@ typedef struct XESP8266Wifi
  * @param device XESP8266Wifi对象指针
  * @param io 底层IO设备指针(外部提供，必须已初始化)
  */
-void XESP8266Wifi_init(XESP8266Wifi* device, XIODeviceBase* io);
+void XESP8266Wifi_init(XESP8266Wifi* device, XIODevice* io);
 
 /**
  * @brief 创建ESP8266设备实例
  * @param io 底层IO设备指针(外部提供，必须已初始化)
  * @return 成功返回XESP8266Wifi对象指针，失败返回NULL
  */
-XESP8266Wifi* XESP8266Wifi_create(XIODeviceBase* io);
+XESP8266Wifi* XESP8266Wifi_create(XIODevice* io);
 
 /**
  * @brief 测试AT指令是否正常工作
@@ -362,7 +362,7 @@ void* XESP8266Wifi_ok_signal(XESP8266Wifi* device);
 void* XESP8266Wifi_connect_signal(XESP8266Wifi* device, int connId);
 void* XESP8266Wifi_disconnect_signal(XESP8266Wifi* device, int connId);
 // 基础方法宏定义
-#define XESP8266Wifi_delete_base        XIODeviceBase_delete_base
+#define XESP8266Wifi_delete_base        XIODevice_delete_base
 #define XESP8266Wifi_poll_base          XObject_poll_base
 
 #ifdef __cplusplus

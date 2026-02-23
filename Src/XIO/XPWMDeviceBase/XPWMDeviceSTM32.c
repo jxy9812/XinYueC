@@ -29,10 +29,10 @@ XVtable *XPWMDeviceSTM32_class_init()
 	// //追加虚函数
 	// XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Open,VXIODevice_open);
-	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Write,VXIODevice_write);
-	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Read,VXIODevice_read);
-	XVTABLE_OVERLOAD_DEFAULT(EXIODeviceBase_Close,VXIODevice_close);
+	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open,VXIODevice_open);
+	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Write,VXIODevice_write);
+	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Read,VXIODevice_read);
+	XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close,VXIODevice_close);
 	XVTABLE_OVERLOAD_DEFAULT(EXPWMDeviceBase_Start,VXPWMDevice_start);
 	XVTABLE_OVERLOAD_DEFAULT(EXPWMDeviceBase_Stop,VXPWMDevice_stop);
 	XVTABLE_OVERLOAD_DEFAULT(EXPWMDeviceBase_SetFrequency,VXPWMDevice_setFrequency);
@@ -60,7 +60,7 @@ XPWMDeviceSTM32 *XPWMDeviceSTM32_create(XPWMGPIO* gpio)
  	pwm->m_oc=oc;
  	pwm->m_portNum=portNum;
  	pwm->m_updateCallback=updateCallback;
-    return XClassGetVirtualFunc(pwm, EXIODeviceBase_Open, bool(*)(XPWMDeviceSTM32*, XIODeviceBaseMode))(pwm, mode);
+    return XClassGetVirtualFunc(pwm, EXIODevice_Open, bool(*)(XPWMDeviceSTM32*, XIODeviceBaseMode))(pwm, mode);
  }
 
 void XPWMDeviceSTM32_init(XPWMDeviceSTM32 *pwm)
@@ -121,8 +121,8 @@ void VXPWMDevice_start(XPWMDeviceSTM32 *pwm)
 		pwm->m_class.m_isRun = true;
 		if (pwm->m_class.m_runChangeCallback)
 		{
-			if (XIODeviceBase_CallbackQueue(pwm))
-				XIODeviceBase_callbackQueue_push(pwm, pwm->m_class.m_runChangeCallback);
+			if (XIODevice_CallbackQueue(pwm))
+				XIODevice_callbackQueue_push(pwm, pwm->m_class.m_runChangeCallback);
 			else
 				pwm->m_class.m_runChangeCallback(pwm);
 		}
@@ -136,8 +136,8 @@ void VXPWMDevice_stop(XPWMDeviceSTM32 *pwm)
 		pwm->m_class.m_isRun = false;
 		if (pwm->m_class.m_runChangeCallback)
 		{
-			if (XIODeviceBase_CallbackQueue(pwm))
-				XIODeviceBase_callbackQueue_push(pwm, pwm->m_class.m_runChangeCallback);
+			if (XIODevice_CallbackQueue(pwm))
+				XIODevice_callbackQueue_push(pwm, pwm->m_class.m_runChangeCallback);
 			else
 				pwm->m_class.m_runChangeCallback(pwm);
 		}
@@ -158,7 +158,7 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
 	if (XPWMDeviceBase_isOpen(pwm))
      	return true;//已经打开了
  	uint8_t portIndex = pwm->m_portNum - 1;
- 	if (openTIM[portIndex] != NULL || (!(mode & XIODeviceBase_ReadOnly | mode & XIODeviceBase_WriteOnly)))
+ 	if (openTIM[portIndex] != NULL || (!(mode & XIODevice_ReadOnly | mode & XIODevice_WriteOnly)))
     	return false;//已经被打开了打开失败
 	TIM Tim1 = { GPIO_AF_TIM1,TIM1,RCC_APB2Periph_TIM1 };
 	TIM Tim2 = { GPIO_AF_TIM2,TIM2,RCC_APB1Periph_TIM2 };
@@ -277,7 +277,7 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
 	
 	pwm->m_TIMX=tim[portIndex].TIMX;
 	openTIM[portIndex]=pwm;
-	((XIODeviceBase*)pwm)->m_mode=mode;
+	((XIODevice*)pwm)->m_openMode=mode;
 	return true;
 }
 
@@ -285,7 +285,7 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
  {
 	if(pwm==NULL)
 		return;
-	if(open&&XIODeviceBase_isOpen_base(pwm))
+	if(open&&XIODevice_isOpen(pwm))
 	{
 		// 使能定时器  更新中断
     	TIM_ITConfig(pwm->m_TIMX, TIM_IT_Update, ENABLE);
@@ -329,7 +329,7 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
  }
  size_t VXIODevice_write(XPWMDeviceSTM32 *pwm, const char *data, size_t maxSize)
  {
-     if (pwm->m_class.m_class.m_mode & XIODeviceBase_WriteOnly) {
+     if (pwm->m_class.m_class.m_openMode & XIODevice_WriteOnly) {
          GPIO_WriteBit(pwm->m_gpio.GPIOX, pwm->m_gpio.GPIO_Pin_X, *((bool *)data));
          return 1;
      }
@@ -338,12 +338,12 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
 
 size_t VXIODevice_read(XPWMDeviceSTM32 *pwm, char *data, size_t maxSize)
 {
-    if(pwm->m_class.m_class.m_mode&XIODeviceBase_ReadOnly)
+    if(pwm->m_class.m_class.m_openMode&XIODevice_ReadOnly)
 	{
 		*((bool*)data)=GPIO_ReadInputDataBit(pwm->m_gpio.GPIOX,pwm->m_gpio.GPIO_Pin_X);
 		return 1;
 	}
-	else  if(pwm->m_class.m_class.m_mode&XIODeviceBase_WriteOnly)
+	else  if(pwm->m_class.m_class.m_openMode&XIODevice_WriteOnly)
 	{
 		*((bool*)data)=GPIO_ReadOutputDataBit(pwm->m_gpio.GPIOX,pwm->m_gpio.GPIO_Pin_X);
 		return 1;
@@ -355,7 +355,7 @@ void VXIODevice_close(XPWMDeviceSTM32 *pwm)
 {
 	if (!XPWMDeviceBase_isOpen(pwm))
     	return true;//已经关闭了
- 	XIODeviceBase_writeFull_base(pwm);
+ 	XIODevice_writeFull_base(pwm);
  	TIM_ITConfig(pwm->m_TIMX, TIM_IT_Update, DISABLE);//关闭接收相关中断
  	TIM_Cmd(pwm->m_TIMX, DISABLE); 
  	pwm->m_TIMX = NULL;
@@ -381,7 +381,7 @@ void VXIODevice_close(XPWMDeviceSTM32 *pwm)
 			break;
 		}
 	}
- 	((XIODeviceBase*)pwm)->m_mode = XIODeviceBase_NotOpen;
+ 	((XIODevice*)pwm)->m_openMode = XIODevice_NotOpen;
 }
 // #define TIMX_Handler(port)\
 //   if (TIM_GetITStatus(TIM##port, TIM_IT_Update) != RESET) \

@@ -5,9 +5,9 @@ extern "C" {
 #endif
 #include<stdint.h>
 #include<stdbool.h>
-#include"XIODeviceBase.h"
+#include"XIODevice.h"
 //XSerialPortDevice虚函数表
-#define XSERIALPORT_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODeviceBase))       //XSerialPort容器虚函数表大小
+#define XSERIALPORT_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODevice))       //XSerialPort容器虚函数表大小
 /**
  * @brief 串口数据方向枚举
  */
@@ -100,23 +100,12 @@ typedef enum {
     XSerialPort_NotOpenError
 } XSerialPort_Error;
 typedef struct XSerialPort XSerialPort;
-//串口设备抽象类
-typedef struct XSerialPortBase
-{
-    XIODeviceBase m_class;//父对象
-    uint8_t m_portNum;//端口号
-    bool m_dataTerminalReady;           ///< DTR 状态
-    bool m_requestToSend;               ///< RTS 状态
-    bool m_breakEnabled;                ///< Break 信号使能
-    XString* m_portName;                ///< 串口名称（如 "COM1" 或 "/dev/ttyUSB0"）
-    uint32_t m_baudRate;//波特率
-    XSerialPort_DataBits m_dataBits;    ///< 数据位
-    XSerialPort_Parity m_parity;        ///< 校验位
-    XSerialPort_StopBits m_stopBits;    ///< 停止位
-    XSerialPort_FlowControl m_flowControl; ///< 流控
-   
-    XSerialPort_Error m_error;          ///< 最近错误码
-}XSerialPortBase;//串口
+struct XSerialPortPrivate; // 前向声明
+
+typedef struct XSerialPort {
+    XIODevice base;
+    struct XSerialPortPrivate* d_ptr;
+} XSerialPort;
 /**
  * @brief 初始化XSerialPort的虚函数表
  * @return 成功返回初始化后的XVtable指针，失败返回NULL
@@ -132,7 +121,7 @@ XVtable* XSerialPort_class_init();
  *          对象需通过XObject_destroy释放
  */
 XSerialPort* XSerialPort_create();
-void XSerialPortBase_init(XSerialPortBase* serial);
+void XSerialPortBase_init(XSerialPort* serial);
 /**
  * @brief 初始化已分配的XSerialPort结构体
  * @param port 指向待初始化的XSerialPort实例（不可为NULL）
@@ -151,13 +140,13 @@ void XSerialPort_init(XSerialPort* port);
   * @param name 串口名称字符串（如"COM3"或"/dev/ttyS0"），不可为NULL
   * @details 此操作不会立即打开设备，仅记录名称供后续open使用
   */
-void XSerialPort_setPortName(XSerialPort* port, const XString* name);
+void XSerialPort_setPortName(XSerialPort* port, const char* name);
 /**
  * @brief 获取当前串口设备名称
  * @param port 指向XSerialPort实例的指针（不可为NULL）
  * @return 返回当前串口名称字符串，若未设置则返回空字符串
  */
-XString* XSerialPort_portName(const XSerialPort* port);
+const char* XSerialPort_portName(const XSerialPort* port);
 
 /**
  * @brief 设置串口波特率
@@ -166,7 +155,7 @@ XString* XSerialPort_portName(const XSerialPort* port);
  * @param directions 应用方向（输入、输出或双向）
  * @return 设置成功返回true，否则返回false（如设备已打开且不支持动态修改）
  */
-bool XSerialPort_setBaudRate(XSerialPort* port, uint32_t baudRate, XSerialPort_Direction directions);
+bool XSerialPort_setBaudRate(XSerialPort* port, int32_t baudRate, XSerialPort_Direction directions);
 
 /**
  * @brief 获取当前波特率
@@ -307,24 +296,24 @@ XSerialPort_Error XSerialPort_error(const XSerialPort* port);
 void XSerialPort_clearError(XSerialPort* port);
 
 /*以下是API*/
-bool XSerialPort_open_base(XSerialPortBase* serial, XIODeviceBaseMode mode, uint8_t portNum, uint32_t baudRate, XSerialPort_Parity parity);
-#define XSerialPort_delete_base                                   XIODeviceBase_delete_base
-#define XSerialPort_setWriteBuffer_base                           XIODeviceBase_setWriteBuffer_base
-#define XSerialPort_setReadBuffer_base                            XIODeviceBase_setReadBuffer_base
-#define XSerialPort_setDevice_base                                XIODeviceBase_setDevice_base
-#define XSerialPort_write_base                                    XIODeviceBase_write_base
-#define XSerialPort_read_base                                     XIODeviceBase_read_base
-#define XSerialPort_getBytesAvailable_base                        XIODeviceBase_getBytesAvailable_base
-#define XSerialPort_getBytesToWrite_base                          XIODeviceBase_getBytesToWrite_base
-#define XSerialPort_isOpen_base                                   XIODeviceBase_isOpen_base
-#define XSerialPort_close_base                                    XIODeviceBase_close_base
-#define XSerialPort_poll_base                                     XIODeviceBase_poll_base
-#define XSerialPort_writeFull_base                                XIODeviceBase_writeFull_base
+#define XSerialPort_open_base                                       XIODevice_open_base
+#define XSerialPort_close_base                                      XIODevice_close_base
+#define XSerialPort_delete_base                                     XIODevice_delete_base
+#define XSerialPort_write_base                                      XIODevice_write
+#define XSerialPort_read_base                                       XIODevice_read
+#define XSerialPort_bytesAvailable_base                             XIODevice_bytesAvailable_base
+#define XSerialPort_bytesToWrite_base                               XIODevice_bytesToWrite_base
+#define XSerialPort_isOpen                                          XIODevice_isOpen
+#define XSerialPort_poll_base                                       XIODevice_poll_base
 
+int64_t XSerialPort_readBufferSize(const XSerialPort* port);
+void XSerialPort_setReadBufferSize(XSerialPort* port, int64_t size);
+
+bool XSerialPort_flush(XSerialPort* port);
+bool XSerialPort_clear(XSerialPort* port, XSerialPort_Direction directions);
 /******************************************************************************************
  * 信号触发（兼容你的事件系统）
  ******************************************************************************************/
-
  /**
   * @brief 触发错误发生信号
   * @param port 指向XSerialPort实例的指针（不可为NULL）

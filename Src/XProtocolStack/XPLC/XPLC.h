@@ -27,11 +27,11 @@ typedef struct XPLC
 XVtable* XPLC_class_init();
 XPLC* XPLC_create();
 void XPLC_init(XPLC* plc);
-bool XPLC_addOutIODevice_base(XPLC* plc,int32_t id,XIODeviceBase* io);
-bool XPLC_addInIODevice_base(XPLC* plc, int32_t id, XIODeviceBase* io);
+bool XPLC_addOutIODevice_base(XPLC* plc,int32_t id,XIODevice* io);
+bool XPLC_addInIODevice_base(XPLC* plc, int32_t id, XIODevice* io);
 bool XPLC_removeOutId_base(XPLC* plc, int32_t id);
 bool XPLC_removeInId_base(XPLC* plc, int32_t id);
-bool XPLC_removeIODevice_base(XPLC* plc,XIODeviceBase* io);
+bool XPLC_removeIODevice_base(XPLC* plc,XIODevice* io);
 #define XPLC_poll_base      XObject_poll_base
 
 //设置扫描周期

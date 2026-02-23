@@ -1,7 +1,7 @@
 ﻿#include"XSwitchDeviceBase.h"
 #include"XMemory.h"
 #include<string.h>
-#define Parent(ptr) ((XIODeviceBase*)(ptr))
+#define Parent(ptr) ((XIODevice*)(ptr))
 #define Port(ptr)  ((XSwitchDevice_PortFunc*)(ptr->m_class.m_port))
 XSwitchDeviceBase* XSwitchDeviceBase_create()
 {
@@ -18,8 +18,8 @@ void XSwitchDeviceBase_init(XSwitchDeviceBase* sw)
 {
 	if (sw == NULL)
 		return ;
-	memset(((XIODeviceBase*)sw) + 1, 0, sizeof(XSwitchDeviceBase) - sizeof(XIODeviceBase));
-	XIODeviceBase_init(sw);
+	memset(((XIODevice*)sw) + 1, 0, sizeof(XSwitchDeviceBase) - sizeof(XIODevice));
+	XIODevice_init(sw);
 	XSwitchDeviceBase_class_init();
 	XClassGetVtable(sw) = XSwitchDeviceBase_class_init();
 	sw->m_triggerMode = XSwitchDeviceBase_Trigger_High;

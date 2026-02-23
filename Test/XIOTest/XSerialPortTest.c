@@ -9,7 +9,7 @@ static void XSerialPortTest();
 
 static void readyRead_slot(XObject* sender, XObject* receiver, void* args)
 {
-    size_t readSize = XSerialPort_getBytesAvailable_base(sender);
+    size_t readSize = XSerialPort_bytesAvailable_base(sender);
     if (readSize == 0)
         return;
     static char buff[1024];
@@ -22,14 +22,16 @@ static void readyRead_slot(XObject* sender, XObject* receiver, void* args)
 }
 void XSerialPortTest()
 {
-    XSerialPortBase* serial = XSerialPort_create();
-    if (!XSerialPort_open_base(serial, XIODeviceBase_ReadWrite, 20, 115200, XSerialPort_NoParity))
+    XSerialPort* serial = XSerialPort_create();
+    XSerialPort_setBaudRate(serial,115200,XSerialPort_AllDirections);
+    XSerialPort_setPortName(serial,"COM20");
+    if (!XSerialPort_open_base(serial, XIODevice_ReadWrite))
     {
         XSerialPort_delete_base(serial);
         XCoreApplication_quit();
         return;
     }
-    XObject_connect(serial,XSignal(XIODeviceBase_readyRead_signal), serial, readyRead_slot,XConnectionType_Auto);
+    XObject_connect(serial,XSignal(XIODevice_readyRead_signal), serial, readyRead_slot,XConnectionType_Auto);
     //XSerialPortBase_setReadBuffer_base(serial,1024);
     //线程接收数据
     //threadTest(serial);
@@ -37,7 +39,7 @@ void XSerialPortTest()
    /* char buff[1024];
     while (true)
     {
-        size_t readSize = XSerialPort_getBytesAvailable_base(serial);
+        size_t readSize = XSerialPort_bytesAvailable_base(serial);
         if (readSize == 0)
             continue;
         size_t len = XSerialPort_read_base(serial, buff, readSize);

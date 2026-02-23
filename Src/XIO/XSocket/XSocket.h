@@ -3,13 +3,13 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XIODeviceBase.h"
+#include"XIODevice.h"
 #include<stdio.h>
 #include<stdint.h>
 #define XSOCKETBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSocket))       //XSocketBase虚函数表大小
 //XSwitchDevice虚函数表枚举
 XCLASS_DEFINE_BEGING(XSocket)
-XCLASS_DEFINE_ENUM(XSocket, ConnectToHost) = XCLASS_VTABLE_GET_SIZE(XIODeviceBase),
+XCLASS_DEFINE_ENUM(XSocket, ConnectToHost) = XCLASS_VTABLE_GET_SIZE(XIODevice),
 XCLASS_DEFINE_ENUM(XSocket, DisconnectFromHost),
 XCLASS_DEFINE_ENUM(XSocket, WaitForConnected),
 XCLASS_DEFINE_ENUM(XSocket, WaitForDisconnected),
@@ -47,7 +47,7 @@ typedef enum {
  */
 typedef struct XSocketBase
 {
-	XIODeviceBase m_class;//父对象
+	XIODevice m_class;//父对象
     XSocketState m_state;//
     XSocketType m_socketType;
     XString* m_peerName;//远程主机名
@@ -156,85 +156,85 @@ XSocketState XSocket_state(const XSocketBase* socket);
  * @brief 宏定义：复用XIODeviceBase的isOpen方法
  * @note 判断套接字是否处于打开状态
  */
-#define XSocket_isOpen_base					XIODeviceBase_isOpen_base
+#define XSocket_isOpen_base					XIODevice_isOpen
 
 /**
 * @brief 宏定义：复用XIODeviceBase的open_base方法
 * @note 基础打开方法
 */
-#define XSocket_open_base				XIODeviceBase_open_base
+#define XSocket_open_base				XIODevice_open_base
 
 /**
 * @brief 宏定义：复用XIODeviceBase的close_base方法
 * @note 基础关闭方法
 */
-#define XSocket_close_base				XIODeviceBase_close_base
+#define XSocket_close_base				XIODevice_close_base
 
 /**
 * @brief 宏定义：复用XIODeviceBase的setDevice_base方法
 * @note 设置设备基础属性
 */
-#define XSocket_setDevice_base			XIODeviceBase_setDevice_base
+#define XSocket_setDevice_base			XIODevice_setDevice_base
 
 /**
  * @brief 宏定义：复用XIODeviceBase的delete_base方法
  * @note 基础删除方法
  */
-#define XSocket_delete_base				XIODeviceBase_delete_base
+#define XSocket_delete_base				XIODevice_delete_base
 
 /**
 * @brief 宏定义：复用XIODeviceBase的poll_base方法
 * @note 基础轮询方法
 */
-#define XSocket_poll_base				XIODeviceBase_poll_base
+#define XSocket_poll_base				XIODevice_poll_base
 
 /**
  * @brief 宏定义：复用XIODeviceBase的setWriteBuffer_base方法
  * @note 设置写缓冲区
  */
-#define XSocket_setWriteBuffer_base     XIODeviceBase_setWriteBuffer_base
+#define XSocket_setWriteBuffer_base     XIODevice_setWriteBuffer_base
 
 /**
 * @brief 宏定义：复用XIODeviceBase的setReadBuffer_base方法
 * @note 设置读缓冲区
 */
-#define XSocket_setReadBuffer_base      XIODeviceBase_setReadBuffer_base
+#define XSocket_setReadBuffer_base      XIODevice_setReadBuffer_base
 
 /**
 * @brief 宏定义：复用XIODeviceBase的write_base方法
 * @note 基础写数据方法
 */
-#define XSocket_write_base              XIODeviceBase_write_base
+#define XSocket_write_base              XIODevice_write
 
 /**
  * @brief 宏定义：复用XIODeviceBase的read_base方法
  * @note 基础读数据方法
  */
-#define XSocket_read_base               XIODeviceBase_read_base
+#define XSocket_read_base               XIODevice_read
 
 /**
 * @brief 宏定义：复用XIODeviceBase的getBytesAvailable_base方法
 * @note 获取可用字节数
 */
-#define XSocket_getBytesAvailable_base  XIODeviceBase_getBytesAvailable_base
+#define XSocket_getBytesAvailable_base  XIODevice_bytesAvailable_base
 
 /**
  * @brief 宏定义：复用XIODeviceBase的getBytesToWrite_base方法
  * @note 获取待写入字节数
  */
-#define XSocket_getBytesToWrite_base    XIODeviceBase_getBytesToWrite_base
+#define XSocket_getBytesToWrite_base    XIODevice_getBytesToWrite_base
 
 /**
  * @brief 宏定义：复用XIODeviceBase的atEnd_base方法
  * @note 判断是否到达数据末尾
  */
-#define XSocket_atEnd_base              XIODeviceBase_atEnd_base
+#define XSocket_atEnd_base              XIODevice_atEnd_base
 
 /**
  * @brief 宏定义：复用XIODeviceBase的writeFull_base方法
  * @note 完整写入数据方法
  */
-#define XSocket_writeFull_base          XIODeviceBase_writeFull_base
+#define XSocket_writeFull_base          XIODevice_writeFull_base
 
 /*                                              信号  ·                   */
 void* XSocket_connected_signal(XSocket* socket);//连接上

@@ -3,11 +3,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XIODeviceBase.h"
+#include"XIODevice.h"
 #define XSWITCHDEVICEBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XSwitchDeviceBase))       //XSwitchDeviceBase容器虚函数表大小
 //XSwitchDevice虚函数表枚举
 XCLASS_DEFINE_BEGING(XSwitchDeviceBase)
-XCLASS_DEFINE_ENUM(XSwitchDeviceBase,SetState) = XCLASS_VTABLE_GET_SIZE(XIODeviceBase),
+XCLASS_DEFINE_ENUM(XSwitchDeviceBase,SetState) = XCLASS_VTABLE_GET_SIZE(XIODevice),
 XCLASS_DEFINE_ENUM(XSwitchDeviceBase,GetState),
 XCLASS_DEFINE_END(XSwitchDeviceBase)
 typedef enum//触发方式
@@ -19,7 +19,7 @@ typedef enum//触发方式
 //开关设备
 typedef struct XSwitchDeviceBase
 {
-	XIODeviceBase m_class;//父对象
+	XIODevice m_class;//父对象
 	bool m_buffer;//存储状态
 	bool m_state;//状态   开或关
 	XSwitchDeviceBaseTriggerMode m_triggerMode;//触发方式
@@ -40,12 +40,12 @@ XSwitchDeviceBaseTriggerMode XSwitchDeviceBase_getTriggerMode(XSwitchDeviceBase*
 void XSwitchDeviceBase_setState_base(XSwitchDeviceBase* sw,bool state);
 //获取状态
 bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw);
-#define XSwitchDeviceBase_isOpen			 XIODeviceBase_isOpen_base
-#define XSwitchDeviceBase_open_base			 XIODeviceBase_open_base
-#define XSwitchDeviceBase_close_base		 XIODeviceBase_close_base
-#define XSwitchDeviceBase_setDevice_base	 XIODeviceBase_setDevice_base
-#define XSwitchDeviceBase_delete_base		 XIODeviceBase_delete_base
-#define XSwitchDeviceBase_poll_base			 XIODeviceBase_poll_base
+#define XSwitchDeviceBase_isOpen			 XIODevice_isOpen
+#define XSwitchDeviceBase_open_base			 XIODevice_open_base
+#define XSwitchDeviceBase_close_base		 XIODevice_close_base
+#define XSwitchDeviceBase_setDevice_base	 XIODevice_setDevice_base
+#define XSwitchDeviceBase_delete_base		 XIODevice_delete_base
+#define XSwitchDeviceBase_poll_base			 XIODevice_poll_base
 
 #if defined(USE_STDPERIPH_DRIVER) 
 #include"XSwitchDeviceSTM32.h"

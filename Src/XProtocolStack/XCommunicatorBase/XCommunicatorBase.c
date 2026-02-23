@@ -3,7 +3,7 @@
 #include"XCoreApplication.h"
 #include"XThread.h"
 #include<string.h>
-void XCommunicatorBase_init(XCommunicatorBase* comm, XIODeviceBase* io)
+void XCommunicatorBase_init(XCommunicatorBase* comm, XIODevice* io)
 {
     //开始初始化
     memset(((XObject*)comm)+1, 0, sizeof(XCommunicatorBase)-sizeof(XObject));

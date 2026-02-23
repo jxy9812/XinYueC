@@ -58,8 +58,8 @@ typedef struct XDataFrameComm
     XSendValidCb m_sendValidCb;//发送添加验证回调
 }XDataFrameComm;
 XVtable* XDataFrameComm_class_init();
-XDataFrameComm* XDataFrameComm_create(XIODeviceBase* io);
-void XDataFrameComm_init(XDataFrameComm* comm,XIODeviceBase* io);
+XDataFrameComm* XDataFrameComm_create(XIODevice* io);
+void XDataFrameComm_init(XDataFrameComm* comm,XIODevice* io);
 XDFC_ErrorCode XDataFrameComm_setCommMode_base(XDataFrameComm* comm, XDFC_CommMode mode);
 XDFC_ErrorCode XDataFrameComm_setFrameEndType_base(XDataFrameComm* comm, XDFC_FrameEndType mode);
 XDFC_ErrorCode XDataFrameComm_setSendMode(XDataFrameComm* comm, XDFC_SendMode mode);

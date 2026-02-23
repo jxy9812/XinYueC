@@ -49,10 +49,10 @@
 //    serial->m_baudRate = 38400;
 //    serial->m_portNum = 2;
 //    XSocket* socket = XSocket_create();
-//    //XIODeviceBase_setWriteBuffer_base(socket,512);
+//    //XIODevice_setWriteBuffer_base(socket,512);
 //    XObject_connect(socket, XSignal(XSocket_connected_signal), socket, connected_slot, XConnectionType_Auto);
 //    XObject_connect(socket, XSignal(XSocket_stateChanged_signal), socket, stateChanged_slot, XConnectionType_Auto);
-//    XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODeviceBase_ReadWrite);
+//    XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODevice_ReadWrite);
 //    //XObject_delete_event(serial);
 //    XSerialPort_delete_base(serial);
 //    
@@ -70,29 +70,29 @@
 //    XModbusDigitalSwitch_setScanningPeriod(ds, 200);
 //    {
 //        XSwitchDeviceModbus* sw0 = XSwitchDeviceModbus_create(ds, 0);
-//        XSwitchDeviceBase_open_base(sw0, XIODeviceBase_WriteOnly);
+//        XSwitchDeviceBase_open_base(sw0, XIODevice_WriteOnly);
 //        XSwitchDeviceBase_setState_base(sw0, true);
 //        SW = sw0;
 //
 //        XSwitchDeviceModbus* sw1 = XSwitchDeviceModbus_create(ds, 1);
-//        XSwitchDeviceBase_open_base(sw1, XIODeviceBase_WriteOnly);
+//        XSwitchDeviceBase_open_base(sw1, XIODevice_WriteOnly);
 //        XSwitchDeviceBase_setState_base(sw1, true);
 //
 //        XSwitchDeviceModbus* sw2 = XSwitchDeviceModbus_create(ds, 2);
-//        XSwitchDeviceBase_open_base(sw2, XIODeviceBase_WriteOnly);
+//        XSwitchDeviceBase_open_base(sw2, XIODevice_WriteOnly);
 //        XSwitchDeviceBase_setState_base(sw2, true);
 //    }
 //    {
 //        XSwitchDeviceModbus* sw0 = XSwitchDeviceModbus_create(ds, 0);
-//        XSwitchDeviceBase_open_base(sw0, XIODeviceBase_ReadOnly);
+//        XSwitchDeviceBase_open_base(sw0, XIODevice_ReadOnly);
 //        XSwitchDeviceBase_setStateChangeCallback(sw0, StateChangeCallback0);
 //
 //        XSwitchDeviceModbus* sw1 = XSwitchDeviceModbus_create(ds, 1);
-//        XSwitchDeviceBase_open_base(sw1, XIODeviceBase_ReadOnly);
+//        XSwitchDeviceBase_open_base(sw1, XIODevice_ReadOnly);
 //        XSwitchDeviceBase_setStateChangeCallback(sw1, StateChangeCallback1);
 //
 //        XSwitchDeviceModbus* sw2 = XSwitchDeviceModbus_create(ds, 2);
-//        XSwitchDeviceBase_open_base(sw2, XIODeviceBase_ReadOnly);
+//        XSwitchDeviceBase_open_base(sw2, XIODevice_ReadOnly);
 //        XSwitchDeviceBase_setStateChangeCallback(sw2, StateChangeCallback2);
 //    }
 //

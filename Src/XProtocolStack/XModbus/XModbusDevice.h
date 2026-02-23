@@ -111,7 +111,7 @@ XModbusDevice_State XModbusDevice_state(const XModbusDevice* dev);
 XModbusDevice_Error XModbusDevice_error(const XModbusDevice* dev);
 XString* XModbusDevice_errorString(const XModbusDevice* dev); // Caller must free the returned XString*
 
-XIODeviceBase* XModbusDevice_device(const XModbusDevice* dev);
+XIODevice* XModbusDevice_device(const XModbusDevice* dev);
 
 // --- 受保护的 API (供子类使用) ---
 void XModbusDevice_setState(XModbusDevice* dev, XModbusDevice_State newState);
