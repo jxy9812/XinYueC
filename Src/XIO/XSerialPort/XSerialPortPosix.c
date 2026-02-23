@@ -1,392 +1,421 @@
-﻿#ifdef __linux__ || defined(__APPLE__) || defined(__BSD__)
-#include "XSerialPortPosix.h"
-#include "XCircularQueue.h"
+﻿#ifdef __linux__ (defined(__unix__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__sun))
+// XSerialPortPosix.c
+#include "XSerialPort_p.h"
 #include "XMemory.h"
-#include "XPrintf.h"
+
+#include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <termios.h>
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <string.h>
-// 若系统未定义 CRTSCTS，则手动定义（Linux 标准值）
+#include <poll.h>
+
+// ========== 平台兼容性宏 ==========
+#ifndef IEXTEN
+#define IEXTEN 0
+#endif
+
+#ifndef CMSPAR
+#define CMSPAR 0
+#endif
+
 #ifndef CRTSCTS
-#define CRTSCTS 020000000000  // 八进制，对应硬件流控制使能
-#endif
-// 前向声明虚函数
-static void VXSerialPort_deinit(XSerialPort* serial);
-static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode);
-static size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize);
-static size_t VXIODevice_writeFull(XSerialPort* serial);
-static size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize);
-static void VXIODevice_close(XSerialPort* serial);
-static void VXIODevice_poll(XSerialPort* serial);
-static void VXIODevice_setWriteBuffer(XSerialPort* serial, size_t count);
-static void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count);
-static size_t VXIODevice_getBytesAvailable(XSerialPort* serial);
-
-// 波特率映射表（Posix 波特率常量与数值对应）
-static speed_t get_baud_rate(uint32_t baud) {
-    switch (baud) {
-        case 9600: return B9600;
-        case 19200: return B19200;
-        case 38400: return B38400;
-        case 57600: return B57600;
-        case 115200: return B115200;
-        case 230400: return B230400;
-        case 460800: return B460800;
-        case 921600: return B921600;
-        default: return B0; // 无效波特率
-    }
-}
-
-// 虚函数表初始化
-XVtable* XSerialPort_class_init() {
-    XVTABLE_CREAT_DEFAULT
-#if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XSERIALPORT_VTABLE_SIZE)
+#ifdef CCTS_OFLOW
+#define CRTSCTS (CCTS_OFLOW | CRTS_IFLOW)
 #else
-    XVTABLE_HEAP_INIT_DEFAULT
+#define CRTSCTS 0
 #endif
-    // 继承父类虚函数表
-    XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
-    // 重载虚函数
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSerialPort_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXSerialPort_open);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Write, VXIODevice_write);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteFull, VXIODevice_writeFull);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Read, VXIODevice_read);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXIODevice_close);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXIODevice_poll);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SetWriteBuffer, VXIODevice_setWriteBuffer);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SetReadBuffer, VXIODevice_setReadBuffer);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_GetBytesAvailable, VXIODevice_getBytesAvailable);
-
-#if SHOWCONTAINERSIZE
-    XPrintf("XSerialPort(Posix) size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
-    return XVTABLE_DEFAULT;
+
+// 某些系统（如旧 macOS、Solaris）没有 TIOCMBIS/TIOCMBIC
+#if !defined(TIOCMBIS) || !defined(TIOCMBIC)
+#define USE_TIOCMGET_SET_FOR_DTR_RTS
+#endif
+
+// Solaris 使用 CBAUD 而非 cfsetispeed
+#ifdef __sun
+#define USE_CBAUD_HACK
+#endif
+
+// 平台私有数据
+struct PlatformData {
+    int fd;
+    struct termios originalTermios;
+    bool isCustomBaud;
+    int32_t customBaudRate;
+};
+
+// ========== 波特率映射（覆盖 Qt 支持的所有标准速率） ==========
+static speed_t toTermiosBaud(int32_t rate, bool* isCustom) {
+    *isCustom = false;
+    switch (rate) {
+    case 0:       return B0;
+    case 50:      return B50;
+    case 75:      return B75;
+    case 110:     return B110;
+    case 134:     return B134;
+    case 150:     return B150;
+    case 200:     return B200;
+    case 300:     return B300;
+    case 600:     return B600;
+    case 1200:    return B1200;
+    case 1800:    return B1800;
+    case 2400:    return B2400;
+    case 4800:    return B4800;
+    case 9600:    return B9600;
+    case 19200:   return B19200;
+    case 38400:   return B38400;
+    case 57600:   return B57600;
+    case 115200:  return B115200;
+#ifdef B230400
+    case 230400:  return B230400;
+#endif
+#ifdef B460800
+    case 460800:  return B460800;
+#endif
+#ifdef B500000
+    case 500000:  return B500000;
+#endif
+#ifdef B576000
+    case 576000:  return B576000;
+#endif
+#ifdef B921600
+    case 921600:  return B921600;
+#endif
+#ifdef B1000000
+    case 1000000: return B1000000;
+#endif
+#ifdef B1152000
+    case 1152000: return B1152000;
+#endif
+#ifdef B1500000
+    case 1500000: return B1500000;
+#endif
+#ifdef B2000000
+    case 2000000: return B2000000;
+#endif
+#ifdef B2500000
+    case 2500000: return B2500000;
+#endif
+#ifdef B3000000
+    case 3000000: return B3000000;
+#endif
+#ifdef B3500000
+    case 3500000: return B3500000;
+#endif
+#ifdef B4000000
+    case 4000000: return B4000000;
+#endif
+    default:
+        *isCustom = true;
+        return B38400; // 占位符
+    }
 }
 
-// 创建串口对象
-XSerialPort* XSerialPort_create() {
-    XSerialPort* serial = XMemory_malloc(sizeof(XSerialPort));
-    if (serial) {
-        XSerialPort_init(serial);
+// ========== 自定义波特率（仅 Linux 尝试） ==========
+static bool setCustomBaudRate(PlatformData* pd, int32_t baud) {
+#ifdef __linux__
+    struct serial_struct serinfo;
+    if (ioctl(pd->fd, TIOCGSERIAL, &serinfo) == 0) {
+        serinfo.flags &= ~ASYNC_SPD_MASK;
+        serinfo.flags |= ASYNC_SPD_CUST;
+        serinfo.custom_divisor = (serinfo.baud_base + (baud / 2)) / baud;
+        if (serinfo.custom_divisor < 1) serinfo.custom_divisor = 1;
+        if (ioctl(pd->fd, TIOCSSERIAL, &serinfo) == 0) {
+            return true;
+        }
     }
-    return serial;
+#endif
+    return false;
 }
 
-// 初始化串口对象
-void XSerialPort_init(XSerialPort* serial) {
-    if (!serial) return;
-    // 初始化父类及成员
-    memset(((XSerialPortBase*)serial) + 1, 0, sizeof(XSerialPort) - sizeof(XSerialPortBase));
-    XSerialPortBase_init(&serial->m_class);
-    XClassGetVtable(serial) = XSerialPort_class_init();
-    serial->m_fd = -1; // 初始化为无效文件描述符
-    serial->m_readBufferSize = 1024;  // 默认读缓冲区大小
-    serial->m_writeBufferSize = 1024; // 默认写缓冲区大小
-}
+// ========== 应用配置（核心） ==========
+static bool applyTermios(XSerialPortPrivate* d) {
+    PlatformData* pd = d->platform;
+    struct termios tio = pd->originalTermios;
 
-// 释放资源
-static void VXSerialPort_deinit(XSerialPort* serial) {
-    if (!serial) return;
-    VXIODevice_close(serial); // 确保关闭串口
-    // 释放父类资源
-    XVtableGetFunc(XIODevice_class_init(), EXClass_Deinit, void(*)(XIODevice*))(serial);
-}
+    // 进入 raw 模式（Qt 行为）
+    cfmakeraw(&tio);
 
-// 打开并配置串口
-static bool VXSerialPort_open(XSerialPort* serial, XIODeviceBaseMode mode) {
-    if (!serial) return false;
-    XSerialPortBase* m_class = &serial->m_class;
+    // 重新设置关键字段（cfmakeraw 可能覆盖部分）
+    tio.c_cflag |= (CLOCAL | CREAD);
+    tio.c_cflag &= ~(CSIZE | PARENB | PARODD | CMSPAR | CSTOPB | CRTSCTS);
 
-    // 生成串口设备路径（如 /dev/ttyUSB0 或 /dev/ttyS0）
-    char portPath[32];
-    snprintf(portPath, sizeof(portPath), "/dev/ttyUSB%d", m_class->m_portNum);
-
-    // 关闭已打开的串口
-    if (serial->m_fd != -1) {
-        close(serial->m_fd);
-        serial->m_fd = -1;
+    // 数据位
+    switch (d->dataBits) {
+    case XSerialPort_Data5: tio.c_cflag |= CS5; break;
+    case XSerialPort_Data6: tio.c_cflag |= CS6; break;
+    case XSerialPort_Data7: tio.c_cflag |= CS7; break;
+    case XSerialPort_Data8:
+    default:                tio.c_cflag |= CS8; break;
     }
 
-    // 打开串口设备（读写、非阻塞模式）
-    int flags = O_NOCTTY;  // 先初始化基础标志（不预先设置读写标志）
+    // 校验位
+    switch (d->parity) {
+    case XSerialPort_NoParity:
+        break;
+    case XSerialPort_EvenParity:
+        tio.c_cflag |= PARENB;
+        break;
+    case XSerialPort_OddParity:
+        tio.c_cflag |= (PARENB | PARODD);
+        break;
+    case XSerialPort_SpaceParity:
+        if (CMSPAR) tio.c_cflag |= (PARENB | CMSPAR);
+        else { /* 降级为 NoParity */ }
+        break;
+    case XSerialPort_MarkParity:
+        if (CMSPAR) tio.c_cflag |= (PARENB | PARODD | CMSPAR);
+        else { /* 降级为 OddParity */ }
+        break;
+    }
 
-    // 根据模式设置读写标志（互斥逻辑）
-    if (mode & XIODevice_ReadWrite) {
-        // 读写模式（同时包含 ReadOnly 和 WriteOnly）
-        flags |= O_RDWR;
-    } else if (mode & XIODevice_ReadOnly) {
-        // 只读模式
-        flags |= O_RDONLY;
-    } else if (mode & XIODevice_WriteOnly) {
-        // 只写模式
-        flags |= O_WRONLY;
-    } else {
-        // 无效模式（至少需要读或写权限）
-        // 可根据需求添加错误处理，例如 return -1 或设置默认值
+    // 停止位
+    if (d->stopBits == XSerialPort_TwoStop)
+        tio.c_cflag |= CSTOPB;
+
+    // 流控
+    if (d->flowControl == XSerialPort_HardwareControl && CRTSCTS) {
+        tio.c_cflag |= CRTSCTS;
+    }
+    else if (d->flowControl == XSerialPort_SoftwareControl) {
+        tio.c_iflag |= (IXON | IXOFF | IXANY);
+    }
+
+    // 波特率
+    bool isCustom = false;
+    speed_t stdBaud = toTermiosBaud(d->baudRate, &isCustom);
+
+#ifdef USE_CBAUD_HACK
+    // Solaris 风格
+    tio.c_cflag &= ~CBAUD;
+    tio.c_cflag |= (stdBaud & CBAUD);
+    tio.c_cflag |= (CBAUDEXT & (stdBaud << 16));
+#else
+    cfsetispeed(&tio, stdBaud);
+    cfsetospeed(&tio, stdBaud);
+#endif
+
+    if (tcsetattr(pd->fd, TCSANOW, &tio) != 0)
         return false;
+
+    if (isCustom) {
+        pd->customBaudRate = d->baudRate;
+        pd->isCustomBaud = true;
+        if (!setCustomBaudRate(pd, d->baudRate)) {
+            // 自定义失败，但不报错（Qt 也如此）
+            return true;
+        }
+    }
+    else {
+        pd->isCustomBaud = false;
     }
 
-    flags |= O_NONBLOCK;  // 非阻塞模式
-    serial->m_fd = open(portPath, flags);
-    if (serial->m_fd == -1) {
-        XPrintf("无法打开串口 %s，错误: %s\n", portPath, strerror(errno));
-        return false;
-    }
-
-    // 保存原始配置（用于关闭时恢复）
-    if (tcgetattr(serial->m_fd, &serial->m_oldTios) != 0) {
-        XPrintf("获取串口配置失败，错误: %s\n", strerror(errno));
-        close(serial->m_fd);
-        serial->m_fd = -1;
-        return false;
-    }
-
-    // 配置新参数
-    struct termios tios = serial->m_oldTios;
-    speed_t baud = get_baud_rate(m_class->m_baudRate);
-    if (baud == B0) {
-        XPrintf("不支持的波特率: %u\n", m_class->m_baudRate);
-        close(serial->m_fd);
-        serial->m_fd = -1;
-        return false;
-    }
-
-    // 设置波特率
-    cfsetispeed(&tios, baud);
-    cfsetospeed(&tios, baud);
-
-    // 配置数据位、停止位、校验位
-    tios.c_cflag &= ~(CSIZE | PARENB | PARODD | CSTOPB); // 清除现有设置
-    switch (m_class->m_dataBits) {
-        case XSerialPort_Data5: tios.c_cflag |= CS5; break;
-        case XSerialPort_Data6: tios.c_cflag |= CS6; break;
-        case XSerialPort_Data7: tios.c_cflag |= CS7; break;
-        case XSerialPort_Data8: tios.c_cflag |= CS8; break;
-        default: 
-            XPrintf("不支持的数据位: %d\n", m_class->m_dataBits);
-            close(serial->m_fd);
-            serial->m_fd = -1;
-            return false;
-    }
-
-    // 校验位设置
-    switch (m_class->m_parity) {
-        case XSerialPort_NoParity:
-            tios.c_cflag &= ~PARENB; // 无校验
-            break;
-        case XSerialPort_OddParity:
-            tios.c_cflag |= (PARENB | PARODD); // 奇校验
-            break;
-        case XSerialPort_EvenParity:
-            tios.c_cflag |= PARENB; // 偶校验（不设置PARODD）
-            break;
-        default:
-            XPrintf("不支持的校验位: %d\n", m_class->m_parity);
-            close(serial->m_fd);
-            serial->m_fd = -1;
-            return false;
-    }
-
-    // 停止位设置
-    switch (m_class->m_stopBits) {
-        case XSerialPort_OneStop:
-            tios.c_cflag &= ~CSTOPB; // 1位停止位
-            break;
-        case XSerialPort_TwoStop:
-            tios.c_cflag |= CSTOPB; // 2位停止位
-            break;
-        default:
-            XPrintf("不支持的停止位: %d\n", m_class->m_stopBits);
-            close(serial->m_fd);
-            serial->m_fd = -1;
-            return false;
-    }
-
-    // 流控制设置
-    tios.c_cflag &= ~CRTSCTS; // 清除硬件流控制
-    tios.c_iflag &= ~(IXON | IXOFF | IXANY); // 清除软件流控制
-    switch (m_class->m_flowControl) {
-        case XSerialPort_HardwareControl:
-            tios.c_cflag |= CRTSCTS; // 硬件流控制（RTS/CTS）
-            break;
-        case XSerialPort_SoftwareControl:
-            tios.c_iflag |= (IXON | IXOFF | IXANY); // 软件流控制（XON/XOFF）
-            break;
-        case XSerialPort_NoFlowControl:
-        default:
-            break; // 无流控制
-    }
-
-    // 启用接收器，设置本地模式
-    tios.c_cflag |= (CLOCAL | CREAD);
-
-    // 禁用特殊处理（不转换回车换行等）
-    tios.c_oflag &= ~OPOST;
-    tios.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
-    tios.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
-
-    // 设置超时（读取时无数据立即返回）
-    tios.c_cc[VTIME] = 0; // 读取超时（百毫秒）
-    tios.c_cc[VMIN] = 0;  // 最小读取字节数
-
-    // 应用配置
-    if (tcsetattr(serial->m_fd, TCSANOW, &tios) != 0) {
-        XPrintf("设置串口配置失败，错误: %s\n", strerror(errno));
-        close(serial->m_fd);
-        serial->m_fd = -1;
-        return false;
-    }
-
-    m_class->m_class.m_openMode = mode;
     return true;
 }
 
-// 写入数据（带缓冲区处理）
-static size_t VXIODevice_write(XSerialPort* serial, const char* data, size_t maxSize) {
-    if (!serial || !data || maxSize == 0 || serial->m_fd == -1) {
-        return 0;
-    }
-    XIODevice* io = (XIODevice*)serial;
-    if (!(io->m_openMode & XIODevice_WriteOnly)) {
-        return 0;
-    }
-
-    // 无缓冲区直接写入
-    if (!io->m_writeBuffer) {
-        return write(serial->m_fd, data, maxSize);
-    }
-
-    // 有缓冲区时先写入队列
-    size_t count = 0;
-    do {
-        // 填充缓冲区
-        while (count < maxSize && XCircularQueue_push_base(io->m_writeBuffer, data + count)) {
-            count++;
-        }
-        //// 缓冲区满时刷写
-        //if (XCircularQueue_isFull_base(io->m_writeBuffer)) {
-        //    VXIODevice_writeFull(serial);
-        //}
-    } while (count < maxSize && !XCircularQueue_isFull_base(io->m_writeBuffer));
-
-    return count;
+// ========== DTR/RTS 跨平台控制 ==========
+static bool setModemControlLine(PlatformData* pd, int line, bool set) {
+#ifdef USE_TIOCMGET_SET_FOR_DTR_RTS
+    int status = 0;
+    if (ioctl(pd->fd, TIOCMGET, &status) != 0)
+        return false;
+    if (set)
+        status |= line;
+    else
+        status &= ~line;
+    return ioctl(pd->fd, TIOCMSET, &status) == 0;
+#else
+    int cmd = set ? TIOCMBIS : TIOCMBIC;
+    return ioctl(pd->fd, cmd, &line) == 0;
+#endif
 }
 
-// 刷写缓冲区数据
-static size_t VXIODevice_writeFull(XSerialPort* serial) {
-    if (!serial || serial->m_fd == -1) {
+// ========== 错误码映射 ==========
+static XSerialPort_Error errnoToSerialError(int err) {
+    switch (err) {
+    case ENOENT:
+    case ENODEV:
+        return XSerialPort_DeviceNotFoundError;
+    case EACCES:
+    case EPERM:
+        return XSerialPort_PermissionError;
+    case EBUSY:
+        return XSerialPort_ResourceBusyError;
+    case EINVAL:
+        return XSerialPort_UnknownError;
+    default:
+        return XSerialPort_ReadError; // 通用回退
+    }
+}
+
+// ========== 平台函数实现 ==========
+
+bool platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portName, XIODeviceBaseMode mode) {
+    if (!portName || !d || !owner) return false;
+
+    int flags = O_NOCTTY | O_NONBLOCK;
+    if ((mode & XIODevice_ReadOnly) && (mode & XIODevice_WriteOnly))
+        flags |= O_RDWR;
+    else if (mode & XIODevice_ReadOnly)
+        flags |= O_RDONLY;
+    else if (mode & XIODevice_WriteOnly)
+        flags |= O_WRONLY;
+    else
+        return false;
+
+    int fd = open(portName, flags);
+    if (fd == -1) {
+        d->error = errnoToSerialError(errno);
+        return false;
+    }
+
+    PlatformData* pd = (PlatformData*)XMemory_calloc(1, sizeof(PlatformData));
+    if (!pd) {
+        close(fd);
+        d->error = XSerialPort_ResourceError;
+        return false;
+    }
+
+    if (tcgetattr(fd, &pd->originalTermios) != 0) {
+        XMemory_free(pd);
+        close(fd);
+        d->error = XSerialPort_OpenError;
+        return false;
+    }
+
+    pd->fd = fd;
+    d->platform = pd;
+    d->isOpen = true;
+
+    if (!applyTermios(d)) {
+        platform_close(d);
+        d->error = XSerialPort_OpenError;
+        return false;
+    }
+
+    return true;
+}
+
+void platform_close(XSerialPortPrivate* d) {
+    if (!d->isOpen || !d->platform) return;
+    PlatformData* pd = d->platform;
+    tcsetattr(pd->fd, TCSANOW, &pd->originalTermios);
+    close(pd->fd);
+    XMemory_free(pd);
+    d->platform = NULL;
+    d->isOpen = false;
+}
+
+bool platform_isOpen(const XSerialPortPrivate* d) {
+    return d && d->isOpen;
+}
+
+int64_t platform_read(XSerialPortPrivate* d, char* data, int64_t maxSize) {
+    if (!d || !data || maxSize <= 0 || !d->platform) return -1;
+    ssize_t r = read(d->platform->fd, data, (size_t)maxSize);
+    if (r == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        d->error = XSerialPort_ReadError;
+        return -1;
+    }
+    return (int64_t)r;
+}
+
+int64_t platform_write(XSerialPortPrivate* d, const char* data, int64_t len) {
+    if (!d || !data || len <= 0 || !d->platform) return -1;
+    ssize_t r = write(d->platform->fd, data, (size_t)len);
+    if (r == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
+        d->error = XSerialPort_WriteError;
+        return -1;
+    }
+    return (int64_t)r;
+}
+
+int64_t platform_bytesAvailable(const XSerialPortPrivate* d) {
+    if (!d->platform) return 0;
+    int bytes = 0;
+    if (ioctl(d->platform->fd, FIONREAD, &bytes) == 0)
+        return (int64_t)bytes;
+    return 0;
+}
+
+int64_t platform_bytesToWrite(const XSerialPortPrivate* d) {
+    (void)d;
+    return 0; // POSIX 无标准方法，Qt 也返回 0
+}
+
+void platform_poll(XSerialPortPrivate* d) {
+    (void)d; // 事件驱动由上层处理
+}
+
+uint32_t platform_pinoutSignals(const XSerialPortPrivate* d) {
+    if (!d || !d->isOpen) return 0;
+    int status = 0;
+    if (ioctl(d->platform->fd, TIOCMGET, &status) != 0)
         return 0;
-    }
-    XIODevice* io = (XIODevice*)serial;
-    if (!(io->m_openMode & XIODevice_WriteOnly) || !io->m_writeBuffer) {
-        return 0;
-    }
 
-    size_t count = 0;
-    char c;
-    while (XCircularQueue_receive_base(io->m_writeBuffer, &c)) {
-        if (write(serial->m_fd, &c, 1) == 1) {
-            count++;
-        } else {
-            // 写入失败时将数据放回缓冲区
-            //XCircularQueue_unshift_base(io->m_writeBuffer, &c);
-            break;
-        }
-    }
-    return count;
+    // 映射到 Qt 的信号位（与 Windows 一致）
+    uint32_t signals = 0;
+    if (status & TIOCM_DTR) signals |= 0x04; // DataTerminalReady
+    if (status & TIOCM_RTS) signals |= 0x40; // RequestToSend
+    if (status & TIOCM_CTS) signals |= 0x80; // ClearToSend
+    if (status & TIOCM_DSR) signals |= 0x10; // DataSetReady
+    if (status & TIOCM_RI)  signals |= 0x20; // RingIndicator
+    if (status & TIOCM_CD)  signals |= 0x08; // CarrierDetect
+    return signals;
 }
 
-// 读取数据
-static size_t VXIODevice_read(XSerialPort* serial, char* data, size_t maxSize) {
-    if (!serial || !data || maxSize == 0 || serial->m_fd == -1) {
-        return 0;
-    }
-    XIODevice* io = (XIODevice*)serial;
-    if (!(io->m_openMode & XIODevice_ReadOnly)) {
-        return 0;
-    }
-
-    // 无缓冲区直接读取
-    if (!io->m_readBuffer) {
-        return read(serial->m_fd, data, maxSize);
-    }
-
-    // 有缓冲区时从队列读取
-    size_t count = 0;
-    while (count < maxSize && XCircularQueue_receive_base(io->m_readBuffer, data + count)) {
-        count++;
-    }
-    return count;
+bool platform_applyConfig(XSerialPortPrivate* d) {
+    return applyTermios(d);
 }
 
-// 关闭串口
-static void VXIODevice_close(XSerialPort* serial) {
-    if (!serial || serial->m_fd == -1) {
-        return;
-    }
-    // 恢复原始配置
-    tcsetattr(serial->m_fd, TCSANOW, &serial->m_oldTios);
-    close(serial->m_fd);
-    serial->m_fd = -1;
-    serial->m_class.m_class.m_openMode = 0; // 重置模式
+bool platform_setDataTerminalReady(XSerialPortPrivate* d, bool set) {
+    if (!d->isOpen) return false;
+    return setModemControlLine(d->platform, TIOCM_DTR, set);
 }
 
-// 轮询处理（用于非阻塞模式）
-static void VXIODevice_poll(XSerialPort* serial) {
-    if (!serial || serial->m_fd == -1) {
-        return;
-    }
-    XIODevice* io = (XIODevice*)serial;
-
-    // 读取数据到缓冲区
-    if (io->m_readBuffer && (io->m_openMode & XIODevice_ReadOnly)) {
-        char buf[128];
-        ssize_t n = read(serial->m_fd, buf, sizeof(buf));
-        if (n > 0) {
-            for (ssize_t i = 0; i < n; i++) {
-                XCircularQueue_push_base(io->m_readBuffer, &buf[i]);
-            }
-        }
-    }
-
-    // 处理写缓冲区
- /*   if (io->m_writeBuffer && (io->m_openMode & XIODevice_WriteOnly)) {
-        VXIODevice_writeFull(serial);
-    }*/
+bool platform_setRequestToSend(XSerialPortPrivate* d, bool set) {
+    if (!d->isOpen) return false;
+    return setModemControlLine(d->platform, TIOCM_RTS, set);
 }
 
-// 设置写缓冲区大小
-static void VXIODevice_setWriteBuffer(XSerialPort* serial, size_t count) {
-    if (!serial) return;
-    serial->m_writeBufferSize = count;
-    //XIODevice_setWriteBuffer_base((XIODevice*)serial, count);
+bool platform_setBreakEnabled(XSerialPortPrivate* d, bool set) {
+    if (!d->isOpen) return false;
+    return ioctl(d->platform->fd, set ? TIOCSBRK : TIOCCBRK, 0) == 0;
 }
 
-// 设置读缓冲区大小
-static void VXIODevice_setReadBuffer(XSerialPort* serial, size_t count) {
-    if (!serial) return;
-    serial->m_readBufferSize = count;
-    //XIODevice_setReadBuffer_base((XIODevice*)serial, count);
+bool platform_flush(XSerialPortPrivate* d) {
+    if (!d->isOpen) return false;
+    return tcdrain(d->platform->fd) == 0;
 }
 
-// 获取可用字节数（接收缓冲区）
-static size_t VXIODevice_getBytesAvailable(XSerialPort* serial) {
-    if (!serial || serial->m_fd == -1) {
-        return 0;
-    }
-    // 无缓冲区时查询内核缓冲区
-    if (!((XIODevice*)serial)->m_readBuffer) {
-        int bytes;
-        ioctl(serial->m_fd, FIONREAD, &bytes);
-        return (size_t)bytes;
-    }
-    // 有缓冲区时查询队列
-    return XCircularQueue_size_base(((XIODevice*)serial)->m_readBuffer);
+bool platform_clear(XSerialPortPrivate* d, XSerialPort_Direction dir) {
+    if (!d->isOpen) return false;
+    int queue = TCIOFLUSH;
+    if (dir == XSerialPort_Input) queue = TCIFLUSH;
+    else if (dir == XSerialPort_Output) queue = TCOFLUSH;
+    return tcflush(d->platform->fd, queue) == 0;
+}
+
+bool platform_waitForReadyRead(XSerialPortPrivate* d, int msecs) {
+    if (!d->isOpen) return false;
+    struct pollfd pfd = { .fd = d->platform->fd, .events = POLLIN };
+    int ret = poll(&pfd, 1, msecs);
+    if (ret > 0 && (pfd.revents & POLLIN))
+        return true;
+    if (ret == 0)
+        d->error = XSerialPort_TimeoutError;
+    return false;
+}
+
+bool platform_waitForBytesWritten(XSerialPortPrivate* d, int msecs) {
+    // Qt 在 Unix 上也简单等待
+    (void)d; (void)msecs;
+    usleep(1000); // 1ms
+    return true;
 }
 
 #endif // Posix 平台

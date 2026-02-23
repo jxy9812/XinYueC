@@ -386,80 +386,42 @@ bool platform_waitForBytesWritten(XSerialPortPrivate* d, int msecs) {
     return triggered || platform_bytesToWrite(d) == 0;
 }
 // ========== Control Functions ==========
-bool XSerialPort_setDataTerminalReady(XSerialPort* port, bool set) {
-    if (!port) return false;
-    XSerialPortPrivate* d = port->d_ptr;
-    if (d->dataTerminalReady == set) return true;
-    d->dataTerminalReady = set;
-    if (d->isOpen) {
-        EscapeCommFunction((HANDLE)d->platform->handle, set ? SETDTR : CLRDTR);
-    }
-    XSerialPort_dataTerminalReadyChanged_signal(port, set);
-    return true;
+bool platform_setDataTerminalReady(XSerialPortPrivate* d, bool set)
+{
+    if (!d->isOpen) return false;
+    return EscapeCommFunction((HANDLE)d->platform->handle, set ? SETDTR : CLRDTR);
 }
-
-bool XSerialPort_isDataTerminalReady(const XSerialPort* port) {
-    return port ? port->d_ptr->dataTerminalReady : false;
-}
-
-bool XSerialPort_setRequestToSend(XSerialPort* port, bool set) {
-    if (!port) return false;
-    XSerialPortPrivate* d = port->d_ptr;
-    if (d->requestToSend == set) return true;
-    d->requestToSend = set;
+bool platform_setRequestToSend(XSerialPortPrivate* d, bool set)
+{
     if (d->isOpen && d->flowControl != XSerialPort_HardwareControl) {
-        EscapeCommFunction((HANDLE)d->platform->handle, set ? SETRTS : CLRRTS);
+        return EscapeCommFunction((HANDLE)d->platform->handle, set ? SETRTS : CLRRTS);
     }
-    XSerialPort_requestToSendChanged_signal(port, set);
-    return true;
+    return false;
 }
-
-bool XSerialPort_isRequestToSend(const XSerialPort* port) {
-    return port ? port->d_ptr->requestToSend : false;
-}
-
-bool XSerialPort_setBreakEnabled(XSerialPort* port, bool enable) {
-    if (!port) return false;
-    XSerialPortPrivate* d = port->d_ptr;
-    if (d->breakEnabled == enable) return true;
-    d->breakEnabled = enable;
-    if (d->isOpen) {
-        EscapeCommFunction((HANDLE)d->platform->handle, enable ? SETBREAK : CLRBREAK);
-    }
-    XSerialPort_breakEnabledChanged_signal(port, enable);
-    return true;
-}
-
-bool XSerialPort_isBreakEnabled(const XSerialPort* port) {
-    return port ? port->d_ptr->breakEnabled : false;
+bool platform_setBreakEnabled(XSerialPortPrivate* d, bool enable)
+{
+    if (!d->isOpen) return false;
+    return EscapeCommFunction((HANDLE)d->platform->handle, enable ? SETBREAK : CLRBREAK);
 }
 
 // ========== Flush / Clear ==========
-bool XSerialPort_flush(XSerialPort* port) {
-    if (!port || !port->d_ptr || !port->d_ptr->isOpen) {
-        if (port && port->d_ptr) port->d_ptr->error = XSerialPort_NotOpenError;
-        return false;
-    }
+bool platform_flush(XSerialPortPrivate* d) {
 
-    if (!FlushFileBuffers((HANDLE)port->d_ptr->platform->handle)) {
-        port->d_ptr->error = XSerialPort_WriteError;
+    if (!FlushFileBuffers((HANDLE)d->platform->handle)) {
+        d->error = XSerialPort_WriteError;
         return false;
     }
     return true;
 }
 
-bool XSerialPort_clear(XSerialPort* port, XSerialPort_Direction directions) {
-    if (!port || !port->d_ptr || !port->d_ptr->isOpen) {
-        if (port && port->d_ptr) port->d_ptr->error = XSerialPort_NotOpenError;
-        return false;
-    }
-
+bool platform_clear(XSerialPortPrivate* d, XSerialPort_Direction directions)
+{
     DWORD flags = 0;
     if (directions & XSerialPort_Input)  flags |= PURGE_RXCLEAR;
     if (directions & XSerialPort_Output) flags |= PURGE_TXCLEAR;
 
-    if (!PurgeComm((HANDLE)port->d_ptr->platform->handle, flags)) {
-        port->d_ptr->error = XSerialPort_ResourceError;
+    if (!PurgeComm((HANDLE)d->platform->handle, flags)) {
+        d->error = XSerialPort_ResourceError;
         return false;
     }
     return true;

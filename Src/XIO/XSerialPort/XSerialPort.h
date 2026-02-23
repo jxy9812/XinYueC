@@ -121,7 +121,6 @@ XVtable* XSerialPort_class_init();
  *          对象需通过XObject_destroy释放
  */
 XSerialPort* XSerialPort_create();
-void XSerialPortBase_init(XSerialPort* serial);
 /**
  * @brief 初始化已分配的XSerialPort结构体
  * @param port 指向待初始化的XSerialPort实例（不可为NULL）

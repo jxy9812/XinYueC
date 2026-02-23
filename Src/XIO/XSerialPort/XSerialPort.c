@@ -384,6 +384,69 @@ void XSerialPort_setReadBufferSize(XSerialPort* port, int64_t size) {
 		// For Windows, this is handled by the OS, so we just store the value
 	}
 }
+bool XSerialPort_setDataTerminalReady(XSerialPort* port, bool set) {
+	if (!port) return false;
+	XSerialPortPrivate* d = port->d_ptr;
+	if (d->dataTerminalReady == set) return true;
+
+	if (platform_setDataTerminalReady(d, set))
+	{
+		d->dataTerminalReady = set;
+		XSerialPort_dataTerminalReadyChanged_signal(port, set);
+		return true;
+	}
+	return false;
+}
+bool XSerialPort_isDataTerminalReady(const XSerialPort* port) {
+	return port ? port->d_ptr->dataTerminalReady : false;
+}
+bool XSerialPort_setRequestToSend(XSerialPort* port, bool set) {
+	if (!port) return false;
+	XSerialPortPrivate* d = port->d_ptr;
+	if (d->requestToSend == set) return true;
+	
+	if (platform_setRequestToSend(d, set))
+	{
+		d->requestToSend = set;
+		XSerialPort_requestToSendChanged_signal(port, set);
+		return true;
+	}
+	return false;
+}
+bool XSerialPort_isRequestToSend(const XSerialPort* port) {
+	return port ? port->d_ptr->requestToSend : false;
+}
+bool XSerialPort_setBreakEnabled(XSerialPort* port, bool enable) {
+	if (!port) return false;
+	XSerialPortPrivate* d = port->d_ptr;
+	if (d->breakEnabled == enable) return true;
+	if(platform_setBreakEnabled(d, enable))
+	{
+		d->breakEnabled = enable;
+		XSerialPort_breakEnabledChanged_signal(port, enable);
+		return true;
+	}
+	return false;
+}
+bool XSerialPort_isBreakEnabled(const XSerialPort* port) {
+	return port ? port->d_ptr->breakEnabled : false;
+}
+bool XSerialPort_flush(XSerialPort* port) {
+	if (!port || !port->d_ptr || !port->d_ptr->isOpen) {
+		if (port && port->d_ptr) port->d_ptr->error = XSerialPort_NotOpenError;
+		return false;
+	}
+	return platform_flush(port->d_ptr);
+}
+
+bool XSerialPort_clear(XSerialPort* port, XSerialPort_Direction directions)
+{
+	if (!port || !port->d_ptr || !port->d_ptr->isOpen) {
+		if (port && port->d_ptr) port->d_ptr->error = XSerialPort_NotOpenError;
+		return false;
+	}
+	return platform_clear(port->d_ptr, directions);
+}
 void* XSerialPort_errorOccurred_signal(XSerialPort* port, XSerialPort_Error error)
 {
 	XEmitSignal(port, XSerialPort_errorOccurred_signal, XVariant_create_int(error), XVariant_delete_base, NULL, XEVENT_PRIORITY_NORMAL);
