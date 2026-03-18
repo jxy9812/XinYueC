@@ -909,6 +909,53 @@ void XVariant_setValue_int32(XVariant* var, int32_t val);
 * @param val: 64位有符号整数数据
 */
 void XVariant_setValue_int64(XVariant* var, int64_t val);
+void XVariant_setValue_size_t(XVariant* var, size_t val);
+void XVariant_setValue_ptr(XVariant* var, void* val);
+void XVariant_setValue_float(XVariant* var, float val);
+void XVariant_setValue_double(XVariant* var, double val);
+void XVariant_setValue_Pair(XVariant* var, const XPair* pair);
+void XVariant_setValue_Point(XVariant* var, XPoint val);
+void XVariant_setValue_ByteArray(XVariant* var, const XByteArray* array);
+void XVariant_setValue_ByteArray_move(XVariant* var, XByteArray* array);
+void XVariant_setValue_ByteArray_ref(XVariant* var, XByteArray* array);
+void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size);
+void XVariant_setValue_String(XVariant* var, const XString* str);
+void XVariant_setValue_String_move(XVariant* var, XString* str);
+void XVariant_setValue_String_ref(XVariant* var, XString* str);
+void XVariant_setValue_utf8_str(XVariant* var, const char* utf8);
+void XVariant_setValue_StringList(XVariant* var, const XStringList* list);
+void XVariant_setValue_StringList_move(XVariant* var, XStringList* list);
+void XVariant_setValue_StringList_ref(XVariant* var, XStringList* list);
+void XVariant_setValue_list(XVariant* var, const XVariantList* list);
+void XVariant_setValue_list_move(XVariant* var, XVariantList* list);
+void XVariant_setValue_list_ref(XVariant* var, XVariantList* list);
+void XVariant_setValue_map(XVariant* var, const XVariantMap* map);
+void XVariant_setValue_map_move(XVariant* var, XVariantMap* map);
+void XVariant_setValue_map_ref(XVariant* var, XVariantMap* map);
+void XVariant_setValue_hash(XVariant* var, const XVariantHashMap* hash);
+void XVariant_setValue_hash_move(XVariant* var, XVariantHashMap* hash);
+void XVariant_setValue_hash_ref(XVariant* var, XVariantHashMap* hash);
+void XVariant_setValue_JsonDocument(XVariant* var, const XJsonDocument* doc);
+void XVariant_setValue_JsonDocument_move(XVariant* var, XJsonDocument* doc);
+void XVariant_setValue_JsonDocument_ref(XVariant* var, XJsonDocument* doc);
+void XVariant_setValue_JsonArray(XVariant* var, const XJsonArray* arr);
+void XVariant_setValue_JsonArray_move(XVariant* var, XJsonArray* arr);
+void XVariant_setValue_JsonArray_ref(XVariant* var, XJsonArray* arr);
+void XVariant_setValue_JsonObject(XVariant* var, const XJsonObject* obj);
+void XVariant_setValue_JsonObject_move(XVariant* var, XJsonObject* obj);
+void XVariant_setValue_JsonObject_ref(XVariant* var, XJsonObject* obj);
+void XVariant_setValue_JsonValue(XVariant* var, const XJsonValue* val);
+void XVariant_setValue_JsonValue_move(XVariant* var, XJsonValue* val);
+void XVariant_setValue_JsonValue_ref(XVariant* var, XJsonValue* val);
+void XVariant_setValue_BsonDocument(XVariant* var, const XBsonDocument* doc);
+void XVariant_setValue_BsonDocument_move(XVariant* var, XBsonDocument* doc);
+void XVariant_setValue_BsonDocument_ref(XVariant* var, XBsonDocument* doc);
+void XVariant_setValue_BsonArray(XVariant* var, const XBsonArray* arr);
+void XVariant_setValue_BsonArray_move(XVariant* var, XBsonArray* arr);
+void XVariant_setValue_BsonArray_ref(XVariant* var, XBsonArray* arr);
+void XVariant_setValue_BsonValue(XVariant* var, const XBsonValue* val);
+void XVariant_setValue_BsonValue_move(XVariant* var, XBsonValue* val);
+void XVariant_setValue_BsonValue_ref(XVariant* var, XBsonValue* val);
 /**
 * @brief 设置XVariant的值为布尔值
 * @param var: 目标XVariant指针
@@ -933,7 +980,17 @@ void XVariant_setValue_uchar(XVariant* var, unsigned char val);
 * @param val: int数据
 */
 void XVariant_setValue_int(XVariant* var, int val);
-
+void XVariant_clear(XVariant* var);
+void XVariant_swap(XVariant* var, XVariant* other);
+int XVariant_type(XVariant* var);
+const char* XVariant_typeName(XVariant* var);
+int32_t XVariant_compare(XVariant* var, XVariant* cmp);
+void XVariant_setUserTypeName(int type, const char* typeName);
+void XVariant_removeUserTypeProperty(int type);
+void XVariant_setUserCompare(int type, XCompare compare);
+void XVariant_setUserDataMethod(int type, XCDataCopyMethod copyMethod, XCDataMoveMethod moveMethod, XCDataClearMethod clearMethod, XCDataDeinitMethod deinitMethod);
+void* XVariant_data(XVariant* var);
+size_t XVariant_dataSize(XVariant* var);
 #define XVariant_copy_base			XClass_copy_base
 #define XVariant_move_base			XClass_move_base
 #define XVariant_deinit_base		XClass_deinit_base

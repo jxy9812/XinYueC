@@ -813,8 +813,8 @@ XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar
 XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter, size_t limit, XCharCaseSensitivity cs);
 
 
-
-
+//拷贝字符串并返回
+char* XStrdup(char* str);
 #ifdef __cplusplus
 }
 #endif
