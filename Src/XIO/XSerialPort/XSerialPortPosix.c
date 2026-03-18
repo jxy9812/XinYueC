@@ -252,7 +252,7 @@ static XSerialPort_Error errnoToSerialError(int err) {
 
 // ========== 平台函数实现 ==========
 
-bool platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portName, XIODeviceBaseMode mode) {
+bool XSerialPort_platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portName, XIODeviceBaseMode mode) {
     if (!portName || !d || !owner) return false;
 
     int flags = O_NOCTTY | O_NONBLOCK;
@@ -290,7 +290,7 @@ bool platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portNa
     d->isOpen = true;
 
     if (!applyTermios(d)) {
-        platform_close(d);
+        XSerialPort_platform_close(d);
         d->error = XSerialPort_OpenError;
         return false;
     }
@@ -298,7 +298,7 @@ bool platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portNa
     return true;
 }
 
-void platform_close(XSerialPortPrivate* d) {
+void XSerialPort_platform_close(XSerialPortPrivate* d) {
     if (!d->isOpen || !d->platform) return;
     PlatformData* pd = d->platform;
     tcsetattr(pd->fd, TCSANOW, &pd->originalTermios);
@@ -308,11 +308,11 @@ void platform_close(XSerialPortPrivate* d) {
     d->isOpen = false;
 }
 
-bool platform_isOpen(const XSerialPortPrivate* d) {
+bool XSerialPort_platform_isOpen(const XSerialPortPrivate* d) {
     return d && d->isOpen;
 }
 
-int64_t platform_read(XSerialPortPrivate* d, char* data, int64_t maxSize) {
+int64_t XSerialPort_platform_read(XSerialPortPrivate* d, char* data, int64_t maxSize) {
     if (!d || !data || maxSize <= 0 || !d->platform) return -1;
     ssize_t r = read(d->platform->fd, data, (size_t)maxSize);
     if (r == -1) {
@@ -323,7 +323,7 @@ int64_t platform_read(XSerialPortPrivate* d, char* data, int64_t maxSize) {
     return (int64_t)r;
 }
 
-int64_t platform_write(XSerialPortPrivate* d, const char* data, int64_t len) {
+int64_t XSerialPort_platform_write(XSerialPortPrivate* d, const char* data, int64_t len) {
     if (!d || !data || len <= 0 || !d->platform) return -1;
     ssize_t r = write(d->platform->fd, data, (size_t)len);
     if (r == -1) {
@@ -334,7 +334,7 @@ int64_t platform_write(XSerialPortPrivate* d, const char* data, int64_t len) {
     return (int64_t)r;
 }
 
-int64_t platform_bytesAvailable(const XSerialPortPrivate* d) {
+int64_t XSerialPort_platform_bytesAvailable(const XSerialPortPrivate* d) {
     if (!d->platform) return 0;
     int bytes = 0;
     if (ioctl(d->platform->fd, FIONREAD, &bytes) == 0)
@@ -342,16 +342,16 @@ int64_t platform_bytesAvailable(const XSerialPortPrivate* d) {
     return 0;
 }
 
-int64_t platform_bytesToWrite(const XSerialPortPrivate* d) {
+int64_t XSerialPort_platform_bytesToWrite(const XSerialPortPrivate* d) {
     (void)d;
     return 0; // POSIX 无标准方法，Qt 也返回 0
 }
 
-void platform_poll(XSerialPortPrivate* d) {
+void XSerialPort_platform_poll(XSerialPortPrivate* d) {
     (void)d; // 事件驱动由上层处理
 }
 
-uint32_t platform_pinoutSignals(const XSerialPortPrivate* d) {
+uint32_t XSerialPort_platform_pinoutSignals(const XSerialPortPrivate* d) {
     if (!d || !d->isOpen) return 0;
     int status = 0;
     if (ioctl(d->platform->fd, TIOCMGET, &status) != 0)
@@ -368,31 +368,31 @@ uint32_t platform_pinoutSignals(const XSerialPortPrivate* d) {
     return signals;
 }
 
-bool platform_applyConfig(XSerialPortPrivate* d) {
+bool XSerialPort_platform_applyConfig(XSerialPortPrivate* d) {
     return applyTermios(d);
 }
 
-bool platform_setDataTerminalReady(XSerialPortPrivate* d, bool set) {
+bool XSerialPort_platform_setDataTerminalReady(XSerialPortPrivate* d, bool set) {
     if (!d->isOpen) return false;
     return setModemControlLine(d->platform, TIOCM_DTR, set);
 }
 
-bool platform_setRequestToSend(XSerialPortPrivate* d, bool set) {
+bool XSerialPort_platform_setRequestToSend(XSerialPortPrivate* d, bool set) {
     if (!d->isOpen) return false;
     return setModemControlLine(d->platform, TIOCM_RTS, set);
 }
 
-bool platform_setBreakEnabled(XSerialPortPrivate* d, bool set) {
+bool XSerialPort_platform_setBreakEnabled(XSerialPortPrivate* d, bool set) {
     if (!d->isOpen) return false;
     return ioctl(d->platform->fd, set ? TIOCSBRK : TIOCCBRK, 0) == 0;
 }
 
-bool platform_flush(XSerialPortPrivate* d) {
+bool XSerialPort_platform_flush(XSerialPortPrivate* d) {
     if (!d->isOpen) return false;
     return tcdrain(d->platform->fd) == 0;
 }
 
-bool platform_clear(XSerialPortPrivate* d, XSerialPort_Direction dir) {
+bool XSerialPort_platform_clear(XSerialPortPrivate* d, XSerialPort_Direction dir) {
     if (!d->isOpen) return false;
     int queue = TCIOFLUSH;
     if (dir == XSerialPort_Input) queue = TCIFLUSH;
@@ -400,7 +400,7 @@ bool platform_clear(XSerialPortPrivate* d, XSerialPort_Direction dir) {
     return tcflush(d->platform->fd, queue) == 0;
 }
 
-bool platform_waitForReadyRead(XSerialPortPrivate* d, int msecs) {
+bool XSerialPort_platform_waitForReadyRead(XSerialPortPrivate* d, int msecs) {
     if (!d->isOpen) return false;
     struct pollfd pfd = { .fd = d->platform->fd, .events = POLLIN };
     int ret = poll(&pfd, 1, msecs);
@@ -411,7 +411,7 @@ bool platform_waitForReadyRead(XSerialPortPrivate* d, int msecs) {
     return false;
 }
 
-bool platform_waitForBytesWritten(XSerialPortPrivate* d, int msecs) {
+bool XSerialPort_platform_waitForBytesWritten(XSerialPortPrivate* d, int msecs) {
     // Qt 在 Unix 上也简单等待
     (void)d; (void)msecs;
     usleep(1000); // 1ms

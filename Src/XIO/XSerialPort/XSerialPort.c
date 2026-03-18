@@ -60,7 +60,7 @@ static void VXSerialPort_poll(XObject* obj) {
 	}
 
 	// 检查是否有新数据可读
-	int64_t available = platform_bytesAvailable(d);
+	int64_t available = XSerialPort_platform_bytesAvailable(d);
 	if (available > 0) {
 		XIODevice_readyRead_signal(port);  // emit readyRead
 	}
@@ -77,13 +77,13 @@ static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode) {
 		XSerialPort_errorOccurred_signal(port, d->error);
 		return false;
 	}
-	if (!platform_open(d, port, port->d_ptr->portName, mode)) {
+	if (!XSerialPort_platform_open(d, port, port->d_ptr->portName, mode)) {
 		d->error = XSerialPort_OpenError;
 		XSerialPort_errorOccurred_signal(port, d->error);
 		return false;
 	}
-	if (!platform_applyConfig(d)) {
-		platform_close(d);
+	if (!XSerialPort_platform_applyConfig(d)) {
+		XSerialPort_platform_close(d);
 		d->error = XSerialPort_UnsupportedOperationError;
 		XSerialPort_errorOccurred_signal(port, d->error);
 		return false;
@@ -100,8 +100,8 @@ static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode) {
 static void VXSerialPort_close(XIODevice* io) {
 	XSerialPort* port = (XSerialPort*)io;
 	XSerialPortPrivate* d = port->d_ptr;
-	if (platform_isOpen(d)) {
-		platform_close(d);
+	if (XSerialPort_platform_isOpen(d)) {
+		XSerialPort_platform_close(d);
 	}
 	XIODevice_close_base(io);
 }
@@ -113,12 +113,12 @@ static bool VXSerialPort_isSequential(const XIODevice* io) {
 
 static int64_t VXSerialPort_bytesAvailable(const XIODevice* io) {
 	const XSerialPort* port = (const XSerialPort*)io;
-	return platform_bytesAvailable(port->d_ptr);
+	return XSerialPort_platform_bytesAvailable(port->d_ptr);
 }
 
 static int64_t VXSerialPort_bytesToWrite(const XIODevice* io) {
 	const XSerialPort* port = (const XSerialPort*)io;
-	return platform_bytesToWrite(port->d_ptr);
+	return XSerialPort_platform_bytesToWrite(port->d_ptr);
 }
 
 static bool VXSerialPort_canReadLine(const XIODevice* io) {
@@ -139,7 +139,7 @@ static bool VXSerialPort_waitForReadyRead(XIODevice* io, int msecs) {
 	if (XIODevice_bytesAvailable_base(io) > 0)
 		return true;
 
-	return platform_waitForReadyRead(d, msecs);
+	return XSerialPort_platform_waitForReadyRead(d, msecs);
 }
 
 static bool VXSerialPort_waitForBytesWritten(XIODevice* io, int msecs) {
@@ -155,14 +155,14 @@ static bool VXSerialPort_waitForBytesWritten(XIODevice* io, int msecs) {
 	if (XIODevice_bytesToWrite_base(io) == 0)
 		return true;
 
-	return platform_waitForBytesWritten(d, msecs);
+	return XSerialPort_platform_waitForBytesWritten(d, msecs);
 }
 
 static int64_t VXSerialPort_readData(XIODevice* io, char* data, int64_t maxSize) {
 	XSerialPort* port = (XSerialPort*)io;
 	XSerialPortPrivate* d = port->d_ptr;
 	if (maxSize <= 0) return 0;
-	int64_t result = platform_read(d, data, maxSize);
+	int64_t result = XSerialPort_platform_read(d, data, maxSize);
 	if (result < 0) {
 		d->error = XSerialPort_ReadError;
 		XSerialPort_errorOccurred_signal(port, d->error);
@@ -174,7 +174,7 @@ static int64_t VXSerialPort_writeData(XIODevice* io, const char* data, int64_t l
 	XSerialPort* port = (XSerialPort*)io;
 	XSerialPortPrivate* d = port->d_ptr;
 	if (len <= 0) return 0;
-	int64_t result = platform_write(d, data, len);
+	int64_t result = XSerialPort_platform_write(d, data, len);
 	if (result < 0) {
 		d->error = XSerialPort_WriteError;
 		XSerialPort_errorOccurred_signal(port, d->error);
@@ -189,8 +189,8 @@ static int64_t VXSerialPort_writeData(XIODevice* io, const char* data, int64_t l
 static void VXSerialPort_deinit(XObject* obj) {
 	XSerialPort* port = (XSerialPort*)obj;
 	if (port->d_ptr) {
-		if (platform_isOpen(port->d_ptr)) {
-			platform_close(port->d_ptr);
+		if (XSerialPort_platform_isOpen(port->d_ptr)) {
+			XSerialPort_platform_close(port->d_ptr);
 		}
 		XSerialPortPrivate_delete(port->d_ptr);
 		port->d_ptr = NULL;
@@ -268,8 +268,8 @@ bool XSerialPort_setBaudRate(XSerialPort* port, int32_t baudRate, XSerialPort_Di
 	if (d->baudRate == baudRate) return true; // Avoid redundant signal
 	d->baudRate = baudRate;
 	bool ok = true;
-	if (platform_isOpen(d)) {
-		ok = platform_applyConfig(d);
+	if (XSerialPort_platform_isOpen(d)) {
+		ok = XSerialPort_platform_applyConfig(d);
 	}
 	if (ok) {
 		XSerialPort_baudRateChanged_signal(port, (uint32_t)baudRate, directions);
@@ -288,8 +288,8 @@ bool XSerialPort_setDataBits(XSerialPort* port, XSerialPort_DataBits dataBits) {
 	if (d->dataBits == dataBits) return true;
 	d->dataBits = dataBits;
 	bool ok = true;
-	if (platform_isOpen(d)) {
-		ok = platform_applyConfig(d);
+	if (XSerialPort_platform_isOpen(d)) {
+		ok = XSerialPort_platform_applyConfig(d);
 	}
 	if (ok) {
 		XSerialPort_dataBitsChanged_signal(port, dataBits);
@@ -307,8 +307,8 @@ bool XSerialPort_setParity(XSerialPort* port, XSerialPort_Parity parity) {
 	if (d->parity == parity) return true;
 	d->parity = parity;
 	bool ok = true;
-	if (platform_isOpen(d)) {
-		ok = platform_applyConfig(d);
+	if (XSerialPort_platform_isOpen(d)) {
+		ok = XSerialPort_platform_applyConfig(d);
 	}
 	if (ok) {
 		XSerialPort_parityChanged_signal(port, parity);
@@ -326,8 +326,8 @@ bool XSerialPort_setStopBits(XSerialPort* port, XSerialPort_StopBits stopBits) {
 	if (d->stopBits == stopBits) return true;
 	d->stopBits = stopBits;
 	bool ok = true;
-	if (platform_isOpen(d)) {
-		ok = platform_applyConfig(d);
+	if (XSerialPort_platform_isOpen(d)) {
+		ok = XSerialPort_platform_applyConfig(d);
 	}
 	if (ok) {
 		XSerialPort_stopBitsChanged_signal(port, stopBits);
@@ -345,8 +345,8 @@ bool XSerialPort_setFlowControl(XSerialPort* port, XSerialPort_FlowControl flowC
 	if (d->flowControl == flowControl) return true;
 	d->flowControl = flowControl;
 	bool ok = true;
-	if (platform_isOpen(d)) {
-		ok = platform_applyConfig(d);
+	if (XSerialPort_platform_isOpen(d)) {
+		ok = XSerialPort_platform_applyConfig(d);
 	}
 	if (ok) {
 		XSerialPort_flowControlChanged_signal(port, flowControl);
@@ -362,7 +362,7 @@ XSerialPort_FlowControl XSerialPort_flowControl(const XSerialPort* port) {
 
 XSerialPort_PinoutSignal XSerialPort_pinoutSignals(const XSerialPort* port) {
 	if (!port || !port->d_ptr || !port->d_ptr->isOpen) return XSerialPort_NoSignal;
-	return platform_pinoutSignals(port->d_ptr);
+	return XSerialPort_platform_pinoutSignals(port->d_ptr);
 }
 
 XSerialPort_Error XSerialPort_error(const XSerialPort* port) {
@@ -389,7 +389,7 @@ bool XSerialPort_setDataTerminalReady(XSerialPort* port, bool set) {
 	XSerialPortPrivate* d = port->d_ptr;
 	if (d->dataTerminalReady == set) return true;
 
-	if (platform_setDataTerminalReady(d, set))
+	if (XSerialPort_platform_setDataTerminalReady(d, set))
 	{
 		d->dataTerminalReady = set;
 		XSerialPort_dataTerminalReadyChanged_signal(port, set);
@@ -405,7 +405,7 @@ bool XSerialPort_setRequestToSend(XSerialPort* port, bool set) {
 	XSerialPortPrivate* d = port->d_ptr;
 	if (d->requestToSend == set) return true;
 	
-	if (platform_setRequestToSend(d, set))
+	if (XSerialPort_platform_setRequestToSend(d, set))
 	{
 		d->requestToSend = set;
 		XSerialPort_requestToSendChanged_signal(port, set);
@@ -420,7 +420,7 @@ bool XSerialPort_setBreakEnabled(XSerialPort* port, bool enable) {
 	if (!port) return false;
 	XSerialPortPrivate* d = port->d_ptr;
 	if (d->breakEnabled == enable) return true;
-	if(platform_setBreakEnabled(d, enable))
+	if(XSerialPort_platform_setBreakEnabled(d, enable))
 	{
 		d->breakEnabled = enable;
 		XSerialPort_breakEnabledChanged_signal(port, enable);
@@ -436,7 +436,7 @@ bool XSerialPort_flush(XSerialPort* port) {
 		if (port && port->d_ptr) port->d_ptr->error = XSerialPort_NotOpenError;
 		return false;
 	}
-	return platform_flush(port->d_ptr);
+	return XSerialPort_platform_flush(port->d_ptr);
 }
 
 bool XSerialPort_clear(XSerialPort* port, XSerialPort_Direction directions)
@@ -445,7 +445,7 @@ bool XSerialPort_clear(XSerialPort* port, XSerialPort_Direction directions)
 		if (port && port->d_ptr) port->d_ptr->error = XSerialPort_NotOpenError;
 		return false;
 	}
-	return platform_clear(port->d_ptr, directions);
+	return XSerialPort_platform_clear(port->d_ptr, directions);
 }
 void* XSerialPort_errorOccurred_signal(XSerialPort* port, XSerialPort_Error error)
 {
@@ -454,17 +454,21 @@ void* XSerialPort_errorOccurred_signal(XSerialPort* port, XSerialPort_Error erro
 
 void* XSerialPort_baudRateChanged_signal(XSerialPort* port, uint32_t baudRate, XSerialPort_Direction dir)
 {
-	XVariant* var= XVariant_create_null();
-	XVariantList* list=XVariantList_create();
+	if(port)
+	{
+		XVariant* var = XVariant_create_null();
+		XVariantList* list = XVariantList_create();
 
-	XVariant_setValue_uint32(var,baudRate);
-	XVariantList_push_back_move_base(list,var);
+		XVariant_setValue_uint32(var, baudRate);
+		XVariantList_push_back_move_base(list, var);
 
-	XVariant_setValue_int32(var, dir);
-	XVariantList_push_back_move_base(list, var);
+		XVariant_setValue_int32(var, dir);
+		XVariantList_push_back_move_base(list, var);
 
-	XVariant_delete_base(var);
-	XEmitSignal(port, XSerialPort_baudRateChanged_signal, list, XVariantList_delete_base, NULL, XEVENT_PRIORITY_NORMAL);
+		XVariant_delete_base(var);
+		XEmitSignal(port, XSerialPort_baudRateChanged_signal, list, XVariantList_delete_base, NULL, XEVENT_PRIORITY_NORMAL);
+	}
+	return XSerialPort_baudRateChanged_signal;
 }
 
 void* XSerialPort_dataBitsChanged_signal(XSerialPort* port, XSerialPort_DataBits bits)

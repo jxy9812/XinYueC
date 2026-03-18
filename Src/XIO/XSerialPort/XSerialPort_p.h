@@ -38,25 +38,25 @@ typedef struct XSerialPortPrivate
 
 // ========== 平台函数声明 ==========
 // 这些函数由各平台 .c 文件提供（通过 static inline 或普通 static 实现）
-bool platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portName, XIODeviceBaseMode mode);
-void platform_close(XSerialPortPrivate* d);
-bool platform_isOpen(const XSerialPortPrivate* d);
-int64_t platform_read(XSerialPortPrivate* d, char* data, int64_t maxSize);
-int64_t platform_write(XSerialPortPrivate* d, const char* data, int64_t len);
-int64_t platform_bytesAvailable(const XSerialPortPrivate* d);
-int64_t platform_bytesToWrite(const XSerialPortPrivate* d); // NEW
-XSerialPort_PinoutSignal platform_pinoutSignals(const XSerialPortPrivate* d); // NEW
+bool XSerialPort_platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portName, XIODeviceBaseMode mode);
+void XSerialPort_platform_close(XSerialPortPrivate* d);
+bool XSerialPort_platform_isOpen(const XSerialPortPrivate* d);
+int64_t XSerialPort_platform_read(XSerialPortPrivate* d, char* data, int64_t maxSize);
+int64_t XSerialPort_platform_write(XSerialPortPrivate* d, const char* data, int64_t len);
+int64_t XSerialPort_platform_bytesAvailable(const XSerialPortPrivate* d);
+int64_t XSerialPort_platform_bytesToWrite(const XSerialPortPrivate* d); // NEW
+XSerialPort_PinoutSignal XSerialPort_platform_pinoutSignals(const XSerialPortPrivate* d); // NEW
 // 配置应用函数
-bool platform_applyConfig(XSerialPortPrivate* d);
-bool platform_waitForReadyRead(XSerialPortPrivate* d, int msecs);
-bool platform_waitForBytesWritten(XSerialPortPrivate* d, int msecs);
-void platform_poll(XSerialPortPrivate* d);
+bool XSerialPort_platform_applyConfig(XSerialPortPrivate* d);
+bool XSerialPort_platform_waitForReadyRead(XSerialPortPrivate* d, int msecs);
+bool XSerialPort_platform_waitForBytesWritten(XSerialPortPrivate* d, int msecs);
+void XSerialPort_platform_poll(XSerialPortPrivate* d);
 
-bool platform_setDataTerminalReady(XSerialPortPrivate* d, bool set);
-bool platform_setRequestToSend(XSerialPortPrivate* d, bool set);
-bool platform_setBreakEnabled(XSerialPortPrivate* d, bool set);
-bool platform_flush(XSerialPortPrivate* d);
-bool platform_clear(XSerialPortPrivate* d, XSerialPort_Direction dir);
+bool XSerialPort_platform_setDataTerminalReady(XSerialPortPrivate* d, bool set);
+bool XSerialPort_platform_setRequestToSend(XSerialPortPrivate* d, bool set);
+bool XSerialPort_platform_setBreakEnabled(XSerialPortPrivate* d, bool set);
+bool XSerialPort_platform_flush(XSerialPortPrivate* d);
+bool XSerialPort_platform_clear(XSerialPortPrivate* d, XSerialPort_Direction dir);
 #ifdef __cplusplus
 }
 #endif

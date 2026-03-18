@@ -89,7 +89,7 @@ static BYTE toDCBStopBits(XSerialPort_StopBits sb) {
     }
 }
 
-bool platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portName, XIODeviceBaseMode mode) {
+bool XSerialPort_platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portName, XIODeviceBaseMode mode) {
     if (!portName || !d || !owner) return false;
 
     DWORD access = 0;
@@ -160,7 +160,7 @@ bool platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portNa
   
 
     // 应用串口配置
-    if (!platform_applyConfig(d)) {
+    if (!XSerialPort_platform_applyConfig(d)) {
         CloseHandle(pd->waitEvent);
         XMemory_free(pd);
         CloseHandle(h);
@@ -181,7 +181,7 @@ bool platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portNa
     return true;
 }
 
-void platform_close(XSerialPortPrivate* d) {
+void XSerialPort_platform_close(XSerialPortPrivate* d) {
     if (!d->isOpen || !d->platform) return;
     PlatformData* pd = d->platform;
     XObject_setPollingInterval(d->platform->owner, 0);
@@ -195,11 +195,11 @@ void platform_close(XSerialPortPrivate* d) {
     d->isOpen = false;
 }
 
-bool platform_isOpen(const XSerialPortPrivate* d) {
+bool XSerialPort_platform_isOpen(const XSerialPortPrivate* d) {
     return d && d->isOpen;
 }
 
-int64_t platform_read(XSerialPortPrivate* d, char* data, int64_t maxSize) {
+int64_t XSerialPort_platform_read(XSerialPortPrivate* d, char* data, int64_t maxSize) {
     if (!d || !data || maxSize <= 0 || !d->platform) return -1;
     PlatformData* pd = d->platform;
 
@@ -234,7 +234,7 @@ int64_t platform_read(XSerialPortPrivate* d, char* data, int64_t maxSize) {
     return r ? (int64_t)bytesRead : -1;
 }
 
-int64_t platform_write(XSerialPortPrivate* d, const char* data, int64_t len) {
+int64_t XSerialPort_platform_write(XSerialPortPrivate* d, const char* data, int64_t len) {
     if (!d || !data || len <= 0 || !d->platform) return -1;
     PlatformData* pd = d->platform;
 
@@ -255,7 +255,7 @@ int64_t platform_write(XSerialPortPrivate* d, const char* data, int64_t len) {
     return r ? (int64_t)bytesWritten : -1;
 }
 
-int64_t platform_bytesAvailable(const XSerialPortPrivate* d) {
+int64_t XSerialPort_platform_bytesAvailable(const XSerialPortPrivate* d) {
      if (!d->platform) return 0;
     PlatformData* pd = d->platform;
     COMSTAT comStat;
@@ -264,7 +264,7 @@ int64_t platform_bytesAvailable(const XSerialPortPrivate* d) {
     return (int64_t)comStat.cbInQue;
 }
 // NEW: bytesToWrite
-int64_t platform_bytesToWrite(const XSerialPortPrivate* d) {
+int64_t XSerialPort_platform_bytesToWrite(const XSerialPortPrivate* d) {
     if (!d->platform) return 0;
     PlatformData* pd = d->platform;
     COMSTAT comStat;
@@ -272,7 +272,7 @@ int64_t platform_bytesToWrite(const XSerialPortPrivate* d) {
     ClearCommError(pd->handle, &errors, &comStat);
     return (int64_t)comStat.cbOutQue;
 }
-void platform_poll(XSerialPortPrivate* d) {
+void XSerialPort_platform_poll(XSerialPortPrivate* d) {
     if (!d->platform) return;
     PlatformData* pd = d->platform;
     if (!pd->pendingWait) return;
@@ -287,7 +287,7 @@ void platform_poll(XSerialPortPrivate* d) {
     }
 }
 // NEW: pinoutSignals
-XSerialPort_PinoutSignal platform_pinoutSignals(const XSerialPortPrivate* d) {
+XSerialPort_PinoutSignal XSerialPort_platform_pinoutSignals(const XSerialPortPrivate* d) {
     if (!d || !d->isOpen) return XSerialPort_NoSignal;
     DWORD modemStat;
     if (!GetCommModemStatus((HANDLE)d->platform->handle, &modemStat)) return XSerialPort_NoSignal;
@@ -301,7 +301,7 @@ XSerialPort_PinoutSignal platform_pinoutSignals(const XSerialPortPrivate* d) {
     return signals;
 }
 
-bool platform_applyConfig(XSerialPortPrivate* d) 
+bool XSerialPort_platform_applyConfig(XSerialPortPrivate* d) 
 {
     PlatformData* pd = d->platform;
     DCB dcb = { 0 };
@@ -338,11 +338,11 @@ bool platform_applyConfig(XSerialPortPrivate* d)
     return SetCommState(pd->handle, &dcb) != FALSE;
 }
 //WaitFor implementations
-bool platform_waitForReadyRead(XSerialPortPrivate * d, int msecs) {
+bool XSerialPort_platform_waitForReadyRead(XSerialPortPrivate * d, int msecs) {
     if (!d->isOpen) return false;
 
     // Check if already available
-    if (platform_bytesAvailable(d) > 0) return true;
+    if (XSerialPort_platform_bytesAvailable(d) > 0) return true;
 
     XMutex_lock(d->waitMutex);
     d->readyReadTriggered = false;
@@ -359,14 +359,14 @@ bool platform_waitForReadyRead(XSerialPortPrivate * d, int msecs) {
     d->readyReadTriggered = false;
     XMutex_unlock(d->waitMutex);
 
-    return triggered || platform_bytesAvailable(d) > 0;
+    return triggered || XSerialPort_platform_bytesAvailable(d) > 0;
 }
 
-bool platform_waitForBytesWritten(XSerialPortPrivate* d, int msecs) {
+bool XSerialPort_platform_waitForBytesWritten(XSerialPortPrivate* d, int msecs) {
     if (!d->isOpen) return false;
 
     // Check if already written
-    if (platform_bytesToWrite(d) == 0) return true;
+    if (XSerialPort_platform_bytesToWrite(d) == 0) return true;
 
     XMutex_lock(d->waitMutex);
     d->bytesWrittenTriggered = false;
@@ -383,29 +383,29 @@ bool platform_waitForBytesWritten(XSerialPortPrivate* d, int msecs) {
     d->bytesWrittenTriggered = false;
     XMutex_unlock(d->waitMutex);
 
-    return triggered || platform_bytesToWrite(d) == 0;
+    return triggered || XSerialPort_platform_bytesToWrite(d) == 0;
 }
 // ========== Control Functions ==========
-bool platform_setDataTerminalReady(XSerialPortPrivate* d, bool set)
+bool XSerialPort_platform_setDataTerminalReady(XSerialPortPrivate* d, bool set)
 {
     if (!d->isOpen) return false;
     return EscapeCommFunction((HANDLE)d->platform->handle, set ? SETDTR : CLRDTR);
 }
-bool platform_setRequestToSend(XSerialPortPrivate* d, bool set)
+bool XSerialPort_platform_setRequestToSend(XSerialPortPrivate* d, bool set)
 {
     if (d->isOpen && d->flowControl != XSerialPort_HardwareControl) {
         return EscapeCommFunction((HANDLE)d->platform->handle, set ? SETRTS : CLRRTS);
     }
     return false;
 }
-bool platform_setBreakEnabled(XSerialPortPrivate* d, bool enable)
+bool XSerialPort_platform_setBreakEnabled(XSerialPortPrivate* d, bool enable)
 {
     if (!d->isOpen) return false;
     return EscapeCommFunction((HANDLE)d->platform->handle, enable ? SETBREAK : CLRBREAK);
 }
 
 // ========== Flush / Clear ==========
-bool platform_flush(XSerialPortPrivate* d) {
+bool XSerialPort_platform_flush(XSerialPortPrivate* d) {
 
     if (!FlushFileBuffers((HANDLE)d->platform->handle)) {
         d->error = XSerialPort_WriteError;
@@ -414,7 +414,7 @@ bool platform_flush(XSerialPortPrivate* d) {
     return true;
 }
 
-bool platform_clear(XSerialPortPrivate* d, XSerialPort_Direction directions)
+bool XSerialPort_platform_clear(XSerialPortPrivate* d, XSerialPort_Direction directions)
 {
     DWORD flags = 0;
     if (directions & XSerialPort_Input)  flags |= PURGE_RXCLEAR;
