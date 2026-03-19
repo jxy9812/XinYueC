@@ -93,7 +93,7 @@ XByteArray* XIODevice_read_new(XIODevice* self, int64_t maxlen)
 	XMemory_free(buf);
 	return result;
 }
-XByteArray* XIODevice_readAll_new(XIODevice* self)
+XByteArray* XIODevice_readAll(XIODevice* self)
 {
 	XByteArray* result = XByteArray_create();
 	char buffer[4096];

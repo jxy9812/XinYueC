@@ -67,12 +67,7 @@ XVtable* XHostInfo_class_init(void) {
 // Public API
 XHostInfo* XHostInfo_create(void) {
     XHostInfo* info = (XHostInfo*)XMemory_malloc(sizeof(XHostInfo));
-    if (info) {
-        memset(info, 0, sizeof(XHostInfo));
-        XClass_init(info);
-        XClassGetVtable(info) = XHostInfo_class_init();
-        info->d = XHostInfoPrivate_create();
-    }
+    XHostInfo_init(info);
     return info;
 }
 
@@ -82,10 +77,13 @@ XHostInfo* XHostInfo_create_copy(const XHostInfo* other) {
     return info;
 }
 
-void XHostInfo_delete(XHostInfo* info) {
+void XHostInfo_init(XHostInfo* info)
+{
     if (info) {
-        XClass_deinit_base(info);
-        XMemory_free(info);
+        memset(info, 0, sizeof(XHostInfo));
+        XClass_init(info);
+        XClassGetVtable(info) = XHostInfo_class_init();
+        info->d = XHostInfoPrivate_create();
     }
 }
 
@@ -111,7 +109,7 @@ void XHostInfo_setAddresses(XHostInfo* info, const XHostAddress* addrs, int coun
     if (!info || !info->d) return;
     if (info->d->addresses) {
         for (int i = 0; i < info->d->addressCount; i++) {
-            XHostInfo_delete((XHostInfo*)&info->d->addresses[i]); // Actually XHostAddress_delete_base
+            XHostInfo_delete_base((XHostInfo*)&info->d->addresses[i]); // Actually XHostAddress_delete_base
         }
         XMemory_free(info->d->addresses);
         info->d->addresses = NULL;

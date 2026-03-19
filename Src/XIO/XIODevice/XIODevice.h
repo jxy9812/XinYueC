@@ -76,7 +76,7 @@ int XIODevice_currentWriteChannel(const XIODevice* self);
 void XIODevice_setCurrentWriteChannel(XIODevice* self, int channel);
 int64_t XIODevice_read(XIODevice* self, char* data, int64_t maxlen);
 XByteArray* XIODevice_read_new(XIODevice* self, int64_t maxlen);
-XByteArray* XIODevice_readAll_new(XIODevice* self);
+XByteArray* XIODevice_readAll(XIODevice* self);
 int64_t XIODevice_readLine(XIODevice* self, char* data, int64_t maxlen);
 XByteArray* XIODevice_readLine_new(XIODevice* self, int64_t maxlen);
 void XIODevice_startTransaction(XIODevice* self);

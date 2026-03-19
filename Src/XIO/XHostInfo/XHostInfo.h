@@ -56,11 +56,12 @@ XHostInfo* XHostInfo_create(void);
  */
 XHostInfo* XHostInfo_create_copy(const XHostInfo* other);
 
-/**
- * @brief 销毁 XHostInfo 实例。
- * @param info 要销毁的实例。
- */
-void XHostInfo_delete(XHostInfo* info);
+void XHostInfo_init(XHostInfo* info);
+
+#define XHostInfo_delete_base    XClass_delete_base
+#define XHostInfo_deinit_base    XClass_deinit_base
+#define XHostInfo_copy_base      XClass_copy_base
+#define XHostInfo_move_base      XClass_move_base
 
 // ==================== 属性访问器 ====================
 
