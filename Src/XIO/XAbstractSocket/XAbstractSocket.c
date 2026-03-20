@@ -546,7 +546,7 @@ static void VXAbstractSocket_DisconnectFromHost(XAbstractSocket* self)
 }
 static intptr_t VXAbstractSocket_SocketDescriptor(const XAbstractSocket* self)
 {
-    return XAbstractSocket_socketDescriptor(self); // 复用公共函数
+    return NULL;//子类需要实现
 }
 static bool VXAbstractSocket_SetSocketDescriptor(XAbstractSocket* self, intptr_t socketDescriptor, XAbstractSocket_SocketState state, XIODeviceBaseMode openMode)
 {

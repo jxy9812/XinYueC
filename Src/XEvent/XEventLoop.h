@@ -28,7 +28,11 @@ typedef enum
     XEventLoop_AllEvents = 0x00,         // 处理所有事件
     XEventLoop_ExcludeUserInputEvents = 0x01,  // 排除用户输入事件
     XEventLoop_ExcludeSocketNotifiers = 0x02,  // 排除套接字通知事件
-    XEventLoop_WaitForMoreEvents = 0x04   // 等待更多事件
+    XEventLoop_WaitForMoreEvents = 0x04,
+    XEventLoop_X11ExcludeTimers = 0x08,
+    XEventLoop_EventLoopExec = 0x20,
+    XEventLoop_DialogExec = 0x40,
+    XEventLoop_ApplicationExec = 0x80
 } XEventLoopProcessEventsFlags;
 XCLASS_DEFINE_BEGING(XEventLoop)
 XCLASS_DEFINE_ENUM(XEventLoop, Exec) = XCLASS_VTABLE_GET_SIZE(XObject),
