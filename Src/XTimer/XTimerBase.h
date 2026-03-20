@@ -7,6 +7,12 @@ extern "C" {
 #include<stdint.h>
 #include<stdio.h>
 #include"XObject.h"
+
+	typedef enum XTimerType {
+		XCoarseTimer,   ///< 粗略定时器（允许 ±5% 误差，节能）
+		XPreciseTimer   ///< 精确定时器（高精度，高功耗）
+	} XTimerType;
+
 /**
 * @brief 定时器超时回调函数类型
 * @param userData 用户自定义数据
