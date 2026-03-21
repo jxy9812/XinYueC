@@ -163,7 +163,7 @@ XStateMachineStatus XStateMachine_status(const XStateMachine* machine) {
 }
 //void (*XEventCB)(XEvent* event)
 //处理事件的回调
-void XStateMachine_handleEventCB(const XEvent* event) {
+void XStateMachine_handleEventCB(const XEventMin* event) {
     if (!event) {
         return ;
     }

@@ -7,7 +7,7 @@ extern "C" {
 #include "XAbstractState.h"
 
 // 前向声明
-typedef struct XEvent XEvent;
+typedef struct XEventMin XEventMin;
 typedef struct XStateMachine XStateMachine;
 typedef struct XAbstractTransition XAbstractTransition;
 XCLASS_DEFINE_BEGING(XAbstractTransition)

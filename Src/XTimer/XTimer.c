@@ -13,7 +13,7 @@
 #include<string.h>
 static void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callback);
 static void VXTimerBase_setUserData(XTimer* timer, void* userData);
-static void TimerOutEventCb(XEvent* event);
+static void TimerOutEventCb(XEventMin* event);
 static  void TimerCallback(void* userData);
 
 typedef struct XTimer
@@ -105,7 +105,7 @@ void TimerCallback(void* userData)
 
 	XObject_postEvent(userData,XEvent_create(NULL,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
 }
-void TimerOutEventCb(XEvent* event)
+void TimerOutEventCb(XEventMin* event)
 {
 	//XPrintf("触发\n");
 	XTimer* timer = event->receiver;

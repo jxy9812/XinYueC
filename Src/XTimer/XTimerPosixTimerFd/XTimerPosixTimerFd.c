@@ -8,7 +8,7 @@
 #include <errno.h>
 #include <stdint.h>
 
-static void ReadEventCb(XEvent*ev);
+static void ReadEventCb(XEventMin*ev);
 
 void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
 void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
@@ -118,7 +118,7 @@ void XTimerPosixTimerFd_init(XTimerPosixTimerFd* timer) {
     timer->m_twoCb = false;
     XObject_addEventFilter(timer,XEVENT_READY,ReadEventCb,NULL);
 }
-void ReadEventCb(XEvent *ev)
+void ReadEventCb(XEventMin *ev)
 {
 	XTimerBase* timer = ((XTimerBase*)ev->receiver);
     uint64_t exp;

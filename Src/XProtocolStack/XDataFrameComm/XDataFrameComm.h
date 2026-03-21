@@ -103,16 +103,16 @@ void* XDataFrameComm_frameReceived_signal(XDataFrameComm* comm,XByteArray* data,
 /*以下是默认的回调函数*/
 
 //默认的事件处理回调(全部事件)
-void XDataFrameComm_EvnetHandCb(XEvent* event);
+void XDataFrameComm_EvnetHandCb(XEventMin* event);
 //接收到完整帧事件回调(默认获取的功能码在第一位 uint8_t)
-void XDataFrameComm_EvnetFrame_ReceivedCb(XEvent* event);//通过调用设置事件处理函数重写
+void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event);//通过调用设置事件处理函数重写
 //执行功能码事件回调
-void XDataFrameComm_EvnetExecuteCb(XEvent* event);//通过调用设置事件处理函数重写
+void XDataFrameComm_EvnetExecuteCb(XEventMin* event);//通过调用设置事件处理函数重写
 /*以下是自定义的事件类型*/
-bool XDataFrameComm_postEvent(XDataFrameComm* comm, XEvent* event);//向事件队列追加一个事件
+bool XDataFrameComm_postEvent(XDataFrameComm* comm, XEventMin* event);//向事件队列追加一个事件
 typedef struct XEventRecvFrame
 {
-    XEvent m_class;//
+    XEventMin m_class;//
     XByteArray* frame;//帧数据
     XAtomic_int32_t* ref_count;//引用次数
 }XEventRecvFrame;//接收帧事件

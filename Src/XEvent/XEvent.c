@@ -8,13 +8,13 @@
 #include"XObject.h"
 #include"XVariant.h"
 #include"XSemaphore.h"
-XEvent* XEvent_create(XObject* receiver, XEventType code, size_t timestamp)
+XEventMin* XEvent_create(XObject* receiver, XEventType code, size_t timestamp)
 {
-	XEvent* event = XMemory_malloc(sizeof(XEvent));
+	XEventMin* event = XMemory_malloc(sizeof(XEventMin));
 	XEvent_init(event, receiver, code, timestamp);
 	return event;
 }
-void XEvent_init(XEvent* event, XObject* receiver, XEventType code, size_t timestamp)
+void XEvent_init(XEventMin* event, XObject* receiver, XEventType code, size_t timestamp)
 {
 	if (event)
 	{
@@ -29,13 +29,13 @@ void XEvent_init(XEvent* event, XObject* receiver, XEventType code, size_t times
 	}
 }
 
-void XEvent_deinit(XEvent* ev)
+void XEvent_deinit(XEventMin* ev)
 {
 	if (ev && ev->deinit)
 		ev->deinit(ev);
 }
 
-void XEvent_delete(XEvent* ev)
+void XEvent_delete(XEventMin* ev)
 {
 	XEvent_deinit(ev);
 	XMemory_free(ev);
@@ -56,7 +56,7 @@ XEventFunc* XEventFunc_create(void(*func)(void*), void* args, void(*del)(void*))
 		event->args = args;
 		event->oneAccept = false;
 		event->del = del;
-		((XEvent*)event)->deinit = XEventFunc_deinit;
+		((XEventMin*)event)->deinit = XEventFunc_deinit;
 	}
 	return event;
 }
@@ -101,7 +101,7 @@ XEventSlotFunc* XEventSlotFunc_create(XObject* sender, XObject* receiver, XSlotF
 	event->del = del;
 	event->ref_count = ref_count;
 	event->sem = sem;
-	((XEvent*)event)->deinit = XEventSlotFunc_deinit;
+	((XEventMin*)event)->deinit = XEventSlotFunc_deinit;
 	return event;
 }
 

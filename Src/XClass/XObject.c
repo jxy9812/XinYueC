@@ -150,7 +150,7 @@ bool XObject_moveToThread(XObject* object, XThread* thread)
 	return false;
 }
 
-bool XObject_postEvent(XObject* object, XEvent* event, XEventPriority priority)
+bool XObject_postEvent(XObject* object, XEventMin* event, XEventPriority priority)
 {
 	if (object == NULL || event == NULL)
 		return false;

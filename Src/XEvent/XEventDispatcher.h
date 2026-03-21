@@ -10,7 +10,7 @@ extern "C" {
 #include "XListSLinked.h"
 #include "XMutex.h"
 #include "XEventLoop.h"
-
+#include "XSocketNotifier.h"
 // 事件调度器虚函数表索引
 XCLASS_DEFINE_BEGING(XEventDispatcher)
 EXEventDispatcher_SendEvent = XCLASS_VTABLE_GET_SIZE(XClass),        // 发送事件（同步）
@@ -24,25 +24,17 @@ EXEventDispatcher_WakeUp,           // 唤醒事件循环
 EXEventDispatcher_GetSupportedEvents,// 获取支持的事件类型
 XCLASS_DEFINE_END(XEventDispatcher)
 
-/**
- * @brief 套接字通知器类型
- */
-typedef enum {
-    XSocketNotifier_Read,
-    XSocketNotifier_Write,
-    XSocketNotifier_Exception
-} XSocketNotifierType;
 
-/**
- * @brief 套接字通知器结构
- */
-typedef struct XSocketNotifier {
-    int socket;                         // 套接字句柄
-    XSocketNotifierType type;           // 通知类型
-    XObject* receiver;                  // 接收对象
-    int eventType;                      // 事件类型
-    bool enabled;                       // 是否启用
-} XSocketNotifier;
+///**
+// * @brief 套接字通知器结构
+// */
+//typedef struct XSocketNotifier {
+//    int socket;                         // 套接字句柄
+//    XSocketNotifierType type;           // 通知类型
+//    XObject* receiver;                  // 接收对象
+//    int eventType;                      // 事件类型
+//    bool enabled;                       // 是否启用
+//} XSocketNotifier;
 
 /**
  * @brief 事件调度器基类
@@ -83,7 +75,7 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize);
  * @param event 要发送的事件
  * @return 事件是否被处理
  */
-bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEvent* event);
+bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEventMin* event);
 
 /**
  * @brief 投递事件（异步处理）
@@ -91,7 +83,7 @@ bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEvent* event
  * @param event 要投递的事件
  * @return 事件是否成功加入队列
  */
-bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEvent* event, XEventPriority priority);
+bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* event, XEventPriority priority);
 /**
  * @brief 添加事件过滤器
  * @param dispatcher 事件调度器

@@ -9,7 +9,7 @@
 void VXSocketBase_waitForConnected(XSocketBase* so, int msecs);
 void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs);
 //写入事件回调
-static void WriteEventCB(XEvent* event)
+static void WriteEventCB(XEventMin* event)
 {
     XSocket* so = event->receiver;
     if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTING_STATE)
@@ -21,7 +21,7 @@ static void WriteEventCB(XEvent* event)
 
 }
 //读取事件回调
-static void ReadEventCB(XEvent* event)
+static void ReadEventCB(XEventMin* event)
 {
     XSocket* so = event->receiver;
     if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTED_STATE)
@@ -30,7 +30,7 @@ static void ReadEventCB(XEvent* event)
     }
 }
 //错误事件回调
-static void ErrorEventCB(XEvent* event)
+static void ErrorEventCB(XEventMin* event)
 {
     XSocket* so = event->receiver;
     if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTED_STATE)

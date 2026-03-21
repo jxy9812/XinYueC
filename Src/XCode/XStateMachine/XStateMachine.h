@@ -116,7 +116,7 @@ XStateMachineStatus XStateMachine_status(const XStateMachine* machine);
  * @param event 要处理的事件
  * @return 
  */
-void XStateMachine_handleEventCB(const XEvent* event);
+void XStateMachine_handleEventCB(const XEventMin* event);
 
 /**
  * @brief 执行状态转换

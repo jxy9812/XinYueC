@@ -144,7 +144,7 @@ bool XObject_moveToThread(XObject* object, XThread* thread);
  * @return 投递成功返回true，失败返回false
  * @note 事件将被加入对象所属线程的事件队列，按优先级处理
  */
-bool XObject_postEvent(XObject* object, XEvent* event, XEventPriority priority);
+bool XObject_postEvent(XObject* object, XEventMin* event, XEventPriority priority);
 
 /**
  * @brief 向对象投递异步执行的函数

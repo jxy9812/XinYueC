@@ -28,8 +28,13 @@ extern "C" {
 
 // 前向声明
 struct XAbstractNativeEventFilter;
-struct XAbstractEventDispatcherPrivate;
-
+typedef struct XAbstractEventDispatcherPrivate
+{
+    XVector* nativeFilters;///< 本地事件过滤器列表
+    XMutex* mutex;              ///< 保护 timers, sockets, nativeFilters 的互斥锁
+}XAbstractEventDispatcherPrivate;
+void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
+void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp);
 // ===================================================================
 // === 核心类型定义（对标 Qt 7+） =====================================
 // ===================================================================
@@ -92,7 +97,7 @@ typedef struct XAbstractEventDispatcher
     XObject m_class; ///< 继承自 XObject
     
     // 私有数据（PIMPL）
-    struct XAbstractEventDispatcherPrivate* d_ptr;
+    XAbstractEventDispatcherPrivate* d_ptr;
 } XAbstractEventDispatcher;
 
 // ===================================================================
@@ -235,9 +240,6 @@ void XAbstractEventDispatcher_removeNativeEventFilter(XAbstractEventDispatcher* 
  * @return true 表示事件已被处理，不再传递。
  */
 bool XAbstractEventDispatcher_filterNativeEvent(XAbstractEventDispatcher* self, const XByteArray* eventType, void* message, int64_t* result);
-
-// 可选：供 XCoreApplication_shutdown 调用
-void XAbstractEventDispatcher_cleanupNativeFilters(void);
 
 // ===================================================================
 // === 公共非虚函数 API（不带 _base）==================================

@@ -16,7 +16,7 @@ typedef struct XSetBase XSetBase;
 typedef struct XAction XAction;
 typedef struct XMenu XMenu;
 typedef struct XSet XSet;
-typedef struct XEvent XEvent; 
+typedef struct XEventMin XEventMin; 
 typedef struct XThread XThread;
 typedef struct XModbusDigitalSwitch XModbusDigitalSwitch; 
 typedef struct XSwitchDeviceModbus XSwitchDeviceModbus;

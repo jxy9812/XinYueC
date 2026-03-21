@@ -5,9 +5,11 @@
 #include"XCoreApplication.h"
 #include <stdarg.h>
 #include"XVarList.h"
-
+#include"XEventDispatcher_win_p.h"
 int main(int argc, char* args[])
 {
+
+	XEventDispatcherWin32_create(NULL);
 	fatfs_test();
 
 	int n = 8,n1=666;

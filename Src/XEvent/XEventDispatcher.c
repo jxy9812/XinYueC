@@ -13,11 +13,11 @@ typedef struct XEventCallback {
     XEventCB callback;             // 回调函数
     void* userData;                // 用户数据
 } XEventCallback;
-bool sendEvent(XEventDispatcher* dispatcher, XEvent* event);
+bool sendEvent(XEventDispatcher* dispatcher, XEventMin* event);
 // 静态函数声明
 static void VXEventDispatcher_deinit(XEventDispatcher* dispatcher);
-static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEvent* event);
-static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEvent* event, XEventPriority priority);
+static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin* event);
+static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin* event, XEventPriority priority);
 static bool VXEventDispatcher_addEventCb(XEventDispatcher* dispatcher, XObject* receiver, int code, XEventCB cb, void* userData);
 static bool VXEventDispatcher_removeEventCb(XEventDispatcher* dispatcher, XObject* receiver, int code);
 static void VXEventDispatcher_handler(XEventDispatcher* dispatcher);
@@ -89,7 +89,7 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
     XClassGetVtable(dispatcher) = XEventDispatcher_class_init();
 
     // 初始化多个优先级事件队列（无锁环形队列）
-    dispatcher->m_queue = XPriorityMapQueue_Create(sizeof(int), sizeof(XEvent*),XCompare_int, XSORT_DESC);
+    dispatcher->m_queue = XPriorityMapQueue_Create(sizeof(int), sizeof(XEventMin*),XCompare_int, XSORT_DESC);
     int priority = XEVENT_PRIORITY_NORMAL;
     XPriorityMapQueue_addFifoQueue(dispatcher->m_queue,&priority, queueSize);
     priority = XEVENT_PRIORITY_HIGHEST;
@@ -115,7 +115,7 @@ void XEventDispatcher_init(XEventDispatcher* dispatcher, size_t queueSize) {
  * @param event 要发送的事件
  * @return 事件是否被处理
  */
-static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEvent* event)
+static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEventMin* event)
 {
     if (!dispatcher || !event) return false;
     bool handled = false;//事件是否被处理
@@ -124,7 +124,7 @@ static bool VXEventDispatcher_sendEvent(XEventDispatcher* dispatcher, XEvent* ev
     XMutex_unlock(dispatcher->m_mutex);
     return handled;
 }
-bool sendEvent(XEventDispatcher* dispatcher, XEvent* event)
+bool sendEvent(XEventDispatcher* dispatcher, XEventMin* event)
 {
     if (!dispatcher || !event) return false;
 
@@ -199,7 +199,7 @@ bool sendEvent(XEventDispatcher* dispatcher, XEvent* event)
  * @param event 要投递的事件
  * @return 事件是否成功加入队列
  */
-static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEvent* event,XEventPriority priority) {
+static bool VXEventDispatcher_postEvent(XEventDispatcher* dispatcher, XEventMin* event,XEventPriority priority) {
     if (!dispatcher || !event) return false;
 
     // 设置时间戳（如果未设置）
@@ -310,7 +310,7 @@ static void VXEventDispatcher_handler(XEventDispatcher* dispatcher)
     
     //处理事件
     XMutex_lock(dispatcher->m_mutex);
-    XEvent* event = NULL;
+    XEventMin* event = NULL;
     while (XPriorityMapQueue_receive_base(dispatcher->m_queue, &event))
     {
         if (event)
@@ -485,18 +485,18 @@ XEventLoop* XEventDispatcher_getEventLoop(XEventDispatcher* dispatcher) {
 }
 
 // 基础函数实现
-bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEvent* event) {
+bool XEventDispatcher_sendEvent_base(XEventDispatcher* dispatcher, XEventMin* event) {
     if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
         return false;
     return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_SendEvent,
-        bool (*)(XEventDispatcher*, XEvent*))(dispatcher, event);
+        bool (*)(XEventDispatcher*, XEventMin*))(dispatcher, event);
 }
 
-bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEvent* event, XEventPriority priority) {
+bool XEventDispatcher_postEvent_base(XEventDispatcher* dispatcher, XEventMin* event, XEventPriority priority) {
     if (ISNULL(dispatcher, "") || ISNULL(XClassGetVtable(dispatcher), ""))
         return false;
     return XClassGetVirtualFunc(dispatcher, EXEventDispatcher_PostEvent,
-        bool (*)(XEventDispatcher*, XEvent*, XEventPriority))(dispatcher, event, priority);
+        bool (*)(XEventDispatcher*, XEventMin*, XEventPriority))(dispatcher, event, priority);
 }
 
 bool XEventDispatcher_addEventCb_base(XEventDispatcher* dispatcher, XObject* receiver, int code, XEventCB cb, void* userData) {

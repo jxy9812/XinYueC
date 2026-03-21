@@ -4,8 +4,6 @@
 #include "XVector.h"
 #include "XAbstractNativeEventFilter.h"
 #include <string.h>
-// 全局原生事件过滤器列表（存储 XAbstractNativeEventFilter*）
-static XVector* g_nativeEventFilters = NULL;
 // 前向声明虚函数
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags);
 static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier);
@@ -23,6 +21,26 @@ static void VXAbstractEventDispatcher_closingDown(XAbstractEventDispatcher* self
 // ===================================================================
 // === 虚函数表初始化 ================================================
 // ===================================================================
+
+void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
+{
+    dp->nativeFilters= XVector_Create(void*);
+    dp->mutex = XMutex_create();
+}
+
+void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
+{
+    if (dp->nativeFilters)
+    {
+        XVector_delete_base(dp->nativeFilters);
+        dp->nativeFilters = NULL;
+    }
+    if (dp->mutex)
+    {
+        XMutex_delete(dp->mutex);
+        dp->mutex = NULL;
+    }
+}
 
 XVtable* XAbstractEventDispatcher_class_init(void)
 {
@@ -241,37 +259,39 @@ void XAbstractEventDispatcher_installNativeEventFilter(XAbstractEventDispatcher*
 {
     (void)self; // 保留参数以匹配 Qt 签名
     if (ISNULL(filter, "filter is NULL")) return;
-
+    XMutex_lock(self->d_ptr->mutex);
     // 首次使用时创建 vector
-    if (!g_nativeEventFilters) {
-        g_nativeEventFilters = XVector_Create(void*); // 宏展开为 sizeof(void*)
+    if (!self->d_ptr->nativeFilters) {
+        self->d_ptr->nativeFilters = XVector_Create(void*); // 宏展开为 sizeof(void*)
     }
 
     // 检查是否已存在（避免重复）
-    for (size_t i = 0; i < XVector_size_base(g_nativeEventFilters); ++i) {
-        XAbstractNativeEventFilter* existing = XVector_At_Base(g_nativeEventFilters, i, XAbstractNativeEventFilter*);
+    for (size_t i = 0; i < XVector_size_base(self->d_ptr->nativeFilters); ++i) {
+        XAbstractNativeEventFilter* existing = XVector_At_Base(self->d_ptr->nativeFilters, i, XAbstractNativeEventFilter*);
         if (existing == filter) {
             return; // 已存在
         }
     }
 
     // 头插：插入到索引 0（实现“后安装的先调用”）
-    XVector_Insert(g_nativeEventFilters, 0, void*, filter);
+    XVector_Insert(self->d_ptr->nativeFilters, 0, void*, filter);
+    XMutex_unlock(self->d_ptr->mutex);
 }
 
 void XAbstractEventDispatcher_removeNativeEventFilter(XAbstractEventDispatcher* self, struct XAbstractNativeEventFilter* filter)
 {
     (void)self;
-    if (ISNULL(filter, "filter is NULL") || !g_nativeEventFilters) return;
-
+    if (ISNULL(filter, "filter is NULL") || !self->d_ptr->nativeFilters) return;
+    XMutex_lock(self->d_ptr->mutex);
     // 查找并移除
-    for (size_t i = 0; i < XVector_size_base(g_nativeEventFilters); ++i) {
-        XAbstractNativeEventFilter* existing = XVector_At_Base(g_nativeEventFilters, i, XAbstractNativeEventFilter*);
+    for (size_t i = 0; i < XVector_size_base(self->d_ptr->nativeFilters); ++i) {
+        XAbstractNativeEventFilter* existing = XVector_At_Base(self->d_ptr->nativeFilters, i, XAbstractNativeEventFilter*);
         if (existing == filter) {
-            XVector_removeAt_base(g_nativeEventFilters, i);
+            XVector_removeAt_base(self->d_ptr->nativeFilters, i);
             break;
         }
     }
+    XMutex_unlock(self->d_ptr->mutex);
 }
 
 // ===================================================================
@@ -281,29 +301,21 @@ void XAbstractEventDispatcher_removeNativeEventFilter(XAbstractEventDispatcher* 
 bool XAbstractEventDispatcher_filterNativeEvent(XAbstractEventDispatcher* self, const XByteArray* eventType, void* message, int64_t* result)
 {
     (void)self;
-    if (ISNULL(eventType, "eventType is NULL") || !g_nativeEventFilters) {
+    if (ISNULL(eventType, "eventType is NULL") || !self->d_ptr->nativeFilters) {
         return false;
     }
-
-    size_t count = XVector_size_base(g_nativeEventFilters);
-    for (size_t i = 0; i < count; ++i) {
-        XAbstractNativeEventFilter* filter = XVector_At_Base(g_nativeEventFilters, i, XAbstractNativeEventFilter*);
-        if (filter) {
-            if (XAbstractNativeEventFilter_nativeEventFilter_base(filter, eventType, message, result)) {
-                return true; // 事件已被处理
-            }
+    XMutex_lock(self->d_ptr->mutex);
+   for (size_t i = 0; i < XVector_size_base(self->d_ptr->nativeFilters); ++i) {
+        XAbstractNativeEventFilter* filter = *(XAbstractNativeEventFilter**)XVector_at_base(self->d_ptr->nativeFilters, i);
+        if (filter && XAbstractNativeEventFilter_nativeEventFilter_base(filter, eventType, message, result)) {
+            XMutex_unlock(self->d_ptr->mutex);
+            return true;
         }
     }
+    XMutex_unlock(self->d_ptr->mutex);
     return false;
 }
 
-void XAbstractEventDispatcher_cleanupNativeFilters(void)
-{
-    if (g_nativeEventFilters) {
-        XVector_delete_base(g_nativeEventFilters);
-        g_nativeEventFilters = NULL;
-    }
-}
 
 XTimerId XAbstractEventDispatcher_registerTimer(
     XAbstractEventDispatcher* self,

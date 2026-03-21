@@ -19,7 +19,6 @@ typedef enum
     XEventLoop_Quit,       // 已退出
     XEventLoop_Suspended   // 已暂停
 } XEventLoopState;
-
 /**
  * @brief 事件处理标志
  */
