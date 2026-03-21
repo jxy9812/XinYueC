@@ -3,7 +3,6 @@
 #include "XCoreApplication.h"
 #include "XVector.h"
 #include "XAbstractNativeEventFilter.h"
-//#include "XAtomic.h"
 #include <string.h>
 // 全局原生事件过滤器列表（存储 XAbstractNativeEventFilter*）
 static XVector* g_nativeEventFilters = NULL;

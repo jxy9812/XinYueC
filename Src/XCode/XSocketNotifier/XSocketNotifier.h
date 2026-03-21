@@ -3,44 +3,12 @@
 #define XSOCKETNOTIFIER_H
 
 #include "XObject.h"
+#include "XSocketDescriptor.h"
 #include <stdbool.h>
 #include <stdint.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/**
- * @brief 跨平台套接字描述符（opaque handle）
- *
- * - 在 POSIX 上代表 int fd
- * - 在 Windows 上代表 HANDLE
- * - 不透明类型，禁止直接解引用或比较
- */
-typedef struct XSocketDescriptorImpl* XSocketDescriptor;
-
-/**
- * @brief 获取无效描述符
- */
-XSocketDescriptor XSocketDescriptor_Invalid(void);
-
-/**
- * @brief 判断描述符是否有效
- */
-bool XSocketDescriptor_isValid(XSocketDescriptor sd);
-
-/**
- * @brief 从整数创建描述符（POSIX: fd, Windows: reinterpret_cast<HANDLE>(intptr)）
- *
- * 注意：此函数存在是为了兼容 Qt 的 qintptr 接口，
- * 但强烈建议使用平台专用函数（见下文）。
- */
-XSocketDescriptor XSocketDescriptor_fromIntptr(intptr_t value);
-
-/**
- * @brief 转换为 intptr_t（用于日志或调试，禁止用于逻辑）
- */
-intptr_t XSocketDescriptor_toIntptr(XSocketDescriptor sd);
 
 /**
  * @brief Notifier 类型（与 Qt::QSocketNotifier::Type 一一对应）
@@ -50,27 +18,20 @@ typedef enum {
     XSocketNotifier_Write = 2,
     XSocketNotifier_Exception = 4
 } XSocketNotifierType;
-
-/**
- * @brief 错误码
- */
-typedef enum {
-    XSocketNotifier_NoError = 0,
-    XSocketNotifier_InvalidDescriptor,
-    XSocketNotifier_ResourceError,
-    XSocketNotifier_UnknownError
-} XSocketNotifierError;
-
+XCLASS_DEFINE_BEGING(XSocketNotifier)
+XCLASS_DEFINE_EXTEND_END(XSocketNotifier, XObject)
 /**
  * @brief XSocketNotifier 类（模拟 Qt::QSocketNotifier）
+ *
+ * 注意：该结构体在头文件中完整定义，但用户不应直接访问成员。
  */
-typedef struct XSocketNotifier XSocketNotifier;
-
-/**
- * @brief 类型系统初始化（内部使用）
- */
+typedef struct XSocketNotifier {
+    XObject base;                     // 继承 XObject
+    XSocketDescriptor socket;         // 当前绑定的 socket
+    XSocketNotifierType type;         // 监听类型
+    bool enabled;                     // 是否启用
+}XSocketNotifier;
 XVtable* XSocketNotifier_class_init(void);
-
 /**
  * @brief 构造函数 1：仅指定类型（后续需调用 setSocket）
  */
@@ -84,7 +45,8 @@ XSocketNotifier* XSocketNotifier_createWithSocket(XSocketDescriptor socket, XSoc
 /**
  * @brief 析构
  */
-void XSocketNotifier_delete(XSocketNotifier* notifier);
+#define  XSocketNotifier_delete XObject_delete_base
+#define  XSocketNotifier_deinit XObject_deinit_base
 
 /**
  * @brief 设置要监控的 socket
@@ -115,16 +77,6 @@ bool XSocketNotifier_isEnabled(const XSocketNotifier* notifier);
  * @brief 启用/禁用监听
  */
 void XSocketNotifier_setEnabled(XSocketNotifier* notifier, bool enabled);
-
-/**
- * @brief 获取错误
- */
-XSocketNotifierError XSocketNotifier_error(const XSocketNotifier* notifier);
-
-/**
- * @brief 清除错误
- */
-void XSocketNotifier_clearError(XSocketNotifier* notifier);
 
 /**
  * @brief activated 信号名称（用于 XObject_connect）
