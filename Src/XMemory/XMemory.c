@@ -1,5 +1,5 @@
 ﻿#include"XMemory.h"
-#include"string.h"
+#include<string.h>
 #ifdef _WIN32
 #include<stdlib.h>
 static XMemory global_Memory = { malloc,free,realloc,calloc };
@@ -10,7 +10,7 @@ static XMemory global_Memory = { malloc,free,realloc,calloc };
 #include"FreeRTOS.h"
 static XMemory global_Memory = { pvPortMalloc,vPortFree,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc };
 #else
-static XMemory global_Memory = { 0 };
+static XMemory global_Memory = { NULL,NULL,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc };
 #endif
 
 void* XMemory_malloc(size_t size)

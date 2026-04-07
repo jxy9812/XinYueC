@@ -1,36 +1,20 @@
 ﻿#include"XTimer.h"
 #include"XCoreApplication.h"
 #include"XMemory.h"
-#if XTIMER_IS_TIMEWHEEL
-#include"XTimerTimeWheel.h"
-#elif XTIMER_IS_TIMESETEVENT
-#include"XTimerWin32TimeSetEvent.h"
-#elif XTIMER_IS_THREADPOOLTIMER
-#include "XTimerWin32ThreadpoolTimer.h"
-#elif XTIMER_IS_TIMERFD
-#include "XTimerPosixTimerFd.h"
-#endif
+#include"XAbstractEventDispatcher.h"
 #include<string.h>
 static void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callback);
 static void VXTimerBase_setUserData(XTimer* timer, void* userData);
-static void TimerOutEventCb(XEventMin* event);
+static void TimerOutEventCb(XEvent* event);
 static  void TimerCallback(void* userData);
+void VXTimerBase_setTimeout(XTimerBase* timer, size_t value);
+void VXTimerBase_out(XTimerBase* timer);
 
-typedef struct XTimer
-{
-#if XTIMER_IS_TIMEWHEEL
-	XTimerTimeWheel m_class;
-#elif XTIMER_IS_TIMESETEVENT
-	XTimerWin32TimeSetEvent	m_class;
-#elif XTIMER_IS_THREADPOOLTIMER
-	XTimerWin32ThreadpoolTimer	m_class;
-#elif XTIMER_IS_TIMERFD 
-	XTimerPosixTimerFd	m_class;
-#endif
-	XTimerBaseCallback callback;
-	void* m_userData;
-} XTimer;
-
+static void VXTimerBase_setInterval(XTimer* timer, size_t value);
+static void VXTimerBase_start(XTimerBase* timer);
+static void VXTimerBase_stop(XTimerBase* timer);
+static void VXTimerBase_deinit(XTimerBase* timer);
+static void VXObject_timerEvent(XTimerBase* timer, XTimerEvent* event);
 XVtable* XTimer_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -40,26 +24,20 @@ XVtable* XTimer_class_init()
 #else
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
-	//继承类
-#if XTIMER_IS_TIMEWHEEL
-	XVTABLE_INHERIT_DEFAULT(XTimerTimeWheel_class_init());
-#elif XTIMER_IS_TIMESETEVENT
-	XVTABLE_INHERIT_DEFAULT(XTimerWin32TimeSetEvent_class_init());
-#elif XTIMER_IS_THREADPOOLTIMER
-	XVTABLE_INHERIT_DEFAULT(XTimerWin32ThreadpoolTimer_class_init());
-#elif XTIMER_IS_TIMERFD
-	XVTABLE_INHERIT_DEFAULT(XTimerPosixTimerFd_class_init());
-#endif
-	//void* table[] = 
-	//{
-
-	//};
-	////追加虚函数
-	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+//继承类
+XVTABLE_INHERIT_DEFAULT(XObject_class_init());
+void* table[] = {
+VXTimerBase_start,VXTimerBase_stop,VXTimerBase_setTimerCallback,VXTimerBase_setUserData,
+VXTimerBase_setTimeout,VXTimerBase_setInterval,
+VXTimerBase_out
+	};
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	//XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTimerBase_deinit);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTimerBase_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXTimerBase_SetTimerCallback, VXTimerBase_setTimerCallback);
 	XVTABLE_OVERLOAD_DEFAULT(EXTimerBase_SetUserData, VXTimerBase_setUserData);
+	XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXObject_timerEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll,NULL);
 #if SHOWCONTAINERSIZE
 	printf("XTimer size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -71,23 +49,9 @@ void XTimer_init(XTimer* timer)
 {
 	if (timer == NULL)
 		return;
-	//初始化父类以外的数据
-#if XTIMER_IS_TIMEWHEEL
-	memset(((XTimerTimeWheel*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerTimeWheel));
-	XTimerTimeWheel_init(timer);
-#elif XTIMER_IS_TIMESETEVENT
-	memset(((XTimerWin32TimeSetEvent*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerWin32TimeSetEvent));
-	XTimerWin32TimeSetEvent_init(timer);
-#elif XTIMER_IS_THREADPOOLTIMER
-	memset(((XTimerWin32ThreadpoolTimer*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerWin32ThreadpoolTimer));
-	XTimerWin32ThreadpoolTimer_init(timer);
-#elif XTIMER_IS_TIMERFD
-	memset(((XTimerPosixTimerFd*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerPosixTimerFd));
-	XTimerPosixTimerFd_init(timer);
-#endif
+	memset(((XTimerBase*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerBase));
+	XTimerBase_init(timer,NULL);
 	XClassGetVtable(timer) = XTimer_class_init();
-	XObject_setParent(timer, XCoreApplication_getTimerGroup());
-	XObject_addEventFilter(timer, XEVENT_TIMEROUT, TimerOutEventCb, NULL);
 	((XTimerBase*)timer)->m_timerCallback = TimerCallback;
 	((XTimerBase*)timer)->m_userData = timer;
 }
@@ -103,16 +67,16 @@ XTimer* XTimer_create()
 void TimerCallback(void* userData)
 {
 
-	XObject_postEvent(userData,XEvent_create(NULL,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
+	//XObject_postEvent(userData,XEvent_create(NULL,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
 }
-void TimerOutEventCb(XEventMin* event)
+void TimerOutEventCb(XEvent* event)
 {
 	//XPrintf("触发\n");
-	XTimer* timer = event->receiver;
+	/*XTimer* timer = event->receiver;
 	if (timer->callback)
-		timer->callback(timer->m_userData);
-	XTimer_timeout_signal(event->receiver);
-	XEvent_Accept(event);
+		timer->callback(timer->m_userData);*/
+	/*XTimer_timeout_signal(event->receiver);*/
+	XEvent_accept(event);
 }
 void* XTimer_timeout_signal(XTimer* timer)
 {
@@ -139,25 +103,52 @@ void XTimer_singleShot(size_t msec, XObject* receiver, XSlotFunc slot_func, XCon
 
 void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callback)
 {
-	timer->callback = callback;
+	//timer->callback = callback;
 }
 
 void VXTimerBase_setUserData(XTimer* timer, void* userData)
 {
-	timer->m_userData = userData;
+	//timer->m_userData = userData;
 }
 
-//void VXTimerBase_deinit(XTimer* timer)
-//{
-//	//调用父类释放函数
-//	XVtableGetFunc(XTimerTimeWheel_class_init(), EXClass_Deinit, void(*)(XTimerTimeWheel*))(timer);
-//}
-//
-//void VXTimerBase_out(XTimer* timer)
-//{
-//	//调用父类释放函数
-//	XVtableGetFunc(XTimerTimeWheel_class_init(), EXTimerBase_Out, void(*)(XTimerTimeWheel*))(timer);
-//	//XTimer_timeout_signal(timer);
-//}
+void VXTimerBase_setInterval(XTimer* timer, size_t value)
+{
+	timer->m_class.m_interval = value;
+}
+void VXObject_timerEvent(XTimerBase* timer, XTimerEvent* event)
+{
+	//XPrintf("定时器触发\n");
+	XTimer_timeout_signal(timer);
+	XEvent_accept(event);
+}
+void VXTimerBase_deinit(XTimerBase* timer)
+{
+	XPrintf("释放定时器\n");
+	XTimerBase_stop_base(timer);
+	// 释放父对象
+	XClass_Deinit_Parent(XObject, timer);
+}
 
-
+void VXTimerBase_start(XTimerBase* timer)
+{
+	XTimerBase_stop_base(timer);
+	XAbstractEventDispatcher* disp = XObject_eventDispatcher(timer);
+	timer->timerId=XAbstractEventDispatcher_registerTimer(disp, timer->m_interval* 1000000, XCoarseTimer, timer);
+	
+	if(timer->timerId)
+		timer->m_isRun = true;
+	//timer->m_isPeriodic = true;
+}
+void VXTimerBase_stop(XTimerBase* timer)
+{
+	//printf("停止定时器\n");
+	if (timer->timerId && XTimerBase_isRunning(timer))
+	{
+		//// 关闭定时器
+		XAbstractEventDispatcher* disp = XObject_eventDispatcher(timer);
+		XAbstractEventDispatcher_unregisterTimer_base(disp, timer->timerId);
+		//XPrintf("停止定时器: id:%d\n", timer->timerId);
+		timer->timerId = 0;
+		timer->m_isRun = false;
+	}
+}

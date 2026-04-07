@@ -40,7 +40,7 @@ void VXTimerBase_start(XTimerBase* timer) {
     }
 
     timerfd_settime(((XTimerBase*)linuxTimer)->timerId, 0, &new_value, NULL);
-    XEventLoop_addFd(XCoreApplication_getEventLoop(), timer,((XTimerBase*)linuxTimer)->timerId,XEVENT_READY);
+    XEventLoop_addFd(XCoreApplication_eventLoop(), timer,((XTimerBase*)linuxTimer)->timerId,XEVENT_READY);
     timer->m_isRun = true;
 }
 
@@ -62,7 +62,7 @@ void VXTimerBase_deinit(XTimerBase* timer) {
     
     if (((XTimerBase*)linuxTimer)->timerId != 0)
     {
-        XEventLoop_removeFd(XCoreApplication_getEventLoop(), ((XTimerBase*)linuxTimer)->timerId);
+        XEventLoop_removeFd(XCoreApplication_eventLoop(), ((XTimerBase*)linuxTimer)->timerId);
         close(((XTimerBase*)linuxTimer)->timerId);
         ((XTimerBase*)linuxTimer)->timerId = 0;
     }
@@ -130,7 +130,7 @@ void ReadEventCb(XEventMin *ev)
     if (timer->m_singleShot) {
         XTimerBase_stop_base(timer);
         if (timer->m_autoDelete) {
-            XObject_delete_base(timer);
+            XObject_deleteLater(timer);
         }
     } 
     else if (!((XTimerPosixTimerFd*)timer)->m_twoCb)

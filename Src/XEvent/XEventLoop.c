@@ -1,17 +1,15 @@
 ﻿#include "XEventLoop.h"
-#include "XEventDispatcher.h"
+#include "XAbstractEventDispatcher.h"
 #include "XEvent.h"
 #include "XMemory.h"
 #include "XTimer.h"
 #include "XQueueBase.h"
 #include "XThread.h"
-#include "XEpoll.h"
+#include "XThreadData.h"
 #include "XCoreApplication.h"
 #include "XCircularQueueAtomic.h"
 #include "XTimerGroupWheel.h"
 #include "XAtomic.h"
-//#include "XWindow.h"  // 假设存在窗口相关定义
-
 //投递类型
 typedef enum PostType
 {
@@ -44,11 +42,6 @@ typedef struct PostData
 }PostData;//
 
 static void VXEventLoop_deinit(XEventLoop* loop);
-static int VXEventLoop_exec(XEventLoop* loop);
-static void VXEventLoop_quit(XEventLoop* loop, int exitCode);
-static void VXEventLoop_wakeUp(XEventLoop* loop);
-static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags);
-static bool VXEventLoop_hasPendingEvents(XEventLoop* loop);
 
 /**
  * @brief 初始化事件循环类的虚函数表
@@ -63,15 +56,11 @@ XVtable* XEventLoop_class_init() {
 #endif
         XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 
-    void* table[] = {
-        VXEventLoop_exec,
-        VXEventLoop_quit,
-        VXEventLoop_wakeUp,
-        VXEventLoop_processEvents,
-        VXEventLoop_hasPendingEvents
-    };
+    //void* table[] = {
+    // 
+    //};
 
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+    //XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXEventLoop_deinit);
 
 #if SHOWCONTAINERSIZE
@@ -125,85 +114,42 @@ void XEventLoop_init(XEventLoop* loop)
         {
             XAtomic_store_int32(loop->m_ref_count, 1);  // 使用原子存储初始化
         }
-        loop->m_dispatcher = XEventDispatcher_create(XEventLoop_QueueSize);
-        XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
-        if (!XCoreApplication_global())
+        loop->m_dispatcher = XThreadData_current()->m_dispatcher;
+        //XEventDispatcher_setEventLoop(loop->m_dispatcher, loop);
+        if (!XCoreApplication_instance())
         {
             loop->m_postQueue = XCircularQueueAtomic_create(sizeof(PostData), XEventLoop_QueueSize);
             // 初始化定时器组
-            XTimerGroupBase* group= XTimerGroupWheel_create(1);
-            XTimerGroupWheel_setMutex(group, XMutex_create());
-            XTimerGroupWheel_addTimeWheel_base(group, 100);//0~100ms    -1ms
-            XTimerGroupWheel_addTimeWheel_base(group, 10);//100ms~1S    -100ms
-            XTimerGroupWheel_addTimeWheel_base(group, 10);//1S~10S      -1s
-            XTimerGroupWheel_addTimeWheel_base(group, 10);//10~100S     -10s
-            XTimerGroupWheel_addTimeWheel_base(group, 10);//100~1000s   -100s
-            loop->m_timerGroup = group;
-            loop->m_epoll = XEpoll_create(XEpoll_Size);
+            //XTimerGroupBase* group= XTimerGroupWheel_create(1);
+            //XTimerGroupWheel_setMutex(group, XMutex_create());
+            //XTimerGroupWheel_addTimeWheel_base(group, 100);//0~100ms    -1ms
+            //XTimerGroupWheel_addTimeWheel_base(group, 10);//100ms~1S    -100ms
+            //XTimerGroupWheel_addTimeWheel_base(group, 10);//1S~10S      -1s
+            //XTimerGroupWheel_addTimeWheel_base(group, 10);//10~100S     -10s
+            //XTimerGroupWheel_addTimeWheel_base(group, 10);//100~1000s   -100s
         }
     }
     loop->m_state = XEventLoop_Suspended;
     loop->m_exitCode = 0;
-    loop->m_quitOnLastWindowClosed = true;
+    //loop->m_quitOnLastWindowClosed = true;
     //初始化信号队列
-    if (XCoreApplication_global())
+    if (XCoreApplication_instance())
     {
-        loop->m_postQueue = XCoreApplication_getEventLoop()->m_postQueue;
-        //初始化定时器组,只在主线程事件循环中使用
-        if (XThread_currentThread() == NULL)
-        {
-            loop->m_timerGroup = XCoreApplication_getTimerGroup();
-            loop->m_epoll = XCoreApplication_getEventLoop()->m_epoll;
-        }
-        else
-        {
-            loop->m_timerGroup = NULL;
-            loop->m_epoll = NULL;
-        }
+        loop->m_postQueue = XCoreApplication_eventLoop()->m_postQueue;
+        ////初始化定时器组,只在主线程事件循环中使用
+        //if (XThread_currentThread() == NULL)
+        //{
+        //    loop->m_timerGroup = XCoreApplication_getTimerGroup();
+        //    loop->m_epoll = XCoreApplication_eventLoop()->m_epoll;
+        //}
+        //else
+        //{
+        //    loop->m_timerGroup = NULL;
+        //    loop->m_epoll = NULL;
+        //}
     }
  
    
-}
-
-/**
- * @brief 获取事件循环关联的调度器
- * @param loop 事件循环实例
- * @return 事件调度器
- */
-XEventDispatcher* XEventLoop_getDispatcher(XEventLoop* loop) {
-    return loop ? loop->m_dispatcher : NULL;
-}
-
-/**
- * @brief 设置当最后一个窗口关闭时是否退出事件循环
- * @param loop 事件循环实例
- * @param quit 是否退出
- */
-void XEventLoop_setQuitOnLastWindowClosed(XEventLoop* loop, bool quit) {
-    if (loop) {
-        loop->m_quitOnLastWindowClosed = quit;
-    }
-}
-
-bool XEventLoop_addFd(XEventLoop* loop, XObject* object, int fd, XEventType events)
-{
-    if (!loop || !loop->m_epoll|| events>0x16)
-        return false;
-    XEpollEvent event = {.fd=fd,.data=object,.events=0};
-    if (events & XEVENT_READY)
-        event.events |= XEPOLLIN;
-    if (events & XEVENT_WRITE)
-        event.events |= XEPOLLOUT;
-    /*if (events & XEVENT_ERROR)
-        event.events |= XEPOLLRDHUP;*/
-   return XEpoll_ctl(loop->m_epoll, XEPOLL_CTL_ADD,fd,&event)==0;
-}
-
-bool XEventLoop_removeFd(XEventLoop* loop, int fd)
-{
-    if (!loop || !loop->m_epoll)
-        return false;
-    return XEpoll_ctl(loop->m_epoll, XEPOLL_CTL_DEL, fd,NULL) == 0;
 }
 
 void XEventLoop_delay(size_t msec)
@@ -218,13 +164,13 @@ void XEventLoop_delay(size_t msec)
         loop->m_deley = timer;
         XTimerBase_setAutoDelete(timer, false);
         XTimerBase_setSingleShote(timer, true);
-        XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+        XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
     }
  
     XTimer_setTimeout_base(timer,msec);
     XTimer_setInterval_base(timer, msec);
     XTimer_start_base(timer);
-    XEventLoop_exec_base(loop);
+    XEventLoop_exec(loop);
 }
 
 /**
@@ -232,7 +178,7 @@ void XEventLoop_delay(size_t msec)
  * @param loop 事件循环实例
  * @return 退出代码
  */
-static int VXEventLoop_exec(XEventLoop* loop) {
+int XEventLoop_exec(XEventLoop* loop) {
     if (!loop || loop->m_state == XEventLoop_Running) return -1;
 
     loop->m_state = XEventLoop_Running;
@@ -241,7 +187,7 @@ static int VXEventLoop_exec(XEventLoop* loop) {
     while (loop->m_state == XEventLoop_Running)
     {
         // 处理事件
-        VXEventLoop_processEvents(loop, XEventLoop_AllEvents);
+        XEventLoop_processEvents(loop, XEventLoop_AllEvents);
 
         // 检查是否需要退出（如最后一个窗口关闭）
        /* if (loop->m_quitOnLastWindowClosed && XWindow_getWindowCount() == 0) {
@@ -273,22 +219,20 @@ static int VXEventLoop_exec(XEventLoop* loop) {
  * @param loop 事件循环实例
  * @param exitCode 退出代码
  */
-static void VXEventLoop_quit(XEventLoop* loop, int exitCode) {
+void XEventLoop_quit(XEventLoop* loop, int exitCode) {
     if (!loop) return;
 
     XMutex_lock(loop->m_mutex);
     loop->m_state = XEventLoop_Quit;
     loop->m_exitCode = exitCode;
     XMutex_unlock(loop->m_mutex);
-
-    VXEventLoop_wakeUp(loop);
 }
 
 /**
  * @brief 唤醒事件循环
  * @param loop 事件循环实例
  */
-static void VXEventLoop_wakeUp(XEventLoop* loop) {
+void XEventLoop_wakeUp(XEventLoop* loop) {
     if (!loop) return;
 
     XMutex_lock(loop->m_mutex);
@@ -301,7 +245,7 @@ static void VXEventLoop_wakeUp(XEventLoop* loop) {
  * @param loop 事件循环对象
  * @param flags 事件处理标志
  */
-static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags)
+void XEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags)
 {
     if (!loop || !loop->m_dispatcher /*|| loop->m_state != XEventLoop_Running*/) return;
     //先处理是否有信号需要在队列中发送
@@ -317,69 +261,42 @@ static void VXEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsF
             }break;
             case Post_Func:
             {//投递函数
-                XObject_postEvent(data.object, XEventFunc_create_oneAccept(data.run_func, data.args, data.del), data.priority);
+                //XObject_postEvent(data.object, XEventFunc_create(data.run_func, data.args, data.del), data.priority);
             }break;
         }
     }
     // 处理定时器事件
-    if(loop->m_timerGroup)
-        XTimerGroupWheel_handler_base(loop->m_timerGroup);
-    if (loop->m_epoll)
-    {
-        static XEpollEvent events[XEpoll_Size];
-        int count = XEpoll_wait(loop->m_epoll,events, XEpoll_Size,0);
-        for (size_t i = 0; i < count; i++)
-        {
-            XEpollEvent* event = events+i;
-            XObject* object = event->data;
-            if (event->events & XEPOLLIN|| event->events & XEPOLLPRI)
-                XObject_postEvent(object,XEvent_create(object,XEVENT_READY,0),XEVENT_PRIORITY_NORMAL);
-            if (event->events & XEPOLLOUT)
-                XObject_postEvent(object, XEvent_create(object, XEVENT_WRITE, 0), XEVENT_PRIORITY_NORMAL);
-            if (event->events & XEPOLLERR)
-                XObject_postEvent(object, XEvent_create(object, XEVENT_ERROR, 0), XEVENT_PRIORITY_NORMAL);
-        }
-    }
-    // 根据标志志处理不同类型的事件
-    if (flags & XEventLoop_ExcludeUserInputEvents) {
-        // 排除用户输入事件的处理逻辑
-        // 这里简化处理，实际实现需要过滤相关事件类型
-    }
-    else if (flags & XEventLoop_ExcludeSocketNotifiers) {
-        // 排除套接字字通知事件的处理逻辑
-    }
+    /*if(loop->m_timerGroup)
+        XTimerGroupWheel_handler_base(loop->m_timerGroup);*/
+    //if (loop->m_epoll)
+    //{
+    //    static XEpollEvent events[XEpoll_Size];
+    //    int count = XEpoll_wait(loop->m_epoll,events, XEpoll_Size,0);
+    //    for (size_t i = 0; i < count; i++)
+    //    {
+    //        XEpollEvent* event = events+i;
+    //        XObject* object = event->data;
+    //       /* if (event->events & XEPOLLIN|| event->events & XEPOLLPRI)
+    //            XObject_postEvent(object,XEvent_create(object,XEVENT_READY,0),XEVENT_PRIORITY_NORMAL);
+    //        if (event->events & XEPOLLOUT)
+    //            XObject_postEvent(object, XEvent_create(object, XEVENT_WRITE, 0), XEVENT_PRIORITY_NORMAL);
+    //        if (event->events & XEPOLLERR)
+    //            XObject_postEvent(object, XEvent_create(object, XEVENT_ERROR, 0), XEVENT_PRIORITY_NORMAL);*/
+    //    }
+    //}
 
     // 处理事件队列中的所有事件
-    XEventDispatcher_handler_base(loop->m_dispatcher);
+    XAbstractEventDispatcher_processEvents_base(loop->m_dispatcher, flags);
 
-    // 如果需要等待更多事件，这里里可以添加额外逻辑
-    if (flags & XEventLoop_WaitForMoreEvents && !VXEventLoop_hasPendingEvents(loop)) {
-        XMutex_lock(loop->m_mutex);
-        XWaitCondition_wait(loop->m_condition, loop->m_mutex, 10); // 短暂等待
-        XMutex_unlock(loop->m_mutex);
-    }
+
+
+    //// 如果需要等待更多事件，这里里可以添加额外逻辑
+    //if (flags & XEventLoop_WaitForMoreEvents ) {
+    //    XMutex_lock(loop->m_mutex);
+    //    XWaitCondition_wait(loop->m_condition, loop->m_mutex, 10); // 短暂等待
+    //    XMutex_unlock(loop->m_mutex);
+    //}
 }
-
-/**
- * @brief 检查是否有待处理的事件
- * @param loop 事件循环实例
- * @return 是否有待处理的事件
- */
-static bool VXEventLoop_hasPendingEvents(XEventLoop* loop) {
-    if (!loop) return false;
-
-    /*for (int i = 0; i < XEVENT_PRIORITY_COUNT; i++)
-    {
-        if (loop->m_dispatcher->m_queue[i]&& !XQueueBase_isEmpty_base(loop->m_dispatcher->m_queue[i]))
-        {
-            return true;
-        }
-    }*/
-    if (!XQueueBase_isEmpty_base(loop->m_dispatcher->m_queue))
-        return true;
-    return false;
-}
-
 /**
  * @brief 释放事件循环资源
  * @param loop 事件循环实例
@@ -393,7 +310,7 @@ static void VXEventLoop_deinit(XEventLoop* loop)
         // 释放放事件调度器
         if (loop->m_dispatcher)
         {
-            XEventDispatcher_delete_base(loop->m_dispatcher);
+            XObject_deleteLater(loop->m_dispatcher);
             loop->m_dispatcher = NULL;
         }
         if (loop->m_deley)
@@ -418,48 +335,24 @@ static void VXEventLoop_deinit(XEventLoop* loop)
     XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(loop);
 }
 
-// 基础函数实现
-int XEventLoop_exec_base(XEventLoop* loop) {
-    if (ISNULL(loop, "") || ISNULL(XClassGetVtable(loop), ""))
-        return -1;
-    return XClassGetVirtualFunc(loop, EXEventLoop_Exec, int (*)(XEventLoop*))(loop);
-}
+//bool XEventLoop_hasPendingEvents_base(XEventLoop* loop) {
+//    if (ISNULL(loop, "") || ISNULL(XClassGetVtable(loop), ""))
+//        return false;
+//    return XClassGetVirtualFunc(loop, EXEventLoop_HasPendingEvents, bool (*)(XEventLoop*))(loop);
+//}
 
-void XEventLoop_quit_base(XEventLoop* loop, int exitCode) {
-    if (ISNULL(loop, "") || ISNULL(XClassGetVtable(loop), ""))
-        return;
-    XClassGetVirtualFunc(loop, EXEventLoop_Quit, void (*)(XEventLoop*, int))(loop, exitCode);
-}
-
-void XEventLoop_wakeUp_base(XEventLoop* loop) {
-    if (ISNULL(loop, "") || ISNULL(XClassGetVtable(loop), ""))
-        return;
-    XClassGetVirtualFunc(loop, EXEventLoop_WakeUp, void (*)(XEventLoop*))(loop);
-}
-
-void XEventLoop_processEvents_base(XEventLoop* loop, XEventLoopProcessEventsFlags flags) {
-    if (!loop || !XClassGetVtable(loop)) return;
-    XClassGetVirtualFunc(loop, EXEventLoop_ProcessEvents, void (*)(XEventLoop*, XEventLoopProcessEventsFlags))(loop, flags);
-}
-
-bool XEventLoop_hasPendingEvents_base(XEventLoop* loop) {
-    if (ISNULL(loop, "") || ISNULL(XClassGetVtable(loop), ""))
-        return false;
-    return XClassGetVirtualFunc(loop, EXEventLoop_HasPendingEvents, bool (*)(XEventLoop*))(loop);
-}
-
-bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority)
-{
-    if (!loop || loop->m_postQueue == NULL)
-        return false;
-    PostData data = {.type=Post_SignalSlot, .sendSignalFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.args = args,.del=del,.ref_count=ref_count, .priority=priority };
-    return XQueueBase_push_base(loop->m_postQueue, &data);
-}
-
-bool XEventLoop_postFunc(XEventLoop* loop, XObject* receiver, void(*func)(void*), void* args, void(*del)(void*), XEventPriority priority)
-{
-    if (loop == NULL ||  func == NULL)
-        return false;
-    PostData data = { .type = Post_Func, .run_func = func,.signalSlot = NULL,.object = receiver,.args = args,.del=del,.priority=priority };
-    return XQueueBase_push_base(loop->m_postQueue, &data);
-}
+//bool XEventLoop_postSendSignal(XEventLoop* loop, void(*sendFunc)(XSignalSlot*, size_t, void*), XSignalSlot* signalSlot, size_t signal, void* argList, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority)
+//{
+//    if (!loop || loop->m_postQueue == NULL)
+//        return false;
+//    PostData data = {.type=Post_SignalSlot, .sendSignalFunc = sendFunc,.signalSlot = signalSlot,.signal = signal,.argList = argList,.del=del,.ref_count=ref_count, .priority=priority };
+//    return XQueueBase_push_base(loop->m_postQueue, &data);
+//}
+//
+//bool XEventLoop_postFunc(XEventLoop* loop, XObject* receiver, void(*func)(void*), void* argList, void(*del)(void*), XEventPriority priority)
+//{
+//    if (loop == NULL ||  func == NULL)
+//        return false;
+//    PostData data = { .type = Post_Func, .run_func = func,.signalSlot = NULL,.object = receiver,.argList = argList,.del=del,.priority=priority };
+//    return XQueueBase_push_base(loop->m_postQueue, &data);
+//}

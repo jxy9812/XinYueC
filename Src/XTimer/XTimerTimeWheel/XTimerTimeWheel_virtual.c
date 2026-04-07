@@ -50,9 +50,9 @@ void VXTimerBase_start(XTimerTimeWheel* timer)
 {
 	if (timer->m_class.m_isRun)
 		XTimerBase_stop_base(timer);
-	if (!XObject_getParent(timer))//如果没设置使用全局区的时间轮组管理
-		XObject_setParent(timer,XCoreApplication_getTimerGroup());
-	XTimerGroupBase_addTimer_base(XObject_getParent(timer), timer);
+	//if (!XObject_parent(timer))//如果没设置使用全局区的时间轮组管理
+	//	XObject_setParent(timer,XCoreApplication_getTimerGroup());
+	XTimerGroupBase_addTimer_base(XObject_parent(timer), timer);
 	if (timer->m_list)
 		timer->m_class.m_isRun = true;
 	
@@ -63,7 +63,7 @@ void VXTimerBase_stop(XTimerTimeWheel* timer)
 	if(timer->m_class.m_isRun)
 	{
 		if (timer->m_list)
-			XTimerGroupBase_removeTimer_base(XObject_getParent(timer), timer);
+			XTimerGroupBase_removeTimer_base(XObject_parent(timer), timer);
 		timer->m_class.m_isRun = false;
 	}
 }

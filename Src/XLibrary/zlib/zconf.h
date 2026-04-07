@@ -325,7 +325,7 @@ typedef unsigned long z_size_t;
 #ifdef STDC
 #define OF(args)  args  // 标准C：保留参数列表
 #else
-#define OF(args)  ()    // 非标准C：省略参数列表（兼容旧编译器）
+#define OF(argList)  ()    // 非标准C：省略参数列表（兼容旧编译器）
 #endif
 #endif
 
@@ -333,7 +333,7 @@ typedef unsigned long z_size_t;
 #if defined(STDC) || defined(Z_HAVE_STDARG_H)
 #define Z_ARG(args)  args  // 支持stdarg.h：保留参数列表
 #else
-#define Z_ARG(args)  ()    // 不支持：省略参数列表
+#define Z_ARG(argList)  ()    // 不支持：省略参数列表
 #endif
 #endif
 

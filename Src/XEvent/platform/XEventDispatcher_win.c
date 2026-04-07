@@ -11,6 +11,8 @@
 #include "XVector.h"
 #include "XHashMap.h"
 #include "XPair.h"
+#include "XEvent.h"
+#include "XCoreApplication.h"
 #include <string.h>
 #include <stdint.h>
 
@@ -45,6 +47,7 @@ static int XCompare_intptr_t(const void* a, const void* b) {
  */
 static LRESULT CALLBACK XEventDispatcherWin32_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+    //XPrintf("接收到系统事件\n");
     if (msg == XDISPATCHER_WM_SOCKET) {
         // 网络事件
         XEventDispatcherWin32* dispatcher = (XEventDispatcherWin32*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
@@ -130,8 +133,10 @@ static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* disp
         XPair* pair = XHashMap_iterator_data(&it);
         XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
         if (timerInfo && timerInfo->object) {
-            //XEvent* timerEvent = XEventTimer_create(timerInfo->timerId);
-            //XObject_postEvent(timerInfo->object, timerEvent, XEVENT_PRIORITY_NORMAL);
+            XEvent* timerEvent = XEventTimer_create_id(timerInfo->timerId);
+            //timerEvent->spontaneous = false;
+            timerEvent->posted = true;
+            XCoreApplication_postEvent(timerInfo->object, timerEvent, XEVENT_PRIORITY_NORMAL);
         }
     }
 
@@ -240,7 +245,7 @@ static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispa
     }
 
     d->interrupt = false; // 重置中断标志
-    return processed;
+    return (XVtableGetFunc(XAbstractEventDispatcher_class_init(), EXAbstractEventDispatcher_ProcessEvents, bool(*)(XAbstractEventDispatcher*, XEventLoopProcessEventsFlags))(dispatcher,flags));
 }
 
 static void VXEventDispatcherWin32_registerSocketNotifier(XAbstractEventDispatcher* dispatcher, XSocketNotifier* notifier)
@@ -306,21 +311,16 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* dispa
     UINT uElapse = (UINT)(intervalMs > UINT_MAX ? UINT_MAX : intervalMs);
 
     XMutex_lock(GetXMutex(dispatcher));
-    XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XMemory_malloc(sizeof(XEventDispatcherWin32_TimerInfo));
-    if (timerInfo) {
-        timerInfo->timerId = timerId;
-        timerInfo->interval = intervalNs;
-        timerInfo->timerType = timerType;
-        timerInfo->object = object;
-        timerInfo->winTimerId = SetTimer(d->internalHwnd, 0, uElapse, NULL);
-        if (timerInfo->winTimerId != 0) {
-            // 插入到 timers HashMap
-            size_t win_timer_id = (size_t)timerInfo->winTimerId;
-            XMapBase_insert_base(d->timers, &win_timer_id, &timerInfo);
-        }
-        else {
-            XMemory_free(timerInfo);
-        }
+    XEventDispatcherWin32_TimerInfo timerInfo = {0};
+    timerInfo.timerId = timerId;
+    timerInfo.interval = intervalNs;
+    timerInfo.timerType = timerType;
+    timerInfo.object = object;
+    timerInfo.winTimerId = SetTimer(d->internalHwnd, timerId, uElapse, NULL);
+    if (timerInfo.winTimerId != 0) {
+        // 插入到 timers HashMap
+        size_t win_timer_id = (size_t)timerInfo.winTimerId;
+        XMapBase_insert_base(d->timers, &timerId, &timerInfo);
     }
     XMutex_unlock(GetXMutex(dispatcher));
 }
@@ -332,20 +332,25 @@ static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* dis
 
     bool found = false;
     XMutex_lock(GetXMutex(dispatcher));
-
-    XHashMap_iterator it = XHashMap_begin(d->timers);
-    while (!XHashMap_iterator_isEnd(&it)) {
-        XPair* pair = XHashMap_iterator_data(&it);
-        XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
-        if (timerInfo && timerInfo->timerId == timerId) {
-            KillTimer(d->internalHwnd, timerInfo->winTimerId);
-            XMapBase_erase_base(d->timers, &it,NULL); // 安全删除
-            XMemory_free(timerInfo);
-            found = true;
-            break;
-        }
-        XHashMap_iterator_add(d->timers, &it);
-    }
+    XEventDispatcherWin32_TimerInfo* timerInfo = XHashMap_value_base(d->timers,&timerId);
+    if (!timerInfo)return false;
+    KillTimer(d->internalHwnd, timerInfo->winTimerId);
+    //将id放回列表
+    XVector_push_back_base(d->m_dp.m_timerIds,&timerId);
+    XHashMap_remove_base(d->timers, &timerId);
+    //XHashMap_iterator it = XHashMap_begin(d->timers);
+    //while (!XHashMap_iterator_isEnd(&it)) {
+    //    XPair* pair = XHashMap_iterator_data(&it);
+    //    XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
+    //    if (timerInfo && timerInfo->timerId == timerId) {
+    //        KillTimer(d->internalHwnd, timerInfo->winTimerId);
+    //        XMapBase_erase_base(d->timers, &it,NULL); // 安全删除
+    //        //XMemory_free(timerInfo);
+    //        found = true;
+    //        break;
+    //    }
+    //    XHashMap_iterator_add(d->timers, &it);
+    //}
 
     XMutex_unlock(GetXMutex(dispatcher));
     return found;
@@ -365,8 +370,10 @@ static bool VXEventDispatcherWin32_unregisterTimers(XAbstractEventDispatcher* di
         XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
         if (timerInfo && timerInfo->object == object) {
             KillTimer(d->internalHwnd, timerInfo->winTimerId);
+            //将id放回列表
+            XVector_push_back_base(d->m_dp.m_timerIds, &timerInfo->timerId);
             XHashMap_erase_base(d->timers, &it, &it);
-            XMemory_free(timerInfo);
+            //XMemory_free(timerInfo);
             found = true;
         }
         else {
@@ -466,7 +473,7 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
         XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
         if (timerInfo) {
             KillTimer(d->internalHwnd, (UINT_PTR) * (size_t*)XPair_first(pair));
-            XMemory_free(timerInfo);
+            //XMemory_free(timerInfo);
         }
         // 注意：不能在这里 erase，因为 deinit 不需要保留容器结构
         // 我们只是释放数据，容器本身会在 delete_base 中销毁
@@ -560,7 +567,7 @@ XAbstractEventDispatcher* XEventDispatcherWin32_create(XObject* parent)
     XAbstractEventDispatcherPrivate_init(d);
 
     // --- 修复点 11: 正确初始化 XHashMap ---
-    d->timers = XHashMap_create(sizeof(size_t), sizeof(XEventDispatcherWin32_TimerInfo*), XHashMap_murmur3_32, XCompare_size_t);
+    d->timers = XHashMap_create(sizeof(size_t), sizeof(XEventDispatcherWin32_TimerInfo), XHashMap_murmur3_32, XCompare_size_t);
     d->sockets = XHashMap_create(sizeof(intptr_t), sizeof(XEventDispatcherWin32_SocketInfo*), XHashMap_murmur3_32, XCompare_intptr_t);
 
     if (!d->timers || !d->sockets ) {
@@ -582,7 +589,7 @@ XAbstractEventDispatcher* XEventDispatcherWin32_create(XObject* parent)
     if (!RegisterClass(&wc)) {
         // 可能已经注册，忽略错误
     }
-
+    d->internalHwnd = 0;
     d->internalHwnd = CreateWindowEx(
         0, "XEventDispatcherInternalWindow", NULL,
         0, 0, 0, 0, 0,

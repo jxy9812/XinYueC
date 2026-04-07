@@ -5,13 +5,15 @@
 #include "XSetBase.h"
 #include "XCoreApplication.h"
 #include "XSignalSlot.h"
-#include "XEventDispatcher.h"
+#include "XThreadData.h"
 #include "XMapBase.h"
 #include "XTimer.h"
 #include <stdarg.h>
 #include <string.h>
 static void VXObject_poll(XObject* object);
 static void VXObject_deinit(XObject* object);
+static bool VXObject_event(XObject* self, XEvent* e);
+static bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event);
 XVtable* XObject_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -23,7 +25,9 @@ XVtable* XObject_class_init()
 #endif
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XClass_class_init());
-	void* table[] = { VXObject_poll};
+	void* table[] = { 
+		VXObject_poll,VXObject_event ,VXObject_eventFilter,
+	NULL,NULL,NULL,NULL,NULL};
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXObject_deinit);
@@ -47,14 +51,40 @@ void XObject_init(XObject* object)
 	memset(((XClass*)object)+1,0,sizeof(XObject)-sizeof(XClass));
 	XClass_init(object);
 	XClassGetVtable(object) = XObject_class_init();
-	object->m_thread = XThread_currentThread();
-	//信号与槽初始化
-	//object->m_signalSlot = NULL;
-	XObject_addEventFilter(object, XEVENT_SLOT_RUN, XEventSlotFuncRunCB, NULL);
-	XObject_addEventFilter(object, XEVENT_FUNC_RUN, XEventFuncRunCB, NULL);
-	//定时器
-	//object->m_poolTimer = NULL;
-	//object->m_isEventBubblingEnabled = false;
+	//object->m_thread = XThread_currentThread();
+	object->children=XVector_create(sizeof(XObject*));
+	object->filters=XVector_create(sizeof(XObject*));
+}
+
+const char* XObject_objectName(const XObject* self)
+{
+	if (!self || !self)return NULL;
+	return self->object_name;
+}
+
+void XObject_setObjectName(XObject* self, const char* name)
+{
+	if (!self || !self)return;
+	if (self->object_name)
+	{
+		XDelete(self->object_name);
+		self->object_name = NULL;
+	}
+	if (!name) return;
+	size_t len = strlen(name);
+	if (len == 0)return;
+	self->object_name=XNew(len+1);
+	memcpy(self->object_name,name,len+1);
+}
+
+bool XObject_isSignalConnected(const XObject* self, size_t signal)
+{
+	return false;
+}
+
+int XObject_receivers(const XObject* self, size_t signal)
+{
+	return 0;
 }
 
 void XObject_poll_base(XObject* object)
@@ -90,113 +120,95 @@ void XObject_setPollingInterval(XObject* object, size_t interval)
 
 void XObject_setParent(XObject* object, XObject* parent)
 {
-	if (object)
-		object->m_parent = parent;
+	if (!object)return;
+	XObject* prev = XObject_parent(object);//上一个父节点
+	if (prev)
+	{
+		if (prev == parent)
+			return;//重复设置
+		//从父结点中删除自己
+		XVector* children=prev->children;
+		XVector_remove_base(children, XVector_indexOf(children, &object, 0), 1);
+			
+	}
+	if (parent)
+	{
+		XVector* children = parent->children;
+		if (-1 == XVector_indexOf(children, &object, 0))//确保新父节点没有自己
+			XVector_push_back_base(children, &object);
+	}
+	object->parent = parent;
 }
 
-XObject* XObject_getParent(XObject* object)
+const XVector* XObject_children(const XObject* self)
+{
+	if(!self)return NULL;
+	return self->children;
+}
+
+bool XObject_isWidgetType(const XObject* self)
+{
+	if (!self)return false;
+	return self->is_widget;
+}
+
+bool XObject_isWindowType(const XObject* self)
+{
+	if (!self)return false;
+	return self->is_window;
+}
+XObject* XObject_parent(XObject* object)
 {
 	if (object)
-		return object->m_parent;
+		return object->parent;
 	return NULL;
-}
-
-void XObject_setEventBubblingEnabled(XObject* object, bool enable)
-{
-	if (object)
-		object->m_isEventBubblingEnabled = enable;
-}
-
-bool XObject_isEventBubbling(XObject* object)
-{
-	if (object)
-		return object->m_isEventBubblingEnabled;
-	return false;
-}
-
-bool XObject_addEventFilter(XObject* object, int code, XEventCB cb, void* userData)
-{
-	if (object == NULL)
-		return false;
-	XEventDispatcher* d = XObject_getEventDispatcher(object);
-	if(d)
-		return XEventDispatcher_addEventCb_base(d, object, code, cb, userData);
-	return false;
-}
-
-bool XObject_removeEventFilter(XObject* object, int code)
-{
-	if (object == NULL)
-		return false;
-	XEventDispatcher* d = XObject_getEventDispatcher(object);
-	return XEventDispatcher_removeEventCb_base(d, object, code);
 }
 
 bool XObject_moveToThread(XObject* object, XThread* thread)
 {
-	if (!object||object->m_thread==thread)
-		return false;
-	XEventDispatcher* dispatcher = XObject_getEventDispatcher(object);
-	//处理剩余的所有事件,防止遗漏
-	if (dispatcher)
-	{
-		//XEventDispatcher_handler_base(object->m_eventLoop->m_dispatcher);
-		if (XEventDispatcher_object_move(dispatcher, XThread_getDispatcher(thread), object))
-		{
-			object->m_thread = thread;
-			return true;
-		}
-	}
+	//if (!object||object->m_thread==thread)
+	//	return false;
+	//XEventDispatcher* dispatcher = XObject_eventDispatcher(object);
+	////处理剩余的所有事件,防止遗漏
+	//if (dispatcher)
+	//{
+	//	//XEventDispatcher_handler_base(object->m_eventLoop->m_dispatcher);
+	//	if (XEventDispatcher_object_move(dispatcher, XThread_dispatcher(thread), object))
+	//	{
+	//		object->m_thread = thread;
+	//		return true;
+	//	}
+	//}
 	return false;
 }
 
-bool XObject_postEvent(XObject* object, XEventMin* event, XEventPriority priority)
+bool XObject_signalsBlocked(const XObject* self)
 {
-	if (object == NULL || event == NULL)
-		return false;
-	event->receiver = object;
-	return XEventDispatcher_postEvent_base(XObject_getEventDispatcher(object), event, priority);
+	if(!self)return false;
+	return self->block_sig;
 }
 
-bool XObject_postFunc(XObject* object, void(*func)(void*), void* args, void(*del)(void*), XEventSendMode mode, XEventPriority priority)
+bool XObject_blockSignals(XObject* self, bool block)
 {
-	if (object == NULL|| func == NULL|| mode== XEVENT_SEND_INVALID)
-		return false;
-	if (mode == XEVENT_SEND_DIRECT)
-	{
-		//投递函数
-		return XObject_postEvent(object, XEventFunc_create(func,args, NULL), priority);
-	}
-	else if (mode == XEVENT_SEND_QUEUED)
-	{//投递到队列，等待主线程事件循环中调用
-		return XCoreApplication_postFunc(object,func,args,del, priority);
-	}
+	if (!self)return false;
+	bool state = XObject_signalsBlocked(self);
+	self->block_sig = block;
+	return state;
 }
-
 XThread* XObject_thread(XObject* object)
 {
-	if(object==NULL)
+	if(!object)
 		return NULL;
 	return object->m_thread;
 }
 
-XEventDispatcher* XObject_getEventDispatcher(XObject* object)
+XAbstractEventDispatcher* XObject_eventDispatcher(XObject* object)
 {
 	if (!object)
 		return NULL;
-	XEventLoop* loop=XObject_getEventLoop(object);
-	if (loop)
-		return loop->m_dispatcher;
-	return NULL;
-}
-
-XEventLoop* XObject_getEventLoop(XObject* object)
-{
-	if(object==NULL)
-		return NULL;
 	if (object->m_thread)
-		return object->m_thread->m_eventLoop;
-	return XCoreApplication_getEventLoop();
+		return object->m_thread->m_data->m_dispatcher;
+	return XCoreApplication_instance()->m_eventLoop->m_dispatcher;
 }
 
 XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
@@ -222,59 +234,28 @@ bool XObject_disconnect_conn(XConnection* conn)
 	return XSignalSlot_disconnect_conn(conn);
 }
 
-
-static void deinit(XObject* object)
-{
-	if (XAtomic_fetch_sub_uint32(&object->m_eventCount, 1) == 1)
-	{//正式释放
-		XClass_deinit_base(object);
-	}
-	else
-	{//重新投递
-		XAtomic_fetch_add_int32(&object->m_eventCount, 1);
-		XObject_postEvent(object, XEventFunc_create_oneAccept(deinit, object, NULL), XEVENT_PRIORITY_LOWEST);
-	}
-}
-void XObject_deinit_base(XObject* object)
+void XObject_deinitLater(XObject* object)
 {
 	if (object == NULL)return;
-	if (XAtomic_load_bool(&object->m_deleteState))
+	if (object->delete_later_called)
 		return;//已经标记为释放了
-	bool state = false;
-	if (!XAtomic_compare_exchange_strong_bool(&object->m_deleteState, &state, true))
-		return;//其他线程抢先提交了释放
 	//发送释放信号
-	XObject_deinit_signal(object);
 	XAtomic_fetch_add_int32(&object->m_eventCount, 1);
-	XObject_postEvent(object, XEventFunc_create_oneAccept(deinit, object, NULL), XEVENT_PRIORITY_LOWEST);
-}
-static void delete(XObject* object)
-{
-	if (XAtomic_fetch_sub_uint32(&object->m_eventCount, 1) == 1)
-	{//正式释放
-		XClass_delete_base(object);
-	}
-	else
-	{//重新投递
-		XAtomic_fetch_add_int32(&object->m_eventCount, 1);
-		XObject_postEvent(object, XEventFunc_create_oneAccept(delete, object, NULL), XEVENT_PRIORITY_LOWEST);
-	}
-}
-void XObject_delete_base(XObject* object)
-{
-	if (object == NULL)return;
-	if (XAtomic_load_bool(&object->m_deleteState))
-		return;//已经标记为释放了
-	bool state = false;
-	if (!XAtomic_compare_exchange_strong_bool(&object->m_deleteState, &state, true))
-		return;//其他线程抢先提交了释放
-	//发送释放信号
-	XObject_deinit_signal(object);
-	XAtomic_fetch_add_int32(&object->m_eventCount, 1);
-	XObject_postEvent(object, XEventFunc_create_oneAccept(delete, object, NULL), XEVENT_PRIORITY_LOWEST);
+	XCoreApplication_postEvent(object, XEventDeferredDelete_create(false), XEVENT_PRIORITY_LOWEST);
+	object->delete_later_called = true;
 }
 
-void XObject_emitSignal(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority)
+void XObject_deleteLater(XObject* object)
+{
+	if (object == NULL)return;
+	if (object->delete_later_called)
+		return;//已经标记为释放了
+	XAtomic_fetch_add_int32(&object->m_eventCount, 1);
+	XCoreApplication_postEvent(object, XEventDeferredDelete_create(true), XEVENT_PRIORITY_LOWEST);
+	object->delete_later_called = true;
+}
+
+void XObject_emitSignal(XObject* object, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_int32_t* ref_count, XEventPriority priority)
 {
 	if(object)
 		XSignalSlot_emit(object->m_signalSlot, signal, args,del, ref_count,priority);
@@ -297,13 +278,23 @@ void VXObject_poll(XObject* object)
 
 void VXObject_deinit(XObject* object)
 {
-	//处理剩余的所有事件,防止遗漏
-	/*XEventDispatcher* dispatcher=XObject_getEventDispatcher(object);
-	if(dispatcher)
-		XEventDispatcher_handler_base(dispatcher);*/
-	//XEventLoop_processEvents_base(XObject_getEventLoop(object), XEventLoop_AllEvents);
+	if(object->children)
+	{
+		XVector_delete_base(object->children);
+		object->children = NULL;
+	}
+	if (object->filters)
+	{
+		XVector_delete_base(object->filters);
+		object->filters = NULL;
+	}
+	if (object->object_name)
+	{
+		XDelete(object->object_name);
+		object->object_name = NULL;
+	}
 	//释放信号与槽
-	if(object->m_signalSlot)
+	if (object->m_signalSlot)
 	{
 		XSignalSlot_delete(object->m_signalSlot);
 		object->m_signalSlot = NULL;
@@ -313,4 +304,95 @@ void VXObject_deinit(XObject* object)
 		XTimerBase_delete_base(object->m_poolTimer);
 		object->m_poolTimer = NULL;
 	}
+}
+bool VXObject_event(XObject* self, XEvent* e)
+{
+	if (!self || !e) {
+		return false; // 安全防护：空指针直接忽略
+	}
+	switch (e->type)
+	{
+		case XEVENT_TYPE_TIMER: XObject_timerEvent_base(self, e); break;
+		case XEVENT_TYPE_CHILD_ADDED:
+		case XEVENT_TYPE_CHILD_POLISHED:
+		case XEVENT_TYPE_CHILD_REMOVED: XObject_timerEvent_base(self, e); break;
+		case XEVENT_TYPE_META_CALL: XEventMetaCall_handler(e, self); break;
+		case XEVENT_TYPE_FUNC_RUN: XEventFunc_handler( e); break;
+		case XEVENT_TYPE_DEFERRED_DELETE: XEventDeferredDelete_handler(e, self); break;
+	}
+	return e->accepted;
+}
+
+bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event)
+{
+	return false;
+}
+void XObject_installEventFilter(XObject* self, XObject* filterObj)
+{
+	if (!self || !filterObj)return;
+	XVector* filters = self->filters;
+	if (-1 == XVector_indexOf(filters, &filterObj, 0))//确保新父节点没有自己
+		XVector_push_back_base(filters, &filterObj);
+}
+
+void XObject_removeEventFilter(XObject* self, XObject* obj)
+{
+	if (!self || !obj)return;
+	XVector* filters = self->filters;
+	XVector_remove_base(filters, XVector_indexOf(filters, &obj, 0), 1);
+}
+
+
+bool XObject_event_base(XObject* self, XEvent* e)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return false;
+	return XClassGetVirtualFunc(self, EXObject_Event, bool(*)(XObject*, XEvent*))(self,e);
+}
+
+bool XObject_eventFilter_base(XObject* self, XObject* watched, XEvent* event)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return false;
+	return XClassGetVirtualFunc(self, EXObject_EventFilter, bool(*)(XObject*, XObject *, XEvent*))(self, watched, event);
+}
+
+void XObject_timerEvent_base(XObject* self, XTimerEvent* event)
+{
+	//子类没重载直接退出
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")|| !XClassGetVirtualFunc(self, EXObject_TimerEvent,bool))
+		return ;
+	XClassGetVirtualFunc(self, EXObject_TimerEvent, void(*)(XObject*, XEvent*))(self, event);
+}
+
+void XObject_childEvent_base(XObject* self, XChildEvent* event)
+{
+	//子类没重载直接退出
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_ChildEvent, bool))
+		return;
+	XClassGetVirtualFunc(self, EXObject_ChildEvent, void(*)(XObject*, XEvent*))(self, event);
+}
+
+void XObject_customEvent(XObject* self, XEvent* event)
+{
+	//子类没重载直接退出
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_CustomEvent, bool))
+		return;
+	XClassGetVirtualFunc(self, EXObject_CustomEvent, void(*)(XObject*, XEvent*))(self, event);
+}
+
+void XObject_connectNotify_base(XObject* self, size_t signal)
+{
+	//子类没重载直接退出
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_TimerEvent, bool))
+		return;
+	XClassGetVirtualFunc(self, EXObject_ConnectNotify, void(*)(XObject*, size_t))(self, signal);
+}
+
+void XObject_disconnectNotify_base(XObject * self, size_t signal)
+{
+	//子类没重载直接退出
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_TimerEvent, bool))
+		return;
+	XClassGetVirtualFunc(self, EXObject_DisconnectNotify, void(*)(XObject*, size_t))(self, signal);
 }

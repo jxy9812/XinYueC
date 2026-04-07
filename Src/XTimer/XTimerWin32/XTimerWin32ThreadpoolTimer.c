@@ -22,7 +22,7 @@ static VOID CALLBACK TimerCallbackThreadpoolTimer(PTP_CALLBACK_INSTANCE Instance
 	{
 		XTimerBase_stop_base(timer);
 		if (((XTimerBase*)timer)->m_autoDelete)
-			XObject_delete_base(timer);
+			XObject_deleteLater(timer);
 	}
 	else if (!((XTimerWin32ThreadpoolTimer*)timer)->m_twoCb)
 	{

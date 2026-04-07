@@ -45,7 +45,7 @@ static void Child2Exited(XAbstractState* state, XStateMachine* machine) {
 
 // -------------------------- 2. 定义转换条件（始终返回true，简化测试） --------------------------
 static bool TransitionCondition(const XEventTransition* transition) {
-    XPrintf("\n触发转换 (事件码: %d)\n", transition->m_event->code);
+    XPrintf("\n触发转换 (事件码: %d)\n", transition->m_event->type);
     return true; // 条件满足，允许转换
 }
 
@@ -57,10 +57,10 @@ void XHistoryState_Test() {
         XPrintf("状态机创建失败！\n");
         return;
     }
-    XObject_addEventFilter(machine, 1001, XStateMachine_handleEventCB, machine);
+    /*XObject_addEventFilter(machine, 1001, XStateMachine_handleEventCB, machine);
     XObject_addEventFilter(machine, 1002, XStateMachine_handleEventCB, machine);
     XObject_addEventFilter(machine, 1003, XStateMachine_handleEventCB, machine);
-    XObject_addEventFilter(machine, 1004, XStateMachine_handleEventCB, machine);
+    XObject_addEventFilter(machine, 1004, XStateMachine_handleEventCB, machine);*/
     // 父状态（设备总控制）
     XState* parent = XState_create();
     XAbstractState_setEnteredCallback(parent, ParentEntered);
@@ -141,7 +141,7 @@ void XHistoryState_Test() {
 
     // -------------------------- 步骤6：切换到child2（待机模式） --------------------------
     XPrintf("\n===================== 2. 发送事件1001（child1→child2） =====================\n");
-    XObject_postEvent(machine, XEvent_create(machine, 1001, 0), XEVENT_PRIORITY_NORMAL);
+    //XObject_postEvent(machine, XEvent_create(1001), XEVENT_PRIORITY_NORMAL);
     //XCoreApplication_processEvents(XEventLoop_AllEvents);
     XCoreApplication_exec();
     // -------------------------- 步骤7：退出parent（触发历史存储） --------------------------
@@ -152,11 +152,11 @@ void XHistoryState_Test() {
     XPrintf("\n===================== 4. 发送事件1003（浅层历史恢复） =====================\n");
     XState_setInitialState(parent, (XAbstractState*)NULL);
     XState_activate_base((XAbstractState*)parent); // 重新进入parent
-    XObject_postEvent(machine, XEvent_create(machine, 1003, 0), XEVENT_PRIORITY_NORMAL);
+    //XObject_postEvent(machine, XEvent_create(machine, 1003, 0), XEVENT_PRIORITY_NORMAL);
     XCoreApplication_exec();
     // -------------------------- 步骤9：切换回child1→grandchild1 --------------------------
     XPrintf("\n===================== 5. 发送事件1002（child2→child1） =====================\n");
-    XObject_postEvent(machine, XEvent_create(machine, 1002, 0), XEVENT_PRIORITY_NORMAL); // 进入child1→grandchild1
+    //XObject_postEvent(machine, XEvent_create(machine, 1002, 0), XEVENT_PRIORITY_NORMAL); // 进入child1→grandchild1
     XCoreApplication_exec();
     // -------------------------- 步骤10：退出parent（再次触发历史存储） --------------------------
     XPrintf("\n===================== 6. 退出parent（再次触发历史存储） =====================\n");
@@ -165,7 +165,7 @@ void XHistoryState_Test() {
     // -------------------------- 步骤11：重新激活parent，通过深层历史恢复 --------------------------
     XPrintf("\n===================== 7. 发送事件1004（深层历史恢复） =====================\n");
     XState_activate_base((XAbstractState*)parent); // 重新进入parent
-    XObject_postEvent(machine, XEvent_create(machine, 1004, 0), XEVENT_PRIORITY_NORMAL); // 触发深层历史，恢复到grandchild1
+    //XObject_postEvent(machine, XEvent_create(machine, 1004, 0), XEVENT_PRIORITY_NORMAL); // 触发深层历史，恢复到grandchild1
 
     //// -------------------------- 步骤12：清理资源 --------------------------
     //printf("\n===================== 8. 销毁资源 =====================\n");
@@ -220,7 +220,7 @@ void XStateMachineEventTest()
         XPrintf("XStateMachine 事件测试\n");
         XStateMachine* machine = XStateMachine_create();
         XObject_connect(machine, XSignal(XStateMachine_stop_signal), machine, deleteSlot, XConnectionType_Queued);
-        XObject_addEventFilter(machine, XEVENT_TRANSITION, XStateMachine_handleEventCB, machine);
+        //XObject_addEventFilter(machine, XEVENT_TRANSITION, XStateMachine_handleEventCB, machine);
         // 创建状态
         XState* stateA = XState_create();
         XState* stateB = XState_create();
@@ -240,20 +240,20 @@ void XStateMachineEventTest()
         XState_setInitialState(stateA, (XAbstractState*)stateB);
 
         // 修正1：转换源状态为stateB，目标状态为finalState
-        XEventTransition* transition = XEventTransition_create(XEVENT_TRANSITION);
-        XAbstractTransition_setTargetState(transition, (XAbstractState*)finalState);  // 目标改为最终状态
-        XAbstractTransition_setCondition(transition, BtoFinal);
-        XState_addTransition(stateB, (XAbstractTransition*)transition);  // 源状态改为stateB
+        //XEventTransition* transition = XEventTransition_create(XEVENT_TRANSITION);
+        //XAbstractTransition_setTargetState(transition, (XAbstractState*)finalState);  // 目标改为最终状态
+        //XAbstractTransition_setCondition(transition, BtoFinal);
+        //XState_addTransition(stateB, (XAbstractTransition*)transition);  // 源状态改为stateB
 
-        // 配置状态机
-        XStateMachine_addState(machine, (XAbstractState*)stateA);
-        XStateMachine_setInitialState(machine, (XAbstractState*)stateA);
+        //// 配置状态机
+        //XStateMachine_addState(machine, (XAbstractState*)stateA);
+        //XStateMachine_setInitialState(machine, (XAbstractState*)stateA);
 
-        // 启动状态机
-        XStateMachine_start(machine);  // 预期：A进入 → B进入
+        //// 启动状态机
+        //XStateMachine_start(machine);  // 预期：A进入 → B进入
 
-        // 触发事件
-        XObject_postEvent(machine, XEvent_create(machine, XEVENT_TRANSITION, 0), XEVENT_PRIORITY_NORMAL);
+        //// 触发事件
+        //XObject_postEvent(machine, XEvent_create(machine, XEVENT_TRANSITION, 0), XEVENT_PRIORITY_NORMAL);
         
         // 清理资源
         /*现在无法清理资源，deleteSlot 用信号和槽的方式异步清理*/

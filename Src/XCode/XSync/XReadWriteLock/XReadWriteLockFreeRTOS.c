@@ -9,7 +9,7 @@ struct XReadWriteLock {
     XReadWriteLock_Type type;
 
     // 核心同步原语
-    SemaphoreHandle_t mutex;       // 保护内部状态
+    SemaphoreHandle_t m_mutex;       // 保护内部状态
     SemaphoreHandle_t readSem;     // 读者信号量
     SemaphoreHandle_t writeSem;    // 写者信号量
 
@@ -105,7 +105,7 @@ void XReadWriteLock_init(XReadWriteLock* rwlock, XReadWriteLock_Type type) {
     if (!rwlock) return;
 
     rwlock->type = type;
-    rwlock->mutex = xSemaphoreCreateMutex();
+    rwlock->m_mutex = xSemaphoreCreateMutex();
     rwlock->readSem = xSemaphoreCreateBinary();
     rwlock->writeSem = xSemaphoreCreateBinary();
 
@@ -130,7 +130,7 @@ void XReadWriteLock_init(XReadWriteLock* rwlock, XReadWriteLock_Type type) {
 void XReadWriteLock_deinit(XReadWriteLock* rwlock) {
     if (!rwlock) return;
 
-    vSemaphoreDelete(rwlock->mutex);
+    vSemaphoreDelete(rwlock->m_mutex);
     vSemaphoreDelete(rwlock->readSem);
     vSemaphoreDelete(rwlock->writeSem);
     vPortFree(rwlock->readOwners);
@@ -178,11 +178,11 @@ void XReadWriteLock_lockForRead(XReadWriteLock* rwlock) {
 
     // 普通模式或需要真正获取锁
     while (true) {
-        xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+        xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
 
         if (!rwlock->isWriting && rwlock->writeWaiting == 0) {
             rwlock->readCount++;
-            xSemaphoreGive(rwlock->mutex);
+            xSemaphoreGive(rwlock->m_mutex);
 
             // 记录读锁拥有者
             if (rwlock->type == XReadWriteLock_Recursive) {
@@ -192,11 +192,11 @@ void XReadWriteLock_lockForRead(XReadWriteLock* rwlock) {
         }
 
         rwlock->readWaiting++;
-        xSemaphoreGive(rwlock->mutex);
+        xSemaphoreGive(rwlock->m_mutex);
         xSemaphoreTake(rwlock->readSem, portMAX_DELAY);
-        xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+        xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
         rwlock->readWaiting--;
-        xSemaphoreGive(rwlock->mutex);
+        xSemaphoreGive(rwlock->m_mutex);
     }
 }
 
@@ -225,11 +225,11 @@ void XReadWriteLock_lockForWrite(XReadWriteLock* rwlock) {
 
     // 普通模式或需要真正获取锁
     while (true) {
-        xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+        xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
 
         if (rwlock->readCount == 0 && !rwlock->isWriting) {
             rwlock->isWriting = pdTRUE;
-            xSemaphoreGive(rwlock->mutex);
+            xSemaphoreGive(rwlock->m_mutex);
 
             // 记录写锁拥有者
             if (rwlock->type == XReadWriteLock_Recursive) {
@@ -240,11 +240,11 @@ void XReadWriteLock_lockForWrite(XReadWriteLock* rwlock) {
         }
 
         rwlock->writeWaiting++;
-        xSemaphoreGive(rwlock->mutex);
+        xSemaphoreGive(rwlock->m_mutex);
         xSemaphoreTake(rwlock->writeSem, portMAX_DELAY);
-        xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+        xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
         rwlock->writeWaiting--;
-        xSemaphoreGive(rwlock->mutex);
+        xSemaphoreGive(rwlock->m_mutex);
     }
 }
 
@@ -270,7 +270,7 @@ bool XReadWriteLock_tryLockForRead(XReadWriteLock* rwlock) {
     }
 
     // 尝试获取读锁
-    if (xSemaphoreTake(rwlock->mutex, 0) != pdTRUE) {
+    if (xSemaphoreTake(rwlock->m_mutex, 0) != pdTRUE) {
         return false;
     }
 
@@ -285,7 +285,7 @@ bool XReadWriteLock_tryLockForRead(XReadWriteLock* rwlock) {
         }
     }
 
-    xSemaphoreGive(rwlock->mutex);
+    xSemaphoreGive(rwlock->m_mutex);
     return success;
 }
 
@@ -313,7 +313,7 @@ bool XReadWriteLock_tryLockForWrite(XReadWriteLock* rwlock) {
     }
 
     // 尝试获取写锁
-    if (xSemaphoreTake(rwlock->mutex, 0) != pdTRUE) {
+    if (xSemaphoreTake(rwlock->m_mutex, 0) != pdTRUE) {
         return false;
     }
 
@@ -329,7 +329,7 @@ bool XReadWriteLock_tryLockForWrite(XReadWriteLock* rwlock) {
         }
     }
 
-    xSemaphoreGive(rwlock->mutex);
+    xSemaphoreGive(rwlock->m_mutex);
     return success;
 }
 
@@ -368,13 +368,13 @@ bool XReadWriteLock_tryLockForReadTimeout(XReadWriteLock* rwlock, int32_t timeou
             return false;
         }
 
-        if (xSemaphoreTake(rwlock->mutex, ticks - elapsed) != pdTRUE) {
+        if (xSemaphoreTake(rwlock->m_mutex, ticks - elapsed) != pdTRUE) {
             return false;
         }
 
         if (!rwlock->isWriting && rwlock->writeWaiting == 0) {
             rwlock->readCount++;
-            xSemaphoreGive(rwlock->mutex);
+            xSemaphoreGive(rwlock->m_mutex);
 
             // 记录读锁拥有者
             if (rwlock->type == XReadWriteLock_Recursive) {
@@ -384,26 +384,26 @@ bool XReadWriteLock_tryLockForReadTimeout(XReadWriteLock* rwlock, int32_t timeou
         }
 
         rwlock->readWaiting++;
-        xSemaphoreGive(rwlock->mutex);
+        xSemaphoreGive(rwlock->m_mutex);
 
         elapsed = xTaskGetTickCount() - start;
         if (elapsed >= ticks) {
-            xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+            xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
             rwlock->readWaiting--;
-            xSemaphoreGive(rwlock->mutex);
+            xSemaphoreGive(rwlock->m_mutex);
             return false;
         }
 
         if (xSemaphoreTake(rwlock->readSem, ticks - elapsed) != pdTRUE) {
-            xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+            xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
             rwlock->readWaiting--;
-            xSemaphoreGive(rwlock->mutex);
+            xSemaphoreGive(rwlock->m_mutex);
             return false;
         }
 
-        xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+        xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
         rwlock->readWaiting--;
-        xSemaphoreGive(rwlock->mutex);
+        xSemaphoreGive(rwlock->m_mutex);
     }
 }
 
@@ -444,13 +444,13 @@ bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeo
             return false;
         }
 
-        if (xSemaphoreTake(rwlock->mutex, ticks - elapsed) != pdTRUE) {
+        if (xSemaphoreTake(rwlock->m_mutex, ticks - elapsed) != pdTRUE) {
             return false;
         }
 
         if (rwlock->readCount == 0 && !rwlock->isWriting) {
             rwlock->isWriting = pdTRUE;
-            xSemaphoreGive(rwlock->mutex);
+            xSemaphoreGive(rwlock->m_mutex);
 
             // 记录写锁拥有者
             if (rwlock->type == XReadWriteLock_Recursive) {
@@ -461,26 +461,26 @@ bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeo
         }
 
         rwlock->writeWaiting++;
-        xSemaphoreGive(rwlock->mutex);
+        xSemaphoreGive(rwlock->m_mutex);
 
         elapsed = xTaskGetTickCount() - start;
         if (elapsed >= ticks) {
-            xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+            xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
             rwlock->writeWaiting--;
-            xSemaphoreGive(rwlock->mutex);
+            xSemaphoreGive(rwlock->m_mutex);
             return false;
         }
 
         if (xSemaphoreTake(rwlock->writeSem, ticks - elapsed) != pdTRUE) {
-            xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+            xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
             rwlock->writeWaiting--;
-            xSemaphoreGive(rwlock->mutex);
+            xSemaphoreGive(rwlock->m_mutex);
             return false;
         }
 
-        xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+        xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
         rwlock->writeWaiting--;
-        xSemaphoreGive(rwlock->mutex);
+        xSemaphoreGive(rwlock->m_mutex);
     }
 }
 
@@ -493,7 +493,7 @@ void XReadWriteLock_unlock(XReadWriteLock* rwlock) {
         // 检查是否持有写锁
         if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == task) {
             if (--rwlock->writeRecursionCount == 0) {
-                xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+                xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
                 rwlock->isWriting = pdFALSE;
 
                 // 优先唤醒写者
@@ -505,7 +505,7 @@ void XReadWriteLock_unlock(XReadWriteLock* rwlock) {
                 }
 
                 rwlock->writeOwner = NULL;
-                xSemaphoreGive(rwlock->mutex);
+                xSemaphoreGive(rwlock->m_mutex);
             }
             return;
         }
@@ -518,21 +518,21 @@ void XReadWriteLock_unlock(XReadWriteLock* rwlock) {
                 fullyReleased = true;
                 removeReadOwner(rwlock, task);
 
-                xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+                xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
                 if (--rwlock->readCount == 0 && rwlock->writeWaiting > 0) {
                     xSemaphoreGive(rwlock->writeSem);
                 }
                 else if (rwlock->readWaiting > 0) {
                     xSemaphoreGive(rwlock->readSem);
                 }
-                xSemaphoreGive(rwlock->mutex);
+                xSemaphoreGive(rwlock->m_mutex);
             }
             return;
         }
     }
 
     // 非递归模式释放
-    xSemaphoreTake(rwlock->mutex, portMAX_DELAY);
+    xSemaphoreTake(rwlock->m_mutex, portMAX_DELAY);
 
     if (rwlock->isWriting) {
         rwlock->isWriting = pdFALSE;
@@ -553,7 +553,7 @@ void XReadWriteLock_unlock(XReadWriteLock* rwlock) {
         }
     }
 
-    xSemaphoreGive(rwlock->mutex);
+    xSemaphoreGive(rwlock->m_mutex);
 }
 
 XReadWriteLock_Type XReadWriteLock_type(XReadWriteLock* rwlock) {

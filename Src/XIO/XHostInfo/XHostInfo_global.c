@@ -66,9 +66,9 @@ void XHostInfo_dns_worker(void* arg) {
         }
         else if (task->receiver && task->member) {
             //XVariant var= XVariant
-            //XVariant_setValue_ptr(&args[0], result);
+            //XVariant_setValue_ptr(&argList[0], result);
             XObject_emitSignal(task->receiver, task->member, result, NULL,NULL,XEVENT_PRIORITY_NORMAL);
-            //XVariant_deinit_base(&args[0]);
+            //XVariant_deinit_base(&argList[0]);
         }
         XHostInfo_task_destroy(task);
     }

@@ -78,12 +78,12 @@ void XTimerBase_init(XTimerBase* timer, XVtable* vtable);
 * @brief 基类删除函数宏定义
 * 复用XObject的删除函数
 */
-#define XTimerBase_delete_base    XObject_delete_base
+#define XTimerBase_delete_base    XObject_deleteLater
 /**
 * @brief 基类反初始化函数宏定义
 * 复用XObject的反初始化函数
 */
-#define XTimerBase_deinit_base    XObject_deinit_base
+#define XTimerBase_deinit_base    XObject_deinitLater
 // === 启动与停止相关接口 ===
 /**
 * @brief 启动定时器（基类实现）

@@ -106,9 +106,9 @@ void XESP8266Wifi_init(XESP8266Wifi* device, XIODevice* io) {
             device,
             VXESP8266_processResponse,XConnectionType_Auto);
     }
-    XConnection* timeroutComm = XObject_connect(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit_base, XConnectionType_Auto);
-    XConnection* okComm = XObject_connect(device, XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit_base, XConnectionType_Auto);
-    XConnection* errComm = XObject_connect(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit_base, XConnectionType_Auto);
+    XConnection* timeroutComm = XObject_connect(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+    XConnection* okComm = XObject_connect(device, XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+    XConnection* errComm = XObject_connect(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
 }
 void VXESP8266_deinit(XESP8266Wifi* device)
 {
@@ -302,21 +302,21 @@ static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XE
     // 启动超时定时器
     if (msecs > 0) 
     {
-       /* XConnection*timeroutComm= XObject_connect(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit_base, XConnectionType_Auto);
-        XConnection* okComm = XObject_connect(device,XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit_base, XConnectionType_Auto);
-        XConnection* errComm = XObject_connect(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit_base, XConnectionType_Auto);*/
+       /* XConnection*timeroutComm= XObject_connect(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+        XConnection* okComm = XObject_connect(device,XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+        XConnection* errComm = XObject_connect(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);*/
         
         XTimer_setInterval_base(device->m_timeoutTimer, msecs);
         XTimer_setTimeout_base(device->m_timeoutTimer, msecs);
         XTimer_start_base(device->m_timeoutTimer);
-        XEventLoop_exec_base(device->m_loop);
+        XEventLoop_exec(device->m_loop);
         //XObject_disconnect_conn(timeroutComm);
         //XObject_disconnect_conn(okComm);
         //XObject_disconnect_conn(errComm);
     }
     else if(msecs==-1)
     {//-1无限等待
-        XEventLoop_exec_base(device->m_loop);
+        XEventLoop_exec(device->m_loop);
     }
     if(msecs>0|| msecs == -1)
         return device->m_operationResult;
@@ -679,7 +679,7 @@ size_t XESP8266Wifi_read(XESP8266Wifi* device, int connId, void* data, size_t si
     size_t current= XTimerBase_getCurrentTime();
     while (XTimerBase_getCurrentTime()< current+ msecs)
     {
-        XEventLoop_processEvents_base(XThread_currentEventLoop(), XEventLoop_AllEvents);
+        XEventLoop_processEvents(XThread_currentEventLoop(), XEventLoop_AllEvents);
         if (remaining_size && XQueueBase_receive_base(queue, ((char*)data) + (size - remaining_size)))
         {
             --remaining_size;
@@ -791,7 +791,7 @@ bool XESP8266Wifi_waitForWiFiConnected(XESP8266Wifi* device, int msecs) {
         XTimer_setInterval_base(device->m_timeoutTimer, msecs);
         XTimer_setTimeout_base(device->m_timeoutTimer, msecs);
         XTimer_start_base(device->m_timeoutTimer);
-        XEventLoop_exec_base(device->m_loop);
+        XEventLoop_exec(device->m_loop);
     }
     return  device->m_wifiStatus == XESP8266_Status_Connected;
 }
@@ -808,7 +808,7 @@ bool XESP8266Wifi_waitForServerConnected(XESP8266Wifi* device, int msecs)
         XTimer_setInterval_base(device->m_timeoutTimer, msecs);
         XTimer_setTimeout_base(device->m_timeoutTimer, msecs);
         XTimer_start_base(device->m_timeoutTimer);
-        XEventLoop_exec_base(device->m_loop);
+        XEventLoop_exec(device->m_loop);
     }
     return  device->m_pendingStatus == XESP8266_Status_Connected;
 }
@@ -831,7 +831,7 @@ bool XESP8266Wifi_waitForDisconnectConn(XESP8266Wifi* device, int connId, int ms
         XTimer_setInterval_base(device->m_timeoutTimer, msecs);
         XTimer_setTimeout_base(device->m_timeoutTimer, msecs);
         XTimer_start_base(device->m_timeoutTimer);
-        XEventLoop_exec_base(device->m_loop);
+        XEventLoop_exec(device->m_loop);
     }
     return device->m_connections[connId].status == XESP8266_Status_Disconnected;
 }

@@ -2,9 +2,10 @@
 #ifndef XEVENTDISPATCHER_WIN_P_H
 #define XEVENTDISPATCHER_WIN_P_H
 
-#include "XEventDispatcher.h"
+
 #include "XAbstractEventDispatcher.h"
 #include "XHashMap.h"
+#include "XListSLinked.h"
 #include "XMutex.h"
 #include <windows.h>
 

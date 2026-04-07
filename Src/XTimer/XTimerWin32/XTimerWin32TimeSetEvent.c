@@ -23,7 +23,7 @@ static void CALLBACK TimerCallbackTimeSetEvent(UINT uID, UINT uMsg, DWORD_PTR dw
 	{
 		XTimerBase_stop_base(timer);
 		if (((XTimerBase*)timer)->m_autoDelete)
-			XObject_delete_base(timer);
+			XObject_deleteLater(timer);
 	}
 	else if(!((XTimerWin32TimeSetEvent*)timer)->m_twoCb)
 	{

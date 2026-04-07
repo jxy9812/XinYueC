@@ -38,6 +38,7 @@ XCLASS_DEFINE_ENUM(XThread, SetPriority),
 XCLASS_DEFINE_ENUM(XThread, SetStackSize),
 XCLASS_DEFINE_END(XThread)
 
+typedef struct XThreadData XThreadData;
 /**
  * @brief 线程类
  * 表示一个线程对象，包含线程的基本属性和状态
@@ -48,12 +49,15 @@ typedef struct XThread
     XHandle m_handle;              /**< 线程句柄 */
     bool m_finished;               /**< 线程是否结束 */
     bool m_interruptionRequested;  /**< 是否请求中断线程 */
+    bool m_running;                // 线程是否正在运行
     int loopLevel;               /**< 线程循环级别 */
     XThread_Priority m_priority;   /**< 线程优先级 */
     uint32_t m_stackSize;          /**< 线程栈大小 */
+    XThreadData* m_data;                      // 指向该线程私有的线程数据（包含事件队列、锁等）
     XEventLoop* m_eventLoop;            // 关联的事件循环
     void (*m_start_routine)(void*);
     void* m_arg;
+
 } XThread;
 
 /**
@@ -103,8 +107,8 @@ bool XThread_start_base(XThread* Object);
  * @param Object 指向常量XThread对象的指针
  * @retval 返回事件调度器的指针
  */
-XEventDispatcher* XThread_getDispatcher(const XThread* Object);
-XEventLoop* XThread_getEventLoop(const XThread* Object);
+XEventDispatcher* XThread_dispatcher(const XThread* Object);
+XEventLoop* XThread_eventLoop(const XThread* Object);
 /**
  * @brief 判断XThread对象对应的线程是否结束
  * @param Object 指向常量XThread对象的指针
@@ -181,7 +185,9 @@ bool XThread_terminate_base(XThread* Object);
  */
 #define XThread_delete_base XClass_delete_base
 
+//主线程返回NULL
 XThread* XThread_currentThread();
+//返回当前线程的事件循环
 XEventLoop* XThread_currentEventLoop();
 XEventDispatcher* XThread_currentDispatcher();
 XHandle XThread_currentThreadId();

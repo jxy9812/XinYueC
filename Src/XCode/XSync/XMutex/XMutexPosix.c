@@ -7,7 +7,7 @@
 
 // POSIX平台具体结构体定义
 struct XMutex {
-    pthread_mutex_t mutex;
+    pthread_mutex_t m_mutex;
     XMutex_Type type;
 };
 size_t XMutex_geTypetSize()
@@ -18,85 +18,85 @@ size_t XMutex_geTypetSize()
 //void* XMutex_getNativeHandle(XMutex* mutex) {
 //    return mutex ? &mutex->mutex : NULL;
 //}
-void XRecursiveMutex_init(XRecursiveMutex* mutex)
+void XRecursiveMutex_init(XRecursiveMutex* m_mutex)
 {
-    if (!mutex) return;
+    if (!m_mutex) return;
 
-    mutex->type = XMutex_Recursive;
+    m_mutex->type = XMutex_Recursive;
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
 
     // 设置互斥锁类型
-    if (mutex->type == XMutex_Recursive) {
+    if (m_mutex->type == XMutex_Recursive) {
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
     }
     else {
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
     }
 
-    pthread_mutex_init(&mutex->mutex, &attr);
+    pthread_mutex_init(&m_mutex->m_mutex, &attr);
     pthread_mutexattr_destroy(&attr);
 }
 XRecursiveMutex* XRecursiveMutex_create()
 {
-    XMutex* mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
-    if (mutex)
+    XMutex* m_mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
+    if (m_mutex)
     {
-        XRecursiveMutex_init(mutex);
+        XRecursiveMutex_init(m_mutex);
     }
-    return mutex;
+    return m_mutex;
 }
-void XMutex_init(XMutex* mutex) {
-    if (!mutex) return;
+void XMutex_init(XMutex* m_mutex) {
+    if (!m_mutex) return;
 
-    mutex->type = XMutex_Normal;
+    m_mutex->type = XMutex_Normal;
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
 
     // 设置互斥锁类型
-    if (mutex->type == XMutex_Recursive) {
+    if (m_mutex->type == XMutex_Recursive) {
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
     }
     else {
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
     }
 
-    pthread_mutex_init(&mutex->mutex, &attr);
+    pthread_mutex_init(&m_mutex->m_mutex, &attr);
     pthread_mutexattr_destroy(&attr);
 }
 
-void XMutex_deinit(XMutex* mutex) {
-    if (!mutex) return;
-    pthread_mutex_destroy(&mutex->mutex);
+void XMutex_deinit(XMutex* m_mutex) {
+    if (!m_mutex) return;
+    pthread_mutex_destroy(&m_mutex->m_mutex);
 }
 
 XMutex* XMutex_create() {
-    XMutex* mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
-    if (mutex) {
-        XMutex_init(mutex);
+    XMutex* m_mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
+    if (m_mutex) {
+        XMutex_init(m_mutex);
     }
-    return mutex;
+    return m_mutex;
 }
 
-void XMutex_delete(XMutex* mutex) {
-    if (mutex) {
-        XMutex_deinit(mutex);
-        XMemory_free(mutex);
+void XMutex_delete(XMutex* m_mutex) {
+    if (m_mutex) {
+        XMutex_deinit(m_mutex);
+        XMemory_free(m_mutex);
     }
 }
 
-void XMutex_lock(XMutex* mutex) {
-    if (!mutex) return;
-    pthread_mutex_lock(&mutex->mutex);
+void XMutex_lock(XMutex* m_mutex) {
+    if (!m_mutex) return;
+    pthread_mutex_lock(&m_mutex->m_mutex);
 }
 
-bool XMutex_tryLock(XMutex* mutex) {
-    if (!mutex) return false;
-    return pthread_mutex_trylock(&mutex->mutex) == 0;
+bool XMutex_tryLock(XMutex* m_mutex) {
+    if (!m_mutex) return false;
+    return pthread_mutex_trylock(&m_mutex->m_mutex) == 0;
 }
 
-bool XMutex_tryLockTimeout(XMutex* mutex, uint32_t timeout) {
-    if (!mutex) return false;
+bool XMutex_tryLockTimeout(XMutex* m_mutex, uint32_t timeout) {
+    if (!m_mutex) return false;
 
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -108,19 +108,19 @@ bool XMutex_tryLockTimeout(XMutex* mutex, uint32_t timeout) {
         ts.tv_nsec -= 1000000000;
     }
 
-    return pthread_mutex_timedlock(&mutex->mutex, &ts) == 0;
+    return pthread_mutex_timedlock(&m_mutex->m_mutex, &ts) == 0;
 }
 
-void XMutex_unlock(XMutex* mutex) {
-    if (!mutex) return;
-    pthread_mutex_unlock(&mutex->mutex);
+void XMutex_unlock(XMutex* m_mutex) {
+    if (!m_mutex) return;
+    pthread_mutex_unlock(&m_mutex->m_mutex);
 }
 
-bool XMutex_isRecursive(XMutex* mutex) {
-    return mutex ? (mutex->type == XMutex_Recursive) : false;
+bool XMutex_isRecursive(XMutex* m_mutex) {
+    return m_mutex ? (m_mutex->type == XMutex_Recursive) : false;
 }
-XMutex_Type XMutex_type(XMutex* mutex)
+XMutex_Type XMutex_type(XMutex* m_mutex)
 {
-    return mutex->type;
+    return m_mutex->type;
 }
 #endif

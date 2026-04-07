@@ -70,7 +70,7 @@ static void* ThreadFunction(void* arg)
     }
     // 运行事件循环
     if (Object->loopLevel > 0 && Object->m_eventLoop) {
-        XEventLoop_exec_base(Object->m_eventLoop);
+        XEventLoop_exec(Object->m_eventLoop);
     }
     // 处理事件调度器逻辑
     // if (Object->m_eventLoop && Object->m_eventLoop->m_dispatcher) {
@@ -232,7 +232,7 @@ static void VXThread_requestInterruption(XThread* Object) {
         Object->m_interruptionRequested = true;
         // 唤醒事件循环
         if (Object->m_eventLoop) {
-            XEventLoop_wakeUp_base(Object->m_eventLoop);
+            XEventLoop_wakeUp(Object->m_eventLoop);
         }
     }
 }

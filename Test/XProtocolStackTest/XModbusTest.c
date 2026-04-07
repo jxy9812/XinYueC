@@ -14,12 +14,12 @@
 //#include"XCoreApplication.h"
 //#include"XPrintf.h"
 //#include"XTimerBase.h"
-//static void deinit_slot(XObject* receiver, void* args, XObject* sender)
+//static void deinit_slot(XObject* receiver, void* argList, XObject* sender)
 //{
 //    XPrintf("sender:%p receiver:%p 串口释放\n",sender,receiver);
 //}
 //
-//static void connected_slot(XObject* receiver, void* args, XObject* sender)
+//static void connected_slot(XObject* receiver, void* argList, XObject* sender)
 //{
 //    XPrintf("sender:%p receiver:%p 网络已连接\n", sender, receiver);
 //}

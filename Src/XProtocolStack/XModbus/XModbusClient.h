@@ -41,7 +41,7 @@ extern "C" {
     /**
      * @brief 在堆上创建并初始化一个XModbusClient实例
      * @return 成功返回指向新分配XModbusClient对象的指针，失败返回NULL
-     * @note 返回的对象必须通过 XObject_delete_base 或 XModbusClient_delete_base 释放
+     * @note 返回的对象必须通过 XObject_deleteLater 或 XModbusClient_delete_base 释放
      */
     XModbusClient* XModbusClient_create(void);
 

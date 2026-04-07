@@ -12,6 +12,10 @@ extern "C" {
 * 基于XTimerTimeWheel的虚函数表大小
 */
 #define XTIMER_VTABLE_SIZE (XTIMERTIMEWHEEL_VTABLE_SIZE)
+typedef struct XTimer
+{
+	XTimerBase m_class;
+} XTimer;
 // === 类初始化与构造相关接口 ===
 /**
 * @brief 初始化XTimer类的虚函数表

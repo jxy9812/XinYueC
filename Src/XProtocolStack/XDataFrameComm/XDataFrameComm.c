@@ -8,7 +8,7 @@
 #include"XListSLinked.h"
 #include"XString.h"
 #include"XTimerBase.h"
-#include"XEventDispatcher.h"
+#include"XCoreApplication.h"
 #include"XPrintf.h"
 #include<string.h>
 #include<stdarg.h>
@@ -42,7 +42,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODevice* io)
 	comm->m_periodicSendList = XListSLinked_Create(void*);
 	//comm->m_periodicSendList->m_equality = XEquality_ptr;
 	XContainerSetCompare(comm->m_periodicSendList, XCompare_ptr);
-	XObject_addEventFilter(comm, XEVENT_ALL, XDataFrameComm_EvnetHandCb,comm);
+	//XObject_addEventFilter(comm, XEVENT_ALL, XDataFrameComm_EvnetHandCb,comm);
 
 	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm,XDFC_FRAME_END_TIMEOUT);
@@ -303,7 +303,7 @@ XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t t
 	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
 	if (ev == NULL)
 		return NULL;
-	XEvent_init(ev, object, eventCode, timestamp);
+	XEvent_init(ev, eventCode);
 	
 	if(!ref_count)
 	{
@@ -317,7 +317,7 @@ XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t t
 		ev->frame = frame;
 	}
 	ev->ref_count = ref_count;
-	ev->m_class.deinit = XEventRecvFrame_deinit;
+	//ev->m_class.deinit = XEventRecvFrame_deinit;
 	return ev;
 }
 XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t timestamp, XByteArray* frame, void* funcCode)
@@ -325,13 +325,13 @@ XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t tim
 	XEventFuncCode* ev = XMemory_malloc(sizeof(XEventFuncCode));
 	if (ev == NULL)
 		return NULL;
-	XEvent_init(ev, object, eventCode, timestamp);
+	XEvent_init(ev, eventCode);
 	ev->m_class.frame = frame;
 	ev->funcCode = funcCode;
 	return ev;
 }
 //接收到完整帧事件
-void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
+void XDataFrameComm_EvnetFrame_ReceivedCb(XEvent* event)
 {
 	XEventRecvFrame* ev = event;
 	XByteArray* frame = ev->frame;
@@ -359,23 +359,23 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEventMin* event)
 		XPrintf("\nString接收帧:%s\n", XContainerDataPtr(frame));
 	}
 #endif // XDFC_RECV_FRAME_STR_SHOW
-	XDataFrameComm* comm = event->receiver;
+	XDataFrameComm* comm =NULL;
 	void* funcCode = XFuncCodeMap_createCode(comm->m_funcCodeMap);
-	if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, funcCode) && XDataFrameComm_postEvent(comm, XEventFuncCode_create(event->receiver, XDFC_EXECUTE, 0, frame, funcCode))))
-	{//没有功能码处理或获取失败 直接释放
-		XVector_delete_base(frame);
-		XFuncCodeMap_deleteCode(funcCode);
-	}
+	//if (!(comm->m_funcCodeMap != NULL && !XFuncCodeMap_isEmpty_base(comm->m_funcCodeMap) && comm->m_getFuncCode != NULL && comm->m_getFuncCode(comm, frame, funcCode) && XDataFrameComm_postEvent(comm, XEventFuncCode_create(event->receiver, XDFC_EXECUTE, 0, frame, funcCode))))
+	//{//没有功能码处理或获取失败 直接释放
+	//	XVector_delete_base(frame);
+	//	XFuncCodeMap_deleteCode(funcCode);
+	//}
 	ev->frame = NULL;//帧数据转移到功能码帧中
-	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
+	XEvent_accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
 //功能码事件回调
-void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
+void XDataFrameComm_EvnetExecuteCb(XEvent* event)
 {
 	//XPrintf("功能码事件\n");
 	XEventFuncCode* ev = event;
 	XByteArray* frame = ev->m_class.frame;
-	XDataFrameComm* comm = event->userData;
+	XDataFrameComm* comm = NULL;
 	XFuncCodeNode* node = NULL;
 	if (comm->m_funcCodeMap != NULL)
 	{
@@ -385,7 +385,7 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 	{
 		ev->m_class.frame = NULL;
 		XVector_delete_base(frame);//释放帧数据以免内存泄露
-		XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
+		XEvent_accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 		return;
 	}
 	if(node->cb!=NULL)
@@ -393,15 +393,16 @@ void XDataFrameComm_EvnetExecuteCb(XEventMin* event)
 	ev->m_class.frame = NULL;
 	ev->funcCode = NULL;
 	XVector_delete_base(frame);//释放帧数据以免内存泄露
-	XEvent_Accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
+	XEvent_accept(ev);//事件回调函数中不能直接释放事件，接受后调度器会释放
 }
-bool XDataFrameComm_postEvent(XDataFrameComm* comm, XEventMin* ev)
+bool XDataFrameComm_postEvent(XDataFrameComm* comm, XEvent* ev)
 {
 	if (comm == NULL || ev == NULL)
 		return false;
-	if(!XObject_postEvent(comm,ev, XEVENT_PRIORITY_NORMAL))
+	XCoreApplication_postEvent(comm, ev, XEVENT_PRIORITY_NORMAL);
+	//if(!)
 	{//添加失败，队列满了
-		XEvent_delete(ev);
+		XEvent_delete_base(ev);
 #if XDFC_QUEUE_FULL_SHOW
 		XPrintf("事件队列溢出当前最大:%d,建议增大队列,调整:XDFC_EVENT_QUEUE_COUNT\n", XDFC_EVENT_QUEUE_COUNT);
 #endif
@@ -413,7 +414,7 @@ void* XDataFrameComm_frameReceived_signal(XDataFrameComm* comm, XByteArray* data
 {
 	XEmitSignal(comm, XDataFrameComm_frameReceived_signal, XByteArray_create_copy(data), XByteArray_delete_base, ref_count, XEVENT_PRIORITY_NORMAL);
 }
-void XDataFrameComm_EvnetHandCb(XEventMin* event)
+void XDataFrameComm_EvnetHandCb(XEvent* event)
 {
 #if XDFC_EVENT_HANDLE_SHOW
 #if XDFC_ENUM_TO_STRING
@@ -422,12 +423,12 @@ void XDataFrameComm_EvnetHandCb(XEventMin* event)
 	XPrintf("准备处理事件:%d\n", eEvent);
 #endif
 #endif // MB_EVENT_SHOH
-	switch (event->code)
+	switch (event->type)
 	{
 		//case XDFC_READY:break;
 		case XDFC_FRAME_RECEIVED:XDataFrameComm_EvnetFrame_ReceivedCb(event); break;
 		case XDFC_EXECUTE:XDataFrameComm_EvnetExecuteCb(event); break;
 		//case XDFC_FRAME_SENT:break;
-		default:XEvent_Accept(event); break;
+		default:XEvent_accept(event); break;
 	}
 }

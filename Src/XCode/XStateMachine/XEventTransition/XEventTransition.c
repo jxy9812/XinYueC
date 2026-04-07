@@ -3,7 +3,7 @@
 #include "XMemory.h"
 static void XEventTransition_deinit(XEventTransition* transition);
 // 事件过滤回调函数
-static bool eventFilterCallback(XObject* object, XEventMin* event, void* userData) {
+static bool eventFilterCallback(XObject* object, XEvent* event, void* userData) {
     XEventTransition* transition = (XEventTransition*)userData;
     XStateMachine* machine = (XStateMachine*)object;
 
@@ -64,11 +64,11 @@ void XEventTransition_setEventType(XEventTransition* transition, XEventType even
     }
 }
 
-bool XEventTransition_processEvent(XEventTransition* transition, XStateMachine* machine, const XEventMin* event) {
+bool XEventTransition_processEvent(XEventTransition* transition, XStateMachine* machine, const XEvent* event) {
     if (!transition || !machine || !event) return false;
 
     // 检查事件类型是否匹配
-    if (event->code != transition->m_eventType) {
+    if (event->type != transition->m_eventType) {
         return false;
     }
 

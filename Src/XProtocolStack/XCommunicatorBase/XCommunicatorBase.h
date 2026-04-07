@@ -53,7 +53,7 @@ bool XCommunicatorBase_sendAsync_base(XCommunicatorBase* comm, const void* data,
 bool XCommunicatorBase_recvAsync_base(XCommunicatorBase* comm, size_t maxSize); // 异步接收
 void XCommunicatorBase_setOption_base(XCommunicatorBase* comm, int optionId, const void* value, size_t size);
 void XCommunicatorBase_getOption_base(XCommunicatorBase* comm, int optionId, void* value, size_t* size);
-#define XCommunicatorBase_delete_base			XObject_delete_base
+#define XCommunicatorBase_delete_base			XObject_deleteLater
 #define XCommunicatorBase_poll_base				XObject_poll_base
 /*										信号											*/	
 void* XCommunicatorBase_connect_signal(XCommunicatorBase* comm);

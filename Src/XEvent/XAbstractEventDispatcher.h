@@ -25,12 +25,12 @@ extern "C" {
 #include "XTimer.h"
 #include <stdint.h>
 #include <stdbool.h>
-
 // 前向声明
 struct XAbstractNativeEventFilter;
 typedef struct XAbstractEventDispatcherPrivate
 {
     XVector* nativeFilters;///< 本地事件过滤器列表
+    XVector* m_timerIds;//定时器id数组
     XMutex* mutex;              ///< 保护 timers, sockets, nativeFilters 的互斥锁
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
@@ -47,7 +47,7 @@ typedef int64_t XDuration;
 /**
  * @brief 定时器唯一标识符。
  */
-typedef uint64_t XTimerId;
+typedef size_t XTimerId;
 
 #define XTIMER_ID_INVALID ((XTimerId)0)
 

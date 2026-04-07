@@ -70,7 +70,7 @@ static void ThreadFunction(void* arg)
 	}
 	// 运行事件循环
 	if (Object->loopLevel > 0 && Object->m_eventLoop) {
-		XEventLoop_exec_base(Object->m_eventLoop);
+		XEventLoop_exec(Object->m_eventLoop);
 	}
 	// 标记线程结束并释放信号量
 	Object->m_finished = true;
@@ -212,7 +212,7 @@ static void VXThread_requestInterruption(XThread* Object) {
 	Object->m_interruptionRequested = true;
 	// 唤醒事件循环（如果存在）
 	if (Object->m_eventLoop) {
-		XEventLoop_wakeUp_base(Object->m_eventLoop);
+		XEventLoop_wakeUp(Object->m_eventLoop);
 	}
 	// 发送任务通知唤醒线程
 	if (Object->m_handle != 0) {

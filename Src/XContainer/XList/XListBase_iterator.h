@@ -16,7 +16,7 @@ typedef struct XListBase_iterator
 //bool XListBase_iterator_isEnd(const XListBase_iterator* it);
 //void XListBase_iterator_add(XListBase* this_set, XListBase_iterator* it);
 //bool XListBase_iterator_equality(XListBase_iterator* itFirst, XListBase_iterator* itSecond);
-//void XListBase_iterator_for_each(XListBase* this_set, XFor_each ForFunction, void* args);
+//void XListBase_iterator_for_each(XListBase* this_set, XFor_each ForFunction, void* argList);
 //void* XListBase_iterator_data(XListBase_iterator* it);
 #ifdef __cplusplus
 }

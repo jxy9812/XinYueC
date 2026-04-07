@@ -1,13 +1,22 @@
-#include"XVarList.h"
+ï»¿#include"XVarList.h"
 #include"XMemory.h"
 #include<stdarg.h>
 #include<string.h>
+void XVarList_delete(XVarList* list)
+{
+    if (list)
+    {
+        if (list->del)
+            list->del(list);
+        XDelete(list);
+    }
+}
 XVarList* XVarList_create(uint8_t count, ...)
 {
     if (count % 2 == 1)
         return NULL;
-    va_list ap;       // ÉùÃ÷²ÎÊıÖ¸Õë
-    va_start(ap, count);  // ³õÊ¼»¯ ap£¬Ö¸ÏòµÚÒ»¸ö¿É±ä²ÎÊı
+    va_list ap;       // å£°æ˜å‚æ•°æŒ‡é’ˆ
+    va_start(ap, count);  // åˆå§‹åŒ– apï¼ŒæŒ‡å‘ç¬¬ä¸€ä¸ªå¯å˜å‚æ•°
     size_t sumTypeSize = 0;
     for (int i = 0; i < count; i++) 
     {
@@ -15,15 +24,16 @@ XVarList* XVarList_create(uint8_t count, ...)
             sumTypeSize += va_arg(ap, int);
         else 
             va_arg(ap, void*);
-        //printf("%d\t", va_arg(ap, int));  // »ñÈ¡ int ÀàĞÍ²ÎÊı£¬ÀÛ¼Ó
+        //printf("%d\t", va_arg(ap, int));  // è·å– int ç±»å‹å‚æ•°ï¼Œç´¯åŠ 
     }
-    va_end(ap);  // ½áÊø·ÃÎÊ
-    uint8_t* list = XMemory_malloc(sumTypeSize+sizeof(uint8_t*));
-    XVarList_start(list);//Ö¸Ïò¿ªÍ·
-    uint8_t* ptr = list+sizeof(uint8_t*);
+    va_end(ap);  // ç»“æŸè®¿é—®
+    uint8_t* list = XMemory_malloc(sumTypeSize+sizeof(uint8_t*)*2);
+    XVarList_setArgsDel(list,NULL);
+    XVarList_start(list);//æŒ‡å‘å¼€å¤´
+    uint8_t* ptr = *((uint8_t**)list);
     //void* data = NULL;
     size_t typeSize = 0;
-    va_start(ap, count);  // ³õÊ¼»¯ ap£¬Ö¸ÏòµÚÒ»¸ö¿É±ä²ÎÊı
+    va_start(ap, count);  // åˆå§‹åŒ– apï¼ŒæŒ‡å‘ç¬¬ä¸€ä¸ªå¯å˜å‚æ•°
     for (int i = 0; i < count; i++)
     {
         if (i % 2 == 1)
@@ -37,6 +47,6 @@ XVarList* XVarList_create(uint8_t count, ...)
             typeSize=va_arg(ap,int);
         }
     }
-    va_end(ap);  // ½áÊø·ÃÎÊ
+    va_end(ap);  // ç»“æŸè®¿é—®
 	return list;
 }

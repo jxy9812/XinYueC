@@ -45,8 +45,8 @@ XSocketNotifier* XSocketNotifier_createWithSocket(XSocketDescriptor socket, XSoc
 /**
  * @brief 析构
  */
-#define  XSocketNotifier_delete XObject_delete_base
-#define  XSocketNotifier_deinit XObject_deinit_base
+#define  XSocketNotifier_delete XObject_deleteLater
+#define  XSocketNotifier_deinit XObject_deinitLater
 
 /**
  * @brief 设置要监控的 socket

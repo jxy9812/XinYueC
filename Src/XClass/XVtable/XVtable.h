@@ -6,6 +6,7 @@ extern "C" {
 #include<stdio.h>
 #include<stdbool.h>
 #include<stdint.h>
+#include <stddef.h>
 #include"XTypes.h"
 typedef struct 
 {
@@ -42,6 +43,10 @@ void* XVtable_at(XVtable* this_vtable, size_t index);
 #define XCLASS_DEFINE_EXTEND_END(Class,Parent)    XCLASS_VTABLE_GET_SIZE(Class)=XCLASS_VTABLE_GET_SIZE(Parent)};
 //获取类虚函数表大小
 #define XCLASS_VTABLE_GET_SIZE(Class)   E##Class##_END_SIZE
+
+// 简化版 container_of，兼容 MSVC 和 GCC
+#define container_of(ptr, type, member) \
+    ((type *)((char *)(ptr) - offsetof(type, member)))
 #ifdef __cplusplus
 }
 #endif

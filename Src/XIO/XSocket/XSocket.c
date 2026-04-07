@@ -3,43 +3,43 @@
 #include"XString.h"
 #include"XTimer.h"
 #include"XEvent.h"
-#include"XEventDispatcher.h"
+#include"XEventLoop.h"
 #include<string.h>
 #include<stdarg.h>
 void VXSocketBase_waitForConnected(XSocketBase* so, int msecs);
 void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs);
 //写入事件回调
-static void WriteEventCB(XEventMin* event)
+static void WriteEventCB(XEvent* event)
 {
-    XSocket* so = event->receiver;
+   /* XSocket* so = event->receiver;
     if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTING_STATE)
     {
         ((XSocketBase*)so)->m_state = XSOCKET_CONNECTED_STATE;
         XSocket_stateChanged_signal(so, ((XSocketBase*)so)->m_state);
         XSocket_connected_signal(so);
-    }
+    }*/
 
 }
 //读取事件回调
-static void ReadEventCB(XEventMin* event)
+static void ReadEventCB(XEvent* event)
 {
-    XSocket* so = event->receiver;
+   /* XSocket* so = event->receiver;
     if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTED_STATE)
     {
         XIODevice_readyRead_signal(so);
-    }
+    }*/
 }
 //错误事件回调
-static void ErrorEventCB(XEventMin* event)
+static void ErrorEventCB(XEvent* event)
 {
-    XSocket* so = event->receiver;
+    /*XSocket* so = event->receiver;
     if (((XSocketBase*)so)->m_state == XSOCKET_CONNECTED_STATE)
     {
         ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
         XSocket_disconnected_signal(so);
         XSocket_stateChanged_signal(so, XSOCKET_UNCONNECTED_STATE);
         XIODevice_close_base(so);
-    }
+    }*/
 }
 
 void XSocketBase_init(XSocketBase* socket)
@@ -54,9 +54,9 @@ void XSocketBase_init(XSocketBase* socket)
 
     //XObject_setPollingInterval(socket,50);
     // return;
-    XObject_addEventFilter(socket, XEVENT_WRITE, WriteEventCB, NULL);
+    /*XObject_addEventFilter(socket, XEVENT_WRITE, WriteEventCB, NULL);
     XObject_addEventFilter(socket, XEVENT_READY, ReadEventCB, NULL);
-    XObject_addEventFilter(socket, XEVENT_ERROR, ErrorEventCB, NULL);
+    XObject_addEventFilter(socket, XEVENT_ERROR, ErrorEventCB, NULL);*/
 }
 
 void XSocket_connectToHost_base(XSocketBase* socket, const char* hostName, uint16_t port, XIODeviceBaseMode mode)
@@ -165,19 +165,19 @@ void VXSocketBase_waitForConnected(XSocketBase* so, int msecs)
     if (!so || so->m_state != XSOCKET_CONNECTING_STATE) return;
     XEventLoop* loop = XEventLoop_create();
     XTimer* timer = NULL;
-    XObject_connect(so, XSignal(XSocket_connected_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+    //XObject_connect(so, XSignal(XSocket_connected_signal), loop, XEventLoop_quit, XConnectionType_Auto);
     if (msecs > 0)
     {
         timer = XTimer_create();
         XTimer_setInterval_base(timer, msecs);
         XTimer_setTimeout_base(timer, msecs);
         XTimerBase_setSingleShote(timer, true);
-        XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+        //XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
         XTimer_start_base(timer);
     }
     if (so->m_state == XSOCKET_CONNECTING_STATE)
     {
-        XEventLoop_exec_base(loop);
+        XEventLoop_exec(loop);
     }
     else
     {
@@ -192,19 +192,19 @@ void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs)
 
     XEventLoop* loop = XEventLoop_create();
     XTimer* timer = NULL;
-    XObject_connect(so, XSignal(XSocket_disconnected_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+    //XObject_connect(so, XSignal(XSocket_disconnected_signal), loop, XEventLoop_quit, XConnectionType_Auto);
     if (msecs > 0)
     {
         timer = XTimer_create();
         XTimer_setInterval_base(timer, msecs);
         XTimer_setTimeout_base(timer, msecs);
         XTimerBase_setSingleShote(timer, true);
-        XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+        //XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
         XTimer_start_base(timer);
     }
     if (so->m_state == XSOCKET_CONNECTED_STATE)
     {
-        XEventLoop_exec_base(loop);
+        XEventLoop_exec(loop);
     }
     else
     {

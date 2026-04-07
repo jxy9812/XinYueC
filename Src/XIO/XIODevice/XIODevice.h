@@ -58,7 +58,7 @@ typedef struct XIODevice
 XVtable* XIODevice_class_init();
 XIODevice* XIODevice_create();
 void XIODevice_init(XIODevice* io);
-#define XIODevice_delete_base		XObject_delete_base
+#define XIODevice_delete_base		XObject_deleteLater
 #define XIODevice_poll_base         XObject_poll_base
 // —————— Public API ——————
 XIODeviceBaseMode XIODevice_openMode(const XIODevice* self);

@@ -7,11 +7,11 @@ extern "C" {
 #include"XTreeObject.h"
 #include"XCompare.h"
 //23树-获取父节点
-#define XTTTree_GetParent(this_root)			(*XTreeNode_getNodeRef(this_root, XTreeParent))
+#define XTTTree_GetParent(this_root)			(*XTreeNode_getNodeRef(this_root,XTreeParent))
 //23树-获取节点,0是指向父节点
 #define XTTTree_GetNode(this_root,nSel，node)	(*XTTTree_Node(this_root,nSel))
 //23树-设置父节点
-#define XTTTree_SetParent(this_root,nodes)		(*XTreeNode_getNodeRef(this_root, XTreeParent)=nodes)
+#define XTTTree_SetParent(this_root,nodes)		(*XTreeNode_getNodeRef(this_root,XTreeParent)=nodes)
 //23树-设置节点,0是指向父节点
 #define XTTTree_SetNode(this_root,nSel，node)	(*XTTTree_Node(this_root,nSel)=nodes)
 

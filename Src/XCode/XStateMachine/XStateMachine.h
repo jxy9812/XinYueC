@@ -46,8 +46,8 @@ void XStateMachine_init(XStateMachine* machine);
  * @brief 销毁状态机
  * @param m_machine 状态机实例
  */
-#define XStateMachine_delete_base       XObject_delete_base
-#define XStateMachine_deinit_base       XObject_deinit_base
+#define XStateMachine_delete_base       XObject_deleteLater
+#define XStateMachine_deinit_base       XObject_deinitLater
 
 /**
  * @brief 设置初始状态
@@ -116,7 +116,7 @@ XStateMachineStatus XStateMachine_status(const XStateMachine* machine);
  * @param event 要处理的事件
  * @return 
  */
-void XStateMachine_handleEventCB(const XEventMin* event);
+void XStateMachine_handleEventCB(const XEvent* event);
 
 /**
  * @brief 执行状态转换

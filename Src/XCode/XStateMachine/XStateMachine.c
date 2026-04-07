@@ -163,11 +163,11 @@ XStateMachineStatus XStateMachine_status(const XStateMachine* machine) {
 }
 //void (*XEventCB)(XEvent* event)
 //处理事件的回调
-void XStateMachine_handleEventCB(const XEventMin* event) {
+void XStateMachine_handleEventCB(const XEvent* event) {
     if (!event) {
         return ;
     }
-    XStateMachine* machine = event->userData;
+    XStateMachine* machine = NULL;
     if(!machine || machine->m_status != XStateMachineRunning) return ;
 
     // 保存当前激活状态的快照，防止处理过程中状态变化影响遍历

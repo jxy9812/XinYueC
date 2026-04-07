@@ -19,7 +19,7 @@ typedef struct XMapBase_iterator
 //bool XMapBase_iterator_isEnd(const XMapBase_iterator* it);
 //void XMapBase_iterator_add(XMapBase* this_set, XMapBase_iterator* it);
 //bool XMapBase_iterator_equality(XMapBase_iterator* itFirst, XMapBase_iterator* itSecond);
-//void XMapBase_iterator_for_each(XMapBase* this_set, XFor_each ForFunction, void* args);
+//void XMapBase_iterator_for_each(XMapBase* this_set, XFor_each ForFunction, void* argList);
 //void* XMapBase_iterator_data(XMapBase_iterator* it);
 #ifdef __cplusplus
 }

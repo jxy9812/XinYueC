@@ -426,7 +426,7 @@ bool  XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue);
  * @param vector 目标XVector（存储字符串数据）
  * @param appendNull 是否追加空字符('\0')
  * @param format 格式化字符串
- * @param args 可变参数列表
+ * @param argList 可变参数列表
  * @return 构造成功返回true，失败返回false
  * @note 用于实现字符串的格式化构建，通常不直接调用
  */

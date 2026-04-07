@@ -31,7 +31,8 @@ extern "C" {
 typedef struct XVarList
 {
 	uint8_t* ptr;  ///< 当前访问的指针位置，用于遍历元素
-	void* data;    ///< 存储变量数据的起始地址
+    void(*del)(struct XVarList*);//释放方法
+    void* data;    ///< 存储变量数据的起始地址
 } XVarList;
 /**
 * @brief 创建XVarList实例，自动计算参数数量
@@ -44,13 +45,17 @@ typedef struct XVarList
 * @brief 释放XVarList实例占用的内存
 * 本质是调用XMemory_free，用于统一内存释放接口
 */
-#define XVarList_delete          XMemory_free
+void  XVarList_delete(XVarList*list);
+//设置参数删除函数
+#define XVarList_setArgsDel(list,d)       (((XVarList*)list)->del = d)
+//参数删除函数
+#define XVarList_argsDel(list)            ((XVarList*)list)->del
 /**
 * @brief 初始化XVarList的指针，使其指向数据起始位置
 * 将ptr成员设置为数据区域的起始地址（跳过内部指针存储区）
 * @param list XVarList实例指针
 */
-#define XVarList_start(list)     *((uint8_t**)list) = (uint8_t*)list + sizeof(uint8_t*)
+#define XVarList_start(list)     *((uint8_t**)list) = (uint8_t*)list + sizeof(uint8_t*)*2
 /**
 * @brief 获取当前指针指向的参数地址
 * @param list XVarList实例指针
@@ -72,6 +77,12 @@ typedef struct XVarList
 * @return 当前指针指向的指定类型变量值
 */
 #define XVarList_arg(list, type) *((type*)XVarList_argPtr(list)); XVarList_argOffset(list, type)
+//#define XVarList_arg(list, type) \
+//    ( \
+//        *((type*)XVarList_argPtr(list)), \
+//        (XVarList_argPtr(list) += sizeof(type)), \
+//        *((type*)(XVarList_argPtr(list) - sizeof(type))) \
+//    )
 /**
 * @brief 创建XVarList实例
 * 接收参数数量和由XVar宏包装的参数列表，内部分配内存并拷贝数据
@@ -80,6 +91,54 @@ typedef struct XVarList
 * @return 新创建的XVarList实例，失败返回NULL
 */
 XVarList* XVarList_create(uint8_t count, ...);
+
+// 现在，所有 XVarList_args_N 宏都变得极其简单和一致
+#define XVarList_args_0(list)
+
+#define XVarList_args_1(list, type1, name1) \
+    XVarList_start(list);\
+    type1 name1 = XVarList_arg(list, type1)
+
+#define XVarList_args_2(list, type1, name1, type2, name2) \
+    XVarList_args_1(list,type1, name1);\
+    type2 name2 = XVarList_arg(list, type2)
+
+#define XVarList_args_3(list, type1, name1, type2, name2, type3, name3) \
+    XVarList_args_2(list, type1, name1, type2, name2);\
+    type3 name3 = XVarList_arg(list, type3)
+
+#define XVarList_args_4(list, type1, name1, type2, name2, type3, name3, type4, name4) \
+    XVarList_args_3(list, type1, name1, type2, name2, type3, name3);\
+    type4 name4 = XVarList_arg(list, type4)
+
+#define XVarList_args_5(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5) \
+    XVarList_args_4(list, type1, name1, type2, name2, type3, name3, type4, name4); \
+    type5 name5 = XVarList_arg(list, type5)
+
+// 6 对参数
+#define XVarList_args_6(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6) \
+    XVarList_args_5(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5); \
+    type6 name6 = XVarList_arg(list, type6)
+
+// 7 对参数
+#define XVarList_args_7(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7) \
+    XVarList_args_6(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6); \
+    type7 name7 = XVarList_arg(list, type7)
+
+// 8 对参数
+#define XVarList_args_8(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7, type8, name8) \
+    XVarList_args_7(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7); \
+    type8 name8 = XVarList_arg(list, type8)
+
+// 9 对参数
+#define XVarList_args_9(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7, type8, name8, type9, name9) \
+    XVarList_args_8(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7, type8, name8); \
+    type9 name9 = XVarList_arg(list, type9)
+
+// 10 对参数
+#define XVarList_args_10(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7, type8, name8, type9, name9, type10, name10) \
+    XVarList_args_9(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7, type8, name8, type9, name9); \
+    type10 name10 = XVarList_arg(list, type10)
 #ifdef __cplusplus
 }
 #endif

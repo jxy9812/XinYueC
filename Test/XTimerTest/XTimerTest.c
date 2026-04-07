@@ -7,6 +7,10 @@
 #include"XEventLoop.h"
 #include"XCoreApplication.h"
 static size_t currentTimer = 0;
+static void deleteCb()
+{
+	XPrintf("触发删除\n");
+}
 static void Callback(void* userData)
 {
 	
@@ -25,7 +29,7 @@ static void  timerSlotFunc(XObject* receiver, void* args, XObject* sender)
 {
 	Callback(NULL);
 	if(receiver)
-		XEventLoop_quit_base(receiver,0);
+		XEventLoop_quit(receiver,0);
 }
 void XTimerTest()
 {
@@ -46,16 +50,18 @@ void XTimerTest()
 		// return;
 		//XTimer_singleShot(100, NULL, timerSlotFunc, XConnectionType_Auto);
 		XEventLoop* loop = XEventLoop_create();
-		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit_base, XConnectionType_Auto);
+		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
 		XObject_connect(timer, XSignal(XTimer_timeout_signal), NULL, Callback, XConnectionType_Auto);
 		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_delete_base, XConnectionType_Auto);
+		XObject_connect(timer, XSignal(XObject_deinit_signal), NULL, deleteCb, XConnectionType_Auto);
 		XTimer_start_base(timer);
 		XPrintf("事件循环等待\n");
-		XEventLoop_exec_base(loop);
+		XEventLoop_exec(loop);
 		XPrintf("事件循环结束\n");
-		
+	
 		XEventLoop_delete_base(loop);
-		//XTimer_delete_base(timer);
+		XTimer_delete_base(timer);
+		XCoreApplication_processEvents(0);
 	}
 
 	XCoreApplication_quit();

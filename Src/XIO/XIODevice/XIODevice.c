@@ -23,7 +23,7 @@ void XIODevice_init(XIODevice* io)
 	memset(((XObject*)io)+1, 0, sizeof(XIODevice)-sizeof(XObject));
 	XObject_init(io);
 	XClassGetVtable(io) = XIODevice_class_init();
-	XObject_addEventFilter(io, XEVENT_FUNC_RUN, XEventFuncRunCB,NULL);
+	//XObject_addEventFilter(io, XEVENT_FUNC_RUN, XEventFunc_handler,NULL);
 }
 XIODeviceBaseMode XIODevice_openMode(const XIODevice* self)
 {

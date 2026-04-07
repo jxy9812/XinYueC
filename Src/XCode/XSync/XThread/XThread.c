@@ -7,10 +7,10 @@
 #include "XHashFunc.h"
 #include "XMutex.h"
 #include "XEventLoop.h"
-#include "XEventDispatcher.h"
+//#include "XEventDispatcher.h"
 #include "XCoreApplication.h"
-static XHashMap*threadMap=NULL;
-static XMutex* mutex=NULL;//互斥锁
+#include "XThreadData.h"
+
 // 初始化 XThread 对象
 void XThread_init(XThread* Object)
 {
@@ -22,21 +22,14 @@ void XThread_init(XThread* Object)
     Object->loopLevel = 0;
     Object->m_priority = XThread_NormalPriority;
     Object->m_stackSize = 512;
-    Object->m_eventLoop = XEventLoop_create();
+    Object->m_data = XThreadData_create(Object);
+    //Object->m_eventLoop = XEventLoop_create();
+    //Object->m_eventLoop->m_dispatcher = Object->m_data->m_dispatcher;
 }
 XThread* XThread_currentThread()
 {
-    if (threadMap == NULL)
-        threadMap = XHashMap_Create(size_t, XThread*, XCompare_size_t);
-    if (mutex == NULL)
-        mutex = XMutex_create();
-    size_t id = XThread_currentThreadId();
-    XMutex_lock(mutex);
-    XThread** ptr=XHashMap_value_base(threadMap, &id);
-    XMutex_unlock(mutex);
-    if(ptr)
-        return *ptr;
-    return NULL;
+    XThreadData* data = XThreadData_current();
+    return data ? data->m_thread:NULL;
 }
 bool XThread_terminate_base(XThread* Object)
 {
@@ -44,28 +37,15 @@ bool XThread_terminate_base(XThread* Object)
 }
 XEventLoop* XThread_currentEventLoop()
 {
-    return XThread_getEventLoop(XThread_currentThread());
+    XThread* th = XThread_currentThread();
+    return th?XThread_eventLoop(th):XCoreApplication_eventLoop();
 }
 XEventDispatcher* XThread_currentDispatcher()
 {
-    return XThread_getDispatcher(XThread_currentThread());
+    XThread* th = XThread_currentThread();
+    return th ? XThread_dispatcher(th) : XCoreApplication_dispatcher();
 }
-void XThread_mapInsert(XThread* Object)
-{
-    if (Object == NULL)return;
-    size_t id = XThread_currentThreadId();
-    XMutex_lock(mutex);
-    XHashMap_insert_base(threadMap, &id, &Object);
-    XMutex_unlock(mutex);
-}
-void XThread_mapRemove(XThread* Object)
-{
-    if (Object == NULL)return;
-    size_t id = XThread_currentThreadId();
-    XMutex_lock(mutex);
-    XHashMap_remove_base(threadMap, &id);
-    XMutex_unlock(mutex);
-}
+
 
 
 // 获取 XThread 句柄
@@ -81,18 +61,16 @@ bool XThread_wait_base(XThread* Object, unsigned long time)
 }
 
 // 获取事件调度器
-XEventDispatcher* XThread_getDispatcher(const XThread* Object)
+XEventDispatcher* XThread_dispatcher(const XThread* Object)
 {
     if (Object)
-        return Object->m_eventLoop? Object->m_eventLoop->m_dispatcher:NULL;
-    return XCoreApplication_getDispatcher();
+        return Object->m_data? Object->m_data->m_dispatcher:NULL;
+    return XCoreApplication_dispatcher();
 }
 
-XEventLoop* XThread_getEventLoop(const XThread* Object)
+XEventLoop* XThread_eventLoop(const XThread* Object)
 {
-    if (Object)
-        return Object->m_eventLoop;
-    return XCoreApplication_getEventLoop();
+    return Object? Object->m_eventLoop:NULL;
 }
 
 // 判断线程是否结束
@@ -134,11 +112,13 @@ void XThread_requestInterruption_base(XThread* Object)
 // 设置事件调度器
 void XThread_setEventDispatcher(XThread* Object, XEventDispatcher* eventDispatcher)
 {
-    if (Object->m_eventLoop == NULL)
-        return;
-    if (Object->m_eventLoop->m_dispatcher != NULL)
+    if (!Object || !eventDispatcher)return;
+    if (Object->m_data && Object->m_data->m_dispatcher)
+        XClass_delete_base(Object->m_data->m_dispatcher);
+    Object->m_data->m_dispatcher=eventDispatcher;
+   /* if (Object->m_eventLoop->m_dispatcher != NULL)
         XEventDispatcher_delete_base(Object->m_eventLoop->m_dispatcher);
-    Object->m_eventLoop->m_dispatcher = eventDispatcher;
+    Object->m_eventLoop->m_dispatcher = eventDispatcher;*/
 }
 
 // 设置线程优先级

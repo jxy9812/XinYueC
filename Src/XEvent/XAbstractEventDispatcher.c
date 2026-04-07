@@ -2,7 +2,11 @@
 #include "XMemory.h"
 #include "XCoreApplication.h"
 #include "XVector.h"
+//#include "XCircularQueueAtomic.h"
 #include "XAbstractNativeEventFilter.h"
+#include "XPriorityMapQueue.h"
+#include "XThreadData.h"
+#include "XThread.h"
 #include <string.h>
 // 前向声明虚函数
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags);
@@ -26,6 +30,7 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 {
     dp->nativeFilters= XVector_Create(void*);
     dp->mutex = XMutex_create();
+    dp->m_timerIds = XVector_Create(XTimerId);
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
@@ -39,6 +44,11 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
     {
         XMutex_delete(dp->mutex);
         dp->mutex = NULL;
+    }
+    if (dp->m_timerIds)
+    {
+        XVector_delete_base(dp->m_timerIds);
+        dp->m_timerIds = NULL;
     }
 }
 
@@ -71,7 +81,6 @@ XVtable* XAbstractEventDispatcher_class_init(void)
         (void*)VXAbstractEventDispatcher_closingDown
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-
 #if SHOWCONTAINERSIZE
     printf("XAbstractEventDispatcher size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -113,9 +122,34 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
 
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags)
 {
-    (void)self; (void)flags;
-    // 纯虚函数，子类必须重写
-    return false;
+    size_t size = 0;
+    //处理事件
+    XMutex_lock(self->d_ptr->mutex);
+    XVector* events = XThreadData_takePostedEvents();
+    for_each_iterator(events, XVector, it)
+    {
+        XPostEvent* ePost = XVector_iterator_data(&it);
+        if (!ePost) continue;
+        // 根据 flags 排除特定事件类型
+        if ((flags & XEventLoop_ExcludeUserInputEvents) && ePost->event->input_event == XEventLoop_ExcludeUserInputEvents)
+        {
+            XCoreApplication_postEvent(ePost->receiver,ePost->event,ePost->priority);
+            continue; // 跳过用户输入事件
+        }
+        if ((flags & XEventLoop_ExcludeSocketNotifiers) && ePost->event->type == XEVENT_TYPE_SOCK_ACT) {
+            XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
+            continue; // 跳过 socket 事件
+        }
+        if ((flags & XEventLoop_X11ExcludeTimers) && ePost->event->type == XEVENT_TYPE_TIMER) {
+            XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
+            continue; // 跳过定时器事件
+        }
+       if(XCoreApplication_sendEvent(ePost->receiver, ePost->event))++size;
+    }
+    XVector_delete_base(events);
+    XMutex_unlock(self->d_ptr->mutex);
+
+    return size;
 }
 
 static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
@@ -325,8 +359,19 @@ XTimerId XAbstractEventDispatcher_registerTimer(
 {
     if (ISNULL(self, "")) return XTIMER_ID_INVALID;
     static XAtomic_uint64_t s_nextTimerId = {.value=1};
-    //XTimerId id = 0;
-    XTimerId id = XAtomic_fetch_add_size_t(&s_nextTimerId, 1);
+    XTimerId id = 0;
+    XMutex_lock(self->d_ptr->mutex);
+    if(XVector_isEmpty_base(self->d_ptr->m_timerIds))
+    {
+        id = XAtomic_fetch_add_size_t(&s_nextTimerId, 1);
+    }
+    else
+    {
+        id = XVector_Back_Base(self->d_ptr->m_timerIds, XTimerId);
+        XVector_pop_back_base(self->d_ptr->m_timerIds);
+    }
+    XMutex_unlock(self->d_ptr->mutex);
+    
     if (id == 0) id = XAtomic_fetch_add_size_t(&s_nextTimerId, 1); // 避免 0
     XAbstractEventDispatcher_registerTimer_base(self, id, interval, timerType, object);
     return id;
@@ -334,15 +379,9 @@ XTimerId XAbstractEventDispatcher_registerTimer(
 
 XAbstractEventDispatcher* XAbstractEventDispatcher_instance(XThread* thread)
 {
-    // 从线程或全局应用获取当前调度器
-    //if (thread == NULL) {
-    //    thread = XThread_currentThread();
-    //}
-    //if (thread) {
-    //    return (XAbstractEventDispatcher*)XThread_getDispatcher((XThread*)thread);
-    //}
-    //return (XAbstractEventDispatcher*)XCoreApplication_getEventDispatcher();
-    return NULL;
+    if(thread)
+        return (XAbstractEventDispatcher*)XThread_dispatcher((XThread*)thread);
+    return XCoreApplication_dispatcher();
 }
 
 // ===================================================================

@@ -5,7 +5,7 @@
 #include "XString.h"
 #include "XEvent.h"
 //#include "XTimer.h"
-#include "XEventDispatcher.h"
+//#include "XEventDispatcher.h"
 #include "XPrintf.h"
 #include "XCoreApplication.h"
 #include <string.h>
@@ -470,7 +470,7 @@ void VXIODevice_poll(XSocket* so)
     //        if (netEvents->iErrorCode[FD_CONNECT_BIT] != 0) {
     //            // 连接错误
     //           /* XEvent* event = XEvent_create(so, XEVENT_SOCKET_ERROR, XTimerBase_getCurrentTime());
-    //            XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);*/
+    //            XEventDispatcher_postEvent_base(XObject_eventDispatcher(so), event);*/
     //            if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
     //            {
     //                ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
@@ -480,7 +480,7 @@ void VXIODevice_poll(XSocket* so)
     //        else {
     //            // 连接成功
     //           /* XEvent* event = XEvent_create(so,XEVENT_SOCKET_CONNECTED, XTimerBase_getCurrentTime());
-    //            XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);*/
+    //            XEventDispatcher_postEvent_base(XObject_eventDispatcher(so), event);*/
     //            if (((XSocketBase*)so)->m_state != XSOCKET_CONNECTED_STATE)
     //            {
     //                ((XSocketBase*)so)->m_state = XSOCKET_CONNECTED_STATE;
@@ -494,7 +494,7 @@ void VXIODevice_poll(XSocket* so)
     //        // 连接关闭
     //       // XEvent* event = XEvent_create(so, XEVENT_SOCKET_DISCONNECTED, XTimerBase_getCurrentTime());
     //       //// event->userData = eventData;
-    //       // XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
+    //       // XEventDispatcher_postEvent_base(XObject_eventDispatcher(so), event);
     //        if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
     //        {
     //            ((XSocketBase*)so)->m_state = XSOCKET_UNCONNECTED_STATE;
@@ -509,7 +509,7 @@ void VXIODevice_poll(XSocket* so)
     //        XIODevice_readyRead_signal(so);
     //        //XEvent* event = XEvent_create(so, XEVENT_SOCKET_DATA_READY, XTimerBase_getCurrentTime());
     //        ////event->userData = eventData;
-    //        //XEventDispatcher_postEvent_base(XObject_getEventDispatcher(so), event);
+    //        //XEventDispatcher_postEvent_base(XObject_eventDispatcher(so), event);
     //    }
 
     //    // 可以添加对FD_WRITE事件的处理...
@@ -617,7 +617,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
     while (addr)
     {
         if (so->m_socket != INVALID_SOCKET) {
-            XCoreApplication_removeFd(so->m_socket);
+            //XCoreApplication_removeFd(so->m_socket);
             shutdown(so->m_socket, SD_BOTH);
             closesocket(so->m_socket);
             so->m_socket = INVALID_SOCKET;
@@ -639,7 +639,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
             addr = addr->ai_next;
             continue;
         }
-        XCoreApplication_addFd(so, so->m_socket, XEVENT_READY| XEVENT_WRITE);
+        //XCoreApplication_addFd(so, so->m_socket, XEVENT_READY| XEVENT_WRITE);
         
         // 注册网络事件
        /* long events = FD_READ | FD_WRITE | FD_CLOSE | FD_CONNECT;
@@ -738,7 +738,7 @@ bool VXIODevice_close(XSocket* so)
   
     // 关闭套接字相关资源
     if (so->m_socket != INVALID_SOCKET) {
-        XCoreApplication_removeFd(so->m_socket);
+        //XCoreApplication_removeFd(so->m_socket);
         shutdown(so->m_socket, SD_BOTH);
         closesocket(so->m_socket);
         so->m_socket = INVALID_SOCKET;

@@ -18,7 +18,7 @@ typedef struct XSetBase_iterator
 //bool XSetBase_iterator_isEnd(const XSetBase_iterator* it);
 //void XSetBase_iterator_add(XSet* this_set, XSetBase_iterator* it);
 //bool XSetBase_iterator_equality(XSetBase_iterator* itFirst, XSetBase_iterator* itSecond);
-//void XSetBase_iterator_for_each(XSet* this_set, XFor_each ForFunction, void* args);
+//void XSetBase_iterator_for_each(XSet* this_set, XFor_each ForFunction, void* argList);
 //void* XSetBase_iterator_data(XSetBase_iterator* it);
 #ifdef __cplusplus
 }

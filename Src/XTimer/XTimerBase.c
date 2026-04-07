@@ -138,7 +138,7 @@ bool XTimerBase_isAutoDelete(XTimerBase* timer)
 //XTimerGroupBase* XTimerBase_getTimerGroup(XTimerBase* timer)
 //{
 //	if (timer)
-//		return XObject_getParent(timer);
+//		return XObject_parent(timer);
 //	return NULL;
 //}
 void XTimerBase_out_base(XTimerBase* timer)

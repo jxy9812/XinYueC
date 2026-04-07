@@ -5,9 +5,8 @@
 #include"XMemory.h"
 #include"XObject.h"
 #include"XEventLoop.h"
+#include"XEventDispatcher_win_p.h"
 #include <windows.h>
-void XThread_mapInsert(XThread* Object);
-void XThread_mapRemove(XThread* Object);
 
 static bool VXThread_start(XThread* Object);
 static bool VXThread_wait(XThread* Object, unsigned long time);
@@ -54,13 +53,13 @@ XVtable* XThread_class_init()
 static DWORD WINAPI ThreadFunction(LPVOID lpParam) 
 {
     XThread* Object = (XThread*)lpParam;
-    XThread_mapInsert(Object);
+    //XThread_mapInsert(Object);
     //运行函数
     if (Object->m_start_routine)
         Object->m_start_routine(Object->m_arg);
     //运行事件调度
-    if(Object->loopLevel)
-        XEventLoop_exec_base(Object->m_eventLoop);
+   /* if(Object->loopLevel)
+        XEventLoop_exec(Object->m_eventLoop);*/
  /*   if (Object->m_eventDispatcher->m_Objects && !XSetBase_isEmpty_base(Object->m_eventDispatcher->m_Objects))
     {
         while (!(Object->m_interruptionRequested))
@@ -69,7 +68,7 @@ static DWORD WINAPI ThreadFunction(LPVOID lpParam)
         }
     }*/
     Object->m_finished = true;
-    XThread_mapRemove(Object);
+    //XThread_mapRemove(Object);
     return 0;
 }
 
@@ -202,8 +201,7 @@ void VXThread_deinit(XThread* Object)
         CloseHandle(Object->m_handle);
         Object->m_handle = NULL;
     }
-    if (Object->m_eventLoop)
-        XEventLoop_delete_base(Object->m_eventLoop);
+    
     //XMemory_free(Object);
 }
 
@@ -226,5 +224,9 @@ XThread* XThread_create(void (*start_routine)(void*), void* arg)
     XThread_currentThread();//初始化
 
     return Object;
+}
+XAbstractEventDispatcher* XEventDispatcher_create()
+{
+    return XEventDispatcherWin32_create(NULL);
 }
 #endif

@@ -5,20 +5,21 @@
 #include"XCoreApplication.h"
 #include <stdarg.h>
 #include"XVarList.h"
-#include"XEventDispatcher_win_p.h"
+#include"XThread.h"
 int main(int argc, char* args[])
 {
+	//printf("%d\n", XThread_currentThreadId());
 
-	XEventDispatcherWin32_create(NULL);
-	fatfs_test();
+	//XEventDispatcherWin32_create(NULL);
+	//fatfs_test();
 
-	int n = 8,n1=666;
-	XVarList* list=XVarList_Create(XVar(int,n));
-	XVarList_start(list);
-	n = XVarList_arg(list,int);
-	printf("%d\n",n);
-	n = XVarList_arg(list, int);
-	printf("%d\n", n);
+	int n = 8,n1=666,sum=n+n1;
+	char* str = "dadasdsad";
+	XVarList* list=XVarList_Create(XVar(int,n), XVar(int, n1), XVar(char*, str));
+	//XVarList_start(list);
+	XVarList_args_3(list,int,a,int,b, char*,c);
+	printf("%d %d %s\n", a,b,c);
+	
 	XVarList_delete(list);
 
 	XCoreApplication* app = XCoreApplication_create(argc,args);
