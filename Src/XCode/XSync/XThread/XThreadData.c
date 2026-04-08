@@ -85,13 +85,24 @@ void XThreadData_mapRemove(XThreadData* data)
     XMutex_unlock(mutex);
 }
 
-void XThreadData_initMainThread(void) 
+XThreadData* XThreadData_initMainThread(void)
 {
-    XThreadData* data=XThreadData_current();
-    if (data||XMapBase_contains(threadMap,&MainThread))return;
-    data = XThreadData_create(NULL);
+    XMutex_lock(mutex);
+    if (threadMap&&XMapBase_contains(threadMap, &MainThread))
+    {
+        XThreadData** ptr = XHashMap_value_base(threadMap, &MainThread);
+        XMutex_unlock(mutex);
+        if (ptr)
+            return (*ptr);
+        return NULL;
+    }
+    XMutex_unlock(mutex);
+    XThreadData_current();
+    XThreadData*  data = XThreadData_create(NULL);
     XThreadData_mapInsert(data);
     MainThread= XThread_currentThreadId();
+  
+    return data;
 }
 
 void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) {

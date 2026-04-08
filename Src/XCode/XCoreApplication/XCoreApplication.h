@@ -59,14 +59,13 @@ typedef struct XCoreApplication
     bool m_quit;                   // 是否退出标志
     int m_argc;                    // 命令行参数数量
     char** m_argv;                 // 命令行参数数组
-    XStringList m_arguments;
-    XString* m_applicationName;
-    XString* m_version;
-    XString* m_orgName;
-    XString* m_orgDomain;
-    XBitArray m_attribute;
+    //XStringList m_arguments;
+    XString* m_applicationName;//应用程序名称
+    XString* m_version;//应用程序版本号
+    XString* m_orgName;//组织名称
+    XString* m_orgDomain;//组织域名
+    XBitArray m_attribute;//属性位数组
     XEventLoop* m_eventLoop;       // 事件调度器
-    XCommandLineParser* m_cmdParser; // 命令行解析器
 } XCoreApplication;
 
 /**
@@ -175,9 +174,9 @@ bool XCoreApplication_testAttribute(XCoreApplicationAttribute attribute);
 /**
  * @brief 获取命令行参数列表。
  *
- * @return 参数列表。此对象由 XCore 管理，用户不应释放。
+ * @return 参数列表。此对象由 XCore 管理，用户应自己释放。
  */
-const XStringList* XCoreApplication_arguments(void);
+XStringList* XCoreApplication_arguments(void);
 
 /**
  * @brief 获取应用程序可执行文件所在的目录路径。
@@ -243,14 +242,14 @@ void XCoreApplication_postEvent(XObject* receiver, XEvent* event, int priority);
  * @param receiver 如果为 NULL，则发送所有接收者的事件；否则只发送给指定接收者。
  * @param eventType 如果为 0，则发送所有类型的事件；否则只发送指定类型的事件。
  */
-void XCoreApplication_sendPostedEvents(XObject* receiver, int eventType);
+void XCoreApplication_sendPostedEvents(XObject* receiver, XEventType eventType);
 /**
  * @brief 移除指定接收者的所有已投递事件。
  *
  * @param receiver 事件接收者的指针。
  * @param eventType 如果为 0，则移除所有类型的事件；否则只移除指定类型的事件。
  */
-void XCoreApplication_removePostedEvents(XObject* receiver, int eventType);
+void XCoreApplication_removePostedEvents(XObject* receiver, XEventType eventType);
 /* ==================== 事件分发器 ==================== */
 
 /**
@@ -304,129 +303,6 @@ XEventDispatcher* XCoreApplication_dispatcher();
  */
 XEventLoop* XCoreApplication_eventLoop();
 
-
-
-/**
- * @brief 发送信号到事件循环
- * @param sendFunc 信号发送函数
- * @param signalSlot 信号槽
- * @param signal 信号ID
- * @param argList 信号参数
- * @param ref_count 引用计数
- * @param priority 事件优先级
- * @return 成功返回true，失败返回false
- */
-//bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*),
-//    XSignalSlot* signalSlot, size_t signal, void* argList, void(*del)(void*),
-//    XAtomic_int32_t* ref_count, XEventPriority priority);
-
-/**
- * @brief 向事件循环提交函数执行
- * @param receiver 接收者对象
- * @param func 要执行的函数
- * @param argList 函数参数
- * @param priority 事件优先级
- * @return 成功返回true，失败返回false
- */
-//bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* argList, void(*del)(void*), XEventPriority priority);
-
-/**
- * @brief 获取命令行解析器
- * @param app 应用程序实例
- * @return 命令行解析器指针，应用程序为NULL返回NULL
- */
-XCommandLineParser* XCoreApplication_getCommandLineParser(XCoreApplication* app);
-
-/**
- * @brief 向应用程序添加命令行选项
- * @param app 应用程序实例
- * @param shortName 短选项名
- * @param longName 长选项名
- * @param description 选项描述
- * @param requiresValue 是否需要参数值
- * @param isHidden 是否隐藏选项
- * @param defaultValue 默认值
- */
-void XCoreApplication_addCommandLineOption(XCoreApplication* app,
-    const char* shortName,
-    const char* longName,
-    const char* description,
-    bool requiresValue,
-    bool isHidden,
-    const char* defaultValue);
-
-/**
- * @brief 向应用程序添加选项组
- * @param app 应用程序实例
- * @param group 选项组
- */
-void XCoreApplication_addOptionGroup(XCoreApplication* app, XCommandLineOptionGroup* group);
-
-/**
- * @brief 解析命令行参数
- * @param app 应用程序实例
- * @return 解析成功返回true，否则返回false
- */
-bool XCoreApplication_parseCommandLine(XCoreApplication* app);
-
-/**
- * @brief 检查是否存在指定选项
- * @param app 应用程序实例
- * @param option 选项名
- * @return 存在返回true，否则返回false
- */
-bool XCoreApplication_hasOption(XCoreApplication* app, const char* option);
-
-/**
- * @brief 获取选项值
- * @param app 应用程序实例
- * @param option 选项名
- * @return 选项值，不存在返回NULL
- */
-const char* XCoreApplication_getOptionValue(XCoreApplication* app, const char* option);
-
-/**
- * @brief 获取选项出现次数
- * @param app 应用程序实例
- * @param option 选项名
- * @return 出现次数
- */
-int XCoreApplication_optionCount(XCoreApplication* app, const char* option);
-
-/**
- * @brief 获取位置参数列表
- * @param app 应用程序实例
- * @return 位置参数向量
- */
-XVector* XCoreApplication_positionalArguments(XCoreApplication* app);
-
-/**
- * @brief 获取互斥组冲突列表
- * @param app 应用程序实例
- * @return 冲突选项向量
- */
-XVector* XCoreApplication_exclusiveGroupConflicts(XCoreApplication* app);
-
-/**
- * @brief 设置应用程序描述
- * @param app 应用程序实例
- * @param description 描述文本
- */
-void XCoreApplication_setApplicationDescription(XCoreApplication* app, const char* description);
-
-/**
- * @brief 打印帮助信息并退出
- * @param app 应用程序实例
- * @param description 应用程序描述
- */
-void XCoreApplication_printHelpAndExit(XCoreApplication* app, const char* description);
-
-/**
- * @brief 打印版本信息并退出
- * @param app 应用程序实例
- * @param version 版本字符串
- */
-void XCoreApplication_printVersionAndExit(XCoreApplication* app, const char* version);
 
 /**
  * @brief 获取即将退出的信号

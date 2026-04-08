@@ -61,23 +61,22 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     app->m_argv = argv;
     app->m_quit = false;
     app->m_eventLoop = XEventLoop_create();
-    XStringList_init(&app->m_arguments);
     XBitArray_init(&app->m_attribute, XCORE_APPLICATION_ATTRIBUTE_COUNT);
 
 
 
-    // 初始化命令行解析器
-    app->m_cmdParser = XCommandLineParser_create();
+    //// 初始化命令行解析器
+    //app->m_cmdParser = XCommandLineParser_create();
 
-    // 检查关键组件初始化
-    if (!app->m_eventLoop || !app->m_cmdParser) {
-        // 初始化失败，清理资源
-        XEventLoop_delete_base(app->m_eventLoop);
-        XCommandLineParser_delete(app->m_cmdParser);
-        app->m_eventLoop = NULL;
-        app->m_cmdParser = NULL;
-        return;
-    }
+    //// 检查关键组件初始化
+    //if (!app->m_eventLoop || !app->m_cmdParser) {
+    //    // 初始化失败，清理资源
+    //    XEventLoop_delete_base(app->m_eventLoop);
+    //    XCommandLineParser_delete(app->m_cmdParser);
+    //    app->m_eventLoop = NULL;
+    //    app->m_cmdParser = NULL;
+    //    return;
+    //}
 
     // 设置全局实例
     g_app = app;
@@ -90,8 +89,6 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
 void XCoreApplication_delete(XCoreApplication* app) {
     if (!app) return;
 
-    // 释放命令行解析器
-    XCommandLineParser_delete(app->m_cmdParser);
 
     // 释放事件循环
     XEventLoop_delete_base(app->m_eventLoop);
@@ -181,11 +178,16 @@ bool XCoreApplication_testAttribute(XCoreApplicationAttribute attribute)
     return XBitArray_getBit(&app->m_attribute, (size_t)attribute);
 }
 
-const XStringList* XCoreApplication_arguments(void)
+XStringList* XCoreApplication_arguments(void)
 {
     XCoreApplication* app = XCoreApplication_instance();
     if (!app)return NULL;
-    return &app->m_arguments;
+    XStringList* list = XStringList_create();
+    for (size_t i = 0; i < app->m_argc; i++)
+    {
+        XStringList_push_back_utf8(list, app->m_argv[i]);
+    }
+    return list;
 }
 
 const XString* XCoreApplication_applicationDirPath(void)
@@ -197,46 +199,6 @@ const XString* XCoreApplication_applicationFilePath(void)
 {
     return NULL;
 }
-
-void XCoreApplication_addOptionGroup(XCoreApplication* app, XCommandLineOptionGroup* group) {
-    if (app && app->m_cmdParser) {
-        XCommandLineParser_addOptionGroup(app->m_cmdParser, group);
-    }
-}
-
-int XCoreApplication_optionCount(XCoreApplication* app, const char* option) {
-    if (app && app->m_cmdParser) {
-        return XCommandLineParser_optionCount(app->m_cmdParser, option);
-    }
-    return 0;
-}
-
-XVector* XCoreApplication_exclusiveGroupConflicts(XCoreApplication* app) {
-    if (app && app->m_cmdParser) {
-        return XCommandLineParser_exclusiveGroupConflicts(app->m_cmdParser);
-    }
-    return NULL;
-}
-
-void XCoreApplication_setApplicationDescription(XCoreApplication* app, const char* description) {
-    if (app && app->m_cmdParser) {
-        XCommandLineParser_setApplicationDescription(app->m_cmdParser, description);
-    }
-}
-
-void XCoreApplication_addCommandLineOption(XCoreApplication* app,
-    const char* shortName,
-    const char* longName,
-    const char* description,
-    bool requiresValue,
-    bool isHidden,
-    const char* defaultValue) {
-    if (app && app->m_cmdParser) {
-        XCommandLineParser_addOption(app->m_cmdParser, shortName, longName, description,
-            requiresValue, isHidden, defaultValue);
-    }
-}
-
 XEventDispatcher* XCoreApplication_dispatcher() {
     XCoreApplication* app = XCoreApplication_instance();
     return app ? (app->m_eventLoop ? app->m_eventLoop->m_dispatcher : NULL) : NULL;
@@ -296,8 +258,6 @@ bool XCoreApplication_sendEvent(XObject* receiver, XEvent* event)
     if (!receiver || !event) {
         return false;
     }
-    /*XCoreApplication* app = XCoreApplication_instance();
-    if (!app) return false;*/
     // 【核心】将事件分发工作交给 notify
     return XCoreApplication_notify_base(receiver, event);
 }
@@ -307,20 +267,33 @@ void XCoreApplication_postEvent(XObject* receiver, XEvent* event, int priority)
     XThreadData_postEvent(receiver,event,priority);
 }
 
-void XCoreApplication_sendPostedEvents(XObject * receiver, int eventType)
-{}
+void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)
+{
+    //XAbstractEventDispatcher_processEvents_base(XThreadData_initMainThread()->m_dispatcher, XEventLoop_AllEvents);
+}
 
-void XCoreApplication_removePostedEvents(XObject * receiver, int eventType)
-{}
+void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventType)
+{
+
+}
 
 XAbstractEventDispatcher* XCoreApplication_eventDispatcher(void)
 {
-    XThreadData* data = XThreadData_current();
-    return data? data->m_dispatcher:NULL;
+    XCoreApplication* app=XCoreApplication_instance();
+    if (!app || !app->m_eventLoop)return NULL;
+    return app->m_eventLoop->m_dispatcher;
 }
 
 void XCoreApplication_setEventDispatcher(XAbstractEventDispatcher* dispatcher)
 {
+    //未完成，实际要先停止事件循环
+    XThreadData* data = XThreadData_initMainThread();
+    if (!data)return;
+    if (data->m_dispatcher) XObject_deleteLater(data->m_dispatcher);
+    data->m_dispatcher = dispatcher;
+    XCoreApplication* app = XCoreApplication_instance();
+    if (app && app->m_eventLoop)app->m_eventLoop->m_dispatcher = dispatcher;
+
 }
 
 void XCoreApplication_setLibraryPaths(const XStringList* paths)
@@ -336,83 +309,6 @@ void XCoreApplication_addLibraryPath(const XString* path)
 
 void XCoreApplication_removeLibraryPath(const XString * path)
 {}
-
-//bool XCoreApplication_postSendSignal(void(*sendFunc)(XSignalSlot*, size_t, void*),
-//    XSignalSlot* signalSlot, size_t signal, void* argList, void(*del)(void*),
-//    XAtomic_int32_t* ref_count, XEventPriority priority) 
-//{
-//    XCoreApplication* app = XCoreApplication_instance();
-//    if (!app || !app->m_eventLoop)
-//        return false;
-//
-//    return XEventLoop_postSendSignal(app->m_eventLoop, sendFunc, signalSlot, signal,
-//        argList, del,ref_count, priority);
-//}
-
-//bool XCoreApplication_postFunc(XObject* receiver, void(*func)(void*), void* argList, void(*del)(void*), XEventPriority priority) {
-//    XCoreApplication* app = XCoreApplication_instance();
-//    if (!app || !app->m_eventLoop)
-//        return false;
-//
-//    return XEventLoop_postFunc(app->m_eventLoop, receiver, func, argList, del,priority);
-//}
-
-
-XCommandLineParser* XCoreApplication_getCommandLineParser(XCoreApplication* app) {
-    return app ? app->m_cmdParser : NULL;
-}
-
-bool XCoreApplication_parseCommandLine(XCoreApplication* app) {
-    if (!app || !app->m_cmdParser || app->m_argc <= 0 || !app->m_argv)
-        return false;
-
-    return XCommandLineParser_parse(app->m_cmdParser, app->m_argc, app->m_argv);
-}
-
-bool XCoreApplication_hasOption(XCoreApplication* app, const char* option) {
-    if (!app || !app->m_cmdParser || !option)
-        return false;
-
-    return XCommandLineParser_hasOption(app->m_cmdParser, option);
-}
-
-const char* XCoreApplication_getOptionValue(XCoreApplication* app, const char* option) {
-    if (!app || !app->m_cmdParser || !option)
-        return NULL;
-
-    return XCommandLineParser_getOptionValue(app->m_cmdParser, option);
-}
-
-XVector* XCoreApplication_positionalArguments(XCoreApplication* app) {
-    if (!app || !app->m_cmdParser)
-        return NULL;
-
-    return XCommandLineParser_positionalArguments(app->m_cmdParser);
-}
-
-void XCoreApplication_printHelpAndExit(XCoreApplication* app, const char* description) {
-    if (!app || !app->m_cmdParser)
-        return;
-
-    XString* help = XCommandLineParser_helpText(app->m_cmdParser, description);
-    if (help) {
-        XPrintf_string(help);
-        XString_delete_base(help);
-    }
-    XCoreApplication_quit();
-}
-
-void XCoreApplication_printVersionAndExit(XCoreApplication* app, const char* version) {
-    if (!app || !app->m_cmdParser)
-        return;
-
-    XString* ver = XCommandLineParser_versionText(app->m_cmdParser, version);
-    if (ver) {
-        XPrintf_string(ver);
-        XString_delete_base(ver);
-    }
-    XCoreApplication_quit();
-}
 
 void* XCoreApplication_aboutToQuit_signal(XCoreApplication* app) 
 {

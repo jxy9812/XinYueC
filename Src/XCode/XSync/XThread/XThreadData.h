@@ -32,10 +32,11 @@ void XThreadData_init(XThreadData* data,XThread* thread);
 
 // 获取当前线程的 XThreadData
 XThreadData* XThreadData_current(void);
+
 void XThreadData_mapInsert(XThreadData* data);
 void XThreadData_mapRemove(XThreadData* data);
 // 初始化主线程的 XThreadData（由 XCoreApplication 调用）
-void XThreadData_initMainThread(void);
+XThreadData* XThreadData_initMainThread(void);
 
 // 向当前线程投递事件（内部使用）
 void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority);
