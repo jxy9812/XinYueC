@@ -154,7 +154,7 @@ bool XMemory_write_data(uint8_t* write, XByteOrder writeOrder, const uint8_t* in
 * @param obj 目标对象类型（如int、struct xxx等）
 * @return 成功返回对应类型的内存块指针，失败返回NULL
 */
-#define XNew(obj)                      XMemory_malloc(sizeof(obj))
+#define XNew(type)                      (type*)XMemory_malloc(sizeof(type))
 /**
 * @brief 释放内存（封装XMemory_free）
 * @param ptr 待释放的内存块指针

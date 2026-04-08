@@ -10,7 +10,7 @@ extern "C" {
 #include"XSignalSlot.h"
 #include"XAtomic.h"
 #include"XVarList.h"
-
+#include"XNamespace.h"
 /**
  * @brief 开始定义XObject类的虚函数表枚举
  * @note 用于实现C语言中的多态机制，枚举值对应虚函数在表中的索引
@@ -34,13 +34,8 @@ typedef struct XObject
 {
     XClass m_class;                      ///< 继承的基类成员，包含虚函数表指针（实现多态）
 	//XAtomic_bool m_deleteState;          ///< 原子布尔变量：标记对象是否处于删除状态（线程安全）
-	XAtomic_uint32_t m_eventCount;       ///< 原子无符号整数：记录当前待处理的事件数量（用于延迟释放）
-	XSignalSlot* m_signalSlot;           ///< 信号与槽控制器：管理当前对象的所有信号与槽连接关系
-	// 父子关系
-	XObject* parent;
-	XVector* children; // 对象列表
-	XVector* filters;//过滤器列表
-	XThread* m_thread;                   ///< 所属线程指针：对象关联的线程，事件处理在该线程执行
+	XAtomic_uint32_t m_posted_events;       ///< 原子无符号整数：已投递但未处理的事件计数
+	
 	// 对象标志位
 	uint32_t is_widget : 1;         // 是否为窗口部件
 	uint32_t block_sig : 1;         // 信号是否被阻塞
@@ -54,10 +49,16 @@ typedef struct XObject
 	uint32_t will_be_widget : 1;    // 构造时将变为窗口部件
 	uint32_t was_widget : 1;        // 析构时曾是窗口部件
 	uint32_t receive_parent_events : 1; // 是否接收父对象事件
-	uint32_t unused : 19;           // 保留位
-
+	uint32_t unused : 20;           // 保留位
+	XSignalSlot* m_signalSlot;           ///< 信号与槽控制器：管理当前对象的所有信号与槽连接关系
+	// 父子关系
+	XObject* parent;//父对象
+	XVector* children; //子对象列表
+	XObject* sender;              // 发送者对象
+	XVector* filters;//过滤器列表
+	XThread* m_thread;                   ///< 所属线程指针：对象关联的线程，事件处理在该线程执行
 	// 事件与元对象
-	int posted_events;              // 已投递但未处理的事件计数
+	//int posted_events;              // 已投递但未处理的事件计数
 	//void* meta_object;              // 动态元对象数据 (void* 作为占位)
 	//void* binding_storage;          // 绑定存储 (void* 作为占位)
 
@@ -130,22 +131,15 @@ bool XObject_signalsBlocked(const XObject* self);
 // 阻塞或取消阻塞信号，返回之前的阻塞状态
 bool XObject_blockSignals(XObject* self, bool block);
 
-// 获取连接到指定信号的接收者数量
-int XObject_receivers(const XObject* self, const char* signal);
-// 获取当前激活的信号的发送者 (仅在槽函数内有效)
-XObject* XObject_sender(const XObject* self);
-
 // ------------------------
 // 定时器
 // ------------------------
 // 启动一个定时器 (毫秒)
-int XObject_startTimer_ms(XObject* self, int interval, int timerType);
+XTimerId XObject_startTimer_ms(XObject* self, int interval, XTimerType timerType);
 // 启动一个定时器 (纳秒)
-int XObject_startTimer_ns(XObject* self, uint64_t interval_ns, int timerType);
-// 停止一个定时器 (通过ID)
-void XObject_killTimer_id(XObject* self, int id);
+XTimerId XObject_startTimer_ns(XObject* self, uint64_t interval_ns, XTimerType timerType);
 // 停止一个定时器 (通过 TimerId 类型)
-void XObject_killTimer(XObject* self, int timerId);
+void XObject_killTimer(XObject* self, XTimerId timerId);
 
 
 // ------------------------
@@ -157,19 +151,16 @@ void XObject_installEventFilter(XObject* self, XObject* filterObj);
 void XObject_removeEventFilter(XObject* self, XObject* obj);
 
 
+typedef  XVector XObjectList;
 // ------------------------
 // 对象查找
 // ------------------------
 // 查找一个子对象 (通过名称)
-//XObject* XObject_findChild_byName(const XObject* self, const char* name, int options);
-// 查找一个子对象 (无名称，仅通过类型)
-//XObject* XObject_findChild(const XObject* self, int options);
-//// 查找所有匹配的子对象 (通过名称)
-//XObjectList XObject_findChildren_byName(const XObject* self, const char* name, int options);
-//// 查找所有匹配的子对象 (无名称，仅通过类型)
-//XObjectList XObject_findChildren(const XObject* self, int options);
-//// 查找所有匹配的子对象 (通过正则表达式)
-//XObjectList XObject_findChildren_re(const XObject* self, const XRegularExpression* re, int options);
+XObject* XObject_findChild(const XObject* self, const char* name, XFindChildOption options);
+// 查找所有匹配的子对象 (通过名称)
+XObjectList* XObject_findChildren(const XObject* self, const char* name, XFindChildOption options);
+// 查找所有匹配的子对象 (通过正则表达式)
+//XObjectList XObject_findChildren_re(const XObject* self, const XRegularExpression* re, XFindChildOption options);
 
 
 // ------------------------
@@ -232,7 +223,7 @@ void XObject_disconnectNotify_base(XObject* self, size_t signal);
 XObject* XObject_sender(const XObject* self);
 
 // 获取触发当前槽函数的信号在其发送者类中的索引。
-int XObject_senderSignalIndex(const XObject* self);
+//int XObject_senderSignalIndex(const XObject* self);
 
 // ------------------------
 // 连接状态查询

@@ -53,7 +53,8 @@ XSocketNotifier* XSocketNotifier_createWithType(XSocketNotifierType type)
     XSocketNotifier* notifier = (XSocketNotifier*)XMemory_calloc(1, sizeof(XSocketNotifier));
     if (!notifier) return NULL;
 
-    XObject_init(&notifier->base);
+    XObject_init(notifier);
+    SET_CLASS_HEAP(notifier);
     XClassGetVtable(notifier) = XSocketNotifier_class_init();
 
     notifier->socket = XSocketDescriptor_Invalid();

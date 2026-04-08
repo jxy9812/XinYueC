@@ -1,8 +1,7 @@
 ﻿#include"XSignalSlot.h"
 #include"XMemory.h"
 #include"XMap.h"
-#include"XListSLinked.h"
-#include"XListSLinkedAtomic.h"
+#include"XVector.h"
 #include"XObject.h"
 #include"XCoreApplication.h"
 #include"XMutex.h"
@@ -31,7 +30,7 @@ void XSignalSlot_init(XSignalSlot* manager, XObject* obj)
 		return NULL;
 	manager->obj = obj;
 	manager->signalMap = XMap_Create(size_t, XSignal,XCompare_size_t);
-	manager->bindSignalList = XListSLinkedAtomic_Create(XConnection*);
+	manager->bindSignalList = XVector_Create(XConnection*);
 	XContainerSetCompare(manager->bindSignalList, XCompare_ptr);
 	// 初始化互斥锁
 	manager->mutex = XMutex_create();
@@ -48,28 +47,28 @@ void XSignalSlot_deinit(XSignalSlot* manager)
 		XSignal* signal = XPair_second(XMap_iterator_data(&it));
 		if (signal == NULL)
 			continue;
-		for_each_iterator(signal->connList, XListSLinkedAtomic,it)
+		for_each_iterator(signal->connList, XVector,it)
 		{
-			XConnection* conn = XListSLinkedAtomic_iterator_data(&it);
+			XConnection* conn = XVector_iterator_data(&it);
 			if (conn->receiver)
 			{//在接收者中删除指向
-				XListBase_remove_base(conn->receiver->m_signalSlot->bindSignalList, &conn);
+				XVector_remove_base(conn->receiver->m_signalSlot->bindSignalList, XVector_indexOf(conn->receiver->m_signalSlot->bindSignalList, &conn,0),1);
 			}
 		}
-		XListBase_delete_base(signal->connList);
+		XVector_delete_base(signal->connList);
 	}
 	XMapBase_delete_base(manager->signalMap);
 	manager->signalMap = NULL;
 	//清除链接的信号
-	for_each_iterator(manager->bindSignalList, XListSLinkedAtomic, it)
+	for_each_iterator(manager->bindSignalList, XVector, it)
 	{
-		XConnection* conn = (*(XConnection**)XListSLinkedAtomic_iterator_data(&it));
+		XConnection* conn = (*(XConnection**)XVector_iterator_data(&it));
 		XSignal* signalObj = conn->signal;
 		if (signalObj == NULL)
 			continue;
-		XListBase_remove_base(signalObj->connList, conn);
+		XVector_remove_base(signalObj->connList, XVector_indexOf(signalObj->connList, conn,0),1);
 	}
-	XListBase_delete_base(manager->bindSignalList);
+	XVector_delete_base(manager->bindSignalList);
 	manager->bindSignalList = NULL;
 
 	manager->obj = NULL;
@@ -85,18 +84,19 @@ void XSignalSlot_delete(XSignalSlot* manager)
 }
 bool XSignalSlot_isSignalConnected(const XSignalSlot* manager, size_t signal)
 {
-	return false;
+	return XSignalSlot_receivers(manager,signal);
 }
 int XSignalSlot_receivers(const XSignalSlot* manager, size_t signal)
 {
 	if(!manager|| XMapBase_isEmpty_base(manager->signalMap))return 0;
+	int size = 0;
 	XMutex_lock(manager->mutex);  // 加锁
 	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
 	if (signalObj == NULL)goto end;
-
+	size=XVector_size_base(signalObj->connList);
 end:
 	XMutex_unlock(manager->mutex);  // 解锁
-	return 0;
+	return size;
 }
 static const bool Equality_Connection(const XConnection* pvPrevValue, const XConnection* pvNextValue)
 {
@@ -112,7 +112,7 @@ XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* re
 	XSignal* signalObj= XMapBase_value_base(manager->signalMap,&signal);
 	if (signalObj == NULL)
 	{
-		XSignal insert = {.sender=manager->obj,.type= signal,.connList= XListSLinkedAtomic_Create(XConnection)};
+		XSignal insert = {.sender=manager->obj,.type= signal,.connList= XVector_Create(XConnection)};
 		//insert.connList->m_equality = XEquality_XConnection;
 		XContainerSetCompare(insert.connList, XConnection_compare);
 		XMap_insert_base(manager->signalMap, &signal, &insert);
@@ -120,22 +120,22 @@ XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* re
 	}
 	//判断是否重复添加
 	XConnection conn = {.type=type,.signal= signalObj,.receiver=receiver,.slot_func=slot_func};
-	for_each_iterator(signalObj->connList, XListSLinkedAtomic,it)
+	for_each_iterator(signalObj->connList, XVector,it)
 	{
-		if (Equality_Connection(XListSLinkedAtomic_iterator_data(&it), &conn) && (type & XConnectionType_Unique))
+		if (Equality_Connection(XVector_iterator_data(&it), &conn) && (type & XConnectionType_Unique))
 		{
 			XMutex_unlock(manager->mutex);  // 解锁
 			return NULL;//重复了
 		}
 	}
 	//添加
-	XListBase_push_back_base(signalObj->connList,&conn);
-	XConnection* ptr=XListBase_back_base(signalObj->connList);
+	XVector_push_back_base(signalObj->connList,&conn);
+	XConnection* ptr=XVector_back_base(signalObj->connList);
 	if (receiver&&receiver!= manager->obj)
 	{//存在接收对象 添加绑定的信号
 		if(receiver->m_signalSlot==NULL)
 			receiver->m_signalSlot = XSignalSlot_create(receiver);
-		XListBase_push_back_base(receiver->m_signalSlot->bindSignalList, &ptr);
+		XVector_push_back_base(receiver->m_signalSlot->bindSignalList, &ptr);
 		//触发回调
 		XObject_connectNotify_base(receiver,signal);
 	}
@@ -151,12 +151,12 @@ static bool disconnect_conn(XConnection* conn)
 		return false;
 	if (conn->receiver)
 	{//存在接收对象
-		XListBase_remove_base(conn->receiver->m_signalSlot->bindSignalList, &conn);
+		XVector_remove_base(conn->receiver->m_signalSlot->bindSignalList, XVector_indexOf(conn->receiver->m_signalSlot->bindSignalList ,&conn,0),1);
 		//触发信号断开回调
 		XObject_disconnectNotify_base(conn->receiver, conn->signal->type);
 	}
 
-	XListBase_remove_base(signalObj->connList, conn);
+	XVector_remove_base(signalObj->connList, XVector_indexOf(signalObj->connList,conn,0),0);
 	return true;
 }
 bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc slot_func)
@@ -170,11 +170,11 @@ bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiv
 	XMutex* mutex = NULL;
 	//判断是否重复添加
 	XConnection conn = { .signal = signalObj,.receiver = receiver,.slot_func = slot_func };
-	for_each_iterator(signalObj->connList, XListSLinkedAtomic, it)
+	for_each_iterator(signalObj->connList, XVector, it)
 	{
-		if (Equality_Connection(XListSLinkedAtomic_iterator_data(&it), &conn))
+		if (Equality_Connection(XVector_iterator_data(&it), &conn))
 		{//找到了
-			XConnection* conn = XListSLinkedAtomic_iterator_data(&it);
+			XConnection* conn = XVector_iterator_data(&it);
 			if (conn->receiver && conn->receiver->m_signalSlot)
 				mutex = conn->receiver->m_signalSlot->mutex;
 			if(mutex!= manager->mutex)
@@ -214,7 +214,7 @@ static void Direct_emit(XConnection* conn, void* args,  XAtomic_int32_t* ref_cou
 	if (ref_count) 
 		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	if(conn->slot_func)
-		conn->slot_func(conn->receiver,args, conn->signal->sender);
+		conn->slot_func(conn->receiver,args);
 	if (ref_count)
 		XAtomic_fetch_sub_int32(ref_count, 1);
 }
@@ -284,9 +284,9 @@ static void emit(XSignalSlot* manager, size_t signal, void* args, XAtomic_int32_
 	XConnection* conn = NULL;
 	if (ref_count)
 		XAtomic_fetch_add_int32(ref_count, 1);  // 使用原子存储++
-	for (XListSLinkedAtomic_iterator it = XListSLinkedAtomic_begin(signalObj->connList), endIt = XListSLinkedAtomic_end(signalObj->connList); !XListSLinkedAtomic_iterator_equality(&it, &endIt); )
+	for (XVector_iterator it = XVector_begin(signalObj->connList), endIt = XVector_end(signalObj->connList); !XVector_iterator_equality(&it, &endIt); )
 	{
-		conn = XListSLinkedAtomic_iterator_data(&it);
+		conn = XVector_iterator_data(&it);
 		switch (conn->type)
 		{
 		case XConnectionType_Auto:Auto_emit(conn, args,ref_count,priority); break;
@@ -297,11 +297,11 @@ static void emit(XSignalSlot* manager, size_t signal, void* args, XAtomic_int32_
 		//是否是单次链接
 		if ((conn->type) & XConnectionType_SingleShot)
 		{//取消链接
-			XListBase_erase_base(signalObj->connList, &it, &it);
+			XVector_erase_base(signalObj->connList, &it, &it);
 		}
 		else
 		{
-			XListSLinkedAtomic_iterator_add(signalObj->connList, &it);
+			XVector_iterator_add(signalObj->connList, &it);
 		}
 	}
 	if (ref_count && XAtomic_fetch_sub_int32(ref_count,1) == 1)

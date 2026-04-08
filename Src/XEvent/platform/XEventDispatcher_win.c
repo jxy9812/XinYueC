@@ -133,7 +133,7 @@ static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* disp
         XPair* pair = XHashMap_iterator_data(&it);
         XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
         if (timerInfo && timerInfo->object) {
-            XEvent* timerEvent = XEventTimer_create_id(timerInfo->timerId);
+            XEvent* timerEvent = XEventTimer_create(timerInfo->timerId);
             //timerEvent->spontaneous = false;
             timerEvent->posted = true;
             XCoreApplication_postEvent(timerInfo->object, timerEvent, XEVENT_PRIORITY_NORMAL);
@@ -552,11 +552,12 @@ XVtable* XEventDispatcherWin32_class_init()
 
 XAbstractEventDispatcher* XEventDispatcherWin32_create(XObject* parent)
 {
-    XEventDispatcherWin32* self = (XEventDispatcherWin32*)XMemory_malloc(sizeof(XEventDispatcherWin32));
+    XEventDispatcherWin32* self = XNew(XEventDispatcherWin32);
     if (!self) return NULL;
 
     // 初始化基类
     XAbstractEventDispatcher_init(self, parent);
+    SET_CLASS_HEAP(self);
     XClassGetVtable(self) = XEventDispatcherWin32_class_init();
 
     XEventDispatcherWin32PlatformPrivate* d = (XEventDispatcherWin32PlatformPrivate*)XMemory_calloc(1, sizeof(XEventDispatcherWin32PlatformPrivate));

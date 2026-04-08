@@ -44,6 +44,7 @@ XCoreApplication* XCoreApplication_create(int argc, char** argv) {
     if (!app) return NULL;
 
     XCoreApplication_init(app, argc, argv);
+    SET_CLASS_HEAP(app);
     return g_app;
 }
 
@@ -427,13 +428,16 @@ bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
 
     //调用接收者的事件过滤器
     XVector* filters = receiver->filters;
-    for_each_iterator(filters, XVector, it)
+    if (filters)
     {
-        XObject* filter = *((XObject**)XVector_iterator_data(&it));
-        if (filter)//调用事件过滤器的过滤方法
-            event->accepted = XObject_eventFilter_base(filter, receiver, event);
-        if (event->accepted)//如果被处理则不在传播
-            goto del;
+        for_each_iterator(filters, XVector, it)
+        {
+            XObject* filter = *((XObject**)XVector_iterator_data(&it));
+            if (filter)//调用事件过滤器的过滤方法
+                event->accepted = XObject_eventFilter_base(filter, receiver, event);
+            if (event->accepted)//如果被处理则不在传播
+                goto del;
+        }
     }
     if (!event->accepted)
     {//如果还未被接受

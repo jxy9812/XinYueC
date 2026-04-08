@@ -147,23 +147,51 @@ typedef struct XTimerEvent
     XEvent m_base;
     XTimerId timerId;
 }XTimerEvent;
-XTimerEvent* XEventTimer_create_id(XTimerId id);
-XTimerEvent* XEventTimer_create_timerId(int timerId);
-
-XTimerId XEventTimer_id(const XTimerEvent* event);
-int XEventTimer_timerId(const XTimerEvent* event);
+XTimerEvent* XEventTimer_create(XTimerId id);
+XTimerId XEventTimer_timerId(const XTimerEvent* event);
 
 //孩子事件
 typedef struct {
     XEvent m_base;
     XObject* child;
 } XChildEvent;
+/**
+ * @brief 创建一个子对象事件
+ * @param type 事件类型（例如添加、移除或 polish 状态）
+ * @param child 发生事件的子对象
+ * @return 新创建的 XChildEvent 实例，需由调用者负责释放
+ */
 XChildEvent* XChildEvent_create(XEventType type, XObject* child);
-bool XChildEvent_added(const XEvent* event);
-XObject* XChildEvent_child(const XEvent* event);
-bool XChildEvent_polished(const XEvent* event);
-bool XChildEvent_removed(const XEvent* event);
 
+/**
+ * @brief 判断子对象事件是否为“已添加”类型
+ * @param event 指向 XEvent 的常量指针（通常为 XChildEvent 实例）
+ * @return 若事件表示子对象被添加，则返回 true；否则返回 false
+ */
+bool XChildEvent_added(const XChildEvent* event);
+
+/**
+ * @brief 获取子对象事件中涉及的子对象
+ * @param event 指向 XEvent 的常量指针（通常为 XChildEvent 实例）
+ * @return 与事件关联的子对象指针，若事件无效则返回 NULL
+ */
+XObject* XChildEvent_child(const XChildEvent* event);
+
+/**
+ * @brief 判断子对象事件是否为“已 polish”类型
+ * @param event 指向 XEvent 的常量指针（通常为 XChildEvent 实例）
+ * @return 若事件表示子对象已完成布局和绘制准备（polished），则返回 true；否则返回 false
+ */
+bool XChildEvent_polished(const XChildEvent* event);
+
+/**
+ * @brief 判断子对象事件是否为“已移除”类型
+ * @param event 指向 XEvent 的常量指针（通常为 XChildEvent 实例）
+ * @return 若事件表示子对象被移除，则返回 true；否则返回 false
+ */
+bool XChildEvent_removed(const XChildEvent* event);
+//子对象事件默认处理
+void XChildEvent_handler(XChildEvent* event, XObject* receiver);
 //动态属性事件
 typedef struct {
     XEvent m_base;

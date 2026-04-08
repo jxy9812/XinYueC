@@ -77,6 +77,7 @@ XVtable* XEventLoop_class_init() {
 XEventLoop* XEventLoop_create() {
     XEventLoop* loop = XMemory_malloc(sizeof(XEventLoop));
     XEventLoop_init(loop);
+    SET_CLASS_HEAP(loop);
     return loop;
 }
 

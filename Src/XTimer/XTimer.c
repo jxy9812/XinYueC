@@ -58,10 +58,11 @@ void XTimer_init(XTimer* timer)
 
 XTimer* XTimer_create()
 {
-	XTimer* timer = XMemory_malloc(sizeof(XTimer));
+	XTimer* timer = XNew(XTimer);
 	if (timer == NULL)
 		return timer;
 	XTimer_init(timer);
+	SET_CLASS_HEAP(timer);
 	return timer;
 }
 void TimerCallback(void* userData)
@@ -132,9 +133,7 @@ void VXTimerBase_deinit(XTimerBase* timer)
 void VXTimerBase_start(XTimerBase* timer)
 {
 	XTimerBase_stop_base(timer);
-	XAbstractEventDispatcher* disp = XObject_eventDispatcher(timer);
-	timer->timerId=XAbstractEventDispatcher_registerTimer(disp, timer->m_interval* 1000000, XCoarseTimer, timer);
-	
+	timer->timerId=XObject_startTimer_ms(timer,timer->m_interval, XCoarseTimer);
 	if(timer->timerId)
 		timer->m_isRun = true;
 	//timer->m_isPeriodic = true;
@@ -144,9 +143,8 @@ void VXTimerBase_stop(XTimerBase* timer)
 	//printf("停止定时器\n");
 	if (timer->timerId && XTimerBase_isRunning(timer))
 	{
-		//// 关闭定时器
-		XAbstractEventDispatcher* disp = XObject_eventDispatcher(timer);
-		XAbstractEventDispatcher_unregisterTimer_base(disp, timer->timerId);
+		// 关闭定时器
+		XObject_killTimer(timer, timer->timerId);
 		//XPrintf("停止定时器: id:%d\n", timer->timerId);
 		timer->timerId = 0;
 		timer->m_isRun = false;

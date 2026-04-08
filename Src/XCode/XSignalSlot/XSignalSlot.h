@@ -13,7 +13,7 @@ extern "C" {
 // 前置声明
 typedef struct XSignal XSignal;
 typedef struct XConnection XConnection;
-typedef void (*XSlotFunc)(XObject* receiver, XVarList* args, XObject* sender);
+typedef void (*XSlotFunc)(XObject* receiver, XVarList* args);
 /**
  * @brief 信号发送模式枚举
  * 定义信号从发送到执行槽函数的不同处理方式
@@ -55,7 +55,7 @@ typedef struct XSignalSlot
     XObject* obj;//管理者/发送者
     //XEventSendMode sendMode;//发送模式
     XMap* signalMap;//信号列表 <size_t,XSignal>
-    XListBase* bindSignalList;//接收对象列表 绑定的其他对象信号
+    XVector* bindSignalList;//接收对象列表 绑定的其他对象信号
     XMutex* mutex;            //用于同步的互斥锁
 }XSignalSlot;
 

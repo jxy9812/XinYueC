@@ -87,6 +87,11 @@ void XClass_copy_base(XClass* object, const XClass* src);
 void XClass_move_base(XClass* object, XClass* src);
 void XClass_deinit_base(XClass* object);
 void XClass_delete_base(XClass* object);
+//类是否在堆上
+#define IS_CLASS_HEAP(obj)   ((XVtable*)obj)->is_objHeap
+//设置标志类在堆上
+#define SET_CLASS_HEAP(obj)  (((XClass*)obj)->m_vtable->is_objHeap=1)
+
 // 释放父对象
 #define 	XClass_Deinit_Parent(Type,obj)   (XVtableGetFunc(Type##_class_init(), EXClass_Deinit, void(*)(Type*))(obj))
 

@@ -13,9 +13,11 @@ typedef struct
 	void** data;//
 	size_t size;
 	size_t capacity;//当前容器能容纳的最大元素数量
-	bool isStack;//定义在栈上
+	uint32_t isStack : 1;//定义在栈上
+	uint32_t is_objHeap : 1;        //类是否在堆上
+	uint32_t unused : 30;           // 保留位
 }XVtable;
-XVtable* XVtable_create();
+XVtable* XVtable_create();				
 //定义在栈上
 void XVtable_init_stack(XVtable* this_vtable, void** data, size_t size);
 #define XVtable_Init_Stack(this_vtable,vtable_data) XVtable_init_stack((this_vtable),vtable_data, sizeof(vtable_data) / sizeof(vtable_data[0]))

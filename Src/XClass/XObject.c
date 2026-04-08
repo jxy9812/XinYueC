@@ -8,6 +8,7 @@
 #include "XThreadData.h"
 #include "XMapBase.h"
 #include "XTimer.h"
+#include "XStack.h"
 #include <stdarg.h>
 #include <string.h>
 static void VXObject_poll(XObject* object);
@@ -39,8 +40,9 @@ XVtable* XObject_class_init()
 
 XObject* XObject_create()
 {
-	XObject* object = XMemory_malloc(sizeof(XObject));
+	XObject* object = XNew(XObject);
 	XObject_init(object);
+	SET_CLASS_HEAP(object);
 	return object;
 }
 
@@ -51,9 +53,9 @@ void XObject_init(XObject* object)
 	memset(((XClass*)object)+1,0,sizeof(XObject)-sizeof(XClass));
 	XClass_init(object);
 	XClassGetVtable(object) = XObject_class_init();
-	//object->m_thread = XThread_currentThread();
-	object->children=XVector_create(sizeof(XObject*));
-	object->filters=XVector_create(sizeof(XObject*));
+	
+	//object->children=XVector_create(sizeof(XObject*));
+	//object->filters=XVector_create(sizeof(XObject*));
 }
 
 const char* XObject_objectName(const XObject* self)
@@ -73,18 +75,20 @@ void XObject_setObjectName(XObject* self, const char* name)
 	if (!name) return;
 	size_t len = strlen(name);
 	if (len == 0)return;
-	self->object_name=XNew(len+1);
+	self->object_name=XMalloc(len+1);
 	memcpy(self->object_name,name,len+1);
 }
 
 bool XObject_isSignalConnected(const XObject* self, size_t signal)
 {
-	return false;
+	if (!self) return false;
+	return XSignalSlot_isSignalConnected(self->m_signalSlot,signal);
 }
 
 int XObject_receivers(const XObject* self, size_t signal)
 {
-	return 0;
+	if (!self) return 0;
+	return XSignalSlot_receivers(self->m_signalSlot, signal);
 }
 
 void XObject_poll_base(XObject* object)
@@ -122,22 +126,15 @@ void XObject_setParent(XObject* object, XObject* parent)
 {
 	if (!object)return;
 	XObject* prev = XObject_parent(object);//上一个父节点
-	if (prev)
-	{
-		if (prev == parent)
-			return;//重复设置
-		//从父结点中删除自己
-		XVector* children=prev->children;
-		XVector_remove_base(children, XVector_indexOf(children, &object, 0), 1);
-			
-	}
-	if (parent)
-	{
-		XVector* children = parent->children;
-		if (-1 == XVector_indexOf(children, &object, 0))//确保新父节点没有自己
-			XVector_push_back_base(children, &object);
-	}
+	if (prev == parent)
+		return;//重复设置
+	if(prev)
+		XCoreApplication_postEvent(prev, XChildEvent_create(XEVENT_TYPE_CHILD_REMOVED, object), XEVENT_PRIORITY_NORMAL);
 	object->parent = parent;
+	if (parent)
+		XCoreApplication_postEvent(parent, XChildEvent_create(XEVENT_TYPE_CHILD_ADDED, object), XEVENT_PRIORITY_NORMAL);
+	
+	//object->parent = parent;
 }
 
 const XVector* XObject_children(const XObject* self)
@@ -195,6 +192,24 @@ bool XObject_blockSignals(XObject* self, bool block)
 	self->block_sig = block;
 	return state;
 }
+XTimerId XObject_startTimer_ms(XObject* self, int interval, XTimerType timerType)
+{
+	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
+	if (!disp)return 0;
+	return XAbstractEventDispatcher_registerTimer(disp, interval * 1000000, timerType, self);
+}
+XTimerId XObject_startTimer_ns(XObject* self, uint64_t interval_ns, XTimerType timerType)
+{
+	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
+	if (!disp)return 0;
+	return XAbstractEventDispatcher_registerTimer(disp, interval_ns, timerType, self);
+}
+void XObject_killTimer(XObject* self, XTimerId timerId)
+{
+	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
+	if (!disp)return ;
+	XAbstractEventDispatcher_unregisterTimer_base(disp, timerId);
+}
 XThread* XObject_thread(XObject* object)
 {
 	if(!object)
@@ -240,7 +255,7 @@ void XObject_deinitLater(XObject* object)
 	if (object->delete_later_called)
 		return;//已经标记为释放了
 	//发送释放信号
-	XAtomic_fetch_add_int32(&object->m_eventCount, 1);
+	XAtomic_fetch_add_int32(&object->m_posted_events, 1);
 	XCoreApplication_postEvent(object, XEventDeferredDelete_create(false), XEVENT_PRIORITY_LOWEST);
 	object->delete_later_called = true;
 }
@@ -250,7 +265,7 @@ void XObject_deleteLater(XObject* object)
 	if (object == NULL)return;
 	if (object->delete_later_called)
 		return;//已经标记为释放了
-	XAtomic_fetch_add_int32(&object->m_eventCount, 1);
+	XAtomic_fetch_add_int32(&object->m_posted_events, 1);
 	XCoreApplication_postEvent(object, XEventDeferredDelete_create(true), XEVENT_PRIORITY_LOWEST);
 	object->delete_later_called = true;
 }
@@ -280,6 +295,14 @@ void VXObject_deinit(XObject* object)
 {
 	if(object->children)
 	{
+		for_each_iterator(object->children, XVector,it)
+		{
+			XObject* child = *((XObject**)XVector_iterator_data(&it));
+			if (IS_CLASS_HEAP(child))
+				XObject_deleteLater(child);
+			else
+				XObject_deinitLater(child);
+		}
 		XVector_delete_base(object->children);
 		object->children = NULL;
 	}
@@ -315,7 +338,7 @@ bool VXObject_event(XObject* self, XEvent* e)
 		case XEVENT_TYPE_TIMER: XObject_timerEvent_base(self, e); break;
 		case XEVENT_TYPE_CHILD_ADDED:
 		case XEVENT_TYPE_CHILD_POLISHED:
-		case XEVENT_TYPE_CHILD_REMOVED: XObject_timerEvent_base(self, e); break;
+		case XEVENT_TYPE_CHILD_REMOVED: XChildEvent_handler(e,self); break;
 		case XEVENT_TYPE_META_CALL: XEventMetaCall_handler(e, self); break;
 		case XEVENT_TYPE_FUNC_RUN: XEventFunc_handler( e); break;
 		case XEVENT_TYPE_DEFERRED_DELETE: XEventDeferredDelete_handler(e, self); break;
@@ -331,6 +354,13 @@ void XObject_installEventFilter(XObject* self, XObject* filterObj)
 {
 	if (!self || !filterObj)return;
 	XVector* filters = self->filters;
+	if (!filters)
+	{
+		self->filters = XVector_create(sizeof(XObject*));
+		filters = self->filters;
+		if (!filters)return;
+	}
+	
 	if (-1 == XVector_indexOf(filters, &filterObj, 0))//确保新父节点没有自己
 		XVector_push_back_base(filters, &filterObj);
 }
@@ -340,6 +370,79 @@ void XObject_removeEventFilter(XObject* self, XObject* obj)
 	if (!self || !obj)return;
 	XVector* filters = self->filters;
 	XVector_remove_base(filters, XVector_indexOf(filters, &obj, 0), 1);
+}
+
+XObject* XObject_findChild(const XObject* self, const char* name, XFindChildOption options)
+{
+	if(!self||!name||!self->children)return NULL;
+	if (options == XFindChildrenRecursively)
+	{
+		XStack* sk = XStack_Create(XObject*);
+		XStack_push_base(sk, &self);
+		
+		while (!XStack_isEmpty_base(sk))
+		{
+			XObject* c = XStack_Top_Base(sk, XObject*);
+			XStack_pop_base(sk);
+			for_each_iterator(c, XVector, it)
+			{
+				XObject* child = *((XObject**)XVector_iterator_data(&it));
+				XStack_push_base(sk, &child);
+				if (child && child->object_name && strcmp(child->object_name, name) == 0)
+				{
+					XStack_delete_base(sk);
+					return child;
+				}
+			}
+		}
+		XStack_delete_base(sk);
+	}
+	else if (options == XFindDirectChildrenOnly)
+	{
+		for_each_iterator(self->children, XVector, it)
+		{
+			XObject* child = *((XObject**)XVector_iterator_data(&it));
+			if (child && child->object_name && strcmp(child->object_name, name) == 0) return child;
+		}
+	}
+	return NULL;
+}
+
+XObjectList* XObject_findChildren(const XObject* self, const char* name, XFindChildOption options)
+{
+	if (!self || !name || !self->children)return NULL;
+	XObjectList* list = XVector_Create(XObject*);
+	if (options == XFindChildrenRecursively)
+	{
+		XStack* sk = XStack_Create(XObject*);
+		XStack_push_base(sk, &self);
+
+		while (!XStack_isEmpty_base(sk))
+		{
+			XObject* c = XStack_Top_Base(sk, XObject*);
+			XStack_pop_base(sk);
+			for_each_iterator(c, XVector, it)
+			{
+				XObject* child = *((XObject**)XVector_iterator_data(&it));
+				XStack_push_base(sk, &child);
+				if (child && child->object_name && strcmp(child->object_name, name) == 0)
+				{
+					XVector_push_back_base(list,&child);
+				}
+			}
+		}
+		XStack_delete_base(sk);
+	}
+	else if (options == XFindDirectChildrenOnly)
+	{
+		for_each_iterator(self->children, XVector, it)
+		{
+			XObject* child = *((XObject**)XVector_iterator_data(&it));
+			if (child && child->object_name && strcmp(child->object_name, name) == 0)
+				XVector_push_back_base(list, &child);
+		}
+	}
+	return list;
 }
 
 
@@ -395,4 +498,9 @@ void XObject_disconnectNotify_base(XObject * self, size_t signal)
 	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_TimerEvent, bool))
 		return;
 	XClassGetVirtualFunc(self, EXObject_DisconnectNotify, void(*)(XObject*, size_t))(self, signal);
+}
+
+XObject* XObject_sender(const XObject* self)
+{
+	return self? self->sender:NULL;
 }

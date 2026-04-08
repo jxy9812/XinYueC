@@ -342,6 +342,7 @@ XThread* XThread_create(void (*start_routine)(void*), void* arg)
         return NULL;
     }
     XThread_init(Object);
+    SET_CLASS_HEAP(Object);
     Object->m_start_routine = start_routine;
     Object->m_arg = arg;
 

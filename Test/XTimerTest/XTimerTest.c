@@ -25,7 +25,7 @@ static void Callback(void* userData)
 	XTimerTimeWheel_start_base(timer);
 	XTimerGroupBase_addTimer_base(userData, timer);*/
 }
-static void  timerSlotFunc(XObject* receiver, void* args, XObject* sender)
+static void  timerSlotFunc(XObject* receiver, void* args)
 {
 	Callback(NULL);
 	if(receiver)
@@ -37,7 +37,7 @@ void XTimerTest()
 	while (true)//测试内存是否泄漏
 	{
 		XTimer* timer = XTimer_create();
-		XTimer_setInterval_base(timer, 10);
+		XTimer_setInterval_base(timer, 100);
 		XTimer_setTimeout_base(timer, 50);
 		XTimerBase_setSingleShote(timer, true);
 		XTimerBase_setAutoDelete(timer, true);
@@ -55,12 +55,14 @@ void XTimerTest()
 		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_delete_base, XConnectionType_Auto);
 		XObject_connect(timer, XSignal(XObject_deinit_signal), NULL, deleteCb, XConnectionType_Auto);
 		XTimer_start_base(timer);
-		XPrintf("事件循环等待\n");
+		//XPrintf("事件循环等待\n");
 		XEventLoop_exec(loop);
-		XPrintf("事件循环结束\n");
-	
+		//XPrintf("事件循环结束\n");
+		XObject_setParent(timer,loop);
+		
 		XEventLoop_delete_base(loop);
-		XTimer_delete_base(timer);
+		//XTimer_delete_base(timer);
+		XCoreApplication_processEvents(0);
 		XCoreApplication_processEvents(0);
 	}
 

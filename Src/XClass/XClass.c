@@ -3,6 +3,7 @@
 #include"XMemory.h"
 #include"XString.h"
 #include"XPrintf.h"
+#include<string.h>
 bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/)
 {
 	if (args == NULL)
@@ -34,5 +35,6 @@ void XClass_move_base(XClass* object, XClass* src)
 void XClass_delete_base(XClass* object)
 {
 	XClass_deinit_base(object);
+	//if(IS_CLASS_HEAP(object))
 	XMemory_free(object);
 }

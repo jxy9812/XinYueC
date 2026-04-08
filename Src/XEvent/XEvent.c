@@ -151,8 +151,10 @@ void XEventMetaCall_handler(XEventMetaCall* event, XObject* receiver)
 {
 	if (!event)
 		return;
+	if (receiver)
+		receiver->sender = event->sender;
 	if (event->func)
-		event->func(receiver, event->argList, event->sender);
+		event->func(receiver, event->argList);
 
 	if (event->sem)
 		XSemaphore_release(event->sem, 1);
@@ -236,7 +238,7 @@ XEventDeferredDelete* XEventDeferredDelete_create(bool isDelete)
 void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver)
 {
 	receiver->was_deleted = true;
-	if (XAtomic_fetch_sub_uint32(&receiver->m_eventCount, 1) == 1)
+	if (XAtomic_fetch_sub_uint32(&receiver->m_posted_events, 1) == 1)
 	{//正式释放
 		receiver->is_deleting_children = true;
 		XObject_deinit_signal(receiver);
@@ -248,61 +250,78 @@ void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver
 	}
 	else
 	{//重新投递
-		XAtomic_fetch_add_int32(&receiver->m_eventCount, 1);
+		XAtomic_fetch_add_int32(&receiver->m_posted_events, 1);
 		XCoreApplication_postEvent(receiver, event, XEVENT_PRIORITY_LOWEST);
 	}
 }
 
-XTimerEvent* XEventTimer_create_id(XTimerId id)
+XTimerEvent* XEventTimer_create(XTimerId id)
 {
 	XTimerEvent* event = XNew(XTimerEvent);
 	XEvent_init(event, XEVENT_TYPE_TIMER);
 	event->timerId = id;
 	return event;
 }
-
-XTimerEvent* XEventTimer_create_timerId(int timerId)
-{
-	return NULL;
-}
-
-XTimerId XEventTimer_id(const XTimerEvent* event)
+XTimerId XEventTimer_timerId(const XTimerEvent* event)
 {
 	return (event && event->m_base.type== XEVENT_TYPE_TIMER) ?
 		((XTimerEvent*)event)->timerId : 0;
 }
 
-int XEventTimer_timerId(const XTimerEvent* event)
-{//待后续实现
-	return 0;
-}
-
 XChildEvent* XChildEvent_create(XEventType type, XObject* child)
 {
-	return NULL;
+	XChildEvent* event = XNew(XChildEvent);
+	XEvent_init(event, type);
+	event->child = child;
+	return event;
 }
 
-bool XChildEvent_added(const XEvent* event)
+bool XChildEvent_added(const XChildEvent* e)
 {
+	XEvent* event = (XEvent*)e;
 	return event && event->type == XEVENT_TYPE_CHILD_ADDED;
 }
 
-XObject* XChildEvent_child(const XEvent* event)
+XObject* XChildEvent_child(const XChildEvent* e)
 {
+	XEvent* event = (XEvent*)e;
 	return (event && (event->type == XEVENT_TYPE_CHILD_ADDED ||
 		event->type == XEVENT_TYPE_CHILD_POLISHED ||
 		event->type == XEVENT_TYPE_CHILD_REMOVED)) ?
 		((XChildEvent*)event)->child : NULL;
 }
 
-bool XChildEvent_polished(const XEvent* event)
+bool XChildEvent_polished(const XChildEvent* e)
 {
+	XEvent* event = (XEvent*)e;
 	return event && event->type == XEVENT_TYPE_CHILD_POLISHED;
 }
 
-bool XChildEvent_removed(const XEvent* event)
+bool XChildEvent_removed(const XChildEvent* e)
 {
+	XEvent* event = (XEvent*)e;
 	return event && event->type == XEVENT_TYPE_CHILD_REMOVED;
+}
+
+void XChildEvent_handler(XChildEvent* event, XObject* receiver)
+{
+	if (XChildEvent_added(event))
+	{
+		XVector* children = receiver->children;
+		if (!children)
+		{
+			receiver->children = XVector_create(sizeof(XObject*));
+			children = receiver->children;
+		}
+		if (-1 == XVector_indexOf(children, &event->child, 0))//确保新父节点没有自己
+			XVector_push_back_base(children, &event->child);
+	}
+	else if (XChildEvent_removed(event))
+	{
+		XVector* children= receiver->children;
+		XVector_remove_base(children, XVector_indexOf(children, &event->child, 0), 1);
+	}
+	XEvent_accept(event);
 }
 
 XDynamicPropertyChangeEvent* XDynamicPropertyChangeEvent_create(const char* name)
