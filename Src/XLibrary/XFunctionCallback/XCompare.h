@@ -27,11 +27,11 @@ typedef  int32_t(*XCompareRuleOne)(XCompare compare, const void* pvValue, const 
 //比较大小的-回调函数自定义准则,两个自定义
 typedef  int32_t(*XCompareRuleTwo)(XCompare compare, const void* lhs, const void* rhs);
 //函数定义
-#define XCompare_Define(type) int32_t XCompare_##type(const type* lhs, const type* rhs)
-#define XCompare_DefineTwo(typeOne,typeTwo) int32_t XCompare_##typeOne##_##typeTwo(const typeOne typeTwo* lhs, const typeOne typeTwo* rhs)
+#define XCompare_Define(type) int32_t type##_compare(const type* lhs, const type* rhs)
+#define XCompare_DefineTwo(typeOne,typeTwo) int32_t typeOne##_##typeTwo##_compare(const typeOne typeTwo* lhs, const typeOne typeTwo* rhs)
 //函数实现
-#define XCompare_Come(type) int32_t XCompare_##type(const type* lhs, const type* rhs){if((*lhs)<(*rhs))return XCompare_Less;else if((*lhs)>(*rhs))return XCompare_Greater;return XCompare_Equality;}
-#define XCompare_ComeTwo(typeOne,typeTwo) int32_t XCompare_##typeOne##_##typeTwo(const typeOne typeTwo* lhs, const typeOne typeTwo* rhs){if((*lhs)<(*rhs))return XCompare_Less;else if((*lhs)>(*rhs))return XCompare_Greater;return XCompare_Equality;}
+#define XCompare_Come(type) XCompare_Define(type){if((*lhs)<(*rhs))return XCompare_Less;else if((*lhs)>(*rhs))return XCompare_Greater;return XCompare_Equality;}
+#define XCompare_ComeTwo(typeOne,typeTwo) XCompare_DefineTwo(typeOne,typeTwo){if((*lhs)<(*rhs))return XCompare_Less;else if((*lhs)>(*rhs))return XCompare_Greater;return XCompare_Equality;}
 XCompare_Define(bool);
 XCompare_DefineTwo(unsigned,char);
 XCompare_Define(char);
@@ -49,7 +49,6 @@ XCompare_Define(int32_t);
 XCompare_Define(int64_t);
 XCompare_Define(size_t);
 XCompare_Define(ptr);
-
 #ifdef __cplusplus
 }
 #endif

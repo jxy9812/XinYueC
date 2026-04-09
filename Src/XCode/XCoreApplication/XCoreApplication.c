@@ -11,8 +11,11 @@
 #include "XEventLoop.h"
 #include "XCircularQueueAtomic.h"
 #include "XThreadData.h"
+#include "XTimer.h"
 static XCoreApplication* g_app = NULL; // 全局应用程序实例
 bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
+static void VXObject_timerEvent(XCoreApplication* app, XTimerEvent* event);
+static void VXCoreApplication_deinit(XCoreApplication* app);
 XVtable* XCoreApplication_class_init() {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
@@ -24,6 +27,8 @@ XVtable* XCoreApplication_class_init() {
     XVTABLE_INHERIT_DEFAULT(XObject_class_init());
     void* table[] = { VXCoreApplication_notify };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+    //XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXObject_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCoreApplication_deinit);
 #if SHOWCONTAINERSIZE
         printf("XCoreApplication size:%d\n", XVtable_size(XClassVtable));
 #endif
@@ -60,49 +65,14 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     app->m_argc = argc;
     app->m_argv = argv;
     app->m_quit = false;
-    app->m_eventLoop = XEventLoop_create();
+    //app->m_eventLoop = XEventLoop_create();
     XBitArray_init(&app->m_attribute, XCORE_APPLICATION_ATTRIBUTE_COUNT);
 
 
-
-    //// 初始化命令行解析器
-    //app->m_cmdParser = XCommandLineParser_create();
-
-    //// 检查关键组件初始化
-    //if (!app->m_eventLoop || !app->m_cmdParser) {
-    //    // 初始化失败，清理资源
-    //    XEventLoop_delete_base(app->m_eventLoop);
-    //    XCommandLineParser_delete(app->m_cmdParser);
-    //    app->m_eventLoop = NULL;
-    //    app->m_cmdParser = NULL;
-    //    return;
-    //}
-
     // 设置全局实例
     g_app = app;
-
-    // 添加事件过滤器
-    //XObject_addEventFilter(app, XEVENT_SLOT_RUN, XEventMetaCall_handler, NULL);
-    //XObject_addEventFilter(app, XEVENT_FUNC_RUN, XEventFunc_handler, NULL);
 }
 
-void XCoreApplication_delete(XCoreApplication* app) {
-    if (!app) return;
-
-
-    // 释放事件循环
-    XEventLoop_delete_base(app->m_eventLoop);
-
-    // 释放父类资源
-    XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(app);
-
-    // 清除全局实例
-    if (g_app == app) {
-        g_app = NULL;
-    }
-
-    XMemory_free(app);
-}
 
 void XCoreApplication_setApplicationName(const XString* applicationName)
 {
@@ -199,16 +169,6 @@ const XString* XCoreApplication_applicationFilePath(void)
 {
     return NULL;
 }
-XEventDispatcher* XCoreApplication_dispatcher() {
-    XCoreApplication* app = XCoreApplication_instance();
-    return app ? (app->m_eventLoop ? app->m_eventLoop->m_dispatcher : NULL) : NULL;
-}
-
-XEventLoop* XCoreApplication_eventLoop() {
-    XCoreApplication* app = XCoreApplication_instance();
-    return app ? app->m_eventLoop : NULL;
-}
-
 int64_t XCoreApplication_applicationPid(void)
 {
     return 0;
@@ -216,7 +176,8 @@ int64_t XCoreApplication_applicationPid(void)
 
 void XCoreApplication_quit() {
     XCoreApplication* app = XCoreApplication_instance();
-    if (app) {
+    if (app&& app->m_eventLoop) 
+    {
         app->m_quit = true;
         XEventLoop_quit(app->m_eventLoop, 0);
     }
@@ -228,7 +189,15 @@ void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags) {
 
 void XCoreApplication_processEventsWithMaxTime(XEventLoopProcessEventsFlags flags, int maxtime)
 {
-
+    XTimer* timer = XTimer_create();
+    XTimer_setInterval_base(timer,maxtime);
+    XTimer_setSingleShot(timer,true);
+    XTimer_start_base(timer);
+    while (XTimer_isRunning(timer))
+    {
+        XCoreApplication_processEvents(flags);
+    }
+    XTimer_delete_base(timer);
 }
 
 bool XCoreApplication_notify_base(XObject* receiver, XEvent* e)
@@ -241,9 +210,10 @@ bool XCoreApplication_notify_base(XObject* receiver, XEvent* e)
 int XCoreApplication_exec() 
 {
     XCoreApplication* app = XCoreApplication_instance();
-    if (app == NULL || app->m_eventLoop == NULL)
+    if (app == NULL )
         return -1;
-
+    if(!app->m_eventLoop)
+        app->m_eventLoop = XEventLoop_create();
     app->m_quit = false;
     int result = XEventLoop_exec(app->m_eventLoop);
 
@@ -269,19 +239,54 @@ void XCoreApplication_postEvent(XObject* receiver, XEvent* event, int priority)
 
 void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)
 {
-    //XAbstractEventDispatcher_processEvents_base(XThreadData_initMainThread()->m_dispatcher, XEventLoop_AllEvents);
+    size_t size = 0;
+    //处理事件
+    XVector* events = XThreadData_takePostedEvents();
+    for_each_iterator(events, XVector, it)
+    {
+        XPostEvent* ePost = XVector_iterator_data(&it);
+        if (!ePost) continue;
+        if (receiver && ePost->receiver != receiver)
+            continue;//如果有指定的接收者，跳过其他接收者
+        if(eventType&& eventType!=ePost->event->type)
+            continue;//如果有指定的事件类型，跳过其他事件
+        if (XCoreApplication_sendEvent(ePost->receiver, ePost->event))
+            ++size;
+        ePost->event = NULL;//处理过的事件置空
+    }
+    //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
+    if (size < XVector_size_base(events))
+        XThreadData_push_front_list(events);
+    XVector_delete_base(events);
 }
 
 void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventType)
 {
-
+    size_t size = 0;
+    //移除事件
+    XVector* events = XThreadData_takePostedEvents();
+    for_each_iterator(events, XVector, it)
+    {
+        XPostEvent* ePost = XVector_iterator_data(&it);
+        if (!ePost) continue;
+        if (receiver && ePost->receiver != receiver)
+            continue;//如果有指定的接收者，跳过其他接收者
+        if (eventType && eventType != ePost->event->type)
+            continue;//如果有指定的事件类型，跳过其他事件
+        XEvent_delete_base(ePost->event);
+        ++size;
+        ePost->event = NULL;//移除的事件置空
+    }
+    //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
+    if (size < XVector_size_base(events))
+        XThreadData_push_front_list(events);
+    XVector_delete_base(events);
 }
 
 XAbstractEventDispatcher* XCoreApplication_eventDispatcher(void)
 {
-    XCoreApplication* app=XCoreApplication_instance();
-    if (!app || !app->m_eventLoop)return NULL;
-    return app->m_eventLoop->m_dispatcher;
+    XCoreApplication* app = XCoreApplication_instance();
+    return XThreadData_initMainThread()->m_dispatcher;
 }
 
 void XCoreApplication_setEventDispatcher(XAbstractEventDispatcher* dispatcher)
@@ -297,18 +302,33 @@ void XCoreApplication_setEventDispatcher(XAbstractEventDispatcher* dispatcher)
 }
 
 void XCoreApplication_setLibraryPaths(const XStringList* paths)
-{}
+{
+    XCoreApplication* app = XCoreApplication_instance();
+    if (!app)return;
+    if (!app->m_paths)app->m_paths = XStringList_create();
+    XString_copy_base(app->m_paths,paths);
+}
 
 const XStringList* XCoreApplication_libraryPaths(void)
 {
-    return NULL;
+    XCoreApplication* app = XCoreApplication_instance();
+    return app?app->m_paths:NULL;
 }
 
 void XCoreApplication_addLibraryPath(const XString* path)
-{}
+{
+    XCoreApplication* app = XCoreApplication_instance();
+    if (!app|| !path)return;
+    if (!app->m_paths)app->m_paths = XStringList_create();
+    XStringList_push_back_base(app->m_paths, path);
+}
 
 void XCoreApplication_removeLibraryPath(const XString * path)
-{}
+{
+    XCoreApplication* app = XCoreApplication_instance();
+    if (!app || !app->m_paths||!path)return;
+    XStringList_remove_base(app->m_paths, XStringList_indexOf(app->m_paths, path,0),1);
+}
 
 void* XCoreApplication_aboutToQuit_signal(XCoreApplication* app) 
 {
@@ -356,4 +376,30 @@ del:
         return true;
     }
     return false;//事件未被处理
+}
+
+//void VXObject_timerEvent(XCoreApplication* app, XTimerEvent* event)
+//{
+//    app->m_quit = true;//XCoreApplication_processEventsWithMaxTime 定时简单处理，如果类中有多个定时就要添加标志位单独处理
+//}
+
+void VXCoreApplication_deinit(XCoreApplication* app)
+{
+    if (!app) return;
+
+
+    // 释放事件循环
+    if (app->m_eventLoop)
+    {
+        XEventLoop_delete_base(app->m_eventLoop);
+        app->m_eventLoop = NULL;
+    }
+
+    // 释放父类资源
+    XClass_Deinit_Parent(XObject, app);
+
+    // 清除全局实例
+    if (g_app == app) {
+        g_app = NULL;
+    }
 }

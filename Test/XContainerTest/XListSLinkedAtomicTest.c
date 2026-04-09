@@ -21,7 +21,7 @@ void XListSLinkedAtomicSortTest()
 {
 #if XList_ON
 	XListSLinkedAtomic* li = XListSLinkedAtomic_create(sizeof(int));
-	XContainerSetCompare(li, XCompare_int);
+	XContainerSetCompare(li, int_compare);
 	int size = 10;
 	srand((unsigned int)time(NULL));
 	//int* p1 = XMemory_malloc(sizeof(int) * size);
@@ -70,7 +70,7 @@ void XListSLinkedAtomicTest()
 	XPrintf("XList 测试\n");
 	XListSLinkedAtomic* list = XListSLinkedAtomic_create(sizeof(int));
 	//list->m_class.m_equality = XEquality_int;
-	XContainerSetCompare(list, XCompare_int);
+	XContainerSetCompare(list, int_compare);
 	XPrintf("%s\n", XContainerObject_isEmpty_base(list) ? "empty" : "");
 	XPrintf("%d\n", XContainerObject_size_base(list));
 

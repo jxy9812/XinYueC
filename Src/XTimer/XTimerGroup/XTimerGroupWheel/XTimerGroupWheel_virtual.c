@@ -286,14 +286,14 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
             if (group->m_mutex) XMutex_unlock(group->m_mutex);
             XTimerBase_out_base(timer);
             if (group->m_mutex) XMutex_lock(group->m_mutex);
-            if ((!((XTimerBase*)timer)->m_singleShot) && (((XTimerBase*)timer)->m_interval > 0) && ((XTimerBase*)timer)->m_isRun)
+            if ((!((XTimerBase*)timer)->m_isSingleShot) && (((XTimerBase*)timer)->m_interval > 0) && ((XTimerBase*)timer)->m_isRun)
             {
                 // 有定时间隔的重新添加
                 size_t timeout_ticks = ((XTimerBase*)timer)->m_interval / group->m_class.m_precision;
                 ((XTimerTimeWheel*)timer)->m_expire_ticks = ((XTimerGroupBase*)group)->m_current_tick + timeout_ticks;
                 addTimer_node(group, node, timeout_ticks);
             }
-            else if(((XTimerBase*)timer)->m_singleShot&& ((XTimerBase*)timer)->m_autoDelete)
+            else if(((XTimerBase*)timer)->m_isSingleShot&& ((XTimerBase*)timer)->m_autoDelete)
             {
                 isdelete = true;
             }
@@ -376,7 +376,7 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
                     if (group->m_mutex) XMutex_unlock(group->m_mutex);
                     XTimerBase_out_base(timer);
                     if (group->m_mutex) XMutex_lock(group->m_mutex);
-                    if ((!((XTimerBase*)timer)->m_singleShot) && (((XTimerBase*)timer)->m_interval > 0) && ((XTimerBase*)timer)->m_isRun)
+                    if ((!((XTimerBase*)timer)->m_isSingleShot) && (((XTimerBase*)timer)->m_interval > 0) && ((XTimerBase*)timer)->m_isRun)
                     {
                         // 有定时间隔的重新添加
                         size_t timeout_ticks = ((XTimerBase*)timer)->m_interval / group->m_class.m_precision;

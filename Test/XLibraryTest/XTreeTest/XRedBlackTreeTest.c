@@ -28,12 +28,12 @@ void XRedBlackTreeTest()
 	int a[] = { 40,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
 	int* LPa = a;
 	XPrintf("插入测试\n");
-	XRBTreeNode* root = XRBTree_insert(NULL, XCompare_int,XCompareRuleTwo_BinaryTree, LPa++, sizeof(int));
+	XRBTreeNode* root = XRBTree_insert(NULL, int_compare,XCompareRuleTwo_BinaryTree, LPa++, sizeof(int));
 	for (size_t i = 0; i < sizeof(a) / sizeof(a[0]) - 1; i++)
 	{
 		if (i == 11)
 			i = 11;
-		XRBTree_insert(&root, XCompare_int, XCompareRuleTwo_BinaryTree, LPa++, sizeof(int));
+		XRBTree_insert(&root, int_compare, XCompareRuleTwo_BinaryTree, LPa++, sizeof(int));
 	}
 	if (root != NULL)
 	{
@@ -52,7 +52,7 @@ void XRedBlackTreeTest()
 	//删除测试遍历插入的数组一个个查找删除，直至清空二叉树
 	for (size_t i = 0; i <sizeof(a) / sizeof(a[0]); i++)
 	{
-		XRBTree_remove(&root,XCompare_int,XCompareRuleOne_BinaryTree, a + i,NULL,NULL);
+		XRBTree_remove(&root,int_compare,XCompareRuleOne_BinaryTree, a + i,NULL,NULL);
 	}
 	if (root != NULL)
 	{

@@ -34,7 +34,7 @@ void VXTimerBase_start(XTimerBase* timer) {
     new_value.it_value.tv_sec = timer->m_timeout / 1000;
     new_value.it_value.tv_nsec = (timer->m_timeout % 1000) * 1000000;
 
-    if (!timer->m_singleShot) {
+    if (!timer->m_isSingleShot) {
         new_value.it_interval.tv_sec = timer->m_interval / 1000;
         new_value.it_interval.tv_nsec = (timer->m_interval % 1000) * 1000000;
     }
@@ -127,7 +127,7 @@ void ReadEventCb(XEventMin *ev)
 
     XTimerBase_out_base(timer);
 
-    if (timer->m_singleShot) {
+    if (timer->m_isSingleShot) {
         XTimerBase_stop_base(timer);
         if (timer->m_autoDelete) {
             XObject_deleteLater(timer);

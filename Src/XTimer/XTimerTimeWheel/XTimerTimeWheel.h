@@ -32,9 +32,9 @@ void XTimerTimeWheel_init(XTimerTimeWheel* timer);
 // 是否为周期性任务
 #define XTimerTimeWheel_isPeriodic XTimerBase_isPeriodic
 #define XTimerTimeWheel_isRunning XTimerBase_isRunning
-#define XTimerTimeWheel_getTimeout XTimerBase_getTimeout
-#define XTimerTimeWheel_getInterval XTimerBase_getInterval
-#define XTimerTimeWheel_getGroup XTimerBase_getTimerId
+#define XTimerTimeWheel_getTimeout XTimerBase_timeout
+#define XTimerTimeWheel_getInterval XTimerBase_interval
+#define XTimerTimeWheel_getGroup XTimerBase_timerId
 #define XTimerTimeWheel_getUserData XTimerBase_getUserData
 //超时回调函数
 #define XTimerTimeWheel_out_base XTimerBase_out_base

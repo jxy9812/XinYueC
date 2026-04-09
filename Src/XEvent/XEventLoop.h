@@ -44,11 +44,10 @@ typedef struct XEventLoop
 {
     XObject m_class;                  // 父类
     XAbstractEventDispatcher* m_dispatcher;   // 关联的事件调度器
-    XCircularQueueAtomic* m_postQueue;//信号发送队列(引用XCoreApplication)
     XEventLoopState m_state;          // 事件循环状态
-    XWaitCondition* m_condition;      // 等待条件变量
-    XMutex* m_mutex;                  // 互斥锁
-    XAtomic_int32_t* m_ref_count;         // 引用计数：用于 Copy-On-Write 机制的资源管理
+    //XWaitCondition* m_condition;      // 等待条件变量
+    //XMutex* m_mutex;                  // 互斥锁
+    //XAtomic_int32_t* m_ref_count;         // 引用计数：用于 Copy-On-Write 机制的资源管理
     XTimer* m_deley;
     int m_exitCode;                   // 退出代码
     //bool m_quitOnLastWindowClosed;    // 当最后一个窗口关闭时退出

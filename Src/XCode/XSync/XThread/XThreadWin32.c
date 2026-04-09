@@ -55,8 +55,8 @@ static DWORD WINAPI ThreadFunction(LPVOID lpParam)
     XThread* Object = (XThread*)lpParam;
     //XThread_mapInsert(Object);
     //运行函数
-    if (Object->m_start_routine)
-        Object->m_start_routine(Object->m_arg);
+    /*if (Object->m_start_routine)
+        Object->m_start_routine(Object->m_arg);*/
     //运行事件调度
    /* if(Object->loopLevel)
         XEventLoop_exec(Object->m_eventLoop);*/

@@ -61,7 +61,7 @@ static bool global_typeHash_init()
 {
 	if (global_typeProperty)
 		return true;
-	global_typeProperty = XHashMap_Create(int, TypeProperty, XCompare_int);
+	global_typeProperty = XHashMap_Create(int, TypeProperty, int_compare);
 	if (global_typeProperty)
 		return true;
 	return false;
@@ -1739,22 +1739,22 @@ int32_t XVariant_compare(XVariant* var, XVariant* cmp)
 		return false;
 	switch (var->m_type)
 	{
-	case XVariantType_Uint8:return XCompare_uint8_t(var->m_data, cmp->m_data);
-	case XVariantType_Uint16:return XCompare_uint16_t(var->m_data, cmp->m_data);
-	case XVariantType_Uint32:return XCompare_uint32_t(var->m_data, cmp->m_data);
-	case XVariantType_Uint64:return XCompare_uint64_t(var->m_data, cmp->m_data);
-	case XVariantType_Int8:return XCompare_int8_t(var->m_data, cmp->m_data);
-	case XVariantType_Int16:return XCompare_int16_t(var->m_data, cmp->m_data);
-	case XVariantType_Int32:return XCompare_int32_t(var->m_data, cmp->m_data);
-	case XVariantType_Int64:return XCompare_int64_t(var->m_data, cmp->m_data);
-	case XVariantType_Bool:return XCompare_bool(var->m_data, cmp->m_data);
-	case XVariantType_Char:return XCompare_char(var->m_data, cmp->m_data);
-	case XVariantType_UChar:return XCompare_unsigned_char(var->m_data, cmp->m_data);
-	case XVariantType_Int:return XCompare_int(var->m_data, cmp->m_data);
-	case XVariantType_Size_t:return XCompare_size_t(var->m_data, cmp->m_data);
-	case XVariantType_Ptr:return XCompare_ptr(var->m_data, cmp->m_data);
-	case XVariantType_Float:return XCompare_float(var->m_data, cmp->m_data);
-	case XVariantType_Double:return XCompare_double(var->m_data, cmp->m_data);
+	case XVariantType_Uint8:return uint8_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Uint16:return uint16_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Uint32:return uint32_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Uint64:return uint64_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Int8:return int8_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Int16:return int16_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Int32:return int32_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Int64:return int64_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Bool:return bool_compare(var->m_data, cmp->m_data);
+	case XVariantType_Char:return char_compare(var->m_data, cmp->m_data);
+	case XVariantType_UChar:return unsigned_char_compare(var->m_data, cmp->m_data);
+	case XVariantType_Int:return int_compare(var->m_data, cmp->m_data);
+	case XVariantType_Size_t:return size_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Ptr:return ptr_compare(var->m_data, cmp->m_data);
+	case XVariantType_Float:return float_compare(var->m_data, cmp->m_data);
+	case XVariantType_Double:return double_compare(var->m_data, cmp->m_data);
 	case XVariantType_Pair:return XPair_compare(var->m_data, cmp->m_data);
 	case XVariantType_Point:return XPoint_compare(var->m_data, cmp->m_data);
 	case XVariantType_ByteArray:return XByteArray_compare(var->m_data, cmp->m_data);

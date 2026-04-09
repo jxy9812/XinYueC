@@ -10,6 +10,7 @@ extern "C" {
 #include"XTypes.h"
 #include"XEventType.h"
 #include"XSignalSlot.h"
+#include"XNamespace.h"
 #include"XAtomic.h"
 // 事件回调函数类型
 typedef void (*XEventCB)(XEvent* event);
@@ -140,7 +141,6 @@ typedef struct XEventDeferredDelete
 }XEventDeferredDelete;
 XEventDeferredDelete*XEventDeferredDelete_create(bool isDelete);
 void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver);
-typedef size_t XTimerId;
 //定时器事件
 typedef struct XTimerEvent
 {

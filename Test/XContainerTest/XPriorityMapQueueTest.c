@@ -15,7 +15,7 @@ void XPriorityMapQueueTest()
 	XPrintf("XPriorityMapQueue 测试\n");
 	//while (true)
 	{
-		XPriorityMapQueue* queue = XPriorityMapQueue_Create(int, int, XCompare_int, XSORT_ASC);
+		XPriorityMapQueue* queue = XPriorityMapQueue_Create(int, int, int_compare, XSORT_ASC);
 		int p = 1;
 		XPriorityMapQueue_addFifoQueue(queue,&p,10);
 		//XPriorityMapQueue_removeFifoQueue(queue, &p);

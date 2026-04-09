@@ -21,7 +21,7 @@ void XTJCHMIComm_init(XTJCHMIComm* comm, XIODevice* io)
 	XDataFrameComm_setCommMode_base(comm, XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm, XDFC_FRAME_END_MARKER);
 
-	XDataFrameComm_funcCodeMap_create(comm,sizeof(uint8_t),XCompare_uint8_t);
+	XDataFrameComm_funcCodeMap_create(comm,sizeof(uint8_t),uint8_t_compare);
 	XDataFrameComm_setGetFuncCodeCb(comm, XTJCHMIComm_GetFuncCodeCb);
 }
 

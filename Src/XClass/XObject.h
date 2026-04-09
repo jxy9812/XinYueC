@@ -135,7 +135,7 @@ bool XObject_blockSignals(XObject* self, bool block);
 // 定时器
 // ------------------------
 // 启动一个定时器 (毫秒)
-XTimerId XObject_startTimer_ms(XObject* self, int interval, XTimerType timerType);
+XTimerId XObject_startTimer_ms(XObject* self, uint64_t interval, XTimerType timerType);
 // 启动一个定时器 (纳秒)
 XTimerId XObject_startTimer_ns(XObject* self, uint64_t interval_ns, XTimerType timerType);
 // 停止一个定时器 (通过 TimerId 类型)

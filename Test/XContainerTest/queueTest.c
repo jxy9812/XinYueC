@@ -44,7 +44,7 @@ void XPriorityQueueTest()
 #if	XPriorityQueue_ON
 	XPrintf("XPriority_QueueTest 测试\n");
 	//XPriorityQueue* queue=XPriorityQueue_create(sizeof(int),XLess_int);//小堆，先出小的
-	XPriorityQueue* queue = XPriorityQueue_create(sizeof(int), XCompare_int,XSORT_DESC);//大堆，先出大的
+	XPriorityQueue* queue = XPriorityQueue_create(sizeof(int), int_compare,XSORT_DESC);//大堆，先出大的
 	XVector* v = XVector_Create(int);
 	for (size_t i = 0; i < 10; i++)
 	{

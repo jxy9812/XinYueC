@@ -97,7 +97,7 @@ void XTimer_singleShot(size_t msec, XObject* receiver, XSlotFunc slot_func, XCon
 	XTimer* timer = XTimer_create();
 	XTimer_setTimeout_base(timer, msec);
 	XTimerBase_setAutoDelete(timer,true);
-	XTimerBase_setSingleShote(timer, true);
+	XTimerBase_setSingleShot(timer, true);
 	XObject_connect(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, type);
 	XTimer_start_base(timer);
 }
@@ -118,13 +118,28 @@ void VXTimerBase_setInterval(XTimer* timer, size_t value)
 }
 void VXObject_timerEvent(XTimerBase* timer, XTimerEvent* event)
 {
-	//XPrintf("定时器触发\n");
 	XTimer_timeout_signal(timer);
+	if (timer->m_isSingleShot)
+	{
+		//XPrintf("定时器触发\n");
+		XTimer_stop_base(timer);
+		if(timer->m_autoDelete)
+			XTimer_delete_base(timer);
+	}
+	else if(!timer->m_firstTrigger)
+	{
+		timer->m_firstTrigger = true;//第一次触发
+		XTimer_stop_base(timer);
+		if (timer->m_interval)
+			timer->timerId = XObject_startTimer_ms(timer, timer->m_interval, XCoarseTimer);
+		if (timer->timerId)
+			timer->m_isRun = true;
+	}
 	XEvent_accept(event);
 }
 void VXTimerBase_deinit(XTimerBase* timer)
 {
-	XPrintf("释放定时器\n");
+	//XPrintf("释放定时器\n");
 	XTimerBase_stop_base(timer);
 	// 释放父对象
 	XClass_Deinit_Parent(XObject, timer);
@@ -132,11 +147,14 @@ void VXTimerBase_deinit(XTimerBase* timer)
 
 void VXTimerBase_start(XTimerBase* timer)
 {
+	timer->m_firstTrigger = false;
 	XTimerBase_stop_base(timer);
-	timer->timerId=XObject_startTimer_ms(timer,timer->m_interval, XCoarseTimer);
+	if(timer->m_timeout)
+		timer->timerId=XObject_startTimer_ms(timer,timer->m_timeout, XCoarseTimer);
+	else if(timer->m_interval)
+		timer->timerId = XObject_startTimer_ms(timer, timer->m_interval, XCoarseTimer);
 	if(timer->timerId)
 		timer->m_isRun = true;
-	//timer->m_isPeriodic = true;
 }
 void VXTimerBase_stop(XTimerBase* timer)
 {

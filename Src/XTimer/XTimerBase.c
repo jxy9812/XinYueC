@@ -14,6 +14,7 @@ XTimerBase* XTimerBase_create(XVtable* vtable)
 	if (timer == NULL)
 		return NULL;
 	XTimerBase_init(timer,vtable);
+	SET_CLASS_HEAP(timer);
 	return timer;
 }
 
@@ -88,10 +89,14 @@ void XTimerBase_setAutoDelete(XTimerBase* timer, bool del)
 	if (timer)
 		timer->m_autoDelete = del;
 }
-void XTimerBase_setSingleShote(XTimerBase* timer, bool ss)
+void XTimerBase_setSingleShot(XTimerBase* timer, bool ss)
 {
 	if (timer)
-		timer->m_singleShot = ss;
+		timer->m_isSingleShot = ss;
+}
+bool XTimerBase_isSingleShot(XTimerBase* timer)
+{
+	return timer?timer->m_isSingleShot:false;
 }
 bool XTimerBase_isPeriodic(XTimerBase* timer)
 {
@@ -101,23 +106,21 @@ bool XTimerBase_isPeriodic(XTimerBase* timer)
 }
 bool XTimerBase_isRunning(XTimerBase* timer)
 {
-	if (timer)
-		return timer->m_isRun;
-	return false;
+	return timer ? timer->m_isRun : false;
 }
-size_t XTimerBase_getTimeout(XTimerBase* timer)
+size_t XTimerBase_timeout(XTimerBase* timer)
 {
 	if (timer)
 		return timer->m_timeout;
 	return 0;
 }
-size_t XTimerBase_getInterval(XTimerBase* timer)
+size_t XTimerBase_interval(XTimerBase* timer)
 {
 	if(timer)
 		return timer->m_interval;
 	return 0;
 }
-size_t XTimerBase_getTimerId(XTimerBase* timer)
+size_t XTimerBase_timerId(XTimerBase* timer)
 {
 	if(timer)
 		return timer->timerId;
@@ -171,7 +174,7 @@ void VXTimerBase_out(XTimerBase* timer)
 {
 	if (timer == NULL)
 		return;
-	++timer->number;
+	//++timer->number;
 	if (timer->m_timerCallback != NULL)
 		timer->m_timerCallback(timer->m_userData);
 

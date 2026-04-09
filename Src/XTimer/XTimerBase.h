@@ -46,15 +46,16 @@ XCLASS_DEFINE_END(XTimerBase)
 typedef struct XTimerBase
 {
 	XObject m_class;               ///< 继承自XObject基类
-	bool m_autoDelete;             ///< 定时器超时后是否自动释放
-	bool m_isRun;                  ///< 定时器是否正在运行
-	bool m_singleShot;             ///< 是否为单次定时器（true：只触发一次，false：周期性触发）
+	uint32_t m_autoDelete : 1;	   ///< 定时器超时后是否自动释放        
+	uint32_t m_isRun:1;            ///< 定时器是否正在运行
+	uint32_t m_isSingleShot:1;       ///< 是否为单次定时器（true：只触发一次，false：周期性触发）
+	uint32_t m_firstTrigger : 1;   //首次触发
 	size_t m_timeout;              ///< 首次超时时间（毫秒）
 	size_t m_interval;             ///< 周期性触发时间间隔（毫秒）
 	size_t timerId;                ///< 定时器唯一标识ID
 	void* m_userData;              ///< 用户自定义数据
 	XTimerBaseCallback m_timerCallback; ///< 定时器超时回调函数
-	size_t number;                 ///< 超时触发次数计数
+	//size_t number;                 ///< 超时触发次数计数
 }XTimerBase;
 // === 构造与析构相关接口 ===
 /**
@@ -132,8 +133,9 @@ void XTimerBase_setAutoDelete(XTimerBase* timer, bool del);
 * @param timer XTimerBase实例指针
 * @param ss true：单次触发，false：周期性触发
 */
-void XTimerBase_setSingleShote(XTimerBase* timer, bool ss);
+void XTimerBase_setSingleShot(XTimerBase* timer, bool ss);
 // === 属性获取相关接口 ===
+bool XTimerBase_isSingleShot(XTimerBase* timer);
 /**
 * @brief 判断定时器是否为周期性任务
 * @param timer XTimerBase实例指针
@@ -151,19 +153,19 @@ bool XTimerBase_isRunning(XTimerBase* timer);
 * @param timer XTimerBase实例指针
 * @return 超时时间（毫秒）
 */
-size_t XTimerBase_getTimeout(XTimerBase* timer);
+size_t XTimerBase_timeout(XTimerBase* timer);
 /**
 * @brief 获取定时器周期间隔
 * @param timer XTimerBase实例指针
 * @return 周期间隔（毫秒）
 */
-size_t XTimerBase_getInterval(XTimerBase* timer);
+size_t XTimerBase_interval(XTimerBase* timer);
 /**
 * @brief 获取定时器ID
 * @param timer XTimerBase实例指针
 * @return 定时器ID
 */
-size_t XTimerBase_getTimerId(XTimerBase* timer);
+size_t XTimerBase_timerId(XTimerBase* timer);
 /**
 * @brief 获取用户自定义数据
 * @param timer XTimerBase实例指针

@@ -65,6 +65,7 @@ typedef struct XCoreApplication
     XString* m_orgName;//组织名称
     XString* m_orgDomain;//组织域名
     XBitArray m_attribute;//属性位数组
+    XStringList* m_paths;//库搜索路径列表
     XEventLoop* m_eventLoop;       // 事件调度器
 } XCoreApplication;
 
@@ -100,7 +101,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv);
  * @brief 销毁应用程序实例
  * @param app 要销毁的应用程序实例，传NULL无操作
  */
-void XCoreApplication_delete(XCoreApplication* app);
+#define XCoreApplication_delete_base      XClass_delete_base
 /* ==================== 应用程序元数据 (静态属性) ==================== */
 
 /**
@@ -289,19 +290,6 @@ void XCoreApplication_addLibraryPath(const XString* path);
  * @param path 要移除的路径。
  */
 void XCoreApplication_removeLibraryPath(const XString* path);
-
-
-/**
- * @brief 获取事件分发器
- * @return 事件分发器指针，应用程序未初始化返回NULL
- */
-XEventDispatcher* XCoreApplication_dispatcher();
-
-/**
- * @brief 获取事件循环
- * @return 事件循环指针，应用程序未初始化返回NULL
- */
-XEventLoop* XCoreApplication_eventLoop();
 
 
 /**

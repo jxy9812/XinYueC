@@ -18,7 +18,7 @@ void XSetTest()
 	//while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
-		XSet* set = XSet_Create(int, XCompare_int);
+		XSet* set = XSet_Create(int, int_compare);
 
 		for (size_t i = 0; i < 5; i++)
 		{

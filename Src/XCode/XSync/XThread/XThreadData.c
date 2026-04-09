@@ -56,7 +56,7 @@ void XThreadData_init(XThreadData* data, XThread* thread)
 XThreadData* XThreadData_current(void) 
 {
     if (threadMap == NULL)
-        threadMap = XHashMap_Create(size_t, XThreadData*, XCompare_size_t);
+        threadMap = XHashMap_Create(size_t, XThreadData*, size_t_compare);
     if (mutex == NULL)
         mutex = XMutex_create();
     size_t id = XThread_currentThreadId();
@@ -128,6 +128,33 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) {
         XAbstractEventDispatcher_wakeUp_base(td->m_dispatcher);
     }
 }
+
+void XThreadData_push_front_list(const XVector* events)
+{
+    if (!events||!XVector_size_base(events))return;
+    XThreadData* td = XThreadData_current();
+    XVector* temp = XVector_create(sizeof(XPostEvent));
+    XVector_resize_base(temp,XVector_size_base(events));
+    XVector_clear_base(temp);
+    //提取出有效的事件
+    for_each_iterator(events, XVector, it)
+    {
+        XPostEvent* ePost = XVector_iterator_data(&it);
+        if (ePost->event)
+            XVector_push_back_base(temp,ePost);
+    }
+    if(XVector_size_base(temp))
+    {
+        XMutex_lock(td->m_mutex);
+        XVector* local = &td->m_postEventList;
+        //整个一起插入到头部
+        XVector_insert_array_base(local, 0, XContainerDataPtr(temp), XVector_size_base(temp));
+        // 关键：稳定降序排序
+        XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
+        XMutex_unlock(td->m_mutex);
+    }
+    XVector_delete_base(temp);
+}  
 
 XVector* XThreadData_takePostedEvents(void) {
     XThreadData* td = XThreadData_current();

@@ -19,7 +19,7 @@ static void CALLBACK TimerCallbackTimeSetEvent(UINT uID, UINT uMsg, DWORD_PTR dw
 {
 	XTimerBase* timer = ((XTimerBase*)dwUser);
 	XTimerBase_out_base(timer);
-	if (timer->m_singleShot)
+	if (timer->m_isSingleShot)
 	{
 		XTimerBase_stop_base(timer);
 		if (((XTimerBase*)timer)->m_autoDelete)
@@ -48,7 +48,7 @@ void VXTimerBase_start(XTimerBase* timer)
 		1,             // 精度1毫秒
 		TimerCallbackTimeSetEvent, // 回调函数
 		timer,             // 传递用户数据
-		timer->m_singleShot? TIME_ONESHOT:TIME_PERIODIC  // 周期性触发
+		timer->m_isSingleShot? TIME_ONESHOT:TIME_PERIODIC  // 周期性触发
 	);
 	//XPrintf("启动定时器:timer:%d mm id:%d\n", timer->m_timeout, timer->timerId);
 	timer->m_isRun = true;

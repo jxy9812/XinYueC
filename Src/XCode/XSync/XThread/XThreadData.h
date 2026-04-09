@@ -40,7 +40,8 @@ XThreadData* XThreadData_initMainThread(void);
 
 // 向当前线程投递事件（内部使用）
 void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority);
-
+//向当前线程事件队列头部追加未处理的事件列表
+void XThreadData_push_front_list(const XVector* events);
 // 消费并清空当前线程的 posted events（返回局部副本）
 XVector*/*<XPostEvent>*/ XThreadData_takePostedEvents(void);
 

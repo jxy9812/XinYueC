@@ -23,8 +23,6 @@ void XThread_init(XThread* Object)
     Object->m_priority = XThread_NormalPriority;
     Object->m_stackSize = 512;
     Object->m_data = XThreadData_create(Object);
-    //Object->m_eventLoop = XEventLoop_create();
-    //Object->m_eventLoop->m_dispatcher = Object->m_data->m_dispatcher;
 }
 XThread* XThread_currentThread()
 {
@@ -35,15 +33,10 @@ bool XThread_terminate_base(XThread* Object)
 {
     return XClassGetVirtualFunc(Object, EXThread_Terminate, bool(*)(const XThread*))(Object);
 }
-XEventLoop* XThread_currentEventLoop()
-{
-    XThread* th = XThread_currentThread();
-    return th?XThread_eventLoop(th):XCoreApplication_eventLoop();
-}
 XEventDispatcher* XThread_currentDispatcher()
 {
     XThread* th = XThread_currentThread();
-    return th ? XThread_dispatcher(th) : XCoreApplication_dispatcher();
+    return th ? XThread_dispatcher(th) : XCoreApplication_eventDispatcher();
 }
 
 
@@ -65,12 +58,7 @@ XEventDispatcher* XThread_dispatcher(const XThread* Object)
 {
     if (Object)
         return Object->m_data? Object->m_data->m_dispatcher:NULL;
-    return XCoreApplication_dispatcher();
-}
-
-XEventLoop* XThread_eventLoop(const XThread* Object)
-{
-    return Object? Object->m_eventLoop:NULL;
+    return XCoreApplication_eventDispatcher();
 }
 
 // 判断线程是否结束
@@ -116,9 +104,6 @@ void XThread_setEventDispatcher(XThread* Object, XEventDispatcher* eventDispatch
     if (Object->m_data && Object->m_data->m_dispatcher)
         XClass_delete_base(Object->m_data->m_dispatcher);
     Object->m_data->m_dispatcher=eventDispatcher;
-   /* if (Object->m_eventLoop->m_dispatcher != NULL)
-        XEventDispatcher_delete_base(Object->m_eventLoop->m_dispatcher);
-    Object->m_eventLoop->m_dispatcher = eventDispatcher;*/
 }
 
 // 设置线程优先级
@@ -137,6 +122,15 @@ void XThread_setStackSize_base(XThread* Object, uint32_t stackSize)
 uint32_t XThread_stackSize(const XThread* Object)
 {
     return Object->m_stackSize;
+}
+
+int XThread_exec(XThread* thread)
+{
+    if (!thread) return;
+    XEventLoop* loop = XEventLoop_create();
+    int result = XEventLoop_exec(loop);
+    XEventLoop_delete_base(loop);
+    return result;
 }
 
 // 启动线程

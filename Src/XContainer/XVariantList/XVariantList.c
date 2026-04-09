@@ -40,5 +40,5 @@ void XVariantList_init(XVariantList* list)
 	XContainerSetDataCopyMethod(list, XVariant_copy_base);
 	XContainerSetDataMoveMethod(list, XVariant_move_base);
 	XContainerSetDataDeinitMethod(list, XVariant_deinit_base);
-	XContainerSetCompare(list, XCompare_ptr);
+	XContainerSetCompare(list, ptr_compare);
 }

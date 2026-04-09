@@ -46,7 +46,7 @@ void XByteArray_init(XByteArray* array)
 	if (array == NULL)
 		return;
 	XVector_init(array,sizeof(uint8_t));
-	XContainerSetCompare(array, XCompare_uint8_t);
+	XContainerSetCompare(array, uint8_t_compare);
 	//array->m_class.m_equality = XEquality_uint8_t;
 }
 

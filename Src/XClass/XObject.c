@@ -115,7 +115,7 @@ void XObject_setPollingInterval(XObject* object, size_t interval)
 		XTimerBase_setAutoDelete(object->m_poolTimer,false);
 		XTimerBase_setTimerCallback_base(object->m_poolTimer,XObject_poll_base);
 		XTimerBase_setUserData_base(object->m_poolTimer,object);
-		XTimerBase_setSingleShote(object->m_poolTimer, false);
+		XTimerBase_setSingleShot(object->m_poolTimer, false);
 	}
 	XTimerBase_setTimeout_base(object->m_poolTimer, interval);
 	XTimerBase_setInterval_base(object->m_poolTimer, interval);
@@ -192,17 +192,17 @@ bool XObject_blockSignals(XObject* self, bool block)
 	self->block_sig = block;
 	return state;
 }
-XTimerId XObject_startTimer_ms(XObject* self, int interval, XTimerType timerType)
+XTimerId XObject_startTimer_ms(XObject* self, uint64_t interval, XTimerType timerType)
 {
 	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
 	if (!disp)return 0;
-	return XAbstractEventDispatcher_registerTimer(disp, interval * 1000000, timerType, self);
+	return XAbstractEventDispatcher_registerTimer_ms(disp, interval, timerType, self);
 }
 XTimerId XObject_startTimer_ns(XObject* self, uint64_t interval_ns, XTimerType timerType)
 {
 	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
 	if (!disp)return 0;
-	return XAbstractEventDispatcher_registerTimer(disp, interval_ns, timerType, self);
+	return XAbstractEventDispatcher_registerTimer_ns(disp, interval_ns, timerType, self);
 }
 void XObject_killTimer(XObject* self, XTimerId timerId)
 {
@@ -223,7 +223,7 @@ XAbstractEventDispatcher* XObject_eventDispatcher(XObject* object)
 		return NULL;
 	if (object->m_thread)
 		return object->m_thread->m_data->m_dispatcher;
-	return XCoreApplication_instance()->m_eventLoop->m_dispatcher;
+	return XCoreApplication_eventDispatcher();
 }
 
 XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type)

@@ -2,7 +2,7 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XTimer.h"
-#include "XEventLoop.h"
+#include "XCoreApplication.h"
 #include "XCircularQueueAtomic.h"
 #include "XThread.h"
 #include <string.h>
@@ -11,7 +11,7 @@ void VXESP8266_processResponse(XESP8266Wifi* device);
 
 // 前向声明
 static bool VXESP8266_open(XESP8266Wifi* device, XIODeviceBaseMode mode);
-static bool VXESP8266_close(XESP8266Wifi* device);
+static void VXESP8266_close(XESP8266Wifi* device);
 static size_t VXESP8266_write(XESP8266Wifi* device, const char* data, size_t maxSize);
 static size_t VXESP8266_read(XESP8266Wifi* device, char* data, size_t maxSize);
 static size_t VXESP8266_getBytesAvailable(XESP8266Wifi* device);
@@ -227,11 +227,11 @@ static bool VXESP8266_open(XESP8266Wifi* device, XIODeviceBaseMode mode) {
 /**
  * @brief 关闭设备
  */
-static bool VXESP8266_close(XESP8266Wifi* device) {
+static void VXESP8266_close(XESP8266Wifi* device) {
     if (ISNULL(device, "device is NULL") || ISNULL(device->m_io, "m_io is NULL"))
-        return false;
+        return ;
 
-    return XIODevice_close_base(device->m_io);
+    XIODevice_close_base(device->m_io);
 }
 
 /**
@@ -679,7 +679,7 @@ size_t XESP8266Wifi_read(XESP8266Wifi* device, int connId, void* data, size_t si
     size_t current= XTimerBase_getCurrentTime();
     while (XTimerBase_getCurrentTime()< current+ msecs)
     {
-        XEventLoop_processEvents(XThread_currentEventLoop(), XEventLoop_AllEvents);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
         if (remaining_size && XQueueBase_receive_base(queue, ((char*)data) + (size - remaining_size)))
         {
             --remaining_size;

@@ -18,7 +18,7 @@ static VOID CALLBACK TimerCallbackThreadpoolTimer(PTP_CALLBACK_INSTANCE Instance
 {
 	XTimerBase* timer = ((XTimerBase*)Context);
 	XTimerBase_out_base(timer);
-	if (timer->m_singleShot)
+	if (timer->m_isSingleShot)
 	{
 		XTimerBase_stop_base(timer);
 		if (((XTimerBase*)timer)->m_autoDelete)

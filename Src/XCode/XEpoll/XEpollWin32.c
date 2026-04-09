@@ -33,7 +33,7 @@ struct XEpoll {
 };
 
 // 哈希表比较和哈希函数
-//static int XCompare_int(const void* a, const void* b) {
+//static int int_compare(const void* a, const void* b) {
 //    const int* ia = (const int*)a;
 //    const int* ib = (const int*)b;
 //    return (*ia - *ib);
@@ -109,7 +109,7 @@ bool XEpoll_init(XEpoll* epoll, int size) {
 
     // 初始化fd映射表
     epoll->fdToIndexMap = XHashMap_Create(int,int,
-        XCompare_int
+        int_compare
     );
     if (!epoll->fdToIndexMap) {
         XMemory_free(epoll->used_indices);

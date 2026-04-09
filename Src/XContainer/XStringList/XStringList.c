@@ -60,6 +60,7 @@ void XStringList_init(XStringList* strList)
 	XContainerSetDataCopyMethod(strList, XClass_copy_base);
 	XContainerSetDataMoveMethod(strList, XClass_move_base);
 	XContainerSetDataDeinitMethod(strList, XClass_deinit_base);
+	XContainerSetCompare(strList,XString_compare);
 }
 void XStringList_push_front_utf8(XStringList* strList, const char* utf8_str)
 {

@@ -3,6 +3,15 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+	/**
+	 * @brief 定时器唯一标识符。
+	 */
+typedef size_t XTimerId;
+/**
+ * @brief 时间持续量（Duration）。
+ */
+typedef uint64_t XDuration;
+
 typedef enum XTimerType {
 	XCoarseTimer,   ///< 粗略定时器（允许 ±5% 误差，节能）
 	XPreciseTimer   ///< 精确定时器（高精度，高功耗）

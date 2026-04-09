@@ -19,7 +19,7 @@ void XHashSetTest()
 	//while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
-		XHashSet* set = XHashSet_Create(int,XCompare_int);
+		XHashSet* set = XHashSet_Create(int,int_compare);
 
 		for (size_t i = 0; i < 5; i++)
 		{

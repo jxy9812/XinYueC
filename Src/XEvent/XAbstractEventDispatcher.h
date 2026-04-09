@@ -39,15 +39,6 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp)
 // === 核心类型定义（对标 Qt 7+） =====================================
 // ===================================================================
 
-/**
- * @brief 时间持续量（Duration），单位为纳秒（nanoseconds）。
- */
-typedef int64_t XDuration;
-
-/**
- * @brief 定时器唯一标识符。
- */
-typedef size_t XTimerId;
 
 #define XTIMER_ID_INVALID ((XTimerId)0)
 
@@ -72,7 +63,8 @@ XCLASS_DEFINE_BEGING(XAbstractEventDispatcher)
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, ProcessEvents) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, RegisterSocketNotifier),
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, UnregisterSocketNotifier),
-XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, RegisterTimer),
+XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, RegisterTimer_NS),
+XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, RegisterTimer_MS),
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, UnregisterTimer),
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, UnregisterTimers),
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, TimersForObject),
@@ -159,7 +151,8 @@ void XAbstractEventDispatcher_unregisterSocketNotifier_base(XAbstractEventDispat
  * @param timerType 定时器类型。
  * @param object 所属对象。
  */
-void XAbstractEventDispatcher_registerTimer_base(XAbstractEventDispatcher* self, XTimerId timerId, XDuration interval, XTimerType timerType, XObject* object);
+void XAbstractEventDispatcher_registerTimer_ns_base(XAbstractEventDispatcher* self, XTimerId timerId, XDuration interval, XTimerType timerType, XObject* object);
+void XAbstractEventDispatcher_registerTimer_ms_base(XAbstractEventDispatcher* self, XTimerId timerId, XDuration interval, XTimerType timerType, XObject* object);
 
 /**
  * @brief 注销指定 ID 的定时器（多态入口）。
@@ -253,13 +246,26 @@ bool XAbstractEventDispatcher_filterNativeEvent(XAbstractEventDispatcher* self, 
  * @param object 所属对象。
  * @return 新分配的 XTimerId，失败返回 XTIMER_ID_INVALID。
  */
-XTimerId XAbstractEventDispatcher_registerTimer(
+XTimerId XAbstractEventDispatcher_registerTimer_ns(
     XAbstractEventDispatcher* self,
     XDuration interval,
     XTimerType timerType,
     XObject* object
 );
-
+/**
+ * @brief 注册一个高精度定时器（自动分配 ID）。
+ * @param self 调度器指针。
+ * @param interval 间隔（毫秒）。
+ * @param timerType 定时器类型。
+ * @param object 所属对象。
+ * @return 新分配的 XTimerId，失败返回 XTIMER_ID_INVALID。
+ */
+XTimerId XAbstractEventDispatcher_registerTimer_ms(
+    XAbstractEventDispatcher* self,
+    XDuration interval,
+    XTimerType timerType,
+    XObject* object
+);
 /**
  * @brief 获取指定线程的事件调度器实例。
  * @param thread 线程指针（NULL 表示当前线程）。

@@ -71,6 +71,7 @@ XVtable* XAbstractEventDispatcher_class_init(void)
         (void*)VXAbstractEventDispatcher_registerSocketNotifier,
         (void*)VXAbstractEventDispatcher_unregisterSocketNotifier,
         (void*)VXAbstractEventDispatcher_registerTimer,
+        (void*)VXAbstractEventDispatcher_registerTimer,
         (void*)VXAbstractEventDispatcher_unregisterTimer,
         (void*)VXAbstractEventDispatcher_unregisterTimers,
         (void*)VXAbstractEventDispatcher_timersForObject,
@@ -124,7 +125,7 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
 {
     size_t size = 0;
     //处理事件
-    XMutex_lock(self->d_ptr->mutex);
+    //XMutex_lock(self->d_ptr->mutex);
     XVector* events = XThreadData_takePostedEvents();
     for_each_iterator(events, XVector, it)
     {
@@ -133,21 +134,27 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
         // 根据 flags 排除特定事件类型
         if ((flags & XEventLoop_ExcludeUserInputEvents) && ePost->event->input_event == XEventLoop_ExcludeUserInputEvents)
         {
-            XCoreApplication_postEvent(ePost->receiver,ePost->event,ePost->priority);
+            //XCoreApplication_postEvent(ePost->receiver,ePost->event,ePost->priority);
+
             continue; // 跳过用户输入事件
         }
         if ((flags & XEventLoop_ExcludeSocketNotifiers) && ePost->event->type == XEVENT_TYPE_SOCK_ACT) {
-            XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
+            //XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
             continue; // 跳过 socket 事件
         }
         if ((flags & XEventLoop_X11ExcludeTimers) && ePost->event->type == XEVENT_TYPE_TIMER) {
-            XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
+            //XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
             continue; // 跳过定时器事件
         }
-       if(XCoreApplication_sendEvent(ePost->receiver, ePost->event))++size;
+       if(XCoreApplication_sendEvent(ePost->receiver, ePost->event))
+           ++size;
+       ePost->event = NULL;//处理过的事件置空
     }
+    //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
+    if(size< XVector_size_base(events))
+        XThreadData_push_front_list(events);
     XVector_delete_base(events);
-    XMutex_unlock(self->d_ptr->mutex);
+    //XMutex_unlock(self->d_ptr->mutex);
 
     return size;
 }
@@ -235,10 +242,16 @@ void XAbstractEventDispatcher_unregisterSocketNotifier_base(XAbstractEventDispat
     XClassGetVirtualFunc(self, EXAbstractEventDispatcher_UnregisterSocketNotifier, void(*)(XAbstractEventDispatcher*, XSocketNotifier*))(self, notifier);
 }
 
-void XAbstractEventDispatcher_registerTimer_base(XAbstractEventDispatcher* self, XTimerId timerId, XDuration interval, XTimerType timerType, XObject* object)
+void XAbstractEventDispatcher_registerTimer_ns_base(XAbstractEventDispatcher* self, XTimerId timerId, XDuration interval, XTimerType timerType, XObject* object)
 {
     if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return;
-    XClassGetVirtualFunc(self, EXAbstractEventDispatcher_RegisterTimer, void(*)(XAbstractEventDispatcher*, XTimerId, XDuration, XTimerType, XObject*))(self, timerId, interval, timerType, object);
+    XClassGetVirtualFunc(self, EXAbstractEventDispatcher_RegisterTimer_NS, void(*)(XAbstractEventDispatcher*, XTimerId, XDuration, XTimerType, XObject*))(self, timerId, interval, timerType, object);
+}
+
+void XAbstractEventDispatcher_registerTimer_ms_base(XAbstractEventDispatcher* self, XTimerId timerId, XDuration interval, XTimerType timerType, XObject* object)
+{
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return;
+    XClassGetVirtualFunc(self, EXAbstractEventDispatcher_RegisterTimer_MS, void(*)(XAbstractEventDispatcher*, XTimerId, XDuration, XTimerType, XObject*))(self, timerId, interval, timerType, object);
 }
 
 bool XAbstractEventDispatcher_unregisterTimer_base(XAbstractEventDispatcher* self, XTimerId timerId)
@@ -351,7 +364,7 @@ bool XAbstractEventDispatcher_filterNativeEvent(XAbstractEventDispatcher* self, 
 }
 
 
-XTimerId XAbstractEventDispatcher_registerTimer(
+XTimerId XAbstractEventDispatcher_registerTimer_ns(
     XAbstractEventDispatcher* self,
     XDuration interval,
     XTimerType timerType,
@@ -373,7 +386,29 @@ XTimerId XAbstractEventDispatcher_registerTimer(
     XMutex_unlock(self->d_ptr->mutex);
     
     if (id == 0) id = XAtomic_fetch_add_size_t(&s_nextTimerId, 1); // 避免 0
-    XAbstractEventDispatcher_registerTimer_base(self, id, interval, timerType, object);
+    XAbstractEventDispatcher_registerTimer_ns_base(self, id, interval, timerType, object);
+    return id;
+}
+
+XTimerId XAbstractEventDispatcher_registerTimer_ms(XAbstractEventDispatcher* self, XDuration interval, XTimerType timerType, XObject* object)
+{
+    if (ISNULL(self, "")) return XTIMER_ID_INVALID;
+    static XAtomic_uint64_t s_nextTimerId = { .value = 1 };
+    XTimerId id = 0;
+    XMutex_lock(self->d_ptr->mutex);
+    if (XVector_isEmpty_base(self->d_ptr->m_timerIds))
+    {
+        id = XAtomic_fetch_add_size_t(&s_nextTimerId, 1);
+    }
+    else
+    {
+        id = XVector_Back_Base(self->d_ptr->m_timerIds, XTimerId);
+        XVector_pop_back_base(self->d_ptr->m_timerIds);
+    }
+    XMutex_unlock(self->d_ptr->mutex);
+
+    if (id == 0) id = XAtomic_fetch_add_size_t(&s_nextTimerId, 1); // 避免 0
+    XAbstractEventDispatcher_registerTimer_ms_base(self, id, interval, timerType, object);
     return id;
 }
 
@@ -381,7 +416,7 @@ XAbstractEventDispatcher* XAbstractEventDispatcher_instance(XThread* thread)
 {
     if(thread)
         return (XAbstractEventDispatcher*)XThread_dispatcher((XThread*)thread);
-    return XCoreApplication_dispatcher();
+    return XCoreApplication_eventDispatcher();
 }
 
 // ===================================================================

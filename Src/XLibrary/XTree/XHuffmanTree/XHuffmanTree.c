@@ -9,7 +9,7 @@ XHuffmanTree* XHfmTree_init() {
     }
     tree->root = NULL;
     // 使用unsigned char作为key类型，解决符号问题
-    tree->dictionaries = XMap_Create(unsigned char, DictionaryValue, XCompare_unsigned_char);
+    tree->dictionaries = XMap_Create(unsigned char, DictionaryValue, unsigned_char_compare);
     if (ISNULL(tree->dictionaries, "申请哈夫曼树字典失败")) {
         XMemory_free(tree);  // 修复内存泄漏：失败时释放已分配的tree
         return NULL;

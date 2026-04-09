@@ -26,7 +26,7 @@ void XListDLinkedSortTest()
 {
 #if XList_ON
 	XListDLinked* li = XListDLinked_create(sizeof(int));
-	XContainerSetCompare(li, XCompare_int);
+	XContainerSetCompare(li, int_compare);
 	int size = 10;
 	srand((unsigned int)time(NULL));
 	//int* p1 = XMemory_malloc(sizeof(int) * size);
@@ -79,7 +79,7 @@ void XListDLinkedTest()
 #if XList_ON
 	XPrintf("XList 测试\n");
 	XListDLinked* list = XListDLinked_create(sizeof(int));
-	XContainerSetCompare(list,XCompare_int);
+	XContainerSetCompare(list,int_compare);
 	//list->m_class.m_equality = XEquality_int;
 	//XPrintf("%s\n", XContainerObject_empty(list)?"empty":"");
 	//XPrintf("%d\n", XContainerObject_size_base(list));

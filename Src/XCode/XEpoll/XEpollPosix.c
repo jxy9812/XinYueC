@@ -96,7 +96,7 @@ bool XEpoll_init(XEpoll* epoll, int size) {
     }
 
     // 初始化fd映射表
-    epoll->fdToIndexMap = XHashMap_Create(int, int, XCompare_int);
+    epoll->fdToIndexMap = XHashMap_Create(int, int, int_compare);
     if (!epoll->fdToIndexMap) {
         close(epoll->epoll_fd);
         XMemory_free(epoll->events);

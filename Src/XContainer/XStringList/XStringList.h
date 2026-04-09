@@ -254,6 +254,8 @@ XString* XStringList_join_utf8(const XStringList* strList, const char* separator
 */
 #define XStringList_typeSize_base								XVector_typeSize_base
 
+#define XStringList_indexOf                     XVector_indexOf
+#define XStringList_lastIndexOf                 XVector_lastIndexOf
 #ifdef __cplusplus
 }
 #endif

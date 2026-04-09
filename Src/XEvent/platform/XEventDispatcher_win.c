@@ -31,7 +31,7 @@
 // ========================
 
 // 用于 sockets HashMap: 键是 socket value (intptr_t)
-static int XCompare_intptr_t(const void* a, const void* b) {
+static int int_compareptr_t(const void* a, const void* b) {
     intptr_t va = *(const intptr_t*)a;
     intptr_t vb = *(const intptr_t*)b;
     if (va < vb) return -1;
@@ -300,20 +300,20 @@ static void VXEventDispatcherWin32_unregisterSocketNotifier(XAbstractEventDispat
     XMutex_unlock(GetXMutex(dispatcher));
 }
 
-static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* dispatcher, XTimerId timerId, int64_t intervalNs, XTimerType timerType, XObject* object)
+static void VXEventDispatcherWin32_registerTimer_ms(XAbstractEventDispatcher* dispatcher, XTimerId timerId, size_t intervalMs, XTimerType timerType, XObject* object)
 {
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
 
     // 将纳秒转换为毫秒，Windows 定时器精度有限
-    int64_t intervalMs = (intervalNs + 999999) / 1000000;
+    //size_t intervalMs = (intervalMs + 999999) / 1000000;
     if (intervalMs <= 0) intervalMs = 1;
     UINT uElapse = (UINT)(intervalMs > UINT_MAX ? UINT_MAX : intervalMs);
 
     XMutex_lock(GetXMutex(dispatcher));
     XEventDispatcherWin32_TimerInfo timerInfo = {0};
     timerInfo.timerId = timerId;
-    timerInfo.interval = intervalNs;
+    timerInfo.interval = intervalMs;
     timerInfo.timerType = timerType;
     timerInfo.object = object;
     timerInfo.winTimerId = SetTimer(d->internalHwnd, timerId, uElapse, NULL);
@@ -324,7 +324,11 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* dispa
     }
     XMutex_unlock(GetXMutex(dispatcher));
 }
-
+static void VXEventDispatcherWin32_registerTimer_ns(XAbstractEventDispatcher* dispatcher, XTimerId timerId, size_t intervalNs, XTimerType timerType, XObject* object)
+{
+    // 将纳秒转换为毫秒，Windows 定时器精度有限
+    VXEventDispatcherWin32_registerTimer_ms(dispatcher,timerId, (intervalNs + 999999) / 1000000,timerType,object);
+}
 static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* dispatcher, XTimerId timerId)
 {
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
@@ -529,7 +533,8 @@ XVtable* XEventDispatcherWin32_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_ProcessEvents, (void*)VXEventDispatcherWin32_processEvents);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterSocketNotifier, (void*)VXEventDispatcherWin32_registerSocketNotifier);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterSocketNotifier, (void*)VXEventDispatcherWin32_unregisterSocketNotifier);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterTimer, (void*)VXEventDispatcherWin32_registerTimer);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterTimer_MS, (void*)VXEventDispatcherWin32_registerTimer_ms);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterTimer_NS, (void*)VXEventDispatcherWin32_registerTimer_ns);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterTimer, (void*)VXEventDispatcherWin32_unregisterTimer);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterTimers, (void*)VXEventDispatcherWin32_unregisterTimers);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_TimersForObject, (void*)VXEventDispatcherWin32_timersForObject);
@@ -568,8 +573,8 @@ XAbstractEventDispatcher* XEventDispatcherWin32_create(XObject* parent)
     XAbstractEventDispatcherPrivate_init(d);
 
     // --- 修复点 11: 正确初始化 XHashMap ---
-    d->timers = XHashMap_create(sizeof(size_t), sizeof(XEventDispatcherWin32_TimerInfo), XHashMap_murmur3_32, XCompare_size_t);
-    d->sockets = XHashMap_create(sizeof(intptr_t), sizeof(XEventDispatcherWin32_SocketInfo*), XHashMap_murmur3_32, XCompare_intptr_t);
+    d->timers = XHashMap_create(sizeof(size_t), sizeof(XEventDispatcherWin32_TimerInfo), XHashMap_murmur3_32, size_t_compare);
+    d->sockets = XHashMap_create(sizeof(intptr_t), sizeof(XEventDispatcherWin32_SocketInfo*), XHashMap_murmur3_32, int_compareptr_t);
 
     if (!d->timers || !d->sockets ) {
         // 错误处理

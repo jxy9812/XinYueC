@@ -29,9 +29,9 @@ void XSignalSlot_init(XSignalSlot* manager, XObject* obj)
 	if (manager == NULL)
 		return NULL;
 	manager->obj = obj;
-	manager->signalMap = XMap_Create(size_t, XSignal,XCompare_size_t);
+	manager->signalMap = XMap_Create(size_t, XSignal,size_t_compare);
 	manager->bindSignalList = XVector_Create(XConnection*);
-	XContainerSetCompare(manager->bindSignalList, XCompare_ptr);
+	XContainerSetCompare(manager->bindSignalList, ptr_compare);
 	// 初始化互斥锁
 	manager->mutex = XMutex_create();
 }

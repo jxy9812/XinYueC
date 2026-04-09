@@ -50,6 +50,7 @@ void XTimer_init(XTimer* timer);
 */
 #define XTimer_stop_base			XTimerBase_stop_base
 // === 属性设置相关接口 ===
+#define XTimer_setSingleShot		XTimerBase_setSingleShot
 /**
 * @brief 设置定时器超时时间的基类实现宏
 * 复用XTimerBase的setTimeout_base方法
@@ -74,8 +75,9 @@ void XTimer_init(XTimer* timer);
 * @brief 设置定时器所属组的宏
 * 复用XTimerBase的setTimerId方法（将组标识作为timerId存储）
 */
-#define XTimer_setGroup				XTimerBase_setTimerId
+#define XTimer_setTimerId				XTimerBase_setTimerId
 // === 属性获取相关接口 ===
+#define XTimer_isSingleShot			XTimerBase_isSingleShot
 /**
 * @brief 判断定时器是否为周期性任务的宏
 * 复用XTimerBase的isPeriodic方法
@@ -93,19 +95,19 @@ void XTimer_init(XTimer* timer);
 * 复用XTimerBase的getTimeout方法
 * @return 超时时间（毫秒）
 */
-#define XTimer_getTimeout			XTimerBase_getTimeout
+#define XTimer_timeout			XTimerBase_timeout
 /**
 * @brief 获取定时器周期间隔的宏
 * 复用XTimerBase的getInterval方法
 * @return 周期间隔（毫秒）
 */
-#define XTimer_getInterval			XTimerBase_getInterval
+#define XTimer_interval			XTimerBase_interval
 /**
 * @brief 获取定时器所属组的宏
 * 复用XTimerBase的getTimerId方法（组标识存储在timerId中）
 * @return 所属组标识
 */
-#define XTimer_getGroup				XTimerBase_getTimerId
+#define XTimer_timerId			XTimerBase_timerId
 /**
 * @brief 获取用户自定义数据的宏
 * 复用XTimerBase的getUserData方法

@@ -146,7 +146,7 @@ void XMenuData_init(XMenuData* data, const char* title)
 	}
 	data->title = str;
 	data->actions = XVector_create(sizeof(XAction*));
-	XContainerSetCompare(data->actions, XCompare_ptr);
+	XContainerSetCompare(data->actions, ptr_compare);
 }
 
 void XMenuData_setTitle(XMenuData* data, const char* title)
