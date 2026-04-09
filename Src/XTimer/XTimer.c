@@ -3,14 +3,6 @@
 #include"XMemory.h"
 #include"XAbstractEventDispatcher.h"
 #include<string.h>
-static void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callback);
-static void VXTimerBase_setUserData(XTimer* timer, void* userData);
-static void TimerOutEventCb(XEvent* event);
-static  void TimerCallback(void* userData);
-void VXTimerBase_setTimeout(XTimerBase* timer, size_t value);
-void VXTimerBase_out(XTimerBase* timer);
-
-static void VXTimerBase_setInterval(XTimer* timer, size_t value);
 static void VXTimerBase_start(XTimerBase* timer);
 static void VXTimerBase_stop(XTimerBase* timer);
 static void VXTimerBase_deinit(XTimerBase* timer);
@@ -27,16 +19,12 @@ XVtable* XTimer_class_init()
 //继承类
 XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 void* table[] = {
-VXTimerBase_start,VXTimerBase_stop,VXTimerBase_setTimerCallback,VXTimerBase_setUserData,
-VXTimerBase_setTimeout,VXTimerBase_setInterval,
-VXTimerBase_out
+VXTimerBase_start,VXTimerBase_stop
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTimerBase_deinit);
-	XVTABLE_OVERLOAD_DEFAULT(EXTimerBase_SetTimerCallback, VXTimerBase_setTimerCallback);
-	XVTABLE_OVERLOAD_DEFAULT(EXTimerBase_SetUserData, VXTimerBase_setUserData);
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXObject_timerEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll,NULL);
 #if SHOWCONTAINERSIZE
@@ -52,8 +40,6 @@ void XTimer_init(XTimer* timer)
 	memset(((XTimerBase*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerBase));
 	XTimerBase_init(timer,NULL);
 	XClassGetVtable(timer) = XTimer_class_init();
-	((XTimerBase*)timer)->m_timerCallback = TimerCallback;
-	((XTimerBase*)timer)->m_userData = timer;
 }
 
 XTimer* XTimer_create()
@@ -65,29 +51,10 @@ XTimer* XTimer_create()
 	SET_CLASS_HEAP(timer);
 	return timer;
 }
-void TimerCallback(void* userData)
-{
 
-	//XObject_postEvent(userData,XEvent_create(NULL,XEVENT_TIMEROUT,0), XEVENT_PRIORITY_NORMAL);
-}
-void TimerOutEventCb(XEvent* event)
-{
-	//XPrintf("触发\n");
-	/*XTimer* timer = event->receiver;
-	if (timer->callback)
-		timer->callback(timer->m_userData);*/
-	/*XTimer_timeout_signal(event->receiver);*/
-	XEvent_accept(event);
-}
 void* XTimer_timeout_signal(XTimer* timer)
 {
 	XEmitSignal(timer, XTimer_timeout_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
-}
-
-void XTimer_callOnTimeout(XTimer* timer, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
-{
-	if(timer&& slot_func)
-		XObject_connect(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, XConnectionType_Auto);
 }
 
 void XTimer_singleShot(size_t msec, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
@@ -95,29 +62,15 @@ void XTimer_singleShot(size_t msec, XObject* receiver, XSlotFunc slot_func, XCon
 	if (msec == 0 || slot_func == NULL)
 		return;
 	XTimer* timer = XTimer_create();
-	XTimer_setTimeout_base(timer, msec);
+	XTimer_setTimeout(timer, msec);
 	XTimerBase_setAutoDelete(timer,true);
 	XTimerBase_setSingleShot(timer, true);
 	XObject_connect(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, type);
 	XTimer_start_base(timer);
 }
-
-void VXTimerBase_setTimerCallback(XTimer* timer, XTimerBaseCallback callback)
-{
-	//timer->callback = callback;
-}
-
-void VXTimerBase_setUserData(XTimer* timer, void* userData)
-{
-	//timer->m_userData = userData;
-}
-
-void VXTimerBase_setInterval(XTimer* timer, size_t value)
-{
-	timer->m_class.m_interval = value;
-}
 void VXObject_timerEvent(XTimerBase* timer, XTimerEvent* event)
 {
+	XTimer_out(timer);
 	XTimer_timeout_signal(timer);
 	if (timer->m_isSingleShot)
 	{

@@ -2,11 +2,6 @@
 #include"XTimerGroupBase.h"
 #include"XCoreApplication.h"
 #include"XMemory.h"
-void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
-void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
-void VXTimerBase_setTimeout(XTimerBase* timer, size_t value);
-void VXTimerBase_setInterval(XTimerBase* timer, size_t value);
-void VXTimerBase_out(XTimerBase* timer);
 static void VXTimerBase_start(XTimerTimeWheel* timer);
 static void VXTimerBase_stop(XTimerTimeWheel* timer);
 static void VXTimerBase_deinit(XTimerTimeWheel* timer);
@@ -23,9 +18,7 @@ XVtable* XTimerTimeWheel_class_init()
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 	void* table[] = {
-	VXTimerBase_start,VXTimerBase_stop,VXTimerBase_setTimerCallback,VXTimerBase_setUserData,
-	VXTimerBase_setTimeout,VXTimerBase_setInterval,
-	VXTimerBase_out
+	VXTimerBase_start,VXTimerBase_stop
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);

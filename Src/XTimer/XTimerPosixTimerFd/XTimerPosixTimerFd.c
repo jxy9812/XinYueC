@@ -125,7 +125,7 @@ void ReadEventCb(XEventMin *ev)
     ssize_t ret = read(((XTimerBase*)timer)->timerId, &exp, sizeof(exp));
     if (ret != sizeof(exp)) return;
 
-    XTimerBase_out_base(timer);
+    XTimerBase_out(timer);
 
     if (timer->m_isSingleShot) {
         XTimerBase_stop_base(timer);

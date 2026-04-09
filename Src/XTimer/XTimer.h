@@ -55,22 +55,22 @@ void XTimer_init(XTimer* timer);
 * @brief 设置定时器超时时间的基类实现宏
 * 复用XTimerBase的setTimeout_base方法
 */
-#define XTimer_setTimeout_base		XTimerBase_setTimeout_base
+#define XTimer_setTimeout		XTimerBase_setTimeout
 /**
 * @brief 设置定时器周期间隔的基类实现宏
 * 复用XTimerBase的setInterval_base方法
 */
-#define XTimer_setInterval_base		XTimerBase_setInterval_base
+#define XTimer_setInterval		XTimerBase_setInterval
 /**
 * @brief 设置用户自定义数据的宏
 * 复用XTimerBase的setUserData_base方法
 */
-#define XTimer_setUserData			XTimerBase_setUserData_base
+#define XTimer_setUserData			XTimerBase_setUserData
 /**
 * @brief 设置定时器回调函数的宏
 * 复用XTimerBase的setTimerCallback_base方法
 */
-#define XTimer_setTimerCallback		XTimerBase_setTimerCallback_base
+#define XTimer_setTimerCallback		XTimerBase_setTimerCallback
 /**
 * @brief 设置定时器所属组的宏
 * 复用XTimerBase的setTimerId方法（将组标识作为timerId存储）
@@ -119,7 +119,7 @@ void XTimer_init(XTimer* timer);
 * @brief 定时器超时处理的基类实现宏
 * 复用XTimerBase的out_base方法
 */
-#define XTimer_out_base				XTimerBase_out_base
+#define XTimer_out				XTimerBase_out
 /**
 * @brief 定时器超时触发信号
 * 用于触发定时器超时相关的信号回调

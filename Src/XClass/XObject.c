@@ -102,24 +102,24 @@ void XObject_setPollingInterval(XObject* object, size_t interval)
 {
 	if (object == NULL|| XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*))==NULL)
 		return;
-	//间隔是0的时候关闭轮询
-	if (interval == 0&& object->m_poolTimer)
-	{//关闭轮询
-		XTimerBase_stop_base(object->m_poolTimer);
-		//object->m_poolTimer = NULL;
-		return;
-	}
-	if (object->m_poolTimer == NULL)
-	{
-		object->m_poolTimer = XTimer_create();
-		XTimerBase_setAutoDelete(object->m_poolTimer,false);
-		XTimerBase_setTimerCallback_base(object->m_poolTimer,XObject_poll_base);
-		XTimerBase_setUserData_base(object->m_poolTimer,object);
-		XTimerBase_setSingleShot(object->m_poolTimer, false);
-	}
-	XTimerBase_setTimeout_base(object->m_poolTimer, interval);
-	XTimerBase_setInterval_base(object->m_poolTimer, interval);
-	XTimerBase_start_base(object->m_poolTimer);
+	////间隔是0的时候关闭轮询
+	//if (interval == 0&& object->m_poolTimer)
+	//{//关闭轮询
+	//	XTimerBase_stop_base(object->m_poolTimer);
+	//	//object->m_poolTimer = NULL;
+	//	return;
+	//}
+	//if (object->m_poolTimer == NULL)
+	//{
+	//	object->m_poolTimer = XTimer_create();
+	//	XTimerBase_setAutoDelete(object->m_poolTimer,false);
+	//	XTimerBase_setTimerCallback(object->m_poolTimer,XObject_poll_base);
+	//	XTimerBase_setUserData(object->m_poolTimer,object);
+	//	XTimerBase_setSingleShot(object->m_poolTimer, false);
+	//}
+	//XTimerBase_setTimeout(object->m_poolTimer, interval);
+	//XTimerBase_setInterval(object->m_poolTimer, interval);
+	//XTimerBase_start_base(object->m_poolTimer);
 }
 
 void XObject_setParent(XObject* object, XObject* parent)

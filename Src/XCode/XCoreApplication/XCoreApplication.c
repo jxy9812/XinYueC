@@ -190,7 +190,7 @@ void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags) {
 void XCoreApplication_processEventsWithMaxTime(XEventLoopProcessEventsFlags flags, int maxtime)
 {
     XTimer* timer = XTimer_create();
-    XTimer_setInterval_base(timer,maxtime);
+    XTimer_setInterval(timer,maxtime);
     XTimer_setSingleShot(timer,true);
     XTimer_start_base(timer);
     while (XTimer_isRunning(timer))

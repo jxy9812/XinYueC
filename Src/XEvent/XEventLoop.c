@@ -119,8 +119,8 @@ void XEventLoop_delay(size_t msec)
         XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
     }
  
-    XTimer_setTimeout_base(timer,msec);
-    XTimer_setInterval_base(timer, msec);
+    XTimer_setTimeout(timer,msec);
+    XTimer_setInterval(timer, msec);
     XTimer_start_base(timer);
     XEventLoop_exec(loop);*/
 }

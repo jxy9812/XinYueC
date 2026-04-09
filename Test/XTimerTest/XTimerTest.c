@@ -20,7 +20,7 @@ static void Callback(void* userData)
 
 	/*XTimerTimeWheel* timer = XTimerTimeWheel_create();
 	XTimerTimeWheel_setUserData(timer, userData);
-	XTimerTimeWheel_setTimeout_base(timer, 5);
+	XTimerTimeWheel_setTimeout(timer, 5);
 	XTimerTimeWheel_setTimerCallback(timer, Callback1);
 	XTimerTimeWheel_start_base(timer);
 	XTimerGroupBase_addTimer_base(userData, timer);*/
@@ -40,8 +40,8 @@ void XTimerTest()
 		XPrintf("正式结束\n");
 		continue;*/
 		XTimer* timer = XTimer_create();
-		XTimer_setInterval_base(timer, 100);
-		//XTimer_setTimeout_base(timer, 5000);
+		XTimer_setInterval(timer, 100);
+		//XTimer_setTimeout(timer, 5000);
 		XTimerBase_setSingleShot(timer, true);
 		XTimerBase_setAutoDelete(timer, true);
 

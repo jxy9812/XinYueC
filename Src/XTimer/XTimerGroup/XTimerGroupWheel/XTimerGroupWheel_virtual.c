@@ -284,7 +284,7 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
         {
             // 已到期，直接触发
             if (group->m_mutex) XMutex_unlock(group->m_mutex);
-            XTimerBase_out_base(timer);
+            XTimerBase_out(timer);
             if (group->m_mutex) XMutex_lock(group->m_mutex);
             if ((!((XTimerBase*)timer)->m_isSingleShot) && (((XTimerBase*)timer)->m_interval > 0) && ((XTimerBase*)timer)->m_isRun)
             {
@@ -374,7 +374,7 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
                 {
                     ((XTimerTimeWheel*)timer)->m_list = NULL;
                     if (group->m_mutex) XMutex_unlock(group->m_mutex);
-                    XTimerBase_out_base(timer);
+                    XTimerBase_out(timer);
                     if (group->m_mutex) XMutex_lock(group->m_mutex);
                     if ((!((XTimerBase*)timer)->m_isSingleShot) && (((XTimerBase*)timer)->m_interval > 0) && ((XTimerBase*)timer)->m_isRun)
                     {

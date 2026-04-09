@@ -15,7 +15,7 @@ static void Callback1(void* userData)
 
 	/*XTimerTimeWheel* timer = XTimerTimeWheel_create();
 	XTimerTimeWheel_setUserData(timer, userData);
-	XTimerTimeWheel_setTimeout_base(timer, 5);
+	XTimerTimeWheel_setTimeout(timer, 5);
 	XTimerTimeWheel_setTimerCallback(timer, Callback1);
 	XTimerTimeWheel_start_base(timer);
 	XTimerGroupBase_addTimer_base(userData, timer);*/
@@ -39,8 +39,8 @@ void XTimerTimeWheelTest()
 	{
 		XTimerTimeWheel* timer = XTimerTimeWheel_create();
 		XTimerTimeWheel_setUserData(timer, wheel);
-		XTimerTimeWheel_setInterval_base(timer,2);
-		XTimerTimeWheel_setTimeout_base(timer, 5);
+		XTimerTimeWheel_setInterval(timer,2);
+		XTimerTimeWheel_setTimeout(timer, 5);
 		XTimerTimeWheel_setTimerCallback(timer,Callback1);
 		XObject_setParent(timer, wheel);
 		XTimerTimeWheel_start_base(timer);
@@ -49,8 +49,8 @@ void XTimerTimeWheelTest()
 	{
 		XTimerTimeWheel* timer = XTimerTimeWheel_create();
 		XTimerBase* parentTimer = (XTimerBase*)timer;
-		XTimerTimeWheel_setInterval_base(timer, 49);
-		XTimerTimeWheel_setTimeout_base(timer, 15);
+		XTimerTimeWheel_setInterval(timer, 49);
+		XTimerTimeWheel_setTimeout(timer, 15);
 		XTimerTimeWheel_setTimerCallback(timer, Callback2);
 		XObject_setParent(timer, wheel);
 		XTimerTimeWheel_start_base(timer);

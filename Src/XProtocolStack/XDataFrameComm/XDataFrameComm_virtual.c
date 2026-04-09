@@ -424,10 +424,10 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 		if (comm->m_timerSendExpired==NULL)
 		{
 			XTimerBase* timer = XTimerTimeWheel_create();
-			XTimerBase_setTimerCallback_base(timer, TimerSendExpired);
-			XTimerBase_setUserData_base(timer, comm);
+			XTimerBase_setTimerCallback(timer, TimerSendExpired);
+			XTimerBase_setUserData(timer, comm);
 			XTimerBase_setAutoDelete(timer,false);
-			XTimerBase_setTimeout_base(timer, XDFC_HALF_DUPLEX_SEND_WAIT_TIME);
+			XTimerBase_setTimeout(timer, XDFC_HALF_DUPLEX_SEND_WAIT_TIME);
 			comm->m_timerSendExpired = timer;
 		}
 	}
@@ -476,11 +476,11 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 		if (comm->m_timerRecvExpired == NULL)
 		{
 			XTimerBase* timer = XTimerTimeWheel_create();
-			XTimerBase_setTimerCallback_base(timer, TimerRecvExpired);
-			XTimerBase_setUserData_base(timer, comm);
+			XTimerBase_setTimerCallback(timer, TimerRecvExpired);
+			XTimerBase_setUserData(timer, comm);
 			XTimerBase_setAutoDelete(timer, false);
-			XTimerBase_setTimeout_base(timer, XDFC_FRAME_END_TIMEOUT_TIME);
-			XTimerBase_setInterval_base(timer, XDFC_FRAME_END_TIMEOUT_TIME);
+			XTimerBase_setTimeout(timer, XDFC_FRAME_END_TIMEOUT_TIME);
+			XTimerBase_setInterval(timer, XDFC_FRAME_END_TIMEOUT_TIME);
 			comm->m_timerRecvExpired = timer;
 		}
 	}
@@ -556,10 +556,10 @@ XHandle VXDataFrameComm_addPeriodicData(XDataFrameComm* comm, XByteArray* data, 
 	node->timer = timer;
 
 	XListBase_push_back_base(comm->m_periodicSendList,&node);
-	XTimerBase_setTimeout_base(timer, time);
-	XTimerBase_setInterval_base(timer, time);
-	XTimerBase_setUserData_base(timer, node);
-	XTimerBase_setTimerCallback_base(timer, SendDataPeriodicCb);
+	XTimerBase_setTimeout(timer, time);
+	XTimerBase_setInterval(timer, time);
+	XTimerBase_setUserData(timer, node);
+	XTimerBase_setTimerCallback(timer, SendDataPeriodicCb);
 	XTimerBase_start_base(timer);
 	return node;
 }

@@ -33,11 +33,6 @@ typedef struct XTimerGroupBase XTimerGroupBase;
 XCLASS_DEFINE_BEGING(XTimerBase)
 XCLASS_DEFINE_ENUM(XTimerBase, Start) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XTimerBase, Stop),
-XCLASS_DEFINE_ENUM(XTimerBase, SetTimerCallback),
-XCLASS_DEFINE_ENUM(XTimerBase, SetUserData),
-XCLASS_DEFINE_ENUM(XTimerBase, SetTimeOut),
-XCLASS_DEFINE_ENUM(XTimerBase, SetInterval),
-XCLASS_DEFINE_ENUM(XTimerBase, Out),
 XCLASS_DEFINE_END(XTimerBase)
 /**
 * @brief 定时器基类结构体定义
@@ -97,25 +92,25 @@ void XTimerBase_stop_base(XTimerBase* timer);
 * @param timer XTimerBase实例指针
 * @param value 超时时间（毫秒）
 */
-void XTimerBase_setTimeout_base(XTimerBase* timer, size_t value);
+void XTimerBase_setTimeout(XTimerBase* timer, size_t value);
 /**
 * @brief 设置定时器周期间隔（基类实现）
 * @param timer XTimerBase实例指针
 * @param value 周期间隔（毫秒）
 */
-void XTimerBase_setInterval_base(XTimerBase* timer, size_t value);
+void XTimerBase_setInterval(XTimerBase* timer, size_t value);
 /**
 * @brief 设置用户自定义数据（基类实现）
 * @param timer XTimerBase实例指针
 * @param userData 用户数据指针
 */
-void XTimerBase_setUserData_base(XTimerBase* timer, void* userData);
+void XTimerBase_setUserData(XTimerBase* timer, void* userData);
 /**
 * @brief 设置定时器回调函数（基类实现）
 * @param timer XTimerBase实例指针
 * @param callback 回调函数指针
 */
-void XTimerBase_setTimerCallback_base(XTimerBase* timer, XTimerBaseCallback callback);
+void XTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
 /**
 * @brief 设置定时器ID
 * @param timer XTimerBase实例指针
@@ -183,7 +178,7 @@ bool   XTimerBase_isAutoDelete(XTimerBase* timer);
 * @brief 定时器超时处理函数（基类实现）
 * @param timer XTimerBase实例指针
 */
-void XTimerBase_out_base(XTimerBase* timer);
+void XTimerBase_out(XTimerBase* timer);
 // === 时间戳相关接口 ===
 /**
 * @brief 累加当前时间戳（以毫秒为单位）

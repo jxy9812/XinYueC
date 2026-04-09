@@ -2,11 +2,6 @@
 #include"XMemory.h"
 #include <windows.h>
 #include "XTimerWin32ThreadpoolTimer.h"
-void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
-void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
-void VXTimerBase_setTimeout(XTimerBase* timer, size_t value);
-static void VXTimerBase_setInterval(XTimerWin32ThreadpoolTimer* timer, size_t value);
-void VXTimerBase_out(XTimerBase* timer);
 static void VXTimerBase_start(XTimerBase* timer);
 static void VXTimerBase_stop(XTimerBase* timer);
 static void VXTimerBase_deinit(XTimerBase* timer);
@@ -17,7 +12,7 @@ static void VXTimerBase_deinit(XTimerBase* timer);
 static VOID CALLBACK TimerCallbackThreadpoolTimer(PTP_CALLBACK_INSTANCE Instance, PVOID Context, PTP_TIMER Timer)
 {
 	XTimerBase* timer = ((XTimerBase*)Context);
-	XTimerBase_out_base(timer);
+	XTimerBase_out(timer);
 	if (timer->m_isSingleShot)
 	{
 		XTimerBase_stop_base(timer);
@@ -100,14 +95,7 @@ void VXTimerBase_deinit(XTimerBase* timer)
 	// 释放父对象
 	XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(timer);
 }
-void VXTimerBase_setInterval(XTimerWin32ThreadpoolTimer* timer, size_t value)
-{
-	((XTimerBase*)timer)->m_interval = value;
-	if (XTimerBase_isRunning(timer))
-	{
-		XTimerBase_start_base(timer);
-	}
-}
+
 XVtable* XTimerWin32ThreadpoolTimer_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -120,9 +108,7 @@ XVtable* XTimerWin32ThreadpoolTimer_class_init()
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XObject_class_init());
 	void* table[] = {
-	VXTimerBase_start,VXTimerBase_stop,VXTimerBase_setTimerCallback,VXTimerBase_setUserData,
-	VXTimerBase_setTimeout,VXTimerBase_setInterval,
-	VXTimerBase_out
+	VXTimerBase_start,VXTimerBase_stop
 	};
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);

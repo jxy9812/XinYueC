@@ -1,11 +1,6 @@
 ﻿#include"XTimerBase.h"
 #include"XMemory.h"
 #include<string.h>
-void VXTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback);
-void VXTimerBase_setUserData(XTimerBase* timer, void* userData);
-void VXTimerBase_setTimeout(XTimerBase* timer, size_t value);
-void VXTimerBase_setInterval(XTimerBase* timer, size_t value);
-void VXTimerBase_out(XTimerBase* timer);
 XTimerBase* XTimerBase_create(XVtable* vtable)
 {
 	if (vtable == NULL)
@@ -48,37 +43,6 @@ void XTimerBase_stop_base(XTimerBase* timer)
 	XClassGetVirtualFunc(timer, EXTimerBase_Stop, void(*)(XTimerBase*))(timer);
 }
 
-void XTimerBase_setTimeout_base(XTimerBase* timer, size_t value)
-{
-	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
-		return;
-	XClassGetVirtualFunc(timer, EXTimerBase_SetTimeOut, void(*)(XTimerBase*, size_t))(timer, value);
-}
-
-void XTimerBase_setInterval_base(XTimerBase* timer, size_t value)
-{
-	if (ISNULL(timer, "")|| ISNULL(XClassGetVtable(timer), ""))
-		return;
-	XClassGetVirtualFunc(timer, EXTimerBase_SetInterval, void(*)(XTimerBase*, size_t))(timer, value);
-	//if (timer == NULL /*||timer->setInterval==NULL*/)
-	//	return;
-	//timer->m_interval=value;
-	//XTimer_start(timer);
-	/*if(timer->setInterval)
-		timer->setInterval(timer);*/
-}
-void XTimerBase_setUserData_base(XTimerBase* timer, void* userData)
-{
-	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
-		return;
-	XClassGetVirtualFunc(timer, EXTimerBase_SetUserData, void(*)(XTimerBase*, void*))(timer, userData);
-}
-void XTimerBase_setTimerCallback_base(XTimerBase* timer, XTimerBaseCallback callback)
-{
-	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
-		return;
-	XClassGetVirtualFunc(timer, EXTimerBase_SetTimerCallback, void(*)(XTimerBase*, XTimerBaseCallback))(timer, callback);
-}
 void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId)
 {
 	if (timer)
@@ -138,39 +102,25 @@ bool XTimerBase_isAutoDelete(XTimerBase* timer)
 		return timer->m_autoDelete;
 	return false;
 }
-//XTimerGroupBase* XTimerBase_getTimerGroup(XTimerBase* timer)
-//{
-//	if (timer)
-//		return XObject_parent(timer);
-//	return NULL;
-//}
-void XTimerBase_out_base(XTimerBase* timer)
-{
-	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
-		return;
-	XClassGetVirtualFunc(timer, EXTimerBase_Out, void(*)(XTimerBase*))(timer);
-}
 
-void VXTimerBase_setTimerCallback(XTimerBase *timer, XTimerBaseCallback callback)
+void XTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback)
 {
 	timer->m_timerCallback = callback;
 }
 
-void VXTimerBase_setUserData(XTimerBase* timer, void* userData)
+void XTimerBase_setUserData(XTimerBase* timer, void* userData)
 {
 	timer->m_userData = userData;
 }
-
-void VXTimerBase_setTimeout(XTimerBase* timer, size_t value)
+void XTimerBase_setTimeout(XTimerBase* timer, size_t value)
 {
 	timer->m_timeout = value;
 }
-
-void VXTimerBase_setInterval(XTimerBase* timer, size_t value)
+void XTimerBase_setInterval(XTimerBase* timer, size_t value)
 {
 	timer->m_interval = value;
 }
-void VXTimerBase_out(XTimerBase* timer)
+void XTimerBase_out(XTimerBase* timer)
 {
 	if (timer == NULL)
 		return;
