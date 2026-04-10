@@ -40,6 +40,7 @@ void XTimer_init(XTimer* timer)
 	memset(((XTimerBase*)timer) + 1, 0, sizeof(XTimer) - sizeof(XTimerBase));
 	XTimerBase_init(timer,NULL);
 	XClassGetVtable(timer) = XTimer_class_init();
+	timer->m_type = XTimerType_CoarseTimer;
 }
 
 XTimer* XTimer_create()
@@ -50,6 +51,16 @@ XTimer* XTimer_create()
 	XTimer_init(timer);
 	SET_CLASS_HEAP(timer);
 	return timer;
+}
+
+void XTimer_setTimerType(XTimer* timer,XTimerType type)
+{
+	if (timer)timer->m_type = type;
+}
+
+XTimerType XTimer_timerType(XTimer* timer)
+{
+	return timer?timer->m_type: XTimerType_PreciseTimer;
 }
 
 void* XTimer_timeout_signal(XTimer* timer)
@@ -84,7 +95,7 @@ void VXObject_timerEvent(XTimerBase* timer, XTimerEvent* event)
 		timer->m_firstTrigger = true;//第一次触发
 		XTimer_stop_base(timer);
 		if (timer->m_interval)
-			timer->timerId = XObject_startTimer_ms(timer, timer->m_interval, XCoarseTimer);
+			timer->timerId = XObject_startTimer_ms(timer, timer->m_interval, XTimer_timerType(timer));
 		if (timer->timerId)
 			timer->m_isRun = true;
 	}
@@ -103,9 +114,9 @@ void VXTimerBase_start(XTimerBase* timer)
 	timer->m_firstTrigger = false;
 	XTimerBase_stop_base(timer);
 	if(timer->m_timeout)
-		timer->timerId=XObject_startTimer_ms(timer,timer->m_timeout, XCoarseTimer);
+		timer->timerId = XObject_startTimer_ms(timer, timer->m_timeout, XTimer_timerType(timer));
 	else if(timer->m_interval)
-		timer->timerId = XObject_startTimer_ms(timer, timer->m_interval, XCoarseTimer);
+		timer->timerId = XObject_startTimer_ms(timer, timer->m_interval, XTimer_timerType(timer));
 	if(timer->timerId)
 		timer->m_isRun = true;
 }

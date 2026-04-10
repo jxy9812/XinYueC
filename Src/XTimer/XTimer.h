@@ -15,6 +15,7 @@ extern "C" {
 typedef struct XTimer
 {
 	XTimerBase m_class;
+	XTimerType m_type;
 } XTimer;
 // === 类初始化与构造相关接口 ===
 /**
@@ -51,6 +52,7 @@ void XTimer_init(XTimer* timer);
 #define XTimer_stop_base			XTimerBase_stop_base
 // === 属性设置相关接口 ===
 #define XTimer_setSingleShot		XTimerBase_setSingleShot
+#define XTimer_setAutoDelete		XTimerBase_setAutoDelete
 /**
 * @brief 设置定时器超时时间的基类实现宏
 * 复用XTimerBase的setTimeout_base方法
@@ -120,6 +122,8 @@ void XTimer_init(XTimer* timer);
 * 复用XTimerBase的out_base方法
 */
 #define XTimer_out				XTimerBase_out
+void XTimer_setTimerType(XTimer* timer,XTimerType type);
+XTimerType XTimer_timerType(XTimer* timer);
 /**
 * @brief 定时器超时触发信号
 * 用于触发定时器超时相关的信号回调

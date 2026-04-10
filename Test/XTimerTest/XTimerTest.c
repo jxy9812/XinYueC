@@ -42,9 +42,9 @@ void XTimerTest()
 		XTimer* timer = XTimer_create();
 		XTimer_setInterval(timer, 100);
 		//XTimer_setTimeout(timer, 5000);
-		XTimerBase_setSingleShot(timer, true);
-		XTimerBase_setAutoDelete(timer, true);
-
+		XTimer_setSingleShot(timer, true);
+		XTimer_setAutoDelete(timer, true);
+		XTimer_setTimerType(timer, XTimerType_PreciseTimer);
 		//XConnection* conn=XObject_connect(timer,XSignal(XTimer_timeout_signal),timer, timerSlotFunc,XConnectionType_Queued);
 		//XObject_disconnect_conn(conn);
 		//XObject_disconnect(timer, XSignal(XTimer_timeout_signal), NULL, timerSlotFunc);

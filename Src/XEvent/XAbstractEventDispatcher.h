@@ -63,8 +63,7 @@ XCLASS_DEFINE_BEGING(XAbstractEventDispatcher)
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, ProcessEvents) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, RegisterSocketNotifier),
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, UnregisterSocketNotifier),
-XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, RegisterTimer_NS),
-XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, RegisterTimer_MS),
+XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, RegisterTimer),
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, UnregisterTimer),
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, UnregisterTimers),
 XCLASS_DEFINE_ENUM(XAbstractEventDispatcher, TimersForObject),
@@ -151,8 +150,7 @@ void XAbstractEventDispatcher_unregisterSocketNotifier_base(XAbstractEventDispat
  * @param timerType 定时器类型。
  * @param object 所属对象。
  */
-void XAbstractEventDispatcher_registerTimer_ns_base(XAbstractEventDispatcher* self, XTimerId timerId, XDuration interval, XTimerType timerType, XObject* object);
-void XAbstractEventDispatcher_registerTimer_ms_base(XAbstractEventDispatcher* self, XTimerId timerId, XDuration interval, XTimerType timerType, XObject* object);
+void XAbstractEventDispatcher_registerTimer_base(XAbstractEventDispatcher* self, XTimerId timerId, XDuration interval, XTimerType timerType, XObject* object);
 
 /**
  * @brief 注销指定 ID 的定时器（多态入口）。
@@ -246,7 +244,7 @@ bool XAbstractEventDispatcher_filterNativeEvent(XAbstractEventDispatcher* self, 
  * @param object 所属对象。
  * @return 新分配的 XTimerId，失败返回 XTIMER_ID_INVALID。
  */
-XTimerId XAbstractEventDispatcher_registerTimer_ns(
+XTimerId XAbstractEventDispatcher_registerTimer(
     XAbstractEventDispatcher* self,
     XDuration interval,
     XTimerType timerType,

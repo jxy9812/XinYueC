@@ -10,11 +10,12 @@ typedef size_t XTimerId;
 /**
  * @brief 时间持续量（Duration）。
  */
-typedef uint64_t XDuration;
+typedef int64_t XDuration;
 
 typedef enum XTimerType {
-	XCoarseTimer,   ///< 粗略定时器（允许 ±5% 误差，节能）
-	XPreciseTimer   ///< 精确定时器（高精度，高功耗）
+	XTimerType_PreciseTimer,   ///< 精确定时器（高精度，高功耗）
+	XTimerType_CoarseTimer,   ///< 粗略定时器（允许 ±5% 误差，节能）
+	XTimerType_VeryCoarseTimer// 仅保持完整的秒级精度。
 } XTimerType;
 /**
  * @brief 查找子对象的选项（对应 Qt::FindChildOption）

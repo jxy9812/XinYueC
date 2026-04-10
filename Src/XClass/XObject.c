@@ -196,13 +196,13 @@ XTimerId XObject_startTimer_ms(XObject* self, uint64_t interval, XTimerType time
 {
 	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
 	if (!disp)return 0;
-	return XAbstractEventDispatcher_registerTimer_ms(disp, interval, timerType, self);
+	return XAbstractEventDispatcher_registerTimer(disp, interval*1000000, timerType, self);
 }
 XTimerId XObject_startTimer_ns(XObject* self, uint64_t interval_ns, XTimerType timerType)
 {
 	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
 	if (!disp)return 0;
-	return XAbstractEventDispatcher_registerTimer_ns(disp, interval_ns, timerType, self);
+	return XAbstractEventDispatcher_registerTimer(disp, interval_ns, timerType, self);
 }
 void XObject_killTimer(XObject* self, XTimerId timerId)
 {
