@@ -28,7 +28,10 @@ static void VXAbstractEventDispatcher_closingDown(XAbstractEventDispatcher* self
 
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 {
-    dp->nativeFilters= XVector_Create(void*);
+    if (!XThread_currentThread())
+        dp->nativeFilters = XVector_Create(void*);
+    else
+        dp->nativeFilters = NULL;
     dp->mutex = XMutex_create();
     dp->m_timerIds = XVector_Create(XTimerId);
 }
@@ -299,6 +302,7 @@ void XAbstractEventDispatcher_installNativeEventFilter(XAbstractEventDispatcher*
 {
     (void)self; // 保留参数以匹配 Qt 签名
     if (ISNULL(filter, "filter is NULL")) return;
+    if (XObject_thread(self))return;//子线程不需要原生事件过滤器
     XMutex_lock(self->d_ptr->mutex);
     // 首次使用时创建 vector
     if (!self->d_ptr->nativeFilters) {
@@ -322,6 +326,7 @@ void XAbstractEventDispatcher_removeNativeEventFilter(XAbstractEventDispatcher* 
 {
     (void)self;
     if (ISNULL(filter, "filter is NULL") || !self->d_ptr->nativeFilters) return;
+    if (XObject_thread(self))return;//子线程不需要原生事件过滤器
     XMutex_lock(self->d_ptr->mutex);
     // 查找并移除
     for (size_t i = 0; i < XVector_size_base(self->d_ptr->nativeFilters); ++i) {

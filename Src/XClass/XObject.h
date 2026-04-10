@@ -63,8 +63,7 @@ typedef struct XObject
 	//void* binding_storage;          // 绑定存储 (void* 作为占位)
 
 	// 对象名称
-	char* object_name;
-    XTimerBase* m_poolTimer;             ///< 轮询定时器：用于定期触发Poll虚函数（控制轮询频率）
+	XString* object_name;
 }XObject;
 
 /**
@@ -88,9 +87,9 @@ XObject* XObject_create();
  */
 void XObject_init(XObject* object);
 // 获取对象名称
-const char* XObject_objectName(const XObject* self);
+const XString* XObject_objectName(const XObject* self);
 // 设置对象名称
-void XObject_setObjectName(XObject* self, const char* name);
+void XObject_setObjectName(XObject* self, const XString* name);
 /**
  * @brief 获取当前对象的父对象
  * @param object 目标XObject对象指针（非NULL）
@@ -340,8 +339,9 @@ void XObject_deleteLater(XObject* object);
  * @note 槽函数原型：void deinit_slot(XObject* receiver, XVarList* argList, XObject* m_sender)
  *       用于通知相关对象当前对象即将释放
  */
-void* XObject_deinit_signal(XObject* object);
+void* XObject_destroyed_signal(XObject* object);
 
+void XObject_objectNameChanged_signal(XObject* object,const XString* objectName);
 /**
 * @brief 精简信号发射宏（同步发射）
 * @param object 发送信号的对象指针（可为NULL，为NULL时不发射）

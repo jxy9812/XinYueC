@@ -84,8 +84,9 @@ int XEventLoop_exec(XEventLoop* loop);
  * @param loop 事件循环实例
  * @param exitCode 退出代码
  */
-void XEventLoop_quit(XEventLoop* loop, int exitCode);
+void XEventLoop_exit(XEventLoop* loop, int exitCode);
 
+void XEventLoop_quit(XEventLoop* loop);
 /**
  * @brief 唤醒事件循环
  * @param loop 事件循环实例

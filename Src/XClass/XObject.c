@@ -58,25 +58,21 @@ void XObject_init(XObject* object)
 	//object->filters=XVector_create(sizeof(XObject*));
 }
 
-const char* XObject_objectName(const XObject* self)
+const XString* XObject_objectName(const XObject* self)
 {
-	if (!self || !self)return NULL;
+	if (!self)return NULL;
 	return self->object_name;
 }
 
-void XObject_setObjectName(XObject* self, const char* name)
+void XObject_setObjectName(XObject* self, const XString* name)
 {
-	if (!self || !self)return;
-	if (self->object_name)
+	if (!self || !name)return;
+	if (!self->object_name)self->object_name = XString_create();
+	if(XString_compare(self->object_name, name)!=XCompare_Equality)
 	{
-		XDelete(self->object_name);
-		self->object_name = NULL;
+		XString_assign(self->object_name, name);
+		XObject_objectNameChanged_signal(self, self->object_name);
 	}
-	if (!name) return;
-	size_t len = strlen(name);
-	if (len == 0)return;
-	self->object_name=XMalloc(len+1);
-	memcpy(self->object_name,name,len+1);
 }
 
 bool XObject_isSignalConnected(const XObject* self, size_t signal)
@@ -163,20 +159,10 @@ XObject* XObject_parent(XObject* object)
 
 bool XObject_moveToThread(XObject* object, XThread* thread)
 {
-	//if (!object||object->m_thread==thread)
-	//	return false;
-	//XEventDispatcher* dispatcher = XObject_eventDispatcher(object);
-	////处理剩余的所有事件,防止遗漏
-	//if (dispatcher)
-	//{
-	//	//XEventDispatcher_handler_base(object->m_eventLoop->m_dispatcher);
-	//	if (XEventDispatcher_object_move(dispatcher, XThread_dispatcher(thread), object))
-	//	{
-	//		object->m_thread = thread;
-	//		return true;
-	//	}
-	//}
-	return false;
+	//处理当前线程剩余的所有事件
+	XCoreApplication_processEvents(XEventLoop_AllEvents);
+	object->m_thread = thread;
+	return true;
 }
 
 bool XObject_signalsBlocked(const XObject* self)
@@ -282,9 +268,14 @@ void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, void(*
 		XSignalSlot_emit_queue(object->m_signalSlot, signal, args, del, ref_count,priority);
 }
 
-void* XObject_deinit_signal(XObject* object)
+void* XObject_destroyed_signal(XObject* object)
 {
-	XEmitSignal(object, XObject_deinit_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
+	XEmitSignal(object, XObject_destroyed_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
+}
+
+void XObject_objectNameChanged_signal(XObject* object, const XString* objectName)
+{
+
 }
 
 void VXObject_poll(XObject* object)
@@ -313,7 +304,7 @@ void VXObject_deinit(XObject* object)
 	}
 	if (object->object_name)
 	{
-		XDelete(object->object_name);
+		XString_delete_base(object->object_name);
 		object->object_name = NULL;
 	}
 	//释放信号与槽
@@ -321,11 +312,6 @@ void VXObject_deinit(XObject* object)
 	{
 		XSignalSlot_delete(object->m_signalSlot);
 		object->m_signalSlot = NULL;
-	}
-	if (object->m_poolTimer)
-	{
-		XTimerBase_delete_base(object->m_poolTimer);
-		object->m_poolTimer = NULL;
 	}
 }
 bool VXObject_event(XObject* self, XEvent* e)
@@ -388,7 +374,7 @@ XObject* XObject_findChild(const XObject* self, const char* name, XFindChildOpti
 			{
 				XObject* child = *((XObject**)XVector_iterator_data(&it));
 				XStack_push_base(sk, &child);
-				if (child && child->object_name && strcmp(child->object_name, name) == 0)
+				if (child && child->object_name &&XString_compare(child->object_name, name) == XCompare_Equality)
 				{
 					XStack_delete_base(sk);
 					return child;
@@ -402,7 +388,7 @@ XObject* XObject_findChild(const XObject* self, const char* name, XFindChildOpti
 		for_each_iterator(self->children, XVector, it)
 		{
 			XObject* child = *((XObject**)XVector_iterator_data(&it));
-			if (child && child->object_name && strcmp(child->object_name, name) == 0) return child;
+			if (child && child->object_name && XString_compare(child->object_name, name) == XCompare_Equality) return child;
 		}
 	}
 	return NULL;
@@ -425,7 +411,7 @@ XObjectList* XObject_findChildren(const XObject* self, const char* name, XFindCh
 			{
 				XObject* child = *((XObject**)XVector_iterator_data(&it));
 				XStack_push_base(sk, &child);
-				if (child && child->object_name && strcmp(child->object_name, name) == 0)
+				if (child && child->object_name && XString_compare(child->object_name, name) == XCompare_Equality)
 				{
 					XVector_push_back_base(list,&child);
 				}
@@ -438,7 +424,7 @@ XObjectList* XObject_findChildren(const XObject* self, const char* name, XFindCh
 		for_each_iterator(self->children, XVector, it)
 		{
 			XObject* child = *((XObject**)XVector_iterator_data(&it));
-			if (child && child->object_name && strcmp(child->object_name, name) == 0)
+			if (child && child->object_name && XString_compare(child->object_name, name) == XCompare_Equality)
 				XVector_push_back_base(list, &child);
 		}
 	}

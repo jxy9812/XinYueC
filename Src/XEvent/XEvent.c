@@ -241,7 +241,7 @@ void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver
 	if (XAtomic_fetch_sub_uint32(&receiver->m_posted_events, 1) == 1)
 	{//正式释放
 		receiver->is_deleting_children = true;
-		XObject_deinit_signal(receiver);
+		XObject_destroyed_signal(receiver);
 		if(event->isDelete)
 			XClass_delete_base(receiver);
 		else

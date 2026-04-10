@@ -251,20 +251,6 @@ XTimerId XAbstractEventDispatcher_registerTimer(
     XObject* object
 );
 /**
- * @brief 注册一个高精度定时器（自动分配 ID）。
- * @param self 调度器指针。
- * @param interval 间隔（毫秒）。
- * @param timerType 定时器类型。
- * @param object 所属对象。
- * @return 新分配的 XTimerId，失败返回 XTIMER_ID_INVALID。
- */
-XTimerId XAbstractEventDispatcher_registerTimer_ms(
-    XAbstractEventDispatcher* self,
-    XDuration interval,
-    XTimerType timerType,
-    XObject* object
-);
-/**
  * @brief 获取指定线程的事件调度器实例。
  * @param thread 线程指针（NULL 表示当前线程）。
  * @return 调度器指针。

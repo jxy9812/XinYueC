@@ -44,8 +44,8 @@
 //void XModbusTest()
 //{
 //    XSerialPortBase* serial = XSerialPort_create();
-//    XObject_connect(serial, XSignal(XObject_deinit_signal), serial, deinit_slot, XConnectionType_Auto);
-//    XObject_connect(serial, XSignal(XObject_deinit_signal), serial, deinit_slot, XConnectionType_Auto| XConnectionType_Unique);
+//    XObject_connect(serial, XSignal(XObject_destroyed_signal), serial, deinit_slot, XConnectionType_Auto);
+//    XObject_connect(serial, XSignal(XObject_destroyed_signal), serial, deinit_slot, XConnectionType_Auto| XConnectionType_Unique);
 //    serial->m_baudRate = 38400;
 //    serial->m_portNum = 2;
 //    XSocket* socket = XSocket_create();

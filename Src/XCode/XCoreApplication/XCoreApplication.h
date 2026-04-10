@@ -56,10 +56,8 @@ XCLASS_DEFINE_END(XCoreApplication)
 typedef struct XCoreApplication
 {
     XObject m_class;               // 父对象
-    bool m_quit;                   // 是否退出标志
     int m_argc;                    // 命令行参数数量
     char** m_argv;                 // 命令行参数数组
-    //XStringList m_arguments;
     XString* m_applicationName;//应用程序名称
     XString* m_version;//应用程序版本号
     XString* m_orgName;//组织名称
@@ -69,6 +67,7 @@ typedef struct XCoreApplication
     XEventLoop* m_eventLoop;       // 事件调度器
 } XCoreApplication;
 
+#define xApp XCoreApplication_instance()
 /**
  * @brief 获取应用程序类的虚函数表
  * @return 虚函数表指针
@@ -197,6 +196,7 @@ const XString* XCoreApplication_applicationFilePath(void);
  */
 int64_t XCoreApplication_applicationPid(void);
 
+void XCoreApplication_exit(int returnCode);
 /**
  * @brief 退出应用程序
  */
@@ -215,7 +215,20 @@ void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags);
  */
 void XCoreApplication_processEventsWithMaxTime(XEventLoopProcessEventsFlags flags, int maxtime);
 
+/**
+ * @brief 安装原生事件过滤器。
+ * @param filter 过滤器对象。
+ */
+void XCoreApplication_installNativeEventFilter(struct XAbstractNativeEventFilter* filter);
+
+/**
+ * @brief 移除原生事件过滤器。
+ * @param filter 过滤器对象。
+ */
+void XCoreApplication_removeNativeEventFilter(struct XAbstractNativeEventFilter* filter);
+
 bool XCoreApplication_notify_base(XObject* receiver, XEvent* e);
+
 /**
  * @brief 启动应用程序事件循环
  * @return 退出码
@@ -299,6 +312,13 @@ void XCoreApplication_removeLibraryPath(const XString* path);
  */
 void* XCoreApplication_aboutToQuit_signal(XCoreApplication* app);
 
+void* XCoreApplication_applicationNameChanged_signal(XCoreApplication* app);
+
+void* XCoreApplication_applicationVersionChanged_signal(XCoreApplication* app);
+
+void* XCoreApplication_organizationDomainChanged_signal(XCoreApplication* app);
+
+void* XCoreApplication_organizationNameChanged_signal(XCoreApplication* app);
 #ifdef __cplusplus
 }
 #endif

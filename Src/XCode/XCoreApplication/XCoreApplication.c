@@ -64,7 +64,6 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     // 初始化成员变量
     app->m_argc = argc;
     app->m_argv = argv;
-    app->m_quit = false;
     //app->m_eventLoop = XEventLoop_create();
     XBitArray_init(&app->m_attribute, XCORE_APPLICATION_ATTRIBUTE_COUNT);
 
@@ -80,7 +79,12 @@ void XCoreApplication_setApplicationName(const XString* applicationName)
     if (!app||!applicationName)return;
     if (!app->m_applicationName)
         app->m_applicationName = XString_create();
-    XString_assign(app->m_applicationName, applicationName);
+    if(XString_compare(app->m_applicationName, applicationName)!=XCompare_Equality)
+    {
+        XString_assign(app->m_applicationName, applicationName);
+        XCoreApplication_applicationNameChanged_signal(xApp);
+    }
+
 }
 
 const XString* XCoreApplication_applicationName(void)
@@ -95,7 +99,11 @@ void XCoreApplication_setApplicationVersion(const XString* version)
     if (!app || !version)return;
     if (!app->m_version)
         app->m_version = XString_create();
-    XString_assign(app->m_version, version);
+    if (XString_compare(app->m_version, version) != XCompare_Equality)
+    {
+        XString_assign(app->m_version, version);
+        XCoreApplication_applicationVersionChanged_signal(xApp);
+    }
 }
 
 const XString* XCoreApplication_applicationVersion(void)
@@ -110,7 +118,11 @@ void XCoreApplication_setOrganizationName(const XString* orgName)
     if (!app || !orgName)return;
     if (!app->m_orgName)
         app->m_orgName = XString_create();
-    XString_assign(app->m_orgName, orgName);
+    if (XString_compare(app->m_orgName, orgName) != XCompare_Equality)
+    {
+        XString_assign(app->m_orgName, orgName);
+        XCoreApplication_organizationNameChanged_signal(xApp);
+    }
 }
 
 const XString* XCoreApplication_organizationName(void)
@@ -125,7 +137,11 @@ void XCoreApplication_setOrganizationDomain(const XString* orgDomain)
     if (!app || !orgDomain)return;
     if (!app->m_orgDomain)
         app->m_orgDomain = XString_create();
-    XString_assign(app->m_orgDomain, orgDomain);
+    if (XString_compare(app->m_orgDomain, orgDomain) != XCompare_Equality)
+    {
+        XString_assign(app->m_orgDomain, orgDomain);
+        XCoreApplication_organizationDomainChanged_signal(xApp);
+    }
 }
 
 const XString* XCoreApplication_organizationDomain(void)
@@ -174,12 +190,20 @@ int64_t XCoreApplication_applicationPid(void)
     return 0;
 }
 
+void XCoreApplication_exit(int returnCode)
+{
+    XCoreApplication* app = XCoreApplication_instance();
+    if (app && app->m_eventLoop)
+    {
+        XEventLoop_exit(app->m_eventLoop, returnCode);
+    }
+}
+
 void XCoreApplication_quit() {
     XCoreApplication* app = XCoreApplication_instance();
     if (app&& app->m_eventLoop) 
     {
-        app->m_quit = true;
-        XEventLoop_quit(app->m_eventLoop, 0);
+        XEventLoop_quit(app->m_eventLoop);
     }
 }
 
@@ -200,13 +224,22 @@ void XCoreApplication_processEventsWithMaxTime(XEventLoopProcessEventsFlags flag
     XTimer_delete_base(timer);
 }
 
+void XCoreApplication_installNativeEventFilter(XAbstractNativeEventFilter* filter)
+{
+    XAbstractEventDispatcher_installNativeEventFilter(XCoreApplication_eventDispatcher(),filter);
+}
+
+void XCoreApplication_removeNativeEventFilter(XAbstractNativeEventFilter* filter)
+{
+    XAbstractEventDispatcher_removeNativeEventFilter(XCoreApplication_eventDispatcher(), filter);
+}
+
 bool XCoreApplication_notify_base(XObject* receiver, XEvent* e)
 {
     if (ISNULL(receiver, "") || ISNULL(XClassGetVtable(receiver), ""))
         return false;
     return XClassGetVirtualFunc(XCoreApplication_instance(), EXCoreApplication_Notify, bool(*)(XObject*, XEvent*))(receiver, e);
 }
-
 int XCoreApplication_exec() 
 {
     XCoreApplication* app = XCoreApplication_instance();
@@ -214,12 +247,11 @@ int XCoreApplication_exec()
         return -1;
     if(!app->m_eventLoop)
         app->m_eventLoop = XEventLoop_create();
-    app->m_quit = false;
     int result = XEventLoop_exec(app->m_eventLoop);
 
     // 发送即将退出信号
     XCoreApplication_aboutToQuit_signal(app);
-
+    XCoreApplication_processEvents(XEventLoop_AllEvents);//处理事件，保证退出信号可以被调用
     return result;
 }
 
@@ -333,6 +365,26 @@ void XCoreApplication_removeLibraryPath(const XString * path)
 void* XCoreApplication_aboutToQuit_signal(XCoreApplication* app) 
 {
     XEmitSignal(app, XCoreApplication_aboutToQuit_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
+}
+
+void* XCoreApplication_applicationNameChanged_signal(XCoreApplication* app)
+{
+    XEmitSignal(app, XCoreApplication_applicationNameChanged_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XCoreApplication_applicationVersionChanged_signal(XCoreApplication* app)
+{
+    XEmitSignal(app, XCoreApplication_applicationVersionChanged_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XCoreApplication_organizationDomainChanged_signal(XCoreApplication* app)
+{
+    XEmitSignal(app, XCoreApplication_organizationDomainChanged_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XCoreApplication_organizationNameChanged_signal(XCoreApplication* app)
+{
+    XEmitSignal(app, XCoreApplication_organizationNameChanged_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 bool VXCoreApplication_notify(XObject* receiver, XEvent* event)

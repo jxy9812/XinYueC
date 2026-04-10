@@ -97,13 +97,13 @@ static LRESULT CALLBACK XEventDispatcherWin32_WndProc(HWND hwnd, UINT msg, WPARA
     }
 
     // 处理本地事件过滤器
-    XEventDispatcherWin32* dispatcher = (XEventDispatcherWin32*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+   /* XEventDispatcherWin32* dispatcher = (XEventDispatcherWin32*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
     if (dispatcher) {
         intptr_t result = 0;
         if (XAbstractEventDispatcher_filterNativeEvent(dispatcher, "windows_generic_MSG", &msg, &result)) {
             return (LRESULT)result;
         }
-    }
+    }*/
 
     return DefWindowProc(hwnd, msg, wParam, lParam);
 }
@@ -251,8 +251,8 @@ static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispa
     // 先处理所有已排队的消息（PeekMessage 不会阻塞）
     while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
         if (msg.message == WM_QUIT) {
-            //XEvent* quitEvent = XEventQuit_create();
-            //XCoreApplication_postEvent(quitEvent, XEVENT_PRIORITY_HIGH);
+            XEvent* quitEvent = XEvent_create(XEVENT_TYPE_QUIT);
+            XCoreApplication_postEvent(XCoreApplication_instance(), quitEvent, XEVENT_PRIORITY_HIGH);
             break;
         }
         TranslateMessage(&msg);
@@ -728,7 +728,6 @@ XAbstractEventDispatcher* XEventDispatcherWin32_create(XObject* parent)
         //if (d->mutex) XMutex_delete(d->mutex);
         if (d->timers) XHashMap_delete_base(d->timers);
         if (d->sockets) XHashMap_delete_base(d->sockets);
-        //if (d->nativeFilters) XVector_delete_base(d->nativeFilters);
         XMemory_free(d);
         XMemory_free(self);
         return NULL;

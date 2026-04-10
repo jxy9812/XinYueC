@@ -2,7 +2,6 @@
 #ifndef XEVENTDISPATCHER_WIN_P_H
 #define XEVENTDISPATCHER_WIN_P_H
 
-
 #include "XAbstractEventDispatcher.h"
 #include "XHashMap.h"
 #include "XListSLinked.h"
