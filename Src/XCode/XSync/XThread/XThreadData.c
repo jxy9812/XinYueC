@@ -4,6 +4,7 @@
 #include "XHashMap.h"
 #include "XMutex.h"
 #include "XAbstractEventDispatcher.h"
+#include "XCoreApplication.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -37,11 +38,12 @@ XThreadData* XThreadData_create(XThread* thread)
 
 void XThreadData_delete(XThreadData* data)
 {
-    XThreadData_mapRemove(data);
+    //XThreadData_mapRemove(data);
     if (data->m_mutex)
         XMutex_delete(data->m_mutex);
     if (data->m_dispatcher)
         XObject_deleteLater(data->m_dispatcher);
+    //XCoreApplication_processEvents(XEventLoop_AllEvents);
     XVector_deinit_base(&data->m_postEventList);
     XDelete(data);
 }

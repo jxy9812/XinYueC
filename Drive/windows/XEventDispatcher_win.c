@@ -269,6 +269,7 @@ static void XEventDispatcherWin32_updateSocketEventMask(XEventDispatcherWin32_So
 
 static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispatcher, XEventLoopProcessEventsFlags flags)
 {
+   
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
 

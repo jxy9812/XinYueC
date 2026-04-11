@@ -122,7 +122,7 @@ static bool VXThread_start(XThread* Object) {
     }
 
     Object->m_handle = (XHandle)thread;
-    XThread_setPriority_base(Object, XThread_priority_base(Object));
+    XThread_setPriority(Object, XThread_priority(Object));
     return true;
 }
 
@@ -314,13 +314,13 @@ static void VXThread_setStackSize(XThread* Object, uint32_t stackSize) {
 static void VXThread_deinit(XThread* Object) {
     if (Object == NULL) return;
 
-    if (XThread_isRunning_base(Object)) {
-        XThread_requestInterruption_base(Object);
-        XThread_wait_base(Object, UINT32_MAX);
+    if (XThread_isRunning(Object)) {
+        XThread_requestInterruption(Object);
+        XThread_wait(Object, UINT32_MAX);
     }
 
     if (Object->m_eventLoop) {
-        XEventLoop_delete_base(Object->m_eventLoop);
+        XEventLoop_deleteLater(Object->m_eventLoop);
         Object->m_eventLoop = NULL;
     }
 
@@ -335,7 +335,7 @@ XHandle XThread_currentThreadId() {
     return (XHandle)pthread_self();
 }
 // 创建 XThread 对象
-XThread* XThread_create(void (*start_routine)(void*), void* arg)
+XThread* XThread_create_func(void (*start_routine)(void*), void* arg)
 {
     XThread* Object = (XThread*)XMemory_malloc(sizeof(XThread));
     if (Object == NULL) {

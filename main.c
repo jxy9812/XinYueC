@@ -6,6 +6,7 @@
 #include <stdarg.h>
 #include"XVarList.h"
 #include"XThread.h"
+void XThreadTest();
 int main(int argc, char* args[])
 {
 	//printf("%d\n", XThread_currentThreadId());
@@ -23,6 +24,7 @@ int main(int argc, char* args[])
 	XVarList_delete(list);
 
 	XCoreApplication* app = XCoreApplication_create(argc,args);
+	XThreadTest();
 	//XCoreApplication_setApplicationDescription
 	//XAtomic_bool b;
 	//XAtomic_init(b,false);

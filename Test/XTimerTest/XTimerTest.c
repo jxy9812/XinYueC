@@ -55,7 +55,7 @@ void XTimerTest()
 		XEventLoop* loop = XEventLoop_create();
 		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
 		XObject_connect(timer, XSignal(XTimer_timeout_signal), NULL, Callback, XConnectionType_Auto);
-		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_delete_base, XConnectionType_Auto);
+		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_deleteLater, XConnectionType_Auto);
 		XObject_connect(timer, XSignal(XObject_destroyed_signal), NULL, deleteCb, XConnectionType_Auto);
 		XTimer_start_base(timer);
 		//XPrintf("事件循环等待\n");
@@ -63,7 +63,7 @@ void XTimerTest()
 		XPrintf("事件循环结束\n");
 		//XObject_setParent(timer,loop);
 		
-		XEventLoop_delete_base(loop);
+		XEventLoop_deleteLater(loop);
 	/*	XTimer_delete_base(timer);
 		XPrintf("3s后正式结束\n");
 		XCoreApplication_processEvents(0);

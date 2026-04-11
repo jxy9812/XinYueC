@@ -53,7 +53,7 @@ void XObject_init(XObject* object)
 	memset(((XClass*)object)+1,0,sizeof(XObject)-sizeof(XClass));
 	XClass_init(object);
 	XClassGetVtable(object) = XObject_class_init();
-	
+	object->m_thread = XThread_currentThread();
 	//object->children=XVector_create(sizeof(XObject*));
 	//object->filters=XVector_create(sizeof(XObject*));
 }

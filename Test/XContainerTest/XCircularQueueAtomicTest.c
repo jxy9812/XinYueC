@@ -31,8 +31,8 @@ void XCircularQueueAtomicTest()
 #if XCircularQueueAtomic_ON
 	XPrintf("循环队列 测试\n");
 	XCircularQueueAtomic* queue = XCircularQueueAtomic_Create(int,1000);
-	XThread* thread = XThread_create(ThreadReceive,queue);
-	XThread_start_base(thread);
+	XThread* thread = XThread_create_func(ThreadReceive,queue);
+	XThread_start(thread);
 	//threadTest(queue);
 	int index = 0;
 	int value;
@@ -45,8 +45,8 @@ void XCircularQueueAtomicTest()
 			//XCircularQueueAtomic_pop_base(queue);
 		}
 	}
-	XThread_wait_base(thread,UINT32_MAX);
-	XThread_delete_base(thread);
+	XThread_wait(thread,UINT32_MAX);
+	XThread_deleteLater(thread);
 	XCircularQueueAtomic_delete_base(queue);
 	XPrintf("循环队列 空\n");
 	

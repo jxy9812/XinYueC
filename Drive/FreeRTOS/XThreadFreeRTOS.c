@@ -242,10 +242,10 @@ static void VXThread_setStackSize(XThread* Object, uint32_t stackSize) {
 // 销毁线程对象
 static void VXThread_deinit(XThread* Object) {
 	if (!Object) return;
-	if (XThread_isRunning_base(Object)) {
-		XThread_requestInterruption_base(Object);
+	if (XThread_isRunning(Object)) {
+		XThread_requestInterruption(Object);
 		// 等待线程结束，最长 100ms
-		if (!XThread_wait_base(Object, 100)) {
+		if (!XThread_wait(Object, 100)) {
 			// 超时未结束，强制终止
 			VXThread_terminate(Object);
 			DEBUG_PRINTF("Thread forced termination");
@@ -253,7 +253,7 @@ static void VXThread_deinit(XThread* Object) {
 	}
 	// 清理事件循环
 	if (Object->m_eventLoop) {
-		XEventLoop_delete_base(Object->m_eventLoop);
+		XEventLoop_deleteLater(Object->m_eventLoop);
 		Object->m_eventLoop = NULL;
 	}
 	// 从线程映射中移除
@@ -266,7 +266,7 @@ XHandle XThread_currentThreadId() {
 }
 
 // 创建 XThread 对象
-XThread* XThread_create(void (*start_routine)(void*), void* arg)
+XThread* XThread_create_func(void (*start_routine)(void*), void* arg)
 {
 	XThread* Object = (XThreadFreeRTOS*)XMemory_malloc(sizeof(XThreadFreeRTOS));
 	if (Object == NULL) {

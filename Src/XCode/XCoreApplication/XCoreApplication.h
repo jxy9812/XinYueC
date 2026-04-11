@@ -64,6 +64,7 @@ typedef struct XCoreApplication
     XString* m_orgDomain;//组织域名
     XBitArray m_attribute;//属性位数组
     XStringList* m_paths;//库搜索路径列表
+    XThread* m_thread;
     XEventLoop* m_eventLoop;       // 事件调度器
 } XCoreApplication;
 

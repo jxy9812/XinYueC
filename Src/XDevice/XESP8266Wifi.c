@@ -134,7 +134,7 @@ void VXESP8266_deinit(XESP8266Wifi* device)
     }*/
     if (device->m_loop)
     {
-        XEventLoop_delete_base(device->m_loop);
+        XEventLoop_deleteLater(device->m_loop);
         device->m_loop = NULL;
     }
     for (int i = 0; i < XESP8266_MAX_CONNS; i++) {

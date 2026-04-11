@@ -1,0 +1,37 @@
+﻿#include"XCodeTest.h"
+#include"XMemory.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+#include"XThread.h"
+static void threadFunc(XThread* thread, XVarList* list)
+{
+	XPrintf("子线程:id:%d\n",XThread_currentThreadId());
+	
+	XCoreApplication_quit();
+}
+void XThreadTest()
+{
+	//while (true)
+	{
+		XPrintf("主线程:id:%d\n", XThread_currentThreadId());
+		XThread* th = XThread_create_func(threadFunc, NULL);
+		//XPrintf("XThread:%p XVector* children:%p\n", th,((XObject*)th)->children);
+		XThread_start(th);
+		//XPrintf("XThread:%p XVector* children:%p\n", th, ((XObject*)th)->children);
+		//while (true);
+		XCoreApplication_exec();
+		XThread_deleteLater(th);
+		XCoreApplication_processEvents(XEventLoop_AllEvents);
+	}
+}
+
+void XMenu_XThreadTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XThread(线程)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XThreadTest);
+	}
+}

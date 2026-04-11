@@ -16,16 +16,16 @@ void XHostInfo_init_module(void) {
     g_XHostInfo_task_mutex = XMutex_create();
     g_XHostInfo_pending_tasks = XListSLinked_create(sizeof(XHostInfo_LookupTask*));
     g_XHostInfo_dns_thread_quit = false;
-    g_XHostInfo_dns_thread = XThread_create(XHostInfo_dns_worker, NULL);
-    XThread_start_base(g_XHostInfo_dns_thread);
+    g_XHostInfo_dns_thread = XThread_create_func(XHostInfo_dns_worker, NULL);
+    XThread_start(g_XHostInfo_dns_thread);
     initialized = true;
 }
 
 void XHostInfo_cleanup_module(void) {
     if (!g_XHostInfo_dns_thread) return;
     g_XHostInfo_dns_thread_quit = true;
-    XThread_wait_base(g_XHostInfo_dns_thread, UINT32_MAX);
-    XThread_delete_base(g_XHostInfo_dns_thread);
+    XThread_wait(g_XHostInfo_dns_thread, UINT32_MAX);
+    XThread_deleteLater(g_XHostInfo_dns_thread);
     XMutex_delete(g_XHostInfo_task_mutex);
     while (!XListSLinked_isEmpty_base(g_XHostInfo_pending_tasks)) {
         XHostInfo_LookupTask* task = NULL;

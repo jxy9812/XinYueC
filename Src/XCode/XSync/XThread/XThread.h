@@ -1,7 +1,7 @@
 ﻿#ifndef XTHREAD_H
 #define XTHREAD_H
 
-#include "XClass.h"
+#include "XObject.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -26,16 +26,7 @@ typedef enum
  * 定义了XThread类的虚函数表枚举值
  */
 XCLASS_DEFINE_BEGING(XThread)
-XCLASS_DEFINE_ENUM(XThread, Start) = XCLASS_VTABLE_GET_SIZE(XClass),  //
-XCLASS_DEFINE_ENUM(XThread, Wait),
-XCLASS_DEFINE_ENUM(XThread, IsFinished),
-XCLASS_DEFINE_ENUM(XThread, IsRunning),
-XCLASS_DEFINE_ENUM(XThread, LoopLevel),
-XCLASS_DEFINE_ENUM(XThread, Priority),
-XCLASS_DEFINE_ENUM(XThread, Terminate),
-XCLASS_DEFINE_ENUM(XThread, RequestInterruption),
-XCLASS_DEFINE_ENUM(XThread, SetPriority),
-XCLASS_DEFINE_ENUM(XThread, SetStackSize),
+XCLASS_DEFINE_ENUM(XThread, Run) = XCLASS_VTABLE_GET_SIZE(XObject),  //
 XCLASS_DEFINE_END(XThread)
 typedef struct XVarList XVarList;
 typedef struct XThreadData XThreadData;
@@ -46,15 +37,16 @@ typedef void (*XThreadFunc)(XThread*,XVarList*);
  */
 typedef struct XThread
 {
-    XClass m_base;                 /**< 基类 */
-    XHandle m_handle;              /**< 线程句柄 */
-    bool m_finished;               /**< 线程是否结束 */
-    bool m_interruptionRequested;  /**< 是否请求中断线程 */
-    bool m_running;                // 线程是否正在运行
-    int loopLevel;               /**< 线程循环级别 */
-    XThread_Priority m_priority;   /**< 线程优先级 */
-    uint32_t m_stackSize;          /**< 线程栈大小 */
-    XThreadData* m_data;                      // 指向该线程私有的线程数据（包含事件队列、锁等）
+    XObject m_base;                           /**< 基类 */
+    uint8_t  m_finished:1;                  /**< 线程是否结束 */
+    uint8_t  m_interruptionRequested:1;     /**< 是否请求中断线程 */
+    uint8_t  m_running:1;                   // 线程是否正在运行
+    uint8_t  m_isMainThread : 1;            // 当前是主线程
+    int loopLevel;                          /**< 线程循环级别 */
+    XThread_Priority m_priority;            /**< 线程优先级 */
+    uint32_t m_stackSize;                   /**< 线程栈大小 */
+    XHandle m_handle;                       /**< 线程句柄 */
+    XThreadData* m_data;                    // 指向该线程私有的线程数据（包含事件队列、锁等）
     XThreadFunc  m_start_routine;
     XVarList* m_arg;
 } XThread;
@@ -77,8 +69,8 @@ void XThread_init(XThread* Object);
  * @param arg 传递给线程启动函数的参数
  * @retval 若内存分配成功，返回新创建的XThread对象指针；否则返回NULL
  */
-XThread* XThread_create(void (*start_routine)(void*), void* arg);
-
+XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist);
+XThread* XThread_create(XObject*parent);
 /**
  * @brief 获取XThread对象的句柄
  * @param Object 指向XThread对象的指针
@@ -92,14 +84,14 @@ XHandle XThread_getHandle(XThread* Object);
  * @param time 等待的时间（毫秒）
  * @retval 若线程在指定时间内结束，返回true；否则返回false
  */
-bool XThread_wait_base(XThread* Object, unsigned long time);
+bool XThread_wait(XThread* Object, unsigned long time);
 
 /**
  * @brief 启动XThread对象对应的线程
  * @param Object 指向XThread对象的指针
  * @retval 若线程启动成功，返回true；否则返回false
  */
-bool XThread_start_base(XThread* Object);
+bool XThread_start(XThread* Object);
 
 /**
  * @brief 获取XThread对象的事件调度器
@@ -112,7 +104,7 @@ XEventDispatcher* XThread_dispatcher(const XThread* Object);
  * @param Object 指向常量XThread对象的指针
  * @retval 若线程已结束，返回true；否则返回false
  */
-bool XThread_isFinished_base(const XThread* Object);
+bool XThread_isFinished(const XThread* Object);
 
 /**
  * @brief 判断XThread对象对应的线程是否被请求中断
@@ -126,27 +118,27 @@ bool XThread_isInterruptionRequested(const XThread* Object);
  * @param Object 指向常量XThread对象的指针
  * @retval 若线程正在运行，返回true；否则返回false
  */
-bool XThread_isRunning_base(const XThread* Object);
+bool XThread_isRunning(const XThread* Object);
 
 /**
  * @brief 获取XThread对象的线程循环级别
  * @param Object 指向常量XThread对象的指针
  * @retval 返回线程的循环级别
  */
-int XThread_loopLevel_base(const XThread* Object);
+int XThread_loopLevel(const XThread* Object);
 
 /**
  * @brief 获取XThread对象的线程优先级
  * @param Object 指向常量XThread对象的指针
  * @retval 返回线程的优先级
  */
-XThread_Priority XThread_priority_base(const XThread* Object);
+XThread_Priority XThread_priority(const XThread* Object);
 
 /**
  * @brief 请求中断XThread对象对应的线程
  * @param Object 指向XThread对象的指针
  */
-void XThread_requestInterruption_base(XThread* Object);
+void XThread_requestInterruption(XThread* Object);
 
 /**
  * @brief 设置XThread对象的事件调度器
@@ -160,14 +152,14 @@ void XThread_setEventDispatcher(XThread* Object, XEventDispatcher* eventDispatch
  * @param Object 指向XThread对象的指针
  * @param priority 要设置的线程优先级
  */
-void XThread_setPriority_base(XThread* Object, XThread_Priority priority);
+void XThread_setPriority(XThread* Object, XThread_Priority priority);
 
 /**
  * @brief 设置XThread对象的线程栈大小
  * @param Object 指向XThread对象的指针
  * @param stackSize 要设置的线程栈大小
  */
-void XThread_setStackSize_base(XThread* Object, uint32_t stackSize);
+void XThread_setStackSize(XThread* Object, uint32_t stackSize);
 
 /**
  * @brief 获取XThread对象的线程栈大小
@@ -178,15 +170,16 @@ uint32_t XThread_stackSize(const XThread* Object);
 
 //启动线程事件循环，在 run内调用
 int XThread_exec(XThread* thread);
-
+//在传入的回调函数中调用,外部不能调用
+void XThread_run_base(XThread* thread);
 //强制终止线程
-bool XThread_terminate_base(XThread* Object);
+bool XThread_terminate(XThread* Object);
 /**
  * @brief 删除XThread对象
  * 等价于调用XClass_delete_base
  */
-#define XThread_delete_base XClass_delete_base
-
+#define XThread_deleteLater XObject_deleteLater
+#define XThread_deinitLater XObject_deinitLater
 //主线程返回NULL
 XThread* XThread_currentThread();
 //返回当前线程的事件循环

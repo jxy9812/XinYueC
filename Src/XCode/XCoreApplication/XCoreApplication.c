@@ -11,6 +11,7 @@
 #include "XEventLoop.h"
 #include "XCircularQueueAtomic.h"
 #include "XThreadData.h"
+#include "XThread.h"
 #include "XTimer.h"
 static XCoreApplication* g_app = NULL; // 全局应用程序实例
 bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
@@ -64,6 +65,8 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     // 初始化成员变量
     app->m_argc = argc;
     app->m_argv = argv;
+    app->m_thread = XThread_create(app);
+    app->m_thread->m_isMainThread = true;
     //app->m_eventLoop = XEventLoop_create();
     app->m_eventLoop = NULL;
     XBitArray_init(&app->m_attribute, XCORE_APPLICATION_ATTRIBUTE_COUNT);
@@ -444,7 +447,7 @@ void VXCoreApplication_deinit(XCoreApplication* app)
     // 释放事件循环
     if (app->m_eventLoop)
     {
-        XEventLoop_delete_base(app->m_eventLoop);
+        XEventLoop_deleteLater(app->m_eventLoop);
         app->m_eventLoop = NULL;
     }
 

@@ -10,11 +10,41 @@
 //#include "XEventDispatcher.h"
 #include "XCoreApplication.h"
 #include "XThreadData.h"
+// 创建 XThread 对象
+XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist)
+{
+    XThread* Object = (XThread*)XMemory_malloc(sizeof(XThread));
+    if (Object == NULL) {
+        return NULL;
+    }
+    XThread_init(Object);
+    SET_CLASS_HEAP(Object);
+    Object->m_start_routine = start_routine;
+    Object->m_arg = varlist;
 
+    //XThread_currentThread();//初始化
+
+    return Object;
+}
+XThread* XThread_create(XObject* parent)
+{
+    XThread* Object = (XThread*)XMemory_malloc(sizeof(XThread));
+    if (Object == NULL) {
+        return NULL;
+    }
+    XThread_init(Object);
+    SET_CLASS_HEAP(Object);
+    Object->m_start_routine = NULL;
+    Object->m_arg = NULL;
+
+    //XThread_currentThread();//初始化
+
+    return Object;
+}
 // 初始化 XThread 对象
 void XThread_init(XThread* Object)
 {
-    XClass_init((XClass*)Object);
+    XObject_init(Object);
     XClassGetVtable(Object) = XThread_class_init();
     Object->m_handle = 0;
     Object->m_finished = false;
@@ -23,15 +53,12 @@ void XThread_init(XThread* Object)
     Object->m_priority = XThread_NormalPriority;
     Object->m_stackSize = 512;
     Object->m_data = XThreadData_create(Object);
+    //((XObject*)Object)->m_thread = Object;//将线程指针设为自己，才可以使用事件
 }
 XThread* XThread_currentThread()
 {
     XThreadData* data = XThreadData_current();
     return data ? data->m_thread:NULL;
-}
-bool XThread_terminate_base(XThread* Object)
-{
-    return XClassGetVirtualFunc(Object, EXThread_Terminate, bool(*)(const XThread*))(Object);
 }
 XEventDispatcher* XThread_currentDispatcher()
 {
@@ -47,12 +74,6 @@ XHandle XThread_getHandle(XThread* Object)
     return Object->m_handle;
 }
 
-// 等待 XThread 结束
-bool XThread_wait_base(XThread* Object, unsigned long time)
-{
-    return XClassGetVirtualFunc(Object, EXThread_Wait, bool(*)(XThread*, unsigned long))(Object, time);
-}
-
 // 获取事件调度器
 XEventDispatcher* XThread_dispatcher(const XThread* Object)
 {
@@ -61,40 +82,27 @@ XEventDispatcher* XThread_dispatcher(const XThread* Object)
     return XCoreApplication_eventDispatcher();
 }
 
-// 判断线程是否结束
-bool XThread_isFinished_base(const XThread* Object)
-{
-    return XClassGetVirtualFunc(Object, EXThread_IsFinished, bool(*)(const XThread*))(Object);
-}
-
 // 判断线程是否被请求中断
 bool XThread_isInterruptionRequested(const XThread* Object)
 {
     return Object->m_interruptionRequested;
 }
-
-// 判断线程是否正在运行
-bool XThread_isRunning_base(const XThread* Object)
-{
-    return XClassGetVirtualFunc(Object, EXThread_IsRunning, bool(*)(const XThread*))(Object);
-}
-
 // 获取线程循环级别
-int XThread_loopLevel_base(const XThread* Object)
+int XThread_loopLevel(const XThread* Object)
 {
-    return XClassGetVirtualFunc(Object, EXThread_LoopLevel, int(*)(const XThread*))(Object);
+    return Object->loopLevel;
 }
 
 // 获取线程优先级
-XThread_Priority XThread_priority_base(const XThread* Object)
+XThread_Priority XThread_priority(const XThread* Object)
 {
-    return XClassGetVirtualFunc(Object, EXThread_Priority, XThread_Priority(*)(const XThread*))(Object);
+    return Object->m_priority;
 }
 
 // 请求中断线程
-void XThread_requestInterruption_base(XThread* Object)
+void XThread_requestInterruption(XThread* Object)
 {
-    XClassGetVirtualFunc(Object, EXThread_RequestInterruption, void(*)(XThread*))(Object);
+    Object->m_interruptionRequested = true;
 }
 
 // 设置事件调度器
@@ -106,17 +114,6 @@ void XThread_setEventDispatcher(XThread* Object, XEventDispatcher* eventDispatch
     Object->m_data->m_dispatcher=eventDispatcher;
 }
 
-// 设置线程优先级
-void XThread_setPriority_base(XThread* Object, XThread_Priority priority)
-{
-    XClassGetVirtualFunc(Object, EXThread_SetPriority, void(*)(XThread*, XThread_Priority))(Object, priority);
-}
-
-// 设置线程栈大小
-void XThread_setStackSize_base(XThread* Object, uint32_t stackSize)
-{
-    XClassGetVirtualFunc(Object, EXThread_SetStackSize, void(*)(XThread*, uint32_t))(Object, stackSize);
-}
 
 // 获取线程栈大小
 uint32_t XThread_stackSize(const XThread* Object)
@@ -127,14 +124,20 @@ uint32_t XThread_stackSize(const XThread* Object)
 int XThread_exec(XThread* thread)
 {
     if (!thread) return;
-    XEventLoop* loop = XEventLoop_create();
-    int result = XEventLoop_exec(loop);
-    XEventLoop_delete_base(loop);
+    XEventLoop loop;
+    XEventLoop_init(&loop);
+    int result = XEventLoop_exec(&loop);
+    XEventLoop_deinitLater(&loop);
     return result;
 }
 
-// 启动线程
-bool XThread_start_base(XThread* Object)
+void XThread_run_base(XThread* thread)
 {
-    return XClassGetVirtualFunc(Object, EXThread_Start, bool(*)(XThread*))(Object);
+    return XClassGetVirtualFunc(thread, EXThread_Run, bool(*)(XThread*))(thread);
+}
+//虚函数默认实现,供平台实现文件调用
+void VXThread_run(XThread* thread)
+{
+    if (thread && thread->m_start_routine)
+        thread->m_start_routine(thread,thread->m_arg);
 }

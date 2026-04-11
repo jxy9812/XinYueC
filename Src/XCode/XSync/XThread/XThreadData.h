@@ -1,8 +1,6 @@
 ﻿// XThread_p.h - 内部使用
 #ifndef XTHREADDATA_H
 #define XTHREADDATA_H
-
-//#include "XPostEvent.h"
 #include "XAbstractEventDispatcher.h"
 #include "XMutex.h"
 #include "XVector.h" // 假设你有 XVector 实现（基于 realloc）

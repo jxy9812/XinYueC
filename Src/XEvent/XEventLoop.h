@@ -117,8 +117,8 @@ void XEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags fla
  * @brief 释放事件循环资源
  * @param loop 事件循环实例
  */
-#define XEventLoop_delete_base    XObject_deleteLater
-
+#define XEventLoop_deleteLater    XObject_deleteLater
+#define XEventLoop_deinitLater    XObject_deinitLater
 //定时器延迟
 void XEventLoop_delay(size_t msec);
 
