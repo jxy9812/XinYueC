@@ -50,7 +50,7 @@ void VXCommunicatorBase_deinit(XCommunicatorBase* comm)
 {
 	if(comm->m_io)
 	{
-		XIODevice_delete_base(comm->m_io);
+		XIODevice_deleteLater(comm->m_io);
 		comm->m_io = NULL;
 	}
 	if (comm->m_recvAsyncBuffer)

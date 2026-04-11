@@ -180,7 +180,7 @@ XSocketState XSocket_state(const XSocketBase* socket);
  * @brief 宏定义：复用XIODeviceBase的delete_base方法
  * @note 基础删除方法
  */
-#define XSocket_delete_base				XIODevice_delete_base
+#define XSocket_delete_base				XIODevice_deleteLater
 
 /**
 * @brief 宏定义：复用XIODeviceBase的poll_base方法

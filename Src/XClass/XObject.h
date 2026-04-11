@@ -111,8 +111,6 @@ const XVector* XObject_children(const XObject* self);
 bool XObject_isWidgetType(const XObject* self);
 // 检查是否为窗口类型
 bool XObject_isWindowType(const XObject* self);
-// 获取对象所属线程
-XThread* XObject_thread(const XObject* self);
 /**
  * @brief 将对象移动到指定线程
  * @param object 目标XObject对象指针（非NULL）

@@ -43,7 +43,7 @@ bool VXPLC_addOutIODevice(XPLC* plc, int32_t id, XIODevice* io)
 		return false;
 	XIODevice* findIo=XMapBase_value_base(plc->m_outIO, &id);
 	if (findIo != NULL)
-		XIODevice_delete_base(findIo);
+		XIODevice_deleteLater(findIo);
 	XMapBase_insert_base(plc->m_outIO,&id,&io);
 	return true;
 }
@@ -54,7 +54,7 @@ bool VXPLC_addInIODevice(XPLC* plc, int32_t id, XIODevice* io)
 		return false;
 	XIODevice* findIo = XMapBase_value_base(plc->m_inIO, &id);
 	if (findIo != NULL)
-		XIODevice_delete_base(findIo);
+		XIODevice_deleteLater(findIo);
 	XMapBase_insert_base(plc->m_inIO, &id, &io);
 	return true;
 }
@@ -63,7 +63,7 @@ bool VXPLC_removeOutId(XPLC* plc, int32_t id)
 {
 	XIODevice* findIo = XMapBase_value_base(plc->m_outIO, &id);
 	if (findIo != NULL)
-		XIODevice_delete_base(findIo);
+		XIODevice_deleteLater(findIo);
 	XMapBase_remove_base(plc->m_outIO, &id);
 	return true;
 }
@@ -72,7 +72,7 @@ bool VXPLC_removeInId(XPLC* plc, int32_t id)
 {
 	XIODevice* findIo = XMapBase_value_base(plc->m_inIO, &id);
 	if (findIo != NULL)
-		XIODevice_delete_base(findIo);
+		XIODevice_deleteLater(findIo);
 	XMapBase_remove_base(plc->m_inIO, &id);
 	return true;
 }
@@ -93,7 +93,7 @@ bool VXPLC_removeIODevice(XPLC* plc, XIODevice* io)
 	}
 	if (isFind)
 	{
-		XIODevice_delete_base(io);
+		XIODevice_deleteLater(io);
 		XMapBase_remove_base(plc->m_inIO, &id);
 		return true;
 	}
@@ -109,7 +109,7 @@ bool VXPLC_removeIODevice(XPLC* plc, XIODevice* io)
 	}
 	if (isFind)
 	{
-		XIODevice_delete_base(io);
+		XIODevice_deleteLater(io);
 		XMapBase_remove_base(plc->m_outIO, &id);
 		return true;
 	}
@@ -143,14 +143,14 @@ void VXIODevice_deinit(XPLC* plc)
 	for_each_iterator(plc->m_inIO, XHashMap, it)
 	{
 		XPair* node = XHashMap_iterator_data(&it);
-		XIODevice_delete_base(XPair_Second(node, XIODevice*));
+		XIODevice_deleteLater(XPair_Second(node, XIODevice*));
 	}
 	XContainerObject_delete_base(plc->m_inIO);
 	plc->m_inIO = NULL;
 	for_each_iterator(plc->m_outIO, XHashMap, it)
 	{
 		XPair* node = XHashMap_iterator_data(&it);
-		XIODevice_delete_base(XPair_Second(node, XIODevice*));
+		XIODevice_deleteLater(XPair_Second(node, XIODevice*));
 	}
 	XContainerObject_delete_base(plc->m_outIO);
 	plc->m_outIO = NULL;

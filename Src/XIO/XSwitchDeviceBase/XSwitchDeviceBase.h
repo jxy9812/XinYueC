@@ -44,7 +44,7 @@ bool XSwitchDeviceBase_getState_base(XSwitchDeviceBase* sw);
 #define XSwitchDeviceBase_open_base			 XIODevice_open_base
 #define XSwitchDeviceBase_close_base		 XIODevice_close_base
 #define XSwitchDeviceBase_setDevice_base	 XIODevice_setDevice_base
-#define XSwitchDeviceBase_delete_base		 XIODevice_delete_base
+#define XSwitchDeviceBase_delete_base		 XIODevice_deleteLater
 #define XSwitchDeviceBase_poll_base			 XIODevice_poll_base
 
 #if defined(USE_STDPERIPH_DRIVER) 

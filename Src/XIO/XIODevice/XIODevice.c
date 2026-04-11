@@ -7,12 +7,11 @@
 #include <stdarg.h>
 XIODevice* XIODevice_create()
 {
-	/*if (port == NULL)
-		return NULL;*/
 	XIODevice* io= XMemory_malloc(sizeof(XIODevice));
 	if (io == NULL)
 		return io;
 	XIODevice_init(io);
+	SET_CLASS_HEAP(io);
 	return io;
 }
 void XIODevice_init(XIODevice* io)
@@ -354,52 +353,29 @@ bool XIODevice_seek_base(XIODevice* self, int64_t pos)
 
 void* XIODevice_aboutToClose_signal(XIODevice* io)
 {
-	if (io)
-		XObject_emitSignal(io, XIODevice_aboutToClose_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
-	return XIODevice_aboutToClose_signal;
+	XEmitSignal(io, XIODevice_aboutToClose_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XIODevice_channelBytesWritten_signal(XIODevice* self, int channel, int64_t bytes)
 {
-	if (self)
-	{
-		XVariant_Init(var,NULL,0, XVariantType_NULL);
-		XVariantList* list = XVariantList_create();
-
-		XVariant_setValue_int(var,channel);
-		XVariantList_push_back_move_base(list, var);
-
-		XVariant_setValue_int64(var, bytes);
-		XVariantList_push_back_move_base(list, var);
-
-		XObject_emitSignal(self, XIODevice_channelBytesWritten_signal, list, XVariantList_delete_base, NULL, XEVENT_PRIORITY_NORMAL);
-	}
-	return XIODevice_channelBytesWritten_signal;
+	XEmitSignal(self, XIODevice_channelBytesWritten_signal, XVarList_Create(XVar(int, channel),XVar(int64_t, bytes)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XIODevice_channelReadyRead_signal(XIODevice* self, int channel)
 {
-	if (self)
-		XObject_emitSignal(self, XIODevice_channelReadyRead_signal, XVariant_create_int(channel), XVariant_delete_base, NULL, XEVENT_PRIORITY_NORMAL);
-	return XIODevice_channelReadyRead_signal;
+	XEmitSignal(self, XIODevice_channelReadyRead_signal, XVarList_Create(XVar(int, channel)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XIODevice_readChannelFinished_signal(XIODevice* self)
 {
-	if (self)
-		XObject_emitSignal(self, XIODevice_readChannelFinished_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
-	return XIODevice_readChannelFinished_signal;
+	XEmitSignal(self, XIODevice_readChannelFinished_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-void* XIODevice_readyRead_signal(XIODevice* io)
+void* XIODevice_readyRead_signal(XIODevice* self)
 {
-	if (io)
-		XObject_emitSignal(io, XIODevice_readyRead_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
-	return XIODevice_readyRead_signal;
+	XEmitSignal(self, XIODevice_readyRead_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
-void* XIODevice_bytesWritten_signal(XIODevice* io, int64_t bytes)
+void* XIODevice_bytesWritten_signal(XIODevice* self, int64_t bytes)
 {
-	if (io)
-		XObject_emitSignal(io, XIODevice_bytesWritten_signal, XVariant_create_int64(bytes), XVariant_delete_base, NULL, XEVENT_PRIORITY_NORMAL);
-	return XIODevice_bytesWritten_signal;
+	XEmitSignal(self, XIODevice_bytesWritten_signal, XVarList_Create(XVar(int64_t, bytes)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }

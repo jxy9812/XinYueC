@@ -297,7 +297,7 @@ void XSerialPort_clearError(XSerialPort* port);
 /*以下是API*/
 #define XSerialPort_open_base                                       XIODevice_open_base
 #define XSerialPort_close_base                                      XIODevice_close_base
-#define XSerialPort_delete_base                                     XIODevice_delete_base
+#define XSerialPort_delete_base                                     XIODevice_deleteLater
 #define XSerialPort_write_base                                      XIODevice_write
 #define XSerialPort_read_base                                       XIODevice_read
 #define XSerialPort_bytesAvailable_base                             XIODevice_bytesAvailable_base

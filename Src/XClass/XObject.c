@@ -137,13 +137,13 @@ void XObject_setParent(XObject* object, XObject* parent)
 	if (current_thread != object_thread) {
 		// 在错误的线程中调用 setParent，这是未定义行为，应记录错误并返回
 		// （此处可以用您的日志系统替换 printf）
-		fprintf(stderr, "Error: XObject_setParent called from wrong thread for object %p.\n", (void*)object);
+		//fprintf(stderr, "Error: XObject_setParent called from wrong thread for object %p.\n", (void*)object);
 		return;
 	}
 
 	// 检查新父对象（如果存在）是否与当前对象在同一线程
 	if (parent && object_thread != new_parent_thread) {
-		fprintf(stderr, "Error: Cannot set parent, objects are in different threads.\n");
+		//fprintf(stderr, "Error: Cannot set parent, objects are in different threads.\n");
 		return;
 	}
 	// === 线程一致性检查结束 ===
@@ -151,8 +151,6 @@ void XObject_setParent(XObject* object, XObject* parent)
 
 	 // 获取旧的父对象
 	XObject* prev_parent = object->parent;
-	if (prev_parent == parent)
-		return;//重复设置
 	// 从旧父对象的 children 列表中移除自己
 	if (prev_parent && prev_parent->children) {
 		// 注意：这里假设 XVector 提供了安全的查找和移除方法
@@ -234,14 +232,14 @@ bool XObject_moveToThread(XObject* object, XThread* target_thread)
 	// 规则1: 只能在对象的“亲生”线程（即创建它的线程）中调用 moveToThread
 	// 这里我们简化处理，认为“亲生”线程就是当前所属线程，并且调用者必须在此线程中。
 	if (current_caller_thread != object_current_thread) {
-		fprintf(stderr, "Error: XObject_moveToThread can only be called from the object's own thread.\n");
+		//fprintf(stderr, "Error: XObject_moveToThread can only be called from the object's own thread.\n");
 		return false;
 	}
 
 	// 规则2: 不能移动到一个正在运行的非当前线程
 	// (这是一个简化规则，Qt 的规则更复杂，但核心思想是避免在活动线程间移动)
 	if (target_thread && target_thread != current_caller_thread && XThread_isRunning(target_thread)) {
-		fprintf(stderr, "Error: Cannot move object to a running thread.\n");
+		//fprintf(stderr, "Error: Cannot move object to a running thread.\n");
 		return false;
 	}
 	// === 移动规则检查结束 ===
@@ -341,6 +339,7 @@ void XObject_deinitLater(XObject* object)
 	if (object == NULL)return;
 	if (object->delete_later_called)
 		return;//已经标记为释放了
+	XObject_setParent(object,NULL);
 	//发送释放信号
 	XAtomic_fetch_add_int32(&object->m_posted_events, 1);
 	XCoreApplication_postEvent(object, XEventDeferredDelete_create(false), XEVENT_PRIORITY_LOWEST);
@@ -352,6 +351,7 @@ void XObject_deleteLater(XObject* object)
 	if (object == NULL)return;
 	if (object->delete_later_called)
 		return;//已经标记为释放了
+	XObject_setParent(object, NULL);
 	XAtomic_fetch_add_int32(&object->m_posted_events, 1);
 	XCoreApplication_postEvent(object, XEventDeferredDelete_create(true), XEVENT_PRIORITY_LOWEST);
 	object->delete_later_called = true;
@@ -403,6 +403,8 @@ void VXObject_deinit(XObject* object)
 		for_each_iterator(object->children, XVector,it)
 		{
 			XObject* child = *((XObject**)XVector_iterator_data(&it));
+			if (!child)continue;
+			child->parent = NULL; // 断开链接
 			if (IS_CLASS_HEAP(child))
 				XObject_deleteLater(child);
 			else

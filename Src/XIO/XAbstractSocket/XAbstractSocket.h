@@ -186,7 +186,7 @@ typedef struct XAbstractSocket {
 #define XAbstractSocket_canReadLine_base         XIODevice_canReadLine_base
 #define XAbstractSocket_waitForReadyRead_base    XIODevice_waitForReadyRead_base
 #define XAbstractSocket_waitForBytesWritten_base XIODevice_waitForBytesWritten_base
-#define XAbstractSocket_delete_base              XIODevice_delete_base
+#define XAbstractSocket_delete_base              XIODevice_deleteLater
 
 #define XAbstractSocket_isOpen                   XIODevice_isOpen
 #define XAbstractSocket_isReadable               XIODevice_isReadable
