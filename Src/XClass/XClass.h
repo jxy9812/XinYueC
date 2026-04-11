@@ -18,6 +18,8 @@ XCLASS_DEFINE_END(XClass)
 typedef struct XClass
 {
 	XVtable* m_vtable;//虚函数表
+	uint32_t is_objHeap : 1;        //类是否在堆上
+	uint32_t unused : 31;           // 保留位
 }XClass;
 #define XVtableGetFunc(Vtable,Offset,Type) ((Type)((((XVtable*)Vtable)->data)[Offset]))//用虚函数表获取函数
 #define XClassGetVtable(Object) ((XClass*)Object)->m_vtable  //用获取类中的虚函数表
@@ -87,10 +89,14 @@ void XClass_copy_base(XClass* object, const XClass* src);
 void XClass_move_base(XClass* object, XClass* src);
 void XClass_deinit_base(XClass* object);
 void XClass_delete_base(XClass* object);
+
+//标记保护权限
+#define Protected 
+
 //类是否在堆上
-#define IS_CLASS_HEAP(obj)   (((XClass*)obj)->m_vtable->is_objHeap)
+#define IS_CLASS_HEAP(obj)   (((XClass*)obj)->is_objHeap)
 //设置标志类在堆上
-#define SET_CLASS_HEAP(obj)  (((XClass*)obj)->m_vtable->is_objHeap=1)
+#define SET_CLASS_HEAP(obj)  (((XClass*)obj)->is_objHeap=1)
 
 // 释放父对象
 #define 	XClass_Deinit_Parent(Type,obj)   (XVtableGetFunc(Type##_class_init(), EXClass_Deinit, void(*)(Type*))(obj))

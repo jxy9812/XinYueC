@@ -8,7 +8,7 @@
 #include"XThreadData.h"
 #include <windows.h>
 void VXThread_run(XThread* thread);
-static void VXThread_deinit(XThread* Object);
+static void VXThread_deinit(XThread* thread);
 // 虚函数表初始化
 XVtable* XThread_class_init()
 {
@@ -37,16 +37,12 @@ XVtable* XThread_class_init()
 // 线程函数包装器，用于调用事件调度器
 static DWORD WINAPI ThreadFunction(LPVOID lpParam) 
 {
-    XThread* obj = (XThread*)lpParam;
-    //XPrintf("XThread:%p XVector* children:%p\n", obj,((XObject*)obj)->children);
-    obj->m_finished = false;
-    obj->m_running = true;
-    XThreadData_mapInsert(obj->m_data);
+    XThread* thread = (XThread*)lpParam;
+    //XPrintf("XThread:%p XVector* children:%p\n", thread,((XObject*)thread)->children);
+  
     //运行函数
-    XThread_run_base(obj);
-    obj->m_finished = true;
-    obj->m_running = false;
-    XThreadData_mapInsert(obj->m_data);
+    XThread_run_base(thread);
+   
     return 0;
 }
 
@@ -65,52 +61,122 @@ bool XThread_start(XThread* thread)
     return true;
 }
 
-bool XThread_wait(XThread* Object, unsigned long time)
+bool XThread_wait(XThread* thread, uint32_t time)
 {
-    if (Object->m_handle == NULL) {
+    if (thread->m_handle == NULL) {
         return false;
     }
-    DWORD result = WaitForSingleObject(Object->m_handle, time);
+    DWORD result = WaitForSingleObject(thread->m_handle, time);
     return (result == WAIT_OBJECT_0);
 }
 
-bool XThread_isFinished(const XThread* Object)
+bool XThread_isFinished(const XThread* thread)
 {
-    if (Object->m_handle == NULL) {
+    if (thread->m_handle == NULL) {
         return false;
     }
     DWORD exitCode;
-    if (GetExitCodeThread(Object->m_handle, &exitCode)) {
+    if (GetExitCodeThread(thread->m_handle, &exitCode)) {
         return (exitCode != STILL_ACTIVE);
     }
     return false;
 }
 
-bool XThread_isRunning(const XThread* Object)
+bool XThread_isRunning(const XThread* thread)
 {
-    if (Object->m_handle == NULL) {
+    if (thread->m_handle == NULL) {
         return false;
     }
     DWORD exitCode;
-    if (GetExitCodeThread(Object->m_handle, &exitCode)) {
+    if (GetExitCodeThread(thread->m_handle, &exitCode)) {
         return (exitCode == STILL_ACTIVE);
     }
     return false;
 }
 
-int VXThread_loopLevel(const XThread* Object)
+XThread_Priority XThread_priority(const XThread* thread)
 {
-    return Object->loopLevel;
-}
+    if (!thread) {
+        return XThread_NormalPriority;
+    }
 
-XThread_Priority VXThread_priority(const XThread* Object)
-{
-    return Object->m_priority;
-}
+    // 如果不是主线程，直接返回缓存的值
+    if (!thread->m_isMainThread|| thread->m_priority!= XThread_err) {
+        return thread->m_priority;
+    }
 
-void VXThread_requestInterruption(XThread* Object)
+    // 主线程：从操作系统查询真实优先级
+    int currentWinPriority = GetThreadPriority(GetCurrentThread());
+    if (currentWinPriority == THREAD_PRIORITY_ERROR_RETURN) {
+        // 查询失败，返回默认值
+        printf("Failed to get main thread priority: %d\n", GetLastError());
+        return XThread_NormalPriority;
+    }
+
+    // 将 Windows 优先级映射回 XThread_Priority 枚举
+    XThread_Priority xPriority;
+    switch (currentWinPriority) {
+    case THREAD_PRIORITY_IDLE:
+        xPriority = XThread_IdlePriority;
+        break;
+    case THREAD_PRIORITY_LOWEST:
+        xPriority = XThread_LowestPriority;
+        break;
+    case THREAD_PRIORITY_BELOW_NORMAL:
+        xPriority = XThread_LowPriority;
+        break;
+    case THREAD_PRIORITY_NORMAL:
+        xPriority = XThread_NormalPriority;
+        break;
+    case THREAD_PRIORITY_ABOVE_NORMAL:
+        xPriority = XThread_HighPriority;
+        break;
+    case THREAD_PRIORITY_HIGHEST:
+        xPriority = XThread_HighestPriority;
+        break;
+    case THREAD_PRIORITY_TIME_CRITICAL:
+        xPriority = XThread_TimeCriticalPriority;
+        break;
+    default:
+        // 对于其他不常见的优先级（如 THREAD_PRIORITY_ABOVE_NORMAL + 1），统一视为 Normal
+        xPriority = XThread_NormalPriority;
+        break;
+    }
+
+    // 可选：更新对象内部的缓存值，使其与真实值同步
+    //((XThread*)thread)->m_priority = xPriority;
+
+    return xPriority;
+}
+// 获取线程栈大小
+uint32_t XThread_stackSize(const XThread* thread)
 {
-    Object->m_interruptionRequested = true;
+    if (!thread) {
+        return 0;
+    }
+
+    // 如果不是主线程，直接返回缓存的值（对于工作线程，这是创建时设置的）
+    if (!thread->m_isMainThread|| thread->m_stackSize) {
+        return thread->m_stackSize;
+    }
+
+    // 主线程：从 TEB (Thread Environment Block) 获取栈信息
+    // NtCurrentTeb() 是一个内联函数，可直接获取当前线程的 TEB
+    NT_TIB* tib = (NT_TIB*)NtCurrentTeb();
+
+    // 栈基地址 (Stack Base) 是栈的最高地址
+    // 栈限制地址 (Stack Limit) 是栈的最低地址
+    // 栈大小 = StackBase - StackLimit
+    size_t stackSize = (size_t)tib->StackBase - (size_t)tib->StackLimit;
+
+    // 可选：更新对象内部的缓存值，使其与真实值同步
+    //((XThread*)thread)->m_stackSize = (uint32_t)stackSize;
+
+    return (uint32_t)stackSize;
+}
+void VXThread_requestInterruption(XThread* thread)
+{
+    thread->m_interruptionRequested = true;
 }
 
 void XThread_setPriority(XThread* Object, XThread_Priority priority)
@@ -145,18 +211,30 @@ void XThread_setPriority(XThread* Object, XThread_Priority priority)
         winPriority = THREAD_PRIORITY_NORMAL;
         break;
     }
-    if (Object->m_handle != NULL) {
-        if (!SetThreadPriority(Object->m_handle, winPriority)) {
-            // 可选：记录错误日志，如GetLastError()
-             printf("Failed to set thread priority: %d\n", GetLastError());
+
+
+    // 判断是否为主线程
+    if (Object->m_isMainThread) {
+        // 主线程：使用 GetCurrentThread() 获取当前线程的伪句柄
+        if (!SetThreadPriority(GetCurrentThread(), winPriority)) {
+            printf("Failed to set main thread priority: %d\n", GetLastError());
         }
     }
+    else {
+        // 工作线程：使用已保存的 m_handle
+        if (Object->m_handle != NULL) {
+            if (!SetThreadPriority(Object->m_handle, winPriority)) {
+                printf("Failed to set worker thread priority: %d\n", GetLastError());
+            }
+        }
+    }
+    // 无论成功与否，都更新对象内部的状态
     Object->m_priority = priority;
 }
 
-void XThread_setStackSize(XThread* Object, uint32_t m_stackSize)
+void XThread_setStackSize(XThread* thread, uint32_t m_stackSize)
 {
-    Object->m_stackSize = m_stackSize;
+    thread->m_stackSize = m_stackSize;
 }
 
 bool XThread_terminate(XThread* Object)
@@ -169,26 +247,67 @@ bool XThread_terminate(XThread* Object)
     return true;
 }
 
-void VXThread_deinit(XThread* Object)
+void VXThread_deinit(XThread* thread)
 {
-    XThreadData_delete(Object->m_data);
-
-    if (XThread_isRunning(Object))
-        XThread_requestInterruption(Object);
-    XThread_wait(Object,UINT32_MAX);
-    if (Object->m_handle != NULL) 
+    if (XThread_isRunning(thread))
+        XThread_requestInterruption(thread);
+    XThread_wait(thread,UINT32_MAX);
+    if (thread->m_handle != NULL) 
     {
-        CloseHandle(Object->m_handle);
-        Object->m_handle = NULL;
+        CloseHandle(thread->m_handle);
+        thread->m_handle = NULL;
     }
-    if (Object->m_arg)XVarList_delete(Object->m_arg);
-    XClass_Deinit_Parent(XObject,Object);
-    //XMemory_free(obj);
+    if (thread->m_varList)XVarList_delete(thread->m_varList);
+    if (thread->m_loop)
+        XClass_delete_base(thread->m_loop);
+    XClass_Deinit_Parent(XObject,thread);
+    XThreadData_delete(thread->m_data);
+    //XMemory_free(thread);
 }
 
 XHandle XThread_currentThreadId()
 {
     return GetCurrentThreadId();
 }
+int XThread_idealThreadCount()
+{
+    return GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+}
+// 毫秒级休眠 (milliseconds)
+void XThread_msleep(uint32_t msecs)
+{
+    // Windows API Sleep 函数的参数单位就是毫秒
+    Sleep(msecs);
+}
 
+// 秒级休眠 (seconds)
+void XThread_sleep(uint32_t secs)
+{
+    // 将秒转换为毫秒 (1秒 = 1000毫秒)
+    Sleep(secs * 1000);
+}
+
+// 微秒级休眠 (microseconds)
+// 注意：Windows 的 Sleep 精度通常在 1-15 毫秒左右，
+// 所以小于 1000 微秒 (1毫秒) 的休眠可能不精确。
+void XThread_usleep(uint32_t usecs)
+{
+    // 将微秒转换为毫秒
+    // 如果 usecs < 1000, 那么 usecs / 1000 的结果是 0
+    // 此时 Sleep(0) 会主动让出 CPU 时间片，但不会真正休眠
+    DWORD msecs = usecs / 1000;
+
+    // 处理微秒不足1毫秒的情况
+    if (msecs == 0 && usecs > 0) {
+        // 对于非常短的延迟，调用 Sleep(0) 让出时间片
+        Sleep(0);
+    }
+    else {
+        Sleep(msecs);
+    }
+}
+void XThread_yieldCurrentThread()
+{
+    SwitchToThread();
+}
 #endif

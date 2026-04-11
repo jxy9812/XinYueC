@@ -4,15 +4,28 @@
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XThread.h"
+#include"XTimer.h"
 static void threadFunc(XThread* thread, XVarList* list)
 {
 	XPrintf("子线程:id:%d\n",XThread_currentThreadId());
+	XTimer* timer = XTimer_create();
+	XTimer_setInterval(timer, 3);
+	//XTimer_setTimeout(timer, 5000);
+	XTimer_setSingleShot(timer, true);
+	XTimer_setAutoDelete(timer, true);
+	XTimer_setTimerType(timer, XTimerType_PreciseTimer);
+	XObject_connect(timer, XSignal(XTimer_timeout_signal), thread, XThread_quit, XConnectionType_Auto);
+	XTimer_start_base(timer);
 	
+	XThread_exec(thread);
+	XTimer_delete_base(timer);
+	XCoreApplication_processEvents(XEventLoop_AllEvents);
 	XCoreApplication_quit();
+	XThread_deleteLater(thread);
 }
 void XThreadTest()
 {
-	//while (true)
+	while (true)
 	{
 		XPrintf("主线程:id:%d\n", XThread_currentThreadId());
 		XThread* th = XThread_create_func(threadFunc, NULL);
@@ -22,6 +35,7 @@ void XThreadTest()
 		//while (true);
 		XCoreApplication_exec();
 		XThread_deleteLater(th);
+
 		XCoreApplication_processEvents(XEventLoop_AllEvents);
 	}
 }

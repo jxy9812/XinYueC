@@ -54,8 +54,6 @@ void XObject_init(XObject* object)
 	XClass_init(object);
 	XClassGetVtable(object) = XObject_class_init();
 	object->m_thread = XThread_currentThread();
-	//object->children=XVector_create(sizeof(XObject*));
-	//object->filters=XVector_create(sizeof(XObject*));
 }
 
 const XString* XObject_objectName(const XObject* self)
@@ -120,16 +118,76 @@ void XObject_setPollingInterval(XObject* object, size_t interval)
 
 void XObject_setParent(XObject* object, XObject* parent)
 {
-	if (!object)return;
-	XObject* prev = XObject_parent(object);//上一个父节点
-	if (prev == parent)
+	// 健壮性检查：空对象或已删除的对象不应再设置父对象
+	if (!object || object->was_deleted) {
+		return;
+	}
+
+	// 如果新父对象就是当前父对象，直接返回
+	if (object->parent == parent) {
+		return;
+	}
+
+ // 父子对象必须在同一线程中。这是 Qt 对象模型的核心规则。
+	XThread* current_thread = XThread_currentThread();
+	XThread* object_thread = object->m_thread;
+	XThread* new_parent_thread = parent ? parent->m_thread : current_thread;
+
+	// 检查当前调用线程是否是 object 所属的线程
+	if (current_thread != object_thread) {
+		// 在错误的线程中调用 setParent，这是未定义行为，应记录错误并返回
+		// （此处可以用您的日志系统替换 printf）
+		fprintf(stderr, "Error: XObject_setParent called from wrong thread for object %p.\n", (void*)object);
+		return;
+	}
+
+	// 检查新父对象（如果存在）是否与当前对象在同一线程
+	if (parent && object_thread != new_parent_thread) {
+		fprintf(stderr, "Error: Cannot set parent, objects are in different threads.\n");
+		return;
+	}
+	// === 线程一致性检查结束 ===
+
+
+	 // 获取旧的父对象
+	XObject* prev_parent = object->parent;
+	if (prev_parent == parent)
 		return;//重复设置
-	if(prev)
-		XCoreApplication_postEvent(prev, XChildEvent_create(XEVENT_TYPE_CHILD_REMOVED, object), XEVENT_PRIORITY_NORMAL);
+	// 从旧父对象的 children 列表中移除自己
+	if (prev_parent && prev_parent->children) {
+		// 注意：这里假设 XVector 提供了安全的查找和移除方法
+		int index = XVector_indexOf(prev_parent->children, &object, 0);
+		if (index != -1) {
+			XVector_remove_base(prev_parent->children, index, 1);
+		}
+		// 向旧父对象发送 CHILD_REMOVED 事件
+		XCoreApplication_postEvent(prev_parent, XChildEvent_create(XEVENT_TYPE_CHILD_REMOVED, object), XEVENT_PRIORITY_NORMAL);
+	}
+
+	// 设置新的父对象
 	object->parent = parent;
-	if (parent)
+
+	// 将自己添加到新父对象的 children 列表中
+	if (parent) {
+		if (!parent->children) {
+			parent->children = XVector_create(sizeof(XObject*));
+		}
+		if (parent->children) {
+			XVector_push_back_base(parent->children, &object);
+		}
+		// 向新父对象发送 CHILD_ADDED 事件
 		XCoreApplication_postEvent(parent, XChildEvent_create(XEVENT_TYPE_CHILD_ADDED, object), XEVENT_PRIORITY_NORMAL);
-	
+	}
+
+	//XObject* prev = XObject_parent(object);//上一个父节点
+	//if (prev == parent)
+	//	return;//重复设置
+	//if(prev)
+	//	XCoreApplication_postEvent(prev, XChildEvent_create(XEVENT_TYPE_CHILD_REMOVED, object), XEVENT_PRIORITY_NORMAL);
+	//object->parent = parent;
+	//if (parent)
+	//	XCoreApplication_postEvent(parent, XChildEvent_create(XEVENT_TYPE_CHILD_ADDED, object), XEVENT_PRIORITY_NORMAL);
+	//
 	//object->parent = parent;
 }
 
@@ -157,11 +215,54 @@ XObject* XObject_parent(XObject* object)
 	return NULL;
 }
 
-bool XObject_moveToThread(XObject* object, XThread* thread)
+bool XObject_moveToThread(XObject* object, XThread* target_thread)
 {
-	//处理当前线程剩余的所有事件
+	// 健壮性检查
+	if (!object || object->was_deleted) {
+		return false;
+	}
+
+	// 如果目标线程就是当前线程，无需移动
+	if (object->m_thread == target_thread) {
+		return true;
+	}
+
+	// === 关键健壮性增强：移动规则检查 ===
+	XThread* current_caller_thread = XThread_currentThread();
+	XThread* object_current_thread = object->m_thread;
+
+	// 规则1: 只能在对象的“亲生”线程（即创建它的线程）中调用 moveToThread
+	// 这里我们简化处理，认为“亲生”线程就是当前所属线程，并且调用者必须在此线程中。
+	if (current_caller_thread != object_current_thread) {
+		fprintf(stderr, "Error: XObject_moveToThread can only be called from the object's own thread.\n");
+		return false;
+	}
+
+	// 规则2: 不能移动到一个正在运行的非当前线程
+	// (这是一个简化规则，Qt 的规则更复杂，但核心思想是避免在活动线程间移动)
+	if (target_thread && target_thread != current_caller_thread && XThread_isRunning(target_thread)) {
+		fprintf(stderr, "Error: Cannot move object to a running thread.\n");
+		return false;
+	}
+	// === 移动规则检查结束 ===
+
+	// === 处理子对象 ===
+	// 根据 Qt 的行为，移动一个对象时，其所有子对象也会被自动移动到同一个线程。
+	if (object->children) {
+		for_each_iterator(object->children, XVector, it) {
+			XObject* child = *((XObject**)XVector_iterator_data(&it));
+			// 递归移动子对象
+			XObject_moveToThread(child, target_thread);
+		}
+	}
+	// === 子对象处理结束 ===
+
+	// 在移动前，处理完当前线程中所有待处理的事件，确保状态一致
 	XCoreApplication_processEvents(XEventLoop_AllEvents);
-	object->m_thread = thread;
+
+	// 执行移动：更新线程指针
+	object->m_thread = target_thread;
+
 	return true;
 }
 
@@ -272,10 +373,23 @@ void* XObject_destroyed_signal(XObject* object)
 {
 	XEmitSignal(object, XObject_destroyed_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
 }
-
+static void objectNameChanged_signal_del(struct XVarList* list)
+{
+	XVarList_args_1(list, XString*, objectName);
+	if (objectName)
+		XString_delete_base(objectName);
+}
 void XObject_objectNameChanged_signal(XObject* object, const XString* objectName)
 {
-
+	if(objectName)
+	{
+		XString* name = XString_create_copy(objectName);
+		XEmitSignal(object, XObject_objectNameChanged_signal, XVarList_Create(XVar(XString*, name)), objectNameChanged_signal_del, NULL, XEVENT_PRIORITY_NORMAL);
+	}
+	else
+	{
+		XEmitSignal(object, XObject_objectNameChanged_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
+	}
 }
 
 void VXObject_poll(XObject* object)

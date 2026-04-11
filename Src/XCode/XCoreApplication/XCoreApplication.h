@@ -13,10 +13,11 @@ extern "C" {
 #include"XEventLoop.h"
 #include"XCommandLineParser.h"
 #include"XCommandLineOptionGroup.h"
-    /**
-     * @brief 应用程序属性枚举。
-     */
-typedef enum {
+/**
+ * @brief 应用程序属性枚举。
+ */
+typedef enum 
+{
     XCORE_APPLICATION_ATTRIBUTE_QT_QUICK_USE_DEFAULT_SIZE_POLICY = 1, // Qt Quick 布局使用 Item 的内置大小策略
     XCORE_APPLICATION_ATTRIBUTE_DONT_SHOW_ICONS_IN_MENUS = 2, // 菜单中不显示动作（Action）的图标
     XCORE_APPLICATION_ATTRIBUTE_NATIVE_WINDOWS = 3, // 确保控件拥有原生窗口
@@ -64,8 +65,6 @@ typedef struct XCoreApplication
     XString* m_orgDomain;//组织域名
     XBitArray m_attribute;//属性位数组
     XStringList* m_paths;//库搜索路径列表
-    XThread* m_thread;
-    XEventLoop* m_eventLoop;       // 事件调度器
 } XCoreApplication;
 
 #define xApp XCoreApplication_instance()
@@ -197,12 +196,6 @@ const XString* XCoreApplication_applicationFilePath(void);
  */
 int64_t XCoreApplication_applicationPid(void);
 
-void XCoreApplication_exit(int returnCode);
-/**
- * @brief 退出应用程序
- */
-void XCoreApplication_quit();
-
 /**
  * @brief 处理待处理事件
  * @param flags 事件处理标志
@@ -229,7 +222,11 @@ void XCoreApplication_installNativeEventFilter(struct XAbstractNativeEventFilter
 void XCoreApplication_removeNativeEventFilter(struct XAbstractNativeEventFilter* filter);
 
 bool XCoreApplication_notify_base(XObject* receiver, XEvent* e);
-
+void XCoreApplication_exit(int returnCode);
+/**
+ * @brief 退出应用程序
+ */
+void XCoreApplication_quit();
 /**
  * @brief 启动应用程序事件循环
  * @return 退出码

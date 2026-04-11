@@ -11,11 +11,10 @@ extern "C" {
 typedef struct 
 {
 	void** data;//
-	size_t size;
-	size_t capacity;//当前容器能容纳的最大元素数量
-	uint32_t isStack : 1;//定义在栈上
-	uint32_t is_objHeap : 1;        //类是否在堆上
-	uint32_t unused : 30;           // 保留位
+	uint16_t size;
+	uint16_t capacity;//当前容器能容纳的最大元素数量
+	uint16_t isStack : 1;//定义在栈上
+	uint16_t unused : 15;           // 保留位
 }XVtable;
 XVtable* XVtable_create();				
 //定义在栈上

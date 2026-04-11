@@ -66,7 +66,7 @@ static void* ThreadFunction(void* arg)
     XThread_mapInsert(Object);
     // 执行用户线程函数
     if (Object->m_start_routine) {
-        Object->m_start_routine(Object->m_arg);
+        Object->m_start_routine(Object->m_varList);
     }
     // 运行事件循环
     if (Object->loopLevel > 0 && Object->m_eventLoop) {
@@ -344,7 +344,7 @@ XThread* XThread_create_func(void (*start_routine)(void*), void* arg)
     XThread_init(Object);
     SET_CLASS_HEAP(Object);
     Object->m_start_routine = start_routine;
-    Object->m_arg = arg;
+    Object->m_varList = arg;
 
     XThread_currentThread();//初始化
 

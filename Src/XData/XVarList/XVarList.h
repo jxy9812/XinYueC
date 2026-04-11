@@ -40,7 +40,7 @@ typedef struct XVarList
 * @param ... 由XVar宏包装的参数列表
 * @return 新创建的XVarList实例，失败返回NULL
 */
-#define XVarList_Create(...)     XVarList_create(COUNT_ARGS(__VA_ARGS__), __VA_ARGS__);
+#define XVarList_Create(...)     XVarList_create(COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
 /**
 * @brief 释放XVarList实例占用的内存
 * 本质是调用XMemory_free，用于统一内存释放接口

@@ -25,7 +25,7 @@ XVtable* XClass_class_init()
 void XClass_init(XClass* object)
 {
 	XClassGetVtable(object) = XClass_class_init();
-	object->m_vtable->is_objHeap = false;
+	object->is_objHeap = false;
 }
 
 void VXClass_copy(XClass* object, const XClass* src)

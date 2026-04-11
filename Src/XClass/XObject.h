@@ -11,6 +11,7 @@ extern "C" {
 #include"XAtomic.h"
 #include"XVarList.h"
 #include"XNamespace.h"
+#define Signals
 /**
  * @brief 开始定义XObject类的虚函数表枚举
  * @note 用于实现C语言中的多态机制，枚举值对应虚函数在表中的索引
@@ -33,7 +34,6 @@ XCLASS_DEFINE_END(XObject)
 typedef struct XObject
 {
     XClass m_class;                      ///< 继承的基类成员，包含虚函数表指针（实现多态）
-	//XAtomic_bool m_deleteState;          ///< 原子布尔变量：标记对象是否处于删除状态（线程安全）
 	XAtomic_uint32_t m_posted_events;       ///< 原子无符号整数：已投递但未处理的事件计数
 	
 	// 对象标志位
@@ -120,7 +120,7 @@ XThread* XObject_thread(const XObject* self);
  * @return 移动成功返回true，失败返回false
  * @note 移动后，对象的事件处理将在目标线程执行，确保线程安全
  */
-bool XObject_moveToThread(XObject* object, XThread* thread);
+bool XObject_moveToThread(XObject* object, XThread* target_thread);
 
 // ------------------------
 // 信号与槽
@@ -331,7 +331,7 @@ void XObject_deinitLater(XObject* object);
  *       等待所有待处理事件完成后再释放，避免未处理事件导致的错误
  */
 void XObject_deleteLater(XObject* object);
-
+Signals
 /**
  * @brief 释放信号（槽函数原型对应的信号）
  * @param object 发送信号的XObject对象指针（非NULL）
@@ -389,6 +389,7 @@ void XObject_emitSignal(XObject* object, size_t signal, XVarList * args, void(*d
 * @param priority 信号优先级
 */
 void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority);
+
 
 #ifdef __cplusplus
 }

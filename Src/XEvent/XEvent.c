@@ -305,22 +305,22 @@ bool XChildEvent_removed(const XChildEvent* e)
 
 void XChildEvent_handler(XChildEvent* event, XObject* receiver)
 {
-	if (XChildEvent_added(event))
-	{
-		XVector* children = receiver->children;
-		if (!children)
-		{
-			receiver->children = XVector_create(sizeof(XObject*));
-			children = receiver->children;
-		}
-		if (-1 == XVector_indexOf(children, &event->child, 0))//确保新父节点没有自己
-			XVector_push_back_base(children, &event->child);
-	}
-	else if (XChildEvent_removed(event))
-	{
-		XVector* children= receiver->children;
-		XVector_remove_base(children, XVector_indexOf(children, &event->child, 0), 1);
-	}
+	//if (XChildEvent_added(event))
+	//{
+	//	XVector* children = receiver->children;
+	//	if (!children)
+	//	{
+	//		receiver->children = XVector_create(sizeof(XObject*));
+	//		children = receiver->children;
+	//	}
+	//	if (-1 == XVector_indexOf(children, &event->child, 0))//确保新父节点没有自己
+	//		XVector_push_back_base(children, &event->child);
+	//}
+	//else if (XChildEvent_removed(event))
+	//{
+	//	XVector* children= receiver->children;
+	//	XVector_remove_base(children, XVector_indexOf(children, &event->child, 0), 1);
+	//}
 	XEvent_accept(event);
 }
 

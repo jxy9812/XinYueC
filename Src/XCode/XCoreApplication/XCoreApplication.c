@@ -57,7 +57,7 @@ XCoreApplication* XCoreApplication_create(int argc, char** argv) {
 void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     if (app == NULL)
         return;
-    XThreadData_initMainThread();
+    //XThreadData_initMainThread();
     // 初始化父类
     XObject_init(app);
     XClassGetVtable(app) = XCoreApplication_class_init();
@@ -65,10 +65,9 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     // 初始化成员变量
     app->m_argc = argc;
     app->m_argv = argv;
-    app->m_thread = XThread_create(app);
-    app->m_thread->m_isMainThread = true;
+    ((XObject*)app)->m_thread = XThread_createMainThread(app);
     //app->m_eventLoop = XEventLoop_create();
-    app->m_eventLoop = NULL;
+    //app->m_eventLoop = NULL;
     XBitArray_init(&app->m_attribute, XCORE_APPLICATION_ATTRIBUTE_COUNT);
 
 
@@ -197,18 +196,14 @@ int64_t XCoreApplication_applicationPid(void)
 void XCoreApplication_exit(int returnCode)
 {
     XCoreApplication* app = XCoreApplication_instance();
-    if (app && app->m_eventLoop)
-    {
-        XEventLoop_exit(app->m_eventLoop, returnCode);
-    }
+    if (app)
+        XThread_exit(((XObject*)app)->m_thread, returnCode);
 }
 
 void XCoreApplication_quit() {
     XCoreApplication* app = XCoreApplication_instance();
-    if (app&& app->m_eventLoop) 
-    {
-        XEventLoop_quit(app->m_eventLoop);
-    }
+    if (app)
+        XThread_quit(((XObject*)app)->m_thread);
 }
 
 void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags) {
@@ -249,10 +244,7 @@ int XCoreApplication_exec()
     XCoreApplication* app = XCoreApplication_instance();
     if (app == NULL )
         return -1;
-    if(!app->m_eventLoop)
-        app->m_eventLoop = XEventLoop_create();
-    int result = XEventLoop_exec(app->m_eventLoop);
-
+    int result = XThread_exec(((XObject*)app)->m_thread);
     // 发送即将退出信号
     XCoreApplication_aboutToQuit_signal(app);
     XCoreApplication_processEvents(XEventLoop_AllEvents);//处理事件，保证退出信号可以被调用
@@ -278,6 +270,7 @@ void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)
     size_t size = 0;
     //处理事件
     XVector* events = XThreadData_takePostedEvents();
+    if (!events)return;
     for_each_iterator(events, XVector, it)
     {
         XPostEvent* ePost = XVector_iterator_data(&it);
@@ -301,6 +294,7 @@ void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventTyp
     size_t size = 0;
     //移除事件
     XVector* events = XThreadData_takePostedEvents();
+    if (!events)return;
     for_each_iterator(events, XVector, it)
     {
         XPostEvent* ePost = XVector_iterator_data(&it);
@@ -322,18 +316,50 @@ void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventTyp
 XAbstractEventDispatcher* XCoreApplication_eventDispatcher(void)
 {
     XCoreApplication* app = XCoreApplication_instance();
-    return XThreadData_initMainThread()->m_dispatcher;
+    return ((XObject*)app)->m_thread->m_data->m_dispatcher;
 }
 
 void XCoreApplication_setEventDispatcher(XAbstractEventDispatcher* dispatcher)
 {
-    //未完成，实际要先停止事件循环
-    XThreadData* data = XThreadData_initMainThread();
-    if (!data)return;
-    if (data->m_dispatcher) XObject_deleteLater(data->m_dispatcher);
-    data->m_dispatcher = dispatcher;
+    // 1. 获取全局应用实例和其关联的主线程数据
     XCoreApplication* app = XCoreApplication_instance();
-    if (app && app->m_eventLoop)app->m_eventLoop->m_dispatcher = dispatcher;
+    if (!app) {
+        // 如果应用实例不存在，无法设置分发器
+        return;
+    }
+
+    XThreadData* data = ((XObject*)app)->m_thread->m_data;
+    if (!data) {
+        // 理论上主线程的 m_data 不应为空，但做安全检查
+        return;
+    }
+
+    // 2. 参数校验：允许传入 NULL 来清除分发器
+    //    但通常不建议这样做，因为事件循环需要一个有效的分发器。
+    //    如果传入 NULL，我们只是清理旧的，不设置新的。
+    if (dispatcher == NULL) {
+        // 可选：打印警告，因为这通常不是一个好主意
+         printf("Warning: Setting event dispatcher to NULL.\n");
+    }
+
+    // 3. 清理旧的事件分发器
+    if (data->m_dispatcher != NULL) {
+        // 使用 deleteLater 确保在当前事件循环迭代结束后再销毁，
+        // 避免在处理事件时删除正在使用的分发器。
+        XObject_deleteLater((XObject*)(data->m_dispatcher));
+        data->m_dispatcher = NULL; // 立即置空指针，防止悬空指针
+    }
+
+    // 4. 设置新的事件分发器并建立所有权关系
+    if (dispatcher != NULL) {
+        data->m_dispatcher = dispatcher;
+
+        // --- 关键改进：设置父对象 ---
+        // 将新的分发器的父对象设置为应用程序实例。
+        // 这样，当应用程序实例被销毁时，分发器也会被自动清理，
+        // 防止了内存泄漏，并明确了对象的生命周期。
+        XObject_setParent((XObject*)dispatcher, (XObject*)app);
+    }
 
 }
 
@@ -445,11 +471,11 @@ void VXCoreApplication_deinit(XCoreApplication* app)
 
 
     // 释放事件循环
-    if (app->m_eventLoop)
+   /* if (app->m_eventLoop)
     {
         XEventLoop_deleteLater(app->m_eventLoop);
         app->m_eventLoop = NULL;
-    }
+    }*/
 
     // 释放父类资源
     XClass_Deinit_Parent(XObject, app);

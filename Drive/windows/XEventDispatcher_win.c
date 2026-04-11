@@ -629,6 +629,7 @@ static void VXEventDispatcherWin32_closingDown(XAbstractEventDispatcher* dispatc
 
 static void VXEventDispatcherWin32_deinit(XObject* obj)
 {
+    //XPrintf("事件调度器清理\n");
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)obj;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(obj);
 
@@ -672,7 +673,7 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
         }
         XHashMap_iterator_add(d->sockets, &it_sockets);
     }
-
+    XMutex_unlock(d->m_dp.mutex);
     // 清理本地过滤器
     XAbstractEventDispatcherPrivate_deinit(d);
 
@@ -682,9 +683,16 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
     }
 
     // 销毁容器
-    XHashMap_delete_base(d->timers);
-    XHashMap_delete_base(d->sockets);
-    //XMutex_delete(d->m_dp.mutex);
+    if(d->timers)
+    {
+        XHashMap_delete_base(d->timers);
+        d->timers = NULL;
+    }
+    if(d->sockets)
+    {
+        XHashMap_delete_base(d->sockets);
+        d->sockets = NULL;
+    }
     XMemory_free(d);
 
     XClass_Deinit_Parent(XAbstractEventDispatcher, obj);
@@ -739,8 +747,8 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
 
     // 初始化基类
     XAbstractEventDispatcher_init(self, parent);
-    SET_CLASS_HEAP(self);
     XClassGetVtable(self) = XEventDispatcherWin32_class_init();
+    SET_CLASS_HEAP(self);
 
     XEventDispatcherWin32PlatformPrivate* d = (XEventDispatcherWin32PlatformPrivate*)XMemory_calloc(1, sizeof(XEventDispatcherWin32PlatformPrivate));
     if (!d) {
@@ -748,15 +756,15 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
         return NULL;
     }
     XAbstractEventDispatcherPrivate_init(d);
+    d->timers = NULL;
+    d->sockets = NULL;
 
-    // --- 修复点 11: 正确初始化 XHashMap ---
     d->timers = XHashMap_create(sizeof(size_t), sizeof(XEventDispatcherWin32_TimerInfo), XHashMap_murmur3_32, size_t_compare);
     XContainerSetDataDeinitMethod(d->timers, timersDataDeinit);
     d->sockets = XHashMap_create(sizeof(intptr_t), sizeof(XEventDispatcherWin32_SocketInfo*), XHashMap_murmur3_32, int_compareptr_t);
 
     if (!d->timers || !d->sockets ) {
         // 错误处理
-        //if (d->mutex) XMutex_delete(d->mutex);
         if (d->timers) XHashMap_delete_base(d->timers);
         if (d->sockets) XHashMap_delete_base(d->sockets);
         XMemory_free(d);

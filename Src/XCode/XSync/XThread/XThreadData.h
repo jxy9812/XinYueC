@@ -4,7 +4,7 @@
 #include "XAbstractEventDispatcher.h"
 #include "XMutex.h"
 #include "XVector.h" // 假设你有 XVector 实现（基于 realloc）
-
+#include "XAtomic.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -21,6 +21,8 @@ typedef struct XThreadData{
     XThread* m_thread;
     XVector/*<XPostEvent>*/ m_postEventList;  // 动态数组
     XAbstractEventDispatcher* m_dispatcher;   // 本线程的事件分发器
+    XAtomic_ptr m_currentEventLoop;//当前正在运行的事件循环
+    XAtomic_size_t m_loopLevel; // <-- 关键：一个原子整数计数器
 } XThreadData;
 
 //需平台实现
@@ -36,7 +38,11 @@ XThreadData* XThreadData_current(void);
 void XThreadData_mapInsert(XThreadData* data);
 void XThreadData_mapRemove(XThreadData* data);
 // 初始化主线程的 XThreadData（由 XCoreApplication 调用）
-XThreadData* XThreadData_initMainThread(void);
+XThreadData* XThreadData_initMainThread(XThread* thread);
+
+XEventLoop* XThreadData_currentEventLoop(XThreadData* data);
+void XThreadData_pushEventloop(XThreadData* data, XEventLoop*loop);
+void XThreadData_popEventloop(XThreadData* data, XEventLoop* loop);
 
 // 向当前线程投递事件（内部使用）
 void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority);

@@ -100,6 +100,7 @@ XAbstractEventDispatcher* XAbstractEventDispatcher_create(XObject* parent)
     XAbstractEventDispatcher* self = (XAbstractEventDispatcher*)XMemory_malloc(sizeof(XAbstractEventDispatcher));
     if (self) {
         XAbstractEventDispatcher_init(self, parent);
+        SET_CLASS_HEAP(self);
     }
     return self;
 }
@@ -129,6 +130,7 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     //处理事件
     //XMutex_lock(self->d_ptr->mutex);
     XVector* events = XThreadData_takePostedEvents();
+    if (!events)return false;
     for_each_iterator(events, XVector, it)
     {
         XPostEvent* ePost = XVector_iterator_data(&it);

@@ -135,13 +135,16 @@ int XEventLoop_exec(XEventLoop* loop) {
 
     loop->m_state = XEventLoop_Running;
     loop->m_exitCode = 0;
-
+    XThreadData* data = XThreadData_current();
+    XEventLoop* parent = XThreadData_currentEventLoop(data);
+    XThreadData_pushEventloop(data,loop);
     while (loop->m_state == XEventLoop_Running)
     {
         // 处理事件
         XEventLoop_processEvents(loop, XEventLoop_AllEvents);
     }
-
+    XThreadData_popEventloop(data,parent);
+   
     return loop->m_exitCode;
 }
 

@@ -13,47 +13,82 @@
 // 创建 XThread 对象
 XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist)
 {
-    XThread* Object = (XThread*)XMemory_malloc(sizeof(XThread));
-    if (Object == NULL) {
+    XThread* thread = (XThread*)XMemory_malloc(sizeof(XThread));
+    if (thread == NULL) {
         return NULL;
     }
-    XThread_init(Object);
-    SET_CLASS_HEAP(Object);
-    Object->m_start_routine = start_routine;
-    Object->m_arg = varlist;
+    XThread_init(thread);
+    SET_CLASS_HEAP(thread);
+    thread->m_start_routine = start_routine;
+    thread->m_varList = varlist;
 
     //XThread_currentThread();//初始化
 
-    return Object;
+    return thread;
 }
 XThread* XThread_create(XObject* parent)
 {
-    XThread* Object = (XThread*)XMemory_malloc(sizeof(XThread));
-    if (Object == NULL) {
+    XThread* thread = (XThread*)XMemory_malloc(sizeof(XThread));
+    if (thread == NULL) {
         return NULL;
     }
-    XThread_init(Object);
-    SET_CLASS_HEAP(Object);
-    Object->m_start_routine = NULL;
-    Object->m_arg = NULL;
+    XThread_init(thread);
+    SET_CLASS_HEAP(thread);
+    thread->m_start_routine = NULL;
+    thread->m_varList = NULL;
 
     //XThread_currentThread();//初始化
 
-    return Object;
+    return thread;
+}
+XThread* XThread_createMainThread(XObject* parent)
+{
+    XThread* thread = (XThread*)XMemory_malloc(sizeof(XThread));
+    if (thread == NULL) {
+        return NULL;
+    }
+    XObject_init(thread);
+    XClassGetVtable(thread) = XThread_class_init();
+    thread->m_handle = 0;
+    thread->m_finished = false;
+    thread->m_interruptionRequested = false;
+    thread->m_running = true;
+    thread->m_loop = NULL;
+    thread->m_priority = XThread_err;
+    thread->m_stackSize = 0;
+    thread->m_data = XThreadData_initMainThread(thread);
+    SET_CLASS_HEAP(thread);
+    thread->m_start_routine = NULL;
+    thread->m_varList = NULL;
+    thread->m_isMainThread = true;
+    // 初始化优先级和栈大小为真实值
+    thread->m_priority = XThread_priority(thread); // 这会触发上面的新逻辑
+    thread->m_stackSize = XThread_stackSize(thread); // 这会触发上面的新逻辑
+    return thread;
 }
 // 初始化 XThread 对象
-void XThread_init(XThread* Object)
+void XThread_init(XThread* thread)
 {
-    XObject_init(Object);
-    XClassGetVtable(Object) = XThread_class_init();
-    Object->m_handle = 0;
-    Object->m_finished = false;
-    Object->m_interruptionRequested = false;
-    Object->loopLevel = 0;
-    Object->m_priority = XThread_NormalPriority;
-    Object->m_stackSize = 512;
-    Object->m_data = XThreadData_create(Object);
-    //((XObject*)Object)->m_thread = Object;//将线程指针设为自己，才可以使用事件
+    XObject_init(thread);
+    XClassGetVtable(thread) = XThread_class_init();
+    thread->m_handle = 0;
+    thread->m_finished = false;
+    thread->m_interruptionRequested = false;
+    thread->m_running = false;
+    thread->m_loop = NULL;
+    thread->m_priority = XThread_NormalPriority;
+    thread->m_stackSize = 512;
+    thread->m_data = XThreadData_create(thread);
+    //thread->m_data = NULL;
+    //((Xthread*)thread)->m_thread = thread;//将线程指针设为自己，才可以使用事件
+}
+void* XThread_finished_signal(XThread* thread)
+{
+    XEmitSignal(thread, XThread_finished_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+void* XThread_started_signal(XThread* thread)
+{
+    XEmitSignal(thread, XThread_started_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 XThread* XThread_currentThread()
 {
@@ -63,71 +98,106 @@ XThread* XThread_currentThread()
 XEventDispatcher* XThread_currentDispatcher()
 {
     XThread* th = XThread_currentThread();
-    return th ? XThread_dispatcher(th) : XCoreApplication_eventDispatcher();
+    return th ? XThread_dispatcher(th) : NULL;
 }
 
-
+bool XThread_isMainThread()
+{
+    XThread* th=XThread_currentThread();
+    return th? th->m_isMainThread:false;
+}
 
 // 获取 XThread 句柄
-XHandle XThread_getHandle(XThread* Object)
+XHandle XThread_getHandle(XThread* thread)
 {
-    return Object->m_handle;
+    return thread->m_handle;
 }
 
 // 获取事件调度器
-XEventDispatcher* XThread_dispatcher(const XThread* Object)
+XEventDispatcher* XThread_dispatcher(const XThread* thread)
 {
-    if (Object)
-        return Object->m_data? Object->m_data->m_dispatcher:NULL;
+    if (thread)
+        return thread->m_data? thread->m_data->m_dispatcher:NULL;
     return XCoreApplication_eventDispatcher();
 }
 
-// 判断线程是否被请求中断
-bool XThread_isInterruptionRequested(const XThread* Object)
+bool XThread_isCurrentThread(const XThread* thread)
 {
-    return Object->m_interruptionRequested;
-}
-// 获取线程循环级别
-int XThread_loopLevel(const XThread* Object)
-{
-    return Object->loopLevel;
+    return XThread_currentThread()==thread;
 }
 
-// 获取线程优先级
-XThread_Priority XThread_priority(const XThread* Object)
+// 判断线程是否被请求中断
+bool XThread_isInterruptionRequested(const XThread* thread)
 {
-    return Object->m_priority;
+    return thread->m_interruptionRequested;
+}
+// 获取线程循环级别
+int XThread_loopLevel(const XThread* thread)
+{
+    return XAtomic_load_size_t(&thread->m_data->m_loopLevel);
 }
 
 // 请求中断线程
-void XThread_requestInterruption(XThread* Object)
+void XThread_requestInterruption(XThread* thread)
 {
-    Object->m_interruptionRequested = true;
+    thread->m_interruptionRequested = true;
 }
 
 // 设置事件调度器
-void XThread_setEventDispatcher(XThread* Object, XEventDispatcher* eventDispatcher)
+void XThread_setEventDispatcher(XThread* thread, XEventDispatcher* eventDispatcher)
 {
-    if (!Object || !eventDispatcher)return;
-    if (Object->m_data && Object->m_data->m_dispatcher)
-        XClass_delete_base(Object->m_data->m_dispatcher);
-    Object->m_data->m_dispatcher=eventDispatcher;
+    // 参数校验
+    if (!thread || !eventDispatcher) {
+        return;
+    }
+
+    // 确保线程的私有数据已经初始化
+    if (!thread->m_data) {
+        // 如果 m_data 不存在，说明线程对象可能尚未正确初始化。
+        // 根据您的框架设计，这里可以选择初始化它或者直接返回错误。
+        // 考虑到 XThread_init 和 XThread_createMainThread 都会初始化 m_data，
+        // 这种情况通常不应该发生。
+        return;
+    }
+
+    // --- 关键步骤：替换分发器 ---
+    // 1. 先删除旧的分发器（如果存在）
+    if (thread->m_data->m_dispatcher) {
+        XClass_delete_base(thread->m_data->m_dispatcher);
+    }
+
+    // 2. 设置新的分发器
+    thread->m_data->m_dispatcher = eventDispatcher;
+
+    // --- 可选：设置新分发器的父对象 ---
+    // 为了让新分发器能随着线程对象的销毁而自动清理，可以将其父对象设为线程。
+    // 这需要您的对象模型支持父子关系管理（如 Qt 的 Qthread）。
+    // 如果您的 Xthread 支持 setParent，可以加上下面这行：
+     XObject_setParent((XObject*)eventDispatcher, (XObject*)thread);
 }
 
-
-// 获取线程栈大小
-uint32_t XThread_stackSize(const XThread* Object)
+void XThread_exit(XThread* thread, int returnCode)
 {
-    return Object->m_stackSize;
+    if (thread && thread->m_loop)
+        XEventLoop_exit(thread->m_loop, returnCode);
 }
-
+void XThread_quit(XThread * thread)
+{
+    if (thread && thread->m_loop)
+        XEventLoop_quit(thread->m_loop);
+}
 int XThread_exec(XThread* thread)
 {
     if (!thread) return;
-    XEventLoop loop;
-    XEventLoop_init(&loop);
-    int result = XEventLoop_exec(&loop);
-    XEventLoop_deinitLater(&loop);
+    if(!thread->m_loop)
+    {
+        thread->m_loop = XEventLoop_create();
+    }
+    int result = XEventLoop_exec(thread->m_loop);
+    //Xthread_connect(thread,XSignal(Xthread_destroyed_signal), thread->m_loop,XClass_delete_base,XConnectionType_Direct);
+    //XEventLoop_deleteLater(thread->m_loop);
+    //XCoreApplication_processEvents(0);
+    //thread->m_loop = NULL;
     return result;
 }
 
@@ -138,6 +208,16 @@ void XThread_run_base(XThread* thread)
 //虚函数默认实现,供平台实现文件调用
 void VXThread_run(XThread* thread)
 {
+    thread->m_finished = false;
+    thread->m_running = true;
+    XThreadData_mapInsert(thread->m_data);
+
+    XThread_started_signal(thread);
     if (thread && thread->m_start_routine)
-        thread->m_start_routine(thread,thread->m_arg);
+        thread->m_start_routine(thread,thread->m_varList);
+    XThread_finished_signal(thread);
+    thread->m_finished = true;
+    thread->m_running = false;
+    XThreadData_mapRemove(thread->m_data);
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
 }
