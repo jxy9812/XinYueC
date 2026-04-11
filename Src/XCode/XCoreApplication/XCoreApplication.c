@@ -65,6 +65,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     app->m_argc = argc;
     app->m_argv = argv;
     //app->m_eventLoop = XEventLoop_create();
+    app->m_eventLoop = NULL;
     XBitArray_init(&app->m_attribute, XCORE_APPLICATION_ATTRIBUTE_COUNT);
 
 

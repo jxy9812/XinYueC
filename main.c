@@ -10,7 +10,7 @@ int main(int argc, char* args[])
 {
 	//printf("%d\n", XThread_currentThreadId());
 
-	//XEventDispatcherWin32_create(NULL);
+	//XEventDispatcher_create(NULL);
 	//fatfs_test();
 
 	int n = 8,n1=666,sum=n+n1;

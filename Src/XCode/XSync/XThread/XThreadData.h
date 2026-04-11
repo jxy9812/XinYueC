@@ -24,8 +24,10 @@ typedef struct XThreadData{
     XVector/*<XPostEvent>*/ m_postEventList;  // 动态数组
     XAbstractEventDispatcher* m_dispatcher;   // 本线程的事件分发器
 } XThreadData;
+
 //需平台实现
-XAbstractEventDispatcher* XEventDispatcher_create();
+XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent);
+
 XThreadData* XThreadData_create(XThread* thread);
 void XThreadData_delete(XThreadData* data);
 void XThreadData_init(XThreadData* data,XThread* thread);

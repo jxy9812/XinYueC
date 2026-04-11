@@ -55,10 +55,10 @@ static void trigger(MenuData* data)
 	{
 		XMenu* menu = *(data->menu);
 		XPrintf("\n开始---------------%s---------------\n", XAction_getText(data->data));
-		XCoreApplication_instance()->m_quit = false;
+		//XCoreApplication_instance()->m_quit = false;
 		XAction_trigger(data->data);
-		if (!(XCoreApplication_instance()->m_quit))
-			*((int*)(&(menu->m_userData)))=XCoreApplication_exec();//有初始化XObject派生类需要调用事件循环
+		//if (!(XCoreApplication_instance()->m_quit))
+			//*((int*)(&(menu->m_userData)))=XCoreApplication_exec();//有初始化XObject派生类需要调用事件循环
 		XPrintf("\n结束---------------%s---------------\n", XAction_getText(data->data));
 	}
 }

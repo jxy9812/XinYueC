@@ -16,16 +16,20 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
 include(CMake_Config.cmake)
 #查找include目录下的所有*.hpp,*.h头文件,并路径列表保存到变量中
 FIND_INCLUDE_DIR(INCLUDE_SRC_LIST "Src")			#调用函数，指定参数
+FIND_INCLUDE_DIR(INCLUDE_DRIVE_LIST "Drive")			#调用函数，指定参数
 FIND_INCLUDE_DIR(INCLUDE_TEST_LIST "Test")			#调用函数，指定参数
 #将INCLUDE中路径列表加入工程		
 include_directories(${INCLUDE_SRC_LIST})
+include_directories(${INCLUDE_DRIVE_LIST})
 include_directories(${INCLUDE_TEST_LIST})
 #递归搜索目录下的文件添加到变量中
-file(GLOB_RECURSE SRC_FILE "Src/*.c")
+file(GLOB_RECURSE SRC_FILE "Src/*.c" )
 file(GLOB_RECURSE TEST_FILE "Test/*.c" )
+file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 
-add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE})
-add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${PUBLIC_HDRS})
+
+add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE} ${DRIVE_FILE})
+add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${PUBLIC_HDRS})
 
 #添加参加编译的文件
 add_executable(${PROJECT_NAME}

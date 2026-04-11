@@ -51,7 +51,7 @@ void XThreadData_init(XThreadData* data, XThread* thread)
     data->m_mutex = XMutex_create();
     XVector_init(&(data->m_postEventList), sizeof(XPostEvent));
     data->m_thread = thread;
-    data->m_dispatcher = XEventDispatcher_create();
+    data->m_dispatcher = XEventDispatcher_create(thread);
 }
 XThreadData* XThreadData_current(void) 
 {

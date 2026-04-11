@@ -5,7 +5,7 @@
 #include"XMemory.h"
 #include"XObject.h"
 #include"XEventLoop.h"
-#include"XEventDispatcher_win_p.h"
+
 #include <windows.h>
 
 static bool VXThread_start(XThread* Object);
@@ -226,8 +226,5 @@ XThread* XThread_create(void (*start_routine)(void*), void* arg)
 
     return Object;
 }
-XAbstractEventDispatcher* XEventDispatcher_create()
-{
-    return XEventDispatcherWin32_create(NULL);
-}
+
 #endif

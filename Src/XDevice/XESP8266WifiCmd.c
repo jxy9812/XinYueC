@@ -40,7 +40,7 @@ bool g_ok(XESP8266Wifi* device)
         device->m_operationResult = true;
         XTimer_stop_base(device->m_timeoutTimer);
         XESP8266Wifi_ok_signal(device);
-        XEventLoop_quit(device->m_loop, 0);
+        XEventLoop_quit(device->m_loop);
         return true;
     }
     return false;
@@ -53,7 +53,7 @@ bool g_error(XESP8266Wifi* device)
         *hasError = 0;
         XESP8266Wifi_error_signal(device, -1, device->m_responseBuffer);
         XTimer_stop_base(device->m_timeoutTimer);
-        XEventLoop_quit(device->m_loop, -1);
+        XEventLoop_quit(device->m_loop);
         return true;
     }
     return false;
@@ -154,7 +154,7 @@ bool ConnectWiFi(XESP8266Wifi* device)
         device->m_operationResult = true;
         XTimer_stop_base(device->m_timeoutTimer);
         XESP8266Wifi_ok_signal(device);
-        XEventLoop_quit(device->m_loop, 0);
+        XEventLoop_quit(device->m_loop);
 
         return true;
     }
@@ -200,7 +200,7 @@ bool DisconnectWiFi(XESP8266Wifi* device)
         device->m_operationResult = true;
         XTimer_stop_base(device->m_timeoutTimer);
         XESP8266Wifi_ok_signal(device);
-        XEventLoop_quit(device->m_loop, 0);
+        XEventLoop_quit(device->m_loop);
         return true;
     }
     return false;
