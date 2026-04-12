@@ -46,7 +46,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODevice* io)
 
 	XDataFrameComm_setCommMode_base(comm,XDFC_COMM_MODE_FULL_DUPLEX);
 	XDataFrameComm_setFrameEndType_base(comm,XDFC_FRAME_END_TIMEOUT);
-	//XObject_connect(io,XSignal(XIODevice_readyRead_signal),comm,XObject_poll_base,XConnectionType_Auto);
+	//XObject_connect1(io,XSignal(XIODevice_readyRead_signal),comm,XObject_poll_base,XConnectionType_Auto);
 }
 
 XDFC_ErrorCode XDataFrameComm_setCommMode_base(XDataFrameComm* comm, XDFC_CommMode mode)

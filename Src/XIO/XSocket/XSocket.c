@@ -165,14 +165,14 @@ void VXSocketBase_waitForConnected(XSocketBase* so, int msecs)
     if (!so || so->m_state != XSOCKET_CONNECTING_STATE) return;
     XEventLoop* loop = XEventLoop_create();
     XTimer* timer = NULL;
-    //XObject_connect(so, XSignal(XSocket_connected_signal), loop, XEventLoop_quit, XConnectionType_Auto);
+    //XObject_connect1(so, XSignal(XSocket_connected_signal), loop, XEventLoop_quit, XConnectionType_Auto);
     if (msecs > 0)
     {
         timer = XTimer_create();
         XTimer_setInterval(timer, msecs);
         XTimer_setTimeout(timer, msecs);
         XTimerBase_setSingleShot(timer, true);
-        //XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
+        //XObject_connect1(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
         XTimer_start_base(timer);
     }
     if (so->m_state == XSOCKET_CONNECTING_STATE)
@@ -192,14 +192,14 @@ void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs)
 
     XEventLoop* loop = XEventLoop_create();
     XTimer* timer = NULL;
-    //XObject_connect(so, XSignal(XSocket_disconnected_signal), loop, XEventLoop_quit, XConnectionType_Auto);
+    //XObject_connect1(so, XSignal(XSocket_disconnected_signal), loop, XEventLoop_quit, XConnectionType_Auto);
     if (msecs > 0)
     {
         timer = XTimer_create();
         XTimer_setInterval(timer, msecs);
         XTimer_setTimeout(timer, msecs);
         XTimerBase_setSingleShot(timer, true);
-        //XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
+        //XObject_connect1(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
         XTimer_start_base(timer);
     }
     if (so->m_state == XSOCKET_CONNECTED_STATE)

@@ -7,11 +7,11 @@
 #include"XEventLoop.h"
 #include"XCoreApplication.h"
 static size_t currentTimer = 0;
-static void deleteCb()
+static void deleteCb(XObject* sender, XVarList* args)
 {
 	XPrintf("触发删除\n");
 }
-static void Callback(void* userData)
+static void Callback(XObject* sender, XVarList* args)
 {
 	
 
@@ -24,12 +24,6 @@ static void Callback(void* userData)
 	XTimerTimeWheel_setTimerCallback(timer, Callback1);
 	XTimerTimeWheel_start_base(timer);
 	XTimerGroupBase_addTimer_base(userData, timer);*/
-}
-static void  timerSlotFunc(XObject* receiver, void* args)
-{
-	Callback(NULL);
-	if(receiver)
-		XEventLoop_quit(receiver);
 }
 void XTimerTest()
 {
@@ -45,18 +39,18 @@ void XTimerTest()
 		XTimer_setSingleShot(timer, true);
 		XTimer_setAutoDelete(timer, true);
 		XTimer_setTimerType(timer, XTimerType_PreciseTimer);
-		//XConnection* conn=XObject_connect(timer,XSignal(XTimer_timeout_signal),timer, timerSlotFunc,XConnectionType_Queued);
+		//XConnection* conn=XObject_connect1(timer,XSignal(XTimer_timeout_signal),timer, timerSlotFunc,XConnectionType_Queued);
 		//XObject_disconnect_conn(conn);
 		//XObject_disconnect(timer, XSignal(XTimer_timeout_signal), NULL, timerSlotFunc);
-		//XTimer_callOnTimeout(timer,NULL, timerSlotFunc, XConnectionType_Auto);
+		//XTimer_callOnTimeout1(timer,NULL, timerSlotFunc, XConnectionType_Auto);
 		// XTimer_start_base(timer);
 		// return;
-		//XTimer_singleShot(100, NULL, timerSlotFunc, XConnectionType_Auto);
+		//XTimer_singleShot1(100, NULL, timerSlotFunc, XConnectionType_Auto);
 		XEventLoop* loop = XEventLoop_create();
-		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
-		XObject_connect(timer, XSignal(XTimer_timeout_signal), NULL, Callback, XConnectionType_Auto);
-		XObject_connect(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_deleteLater, XConnectionType_Auto);
-		XObject_connect(timer, XSignal(XObject_destroyed_signal), NULL, deleteCb, XConnectionType_Auto);
+		XTimer_callOnTimeout1(timer,  loop, XEventLoop_quit, XConnectionType_Auto);
+		XObject_connect2(timer, XSignal(XTimer_timeout_signal), Callback);
+		XTimer_callOnTimeout1(timer, loop, XEventLoop_deleteLater, XConnectionType_Auto);
+		XObject_connect2(timer, XSignal(XObject_destroyed_signal), deleteCb);
 		XTimer_start_base(timer);
 		//XPrintf("事件循环等待\n");
 		XEventLoop_exec(loop);

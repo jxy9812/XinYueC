@@ -131,7 +131,7 @@ XVtable* XEventMetaCall_class_init()
 #endif
 	return XVTABLE_DEFAULT;
 }
-XEventMetaCall* XEventMetaCall_create(XObject* sender,XSlotFunc func, XVarList* argList,XAtomic_int32_t* ref_count,XSemaphore* sem)
+XEventMetaCall* XEventMetaCall_create(XObject* sender,XSlotFunc1 func, XVarList* argList,XAtomic_int32_t* ref_count,XSemaphore* sem)
 {
 	XEventMetaCall* event = XMemory_malloc(sizeof(XEventMetaCall));
 	if (event == NULL)
@@ -152,11 +152,12 @@ void XEventMetaCall_handler(XEventMetaCall* event, XObject* receiver)
 	if (!event)
 		return;
 	if (receiver)
+	{
 		receiver->sender = event->sender;
-	if (event->func)
-		event->func(receiver, event->argList);
-	if (receiver)
+		if (event->func)
+			event->func(receiver, event->argList);
 		receiver->sender = NULL;
+	}
 	if (event->sem)
 		XSemaphore_release(event->sem, 1);
 	XEvent_accept(event);

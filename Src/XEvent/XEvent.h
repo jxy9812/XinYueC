@@ -229,7 +229,7 @@ void XEventFunc_handler(XEventFunc* event);
 typedef struct XEventMetaCall
 {
     XEvent event;
-    XSlotFunc func;               // 需要执行的槽函数
+    XSlotFunc1 func;               // 需要执行的槽函数
     XObject* sender;              // 发送者对象
     XVarList* argList;            // 函数参数
     //void(*del)(XVarList*);        // XVarList释放函数
@@ -248,7 +248,7 @@ typedef struct XEventMetaCall
  * @param priority 事件优先级
  * @return 新创建的槽函数事件
  */
-XEventMetaCall* XEventMetaCall_create(XObject* sender, XSlotFunc func,
+XEventMetaCall* XEventMetaCall_create(XObject* sender, XSlotFunc1 func,
     XVarList* argList, XAtomic_int32_t* ref_count, XSemaphore* sem);
 XVtable* XEventMetaCall_class_init();
 /**

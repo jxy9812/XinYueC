@@ -139,7 +139,14 @@ void* XTimer_timeout_signal(XTimer* timer);
 * @param slot_func 要调用的槽函数
 * @param type 连接类型（XConnectionType）
 */
-void XTimer_callOnTimeout(XTimer* timer, XObject* receiver, XSlotFunc slot_func, XConnectionType type);
+void XTimer_callOnTimeout1(XTimer* timer, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type);
+/**
+* @brief 连接定时器超时信号到槽函数
+* 绑定定时器超时事件到指定接收者的槽函数
+* @param timer 要连接的XTimer实例指针
+* @param slot_func 要调用的槽函数
+*/
+void XTimer_callOnTimeout2(XTimer* timer, XSlotFunc2 slot_func);
 /**
 * @brief 创建单次触发的定时器
 * 定时msec毫秒后触发一次槽函数，之后自动释放
@@ -148,7 +155,14 @@ void XTimer_callOnTimeout(XTimer* timer, XObject* receiver, XSlotFunc slot_func,
 * @param slot_func 要调用的槽函数
 * @param type 连接类型（XConnectionType）
 */
-void XTimer_singleShot(size_t msec, XObject* receiver, XSlotFunc slot_func, XConnectionType type);
+void XTimer_singleShot1(size_t msec, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type);
+/**
+* @brief 创建单次触发的定时器
+* 定时msec毫秒后触发一次槽函数，之后自动释放
+* @param msec 超时时间（毫秒）
+* @param slot_func 要调用的槽函数
+*/
+void XTimer_singleShot2(size_t msec,XSlotFunc1 slot_func);
 #ifdef __cplusplus
 }
 #endif

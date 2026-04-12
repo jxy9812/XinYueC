@@ -219,7 +219,7 @@ void XStateMachineEventTest()
     {
         XPrintf("XStateMachine 事件测试\n");
         XStateMachine* machine = XStateMachine_create();
-        XObject_connect(machine, XSignal(XStateMachine_stop_signal), machine, deleteSlot, XConnectionType_Queued);
+        XObject_connect1(machine, XSignal(XStateMachine_stop_signal), machine, deleteSlot, XConnectionType_Queued);
         //XObject_addEventFilter(machine, XEVENT_TRANSITION, XStateMachine_handleEventCB, machine);
         // 创建状态
         XState* stateA = XState_create();
@@ -272,7 +272,7 @@ void XStateMachineSignalTest()
     {
         XPrintf("XStateMachine 信号测试\n");
         XStateMachine* machine = XStateMachine_create();
-        XObject_connect(machine, XSignal(XStateMachine_stop_signal), machine, deleteSlot, XConnectionType_Queued);
+        XObject_connect1(machine, XSignal(XStateMachine_stop_signal), machine, deleteSlot, XConnectionType_Queued);
         // 创建状态
         XState* stateA = XState_create();
         XState* stateB = XState_create();

@@ -101,14 +101,14 @@ void XESP8266Wifi_init(XESP8266Wifi* device, XIODevice* io) {
 
     // 绑定底层设备的readyRead信号
     if (device->m_io) {
-        XObject_connect(device->m_io,
+        XObject_connect1(device->m_io,
             XIODevice_readyRead_signal,
             device,
             VXESP8266_processResponse,XConnectionType_Auto);
     }
-    XConnection* timeroutComm = XObject_connect(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
-    XConnection* okComm = XObject_connect(device, XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
-    XConnection* errComm = XObject_connect(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+    XConnection* timeroutComm = XObject_connect1(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+    XConnection* okComm = XObject_connect1(device, XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+    XConnection* errComm = XObject_connect1(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
 }
 void VXESP8266_deinit(XESP8266Wifi* device)
 {
@@ -302,9 +302,9 @@ static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XE
     // 启动超时定时器
     if (msecs > 0) 
     {
-       /* XConnection*timeroutComm= XObject_connect(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
-        XConnection* okComm = XObject_connect(device,XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
-        XConnection* errComm = XObject_connect(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);*/
+       /* XConnection*timeroutComm= XObject_connect1(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+        XConnection* okComm = XObject_connect1(device,XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+        XConnection* errComm = XObject_connect1(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);*/
         
         XTimer_setInterval(device->m_timeoutTimer, msecs);
         XTimer_setTimeout(device->m_timeoutTimer, msecs);

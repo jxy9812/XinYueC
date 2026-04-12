@@ -68,7 +68,21 @@ void* XTimer_timeout_signal(XTimer* timer)
 	XEmitSignal(timer, XTimer_timeout_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-void XTimer_singleShot(size_t msec, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
+void XTimer_callOnTimeout1(XTimer* timer, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type)
+{
+	if (timer == 0 || slot_func == NULL)
+		return;
+	XObject_connect1(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, type);
+}
+
+void XTimer_callOnTimeout2(XTimer* timer, XSlotFunc2 slot_func)
+{
+	if (timer == 0 || slot_func == NULL)
+		return;
+	XObject_connect2(timer, XSignal(XTimer_timeout_signal), slot_func);
+}
+
+void XTimer_singleShot1(size_t msec, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type)
 {
 	if (msec == 0 || slot_func == NULL)
 		return;
@@ -76,7 +90,18 @@ void XTimer_singleShot(size_t msec, XObject* receiver, XSlotFunc slot_func, XCon
 	XTimer_setTimeout(timer, msec);
 	XTimerBase_setAutoDelete(timer,true);
 	XTimerBase_setSingleShot(timer, true);
-	XObject_connect(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, type);
+	XObject_connect1(timer, XSignal(XTimer_timeout_signal), receiver, slot_func, type);
+	XTimer_start_base(timer);
+}
+void XTimer_singleShot2(size_t msec, XSlotFunc1 slot_func)
+{
+	if (msec == 0 || slot_func == NULL)
+		return;
+	XTimer* timer = XTimer_create();
+	XTimer_setTimeout(timer, msec);
+	XTimerBase_setAutoDelete(timer, true);
+	XTimerBase_setSingleShot(timer, true);
+	XObject_connect2(timer, XSignal(XTimer_timeout_signal), slot_func);
 	XTimer_start_base(timer);
 }
 void VXObject_timerEvent(XTimerBase* timer, XTimerEvent* event)

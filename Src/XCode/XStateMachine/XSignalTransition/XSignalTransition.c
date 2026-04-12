@@ -80,7 +80,7 @@ bool XSignalTransition_connect(XSignalTransition* transition, XObject* sender, s
 {
     if(!transition)
         return false;
-    transition->m_connection=XObject_connect(sender?sender:transition,signal, transition, signalSlotCallback,type);
+    transition->m_connection=XObject_connect1(sender?sender:transition,signal, transition, signalSlotCallback,type);
     if (transition->m_connection)
     {
         transition->m_sender = sender;

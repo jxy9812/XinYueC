@@ -44,14 +44,14 @@
 //void XModbusTest()
 //{
 //    XSerialPortBase* serial = XSerialPort_create();
-//    XObject_connect(serial, XSignal(XObject_destroyed_signal), serial, deinit_slot, XConnectionType_Auto);
-//    XObject_connect(serial, XSignal(XObject_destroyed_signal), serial, deinit_slot, XConnectionType_Auto| XConnectionType_Unique);
+//    XObject_connect1(serial, XSignal(XObject_destroyed_signal), serial, deinit_slot, XConnectionType_Auto);
+//    XObject_connect1(serial, XSignal(XObject_destroyed_signal), serial, deinit_slot, XConnectionType_Auto| XConnectionType_Unique);
 //    serial->m_baudRate = 38400;
 //    serial->m_portNum = 2;
 //    XSocket* socket = XSocket_create();
 //    //XIODevice_setWriteBuffer_base(socket,512);
-//    XObject_connect(socket, XSignal(XSocket_connected_signal), socket, connected_slot, XConnectionType_Auto);
-//    XObject_connect(socket, XSignal(XSocket_stateChanged_signal), socket, stateChanged_slot, XConnectionType_Auto);
+//    XObject_connect1(socket, XSignal(XSocket_connected_signal), socket, connected_slot, XConnectionType_Auto);
+//    XObject_connect1(socket, XSignal(XSocket_stateChanged_signal), socket, stateChanged_slot, XConnectionType_Auto);
 //    XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODevice_ReadWrite);
 //    //XObject_delete_event(serial);
 //    XSerialPort_delete_base(serial);

@@ -91,8 +91,8 @@ static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode) {
     port->error = XSerialPort_NoError;
 
     // Connect signals for waitFor
-    XObject_connect(io, XSignal(XIODevice_readyRead_signal), io, readyReadHandler, XConnectionType_Auto);
-    XObject_connect(io, XSignal(XIODevice_bytesWritten_signal), io, bytesWrittenHandler, XConnectionType_Auto);
+    XObject_connect1(io, XSignal(XIODevice_readyRead_signal), io, readyReadHandler, XConnectionType_Auto);
+    XObject_connect1(io, XSignal(XIODevice_bytesWritten_signal), io, bytesWrittenHandler, XConnectionType_Auto);
     io->m_openMode = mode;
     return true;
 }

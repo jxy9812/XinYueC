@@ -305,20 +305,29 @@ XAbstractEventDispatcher* XObject_eventDispatcher(XObject* object)
 	return XCoreApplication_eventDispatcher();
 }
 
-XConnection* XObject_connect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
+XConnection* XObject_connect1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type)
 {
 	if(object==NULL || slot_func == NULL)
 		return NULL;
 	if(object->m_signalSlot==NULL)
 		object->m_signalSlot = XSignalSlot_create(object);
-	return XSignalSlot_connect(object->m_signalSlot,signal,receiver,slot_func,type);
+	return XSignalSlot_connect1(object->m_signalSlot,signal,receiver,slot_func,type);
 }
 
-bool XObject_disconnect(XObject* object, size_t signal, XObject* receiver, XSlotFunc slot_func)
+XConnection* XObject_connect2(XObject* object, size_t signal, XSlotFunc2 slot_func)
 {
-	if (object == NULL|| slot_func==NULL)
+	if (object == NULL || slot_func == NULL)
+		return NULL;
+	if (object->m_signalSlot == NULL)
+		object->m_signalSlot = XSignalSlot_create(object);
+	return XSignalSlot_connect2(object->m_signalSlot, signal, slot_func);
+}
+
+bool XObject_disconnect(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1)
+{
+	if (object == NULL|| slot_func1==NULL)
 		return false;
-	return XSignalSlot_disconnect(object->m_signalSlot, signal, receiver, slot_func);
+	return XSignalSlot_disconnect(object->m_signalSlot, signal, receiver, slot_func1);
 }
 
 bool XObject_disconnect_conn(XConnection* conn)

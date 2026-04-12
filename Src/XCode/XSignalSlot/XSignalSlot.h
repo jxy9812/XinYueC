@@ -13,7 +13,8 @@ extern "C" {
 // 前置声明
 typedef struct XSignal XSignal;
 typedef struct XConnection XConnection;
-typedef void (*XSlotFunc)(XObject* receiver, XVarList* args);
+typedef void (*XSlotFunc1)(XObject* receiver, XVarList* args);
+typedef void (*XSlotFunc2)(XObject* sender,XVarList* args);
 /**
  * @brief 信号发送模式枚举
  * 定义信号从发送到执行槽函数的不同处理方式
@@ -39,7 +40,11 @@ typedef struct XConnection
     XConnectionType type;
     XSignal* signal;
     XObject* receiver;          // 接收者对象（槽函数所属的对象）
-    XSlotFunc slot_func;        //槽函数
+    union//槽函数
+    {
+        XSlotFunc1 slot_func1;        //receiver!=NULL调用这个
+        XSlotFunc2 slot_func2;        //receiver==NULL调用这个
+    };
 } XConnection;
 
 //信号
@@ -75,8 +80,15 @@ int XSignalSlot_receivers(const XSignalSlot* manager, size_t signal);
  * @param slot_func 槽函数
  * @return 连接对象指针（可用于后续断开连接）
  */
-XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type);
-bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc slot_func);
+XConnection* XSignalSlot_connect1(XSignalSlot* manager,size_t signal, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type);
+/**
+ * @brief 连接信号与槽
+ * @param m_signal 信号指针
+ * @param slot_func 槽函数
+ * @return 连接对象指针（可用于后续断开连接）
+ */
+XConnection* XSignalSlot_connect2(XSignalSlot* manager, size_t signal,XSlotFunc2 slot_func);
+bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc1 slot_func1);
 /**
  * @brief 断开信号与槽的连接
  * @param conn 要断开的连接（由signal_connect返回）

@@ -9,11 +9,11 @@
 #include"XSemaphore.h"
 static const bool XEquality_XConnection(const XConnection* pvPrevValue, const XConnection* pvNextValue)
 {
-	return (pvPrevValue->receiver == pvNextValue->receiver) && (pvPrevValue->signal == pvNextValue->signal) && (pvPrevValue->slot_func == pvNextValue->slot_func) && (pvPrevValue->type == pvNextValue->type);
+	return (pvPrevValue->receiver == pvNextValue->receiver) && (pvPrevValue->signal == pvNextValue->signal) && (pvPrevValue->slot_func1 == pvNextValue->slot_func1) && (pvPrevValue->type == pvNextValue->type);
 }
 static const int32_t XConnection_compare(const XConnection* pvPrevValue, const XConnection* pvNextValue)
 {
-	if((pvPrevValue->receiver == pvNextValue->receiver) && (pvPrevValue->signal == pvNextValue->signal) && (pvPrevValue->slot_func == pvNextValue->slot_func) && (pvPrevValue->type == pvNextValue->type))
+	if((pvPrevValue->receiver == pvNextValue->receiver) && (pvPrevValue->signal == pvNextValue->signal) && (pvPrevValue->slot_func1 == pvNextValue->slot_func1) && (pvPrevValue->type == pvNextValue->type))
 		return XCompare_Equality;
 	return XCompare_Other;
 }
@@ -100,9 +100,9 @@ end:
 }
 static const bool Equality_Connection(const XConnection* pvPrevValue, const XConnection* pvNextValue)
 {
-	return ((pvNextValue->receiver) ? (pvPrevValue->receiver == pvNextValue->receiver) : true) && (pvPrevValue->signal == pvNextValue->signal) && ((pvNextValue->slot_func) ? (pvPrevValue->slot_func == pvNextValue->slot_func):true);
+	return ((pvNextValue->receiver) ? (pvPrevValue->receiver == pvNextValue->receiver) : true) && (pvPrevValue->signal == pvNextValue->signal) && ((pvNextValue->slot_func1) ? (pvPrevValue->slot_func1 == pvNextValue->slot_func1):true);
 }
-XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* receiver, XSlotFunc slot_func, XConnectionType type)
+XConnection* XSignalSlot_connect1(XSignalSlot* manager,size_t signal, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type)
 {
 	if(manager==NULL||slot_func==NULL)
 		return NULL;
@@ -119,7 +119,7 @@ XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* re
 		signalObj = XMapBase_value_base(manager->signalMap, &signal);
 	}
 	//判断是否重复添加
-	XConnection conn = {.type=type,.signal= signalObj,.receiver=receiver,.slot_func=slot_func};
+	XConnection conn = {.type=type,.signal= signalObj,.receiver=receiver,.slot_func1=slot_func};
 	for_each_iterator(signalObj->connList, XVector,it)
 	{
 		if (Equality_Connection(XVector_iterator_data(&it), &conn) && (type & XConnectionType_Unique))
@@ -142,6 +142,10 @@ XConnection* XSignalSlot_connect(XSignalSlot* manager,size_t signal, XObject* re
 	XMutex_unlock(manager->mutex);  // 解锁
 	return ptr;
 }
+XConnection* XSignalSlot_connect2(XSignalSlot* manager, size_t signal, XSlotFunc2 slot_func)
+{
+	return XSignalSlot_connect1(manager, signal,NULL,slot_func,XConnectionType_Auto);
+}
 static bool disconnect_conn(XConnection* conn)
 {
 	if (conn == NULL)
@@ -159,9 +163,9 @@ static bool disconnect_conn(XConnection* conn)
 	XVector_remove_base(signalObj->connList, XVector_indexOf(signalObj->connList,conn,0),0);
 	return true;
 }
-bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc slot_func)
+bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc1 slot_func1)
 {
-	if(manager==NULL||slot_func==NULL)
+	if(manager==NULL||slot_func1==NULL)
 		return false;
 	XMutex_lock(manager->mutex);  // 加锁
 	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
@@ -169,7 +173,7 @@ bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiv
 		return false;
 	XMutex* mutex = NULL;
 	//判断是否重复添加
-	XConnection conn = { .signal = signalObj,.receiver = receiver,.slot_func = slot_func };
+	XConnection conn = { .signal = signalObj,.receiver = receiver,.slot_func1 = slot_func1 };
 	for_each_iterator(signalObj->connList, XVector, it)
 	{
 		if (Equality_Connection(XVector_iterator_data(&it), &conn))
@@ -213,11 +217,19 @@ static void Direct_emit(XConnection* conn, void* args,  XAtomic_int32_t* ref_cou
 {
 	if (ref_count) 
 		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
-	if(conn->slot_func)
+	if(conn->slot_func1)
 	{
-		conn->receiver->sender = conn->signal->sender;
-		conn->slot_func(conn->receiver, args);
-		conn->receiver->sender = NULL;
+		if(conn->receiver)
+		{
+			conn->receiver->sender = conn->signal->sender;
+			if(conn->slot_func1)
+				conn->slot_func1(conn->receiver, args);
+			conn->receiver->sender = NULL;
+		}
+		else if (conn->slot_func2)
+		{
+			conn->slot_func2(conn->signal->sender,args);
+		}
 	}
 	if (ref_count)
 		XAtomic_fetch_sub_int32(ref_count, 1);
@@ -231,7 +243,7 @@ static void Queued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_coun
 		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
 	//向接收者对象投递函数事件
 	//XObject_postEvent(conn->receiver, XEventMetaCall_create(conn->signal->sender, conn->receiver,conn->slot_func,args, del,ref_count,NULL), priority);
-	XCoreApplication_postEvent(conn->receiver, XEventMetaCall_create(conn->signal->sender, conn->slot_func, args, ref_count, NULL), priority);
+	XCoreApplication_postEvent(conn->receiver, XEventMetaCall_create(conn->signal->sender, conn->slot_func1, args, ref_count, NULL), priority);
 }
 
 //（槽函数在接收者线程执行），区别在于发送信号的线程会阻塞，直到槽函数执行完成后才继续。
@@ -254,7 +266,7 @@ static void BlockingQueued_emit(XConnection* conn, void* args, XAtomic_int32_t* 
 		return;
 	//向接收者对象投递信号事件
 	//XObject_postEvent(conn->receiver, XEventMetaCall_create(conn->signal->sender, conn->receiver, conn->slot_func, args, del, ref_count, sem), priority);
-	XCoreApplication_postEvent(conn->receiver, XEventMetaCall_create(conn->signal->sender, conn->slot_func, args, ref_count, NULL), priority);
+	XCoreApplication_postEvent(conn->receiver, XEventMetaCall_create(conn->signal->sender, conn->slot_func1, args, ref_count, NULL), priority);
 	XSemaphore_acquire(sem,1);//阻塞等待其他线程处理
 	XSemaphore_delete(sem);//释放信号量
 }

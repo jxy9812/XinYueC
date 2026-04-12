@@ -31,8 +31,8 @@ static void XESP8266Wifi_TCP_Client_Test(XMenu* root)
     }
 	XESP8266Wifi* wifi=XESP8266Wifi_create(serial);
     //XIODevice_setReadBuffer_base(wifi,1024);
-    XObject_connect(wifi,XSignal(XESP8266Wifi_error_signal),NULL, errorSlot,XConnectionType_Auto);
-    XObject_connect(wifi, XSignal(XESP8266Wifi_readyRead_signal), wifi, dataReceived_signal, XConnectionType_Queued);
+    XObject_connect1(wifi,XSignal(XESP8266Wifi_error_signal),NULL, errorSlot,XConnectionType_Auto);
+    XObject_connect1(wifi, XSignal(XESP8266Wifi_readyRead_signal), wifi, dataReceived_signal, XConnectionType_Queued);
     //XESP8266Wifi_reset(wifi,3000);
     //XEventLoop_delay(3000);
     XESP8266Wifi_exitTransparentMode(wifi,3000);
@@ -85,8 +85,8 @@ static void XESP8266Wifi_TCP_Server_Test(XMenu* root)
     }
     XESP8266Wifi* wifi = XESP8266Wifi_create(serial);
     //XIODevice_setReadBuffer_base(wifi, 1024);
-    XObject_connect(wifi, XSignal(XESP8266Wifi_error_signal), NULL, errorSlot, XConnectionType_Auto);
-    XObject_connect(wifi, XSignal(XESP8266Wifi_readyRead_signal), wifi, dataReceived_signal, XConnectionType_Queued);
+    XObject_connect1(wifi, XSignal(XESP8266Wifi_error_signal), NULL, errorSlot, XConnectionType_Auto);
+    XObject_connect1(wifi, XSignal(XESP8266Wifi_readyRead_signal), wifi, dataReceived_signal, XConnectionType_Queued);
     XESP8266Wifi_reset(wifi,3000);
     //XEventLoop_delay(3000);
     XESP8266Wifi_exitTransparentMode(wifi, 3000);
