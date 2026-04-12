@@ -19,7 +19,7 @@ typedef enum {
 } XMutex_Type;
 
 //获取此类型的大小
-size_t XMutex_geTypetSize();
+size_t XMutex_typetSize();
 
 /**
  * @brief 初始化互斥锁（栈对象）

@@ -121,8 +121,9 @@ typedef struct XSerialPort
     XSerialPort_FlowControl flowControl;
     XSerialPort_Error error;
     int64_t readBufferSize;
-
 } XSerialPort;
+//获取类型大小,此类在不同平台大小不一样,用在继承的时候使用
+size_t XSerialPort_typetSize();
 /**
  * @brief 初始化XSerialPort的虚函数表
  * @return 成功返回初始化后的XVtable指针，失败返回NULL

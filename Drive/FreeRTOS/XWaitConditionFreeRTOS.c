@@ -13,7 +13,7 @@ struct XWaitCondition {
 #endif
 };
 
-size_t XWaitCondition_getTypeSize()
+size_t XWaitCondition_typeSize()
 {
     return sizeof(struct XWaitCondition);
 }

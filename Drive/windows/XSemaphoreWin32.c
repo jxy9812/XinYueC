@@ -10,7 +10,7 @@ struct XSemaphore {
 };
 
 // 实现类型大小获取接口
-size_t XSemaphore_getTypeSize() {
+size_t XSemaphore_typeSize() {
     return sizeof(struct XSemaphore);
 }
 

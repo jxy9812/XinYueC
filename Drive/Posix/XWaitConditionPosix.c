@@ -10,7 +10,7 @@ struct XWaitCondition {
     pthread_cond_t cond;
 };
 
-size_t XWaitCondition_getTypeSize()
+size_t XWaitCondition_typeSize()
 {
     return sizeof(struct XWaitCondition);
 }

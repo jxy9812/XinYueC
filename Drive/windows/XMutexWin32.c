@@ -10,7 +10,7 @@ struct XMutex {
     uint32_t recursive_count;  // 递归计数
     DWORD owner_thread;        // 拥有者线程ID
 };
-size_t XMutex_geTypetSize()
+size_t XMutex_typetSize()
 {
     return sizeof(struct XMutex);
 }

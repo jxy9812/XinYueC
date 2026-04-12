@@ -51,7 +51,6 @@ typedef struct XThread
     XVarList* m_varList;
     XEventLoop* m_loop;//事件循环
 } XThread;
-
 /**
  * @brief 初始化XThread类的虚函数表
  * @retval 返回初始化后的XVtable指针

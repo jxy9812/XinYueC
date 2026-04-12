@@ -18,6 +18,48 @@ XCLASS_DEFINE_ENUM(XSocket, LocalPort),
 XCLASS_DEFINE_END(XSocket)
 
 /**
+ * @brief 套接字错误类型枚举
+ * @details 与 QAbstractSocket::SocketError 对齐
+ */
+    typedef enum {
+    XSOCKET_CONNECTION_REFUSED_ERROR = 0,      // 连接被对端拒绝（或超时）
+    XSOCKET_REMOTE_HOST_CLOSED_ERROR = 1,      // 远程主机关闭了连接
+    XSOCKET_HOST_NOT_FOUND_ERROR = 2,          // 未找到主机地址
+    XSOCKET_SOCKET_ACCESS_ERROR = 3,           // 应用程序缺乏所需权限
+    XSOCKET_SOCKET_RESOURCE_ERROR = 4,         // 本地系统资源耗尽
+    XSOCKET_SOCKET_TIMEOUT_ERROR = 5,          // 套接字操作超时
+    XSOCKET_DATAGRAM_TOO_LARGE_ERROR = 6,      // 数据报大于操作系统限制
+    XSOCKET_NETWORK_ERROR = 7,                 // 网络发生错误
+    XSOCKET_ADDRESS_IN_USE_ERROR = 8,          // 地址已在使用中
+    XSOCKET_SOCKET_ADDRESS_NOT_AVAILABLE_ERROR = 9, // 地址不属于主机
+    XSOCKET_UNSUPPORTED_SOCKET_OPERATION_ERROR = 10, // 操作系统不支持请求的操作
+    XSOCKET_UNFINISHED_SOCKET_OPERATION_ERROR = 11, // 上次操作尚未完成
+    XSOCKET_PROXY_AUTHENTICATION_REQUIRED_ERROR = 12, // 代理需要认证
+    XSOCKET_SSL_HANDSHAKE_FAILED_ERROR = 13,   // SSL/TLS 握手失败
+    XSOCKET_PROXY_CONNECTION_REFUSED_ERROR = 14, // 无法联系代理服务器
+    XSOCKET_PROXY_CONNECTION_CLOSED_ERROR = 15, // 与代理服务器的连接意外关闭
+    XSOCKET_PROXY_CONNECTION_TIMEOUT_ERROR = 16, // 与代理服务器的连接超时
+    XSOCKET_PROXY_NOT_FOUND_ERROR = 17,        // 未找到代理地址
+    XSOCKET_PROXY_PROTOCOL_ERROR = 18,         // 代理服务器响应无法理解
+    XSOCKET_OPERATION_ERROR = 19,              // 在不允许的状态下尝试操作
+    XSOCKET_SSL_INTERNAL_ERROR = 20,           // SSL 库报告内部错误
+    XSOCKET_SSL_INVALID_USER_DATA_ERROR = 21,  // 提供了无效的 SSL 数据
+    XSOCKET_TEMPORARY_ERROR = 22,              // 发生临时错误
+    XSOCKET_UNKNOWN_SOCKET_ERROR = -1          // 未识别的错误
+} XSocketError;
+
+/**
+ * @brief 绑定标志枚举
+ * @details 与 QAbstractSocket::BindFlag 对齐
+ */
+typedef enum {
+    XSOCKET_SHARE_ADDRESS = 0x1,               // 允许其他服务绑定到相同地址和端口
+    XSOCKET_DONT_SHARE_ADDRESS = 0x2,          // 独占绑定地址和端口
+    XSOCKET_REUSE_ADDRESS_HINT = 0x4,          // 提示应尝试重新绑定已绑定的地址
+    XSOCKET_DEFAULT_FOR_PLATFORM = 0x0         // 使用当前平台的默认选项
+} XSocketBindFlag;
+
+/**
  * @brief 套接字状态枚举
  * @details 定义套接字在不同阶段的状态
  */
@@ -41,6 +83,18 @@ typedef enum {
     XSOCKET_TYPE_SCTP = 2,         // SCTP协议
     XSOCKET_TYPE_UNKNOWN = -1      // 非TCP、UDP和SCTP的其他协议
 } XSocketType;
+
+/**
+ * @brief 网络层协议枚举
+ * @details 与 QAbstractSocket::NetworkLayerProtocol 对齐
+ */
+typedef enum {
+    XSOCKET_IPV4_PROTOCOL = 0,
+    XSOCKET_IPV6_PROTOCOL = 1,
+    XSOCKET_ANY_IP_PROTOCOL = 2,
+    XSOCKET_UNKNOWN_NETWORK_LAYER_PROTOCOL = -1
+} XSocketNetworkLayerProtocol;
+
 /**
  * @brief 套接字基础类结构体
  * @details 继承自XIODeviceBase，包含套接字的基本属性和状态
@@ -50,6 +104,7 @@ typedef struct XSocketBase
 	XIODevice m_class;//父对象
     XSocketState m_state;//
     XSocketType m_socketType;
+    XSocketError m_socketError; // 新增：存储最后发生的错误
     XString* m_peerName;//远程主机名
     XString* m_peerAddress;//远程主机地址
     uint16_t m_peerPort;//远程主机端口

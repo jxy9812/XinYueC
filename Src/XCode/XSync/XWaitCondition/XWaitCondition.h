@@ -13,7 +13,7 @@ extern "C" {
 // 只声明结构体，不定义具体实现
 typedef struct XWaitCondition XWaitCondition;
 //获取此类型的大小
-size_t XWaitCondition_getTypeSize();
+size_t XWaitCondition_typeSize();
 /**
  * @brief 初始化条件变量（栈对象）
  * @param cond 待初始化的XWaitCondition指针

@@ -10,7 +10,7 @@ struct XMutex {
     pthread_mutex_t m_mutex;
     XMutex_Type type;
 };
-size_t XMutex_geTypetSize()
+size_t XMutex_typetSize()
 {
     return sizeof(struct XMutex);
 }

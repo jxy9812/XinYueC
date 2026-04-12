@@ -12,7 +12,7 @@ struct XMutex {
     uint32_t recursive_count;
     TaskHandle_t owner_task;
 };
-size_t XMutex_geTypetSize()
+size_t XMutex_typetSize()
 {
     return sizeof(struct XMutex);
 }

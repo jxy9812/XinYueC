@@ -19,7 +19,10 @@ typedef struct XSerialPortWin32
     bool pendingWait;
     DWORD lastEvents; // 用于 WaitCommEvent 的 lpEvtMask
 } XSerialPortWin32;
-
+size_t XSerialPort_typetSize()
+{
+    return sizeof(XSerialPortWin32);
+}
 void XSerialPort_init(XSerialPort* serial)
 {
     if (serial == NULL)

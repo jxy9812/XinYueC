@@ -12,8 +12,8 @@ extern "C" {
 // 只声明结构体，不定义具体实现（与XWaitCondition保持一致）
 typedef struct XSemaphore XSemaphore;
 
-// 获取结构体大小（参考XWaitCondition的GetTypeSize接口）
-size_t XSemaphore_getTypeSize();
+// 获取结构体大小（参考XWaitCondition的typeSize接口）
+size_t XSemaphore_typeSize();
 
 /**
  * @brief 初始化信号量(栈对象)
