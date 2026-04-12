@@ -314,14 +314,14 @@ XConnection* XObject_connect2(XObject* object, size_t signal,XSlotFunc2 slot_fun
 * @param slot_func1 槽函数指针（XSlotFunc类型）
 * @return 断开成功返回true，失败返回false
 */
-bool XObject_disconnect(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1);
+bool XObject_disconnect1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1);
 
 /**
  * @brief 通过连接对象断开信号与槽的连接
  * @param conn 连接对象指针（XConnection*，非NULL）
  * @return 断开成功返回true，失败返回false
  */
-bool XObject_disconnect_conn(XConnection* conn);
+bool XObject_disconnect2(XConnection* conn);
 
 /**
  * @brief 栈区对象延迟释放

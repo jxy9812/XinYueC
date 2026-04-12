@@ -310,9 +310,9 @@ static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XE
         XTimer_setTimeout(device->m_timeoutTimer, msecs);
         XTimer_start_base(device->m_timeoutTimer);
         XEventLoop_exec(device->m_loop);
-        //XObject_disconnect_conn(timeroutComm);
-        //XObject_disconnect_conn(okComm);
-        //XObject_disconnect_conn(errComm);
+        //XObject_disconnect2(timeroutComm);
+        //XObject_disconnect2(okComm);
+        //XObject_disconnect2(errComm);
     }
     else if(msecs==-1)
     {//-1无限等待

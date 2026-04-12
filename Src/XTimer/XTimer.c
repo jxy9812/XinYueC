@@ -130,7 +130,8 @@ void VXObject_timerEvent(XTimerBase* timer, XTimerEvent* event)
 	}
 	else
 	{
-		XClassGetVirtualFunc(timer, EXObject_TimerEvent, void(*)(XObject*))(timer);
+		XClass_Parent(XObject, EXObject_TimerEvent, void(*)(XObject*))(timer);
+		//(XVtableGetFunc(XObject_class_init(), EXObject_TimerEvent, void(*)(XObject*))(timer));
 	}
 }
 void VXTimerBase_deinit(XTimerBase* timer)

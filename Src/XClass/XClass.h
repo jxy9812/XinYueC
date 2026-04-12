@@ -99,7 +99,8 @@ void XClass_delete_base(XClass* object);
 #define SET_CLASS_HEAP(obj)  (((XClass*)obj)->is_objHeap=1)
 
 // 释放父对象
-#define 	XClass_Deinit_Parent(Type,obj)   (XVtableGetFunc(Type##_class_init(), EXClass_Deinit, void(*)(Type*))(obj))
+#define XClass_Parent(objType,funcEnum,funcType)  (XVtableGetFunc(objType##_class_init(), funcEnum, funcType))
+#define XClass_Deinit_Parent(Type,obj)			(XClass_Parent(Type,EXClass_Deinit,void(*)(Type*))(obj))
 
 #ifdef __cplusplus
 }

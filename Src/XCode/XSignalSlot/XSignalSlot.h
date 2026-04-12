@@ -88,12 +88,12 @@ XConnection* XSignalSlot_connect1(XSignalSlot* manager,size_t signal, XObject* r
  * @return 连接对象指针（可用于后续断开连接）
  */
 XConnection* XSignalSlot_connect2(XSignalSlot* manager, size_t signal,XSlotFunc2 slot_func);
-bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc1 slot_func1);
+bool XSignalSlot_disconnect1(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc1 slot_func1);
 /**
  * @brief 断开信号与槽的连接
  * @param conn 要断开的连接（由signal_connect返回）
  */
-bool XSignalSlot_disconnect_conn(XConnection* conn);
+bool XSignalSlot_disconnect2(XConnection* conn);
 
 /**
  * @brief 触发信号，通知所有关联的槽函数

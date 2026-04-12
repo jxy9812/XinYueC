@@ -208,16 +208,21 @@ void XThread_run_base(XThread* thread)
 //虚函数默认实现,供平台实现文件调用
 void VXThread_run(XThread* thread)
 {
+    if (!thread)return;
+    XThreadData_mapInsert(thread->m_data);
     thread->m_finished = false;
     thread->m_running = true;
-    XThreadData_mapInsert(thread->m_data);
-
     XThread_started_signal(thread);
     if (thread && thread->m_start_routine)
         thread->m_start_routine(thread,thread->m_varList);
     XThread_finished_signal(thread);
     thread->m_finished = true;
     thread->m_running = false;
-    XThreadData_mapRemove(thread->m_data);
+    if (thread->m_loop&& XObject_thread(thread->m_loop)==XThread_currentThread())
+    {//当前线程创建的在当前线程结束前释放
+        XObject_deleteLater(thread->m_loop);
+        thread->m_loop = NULL;
+    }
     XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    XThreadData_mapRemove(thread->m_data);
 }

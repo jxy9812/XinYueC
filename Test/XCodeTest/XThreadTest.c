@@ -9,6 +9,7 @@ static void threadFunc(XThread* thread, XVarList* list)
 {
 	XPrintf("子线程:id:%d\n",XThread_currentThreadId());
 	XTimer* timer = XTimer_create();
+	XPrintf("XTimer:thread:%p\n",((XObject*)timer)->m_thread);
 	XTimer_setInterval(timer, 3);
 	//XTimer_setTimeout(timer, 5000);
 	XTimer_setSingleShot(timer, true);
@@ -18,10 +19,8 @@ static void threadFunc(XThread* thread, XVarList* list)
 	XTimer_start_base(timer);
 	
 	XThread_exec(thread);
-	XTimer_delete_base(timer);
-	XCoreApplication_processEvents(XEventLoop_AllEvents);
+	//XTimer_delete_base(timer);
 	XCoreApplication_quit();
-	XThread_deleteLater(thread);
 }
 void XThreadTest()
 {
@@ -33,6 +32,7 @@ void XThreadTest()
 		XThread_start(th);
 		//XPrintf("XThread:%p XVector* children:%p\n", th, ((XObject*)th)->children);
 		//while (true);
+		XPrintf("XThread:thread:%p\n", ((XObject*)th)->m_thread);
 		XCoreApplication_exec();
 		XThread_deleteLater(th);
 

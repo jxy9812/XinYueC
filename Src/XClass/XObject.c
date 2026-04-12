@@ -323,18 +323,18 @@ XConnection* XObject_connect2(XObject* object, size_t signal, XSlotFunc2 slot_fu
 	return XSignalSlot_connect2(object->m_signalSlot, signal, slot_func);
 }
 
-bool XObject_disconnect(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1)
+bool XObject_disconnect1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1)
 {
 	if (object == NULL|| slot_func1==NULL)
 		return false;
-	return XSignalSlot_disconnect(object->m_signalSlot, signal, receiver, slot_func1);
+	return XSignalSlot_disconnect1(object->m_signalSlot, signal, receiver, slot_func1);
 }
 
-bool XObject_disconnect_conn(XConnection* conn)
+bool XObject_disconnect2(XConnection* conn)
 {
 	if ( conn == NULL)
 		return false;
-	return XSignalSlot_disconnect_conn(conn);
+	return XSignalSlot_disconnect2(conn);
 }
 
 void XObject_deinitLater(XObject* object)

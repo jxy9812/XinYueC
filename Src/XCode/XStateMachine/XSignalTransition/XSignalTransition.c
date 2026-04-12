@@ -102,7 +102,7 @@ void XSignalTransition_deinit(XSignalTransition* transition)
      // 断开信号连接
     if (transition->m_connection) 
     {
-        XObject_disconnect_conn(transition->m_connection);
+        XObject_disconnect2(transition->m_connection);
         transition->m_connection = NULL;
     }
     transition->m_signal = 0;

@@ -257,10 +257,11 @@ void VXThread_deinit(XThread* thread)
         CloseHandle(thread->m_handle);
         thread->m_handle = NULL;
     }
-    if (thread->m_varList)XVarList_delete(thread->m_varList);
+    if (thread->m_varList)
+        XVarList_delete(thread->m_varList);
     if (thread->m_loop)
-        XClass_delete_base(thread->m_loop);
-    XClass_Deinit_Parent(XObject,thread);
+        XObject_deleteLater(thread->m_loop);
+    XClass_Deinit_Parent(XObject, thread);
     XThreadData_delete(thread->m_data);
     //XMemory_free(thread);
 }

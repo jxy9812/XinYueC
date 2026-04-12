@@ -163,7 +163,7 @@ static bool disconnect_conn(XConnection* conn)
 	XVector_remove_base(signalObj->connList, XVector_indexOf(signalObj->connList,conn,0),0);
 	return true;
 }
-bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc1 slot_func1)
+bool XSignalSlot_disconnect1(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc1 slot_func1)
 {
 	if(manager==NULL||slot_func1==NULL)
 		return false;
@@ -194,7 +194,7 @@ bool XSignalSlot_disconnect(XSignalSlot* manager, size_t signal, XObject* receiv
 	return false;
 }
 
-bool XSignalSlot_disconnect_conn(XConnection* conn)
+bool XSignalSlot_disconnect2(XConnection* conn)
 {
 	if (conn == NULL)
 		return false;
