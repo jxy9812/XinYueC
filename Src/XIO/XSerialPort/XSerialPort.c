@@ -35,7 +35,7 @@ bool XSerialPort_setBaudRate(XSerialPort* port, int32_t baudRate, XSerialPort_Di
 
 // ========== 信号处理函数 ==========
 static void readyReadHandler(XObject* receiver, void* args) {
-    XSerialPort* port = (XSerialPort*)receiver->sender;
+    XSerialPort* port = (XSerialPort*)XObject_sender(receiver);
     XMutex_lock(port->waitMutex);
     port->readyReadTriggered = true;
     XWaitCondition_wakeOne(port->waitCondition);
@@ -43,7 +43,7 @@ static void readyReadHandler(XObject* receiver, void* args) {
 }
 
 static void bytesWrittenHandler(XObject* receiver, void* args) {
-    XSerialPort* port = (XSerialPort*)receiver->sender;
+    XSerialPort* port = (XSerialPort*)XObject_sender(receiver);
     XMutex_lock(port->waitMutex);
     port->bytesWrittenTriggered = true;
     XWaitCondition_wakeOne(port->waitCondition);
@@ -192,8 +192,16 @@ static void VXSerialPort_deinit(XObject* obj) {
         port->portName = NULL;
     }
     // 销毁同步原语
-    if (port->waitMutex) XMutex_delete(port->waitMutex);
-    if (port->waitCondition) XWaitCondition_delete(port->waitCondition);
+    if (port->waitMutex)
+    {
+        port->waitMutex = NULL;
+        XMutex_delete(port->waitMutex);
+    }
+    if (port->waitCondition) 
+    {
+        port->waitCondition;
+        XWaitCondition_delete(port->waitCondition);
+    }
     XClass_Deinit_Parent(XIODevice, obj);
 }
 

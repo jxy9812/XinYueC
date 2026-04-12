@@ -217,6 +217,7 @@ static void Direct_emit(XConnection* conn, void* args,  XAtomic_int32_t* ref_cou
 	{
 		conn->receiver->sender = conn->signal->sender;
 		conn->slot_func(conn->receiver, args);
+		conn->receiver->sender = NULL;
 	}
 	if (ref_count)
 		XAtomic_fetch_sub_int32(ref_count, 1);

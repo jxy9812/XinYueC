@@ -174,7 +174,7 @@ XSocketState XSocket_state(const XSocketBase* socket);
 * @brief 宏定义：复用XIODeviceBase的setDevice_base方法
 * @note 设置设备基础属性
 */
-#define XSocket_setDevice_base			XIODevice_setDevice_base
+//#define XSocket_setDevice_base			XIODevice_setDevice_base
 
 /**
  * @brief 宏定义：复用XIODeviceBase的delete_base方法
@@ -192,13 +192,13 @@ XSocketState XSocket_state(const XSocketBase* socket);
  * @brief 宏定义：复用XIODeviceBase的setWriteBuffer_base方法
  * @note 设置写缓冲区
  */
-#define XSocket_setWriteBuffer_base     XIODevice_setWriteBuffer_base
+//#define XSocket_setWriteBuffer_base     XIODevice_setWriteBuffer_base
 
 /**
 * @brief 宏定义：复用XIODeviceBase的setReadBuffer_base方法
 * @note 设置读缓冲区
 */
-#define XSocket_setReadBuffer_base      XIODevice_setReadBuffer_base
+//#define XSocket_setReadBuffer_base      XIODevice_setReadBuffer_base
 
 /**
 * @brief 宏定义：复用XIODeviceBase的write_base方法
@@ -216,13 +216,13 @@ XSocketState XSocket_state(const XSocketBase* socket);
 * @brief 宏定义：复用XIODeviceBase的getBytesAvailable_base方法
 * @note 获取可用字节数
 */
-#define XSocket_getBytesAvailable_base  XIODevice_bytesAvailable_base
+#define XSocket_bytesAvailable_base  XIODevice_bytesAvailable_base
 
 /**
  * @brief 宏定义：复用XIODeviceBase的getBytesToWrite_base方法
  * @note 获取待写入字节数
  */
-#define XSocket_getBytesToWrite_base    XIODevice_getBytesToWrite_base
+#define XSocket_bytesToWrite_base    XIODevice_bytesToWrite_base
 
 /**
  * @brief 宏定义：复用XIODeviceBase的atEnd_base方法
@@ -234,7 +234,7 @@ XSocketState XSocket_state(const XSocketBase* socket);
  * @brief 宏定义：复用XIODeviceBase的writeFull_base方法
  * @note 完整写入数据方法
  */
-#define XSocket_writeFull_base          XIODevice_writeFull_base
+//#define XSocket_writeFull_base          XIODevice_writeFull_base
 
 /*                                              信号  ·                   */
 void* XSocket_connected_signal(XSocket* socket);//连接上

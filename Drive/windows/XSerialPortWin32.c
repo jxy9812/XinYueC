@@ -202,7 +202,12 @@ void XSerialPort_platform_close(XSerialPort* port) {
     CancelIo(win32->handle);
     PurgeComm(win32->handle, PURGE_TXABORT | PURGE_RXABORT);
     CloseHandle(win32->handle);
-    if (win32->waitEvent) CloseHandle(win32->waitEvent);
+    win32->handle = 0;
+    if (win32->waitEvent) 
+    {
+        CloseHandle(win32->waitEvent);
+        win32->waitEvent = 0;
+    }
 
     port->isOpen = false;
 }
