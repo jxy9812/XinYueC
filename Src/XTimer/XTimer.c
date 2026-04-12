@@ -81,25 +81,32 @@ void XTimer_singleShot(size_t msec, XObject* receiver, XSlotFunc slot_func, XCon
 }
 void VXObject_timerEvent(XTimerBase* timer, XTimerEvent* event)
 {
-	XTimer_out(timer);
-	XTimer_timeout_signal(timer);
-	if (timer->m_isSingleShot)
+	if(timer->timerId==event->timerId)
 	{
-		//XPrintf("定时器触发\n");
-		XTimer_stop_base(timer);
-		if(timer->m_autoDelete)
-			XTimer_delete_base(timer);
+		XTimer_out(timer);
+		XTimer_timeout_signal(timer);
+		if (timer->m_isSingleShot)
+		{
+			//XPrintf("定时器触发\n");
+			XTimer_stop_base(timer);
+			if (timer->m_autoDelete)
+				XTimer_delete_base(timer);
+		}
+		else if (!timer->m_firstTrigger)
+		{
+			timer->m_firstTrigger = true;//第一次触发
+			XTimer_stop_base(timer);
+			if (timer->m_interval)
+				timer->timerId = XObject_startTimer_ms(timer, timer->m_interval, XTimer_timerType(timer));
+			if (timer->timerId)
+				timer->m_isRun = true;
+		}
+		XEvent_accept(event);
 	}
-	else if(!timer->m_firstTrigger)
+	else
 	{
-		timer->m_firstTrigger = true;//第一次触发
-		XTimer_stop_base(timer);
-		if (timer->m_interval)
-			timer->timerId = XObject_startTimer_ms(timer, timer->m_interval, XTimer_timerType(timer));
-		if (timer->timerId)
-			timer->m_isRun = true;
+		XClassGetVirtualFunc(timer, EXObject_TimerEvent, void(*)(XObject*))(timer);
 	}
-	XEvent_accept(event);
 }
 void VXTimerBase_deinit(XTimerBase* timer)
 {

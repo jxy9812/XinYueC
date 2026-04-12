@@ -15,6 +15,7 @@ static void VXObject_poll(XObject* object);
 static void VXObject_deinit(XObject* object);
 static bool VXObject_event(XObject* self, XEvent* e);
 static bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event);
+static void VXObject_timerEvent(XObject* timer, XTimerEvent* event);
 XVtable* XObject_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -28,7 +29,7 @@ XVtable* XObject_class_init()
 	XVTABLE_INHERIT_DEFAULT(XClass_class_init());
 	void* table[] = { 
 		VXObject_poll,VXObject_event ,VXObject_eventFilter,
-	NULL,NULL,NULL,NULL,NULL};
+	NULL,NULL,NULL,NULL,VXObject_timerEvent };
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXObject_deinit);
@@ -92,28 +93,21 @@ void XObject_poll_base(XObject* object)
 	XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*))(object);
 }
 
-void XObject_setPollingInterval(XObject* object, size_t interval)
+void XObject_setPollTime(XObject* object, size_t interval)
 {
 	if (object == NULL|| XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*))==NULL)
 		return;
-	////间隔是0的时候关闭轮询
-	//if (interval == 0&& object->m_poolTimer)
-	//{//关闭轮询
-	//	XTimerBase_stop_base(object->m_poolTimer);
-	//	//object->m_poolTimer = NULL;
-	//	return;
-	//}
-	//if (object->m_poolTimer == NULL)
-	//{
-	//	object->m_poolTimer = XTimer_create();
-	//	XTimerBase_setAutoDelete(object->m_poolTimer,false);
-	//	XTimerBase_setTimerCallback(object->m_poolTimer,XObject_poll_base);
-	//	XTimerBase_setUserData(object->m_poolTimer,object);
-	//	XTimerBase_setSingleShot(object->m_poolTimer, false);
-	//}
-	//XTimerBase_setTimeout(object->m_poolTimer, interval);
-	//XTimerBase_setInterval(object->m_poolTimer, interval);
-	//XTimerBase_start_base(object->m_poolTimer);
+	//间隔是0的时候关闭轮询
+	if (interval == 0&& object->pollId)
+	{//关闭轮询
+		XObject_killTimer(object, object->pollId);
+		object->pollId = 0;
+		return;
+	}
+	if (!object->pollId)
+	{
+		object->pollId = XObject_startTimer_ms(object, interval,XTimerType_PreciseTimer);
+	}
 }
 
 void XObject_setParent(XObject* object, XObject* parent)
@@ -452,6 +446,14 @@ bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event)
 {
 	return false;
 }
+void VXObject_timerEvent(XObject* self, XTimerEvent* event)
+{
+	if (self->pollId == event->timerId)
+	{
+		XObject_poll_base(self);
+		XEvent_accept(event);
+	}
+}
 void XObject_installEventFilter(XObject* self, XObject* filterObj)
 {
 	if (!self || !filterObj)return;
@@ -589,7 +591,7 @@ void XObject_customEvent(XObject* self, XEvent* event)
 void XObject_connectNotify_base(XObject* self, size_t signal)
 {
 	//子类没重载直接退出
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_TimerEvent, bool))
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_ConnectNotify, bool))
 		return;
 	XClassGetVirtualFunc(self, EXObject_ConnectNotify, void(*)(XObject*, size_t))(self, signal);
 }
@@ -597,7 +599,7 @@ void XObject_connectNotify_base(XObject* self, size_t signal)
 void XObject_disconnectNotify_base(XObject * self, size_t signal)
 {
 	//子类没重载直接退出
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_TimerEvent, bool))
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_DisconnectNotify, bool))
 		return;
 	XClassGetVirtualFunc(self, EXObject_DisconnectNotify, void(*)(XObject*, size_t))(self, signal);
 }

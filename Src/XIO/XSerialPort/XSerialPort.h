@@ -102,9 +102,26 @@ typedef enum {
 typedef struct XSerialPort XSerialPort;
 struct XSerialPortPrivate; // 前向声明
 
-typedef struct XSerialPort {
+typedef struct XSerialPort 
+{
     XIODevice base;
-    struct XSerialPortPrivate* d_ptr;
+    char* portName;
+    XMutex* waitMutex;
+    XWaitCondition* waitCondition;
+    uint16_t dataTerminalReady : 1;
+    uint16_t requestToSend : 1;
+    uint16_t breakEnabled : 1;
+    uint16_t isOpen : 1;
+    uint16_t readyReadTriggered : 1;
+    uint16_t bytesWrittenTriggered : 1;
+    int32_t baudRate;
+    XSerialPort_DataBits dataBits;
+    XSerialPort_Parity parity;
+    XSerialPort_StopBits stopBits;
+    XSerialPort_FlowControl flowControl;
+    XSerialPort_Error error;
+    int64_t readBufferSize;
+
 } XSerialPort;
 /**
  * @brief 初始化XSerialPort的虚函数表
@@ -215,6 +232,17 @@ XSerialPort_StopBits XSerialPort_stopBits(const XSerialPort* port);
  * @return 设置成功返回true，否则返回false
  */
 bool XSerialPort_setFlowControl(XSerialPort* port, XSerialPort_FlowControl flowControl);
+
+/**
+ * @brief 获取底层平台的原生串口句柄。
+ * 如果平台受支持且串口已打开，则返回原生串口句柄；否则返回 -1。
+ *
+ * 警告：此函数仅供专家使用，请自行承担风险。此外，此函数在次要版本之间不保证兼容性。
+ *
+ * @param port 指向 XSerialPort 实例的指针。
+ * @return 成功时返回平台特定的句柄（Windows 下为 HANDLE），失败或未打开时返回 -1。
+ */
+XHandle XSerialPort_handle(const XSerialPort* port);
 
 /**
  * @brief 获取当前流控方式

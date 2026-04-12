@@ -11,7 +11,7 @@ void XCommunicatorBase_init(XCommunicatorBase* comm, XIODevice* io)
     XClassGetVtable(comm) = XCommunicatorBase_class_init();
     comm->m_io = io;
    
-    XObject_setPollingInterval(comm, 2);
+    XObject_setPollTime(comm, 2);
 }
 bool XCommunicatorBase_connect_base(XCommunicatorBase* comm)
 {

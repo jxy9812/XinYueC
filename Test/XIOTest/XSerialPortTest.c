@@ -32,23 +32,7 @@ void XSerialPortTest()
         return;
     }
     XObject_connect(serial,XSignal(XIODevice_readyRead_signal), serial, readyRead_slot,XConnectionType_Auto);
-    //XSerialPortBase_setReadBuffer_base(serial,1024);
-    //线程接收数据
-    //threadTest(serial);
-    //主线程处理数据
-   /* char buff[1024];
-    while (true)
-    {
-        size_t readSize = XSerialPort_bytesAvailable_base(serial);
-        if (readSize == 0)
-            continue;
-        size_t len = XSerialPort_read_base(serial, buff, readSize);
-        if (len >0)
-        {
-            buff[len] = 0;
-            XPrintf("%s", buff);
-        }
-    }*/
+    XCoreApplication_exec();
 }
 
 void XMenu_XSerialPortTest(XMenu* root)

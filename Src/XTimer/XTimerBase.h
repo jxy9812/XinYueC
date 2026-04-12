@@ -47,7 +47,7 @@ typedef struct XTimerBase
 	uint32_t m_firstTrigger : 1;   //首次触发
 	size_t m_timeout;              ///< 首次超时时间（毫秒）
 	size_t m_interval;             ///< 周期性触发时间间隔（毫秒）
-	size_t timerId;                ///< 定时器唯一标识ID
+	XTimerId timerId;                ///< 定时器唯一标识ID
 	void* m_userData;              ///< 用户自定义数据
 	XTimerBaseCallback m_timerCallback; ///< 定时器超时回调函数
 	//size_t number;                 ///< 超时触发次数计数

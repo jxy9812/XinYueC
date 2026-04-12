@@ -50,6 +50,7 @@ typedef struct XObject
 	uint32_t was_widget : 1;        // 析构时曾是窗口部件
 	uint32_t receive_parent_events : 1; // 是否接收父对象事件
 	uint32_t unused : 20;           // 保留位
+	XTimerId pollId;//轮询id
 	XSignalSlot* m_signalSlot;           ///< 信号与槽控制器：管理当前对象的所有信号与槽连接关系
 	// 父子关系
 	XObject* parent;//父对象
@@ -243,9 +244,9 @@ void XObject_poll_base(XObject* object);
  * @brief 设置轮询间隔时间
  * @param object 目标XObject对象指针（非NULL）
  * @param interval 轮询间隔（毫秒），0表示关闭轮询
- * @note 通过m_poolTimer定时器控制Poll函数的调用频率
+ * @note 通过定时器控制Poll函数的调用频率
  */
-void XObject_setPollingInterval(XObject* object, size_t interval);
+void XObject_setPollTime(XObject* object, size_t interval);
 
 
 

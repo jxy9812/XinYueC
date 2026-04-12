@@ -52,7 +52,7 @@ void XSocketBase_init(XSocketBase* socket)
     socket->m_peerName = XString_create_utf8(NULL);
     socket->m_peerAddress = XString_create_utf8(NULL);
 
-    //XObject_setPollingInterval(socket,50);
+    //XObject_setPollTime(socket,50);
     // return;
     /*XObject_addEventFilter(socket, XEVENT_WRITE, WriteEventCB, NULL);
     XObject_addEventFilter(socket, XEVENT_READY, ReadEventCB, NULL);
