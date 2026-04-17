@@ -15,7 +15,7 @@ static void VXObject_poll(XObject* object);
 static void VXObject_deinit(XObject* object);
 static bool VXObject_event(XObject* self, XEvent* e);
 static bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event);
-static void VXObject_timerEvent(XObject* timer, XTimerEvent* event);
+static void VXObject_timerEvent(XObject* timer, XEventTimer* event);
 XVtable* XObject_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -455,7 +455,7 @@ bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event)
 {
 	return false;
 }
-void VXObject_timerEvent(XObject* self, XTimerEvent* event)
+void VXObject_timerEvent(XObject* self, XEventTimer* event)
 {
 	if (self->pollId == event->timerId)
 	{
@@ -573,7 +573,7 @@ bool XObject_eventFilter_base(XObject* self, XObject* watched, XEvent* event)
 	return XClassGetVirtualFunc(self, EXObject_EventFilter, bool(*)(XObject*, XObject *, XEvent*))(self, watched, event);
 }
 
-void XObject_timerEvent_base(XObject* self, XTimerEvent* event)
+void XObject_timerEvent_base(XObject* self, XEventTimer* event)
 {
 	//子类没重载直接退出
 	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")|| !XClassGetVirtualFunc(self, EXObject_TimerEvent,bool))

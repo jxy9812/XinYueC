@@ -21,14 +21,14 @@ extern "C" {
 typedef struct XListSNodeAtomic 
 {
 	struct XListSNodeAtomic* next;  ///< 指向后继节点的指针（原子操作保护）
-	void* data;                     ///< 指向节点存储的实际数据的指针
+	char data[];                     ///< 指向节点存储的实际数据的指针
 } XListSNodeAtomic;
 /**
 * @brief 获取节点中数据的指针（地址）
 * @param Node 节点指针（XListSNodeAtomic*类型）
 * @return 数据存储的地址（void**类型）
 */
-#define XListSNodeAtomic_DataPtr(Node)  (&(((XListSNodeAtomic*)Node)->data))
+#define XListSNodeAtomic_DataPtr(Node)  (((XListSNodeAtomic*)Node)->data)
 /**
 * @brief 获取节点中指定类型的数据（解引用数据指针）
 * @param Node 节点指针（XListSNodeAtomic*类型）

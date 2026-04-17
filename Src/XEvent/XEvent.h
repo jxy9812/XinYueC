@@ -12,6 +12,7 @@ extern "C" {
 #include"XSignalSlot.h"
 #include"XNamespace.h"
 #include"XAtomic.h"
+#include"XSocketDescriptor.h"
 // 事件回调函数类型
 typedef void (*XEventCB)(XEvent* event);
 
@@ -142,14 +143,21 @@ typedef struct XEventDeferredDelete
 XEventDeferredDelete*XEventDeferredDelete_create(bool isDelete);
 void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver);
 //定时器事件
-typedef struct XTimerEvent
+typedef struct XEventTimer
 {
     XEvent m_base;
     XTimerId timerId;
-}XTimerEvent;
-XTimerEvent* XEventTimer_create(XTimerId id);
-XTimerId XEventTimer_timerId(const XTimerEvent* event);
-
+}XEventTimer;
+XEventTimer* XEventTimer_create(XTimerId id);
+XTimerId XEventTimer_timerId(const XEventTimer* event);
+//套接字活动事件
+typedef struct XEventSockAct
+{
+    XEvent m_base;
+    XSocketDescriptor socket;
+    XSocketActType actType;//活动类型
+}XEventSockAct;
+XEventSockAct* XEventSockAct_create(XSocketDescriptor socket, XSocketActType actType);
 //孩子事件
 typedef struct {
     XEvent m_base;

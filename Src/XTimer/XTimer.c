@@ -6,7 +6,7 @@
 static void VXTimerBase_start(XTimerBase* timer);
 static void VXTimerBase_stop(XTimerBase* timer);
 static void VXTimerBase_deinit(XTimerBase* timer);
-static void VXObject_timerEvent(XTimerBase* timer, XTimerEvent* event);
+static void VXObject_timerEvent(XTimerBase* timer, XEventTimer* event);
 XVtable* XTimer_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -104,7 +104,7 @@ void XTimer_singleShot2(size_t msec, XSlotFunc1 slot_func)
 	XObject_connect2(timer, XSignal(XTimer_timeout_signal), slot_func);
 	XTimer_start_base(timer);
 }
-void VXObject_timerEvent(XTimerBase* timer, XTimerEvent* event)
+void VXObject_timerEvent(XTimerBase* timer, XEventTimer* event)
 {
 	if(timer->timerId==event->timerId)
 	{

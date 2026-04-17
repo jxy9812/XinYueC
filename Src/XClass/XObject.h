@@ -197,7 +197,7 @@ bool XObject_eventFilter_base(XObject* self, XObject* watched, XEvent* event);
 // 特定事件回调
 // ------------------------
 // 定时器事件回调。当定时器触发时被调用。
-void XObject_timerEvent_base(XObject* self,XTimerEvent* event);
+void XObject_timerEvent_base(XObject* self,XEventTimer* event);
 
 // 子对象事件回调。当子对象被添加、移除或销毁时被调用。
 void XObject_childEvent_base(XObject* self,XChildEvent* event);

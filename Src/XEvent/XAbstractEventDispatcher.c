@@ -33,7 +33,7 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
     else
         dp->nativeFilters = NULL;
     dp->mutex = XMutex_create();
-    dp->m_timerIds = XVector_Create(XTimerId);
+    dp->m_timerIds = NULL;
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
@@ -365,12 +365,13 @@ bool XAbstractEventDispatcher_filterNativeEvent(XAbstractEventDispatcher* self, 
 
 
 XTimerId XAbstractEventDispatcher_registerTimer(
-    XAbstractEventDispatcher* self,
+    XAbstractEventDispatcher* s,
     XDuration interval,
     XTimerType timerType,
     XObject* object)
 {
-    if (ISNULL(self, "")) return XTIMER_ID_INVALID;
+    if (ISNULL(s, "")) return XTIMER_ID_INVALID;
+    XAbstractEventDispatcher* self = XCoreApplication_eventDispatcher();
     static XAtomic_uint64_t s_nextTimerId = {.value=1};
     XTimerId id = 0;
     XMutex_lock(self->d_ptr->mutex);

@@ -1,507 +1,347 @@
-﻿# 前言
+﻿# XinYueC - 纯 C 语言面向对象库
+
+**官方完整文档**
+
+------
+
 ## 基本介绍
-+ 本项目使用**纯C**实现各种容器和算法(**<u>均是泛型</u>**)。
-+ 本意是锻炼思维，顺道给C写一套容器供以后使用。
-+ 容器成员函数名都尽可能与C++中的**保持一致**，只要看几个样例就可以**快速上手**使用。
-+ **但是**使用此代码对**指针**的掌握有一定的要求，有些时候会用到二级指针(**这个不多**)但**一级指针**必须会要用。
-+  这里仅仅介绍各种**使用方法**，不做详细展开，帮助更好的**阅读源码**，欢迎一起**完善它**。
-+  现已支持安装成静态或动态库安装请参考[教程](https://gitee.com/xin___yue/XQt6/blob/master/Install/README.md)
-## 项目地址
 
-[master](https://gitee.com/xin___yue/c-language-container/tree/master) (稳定版分支)
+XinYueC 是一个使用纯 C 语言实现的、功能丰富的面向对象库。它旨在为 C 语言开发者提供一套强大、高效且易于使用的泛型容器、算法和跨平台接口，以弥补 C 语言在现代软件开发中的一些不足。
 
-[develop](https://gitee.com/xin___yue/c-language-container/tree/develop)(开发板分支)
+本项目最初是为了锻炼编程思维而创建，现已发展成为一个可用于实际项目的成熟库。其设计哲学深受 C++ STL 的影响，容器的成员函数命名尽可能与 C++ 保持一致，以降低学习成本。
 
-[new](https://gitee.com/xin___yue/c-language-container/tree/new)(最新重构分支)
+### 核心特性
 
-## 使用方法
-1.选择一个[分支](##项目地址)
-    ![分支](assets/分支.png)
-2.复制其HTTPS地址
-    <img src="assets/https.png" alt="https" style="zoom:200%;" />
-3.打开VS
-	1.开始使用
-	2.克隆储存库
+- **纯 C 实现**: 不依赖任何第三方库，仅使用标准 C 库。
+- **泛型容器**: 提供多种数据结构（如链表、动态数组、映射等），支持任意数据类型。
+- **丰富算法**: 包含排序、查找、迷宫生成与寻路等多种经典算法。
+- **面向对象风格**: 通过结构体和函数指针模拟类、继承和多态。
+- **跨平台**: 提供了针对不同操作系统的抽象层，确保代码可移植性。
+- **内存安全**: 容器支持自定义的元素拷贝、移动和析构回调，有效管理复杂对象的生命周期。
 
-![克隆](assets/VS克隆储存库.png)
-4.填入基本信息
-	1.储存库位置:刚才**复制的HTTPS地址**，直接**粘贴**即可
-	2.路径:在电脑上找到一个**目录**，新建一个文件夹后选择，一定要**空文件夹**
+### 许可证
 
-![克隆信息](assets/克隆信息.png)
-5.最后右下角**点击克隆**即可，VS会从网上将文件都下载下来
+本项目采用 **MIT 开源许可协议**。
 
-6.右键点击CMakeLists.txt**配置**一下
+------
 
-![配置](assets/配置cmake.png)
+## 核心架构
 
-7.最后选中Container.exe**点击**即可运行
+XinYueC 的核心架构围绕几个关键概念构建：`XClass`（基类）、`XContainerObject`（容器基类）、`XObject`（事件处理对象）以及事件循环系统。
 
-![运行](assets/运行.png)
+### XClass: 面向对象的基石
 
-### CMake (C模板)
-
-+ 在当前工程文件夹下，新建SourceFile文件夹，在其**SourceFile**文件夹下的**所有.c .h** 文件都将会**自动**添加并参与**编译**，可以在**其内嵌套**文件夹
-
-+  每次**删除或添加**代码文件后，仅需右键CMakeLists.txt**重新配置**即可
-
-```cmake
-#请求CAMKE的最小构建版本
-cmake_minimum_required(VERSION 3.5)
-#设置项目名称
-project(Container VERSION 0.1 LANGUAGES C)
-
-set(CMAKE_INCLUDE_CURRENT_DIR ON)
-
-set(CMAKE_C_STANDARD 99)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-
-
-#自动查找头文件路径函数(没有去重)
-macro(FIND_INCLUDE_DIR result curdir)  #定义函数,2个参数:存放结果result；指定路径curdir；
-    file(GLOB_RECURSE children "${curdir}/*.hpp" "${curdir}/*.h" )	#遍历获取{curdir}中*.hpp和*.h文件列表
-    message(STATUS "children= ${children}")								#打印*.hpp和*.h的文件列表
-    set(dirlist "")														#定义dirlist中间变量，并初始化
-    foreach(child ${children})											#for循环
-        string(REGEX REPLACE "(.*)/.*" "\\1" LIB_NAME ${child})			#字符串替换,用/前的字符替换/*h
-        if(IS_DIRECTORY ${LIB_NAME})									#判断是否为路径
-            LIST(APPEND dirlist ${LIB_NAME})							#将合法的路径加入dirlist变量中
-        endif()															#结束判断
-    endforeach()														#结束for循环
-    set(${result} ${dirlist})											#dirlist结果放入result变量中
-endmacro()																#函数结束
-
-#查找include目录下的所有*.hpp,*.h头文件,并路径列表保存到 INCLUDE_DIR_LIST 变量中
-FIND_INCLUDE_DIR(INCLUDE_DIR_LIST "SourceFile")			#调用函数，指定参数
-#将INCLUDE_DIR_LIST中路径列表加入工程		
-include_directories(${INCLUDE_DIR_LIST})
-#递归搜索目录下的文件添加到变量中
-file(GLOB_RECURSE FILE "SourceFile/*.c" "SourceFile/*.h")
-
-#设置图标
-#aux_source_directory(. MY_SCOURCES)
-#设置可执行文件的输出目录
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
-#添加参加编译的文件
-add_executable(${PROJECT_NAME}
-${FILE}
- )
-```
-
-
-
-# 目录
-
-## 容器
-### XContainerObject(容器-基类)
-#### 说明
-> 这个基本不会直接使用，不做详细展开，仅做介绍
+`XClass` 是所有类的基类，它实现了 C 语言中的“类”、“继承”和“多态”。
 
 #### 结构体定义
-```c
-//容器基类
-typedef struct XContainerObject
-{
-	//判断函数
-	const bool (*empty)(const struct XContainerObject*);// 检测容器是否为空，空为真 O(1)
-	//大小函数
-	const size_t(*size)(const struct XContainerObject*);//返回容器内元素的个数 O(1)
-	const size_t(*capacity)(const struct XContainerObject*); //返回当前容器所能容纳的最大元素值
-	//其他函数
-	void (*swap)(struct XContainerObject*, struct XContainerObject*);//交换两个同类型容器的数据
-	void* _data;//指向容器数据的指针
-	size_t  _capacity;//当前容器能容纳的最大元素数量
-	size_t _size;//当前容器内的元素个数
-	size_t _type;//类型占用字节数
-}XContainerObject;
+
+```
+1// XClass.h
+2typedef struct XClass {
+3    XVtable* m_vtable; // 虚函数表指针
+4} XClass;
 ```
 
-#### 初始化容器XContainerObject的基本数据
+#### 关键宏与函数
 
-```c
-void XContainerObject_init( struct XContainerObject* Object,size_t type);
-```
-#### 判断容器是否为空，空返回true
-```c
-const bool XContainerObject_empty(const struct XContainerObject* Object);
-```
-#### 返回容器当前的元素数量
-```c
-const size_t XContainerObject_size(const struct XContainerObject* Object);
-```
-#### 返回容器当前状态可以容纳的最大值(当前为数据准备的内存大小)
-```c
-const size_t XContainerObject_capacity(const struct XContainerObject* Object);
-```
-#### 返回容器内单个元素的大小(字节)
-```c
-const size_t XContainerObject_type(const struct XContainerObject* Object);
-```
-#### 交换两个相同类型的容器
-```c
-void XContainerObject_swap(struct XContainerObject* ObjectOne, struct XContainerObject* ObjectTwo);
-```
-### XList(链表)
-[^this_list]:链表指针
-[^pvValue]:数据的内存地址 
-[^curNode]:指定的节点指针 
-#### 插入
+- **`XClass_init(self)`**: 初始化一个 `XClass` 实例，通常作为派生类初始化的第一步。
+- **`XClassGetVtable(self)`**: 获取对象的虚函数表指针。
+- **`XClassGetVirtualFunc(self, func_index, func_type)`**: 通过虚函数表索引和函数类型，安全地调用虚函数，实现多态。
 
-##### 链表头部增加一个元素
+### XObject: 事件驱动的核心
 
-1[^this_list] 2[^pvValue]
+`XObject` 是所有可以参与事件循环和信号槽通信的对象的基类。它继承自 `XClass` 并扩展了事件处理、线程亲和性和父子关系管理等功能。
 
-```C
- XListNode* XList_push_front(struct XList* this_list, void* pvValue);
+#### 结构体定义 (关键部分)
+
 ```
-##### 链表尾部增加一个元素
-1[^this_list] 2[^pvValue]
-
-```c
-XListNode* XList_push_back(struct XList* this_list, void* pvValue);
-```
-##### 链表指向的节点前插入多个
-1[^this_list] 2[^curNode]
-
-```c
-void  XList_insert_front_p(struct XList* this_list,XListNode* curNode, ...);
-//curNode后不填个数默认一个，最大一次1000个
-```
-##### 链表指向的节点前插入一个数组的数据(可插入单个数据)
-1[^this_list] 2[^curNode]
-
-```c
-void  XList_insert(struct XList* this_list,XListNode* curNode, const void* begin, const void* end);
-//begin与end相同时插入一个数据
+1// XObject.h
+2typedef struct XObject {
+3    XClass m_class;                      // 继承自 XClass
+4    
+5    XAtomic_uint32_t m_posted_events;    // 原子计数：已投递但未处理的事件数量
+6
+7    uint32_t is_widget : 1;         // 是否为窗口部件
+8    uint32_t block_sig : 1;         // 信号是否被阻塞
+9    uint32_t was_deleted : 1;       // 对象是否已被标记为删除
+10
+11    XTimerId pollId;                // 轮询定时器ID
+12    XSignalSlot* m_signalSlot;      // 信号与槽控制器
+13    XObject* parent;                // 父对象
+14    XVector* children;              // 子对象列表
+15    XObject* sender;                // 发送者对象（用于信号槽）
+16    XVector* filters;               // 事件过滤器列表
+17    XThread* m_thread;              // 所属线程指针
+18    XString* object_name;           // 对象名称
+19} XObject;
 ```
 
-#### 删除
-##### 链表删除头节点
+#### 核心 API
 
-1[^this_list] 
+- **`XObject_event(XObject\* self, XEvent\* e)`**: 对象的事件处理器。这是一个虚函数，派生类可以重写此方法来处理特定类型的事件。基类实现 `VXObject_event` 会根据事件类型分发到不同的处理函数（如 `timerEvent`, `childEvent` 等）。
+- **`XObject_moveToThread(XObject\* object, XThread\* target_thread)`**: 将对象及其所有子对象移动到指定的线程。这是实现跨线程通信的关键。
+- **`xobject_emit_signal(XObject\* sender, uint32_t signal_index, ...)`**: 发射一个信号。框架会根据连接类型（直接或队列）决定是立即调用槽函数还是将 `MetaCallEvent` 投递到接收者线程的事件队列。
 
-```C
-void  XList_pop_front(struct XList* this_list);
+------
+
+## 容器系统
+
+容器系统是 XinYueC 的重要组成部分，所有容器都继承自 `XContainerObject` 基类。
+
+### XContainerObject: 容器基类
+
+`XContainerObject` 为所有派生容器（如 `XList`, `XVector`, `XMap`）提供了统一的接口和基础功能。
+
+#### 结构体定义
+
 ```
-##### 链表删除尾节点
-
-1[^this_list] 
-
-```C
-void  XList_pop_back(struct XList* this_list);
-```
-##### 链表删除一个区间内的节点(可以删除一个节点)
-
-1[^this_list] 
-
-```C
-void  XList_erase_p(struct XList* this_list, const XListNode* begin, const XListNode* end);
-//begin与end相同时删除同一个节点
-```
-##### 链表清空节点
-
-1[^this_list] 
-
-```C
-void  XList_clear(struct XList* this_list);
-```
-
-#### 遍历
-##### 链表返回其头节点
-
-1[^this_list] 
-
-```C
-XListNode* XList_front(struct XList* this_list);
-```
-##### 链表返回其尾节点
-
-1[^this_list] 
-
-```C
-XListNode* XList_back(struct XList* this_list);
-```
-##### 链表根据元素查找其节点
-
-1[^this_list] 
-
-```C
-XListNode* XList_find(const struct XList* this_list, XEquality equality, const void* findVal);
-//equality是一个判断相等的比较准则，回调函数
-//findVal 查找元素的指针
-```
-#### 判断
-##### 链表是否为空
-
-1[^this_list] 
-
-```C
-bool  XList_empty(const struct XList* this_list);
-```
-#### 其他
-##### 链表返回其元素个数(节点个数)
-
-1[^this_list] 
-
-```C
-size_t   XList_size(const  struct XList* this_list);
-```
-##### 链表排序
-
-1[^this_list] 
-
-```C
-void  XList_sort(struct XList* this_list, XCompare compare);
-//compare比较准则-回调函数
-```
-##### 交换两个相同类型的链表
-
-1[^this_list] 
-
-```C
-void  XList_swap(struct XList* this_listOne, struct XList* this_listTwo);
-```
-##### 释放链表
-
-1[^this_list] 
-
-```C
-void  XList_free(struct XList* this_list);
-```
-##### 创建初始化链表
-
-
-```C
-struct XList* XList_init(int TypeSize);
-//TypeSize单元素的大小-字节
-```
-#### 链表迭代器
-##### 链表正向迭代器
-###### 链表正向迭代器开始的位置
-1[^this_list] 
-
-```C
-XList_iterator* XList_begin(struct XList* this_list);
-```
-###### 链表正向迭代器结束的位置
-1[^this_list] 
-
-```C
-XList_iterator* XList_end(struct XList* this_list);
-```
-###### 链表正向迭代器做++运算
-1[^this_list] 
-
-```C
-XList_iterator* XList_iterator_add(struct XList* this_list, XList_iterator*it);
-//注意因为是一级指针一定要接收函数的返回值
-```
-###### 链表用正向迭代器做遍历操作
-1[^this_list] 
-
-```C
-void XList_iterator_for_each(struct XList* this_list, XFor_each ForFunction, void* args);
-//ForFunction 传入做遍历操作的回调函数
-//args传给回调函数的参数指针，不使用时直接NULL
-```
-##### 链表反向迭代器
-###### 链表反向迭代器开始的位置
-1[^this_list] 
-
-```C
-XList_reverse_iterator* XList_rbegin(struct XList* this_list);
-```
-###### 链表反向迭代器结束的位置
-1[^this_list] 
-
-```C
-XList_reverse_iterator* XList_rend(struct XList* this_list);
-```
-###### 链表反向迭代器做++运算
-1[^this_list] 
-
-```C
-XList_reverse_iterator* XList_reverse_iterator_add(struct XList* this_list, XList_reverse_iterator* it);
-//注意因为是一级指针一定要接收函数的返回值
-```
-###### 链表用反向迭代器做遍历操作
-1[^this_list] 
-
-```C
-void XList_reverse_iterator_for_each(struct XList* this_list, XFor_each ForFunction, void* args);
-//ForFunction 传入做遍历操作的回调函数
-//args传给回调函数的参数指针，不使用时直接NULL
-```
-#### 链表使用样例
-
-```C
-#include"XList.h"//链表容器的头文件
-#include"XEquality.h"//判断相等的回调函数库
-#include"XCompare.h"//比较大小的回调函数库-包括大于，小于，相等
-#include<time.h>
-#include<stdio.h>
-#include<stdlib.h>
-//链表迭代器遍历的回调函数
-void ListFor_each(void* LPVal, void* args)
-{
-	printf("%d ",*(int*)LPVal);
-}
-//链表排序的测试
-void ListSortTest()
-{
-	XList* li = XList_init(sizeof(int));
-	int size = 1000000;
-	srand((unsigned int)time(NULL));
-	int* p1 = malloc(sizeof(int) * size);
-	for (size_t i = 0; i < size; i++)
-	{
-		int num = rand() % 1000;
-		li->push_back(li,&num);//尾插
-	}
-	clock_t  time_front = clock();
-	XList_sort(li, XLess_int);
-	clock_t time_after = clock();
-	printf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
-	li->XMemory_free(li);
-}
-//链表的迭代器测试
-void ListIterator()
-{
-	XList* li = XList_init(sizeof(int));
-	int arr[] = { 123,12,1,4,9 };
-	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
-	{
-		XList_push_back(li, arr + i);
-	}
-	printf("开始正向遍历\n");
-	for (XList_iterator* it = XList_begin(li); it != XList_end(li); it = XList_iterator_add(li, it))
-	{
-		printf("%d\n", *(int*)((XListNode*)it)->date);
-	}
-	printf("开始反向遍历\n");
-	for (XList_reverse_iterator* it = XList_rbegin(li); it != XList_rend(li); it = XList_reverse_iterator_add(li, it))
-	{
-		printf("%d\n", *(int*)((XListNode*)it)->date);
-	}
-	XList_free(li);
-}
-//链表的基本函数测试
-void ListTest()
-{
-	XList* list = XList_init(sizeof(int));
-	
-	int arr[] = { 123,12,1,4,9 };
-	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
-	{
-		XList_push_back(list,arr+i);
-	}
-	int x = 100;
-	//li->insert_front_int(li, 0, &x, 10);
-	printf("元素遍历\n");
-
-	XList_iterator_for_each(list, ListFor_each,NULL);//迭代器遍历输出
-	printf("\n");
-	printf("头元素为：%d\n", *(int*)list->front(list)->date);
-	printf("尾元素为：%d\n", *(int*)list->back(list)->date);
-
-	XListNode*findNode=XList_find(list, XEquality_int, arr +2);
-	printf("找到的数字%d\n", *(int*)findNode->date);
-
-
-	/*li->pop_back(li);
-	li->pop_back(li);
-	li->pop_front(li);
-	li->pop_front(li);*/
-	//li->erase_p(li,li->find(li,num+1), li->find(li,num+5));
-	list->erase_int(list,1, 8);
-	printf("删除元素后遍历\n");
-	for (size_t i = 0; i < list->size(list); i++)
-	{
-		printf("%d\n", *(int*)list->at(list, i)->date);
-	}
-	list->XMemory_free(list);
-}
-//交换函数测试
-void ListSwapTest()
-{
-	XList* li1 = XList_init(sizeof(int));
-	int num;
-
-	for (size_t i = 0; i < 10; i++)
-	{
-		num = i;
-		li1->push_front(li1, &num);
-	}
-	printf("li1元素遍历\n");
-	for (size_t i = 0; i < li1->size(li1); i++)
-	{
-		printf("%d\n", *(int*)li1->at(li1, i));
-	}
-
-	XList* li2 = XList_init(sizeof(int));
-
-	for (size_t i = 0; i < 20; i++)
-	{
-		num = 20 - i;
-		li1->push_front(li2, &num);
-	}
-	printf("li2元素遍历\n");
-	for (size_t i = 0; i < li1->size(li2); i++)
-	{
-		printf("%d\n", *(int*)li1->at(li2, i));
-	}
-
-	li1->swap(li1, li2);
-
-	printf("交换后li1元素遍历\n");
-	for (size_t i = 0; i < li1->size(li1); i++)
-	{
-		printf("%d\n", *(int*)li1->at(li1, i));
-	}
-
-	printf("交换后li2元素遍历\n");
-	for (size_t i = 0; i < li1->size(li2); i++)
-	{
-		printf("%d\n", *(int*)li1->at(li2, i));
-	}
-	li1->clear(li1);
-	li1->clear(li2);
-}
+1// XContainerObject.h
+2typedef struct XContainerObject {
+3    XClass m_class;  // 虚函数表
+4
+5    // 回调函数：定义了如何操作容器内的元素
+6    XCDataCopyMethod m_dataCopyMethod;      // 拷贝元素
+7    XCDataMoveMethod m_dataMoveMethod;      // 移动元素
+8    XCDataDeinitMethod m_dataDeinitMethod;  // 销毁元素
+9    XCompare m_compare;                     // 比较元素
+10
+11    void* m_data;             // 数据区指针
+12    size_t m_capacity;        // 容器容量
+13    size_t m_size;            // 当前元素数量
+14    size_t m_typeSize;        // 元素类型大小
+15} XContainerObject;
 ```
 
+#### 核心 API
 
+- **`void XContainerObject_init(XContainerObject\* Object, size_t typeSize)`**: 初始化容器，`typeSize` 是单个元素的字节大小。
+- **`size_t XContainerObject_size_base(const XContainerObject\* Object)`**: 返回容器元素数量。
+- **`bool XContainerObject_isEmpty_base(const XContainerObject\* Object)`**: 判断容器是否为空。
+- **`void XContainerObject_clear_base(XContainerObject\* Object)`**: 清空容器内容。
+- **`void XContainerObject_swap_base(XContainerObject\* ObjectOne, XContainerObject\* ObjectTwo)`**: 交换两个容器的内容。
 
-### XVector(动态数组)
-### XString(字符串)
-### XStack(栈)
-### XMap(映射)
-### XQueue(队列)
-### XPriority_Queue(优先队列)
-## 算法
-### 二叉树
-#### XBinaryTreeObject(二叉树-基类)
-#### 平衡二叉树
-#### 红黑树
-### 迷宫
-#### XMaze(迷宫-基类)
-#### 迷宫生成
-##### 深度优先迷宫生成算法
-#### 迷宫寻路
-##### 深度优先寻路算法
-##### 广度优先寻路算法
-##### A*寻路算法
-### 排序
-#### 直接插入排序
-#### 希尔排序
-#### 直接选择排序
-#### 堆排序
-#### 冒泡排序
-#### 快速排序
-#### 归并排序
-#### 随机打乱顺序
-### 查找
-#### 二分查找
-### 其他
-#### swap(交换数据) 
-#### XDelay(延迟函数，多平台)
+#### 便捷宏
 
+为了简化使用，提供了大量宏：
+
+```
+1#define XContainerSize(Object) (((XContainerObject*)(Object))->m_size)
+2#define XContainerIsEmpty(Object) (XContainerSize(Object) == 0)
+3#define XContainerSetDataCopyMethod(Object, method) \
+4    (((XContainerObject*)(Object))->m_dataCopyMethod = method)
+5// ... 更多宏
+```
+
+### XList: 双向链表
+
+`XList` 是一个功能完备的双向链表容器。
+
+#### 核心 API
+
+- 插入
+
+  :
+
+  - `XListNode* XList_push_front(XList* list, void* value)`: 在头部插入元素。
+  - `XListNode* XList_push_back(XList* list, void* value)`: 在尾部插入元素。
+  - `void XList_insert(XList* list, XListNode* pos, const void* begin, const void* end)`: 在指定位置前插入一个范围的元素。
+
+- 删除
+
+  :
+
+  - `void XList_pop_front(XList* list)`: 删除头节点。
+  - `void XList_pop_back(XList* list)`: 删除尾节点。
+  - `void XList_erase(XList* list, const XListNode* begin, const XListNode* end)`: 删除一个范围内的节点。
+
+- 访问
+
+  :
+
+  - `XListNode* XList_front(XList* list)`: 获取头节点。
+  - `XListNode* XList_back(XList* list)`: 获取尾节点。
+  - `XListNode* XList_find(const XList* list, XEquality equality, const void* value)`: 查找元素。
+
+- 其他
+
+  :
+
+  - `void XList_sort(XList* list, XCompare compare)`: 对链表进行排序。
+  - `void XList_clear(XList* list)`: 清空链表。
+
+#### 迭代器
+
+`XList` 支持正向和反向迭代器，便于遍历。
+
+```
+1// 正向遍历
+2for (XList_iterator* it = XList_begin(list); 
+3     it != XList_end(list); 
+4     it = XList_iterator_add(list, it)) {
+5    // 处理 *it
+6}
+7
+8// 反向遍历
+9for (XList_reverse_iterator* it = XList_rbegin(list); 
+10     it != XList_rend(list); 
+11     it = XList_reverse_iterator_add(list, it)) {
+12    // 处理 *it
+13}
+```
+
+### XVector: 动态数组
+
+`XVector` 是一个类似 `std::vector` 的动态数组容器，支持随机访问。
+
+#### 核心 API
+
+- 容量管理
+
+  :
+
+  - `void XVector_reserve(XVector* vec, size_t new_cap)`: 预分配内存。
+  - `void XVector_shrink_to_fit(XVector* vec)`: 释放未使用的内存。
+
+- 元素访问
+
+  :
+
+  - `void* XVector_at(XVector* vec, size_t index)`: 访问指定索引的元素（带边界检查）。
+  - `void* XVector_data(XVector* vec)`: 获取底层数组指针。
+
+- 修改
+
+  :
+
+  - `void XVector_push_back(XVector* vec, const void* value)`: 在末尾添加元素。
+  - `void XVector_pop_back(XVector* vec)`: 删除末尾元素。
+  - `void XVector_insert(XVector* vec, size_t index, const void* value)`: 在指定位置插入元素。
+  - `void XVector_erase(XVector* vec, size_t index)`: 删除指定位置的元素。
+
+### XMap: 映射（关联容器）
+
+`XMap` 是一个基于红黑树实现的键值对映射容器，保证元素按键有序存储。
+
+#### 核心 API
+
+- 构造/析构
+
+  :
+
+  - `void XMap_init(XMap* map, size_t key_size, size_t val_size)`: 初始化映射，指定键和值的大小。
+
+- 容量
+
+  :
+
+  - `size_t XMap_size(const XMap* map)`: 返回元素数量。
+  - `bool XMap_empty(const XMap* map)`: 判断是否为空。
+
+- 元素访问
+
+  :
+
+  - `void* XMap_at(XMap* map, const void* key)`: 访问指定键对应的值（如果键不存在会插入默认值）。
+  - `void* XMap_find(XMap* map, const void* key)`: 查找键，返回值指针或 `NULL`。
+
+- 修改
+
+  :
+
+  - `void XMap_insert(XMap* map, const void* key, const void* value)`: 插入键值对。
+  - `void XMap_erase(XMap* map, const void* key)`: 删除指定键的元素。
+
+- 迭代器
+
+  :
+
+  - `XMap_iterator XMap_begin(XMap* map)`: 返回起始迭代器。
+  - `XMap_iterator XMap_end(XMap* map)`: 返回结束迭代器。
+
+------
+
+## 事件循环与信号槽系统
+
+这是 XinYueC 最具特色的部分，它使得在 C 语言中编写异步、响应式程序成为可能。
+
+### 核心组件
+
+1. **`XEvent`**: 事件的基类。所有具体事件（如 `XTimerEvent`, `XMetaCallEvent`）都继承自它。
+2. **`XEventType`**: 定义了所有事件类型的枚举，例如 `XET_Timer`, `XET_MetaCall`, `XET_Custom` 等。
+3. **`XAbstractEventDispatcher`**: 事件分发器的抽象基类，负责与操作系统底层（如 `epoll`, `kqueue`, `select`）交互，监听 I/O 和定时器事件。
+4. **`XEventLoop`**: 事件循环的具体管理者。它的 `exec()` 方法是整个异步系统的主循环。
+5. **`XSignalSlot`**: 信号槽连接管理器，负责维护信号与槽之间的连接，并在信号发射时执行相应的槽函数。
+6. **`XThread` & `XThreadData`**: 线程及其私有数据。`XThreadData` 中包含了该线程的事件队列 (`m_postedEvents`) 和 `XSignalSlot` 实例。
+
+### 工作流程
+
+1. **事件投递**: 当需要异步处理某事时（例如，跨线程调用槽函数），会创建一个 `XEvent`（通常是 `XMetaCallEvent`）并通过 `XThreadData_postEvent` 将其放入目标线程的事件队列。
+2. **事件循环**: 目标线程的 `XEventLoop` 在 `exec()` 循环中，会定期调用 `processPostedEvents()`。
+3. **事件分发**: `processPostedEvents()` 从队列中取出事件，并调用 `event->receiver->event(event)`。
+4. **事件处理**: `XObject` 的 `event` 虚函数根据事件类型进行分发。对于 `XET_MetaCall` 事件，会调用 `XEventMetaCall_handler`，该处理器最终会执行槽函数。
+5. **信号发射**: 当 `xobject_emit_signal` 被调用时，`XSignalSlot` 会查找所有匹配的连接。如果是队列连接或跨线程，则会创建一个 `XMetaCallEvent` 并投递到接收者线程的事件队列，从而触发上述流程。
+
+### 跨线程通信示例
+
+```
+1// 1. 创建工作对象并移动到新线程
+2Worker* worker = malloc(sizeof(Worker));
+3XThread* worker_thread = XThread_create();
+4XObject_moveToThread((XObject*)worker, worker_thread);
+5
+6// 2. 建立连接（队列连接）
+7xobject_connect(button, SIGNAL(clicked), worker, SLOT(doWork));
+8
+9// 3. 主线程发射信号
+10xobject_emit_signal(button, SIGNAL(clicked));
+11
+12// 4. 框架自动将 MetaCallEvent 投递到 worker_thread 的事件队列
+13// 5. worker_thread 的事件循环处理该事件，调用 worker->doWork()
+```
+
+------
+
+## 使用方法
+
+### CMake 集成
+
+您可以轻松地将 XinYueC 集成到您自己的 CMake 项目中。
+
+1. 在您的项目根目录下创建一个 `SourceFile` 文件夹。
+2. 将 XinYueC 的源码（`.c` 和 `.h` 文件）放入此文件夹或其子文件夹中。
+3. 在您的 `CMakeLists.txt` 中包含以下内容：
+
+```
+1cmake_minimum_required(VERSION 3.5)
+2project(YourProject VERSION 0.1 LANGUAGES C)
+3
+4set(CMAKE_INCLUDE_CURRENT_DIR ON)
+5set(CMAKE_C_STANDARD 99)
+6set(CMAKE_C_STANDARD_REQUIRED ON)
+7
+8# 自动查找 SourceFile 目录下的所有头文件路径
+9macro(FIND_INCLUDE_DIR result curdir)
+10    file(GLOB_RECURSE children "${curdir}/*.hpp" "${curdir}/*.h")
+11    set(dirlist "")
+12    foreach(child ${children})
+13        string(REGEX REPLACE "(.*)/.*" "\\1" LIB_NAME ${child})
+14        if(IS_DIRECTORY ${LIB_NAME})
+15            LIST(APPEND dirlist ${LIB_NAME})
+16        endif()
+17    endforeach()
+18    set(${result} ${dirlist})
+19endmacro()
+20
+21FIND_INCLUDE_DIR(INCLUDE_DIR_LIST "SourceFile")
+22include_directories(${INCLUDE_DIR_LIST})
+23
+24# 递归搜索 SourceFile 目录下的所有源文件
+25file(GLOB_RECURSE SOURCE_FILES "SourceFile/*.c" "SourceFile/*.h")
+26
+27# 添加可执行文件
+28add_executable(${PROJECT_NAME} ${SOURCE_FILES})
+```
+
+每次添加或删除源文件后，只需右键点击 `CMakeLists.txt` 并重新配置即可。
+
+> **探索更多细节，请访问项目源码**: https://gitee.com/xin___yue/XinYueC/tree/develop/

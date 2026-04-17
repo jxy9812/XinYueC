@@ -5,10 +5,6 @@
 #include "XIODevicePrivate.h"
 #include <string.h>
 #include <assert.h>
-//声明 
-//static bool XIODevicePrivate_fillFromBuffer(XIODevice* self, char* data, int64_t maxlen, int channel);
-static bool XIODevicePrivate_canReadLineFromBuffer(const XIODevicePrivate* d, int channel);
-
 static void VXIODevice_deinit(XIODevice* io);
 static int64_t VXIODevice_readData(XIODevice* self, char* data, int64_t maxlen);
 static int64_t VXIODevice_writeData(XIODevice* self, const char* data, int64_t len);
@@ -72,22 +68,13 @@ void VXIODevice_deinit(XIODevice* obj)
 		self->m_openMode = XIODevice_NotOpen;
 	}
 
-	// 清理私有数据
+	// 清理私有数据: 现在只需要删除单个 readBuffer 和 writeBuffer
 	if (self->m_d) {
-		for (int i = 0; i < self->m_d->maxReadChannels; ++i) {
-			if (self->m_d->readBuffers[i]) XByteArray_delete_base(self->m_d->readBuffers[i]);
-			if (self->m_d->ungetBuffers[i]) XByteArray_delete_base(self->m_d->ungetBuffers[i]);
-		}
-		XMemory_free(self->m_d->readBuffers);
-		XMemory_free(self->m_d->ungetBuffers);
-		if (self->m_d->writeBuffer) XByteArray_delete_base(self->m_d->writeBuffer);
-		if (self->m_d->transactionBuffer) XByteArray_delete_base(self->m_d->transactionBuffer);
-		XMemory_free(self->m_d);
+		XIODevicePrivate_delete(self->m_d); // 直接调用新的 delete 函数
 		self->m_d = NULL;
 	}
 	// 释放父对象
 	XClass_Deinit_Parent(XObject, obj);
-	//XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(io);
 }
 
 int64_t VXIODevice_readData(XIODevice* self, char* data, int64_t maxlen)
@@ -117,13 +104,8 @@ void VXIODevice_close(XIODevice* self)
 		self->m_d->aboutToCloseEmitted = true;
 	}
 
-	// 清空所有缓冲区
-	for (int i = 0; i < self->m_d->maxReadChannels; ++i) {
-		XByteArray_clear_base(self->m_d->readBuffers[i]);
-		XByteArray_clear_base(self->m_d->ungetBuffers[i]);
-	}
-	XByteArray_clear_base(self->m_d->writeBuffer);
-
+	// 关闭时，基类不负责清空缓冲区，由具体子类决定
+	// 但可以提交任何未完成的事务
 	if (self->m_d->transactionStarted) {
 		XIODevicePrivate_commitTransaction(self->m_d);
 	}
@@ -132,7 +114,7 @@ void VXIODevice_close(XIODevice* self)
 	self->m_d->aboutToCloseEmitted = false;
 }
 
-bool VXIODevice_isSequential(const XIODevice * self)
+bool VXIODevice_isSequential(const XIODevice* self)
 {
 	return false;
 }
@@ -180,9 +162,10 @@ bool VXIODevice_reset(XIODevice* self)
 int64_t VXIODevice_bytesAvailable(const XIODevice* self)
 {
 	if (!self || !self->m_d) return 0;
-	int ch = XIODevice_currentReadChannel(self);
-	if (ch < 0 || ch >= self->m_d->maxReadChannels) return 0;
-	return XByteArray_size_base(self->m_d->readBuffers[ch]);
+	// 直接返回 readBuffer 的可用字节数
+	int currentReadChannel = XIODevice_currentReadChannel(self);
+	struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(self->m_d, currentReadChannel);
+	return XRingBuffer_available(readBuf);
 }
 
 int64_t VXIODevice_bytesToWrite(const XIODevice* self)
@@ -195,9 +178,8 @@ int64_t VXIODevice_bytesToWrite(const XIODevice* self)
 bool VXIODevice_canReadLine(const XIODevice* self)
 {
 	if (!self || !self->m_d) return false;
-	int ch = XIODevice_currentReadChannel(self);
-	if (XIODevicePrivate_canReadLineFromBuffer(self->m_d, ch)) return true;
-	return false;
+	// 不再需要 channel，直接检查 readBuffer
+	return XIODevicePrivate_canReadLineFromBuffer(self->m_d);
 }
 
 bool VXIODevice_waitForReadyRead(XIODevice* self, int msecs)
@@ -220,21 +202,9 @@ int64_t VXIODevice_skipData(XIODevice* self, int64_t maxSize)
 {
 	if (!self || maxSize <= 0) return 0;
 
-	int ch = XIODevice_currentReadChannel(self);
-	XByteArray* buf = self->m_d->readBuffers[ch];
-	int64_t buffered = buf ? XByteArray_size_base(buf) : 0;
-	int64_t skipped = 0;
-
-	// 先跳过缓冲区
-	if (buffered > 0) {
-		int64_t toSkip = (buffered < maxSize) ? buffered : maxSize;
-		XByteArray_remove_base(buf, 0, toSkip);
-		skipped = toSkip;
-		if (skipped >= maxSize) return skipped;
-	}
-
-	// 从设备读取并丢弃剩余部分
+	// 从设备读取并丢弃
 	char temp[4096];
+	int64_t skipped = 0;
 	while (skipped < maxSize) {
 		int64_t remaining = maxSize - skipped;
 		int64_t toRead = (remaining > (int64_t)sizeof(temp)) ? (int64_t)sizeof(temp) : remaining;
@@ -244,25 +214,4 @@ int64_t VXIODevice_skipData(XIODevice* self, int64_t maxSize)
 	}
 
 	return skipped;
-}
-// ========== 内部辅助函数 ==========
-//static bool XIODevicePrivate_fillFromBuffer(XIODevice* self, char* data, int64_t maxlen, int channel) {
-//	if (!self || !self->m_d || !data || maxlen <= 0) return false;
-//	XByteArray* buf = self->m_d->readBuffers[channel];
-//	if (!buf || XByteArray_size_base(buf) == 0) return false;
-//
-//	int64_t toCopy = (XByteArray_size_base(buf) < maxlen) ? XByteArray_size_base(buf) : maxlen;
-//	memcpy(data, XByteArray_const_data_base(buf), (size_t)toCopy);
-//	XByteArray_remove_base(buf, 0, toCopy);
-//	return true;
-//}
-
-bool XIODevicePrivate_canReadLineFromBuffer(const XIODevicePrivate* d, int channel) {
-	if (!d || !d->readBuffers[channel]) return false;
-	const char* p = XContainerDataPtr(d->readBuffers[channel]);
-	int64_t len = XByteArray_size_base(d->readBuffers[channel]);
-	for (int64_t i = 0; i < len; ++i) {
-		if (p[i] == '\n') return true;
-	}
-	return false;
 }

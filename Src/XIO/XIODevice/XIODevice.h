@@ -271,6 +271,12 @@ int64_t XIODevice_write_cstr(XIODevice* self, const char* data);
 int64_t XIODevice_write_byteArray(XIODevice* self, const XByteArray* data);
 
 /**
+ * @brief 刷新写缓冲区，将所有待发送数据写入底层设备。
+ * @param self XIODevice实例指针
+ * @return 成功返回true，失败返回false。
+ */
+bool XIODevice_flush(XIODevice* self);
+/**
  * @brief 从设备中窥探（不移除）最多 maxlen 个字节的数据到缓冲区 data 中
  * @param self 指向 XIODevice 对象的指针
  * @param data 指向用于存放窥探数据的缓冲区

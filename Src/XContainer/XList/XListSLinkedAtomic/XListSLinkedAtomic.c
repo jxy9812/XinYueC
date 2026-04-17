@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "XStack.h"
-#include "XAlgorithm.h"
+//#include "XAlgorithm.h"
 // 内部函数声明
 static bool VXListBase_push_front_node(XListSLinkedAtomic* this_list, XListSNodeAtomic* node);
 static bool VXListBase_push_back_node(XListSLinkedAtomic* this_list, XListSNodeAtomic* node);
@@ -25,10 +25,12 @@ static void VXClass_copy(XListSLinkedAtomic* object, const XListSLinkedAtomic* s
 static void VXClass_move(XListSLinkedAtomic* object, XListSLinkedAtomic* src);
 static void VXListAtomic_deinit(XListSLinkedAtomic* this_list);
 static void VXListSLinkedAtomic_swap(XListSLinkedAtomic* list1, XListSLinkedAtomic* list2);
+
+//#define CreatNode(this_list)    XMemory_malloc(ALIGN_UP(sizeof(XListSNode)+XContainerTypeSize(this_list),sizeof(void*)))
+
 // 创建新节点
 static XListSNodeAtomic* createNode(XListSLinkedAtomic* this_list, void* pvData) {
-    XListSNodeAtomic* newNode = (XListSNodeAtomic*)XMemory_malloc(
-        sizeof(XListSNodeAtomic) + XContainerTypeSize(this_list));
+    XListSNodeAtomic* newNode = (XListSNodeAtomic*)XMemory_malloc(ALIGN_UP(sizeof(XListSNodeAtomic) + XContainerTypeSize(this_list), sizeof(void*)));
     if (newNode == NULL) {
         perror("创建节点失败");
         return NULL;

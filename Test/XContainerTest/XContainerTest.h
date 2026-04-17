@@ -38,6 +38,8 @@ extern "C" {
 	void XMenu_XSetTest(XMenu* root);
 	void XMenu_XHashSetTest(XMenu* root);
 
+	void XMenu_XRingChunkTest(XMenu* root);
+	void XMenu_XRingBufferTest(XMenu* root);
 	//字符串
 	void XMenu_XStringTest(XMenu* root);
 

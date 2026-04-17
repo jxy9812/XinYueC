@@ -6,13 +6,12 @@
 #include "XVariant.h"
 #include "XVariantList.h"
 #include <string.h>
-
+static bool VXObject_event(XSerialPort* port, XEvent* e);
+void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort* receiver);
 bool XSerialPort_platform_open(XSerialPort* port, XIODeviceBaseMode mode);
 void XSerialPort_platform_close(XSerialPort* port);
 int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize);
 int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t len);
-int64_t XSerialPort_platform_bytesAvailable(const XSerialPort* port);
-int64_t XSerialPort_platform_bytesToWrite(const XSerialPort* port);
 bool XSerialPort_platform_applyConfig(XSerialPort* port);
 void XSerialPort_platform_poll(XSerialPort* port);
 bool XSerialPort_platform_waitForReadyRead(XSerialPort* port, int msecs);
@@ -32,7 +31,14 @@ bool XSerialPort_setBaudRate(XSerialPort* port, int32_t baudRate, XSerialPort_Di
     }
     return ok;
 }
-
+bool VXObject_event(XSerialPort* port, XEvent* e)
+{
+    if (e->type == XEVENT_TYPE_SOCK_ACT)
+    {
+        XSerialPort_platform_XChildEvent_handler((XEventSockAct*)e,port);
+    }
+    return XClass_Parent(XObject, EXObject_Event, bool (*)(XSerialPort*, XEvent*))(port, e);
+}
 // ========== 信号处理函数 ==========
 static void readyReadHandler(XObject* receiver, void* args) {
     XSerialPort* port = (XSerialPort*)XObject_sender(receiver);
@@ -108,16 +114,6 @@ static void VXSerialPort_close(XIODevice* io) {
 static bool VXSerialPort_isSequential(const XIODevice* io) {
     (void)io;
     return true;
-}
-
-static int64_t VXSerialPort_bytesAvailable(const XIODevice* io) {
-    const XSerialPort* port = (const XSerialPort*)io;
-    return XSerialPort_platform_bytesAvailable(port);
-}
-
-static int64_t VXSerialPort_bytesToWrite(const XIODevice* io) {
-    const XSerialPort* port = (const XSerialPort*)io;
-    return XSerialPort_platform_bytesToWrite(port);
 }
 
 static bool VXSerialPort_canReadLine(const XIODevice* io) {
@@ -220,8 +216,6 @@ XVtable* XSerialPort_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXSerialPort_open);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXSerialPort_close);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_IsSequential, VXSerialPort_isSequential);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesAvailable, VXSerialPort_bytesAvailable);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesToWrite, VXSerialPort_bytesToWrite);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_CanReadLine, VXSerialPort_canReadLine);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForReadyRead, VXSerialPort_waitForReadyRead);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForBytesWritten, VXSerialPort_waitForBytesWritten);
@@ -229,7 +223,7 @@ XVtable* XSerialPort_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData, VXSerialPort_writeData);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSerialPort_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXSerialPort_poll);
-
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXObject_event);
 #if SHOWCONTAINERSIZE
     printf("XSerialPort size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

@@ -31,6 +31,7 @@ bool XSocketDescriptor_isValid(XSocketDescriptor sd);
  */
 XSocketDescriptor XSocketDescriptor_fromIntptr(intptr_t value);
 
+int32_t XSocketDescriptor_compare(const XSocketDescriptor* str1, const XSocketDescriptor* str2);
 /**
  * @brief 转换回整数（用于日志、调试，禁止用于逻辑判断）
  */

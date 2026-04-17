@@ -1,7 +1,7 @@
 ﻿// XEventDispatcher_win.c
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include"IOCPInfo.h"
 #include <objbase.h>  // 可选，但更明确
 #include <mmsystem.h>
 #include <winsock2.h>
@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdint.h>
 #pragma comment(lib, "winmm.lib")
+//static  HANDLE ioCompletionPort=NULL;    // 全局 IOCP 句柄;
 /**
  * @brief 定时器信息结构体 (Windows 私有)
  */
@@ -38,24 +39,13 @@ typedef struct {
 } XEventDispatcherWin32_TimerInfo;
 
 /**
- * @brief 套接字信息结构体 (Windows 私有)
- *
- * 使用 WSAAsyncSelect 模型，每个套接字关联一个窗口句柄。
- */
-typedef struct XEventDispatcherWin32_SocketInfo {
-    XSocketDescriptor socket;   ///< 套接字描述符
-    HWND hwnd;                  ///< 用于接收网络事件的隐藏窗口句柄
-    long eventMask;             ///< 当前注册的事件掩码 (FD_READ, FD_WRITE 等)
-    XListSLinked* notifiers;    ///< 该套接字上注册的通知器列表
-} XEventDispatcherWin32_SocketInfo;
-
-/**
  * @brief Windows 平台私有数据
  */
 typedef struct
 {
     XAbstractEventDispatcherPrivate m_dp;
     HWND internalHwnd;          ///< 内部消息窗口句柄，用于接收定时器和网络事件
+    HANDLE ioCompletionPort;
     XHashMap* timers;           ///< 定时器映射: timerId  -> XEventDispatcherWin32_TimerInfo*
     XHashMap* sockets;          ///< 套接字映射: socket.value -> XEventDispatcherWin32_SocketInfo*
     bool interrupt;             ///< 中断标志，用于 interrupt()
@@ -71,11 +61,12 @@ typedef struct XEventDispatcherWin32
 XVtable* XEventDispatcherWin32_class_init();
 // 辅助函数声明
 static LRESULT CALLBACK XEventDispatcherWin32_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dispatcher, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dispatcher, _Out_ DWORD NumberOfBytesTransferred,
+    _Out_ ULONG_PTR CompletionKey,
+    _Out_ LPOVERLAPPED* Overlapped);
 static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* dispatcher, UINT_PTR timerId);
-static XEventDispatcherWin32_SocketInfo* XEventDispatcherWin32_findOrCreateSocketInfo(XEventDispatcherWin32* dispatcher, XSocketDescriptor socket);
-static void XEventDispatcherWin32_updateSocketEventMask(XEventDispatcherWin32_SocketInfo* sockInfo);
-
+//iocp绑定
+bool IOCP_bind(XSocketDescriptor socket,XObject* obj);
 // Windows 消息常量
 #define XDISPATCHER_WM_SOCKET (WM_USER + 1)
 #define XDISPATCHER_WM_WAKEUP (WM_USER + 2)
@@ -107,10 +98,10 @@ static LRESULT CALLBACK XEventDispatcherWin32_WndProc(HWND hwnd, UINT msg, WPARA
     //XPrintf("接收到系统事件\n");
     if (msg == XDISPATCHER_WM_SOCKET) {
         // 网络事件
-        XEventDispatcherWin32* dispatcher = (XEventDispatcherWin32*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+       /* XEventDispatcherWin32* dispatcher = (XEventDispatcherWin32*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
         if (dispatcher) {
             XEventDispatcherWin32_handleSocketMessage(dispatcher, hwnd, msg, wParam, lParam);
-        }
+        }*/
         return 0;
     }
     else if (msg == XDISPATCHER_WM_WAKEUP) {
@@ -140,39 +131,42 @@ static LRESULT CALLBACK XEventDispatcherWin32_WndProc(HWND hwnd, UINT msg, WPARA
 /**
  * @brief 处理网络事件消息
  */
-static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dispatcher, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dispatcher, _Out_ DWORD NumberOfBytesTransferred,
+    _Out_ ULONG_PTR completionKey,
+    _Out_ LPOVERLAPPED* overlapped)
 {
-    (void)hwnd; (void)msg;
-    SOCKET socket = (SOCKET)wParam;
-    int event = WSAGETSELECTEVENT(lParam);
-    int error = WSAGETSELECTERROR(lParam);
-
-    if (error != 0) {
-        event = FD_CLOSE;
-    }
-
+    XEventContext_IOCP* ioCtx = (XEventContext_IOCP*)overlapped;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
+    XEventSockAct* event = XEventSockAct_create(ioCtx->socket, XSocketAct_Invalid);
+    if(!event)return;
     XMutex_lock(GetXMutex(dispatcher));
-
-    intptr_t socket_key = (intptr_t)socket;
-    XHashMap_iterator it;
-    if (XHashMap_find_base(d->sockets, &socket_key, &it)) {
-        XPair* pair = XHashMap_iterator_data(&it);
-        XEventDispatcherWin32_SocketInfo* sockInfo = (XEventDispatcherWin32_SocketInfo*)XPair_second(pair);
-
-        for (size_t i = 0; i < XVector_size_base(sockInfo->notifiers); ++i) {
-            XSocketNotifier* notifier = *(XSocketNotifier**)XVector_at_base(sockInfo->notifiers, i);
-            if (notifier && XSocketNotifier_isEnabled(notifier)) {
-                XSocketNotifierType type = XSocketNotifier_type(notifier);
-                if ((type == XSocketNotifier_Read && (event & (FD_READ | FD_ACCEPT | FD_CLOSE))) ||
-                    (type == XSocketNotifier_Write && (event & (FD_WRITE | FD_CONNECT))) ||
-                    (type == XSocketNotifier_Exception && (event & FD_OOB))) {
-                    XSocketNotifier_activated_signal(notifier, XSocketDescriptor_fromIntptr((intptr_t)socket), type);
+    if (ioCtx->eventMask & FD_READ)
+        event->actType |= XSocketAct_Read;
+    if (ioCtx->eventMask & FD_WRITE)
+        event->actType |= XSocketAct_Write;
+    XCoreApplication_postEvent(completionKey, event, XEVENT_PRIORITY_NORMAL);
+    //套接字监听器
+    XVector* notifiers = XMapBase_value_base(d->sockets, &socket);
+    if (notifiers)
+    {
+        for_each_iterator(notifiers,XVector,it)
+        {
+            XSocketNotifier** lp = XVector_iterator_data(&it);
+            if (lp)
+            {
+                XSocketNotifier* notifier = *lp;
+                if(!notifier)continue;
+                if (!XSocketNotifier_isEnabled(notifier))
+                    continue;//当前监听器未启用
+                XSocketNotifierType t = XSocketNotifier_type(notifier);
+                if ((t & XSocketNotifier_Read && ioCtx->eventMask & FD_READ) || (t & XSocketNotifier_Write && ioCtx->eventMask & FD_WRITE))
+                {//类型符合投递事件
+                    XEventSockAct* e = XEventSockAct_create(ioCtx->socket, event->actType);
+                    XCoreApplication_postEvent(notifier, e, XEVENT_PRIORITY_NORMAL);
                 }
             }
         }
     }
-
     XMutex_unlock(GetXMutex(dispatcher));
 }
 
@@ -199,70 +193,78 @@ static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* disp
 
     XMutex_unlock(GetXMutex(dispatcher));
 }
-
-/**
- * @brief 查找或创建套接字信息
- */
-static XEventDispatcherWin32_SocketInfo* XEventDispatcherWin32_findOrCreateSocketInfo(XEventDispatcherWin32* dispatcher, XSocketDescriptor socket)
+bool IOCP_bind(XSocketDescriptor socket, XObject* obj)
 {
+    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
+    XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
-    SOCKET s = (SOCKET)XSocketDescriptor_toIntptr(socket);
-    intptr_t socket_key = (intptr_t)s;
-
-    XHashMap_iterator it;
-    if (XHashMap_find_base(d->sockets, &socket_key, &it)) {
-        XPair* pair = XHashMap_iterator_data(&it);
-        return (XEventDispatcherWin32_SocketInfo*)XPair_second(pair);
-    }
-    else {
-        XEventDispatcherWin32_SocketInfo* sockInfo = (XEventDispatcherWin32_SocketInfo*)XMemory_calloc(1, sizeof(XEventDispatcherWin32_SocketInfo));
-        if (!sockInfo) return NULL;
-        sockInfo->socket = socket;
-        sockInfo->hwnd = d->internalHwnd;
-        sockInfo->notifiers = XVector_Create(XSocketNotifier*);
-        if (!sockInfo->notifiers) {
-            XMemory_free(sockInfo);
-            return NULL;
-        }
-
-        // 插入到 sockets HashMap
-        //XPair* newPair = XPair_create(sizeof(intptr_t), sizeof(XEventDispatcherWin32_SocketInfo*));
-        //XPair_insert(newPair, &socket_key, &sockInfo);
-        XHashMap_insert_base(d->sockets, &socket_key, &sockInfo);
-        //XPair_delete(newPair);
-
-        return sockInfo;
-    }
+    return CreateIoCompletionPort((HANDLE)XSocketDescriptor_toIntptr(socket), d->ioCompletionPort, obj, 0);
 }
-
-/**
- * @brief 更新套接字的事件掩码
- */
-static void XEventDispatcherWin32_updateSocketEventMask(XEventDispatcherWin32_SocketInfo* sockInfo)
+static void IOCP_handle(XAbstractEventDispatcher* dispatcher)
 {
-    long newMask = 0;
-    for (size_t i = 0; i < XVector_size_base(sockInfo->notifiers); ++i) {
-        XSocketNotifier* notifier = *(XSocketNotifier**)XVector_at_base(sockInfo->notifiers, i);
-        if (notifier && XSocketNotifier_isEnabled(notifier)) {
-            XSocketNotifierType type = XSocketNotifier_type(notifier);
-            if (type == XSocketNotifier_Read) newMask |= FD_READ | FD_ACCEPT | FD_CLOSE;
-            else if (type == XSocketNotifier_Write) newMask |= FD_WRITE | FD_CONNECT;
-            else if (type == XSocketNotifier_Exception) newMask |= FD_OOB;
-        }
-    }
+    XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
+    XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
+    DWORD bytesTransferred = 0;
+    ULONG_PTR completionKey = 0;
+    LPOVERLAPPED overlapped = NULL;
 
-    if (newMask != sockInfo->eventMask) {
-        SOCKET s = (SOCKET)XSocketDescriptor_toIntptr(sockInfo->socket);
-        if (newMask == 0) {
-            WSAAsyncSelect(s, sockInfo->hwnd, 0, 0);
+    BOOL success = GetQueuedCompletionStatus(
+        d->ioCompletionPort,
+        &bytesTransferred,
+        &completionKey,
+        &overlapped,
+        0 // 非阻塞轮询
+    );
+
+    if (overlapped != NULL) 
+    {
+        //XPrintf("收到信息\n");
+        // --- 主线程在此处“发现”事件，但绝不处理！ ---
+        XEventContext_IOCP* ioCtx = (XEventContext_IOCP*)overlapped;
+        if(success)
+        {
+            if (ioCtx->type == XEventContextType_Type_Timer)
+            {
+                XEventDispatcherWin32_handleTimerMessage(dispatcher, ((XEventContext_Timer*)ioCtx)->id);
+            }
+            else if (ioCtx->type == XEventContextType_Type_Socket || ioCtx->type == XEventContextType_Type_File)
+            {
+                XEventDispatcherWin32_handleSocketMessage(dispatcher, bytesTransferred, completionKey, overlapped);
+            }
         }
-        else {
-            WSAAsyncSelect(s, sockInfo->hwnd, XDISPATCHER_WM_SOCKET, newMask);
+        else
+        {
+            // 情况 2: I/O 操作失败完成
+            DWORD lastError = GetLastError(); // 注意：这里用 GetLastError() 而不是 WSAGetLastError()
+            // 常见的“连接关闭”错误码
+            if (lastError == ERROR_NETNAME_DELETED ||      // 64
+                lastError == ERROR_OPERATION_ABORTED ||    // 995
+                lastError == WSAENETRESET ||               // 10052
+                lastError == WSAECONNRESET) {              // 10054
+
+                //printf("Client disconnected! Error: %lu\notifier", lastError);
+                //CleanupClient(pIoData); // 执行清理
+                return;
+            }
         }
-        sockInfo->eventMask = newMask;
+        //// 创建跨平台 I/O 事件
+        //XIoEvent* ioEvent = XEventIo_create(
+        //    ioCtx->eventType,
+        //    ioCtx->buffer,
+        //    bytesTransferred,
+        //    ioCtx->handle
+        //);
+        //ioEvent->posted = true;
+
+        // 【关键】将事件转发给关联的对象
+        // 对象会在其自己的线程上下文中处理此事件
+        //XCoreApplication_postEvent(ioCtx->object, (XEvent*)ioEvent, XEVENT_PRIORITY_NORMAL);
+
+        // 清理上下文（假设是一次性操作，实际应用中可能需要复用）
+        //XEventDispatcherWin32_deleteIoContext(ioCtx);
+       
     }
 }
-
 // ========================
 // 虚函数实现
 // ========================
@@ -273,29 +275,36 @@ static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispa
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
 
-    // 发送 awake 信号
-    XAbstractEventDispatcher_awake_signal(dispatcher);
+    if (d->internalHwnd)
+    {
+        MSG msg;
+        bool processed = false;
 
-    MSG msg;
-    bool processed = false;
-
-    // 先处理所有已排队的消息（PeekMessage 不会阻塞）
-    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-        if (msg.message == WM_QUIT) {
-            XEvent* quitEvent = XEvent_create(XEVENT_TYPE_QUIT);
-            XCoreApplication_postEvent(XCoreApplication_instance(), quitEvent, XEVENT_PRIORITY_HIGH);
-            break;
+        // 先处理所有已排队的消息（PeekMessage 不会阻塞）
+        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) {
+                XEvent* quitEvent = XEvent_create(XEVENT_TYPE_QUIT);
+                XCoreApplication_postEvent(XCoreApplication_instance(), quitEvent, XEVENT_PRIORITY_HIGH);
+                break;
+            }
+            TranslateMessage(&msg);
+            DispatchMessage(&msg); // ← 这会调用 WndProc（处理 socket/timer 等）
+            processed = true;
         }
-        TranslateMessage(&msg);
-        DispatchMessage(&msg); // ← 这会调用 WndProc（处理 socket/timer 等）
-        processed = true;
     }
-
+   
+    if (d->ioCompletionPort)
+    {//只在主线程中接收数据分发事件
+        IOCP_handle(dispatcher);
+    }
+    
     // 【关键修改】只有设置了 WaitForMoreEvents，并且当前没有中断，才进入等待
     if ((flags & XEventLoop_WaitForMoreEvents) && !d->interrupt) {
         XAbstractEventDispatcher_aboutToBlock_signal(dispatcher);
         DWORD waitRet = MsgWaitForMultipleObjectsEx(0, NULL, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (waitRet != WAIT_FAILED) {
+            // 发送 awake 信号
+            XAbstractEventDispatcher_awake_signal(dispatcher);
             // 被唤醒后，可以再次尝试处理新消息（可选，通常由下一次 processEvents 调用处理）
             // 这里我们不立即处理，保持与 Qt 一致：WaitForMoreEvents 只保证“至少等一个事件到来”
             // 实际处理留到下次调用
@@ -315,11 +324,33 @@ static void VXEventDispatcherWin32_registerSocketNotifier(XAbstractEventDispatch
     if (!XSocketDescriptor_isValid(socket)) return;
 
     XMutex_lock(GetXMutex(dispatcher));
-    XEventDispatcherWin32_SocketInfo* sockInfo = XEventDispatcherWin32_findOrCreateSocketInfo(self, socket);
+    if (!XMapBase_contains(d->sockets, &socket))
+    {
+        XVector v = { 0 };
+        XVector_init(&v,sizeof(XSocketNotifier*));
+        XContainerSetCompare(&v,ptr_compare);
+        XMapBase_insert_base(d->sockets, &socket,&v);
+    }
+    XVector* notifiers = XMapBase_value_base(d->sockets, &socket);
+    if (notifiers&&XVector_indexOf(notifiers,&notifier,0)==-1)
+    {
+       /* if (XVector_isEmpty_base(notifiers))
+        {
+           if(CreateIoCompletionPort((HANDLE)XSocketDescriptor_toIntptr(socket), d->ioCompletionPort, notifiers, 0))
+               XVector_append_base(notifiers, &notifier);
+        }
+        else*/
+        {
+            XVector_append_base(notifiers, &notifier);
+        }
+        
+    }
+
+  /*  XEventDispatcherWin32_SocketInfo* sockInfo = XEventDispatcherWin32_findOrCreateSocketInfo(self, socket);
     if (sockInfo) {
         XVector_push_back_base(sockInfo->notifiers, &notifier);
         XEventDispatcherWin32_updateSocketEventMask(sockInfo);
-    }
+    }*/
     XMutex_unlock(GetXMutex(dispatcher));
 }
 
@@ -332,36 +363,39 @@ static void VXEventDispatcherWin32_unregisterSocketNotifier(XAbstractEventDispat
     if (!XSocketDescriptor_isValid(socket)) return;
 
     XMutex_lock(GetXMutex(dispatcher));
-    intptr_t socket_key = XSocketDescriptor_toIntptr(socket);
-    XHashMap_iterator it;
-    if (XHashMap_find_base(d->sockets, &socket_key, &it)) {
-        XPair* pair = XHashMap_iterator_data(&it);
-        XEventDispatcherWin32_SocketInfo* sockInfo = (XEventDispatcherWin32_SocketInfo*)XPair_second(pair);
-
-        for (size_t i = 0; i < XVector_size_base(sockInfo->notifiers); ++i) {
-            XSocketNotifier** pnotifier = (XSocketNotifier**)XVector_at_base(sockInfo->notifiers, i);
-            if (*pnotifier == notifier) {
-                XVector_removeAt_base(sockInfo->notifiers, i);
-                break;
-            }
-        }
-        XEventDispatcherWin32_updateSocketEventMask(sockInfo);
-
-        if (XVector_isEmpty_base(sockInfo->notifiers)) {
-            SOCKET s = (SOCKET)XSocketDescriptor_toIntptr(socket);
-            WSAAsyncSelect(s, NULL, 0, 0);
-            XHashMap_remove_base(d->sockets, &socket_key);
-            XVector_delete_base(sockInfo->notifiers);
-            XMemory_free(sockInfo);
-        }
+    XVector* notifiers = XMapBase_value_base(d->sockets, &socket);
+    if (notifiers)
+    {
+        int index = XVector_indexOf(notifiers, &notifier, 0);
+        if (index != -1)
+            XVector_remove_base(d->sockets,index,1);
     }
+    //intptr_t socket_key = XSocketDescriptor_toIntptr(socket);
+    //XHashMap_iterator it;
+    //if (XHashMap_find_base(d->sockets, &socket_key, &it)) {
+    //    XPair* pair = XHashMap_iterator_data(&it);
+    //    XEventDispatcherWin32_SocketInfo* sockInfo = (XEventDispatcherWin32_SocketInfo*)XPair_second(pair);
+
+    //    for (size_t i = 0; i < XVector_size_base(sockInfo->notifiers); ++i) {
+    //        XSocketNotifier** pnotifier = (XSocketNotifier**)XVector_at_base(sockInfo->notifiers, i);
+    //        if (*pnotifier == notifier) {
+    //            XVector_removeAt_base(sockInfo->notifiers, i);
+    //            break;
+    //        }
+    //    }
+    //    XEventDispatcherWin32_updateSocketEventMask(sockInfo);
+
+    //    if (XVector_isEmpty_base(sockInfo->notifiers)) {
+    //        SOCKET s = (SOCKET)XSocketDescriptor_toIntptr(socket);
+    //        WSAAsyncSelect(s, NULL, 0, 0);
+    //        XHashMap_remove_base(d->sockets, &socket_key);
+    //        XVector_delete_base(sockInfo->notifiers);
+    //        XMemory_free(sockInfo);
+    //    }
+    //}
     XMutex_unlock(GetXMutex(dispatcher));
 }
-// 用于高精度定时器回调的上下文
-typedef struct {
-    XEventDispatcherWin32* dispatcher;
-    XTimerId timerId;
-} HighResTimerContext;
+
 /**
  * @brief 高精度定时器回调函数
  *
@@ -377,17 +411,24 @@ static void CALLBACK XEventDispatcherWin32_HighResTimerCallback(
     DWORD_PTR dw2
 ) {
     (void)uID; (void)uMsg; (void)dw1; (void)dw2;
-    HighResTimerContext* ctx = (HighResTimerContext*)dwUser;
-    if (!ctx)return;
-    if (ctx->dispatcher) {
-        XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(ctx->dispatcher);
-        // 转发到内部窗口，复用 WM_TIMER 消息
-        PostMessage(d->internalHwnd, WM_TIMER, (WPARAM)ctx->timerId, 0);
-    }
+    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
+    XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
+    XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
+    HANDLE ioCompletionPort = d->ioCompletionPort;
+   
+    // 向 IOCP 投递一个“定时器事件”
+    // 参数含义可自定义（这里用 dwNumberOfBytesTransferred=0 表示定时事件）
+    PostQueuedCompletionStatus(
+        d->ioCompletionPort,           // IOCP 句柄
+        0,                 // dwNumberOfBytesTransferred: 0 表示定时事件
+        (ULONG_PTR)dwUser,// dwCompletionKey: 可传递用户数据（如 timer ID）
+        dwUser            // lpOverlapped: 通常为 notifierullptr
+    );
 }
-static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* dispatcher, XTimerId timerId, XDuration intervalNs, XTimerType timerType, XObject* object)
+static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, XTimerId timerId, XDuration intervalNs, XTimerType timerType, XObject* object)
 {
     if (!timerId || !intervalNs || !object)return;
+    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
 
@@ -416,13 +457,13 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* dispa
             d->timePeriodSet = true;
         }
         // --- 关键修改：分配回调上下文 ---
-        HighResTimerContext* ctx = (HighResTimerContext*)XMemory_malloc(sizeof(HighResTimerContext));
+        XEventContext_Timer* ctx = XNew(XEventContext_Timer);
         if (!ctx) {
             XMutex_unlock(GetXMutex(dispatcher));
             return; // 内存不足
         }
-        ctx->dispatcher = self;
-        ctx->timerId = timerId;
+        ctx->type = XEventContextType_Type_Timer;
+        ctx->id = timerId;
         // 将上下文指针传给 dwUser
         timerInfo.mmTimerId = timeSetEvent(
             uInterval,
@@ -479,8 +520,9 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* dispa
 
     XMutex_unlock(GetXMutex(dispatcher));
 }
-static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* dispatcher, XTimerId timerId)
+static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed, XTimerId timerId)
 {
+    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
 
@@ -661,18 +703,18 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
             d->timePeriodSet = false;
         }
     // 清理所有套接字
-    XHashMap_iterator it_sockets = XHashMap_begin(d->sockets);
-    while (!XHashMap_iterator_isEnd(&it_sockets)) {
-        XPair* pair = XHashMap_iterator_data(&it_sockets);
-        XEventDispatcherWin32_SocketInfo* sockInfo = (XEventDispatcherWin32_SocketInfo*)XPair_second(pair);
-        if (sockInfo) {
-            SOCKET s = (SOCKET)XSocketDescriptor_toIntptr(sockInfo->socket);
-            WSAAsyncSelect(s, NULL, 0, 0);
-            XVector_delete_base(sockInfo->notifiers);
-            XMemory_free(sockInfo);
-        }
-        XHashMap_iterator_add(d->sockets, &it_sockets);
-    }
+    //XHashMap_iterator it_sockets = XHashMap_begin(d->sockets);
+    //while (!XHashMap_iterator_isEnd(&it_sockets)) {
+    //    XPair* pair = XHashMap_iterator_data(&it_sockets);
+    //    XEventDispatcherWin32_SocketInfo* sockInfo = (XEventDispatcherWin32_SocketInfo*)XPair_second(pair);
+    //    if (sockInfo) {
+    //        SOCKET s = (SOCKET)XSocketDescriptor_toIntptr(sockInfo->socket);
+    //        WSAAsyncSelect(s, NULL, 0, 0);
+    //        //XVector_delete_base(sockInfo->notifiers);
+    //        XMemory_free(sockInfo);
+    //    }
+    //    XHashMap_iterator_add(d->sockets, &it_sockets);
+    //}
     XMutex_unlock(d->m_dp.mutex);
     // 清理本地过滤器
     XAbstractEventDispatcherPrivate_deinit(d);
@@ -749,62 +791,73 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
     XAbstractEventDispatcher_init(self, parent);
     XClassGetVtable(self) = XEventDispatcherWin32_class_init();
     SET_CLASS_HEAP(self);
-
     XEventDispatcherWin32PlatformPrivate* d = (XEventDispatcherWin32PlatformPrivate*)XMemory_calloc(1, sizeof(XEventDispatcherWin32PlatformPrivate));
     if (!d) {
         XMemory_free(self);
         return NULL;
     }
-    XAbstractEventDispatcherPrivate_init(d);
-    d->timers = NULL;
-    d->sockets = NULL;
+    if (!XThread_currentThread())
+    {
+        XAbstractEventDispatcherPrivate_init(d);
+        d->m_dp.m_timerIds = XVector_Create(XTimerId);
+        d->timers = NULL;
+        d->sockets = NULL;
 
-    d->timers = XHashMap_create(sizeof(size_t), sizeof(XEventDispatcherWin32_TimerInfo), XHashMap_murmur3_32, size_t_compare);
-    XContainerSetDataDeinitMethod(d->timers, timersDataDeinit);
-    d->sockets = XHashMap_create(sizeof(intptr_t), sizeof(XEventDispatcherWin32_SocketInfo*), XHashMap_murmur3_32, int_compareptr_t);
+        d->timers = XHashMap_create(sizeof(size_t), sizeof(XEventDispatcherWin32_TimerInfo), XHashMap_murmur3_32, size_t_compare);
+        XContainerSetDataDeinitMethod(d->timers, timersDataDeinit);
+        d->sockets = XHashMap_create(sizeof(intptr_t), sizeof(XVector), XHashMap_murmur3_32, int_compareptr_t);
 
-    if (!d->timers || !d->sockets ) {
-        // 错误处理
-        if (d->timers) XHashMap_delete_base(d->timers);
-        if (d->sockets) XHashMap_delete_base(d->sockets);
-        XMemory_free(d);
-        XMemory_free(self);
-        return NULL;
+        if (!d->timers || !d->sockets) {
+            // 错误处理
+            if (d->timers) XHashMap_delete_base(d->timers);
+            if (d->sockets) XHashMap_delete_base(d->sockets);
+            XMemory_free(d);
+            XMemory_free(self);
+            return NULL;
+        }
+
+        // 创建内部消息窗口
+        WNDCLASS wc = { 0 };
+        wc.lpfnWndProc = XEventDispatcherWin32_WndProc;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = "XEventDispatcherInternalWindow";
+        if (!RegisterClass(&wc)) {
+            // 可能已经注册，忽略错误
+        }
+        d->internalHwnd = 0;
+        d->internalHwnd = CreateWindowEx(
+            0, "XEventDispatcherInternalWindow", NULL,
+            0, 0, 0, 0, 0,
+            HWND_MESSAGE, NULL, GetModuleHandle(NULL), NULL
+        );
+
+        if (!d->internalHwnd) {
+            XHashMap_delete_base(d->timers);
+            XHashMap_delete_base(d->sockets);
+            XAbstractEventDispatcherPrivate_deinit(d);
+            XMemory_free(d);
+            XMemory_free(self);
+            return NULL;
+        }
+
+        // 将 dispatcher 指针存入窗口
+        SetWindowLongPtr(d->internalHwnd, GWLP_USERDATA, (LONG_PTR)self);
+
+        d->ioCompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+       
     }
+    else
+    {
 
-    // 创建内部消息窗口
-    WNDCLASS wc = { 0 };
-    wc.lpfnWndProc = XEventDispatcherWin32_WndProc;
-    wc.hInstance = GetModuleHandle(NULL);
-    wc.lpszClassName = "XEventDispatcherInternalWindow";
-    if (!RegisterClass(&wc)) {
-        // 可能已经注册，忽略错误
     }
-    d->internalHwnd = 0;
-    d->internalHwnd = CreateWindowEx(
-        0, "XEventDispatcherInternalWindow", NULL,
-        0, 0, 0, 0, 0,
-        HWND_MESSAGE, NULL, GetModuleHandle(NULL), NULL
-    );
-
-    if (!d->internalHwnd) {
-        XHashMap_delete_base(d->timers);
-        XHashMap_delete_base(d->sockets);
-        XAbstractEventDispatcherPrivate_deinit(d);
-        XMemory_free(d);
-        XMemory_free(self);
-        return NULL;
-    }
-
-    // 将 dispatcher 指针存入窗口
-    SetWindowLongPtr(d->internalHwnd, GWLP_USERDATA, (LONG_PTR)self);
+    self->m_class.d_ptr = d;
 
     if (XThread_currentThread()) {
         // 子线程需初始化 COM 和 OLE
-        CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+        //CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     }
 
-    self->m_class.d_ptr = d;
+   
     return self;
 }
 #endif

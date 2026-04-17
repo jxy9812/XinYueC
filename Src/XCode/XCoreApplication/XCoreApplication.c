@@ -15,7 +15,7 @@
 #include "XTimer.h"
 static XCoreApplication* g_app = NULL; // 全局应用程序实例
 bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
-static void VXObject_timerEvent(XCoreApplication* app, XTimerEvent* event);
+static void VXObject_timerEvent(XCoreApplication* app, XEventTimer* event);
 static void VXCoreApplication_deinit(XCoreApplication* app);
 XVtable* XCoreApplication_class_init() {
     XVTABLE_CREAT_DEFAULT
@@ -460,7 +460,7 @@ del:
     return false;//事件未被处理
 }
 
-//void VXObject_timerEvent(XCoreApplication* app, XTimerEvent* event)
+//void VXObject_timerEvent(XCoreApplication* app, XEventTimer* event)
 //{
 //    app->m_quit = true;//XCoreApplication_processEventsWithMaxTime 定时简单处理，如果类中有多个定时就要添加标志位单独处理
 //}

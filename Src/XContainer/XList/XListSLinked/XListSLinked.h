@@ -20,7 +20,7 @@ extern "C" {
 typedef struct XListSNode
 {
 	struct XListSNode* next; // 指向下一个节点的指针
-	void* data; // 存储元素数据的指针
+	char data[]; // 存储元素数据的指针
 }XListSNode;
 /**
 * @brief 创建指定类型的单链表节点
@@ -35,7 +35,7 @@ typedef struct XListSNode
 * @return 节点中数据的指针（void*类型）
 * @note 需配合类型转换使用，获取实际数据类型的指针
 */
-#define XListSNode_DataPtr(Node)  (&(((XListSNode*)Node)->data))
+#define XListSNode_DataPtr(Node)  (((XListSNode*)Node)->data)
 /**
 * @brief 获取单链表节点中指定类型的数据
 * @param Node 目标节点指针

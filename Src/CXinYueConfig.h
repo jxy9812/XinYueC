@@ -33,6 +33,8 @@ extern "C" {
 #define	XCircularQueue_ON				1
 #define	XCircularQueueAtomic_ON			1
 #define XBitArray_ON					1
+#define XRingChunk_ON					1
+#define XRingBuffer_ON					1
 /*                          算法                            */
 #define XCrc_ON                         1
 #define XCrc16_ON                       1

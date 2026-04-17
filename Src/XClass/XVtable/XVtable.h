@@ -48,6 +48,8 @@ void* XVtable_at(XVtable* this_vtable, size_t index);
 // 简化版 container_of，兼容 MSVC 和 GCC
 #define container_of(ptr, type, member) \
     ((type *)((char *)(ptr) - offsetof(type, member)))
+//内存对齐宏
+#define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
 #ifdef __cplusplus
 }
 #endif

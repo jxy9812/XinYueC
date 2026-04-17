@@ -67,8 +67,8 @@ XVtable* XListDLinked_class_init()
 #endif
     return XVTABLE_DEFAULT;
 }
-
-#define CreatNode(this_list)   (XMemory_malloc(sizeof(XListDNode*)*2+XContainerTypeSize(this_list)))
+#define CreatNode(this_list)    XMemory_malloc(ALIGN_UP(sizeof(XListDNode)+XContainerTypeSize(this_list),sizeof(void*)))
+//#define CreatNode(this_list)   (XMemory_malloc(sizeof(XListDNode)+XContainerTypeSize(this_list)))
 
 void VXClass_copy(XListDLinked* object, const XListDLinked* src)
 {

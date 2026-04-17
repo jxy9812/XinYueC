@@ -65,8 +65,8 @@ XVtable* XListSLinked_class_init()
 #endif
     return XVTABLE_DEFAULT;
 }
-
-#define CreatNode(this_list)   (XMemory_malloc(sizeof(XListSNode*)+XContainerTypeSize(this_list)))
+#define CreatNode(this_list)    XMemory_malloc(ALIGN_UP(sizeof(XListSNode)+XContainerTypeSize(this_list),sizeof(void*)))
+//#define CreatNode(this_list)   (XMemory_malloc(sizeof(XListSNode)+XContainerTypeSize(this_list)))
 
 bool VXListBase_push_front_node(XListSLinked* this_list, XListSNode* node)
 {

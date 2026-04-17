@@ -257,17 +257,26 @@ void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver
 	}
 }
 
-XTimerEvent* XEventTimer_create(XTimerId id)
+XEventTimer* XEventTimer_create(XTimerId id)
 {
-	XTimerEvent* event = XNew(XTimerEvent);
+	XEventTimer* event = XNew(XEventTimer);
 	XEvent_init(event, XEVENT_TYPE_TIMER);
 	event->timerId = id;
 	return event;
 }
-XTimerId XEventTimer_timerId(const XTimerEvent* event)
+XTimerId XEventTimer_timerId(const XEventTimer* event)
 {
 	return (event && event->m_base.type== XEVENT_TYPE_TIMER) ?
-		((XTimerEvent*)event)->timerId : 0;
+		((XEventTimer*)event)->timerId : 0;
+}
+
+XEventSockAct* XEventSockAct_create(XSocketDescriptor socket, XSocketActType actType)
+{
+	XEventSockAct* event = XNew(XEventSockAct);
+	XEvent_init(event, XEVENT_TYPE_SOCK_ACT);
+	event->socket = socket;
+	event->actType = actType;
+	return event;
 }
 
 XChildEvent* XChildEvent_create(XEventType type, XObject* child)

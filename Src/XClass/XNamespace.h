@@ -26,7 +26,14 @@ typedef enum XFindChildOption {
 	XFindDirectChildrenOnly = 0x0,  /**< 仅查找直接子对象（不递归） */
 	XFindChildrenRecursively = 0x1  /**< 递归查找所有后代子对象（默认行为） */
 }XFindChildOption;
-
+//套接字活动类型
+typedef enum {
+	XSocketAct_Invalid = 0,
+	XSocketAct_Read = 1,
+	XSocketAct_Write = 2,
+	XSocketAct_ReadWrite = XSocketAct_Read | XSocketAct_Write,
+	XSocketAct_Exception = 4
+} XSocketActType;
 #ifdef __cplusplus
 }
 #endif

@@ -55,11 +55,7 @@ XSocketNotifier* XSocketNotifier_createWithType(XSocketNotifierType type)
 
     XObject_init(notifier);
     SET_CLASS_HEAP(notifier);
-    XClassGetVtable(notifier) = XSocketNotifier_class_init();
-
-    notifier->socket = XSocketDescriptor_Invalid();
-    notifier->type = type;
-    notifier->enabled = true; // Qt 默认启用
+    XSocketNotifier_init(notifier,type);
 
     return notifier;
 }
@@ -71,6 +67,22 @@ XSocketNotifier* XSocketNotifier_createWithSocket(XSocketDescriptor socket, XSoc
         XSocketNotifier_setSocket(notifier, socket);
     }
     return notifier;
+}
+
+void XSocketNotifier_init(XSocketNotifier* notifier, XSocketNotifierType type)
+{
+    if (!notifier)return;
+    XClassGetVtable(notifier) = XSocketNotifier_class_init();
+
+    notifier->socket = XSocketDescriptor_Invalid();
+    if ((type & ~(XSocketNotifier_Read | XSocketNotifier_Write | XSocketNotifier_Exception)) != 0) {
+        notifier->type = XSocketNotifier_ReadWrite;
+    }
+    else
+    {
+        notifier->type = type;
+    }
+    notifier->enabled = true; // Qt 默认启用
 }
 
 void XSocketNotifier_setSocket(XSocketNotifier* notifier, XSocketDescriptor socket)

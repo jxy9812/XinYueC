@@ -1,7 +1,6 @@
 ﻿// XSocketNotifier.h
 #ifndef XSOCKETNOTIFIER_H
 #define XSOCKETNOTIFIER_H
-
 #include "XObject.h"
 #include "XSocketDescriptor.h"
 #include <stdbool.h>
@@ -16,6 +15,7 @@ extern "C" {
 typedef enum {
     XSocketNotifier_Read = 1,
     XSocketNotifier_Write = 2,
+    XSocketNotifier_ReadWrite = XSocketNotifier_Read | XSocketNotifier_Write,
     XSocketNotifier_Exception = 4
 } XSocketNotifierType;
 XCLASS_DEFINE_BEGING(XSocketNotifier)
@@ -42,11 +42,12 @@ XSocketNotifier* XSocketNotifier_createWithType(XSocketNotifierType type);
  */
 XSocketNotifier* XSocketNotifier_createWithSocket(XSocketDescriptor socket, XSocketNotifierType type);
 
+void XSocketNotifier_init(XSocketNotifier* notifier, XSocketNotifierType type);
 /**
  * @brief 析构
  */
-#define  XSocketNotifier_delete XObject_deleteLater
-#define  XSocketNotifier_deinit XObject_deinitLater
+#define  XSocketNotifier_deleteLater XObject_deleteLater
+#define  XSocketNotifier_deinitLater XObject_deinitLater
 
 /**
  * @brief 设置要监控的 socket

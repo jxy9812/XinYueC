@@ -7,141 +7,126 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "XByteArray.h"
+#include "XRingBuffer.h"
 #include "XString.h"
+#include "XVector.h" // 引入 XVector 用于动态管理通道
 
 struct XIODevice;
 
 /**
- * @brief XIODevice 的私有数据结构。
+ * @brief XIODevice 的私有数据结构（多通道模型）。
  *
- * 此结构体封装了 XIODevice 的所有内部状态和缓冲区，实现了 PIMPL (Pointer to IMPLementation) 模式，
- * 以隐藏实现细节并保持公共 API 的稳定性。
+ * 此结构体现在支持多输入/多输出通道。
+ * 它通过 XVector 动态管理多个读缓冲区和写缓冲区，每个缓冲区对应一个唯一的通道ID。
+ * 对于单通道设备，它会自动使用 ID 为 XIO_DEFAULT_CHANNEL_ID (0) 的通道，行为与旧版完全一致。
  */
 typedef struct XIODevicePrivate {
-    // 多读通道缓冲（动态扩展）
-    struct XByteArray** readBuffers;        /**< @brief 指向各读通道缓冲区的指针数组。索引 [channel] 对应特定通道。 */
-    struct XByteArray** ungetBuffers;       /**< @brief 指向各通道“退回”字符缓冲区的指针数组。用于 ungetChar 功能。 */
-    int maxReadChannels;                    /**< @brief 当前为读通道分配的缓冲区数量（至少为1）。 */
+    // --- 读缓冲区池 ---
+    struct XVector* readBuffers;        /**< @brief XVector<XRingBuffer*>，存储所有读缓冲区。索引即为通道ID。 */
 
-    // 写缓冲（全局，因 Qt 通常单写流）
-    struct XByteArray* writeBuffer;         /**< @brief 全局写缓冲区。假定设备通常只有一个写流。 */
+    // --- 写缓冲区池 ---
+    struct XVector* writeBuffers;       /**< @brief XVector<XRingBuffer*>，存储所有写缓冲区。索引即为通道ID。 */
 
-    // 事务（简化：仅作用于当前读通道）
-    struct XByteArray* transactionBuffer;   /**< @brief 用于存储事务期间读取数据的缓冲区。 */
-    bool transactionStarted;                /**< @brief 标志位，指示当前是否处于一个事务中。 */
+    // --- 事务相关 ---
+    bool transactionStarted;            /**< @brief 标志位，指示是否已调用 startTransaction()。 */
+    int64_t transactionReadPos;         /**< @brief 事务开始时的读位置（针对默认通道）。 */
 
-    // 错误 & 状态
-    struct XString* errorString;            /**< @brief 存储最近一次 I/O 操作产生的错误信息。 */
-    bool aboutToCloseEmitted;               /**< @brief 标志位，指示 aboutToClose 信号是否已被触发。 */
+    // --- 错误 & 状态 ---
+    struct XString* errorString;        /**< @brief 存储最近一次 I/O 操作的错误信息。 */
+    bool aboutToCloseEmitted;           /**< @brief 标志位，防止 aboutToClose 信号重复发射。 */
 
-    struct XIODevice* q_ptr;                /**< @brief 指向拥有此私有数据的公有 XIODevice 对象的反向指针。 */
+    struct XIODevice* q_ptr;            /**< @brief 反向指针，指向公有接口 XIODevice 实例。 */
 } XIODevicePrivate;
 
 /**
- * @brief 创建一个新的 XIODevicePrivate 实例。
- *
- * 该函数负责分配内存并初始化 XIODevicePrivate 结构体的所有成员。
- * @param q 指向关联的公有 XIODevice 对象的指针，将被赋值给 q_ptr 成员。
- * @return 返回指向新创建的 XIODevicePrivate 实例的指针；若内存分配失败，则返回 NULL。
+ * @brief 创建一个 XIODevicePrivate 实例。
+ * @param q 指向所属的 XIODevice 公有对象的指针。
+ * @return 成功时返回新实例指针；失败时返回 NULL。
  */
 XIODevicePrivate* XIODevicePrivate_create(struct XIODevice* q);
 
 /**
  * @brief 销毁一个 XIODevicePrivate 实例。
- *
- * 该函数负责释放 XIODevicePrivate 实例及其所有成员（如缓冲区、错误字符串等）占用的内存。
- * 调用此函数后，传入的指针 d 将变为无效。
- * @param d 指向要销毁的 XIODevicePrivate 实例的指针。
- * @retval 无
+ * @param d 指向要销毁的实例的指针。
  */
 void XIODevicePrivate_delete(XIODevicePrivate* d);
 
-// 带通道参数的操作
+// === 多通道操作 API ===
 
 /**
- * @brief 向指定读通道的缓冲区末尾添加一个字符。
- *
- * 该函数主要用于内部实现，例如在从设备读取数据后将其放入缓冲区。
+ * @brief 获取指定读通道的缓冲区。如果通道不存在，则创建它。
  * @param d 指向 XIODevicePrivate 实例的指针。
- * @param c 要添加的字符。
- * @param channel 目标读通道的索引。
- * @retval 无
+ * @param channelId 通道ID。
+ * @return 指向 XRingBuffer 的指针。
  */
-void XIODevicePrivate_putChar(XIODevicePrivate* d, char c, int channel);
+struct XRingBuffer* XIODevicePrivate_getOrCreateReadBuffer(XIODevicePrivate* d, int channelId);
 
 /**
- * @brief 从指定读通道的缓冲区（或 unget 缓冲区）中取出一个字符。
- *
- * 该函数会优先从 unget 缓冲区读取，若其为空，则从主读缓冲区读取。
+ * @brief 获取指定写通道的缓冲区。如果通道不存在，则创建它。
  * @param d 指向 XIODevicePrivate 实例的指针。
- * @param c 指向用于接收读取字符的变量的指针。
- * @param channel 源读通道的索引。
- * @retval bool 操作成功（即缓冲区非空）时返回 true；否则返回 false。
+ * @param channelId 通道ID。
+ * @return 指向 XRingBuffer 的指针。
  */
-bool XIODevicePrivate_getChar(XIODevicePrivate* d, char* c, int channel);
+struct XRingBuffer* XIODevicePrivate_getOrCreateWriteBuffer(XIODevicePrivate* d, int channelId);
+
+// === 单通道兼容 API (内部使用当前通道ID) ===
 
 /**
- * @brief 从指定读通道的缓冲区中窥探（不移除）最多 maxlen 个字节的数据。
- *
- * 此函数不会改变缓冲区的状态。如果缓冲区中的数据不足 maxlen 字节，
- * 它会尝试通过调用 device 的 readData 虚函数来填充缓冲区。
+ * @brief 将一个字符推回当前读通道缓冲区前端。
  * @param d 指向 XIODevicePrivate 实例的指针。
- * @param data 指向用于存放窥探数据的缓冲区的指针。
- * @param maxlen 请求窥探的最大字节数。
- * @param device 指向关联的 XIODevice 对象的指针，用于在需要时进行底层读取。
- * @param channel 源读通道的索引。
- * @return 返回实际窥探到的字节数。
+ * @param c 要推回的字符。
  */
-int64_t XIODevicePrivate_peek(XIODevicePrivate* d, char* data, int64_t maxlen, struct XIODevice* device, int channel);
+void XIODevicePrivate_putChar(XIODevicePrivate* d, char c);
 
 /**
- * @brief 从指定读通道的缓冲区中读取一行数据（以换行符 '\n' 结尾）。
- *
- * 该函数会读取数据直到遇到换行符或达到 maxlen 限制，并将换行符包含在输出中。
- * 如果缓冲区中没有完整的行，它会返回 0。
+ * @brief 从当前读通道缓冲区获取一个字符。
  * @param d 指向 XIODevicePrivate 实例的指针。
- * @param data 指向用于存放读取行的缓冲区的指针。
- * @param maxlen 读取缓冲区的最大容量（包括结尾的空字符）。
- * @param channel 源读通道的索引。
- * @return 返回实际读取的字节数（包括 '\n'）；若缓冲区中无完整行，则返回 0。
+ * @param c 输出参数，用于存储读取到的字符。
+ * @return 若成功读取字符则返回 true，否则返回 false。
  */
-int64_t XIODevicePrivate_readLineFromBuffer(XIODevicePrivate* d, char* data, int64_t maxlen, int channel);
+bool XIODevicePrivate_getChar(XIODevicePrivate* d, char* c);
 
 /**
- * @brief 检查指定读通道的缓冲区中是否存在完整的行（以换行符 '\n' 结尾）。
- *
- * 此函数用于在执行 readLine 操作前快速判断是否有数据可读。
+ * @brief 从当前通道的设备和缓冲区中预读（peek）最多 maxlen 字节的数据。
  * @param d 指向 XIODevicePrivate 实例的指针。
- * @param channel 要检查的读通道索引。
- * @retval bool 如果缓冲区中存在至少一个完整的行，则返回 true；否则返回 false。
+ * @param data 输出缓冲区。
+ * @param maxlen 最大预读字节数。
+ * @param device 指向所属 XIODevice 的指针，用于触发底层 read。
+ * @return 实际 peek 到的字节数。
  */
-bool XIODevicePrivate_canReadLineFromBuffer(const XIODevicePrivate* d, int channel);
+int64_t XIODevicePrivate_peek(XIODevicePrivate* d, char* data, int64_t maxlen, struct XIODevice* device);
 
 /**
- * @brief 在当前读通道上启动一个事务。
- *
- * 事务开始后，所有后续的读取操作都会被记录，以便在需要时可以回滚到事务开始前的状态。
+ * @brief 从当前读通道缓冲区中读取一行（以 '\n' 结尾）。
  * @param d 指向 XIODevicePrivate 实例的指针。
- * @retval 无
+ * @param data 输出缓冲区。
+ * @param maxlen 最大读取字节数。
+ * @return 实际读取的字节数；若未找到换行符则返回 0。
+ */
+int64_t XIODevicePrivate_readLineFromBuffer(XIODevicePrivate* d, char* data, int64_t maxlen);
+
+/**
+ * @brief 检查当前读通道缓冲区中是否存在完整的行（含 '\n'）。
+ * @param d 指向 XIODevicePrivate 实例的指针。
+ * @return 若存在完整行则返回 true，否则返回 false。
+ */
+bool XIODevicePrivate_canReadLineFromBuffer(const XIODevicePrivate* d);
+
+/**
+ * @brief 开始一个针对默认读通道的读事务（标记当前读位置）。
+ * @param d 指向 XIODevicePrivate 实例的指针。
  */
 void XIODevicePrivate_startTransaction(XIODevicePrivate* d);
 
 /**
- * @brief 提交当前正在进行的事务。
- *
- * 提交操作会清空事务缓冲区，使所有在事务期间的读取操作成为永久性的。
+ * @brief 提交当前针对默认读通道的读事务（清除标记）。
  * @param d 指向 XIODevicePrivate 实例的指针。
- * @retval 无
  */
 void XIODevicePrivate_commitTransaction(XIODevicePrivate* d);
 
 /**
- * @brief 回滚当前正在进行的事务。
- *
- * 回滚操作会将事务期间读取的所有数据重新放回读缓冲区的前端，使设备状态恢复到事务开始之前。
+ * @brief 回滚当前针对默认读通道的读事务（恢复到标记位置）。
  * @param d 指向 XIODevicePrivate 实例的指针。
- * @retval 无
  */
 void XIODevicePrivate_rollbackTransaction(XIODevicePrivate* d);
 
