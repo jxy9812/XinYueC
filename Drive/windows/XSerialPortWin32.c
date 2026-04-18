@@ -25,7 +25,6 @@ typedef struct XSerialPortWin32
     XEventContext_IOCP read;
     XEventContext_IOCP write;
     HANDLE handle;
-    bool isWritePending; // 新增：标记是否有写操作在进行
     char readBuff[BUFFSIZE];
     char writeBuff[BUFFSIZE];
 } XSerialPortWin32;
@@ -47,15 +46,12 @@ void XSerialPort_init(XSerialPort* serial)
     serial->parity = XSerialPort_NoParity;
     serial->stopBits = XSerialPort_OneStop;
     serial->flowControl = XSerialPort_NoFlowControl;
-
+    serial->readyReadTriggered = false;
+    serial->bytesWrittenTriggered = true;
     // 设置默认的读缓冲区大小 (Qt 的默认值是 512 KB)
     serial->readBufferSize = 512 * 1024;
 
-    // 初始化同步原语，用于 waitForReadyRead / waitForBytesWritten
-    serial->waitMutex = XMutex_create();
-    serial->waitCondition = XWaitCondition_create();
     XSerialPortWin32* win32 = (XSerialPortWin32*)serial;
-    win32->isWritePending =false;
 }
 
 XSerialPort* XSerialPort_create()
@@ -65,25 +61,6 @@ XSerialPort* XSerialPort_create()
     XSerialPort_init(port);
     SET_CLASS_HEAP(port);
     return port;
-}
-// Helper: 启动 WaitCommEvent
-static bool startWaitCommEvent(XSerialPort* port) {
-    XSerialPortWin32* win32 = (XSerialPortWin32*)port;
-    //if (!port || win32->pendingWait) return true;
-
-    //DWORD events = 0;
-    //if (!WaitCommEvent(win32->handle, &win32->lastEvents, &win32->waitOverlapped)) {
-    //    DWORD err = GetLastError();
-    //    if (err == ERROR_IO_PENDING)
-    //    {
-    //        win32->pendingWait = true;
-    //        return true;
-    //    }
-    //    printf("WaitCommEvent failed with error %lu\n", err);
-    //    return false;
-    //}
-    //win32->pendingWait = true;
-    return true;
 }
 
 // Helper functions
@@ -157,6 +134,7 @@ void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort*
             int64_t bytesFromBuffer = XRingBuffer_write(readBuf, win32->read.buffer, win32->read.finishedBytes);
             if (bytesFromBuffer)
             {
+                receiver->readyReadTriggered = true;
                 XIODevice_readyRead_signal(receiver);
                 XIODevice_channelReadyRead_signal(receiver, currentReadChannel);
             }
@@ -190,11 +168,11 @@ void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort*
         {
            BOOL r = WriteFile(win32->handle, win32->writeBuff, (DWORD)bytesFromBuffer, &win32->write
                .finishedBytes, &win32->write);
-           win32->isWritePending = true;
+           receiver->bytesWrittenTriggered = false;
         }
         else
         {
-            win32->isWritePending = false;
+            receiver->bytesWrittenTriggered = true;
         }
        
     }
@@ -321,31 +299,20 @@ int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize
 {
     if (!port || !data || maxSize <= 0) return -1;
     XSerialPortWin32* win32 = (XSerialPortWin32*)port;
-    return -1;
-    /*OVERLAPPED ov = { 0 };
-    ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-    if (!ov.hEvent) return -1;*/
-    memset(&win32->read, 0, sizeof(OVERLAPPED)); // hEvent 必须为 NULL！
-    win32->read.type = XEventContextType_Type_File;
-    win32->read.buffer = data;
-    win32->read.bufferSize = maxSize;
-    win32->read.eventMask = FD_READ;
-    DWORD bytesRead = 0;
-    BOOL r = ReadFile(win32->handle, data, (DWORD)maxSize, &bytesRead, &win32->read);
-    if (!r) {
-        DWORD err = GetLastError();
-        if (err != ERROR_IO_PENDING) {
-            // 真正的错误（如同步失败）
-            //free(ctx);
-            return false;
-        }
-        // 否则：I/O pending，等待 IOCP 通知
+    XIODevicePrivate* d = ((XIODevice*)port)->m_d;
+    // 获取当前读通道ID
+    int currentReadChannel = XIODevice_currentReadChannel(port);
+    struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
+    if (!readBuf) {
+        return -1; // 无法获取或创建缓冲区
     }
-    else {
-        // 极少数情况：同步完成（如驱动缓存中有数据）
-       
+    //XEventLoop* loop=XEventLoop_create();
+    while (XRingBuffer_size_base(readBuf)< maxSize)
+    {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
     }
-    return r ? (int64_t)bytesRead : -1;
+    int64_t bytesFromBuffer = XRingBuffer_read(readBuf, data, maxSize);
+    return bytesFromBuffer; // 
 }
 
 int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t len) {
@@ -355,7 +322,7 @@ int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t 
     int currentWriteChannel = XIODevice_currentWriteChannel(port);
     struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentWriteChannel);
     size_t written = 0;
-    if (win32->isWritePending)
+    if (!port->bytesWrittenTriggered)
     {//当前还在写操作，写到缓冲区
        
         written += XRingBuffer_write(writeBuf, data, (size_t)len);
@@ -368,7 +335,7 @@ int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t 
         win32->write.eventMask = FD_WRITE;
         win32->write.socket = XSocketDescriptor_fromIntptr(win32->handle);
         win32->write.finishedBytes = 0;
-        win32->isWritePending = true;
+        port->bytesWrittenTriggered = false;
 
         if(len<= BUFFSIZE)
         {
@@ -498,43 +465,36 @@ bool XSerialPort_platform_applyConfig(XSerialPort* port)
     return SetCommState(win32->handle, &dcb) != FALSE;
 }
 // ========== 新增的平台等待函数 ==========
-bool XSerialPort_platform_waitForReadyRead(XSerialPort* port, int msecs) {
-    if (XSerialPort_bytesAvailable_base(port) > 0) return true;
-
-    XMutex_lock(port->waitMutex);
-    port->readyReadTriggered = false;
-    XMutex_unlock(port->waitMutex);
-
-    XMutex_lock(port->waitMutex);
-    bool result = XWaitCondition_wait(port->waitCondition, port->waitMutex, msecs);
-    if (!result) {
-        port->error = XSerialPort_TimeoutError;
-    }
-    bool triggered = port->readyReadTriggered;
-    port->readyReadTriggered = false;
-    XMutex_unlock(port->waitMutex);
-
-    return triggered || XSerialPort_bytesAvailable_base(port) > 0;
-}
-
-bool XSerialPort_platform_waitForBytesWritten(XSerialPort* port, int msecs) {
-    if (XSerialPort_bytesToWrite_base(port) == 0) return true;
-
-    XMutex_lock(port->waitMutex);
-    port->bytesWrittenTriggered = false;
-    XMutex_unlock(port->waitMutex);
-
-    XMutex_lock(port->waitMutex);
-    bool result = XWaitCondition_wait(port->waitCondition, port->waitMutex, msecs);
-    if (!result) {
-        port->error = XSerialPort_TimeoutError;
-    }
-    bool triggered = port->bytesWrittenTriggered;
-    port->bytesWrittenTriggered = false;
-    XMutex_unlock(port->waitMutex);
-
-    return triggered || XSerialPort_bytesToWrite_base(port) == 0;
-}
+//bool XSerialPort_platform_waitForReadyRead(XSerialPort* port, int msecs) {
+//    if (XSerialPort_bytesAvailable_base(port) > 0) return true;
+//
+//    size_t current = XTimerBase_getCurrentTime();
+//    while (XSerialPort_bytesAvailable_base(port)< 0)
+//    {
+//        XCoreApplication_processEvents(XEventLoop_AllEvents);
+//        if (XTimerBase_getCurrentTime() > current + msecs)
+//            return false;
+//    }
+//    return true; // 
+//}
+//
+//bool XSerialPort_platform_waitForBytesWritten(XSerialPort* port, int msecs) {
+//    if (XSerialPort_bytesToWrite_base(port) == 0) return true;
+//
+//   /* XMutex_lock(port->waitMutex);
+//    port->bytesWrittenTriggered = false;
+//    XMutex_unlock(port->waitMutex);
+//
+//    XMutex_lock(port->waitMutex);
+//    bool result = XWaitCondition_wait(port->waitCondition, port->waitMutex, msecs);
+//    if (!result) {
+//        port->error = XSerialPort_TimeoutError;
+//    }
+//    bool triggered = port->bytesWrittenTriggered;
+//    port->bytesWrittenTriggered = false;
+//    XMutex_unlock(port->waitMutex);*/
+//
+//}
 
 // NEW: pinoutSignals
 XSerialPort_PinoutSignal XSerialPort_pinoutSignals(const XSerialPort* port)

@@ -3,6 +3,8 @@
 #include"XCircularQueueAtomic.h"
 #include "XMemory.h"
 #include "XIODevicePrivate.h"
+#include "XCoreApplication.h"
+#include "XTimerBase.h"
 #include <string.h>
 #include <assert.h>
 static void VXIODevice_deinit(XIODevice* io);
@@ -170,9 +172,11 @@ int64_t VXIODevice_bytesAvailable(const XIODevice* self)
 
 int64_t VXIODevice_bytesToWrite(const XIODevice* self)
 {
-	(void)self;
-	// Qt 基类不管理写缓冲，返回 0
-	return 0;
+	if (!self || !self->m_d) return 0;
+	// 直接返回 readBuffer 的可用字节数
+	int currentChannel = XIODevice_currentWriteChannel(self);
+	struct XRingBuffer* buff = XIODevicePrivate_getOrCreateWriteBuffer(self->m_d, currentChannel);
+	return XRingBuffer_available(buff);
 }
 
 bool VXIODevice_canReadLine(const XIODevice* self)
@@ -184,18 +188,35 @@ bool VXIODevice_canReadLine(const XIODevice* self)
 
 bool VXIODevice_waitForReadyRead(XIODevice* self, int msecs)
 {
-	// 默认不支持同步等待
-	return false;
+	if (XIODevice_bytesAvailable_base(self) > 0) return true;
+
+	uint64_t current = XTimerBase_getCurrentTime();
+	while (XIODevice_bytesAvailable_base(self) ==0)
+	{
+		XCoreApplication_processEvents(XEventLoop_AllEvents);
+		if (XTimerBase_getCurrentTime() > (current + msecs))
+			return false;
+	}
+	return true; // 
 }
 
 bool VXIODevice_waitForBytesWritten(XIODevice* self, int msecs)
 {
-	return false;
+	if (XIODevice_bytesToWrite_base(self)==0) return true;
+
+	size_t current = XTimerBase_getCurrentTime();
+	while (XIODevice_bytesToWrite_base(self)>0)
+	{
+		XCoreApplication_processEvents(XEventLoop_AllEvents);
+		if (XTimerBase_getCurrentTime() > current + msecs)
+			return false;
+	}
+	return true; // 
 }
 
 int64_t VXIODevice_readLineData(XIODevice* self, char* data, int64_t maxlen)
 {
-	return -1; // 表示未实现
+	return XIODevicePrivate_readLineFromBuffer(self->m_d, data, maxlen);
 }
 
 int64_t VXIODevice_skipData(XIODevice* self, int64_t maxSize)

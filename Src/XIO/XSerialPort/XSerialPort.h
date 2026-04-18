@@ -106,14 +106,12 @@ typedef struct XSerialPort
 {
     XIODevice base;
     char* portName;
-    XMutex* waitMutex;
-    XWaitCondition* waitCondition;
-    uint16_t dataTerminalReady : 1;
-    uint16_t requestToSend : 1;
-    uint16_t breakEnabled : 1;
-    uint16_t isOpen : 1;
-    uint16_t readyReadTriggered : 1;
-    uint16_t bytesWrittenTriggered : 1;
+    uint16_t dataTerminalReady : 1;// DTR 信号
+    uint16_t requestToSend : 1;// RTS 信号
+    uint16_t breakEnabled : 1; // Break 信号使能
+    uint16_t isOpen : 1;// 串口已打开标志
+    uint16_t readyReadTriggered : 1;//是否触发了数据可读事件
+    uint16_t bytesWrittenTriggered : 1;//是否触发了数据发送完成事件
     int32_t baudRate;
     XSerialPort_DataBits dataBits;
     XSerialPort_Parity parity;

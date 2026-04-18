@@ -13,7 +13,7 @@ static void readyRead_slot(XObject* sender, XObject* receiver, void* args)
     if (readSize == 0)
         return;
     static char buff[1024];
-    size_t len = XSerialPort_read_base(sender, buff, readSize);
+    int len = XSerialPort_read_base(sender, buff, readSize);
     if (len > 0)
     {
         buff[len] = 0;
@@ -22,17 +22,34 @@ static void readyRead_slot(XObject* sender, XObject* receiver, void* args)
 }
 void XSerialPortTest()
 {
+    while (true)
+    {
     XSerialPort* serial = XSerialPort_create();
     XSerialPort_setBaudRate(serial,115200,XSerialPort_AllDirections);
     XSerialPort_setPortName(serial,"COM20");
     if (!XSerialPort_open_base(serial, XIODevice_ReadWrite))
     {
         XSerialPort_delete_base(serial);
-        XCoreApplication_quit();
-        return;
+        //XCoreApplication_quit();
+        //return;
+        continue;
     }
-    XObject_connect1(serial,XSignal(XIODevice_readyRead_signal), serial, readyRead_slot,XConnectionType_Auto);
-    XCoreApplication_exec();
+
+        static char buff[1024];
+        XIODevice_waitForReadyRead_base(serial,INT32_MAX);
+        size_t readSize = XSerialPort_bytesAvailable_base(serial);
+        int len = XSerialPort_read_base(serial, buff, readSize);
+        if (len > 0)
+        {
+            buff[len] = 0;
+            XPrintf("%s", buff);
+        }
+        XSerialPort_delete_base(serial);
+        XCoreApplication_processEvents(0);
+    }
+   
+   /* XObject_connect1(serial,XSignal(XIODevice_readyRead_signal), serial, readyRead_slot,XConnectionType_Auto);
+    XCoreApplication_exec();*/
 }
 
 void XMenu_XSerialPortTest(XMenu* root)
