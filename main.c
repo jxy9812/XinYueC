@@ -1,18 +1,13 @@
 ﻿#include"XDataStructTest.h"
 #include"XMenuTest.h"
 #include<stdio.h>
+#include<string.h>
 #include<math.h>
 #include"XCoreApplication.h"
 #include <stdarg.h>
 #include"XVarList.h"
-#include"XThread.h"
 int main(int argc, char* args[])
 {
-	//printf("%d\n", XThread_currentThreadId());
-
-	//XEventDispatcher_create(NULL);
-	//fatfs_test();
-
 	int n = 8,n1=666,sum=n+n1;
 	char* str = "dadasdsad";
 	XVarList* list=XVarList_Create(XVar(int,n), XVar(int, n1), XVar(char*, str));

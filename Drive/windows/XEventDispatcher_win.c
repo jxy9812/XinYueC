@@ -790,7 +790,7 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
     // 初始化基类
     XAbstractEventDispatcher_init(self, parent);
     XClassGetVtable(self) = XEventDispatcherWin32_class_init();
-    SET_CLASS_HEAP(self);
+    Set_Class_MemoryFree(self, XFree);
     XEventDispatcherWin32PlatformPrivate* d = (XEventDispatcherWin32PlatformPrivate*)XMemory_calloc(1, sizeof(XEventDispatcherWin32PlatformPrivate));
     if (!d) {
         XMemory_free(self);

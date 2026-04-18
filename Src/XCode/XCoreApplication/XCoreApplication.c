@@ -50,7 +50,7 @@ XCoreApplication* XCoreApplication_create(int argc, char** argv) {
     if (!app) return NULL;
 
     XCoreApplication_init(app, argc, argv);
-    SET_CLASS_HEAP(app);
+    Set_Class_MemoryFree(app, XFree);
     return g_app;
 }
 

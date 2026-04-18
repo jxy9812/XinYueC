@@ -14,7 +14,7 @@ XIODevice* XIODevice_create()
 	if (io == NULL)
 		return io;
 	XIODevice_init(io);
-	SET_CLASS_HEAP(io);
+	Set_Class_MemoryFree(io, XFree);
 	return io;
 }
 void XIODevice_init(XIODevice* io)

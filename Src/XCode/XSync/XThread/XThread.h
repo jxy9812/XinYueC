@@ -185,7 +185,7 @@ bool XThread_terminate(XThread* thread);
 Signals
 void* XThread_finished_signal(XThread* thread);
 void* XThread_started_signal(XThread* thread);
-//主线程返回NULL
+
 XThread* XThread_currentThread();
 //返回当前线程的事件循环
 XEventDispatcher* XThread_currentDispatcher();

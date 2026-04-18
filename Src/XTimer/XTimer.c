@@ -49,7 +49,7 @@ XTimer* XTimer_create()
 	if (timer == NULL)
 		return timer;
 	XTimer_init(timer);
-	SET_CLASS_HEAP(timer);
+	Set_Class_MemoryFree(timer, XFree);
 	return timer;
 }
 

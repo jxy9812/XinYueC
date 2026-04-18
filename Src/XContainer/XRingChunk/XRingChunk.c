@@ -92,12 +92,12 @@ XRingChunk* XRingChunk_create(size_t capacity)
     if (ISNULL(capacity, ""))
         return NULL;
 
-    XRingChunk* chunk = XMemory_malloc(sizeof(XRingChunk));
+    XRingChunk* chunk = XNew(XRingChunk);
     if (chunk == NULL)
         return NULL;
 
     XRingChunk_init(chunk, capacity);
-    SET_CLASS_HEAP(chunk);
+    Set_Class_MemoryFree(chunk,XFree);
     return chunk;
 }
 

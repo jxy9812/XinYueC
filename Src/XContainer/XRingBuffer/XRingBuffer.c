@@ -113,7 +113,7 @@ XRingBuffer* XRingBuffer_create(size_t chunkSize)
         return NULL;
 
     XRingBuffer_init(buffer, chunkSize);
-    SET_CLASS_HEAP(buffer);
+    Set_Class_MemoryFree(buffer, XFree);
     return buffer;
 }
 

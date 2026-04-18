@@ -8,6 +8,7 @@ extern "C" {
 #include<stdint.h>
 #include <stddef.h>
 #include"XTypes.h"
+#include"XMemory.h"
 typedef struct 
 {
 	void** data;//

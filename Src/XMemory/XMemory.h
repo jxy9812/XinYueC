@@ -7,6 +7,8 @@ extern "C" {
 #include<stdbool.h>
 #include<stdint.h>
 #include"CXinYueConfig.h"
+//全局默认的内存方法
+
 /**
 * @brief 内存申请函数指针类型
 * @param size 申请的内存大小（字节数）

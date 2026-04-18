@@ -43,7 +43,7 @@ XObject* XObject_create()
 {
 	XObject* object = XNew(XObject);
 	XObject_init(object);
-	SET_CLASS_HEAP(object);
+	Set_Class_MemoryFree(object, XFree);
 	return object;
 }
 
@@ -408,7 +408,7 @@ void VXObject_deinit(XObject* object)
 			XObject* child = *((XObject**)XVector_iterator_data(&it));
 			if (!child)continue;
 			child->parent = NULL; // 断开链接
-			if (IS_CLASS_HEAP(child))
+			if (Class_MemoryFree(child))
 				XObject_deleteLater(child);
 			else
 				XObject_deinitLater(child);

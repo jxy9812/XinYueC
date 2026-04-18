@@ -100,7 +100,7 @@ XAbstractEventDispatcher* XAbstractEventDispatcher_create(XObject* parent)
     XAbstractEventDispatcher* self = (XAbstractEventDispatcher*)XMemory_malloc(sizeof(XAbstractEventDispatcher));
     if (self) {
         XAbstractEventDispatcher_init(self, parent);
-        SET_CLASS_HEAP(self);
+        Set_Class_MemoryFree(self, XFree);
     }
     return self;
 }

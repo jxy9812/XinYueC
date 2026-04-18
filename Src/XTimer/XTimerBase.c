@@ -9,7 +9,7 @@ XTimerBase* XTimerBase_create(XVtable* vtable)
 	if (timer == NULL)
 		return NULL;
 	XTimerBase_init(timer,vtable);
-	SET_CLASS_HEAP(timer);
+	Set_Class_MemoryFree(timer, XFree);
 	return timer;
 }
 

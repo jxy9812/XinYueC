@@ -54,7 +54,7 @@ XSocketNotifier* XSocketNotifier_createWithType(XSocketNotifierType type)
     if (!notifier) return NULL;
 
     XObject_init(notifier);
-    SET_CLASS_HEAP(notifier);
+    Set_Class_MemoryFree(notifier, XFree);
     XSocketNotifier_init(notifier,type);
 
     return notifier;

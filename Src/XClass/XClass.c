@@ -35,6 +35,6 @@ void XClass_move_base(XClass* object, XClass* src)
 void XClass_delete_base(XClass* object)
 {
 	XClass_deinit_base(object);
-	//if(IS_CLASS_HEAP(object))
+	//if(Class_MemoryFree(object))
 	XMemory_free(object);
 }

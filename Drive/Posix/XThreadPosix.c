@@ -342,7 +342,7 @@ XThread* XThread_create_func(void (*start_routine)(void*), void* arg)
         return NULL;
     }
     XThread_init(Object);
-    SET_CLASS_HEAP(Object);
+    Set_Class_MemoryFree(Object);
     Object->m_start_routine = start_routine;
     Object->m_varList = arg;
 

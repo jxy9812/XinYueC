@@ -267,8 +267,25 @@ bool VXVector_push_back(XVector* this_vector, void* pvValue, XCDataCreatMethod d
 }
 bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begin, size_t n, XCDataCreatMethod dataCreatMethod)// 向量中指向元素p前插入另一个相同类型向量的指针[p1,p2)间的数据
 {
-	const void* ptr = VXVector_at(this_vector, index);
+	// --- 1. 输入验证 ---
+	if (!this_vector || !begin || n == 0) {
+		return false;
+	}
+	size_t current_size = XContainerSize(this_vector);
 	size_t typeSize = XContainerTypeSize(this_vector);
+
+	// --- 2. 验证索引的有效性 ---
+	// 合法的插入索引范围是 [0, current_size]
+	if (index < 0 || index >(int64_t)current_size) {
+		return false;
+	}
+	// --- 3. 处理空容器或在末尾追加的特殊情况 ---
+	if (current_size == 0 || index == (int64_t)current_size) {
+		// 直接使用 append 逻辑，这是最简单高效的方式
+		return XClassGetVirtualFunc(this_vector, EXVector_append_Array, bool (*)(XVector*, void*, size_t, XCDataCreatMethod))(this_vector, begin, n, dataCreatMethod);
+	}
+	const void* ptr = VXVector_at(this_vector, index);
+	
 	if (ptr&&ptr >= VXVector_front(this_vector) && ptr <= VXVector_back(this_vector))
 	{
 		int64_t size = (char*)VXVector_back(this_vector) - (char*)ptr + typeSize;
@@ -299,13 +316,6 @@ bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 		XMemory_free(temp);
 	}
 	return true;
-	/*else if(XContainerObject_isEmpty_base(this_vector))
-	{
-		for (size_t i = 0; i < n; i++)
-		{
-			XVector_push_back_base(this_vector, (char*)begin+i*XContainerTypeSize(this_vector));
-		}
-	}*/
 }
 bool VXVector_append_array(XVector* this_vector, const void* begin, size_t n, XCDataCreatMethod dataCreatMethod)
 {

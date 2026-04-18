@@ -18,7 +18,7 @@ XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist)
         return NULL;
     }
     XThread_init(thread);
-    SET_CLASS_HEAP(thread);
+    Set_Class_MemoryFree(thread, XFree);
     thread->m_start_routine = start_routine;
     thread->m_varList = varlist;
 
@@ -33,7 +33,7 @@ XThread* XThread_create(XObject* parent)
         return NULL;
     }
     XThread_init(thread);
-    SET_CLASS_HEAP(thread);
+    Set_Class_MemoryFree(thread, XFree);
     thread->m_start_routine = NULL;
     thread->m_varList = NULL;
 
@@ -57,7 +57,7 @@ XThread* XThread_createMainThread(XObject* parent)
     thread->m_priority = XThread_err;
     thread->m_stackSize = 0;
     thread->m_data = XThreadData_initMainThread(thread);
-    SET_CLASS_HEAP(thread);
+    Set_Class_MemoryFree(thread, XFree);
     thread->m_start_routine = NULL;
     thread->m_varList = NULL;
     thread->m_isMainThread = true;
