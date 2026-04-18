@@ -76,6 +76,7 @@ XModbusDevice* XModbusDevice_create() {
     XModbusDevice* dev = (XModbusDevice*)XMemory_malloc(sizeof(XModbusDevice));
     if (dev) {
         XModbusDevice_init(dev);
+        Set_Class_MemoryFree(dev, XFree);
     }
     return dev;
 }

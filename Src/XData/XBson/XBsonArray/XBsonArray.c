@@ -10,6 +10,7 @@ XBsonArray* XBsonArray_create()
     XBsonArray* array = (XBsonArray*)XMemory_malloc(sizeof(XBsonArray));
     if (array) {
         XBsonArray_init(array);
+        Set_Class_MemoryFree(array, XFree);
     }
     return array;
 }

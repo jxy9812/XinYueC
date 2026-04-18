@@ -6,6 +6,7 @@ XListSLinked* XListSLinked_create(size_t typeSize)
 		return NULL;
 	XListSLinked* this_list = XMemory_malloc(sizeof(XListSLinked));
 	XListSLinked_init(this_list, typeSize);
+	Set_Class_MemoryFree(this_list, XFree);
 	return this_list;
 }
 void XListSLinked_init(XListSLinked* this_list, size_t typeSize)

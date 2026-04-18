@@ -238,8 +238,8 @@ static void VXClass_move(XString* object, XString* src)
     {
         XString_clear_base(object);
     }
-    XSwap(object, src, sizeof(XString));
-   /// memset(src, 0, sizeof(XString));
+    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XString) - sizeof(XClass));
+    //memset((XClass*)src, 0, sizeof(XString) - sizeof(XClass));
 }
 
 // 类方法：销毁

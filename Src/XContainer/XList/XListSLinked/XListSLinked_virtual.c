@@ -596,7 +596,7 @@ void VXClass_move(XListSLinked* object, XListSLinked* src)
     {
         XListBase_clear_base(object);
     }
-    XSwap(object, src, sizeof(XListSLinked));
+    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XListSLinked) - sizeof(XClass));
 }
 
 void VXList_deinit(XListSLinked* this_list)

@@ -23,6 +23,7 @@ XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XCompare c
 	}
 	XMap* this_map = (XMap*)XMemory_malloc(sizeof(XMap));
 	XMap_init(this_map,keyTypeSize,valTypeSize, compare);
+	Set_Class_MemoryFree(this_map, XFree);
 	return this_map;
 }
 XMap* XMap_create_copy(const XMap* other)

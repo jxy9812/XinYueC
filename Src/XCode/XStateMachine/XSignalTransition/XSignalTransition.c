@@ -44,6 +44,7 @@ XSignalTransition* XSignalTransition_create()
     XSignalTransition* transition = (XSignalTransition*)XMemory_malloc(sizeof(XSignalTransition));
     if (transition) {
         XSignalTransition_init(transition);
+        Set_Class_MemoryFree(transition, XFree);
     }
     return transition;
 }

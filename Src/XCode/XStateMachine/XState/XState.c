@@ -45,6 +45,7 @@ XState* XState_create() {
     XState* state = (XState*)XMemory_malloc(sizeof(XState));
     if (state) {
         XState_init(state);
+        Set_Class_MemoryFree(state, XFree);
     }
     return state;
 }

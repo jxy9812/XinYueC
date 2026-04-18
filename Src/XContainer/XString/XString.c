@@ -92,6 +92,7 @@ XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
             str->parent.m_size = xchar_count;
         }
     }
+    Set_Class_MemoryFree(str, XFree);
     return str;
 }
 
@@ -185,6 +186,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     data[xchar_count] = (XChar){ 0 };
 
     XString_deinitCache(str);
+    Set_Class_MemoryFree(str, XFree);
     return str;
 }
 

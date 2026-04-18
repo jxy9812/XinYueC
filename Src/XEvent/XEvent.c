@@ -38,6 +38,7 @@ XEvent* XEvent_create(XEventType code)
 {
 	XEvent* event = XMemory_malloc(sizeof(XEvent));
 	XEvent_init(event, code);
+	Set_Class_MemoryFree(event, XFree);
 	return event;
 }
 void XEvent_init(XEvent* event,XEventType type)
@@ -79,6 +80,7 @@ XEventFunc* XEventFunc_create( void (*func)(void*), void* args, void(*del)(void*
 	XEventFunc* event = XMemory_malloc(sizeof(XEventFunc));
 	if (!event)return NULL;
 	XEventFunc_init(event, func,args,del);
+	Set_Class_MemoryFree(event, XFree);
 	return event;
 }
 
@@ -144,6 +146,7 @@ XEventMetaCall* XEventMetaCall_create(XObject* sender,XSlotFunc1 func, XVarList*
 	//event->del = XVarList_delete;
 	event->ref_count = ref_count;
 	event->sem = sem;
+	Set_Class_MemoryFree(event, XFree);
 	return event;
 }
 
@@ -234,6 +237,7 @@ XEventDeferredDelete* XEventDeferredDelete_create(bool isDelete)
 	XEventDeferredDelete* event = XNew(XEventDeferredDelete);
 	XEvent_init(event, XEVENT_TYPE_DEFERRED_DELETE);
 	event->isDelete = isDelete;
+	Set_Class_MemoryFree(event, XFree);
 	return event;
 }
 
@@ -262,6 +266,7 @@ XEventTimer* XEventTimer_create(XTimerId id)
 	XEventTimer* event = XNew(XEventTimer);
 	XEvent_init(event, XEVENT_TYPE_TIMER);
 	event->timerId = id;
+	Set_Class_MemoryFree(event, XFree);
 	return event;
 }
 XTimerId XEventTimer_timerId(const XEventTimer* event)
@@ -276,6 +281,7 @@ XEventSockAct* XEventSockAct_create(XSocketDescriptor socket, XSocketActType act
 	XEvent_init(event, XEVENT_TYPE_SOCK_ACT);
 	event->socket = socket;
 	event->actType = actType;
+	Set_Class_MemoryFree(event, XFree);
 	return event;
 }
 
@@ -284,6 +290,7 @@ XChildEvent* XChildEvent_create(XEventType type, XObject* child)
 	XChildEvent* event = XNew(XChildEvent);
 	XEvent_init(event, type);
 	event->child = child;
+	Set_Class_MemoryFree(event, XFree);
 	return event;
 }
 

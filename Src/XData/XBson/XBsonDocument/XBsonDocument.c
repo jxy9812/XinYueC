@@ -10,6 +10,7 @@ XBsonDocument* XBsonDocument_create() {
     XBsonDocument* doc = (XBsonDocument*)XMemory_malloc(sizeof(XBsonDocument));
     if (doc) {
         XBsonDocument_init(doc);
+        Set_Class_MemoryFree(doc, XFree);
     }
     return doc;
 }

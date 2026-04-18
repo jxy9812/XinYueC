@@ -52,11 +52,8 @@ XSocketNotifier* XSocketNotifier_createWithType(XSocketNotifierType type)
 
     XSocketNotifier* notifier = (XSocketNotifier*)XMemory_calloc(1, sizeof(XSocketNotifier));
     if (!notifier) return NULL;
-
-    XObject_init(notifier);
-    Set_Class_MemoryFree(notifier, XFree);
     XSocketNotifier_init(notifier,type);
-
+    Set_Class_MemoryFree(notifier, XFree);
     return notifier;
 }
 
@@ -72,6 +69,7 @@ XSocketNotifier* XSocketNotifier_createWithSocket(XSocketDescriptor socket, XSoc
 void XSocketNotifier_init(XSocketNotifier* notifier, XSocketNotifierType type)
 {
     if (!notifier)return;
+    XObject_init(notifier);
     XClassGetVtable(notifier) = XSocketNotifier_class_init();
 
     notifier->socket = XSocketDescriptor_Invalid();

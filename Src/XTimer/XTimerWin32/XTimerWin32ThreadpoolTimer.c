@@ -125,6 +125,7 @@ XTimerWin32ThreadpoolTimer* XTimerXTimerWin32ThreadpoolTimer_create()
 	if (timer == NULL)
 		return NULL;
 	XTimerWin32ThreadpoolTimer_class_init(timer);
+	Set_Class_MemoryFree(timer, XFree);
 	return timer;
 }
 

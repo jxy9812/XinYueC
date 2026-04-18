@@ -166,6 +166,7 @@ XESP8266Wifi* XESP8266Wifi_create(XIODevice* io) {
     XESP8266Wifi* device = XMemory_malloc(sizeof(XESP8266Wifi));
     if (ISNULL(device, "malloc failed")) return NULL;
     XESP8266Wifi_init(device, io);
+    Set_Class_MemoryFree(device, XFree);
     return device;
 }
 void VXIODevice_setWriteBuffer(XIODevice* io, size_t count)

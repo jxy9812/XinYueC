@@ -46,6 +46,7 @@ XHistoryState* XHistoryState_create(XHistoryStateType type) {
     XHistoryState* state = (XHistoryState*)XMemory_malloc(sizeof(XHistoryState));
     if (state) {
         XHistoryState_init(state, type);
+        Set_Class_MemoryFree(state, XFree);
     }
     return state;
 }

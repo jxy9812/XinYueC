@@ -198,7 +198,7 @@ void VXClass_move(XCircularQueueAtomic* object, XCircularQueueAtomic* src)
     {
         XCircularQueueAtomic_clear_base(object);
     }
-    XSwap(object, src, sizeof(XCircularQueueAtomic));
+    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XCircularQueueAtomic) - sizeof(XClass));
 }
 void VXClass_deinit(XCircularQueueAtomic* this_queue)
 {

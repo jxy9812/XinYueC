@@ -8,6 +8,7 @@ XVector* XVector_create(size_t typeSize)
 		return NULL;
 	XVector* this_vector = XMemory_malloc(sizeof(XVector));
 	XVector_init(this_vector,typeSize);
+	Set_Class_MemoryFree(this_vector, XFree);
 	return this_vector;
 }
 

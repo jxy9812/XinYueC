@@ -97,6 +97,7 @@ XTimerWin32TimeSetEvent* XTimerWin32TimeSetEvent_create()
 	if (timer == NULL)
 		return NULL;
 	XTimerWin32TimeSetEvent_init(timer);
+	Set_Class_MemoryFree(timer, XFree);
 	return timer;
 }
 void XTimerWin32TimeSetEvent_init(XTimerWin32TimeSetEvent* timer)

@@ -18,12 +18,9 @@ XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist)
         return NULL;
     }
     XThread_init(thread);
-    Set_Class_MemoryFree(thread, XFree);
     thread->m_start_routine = start_routine;
     thread->m_varList = varlist;
-
-    //XThread_currentThread();//初始化
-
+    Set_Class_MemoryFree(thread, XFree);
     return thread;
 }
 XThread* XThread_create(XObject* parent)
@@ -33,12 +30,10 @@ XThread* XThread_create(XObject* parent)
         return NULL;
     }
     XThread_init(thread);
-    Set_Class_MemoryFree(thread, XFree);
     thread->m_start_routine = NULL;
     thread->m_varList = NULL;
 
-    //XThread_currentThread();//初始化
-
+    Set_Class_MemoryFree(thread, XFree);
     return thread;
 }
 XThread* XThread_createMainThread(XObject* parent)

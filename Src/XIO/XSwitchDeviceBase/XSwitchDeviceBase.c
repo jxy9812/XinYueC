@@ -11,6 +11,7 @@ XSwitchDeviceBase* XSwitchDeviceBase_create()
 	if (sw == NULL)
 		return NULL;
 	XSwitchDeviceBase_init(sw);
+	Set_Class_MemoryFree(sw, XFree);
 	return sw;
 }
 

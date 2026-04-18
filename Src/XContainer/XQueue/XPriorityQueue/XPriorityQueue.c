@@ -9,6 +9,7 @@ XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare, XSortOr
 		return NULL;
 	XPriorityQueue* this_queue = XMemory_malloc(sizeof(XPriorityQueue));
 	XPriorityQueue_init(this_queue, typeSize,compare,order);
+	Set_Class_MemoryFree(this_queue, XFree);
 	return this_queue;
 }
 

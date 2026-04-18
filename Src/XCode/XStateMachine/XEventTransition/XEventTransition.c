@@ -39,6 +39,7 @@ XEventTransition* XEventTransition_create(XEventType eventType) {
     XEventTransition* transition = (XEventTransition*)XMemory_malloc(sizeof(XEventTransition));
     if (transition) {
         XEventTransition_init(transition, eventType);
+        Set_Class_MemoryFree(transition, XFree);
     }
     return transition;
 }

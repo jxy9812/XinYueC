@@ -7,9 +7,10 @@
 #define BYTE_COUNT(bitCount) ((bitCount + 7) / 8)
 
 XBitArray* XBitArray_create(size_t initialBitCount) {
-    XBitArray* array = XMemory_malloc(sizeof(XBitArray));
+    XBitArray* array = XNew(XBitArray);
     if (array) {
         XBitArray_init(array, initialBitCount);
+        Set_Class_MemoryFree(array, XFree);
     }
     return array;
 }

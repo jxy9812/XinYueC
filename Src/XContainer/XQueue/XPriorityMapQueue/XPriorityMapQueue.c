@@ -61,6 +61,7 @@ XPriorityMapQueue* XPriorityMapQueue_create(size_t prioritySize, XCompare priori
 		return NULL;
 	XPriorityMapQueue* this_queue = XMemory_malloc(sizeof(XPriorityMapQueue));
 	XPriorityMapQueue_init(this_queue, prioritySize, priorityCom, priorityOrder, typeSize);
+	Set_Class_MemoryFree(this_queue, XFree);
 	return this_queue;
 }
 //进行一次映射

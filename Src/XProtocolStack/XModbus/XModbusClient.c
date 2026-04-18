@@ -36,6 +36,7 @@ XModbusClient* XModbusClient_create(void) {
     XModbusClient* client = (XModbusClient*)XMemory_malloc(sizeof(XModbusClient));
     if (client) {
         XModbusClient_init(client);
+        Set_Class_MemoryFree(client, XFree);
     }
     return client;
 }

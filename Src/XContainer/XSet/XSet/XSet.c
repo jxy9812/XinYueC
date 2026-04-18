@@ -19,7 +19,7 @@ static void VXSet_clear(XSet* this_set);
 static void VXClass_copy(XSet* object, const XSet* src);
 static void VXClass_move(XSet* object, XSet* src);
 static void VXSet_deinit(XSet* this_set);
-static void VXSet_swap(XSet* this_setOne, XSet* this_setTwo);
+//static void VXSet_swap(XSet* this_setOne, XSet* this_setTwo);
 XVtable* XSet_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -42,7 +42,7 @@ XVtable* XSet_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSet_deinit);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXSet_swap);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXSet_swap);
 #if SHOWCONTAINERSIZE
 	printf("XSet size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -107,15 +107,6 @@ void VXSet_deinit(XSet* this_set)
 	//XMemory_free(this_set);
 }
 
-void VXSet_swap(XSet* this_setOne, XSet* this_setTwo)
-{
-	/*XVtableGetFunc(XVector_class_init(), EXContainerObject_Swap, void (*)(XContainerObject*, XContainerObject*))(this_setOne, this_setTwo);
-	XSwap(&((XSetBase*)this_setOne)->m_KeyEquality, &((XSetBase*)this_setTwo)->m_KeyEquality, sizeof(XEquality));
-	XSwap(&((XSetBase*)this_setOne)->m_KeyLess, &((XSetBase*)this_setTwo)->m_KeyLess, sizeof(XLess));
-	XSwap(&XContainerTypeSize(this_setOne), &XContainerTypeSize(this_setTwo), sizeof(size_t));*/
-
-	XSwap(this_setOne,this_setTwo,sizeof(XSet));
-}
 bool VXSet_insert(XSet* this_set, const void* pvKey, XCDataCreatMethod dataCreatMethod)
 {
 	//if (ISNULL(this_set, "") || ISNULL(pvKey, "") )
@@ -243,6 +234,7 @@ XSet* XSet_create(const size_t keyTypeSize, XCompare compare)
 	}
 	XSet* this_set = (XSet*)XMemory_malloc(sizeof(XSet));
 	XSet_init(this_set, keyTypeSize, compare);
+	Set_Class_MemoryFree(this_set, XFree);
 	return this_set;
 }
 

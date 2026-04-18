@@ -68,6 +68,7 @@ XVtable* XHostInfo_class_init(void) {
 XHostInfo* XHostInfo_create(void) {
     XHostInfo* info = (XHostInfo*)XMemory_malloc(sizeof(XHostInfo));
     XHostInfo_init(info);
+    Set_Class_MemoryFree(info, XFree);
     return info;
 }
 

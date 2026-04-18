@@ -50,6 +50,7 @@ XPWMDeviceSTM32 *XPWMDeviceSTM32_create(XPWMGPIO* gpio)
 		return NULL;
 	XPWMDeviceSTM32_init(pwm);
 	pwm->m_gpio=*gpio;
+	Set_Class_MemoryFree(pwm, XFree);
     return pwm;
 }
 

@@ -79,6 +79,7 @@ XDispatcher* XDispatcher_create(XSchedulePolicy policy) {
     XDispatcher* dispatcher = XMemory_malloc(sizeof(XDispatcher));
     if (dispatcher) {
         XDispatcher_init(dispatcher, policy);
+        Set_Class_MemoryFree(dispatcher, XFree);
     }
     return dispatcher;
 }

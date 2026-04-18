@@ -11,6 +11,7 @@ XJsonArray* XJsonArray_create()
     if (array == NULL)
         return NULL;
     XJsonArray_init(array);
+    Set_Class_MemoryFree(array, XFree);
     return array;
 }
 

@@ -99,7 +99,7 @@ void VXClass_move(XListDLinked* object, XListDLinked* src)
     {
         XListBase_clear_base(object);
     }
-    XSwap(object, src, sizeof(XListDLinked));
+    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XListDLinked) - sizeof(XClass));
 }
 
 bool VXListBase_push_front_node(XListDLinked* this_list, XListDNode* node)

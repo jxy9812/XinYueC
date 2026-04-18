@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "XStack.h"
-//#include "XAlgorithm.h"
+#include"XAlgorithm.h"
 // 内部函数声明
 static bool VXListBase_push_front_node(XListSLinkedAtomic* this_list, XListSNodeAtomic* node);
 static bool VXListBase_push_back_node(XListSLinkedAtomic* this_list, XListSNodeAtomic* node);
@@ -759,7 +759,7 @@ void VXClass_move(XListSLinkedAtomic* object, XListSLinkedAtomic* src)
     {
         XListBase_clear_base(object);
     }
-    XSwap(object, src, sizeof(XListSLinkedAtomic));
+    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XListSLinkedAtomic) - sizeof(XClass));
 }
 
 // 释放链表
@@ -775,6 +775,7 @@ XListSLinkedAtomic* XListSLinkedAtomic_create(size_t typeSize) {
     XListSLinkedAtomic* this_list = (XListSLinkedAtomic*)XMemory_malloc(sizeof(XListSLinkedAtomic));
     if (this_list == NULL) return NULL;
     XListSLinkedAtomic_init(this_list, typeSize);
+    Set_Class_MemoryFree(this_list, XFree);
     return this_list;
 }
 

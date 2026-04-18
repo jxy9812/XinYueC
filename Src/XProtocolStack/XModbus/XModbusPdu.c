@@ -43,6 +43,7 @@ XVtable* XModbusExceptionResponse_class_init(void)
 XModbusPdu* XModbusPdu_create(void) {
     XModbusPdu* pdu = (XModbusPdu*)XMemory_malloc(sizeof(XModbusPdu));
     if (pdu) XModbusPdu_init(pdu);
+    Set_Class_MemoryFree(pdu, XFree);
     return pdu;
 }
 

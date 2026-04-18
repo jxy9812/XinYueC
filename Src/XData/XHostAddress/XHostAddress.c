@@ -224,6 +224,7 @@ void XHostAddress_init(XHostAddress* addr) {
 XHostAddress* XHostAddress_create(void) {
     XHostAddress* addr = (XHostAddress*)XMemory_malloc(sizeof(XHostAddress));
     if (addr) XHostAddress_init(addr);
+    Set_Class_MemoryFree(addr, XFree);
     return addr;
 }
 

@@ -94,6 +94,7 @@ XVariant* XVariant_create(void* data, size_t dataSize, int type)
 {
 	XVariant* var = XMemory_malloc(sizeof(XVariant));
 	XVariant_init(var,data,dataSize,type);
+	Set_Class_MemoryFree(var, XFree);
 	return var;
 }
 

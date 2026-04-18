@@ -18,7 +18,7 @@ static void VXSet_clear(XHashSet* this_set);
 static void VXClass_copy(XHashSet* object, const XHashSet* src);
 static void VXClass_move(XHashSet* object, XHashSet* src);
 static void VXSet_deinit(XHashSet* this_set);
-static void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo);
+//static void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo);
 static XVector* VXSetBase_keys(const XSetBase* this_set);
 
 // 私有函数：扩容哈希表
@@ -50,7 +50,7 @@ XVtable* XHashSet_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSet_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXSet_swap);
+    //XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXSet_swap);
 #if SHOWCONTAINERSIZE
     printf("XHashSet size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -258,7 +258,8 @@ void VXClass_move(XHashSet* object, XHashSet* src)
     {
         XHashSet_clear_base(object);
     }
-    XSwap(object, src, sizeof(XHashSet));
+
+    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XHashSet) - sizeof(XClass));
 }
 
 void VXSet_deinit(XHashSet* this_set)
@@ -270,16 +271,6 @@ void VXSet_deinit(XHashSet* this_set)
         XContainerDataPtr(this_set) = NULL;
     }
     //XMemory_free(this_set);
-}
-
-void VXSet_swap(XHashSet* this_setOne, XHashSet* this_setTwo)
-{
-    // 调用父类交换一部分
-    //XVtableGetFunc(XContainerObject_class_init(), EXContainerObject_Swap, void(*)(XHashSet*, XHashSet*))(this_setOne, this_setTwo);
-    //XSwap(&(this_setOne->m_class.m_KeyEquality), &(this_setTwo->m_class.m_KeyEquality), sizeof(XEquality));
-   // XSwap(&XContainerTypeSize(this_setOne), & XContainerTypeSize(this_setTwo), sizeof(size_t));
-    //XSwap(&(this_setOne->m_hash), &(this_setTwo->m_hash), sizeof(XHashFunc));
-    XSwap(this_setOne,this_setTwo,sizeof(XHashSet));
 }
 
 XVector* VXSetBase_keys(const XSetBase* this_set)
@@ -296,6 +287,7 @@ XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XCompare com
 {
     XHashSet* set = XMemory_malloc(sizeof(XHashSet));
     XHashSet_init(set, keyTypeSize, hash,compare);
+    Set_Class_MemoryFree(set, XFree);
     return set;
 }
 

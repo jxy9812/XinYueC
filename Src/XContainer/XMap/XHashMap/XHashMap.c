@@ -8,6 +8,7 @@ XHashMap*XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHa
 {
 	XHashMap*map = XMemory_malloc(sizeof(XHashMap));
 	XHashMap_init(map,keyTypeSize,valTypeSize,hash,compare);
+	Set_Class_MemoryFree(map, XFree);
 	return map;
 }
 XHashMap* XHashMap_create_copy(const XHashMap* other)

@@ -7,6 +7,7 @@ XTimerTimeWheel* XTimerTimeWheel_create()
 	if (timer == NULL)
 		return timer;
 	XTimerTimeWheel_init(timer);
+	Set_Class_MemoryFree(timer, XFree);
 	return timer;
 }
 

@@ -24,6 +24,7 @@ XQueue* XQueue_create(size_t typeSize)
 		return NULL;
 	XQueue* this_queue = XMemory_malloc(sizeof(XQueue));
 	XQueue_init(this_queue, typeSize);
+	Set_Class_MemoryFree(this_queue, XFree);
 	return this_queue;
 }
 

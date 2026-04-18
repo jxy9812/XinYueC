@@ -43,6 +43,7 @@ XStateMachine* XStateMachine_create() {
     XStateMachine* machine = (XStateMachine*)XMemory_malloc(sizeof(XStateMachine));
     if (machine) {
         XStateMachine_init(machine);
+        Set_Class_MemoryFree(machine, XFree);
     }
     return machine;
 }

@@ -173,7 +173,7 @@ void VXClass_copy(XVector* object, const XVector* src)
 	{
 		if (XContainerDataPtr(object))
 			XMemory_free(XContainerDataPtr(object));
-		memcpy(object, src, sizeof(XVector));
+		memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XVector) - sizeof(XClass));
 		XContainerDataPtr(object) = XMemory_malloc(XContainerSize(object) * XContainerTypeSize(object));
 		memcpy(XContainerDataPtr(object), XContainerDataPtr(src), XContainerSize(object) * XContainerTypeSize(object));
 		XContainerCapacity(object) = XContainerSize(object);
@@ -183,7 +183,7 @@ void VXClass_move(XVector* object, XVector* src)
 {
 	if (XContainerDataPtr(object))
 		XMemory_free(XContainerDataPtr(object));
-	memcpy(object, src, sizeof(XVector));
+	memcpy((XClass*)object+1, (XClass*)src+1, sizeof(XVector)-sizeof(XClass));
 	XContainerDataPtr(src) = NULL;
 	XContainerCapacity(src) = 0;
 	XContainerSize(src) = 0;

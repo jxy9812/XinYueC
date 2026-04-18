@@ -8,7 +8,7 @@ XVariantList* XVariantList_create()
 {
 	XVariantList* vector = XMemory_malloc(sizeof(XVariantList));
 	XVariantList_init(vector);
-	
+	Set_Class_MemoryFree(vector, XFree);
 	return vector;
 }
 XVariantList* XVariantList_create_copy(const XVariantList* other)

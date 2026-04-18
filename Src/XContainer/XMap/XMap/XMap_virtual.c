@@ -21,7 +21,7 @@ static void VXMap_clear(XMap* this_map);
 static void VXClass_copy(XMap* object, const XMap* src);
 static void VXClass_move(XMap* object, XMap* src);
 static void VXMap_deinit(XMap* this_map);
-static void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
+//static void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo);
 
 XVtable* XMap_class_init()
 {
@@ -45,7 +45,7 @@ XVtable* XMap_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit,VXMap_deinit);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
 #if SHOWCONTAINERSIZE
 	printf("XMap size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -270,7 +270,7 @@ void VXClass_move(XMap* object, XMap* src)
 	{
 		XMapBase_clear_base(object);
 	}
-	XSwap(object, src, sizeof(XMap));
+	XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XMap) - sizeof(XClass));
 }
 
 void VXMap_deinit(XMap* this_map)
@@ -279,14 +279,5 @@ void VXMap_deinit(XMap* this_map)
 	//XMemory_free(this_map);
 }
 
-void VXMap_swap(XMap* this_mapOne, XMap* this_mapTwo)
-{
-	XSwap(this_mapOne, this_mapTwo, sizeof(XMap));
-	//XVtableGetFunc(XVector_class_init(), EXContainerObject_Swap, void (*)(XContainerObject*, XContainerObject*))(this_mapOne, this_mapTwo);
-	////XContainerObject_swap_base(this_mapOne, this_mapTwo);
-	//XSwap(&((XMapBase*)this_mapOne)->m_KeyEquality, &((XMapBase*)this_mapTwo)->m_KeyEquality, sizeof(XEquality));
-	//XSwap(&((XMapBase*)this_mapOne)->m_KeyLess, &((XMapBase*)this_mapTwo)->m_KeyLess, sizeof(XLess));
-	//XSwap(&((XMapBase*)this_mapOne)->m_keyTypeSize, &((XMapBase*)this_mapTwo)->m_keyTypeSize, sizeof(size_t));
-}
 
 #endif

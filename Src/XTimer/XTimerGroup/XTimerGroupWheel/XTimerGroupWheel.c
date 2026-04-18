@@ -12,6 +12,7 @@ XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision)
 	if (group == NULL)
 		return group;
 	XTimerGroupWheel_init(group, precision);
+	Set_Class_MemoryFree(group, XFree);
 	return group;
 }
 

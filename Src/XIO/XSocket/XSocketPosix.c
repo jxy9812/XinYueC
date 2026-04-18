@@ -86,6 +86,7 @@ XSocket* XSocket_create()
 {
     XSocket* so = XMemory_malloc(sizeof(XSocket));
     XSocket_init(so);
+    Set_Class_MemoryFree(so, XFree);
     return so;
 }
 

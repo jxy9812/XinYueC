@@ -10,6 +10,7 @@ XPWMDeviceBase* XPWMDeviceBase_create()
 		return pwm;
 	
 	XPWMDeviceBase_init(pwm);
+	Set_Class_MemoryFree(pwm, XFree);
 	return pwm;
 }
 

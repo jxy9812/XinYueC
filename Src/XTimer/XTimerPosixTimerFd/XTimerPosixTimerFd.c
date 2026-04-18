@@ -1,4 +1,4 @@
-#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
+﻿#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 #include "XTimerPosixTimerFd.h"
 #include "XMemory.h"
 #include "XEventLoop.h"
@@ -106,6 +106,7 @@ XTimerPosixTimerFd* XTimerPosixTimerFd_create() {
     XTimerPosixTimerFd* timer = XMemory_malloc(sizeof(XTimerPosixTimerFd));
     if (timer) {
         XTimerPosixTimerFd_init(timer);
+        Set_Class_MemoryFree(timer, XFree);
     }
     return timer;
 }

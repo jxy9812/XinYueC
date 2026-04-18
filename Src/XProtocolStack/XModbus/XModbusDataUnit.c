@@ -31,6 +31,7 @@ XModbusDataUnit* XModbusDataUnit_create()
 {
 	XModbusDataUnit* unit = XMemory_malloc(sizeof(XModbusDataUnit));
 	XModbusDataUnit_init(unit);
+	Set_Class_MemoryFree(unit, XFree);
 	return unit;
 }
 

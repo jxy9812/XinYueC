@@ -18,6 +18,7 @@ XDataFrameComm* XDataFrameComm_create(XIODevice* io)
 		return NULL;
 	XDataFrameComm* comm = XMemory_malloc(sizeof(XDataFrameComm));
 	XDataFrameComm_init(comm, io);
+	Set_Class_MemoryFree(comm, XFree);
 	return comm;
 }
 void XDataFrameComm_init(XDataFrameComm* comm, XIODevice* io)

@@ -392,7 +392,7 @@ static void VXClass_move(XRingChunk* object, XRingChunk* src)
     if (XContainerDataPtr(object))
         XMemory_free(XContainerDataPtr(object));
 
-    memcpy(object, src, sizeof(XRingChunk));
+    memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XRingChunk) - sizeof(XClass));
 
     // 重置源对象
     XContainerDataPtr(src) = NULL;

@@ -47,6 +47,7 @@ XSwitchDeviceSTM32 *XSwitchDeviceSTM32_create(XSwitchGPIO *gpio)
 		return NULL;
 	XSwitchDeviceSTM32_init(sw);
 	sw->m_gpio=*gpio;
+	Set_Class_MemoryFree(sw, XFree);
     return sw;
 }
 bool VXIODevice_open(XSwitchDeviceSTM32 *sw, XIODeviceBaseMode mode)

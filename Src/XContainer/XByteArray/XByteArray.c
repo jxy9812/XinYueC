@@ -8,6 +8,7 @@ XByteArray* XByteArray_create()
 	if (array == NULL)
 		return NULL;
 	XByteArray_init(array);
+	Set_Class_MemoryFree(array, XFree);
 	return array;
 }
 

@@ -16,6 +16,7 @@ XCircularQueueAtomic* XCircularQueueAtomic_create(size_t typeSize, size_t count)
 		return NULL;
 	XCircularQueueAtomic* this_queue = XMemory_malloc(sizeof(XCircularQueueAtomic));
 	XCircularQueueAtomic_init(this_queue,typeSize,count);
+	Set_Class_MemoryFree(this_queue, XFree);
 	return this_queue;
 }
 

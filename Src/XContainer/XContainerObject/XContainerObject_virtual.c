@@ -69,10 +69,7 @@ void VXContainerObject_swap(XContainerObject* ObjectOne, XContainerObject* Objec
 	bool two = ISNULL(ObjectTwo, "");
 	if (!(one || two))
 	{
-		XSwap(ObjectOne, ObjectTwo,sizeof(XContainerObject));
-		//XSwap(&ObjectOne->m_data, &ObjectTwo->m_data, sizeof(void*));
-		//XSwap(&ObjectOne->m_capacity, &ObjectTwo->m_capacity, sizeof(size_t));
-		//XSwap(&ObjectOne->m_size, &ObjectTwo->m_size, sizeof(size_t));
+		XSwap((XClass*)ObjectOne+1, (XClass*)ObjectTwo+1,sizeof(XContainerObject)- sizeof(XClass));
 	}
 }
 

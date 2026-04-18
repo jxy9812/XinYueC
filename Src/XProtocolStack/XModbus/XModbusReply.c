@@ -30,6 +30,7 @@ XModbusReply* XModbusReply_create(XModbusReply_ReplyType type, int serverAddress
     XModbusReply* reply = (XModbusReply*)XMemory_malloc(sizeof(XModbusReply));
     if (reply) {
         XModbusReply_init(reply, type, serverAddress);
+        Set_Class_MemoryFree(reply, XFree);
     }
     return reply;
 }

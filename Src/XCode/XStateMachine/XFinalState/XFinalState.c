@@ -31,6 +31,7 @@ XFinalState* XFinalState_create() {
     XFinalState* state = (XFinalState*)XMemory_malloc(sizeof(XFinalState));
     if (state) {
         XFinalState_init(state);
+        Set_Class_MemoryFree(state, XFree);
     }
     return state;
 }

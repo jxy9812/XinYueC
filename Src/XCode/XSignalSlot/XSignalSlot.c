@@ -21,6 +21,7 @@ XSignalSlot* XSignalSlot_create(XObject* obj)
 {
 	XSignalSlot* manager = XNew(XSignalSlot);
 	XSignalSlot_init(manager,obj);
+	Set_Class_MemoryFree(obj, XFree);
 	return manager;
 }
 

@@ -554,7 +554,7 @@ static void VXClass_move(XRingBuffer* object, XRingBuffer* src)
     if (object->m_chunks)
         XVector_delete_base(object->m_chunks);
 
-    memcpy(object, src, sizeof(XRingBuffer));
+    memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XRingBuffer) - sizeof(XClass));
 
     // 重置源对象
     src->m_chunks = NULL;

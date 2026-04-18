@@ -21,7 +21,7 @@ static void VXMap_clear(XHashMap*this_hash);
 static void VXClass_copy(XHashMap* object, const XHashMap* src);
 static void VXClass_move(XHashMap* object, XHashMap* src);
 static void VXMap_deinit(XHashMap*this_hash);
-static void VXMap_swap(XHashMap*this_hashOne, XHashMap*this_hashTwo);
+//static void VXMap_swap(XHashMap*this_hashOne, XHashMap*this_hashTwo);
 // 私有函数：扩容哈希表
 static bool XHashMap_resize(XHashMap*map, size_t new_capacity);
 
@@ -47,7 +47,7 @@ XVtable* XHashMap_class_init()
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMap_deinit);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
 #if SHOWCONTAINERSIZE
 	printf("XHash size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -323,7 +323,7 @@ void VXClass_move(XHashMap* object, XHashMap* src)
 	{
 		XMapBase_clear_base(object);
 	}
-	XSwap(object,src, sizeof(XHashMap));
+	XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XHashMap) - sizeof(XClass));
 }
 
 void VXMap_deinit(XHashMap*this_hash)
@@ -339,13 +339,4 @@ void VXMap_deinit(XHashMap*this_hash)
 	//XMemory_free(this_hash);
 }
 
-void VXMap_swap(XHashMap*this_hashOne, XHashMap*this_hashTwo)
-{
-	XSwap(this_hashOne, this_hashTwo,sizeof(XHashMap));
-	////调用父类交换一部分
-	//XVtableGetFunc(XContainerObject_class_init(), EXContainerObject_Swap, void(*)(XHashMap*, XHashMap*))(this_hashOne, this_hashTwo);
-	//XSwap(&(this_hashOne->m_class.m_KeyEquality), &(this_hashTwo->m_class.m_KeyEquality), sizeof(XEquality));
-	//XSwap(&(this_hashOne->m_class.m_keyTypeSize), &(this_hashTwo->m_class.m_keyTypeSize), sizeof(size_t));
-	//XSwap(&(this_hashOne->m_hash), &(this_hashTwo->m_hash), sizeof(XHashFunc));
-}
 #endif

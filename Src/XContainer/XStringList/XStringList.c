@@ -28,7 +28,7 @@ XStringList* XStringList_create()
 {
 	XStringList* vector=XMemory_malloc(sizeof(XStringList));
 	XStringList_init(vector);
-	
+	Set_Class_MemoryFree(vector, XFree);
 	return vector;
 }
 XStringList* XStringList_create_copy(const XStringList* other)
