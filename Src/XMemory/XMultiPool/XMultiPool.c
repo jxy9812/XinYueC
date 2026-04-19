@@ -24,18 +24,17 @@ static size_t calculate_required_subpool_size(size_t user_request_size) {
  * 布局: [next_ptr | pool_index | user_data]
  */
 static void* get_final_user_ptr(void* raw_block_from_fixed_pool) {
-    // raw_block_from_fixed_pool 指向 next_ptr
+    // raw_block_from_fixed_pool 指向 next_ptr后(fixed_pool的user_data)
     // 用户数据 = next_ptr + sizeof(void*) + POOL_INDEX_SIZE
-    return (char*)raw_block_from_fixed_pool + sizeof(void*) + POOL_INDEX_SIZE;
+    return (char*)raw_block_from_fixed_pool + POOL_INDEX_SIZE;
 }
 
 /**
  * @brief 从用户提供的指针，恢复出 XFixedPool 需要的原始块指针。
  */
 static void* get_raw_block_for_fixed_pool(void* user_ptr) {
-    // user_ptr - POOL_INDEX_SIZE 得到 pool_index 的地址
-    // 再 - sizeof(void*) 得到 next_ptr 的地址，也就是原始块指针
-    return (char*)user_ptr - POOL_INDEX_SIZE - sizeof(void*);
+    // raw_block - POOL_INDEX_SIZE 得到 pool_index 的地址
+    return (char*)user_ptr - POOL_INDEX_SIZE ;
 }
 
 /**
@@ -49,8 +48,8 @@ static pool_index_t read_pool_index(void* user_ptr) {
 /**
  * @brief 向用户提供的指针写入池索引。
  */
-static void write_pool_index(void* user_ptr, pool_index_t index) {
-    pool_index_t* index_ptr = (pool_index_t*)((char*)user_ptr - POOL_INDEX_SIZE);
+static void write_pool_index(void* raw_block, pool_index_t index) {
+    pool_index_t* index_ptr = (pool_index_t*)(raw_block);
     *index_ptr = index;
 }
 // ----------------------------------------------------------------------------
@@ -82,27 +81,38 @@ static size_t find_insert_position(const XVector* sub_pools, size_t new_user_blo
  * @brief 使用二分查找找到能满足 size 需求的最小子池索引
  * 注意：这里的 size 已经是 (用户请求 + 索引大小)
  */
-static size_t find_suitable_pool_index(const XVector* sub_pools, size_t size) {
+static int32_t find_suitable_pool_index(const XVector* sub_pools, size_t size) {
     size_t num_pools = XVector_size_base(sub_pools);
     if (num_pools == 0) {
-        return num_pools;
+        return -1;
     }
 
-    size_t left = 0;
+    size_t left=0, mid = 0;
     size_t right = num_pools;
-
     while (left < right) {
         size_t mid = left + (right - left) / 2;
         XFixedPool* mid_pool = *(XFixedPool**)XVector_at_base(sub_pools, mid);
 
+        // 核心逻辑：只关心是否足够大
         if (mid_pool->user_block_size < size) {
+            // 当前池太小，答案在右半部分
             left = mid + 1;
         }
         else {
+            // 当前池足够大，它可能是答案，但我们要找最小的，所以继续在左半部分（包括mid）查找
             right = mid;
         }
     }
-    return left; // left 是第一个满足 user_block_size >= size 的池索引
+
+    // 循环结束时，left == right
+    // left 就是第一个满足 user_block_size >= size 的索引
+    // 如果 left == num_pools，说明所有池都太小
+    if (left < num_pools) {
+        return (int32_t)left;
+    }
+    else {
+        return -1;
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -115,16 +125,13 @@ void* XMultiPool_malloc(XMultiPool* multi_pool, size_t size) {
     }
 
     const XVector* sub_pools = multi_pool->sub_pools;
-    size_t num_pools = XVector_size_base(sub_pools);
+    size_t num_pools = XContainerSize(sub_pools);
 
     // --- 计算查找所需的大小 ---
     size_t required_size = calculate_required_subpool_size(size);
-    size_t start_pool_idx = find_suitable_pool_index(sub_pools, required_size);
+    int32_t start_pool_idx = find_suitable_pool_index(sub_pools, required_size);
 
-    if (start_pool_idx >= XVector_size_base(sub_pools)) {
-        return NULL; // 请求过大，无池可满足
-    }
-    if (start_pool_idx >= num_pools) {
+    if (start_pool_idx==-1||start_pool_idx >= num_pools) {
         return NULL; // 请求过大，无池可满足
     }
 
@@ -134,15 +141,18 @@ void* XMultiPool_malloc(XMultiPool* multi_pool, size_t size) {
 
         // 1. 尝试从当前子池获取原始块
         void* raw_block = XFixedPool_malloc(pool);
-        if (raw_block) {
+        if (raw_block) 
+        {
+           // *((pool_index_t*)raw_block) = i;//这里写入的是实际分配成功的池索引 i
+            write_pool_index(raw_block, (pool_index_t)i); // 注意：这里写入的是实际分配成功的池索引 i
             // 2. 分配成功，在原始块中写入当前池的索引
-            // 布局: [next_ptr | pool_index | ...]
+           // 布局: [next_ptr | pool_index | ...]
             void* user_data_start = get_final_user_ptr(raw_block);
-            write_pool_index(user_data_start, (pool_index_t)i); // 注意：这里写入的是实际分配成功的池索引 i
-
             // 3. 返回最终的用户指针
+            //XPrintf("malloc index:%i ptr:%p\n", i, user_data_start);
             return user_data_start;
         }
+        //XPrintf("当前池已满下一个 尝试\n");
         // 如果当前池已空，继续尝试下一个更大的池
     }
 
@@ -157,7 +167,7 @@ void XMultiPool_free(XMultiPool* multi_pool, void* ptr) {
 
     // 1. 从用户指针读取池索引
     pool_index_t pool_idx = read_pool_index(ptr);
-    size_t num_pools = XVector_size_base(multi_pool->sub_pools);
+    size_t num_pools = XContainerSize(multi_pool->sub_pools);
 
     // 安全检查：确保索引有效
     if (pool_idx >= num_pools) {
@@ -170,8 +180,10 @@ void XMultiPool_free(XMultiPool* multi_pool, void* ptr) {
 
     // 3. 恢复出原始块指针并归还
     void* raw_block = get_raw_block_for_fixed_pool(ptr);
+    //XPrintf("free index:%i ptr:%p\n", pool_idx, ptr);
     XFixedPool_free(pool, raw_block);
 }
+
 
 // ----------------------------------------------------------------------------
 // 动态模式 API 实现
@@ -261,4 +273,30 @@ void XMultiPool_deinit(XMultiPool* multi_pool) {
         XVector_delete_base(multi_pool->sub_pools);
         multi_pool->sub_pools = NULL;
     }
+}
+
+static XMultiPool* global_pool = NULL;
+XMultiPool* XMultiPool_global()
+{
+    return global_pool;
+}
+void XMultiPool_initGlobal()
+{
+    if (global_pool)return;
+    global_pool = XMultiPool_create();
+    XMultiPool_add_pool(global_pool, XFixedPool_create(32, 100));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(64, 50));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(128, 10));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(256, 5));
+}
+
+void* XMultiPool_mallocGlobal(size_t size)
+{
+    return global_pool?XMultiPool_malloc(global_pool, size):NULL;
+}
+
+void XMultiPool_freeGlobal(void* ptr)
+{
+    if(global_pool&&ptr)
+        XMultiPool_free(global_pool, ptr);
 }

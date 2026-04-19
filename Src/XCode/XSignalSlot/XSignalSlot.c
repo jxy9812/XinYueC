@@ -342,7 +342,7 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal, XVarList* args, void(
 	if (del && !ref_count)
 		ref_count = XAtomic_create(int32_t);
 	if (del)
-		args->del = del;
+		args->argsDel = del;
 	emit(manager, signal, args, ref_count, priority);
 }
 

@@ -1,14 +1,15 @@
 ﻿#include"XVarList.h"
-#include"XMemory.h"
+#include"XMultiPool.h"
 #include<stdarg.h>
 #include<string.h>
 void XVarList_delete(XVarList* list)
 {
     if (list)
     {
-        if (list->del)
-            list->del(list);
-        XDelete(list);
+        if (list->argsDel)
+            list->argsDel(list);
+        if (list->m_free)
+            list->m_free(list);
     }
 }
 XVarList* XVarList_create(uint8_t count, ...)
@@ -27,11 +28,23 @@ XVarList* XVarList_create(uint8_t count, ...)
         //printf("%d\t", va_arg(ap, int));  // 获取 int 类型参数，累加
     }
     va_end(ap);  // 结束访问
-    uint8_t* list = XMemory_malloc(sumTypeSize+sizeof(uint8_t*)*2);
+    XVarList* list = NULL;
+    if (XMultiPool_global())
+    {
+        list= XMultiPool_mallocGlobal(ALIGN_UP(sumTypeSize + sizeof(XVarList), sizeof(void*)));
+        if(list)
+            list->m_free = XMultiPool_freeGlobal;
+    }
+    if (!list)
+    {
+        list = XMalloc(ALIGN_UP(sumTypeSize + sizeof(XVarList), sizeof(void*)));
+        list->m_free = XFree;
+    }
+    if (!list)return NULL;
+
     XVarList_setArgsDel(list,NULL);
     XVarList_start(list);//指向开头
     uint8_t* ptr = *((uint8_t**)list);
-    //void* data = NULL;
     size_t typeSize = 0;
     va_start(ap, count);  // 初始化 ap，指向第一个可变参数
     for (int i = 0; i < count; i++)

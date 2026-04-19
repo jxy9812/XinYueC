@@ -109,6 +109,13 @@ void* XMultiPool_malloc(XMultiPool* multi_pool, size_t size);
  */
 void XMultiPool_free(XMultiPool* multi_pool, void* ptr);
 
+XMultiPool* XMultiPool_global();
+//初始化默认的全局多级池
+void XMultiPool_initGlobal();
+//用全局池分配
+void* XMultiPool_mallocGlobal(size_t size);
+//全局池释放
+void XMultiPool_freeGlobal(void* ptr);
 #ifdef __cplusplus
 }
 #endif

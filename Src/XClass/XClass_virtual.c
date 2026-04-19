@@ -30,12 +30,12 @@ void XClass_init(XClass* object)
 
 void VXClass_copy(XClass* object, const XClass* src)
 {
-	memcpy(object,src,sizeof(XClass));
+	//memcpy(object,src,sizeof(XClass));
 }
 
 void VXClass_move(XClass* object, XClass* src)
 {
-	memcpy(object, src, sizeof(XClass));
+	//memcpy(object, src, sizeof(XClass));
 }
 
 void VXClass_deinit(XClass* object)

@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 #include "CXinYueConfig.h"
+#include "XMemory.h"
 #include "XTypes.h"
 #include "XChar.h"
 #include <stdio.h>
@@ -31,8 +32,9 @@ extern "C" {
 typedef struct XVarList
 {
 	uint8_t* ptr;  ///< 当前访问的指针位置，用于遍历元素
-    void(*del)(struct XVarList*);//释放方法
-    void* data;    ///< 存储变量数据的起始地址
+    DeleteMethod m_free;//释放方法
+    void(*argsDel)(struct XVarList*);//释放方法
+    char data[];    ///< 存储变量数据的起始地址
 } XVarList;
 /**
 * @brief 创建XVarList实例，自动计算参数数量
@@ -47,15 +49,15 @@ typedef struct XVarList
 */
 void  XVarList_delete(XVarList*list);
 //设置参数删除函数
-#define XVarList_setArgsDel(list,d)       (((XVarList*)list)->del = d)
+#define XVarList_setArgsDel(list,d)       (((XVarList*)list)->argsDel = d)
 //参数删除函数
-#define XVarList_argsDel(list)            ((XVarList*)list)->del
+#define XVarList_argsDel(list)            ((XVarList*)list)->argsDel
 /**
 * @brief 初始化XVarList的指针，使其指向数据起始位置
 * 将ptr成员设置为数据区域的起始地址（跳过内部指针存储区）
 * @param list XVarList实例指针
 */
-#define XVarList_start(list)     *((uint8_t**)list) = (uint8_t*)list + sizeof(uint8_t*)*2
+#define XVarList_start(list)     *((uint8_t**)list) = ((XVarList*)list)->data
 /**
 * @brief 获取当前指针指向的参数地址
 * @param list XVarList实例指针

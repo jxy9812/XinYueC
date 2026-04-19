@@ -28,11 +28,8 @@ void XThreadTest()
 	{
 		XPrintf("主线程:id:%d\n", XThread_currentThreadId());
 		XThread* th = XThread_create_func(threadFunc, NULL);
-		//XPrintf("XThread:%p XVector* children:%p\n", th,((XObject*)th)->children);
+		XPrintf("XThread:%p XVector* children:%p\n", th,((XObject*)th)->children);
 		XThread_start(th);
-		//XPrintf("XThread:%p XVector* children:%p\n", th, ((XObject*)th)->children);
-		//while (true);
-		XPrintf("XThread:thread:%p\n", ((XObject*)th)->m_thread);
 		XCoreApplication_exec();
 		XThread_deleteLater(th);
 

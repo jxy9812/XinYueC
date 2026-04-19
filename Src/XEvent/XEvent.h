@@ -25,10 +25,6 @@ typedef struct XEvent
 {
     XClass m_class;
     int type;                     //事件类型代码
-    //bool accepted;                  //接受事件
-    //bool spontaneous;             // 是否为自发事件(非用户触发)
-    //bool posted;                    // 1 是否来自事件队列
-    //bool _unused;                   // 内存对齐
     // 标志位（16 bits）
     uint16_t reserved : 10;//预留未来扩展
     uint16_t accepted : 1; //接受事件

@@ -13,6 +13,7 @@
 #include "XThreadData.h"
 #include "XThread.h"
 #include "XTimer.h"
+#include "XMultiPool.h"
 static XCoreApplication* g_app = NULL; // 全局应用程序实例
 bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
 static void VXObject_timerEvent(XCoreApplication* app, XEventTimer* event);
@@ -57,7 +58,8 @@ XCoreApplication* XCoreApplication_create(int argc, char** argv) {
 void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     if (app == NULL)
         return;
-    //XThreadData_initMainThread();
+    //初始化内存池
+    XMultiPool_initGlobal();
     // 初始化父类
     XObject_init(app);
     XClassGetVtable(app) = XCoreApplication_class_init();

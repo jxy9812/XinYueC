@@ -10,27 +10,26 @@
  *
  * 内部块 = 隐藏的 next 指针 + 用户数据区 + 可能的填充（为了对齐）
  */
-static size_t calculate_internal_block_size(size_t user_block_size) {
-    // 确保用户数据区至少为 sizeof(void*)，以便能安全地存储指针
-    size_t effective_user_size = (user_block_size < sizeof(void*)) ? sizeof(void*) : user_block_size;
-
-    // 内部块大小 = next指针 + 对齐后的用户数据区
+static size_t calculate_internal_block_size(size_t user_block_size) 
+{
     // 我们需要确保整个内部块是 XFIXEDPOOL_ALIGN 对齐的
-    size_t internal_size = sizeof(void*) + effective_user_size;
+    size_t internal_size = sizeof(void*) + user_block_size;
     return ALIGN_UP(internal_size, sizeof(void*));
 }
 
 /**
  * @brief 获取用户可用数据的起始地址
  */
-static inline void* get_user_data_ptr(void* internal_block) {
+static void* get_user_data_ptr(void* internal_block) 
+{
+
     return (char*)internal_block + sizeof(void*);
 }
 
 /**
  * @brief 从用户数据指针恢复内部块地址
  */
-static inline void* get_internal_block_ptr(void* user_data) {
+static void* get_internal_block_ptr(void* user_data) {
     return (char*)user_data - sizeof(void*);
 }
 
@@ -44,11 +43,15 @@ static void initialize_free_list(XFixedPool* pool) {
     const size_t num_blocks = pool->total_raw_size / pool->block_size;
 
     void* current = memory;
-    for (size_t i = 0; i < num_blocks - 1; ++i) {
-        char* next_block_addr = memory + (i + 1) * pool->block_size;
-        // 在内部块的开头存储下一个内部块的地址
+    for (size_t i = 0; i < num_blocks - 1; ++i) 
+    {
+        void* next_block_addr = ((char*)current)+pool->block_size;//下一个内存块
         *(void**)current = next_block_addr;
         current = next_block_addr;
+        //char* next_block_addr = memory + (i + 1) * pool->block_size;
+        //// 在内部块的开头存储下一个内部块的地址
+        //*(void**)current = next_block_addr;
+        //current = next_block_addr;
     }
     *(void**)current = NULL; // 链表尾
     XAtomic_init(pool->free_list_head, memory);
@@ -74,7 +77,7 @@ bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t 
     pool->block_size = internal_block_size;
     pool->user_block_size = internal_block_size - sizeof(void*);
     pool->raw_memory = memory;
-    pool->total_raw_size = num_blocks * internal_block_size;
+    pool->total_raw_size = total_bytes;
     pool->owns_memory = false; // 静态模式下，用户拥有所有权
 
     initialize_free_list(pool);
@@ -105,6 +108,7 @@ void* XFixedPool_malloc(XFixedPool* pool) {
     } while (!XAtomic_compare_exchange_strong_ptr(&pool->free_list_head, &internal_block, new_head));
 
     // --- 关键修改: 返回用户数据区的地址 ---
+    if (!internal_block)return NULL;
     return get_user_data_ptr(internal_block);
 }
 

@@ -14,13 +14,13 @@ static void threadfunc(XThread*thread, XVarList* list)
 	{
 		// 3. 分配内存
 		char* ptr1 = XMultiPool_malloc(multi_pool, 10);  // 从 64-byte 池分配
-		char* ptr2 = XMultiPool_malloc(multi_pool, 200); // 从 256-byte 池分配
+		char* ptr2 = XMultiPool_malloc(multi_pool, 20); // 从 256-byte 池分配
 		char* ptr3 = XMultiPool_malloc(multi_pool, 5);   // 从 8-byte 池分配
-		strcpy(ptr1, "ptr11");
+		strcpy(ptr1, "ptr1");
 		strcpy(ptr2, "ptr21");
-		strcpy(ptr3, "ptr31");
+		strcpy(ptr3, "ptr31ptr31ptr31");
 		if (ptr1 && ptr2 && ptr3) {
-			printf("%s\n %s\n %s\n", ptr1, ptr2, ptr3);
+			//printf("%s\n %s\n %s\n", ptr1, ptr2, ptr3);
 		}
 		// 4. 释放内存
 		XMultiPool_free(multi_pool, ptr1);
@@ -56,10 +56,10 @@ void XMultiPoolTest()
 		char* ptr2 = XMultiPool_malloc(multi_pool, 200); // 从 256-byte 池分配
 		char* ptr3 = XMultiPool_malloc(multi_pool, 5);   // 从 8-byte 池分配
 		strcpy(ptr1, "ptr1");
-		strcpy(ptr2, "ptr2");
-		strcpy(ptr3, "ptr3");
+		strcpy(ptr2, "ptr21");
+		strcpy(ptr3, "ptr31ptr31ptr31");
 		if (ptr1 && ptr2 && ptr3) {
-			printf("%s\n %s\n %s\n", ptr1, ptr2, ptr3);
+			//printf("%s\n %s\n %s\n", ptr1, ptr2, ptr3);
 		}
 		// 4. 释放内存
 		XMultiPool_free(multi_pool, ptr1);
