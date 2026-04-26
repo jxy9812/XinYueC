@@ -30,101 +30,162 @@ static bool XRBTree_AdjustNoOne(XRBTreeNode** currentNode, XRBTreeNode* LPpater,
 	return false;
 }
 /*                                                  删除函数                                          */
-//删除调整树
+/**
+ * @brief 删除节点后的平衡修复函数
+ *
+ * 此函数用于在删除一个黑色节点后，修复可能被破坏的红黑树性质。
+ * 它通过检查被删除节点的兄弟节点及其子节点的颜色，执行一系列旋转和重新着色操作，
+ * 将“缺少一个黑色”的问题沿着树向上传递，直到问题被解决或到达根节点。
+ *
+ * @param this_root 指向红黑树根节点指针的指针。
+ * @param nodes 被删除后留下的“额外黑色”所在的节点（可能是 NULL）。
+ * @param LPpater nodes 的父节点。
+ */
 static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* nodes, XRBTreeNode* LPpater)
 {
-	XRBTreeNode* LPbrother = NULL;//兄弟节点
+	XRBTreeNode* LPbrother = NULL;
+
+	// 循环条件：nodes 是黑色（或为 NULL，视为双重黑色）且不是根节点
 	while ((nodes == NULL || XRBTree_IsBlack(nodes)) && nodes != *this_root)
 	{
 		if (XBTreeNode_GetLChild(LPpater) == nodes)
 		{
+			// 情况 A: nodes 是其父节点的左孩子
 			LPbrother = XBTreeNode_GetRChild(LPpater);
+
+			// Case 1: 兄弟是红色
+			// 目标：将其转换为兄弟是黑色的情况（Case 2, 3, 4）
 			if (LPbrother != NULL && XRBTree_IsRed(LPbrother))
 			{
 				XRBTree_SetBlack(LPbrother);
 				XRBTree_SetRed(LPpater);
-				XBTree_SpinLL(this_root, LPpater);
+				XBTree_SpinLL(this_root, LPpater); // 对父节点进行左旋
+
+				// 旋转后，原兄弟的左孩子成为新的兄弟，且必为黑色
 				LPbrother = XBTreeNode_GetRChild(LPpater);
+				// 此处 LPbrother 理论上不应为 NULL，但为了健壮性，后续逻辑会处理
 			}
+
+			// 此时 LPbrother 是黑色 (或 NULL)
 			if (LPbrother != NULL)
 			{
-				XRBTreeNode* LPbrotherLChild = XBTreeNode_GetLChild(LPbrother);//兄弟节点的左孩子
-				XRBTreeNode* LPbrotherRChild = XBTreeNode_GetRChild(LPbrother);//兄弟节点的右孩子
-				if ((LPbrotherLChild == NULL || XRBTree_IsBlack(LPbrotherLChild))
-					&& (LPbrotherRChild == NULL || XRBTree_IsBlack(LPbrotherRChild)))
+				XRBTreeNode* LPbrotherLChild = XBTreeNode_GetLChild(LPbrother);
+				XRBTreeNode* LPbrotherRChild = XBTreeNode_GetRChild(LPbrother);
+
+				// Case 2: 兄弟是黑色，且它的两个孩子都是黑色（或 NULL）
+				// 目标：将“双重黑色”问题向上传递给父节点
+				if ((LPbrotherLChild == NULL || XRBTree_IsBlack(LPbrotherLChild)) &&
+					(LPbrotherRChild == NULL || XRBTree_IsBlack(LPbrotherRChild)))
 				{
-					XRBTree_SetRed(LPbrother);
+					XRBTree_SetRed(LPbrother); // 将兄弟设为红色
+					// 将“双重黑色”问题向上传递
 					nodes = LPpater;
-					LPpater = XBTreeNode_GetParent(nodes);
+					LPpater = XBTreeNode_GetParent(nodes); // <-- 关键：更新父节点！
+					// 如果 nodes 现在是根，循环将在下一次检查时退出
 				}
 				else
 				{
-					if ((XBTreeNode_GetRChild(LPbrother) == NULL || XRBTree_IsBlack((XRBTreeNode*)XBTreeNode_GetRChild(LPbrother))))
+					// Case 3: 兄弟是黑色，左孩子是红色，右孩子是黑色
+					// 目标：将其转换为 Case 4
+					if (LPbrotherRChild == NULL || XRBTree_IsBlack(LPbrotherRChild))
 					{
-						XRBTree_SetBlack((XRBTreeNode*)XBTreeNode_GetLChild(LPbrother));
+						if (LPbrotherLChild != NULL)
+							XRBTree_SetBlack(LPbrotherLChild);
 						XRBTree_SetRed(LPbrother);
-						XBTree_SpinRR(this_root, LPbrother);
+						XBTree_SpinRR(this_root, LPbrother); // 对兄弟进行右旋
+
+						// 更新兄弟为原兄弟的右孩子（现在是红色）
 						LPbrother = XBTreeNode_GetRChild(LPpater);
+						// 此时 LPbrother 不应为 NULL，且其右孩子为红色
 					}
+
+					// Case 4: 兄弟是黑色，右孩子是红色
+					// 目标：通过一次旋转和变色彻底解决问题
 					XRBTree_SetColor(LPbrother, XRBTree_GetColor(LPpater));
 					XRBTree_SetBlack(LPpater);
-					XRBTree_SetBlack((XRBTreeNode*)XBTreeNode_GetRChild(LPbrother));
-					XBTree_SpinLL(this_root, LPpater);
+					if (LPbrother != NULL) {
+						XRBTreeNode* temp = XBTreeNode_GetRChild(LPbrother);
+						if (temp != NULL)
+							XRBTree_SetBlack(temp);
+					}
+					XBTree_SpinLL(this_root, LPpater); // 对父节点进行左旋
+
+					// 修复完成，将 nodes 设为根以退出循环
 					nodes = *this_root;
-					break;
 				}
 			}
 			else
 			{
+				// 兄弟节点为 NULL，这通常意味着树结构已损坏，
+				// 但按照算法逻辑，应将“双重黑色”问题向上传递
 				nodes = LPpater;
+				LPpater = XBTreeNode_GetParent(nodes); // <-- 关键：更新父节点！
 			}
-
 		}
 		else
 		{
+			// 情况 B: nodes 是其父节点的右孩子 (与情况 A 对称)
 			LPbrother = XBTreeNode_GetLChild(LPpater);
-			if (XRBTree_IsRed(LPbrother))
+
+			// Case 1: 兄弟是红色
+			if (LPbrother != NULL && XRBTree_IsRed(LPbrother))
 			{
 				XRBTree_SetBlack(LPbrother);
 				XRBTree_SetRed(LPpater);
-				XBTree_SpinLL(this_root, LPpater);
+				XBTree_SpinRR(this_root, LPpater); // 对父节点进行右旋
+
 				LPbrother = XBTreeNode_GetLChild(LPpater);
 			}
+
 			if (LPbrother != NULL)
 			{
-				XRBTreeNode* LPbrotherLChild = XBTreeNode_GetLChild(LPbrother);//兄弟节点的左孩子
-				XRBTreeNode* LPbrotherRChild = XBTreeNode_GetRChild(LPbrother);//兄弟节点的右孩子
-				if ((LPbrotherLChild == NULL || XRBTree_IsBlack(LPbrotherLChild))
-					&& (LPbrotherRChild == NULL || XRBTree_IsBlack(LPbrotherRChild)))
+				XRBTreeNode* LPbrotherLChild = XBTreeNode_GetLChild(LPbrother);
+				XRBTreeNode* LPbrotherRChild = XBTreeNode_GetRChild(LPbrother);
+
+				// Case 2: 兄弟是黑色，且它的两个孩子都是黑色
+				if ((LPbrotherLChild == NULL || XRBTree_IsBlack(LPbrotherLChild)) &&
+					(LPbrotherRChild == NULL || XRBTree_IsBlack(LPbrotherRChild)))
 				{
 					XRBTree_SetRed(LPbrother);
 					nodes = LPpater;
-					LPpater = XBTreeNode_GetParent(nodes);
+					LPpater = XBTreeNode_GetParent(nodes); // <-- 关键：更新父节点！
 				}
 				else
 				{
-					if ((XBTreeNode_GetLChild(LPbrother) == NULL || XRBTree_IsBlack((XRBTreeNode*)XBTreeNode_GetLChild(LPbrother))))
+					// Case 3: 兄弟是黑色，右孩子是红色，左孩子是黑色
+					if (LPbrotherLChild == NULL || XRBTree_IsBlack(LPbrotherLChild))
 					{
-						XRBTree_SetBlack((XRBTreeNode*)XBTreeNode_GetRChild(LPbrother));
+						if (LPbrotherRChild != NULL)
+							XRBTree_SetBlack(LPbrotherRChild);
 						XRBTree_SetRed(LPbrother);
-						XBTree_SpinLL(this_root, LPbrother);
+						XBTree_SpinLL(this_root, LPbrother); // 对兄弟进行左旋
+
 						LPbrother = XBTreeNode_GetLChild(LPpater);
 					}
+
+					// Case 4: 兄弟是黑色，左孩子是红色
 					XRBTree_SetColor(LPbrother, XRBTree_GetColor(LPpater));
 					XRBTree_SetBlack(LPpater);
-					XRBTree_SetBlack((XRBTreeNode*)XBTreeNode_GetLChild(LPbrother));
-					XBTree_SpinRR(this_root, LPpater);
+					if (LPbrother != NULL) {
+						XRBTreeNode* temp = XBTreeNode_GetLChild(LPbrother);
+						if (temp != NULL)
+							XRBTree_SetBlack(temp);
+					}
+					XBTree_SpinRR(this_root, LPpater); // 对父节点进行右旋
+
 					nodes = *this_root;
-					break;
 				}
 			}
 			else
 			{
 				nodes = LPpater;
+				LPpater = XBTreeNode_GetParent(nodes); // <-- 关键：更新父节点！
 			}
 		}
 	}
-	if (nodes)
+
+	// 循环结束后，确保当前节点为黑色
+	if (nodes != NULL)
 	{
 		XRBTree_SetBlack(nodes);
 	}
@@ -166,48 +227,26 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTre
 static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTreeNodeDataDeleteMethod method, void* args)
 {
 #if XVector_ON
-	XRBTreeNode* LPchild = NULL;//孩子节点
-	XRBTreeNode* LPreplace = eraseNode;//替换节点
-	XRBTreeNode* LPparent = NULL;//父节点
+	XRBTreeNode* LPreplace = NULL; // 后继节点（用于替换）
 
-	LPreplace = XBTreeNode_GetRChild(LPreplace);//从右子树中取最左边
-	while (XBTreeNode_GetLChild(LPreplace) != NULL)//找替换的节点
+	// 1. 找到后继节点 (右子树中的最左节点)
+	LPreplace = XBTreeNode_GetRChild(eraseNode);
+	while (XBTreeNode_GetLChild(LPreplace) != NULL)
 	{
 		LPreplace = XBTreeNode_GetLChild(LPreplace);
 	}
-	if (XTreeNode_GetDataPtr(eraseNode))
-		XMemory_free(XTreeNode_GetDataPtr(eraseNode));
+
+	// 2. === 关键修复：直接将 eraseNode 的数据指针替换为 LPreplace 的数据指针 ===
+	//    注意：这里只交换数据指针，不交换颜色！
+	void* tempData = XTreeNode_GetDataPtr(eraseNode);
 	XTreeNode_SetDataPtr(eraseNode, XTreeNode_GetDataPtr(LPreplace));
-	XTreeNode_SetDataPtr(LPreplace, NULL);
+	XTreeNode_SetDataPtr(LPreplace, tempData);
 
-	LPchild = XBTreeNode_GetRChild(LPreplace);
-	LPparent = XBTreeNode_GetParent(LPreplace);
-	enum XRBTreeColor color = XRBTree_GetColor(LPreplace);
-	if (LPparent == eraseNode)
-	{
-		XBTreeNode_SetRChild(LPparent, LPchild);
-	}
-	else
-	{
-		XBTreeNode_SetLChild(LPparent, LPchild);
-	}
+	// 3. === 核心思想：现在，LPreplace 节点持有需要被清理的旧数据 ===
+	//    我们现在要做的就是像删除一个普通节点一样删除 LPreplace。
+	//    由于 LPreplace 是后继节点，它最多只有一个右孩子，所以可以直接调用 OneChild_erase。
+	OneChild_erase(this_root, LPreplace, method, args);
 
-	if (LPchild != NULL)
-	{
-		XBTreeNode_SetParent(LPchild, LPparent);
-	}
-
-	XBBTreeNode** parent = XTreeNode_getChildrenParentRef(LPreplace);
-	if (parent)
-		*parent = NULL;
-	if (method)
-		method(XTreeNode_GetDataPtr(LPreplace), args);
-	XTreeNode_delete(LPreplace);
-	if (color == XRBTreeBlack)
-	{
-		//调整树：
-		eraseAdjustTree(this_root, LPchild, LPparent);
-	}
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
@@ -225,10 +264,14 @@ XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareR
 		++count;
 	if (XBTreeNode_GetRChild(findErase) != NULL)
 		++count;
-	if (count < 2)//零或一个孩子
-		OneChild_erase(this_root, findErase, method,args);
-	if (count == 2)//两个孩子
+	if (count == 2) // 两个孩子
+	{
 		TwoChild_erase(this_root, findErase, method, args);
+	}
+	else // 零个或一个孩子
+	{
+		OneChild_erase(this_root, findErase, method, args);
+	}
 	return findErase;
 }
 
@@ -260,51 +303,74 @@ XRBTreeNode* XRBTree_findNode(XRBTreeNode* this_root, XCompare compare, XCompare
 //调整成为红黑树
 static void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNode)
 {
-	XRBTreeNode* LPpater = NULL;//父节点
-	XRBTreeNode* LPgrandpa = NULL;//祖父节点
-	XRBTreeNode* LPuncle = NULL;//叔叔节点
+	XRBTreeNode* LPpater = NULL;    // 父节点
+	XRBTreeNode* LPgrandpa = NULL;  // 祖父节点
+	XRBTreeNode* LPuncle = NULL;    // 叔叔节点
+
+	// 循环：只要当前节点有父节点，且父节点是红色，就需要调整
 	while ((LPpater = XBTreeNode_GetParent(currentNode)) && XRBTree_IsRed(LPpater))
 	{
 		LPgrandpa = XBTreeNode_GetParent(LPpater);
-		if (LPpater == XBTreeNode_GetLChild(LPgrandpa))//父节点是祖父的左孩子
+		// --- 新增：安全检查 ---
+		if (LPgrandpa == NULL) {
+			// 父节点是根节点，这不应该发生，因为根必须是黑色。
+			// 但为了安全，直接将父节点设为黑色并退出。
+			XRBTree_SetBlack(LPpater);
+			break;
+		}
+
+		if (LPpater == XBTreeNode_GetLChild(LPgrandpa)) // 父节点是祖父的左孩子
 		{
 			LPuncle = XBTreeNode_GetRChild(LPgrandpa);
-			if (XRBTree_AdjustNoOne(&currentNode, LPpater, LPgrandpa, LPuncle))//叔叔节点是红色
+			if (XRBTree_AdjustNoOne(&currentNode, LPpater, LPgrandpa, LPuncle)) // 叔叔节点是红色
 				continue;
-			//NO.2当前节点是其父节点的右孩子
+
+			// Case 2: 当前节点是其父节点的右孩子
 			if (currentNode == XBTreeNode_GetRChild(LPpater))
 			{
 				currentNode = LPpater;
-				LPpater = XBTree_SpinLL(this_root, LPpater);
+				XBTree_SpinLL(this_root, LPpater); // 注意：旋转后 LPpater 已改变
+				// 更新指针以反映旋转后的结构
+				LPpater = XBTreeNode_GetParent(currentNode);
+				LPgrandpa = XBTreeNode_GetParent(LPpater);
 			}
-			//NO.3当前节点是其父节点的左孩子
-			{
+
+			// Case 3: 当前节点是其父节点的左孩子
+			if (LPpater && LPgrandpa) { // 再次检查
 				XRBTree_SetBlack(LPpater);
 				XRBTree_SetRed(LPgrandpa);
 				XBTree_SpinRR(this_root, LPgrandpa);
 			}
 		}
-		else//父节点是祖父的右孩子
+		else // 父节点是祖父的右孩子
 		{
 			LPuncle = XBTreeNode_GetLChild(LPgrandpa);
-			if (XRBTree_AdjustNoOne(&currentNode, LPpater, LPgrandpa, LPuncle))//叔叔节点是红色
+			if (XRBTree_AdjustNoOne(&currentNode, LPpater, LPgrandpa, LPuncle)) // 叔叔节点是红色
 				continue;
-			//NO.2当前节点是其父节点的左孩子
+
+			// Case 2: 当前节点是其父节点的左孩子
 			if (currentNode == XBTreeNode_GetLChild(LPpater))
 			{
 				currentNode = LPpater;
-				LPpater = XBTree_SpinRR(this_root, LPpater);
+				XBTree_SpinRR(this_root, LPpater);
+				// 更新指针
+				LPpater = XBTreeNode_GetParent(currentNode);
+				LPgrandpa = XBTreeNode_GetParent(LPpater);
 			}
-			//NO.3当前节点是其父节点的左孩子
-			{
+
+			// Case 3: 当前节点是其父节点的右孩子 <-- 修正注释
+			if (LPpater && LPgrandpa) {
 				XRBTree_SetBlack(LPpater);
 				XRBTree_SetRed(LPgrandpa);
 				XBTree_SpinLL(this_root, LPgrandpa);
 			}
 		}
-		//LPpater = XBTreeNode_GetParent(currentNode);
 	}
-	XRBTree_SetBlack(*this_root);
+
+	// 确保根节点始终是黑色
+	if (*this_root != NULL) {
+		XRBTree_SetBlack(*this_root);
+	}
 }
 XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t TypeSize)
 {
@@ -323,6 +389,7 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareR
 	if (!flag)
 	{
 		printf("节点插入失败\n");
+		XTreeNode_delete((XTreeNode*)nodes); // 
 		return NULL;
 	}
 	if (this_root == NULL)//根节点，无内存开辟

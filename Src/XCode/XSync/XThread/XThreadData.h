@@ -19,7 +19,7 @@ typedef struct {
 typedef struct XThreadData{
     XMutex* m_mutex; // 保护 postEventList
     XThread* m_thread;
-    XVector/*<XPostEvent>*/ m_postEventList;  // 动态数组
+    XVector*/*<XPostEvent>*/ m_postEventList;  // 动态数组
     XAbstractEventDispatcher* m_dispatcher;   // 本线程的事件分发器
     XAtomic_ptr m_currentEventLoop;//当前正在运行的事件循环
     XAtomic_size_t m_loopLevel; // <-- 关键：一个原子整数计数器
@@ -28,6 +28,8 @@ typedef struct XThreadData{
 //需平台实现
 XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent);
 
+//XThreadData* XThreadData_test(XThread* thread);
+
 XThreadData* XThreadData_create(XThread* thread);
 void XThreadData_delete(XThreadData* data);
 void XThreadData_init(XThreadData* data,XThread* thread);
@@ -35,8 +37,8 @@ void XThreadData_init(XThreadData* data,XThread* thread);
 // 获取当前线程的 XThreadData
 XThreadData* XThreadData_current(void);
 
-void XThreadData_mapInsert(XThreadData* data);
-void XThreadData_mapRemove(XThreadData* data);
+XHandle XThreadData_mapInsert(XThreadData* data);
+void XThreadData_mapRemove(XHandle id);
 // 初始化主线程的 XThreadData（由 XCoreApplication 调用）
 XThreadData* XThreadData_initMainThread(XThread* thread);
 

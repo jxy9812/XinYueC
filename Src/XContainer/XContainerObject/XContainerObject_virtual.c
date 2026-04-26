@@ -101,14 +101,14 @@ void VXClass_move(XContainerObject* object, XContainerObject* src)
 void VXContainerObject_deinit(XContainerObject* Object)
 {
 	if (ISNULL(Object, ""))
-		return 0;
+		return ;
 	//printf("准备释放\n");
 	XContainerObject_clear_base(Object);
 	//XClassGetVtable(Object) = NULL;
 	Object->m_capacity = 0;
 	Object->m_size = 0;
 	Object->m_typeSize = 0;
-	if (Object->m_data);
+	if (Object->m_data)
 	{
 		XMemory_free(Object->m_data);
 		Object->m_data = NULL;

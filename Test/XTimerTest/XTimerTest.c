@@ -58,7 +58,7 @@ void XTimerTest()
 		//XObject_setParent(timer,loop);
 		
 		XEventLoop_deleteLater(loop);
-	/*	XTimer_delete_base(timer);
+	/*	XTimer_deleteLater(timer);
 		XPrintf("3s后正式结束\n");
 		XCoreApplication_processEvents(0);
 		XCoreApplication_processEventsWithMaxTime(0, 3000);

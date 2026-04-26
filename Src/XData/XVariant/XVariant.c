@@ -228,7 +228,7 @@ XVariant* XVariant_create_Pair(const XPair* val)
 {
 	if (val == NULL)
 		return NULL;
-	return XVariant_create(val, XPair_getSize(val), XVariantType_Pair);
+	return XVariant_create(val, XPair_size(val), XVariantType_Pair);
 }
 
 XVariant* XVariant_create_Point(XPoint val)
@@ -1022,7 +1022,7 @@ void XVariant_setValue_double(XVariant* var, double val)
 
 void XVariant_setValue_Pair(XVariant* var, const XPair* pair)
 {
-	setValue(var,pair,XPair_getSize(pair), XVariantType_Pair);
+	setValue(var,pair,XPair_size(pair), XVariantType_Pair);
 }
 
 void XVariant_setValue_Point(XVariant* var, XPoint val)

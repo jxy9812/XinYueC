@@ -10,6 +10,7 @@
 //#include "XEventDispatcher.h"
 #include "XCoreApplication.h"
 #include "XThreadData.h"
+#include <string.h>
 // 创建 XThread 对象
 XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist)
 {
@@ -42,6 +43,7 @@ XThread* XThread_createMainThread(XObject* parent)
     if (thread == NULL) {
         return NULL;
     }
+    memset(((XObject*)thread) + 1, 0, sizeof(XThread) - sizeof(XObject));
     XObject_init(thread);
     XClassGetVtable(thread) = XThread_class_init();
     thread->m_handle = 0;
@@ -64,6 +66,8 @@ XThread* XThread_createMainThread(XObject* parent)
 // 初始化 XThread 对象
 void XThread_init(XThread* thread)
 {
+    if (!thread)return;
+    memset(((XObject*)thread) + 1, 0, sizeof(XThread) - sizeof(XObject));
     XObject_init(thread);
     XClassGetVtable(thread) = XThread_class_init();
     thread->m_handle = 0;
@@ -204,10 +208,12 @@ void XThread_run_base(XThread* thread)
 void VXThread_run(XThread* thread)
 {
     if (!thread)return;
-    XThreadData_mapInsert(thread->m_data);
+    XHandle id=XThreadData_mapInsert(thread->m_data);
+   
     thread->m_finished = false;
     thread->m_running = true;
     XThread_started_signal(thread);
+
     if (thread && thread->m_start_routine)
         thread->m_start_routine(thread,thread->m_varList);
     XThread_finished_signal(thread);
@@ -219,5 +225,5 @@ void VXThread_run(XThread* thread)
         thread->m_loop = NULL;
     }
     XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
-    XThreadData_mapRemove(thread->m_data);
+    XThreadData_mapRemove(id);
 }

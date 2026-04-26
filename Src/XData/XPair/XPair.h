@@ -14,8 +14,9 @@ typedef struct XPair
 {
 	size_t m_firstTypeSize;  ///< 第一个数据的类型大小（字节）
 	size_t m_secondTypeSize; ///< 第二个数据的类型大小（字节）
-	void* m_first;           ///< 指向第一个数据的指针
-	void* m_second;          ///< 指向第二个数据的指针
+	char m_data[];  //数据
+	//void* m_first;           ///< 指向第一个数据的指针
+	//void* m_second;          ///< 指向第二个数据的指针
 } XPair;
 // 构造函数
 /**
@@ -131,7 +132,7 @@ void* XPair_second(XPair* this_pair);
 * @param this_pair 目标XPair实例
 * @return 返回包含类型信息和数据的总大小
 */
-size_t XPair_getSize(XPair* this_pair);
+size_t XPair_size(XPair* this_pair);
 /**
 * @brief 释放XPair实例占用的内存
 * @param this_pair 待释放的XPair实例（可为NULL，此时不操作）

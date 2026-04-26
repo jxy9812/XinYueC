@@ -115,7 +115,7 @@ void VXObject_timerEvent(XTimerBase* timer, XEventTimer* event)
 			//XPrintf("定时器触发\n");
 			XTimer_stop_base(timer);
 			if (timer->m_autoDelete)
-				XTimer_delete_base(timer);
+				XTimer_deleteLater(timer);
 		}
 		else if (!timer->m_firstTrigger)
 		{

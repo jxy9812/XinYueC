@@ -96,15 +96,16 @@ XVector* XMapBase_values_base(const XMapBase* this_map)
 	return XClassGetVirtualFunc(this_map, EXMapBase_Values, void* (*)(const XMapBase*))(this_map);
 }
 
-void XMapBase_deleteNodeData(XPair** pair, XMapBase* this_map)
+void XMapBase_deleteNodeData(XPair** lpPair, XMapBase* this_map)
 {
+	if (!lpPair)return;
+	XPair* pair = *lpPair;
 	if (XMapBaseKeyDeinitMethod(this_map))
-		XMapBaseKeyDeinitMethod(this_map)(XPair_first(*pair));
+		XMapBaseKeyDeinitMethod(this_map)(XPair_first(pair));
 
 	if (XContainerDataDeinitMethod(this_map))
-		XContainerDataDeinitMethod(this_map)(XPair_second(*pair));
-
-	XPair_delete(*pair);
+		XContainerDataDeinitMethod(this_map)(XPair_second(pair));
+	XPair_delete(pair);
 }
 
 #endif

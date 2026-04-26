@@ -196,7 +196,7 @@ bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerTimeWheel* time
         }
     }
     if (((XTimerBase*)timer)->m_autoDelete)
-        XTimerBase_delete_base(timer);
+        XTimerBase_deleteLater(timer);
 
     if (group->m_mutex)
         XMutex_unlock(group->m_mutex);
@@ -249,7 +249,7 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
                     prev = node;
                     node = node->next;
                     if(XTimerBase_isAutoDelete(timer))//查看是否有内存管理权限
-                        XTimerBase_delete_base(timer);
+                        XTimerBase_deleteLater(timer);
                     XMemory_free(prev);
                 }
                 //XListSLinked_delete_base(list);
@@ -322,7 +322,7 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
         }
         if (isdelete && ((XTimerBase*)timer)->m_autoDelete)
         {
-            XTimerBase_delete_base(timer);
+            XTimerBase_deleteLater(timer);
         }
         node = next;
         if (isdelete)
@@ -401,7 +401,7 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
                 }
                 if (isdelete&&((XTimerBase*)timer)->m_autoDelete)
                 {
-                    XTimerBase_delete_base(timer);
+                    XTimerBase_deleteLater(timer);
                 }
                 //else // 也不释放的定时器更新状态
                 //{

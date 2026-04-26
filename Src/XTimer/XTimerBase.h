@@ -69,7 +69,7 @@ void XTimerBase_init(XTimerBase* timer, XVtable* vtable);
 * @brief 基类删除函数宏定义
 * 复用XObject的删除函数
 */
-#define XTimerBase_delete_base    XObject_deleteLater
+#define XTimerBase_deleteLater    XObject_deleteLater
 /**
 * @brief 基类反初始化函数宏定义
 * 复用XObject的反初始化函数

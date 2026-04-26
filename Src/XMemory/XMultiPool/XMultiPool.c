@@ -1,7 +1,7 @@
 ﻿#include "XMultiPool.h"
 #include "XMemory.h" 
 #include <string.h>
-
+#include "XMutex.h"
 // ---------------------------------------------------------------------------- 
 // 内部常量与辅助函数 
 // ---------------------------------------------------------------------------- 
@@ -149,7 +149,7 @@ void* XMultiPool_malloc(XMultiPool* multi_pool, size_t size) {
            // 布局: [next_ptr | pool_index | ...]
             void* user_data_start = get_final_user_ptr(raw_block);
             // 3. 返回最终的用户指针
-            //XPrintf("malloc index:%i ptr:%p\n", i, user_data_start);
+            XPrintf("XMultiPool  malloc index:%i ptr:%p\n", i, user_data_start);
             return user_data_start;
         }
         //XPrintf("当前池已满下一个 尝试\n");
@@ -180,7 +180,7 @@ void XMultiPool_free(XMultiPool* multi_pool, void* ptr) {
 
     // 3. 恢复出原始块指针并归还
     void* raw_block = get_raw_block_for_fixed_pool(ptr);
-    //XPrintf("free index:%i ptr:%p\n", pool_idx, ptr);
+    XPrintf("XMultiPool free index:%i ptr:%p\n", pool_idx, ptr);
     XFixedPool_free(pool, raw_block);
 }
 
@@ -292,11 +292,14 @@ void XMultiPool_initGlobal()
 
 void* XMultiPool_mallocGlobal(size_t size)
 {
+    return XMalloc(size);
     return global_pool?XMultiPool_malloc(global_pool, size):NULL;
 }
 
 void XMultiPool_freeGlobal(void* ptr)
 {
+    XFree(ptr);
+    return;
     if(global_pool&&ptr)
         XMultiPool_free(global_pool, ptr);
 }

@@ -2,6 +2,7 @@
 #include "XThread.h" // 需提供 XThread_currentThreadId()
 #include "XSort.h"
 #include "XHashMap.h"
+#include "XMap.h"
 #include "XMutex.h"
 #include "XAbstractEventDispatcher.h"
 #include "XCoreApplication.h"
@@ -35,43 +36,73 @@ XThreadData* XThreadData_create(XThread* thread)
     XThreadData_init(data,thread);
     return data;
 }
-
+//XThreadData* XThreadData_test(XThread* thread)
+//{
+//    //return NULL;
+//    XThreadData* data = XMemory_malloc(sizeof(XThreadData));
+//    memset(data, 0, sizeof(XThreadData));
+//    //XThreadData_delete(data);
+//    //return NULL;
+//    return data;
+//    data->m_mutex = XMutex_create();
+//    data->m_mutex = NULL;
+//    //XVector_init(&(data->m_postEventList), sizeof(XPostEvent));
+//
+//
+//    data->m_thread = thread;
+//    XAtomic_init(data->m_currentEventLoop, 0);
+//    XAtomic_init(data->m_loopLevel, 0);
+//    //data->m_dispatcher = XEventDispatcher_create(thread);
+//    data->m_dispatcher = NULL;
+//    return data;
+//}
 void XThreadData_delete(XThreadData* data)
 {
     if (!data)return;
     
     //XThreadData_mapRemove(data);
-    if (data->m_mutex)
-        XMutex_delete(data->m_mutex);
     if (data->m_dispatcher)
-        XObject_deleteLater(data->m_dispatcher);
-    //XCoreApplication_processEvents(XEventLoop_AllEvents);
-    //最后一次处理剩余的所有删除事件
-    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
-    //遍历一遍丢弃其他所有事件
-    for_each_iterator(&data->m_postEventList, XVector, it)
     {
-        XPostEvent* post = XVector_iterator_data(&it);
-        if (post)
-            XEvent_delete_base(post->event);
+        XObject_deleteLater(data->m_dispatcher);
+        data->m_dispatcher = NULL;
     }
-    XVector_deinit_base(&data->m_postEventList);
-    XDelete(data);
+    /*线程结束前已经处理了所有删除事件
+    遍历一遍丢弃其他所有事件*/
+    if (data->m_postEventList)
+    {
+        for_each_iterator(data->m_postEventList, XVector, it)
+        {
+            XPostEvent* post = XVector_iterator_data(&it);
+            if (post)
+                XEvent_delete_base(post->event);
+        }
+        XVector_delete_base(data->m_postEventList);
+        data->m_postEventList = NULL;
+    }
+    if (data->m_mutex)
+    {
+        XMutex_delete(data->m_mutex);
+        data->m_mutex = NULL;
+    }
+    XMemory_free(data);
 }
 
 void XThreadData_init(XThreadData* data, XThread* thread)
 {
+    if (!data)return;
     data->m_mutex = XMutex_create();
-    XVector_init(&(data->m_postEventList), sizeof(XPostEvent));
+    data->m_postEventList=XVector_create(sizeof(XPostEvent));
     data->m_thread = thread;
     XAtomic_init(data->m_currentEventLoop, 0);
     XAtomic_init(data->m_loopLevel, 0);
     data->m_dispatcher = XEventDispatcher_create(thread);
+
 }
 XThreadData* XThreadData_current(void) 
 {
     if (threadMap == NULL)
         threadMap = XHashMap_Create(XHandle, XThreadData*, size_t_compare);
+        //threadMap = XMap_Create(XHandle, XThreadData*, ptr_compare);
     if (mutex == NULL)
         mutex = XMutex_create();
     XHandle id = XThread_currentThreadId();
@@ -83,20 +114,22 @@ XThreadData* XThreadData_current(void)
     return NULL;
 };
 
-void XThreadData_mapInsert(XThreadData* data)
+XHandle XThreadData_mapInsert(XThreadData* data)
 {
-    if (data == NULL)return;
+    if (data == NULL)return 0;
     XHandle id = XThread_currentThreadId();
     XMutex_lock(mutex);
-    XHashMap_insert_base(threadMap, &id, &data);
+    //if(XMapBase_isEmpty_base(threadMap))
+    XMapBase_insert_base(threadMap, &id, &data);
     XMutex_unlock(mutex);
+    return id;
 }
-void XThreadData_mapRemove(XThreadData* data)
+void XThreadData_mapRemove(XHandle id)
 {
-    if (data == NULL)return;
-    XHandle id = XThread_currentThreadId();
+    if (id == 0)return;
+    //XHandle id = XThread_currentThreadId();
     XMutex_lock(mutex);
-    XHashMap_remove_base(threadMap, &id);
+    XMapBase_remove_base(threadMap, &id);
     XMutex_unlock(mutex);
 }
 
@@ -143,10 +176,11 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) {
     XThread* th = receiver->m_thread;
     if (!th|| !th->m_data) return;
     XThreadData* td = th->m_data;
+    if (!td->m_postEventList)return;
     XPostEvent pe = { receiver, event, priority };
     
     XMutex_lock(td->m_mutex);
-    XVector* local = &td->m_postEventList;
+    XVector* local = td->m_postEventList;
     XVector_push_back_base(local, &pe);
     // 关键：稳定降序排序
     XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
@@ -162,6 +196,7 @@ void XThreadData_push_front_list(const XVector* events)
 {
     if (!events||!XVector_size_base(events))return;
     XThreadData* td = XThreadData_current();
+    if (!td->m_postEventList)return;
     XVector* temp = XVector_create(sizeof(XPostEvent));
     XVector_resize_base(temp,XVector_size_base(events));
     XVector_clear_base(temp);
@@ -175,7 +210,7 @@ void XThreadData_push_front_list(const XVector* events)
     if(XVector_size_base(temp))
     {
         XMutex_lock(td->m_mutex);
-        XVector* local = &td->m_postEventList;
+        XVector* local = td->m_postEventList;
         //整个一起插入到头部
         XVector_insert_array_base(local, 0, XContainerDataPtr(temp), XVector_size_base(temp));
         // 关键：稳定降序排序
@@ -185,17 +220,25 @@ void XThreadData_push_front_list(const XVector* events)
     XVector_delete_base(temp);
 }  
 
-XVector* XThreadData_takePostedEvents(void) {
+XVector* XThreadData_takePostedEvents(void) 
+{
     XThreadData* td = XThreadData_current();
+    if (!td||!td->m_postEventList)return;
     XVector* local = NULL;
     if (!td) return local;
-    if (XContainerSize(&td->m_postEventList))
-        local=XVector_create(sizeof(XPostEvent));
-    else
-        return NULL;//为空的时候直接返回空，生成空副本无意义,提升性能
     XMutex_lock(td->m_mutex);
+    if (XContainerSize(td->m_postEventList))
+    {
+        local = XVector_create(sizeof(XPostEvent));
+    }
+    else
+    {
+        XMutex_unlock(td->m_mutex);
+        return NULL;//为空的时候直接返回空，生成空副本无意义,提升性能
+    }
     //把空的数组交换出来
-    XVector_swap_base(local,&(td->m_postEventList));
+    if(local)
+        XVector_swap_base(local,(td->m_postEventList));
     XMutex_unlock(td->m_mutex);
 
     return local;

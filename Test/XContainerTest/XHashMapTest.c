@@ -6,32 +6,40 @@
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
+#include<string.h>
 //static void XHashMapTest();
 static void XFor_each_pair(void* LPVal, void* args)
 {
 	XPair* pair = (XPair*)LPVal;
 	XPrintf("key:%d val:%s\n", XPair_First(pair,int), XPair_Second(pair,char*));
 }
+static void map_dataDelete(char**lpStr)
+{
+	if (!lpStr)return;
+	char* str = *lpStr;
+		XFree(str);
+}
 void XHashMapTest()
 {
 #if XHashMap_ON
 	XPrintf("XHashMap 测试\n");
-	//while (true)
+	while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
-		char arraychar[][100] = { "琦神","星小白","章鱼哥","你好啊111hjhj1","玩蛇" };
+		char arraychar[][100] = { "aaaa","bbbbbbbb","78777777","12131313","dsadcxzccxzcxzc" };
 		XHashMap* map = XHashMap_Create(int, char*, int_compare);
-
-		for (size_t i = 0; i < 5; i++)
+		XContainerSetDataDeinitMethod(map, map_dataDelete);
+		for (size_t i = 0; i < 500; i++)
 		{
-			size_t p = &arraychar[i];
-			XHashMap_insert_base(map, arrayint + i, &p);
+			char* str = XMemory_malloc(strlen(arraychar[i % 5]) + 10);
+			strcpy(str, arraychar[i % 5]);
+			XHashMap_insert_base(map, &i, &str);
 		}
-		for (int i = 0; i < 5; i++)
+		/*for (int i = 0; i < 5; i++)
 		{
 			size_t p = &arraychar[i%5];
 			XHashMap_insert_base(map, &i, &p);
-		}
+		}*/
 		XPrintf("当前XHashMap容器内数据数量:%d\n", XHashMap_size_base(map));
 
 		XHashMap_iterator_for_each(map, XFor_each_pair, NULL);

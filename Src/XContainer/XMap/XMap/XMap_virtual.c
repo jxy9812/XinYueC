@@ -60,6 +60,10 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue, XCData
 	if (!XMap_find_base(this_map, pvKey, &it))
 	{
 		pair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
+		if (!pair) {
+			// XPair_create 失败，直接返回 false
+			return false;
+		}
 		if (keyCreatMethod)
 			keyCreatMethod(XPair_first(pair), pvKey);
 		else
@@ -71,8 +75,13 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue, XCData
 
 		//printf("创建的xpair pvKey:%d pvValue:%s\n",XPair_First(pair,int),XPair_second(LPpair));
 
-		XRBTree_insert(&XContainerDataPtr(this_map), XContainerCompare(this_map), XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
-
+		XRBTreeNode* inserted_node = XRBTree_insert(&XContainerDataPtr(this_map), XContainerCompare(this_map), XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
+		if (inserted_node == NULL)
+		{
+			// 红黑树插入失败！必须释放之前分配的 pair
+			XMapBase_deleteNodeData(&pair, this_map);
+			return false; // 返回失败
+		}
 		++XContainerCapacity(this_map);
 		++XContainerSize(this_map);
 		//return true;
@@ -80,18 +89,20 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue, XCData
 	else//插入的已经存在键了
 	{
 		pair = XMap_iterator_data(&it);
+		if (XMapBaseKeyDeinitMethod(this_map))
+			XMapBaseKeyDeinitMethod(this_map)(XPair_first(pair));
 		if (keyCreatMethod)
-		{
-			keyCreatMethod(XPair_second(pair), pvValue);
-		}
+			keyCreatMethod(XPair_first(pair), pvKey);
 		else
-		{
-			if (XContainerDataDeinitMethod(this_map))
-				XContainerDataDeinitMethod(this_map)(XPair_second(pair));
+			XPair_insertFirst(pair, pvKey);
+		// 释放旧的值
+		if (XContainerDataDeinitMethod(this_map))
+			XContainerDataDeinitMethod(this_map)(XPair_second(pair));
 
+		if (dataCreatMethod)
+			dataCreatMethod(XPair_second(pair), pvValue);
+		else
 			XPair_insertSecond(pair, pvValue);
-		}
-
 	}
 	return true;
 }

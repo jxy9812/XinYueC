@@ -413,7 +413,7 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 	{//全双工
 		if (comm->m_timerSendExpired)
 		{
-			/*XTimerBase_delete_base(comm->m_timerSendExpired);
+			/*XTimerBase_deleteLater(comm->m_timerSendExpired);
 			comm->m_timerSendExpired = NULL;*/
 			XTimerBase_stop_base(comm->m_timerSendExpired);
 		}
@@ -574,7 +574,7 @@ bool VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle
 		return false;
 	PeriodicNode* node = handle;
 	XByteArray_delete_base(node->data);
-	XTimerBase_delete_base(node->timer);
+	XTimerBase_deleteLater(node->timer);
 	XMemory_free(node);
 	return true;
 }
@@ -623,7 +623,7 @@ void VXDataFrameComm_deinit(XDataFrameComm* comm)
 		{
 			PeriodicNode* node=XListSLinked_iterator_data(&it);
 			XByteArray_delete_base(node->data);
-			XTimerBase_delete_base(node->timer);
+			XTimerBase_deleteLater(node->timer);
 			XMemory_free(node);
 		}
 		XListBase_delete_base(comm->m_periodicSendList);
@@ -656,12 +656,12 @@ void VXDataFrameComm_deinit(XDataFrameComm* comm)
 	}
 	if (comm->m_timerRecvExpired)
 	{
-		XTimerBase_delete_base(comm->m_timerRecvExpired);
+		XTimerBase_deleteLater(comm->m_timerRecvExpired);
 		comm->m_timerRecvExpired = NULL;
 	}
 	if (comm->m_timerSendExpired)
 	{
-		XTimerBase_delete_base(comm->m_timerSendExpired);
+		XTimerBase_deleteLater(comm->m_timerSendExpired);
 		comm->m_timerSendExpired = NULL;
 	}
 	//调用父类释放函数

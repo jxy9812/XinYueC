@@ -14,6 +14,8 @@
 #include "XThread.h"
 #include "XTimer.h"
 #include "XMultiPool.h"
+#include <assert.h>
+#include <string.h>
 static XCoreApplication* g_app = NULL; // 全局应用程序实例
 bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
 static void VXObject_timerEvent(XCoreApplication* app, XEventTimer* event);
@@ -60,6 +62,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
         return;
     //初始化内存池
     XMultiPool_initGlobal();
+    memset(((XObject*)app)+1,0,sizeof(XCoreApplication)-sizeof(XObject));
     // 初始化父类
     XObject_init(app);
     XClassGetVtable(app) = XCoreApplication_class_init();
@@ -222,7 +225,7 @@ void XCoreApplication_processEventsWithMaxTime(XEventLoopProcessEventsFlags flag
     {
         XCoreApplication_processEvents(flags);
     }
-    XTimer_delete_base(timer);
+    XTimer_deleteLater(timer);
 }
 
 void XCoreApplication_installNativeEventFilter(XAbstractNativeEventFilter* filter)
@@ -434,14 +437,14 @@ bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
         {
             XObject* filter = *((XObject**)XVector_iterator_data(&it));
             if (filter)//调用事件过滤器的过滤方法
-                event->accepted = XObject_eventFilter_base(filter, receiver, event);
+                XObject_eventFilter_base(filter, receiver, event);
             if (event->accepted)//如果被处理则不在传播
                 goto del;
         }
     }
     if (!event->accepted)
     {//如果还未被接受
-        event->accepted =XObject_event_base(receiver,event);
+        XObject_event_base(receiver, event);
     }
     if (!event->accepted&& XObject_isWidgetType(receiver))
     {//如果还未被接受向上冒泡
@@ -449,7 +452,7 @@ bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
         if(parent)
         {
             XCoreApplication_postEvent(parent, event, 0);
-            return false;
+            return true;
         }
     }
     //释放事件
@@ -459,6 +462,7 @@ del:
         XEvent_delete_base(event);
         return true;
     }
+    assert(true,"事件发生内存泄漏\n");
     return false;//事件未被处理
 }
 

@@ -114,7 +114,7 @@ void VXESP8266_deinit(XESP8266Wifi* device)
 {
     if(device->m_timeoutTimer)
     {
-        XTimer_delete_base(device->m_timeoutTimer);
+        XTimer_deleteLater(device->m_timeoutTimer);
         device->m_timeoutTimer = NULL;
     }
     if (device->m_ssid)

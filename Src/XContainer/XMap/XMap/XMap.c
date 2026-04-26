@@ -49,16 +49,16 @@ XMap* XMap_create_move(XMap* other)
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare)
 {
 	if (ISNULL(this_map, ""))
-		return NULL;
+		return ;
 	if (keyTypeSize == 0 || valTypeSize == 0)
 	{
 		printf("类型参数不能为0");
-		return NULL;
+		return ;
 	}
 	if (compare == NULL)
 	{
 		printf("compare比较函数NULL");
-		return NULL;
+		return ;
 	}
 	XMapBase_init(this_map, keyTypeSize, valTypeSize, compare);
 	XClassGetVtable(this_map) = XMap_class_init();

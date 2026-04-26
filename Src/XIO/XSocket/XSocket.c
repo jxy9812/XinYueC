@@ -181,7 +181,7 @@ void VXSocketBase_waitForConnected(XSocketBase* so, int msecs)
     }
     else
     {
-        XTimer_delete_base(timer);
+        XTimer_deleteLater(timer);
     }
     XEventLoop_deleteLater(loop);
 }
@@ -208,7 +208,7 @@ void VXSocketBase_waitForDisconnected(XSocketBase* so, int msecs)
     }
     else
     {
-        XTimer_delete_base(timer);
+        XTimer_deleteLater(timer);
     }
     XEventLoop_deleteLater(loop);
 }

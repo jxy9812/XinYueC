@@ -35,7 +35,6 @@ XCLASS_DEFINE_END(XVector)
 typedef struct XVector
 {
 	XContainerObject m_class;
-	//XEquality m_equality;//相等比较函数
 }XVector;
 
 /**

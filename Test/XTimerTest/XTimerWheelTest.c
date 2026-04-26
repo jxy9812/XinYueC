@@ -54,7 +54,7 @@ void XTimerTimeWheelTest()
 		XTimerTimeWheel_setTimerCallback(timer, Callback2);
 		XObject_setParent(timer, wheel);
 		XTimerTimeWheel_start_base(timer);
-		XTimerBase_delete_base(timer);
+		XTimerBase_deleteLater(timer);
 	}
 	while(true) XTimerGroupWheel_handler_base(wheel);
 }

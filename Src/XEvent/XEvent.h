@@ -47,10 +47,7 @@ XEvent* XEvent_create(XEventType code);
 /**
  * @brief 初始化基础事件
  * @param event 要初始化的事件
- * @param receiver 事件接收对象
  * @param code 事件类型
- * @param timestamp 时间戳，0表示使用当前时间
- * @param priority 事件优先级
  */
 void XEvent_init(XEvent* event, XEventType type);
 #define XEvent_deinit_base                           XClass_deinit_base

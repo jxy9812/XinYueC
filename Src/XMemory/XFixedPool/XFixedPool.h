@@ -2,15 +2,14 @@
 #define XFIXEDPOOL_H
 /**
  * @file XFixedPool.h
- * @brief 固定大小内存池（无锁、对齐、多模式）
+ * @brief 固定大小内存池（对齐、多模式）
  *
- * 此内存池提供 O(1) 时间复杂度的分配和释放操作，并且是线程安全的（无锁）。
+ * 此内存池提供 O(1) 时间复杂度的分配和释放操作，并且是线程安全的。
  * 它支持两种使用模式以适应不同场景：
  * - **动态模式**: 库内部负责分配内存池结构体和数据缓冲区。
  * - **静态/栈模式**: 用户在栈或全局区提供内存池结构体和数据缓冲区，库只负责初始化逻辑。
  *
  * 主要特性:
- * - 无锁 (Lock-Free) 并发安全。
  * - 可配置的内存块对齐，优化 CPU 缓存性能并避免 false sharing。
  * - 零外部依赖（除了XAtomic 原子库）。
  */
@@ -20,13 +19,20 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XAtomic.h" 
+#include "XSpinLock.h"
 typedef struct XFixedPool 
 {
-    XAtomic_ptr free_list_head; // 原子指针，用于无锁操作
+    XAtomic_ptr free_list_head_packed; //打包头指针
+    XSpinLock lock;
     size_t block_size;          // 对齐后的块大小
     size_t user_block_size;     // 用户视角的块大小
     void* raw_memory;           // 指向数据缓冲区的指针
     size_t total_raw_size;      // 数据缓冲区的总有效字节数
+    size_t num_blocks; // 新增：总块数，用于判断空和计算索引
+    // --- 无锁辅助字段 ---
+    size_t index_bits;          // 用于存储索引的位数
+    uintptr_t index_mask;       // 索引掩码
+    uintptr_t version_mask;     // 版本号掩码
     bool owns_memory;  //所有权标记
 } XFixedPool;
 /**

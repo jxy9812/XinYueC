@@ -12,6 +12,7 @@
 #include "XByteArray.h"
 #include "XVector.h"
 #include "XHashMap.h"
+#include "XMap.h"
 #include "XPair.h"
 #include "XEvent.h"
 #include "XAbstractEventDispatcher.h"
@@ -19,6 +20,7 @@
 #include "XListSLinked.h"
 #include <string.h>
 #include <stdint.h>
+#include "XThreadData.h"
 #pragma comment(lib, "winmm.lib")
 //static  HANDLE ioCompletionPort=NULL;    // 全局 IOCP 句柄;
 /**
@@ -526,10 +528,13 @@ static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed,
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
 
-    bool found = false;
     XMutex_lock(GetXMutex(dispatcher));
     XEventDispatcherWin32_TimerInfo* timerInfo = XHashMap_value_base(d->timers,&timerId);
-    if (!timerInfo)return false;
+    if (!timerInfo)
+    {
+        XMutex_unlock(GetXMutex(dispatcher));
+        return false;
+    }
     if (timerInfo->isHighPrecision) {
         if (timerInfo->mmTimerId != 0) {
             timeKillEvent((MMRESULT)timerInfo->mmTimerId);
@@ -550,7 +555,7 @@ static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed,
     XVector_push_back_base(d->m_dp.m_timerIds,&timerId);
     XHashMap_remove_base(d->timers, &timerId);
     XMutex_unlock(GetXMutex(dispatcher));
-    return found;
+    return true;
 }
 
 static bool VXEventDispatcherWin32_unregisterTimers(XAbstractEventDispatcher* dispatcher, XObject* object)
@@ -736,7 +741,7 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
         d->sockets = NULL;
     }
     XMemory_free(d);
-
+    PlatformPrivate(obj) = NULL;
     XClass_Deinit_Parent(XAbstractEventDispatcher, obj);
 }
 
@@ -804,6 +809,7 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
         d->sockets = NULL;
 
         d->timers = XHashMap_create(sizeof(size_t), sizeof(XEventDispatcherWin32_TimerInfo), XHashMap_murmur3_32, size_t_compare);
+        //d->timers = XMap_Create(size_t, XEventDispatcherWin32_TimerInfo,size_t_compare);
         XContainerSetDataDeinitMethod(d->timers, timersDataDeinit);
         d->sockets = XHashMap_create(sizeof(intptr_t), sizeof(XVector), XHashMap_murmur3_32, int_compareptr_t);
 
@@ -852,12 +858,13 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
     }
     self->m_class.d_ptr = d;
 
-    if (XThread_currentThread()) {
-        // 子线程需初始化 COM 和 OLE
-        //CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-    }
+    //if (XThread_currentThread()) {
+    //    // 子线程需初始化 COM 和 OLE
+    //    //CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    //}
 
    
     return self;
 }
+
 #endif

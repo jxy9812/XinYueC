@@ -114,6 +114,10 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue, X
 	if (!XHashMap_find_base(this_hash, pvKey, &it))
 	{//节点不存在
 		pair = XPair_create(((XMapBase*)this_hash)->m_keyTypeSize, XContainerTypeSize(this_hash));
+		if (!pair) {
+			// XPair_create 失败，直接返回 false
+			return false;
+		}
 		if (keyCreatMethod)
 			keyCreatMethod(XPair_first(pair), pvKey);
 		else
@@ -122,24 +126,38 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue, X
 			dataCreatMethod(XPair_second(pair), pvValue);
 		else
 			XPair_insertSecond(pair, pvValue);
-		XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, XContainerCompare(this_hash), XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
-		//++XContainerCapacity(this_hash);
+		XRBTreeNode* inserted_node = XRBTree_insert(
+			&((XRBTreeNode**)XContainerDataPtr(this_hash))[index],
+			XContainerCompare(this_hash),
+			XCompareRuleTwo_XMap,
+			&pair,
+			sizeof(XPair*)
+		);
+		if (inserted_node == NULL)
+		{
+			// 红黑树插入失败！必须释放之前分配的 pair
+			XMapBase_deleteNodeData(&pair, this_hash);
+			return false; // 返回失败
+		}
 		++XContainerSize(this_hash);
 	}
 	else
 	{
 		pair = XHashMap_iterator_data(&it);
-		if (XContainerDataCopyMethod(this_hash))
-		{
-			keyCreatMethod(XPair_second(pair), pvValue);
-		}
+		if(XMapBaseKeyDeinitMethod(this_hash))
+			XMapBaseKeyDeinitMethod(this_hash)(XPair_first(pair));
+		if (keyCreatMethod)
+			keyCreatMethod(XPair_first(pair), pvKey);
 		else
-		{
-			if (XContainerDataDeinitMethod(this_hash) != NULL)
-				XContainerDataDeinitMethod(this_hash)(pair);
-			XPair_insert(pair, pvKey, pvValue);
-		}
+			XPair_insertFirst(pair, pvKey);
+		
+		if (XContainerDataDeinitMethod(this_hash))
+			XContainerDataDeinitMethod(this_hash)(XPair_second(pair));
 
+		if (dataCreatMethod)
+			dataCreatMethod(XPair_second(pair), pvValue);
+		else
+			XPair_insertSecond(pair, pvValue);
 	}
 	return true;
 }

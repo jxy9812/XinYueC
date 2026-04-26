@@ -38,7 +38,7 @@ void XTimer_init(XTimer* timer);
 * @brief 基类删除函数宏定义
 * 复用XTimerBase的删除函数
 */
-#define XTimer_delete_base			XTimerBase_delete_base
+#define XTimer_deleteLater			XTimerBase_deleteLater
 // === 启动与停止相关接口 ===
 /**
 * @brief 启动定时器的基类实现宏

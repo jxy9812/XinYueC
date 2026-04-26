@@ -111,7 +111,6 @@ static void VXEventMetaCall_deinit(XEventMetaCall* ev)
 		{
 			if (ev->argList)
 			{
-				//ev->del(ev->argList);
 				XVarList_delete(ev->argList);
 			}
 			XAtomic_delete(ev->ref_count);
@@ -290,11 +289,11 @@ XEventSockAct* XEventSockAct_create(XSocketDescriptor socket, XSocketActType act
 
 XChildEvent* XChildEvent_create(XEventType type, XObject* child)
 {
-	XChildEvent* event = XMultiPool_mallocGlobal(sizeof(XChildEvent));
+	XChildEvent* event = XMalloc(sizeof(XChildEvent));
 	if (!event)return NULL;
 	XEvent_init(event, type);
 	event->child = child;
-	Set_Class_MemoryFree(event, XMultiPool_freeGlobal);
+	Set_Class_MemoryFree(event, XFree);
 	return event;
 }
 

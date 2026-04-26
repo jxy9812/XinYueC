@@ -128,7 +128,10 @@ XTreeNode* XBTree_SpinRR(XTreeNode** this_root, XTreeNode* nodes)
 		return NULL;
 	//获取将成为的根节点
 	XTreeNode* NewNode = XBTreeNode_GetLChild(nodes);
-
+	if (NewNode == NULL) {
+		// 无法执行右旋，因为 nodes 没有左子节点
+		return NULL;
+	}
 	//设置NewRoot的父节点，this_root成为NewRoot的孩子
 	XTreeNode** ppThis_nodeParent = XTreeNode_getParentRef(nodes);
 	//父节点
@@ -159,7 +162,10 @@ XTreeNode* XBTree_SpinLL(XTreeNode** this_root, XTreeNode* nodes)
 	if (ISNULL(nodes, ""))
 		return NULL;
 	XTreeNode* NewNode = XBTreeNode_GetRChild(nodes);
-
+	if (NewNode == NULL) {
+		// 无法执行左旋，因为 nodes 没有右子节点
+		return NULL;
+	}
 	XTreeNode** ppThis_rootParent = XTreeNode_getParentRef(nodes);
 	//父节点
 	XTreeNode* pater = *ppThis_rootParent;

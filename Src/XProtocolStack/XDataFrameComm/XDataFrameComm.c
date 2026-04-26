@@ -263,11 +263,11 @@ void XDataFrameComm_setTimerRecvExpired(XDataFrameComm* comm, XTimerBase* timer)
 	if (comm == NULL)
 	{
 		if(timer)
-			XTimerBase_delete_base(timer);
+			XTimerBase_deleteLater(timer);
 		return;
 	}
 	if (comm->m_timerRecvExpired)
-		XTimerBase_delete_base(comm->m_timerRecvExpired);
+		XTimerBase_deleteLater(comm->m_timerRecvExpired);
 	comm->m_timerRecvExpired = timer;
 }
 
@@ -276,11 +276,11 @@ void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer)
 	if (comm == NULL)
 	{
 		if (timer)
-			XTimerBase_delete_base(timer);
+			XTimerBase_deleteLater(timer);
 		return;
 	}
 	if (comm->m_timerSendExpired)
-		XTimerBase_delete_base(comm->m_timerSendExpired);
+		XTimerBase_deleteLater(comm->m_timerSendExpired);
 	comm->m_timerSendExpired = timer;
 
 }
