@@ -232,13 +232,16 @@ bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expecte
 }
 bool XAtomic_compare_exchange_strong_ptr(XAtomic_ptr* var, void** expected, void* desired)
 {
-    void* result = _InterlockedCompareExchangePointer(
+    void* actual_value = _InterlockedCompareExchangePointer(
         (volatile void**)&var->value,
         desired,
         *expected
     );
-    *expected = result;
-    return result == *expected;
+
+    bool success = (actual_value == *expected); // 1. 先判断是否成功
+    *expected = actual_value;                  // 2. 再更新 expected
+
+    return success;
 }
 
 int32_t XAtomic_fetch_add_int32(XAtomic_int32_t* var, int32_t value)

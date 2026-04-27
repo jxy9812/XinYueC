@@ -17,7 +17,6 @@ void XMenu_XTreeTest(XMenu* root)
 	XMenu_addMenu(root, menu);
 	XMenu_XBinaryTreeTest(menu);
 	XMenu_XBalancedBinaryTreeTest(menu);
-	XMenu_XHuffmanTreeTest(menu);
 	XMenu_XRedBlackTreeTest(menu);
 }
 

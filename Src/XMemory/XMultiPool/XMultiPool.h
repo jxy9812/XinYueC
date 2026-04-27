@@ -108,6 +108,17 @@ void* XMultiPool_malloc(XMultiPool* multi_pool, size_t size);
  * @param ptr 要归还的内存块指针。
  */
 void XMultiPool_free(XMultiPool* multi_pool, void* ptr);
+/**
+ * @brief 检查一个指针是否由该多级内存池分配
+ *
+ * 此函数用于验证一个 `void*` 指针是否是由 `XMultiPool_malloc` 从此特定的多级内存池分配的。
+ * 它通过读取指针中嵌入的池索引，并委托给对应的子池进行验证。
+ *
+ * @param multi_pool 指向多级内存池的指针。
+ * @param ptr 要检查的指针。
+ * @return bool 如果指针有效且属于此多级内存池，则返回 `true`；否则返回 `false`。
+ */
+bool XMultiPool_is_from_pool(const XMultiPool* multi_pool, const void* ptr);
 
 XMultiPool* XMultiPool_global();
 //初始化默认的全局多级池

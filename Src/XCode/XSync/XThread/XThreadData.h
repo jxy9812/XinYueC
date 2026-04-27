@@ -19,7 +19,7 @@ typedef struct {
 typedef struct XThreadData{
     XMutex* m_mutex; // 保护 postEventList
     XThread* m_thread;
-    XVector*/*<XPostEvent>*/ m_postEventList;  // 动态数组
+    XVector/*<XPostEvent>*/ m_postEventList;  // 动态数组
     XAbstractEventDispatcher* m_dispatcher;   // 本线程的事件分发器
     XAtomic_ptr m_currentEventLoop;//当前正在运行的事件循环
     XAtomic_size_t m_loopLevel; // <-- 关键：一个原子整数计数器

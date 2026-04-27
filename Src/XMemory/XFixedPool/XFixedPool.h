@@ -23,7 +23,6 @@ extern "C" {
 typedef struct XFixedPool 
 {
     XAtomic_ptr free_list_head_packed; //打包头指针
-    XSpinLock lock;
     size_t block_size;          // 对齐后的块大小
     size_t user_block_size;     // 用户视角的块大小
     void* raw_memory;           // 指向数据缓冲区的指针
@@ -116,6 +115,17 @@ void* XFixedPool_malloc(XFixedPool* pool);
  */
 void XFixedPool_free(XFixedPool* pool, void* block);
 
+/**
+ * @brief 检查一个指针是否由该内存池分配
+ *
+ * 此函数用于验证一个 `void*` 指针是否是由 `XFixedPool_malloc` 从此特定内存池分配的。
+ * 它通过检查指针的地址范围和对齐方式来实现。
+ *
+ * @param pool 指向内存池的指针。
+ * @param ptr 要检查的指针。
+ * @return bool 如果指针有效且属于此内存池，则返回 `true`；否则返回 `false`。
+ */
+bool XFixedPool_is_from_pool(const XFixedPool* pool, const void* ptr);
 #ifdef __cplusplus
 }
 #endif

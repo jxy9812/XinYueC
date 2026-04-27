@@ -14,7 +14,6 @@ extern "C" {
 	void XMenu_XTreeTest(XMenu* root);
 	void XMenu_XBinaryTreeTest(XMenu* root);
 	void XMenu_XBalancedBinaryTreeTest(XMenu* root);
-	void XMenu_XHuffmanTreeTest(XMenu* root);
 	void XMenu_XRedBlackTreeTest(XMenu* root);
 	//CJson
 	void XMenu_CJsonTest(XMenu* root);

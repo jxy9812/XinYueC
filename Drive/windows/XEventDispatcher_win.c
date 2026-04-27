@@ -187,9 +187,11 @@ static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* disp
         XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
         if (timerInfo && timerInfo->object) {
             XEvent* timerEvent = XEventTimer_create(timerInfo->timerId);
-            //timerEvent->spontaneous = false;
-            timerEvent->posted = true;
-            XCoreApplication_postEvent(timerInfo->object, timerEvent, XEVENT_PRIORITY_NORMAL);
+            if(timerEvent)
+            {
+                timerEvent->posted = true;
+                XCoreApplication_postEvent(timerInfo->object, timerEvent, XEVENT_PRIORITY_NORMAL);
+            }
         }
     }
 
@@ -417,15 +419,17 @@ static void CALLBACK XEventDispatcherWin32_HighResTimerCallback(
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
     HANDLE ioCompletionPort = d->ioCompletionPort;
-   
-    // 向 IOCP 投递一个“定时器事件”
-    // 参数含义可自定义（这里用 dwNumberOfBytesTransferred=0 表示定时事件）
-    PostQueuedCompletionStatus(
-        d->ioCompletionPort,           // IOCP 句柄
-        0,                 // dwNumberOfBytesTransferred: 0 表示定时事件
-        (ULONG_PTR)dwUser,// dwCompletionKey: 可传递用户数据（如 timer ID）
-        dwUser            // lpOverlapped: 通常为 notifierullptr
-    );
+    XEventContext_Timer* ctx = (XEventContext_Timer*)dwUser;
+
+    if(ctx->id)
+    {
+        PostQueuedCompletionStatus(
+            d->ioCompletionPort,           // IOCP 句柄
+            0,                 // dwNumberOfBytesTransferred: 0 表示定时事件
+            (ULONG_PTR)dwUser,// dwCompletionKey: 可传递用户数据（如 timer ID）
+            dwUser            // lpOverlapped: 通常为 notifierullptr
+        );
+    }
 }
 static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, XTimerId timerId, XDuration intervalNs, XTimerType timerType, XObject* object)
 {
@@ -459,8 +463,9 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
             d->timePeriodSet = true;
         }
         // --- 关键修改：分配回调上下文 ---
-        XEventContext_Timer* ctx = XNew(XEventContext_Timer);
-        if (!ctx) {
+        XEventContext_Timer* ctx = (XEventContext_Timer*)XMemory_malloc(sizeof(XEventContext_Timer));
+        if (!ctx) 
+        {
             XMutex_unlock(GetXMutex(dispatcher));
             return; // 内存不足
         }
@@ -522,6 +527,50 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
 
     XMutex_unlock(GetXMutex(dispatcher));
 }
+// 清理高精度定时的普通定时器回调
+static VOID CALLBACK CleanupTimerCallback(
+    PTP_CALLBACK_INSTANCE Instance,
+    PVOID Context,
+    PTP_TIMER Timer
+) {
+    (void)Instance; // 未使用
+    (void)Timer;    // 未使用
+
+    XEventContext_Timer* ctx = (XEventContext_Timer*)Context;
+
+    // --- 关键：在这里安全地释放内存 ---
+    // 因为这是在 unregister 之后触发的，
+    // 所以我们可以直接释放，无需额外同步。
+    XMemory_free(ctx);
+    CloseThreadpoolTimer(Timer);
+}
+//清理高精度定时的普通定时器 延迟释放
+static void clearHighPrecisionTimer(XEventContext_Timer* ctx)
+{
+    // 2. --- 关键：创建并启动一个单次的线程池定时器作为兜底 ---
+            //    a. 创建定时器对象
+    PTP_TIMER timer = CreateThreadpoolTimer(
+        CleanupTimerCallback, // 回调函数
+        ctx,                  // 传递 ctx 作为上下文
+        NULL                  // 使用默认环境
+    );
+
+    if (timer == NULL) {
+        // 创建失败，直接清理（虽然不太可能发生）
+        XMemory_free(ctx);
+        //return true;
+    }
+    // --- 设置为 50 毫秒的单次兜底定时器 ---
+    ULARGE_INTEGER dueTime;
+    dueTime.QuadPart = -5000000; // 50ms = 50 * 10,000 * 100ns
+
+    SetThreadpoolTimer(
+        timer,
+        (FILETIME*)&dueTime, // 到期时间
+        0,                   // msPeriod = 0 表示单次触发！
+        0                    // msWindowLength (可选，设为0)
+    );
+}
 static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed, XTimerId timerId)
 {
     XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
@@ -535,20 +584,28 @@ static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed,
         XMutex_unlock(GetXMutex(dispatcher));
         return false;
     }
-    if (timerInfo->isHighPrecision) {
-        if (timerInfo->mmTimerId != 0) {
+    if (timerInfo->isHighPrecision) 
+    {
+        if (timerInfo->mmTimerId != 0) 
+        {
+            XEventContext_Timer* ctx = (XEventContext_Timer*)timerInfo->highResContext;
+            ctx->id = 0;
+            // 1. 立即杀死高精度多媒体定时器
             timeKillEvent((MMRESULT)timerInfo->mmTimerId);
             timerInfo->mmTimerId = 0;
             d->highPrecisionTimerCount--;
-
+            clearHighPrecisionTimer(ctx);
             // 如果这是最后一个高精度定时器，恢复系统时钟精度
             if (d->highPrecisionTimerCount == 0 && d->timePeriodSet) {
                 timeEndPeriod(1);
                 d->timePeriodSet = false;
             }
+            // 注意：此时我们不释放 ctx，而是将其“托管”给线程池定时器
+            timerInfo->highResContext = NULL;
         }
     }
-    else {
+    else 
+    {
         KillTimer(d->internalHwnd, (UINT_PTR)timerInfo->winTimerId);
     }
     //将id放回列表
@@ -572,11 +629,16 @@ static bool VXEventDispatcherWin32_unregisterTimers(XAbstractEventDispatcher* di
         XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
         if (timerInfo && timerInfo->object == object) 
         {
-            if (timerInfo->isHighPrecision) {
-                if (timerInfo->mmTimerId != 0) {
+            if (timerInfo->isHighPrecision) 
+            {
+                if (timerInfo->mmTimerId != 0) 
+                {
+                    XEventContext_Timer* ctx = (XEventContext_Timer*)timerInfo->highResContext;
+                    ctx->id = 0;
                     timeKillEvent((MMRESULT)timerInfo->mmTimerId);
                     timerInfo->mmTimerId = 0;
                     d->highPrecisionTimerCount--;
+                    clearHighPrecisionTimer(ctx);
                 }
             }
             else {

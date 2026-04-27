@@ -73,20 +73,17 @@ static inline void* get_block_by_index(XFixedPool* pool, size_t index) {
  */
 static void initialize_free_list(XFixedPool* pool) {
     char* memory = (char*)pool->raw_memory;
-    const size_t num_blocks = pool->total_raw_size / pool->block_size;
+    const size_t num_blocks = pool->num_blocks;
 
     // 使用 char* 进行指针算术更清晰
     char* current = memory;
-    for (size_t i = 0; i < num_blocks - 1; ++i) {
-        char* next_block = current + pool->block_size;
-        // 在当前块的开头存储下一个块的地址
-        // 假设 current 地址已按 sizeof(void*) 对齐
-        *(void**)current = next_block;
+    for (size_t i = 0; i < num_blocks; ++i)
+    {
+        char* next_block = ((uint8_t*)current) + pool->block_size;
+        *((size_t*)current) = i + 1;//存储下一块的索引
        
         current = next_block;
     }
-    // 链表尾
-    *(void**)current = NULL;
 }
 
 /**
@@ -128,7 +125,6 @@ bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t 
     if (num_blocks == 0) {
         return false;
     }
-    XSpinLock_init(&pool->lock);
     pool->block_size = internal_block_size;
     pool->user_block_size = internal_block_size - sizeof(void*);
     pool->raw_memory = memory;
@@ -164,48 +160,26 @@ void XFixedPool_deinit(XFixedPool* pool) {
 void* XFixedPool_malloc(XFixedPool* pool) {
     if (!pool) return NULL;
 
-    void* old_head_packed;
-    void* new_head_packed;
-    void* old_head_block;
-    XSpinLock_lock(&pool->lock);
-start:
+    void* old_head_packed=NULL;
+    void* new_head_packed = NULL;
+    void* old_head_block = NULL;
+    size_t old_head_index=0,new_head_index=0;
+
     do {
         // 1. 读取当前头
         old_head_packed = XAtomic_load_ptr(&pool->free_list_head_packed);
-        size_t old_head_index = unpack_index(old_head_packed, pool);
+        old_head_index = unpack_index(old_head_packed, pool);
 
         // 2. 检查是否为空
         if (old_head_index >= pool->num_blocks) 
         {
-            XSpinLock_unlock(&pool->lock);
             return NULL;
         }
 
         // 3. 获取旧头块的地址
         old_head_block = get_block_by_index(pool, old_head_index);
 
-        // 4. 【关键】读取旧头块的 next 指针，以确定新头
-        void* next_block_ptr = XAtomic_load_ptr(old_head_block);
-        //void* next_block_ptr = *(void**)old_head_block;
-        size_t new_head_index;
-        if (next_block_ptr == NULL) 
-        {
-            new_head_index = pool->num_blocks; // Sentinel for empty
-        }
-        else if (next_block_ptr == XFIXEDPOOL_BLOCK_ALLOCATED)
-        {//有线程抢先一步获得了这个内存块
-            goto start;//重试
-        }
-        else 
-        {
-            new_head_index = ((char*)next_block_ptr - (char*)pool->raw_memory) / pool->block_size;
-            if (new_head_index >= pool->num_blocks) 
-            {
-                XSpinLock_unlock(&pool->lock);
-                return NULL;
-            }
-        }
-
+        new_head_index = *(volatile size_t*)old_head_block; // 在无锁算法中，非原子读取 next 是安全的，因为 CAS 会验证整个操作
         // 5. 打包新头
         size_t old_version = unpack_version(old_head_packed, pool);
         new_head_packed = pack_index_version(new_head_index, old_version + 1, pool);
@@ -214,17 +188,15 @@ start:
     } while (!XAtomic_compare_exchange_strong_ptr(&pool->free_list_head_packed, &old_head_packed, new_head_packed));
 
     // --- 关键修改: 标记为已分配 ---
-    XAtomic_store_ptr(old_head_block, XFIXEDPOOL_BLOCK_ALLOCATED);
-    //*(void**)old_head_block = XFIXEDPOOL_BLOCK_ALLOCATED;
-     XSpinLock_unlock(&pool->lock);
-    printf("XFixedPool malloc pool:%p  ptr:%p\n", pool->raw_memory, get_user_data_ptr(old_head_block));
+    *(volatile size_t*)old_head_block = (size_t)XFIXEDPOOL_BLOCK_ALLOCATED;
+    //printf("XFixedPool malloc pool:%p block_size:%d num_blocks:%d index :%d ptr:%p\n", pool->raw_memory, pool->block_size,pool->num_blocks, old_head_index, get_user_data_ptr(old_head_block));
 
     return get_user_data_ptr(old_head_block);
 }
 
 void XFixedPool_free(XFixedPool* pool, void* user_ptr) {
     if (!pool || !user_ptr) return;
-
+    if (!XFixedPool_is_from_pool(pool, user_ptr))return;
     // 1. 从用户指针恢复内部块地址
     void* internal_block = get_internal_block_ptr(user_ptr);
     int64_t freed_index = ((char*)internal_block - (char*)pool->raw_memory) / pool->block_size;
@@ -232,36 +204,19 @@ void XFixedPool_free(XFixedPool* pool, void* user_ptr) {
         return; // Invalid pointer
     }
 
-    // --- 关键修改: 双重释放检查 ---
-    void** next_ptr = (void**)internal_block;
-    if (*next_ptr != XFIXEDPOOL_BLOCK_ALLOCATED) {
-        // 如果 next_ptr 不是我们设置的 "已分配" 标记，那就是双重释放或无效指针！
-        printf("XFixedPool_free: Double free or invalid pointer detected! "
-            "Ptr: %p, Index: %zu, Current next_ptr: %p\n",
-            user_ptr, freed_index, *next_ptr);
+    // 【增强健壮性】检查是否是双重释放
+    if (*(volatile size_t*)internal_block != (size_t)XFIXEDPOOL_BLOCK_ALLOCATED) {
         return;
     }
  
-
     void* old_head_packed;
     void* new_head_packed;
-
     do {
         // a. 读取当前头 (index + version)
         old_head_packed = XAtomic_load_ptr(&pool->free_list_head_packed);
         size_t old_head_index = unpack_index(old_head_packed, pool);
 
-        // b. 【关键】直接将 old_head_index (或其对应的sentinel) 写入被释放块的 next 字段
-        //    不需要先把它转换成指针！我们可以直接存储索引，或者用一个统一的sentinel值。
-        //    为了与 malloc 保持一致，我们在这里也使用指针语义。
-        void* new_next_ptr;
-        if (old_head_index >= pool->num_blocks) {
-            new_next_ptr = NULL; // 链表为空
-        }
-        else {
-            new_next_ptr = get_block_by_index(pool, old_head_index); // 转换为指针
-        }
-        *(void**)internal_block = new_next_ptr; // 这次写入是非原子的，但仅此线程会写这里
+        *(volatile size_t*)internal_block = old_head_index;
 
         // c. 打包新头: 被释放的块成为新的头
         size_t old_version = unpack_version(old_head_packed, pool);
@@ -269,8 +224,43 @@ void XFixedPool_free(XFixedPool* pool, void* user_ptr) {
 
         // d. 尝试原子地更新头指针
     } while (!XAtomic_compare_exchange_strong_ptr(&pool->free_list_head_packed, &old_head_packed, new_head_packed));
+    //printf("XFixedPool free pool:%p   index:%lld ptr:%p\n", pool->raw_memory, freed_index, user_ptr);
+}
 
-    printf("XFixedPool free pool:%p   index:%lld ptr:%p\n", pool->raw_memory, freed_index, user_ptr);
+bool XFixedPool_is_from_pool(const XFixedPool* pool, const void* ptr)
+{
+    if (!pool || !ptr) {
+        return false;
+    }
+
+    // 1. 从用户指针恢复内部块地址
+    const char* internal_block = (const char*)ptr - sizeof(void*);
+
+    // 2. 获取内存池数据区的起始和结束地址
+    const char* pool_start = (const char*)pool->raw_memory;
+    const char* pool_end = pool_start + (pool->block_size * pool->num_blocks);
+
+    // 3. 检查内部块地址是否在池的有效范围内
+    if (internal_block < pool_start || internal_block >= pool_end) {
+        return false;
+    }
+
+    // 4. 计算该地址相对于池起始位置的偏移量
+    uintptr_t offset = (uintptr_t)(internal_block - pool_start);
+
+    // 5. 检查偏移量是否能被块大小整除（即是否对齐到块边界）
+    if (offset % pool->block_size != 0) {
+        return false;
+    }
+
+    // 6. （可选但推荐）额外检查：确保该块当前处于已分配状态
+    //    在您的实现中，已分配的块其第一个 sizeof(size_t) 字节会被设为 XFIXEDPOOL_BLOCK_ALLOCATED。
+    //    这可以防止函数将一个已经归还但尚未被再次分配的块误判为“有效”。
+    if (*(const volatile size_t*)internal_block != (size_t)XFIXEDPOOL_BLOCK_ALLOCATED) {
+        return false;
+    }
+
+    return true;
 }
 
 // ----------------------------------------------------------------------------
@@ -301,11 +291,11 @@ XFixedPool* XFixedPool_create(size_t block_size, size_t num_blocks) {
     size_t internal_block_size = calculate_internal_block_size(block_size);
     size_t total_bytes = internal_block_size * num_blocks;
 
-    void* raw_memory = XMalloc(total_bytes);
+    void* raw_memory = XMemory_malloc(total_bytes);
     if (!raw_memory) {
         return NULL;
     }
-
+    memset(raw_memory,0, total_bytes);
     XFixedPool* pool = XFixedPool_create_from_memory(raw_memory, total_bytes, block_size);
     if (pool) {
         pool->owns_memory = true; // 标记为完全拥有

@@ -46,7 +46,6 @@ static void threadFunc(XThread* thread, XVarList* list)
 void XThreadTest()
 {
 	XAtomic_int32_t* rt= XAtomic_create(int32_t);
-	//XAtomic_init(rt,0);
 	while (true)
 	{
 		//XPrintf("主线程:id:%d\n", XThread_currentThreadId());

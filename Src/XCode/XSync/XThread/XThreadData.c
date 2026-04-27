@@ -68,17 +68,13 @@ void XThreadData_delete(XThreadData* data)
     }
     /*线程结束前已经处理了所有删除事件
     遍历一遍丢弃其他所有事件*/
-    if (data->m_postEventList)
+    for_each_iterator(&data->m_postEventList, XVector, it)
     {
-        for_each_iterator(data->m_postEventList, XVector, it)
-        {
-            XPostEvent* post = XVector_iterator_data(&it);
-            if (post)
-                XEvent_delete_base(post->event);
-        }
-        XVector_delete_base(data->m_postEventList);
-        data->m_postEventList = NULL;
+        XPostEvent* post = XVector_iterator_data(&it);
+        if (post)
+            XEvent_delete_base(post->event);
     }
+    XVector_deinit_base(&data->m_postEventList);
     if (data->m_mutex)
     {
         XMutex_delete(data->m_mutex);
@@ -91,7 +87,8 @@ void XThreadData_init(XThreadData* data, XThread* thread)
 {
     if (!data)return;
     data->m_mutex = XMutex_create();
-    data->m_postEventList=XVector_create(sizeof(XPostEvent));
+    XVector_init(&data->m_postEventList,sizeof(XPostEvent));
+    //data->m_postEventList=XVector_create(sizeof(XPostEvent));
     data->m_thread = thread;
     XAtomic_init(data->m_currentEventLoop, 0);
     XAtomic_init(data->m_loopLevel, 0);
@@ -176,11 +173,11 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) {
     XThread* th = receiver->m_thread;
     if (!th|| !th->m_data) return;
     XThreadData* td = th->m_data;
-    if (!td->m_postEventList)return;
+   // if (!td->m_postEventList)return;
     XPostEvent pe = { receiver, event, priority };
     
     XMutex_lock(td->m_mutex);
-    XVector* local = td->m_postEventList;
+    XVector* local = &td->m_postEventList;
     XVector_push_back_base(local, &pe);
     // 关键：稳定降序排序
     XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
@@ -196,7 +193,7 @@ void XThreadData_push_front_list(const XVector* events)
 {
     if (!events||!XVector_size_base(events))return;
     XThreadData* td = XThreadData_current();
-    if (!td->m_postEventList)return;
+    //if (!td->m_postEventList)return;
     XVector* temp = XVector_create(sizeof(XPostEvent));
     XVector_resize_base(temp,XVector_size_base(events));
     XVector_clear_base(temp);
@@ -210,7 +207,7 @@ void XThreadData_push_front_list(const XVector* events)
     if(XVector_size_base(temp))
     {
         XMutex_lock(td->m_mutex);
-        XVector* local = td->m_postEventList;
+        XVector* local = &td->m_postEventList;
         //整个一起插入到头部
         XVector_insert_array_base(local, 0, XContainerDataPtr(temp), XVector_size_base(temp));
         // 关键：稳定降序排序
@@ -223,11 +220,11 @@ void XThreadData_push_front_list(const XVector* events)
 XVector* XThreadData_takePostedEvents(void) 
 {
     XThreadData* td = XThreadData_current();
-    if (!td||!td->m_postEventList)return;
+    if (!td)return;
     XVector* local = NULL;
     if (!td) return local;
     XMutex_lock(td->m_mutex);
-    if (XContainerSize(td->m_postEventList))
+    if (XContainerSize(&td->m_postEventList))
     {
         local = XVector_create(sizeof(XPostEvent));
     }
@@ -238,7 +235,7 @@ XVector* XThreadData_takePostedEvents(void)
     }
     //把空的数组交换出来
     if(local)
-        XVector_swap_base(local,(td->m_postEventList));
+        XVector_swap_base(local,(&td->m_postEventList));
     XMutex_unlock(td->m_mutex);
 
     return local;
