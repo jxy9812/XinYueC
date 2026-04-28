@@ -148,12 +148,7 @@ XReadWriteLock* XReadWriteLock_create(XReadWriteLock_Type type) {
     return rwlock;
 }
 
-void XReadWriteLock_delete(XReadWriteLock* rwlock) {
-    if (rwlock) {
-        XReadWriteLock_deinit(rwlock);
-        XMemory_free(rwlock);
-    }
-}
+
 
 void XReadWriteLock_lockForRead(XReadWriteLock* rwlock) {
     if (!rwlock) return;

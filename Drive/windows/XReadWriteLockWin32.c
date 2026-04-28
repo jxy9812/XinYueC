@@ -4,39 +4,38 @@
 #include <windows.h>
 #include <stdlib.h>
 
-// 线程ID获取函数
 static DWORD XReadWriteLock_currentThreadId() {
     return GetCurrentThreadId();
 }
 
-struct XReadWriteLock {
+typedef struct XReadWriteLockWin32 {
     XReadWriteLock_Type type;
     SRWLOCK srwlock;
 
-    // 用于超时等待的事件对象
-    HANDLE readEvent;
-    HANDLE writeEvent;
+    // 使用 CONDITION_VARIABLE
+    CONDITION_VARIABLE readCond;
+    CONDITION_VARIABLE writeCond;
 
-    // 状态跟踪
+    // 核心状态，由 srwlock 保护
     long readCount;
-    long writeWaiting;
-    long readWaiting;
     long isWriting;
 
     // 递归模式支持
-    DWORD writeOwner;           // 写锁拥有者线程ID
-    int writeRecursionCount;    // 写锁递归计数
-    DWORD* readOwners;          // 读锁拥有者线程ID列表
-    int* readRecursionCounts;   // 读锁递归计数列表
-    int readOwnerCount;         // 读锁拥有者数量
-    int readOwnerCapacity;      // 读锁拥有者列表容量
-};
+    DWORD writeOwner;
+    int writeRecursionCount;
+    DWORD* readOwners;
+    int* readRecursionCounts;
+    int readOwnerCount;
+    int readOwnerCapacity;
+} XReadWriteLockWin32;
 
-size_t XReadWriteLock_getTypeSize() {
-    return sizeof(struct XReadWriteLock);
+size_t XReadWriteLock_platform_getTypeSize()
+{
+    return sizeof(struct XReadWriteLockWin32);
 }
 
-static int findReadOwnerIndex(struct XReadWriteLock* rwlock, DWORD threadId) {
+// --- 辅助函数 ---
+static int findReadOwnerIndex(struct XReadWriteLockWin32* rwlock, DWORD threadId) {
     for (int i = 0; i < rwlock->readOwnerCount; i++) {
         if (rwlock->readOwners[i] == threadId) {
             return i;
@@ -45,40 +44,42 @@ static int findReadOwnerIndex(struct XReadWriteLock* rwlock, DWORD threadId) {
     return -1;
 }
 
-static bool addReadOwner(struct XReadWriteLock* rwlock, DWORD threadId) {
+static bool addReadOwner(struct XReadWriteLockWin32* rwlock, DWORD threadId) {
     int index = findReadOwnerIndex(rwlock, threadId);
     if (index != -1) {
         rwlock->readRecursionCounts[index]++;
         return true;
     }
 
-    // 需要扩容
     if (rwlock->readOwnerCount >= rwlock->readOwnerCapacity) {
         int newCapacity = rwlock->readOwnerCapacity + 4;
-        DWORD* newOwners = (DWORD*)realloc(
-            rwlock->readOwners, newCapacity * sizeof(DWORD));
-        int* newCounts = (int*)realloc(
-            rwlock->readRecursionCounts, newCapacity * sizeof(int));
+        DWORD* newOwners = (DWORD*)XMalloc(newCapacity * sizeof(DWORD));
+        int* newCounts = (int*)XMalloc(newCapacity * sizeof(int));
 
         if (!newOwners || !newCounts) {
-           XMemory_free(newOwners);
-           XMemory_free(newCounts);
+            XMemory_free(newOwners);
+            XMemory_free(newCounts);
             return false;
         }
+
+        memcpy(newOwners, rwlock->readOwners, rwlock->readOwnerCount * sizeof(DWORD));
+        memcpy(newCounts, rwlock->readRecursionCounts, rwlock->readOwnerCount * sizeof(int));
+
+        XMemory_free(rwlock->readOwners);
+        XMemory_free(rwlock->readRecursionCounts);
 
         rwlock->readOwners = newOwners;
         rwlock->readRecursionCounts = newCounts;
         rwlock->readOwnerCapacity = newCapacity;
     }
 
-    // 添加新的读锁拥有者
     rwlock->readOwners[rwlock->readOwnerCount] = threadId;
     rwlock->readRecursionCounts[rwlock->readOwnerCount] = 1;
     rwlock->readOwnerCount++;
     return true;
 }
 
-static bool removeReadOwner(struct XReadWriteLock* rwlock, DWORD threadId) {
+static bool removeReadOwner(struct XReadWriteLockWin32* rwlock, DWORD threadId) {
     int index = findReadOwnerIndex(rwlock, threadId);
     if (index == -1) {
         return false;
@@ -88,7 +89,6 @@ static bool removeReadOwner(struct XReadWriteLock* rwlock, DWORD threadId) {
         return true;
     }
 
-    // 递归计数为0，移除该拥有者
     rwlock->readOwnerCount--;
     if (index < rwlock->readOwnerCount) {
         rwlock->readOwners[index] = rwlock->readOwners[rwlock->readOwnerCount];
@@ -97,432 +97,396 @@ static bool removeReadOwner(struct XReadWriteLock* rwlock, DWORD threadId) {
 
     return true;
 }
+// --- 辅助函数结束 ---
 
-void XReadWriteLock_init(XReadWriteLock* rwlock, XReadWriteLock_Type type) {
-    if (!rwlock) return;
+void XReadWriteLock_platform_init(XReadWriteLock* lock, XReadWriteLock_Type type)
+{
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return;
 
     rwlock->type = type;
     InitializeSRWLock(&rwlock->srwlock);
-    rwlock->readEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-    rwlock->writeEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+    InitializeConditionVariable(&rwlock->readCond);
+    InitializeConditionVariable(&rwlock->writeCond);
 
     rwlock->readCount = 0;
-    rwlock->writeWaiting = 0;
-    rwlock->readWaiting = 0;
     rwlock->isWriting = 0;
 
-    // 递归模式初始化
     rwlock->writeOwner = 0;
     rwlock->writeRecursionCount = 0;
     rwlock->readOwnerCount = 0;
     rwlock->readOwnerCapacity = 4;
-    rwlock->readOwners = (DWORD*)malloc(rwlock->readOwnerCapacity * sizeof(DWORD));
-    rwlock->readRecursionCounts = (int*)malloc(rwlock->readOwnerCapacity * sizeof(int));
+    rwlock->readOwners = (DWORD*)XMalloc(rwlock->readOwnerCapacity * sizeof(DWORD));
+    rwlock->readRecursionCounts = (int*)XMalloc(rwlock->readOwnerCapacity * sizeof(int));
 }
 
-void XReadWriteLock_deinit(XReadWriteLock* rwlock) {
-    if (!rwlock) return;
+void XReadWriteLock_platform_deinit(XReadWriteLock* lock)
+{
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return;
 
-    CloseHandle(rwlock->readEvent);
-    CloseHandle(rwlock->writeEvent);
-   XMemory_free(rwlock->readOwners);
-   XMemory_free(rwlock->readRecursionCounts);
+    XMemory_free(rwlock->readOwners);
+    XMemory_free(rwlock->readRecursionCounts);
 
     rwlock->readOwners = NULL;
     rwlock->readRecursionCounts = NULL;
 }
 
-XReadWriteLock* XReadWriteLock_create(XReadWriteLock_Type type) {
-    XReadWriteLock* rwlock = (XReadWriteLock*)XMemory_malloc(sizeof(struct XReadWriteLock));
-    if (rwlock) {
-        XReadWriteLock_init(rwlock, type);
-    }
-    return rwlock;
+void XReadWriteLock_platform_delete(XReadWriteLock* lock)
+{
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return;
+    XReadWriteLock_deinit(rwlock);
+    XMemory_free(rwlock);
 }
 
-void XReadWriteLock_delete(XReadWriteLock* rwlock) {
-    if (rwlock) {
-        XReadWriteLock_deinit(rwlock);
-        XMemory_free(rwlock);
-    }
-}
-
-void XReadWriteLock_lockForRead(XReadWriteLock* rwlock) {
-    if (!rwlock) return;
+// ========== 核心: lockForRead ==========
+void XReadWriteLock_platform_lockForRead(XReadWriteLock* lock)
+{
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return;
 
     DWORD threadId = XReadWriteLock_currentThreadId();
 
-    // 递归模式处理
-    if (rwlock->type == XReadWriteLock_Recursive) {
-        // 如果当前线程持有写锁，直接增加读锁计数(写锁降级)
+    // --- 递归模式快速路径 ---
+    if (rwlock->type & XReadWriteLock_Recursive) {
+        AcquireSRWLockExclusive(&rwlock->srwlock);
+        // 情况1: 当前线程已持有写锁，可以直接获取读锁
         if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
             addReadOwner(rwlock, threadId);
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
             return;
         }
-
-        // 如果当前线程已持有读锁，增加递归计数
+        // 情况2: 当前线程已持有读锁，递归计数+1
         int index = findReadOwnerIndex(rwlock, threadId);
         if (index != -1) {
             rwlock->readRecursionCounts[index]++;
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
             return;
         }
+        ReleaseSRWLockExclusive(&rwlock->srwlock);
     }
 
-    // 普通模式或需要真正获取锁
-    while (true) {
-        AcquireSRWLockShared(&rwlock->srwlock);
-        if (rwlock->isWriting == 0 && rwlock->writeWaiting == 0) {
-            InterlockedIncrement(&rwlock->readCount);
-            ReleaseSRWLockShared(&rwlock->srwlock);
-
-            // 记录读锁拥有者
-            if (rwlock->type == XReadWriteLock_Recursive) {
-                addReadOwner(rwlock, threadId);
-            }
-            return;
-        }
-        ReleaseSRWLockShared(&rwlock->srwlock);
-
-        InterlockedIncrement(&rwlock->readWaiting);
-        WaitForSingleObject(rwlock->readEvent, INFINITE);
-        InterlockedDecrement(&rwlock->readWaiting);
-    }
-}
-
-void XReadWriteLock_lockForWrite(XReadWriteLock* rwlock) {
-    if (!rwlock) return;
-
-    DWORD threadId = XReadWriteLock_currentThreadId();
-
-    // 递归模式处理
-    if (rwlock->type == XReadWriteLock_Recursive) {
-        // 如果当前线程已持有写锁，增加递归计数
-        if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
-            rwlock->writeRecursionCount++;
-            return;
-        }
-
-        // 如果当前线程持有读锁，需要先释放所有读锁
-        int index = findReadOwnerIndex(rwlock, threadId);
-        if (index != -1) {
-            int count = rwlock->readRecursionCounts[index];
-            for (int i = 0; i < count; i++) {
-                XReadWriteLock_unlock(rwlock);
-            }
-        }
-    }
-
-    // 普通模式或需要真正获取锁
+    // --- 主等待循环 ---
     while (true) {
         AcquireSRWLockExclusive(&rwlock->srwlock);
-        if (rwlock->readCount == 0 && rwlock->isWriting == 0) {
-            rwlock->isWriting = 1;
-            ReleaseSRWLockExclusive(&rwlock->srwlock);
 
-            // 记录写锁拥有者
-            if (rwlock->type == XReadWriteLock_Recursive) {
-                rwlock->writeOwner = threadId;
-                rwlock->writeRecursionCount = 1;
-            }
-            return;
-        }
-        ReleaseSRWLockExclusive(&rwlock->srwlock);
-
-        InterlockedIncrement(&rwlock->writeWaiting);
-        WaitForSingleObject(rwlock->writeEvent, INFINITE);
-        InterlockedDecrement(&rwlock->writeWaiting);
-    }
-}
-
-bool XReadWriteLock_tryLockForRead(XReadWriteLock* rwlock) {
-    if (!rwlock) return false;
-
-    DWORD threadId = XReadWriteLock_currentThreadId();
-
-    // 递归模式处理
-    if (rwlock->type == XReadWriteLock_Recursive) {
-        // 如果当前线程持有写锁，直接增加读锁计数
-        if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
-            addReadOwner(rwlock, threadId);
-            return true;
-        }
-
-        // 如果当前线程已持有读锁，增加递归计数
-        int index = findReadOwnerIndex(rwlock, threadId);
-        if (index != -1) {
-            rwlock->readRecursionCounts[index]++;
-            return true;
-        }
-    }
-
-    // 尝试获取读锁
-    if (TryAcquireSRWLockShared(&rwlock->srwlock)) {
-        bool success = (rwlock->isWriting == 0 && rwlock->writeWaiting == 0);
-        if (success) {
-            InterlockedIncrement(&rwlock->readCount);
-
-            // 记录读锁拥有者
-            if (rwlock->type == XReadWriteLock_Recursive) {
+        // 允许读者进入的条件：没有写者正在写
+        if (rwlock->isWriting == 0) {
+            rwlock->readCount++;
+            if (rwlock->type & XReadWriteLock_Recursive) {
                 addReadOwner(rwlock, threadId);
             }
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
+            return;
         }
-        ReleaseSRWLockShared(&rwlock->srwlock);
-        return success;
-    }
 
-    return false;
+        // 不能进入，直接等待
+        SleepConditionVariableSRW(&rwlock->readCond, &rwlock->srwlock, INFINITE, 0);
+    }
 }
 
-bool XReadWriteLock_tryLockForWrite(XReadWriteLock* rwlock) {
-    if (!rwlock) return false;
+// ========== 核心: lockForWrite ==========
+void XReadWriteLock_platform_lockForWrite(XReadWriteLock* lock)
+{
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return;
 
     DWORD threadId = XReadWriteLock_currentThreadId();
 
-    // 递归模式处理
-    if (rwlock->type == XReadWriteLock_Recursive) {
-        // 如果当前线程已持有写锁，增加递归计数
+    // --- 递归模式快速路径 ---
+    if (rwlock->type & XReadWriteLock_Recursive) {
+        AcquireSRWLockExclusive(&rwlock->srwlock);
+        // 情况1: 当前线程已持有写锁，递归计数+1
         if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
             rwlock->writeRecursionCount++;
-            return true;
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
+            return;
         }
-
-        // 如果当前线程持有读锁，需要先释放所有读锁
+        // 情况2: 当前线程持有读锁，需要先转换
         int index = findReadOwnerIndex(rwlock, threadId);
         if (index != -1) {
             int count = rwlock->readRecursionCounts[index];
             for (int i = 0; i < count; i++) {
-                XReadWriteLock_unlock(rwlock);
+                removeReadOwner(rwlock, threadId);
             }
+            rwlock->readCount -= count;
+            // 转换后，继续走主逻辑
         }
+        ReleaseSRWLockExclusive(&rwlock->srwlock);
     }
 
-    // 尝试获取写锁
-    if (TryAcquireSRWLockExclusive(&rwlock->srwlock)) {
-        bool success = (rwlock->readCount == 0 && rwlock->isWriting == 0);
-        if (success) {
-            rwlock->isWriting = 1;
+    // --- 主等待循环 ---
+    while (true) {
+        AcquireSRWLockExclusive(&rwlock->srwlock);
 
-            // 记录写锁拥有者
-            if (rwlock->type == XReadWriteLock_Recursive) {
+        // 允许写者进入的条件：没有读者，也没有写者
+        if (rwlock->readCount == 0 && rwlock->isWriting == 0) {
+            rwlock->isWriting = 1;
+            if (rwlock->type & XReadWriteLock_Recursive) {
                 rwlock->writeOwner = threadId;
                 rwlock->writeRecursionCount = 1;
             }
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
+            return;
         }
-        ReleaseSRWLockExclusive(&rwlock->srwlock);
-        return success;
-    }
 
-    return false;
+        // 不能进入，直接等待
+        SleepConditionVariableSRW(&rwlock->writeCond, &rwlock->srwlock, INFINITE, 0);
+    }
 }
 
-bool XReadWriteLock_tryLockForReadTimeout(XReadWriteLock* rwlock, int32_t timeout) {
-    if (!rwlock) return false;
-
-    // 永久等待
-    if (timeout < 0) {
-        XReadWriteLock_lockForRead(rwlock);
-        return true;
-    }
+// ========== 非阻塞: tryLockForRead ==========
+bool XReadWriteLock_platform_tryLockForRead(XReadWriteLock* lock)
+{
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return false;
 
     DWORD threadId = XReadWriteLock_currentThreadId();
+    AcquireSRWLockExclusive(&rwlock->srwlock);
 
-    // 递归模式处理
-    if (rwlock->type == XReadWriteLock_Recursive) {
-        // 如果当前线程持有写锁，直接增加读锁计数
+    bool success = false;
+    if (rwlock->type & XReadWriteLock_Recursive) {
         if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
             addReadOwner(rwlock, threadId);
-            return true;
+            success = true;
         }
-
-        // 如果当前线程已持有读锁，增加递归计数
-        int index = findReadOwnerIndex(rwlock, threadId);
-        if (index != -1) {
-            rwlock->readRecursionCounts[index]++;
-            return true;
-        }
-    }
-
-    DWORD start = GetTickCount();
-    while (true) {
-        if (TryAcquireSRWLockShared(&rwlock->srwlock)) {
-            if (rwlock->isWriting == 0 && rwlock->writeWaiting == 0) {
-                InterlockedIncrement(&rwlock->readCount);
-                ReleaseSRWLockShared(&rwlock->srwlock);
-
-                // 记录读锁拥有者
-                if (rwlock->type == XReadWriteLock_Recursive) {
-                    addReadOwner(rwlock, threadId);
-                }
-                return true;
+        else {
+            int index = findReadOwnerIndex(rwlock, threadId);
+            if (index != -1) {
+                rwlock->readRecursionCounts[index]++;
+                success = true;
             }
-            ReleaseSRWLockShared(&rwlock->srwlock);
-        }
-
-        DWORD elapsed = GetTickCount() - start;
-        DWORD remaining = (elapsed >= (DWORD)timeout) ? 0 : ((DWORD)timeout - elapsed);
-        if (remaining == 0) {
-            return false;
-        }
-
-        InterlockedIncrement(&rwlock->readWaiting);
-        DWORD result = WaitForSingleObject(rwlock->readEvent, remaining);
-        InterlockedDecrement(&rwlock->readWaiting);
-
-        if (result != WAIT_OBJECT_0) {
-            return false;
-        }
-    }
-}
-
-bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeout) {
-    if (!rwlock) return false;
-
-    // 永久等待
-    if (timeout < 0) {
-        XReadWriteLock_lockForWrite(rwlock);
-        return true;
-    }
-
-    DWORD threadId = XReadWriteLock_currentThreadId();
-
-    // 递归模式处理
-    if (rwlock->type == XReadWriteLock_Recursive) {
-        // 如果当前线程已持有写锁，增加递归计数
-        if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
-            rwlock->writeRecursionCount++;
-            return true;
-        }
-
-        // 如果当前线程持有读锁，需要先释放所有读锁
-        int index = findReadOwnerIndex(rwlock, threadId);
-        if (index != -1) {
-            int count = rwlock->readRecursionCounts[index];
-            for (int i = 0; i < count; i++) {
-                XReadWriteLock_unlock(rwlock);
+            else if (rwlock->isWriting == 0) {
+                rwlock->readCount++;
+                addReadOwner(rwlock, threadId);
+                success = true;
             }
-        }
-    }
-
-    DWORD start = GetTickCount();
-    while (true) {
-        if (TryAcquireSRWLockExclusive(&rwlock->srwlock)) {
-            if (rwlock->readCount == 0 && rwlock->isWriting == 0) {
-                rwlock->isWriting = 1;
-                ReleaseSRWLockExclusive(&rwlock->srwlock);
-
-                // 记录写锁拥有者
-                if (rwlock->type == XReadWriteLock_Recursive) {
-                    rwlock->writeOwner = threadId;
-                    rwlock->writeRecursionCount = 1;
-                }
-                return true;
-            }
-            ReleaseSRWLockExclusive(&rwlock->srwlock);
-        }
-
-        DWORD elapsed = GetTickCount() - start;
-        DWORD remaining = (elapsed >= (DWORD)timeout) ? 0 : ((DWORD)timeout - elapsed);
-        if (remaining == 0) {
-            return false;
-        }
-
-        InterlockedIncrement(&rwlock->writeWaiting);
-        DWORD result = WaitForSingleObject(rwlock->writeEvent, remaining);
-        InterlockedDecrement(&rwlock->writeWaiting);
-
-        if (result != WAIT_OBJECT_0) {
-            return false;
-        }
-    }
-}
-
-void XReadWriteLock_unlock(XReadWriteLock* rwlock) {
-    if (!rwlock) return;
-
-    DWORD threadId = XReadWriteLock_currentThreadId();
-
-    if (rwlock->type == XReadWriteLock_Recursive) {
-        // 检查是否持有写锁
-        if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
-            if (--rwlock->writeRecursionCount == 0) {
-                AcquireSRWLockExclusive(&rwlock->srwlock);
-                rwlock->isWriting = 0;
-
-                // 优先唤醒写者
-                if (rwlock->writeWaiting > 0) {
-                    SetEvent(rwlock->writeEvent);
-                }
-                else if (rwlock->readWaiting > 0) {
-                    SetEvent(rwlock->readEvent);
-                }
-
-                rwlock->writeOwner = 0;
-                ReleaseSRWLockExclusive(&rwlock->srwlock);
-            }
-            return;
-        }
-
-        // 检查是否持有读锁
-        int index = findReadOwnerIndex(rwlock, threadId);
-        if (index != -1) {
-            bool fullyReleased = false;
-            if (--rwlock->readRecursionCounts[index] == 0) {
-                fullyReleased = true;
-                removeReadOwner(rwlock, threadId);
-
-                AcquireSRWLockExclusive(&rwlock->srwlock);
-                if (--rwlock->readCount == 0 && rwlock->writeWaiting > 0) {
-                    SetEvent(rwlock->writeEvent);
-                }
-                else if (rwlock->readWaiting > 0) {
-                    SetEvent(rwlock->readEvent);
-                }
-                ReleaseSRWLockExclusive(&rwlock->srwlock);
-            }
-            return;
-        }
-    }
-
-    // 非递归模式释放
-    AcquireSRWLockExclusive(&rwlock->srwlock);
-    if (rwlock->isWriting) {
-        rwlock->isWriting = 0;
-        // 优先唤醒写者
-        if (rwlock->writeWaiting > 0) {
-            SetEvent(rwlock->writeEvent);
-        }
-        else if (rwlock->readWaiting > 0) {
-            SetEvent(rwlock->readEvent);
         }
     }
     else {
-        if (--rwlock->readCount == 0 && rwlock->writeWaiting > 0) {
-            SetEvent(rwlock->writeEvent);
-        }
-        else if (rwlock->readWaiting > 0) {
-            SetEvent(rwlock->readEvent);
+        if (rwlock->isWriting == 0) {
+            rwlock->readCount++;
+            success = true;
         }
     }
+
+    ReleaseSRWLockExclusive(&rwlock->srwlock);
+    return success;
+}
+
+// ========== 非阻塞: tryLockForWrite ==========
+bool XReadWriteLock_platform_tryLockForWrite(XReadWriteLock* lock)
+{
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return false;
+
+    DWORD threadId = XReadWriteLock_currentThreadId();
+    AcquireSRWLockExclusive(&rwlock->srwlock);
+
+    bool success = false;
+    if (rwlock->type & XReadWriteLock_Recursive) {
+        if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
+            rwlock->writeRecursionCount++;
+            success = true;
+        }
+        else {
+            int index = findReadOwnerIndex(rwlock, threadId);
+            if (index != -1) {
+                int count = rwlock->readRecursionCounts[index];
+                for (int i = 0; i < count; i++) {
+                    removeReadOwner(rwlock, threadId);
+                }
+                rwlock->readCount -= count;
+            }
+            if (rwlock->readCount == 0 && rwlock->isWriting == 0) {
+                rwlock->isWriting = 1;
+                rwlock->writeOwner = threadId;
+                rwlock->writeRecursionCount = 1;
+                success = true;
+            }
+        }
+    }
+    else {
+        if (rwlock->readCount == 0 && rwlock->isWriting == 0) {
+            rwlock->isWriting = 1;
+            success = true;
+        }
+    }
+
+    ReleaseSRWLockExclusive(&rwlock->srwlock);
+    return success;
+}
+
+// ========== 超时: tryLockForReadTimeout ==========
+bool XReadWriteLock_platform_tryLockForReadTimeout(XReadWriteLock* lock, int32_t timeout) {
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return false;
+
+    if (timeout < 0) {
+        XReadWriteLock_lockForRead(lock);
+        return true;
+    }
+
+    DWORD threadId = XReadWriteLock_currentThreadId();
+    DWORD start = GetTickCount();
+
+    // --- 递归模式快速路径 ---
+    if (rwlock->type & XReadWriteLock_Recursive) {
+        AcquireSRWLockExclusive(&rwlock->srwlock);
+        if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
+            addReadOwner(rwlock, threadId);
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
+            return true;
+        }
+        int index = findReadOwnerIndex(rwlock, threadId);
+        if (index != -1) {
+            rwlock->readRecursionCounts[index]++;
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
+            return true;
+        }
+        ReleaseSRWLockExclusive(&rwlock->srwlock);
+    }
+
+    while (true) {
+        AcquireSRWLockExclusive(&rwlock->srwlock);
+
+        if (rwlock->isWriting == 0) {
+            rwlock->readCount++;
+            if (rwlock->type & XReadWriteLock_Recursive) {
+                addReadOwner(rwlock, threadId);
+            }
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
+            return true;
+        }
+
+        DWORD elapsed = GetTickCount() - start;
+        DWORD remaining = (elapsed >= (DWORD)timeout) ? 0 : ((DWORD)timeout - elapsed);
+
+        BOOL result = SleepConditionVariableSRW(&rwlock->readCond, &rwlock->srwlock, remaining, 0);
+        if (!result) {
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
+            return false;
+        }
+    }
+}
+
+// ========== 超时: tryLockForWriteTimeout ==========
+bool XReadWriteLock_platform_tryLockForWriteTimeout(XReadWriteLock* lock, int32_t timeout) {
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return false;
+
+    if (timeout < 0) {
+        XReadWriteLock_lockForWrite(lock);
+        return true;
+    }
+
+    DWORD threadId = XReadWriteLock_currentThreadId();
+    DWORD start = GetTickCount();
+
+    // --- 递归模式快速路径 ---
+    if (rwlock->type & XReadWriteLock_Recursive) {
+        AcquireSRWLockExclusive(&rwlock->srwlock);
+        if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
+            rwlock->writeRecursionCount++;
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
+            return true;
+        }
+        int index = findReadOwnerIndex(rwlock, threadId);
+        if (index != -1) {
+            int count = rwlock->readRecursionCounts[index];
+            for (int i = 0; i < count; i++) {
+                removeReadOwner(rwlock, threadId);
+            }
+            rwlock->readCount -= count;
+        }
+        ReleaseSRWLockExclusive(&rwlock->srwlock);
+    }
+
+    while (true) {
+        AcquireSRWLockExclusive(&rwlock->srwlock);
+
+        if (rwlock->readCount == 0 && rwlock->isWriting == 0) {
+            rwlock->isWriting = 1;
+            if (rwlock->type & XReadWriteLock_Recursive) {
+                rwlock->writeOwner = threadId;
+                rwlock->writeRecursionCount = 1;
+            }
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
+            return true;
+        }
+
+        DWORD elapsed = GetTickCount() - start;
+        DWORD remaining = (elapsed >= (DWORD)timeout) ? 0 : ((DWORD)timeout - elapsed);
+
+        BOOL result = SleepConditionVariableSRW(&rwlock->writeCond, &rwlock->srwlock, remaining, 0);
+        if (!result) {
+            ReleaseSRWLockExclusive(&rwlock->srwlock);
+            return false;
+        }
+    }
+}
+
+// ========== 核心: unlock ==========
+void XReadWriteLock_platform_unlock(XReadWriteLock* lock)
+{
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return;
+
+    DWORD threadId = XReadWriteLock_currentThreadId();
+    AcquireSRWLockExclusive(&rwlock->srwlock);
+
+    if (rwlock->type & XReadWriteLock_Recursive) {
+        if (rwlock->writeRecursionCount > 0 && rwlock->writeOwner == threadId) {
+            rwlock->writeRecursionCount--;
+            if (rwlock->writeRecursionCount == 0) {
+                rwlock->isWriting = 0;
+                rwlock->writeOwner = 0;
+            }
+        }
+        else {
+            int index = findReadOwnerIndex(rwlock, threadId);
+            if (index != -1) {
+                if (--rwlock->readRecursionCounts[index] == 0) {
+                    removeReadOwner(rwlock, threadId);
+                    rwlock->readCount--;
+                }
+            }
+        }
+    }
+    else {
+        if (rwlock->isWriting) {
+            rwlock->isWriting = 0;
+        }
+        else {
+            rwlock->readCount--;
+        }
+    }
+
+    // --- 关键修复: 无条件唤醒，不再依赖 waiting 计数器 ---
+    // 策略: 写者优先
+    // 如果现在没有活动的读者或写者，则锁已空闲，可以安全地唤醒一个写者。
+    if (rwlock->readCount == 0 && rwlock->isWriting == 0) {
+        WakeConditionVariable(&rwlock->writeCond);
+    }
+    // 注意：这里不再唤醒读者。因为如果有读者来，
+    // 它们会发现 isWriting==0 并直接获取锁，无需被唤醒。
+
     ReleaseSRWLockExclusive(&rwlock->srwlock);
 }
 
-XReadWriteLock_Type XReadWriteLock_type(XReadWriteLock* rwlock) {
-    return rwlock ? rwlock->type : XReadWriteLock_NonRecursive;
-}
-
-bool XReadWriteLock_hasReadLock(XReadWriteLock* rwlock) {
-    if (!rwlock || rwlock->type != XReadWriteLock_Recursive) {
-        return false;
-    }
-
+// 其他函数保持不变
+bool XReadWriteLock_platform_hasReadLock(XReadWriteLock* lock)
+{
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return false;
     return findReadOwnerIndex(rwlock, XReadWriteLock_currentThreadId()) != -1;
 }
 
-bool XReadWriteLock_hasWriteLock(XReadWriteLock* rwlock) {
-    if (!rwlock || rwlock->type != XReadWriteLock_Recursive) {
-        return false;
-    }
-
+bool XReadWriteLock_platform_hasWriteLock(XReadWriteLock* lock)
+{
+    XReadWriteLockWin32* rwlock = (XReadWriteLockWin32*)lock;
+    if (!lock) return false;
     return rwlock->writeRecursionCount > 0 && rwlock->writeOwner == XReadWriteLock_currentThreadId();
 }
 

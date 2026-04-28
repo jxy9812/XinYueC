@@ -4,13 +4,14 @@
 #include "XHashMap.h"
 #include "XMap.h"
 #include "XMutex.h"
+#include "XReadWriteLock.h"
 #include "XAbstractEventDispatcher.h"
 #include "XCoreApplication.h"
 #include <stdlib.h>
 #include <string.h>
 
-static XHashMap* threadMap = NULL;
-static XMutex* mutex = NULL;//互斥锁
+static XHashMap* global_thread_map = NULL;
+static XReadWriteLock* global_lock = NULL;//互斥锁
 static size_t MainThread = NULL;//主线程句柄
 // ========================
 // 稳定排序：按 priority 降序，同优先级保持原序
@@ -36,26 +37,7 @@ XThreadData* XThreadData_create(XThread* thread)
     XThreadData_init(data,thread);
     return data;
 }
-//XThreadData* XThreadData_test(XThread* thread)
-//{
-//    //return NULL;
-//    XThreadData* data = XMemory_malloc(sizeof(XThreadData));
-//    memset(data, 0, sizeof(XThreadData));
-//    //XThreadData_delete(data);
-//    //return NULL;
-//    return data;
-//    data->m_mutex = XMutex_create();
-//    data->m_mutex = NULL;
-//    //XVector_init(&(data->m_postEventList), sizeof(XPostEvent));
-//
-//
-//    data->m_thread = thread;
-//    XAtomic_init(data->m_currentEventLoop, 0);
-//    XAtomic_init(data->m_loopLevel, 0);
-//    //data->m_dispatcher = XEventDispatcher_create(thread);
-//    data->m_dispatcher = NULL;
-//    return data;
-//}
+
 void XThreadData_delete(XThreadData* data)
 {
     if (!data)return;
@@ -86,6 +68,7 @@ void XThreadData_delete(XThreadData* data)
 void XThreadData_init(XThreadData* data, XThread* thread)
 {
     if (!data)return;
+    memset(data,0,sizeof(XThreadData));
     data->m_mutex = XMutex_create();
     XVector_init(&data->m_postEventList,sizeof(XPostEvent));
     //data->m_postEventList=XVector_create(sizeof(XPostEvent));
@@ -97,15 +80,17 @@ void XThreadData_init(XThreadData* data, XThread* thread)
 }
 XThreadData* XThreadData_current(void) 
 {
-    if (threadMap == NULL)
-        threadMap = XHashMap_Create(XHandle, XThreadData*, size_t_compare);
+    if (global_thread_map == NULL)
+        global_thread_map = XHashMap_Create(XHandle, XThreadData*, size_t_compare);
         //threadMap = XMap_Create(XHandle, XThreadData*, ptr_compare);
-    if (mutex == NULL)
-        mutex = XMutex_create();
+    if (global_lock == NULL)
+        global_lock = XReadWriteLock_create(XReadWriteLock_SpinNonRecursive);
     XHandle id = XThread_currentThreadId();
-    XMutex_lock(mutex);
-    XThreadData** ptr = XHashMap_value_base(threadMap, &id);
-    XMutex_unlock(mutex);
+    //XMutex_lock(global_lock);
+    XReadWriteLock_lockForRead(global_lock);
+    XThreadData** ptr = XHashMap_value_base(global_thread_map, &id);
+    //XMutex_unlock(global_lock);
+    XReadWriteLock_unlock(global_lock);
     if (ptr)
         return (*ptr);
     return NULL;
@@ -115,33 +100,38 @@ XHandle XThreadData_mapInsert(XThreadData* data)
 {
     if (data == NULL)return 0;
     XHandle id = XThread_currentThreadId();
-    XMutex_lock(mutex);
-    //if(XMapBase_isEmpty_base(threadMap))
-    XMapBase_insert_base(threadMap, &id, &data);
-    XMutex_unlock(mutex);
+    //XPrintf("尝试写锁id:%d\n", id);
+    XReadWriteLock_lockForWrite(global_lock);
+    //XPrintf("写锁成功id:%d\n", id);
+    XMapBase_insert_base(global_thread_map, &id, &data);
+    XReadWriteLock_unlock(global_lock);
+    //XPrintf("解锁id:%d\n", id);
     return id;
 }
 void XThreadData_mapRemove(XHandle id)
 {
     if (id == 0)return;
     //XHandle id = XThread_currentThreadId();
-    XMutex_lock(mutex);
-    XMapBase_remove_base(threadMap, &id);
-    XMutex_unlock(mutex);
+    //XPrintf("尝试写锁id:%d\n", id);
+    XReadWriteLock_lockForWrite(global_lock);
+    //XPrintf("写锁成功id:%d\n", id);
+    XMapBase_remove_base(global_thread_map, &id);
+    XReadWriteLock_unlock(global_lock);
+    //XPrintf("解锁id:%d\n", id);
 }
 
 XThreadData* XThreadData_initMainThread(XThread* thread)
 {
-    XMutex_lock(mutex);
-    if (threadMap && XMapBase_contains(threadMap, &MainThread))
+    XReadWriteLock_lockForRead(global_lock);
+    if (global_thread_map && XMapBase_contains(global_thread_map, &MainThread))
     {
-        XThreadData** ptr = XHashMap_value_base(threadMap, &MainThread);
-        XMutex_unlock(mutex);
+        XThreadData** ptr = XHashMap_value_base(global_thread_map, &MainThread);
+        XReadWriteLock_unlock(global_lock);
         if (ptr)
             return (*ptr);
         return NULL;
     }
-    XMutex_unlock(mutex);
+    XReadWriteLock_unlock(global_lock);
     XThreadData_current();
     XThreadData* data = XThreadData_create(thread);
     XThreadData_mapInsert(data);
@@ -227,6 +217,8 @@ XVector* XThreadData_takePostedEvents(void)
     if (XContainerSize(&td->m_postEventList))
     {
         local = XVector_create(sizeof(XPostEvent));
+        XVector_resize_base(local, XVector_size_base(&td->m_postEventList));
+        XContainerSize(local)=0;
     }
     else
     {

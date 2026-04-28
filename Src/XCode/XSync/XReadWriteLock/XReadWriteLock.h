@@ -13,9 +13,13 @@ extern "C" {
  * @brief 读写锁类型枚举
  * 对应QReadWriteLock的Recursive和NonRecursive类型
  */
-typedef enum {
-    XReadWriteLock_NonRecursive,  // 非递归模式(默认)
-    XReadWriteLock_Recursive      // 递归模式
+typedef enum 
+{
+    XReadWriteLock_NonRecursive=1,      //非递归模式-默认系统调用(需要平台实现)
+    XReadWriteLock_Spin=2,              //自旋模式-等于XReadWriteLock_SpinNonRecursive
+    XReadWriteLock_SpinNonRecursive=3,  //自旋非递归模式
+    XReadWriteLock_Recursive=4,         //递归模式-默认系统调用(需要平台实现)
+    XReadWriteLock_SpinRecursive = 6    //自旋递归模式
 } XReadWriteLock_Type;
 
 // 前向声明
@@ -25,7 +29,7 @@ typedef struct XReadWriteLock XReadWriteLock;
  * @brief 获取类型大小
  * @return 结构体大小(字节)
  */
-size_t XReadWriteLock_getTypeSize();
+size_t XReadWriteLock_getTypeSize(XReadWriteLock_Type type);
 
 /**
  * @brief 初始化读写锁(栈对象)

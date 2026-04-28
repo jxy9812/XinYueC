@@ -13,22 +13,21 @@ typedef struct {
     XEvent* event;
     int      priority;  // 任意整数，越大优先级越高
 } XPostEvent;
+
 /**
  * @brief XThreadData - 每个线程的私有数据（对标 QThreadData）
  */
 typedef struct XThreadData{
     XMutex* m_mutex; // 保护 postEventList
     XThread* m_thread;
-    XVector/*<XPostEvent>*/ m_postEventList;  // 动态数组
     XAbstractEventDispatcher* m_dispatcher;   // 本线程的事件分发器
     XAtomic_ptr m_currentEventLoop;//当前正在运行的事件循环
     XAtomic_size_t m_loopLevel; // <-- 关键：一个原子整数计数器
+    XVector/*<XPostEvent>*/ m_postEventList;  // 动态数组
 } XThreadData;
 
 //需平台实现
 XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent);
-
-//XThreadData* XThreadData_test(XThread* thread);
 
 XThreadData* XThreadData_create(XThread* thread);
 void XThreadData_delete(XThreadData* data);
@@ -36,7 +35,6 @@ void XThreadData_init(XThreadData* data,XThread* thread);
 
 // 获取当前线程的 XThreadData
 XThreadData* XThreadData_current(void);
-
 XHandle XThreadData_mapInsert(XThreadData* data);
 void XThreadData_mapRemove(XHandle id);
 // 初始化主线程的 XThreadData（由 XCoreApplication 调用）
