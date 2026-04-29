@@ -27,7 +27,7 @@ typedef struct XReadWriteLock
 {
     XReadWriteLock_Type type;
     XAtomic_size_t state; // 核心状态变量
-    XReadWriteLockPrivate* m_d;
+    XReadWriteLockPrivate* m_d;//非自旋模式扩展数据
 }XReadWriteLock;
 
 /**
