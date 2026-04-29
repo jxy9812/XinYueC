@@ -15,10 +15,10 @@ extern "C" {
  */
 typedef enum 
 {
-    XReadWriteLock_NonRecursive=1,      //非递归模式-默认系统调用(需要平台实现)
+    XReadWriteLock_NonRecursive=1,      //非递归模式-
     XReadWriteLock_Spin=2,              //自旋模式-等于XReadWriteLock_SpinNonRecursive
     XReadWriteLock_SpinNonRecursive=3,  //自旋非递归模式
-    XReadWriteLock_Recursive=4,         //递归模式-默认系统调用(需要平台实现)
+    XReadWriteLock_Recursive=4,         //递归模式-
     XReadWriteLock_SpinRecursive = 6    //自旋递归模式
 } XReadWriteLock_Type;
 typedef struct XReadWriteLockPrivate XReadWriteLockPrivate;

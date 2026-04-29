@@ -1,12 +1,29 @@
 #include "XReadLocker.h"
-//#include "XThreadData.h"
+#include "XRecursiveLockState.h"
 #include "XThread.h"
 #include "XHashMap.h"
 #include "XMutex.h"
 #include "XWaitCondition.h"
 #include "XTimer.h"
 #include <stdlib.h>
-
+// --- 锁状态定义 (使用 size_t) ---
+#if SIZE_MAX == UINT32_MAX
+ // 32-bit platform: 
+	// - 最高位 (bit 31) 作为写者标志 (1 bit)
+	// - 低31位 (bits 0-30) 作为读者计数 (31 bits)
+#define WRITER_ACTIVE_FLAG      (((size_t)1) << 31)
+#define READER_COUNT_MASK       (WRITER_ACTIVE_FLAG - 1) // 0x7FFFFFFF
+#define MAX_READERS             READER_COUNT_MASK        // 2,147,483,647
+#elif SIZE_MAX == UINT64_MAX
+	// 64-bit platform: 
+	// - 最高位 (bit 63) 作为写者标志 (1 bit)
+	// - 低63位 (bits 0-62) 作为读者计数 (63 bits)
+#define WRITER_ACTIVE_FLAG      (((size_t)1) << 63)
+#define READER_COUNT_MASK       (WRITER_ACTIVE_FLAG - 1) // 0x7FFFFFFFFFFFFFFF
+#define MAX_READERS             READER_COUNT_MASK        // 9,223,372,036,854,775,807
+#else
+#error "Unsupported platform word size."
+#endif
 typedef struct XReadWriteLockPrivate
 {
 	XMutex* mutex;               // 辅助互斥锁，用于条件变量
@@ -29,7 +46,7 @@ static void XReadWriteLockPrivate_init(XReadWriteLockPrivate* p)
 	p->mutex = XMutex_create();
 	p->readCond = XWaitCondition_create();
 	p->writeCond = XWaitCondition_create();
-	XAtomic_init(p->read_waiters,0);
+	XAtomic_init(p->read_waiters, 0);
 	XAtomic_init(p->write_waiters, 0);
 }
 static void XReadWriteLockPrivate_deinit(XReadWriteLockPrivate* p)
@@ -59,85 +76,6 @@ static void XReadWriteLockPrivate_delete(XReadWriteLockPrivate* p)
 	XReadWriteLockPrivate_deinit(p);
 	XFree(p);
 }
-static XReadWriteLock* global_lock=NULL;
-static XHashMap* global_locks_map =NULL;
-/**
- * @brief ThreadLocalLockState - 用于支持 XReadWriteLock 的递归模式
- */
-typedef struct
-{
-	size_t reader_count; // 当前线程持有的读锁计数
-	size_t writer_count; // 当前线程持有的写锁计数 (0 or >=1)
-} ThreadLocalLockState;
-
-static void recursive_locks_map_init()//    XHashMap* m_recursive_locks_map; // 键: XReadWriteLock*, 值: <threadId,ThreadLocalLockState>
-{
-	if (global_locks_map)return;
-	global_lock = XReadWriteLock_create(XReadWriteLock_NonRecursive);
-	global_locks_map = XHashMap_Create(XReadWriteLock*, XHashMap,ptr_compare);
-	XContainerSetDataDeinitMethod(global_locks_map, XHashMap_deinit_base);
-}
-//本地当前的锁状态
-static ThreadLocalLockState* XThreadData_local_lock_state(XReadWriteLock* rwlock)
-{
-	start:
-	XReadWriteLock_lockForRead(global_lock);
-	XHashMap* stateMap = (XHashMap*)XHashMap_value_base(global_locks_map,&rwlock);
-	XHandle id = XThread_currentThreadId();
-	ThreadLocalLockState* state = NULL;
-	if (stateMap)
-	{
-		findSate:
-		state =(ThreadLocalLockState*)XHashMap_value_base(stateMap, &id);
-		XReadWriteLock_unlock(global_lock);
-		if (!state)
-		{
-			ThreadLocalLockState s = { 0 };
-			XReadWriteLock_lockForWrite(global_lock);
-			XHashMap_insert_base(stateMap, &id,&s);
-			goto findSate;
-			//state = (ThreadLocalLockState*)XHashMap_value_base(stateMap, &id);
-			//XReadWriteLock_unlock(global_lock);
-		}
-		return state;
-	}
-	else
-	{
-		XReadWriteLock_unlock(global_lock);
-		XHashMap map;
-		XHashMap_init(&map,sizeof(XHandle),sizeof(ThreadLocalLockState), XHashMap_murmur3_32,ptr_compare);
-		XReadWriteLock_lockForWrite(global_lock);
-		XHashMap_insert_base(global_locks_map, &rwlock, &map);
-		XReadWriteLock_unlock(global_lock);
-		goto start;
-	}
-}
-static void XThreadData_local_lock_clear(XReadWriteLock* rwlock)
-{
-	XReadWriteLock_lockForWrite(global_lock);
-	if (global_locks_map)return;
-	XHashMap_remove_base(global_locks_map,&rwlock);
-	XReadWriteLock_unlock(global_lock);
-}
-// --- 锁状态定义 (使用 size_t) ---
-#if SIZE_MAX == UINT32_MAX
- // 32-bit platform: 
-	// - 最高位 (bit 31) 作为写者标志 (1 bit)
-	// - 低31位 (bits 0-30) 作为读者计数 (31 bits)
-#define WRITER_ACTIVE_FLAG      (((size_t)1) << 31)
-#define READER_COUNT_MASK       (WRITER_ACTIVE_FLAG - 1) // 0x7FFFFFFF
-#define MAX_READERS             READER_COUNT_MASK        // 2,147,483,647
-#elif SIZE_MAX == UINT64_MAX
-	// 64-bit platform: 
-	// - 最高位 (bit 63) 作为写者标志 (1 bit)
-	// - 低63位 (bits 0-62) 作为读者计数 (63 bits)
-#define WRITER_ACTIVE_FLAG      (((size_t)1) << 63)
-#define READER_COUNT_MASK       (WRITER_ACTIVE_FLAG - 1) // 0x7FFFFFFFFFFFFFFF
-#define MAX_READERS             READER_COUNT_MASK        // 9,223,372,036,854,775,807
-#else
-#error "Unsupported platform word size."
-#endif
-
 // --- 非递归模式的内部函数 ---
 static bool try_acquire_read_nonrecursive(XReadWriteLock* rwlock) {
 	size_t current_state = XAtomic_load_size_t(&rwlock->state);
@@ -167,7 +105,7 @@ static bool try_acquire_write_nonrecursive(XReadWriteLock* rwlock) {
 static bool try_acquire_read_recursive(XReadWriteLock* rwlock)
 {
 	// 1. 获取当前线程对此锁 (rwlock) 的私有状态。
-	ThreadLocalLockState* tls = XThreadData_local_lock_state(rwlock);
+	XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 	if (!tls) return false; // 如果获取状态失败（如内存不足），则直接返回失败。
 
 	// 2. 情况A: 当前线程已经是此锁的写者。
@@ -200,7 +138,7 @@ static bool try_acquire_read_recursive(XReadWriteLock* rwlock)
 static bool try_acquire_write_recursive(XReadWriteLock* rwlock) 
 {
 	// 1. 获取当前线程对此锁 (rwlock) 的私有状态。
-	ThreadLocalLockState* tls = XThreadData_local_lock_state(rwlock);
+	XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 	if (!tls) return false;
 
 	// 2. 情况A: 当前线程已经是此锁的写者。
@@ -245,7 +183,7 @@ void XReadWriteLock_init(XReadWriteLock* rwlock, XReadWriteLock_Type type)
 	else
 		rwlock->type = type;
 	if (type & XReadWriteLock_Recursive)
-		recursive_locks_map_init();
+		XRecursiveLockState_init();
 
 	if(type & XReadWriteLock_Spin)
 	{
@@ -260,7 +198,7 @@ void XReadWriteLock_deinit(XReadWriteLock* rwlock)
 {
 	if (XReadWriteLock_type(rwlock) & XReadWriteLock_Recursive)
 	{
-		XThreadData_local_lock_clear(rwlock);//清理全局数据
+		XRecursiveLockState_clear(rwlock);//清理全局数据
 	}
 	if (rwlock->m_d)
 	{
@@ -535,7 +473,7 @@ bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeo
 static void unlock_state_update(XReadWriteLock* rwlock)
 {
 	if (rwlock->type & XReadWriteLock_Recursive) {
-		ThreadLocalLockState* tls = XThreadData_local_lock_state(rwlock);
+		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 		if (!tls) return;
 
 		if (tls->writer_count > 0) {
@@ -587,7 +525,7 @@ bool XReadWriteLock_hasReadLock(XReadWriteLock* rwlock)
 {
 	if (!rwlock) return false;
 	if (!rwlock || !(rwlock->type & XReadWriteLock_Recursive)) return false;
-	ThreadLocalLockState* tls = XThreadData_local_lock_state(rwlock);
+	XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 	return tls && (tls->reader_count > 0);
 	
 }
@@ -596,6 +534,6 @@ bool XReadWriteLock_hasWriteLock(XReadWriteLock* rwlock)
 {
 	if (!rwlock) return false;
 	if (!rwlock || !(rwlock->type & XReadWriteLock_Recursive)) return false;
-	ThreadLocalLockState* tls = XThreadData_local_lock_state(rwlock);
+	XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 	return tls && (tls->writer_count > 0);
 }
