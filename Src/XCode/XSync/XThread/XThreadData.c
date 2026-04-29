@@ -84,7 +84,7 @@ XThreadData* XThreadData_current(void)
         global_thread_map = XHashMap_Create(XHandle, XThreadData*, size_t_compare);
         //threadMap = XMap_Create(XHandle, XThreadData*, ptr_compare);
     if (global_lock == NULL)
-        global_lock = XReadWriteLock_create(XReadWriteLock_SpinNonRecursive);
+        global_lock = XReadWriteLock_create(XReadWriteLock_NonRecursive);
     XHandle id = XThread_currentThreadId();
     //XMutex_lock(global_lock);
     XReadWriteLock_lockForRead(global_lock);

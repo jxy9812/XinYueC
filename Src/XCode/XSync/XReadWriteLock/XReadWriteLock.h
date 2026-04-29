@@ -4,11 +4,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
-
+#include "XAtomic.h"
+#include "XTypes.h"
 /**
  * @brief 读写锁类型枚举
  * 对应QReadWriteLock的Recursive和NonRecursive类型
@@ -21,15 +21,14 @@ typedef enum
     XReadWriteLock_Recursive=4,         //递归模式-默认系统调用(需要平台实现)
     XReadWriteLock_SpinRecursive = 6    //自旋递归模式
 } XReadWriteLock_Type;
-
-// 前向声明
-typedef struct XReadWriteLock XReadWriteLock;
-
-/**
- * @brief 获取类型大小
- * @return 结构体大小(字节)
- */
-size_t XReadWriteLock_getTypeSize(XReadWriteLock_Type type);
+typedef struct XReadWriteLockPrivate XReadWriteLockPrivate;
+//读写自旋锁
+typedef struct XReadWriteLock
+{
+    XReadWriteLock_Type type;
+    XAtomic_size_t state; // 核心状态变量
+    XReadWriteLockPrivate* m_d;
+}XReadWriteLock;
 
 /**
  * @brief 初始化读写锁(栈对象)
