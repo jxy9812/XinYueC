@@ -1,126 +1,104 @@
 ﻿#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
-#include "XRecursiveMutex.h"
-#include "XMemory.h"
+#include "XMutex.h"
+#include "XThread.h" // For XThread_currentThreadId()
+#include "XTimer.h"  // For time-related functions if needed, though we'll use clock_gettime directly for precision
 #include <pthread.h>
 #include <time.h>
 #include <errno.h>
+#include <string.h>
 
-// POSIX平台具体结构体定义
-struct XMutex {
-    pthread_mutex_t m_mutex;
-    XMutex_Type type;
-};
-size_t XMutex_typetSize()
+// PlatformPrivate 结构体定义
+// 对于Linux，我们直接使用 pthread_mutex_t
+typedef struct PlatformPrivate
 {
-    return sizeof(struct XMutex);
+    pthread_mutex_t mutex;
+} PlatformPrivate;
+
+// 声明外部函数，这些函数在 XMutex.c 中被调用
+PlatformPrivate* XMutex_getPlatformPrivate(XMutex* mutex);
+
+pthread_mutex_t* XMutex_get_pthread_mutex_t(XMutex* mutex)
+{
+    if (!mutex || mutex->type & XMutex_Spin)return NULL;
+    PlatformPrivate* p = XMutex_getPlatformPrivate(mutex);
+    return p ? &p->mutex : NULL;
 }
-//// 内部辅助函数：获取平台相关句柄（供XWaitCondition使用）
-//void* XMutex_getNativeHandle(XMutex* mutex) {
-//    return mutex ? &mutex->mutex : NULL;
-//}
-void XRecursiveMutex_init(XRecursiveMutex* m_mutex)
-{
-    if (!m_mutex) return;
 
-    m_mutex->type = XMutex_Recursive;
+// ========== 平台抽象接口实现 ==========
+size_t XMutex_PlatformPrivate_size()
+{
+    return sizeof(PlatformPrivate);
+}
+
+void XMutex_platform_init(PlatformPrivate* p)
+{
+    if (!p) return;
+
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
 
-    // 设置互斥锁类型
-    if (m_mutex->type == XMutex_Recursive) {
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    }
-    else {
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
-    }
+    // 初始化为非递归（快速）互斥锁
+    // 因为递归逻辑已经在 XMutex.c 中处理了
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_NORMAL);
 
-    pthread_mutex_init(&m_mutex->m_mutex, &attr);
-    pthread_mutexattr_destroy(&attr);
-}
-XRecursiveMutex* XRecursiveMutex_create()
-{
-    XMutex* m_mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
-    if (m_mutex)
-    {
-        XRecursiveMutex_init(m_mutex);
-    }
-    return m_mutex;
-}
-void XMutex_init(XMutex* m_mutex) {
-    if (!m_mutex) return;
-
-    m_mutex->type = XMutex_Normal;
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-
-    // 设置互斥锁类型
-    if (m_mutex->type == XMutex_Recursive) {
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    }
-    else {
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
-    }
-
-    pthread_mutex_init(&m_mutex->m_mutex, &attr);
+    pthread_mutex_init(&p->mutex, &attr);
     pthread_mutexattr_destroy(&attr);
 }
 
-void XMutex_deinit(XMutex* m_mutex) {
-    if (!m_mutex) return;
-    pthread_mutex_destroy(&m_mutex->m_mutex);
-}
-
-XMutex* XMutex_create() {
-    XMutex* m_mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
-    if (m_mutex) {
-        XMutex_init(m_mutex);
-    }
-    return m_mutex;
-}
-
-void XMutex_delete(XMutex* m_mutex) {
-    if (m_mutex) {
-        XMutex_deinit(m_mutex);
-        XMemory_free(m_mutex);
-    }
-}
-
-void XMutex_lock(XMutex* m_mutex) {
-    if (!m_mutex) return;
-    pthread_mutex_lock(&m_mutex->m_mutex);
-}
-
-bool XMutex_tryLock(XMutex* m_mutex) {
-    if (!m_mutex) return false;
-    return pthread_mutex_trylock(&m_mutex->m_mutex) == 0;
-}
-
-bool XMutex_tryLockTimeout(XMutex* m_mutex, uint32_t timeout) {
-    if (!m_mutex) return false;
-
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    ts.tv_sec += timeout / 1000;
-    ts.tv_nsec += (timeout % 1000) * 1000000;
-
-    if (ts.tv_nsec >= 1000000000) {
-        ts.tv_sec += 1;
-        ts.tv_nsec -= 1000000000;
-    }
-
-    return pthread_mutex_timedlock(&m_mutex->m_mutex, &ts) == 0;
-}
-
-void XMutex_unlock(XMutex* m_mutex) {
-    if (!m_mutex) return;
-    pthread_mutex_unlock(&m_mutex->m_mutex);
-}
-
-bool XMutex_isRecursive(XMutex* m_mutex) {
-    return m_mutex ? (m_mutex->type == XMutex_Recursive) : false;
-}
-XMutex_Type XMutex_type(XMutex* m_mutex)
+void XMutex_platform_deinit(PlatformPrivate* p)
 {
-    return m_mutex->type;
+    if (!p) return;
+    pthread_mutex_destroy(&p->mutex);
 }
+
+void XMutex_platform_lock(PlatformPrivate* p)
+{
+    if (!p) return;
+    pthread_mutex_lock(&p->mutex);
+}
+
+bool XMutex_platform_tryLock(PlatformPrivate* p)
+{
+    if (!p) return false;
+    int result = pthread_mutex_trylock(&p->mutex);
+    return (result == 0);
+}
+
+void XMutex_platform_unlock(PlatformPrivate* p)
+{
+    if (!p) return;
+    pthread_mutex_unlock(&p->mutex);
+}
+
+// ========== 超时锁的专用实现 ==========
+// 注意：XMutex.c 中的 XMutex_tryLockTimeout 是一个通用的、基于轮询的实现。
+// 为了获得更好的性能和精确性，我们可以在这里提供一个基于 pthread_mutex_timedlock 的原生实现。
+// 但是，为了保持与现有架构的一致性，我们让 XMutex.c 继续使用其通用的超时逻辑，
+// 它内部会循环调用 XMutex_platform_tryLock。
+// 如果您希望使用更高效的原生超时，可以取消注释下面的函数，并在 XMutex.c 中调用它。
+
+/*
+static bool _XMutex_platform_tryLockTimeout_private(PlatformPrivate* p, uint32_t timeout_ms)
+{
+    if (!p || timeout_ms == 0)
+        return XMutex_platform_tryLock(p);
+
+    struct timespec abs_timeout;
+    clock_gettime(CLOCK_REALTIME, &abs_timeout);
+
+    // 将毫秒超时转换为 timespec
+    abs_timeout.tv_sec += timeout_ms / 1000;
+    abs_timeout.tv_nsec += (timeout_ms % 1000) * 1000000; // ms to ns
+
+    // 处理纳秒溢出
+    if (abs_timeout.tv_nsec >= 1000000000L) {
+        abs_timeout.tv_sec++;
+        abs_timeout.tv_nsec -= 1000000000L;
+    }
+
+    int result = pthread_mutex_timedlock(&p->mutex, &abs_timeout);
+    return (result == 0);
+}
+*/
+
 #endif

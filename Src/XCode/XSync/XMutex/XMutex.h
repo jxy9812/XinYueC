@@ -8,25 +8,33 @@ extern "C" {
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
-
+#include "XAtomic.h"
+#include "Xtypes.h"
 // 只声明结构体，不定义具体实现
 typedef struct XMutex XMutex;
 
-// 互斥锁类型
+// 互斥锁类型 - 扩展以支持多模式
 typedef enum {
-    XMutex_Normal,      // 普通锁，同一线程不能重复上锁
-    XMutex_Recursive    // 递归锁，同一线程可以多次上锁
+    XMutex_NonRecursive = 1,        // 非递归模式
+    XMutex_Spin = 2,                // 自旋模式 (等同于 SpinNonRecursive)
+    XMutex_SpinNonRecursive = 3,    // 自旋非递归模式
+    XMutex_Recursive = 4,           // 递归模式
+    XMutex_SpinRecursive = 6        // 自旋递归模式
 } XMutex_Type;
-
+typedef struct XMutex 
+{
+    XMutex_Type type;
+    char m_d[];//扩展数据
+}XMutex;
 //获取此类型的大小
-size_t XMutex_typetSize();
+size_t XMutex_typetSize(XMutex_Type type);
 
 /**
  * @brief 初始化互斥锁（栈对象）
  * @param mutex 互斥锁指针
  * @param type 互斥锁类型
  */
-void XMutex_init(XMutex* mutex);
+void XMutex_init(XMutex* mutex, XMutex_Type type);
 
 /**
  * @brief 销毁互斥锁（栈对象）
@@ -38,7 +46,7 @@ void XMutex_deinit(XMutex* mutex);
  * @brief 创建互斥锁（堆对象）
  * @return 成功返回XMutex指针，失败返回NULL
  */
-XMutex* XMutex_create();
+XMutex* XMutex_create(XMutex_Type type);
 
 /**
  * @brief 销毁并释放互斥锁（堆对象）

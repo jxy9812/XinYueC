@@ -2,7 +2,7 @@
 #include "XWaitCondition.h"
 #include "XMemory.h"
 #include <windows.h>
-
+CRITICAL_SECTION* XMutex_get_critical_section(XMutex* mutex);
 // Windows平台具体结构体定义
 struct XWaitCondition {
     CONDITION_VARIABLE cond;
@@ -40,7 +40,7 @@ bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int32_t timeout) {
     if (cond == NULL || mutex == NULL) return false;
 
     // 获取Windows临界区句柄
-    CRITICAL_SECTION* cs = (CRITICAL_SECTION*)mutex;
+    CRITICAL_SECTION* cs = (CRITICAL_SECTION*)XMutex_get_critical_section(mutex);
     if (!cs) return false;
 
     // 转换超时时间（INFINITE表示无限等待）

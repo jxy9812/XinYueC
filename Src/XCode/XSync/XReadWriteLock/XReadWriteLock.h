@@ -21,13 +21,12 @@ typedef enum
     XReadWriteLock_Recursive=4,         //递归模式-
     XReadWriteLock_SpinRecursive = 6    //自旋递归模式
 } XReadWriteLock_Type;
-typedef struct XReadWriteLockPrivate XReadWriteLockPrivate;
 //读写自旋锁
 typedef struct XReadWriteLock
 {
     XReadWriteLock_Type type;
     XAtomic_size_t state; // 核心状态变量
-    XReadWriteLockPrivate* m_d;//非自旋模式扩展数据
+    char m_d[];//非自旋模式扩展数据
 }XReadWriteLock;
 
 /**

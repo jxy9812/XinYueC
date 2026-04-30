@@ -1,149 +1,71 @@
 ﻿#ifdef __FreeRTOS__
-#include "XRecursiveMutex.h"
-#include "XMemory.h"
-#include "FreeRTOS.h"
-#include "semphr.h"
-#include "task.h"
+#include "XMutex.h"
+#include "XThread.h" // For XThread_currentThreadId(), which should map to xTaskGetCurrentTaskHandle()
+#include <string.h>
+#include "semphr.h"  // FreeRTOS semaphore API
 
-// FreeRTOS平台具体结构体定义
-struct XMutex {
-    SemaphoreHandle_t sem;
-    XMutex_Type type;
-    uint32_t recursive_count;
-    TaskHandle_t owner_task;
-};
-size_t XMutex_typetSize()
+// PlatformPrivate 结构体定义
+// 对于FreeRTOS，我们使用 SemaphoreHandle_t 来持有互斥信号量
+typedef struct PlatformPrivate
 {
-    return sizeof(struct XMutex);
-}
+    SemaphoreHandle_t mutex;
+} PlatformPrivate;
 
-void XRecursiveMutex_init(XRecursiveMutex* m_mutex) 
+// 声明外部函数，这些函数在 XMutex.c 中被调用
+PlatformPrivate* XMutex_getPlatformPrivate(XMutex* mutex);
+
+// ========== 平台抽象接口实现 ==========
+size_t XMutex_PlatformPrivate_size()
 {
-    if (!m_mutex) return;
-
-    m_mutex->type = XMutex_Recursive;
-    m_mutex->recursive_count = 0;
-    m_mutex->owner_task = NULL;
-
-    if (m_mutex->type == XMutex_Recursive) {
-        m_mutex->sem = xSemaphoreCreateRecursiveMutex();
-    }
-    else {
-        m_mutex->sem = xSemaphoreCreateMutex();
-    }
+    return sizeof(PlatformPrivate);
 }
 
-XRecursiveMutex* XRecursiveMutex_create()
+void XMutex_platform_init(PlatformPrivate* p)
 {
-    XMutex* m_mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
-    if (m_mutex) {
-        XRecursiveMutex_init(m_mutex);
-        if (!m_mutex->sem) {
-            XMemory_free(m_mutex);
-            return NULL;
-        }
-    }
-    return m_mutex;
+    if (!p) return;
+
+    // 创建一个互斥信号量 (Mutex Semaphore)
+    // FreeRTOS 的互斥信号量默认支持优先级继承，可以有效防止优先级反转
+    p->mutex = xSemaphoreCreateMutex();
+
+    // 注意：在资源受限的嵌入式系统中，创建失败是可能的。
+    // 根据您的错误处理策略，这里可以选择断言或设置一个无效状态。
+    // 为了简单起见，我们假设创建总是成功。
+    // 如果需要更健壮的处理，可以在 XMutex_init 中检查 p->mutex 是否为 NULL。
 }
 
-void XMutex_init(XMutex* m_mutex) {
-    if (!m_mutex) return;
-
-    m_mutex->type = XMutex_Normal;
-    m_mutex->recursive_count = 0;
-    m_mutex->owner_task = NULL;
-
-    if (m_mutex->type == XMutex_Recursive) {
-        m_mutex->sem = xSemaphoreCreateRecursiveMutex();
-    }
-    else {
-        m_mutex->sem = xSemaphoreCreateMutex();
-    }
-}
-
-void XMutex_deinit(XMutex* m_mutex) {
-    if (!m_mutex || !m_mutex->sem) return;
-    vSemaphoreDelete(m_mutex->sem);
-    m_mutex->sem = NULL;
-}
-
-XMutex* XMutex_create() 
+void XMutex_platform_deinit(PlatformPrivate* p)
 {
-    XMutex* m_mutex = (XMutex*)XMemory_malloc(sizeof(XMutex));
-    if (m_mutex) {
-        XMutex_init(m_mutex);
-        if (!m_mutex->sem) {
-            XMemory_free(m_mutex);
-            return NULL;
-        }
-    }
-    return m_mutex;
+    if (!p || !p->mutex) return;
+
+    // 在FreeRTOS中，通常不建议在运行时删除内核对象，尤其是当它们可能还在被使用时。
+    // 但为了API的完整性，我们在这里调用 vSemaphoreDelete。
+    // 请确保在调用此函数时，该互斥锁未被任何任务持有。
+    vSemaphoreDelete(p->mutex);
+    p->mutex = NULL;
 }
 
-void XMutex_delete(XMutex* m_mutex) {
-    if (m_mutex) {
-        XMutex_deinit(m_mutex);
-        XMemory_free(m_mutex);
-    }
-}
-
-void XMutex_lock(XMutex* m_mutex) {
-    if (!m_mutex || !m_mutex->sem) return;
-
-    if (m_mutex->type == XMutex_Recursive) {
-        xSemaphoreTakeRecursive(m_mutex->sem, portMAX_DELAY);
-    }
-    else {
-        xSemaphoreTake(m_mutex->sem, portMAX_DELAY);
-    }
-}
-
-bool XMutex_tryLock(XMutex* m_mutex) {
-    if (!m_mutex || !m_mutex->sem) return false;
-
-    BaseType_t result;
-    if (m_mutex->type == XMutex_Recursive) {
-        result = xSemaphoreTakeRecursive(m_mutex->sem, 0);
-    }
-    else {
-        result = xSemaphoreTake(m_mutex->sem, 0);
-    }
-
-    return result == pdTRUE;
-}
-
-bool XMutex_tryLockTimeout(XMutex* m_mutex, uint32_t timeout) {
-    if (!m_mutex || !m_mutex->sem) return false;
-
-    TickType_t ticks = pdMS_TO_TICKS(timeout);
-    BaseType_t result;
-
-    if (m_mutex->type == XMutex_Recursive) {
-        result = xSemaphoreTakeRecursive(m_mutex->sem, ticks);
-    }
-    else {
-        result = xSemaphoreTake(m_mutex->sem, ticks);
-    }
-
-    return result == pdTRUE;
-}
-
-void XMutex_unlock(XMutex* m_mutex) {
-    if (!m_mutex || !m_mutex->sem) return;
-
-    if (m_mutex->type == XMutex_Recursive) {
-        xSemaphoreGiveRecursive(m_mutex->sem);
-    }
-    else {
-        xSemaphoreGive(m_mutex->sem);
-    }
-}
-
-bool XMutex_isRecursive(XMutex* m_mutex) {
-    return m_mutex ? (m_mutex->type == XMutex_Recursive) : false;
-}
-XMutex_Type XMutex_type(XMutex* m_mutex)
+void XMutex_platform_lock(PlatformPrivate* p)
 {
-    return m_mutex->type;
+    if (!p || !p->mutex) return;
+
+    // 获取互斥锁，portMAX_DELAY 表示永久阻塞直到成功
+    xSemaphoreTake(p->mutex, portMAX_DELAY);
+}
+
+bool XMutex_platform_tryLock(PlatformPrivate* p)
+{
+    if (!p || !p->mutex) return false;
+
+    // 尝试立即获取互斥锁，0 表示不等待
+    return (xSemaphoreTake(p->mutex, 0) == pdTRUE);
+}
+
+void XMutex_platform_unlock(PlatformPrivate* p)
+{
+    if (!p || !p->mutex) return;
+
+    // 释放互斥锁
+    xSemaphoreGive(p->mutex);
 }
 #endif

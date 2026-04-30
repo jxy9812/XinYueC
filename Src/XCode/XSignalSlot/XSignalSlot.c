@@ -34,7 +34,7 @@ void XSignalSlot_init(XSignalSlot* manager, XObject* obj)
 	manager->bindSignalList = XVector_Create(XConnection*);
 	XContainerSetCompare(manager->bindSignalList, ptr_compare);
 	// 初始化互斥锁
-	manager->mutex = XMutex_create();
+	manager->mutex = XMutex_create(XMutex_NonRecursive);
 }
 void XSignalSlot_deinit(XSignalSlot* manager)
 {

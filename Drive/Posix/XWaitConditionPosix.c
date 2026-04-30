@@ -4,7 +4,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <time.h>
-
+pthread_mutex_t* XMutex_get_pthread_mutex_t(XMutex* mutex);
 // POSIX平台具体结构体定义
 struct XWaitCondition {
     pthread_cond_t cond;
@@ -39,11 +39,11 @@ void XWaitCondition_delete(XWaitCondition* cond) {
     XMemory_free(cond);
 }
 
-bool XWaitCondition_wait(XWaitCondition* cond, XMutex* m_mutex, int32_t timeout) {
-    if (cond == NULL || m_mutex == NULL) return false;
+bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int32_t timeout) {
+    if (cond == NULL || mutex == NULL) return false;
 
     // 获取POSIX互斥锁句柄
-    pthread_mutex_t* pthread_mutex = (pthread_mutex_t*)m_mutex;
+    pthread_mutex_t* pthread_mutex = (pthread_mutex_t*)XMutex_get_pthread_mutex_t(mutex);
     if (!pthread_mutex) return false;
 
     if (timeout == -1) {

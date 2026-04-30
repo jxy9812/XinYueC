@@ -9,14 +9,14 @@ extern "C" {
 typedef struct  XMutex  XRecursiveMutex;
 
 //获取此类型的大小
-#define XRecursiveMutex_geTypetSize				XMutex_geTypetSize
+#define XRecursiveMutex_typetSize				XMutex_typetSize(XMutex_Recursive)
 
 /**
  * @brief 初始化互斥锁（栈对象）
  * @param mutex 互斥锁指针
  * @param type 互斥锁类型
  */
-void XRecursiveMutex_init(XRecursiveMutex* mutex);
+#define XRecursiveMutex_init(mutex)				  XMutex_init(mutex,XMutex_Recursive)
 
 /**
  * @brief 销毁互斥锁（栈对象）
@@ -28,7 +28,7 @@ void XRecursiveMutex_init(XRecursiveMutex* mutex);
  * @brief 创建互斥锁（堆对象）
  * @return 成功返回XRecursiveMutex指针，失败返回NULL
  */
-XRecursiveMutex* XRecursiveMutex_create();
+#define XRecursiveMutex_create				XMutex_create(XMutex_Recursive)
 
 /**
  * @brief 销毁并释放互斥锁（堆对象）

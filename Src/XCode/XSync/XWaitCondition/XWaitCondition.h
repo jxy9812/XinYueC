@@ -41,7 +41,7 @@ void XWaitCondition_delete(XWaitCondition* cond);
 /**
  * @brief 等待条件满足（必须已持有mutex锁）
  * @param cond 条件变量指针
- * @param mutex 关联的互斥锁（必须已上锁）
+ * @param mutex 关联的互斥锁（必须已上锁,不能是自旋模式）
  * @param timeout 超时时间（毫秒），-1表示无限等待
  * @return 成功唤醒返回true，超时返回false
  */

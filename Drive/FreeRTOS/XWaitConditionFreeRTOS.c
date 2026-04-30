@@ -55,8 +55,8 @@ void XWaitCondition_delete(XWaitCondition* cond) {
     XMemory_free(cond);
 }
 
-bool XWaitCondition_wait(XWaitCondition* cond, XMutex* m_mutex, int32_t timeout) {
-    if (cond == NULL || m_mutex == NULL) return false;
+bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int32_t timeout) {
+    if (cond == NULL || mutex == NULL) return false;
 
     // 等待前增加计数
     taskENTER_CRITICAL();
@@ -64,14 +64,14 @@ bool XWaitCondition_wait(XWaitCondition* cond, XMutex* m_mutex, int32_t timeout)
     taskEXIT_CRITICAL();
 
     // 释放互斥锁
-    XMutex_unlock(m_mutex);
+    XMutex_unlock(mutex);
 
     // 等待信号量（超时转换为FreeRTOS ticks）
     TickType_t ticks = (timeout == -1) ? portMAX_DELAY : pdMS_TO_TICKS(timeout);
     BaseType_t result = xSemaphoreTake(cond->sem, ticks);
 
     // 重新获取互斥锁
-    XMutex_lock(m_mutex);
+    XMutex_lock(mutex);
 
     // 等待后减少计数
     taskENTER_CRITICAL();

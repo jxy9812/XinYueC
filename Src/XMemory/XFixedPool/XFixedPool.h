@@ -19,7 +19,6 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XAtomic.h" 
-#include "XSpinLock.h"
 typedef struct XFixedPool 
 {
     XAtomic_ptr free_list_head_packed; //打包头指针

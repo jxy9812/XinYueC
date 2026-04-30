@@ -13,7 +13,7 @@ volatile bool g_XHostInfo_dns_thread_quit = false;
 void XHostInfo_init_module(void) {
     static bool initialized = false;
     if (initialized) return;
-    g_XHostInfo_task_mutex = XMutex_create();
+    g_XHostInfo_task_mutex = XMutex_create(XMutex_NonRecursive);
     g_XHostInfo_pending_tasks = XListSLinked_create(sizeof(XHostInfo_LookupTask*));
     g_XHostInfo_dns_thread_quit = false;
     g_XHostInfo_dns_thread = XThread_create_func(XHostInfo_dns_worker, NULL);
