@@ -286,7 +286,7 @@ void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer)
 }
 static void XEventRecvFrame_deinit(XEventRecvFrame* ev)
 {
-	if (ev->ref_count && XAtomic_fetch_sub_int32(ev->ref_count, 1) > 1)
+	if (ev->ref_count && XAtomic_fetch_sub_int32(ev->ref_count, 1, XAtomic_MemoryOrder_Relaxed) > 1)
 		return;
 	if (ev->frame)
 	{

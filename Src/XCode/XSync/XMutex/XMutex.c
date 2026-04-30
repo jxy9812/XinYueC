@@ -49,7 +49,7 @@ static void spin_lock(XMutex* mutex)
     SpinPrivate* p = GetSpinPrivate(mutex);
     bool expected = false;
     // 循环尝试获取锁
-    while (!XAtomic_compare_exchange_strong_bool(&p->state, &expected, true)) {
+    while (!XAtomic_compare_exchange_strong_bool(&p->state, &expected, true, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
         expected = false; // 重置 expected，为下一次尝试做准备
         XThread_yieldCurrentThread();
     }
@@ -59,7 +59,7 @@ static void spin_unlock(XMutex* mutex)
 {
     SpinPrivate* p = GetSpinPrivate(mutex);
     // 直接解锁原子状态
-    XAtomic_store_bool(&p->state, false);
+    XAtomic_store_bool(&p->state, false, XAtomic_MemoryOrder_Release);
 }
 //
 //// ========== 公共API实现 ==========
@@ -161,7 +161,7 @@ bool XMutex_tryLock(XMutex* mutex)
         SpinPrivate* p = GetSpinPrivate(mutex);
         bool expected = false;
         // 尝试一次获取锁，不成功则立即返回
-        is_lock= XAtomic_compare_exchange_strong_bool(&p->state, &expected, true);
+        is_lock= XAtomic_compare_exchange_strong_bool(&p->state, &expected, true, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed);
     }
     else 
     {

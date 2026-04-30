@@ -344,7 +344,7 @@ void XObject_deinitLater(XObject* object)
 		return;//已经标记为释放了
 	XObject_setParent(object,NULL);
 	//发送释放信号
-	XAtomic_fetch_add_int32(&object->m_posted_events, 1);
+	XAtomic_fetch_add_int32(&object->m_posted_events, 1, XAtomic_MemoryOrder_Relaxed);
 	XCoreApplication_postEvent(object, XEventDeferredDelete_create(false), XEVENT_PRIORITY_LOWEST);
 	object->delete_later_called = true;
 }
@@ -355,7 +355,7 @@ void XObject_deleteLater(XObject* object)
 	if (object->delete_later_called)
 		return;//已经标记为释放了
 	XObject_setParent(object, NULL);
-	XAtomic_fetch_add_int32(&object->m_posted_events, 1);
+	XAtomic_fetch_add_int32(&object->m_posted_events, 1, XAtomic_MemoryOrder_Relaxed);
 	XCoreApplication_postEvent(object, XEventDeferredDelete_create(true), XEVENT_PRIORITY_LOWEST);
 	object->delete_later_called = true;
 }

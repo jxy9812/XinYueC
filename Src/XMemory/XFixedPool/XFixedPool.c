@@ -167,7 +167,7 @@ void* XFixedPool_malloc(XFixedPool* pool) {
 
     do {
         // 1. 读取当前头
-        old_head_packed = XAtomic_load_ptr(&pool->free_list_head_packed);
+        old_head_packed = XAtomic_load_ptr(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
         old_head_index = unpack_index(old_head_packed, pool);
 
         // 2. 检查是否为空
@@ -185,7 +185,7 @@ void* XFixedPool_malloc(XFixedPool* pool) {
         new_head_packed = pack_index_version(new_head_index, old_version + 1, pool);
 
         // 6. 尝试替换头
-    } while (!XAtomic_compare_exchange_strong_ptr(&pool->free_list_head_packed, &old_head_packed, new_head_packed));
+    } while (!XAtomic_compare_exchange_strong_ptr(&pool->free_list_head_packed, &old_head_packed, new_head_packed, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
 
     // --- 关键修改: 标记为已分配 ---
     *(volatile size_t*)old_head_block = (size_t)XFIXEDPOOL_BLOCK_ALLOCATED;
@@ -213,7 +213,7 @@ void XFixedPool_free(XFixedPool* pool, void* user_ptr) {
     void* new_head_packed;
     do {
         // a. 读取当前头 (index + version)
-        old_head_packed = XAtomic_load_ptr(&pool->free_list_head_packed);
+        old_head_packed = XAtomic_load_ptr(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
         size_t old_head_index = unpack_index(old_head_packed, pool);
 
         *(volatile size_t*)internal_block = old_head_index;
@@ -223,7 +223,7 @@ void XFixedPool_free(XFixedPool* pool, void* user_ptr) {
         new_head_packed = pack_index_version(freed_index, old_version + 1, pool);
 
         // d. 尝试原子地更新头指针
-    } while (!XAtomic_compare_exchange_strong_ptr(&pool->free_list_head_packed, &old_head_packed, new_head_packed));
+    } while (!XAtomic_compare_exchange_strong_ptr(&pool->free_list_head_packed, &old_head_packed, new_head_packed, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
     //printf("XFixedPool free pool:%p   index:%lld ptr:%p\n", pool->raw_memory, freed_index, user_ptr);
 }
 

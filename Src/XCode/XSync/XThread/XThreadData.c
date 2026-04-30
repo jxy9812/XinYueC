@@ -142,19 +142,19 @@ XThreadData* XThreadData_initMainThread(XThread* thread)
 
 XEventLoop* XThreadData_currentEventLoop(XThreadData* data)
 {
-    return XAtomic_load_ptr(&data->m_currentEventLoop);
+    return XAtomic_load_ptr(&data->m_currentEventLoop, XAtomic_MemoryOrder_Relaxed);
 }
 
 void XThreadData_pushEventloop(XThreadData* data, XEventLoop* loop)
 {
-    XAtomic_fetch_add_size_t(&data->m_loopLevel,1);
-    XAtomic_exchange_ptr(&data->m_currentEventLoop,loop);
+    XAtomic_fetch_add_size_t(&data->m_loopLevel,1, XAtomic_MemoryOrder_Relaxed);
+    XAtomic_exchange_ptr(&data->m_currentEventLoop,loop, XAtomic_MemoryOrder_Relaxed);
 }
 
 void XThreadData_popEventloop(XThreadData * data, XEventLoop * loop)
 {
-    XAtomic_fetch_sub_size_t(&data->m_loopLevel, 1);
-    XAtomic_exchange_ptr(&data->m_currentEventLoop, loop);
+    XAtomic_fetch_sub_size_t(&data->m_loopLevel, 1, XAtomic_MemoryOrder_Relaxed);
+    XAtomic_exchange_ptr(&data->m_currentEventLoop, loop, XAtomic_MemoryOrder_Relaxed);
 }
 
 void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) {

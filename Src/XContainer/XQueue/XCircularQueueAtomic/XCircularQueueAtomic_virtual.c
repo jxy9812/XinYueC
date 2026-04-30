@@ -51,15 +51,15 @@ bool VXCircularQueueAtomic_isEmpty(const XCircularQueueAtomic* this_queue)
 {
     if (this_queue == NULL)
         return true;
-    return (XAtomic_load_size_t(&(this_queue->m_head)) == XAtomic_load_size_t(&(this_queue->m_tail)));//头指针等于尾指针时为空
+    return (XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed) == XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed));//头指针等于尾指针时为空
 }
 
 bool VXCircularQueueAtomic_isFull(const XCircularQueueAtomic* this_queue)
 {
     if (this_queue == NULL)
         return false;
-    size_t head = XAtomic_load_size_t(&(this_queue->m_head));
-    size_t tail = XAtomic_load_size_t(&(this_queue->m_tail));
+    size_t head = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
+    size_t tail = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed);
     return ((tail + 1) % XContainerSize(this_queue) == head);//尾指针下一个位置等于头指针时为满
 }
 
@@ -83,8 +83,8 @@ size_t VXCircularQueueAtomic_getSize(const XCircularQueueAtomic* this_queue)
 {
     if (this_queue == NULL)
         return 0;
-    size_t head = XAtomic_load_size_t(&(this_queue->m_head));
-    size_t tail = XAtomic_load_size_t(&(this_queue->m_tail));
+    size_t head = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
+    size_t tail = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed);
     return (tail >= head) ? (tail - head) : (XContainerSize(this_queue) - head + tail);
 }
 
@@ -94,16 +94,16 @@ bool VXCircularQueueAtomic_push(XCircularQueueAtomic* this_queue, void* pvValue,
 
     // 循环尝试直到成功或队列满
     while (1) {
-        tail = XAtomic_load_size_t(&(this_queue->m_tail));
+        tail = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed);
         next_tail = (tail + 1) % XContainerSize(this_queue);
 
         // 检查队列是否已满（可能被其他生产者填满）
-        if (next_tail == XAtomic_load_size_t(&(this_queue->m_head)))
+        if (next_tail == XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed))
             return false; // 队列已满
 
         // 使用CAS操作尝试更新队尾索引
         if (XAtomic_compare_exchange_strong_size_t(
-            &(this_queue->m_tail), &tail, next_tail)) {
+            &(this_queue->m_tail), &tail, next_tail, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
             break; // 成功获得写入权限
         }
         // 否则，表示其他线程已更新m_tail，重试
@@ -139,7 +139,7 @@ void* VXCircularQueueAtomic_top(XCircularQueueAtomic* this_queue)
     if (VXCircularQueueAtomic_isEmpty(this_queue))
         return NULL;
 
-    size_t head = XAtomic_load_size_t(&(this_queue->m_head));
+    size_t head = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
     return ((char*)XContainerDataPtr(this_queue)) + (head * XContainerTypeSize(this_queue));
 }
 
@@ -149,17 +149,17 @@ bool VXCircularQueueAtomic_receive(XCircularQueueAtomic* this_queue, void* pvBuf
 
     // 循环尝试直到成功或队列为空
     while (1) {
-        head = XAtomic_load_size_t(&(this_queue->m_head));
+        head = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
 
         // 检查队列是否为空（可能被其他消费者取空）
-        if (head == XAtomic_load_size_t(&(this_queue->m_tail)))
+        if (head == XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed))
             return false; // 队列为空
 
         next_head = (head + 1) % XContainerSize(this_queue);
 
         // 使用CAS操作尝试更新队头索引
         if (XAtomic_compare_exchange_strong_size_t(
-            &(this_queue->m_head), &head, next_head)) {
+            &(this_queue->m_head), &head, next_head,XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
             break; // 成功获得读取权限
         }
         // 否则，表示其他线程已更新m_head，重试

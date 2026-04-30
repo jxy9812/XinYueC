@@ -377,7 +377,7 @@ XTimerId XAbstractEventDispatcher_registerTimer(
     XMutex_lock(self->d_ptr->mutex);
     if(XVector_isEmpty_base(self->d_ptr->m_timerIds))
     {
-        id = XAtomic_fetch_add_size_t(&s_nextTimerId, 1);
+        id = XAtomic_fetch_add_size_t(&s_nextTimerId, 1, XAtomic_MemoryOrder_Relaxed);
     }
     else
     {
@@ -386,7 +386,7 @@ XTimerId XAbstractEventDispatcher_registerTimer(
     }
     XMutex_unlock(self->d_ptr->mutex);
     
-    if (id == 0) id = XAtomic_fetch_add_size_t(&s_nextTimerId, 1); // 避免 0
+    if (id == 0) id = XAtomic_fetch_add_size_t(&s_nextTimerId, 1, XAtomic_MemoryOrder_Relaxed); // 避免 0
     XAbstractEventDispatcher_registerTimer_base(self, id, interval, timerType, object);
     return id;
 }

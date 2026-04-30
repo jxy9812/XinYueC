@@ -133,7 +133,7 @@ bool XThread_isInterruptionRequested(const XThread* thread)
 // 获取线程循环级别
 int XThread_loopLevel(const XThread* thread)
 {
-    return XAtomic_load_size_t(&thread->m_data->m_loopLevel);
+    return XAtomic_load_size_t(&thread->m_data->m_loopLevel, XAtomic_MemoryOrder_Relaxed);
 }
 
 // 请求中断线程

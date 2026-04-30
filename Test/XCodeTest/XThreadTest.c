@@ -9,7 +9,7 @@
 static void threadFunc(XThread* thread, XVarList* list)
 {
 	XVarList_args_1(list, XAtomic_int32_t*, rt);
-	XPrintf("子线程:id:%d 引用:%d\n",XThread_currentThreadId(), XAtomic_load_int32(rt));
+	XPrintf("子线程:id:%d 引用:%d\n",XThread_currentThreadId(), XAtomic_load_int32(rt, XAtomic_MemoryOrder_Relaxed));
 	XTimer* timer = XTimer_create();
 	//XPrintf("XTimer:thread:%p\n",((XObject*)timer)->m_thread);
 	XTimer_setInterval(timer, 20);
@@ -23,7 +23,7 @@ static void threadFunc(XThread* thread, XVarList* list)
 	XThread_exec(thread);
 	//XTimer_deleteLater(timer);
 	//XClass_delete_base(timer);
-	int value = XAtomic_fetch_sub_int32(rt, 1);
+	int value = XAtomic_fetch_sub_int32(rt, 1, XAtomic_MemoryOrder_Relaxed);
 	if (value <= 1)
 	{
 		XCoreApplication* app = xApp;
@@ -51,14 +51,14 @@ void XThreadTest()
 		//XPrintf("主线程:id:%d\n", XThread_currentThreadId());
 		for (size_t i = 0; i < 16; i++)
 		{
-			XAtomic_fetch_add_int32(rt, 1);
+			XAtomic_fetch_add_int32(rt, 1, XAtomic_MemoryOrder_Relaxed);
 			XThread* th = XThread_create_func(threadFunc, XVarList_Create(XVar(XAtomic_int32_t*, rt)));
 			XObject_connect1(th, XSignal(XThread_finished_signal), th, XThread_deleteLater, XConnectionType_Auto);
 			//XPrintf("XThread:%p XVector* children:%p\n", th, ((XObject*)th)->children);
 			if (!XThread_start(th))
 			{
 				XThread_deleteLater(th);
-				int value = XAtomic_fetch_sub_int32(rt, 1);
+				int value = XAtomic_fetch_sub_int32(rt, 1, XAtomic_MemoryOrder_Relaxed);
 				if (value <= 1 && i == 9)
 					continue;
 				

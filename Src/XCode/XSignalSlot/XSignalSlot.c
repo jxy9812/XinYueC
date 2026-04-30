@@ -217,7 +217,7 @@ bool XSignalSlot_disconnect2(XConnection* conn)
 static void Direct_emit(XConnection* conn, void* args,  XAtomic_int32_t* ref_count)
 {
 	if (ref_count) 
-		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
+		XAtomic_fetch_add_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子加1
 	if(conn->slot_func1)
 	{
 		if(conn->receiver)
@@ -233,7 +233,7 @@ static void Direct_emit(XConnection* conn, void* args,  XAtomic_int32_t* ref_cou
 		}
 	}
 	if (ref_count)
-		XAtomic_fetch_sub_int32(ref_count, 1);
+		XAtomic_fetch_sub_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed);
 }
 //槽函数会在接收者线程的事件循环回归控制时被调用。槽函数在接收者所属线程中执行。
 static void Queued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count, int priority)
@@ -241,7 +241,7 @@ static void Queued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_coun
 	if (conn->receiver == NULL)
 		return;
 	if (ref_count)
-		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
+		XAtomic_fetch_add_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子加1
 	//向接收者对象投递函数事件
 	//XObject_postEvent(conn->receiver, XEventMetaCall_create(conn->signal->sender, conn->receiver,conn->slot_func,args, del,ref_count,NULL), priority);
 	XCoreApplication_postEvent(conn->receiver, XEventMetaCall_create(conn->signal->sender, conn->slot_func1, args, ref_count, NULL), priority);
@@ -260,7 +260,7 @@ static void BlockingQueued_emit(XConnection* conn, void* args, XAtomic_int32_t* 
 		return;  // 或触发断言：XASSERT(false, "线程相同错误");
 	}
 	if (ref_count)
-		XAtomic_fetch_add_int32(ref_count, 1);  // 原子加1
+		XAtomic_fetch_add_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子加1
 	//使用信号量进行同步
 	XSemaphore* sem = XSemaphore_create(1,1);
 	if (!sem)
@@ -300,7 +300,7 @@ static void emit(XSignalSlot* manager, size_t signal, void* args, XAtomic_int32_
 	}
 	XConnection* conn = NULL;
 	if (ref_count)
-		XAtomic_fetch_add_int32(ref_count, 1);  // 使用原子存储++
+		XAtomic_fetch_add_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 使用原子存储++
 	for (XVector_iterator it = XVector_begin(signalObj->connList), endIt = XVector_end(signalObj->connList); !XVector_iterator_equality(&it, &endIt); )
 	{
 		conn = XVector_iterator_data(&it);
@@ -321,7 +321,7 @@ static void emit(XSignalSlot* manager, size_t signal, void* args, XAtomic_int32_
 			XVector_iterator_add(signalObj->connList, &it);
 		}
 	}
-	if (ref_count && XAtomic_fetch_sub_int32(ref_count,1) == 1)
+	if (ref_count && XAtomic_fetch_sub_int32(ref_count,1, XAtomic_MemoryOrder_Relaxed) == 1)
 	{//该释放了
 		if (args)
 			XVarList_delete(args);

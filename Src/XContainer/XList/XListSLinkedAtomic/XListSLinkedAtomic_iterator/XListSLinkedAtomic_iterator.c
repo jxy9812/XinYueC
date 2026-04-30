@@ -8,7 +8,7 @@ XListSLinkedAtomic_iterator XListSLinkedAtomic_begin(XListSLinkedAtomic * this_l
     XListSLinkedAtomic_iterator it = { 0 };
     if (this_list == NULL)
         return it;
-    it.node = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head);
+    it.node = (XListSNodeAtomic*)XAtomic_load_ptr(&this_list->m_head, XAtomic_MemoryOrder_Relaxed);
     return it;
 }
 
