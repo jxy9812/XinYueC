@@ -12,7 +12,7 @@ static XHashMap* global_locks_map = NULL; // 键: void* (锁对象指针), 值: 
 void XRecursiveLockState_init() 
 {
 	if (global_locks_map)return;
-	global_lock = XReadWriteLock_create(XReadWriteLock_NonRecursive);
+	global_lock = XReadWriteLock_create(XLock_NonRecursive);
 	global_locks_map = XHashMap_Create(XReadWriteLock*, XHashMap, ptr_compare);
 	XContainerSetDataDeinitMethod(global_locks_map, XHashMap_deinit_base);
 }

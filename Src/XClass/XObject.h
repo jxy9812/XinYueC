@@ -10,7 +10,6 @@ extern "C" {
 #include"XSignalSlot.h"
 #include"XAtomic.h"
 #include"XVarList.h"
-#include"XNamespace.h"
 #define Signals
 /**
  * @brief 开始定义XObject类的虚函数表枚举

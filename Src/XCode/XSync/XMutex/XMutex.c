@@ -18,7 +18,7 @@ typedef struct PlatformPrivate PlatformPrivate;
 static RecursivePrivate* XMutex_getRecursivePrivate(XMutex* mutex)
 {
     if (!mutex)return NULL;
-    if (mutex->type & XMutex_Spin)
+    if (mutex->type & XLock_Spin)
         return GetSpinPrivate(mutex)->m_d;//挂在SpinPrivate后面
     return (uint8_t*)(mutex->m_d)+ XMutex_PlatformPrivate_size();//挂在PlatformPrivate后面
 }
@@ -37,8 +37,8 @@ bool XMutex_platform_tryLock(PlatformPrivate* p);
 void XMutex_platform_unlock(PlatformPrivate* p);
 //
 // ========== 判断是否为自旋模式 ==========
-static bool is_spin_mode(XMutex_Type type) {
-    return type &XMutex_Spin;
+static bool is_spin_mode(XLock_Type type) {
+    return type & XLock_Spin;
 }
 //
 // ========== 自旋模式内部函数 (跨平台) ==========
@@ -64,21 +64,21 @@ static void spin_unlock(XMutex* mutex)
 //
 //// ========== 公共API实现 ==========
 //
-size_t XMutex_typetSize(XMutex_Type type)
+size_t XMutex_typetSize(XLock_Type type)
 {
     size_t size= sizeof(XMutex);
-    if (type & XMutex_Spin)
+    if (type & XLock_Spin)
         size += sizeof(SpinPrivate);
     else
         size += XMutex_PlatformPrivate_size();
-    if (type & XMutex_Recursive)
+    if (type & XLock_Recursive)
         size += sizeof(RecursivePrivate);
     return size;
     //return sizeof(XMutex) + (type & XMutex_Spin)?sizeof(SpinPrivate): XMutex_PlatformPrivate_size() +
     //    (type & XMutex_Recursive) ? sizeof(RecursivePrivate) : 0
     //    ;
 }
-void XMutex_init(XMutex* mutex, XMutex_Type type) 
+void XMutex_init(XMutex* mutex, XLock_Type type)
 {
     if (!mutex) return;
     memset(mutex, 0, XMutex_typetSize(type));
@@ -99,7 +99,7 @@ void XMutex_deinit(XMutex* mutex)
     }
 }
 
-XMutex* XMutex_create(XMutex_Type type) 
+XMutex* XMutex_create(XLock_Type type)
 {
     XMutex* mutex = (XMutex*)XMemory_malloc(XMutex_typetSize(type));
     if (mutex) {
@@ -119,7 +119,7 @@ void XMutex_delete(XMutex* mutex)
 void XMutex_lock(XMutex* mutex) 
 {
     if (!mutex) return;
-    if (mutex->type &XMutex_Recursive) 
+    if (mutex->type & XLock_Recursive)
     {
         XHandle current_thread = XThread_currentThreadId();
         RecursivePrivate* recursive = XMutex_getRecursivePrivate(mutex);
@@ -133,7 +133,7 @@ void XMutex_lock(XMutex* mutex)
         spin_lock(mutex);
     else  
         XMutex_platform_lock(XMutex_getPlatformPrivate(mutex));
-    if (mutex->type & XMutex_Recursive)
+    if (mutex->type & XLock_Recursive)
     {
         RecursivePrivate* recursive = XMutex_getRecursivePrivate(mutex);
         recursive->owner_thread = XThread_currentThreadId();
@@ -144,7 +144,7 @@ void XMutex_lock(XMutex* mutex)
 bool XMutex_tryLock(XMutex* mutex) 
 {
     if (!mutex) return false;
-    if (mutex->type & XMutex_Recursive)
+    if (mutex->type & XLock_Recursive)
     {
         RecursivePrivate* recursive = XMutex_getRecursivePrivate(mutex);
         if (recursive->owner_thread == XThread_currentThreadId()) 
@@ -200,7 +200,7 @@ bool XMutex_tryLockTimeout(XMutex* mutex, uint32_t timeout_ms)
 
 void XMutex_unlock(XMutex* mutex) {
     if (!mutex) return;
-    if (mutex->type &XMutex_Recursive) 
+    if (mutex->type & XLock_Recursive)
     {
         RecursivePrivate* recursive = XMutex_getRecursivePrivate(mutex);
         if (recursive->owner_thread == NULL)return;//当前根本没有拥有者
@@ -232,10 +232,10 @@ void XMutex_unlock(XMutex* mutex) {
 bool XMutex_isRecursive(XMutex* mutex) 
 {
     if (!mutex) return false;
-    return mutex->type & XMutex_Recursive;
+    return mutex->type & XLock_Recursive;
 }
 
-XMutex_Type XMutex_type(XMutex* mutex) 
+XLock_Type XMutex_type(XMutex* mutex)
 {
-    return mutex ? mutex->type : XMutex_NonRecursive;
+    return mutex ? mutex->type : XLock_NonRecursive;
 }

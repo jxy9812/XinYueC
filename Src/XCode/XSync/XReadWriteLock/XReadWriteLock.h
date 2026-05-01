@@ -9,32 +9,22 @@ extern "C" {
 #include <stdint.h>
 #include "XAtomic.h"
 #include "XTypes.h"
-/**
- * @brief 读写锁类型枚举
- * 对应QReadWriteLock的Recursive和NonRecursive类型
- */
-typedef enum 
-{
-    XReadWriteLock_NonRecursive=1,      //非递归模式-
-    XReadWriteLock_Spin=2,              //自旋模式-等于XReadWriteLock_SpinNonRecursive
-    XReadWriteLock_SpinNonRecursive=3,  //自旋非递归模式
-    XReadWriteLock_Recursive=4,         //递归模式-
-    XReadWriteLock_SpinRecursive = 6    //自旋递归模式
-} XReadWriteLock_Type;
+
 //读写自旋锁
 typedef struct XReadWriteLock
 {
-    XReadWriteLock_Type type;
+    XLock_Type type;
     XAtomic_size_t state; // 核心状态变量
     char m_d[];//非自旋模式扩展数据
 }XReadWriteLock;
-
+//获取此类型的大小
+size_t XReadLocker_typetSize(XLock_Type type);
 /**
  * @brief 初始化读写锁(栈对象)
  * @param rwlock 读写锁指针
  * @param type 锁类型(递归/非递归)
  */
-void XReadWriteLock_init(XReadWriteLock* rwlock, XReadWriteLock_Type type);
+void XReadWriteLock_init(XReadWriteLock* rwlock, XLock_Type type);
 
 /**
  * @brief 销毁读写锁(栈对象)
@@ -47,7 +37,7 @@ void XReadWriteLock_deinit(XReadWriteLock* rwlock);
  * @param type 锁类型(递归/非递归)
  * @return 成功返回读写锁指针，失败返回NULL
  */
-XReadWriteLock* XReadWriteLock_create(XReadWriteLock_Type type);
+XReadWriteLock* XReadWriteLock_create(XLock_Type type);
 
 /**
  * @brief 销毁并释放读写锁(堆对象)
@@ -108,7 +98,7 @@ void XReadWriteLock_unlock(XReadWriteLock* rwlock);
  * @param rwlock 读写锁指针
  * @return 锁类型枚举值
  */
-XReadWriteLock_Type XReadWriteLock_type(XReadWriteLock* rwlock);
+XLock_Type XReadWriteLock_type(XReadWriteLock* rwlock);
 
 /**
  * @brief 判断当前线程是否持有读锁

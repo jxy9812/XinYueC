@@ -170,36 +170,36 @@ static bool try_acquire_write_recursive(XReadWriteLock* rwlock)
 	return false;
 }
 
-XReadWriteLock* XReadWriteLock_create(XReadWriteLock_Type type)
+XReadWriteLock* XReadWriteLock_create(XLock_Type type)
 {
 	XReadWriteLock* rwlock = NULL;
 
-	if (type & XReadWriteLock_Spin)
+	if (type & XLock_Spin)
 		rwlock=(XReadWriteLock*)XMemory_malloc(sizeof(XReadWriteLock));
 	else
 		rwlock = (XReadWriteLock*)XMemory_malloc(sizeof(XReadWriteLock)+sizeof(XReadWriteLockPrivate));
 	XReadWriteLock_init(rwlock, type);
 	return rwlock;
 }
-void XReadWriteLock_init(XReadWriteLock* rwlock, XReadWriteLock_Type type) 
+void XReadWriteLock_init(XReadWriteLock* rwlock, XLock_Type type) 
 {
     if (!rwlock)return;
 	XAtomic_init(rwlock->state, 0);
-	if (type == XReadWriteLock_Spin)
-		rwlock->type = XReadWriteLock_SpinNonRecursive;
+	if (type == XLock_Spin)
+		rwlock->type = XLock_SpinNonRecursive;
 	else
 		rwlock->type = type;
-	if (type & XReadWriteLock_Recursive)
+	if (type & XLock_Recursive)
 		XRecursiveLockState_init();
 
-	if (!(type & XReadWriteLock_Spin))
+	if (!(type & XLock_Spin))
 	{
 		XReadWriteLockPrivate_init(GetPrivate(rwlock));
 	}
 }
 void XReadWriteLock_deinit(XReadWriteLock* rwlock) 
 {
-	if (XReadWriteLock_type(rwlock) & XReadWriteLock_Recursive)
+	if (XReadWriteLock_type(rwlock) & XLock_Recursive)
 	{
 		XRecursiveLockState_clear(rwlock);//清理全局数据
 	}
@@ -216,14 +216,14 @@ void XReadWriteLock_delete(XReadWriteLock* rwlock)
 		XMemory_free(rwlock);
 	}
 }
-XReadWriteLock_Type XReadWriteLock_type(XReadWriteLock* rwlock)
+XLock_Type XReadWriteLock_type(XReadWriteLock* rwlock)
 {
-	return rwlock ? rwlock->type : XReadWriteLock_NonRecursive;
+	return rwlock ? rwlock->type : XLock_NonRecursive;
 }
 // ========== Spin 模式专用接口 ==========
 static void XReadWriteLock_lockForRead_Spin(XReadWriteLock* rwlock)
 {
-	if (rwlock->type & XReadWriteLock_Recursive) {
+	if (rwlock->type & XLock_Recursive) {
 		while (!try_acquire_read_recursive(rwlock)) {
 			XThread_yieldCurrentThread();
 		}
@@ -237,7 +237,7 @@ static void XReadWriteLock_lockForRead_Spin(XReadWriteLock* rwlock)
 
 static void XReadWriteLock_lockForWrite_Spin(XReadWriteLock* rwlock)
 {
-	if (rwlock->type & XReadWriteLock_Recursive) {
+	if (rwlock->type & XLock_Recursive) {
 		while (!try_acquire_write_recursive(rwlock)) {
 			XThread_yieldCurrentThread();
 		}
@@ -305,7 +305,7 @@ static void XReadWriteLock_lockForWrite_NonSpin(XReadWriteLock* rwlock)
 void XReadWriteLock_lockForRead(XReadWriteLock* rwlock)
 {
 	if (!rwlock) return;
-	if (XReadWriteLock_type(rwlock) & XReadWriteLock_Spin) {
+	if (XReadWriteLock_type(rwlock) & XLock_Spin) {
 		XReadWriteLock_lockForRead_Spin(rwlock);
 	}
 	else {
@@ -316,7 +316,7 @@ void XReadWriteLock_lockForRead(XReadWriteLock* rwlock)
 bool XReadWriteLock_tryLockForRead(XReadWriteLock* rwlock)
 {
 	if (!rwlock) return false;
-	if (rwlock->type & XReadWriteLock_Recursive) {
+	if (rwlock->type & XLock_Recursive) {
 		return try_acquire_read_recursive(rwlock);
 	}
 	else {
@@ -328,7 +328,7 @@ bool XReadWriteLock_tryLockForReadTimeout(XReadWriteLock* rwlock, int32_t timeou
 {
 	if (!rwlock) return false;
 
-	if (XReadWriteLock_type(rwlock) & XReadWriteLock_Spin) {
+	if (XReadWriteLock_type(rwlock) & XLock_Spin) {
 		if (timeout_ms <= 0) {
 			return XReadWriteLock_tryLockForRead(rwlock);
 		}
@@ -397,7 +397,7 @@ bool XReadWriteLock_tryLockForReadTimeout(XReadWriteLock* rwlock, int32_t timeou
 void XReadWriteLock_lockForWrite(XReadWriteLock* rwlock)
 {
 	if (!rwlock) return;
-	if (XReadWriteLock_type(rwlock) & XReadWriteLock_Spin) {
+	if (XReadWriteLock_type(rwlock) & XLock_Spin) {
 		XReadWriteLock_lockForWrite_Spin(rwlock);
 	}
 	else {
@@ -408,7 +408,7 @@ void XReadWriteLock_lockForWrite(XReadWriteLock* rwlock)
 bool XReadWriteLock_tryLockForWrite(XReadWriteLock* rwlock)
 {
 	if (!rwlock) return false;
-	if (rwlock->type & XReadWriteLock_Recursive)
+	if (rwlock->type & XLock_Recursive)
 	{
 		return try_acquire_write_recursive(rwlock);
 	}
@@ -423,7 +423,7 @@ bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeo
 {
 	if (!rwlock) return false;
 
-	if (XReadWriteLock_type(rwlock) & XReadWriteLock_Spin) {
+	if (XReadWriteLock_type(rwlock) & XLock_Spin) {
 		if (timeout_ms <= 0) {
 			return XReadWriteLock_tryLockForWrite(rwlock);
 		}
@@ -475,7 +475,7 @@ bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeo
 // ========== 核心状态更新逻辑 (Spin/Non-Spin 共用) ==========
 static void unlock_state_update(XReadWriteLock* rwlock)
 {
-	if (rwlock->type & XReadWriteLock_Recursive) {
+	if (rwlock->type & XLock_Recursive) {
 		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 		if (!tls) return;
 
@@ -511,7 +511,7 @@ void XReadWriteLock_unlock(XReadWriteLock* rwlock)
 	unlock_state_update(rwlock);
 
 	// 2. 如果是非自旋模式，则执行唤醒逻辑
-	if (!(XReadWriteLock_type(rwlock) & XReadWriteLock_Spin)) {
+	if (!(XReadWriteLock_type(rwlock) & XLock_Spin)) {
 		XMutex_lock(GetPrivate(rwlock)->mutex);
 		size_t current_write_waiters = XAtomic_load_size_t(&GetPrivate(rwlock)->write_waiters, XAtomic_MemoryOrder_Relaxed);
 		if (current_write_waiters > 0) {
@@ -527,7 +527,7 @@ void XReadWriteLock_unlock(XReadWriteLock* rwlock)
 bool XReadWriteLock_hasReadLock(XReadWriteLock* rwlock)
 {
 	if (!rwlock) return false;
-	if (!rwlock || !(rwlock->type & XReadWriteLock_Recursive)) return false;
+	if (!rwlock || !(rwlock->type & XLock_Recursive)) return false;
 	XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 	return tls && (tls->reader_count > 0);
 	
@@ -536,7 +536,7 @@ bool XReadWriteLock_hasReadLock(XReadWriteLock* rwlock)
 bool XReadWriteLock_hasWriteLock(XReadWriteLock* rwlock)
 {
 	if (!rwlock) return false;
-	if (!rwlock || !(rwlock->type & XReadWriteLock_Recursive)) return false;
+	if (!rwlock || !(rwlock->type & XLock_Recursive)) return false;
 	XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 	return tls && (tls->writer_count > 0);
 }

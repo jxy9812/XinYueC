@@ -2,7 +2,7 @@
 #define IOCPINFO_H
 #include <windows.h>
 #include "XSocketDescriptor.h"
-#include "XNamespace.h"
+#include "XTypes.h"
 #ifdef __cplusplus
 extern "C" {
 #endif

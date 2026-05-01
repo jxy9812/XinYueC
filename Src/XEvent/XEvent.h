@@ -10,7 +10,6 @@ extern "C" {
 #include"XTypes.h"
 #include"XEventType.h"
 #include"XSignalSlot.h"
-#include"XNamespace.h"
 #include"XAtomic.h"
 #include"XSocketDescriptor.h"
 // 事件回调函数类型
