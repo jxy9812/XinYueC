@@ -69,7 +69,7 @@ void XThreadData_init(XThreadData* data, XThread* thread)
 {
     if (!data)return;
     memset(data,0,sizeof(XThreadData));
-    data->m_mutex = XMutex_create(XMutex_NonRecursive);
+    data->m_mutex = XMutex_create(XLock_NonRecursive);
     XVector_init(&data->m_postEventList,sizeof(XPostEvent));
     //data->m_postEventList=XVector_create(sizeof(XPostEvent));
     data->m_thread = thread;

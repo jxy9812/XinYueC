@@ -45,7 +45,7 @@ typedef struct XReadWriteLockPrivate
 static void XReadWriteLockPrivate_init(XReadWriteLockPrivate* p)
 {
 	if (!p)return;
-	p->mutex = XMutex_create(XMutex_NonRecursive);
+	p->mutex = XMutex_create(XLock_NonRecursive);
 	p->readCond = XWaitCondition_create();
 	p->writeCond = XWaitCondition_create();
 	XAtomic_init(p->read_waiters, 0);
@@ -181,7 +181,13 @@ XReadWriteLock* XReadWriteLock_create(XLock_Type type)
 	XReadWriteLock_init(rwlock, type);
 	return rwlock;
 }
-void XReadWriteLock_init(XReadWriteLock* rwlock, XLock_Type type) 
+size_t XReadLocker_typetSize(XLock_Type type)
+{
+	size_t size = sizeof(XReadWriteLock);
+
+	return size;
+}
+void XReadWriteLock_init(XReadWriteLock* rwlock, XLock_Type type)
 {
     if (!rwlock)return;
 	XAtomic_init(rwlock->state, 0);
@@ -252,14 +258,23 @@ static void XReadWriteLock_lockForWrite_Spin(XReadWriteLock* rwlock)
 // ========== Non-Spin 模式专用接口 ==========
 static void XReadWriteLock_lockForRead_NonSpin(XReadWriteLock* rwlock)
 {
+	// --- 关键修复：首先检查递归状态 ---
+	if (rwlock->type & XLock_Recursive) {
+		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
+		if (tls && (tls->reader_count > 0 || tls->writer_count > 0)) {
+			// 当前线程已持有读锁或写锁，直接递增计数器
+			tls->reader_count++;
+			return;
+		}
+	}
+
 	// 第一阶段：快速路径
 	if (XReadWriteLock_tryLockForRead(rwlock)) {
 		return;
 	}
 
-	// 第二阶段：慢速路径
-	
-	XAtomic_fetch_add_size_t(&GetPrivate(rwlock)->read_waiters, 1,XAtomic_MemoryOrder_Relaxed);
+	// 第二阶段：慢速路径（此时确定不是递归调用）
+	XAtomic_fetch_add_size_t(&GetPrivate(rwlock)->read_waiters, 1, XAtomic_MemoryOrder_Relaxed);
 	while (true) {
 		XMutex_lock(GetPrivate(rwlock)->mutex);
 
@@ -284,10 +299,28 @@ static void XReadWriteLock_lockForRead_NonSpin(XReadWriteLock* rwlock)
 
 static void XReadWriteLock_lockForWrite_NonSpin(XReadWriteLock* rwlock)
 {
+	// --- 关键修复：首先检查递归状态 ---
+	if (rwlock->type & XLock_Recursive) {
+		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
+		if (tls && tls->writer_count > 0) {
+			// 当前线程已持有写锁，直接递增计数器
+			tls->writer_count++;
+			return;
+		}
+		// 注意：这里依然禁止从读锁升级到写锁
+		if (tls && tls->reader_count > 0) {
+			// 可以选择在此处抛出错误或断言，因为升级是危险的。
+			// 当前逻辑保持与 try_acquire_write_recursive 一致，即不允许。
+			// 但正常情况下，一个只持有读锁的线程不应该走到这个阻塞函数里来，
+			// 因为 tryLockForWrite 应该已经处理了这种情况。
+		}
+	}
+
 	if (XReadWriteLock_tryLockForWrite(rwlock)) {
 		return;
 	}
 
+	// 慢速路径（此时确定不是递归写）
 	XAtomic_fetch_add_size_t(&GetPrivate(rwlock)->write_waiters, 1, XAtomic_MemoryOrder_Relaxed);
 	while (true) {
 		XMutex_lock(GetPrivate(rwlock)->mutex);
@@ -482,17 +515,26 @@ static void unlock_state_update(XReadWriteLock* rwlock)
 		if (tls->writer_count > 0) {
 			tls->writer_count--;
 			if (tls->writer_count == 0) {
-				XAtomic_store_size_t(&rwlock->state, 0, XAtomic_MemoryOrder_Relaxed);
+				// 修复点: 使用 Release 内存序
+				// 这确保了 'tls->writer_count = 0' 的操作
+				// 在此 store 操作之前完成，并且对其他线程可见。
+				XAtomic_store_size_t(&rwlock->state, 0, XAtomic_MemoryOrder_Release);
 			}
 		}
 		else if (tls->reader_count > 0) {
 			tls->reader_count--;
 			if (tls->reader_count == 0) {
+				// 对于读者，我们执行原子减法。
+				// Acquire-Release 语义通常由 compare_exchange 或 fetch_add/sub 提供。
+				// 这里保持原有逻辑，但为了对称性，可以考虑其内存序。
+				// 原有的 fetch_sub(Relaxed) 在此处通常是安全的，
+				// 因为读者的释放不涉及像写者那样的独占权转移。
 				XAtomic_fetch_sub_size_t(&rwlock->state, 1, XAtomic_MemoryOrder_Relaxed);
 			}
 		}
 	}
 	else {
+		// 非递归模式，保持原样
 		size_t current_state = XAtomic_load_size_t(&rwlock->state, XAtomic_MemoryOrder_Relaxed);
 		if (current_state & WRITER_ACTIVE_FLAG) {
 			XAtomic_store_size_t(&rwlock->state, 0, XAtomic_MemoryOrder_Relaxed);

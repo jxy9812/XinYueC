@@ -13,11 +13,6 @@ extern "C" {
 // 只声明结构体，不定义具体实现
 typedef struct XMutex XMutex;
 
-typedef struct XMutex 
-{
-    XLock_Type type;
-    char m_d[];//扩展数据
-}XMutex;
 //获取此类型的大小
 size_t XMutex_typetSize(XLock_Type type);
 

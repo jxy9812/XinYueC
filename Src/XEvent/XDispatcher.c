@@ -96,7 +96,7 @@ void XDispatcher_init(XDispatcher* dispatcher, XSchedulePolicy policy)
     // 初始化成员变量
     dispatcher->policy = policy;
     dispatcher->current_entity = NULL;
-    dispatcher->mutex = XMutex_create(XMutex_NonRecursive);
+    dispatcher->mutex = XMutex_create(XLock_NonRecursive);
     dispatcher->last_sched_time = XTimerBase_getCurrentTime(); // 初始化为当前毫秒时间
     dispatcher->min_vruntime = 0;
     dispatcher->nr_running = 0;

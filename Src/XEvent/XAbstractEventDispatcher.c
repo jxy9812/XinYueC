@@ -32,7 +32,7 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
         dp->nativeFilters = XVector_Create(void*);
     else
         dp->nativeFilters = NULL;
-    dp->mutex = XMutex_create(XMutex_NonRecursive);
+    dp->mutex = XMutex_create(XLock_NonRecursive);
     dp->m_timerIds = NULL;
 }
 

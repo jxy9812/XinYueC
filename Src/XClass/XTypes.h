@@ -110,11 +110,11 @@ typedef enum {
  */
 typedef enum
 {
-	XLock_NonRecursive = 1,      //非递归模式-
-	XLock_Spin = 2,              //自旋模式-等于XLock_SpinNonRecursive
-	XLock_SpinNonRecursive = 3,  //自旋非递归模式
-	XLock_Recursive = 4,         //递归模式-
-	XLock_SpinRecursive = 6    //自旋递归模式
+	XLock_NonRecursive = 1,			//非递归模式-
+	XLock_Spin = 2,					//自旋模式-等于XLock_SpinNonRecursive
+	XLock_SpinNonRecursive = 3,		//自旋非递归模式
+	XLock_Recursive = 4,			//递归模式-
+	XLock_SpinRecursive = 6			//自旋递归模式
 } XLock_Type;
 #ifdef __cplusplus
 }

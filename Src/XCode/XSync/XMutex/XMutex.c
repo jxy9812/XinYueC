@@ -2,6 +2,11 @@
 #include "XThread.h"
 #include "XTimer.h" // 引入XTimer.h以使用XTimerBase_getCurrentTime
 #include <string.h>
+typedef struct XMutex
+{
+    XLock_Type type;
+    char m_d[];//扩展数据
+}XMutex;
 typedef struct SpinPrivate
 {
 	XAtomic_bool state; // 用于自旋模式: false=unlocked, true=locked

@@ -9,7 +9,7 @@ typedef struct PlatformPrivate
 PlatformPrivate* XMutex_getPlatformPrivate(XMutex* mutex);
 CRITICAL_SECTION* XMutex_get_critical_section(XMutex* mutex)
 {
-    if (!mutex||mutex->type& XMutex_Spin)return NULL;
+    if (!mutex||mutex->type& XLock_Spin)return NULL;
     PlatformPrivate* p=XMutex_getPlatformPrivate(mutex);
     return p ? &p->cs : NULL;
 }
