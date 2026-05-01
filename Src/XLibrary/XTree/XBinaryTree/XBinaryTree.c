@@ -1,20 +1,24 @@
 ﻿#include"XBinaryTree.h"
 #include"XStack.h"
+size_t XBTreeNode_typeSize()
+{
+	return sizeof(XBTreeNode) + sizeof(struct XTreeNode*) *3;
+}
 XBTreeNode* XBTreeNode_create(const char* pvData, const size_t typeSize)
 {
 	if (typeSize == 0)
 		return NULL;
-	XBTreeNode* node = XMemory_malloc(sizeof(XBTreeNode));
+	XBTreeNode* node = XMemory_malloc(XBTreeNode_typeSize() + typeSize);
 	if (node)
-		XBTreeNode_init(node, pvData, typeSize);
+		XBTreeNode_init(node, XBTreeNode_typeSize(), pvData, typeSize);
 	return node;
 }
 
-void XBTreeNode_init(XBTreeNode* node, const char* pvData, const size_t typeSize)
+void XBTreeNode_init(XBTreeNode* node, size_t treeNodeSize, const char* pvData, const size_t typeSize)
 {
 	if (node==NULL|| typeSize == 0)
 		return ;
-	XTreeNode_init(node,2,pvData, typeSize);
+	XTreeNode_init(node,3, treeNodeSize,pvData, typeSize);
 }
 
 //前序

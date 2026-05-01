@@ -15,21 +15,25 @@ static void XMenuData_setTitle(XMenuData* data, const char* title);
 static void XMenuData_delete(XMenuData* data);
 //数据删除方法
 static void DataDeleteMethod(XMenuData* data, void* args);
+size_t XMenu_typeSize()
+{
+	return sizeof(XMenu) + sizeof(struct XTreeNode*) * 2;
+}
 XMenu* XMenu_create(const char* title)
 {
-	XHTreeNode* menu = XMemory_malloc(sizeof(XMenu));
+	XHTreeNode* menu = XMemory_malloc(XMenu_typeSize()+ sizeof(XMenuData));
 	if (menu)
-		XMenu_init(menu, title);
+		XMenu_init(menu, XMenu_typeSize(),title);
 	return menu;
 }
 
-void XMenu_init(XMenu* menu, const char* title)
+void XMenu_init(XMenu* menu, size_t treeNodeSize, const char* title)
 {
 	if (menu == NULL)
 		return;
 	XMenuData data = { 0 };
 	XMenuData_init(&data,title);
-	XHTreeNode_init(menu, &data, sizeof(XMenuData));
+	XHTreeNode_init(menu, treeNodeSize, &data, sizeof(XMenuData));
 	menu->m_userData = NULL;
 }
 

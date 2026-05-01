@@ -1,19 +1,24 @@
 ﻿#include"XRedBlackTree.h"
 #include"XClass.h"
 #include"XBalancedBinaryTree.h"
+#include<string.h>
+size_t XRBTree_typeSize()
+{
+	return sizeof(XRBTreeNode) - sizeof(XBTreeNode) + XBTreeNode_typeSize();
+}
 XRBTreeNode* XRBTree_create(const char* pvData, const size_t dataTypeSize)
 {
-	XRBTreeNode* node = XMemory_malloc(sizeof(XRBTreeNode));
+	XRBTreeNode* node = XMemory_malloc(XRBTree_typeSize()+ dataTypeSize);
 	if (ISNULL(node, "创建红黑树节点失败"))
 		return NULL;
-	XRBTree_init(node,pvData, dataTypeSize);
+	XRBTree_init(node, XRBTree_typeSize(),pvData, dataTypeSize);
 	return node;
 }
-void XRBTree_init(XRBTreeNode* this_root, const char* pvData, const size_t dataTypeSize)
+void XRBTree_init(XRBTreeNode* this_root, size_t treeNodeSize, const char* pvData, const size_t dataTypeSize)
 {
 	if (this_root == NULL)
 		return;
-	XBTreeNode_init(this_root, pvData, dataTypeSize);
+	XBTreeNode_init(this_root, treeNodeSize,pvData, dataTypeSize);
 	XRBTree_SetRed(this_root);
 }
 //当前节点的父节点是红色，且当前节点的祖父节点的另一一个子节点(叔叔节点)也是红色
@@ -238,9 +243,23 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTre
 
 	// 2. === 关键修复：直接将 eraseNode 的数据指针替换为 LPreplace 的数据指针 ===
 	//    注意：这里只交换数据指针，不交换颜色！
-	void* tempData = XTreeNode_GetDataPtr(eraseNode);
-	XTreeNode_SetDataPtr(eraseNode, XTreeNode_GetDataPtr(LPreplace));
-	XTreeNode_SetDataPtr(LPreplace, tempData);
+	size_t dataSize = ((XTreeNode*)eraseNode)->dataSize;
+	if (dataSize > 0) 
+	{
+		char* tempBuffer = (char*)XMemory_malloc(dataSize); // 创建临时缓冲区
+		if (tempBuffer == NULL) {
+			// 处理内存分配失败的情况，例如直接返回或采取其他措施
+			return;
+		}
+		memcpy(tempBuffer, XTreeNode_GetDataPtr(eraseNode), dataSize);
+		memcpy(XTreeNode_GetDataPtr(eraseNode), XTreeNode_GetDataPtr(LPreplace), dataSize);
+		memcpy(XTreeNode_GetDataPtr(LPreplace), tempBuffer, dataSize);
+		XMemory_free(tempBuffer); // 释放临时缓冲区
+	}
+	//void* tempData = XTreeNode_GetDataPtr(eraseNode);
+	//memcpy();
+	//XTreeNode_SetDataPtr(eraseNode, XTreeNode_GetDataPtr(LPreplace));
+	//XTreeNode_SetDataPtr(LPreplace, tempData);
 
 	// 3. === 核心思想：现在，LPreplace 节点持有需要被清理的旧数据 ===
 	//    我们现在要做的就是像删除一个普通节点一样删除 LPreplace。

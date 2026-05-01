@@ -15,9 +15,10 @@ typedef struct XHTreeNode
 {
 	XTreeNode parent;//普通树节点
 }XHTreeNode;
-//
+size_t XHTreeNode_typeSize();
+
 XHTreeNode* XHTreeNode_create(const char* pvData, const size_t dataTypeSize);
-void XHTreeNode_init(XHTreeNode* node, const char* pvData, const size_t dataTypeSize);
+void XHTreeNode_init(XHTreeNode* node, size_t treeNodeSize, const char* pvData, const size_t dataTypeSize);
 bool XHTreeNode_addNode(XHTreeNode* parent, XHTreeNode* child);
 // 添加子节点
 XHTreeNode* XHTreeNode_addChild(XHTreeNode* parent, const char* pvData, const size_t dataTypeSize);

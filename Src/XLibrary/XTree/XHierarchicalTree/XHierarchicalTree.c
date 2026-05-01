@@ -1,19 +1,23 @@
 ﻿#include"XHierarchicalTree.h"
+size_t XHTreeNode_typeSize()
+{
+	return sizeof(XHTreeNode) + sizeof(struct XTreeNode*) * 2;
+}
 XHTreeNode* XHTreeNode_create(const char* pvData, const size_t dataTypeSize)
 {
 	if (dataTypeSize == 0)
 		return NULL;
-	XHTreeNode* node = XMemory_malloc(sizeof(XHTreeNode));
+	XHTreeNode* node = XMemory_malloc(XHTreeNode_typeSize()+dataTypeSize);
 	if (node)
-		XHTreeNode_init(node, pvData, dataTypeSize);
+		XHTreeNode_init(node, XHTreeNode_typeSize(), pvData, dataTypeSize);
 	return node;
 }
 
-void XHTreeNode_init(XHTreeNode* node, const char* pvData, const size_t dataTypeSize)
+void XHTreeNode_init(XHTreeNode* node, size_t treeNodeSize, const char* pvData, const size_t dataTypeSize)
 {
 	if (node == NULL || dataTypeSize == 0)
 		return;
-	XTreeNode_init(node, 2,pvData, dataTypeSize);
+	XTreeNode_init(node, 2, treeNodeSize,pvData, dataTypeSize);
 }
 
 bool XHTreeNode_addNode(XHTreeNode* parent, XHTreeNode* child)

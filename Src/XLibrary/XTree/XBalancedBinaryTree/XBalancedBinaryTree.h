@@ -9,9 +9,11 @@ extern "C" {
 //平衡二叉树节点
 typedef struct XBBTreeNode
 {
-	XTreeNode XBTNode;//普通二叉树节点
+	XBTreeNode XBTNode;//普通二叉树节点
 	size_t maxLayer;			//左右两孩子到自己中最大层数
 }XBBTreeNode;
+//计算树节点大小(不带数据)
+size_t XBBTreeNode_typeSize();
 
 //创建初始化一个二叉树节点
 XBBTreeNode* XBBTree_create(const char* pvData, const size_t TypeSize);

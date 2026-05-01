@@ -12,9 +12,9 @@ typedef struct XMenu
 	XHTreeNode m_class;
 	void* m_userData;
 }XMenu;
-
+size_t XMenu_typeSize();
 XMenu* XMenu_create(const char* title);
-void XMenu_init(XMenu* menu,const char* title);
+void XMenu_init(XMenu* menu, size_t treeNodeSize,const char* title);
 void XMenu_setTitle(XMenu* menu, const char* title);
 const char* XMenu_getTitle(XMenu* menu);
 

@@ -22,16 +22,17 @@ typedef struct XBTreeNode
 {
 	XTreeNode m_class;//树节点
 }XBTreeNode;
+//计算树节点大小(不带数据)
+size_t XBTreeNode_typeSize();
 
 XBTreeNode* XBTreeNode_create(const char* pvData,const size_t typeSize);
-void XBTreeNode_init(XBTreeNode* node, const char* pvData, const size_t typeSize);
+void XBTreeNode_init(XBTreeNode* node, size_t treeNodeSize, const char* pvData, const size_t typeSize);
 //二叉树遍历转数组存储
 XVector* XBTree_TraversingToXVector(XTreeNode* this_root, const enum XBTreeTraversing Traversing);
 //右旋
 XTreeNode* XBTree_SpinRR(XTreeNode** this_root, XTreeNode* nodes);
 //左旋
 XTreeNode* XBTree_SpinLL(XTreeNode** this_root, XTreeNode* nodes);
-
 //获取节点
 #define XBTreeNode_GetParent(this_root) XTreeNode_GetParent(this_root)//二叉树-获取父节点(继承的子类均可以使用)
 #define XBTreeNode_GetLChild(this_root) XTreeNode_GetChild(this_root,XBTreeLChild)//二叉树-获取左孩子(继承的子类均可以使用)
@@ -41,8 +42,6 @@ XTreeNode* XBTree_SpinLL(XTreeNode** this_root, XTreeNode* nodes);
 #define XBTreeNode_SetLChild(this_root,node) XTreeNode_SetChild(this_root,XBTreeLChild,node)//二叉树-设置左孩子(继承的子类均可以使用)
 #define XBTreeNode_SetRChild(this_root,node) XTreeNode_SetChild(this_root,XBTreeRChild,node)//二叉树-设置右孩子(继承的子类均可以使用)
 //数据
-#define XBTreeNode_SetDataPtr						XTreeNode_SetDataPtr
-#define XBTreeNode_SetData							XTreeNode_SetData
 #define XBTreeNode_GetDataPtr						XTreeNode_GetDataPtr
 #define XBTreeNode_GetData							XTreeNode_GetData
 

@@ -36,15 +36,15 @@ static XVector* GetXMazePath(const XTreeNode* child)
 	return Path;
 }
 //插入孩子
-static size_t insertChild(const XVector* maze, XTreeNode* nodes, XVector* NextNodeArray)
+static size_t insertChild(const XVector* maze, XTreeNode* node, XVector* NextNodeArray)
 {
 #if XStack_ON
-	int* pMazePos = (int*)XVectorTwo_at_XPoint(maze, GetXPoint(nodes));
+	int* pMazePos = (int*)XVectorTwo_at_XPoint(maze, GetXPoint(node));
 	if (*pMazePos != XMazeRoute)
 		return 0;
 	else
 		*pMazePos = XMazePath;//标记走过了
-	XPointStep pos = { GetXPoint(nodes).x,GetXPoint(nodes).y,1};
+	XPointStep pos = { GetXPoint(node).x,GetXPoint(node).y,1};
 	XStack* ChildAll = XStack_create(sizeof(XPointStep));
 	Pathfinder(ChildAll,maze, pos);//获取周围能走的点位
 	while (!XStack_isEmpty_base(ChildAll))
@@ -52,13 +52,13 @@ static size_t insertChild(const XVector* maze, XTreeNode* nodes, XVector* NextNo
 		XPointStep* pCurrentPos = (XPointStep*)XStack_top_base(ChildAll);
 		XTreeNode* childBFSNode = CreationBFSNode(pCurrentPos->x,pCurrentPos ->y);
 		//*XTreeNode_getNodeRef(childBFSNode, XTreeParent) = nodes;
-		XTreeNode_SetParent(childBFSNode, nodes);
-		XVector_push_back_base(nodes->nodes, &childBFSNode);
+		XTreeNode_SetParent(childBFSNode, node);
+		XVector_push_back_base(XTreeNode_GetNodes(node), &childBFSNode);
 		XVector_push_back_base(NextNodeArray, &childBFSNode);
 		XStack_pop_base(ChildAll);
 	}
 	XStack_delete_base(ChildAll);
-	return XVector_size_base(nodes->nodes)>1? XVector_size_base(nodes->nodes) -1:0;
+	return XVector_size_base(XTreeNode_GetNodes(node))>1? XVector_size_base(XTreeNode_GetNodes(node)) -1:0;
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif

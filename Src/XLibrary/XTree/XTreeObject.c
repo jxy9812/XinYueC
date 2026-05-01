@@ -4,34 +4,32 @@
 #include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
-void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, const char* pvData, const size_t typeSize)
+void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, size_t treeNodeSize, const char* pvData, const size_t typeSize)
 {
 	if (node == NULL||nodeCount==0||typeSize==0)
 		return;
-	node->nodes = XMemory_calloc(nodeCount,sizeof(XTreeNode*));
-	if (node->nodes == NULL)
-		return;
+	node->nodeSize = treeNodeSize;
 	node->nodeCount = nodeCount;
-	XTreeNode_GetDataPtr(node) = XMemory_calloc(1, typeSize);
-	if (XTreeNode_GetDataPtr(node) == NULL)
-	{
-		XMemory_free(node->nodes);
-		node->nodes = NULL;
-		node->nodeCount = 0;
-		return;
-	}
-	//node->typeSize = typeSize;
+	node->dataSize = typeSize;
+	//初始化孩子数组
+	memset(XTreeNode_GetNodes(node), 0, sizeof(XTreeNode*) * nodeCount);
 	node->parentNode = NULL;
 	if (pvData)
 		memcpy(XTreeNode_GetDataPtr(node), pvData, typeSize);
+	else
+		memset(XTreeNode_GetDataPtr(node), 0, typeSize);
+}
+size_t XTreeNode_typeSize(const uint8_t nodeCount)
+{
+	return sizeof(XTreeNode)+sizeof(struct XTreeNode*)*nodeCount;
 }
 XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t typeSize)
 {
 	if (nodeCount == 0 || typeSize == 0)
 		return NULL;
-	XTreeNode* node = XMemory_malloc(sizeof(XTreeNode));
+	XTreeNode* node = XMemory_malloc(XTreeNode_typeSize(node)+ typeSize);
 	if (node)
-		XTreeNode_init(node,nodeCount,pvData,typeSize);
+		XTreeNode_init(node,nodeCount, XTreeNode_typeSize(node),pvData,typeSize);
 	return node;
 }
 bool XTreeNode_setData(XTreeNode* this_root, const void* pvData, size_t typeSize)
@@ -51,14 +49,16 @@ bool XTreeNode_setNode(XTreeNode* this_root, const uint8_t nodeType, XTreeNode* 
 {
 	if (this_root == NULL || this_root->nodeCount <= nodeType)
 		return false;
-	((XTreeNode**)(this_root->nodes))[nodeType] = node;
+	XTreeNode_SetChild(this_root, nodeType, node);
+	//((XTreeNode**)(this_root->nodes))[nodeType] = node;
 	return true;
 }
 XTreeNode* XTreeNode_getChild(XTreeNode* this_root, const uint8_t nodeType)
 {
 	if(this_root==NULL)
 		return NULL;
-	return ((XTreeNode**)(this_root->nodes))[nodeType];
+	return XTreeNode_GetChild(this_root,nodeType);
+	//return ((XTreeNode**)(this_root->nodes))[nodeType];
 }
 void XTree_delete(XTreeNode* this_root, XTreeNodeDataDeleteMethod method, void* args)
 {
@@ -69,10 +69,10 @@ void XTreeNode_delete(XTreeNode* node)
 {
 	if (node == NULL)
 		return;
-	if (node->nodes)
-		XMemory_free(node->nodes);
-	if (XTreeNode_GetDataPtr(node))
-		XMemory_free(XTreeNode_GetDataPtr(node));
+	/*if (node->nodes)
+		XMemory_free(node->nodes);*/
+	/*if (XTreeNode_GetDataPtr(node))
+		XMemory_free(XTreeNode_GetDataPtr(node));*/
 	XMemory_free(node);
 }
 
@@ -95,7 +95,7 @@ void XTree_delete_base(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod, X
 			continue;
 		for (size_t i = 0; i < currentNode->nodeCount; i++)
 		{
-			node = ((XTreeNode**)(currentNode->nodes))[i];
+			node = XTreeNode_GetChild(currentNode,i);
 			if (node)
 				XStack_push_base(stack, &node);
 		}
@@ -122,7 +122,8 @@ XTreeNode** XTreeNode_getChildRef(XTreeNode* this_root, const uint8_t nodeType)
 		DEBUG_PRINTF("nodeType:%d>=总量:%d", nodeType, count);
 		return;
 	}
-	return ((XTreeNode**)(this_root->nodes)) + nodeType;
+	return &XTreeNode_GetChild(this_root, nodeType);
+	//return ((XTreeNode**)(this_root->nodes)) + nodeType;
 }
 
 XTreeNode** XTreeNode_getParentRef(XTreeNode* this_root)
@@ -161,8 +162,9 @@ XTreeNode** XTreeNode_getChildrenParentRef(XTreeNode* this_root)
 		return NULL;
 	for (size_t i = 0; i < this_root->nodeCount; i++)
 	{
-		if (XTreeNode_GetChild(Parent,i) == this_root)
-			return Parent->nodes + i;
+		if (XTreeNode_GetChild(Parent, i) == this_root)
+			//return Parent->nodes + i;
+			return &XTreeNode_GetChild(Parent, i);
 	}
 	return NULL;
 }
