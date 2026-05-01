@@ -1,6 +1,6 @@
 ﻿#include"XDataStructTest.h"
 #if DEMOTEST
-#include"XListSLinkedAtomic.h"
+#include"XLockFreeList.h"
 #include"XCompare.h"
 #include<time.h>
 #include<stdio.h>
@@ -9,18 +9,18 @@
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
-// static void XListSLinkedAtomicSortTest();
-// static void XListSLinkedAtomicIterator();
-// static void XListSLinkedAtomicSwapTest();
-// static void XListSLinkedAtomicTest();
+// static void XLockFreeListSortTest();
+// static void XLockFreeListIterator();
+// static void XLockFreeListSwapTest();
+// static void XLockFreeListTest();
 static void ListFor_each(void* LPVal, void* args)
 {
 	XPrintf("%d ", *(int*)LPVal);
 }
-void XListSLinkedAtomicSortTest()
+void XLockFreeListSortTest()
 {
 #if XList_ON
-	XListSLinkedAtomic* li = XListSLinkedAtomic_create(sizeof(int));
+	XLockFreeList* li = XLockFreeList_create(sizeof(int));
 	XContainerSetCompare(li, int_compare);
 	int size = 10;
 	srand((unsigned int)time(NULL));
@@ -31,44 +31,44 @@ void XListSLinkedAtomicSortTest()
 		XListBase_push_back_base(li, &num);//尾插
 	}
 	XPrintf("排序前\n");
-	XListSLinkedAtomic_iterator_for_each(li, ListFor_each, NULL); XPrintf("\n");
+	XLockFreeList_iterator_for_each(li, ListFor_each, NULL); XPrintf("\n");
 
 	clock_t  time_front = clock();
-	XListSLinkedAtomic_sort_base(li, XSORT_ASC);
+	XLockFreeList_sort_base(li, XSORT_ASC);
 	clock_t time_after = clock();
 
 	XPrintf("排序后\n");
-	XListSLinkedAtomic_iterator_for_each(li, ListFor_each, NULL); XPrintf("\n");
+	XLockFreeList_iterator_for_each(li, ListFor_each, NULL); XPrintf("\n");
 
 	XPrintf("%d随机数，链表排序运行了%dms\n", size, time_after - time_front);
 	XListBase_delete_base(li);
 #endif
 	XCoreApplication_quit();
 }
-void XListSLinkedAtomicIterator()
+void XLockFreeListIterator()
 {
 #if XList_ON
-	XListSLinkedAtomic* li = XListSLinkedAtomic_create(sizeof(int));
+	XLockFreeList* li = XLockFreeList_create(sizeof(int));
 	int arr[] = { 123,12,1,4,9 };
 	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
 	{
 		XListBase_push_back_base(li, arr + i);
 	}
 	XPrintf("开始正向遍历\n");
-	for_each_iterator(li, XListSLinkedAtomic, it)
+	for_each_iterator(li, XLockFreeList, it)
 	{
-		XPrintf("%d\n", XListSNodeAtomic_Data(it.node, int));
+		XPrintf("%d\n", XLockFreeListNode_Data(it.node, int));
 	}
 	XListBase_delete_base(li);
 #endif
 	XCoreApplication_quit();
 }
 
-void XListSLinkedAtomicTest()
+void XLockFreeListTest()
 {
 #if XList_ON
 	XPrintf("XList 测试\n");
-	XListSLinkedAtomic* list = XListSLinkedAtomic_create(sizeof(int));
+	XLockFreeList* list = XLockFreeList_create(sizeof(int));
 	//list->m_class.m_equality = XEquality_int;
 	XContainerSetCompare(list, int_compare);
 	XPrintf("%s\n", XContainer_isEmpty_base(list) ? "empty" : "");
@@ -86,33 +86,33 @@ void XListSLinkedAtomicTest()
 	int findValue = 123;
 	//XList_insert_base(list, XList_at(list, &findValue), &x);
 
-	XPrintf("元素遍历\t"); XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
+	XPrintf("元素遍历\t"); XLockFreeList_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
 	XPrintf("头元素为：%d\n", XListBase_Front_Base(list, int));
 	XPrintf("尾元素为：%d\n", XListBase_Back_Base(list, int));
 
-	//XListSNodeAtomic* findNode = XListBase_find_base(list, arr + 2);
+	//XLockFreeListNode* findNode = XListBase_find_base(list, arr + 2);
 	//XListBase_insert_array_base(list, findNode, arr, 5);
-	//XPrintf("找到的数字%d\n", XListSNodeAtomic_Data(findNode, int));
-	XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
+	//XPrintf("找到的数字%d\n", XLockFreeListNode_Data(findNode, int));
+	XLockFreeList_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
 	XListBase_pop_front_base(list);
 	XListBase_pop_back_base(list);
 	//XListBase_erase_base(list, findNode);
 
-	XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
+	XLockFreeList_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
 	//return;
 	int removeVlaue = 4;
 	XListBase_remove_base(list, &removeVlaue);
 	//XList_clear_base(list);
-	XPrintf("删除元素后遍历\t"); XListSLinkedAtomic_iterator_for_each(list, ListFor_each, NULL);
+	XPrintf("删除元素后遍历\t"); XLockFreeList_iterator_for_each(list, ListFor_each, NULL);
 	XListBase_delete_base(list);
 #endif
 	XCoreApplication_quit();
 }
 
-void XListSLinkedAtomicSwapTest()//交换函数测试
+void XLockFreeListSwapTest()//交换函数测试
 {
 #if XList_ON
-	XListSLinkedAtomic* li1 = XListSLinkedAtomic_create(sizeof(int));
+	XLockFreeList* li1 = XLockFreeList_create(sizeof(int));
 	int num;
 
 	for (size_t i = 0; i < 10; i++)
@@ -121,9 +121,9 @@ void XListSLinkedAtomicSwapTest()//交换函数测试
 		XListBase_push_back_base(li1, &num);//尾插
 	}
 	XPrintf("li1元素遍历\n");
-	XListSLinkedAtomic_iterator_for_each(li1, ListFor_each, NULL); XPrintf("\n");
+	XLockFreeList_iterator_for_each(li1, ListFor_each, NULL); XPrintf("\n");
 
-	XListSLinkedAtomic* li2 = XListSLinkedAtomic_create(sizeof(int));
+	XLockFreeList* li2 = XLockFreeList_create(sizeof(int));
 
 	for (size_t i = 0; i < 20; i++)
 	{
@@ -131,39 +131,39 @@ void XListSLinkedAtomicSwapTest()//交换函数测试
 		XListBase_push_back_base(li2, &num);//尾插
 	}
 	XPrintf("li2元素遍历\n");
-	XListSLinkedAtomic_iterator_for_each(li2, ListFor_each, NULL); XPrintf("\n");
+	XLockFreeList_iterator_for_each(li2, ListFor_each, NULL); XPrintf("\n");
 
 	XListBase_swap_base(li1, li2);
 
 	XPrintf("交换后li1元素遍历\n");
-	XListSLinkedAtomic_iterator_for_each(li1, ListFor_each, NULL); XPrintf("\n");
+	XLockFreeList_iterator_for_each(li1, ListFor_each, NULL); XPrintf("\n");
 
 	XPrintf("交换后li2元素遍历\n");
-	XListSLinkedAtomic_iterator_for_each(li2, ListFor_each, NULL); XPrintf("\n");
+	XLockFreeList_iterator_for_each(li2, ListFor_each, NULL); XPrintf("\n");
 	XListBase_delete_base(li1);
 	XListBase_delete_base(li2);
 #endif
 	XCoreApplication_quit();
 }
-void XMenu_XListSLinkedAtomicTest(XMenu* root)
+void XMenu_XLockFreeListTest(XMenu* root)
 {
-	XMenu* menu = XMenu_create("XListSLinkedAtomic(单向无锁链表)");
+	XMenu* menu = XMenu_create("XLockFreeList(单向无锁链表)");
 	XMenu_addMenu(root, menu);
 	{
 		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XListSLinkedAtomicTest);
+		XAction_setAction(action, XLockFreeListTest);
 	}
 	{
 		XAction* action = XMenu_addAction(menu, "排序测试");
-		XAction_setAction(action, XListSLinkedAtomicSortTest);
+		XAction_setAction(action, XLockFreeListSortTest);
 	}
 	{
 		XAction* action = XMenu_addAction(menu, "迭代器测试");
-		XAction_setAction(action, XListSLinkedAtomicIterator);
+		XAction_setAction(action, XLockFreeListIterator);
 	}
 	{
 		XAction* action = XMenu_addAction(menu, "交换测试");
-		XAction_setAction(action, XListSLinkedAtomicSwapTest);
+		XAction_setAction(action, XLockFreeListSwapTest);
 	}
 }
 #endif

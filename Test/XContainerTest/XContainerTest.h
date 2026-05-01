@@ -18,7 +18,7 @@ extern "C" {
 	void XMenu_ListTest(XMenu* root);
 	void XMenu_XListDLinkedTest(XMenu* root);
 	void XMenu_XListSLinkedTest(XMenu* root);
-	void XMenu_XListSLinkedAtomicTest(XMenu* root);
+	void XMenu_XLockFreeListTest(XMenu* root);
 
 	//栈
 	void XMenu_XStackTest(XMenu* root);
@@ -54,10 +54,10 @@ extern "C" {
 	void  XMapTest();
 	void XHashMapTest();
 	
-	void XListSLinkedAtomicTest();
-	void XListSLinkedAtomicSwapTest();
-	void XListSLinkedAtomicSortTest();
-	void XListSLinkedAtomicIterator();
+	void XLockFreeListTest();
+	void XLockFreeListSwapTest();
+	void XLockFreeListSortTest();
+	void XLockFreeListIterator();
 	void XHashSetTest();
 	void XSetTest();
 	void XVariantListTest();

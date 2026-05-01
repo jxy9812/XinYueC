@@ -38,10 +38,10 @@ int main(int argc, char* args[])
 	//XListDLinkedIterator();
 	//XHashMapTest();
 	//XMapTest();
-	//XListSLinkedAtomicTest();
-	//XListSLinkedAtomicSwapTest();
-	//XListSLinkedAtomicSortTest();
-	//XListSLinkedAtomicIterator();
+	//XLockFreeListTest();
+	//XLockFreeListSwapTest();
+	//XLockFreeListSortTest();
+	//XLockFreeListIterator();
 	//XListDLinkedTest();
 	//
 	//XListDLinkedSortTest();

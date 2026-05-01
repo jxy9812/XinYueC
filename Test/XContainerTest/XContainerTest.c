@@ -33,7 +33,7 @@ void XMenu_ListTest(XMenu* root)
 	XMenu_addMenu(root, menu);
 	XMenu_XListDLinkedTest(menu);
 	XMenu_XListSLinkedTest(menu);
-	XMenu_XListSLinkedAtomicTest(menu);
+	XMenu_XLockFreeListTest(menu);
 }
 void XMenu_QueueTest(XMenu* root)
 {
