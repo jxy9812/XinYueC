@@ -24,62 +24,36 @@
 #else
 #error "Unsupported platform word size."
 #endif
-typedef struct XReadWriteLockPrivate
+//读写自旋锁
+typedef struct XReadWriteLock
 {
-	XMutex* mutex;               // 辅助互斥锁，用于条件变量
-	XWaitCondition* readCond;    // 等待读锁的条件变量
-	XWaitCondition* writeCond;   // 等待写锁的条件变量
+	XLock_Type type;
+	XAtomic_size_t state; // : false=unlocked, true=locked
 	XAtomic_size_t read_waiters; // 等待读锁的线程数
 	XAtomic_size_t write_waiters; //等待写锁的线程数
-}XReadWriteLockPrivate;
-
-#define GetPrivate(lock)   ((XReadWriteLockPrivate*)lock->m_d)
-//static void XReadWriteLockPrivate_init(XReadWriteLockPrivate* p);
-//static XReadWriteLockPrivate* XReadWriteLockPrivate_create()
+	char m_d[];//扩展数据
+}XReadWriteLock;
+//用户等待休眠 这里声明的结构实际是直接存储对象而不是指针
+//typedef struct WaitPrivate
 //{
-//	XReadWriteLockPrivate* p = (XReadWriteLockPrivate*)XMalloc(sizeof(XReadWriteLockPrivate));
-//	XReadWriteLockPrivate_init(p);
-//	return p;
-//}
+//	XMutex* mutex;               // 辅助互斥锁，用于条件变量
+//	XWaitCondition* readCond;    // 等待读锁的条件变量
+//	XWaitCondition* writeCond;   // 等待写锁的条件变量
+//	char m_d[];//扩展数据
+//}WaitPrivate;
+typedef struct WaitPrivate  WaitPrivate;
+#define GetWaitPrivate(lock)	((WaitPrivate*)lock->m_d)
+#define GetMutex(lock)           GetWaitPrivate(lock)
+#define GetReadCond(lock)       (((uint8_t*)GetWaitPrivate(lock))+XMutex_typetSize(XLock_NonRecursive))
+#define GetWriteCond(lock)      (((uint8_t*)GetReadCond(lock))+XWaitCondition_typeSize())
+static size_t XMutex_WaitPrivate_size()
+{
+	return XMutex_typetSize(XLock_NonRecursive)+2*XWaitCondition_typeSize();
+}
 
-static void XReadWriteLockPrivate_init(XReadWriteLockPrivate* p)
-{
-	if (!p)return;
-	p->mutex = XMutex_create(XLock_NonRecursive);
-	p->readCond = XWaitCondition_create();
-	p->writeCond = XWaitCondition_create();
-	XAtomic_init(p->read_waiters, 0);
-	XAtomic_init(p->write_waiters, 0);
-}
-static void XReadWriteLockPrivate_deinit(XReadWriteLockPrivate* p)
-{
-	if (!p)return;
-	if (p->mutex)
-	{
-		XMutex_delete(p->mutex);
-		p->mutex = NULL;
-	}
-	if (p->readCond)
-	{
-		XWaitCondition_delete(p->readCond);
-		p->readCond = NULL;
-	}
-	if (p->writeCond)
-	{
-		XWaitCondition_delete(p->writeCond);
-		p->writeCond = NULL;
-	}
-	/*XAtomic_init(p->read_waiters, 0);
-	XAtomic_init(p->write_waiters, 0);*/
-}
-static void XReadWriteLockPrivate_delete(XReadWriteLockPrivate* p)
-{
-	if (!p)return;
-	XReadWriteLockPrivate_deinit(p);
-	XFree(p);
-}
 // --- 非递归模式的内部函数 ---
-static bool try_acquire_read_nonrecursive(XReadWriteLock* rwlock) {
+static bool try_acquire_read_nonrecursive(XReadWriteLock* rwlock) 
+{
 	size_t current_state = XAtomic_load_size_t(&rwlock->state, XAtomic_MemoryOrder_Relaxed);
 
 	if (current_state & WRITER_ACTIVE_FLAG) {
@@ -91,7 +65,8 @@ static bool try_acquire_read_nonrecursive(XReadWriteLock* rwlock) {
 	return XAtomic_compare_exchange_strong_size_t(&rwlock->state, &expected, desired, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed);
 }
 
-static bool try_acquire_write_nonrecursive(XReadWriteLock* rwlock) {
+static bool try_acquire_write_nonrecursive(XReadWriteLock* rwlock) 
+{
 	size_t current_state = XAtomic_load_size_t(&rwlock->state, XAtomic_MemoryOrder_Relaxed);
 
 	if (current_state != 0) {
@@ -172,35 +147,35 @@ static bool try_acquire_write_recursive(XReadWriteLock* rwlock)
 
 XReadWriteLock* XReadWriteLock_create(XLock_Type type)
 {
-	XReadWriteLock* rwlock = NULL;
-
-	if (type & XLock_Spin)
-		rwlock=(XReadWriteLock*)XMemory_malloc(sizeof(XReadWriteLock));
-	else
-		rwlock = (XReadWriteLock*)XMemory_malloc(sizeof(XReadWriteLock)+sizeof(XReadWriteLockPrivate));
+	XReadWriteLock* rwlock = (XReadWriteLock*)XMemory_malloc(XReadWriteLock_typetSize(type));
 	XReadWriteLock_init(rwlock, type);
 	return rwlock;
 }
-size_t XReadLocker_typetSize(XLock_Type type)
+size_t XReadWriteLock_typetSize(XLock_Type type)
 {
 	size_t size = sizeof(XReadWriteLock);
-
+	if (!(type & XLock_Spin))
+		size += XMutex_WaitPrivate_size();
 	return size;
 }
 void XReadWriteLock_init(XReadWriteLock* rwlock, XLock_Type type)
 {
     if (!rwlock)return;
-	XAtomic_init(rwlock->state, 0);
+	memset(rwlock, 0, XReadWriteLock_typetSize(type));
+	//rwlock->type = type;
+
 	if (type == XLock_Spin)
 		rwlock->type = XLock_SpinNonRecursive;
 	else
 		rwlock->type = type;
+
 	if (type & XLock_Recursive)
 		XRecursiveLockState_init();
-
 	if (!(type & XLock_Spin))
 	{
-		XReadWriteLockPrivate_init(GetPrivate(rwlock));
+		XMutex_init(GetMutex(rwlock), XLock_NonRecursive);
+		XWaitCondition_init(GetReadCond(rwlock));
+		XWaitCondition_init(GetWriteCond(rwlock));
 	}
 }
 void XReadWriteLock_deinit(XReadWriteLock* rwlock) 
@@ -209,9 +184,11 @@ void XReadWriteLock_deinit(XReadWriteLock* rwlock)
 	{
 		XRecursiveLockState_clear(rwlock);//清理全局数据
 	}
-	if (GetPrivate(rwlock))
+	if (!(rwlock->type & XLock_Spin))
 	{
-		XReadWriteLockPrivate_deinit(GetPrivate(rwlock));
+		XMutex_deinit(GetMutex(rwlock));
+		XWaitCondition_deinit(GetReadCond(rwlock));
+		XWaitCondition_deinit(GetWriteCond(rwlock));
 	}
 }
 
@@ -230,8 +207,22 @@ XLock_Type XReadWriteLock_type(XReadWriteLock* rwlock)
 static void XReadWriteLock_lockForRead_Spin(XReadWriteLock* rwlock)
 {
 	if (rwlock->type & XLock_Recursive) {
+		// --- 修复: 使用分层自旋策略 ---
+		const int MAX_BUSY_WAITS = 100; // 可根据实际情况调整
+		int busy_wait_count = 0;
+
 		while (!try_acquire_read_recursive(rwlock)) {
-			XThread_yieldCurrentThread();
+			if (busy_wait_count < MAX_BUSY_WAITS) {
+				// 第一层: 忙等待 (可以在此处插入平台相关的 pause 指令以进一步优化)
+				busy_wait_count++;
+				// 对于简单实现，我们只是继续循环，不调用任何系统函数。
+				// 在真实环境中，这里应该是一个非常轻量的操作。
+			}
+			else {
+				// 第二层: 让出CPU
+				XThread_yieldCurrentThread();
+				busy_wait_count = 0; // 重置计数器
+			}
 		}
 	}
 	else {
@@ -244,8 +235,20 @@ static void XReadWriteLock_lockForRead_Spin(XReadWriteLock* rwlock)
 static void XReadWriteLock_lockForWrite_Spin(XReadWriteLock* rwlock)
 {
 	if (rwlock->type & XLock_Recursive) {
+		// --- 修复: 使用分层自旋策略 ---
+		const int MAX_BUSY_WAITS = 100; // 可根据实际情况调整
+		int busy_wait_count = 0;
+
 		while (!try_acquire_write_recursive(rwlock)) {
-			XThread_yieldCurrentThread();
+			if (busy_wait_count < MAX_BUSY_WAITS) {
+				// 第一层: 忙等待
+				busy_wait_count++;
+			}
+			else {
+				// 第二层: 让出CPU
+				XThread_yieldCurrentThread();
+				busy_wait_count = 0; // 重置计数器
+			}
 		}
 	}
 	else {
@@ -258,82 +261,84 @@ static void XReadWriteLock_lockForWrite_Spin(XReadWriteLock* rwlock)
 // ========== Non-Spin 模式专用接口 ==========
 static void XReadWriteLock_lockForRead_NonSpin(XReadWriteLock* rwlock)
 {
-	// --- 关键修复：首先检查递归状态 ---
+	// --- 第一步：处理递归状态 ---
 	if (rwlock->type & XLock_Recursive) {
 		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 		if (tls && (tls->reader_count > 0 || tls->writer_count > 0)) {
-			// 当前线程已持有读锁或写锁，直接递增计数器
 			tls->reader_count++;
 			return;
 		}
 	}
 
-	// 第一阶段：快速路径
+	// 第二步：快速路径
 	if (XReadWriteLock_tryLockForRead(rwlock)) {
 		return;
 	}
 
-	// 第二阶段：慢速路径（此时确定不是递归调用）
-	XAtomic_fetch_add_size_t(&GetPrivate(rwlock)->read_waiters, 1, XAtomic_MemoryOrder_Relaxed);
-	while (true) {
-		XMutex_lock(GetPrivate(rwlock)->mutex);
+	// --- 第三步：进入慢速路径 ---
+	// 所有非自旋锁都增加 read_waiters
+	XAtomic_fetch_add_size_t(&rwlock->read_waiters, 1, XAtomic_MemoryOrder_Relaxed);
 
-		// 写者优先：如果有任何写者在等待，则新来的读者必须等待
-		size_t current_write_waiters = XAtomic_load_size_t(&GetPrivate(rwlock)->write_waiters, XAtomic_MemoryOrder_Relaxed);
-		if (current_write_waiters > 0) {
-			XWaitCondition_wait(GetPrivate(rwlock)->readCond, GetPrivate(rwlock)->mutex, -1);
-			XMutex_unlock(GetPrivate(rwlock)->mutex);
+	while (true) {
+		XMutex_lock(GetMutex(rwlock));
+
+		// --- 写者优先：检查是否有写者在等待 ---
+		bool should_wait_for_writers = (XAtomic_load_size_t(&rwlock->write_waiters, XAtomic_MemoryOrder_Relaxed) > 0);
+
+		if (should_wait_for_writers) {
+			XWaitCondition_wait(GetReadCond(rwlock), GetMutex(rwlock), -1);
+			XMutex_unlock(GetMutex(rwlock));
 			continue;
 		}
 
 		if (XReadWriteLock_tryLockForRead(rwlock)) {
-			XMutex_unlock(GetPrivate(rwlock)->mutex);
+			XMutex_unlock(GetMutex(rwlock));
 			break;
 		}
 
-		XWaitCondition_wait(GetPrivate(rwlock)->readCond, GetPrivate(rwlock)->mutex, -1);
-		XMutex_unlock(GetPrivate(rwlock)->mutex);
+		XWaitCondition_wait(GetReadCond(rwlock), GetMutex(rwlock), -1);
+		XMutex_unlock(GetMutex(rwlock));
 	}
-	XAtomic_fetch_sub_size_t(&GetPrivate(rwlock)->read_waiters, 1, XAtomic_MemoryOrder_Relaxed);
+
+	// --- 第四步：清理 ---
+	XAtomic_fetch_sub_size_t(&rwlock->read_waiters, 1, XAtomic_MemoryOrder_Relaxed);
 }
 
 static void XReadWriteLock_lockForWrite_NonSpin(XReadWriteLock* rwlock)
 {
-	// --- 关键修复：首先检查递归状态 ---
+	// --- 第一步：处理递归写锁 ---
 	if (rwlock->type & XLock_Recursive) {
 		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 		if (tls && tls->writer_count > 0) {
-			// 当前线程已持有写锁，直接递增计数器
 			tls->writer_count++;
 			return;
 		}
-		// 注意：这里依然禁止从读锁升级到写锁
-		if (tls && tls->reader_count > 0) {
-			// 可以选择在此处抛出错误或断言，因为升级是危险的。
-			// 当前逻辑保持与 try_acquire_write_recursive 一致，即不允许。
-			// 但正常情况下，一个只持有读锁的线程不应该走到这个阻塞函数里来，
-			// 因为 tryLockForWrite 应该已经处理了这种情况。
-		}
+		// 注意：从读锁升级到写锁在此设计中是被禁止的。
 	}
 
+	// --- 第二步：尝试快速获取写锁 ---
 	if (XReadWriteLock_tryLockForWrite(rwlock)) {
 		return;
 	}
 
-	// 慢速路径（此时确定不是递归写）
-	XAtomic_fetch_add_size_t(&GetPrivate(rwlock)->write_waiters, 1, XAtomic_MemoryOrder_Relaxed);
+	// --- 第三步：进入慢速路径 ---
+	// 所有非自旋锁都增加 write_waiters
+	XAtomic_fetch_add_size_t(&rwlock->write_waiters, 1, XAtomic_MemoryOrder_Relaxed);
+
 	while (true) {
-		XMutex_lock(GetPrivate(rwlock)->mutex);
+		XMutex_lock(GetMutex(rwlock));
 
 		if (XReadWriteLock_tryLockForWrite(rwlock)) {
-			XMutex_unlock(GetPrivate(rwlock)->mutex);
+			XMutex_unlock(GetMutex(rwlock));
 			break;
 		}
 
-		XWaitCondition_wait(GetPrivate(rwlock)->writeCond, GetPrivate(rwlock)->mutex, -1);
-		XMutex_unlock(GetPrivate(rwlock)->mutex);
+		XWaitCondition_wait(GetWriteCond(rwlock), GetMutex(rwlock), -1);
+		XMutex_unlock(GetMutex(rwlock));
 	}
-	XAtomic_fetch_sub_size_t(&GetPrivate(rwlock)->write_waiters, 1, XAtomic_MemoryOrder_Relaxed);
+
+	// --- 第四步：清理 ---
+	XAtomic_fetch_sub_size_t(&rwlock->write_waiters, 1, XAtomic_MemoryOrder_Relaxed);
 }
 void XReadWriteLock_lockForRead(XReadWriteLock* rwlock)
 {
@@ -361,69 +366,59 @@ bool XReadWriteLock_tryLockForReadTimeout(XReadWriteLock* rwlock, int32_t timeou
 {
 	if (!rwlock) return false;
 
-	if (XReadWriteLock_type(rwlock) & XLock_Spin) {
-		if (timeout_ms <= 0) {
-			return XReadWriteLock_tryLockForRead(rwlock);
+	// --- 第一步：处理递归读锁 ---
+	if (rwlock->type & XLock_Recursive) {
+		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
+		if (tls && (tls->reader_count > 0 || tls->writer_count > 0)) {
+			tls->reader_count++;
+			return true;
 		}
-		const int32_t max_spins = timeout_ms * 1000;
-		for (int32_t i = 0; i < max_spins; ++i) {
-			if (XReadWriteLock_tryLockForRead(rwlock)) {
-				return true;
-			}
-		}
+	}
+
+	// --- 第二步：尝试快速获取读锁 ---
+	if (XReadWriteLock_tryLockForRead(rwlock)) {
+		return true;
+	}
+
+	if (timeout_ms == 0) {
 		return false;
 	}
-	else {
-		if (timeout_ms <= 0) {
-			XReadWriteLock_lockForRead_NonSpin(rwlock);
-			return true;
+
+	// --- 第三步：进入慢速路径（带超时等待）---
+	XAtomic_fetch_add_size_t(&rwlock->read_waiters, 1, XAtomic_MemoryOrder_Relaxed);
+
+	bool acquired = false;
+	while (!acquired) {
+		XMutex_lock(GetMutex(rwlock));
+
+		// --- 写者优先 ---
+		bool should_wait_for_writers = (XAtomic_load_size_t(&rwlock->write_waiters, XAtomic_MemoryOrder_Relaxed) > 0);
+
+		if (should_wait_for_writers) {
+			bool was_signaled = XWaitCondition_wait(GetReadCond(rwlock), GetMutex(rwlock), timeout_ms);
+			XMutex_unlock(GetMutex(rwlock));
+			if (!was_signaled) { // 超时
+				break;
+			}
+			continue;
 		}
 
 		if (XReadWriteLock_tryLockForRead(rwlock)) {
-			return true;
+			acquired = true;
+			XMutex_unlock(GetMutex(rwlock));
+			break;
 		}
 
-		size_t start_time = XTimerBase_getCurrentTime();
-		XAtomic_fetch_add_size_t(&GetPrivate(rwlock)->read_waiters, 1, XAtomic_MemoryOrder_Relaxed);
-		bool result = false;
-		while (true) {
-			XMutex_lock(GetPrivate(rwlock)->mutex);
-
-			size_t current_write_waiters = XAtomic_load_size_t(&GetPrivate(rwlock)->write_waiters, XAtomic_MemoryOrder_Relaxed);
-			if (current_write_waiters > 0) {
-				// 有写者在等，读者不能插队
-				size_t current_time = XTimerBase_getCurrentTime();
-				int32_t elapsed = (int32_t)(current_time - start_time);
-				int32_t remaining = timeout_ms - elapsed;
-				if (remaining <= 0) {
-					XMutex_unlock(GetPrivate(rwlock)->mutex);
-					break;
-				}
-				XWaitCondition_wait(GetPrivate(rwlock)->readCond, GetPrivate(rwlock)->mutex, remaining);
-				XMutex_unlock(GetPrivate(rwlock)->mutex);
-				continue;
-			}
-
-			if (XReadWriteLock_tryLockForRead(rwlock)) {
-				result = true;
-				XMutex_unlock(GetPrivate(rwlock)->mutex);
-				break;
-			}
-
-			size_t current_time = XTimerBase_getCurrentTime();
-			int32_t elapsed = (int32_t)(current_time - start_time);
-			int32_t remaining = timeout_ms - elapsed;
-			if (remaining <= 0) {
-				XMutex_unlock(GetPrivate(rwlock)->mutex);
-				break;
-			}
-
-			XWaitCondition_wait(GetPrivate(rwlock)->readCond, GetPrivate(rwlock)->mutex, remaining);
-			XMutex_unlock(GetPrivate(rwlock)->mutex);
+		bool was_signaled = XWaitCondition_wait(GetReadCond(rwlock), GetMutex(rwlock), timeout_ms);
+		XMutex_unlock(GetMutex(rwlock));
+		if (!was_signaled) { // 超时
+			break;
 		}
-		XAtomic_fetch_sub_size_t(&GetPrivate(rwlock)->read_waiters, 1, XAtomic_MemoryOrder_Relaxed);
-		return result;
 	}
+
+	// --- 第四步：清理 ---
+	XAtomic_fetch_sub_size_t(&rwlock->read_waiters, 1, XAtomic_MemoryOrder_Relaxed);
+	return acquired;
 }
 
 // --- 写锁相关公共接口 ---
@@ -456,6 +451,7 @@ bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeo
 {
 	if (!rwlock) return false;
 
+	// --- 自旋模式处理 ---
 	if (XReadWriteLock_type(rwlock) & XLock_Spin) {
 		if (timeout_ms <= 0) {
 			return XReadWriteLock_tryLockForWrite(rwlock);
@@ -468,25 +464,33 @@ bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeo
 		}
 		return false;
 	}
+
+	// --- 非自旋模式处理 ---
 	else {
-		if (timeout_ms <= 0) {
+		if (timeout_ms < 0) {
 			XReadWriteLock_lockForWrite_NonSpin(rwlock);
 			return true;
+		}
+		if (timeout_ms == 0) {
+			return XReadWriteLock_tryLockForWrite(rwlock);
 		}
 
 		if (XReadWriteLock_tryLockForWrite(rwlock)) {
 			return true;
 		}
 
+		// --- 进入慢速路径 ---
+		XAtomic_fetch_add_size_t(&rwlock->write_waiters, 1, XAtomic_MemoryOrder_Relaxed);
+
 		size_t start_time = XTimerBase_getCurrentTime();
-		XAtomic_fetch_add_size_t(&GetPrivate(rwlock)->write_waiters, 1, XAtomic_MemoryOrder_Relaxed);
 		bool result = false;
+
 		while (true) {
-			XMutex_lock(GetPrivate(rwlock)->mutex);
+			XMutex_lock(GetMutex(rwlock));
 
 			if (XReadWriteLock_tryLockForWrite(rwlock)) {
 				result = true;
-				XMutex_unlock(GetPrivate(rwlock)->mutex);
+				XMutex_unlock(GetMutex(rwlock));
 				break;
 			}
 
@@ -494,14 +498,20 @@ bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeo
 			int32_t elapsed = (int32_t)(current_time - start_time);
 			int32_t remaining = timeout_ms - elapsed;
 			if (remaining <= 0) {
-				XMutex_unlock(GetPrivate(rwlock)->mutex);
+				XMutex_unlock(GetMutex(rwlock));
 				break;
 			}
 
-			XWaitCondition_wait(GetPrivate(rwlock)->writeCond, GetPrivate(rwlock)->mutex, remaining);
-			XMutex_unlock(GetPrivate(rwlock)->mutex);
+			bool was_signaled = XWaitCondition_wait(GetWriteCond(rwlock), GetMutex(rwlock), remaining);
+			XMutex_unlock(GetMutex(rwlock));
+
+			if (!was_signaled) {
+				break;
+			}
 		}
-		XAtomic_fetch_sub_size_t(&GetPrivate(rwlock)->write_waiters, 1, XAtomic_MemoryOrder_Relaxed);
+
+		// --- 清理 ---
+		XAtomic_fetch_sub_size_t(&rwlock->write_waiters, 1, XAtomic_MemoryOrder_Relaxed);
 		return result;
 	}
 }
@@ -549,20 +559,26 @@ void XReadWriteLock_unlock(XReadWriteLock* rwlock)
 {
 	if (!rwlock) return;
 
-	// 1. 首先，统一更新锁的核心状态 (state)
+	// 1. 更新核心状态
 	unlock_state_update(rwlock);
 
-	// 2. 如果是非自旋模式，则执行唤醒逻辑
+	// 2. 非自旋模式的唤醒逻辑
 	if (!(XReadWriteLock_type(rwlock) & XLock_Spin)) {
-		XMutex_lock(GetPrivate(rwlock)->mutex);
-		size_t current_write_waiters = XAtomic_load_size_t(&GetPrivate(rwlock)->write_waiters, XAtomic_MemoryOrder_Relaxed);
+		XMutex_lock(GetMutex(rwlock));
+
+		// --- 关键修复：直接读取公共的 write_waiters ---
+		size_t current_write_waiters = XAtomic_load_size_t(&rwlock->write_waiters, XAtomic_MemoryOrder_Relaxed);
+
 		if (current_write_waiters > 0) {
-			XWaitCondition_wakeOne(GetPrivate(rwlock)->writeCond);
+			// 有写者在等待，优先唤醒一个写者
+			XWaitCondition_wakeOne(GetWriteCond(rwlock));
 		}
 		else {
-			XWaitCondition_wakeAll(GetPrivate(rwlock)->readCond);
+			// 否则，唤醒所有等待的读者
+			XWaitCondition_wakeAll(GetReadCond(rwlock));
 		}
-		XMutex_unlock(GetPrivate(rwlock)->mutex);
+
+		XMutex_unlock(GetMutex(rwlock));
 	}
 }
 

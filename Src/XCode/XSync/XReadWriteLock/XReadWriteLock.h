@@ -9,16 +9,10 @@ extern "C" {
 #include <stdint.h>
 #include "XAtomic.h"
 #include "XTypes.h"
+typedef struct XReadWriteLock XReadWriteLock;
 
-//读写自旋锁
-typedef struct XReadWriteLock
-{
-    XLock_Type type;
-    XAtomic_size_t state; // 核心状态变量
-    char m_d[];//非自旋模式扩展数据
-}XReadWriteLock;
 //获取此类型的大小
-size_t XReadLocker_typetSize(XLock_Type type);
+size_t XReadWriteLock_typetSize(XLock_Type type);
 /**
  * @brief 初始化读写锁(栈对象)
  * @param rwlock 读写锁指针
