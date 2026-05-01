@@ -3,7 +3,7 @@
 #include "XString.h"
 #include "XTimer.h"
 #include "XCoreApplication.h"
-#include "XCircularQueueAtomic.h"
+#include "XLockFreeQueue.h"
 #include "XThread.h"
 #include <string.h>
 
@@ -178,11 +178,11 @@ void VXIODevice_setWriteBuffer(XIODevice* io, size_t count)
         if (count != 0)
         {
             if (device->m_connections[i].m_writeBuffer == NULL)
-                device->m_connections[i].m_writeBuffer = XCircularQueueAtomic_Create(char, count);
+                device->m_connections[i].m_writeBuffer = XLockFreeQueue_Create(char, count);
         }
         else if (device->m_connections[i].m_writeBuffer != NULL)
         {
-            XCircularQueueAtomic_delete_base(device->m_connections[i].m_writeBuffer);
+            XLockFreeQueue_delete_base(device->m_connections[i].m_writeBuffer);
             device->m_connections[i].m_writeBuffer = NULL;
         }
     }*/
@@ -198,11 +198,11 @@ void VXIODevice_setReadBuffer(XIODevice* io, size_t count)
         if (count != 0)
         {
             if (device->m_connections[i].m_readBuffer == NULL)
-                device->m_connections[i].m_readBuffer = XCircularQueueAtomic_Create(char, count);
+                device->m_connections[i].m_readBuffer = XLockFreeQueue_Create(char, count);
         }
         else if (device->m_connections[i].m_readBuffer != NULL)
         {
-            XCircularQueueAtomic_delete_base(device->m_connections[i].m_readBuffer);
+            XLockFreeQueue_delete_base(device->m_connections[i].m_readBuffer);
             device->m_connections[i].m_readBuffer = NULL;
         }
     }*/

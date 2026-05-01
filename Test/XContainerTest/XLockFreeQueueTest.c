@@ -1,0 +1,67 @@
+﻿#include"XDataStructTest.h"
+#if DEMOTEST
+#include<stdint.h>
+#include"XLockFreeQueue.h"
+#include"XThread.h"
+#include"XMenu.h"
+#include"XAction.h"
+#include"XCoreApplication.h"
+#include"XPrintf.h"
+static void XLockFreeQueueTest();
+
+// 线程函数 1：输出 "Thread 1 is running"
+static void ThreadReceive(XThread* thread, XVarList* list)
+{
+	XPrintf("线程进入\n");
+	XVarList_args_1(list, XLockFreeQueue*, queue);
+	//int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
+
+	for (size_t i = 0; i < 10000; i++)
+	{
+		int n = i;
+		while (!XLockFreeQueue_push_base(queue, &n));
+		//Sleep(100);
+	}
+
+	return 0;
+}
+
+void XLockFreeQueueTest()
+{
+#if XLockFreeQueue_ON
+	XPrintf("循环队列 测试\n");
+	XLockFreeQueue* queue = XLockFreeQueue_Create(int,1000);
+	XThread* thread = XThread_create_func(ThreadReceive, XVarList_Create(XVar(XLockFreeQueue*, queue)));
+	XThread_start(thread);
+	//threadTest(queue);
+	int index = 0;
+	int value;
+	while (index<10000)
+	{
+		if (XLockFreeQueue_receive_base(queue, &value))
+		{
+
+			XPrintf("index:%d %d size:%d\n",index++,value ,XLockFreeQueue_size_base(queue));
+			//XLockFreeQueue_pop_base(queue);
+		}
+	}
+	XThread_wait(thread,UINT32_MAX);
+	XThread_deleteLater(thread);
+	XLockFreeQueue_delete_base(queue);
+	XPrintf("循环队列 空\n");
+	
+#else
+	IS_ON_DEBUG(XLockFreeQueue_ON);
+#endif
+	XCoreApplication_quit();
+}
+void XMenu_XLockFreeQueueTest(XMenu* root)
+{
+	XMenu* menu = XMenu_create("XLockFreeQueue(无锁环形队列)");
+	XMenu_addMenu(root, menu);
+	{
+		XAction* action = XMenu_addAction(menu, "主测试");
+		XAction_setAction(action, XLockFreeQueueTest);
+	}
+}
+#endif

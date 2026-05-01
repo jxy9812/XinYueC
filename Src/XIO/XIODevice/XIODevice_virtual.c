@@ -1,6 +1,6 @@
 ﻿#include"XIODevice.h"
 #include"XCircularQueue.h"
-#include"XCircularQueueAtomic.h"
+#include"XLockFreeQueue.h"
 #include "XMemory.h"
 #include "XIODevicePrivate.h"
 #include "XCoreApplication.h"

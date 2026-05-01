@@ -9,7 +9,7 @@
 #include "XString.h"
 #include "XTimerGroupWheel.h"
 #include "XEventLoop.h"
-#include "XCircularQueueAtomic.h"
+#include "XLockFreeQueue.h"
 #include "XThreadData.h"
 #include "XThread.h"
 #include "XTimer.h"

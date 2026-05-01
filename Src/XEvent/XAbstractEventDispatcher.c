@@ -2,7 +2,7 @@
 #include "XMemory.h"
 #include "XCoreApplication.h"
 #include "XVector.h"
-//#include "XCircularQueueAtomic.h"
+//#include "XLockFreeQueue.h"
 #include "XAbstractNativeEventFilter.h"
 #include "XPriorityMapQueue.h"
 #include "XThreadData.h"

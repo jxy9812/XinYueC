@@ -40,7 +40,7 @@ void XMenu_QueueTest(XMenu* root)
 	XMenu* menu = XMenu_create("Queue(队列)");
 	XMenu_addMenu(root, menu);
 	XMenu_XCircularQueueTest(menu);
-	XMenu_XCircularQueueAtomicTest(menu);
+	XMenu_XLockFreeQueueTest(menu);
 	XMenu_XPriorityQueueTest(menu);
 	XMenu_XQueueTest(menu);
 	XMenu_XPriorityMapQueueTest(menu);

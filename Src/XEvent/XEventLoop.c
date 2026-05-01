@@ -7,7 +7,7 @@
 #include "XThread.h"
 #include "XThreadData.h"
 #include "XCoreApplication.h"
-#include "XCircularQueueAtomic.h"
+#include "XLockFreeQueue.h"
 #include "XTimerGroupWheel.h"
 #include "XAtomic.h"
 //投递类型

@@ -31,7 +31,7 @@ extern "C" {
 #define	XStringList_ON					1
 #define XVariantList_ON					1
 #define	XCircularQueue_ON				1
-#define	XCircularQueueAtomic_ON			1
+#define	XLockFreeQueue_ON			1
 #define XBitArray_ON					1
 #define XRingChunk_ON					1
 #define XRingBuffer_ON					1

@@ -48,7 +48,7 @@ typedef struct XEventDispatcher XEventDispatcher;
 typedef struct XTimerGroupBase XTimerGroupBase;
 typedef struct XDataFrameComm  XDataFrameComm;
 typedef struct XIODevice  XIODevice;
-typedef struct XCircularQueueAtomic XCircularQueueAtomic;
+typedef struct XLockFreeQueue XLockFreeQueue;
 typedef struct XMutex XMutex;
 typedef struct XWaitCondition XWaitCondition;
 typedef struct XSocket XSocket;

@@ -1,7 +1,7 @@
 ﻿#include"XESP8266Wifi.h"
 #include "XTimer.h"
 #include "XEventLoop.h"
-#include "XCircularQueueAtomic.h"
+#include "XLockFreeQueue.h"
 #include <string.h>
 #define AT_RESPONSE_OK          (strstr(device->m_responseBuffer, "OK"))
 #define AT_RESPONSE_ERROR       (strstr(device->m_responseBuffer, "ERROR"))
@@ -401,13 +401,13 @@ void setBuffer(XESP8266Wifi* device, int connId)
     //    else if (count > 0)
     //    {
     //        //存在缓冲区，但是跟设置的不一样
-    //        if (device->m_connections[connId].m_readBuffer && count != XCircularQueueAtomic_size_base(device->m_connections[connId].m_readBuffer))
+    //        if (device->m_connections[connId].m_readBuffer && count != XLockFreeQueue_size_base(device->m_connections[connId].m_readBuffer))
     //        {
     //            XQueueBase_delete_base(device->m_connections[connId].m_readBuffer);
     //            device->m_connections[connId].m_readBuffer = NULL;
     //        }
     //        if (device->m_connections[connId].m_readBuffer == NULL)
-    //            device->m_connections[connId].m_readBuffer = XCircularQueueAtomic_Create(char, count);
+    //            device->m_connections[connId].m_readBuffer = XLockFreeQueue_Create(char, count);
     //    }
     //}
     ////写入缓冲区
@@ -422,13 +422,13 @@ void setBuffer(XESP8266Wifi* device, int connId)
     //    else if (count > 0)
     //    {
     //        //存在缓冲区，但是跟设置的不一样
-    //        if (device->m_connections[connId].m_writeBuffer && count != XCircularQueueAtomic_size_base(device->m_connections[connId].m_writeBuffer))
+    //        if (device->m_connections[connId].m_writeBuffer && count != XLockFreeQueue_size_base(device->m_connections[connId].m_writeBuffer))
     //        {
     //            XQueueBase_delete_base(device->m_connections[connId].m_writeBuffer);
     //            device->m_connections[connId].m_writeBuffer = NULL;
     //        }
     //        if (device->m_connections[connId].m_writeBuffer == NULL)
-    //            device->m_connections[connId].m_writeBuffer = XCircularQueueAtomic_Create(char, count);
+    //            device->m_connections[connId].m_writeBuffer = XLockFreeQueue_Create(char, count);
     //    }
     //}
 }

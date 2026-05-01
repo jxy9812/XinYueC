@@ -2,7 +2,7 @@
 #include"XMemory.h"
 #include<string.h>
 #include"XTimerBase.h"
-#include"XCircularQueueAtomic.h"
+#include"XLockFreeQueue.h"
 #include"XHashMap.h"
 #include"XListSLinked.h"
 #include"XObject.h"

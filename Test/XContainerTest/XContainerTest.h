@@ -25,7 +25,7 @@ extern "C" {
 	//队列
 	void XMenu_QueueTest(XMenu* root);
 	void XMenu_XCircularQueueTest(XMenu* root);
-	void XMenu_XCircularQueueAtomicTest(XMenu* root);
+	void XMenu_XLockFreeQueueTest(XMenu* root);
 	void XMenu_XPriorityQueueTest(XMenu* root);
 	void XMenu_XQueueTest(XMenu* root);
 	void XMenu_XPriorityMapQueueTest(XMenu* root);

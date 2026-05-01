@@ -2,7 +2,7 @@
 #include"XByteArray.h"
 #include"XEvent.h"
 #include"XMapBase.h"
-#include"XCircularQueueAtomic.h"
+#include"XLockFreeQueue.h"
 #include"XDataFrameCommConfig.h"
 #include"XIODevice.h"
 #include"XListSLinked.h"
@@ -39,7 +39,7 @@ void XDataFrameComm_init(XDataFrameComm* comm, XIODevice* io)
 	comm->m_state = XDFC_STATE_NOT_INITIALIZED;
 	comm->m_sendMode = XDFC_SEND_MODE_WHOLE;
 
-	comm->m_sendFrameQueue = XCircularQueueAtomic_Create(XByteArray*, XDFC_FRAME_SEND_QUEUE_COUNT);
+	comm->m_sendFrameQueue = XLockFreeQueue_Create(XByteArray*, XDFC_FRAME_SEND_QUEUE_COUNT);
 	comm->m_periodicSendList = XListSLinked_Create(void*);
 	//comm->m_periodicSendList->m_equality = XEquality_ptr;
 	XContainerSetCompare(comm->m_periodicSendList, ptr_compare);

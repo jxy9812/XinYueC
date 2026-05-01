@@ -1,6 +1,6 @@
 ﻿#include "XPriorityMapQueue.h"
 #include "XPriorityQueue.h"
-#include "XCircularQueueAtomic.h"
+#include "XLockFreeQueue.h"
 #include "XMap.h"
 #include <string.h>
 #define GetMap(queue)				((XMapBase*)XContainerDataPtr(queue)) //获取map
@@ -100,7 +100,7 @@ bool XPriorityMapQueue_addFifoQueue(XPriorityMapQueue* this_queue, void* priorit
 		return false;
 	if (XMapBase_value_base(GetMap(this_queue), priority))
 		return false;//已经添加了
-	XCircularQueue* queue = XCircularQueueAtomic_create(XContainerTypeSize(this_queue),queueSize);
+	XCircularQueue* queue = XLockFreeQueue_create(XContainerTypeSize(this_queue),queueSize);
 	if (queue == NULL)
 		return false;
 	/*XContainerSetDataMoveMethod(queue, XContainerDataMoveMethod(this_queue));
