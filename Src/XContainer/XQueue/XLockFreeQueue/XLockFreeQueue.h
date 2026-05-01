@@ -25,8 +25,8 @@ typedef struct XLockFreeQueue
 	XAtomic_size_t m_tail;///< 原子化队尾索引，标识队列尾部位置
 	// --- 无锁辅助字段 ---
 	size_t m_index_bits;        ///< 用于存储索引的位数
-	uintptr_t m_index_mask;     ///< 索引掩码
-	uintptr_t m_version_mask;   ///< 版本号掩码
+	size_t m_index_mask;        ///< 索引掩码
+	size_t m_version_mask;      ///< 版本号掩码
 } XLockFreeQueue;
 // ------------------------------ 类初始化与实例管理 ------------------------------
 /**
