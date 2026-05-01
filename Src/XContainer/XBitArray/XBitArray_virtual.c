@@ -20,8 +20,8 @@ XVtable* XBitArray_class_init() {
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
 
-    // 继承XContainerObject的虚函数表
-    XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+    // 继承XContainer的虚函数表
+    XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 
     //// 注册新虚函数
     //void* table[] = {
@@ -39,7 +39,7 @@ XVtable* XBitArray_class_init() {
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXBitArray_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXBitArray_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXBitArray_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXBitArray_clear);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXBitArray_clear);
 
     return XVTABLE_DEFAULT;
 }

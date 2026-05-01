@@ -32,7 +32,7 @@ void XVector_reverse_iterator_add(XVector* this_vector,XVector_reverse_iterator*
 		it->data = NULL;
 		return;
 	}
-	it->data = ((char*)(it->data)) - ((XContainerObject*)this_vector)->m_typeSize;//指向上一个元素
+	it->data = ((char*)(it->data)) - ((XContainer*)this_vector)->m_typeSize;//指向上一个元素
 
 }
 

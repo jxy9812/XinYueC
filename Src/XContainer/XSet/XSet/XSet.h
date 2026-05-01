@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XContainer.h"
 #if !defined(XMAP_H)&& XSet_ON
 #define XMAP_H
 #ifdef __cplusplus

@@ -145,13 +145,13 @@ void VXIODevice_deinit(XPLC* plc)
 		XPair* node = XHashMap_iterator_data(&it);
 		XIODevice_deleteLater(XPair_Second(node, XIODevice*));
 	}
-	XContainerObject_delete_base(plc->m_inIO);
+	XContainer_delete_base(plc->m_inIO);
 	plc->m_inIO = NULL;
 	for_each_iterator(plc->m_outIO, XHashMap, it)
 	{
 		XPair* node = XHashMap_iterator_data(&it);
 		XIODevice_deleteLater(XPair_Second(node, XIODevice*));
 	}
-	XContainerObject_delete_base(plc->m_outIO);
+	XContainer_delete_base(plc->m_outIO);
 	plc->m_outIO = NULL;
 }

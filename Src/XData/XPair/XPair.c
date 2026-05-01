@@ -1,5 +1,5 @@
 ﻿#include"XPair.h"
-#include"XContainerObject.h"
+#include"XContainer.h"
 //#include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>

@@ -25,13 +25,13 @@ XVtable* XPriorityMapQueue_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+	XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 	void* table[] = { VXPriorityQueue_push,VXPriorityQueue_pop,VXPriorityQueue_top,VXPriorityQueue_receive,VXPriorityQueue_isFull };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
-	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXPriorityQueue_isEmpty);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainer_IsEmpty, VXPriorityQueue_isEmpty);
 #if SHOWCONTAINERSIZE
 	printf("XPriorityMapQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -41,7 +41,7 @@ void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize, 
 {
 	if (ISNULL(this_queue, "") || ISNULL(typeSize, ""))
 		return;
-	XContainerObject_init(this_queue, typeSize);
+	XContainer_init(this_queue, typeSize);
 	XClassGetVtable(this_queue) = XPriorityMapQueue_class_init();
 	XContainerDataPtr(this_queue)= XMap_create(prioritySize, sizeof(XCircularQueue), priorityCom);
 	XContainerSetDataMoveMethod(GetMap(this_queue), XCircularQueue_move_base);
@@ -210,7 +210,7 @@ static bool getMapQueue(XPriorityMapQueue* this_queue,XCircularQueue** getCq)
 		for (size_t i = 0; i < XContainerSize(GetMap(this_queue)); i++)
 		{
 			cq = XPair_second(((XPair**)this_queue->mapPriority)[i]);
-			if (XContainerObject_isEmpty_base(cq))
+			if (XContainer_isEmpty_base(cq))
 				continue;//跳过当前
 			priorityMap = XPair_first(((XPair**)this_queue->mapPriority)[i]);
 			break;//找到了跳出循环
@@ -282,7 +282,7 @@ void VXPriorityQueue_pop(XPriorityMapQueue* this_queue)
 	//	for (size_t i = 0; i <XContainerSize(GetMap(this_queue)); i++)
 	//	{
 	//		cq = XPair_second(((XPair**)this_queue->mapPriority)[i]);
-	//		if (XContainerObject_isEmpty_base(cq))
+	//		if (XContainer_isEmpty_base(cq))
 	//			continue;//跳过当前
 	//		priorityMap = XPair_first(((XPair**)this_queue->mapPriority)[i]);
 	//		break;//找到了跳出循环

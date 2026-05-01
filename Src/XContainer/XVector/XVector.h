@@ -8,14 +8,14 @@ extern "C" {
 #include<stdbool.h>
 #include<stdint.h>
 #include<stdarg.h>
-#include"XContainerObject.h"
+#include"XContainer.h"
 #include"XVectorTwo_func.h"
 #include"XVector_iterator.h"
 #include"XVector_reverse_iterator.h"
 #define XVECTOR_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XVector))       //XVector容器虚函数表大小
 //XVector虚函数表枚举
 XCLASS_DEFINE_BEGING(XVector)
-XCLASS_DEFINE_ENUM(XVector, Resize) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
+XCLASS_DEFINE_ENUM(XVector, Resize) = XCLASS_VTABLE_GET_SIZE(XContainer),
 XCLASS_DEFINE_ENUM(XVector, Push_Front),
 XCLASS_DEFINE_ENUM(XVector, Push_Back),
 XCLASS_DEFINE_ENUM(XVector, Insert_Array),
@@ -34,7 +34,7 @@ XCLASS_DEFINE_END(XVector)
 
 typedef struct XVector
 {
-	XContainerObject m_class;
+	XContainer m_class;
 }XVector;
 
 /**
@@ -402,16 +402,16 @@ bool  XVector_replace(XVector* this_vector, int64_t index, void* pvValue);
  */
 bool  XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue);
 
-#define XVector_copy_base							XContainerObject_copy_base	
-#define XVector_move_base							XContainerObject_move_base	
-#define XVector_deinit_base							XContainerObject_deinit_base	
-#define XVector_delete_base							XContainerObject_delete_base	
-#define XVector_clear_base							XContainerObject_clear_base	
-#define XVector_isEmpty_base						XContainerObject_isEmpty_base	
-#define XVector_size_base							XContainerObject_size_base	
-#define XVector_capacity_base						XContainerObject_capacity_base
-#define XVector_swap_base							XContainerObject_swap_base	
-#define XVector_typeSize_base						XContainerObject_typeSize_base
+#define XVector_copy_base							XContainer_copy_base	
+#define XVector_move_base							XContainer_move_base	
+#define XVector_deinit_base							XContainer_deinit_base	
+#define XVector_delete_base							XContainer_delete_base	
+#define XVector_clear_base							XContainer_clear_base	
+#define XVector_isEmpty_base						XContainer_isEmpty_base	
+#define XVector_size_base							XContainer_size_base	
+#define XVector_capacity_base						XContainer_capacity_base
+#define XVector_swap_base							XContainer_swap_base	
+#define XVector_typeSize_base						XContainer_typeSize_base
 #define XVector_count_base							XVector_size_base
 #define XVector_length_base							XVector_size_base
 #define XVector_append_base							XVector_push_back_base

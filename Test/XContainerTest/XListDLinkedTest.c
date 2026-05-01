@@ -81,8 +81,8 @@ void XListDLinkedTest()
 	XListDLinked* list = XListDLinked_create(sizeof(int));
 	XContainerSetCompare(list,int_compare);
 	//list->m_class.m_equality = XEquality_int;
-	//XPrintf("%s\n", XContainerObject_empty(list)?"empty":"");
-	//XPrintf("%d\n", XContainerObject_size_base(list));
+	//XPrintf("%s\n", XContainer_empty(list)?"empty":"");
+	//XPrintf("%d\n", XContainer_size_base(list));
 
 	
 

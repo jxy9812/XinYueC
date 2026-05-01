@@ -1,6 +1,6 @@
 ﻿#include"XMazePathfindingAStar.h"
 #include"XClass.h"
-#include"XContainerObject.h"
+#include"XContainer.h"
 #include"XMazePathfindingObject.h"
 #include<string.h>
 #include<stdio.h>

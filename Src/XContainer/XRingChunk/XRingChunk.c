@@ -32,7 +32,7 @@ XVtable* XRingChunk_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         // 继承类
-        XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+        XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 
     //void* table[] = {
     //    VXRingChunk_write,
@@ -47,7 +47,7 @@ XVtable* XRingChunk_class_init()
     //XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
     // 重写的函数
-    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXRingChunk_clear);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXRingChunk_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 
@@ -63,7 +63,7 @@ void XRingChunk_init(XRingChunk* chunk, size_t logicalCapacity)
     if (ISNULL(chunk, "") || ISNULL(logicalCapacity, ""))
         return;
 
-    XContainerObject_init(chunk, sizeof(uint8_t));
+    XContainer_init(chunk, sizeof(uint8_t));
     XClassGetVtable(chunk) = XRingChunk_class_init();
 
     // --- 核心修正点 ---

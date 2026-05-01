@@ -1,6 +1,6 @@
 ﻿#include"XMap.h"
 #if XMap_ON
-#include"XContainerObject.h"
+#include"XContainer.h"
 #include"XPair.h"
 #include"XRedBlackTree.h"
 #include"XAlgorithm.h"

@@ -229,7 +229,7 @@ XString* XString_create_fmt_utf8(const char* format, ...)
 void XString_init(XString* str)
 {
     if (!str) return;
-    XContainerObject_init(str, sizeof(XChar));
+    XContainer_init(str, sizeof(XChar));
     // 初始化原子引用计数（初始值为1）
     str->m_ref_count = (XAtomic_int32_t*)XMemory_malloc(sizeof(XAtomic_int32_t));
     if (str->m_ref_count) 
@@ -1508,7 +1508,7 @@ bool XString_isNull(const XString* str)
         return true;
     }
 
-    // 检查内部数据指针是否未初始化（根据XContainerObject结构特性）
+    // 检查内部数据指针是否未初始化（根据XContainer结构特性）
     // 结合XString_init逻辑，未初始化的对象其数据指针可能为NULL
     if (XContainerDataPtr(str) == NULL) {
         return true;

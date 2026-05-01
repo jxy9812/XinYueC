@@ -99,7 +99,7 @@ XQueue* XQueue_create(size_t typeSize);
 * @note 复用XQueueBase的XQueueBase_isFull_base函数，对于基于链表的队列通常返回false
 */
 #define XQueue_isFull_base				XQueueBase_isFull_base
-// ------------------------------ 容器管理（继承自XQueueBase/XContainerObject） ------------------------------
+// ------------------------------ 容器管理（继承自XQueueBase/XContainer） ------------------------------
 /**
 * @brief 拷贝容器（继承自基类）
 * @note 复用XQueueBase的XQueueBase_copy_base，复制源队列的所有元素

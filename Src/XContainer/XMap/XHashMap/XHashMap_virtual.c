@@ -35,7 +35,7 @@ XVtable* XHashMap_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 		//继承类
-		XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+		XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 	void* table[] = {
 		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find,
 		VXMapBase_keys,VXMapBase_values
@@ -43,11 +43,11 @@ XVtable* XHashMap_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXMap_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXMap_clear);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMap_deinit);
-	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainer_Swap, VXMap_swap);
 #if SHOWCONTAINERSIZE
 	printf("XHash size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -190,7 +190,7 @@ void VXMap_erase(XHashMap* this_hash, const XHashMap_iterator* it, XHashMap_iter
 	// 从哈希表的对应红黑树中删除节点
 	XRBTree_remove(
 		&((XRBTreeNode**)XContainerDataPtr(this_hash))[it->index],  // 对应桶的红黑树根节点地址
-		((XContainerObject*)this_hash)->m_compare,
+		((XContainer*)this_hash)->m_compare,
 		XCompareRuleOne_XMap,                                       // 比较规则
 		XPair_first(current_pair),                                 // 要删除的键
 		XMapBase_deleteNodeData,                                   // 节点数据释放回调
@@ -210,10 +210,10 @@ bool VXMap_remove(XHashMap*this_hash, const void* pvKey)
 	if (XMapBase_isEmpty_base(this_hash))
 		return false;
 	size_t index = this_hash->m_hash(pvKey, ((XMapBase*)this_hash)->m_keyTypeSize) % XContainerCapacity(this_hash);
-	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
+	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
 	if (nodes != NULL)
 	{
-		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, XMapBase_deleteNodeData,this_hash);
+		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, XMapBase_deleteNodeData,this_hash);
 		--XContainerSize(this_hash);
 		return true;
 	}
@@ -244,7 +244,7 @@ bool VXMap_find(XHashMap*this_hash, const void* pvKey, XHashMap_iterator* it)
 		return false;
 	}
 	size_t index = this_hash->m_hash(pvKey, ((XMapBase*)this_hash)->m_keyTypeSize) % XContainerCapacity(this_hash);
-	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainerObject*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
+	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
 	if (nodes == NULL)
 	{
 		if (it)

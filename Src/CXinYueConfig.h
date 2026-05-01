@@ -11,7 +11,7 @@ extern "C" {
 #define DEBUG_ON						0
 #define DEMOTEST						1//测试代码
 /*                容器                              */
-#define XContainerObject_ON				1
+#define XContainer_ON				1
 #define XSet_ON							1
 #define XHashSet_ON						1
 #define XMap_ON							1
@@ -51,7 +51,7 @@ extern "C" {
 #define	XVectorTwo_ON					0
 #define	XStringVector_ON				0
 #endif
-#if !XContainerObject_ON					
+#if !XContainer_ON					
 #define XMap_ON							0
 #define XString_ON						0
 #define	XPriorityQueue_ON				0

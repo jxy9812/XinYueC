@@ -5,21 +5,21 @@
 extern "C" {
 #endif
 #include <stdbool.h>
-#include "XContainerObject.h"
+#include "XContainer.h"
 
 // 虚函数表大小定义，通过基类计算XBitArray所需的虚函数表大小
 #define XBITARRAY_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XBitArray))
 
-// 虚函数表枚举（继承XContainerObject）
+// 虚函数表枚举（继承XContainer）
 // 定义XBitArray类的虚函数索引，用于虚函数表中定位具体函数
 XCLASS_DEFINE_BEGING(XBitArray)
-XCLASS_DEFINE_EXTEND_END(XBitArray, XContainerObject)
+XCLASS_DEFINE_EXTEND_END(XBitArray, XContainer)
 
 // 比特数组结构体
-// 继承自XContainerObject基类，实现比特级别的存储与操作
+// 继承自XContainer基类，实现比特级别的存储与操作
 typedef struct XBitArray
 {
-	XContainerObject m_class; // 继承自容器基类，包含数据、大小、容量等元信息
+	XContainer m_class; // 继承自容器基类，包含数据、大小、容量等元信息
 	XBitOrder m_bitOrder;
 } XBitArray;
 
@@ -167,65 +167,65 @@ const char* XBitArray_bits(const XBitArray* array);
 void XBitArray_truncate(XBitArray* array, int64_t pos);
 
 /**
- * @brief 复用XContainerObject的复制容器内容实现
+ * @brief 复用XContainer的复制容器内容实现
  * @param dest 目标容器
  * @param src 源容器
  */
-#define XBitArray_copy_base          XContainerObject_copy_base
+#define XBitArray_copy_base          XContainer_copy_base
 
 /**
- * @brief 复用XContainerObject的移动容器资源实现
+ * @brief 复用XContainer的移动容器资源实现
  * @param dest 目标容器
  * @param src 源容器（资源会被转移）
  */
-#define XBitArray_move_base          XContainerObject_move_base
+#define XBitArray_move_base          XContainer_move_base
 
 /**
- * @brief 复用XContainerObject的反初始化容器实现
+ * @brief 复用XContainer的反初始化容器实现
  * @param array 要反初始化的比特数组
  */
-#define XBitArray_deinit_base        XContainerObject_deinit_base
+#define XBitArray_deinit_base        XContainer_deinit_base
 
 /**
-* @brief 复用XContainerObject的销毁容器并释放内存实现
+* @brief 复用XContainer的销毁容器并释放内存实现
 * @param array 要销毁的比特数组
 */
-#define XBitArray_delete_base        XContainerObject_delete_base
+#define XBitArray_delete_base        XContainer_delete_base
 
 /**
-* @brief 复用XContainerObject的判断容器是否为空实现
+* @brief 复用XContainer的判断容器是否为空实现
 * @param array 比特数组对象
 * @return 容器为空返回true，否则返回false
 */
-#define XBitArray_isEmpty_base       XContainerObject_isEmpty_base
+#define XBitArray_isEmpty_base       XContainer_isEmpty_base
 
 /**
-* @brief 复用XContainerObject的获取容器中比特数量实现
+* @brief 复用XContainer的获取容器中比特数量实现
 * @param array 比特数组对象
 * @return 容器中当前的比特总数
 */
-#define XBitArray_size_base          XContainerObject_size_base
+#define XBitArray_size_base          XContainer_size_base
 
 /**
-* @brief 复用XContainerObject的获取容器容量（可容纳的比特数）实现
+* @brief 复用XContainer的获取容器容量（可容纳的比特数）实现
 * @param array 比特数组对象
 * @return 容器可容纳的最大比特数
 */
-#define XBitArray_capacity_base      XContainerObject_capacity_base
+#define XBitArray_capacity_base      XContainer_capacity_base
 
 /**
-* @brief 复用XContainerObject的交换两个容器的内容实现
+* @brief 复用XContainer的交换两个容器的内容实现
 * @param a 第一个要交换的容器
 * @param b 第二个要交换的容器
 */
-#define XBitArray_swap_base          XContainerObject_swap_base
+#define XBitArray_swap_base          XContainer_swap_base
 
 /**
-* @brief 复用XContainerObject的获取元素类型大小（此处为1字节）实现
+* @brief 复用XContainer的获取元素类型大小（此处为1字节）实现
 * @param array 比特数组对象
 * @return 元素类型大小（字节）
 */
-#define XBitArray_typeSize_base      XContainerObject_typeSize_base
+#define XBitArray_typeSize_base      XContainer_typeSize_base
 
 /**
 * @brief 简化设置指定位的调用宏（参考QBitArray风格）

@@ -11,18 +11,18 @@ extern "C" {
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "XContainerObject.h"
+#include "XContainer.h"
 
-// XRingBuffer虚函数表大小（继承自XContainerObject）
+// XRingBuffer虚函数表大小（继承自XContainer）
 #define XRINGBUFFER_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XRingBuffer))
 
 // XRingBuffer虚函数表枚举（仅用于扩展，不新增自定义虚函数）
 XCLASS_DEFINE_BEGING(XRingBuffer)
-XCLASS_DEFINE_EXTEND_END(XRingBuffer, XContainerObject)
+XCLASS_DEFINE_EXTEND_END(XRingBuffer, XContainer)
 
 typedef struct XRingBuffer
 {
-    XContainerObject m_class;           ///< 继承自XContainerObject的基础成员
+    XContainer m_class;           ///< 继承自XContainer的基础成员
     struct XVector* m_chunks;           ///< 存储XRingChunk指针的向量
     //size_t m_totalSize;                 ///< 缓冲区中当前存储的总数据量（字节）
     size_t m_currentReadChunk;          ///< 当前用于读取操作的chunk在向量中的索引
@@ -158,7 +158,7 @@ size_t XRingBuffer_writeable(const XRingBuffer* buffer);
  */
 const void* XRingBuffer_peekReadPtr(XRingBuffer* buffer, size_t* size);
 
-// 基础操作宏定义（继承自XContainerObject）
+// 基础操作宏定义（继承自XContainer）
 
 #define XRingBuffer_readable XRingBuffer_available
 /**
@@ -167,7 +167,7 @@ const void* XRingBuffer_peekReadPtr(XRingBuffer* buffer, size_t* size);
  * @param object 目标容器对象指针
  * @param src 源容器对象指针
  */
-#define XRingBuffer_copy_base               XContainerObject_copy_base
+#define XRingBuffer_copy_base               XContainer_copy_base
 
 /**
  * @brief 容器对象移动的基础实现
@@ -175,68 +175,68 @@ const void* XRingBuffer_peekReadPtr(XRingBuffer* buffer, size_t* size);
  * @param object 目标容器对象指针
  * @param src 源容器对象指针
  */
-#define XRingBuffer_move_base               XContainerObject_move_base
+#define XRingBuffer_move_base               XContainer_move_base
 
 /**
  * @brief 容器对象反初始化的基础实现
  * @details 通过虚函数调用释放容器对象占用的资源（不包括对象本身），支持多态。
- * @param Object XContainerObject实例指针
+ * @param Object XContainer实例指针
  */
-#define XRingBuffer_deinit_base             XContainerObject_deinit_base
+#define XRingBuffer_deinit_base             XContainer_deinit_base
 
 /**
  * @brief 容器对象删除的基础实现
  * @details 通过虚函数调用释放容器对象本身及其占用的所有资源，支持多态。
- * @param Object XContainerObject实例指针
+ * @param Object XContainer实例指针
  */
-#define XRingBuffer_delete_base             XContainerObject_delete_base
+#define XRingBuffer_delete_base             XContainer_delete_base
 
 /**
  * @brief 清空容器内容的基础实现
  * @details 通过虚函数调用清空容器内的所有元素，使其大小变为0，支持多态。
- * @param Object XContainerObject实例指针
+ * @param Object XContainer实例指针
  */
-#define XRingBuffer_clear_base              XContainerObject_clear_base
+#define XRingBuffer_clear_base              XContainer_clear_base
 
 /**
  * @brief 检查容器是否为空的基础实现
  * @details 通过虚函数调用检查容器内是否没有任何元素，支持多态。
- * @param Object XContainerObject实例指针（const修饰，不可修改）
+ * @param Object XContainer实例指针（const修饰，不可修改）
  * @return 若容器为空则返回true，否则返回false
  */
-#define XRingBuffer_isEmpty_base            XContainerObject_isEmpty_base
+#define XRingBuffer_isEmpty_base            XContainer_isEmpty_base
 
 /**
  * @brief 获取容器当前大小的基础实现
  * @details 获取XRingBuffer中当前存储的数据总量（字节数）。
- * @param Object XContainerObject实例指针（const修饰，不可修改）
+ * @param Object XContainer实例指针（const修饰，不可修改）
  * @return 容器当前大小（字节数）
  */
-#define XRingBuffer_size_base               XContainerObject_size_base
+#define XRingBuffer_size_base               XContainer_size_base
 
 /**
  * @brief 获取容器容量的基础实现
  * @details **注意**: 对于XRingBuffer，此函数返回0，因为它是动态扩容的，没有固定容量上限。
- * @param Object XContainerObject实例指针（const修饰，不可修改）
+ * @param Object XContainer实例指针（const修饰，不可修改）
  * @return 0
  */
-#define XRingBuffer_capacity_base           XContainerObject_capacity_base
+#define XRingBuffer_capacity_base           XContainer_capacity_base
 
 /**
  * @brief 交换两个容器内容的基础实现
  * @details 通过虚函数调用交换两个容器的所有内容，支持多态。
- * @param Object1 第一个XContainerObject实例指针
- * @param Object2 第二个XContainerObject实例指针
+ * @param Object1 第一个XContainer实例指针
+ * @param Object2 第二个XContainer实例指针
  */
-#define XRingBuffer_swap_base               XContainerObject_swap_base
+#define XRingBuffer_swap_base               XContainer_swap_base
 
 /**
  * @brief 获取容器元素类型大小的基础实现
  * @details 获取XRingBuffer中单个元素的大小（以字节为单位），此处为1（字节流）。
- * @param Object XContainerObject实例指针（const修饰，不可修改）
+ * @param Object XContainer实例指针（const修饰，不可修改）
  * @return 元素类型大小（字节数）
  */
-#define XRingBuffer_typeSize_base           XContainerObject_typeSize_base
+#define XRingBuffer_typeSize_base           XContainer_typeSize_base
 
 #endif // XRingBuffer_ON
 

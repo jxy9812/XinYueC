@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XContainerObject_iterator.h"
+#include"XContainer_iterator.h"
 #include"XVector_reverse_iterator.h"
 XContainerTypeDeclare(XStringList);
 //反向迭代器

@@ -39,18 +39,18 @@ XVtable* XHashSet_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         // 继承类
-        XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+        XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
     void* table[] = {
         VXSet_insert,VXSet_erase, VXSet_remove, VXSet_find,VXSetBase_keys
     };
     // 追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     // 重载
-    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXSet_clear);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXSet_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSet_deinit);
-    //XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXSet_swap);
+    //XVTABLE_OVERLOAD_DEFAULT(EXContainer_Swap, VXSet_swap);
 #if SHOWCONTAINERSIZE
     printf("XHashSet size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -115,7 +115,7 @@ bool VXSet_insert(XHashSet* this_set, const void* key, XCDataCreatMethod dataCre
 
     size_t index = this_set->m_hash(key, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
 
-    XRBTreeNode* current = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
+    XRBTreeNode* current = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key);
     if (current == NULL)
     {//节点不存在
         if (dataCreatMethod)
@@ -169,7 +169,7 @@ void VXSet_erase(XHashSet* this_set, const XHashSet_iterator* it, XHashSet_itera
     // 哈希表存储的是红黑树根节点数组，需传入对应桶的根节点地址
     XRBTree_remove(
         &((XRBTreeNode**)XContainerDataPtr(this_set))[it->index],  // 对应桶的红黑树根节点指针
-        ((XContainerObject*)this_set)->m_compare,
+        ((XContainer*)this_set)->m_compare,
         XCompareRuleOne_XSet,                                       // 比较规则
         current_key,                                               // 要删除的键值
         XSet_freeNodeData,                                         // 节点数据释放回调
@@ -189,10 +189,10 @@ bool VXSet_remove(XHashSet* this_set, const void* key)
     if (XSetBase_isEmpty_base(this_set))
         return false;
     size_t index = this_set->m_hash(key, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
-    XRBTreeNode* node = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
+    XRBTreeNode* node = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key);
     if (node != NULL)
     {
-        XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key, XSet_freeNodeData,this_set);
+        XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key, XSet_freeNodeData,this_set);
         --XContainerSize(this_set);
         return true;
     }
@@ -207,7 +207,7 @@ bool VXSet_find(XHashSet* this_set, const void* key,XHashSet_iterator* it)
         return false;
     }
     size_t index = this_set->m_hash(key, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
-    XRBTreeNode* node = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
+    XRBTreeNode* node = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key);
     if (node == NULL)
     {
         if (it)

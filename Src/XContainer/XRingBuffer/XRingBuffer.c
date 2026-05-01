@@ -20,12 +20,12 @@ XVtable* XRingBuffer_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         // 继承类
-        XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+        XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 
     // --- 关键修改: 不再添加 XRingBuffer 自己的 Write/Read 等虚函数 ---
 
     // 重写父类的虚函数
-    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXRingBuffer_clear);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXRingBuffer_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXRingBuffer_deinit);
@@ -53,7 +53,7 @@ void XRingBuffer_init(XRingBuffer* buffer, size_t chunkSize)
     if (ISNULL(buffer, "") || ISNULL(chunkSize, ""))
         return;
 
-    XContainerObject_init(buffer, sizeof(uint8_t));
+    XContainer_init(buffer, sizeof(uint8_t));
     XClassGetVtable(buffer) = XRingBuffer_class_init();
 
     // 创建chunks向量

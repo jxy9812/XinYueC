@@ -51,7 +51,7 @@ XVtable* XListSLinkedAtomic_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         // 继承类
-        XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+        XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 
     void* table[] = {
         // 插入操作
@@ -72,8 +72,8 @@ XVtable* XListSLinkedAtomic_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXListAtomic_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXListAtomic_clear);
-    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXListSLinkedAtomic_swap);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXListAtomic_clear);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Swap, VXListSLinkedAtomic_swap);
 #if SHOWCONTAINERSIZE
     printf("XListSLinkedAtomic size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

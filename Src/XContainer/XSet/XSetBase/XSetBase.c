@@ -2,7 +2,7 @@
 #if XSet_ON
 XVtable* XSetBase_class_init()
 {
-    return XContainerObject_class_init();
+    return XContainer_class_init();
 }
 
 void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XCompare compare)
@@ -19,7 +19,7 @@ void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XCompare compar
         printf("compare比较函数NULL");
         return;
     }
-    XContainerObject_init(&this_set->m_class, keyTypeSize);
+    XContainer_init(&this_set->m_class, keyTypeSize);
     XClassGetVtable(this_set) = XSetBase_class_init();
     XContainerTypeSize(this_set)= keyTypeSize;
     XContainerSetCompare(this_set,compare);

@@ -35,7 +35,7 @@ void XVector_iterator_add(XVector* this_vector,XVector_iterator*it)
 		it->data = NULL;
 		return;
 	}
-	it->data = ((char*)(it->data)) + ((XContainerObject*)this_vector)->m_typeSize;//指向下一个元素
+	it->data = ((char*)(it->data)) + ((XContainer*)this_vector)->m_typeSize;//指向下一个元素
 }
 
 bool XVector_iterator_equality(XVector_iterator* itFirst, XVector_iterator* itSecond)

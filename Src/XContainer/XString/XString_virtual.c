@@ -37,7 +37,7 @@ static void VXString_Erase(XString* str, const XString_iterator* it, XString_ite
 static void VXClass_copy(XString* object, const XString* src);
 static void VXClass_move(XString* object, XString* src);
 static void VXClass_deinit(XString* str);
-static void VXContainerObject_clear(XString* str);
+static void VXContainer_clear(XString* str);
 
 // 1. 获取指定位置的Unicode码点
 static XChar VXString_At(const XString* str, size_t index)
@@ -274,11 +274,11 @@ static void VXClass_deinit(XString* str)
     XContainerDataPtr(str) = NULL;
     XContainerSize(str) = 0;
     XContainerCapacity(str) =0;
-    //XVtableGetFunc(XContainerObject_class_init(), EXClass_Deinit, void(*)(XClass*))((XClass*)str);
+    //XVtableGetFunc(XContainer_class_init(), EXClass_Deinit, void(*)(XClass*))((XClass*)str);
 }
 
 // 容器方法：清空
-static void VXContainerObject_clear(XString* str)
+static void VXContainer_clear(XString* str)
 {
     if (!str) return;
 
@@ -324,7 +324,7 @@ XVtable* XString_class_init() {
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
 
-        XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+        XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 
     void* vtable_funcs[] = {
         VXString_At,
@@ -340,7 +340,7 @@ XVtable* XString_class_init() {
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXContainerObject_clear);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXContainer_clear);
 
 #if SHOWCONTAINERSIZE
     printf("XString vtable size: %d\n", XSTRING_VTABLE_SIZE);

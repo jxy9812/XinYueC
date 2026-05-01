@@ -37,7 +37,7 @@ void XBitArray_init(XBitArray* array, size_t initialBitCount)
 {
     if (!array) return;
     // 初始化基类（类型大小设为1，便于按字节管理）
-    XContainerObject_init(array, 1);
+    XContainer_init(array, 1);
     XClassGetVtable(array) = XBitArray_class_init();
 
     // 初始容量至少为1字节

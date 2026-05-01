@@ -1509,7 +1509,7 @@ void VXVariant_copy(XVariant* var, const XVariant* src)
 		case XVariantType_JsonObject:
 		case XVariantType_JsonArray:
 		case XVariantType_BsonArray:
-		case XVariantType_BsonDocument:XContainerObject_copy_base(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
+		case XVariantType_BsonDocument:XContainer_copy_base(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
 		case XVariantType_JsonDocument:XJsonDocument_copy(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
 		case XVariantType_JsonValue:XJsonValue_copy(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
 		case XVariantType_BsonValue:XBsonValue_copy(XVariant_DataPtr(var), XVariant_DataPtr(src)); break;
@@ -1588,7 +1588,7 @@ void VXVariant_deinit(XVariant* var)
 		case XVariantType_JsonObject:
 		case XVariantType_JsonArray:
 		case XVariantType_BsonArray:
-		case XVariantType_BsonDocument:XContainerObject_deinit_base(XVariant_DataPtr(var)); break;
+		case XVariantType_BsonDocument:XContainer_deinit_base(XVariant_DataPtr(var)); break;
 		case XVariantType_JsonDocument:XJsonDocument_deinit(XVariant_DataPtr(var)); break;
 		case XVariantType_JsonValue:XJsonValue_deinit(XVariant_DataPtr(var)); break;
 		case XVariantType_BsonValue:XBsonValue_deinit(XVariant_DataPtr(var)); break;
@@ -1641,7 +1641,7 @@ void XVariant_clear(XVariant* var)
 		case XVariantType_JsonObject:
 		case XVariantType_JsonArray:
 		case XVariantType_BsonArray:
-		case XVariantType_BsonDocument:XContainerObject_clear_base(XVariant_DataPtr(var)); break;
+		case XVariantType_BsonDocument:XContainer_clear_base(XVariant_DataPtr(var)); break;
 		case XVariantType_JsonDocument:XJsonDocument_clear(XVariant_DataPtr(var)); break;
 		case XVariantType_JsonValue:XJsonValue_clear(XVariant_DataPtr(var)); break;
 		case XVariantType_BsonValue:XBsonValue_clear(XVariant_DataPtr(var)); break;

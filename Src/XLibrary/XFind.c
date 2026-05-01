@@ -1,5 +1,5 @@
 ﻿#include"XFind.h"
-#include"XContainerObject.h"
+#include"XContainer.h"
 void* XBinarySearch(void* values, size_t n, size_t TypeSize, XCompare compare, void* findVal)
 {
 	{

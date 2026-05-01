@@ -1,6 +1,6 @@
 ﻿#include"CXinYueConfig.h"
-#if !defined(XCONTAINEROBJECT_ITERATOR_H)&& XContainerObject_ON
-#define XCONTAINEROBJECT_ITERATOR_H
+#if !defined(XContainer_ITERATOR_H)&& XContainer_ON
+#define XContainer_ITERATOR_H
 #ifdef __cplusplus
 extern "C" {
 #endif

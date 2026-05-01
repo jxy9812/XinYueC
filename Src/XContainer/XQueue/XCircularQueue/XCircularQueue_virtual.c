@@ -29,14 +29,14 @@ XVtable* XCircularQueue_class_init()
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+	XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 	void* table[] = { VXCircularQueue_push,VXCircularQueue_pop,VXCircularQueue_top,VXCircularQueue_receive,VXCircularQueue_isFull };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty,VXCircularQueue_isEmpty);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXCircularQueue_clear);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Size,VXCircularQueue_getSize);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_IsEmpty,VXCircularQueue_isEmpty);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear,VXCircularQueue_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Size,VXCircularQueue_getSize);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);

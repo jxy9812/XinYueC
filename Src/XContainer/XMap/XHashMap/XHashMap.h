@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XContainer.h"
 #if !defined(XHASHMAP_H)&& XHashMap_ON
 #define XHASHMAP_H
 #ifdef __cplusplus

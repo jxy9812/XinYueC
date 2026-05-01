@@ -37,7 +37,7 @@ XVtable* XListSLinked_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         //继承类
-        XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+        XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 
     void* table[] = {
         //插入
@@ -58,7 +58,7 @@ XVtable* XListSLinked_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXList_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXList_clear);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXList_clear);
 
 #if SHOWCONTAINERSIZE
     printf("XListSLinked size:%d\n", XVtable_size(XVTABLE_DEFAULT));

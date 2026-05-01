@@ -30,7 +30,7 @@ XVtable* XSet_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 		//继承类
-		XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+		XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 	void* table[] = {
 		VXSet_insert,VXSet_erase,VXSet_remove,VXSet_find,
 		VXSetBase_keys
@@ -38,11 +38,11 @@ XVtable* XSet_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXSet_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXSet_clear);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSet_deinit);
-	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXSet_swap);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainer_Swap, VXSet_swap);
 #if SHOWCONTAINERSIZE
 	printf("XSet size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -166,7 +166,7 @@ void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* next)
 	// 从红黑树中删除当前节点
 	XRBTree_remove(
 		&XContainerDataPtr(this_set),                   // 红黑树根节点地址
-		((XContainerObject*)this_set)->m_compare,
+		((XContainer*)this_set)->m_compare,
 		XCompareRuleOne_XSet,									// 比较规则
 		current_key,										// 要删除的键值
 		XSet_freeNodeData,								// 节点数据释放回调
@@ -190,7 +190,7 @@ bool VXSet_remove(XSet* this_set, const void* pvKey)
 	{
 		if (XContainerDataDeinitMethod(this_set) != NULL)
 			XContainerDataDeinitMethod(this_set)(pvKey);
-		XRBTree_remove(&XContainerDataPtr(this_set), ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, pvKey, XSet_freeNodeData, this_set);
+		XRBTree_remove(&XContainerDataPtr(this_set), ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, pvKey, XSet_freeNodeData, this_set);
 
 		--XContainerCapacity(this_set);
 		--XContainerSize(this_set);
@@ -207,7 +207,7 @@ bool VXSet_find(XSet* this_set, const void* key, XSet_iterator* it)
 			*it = XSet_end(this_set);
 		return false;
 	}
-	XTreeNode* node = XRBTree_findNode(XContainerDataPtr(this_set), ((XContainerObject*)this_set)->m_compare, XCompareRuleOne_XSet, key);
+	XTreeNode* node = XRBTree_findNode(XContainerDataPtr(this_set), ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key);
 	if (node == NULL)
 	{
 		if (it)

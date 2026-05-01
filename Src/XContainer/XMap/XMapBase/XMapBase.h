@@ -1,4 +1,4 @@
-﻿#include"XContainerObject.h"
+﻿#include"XContainer.h"
 #if !defined(XMAPBASE_H)&& XMap_ON
 #define XMAPBASE_H
 #ifdef __cplusplus
@@ -10,16 +10,16 @@ extern "C" {
 
 /**
 * @brief XMapBase容器虚函数表大小定义
-* @note 基于XContainerObject的虚函数表大小扩展
+* @note 基于XContainer的虚函数表大小扩展
 */
 #define XMAPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))
 
 /**
 * @brief XMapBase虚函数表枚举定义
-* @note 用于标识XMapBase容器的各类虚函数，继承自XContainerObject
+* @note 用于标识XMapBase容器的各类虚函数，继承自XContainer
 */
 XCLASS_DEFINE_BEGING(XMapBase)
-XCLASS_DEFINE_ENUM(XMapBase, Insert) = XCLASS_VTABLE_GET_SIZE(XContainerObject),  // 插入键值对
+XCLASS_DEFINE_ENUM(XMapBase, Insert) = XCLASS_VTABLE_GET_SIZE(XContainer),  // 插入键值对
 XCLASS_DEFINE_ENUM(XMapBase, Erase),                                           // 通过迭代器删除元素
 XCLASS_DEFINE_ENUM(XMapBase, Remove),                                          // 通过键删除元素
 XCLASS_DEFINE_ENUM(XMapBase, Value),                                           // 通过键获取值
@@ -30,11 +30,11 @@ XCLASS_DEFINE_END(XMapBase)
 
 /**
 * @brief XMapBase结构体定义（映射容器基类）
-* @note 继承自XContainerObject，存储键值对数据，支持键的类型管理和数据操作方法
+* @note 继承自XContainer，存储键值对数据，支持键的类型管理和数据操作方法
 */
 typedef struct XMapBase
 {
-	XContainerObject m_class;                // 继承自容器基类，存储值类型信息及基础容器数据
+	XContainer m_class;                // 继承自容器基类，存储值类型信息及基础容器数据
 	size_t m_keyTypeSize;                    // 键的类型大小（字节数）
 	XCDataCopyMethod m_keyCopyMethod;        // 键的拷贝方法
 	XCDataMoveMethod m_keyMoveMethod;        // 键的移动方法
@@ -209,64 +209,64 @@ XVector* XMapBase_values_base(const XMapBase* this_map);
 // ========================= 继承与工具方法 =========================
 
 /**
-* @brief 拷贝容器（继承自XContainerObject）
-* @note 宏定义，等价于XContainerObject_copy_base
+* @brief 拷贝容器（继承自XContainer）
+* @note 宏定义，等价于XContainer_copy_base
 */
-#define XMapBase_copy_base				XContainerObject_copy_base	
+#define XMapBase_copy_base				XContainer_copy_base	
 
 /**
-* @brief 移动容器资源（继承自XContainerObject）
-* @note 宏定义，等价于XContainerObject_move_base
+* @brief 移动容器资源（继承自XContainer）
+* @note 宏定义，等价于XContainer_move_base
 */
-#define XMapBase_move_base				XContainerObject_move_base	
+#define XMapBase_move_base				XContainer_move_base	
 
 /**
-* @brief 释放容器资源（继承自XContainerObject）
-* @note 宏定义，等价于XContainerObject_deinit_base
+* @brief 释放容器资源（继承自XContainer）
+* @note 宏定义，等价于XContainer_deinit_base
 */
-#define XMapBase_deinit_base			XContainerObject_deinit_base	
+#define XMapBase_deinit_base			XContainer_deinit_base	
 
 /**
-* @brief 删除容器实例（继承自XContainerObject）
-* @note 宏定义，等价于XContainerObject_delete_base
+* @brief 删除容器实例（继承自XContainer）
+* @note 宏定义，等价于XContainer_delete_base
 */
-#define XMapBase_delete_base			XContainerObject_delete_base	
+#define XMapBase_delete_base			XContainer_delete_base	
 
 /**
-* @brief 清空容器元素（继承自XContainerObject）
-* @note 宏定义，等价于XContainerObject_clear_base
+* @brief 清空容器元素（继承自XContainer）
+* @note 宏定义，等价于XContainer_clear_base
 */
-#define XMapBase_clear_base				XContainerObject_clear_base	
+#define XMapBase_clear_base				XContainer_clear_base	
 
 /**
-* @brief 判断容器是否为空（继承自XContainerObject）
-* @note 宏定义，等价于XContainerObject_isEmpty_base
+* @brief 判断容器是否为空（继承自XContainer）
+* @note 宏定义，等价于XContainer_isEmpty_base
 */
-#define XMapBase_isEmpty_base			XContainerObject_isEmpty_base	
+#define XMapBase_isEmpty_base			XContainer_isEmpty_base	
 
 /**
-* @brief 获取容器元素数量（继承自XContainerObject）
-* @note 宏定义，等价于XContainerObject_size_base
+* @brief 获取容器元素数量（继承自XContainer）
+* @note 宏定义，等价于XContainer_size_base
 */
-#define XMapBase_size_base				XContainerObject_size_base	
+#define XMapBase_size_base				XContainer_size_base	
 
 /**
-* @brief 获取容器容量（继承自XContainerObject）
-* @note 宏定义，等价于XContainerObject_capacity_base
+* @brief 获取容器容量（继承自XContainer）
+* @note 宏定义，等价于XContainer_capacity_base
 */
-#define XMapBase_capacity_base			XContainerObject_capacity_base
+#define XMapBase_capacity_base			XContainer_capacity_base
 
 /**
-* @brief 交换两个容器内容（继承自XContainerObject）
-* @note 宏定义，等价于XContainerObject_swap_base
+* @brief 交换两个容器内容（继承自XContainer）
+* @note 宏定义，等价于XContainer_swap_base
 */
-#define XMapBase_swap_base				XContainerObject_swap_base	
+#define XMapBase_swap_base				XContainer_swap_base	
 
 /**
-* @brief 获取值的类型大小（继承自XContainerObject）
-* @note 宏定义，等价于XContainerObject_typeSize_base
+* @brief 获取值的类型大小（继承自XContainer）
+* @note 宏定义，等价于XContainer_typeSize_base
 */
-#define XMapBase_typeSize_base			XContainerObject_typeSize_base
+#define XMapBase_typeSize_base			XContainer_typeSize_base
 
 // ========================= 键方法设置与获取 =========================
 

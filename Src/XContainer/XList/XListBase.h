@@ -16,7 +16,7 @@ extern "C" {
 
 #include<stdbool.h>        /** @brief 布尔类型支持，提供bool、true、false定义 */
 #include<stdio.h>          /** @brief 标准输入输出库，用于调试输出 */
-#include"XContainerObject.h" /** @brief 容器基类，XListBase继承自该类 */
+#include"XContainer.h" /** @brief 容器基类，XListBase继承自该类 */
 #include"XFunctionCallback.h" /** @brief 函数回调支持，提供容器操作所需的回调函数类型 */
 #include"XListBase_iterator.h" /** @brief 链表迭代器定义，支持链表遍历操作 */
 
@@ -33,7 +33,7 @@ extern "C" {
 * @note 枚举值从容器基类虚函数表大小开始，避免索引冲突
 */
 XCLASS_DEFINE_BEGING(XListBase)
-XCLASS_DEFINE_ENUM(XListBase, Push_Front) = XCLASS_VTABLE_GET_SIZE(XContainerObject), /** @brief 头插元素（拷贝/移动）虚函数索引 */
+XCLASS_DEFINE_ENUM(XListBase, Push_Front) = XCLASS_VTABLE_GET_SIZE(XContainer), /** @brief 头插元素（拷贝/移动）虚函数索引 */
 XCLASS_DEFINE_ENUM(XListBase, Push_Front_Node), /** @brief 头插节点虚函数索引 */
 XCLASS_DEFINE_ENUM(XListBase, Push_Back), /** @brief 尾插元素（拷贝/移动）虚函数索引 */
 XCLASS_DEFINE_ENUM(XListBase, Push_Back_Node), /** @brief 尾插节点虚函数索引 */
@@ -56,7 +56,7 @@ XCLASS_DEFINE_END(XListBase)
 */
 typedef struct XListBase
 {
-	XContainerObject m_class; /** @brief 继承自容器基类，包含通用容器属性（如大小、容量、数据操作方法等） */
+	XContainer m_class; /** @brief 继承自容器基类，包含通用容器属性（如大小、容量、数据操作方法等） */
 	//XEquality m_equality;//相等比较函数（预留字段，暂未使用）
 }XListBase;
 
@@ -332,85 +332,85 @@ void XListBase_sort_base(XListBase* this_list, XSortOrder order);
 
 
 /**
-* @brief 通用容器操作接口（继承自XContainerObject）
+* @brief 通用容器操作接口（继承自XContainer）
 */
 
 /**
 * @brief 拷贝链表（深拷贝）
 * @param this_stackOne 目标链表指针
 * @param this_stackTwo 源链表指针
-* @note 宏定义，等价于XContainerObject_copy_base，拷贝所有元素到目标链表
+* @note 宏定义，等价于XContainer_copy_base，拷贝所有元素到目标链表
 */
-#define XListBase_copy_base				XContainerObject_copy_base	
+#define XListBase_copy_base				XContainer_copy_base	
 
 /**
 * @brief 移动链表资源（所有权转移）
 * @param this_stackOne 目标链表指针
 * @param this_stackTwo 源链表指针
-* @note 宏定义，等价于XContainerObject_move_base，转移资源所有权，避免深拷贝
+* @note 宏定义，等价于XContainer_move_base，转移资源所有权，避免深拷贝
 */
-#define XListBase_move_base				XContainerObject_move_base	
+#define XListBase_move_base				XContainer_move_base	
 
 /**
 * @brief 销毁链表内部资源（保留实例本身）
 * @param this_list 链表实例指针
-* @note 宏定义，等价于XContainerObject_deinit_base，释放元素和节点内存，链表实例可复用
+* @note 宏定义，等价于XContainer_deinit_base，释放元素和节点内存，链表实例可复用
 */
-#define XListBase_deinit_base			XContainerObject_deinit_base	
+#define XListBase_deinit_base			XContainer_deinit_base	
 
 /**
 * @brief 删除链表（释放所有资源）
 * @param this_list 链表实例指针
-* @note 宏定义，等价于XContainerObject_delete_base，释放内部资源及链表实例本身
+* @note 宏定义，等价于XContainer_delete_base，释放内部资源及链表实例本身
 */
-#define XListBase_delete_base			XContainerObject_delete_base	
+#define XListBase_delete_base			XContainer_delete_base	
 
 /**
 * @brief 清空链表（保留容量）
 * @param this_list 链表实例指针
-* @note 宏定义，等价于XContainerObject_clear_base，删除所有元素，元素数量置0
+* @note 宏定义，等价于XContainer_clear_base，删除所有元素，元素数量置0
 */
-#define XListBase_clear_base			XContainerObject_clear_base	
+#define XListBase_clear_base			XContainer_clear_base	
 
 /**
 * @brief 判断链表是否为空
 * @param this_list 链表实例指针
 * @return 为空返回true，否则返回false
-* @note 宏定义，等价于XContainerObject_isEmpty_base，通过元素数量判断
+* @note 宏定义，等价于XContainer_isEmpty_base，通过元素数量判断
 */
-#define XListBase_isEmpty_base			XContainerObject_isEmpty_base	
+#define XListBase_isEmpty_base			XContainer_isEmpty_base	
 
 /**
 * @brief 获取链表元素数量
 * @param this_list 链表实例指针
 * @return 元素个数（size_t类型）
-* @note 宏定义，等价于XContainerObject_size_base
+* @note 宏定义，等价于XContainer_size_base
 */
-#define XListBase_size_base				XContainerObject_size_base	
+#define XListBase_size_base				XContainer_size_base	
 
 /**
 * @brief 获取链表容量（最大可容纳元素数）
 * @param this_list 链表实例指针
 * @return 容量值（size_t类型）
-* @note 宏定义，等价于XContainerObject_capacity_base
+* @note 宏定义，等价于XContainer_capacity_base
 */
-#define XListBase_capacity_base			XContainerObject_capacity_base
+#define XListBase_capacity_base			XContainer_capacity_base
 
 /**
 * @brief 交换两个链表的内容
 * @param this_listOne 第一个链表指针
 * @param this_listTwo 第二个链表指针
-* @note 宏定义，等价于XContainerObject_swap_base，交换元素、大小、容量等所有属性
+* @note 宏定义，等价于XContainer_swap_base，交换元素、大小、容量等所有属性
 */
-#define XListBase_swap_base				XContainerObject_swap_base	
+#define XListBase_swap_base				XContainer_swap_base	
 
 /**
 * @brief 获取链表元素类型大小
 * @param this_list 链表实例指针
 * @return 元素类型大小（字节数，size_t类型）
-* @note 宏定义，等价于XContainerObject_typeSize_base
+* @note 宏定义，等价于XContainer_typeSize_base
 */
-#define XListBase_typeSize_base			XContainerObject_typeSize_base
+#define XListBase_typeSize_base			XContainer_typeSize_base
 
 /**
 * @brief C++兼容声明结束

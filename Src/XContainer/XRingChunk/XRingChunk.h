@@ -11,23 +11,23 @@ extern "C" {
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "XContainerObject.h"
+#include "XContainer.h"
 
 #define XRINGCHUNK_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XRingChunk))
 
 // XRingChunk虚函数表枚举
 XCLASS_DEFINE_BEGING(XRingChunk)
-//XCLASS_DEFINE_ENUM(XRingChunk, Write) = XCLASS_VTABLE_GET_SIZE(XContainerObject),
+//XCLASS_DEFINE_ENUM(XRingChunk, Write) = XCLASS_VTABLE_GET_SIZE(XContainer),
 //XCLASS_DEFINE_ENUM(XRingChunk, Read),
 //XCLASS_DEFINE_ENUM(XRingChunk, Peek),
 //XCLASS_DEFINE_ENUM(XRingChunk, Skip),
 //XCLASS_DEFINE_ENUM(XRingChunk, Reset),
 //XCLASS_DEFINE_ENUM(XRingChunk, Available),
 //XCLASS_DEFINE_END(XRingChunk)
-XCLASS_DEFINE_EXTEND_END(XRingChunk, XContainerObject)
+XCLASS_DEFINE_EXTEND_END(XRingChunk, XContainer)
 typedef struct XRingChunk
 {
-    XContainerObject m_class;
+    XContainer m_class;
     size_t m_readPos;   // 读取位置
     size_t m_writePos;  // 写入位置
     size_t m_markPos;   // <<<< 标记位置，用于事务回滚 >>>>
@@ -149,7 +149,7 @@ size_t XRingChunk_unget(XRingChunk* chunk, const void* data, size_t size);
  */
 void XRingChunk_resetReadPosOnly(XRingChunk* chunk);
 
-// 基础操作宏定义（继承自XContainerObject）
+// 基础操作宏定义（继承自XContainer）
 
 /**
  * @brief 容器对象拷贝的基础实现
@@ -157,7 +157,7 @@ void XRingChunk_resetReadPosOnly(XRingChunk* chunk);
  * @param object 目标容器对象指针
  * @param src 源容器对象指针
  */
-#define XRingChunk_copy_base                XContainerObject_copy_base
+#define XRingChunk_copy_base                XContainer_copy_base
 
 /**
 * @brief 容器对象移动的基础实现
@@ -165,68 +165,68 @@ void XRingChunk_resetReadPosOnly(XRingChunk* chunk);
 * @param object 目标容器对象指针
 * @param src 源容器对象指针
 */
-#define XRingChunk_move_base                XContainerObject_move_base
+#define XRingChunk_move_base                XContainer_move_base
 
 /**
 * @brief 容器对象反初始化的基础实现
 * @details 通过虚函数调用释放容器对象占用的资源（不包括对象本身），支持多态。
-* @param Object XContainerObject实例指针
+* @param Object XContainer实例指针
 */
-#define XRingChunk_deinit_base              XContainerObject_deinit_base
+#define XRingChunk_deinit_base              XContainer_deinit_base
 
 /**
 * @brief 容器对象删除的基础实现
 * @details 通过虚函数调用释放容器对象本身及其占用的所有资源，支持多态。
-* @param Object XContainerObject实例指针
+* @param Object XContainer实例指针
 */
-#define XRingChunk_delete_base              XContainerObject_delete_base
+#define XRingChunk_delete_base              XContainer_delete_base
 
 /**
 * @brief 清空容器内容的基础实现
 * @details 通过虚函数调用清空容器内的所有元素，使其大小变为0，支持多态。
-* @param Object XContainerObject实例指针
+* @param Object XContainer实例指针
 */
-#define XRingChunk_clear_base               XContainerObject_clear_base
+#define XRingChunk_clear_base               XContainer_clear_base
 
 /**
 * @brief 检查容器是否为空的基础实现
 * @details 通过虚函数调用检查容器内是否没有任何元素，支持多态。
-* @param Object XContainerObject实例指针（const修饰，不可修改）
+* @param Object XContainer实例指针（const修饰，不可修改）
 * @return 若容器为空则返回true，否则返回false
 */
-#define XRingChunk_isEmpty_base             XContainerObject_isEmpty_base
+#define XRingChunk_isEmpty_base             XContainer_isEmpty_base
 
 /**
 * @brief 获取容器当前大小的基础实现
 * @details 通过虚函数调用获取容器中当前存储的元素数量，支持多态。
-* @param Object XContainerObject实例指针（const修饰，不可修改）
+* @param Object XContainer实例指针（const修饰，不可修改）
 * @return 容器当前大小（元素个数）
 */
-#define XRingChunk_size_base                XContainerObject_size_base
+#define XRingChunk_size_base                XContainer_size_base
 
 /**
 * @brief 获取容器容量的基础实现
 * @details 通过虚函数调用获取容器当前容量，支持多态。
-* @param Object XContainerObject实例指针（const修饰，不可修改）
+* @param Object XContainer实例指针（const修饰，不可修改）
 * @return 容器容量值（size_t类型）
 */
-#define XRingChunk_capacity_base            XContainerObject_capacity_base
+#define XRingChunk_capacity_base            XContainer_capacity_base
 
 /**
 * @brief 交换两个容器内容的基础实现
 * @details 通过虚函数调用交换两个容器的所有内容，支持多态。
-* @param Object1 第一个XContainerObject实例指针
-* @param Object2 第二个XContainerObject实例指针
+* @param Object1 第一个XContainer实例指针
+* @param Object2 第二个XContainer实例指针
 */
-#define XRingChunk_swap_base                XContainerObject_swap_base
+#define XRingChunk_swap_base                XContainer_swap_base
 
 /**
 * @brief 获取容器元素类型大小的基础实现
 * @details 通过虚函数调用获取容器中单个元素的大小（以字节为单位），支持多态。
-* @param Object XContainerObject实例指针（const修饰，不可修改）
+* @param Object XContainer实例指针（const修饰，不可修改）
 * @return 元素类型大小（字节数）
 */
-#define XRingChunk_typeSize_base            XContainerObject_typeSize_base
+#define XRingChunk_typeSize_base            XContainer_typeSize_base
 
 #endif // XRingChunk_ON
 

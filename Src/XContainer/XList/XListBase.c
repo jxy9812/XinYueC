@@ -4,8 +4,8 @@ void XListBase_init(XListBase* this_list, size_t typeSize)
 {
 	if (ISNULL(this_list, "") || ISNULL(typeSize, ""))
 		return;
-	XContainerObject_init(this_list, typeSize);
-	XClassGetVtable(this_list) = XContainerObject_class_init();
+	XContainer_init(this_list, typeSize);
+	XClassGetVtable(this_list) = XContainer_class_init();
 	//this_list->m_equality = NULL;
 }
 bool XListBase_push_front_node_base(XListBase* this_list, XListBaseNode* node)

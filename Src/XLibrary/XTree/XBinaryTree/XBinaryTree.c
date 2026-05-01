@@ -2,7 +2,7 @@
 #include"XStack.h"
 size_t XBTreeNode_typeSize()
 {
-	return sizeof(XBTreeNode) + sizeof(struct XTreeNode*) *3;
+	return sizeof(XBTreeNode) + sizeof(struct XTreeNode*) *2;
 }
 XBTreeNode* XBTreeNode_create(const char* pvData, const size_t typeSize)
 {
@@ -18,7 +18,7 @@ void XBTreeNode_init(XBTreeNode* node, size_t treeNodeSize, const char* pvData, 
 {
 	if (node==NULL|| typeSize == 0)
 		return ;
-	XTreeNode_init(node,3, treeNodeSize,pvData, typeSize);
+	XTreeNode_init(node,2, treeNodeSize,pvData, typeSize);
 }
 
 //前序

@@ -4,7 +4,7 @@
 #include"XString.h"
 XVtable* XMapBase_class_init()
 {
-	return XContainerObject_class_init();
+	return XContainer_class_init();
 }
 
 void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare)
@@ -18,7 +18,7 @@ void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t va
 	}
 	if (ISNULL(this_map, ""))
 		return NULL;
-	XContainerObject_init(&this_map->m_class, valTypeSize);
+	XContainer_init(&this_map->m_class, valTypeSize);
 	XClassGetVtable(this_map) = XMapBase_class_init();
 	this_map->m_keyTypeSize = keyTypeSize;
 	/*this_map->m_KeyEquality = KeyEquality;

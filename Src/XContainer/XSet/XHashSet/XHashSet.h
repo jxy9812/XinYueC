@@ -1,4 +1,4 @@
-﻿#include "XContainerObject.h"
+﻿#include "XContainer.h"
 #if !defined(XHASHSET_H) && XHashSet_ON
 #define XHASHSET_H
 #ifdef __cplusplus

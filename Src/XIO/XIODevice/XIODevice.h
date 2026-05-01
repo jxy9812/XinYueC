@@ -9,7 +9,7 @@ extern "C" {
 //缓冲区大小
 #define XBuffSize						256
 #define XIODevice_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XIODevice))       //XIODeviceBase虚函数表大小
-//XContainerObject虚函数表枚举
+//XContainer虚函数表枚举
 XCLASS_DEFINE_BEGING(XIODevice)
 XCLASS_DEFINE_ENUM(XIODevice, Open) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XIODevice, Close),

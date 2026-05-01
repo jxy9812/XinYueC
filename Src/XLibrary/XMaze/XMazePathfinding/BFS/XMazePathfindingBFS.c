@@ -1,6 +1,6 @@
 ﻿#include"XMazePathfindingBFS.h"
 #include"XClass.h"
-#include"XContainerObject.h"
+#include"XContainer.h"
 #include"XMazePathfindingObject.h"
 #include<stdio.h>
 #include<stdlib.h>

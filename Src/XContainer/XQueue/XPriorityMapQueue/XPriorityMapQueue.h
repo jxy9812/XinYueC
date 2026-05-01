@@ -24,7 +24,7 @@ extern "C" {
 */
 typedef struct XPriorityMapQueue
 {
-	XContainerObject m_class;///< 容器基类成员，提供通用容器功能
+	XContainer m_class;///< 容器基类成员，提供通用容器功能
 	XCDataCopyMethod m_priorityCopyMethod;///< 优先级数据拷贝函数指针
 	XCDataMoveMethod m_priorityMoveMethod;///< 优先级数据移动函数指针
 	XCDataDeinitMethod m_priorityDeinitMethod;///< 优先级数据释放函数指针

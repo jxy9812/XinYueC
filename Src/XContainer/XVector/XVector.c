@@ -437,31 +437,31 @@ XVector* XVector_create_text_fmt(bool appendNull, const char* format, ...)
 
 //void XVector_delete_base(XVector* this_vector)
 //{
-//	return XContainerObject_delete_base(this_vector);
+//	return XContainer_delete_base(this_vector);
 //}
 //
 //bool XVector_isEmpty_base(const XVector* this_vector)
 //{
-//	return XContainerObject_isEmpty_base(this_vector);
+//	return XContainer_isEmpty_base(this_vector);
 //}
 //
 //size_t XVector_size_base(const XVector* this_vector)
 //{
-//	return XContainerObject_size_base(this_vector);
+//	return XContainer_size_base(this_vector);
 //}
 //
 //size_t XVector_capacity_base(const XVector* this_vector)
 //{
-//	return XContainerObject_capacity_base(this_vector);
+//	return XContainer_capacity_base(this_vector);
 //}
 //
 //void XVector_swap_base(XVector* this_vectorOne, XVector* this_vectorTwo)
 //{
-//	XContainerObject_swap_base(this_vectorOne,this_vectorTwo);
+//	XContainer_swap_base(this_vectorOne,this_vectorTwo);
 //}
 //
 //size_t XVector_typeSize_base(XVector* this_vector)
 //{
-//	return XContainerObject_typeSize_base(this_vector);
+//	return XContainer_typeSize_base(this_vector);
 //}
 #endif

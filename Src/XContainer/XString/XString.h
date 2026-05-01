@@ -1,4 +1,4 @@
-﻿#include "XContainerObject.h"
+﻿#include "XContainer.h"
 #if !defined(XSTRING_H) && XString_ON
 #define XSTRING_H
 #ifdef __cplusplus
@@ -12,11 +12,11 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 /**
- * @brief XString 类虚函数表枚举（继承自 XContainerObject）
+ * @brief XString 类虚函数表枚举（继承自 XContainer）
  * @details 定义 XString 类支持的所有虚函数索引，用于虚函数调用机制
  */
 XCLASS_DEFINE_BEGING(XString)
-XCLASS_DEFINE_ENUM(XString, At) = XCLASS_VTABLE_GET_SIZE(XContainerObject),// 获取指定位置的 XChar 字符
+XCLASS_DEFINE_ENUM(XString, At) = XCLASS_VTABLE_GET_SIZE(XContainer),// 获取指定位置的 XChar 字符
 XCLASS_DEFINE_ENUM(XString, PushBack),      // 尾插单个 XChar 字符
 XCLASS_DEFINE_ENUM(XString, PopBack),       // 尾删单个字符
 XCLASS_DEFINE_ENUM(XString, PushFront),     // 头插单个 XChar 字符
@@ -52,7 +52,7 @@ typedef struct XStringCache
  */
 typedef struct XString
 {
-    XContainerObject parent;  // 继承容器基类，m_data 指向 XChar 数组（UTF-16 存储）
+    XContainer parent;  // 继承容器基类，m_data 指向 XChar 数组（UTF-16 存储）
     XAtomic_int32_t* m_ref_count;         // 引用计数：用于 Copy-On-Write 机制的资源管理
     XStringCache* m_cache;           // 编码缓存数组：存储各类型编码的转换结果（索引对应 XStringCacheType）
 } XString;
@@ -163,24 +163,24 @@ void XString_init(XString* str);
   * - 使用完毕后需根据XString的内存管理规则进行清理（如调用XString_deinit等）
   */
 #define XString_Init_Fmt_Utf8(name,utf8_format, ...)     XString _##name,*name=&_##name;XString_init(name);XString_assign_fmt_utf8(name,utf8_format,##__VA_ARGS__)
-     // -------------------------- 基础操作宏（继承自 XContainerObject） --------------------------
+     // -------------------------- 基础操作宏（继承自 XContainer） --------------------------
 
-#define XString_copy_base				    XContainerObject_copy_base	// 复制对象（基础实现）
-#define XString_move_base				    XContainerObject_move_base	// 移动对象（基础实现）
-#define XString_deinit_base					XContainerObject_deinit_base	// 销毁对象（基础实现）
-#define XString_delete_base					XContainerObject_delete_base	// 删除对象（释放内存）
-#define XString_clear_base				    XContainerObject_clear_base	// 清空字符串内容
-#define XString_isEmpty_base				XContainerObject_isEmpty_base	// 判断字符串是否为空
-#define XString_size_base					XContainerObject_size_base	// 获取字符串长度（字符数）
-#define XString_capacity_base				XContainerObject_capacity_base	// 获取当前容量（字符数）
-#define XString_swap_base				    XContainerObject_swap_base	// 交换两个字符串内容
-#define XString_typeSize_base				XContainerObject_typeSize_base	// 获取单个元素（XChar）的大小
+#define XString_copy_base				    XContainer_copy_base	// 复制对象（基础实现）
+#define XString_move_base				    XContainer_move_base	// 移动对象（基础实现）
+#define XString_deinit_base					XContainer_deinit_base	// 销毁对象（基础实现）
+#define XString_delete_base					XContainer_delete_base	// 删除对象（释放内存）
+#define XString_clear_base				    XContainer_clear_base	// 清空字符串内容
+#define XString_isEmpty_base				XContainer_isEmpty_base	// 判断字符串是否为空
+#define XString_size_base					XContainer_size_base	// 获取字符串长度（字符数）
+#define XString_capacity_base				XContainer_capacity_base	// 获取当前容量（字符数）
+#define XString_swap_base				    XContainer_swap_base	// 交换两个字符串内容
+#define XString_typeSize_base				XContainer_typeSize_base	// 获取单个元素（XChar）的大小
 
 /**
  * @brief 获取字符串长度（字符数，不含终止符）
  * @note 等价于 XString_size_base，为字符串场景提供更直观的命名
  */
-#define XString_length_base                 XContainerObject_size_base
+#define XString_length_base                 XContainer_size_base
 
 // -------------------------- 字符串数据访问函数 --------------------------
 

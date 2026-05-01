@@ -34,7 +34,7 @@ XVtable* XVector_class_init()
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+	XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 	void* table[] = {
 		VXVector_resize,
 		//插入
@@ -52,7 +52,7 @@ XVtable* XVector_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重写的函数
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXVector_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear,VXVector_clear);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 #if SHOWCONTAINERSIZE
@@ -65,7 +65,7 @@ void XVector_init(XVector* this_vector, size_t typeSize)
 {
 	if (ISNULL(this_vector, "") || ISNULL(typeSize, ""))
 		return;
-	XContainerObject_init(this_vector, typeSize);
+	XContainer_init(this_vector, typeSize);
 	XClassGetVtable(this_vector)=XVector_class_init();
 	//this_vector->m_equality = NULL;
 }
@@ -193,7 +193,7 @@ bool VXVector_resize(XVector* this_vector, size_t size)
 	size_t capacity =XContainerCapacity(this_vector);//当前容器的最大数量
 	size_t count = XContainerSize(this_vector);//当前容器使用的数量
 	size_t TypeSize = XContainerTypeSize(this_vector);//数据类型大小
-	//XContainerObject* object = this_vector;//数据父类
+	//XContainer* object = this_vector;//数据父类
 	if (size <= count)
 	{
 		for (size_t i = 0; i < count - size; i++)
@@ -243,7 +243,7 @@ bool VXVector_resize(XVector* this_vector, size_t size)
 }
 bool VXVector_push_front(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod)
 {
-	if (XContainerObject_isEmpty_base(this_vector))
+	if (XContainer_isEmpty_base(this_vector))
 		return XVector_push_back_base(this_vector, pvValue);
 	else
 		return XVector_insert(this_vector, 0, pvValue);
@@ -348,7 +348,7 @@ bool VXVector_append_array(XVector* this_vector, const void* begin, size_t n, XC
 void VXVector_pop_front(XVector* this_vector)//删除向量中第一个元素
 {
 	VXVector_remove(this_vector, 0, 1);
-	//if (VXContainerObject_isEmpty(this_vector))
+	//if (VXContainer_isEmpty(this_vector))
 	//	return NULL;
 	//--XContainerSize(this_vector);
 	//if (XContainerSize(this_vector) > 0)
@@ -364,7 +364,7 @@ void VXVector_pop_front(XVector* this_vector)//删除向量中第一个元素
 }
 void VXVector_pop_back(XVector* this_vector)//删除向量中最后一个元素
 {
-	if (XContainerObject_isEmpty_base(this_vector))
+	if (XContainer_isEmpty_base(this_vector))
 		return ;
 	if (XContainerDataDeinitMethod(this_vector) != NULL)
 		XContainerDataDeinitMethod(this_vector)(XVector_back_base(this_vector));
@@ -406,7 +406,7 @@ void VXVector_erase(XVector* this_vector, const XVector_iterator* it, XVector_it
 }
 void VXVector_remove(XVector* this_vector, int64_t index, int64_t n)//删除数据 n<0 后面全部删除
 {
-	if (XContainerObject_isEmpty_base(this_vector))
+	if (XContainer_isEmpty_base(this_vector))
 		return;
 	size_t size = XContainerSize(this_vector);
 
@@ -435,7 +435,7 @@ void VXVector_remove(XVector* this_vector, int64_t index, int64_t n)//删除数�
 }
 void VXVector_clear(XVector* this_vector)//清空vector的数组
 {
-	if (XContainerObject_isEmpty_base(this_vector))
+	if (XContainer_isEmpty_base(this_vector))
 		return;
 	//释放数据
 	if (XContainerDataDeinitMethod(this_vector) != NULL)
@@ -489,13 +489,13 @@ void* VXVector_at(const XVector* this_vector, int64_t index)// 返回元素的�
 }
 void* VXVector_front(const XVector* this_vector)//返回向量头指针，指向第一个元素
 {
-	if (XContainerObject_isEmpty_base(this_vector))
+	if (XContainer_isEmpty_base(this_vector))
 		return NULL;
 	return XContainerDataPtr(this_vector);
 }
 void* VXVector_back(const XVector* this_vector)//返回向量尾指针，指向向量最后一个元素
 {
-	if (XContainerObject_isEmpty_base(this_vector))
+	if (XContainer_isEmpty_base(this_vector))
 		return NULL;
 	if (XContainerSize(this_vector) == 1)
 		return VXVector_front(this_vector);

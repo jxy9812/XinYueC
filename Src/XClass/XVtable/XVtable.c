@@ -1,5 +1,5 @@
 ﻿#include"XVtable.h"
-#include"XContainerObject.h"
+#include"XContainer.h"
 #include"XClass.h"
 #include<stdlib.h>
 #include<string.h>

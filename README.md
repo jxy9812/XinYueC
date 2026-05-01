@@ -27,7 +27,7 @@ XinYueC 是一个使用纯 C 语言实现的、功能丰富的面向对象库。
 
 ## 核心架构
 
-XinYueC 的核心架构围绕几个关键概念构建：`XClass`（基类）、`XContainerObject`（容器基类）、`XObject`（事件处理对象）以及事件循环系统。
+XinYueC 的核心架构围绕几个关键概念构建：`XClass`（基类）、`XContainer`（容器基类）、`XObject`（事件处理对象）以及事件循环系统。
 
 ### XClass: 面向对象的基石
 
@@ -86,17 +86,17 @@ XinYueC 的核心架构围绕几个关键概念构建：`XClass`（基类）、`
 
 ## 容器系统
 
-容器系统是 XinYueC 的重要组成部分，所有容器都继承自 `XContainerObject` 基类。
+容器系统是 XinYueC 的重要组成部分，所有容器都继承自 `XContainer` 基类。
 
-### XContainerObject: 容器基类
+### XContainer: 容器基类
 
-`XContainerObject` 为所有派生容器（如 `XList`, `XVector`, `XMap`）提供了统一的接口和基础功能。
+`XContainer` 为所有派生容器（如 `XList`, `XVector`, `XMap`）提供了统一的接口和基础功能。
 
 #### 结构体定义
 
 ```
-1// XContainerObject.h
-2typedef struct XContainerObject {
+1// XContainer.h
+2typedef struct XContainer {
 3    XClass m_class;  // 虚函数表
 4
 5    // 回调函数：定义了如何操作容器内的元素
@@ -109,26 +109,26 @@ XinYueC 的核心架构围绕几个关键概念构建：`XClass`（基类）、`
 12    size_t m_capacity;        // 容器容量
 13    size_t m_size;            // 当前元素数量
 14    size_t m_typeSize;        // 元素类型大小
-15} XContainerObject;
+15} XContainer;
 ```
 
 #### 核心 API
 
-- **`void XContainerObject_init(XContainerObject\* Object, size_t typeSize)`**: 初始化容器，`typeSize` 是单个元素的字节大小。
-- **`size_t XContainerObject_size_base(const XContainerObject\* Object)`**: 返回容器元素数量。
-- **`bool XContainerObject_isEmpty_base(const XContainerObject\* Object)`**: 判断容器是否为空。
-- **`void XContainerObject_clear_base(XContainerObject\* Object)`**: 清空容器内容。
-- **`void XContainerObject_swap_base(XContainerObject\* ObjectOne, XContainerObject\* ObjectTwo)`**: 交换两个容器的内容。
+- **`void XContainer_init(XContainer\* Object, size_t typeSize)`**: 初始化容器，`typeSize` 是单个元素的字节大小。
+- **`size_t XContainer_size_base(const XContainer\* Object)`**: 返回容器元素数量。
+- **`bool XContainer_isEmpty_base(const XContainer\* Object)`**: 判断容器是否为空。
+- **`void XContainer_clear_base(XContainer\* Object)`**: 清空容器内容。
+- **`void XContainer_swap_base(XContainer\* ObjectOne, XContainer\* ObjectTwo)`**: 交换两个容器的内容。
 
 #### 便捷宏
 
 为了简化使用，提供了大量宏：
 
 ```
-1#define XContainerSize(Object) (((XContainerObject*)(Object))->m_size)
+1#define XContainerSize(Object) (((XContainer*)(Object))->m_size)
 2#define XContainerIsEmpty(Object) (XContainerSize(Object) == 0)
 3#define XContainerSetDataCopyMethod(Object, method) \
-4    (((XContainerObject*)(Object))->m_dataCopyMethod = method)
+4    (((XContainer*)(Object))->m_dataCopyMethod = method)
 5// ... 更多宏
 ```
 

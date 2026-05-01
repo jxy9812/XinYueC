@@ -46,14 +46,14 @@ XVtable* XQueue_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 		//继承类
-		XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+		XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 	void* table[] = { VXQueue_push,VXQueue_pop,VXQueue_top,VXQueue_receive,VXQueue_isFull };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_IsEmpty, VXQueue_isEmpty);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXQueue_clear);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Size, VXQueue_getSize);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_IsEmpty, VXQueue_isEmpty);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXQueue_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Size, VXQueue_getSize);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 #if SHOWCONTAINERSIZE
@@ -66,7 +66,7 @@ XVtable* XQueue_class_init()
 
 bool VXQueue_isEmpty(const XQueue* this_queue)
 {
-	return XVtableGetFunc(XListSLinked_class_init(), EXContainerObject_IsEmpty, bool (*)(XListSLinked*))(this_queue);
+	return XVtableGetFunc(XListSLinked_class_init(), EXContainer_IsEmpty, bool (*)(XListSLinked*))(this_queue);
 }
 
 bool VXQueue_isFull(const XQueue* this_queue)
@@ -76,12 +76,12 @@ bool VXQueue_isFull(const XQueue* this_queue)
 
 void VXQueue_clear(XQueue* this_queue)
 {
-	XVtableGetFunc(XListSLinked_class_init(), EXContainerObject_Clear, void (*)(XListSLinked*))(this_queue);
+	XVtableGetFunc(XListSLinked_class_init(), EXContainer_Clear, void (*)(XListSLinked*))(this_queue);
 }
 
 size_t VXQueue_getSize(const XQueue* this_queue)
 {
-	return XVtableGetFunc(XListSLinked_class_init(), EXContainerObject_Size, size_t (*)(XListSLinked*))(this_queue);
+	return XVtableGetFunc(XListSLinked_class_init(), EXContainer_Size, size_t (*)(XListSLinked*))(this_queue);
 }
 
 bool VXQueue_push(XQueue* this_queue, void* pvValue, XCDataCreatMethod dataCreatMethod)

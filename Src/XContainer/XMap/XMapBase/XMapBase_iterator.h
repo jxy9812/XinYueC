@@ -4,7 +4,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include"XContainerObject_iterator.h"
+#include"XContainer_iterator.h"
 #include"XFunctionCallback.h"
 XContainerTypeDeclare(XMapBase);
 XContainerTypeDeclare(XPair);

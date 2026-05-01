@@ -6,7 +6,7 @@ extern "C" {
 #include"XClass.h"
 #include"XPoint.h"
 #include"XCompare.h"
-#include"XContainerObject.h"
+#include"XContainer.h"
 #include<stdio.h>
 #include<stdint.h>
 #include<stdbool.h>

@@ -39,7 +39,7 @@ XVtable* XListDLinked_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         //继承类
-        XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+        XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 
     void* table[] = {
         //插入
@@ -60,7 +60,7 @@ XVtable* XListDLinked_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXList_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear, VXList_clear);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXList_clear);
 
 #if SHOWCONTAINERSIZE
     printf("XListDLinked size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -259,7 +259,7 @@ size_t VXList_insert_array(XListDLinked* this_list, XListDNode* curNode, const v
 //根据节点指针删除
 static bool removeNode(XListDLinked* this_list, XListDNode* node)
 {
-    if (ISNULL(node, "") || XContainerObject_isEmpty_base(this_list))
+    if (ISNULL(node, "") || XContainer_isEmpty_base(this_list))
         return false;
     XListDNode* nextNode = node->next;//下一个节点
     XListDNode* prevNode = node->prev;//上一个节点
@@ -288,7 +288,7 @@ static bool removeNode(XListDLinked* this_list, XListDNode* node)
 //头删
 bool VXList_pop_front(XListDLinked* this_list)
 {
-    if (XContainerObject_isEmpty_base(this_list))
+    if (XContainer_isEmpty_base(this_list))
         return false;
     removeNode(this_list, XContainerDataPtr(this_list));
     return true;
@@ -296,7 +296,7 @@ bool VXList_pop_front(XListDLinked* this_list)
 //尾删
 bool VXList_pop_back(XListDLinked* this_list)
 {
-    if (XContainerObject_isEmpty_base(this_list))
+    if (XContainer_isEmpty_base(this_list))
         return false;
     removeNode(this_list, XContainerData(this_list, XListDNode*)->prev);
     return true;
@@ -340,7 +340,7 @@ bool VXList_remove(XListDLinked* this_list, void* pvData)
 
 void VXList_clear(XListDLinked* this_list)
 {
-    if (XContainerObject_isEmpty_base(this_list))
+    if (XContainer_isEmpty_base(this_list))
         return;
     XListBase* list = this_list;
     XListDNode* p = list->m_class.m_data;

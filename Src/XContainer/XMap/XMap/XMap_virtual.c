@@ -33,7 +33,7 @@ XVtable* XMap_class_init()
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XContainerObject_class_init());
+	XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
 	void* table[] = {
 		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find,
 		VXMapBase_keys,VXMapBase_values
@@ -41,11 +41,11 @@ XVtable* XMap_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Clear,VXMap_clear);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear,VXMap_clear);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit,VXMap_deinit);
-	//XVTABLE_OVERLOAD_DEFAULT(EXContainerObject_Swap, VXMap_swap);
+	//XVTABLE_OVERLOAD_DEFAULT(EXContainer_Swap, VXMap_swap);
 #if SHOWCONTAINERSIZE
 	printf("XMap size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif // SHOWCONTAINERSIZE
@@ -134,7 +134,7 @@ void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)
 	// 从红黑树中删除当前节点
 	XRBTree_remove(
 		&XContainerDataPtr(this_map),
-		((XContainerObject*)this_map)->m_compare,
+		((XContainer*)this_map)->m_compare,
 		XCompareRuleOne_XMap,
 		XPair_first(current_pair),  // 传入键用于查找删除
 		XMapBase_deleteNodeData,    // 释放节点数据的回调
@@ -154,10 +154,10 @@ bool VXMap_remove(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return false;
-	XRBTreeNode* nodes = XRBTree_findNode(XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key);
+	XRBTreeNode* nodes = XRBTree_findNode(XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
-		XRBTree_remove(&XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key, XMapBase_deleteNodeData,this_map);
+		XRBTree_remove(&XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key, XMapBase_deleteNodeData,this_map);
 		--XContainerCapacity(this_map);
 		--XContainerSize(this_map);
 		return true;
@@ -188,7 +188,7 @@ bool VXMap_find(XMap* this_map, const void* key, XMap_iterator* it)
 			*it = XMap_end(this_map);
 		return false;
 	}
-	XTreeNode* nodes = XRBTree_findNode(XContainerDataPtr(this_map), ((XContainerObject*)this_map)->m_compare, XCompareRuleOne_XMap, key);
+	XTreeNode* nodes = XRBTree_findNode(XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key);
 	if (nodes == NULL)
 	{
 		if (it)
