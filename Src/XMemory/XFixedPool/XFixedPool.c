@@ -8,27 +8,16 @@
 #define XFIXEDPOOL_BLOCK_ALLOCATED ((void*)(uintptr_t)(-1))
 
 // 计算能容纳 [0, max_value] 所需的最少位数
-// 例如: max_value=0 -> 1 bit, max_value=1 -> 1 bit, max_value=2 -> 2 bits, max_value=63 -> 6 bits, max_value=64 -> 7 bits.
-static size_t calculate_bits_needed_for_max(uintptr_t max_value) {
+static size_t calculate_bits_needed_for_max(size_t max_value) {
     if (max_value == 0) {
         return 1;
     }
-
-    // 我们需要找到最小的 n，使得 (1 << n) > max_value
-    // 这等价于 ceil(log2(max_value + 1))
     size_t bits = 0;
-    uintptr_t value = max_value;
-
-    // 标准的位扫描方法
+    size_t value = max_value;
     while (value > 0) {
         bits++;
         value >>= 1;
     }
-
-    // 特殊情况：如果 max_value+1 刚好是2的幂，上面的循环会少算一位
-    // 但我们可以通过检查 (1ULL << (bits-1)) == (max_value+1) 来判断
-    // 不过，对于我们的用途，直接返回 bits 即可，因为它已经足够表示 [0, max_value]
-    // 因为 (1 << bits) >= max_value + 1
     return bits;
 }
 
@@ -49,14 +38,14 @@ static size_t calculate_internal_block_size(size_t user_block_size)
  */
 static void* get_user_data_ptr(void* internal_block) 
 {
-    return (char*)internal_block + sizeof(void*);
+    return (char*)internal_block + sizeof(size_t);
 }
 
 /**
  * @brief 从用户数据指针恢复内部块地址
  */
 static void* get_internal_block_ptr(void* user_data) {
-    return (char*)user_data - sizeof(void*);
+    return (char*)user_data - sizeof(size_t);
 }
 
 /**
@@ -89,24 +78,22 @@ static void initialize_free_list(XFixedPool* pool) {
 /**
  * @brief 打包索引和版本号
  */
-static inline void* pack_index_version(size_t index, size_t version, XFixedPool* pool) {
-    uintptr_t index_part = index & pool->index_mask;
-    // 移除版本号重置逻辑，利用无符号数自然溢出（永不重置）
-    uintptr_t version_part = (version & pool->version_mask) << pool->index_bits;
-    return (void*)(index_part | version_part);
+static inline size_t pack_index_version(size_t index, size_t version, XFixedPool* pool) {
+    size_t index_part = index & pool->index_mask;
+    size_t version_part = (version & pool->version_mask) << pool->index_bits;
+    return index_part | version_part;
 }
 /**
  * @brief 从打包值中解包出索引
  */
-static inline size_t unpack_index(void* packed, XFixedPool* pool) {
-    return (size_t)((uintptr_t)packed & pool->index_mask);
+static inline size_t unpack_index(size_t packed, XFixedPool* pool) {
+    return packed & pool->index_mask;
 }
 /**
  * @brief 从打包值中解包出版本号
  */
-static inline size_t unpack_version(void* packed, XFixedPool* pool) {
-    uintptr_t shifted = (uintptr_t)packed >> pool->index_bits;
-    return (size_t)(shifted & pool->version_mask);
+static inline size_t unpack_version(size_t packed, XFixedPool* pool) {
+    return (packed >> pool->index_bits) & pool->version_mask;
 }
 
 // ----------------------------------------------------------------------------
@@ -134,20 +121,19 @@ bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t 
 
 
     // --- 关键修改: 计算索引和版本号位数 ---
-    pool->index_bits = calculate_bits_needed_for_max(num_blocks - 1);
-    pool->index_mask = ((uintptr_t)1 << pool->index_bits) - 1;
-    pool->version_mask = ((uintptr_t)1 << (sizeof(void*) * 8 - pool->index_bits)) - 1;
+      pool->index_bits = calculate_bits_needed_for_max(num_blocks - 1);
+      pool->index_mask = (((size_t)1) << pool->index_bits) - 1;
+    pool->version_mask = (((size_t)1) << (sizeof(size_t) * 8 - pool->index_bits)) - 1;
 
-    // 安全检查：确保有足够的版本号位
-    if ((sizeof(void*) * 8 - pool->index_bits) < 16) {
+    if ((sizeof(size_t) * 8 - pool->index_bits) < 16) {
         return false; // ABA风险过高
     }
 
     initialize_free_list(pool);
 
     // --- 初始化打包的头指针 (初始索引为0) ---
-    void* initial_packed = pack_index_version(0, 0, pool);
-    XAtomic_init(pool->free_list_head_packed, initial_packed);
+    size_t initial_packed = pack_index_version(0, 0, pool);
+    XAtomic_init(pool->free_list_head_packed, initial_packed); // XAtomic_init 会处理 size_t
     return true;
 }
 
@@ -160,60 +146,61 @@ void XFixedPool_deinit(XFixedPool* pool) {
 void* XFixedPool_malloc(XFixedPool* pool) {
     if (!pool) return NULL;
 
-    void* old_head_packed=NULL;
-    void* new_head_packed = NULL;
+    size_t old_head_packed;
+    size_t new_head_packed;
     void* old_head_block = NULL;
-    size_t old_head_index=0,new_head_index=0;
+    size_t old_head_index, new_head_index;
 
     do {
         // 1. 读取当前头
-        old_head_packed = XAtomic_load_ptr(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
+        old_head_packed = XAtomic_load_size_t(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
         old_head_index = unpack_index(old_head_packed, pool);
 
         // 2. 检查是否为空
-        if (old_head_index >= pool->num_blocks) 
-        {
+        if (old_head_index >= pool->num_blocks) {
             return NULL;
         }
 
         // 3. 获取旧头块的地址
         old_head_block = get_block_by_index(pool, old_head_index);
 
-        new_head_index = *(volatile size_t*)old_head_block; // 在无锁算法中，非原子读取 next 是安全的，因为 CAS 会验证整个操作
+        // 4. 读取下一个索引
+        new_head_index = *(volatile size_t*)old_head_block;
+
         // 5. 打包新头
         size_t old_version = unpack_version(old_head_packed, pool);
         new_head_packed = pack_index_version(new_head_index, old_version + 1, pool);
 
-        // 6. 尝试替换头
-    } while (!XAtomic_compare_exchange_strong_ptr(&pool->free_list_head_packed, &old_head_packed, new_head_packed, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
+        // 6. 尝试替换头 (使用 _size_t 后缀的 CAS)
+    } while (!XAtomic_compare_exchange_strong_size_t(
+        &pool->free_list_head_packed, &old_head_packed, new_head_packed,
+        XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
 
-    // --- 关键修改: 标记为已分配 ---
-    *(volatile size_t*)old_head_block = (size_t)XFIXEDPOOL_BLOCK_ALLOCATED;
-    //printf("XFixedPool malloc pool:%p block_size:%d num_blocks:%d index :%d ptr:%p\n", pool->raw_memory, pool->block_size,pool->num_blocks, old_head_index, get_user_data_ptr(old_head_block));
-
+    // --- 标记为已分配 ---
+    *(volatile size_t*)old_head_block = XFIXEDPOOL_BLOCK_ALLOCATED;
     return get_user_data_ptr(old_head_block);
 }
 
 void XFixedPool_free(XFixedPool* pool, void* user_ptr) {
     if (!pool || !user_ptr) return;
-    if (!XFixedPool_is_from_pool(pool, user_ptr))return;
-    // 1. 从用户指针恢复内部块地址
+    if (!XFixedPool_is_from_pool(pool, user_ptr)) return;
+
     void* internal_block = get_internal_block_ptr(user_ptr);
     int64_t freed_index = ((char*)internal_block - (char*)pool->raw_memory) / pool->block_size;
-    if (freed_index<0||freed_index >= pool->num_blocks) {
+    if (freed_index < 0 || freed_index >= pool->num_blocks) {
         return; // Invalid pointer
     }
 
     // 【增强健壮性】检查是否是双重释放
-    if (*(volatile size_t*)internal_block != (size_t)XFIXEDPOOL_BLOCK_ALLOCATED) {
+    if (*(volatile size_t*)internal_block != XFIXEDPOOL_BLOCK_ALLOCATED) {
         return;
     }
- 
-    void* old_head_packed;
-    void* new_head_packed;
+
+    size_t old_head_packed;
+    size_t new_head_packed;
     do {
         // a. 读取当前头 (index + version)
-        old_head_packed = XAtomic_load_ptr(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
+        old_head_packed = XAtomic_load_size_t(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
         size_t old_head_index = unpack_index(old_head_packed, pool);
 
         *(volatile size_t*)internal_block = old_head_index;
@@ -222,9 +209,10 @@ void XFixedPool_free(XFixedPool* pool, void* user_ptr) {
         size_t old_version = unpack_version(old_head_packed, pool);
         new_head_packed = pack_index_version(freed_index, old_version + 1, pool);
 
-        // d. 尝试原子地更新头指针
-    } while (!XAtomic_compare_exchange_strong_ptr(&pool->free_list_head_packed, &old_head_packed, new_head_packed, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
-    //printf("XFixedPool free pool:%p   index:%lld ptr:%p\n", pool->raw_memory, freed_index, user_ptr);
+        // d. 尝试原子地更新头指针 (使用 _size_t 后缀的 CAS)
+    } while (!XAtomic_compare_exchange_strong_size_t(
+        &pool->free_list_head_packed, &old_head_packed, new_head_packed,
+        XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
 }
 
 bool XFixedPool_is_from_pool(const XFixedPool* pool, const void* ptr)

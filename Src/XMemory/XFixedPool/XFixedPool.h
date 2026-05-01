@@ -21,7 +21,7 @@ extern "C" {
 #include "XAtomic.h" 
 typedef struct XFixedPool 
 {
-    XAtomic_ptr free_list_head_packed; //打包头指针
+    XAtomic_size_t  free_list_head_packed; //打包头指针 (index + version)
     size_t block_size;          // 对齐后的块大小
     size_t user_block_size;     // 用户视角的块大小
     void* raw_memory;           // 指向数据缓冲区的指针
@@ -29,8 +29,8 @@ typedef struct XFixedPool
     size_t num_blocks; // 新增：总块数，用于判断空和计算索引
     // --- 无锁辅助字段 ---
     size_t index_bits;          // 用于存储索引的位数
-    uintptr_t index_mask;       // 索引掩码
-    uintptr_t version_mask;     // 版本号掩码
+    size_t index_mask;          // 索引掩码 
+    size_t version_mask;        // 版本号掩码 
     bool owns_memory;  //所有权标记
 } XFixedPool;
 /**
