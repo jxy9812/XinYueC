@@ -9,6 +9,7 @@
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
+#include"XThread.h"
 // static void XLockFreeListSortTest();
 // static void XLockFreeListIterator();
 // static void XLockFreeListSwapTest();
@@ -95,6 +96,7 @@ void XLockFreeListTest()
 	//XPrintf("找到的数字%d\n", XLockFreeListNode_Data(findNode, int));
 	XLockFreeList_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
 	XListBase_pop_front_base(list);
+	XLockFreeList_iterator_for_each(list, ListFor_each, NULL); XPrintf("\n");
 	XListBase_pop_back_base(list);
 	//XListBase_erase_base(list, findNode);
 
@@ -145,6 +147,57 @@ void XLockFreeListSwapTest()//交换函数测试
 #endif
 	XCoreApplication_quit();
 }
+// 线程函数 1：输出 "Thread 1 is running"
+static void ThreadReceive(XThread* thread, XVarList* varlist)
+{
+	//XPrintf("线程进入\n");
+	XVarList_args_1(varlist, XLockFreeList*, list);
+	//int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
+	XHandle id= XThread_currentThreadId();
+	int count = 0;
+	int value;
+	while (!XLockFreeList_isEmpty_base(list))
+	{
+		if(XLockFreeList_pop_and_move_front(list, &value))
+			XPrintf("XThread:%p count:%d value:%d size:%d\n", id,count++, value, XLockFreeList_size_base(list));
+	}
+	XThread_deleteLater(thread);
+	XCoreApplication_quit();
+	return 0;
+}
+//线程测试
+void XLockFreeListThreadTest()
+{
+#if XList_ON
+	XPrintf("循环队列 测试\n");
+	XLockFreeList* list = XLockFreeList_create(sizeof(int));
+	//list->m_class.m_equality = XEquality_int;
+	XContainerSetCompare(list, int_compare);
+	
+	//threadTest(queue);
+
+	for (size_t i = 0; i < 10; i++)
+	{
+		int n = i;
+		while (!XLockFreeList_push_front_base(list, &n));
+		//Sleep(100);
+	}
+	for (size_t i = 0; i < 10; i++)
+	{
+		XThread* thread = XThread_create_func(ThreadReceive, XVarList_Create(XVar(XLockFreeList*, list)));
+		XThread_start(thread);
+	}
+	
+	XCoreApplication_exec();
+	//XThread_wait(thread, UINT32_MAX);
+	//XThread_deleteLater(thread);
+	XPrintf("循环队列 空\n");
+	XLockFreeList_delete_base(list);
+#else
+	IS_ON_DEBUG(XLockFreeList_ON);
+#endif
+	XCoreApplication_quit();
+}
 void XMenu_XLockFreeListTest(XMenu* root)
 {
 	XMenu* menu = XMenu_create("XLockFreeList(单向无锁链表)");
@@ -152,6 +205,10 @@ void XMenu_XLockFreeListTest(XMenu* root)
 	{
 		XAction* action = XMenu_addAction(menu, "主测试");
 		XAction_setAction(action, XLockFreeListTest);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "线程安全测试");
+		XAction_setAction(action, XLockFreeListThreadTest);
 	}
 	{
 		XAction* action = XMenu_addAction(menu, "排序测试");

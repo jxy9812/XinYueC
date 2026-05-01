@@ -36,7 +36,7 @@ static size_t calculate_internal_block_size(size_t user_block_size)
 /**
  * @brief 获取用户可用数据的起始地址
  */
-static void* get_user_data_ptr(void* internal_block) 
+static inline void* get_user_data_ptr(void* internal_block)
 {
     return (char*)internal_block + sizeof(size_t);
 }
@@ -44,7 +44,7 @@ static void* get_user_data_ptr(void* internal_block)
 /**
  * @brief 从用户数据指针恢复内部块地址
  */
-static void* get_internal_block_ptr(void* user_data) {
+static inline  void* get_internal_block_ptr(void* user_data) {
     return (char*)user_data - sizeof(size_t);
 }
 

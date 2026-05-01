@@ -43,8 +43,8 @@ typedef struct XLockFreeListNode
 typedef struct XLockFreeList 
 {
 	XListBase m_class;              ///< 继承自链表基类，包含链表通用属性（大小、容量、虚函数表等）
-	XAtomic_ptr m_head;             ///< 头节点指针（原子类型，支持无锁操作）
-	XAtomic_ptr m_tail;             ///< 尾节点指针（原子类型，支持无锁操作）
+	XAtomic_size_t m_head;          ///< 头节点指针（打包了指针和版本号）
+	XAtomic_size_t m_tail;          ///< 尾节点指针（打包了指针和版本号）
 } XLockFreeList;
 // ------------------------------ 类初始化与创建 ------------------------------
 /**
@@ -115,25 +115,41 @@ void XLockFreeList_init(XLockFreeList* this_list, size_t typeSize);
 #define XLockFreeList_Push_Back_Move_Base          XListBase_Push_Back_Move_Base
 /**
 * @brief 在指定节点前插入元素（拷贝语义，基础版本）
-* @note 继承自XListBase的指定位置插入操作，通过宏重命名实现接口统一，支持无锁环境
+* @note 继承自XListBase的指定位置插入操作，通过宏重命名实现接口统一
 */
 #define XLockFreeList_insert_base                  XListBase_insert_base
 /**
 * @brief 在指定节点前插入元素（移动语义，基础版本）
-* @note 继承自XListBase的指定位置插入操作（移动语义），减少数据拷贝开销，支持无锁环境
+* @note 继承自XListBase的指定位置插入操作（移动语义），减少数据拷贝开销
 */
 #define XLockFreeList_insert_move_base             XListBase_insert_move_base
 /**
 * @brief 在指定节点前插入数组元素（拷贝语义，基础版本）
-* @note 继承自XListBase的数组插入操作，需指定数组元素数量，支持无锁环境
+* @note 继承自XListBase的数组插入操作，需指定数组元素数量
 */
 #define XListSLinked_insert_array_base                  XListBase_insert_array_base
 /**
 * @brief 在指定节点前插入数组元素（移动语义，基础版本）
-* @note 继承自XListBase的数组插入操作（移动语义），需指定数组元素数量，支持无锁环境
+* @note 继承自XListBase的数组插入操作（移动语义），需指定数组元素数量
 */
 #define XListSLinked_insert_array_move_base             XListBase_insert_array_move_base
 // ------------------------------ 删除操作 ------------------------------
+/**
+ * @brief 原子地删除链表头部元素，并将其数据拷贝到指定位置。
+ * @param this_list 目标链表指针。
+ * @param pvOutData 接收数据的目标地址，不能为NULL。
+ * @return 成功返回true，失败（如链表为空）返回false。
+ * @note 此操作是线程安全的（多消费者安全）。
+ */
+bool XLockFreeList_pop_and_copy_front(XLockFreeList* this_list, void* pvOutData);
+/**
+ * @brief 原子地删除链表头部元素，并将其数据移动到指定位置。
+ * @param this_list 目标链表指针。
+ * @param pvOutData 接收数据的目标地址，不能为NULL。
+ * @return 成功返回true，失败（如链表为空）返回false。
+ * @note 此操作是线程安全的（多消费者安全）。如果未设置移动方法，则退化为拷贝。
+ */
+bool XLockFreeList_pop_and_move_front(XLockFreeList* this_list, void* pvOutData);
 /**
 * @brief 删除链表第一个元素（基础版本）
 * @note 继承自XListBase的头删操作，通过宏重命名实现接口统一，支持无锁环境
@@ -141,22 +157,22 @@ void XLockFreeList_init(XLockFreeList* this_list, size_t typeSize);
 #define XLockFreeList_pop_front_base               XListBase_pop_front_base
 /**
 * @brief 删除链表最后一个元素（基础版本）
-* @note 继承自XListBase的尾删操作，通过宏重命名实现接口统一，支持无锁环境
+* @note 继承自XListBase的尾删操作，通过宏重命名实现接口统一
 */
 #define XLockFreeList_pop_back_base                XListBase_pop_back_base
 /**
 * @brief 删除指定节点（基础版本）
-* @note 继承自XListBase的指定节点删除操作，通过宏重命名实现接口统一，支持无锁环境
+* @note 继承自XListBase的指定节点删除操作，通过宏重命名实现接口统一
 */
 #define XLockFreeList_erase_base                   XListBase_erase_base
 /**
 * @brief 删除指定值的元素（拷贝语义，基础版本）
-* @note 继承自XListBase的按值删除操作，通过宏重命名实现接口统一，支持无锁环境
+* @note 继承自XListBase的按值删除操作，通过宏重命名实现接口统一
 */
 #define XLockFreeList_remove_base                  XListBase_remove_base
 /**
 * @brief 删除指定值的元素（类型安全宏，拷贝语义）
-* @note 继承自XListBase的类型安全按值删除操作，自动处理类型转换，支持无锁环境
+* @note 继承自XListBase的类型安全按值删除操作，自动处理类型转换
 */
 #define XLockFreeList_Remove_Base                  XListBase_Remove_Base
 // ------------------------------ 遍历操作 ------------------------------
@@ -167,58 +183,58 @@ void XLockFreeList_init(XLockFreeList* this_list, size_t typeSize);
 #define XLockFreeList_front_base                   XListBase_front_base
 /**
 * @brief 获取链表头部元素（类型安全宏）
-* @note 继承自XListBase的类型安全获取头元素操作，自动处理类型转换，支持无锁环境
+* @note 继承自XListBase的类型安全获取头元素操作，自动处理类型转换
 */
 #define XLockFreeList_Front_Base                   XListBase_Front_Base
 /**
 * @brief 获取链表尾部元素（基础版本）
-* @note 继承自XListBase的获取尾元素操作，通过宏重命名实现接口统一，支持无锁环境
+* @note 继承自XListBase的获取尾元素操作，通过宏重命名实现接口统一
 */
 #define XLockFreeList_back_base                    XListBase_back_base
 /**
 * @brief 获取链表尾部元素（类型安全宏）
-* @note 继承自XListBase的类型安全获取尾元素操作，自动处理类型转换，支持无锁环境
+* @note 继承自XListBase的类型安全获取尾元素操作，自动处理类型转换
 */
 #define XLockFreeList_Back_Base                    XListBase_Back_Base
 /**
 * @brief 查找指定值的元素（基础版本）
-* @note 继承自XListBase的查找操作，返回找到的节点指针（未找到返回NULL），支持无锁环境
+* @note 继承自XListBase的查找操作，返回找到的节点指针（未找到返回NULL）
 */
 #define XLockFreeList_find_base                    XListBase_find_base
 // ------------------------------ 其他操作 ------------------------------
 /**
 * @brief 对链表进行排序（基础版本）
-* @note 继承自XListBase的排序操作，通过宏重命名实现接口统一，支持无锁环境
+* @note 继承自XListBase的排序操作，通过宏重命名实现接口统一
 */
 #define XLockFreeList_sort_base                    XListBase_sort_base
 /**
 * @brief 拷贝链表（基础版本）
-* @note 继承自XListBase的拷贝操作，通过宏重命名实现接口统一，支持无锁环境
+* @note 继承自XListBase的拷贝操作，通过宏重命名实现接口统一
 */
 #define XLockFreeList_copy_base                    XListBase_copy_base
 /**
 * @brief 移动链表（基础版本，转移所有权）
-* @note 继承自XListBase的移动操作，通过宏重命名实现接口统一，支持无锁环境
+* @note 继承自XListBase的移动操作，通过宏重命名实现接口统一
 */
 #define XLockFreeList_move_base                    XListBase_move_base
 /**
 * @brief 反初始化链表（基础版本）
-* @note 继承自XListBase的反初始化操作，释放资源但不释放链表本身，支持无锁环境
+* @note 继承自XListBase的反初始化操作，释放资源但不释放链表本身
 */
 #define XLockFreeList_deinit_base                  XListBase_deinit_base
 /**
 * @brief 删除链表（基础版本）
-* @note 继承自XListBase的删除操作，释放资源并销毁链表实例，支持无锁环境
+* @note 继承自XListBase的删除操作，释放资源并销毁链表实例
 */
 #define XLockFreeList_delete_base                  XListBase_delete_base
 /**
 * @brief 清空链表（基础版本）
-* @note 继承自XListBase的清空操作，删除所有元素但保留链表结构，支持无锁环境
+* @note 继承自XListBase的清空操作，删除所有元素但保留链表结构
 */
 #define XLockFreeList_clear_base                   XListBase_clear_base
 /**
 * @brief 判断链表是否为空（基础版本）
-* @note 继承自XListBase的判空操作，通过宏重命名实现接口统一，支持无锁环境
+* @note 继承自XListBase的判空操作，通过宏重命名实现接口统一
 */
 #define XLockFreeList_isEmpty_base                 XListBase_isEmpty_base
 /**
@@ -233,7 +249,7 @@ void XLockFreeList_init(XLockFreeList* this_list, size_t typeSize);
 #define XLockFreeList_capacity_base                XListBase_capacity_base
 /**
 * @brief 交换两个链表的内容（基础版本）
-* @note 继承自XListBase的交换操作，通过宏重命名实现接口统一，支持无锁环境
+* @note 继承自XListBase的交换操作，通过宏重命名实现接口统一
 */
 #define XLockFreeList_swap_base                    XListBase_swap_base
 /**

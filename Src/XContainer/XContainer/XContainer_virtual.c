@@ -9,9 +9,9 @@ static void VXClass_copy(XContainer* object, const XContainer* src);
 static void VXClass_move(XContainer* object, XContainer* src);
 static void VXContainer_deinit(XContainer* Object);
 static bool VXContainer_isEmpty(const XContainer* Object);
-static size_t VXContainer_getSize(const XContainer* Object);
-static size_t VXContainer_getCapacity(const  XContainer* Object);
-static size_t VXContainer_getTypeSize(const XContainer* Object);
+static size_t VXContainer_size(const XContainer* Object);
+static size_t VXContainer_capacity(const  XContainer* Object);
+static size_t VXContainer_typeSize(const XContainer* Object);
 static void VXContainer_swap(XContainer* ObjectOne, XContainer* ObjectTwo);
 static void VXContainer_clear(XContainer* Object);
 XVtable* XContainer_class_init()
@@ -25,7 +25,7 @@ XVtable* XContainer_class_init()
 #endif
 	//继承类
 	XVTABLE_INHERIT_DEFAULT(XClass_class_init());
-	void* table[] = {VXContainer_isEmpty,VXContainer_getSize,VXContainer_getCapacity,VXContainer_getTypeSize,VXContainer_swap,VXContainer_clear };
+	void* table[] = {VXContainer_isEmpty,VXContainer_size,VXContainer_capacity,VXContainer_typeSize,VXContainer_swap,VXContainer_clear };
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
@@ -39,24 +39,24 @@ XVtable* XContainer_class_init()
 }
 bool VXContainer_isEmpty(const XContainer* Object)
 {
-	return XContainerSize(Object) == 0;
+	return XContainer_size_base(Object) == 0;
 }
 
 
-size_t VXContainer_getSize(const XContainer* Object)
+size_t VXContainer_size(const XContainer* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
 	return Object->m_size;
 }
 
-size_t VXContainer_getCapacity(const XContainer* Object)
+size_t VXContainer_capacity(const XContainer* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
 	return Object->m_capacity;
 }
-size_t VXContainer_getTypeSize(const XContainer* Object)
+size_t VXContainer_typeSize(const XContainer* Object)
 {
 	if (ISNULL(Object, ""))
 		return 0;
