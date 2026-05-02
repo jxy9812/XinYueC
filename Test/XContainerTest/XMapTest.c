@@ -24,7 +24,7 @@ void XMapTest()
 #if XMap_ON
 	XMap* map = XMap_Create(int, char*, int_compare);
 	XContainerSetDataDeinitMethod(map, map_dataDelete);
-	while (1)
+	//while (1)
 	{
 		XPrintf("XMap 测试\n");
 		int arrayint[] = { 1,23,456,5,23 };

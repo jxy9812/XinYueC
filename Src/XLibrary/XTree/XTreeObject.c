@@ -4,39 +4,39 @@
 #include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
-void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, size_t treeNodeSize, const char* pvData, const size_t typeSize)
+void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, size_t treeNodeSize, const char* pvData, const size_t dataSize)
 {
-	if (node == NULL||nodeCount==0||typeSize==0)
+	if (node == NULL||nodeCount==0|| dataSize ==0)
 		return;
 	node->nodeSize = treeNodeSize;
 	node->nodeCount = nodeCount;
-	node->dataSize = typeSize;
+	//node->dataSize = dataSize;
 	//初始化孩子数组
 	memset(XTreeNode_GetNodes(node), 0, sizeof(XTreeNode*) * nodeCount);
 	node->parentNode = NULL;
 	if (pvData)
-		memcpy(XTreeNode_GetDataPtr(node), pvData, typeSize);
+		memcpy(XTreeNode_GetDataPtr(node), pvData, dataSize);
 	else
-		memset(XTreeNode_GetDataPtr(node), 0, typeSize);
+		memset(XTreeNode_GetDataPtr(node), 0, dataSize);
 }
 size_t XTreeNode_typeSize(const uint8_t nodeCount)
 {
 	return sizeof(XTreeNode)+sizeof(struct XTreeNode*)*nodeCount;
 }
-XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t typeSize)
+XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t dataSize)
 {
-	if (nodeCount == 0 || typeSize == 0)
+	if (nodeCount == 0 || dataSize == 0)
 		return NULL;
-	XTreeNode* node = XMemory_malloc(XTreeNode_typeSize(node)+ typeSize);
+	XTreeNode* node = XMemory_malloc(XTreeNode_typeSize(node)+ dataSize);
 	if (node)
-		XTreeNode_init(node,nodeCount, XTreeNode_typeSize(node),pvData,typeSize);
+		XTreeNode_init(node,nodeCount, XTreeNode_typeSize(node),pvData,dataSize);
 	return node;
 }
-bool XTreeNode_setData(XTreeNode* this_root, const void* pvData, size_t typeSize)
+bool XTreeNode_setData(XTreeNode* this_root, const void* pvData, size_t dataSize)
 {
 	if(this_root==NULL||pvData==NULL)
 		return false;
-	memcpy((uint8_t*)(XTreeNode_GetDataPtr(this_root)), pvData, typeSize);
+	memcpy((uint8_t*)(XTreeNode_GetDataPtr(this_root)), pvData, dataSize);
 	return true;
 }
 void* XTreeNode_getData(XTreeNode* this_root)

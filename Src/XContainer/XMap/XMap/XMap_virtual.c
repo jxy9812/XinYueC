@@ -137,6 +137,7 @@ void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)
 		((XContainer*)this_map)->m_compare,
 		XCompareRuleOne_XMap,
 		XPair_first(current_pair),  // 传入键用于查找删除
+		sizeof(XPair*),
 		XMapBase_deleteNodeData,    // 释放节点数据的回调
 		this_map                    // 传递容器作为额外参数
 	);
@@ -157,7 +158,7 @@ bool VXMap_remove(XMap* this_map, const void* key)
 	XRBTreeNode* nodes = XRBTree_findNode(XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
-		XRBTree_remove(&XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key, XMapBase_deleteNodeData,this_map);
+		XRBTree_remove(&XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key, sizeof(XPair*), XMapBase_deleteNodeData,this_map);
 		--XContainerCapacity(this_map);
 		--XContainerSize(this_map);
 		return true;

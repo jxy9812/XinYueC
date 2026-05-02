@@ -18,7 +18,6 @@ typedef struct XTreeNode //内存布局 [XTreeNode(及派生类)] [XTreeNode* no
 {
 	uint32_t nodeSize:24;//节点大小（不包括数据大小）
 	uint32_t nodeCount:8;//节点数量
-	uint32_t   dataSize;//用户数据大小
 	struct XTreeNode* parentNode;//父节点
 	//struct XTreeNode** nodes;//节点数组
 	//void* data;//数据
@@ -26,9 +25,9 @@ typedef struct XTreeNode //内存布局 [XTreeNode(及派生类)] [XTreeNode* no
 //计算树节点大小(不带数据)
 size_t XTreeNode_typeSize(const uint8_t nodeCount);
 //初始化
-XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t typeSize);
-void XTreeNode_init(XTreeNode* node,const uint8_t nodeCount, size_t treeNodeSize,const char* pvData, const size_t typeSize);
-bool XTreeNode_setData(XTreeNode* this_root, const void* pvData, size_t typeSize);
+XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const size_t dataSize);
+void XTreeNode_init(XTreeNode* node,const uint8_t nodeCount, size_t treeNodeSize,const char* pvData, const size_t dataSize);
+bool XTreeNode_setData(XTreeNode* this_root, const void* pvData, size_t dataSize);
 //获取数据
 void* XTreeNode_getData(XTreeNode* this_root);
 //设置一个节点指针

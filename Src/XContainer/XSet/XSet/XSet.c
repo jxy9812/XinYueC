@@ -169,6 +169,7 @@ void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* next)
 		((XContainer*)this_set)->m_compare,
 		XCompareRuleOne_XSet,									// 比较规则
 		current_key,										// 要删除的键值
+		XContainerTypeSize(this_set),
 		XSet_freeNodeData,								// 节点数据释放回调
 		this_set											// 传递容器作为额外参数
 	);
@@ -190,7 +191,7 @@ bool VXSet_remove(XSet* this_set, const void* pvKey)
 	{
 		if (XContainerDataDeinitMethod(this_set) != NULL)
 			XContainerDataDeinitMethod(this_set)(pvKey);
-		XRBTree_remove(&XContainerDataPtr(this_set), ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, pvKey, XSet_freeNodeData, this_set);
+		XRBTree_remove(&XContainerDataPtr(this_set), ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, pvKey, XContainerTypeSize(this_set), XSet_freeNodeData, this_set);
 
 		--XContainerCapacity(this_set);
 		--XContainerSize(this_set);

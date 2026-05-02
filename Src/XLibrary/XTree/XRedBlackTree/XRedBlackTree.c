@@ -229,7 +229,7 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTre
 
 }
 //删除的是有两个孩子
-static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTreeNodeDataDeleteMethod method, void* args)
+static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode,size_t dataSize, XTreeNodeDataDeleteMethod method, void* args)
 {
 #if XVector_ON
 	XRBTreeNode* LPreplace = NULL; // 后继节点（用于替换）
@@ -243,7 +243,7 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTre
 
 	// 2. === 关键修复：直接将 eraseNode 的数据指针替换为 LPreplace 的数据指针 ===
 	//    注意：这里只交换数据指针，不交换颜色！
-	size_t dataSize = ((XTreeNode*)eraseNode)->dataSize;
+	//size_t dataSize = ((XTreeNode*)eraseNode)->dataSize;
 	if (dataSize > 0) 
 	{
 		char* tempBuffer = (char*)XMemory_malloc(dataSize); // 创建临时缓冲区
@@ -270,7 +270,7 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTre
 	IS_ON_DEBUG(XVector_ON);
 #endif
 }
-XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const void* pvData, XTreeNodeDataDeleteMethod method, void* args)
+XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const void* pvData, const size_t dataSize, XTreeNodeDataDeleteMethod method, void* args)
 {
 	if (ISNULL(this_root, ""))
 		return NULL;
@@ -285,7 +285,7 @@ XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareR
 		++count;
 	if (count == 2) // 两个孩子
 	{
-		TwoChild_erase(this_root, findErase, method, args);
+		TwoChild_erase(this_root, findErase, dataSize, method, args);
 	}
 	else // 零个或一个孩子
 	{
@@ -391,20 +391,20 @@ static void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNo
 		XRBTree_SetBlack(*this_root);
 	}
 }
-XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t TypeSize)
+XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t dataSize)
 {
 	//DEBUG_PRINTF("less=%p pvData=%p dataTypeSize=%u\n",less,pvData,dataTypeSize);
 	if (ISNULL(compare, ""))
 		return NULL;
 	if (ISNULL(pvData, ""))
 		return NULL;
-	if (ISNULL(TypeSize, ""))
+	if (ISNULL(dataSize, ""))
 		return NULL;
-	XRBTreeNode* nodes = XRBTree_create(NULL, TypeSize);//创建一个红黑树节点并且初始化,默认红色
+	XRBTreeNode* nodes = XRBTree_create(NULL, dataSize);//创建一个红黑树节点并且初始化,默认红色
 	if (ISNULL(nodes, ""))
 		return NULL;
 	//DEBUG_PRINTF("nodes=%p\n",nodes);
-	bool flag = XBBTree_insertAlign(this_root, nodes, compare, lessRule, pvData, TypeSize);//将数据插入到节点，并且链接
+	bool flag = XBBTree_insertAlign(this_root, nodes, compare, lessRule, pvData, dataSize);//将数据插入到节点，并且链接
 	if (!flag)
 	{
 		printf("节点插入失败\n");

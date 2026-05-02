@@ -193,6 +193,7 @@ void VXMap_erase(XHashMap* this_hash, const XHashMap_iterator* it, XHashMap_iter
 		((XContainer*)this_hash)->m_compare,
 		XCompareRuleOne_XMap,                                       // 比较规则
 		XPair_first(current_pair),                                 // 要删除的键
+		sizeof(XPair*),
 		XMapBase_deleteNodeData,                                   // 节点数据释放回调
 		this_hash                                                   // 传递容器作为额外参数
 	);
@@ -213,7 +214,7 @@ bool VXMap_remove(XHashMap*this_hash, const void* pvKey)
 	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
 	if (nodes != NULL)
 	{
-		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, XMapBase_deleteNodeData,this_hash);
+		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, sizeof(XPair*), XMapBase_deleteNodeData,this_hash);
 		--XContainerSize(this_hash);
 		return true;
 	}

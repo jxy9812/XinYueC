@@ -172,6 +172,7 @@ void VXSet_erase(XHashSet* this_set, const XHashSet_iterator* it, XHashSet_itera
         ((XContainer*)this_set)->m_compare,
         XCompareRuleOne_XSet,                                       // 比较规则
         current_key,                                               // 要删除的键值
+        XContainerTypeSize(this_set),
         XSet_freeNodeData,                                         // 节点数据释放回调
         this_set                                                   // 传递容器作为额外参数
     );
@@ -192,7 +193,7 @@ bool VXSet_remove(XHashSet* this_set, const void* key)
     XRBTreeNode* node = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key);
     if (node != NULL)
     {
-        XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key, XSet_freeNodeData,this_set);
+        XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key, XContainerTypeSize(this_set), XSet_freeNodeData,this_set);
         --XContainerSize(this_set);
         return true;
     }
