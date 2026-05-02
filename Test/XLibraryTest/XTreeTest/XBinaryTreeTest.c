@@ -33,21 +33,21 @@ void XBinaryTreeTest()
 		*XTreeNode_getChildRef(curNode, XBTreeRChild) = XBTreeNode_create(LPa++, sizeof(int));
 
 		//前序测试
-		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder);
+		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder, NULL);
 		XPrintf("前序遍历:", XVector_size_base(TreePreorder));
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		XPrintf("\n");
 		XVector_delete_base(TreePreorder);
 
 		//中序测试
-		TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder);
+		TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder, NULL);
 		XPrintf("中序遍历:", XVector_size_base(TreePreorder));
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		XPrintf("\n");
 		XVector_delete_base(TreePreorder);
 
 		//后序测试
-		TreePreorder = XBTree_TraversingToXVector(root, XBTreePostorder);
+		TreePreorder = XBTree_TraversingToXVector(root, XBTreePostorder, NULL);
 		XPrintf("后序遍历:", XVector_size_base(TreePreorder));
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		XPrintf("\n");

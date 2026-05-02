@@ -16,7 +16,7 @@ void XHashSetTest()
 {
 #if XHashMap_ON
 	XPrintf("XHashSet 测试\n");
-	//while (true)
+	while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
 		XHashSet* set = XHashSet_Create(int,int_compare);
@@ -25,7 +25,7 @@ void XHashSetTest()
 		{
 			XHashSet_insert_base(set, arrayint + i);
 		}
-		for (int i = 0; i < 5; i++)
+		for (size_t i = 0; i < 500; i++)
 		{
 			XHashSet_insert_base(set, &i);
 		}

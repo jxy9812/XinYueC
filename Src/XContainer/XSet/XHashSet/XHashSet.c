@@ -74,7 +74,9 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
         if (root != NULL)
         {
             // 遍历红黑树，将节点插入到新哈希表中
-            XVector* nodes = XBTree_TraversingToXVector(root, XBTreeInorder);
+            XVector* nodes = XVector_create(sizeof(struct XTreeNode*));
+            XVector_resize_base(nodes,XContainerSize(set));
+            XBTree_TraversingToXVector(root, XBTreePreorder, nodes);
             if (nodes != NULL)
             {
                 for (size_t j = 0; j < XVector_size_base(nodes); j++)
@@ -83,13 +85,18 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
                     void*key = XRBTree_getData(node);
                     size_t index = set->m_hash(key, XContainerTypeSize(set)) % new_capacity;
 
+                    XRBTree_SetRed(node);
+                    memset(XTreeNode_GetNodes(node), 0, sizeof(XTreeNode*) * ((XTreeNode*)node)->nodeCount);
+                    ((XTreeNode*)node)->parentNode = NULL;
+                    XRBTree_insertNode(&newData[index], XContainerCompare(set), XCompareRuleTwo_XSet, node);
+
                     // 将节点插入到新哈希表的相应红黑树中
-                    XRBTree_insert(&newData[index], XContainerCompare(set), XCompareRuleTwo_XSet, XRBTree_getData(node), XContainerTypeSize(set));
+                    //XRBTree_insert(&newData[index], XContainerCompare(set), XCompareRuleTwo_XSet, XRBTree_getData(node), XContainerTypeSize(set));
                 }
                 XVector_delete_base(nodes);
             }
             // 删除原红黑树
-            XRBTree_delete(root, NULL, NULL);
+            //XRBTree_delete(root, NULL, NULL);
         }
     }
 

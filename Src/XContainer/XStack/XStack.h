@@ -61,7 +61,14 @@ XStack* XStack_create(size_t typeSize);
 */
 void XStack_init(XStack* this_stack, size_t typeSize);
 
-
+/**
+* @brief 调整栈的容量大小
+* @param this_stack 栈实例指针
+* @param new_capacity 新的容量大小（元素个数）
+* @return 成功返回true，失败返回false
+* @note 如果new_capacity小于当前元素数量，多余元素将被截断
+*/
+bool XStack_resize(XStack* this_stack, size_t new_capacity);
 /**
 * @brief 核心栈操作接口（压栈、出栈、取栈顶）
 */

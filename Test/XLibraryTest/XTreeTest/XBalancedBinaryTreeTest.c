@@ -31,7 +31,7 @@ void XBalancedBinaryTreeTest()
 		if (i == 11)
 			i = 11;
 		XBBTree_insert(&root, int_compare, XCompareRuleTwo_BinaryTree, LPa++, sizeof(int));
-		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder);
+		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder,NULL);
 		XVector_iterator_for_each(TreePreorder, traverse, NULL);
 		XVector_delete_base(TreePreorder);
 	}
@@ -41,21 +41,21 @@ void XBalancedBinaryTreeTest()
 	XPrintf("找到的:%d\n", XTreeNode_GetData(findRet,int));
 
 	//前序测试
-	XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder);
+	XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder,NULL);
 	XPrintf("前序遍历:%d\n", XVector_size_base(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	XPrintf("\n");
 	XVector_delete_base(TreePreorder);
 
 	//中序测试
-	TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder);
+	TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder, NULL);
 	XPrintf("中序遍历:%d\n", XVector_size_base(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	XPrintf("size:%d\n",XVector_size_base(TreePreorder));
 	XVector_delete_base(TreePreorder);
 
 	//后序测试
-	TreePreorder = XBTree_TraversingToXVector(root, XBTreePostorder);
+	TreePreorder = XBTree_TraversingToXVector(root, XBTreePostorder, NULL);
 	XPrintf("后序遍历::%d\n", XVector_size_base(TreePreorder));
 	XVector_iterator_for_each(TreePreorder, printTreeNode,NULL);
 	XPrintf("\n");
@@ -69,7 +69,7 @@ void XBalancedBinaryTreeTest()
 	}
 	
 	//中序测试
-	TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder);
+	TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder, NULL);
 	if(TreePreorder!=NULL)
 	{
 		XPrintf("中序遍历:%d\n", XVector_size_base(TreePreorder));

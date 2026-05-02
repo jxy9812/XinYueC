@@ -70,7 +70,9 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 		if (root != NULL)
 		{
 			// 遍历红黑树，将节点插入到新哈希表中
-			XVector* nodes = XBTree_TraversingToXVector(root, XBTreeInorder);
+			XVector* nodes = XVector_create(sizeof(struct XTreeNode*));
+			XVector_resize_base(nodes, XContainerSize(map));
+			XBTree_TraversingToXVector(root, XBTreePreorder, nodes);
 			if (nodes != NULL)
 			{
 				for (size_t j = 0; j < XVector_size_base(nodes); j++)

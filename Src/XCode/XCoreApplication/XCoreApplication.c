@@ -211,8 +211,11 @@ void XCoreApplication_quit() {
         XThread_quit(((XObject*)app)->m_thread);
 }
 
-void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags) {
-    XAbstractEventDispatcher_processEvents_base(XThreadData_current()->m_dispatcher, flags);
+void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags) 
+{
+    XThreadData* data = XThreadData_current();
+    if(data)
+        XAbstractEventDispatcher_processEvents_base(data->m_dispatcher, flags);
 }
 
 void XCoreApplication_processEventsWithMaxTime(XEventLoopProcessEventsFlags flags, int maxtime)

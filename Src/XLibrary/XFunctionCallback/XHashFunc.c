@@ -1,4 +1,5 @@
 ﻿#include "XHashFunc.h"
+#include "xxhash.h"
 #include <stdint.h>
 #include <string.h>
 /* ========================= 辅助函数 ========================= */
@@ -892,133 +893,8 @@ uint64_t XHash_highwayhash64(const void* key, size_t len) {
 
 /* ========================= xxHash64 完整实现 ========================= */
 
-static const uint64_t XXH_PRIME64_1 = 11400714785074694791ULL;
-static const uint64_t XXH_PRIME64_2 = 14029467366897019727ULL;
-static const uint64_t XXH_PRIME64_3 = 1609587929392839161ULL;
-static const uint64_t XXH_PRIME64_4 = 9650029242287828579ULL;
-static const uint64_t XXH_PRIME64_5 = 2870177450012600261ULL;
-
-static inline uint64_t xxh64_round(uint64_t acc, uint64_t input) {
-    acc += input * XXH_PRIME64_2;
-    acc = (acc << 31) | (acc >> 33);
-    return acc * XXH_PRIME64_1;
-}
-
-static inline uint64_t xxh64_merge_round(uint64_t acc, uint64_t val) {
-    val *= XXH_PRIME64_1;
-    acc ^= xxh64_round(0, val);
-    acc = acc * XXH_PRIME64_1 + XXH_PRIME64_4;
-    return acc;
-}
-
-static inline uint64_t xxh64_avalanche(uint64_t hash) {
-    hash ^= hash >> 33;
-    hash *= XXH_PRIME64_2;
-    hash ^= hash >> 29;
-    hash *= XXH_PRIME64_3;
-    hash ^= hash >> 32;
-    return hash;
-}
-
 uint64_t XHash_xxhash64(const void* key, size_t len) {
-    const uint8_t* p = (const uint8_t*)key;
-    const uint8_t* const bEnd = p + len;
-    uint64_t seed = 0; // default seed
-
-    if (len >= 32) {
-        const uint8_t* const limit = bEnd - 32;
-        uint64_t v1 = seed + XXH_PRIME64_1 + XXH_PRIME64_2;
-        uint64_t v2 = seed + XXH_PRIME64_2;
-        uint64_t v3 = seed + 0;
-        uint64_t v4 = seed - XXH_PRIME64_1;
-
-        do {
-            v1 = xxh64_round(v1, *((uint64_t*)p));
-            p += 8;
-            v2 = xxh64_round(v2, *((uint64_t*)p));
-            p += 8;
-            v3 = xxh64_round(v3, *((uint64_t*)p));
-            p += 8;
-            v4 = xxh64_round(v4, *((uint64_t*)p));
-            p += 8;
-        } while (p <= limit);
-
-        uint64_t hash = ((v1 << 1) | (v1 >> 63)) +
-            ((v2 << 7) | (v2 >> 57)) +
-            ((v3 << 12) | (v3 >> 52)) +
-            ((v4 << 18) | (v4 >> 46));
-
-        v1 *= XXH_PRIME64_2;
-        v1 = (v1 << 31) | (v1 >> 33);
-        v1 *= XXH_PRIME64_1;
-        hash ^= v1;
-        hash = hash * XXH_PRIME64_1 + XXH_PRIME64_4;
-
-        v2 *= XXH_PRIME64_2;
-        v2 = (v2 << 31) | (v2 >> 33);
-        v2 *= XXH_PRIME64_1;
-        hash ^= v2;
-        hash = hash * XXH_PRIME64_1 + XXH_PRIME64_4;
-
-        v3 *= XXH_PRIME64_2;
-        v3 = (v3 << 31) | (v3 >> 33);
-        v3 *= XXH_PRIME64_1;
-        hash ^= v3;
-        hash = hash * XXH_PRIME64_1 + XXH_PRIME64_4;
-
-        v4 *= XXH_PRIME64_2;
-        v4 = (v4 << 31) | (v4 >> 33);
-        v4 *= XXH_PRIME64_1;
-        hash ^= v4;
-        hash = hash * XXH_PRIME64_1 + XXH_PRIME64_4;
-
-        return xxh64_avalanche(hash);
-    }
-
-    uint64_t hash = seed + XXH_PRIME64_5 + (uint64_t)len;
-
-    if (len >= 16) {
-        uint64_t v1 = hash + *((uint64_t*)p) * XXH_PRIME64_1;
-        p += 8;
-        v1 = xxh64_round(v1, *((uint64_t*)p));
-        p += 8;
-        uint64_t v2 = hash + *((uint64_t*)p) * XXH_PRIME64_1;
-        p += 8;
-        v2 = xxh64_round(v2, *((uint64_t*)p));
-        p += 8;
-        hash = ((v1 << 1) | (v1 >> 63)) + ((v2 << 7) | (v2 >> 57));
-        hash = xxh64_merge_round(hash, v1);
-        hash = xxh64_merge_round(hash, v2);
-    }
-
-    if (len >= 8) {
-        hash ^= xxh64_round(0, *((uint64_t*)p));
-        hash = hash * XXH_PRIME64_1 + XXH_PRIME64_4;
-        p += 8;
-    }
-
-    if (len >= 4) {
-        hash ^= (uint64_t)(*((uint32_t*)p)) * XXH_PRIME64_1;
-        hash = (hash << 23) | (hash >> 41);
-        hash *= XXH_PRIME64_2;
-        hash += XXH_PRIME64_3;
-        p += 4;
-    }
-
-    if (len >= 2) {
-        hash ^= (uint64_t)(*((uint16_t*)p)) * XXH_PRIME64_5;
-        hash = (hash << 17) | (hash >> 47);
-        hash *= XXH_PRIME64_4;
-        p += 2;
-    }
-
-    if (len >= 1) {
-        hash ^= (*p) * XXH_PRIME64_5;
-        hash = (hash << 11) | (hash >> 53);
-        hash *= XXH_PRIME64_1;
-    }
-
-    return xxh64_avalanche(hash);
+    return XXH64(key, len, 0); // 使用默认seed=0
 }
 
 /* ========================= Wyhash 完整实现 ========================= */

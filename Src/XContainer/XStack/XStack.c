@@ -35,6 +35,16 @@ void XStack_init(XStack* this_stack, size_t typeSize)
 	XVector_init(this_stack, typeSize);
 	XClassGetVtable(this_stack)= XStack_class_init();
 }
+bool XStack_resize(XStack* this_stack, size_t new_capacity)
+{
+	if (ISNULL(this_stack, ""))
+		return false;
+	size_t size = XStack_size_base(this_stack);
+	bool is_ok = XVtableGetFunc(XVector_class_init(), EXVector_Resize,
+		bool (*)(XVector*, size_t))(this_stack, new_capacity);
+	XContainerSize(this_stack)=size;
+	return is_ok;
+}
 XVtable* XStack_class_init()
 {
 	XVTABLE_CREAT_DEFAULT

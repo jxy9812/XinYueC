@@ -38,7 +38,7 @@ void XRedBlackTreeTest()
 	if (root != NULL)
 	{
 		//中序测试
-		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder);
+		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder, NULL);
 		XPrintf("中序遍历:%d\n", XVector_size_base(TreePreorder));
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		XPrintf("size:%d\n", XVector_size_base(TreePreorder));
@@ -57,7 +57,7 @@ void XRedBlackTreeTest()
 	if (root != NULL)
 	{
 		//中序测试
-		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder);
+		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreeInorder, NULL);
 		XPrintf("中序遍历:%d\n", XVector_size_base(TreePreorder));
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		XPrintf("size:%d\n", XVector_size_base(TreePreorder));

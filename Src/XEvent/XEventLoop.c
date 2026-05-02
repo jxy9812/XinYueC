@@ -136,6 +136,7 @@ int XEventLoop_exec(XEventLoop* loop) {
     loop->m_state = XEventLoop_Running;
     loop->m_exitCode = 0;
     XThreadData* data = XThreadData_current();
+    if (!data)return -1;
     XEventLoop* parent = XThreadData_currentEventLoop(data);
     XThreadData_pushEventloop(data,loop);
     while (loop->m_state == XEventLoop_Running)

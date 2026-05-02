@@ -28,7 +28,8 @@ size_t XBTreeNode_typeSize();
 XBTreeNode* XBTreeNode_create(const char* pvData,const size_t typeSize);
 void XBTreeNode_init(XBTreeNode* node, size_t treeNodeSize, const char* pvData, const size_t typeSize);
 //二叉树遍历转数组存储
-XVector* XBTree_TraversingToXVector(XTreeNode* this_root, const enum XBTreeTraversing Traversing);
+
+XVector* XBTree_TraversingToXVector(XTreeNode* this_root, const enum XBTreeTraversing Traversing, XVector*buffer);
 //右旋
 XTreeNode* XBTree_SpinRR(XTreeNode** this_root, XTreeNode* nodes);
 //左旋
