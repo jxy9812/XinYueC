@@ -3,34 +3,6 @@
 #include"XAlgorithm.h"
 #include<string.h>
 #include<stdlib.h>
-// 计算能容纳 [0, max_value] 所需的最少位数
-static inline size_t calculate_bits_needed_for_max(uintptr_t max_value) {
-    if (max_value == 0) return 1;
-    size_t bits = 0;
-    while (max_value > 0) {
-        bits++;
-        max_value >>= 1;
-    }
-    return bits;
-}
-
-// 打包索引和版本号
-static inline size_t  pack_index_version(size_t index, size_t version, size_t index_bits, uintptr_t version_mask) {
-    size_t index_part = index;
-    size_t version_part = (version & version_mask) << index_bits;
-    return index_part | version_part;
-}
-
-// 从打包值中解包出索引
-static inline size_t unpack_index(size_t packed, uintptr_t index_mask) {
-    return packed & index_mask;
-}
-
-// 从打包值中解包出版本号
-static inline size_t unpack_version(size_t packed, size_t index_bits, uintptr_t version_mask) {
-    return (packed >> index_bits) & version_mask;
-}
-
 static bool VXLockFreeQueue_isEmpty(const XLockFreeQueue* this_queue);
 static bool VXLockFreeQueue_isFull(const XLockFreeQueue* this_queue);
 static void VXLockFreeQueue_clear(XLockFreeQueue* this_queue);//清空
@@ -95,27 +67,21 @@ void XLockFreeQueue_init(XLockFreeQueue* this_queue, size_t typeSize, size_t cou
     // 现在 actual_buffer_size 是 >= (count+1) 的最小2的幂
     XVector_init(this_queue, typeSize);
     XVector_resize_base(this_queue, actual_buffer_size);
-    this_queue->m_index_bits = 0;
-    size_t temp = actual_buffer_size;
-    while (temp > 1) {
-        this_queue->m_index_bits++;
-        temp >>= 1;
-    }
+    this_queue->m_index_bits =XAtomic_index_bits(actual_buffer_size);
+    //this_queue->m_index_mask = XAtomic_index_mask(this_queue->m_index_bits);
     this_queue->m_index_mask = actual_buffer_size - 1; // 例如，size=8, mask=7 (0b111)
     // --- 关键修改: 初始化打包的 head 和 tail ---
     size_t queue_size = actual_buffer_size; // 实际缓冲区大小
-    //this_queue->m_index_bits = calculate_bits_needed_for_max(queue_size - 1);
-    //this_queue->m_index_mask = ((size_t)1 << this_queue->m_index_bits) - 1;
-    this_queue->m_version_mask = ((size_t)1 << (sizeof(size_t) * 8 - this_queue->m_index_bits)) - 1;
+    this_queue->m_version_mask = XAtomic_version_mask(this_queue->m_index_bits);
 
     // 安全检查：确保有足够的版本号位
-    if ((sizeof(size_t) * 8 - this_queue->m_index_bits) < 16) {
+    if (XAtomic_version_bits(this_queue->m_index_bits) < 16) {
         // 处理错误，例如设置一个无效状态或断言
         // 这里简单地将掩码设为0，后续操作会失败
         this_queue->m_version_mask = 0;
     }
 
-    size_t initial_packed = pack_index_version(0, 0, this_queue->m_index_bits, this_queue->m_version_mask);
+    size_t initial_packed = XAtomic_pack_index_version(0, 0, this_queue->m_index_bits, this_queue->m_version_mask);
     XAtomic_init(this_queue->m_head, initial_packed);
     XAtomic_init(this_queue->m_tail, initial_packed);
     XContainerSize(this_queue)=0;
@@ -134,10 +100,10 @@ bool VXLockFreeQueue_isEmpty(const XLockFreeQueue* this_queue)
 
     // 使用 Acquire 读取 tail 来建立同步
     size_t tail_packed = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Acquire);
-    size_t tail_index = unpack_index(tail_packed, this_queue->m_index_mask);
+    size_t tail_index = XAtomic_unpack_index(tail_packed, this_queue->m_index_mask);
 
     size_t head_packed = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
-    size_t head_index = unpack_index(head_packed, this_queue->m_index_mask);
+    size_t head_index = XAtomic_unpack_index(head_packed, this_queue->m_index_mask);
 
     return (head_index == tail_index);
 }
@@ -180,8 +146,8 @@ size_t VXLockFreeQueue_size(const XLockFreeQueue* this_queue)
         tail2 = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed);
     } while (head1 != head2 || tail1 != tail2);
 
-    size_t head_index = unpack_index(head1, this_queue->m_index_mask);
-    size_t tail_index = unpack_index(tail1, this_queue->m_index_mask);
+    size_t head_index = XAtomic_unpack_index(head1, this_queue->m_index_mask);
+    size_t tail_index = XAtomic_unpack_index(tail1, this_queue->m_index_mask);
 
     if (tail_index >= head_index) {
         return tail_index - head_index;
@@ -206,9 +172,9 @@ bool VXLockFreeQueue_push(XLockFreeQueue* this_queue, void* pvValue, XCDataCreat
     while (1) {
         // 1. 读取当前尾
         old_tail_packed = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed);
-        old_tail_index = unpack_index(old_tail_packed, this_queue->m_index_mask);
+        old_tail_index = XAtomic_unpack_index(old_tail_packed, this_queue->m_index_mask);
         size_t head_packed = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
-        size_t head_index = unpack_index(head_packed, this_queue->m_index_mask);
+        size_t head_index = XAtomic_unpack_index(head_packed, this_queue->m_index_mask);
 
         // 2. 检查队列是否已满
         new_tail_index = (old_tail_index + 1) & this_queue->m_index_mask;
@@ -216,8 +182,8 @@ bool VXLockFreeQueue_push(XLockFreeQueue* this_queue, void* pvValue, XCDataCreat
             return false; // 队列已满
 
         // 3. 打包新尾 (版本号+1)
-        size_t old_version = unpack_version(old_tail_packed, this_queue->m_index_bits, this_queue->m_version_mask);
-        new_tail_packed = pack_index_version(new_tail_index, old_version + 1, this_queue->m_index_bits, this_queue->m_version_mask);
+        size_t old_version = XAtomic_unpack_version(old_tail_packed, this_queue->m_index_bits, this_queue->m_version_mask);
+        new_tail_packed = XAtomic_pack_index_version(new_tail_index, old_version + 1, this_queue->m_index_bits, this_queue->m_version_mask);
 
         // 4. 使用CAS操作尝试更新队尾
         if (XAtomic_compare_exchange_strong_size_t(
@@ -265,10 +231,10 @@ void* VXLockFreeQueue_top(XLockFreeQueue* this_queue)
     // --- 关键: 使用 Acquire 读取 tail，以同步 push 的 Release ---
     // 我们读取 tail 是为了检查队列是否为空，但更重要的是建立同步
     size_t tail_packed = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Acquire);
-    size_t tail_index = unpack_index(tail_packed, this_queue->m_index_mask);
+    size_t tail_index = XAtomic_unpack_index(tail_packed, this_queue->m_index_mask);
 
     size_t head_packed = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
-    size_t head_index = unpack_index(head_packed, this_queue->m_index_mask);
+    size_t head_index = XAtomic_unpack_index(head_packed, this_queue->m_index_mask);
 
     if (head_index == tail_index) {
         return NULL; // 队列为空
@@ -288,16 +254,16 @@ bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer)
 
     while (1) {
         old_head_packed = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
-        old_head_index = unpack_index(old_head_packed, this_queue->m_index_mask);
+        old_head_index = XAtomic_unpack_index(old_head_packed, this_queue->m_index_mask);
         size_t tail_packed = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed);
-        size_t tail_index = unpack_index(tail_packed, this_queue->m_index_mask);
+        size_t tail_index = XAtomic_unpack_index(tail_packed, this_queue->m_index_mask);
 
         if (old_head_index == tail_index)
             return false;
 
         new_head_index = (old_head_index + 1) & this_queue->m_index_mask;
-        size_t old_version = unpack_version(old_head_packed, this_queue->m_index_bits, this_queue->m_version_mask);
-        new_head_packed = pack_index_version(new_head_index, old_version + 1, this_queue->m_index_bits, this_queue->m_version_mask);
+        size_t old_version = XAtomic_unpack_version(old_head_packed, this_queue->m_index_bits, this_queue->m_version_mask);
+        new_head_packed = XAtomic_pack_index_version(new_head_index, old_version + 1, this_queue->m_index_bits, this_queue->m_version_mask);
 
         // 安全读取数据
         if(pvBuffer)

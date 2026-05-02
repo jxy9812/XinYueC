@@ -8,18 +8,18 @@
 #define XFIXEDPOOL_BLOCK_ALLOCATED ((void*)(uintptr_t)(-1))
 
 // 计算能容纳 [0, max_value] 所需的最少位数
-static size_t calculate_bits_needed_for_max(size_t max_value) {
-    if (max_value == 0) {
-        return 1;
-    }
-    size_t bits = 0;
-    size_t value = max_value;
-    while (value > 0) {
-        bits++;
-        value >>= 1;
-    }
-    return bits;
-}
+//static size_t calculate_bits_needed_for_max(size_t max_value) {
+//    if (max_value == 0) {
+//        return 1;
+//    }
+//    size_t bits = 0;
+//    size_t value = max_value;
+//    while (value > 0) {
+//        bits++;
+//        value >>= 1;
+//    }
+//    return bits;
+//}
 
 /**
  * @brief 计算用户请求的块大小对应的内部块大小
@@ -78,23 +78,23 @@ static void initialize_free_list(XFixedPool* pool) {
 /**
  * @brief 打包索引和版本号
  */
-static inline size_t pack_index_version(size_t index, size_t version, XFixedPool* pool) {
-    size_t index_part = index & pool->index_mask;
-    size_t version_part = (version & pool->version_mask) << pool->index_bits;
-    return index_part | version_part;
-}
+//static inline size_t pack_index_version(size_t index, size_t version, XFixedPool* pool) {
+//    size_t index_part = index & pool->index_mask;
+//    size_t version_part = (version & pool->version_mask) << pool->index_bits;
+//    return index_part | version_part;
+//}
 /**
  * @brief 从打包值中解包出索引
  */
-static inline size_t unpack_index(size_t packed, XFixedPool* pool) {
-    return packed & pool->index_mask;
-}
+//static inline size_t unpack_index(size_t packed, XFixedPool* pool) {
+//    return packed & pool->index_mask;
+//}
 /**
  * @brief 从打包值中解包出版本号
  */
-static inline size_t unpack_version(size_t packed, XFixedPool* pool) {
-    return (packed >> pool->index_bits) & pool->version_mask;
-}
+//static inline size_t unpack_version(size_t packed, XFixedPool* pool) {
+//    return (packed >> pool->index_bits) & pool->version_mask;
+//}
 
 // ----------------------------------------------------------------------------
 // 核心 API 实现
@@ -121,18 +121,18 @@ bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t 
 
 
     // --- 关键修改: 计算索引和版本号位数 ---
-      pool->index_bits = calculate_bits_needed_for_max(num_blocks - 1);
-      pool->index_mask = (((size_t)1) << pool->index_bits) - 1;
-    pool->version_mask = (((size_t)1) << (sizeof(size_t) * 8 - pool->index_bits)) - 1;
+    pool->index_bits = XAtomic_index_bits(num_blocks - 1);
+    pool->index_mask = XAtomic_index_mask(pool->index_bits);
+    pool->version_mask = XAtomic_version_mask(pool->index_bits);
 
-    if ((sizeof(size_t) * 8 - pool->index_bits) < 16) {
+    if (XAtomic_version_bits(pool->index_bits) < 16) {
         return false; // ABA风险过高
     }
 
     initialize_free_list(pool);
 
     // --- 初始化打包的头指针 (初始索引为0) ---
-    size_t initial_packed = pack_index_version(0, 0, pool);
+    size_t initial_packed = XAtomic_pack_index_version(0, 0, pool->index_bits,pool->index_mask);
     XAtomic_init(pool->free_list_head_packed, initial_packed); // XAtomic_init 会处理 size_t
     return true;
 }
@@ -154,7 +154,7 @@ void* XFixedPool_malloc(XFixedPool* pool) {
     do {
         // 1. 读取当前头
         old_head_packed = XAtomic_load_size_t(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
-        old_head_index = unpack_index(old_head_packed, pool);
+        old_head_index = XAtomic_unpack_index(old_head_packed, pool->index_mask);
 
         // 2. 检查是否为空
         if (old_head_index >= pool->num_blocks) {
@@ -168,8 +168,8 @@ void* XFixedPool_malloc(XFixedPool* pool) {
         new_head_index = *(volatile size_t*)old_head_block;
 
         // 5. 打包新头
-        size_t old_version = unpack_version(old_head_packed, pool);
-        new_head_packed = pack_index_version(new_head_index, old_version + 1, pool);
+        size_t old_version = XAtomic_unpack_version(old_head_packed, pool->index_bits,pool->index_mask);
+        new_head_packed = XAtomic_pack_index_version(new_head_index, old_version + 1, pool->index_bits, pool->index_mask);
 
         // 6. 尝试替换头 (使用 _size_t 后缀的 CAS)
     } while (!XAtomic_compare_exchange_strong_size_t(
@@ -201,13 +201,13 @@ void XFixedPool_free(XFixedPool* pool, void* user_ptr) {
     do {
         // a. 读取当前头 (index + version)
         old_head_packed = XAtomic_load_size_t(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
-        size_t old_head_index = unpack_index(old_head_packed, pool);
+        size_t old_head_index = XAtomic_unpack_index(old_head_packed, pool->index_mask);
 
         *(volatile size_t*)internal_block = old_head_index;
 
         // c. 打包新头: 被释放的块成为新的头
-        size_t old_version = unpack_version(old_head_packed, pool);
-        new_head_packed = pack_index_version(freed_index, old_version + 1, pool);
+        size_t old_version = XAtomic_unpack_version(old_head_packed, pool->index_bits, pool->index_mask);
+        new_head_packed = XAtomic_pack_index_version(freed_index, old_version + 1, pool->index_bits, pool->index_mask);
 
         // d. 尝试原子地更新头指针 (使用 _size_t 后缀的 CAS)
     } while (!XAtomic_compare_exchange_strong_size_t(

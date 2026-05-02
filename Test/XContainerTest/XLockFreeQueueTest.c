@@ -52,7 +52,7 @@ void XLockFreeQueueTest()
 	XPrintf("循环队列 测试\n");
 	XLockFreeQueue* queue = XLockFreeQueue_Create(int,10000),*vqueue= XLockFreeQueue_Create(int, 10000);
 	XAtomic_int32_t active_consumer_count = { 0 },*lpcount=&active_consumer_count;
-	for (size_t i = 0; i < 100; i++)
+	for (size_t i = 0; i < 10000; i++)
 	{
 		int n = i;
 		while (!XLockFreeQueue_push_base(queue, &n));

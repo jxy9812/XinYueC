@@ -134,6 +134,18 @@ void  XAtomic_memory_barrier_acquire();
  */
 void  XAtomic_memory_barrier_release();
 
+
+#define XAtomic_index_mask(index_bits)      ((((size_t)1) << index_bits) - 1)
+#define XAtomic_version_mask(index_bits)    ((((size_t)1) << XAtomic_version_bits(index_bits)) - 1)
+#define XAtomic_version_bits(index_bits)    (sizeof(size_t) * 8 - index_bits)
+// 计算能容纳 [0, max_value] 所需的最少位数-获取 index_bits
+size_t XAtomic_index_bits(size_t max_value);
+// 打包索引和版本号
+size_t XAtomic_pack_index_version(size_t index, size_t version, size_t index_bits, uintptr_t version_mask);
+// 从打包值中解包出索引
+size_t XAtomic_unpack_index(size_t packed, size_t index_mask);
+// 从打包值中解包出版本号
+size_t XAtomic_unpack_version(size_t packed, size_t index_bits, size_t version_mask);
 #ifdef __cplusplus
 }
 #endif
