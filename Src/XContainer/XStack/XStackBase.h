@@ -60,7 +60,7 @@ typedef struct XStackBase
 * @return 插入成功返回true，失败返回false
 * @note 拷贝pvData指向的数据到栈顶部，线程不安全
 */
-bool XStackBase_push_base(XStackBase* this_stack, void* pvData);
+#define XStackBase_push_base            XQueueBase_push_base
 
 /**
 * @brief 类型安全的压栈宏（移动语义）
@@ -79,7 +79,7 @@ bool XStackBase_push_base(XStackBase* this_stack, void* pvData);
 * @return 插入成功返回true，失败返回false
 * @note 移动pvData指向的数据到栈顶部，减少拷贝开销，线程不安全
 */
-bool XStackBase_push_move_base(XStackBase* this_stack, void* pvData);
+#define XStackBase_push_move_base      XQueueBase_push_move_base
 
 // ------------------------------ 删除操作 ------------------------------
 
@@ -88,7 +88,7 @@ bool XStackBase_push_move_base(XStackBase* this_stack, void* pvData);
 * @param this_stack 栈实例指针
 * @note 移除并释放栈顶部的第一个元素，若栈为空则无操作
 */
-void XStackBase_pop_base(XStackBase* this_stack);
+#define XStackBase_pop_base             XQueueBase_pop_base
 
 // ------------------------------ 元素访问与接收 ------------------------------
 
@@ -99,7 +99,7 @@ void XStackBase_pop_base(XStackBase* this_stack);
 * @return 成功接收并移除栈顶元素返回true，失败（如栈为空）返回false
 * @note 将栈顶元素数据拷贝到pvBuffer，然后执行弹栈操作
 */
-bool XStackBase_receive_base(XStackBase* this_stack, void* pvBuffer);
+#define XStackBase_receive_base         XQueueBase_receive_base
 
 /**
 * @brief 类型安全的获取栈顶元素宏
@@ -116,7 +116,7 @@ bool XStackBase_receive_base(XStackBase* this_stack, void* pvBuffer);
 * @return 成功返回栈顶元素的地址，失败（如栈为空）返回NULL
 * @note 仅返回地址，不移除元素，需确保栈非空时使用
 */
-void* XStackBase_top_base(XStackBase* this_stack);
+#define XStackBase_top_base                 XQueueBase_top_base
 
 // ------------------------------ 栈状态查询 ------------------------------
 
@@ -126,7 +126,7 @@ void* XStackBase_top_base(XStackBase* this_stack);
 * @return 栈已满返回true，否则返回false
 * @note 适用于有界栈，无界栈可能始终返回false
 */
-bool XStackBase_isFull_base(XStackBase* this_stack);
+#define XStackBase_isFull_base            XQueueBase_isFull_base
 
 // ------------------------------ 容器管理（继承自XContainer） ------------------------------
 
