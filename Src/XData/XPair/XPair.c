@@ -3,6 +3,14 @@
 //#include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
+void XPair_init(XPair* this_pair, const size_t firstTypeSize, const size_t secondTypeSize)
+{
+	if (!this_pair ||firstTypeSize == 0 || secondTypeSize == 0)return;
+	this_pair->m_firstTypeSize = firstTypeSize;
+	this_pair->m_secondTypeSize = secondTypeSize;
+
+	memset(this_pair + 1, 0, firstTypeSize + secondTypeSize);
+}
 XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize)
 {
 	if (firstTypeSize == 0 || secondTypeSize == 0)
@@ -13,10 +21,7 @@ XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize)
 	size_t size = ALIGN_UP(firstTypeSize + secondTypeSize + sizeof(XPair), sizeof(void*));
 	XPair* this_pair = (XPair*)XMemory_malloc(size);
 	if (!this_pair)return NULL;
-	this_pair->m_firstTypeSize = firstTypeSize;
-	this_pair->m_secondTypeSize = secondTypeSize;
-
-	memset(this_pair+1, 0, firstTypeSize + secondTypeSize);
+	XPair_init(this_pair, firstTypeSize, secondTypeSize);
 	return this_pair;
 }
 
@@ -98,10 +103,15 @@ void* XPair_second(XPair* this_pair)
 		return;
 	return ((uint8_t*)(this_pair+1)) + this_pair->m_firstTypeSize;
 }
-size_t XPair_size(XPair* this_pair)
+size_t XPair_size1(size_t firstTypeSize, size_t secondTypeSize)
+{
+	if (!firstTypeSize|| !secondTypeSize)return 0;
+	return ALIGN_UP(firstTypeSize + secondTypeSize +sizeof(XPair),sizeof(void*));
+}
+size_t XPair_size2(XPair* this_pair)
 {
 	if (!this_pair)return 0;
-	return ALIGN_UP(this_pair->m_firstTypeSize+ this_pair->m_secondTypeSize+sizeof(XPair),sizeof(void*));
+	return XPair_size1(this_pair->m_firstTypeSize, this_pair->m_secondTypeSize);
 }
 void XPair_delete(XPair* this_pair)
 {

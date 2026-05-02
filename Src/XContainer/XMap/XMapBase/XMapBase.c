@@ -27,6 +27,8 @@ void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t va
 	this_map->m_keyCopyMethod = NULL;
 	this_map->m_keyMoveMethod = NULL;
 	this_map->m_keyDeinitMethod = NULL;
+	this_map->m_pairBuffer = XPair_create(keyTypeSize, valTypeSize);
+	this_map->m_pairTypeSize = XPair_size1(keyTypeSize, valTypeSize);
 }
 bool XMapBase_insert_base(XMapBase* this_map, const void* pvKey, const void* pvValue)
 {
@@ -96,16 +98,16 @@ XVector* XMapBase_values_base(const XMapBase* this_map)
 	return XClassGetVirtualFunc(this_map, EXMapBase_Values, void* (*)(const XMapBase*))(this_map);
 }
 
-void XMapBase_deleteNodeData(XPair** lpPair, XMapBase* this_map)
+void XMapBase_deleteNodeData(XPair* pair, XMapBase* this_map)
 {
-	if (!lpPair)return;
-	XPair* pair = *lpPair;
+	if (!pair)return;
+	//XPair* pair = *lpPair;
 	if (XMapBaseKeyDeinitMethod(this_map))
 		XMapBaseKeyDeinitMethod(this_map)(XPair_first(pair));
 
 	if (XContainerDataDeinitMethod(this_map))
 		XContainerDataDeinitMethod(this_map)(XPair_second(pair));
-	XPair_delete(pair);
+	//XPair_delete(pair);
 }
 
 #endif

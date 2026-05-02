@@ -76,16 +76,22 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 				for (size_t j = 0; j < XVector_size_base(nodes); j++)
 				{
 					XRBTreeNode* node = ((XRBTreeNode**)XContainerDataPtr(nodes))[j];
-					XPair* pair = XRBTree_GetData(node, XPair*);
+					XPair* pair = XBTreeNode_GetDataPtr(node);
 					size_t index = map->m_hash(XPair_first(pair), ((XMapBase*)map)->m_keyTypeSize) % new_capacity;
 
 					// 将节点插入到新哈希表的相应红黑树中
-					XRBTree_insert(&newData[index], XContainerCompare(map), XCompareRuleTwo_XMap, XTreeNode_getData(node), sizeof(XPair*));
+					//XRBTree_insert(&newData[index], XContainerCompare(map), XCompareRuleTwo_XMap, pair,XMapBasePairTypeSize(map));
+
+					//初始化节点信息当新节点直接插入
+					XRBTree_SetRed(node);
+					memset(XTreeNode_GetNodes(node), 0, sizeof(XTreeNode*) * ((XTreeNode*)node)->nodeCount);
+					((XTreeNode*)node)->parentNode = NULL;
+					XRBTree_insertNode(&newData[index], XContainerCompare(map), XCompareRuleTwo_XMap, node);
 				}
 				XVector_delete_base(nodes);
 			}
-			// 删除原红黑树
-			XRBTree_delete(root, NULL, NULL);
+			// 删除原红黑树  整颗树重新插入不用释放了
+			//XRBTree_delete(root, NULL, NULL);
 		}
 	}
 
@@ -113,11 +119,12 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue, X
 	XPair* pair = NULL;
 	if (!XHashMap_find_base(this_hash, pvKey, &it))
 	{//节点不存在
-		pair = XPair_create(((XMapBase*)this_hash)->m_keyTypeSize, XContainerTypeSize(this_hash));
-		if (!pair) {
-			// XPair_create 失败，直接返回 false
-			return false;
-		}
+		//pair = XPair_create(((XMapBase*)this_hash)->m_keyTypeSize, XContainerTypeSize(this_hash));
+		//if (!pair) {
+		//	// XPair_create 失败，直接返回 false
+		//	return false;
+		//}
+		pair = XMapBasePairBuffer(this_hash);
 		if (keyCreatMethod)
 			keyCreatMethod(XPair_first(pair), pvKey);
 		else
@@ -126,12 +133,13 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue, X
 			dataCreatMethod(XPair_second(pair), pvValue);
 		else
 			XPair_insertSecond(pair, pvValue);
+
 		XRBTreeNode* inserted_node = XRBTree_insert(
 			&((XRBTreeNode**)XContainerDataPtr(this_hash))[index],
 			XContainerCompare(this_hash),
 			XCompareRuleTwo_XMap,
-			&pair,
-			sizeof(XPair*)
+			pair,
+			XMapBasePairTypeSize(this_hash)
 		);
 		if (inserted_node == NULL)
 		{
@@ -193,7 +201,7 @@ void VXMap_erase(XHashMap* this_hash, const XHashMap_iterator* it, XHashMap_iter
 		((XContainer*)this_hash)->m_compare,
 		XCompareRuleOne_XMap,                                       // 比较规则
 		XPair_first(current_pair),                                 // 要删除的键
-		sizeof(XPair*),
+		XMapBasePairTypeSize(this_hash),
 		XMapBase_deleteNodeData,                                   // 节点数据释放回调
 		this_hash                                                   // 传递容器作为额外参数
 	);
@@ -214,7 +222,7 @@ bool VXMap_remove(XHashMap*this_hash, const void* pvKey)
 	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
 	if (nodes != NULL)
 	{
-		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, sizeof(XPair*), XMapBase_deleteNodeData,this_hash);
+		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, XMapBasePairTypeSize(this_hash), XMapBase_deleteNodeData,this_hash);
 		--XContainerSize(this_hash);
 		return true;
 	}
@@ -347,13 +355,17 @@ void VXClass_move(XHashMap* object, XHashMap* src)
 
 void VXMap_deinit(XHashMap*this_hash)
 {
-
 	XHashMap_clear_base(this_hash);
 	void* data = XContainerDataPtr(this_hash);
 	if (data)
 	{
 		XMemory_free(data);
 		XContainerDataPtr(this_hash) = NULL;
+	}
+	if (XMapBasePairBuffer(this_hash))
+	{
+		XPair_delete(XMapBasePairBuffer(this_hash));
+		XMapBasePairBuffer(this_hash) = NULL;
 	}
 	//XMemory_free(this_hash);
 }

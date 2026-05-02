@@ -26,6 +26,7 @@ typedef struct XPair
 * @return 成功返回XPair指针，失败返回NULL
 */
 #define XPair_Create(firstType,secondType) XPair_create(sizeof(firstType),sizeof(secondType))
+void XPair_init(XPair* other,const size_t firstTypeSize, const size_t secondTypeSize);
 /**
 * @brief 创建XPair实例
 * @param firstTypeSize 第一个数据的类型大小（字节）
@@ -132,7 +133,8 @@ void* XPair_second(XPair* this_pair);
 * @param this_pair 目标XPair实例
 * @return 返回包含类型信息和数据的总大小
 */
-size_t XPair_size(XPair* this_pair);
+size_t XPair_size1(size_t firstTypeSize,size_t secondTypeSize);
+size_t XPair_size2(XPair* this_pair);
 /**
 * @brief 释放XPair实例占用的内存
 * @param this_pair 待释放的XPair实例（可为NULL，此时不操作）

@@ -34,11 +34,13 @@ XCLASS_DEFINE_END(XMapBase)
 */
 typedef struct XMapBase
 {
-	XContainer m_class;                // 继承自容器基类，存储值类型信息及基础容器数据
-	size_t m_keyTypeSize;                    // 键的类型大小（字节数）
+	XContainer m_class;						// 继承自容器基类，存储值类型信息及基础容器数据
+	void* m_pairBuffer;						//键值的缓冲区
+	size_t m_pairTypeSize;
 	XCDataCopyMethod m_keyCopyMethod;        // 键的拷贝方法
 	XCDataMoveMethod m_keyMoveMethod;        // 键的移动方法
 	XCDataDeinitMethod m_keyDeinitMethod;    // 键的释放方法
+	size_t m_keyTypeSize;                    // 键的类型大小（字节数）
 } XMapBase;
 
 // ========================= 虚函数表与初始化 =========================
@@ -312,6 +314,8 @@ XVector* XMapBase_values_base(const XMapBase* this_map);
 */
 #define XMapBaseSetKeyDeinitMethod(Map,method) (((XMapBase*)(Map))->m_keyDeinitMethod=method)
 
+#define XMapBasePairBuffer(Map)					(((XMapBase*)Map)->m_pairBuffer)
+#define XMapBasePairTypeSize(Map)				(((XMapBase*)Map)->m_pairTypeSize)
 // ========================= 节点数据释放 =========================
 
 /**

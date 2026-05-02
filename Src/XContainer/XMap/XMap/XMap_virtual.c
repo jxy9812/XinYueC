@@ -59,11 +59,13 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue, XCData
 	XPair* pair = NULL;
 	if (!XMap_find_base(this_map, pvKey, &it))
 	{
-		pair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
-		if (!pair) {
-			// XPair_create 失败，直接返回 false
-			return false;
-		}
+		//pair = XPair_create(((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
+		//if (!pair) {
+		//	// XPair_create 失败，直接返回 false
+		//	return false;
+		//}
+		pair = XMapBasePairBuffer(this_map);
+
 		if (keyCreatMethod)
 			keyCreatMethod(XPair_first(pair), pvKey);
 		else
@@ -75,7 +77,8 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue, XCData
 
 		//printf("创建的xpair pvKey:%d pvValue:%s\n",XPair_First(pair,int),XPair_second(LPpair));
 
-		XRBTreeNode* inserted_node = XRBTree_insert(&XContainerDataPtr(this_map), XContainerCompare(this_map), XCompareRuleTwo_XMap, &pair, sizeof(XPair*));
+		XRBTreeNode* inserted_node = XRBTree_insert(&XContainerDataPtr(this_map), XContainerCompare(this_map), XCompareRuleTwo_XMap, pair,
+			XMapBasePairTypeSize(this_map));
 		if (inserted_node == NULL)
 		{
 			// 红黑树插入失败！必须释放之前分配的 pair
@@ -137,7 +140,7 @@ void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)
 		((XContainer*)this_map)->m_compare,
 		XCompareRuleOne_XMap,
 		XPair_first(current_pair),  // 传入键用于查找删除
-		sizeof(XPair*),
+		XMapBasePairTypeSize(this_map),
 		XMapBase_deleteNodeData,    // 释放节点数据的回调
 		this_map                    // 传递容器作为额外参数
 	);
@@ -158,7 +161,7 @@ bool VXMap_remove(XMap* this_map, const void* key)
 	XRBTreeNode* nodes = XRBTree_findNode(XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key);
 	if (nodes != NULL)
 	{
-		XRBTree_remove(&XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key, sizeof(XPair*), XMapBase_deleteNodeData,this_map);
+		XRBTree_remove(&XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key, XMapBasePairTypeSize(this_map), XMapBase_deleteNodeData,this_map);
 		--XContainerCapacity(this_map);
 		--XContainerSize(this_map);
 		return true;
@@ -288,7 +291,11 @@ void VXClass_move(XMap* object, XMap* src)
 void VXMap_deinit(XMap* this_map)
 {
 	XMap_clear_base(this_map);
-	//XMemory_free(this_map);
+	if (XMapBasePairBuffer(this_map))
+	{
+		XPair_delete(XMapBasePairBuffer(this_map));
+		XMapBasePairBuffer(this_map) = NULL;
+	}
 }
 
 

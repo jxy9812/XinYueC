@@ -1,6 +1,6 @@
 ﻿#include"XSignalSlot.h"
 #include"XMemory.h"
-#include"XMap.h"
+#include"XHashMap.h"
 #include"XVector.h"
 #include"XObject.h"
 #include"XCoreApplication.h"
@@ -30,7 +30,7 @@ void XSignalSlot_init(XSignalSlot* manager, XObject* obj)
 	if (manager == NULL)
 		return NULL;
 	manager->obj = obj;
-	manager->signalMap = XMap_Create(size_t, XSignal,size_t_compare);
+	manager->signalMap = XHashMap_Create(size_t, XSignal,size_t_compare);
 	manager->bindSignalList = XVector_Create(XConnection*);
 	XContainerSetCompare(manager->bindSignalList, ptr_compare);
 	// 初始化互斥锁
@@ -43,9 +43,9 @@ void XSignalSlot_deinit(XSignalSlot* manager)
 	// 加锁保护销毁过程
 	XMutex_lock(manager->mutex);
 	//清除绑定的槽
-	for_each_iterator(manager->signalMap, XMap, it)
+	for_each_iterator(manager->signalMap, XHashMap, it)
 	{
-		XSignal* signal = XPair_second(XMap_iterator_data(&it));
+		XSignal* signal = XPair_second(XHashMap_iterator_data(&it));
 		if (signal == NULL)
 			continue;
 		for_each_iterator(signal->connList, XVector,it)
@@ -116,7 +116,7 @@ XConnection* XSignalSlot_connect1(XSignalSlot* manager,size_t signal, XObject* r
 		XSignal insert = {.sender=manager->obj,.type= signal,.connList= XVector_Create(XConnection)};
 		//insert.connList->m_equality = XEquality_XConnection;
 		XContainerSetCompare(insert.connList, XConnection_compare);
-		XMap_insert_base(manager->signalMap, &signal, &insert);
+		XMapBase_insert_base(manager->signalMap, &signal, &insert);
 		signalObj = XMapBase_value_base(manager->signalMap, &signal);
 	}
 	//判断是否重复添加

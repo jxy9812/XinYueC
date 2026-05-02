@@ -131,7 +131,7 @@ XPair* XHashMap_iterator_data(XHashMap_iterator* it)
 {
 	if (it == NULL || it->node == NULL)
 		return NULL;
-	return XBTreeNode_GetData(it->node, XPair*);
+	return XBTreeNode_GetDataPtr(it->node);
 	//return ((XHashNode*)(it->node))->pair;
 }
 
