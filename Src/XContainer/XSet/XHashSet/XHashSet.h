@@ -58,7 +58,7 @@ XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XCompare com
 * @return 创建成功的XHashSet实例指针，失败返回NULL
 * @note 自动推导键的类型大小，哈希函数默认使用XHashMap_murmur3_32
 */
-#define XHashSet_Create(keyType, compare) XHashSet_create(sizeof(keyType), XHashMap_murmur3_32, compare);
+#define XHashSet_Create(keyType, compare) XHashSet_create(sizeof(keyType), XHash_murmur3_32, compare);
 /**
 * @brief 初始化XHashSet实例
 * @param this_set 待初始化的XHashSet实例指针（需提前分配内存）

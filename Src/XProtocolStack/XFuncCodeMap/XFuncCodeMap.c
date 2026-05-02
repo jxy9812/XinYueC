@@ -2,7 +2,7 @@
 #include "XHashMap.h"
 XFuncCodeMap* XFuncCodeMap_create(size_t codeSize, XCompare codeCompare)
 {
-	XHashMap* hash = XHashMap_create(codeSize, sizeof(XFuncCodeNode), XHashMap_murmur3_32, codeCompare);
+	XHashMap* hash = XHashMap_create(codeSize, sizeof(XFuncCodeNode), XHash_xxhash64, codeCompare);
 	return hash;
 }
 

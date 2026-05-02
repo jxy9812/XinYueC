@@ -43,7 +43,7 @@ start:
 	{
 		XReadWriteLock_unlock(global_lock);
 		XHashMap map;
-		XHashMap_init(&map, sizeof(XHandle), sizeof(XRecursiveLockState), XHashMap_murmur3_32, ptr_compare);
+		XHashMap_init(&map, sizeof(XHandle), sizeof(XRecursiveLockState), XHash_xxhash64, ptr_compare);
 		XReadWriteLock_lockForWrite(global_lock);
 		XHashMap_insert_base(global_locks_map, &lock_obj, &map);
 		XReadWriteLock_unlock(global_lock);

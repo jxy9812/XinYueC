@@ -897,10 +897,10 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
         d->timers = NULL;
         d->sockets = NULL;
 
-        d->timers = XHashMap_create(sizeof(size_t), sizeof(XEventDispatcherWin32_TimerInfo), XHashMap_murmur3_32, size_t_compare);
+        d->timers = XHashMap_Create(size_t, XEventDispatcherWin32_TimerInfo, size_t_compare);
         //d->timers = XMap_Create(size_t, XEventDispatcherWin32_TimerInfo,size_t_compare);
         XContainerSetDataDeinitMethod(d->timers, timersDataDeinit);
-        d->sockets = XHashMap_create(sizeof(intptr_t), sizeof(XVector), XHashMap_murmur3_32, int_compareptr_t);
+        d->sockets = XHashMap_Create(intptr_t, XVector, int_compareptr_t);
 
         if (!d->timers || !d->sockets) {
             // 错误处理

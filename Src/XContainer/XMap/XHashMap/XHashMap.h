@@ -76,7 +76,7 @@ XHashMap* XHashMap_create_move(XHashMap* other);
 * @return 调用XHashMap_create创建的XHashMap指针，哈希函数默认使用XHashMap_murmur3_32
 * @note 自动推导键和值的类型大小，避免手动计算sizeof
 */
-#define XHashMap_Create(keyType, valType, compare) XHashMap_create(sizeof(keyType), sizeof(valType), XHashMap_murmur3_32, compare)
+#define XHashMap_Create(keyType, valType, compare) XHashMap_create(sizeof(keyType), sizeof(valType), XHash_xxhash64, compare)
 /**
 * @brief 初始化已分配内存的XHashMap实例
 * @param this_map 待初始化的XHashMap指针（需提前分配内存）
