@@ -42,12 +42,13 @@ void XThreadData_delete(XThreadData* data)
 {
     if (!data)return;
     
-    //XThreadData_mapRemove(data);
     if (data->m_dispatcher)
     {
-        XObject_deleteLater(data->m_dispatcher);
+        XClass_delete_base(data->m_dispatcher);
+        //XObject_deleteLater(data->m_dispatcher);
         data->m_dispatcher = NULL;
     }
+    //XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
     /*线程结束前已经处理了所有删除事件
     遍历一遍丢弃其他所有事件*/
     for_each_iterator(&data->m_postEventList, XVector, it)
@@ -56,7 +57,9 @@ void XThreadData_delete(XThreadData* data)
         if (post)
             XEvent_delete_base(post->event);
     }
+    XLockFreeQueue_deinit_base(&data->m_tryPostEventList);
     XVector_deinit_base(&data->m_postEventList);
+    XVector_deinit_base(&data->m_handlerEventList);
     if (data->m_mutex)
     {
         XMutex_delete(data->m_mutex);
@@ -70,12 +73,15 @@ void XThreadData_init(XThreadData* data, XThread* thread)
     if (!data)return;
     memset(data,0,sizeof(XThreadData));
     data->m_mutex = XMutex_create(XLock_NonRecursive);
-    XVector_init(&data->m_postEventList,sizeof(XPostEvent));
+    XLockFreeQueue_init(&data->m_tryPostEventList,sizeof(XPostEvent),30);//中断队列大小按需修改
+    XVector_init(&data->m_postEventList, sizeof(XPostEvent));
+    XVector_init(&data->m_handlerEventList, sizeof(XPostEvent));
     //data->m_postEventList=XVector_create(sizeof(XPostEvent));
     data->m_thread = thread;
     XAtomic_init(data->m_currentEventLoop, 0);
     XAtomic_init(data->m_loopLevel, 0);
-    data->m_dispatcher = XEventDispatcher_create(thread);
+    data->m_dispatcher = NULL;
+    //data->m_dispatcher = XEventDispatcher_create(thread);
 
 }
 XThreadData* XThreadData_current(void) 
@@ -135,6 +141,7 @@ XThreadData* XThreadData_initMainThread(XThread* thread)
     XThreadData_current();
     XThreadData* data = XThreadData_create(thread);
     XThreadData_mapInsert(data);
+    data->m_dispatcher= XEventDispatcher_create(thread);
     MainThread = XThread_currentThreadId();
 
     return data;
@@ -157,7 +164,8 @@ void XThreadData_popEventloop(XThreadData * data, XEventLoop * loop)
     XAtomic_exchange_ptr(&data->m_currentEventLoop, loop, XAtomic_MemoryOrder_Relaxed);
 }
 
-void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) {
+void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) 
+{
     if (!receiver || !event) return;
 
     XThread* th = receiver->m_thread;
@@ -170,9 +178,27 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) {
     XVector* local = &td->m_postEventList;
     XVector_push_back_base(local, &pe);
     // 关键：稳定降序排序
-    XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
+    //XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
+  
     XMutex_unlock(td->m_mutex);
+    // 唤醒事件循环
+    if (td->m_dispatcher) 
+    {
+        //XPrintf("XThread:%d 进行唤醒\n",XThread_currentThreadId() );
+        XAbstractEventDispatcher_wakeUp_base(td->m_dispatcher);
+    }
+    
+}
 
+void XThreadData_tryPostEvent(XObject* receiver, XEvent* event, int priority)
+{
+    if (!receiver || !event) return;
+
+    XThread* th = receiver->m_thread;
+    if (!th || !th->m_data) return;
+    XThreadData* td = th->m_data;
+    XPostEvent pe = { receiver, event, priority };
+    XLockFreeQueue_push_base(&td->m_tryPostEventList,&pe);
     // 唤醒事件循环
     if (td->m_dispatcher) {
         XAbstractEventDispatcher_wakeUp_base(td->m_dispatcher);
@@ -183,52 +209,70 @@ void XThreadData_push_front_list(const XVector* events)
 {
     if (!events||!XVector_size_base(events))return;
     XThreadData* td = XThreadData_current();
-    //if (!td->m_postEventList)return;
-    XVector* temp = XVector_create(sizeof(XPostEvent));
-    XVector_resize_base(temp,XVector_size_base(events));
-    XVector_clear_base(temp);
-    //提取出有效的事件
+   
     for_each_iterator(events, XVector, it)
     {
         XPostEvent* ePost = XVector_iterator_data(&it);
         if (ePost->event)
-            XVector_push_back_base(temp,ePost);
+        {
+            XMutex_lock(td->m_mutex);
+            XVector_push_back_base(&td->m_postEventList, ePost);
+            XMutex_unlock(td->m_mutex);
+        }
     }
-    if(XVector_size_base(temp))
-    {
-        XMutex_lock(td->m_mutex);
-        XVector* local = &td->m_postEventList;
-        //整个一起插入到头部
-        XVector_insert_array_base(local, 0, XContainerDataPtr(temp), XVector_size_base(temp));
-        // 关键：稳定降序排序
-        XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
-        XMutex_unlock(td->m_mutex);
-    }
-    XVector_delete_base(temp);
+  
+    //XVector* temp = XVector_create(sizeof(XPostEvent));
+    //XVector_resize_base(temp,XVector_size_base(events));
+    //XVector_clear_base(temp);
+    ////提取出有效的事件
+    //for_each_iterator(events, XVector, it)
+    //{
+    //    XPostEvent* ePost = XVector_iterator_data(&it);
+    //    if (ePost->event)
+    //        XVector_push_back_base(temp,ePost);
+    //}
+    //if(XVector_size_base(temp))
+    //{
+    //    XMutex_lock(td->m_mutex);
+    //    XVector* local = &td->m_postEventList;
+    //    //整个一起插入到头部
+    //    XVector_insert_array_base(local, 0, XContainerDataPtr(temp), XVector_size_base(temp));
+    //    // 关键：稳定降序排序
+    //    XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
+    //    XMutex_unlock(td->m_mutex);
+    //}
+    //XVector_delete_base(temp);
 }  
 
 XVector* XThreadData_takePostedEvents(void) 
 {
     XThreadData* td = XThreadData_current();
-    if (!td)return;
-    XVector* local = NULL;
-    if (!td) return local;
+    if (!td) return NULL;
+    XVector* local = &td->m_handlerEventList;
+
     XMutex_lock(td->m_mutex);
-    if (XContainerSize(&td->m_postEventList))
+    size_t count = XContainerCapacity(&td->m_postEventList) + XLockFreeQueue_size_base(&td->m_tryPostEventList);
+    if (count > XContainerCapacity(local))
     {
-        local = XVector_create(sizeof(XPostEvent));
-        XVector_resize_base(local, XVector_size_base(&td->m_postEventList));
-        XContainerSize(local)=0;
+        XVector_resize_base(local, count);
+        XContainerSize(local) = 0;
     }
-    else
+    if (XContainerIsEmpty(&td->m_postEventList))
     {
         XMutex_unlock(td->m_mutex);
-        return NULL;//为空的时候直接返回空，生成空副本无意义,提升性能
+        return NULL;
     }
     //把空的数组交换出来
     if(local)
         XVector_swap_base(local,(&td->m_postEventList));
     XMutex_unlock(td->m_mutex);
+
+    XPostEvent pe = { 0 };
+    while (XLockFreeQueue_receive_base(&td->m_tryPostEventList, &pe))
+    {
+        XVector_push_back_base(local, &pe);
+    }
+    XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
 
     return local;
 }

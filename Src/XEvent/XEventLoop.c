@@ -187,25 +187,15 @@ void XEventLoop_wakeUp(XEventLoop* loop) {
 void XEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags)
 {
     if (!loop || !loop->m_dispatcher /*|| loop->m_state != XEventLoop_Running*/) return;
-    //先处理是否有信号需要在队列中发送
-    //PostData data;
-    //while (XQueueBase_receive_base(loop->m_postQueue, &data))
-    //{
-    //    switch (data.type) 
-    //    {
-    //        case Post_SignalSlot:
-    //        {//发送信号
-    //            if (data.sendSignalFunc)
-    //                data.sendSignalFunc(data.signalSlot, data.signal, data.args, data.ref_count, data.priority);//发送信号
-    //        }break;
-    //        case Post_Func:
-    //        {//投递函数
-    //            //XObject_postEvent(data.object, XEventFunc_create(data.run_func, data.args, data.del), data.priority);
-    //        }break;
-    //    }
-    //}
     // 处理事件队列中的所有事件
-    XAbstractEventDispatcher_processEvents_base(loop->m_dispatcher, flags);
+    for (size_t i = 0; i < 1; i++)
+    {
+        if (XAbstractEventDispatcher_processEvents_base(loop->m_dispatcher, flags))
+            return;
+
+    }
+    // 2. 【关键】如果没有事件，才考虑休眠
+    XAbstractEventDispatcher_processEvents_base(loop->m_dispatcher, XEventLoop_WaitForMoreEvents); // 
 }
 /**
  * @brief 释放事件循环资源

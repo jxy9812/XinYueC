@@ -279,7 +279,7 @@ void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)
     for_each_iterator(events, XVector, it)
     {
         XPostEvent* ePost = XVector_iterator_data(&it);
-        if (!ePost) continue;
+        if (!ePost|| !ePost->event) continue;
         if (receiver && ePost->receiver != receiver)
             continue;//如果有指定的接收者，跳过其他接收者
         if(eventType&& eventType!=ePost->event->type)
@@ -291,7 +291,8 @@ void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)
     //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
     if (size < XVector_size_base(events))
         XThreadData_push_front_list(events);
-    XVector_delete_base(events);
+    XVector_clear_base(events);
+    //XVector_delete_base(events);
 }
 
 void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventType)
@@ -315,7 +316,8 @@ void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventTyp
     //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
     if (size < XVector_size_base(events))
         XThreadData_push_front_list(events);
-    XVector_delete_base(events);
+    XVector_clear_base(events);
+    //XVector_delete_base(events);
 }
 
 XAbstractEventDispatcher* XCoreApplication_eventDispatcher(void)

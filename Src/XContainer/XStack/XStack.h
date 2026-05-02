@@ -17,7 +17,7 @@ extern "C" {
 #include <stdio.h>    /** @brief 标准输入输出库，用于调试输出 */
 #include <stdbool.h>  /** @brief 布尔类型支持，提供bool、true、false定义 */
 #include "XVector.h"  /** @brief 依赖XVector作为底层存储容器，栈操作复用向量尾操作 */
-
+#include "XStackBase.h"
 
 /**
 * @brief XStack虚函数表枚举

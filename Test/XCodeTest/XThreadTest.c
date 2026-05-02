@@ -9,7 +9,7 @@
 static void threadFunc(XThread* thread, XVarList* list)
 {
 	XVarList_args_1(list, XAtomic_int32_t*, rt);
-	XPrintf("子线程:id:%d 引用:%d\n",XThread_currentThreadId(), XAtomic_load_int32(rt, XAtomic_MemoryOrder_Relaxed));
+	XPrintf("子线程:%p 引用:%d\n", XThread_currentThread(), XAtomic_load_int32(rt, XAtomic_MemoryOrder_Relaxed));
 	XTimer* timer = XTimer_create();
 	//XPrintf("XTimer:thread:%p\n",((XObject*)timer)->m_thread);
 	XTimer_setInterval(timer, 20);
@@ -48,7 +48,7 @@ void XThreadTest()
 	XAtomic_int32_t* rt= XAtomic_create(int32_t);
 	while (true)
 	{
-		//XPrintf("主线程:id:%d\n", XThread_currentThreadId());
+		//XPrintf("主线程:%p\n", XThread_currentThread());
 		for (size_t i = 0; i < 16; i++)
 		{
 			XAtomic_fetch_add_int32(rt, 1, XAtomic_MemoryOrder_Relaxed);
@@ -59,8 +59,8 @@ void XThreadTest()
 			{
 				XThread_deleteLater(th);
 				int value = XAtomic_fetch_sub_int32(rt, 1, XAtomic_MemoryOrder_Relaxed);
-				if (value <= 1 && i == 9)
-					continue;
+				/*if (value <= 1 && i == 9)
+					continue;*/
 				
 			}
 		}

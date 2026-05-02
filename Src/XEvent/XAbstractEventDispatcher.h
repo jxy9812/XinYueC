@@ -32,6 +32,7 @@ typedef struct XAbstractEventDispatcherPrivate
     XVector* nativeFilters;///< 本地事件过滤器列表
     XVector* m_timerIds;//定时器id数组
     XMutex* mutex;              ///< 保护 timers, sockets, nativeFilters 的互斥锁
+    XWaitCondition* wait;
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp);
@@ -86,7 +87,6 @@ XCLASS_DEFINE_END(XAbstractEventDispatcher)
 typedef struct XAbstractEventDispatcher 
 {
     XObject m_class; ///< 继承自 XObject
-    
     // 私有数据（PIMPL）
     XAbstractEventDispatcherPrivate* d_ptr;
 } XAbstractEventDispatcher;

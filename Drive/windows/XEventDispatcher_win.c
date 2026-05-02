@@ -100,14 +100,18 @@ static LRESULT CALLBACK XEventDispatcherWin32_WndProc(HWND hwnd, UINT msg, WPARA
     //XPrintf("接收到系统事件\n");
     if (msg == XDISPATCHER_WM_SOCKET) {
         // 网络事件
-       /* XEventDispatcherWin32* dispatcher = (XEventDispatcherWin32*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
-        if (dispatcher) {
+        XEventDispatcherWin32* dispatcher = (XEventDispatcherWin32*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+        /*if (dispatcher) {
             XEventDispatcherWin32_handleSocketMessage(dispatcher, hwnd, msg, wParam, lParam);
         }*/
         return 0;
     }
     else if (msg == XDISPATCHER_WM_WAKEUP) {
+        XEventDispatcherWin32* dispatcher = (XEventDispatcherWin32*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
         // 唤醒事件
+        XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
+        // 重置 wakeUpSent 标志，允许下次再次发送唤醒消息
+        d->wakeUpSent = false;
         return 0;
     }
     else  if (msg == WM_TIMER) {
@@ -275,16 +279,19 @@ static void IOCP_handle(XAbstractEventDispatcher* dispatcher)
 
 static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispatcher, XEventLoopProcessEventsFlags flags)
 {
-   
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
 
+    bool processed = false;
+
+    // 1. 首先处理基类的跨线程事件
+    bool hasPostedEvents = (XVtableGetFunc(XAbstractEventDispatcher_class_init(), EXAbstractEventDispatcher_ProcessEvents, bool(*)(XAbstractEventDispatcher*, XEventLoopProcessEventsFlags))(dispatcher, flags));
+    processed = hasPostedEvents;
+
+    // 2. 处理所有 Windows 消息（包括 internalHwnd 的消息）
     if (d->internalHwnd)
     {
         MSG msg;
-        bool processed = false;
-
-        // 先处理所有已排队的消息（PeekMessage 不会阻塞）
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
                 XEvent* quitEvent = XEvent_create(XEVENT_TYPE_QUIT);
@@ -292,31 +299,50 @@ static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispa
                 break;
             }
             TranslateMessage(&msg);
-            DispatchMessage(&msg); // ← 这会调用 WndProc（处理 socket/timer 等）
-            processed = true;
-        }
-    }
-   
-    if (d->ioCompletionPort)
-    {//只在主线程中接收数据分发事件
-        IOCP_handle(dispatcher);
-    }
-    
-    // 【关键修改】只有设置了 WaitForMoreEvents，并且当前没有中断，才进入等待
-    if ((flags & XEventLoop_WaitForMoreEvents) && !d->interrupt) {
-        XAbstractEventDispatcher_aboutToBlock_signal(dispatcher);
-        DWORD waitRet = MsgWaitForMultipleObjectsEx(0, NULL, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        if (waitRet != WAIT_FAILED) {
-            // 发送 awake 信号
-            XAbstractEventDispatcher_awake_signal(dispatcher);
-            // 被唤醒后，可以再次尝试处理新消息（可选，通常由下一次 processEvents 调用处理）
-            // 这里我们不立即处理，保持与 Qt 一致：WaitForMoreEvents 只保证“至少等一个事件到来”
-            // 实际处理留到下次调用
+            DispatchMessage(&msg);
+            processed = true; // 只要处理了任何 Windows 消息，就标记为已处理
         }
     }
 
-    d->interrupt = false; // 重置中断标志
-    return (XVtableGetFunc(XAbstractEventDispatcher_class_init(), EXAbstractEventDispatcher_ProcessEvents, bool(*)(XAbstractEventDispatcher*, XEventLoopProcessEventsFlags))(dispatcher,flags));
+    // 3. 处理 IOCP（仅主线程）
+    if (d->ioCompletionPort)
+    {
+        IOCP_handle(dispatcher);
+    }
+
+    // 4. 关键修复：正确判断是否需要等待
+    // 只有当确实没有任何事件需要处理时，才进入等待状态
+    if (!d->ioCompletionPort) // 子线程
+    {
+        // 检查是否还有未处理的 Windows 消息（非阻塞检查）
+        bool hasPendingMessages = false;
+        if (d->internalHwnd) {
+            MSG peekMsg;
+            hasPendingMessages = PeekMessage(&peekMsg, NULL, 0, 0, PM_NOREMOVE);
+        }
+
+        // 只有在明确需要等待、没有中断、且确实没有事件时才等待
+        if ((flags & XEventLoop_WaitForMoreEvents) &&
+            !d->interrupt &&
+            !processed &&
+            !hasPendingMessages)
+        {
+            //XPrintf("XThread:%p 进入睡眠\n", XThread_currentThread());
+            XAbstractEventDispatcher_aboutToBlock_signal(dispatcher);
+            DWORD waitRet = MsgWaitForMultipleObjectsEx(0, NULL, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+
+            //XPrintf("XThread:%p 被唤醒\n", XThread_currentThread());
+            if (waitRet != WAIT_FAILED)
+            {
+                XAbstractEventDispatcher_awake_signal(dispatcher);
+                // 被唤醒后，确保 wakeUpSent 标志会在消息处理中重置
+                // 实际的消息处理会在下一次 processEvents 调用中完成
+            }
+        }
+    }
+
+    d->interrupt = false;
+    return processed;
 }
 
 static void VXEventDispatcherWin32_registerSocketNotifier(XAbstractEventDispatcher* dispatcher, XSocketNotifier* notifier)
@@ -705,7 +731,8 @@ static void VXEventDispatcherWin32_wakeUp(XAbstractEventDispatcher* dispatcher)
     XEventDispatcherWin32PlatformPrivate* d = PlatformPrivate(dispatcher);
 
     // 防止重复发送
-    if (!d->wakeUpSent) {
+    if (!d->wakeUpSent) 
+    {
         d->wakeUpSent = true;
         PostMessage(d->internalHwnd, XDISPATCHER_WM_WAKEUP, 0, 0);
     }
@@ -817,8 +844,8 @@ XVtable* XEventDispatcherWin32_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
 
-        // 继承 XObject 的虚函数表
-        XVTABLE_INHERIT_DEFAULT(XObject_class_init());
+    // 继承 XObject 的虚函数表
+    XVTABLE_INHERIT_DEFAULT(XAbstractEventDispatcher_class_init());
     //XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_ProcessEvents, (void*)VXEventDispatcherWin32_processEvents);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterSocketNotifier, (void*)VXEventDispatcherWin32_registerSocketNotifier);
@@ -863,9 +890,9 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
         XMemory_free(self);
         return NULL;
     }
-    if (!XThread_currentThread())
+    XAbstractEventDispatcherPrivate_init(d);
+    if (XThread_isMainThread())
     {
-        XAbstractEventDispatcherPrivate_init(d);
         d->m_dp.m_timerIds = XVector_Create(XTimerId);
         d->timers = NULL;
         d->sockets = NULL;
@@ -884,46 +911,47 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
             return NULL;
         }
 
-        // 创建内部消息窗口
-        WNDCLASS wc = { 0 };
-        wc.lpfnWndProc = XEventDispatcherWin32_WndProc;
-        wc.hInstance = GetModuleHandle(NULL);
-        wc.lpszClassName = "XEventDispatcherInternalWindow";
-        if (!RegisterClass(&wc)) {
-            // 可能已经注册，忽略错误
-        }
-        d->internalHwnd = 0;
-        d->internalHwnd = CreateWindowEx(
-            0, "XEventDispatcherInternalWindow", NULL,
-            0, 0, 0, 0, 0,
-            HWND_MESSAGE, NULL, GetModuleHandle(NULL), NULL
-        );
 
-        if (!d->internalHwnd) {
-            XHashMap_delete_base(d->timers);
-            XHashMap_delete_base(d->sockets);
-            XAbstractEventDispatcherPrivate_deinit(d);
-            XMemory_free(d);
-            XMemory_free(self);
-            return NULL;
-        }
-
-        // 将 dispatcher 指针存入窗口
-        SetWindowLongPtr(d->internalHwnd, GWLP_USERDATA, (LONG_PTR)self);
 
         d->ioCompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
        
     }
     else
     {
-
+        d->ioCompletionPort = NULL;
     }
+    // 创建内部消息窗口
+    WNDCLASS wc = { 0 };
+    wc.lpfnWndProc = XEventDispatcherWin32_WndProc;
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.lpszClassName = "XEventDispatcherInternalWindow";
+    if (!RegisterClass(&wc)) {
+        // 可能已经注册，忽略错误
+    }
+    d->internalHwnd = 0;
+    d->internalHwnd = CreateWindowEx(
+        0, "XEventDispatcherInternalWindow", NULL,
+        0, 0, 0, 0, 0,
+        HWND_MESSAGE, NULL, GetModuleHandle(NULL), NULL
+    );
+
+    if (!d->internalHwnd) {
+        XHashMap_delete_base(d->timers);
+        XHashMap_delete_base(d->sockets);
+        XAbstractEventDispatcherPrivate_deinit(d);
+        XMemory_free(d);
+        XMemory_free(self);
+        return NULL;
+    }
+
+    // 将 dispatcher 指针存入窗口
+    SetWindowLongPtr(d->internalHwnd, GWLP_USERDATA, (LONG_PTR)self);
     self->m_class.d_ptr = d;
 
-    //if (XThread_currentThread()) {
-    //    // 子线程需初始化 COM 和 OLE
-    //    //CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-    //}
+    if (!XThread_isMainThread()) {
+        // 子线程需初始化 COM 和 OLE
+        CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    }
 
    
     return self;

@@ -176,13 +176,13 @@ void XLockFreeListThreadTest()
 	
 	//threadTest(queue);
 
-	for (size_t i = 0; i < 10; i++)
+	for (size_t i = 0; i < 10000; i++)
 	{
 		int n = i;
 		while (!XLockFreeList_push_front_base(list, &n));
 		//Sleep(100);
 	}
-	for (size_t i = 0; i < 10; i++)
+	for (size_t i = 0; i < 16; i++)
 	{
 		XThread* thread = XThread_create_func(ThreadReceive, XVarList_Create(XVar(XLockFreeList*, list)));
 		XThread_start(thread);

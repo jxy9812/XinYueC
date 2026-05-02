@@ -29,9 +29,15 @@ static void VXAbstractEventDispatcher_closingDown(XAbstractEventDispatcher* self
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 {
     if (!XThread_currentThread())
+    {
         dp->nativeFilters = XVector_Create(void*);
+    }
     else
+    {
         dp->nativeFilters = NULL;
+        //dp->wait = XWaitCondition_create();
+        dp->wait = NULL;
+    }
     dp->mutex = XMutex_create(XLock_NonRecursive);
     dp->m_timerIds = NULL;
 }
@@ -47,6 +53,11 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
     {
         XMutex_delete(dp->mutex);
         dp->mutex = NULL;
+    }
+    if (dp->wait)
+    {
+        XWaitCondition_delete(dp->wait);
+        dp->wait = NULL;
     }
     if (dp->m_timerIds)
     {
@@ -128,13 +139,27 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
 {
     size_t size = 0;
     //处理事件
-    //XMutex_lock(self->d_ptr->mutex);
     XVector* events = XThreadData_takePostedEvents();
-    if (!events)return false;
+    if (!events)
+    {
+        //if (flags & XEventLoop_WaitForMoreEvents)
+        //{
+        //    if(self->d_ptr->wait)
+        //    {
+        //        XThreadData* data = XThreadData_current();
+        //        XMutex_lock(data->m_mutex);
+        //        if(XVector_isEmpty_base(&data->m_postEventList))
+        //            XWaitCondition_wait(self->d_ptr->wait, data->m_mutex, 1);
+        //        XMutex_unlock(data->m_mutex);
+        //        //XPrintf("线程唤醒\n");
+        //    }
+        //}
+        return false;
+    }
     for_each_iterator(events, XVector, it)
     {
         XPostEvent* ePost = XVector_iterator_data(&it);
-        if (!ePost) continue;
+        if (!ePost|| !ePost->event) continue;
         // 根据 flags 排除特定事件类型
         if ((flags & XEventLoop_ExcludeUserInputEvents) && ePost->event->input_event == XEventLoop_ExcludeUserInputEvents)
         {
@@ -150,15 +175,21 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
             //XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
             continue; // 跳过定时器事件
         }
-       if(XCoreApplication_sendEvent(ePost->receiver, ePost->event))
+        if (!ePost->receiver||ePost->receiver->is_deleting_children)
+        {
+            XEvent_delete_base(ePost->event);
+            ++size;
+        }
+        XEvent* e = ePost->event;
+        ePost->event = NULL;//处理过的事件置空
+        if(XCoreApplication_sendEvent(ePost->receiver, e))
            ++size;
-       ePost->event = NULL;//处理过的事件置空
     }
     //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
     if(size< XVector_size_base(events))
         XThreadData_push_front_list(events);
-    XVector_delete_base(events);
-    //XMutex_unlock(self->d_ptr->mutex);
+    XVector_clear_base(events);
+    //XVector_delete_base(events);
 
     return size;
 }
@@ -207,7 +238,8 @@ static XDuration VXAbstractEventDispatcher_remainingTime(const XAbstractEventDis
 
 static void VXAbstractEventDispatcher_wakeUp(XAbstractEventDispatcher* self)
 {
-    (void)self;
+    if(self->d_ptr->wait)
+        XWaitCondition_wakeAll(self->d_ptr->wait);
 }
 
 static void VXAbstractEventDispatcher_interrupt(XAbstractEventDispatcher* self)

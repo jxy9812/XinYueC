@@ -53,7 +53,6 @@ XThread* XThread_createMainThread(XObject* parent)
     thread->m_loop = NULL;
     thread->m_priority = XThread_err;
     thread->m_stackSize = 0;
-    thread->m_data = XThreadData_initMainThread(thread);
     Set_Class_MemoryFree(thread, XFree);
     thread->m_start_routine = NULL;
     thread->m_varList = NULL;
@@ -61,6 +60,8 @@ XThread* XThread_createMainThread(XObject* parent)
     // 初始化优先级和栈大小为真实值
     thread->m_priority = XThread_priority(thread); // 这会触发上面的新逻辑
     thread->m_stackSize = XThread_stackSize(thread); // 这会触发上面的新逻辑
+    thread->m_data = XThreadData_initMainThread(thread);
+    //thread->m_data = NULL;
     return thread;
 }
 // 初始化 XThread 对象
@@ -77,8 +78,8 @@ void XThread_init(XThread* thread)
     thread->m_loop = NULL;
     thread->m_priority = XThread_NormalPriority;
     thread->m_stackSize = 512;
-    thread->m_data = XThreadData_create(thread);
-    //thread->m_data = NULL;
+    //thread->m_data = XThreadData_create(thread);
+    thread->m_data = NULL;
     //((Xthread*)thread)->m_thread = thread;//将线程指针设为自己，才可以使用事件
 }
 void* XThread_finished_signal(XThread* thread)
@@ -183,7 +184,10 @@ void XThread_exit(XThread* thread, int returnCode)
 void XThread_quit(XThread * thread)
 {
     if (thread && thread->m_loop)
+    {
         XEventLoop_quit(thread->m_loop);
+        XAbstractEventDispatcher_wakeUp_base(thread->m_data->m_dispatcher);
+    }
 }
 int XThread_exec(XThread* thread)
 {
@@ -208,7 +212,13 @@ void XThread_run_base(XThread* thread)
 void VXThread_run(XThread* thread)
 {
     if (!thread)return;
-    XHandle id=XThreadData_mapInsert(thread->m_data);
+    XHandle id = 0;
+    if (!thread->m_isMainThread)
+    {
+        thread->m_data = XThreadData_create(thread);
+        id = XThreadData_mapInsert(thread->m_data);
+        thread->m_data->m_dispatcher= XEventDispatcher_create(thread);
+    }
    
     thread->m_finished = false;
     thread->m_running = true;
@@ -225,5 +235,6 @@ void VXThread_run(XThread* thread)
         thread->m_loop = NULL;
     }
     XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
-    XThreadData_mapRemove(id);
+    if(id)
+        XThreadData_mapRemove(id);
 }
