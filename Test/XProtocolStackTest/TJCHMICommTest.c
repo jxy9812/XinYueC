@@ -2,7 +2,7 @@
 #include"XTJCHMIComm.h"
 #include"XSerialPort.h"
 #include"XVector.h"
-#include"XTimerBase.h"
+#include"XTimer.h"
 #include"XString.h"
 #include"XStringList.h"
 #include"XTimerGroupBase.h"
@@ -46,7 +46,7 @@ void TJCHMICommTest()
 		XCoreApplication_quit();
 		return;
 	}
-	//size_t speed = 1, current = XTimerBase_getCurrentTime();
+	//size_t speed = 1, current = XTimer_getCurrentTime();
 }
 
 void XMenu_TJCHMICommTest(XMenu* root)

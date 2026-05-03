@@ -106,7 +106,7 @@ typedef struct XESP8266Wifi
     XIODevice m_class;                // 继承XIODeviceBase
     XIODevice* m_io;                  // 底层IO设备(外部传入)
     XESP8266WifiStatus m_wifiStatus;          // WiFi连接状态
-    XTimerBase* m_timeoutTimer;           // 超时定时器
+    XTimer* m_timeoutTimer;           // 超时定时器
     XString* m_ssid;                      // WiFi名称缓存
     XString* m_password;                  // WiFi密码缓存
     bool m_transparentMode;               // 透传模式标志

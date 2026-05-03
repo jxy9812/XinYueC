@@ -110,7 +110,7 @@ size_t VXCommunicatorBase_recv(XCommunicatorBase* comm, void* data, size_t maxSi
 	//XTimerTimeWheel* timer = NULL;
 	if (comm->m_opt_timeout != 0)
 	{//设置了超时时间
-		comm->m_currentTimeout = XTimerBase_getCurrentTime();
+		comm->m_currentTimeout = XTimer_getCurrentTime();
 	}
 	while (size < maxSize)
 	{
@@ -119,7 +119,7 @@ size_t VXCommunicatorBase_recv(XCommunicatorBase* comm, void* data, size_t maxSi
 		{
 			size += XIODevice_read(comm->m_io, ((char*)data) + size, (maxSize - size) > readSize ? readSize : (maxSize - size));
 		}
-		else if (comm->m_opt_timeout != 0 && (comm->m_currentTimeout + comm->m_opt_timeout) < XTimerBase_getCurrentTime())
+		else if (comm->m_opt_timeout != 0 && (comm->m_currentTimeout + comm->m_opt_timeout) < XTimer_getCurrentTime())
 		{//超时退出
 			break;
 		}

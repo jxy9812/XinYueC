@@ -1,16 +1,26 @@
 ﻿#include"XTimerGroupWheel.h"
 #include"XListSLinked.h"
-#include"XTimerTimeWheel.h"
 #include"XMemory.h"
 #include"XStack.h"
 #include"XMutex.h"
+#include"XCoreApplication.h"
 static size_t calculate_max_time_range(XTimerGroupWheel* group);
 static void VXTimerGroupWheel_deinit(XTimerGroupWheel* group);
-static bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer);
-static bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer);
+static bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerData* timer);
+static bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerData* timer);
 static void VXTimerGroupBase_handler(XTimerGroupWheel* group);
 static void VXTimerGroupWheel_addTimeWheel(XTimerGroupWheel* group, size_t slotsCount);
 static void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group);
+static void deleteData(XTimerGroupWheel* group,XTimerWheelData* data);
+XTimerWheelData* XTimerWheelData_create()
+{
+    return XCalloc(1,sizeof(XTimerWheelData));
+}
+
+void XTimerWheelData_delete(XTimerWheelData* data)
+{
+    if (data)XFree(data);
+}
 
 XVtable* XTimerGroupWheel_class_init()
 {
@@ -79,7 +89,7 @@ static void add_timer_to_wheel_node(XTimeWheel* wheel, XListSNode* node, size_t 
         node->next = head;
         *pvList = node;
     }
-    XListSNode_Data(node, XTimerTimeWheel*)->m_list = pvList;
+    XListSNode_Data(node, XTimerWheelData*)->m_list = pvList;
 }
 static void add_timer_to_wheel(XTimeWheel* wheel, XTimerTimeWheel* timer, size_t ticks)
 {
@@ -101,7 +111,7 @@ static void add_timer_to_wheel(XTimeWheel* wheel, XTimerTimeWheel* timer, size_t
         *pvList = node;
     }
     
-    ((XTimerTimeWheel*)timer)->m_list = pvList;
+    ((XTimerWheelData*)timer)->m_list = pvList;
 }
 static bool addTimer_node(XTimerGroupWheel* group, XListSNode* node, size_t timeout_ticks)
 {
@@ -140,26 +150,26 @@ static bool addTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer, size_t tim
     return false;
 }
 
-bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer)
+bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerData* timerData)
 {
-    XTimerBase* parent = (XTimerBase*)timer;
-    if (timer == NULL || parent->m_timerCallback == NULL || ((parent->m_interval == 0) && (parent->m_timeout == 0)))
+    XTimerData* parent = (XTimerData*)timerData;
+    if (timerData == NULL || parent->m_timerCallback == NULL || ((parent->m_interval == 0) && (parent->m_timeout == 0)))
         return false;
     //校准下时间
-    group->m_class.m_current_tick = XTimerBase_getCurrentTime() / group->m_class.m_precision;
+    group->m_class.m_current_tick = XTimer_getCurrentTime() / group->m_class.m_precision;
     // 计算超时时间（转换为）
     size_t timeout_ticks = parent->m_timeout / group->m_class.m_precision;
     if(timeout_ticks==0)timeout_ticks= parent->m_interval/ group->m_class.m_precision;//如果超时时间是0就直接使用周期时间
-    ((XTimerTimeWheel*)timer)->m_expire_ticks = group->m_class.m_current_tick + timeout_ticks;
-    XObject_setParent(timer, group);
+    ((XTimerWheelData*)timerData)->m_expire_ticks = group->m_class.m_current_tick + timeout_ticks;
+    //XObject_setParent(timerData, group);
 
     if (group->m_mutex)
         XMutex_lock(group->m_mutex);
 
-    bool result = addTimer(group, timer, timeout_ticks);
+    bool result = addTimer(group, timerData, timeout_ticks);
     if (result)
     {
-        ((XTimerBase*)timer)->m_isRun = true;
+        (timerData)->m_isRun = true;
         ++group->m_count;
     }
     if (group->m_mutex)
@@ -168,39 +178,40 @@ bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer)
     return result;
 }
 
-bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer)
+bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerData* timerData)
 {
-    if (((XTimerTimeWheel*)timer)->m_list == NULL)
+    if (((XTimerWheelData*)timerData)->m_list == NULL)
         return false;
-    timer->m_class.m_isRun = false;
+   
     if (group->m_mutex)
         XMutex_lock(group->m_mutex);
-    XListSNode** pvHead = ((XTimerTimeWheel*)timer)->m_list;
-    if (pvHead)
-    {
-        XListSNode* head = *pvHead;
-        XListSNode* prev = NULL;//前一个节点
-        XListSNode* curNode = head;//当前节点
-        while (curNode)
-        {
-            if (XListSNode_Data(curNode, XTimerTimeWheel*)==timer)
-            {//找到了
-                if (prev)
-                    prev->next = curNode->next;//上一个节点直接链接下一个
-                else
-                    *pvHead = curNode->next;//证明当前是头节点
-                XMemory_free(curNode);
-                ((XTimerTimeWheel*)timer)->m_list = NULL;
-                ((XTimerBase*)timer)->m_isRun = false;
-                --group->m_count;
-                break;
-            }
-            prev = curNode;
-            curNode = curNode->next;
-        }
-    }
-    if (((XTimerBase*)timer)->m_autoDelete)
-        XTimerBase_deleteLater(timer);
+    timerData->m_isRun = false;
+    //XListSNode** pvHead = ((XTimerWheelData*)timerData)->m_list;
+    //if (pvHead)
+    //{
+    //    XListSNode* head = *pvHead;
+    //    XListSNode* prev = NULL;//前一个节点
+    //    XListSNode* curNode = head;//当前节点
+    //    while (curNode)
+    //    {
+    //        if (XListSNode_Data(curNode, XTimerTimeWheel*)==timerData)
+    //        {//找到了
+    //            if (prev)
+    //                prev->next = curNode->next;//上一个节点直接链接下一个
+    //            else
+    //                *pvHead = curNode->next;//证明当前是头节点
+    //            XMemory_free(curNode);
+    //            ((XTimerWheelData*)timerData)->m_list = NULL;
+    //            (timerData)->m_isRun = false;
+    //            --group->m_count;
+    //            break;
+    //        }
+    //        prev = curNode;
+    //        curNode = curNode->next;
+    //    }
+    //}
+    //if ((timerData)->m_autoDelete)
+    //    deleteData(group,timerData);
     
     if (group->m_mutex)
         XMutex_unlock(group->m_mutex);
@@ -267,8 +278,8 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
                 XTimerTimeWheel* timer = XListSNode_Data(node, XTimerTimeWheel*);
                 prev = node;
                 node = node->next;
-                if (XTimerBase_isAutoDelete(timer))//查看是否有内存管理权限
-                    XTimerBase_deleteLater(timer);
+                if (XTimerData_isAutoDelete(timer))//查看是否有内存管理权限
+                    deleteData(group,timer);
                 XMemory_free(prev);
             }
             //XListSLinked_delete_base(list);
@@ -279,6 +290,17 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
     ((XTimerGroupBase*)group)->m_max_time = calculate_max_time_range(group);
     if (group->m_mutex)
         XMutex_unlock(group->m_mutex);
+}
+static void deleteCall(XVarList* argList)
+{
+    XVarList_args_1(argList, XTimerWheelData*, data);
+    XTimerWheelData_delete(data);
+}
+void deleteData(XTimerGroupWheel* group,XTimerWheelData* data)
+{
+    XEventFunc* event = XEventFunc_create(deleteCall,XVarList_Create(XVar(XTimerWheelData*,data)),NULL);
+    if (event)
+        XCoreApplication_postEvent(group,event, XEVENT_PRIORITY_LOWEST);
 }
 
 static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, int slot_index, size_t higher_level_idx)
@@ -293,30 +315,30 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
     {
         prev = node;
         next = node->next;
-        XTimerTimeWheel* timer = XListSNode_Data(node, XTimerTimeWheel*);
+        XTimerWheelData* timer = XListSNode_Data(node, XTimerTimeWheel*);
 
         // 计算剩余ticks（距离到期的滴答数）
-        size_t remaining_ticks = ((XTimerTimeWheel*)timer)->m_expire_ticks - group->m_class.m_current_tick;
+        size_t remaining_ticks = ((XTimerWheelData*)timer)->m_expire_ticks - group->m_class.m_current_tick;
         bool isdelete = false;
-        if (((XTimerTimeWheel*)timer)->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick && XTimerBase_isRunning(timer))
+        if (((XTimerWheelData*)timer)->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick && XTimerData_isRunning(timer))
         {
             // 已到期，直接触发
             if (group->m_mutex) XMutex_unlock(group->m_mutex);
-            XTimerBase_out(timer);
+            XTimerData_out(timer);
             if (group->m_mutex) XMutex_lock(group->m_mutex);
-            if ((!((XTimerBase*)timer)->m_isSingleShot) && (((XTimerBase*)timer)->m_interval > 0) && ((XTimerBase*)timer)->m_isRun)
+            if ((!((XTimerData*)timer)->m_isSingleShot) && (((XTimerData*)timer)->m_interval > 0) && ((XTimerData*)timer)->m_isRun)
             {
                 // 有定时间隔的重新添加
-                size_t timeout_ticks = ((XTimerBase*)timer)->m_interval / group->m_class.m_precision;
-                ((XTimerTimeWheel*)timer)->m_expire_ticks = ((XTimerGroupBase*)group)->m_current_tick + timeout_ticks;
+                size_t timeout_ticks = ((XTimerData*)timer)->m_interval / group->m_class.m_precision;
+                ((XTimerWheelData*)timer)->m_expire_ticks = ((XTimerGroupBase*)group)->m_current_tick + timeout_ticks;
                 addTimer_node(group, node, timeout_ticks);
             }
-            else if(((XTimerBase*)timer)->m_isSingleShot&& ((XTimerBase*)timer)->m_autoDelete)
+            else if(((XTimerData*)timer)->m_isSingleShot&& ((XTimerData*)timer)->m_autoDelete)
             {
                 isdelete = true;
             }
         }
-        else  if (((XTimerTimeWheel*)timer)->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick && !XTimerBase_isRunning(timer))
+        else  if (((XTimerWheelData*)timer)->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick && !XTimerData_isRunning(timer))
         {
             isdelete = true;
         }
@@ -338,9 +360,9 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
                 add_timer_to_wheel_node(lower_level, node, relative_ticks);
             }
         }
-        if (isdelete && ((XTimerBase*)timer)->m_autoDelete)
+        if (isdelete && ((XTimerData*)timer)->m_autoDelete)
         {
-            XTimerBase_deleteLater(timer);
+            deleteData(group,timer);
         }
         node = next;
         if (isdelete)
@@ -357,7 +379,7 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
         return;
     //XPrintf("轮询定时器中\n");
     XTimerGroupBase* groupBase = ((XTimerGroupBase*)group);
-    size_t tick = XTimerBase_getCurrentTime() / groupBase->m_precision; // 当前滴答数
+    size_t tick = XTimer_getCurrentTime() / groupBase->m_precision; // 当前滴答数
     if (tick <= groupBase->m_current_tick)
     {
         groupBase->m_current_tick = tick;
@@ -386,20 +408,19 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
             {
                 prev = node;
                 next = node->next;
-                XTimerTimeWheel* timer = XListSNode_Data(node, XTimerTimeWheel*);
-                XObject* object = (XObject*)timer;
+                XTimerWheelData* timer = XListSNode_Data(node, XTimerWheelData*);
                 bool isdelete = true;
-                if (!object->delete_later_called &&((XTimerTimeWheel*)timer)->m_expire_ticks <= groupBase->m_current_tick && XTimerBase_isRunning(timer))
+                if (((XTimerWheelData*)timer)->m_expire_ticks <= groupBase->m_current_tick && XTimerData_isRunning(timer))
                 {
-                    ((XTimerTimeWheel*)timer)->m_list = NULL;
+                    ((XTimerWheelData*)timer)->m_list = NULL;
                     if (group->m_mutex) XMutex_unlock(group->m_mutex);
-                    XTimerBase_out(timer);
+                    XTimerData_out(timer);
                     if (group->m_mutex) XMutex_lock(group->m_mutex);
-                    if ((!((XTimerBase*)timer)->m_isSingleShot) && (((XTimerBase*)timer)->m_interval > 0) && ((XTimerBase*)timer)->m_isRun)
+                    if ((!((XTimerData*)timer)->m_isSingleShot) && (((XTimerData*)timer)->m_interval > 0) && ((XTimerData*)timer)->m_isRun)
                     {
                         // 有定时间隔的重新添加
-                        size_t timeout_ticks = ((XTimerBase*)timer)->m_interval / group->m_class.m_precision;
-                        ((XTimerTimeWheel*)timer)->m_expire_ticks = groupBase->m_current_tick + timeout_ticks;
+                        size_t timeout_ticks = ((XTimerData*)timer)->m_interval / group->m_class.m_precision;
+                        ((XTimerWheelData*)timer)->m_expire_ticks = groupBase->m_current_tick + timeout_ticks;
                        /* if (group->m_mutex)
                             XMutex_lock(group->m_mutex);*/
                         addTimer_node(group, node, timeout_ticks);
@@ -408,24 +429,24 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
                         isdelete = false;
                     }
                 }
-                else if(XTimerBase_isRunning(timer))
+                else if(XTimerData_isRunning(timer))
                 {
                     /*if (group->m_mutex)
                         XMutex_lock(group->m_mutex);*/
-                    size_t timeout_ticks = ((XTimerTimeWheel*)timer)->m_expire_ticks- groupBase->m_current_tick ;
+                    size_t timeout_ticks = ((XTimerWheelData*)timer)->m_expire_ticks- groupBase->m_current_tick ;
                     addTimer_node(group, node, timeout_ticks);
                     /*if (group->m_mutex)
                         XMutex_unlock(group->m_mutex);*/
                     isdelete = false;
                 }
-                if (isdelete&&((XTimerBase*)timer)->m_autoDelete)
+                if (isdelete&&((XTimerData*)timer)->m_autoDelete)
                 {
-                    XTimerBase_deleteLater(timer);
+                    deleteData(group,timer);
                 }
                 //else // 也不释放的定时器更新状态
                 //{
-                //    ((XTimerBase*)timer)->m_isRun = false;
-                //    timer->m_list = NULL;
+                //    ((XTimer*)timerData)->m_isRun = false;
+                //    timerData->m_list = NULL;
                 //}
                 node =next;
                 if(isdelete)

@@ -94,12 +94,11 @@ XThreadData* XThreadData_current(void)
     XHandle id = XThread_currentThreadId();
     //XMutex_lock(global_lock);
     XReadWriteLock_lockForRead(global_lock);
-    XThreadData** ptr = XHashMap_value_base(global_thread_map, &id);
+    XThreadData** lptr = XHashMap_value_base(global_thread_map, &id);
+    XThreadData* ptr = lptr ? *lptr : NULL;
     //XMutex_unlock(global_lock);
     XReadWriteLock_unlock(global_lock);
-    if (ptr)
-        return (*ptr);
-    return NULL;
+    return ptr;
 };
 
 XHandle XThreadData_mapInsert(XThreadData* data)
@@ -131,12 +130,12 @@ XThreadData* XThreadData_initMainThread(XThread* thread)
     XReadWriteLock_lockForRead(global_lock);
     if (global_thread_map && XMapBase_contains(global_thread_map, &MainThread))
     {
-        XThreadData** ptr = XHashMap_value_base(global_thread_map, &MainThread);
+        XThreadData** lptr = XHashMap_value_base(global_thread_map, &MainThread);
+        XThreadData* ptr = lptr ? *lptr : NULL;
         XReadWriteLock_unlock(global_lock);
-        if (ptr)
-            return (*ptr);
-        return NULL;
+        return ptr;
     }
+    if (!thread)return;
     XReadWriteLock_unlock(global_lock);
     XThreadData_current();
     XThreadData* data = XThreadData_create(thread);
@@ -145,6 +144,11 @@ XThreadData* XThreadData_initMainThread(XThread* thread)
     MainThread = XThread_currentThreadId();
 
     return data;
+}
+
+XThreadData* XThreadData_mainThread()
+{
+    return XThreadData_initMainThread(NULL);
 }
 
 XEventLoop* XThreadData_currentEventLoop(XThreadData* data)

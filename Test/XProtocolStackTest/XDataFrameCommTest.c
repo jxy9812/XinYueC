@@ -2,7 +2,7 @@
 #include"XDataFrameComm.h"
 #include"XSerialPort.h"
 #include"XVector.h"
-#include"XTimerBase.h"
+#include"XTimer.h"
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
@@ -34,13 +34,13 @@ void XDataFrameCommTest()
 		XCoreApplication_quit();
 		return;
 	}
-	size_t speed=1,current = XTimerBase_getCurrentTime();
+	size_t speed=1,current = XTimer_getCurrentTime();
 	while (true)
 	{
-		if (XTimerBase_getCurrentTime() > current + 1000)
+		if (XTimer_getCurrentTime() > current + 1000)
 		{
 			//XDataFrameComm_sendTextFmt(comm, false,  "ain.cuttingMotorSp.val=%d", speed++);
-			current = XTimerBase_getCurrentTime();
+			current = XTimer_getCurrentTime();
 		}
 		XDataFrameComm_poll_base(comm);
 	}

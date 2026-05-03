@@ -468,11 +468,11 @@ bool XSerialPort_platform_applyConfig(XSerialPort* port)
 //bool XSerialPort_platform_waitForReadyRead(XSerialPort* port, int msecs) {
 //    if (XSerialPort_bytesAvailable_base(port) > 0) return true;
 //
-//    size_t current = XTimerBase_getCurrentTime();
+//    size_t current = XTimer_getCurrentTime();
 //    while (XSerialPort_bytesAvailable_base(port)< 0)
 //    {
 //        XCoreApplication_processEvents(XEventLoop_AllEvents);
-//        if (XTimerBase_getCurrentTime() > current + msecs)
+//        if (XTimer_getCurrentTime() > current + msecs)
 //            return false;
 //    }
 //    return true; // 

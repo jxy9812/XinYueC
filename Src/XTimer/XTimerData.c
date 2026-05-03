@@ -1,126 +1,113 @@
-﻿#include"XTimerBase.h"
+﻿#include"XTimerData.h"
 #include"XMemory.h"
 #include<string.h>
-XTimerBase* XTimerBase_create(XVtable* vtable)
+XTimerData* XTimerData_create(XVtable* vtable)
 {
 	if (vtable == NULL)
 		return NULL;
-	XTimerBase* timer = XMemory_malloc(sizeof(XTimerBase));
+	XTimerData* timer = XMemory_malloc(sizeof(XTimerData));
 	if (timer == NULL)
 		return NULL;
-	XTimerBase_init(timer,vtable);
+	XTimerData_init(timer,vtable);
 	Set_Class_MemoryFree(timer, XFree);
 	return timer;
 }
 
-void XTimerBase_init(XTimerBase* timer, XVtable* vtable)
+void XTimerData_init(XTimerData* timer, XVtable* vtable)
 {
 	if (timer == NULL)
 		return;
 	//开始初始化
-	memset(timer, 0, sizeof(XTimerBase));
-	XObject_init(timer);
-	XClassGetVtable(timer) = vtable;
+	memset(timer, 0, sizeof(XTimerData));
+	//XObject_init(timer);
+	//XClassGetVtable(timer) = vtable;
 	timer->m_autoDelete = false;
 }
 
-void XTimerBase_start_base(XTimerBase* timer)
+void XTimerData_delete(XTimerData* timer)
 {
-	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
-		return;
-	XClassGetVirtualFunc(timer, EXTimerBase_Start, void(*)(XTimerBase*))(timer);
-	/*if (timer&&timer->m_port.start)
-	{
-		timer->m_port.start(timer);
-		timer->number = 0;
-	}*/
+	if (timer)
+		XFree(timer);
 }
 
-void XTimerBase_stop_base(XTimerBase* timer)
-{
-	if (ISNULL(timer, "") || ISNULL(XClassGetVtable(timer), ""))
-		return;
-	XClassGetVirtualFunc(timer, EXTimerBase_Stop, void(*)(XTimerBase*))(timer);
-}
-
-void XTimerBase_setTimerId(XTimerBase* timer, size_t timerId)
+void XTimerData_setTimerId(XTimerData* timer, size_t timerId)
 {
 	if (timer)
 		timer->timerId=timerId;
 }
-void XTimerBase_setAutoDelete(XTimerBase* timer, bool del)
+void XTimerData_setAutoDelete(XTimerData* timer, bool del)
 {
 	if (timer)
 		timer->m_autoDelete = del;
 }
-void XTimerBase_setSingleShot(XTimerBase* timer, bool ss)
+void XTimerData_setSingleShot(XTimerData* timer, bool ss)
 {
 	if (timer)
 		timer->m_isSingleShot = ss;
 }
-bool XTimerBase_isSingleShot(XTimerBase* timer)
+bool XTimerData_isSingleShot(XTimerData* timer)
 {
 	return timer?timer->m_isSingleShot:false;
 }
-bool XTimerBase_isPeriodic(XTimerBase* timer)
+bool XTimerData_isPeriodic(XTimerData* timer)
 {
 	if (timer)
 		return timer->m_interval==0;
 	return false;
 }
-bool XTimerBase_isRunning(XTimerBase* timer)
+bool XTimerData_isRunning(XTimerData* timer)
 {
 	return timer ? timer->m_isRun : false;
 }
-size_t XTimerBase_timeout(XTimerBase* timer)
+size_t XTimerData_timeout(XTimerData* timer)
 {
 	if (timer)
 		return timer->m_timeout;
 	return 0;
 }
-size_t XTimerBase_interval(XTimerBase* timer)
+size_t XTimerData_interval(XTimerData* timer)
 {
 	if(timer)
 		return timer->m_interval;
 	return 0;
 }
-size_t XTimerBase_timerId(XTimerBase* timer)
+size_t XTimerData_timerId(XTimerData* timer)
 {
 	if(timer)
 		return timer->timerId;
 	return 0;
 }
-void* XTimerBase_userData(XTimerBase* timer)
+void* XTimerData_userData(XTimerData* timer)
 {
 	if(timer)
 		return timer->m_userData;
 	return NULL;
 }
-bool XTimerBase_isAutoDelete(XTimerBase* timer)
+bool XTimerData_isAutoDelete(XTimerData* timer)
 {
 	if (timer)
 		return timer->m_autoDelete;
 	return false;
 }
 
-void XTimerBase_setTimerCallback(XTimerBase* timer, XTimerBaseCallback callback)
+void XTimerData_setTimerCallback(XTimerData* timer, XTimerCallback callback)
 {
 	timer->m_timerCallback = callback;
 }
 
-void XTimerBase_setUserData(XTimerBase* timer, void* userData)
+void XTimerData_setUserData(XTimerData* timer, void* userData)
 {
 	timer->m_userData = userData;
 }
-void XTimerBase_setTimeout(XTimerBase* timer, size_t value)
+void XTimerData_setTimeout(XTimerData* timer, size_t value)
 {
 	timer->m_timeout = value;
 }
-void XTimerBase_setInterval(XTimerBase* timer, size_t value)
+void XTimerData_setInterval(XTimerData* timer, size_t value)
 {
 	timer->m_interval = value;
 }
-void XTimerBase_out(XTimerBase* timer)
+void XTimerData_out(XTimerData* timer)
 {
 	if (timer == NULL)
 		return;
@@ -186,24 +173,24 @@ static void(*global_delay_ms)(size_t)=NULL;
 #endif
 
 static size_t currentTime = 0;
-void XTimerBase_inc(size_t tick_period)
+void XTimer_inc(size_t tick_period)
 {
 	currentTime += tick_period;
 }
 
-void XTimerBase_setCurrentTime(size_t time)
+void XTimer_setCurrentTime(size_t time)
 {
 	currentTime = time;
 }
 
-size_t XTimerBase_getCurrentTime()
+size_t XTimer_getCurrentTime()
 {
 	if(global_getCurrentTime==NULL)
 		return currentTime;
 	return global_getCurrentTime();
 }
 
-void XTimerBase_setCurrentTimeFunc(size_t(*get)())
+void XTimer_setCurrentTimeFunc(size_t(*get)())
 {
 	global_getCurrentTime = get;
 }

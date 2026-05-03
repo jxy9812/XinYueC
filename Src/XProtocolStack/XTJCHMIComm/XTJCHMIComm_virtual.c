@@ -1,6 +1,6 @@
 ﻿#include"XTJCHMIComm.h"
 #include"XVector.h"
-#include"XTimerBase.h"
+#include"XTimer.h"
 #include"XCrc.h"
 #include"XByteArray.h"
 #include<string.h>
@@ -53,7 +53,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 	{
 		if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
 		{
-			XTimerBase_start_base(comm->m_timerRecvExpired);
+			XTimer_start_base(comm->m_timerRecvExpired);
 		}
 		else
 		{
@@ -67,7 +67,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 	{
 		if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
 		{
-			XTimerBase_start_base(comm->m_timerRecvExpired);// 保持定时器运行，等待错误帧结束
+			XTimer_start_base(comm->m_timerRecvExpired);// 保持定时器运行，等待错误帧结束
 			break;
 		}
 		else
@@ -101,7 +101,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		}
 
 		if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
-			XTimerBase_start_base(comm->m_timerRecvExpired);
+			XTimer_start_base(comm->m_timerRecvExpired);
 		break;
 	}
 	case XDFC_STATE_RX_HEAD:    // 接收帧头中
@@ -125,7 +125,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			comm->m_eRcvState = XDFC_STATE_RX_RCV;//切换到接收数据中
 		}
 		if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
-			XTimerBase_start_base(comm->m_timerRecvExpired);
+			XTimer_start_base(comm->m_timerRecvExpired);
 		break;
 	}
 	case XDFC_STATE_RX_RCV:  // 接收中状态（连续接收字节）
@@ -140,7 +140,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 
 		if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
 		{
-			XTimerBase_start_base(comm->m_timerRecvExpired);
+			XTimer_start_base(comm->m_timerRecvExpired);
 			return;
 		}
 		else if (comm->m_frameEndMode == XDFC_FRAME_END_MARKER)

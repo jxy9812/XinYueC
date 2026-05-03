@@ -8,7 +8,7 @@ extern "C" {
 #include<stdio.h>
 #include"XVector.h"
 #include"XTimerGroupBase.h"
-#include"XTimerTimeWheel.h"
+#include"XTimerData.h"
 typedef struct XListSLinked XListSLinked;
 typedef struct XVector XVector;
 typedef struct XTimerTimeWheel  XTimerTimeWheel;
@@ -18,6 +18,16 @@ XCLASS_DEFINE_BEGING(XTimerGroupWheel)
 XCLASS_DEFINE_ENUM(XTimerGroupWheel, Add_TimeWheel) = XCLASS_VTABLE_GET_SIZE(XTimerGroupBase),
 XCLASS_DEFINE_ENUM(XTimerGroupWheel, Remove_TimeWheel),
 XCLASS_DEFINE_END(XTimerGroupWheel)
+// 定时器时间轮
+typedef struct XTimerWheelData
+{
+	XTimerData m_data;
+	size_t m_expire_ticks;     // 到期时间戳（毫秒）
+	XListSLinked* m_list;//加入的链表
+	//XTimerGroupBase* m_group;//加入的组
+} XTimerWheelData;
+XTimerWheelData* XTimerWheelData_create();
+void XTimerWheelData_delete(XTimerWheelData*data);
 // 单个时间轮结构
 typedef struct XTimeWheel {
 	XVector m_slots;					// 槽数组，每个槽是一个链表头 /XVector<XListSLinked<XTimerTimeWheel*>>

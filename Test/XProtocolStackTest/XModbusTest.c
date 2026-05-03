@@ -13,7 +13,7 @@
 //#include"XAction.h"
 //#include"XCoreApplication.h"
 //#include"XPrintf.h"
-//#include"XTimerBase.h"
+//#include"XTimer.h"
 //static void deinit_slot(XObject* receiver, void* argList, XObject* sender)
 //{
 //    XPrintf("sender:%p receiver:%p 串口释放\n",sender,receiver);
@@ -144,7 +144,7 @@
 //        XCoreApplication_quit();
 //        return;
 //    }
-//    //XTimerBase_delay_ms(100);
+//    //XTimer_delay_ms(100);
 //}
 //
 //

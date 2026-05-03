@@ -1,7 +1,7 @@
 ﻿#include"XEvent.h"
 #include"XMemory.h"
 #include<string.h>
-#include"XTimerBase.h"
+#include"XTimer.h"
 #include"XLockFreeQueue.h"
 #include"XHashMap.h"
 #include"XListSLinked.h"
@@ -54,9 +54,9 @@ void XEvent_init(XEvent* event,XEventType type)
 
 static void  XEventFunc_deinit(XEventFunc* ev)
 {
-	if (ev->args && ev->del)
+	if (ev->argList)
 	{
-		ev->del(ev->args);
+		XVarList_delete(ev->argList);
 	}
 }
 XVtable* XEventFunc_class_init()
@@ -77,29 +77,29 @@ XVtable* XEventFunc_class_init()
 #endif
 	return XVTABLE_DEFAULT;
 }
-XEventFunc* XEventFunc_create( void (*func)(void*), void* args, void(*del)(void*))
+XEventFunc* XEventFunc_create(void(*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*))
 {
 	XEventFunc* event = XMultiPool_mallocGlobal(sizeof(XEventFunc));
 	if (!event)return NULL;
-	XEventFunc_init(event, func,args,del);
+	XEventFunc_init(event, func, argList, del_argList);
 	Set_Class_MemoryFree(event, XMultiPool_freeGlobal);
 	return event;
 }
-
-void XEventFunc_init(XEventFunc* event,void(*func)(void*), void* args, void(*del)(void*))
+void XEventFunc_init(XEventFunc* event, void(*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*))
 {
 	if (!event)return;
 	XEvent_init(event, XEVENT_TYPE_FUNC_RUN);
 	XClassGetVtable(event) = XEventFunc_class_init();
 	event->func = func;
-	event->args = args;
-	event->del = del;
+	event->argList = argList;
+	if (event->argList)
+		event->argList->argsDel = del_argList;
 }
 
 void XEventFunc_handler(XEventFunc* event)
 {
 	if (event && event->func)
-		event->func(event->args);
+		event->func(event->argList);
 	XEvent_accept(event);
 }
 

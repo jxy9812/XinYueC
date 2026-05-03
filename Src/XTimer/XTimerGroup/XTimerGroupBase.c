@@ -1,4 +1,5 @@
 ﻿#include"XTimerGroupBase.h"
+#include"XTimerData.h"
 #include<string.h>
 void XTimerGroupBase_init(XTimerGroupBase* group, uint16_t precision)
 {
@@ -12,19 +13,19 @@ void XTimerGroupBase_init(XTimerGroupBase* group, uint16_t precision)
 	/*XClassGetVtable(group) = vtable;*/
 }
 
-bool XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerBase* timer)
+bool XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData* timer)
 {
 	if (ISNULL(group, "") || ISNULL(timer, "") || ISNULL(XClassGetVtable(group), ""))
 		return false;
 	
-	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_Timer, bool(*)(XTimerGroupBase* ,XTimerBase*))(group,timer);
+	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_Timer, bool(*)(XTimerGroupBase* , XTimerData*))(group,timer);
 }
 
-bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerBase* timer)
+bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerData* timer)
 {
 	if (ISNULL(group, "") || ISNULL(timer, "") || ISNULL(XClassGetVtable(group), ""))
 		return false;
-	return XClassGetVirtualFunc(group, EXTimerGroupBase_Remove_Timer, bool(*)(XTimerGroupBase*, XTimerBase*))(group, timer);
+	return XClassGetVirtualFunc(group, EXTimerGroupBase_Remove_Timer, bool(*)(XTimerGroupBase*, XTimerData*))(group, timer);
 }
 bool XTimerGroupBase_timeRange(XTimerGroupBase* group, size_t* min_time, size_t* max_time)
 {

@@ -6,15 +6,25 @@ extern "C" {
 #include<stdbool.h>
 #include<stdint.h>
 #include<stdio.h>
-#include"XTimerBase.h"
+#include"XObject.h"
+#include"XTimerData.h"
 /**
-* @brief XTimer虚函数表大小宏定义
-* 基于XTimerTimeWheel的虚函数表大小
+* @brief XTimerData虚函数表大小宏定义
+* 基于XObject的虚函数表大小扩展
 */
-#define XTIMER_VTABLE_SIZE (XTIMERTIMEWHEEL_VTABLE_SIZE)
+#define XTIMER_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimer))
+/**
+* @brief XTimerData虚函数表枚举定义开始
+* 用于标识虚函数表中的函数索引
+*/
+XCLASS_DEFINE_BEGING(XTimer)
+XCLASS_DEFINE_ENUM(XTimer, Start) = XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_ENUM(XTimer, Stop),
+XCLASS_DEFINE_END(XTimer)
 typedef struct XTimer
 {
-	XTimerBase m_class;
+	XObject m_class;
+	XTimerData m_timerData;
 	XTimerType m_type;
 } XTimer;
 // === 类初始化与构造相关接口 ===
@@ -36,92 +46,114 @@ void XTimer_init(XTimer* timer);
 // === 销毁相关接口 ===
 /**
 * @brief 基类删除函数宏定义
-* 复用XTimerBase的删除函数
+* 复用XTimer的删除函数
 */
-#define XTimer_deleteLater			XTimerBase_deleteLater
+#define XTimer_deleteLater			XObject_deleteLater
 // === 启动与停止相关接口 ===
 /**
-* @brief 启动定时器的基类实现宏
-* 复用XTimerBase的start_base方法
+* @brief 启动定时器（基类实现）
+* @param timer XTimerData实例指针
 */
-#define XTimer_start_base			XTimerBase_start_base
+void XTimer_start_base(XTimer* timer);
 /**
-* @brief 停止定时器的基类实现宏
-* 复用XTimerBase的stop_base方法
+* @brief 停止定时器（基类实现）
+* @param timer XTimer实例指针
 */
-#define XTimer_stop_base			XTimerBase_stop_base
+void XTimer_stop_base(XTimer* timer);
 // === 属性设置相关接口 ===
-#define XTimer_setSingleShot		XTimerBase_setSingleShot
-#define XTimer_setAutoDelete		XTimerBase_setAutoDelete
 /**
-* @brief 设置定时器超时时间的基类实现宏
-* 复用XTimerBase的setTimeout_base方法
+* @brief 设置定时器超时时间（基类实现）
+* @param timer XTimer实例指针
+* @param value 超时时间（毫秒）
 */
-#define XTimer_setTimeout		XTimerBase_setTimeout
+void XTimer_setTimeout(XTimer* timer, size_t value);
 /**
-* @brief 设置定时器周期间隔的基类实现宏
-* 复用XTimerBase的setInterval_base方法
+* @brief 设置定时器周期间隔（基类实现）
+* @param timer XTimer实例指针
+* @param value 周期间隔（毫秒）
 */
-#define XTimer_setInterval		XTimerBase_setInterval
+void XTimer_setInterval(XTimer* timer, size_t value);
 /**
-* @brief 设置用户自定义数据的宏
-* 复用XTimerBase的setUserData_base方法
+* @brief 设置用户自定义数据（基类实现）
+* @param timer XTimer实例指针
+* @param userData 用户数据指针
 */
-#define XTimer_setUserData			XTimerBase_setUserData
+void XTimer_setUserData(XTimer* timer, void* userData);
 /**
-* @brief 设置定时器回调函数的宏
-* 复用XTimerBase的setTimerCallback_base方法
+* @brief 设置定时器回调函数（基类实现）
+* @param timer XTimer实例指针
+* @param callback 回调函数指针
 */
-#define XTimer_setTimerCallback		XTimerBase_setTimerCallback
+void XTimer_setTimerCallback(XTimer* timer, XTimerCallback callback);
 /**
-* @brief 设置定时器所属组的宏
-* 复用XTimerBase的setTimerId方法（将组标识作为timerId存储）
+* @brief 设置定时器ID
+* @param timer XTimer实例指针
+* @param timerId 要设置的ID值
 */
-#define XTimer_setTimerId				XTimerBase_setTimerId
+void XTimer_setTimerId(XTimer* timer, size_t timerId);
+/**
+* @brief 设置定时器是否自动释放
+* @param timer XTimer实例指针
+* @param del true：自动释放，false：不自动释放
+*/
+void XTimer_setAutoDelete(XTimer* timer, bool del);
+/**
+* @brief 设置定时器是否为单次触发模式
+* @param timer XTimer实例指针
+* @param ss true：单次触发，false：周期性触发
+*/
+void XTimer_setSingleShot(XTimer* timer, bool ss);
 // === 属性获取相关接口 ===
-#define XTimer_isSingleShot			XTimerBase_isSingleShot
+bool XTimer_isSingleShot(XTimer* timer);
 /**
-* @brief 判断定时器是否为周期性任务的宏
-* 复用XTimerBase的isPeriodic方法
+* @brief 判断定时器是否为周期性任务
+* @param timer XTimer实例指针
 * @return true：非周期性（单次），false：周期性
 */
-#define XTimer_isPeriodic			XTimerBase_isPeriodic
+bool XTimer_isPeriodic(XTimer* timer);
 /**
-* @brief 判断定时器是否正在运行的宏
-* 复用XTimerBase的isRunning方法
+* @brief 判断定时器是否正在运行
+* @param timer XTimer实例指针
 * @return true：运行中，false：已停止
 */
-#define XTimer_isRunning			XTimerBase_isRunning
+bool XTimer_isRunning(XTimer* timer);
 /**
-* @brief 获取定时器超时时间的宏
-* 复用XTimerBase的getTimeout方法
+* @brief 获取定时器超时时间
+* @param timer XTimer实例指针
 * @return 超时时间（毫秒）
 */
-#define XTimer_timeout			XTimerBase_timeout
+size_t XTimer_timeout(XTimer* timer);
 /**
-* @brief 获取定时器周期间隔的宏
-* 复用XTimerBase的getInterval方法
+* @brief 获取定时器周期间隔
+* @param timer XTimer实例指针
 * @return 周期间隔（毫秒）
 */
-#define XTimer_interval			XTimerBase_interval
+size_t XTimer_interval(XTimer* timer);
 /**
-* @brief 获取定时器所属组的宏
-* 复用XTimerBase的getTimerId方法（组标识存储在timerId中）
-* @return 所属组标识
+* @brief 获取定时器ID
+* @param timer XTimer实例指针
+* @return 定时器ID
 */
-#define XTimer_timerId			XTimerBase_timerId
+size_t XTimer_timerId(XTimer* timer);
 /**
-* @brief 获取用户自定义数据的宏
-* 复用XTimerBase的getUserData方法
+* @brief 获取用户自定义数据
+* @param timer XTimer实例指针
 * @return 用户数据指针
 */
-#define XTimer_getUserData			XTimerBase_userData
+void* XTimer_userData(XTimer* timer);
+/**
+* @brief 判断定时器是否自动释放
+* @param timer XTimer实例指针
+* @return true：自动释放，false：不自动释放
+*/
+bool   XTimer_isAutoDelete(XTimer* timer);
 // === 超时处理相关接口 ===
 /**
-* @brief 定时器超时处理的基类实现宏
-* 复用XTimerBase的out_base方法
+* @brief 定时器超时处理函数（基类实现）
+* @param timer XTimer实例指针
 */
-#define XTimer_out				XTimerBase_out
+void XTimer_out(XTimer* timer);
+
 void XTimer_setTimerType(XTimer* timer,XTimerType type);
 XTimerType XTimer_timerType(XTimer* timer);
 /**

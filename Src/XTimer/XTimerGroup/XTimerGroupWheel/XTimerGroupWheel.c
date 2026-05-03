@@ -2,6 +2,7 @@
 #include"XMemory.h"
 #include"XListSLinked.h"
 #include"XMutex.h"
+#include"XThreadData.h"
 #include<string.h>
 XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision)
 {
@@ -27,7 +28,7 @@ void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision)
 	XVector_init(&group->m_timeWheel,sizeof(XTimeWheel));
 	XContainerSetDataDeinitMethod(&group->m_timeWheel,XVector_deinit_base);
 	//group->m_timeWheel = XVector_Create(XTimeWheel);
-	group->m_class.m_current_tick = XTimerBase_getCurrentTime() / group->m_class.m_precision;
+	group->m_class.m_current_tick = XTimer_getCurrentTime() / group->m_class.m_precision;
 	group->m_count = 0;
 }
 
@@ -139,14 +140,14 @@ uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
 			XListSLinked_iterator it = XListSLinked_begin(list);
 			while (XListSLinked_iterator_isEnd(&it))
 			{
-				XTimerTimeWheel* timer = *((XTimerTimeWheel**)XListSLinked_iterator_data(&it));
+				XTimerWheelData* data = *((XTimerTimeWheel**)XListSLinked_iterator_data(&it));
 				// 只考虑运行中的定时器
-				if (timer != NULL && XTimerBase_isRunning(&timer->m_class))
+				if (data != NULL && XTimerData_isRunning(data))
 				{
 					// 记录最小的到期滴答数
-					if (((XTimerTimeWheel*)timer)->m_expire_ticks < min_expire_ticks)
+					if (((XTimerWheelData*)data)->m_expire_ticks < min_expire_ticks)
 					{
-						min_expire_ticks = ((XTimerTimeWheel*)timer)->m_expire_ticks;
+						min_expire_ticks = ((XTimerWheelData*)data)->m_expire_ticks;
 					}
 				}
 				XListSLinked_iterator_add(&it,&it);
@@ -180,6 +181,7 @@ static void XTimerGroupWheel_global_init()
 {
 	if (global_XTimerGroupWheel)return;
 	global_XTimerGroupWheel = XTimerGroupWheel_create(1);
+	XObject_moveToThread(global_XTimerGroupWheel, XThreadData_mainThread()->m_thread);
 	XTimerGroupWheel_addTimeWheel_base(global_XTimerGroupWheel, 20);
 	XTimerGroupWheel_addTimeWheel_base(global_XTimerGroupWheel, 10);
 	XTimerGroupWheel_addTimeWheel_base(global_XTimerGroupWheel, 10);

@@ -15,19 +15,19 @@ static void Callback(XObject* sender, XVarList* args)
 {
 	
 
-	XPrintf("定时器1触发:%d ms\n", XTimerBase_getCurrentTime() - currentTimer);
-	currentTimer = XTimerBase_getCurrentTime();
+	XPrintf("定时器1触发:%d ms\n", XTimer_getCurrentTime() - currentTimer);
+	currentTimer = XTimer_getCurrentTime();
 
-	/*XTimerTimeWheel* timer = XTimerTimeWheel_create();
-	XTimerTimeWheel_setUserData(timer, userData);
-	XTimerTimeWheel_setTimeout(timer, 5);
-	XTimerTimeWheel_setTimerCallback(timer, Callback1);
-	XTimerTimeWheel_start_base(timer);
+	/*XTimerTimeWheel* timer = XTimer_create();
+	XTimer_setUserData(timer, userData);
+	XTimer_setTimeout(timer, 5);
+	XTimer_setTimerCallback(timer, Callback1);
+	XTimer_start_base(timer);
 	XTimerGroupBase_addTimer_base(userData, timer);*/
 }
 void XTimerTest()
 {
-	currentTimer = XTimerBase_getCurrentTime();	
+	currentTimer = XTimer_getCurrentTime();	
 	while (true)//测试内存是否泄漏
 	{
 		/*XCoreApplication_processEventsWithMaxTime(0, 1000);

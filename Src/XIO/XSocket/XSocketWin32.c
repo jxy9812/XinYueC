@@ -470,7 +470,7 @@ void VXIODevice_poll(XSocket* so)
     //    if (netEvents->lNetworkEvents & FD_CONNECT) {
     //        if (netEvents->iErrorCode[FD_CONNECT_BIT] != 0) {
     //            // 连接错误
-    //           /* XEvent* event = XEvent_create(so, XEVENT_SOCKET_ERROR, XTimerBase_getCurrentTime());
+    //           /* XEvent* event = XEvent_create(so, XEVENT_SOCKET_ERROR, XTimer_getCurrentTime());
     //            XEventDispatcher_postEvent_base(XObject_eventDispatcher(so), event);*/
     //            if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
     //            {
@@ -480,7 +480,7 @@ void VXIODevice_poll(XSocket* so)
     //        }
     //        else {
     //            // 连接成功
-    //           /* XEvent* event = XEvent_create(so,XEVENT_SOCKET_CONNECTED, XTimerBase_getCurrentTime());
+    //           /* XEvent* event = XEvent_create(so,XEVENT_SOCKET_CONNECTED, XTimer_getCurrentTime());
     //            XEventDispatcher_postEvent_base(XObject_eventDispatcher(so), event);*/
     //            if (((XSocketBase*)so)->m_state != XSOCKET_CONNECTED_STATE)
     //            {
@@ -493,7 +493,7 @@ void VXIODevice_poll(XSocket* so)
 
     //    if (netEvents->lNetworkEvents & FD_CLOSE) {
     //        // 连接关闭
-    //       // XEvent* event = XEvent_create(so, XEVENT_SOCKET_DISCONNECTED, XTimerBase_getCurrentTime());
+    //       // XEvent* event = XEvent_create(so, XEVENT_SOCKET_DISCONNECTED, XTimer_getCurrentTime());
     //       //// event->userData = eventData;
     //       // XEventDispatcher_postEvent_base(XObject_eventDispatcher(so), event);
     //        if (((XSocketBase*)so)->m_state != XSOCKET_UNCONNECTED_STATE)
@@ -508,7 +508,7 @@ void VXIODevice_poll(XSocket* so)
     //    {
     //        // 有数据可读
     //        XIODevice_readyRead_signal(so);
-    //        //XEvent* event = XEvent_create(so, XEVENT_SOCKET_DATA_READY, XTimerBase_getCurrentTime());
+    //        //XEvent* event = XEvent_create(so, XEVENT_SOCKET_DATA_READY, XTimer_getCurrentTime());
     //        ////event->userData = eventData;
     //        //XEventDispatcher_postEvent_base(XObject_eventDispatcher(so), event);
     //    }

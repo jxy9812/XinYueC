@@ -3,7 +3,7 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XEvent.h"
-#include "XTimerBase.h"
+#include "XTimer.h"
 #include "XEventDispatcher.h"
 #include "XCoreApplication.h"
 #include "XPrintf.h"

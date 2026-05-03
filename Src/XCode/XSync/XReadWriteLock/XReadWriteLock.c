@@ -482,7 +482,7 @@ bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeo
 		// --- 进入慢速路径 ---
 		XAtomic_fetch_add_size_t(&rwlock->write_waiters, 1, XAtomic_MemoryOrder_Relaxed);
 
-		size_t start_time = XTimerBase_getCurrentTime();
+		size_t start_time = XTimer_getCurrentTime();
 		bool result = false;
 
 		while (true) {
@@ -494,7 +494,7 @@ bool XReadWriteLock_tryLockForWriteTimeout(XReadWriteLock* rwlock, int32_t timeo
 				break;
 			}
 
-			size_t current_time = XTimerBase_getCurrentTime();
+			size_t current_time = XTimer_getCurrentTime();
 			int32_t elapsed = (int32_t)(current_time - start_time);
 			int32_t remaining = timeout_ms - elapsed;
 			if (remaining <= 0) {

@@ -4,14 +4,14 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "XTimerBase.h"
+#include "XTimer.h"
 #include <stdint.h>
 
-#define XTIMERLINUXTIMERFD_VTABLE_SIZE (XTIMERBASE_VTABLE_SIZE)
+#define XTIMERLINUXTIMERFD_VTABLE_SIZE (XTimer_VTABLE_SIZE)
 
 typedef struct XTimerPosixTimerFd 
 {
-    XTimerBase m_class;
+    XTimer m_class;
     bool m_twoCb;
     //int timerFd; // Linux timerfd句柄
 } XTimerPosixTimerFd;

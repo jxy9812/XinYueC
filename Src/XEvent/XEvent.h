@@ -204,19 +204,16 @@ typedef struct XEventFunc
 {
     XEvent event;
     void (*func)(void* args); // 需要执行的函数
-    void* args;                   // 函数参数
-    void(*del)(void*);            // 参数释放方式
+    XVarList* argList;                   // 函数参数
 }XEventFunc;
 /**
  * @brief 创建函数事件
- * @param receiver 事件接收对象
  * @param func 要执行的函数
  * @param argList 函数参数
- * @param priority 事件优先级
  * @return 新创建的函数事件
  */
-XEventFunc* XEventFunc_create(void (*func)(void*), void* args, void(*del)(void*));
-void XEventFunc_init(XEventFunc* event,void (*func)(void*), void* args, void(*del)(void*));
+XEventFunc* XEventFunc_create(void (*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*));
+void XEventFunc_init(XEventFunc* event, void(*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*));
 XVtable* XEventFunc_class_init();
 /**
  * @brief 执行函数事件的回调

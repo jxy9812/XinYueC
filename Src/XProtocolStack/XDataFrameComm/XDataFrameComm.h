@@ -50,8 +50,8 @@ typedef struct XDataFrameComm
     size_t m_sentBytes;//已发送字节计数
     XByteArray* m_sendFrameHead;//帧头
     XByteArray* m_sendFrameTail;//帧尾
-    XTimerBase* m_timerRecvExpired;//检测帧接收超时
-    XTimerBase* m_timerSendExpired;//检测发送帧到期
+    XTimer* m_timerRecvExpired;//检测帧接收超时
+    XTimer* m_timerSendExpired;//检测发送帧到期
     XByteArray* m_recvFrameHead;//帧头
     XByteArray* m_recvFrameTail;//帧尾
     XRecvValidCb m_recvValidCb;//接收验证回调
@@ -90,9 +90,9 @@ void XDataFrameComm_removeFuncCode(XDataFrameComm* comm, void* funcCode);
 void XDataFrameComm_clearFuncCode(XDataFrameComm* comm);
 void XDataFrameComm_deleteFuncCode(XDataFrameComm* comm);
 void XDataFrameComm_setGetFuncCodeCb(XDataFrameComm* comm, GetFuncCodeCb cb);//获取功能码回调
-/*  XTimerBase 帧接收超时  帧发送超时 定时器   */
-void XDataFrameComm_setTimerRecvExpired(XDataFrameComm* comm, XTimerBase*timer);
-void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer);
+/*  XTimer 帧接收超时  帧发送超时 定时器   */
+void XDataFrameComm_setTimerRecvExpired(XDataFrameComm* comm, XTimer*timer);
+void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimer* timer);
 #define XDataFrameComm_poll_base                   XCommunicatorBase_poll_base
 #define XDataFrameComm_connect_base                XCommunicatorBase_connect_base
 #define XDataFrameComm_disconnect_base             XCommunicatorBase_disconnect_base

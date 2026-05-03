@@ -4,7 +4,7 @@
 #include "XMemory.h"
 #include "XIODevicePrivate.h"
 #include "XCoreApplication.h"
-#include "XTimerBase.h"
+#include "XTimer.h"
 #include <string.h>
 #include <assert.h>
 static void VXIODevice_deinit(XIODevice* io);
@@ -190,11 +190,11 @@ bool VXIODevice_waitForReadyRead(XIODevice* self, int msecs)
 {
 	if (XIODevice_bytesAvailable_base(self) > 0) return true;
 
-	uint64_t current = XTimerBase_getCurrentTime();
+	uint64_t current = XTimer_getCurrentTime();
 	while (XIODevice_bytesAvailable_base(self) ==0)
 	{
 		XCoreApplication_processEvents(XEventLoop_AllEvents);
-		if (XTimerBase_getCurrentTime() > (current + msecs))
+		if (XTimer_getCurrentTime() > (current + msecs))
 			return false;
 	}
 	return true; // 
@@ -204,11 +204,11 @@ bool VXIODevice_waitForBytesWritten(XIODevice* self, int msecs)
 {
 	if (XIODevice_bytesToWrite_base(self)==0) return true;
 
-	size_t current = XTimerBase_getCurrentTime();
+	size_t current = XTimer_getCurrentTime();
 	while (XIODevice_bytesToWrite_base(self)>0)
 	{
 		XCoreApplication_processEvents(XEventLoop_AllEvents);
-		if (XTimerBase_getCurrentTime() > current + msecs)
+		if (XTimer_getCurrentTime() > current + msecs)
 			return false;
 	}
 	return true; // 

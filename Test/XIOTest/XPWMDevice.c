@@ -1,26 +1,26 @@
 ﻿#include"XIOTest.h"
 #if DEMOTEST
 #include"XPWMDeviceBase.h"
-#include"XTimerBase.h"
+#include"XTimer.h"
 #include"XPrintf.h"
 static struct XPWMDeviceTimer
 {
-	XTimerBase* timer1;//一个周期
-	XTimerBase* timer2;//电平反转
+	XTimer* timer1;//一个周期
+	XTimer* timer2;//电平反转
 }pwmTimer;
 static bool state=false;
-static void TimerCallback(XTimerBase* timer)
+static void TimerCallback(XTimer* timer)
 {
 	
 	if (timer == pwmTimer.timer1)
 	{
 		state = true;
-		XTimerBase_start_base(pwmTimer.timer2);
+		XTimer_start_base(pwmTimer.timer2);
 	}
 	else
 	{
 		state = false;
-		XTimerBase_stop_base(pwmTimer.timer2);
+		XTimer_stop_base(pwmTimer.timer2);
 	}
 	XPrintf("%s\n", state ? "高电平" : "低电平");
 }

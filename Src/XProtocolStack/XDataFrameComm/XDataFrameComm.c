@@ -7,7 +7,7 @@
 #include"XIODevice.h"
 #include"XListSLinked.h"
 #include"XString.h"
-#include"XTimerBase.h"
+#include"XTimer.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
 #include<string.h>
@@ -258,29 +258,29 @@ void XDataFrameComm_setGetFuncCodeCb(XDataFrameComm* comm, GetFuncCodeCb cb)
 		comm->m_getFuncCode = cb;
 }
 
-void XDataFrameComm_setTimerRecvExpired(XDataFrameComm* comm, XTimerBase* timer)
+void XDataFrameComm_setTimerRecvExpired(XDataFrameComm* comm, XTimer* timer)
 {
 	if (comm == NULL)
 	{
 		if(timer)
-			XTimerBase_deleteLater(timer);
+			XTimer_deleteLater(timer);
 		return;
 	}
 	if (comm->m_timerRecvExpired)
-		XTimerBase_deleteLater(comm->m_timerRecvExpired);
+		XTimer_deleteLater(comm->m_timerRecvExpired);
 	comm->m_timerRecvExpired = timer;
 }
 
-void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimerBase* timer)
+void XDataFrameComm_setTimerSendExpired(XDataFrameComm* comm, XTimer* timer)
 {
 	if (comm == NULL)
 	{
 		if (timer)
-			XTimerBase_deleteLater(timer);
+			XTimer_deleteLater(timer);
 		return;
 	}
 	if (comm->m_timerSendExpired)
-		XTimerBase_deleteLater(comm->m_timerSendExpired);
+		XTimer_deleteLater(comm->m_timerSendExpired);
 	comm->m_timerSendExpired = timer;
 
 }

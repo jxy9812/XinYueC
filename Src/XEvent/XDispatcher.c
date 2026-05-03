@@ -3,7 +3,7 @@
 #include "XSet.h"
 #include "XMutex.h"
 #include "XMemory.h"
-#include "XTimerBase.h"
+#include "XTimer.h"
 // 比较函数（用于红黑树排序）
 // 实体比较函数（先按策略，再按优先级，最后按虚拟运行时间）
 static int XScheduleEntity_compare(const void* a, const void* b) 
@@ -97,7 +97,7 @@ void XDispatcher_init(XDispatcher* dispatcher, XSchedulePolicy policy)
     dispatcher->policy = policy;
     dispatcher->current_entity = NULL;
     dispatcher->mutex = XMutex_create(XLock_NonRecursive);
-    dispatcher->last_sched_time = XTimerBase_getCurrentTime(); // 初始化为当前毫秒时间
+    dispatcher->last_sched_time = XTimer_getCurrentTime(); // 初始化为当前毫秒时间
     dispatcher->min_vruntime = 0;
     dispatcher->nr_running = 0;
 
@@ -134,7 +134,7 @@ void XScheduleEntity_init(XScheduleEntity* entity, void* data, int priority, XSc
     entity->state = X_ENTITY_READY;
     entity->vruntime = 0;
     entity->runtime = 0;
-    // RR策略默认时间片为100ms（与XTimerBase_getCurrentTime单位一致）
+    // RR策略默认时间片为100ms（与XTimer_getCurrentTime单位一致）
     entity->slice = (policy == X_SCHED_RR) ? 100 : 0;
     entity->run = NULL; // 初始化为空，由用户设置
 }
@@ -241,7 +241,7 @@ static void VXDispatcher_schedule(XDispatcher* dispatcher) {
     if (!dispatcher) return;
 
     XMutex_lock(dispatcher->mutex);
-    uint64_t current_time = XTimerBase_getCurrentTime(); // 当前时间（毫秒）
+    uint64_t current_time = XTimer_getCurrentTime(); // 当前时间（毫秒）
     XScheduleEntity* prev = dispatcher->current_entity;
     XScheduleEntity* next = VXDispatcher_getNextEntity(dispatcher);
 

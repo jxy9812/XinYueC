@@ -42,7 +42,7 @@ XHandle XThreadData_mapInsert(XThreadData* data);
 void XThreadData_mapRemove(XHandle id);
 // 初始化主线程的 XThreadData（由 XCoreApplication 调用）
 XThreadData* XThreadData_initMainThread(XThread* thread);
-
+XThreadData* XThreadData_mainThread();
 XEventLoop* XThreadData_currentEventLoop(XThreadData* data);
 void XThreadData_pushEventloop(XThreadData* data, XEventLoop*loop);
 void XThreadData_popEventloop(XThreadData* data, XEventLoop* loop);

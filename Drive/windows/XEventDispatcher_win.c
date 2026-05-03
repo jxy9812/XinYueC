@@ -460,11 +460,11 @@ static void CALLBACK XEventDispatcherWin32_HighResTimerCallback(
         );
     }
 }
-static void XTimerTimeWheelCallback(void* userData, XTimerTimeWheel* timer)
+static void XTimerTimeWheelCallback(void* userData, XTimerWheelData* timer)
 {
     XObject* object = (XObject*)userData;
     if (!object)return;
-    XEvent* timerEvent = XEventTimer_create(XTimerTimeWheel_timerId(timer));
+    XEvent* timerEvent = XEventTimer_create(XTimerData_timerId(timer));
     if (timerEvent)
     {
         timerEvent->posted = true;
@@ -501,17 +501,14 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
         XTimerGroupWheel* group = XTimerGroupWheel_global();
         if (group&& XTimerGroupWheel_max_time(group)> intervalMs)
         {//范围达标使用时间轮定时器
-            XTimerTimeWheel* timer = XTimerTimeWheel_create();
+            XTimerWheelData* timer = XTimerWheelData_create();
             if(timer)
             {
-                XTimerTimeWheel_setAutoDelete(timer, true);
-                //XTimerTimeWheel_setGroup(timer, group);
-               
-                XTimerTimeWheel_setTimerId(timer, timerId);
-                XTimerTimeWheel_setInterval(timer, intervalMs);
-                //XTimerTimeWheel_setTimeout(timer, 15);
-                XTimerTimeWheel_setTimerCallback(timer, XTimerTimeWheelCallback);
-                XTimerTimeWheel_setUserData(timer, object);
+                XTimerData_setAutoDelete(timer, true);
+                XTimerData_setTimerId(timer, timerId);
+                XTimerData_setInterval(timer, intervalMs);
+                XTimerData_setTimerCallback(timer, XTimerTimeWheelCallback);
+                XTimerData_setUserData(timer, object);
 
                 if (XTimerGroupWheel_addTimer_base(group, timer))
                 {
@@ -521,7 +518,7 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
                 }
                 else
                 {
-                    XTimerTimeWheel_deleteLater(timer);
+                    XTimer_deleteLater(timer);
                 }
             }
 
@@ -658,9 +655,9 @@ static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed,
         if (timerInfo->isTimeWheel)
         {
             //timerInfo->m_wheel->m_class.m_isRun = false;
-            XTimerTimeWheel_setUserData(timerInfo->m_wheel,NULL);
+            XTimerData_setUserData(timerInfo->m_wheel,NULL);
             XTimerGroupWheel_removeTimer_base(XTimerGroupWheel_global(), timerInfo->m_wheel);
-            //XTimerTimeWheel_stop_base(timerInfo->m_wheel);
+            //XTimer_stop_base(timerInfo->m_wheel);
         }
         else if (timerInfo->mmTimerId != 0) 
         {
@@ -710,7 +707,7 @@ static bool VXEventDispatcherWin32_unregisterTimers(XAbstractEventDispatcher* ed
             {
                 if (timerInfo->isTimeWheel)
                 {
-                    XTimerTimeWheel_stop_base(timerInfo->m_wheel);
+                    XTimer_stop_base(timerInfo->m_wheel);
                 }
                 else if (timerInfo->mmTimerId != 0) 
                 {

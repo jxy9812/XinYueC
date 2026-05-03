@@ -7,6 +7,7 @@ extern "C" {
 #include<stdint.h>
 #include<stdio.h>
 #include"XObject.h"
+#include"XTimerData.h"
 #define XTIMERGROUPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimerGroupBase))       //XTimerGroupBase虚函数表大小
 XCLASS_DEFINE_BEGING(XTimerGroupBase)
 XCLASS_DEFINE_ENUM(XTimerGroupBase, Add_Timer) = XCLASS_VTABLE_GET_SIZE(XObject),
@@ -22,9 +23,9 @@ typedef struct XTimerGroupBase
 	size_t m_current_tick;      // 当前系统滴答
 }XTimerGroupBase;
 void XTimerGroupBase_init(XTimerGroupBase*group, uint16_t precision);
-bool XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerBase* timer);
+bool XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData* timer);
 //仅从任务中删除，需要手动释放
-bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerBase* timer);
+bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerData* timer);
 /**
  * @brief 获取定时器组可以管理的时间范围（以毫秒为单位）
  * @param group 定时器组指针

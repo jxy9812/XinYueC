@@ -1,6 +1,6 @@
 ﻿#include"XPLC.h"
 #include"XMemory.h"
-#include"XTimerBase.h"
+#include"XTimer.h"
 XPLC* XPLC_create()
 {
 	XPLC* plc = XMemory_malloc(sizeof(XPLC));
@@ -14,7 +14,7 @@ void XPLC_init(XPLC* plc)
 		return;
 	XObject_init(plc);
 	XClassGetVtable(plc) = XPLC_class_init();
-	//XPLC_setDelayMsCb(plc, XTimerBase_delay_ms);
+	//XPLC_setDelayMsCb(plc, XTimer_delay_ms);
 	XPLC_setScanPeriod(plc,10);
 }
 

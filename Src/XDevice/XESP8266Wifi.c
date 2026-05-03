@@ -68,8 +68,8 @@ void XESP8266Wifi_init(XESP8266Wifi* device, XIODevice* io) {
     device->m_wifiStatus = XESP8266_Status_Disconnected;
     //device->m_serverStatus = XESP8266_Status_Disconnected;
     device->m_timeoutTimer = XTimer_create();
-    XTimerBase_setUserData(device->m_timeoutTimer,device);
-    XTimerBase_setTimerCallback(device->m_timeoutTimer, VXESP8266_timeoutCallback);
+    XTimer_setUserData(device->m_timeoutTimer,device);
+    XTimer_setTimerCallback(device->m_timeoutTimer, VXESP8266_timeoutCallback);
     device->m_ssid = XString_create();
     device->m_password = XString_create();
     //device->m_serverIP = XString_create();
@@ -677,8 +677,8 @@ size_t XESP8266Wifi_read(XESP8266Wifi* device, int connId, void* data, size_t si
     if (msecs <= 0)
         return size - remaining_size;//立即结束，返回当前获取的数据大小
     //延迟等待
-    size_t current= XTimerBase_getCurrentTime();
-    while (XTimerBase_getCurrentTime()< current+ msecs)
+    size_t current= XTimer_getCurrentTime();
+    while (XTimer_getCurrentTime()< current+ msecs)
     {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         if (remaining_size && XQueueBase_receive_base(queue, ((char*)data) + (size - remaining_size)))

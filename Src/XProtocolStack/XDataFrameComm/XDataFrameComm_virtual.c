@@ -9,7 +9,6 @@
 #include"XTimer.h"
 #include"XString.h"
 #include"XListSLinked.h"
-#include"XTimerTimeWheel.h"
 #include"XPrintf.h"
 #include<assert.h>
 #include<string.h>
@@ -108,7 +107,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		{
 			if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
 			{
-				XTimerBase_start_base(comm->m_timerRecvExpired);
+				XTimer_start_base(comm->m_timerRecvExpired);
 			}
 			else
 			{
@@ -122,7 +121,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		{
 			if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
 			{
-				XTimerBase_start_base(comm->m_timerRecvExpired);// 保持定时器运行，等待错误帧结束
+				XTimer_start_base(comm->m_timerRecvExpired);// 保持定时器运行，等待错误帧结束
 				break;
 			}
 			else
@@ -156,7 +155,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			}
 
 			if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
-				XTimerBase_start_base(comm->m_timerRecvExpired);
+				XTimer_start_base(comm->m_timerRecvExpired);
 			break;
 		}
 		case XDFC_STATE_RX_HEAD:    // 接收帧头中
@@ -180,7 +179,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				comm->m_eRcvState = XDFC_STATE_RX_RCV;//切换到接收数据中
 			}
 			if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
-				XTimerBase_start_base(comm->m_timerRecvExpired);
+				XTimer_start_base(comm->m_timerRecvExpired);
 			break;
 		}
 		case XDFC_STATE_RX_RCV:  // 接收中状态（连续接收字节）
@@ -200,7 +199,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 	{
 		if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
 		{
-			XTimerBase_start_base(comm->m_timerRecvExpired);
+			XTimer_start_base(comm->m_timerRecvExpired);
 			//return;
 		}
 		else if (comm->m_frameEndMode == XDFC_FRAME_END_MARKER)
@@ -297,7 +296,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			if (comm->m_commMode == XDFC_COMM_MODE_HALF_DUPLEX)
 			{//半双工模式时等待一段时间才可以继续发送，留给接收响应
 				comm->m_eSndState = XDFC_STATE_TX_END;  // 切换到发送结束状态
-				XTimerBase_start_base(comm->m_timerSendExpired);
+				XTimer_start_base(comm->m_timerSendExpired);
 			}
 			else if (comm->m_commMode == XDFC_COMM_MODE_FULL_DUPLEX)
 			{
@@ -353,7 +352,7 @@ bool VXCommunicatorBase_connect(XDataFrameComm* comm)
 		if(comm->m_frameEndMode== XDFC_FRAME_END_TIMEOUT)
 		{
 			comm->m_eRcvState = XDFC_STATE_RX_INIT;  // 初始状态：等待总线空闲
-			XTimerBase_start_base(comm->m_timerRecvExpired);
+			XTimer_start_base(comm->m_timerRecvExpired);
 		}
 		else
 		{
@@ -392,7 +391,7 @@ bool VXCommunicatorBase_disconnect(XDataFrameComm* comm)
 static void SendExpired(XDataFrameComm* comm)
 {
 	comm->m_eSndState = XDFC_STATE_TX_IDLE;
-	XTimerBase_stop_base(comm->m_timerSendExpired);  // 关闭定时器
+	XTimer_stop_base(comm->m_timerSendExpired);  // 关闭定时器
 }
 //定时器触发
 static void TimerSendExpired(XDataFrameComm* comm)
@@ -413,9 +412,9 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 	{//全双工
 		if (comm->m_timerSendExpired)
 		{
-			/*XTimerBase_deleteLater(comm->m_timerSendExpired);
+			/*XTimer_deleteLater(comm->m_timerSendExpired);
 			comm->m_timerSendExpired = NULL;*/
-			XTimerBase_stop_base(comm->m_timerSendExpired);
+			XTimer_stop_base(comm->m_timerSendExpired);
 		}
 	}
 	else if (mode == XDFC_COMM_MODE_HALF_DUPLEX)
@@ -423,11 +422,11 @@ XDFC_ErrorCode VXDataFrameComm_setCommMode(XDataFrameComm* comm, XDFC_CommMode m
 		
 		if (comm->m_timerSendExpired==NULL)
 		{
-			XTimerBase* timer = XTimerTimeWheel_create();
-			XTimerBase_setTimerCallback(timer, TimerSendExpired);
-			XTimerBase_setUserData(timer, comm);
-			XTimerBase_setAutoDelete(timer,false);
-			XTimerBase_setTimeout(timer, XDFC_HALF_DUPLEX_SEND_WAIT_TIME);
+			XTimer* timer = XTimer_create();
+			XTimer_setTimerCallback(timer, TimerSendExpired);
+			XTimer_setUserData(timer, comm);
+			XTimer_setAutoDelete(timer,false);
+			XTimer_setTimeout(timer, XDFC_HALF_DUPLEX_SEND_WAIT_TIME);
 			comm->m_timerSendExpired = timer;
 		}
 	}
@@ -458,7 +457,7 @@ static void RecvExpired(XDataFrameComm* comm)
 	}
 
 	comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
-	XTimerBase_stop_base(comm->m_timerRecvExpired);  // 关闭定时器
+	XTimer_stop_base(comm->m_timerRecvExpired);  // 关闭定时器
 }
 //定时器触发
 static void TimerRecvExpired(XDataFrameComm* comm)
@@ -475,12 +474,12 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 		
 		if (comm->m_timerRecvExpired == NULL)
 		{
-			XTimerBase* timer = XTimerTimeWheel_create();
-			XTimerBase_setTimerCallback(timer, TimerRecvExpired);
-			XTimerBase_setUserData(timer, comm);
-			XTimerBase_setAutoDelete(timer, false);
-			XTimerBase_setTimeout(timer, XDFC_FRAME_END_TIMEOUT_TIME);
-			XTimerBase_setInterval(timer, XDFC_FRAME_END_TIMEOUT_TIME);
+			XTimer* timer = XTimer_create();
+			XTimer_setTimerCallback(timer, TimerRecvExpired);
+			XTimer_setUserData(timer, comm);
+			XTimer_setAutoDelete(timer, false);
+			XTimer_setTimeout(timer, XDFC_FRAME_END_TIMEOUT_TIME);
+			XTimer_setInterval(timer, XDFC_FRAME_END_TIMEOUT_TIME);
 			comm->m_timerRecvExpired = timer;
 		}
 	}
@@ -488,7 +487,7 @@ XDFC_ErrorCode VXDataFrameComm_setFrameEndType(XDataFrameComm* comm, XDFC_FrameE
 	{//设置为标志结束
 		if (comm->m_timerRecvExpired)
 		{
-			XTimerBase_stop_base(comm->m_timerRecvExpired);
+			XTimer_stop_base(comm->m_timerRecvExpired);
 		}
 	}
 	comm->m_frameEndMode = mode;
@@ -556,11 +555,11 @@ XHandle VXDataFrameComm_addPeriodicData(XDataFrameComm* comm, XByteArray* data, 
 	node->timer = timer;
 
 	XListBase_push_back_base(comm->m_periodicSendList,&node);
-	XTimerBase_setTimeout(timer, time);
-	XTimerBase_setInterval(timer, time);
-	XTimerBase_setUserData(timer, node);
-	XTimerBase_setTimerCallback(timer, SendDataPeriodicCb);
-	XTimerBase_start_base(timer);
+	XTimer_setTimeout(timer, time);
+	XTimer_setInterval(timer, time);
+	XTimer_setUserData(timer, node);
+	XTimer_setTimerCallback(timer, SendDataPeriodicCb);
+	XTimer_start_base(timer);
 	return node;
 }
 
@@ -574,7 +573,7 @@ bool VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle
 		return false;
 	PeriodicNode* node = handle;
 	XByteArray_delete_base(node->data);
-	XTimerBase_deleteLater(node->timer);
+	XTimer_deleteLater(node->timer);
 	XMemory_free(node);
 	return true;
 }
@@ -623,7 +622,7 @@ void VXDataFrameComm_deinit(XDataFrameComm* comm)
 		{
 			PeriodicNode* node=XListSLinked_iterator_data(&it);
 			XByteArray_delete_base(node->data);
-			XTimerBase_deleteLater(node->timer);
+			XTimer_deleteLater(node->timer);
 			XMemory_free(node);
 		}
 		XListBase_delete_base(comm->m_periodicSendList);
@@ -656,12 +655,12 @@ void VXDataFrameComm_deinit(XDataFrameComm* comm)
 	}
 	if (comm->m_timerRecvExpired)
 	{
-		XTimerBase_deleteLater(comm->m_timerRecvExpired);
+		XTimer_deleteLater(comm->m_timerRecvExpired);
 		comm->m_timerRecvExpired = NULL;
 	}
 	if (comm->m_timerSendExpired)
 	{
-		XTimerBase_deleteLater(comm->m_timerSendExpired);
+		XTimer_deleteLater(comm->m_timerSendExpired);
 		comm->m_timerSendExpired = NULL;
 	}
 	//调用父类释放函数
