@@ -20,7 +20,7 @@ XVtable* XRingBuffer_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         // 继承类
-        XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
+        XVTABLE_INHERIT_XCLASS(XContainer);
 
     // --- 关键修改: 不再添加 XRingBuffer 自己的 Write/Read 等虚函数 ---
 

@@ -35,7 +35,7 @@ XVtable* XHashMap_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 		//继承类
-		XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
+		XVTABLE_INHERIT_XCLASS(XContainer);
 	void* table[] = {
 		VXMap_insert,VXMap_erase,VXMap_remove,VXMap_value,VXMap_find,
 		VXMapBase_keys,VXMapBase_values

@@ -20,7 +20,7 @@ XVtable* XPWMDeviceBase_class_init()
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
+	XVTABLE_INHERIT_XCLASS(XIODevice);
 	void* table[] = { 
 		VXPWMDevice_setFrequency,VXPWMDevice_setDutyCycle,
 		VXPWMDevice_start,VXPWMDevice_stop,

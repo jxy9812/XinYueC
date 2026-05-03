@@ -22,6 +22,7 @@ typedef struct XClass
 }XClass;
 #define XVtableGetFunc(Vtable,Offset,Type) ((Type)((((XVtable*)Vtable)->data)[Offset]))//用虚函数表获取函数
 #define XClassGetVtable(Object) ((XClass*)Object)->m_vtable  //用获取类中的虚函数表
+#define XClassSetVtable(Obj,Type) (XClassGetVtable(Obj)=Type##_class_init())
 //#define XClassGetVirtualFunc(Object,Offset,Type) ((Type)((((XClass*)Object)->m_vtable->data)[Offset]))
 #define XClassGetVirtualFunc(Object,Offset,Type)      XVtableGetFunc((XClassGetVtable(Object)),Offset,Type)//用XClassObject及其子类获取虚函数
 #define isNULLInfo(args,str) args,#args,str ,__FUNCTION__,__FILE__,__LINE__
@@ -77,6 +78,8 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 #define XVTABLE_STACK_INIT_DEFAULT(Size)			XVTABLE_STACK_INIT(XVTABLE_DEFAULT,Size)
 //继承表
 #define XVTABLE_INHERIT_DEFAULT(VtableBase)			XVTABLE_INHERIT(XVTABLE_DEFAULT,VtableBase)
+//继承类
+#define XVTABLE_INHERIT_XCLASS(Type)				XVTABLE_INHERIT(XVTABLE_DEFAULT,Type##_class_init())
 //虚函数表函数重载
 #define XVTABLE_OVERLOAD_DEFAULT(Type,Func)			XVTABLE_OVERLOAD(XVTABLE_DEFAULT,Type,Func)
 //虚函数表追加函数列表

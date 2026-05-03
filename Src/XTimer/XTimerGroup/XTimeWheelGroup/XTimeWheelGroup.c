@@ -90,12 +90,12 @@ XVtable* XTimeWheelGroup_class_init()
     XVTABLE_CREAT_DEFAULT
         // 虚函数表初始化
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XTIMEWHEELGROUP_VTABLE_SIZE)
+    XVTABLE_STACK_INIT_DEFAULT(XTIMEWHEELGROUP_VTABLE_SIZE)
 #else
-        XVTABLE_HEAP_INIT_DEFAULT
+    XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        // 继承类
-        XVTABLE_INHERIT_DEFAULT(XObject_class_init());
+    // 继承类
+    XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
         VXTimerGroupBase_addTimer, VXTimerGroupBase_removeTimer,VXTimeWheelGroup_tick,
         VXTimeWheelGroup_addTimeWheel, VXTimeWheelGroup_removeTimeWheel,

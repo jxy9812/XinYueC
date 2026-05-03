@@ -28,7 +28,7 @@ XVtable* XCoreApplication_class_init() {
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
     //继承类
-    XVTABLE_INHERIT_DEFAULT(XObject_class_init());
+    XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = { VXCoreApplication_notify };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     //XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXObject_timerEvent);

@@ -27,7 +27,7 @@ XVtable* XHistoryState_class_init()
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_DEFAULT(XAbstractState_class_init());
+        XVTABLE_INHERIT_XCLASS(XAbstractState);
 
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHistoryState_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_SetParentState, VHistoryState_setParentState);

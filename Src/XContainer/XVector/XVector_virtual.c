@@ -34,7 +34,7 @@ XVtable* XVector_class_init()
 	XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
+	XVTABLE_INHERIT_XCLASS(XContainer);
 	void* table[] = {
 		VXVector_resize,
 		//插入

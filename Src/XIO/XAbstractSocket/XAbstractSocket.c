@@ -52,7 +52,7 @@ XVtable* XAbstractSocket_class_init(void)
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
     // 继承 XIODevice 的虚表
-    XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
+    XVTABLE_INHERIT_XCLASS(XIODevice);
     // 添加 XAbstractSocket 特有虚函数
     void* table[] = {
         VXAbstractSocket_Resume,

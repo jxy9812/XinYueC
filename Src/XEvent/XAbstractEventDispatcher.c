@@ -63,7 +63,7 @@ XVtable* XAbstractEventDispatcher_class_init(void)
 #endif
 
         // 继承 XObject 的虚函数表
-        XVTABLE_INHERIT_DEFAULT(XObject_class_init());
+        XVTABLE_INHERIT_XCLASS(XObject);
 
     // 添加本类虚函数
     void* table[] = {

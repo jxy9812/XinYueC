@@ -34,7 +34,7 @@ XVtable* XESP8266Wifi_class_init() {
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         // 继承XIODeviceBase
-        XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
+        XVTABLE_INHERIT_XCLASS(XIODevice);
     // 重载虚函数
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXESP8266_open);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXESP8266_close);

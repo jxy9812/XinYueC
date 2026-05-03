@@ -49,7 +49,7 @@ XVtable* XSocket_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         // 继承父类虚函数表
-        XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
+        XVTABLE_INHERIT_XCLASS(XIODevice);
 
     void* table[] = {
         VXSocketBase_connectToHost,

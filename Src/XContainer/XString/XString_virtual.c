@@ -324,7 +324,7 @@ XVtable* XString_class_init() {
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
 
-        XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
+        XVTABLE_INHERIT_XCLASS(XContainer);
 
     void* vtable_funcs[] = {
         VXString_At,

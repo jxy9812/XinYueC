@@ -15,7 +15,7 @@ XVtable* XModbusReply_class_init(void) {
 #endif
 
         // 继承XObject
-        XVTABLE_INHERIT_DEFAULT(XObject_class_init());
+        XVTABLE_INHERIT_XCLASS(XObject);
 
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusReply_deinit);

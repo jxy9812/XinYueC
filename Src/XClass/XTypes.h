@@ -5,7 +5,6 @@ extern "C" {
 #endif
 #include<stdint.h>
 typedef  void* XHandle;//句柄
-typedef void* ptr;//指针类型
 typedef struct XEpoll XEpoll;
 typedef struct XTimer XTimer;
 typedef struct XClass XClass;
@@ -68,11 +67,12 @@ typedef struct XBsonValue XBsonValue;
 typedef struct XSignalSlot XSignalSlot;
 typedef struct XAtomic_int32_t XAtomic_int32_t;
 typedef struct XAbstractNativeEventFilter XAbstractNativeEventFilter;
+typedef struct XVarList XVarList;
 typedef XMapBase XFuncCodeMap;
 typedef XMap XVariantMap;
 typedef XHashMap XVariantHashMap;
 
-
+typedef void (*XCallableToRun)(XVarList*);
 /**
  * @brief 定时器唯一标识符。
  */

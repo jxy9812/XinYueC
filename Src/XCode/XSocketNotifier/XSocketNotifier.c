@@ -24,7 +24,7 @@ XVtable* XSocketNotifier_class_init(void)
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
     //继承类
-    XVTABLE_INHERIT_DEFAULT(XObject_class_init());
+    XVTABLE_INHERIT_XCLASS(XObject);
  /*   void* table[] = { VXObject_poll };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);*/
     //重载

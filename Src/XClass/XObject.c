@@ -26,7 +26,7 @@ XVtable* XObject_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+	XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = { 
 		VXObject_poll,VXObject_event ,VXObject_eventFilter,
 	NULL,NULL,NULL,NULL,VXObject_timerEvent };

@@ -56,7 +56,7 @@ XVtable* XDispatcher_class_init() {
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+        XVTABLE_INHERIT_XCLASS(XClass);
 
     void* table[] = {
         VXDispatcher_addEntity,

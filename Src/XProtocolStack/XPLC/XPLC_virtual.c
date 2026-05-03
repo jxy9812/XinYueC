@@ -20,7 +20,7 @@ XVtable* XPLC_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 		//继承类
-		XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+		XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = {
 		VXPLC_addOutIODevice,VXPLC_addInIODevice,
 		VXPLC_removeOutId,VXPLC_removeInId,

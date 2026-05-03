@@ -21,7 +21,7 @@ XVtable* XBitArray_class_init() {
 #endif
 
     // 继承XContainer的虚函数表
-    XVTABLE_INHERIT_DEFAULT(XContainer_class_init());
+    XVTABLE_INHERIT_XCLASS(XContainer);
 
     //// 注册新虚函数
     //void* table[] = {

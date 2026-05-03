@@ -60,7 +60,7 @@ XVtable* XModbusDevice_class_init()
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
     // 继承 XModbusDevice
-    XVTABLE_INHERIT_DEFAULT(XModbusDevice_class_init());
+    XVTABLE_INHERIT_XCLASS(XModbusDevice);
     void* table[] = { NULL,NULL };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     // 重载析构

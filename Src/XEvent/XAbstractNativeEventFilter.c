@@ -33,7 +33,7 @@ XVtable* XAbstractNativeEventFilter_class_init(void)
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         //继承类
-        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+        XVTABLE_INHERIT_XCLASS(XClass);
         // 无基类继承（XClass 是最底层）
         void* table[] = {
             (void*)VXAbstractNativeEventFilter_nativeEventFilter

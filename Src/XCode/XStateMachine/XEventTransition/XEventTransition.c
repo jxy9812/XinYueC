@@ -21,7 +21,7 @@ XVtable* XEventTransition_class_init()
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_DEFAULT(XAbstractTransition_class_init());
+        XVTABLE_INHERIT_XCLASS(XAbstractTransition);
 
     /*  void* table[] =
       {

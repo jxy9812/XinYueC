@@ -897,7 +897,7 @@ XVtable* XEventDispatcherWin32_class_init()
 #endif
 
     // 继承 XObject 的虚函数表
-    XVTABLE_INHERIT_DEFAULT(XAbstractEventDispatcher_class_init());
+    XVTABLE_INHERIT_XCLASS(XAbstractEventDispatcher);
     //XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_ProcessEvents, (void*)VXEventDispatcherWin32_processEvents);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterSocketNotifier, (void*)VXEventDispatcherWin32_registerSocketNotifier);

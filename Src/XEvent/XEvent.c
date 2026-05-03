@@ -22,7 +22,7 @@ XVtable* XEvent_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+	XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = {
 		VXEvent_default_setAccepted,VXEvent_default_clone
 	};
@@ -48,7 +48,7 @@ void XEvent_init(XEvent* event,XEventType type)
 	if (!event)return;
 	memset(((XClass*)event) + 1, 0, sizeof(XEvent) - sizeof(XClass));
 	XClass_init(event);
-	XClassGetVtable(event) = XEvent_class_init();
+	XClassSetVtable(event, XEvent);
 	event->type = type;
 }
 
@@ -64,12 +64,12 @@ XVtable* XEventFunc_class_init()
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
 #if VTABLE_ISSTACK
-		XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XEvent))
+	XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XEvent))
 #else
-		XVTABLE_HEAP_INIT_DEFAULT
+	XVTABLE_HEAP_INIT_DEFAULT
 #endif
-		//继承类
-		XVTABLE_INHERIT_DEFAULT(XEvent_class_init());
+	//继承类
+	XVTABLE_INHERIT_XCLASS(XEvent);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, XEventFunc_deinit);
 #if SHOWCONTAINERSIZE
@@ -77,7 +77,7 @@ XVtable* XEventFunc_class_init()
 #endif
 	return XVTABLE_DEFAULT;
 }
-XEventFunc* XEventFunc_create(void(*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*))
+XEventFunc* XEventFunc_create(XCallableToRun func, XVarList* argList, void(*del_argList)(XVarList*))
 {
 	XEventFunc* event = XMultiPool_global_malloc(sizeof(XEventFunc));
 	if (!event)return NULL;
@@ -127,7 +127,7 @@ XVtable* XEventMetaCall_class_init()
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
 	//继承类
-	XVTABLE_INHERIT_DEFAULT(XEvent_class_init());
+	XVTABLE_INHERIT_XCLASS(XEvent);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXEventMetaCall_deinit);
 #if SHOWCONTAINERSIZE
 	printf("XEventMetaCall size:%d\n", XVtable_size(XVTABLE_DEFAULT));

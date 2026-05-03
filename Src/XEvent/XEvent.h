@@ -203,7 +203,7 @@ const char* XDynamicPropertyChangeEvent_propertyName(const XEvent* event);
 typedef struct XEventFunc
 {
     XEvent event;
-    void (*func)(void* args); // 需要执行的函数
+    XCallableToRun func; // 需要执行的函数
     XVarList* argList;                   // 函数参数
 }XEventFunc;
 /**
@@ -212,7 +212,7 @@ typedef struct XEventFunc
  * @param argList 函数参数
  * @return 新创建的函数事件
  */
-XEventFunc* XEventFunc_create(void (*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*));
+XEventFunc* XEventFunc_create(XCallableToRun func, XVarList* argList, void(*del_argList)(XVarList*));
 void XEventFunc_init(XEventFunc* event, void(*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*));
 XVtable* XEventFunc_class_init();
 /**

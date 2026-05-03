@@ -23,7 +23,7 @@ XVtable* XSerialPort_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         //继承类
-        XVTABLE_INHERIT_DEFAULT(XIODevice_class_init());
+        XVTABLE_INHERIT_XCLASS(XIODevice);
     //重载
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXSerialPort_open);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Write, VXIODevice_write);
