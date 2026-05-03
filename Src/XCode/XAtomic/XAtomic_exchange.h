@@ -71,7 +71,7 @@ size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_Memory
  * @return 原子变量的旧值
  * @note 原子性保证：整个读取-替换过程不可分割
  */
-void* XAtomic_exchange_ptr(XAtomic_ptr* var, void* value, XAtomic_MemoryOrder order);
+uintptr_t XAtomic_exchange_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order);
 
 #ifdef __cplusplus
 }

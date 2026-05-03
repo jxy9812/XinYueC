@@ -37,10 +37,10 @@ XVtable* XEvent_class_init()
 }
 XEvent* XEvent_create(XEventType code)
 {
-	XEvent* event = XMultiPool_mallocGlobal(sizeof(XEvent));
+	XEvent* event = XMultiPool_global_malloc(sizeof(XEvent));
 	if (!event)return NULL;
 	XEvent_init(event, code);
-	Set_Class_MemoryFree(event, XMultiPool_freeGlobal);
+	Set_Class_MemoryFree(event, XMultiPool_global_free);
 	return event;
 }
 void XEvent_init(XEvent* event,XEventType type)
@@ -79,10 +79,10 @@ XVtable* XEventFunc_class_init()
 }
 XEventFunc* XEventFunc_create(void(*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*))
 {
-	XEventFunc* event = XMultiPool_mallocGlobal(sizeof(XEventFunc));
+	XEventFunc* event = XMultiPool_global_malloc(sizeof(XEventFunc));
 	if (!event)return NULL;
 	XEventFunc_init(event, func, argList, del_argList);
-	Set_Class_MemoryFree(event, XMultiPool_freeGlobal);
+	Set_Class_MemoryFree(event, XMultiPool_global_free);
 	return event;
 }
 void XEventFunc_init(XEventFunc* event, void(*func)(XVarList*), XVarList* argList, void(*del_argList)(XVarList*))
@@ -136,7 +136,7 @@ XVtable* XEventMetaCall_class_init()
 }
 XEventMetaCall* XEventMetaCall_create(XObject* sender,XSlotFunc1 func, XVarList* argList,XAtomic_int32_t* ref_count,XSemaphore* sem)
 {
-	XEventMetaCall* event = XMultiPool_mallocGlobal(sizeof(XEventMetaCall));
+	XEventMetaCall* event = XMultiPool_global_malloc(sizeof(XEventMetaCall));
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_META_CALL);
 	XClassGetVtable(event) = XEventMetaCall_class_init();
@@ -145,7 +145,7 @@ XEventMetaCall* XEventMetaCall_create(XObject* sender,XSlotFunc1 func, XVarList*
 	event->argList = argList;
 	event->ref_count = ref_count;
 	event->sem = sem;
-	Set_Class_MemoryFree(event, XMultiPool_freeGlobal);
+	Set_Class_MemoryFree(event, XMultiPool_global_free);
 	return event;
 }
 
@@ -233,11 +233,11 @@ int XEvent_registerEventType(int hint)
 
 XEventDeferredDelete* XEventDeferredDelete_create(bool isDelete)
 {
-	XEventDeferredDelete* event = XMultiPool_mallocGlobal(sizeof(XEventDeferredDelete));
+	XEventDeferredDelete* event = XMultiPool_global_malloc(sizeof(XEventDeferredDelete));
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_DEFERRED_DELETE);
 	event->isDelete = isDelete;
-	Set_Class_MemoryFree(event, XMultiPool_freeGlobal);
+	Set_Class_MemoryFree(event, XMultiPool_global_free);
 	return event;
 }
 
@@ -263,11 +263,11 @@ void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver
 
 XEventTimer* XEventTimer_create(XTimerId id)
 {
-	XEventTimer* event = XMultiPool_mallocGlobal(sizeof(XEventTimer));
+	XEventTimer* event = XMultiPool_global_malloc(sizeof(XEventTimer));
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_TIMER);
 	event->timerId = id;
-	Set_Class_MemoryFree(event, XMultiPool_freeGlobal);
+	Set_Class_MemoryFree(event, XMultiPool_global_free);
 	return event;
 }
 XTimerId XEventTimer_timerId(const XEventTimer* event)
@@ -278,12 +278,12 @@ XTimerId XEventTimer_timerId(const XEventTimer* event)
 
 XEventSockAct* XEventSockAct_create(XSocketDescriptor socket, XSocketActType actType)
 {
-	XEventSockAct* event = XMultiPool_mallocGlobal(sizeof(XEventSockAct));
+	XEventSockAct* event = XMultiPool_global_malloc(sizeof(XEventSockAct));
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_SOCK_ACT);
 	event->socket = socket;
 	event->actType = actType;
-	Set_Class_MemoryFree(event, XMultiPool_freeGlobal);
+	Set_Class_MemoryFree(event, XMultiPool_global_free);
 	return event;
 }
 

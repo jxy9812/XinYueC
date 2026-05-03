@@ -2,7 +2,7 @@
 #include "XMemory.h"
 #include "XCoreApplication.h"
 #include "XVector.h"
-#include "XTimerGroupWheel.h"
+#include "XTimeWheelGroup.h"
 #include "XAbstractNativeEventFilter.h"
 #include "XPriorityMapQueue.h"
 #include "XThreadData.h"
@@ -124,12 +124,12 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags)
 {
     //先处理定时器任务
-    if (XAbstractEventDispatcher_isMainThread(self)&& XTimerGroupWheel_GlobalExists())
+    if (XAbstractEventDispatcher_isMainThread(self)&& XTimeWheelGroup_GlobalExists())
     {
         //XPrintf("轮询定时器中\n");
-        if(XTimerGroupWheel_count(XTimerGroupWheel_global()))
+        if(XTimeWheelGroup_count(XTimeWheelGroup_global()))
         {
-            XTimerGroupWheel_handler_base(XTimerGroupWheel_global());
+            XTimeWheelGroup_handler(XTimeWheelGroup_global());
         }
     }
     size_t size = 0;

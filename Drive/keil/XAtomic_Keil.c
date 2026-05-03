@@ -74,7 +74,7 @@ size_t XAtomic_load_size_t(const XAtomic_size_t* var, XAtomic_MemoryOrder order)
 {
     return __atomic_load_n(&(var->value), xatomic_to_gcc_memory_order(order));
 }
-void* XAtomic_load_ptr(const XAtomic_ptr* var, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_load_uintptr_t(const XAtomic_uintptr_t* var, XAtomic_MemoryOrder order)
 {
     return __atomic_load_n(&(var->value), xatomic_to_gcc_memory_order(order));
 }
@@ -104,7 +104,7 @@ void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder
 {
     __atomic_store_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
 }
-void XAtomic_store_ptr(XAtomic_ptr* var, void* value, XAtomic_MemoryOrder order)
+void XAtomic_store_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
     __atomic_store_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
 }
@@ -134,7 +134,7 @@ size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_Memory
 {
     return __atomic_exchange_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
 }
-void* XAtomic_exchange_ptr(XAtomic_ptr* var, void* value, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_exchange_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
     return __atomic_exchange_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
 }
@@ -164,7 +164,7 @@ bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expecte
 {
     return __atomic_compare_exchange_n(&(var->value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
-bool XAtomic_compare_exchange_strong_ptr(XAtomic_ptr* var, void** expected, void* desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_uintptr_t(XAtomic_uintptr_t* var, uintptr_t* expected, uintptr_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
     return __atomic_compare_exchange_n(&(var->value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
@@ -305,9 +305,9 @@ size_t XAtomic_load_size_t(const XAtomic_size_t* var, XAtomic_MemoryOrder order)
     __apply_acquire(order);
     return val;
 }
-void* XAtomic_load_ptr(const XAtomic_ptr* var, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_load_uintptr_t(const XAtomic_uintptr_t* var, XAtomic_MemoryOrder order)
 {
-    void* val = var->value;
+    uintptr_t val = var->value;
     __apply_acquire(order);
     return val;
 }
@@ -343,7 +343,7 @@ void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder
     __apply_release(order);
     var->value = value;
 }
-void XAtomic_store_ptr(XAtomic_ptr* var, void* value, XAtomic_MemoryOrder order)
+void XAtomic_store_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
     __apply_release(order);
     var->value = value;
@@ -400,11 +400,11 @@ size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_Memory
     }
     return expected;
 }
-void* XAtomic_exchange_ptr(XAtomic_ptr* var, void* value, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_exchange_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
-    void* expected = var->value;
-    while (!XAtomic_compare_exchange_strong_ptr(var, &expected, value, XAtomic_MemoryOrder_SeqCst, XAtomic_MemoryOrder_SeqCst)) {
+    uintptr_t expected = var->value;
+    while (!XAtomic_compare_exchange_strong_uintptr_t(var, &expected, value, XAtomic_MemoryOrder_SeqCst, XAtomic_MemoryOrder_SeqCst)) {
         // expected 已被更新为当前值，继续循环
     }
     return expected;
@@ -455,7 +455,7 @@ bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expecte
     (void)failure_order;
     return __xatomic_cas_32((volatile uint32_t*)&var->value, expected, desired);
 }
-bool XAtomic_compare_exchange_strong_ptr(XAtomic_ptr* var, void** expected, void* desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_uintptr_t(XAtomic_uintptr_t* var, uintptr_t* expected, uintptr_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
     (void)success_order;
     (void)failure_order;

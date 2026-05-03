@@ -97,7 +97,7 @@ typedef struct XAtomic_size_t { volatile size_t value; }  XAtomic_size_t;
  * @brief 原子指针类型定义
  * @note 内部包含一个volatile修饰的void*指针，确保多线程环境下的可见性
  */
-typedef struct { volatile void* value; }  XAtomic_ptr;
+typedef struct { volatile void* value; }  XAtomic_uintptr_t;
 //创建原子变量
 #define XAtomic_create(type)    XCalloc(1,sizeof(XAtomic_##type))
 /**

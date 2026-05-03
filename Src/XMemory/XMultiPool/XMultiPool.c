@@ -318,14 +318,14 @@ XMultiPool* XMultiPool_global()
         XMultiPool_initGlobal();
     return global_pool;
 }
-void* XMultiPool_mallocGlobal(size_t size)
+void* XMultiPool_global_malloc(size_t size)
 {
     /*return XMalloc(size);*/
     void* ptr = global_pool ? XMultiPool_malloc(global_pool, size) : NULL;
     return ptr;
 }
 
-void XMultiPool_freeGlobal(void* ptr)
+void XMultiPool_global_free(void* ptr)
 {
    /* XFree(ptr);
     return;*/

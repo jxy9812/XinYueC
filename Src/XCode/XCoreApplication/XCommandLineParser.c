@@ -132,8 +132,8 @@ XCommandLineParser* XCommandLineParser_create() {
 
     // 初始化解析结果
     parser->result->positionalArgs = XVector_create(sizeof(char*));
-    parser->result->optionMap = XHashMap_Create(char*, char*, ptr_compare);
-    parser->result->optionCounts = XHashMap_Create(char*, int, ptr_compare);
+    parser->result->optionMap = XHashMap_Create(char*, char*, uintptr_t_compare);
+    parser->result->optionCounts = XHashMap_Create(char*, int, uintptr_t_compare);
     parser->result->unrecognizedOpts = XVector_create(sizeof(char*));
     parser->result->exclusiveGroupConflicts = XVector_create(sizeof(const char*));
     parser->result->allocatedStrings = XVector_create(sizeof(char*)); // 初始化内存跟踪向量

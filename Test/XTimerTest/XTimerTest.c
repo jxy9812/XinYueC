@@ -3,7 +3,7 @@
 #include"XAction.h"
 #include"XTimer.h"
 #include"XThread.h"
-#include"XTimerGroupWheel.h"
+#include"XTimeWheelGroup.h"
 #include"XEventLoop.h"
 #include"XCoreApplication.h"
 static size_t currentTimer = 0;

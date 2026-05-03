@@ -88,7 +88,7 @@ XThreadData* XThreadData_current(void)
 {
     if (global_thread_map == NULL)
         global_thread_map = XHashMap_Create(XHandle, XThreadData*, size_t_compare);
-        //threadMap = XMap_Create(XHandle, XThreadData*, ptr_compare);
+        //threadMap = XMap_Create(XHandle, XThreadData*, uintptr_t_compare);
     if (global_lock == NULL)
         global_lock = XReadWriteLock_create(XLock_NonRecursive);
     XHandle id = XThread_currentThreadId();
@@ -153,19 +153,19 @@ XThreadData* XThreadData_mainThread()
 
 XEventLoop* XThreadData_currentEventLoop(XThreadData* data)
 {
-    return XAtomic_load_ptr(&data->m_currentEventLoop, XAtomic_MemoryOrder_Relaxed);
+    return XAtomic_load_uintptr_t(&data->m_currentEventLoop, XAtomic_MemoryOrder_Relaxed);
 }
 
 void XThreadData_pushEventloop(XThreadData* data, XEventLoop* loop)
 {
     XAtomic_fetch_add_size_t(&data->m_loopLevel,1, XAtomic_MemoryOrder_Relaxed);
-    XAtomic_exchange_ptr(&data->m_currentEventLoop,loop, XAtomic_MemoryOrder_Relaxed);
+    XAtomic_exchange_uintptr_t(&data->m_currentEventLoop,loop, XAtomic_MemoryOrder_Relaxed);
 }
 
 void XThreadData_popEventloop(XThreadData * data, XEventLoop * loop)
 {
     XAtomic_fetch_sub_size_t(&data->m_loopLevel, 1, XAtomic_MemoryOrder_Relaxed);
-    XAtomic_exchange_ptr(&data->m_currentEventLoop, loop, XAtomic_MemoryOrder_Relaxed);
+    XAtomic_exchange_uintptr_t(&data->m_currentEventLoop, loop, XAtomic_MemoryOrder_Relaxed);
 }
 
 void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) 
@@ -255,7 +255,7 @@ XVector* XThreadData_takePostedEvents(void)
     XVector* local = &td->m_handlerEventList;
 
     XMutex_lock(td->m_mutex);
-    size_t count = XContainerCapacity(&td->m_postEventList) + XLockFreeQueue_size_base(&td->m_tryPostEventList);
+    size_t count = XContainerSize(&td->m_postEventList) /*+ XLockFreeQueue_size_base(&td->m_tryPostEventList)*/;
     if (count > XContainerCapacity(local))
     {
         XVector_resize_base(local, count);
@@ -276,6 +276,7 @@ XVector* XThreadData_takePostedEvents(void)
     {
         XVector_push_back_base(local, &pe);
     }
+    // 关键：稳定降序排序
     XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
 
     return local;

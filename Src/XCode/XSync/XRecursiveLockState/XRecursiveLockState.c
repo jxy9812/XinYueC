@@ -13,7 +13,7 @@ void XRecursiveLockState_init()
 {
 	if (global_locks_map)return;
 	global_lock = XReadWriteLock_create(XLock_Spin);
-	global_locks_map = XHashMap_Create(XReadWriteLock*, XHashMap, ptr_compare);
+	global_locks_map = XHashMap_Create(XReadWriteLock*, XHashMap, uintptr_t_compare);
 	XContainerSetDataDeinitMethod(global_locks_map, XHashMap_deinit_base);
 }
 
@@ -43,7 +43,7 @@ start:
 	{
 		XReadWriteLock_unlock(global_lock);
 		XHashMap map;
-		XHashMap_init(&map, sizeof(XHandle), sizeof(XRecursiveLockState), XHash_xxhash64, ptr_compare);
+		XHashMap_init(&map, sizeof(XHandle), sizeof(XRecursiveLockState), XHash_xxhash64, uintptr_t_compare);
 		XReadWriteLock_lockForWrite(global_lock);
 		XHashMap_insert_base(global_locks_map, &lock_obj, &map);
 		XReadWriteLock_unlock(global_lock);

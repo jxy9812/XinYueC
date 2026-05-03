@@ -20,4 +20,4 @@ XCompare_Come(int16_t);
 XCompare_Come(int32_t);
 XCompare_Come(int64_t);
 XCompare_Come(size_t);
-XCompare_Come(ptr);
+XCompare_Come(uintptr_t);

@@ -248,6 +248,7 @@ bool XCoreApplication_sendEvent(XObject* receiver, XEvent* event);
  * @param priority 事件优先级。
  */
 void XCoreApplication_postEvent(XObject* receiver, XEvent* event, int priority);
+void XCoreApplication_tryPostEvent(XObject* receiver, XEvent* event, int priority);
 /**
  * @brief 立即强制发送所有已投递的事件。
  *

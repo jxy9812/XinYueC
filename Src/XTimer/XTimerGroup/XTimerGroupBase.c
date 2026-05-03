@@ -43,10 +43,28 @@ size_t XTimerGroupBase_max_time(XTimerGroupBase* group)
 {
 	return group? group->m_max_time:0;
 }
-void XTimerGroupBase_handler_base(XTimerGroupBase* group)
+void XTimerGroupBase_tick_base(XTimerGroupBase* group)
 {
 	if (ISNULL(group, "") || ISNULL(XClassGetVtable(group), ""))
 		return;
-	XClassGetVirtualFunc(group, EXTimerGroupBase_Handler,
+	XClassGetVirtualFunc(group, EXTimerGroupBase_Tick,
 		void (*)(XTimerGroupBase*))(group);
+}
+
+void XTimerGroupBase_handler(XTimerGroupBase* group)
+{
+	XTimerGroupBase* groupBase = ((XTimerGroupBase*)group);
+	size_t tick = XTimer_getCurrentTime() / groupBase->m_precision; // 当前滴答数
+
+	if (tick <= groupBase->m_current_tick)
+	{
+		groupBase->m_current_tick = tick;
+		return;
+	}
+
+	// 处理时间跳跃：循环推进多个滴答
+	while (tick > groupBase->m_current_tick)
+	{
+		XTimerGroupBase_tick_base(group);
+	}
 }

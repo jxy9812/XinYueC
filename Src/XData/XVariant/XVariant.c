@@ -1753,7 +1753,7 @@ int32_t XVariant_compare(XVariant* var, XVariant* cmp)
 	case XVariantType_UChar:return unsigned_char_compare(var->m_data, cmp->m_data);
 	case XVariantType_Int:return int_compare(var->m_data, cmp->m_data);
 	case XVariantType_Size_t:return size_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Ptr:return ptr_compare(var->m_data, cmp->m_data);
+	case XVariantType_Ptr:return uintptr_t_compare(var->m_data, cmp->m_data);
 	case XVariantType_Float:return float_compare(var->m_data, cmp->m_data);
 	case XVariantType_Double:return double_compare(var->m_data, cmp->m_data);
 	case XVariantType_Pair:return XPair_compare(var->m_data, cmp->m_data);

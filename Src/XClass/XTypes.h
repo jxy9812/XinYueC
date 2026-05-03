@@ -40,7 +40,7 @@ typedef struct XString XString;
 typedef struct XListBase XListBase;
 typedef struct XVector XVector;
 typedef struct XByteArray XByteArray;
-typedef struct XTimerGroupWheel XTimerGroupWheel;
+typedef struct XTimeWheelGroup XTimeWheelGroup;
 typedef struct XQueueBase XQueueBase;
 typedef struct XTimer XTimer;
 typedef struct XTimerWheelData XTimerWheelData;

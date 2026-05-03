@@ -4,415 +4,713 @@
 // 引入内存屏障宏
 #include <windows.h>
 
-// ========== 辅助函数：应用内存序 ==========
-// 对于 Load 操作，应用 Acquire 语义
-static inline void xatomic_apply_acquire(XAtomic_MemoryOrder order)
-{
-    // 在 x86/x64 上，CPU 层面不需要额外指令，但需要防止编译器重排
-    if (order == XAtomic_MemoryOrder_Acquire ||
-        order == XAtomic_MemoryOrder_AcqRel ||
-        order == XAtomic_MemoryOrder_SeqCst) {
-        _ReadBarrier(); // 编译器屏障：后续读写不能重排到此之前
-    }
-    // Note: memory_order_consume 在实践中通常被当作 acquire 处理
-}
-
-// 对于 Store 操作，应用 Release 语义
-static inline void xatomic_apply_release(XAtomic_MemoryOrder order)
-{
-    // 在 x86/x64 上，CPU 层面不需要额外指令，但需要防止编译器重排
-    if (order == XAtomic_MemoryOrder_Release ||
-        order == XAtomic_MemoryOrder_AcqRel ||
-        order == XAtomic_MemoryOrder_SeqCst) {
-        _WriteBarrier(); // 编译器屏障：前面的读写不能重排到此之后
-    }
-}
-
-// ========== 64位操作 (仅在 x64 下可用) ==========
-#if _M_X64
-
-// --- Store ---
-void XAtomic_store_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
-{
-    xatomic_apply_release(order);
-    // 对于非 SeqCst 的 Store，理论上可以用普通 mov + 编译器屏障
-    // 但在实践中，为了简单和保证原子性（避免撕裂写），仍使用 InterlockedExchange
-    if (order == XAtomic_MemoryOrder_Relaxed ||
-        order == XAtomic_MemoryOrder_Release) {
-        // 注意：直接赋值 `var->value = value;` 在 64 位对齐时是原子的，
-        // 但为了绝对安全和代码清晰，这里依然使用 Interlocked。
-        // MSVC 的 volatile 64-bit store on x64 is atomic, but let's be explicit.
-        _InterlockedExchange64((volatile __int64*)&var->value, value);
-    }
-    else {
-        // Acquire, AcqRel, SeqCst 都需要最强的保证
-        _InterlockedExchange64((volatile __int64*)&var->value, value);
-    }
-}
-
-void XAtomic_store_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
-{
-    XAtomic_store_int64((XAtomic_int64_t*)var, (int64_t)value, order);
-}
-
-// --- Load ---
-int64_t XAtomic_load_int64(const XAtomic_int64_t* var, XAtomic_MemoryOrder order)
-{
-    xatomic_apply_acquire(order);
-    // 对于非 SeqCst/Acquire 的 Load，理论上可以用普通 mov + 编译器屏障
-    // MSVC 保证对 volatile 64-bit 变量的读取是原子的（在 x64 上）
-    if (order == XAtomic_MemoryOrder_Relaxed ||
-        order == XAtomic_MemoryOrder_Consume) {
-        return var->value;
-    }
-    else {
-        // 使用 InterlockedCompareExchange 来确保获取语义（虽然硬件层面可能不必要）
-        return _InterlockedCompareExchange64((volatile __int64*)&var->value, 0, 0);
-    }
-}
-
-uint64_t XAtomic_load_uint64(const XAtomic_uint64_t* var, XAtomic_MemoryOrder order)
-{
-    return (uint64_t)XAtomic_load_int64((const XAtomic_int64_t*)var, order);
-}
-
-// --- RMW 操作 (Exchange, FetchAdd, CAS) ---
-// 这些操作在 x86/x64 上天然就是 seq_cst，无法实现更弱的内存序
-int64_t XAtomic_exchange_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
-{
-    (void)order; // Ignored, as hardware provides seq_cst
-    return _InterlockedExchange64((volatile __int64*)&var->value, value);
-}
-
-uint64_t XAtomic_exchange_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
-{
-    (void)order;
-    return (uint64_t)_InterlockedExchange64((volatile __int64*)&var->value, (long long)value);
-}
-
-int64_t XAtomic_fetch_add_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
-{
-    (void)order;
-    return _InterlockedExchangeAdd64((volatile long long*)&var->value, value);
-}
-
-uint64_t XAtomic_fetch_add_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
-{
-    (void)order;
-    return (uint64_t)_InterlockedExchangeAdd64((volatile long long*)&var->value, (long long)value);
-}
-
-int64_t XAtomic_fetch_sub_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
-{
-    (void)order;
-    return _InterlockedExchangeAdd64((volatile long long*)&var->value, -value);
-}
-
-uint64_t XAtomic_fetch_sub_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
-{
-    (void)order;
-    return (uint64_t)_InterlockedExchangeAdd64((volatile long long*)&var->value, -(long long)value);
-}
-
-bool XAtomic_compare_exchange_strong_int64(XAtomic_int64_t* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
-{
-    (void)success_order;
-    (void)failure_order;
-    __int64 old_val = *expected;
-    __int64 result = _InterlockedCompareExchange64(
-        (volatile __int64*)&var->value,
-        desired,
-        old_val
-    );
-    *expected = result;
-    return result == old_val;
-}
-
-bool XAtomic_compare_exchange_strong_uint64(XAtomic_uint64_t* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
-{
-    (void)success_order;
-    (void)failure_order;
-    return XAtomic_compare_exchange_strong_int64((XAtomic_int64_t*)var, (int64_t*)expected, (int64_t)desired, success_order, failure_order);
-}
-
-#endif // _M_X64
-
-// ========== 32位及通用操作 ==========
-// --- Size_t 操作 (根据平台选择 32/64 位实现) ---
-size_t XAtomic_fetch_add_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
-{
-#if _M_X64
-    return XAtomic_fetch_add_uint64((XAtomic_uint64_t*)var, value, order);
-#else
-    return XAtomic_fetch_add_uint32((XAtomic_uint32_t*)var, value, order);
-#endif
-}
-
-size_t XAtomic_fetch_sub_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
-{
-#if _M_X64
-    return XAtomic_fetch_sub_uint64((XAtomic_uint64_t*)var, value, order);
-#else
-    return XAtomic_fetch_sub_uint32((XAtomic_uint32_t*)var, value, order);
-#endif
-}
-
-// --- 内存屏障 API ---
 void XAtomic_memory_barrier()
 {
-    MemoryBarrier(); // Full hardware + compiler barrier
+    // 全内存屏障：防止所有重排序
+    _ReadWriteBarrier();
+    MemoryBarrier(); // 硬件内存屏障
 }
 
 void XAtomic_memory_barrier_acquire()
 {
-    _ReadBarrier(); // Compiler barrier for acquire
+    // 获取屏障：防止后续读写重排到前面
+    _ReadWriteBarrier();
+    // 在 x86/x64 上，加载操作本身就具有获取语义
+    // 但为了确保跨平台一致性，使用编译器屏障
 }
 
 void XAtomic_memory_barrier_release()
 {
-    _WriteBarrier(); // Compiler barrier for release
+    // 释放屏障：防止前面读写重排到后面
+    _ReadWriteBarrier();
+    // 在 x86/x64 上，存储操作本身就具有释放语义
+    // 但为了确保跨平台一致性，使用编译器屏障
 }
 
-// --- Bool / Int32 / Uint32 / Ptr 操作 ---
-// Load
-bool XAtomic_load_bool(const XAtomic_bool* var, XAtomic_MemoryOrder order)
+// 辅助函数：应用 acquire 内存序
+static inline void xatomic_apply_acquire(XAtomic_MemoryOrder order)
 {
-    xatomic_apply_acquire(order);
-    if (order == XAtomic_MemoryOrder_Relaxed ||
-        order == XAtomic_MemoryOrder_Consume) {
-        return (bool)var->value;
-    }
-    else {
-        return (bool)_InterlockedCompareExchange((volatile long*)&var->value, 0, 0);
+    switch (order) {
+    case XAtomic_MemoryOrder_Acquire:
+    case XAtomic_MemoryOrder_AcqRel:
+    case XAtomic_MemoryOrder_SeqCst:
+        _ReadWriteBarrier(); // 确保读写顺序
+        break;
+    case XAtomic_MemoryOrder_Consume:
+        _ReadWriteBarrier();
+        break;
+    default:
+        break;
     }
 }
+
+// 辅助函数：应用 release 内存序  
+static inline void xatomic_apply_release(XAtomic_MemoryOrder order)
+{
+    switch (order) {
+    case XAtomic_MemoryOrder_Release:
+    case XAtomic_MemoryOrder_AcqRel:
+    case XAtomic_MemoryOrder_SeqCst:
+        _ReadWriteBarrier();
+        break;
+    default:
+        break;
+    }
+}
+
+// 失败路径的内存序处理（只处理 load 相关的语义）
+static inline void xatomic_apply_failure_acquire(XAtomic_MemoryOrder order)
+{
+    // 失败时只有 load 操作，所以只关心 acquire/consume/seq_cst
+    switch (order) {
+    case XAtomic_MemoryOrder_Acquire:
+    case XAtomic_MemoryOrder_AcqRel:
+    case XAtomic_MemoryOrder_SeqCst:
+    case XAtomic_MemoryOrder_Consume:
+        _ReadWriteBarrier();
+        break;
+    default: // Relaxed, Release - 对 load 没有额外要求
+        break;
+    }
+}
+
+// ==============================================================================
+// bool 原子操作 (使用32位存储以确保原子性)
+// ==============================================================================
+
+bool XAtomic_load_bool(const XAtomic_bool* var, XAtomic_MemoryOrder order)
+{
+    int32_t result;
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+        result = var->value;
+        break;
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+    case XAtomic_MemoryOrder_SeqCst:
+        // 使用原子加载确保获取语义
+        result = _InterlockedCompareExchange((volatile long*)&var->value, 0, 0);
+        break;
+    default:
+        result = var->value;
+        break;
+    }
+    xatomic_apply_acquire(order);
+    return (bool)result;
+}
+
+void XAtomic_store_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order); // 统一处理 release 语义
+
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+    case XAtomic_MemoryOrder_Consume: // Consume 对 store 无效
+    case XAtomic_MemoryOrder_Acquire: // Acquire 对 store 无效
+        var->value = (int32_t)value;
+        break;
+    case XAtomic_MemoryOrder_Release:
+    case XAtomic_MemoryOrder_AcqRel:
+    case XAtomic_MemoryOrder_SeqCst:
+        _InterlockedExchange((volatile long*)&var->value, (long)value);
+        break;
+    default:
+        var->value = (int32_t)value;
+        break;
+    }
+}
+
+bool XAtomic_exchange_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    int32_t result = _InterlockedExchange((volatile long*)&var->value, (long)value);
+    xatomic_apply_acquire(order);
+    return (bool)result;
+}
+
+bool XAtomic_compare_exchange_strong_bool(XAtomic_bool* var, bool* expected, bool desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+{
+    int32_t old_val = (int32_t)*expected;
+    int32_t result = _InterlockedCompareExchange(
+        (volatile long*)&var->value,
+        (long)desired,
+        (long)old_val
+    );
+
+    if (result == old_val) {
+        // 成功：应用 success_order 的完整语义
+        xatomic_apply_acquire(success_order);
+        return true;
+    }
+    else {
+        // 失败：只应用 failure_order 中的 acquire 部分
+        xatomic_apply_failure_acquire(failure_order);
+        *expected = (bool)result;
+        return false;
+    }
+}
+
+// ==============================================================================
+// 64位原子操作 (仅在64位平台可用)
+// ==============================================================================
+
+#if defined(_M_X64)
+
+int64_t XAtomic_load_int64(const XAtomic_int64_t* var, XAtomic_MemoryOrder order)
+{
+    int64_t result;
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+        result = var->value;
+        break;
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+    case XAtomic_MemoryOrder_SeqCst:
+        result = _InterlockedCompareExchange64((volatile __int64*)&var->value, 0, 0);
+        break;
+    default:
+        result = var->value;
+        break;
+    }
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+void XAtomic_store_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+        var->value = value;
+        break;
+    case XAtomic_MemoryOrder_Release:
+    case XAtomic_MemoryOrder_AcqRel:
+    case XAtomic_MemoryOrder_SeqCst:
+        _InterlockedExchange64((volatile __int64*)&var->value, value);
+        break;
+    default:
+        var->value = value;
+        break;
+    }
+}
+
+int64_t XAtomic_exchange_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    int64_t result = _InterlockedExchange64((volatile __int64*)&var->value, value);
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+bool XAtomic_compare_exchange_strong_int64(XAtomic_int64_t* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+{
+    int64_t old_val = *expected;
+    int64_t result = _InterlockedCompareExchange64(
+        (volatile __int64*)&var->value,
+        desired,
+        old_val
+    );
+
+    if (result == old_val) {
+        xatomic_apply_acquire(success_order);
+        return true;
+    }
+    else {
+        xatomic_apply_failure_acquire(failure_order);
+        *expected = result;
+        return false;
+    }
+}
+
+int64_t XAtomic_fetch_add_int64(XAtomic_int64_t* var, int64_t arg, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    int64_t result = _InterlockedExchangeAdd64((volatile __int64*)&var->value, arg);
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+int64_t XAtomic_fetch_sub_int64(XAtomic_int64_t* var, int64_t arg, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    int64_t result = _InterlockedExchangeAdd64((volatile __int64*)&var->value, -arg);
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+#endif // _M_X64
+
+// ==============================================================================
+// 32位原子操作 (32位和64位平台都支持)
+// ==============================================================================
 
 int32_t XAtomic_load_int32(const XAtomic_int32_t* var, XAtomic_MemoryOrder order)
 {
+    int32_t result;
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+        result = var->value;
+        break;
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+    case XAtomic_MemoryOrder_SeqCst:
+        result = (int32_t)_InterlockedCompareExchange((volatile long*)&var->value, 0, 0);
+        break;
+    default:
+        result = var->value;
+        break;
+    }
     xatomic_apply_acquire(order);
-    if (order == XAtomic_MemoryOrder_Relaxed ||
-        order == XAtomic_MemoryOrder_Consume) {
-        return var->value;
-    }
-    else {
-        return (int32_t)_InterlockedCompareExchange((volatile long*)&var->value, 0, 0);
-    }
-}
-
-uint32_t XAtomic_load_uint32(const XAtomic_uint32_t* var, XAtomic_MemoryOrder order)
-{
-    xatomic_apply_acquire(order);
-    if (order == XAtomic_MemoryOrder_Relaxed ||
-        order == XAtomic_MemoryOrder_Consume) {
-        return var->value;
-    }
-    else {
-        return (uint32_t)_InterlockedCompareExchange((volatile long*)&var->value, 0, 0);
-    }
-}
-
-size_t XAtomic_load_size_t(const XAtomic_size_t* var, XAtomic_MemoryOrder order)
-{
-#if _M_X64
-    return XAtomic_load_uint64((const XAtomic_uint64_t*)var, order);
-#else
-    return XAtomic_load_uint32((const XAtomic_uint32_t*)var, order);
-#endif
-}
-
-void* XAtomic_load_ptr(const XAtomic_ptr* var, XAtomic_MemoryOrder order)
-{
-    xatomic_apply_acquire(order);
-    if (order == XAtomic_MemoryOrder_Relaxed ||
-        order == XAtomic_MemoryOrder_Consume) {
-        return var->value;
-    }
-    else {
-        return (void*)_InterlockedCompareExchangePointer((volatile void**)&var->value, NULL, NULL);
-    }
-}
-
-// Store
-void XAtomic_store_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
-{
-    xatomic_apply_release(order);
-    if (order == XAtomic_MemoryOrder_Relaxed ||
-        order == XAtomic_MemoryOrder_Release) {
-        var->value = (long)value;
-    }
-    else {
-        _InterlockedExchange((volatile long*)&var->value, (long)value);
-    }
+    return result;
 }
 
 void XAtomic_store_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
 {
     xatomic_apply_release(order);
-    if (order == XAtomic_MemoryOrder_Relaxed ||
-        order == XAtomic_MemoryOrder_Release) {
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
         var->value = value;
+        break;
+    case XAtomic_MemoryOrder_Release:
+    case XAtomic_MemoryOrder_AcqRel:
+    case XAtomic_MemoryOrder_SeqCst:
+        _InterlockedExchange((volatile long*)&var->value, (long)value);
+        break;
+    default:
+        var->value = value;
+        break;
+    }
+}
+
+int32_t XAtomic_exchange_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    int32_t result = (int32_t)_InterlockedExchange((volatile long*)&var->value, (long)value);
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+bool XAtomic_compare_exchange_strong_int32(XAtomic_int32_t* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+{
+    int32_t old_val = *expected;
+    int32_t result = (int32_t)_InterlockedCompareExchange(
+        (volatile long*)&var->value,
+        (long)desired,
+        (long)old_val
+    );
+
+    if (result == old_val) {
+        xatomic_apply_acquire(success_order);
+        return true;
     }
     else {
-        _InterlockedExchange((volatile long*)&var->value, (long)value);
+        xatomic_apply_failure_acquire(failure_order);
+        *expected = result;
+        return false;
     }
+}
+
+int32_t XAtomic_fetch_add_int32(XAtomic_int32_t* var, int32_t arg, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    int32_t result = (int32_t)_InterlockedExchangeAdd((volatile long*)&var->value, (long)arg);
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+int32_t XAtomic_fetch_sub_int32(XAtomic_int32_t* var, int32_t arg, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    int32_t result = (int32_t)_InterlockedExchangeAdd((volatile long*)&var->value, (long)(-arg));
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+// ==============================================================================
+// uint64_t 原子操作
+// ==============================================================================
+
+#if defined(_M_X64)
+
+uint64_t XAtomic_load_uint64(const XAtomic_uint64_t* var, XAtomic_MemoryOrder order)
+{
+    uint64_t result;
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+        result = var->value;
+        break;
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+    case XAtomic_MemoryOrder_SeqCst:
+        result = (uint64_t)_InterlockedCompareExchange64((volatile __int64*)&var->value, 0, 0);
+        break;
+    default:
+        result = var->value;
+        break;
+    }
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+void XAtomic_store_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+        var->value = value;
+        break;
+    case XAtomic_MemoryOrder_Release:
+    case XAtomic_MemoryOrder_AcqRel:
+    case XAtomic_MemoryOrder_SeqCst:
+        _InterlockedExchange64((volatile __int64*)&var->value, (__int64)value);
+        break;
+    default:
+        var->value = value;
+        break;
+    }
+}
+
+uint64_t XAtomic_exchange_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    uint64_t result = (uint64_t)_InterlockedExchange64((volatile __int64*)&var->value, (__int64)value);
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+bool XAtomic_compare_exchange_strong_uint64(XAtomic_uint64_t* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+{
+    uint64_t old_val = *expected;
+    uint64_t result = (uint64_t)_InterlockedCompareExchange64(
+        (volatile __int64*)&var->value,
+        (__int64)desired,
+        (__int64)old_val
+    );
+
+    if (result == old_val) {
+        xatomic_apply_acquire(success_order);
+        return true;
+    }
+    else {
+        xatomic_apply_failure_acquire(failure_order);
+        *expected = result;
+        return false;
+    }
+}
+
+uint64_t XAtomic_fetch_add_uint64(XAtomic_uint64_t* var, uint64_t arg, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    uint64_t result = (uint64_t)_InterlockedExchangeAdd64((volatile __int64*)&var->value, (__int64)arg);
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+uint64_t XAtomic_fetch_sub_uint64(XAtomic_uint64_t* var, uint64_t arg, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    uint64_t result = (uint64_t)_InterlockedExchangeAdd64((volatile __int64*)&var->value, -((__int64)arg));
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+#endif // _M_X64
+
+// ==============================================================================
+// uint32_t 原子操作
+// ==============================================================================
+
+uint32_t XAtomic_load_uint32(const XAtomic_uint32_t* var, XAtomic_MemoryOrder order)
+{
+    uint32_t result;
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+        result = var->value;
+        break;
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+    case XAtomic_MemoryOrder_SeqCst:
+        result = (uint32_t)_InterlockedCompareExchange((volatile long*)&var->value, 0, 0);
+        break;
+    default:
+        result = var->value;
+        break;
+    }
+    xatomic_apply_acquire(order);
+    return result;
 }
 
 void XAtomic_store_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
 {
     xatomic_apply_release(order);
-    if (order == XAtomic_MemoryOrder_Relaxed ||
-        order == XAtomic_MemoryOrder_Release) {
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
         var->value = value;
-    }
-    else {
+        break;
+    case XAtomic_MemoryOrder_Release:
+    case XAtomic_MemoryOrder_AcqRel:
+    case XAtomic_MemoryOrder_SeqCst:
         _InterlockedExchange((volatile long*)&var->value, (long)value);
-    }
-}
-
-void XAtomic_store_ptr(XAtomic_ptr* var, void* value, XAtomic_MemoryOrder order)
-{
-    xatomic_apply_release(order);
-    if (order == XAtomic_MemoryOrder_Relaxed ||
-        order == XAtomic_MemoryOrder_Release) {
+        break;
+    default:
         var->value = value;
+        break;
     }
-    else {
-        _InterlockedExchangePointer((volatile void**)&var->value, value);
-    }
-}
-
-void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
-{
-#if _M_X64
-    XAtomic_store_uint64((XAtomic_uint64_t*)var, value, order);
-#else
-    XAtomic_store_uint32((XAtomic_uint32_t*)var, value, order);
-#endif
-}
-
-// Exchange (RMW - order ignored)
-bool XAtomic_exchange_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
-{
-    (void)order;
-    return (bool)_InterlockedExchange((volatile long*)&var->value, (long)value);
-}
-
-int32_t XAtomic_exchange_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
-{
-    (void)order;
-    return (int32_t)_InterlockedExchange((volatile long*)&var->value, (long)value);
 }
 
 uint32_t XAtomic_exchange_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
 {
-    (void)order;
-    return (uint32_t)_InterlockedExchange((volatile long*)&var->value, (long)value);
-}
-
-size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
-{
-#if _M_X64
-    return XAtomic_exchange_uint64((XAtomic_uint64_t*)var, value, order);
-#else
-    return XAtomic_exchange_uint32((XAtomic_uint32_t*)var, value, order);
-#endif
-}
-
-void* XAtomic_exchange_ptr(XAtomic_ptr* var, void* value, XAtomic_MemoryOrder order)
-{
-    (void)order;
-    return _InterlockedExchangePointer((volatile void**)&var->value, value);
-}
-
-// Compare Exchange (RMW - order ignored)
-bool XAtomic_compare_exchange_strong_bool(XAtomic_bool* var, bool* expected, bool desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
-{
-    (void)success_order;
-    (void)failure_order;
-    long old_val = (long)*expected;
-    long result = _InterlockedCompareExchange(
-        (volatile long*)&var->value,
-        (long)desired,
-        old_val
-    );
-    *expected = (bool)result;
-    return result == old_val;
-}
-
-bool XAtomic_compare_exchange_strong_int32(XAtomic_int32_t* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
-{
-    (void)success_order;
-    (void)failure_order;
-    long old_val = (long)*expected;
-    long result = _InterlockedCompareExchange(
-        (volatile long*)&var->value,
-        (long)desired,
-        old_val
-    );
-    *expected = (int32_t)result;
-    return result == old_val;
+    xatomic_apply_release(order);
+    uint32_t result = (uint32_t)_InterlockedExchange((volatile long*)&var->value, (long)value);
+    xatomic_apply_acquire(order);
+    return result;
 }
 
 bool XAtomic_compare_exchange_strong_uint32(XAtomic_uint32_t* var, uint32_t* expected, uint32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    (void)success_order;
-    (void)failure_order;
-    long old_val = (long)*expected;
-    long result = _InterlockedCompareExchange(
+    uint32_t old_val = *expected;
+    uint32_t result = (uint32_t)_InterlockedCompareExchange(
         (volatile long*)&var->value,
         (long)desired,
-        old_val
+        (long)old_val
     );
-    *expected = (uint32_t)result;
-    return result == old_val;
+
+    if (result == old_val) {
+        xatomic_apply_acquire(success_order);
+        return true;
+    }
+    else {
+        xatomic_apply_failure_acquire(failure_order);
+        *expected = result;
+        return false;
+    }
+}
+
+uint32_t XAtomic_fetch_add_uint32(XAtomic_uint32_t* var, uint32_t arg, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    uint32_t result = (uint32_t)_InterlockedExchangeAdd((volatile long*)&var->value, (long)arg);
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+uint32_t XAtomic_fetch_sub_uint32(XAtomic_uint32_t* var, uint32_t arg, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    uint32_t result = (uint32_t)_InterlockedExchangeAdd((volatile long*)&var->value, (long)(-arg));
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+// ==============================================================================
+// size_t 原子操作 (平台自适应)
+// ==============================================================================
+
+size_t XAtomic_load_size_t(const XAtomic_size_t* var, XAtomic_MemoryOrder order)
+{
+    size_t result;
+#if defined(_M_X64)
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+        result = var->value;
+        break;
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+    case XAtomic_MemoryOrder_SeqCst:
+        result = (size_t)_InterlockedCompareExchange64((volatile __int64*)&var->value, 0, 0);
+        break;
+    default:
+        result = var->value;
+        break;
+    }
+#elif defined(_M_IX86)
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+        result = var->value;
+        break;
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+    case XAtomic_MemoryOrder_SeqCst:
+        result = (size_t)_InterlockedCompareExchange((volatile long*)&var->value, 0, 0);
+        break;
+    default:
+        result = var->value;
+        break;
+    }
+#else
+    result = var->value;
+#endif
+    xatomic_apply_acquire(order);
+    return result;
+}
+
+void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+#if defined(_M_X64)
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+        var->value = value;
+        break;
+    case XAtomic_MemoryOrder_Release:
+    case XAtomic_MemoryOrder_AcqRel:
+    case XAtomic_MemoryOrder_SeqCst:
+        _InterlockedExchange64((volatile __int64*)&var->value, (__int64)value);
+        break;
+    default:
+        var->value = value;
+        break;
+    }
+#elif defined(_M_IX86)
+    switch (order) {
+    case XAtomic_MemoryOrder_Relaxed:
+    case XAtomic_MemoryOrder_Consume:
+    case XAtomic_MemoryOrder_Acquire:
+        var->value = value;
+        break;
+    case XAtomic_MemoryOrder_Release:
+    case XAtomic_MemoryOrder_AcqRel:
+    case XAtomic_MemoryOrder_SeqCst:
+        _InterlockedExchange((volatile long*)&var->value, (long)value);
+        break;
+    default:
+        var->value = value;
+        break;
+    }
+#else
+    var->value = value;
+#endif
+}
+
+size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+{
+    xatomic_apply_release(order);
+    size_t result;
+#if defined(_M_X64)
+    result = (size_t)_InterlockedExchange64((volatile __int64*)&var->value, (__int64)value);
+#elif defined(_M_IX86)
+    result = (size_t)_InterlockedExchange((volatile long*)&var->value, (long)value);
+#else
+    result = var->value;
+    var->value = value;
+#endif
+    xatomic_apply_acquire(order);
+    return result;
 }
 
 bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expected, size_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-#if _M_X64
-    return XAtomic_compare_exchange_strong_uint64((XAtomic_uint64_t*)var, expected, desired, success_order, failure_order);
-#else
-    return XAtomic_compare_exchange_strong_uint32((XAtomic_uint32_t*)var, expected, desired, success_order, failure_order);
-#endif
-}
+    size_t old_val = *expected;
+    size_t result;
 
-bool XAtomic_compare_exchange_strong_ptr(XAtomic_ptr* var, void** expected, void* desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
-{
-    (void)success_order;
-    (void)failure_order;
-    void* actual_value = _InterlockedCompareExchangePointer(
-        (volatile void**)&var->value,
-        desired,
-        *expected
+#if defined(_M_X64)
+    result = (size_t)_InterlockedCompareExchange64(
+        (volatile __int64*)&var->value,
+        (__int64)desired,
+        (__int64)old_val
     );
-    bool success = (actual_value == *expected);
-    *expected = actual_value;
-    return success;
+#elif defined(_M_IX86)
+    result = (size_t)_InterlockedCompareExchange(
+        (volatile long*)&var->value,
+        (long)desired,
+        (long)old_val
+    );
+#else
+    // 其他平台的回退实现（非原子）
+    result = var->value;
+    if (result == old_val) {
+        var->value = desired;
+    }
+#endif
+
+    if (result == old_val) {
+        xatomic_apply_acquire(success_order);
+        return true;
+    }
+    else {
+        xatomic_apply_failure_acquire(failure_order);
+        *expected = result;
+        return false;
+    }
 }
 
-// Fetch Add/Sub (RMW - order ignored)
-int32_t XAtomic_fetch_add_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_fetch_add_size_t(XAtomic_size_t* var, size_t arg, XAtomic_MemoryOrder order)
 {
-    (void)order;
-    return (int32_t)_InterlockedExchangeAdd((volatile long*)&var->value, (long)value);
+    xatomic_apply_release(order);
+    size_t result;
+#if defined(_M_X64)
+    result = (size_t)_InterlockedExchangeAdd64((volatile __int64*)&var->value, (__int64)arg);
+#elif defined(_M_IX86)
+    result = (size_t)_InterlockedExchangeAdd((volatile long*)&var->value, (long)arg);
+#else
+    result = var->value;
+    var->value += arg;
+#endif
+    xatomic_apply_acquire(order);
+    return result;
 }
 
-uint32_t XAtomic_fetch_add_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_fetch_sub_size_t(XAtomic_size_t* var, size_t arg, XAtomic_MemoryOrder order)
 {
-    (void)order;
-    return (uint32_t)_InterlockedExchangeAdd((volatile long*)&var->value, (long)value);
+    xatomic_apply_release(order);
+    size_t result;
+#if defined(_M_X64)
+    result = (size_t)_InterlockedExchangeAdd64((volatile __int64*)&var->value, -((__int64)arg));
+#elif defined(_M_IX86)
+    result = (size_t)_InterlockedExchangeAdd((volatile long*)&var->value, (long)(-arg));
+#else
+    result = var->value;
+    var->value -= arg;
+#endif
+    xatomic_apply_acquire(order);
+    return result;
 }
 
-int32_t XAtomic_fetch_sub_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+// ==============================================================================
+// uintptr_t 原子操作 (平台自适应)
+// ==============================================================================
+
+uintptr_t XAtomic_load_uintptr_t(const XAtomic_uintptr_t* var, XAtomic_MemoryOrder order)
 {
-    (void)order;
-    return (int32_t)_InterlockedExchangeAdd((volatile long*)&var->value, -(long)value);
+    return (uintptr_t)XAtomic_load_size_t((const XAtomic_size_t*)var, order);
 }
 
-uint32_t XAtomic_fetch_sub_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
-    (void)order;
-    return (uint32_t)_InterlockedExchangeAdd((volatile long*)&var->value, -(long)value);
+    XAtomic_store_size_t((XAtomic_size_t*)var, (size_t)value, order);
+}
+
+uintptr_t XAtomic_exchange_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+{
+    return (uintptr_t)XAtomic_exchange_size_t((XAtomic_size_t*)var, (size_t)value, order);
+}
+
+bool XAtomic_compare_exchange_strong_uintptr_t(XAtomic_uintptr_t* var, uintptr_t* expected, uintptr_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+{
+    size_t exp = (size_t)*expected;
+    bool result = XAtomic_compare_exchange_strong_size_t((XAtomic_size_t*)var, &exp, (size_t)desired, success_order, failure_order);
+    *expected = (uintptr_t)exp;
+    return result;
+}
+
+uintptr_t XAtomic_fetch_add_uintptr_t(XAtomic_uintptr_t* var, uintptr_t arg, XAtomic_MemoryOrder order)
+{
+    return (uintptr_t)XAtomic_fetch_add_size_t((XAtomic_size_t*)var, (size_t)arg, order);
+}
+
+uintptr_t XAtomic_fetch_sub_uintptr_t(XAtomic_uintptr_t* var, uintptr_t arg, XAtomic_MemoryOrder order)
+{
+    return (uintptr_t)XAtomic_fetch_sub_size_t((XAtomic_size_t*)var, (size_t)arg, order);
 }
 
 #endif // _MSC_VER

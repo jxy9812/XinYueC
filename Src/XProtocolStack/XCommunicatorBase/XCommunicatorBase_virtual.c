@@ -1,5 +1,5 @@
 ﻿#include "XCommunicatorBase.h"
-#include "XTimerGroupWheel.h"
+#include "XTimeWheelGroup.h"
 #include "XVector.h"
 #include "XMemory.h"
 #include "XCircularQueue.h"

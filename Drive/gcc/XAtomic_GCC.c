@@ -66,9 +66,9 @@ size_t XAtomic_load_size_t(const XAtomic_size_t* var, XAtomic_MemoryOrder order)
     return result;
 }
 
-void* XAtomic_load_ptr(const XAtomic_ptr* var, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_load_uintptr_t(const XAtomic_uintptr_t* var, XAtomic_MemoryOrder order)
 {
-    void* result;
+    uintptr_t result;
     __atomic_load(&var->value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
@@ -104,7 +104,7 @@ void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder
     __atomic_store(&var->value, &value, xatomic_to_gcc_memory_order(order));
 }
 
-void XAtomic_store_ptr(XAtomic_ptr* var, void* value, XAtomic_MemoryOrder order)
+void XAtomic_store_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
     __atomic_store(&var->value, &value, xatomic_to_gcc_memory_order(order));
 }
@@ -152,9 +152,9 @@ size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_Memory
     return result;
 }
 
-void* XAtomic_exchange_ptr(XAtomic_ptr* var, void* value, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_exchange_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
-    void* result;
+    uintptr_t result;
     __atomic_exchange(&var->value, &value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }

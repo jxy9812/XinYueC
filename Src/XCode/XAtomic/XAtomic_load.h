@@ -64,7 +64,7 @@ size_t XAtomic_load_size_t(const XAtomic_size_t* var, XAtomic_MemoryOrder order)
  * @return 原子变量的当前指针值
  * @note 原子性保证：读取操作不会被中断，保证读取到完整的值
  */
-void* XAtomic_load_ptr(const XAtomic_ptr* var, XAtomic_MemoryOrder order);
+uintptr_t XAtomic_load_uintptr_t(const XAtomic_uintptr_t* var, XAtomic_MemoryOrder order);
 
 #ifdef __cplusplus
 }

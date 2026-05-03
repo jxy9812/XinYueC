@@ -22,7 +22,7 @@ typedef struct XThreadData{
     XMutex* m_mutex; // 保护 postEventList
     XThread* m_thread;
     XAbstractEventDispatcher* m_dispatcher;   // 本线程的事件分发器
-    XAtomic_ptr m_currentEventLoop;//当前正在运行的事件循环
+    XAtomic_uintptr_t m_currentEventLoop;//当前正在运行的事件循环
     XAtomic_size_t m_loopLevel; // <-- 关键：一个原子整数计数器
     XLockFreeQueue/*<XPostEvent>*/   m_tryPostEventList;  //无锁投递队列
     XVector/*<XPostEvent>*/ m_postEventList;  //互斥锁投递队列

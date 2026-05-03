@@ -19,7 +19,6 @@ typedef enum
 #define XCompare_Greater			1//大于
 #define XCompare_Equality			0//相等
 #define XCompare_Other				INT32_MAX//其他(无法比较)
-typedef void* ptr;
 //比较大小函数指针-回调函数
 typedef  int32_t(*XCompare)(const void* lhs, const void* rhs);
 //比较大小的-回调函数自定义准则，第一个自定义
@@ -48,7 +47,7 @@ XCompare_Define(int16_t);
 XCompare_Define(int32_t);
 XCompare_Define(int64_t);
 XCompare_Define(size_t);
-XCompare_Define(ptr);
+XCompare_Define(uintptr_t);
 #ifdef __cplusplus
 }
 #endif

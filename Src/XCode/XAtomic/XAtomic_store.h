@@ -64,7 +64,7 @@ void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder
  * @param order 内存序
  * @note 原子性保证：写入操作不会被中断，保证写入的完整性
  */
-void XAtomic_store_ptr(XAtomic_ptr* var, void* value, XAtomic_MemoryOrder order);
+void XAtomic_store_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order);
 
 #ifdef __cplusplus
 }

@@ -32,7 +32,7 @@ void XSignalSlot_init(XSignalSlot* manager, XObject* obj)
 	manager->obj = obj;
 	manager->signalMap = XHashMap_Create(size_t, XSignal,size_t_compare);
 	manager->bindSignalList = XVector_Create(XConnection*);
-	XContainerSetCompare(manager->bindSignalList, ptr_compare);
+	XContainerSetCompare(manager->bindSignalList, uintptr_t_compare);
 	// 初始化互斥锁
 	manager->mutex = XMutex_create(XLock_NonRecursive);
 }

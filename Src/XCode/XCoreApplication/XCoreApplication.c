@@ -7,7 +7,7 @@
 #include "XMutex.h"
 #include "XObject.h"
 #include "XString.h"
-#include "XTimerGroupWheel.h"
+#include "XTimeWheelGroup.h"
 #include "XEventLoop.h"
 #include "XLockFreeQueue.h"
 #include "XThreadData.h"
@@ -63,7 +63,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     //初始化内存池
     XMultiPool_global();
     //初始化全局时间轮
-    //XTimerGroupWheel_global();
+    //XTimeWheelGroup_global();
     memset(((XObject*)app)+1,0,sizeof(XCoreApplication)-sizeof(XObject));
     // 初始化父类
     XObject_init(app);
@@ -273,6 +273,11 @@ bool XCoreApplication_sendEvent(XObject* receiver, XEvent* event)
 void XCoreApplication_postEvent(XObject* receiver, XEvent* event, int priority)
 {
     XThreadData_postEvent(receiver,event,priority);
+}
+
+void XCoreApplication_tryPostEvent(XObject* receiver, XEvent* event, int priority)
+{
+    XThreadData_tryPostEvent(receiver, event, priority);
 }
 
 void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)

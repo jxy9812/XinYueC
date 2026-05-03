@@ -21,7 +21,7 @@
 #include <string.h>
 #include <stdint.h>
 #include "XThreadData.h"
-#include "XTimerGroupWheel.h"
+#include "XTimeWheelGroup.h"
 #pragma comment(lib, "winmm.lib")
 //static  HANDLE ioCompletionPort=NULL;    // 全局 IOCP 句柄;
 /**
@@ -361,7 +361,7 @@ static void VXEventDispatcherWin32_registerSocketNotifier(XAbstractEventDispatch
     {
         XVector v = { 0 };
         XVector_init(&v,sizeof(XSocketNotifier*));
-        XContainerSetCompare(&v,ptr_compare);
+        XContainerSetCompare(&v,uintptr_t_compare);
         XMapBase_insert_base(d->sockets, &socket,&v);
     }
     XVector* notifiers = XMapBase_value_base(d->sockets, &socket);
@@ -498,8 +498,8 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
     if (timerType == XTimerType_PreciseTimer) {
         // --- 使用高精度多媒体定时器 ---
         timerInfo.isHighPrecision = true;
-        XTimerGroupWheel* group = XTimerGroupWheel_global();
-        if (group&& XTimerGroupWheel_max_time(group)> intervalMs)
+        XTimeWheelGroup* group = XTimeWheelGroup_global();
+        if (group&& XTimeWheelGroup_max_time(group)> intervalMs)
         {//范围达标使用时间轮定时器
             XTimerData data = {0};
             XTimerData_setAutoDelete(&data, true);
@@ -507,7 +507,7 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
             XTimerData_setInterval(&data, intervalMs);
             XTimerData_setTimerCallback(&data, XTimerTimeWheelCallback);
             XTimerData_setUserData(&data, object);
-            XTimerWheelData* timer = XTimerGroupWheel_addTimer_base(group, data);
+            XTimerWheelData* timer = XTimeWheelGroup_addTimer_base(group, data);
             if (timer)
             {
                 timerInfo.isTimeWheel = true;
@@ -652,7 +652,7 @@ static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed,
         if (timerInfo->isTimeWheel)
         {
             XTimerData_setUserData(timerInfo->m_wheel,NULL);
-            XTimerGroupWheel_removeTimer_base(XTimerGroupWheel_global(), timerInfo->m_wheel);
+            XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), timerInfo->m_wheel);
         }
         else if (timerInfo->mmTimerId != 0) 
         {

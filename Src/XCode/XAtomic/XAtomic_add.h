@@ -52,6 +52,8 @@ uint64_t XAtomic_fetch_add_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic
  * @note 原子性保证：整个读取-修改-写入过程不可分割
  */
 size_t XAtomic_fetch_add_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order);
+
+uintptr_t XAtomic_fetch_add_uintptr_t(XAtomic_uintptr_t* var, uintptr_t arg, XAtomic_MemoryOrder order);
 #ifdef __cplusplus
 }
 #endif

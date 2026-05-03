@@ -122,9 +122,9 @@ bool XMultiPool_is_from_pool(const XMultiPool* multi_pool, const void* ptr);
 
 XMultiPool* XMultiPool_global();
 //用全局池分配
-void* XMultiPool_mallocGlobal(size_t size);
+void* XMultiPool_global_malloc(size_t size);
 //全局池释放
-void XMultiPool_freeGlobal(void* ptr);
+void XMultiPool_global_free(void* ptr);
 #ifdef __cplusplus
 }
 #endif

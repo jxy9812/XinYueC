@@ -1,5 +1,5 @@
 ﻿#include"XTimerTest.h"
-#include"XTimerGroupWheel.h"
+#include"XTimeWheelGroup.h"
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
@@ -31,22 +31,22 @@ static void Callback2(void* userData)
 void XTimerTimeWheelTest()
 {
 	XPrintf("时间轮定时器测试\n");
-	/*XTimerGroupWheel* wheel= XTimerGroupWheel_create(1);
-	wheel= XTimerGroupWheel_create(1);
-	XTimerGroupWheel_addTimeWheel_base(wheel,100);
-	XTimerGroupWheel_addTimeWheel_base(wheel,10);
-	XTimerGroupWheel_addTimeWheel_base(wheel,10);*/
-	XTimerGroupWheel* wheel = XTimerGroupWheel_global();
+	/*XTimeWheelGroup* wheel= XTimeWheelGroup_create(1);
+	wheel= XTimeWheelGroup_create(1);
+	XTimeWheelGroup_addTimeWheel_base(wheel,100);
+	XTimeWheelGroup_addTimeWheel_base(wheel,10);
+	XTimeWheelGroup_addTimeWheel_base(wheel,10);*/
+	XTimeWheelGroup* wheel = XTimeWheelGroup_global();
 	size_t min_time = 0, max_time = 0;
-	XTimerGroupWheel_timeRange(wheel,&min_time,&max_time);
+	XTimeWheelGroup_timeRange(wheel,&min_time,&max_time);
 	XPrintf("定时器时间轮时间范围 %ld-%ld ms\n",min_time,max_time);
 	{
 		XTimerData data = { 0 };
 		XTimerData_setUserData(&data, wheel);
-		XTimerData_setInterval(&data,300);
+		XTimerData_setInterval(&data,2);
 		XTimerData_setTimeout(&data, 50);
 		XTimerData_setTimerCallback(&data,Callback1);
-		XTimerWheelData* timer = XTimerGroupWheel_addTimer_base(wheel, data);
+		XTimerWheelData* timer = XTimeWheelGroup_addTimer_base(wheel, data);
 	
 	}
 	{
@@ -56,11 +56,11 @@ void XTimerTimeWheelTest()
 		XTimerData_setTimeout(&data, 15);
 		XTimerData_setTimerCallback(&data, Callback2);
 		//XTimerData_setUserData(&data, timer);
-		XTimerWheelData* timer = XTimerGroupWheel_addTimer_base(wheel, data);
+		XTimerWheelData* timer = XTimeWheelGroup_addTimer_base(wheel, data);
 		
 	}
 	XCoreApplication_exec();
-	//while(true) XTimerGroupWheel_handler_base(wheel);
+	//while(true) XTimeWheelGroup_handler_base(wheel);
 }
 
 void XMenu_XTimerTimeWheelTest(XMenu* root)

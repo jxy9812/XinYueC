@@ -31,9 +31,9 @@ XVarList* XVarList_create(uint8_t count, ...)
     XVarList* list = NULL;
     if (XMultiPool_global())
     {
-        list= XMultiPool_mallocGlobal(ALIGN_UP(sumTypeSize + sizeof(XVarList), sizeof(void*)));
+        list= XMultiPool_global_malloc(ALIGN_UP(sumTypeSize + sizeof(XVarList), sizeof(void*)));
         if(list)
-            list->m_free = XMultiPool_freeGlobal;
+            list->m_free = XMultiPool_global_free;
     }
     if (!list)
     {

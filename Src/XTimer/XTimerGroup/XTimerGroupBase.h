@@ -12,7 +12,7 @@ extern "C" {
 XCLASS_DEFINE_BEGING(XTimerGroupBase)
 XCLASS_DEFINE_ENUM(XTimerGroupBase, Add_Timer) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XTimerGroupBase,Remove_Timer),
-XCLASS_DEFINE_ENUM(XTimerGroupBase,Handler),
+XCLASS_DEFINE_ENUM(XTimerGroupBase, Tick),
 XCLASS_DEFINE_END(XTimerGroupBase)
 typedef struct XTimerGroupBase
 {
@@ -36,8 +36,9 @@ bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerData* timer)
 bool XTimerGroupBase_timeRange(XTimerGroupBase* group, size_t* min_time, size_t* max_time);
 size_t XTimerGroupBase_min_time(XTimerGroupBase* group);
 size_t XTimerGroupBase_max_time(XTimerGroupBase* group);
-void XTimerGroupBase_handler_base(XTimerGroupBase* group);
-#define XTimerGroupBase_delete_base XClass_delete_base
+void XTimerGroupBase_tick_base(XTimerGroupBase* group);
+void XTimerGroupBase_handler(XTimerGroupBase* group);
+#define XTimerGroupBase_deleteLater			XObject_deleteLater
 #ifdef __cplusplus
 }
 #endif

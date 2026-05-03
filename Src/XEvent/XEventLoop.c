@@ -8,7 +8,7 @@
 #include "XThreadData.h"
 #include "XCoreApplication.h"
 #include "XLockFreeQueue.h"
-#include "XTimerGroupWheel.h"
+#include "XTimeWheelGroup.h"
 #include "XAtomic.h"
 //投递类型
 typedef enum PostType

@@ -198,22 +198,22 @@ bool VXListBase_push_back_node(XLockFreeList* this_list, XLockFreeListNode* node
                     &this_list->m_head, &expected_head, desired_head, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
                     tagged_ptr_t newTail = pack_ptr(node, 0);
                     XAtomic_store_size_t(&this_list->m_tail, newTail, XAtomic_MemoryOrder_Relaxed);
-                    // XAtomic_store_ptr(&this_list->m_tail_prev, NULL, XAtomic_MemoryOrder_Relaxed); // 已移除
+                    // XAtomic_store_uintptr_t(&this_list->m_tail_prev, NULL, XAtomic_MemoryOrder_Relaxed); // 已移除
                     break;
                 }
             }
         }
         else {
-            XLockFreeListNode* next = (XLockFreeListNode*)XAtomic_load_ptr(&tail->next, XAtomic_MemoryOrder_Relaxed);
+            XLockFreeListNode* next = (XLockFreeListNode*)XAtomic_load_uintptr_t(&tail->next, XAtomic_MemoryOrder_Relaxed);
             if (next == NULL) {
-                if (XAtomic_compare_exchange_strong_ptr(
+                if (XAtomic_compare_exchange_strong_uintptr_t(
                     &tail->next, (void**)&next, node, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
                     uint32_t new_version = (unpack_version(tail_tagged) + 1) & ((1U << VERSION_BITS) - 1);
                     tagged_ptr_t desired_tail = pack_ptr(node, new_version);
                     XAtomic_compare_exchange_strong_size_t(
                         &this_list->m_tail, &tail_tagged, desired_tail, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed);
 
-                    // XAtomic_store_ptr(&this_list->m_tail_prev, tail, XAtomic_MemoryOrder_Relaxed); // 已移除
+                    // XAtomic_store_uintptr_t(&this_list->m_tail_prev, tail, XAtomic_MemoryOrder_Relaxed); // 已移除
                     break;
                 }
             }
@@ -288,7 +288,7 @@ bool VXList_insert(XLockFreeList* this_list, XLockFreeListNode* curNode, void* p
     // 查找指定节点的前一个节点
     while (current != NULL && current != curNode) {
         prev = current;
-        current = (XLockFreeListNode*)XAtomic_load_ptr(&current->next, XAtomic_MemoryOrder_Relaxed);
+        current = (XLockFreeListNode*)XAtomic_load_uintptr_t(&current->next, XAtomic_MemoryOrder_Relaxed);
     }
 
     // 如果没有找到指定节点，直接返回
@@ -315,9 +315,9 @@ bool VXList_insert(XLockFreeList* this_list, XLockFreeListNode* curNode, void* p
         // 插入到非头部位置
         XLockFreeListNode* expected_next;
         do {
-            expected_next = (XLockFreeListNode*)XAtomic_load_ptr(&prev->next, XAtomic_MemoryOrder_Relaxed);
+            expected_next = (XLockFreeListNode*)XAtomic_load_uintptr_t(&prev->next, XAtomic_MemoryOrder_Relaxed);
             newNode->next = expected_next;
-        } while (!XAtomic_compare_exchange_strong_ptr(
+        } while (!XAtomic_compare_exchange_strong_uintptr_t(
             &prev->next, (void**)&expected_next, newNode, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
     }
 
@@ -341,7 +341,7 @@ size_t VXList_insert_array(XLockFreeList* this_list, XLockFreeListNode* curNode,
     if (curNode != NULL) {
         while (current != NULL && current != curNode) {
             prev = current;
-            current = (XLockFreeListNode*)XAtomic_load_ptr(&current->next, XAtomic_MemoryOrder_Relaxed);
+            current = (XLockFreeListNode*)XAtomic_load_uintptr_t(&current->next, XAtomic_MemoryOrder_Relaxed);
         }
         // 如果没有找到指定节点，直接返回
         if (current == NULL) return 0;
@@ -393,9 +393,9 @@ size_t VXList_insert_array(XLockFreeList* this_list, XLockFreeListNode* curNode,
         // 插入到非头部位置
         XLockFreeListNode* expected_next;
         do {
-            expected_next = (XLockFreeListNode*)XAtomic_load_ptr(&prev->next, XAtomic_MemoryOrder_Relaxed);
+            expected_next = (XLockFreeListNode*)XAtomic_load_uintptr_t(&prev->next, XAtomic_MemoryOrder_Relaxed);
             newListTail->next = expected_next;
-        } while (!XAtomic_compare_exchange_strong_ptr(
+        } while (!XAtomic_compare_exchange_strong_uintptr_t(
             &prev->next, (void**)&expected_next, newListHead, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
 
         // 如果插入点是原tail，需要更新tail
@@ -443,10 +443,10 @@ bool VXListAtomic_pop_front(XLockFreeList* this_list)
 
     if (next == NULL) {
         XAtomic_store_size_t(&this_list->m_tail, 0, XAtomic_MemoryOrder_Relaxed);
-        // XAtomic_store_ptr(&this_list->m_tail_prev, NULL, XAtomic_MemoryOrder_Relaxed); // 已移除
+        // XAtomic_store_uintptr_t(&this_list->m_tail_prev, NULL, XAtomic_MemoryOrder_Relaxed); // 已移除
     }
     // else if (next->next == NULL) {
-    //     XAtomic_store_ptr(&this_list->m_tail_prev, NULL, XAtomic_MemoryOrder_Relaxed); // 已移除
+    //     XAtomic_store_uintptr_t(&this_list->m_tail_prev, NULL, XAtomic_MemoryOrder_Relaxed); // 已移除
     // }
 
     if (XContainerDataDeinitMethod(this_list) != NULL) {
@@ -503,7 +503,7 @@ bool VXListAtomic_pop_back(XLockFreeList* this_list)
 
     // 3. 尝试将 tail_prev->next 设为 NULL
     XLockFreeListNode* expected_next = tail;
-    if (!XAtomic_compare_exchange_strong_ptr(
+    if (!XAtomic_compare_exchange_strong_uintptr_t(
         &tail_prev->next, (void**)&expected_next, NULL, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
         //printf("  -> CAS 修改 tail_prev->next 失败\n");
         return false;
@@ -546,7 +546,7 @@ void VXListAtomic_erase(XLockFreeList* this_list, const XLockFreeList_iterator* 
 
     XLockFreeListNode* node = it->node;
     XLockFreeListNode* prev = NULL;
-    XLockFreeListNode* current = (XLockFreeListNode*)XAtomic_load_ptr(&this_list->m_head, XAtomic_MemoryOrder_Relaxed);
+    XLockFreeListNode* current = (XLockFreeListNode*)XAtomic_load_uintptr_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed);
 
     while (current != NULL)
     {
@@ -556,11 +556,11 @@ void VXListAtomic_erase(XLockFreeList* this_list, const XLockFreeList_iterator* 
             if (prev == NULL) 
             {
                 XLockFreeListNode* next = current->next;
-                if (XAtomic_compare_exchange_strong_ptr(
+                if (XAtomic_compare_exchange_strong_uintptr_t(
                     &this_list->m_head, (void**)&current, next, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
                     // 如果删除的是尾节点，更新尾指针
-                    if (current == (XLockFreeListNode*)XAtomic_load_ptr(&this_list->m_tail, XAtomic_MemoryOrder_Relaxed)) {
-                        XAtomic_store_ptr(&this_list->m_tail, next, XAtomic_MemoryOrder_Relaxed);
+                    if (current == (XLockFreeListNode*)XAtomic_load_uintptr_t(&this_list->m_tail, XAtomic_MemoryOrder_Relaxed)) {
+                        XAtomic_store_uintptr_t(&this_list->m_tail, next, XAtomic_MemoryOrder_Relaxed);
                     }
 
                     if (XContainerDataDeinitMethod(this_list) != NULL) {
@@ -577,12 +577,12 @@ void VXListAtomic_erase(XLockFreeList* this_list, const XLockFreeList_iterator* 
             {
                 // 不是头节点
                 XLockFreeListNode* next = current->next;
-                if (XAtomic_compare_exchange_strong_ptr(
+                if (XAtomic_compare_exchange_strong_uintptr_t(
                     &prev->next, (void**)&current, next, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed))
                 {
                     // 如果删除的是尾节点，更新尾指针
-                    if (current == (XLockFreeListNode*)XAtomic_load_ptr(&this_list->m_tail, XAtomic_MemoryOrder_Relaxed)) {
-                        XAtomic_store_ptr(&this_list->m_tail, prev, XAtomic_MemoryOrder_Relaxed);
+                    if (current == (XLockFreeListNode*)XAtomic_load_uintptr_t(&this_list->m_tail, XAtomic_MemoryOrder_Relaxed)) {
+                        XAtomic_store_uintptr_t(&this_list->m_tail, prev, XAtomic_MemoryOrder_Relaxed);
                     }
 
                     if (XContainerDataDeinitMethod(this_list) != NULL) {
@@ -650,7 +650,7 @@ bool VXListAtomic_remove(XLockFreeList* this_list, void* pvData) {
             else {
                 // 不是头节点
                 XLockFreeListNode* next = current->next;
-                if (XAtomic_compare_exchange_strong_ptr(
+                if (XAtomic_compare_exchange_strong_uintptr_t(
                     &prev->next, (void**)&current, next, XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
 
                     // 如果删除的是尾节点，更新尾指针
@@ -693,7 +693,7 @@ void VXListAtomic_clear(XLockFreeList* this_list) {
 
     XAtomic_store_size_t(&this_list->m_head, 0, XAtomic_MemoryOrder_Relaxed);
     XAtomic_store_size_t(&this_list->m_tail, 0, XAtomic_MemoryOrder_Relaxed);
-    // XAtomic_store_ptr(&this_list->m_tail_prev, NULL, XAtomic_MemoryOrder_Relaxed); // 已移除
+    // XAtomic_store_uintptr_t(&this_list->m_tail_prev, NULL, XAtomic_MemoryOrder_Relaxed); // 已移除
     XAtomic_store_size_t(&XContainerSize(this_list), 0, XAtomic_MemoryOrder_Relaxed);
     XAtomic_store_size_t(&XContainerCapacity(this_list), 0, XAtomic_MemoryOrder_Relaxed);
 }
@@ -744,7 +744,7 @@ bool VXListAtomic_find(const XLockFreeList* this_list, void* pvData, XLockFreeLi
                 it->node= current;
             return true;
         }
-        current = (XLockFreeListNode*)XAtomic_load_ptr(&current->next, XAtomic_MemoryOrder_Relaxed);
+        current = (XLockFreeListNode*)XAtomic_load_uintptr_t(&current->next, XAtomic_MemoryOrder_Relaxed);
     }
 
     if (it)
@@ -755,8 +755,8 @@ bool VXListAtomic_find(const XLockFreeList* this_list, void* pvData, XLockFreeLi
 // 找到链表尾部节点
 static XLockFreeListNode* findTail(XLockFreeListNode* head) {
     if (head == NULL) return NULL;
-    while (XAtomic_load_ptr(&head->next, XAtomic_MemoryOrder_Relaxed) != NULL)
-        head = (XLockFreeListNode*)XAtomic_load_ptr(&head->next, XAtomic_MemoryOrder_Relaxed);
+    while (XAtomic_load_uintptr_t(&head->next, XAtomic_MemoryOrder_Relaxed) != NULL)
+        head = (XLockFreeListNode*)XAtomic_load_uintptr_t(&head->next, XAtomic_MemoryOrder_Relaxed);
     return head;
 }
 
@@ -771,14 +771,14 @@ static XLockFreeListNode* List_OneSort(XLockFreeListNode* left, XLockFreeListNod
     memcpy(pivot, &(left->data), typeSize);
 
     XLockFreeListNode* i = left;    // 分区点
-    XLockFreeListNode* j = (XLockFreeListNode*)XAtomic_load_ptr(&left->next, XAtomic_MemoryOrder_Relaxed);
+    XLockFreeListNode* j = (XLockFreeListNode*)XAtomic_load_uintptr_t(&left->next, XAtomic_MemoryOrder_Relaxed);
     int32_t cmp;
     while (j != NULL) {
         //if (compare(&(j->data), pivot)) 
         cmp = compare(&(j->data), pivot);
         if (((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))//排序比较函数
         {
-            i = (XLockFreeListNode*)XAtomic_load_ptr(&i->next, XAtomic_MemoryOrder_Relaxed);
+            i = (XLockFreeListNode*)XAtomic_load_uintptr_t(&i->next, XAtomic_MemoryOrder_Relaxed);
             // 交换i和j的数据
             void* temp = XMemory_malloc(typeSize);
             memcpy(temp, &(i->data), typeSize);
@@ -787,7 +787,7 @@ static XLockFreeListNode* List_OneSort(XLockFreeListNode* left, XLockFreeListNod
             XMemory_free(temp);
         }
         if (j == right) break;  // 到达右边界
-        j = (XLockFreeListNode*)XAtomic_load_ptr(&j->next, XAtomic_MemoryOrder_Relaxed);
+        j = (XLockFreeListNode*)XAtomic_load_uintptr_t(&j->next, XAtomic_MemoryOrder_Relaxed);
     }
 
     // 将pivot放到正确位置
@@ -846,8 +846,8 @@ void VXListAtomic_sort(XLockFreeList* this_list, XSortOrder order)
         }
 
         // 处理右子区间
-        if (pivot != NULL && XAtomic_load_ptr(&pivot->next, XAtomic_MemoryOrder_Relaxed) != NULL) {
-            XLockFreeListNode* rightHead = (XLockFreeListNode*)XAtomic_load_ptr(&pivot->next, XAtomic_MemoryOrder_Relaxed);
+        if (pivot != NULL && XAtomic_load_uintptr_t(&pivot->next, XAtomic_MemoryOrder_Relaxed) != NULL) {
+            XLockFreeListNode* rightHead = (XLockFreeListNode*)XAtomic_load_uintptr_t(&pivot->next, XAtomic_MemoryOrder_Relaxed);
             XLockFreeListNode* rightTail = findTail(rightHead);
             if (rightTail != NULL && rightHead != rightTail) {
                 XStack_push_base(stack, &rightTail);
@@ -1026,19 +1026,19 @@ void VXLockFreeList_swap(XLockFreeList* list1, XLockFreeList* list2)
     // 交换链表实现
     tagged_ptr_t tempHead = XAtomic_load_size_t(&list1->m_head, XAtomic_MemoryOrder_Relaxed);
     tagged_ptr_t tempTail = XAtomic_load_size_t(&list1->m_tail, XAtomic_MemoryOrder_Relaxed);
-    // XLockFreeListNode* tempTailPrev = (XLockFreeListNode*)XAtomic_load_ptr(&list1->m_tail_prev, XAtomic_MemoryOrder_Relaxed); // 已移除
+    // XLockFreeListNode* tempTailPrev = (XLockFreeListNode*)XAtomic_load_uintptr_t(&list1->m_tail_prev, XAtomic_MemoryOrder_Relaxed); // 已移除
     size_t tempSize = XAtomic_load_size_t(&XContainerSize(list1), XAtomic_MemoryOrder_Relaxed);
     size_t tempCapacity = XAtomic_load_size_t(&XContainerCapacity(list1), XAtomic_MemoryOrder_Relaxed);
 
     XAtomic_store_size_t(&list1->m_head, XAtomic_load_size_t(&list2->m_head, XAtomic_MemoryOrder_Relaxed), XAtomic_MemoryOrder_Relaxed);
     XAtomic_store_size_t(&list1->m_tail, XAtomic_load_size_t(&list2->m_tail, XAtomic_MemoryOrder_Relaxed), XAtomic_MemoryOrder_Relaxed);
-    // XAtomic_store_ptr(&list1->m_tail_prev, XAtomic_load_ptr(&list2->m_tail_prev, XAtomic_MemoryOrder_Relaxed), XAtomic_MemoryOrder_Relaxed); // 已移除
+    // XAtomic_store_uintptr_t(&list1->m_tail_prev, XAtomic_load_uintptr_t(&list2->m_tail_prev, XAtomic_MemoryOrder_Relaxed), XAtomic_MemoryOrder_Relaxed); // 已移除
     XAtomic_store_size_t(&XContainerSize(list1), XAtomic_load_size_t(&XContainerSize(list2), XAtomic_MemoryOrder_Relaxed), XAtomic_MemoryOrder_Relaxed);
     XAtomic_store_size_t(&XContainerCapacity(list1), XAtomic_load_size_t(&XContainerCapacity(list2), XAtomic_MemoryOrder_Relaxed), XAtomic_MemoryOrder_Relaxed);
 
     XAtomic_store_size_t(&list2->m_head, tempHead, XAtomic_MemoryOrder_Relaxed);
     XAtomic_store_size_t(&list2->m_tail, tempTail, XAtomic_MemoryOrder_Relaxed);
-    // XAtomic_store_ptr(&list2->m_tail_prev, tempTailPrev, XAtomic_MemoryOrder_Relaxed); // 已移除
+    // XAtomic_store_uintptr_t(&list2->m_tail_prev, tempTailPrev, XAtomic_MemoryOrder_Relaxed); // 已移除
     XAtomic_store_size_t(&XContainerSize(list2), tempSize, XAtomic_MemoryOrder_Relaxed);
     XAtomic_store_size_t(&XContainerCapacity(list2), tempCapacity, XAtomic_MemoryOrder_Relaxed);
 }

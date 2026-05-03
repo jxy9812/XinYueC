@@ -113,7 +113,7 @@ bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expecte
  * 3. 如果不相等，则将原子变量的当前值写入`*expected`
  * 原子性保证：整个比较-交换过程不可分割
  */
-bool XAtomic_compare_exchange_strong_ptr(XAtomic_ptr* var, void** expected, void* desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
+bool XAtomic_compare_exchange_strong_uintptr_t(XAtomic_uintptr_t* var, uintptr_t* expected, uintptr_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
 
 #ifdef __cplusplus
 }
