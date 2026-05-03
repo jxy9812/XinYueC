@@ -111,7 +111,7 @@ bool XTimer_isPeriodic(XTimer* timer)
 
 bool XTimer_isRunning(XTimer* timer)
 {
-	return timer ? XTimerData_isRunning(&timer->m_timerData) : false;
+	return timer ? timer->m_isRun : false;
 }
 
 size_t XTimer_timeout(XTimer* timer)
@@ -218,14 +218,14 @@ void VXObject_timerEvent(XTimer* timer, XEventTimer* event)
 			if (XTimer_isAutoDelete(timer))
 				XTimer_deleteLater(timer);
 		}
-		else if (!timer->m_timerData.m_firstTrigger)
+		else if (!timer->m_firstTrigger)
 		{
-			timer->m_timerData.m_firstTrigger = true;//第一次触发
+			timer->m_firstTrigger = true;//第一次触发
 			XTimer_stop_base(timer);
 			if (XTimer_interval(timer))
 				timer->m_timerData.timerId = XObject_startTimer_ms(timer, XTimer_interval(timer), XTimer_timerType(timer));
 			if (XTimer_timerId(timer))
-				timer->m_timerData.m_isRun = true;
+				timer->m_isRun = true;
 		}
 		XEvent_accept(event);
 	}
@@ -245,14 +245,14 @@ void VXTimer_deinit(XTimer* timer)
 
 void VXTimer_start(XTimer* timer)
 {
-	timer->m_timerData.m_firstTrigger = false;
+	timer->m_firstTrigger = false;
 	XTimer_stop_base(timer);
 	if(timer->m_timerData.m_timeout)
 		timer->m_timerData.timerId = XObject_startTimer_ms(timer, timer->m_timerData.m_timeout, XTimer_timerType(timer));
 	else if(XTimer_interval(timer))
 		timer->m_timerData.timerId = XObject_startTimer_ms(timer, XTimer_interval(timer), XTimer_timerType(timer));
 	if(timer->m_timerData.timerId)
-		timer->m_timerData.m_isRun = true;
+		timer->m_isRun = true;
 }
 void VXTimer_stop(XTimer* timer)
 {
@@ -263,6 +263,6 @@ void VXTimer_stop(XTimer* timer)
 		XObject_killTimer(timer, timer->m_timerData.timerId);
 		//XPrintf("停止定时器: id:%d\n", timer->timerId);
 		timer->m_timerData.timerId = 0;
-		timer->m_timerData.m_isRun = false;
+		timer->m_isRun = false;
 	}
 }

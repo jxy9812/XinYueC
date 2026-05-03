@@ -13,12 +13,11 @@ void XTimerGroupBase_init(XTimerGroupBase* group, uint16_t precision)
 	/*XClassGetVtable(group) = vtable;*/
 }
 
-bool XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData* timer)
+XTimerData* XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData  data)
 {
-	if (ISNULL(group, "") || ISNULL(timer, "") || ISNULL(XClassGetVtable(group), ""))
+	if (ISNULL(group, "") || ISNULL(XClassGetVtable(group), ""))
 		return false;
-	
-	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_Timer, bool(*)(XTimerGroupBase* , XTimerData*))(group,timer);
+	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_Timer, XTimerData * (*)(XTimerGroupBase* , XTimerData))(group, data);
 }
 
 bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerData* timer)

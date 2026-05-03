@@ -11,35 +11,19 @@ extern "C" {
 #include"XTimerData.h"
 typedef struct XListSLinked XListSLinked;
 typedef struct XVector XVector;
-typedef struct XTimerTimeWheel  XTimerTimeWheel;
 typedef struct XTimerGroupWheel XTimerGroupWheel;
 #define XTIMEGROUPWHEEL_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimerGroupWheel))       //XTimeGroupWheel虚函数表大小
 XCLASS_DEFINE_BEGING(XTimerGroupWheel)
 XCLASS_DEFINE_ENUM(XTimerGroupWheel, Add_TimeWheel) = XCLASS_VTABLE_GET_SIZE(XTimerGroupBase),
 XCLASS_DEFINE_ENUM(XTimerGroupWheel, Remove_TimeWheel),
 XCLASS_DEFINE_END(XTimerGroupWheel)
-// 定时器时间轮
-typedef struct XTimerWheelData
-{
-	XTimerData m_data;
-	size_t m_expire_ticks;     // 到期时间戳（毫秒）
-	XListSLinked* m_list;//加入的链表
-	//XTimerGroupBase* m_group;//加入的组
-} XTimerWheelData;
-XTimerWheelData* XTimerWheelData_create();
-void XTimerWheelData_delete(XTimerWheelData*data);
-// 单个时间轮结构
-typedef struct XTimeWheel {
-	XVector m_slots;					// 槽数组，每个槽是一个链表头 /XVector<XListSLinked<XTimerTimeWheel*>>
-	size_t m_tick;						// 当前滴答计数
-} XTimeWheel;
 //定时器轮组
 typedef struct XTimerGroupWheel
 {
 	XTimerGroupBase m_class;//继承
-	XVector m_timeWheel;//多时间轮	/XVector<XTimeWheel>
+	XVector m_timeWheel;//多时间轮	
 	XMutex* m_mutex;//互斥锁
-	size_t m_count;//正在管理的定时器数量
+	XAtomic_size_t m_count;//正在管理的定时器数量
 }XTimerGroupWheel;
 XVtable* XTimerGroupWheel_class_init();
 XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision);
@@ -48,19 +32,6 @@ void XTimerGroupWheel_addTimeWheel_base(XTimerGroupWheel* group,size_t slotsCoun
 void XTimerGroupWheel_removeTimeWheel_base(XTimerGroupWheel* group);
 void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex);
 size_t XTimerGroupWheel_count(XTimerGroupWheel* group);
-/**
- * @brief 检查是否有活跃的定时器
- * @param group 定时器组轮
- * @return 是否有活跃定时器
- */
-bool XTimerGroupWheel_hasActiveTimers(const XTimerGroupWheel* group);
-
-/**
- * @brief 获取下一个定时器超时时间
- * @param group 定时器组轮
- * @return 下一个超时时间（毫秒）
- */
-uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group);
 #define XTimerGroupWheel_addTimer_base				XTimerGroupBase_addTimer_base
 #define XTimerGroupWheel_removeTimer_base			XTimerGroupBase_removeTimer_base
 #define XTimerGroupWheel_timeRange					XTimerGroupBase_timeRange

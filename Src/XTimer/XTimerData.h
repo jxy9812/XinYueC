@@ -24,10 +24,8 @@ typedef struct XTimerGroupBase XTimerGroupBase;
 
 typedef struct XTimerData
 {
-	uint32_t m_autoDelete : 1;			///< 定时器超时后是否自动释放        
-	uint32_t m_isRun : 1;				 ///< 定时器是否正在运行
+	uint32_t m_autoDelete : 1;			///< 定时器超时后是否自动释放  
 	uint32_t m_isSingleShot : 1;		///< 是否为单次定时器（true：只触发一次，false：周期性触发）
-	uint32_t m_firstTrigger : 1;		//首次触发
 	size_t m_timeout;					///< 首次超时时间（毫秒）
 	size_t m_interval;					///< 周期性触发时间间隔（毫秒）
 	XTimerId timerId;					///< 定时器唯一标识ID
@@ -103,12 +101,6 @@ bool XTimerData_isSingleShot(XTimerData* timer);
 * @return true：非周期性（单次），false：周期性
 */
 bool XTimerData_isPeriodic(XTimerData* timer);
-/**
-* @brief 判断定时器是否正在运行
-* @param timer XTimerData实例指针
-* @return true：运行中，false：已停止
-*/
-bool XTimerData_isRunning(XTimerData* timer);
 /**
 * @brief 获取定时器超时时间
 * @param timer XTimerData实例指针

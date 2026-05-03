@@ -23,7 +23,7 @@ typedef struct XTimerGroupBase
 	size_t m_current_tick;      // 当前系统滴答
 }XTimerGroupBase;
 void XTimerGroupBase_init(XTimerGroupBase*group, uint16_t precision);
-bool XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData* timer);
+XTimerData* XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData data);
 //仅从任务中删除，需要手动释放
 bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerData* timer);
 /**

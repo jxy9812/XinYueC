@@ -41,22 +41,22 @@ void XTimerTimeWheelTest()
 	XTimerGroupWheel_timeRange(wheel,&min_time,&max_time);
 	XPrintf("定时器时间轮时间范围 %ld-%ld ms\n",min_time,max_time);
 	{
-		XTimerWheelData* timer = XTimerWheelData_create();
-		XTimerData_setUserData(timer, wheel);
-		XTimerData_setInterval(timer,300);
-		XTimerData_setTimeout(timer, 50);
-		XTimerData_setTimerCallback(timer,Callback1);
-		XTimerGroupWheel_addTimer_base(wheel, timer);
+		XTimerData data = { 0 };
+		XTimerData_setUserData(&data, wheel);
+		XTimerData_setInterval(&data,300);
+		XTimerData_setTimeout(&data, 50);
+		XTimerData_setTimerCallback(&data,Callback1);
+		XTimerWheelData* timer = XTimerGroupWheel_addTimer_base(wheel, data);
 	
 	}
 	{
-		XTimerWheelData* timer = XTimerWheelData_create();
+		XTimerData data = { 0 };
 
-		XTimerData_setInterval(timer, 20);
-		XTimerData_setTimeout(timer, 15);
-		XTimerData_setTimerCallback(timer, Callback2);
-		XTimerData_setUserData(timer, timer);
-		XTimerGroupWheel_addTimer_base(wheel, timer);
+		XTimerData_setInterval(&data, 20);
+		XTimerData_setTimeout(&data, 15);
+		XTimerData_setTimerCallback(&data, Callback2);
+		//XTimerData_setUserData(&data, timer);
+		XTimerWheelData* timer = XTimerGroupWheel_addTimer_base(wheel, data);
 		
 	}
 	XCoreApplication_exec();

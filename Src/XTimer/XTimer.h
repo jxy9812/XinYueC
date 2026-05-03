@@ -24,6 +24,8 @@ XCLASS_DEFINE_END(XTimer)
 typedef struct XTimer
 {
 	XObject m_class;
+	uint32_t m_isRun : 1;				 ///< 定时器是否正在运行
+	uint32_t m_firstTrigger : 1;		//首次触发
 	XTimerData m_timerData;
 	XTimerType m_type;
 } XTimer;

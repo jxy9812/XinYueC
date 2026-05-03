@@ -55,10 +55,6 @@ bool XTimerData_isPeriodic(XTimerData* timer)
 		return timer->m_interval==0;
 	return false;
 }
-bool XTimerData_isRunning(XTimerData* timer)
-{
-	return timer ? timer->m_isRun : false;
-}
 size_t XTimerData_timeout(XTimerData* timer)
 {
 	if (timer)
