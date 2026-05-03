@@ -6,7 +6,7 @@ extern "C" {
 #include<stdbool.h>
 #include<stdint.h>
 #include<stdio.h>
-#include"XClass.h"
+#include"XObject.h"
 #define XTIMERGROUPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimerGroupBase))       //XTimerGroupBase虚函数表大小
 XCLASS_DEFINE_BEGING(XTimerGroupBase)
 XCLASS_DEFINE_ENUM(XTimerGroupBase, Add_Timer) = XCLASS_VTABLE_GET_SIZE(XClass),
@@ -15,7 +15,7 @@ XCLASS_DEFINE_ENUM(XTimerGroupBase,Handler),
 XCLASS_DEFINE_END(XTimerGroupBase)
 typedef struct XTimerGroupBase
 {
-	XClass m_class;
+	XObject m_class;
 	uint16_t m_precision;		//精度 毫秒   
 	size_t m_current_tick;      // 当前系统滴答
 }XTimerGroupBase;

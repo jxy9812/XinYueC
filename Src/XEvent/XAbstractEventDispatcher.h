@@ -31,8 +31,8 @@ typedef struct XAbstractEventDispatcherPrivate
 {
     XVector* nativeFilters;///< 本地事件过滤器列表
     XVector* m_timerIds;//定时器id数组
+    XTimerGroupWheel* m_timerGroup;//定时器组
     XMutex* mutex;              ///< 保护 timers, sockets, nativeFilters 的互斥锁
-    XWaitCondition* wait;
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp);

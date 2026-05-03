@@ -16,6 +16,7 @@ typedef struct XTimerTimeWheel
 	XTimerBase m_class;
 	size_t m_expire_ticks;     // 到期时间戳（毫秒）
 	XListSLinked* m_list;//加入的链表
+	//XTimerGroupBase* m_group;//加入的组
 } XTimerTimeWheel;
 XVtable* XTimerTimeWheel_class_init();
 XTimerTimeWheel* XTimerTimeWheel_create();
@@ -28,14 +29,14 @@ void XTimerTimeWheel_init(XTimerTimeWheel* timer);
 #define XTimerTimeWheel_setInterval XTimerBase_setInterval
 #define XTimerTimeWheel_setUserData XTimerBase_setUserData
 #define XTimerTimeWheel_setTimerCallback XTimerBase_setTimerCallback
-#define XTimerTimeWheel_setGroup XTimerBase_setTimerId
+#define XTimerTimeWheel_setGroup	XObject_setParent
 // 是否为周期性任务
 #define XTimerTimeWheel_isPeriodic XTimerBase_isPeriodic
 #define XTimerTimeWheel_isRunning XTimerBase_isRunning
-#define XTimerTimeWheel_getTimeout XTimerBase_timeout
-#define XTimerTimeWheel_getInterval XTimerBase_interval
-#define XTimerTimeWheel_getGroup XTimerBase_timerId
-#define XTimerTimeWheel_getUserData XTimerBase_getUserData
+#define XTimerTimeWheel_timeout XTimerBase_timeout
+#define XTimerTimeWheel_interval XTimerBase_interval
+#define XTimerTimeWheel_group XObject_parent
+#define XTimerTimeWheel_userData XTimerBase_userData
 //超时回调函数
 #define XTimerTimeWheel_out XTimerBase_out
 #ifdef __cplusplus

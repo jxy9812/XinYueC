@@ -115,7 +115,7 @@ void XTimer_init(XTimer* timer);
 * 复用XTimerBase的getUserData方法
 * @return 用户数据指针
 */
-#define XTimer_getUserData			XTimerBase_getUserData
+#define XTimer_getUserData			XTimerBase_userData
 // === 超时处理相关接口 ===
 /**
 * @brief 定时器超时处理的基类实现宏

@@ -6,6 +6,7 @@ extern "C" {
 #include<stdbool.h>
 #include<stdint.h>
 #include<stdio.h>
+#include"XVector.h"
 #include"XTimerGroupBase.h"
 #include"XTimerTimeWheel.h"
 typedef struct XListSLinked XListSLinked;
@@ -19,14 +20,14 @@ XCLASS_DEFINE_BEGING(XTimerGroupWheel)
 XCLASS_DEFINE_END(XTimerGroupWheel)
 // 单个时间轮结构
 typedef struct XTimeWheel {
+	XVector m_slots;					// 槽数组，每个槽是一个链表头 /XVector<XListSLinked<XTimerTimeWheel*>>
 	size_t m_tick;						// 当前滴答计数
-	XVector* m_slots;					// 槽数组，每个槽是一个链表头 /XVector<XListSLinked<XTimerTimeWheel*>>
 } XTimeWheel;
 //定时器轮组
 typedef struct XTimerGroupWheel
 {
 	XTimerGroupBase m_class;//继承
-	XVector* m_timeWheel;//多时间轮	/XVector<XTimeWheel>
+	XVector m_timeWheel;//多时间轮	/XVector<XTimeWheel>
 	XMutex* m_mutex;//互斥锁
 	size_t m_size;
 }XTimerGroupWheel;

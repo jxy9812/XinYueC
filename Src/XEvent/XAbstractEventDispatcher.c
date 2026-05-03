@@ -2,7 +2,7 @@
 #include "XMemory.h"
 #include "XCoreApplication.h"
 #include "XVector.h"
-//#include "XLockFreeQueue.h"
+#include "XTimerGroupWheel.h"
 #include "XAbstractNativeEventFilter.h"
 #include "XPriorityMapQueue.h"
 #include "XThreadData.h"
@@ -28,18 +28,11 @@ static void VXAbstractEventDispatcher_closingDown(XAbstractEventDispatcher* self
 
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 {
-    if (!XThread_currentThread())
-    {
-        dp->nativeFilters = XVector_Create(void*);
-    }
-    else
-    {
-        dp->nativeFilters = NULL;
-        //dp->wait = XWaitCondition_create();
-        dp->wait = NULL;
-    }
+    dp->nativeFilters = XVector_Create(void*);
+    dp->m_timerIds = XVector_Create(XTimerId);
     dp->mutex = XMutex_create(XLock_NonRecursive);
-    dp->m_timerIds = NULL;
+    dp->m_timerGroup = XTimerGroupWheel_create(1);//高精度定时器
+
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
@@ -54,10 +47,10 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
         XMutex_delete(dp->mutex);
         dp->mutex = NULL;
     }
-    if (dp->wait)
+    if (dp->m_timerGroup)
     {
-        XWaitCondition_delete(dp->wait);
-        dp->wait = NULL;
+        XTimerGroupWheel_delete_base(dp->m_timerGroup);
+        dp->m_timerGroup = NULL;
     }
     if (dp->m_timerIds)
     {
@@ -238,8 +231,7 @@ static XDuration VXAbstractEventDispatcher_remainingTime(const XAbstractEventDis
 
 static void VXAbstractEventDispatcher_wakeUp(XAbstractEventDispatcher* self)
 {
-    if(self->d_ptr->wait)
-        XWaitCondition_wakeAll(self->d_ptr->wait);
+    return;
 }
 
 static void VXAbstractEventDispatcher_interrupt(XAbstractEventDispatcher* self)

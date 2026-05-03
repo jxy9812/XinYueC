@@ -166,7 +166,7 @@ size_t XTimerBase_timerId(XTimerBase* timer);
 * @param timer XTimerBase实例指针
 * @return 用户数据指针
 */
-void* XTimerBase_getUserData(XTimerBase* timer);
+void* XTimerBase_userData(XTimerBase* timer);
 /**
 * @brief 判断定时器是否自动释放
 * @param timer XTimerBase实例指针

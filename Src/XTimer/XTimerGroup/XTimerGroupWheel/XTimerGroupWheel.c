@@ -1,6 +1,5 @@
 ﻿#include"XTimerGroupWheel.h"
 #include"XMemory.h"
-#include"XVector.h"
 #include"XListSLinked.h"
 #include"XMutex.h"
 #include<string.h>
@@ -25,7 +24,9 @@ void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision)
 	XTimerGroupBase_init(group,precision);
 	XClassGetVtable(group) = XTimerGroupWheel_class_init();
 	//初始化数据
-	group->m_timeWheel = XVector_Create(XTimeWheel);
+	XVector_init(&group->m_timeWheel,sizeof(XTimeWheel));
+	XContainerSetDataDeinitMethod(&group->m_timeWheel,XVector_deinit_base);
+	//group->m_timeWheel = XVector_Create(XTimeWheel);
 	group->m_class.m_current_tick = XTimerBase_getCurrentTime() / group->m_class.m_precision;
 	group->m_size = 0;
 }
@@ -58,7 +59,7 @@ void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex)
 }
 bool XTimerGroupWheel_hasActiveTimers(const XTimerGroupWheel* group)
 {
-	if (group == NULL || group->m_timeWheel == NULL)
+	if (group == NULL )
 		return false;
 
 	// 加锁保证线程安全
@@ -66,20 +67,20 @@ bool XTimerGroupWheel_hasActiveTimers(const XTimerGroupWheel* group)
 		XMutex_lock(group->m_mutex);
 
 	bool hasActive = false;
-	size_t wheelCount = XVector_size_base(group->m_timeWheel);
+	size_t wheelCount = XVector_size_base(&group->m_timeWheel);
 
 	// 遍历所有时间轮
 	for (size_t i = 0; i < wheelCount; ++i)
 	{
-		XTimeWheel* wheel = XVector_at_base(group->m_timeWheel, i);
-		if (wheel == NULL || wheel->m_slots == NULL)
+		XTimeWheel* wheel = XVector_at_base(&group->m_timeWheel, i);
+		if (wheel == NULL )
 			continue;
 
 		// 遍历当前时间轮的所有槽
-		size_t slotCount = XVector_size_base(wheel->m_slots);
+		size_t slotCount = XVector_size_base(wheel);
 		for (size_t j = 0; j < slotCount; ++j)
 		{
-			XListSLinked** slotList = XVector_at_base(wheel->m_slots, j);
+			XListSLinked** slotList = XVector_at_base(wheel, j);
 			if (slotList == NULL || *slotList == NULL)
 				continue;
 
@@ -101,7 +102,7 @@ end_check:
 }
 uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
 {
-	if (group == NULL || group->m_timeWheel == NULL)
+	if (group == NULL )
 		return 0;
 
 	// 加锁保证线程安全
@@ -114,18 +115,18 @@ uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
 	const uint16_t precision = group->m_class.m_precision;
 
 	// 遍历所有时间轮
-	const size_t wheel_count = XVector_size_base(group->m_timeWheel);
+	const size_t wheel_count = XVector_size_base(&group->m_timeWheel);
 	for (size_t i = 0; i < wheel_count; ++i)
 	{
-		XTimeWheel* wheel = XVector_at_base(group->m_timeWheel, i);
-		if (wheel == NULL || wheel->m_slots == NULL)
+		XTimeWheel* wheel = XVector_at_base(&group->m_timeWheel, i);
+		if (wheel == NULL )
 			continue;
 
 		// 遍历当前时间轮的所有槽
-		const size_t slot_count = XVector_size_base(wheel->m_slots);
+		const size_t slot_count = XVector_size_base(wheel);
 		for (size_t j = 0; j < slot_count; ++j)
 		{
-			XListSLinked** slot_list_ptr = XVector_at_base(wheel->m_slots, j);
+			XListSLinked** slot_list_ptr = XVector_at_base(wheel, j);
 			if (slot_list_ptr == NULL || *slot_list_ptr == NULL)
 				continue;
 

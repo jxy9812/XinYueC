@@ -1,7 +1,6 @@
 ﻿#include"XTimerGroupWheel.h"
 #include"XListSLinked.h"
 #include"XTimerTimeWheel.h"
-#include"XVector.h"
 #include"XMemory.h"
 #include"XStack.h"
 #include"XMutex.h"
@@ -41,12 +40,13 @@ void VXTimerGroupWheel_deinit(XTimerGroupWheel* group)
     if (group->m_mutex)
         XMutex_lock(group->m_mutex);
 
-    if (group->m_timeWheel != NULL)
+    //if (&group->m_timeWheel != NULL)
     {
-        while (!XVector_isEmpty_base(group->m_timeWheel))
+        while (!XVector_isEmpty_base(&group->m_timeWheel))
             XTimerGroupWheel_removeTimeWheel_base(group);
-        XVector_delete_base(group->m_timeWheel);
-        group->m_timeWheel = NULL;
+        //XVector_delete_base(&&group->m_timeWheel);
+        XVector_deinit_base(&group->m_timeWheel);
+        //&group->m_timeWheel = NULL;
     }
 
     if (group->m_mutex)
@@ -64,8 +64,8 @@ void VXTimerGroupWheel_deinit(XTimerGroupWheel* group)
 
 static void add_timer_to_wheel_node(XTimeWheel* wheel, XListSNode* node, size_t ticks)
 {
-    size_t expire_slot = (wheel->m_tick + ticks) % XContainerSize(wheel->m_slots);
-    XListSNode** pvList = XVector_at_base(wheel->m_slots, expire_slot);
+    size_t expire_slot = (wheel->m_tick + ticks) % XContainerSize(wheel);
+    XListSNode** pvList = XVector_at_base(wheel, expire_slot);
     XListSNode* head = *pvList;
     if (head == NULL)
     {
@@ -83,8 +83,8 @@ static void add_timer_to_wheel_node(XTimeWheel* wheel, XListSNode* node, size_t 
 }
 static void add_timer_to_wheel(XTimeWheel* wheel, XTimerTimeWheel* timer, size_t ticks)
 {
-    size_t expire_slot = (wheel->m_tick + ticks) % XContainerSize(wheel->m_slots);
-    XListSNode** pvList = XVector_at_base(wheel->m_slots, expire_slot);
+    size_t expire_slot = (wheel->m_tick + ticks) % XContainerSize(wheel);
+    XListSNode** pvList = XVector_at_base(wheel, expire_slot);
     XListSNode* head = *pvList;
     XListSNode* node= XListSNode_Create(XTimerTimeWheel*);
     XListSNode_Data(node, XTimerTimeWheel*) = timer;
@@ -108,16 +108,16 @@ static bool addTimer_node(XTimerGroupWheel* group, XListSNode* node, size_t time
     // 根据超时时间决定放入哪个时间轮
     XTimeWheel* wheel = NULL;
     size_t ticksCompare = 1, wheelSize = 1;
-    for (size_t i = 0; i < XContainerSize(group->m_timeWheel); ++i)
+    for (size_t i = 0; i < XContainerSize(&group->m_timeWheel); ++i)
     {
-        wheel = (XTimeWheel*)(((uint8_t*)XContainerDataPtr(group->m_timeWheel)) + i * XContainerTypeSize(group->m_timeWheel));
-        ticksCompare *= XContainerSize(wheel->m_slots);
+        wheel = (XTimeWheel*)(((uint8_t*)XContainerDataPtr(&group->m_timeWheel)) + i * XContainerTypeSize(&group->m_timeWheel));
+        ticksCompare *= XContainerSize(wheel);
         if (timeout_ticks < ticksCompare)
         {
             add_timer_to_wheel_node(wheel, node, timeout_ticks / wheelSize - (i ? 1 : 0));
             return true;
         }
-        wheelSize *= XContainerSize(wheel->m_slots);
+        wheelSize *= XContainerSize(wheel);
     }
     return false;
 }
@@ -126,16 +126,16 @@ static bool addTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer, size_t tim
     // 根据超时时间决定放入哪个时间轮
     XTimeWheel* wheel = NULL;
     size_t ticksCompare = 1, wheelSize = 1;
-    for (size_t i = 0; i < XContainerSize(group->m_timeWheel); ++i)
+    for (size_t i = 0; i < XContainerSize(&group->m_timeWheel); ++i)
     {
-        wheel = (XTimeWheel*)(((uint8_t*)XContainerDataPtr(group->m_timeWheel)) + i * XContainerTypeSize(group->m_timeWheel));
-        ticksCompare *= XContainerSize(wheel->m_slots);
+        wheel = (XTimeWheel*)(((uint8_t*)XContainerDataPtr(&group->m_timeWheel)) + i * XContainerTypeSize(&group->m_timeWheel));
+        ticksCompare *= XContainerSize(wheel);
         if (timeout_ticks < ticksCompare)
         {
             add_timer_to_wheel(wheel, timer, timeout_ticks / wheelSize - (i ? 1 : 0));
             return true;
         }
-        wheelSize *= XContainerSize(wheel->m_slots);
+        wheelSize *= XContainerSize(wheel);
     }
     return false;
 }
@@ -206,20 +206,18 @@ bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerTimeWheel* time
 
 void VXTimerGroupWheel_addTimeWheel(XTimerGroupWheel* group, size_t slotsCount)
 {
-    if (group->m_timeWheel == NULL)
-        return;
-
     XTimeWheel wheel = { 0 };
     wheel.m_tick = 0;
-    wheel.m_slots = XVector_Create(XListSLinked*);
-    if (wheel.m_slots == NULL)
-        return;
-    XVector_resize_base(wheel.m_slots, slotsCount);
+    //wheel.m_slots = XVector_Create(XListSLinked*);
+    /*if (wheel.m_slots == NULL)
+        return;*/
+    XVector_init(&wheel.m_slots,sizeof(XListSNode*));
+    XVector_resize_base(&wheel.m_slots, slotsCount);
 
     if (group->m_mutex)
         XMutex_lock(group->m_mutex);
 
-    XVector_push_back_base(group->m_timeWheel, &wheel);
+    XVector_push_back_base(&group->m_timeWheel, &wheel);
 
     if (group->m_mutex)
         XMutex_unlock(group->m_mutex);
@@ -227,37 +225,34 @@ void VXTimerGroupWheel_addTimeWheel(XTimerGroupWheel* group, size_t slotsCount)
 
 void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
 {
-    if (group->m_timeWheel == NULL || XVector_isEmpty_base(group->m_timeWheel))
+    if (XVector_isEmpty_base(&group->m_timeWheel))
         return;
 
     if (group->m_mutex)
         XMutex_lock(group->m_mutex);
 
-    XTimeWheel* wheel = XVector_back_base(group->m_timeWheel);
-    if (wheel->m_slots != NULL)
+    XTimeWheel* wheel = XVector_back_base(&group->m_timeWheel);
+    // 遍历槽数组
+    for (size_t i = 0; i < XContainerSize(wheel); ++i)
     {
-        // 遍历槽数组
-        for (size_t i = 0; i < XContainerSize(wheel->m_slots); ++i)
+        XListSNode** pvHead = (XListSLinked**)(((uint8_t*)XContainerDataPtr(wheel)) + i * XContainerTypeSize(wheel));
+        if (*pvHead != NULL)
         {
-            XListSNode** pvHead = (XListSLinked**)(((uint8_t*)XContainerDataPtr(wheel->m_slots)) + i * XContainerTypeSize(wheel->m_slots));
-            if (*pvHead != NULL)
+            XListSNode* node = *pvHead, * prev = NULL;
+            while (node)
             {
-                XListSNode* node= *pvHead,*prev=NULL;
-                while (node)
-                {
-                    XTimerTimeWheel* timer = XListSNode_Data(node, XTimerTimeWheel*);
-                    prev = node;
-                    node = node->next;
-                    if(XTimerBase_isAutoDelete(timer))//查看是否有内存管理权限
-                        XTimerBase_deleteLater(timer);
-                    XMemory_free(prev);
-                }
-                //XListSLinked_delete_base(list);
+                XTimerTimeWheel* timer = XListSNode_Data(node, XTimerTimeWheel*);
+                prev = node;
+                node = node->next;
+                if (XTimerBase_isAutoDelete(timer))//查看是否有内存管理权限
+                    XTimerBase_deleteLater(timer);
+                XMemory_free(prev);
             }
+            //XListSLinked_delete_base(list);
         }
     }
     // 删除最后一个轮
-    XVector_pop_back_base(group->m_timeWheel);
+    XVector_pop_back_base(&group->m_timeWheel);
 
     if (group->m_mutex)
         XMutex_unlock(group->m_mutex);
@@ -266,7 +261,7 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
 static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, int slot_index, size_t higher_level_idx)
 {
     if (higher_level_idx == 0) return; // 已到最底层，无需降级
-    XListSNode** pvHead = XVector_at_base(higher_level->m_slots, slot_index);
+    XListSNode** pvHead = XVector_at_base(&higher_level->m_slots, slot_index);
     if (pvHead==NULL||*pvHead == NULL ) return;
 
     XListSNode* prev, * next, * node =*pvHead;//获取头节点
@@ -304,8 +299,8 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
         }
         else {
             // 降级到下一级轮（higher_level_idx - 1），并检查是否需要继续降级
-            XTimeWheel* lower_level = XVector_at_base(group->m_timeWheel, higher_level_idx - 1);
-            size_t lower_slots = XContainerSize(lower_level->m_slots);
+            XTimeWheel* lower_level = XVector_at_base(&group->m_timeWheel, higher_level_idx - 1);
+            size_t lower_slots = XContainerSize(&lower_level->m_slots);
             size_t lower_max_ticks = lower_slots; // 下一级轮的最大ticks
 
             // 若剩余ticks仍大于下一级轮的最大范围，只放入下一级轮（等待下一级轮再降级）
@@ -335,7 +330,7 @@ static void cascade_timers(XTimerGroupWheel* group, XTimeWheel* higher_level, in
 
 void VXTimerGroupBase_handler(XTimerGroupWheel* group)
 {
-    if (group->m_timeWheel == NULL || XVector_isEmpty_base(group->m_timeWheel))
+    if (XVector_isEmpty_base(&group->m_timeWheel))
         return;
 
     XTimerGroupBase* groupBase = ((XTimerGroupBase*)group);
@@ -352,11 +347,11 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
     // 处理时间跳跃：循环推进多个滴答
     while (tick > groupBase->m_current_tick)
     {
-        XTimeWheel* wheel = XVector_front_base(group->m_timeWheel);
-        int current_slot = wheel->m_tick % XVector_size_base(wheel->m_slots);
+        XTimeWheel* wheel = XVector_front_base(&group->m_timeWheel);
+        int current_slot = wheel->m_tick % XVector_size_base(wheel);
         // 处理当前槽的所有定时器
-        XListSNode** pvHead = XVector_at_base(wheel->m_slots, current_slot);
-        //XListSLinked* list = XVector_At_Base(wheel->m_slots, current_slot, XListSLinked*);
+        XListSNode** pvHead = XVector_at_base(wheel, current_slot);
+        //XListSLinked* list = XVector_At_Base(wheel, current_slot, XListSLinked*);
         if (*pvHead != NULL)
         {
             XListSNode* head = *pvHead;
@@ -425,16 +420,16 @@ void VXTimerGroupBase_handler(XTimerGroupWheel* group)
         // 检查是否需要触发中级轮降级
         XTimeWheel* currentWheel = NULL;
         size_t ticksCompare = 1;
-        for (size_t i = 0; i < XContainerSize(group->m_timeWheel); ++i)
+        for (size_t i = 0; i < XContainerSize(&group->m_timeWheel); ++i)
         {
-            currentWheel = (XTimeWheel*)(((uint8_t*)XContainerDataPtr(group->m_timeWheel)) + i * XContainerTypeSize(group->m_timeWheel));
-            ticksCompare *= XContainerSize(currentWheel->m_slots);
+            currentWheel = (XTimeWheel*)(((uint8_t*)XContainerDataPtr(&group->m_timeWheel)) + i * XContainerTypeSize(&group->m_timeWheel));
+            ticksCompare *= XContainerSize(currentWheel);
             if (groupBase->m_current_tick % ticksCompare == 0)
             {
-                if (i + 1 >= XContainerSize(group->m_timeWheel))
+                if (i + 1 >= XContainerSize(&group->m_timeWheel))
                     break; // 下一个时间轮不存在
-                XTimeWheel* nextWheel = ((uint8_t*)currentWheel) + XContainerTypeSize(group->m_timeWheel);
-                int next_slot = (nextWheel->m_tick % XContainerSize(nextWheel->m_slots));
+                XTimeWheel* nextWheel = ((uint8_t*)currentWheel) + XContainerTypeSize(&group->m_timeWheel);
+                int next_slot = (nextWheel->m_tick % XContainerSize(nextWheel));
                 cascade_timers(group, nextWheel, next_slot,i+1);
                 ++nextWheel->m_tick;
                 continue;

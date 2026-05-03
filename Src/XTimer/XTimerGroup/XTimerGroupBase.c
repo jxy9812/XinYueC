@@ -4,8 +4,8 @@ void XTimerGroupBase_init(XTimerGroupBase* group, uint16_t precision)
 {
 	if (group == NULL|| precision==0)
 		return;
-	XClass_init(group);
-	memset(((XClass*)group)+1,0,sizeof(XTimerGroupBase)-sizeof(XClass));
+	XObject_init(group);
+	memset(((XObject*)group)+1,0,sizeof(XTimerGroupBase)-sizeof(XObject));
 	group->m_precision = precision;
 	/*XClassGetVtable(group) = vtable;*/
 }

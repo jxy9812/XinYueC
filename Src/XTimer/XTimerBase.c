@@ -90,7 +90,7 @@ size_t XTimerBase_timerId(XTimerBase* timer)
 		return timer->timerId;
 	return 0;
 }
-void* XTimerBase_getUserData(XTimerBase* timer)
+void* XTimerBase_userData(XTimerBase* timer)
 {
 	if(timer)
 		return timer->m_userData;

@@ -43,10 +43,12 @@ void VXTimerBase_start(XTimerTimeWheel* timer)
 {
 	if (timer->m_class.m_isRun)
 		XTimerBase_stop_base(timer);
+	bool is_run = false;
 	//if (!XObject_parent(timer))//如果没设置使用全局区的时间轮组管理
-	//	XObject_setParent(timer,XCoreApplication_getTimerGroup());
-	XTimerGroupBase_addTimer_base(XObject_parent(timer), timer);
-	if (timer->m_list)
+	//	is_run=XTimerTimeWheel_setGroup(timer,XCoreApplication_getTimerGroup());
+	if(XTimerTimeWheel_group(timer))
+		is_run=XTimerGroupBase_addTimer_base(XTimerTimeWheel_group(timer), timer);
+	if (is_run)
 		timer->m_class.m_isRun = true;
 	
 }

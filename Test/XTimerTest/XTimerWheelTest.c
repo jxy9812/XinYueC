@@ -33,16 +33,16 @@ void XTimerTimeWheelTest()
 	XPrintf("时间轮定时器测试\n");
 	XTimerGroupWheel* wheel= XTimerGroupWheel_create(1);
 	//wheel= XTimerGroupWheel_create(1);
-	XTimerGroupWheel_addTimeWheel_base(wheel,10);
+	XTimerGroupWheel_addTimeWheel_base(wheel,100);
 	XTimerGroupWheel_addTimeWheel_base(wheel,10);
 	XTimerGroupWheel_addTimeWheel_base(wheel,10);
 	{
 		XTimerTimeWheel* timer = XTimerTimeWheel_create();
 		XTimerTimeWheel_setUserData(timer, wheel);
-		XTimerTimeWheel_setInterval(timer,2);
-		XTimerTimeWheel_setTimeout(timer, 5);
+		XTimerTimeWheel_setInterval(timer,2000);
+		XTimerTimeWheel_setTimeout(timer, 50);
 		XTimerTimeWheel_setTimerCallback(timer,Callback1);
-		XObject_setParent(timer, wheel);
+		XTimerTimeWheel_setGroup(timer, wheel);
 		XTimerTimeWheel_start_base(timer);
 	
 	}
