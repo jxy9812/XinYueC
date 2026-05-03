@@ -61,7 +61,9 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     if (app == NULL)
         return;
     //初始化内存池
-    XMultiPool_initGlobal();
+    XMultiPool_global();
+    //初始化全局时间轮
+    XTimerGroupWheel_global();
     memset(((XObject*)app)+1,0,sizeof(XCoreApplication)-sizeof(XObject));
     // 初始化父类
     XObject_init(app);

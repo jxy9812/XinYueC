@@ -25,10 +25,11 @@ typedef struct XListSNode
 /**
 * @brief 创建指定类型的单链表节点
 * @param type 节点存储的数据类型
+* @param mallocMethod内存分配方法
 * @return 新创建的节点指针，失败返回NULL
 * @note 内部通过内存分配函数创建节点，包含数据存储区
 */
-#define XListSNode_Create(type)   (XMemory_malloc(sizeof(XListSNode*)+sizeof(type)))
+#define XListSNode_Create(mallocMethod,Type)   (mallocMethod(ALIGN_UP(sizeof(XListSNode)+sizeof(Type),sizeof(void*))))
 /**
 * @brief 获取单链表节点中数据的指针
 * @param Node 目标节点指针

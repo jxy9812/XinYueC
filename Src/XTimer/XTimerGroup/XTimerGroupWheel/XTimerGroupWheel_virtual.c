@@ -4,7 +4,7 @@
 #include"XMemory.h"
 #include"XStack.h"
 #include"XMutex.h"
-
+static size_t calculate_max_time_range(XTimerGroupWheel* group);
 static void VXTimerGroupWheel_deinit(XTimerGroupWheel* group);
 static bool VXTimerGroupBase_addTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer);
 static bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerTimeWheel* timer);
@@ -22,7 +22,7 @@ XVtable* XTimerGroupWheel_class_init()
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
         // 继承类
-        XVTABLE_INHERIT_DEFAULT(XClass_class_init());
+        XVTABLE_INHERIT_DEFAULT(XObject_class_init());
     void* table[] = {
         VXTimerGroupBase_addTimer, VXTimerGroupBase_removeTimer,VXTimerGroupBase_handler,
         VXTimerGroupWheel_addTimeWheel, VXTimerGroupWheel_removeTimeWheel,
@@ -86,7 +86,7 @@ static void add_timer_to_wheel(XTimeWheel* wheel, XTimerTimeWheel* timer, size_t
     size_t expire_slot = (wheel->m_tick + ticks) % XContainerSize(wheel);
     XListSNode** pvList = XVector_at_base(wheel, expire_slot);
     XListSNode* head = *pvList;
-    XListSNode* node= XListSNode_Create(XTimerTimeWheel*);
+    XListSNode* node= XListSNode_Create(XMalloc,XTimerTimeWheel*);
     XListSNode_Data(node, XTimerTimeWheel*) = timer;
     if (head == NULL)
     {
@@ -171,7 +171,6 @@ bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerTimeWheel* time
 
     if (group->m_mutex)
         XMutex_lock(group->m_mutex);
-    //if(XListSLinked_remove_base(((XTimerTimeWheel*)timer)->m_list, &timer))
     XListSNode** pvHead = ((XTimerTimeWheel*)timer)->m_list;
     if (pvHead)
     {
@@ -203,6 +202,25 @@ bool VXTimerGroupBase_removeTimer(XTimerGroupWheel* group, XTimerTimeWheel* time
 
     return true;
 }
+// 计算时间轮的最大管理时间
+size_t calculate_max_time_range(XTimerGroupWheel* group)
+{
+    if (XContainerSize(&group->m_timeWheel) == 0)
+        return 0;
+
+    // 获取精度（毫秒）
+    uint16_t precision = ((XTimerGroupBase*)group)->m_precision;
+
+    // 计算各级时间轮的总容量
+    size_t total_slots = 1;
+    for (size_t i = 0; i < XContainerSize(&group->m_timeWheel); ++i) {
+        XTimeWheel* wheel = XVector_at_base(&group->m_timeWheel, i);
+        total_slots *= XContainerSize(wheel);
+    }
+
+    // 最大时间范围 = 总槽数 * 精度
+    return total_slots * precision;
+}
 
 void VXTimerGroupWheel_addTimeWheel(XTimerGroupWheel* group, size_t slotsCount)
 {
@@ -218,7 +236,7 @@ void VXTimerGroupWheel_addTimeWheel(XTimerGroupWheel* group, size_t slotsCount)
         XMutex_lock(group->m_mutex);
 
     XVector_push_back_base(&group->m_timeWheel, &wheel);
-
+    ((XTimerGroupBase*)group)->m_max_time=calculate_max_time_range(group);
     if (group->m_mutex)
         XMutex_unlock(group->m_mutex);
 }
@@ -253,7 +271,7 @@ void VXTimerGroupWheel_removeTimeWheel(XTimerGroupWheel* group)
     }
     // 删除最后一个轮
     XVector_pop_back_base(&group->m_timeWheel);
-
+    ((XTimerGroupBase*)group)->m_max_time = calculate_max_time_range(group);
     if (group->m_mutex)
         XMutex_unlock(group->m_mutex);
 }

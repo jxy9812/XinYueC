@@ -15,8 +15,8 @@ typedef struct XTimerTimeWheel  XTimerTimeWheel;
 typedef struct XTimerGroupWheel XTimerGroupWheel;
 #define XTIMEGROUPWHEEL_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimerGroupWheel))       //XTimeGroupWheel虚函数表大小
 XCLASS_DEFINE_BEGING(XTimerGroupWheel)
-	EXTimeGroupWheel_Add_TimeWheel = XTIMERGROUPBASE_VTABLE_SIZE,
-	EXTimeGroupWheel_Remove_TimeWheel,
+XCLASS_DEFINE_ENUM(XTimerGroupWheel, Add_TimeWheel) = XCLASS_VTABLE_GET_SIZE(XTimerGroupBase),
+XCLASS_DEFINE_ENUM(XTimerGroupWheel, Remove_TimeWheel),
 XCLASS_DEFINE_END(XTimerGroupWheel)
 // 单个时间轮结构
 typedef struct XTimeWheel {
@@ -52,8 +52,13 @@ bool XTimerGroupWheel_hasActiveTimers(const XTimerGroupWheel* group);
 uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group);
 #define XTimerGroupWheel_addTimer_base				XTimerGroupBase_addTimer_base
 #define XTimerGroupWheel_removeTimer_base			XTimerGroupBase_removeTimer_base
+#define XTimerGroupWheel_timeRange					XTimerGroupBase_timeRange
 #define XTimerGroupWheel_handler_base				XTimerGroupBase_handler_base
 #define XTimerGroupWheel_delete_base				XTimerGroupBase_delete_base
+
+//全局时间轮
+XTimerGroupWheel*XTimerGroupWheel_global();
+
 #ifdef __cplusplus
 }
 #endif

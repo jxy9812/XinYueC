@@ -301,11 +301,8 @@ bool XMultiPool_is_from_pool(const XMultiPool* multi_pool, const void* ptr)
 }
 
 static XMultiPool* global_pool = NULL;
-XMultiPool* XMultiPool_global()
-{
-    return global_pool;
-}
-void XMultiPool_initGlobal()
+
+static void XMultiPool_initGlobal()
 {
     if (global_pool)return;
     global_pool = XMultiPool_create();
@@ -315,7 +312,12 @@ void XMultiPool_initGlobal()
     XMultiPool_add_pool(global_pool, XFixedPool_create(256, 10));
     XMultiPool_add_pool(global_pool, XFixedPool_create(512, 5));
 }
-
+XMultiPool* XMultiPool_global()
+{
+    if (!global_pool)
+        XMultiPool_initGlobal();
+    return global_pool;
+}
 void* XMultiPool_mallocGlobal(size_t size)
 {
     /*return XMalloc(size);*/

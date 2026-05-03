@@ -25,6 +25,14 @@ typedef struct XListDNode
 	char data[];             ///< 指向节点存储的实际数据的指针
 } XListDNode;
 /**
+* @brief 创建指定类型的双链表节点
+* @param type 节点存储的数据类型
+* @param mallocMethod内存分配方法
+* @return 新创建的节点指针，失败返回NULL
+* @note 内部通过内存分配函数创建节点，包含数据存储区
+*/
+#define XListDNode_Create(mallocMethod,Type)   (mallocMethod(ALIGN_UP(sizeof(XListDNode)+sizeof(Type),sizeof(void*))))
+/**
 * @brief 获取节点中数据的指针（地址）
 * @param Node 节点指针（XListDNode*类型）
 * @return 数据存储的地址（void**类型）

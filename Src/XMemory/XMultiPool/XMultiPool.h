@@ -121,8 +121,6 @@ void XMultiPool_free(XMultiPool* multi_pool, void* ptr);
 bool XMultiPool_is_from_pool(const XMultiPool* multi_pool, const void* ptr);
 
 XMultiPool* XMultiPool_global();
-//初始化默认的全局多级池
-void XMultiPool_initGlobal();
 //用全局池分配
 void* XMultiPool_mallocGlobal(size_t size);
 //全局池释放

@@ -35,14 +35,14 @@ void XTimerGroupWheel_addTimeWheel_base(XTimerGroupWheel* group, size_t slotsCou
 {
 	if (ISNULL(group, "") || ISNULL(slotsCount, "") || ISNULL(XClassGetVtable(group), ""))
 		return;
-	XClassGetVirtualFunc(group, EXTimeGroupWheel_Add_TimeWheel, void(*)(XTimerGroupWheel*, size_t))(group, slotsCount);
+	XClassGetVirtualFunc(group, EXTimerGroupWheel_Add_TimeWheel, void(*)(XTimerGroupWheel*, size_t))(group, slotsCount);
 }
 
 void XTimerGroupWheel_removeTimeWheel_base(XTimerGroupWheel* group)
 {
 	if (ISNULL(group, "") || ISNULL(XClassGetVtable(group), ""))
 		return;
-	XClassGetVirtualFunc(group, EXTimeGroupWheel_Remove_TimeWheel, void(*)(XTimerGroupWheel*))(group);
+	XClassGetVirtualFunc(group, EXTimerGroupWheel_Remove_TimeWheel, void(*)(XTimerGroupWheel*))(group);
 }
 
 void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex)
@@ -169,4 +169,20 @@ uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
 		XMutex_unlock(group->m_mutex);
 
 	return next_timeout;
+}
+static XTimerGroupWheel* global_XTimerGroupWheel = NULL;
+static void XTimerGroupWheel_global_init()
+{
+	if (global_XTimerGroupWheel)return;
+	global_XTimerGroupWheel = XTimerGroupWheel_create(1);;
+	XTimerGroupWheel_addTimeWheel_base(global_XTimerGroupWheel, 50);
+	XTimerGroupWheel_addTimeWheel_base(global_XTimerGroupWheel, 10);
+	XTimerGroupWheel_addTimeWheel_base(global_XTimerGroupWheel, 10);
+	
+}
+XTimerGroupWheel* XTimerGroupWheel_global()
+{
+	if (!global_XTimerGroupWheel)
+		XTimerGroupWheel_global_init();
+	return global_XTimerGroupWheel;
 }
