@@ -31,7 +31,6 @@ typedef struct XAbstractEventDispatcherPrivate
 {
     XVector* nativeFilters;///< 本地事件过滤器列表
     XVector* m_timerIds;//定时器id数组
-    XTimerGroupWheel* m_timerGroup;//定时器组
     XMutex* mutex;              ///< 保护 timers, sockets, nativeFilters 的互斥锁
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
@@ -78,7 +77,11 @@ XCLASS_DEFINE_END(XAbstractEventDispatcher)
 // ===================================================================
 // === 类结构体定义 ===================================================
 // ===================================================================
-
+typedef enum
+{
+    XDISPATCHER_THREAD_TYPE_WORKER,   // 子线程/工作线程
+    XDISPATCHER_THREAD_TYPE_MAIN     // 主线程
+} XDispatcherThreadType;
 /**
  * @brief XAbstractEventDispatcher 类结构体。
  *
@@ -87,6 +90,7 @@ XCLASS_DEFINE_END(XAbstractEventDispatcher)
 typedef struct XAbstractEventDispatcher 
 {
     XObject m_class; ///< 继承自 XObject
+    XDispatcherThreadType type;
     // 私有数据（PIMPL）
     XAbstractEventDispatcherPrivate* d_ptr;
 } XAbstractEventDispatcher;
@@ -271,7 +275,8 @@ void* XAbstractEventDispatcher_awake_signal(XAbstractEventDispatcher* self);
  */
 void* XAbstractEventDispatcher_aboutToBlock_signal(XAbstractEventDispatcher* self);
 
-
+XDispatcherThreadType XAbstractEventDispatcher_threadType(XAbstractEventDispatcher* self);
+bool XAbstractEventDispatcher_isMainThread(XAbstractEventDispatcher* self);
 #ifdef __cplusplus
 }
 #endif

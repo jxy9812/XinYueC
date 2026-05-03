@@ -28,7 +28,7 @@ void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision)
 	XContainerSetDataDeinitMethod(&group->m_timeWheel,XVector_deinit_base);
 	//group->m_timeWheel = XVector_Create(XTimeWheel);
 	group->m_class.m_current_tick = XTimerBase_getCurrentTime() / group->m_class.m_precision;
-	group->m_size = 0;
+	group->m_count = 0;
 }
 
 void XTimerGroupWheel_addTimeWheel_base(XTimerGroupWheel* group, size_t slotsCount)
@@ -56,6 +56,10 @@ void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex)
 	if (group->m_mutex)
 		XMutex_delete(group->m_mutex);
 	group->m_mutex = mutex;
+}
+size_t XTimerGroupWheel_count(XTimerGroupWheel* group)
+{
+	return group? group->m_count:0;
 }
 bool XTimerGroupWheel_hasActiveTimers(const XTimerGroupWheel* group)
 {
@@ -171,18 +175,24 @@ uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group)
 	return next_timeout;
 }
 static XTimerGroupWheel* global_XTimerGroupWheel = NULL;
+//static XMutex* global_mutex = NULL;
 static void XTimerGroupWheel_global_init()
 {
 	if (global_XTimerGroupWheel)return;
-	global_XTimerGroupWheel = XTimerGroupWheel_create(1);;
-	XTimerGroupWheel_addTimeWheel_base(global_XTimerGroupWheel, 50);
+	global_XTimerGroupWheel = XTimerGroupWheel_create(1);
+	XTimerGroupWheel_addTimeWheel_base(global_XTimerGroupWheel, 20);
 	XTimerGroupWheel_addTimeWheel_base(global_XTimerGroupWheel, 10);
 	XTimerGroupWheel_addTimeWheel_base(global_XTimerGroupWheel, 10);
-	
+	XTimerGroupWheel_setMutex(global_XTimerGroupWheel,XMutex_create(XLock_Spin));
 }
 XTimerGroupWheel* XTimerGroupWheel_global()
 {
 	if (!global_XTimerGroupWheel)
 		XTimerGroupWheel_global_init();
+	return global_XTimerGroupWheel;
+}
+
+bool XTimerGroupWheel_GlobalExists(void)
+{
 	return global_XTimerGroupWheel;
 }

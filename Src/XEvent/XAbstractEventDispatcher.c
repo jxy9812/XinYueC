@@ -31,8 +31,6 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
     dp->nativeFilters = XVector_Create(void*);
     dp->m_timerIds = XVector_Create(XTimerId);
     dp->mutex = XMutex_create(XLock_NonRecursive);
-    dp->m_timerGroup = XTimerGroupWheel_create(1);//高精度定时器
-
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
@@ -46,11 +44,6 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
     {
         XMutex_delete(dp->mutex);
         dp->mutex = NULL;
-    }
-    if (dp->m_timerGroup)
-    {
-        XTimerGroupWheel_delete_base(dp->m_timerGroup);
-        dp->m_timerGroup = NULL;
     }
     if (dp->m_timerIds)
     {
@@ -130,6 +123,15 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
 
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags)
 {
+    //先处理定时器任务
+    if (XAbstractEventDispatcher_isMainThread(self)&& XTimerGroupWheel_GlobalExists())
+    {
+        //XPrintf("轮询定时器中\n");
+        if(XTimerGroupWheel_count(XTimerGroupWheel_global()))
+        {
+            XTimerGroupWheel_handler_base(XTimerGroupWheel_global());
+        }
+    }
     size_t size = 0;
     //处理事件
     XVector* events = XThreadData_takePostedEvents();
@@ -438,4 +440,14 @@ void* XAbstractEventDispatcher_aboutToBlock_signal(XAbstractEventDispatcher* sel
     if (self)
         XObject_emitSignal(self, XAbstractEventDispatcher_aboutToBlock_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return XAbstractEventDispatcher_aboutToBlock_signal;
+}
+
+XDispatcherThreadType XAbstractEventDispatcher_threadType(XAbstractEventDispatcher* self)
+{
+    return self ? self->type: XDISPATCHER_THREAD_TYPE_WORKER;
+}
+
+bool XAbstractEventDispatcher_isMainThread(XAbstractEventDispatcher* self)
+{
+    return self ? self->type == XDISPATCHER_THREAD_TYPE_MAIN : false;
 }

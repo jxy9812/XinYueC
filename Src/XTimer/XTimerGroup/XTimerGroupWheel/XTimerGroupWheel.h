@@ -29,7 +29,7 @@ typedef struct XTimerGroupWheel
 	XTimerGroupBase m_class;//继承
 	XVector m_timeWheel;//多时间轮	/XVector<XTimeWheel>
 	XMutex* m_mutex;//互斥锁
-	size_t m_size;
+	size_t m_count;//正在管理的定时器数量
 }XTimerGroupWheel;
 XVtable* XTimerGroupWheel_class_init();
 XTimerGroupWheel* XTimerGroupWheel_create(uint16_t precision);
@@ -37,6 +37,7 @@ void XTimerGroupWheel_init(XTimerGroupWheel* group, uint16_t precision);
 void XTimerGroupWheel_addTimeWheel_base(XTimerGroupWheel* group,size_t slotsCount);
 void XTimerGroupWheel_removeTimeWheel_base(XTimerGroupWheel* group);
 void XTimerGroupWheel_setMutex(XTimerGroupWheel* group, XMutex* mutex);
+size_t XTimerGroupWheel_count(XTimerGroupWheel* group);
 /**
  * @brief 检查是否有活跃的定时器
  * @param group 定时器组轮
@@ -53,12 +54,15 @@ uint64_t XTimerGroupWheel_getNextTimeout(const XTimerGroupWheel* group);
 #define XTimerGroupWheel_addTimer_base				XTimerGroupBase_addTimer_base
 #define XTimerGroupWheel_removeTimer_base			XTimerGroupBase_removeTimer_base
 #define XTimerGroupWheel_timeRange					XTimerGroupBase_timeRange
+#define XTimerGroupWheel_min_time					XTimerGroupBase_min_time
+#define XTimerGroupWheel_max_time					XTimerGroupBase_max_time
 #define XTimerGroupWheel_handler_base				XTimerGroupBase_handler_base
 #define XTimerGroupWheel_delete_base				XTimerGroupBase_delete_base
 
 //全局时间轮
 XTimerGroupWheel*XTimerGroupWheel_global();
-
+//全局是否存在
+bool XTimerGroupWheel_GlobalExists(void);
 #ifdef __cplusplus
 }
 #endif

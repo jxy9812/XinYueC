@@ -21,29 +21,27 @@
 #include <string.h>
 #include <stdint.h>
 #include "XThreadData.h"
+#include "XTimerGroupWheel.h"
 #pragma comment(lib, "winmm.lib")
 //static  HANDLE ioCompletionPort=NULL;    // 全局 IOCP 句柄;
 /**
  * @brief 定时器信息结构体 (Windows 私有)
  */
 typedef struct {
+    bool isHighPrecision;       ///< 标记是否为高精度定时器 
+    bool isTimeWheel;//是否是时间轮
+    XTimerType timerType;       ///< 定时器类型
     XTimerId timerId;           ///< 定时器 ID
     union
     {
         UINT_PTR winTimerId;        ///< Windows 定时器 ID (来自 SetTimer)
         MMRESULT mmTimerId;         ///< 多媒体定时器 ID (来自 timeSetEvent)，用于高精度定时器
+        XTimerTimeWheel* m_wheel;  ///时间轮定时器
     };
-    bool isHighPrecision;       ///< 标记是否为高精度定时器 
-    XTimerType timerType;       ///< 定时器类型
     XObject* object;            ///< 关联的对象   
-    int64_t interval;           ///< 间隔 (纳秒)
     void* highResContext;       // 指向 HighResTimerContext 的指针
+    int64_t interval;           ///< 间隔 (纳秒)
 } XEventDispatcherWin32_TimerInfo;
-typedef enum
-{
-    THREAD_TYPE_MAIN,    // 主线程
-    THREAD_TYPE_WORKER   // 子线程/工作线程
-} ThreadType;
 /**
  * @brief Windows 主线程数据
  */
@@ -60,7 +58,6 @@ typedef struct
 typedef struct XEventDispatcherWin32
 {
     XAbstractEventDispatcher m_class; ///< 继承自 XObject
-    ThreadType type;
     HWND internalHwnd;          ///< 内部消息窗口句柄，用于接收定时器和网络事件
     bool interrupt;             ///< 中断标志，用于 interrupt()
     bool wakeUpSent;            ///< 标记是否已发送 WM_USER 消息用于 wakeUp()
@@ -80,11 +77,6 @@ bool IOCP_bind(XSocketDescriptor socket,XObject* obj);
 
 #define PlatformPrivate(Dispatcher)  ((MainThreadDataPrivate*)((XAbstractEventDispatcher*)Dispatcher)->d_ptr)
 #define GetXMutex(Dispatcher)         PlatformPrivate(Dispatcher)->m_dp.mutex
-
-static inline int IsMainThread(XEventDispatcherWin32* dispatcher)
-{
-    return dispatcher ? dispatcher->type== THREAD_TYPE_MAIN: THREAD_TYPE_WORKER;
-}
 // ========================
 // XHashMap 键比较和哈希函数 (用于 timers 和 sockets)
 // ========================
@@ -203,6 +195,7 @@ static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* disp
             if(timerEvent)
             {
                 timerEvent->posted = true;
+                timerEvent->spontaneous = true;
                 XCoreApplication_postEvent(timerInfo->object, timerEvent, XEVENT_PRIORITY_NORMAL);
             }
         }
@@ -314,14 +307,14 @@ static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispa
     }
 
     // 3. 处理 IOCP（仅主线程）
-    if (IsMainThread(dispatcher))
+    if (XAbstractEventDispatcher_isMainThread(dispatcher))
     {
         IOCP_handle(dispatcher);
     }
 
     // 4. 关键修复：正确判断是否需要等待
     // 只有当确实没有任何事件需要处理时，才进入等待状态
-    if (!IsMainThread(dispatcher)) // 子线程
+    if (!XAbstractEventDispatcher_isMainThread(dispatcher)) // 子线程
     {
         // 检查是否还有未处理的 Windows 消息（非阻塞检查）
         bool hasPendingMessages = false;
@@ -467,6 +460,18 @@ static void CALLBACK XEventDispatcherWin32_HighResTimerCallback(
         );
     }
 }
+static void XTimerTimeWheelCallback(void* userData, XTimerTimeWheel* timer)
+{
+    XObject* object = (XObject*)userData;
+    if (!object)return;
+    XEvent* timerEvent = XEventTimer_create(XTimerTimeWheel_timerId(timer));
+    if (timerEvent)
+    {
+        timerEvent->posted = true;
+        timerEvent->spontaneous = true;
+        XCoreApplication_postEvent(object, timerEvent, XEVENT_PRIORITY_NORMAL);
+    }
+}
 static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, XTimerId timerId, XDuration intervalNs, XTimerType timerType, XObject* object)
 {
     if (!timerId || !intervalNs || !object)return;
@@ -487,12 +492,40 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
     timerInfo.timerType = timerType;
     timerInfo.object = object;
     timerInfo.isHighPrecision = false; // 默认为普通定时器
+    timerInfo.isTimeWheel = false;
     timerInfo.highResContext = NULL;
     // --- 核心逻辑：根据 XTimerType 决定使用哪种定时器 ---
     if (timerType == XTimerType_PreciseTimer) {
         // --- 使用高精度多媒体定时器 ---
         timerInfo.isHighPrecision = true;
+        XTimerGroupWheel* group = XTimerGroupWheel_global();
+        if (group&& XTimerGroupWheel_max_time(group)> intervalMs)
+        {//范围达标使用时间轮定时器
+            XTimerTimeWheel* timer = XTimerTimeWheel_create();
+            if(timer)
+            {
+                XTimerTimeWheel_setAutoDelete(timer, true);
+                //XTimerTimeWheel_setGroup(timer, group);
+               
+                XTimerTimeWheel_setTimerId(timer, timerId);
+                XTimerTimeWheel_setInterval(timer, intervalMs);
+                //XTimerTimeWheel_setTimeout(timer, 15);
+                XTimerTimeWheel_setTimerCallback(timer, XTimerTimeWheelCallback);
+                XTimerTimeWheel_setUserData(timer, object);
 
+                if (XTimerGroupWheel_addTimer_base(group, timer))
+                {
+                    timerInfo.isTimeWheel = true;
+                    timerInfo.m_wheel = timer;
+                    goto save;
+                }
+                else
+                {
+                    XTimerTimeWheel_deleteLater(timer);
+                }
+            }
+
+        }
         // 全局设置系统时钟精度（仅在第一个高精度定时器注册时调用）
         if (!d->timePeriodSet) {
             timeBeginPeriod(1); // 请求 1ms 系统时钟精度
@@ -552,7 +585,7 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
         timerInfo.isHighPrecision = false;
         timerInfo.winTimerId = SetTimer(self->internalHwnd, (UINT_PTR)timerId, uInterval, NULL);
     }
-
+save:
     // 保存到 timers 表（无论哪种方式，只要有一个ID有效）
     bool hasValidId = (timerInfo.isHighPrecision && timerInfo.mmTimerId != 0) ||
         (!timerInfo.isHighPrecision && timerInfo.winTimerId != 0);
@@ -622,7 +655,14 @@ static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed,
     }
     if (timerInfo->isHighPrecision) 
     {
-        if (timerInfo->mmTimerId != 0) 
+        if (timerInfo->isTimeWheel)
+        {
+            //timerInfo->m_wheel->m_class.m_isRun = false;
+            XTimerTimeWheel_setUserData(timerInfo->m_wheel,NULL);
+            XTimerGroupWheel_removeTimer_base(XTimerGroupWheel_global(), timerInfo->m_wheel);
+            //XTimerTimeWheel_stop_base(timerInfo->m_wheel);
+        }
+        else if (timerInfo->mmTimerId != 0) 
         {
             XEventContext_Timer* ctx = (XEventContext_Timer*)timerInfo->highResContext;
             ctx->id = 0;
@@ -668,7 +708,11 @@ static bool VXEventDispatcherWin32_unregisterTimers(XAbstractEventDispatcher* ed
         {
             if (timerInfo->isHighPrecision) 
             {
-                if (timerInfo->mmTimerId != 0) 
+                if (timerInfo->isTimeWheel)
+                {
+                    XTimerTimeWheel_stop_base(timerInfo->m_wheel);
+                }
+                else if (timerInfo->mmTimerId != 0) 
                 {
                     XEventContext_Timer* ctx = (XEventContext_Timer*)timerInfo->highResContext;
                     ctx->id = 0;
@@ -909,7 +953,7 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
             XMemory_free(self);
             return NULL;
         }
-        self->type = THREAD_TYPE_MAIN;
+        ((XAbstractEventDispatcher*)self)->type = XDISPATCHER_THREAD_TYPE_MAIN;
         XAbstractEventDispatcherPrivate_init(&d->m_dp);
         //d->m_dp.m_timerIds = XVector_Create(XTimerId);
         d->timers = NULL;
@@ -932,7 +976,7 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
     else
     {
       
-        self->type = THREAD_TYPE_WORKER;
+        ((XAbstractEventDispatcher*)self)->type = XDISPATCHER_THREAD_TYPE_WORKER;
     }
     self->m_class.d_ptr = d;
 
@@ -953,7 +997,7 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
 
     if (!self->internalHwnd)
     {
-        if(self->type== THREAD_TYPE_MAIN)
+        if(XAbstractEventDispatcher_isMainThread(self))
         {
             XHashMap_delete_base(d->timers);
             XHashMap_delete_base(d->sockets);

@@ -21,22 +21,28 @@ typedef struct XTimerTimeWheel
 XVtable* XTimerTimeWheel_class_init();
 XTimerTimeWheel* XTimerTimeWheel_create();
 void XTimerTimeWheel_init(XTimerTimeWheel* timer);
-#define XTimerTimeWheel_delete_base XTimerBase_deleteLater
-#define XTimerTimeWheel_start_base XTimerBase_start_base
-#define XTimerTimeWheel_stop_base XTimerBase_stop_base
+#define XTimerTimeWheel_deleteLater				XTimerBase_deleteLater
+#define XTimerTimeWheel_start_base				XTimerBase_start_base
+#define XTimerTimeWheel_stop_base				XTimerBase_stop_base
+#define XTimerTimeWheel_setAutoDelete			XTimerBase_setAutoDelete
+#define XTimerTimeWheel_setTimerId				XTimerBase_setTimerId
+#define XTimerTimeWheel_timerId					XTimerBase_timerId
 //设置定时时间
-#define XTimerTimeWheel_setTimeout XTimerBase_setTimeout
-#define XTimerTimeWheel_setInterval XTimerBase_setInterval
-#define XTimerTimeWheel_setUserData XTimerBase_setUserData
-#define XTimerTimeWheel_setTimerCallback XTimerBase_setTimerCallback
-#define XTimerTimeWheel_setGroup	XObject_setParent
+#define XTimerTimeWheel_setTimeout				XTimerBase_setTimeout
+#define XTimerTimeWheel_setInterval				XTimerBase_setInterval
+#define XTimerTimeWheel_interval				XTimerBase_interval
+#define XTimerTimeWheel_setUserData				XTimerBase_setUserData
+#define XTimerTimeWheel_setTimerCallback		XTimerBase_setTimerCallback
+#define XTimerTimeWheel_setGroup				XObject_setParent
 // 是否为周期性任务
-#define XTimerTimeWheel_isPeriodic XTimerBase_isPeriodic
-#define XTimerTimeWheel_isRunning XTimerBase_isRunning
-#define XTimerTimeWheel_timeout XTimerBase_timeout
-#define XTimerTimeWheel_interval XTimerBase_interval
-#define XTimerTimeWheel_group XObject_parent
-#define XTimerTimeWheel_userData XTimerBase_userData
+#define XTimerTimeWheel_setSingleShot			XTimerBase_setSingleShot
+#define XTimerTimeWheel_isSingleShot			XTimerBase_isSingleShot
+#define XTimerTimeWheel_isPeriodic				XTimerBase_isPeriodic
+#define XTimerTimeWheel_isRunning				XTimerBase_isRunning
+#define XTimerTimeWheel_timeout					XTimerBase_timeout
+#define XTimerTimeWheel_interval				XTimerBase_interval
+#define XTimerTimeWheel_group					XObject_parent
+#define XTimerTimeWheel_userData				XTimerBase_userData
 //超时回调函数
 #define XTimerTimeWheel_out XTimerBase_out
 #ifdef __cplusplus
