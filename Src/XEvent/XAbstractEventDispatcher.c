@@ -94,10 +94,10 @@ XVtable* XAbstractEventDispatcher_class_init(void)
 
 XAbstractEventDispatcher* XAbstractEventDispatcher_create(XObject* parent)
 {
-    XAbstractEventDispatcher* self = (XAbstractEventDispatcher*)XMemory_malloc(sizeof(XAbstractEventDispatcher));
+    XAbstractEventDispatcher* self = (XAbstractEventDispatcher*)XMalloc_System(sizeof(XAbstractEventDispatcher));
     if (self) {
         XAbstractEventDispatcher_init(self, parent);
-        Set_Class_MemoryFree(self, XFree);
+        Set_Class_MemoryFree(self, XFree_System);
     }
     return self;
 }
@@ -137,18 +137,8 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     XVector* events = XThreadData_takePostedEvents();
     if (!events)
     {
-        //if (flags & XEventLoop_WaitForMoreEvents)
-        //{
-        //    if(self->d_ptr->wait)
-        //    {
-        //        XThreadData* data = XThreadData_current();
-        //        XMutex_lock(data->m_mutex);
-        //        if(XVector_isEmpty_base(&data->m_postEventList))
-        //            XWaitCondition_wait(self->d_ptr->wait, data->m_mutex, 1);
-        //        XMutex_unlock(data->m_mutex);
-        //        //XPrintf("线程唤醒\n");
-        //    }
-        //}
+      /*  if (XAbstractEventDispatcher_isMainThread(self))
+            XThread_yieldCurrentThread();*/
         return false;
     }
     for_each_iterator(events, XVector, it)
@@ -170,6 +160,10 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
             //XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
             continue; // 跳过定时器事件
         }
+        /*if (ePost->event->type == XEVENT_TYPE_META_CALL)
+        {
+            XPrintf("XEventMetaCall:%p 出问题了\n", ePost->event);
+        }*/
         if (!ePost->receiver||ePost->receiver->is_deleting_children)
         {
             XEvent_delete_base(ePost->event);
@@ -183,8 +177,8 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
     if(size< XVector_size_base(events))
         XThreadData_push_front_list(events);
-    XVector_clear_base(events);
-    //XVector_delete_base(events);
+    //XVector_clear_base(events);
+    XVector_delete_base(events);
 
     return size;
 }

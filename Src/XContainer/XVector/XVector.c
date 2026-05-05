@@ -6,9 +6,9 @@ XVector* XVector_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XVector* this_vector = XMemory_malloc(sizeof(XVector));
+	XVector* this_vector = XMalloc_System(sizeof(XVector));
 	XVector_init(this_vector,typeSize);
-	Set_Class_MemoryFree(this_vector, XFree);
+	Set_Class_MemoryFree(this_vector, XFree_System);
 	return this_vector;
 }
 
@@ -34,8 +34,7 @@ bool XVector_resize_base(XVector* this_vector, size_t size)
 {
 	if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
 		return false;
-	typedef bool (*funcPtr)(XVector*, size_t);
-	XClassGetVirtualFunc(this_vector, EXVector_Resize, funcPtr)(this_vector, size);
+	return XClassGetVirtualFunc(this_vector, EXVector_Resize, bool (*)(XVector*, size_t))(this_vector, size);
 }
 
 bool XVector_push_front_base(XVector* this_vector, void* pvValue)

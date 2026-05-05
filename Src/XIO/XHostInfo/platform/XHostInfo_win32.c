@@ -40,7 +40,7 @@ static char* wide_to_utf8(const wchar_t* wstr) {
     if (!wstr) return NULL;
     int len = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, NULL, 0, NULL, NULL);
     if (len <= 0) return NULL;
-    char* utf8 = (char*)XMemory_malloc(len);
+    char* utf8 = (char*)XMalloc_System(len);
     if (!utf8) return NULL;
     WideCharToMultiByte(CP_UTF8, 0, wstr, -1, utf8, len, NULL, NULL);
     return utf8;
@@ -49,7 +49,7 @@ static char* wide_to_utf8(const wchar_t* wstr) {
 // Helper: Append address from ADDRINFOW to XHostInfoPrivate
 static void appendAddressFromAddrInfoW(XHostInfoPrivate* d, ADDRINFOW* ai) {
     if (!d || !ai) return;
-    XHostAddress* newAddrs = (XHostAddress*)XMemory_realloc(
+    XHostAddress* newAddrs = (XHostAddress*)XCalloc_System(
         d->addresses, (d->addressCount + 1) * sizeof(XHostAddress));
     if (!newAddrs) return;
     d->addresses = newAddrs;
@@ -92,7 +92,7 @@ XHostInfo* XHostInfo_platform_fromName(const char* name) {
         XHostInfo_setErrorString(info, "Failed to convert hostname to wide string");
         return info;
     }
-    wchar_t* wname = (wchar_t*)XMemory_malloc(wlen * sizeof(wchar_t));
+    wchar_t* wname = (wchar_t*)XMalloc_System(wlen * sizeof(wchar_t));
     if (!wname) {
         XHostInfo_setError(info, XHostInfo_UnknownError);
         XHostInfo_setErrorString(info, "Out of memory");
@@ -108,7 +108,7 @@ XHostInfo* XHostInfo_platform_fromName(const char* name) {
 
     ADDRINFOW* result = NULL;
     int ret = GetAddrInfoW(wname, NULL, &hints, &result);
-    XMemory_free(wname);
+    XFree_System(wname);
 
     if (ret != 0) {
         // Map Windows error to human-readable string
@@ -120,7 +120,7 @@ XHostInfo* XHostInfo_platform_fromName(const char* name) {
         XHostInfo_setError(info, XHostInfo_HostNotFound);
         if (msg) {
             XHostInfo_setErrorString(info, msg);
-            XMemory_free(msg);
+            XFree_System(msg);
         }
         else {
             XHostInfo_setErrorString(info, "DNS lookup failed");

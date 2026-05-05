@@ -65,8 +65,8 @@ XVtable* XListSLinked_class_init()
 #endif
     return XVTABLE_DEFAULT;
 }
-#define CreatNode(this_list)    XMemory_malloc(ALIGN_UP(sizeof(XListSNode)+XContainerTypeSize(this_list),sizeof(void*)))
-//#define CreatNode(this_list)   (XMemory_malloc(sizeof(XListSNode)+XContainerTypeSize(this_list)))
+#define CreatNode(this_list)    XMalloc_System(ALIGN_UP(sizeof(XListSNode)+XContainerTypeSize(this_list),sizeof(void*)))
+//#define CreatNode(this_list)   (XMalloc_System(sizeof(XListSNode)+XContainerTypeSize(this_list)))
 
 bool VXListBase_push_front_node(XListSLinked* this_list, XListSNode* node)
 {
@@ -234,7 +234,7 @@ size_t VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, const v
                 if (XContainerDataDeinitMethod(this_list) != NULL) {
                     XContainerDataDeinitMethod(this_list)(&temp->data);
                 }
-                XMemory_free(temp);
+                XFree_System(temp);
             }
             return 0;
         }
@@ -311,7 +311,7 @@ static void removeNode(XListSLinked* this_list, XListSNode* prev, XListSNode* re
     }
     if (XContainerDataDeinitMethod(this_list) != NULL)
         XContainerDataDeinitMethod(this_list)(&(removeNode->data));
-    XMemory_free(removeNode);
+    XFree_System(removeNode);
     //更新数量
     --XContainerSize(this_list);
     --XContainerCapacity(this_list);
@@ -406,7 +406,7 @@ void VXList_clear(XListSLinked* this_list)
         node = node->next;
         if (XContainerDataDeinitMethod(this_list) != NULL)
             XContainerDataDeinitMethod(this_list)(&(prev->data));
-        XMemory_free(prev);
+        XFree_System(prev);
     }
     this_list->m_tail = NULL;
     XContainerDataPtr(this_list) = NULL;
@@ -473,7 +473,7 @@ static XListSNode* List_OneSort(XListSNode* left, XListSNode* right, size_t type
     if (left == NULL || right == NULL || left == right)
         return left;
 
-    void* pivot = XMemory_malloc(typeSize);
+    void* pivot = XMalloc_System(typeSize);
     if (pivot == NULL) return NULL;
     memcpy(pivot, &(left->data), typeSize);
 
@@ -488,23 +488,23 @@ static XListSNode* List_OneSort(XListSNode* left, XListSNode* right, size_t type
             i = i->next;
             // 交换i和j的数据
 
-            void* temp = XMemory_malloc(typeSize);
+            void* temp = XMalloc_System(typeSize);
             memcpy(temp, &(i->data), typeSize);
             memcpy(&(i->data), &(j->data), typeSize);
             memcpy(&(j->data), temp, typeSize);
-            XMemory_free(temp);
+            XFree_System(temp);
         }
         if (j == right) break;  // 到达右边界
         j = j->next;
     }
 
     // 将pivot放到正确位置
-    void* temp = XMemory_malloc(typeSize);
+    void* temp = XMalloc_System(typeSize);
     memcpy(temp, &(i->data), typeSize);
     memcpy(&(i->data), &(left->data), typeSize);
     memcpy(&(left->data), temp, typeSize);
-    XMemory_free(temp);
-    XMemory_free(pivot);
+    XFree_System(temp);
+    XFree_System(pivot);
 
     return i;  // 返回分区点
 }
@@ -602,7 +602,7 @@ void VXClass_move(XListSLinked* object, XListSLinked* src)
 void VXList_deinit(XListSLinked* this_list)
 {
     XListBase_clear_base(this_list);
-    //XMemory_free(this_list);
+    //XFree_System(this_list);
 }
 
 #endif

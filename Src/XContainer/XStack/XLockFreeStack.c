@@ -64,11 +64,11 @@ XLockFreeStack* XLockFreeStack_create(size_t typeSize, size_t capacity)
     if (ISNULL(typeSize, "") || ISNULL(capacity, ""))
         return NULL;
 
-    XLockFreeStack* this_stack = XMemory_malloc(sizeof(XLockFreeStack));
+    XLockFreeStack* this_stack = XMalloc_System(sizeof(XLockFreeStack));
     if (!this_stack) return NULL;
 
     XLockFreeStack_init(this_stack, typeSize, capacity);
-    Set_Class_MemoryFree(this_stack, XFree);
+    Set_Class_MemoryFree(this_stack, XFree_System);
     return this_stack;
 }
 
@@ -144,14 +144,13 @@ bool VXLockFreeStack_push(XLockFreeStack* this_stack, void* pvValue, XCDataCreat
 {
     if (!this_stack || !pvValue) return false;
 
-    size_t old_top_packed;
+    size_t old_top_packed = XAtomic_load_size_t(&(this_stack->m_top), XAtomic_MemoryOrder_Relaxed);
     size_t new_top_packed;
     size_t old_top_index, new_top_index;
 
     // 循环尝试直到成功或栈满
     while (1) {
         // 1. 读取当前栈顶
-        old_top_packed = XAtomic_load_size_t(&(this_stack->m_top), XAtomic_MemoryOrder_Relaxed);
         old_top_index = XAtomic_unpack_index(old_top_packed, this_stack->m_index_mask);
 
         // 2. 检查栈是否已满
@@ -221,12 +220,11 @@ bool VXLockFreeStack_receive(XLockFreeStack* this_stack, void* pvBuffer)
 {
     if (!this_stack) return false;
 
-    size_t old_top_packed;
+    size_t old_top_packed = XAtomic_load_size_t(&(this_stack->m_top), XAtomic_MemoryOrder_Relaxed);
     size_t new_top_packed;
     size_t old_top_index, new_top_index;
 
     while (1) {
-        old_top_packed = XAtomic_load_size_t(&(this_stack->m_top), XAtomic_MemoryOrder_Relaxed);
         old_top_index = XAtomic_unpack_index(old_top_packed, this_stack->m_index_mask);
 
         if (old_top_index == 0)

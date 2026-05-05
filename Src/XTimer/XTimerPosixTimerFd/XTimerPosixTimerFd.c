@@ -103,10 +103,10 @@ XVtable* XTimerPosixTimerFd_class_init() {
 }
 
 XTimerPosixTimerFd* XTimerPosixTimerFd_create() {
-    XTimerPosixTimerFd* timer = XMemory_malloc(sizeof(XTimerPosixTimerFd));
+    XTimerPosixTimerFd* timer = XMalloc_System(sizeof(XTimerPosixTimerFd));
     if (timer) {
         XTimerPosixTimerFd_init(timer);
-        Set_Class_MemoryFree(timer, XFree);
+        Set_Class_MemoryFree(timer, XFree_System);
     }
     return timer;
 }

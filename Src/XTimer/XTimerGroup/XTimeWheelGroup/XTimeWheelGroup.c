@@ -4,7 +4,6 @@
 #include"XStack.h"
 #include"XThreadData.h"
 #include"XCoreApplication.h"
-#include"XMultiPool.h"
 #include<string.h>
 // 单个时间轮结构
 typedef struct XTimeWheel {
@@ -21,17 +20,18 @@ typedef struct XTimerWheelData
 // 内联函数：分配包含 XTimerWheelData 的链表节点
 static inline XListSNode* alloc_timer_node(void)
 {
-    return XListSNode_Create(XMalloc, XTimerWheelData);
-    //return XListSNode_Create(XMultiPool_global_malloc, XTimerWheelData);
-    //return XMultiPool_global_malloc(2*sizeof(XTimerWheelData));
+    //XPrintf("XListSNode准备创建\n");
+    XListSNode* node= XListSNode_Create(XMalloc_MultiPool, XTimerWheelData);
+    //XPrintf("XListSNode:%p 创建\n", node);
+    return node;
 }
 
 // 内联函数：释放链表节点（仅供 delete_timer_node 使用）
 static inline void free_timer_node(XListSNode* node)
 {
     if (node) {
-        XFree(node);
-        //XMultiPool_global_free(node);
+        //XFree_System(node);
+        XFree_MultiPool(node);
     }
 }
 
@@ -463,11 +463,11 @@ XTimeWheelGroup* XTimeWheelGroup_create(uint16_t precision)
 {
     if (precision == 0)
         return NULL;
-    XTimeWheelGroup* group = XMemory_malloc(sizeof(XTimeWheelGroup));
+    XTimeWheelGroup* group = XMalloc_System(sizeof(XTimeWheelGroup));
     if (group == NULL)
         return group;
     XTimeWheelGroup_init(group, precision);
-    Set_Class_MemoryFree(group, XFree);
+    Set_Class_MemoryFree(group, XFree_System);
     return group;
 }
 

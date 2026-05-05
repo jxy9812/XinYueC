@@ -36,10 +36,10 @@ XVtable* XEventTransition_class_init()
 }
 
 XEventTransition* XEventTransition_create(XEventType eventType) {
-    XEventTransition* transition = (XEventTransition*)XMemory_malloc(sizeof(XEventTransition));
+    XEventTransition* transition = (XEventTransition*)XMalloc_System(sizeof(XEventTransition));
     if (transition) {
         XEventTransition_init(transition, eventType);
-        Set_Class_MemoryFree(transition, XFree);
+        Set_Class_MemoryFree(transition, XFree_System);
     }
     return transition;
 }

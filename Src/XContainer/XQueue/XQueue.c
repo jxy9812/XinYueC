@@ -22,9 +22,9 @@ XQueue* XQueue_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XQueue* this_queue = XMemory_malloc(sizeof(XQueue));
+	XQueue* this_queue = XMalloc_System(sizeof(XQueue));
 	XQueue_init(this_queue, typeSize);
-	Set_Class_MemoryFree(this_queue, XFree);
+	Set_Class_MemoryFree(this_queue, XFree_System);
 	return this_queue;
 }
 

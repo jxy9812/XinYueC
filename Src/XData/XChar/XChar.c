@@ -1505,11 +1505,11 @@ int64_t XUTF8_to_gbk_stream(const char* utf8_str, size_t input_size, char* gbk_b
     int wchar_len = MultiByteToWideChar(CP_UTF8, 0, utf8_str, (int)utf8_len, NULL, 0);
     if (wchar_len <= 0) return -1;
 
-    wchar_t* wstr = (wchar_t*)XMemory_malloc(sizeof(wchar_t) * (wchar_len + 1));
+    wchar_t* wstr = (wchar_t*)XMalloc_System(sizeof(wchar_t) * (wchar_len + 1));
     if (!wstr) return -1;
 
     if (MultiByteToWideChar(CP_UTF8, 0, utf8_str, (int)utf8_len, wstr, wchar_len) != wchar_len) {
-        XMemory_free(wstr);
+        XFree_System(wstr);
         return -1;
     }
     wstr[wchar_len] = L'\0';
@@ -1517,30 +1517,30 @@ int64_t XUTF8_to_gbk_stream(const char* utf8_str, size_t input_size, char* gbk_b
     // 计算GBK所需大小
     int gbk_len = WideCharToMultiByte(CP_ACP, 0, wstr, wchar_len, NULL, 0, NULL, NULL);
     if (gbk_len <= 0) {
-        XMemory_free(wstr);
+        XFree_System(wstr);
         return -1;
     }
 
     // 仅返回大小
     if (!gbk_buf || max_len == 0) {
-        XMemory_free(wstr);
+        XFree_System(wstr);
         return (int64_t)gbk_len;
     }
 
     // 检查缓冲区
     if (max_len < (size_t)gbk_len + 1) {
-        XMemory_free(wstr);
+        XFree_System(wstr);
         return -1;
     }
 
     // 转换为GBK
     if (WideCharToMultiByte(CP_ACP, 0, wstr, wchar_len, gbk_buf, gbk_len, NULL, NULL) != gbk_len) {
-        XMemory_free(wstr);
+        XFree_System(wstr);
         return -1;
     }
     gbk_buf[gbk_len] = '\0';
 
-    XMemory_free(wstr);
+    XFree_System(wstr);
     return (int64_t)gbk_len;
 
 #elif defined(__linux__)
@@ -1618,11 +1618,11 @@ int64_t XGBK_to_utf8_stream(const char* gbk_str, size_t input_size, char* utf8_b
     int wchar_len = MultiByteToWideChar(CP_ACP, 0, gbk_str, (int)gbk_len, NULL, 0);
     if (wchar_len <= 0) return -1;
 
-    wchar_t* wstr = (wchar_t*)XMemory_malloc(sizeof(wchar_t) * (wchar_len + 1));
+    wchar_t* wstr = (wchar_t*)XMalloc_System(sizeof(wchar_t) * (wchar_len + 1));
     if (!wstr) return -1;
 
     if (MultiByteToWideChar(CP_ACP, 0, gbk_str, (int)gbk_len, wstr, wchar_len) != wchar_len) {
-        XMemory_free(wstr);
+        XFree_System(wstr);
         return -1;
     }
     wstr[wchar_len] = L'\0';
@@ -1630,30 +1630,30 @@ int64_t XGBK_to_utf8_stream(const char* gbk_str, size_t input_size, char* utf8_b
     // 计算UTF-8所需大小
     int utf8_len = WideCharToMultiByte(CP_UTF8, 0, wstr, wchar_len, NULL, 0, NULL, NULL);
     if (utf8_len <= 0) {
-        XMemory_free(wstr);
+        XFree_System(wstr);
         return -1;
     }
 
     // 仅返回大小
     if (!utf8_buf || max_len == 0) {
-        XMemory_free(wstr);
+        XFree_System(wstr);
         return (int64_t)utf8_len;
     }
 
     // 检查缓冲区
     if (max_len < (size_t)utf8_len + 1) {
-        XMemory_free(wstr);
+        XFree_System(wstr);
         return -1;
     }
 
     // 转换为UTF-8
     if (WideCharToMultiByte(CP_UTF8, 0, wstr, wchar_len, utf8_buf, utf8_len, NULL, NULL) != utf8_len) {
-        XMemory_free(wstr);
+        XFree_System(wstr);
         return -1;
     }
     utf8_buf[utf8_len] = '\0';
 
-    XMemory_free(wstr);
+    XFree_System(wstr);
     return (int64_t)utf8_len;
 #elif defined(__linux__)
     // Linux使用iconv转换

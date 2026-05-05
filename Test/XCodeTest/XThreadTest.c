@@ -41,7 +41,7 @@ static void threadFunc(XThread* thread, XVarList* list)
 		XCoreApplication_quit();
 	}
 	
-	//XThread_deleteLater(thread);
+	XThread_deleteLater(thread);
 }
 void XThreadTest()
 {
@@ -53,7 +53,7 @@ void XThreadTest()
 		{
 			XAtomic_fetch_add_int32(rt, 1, XAtomic_MemoryOrder_Relaxed);
 			XThread* th = XThread_create_func(threadFunc, XVarList_Create(XVar(XAtomic_int32_t*, rt)));
-			XObject_connect1(th, XSignal(XThread_finished_signal), th, XThread_deleteLater, XConnectionType_Auto);
+			//XObject_connect1(th, XSignal(XThread_finished_signal), th, XThread_deleteLater, XConnectionType_Auto);
 			//XPrintf("XThread:%p XVector* children:%p\n", th, ((XObject*)th)->children);
 			if (!XThread_start(th))
 			{

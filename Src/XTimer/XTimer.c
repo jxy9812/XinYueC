@@ -145,7 +145,7 @@ XTimer* XTimer_create()
 	if (timer == NULL)
 		return timer;
 	XTimer_init(timer);
-	Set_Class_MemoryFree(timer, XFree);
+	Set_Class_MemoryFree(timer, XFree_System);
 	return timer;
 }
 

@@ -147,7 +147,7 @@ static bool try_acquire_write_recursive(XReadWriteLock* rwlock)
 
 XReadWriteLock* XReadWriteLock_create(XLock_Type type)
 {
-	XReadWriteLock* rwlock = (XReadWriteLock*)XMemory_malloc(XReadWriteLock_typetSize(type));
+	XReadWriteLock* rwlock = (XReadWriteLock*)XMalloc_System(XReadWriteLock_typetSize(type));
 	XReadWriteLock_init(rwlock, type);
 	return rwlock;
 }
@@ -196,7 +196,7 @@ void XReadWriteLock_delete(XReadWriteLock* rwlock)
 {
 	if (rwlock) {
 		XReadWriteLock_deinit(rwlock);
-		XMemory_free(rwlock);
+		XFree_System(rwlock);
 	}
 }
 XLock_Type XReadWriteLock_type(XReadWriteLock* rwlock)

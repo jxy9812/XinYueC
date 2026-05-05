@@ -35,7 +35,7 @@ static bool expand_used_indices(XEpoll* epoll) {
     int new_capacity = epoll->used_capacity * 3 / 2;
     if (new_capacity <= epoll->used_capacity) new_capacity = epoll->used_capacity + 16;
 
-    int* new_indices = (int*)XMemory_realloc(
+    int* new_indices = (int*)XCalloc_System(
         epoll->used_indices, new_capacity * sizeof(int)
     );
     if (!new_indices) return false;
@@ -74,24 +74,24 @@ bool XEpoll_init(XEpoll* epoll, int size) {
     epoll->count = 0;
 
     // 分配事件表（存储完整XEpollEvent）
-    epoll->events = (XEpollEventEntry*)XMemory_calloc(
+    epoll->events = (XEpollEventEntry*)XCalloc_System(
         size, sizeof(XEpollEventEntry)
     );
     if (!epoll->events) return false;
 
     // 初始化已使用索引数组
     epoll->used_capacity = (size + 3) / 4;
-    epoll->used_indices = (int*)XMemory_malloc(epoll->used_capacity * sizeof(int));
+    epoll->used_indices = (int*)XMalloc_System(epoll->used_capacity * sizeof(int));
     if (!epoll->used_indices) {
-        XMemory_free(epoll->events);
+        XFree_System(epoll->events);
         return false;
     }
 
     // 创建epoll实例
     epoll->epoll_fd = epoll_create1(EPOLL_CLOEXEC);
     if (epoll->epoll_fd == -1) {
-        XMemory_free(epoll->events);
-        XMemory_free(epoll->used_indices);
+        XFree_System(epoll->events);
+        XFree_System(epoll->used_indices);
         return false;
     }
 
@@ -99,19 +99,19 @@ bool XEpoll_init(XEpoll* epoll, int size) {
     epoll->fdToIndexMap = XHashMap_Create(int, int, int_compare);
     if (!epoll->fdToIndexMap) {
         close(epoll->epoll_fd);
-        XMemory_free(epoll->events);
-        XMemory_free(epoll->used_indices);
+        XFree_System(epoll->events);
+        XFree_System(epoll->used_indices);
         return false;
     }
 
     // 初始化空闲索引栈
-    epoll->free_indices = (int*)XMemory_malloc(size * sizeof(int));
+    epoll->free_indices = (int*)XMalloc_System(size * sizeof(int));
     epoll->free_top = 0;
     if (!epoll->free_indices) {
         XHashMap_delete_base(epoll->fdToIndexMap);
         close(epoll->epoll_fd);
-        XMemory_free(epoll->events);
-        XMemory_free(epoll->used_indices);
+        XFree_System(epoll->events);
+        XFree_System(epoll->used_indices);
         return false;
     }
     for (int i = 0; i < size; i++) {
@@ -122,9 +122,9 @@ bool XEpoll_init(XEpoll* epoll, int size) {
 }
 
 XEpoll* XEpoll_create(int size) {
-    XEpoll* epoll = (XEpoll*)XMemory_malloc(sizeof(struct XEpoll));
+    XEpoll* epoll = (XEpoll*)XMalloc_System(sizeof(struct XEpoll));
     if (epoll && !XEpoll_init(epoll, size)) {
-        XMemory_free(epoll);
+        XFree_System(epoll);
         return NULL;
     }
     return epoll;
@@ -138,9 +138,9 @@ void XEpoll_deinit(XEpoll* epoll) {
         }
 
         XHashMap_delete_base(epoll->fdToIndexMap);
-        XMemory_free(epoll->events);
-        XMemory_free(epoll->used_indices);
-        XMemory_free(epoll->free_indices);
+        XFree_System(epoll->events);
+        XFree_System(epoll->used_indices);
+        XFree_System(epoll->free_indices);
 
         epoll->fdToIndexMap = NULL;
         epoll->events = NULL;
@@ -156,7 +156,7 @@ void XEpoll_deinit(XEpoll* epoll) {
 void XEpoll_delete(XEpoll* epoll) {
     if (epoll) {
         XEpoll_deinit(epoll);
-        XMemory_free(epoll);
+        XFree_System(epoll);
     }
 }
 
@@ -287,7 +287,7 @@ int XEpoll_wait(XEpoll* epoll, XEpollEvent* events, int maxevents, int timeout) 
     }
 
     // 分配临时事件数组
-    struct epoll_event* ep_events = (struct epoll_event*)XMemory_malloc(
+    struct epoll_event* ep_events = (struct epoll_event*)XMalloc_System(
         maxevents * sizeof(struct epoll_event)
     );
     if (!ep_events) return -1;
@@ -317,7 +317,7 @@ int XEpoll_wait(XEpoll* epoll, XEpollEvent* events, int maxevents, int timeout) 
         }
     }
 
-    XMemory_free(ep_events);
+    XFree_System(ep_events);
     return ret;
 }
 

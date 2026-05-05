@@ -271,7 +271,7 @@ bool XSerialPort_platform_open(XSerialPortPrivate* d, XSerialPort* owner, const 
         return false;
     }
 
-    PlatformData* pd = (PlatformData*)XMemory_calloc(1, sizeof(PlatformData));
+    PlatformData* pd = (PlatformData*)XCalloc_System(1, sizeof(PlatformData));
     if (!pd) {
         close(fd);
         d->error = XSerialPort_ResourceError;
@@ -279,7 +279,7 @@ bool XSerialPort_platform_open(XSerialPortPrivate* d, XSerialPort* owner, const 
     }
 
     if (tcgetattr(fd, &pd->originalTermios) != 0) {
-        XMemory_free(pd);
+        XFree_System(pd);
         close(fd);
         d->error = XSerialPort_OpenError;
         return false;
@@ -303,7 +303,7 @@ void XSerialPort_platform_close(XSerialPortPrivate* d) {
     PlatformData* pd = d->platform;
     tcsetattr(pd->fd, TCSANOW, &pd->originalTermios);
     close(pd->fd);
-    XMemory_free(pd);
+    XFree_System(pd);
     d->platform = NULL;
     d->isOpen = false;
 }

@@ -22,10 +22,10 @@ void XDerangement(void* LParray, const size_t nSize, const size_t TypeSize)
 //	for (size_t i = nSize; i > 1; i--)
 //	{
 //		size_t nSel = rand() % i;
-//		void* temp = XMemory_malloc(TypeSize);
+//		void* temp = XMalloc_System(TypeSize);
 //		memcpy(temp,(char*)LParray + nSel * TypeSize, TypeSize);
 //		memcpy((char*)LParray + nSel * TypeSize, (char*)LParray + (i - 1) * TypeSize, TypeSize);
 //		memcpy((char*)LParray + (i - 1) * TypeSize, temp, TypeSize);
-//		XMemory_free(temp);
+//		XFree_System(temp);
 //	}
 //}

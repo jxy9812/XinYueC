@@ -29,9 +29,9 @@ XVtable* XModbusDataUnit_class_init()
 
 XModbusDataUnit* XModbusDataUnit_create()
 {
-	XModbusDataUnit* unit = XMemory_malloc(sizeof(XModbusDataUnit));
+	XModbusDataUnit* unit = XMalloc_System(sizeof(XModbusDataUnit));
 	XModbusDataUnit_init(unit);
-	Set_Class_MemoryFree(unit, XFree);
+	Set_Class_MemoryFree(unit, XFree_System);
 	return unit;
 }
 

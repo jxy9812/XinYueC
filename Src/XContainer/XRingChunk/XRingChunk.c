@@ -72,7 +72,7 @@ void XRingChunk_init(XRingChunk* chunk, size_t logicalCapacity)
 
     // 2. 分配物理容量 = 逻辑容量 + 1
     size_t physicalCapacity = getPhysicalCapacity(chunk);
-    XContainerDataPtr(chunk) = XMemory_malloc(physicalCapacity);
+    XContainerDataPtr(chunk) = XMalloc_System(physicalCapacity);
     if (XContainerDataPtr(chunk) == NULL)
     {
         XContainerCapacity(chunk) = 0;
@@ -97,7 +97,7 @@ XRingChunk* XRingChunk_create(size_t capacity)
         return NULL;
 
     XRingChunk_init(chunk, capacity);
-    Set_Class_MemoryFree(chunk,XFree);
+    Set_Class_MemoryFree(chunk,XFree_System);
     return chunk;
 }
 
@@ -365,9 +365,9 @@ static void VXClass_copy(XRingChunk* object, const XRingChunk* src)
     {
         // 需要重新分配内存
         if (XContainerDataPtr(object))
-            XMemory_free(XContainerDataPtr(object));
+            XFree_System(XContainerDataPtr(object));
 
-        XContainerDataPtr(object) = XMemory_malloc(srcPhysicalCap);
+        XContainerDataPtr(object) = XMalloc_System(srcPhysicalCap);
         if (XContainerDataPtr(object) == NULL)
         {
             XContainerCapacity(object) = 0;
@@ -390,7 +390,7 @@ static void VXClass_copy(XRingChunk* object, const XRingChunk* src)
 static void VXClass_move(XRingChunk* object, XRingChunk* src)
 {
     if (XContainerDataPtr(object))
-        XMemory_free(XContainerDataPtr(object));
+        XFree_System(XContainerDataPtr(object));
 
     memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XRingChunk) - sizeof(XClass));
 

@@ -49,10 +49,10 @@ XLockFreeQueue* XLockFreeQueue_create(size_t typeSize, size_t count)
 {
     if (ISNULL(typeSize, "") || ISNULL(count, ""))
         return NULL;
-    XLockFreeQueue* this_queue = XMemory_malloc(sizeof(XLockFreeQueue));
+    XLockFreeQueue* this_queue = XMalloc_System(sizeof(XLockFreeQueue));
     if (!this_queue) return NULL;
     XLockFreeQueue_init(this_queue, typeSize, count);
-    Set_Class_MemoryFree(this_queue, XFree);
+    Set_Class_MemoryFree(this_queue, XFree_System);
     return this_queue;
 }
 void XLockFreeQueue_init(XLockFreeQueue* this_queue, size_t typeSize, size_t count)
@@ -163,15 +163,13 @@ size_t VXLockFreeQueue_size(const XLockFreeQueue* this_queue)
 bool VXLockFreeQueue_push(XLockFreeQueue* this_queue, void* pvValue, XCDataCreatMethod dataCreatMethod)
 {
     if (!this_queue) return false;
-
-    size_t old_tail_packed;
+    // 1. 读取当前尾
+    size_t old_tail_packed = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed);
     size_t new_tail_packed;
     size_t old_tail_index, new_tail_index;
 
     // 循环尝试直到成功或队列满
     while (1) {
-        // 1. 读取当前尾
-        old_tail_packed = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed);
         old_tail_index = XAtomic_unpack_index(old_tail_packed, this_queue->m_index_mask);
         size_t head_packed = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
         size_t head_index = XAtomic_unpack_index(head_packed, this_queue->m_index_mask);
@@ -216,11 +214,11 @@ void VXLockFreeQueue_pop(XLockFreeQueue* this_queue)
     if (VXLockFreeQueue_isEmpty(this_queue))
         return;
 
-    /*void* temp = XMemory_malloc(XContainerTypeSize(this_queue));
+    /*void* temp = XMalloc_System(XContainerTypeSize(this_queue));
     if (temp == NULL) return;*/
 
     VXLockFreeQueue_receive(this_queue, NULL);
-    //XMemory_free(temp);
+    //XFree_System(temp);
 }
 
 void* VXLockFreeQueue_top(XLockFreeQueue* this_queue)
@@ -248,12 +246,10 @@ bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer)
 {
     if (!this_queue || !pvBuffer ) return false;
 
-    size_t old_head_packed;
+    size_t old_head_packed = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
     size_t new_head_packed;
     size_t old_head_index, new_head_index;
-
     while (1) {
-        old_head_packed = XAtomic_load_size_t(&(this_queue->m_head), XAtomic_MemoryOrder_Relaxed);
         old_head_index = XAtomic_unpack_index(old_head_packed, this_queue->m_index_mask);
         size_t tail_packed = XAtomic_load_size_t(&(this_queue->m_tail), XAtomic_MemoryOrder_Relaxed);
         size_t tail_index = XAtomic_unpack_index(tail_packed, this_queue->m_index_mask);
@@ -287,11 +283,11 @@ bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer)
 
     // 如果有删除方法，则调用它
    /* if (XContainerDataDeinitMethod(this_queue) != NULL) {
-        void* temp = XMemory_malloc(type_size);
+        void* temp = XMalloc_System(type_size);
         if (temp != NULL) {
             memcpy(temp, read_slot, type_size);
             XContainerDataDeinitMethod(this_queue)(temp);
-            XMemory_free(temp);
+            XFree_System(temp);
         }
     }*/
 

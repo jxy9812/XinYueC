@@ -222,9 +222,9 @@ void XHostAddress_init(XHostAddress* addr) {
 // ==================== 构造函数 ====================
 
 XHostAddress* XHostAddress_create(void) {
-    XHostAddress* addr = (XHostAddress*)XMemory_malloc(sizeof(XHostAddress));
+    XHostAddress* addr = (XHostAddress*)XMalloc_System(sizeof(XHostAddress));
     if (addr) XHostAddress_init(addr);
-    Set_Class_MemoryFree(addr, XFree);
+    Set_Class_MemoryFree(addr, XFree_System);
     return addr;
 }
 
@@ -499,19 +499,19 @@ bool XHostAddress_parseSubnet(const char* subnetStr, XHostAddress* host, int* pr
     int len = (int)(slash - subnetStr);
     if (len <= 0) return false;
 
-    char* addrStr = (char*)XMemory_malloc(len + 1);
+    char* addrStr = (char*)XMalloc_System(len + 1);
     if (!addrStr) return false;
     memcpy(addrStr, subnetStr, len);
     addrStr[len] = '\0';
 
     int prefix = atoi(slash + 1);
     if (prefix <= 0) {
-        XMemory_free(addrStr);
+        XFree_System(addrStr);
         return false;
     }
 
     XHostAddress* tmp = XHostAddress_create_fromString(addrStr);
-    XMemory_free(addrStr);
+    XFree_System(addrStr);
 
     if (!tmp || XHostAddress_isNull(tmp)) {
         XHostAddress_delete_base(tmp);

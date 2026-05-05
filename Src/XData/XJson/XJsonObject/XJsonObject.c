@@ -8,9 +8,9 @@
 
 XJsonObject* XJsonObject_create(void)
 {
-	XJsonObject* object = (XJsonObject*)XMemory_malloc(sizeof(XJsonObject));
+	XJsonObject* object = (XJsonObject*)XMalloc_System(sizeof(XJsonObject));
     XJsonObject_init(object);
-    Set_Class_MemoryFree(object, XFree);
+    Set_Class_MemoryFree(object, XFree_System);
 	return object;
 }
 

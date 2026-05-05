@@ -7,7 +7,7 @@ XHTreeNode* XHTreeNode_create(const char* pvData, const size_t dataTypeSize)
 {
 	if (dataTypeSize == 0)
 		return NULL;
-	XHTreeNode* node = XMemory_malloc(XHTreeNode_typeSize()+dataTypeSize);
+	XHTreeNode* node = XMalloc_System(XHTreeNode_typeSize()+dataTypeSize);
 	if (node)
 		XHTreeNode_init(node, XHTreeNode_typeSize(), pvData, dataTypeSize);
 	return node;

@@ -9,7 +9,7 @@ size_t XBBTreeNode_typeSize()
 XBBTreeNode* XBBTree_create(const char* pvData, const size_t TypeSize)
 {
 	//struct XBBTreeNode* nodes = XBTree_creationNode(sizeof(XBBTreeNode),3,1,TypeSize);
-	XBBTreeNode* nodes = XMemory_malloc(sizeof(XBBTreeNode));
+	XBBTreeNode* nodes = XMalloc_System(sizeof(XBBTreeNode));
 	if (nodes == NULL)
 		return NULL;
 	XBTreeNode_init(nodes, XBBTreeNode_typeSize(2), pvData, TypeSize);
@@ -79,7 +79,7 @@ static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, siz
 	if (XBTreeNode_GetRChild(preCursor) == NULL)//LeftChildNode的孩子不存在右子树的情况
 	{
 		//size_t dataSize = ((XTreeNode*)eraseNode)->dataSize;
-		//XMemory_free(XTreeNode_GetDataPtr(eraseNode));//释放其数据
+		//XFree_System(XTreeNode_GetDataPtr(eraseNode));//释放其数据
 		//与左子树数据交换
 		//XTreeNode_SetDataPtr(eraseNode, XTreeNode_GetDataPtr(preCursor));
 		//XTreeNode_SetDataPtr(preCursor,NULL);
@@ -98,16 +98,16 @@ static void* TwoChild_erase(XBBTreeNode** this_root, XBBTreeNode* eraseNode, siz
 		{
 			preCursor = XBTreeNode_GetRChild(preCursor);
 		}
-		//XMemory_free(XTreeNode_GetDataPtr(eraseNode));//释放其数据
+		//XFree_System(XTreeNode_GetDataPtr(eraseNode));//释放其数据
 		//与左子树数据交换
 		//size_t dataSize = ((XTreeNode*)eraseNode)->dataSize;
 		if (dataSize > 0)
 		{
-			//char* tempBuffer = XMalloc(dataSize); //创建临时缓冲区
+			//char* tempBuffer = XMalloc_System(dataSize); //创建临时缓冲区
 			//memcpy(tempBuffer, XTreeNode_GetDataPtr(eraseNode), dataSize);
 			memcpy(XTreeNode_GetDataPtr(eraseNode), XTreeNode_GetDataPtr(preCursor), dataSize);
 			//memcpy(XTreeNode_GetDataPtr(LPreplace), tempBuffer, dataSize);
-			//XFree(dataSize);
+			//XFree_System(dataSize);
 		}
 		//XTreeNode_SetDataPtr(eraseNode, XTreeNode_GetDataPtr(preCursor));
 		//XTreeNode_SetDataPtr(preCursor,NULL);

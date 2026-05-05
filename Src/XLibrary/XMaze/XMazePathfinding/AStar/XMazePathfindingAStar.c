@@ -9,7 +9,7 @@
 static AStarNode* CreationAStarNode(const int x, const int y)
 {
 #if XVector_ON
-	AStarNode* nodes = (AStarNode*)XMemory_malloc(sizeof(AStarNode));
+	AStarNode* nodes = (AStarNode*)XMalloc_System(sizeof(AStarNode));
 	if (ISNULL(nodes, ""))
 		return NULL;
 	nodes->pos.x = x;
@@ -111,7 +111,7 @@ static void XBinaryTreeObject_freeNode(AStarNode* root)
 			XStack_push_base(stack, XVector_iterator_data(&it));
 		}
 		XVector_delete_base(current->child);
-		XMemory_free(current);
+		XFree_System(current);
 	}
 #else
 	IS_ON_DEBUG(XStack_ON);

@@ -423,7 +423,7 @@ static void VXEventDispatcherWin32_unregisterSocketNotifier(XAbstractEventDispat
     //        WSAAsyncSelect(s, NULL, 0, 0);
     //        XHashMap_remove_base(d->sockets, &socket_key);
     //        XVector_delete_base(sockInfo->notifiers);
-    //        XMemory_free(sockInfo);
+    //        XFree_System(sockInfo);
     //    }
     //}
     XMutex_unlock(GetXMutex(dispatcher));
@@ -501,6 +501,7 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
         XTimeWheelGroup* group = XTimeWheelGroup_global();
         if (group&& XTimeWheelGroup_max_time(group)> intervalMs)
         {//范围达标使用时间轮定时器
+            //XEventFunc_create();
             XTimerData data = {0};
             XTimerData_setAutoDelete(&data, true);
             XTimerData_setTimerId(&data, timerId);
@@ -526,7 +527,7 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
             d->timePeriodSet = true;
         }
         // --- 关键修改：分配回调上下文 ---
-        XEventContext_Timer* ctx = (XEventContext_Timer*)XMemory_malloc(sizeof(XEventContext_Timer));
+        XEventContext_Timer* ctx = (XEventContext_Timer*)XMalloc_System(sizeof(XEventContext_Timer));
         if (!ctx) 
         {
             XMutex_unlock(GetXMutex(dispatcher));
@@ -546,7 +547,7 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
         if (timerInfo.mmTimerId == 0)
         {
             // 失败：释放 ctx，回退到普通定时器
-            XMemory_free(ctx);
+            XFree_System(ctx);
             // timeSetEvent 失败，回退到普通定时器
             timerInfo.isHighPrecision = false;
             timerInfo.winTimerId = SetTimer(self->internalHwnd, (UINT_PTR)timerId, uInterval, NULL);
@@ -604,7 +605,7 @@ static VOID CALLBACK CleanupTimerCallback(
     // --- 关键：在这里安全地释放内存 ---
     // 因为这是在 unregister 之后触发的，
     // 所以我们可以直接释放，无需额外同步。
-    XMemory_free(ctx);
+    XFree_System(ctx);
     CloseThreadpoolTimer(Timer);
 }
 //清理高精度定时的普通定时器 延迟释放
@@ -620,7 +621,7 @@ static void clearHighPrecisionTimer(XEventContext_Timer* ctx)
 
     if (timer == NULL) {
         // 创建失败，直接清理（虽然不太可能发生）
-        XMemory_free(ctx);
+        XFree_System(ctx);
         //return true;
     }
     // --- 设置为 50 毫秒的单次兜底定时器 ---
@@ -854,7 +855,7 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
         //        SOCKET s = (SOCKET)XSocketDescriptor_toIntptr(sockInfo->socket);
         //        WSAAsyncSelect(s, NULL, 0, 0);
         //        //XVector_delete_base(sockInfo->notifiers);
-        //        XMemory_free(sockInfo);
+        //        XFree_System(sockInfo);
         //    }
         //    XHashMap_iterator_add(d->sockets, &it_sockets);
         //}
@@ -872,7 +873,7 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
             XHashMap_delete_base(d->sockets);
             d->sockets = NULL;
         }
-        XMemory_free(d);
+        XFree_System(d);
     }
    
 
@@ -922,7 +923,7 @@ XVtable* XEventDispatcherWin32_class_init()
 static void timersDataDeinit(XEventDispatcherWin32_TimerInfo* info)
 {
     if (info && info->highResContext)
-        XMemory_free(info->highResContext);
+        XFree_System(info->highResContext);
 }
 // ========================
 // 工厂函数
@@ -936,13 +937,13 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
     // 初始化基类
     XAbstractEventDispatcher_init(self, parent);
     XClassGetVtable(self) = XEventDispatcherWin32_class_init();
-    Set_Class_MemoryFree(self, XFree);
+    Set_Class_MemoryFree(self, XFree_System);
     MainThreadDataPrivate* d = NULL;
     if (XThread_isMainThread())
     {
-        d=(MainThreadDataPrivate*)XMemory_calloc(1, sizeof(MainThreadDataPrivate));
+        d=(MainThreadDataPrivate*)XCalloc_System(1, sizeof(MainThreadDataPrivate));
         if (!d) {
-            XMemory_free(self);
+            XFree_System(self);
             return NULL;
         }
         ((XAbstractEventDispatcher*)self)->type = XDISPATCHER_THREAD_TYPE_MAIN;
@@ -959,8 +960,8 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
             // 错误处理
             if (d->timers) XHashMap_delete_base(d->timers);
             if (d->sockets) XHashMap_delete_base(d->sockets);
-            XMemory_free(d);
-            XMemory_free(self);
+            XFree_System(d);
+            XFree_System(self);
             return NULL;
         }
         d->ioCompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
@@ -994,9 +995,9 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
             XHashMap_delete_base(d->timers);
             XHashMap_delete_base(d->sockets);
             XAbstractEventDispatcherPrivate_deinit(&d->m_dp);
-            XMemory_free(d);
+            XFree_System(d);
         }
-        XMemory_free(self);
+        XFree_System(self);
         return NULL;
     }
 

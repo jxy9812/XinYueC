@@ -27,9 +27,9 @@ XVtable* XModbusDeviceIdentification_class_init(void) {
 }
 
 XModbusDeviceIdentification* XModbusDeviceIdentification_create(void) {
-    XModbusDeviceIdentification* id = (XModbusDeviceIdentification*)XMemory_malloc(sizeof(XModbusDeviceIdentification));
+    XModbusDeviceIdentification* id = (XModbusDeviceIdentification*)XMalloc_System(sizeof(XModbusDeviceIdentification));
     if (id) XModbusDeviceIdentification_init(id);
-    Set_Class_MemoryFree(id, XFree);
+    Set_Class_MemoryFree(id, XFree_System);
     return id;
 }
 

@@ -58,7 +58,7 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 {
 	//printf("进入扩容\n");
 	size_t new_size = new_capacity * sizeof(XRBTreeNode*);
-	XRBTreeNode** newData = XMemory_malloc(new_size);
+	XRBTreeNode** newData = XMalloc_System(new_size);
 	memset(newData, 0, new_size);
 	if (newData == NULL)
 		return false;
@@ -98,7 +98,7 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 	}
 
 	// 释放原哈希表数组
-	XMemory_free(XContainerDataPtr(map));
+	XFree_System(XContainerDataPtr(map));
 	XContainerDataPtr(map) = newData;
 	XContainerCapacity(map) = new_capacity;
 	return true;
@@ -361,7 +361,7 @@ void VXMap_deinit(XHashMap*this_hash)
 	void* data = XContainerDataPtr(this_hash);
 	if (data)
 	{
-		XMemory_free(data);
+		XFree_System(data);
 		XContainerDataPtr(this_hash) = NULL;
 	}
 	if (XMapBasePairBuffer(this_hash))
@@ -369,7 +369,7 @@ void VXMap_deinit(XHashMap*this_hash)
 		XPair_delete(XMapBasePairBuffer(this_hash));
 		XMapBasePairBuffer(this_hash) = NULL;
 	}
-	//XMemory_free(this_hash);
+	//XFree_System(this_hash);
 }
 
 #endif

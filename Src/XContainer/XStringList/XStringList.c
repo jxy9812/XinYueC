@@ -26,9 +26,9 @@ XVtable* XStringList_class_init()
 }
 XStringList* XStringList_create()
 {
-	XStringList* vector=XMemory_malloc(sizeof(XStringList));
+	XStringList* vector=XMalloc_System(sizeof(XStringList));
 	XStringList_init(vector);
-	Set_Class_MemoryFree(vector, XFree);
+	Set_Class_MemoryFree(vector, XFree_System);
 	return vector;
 }
 XStringList* XStringList_create_copy(const XStringList* other)

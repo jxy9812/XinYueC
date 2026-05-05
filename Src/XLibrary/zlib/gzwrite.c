@@ -21,7 +21,7 @@ local int gz_init(state)
     z_streamp strm = &(state->strm);
 
     /* allocate input buffer (double size for gzprintf) */
-    state->in = (unsigned char *)XMemory_malloc(state->want << 1);
+    state->in = (unsigned char *)XMalloc_System(state->want << 1);
     if (state->in == NULL) {
         gz_error(state, Z_MEM_ERROR, "out of memory");
         return -1;
@@ -30,9 +30,9 @@ local int gz_init(state)
     /* only need output buffer and deflate state if compressing */
     if (!state->direct) {
         /* allocate output buffer */
-        state->out = (unsigned char *)XMemory_malloc(state->want);
+        state->out = (unsigned char *)XMalloc_System(state->want);
         if (state->out == NULL) {
-           XMemory_free(state->in);
+           XFree_System(state->in);
             gz_error(state, Z_MEM_ERROR, "out of memory");
             return -1;
         }
@@ -44,8 +44,8 @@ local int gz_init(state)
         ret = deflateInit2(strm, state->level, Z_DEFLATED,
                            MAX_WBITS + 16, DEF_MEM_LEVEL, state->strategy);
         if (ret != Z_OK) {
-           XMemory_free(state->out);
-           XMemory_free(state->in);
+           XFree_System(state->out);
+           XFree_System(state->in);
             gz_error(state, Z_MEM_ERROR, "out of memory");
             return -1;
         }
@@ -652,14 +652,14 @@ int ZEXPORT gzclose_w(file)
     if (state->size) {
         if (!state->direct) {
             (void)deflateEnd(&(state->strm));
-           XMemory_free(state->out);
+           XFree_System(state->out);
         }
-       XMemory_free(state->in);
+       XFree_System(state->in);
     }
     gz_error(state, Z_OK, NULL);
-   XMemory_free(state->path);
+   XFree_System(state->path);
     if (close(state->fd) == -1)
         ret = Z_ERRNO;
-   XMemory_free(state);
+   XFree_System(state);
     return ret;
 }

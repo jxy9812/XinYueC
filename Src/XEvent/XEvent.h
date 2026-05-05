@@ -230,8 +230,8 @@ typedef struct XEventMetaCall
     XObject* sender;              // 发送者对象
     XVarList* argList;            // 函数参数
     //void(*del)(XVarList*);        // XVarList释放函数
-    XAtomic_int32_t* ref_count;   // 参数引用计数
-    XSemaphore* sem;              //信号量
+   XSemaphore* sem;              //信号量
+   XAtomic_int32_t* ref_count;   // 参数引用计数
 }XEventMetaCall;
 
 /**

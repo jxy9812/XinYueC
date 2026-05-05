@@ -21,7 +21,7 @@ static void XDebug_init(XDebug* debug, const char* file, const char* function, i
 
 // 创建XDebug实例（带位置信息）
 XDebug* XDebug_create_with_location_(const char* file, const char* function, int line) {
-    XDebug* debug = (XDebug*)XMemory_malloc(sizeof(XDebug));
+    XDebug* debug = (XDebug*)XMalloc_System(sizeof(XDebug));
     if (!debug) return NULL;
 
     XDebug_init(debug, file, function, line);
@@ -33,7 +33,7 @@ void XDebug_delete_(XDebug* debug) {
     if (!debug) return;
 
     XVector_deinit_base(&debug->buffer);
-    XMemory_free(debug);
+    XFree_System(debug);
 }
 
 // 设置输出目标
@@ -112,7 +112,7 @@ XDebug* XDebug_vprintf_(XDebug* debug, const char* format, va_list args) {
     if (len <= 0) return debug;
 
     // 分配临时缓冲区
-    char* temp = (char*)XMemory_malloc(len + 1);
+    char* temp = (char*)XMalloc_System(len + 1);
     if (!temp) return debug;
 
     // 格式化字符串
@@ -124,14 +124,14 @@ XDebug* XDebug_vprintf_(XDebug* debug, const char* format, va_list args) {
     int gbk_len = XUTF8_to_gbk_stream(temp, 0, NULL, 0);  // 获取所需GBK长度
     if (gbk_len <= 0)
     {
-        XMemory_free(temp);
+        XFree_System(temp);
         return 0;
     }
 
-    char* gbk_buf = (char*)XMemory_malloc(gbk_len + 1);  // +1 终止符
+    char* gbk_buf = (char*)XMalloc_System(gbk_len + 1);  // +1 终止符
     if (!gbk_buf)
     {
-        XMemory_free(temp);
+        XFree_System(temp);
         return 0;
     }
 
@@ -139,7 +139,7 @@ XDebug* XDebug_vprintf_(XDebug* debug, const char* format, va_list args) {
     {
         //result = printf("%s", gbk_buf);  // 输出GBK
     }
-    XMemory_free(temp);
+    XFree_System(temp);
     temp = gbk_buf;
     len = gbk_len;
 #else
@@ -149,7 +149,7 @@ XDebug* XDebug_vprintf_(XDebug* debug, const char* format, va_list args) {
 
     // 写入XDebug缓冲区
     XDebug_write_(debug, temp, len);
-    XMemory_free(temp);
+    XFree_System(temp);
     if (debug->auto_space) {  // 新增
         XDebug_space_(debug);
     }
@@ -394,7 +394,7 @@ XDebug* XDebug_flush_(XDebug* debug) {
 
     // 准备输出内容
     size_t buf_size = XVector_size_base(&debug->buffer);
-    char* output = (char*)XMemory_malloc(buf_size + 2);  // +2 预留换行和结束符
+    char* output = (char*)XMalloc_System(buf_size + 2);  // +2 预留换行和结束符
     if (!output) return debug;
 
     // 复制缓冲区内容
@@ -440,7 +440,7 @@ XDebug* XDebug_flush_(XDebug* debug) {
 
     // 重置缓冲区
     XVector_clear_base(&debug->buffer);
-    XMemory_free(output);
+    XFree_System(output);
     return debug;
 }
 

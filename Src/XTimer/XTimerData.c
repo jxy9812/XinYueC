@@ -5,11 +5,11 @@ XTimerData* XTimerData_create(XVtable* vtable)
 {
 	if (vtable == NULL)
 		return NULL;
-	XTimerData* timer = XMemory_malloc(sizeof(XTimerData));
+	XTimerData* timer = XMalloc_System(sizeof(XTimerData));
 	if (timer == NULL)
 		return NULL;
 	XTimerData_init(timer,vtable);
-	Set_Class_MemoryFree(timer, XFree);
+	Set_Class_MemoryFree(timer, XFree_System);
 	return timer;
 }
 
@@ -27,7 +27,7 @@ void XTimerData_init(XTimerData* timer, XVtable* vtable)
 void XTimerData_delete(XTimerData* timer)
 {
 	if (timer)
-		XFree(timer);
+		XFree_System(timer);
 }
 
 void XTimerData_setTimerId(XTimerData* timer, size_t timerId)

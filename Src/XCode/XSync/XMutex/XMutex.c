@@ -106,7 +106,7 @@ void XMutex_deinit(XMutex* mutex)
 
 XMutex* XMutex_create(XLock_Type type)
 {
-    XMutex* mutex = (XMutex*)XMemory_malloc(XMutex_typetSize(type));
+    XMutex* mutex = (XMutex*)XMalloc_System(XMutex_typetSize(type));
     if (mutex) {
         XMutex_init(mutex, type);
     }
@@ -117,7 +117,7 @@ void XMutex_delete(XMutex* mutex)
 {
     if (mutex) {
         XMutex_deinit(mutex);
-        XMemory_free(mutex);
+        XFree_System(mutex);
     }
 }
 

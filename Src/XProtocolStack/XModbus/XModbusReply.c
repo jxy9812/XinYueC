@@ -27,10 +27,10 @@ XVtable* XModbusReply_class_init(void) {
 }
 
 XModbusReply* XModbusReply_create(XModbusReply_ReplyType type, int serverAddress) {
-    XModbusReply* reply = (XModbusReply*)XMemory_malloc(sizeof(XModbusReply));
+    XModbusReply* reply = (XModbusReply*)XMalloc_System(sizeof(XModbusReply));
     if (reply) {
         XModbusReply_init(reply, type, serverAddress);
-        Set_Class_MemoryFree(reply, XFree);
+        Set_Class_MemoryFree(reply, XFree_System);
     }
     return reply;
 }

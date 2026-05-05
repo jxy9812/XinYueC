@@ -57,6 +57,15 @@ XCircularQueue* XCircularQueue_create(size_t typeSize, size_t count);
 * @note 自动推导元素类型大小，简化XCircularQueue_create的调用
 */
 #define XCircularQueue_Create(Type, count) XCircularQueue_create(sizeof(Type), count)
+/**
+* @brief 从环形队列中删除指定数量的匹配元素
+ * @param this_queue 环形队列实例指针
+ * @param value 要删除的元素值指针
+ * @param n 要删除的最大数量（0表示删除所有匹配元素）
+ * @return 实际删除的元素数量
+ * @note 使用compare函数遍历队列查找匹配元素，找到后移除并修复队列结构
+ */
+size_t XCircularQueue_remove(XCircularQueue* this_queue, const void* value, size_t n);
 // ------------------------------ 配置操作 ------------------------------
 /**
 * @brief 设置环形队列是否开启自动扩容

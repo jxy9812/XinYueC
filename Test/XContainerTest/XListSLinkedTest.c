@@ -25,7 +25,7 @@ void XListSLinkedSortTest()
 	XContainerSetCompare(li,int_compare);
 	int size = 10;
 	srand((unsigned int)time(NULL));
-	//int* p1 = XMemory_malloc(sizeof(int) * size);
+	//int* p1 = XMalloc_System(sizeof(int) * size);
 	for (size_t i = 0; i < size; i++)
 	{
 		int num = rand() % 1000;

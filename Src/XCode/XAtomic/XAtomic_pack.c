@@ -13,7 +13,7 @@ size_t XAtomic_index_bits(size_t max_value)
 size_t XAtomic_pack_index_version(size_t index, size_t version, size_t index_bits, uintptr_t version_mask)
 {
     size_t index_part = index;
-    size_t version_part = (version & version_mask) << index_bits;
+    size_t version_part = (version  & version_mask) << index_bits;
     return index_part | version_part;
 }
 

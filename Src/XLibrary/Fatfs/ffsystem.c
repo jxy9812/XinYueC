@@ -17,13 +17,13 @@
 //动态分配内存
 void *ff_memalloc (UINT size)			
 {
-	return (void*)XMemory_malloc((size_t)size);
+	return (void*)XMalloc_System((size_t)size);
 }
 
 //释放内存
 void ff_memfree (void* mblock)		 
 {
-	XMemory_free(mblock);
+	XFree_System(mblock);
 }
 
 #endif

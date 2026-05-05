@@ -70,7 +70,7 @@ void VXBitArray_move(XBitArray* dest, XBitArray* src) {
 
     // 释放目标原有数据
     if (dest->m_class.m_data) {
-        XMemory_free(dest->m_class.m_data);
+        XFree_System(dest->m_class.m_data);
     }
 
     // 移动数据
@@ -84,7 +84,7 @@ void VXBitArray_deinit(XBitArray* array) {
     if (!array) return;
 
     if (XContainerDataPtr(array)) {
-        XMemory_free(XContainerDataPtr(array));
+        XFree_System(XContainerDataPtr(array));
         XContainerDataPtr(array) = NULL;
     }
     XContainerSize(array) = 0;

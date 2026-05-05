@@ -6,7 +6,7 @@
 static bool VXCircularQueue_isEmpty(const XCircularQueue* this_queue);
 static bool VXCircularQueue_isFull(const XCircularQueue* this_queue);
 static void VXCircularQueue_clear(XCircularQueue* this_queue);//清空
-static size_t VXCircularQueue_getSize(const XCircularQueue* this_queue);
+static size_t VXCircularQueue_size(const XCircularQueue* this_queue);
 //插入到队列的队尾
 static bool VXCircularQueue_push(XCircularQueue* this_queue, void* pvValue, XCDataCreatMethod dataCreatMethod);
 //出队
@@ -36,7 +36,7 @@ XVtable* XCircularQueue_class_init()
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXContainer_IsEmpty,VXCircularQueue_isEmpty);
 	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear,VXCircularQueue_clear);
-	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Size,VXCircularQueue_getSize);
+	XVTABLE_OVERLOAD_DEFAULT(EXContainer_Size,VXCircularQueue_size);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
@@ -73,14 +73,14 @@ void VXCircularQueue_clear(XCircularQueue* this_queue)
 	}*/
 }
 
-size_t VXCircularQueue_getSize(const XCircularQueue* this_queue)
+size_t VXCircularQueue_size(const XCircularQueue* this_queue)
 {
 	/*if (this_queue == NULL)
 		return 0;*/
 	if (this_queue->m_tail >= this_queue->m_head)
 		return this_queue->m_tail - this_queue->m_head;
 	else
-		return this_queue->m_tail+XContainerSize(this_queue) - this_queue->m_head;;
+		return this_queue->m_tail+XContainerSize(this_queue) - this_queue->m_head;
 
 }
 
@@ -90,28 +90,35 @@ bool VXCircularQueue_push(XCircularQueue* this_queue, void* pvValue, XCDataCreat
 	{
 		if (!this_queue->m_autoExpansion)
 			return true;//不开启自动扩容
-		//准备扩容
-		size_t newSize = XContainerSize(this_queue) * 1.5;
-		char* new_array = XMemory_malloc( XContainerTypeSize(this_queue) * newSize);
+		// 准备扩容
+		size_t old_capacity = XContainerSize(this_queue); // 原始分配容量
+		size_t new_capacity = (size_t)(old_capacity * 1.5);
+		size_t elem_size = XContainerTypeSize(this_queue);
+
+		char* new_array = XMalloc_System(elem_size * new_capacity);
 		if (new_array == NULL)
 			return true;
-		//暂时将队列修改为空
-		//this_queue->m_tail = this_queue->m_head;
-		//复制数组内容
-		// 复制元素到新数组
-		int i = this_queue->m_head;
-		int count = 0;
-		while (i != this_queue->m_tail) {
-			new_array[count++] = ((char*)XContainerDataPtr(this_queue))[i];
-			i = (i + 1) % XContainerSize(this_queue);
+
+		// 复制元素到新数组（按元素大小复制，不是逐字节）
+		size_t count = VXCircularQueue_size(this_queue);
+		size_t src_index = this_queue->m_head;
+
+		for (size_t i = 0; i < count; i++) {
+			memcpy(new_array + (i * elem_size),
+				((char*)XContainerDataPtr(this_queue)) + (src_index * elem_size),
+				elem_size);
+			src_index = (src_index + 1) % old_capacity;
 		}
+
 		// 设置新数组的头尾指针
 		this_queue->m_head = 0;
 		this_queue->m_tail = count;  // 新队列的长度等于原队列的元素个数
-		XMemory_free(XContainerDataPtr(this_queue));//释放原数组
-		XContainerDataPtr(this_queue) = new_array;//设置新数组
-		XContainerCapacity(this_queue) = newSize;//改变容量大小
-		XContainerSize(this_queue) = newSize;
+
+		// 释放原数组并设置新数组
+		XFree_System(XContainerDataPtr(this_queue));
+		XContainerDataPtr(this_queue) = new_array;
+		XContainerSize(this_queue) = new_capacity;
+		XContainerCapacity(this_queue) = new_capacity;
 	}
 	if (dataCreatMethod)
 	{

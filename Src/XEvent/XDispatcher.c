@@ -76,10 +76,10 @@ XVtable* XDispatcher_class_init() {
 
 // 创建调度器
 XDispatcher* XDispatcher_create(XSchedulePolicy policy) {
-    XDispatcher* dispatcher = XMemory_malloc(sizeof(XDispatcher));
+    XDispatcher* dispatcher = XMalloc_System(sizeof(XDispatcher));
     if (dispatcher) {
         XDispatcher_init(dispatcher, policy);
-        Set_Class_MemoryFree(dispatcher, XFree);
+        Set_Class_MemoryFree(dispatcher, XFree_System);
     }
     return dispatcher;
 }
@@ -115,7 +115,7 @@ void XDispatcher_init(XDispatcher* dispatcher, XSchedulePolicy policy)
 
 // 创建调度实体
 XScheduleEntity* XScheduleEntity_create(void* data, int priority, XSchedulePolicy policy) {
-    XScheduleEntity* entity = XMemory_malloc(sizeof(XScheduleEntity));
+    XScheduleEntity* entity = XMalloc_System(sizeof(XScheduleEntity));
     if (entity) {
         XScheduleEntity_init(entity, data, priority, policy);
     }

@@ -59,7 +59,7 @@ XSerialPort* XSerialPort_create()
     XSerialPort* port = XNew(XSerialPortWin32);
     if (!port)return NULL;
     XSerialPort_init(port);
-    Set_Class_MemoryFree(port, XFree);
+    Set_Class_MemoryFree(port, XFree_System);
     return port;
 }
 

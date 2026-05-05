@@ -50,10 +50,10 @@ XSocketNotifier* XSocketNotifier_createWithType(XSocketNotifierType type)
         return NULL;
     }
 
-    XSocketNotifier* notifier = (XSocketNotifier*)XMemory_calloc(1, sizeof(XSocketNotifier));
+    XSocketNotifier* notifier = (XSocketNotifier*)XCalloc_System(1, sizeof(XSocketNotifier));
     if (!notifier) return NULL;
     XSocketNotifier_init(notifier,type);
-    Set_Class_MemoryFree(notifier, XFree);
+    Set_Class_MemoryFree(notifier, XFree_System);
     return notifier;
 }
 

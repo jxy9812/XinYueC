@@ -28,10 +28,10 @@ XVtable* XFinalState_class_init()
     return XVTABLE_DEFAULT;
 }
 XFinalState* XFinalState_create() {
-    XFinalState* state = (XFinalState*)XMemory_malloc(sizeof(XFinalState));
+    XFinalState* state = (XFinalState*)XMalloc_System(sizeof(XFinalState));
     if (state) {
         XFinalState_init(state);
-        Set_Class_MemoryFree(state, XFree);
+        Set_Class_MemoryFree(state, XFree_System);
     }
     return state;
 }

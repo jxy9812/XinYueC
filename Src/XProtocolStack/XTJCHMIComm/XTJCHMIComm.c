@@ -7,9 +7,9 @@ XTJCHMIComm* XTJCHMIComm_create(XIODevice* io)
 {
 	if (io == NULL)
 		return NULL;
-	XTJCHMIComm* comm = XMemory_malloc(sizeof(XTJCHMIComm));
+	XTJCHMIComm* comm = XMalloc_System(sizeof(XTJCHMIComm));
 	XTJCHMIComm_init(comm, io);
-	Set_Class_MemoryFree(comm, XFree);
+	Set_Class_MemoryFree(comm, XFree_System);
 	return comm;
 }
 

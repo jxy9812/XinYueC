@@ -17,7 +17,7 @@ static void map_dataDelete(char** lpStr)
 {
 	if (!lpStr)return;
 	char* str = *lpStr;
-	XFree(str);
+	XFree_System(str);
 }
 void XMapTest()
 {
@@ -33,7 +33,7 @@ void XMapTest()
 		for (size_t i = 0; i < 500; i++)
 		{
 			//XMap_Insert_Base(map, int, i, char*, arraychar[i&5]);
-			char* str = XMemory_malloc(strlen(arraychar[i%5]) + 10);
+			char* str = XMalloc_System(strlen(arraychar[i%5]) + 10);
 			strcpy(str, arraychar[i%5]);
 			XMap_insert_base(map, &i, &str);
 		}

@@ -25,10 +25,10 @@ static void assertBufferContent(XRingChunk* chunk, const char* expected, size_t 
         printf("\nGot:      ");
         for (size_t i = 0; i < read; i++) printf("%02x ", (unsigned char)buffer[i]);
         printf("\n");
-        XFree(buffer);
+        XFree_System(buffer);
         exit(1);
     }
-    XFree(buffer);
+    XFree_System(buffer);
 }
 void XRingChunkTest()
 {

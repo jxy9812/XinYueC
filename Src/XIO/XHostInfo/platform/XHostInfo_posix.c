@@ -10,7 +10,7 @@
 
 static void appendAddressFromAddrInfo(XHostInfoPrivate* d, struct addrinfo* ai) {
     if (!d || !ai) return;
-    XHostAddress* newAddrs = (XHostAddress*)XMemory_realloc(
+    XHostAddress* newAddrs = (XHostAddress*)XCalloc_System(
         d->addresses, (d->addressCount + 1) * sizeof(XHostAddress));
     if (!newAddrs) return;
     d->addresses = newAddrs;

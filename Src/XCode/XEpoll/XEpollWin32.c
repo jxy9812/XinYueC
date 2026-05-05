@@ -52,7 +52,7 @@ static bool expand_used_indices(XEpoll* epoll) {
     int new_capacity = epoll->used_capacity * 3 / 2;
     if (new_capacity <= epoll->used_capacity) new_capacity = epoll->used_capacity + 16;
 
-    int* new_indices = (int*)XMemory_realloc(
+    int* new_indices = (int*)XCalloc_System(
         epoll->used_indices, new_capacity * sizeof(int)
     );
     if (!new_indices) return false;
@@ -94,16 +94,16 @@ bool XEpoll_init(XEpoll* epoll, int size) {
 
     // 初始化已使用索引数组（初始容量为size的1/4，减少初始内存占用）
     epoll->used_capacity = (size + 3) / 4;  // 向上取整
-    epoll->used_indices = (int*)XMemory_malloc(epoll->used_capacity * sizeof(int));
+    epoll->used_indices = (int*)XMalloc_System(epoll->used_capacity * sizeof(int));
     if (!epoll->used_indices) return false;
 
     // 初始化事件表和WSAPoll数组
-    epoll->events = (XEpollEventEntry*)XMemory_calloc(size, sizeof(XEpollEventEntry));
-    epoll->pollfds = XMemory_calloc(size, sizeof(WSAPOLLFD));
+    epoll->events = (XEpollEventEntry*)XCalloc_System(size, sizeof(XEpollEventEntry));
+    epoll->pollfds = XCalloc_System(size, sizeof(WSAPOLLFD));
     if (!epoll->events || !epoll->pollfds) {
-        XMemory_free(epoll->used_indices);
-        XMemory_free(epoll->events);
-        XMemory_free(epoll->pollfds);
+        XFree_System(epoll->used_indices);
+        XFree_System(epoll->events);
+        XFree_System(epoll->pollfds);
         return false;
     }
 
@@ -112,20 +112,20 @@ bool XEpoll_init(XEpoll* epoll, int size) {
         int_compare
     );
     if (!epoll->fdToIndexMap) {
-        XMemory_free(epoll->used_indices);
-        XMemory_free(epoll->events);
-        XMemory_free(epoll->pollfds);
+        XFree_System(epoll->used_indices);
+        XFree_System(epoll->events);
+        XFree_System(epoll->pollfds);
         return false;
     }
 
     // 初始化空闲索引栈（用数组模拟栈，O(1)存取）
-    epoll->free_indices = (int*)XMemory_malloc(size * sizeof(int));
+    epoll->free_indices = (int*)XMalloc_System(size * sizeof(int));
     epoll->free_top = 0;
     if (!epoll->free_indices) {
         XHashMap_delete_base(epoll->fdToIndexMap);
-        XMemory_free(epoll->used_indices);
-        XMemory_free(epoll->events);
-        XMemory_free(epoll->pollfds);
+        XFree_System(epoll->used_indices);
+        XFree_System(epoll->events);
+        XFree_System(epoll->pollfds);
         return false;
     }
     // 填充空闲索引（0 ~ size-1）
@@ -137,9 +137,9 @@ bool XEpoll_init(XEpoll* epoll, int size) {
 }
 
 XEpoll* XEpoll_create(int size) {
-    XEpoll* epoll = (XEpoll*)XMemory_malloc(sizeof(struct XEpoll));
+    XEpoll* epoll = (XEpoll*)XMalloc_System(sizeof(struct XEpoll));
     if (epoll && !XEpoll_init(epoll, size)) {
-        XMemory_free(epoll);
+        XFree_System(epoll);
         return NULL;
     }
     return epoll;
@@ -147,10 +147,10 @@ XEpoll* XEpoll_create(int size) {
 
 void XEpoll_deinit(XEpoll* epoll) {
     if (epoll) {
-        XMemory_free(epoll->events);
-        XMemory_free(epoll->pollfds);
-        XMemory_free(epoll->used_indices);  // 释放已使用索引数组
-        XMemory_free(epoll->free_indices);  // 释放空闲索引数组
+        XFree_System(epoll->events);
+        XFree_System(epoll->pollfds);
+        XFree_System(epoll->used_indices);  // 释放已使用索引数组
+        XFree_System(epoll->free_indices);  // 释放空闲索引数组
 
         if (epoll->fdToIndexMap) {
             XHashMap_delete_base(epoll->fdToIndexMap);
@@ -171,7 +171,7 @@ void XEpoll_deinit(XEpoll* epoll) {
 void XEpoll_delete(XEpoll* epoll) {
     if (epoll) {
         XEpoll_deinit(epoll);
-        XMemory_free(epoll);
+        XFree_System(epoll);
     }
 }
 

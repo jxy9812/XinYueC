@@ -108,12 +108,12 @@ XRingBuffer* XRingBuffer_create(size_t chunkSize)
     if (ISNULL(chunkSize, ""))
         return NULL;
 
-    XRingBuffer* buffer = XMemory_malloc(sizeof(XRingBuffer));
+    XRingBuffer* buffer = XMalloc_System(sizeof(XRingBuffer));
     if (buffer == NULL)
         return NULL;
 
     XRingBuffer_init(buffer, chunkSize);
-    Set_Class_MemoryFree(buffer, XFree);
+    Set_Class_MemoryFree(buffer, XFree_System);
     return buffer;
 }
 

@@ -17,7 +17,7 @@ static void map_dataDelete(char**lpStr)
 {
 	if (!lpStr)return;
 	char* str = *lpStr;
-		XFree(str);
+		XFree_System(str);
 }
 void XHashMapTest()
 {
@@ -31,7 +31,7 @@ void XHashMapTest()
 		XContainerSetDataDeinitMethod(map, map_dataDelete);
 		for (size_t i = 0; i < 500; i++)
 		{
-			char* str = XMemory_malloc(strlen(arraychar[i % 5]) + 10);
+			char* str = XMalloc_System(strlen(arraychar[i % 5]) + 10);
 			strcpy(str, arraychar[i % 5]);
 			XHashMap_insert_base(map, &i, &str);
 		}

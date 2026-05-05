@@ -1,7 +1,18 @@
 #include"XRunnable.h"
 #include"XMemory.h"
 #include"XVarList.h"
-
+/**
+ * @brief XRunnable类结构体定义，用于表示可运行的任务
+ * @note 继承自XObject，提供类似Qt QRunnable的功能
+ */
+typedef struct XRunnable
+{
+	XClass m_class;                    ///< 继承的基类成员
+	XCallableToRun function;    //运行的函数
+	XVarList* argsList;         //运行的参数
+	// QRunnable核心属性
+	bool auto_delete;                   ///< 是否自动删除，默认为true
+} XRunnable;
 // 虚函数实现声明
 static void VXRunnable_run(XRunnable* runnable);
 static void VXRunnableFunctionWrapper_deinit(XRunnable* runnable);
@@ -46,11 +57,11 @@ void XRunnable_init(XRunnable* runnable)
 
 XRunnable* XRunnable_create()
 {
-	XRunnable* runnable = (XRunnable*)XMemory_malloc(sizeof(XRunnable));
+	XRunnable* runnable = (XRunnable*)XMalloc_System(sizeof(XRunnable));
 	if (!runnable)
 		return NULL;
 	XRunnable_init(runnable);
-	Set_Class_MemoryFree(runnable, XMemory_free);
+	Set_Class_MemoryFree(runnable, XFree_System);
 	return runnable;
 }
 
@@ -95,7 +106,7 @@ void VXRunnableFunctionWrapper_deinit(XRunnable* runnable)
 	}
 
 	// 调用父类析构
-	XClass_Deinit_Parent(XRunnable, runnable);
+	//XClass_Deinit_Parent(XClass, runnable);
 }
 
 XRunnable* XRunnable_create_from_function(XCallableToRun function, XVarList* argsList, bool auto_delete)

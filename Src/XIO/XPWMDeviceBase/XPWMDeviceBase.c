@@ -5,12 +5,12 @@ XPWMDeviceBase* XPWMDeviceBase_create()
 {
 	/*if (port == NULL)
 		return NULL;*/
-	XPWMDeviceBase* pwm = XMemory_malloc(sizeof(XPWMDeviceBase));
+	XPWMDeviceBase* pwm = XMalloc_System(sizeof(XPWMDeviceBase));
 	if (pwm == NULL)
 		return pwm;
 	
 	XPWMDeviceBase_init(pwm);
-	Set_Class_MemoryFree(pwm, XFree);
+	Set_Class_MemoryFree(pwm, XFree_System);
 	return pwm;
 }
 

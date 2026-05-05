@@ -7,10 +7,10 @@
 
 XBsonArray* XBsonArray_create() 
 {
-    XBsonArray* array = (XBsonArray*)XMemory_malloc(sizeof(XBsonArray));
+    XBsonArray* array = (XBsonArray*)XMalloc_System(sizeof(XBsonArray));
     if (array) {
         XBsonArray_init(array);
-        Set_Class_MemoryFree(array, XFree);
+        Set_Class_MemoryFree(array, XFree_System);
     }
     return array;
 }

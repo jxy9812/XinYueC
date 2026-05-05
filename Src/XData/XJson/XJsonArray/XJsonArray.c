@@ -7,11 +7,11 @@
 
 XJsonArray* XJsonArray_create()
 {
-    XJsonArray* array = (XJsonArray*)XMemory_malloc(sizeof(XJsonArray));
+    XJsonArray* array = (XJsonArray*)XMalloc_System(sizeof(XJsonArray));
     if (array == NULL)
         return NULL;
     XJsonArray_init(array);
-    Set_Class_MemoryFree(array, XFree);
+    Set_Class_MemoryFree(array, XFree_System);
     return array;
 }
 

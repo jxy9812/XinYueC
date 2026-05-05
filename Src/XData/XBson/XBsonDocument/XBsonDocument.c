@@ -7,10 +7,10 @@
 #include <string.h>
 
 XBsonDocument* XBsonDocument_create() {
-    XBsonDocument* doc = (XBsonDocument*)XMemory_malloc(sizeof(XBsonDocument));
+    XBsonDocument* doc = (XBsonDocument*)XMalloc_System(sizeof(XBsonDocument));
     if (doc) {
         XBsonDocument_init(doc);
-        Set_Class_MemoryFree(doc, XFree);
+        Set_Class_MemoryFree(doc, XFree_System);
     }
     return doc;
 }

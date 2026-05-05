@@ -274,7 +274,7 @@ void VXThread_deinit(XThread* thread)
         XThreadData_delete(data);
         thread->m_data = NULL;
     }
-    //XMemory_free(thread);
+    //XFree_System(thread);
 }
 
 XHandle XThread_currentThreadId()

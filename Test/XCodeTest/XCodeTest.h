@@ -9,6 +9,7 @@ extern "C" {
 void XMenu_XCodeTest(XMenu* root);
 void XMenu_XDebugTest(XMenu* root);
 void XMenu_XThreadTest(XMenu* root);
+void XMenu_XThreadPoolTest(XMenu* root);
 void XMenu_XStateMachineTest(XMenu* root);
 void XStateMachineEventTest();
 void XStateMachineSignalTest();

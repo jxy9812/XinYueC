@@ -152,7 +152,7 @@ XHostInfo* XHostInfo_fromName(const char* name);
 /**
  * @brief 获取本机的主机名。
  *
- * @return 动态分配的主机名字符串（需调用 XMemory_free 释放），失败返回 NULL。
+ * @return 动态分配的主机名字符串（需调用 XFree_System 释放），失败返回 NULL。
  */
 char* XHostInfo_localHostName(void);
 
@@ -160,7 +160,7 @@ char* XHostInfo_localHostName(void);
  * @brief 获取本机的域名（若系统支持）。
  *
  * @note 在大多数 POSIX 系统上，此函数可能无法可靠获取域名。
- * @return 动态分配的域名字符串（需调用 XMemory_free 释放），失败或不支持返回 NULL。
+ * @return 动态分配的域名字符串（需调用 XFree_System 释放），失败或不支持返回 NULL。
  */
 char* XHostInfo_localDomainName(void);
 

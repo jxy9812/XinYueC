@@ -10,25 +10,12 @@ extern "C" {
  * @brief 开始定义XRunnable类的虚函数表枚举
  * @note QRunnable只有一个纯虚函数run()
  */
- XCLASS_DEFINE_BEGING(XRunnable)
- // QRunnable特有的虚函数
- XCLASS_DEFINE_ENUM(XRunnable, Run)= XCLASS_VTABLE_GET_SIZE(XClass),
- XCLASS_DEFINE_END(XRunnable)
-/**
- * @brief XRunnable类结构体定义，用于表示可运行的任务
- * @note 继承自XObject，提供类似Qt QRunnable的功能
- */
-typedef struct XRunnable
-{
-    XClass m_class;                    ///< 继承的基类成员
-    XCallableToRun function;    //运行的函数
-    XVarList* argsList;         //运行的参数
-    // QRunnable核心属性
-    bool auto_delete;                   ///< 是否自动删除，默认为true
-} XRunnable;
-
-
-
+XCLASS_DEFINE_BEGING(XRunnable)
+// QRunnable特有的虚函数
+XCLASS_DEFINE_ENUM(XRunnable, Run) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_END(XRunnable)
+typedef struct XRunnable XRunnable;
+ 
 /**
  * @brief 初始化XRunnable类的虚函数表
  * @return 指向初始化完成的XVtable的指针
@@ -54,6 +41,7 @@ void XRunnable_init(XRunnable* runnable);
  */
 #define XRunnable_delete_base      XClass_delete_base
 
+#define XRunnable_deinit_base      XClass_deinit_base
 /**
  * @brief 执行可运行任务（虚函数调用）
  * @param runnable XRunnable对象指针（非NULL）

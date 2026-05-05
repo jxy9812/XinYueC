@@ -14,19 +14,19 @@
 // 创建 XThread 对象
 XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist)
 {
-    XThread* thread = (XThread*)XMemory_malloc(sizeof(XThread));
+    XThread* thread = (XThread*)XMalloc_System(sizeof(XThread));
     if (thread == NULL) {
         return NULL;
     }
     XThread_init(thread);
     thread->m_start_routine = start_routine;
     thread->m_varList = varlist;
-    Set_Class_MemoryFree(thread, XFree);
+    Set_Class_MemoryFree(thread, XFree_System);
     return thread;
 }
 XThread* XThread_create(XObject* parent)
 {
-    XThread* thread = (XThread*)XMemory_malloc(sizeof(XThread));
+    XThread* thread = (XThread*)XMalloc_System(sizeof(XThread));
     if (thread == NULL) {
         return NULL;
     }
@@ -34,12 +34,12 @@ XThread* XThread_create(XObject* parent)
     thread->m_start_routine = NULL;
     thread->m_varList = NULL;
 
-    Set_Class_MemoryFree(thread, XFree);
+    Set_Class_MemoryFree(thread, XFree_System);
     return thread;
 }
 XThread* XThread_createMainThread(XObject* parent)
 {
-    XThread* thread = (XThread*)XMemory_malloc(sizeof(XThread));
+    XThread* thread = (XThread*)XMalloc_System(sizeof(XThread));
     if (thread == NULL) {
         return NULL;
     }
@@ -53,7 +53,7 @@ XThread* XThread_createMainThread(XObject* parent)
     thread->m_loop = NULL;
     thread->m_priority = XThread_err;
     thread->m_stackSize = 0;
-    Set_Class_MemoryFree(thread, XFree);
+    Set_Class_MemoryFree(thread, XFree_System);
     thread->m_start_routine = NULL;
     thread->m_varList = NULL;
     thread->m_isMainThread = true;

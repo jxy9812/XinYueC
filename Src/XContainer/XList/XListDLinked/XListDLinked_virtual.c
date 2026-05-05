@@ -67,8 +67,8 @@ XVtable* XListDLinked_class_init()
 #endif
     return XVTABLE_DEFAULT;
 }
-#define CreatNode(this_list)    XMemory_malloc(ALIGN_UP(sizeof(XListDNode)+XContainerTypeSize(this_list),sizeof(void*)))
-//#define CreatNode(this_list)   (XMemory_malloc(sizeof(XListDNode)+XContainerTypeSize(this_list)))
+#define CreatNode(this_list)    XMalloc_System(ALIGN_UP(sizeof(XListDNode)+XContainerTypeSize(this_list),sizeof(void*)))
+//#define CreatNode(this_list)   (XMalloc_System(sizeof(XListDNode)+XContainerTypeSize(this_list)))
 
 void VXClass_copy(XListDLinked* object, const XListDLinked* src)
 {
@@ -268,7 +268,7 @@ static bool removeNode(XListDLinked* this_list, XListDNode* node)
         if (XContainerDataDeinitMethod(this_list) != NULL)
             XContainerDataDeinitMethod(this_list)(&(node->data));
     }
-    XMemory_free(node);//释放节点
+    XFree_System(node);//释放节点
     if (XContainerSize(this_list) == 1)
     {
         XContainerDataPtr(this_list) = NULL;
@@ -350,8 +350,8 @@ void VXList_clear(XListDLinked* this_list)
         if (XContainerDataDeinitMethod(this_list) != NULL)
             XContainerDataDeinitMethod(this_list)(&(p->data));
         pnext = p->next;
-        //XMemory_free(p->data);
-        XMemory_free(p);
+        //XFree_System(p->data);
+        XFree_System(p);
         p = pnext;
     }
     list->m_class.m_size = 0;
@@ -410,14 +410,14 @@ bool VXList_find(const XListDLinked* this_list, void* pvData, XListDLinked_itera
 void VXList_deinit(XListDLinked* this_list)
 {
     XListDLinked_clear_base(this_list);
-    //XMemory_free(this_list);
+    //XFree_System(this_list);
 }
 //排序
 //一次快排
 static struct XListDNode* List_OneSort(XListDNode* ListHead, XListDNode* ListTail, const size_t type, XCompare compare, XSortOrder order)
 {
 
-    char* compareVal = XMemory_malloc(type);
+    char* compareVal = XMalloc_System(type);
     if (compareVal == NULL)
         return NULL;
     memcpy(compareVal, &(ListHead->data), type);
@@ -454,7 +454,7 @@ static struct XListDNode* List_OneSort(XListDNode* ListHead, XListDNode* ListTai
         }
     }
     memcpy(&(ListTail->data), compareVal, type);
-    XMemory_free(compareVal);
+    XFree_System(compareVal);
     //单次结束，分割节点
     return ListHead;
 

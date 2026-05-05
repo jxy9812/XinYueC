@@ -120,7 +120,7 @@ void VXIODevice_deinit(XPLCTask* task)
 		task->m_taskStateMap = NULL;
 	}
 
-	//XMemory_free(task);
+	//XFree_System(task);
 }
 
 void StartTask(XPLCTask* task)

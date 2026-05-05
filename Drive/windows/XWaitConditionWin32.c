@@ -23,7 +23,7 @@ void XWaitCondition_deinit(XWaitCondition* cond) {
 }
 
 XWaitCondition* XWaitCondition_create() {
-    XWaitCondition* cond = (XWaitCondition*)XMemory_malloc(sizeof(XWaitCondition));
+    XWaitCondition* cond = (XWaitCondition*)XMalloc_System(sizeof(XWaitCondition));
     if (cond != NULL) {
         XWaitCondition_init(cond);
     }
@@ -33,7 +33,7 @@ XWaitCondition* XWaitCondition_create() {
 void XWaitCondition_delete(XWaitCondition* cond) {
     if (cond == NULL) return;
     XWaitCondition_deinit(cond);
-    XMemory_free(cond);
+    XFree_System(cond);
 }
 
 bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int32_t timeout) {

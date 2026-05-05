@@ -7,9 +7,9 @@ XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare, XSortOr
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XPriorityQueue* this_queue = XMemory_malloc(sizeof(XPriorityQueue));
+	XPriorityQueue* this_queue = XMalloc_System(sizeof(XPriorityQueue));
 	XPriorityQueue_init(this_queue, typeSize,compare,order);
-	Set_Class_MemoryFree(this_queue, XFree);
+	Set_Class_MemoryFree(this_queue, XFree_System);
 	return this_queue;
 }
 
@@ -19,7 +19,8 @@ void XPriorityQueue_init(XPriorityQueue* this_queue, size_t typeSize, XCompare c
 		return;
 	XVector_init(this_queue, typeSize);
 	XClassGetVtable(this_queue)= XPriorityQueue_class_init();
-	XContainerSetCompare(this_queue, compare);
+	//XContainerSetCompare(this_queue, compare);
+    this_queue->compare = compare;
 	this_queue->m_order = order;
 }
 

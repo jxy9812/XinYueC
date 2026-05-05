@@ -59,22 +59,22 @@ XPriorityMapQueue* XPriorityMapQueue_create(size_t prioritySize, XCompare priori
 {
 	if (ISNULL(prioritySize, "")|| ISNULL(priorityCom, "") || ISNULL(typeSize, ""))
 		return NULL;
-	XPriorityMapQueue* this_queue = XMemory_malloc(sizeof(XPriorityMapQueue));
+	XPriorityMapQueue* this_queue = XMalloc_System(sizeof(XPriorityMapQueue));
 	XPriorityMapQueue_init(this_queue, prioritySize, priorityCom, priorityOrder, typeSize);
-	Set_Class_MemoryFree(this_queue, XFree);
+	Set_Class_MemoryFree(this_queue, XFree_System);
 	return this_queue;
 }
 //进行一次映射
 static void mapPriority(XPriorityMapQueue* this_queue)
 {
 	if (this_queue->mapPriority)
-		XMemory_free(this_queue->mapPriority);
+		XFree_System(this_queue->mapPriority);
 	if (XMap_isEmpty_base(GetMap(this_queue)))
 	{
 		this_queue->mapPriority = NULL;
 		return;
 	}
-	this_queue->mapPriority = XMemory_malloc(sizeof(XPair*)*XMapBase_size_base(GetMap(this_queue)));
+	this_queue->mapPriority = XMalloc_System(sizeof(XPair*)*XMapBase_size_base(GetMap(this_queue)));
 	if (this_queue->mapPriority == NULL)
 		return;
 	size_t index = 0;
@@ -177,7 +177,7 @@ bool VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void*
 		}
 	}
 	//没有高频队列或没有对应的都插入到堆队列
-	uint8_t* data = XMemory_malloc(XContainerTypeSize(this_queue->low_freq_queue));
+	uint8_t* data = XMalloc_System(XContainerTypeSize(this_queue->low_freq_queue));
 	//XMap* map = GetMap(this_queue);
 	if (priorityCreatMethod)
 		priorityCreatMethod(data, pvPriority);
@@ -194,7 +194,7 @@ bool VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void*
 		memcpy(pvPriority, data, GetPrioritySize(this_queue));
 		memcpy(pvValue, data + GetPrioritySize(this_queue), XContainerTypeSize((this_queue)));
 	}
-	XMemory_free(data);
+	XFree_System(data);
 	++XContainerSize(this_queue);
 	++XContainerCapacity(this_queue);
 	return true;
@@ -387,7 +387,7 @@ void VXClass_deinit(XPriorityMapQueue* this_queue)
 	}
 	if (this_queue->mapPriority)
 	{
-		XMemory_free(this_queue->mapPriority);
+		XFree_System(this_queue->mapPriority);
 		this_queue->mapPriority = NULL;
 	}
 

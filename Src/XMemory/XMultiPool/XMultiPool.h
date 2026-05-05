@@ -32,6 +32,16 @@ typedef struct XMultiPool //因为线程安全可以全局创建一个后公用
      *           初始化。在 `XMultiPool_deinit` 中只会调用 `XFixedPool_deinit`。
      */
     bool owns_memory;
+    // ============ 新增字段 ============
+  /** 标记是否启用了倍数模式 */
+    bool is_power_of_two_mode;
+
+    size_t  initial_size;//初始大小
+    /** 在倍数模式下，期望的下一个块大小 */
+    size_t next_expected_size;
+
+    /** 在倍数模式下，增长倍数（例如2） */
+    size_t growth_multiplier;
 } XMultiPool;
 
 // ============================================================================
@@ -86,7 +96,26 @@ void XMultiPool_deinit(XMultiPool* multi_pool);
  * @return bool 添加成功返回 `true`，否则返回 `false`。
  */
 bool XMultiPool_add_pool(XMultiPool* multi_pool, XFixedPool* pool);
+/**
+ * @brief 启用倍数模式。
+ *
+ * 启用后，`XMultiPool_add_pool` 将强制执行倍数和唯一性检查。
+ * 此函数应在添加任何自定义池之前调用。
+ *
+ * @param multi_pool 目标多级内存池。
+ * @param initial_size 第一个池的大小（字节）。
+ * @param multiplier 增长倍数（必须大于1）。
+ * @return bool 成功启用返回 `true`，否则返回 `false`。
+ */
+bool XMultiPool_enable_power_of_two_mode(XMultiPool* multi_pool, size_t initial_size, size_t multiplier);
 
+/**
+ * @brief 获取由 XMultiPool 分配的内存块的原始大小。
+ * @param mp 指向 XMultiPool 实例的指针。如果为 NULL，则检查全局内存池。
+ * @param ptr 由 XMultiPool_malloc 或相关函数分配的指针。
+ * @return 如果 ptr 有效且来自指定的内存池，则返回其用户可用大小；否则返回 0。
+ */
+size_t XMultiPool_getMaxUserSize(XMultiPool* mp, void* ptr);
 /**
  * @brief 从多级内存池中分配内存
  *
@@ -98,7 +127,26 @@ bool XMultiPool_add_pool(XMultiPool* multi_pool, XFixedPool* pool);
  * @return void* 成功时返回指针，失败（所有池都空或无合适池）时返回 NULL。
  */
 void* XMultiPool_malloc(XMultiPool* multi_pool, size_t size);
+/**
+ * @brief 从多级内存池中分配并清零内存
+ *
+ * @param multi_pool 指向多级内存池的指针。
+ * @param count 元素个数。
+ * @param size 每个元素的大小（字节）。
+ * @return void* 成功时返回指针，失败时返回 NULL。
+ */
+void* XMultiPool_calloc(XMultiPool* multi_pool, size_t count, size_t size);
 
+/**
+ * @brief 重新调整之前分配的内存块的大小
+ *
+ * @param multi_pool 指向多级内存池的指针。
+ * @param ptr 之前由 XMultiPool_malloc/calloc/realloc 分配的指针。
+ * @param size 新的内存大小（字节）。
+ * @return void* 成功时返回新指针（可能与原指针相同），失败时返回 NULL。
+ *         如果 size 为 0 且 ptr 不为 NULL，则释放内存并返回 NULL。
+ */
+void* XMultiPool_realloc(XMultiPool* multi_pool, void* ptr, size_t size);
 /**
  * @brief 将内存块归还给多级内存池
  *
@@ -123,6 +171,8 @@ bool XMultiPool_is_from_pool(const XMultiPool* multi_pool, const void* ptr);
 XMultiPool* XMultiPool_global();
 //用全局池分配
 void* XMultiPool_global_malloc(size_t size);
+void* XMultiPool_global_calloc(size_t count, size_t size);
+void* XMultiPool_global_realloc(void* ptr, size_t size);
 //全局池释放
 void XMultiPool_global_free(void* ptr);
 #ifdef __cplusplus

@@ -27,7 +27,7 @@ XTreeNode* XTreeNode_create(const uint8_t nodeCount, const char* pvData, const s
 {
 	if (nodeCount == 0 || dataSize == 0)
 		return NULL;
-	XTreeNode* node = XMemory_malloc(XTreeNode_typeSize(node)+ dataSize);
+	XTreeNode* node = XMalloc_System(XTreeNode_typeSize(node)+ dataSize);
 	if (node)
 		XTreeNode_init(node,nodeCount, XTreeNode_typeSize(node),pvData,dataSize);
 	return node;
@@ -70,10 +70,10 @@ void XTreeNode_delete(XTreeNode* node)
 	if (node == NULL)
 		return;
 	/*if (node->nodes)
-		XMemory_free(node->nodes);*/
+		XFree_System(node->nodes);*/
 	/*if (XTreeNode_GetDataPtr(node))
-		XMemory_free(XTreeNode_GetDataPtr(node));*/
-	XMemory_free(node);
+		XFree_System(XTreeNode_GetDataPtr(node));*/
+	XFree_System(node);
 }
 
 void XTree_delete_base(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod, XTreeNodeDataDeleteMethod dataMethod, void* args)

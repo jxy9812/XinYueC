@@ -75,9 +75,9 @@ XVtable* XEventLoop_class_init() {
  * @return 新创建的事件循环实例
  */
 XEventLoop* XEventLoop_create() {
-    XEventLoop* loop = XMemory_malloc(sizeof(XEventLoop));
+    XEventLoop* loop = XMalloc_System(sizeof(XEventLoop));
     XEventLoop_init(loop);
-    Set_Class_MemoryFree(loop, XFree);
+    Set_Class_MemoryFree(loop, XFree_System);
     return loop;
 }
 

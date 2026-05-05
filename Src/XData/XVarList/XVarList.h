@@ -32,7 +32,7 @@ extern "C" {
 typedef struct XVarList
 {
 	uint8_t* ptr;  ///< 当前访问的指针位置，用于遍历元素
-    DeleteMethod m_free;//释放方法
+    FreeMethod m_free;//释放方法
     void(*argsDel)(struct XVarList*);//释放方法
     char data[];    ///< 存储变量数据的起始地址
 } XVarList;
@@ -45,7 +45,7 @@ typedef struct XVarList
 #define XVarList_Create(...)     XVarList_create(COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)
 /**
 * @brief 释放XVarList实例占用的内存
-* 本质是调用XMemory_free，用于统一内存释放接口
+* 本质是调用XFree_System，用于统一内存释放接口
 */
 void  XVarList_delete(XVarList*list);
 //设置参数删除函数
@@ -99,48 +99,48 @@ XVarList* XVarList_create(uint8_t count, ...);
 
 #define XVarList_args_1(list, type1, name1) \
     XVarList_start(list);\
-    type1 name1 = XVarList_arg(list, type1)
+    const type1 const name1 = XVarList_arg(list, type1)
 
 #define XVarList_args_2(list, type1, name1, type2, name2) \
     XVarList_args_1(list,type1, name1);\
-    type2 name2 = XVarList_arg(list, type2)
+    const type2 const name2 = XVarList_arg(list, type2)
 
 #define XVarList_args_3(list, type1, name1, type2, name2, type3, name3) \
     XVarList_args_2(list, type1, name1, type2, name2);\
-    type3 name3 = XVarList_arg(list, type3)
+    const type3 const name3 = XVarList_arg(list, type3)
 
 #define XVarList_args_4(list, type1, name1, type2, name2, type3, name3, type4, name4) \
     XVarList_args_3(list, type1, name1, type2, name2, type3, name3);\
-    type4 name4 = XVarList_arg(list, type4)
+    const type4 const name4 = XVarList_arg(list, type4)
 
 #define XVarList_args_5(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5) \
     XVarList_args_4(list, type1, name1, type2, name2, type3, name3, type4, name4); \
-    type5 name5 = XVarList_arg(list, type5)
+    const type5 const name5 = XVarList_arg(list, type5)
 
 // 6 对参数
 #define XVarList_args_6(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6) \
     XVarList_args_5(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5); \
-    type6 name6 = XVarList_arg(list, type6)
+    const type6 const name6 = XVarList_arg(list, type6)
 
 // 7 对参数
 #define XVarList_args_7(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7) \
     XVarList_args_6(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6); \
-    type7 name7 = XVarList_arg(list, type7)
+    const type7 const name7 = XVarList_arg(list, type7)
 
 // 8 对参数
 #define XVarList_args_8(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7, type8, name8) \
     XVarList_args_7(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7); \
-    type8 name8 = XVarList_arg(list, type8)
+    const type8 const name8 = XVarList_arg(list, type8)
 
 // 9 对参数
 #define XVarList_args_9(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7, type8, name8, type9, name9) \
     XVarList_args_8(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7, type8, name8); \
-    type9 name9 = XVarList_arg(list, type9)
+    const type9 const name9 = XVarList_arg(list, type9)
 
 // 10 对参数
 #define XVarList_args_10(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7, type8, name8, type9, name9, type10, name10) \
     XVarList_args_9(list, type1, name1, type2, name2, type3, name3, type4, name4, type5, name5, type6, name6, type7, name7, type8, name8, type9, name9); \
-    type10 name10 = XVarList_arg(list, type10)
+    const type10 const name10 = XVarList_arg(list, type10)
 #ifdef __cplusplus
 }
 #endif

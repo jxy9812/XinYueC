@@ -41,9 +41,9 @@ XVtable* XModbusExceptionResponse_class_init(void)
 
 // --- 创建与初始化 ---
 XModbusPdu* XModbusPdu_create(void) {
-    XModbusPdu* pdu = (XModbusPdu*)XMemory_malloc(sizeof(XModbusPdu));
+    XModbusPdu* pdu = (XModbusPdu*)XMalloc_System(sizeof(XModbusPdu));
     if (pdu) XModbusPdu_init(pdu);
-    Set_Class_MemoryFree(pdu, XFree);
+    Set_Class_MemoryFree(pdu, XFree_System);
     return pdu;
 }
 
@@ -57,13 +57,13 @@ XModbusPdu* XModbusPdu_create_copy(XModbusPdu* pdu)
 }
 
 XModbusPdu* XModbusPdu_create_with_code(XModbusPdu_FunctionCode code) {
-    XModbusPdu* pdu = (XModbusPdu*)XMemory_malloc(sizeof(XModbusPdu));
+    XModbusPdu* pdu = (XModbusPdu*)XMalloc_System(sizeof(XModbusPdu));
     if (pdu) XModbusPdu_init_with_code(pdu, code);
     return pdu;
 }
 
 XModbusPdu* XModbusPdu_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t dataSize) {
-    XModbusPdu* pdu = (XModbusPdu*)XMemory_malloc(sizeof(XModbusPdu));
+    XModbusPdu* pdu = (XModbusPdu*)XMalloc_System(sizeof(XModbusPdu));
     if (pdu) XModbusPdu_init_with_code_and_data(pdu, code, data, dataSize);
     return pdu;
 }
@@ -90,7 +90,7 @@ void XModbusPdu_init_with_code_and_data(XModbusPdu* pdu, XModbusPdu_FunctionCode
 
 XModbusRequest* XModbusRequest_create(void)
 {
-    XModbusRequest* req = (XModbusRequest*)XMemory_malloc(sizeof(XModbusRequest));
+    XModbusRequest* req = (XModbusRequest*)XMalloc_System(sizeof(XModbusRequest));
     if (req) XModbusRequest_init(req);
     return req;
 }
@@ -132,7 +132,7 @@ void XModbusRequest_init_with_code_and_data(XModbusRequest* req, XModbusPdu_Func
 
 XModbusResponse* XModbusResponse_create(void)
 {
-    XModbusResponse* resp = (XModbusResponse*)XMemory_malloc(sizeof(XModbusResponse));
+    XModbusResponse* resp = (XModbusResponse*)XMalloc_System(sizeof(XModbusResponse));
     if (resp) XModbusResponse_init(resp);
     return resp;
 }
@@ -166,7 +166,7 @@ void XModbusResponse_init_with_code_and_data(XModbusResponse* resp, XModbusPdu_F
     }
 }
 XModbusExceptionResponse* XModbusExceptionResponse_create(void) {
-    XModbusExceptionResponse* exc = (XModbusExceptionResponse*)XMemory_malloc(sizeof(XModbusExceptionResponse));
+    XModbusExceptionResponse* exc = (XModbusExceptionResponse*)XMalloc_System(sizeof(XModbusExceptionResponse));
     if (exc) XModbusExceptionResponse_init(exc);
     return exc;
 }

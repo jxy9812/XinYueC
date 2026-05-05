@@ -6,7 +6,7 @@
 #include<string.h>
 void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompare compare, XSortOrder order)
 {
-	char* temp = XMemory_malloc(nSize * TypeSize);//开辟临时数组
+	char* temp = XMalloc_System(nSize * TypeSize);//开辟临时数组
 
 	if (temp == NULL)
 	{
@@ -99,5 +99,5 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 		//memset(tmp, 0, n * size);
 		gap *= 2;
 	}
-	XMemory_free(temp);//释放临时数组
+	XFree_System(temp);//释放临时数组
 }

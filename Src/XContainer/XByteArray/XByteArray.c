@@ -4,11 +4,11 @@
 #include <string.h>
 XByteArray* XByteArray_create()
 {
-	XByteArray* array = XMemory_malloc(sizeof(XByteArray));
+	XByteArray* array = XMalloc_System(sizeof(XByteArray));
 	if (array == NULL)
 		return NULL;
 	XByteArray_init(array);
-	Set_Class_MemoryFree(array, XFree);
+	Set_Class_MemoryFree(array, XFree_System);
 	return array;
 }
 

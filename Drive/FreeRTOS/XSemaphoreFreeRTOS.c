@@ -31,11 +31,11 @@ void XSemaphore_deinit(XSemaphore* sem) {
 }
 
 XSemaphore* XSemaphore_create(int32_t initial, int32_t maximum) {
-    XSemaphore* sem = (XSemaphore*)XMemory_malloc(sizeof(struct XSemaphore));
+    XSemaphore* sem = (XSemaphore*)XMalloc_System(sizeof(struct XSemaphore));
     if (sem) {
         XSemaphore_init(sem, initial, maximum);
         if (!sem->handle) {
-            XMemory_free(sem);
+            XFree_System(sem);
             return NULL;
         }
     }
@@ -45,7 +45,7 @@ XSemaphore* XSemaphore_create(int32_t initial, int32_t maximum) {
 void XSemaphore_delete(XSemaphore* sem) {
     if (sem) {
         XSemaphore_deinit(sem);
-        XMemory_free(sem);
+        XFree_System(sem);
     }
 }
 

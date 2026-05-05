@@ -45,14 +45,18 @@ void XPriorityQueueTest()
 	XPrintf("XPriority_QueueTest 测试\n");
 	//XPriorityQueue* queue=XPriorityQueue_create(sizeof(int),XLess_int);//小堆，先出小的
 	XPriorityQueue* queue = XPriorityQueue_create(sizeof(int), int_compare,XSORT_DESC);//大堆，先出大的
+	XContainerSetCompare(queue, int_compare);
 	XVector* v = XVector_Create(int);
 	for (size_t i = 0; i < 10; i++)
 	{
 		XVector_push_back_base(v, &i);
 	}
 	XDerangement(XContainerDataPtr(v),XVector_size_base(v), sizeof(int));
-	//XPrintf("入队数据:");
+	
+	XPrintf("入队数据:");
 	XVector_iterator_for_each(v, insertData, queue);
+	int remove = 3;
+	XPriorityQueue_remove(queue, &remove, 1);
 	XPrintf("\n队列循环出队:");
 	while (!XPriorityQueue_isEmpty_base(queue))
 	{

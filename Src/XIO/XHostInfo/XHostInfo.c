@@ -7,20 +7,20 @@
 #include <string.h>
 
 static XHostInfoPrivate* XHostInfoPrivate_create(void) {
-    return (XHostInfoPrivate*)XMemory_calloc(1, sizeof(XHostInfoPrivate));
+    return (XHostInfoPrivate*)XCalloc_System(1, sizeof(XHostInfoPrivate));
 }
 
 static void XHostInfoPrivate_destroy(XHostInfoPrivate* d) {
     if (!d) return;
-    XMemory_free(d->hostName);
+    XFree_System(d->hostName);
     if (d->addresses) {
         for (int i = 0; i < d->addressCount; i++) {
             XHostAddress_delete_base(&d->addresses[i]);
         }
-        XMemory_free(d->addresses);
+        XFree_System(d->addresses);
     }
-    XMemory_free(d->errorString);
-    XMemory_free(d);
+    XFree_System(d->errorString);
+    XFree_System(d);
 }
 
 // Virtual functions
@@ -35,7 +35,7 @@ static void VXHostInfo_copy(XHostInfo* self, const XHostInfo* other) {
         if (other->d->errorString)
             self->d->errorString = XStrdup(other->d->errorString);
         if (other->d->addresses && other->d->addressCount > 0) {
-            self->d->addresses = (XHostAddress*)XMemory_malloc(other->d->addressCount * sizeof(XHostAddress));
+            self->d->addresses = (XHostAddress*)XMalloc_System(other->d->addressCount * sizeof(XHostAddress));
             for (int i = 0; i < other->d->addressCount; i++) {
                 self->d->addresses[i] = *XHostAddress_create_copy(&other->d->addresses[i]);
             }
@@ -66,9 +66,9 @@ XVtable* XHostInfo_class_init(void) {
 
 // Public API
 XHostInfo* XHostInfo_create(void) {
-    XHostInfo* info = (XHostInfo*)XMemory_malloc(sizeof(XHostInfo));
+    XHostInfo* info = (XHostInfo*)XMalloc_System(sizeof(XHostInfo));
     XHostInfo_init(info);
-    Set_Class_MemoryFree(info, XFree);
+    Set_Class_MemoryFree(info, XFree_System);
     return info;
 }
 
@@ -95,7 +95,7 @@ const char* XHostInfo_hostName(const XHostInfo* info) {
 
 void XHostInfo_setHostName(XHostInfo* info, const char* name) {
     if (!info || !info->d) return;
-    XMemory_free(info->d->hostName);
+    XFree_System(info->d->hostName);
     info->d->hostName = name ? XStrdup(name) : NULL;
 }
 
@@ -112,12 +112,12 @@ void XHostInfo_setAddresses(XHostInfo* info, const XHostAddress* addrs, int coun
         for (int i = 0; i < info->d->addressCount; i++) {
             XHostInfo_delete_base((XHostInfo*)&info->d->addresses[i]); // Actually XHostAddress_delete_base
         }
-        XMemory_free(info->d->addresses);
+        XFree_System(info->d->addresses);
         info->d->addresses = NULL;
         info->d->addressCount = 0;
     }
     if (addrs && count > 0) {
-        info->d->addresses = (XHostAddress*)XMemory_malloc(count * sizeof(XHostAddress));
+        info->d->addresses = (XHostAddress*)XMalloc_System(count * sizeof(XHostAddress));
         for (int i = 0; i < count; i++) {
             info->d->addresses[i] = *XHostAddress_create_copy(&addrs[i]);
         }
@@ -139,7 +139,7 @@ const char* XHostInfo_errorString(const XHostInfo* info) {
 
 void XHostInfo_setErrorString(XHostInfo* info, const char* str) {
     if (!info || !info->d) return;
-    XMemory_free(info->d->errorString);
+    XFree_System(info->d->errorString);
     info->d->errorString = str ? XStrdup(str) : NULL;
 }
 

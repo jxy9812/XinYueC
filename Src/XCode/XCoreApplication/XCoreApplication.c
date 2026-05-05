@@ -49,11 +49,11 @@ XCoreApplication* XCoreApplication_create(int argc, char** argv) {
         return g_app;
 
     // 创建并初始化应用程序实例
-    XCoreApplication* app = XMemory_malloc(sizeof(XCoreApplication));
+    XCoreApplication* app = XMalloc_System(sizeof(XCoreApplication));
     if (!app) return NULL;
 
     XCoreApplication_init(app, argc, argv);
-    Set_Class_MemoryFree(app, XFree);
+    Set_Class_MemoryFree(app, XFree_System);
     return g_app;
 }
 
@@ -301,8 +301,8 @@ void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)
     //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
     if (size < XVector_size_base(events))
         XThreadData_push_front_list(events);
-    XVector_clear_base(events);
-    //XVector_delete_base(events);
+    //XVector_clear_base(events);
+    XVector_delete_base(events);
 }
 
 void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventType)
@@ -326,8 +326,8 @@ void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventTyp
     //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
     if (size < XVector_size_base(events))
         XThreadData_push_front_list(events);
-    XVector_clear_base(events);
-    //XVector_delete_base(events);
+    //XVector_clear_base(events);
+    XVector_delete_base(events);
 }
 
 XAbstractEventDispatcher* XCoreApplication_eventDispatcher(void)

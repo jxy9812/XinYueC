@@ -43,10 +43,10 @@ XVtable* XHistoryState_class_init()
  * @brief 创建历史状态实例
  */
 XHistoryState* XHistoryState_create(XHistoryStateType type) {
-    XHistoryState* state = (XHistoryState*)XMemory_malloc(sizeof(XHistoryState));
+    XHistoryState* state = (XHistoryState*)XMalloc_System(sizeof(XHistoryState));
     if (state) {
         XHistoryState_init(state, type);
-        Set_Class_MemoryFree(state, XFree);
+        Set_Class_MemoryFree(state, XFree_System);
     }
     return state;
 }

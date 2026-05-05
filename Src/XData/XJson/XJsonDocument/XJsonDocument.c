@@ -63,7 +63,7 @@ static void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat 
 
 XJsonDocument* XJsonDocument_create(void)
 {
-    XJsonDocument* doc = (XJsonDocument*)XMemory_malloc(sizeof(XJsonDocument));
+    XJsonDocument* doc = (XJsonDocument*)XMalloc_System(sizeof(XJsonDocument));
     XJsonDocument_init(doc);
     return doc;
 }
@@ -155,7 +155,7 @@ void XJsonDocument_delete(XJsonDocument* document)
     XJsonDocument_deinit(document);
 
     if(document)
-        XMemory_free(document);
+        XFree_System(document);
 }
 
 void XJsonDocument_clear(XJsonDocument* document)

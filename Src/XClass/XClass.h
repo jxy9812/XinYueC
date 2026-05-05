@@ -18,7 +18,7 @@ XCLASS_DEFINE_END(XClass)
 typedef struct XClass
 {
 	XVtable* m_vtable;//虚函数表
-	DeleteMethod m_free;//释放方法
+	FreeMethod m_free;//释放方法
 }XClass;
 #define XVtableGetFunc(Vtable,Offset,Type) ((Type)((((XVtable*)Vtable)->data)[Offset]))//用虚函数表获取函数
 #define XClassGetVtable(Object) ((XClass*)Object)->m_vtable  //用获取类中的虚函数表

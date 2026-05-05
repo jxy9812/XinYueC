@@ -14,7 +14,7 @@
 static char* XStrDup(const char* str) {
     if (!str) return NULL;
     size_t len = strlen(str) + 1;
-    char* copy = XMemory_malloc(len);
+    char* copy = XMalloc_System(len);
     if (copy) {
         memcpy(copy, str, len);
     }
@@ -113,20 +113,20 @@ static void checkExclusiveGroups(XCommandLineParser* parser) {
 }
 
 XCommandLineParser* XCommandLineParser_create() {
-    XCommandLineParser* parser = XMemory_malloc(sizeof(XCommandLineParser));
+    XCommandLineParser* parser = XMalloc_System(sizeof(XCommandLineParser));
     if (!parser) return NULL;
 
     // 初始化选项和组向量
     parser->options = XVector_create(sizeof(XCommandLineOption));
     parser->groups = XVector_create(sizeof(XCommandLineOptionGroup*));
-    parser->result = XMemory_malloc(sizeof(XCommandLineParseResult));
+    parser->result = XMalloc_System(sizeof(XCommandLineParseResult));
 
     // 检查内存分配
     if (!parser->options || !parser->groups || !parser->result) {
         XVector_delete_base(parser->options);
         XVector_delete_base(parser->groups);
-        XMemory_free(parser->result);
-        XMemory_free(parser);
+        XFree_System(parser->result);
+        XFree_System(parser);
         return NULL;
     }
 
@@ -149,10 +149,10 @@ XCommandLineParser* XCommandLineParser_create() {
         XVector_delete_base(parser->result->unrecognizedOpts);
         XVector_delete_base(parser->result->exclusiveGroupConflicts);
         XVector_delete_base(parser->result->allocatedStrings);
-        XMemory_free(parser->result);
+        XFree_System(parser->result);
         XVector_delete_base(parser->options);
         XVector_delete_base(parser->groups);
-        XMemory_free(parser);
+        XFree_System(parser);
         return NULL;
     }
 
@@ -190,14 +190,14 @@ void XCommandLineParser_delete(XCommandLineParser* parser) {
         // 释放所有动态分配的字符串
         for (size_t i = 0; i < XVector_size_base(parser->result->allocatedStrings); i++) {
             char* str = *(char**)XVector_at_base(parser->result->allocatedStrings, i);
-            XMemory_free(str);
+            XFree_System(str);
         }
         XVector_delete_base(parser->result->allocatedStrings);
 
-        XMemory_free(parser->result);
+        XFree_System(parser->result);
     }
 
-    XMemory_free(parser);
+    XFree_System(parser);
 }
 
 void XCommandLineParser_addOption(XCommandLineParser* parser,

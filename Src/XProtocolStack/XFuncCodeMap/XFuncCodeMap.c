@@ -34,12 +34,12 @@ void* XFuncCodeMap_createCode(XFuncCodeMap* map)
 {
 	if (map == NULL)
 		return NULL;
-	void* code = XMemory_malloc(map->m_keyTypeSize);
+	void* code = XMalloc_System(map->m_keyTypeSize);
 	return code;
 }
 
 void XFuncCodeMap_deleteCode(void* code)
 {
 	if (code)
-		XMemory_free(code);
+		XFree_System(code);
 }

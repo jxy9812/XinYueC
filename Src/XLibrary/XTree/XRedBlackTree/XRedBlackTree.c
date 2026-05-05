@@ -8,7 +8,7 @@ size_t XRBTree_typeSize()
 }
 XRBTreeNode* XRBTree_create(const char* pvData, const size_t dataTypeSize)
 {
-	XRBTreeNode* node = XMemory_malloc(XRBTree_typeSize()+ dataTypeSize);
+	XRBTreeNode* node = XMalloc_System(XRBTree_typeSize()+ dataTypeSize);
 	if (ISNULL(node, "创建红黑树节点失败"))
 		return NULL;
 	XRBTree_init(node, XRBTree_typeSize(),pvData, dataTypeSize);
@@ -246,7 +246,7 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode,size_
 	//size_t dataSize = ((XTreeNode*)eraseNode)->dataSize;
 	if (dataSize > 0) 
 	{
-		char* tempBuffer = (char*)XMemory_malloc(dataSize); // 创建临时缓冲区
+		char* tempBuffer = (char*)XMalloc_System(dataSize); // 创建临时缓冲区
 		if (tempBuffer == NULL) {
 			// 处理内存分配失败的情况，例如直接返回或采取其他措施
 			return;
@@ -254,7 +254,7 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode,size_
 		memcpy(tempBuffer, XTreeNode_GetDataPtr(eraseNode), dataSize);
 		memcpy(XTreeNode_GetDataPtr(eraseNode), XTreeNode_GetDataPtr(LPreplace), dataSize);
 		memcpy(XTreeNode_GetDataPtr(LPreplace), tempBuffer, dataSize);
-		XMemory_free(tempBuffer); // 释放临时缓冲区
+		XFree_System(tempBuffer); // 释放临时缓冲区
 	}
 	//void* tempData = XTreeNode_GetDataPtr(eraseNode);
 	//memcpy();

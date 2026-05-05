@@ -21,7 +21,7 @@ size_t XMenu_typeSize()
 }
 XMenu* XMenu_create(const char* title)
 {
-	XHTreeNode* menu = XMemory_malloc(XMenu_typeSize()+ sizeof(XMenuData));
+	XHTreeNode* menu = XMalloc_System(XMenu_typeSize()+ sizeof(XMenuData));
 	if (menu)
 		XMenu_init(menu, XMenu_typeSize(),title);
 	return menu;
@@ -144,7 +144,7 @@ void XMenuData_init(XMenuData* data, const char* title)
 		size_t len = strlen(title) + 1;
 		if (len > 0)
 		{
-			str = XMemory_malloc(len);
+			str = XMalloc_System(len);
 			memcpy(str, title, len);
 		}
 	}
@@ -158,14 +158,14 @@ void XMenuData_setTitle(XMenuData* data, const char* title)
 	if (data == NULL)
 		return;
 	if (data->title)
-		XMemory_free(data->title);
+		XFree_System(data->title);
 	char* str = NULL;
 	if (title)
 	{
 		size_t len = strlen(title) + 1;
 		if (len > 0)
 		{
-			str = XMemory_malloc(len);
+			str = XMalloc_System(len);
 			memcpy(str, title, len);
 		}
 	}
@@ -177,7 +177,7 @@ void XMenuData_delete(XMenuData* data)
 	if (data == NULL)
 		return;
 	if (data->title)
-		XMemory_free(data->title);
+		XFree_System(data->title);
 	if(data->actions)
 	{
 		for_each_iterator(data->actions, XVector, it)
@@ -187,7 +187,7 @@ void XMenuData_delete(XMenuData* data)
 		}
 		XVector_delete_base(data->actions);
 	}
-	XMemory_free(data);
+	XFree_System(data);
 }
 
 void DataDeleteMethod(XMenuData* data, void* args)

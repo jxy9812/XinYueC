@@ -5,13 +5,13 @@
 #define Port(ptr)  ((XSwitchDevice_PortFunc*)(ptr->m_class.m_port))
 XSwitchDeviceBase* XSwitchDeviceBase_create()
 {
-	XSwitchDeviceBase* sw = XMemory_malloc(sizeof(XSwitchDeviceBase));
+	XSwitchDeviceBase* sw = XMalloc_System(sizeof(XSwitchDeviceBase));
 	//开始初始化
 	memset(sw, 0, sizeof(XSwitchDeviceBase));
 	if (sw == NULL)
 		return NULL;
 	XSwitchDeviceBase_init(sw);
-	Set_Class_MemoryFree(sw, XFree);
+	Set_Class_MemoryFree(sw, XFree_System);
 	return sw;
 }
 

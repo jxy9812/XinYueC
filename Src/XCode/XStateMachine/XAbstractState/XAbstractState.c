@@ -44,7 +44,7 @@ XVtable* XAbstractState_class_init()
 }
 
 static void XAbstractState_private_init(XAbstractState* state) {
-    XAbstractStatePrivate* d = XMemory_malloc(sizeof(XAbstractStatePrivate));
+    XAbstractStatePrivate* d = XMalloc_System(sizeof(XAbstractStatePrivate));
     d->enteredCallback = NULL;
     d->exitedCallback = NULL;
     state->m_privateData = d;  // 存储私有数据
@@ -118,7 +118,7 @@ void VXAbstractState_deinit(XAbstractState* state)
     if (!state) return;
    
     // 释放私有数据
-    XMemory_free(state->m_privateData);
+    XFree_System(state->m_privateData);
     state->m_privateData = NULL;
     memset(state,0,sizeof(state));
 }

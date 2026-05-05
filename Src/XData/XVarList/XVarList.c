@@ -37,8 +37,8 @@ XVarList* XVarList_create(uint8_t count, ...)
     }
     if (!list)
     {
-        list = XMalloc(ALIGN_UP(sumTypeSize + sizeof(XVarList), sizeof(void*)));
-        list->m_free = XFree;
+        list = XMalloc_System(ALIGN_UP(sumTypeSize + sizeof(XVarList), sizeof(void*)));
+        list->m_free = XFree_System;
     }
     if (!list)return NULL;
 

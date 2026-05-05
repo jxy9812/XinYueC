@@ -29,7 +29,7 @@
 static size_t calculate_internal_block_size(size_t user_block_size) 
 {
     // 我们需要确保整个内部块是 XFIXEDPOOL_ALIGN 对齐的
-    size_t internal_size = sizeof(void*) + user_block_size;
+    size_t internal_size = sizeof(size_t) + user_block_size;
     return ALIGN_UP(internal_size, sizeof(void*));
 }
 
@@ -113,7 +113,7 @@ bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t 
         return false;
     }
     pool->block_size = internal_block_size;
-    pool->user_block_size = internal_block_size - sizeof(void*);
+    pool->user_block_size = block_size;
     pool->raw_memory = memory;
     pool->total_raw_size = total_bytes;
     pool->num_blocks = num_blocks;
@@ -132,7 +132,7 @@ bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t 
     initialize_free_list(pool);
 
     // --- 初始化打包的头指针 (初始索引为0) ---
-    size_t initial_packed = XAtomic_pack_index_version(0, 0, pool->index_bits,pool->index_mask);
+    size_t initial_packed = XAtomic_pack_index_version(0, 0, pool->index_bits,pool->version_mask);
     XAtomic_init(pool->free_list_head_packed, initial_packed); // XAtomic_init 会处理 size_t
     return true;
 }
@@ -145,15 +145,12 @@ void XFixedPool_deinit(XFixedPool* pool) {
 
 void* XFixedPool_malloc(XFixedPool* pool) {
     if (!pool) return NULL;
-
-    size_t old_head_packed;
+    // 1. 读取当前头
+    size_t old_head_packed = XAtomic_load_size_t(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
     size_t new_head_packed;
     void* old_head_block = NULL;
     size_t old_head_index, new_head_index;
-
     do {
-        // 1. 读取当前头
-        old_head_packed = XAtomic_load_size_t(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
         old_head_index = XAtomic_unpack_index(old_head_packed, pool->index_mask);
 
         // 2. 检查是否为空
@@ -168,8 +165,8 @@ void* XFixedPool_malloc(XFixedPool* pool) {
         new_head_index = *(volatile size_t*)old_head_block;
 
         // 5. 打包新头
-        size_t old_version = XAtomic_unpack_version(old_head_packed, pool->index_bits,pool->index_mask);
-        new_head_packed = XAtomic_pack_index_version(new_head_index, old_version + 1, pool->index_bits, pool->index_mask);
+        size_t old_version = XAtomic_unpack_version(old_head_packed, pool->index_bits,pool->version_mask);
+        new_head_packed = XAtomic_pack_index_version(new_head_index, old_version + 1, pool->index_bits, pool->version_mask);
 
         // 6. 尝试替换头 (使用 _size_t 后缀的 CAS)
     } while (!XAtomic_compare_exchange_strong_size_t(
@@ -195,19 +192,18 @@ void XFixedPool_free(XFixedPool* pool, void* user_ptr) {
     if (*(volatile size_t*)internal_block != XFIXEDPOOL_BLOCK_ALLOCATED) {
         return;
     }
-
-    size_t old_head_packed;
+    // a. 读取当前头 (index + version)
+    size_t old_head_packed = XAtomic_load_size_t(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
     size_t new_head_packed;
+
     do {
-        // a. 读取当前头 (index + version)
-        old_head_packed = XAtomic_load_size_t(&pool->free_list_head_packed, XAtomic_MemoryOrder_Relaxed);
         size_t old_head_index = XAtomic_unpack_index(old_head_packed, pool->index_mask);
 
         *(volatile size_t*)internal_block = old_head_index;
 
         // c. 打包新头: 被释放的块成为新的头
-        size_t old_version = XAtomic_unpack_version(old_head_packed, pool->index_bits, pool->index_mask);
-        new_head_packed = XAtomic_pack_index_version(freed_index, old_version + 1, pool->index_bits, pool->index_mask);
+        size_t old_version = XAtomic_unpack_version(old_head_packed, pool->index_bits, pool->version_mask);
+        new_head_packed = XAtomic_pack_index_version(freed_index, old_version + 1, pool->index_bits, pool->version_mask);
 
         // d. 尝试原子地更新头指针 (使用 _size_t 后缀的 CAS)
     } while (!XAtomic_compare_exchange_strong_size_t(
@@ -222,7 +218,7 @@ bool XFixedPool_is_from_pool(const XFixedPool* pool, const void* ptr)
     }
 
     // 1. 从用户指针恢复内部块地址
-    const char* internal_block = (const char*)ptr - sizeof(void*);
+    const char* internal_block = get_internal_block_ptr(ptr); 
 
     // 2. 获取内存池数据区的起始和结束地址
     const char* pool_start = (const char*)pool->raw_memory;
@@ -259,13 +255,13 @@ XFixedPool* XFixedPool_create_from_memory(void* memory, size_t total_bytes, size
     if (!memory || total_bytes == 0 || block_size == 0) {
         return NULL;
     }
-    XFixedPool* pool = (XFixedPool*)XMalloc(sizeof(XFixedPool));
+    XFixedPool* pool = (XFixedPool*)XMalloc_System(sizeof(XFixedPool));
     if (!pool) {
         return NULL;
     }
     if (!XFixedPool_init(pool, memory, total_bytes, block_size))
     {
-        XFree(pool);
+        XFree_System(pool);
         return NULL;
     }
     return pool;
@@ -279,17 +275,17 @@ XFixedPool* XFixedPool_create(size_t block_size, size_t num_blocks) {
     size_t internal_block_size = calculate_internal_block_size(block_size);
     size_t total_bytes = internal_block_size * num_blocks;
 
-    void* raw_memory = XMemory_malloc(total_bytes);
+    void* raw_memory = XMalloc_System(total_bytes);
     if (!raw_memory) {
         return NULL;
     }
-    memset(raw_memory,0, total_bytes);
+    //memset(raw_memory,0, total_bytes);
     XFixedPool* pool = XFixedPool_create_from_memory(raw_memory, total_bytes, block_size);
     if (pool) {
         pool->owns_memory = true; // 标记为完全拥有
     }
     else {
-        XFree(raw_memory);
+        XFree_System(raw_memory);
     }
 
     return pool;
@@ -302,8 +298,8 @@ void XFixedPool_delete(XFixedPool* pool) {
 
     // 根据 owns_memory 标志决定是否释放数据缓冲区
     if (pool->owns_memory) {
-        XFree(pool->raw_memory);
+        XFree_System(pool->raw_memory);
     }
     // 无论如何都要释放 pool 结构体本身
-    XFree(pool);
+    XFree_System(pool);
 }

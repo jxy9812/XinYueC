@@ -21,6 +21,7 @@ typedef struct XPriorityQueue
 {
 	XVector m_vector;    ///< 存储队列元素的底层向量
 	XSortOrder m_order;  ///< 排序顺序，影响优先级比较逻辑
+	XCompare compare;	//优先级比较规则
 } XPriorityQueue;
 // ------------------------------ 类初始化与实例管理 ------------------------------
 /**
@@ -47,6 +48,15 @@ void XPriorityQueue_init(XPriorityQueue* this_queue, size_t typeSize, XCompare c
 * @note 内部分配内存并调用XPriorityQueue_init完成初始化
 */
 XPriorityQueue* XPriorityQueue_create(size_t typeSize, XCompare compare, XSortOrder order);
+/**
+* @brief 从优先队列中移除指定元素
+* @param this_queue 优先队列实例指针
+* @param value 要移除的元素值
+* @param n 最多移除的元素数量
+* @return 实际移除的元素数量
+* @note 使用元素比较函数进行匹配
+*/
+size_t XPriorityQueue_remove(XPriorityQueue* this_queue, const void* value, size_t n);
 /**
 * @brief 类型安全的优先队列创建宏
 * @param Type 队列中元素的数据类型（如int、float）

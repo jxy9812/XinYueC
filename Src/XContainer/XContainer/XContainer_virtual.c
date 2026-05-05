@@ -81,9 +81,9 @@ void VXContainer_clear(XContainer* Object)
 void VXClass_copy(XContainer* object, const XContainer* src)
 {
 	if (XContainerDataPtr(object))
-		XMemory_free(XContainerDataPtr(object));
+		XFree_System(XContainerDataPtr(object));
 	memcpy(object,src,sizeof(XContainer));
-	XContainerDataPtr(object) = XMemory_malloc(XContainerSize(object)* XContainerTypeSize(object));
+	XContainerDataPtr(object) = XMalloc_System(XContainerSize(object)* XContainerTypeSize(object));
 	memcpy(XContainerDataPtr(object), XContainerDataPtr(src), XContainerSize(object) * XContainerTypeSize(object));
 	XContainerCapacity(object) = XContainerSize(object);
 }
@@ -91,7 +91,7 @@ void VXClass_copy(XContainer* object, const XContainer* src)
 void VXClass_move(XContainer* object, XContainer* src)
 {
 	if (XContainerDataPtr(object))
-		XMemory_free(XContainerDataPtr(object));
+		XFree_System(XContainerDataPtr(object));
 	memcpy(object, src, sizeof(XContainer));
 	XContainerDataPtr(src) = NULL;
 	XContainerCapacity(src) = 0;
@@ -110,10 +110,10 @@ void VXContainer_deinit(XContainer* Object)
 	Object->m_typeSize = 0;
 	if (Object->m_data)
 	{
-		XMemory_free(Object->m_data);
+		XFree_System(Object->m_data);
 		Object->m_data = NULL;
 	}
-	//XMemory_free(Object);
+	//XFree_System(Object);
 }
 
 

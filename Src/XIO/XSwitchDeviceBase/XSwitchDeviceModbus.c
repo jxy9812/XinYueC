@@ -37,7 +37,7 @@
 //{
 //	if (ds == NULL)
 //		return NULL;
-//	XSwitchDeviceModbus* sw = XMemory_malloc(sizeof(XSwitchDeviceModbus));
+//	XSwitchDeviceModbus* sw = XMalloc_System(sizeof(XSwitchDeviceModbus));
 //	if (sw == NULL)
 //		return NULL;
 //	XSwitchDeviceModbus_init(sw);

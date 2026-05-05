@@ -26,7 +26,7 @@ void XWriteLocker_deinit(XWriteLocker* locker) {
 XWriteLocker* XWriteLocker_create(XReadWriteLock* rwlock) {
     if (!rwlock) return NULL;
 
-    XWriteLocker* locker = (XWriteLocker*)XMemory_malloc(XWriteLocker_getTypeSize());
+    XWriteLocker* locker = (XWriteLocker*)XMalloc_System(XWriteLocker_getTypeSize());
     if (locker) {
         XWriteLocker_init(locker, rwlock);
     }
@@ -37,7 +37,7 @@ void XWriteLocker_delete(XWriteLocker* locker) {
     if (!locker) return;
 
     XWriteLocker_deinit(locker);
-    XMemory_free(locker);
+    XFree_System(locker);
 }
 
 void XWriteLocker_unlock(XWriteLocker* locker) {

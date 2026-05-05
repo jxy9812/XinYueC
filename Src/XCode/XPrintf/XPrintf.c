@@ -19,18 +19,18 @@ int XPrintf_utf8(const char* utf8_str)
     if (gbk_len <= 0) return 0;  // 转换失败
 
     // 2. 分配GBK缓冲区（+1用于终止符）
-    char* gbk_buf = (char*)XMemory_malloc(gbk_len + 1);
+    char* gbk_buf = (char*)XMalloc_System(gbk_len + 1);
     if (!gbk_buf) return 0;
 
     // 3. 执行UTF-8到GBK的转换
     if (XUTF8_to_gbk_stream(utf8_str, 0, gbk_buf, gbk_len + 1) <= 0) {
-        XMemory_free(gbk_buf);
+        XFree_System(gbk_buf);
         return 0;
     }
 
     // 4. 输出GBK字符串并释放资源
     int result = printf("%s", gbk_buf);
-    XMemory_free(gbk_buf);
+    XFree_System(gbk_buf);
     return result;
 
 #else
@@ -59,7 +59,7 @@ int XPrintf(const char* format, ...)
     }
 
     // 1.2 分配缓冲区并格式化UTF-8内容（使用原始参数列表）
-    char* utf8_buf = (char*)XMemory_malloc(utf8_len);
+    char* utf8_buf = (char*)XMalloc_System(utf8_len);
     if (!utf8_buf)
     {
         va_end(args);
@@ -77,14 +77,14 @@ int XPrintf(const char* format, ...)
     int gbk_len = XUTF8_to_gbk_stream(utf8_buf, 0, NULL, 0);
     if (gbk_len <= 0)
     {
-        XMemory_free(utf8_buf);
+        XFree_System(utf8_buf);
         return 0;
     }
 
-    char* gbk_buf = (char*)XMemory_malloc(gbk_len + 1);
+    char* gbk_buf = (char*)XMalloc_System(gbk_len + 1);
     if (!gbk_buf)
     {
-        XMemory_free(utf8_buf);
+        XFree_System(utf8_buf);
         return 0;
     }
 
@@ -92,13 +92,13 @@ int XPrintf(const char* format, ...)
     {
         result = printf("%s", gbk_buf);
     }
-    XMemory_free(gbk_buf);
+    XFree_System(gbk_buf);
 #else
     // Linux：直接输出UTF-8
     result = printf("%s", utf8_buf);
 #endif
 
-    XMemory_free(utf8_buf);
+    XFree_System(utf8_buf);
     return result;
 }
 

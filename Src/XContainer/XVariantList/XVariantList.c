@@ -6,9 +6,9 @@ XVtable* XVariantList_class_init()
 
 XVariantList* XVariantList_create()
 {
-	XVariantList* vector = XMemory_malloc(sizeof(XVariantList));
+	XVariantList* vector = XMalloc_System(sizeof(XVariantList));
 	XVariantList_init(vector);
-	Set_Class_MemoryFree(vector, XFree);
+	Set_Class_MemoryFree(vector, XFree_System);
 	return vector;
 }
 XVariantList* XVariantList_create_copy(const XVariantList* other)

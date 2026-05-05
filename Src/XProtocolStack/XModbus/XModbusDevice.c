@@ -27,7 +27,7 @@ static void XModbusDevicePrivate_destroy(XModbusDevicePrivate* d) {
     // 注意: XModbusDevice 不负责 delete io_device!
     // 生命周期由子类管理。
     d->io_device = NULL; // <<<--- 仅置空
-    XMemory_free(d);
+    XFree_System(d);
 }
 
 // 错误字符串映射
@@ -73,10 +73,10 @@ XVtable* XModbusDevice_class_init()
 
 // ----------------- Constructor/Destructor -----------------
 XModbusDevice* XModbusDevice_create() {
-    XModbusDevice* dev = (XModbusDevice*)XMemory_malloc(sizeof(XModbusDevice));
+    XModbusDevice* dev = (XModbusDevice*)XMalloc_System(sizeof(XModbusDevice));
     if (dev) {
         XModbusDevice_init(dev);
-        Set_Class_MemoryFree(dev, XFree);
+        Set_Class_MemoryFree(dev, XFree_System);
     }
     return dev;
 }
@@ -92,7 +92,7 @@ void XModbusDevice_init(XModbusDevice* dev) {
     dev->m_state = XModbusDevice_UnconnectedState;
     dev->m_error = XModbusDevice_NoError;
     dev->m_errorString = NULL;
-    dev->m_d = (XModbusDevicePrivate*)XMemory_calloc(1, sizeof(XModbusDevicePrivate));
+    dev->m_d = (XModbusDevicePrivate*)XCalloc_System(1, sizeof(XModbusDevicePrivate));
     if (dev->m_d) {
         XModbusDevicePrivate_init(dev->m_d);
     }

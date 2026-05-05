@@ -12,21 +12,18 @@ void XCircularQueueTest()
 #if XCircularQueue_ON
 	XPrintf("循环队列 测试\n");
 	XCircularQueue* queue = XCircularQueue_Create(int,5);
-	int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
+	XContainerSetCompare(queue,int_compare);
+	XCircularQueue_setAutoExpansion(queue,true);
 
-	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
+	for (size_t i = 0; i < 10; i++)
 	{
-		int n = arr[i];
-		XCircularQueue_push_base(queue, arr + i);
+		XCircularQueue_push_base(queue, &i);
 	}
+	int remove = 5;
+	XCircularQueue_remove(queue,&remove,1);
+	/*XCircularQueue_pop_base(queue);
 	XCircularQueue_pop_base(queue);
-	XCircularQueue_pop_base(queue);
-	XCircularQueue_pop_base(queue);
-	for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
-	{
-		int n = arr[i];
-		XCircularQueue_push_base(queue, arr + i);
-	}
+	XCircularQueue_pop_base(queue);*/
 	while (!XCircularQueue_isEmpty_base(queue))
 	{
 		XPrintf("%d size:%d\n", XCircularQueue_Top_Base(queue, int), XCircularQueue_size_base(queue));

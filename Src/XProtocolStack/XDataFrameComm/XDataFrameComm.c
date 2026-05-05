@@ -16,9 +16,9 @@ XDataFrameComm* XDataFrameComm_create(XIODevice* io)
 {
 	if (io == NULL)
 		return NULL;
-	XDataFrameComm* comm = XMemory_malloc(sizeof(XDataFrameComm));
+	XDataFrameComm* comm = XMalloc_System(sizeof(XDataFrameComm));
 	XDataFrameComm_init(comm, io);
-	Set_Class_MemoryFree(comm, XFree);
+	Set_Class_MemoryFree(comm, XFree_System);
 	return comm;
 }
 void XDataFrameComm_init(XDataFrameComm* comm, XIODevice* io)
@@ -301,7 +301,7 @@ static void XEventRecvFrame_deinit(XEventRecvFrame* ev)
 }
 XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t timestamp,XByteArray* frame, XAtomic_int32_t* ref_count)
 {
-	XEventRecvFrame* ev = XMemory_malloc(sizeof(XEventRecvFrame));
+	XEventRecvFrame* ev = XMalloc_System(sizeof(XEventRecvFrame));
 	if (ev == NULL)
 		return NULL;
 	XEvent_init(ev, eventCode);
@@ -323,7 +323,7 @@ XEventRecvFrame* XEventRecvFrame_create(XObject* object, int eventCode, size_t t
 }
 XEventFuncCode* XEventFuncCode_create(XObject* object, int eventCode, size_t timestamp, XByteArray* frame, void* funcCode)
 {
-	XEventFuncCode* ev = XMemory_malloc(sizeof(XEventFuncCode));
+	XEventFuncCode* ev = XMalloc_System(sizeof(XEventFuncCode));
 	if (ev == NULL)
 		return NULL;
 	XEvent_init(ev, eventCode);

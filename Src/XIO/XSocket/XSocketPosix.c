@@ -84,9 +84,9 @@ XVtable* XSocket_class_init()
 
 XSocket* XSocket_create()
 {
-    XSocket* so = XMemory_malloc(sizeof(XSocket));
+    XSocket* so = XMalloc_System(sizeof(XSocket));
     XSocket_init(so);
-    Set_Class_MemoryFree(so, XFree);
+    Set_Class_MemoryFree(so, XFree_System);
     return so;
 }
 
@@ -583,7 +583,7 @@ static void VXIODevice_deinit(XSocket* so)
 {
     if (!so) return;
     VXIODevice_close(so);
-    XMemory_free(so);
+    XFree_System(so);
 }
 
 #endif

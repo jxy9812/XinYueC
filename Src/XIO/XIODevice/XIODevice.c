@@ -10,11 +10,11 @@
 #define XIO_DEFAULT_CHANNEL_ID 0
 XIODevice* XIODevice_create()
 {
-	XIODevice* io = XMemory_malloc(sizeof(XIODevice));
+	XIODevice* io = XMalloc_System(sizeof(XIODevice));
 	if (io == NULL)
 		return io;
 	XIODevice_init(io);
-	Set_Class_MemoryFree(io, XFree);
+	Set_Class_MemoryFree(io, XFree_System);
 	return io;
 }
 void XIODevice_init(XIODevice* io)
@@ -165,11 +165,11 @@ int64_t XIODevice_read(XIODevice* self, char* data, int64_t maxlen)
 XByteArray* XIODevice_read_new(XIODevice* self, int64_t maxlen)
 {
 	if (maxlen <= 0) return XByteArray_create();
-	char* buf = (char*)XMemory_malloc(maxlen);
+	char* buf = (char*)XMalloc_System(maxlen);
 	if (!buf) return XByteArray_create();
 	int64_t n = XIODevice_read(self, buf, maxlen);
 	XByteArray* result = XByteArray_create(buf, (n > 0) ? n : 0);
-	XMemory_free(buf);
+	XFree_System(buf);
 	return result;
 }
 
@@ -208,11 +208,11 @@ int64_t XIODevice_readLine(XIODevice* self, char* data, int64_t maxlen)
 XByteArray* XIODevice_readLine_new(XIODevice* self, int64_t maxlen)
 {
 	if (maxlen <= 0) maxlen = 1024;
-	char* buf = (char*)XMemory_malloc(maxlen);
+	char* buf = (char*)XMalloc_System(maxlen);
 	if (!buf) return XByteArray_create();
 	int64_t n = XIODevice_readLine(self, buf, maxlen);
 	XByteArray* result = XByteArray_create_with_data(buf, (n > 0) ? n : 0);
-	XMemory_free(buf);
+	XFree_System(buf);
 	return result;
 }
 
@@ -295,7 +295,7 @@ bool XIODevice_flush(XIODevice* self)
 	}
 
 	// 分配临时缓冲区来读取待发送的数据
-	char* tempBuffer = (char*)XMalloc(available);
+	char* tempBuffer = (char*)XMalloc_System(available);
 	if (!tempBuffer) {
 		return false; // 内存分配失败
 	}
@@ -303,7 +303,7 @@ bool XIODevice_flush(XIODevice* self)
 	// 从 writeBuf 读取所有数据
 	size_t readFromBuffer = XRingBuffer_read(writeBuf, tempBuffer, available);
 	if (readFromBuffer != available) {
-		XFree(tempBuffer);
+		XFree_System(tempBuffer);
 		return false; // 读取失败
 	}
 
@@ -326,7 +326,7 @@ bool XIODevice_flush(XIODevice* self)
 	}
 	// 如果 writtenToDevice == readFromBuffer，则全部成功，无需操作
 
-	XFree(tempBuffer);
+	XFree_System(tempBuffer);
 	return success;
 }
 
@@ -339,11 +339,11 @@ int64_t XIODevice_peek(XIODevice* self, char* data, int64_t maxlen)
 XByteArray* XIODevice_peek_new(XIODevice* self, int64_t maxlen)
 {
 	if (maxlen <= 0) return XByteArray_create();
-	char* buf = (char*)XMemory_malloc(maxlen);
+	char* buf = (char*)XMalloc_System(maxlen);
 	if (!buf) return XByteArray_create();
 	int64_t n = XIODevice_peek(self, buf, maxlen);
 	XByteArray* result = XByteArray_create_with_data(buf, n);
-	XMemory_free(buf);
+	XFree_System(buf);
 	return result;
 }
 

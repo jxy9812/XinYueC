@@ -36,7 +36,7 @@ void cJsonTest()
     XPrintf("%s\n", json_str_modified);
 
     // 释放字符串和 cJSON 对象
-    XMemory_free(json_str_modified);
+    XFree_System(json_str_modified);
     cJSON_Delete(root);
     XCoreApplication_quit();
 }

@@ -41,10 +41,10 @@ XVtable* XSignalTransition_class_init()
 }
 XSignalTransition* XSignalTransition_create() 
 {
-    XSignalTransition* transition = (XSignalTransition*)XMemory_malloc(sizeof(XSignalTransition));
+    XSignalTransition* transition = (XSignalTransition*)XMalloc_System(sizeof(XSignalTransition));
     if (transition) {
         XSignalTransition_init(transition);
-        Set_Class_MemoryFree(transition, XFree);
+        Set_Class_MemoryFree(transition, XFree_System);
     }
     return transition;
 }

@@ -62,7 +62,7 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
 {
     //printf("进入扩容\n");
     size_t new_size = new_capacity * sizeof(XRBTreeNode*);
-    XRBTreeNode** newData = XMemory_malloc(new_size);
+    XRBTreeNode** newData = XMalloc_System(new_size);
     memset(newData, 0, new_size);
     if (newData == NULL)
         return false;
@@ -101,7 +101,7 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
     }
 
     // 释放原哈希表数组
-    XMemory_free(XContainerDataPtr(set));
+    XFree_System(XContainerDataPtr(set));
     XContainerDataPtr(set) = newData;
     XContainerCapacity(set) = new_capacity;
     return true;
@@ -127,10 +127,10 @@ bool VXSet_insert(XHashSet* this_set, const void* key, XCDataCreatMethod dataCre
     {//节点不存在
         if (dataCreatMethod)
         {
-            void* temp = XMemory_calloc(1, XContainerTypeSize(this_set));
+            void* temp = XCalloc_System(1, XContainerTypeSize(this_set));
             dataCreatMethod(temp, key);
             XRBTree_insert(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, XContainerCompare(this_set), XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
-            XMemory_free(temp);
+            XFree_System(temp);
         }
         else
         {
@@ -275,10 +275,10 @@ void VXSet_deinit(XHashSet* this_set)
     VXSet_clear(this_set);
     if(XContainerDataPtr(this_set))
     {
-        XMemory_free(XContainerDataPtr(this_set));
+        XFree_System(XContainerDataPtr(this_set));
         XContainerDataPtr(this_set) = NULL;
     }
-    //XMemory_free(this_set);
+    //XFree_System(this_set);
 }
 
 XVector* VXSetBase_keys(const XSetBase* this_set)
@@ -293,9 +293,9 @@ XVector* VXSetBase_keys(const XSetBase* this_set)
 
 XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XCompare compare)
 {
-    XHashSet* set = XMemory_malloc(sizeof(XHashSet));
+    XHashSet* set = XMalloc_System(sizeof(XHashSet));
     XHashSet_init(set, keyTypeSize, hash,compare);
-    Set_Class_MemoryFree(set, XFree);
+    Set_Class_MemoryFree(set, XFree_System);
     return set;
 }
 
@@ -308,10 +308,10 @@ void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash,
     this_set->m_hash = hash;
     XContainerCapacity(this_set) = DEFAULT_CAPACITY;
     size_t size = sizeof(XRBTreeNode*) * XContainerCapacity(this_set);
-    XContainerDataPtr(this_set) = XMemory_malloc(size);
+    XContainerDataPtr(this_set) = XMalloc_System(size);
     if (XContainerDataPtr(this_set) == NULL)
     {
-        XMemory_free(this_set);
+        XFree_System(this_set);
         return;
     }
     memset(XContainerDataPtr(this_set), 0, size);

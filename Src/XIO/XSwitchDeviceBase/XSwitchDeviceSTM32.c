@@ -42,12 +42,12 @@ void XSwitchDeviceSTM32_init(XSwitchDeviceSTM32 *sw)
 #include"stm32f4xx.h"
 XSwitchDeviceSTM32 *XSwitchDeviceSTM32_create(XSwitchGPIO *gpio)
 {
-	XSwitchDeviceSTM32 * sw=XMemory_malloc(sizeof(XSwitchDeviceSTM32));
+	XSwitchDeviceSTM32 * sw=XMalloc_System(sizeof(XSwitchDeviceSTM32));
 	if(sw==NULL)
 		return NULL;
 	XSwitchDeviceSTM32_init(sw);
 	sw->m_gpio=*gpio;
-	Set_Class_MemoryFree(sw, XFree);
+	Set_Class_MemoryFree(sw, XFree_System);
     return sw;
 }
 bool VXIODevice_open(XSwitchDeviceSTM32 *sw, XIODeviceBaseMode mode)

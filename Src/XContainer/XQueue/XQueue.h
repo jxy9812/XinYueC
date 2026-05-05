@@ -47,7 +47,7 @@ void XQueue_init(XQueue* this_queue, size_t typeSize);
 * @brief 创建队列实例
 * @param typeSize 队列中元素的类型大小（字节数）
 * @return 创建成功的队列实例指针XQueue*，失败返回NULL
-* @note 内部调用XMemory_malloc分配内存并调用XQueue_init初始化
+* @note 内部调用XMalloc_System分配内存并调用XQueue_init初始化
 */
 XQueue* XQueue_create(size_t typeSize);
 // ------------------------------ 入队操作 ------------------------------

@@ -10,7 +10,7 @@ XBitArray* XBitArray_create(size_t initialBitCount) {
     XBitArray* array = XNew(XBitArray);
     if (array) {
         XBitArray_init(array, initialBitCount);
-        Set_Class_MemoryFree(array, XFree);
+        Set_Class_MemoryFree(array, XFree_System);
     }
     return array;
 }
@@ -42,7 +42,7 @@ void XBitArray_init(XBitArray* array, size_t initialBitCount)
 
     // 初始容量至少为1字节
     size_t initialBytes = BYTE_COUNT(initialBitCount);
-    XContainerDataPtr(array) = XMemory_malloc(initialBytes);
+    XContainerDataPtr(array) = XMalloc_System(initialBytes);
     if (XContainerDataPtr(array)) {
         memset(XContainerDataPtr(array), 0, initialBytes);
         XContainerCapacity(array) = initialBytes * 8; // 容量以比特为单位
@@ -100,7 +100,7 @@ bool XBitArray_resize(XBitArray* array, size_t newBitCount)
 
     // 容量不足时重新分配内存
     if (newBytes > oldBytes) {
-        void* newData = XMemory_realloc(XContainerDataPtr(array), newBytes);
+        void* newData = XRealloc_System(XContainerDataPtr(array), newBytes);
         if (!newData) return false;
         XContainerDataPtr(array) = newData;
         XContainerCapacity(array) = newBytes * 8;

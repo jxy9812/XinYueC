@@ -5,7 +5,7 @@
 #include<string.h>
 #include<stdlib.h>
 //声明
-#define VECTORNUM 4//初始数组大小
+#define VECTORNUM 20//初始数组大小
 static void VXClass_copy(XVector* object, const XVector* src);
 static void VXClass_move(XVector* object, XVector* src);
 static bool VXVector_resize(XVector* this_vector, size_t size);
@@ -79,9 +79,10 @@ static bool VXVectorEnlargeCapacity(XVector* this_vector)
 		newCapacity = XContainerCapacity(this_vector) * 1.5;
 	else
 		newCapacity = XContainerCapacity(this_vector) * 2;
+	size_t bytes = ALIGN_UP(newCapacity * XContainerTypeSize(this_vector), sizeof(void*));
 	if (XContainerCapacity(this_vector) == 0)
 	{
-		XContainerDataPtr(this_vector) = XMemory_malloc(XContainerTypeSize(this_vector) * VECTORNUM);
+		XContainerDataPtr(this_vector) = XMalloc_System(ALIGN_UP(XContainerTypeSize(this_vector) * VECTORNUM, sizeof(void*)));
 		if (XContainerDataPtr(this_vector) == NULL)
 		{
 			//perror("初始化vector失败");
@@ -95,19 +96,18 @@ static bool VXVectorEnlargeCapacity(XVector* this_vector)
 	else if (XContainerCapacity(this_vector) == XContainerSize(this_vector))//空间已满需要扩容
 	{
 		void* m_data = NULL;
-		if (XMemory_realloc_isNULL())
+		if (XMemory_realloc_isNULL(XMEMORY_TYPE_SYSTEM))
 		{
 			void* ptr = XContainerDataPtr(this_vector);
-			uint32_t typeSize = XContainerTypeSize(this_vector);
-			m_data = XMemory_malloc(newCapacity * typeSize);
+			m_data = XMalloc_System(bytes);
 			if (m_data && ptr)
-				memcpy(m_data, ptr, typeSize * XContainerCapacity(this_vector));
+				memcpy(m_data, ptr, XContainerTypeSize(this_vector) * XContainerCapacity(this_vector));
 			if (ptr)
-				XMemory_free(ptr);
+				XFree_System(ptr);
 		}
 		else
 		{
-			m_data = XMemory_realloc(XContainerDataPtr(this_vector), newCapacity * XContainerTypeSize(this_vector));
+			m_data = XRealloc_System(XContainerDataPtr(this_vector),bytes);
 		}
 		XContainerDataPtr(this_vector) = m_data;
 		if (m_data == NULL)
@@ -152,8 +152,8 @@ void VXClass_copy(XVector* object, const XVector* src)
 		{
 			if (XContainerCapacity(object) * XContainerTypeSize(object) < size * typeSize)
 			{//原先的容量不够扩容
-				XMemory_free(XContainerDataPtr(object));
-				XContainerDataPtr(object) = XMemory_malloc(size * typeSize);
+				XFree_System(XContainerDataPtr(object));
+				XContainerDataPtr(object) = XMalloc_System(size * typeSize);
 				XContainerCapacity(object) = size;
 			}
 			else
@@ -172,9 +172,9 @@ void VXClass_copy(XVector* object, const XVector* src)
 	else
 	{
 		if (XContainerDataPtr(object))
-			XMemory_free(XContainerDataPtr(object));
+			XFree_System(XContainerDataPtr(object));
 		memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XVector) - sizeof(XClass));
-		XContainerDataPtr(object) = XMemory_malloc(XContainerSize(object) * XContainerTypeSize(object));
+		XContainerDataPtr(object) = XMalloc_System(XContainerSize(object) * XContainerTypeSize(object));
 		memcpy(XContainerDataPtr(object), XContainerDataPtr(src), XContainerSize(object) * XContainerTypeSize(object));
 		XContainerCapacity(object) = XContainerSize(object);
 	}
@@ -182,7 +182,7 @@ void VXClass_copy(XVector* object, const XVector* src)
 void VXClass_move(XVector* object, XVector* src)
 {
 	if (XContainerDataPtr(object))
-		XMemory_free(XContainerDataPtr(object));
+		XFree_System(XContainerDataPtr(object));
 	memcpy((XClass*)object+1, (XClass*)src+1, sizeof(XVector)-sizeof(XClass));
 	XContainerDataPtr(src) = NULL;
 	XContainerCapacity(src) = 0;
@@ -193,12 +193,12 @@ bool VXVector_resize(XVector* this_vector, size_t size)
 	size_t capacity =XContainerCapacity(this_vector);//当前容器的最大数量
 	size_t count = XContainerSize(this_vector);//当前容器使用的数量
 	size_t TypeSize = XContainerTypeSize(this_vector);//数据类型大小
-	//XContainer* object = this_vector;//数据父类
+	size_t bytes = ALIGN_UP(size * XContainerTypeSize(this_vector), sizeof(void*));
 	if (size <= count)
 	{
 		for (size_t i = 0; i < count - size; i++)
 		{
-			XVector_pop_back_base(this_vector);
+			VXVector_pop_back(this_vector); // 直接调用，效率更高
 		}
 		return true;
 	}
@@ -206,18 +206,18 @@ bool VXVector_resize(XVector* this_vector, size_t size)
 	if (size > capacity)//大于最大容量
 	{
 		void* m_data = NULL;
-		if (XMemory_realloc_isNULL())
+		if (XMemory_realloc_isNULL(XMEMORY_TYPE_SYSTEM))
 		{
 			void* ptr = XContainerDataPtr(this_vector);
-			m_data = XMemory_malloc(size * TypeSize);
+			m_data = XMalloc_System(bytes);
 			if (m_data && ptr)
-				memcpy(m_data, ptr, size * TypeSize);
+				memcpy(m_data, ptr, count * TypeSize);
 			if (ptr)
-				XMemory_free(ptr);
+				XFree_System(ptr);
 		}
 		else
 		{
-			m_data = XMemory_realloc(XContainerDataPtr(this_vector), size * TypeSize);
+			m_data = XRealloc_System(XContainerDataPtr(this_vector), bytes);
 		}
 		XContainerDataPtr(this_vector) = m_data;
 		if (m_data == NULL)
@@ -289,7 +289,7 @@ bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 	if (ptr&&ptr >= VXVector_front(this_vector) && ptr <= VXVector_back(this_vector))
 	{
 		int64_t size = (char*)VXVector_back(this_vector) - (char*)ptr + typeSize;
-		void* temp = XMemory_malloc(size);
+		void* temp = XMalloc_System(size);
 		memcpy(temp, ptr, size);
 		int64_t sizen = ((char*)ptr - (char*)VXVector_front(this_vector)) / typeSize;
 		for (size_t i = 0; i < n; i++)
@@ -297,7 +297,7 @@ bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 			if (!VXVectorEnlargeCapacity(this_vector))
 			{
 				memcpy(VXVector_at(this_vector, sizen), temp, size);
-				XMemory_free(temp);
+				XFree_System(temp);
 				return false;
 			}
 			if (dataCreatMethod)
@@ -313,7 +313,7 @@ bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 			XContainerSize(this_vector)++;
 		}
 		memcpy(VXVector_at(this_vector, sizen), temp, size);
-		XMemory_free(temp);
+		XFree_System(temp);
 	}
 	return true;
 }
@@ -449,7 +449,7 @@ void VXVector_clear(XVector* this_vector)//清空vector的数组
 	XContainerSize(this_vector) = 0;
 	/*if (object->m_data != NULL)
 	{
-		XMemory_free(object->m_data);
+		XFree_System(object->m_data);
 		object->m_data = NULL;
 		object->m_capacity = 0;
 		object->m_size = 0;
@@ -460,12 +460,12 @@ void VXVector_rcopy(XVector* this_One, const XVector* this_Two)
 	if (ISNULL(this_One, "") || ISNULL(this_One, ""))
 		return;
 	if (XContainerDataPtr(this_One))
-		XMemory_free(XContainerDataPtr(this_One));
+		XFree_System(XContainerDataPtr(this_One));
 	size_t size = XContainerSize(this_Two);
 	size_t typeSize = XContainerTypeSize(this_Two);
 	if (size > 0)
 	{
-		XContainerDataPtr(this_One) = XMemory_malloc(size * typeSize);
+		XContainerDataPtr(this_One) = XMalloc_System(size * typeSize);
 		for (char* pst2 = (char*)XContainerDataPtr(this_Two) + (size - 1) * typeSize, *pst1 = XContainerDataPtr(this_One); pst2 >= XContainerDataPtr(this_Two); pst2 -= typeSize, pst1 += typeSize)
 		{
 			memcpy(pst1, pst2, typeSize);

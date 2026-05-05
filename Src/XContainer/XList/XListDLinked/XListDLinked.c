@@ -6,9 +6,9 @@ XListDLinked* XListDLinked_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XListDLinked* this_list = XMemory_malloc(sizeof(XListDLinked));
+	XListDLinked* this_list = XMalloc_System(sizeof(XListDLinked));
 	XListDLinked_init(this_list, typeSize);
-	Set_Class_MemoryFree(this_list, XFree);
+	Set_Class_MemoryFree(this_list, XFree_System);
 	return this_list;
 }
 void XListDLinked_init(XListDLinked* this_list, size_t typeSize)

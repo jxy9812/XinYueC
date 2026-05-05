@@ -183,7 +183,9 @@ bool XThread_terminate(XThread* thread);
 #define XThread_deinitLater XObject_deinitLater
 
 Signals
+//线程结束信号
 void* XThread_finished_signal(XThread* thread);
+//线程启动信号
 void* XThread_started_signal(XThread* thread);
 
 XThread* XThread_currentThread();

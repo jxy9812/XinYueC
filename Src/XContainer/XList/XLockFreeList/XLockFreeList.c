@@ -64,7 +64,7 @@ static void VXClass_move(XLockFreeList* object, XLockFreeList* src);
 static void VXListAtomic_deinit(XLockFreeList* this_list);
 static void VXLockFreeList_swap(XLockFreeList* list1, XLockFreeList* list2);
 
-//#define CreatNode(this_list)    XMemory_malloc(ALIGN_UP(sizeof(XListSNode)+XContainerTypeSize(this_list),sizeof(void*)))
+//#define CreatNode(this_list)    XMalloc_System(ALIGN_UP(sizeof(XListSNode)+XContainerTypeSize(this_list),sizeof(void*)))
 
 // 创建新节点
 static XLockFreeListNode* createNode(XLockFreeList* this_list, void* pvData, XCDataCreatMethod dataCreatMethod)
@@ -72,7 +72,7 @@ static XLockFreeListNode* createNode(XLockFreeList* this_list, void* pvData, XCD
     // 总需求大小 = header + 节点
     size_t needed_size = sizeof(void*) + sizeof(XLockFreeListNode) + XContainerTypeSize(this_list);
     // 分配足够的内存，并加上最大填充（align-1）以确保能找到对齐位置
-    void* raw_buffer = XMemory_malloc(needed_size + 7); // +7 是为了8字节对齐的安全边际
+    void* raw_buffer = XMalloc_System(needed_size + 7); // +7 是为了8字节对齐的安全边际
     if (raw_buffer == NULL) {
         return NULL;
     }
@@ -101,7 +101,7 @@ static void destroyNode(XLockFreeListNode* node) {
     if (node == NULL) return;
     void** header = (void**)((char*)node - sizeof(void*));
     void* raw_buffer = *header;
-    XMemory_free(raw_buffer);
+    XFree_System(raw_buffer);
 }
 // 类初始化
 XVtable* XLockFreeList_class_init()
@@ -149,11 +149,10 @@ bool VXListBase_push_front_node(XLockFreeList* this_list, XLockFreeListNode* nod
     if (this_list == NULL || node == NULL)
         return false;
 
-    tagged_ptr_t expected, desired;
+    tagged_ptr_t expected = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed), desired;
     XLockFreeListNode* oldHead;
 
     do {
-        expected = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed);
         oldHead = (XLockFreeListNode*)unpack_ptr(expected);
         node->next = oldHead;
 
@@ -236,10 +235,10 @@ XLockFreeListNode* VXListAtomic_push_front(XLockFreeList* this_list, void* pvDat
     XLockFreeListNode* newNode = NULL;
     if (dataCreatMethod)
     {
-        void* temp = XMemory_calloc(1, XContainerTypeSize(this_list));
+        void* temp = XCalloc_System(1, XContainerTypeSize(this_list));
         dataCreatMethod(temp, pvData);
         newNode = createNode(this_list, temp, dataCreatMethod);
-        XMemory_free(temp);
+        XFree_System(temp);
     }
     else
     {
@@ -259,10 +258,10 @@ XLockFreeListNode* VXListAtomic_push_back(XLockFreeList* this_list, void* pvData
     XLockFreeListNode* newNode = NULL;
     if (dataCreatMethod)
     {
-        void* temp = XMemory_calloc(1, XContainerTypeSize(this_list));
+        void* temp = XCalloc_System(1, XContainerTypeSize(this_list));
         dataCreatMethod(temp, pvData);
         newNode = createNode(this_list, temp, dataCreatMethod);
-        XMemory_free(temp);
+        XFree_System(temp);
     }
     else
     {
@@ -300,9 +299,8 @@ bool VXList_insert(XLockFreeList* this_list, XLockFreeListNode* curNode, void* p
 
     // 如果要插入的位置是头节点
     if (prev == NULL) {
-        tagged_ptr_t expected_head, desired_head;
+        tagged_ptr_t expected_head = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed), desired_head;
         do {
-            expected_head = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed);
             current = (XLockFreeListNode*)unpack_ptr(expected_head);
             newNode->next = current;
             uint32_t new_version = (unpack_version(expected_head) + 1) & ((1U << VERSION_BITS) - 1);
@@ -372,9 +370,8 @@ size_t VXList_insert_array(XLockFreeList* this_list, XLockFreeListNode* curNode,
     // 插入新链表
     if (prev == NULL) {
         // 插入到链表头部
-        tagged_ptr_t expected_head, desired_head;
+        tagged_ptr_t expected_head = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed), desired_head;
         do {
-            expected_head = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed);
             current = (XLockFreeListNode*)unpack_ptr(expected_head);
             newListTail->next = current;
             uint32_t new_version = (unpack_version(expected_head) + 1) & ((1U << VERSION_BITS) - 1);
@@ -423,13 +420,11 @@ bool VXListAtomic_pop_front(XLockFreeList* this_list)
 {
     if (XLockFreeList_isEmpty_base(this_list)) return false;
 
-    tagged_ptr_t expected, desired;
+    tagged_ptr_t expected = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed), desired;
     XLockFreeListNode* oldHead;
     XLockFreeListNode* next;
 
     do {
-        // --- 关键修改：使用 XAtomic_load_size_t ---
-        expected = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed);
         oldHead = (XLockFreeListNode*)unpack_ptr(expected);
         if (oldHead == NULL) return false;
 
@@ -566,7 +561,7 @@ void VXListAtomic_erase(XLockFreeList* this_list, const XLockFreeList_iterator* 
                     if (XContainerDataDeinitMethod(this_list) != NULL) {
                         XContainerDataDeinitMethod(this_list)(&current->data);
                     }
-                    XMemory_free(current);
+                    XFree_System(current);
                     XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1, XAtomic_MemoryOrder_Relaxed);
                     XAtomic_fetch_sub_size_t(&XContainerCapacity(this_list), 1, XAtomic_MemoryOrder_Relaxed);
                     if (nextIt)
@@ -588,7 +583,7 @@ void VXListAtomic_erase(XLockFreeList* this_list, const XLockFreeList_iterator* 
                     if (XContainerDataDeinitMethod(this_list) != NULL) {
                         XContainerDataDeinitMethod(this_list)(&current->data);
                     }
-                    XMemory_free(current);
+                    XFree_System(current);
                     XAtomic_fetch_sub_size_t(&XContainerSize(this_list), 1, XAtomic_MemoryOrder_Relaxed);
                     XAtomic_fetch_sub_size_t(&XContainerCapacity(this_list), 1, XAtomic_MemoryOrder_Relaxed);
                     if (nextIt)
@@ -766,7 +761,7 @@ static XLockFreeListNode* List_OneSort(XLockFreeListNode* left, XLockFreeListNod
     if (left == NULL || right == NULL || left == right)
         return left;
 
-    void* pivot = XMemory_malloc(typeSize);
+    void* pivot = XMalloc_System(typeSize);
     if (pivot == NULL) return NULL;
     memcpy(pivot, &(left->data), typeSize);
 
@@ -780,23 +775,23 @@ static XLockFreeListNode* List_OneSort(XLockFreeListNode* left, XLockFreeListNod
         {
             i = (XLockFreeListNode*)XAtomic_load_uintptr_t(&i->next, XAtomic_MemoryOrder_Relaxed);
             // 交换i和j的数据
-            void* temp = XMemory_malloc(typeSize);
+            void* temp = XMalloc_System(typeSize);
             memcpy(temp, &(i->data), typeSize);
             memcpy(&(i->data), &(j->data), typeSize);
             memcpy(&(j->data), temp, typeSize);
-            XMemory_free(temp);
+            XFree_System(temp);
         }
         if (j == right) break;  // 到达右边界
         j = (XLockFreeListNode*)XAtomic_load_uintptr_t(&j->next, XAtomic_MemoryOrder_Relaxed);
     }
 
     // 将pivot放到正确位置
-    void* temp = XMemory_malloc(typeSize);
+    void* temp = XMalloc_System(typeSize);
     memcpy(temp, &(i->data), typeSize);
     memcpy(&(i->data), &(left->data), typeSize);
     memcpy(&(left->data), temp, typeSize);
-    XMemory_free(temp);
-    XMemory_free(pivot);
+    XFree_System(temp);
+    XFree_System(pivot);
 
     return i;  // 返回分区点
 }
@@ -897,17 +892,17 @@ void VXClass_move(XLockFreeList* object, XLockFreeList* src)
 // 释放链表
 void VXListAtomic_deinit(XLockFreeList* this_list) {
     VXListAtomic_clear(this_list);
-   //XMemory_free(this_list);
+   //XFree_System(this_list);
 }
 
 // 对外接口实现
 
 XLockFreeList* XLockFreeList_create(size_t typeSize) {
     if (typeSize == 0) return NULL;
-    XLockFreeList* this_list = (XLockFreeList*)XMemory_malloc(sizeof(XLockFreeList));
+    XLockFreeList* this_list = (XLockFreeList*)XMalloc_System(sizeof(XLockFreeList));
     if (this_list == NULL) return NULL;
     XLockFreeList_init(this_list, typeSize);
-    Set_Class_MemoryFree(this_list, XFree);
+    Set_Class_MemoryFree(this_list, XFree_System);
     return this_list;
 }
 
@@ -929,12 +924,11 @@ bool XLockFreeList_pop_and_copy_front(XLockFreeList* this_list, void* pvOutData)
     if (XLockFreeList_isEmpty_base(this_list))
         return false;
 
-    tagged_ptr_t expected, desired;
+    tagged_ptr_t expected = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed), desired;
     XLockFreeListNode* oldHead;
     XLockFreeListNode* next;
 
     do {
-        expected = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed);
         oldHead = (XLockFreeListNode*)unpack_ptr(expected);
         if (oldHead == NULL)
             return false;
@@ -979,12 +973,11 @@ bool XLockFreeList_pop_and_move_front(XLockFreeList* this_list, void* pvOutData)
     if (XLockFreeList_isEmpty_base(this_list))
         return false;
 
-    tagged_ptr_t expected, desired;
+    tagged_ptr_t expected = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed), desired;
     XLockFreeListNode* oldHead;
     XLockFreeListNode* next;
 
     do {
-        expected = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed);
         oldHead = (XLockFreeListNode*)unpack_ptr(expected);
         if (oldHead == NULL)
             return false;

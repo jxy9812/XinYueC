@@ -92,9 +92,9 @@ XVtable* XVariant_class_init()
 
 XVariant* XVariant_create(void* data, size_t dataSize, int type)
 {
-	XVariant* var = XMemory_malloc(sizeof(XVariant));
+	XVariant* var = XMalloc_System(sizeof(XVariant));
 	XVariant_init(var,data,dataSize,type);
-	Set_Class_MemoryFree(var, XFree);
+	Set_Class_MemoryFree(var, XFree_System);
 	return var;
 }
 
@@ -122,10 +122,10 @@ void XVariant_init(XVariant* var, void* data, size_t dataSize, int type)
 	XClassGetVtable(var) = XVariant_class_init();
 	if (dataSize > 0)
 	{
-		var->m_data = XMemory_malloc(dataSize);
+		var->m_data = XMalloc_System(dataSize);
 		if (var->m_data == NULL)
 		{
-			XMemory_free(var);
+			XFree_System(var);
 			return NULL;
 		}
 		if (data != NULL)
@@ -915,7 +915,7 @@ static void setValue(XVariant* var, void* data, size_t size, int type)
 	{
 		if(size>0&& var->m_data==NULL)
 		{
-			var->m_data = XMemory_malloc(size);
+			var->m_data = XMalloc_System(size);
 		}
 		if (var->m_data == NULL&&size>0)
 		{//失败
@@ -1478,7 +1478,7 @@ void VXVariant_copy(XVariant* var, const XVariant* src)
 		XVariant_deinit_base(var);//
 	if (XVariant_DataPtr(var) == NULL)
 	{
-		var->m_data = XMemory_calloc(1,src->m_dataSize);
+		var->m_data = XCalloc_System(1,src->m_dataSize);
 		var->m_dataSize = src->m_dataSize;
 		var->m_type = src->m_type;
 	}
@@ -1606,7 +1606,7 @@ void VXVariant_deinit(XVariant* var)
 			}
 		}
 	}
-	XMemory_free(XVariant_DataPtr(var));
+	XFree_System(XVariant_DataPtr(var));
 	XVariant_DataPtr(var) = NULL;
 }
 
@@ -1793,7 +1793,7 @@ void XVariant_setUserTypeName(int type, const char* typeName)
 	{
 		size_t len = strlen(typeName) + 1;
 		TypeProperty property = { 0 };
-		property.typeName =XMemory_malloc(len);
+		property.typeName =XMalloc_System(len);
 		if (property.typeName == NULL)
 			return;
 		memcpy(property.typeName,typeName,len);
@@ -1802,9 +1802,9 @@ void XVariant_setUserTypeName(int type, const char* typeName)
 	else 
 	{
 		if (pv->typeName)
-			XMemory_free(pv->typeName);
+			XFree_System(pv->typeName);
 		size_t len = strlen(typeName) + 1;
-		pv->typeName = XMemory_malloc(len);
+		pv->typeName = XMalloc_System(len);
 		if (pv->typeName == NULL)
 			return;
 		memcpy(pv->typeName, typeName, len);
@@ -1821,7 +1821,7 @@ void XVariant_removeUserTypeProperty(int type)
 	if (pv == NULL)
 		return;
 	if (pv->typeName)
-		XMemory_free(pv->typeName);
+		XFree_System(pv->typeName);
 	XMapBase_remove_base(global_typeProperty,&type);
 }
 

@@ -337,7 +337,7 @@ XHandle XThread_currentThreadId() {
 // 创建 XThread 对象
 XThread* XThread_create_func(void (*start_routine)(void*), void* arg)
 {
-    XThread* Object = (XThread*)XMemory_malloc(sizeof(XThread));
+    XThread* Object = (XThread*)XMalloc_System(sizeof(XThread));
     if (Object == NULL) {
         return NULL;
     }

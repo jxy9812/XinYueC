@@ -67,7 +67,7 @@ static struct XRingBuffer* getOrCreateBuffer(struct XVector* buffers, int channe
 // --- Public API Implementation ---
 
 XIODevicePrivate* XIODevicePrivate_create(XIODevice* q) {
-    XIODevicePrivate* d = (XIODevicePrivate*)XMemory_malloc(sizeof(XIODevicePrivate));
+    XIODevicePrivate* d = (XIODevicePrivate*)XMalloc_System(sizeof(XIODevicePrivate));
     if (!d) return NULL;
     memset(d, 0, sizeof(XIODevicePrivate));
 
@@ -112,7 +112,7 @@ void XIODevicePrivate_delete(XIODevicePrivate* d) {
     }
 
     if (d->errorString) XString_delete_base(d->errorString);
-    XMemory_free(d);
+    XFree_System(d);
 }
 
 struct XRingBuffer* XIODevicePrivate_getOrCreateReadBuffer(XIODevicePrivate* d, int channelId) {
@@ -155,13 +155,13 @@ int64_t XIODevicePrivate_peek(XIODevicePrivate* d, char* data, int64_t maxlen, X
     int64_t available = XRingBuffer_available(defaultReadBuf);
     if (available < maxlen) {
         int64_t toRead = maxlen - available;
-        char* temp = (char*)XMemory_malloc(toRead);
+        char* temp = (char*)XMalloc_System(toRead);
         if (temp) {
             int64_t n = XIODevice_read(device, temp, toRead);
             if (n > 0) {
                 XRingBuffer_write(defaultReadBuf, temp, n);
             }
-            XMemory_free(temp);
+            XFree_System(temp);
         }
     }
 
@@ -177,7 +177,7 @@ int64_t XIODevicePrivate_readLineFromBuffer(XIODevicePrivate* d, char* data, int
     size_t available = XRingBuffer_available(defaultReadBuf);
     if (available == 0) return 0;
 
-    char* temp = (char*)XMemory_malloc(available);
+    char* temp = (char*)XMalloc_System(available);
     if (!temp) return 0;
 
     size_t peeked = XRingBuffer_peek(defaultReadBuf, temp, available);
@@ -189,7 +189,7 @@ int64_t XIODevicePrivate_readLineFromBuffer(XIODevicePrivate* d, char* data, int
         }
     }
 
-    XMemory_free(temp);
+    XFree_System(temp);
 
     if (lineEnd == -1) return 0;
     return XRingBuffer_read(defaultReadBuf, data, lineEnd);
@@ -200,7 +200,7 @@ bool XIODevicePrivate_canReadLineFromBuffer(const XIODevicePrivate* d) {
     size_t available = XRingBuffer_available(defaultReadBuf);
     if (available == 0) return false;
 
-    char* temp = (char*)XMemory_malloc(available);
+    char* temp = (char*)XMalloc_System(available);
     if (!temp) return false;
 
     bool found = false;
@@ -211,7 +211,7 @@ bool XIODevicePrivate_canReadLineFromBuffer(const XIODevicePrivate* d) {
             break;
         }
     }
-    XMemory_free(temp);
+    XFree_System(temp);
     return found;
 }
 

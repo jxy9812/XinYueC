@@ -42,10 +42,10 @@ XVtable* XState_class_init()
 }
 
 XState* XState_create() {
-    XState* state = (XState*)XMemory_malloc(sizeof(XState));
+    XState* state = (XState*)XMalloc_System(sizeof(XState));
     if (state) {
         XState_init(state);
-        Set_Class_MemoryFree(state, XFree);
+        Set_Class_MemoryFree(state, XFree_System);
     }
     return state;
 }
@@ -56,7 +56,7 @@ void XState_init(XState* state) {
     XAbstractState_init(state, XStateType_Basic);
     XClassGetVtable(state) = XState_class_init();
     state->m_transitionCapacity = INITIAL_CAPACITY;
-    state->m_transitions = (XAbstractTransition**)XMemory_malloc(
+    state->m_transitions = (XAbstractTransition**)XMalloc_System(
         sizeof(XAbstractTransition*) * state->m_transitionCapacity
     );
     state->m_transitionCount = 0;
@@ -122,7 +122,7 @@ bool XState_addState(XState* state, XAbstractState* child)
     if (state->m_childCapacity == 0)
     {//初始化
         state->m_childCapacity = INITIAL_CAPACITY;
-        state->m_childStates = (XAbstractState**)XMemory_malloc(
+        state->m_childStates = (XAbstractState**)XMalloc_System(
             sizeof(XAbstractState*) * state->m_childCapacity);
     }
     else
@@ -139,7 +139,7 @@ bool XState_addState(XState* state, XAbstractState* child)
     // 扩容
     if (state->m_childCount >= state->m_childCapacity) {
         size_t newCapacity = state->m_childCapacity * 2;
-        XAbstractState** newChildren = (XAbstractState**)XMemory_realloc(
+        XAbstractState** newChildren = (XAbstractState**)XCalloc_System(
             state->m_childStates, sizeof(XAbstractState*) * newCapacity
         );
         if (!newChildren) return false;
@@ -162,14 +162,14 @@ void VXState_deinit(XState* state)
     for (size_t i = 0; i < state->m_childCount; i++) {
         XAbstractState_delete_base(state->m_childStates[i]);
     }
-    XMemory_free(state->m_childStates);
+    XFree_System(state->m_childStates);
     state->m_childStates = NULL;
 
     // 移除所有转换
     for (size_t i = 0; i < state->m_transitionCount; i++) {
         XAbstractTransition_delete_base(state->m_transitions[i]);
     }
-    XMemory_free(state->m_transitions);
+    XFree_System(state->m_transitions);
     state->m_transitions = NULL;
     //调用父类释放函数
     XVtableGetFunc(XAbstractState_class_init(), EXClass_Deinit, void(*)(XAbstractState*))(state);
@@ -188,7 +188,7 @@ bool XState_addTransition(XState* state, XAbstractTransition* transition) {
     // 扩容
     if (state->m_transitionCount >= state->m_transitionCapacity) {
         size_t newCapacity = state->m_transitionCapacity * 2;
-        XAbstractTransition** newTransitions = (XAbstractTransition**)XMemory_realloc(
+        XAbstractTransition** newTransitions = (XAbstractTransition**)XCalloc_System(
             state->m_transitions, sizeof(XAbstractTransition*) * newCapacity
         );
         if (!newTransitions) return false;

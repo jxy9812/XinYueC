@@ -99,7 +99,7 @@ typedef struct XAtomic_size_t { volatile size_t value; }  XAtomic_size_t;
  */
 typedef struct { volatile void* value; }  XAtomic_uintptr_t;
 //创建原子变量
-#define XAtomic_create(type)    XCalloc(1,sizeof(XAtomic_##type))
+#define XAtomic_create(type)    XCalloc_System(1,sizeof(XAtomic_##type))
 /**
  * @brief 初始化原子变量为指定值
  * @param var 原子变量（非指针）
@@ -107,7 +107,7 @@ typedef struct { volatile void* value; }  XAtomic_uintptr_t;
  * @note 此宏直接对原子变量的内部值进行赋值，非原子操作，应在多线程访问前调用
 */
 #define XAtomic_init(var, v) do { (var).value = (v); } while(0)
-#define XAtomic_delete			XFree
+#define XAtomic_delete			XFree_System
 
 #include"XAtomic_load.h"
 #include"XAtomic_store.h"
@@ -136,8 +136,8 @@ void  XAtomic_memory_barrier_release();
 
 
 #define XAtomic_index_mask(index_bits)      ((((size_t)1) << index_bits) - 1)
-#define XAtomic_version_mask(index_bits)    ((((size_t)1) << XAtomic_version_bits(index_bits)) - 1)
 #define XAtomic_version_bits(index_bits)    (sizeof(size_t) * 8 - index_bits)
+#define XAtomic_version_mask(index_bits)    ((((size_t)1) << XAtomic_version_bits(index_bits)) - 1)
 // 计算能容纳 [0, max_value] 所需的最少位数-获取 index_bits
 size_t XAtomic_index_bits(size_t max_value);
 // 打包索引和版本号

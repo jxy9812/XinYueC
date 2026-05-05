@@ -8,14 +8,14 @@
 #include <string.h>
 XJsonValue* XJsonValue_create_null(void) 
 {
-    XJsonValue* value = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue* value = (XJsonValue*)XMalloc_System(sizeof(XJsonValue));
     XJsonValue_init(value, XJsonValue_Null);
     return value;
 }
 
 XJsonValue* XJsonValue_create_bool(bool value)
 {
-    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue* val = (XJsonValue*)XMalloc_System(sizeof(XJsonValue));
     XJsonValue_init(val, XJsonValue_Bool);
     if (val) 
     {
@@ -26,7 +26,7 @@ XJsonValue* XJsonValue_create_bool(bool value)
 
 XJsonValue* XJsonValue_create_double(double value) 
 {
-    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue* val = (XJsonValue*)XMalloc_System(sizeof(XJsonValue));
     XJsonValue_init(val, XJsonValue_Double);
     if (val)
     {
@@ -37,7 +37,7 @@ XJsonValue* XJsonValue_create_double(double value)
 
 XJsonValue* XJsonValue_create_int(int64_t value)
 {
-    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue* val = (XJsonValue*)XMalloc_System(sizeof(XJsonValue));
     XJsonValue_init(val, XJsonValue_Int);
     if (val)
     {
@@ -50,7 +50,7 @@ XJsonValue* XJsonValue_create_string(const XString* string)
 {
     if (string == NULL)
         return NULL;
-    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue* val = (XJsonValue*)XMalloc_System(sizeof(XJsonValue));
     XJsonValue_init(val, XJsonValue_String);
     if (val)
     {
@@ -63,7 +63,7 @@ XJsonValue* XJsonValue_create_array(XJsonArray* array)
 {
     if (array == NULL)
         return NULL;
-    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue* val = (XJsonValue*)XMalloc_System(sizeof(XJsonValue));
     XJsonValue_init(val, XJsonValue_Array);
     if (val)
     {
@@ -74,7 +74,7 @@ XJsonValue* XJsonValue_create_array(XJsonArray* array)
 
 XJsonValue* XJsonValue_create_object(XJsonObject* object) 
 {
-    XJsonValue* val = (XJsonValue*)XMemory_malloc(sizeof(XJsonValue));
+    XJsonValue* val = (XJsonValue*)XMalloc_System(sizeof(XJsonValue));
     XJsonValue_init(val, XJsonValue_Object);
     if (val)
     {
@@ -171,7 +171,7 @@ void XJsonValue_delete(XJsonValue* value)
 {
     if (!value) return;
     XJsonValue_deinit(value);
-    XMemory_free(value);
+    XFree_System(value);
 }
 
 void XJsonValue_clear(XJsonValue* value)

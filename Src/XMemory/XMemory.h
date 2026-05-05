@@ -19,7 +19,7 @@ typedef void* (*MallocMethod)(size_t size);
 * @brief 内存释放函数指针类型
 * @param ptr 待释放的内存块指针
 */
-typedef void (*DeleteMethod)(void* ptr);
+typedef void (*FreeMethod)(void* ptr);
 /**
 * @brief 内存重分配函数指针类型
 * @param ptr 原内存块指针
@@ -39,10 +39,10 @@ typedef void* (*CallocMethod)(size_t count, size_t size);
 */
 typedef struct
 {
-	MallocMethod allocate;      ///< 内存申请函数
-	DeleteMethod deallocate;    ///< 内存释放函数
-	ReallocMethod reallocate;   ///< 内存重分配函数
-	CallocMethod callocZero;    ///< 零初始化内存分配函数
+	MallocMethod malloc;      ///< 内存申请函数
+	FreeMethod free;    ///< 内存释放函数
+	ReallocMethod realloc;   ///< 内存重分配函数
+	CallocMethod calloc;    ///< 零初始化内存分配函数
 } XMemory;
 /**
 * @brief 字节序枚举定义
@@ -62,30 +62,38 @@ typedef enum {
 	XBIT_ORDER_DEFAULT          ///< 默认使用XBIT_ORDER_LSB_FIRST
 } XBitOrder;
 /**
+ * @brief 内存池类型枚举
+ */
+typedef enum {
+	XMEMORY_TYPE_SYSTEM,        ///< 使用系统 malloc/free
+	XMEMORY_TYPE_MULTIPOOL,    ///< 使用 XMultiPool
+	XMEMORY_TYPE_HYBRID         ///< 组合模式：小内存用 XMultiPool，大内存用系统
+} XMemoryType;
+/**
 * @brief 设置全局内存管理方法
 * @param method 内存管理方法结构体指针，为NULL时不执行操作
 */
-void XMemory_setMethod(const XMemory* method);
+void XMemory_setMethod(const XMemory* method, XMemoryType type);
 /**
 * @brief 设置内存申请函数
 * @param method 自定义的内存申请函数指针
 */
-void XMemory_setMallocMethod(MallocMethod method);
+void XMemory_setMallocMethod(MallocMethod method, XMemoryType type);
 /**
 * @brief 设置内存释放函数
 * @param method 自定义的内存释放函数指针
 */
-void XMemory_setDeleteMethod(DeleteMethod method);
+void XMemory_setFreeMethod(FreeMethod method, XMemoryType type);
 /**
 * @brief 设置内存重分配函数
 * @param method 自定义的内存重分配函数指针
 */
-void XMemory_setReallocMethod(ReallocMethod method);
+void XMemory_setReallocMethod(ReallocMethod method, XMemoryType type);
 /**
 * @brief 设置零初始化内存分配函数
 * @param method 自定义的零初始化内存分配函数指针
 */
-void XMemory_setCallocMethod(CallocMethod method);
+void XMemory_setCallocMethod(CallocMethod method, XMemoryType type);
 /**
 * @brief 使用malloc实现的内存重分配函数（XMemory_realloc的备选实现）
 * @details 扩大内存时通过malloc+拷贝+free实现，存在数据拷贝隐患
@@ -93,44 +101,91 @@ void XMemory_setCallocMethod(CallocMethod method);
 * @param size 新的内存大小（字节数）
 * @return 成功返回新内存块指针，失败返回NULL
 */
-void* XMemory_realloc_isMalloc(void* ptr, size_t size);
+void* XMemory_realloc_isMalloc(void* ptr, size_t size, XMemoryType type);
 /**
 * @brief 使用malloc+memset实现的零初始化内存分配函数（XMemory_calloc的备选实现）
 * @param count 元素数量
 * @param size 单个元素大小（字节数）
 * @return 成功返回连续内存块指针（已初始化为0），失败返回NULL
 */
-void* XMemory_calloc_isMalloc(size_t count, size_t size);
+void* XMemory_calloc_isMalloc(size_t count, size_t size, XMemoryType type);
 /**
 * @brief 内存申请函数（调用全局配置的allocate方法）
 * @param size 申请的内存大小（字节数）
 * @return 成功返回内存块指针，失败返回NULL
 */
-void* XMemory_malloc(size_t size);
+void* XMemory_malloc(size_t size, XMemoryType type);
 /**
 * @brief 内存释放函数（调用全局配置的deallocate方法）
 * @param ptr 待释放的内存块指针
 */
-void XMemory_free(void* ptr);
+void XMemory_free(void* ptr, XMemoryType type);
 /**
 * @brief 内存重分配函数（调用全局配置的reallocate方法）
 * @param ptr 原内存块指针
 * @param size 新的内存大小（字节数）
 * @return 成功返回新内存块指针，失败返回NULL
 */
-void* XMemory_realloc(void* ptr, size_t size);
+void* XMemory_realloc(void* ptr, size_t size, XMemoryType type);
 /**
 * @brief 零初始化内存分配函数（调用全局配置的callocZero方法）
 * @param count 元素数量
 * @param size 单个元素大小（字节数）
 * @return 成功返回连续内存块指针（已初始化为0），失败返回NULL
 */
-void* XMemory_calloc(size_t count, size_t size);
+void* XMemory_calloc(size_t count, size_t size, XMemoryType type);
 /**
 * @brief 检查当前内存重分配函数是否为NULL
 * @return true表示realloc方法未设置（为NULL），false表示已设置
 */
-bool XMemory_realloc_isNULL();
+bool XMemory_realloc_isNULL(XMemoryType type);
+
+/**
+* @brief 申请指定类型对象的内存（封装XMalloc_System）
+* @param obj 目标对象类型（如int、struct xxx等）
+* @return 成功返回对应类型的内存块指针，失败返回NULL
+*/
+#define XNew(type)                      (type*)XMalloc_System(sizeof(type))
+/**
+* @brief 释放内存（封装XFree_System）
+* @param ptr 待释放的内存块指针
+*/
+#define XDelete(ptr)                   XFree_System(ptr);
+/**
+* @brief XMalloc_System的宏别名
+*/
+#define XMalloc                        XMemory_malloc
+void* XMalloc_System(size_t size);
+void* XMalloc_MultiPool(size_t size);
+void* XMalloc_Hybrid(size_t size);
+/**
+* @brief XFree_System的宏别名
+*/
+#define XFree						   XMemory_free
+void XFree_System(void* ptr);
+void XFree_MultiPool(void* ptr);
+void XFree_Hybrid(void* ptr);
+/**
+* @brief 内存重分配函数（调用全局配置的reallocate方法）
+* @param ptr 原内存块指针
+* @param size 新的内存大小（字节数）
+* @return 成功返回新内存块指针，失败返回NULL
+*/
+#define XRealloc                           XMemory_realloc
+void* XRealloc_System(void* ptr, size_t size);
+void* XRealloc_MultiPool(void* ptr, size_t size);
+void* XRealloc_Hybrid(void* ptr, size_t size);
+/**
+* @brief 零初始化内存分配函数（调用全局配置的callocZero方法）
+* @param count 元素数量
+* @param size 单个元素大小（字节数）
+* @return 成功返回连续内存块指针（已初始化为0），失败返回NULL
+*/
+#define XCalloc								XMemory_calloc
+void* XCalloc_System(size_t count, size_t size);
+void* XCalloc_MultiPool(size_t count, size_t size);
+void* XCalloc_Hybrid(size_t count, size_t size);
+
 /**
 * @brief 将指定字节序的数据流读取到内存缓冲区，并根据字节序转换
 * @details 用于跨平台/协议数据交互，自动处理字节序转换，确保内存数据符合当前系统字节序
@@ -151,33 +206,6 @@ bool XMemory_read_data(const uint8_t* src, XByteOrder readOrder, uint8_t* out, s
 * @return bool 转换成功返回true，参数无效（空指针或长度为0）返回false
 */
 bool XMemory_write_data(uint8_t* write, XByteOrder writeOrder, const uint8_t* in, size_t size);
-/**
-* @brief 申请指定类型对象的内存（封装XMemory_malloc）
-* @param obj 目标对象类型（如int、struct xxx等）
-* @return 成功返回对应类型的内存块指针，失败返回NULL
-*/
-#define XNew(type)                      (type*)XMemory_malloc(sizeof(type))
-/**
-* @brief 释放内存（封装XMemory_free）
-* @param ptr 待释放的内存块指针
-*/
-#define XDelete(ptr)                   XMemory_free(ptr);
-/**
-* @brief XMemory_malloc的宏别名
-*/
-#define XMalloc                        XMemory_malloc
-/**
-* @brief XMemory_free的宏别名
-*/
-#define XFree                          XMemory_free
-/**
-* @brief XMemory_realloc的宏别名
-*/
-#define XRealloc                       XMemory_realloc
-/**
-* @brief XMemory_calloc的宏别名
-*/
-#define XCalloc                        XMemory_calloc
 /**
 * @brief 从字节流读取数据并转换为指定类型变量（封装XMemory_read_data）
 * @param src        输入数据源指针

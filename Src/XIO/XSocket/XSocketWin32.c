@@ -74,9 +74,9 @@ XVtable* XSocket_class_init()
 
 XSocket* XSocket_create()
 {
-    XSocket* so = XMemory_malloc(sizeof(XSocket));
+    XSocket* so = XMalloc_System(sizeof(XSocket));
     XSocket_init(so);
-    Set_Class_MemoryFree(so, XFree);
+    Set_Class_MemoryFree(so, XFree_System);
     return so;
 }
 
@@ -90,7 +90,7 @@ void XSocket_init(XSocket* so)
     
     so->m_socket = INVALID_SOCKET;
     // 初始化网络事件结构
-   /* so->m_netEvents = XMemory_malloc(sizeof(WSANETWORKEVENTS));
+   /* so->m_netEvents = XMalloc_System(sizeof(WSANETWORKEVENTS));
     if (so->m_netEvents) {
         memset(so->m_netEvents, 0, sizeof(WSANETWORKEVENTS));
     }*/
@@ -415,7 +415,7 @@ void VXIODevice_deinit(XSocket* so)
 
     /*if (so->m_netEvents)
     {
-        XMemory_free(so->m_netEvents);
+        XFree_System(so->m_netEvents);
         so->m_netEvents = NULL;
     }*/
 
@@ -675,7 +675,7 @@ bool VXIODevice_open(XSocket* so, XIODeviceBaseMode mode)
 
         // 保存远程地址信息
         if (base->m_peerAddress) {
-            XMemory_free(base->m_peerAddress);
+            XFree_System(base->m_peerAddress);
         }
 
         char ipStr[46]; // 足够存储IPv6地址

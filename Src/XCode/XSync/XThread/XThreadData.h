@@ -26,7 +26,7 @@ typedef struct XThreadData{
     XAtomic_size_t m_loopLevel; // <-- 关键：一个原子整数计数器
     XLockFreeQueue/*<XPostEvent>*/   m_tryPostEventList;  //无锁投递队列
     XVector/*<XPostEvent>*/ m_postEventList;  //互斥锁投递队列
-    XVector/*<XPostEvent>*/ m_handlerEventList;  //事件处理专用队列
+    //XVector/*<XPostEvent>*/ m_handlerEventList;  //事件处理专用队列
 } XThreadData;
 
 //需平台实现
@@ -53,7 +53,7 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority);
 void XThreadData_tryPostEvent(XObject* receiver, XEvent* event, int priority);
 //向当前线程事件队列头部追加未处理的事件列表传入 XThreadData_takePostedEvents(void) 的返回值
 void XThreadData_push_front_list(const XVector* events);
-// 消费并清空当前线程的 posted events（返回引用切勿删除）
+// 消费并清空当前线程的 posted events（副本自己管理）
 XVector*/*<XPostEvent>*/ XThreadData_takePostedEvents(void);
 
 // 设置当前线程的事件分发器

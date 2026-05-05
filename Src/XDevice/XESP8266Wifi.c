@@ -163,10 +163,10 @@ void VXESP8266_deinit(XESP8266Wifi* device)
  * @brief 创建ESP8266设备实例
  */
 XESP8266Wifi* XESP8266Wifi_create(XIODevice* io) {
-    XESP8266Wifi* device = XMemory_malloc(sizeof(XESP8266Wifi));
+    XESP8266Wifi* device = XMalloc_System(sizeof(XESP8266Wifi));
     if (ISNULL(device, "malloc failed")) return NULL;
     XESP8266Wifi_init(device, io);
-    Set_Class_MemoryFree(device, XFree);
+    Set_Class_MemoryFree(device, XFree_System);
     return device;
 }
 void VXIODevice_setWriteBuffer(XIODevice* io, size_t count)
@@ -866,7 +866,7 @@ static void error_signal_data_delete(XVarList* list)
     XVarList_argOffset(list, int);
     char* msg=XVarList_arg(list,char*);
     if(msg)
-        XMemory_free(msg);
+        XFree_System(msg);
     XVarList_delete(list);
 }
 void* XESP8266Wifi_error_signal(XESP8266Wifi* device, int errorCode, const char* errorMsg) 
@@ -874,7 +874,7 @@ void* XESP8266Wifi_error_signal(XESP8266Wifi* device, int errorCode, const char*
     if (device)
     {
         size_t len = strlen(errorMsg);
-        char* msg = len ? XMemory_malloc(len + 1) : NULL;
+        char* msg = len ? XMalloc_System(len + 1) : NULL;
         if (msg)
             strcpy(msg, errorMsg);
         XVarList* list = XVarList_Create(XVar(int, errorCode), XVar(char*, msg));

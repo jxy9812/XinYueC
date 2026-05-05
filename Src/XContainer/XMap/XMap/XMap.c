@@ -21,9 +21,9 @@ XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XCompare c
 		printf("compare比较函数NULL");
 		return NULL;
 	}
-	XMap* this_map = (XMap*)XMemory_malloc(sizeof(XMap));
+	XMap* this_map = (XMap*)XMalloc_System(sizeof(XMap));
 	XMap_init(this_map,keyTypeSize,valTypeSize, compare);
-	Set_Class_MemoryFree(this_map, XFree);
+	Set_Class_MemoryFree(this_map, XFree_System);
 	return this_map;
 }
 XMap* XMap_create_copy(const XMap* other)

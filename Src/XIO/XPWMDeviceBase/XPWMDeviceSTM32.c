@@ -45,12 +45,12 @@ XVtable *XPWMDeviceSTM32_class_init()
 
 XPWMDeviceSTM32 *XPWMDeviceSTM32_create(XPWMGPIO* gpio)
 {
-	XPWMDeviceSTM32 * pwm=XMemory_malloc(sizeof(XPWMDeviceSTM32));
+	XPWMDeviceSTM32 * pwm=XMalloc_System(sizeof(XPWMDeviceSTM32));
 	if(pwm==NULL)
 		return NULL;
 	XPWMDeviceSTM32_init(pwm);
 	pwm->m_gpio=*gpio;
-	Set_Class_MemoryFree(pwm, XFree);
+	Set_Class_MemoryFree(pwm, XFree_System);
     return pwm;
 }
 

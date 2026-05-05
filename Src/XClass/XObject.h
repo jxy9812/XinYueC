@@ -76,7 +76,7 @@ XVtable* XObject_class_init();
 /**
  * @brief 在堆上创建XObject实例并初始化
  * @return 指向新创建的XObject对象的指针，失败返回NULL
- * @note 内部调用XMemory_malloc分配内存，再调用XObject_init初始化
+ * @note 内部调用XMalloc_System分配内存，再调用XObject_init初始化
  */
 XObject* XObject_create();
 

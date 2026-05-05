@@ -104,7 +104,7 @@ void VXClass_move(XSet* object, XSet* src)
 void VXSet_deinit(XSet* this_set)
 {
 	XSet_clear_base(this_set);
-	//XMemory_free(this_set);
+	//XFree_System(this_set);
 }
 
 bool VXSet_insert(XSet* this_set, const void* pvKey, XCDataCreatMethod dataCreatMethod)
@@ -115,10 +115,10 @@ bool VXSet_insert(XSet* this_set, const void* pvKey, XCDataCreatMethod dataCreat
 	{
 		if (dataCreatMethod)
 		{
-			void* temp = XMemory_calloc(1,XContainerTypeSize(this_set));
+			void* temp = XCalloc_System(1,XContainerTypeSize(this_set));
 			dataCreatMethod(temp, pvKey);
 			XRBTree_insert(&XContainerDataPtr(this_set), XContainerCompare(this_set), XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
-			XMemory_free(temp);
+			XFree_System(temp);
 		}
 		else
 		{
@@ -233,9 +233,9 @@ XSet* XSet_create(const size_t keyTypeSize, XCompare compare)
 		printf("compare比较函数NULL");
 		return NULL;
 	}
-	XSet* this_set = (XSet*)XMemory_malloc(sizeof(XSet));
+	XSet* this_set = (XSet*)XMalloc_System(sizeof(XSet));
 	XSet_init(this_set, keyTypeSize, compare);
-	Set_Class_MemoryFree(this_set, XFree);
+	Set_Class_MemoryFree(this_set, XFree_System);
 	return this_set;
 }
 

@@ -204,7 +204,7 @@ static unsigned char* cJSON_strdup(const unsigned char* string/*, const internal
     }
 
     length = strlen((const char*)string) + sizeof("");
-    copy = (unsigned char*)XMemory_malloc(length);
+    copy = (unsigned char*)XMalloc_System(length);
     if (copy == NULL)
     {
         return NULL;
@@ -248,7 +248,7 @@ static unsigned char* cJSON_strdup(const unsigned char* string/*, const internal
 /* Internal constructor. */
 static cJSON *cJSON_New_Item(/*const internal_hooks * const hooks*/)
 {
-    cJSON* node = (cJSON*)XMemory_malloc(sizeof(cJSON));
+    cJSON* node = (cJSON*)XMalloc_System(sizeof(cJSON));
     if (node)
     {
         memset(node, '\0', sizeof(cJSON));
@@ -270,15 +270,15 @@ CJSON_PUBLIC(void) cJSON_Delete(cJSON *item)
         }
         if (!(item->type & cJSON_IsReference) && (item->valuestring != NULL))
         {
-            XMemory_free(item->valuestring);
+            XFree_System(item->valuestring);
             item->valuestring = NULL;
         }
         if (!(item->type & cJSON_StringIsConst) && (item->string != NULL))
         {
-            XMemory_free(item->string);
+            XFree_System(item->string);
             item->string = NULL;
         }
-        XMemory_free(item);
+        XFree_System(item);
         item = next;
     }
 }
@@ -502,13 +502,13 @@ static unsigned char* ensure(printbuffer * const p, size_t needed)
         newsize = needed * 2;
     }
 
-    if (!XMemory_realloc_isNULL())
+    if (!XMemory_realloc_isNULL(XMEMORY_TYPE_SYSTEM))
     {
         /* reallocate with realloc if available */
-        newbuffer = (unsigned char*)XMemory_realloc(p->buffer, newsize);
+        newbuffer = (unsigned char*)XCalloc_System(p->buffer, newsize);
         if (newbuffer == NULL)
         {
-            XMemory_free(p->buffer);
+            XFree_System(p->buffer);
             p->length = 0;
             p->buffer = NULL;
 
@@ -518,10 +518,10 @@ static unsigned char* ensure(printbuffer * const p, size_t needed)
     else
     {
         /* otherwise reallocate manually */
-        newbuffer = (unsigned char*)XMemory_malloc(newsize);
+        newbuffer = (unsigned char*)XMalloc_System(newsize);
         if (!newbuffer)
         {
-            XMemory_free(p->buffer);
+            XFree_System(p->buffer);
             p->length = 0;
             p->buffer = NULL;
 
@@ -529,7 +529,7 @@ static unsigned char* ensure(printbuffer * const p, size_t needed)
         }
 
         memcpy(newbuffer, p->buffer, p->offset + 1);
-        XMemory_free(p->buffer);
+        XFree_System(p->buffer);
     }
     p->length = newsize;
     p->buffer = newbuffer;
@@ -825,7 +825,7 @@ static cJSON_bool parse_string(cJSON * const item, parse_buffer * const input_bu
 
         /* This is at most how much we need for the output */
         allocation_length = (size_t) (input_end - buffer_at_offset(input_buffer)) - skipped_bytes;
-        output = (unsigned char*)XMemory_malloc(allocation_length + sizeof(""));
+        output = (unsigned char*)XMalloc_System(allocation_length + sizeof(""));
         if (output == NULL)
         {
             goto fail; /* allocation failure */
@@ -903,7 +903,7 @@ static cJSON_bool parse_string(cJSON * const item, parse_buffer * const input_bu
 fail:
     if (output != NULL)
     {
-        XMemory_free(output);
+        XFree_System(output);
         output = NULL;
     }
 
@@ -1210,7 +1210,7 @@ static unsigned char* print(const cJSON* const item, cJSON_bool format/*, const 
     memset(buffer, 0, sizeof(buffer));
 
     /* create m_buffer */
-    buffer->buffer = (unsigned char*)XMemory_malloc(default_buffer_size);
+    buffer->buffer = (unsigned char*)XMalloc_System(default_buffer_size);
     buffer->length = default_buffer_size;
     buffer->format = format;
     //m_buffer->hooks = *hooks;
@@ -1227,9 +1227,9 @@ static unsigned char* print(const cJSON* const item, cJSON_bool format/*, const 
     update_offset(buffer);
 
     /* check if reallocate is available */
-    if (!XMemory_realloc_isNULL())
+    if (!XMemory_realloc_isNULL(XMEMORY_TYPE_SYSTEM))
     {
-        printed = (unsigned char*)XMemory_realloc(buffer->buffer, buffer->offset + 1);
+        printed = (unsigned char*)XCalloc_System(buffer->buffer, buffer->offset + 1);
         if (printed == NULL) {
             goto fail;
         }
@@ -1237,7 +1237,7 @@ static unsigned char* print(const cJSON* const item, cJSON_bool format/*, const 
     }
     else /* otherwise copy the JSON over to a new m_buffer */
     {
-        printed = (unsigned char*)XMemory_malloc(buffer->offset + 1);
+        printed = (unsigned char*)XMalloc_System(buffer->offset + 1);
         if (printed == NULL)
         {
             goto fail;
@@ -1246,7 +1246,7 @@ static unsigned char* print(const cJSON* const item, cJSON_bool format/*, const 
         printed[buffer->offset] = '\0'; /* just to be sure */
 
         /* free the m_buffer */
-        XMemory_free(buffer->buffer);
+        XFree_System(buffer->buffer);
         buffer->buffer = NULL;
     }
 
@@ -1255,13 +1255,13 @@ static unsigned char* print(const cJSON* const item, cJSON_bool format/*, const 
 fail:
     if (buffer->buffer != NULL)
     {
-        XMemory_free(buffer->buffer);
+        XFree_System(buffer->buffer);
         buffer->buffer = NULL;
     }
 
     if (printed != NULL)
     {
-        XMemory_free(printed);
+        XFree_System(printed);
         printed = NULL;
     }
 
@@ -1295,9 +1295,9 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
     update_offset(buffer);
 
     /* check if reallocate is available */
-    if (!XMemory_realloc_isNULL())
+    if (!XMemory_realloc_isNULL(XMEMORY_TYPE_SYSTEM))
     {
-        printed = (unsigned char*)XMemory_realloc(buffer->buffer, buffer->offset + 1);
+        printed = (unsigned char*)XCalloc_System(buffer->buffer, buffer->offset + 1);
         if (printed == NULL) {
             goto fail;
         }
@@ -1308,7 +1308,7 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
     }
     else /* otherwise copy the JSON over to a new m_buffer */
     {
-        printed = (unsigned char*) XMemory_malloc(buffer->offset + 1);
+        printed = (unsigned char*) XMalloc_System(buffer->offset + 1);
         if (printed == NULL)
         {
             goto fail;
@@ -1317,7 +1317,7 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
         printed[buffer->offset] = '\0'; /* just to be sure */
 
         /* free the m_buffer */
-        XMemory_free(buffer->buffer);
+        XFree_System(buffer->buffer);
         buffer->buffer = NULL;
         XContainerDataPtr(str) = printed;
         XContainerCapacity(str) = buffer->offset + 1;
@@ -1329,13 +1329,13 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
 fail:
     if (buffer->buffer != NULL)
     {
-        XMemory_free(buffer->buffer);
+        XFree_System(buffer->buffer);
         buffer->buffer = NULL;
     }
 
     if (printed != NULL)
     {
-        XMemory_free(printed);
+        XFree_System(printed);
         printed = NULL;
     }
     if (str != NULL)
@@ -1363,7 +1363,7 @@ CJSON_PUBLIC(char *) cJSON_PrintBuffered(const cJSON *item, int prebuffer, cJSON
         return NULL;
     }
 
-    p.buffer = (unsigned char*)XMemory_malloc((size_t)prebuffer);
+    p.buffer = (unsigned char*)XMalloc_System((size_t)prebuffer);
     if (!p.buffer)
     {
         return NULL;
@@ -1377,7 +1377,7 @@ CJSON_PUBLIC(char *) cJSON_PrintBuffered(const cJSON *item, int prebuffer, cJSON
 
     if (!print_value(item, &p))
     {
-        XMemory_free(p.buffer);
+        XFree_System(p.buffer);
         p.buffer = NULL;
         return NULL;
     }
@@ -2137,7 +2137,7 @@ static cJSON_bool add_item_to_object(cJSON * const object, const char * const st
 
     if (!(item->type & cJSON_StringIsConst) && (item->string != NULL))
     {
-        XMemory_free(item->string);
+        XFree_System(item->string);
     }
 
     item->string = new_key;
@@ -3212,11 +3212,11 @@ CJSON_PUBLIC(cJSON_bool) cJSON_Compare(const cJSON * const a, const cJSON * cons
 
 CJSON_PUBLIC(void *) cJSON_malloc(size_t size)
 {
-    return XMemory_malloc(size);
+    return XMalloc_System(size);
 }
 
 CJSON_PUBLIC(void) cJSON_free(void *object)
 {
-    XMemory_free(object);
+    XFree_System(object);
     object = NULL;
 }

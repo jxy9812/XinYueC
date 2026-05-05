@@ -7,4 +7,5 @@ void XMenu_XCodeTest(XMenu* root)
 	XMenu_XDebugTest(menu);
 	XMenu_XStateMachineTest(menu);
 	XMenu_XThreadTest(menu);
+	XMenu_XThreadPoolTest(menu);
 }

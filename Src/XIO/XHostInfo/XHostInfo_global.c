@@ -75,7 +75,7 @@ void XHostInfo_dns_worker(void* arg) {
 }
 
 XHostInfo_LookupTask* XHostInfo_task_create(const char* name, int id) {
-    XHostInfo_LookupTask* task = (XHostInfo_LookupTask*)XMemory_calloc(1, sizeof(XHostInfo_LookupTask));
+    XHostInfo_LookupTask* task = (XHostInfo_LookupTask*)XCalloc_System(1, sizeof(XHostInfo_LookupTask));
     task->name = XStrdup(name);
     task->lookupId = id;
     return task;
@@ -83,7 +83,7 @@ XHostInfo_LookupTask* XHostInfo_task_create(const char* name, int id) {
 
 void XHostInfo_task_destroy(XHostInfo_LookupTask* task) {
     if (!task) return;
-    XMemory_free(task->name);
-    XMemory_free(task->member);
-    XMemory_free(task);
+    XFree_System(task->name);
+    XFree_System(task->member);
+    XFree_System(task);
 }

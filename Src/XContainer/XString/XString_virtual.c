@@ -219,7 +219,7 @@ static void VXClass_copy(XString* object, const XString* src)
     XContainerSize(object) = XContainerSize(src);
     XContainerCapacity(object) = XContainerCapacity(src);
     if (object->m_ref_count)
-        XMemory_free(object->m_ref_count);
+        XFree_System(object->m_ref_count);
     object->m_ref_count = src->m_ref_count;
     if (object->m_ref_count) {
         XAtomic_fetch_add_int32(object->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子加1
@@ -254,9 +254,9 @@ static void VXClass_deinit(XString* str)
         {
             if (XContainerDataPtr(str)) 
             {
-                XMemory_free(XContainerDataPtr(str));
+                XFree_System(XContainerDataPtr(str));
             }
-            XMemory_free(str->m_ref_count);
+            XFree_System(str->m_ref_count);
             
         }
         str->m_ref_count = NULL;
@@ -267,7 +267,7 @@ static void VXClass_deinit(XString* str)
     if (str->m_cache)
     {
         XString_deinitCache(str);
-        XMemory_free(str->m_cache);
+        XFree_System(str->m_cache);
         str->m_cache = NULL;
     }
 
@@ -295,7 +295,7 @@ static void VXContainer_clear(XString* str)
     {//被其他对象拷贝引用了,将缓冲区交给其他对象管理
         int32_t old_ref = XAtomic_fetch_sub_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
         // 为新数据创建独立的引用计数（初始化为1）
-        XAtomic_int32_t* new_ref_count = (XAtomic_int32_t*)XMemory_malloc(sizeof(XAtomic_int32_t));
+        XAtomic_int32_t* new_ref_count = (XAtomic_int32_t*)XMalloc_System(sizeof(XAtomic_int32_t));
         if (!new_ref_count) {
             // 恢复原引用计数（拷贝失败需回滚）
             XAtomic_fetch_add_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
@@ -303,7 +303,7 @@ static void VXContainer_clear(XString* str)
         }
         XAtomic_store_int32(new_ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子初始化新计数
         str->m_ref_count = new_ref_count;
-        XContainerDataPtr(str) = XMemory_malloc(sizeof(XChar)*(XContainerCapacity(str)+1));
+        XContainerDataPtr(str) = XMalloc_System(sizeof(XChar)*(XContainerCapacity(str)+1));
     }
     if (XContainerDataPtr(str)) 
     {

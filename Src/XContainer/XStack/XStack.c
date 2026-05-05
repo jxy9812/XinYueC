@@ -22,9 +22,9 @@ XStack* XStack_create(size_t typeSize)
 {
 	if (ISNULL(typeSize, ""))
 		return NULL;
-	XVector* this_stack = XMemory_malloc(sizeof(XVector));
+	XVector* this_stack = XMalloc_System(sizeof(XVector));
 	XStack_init(this_stack, typeSize);
-	Set_Class_MemoryFree(this_stack, XFree);
+	Set_Class_MemoryFree(this_stack, XFree_System);
 	return this_stack;
 }
 

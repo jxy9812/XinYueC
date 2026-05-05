@@ -43,7 +43,7 @@ XObject* XObject_create()
 {
 	XObject* object = XNew(XObject);
 	XObject_init(object);
-	Set_Class_MemoryFree(object, XFree);
+	Set_Class_MemoryFree(object, XFree_System);
 	return object;
 }
 

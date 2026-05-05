@@ -180,7 +180,7 @@ static void VXSerialPort_deinit(XObject* obj) {
         XSerialPort_platform_close(port);
     }
     if (port->portName) {
-        XMemory_free(port->portName);
+        XFree_System(port->portName);
         port->portName = NULL;
     }
     XClass_Deinit_Parent(XIODevice, obj);
@@ -223,9 +223,9 @@ void XSerialPort_setPortName(XSerialPort* port, const char* name) {
 	if (!port || !name) return;
 	
 	if (port->portName)
-		XMemory_free(port->portName);
+		XFree_System(port->portName);
 	int len = strlen(name);
-	port->portName = XMemory_malloc(len+1);
+	port->portName = XMalloc_System(len+1);
 	memcpy(port->portName,name, len+1);
 }
 

@@ -55,7 +55,7 @@ XString* XString_create_copy(const XString* other)
 {
     if (other == NULL)
         return NULL;
-    XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    XString* str = (XString*)XMalloc_System(sizeof(XString));
     if (!str) return NULL;
     memset(str, 0, sizeof(XString));
 
@@ -79,7 +79,7 @@ XString* XString_create_utf8(const char* utf8_str)
 
 XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
 {
-    XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    XString* str = (XString*)XMalloc_System(sizeof(XString));
     if (!str) return NULL;
     XString_init(str);
     size_t actual_len = (len == 0 && utf8_str) ? strlen(utf8_str) : len;
@@ -92,7 +92,7 @@ XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
             str->parent.m_size = xchar_count;
         }
     }
-    Set_Class_MemoryFree(str, XFree);
+    Set_Class_MemoryFree(str, XFree_System);
     return str;
 }
 
@@ -125,7 +125,7 @@ XString* XString_create_fmt_gbk(const char* format, ...)
     if (fmt_len <= 0) return NULL;
 
     // 第二步：分配缓冲区并格式化GBK字符串
-    char* gbk_buf = (char*)XMemory_malloc(fmt_len + 1); // +1 用于终止符
+    char* gbk_buf = (char*)XMalloc_System(fmt_len + 1); // +1 用于终止符
     if (!gbk_buf) return NULL;
 
     va_start(args, format);
@@ -134,7 +134,7 @@ XString* XString_create_fmt_gbk(const char* format, ...)
 
     // 第三步：通过已实现的函数创建XString
     XString* str = XString_create_gbk(gbk_buf);
-    XMemory_free(gbk_buf); // 释放临时缓冲区
+    XFree_System(gbk_buf); // 释放临时缓冲区
 
     return str;
 }
@@ -146,7 +146,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     }
 
     // 步骤1：创建带空终止符的临时GBK缓冲区（避免原函数越界读取）
-    char* temp_gbk = (char*)XMemory_malloc(len + 1); // +1 用于存储'\0'
+    char* temp_gbk = (char*)XMalloc_System(len + 1); // +1 用于存储'\0'
     if (!temp_gbk) {
         return NULL;
     }
@@ -156,14 +156,14 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     // 步骤2：计算转换所需的XChar数量（首次调用获取长度）
     int64_t xchar_count = XChar_from_gbk_stream(temp_gbk, len, NULL, 0);
     if (xchar_count <= 0) {
-        XMemory_free(temp_gbk); // 释放临时缓冲区
+        XFree_System(temp_gbk); // 释放临时缓冲区
         return NULL;
     }
 
     // 步骤3：创建并初始化XString
-    XString* str = (XString*)XMemory_malloc(sizeof(XString));
+    XString* str = (XString*)XMalloc_System(sizeof(XString));
     if (!str) {
-        XMemory_free(temp_gbk);
+        XFree_System(temp_gbk);
         return NULL;
     }
     XString_init(str);
@@ -174,7 +174,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     // 步骤5：执行实际转换（使用临时缓冲区）
     XChar* data = XString_data(str);
     xchar_count = XChar_from_gbk_stream(temp_gbk, len, data, (size_t)xchar_count + 1); // +1 预留终止符位置
-    XMemory_free(temp_gbk); // 转换完成后释放临时缓冲区
+    XFree_System(temp_gbk); // 转换完成后释放临时缓冲区
 
     if (xchar_count <= 0) {
         XString_delete_base(str);
@@ -186,7 +186,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     data[xchar_count] = (XChar){ 0 };
 
     XString_deinitCache(str);
-    Set_Class_MemoryFree(str, XFree);
+    Set_Class_MemoryFree(str, XFree_System);
     return str;
 }
 
@@ -208,7 +208,7 @@ XString* XString_create_fmt_utf8(const char* format, ...)
     }
 
     // 分配缓冲区（+1 用于存储终止符'\0'）
-    char* buf = (char*)XMemory_malloc(buf_size + 1);
+    char* buf = (char*)XMalloc_System(buf_size + 1);
     if (!buf) {
         va_end(args);
         return NULL;     // 内存分配失败
@@ -220,7 +220,7 @@ XString* XString_create_fmt_utf8(const char* format, ...)
 
     // 创建UTF-8编码的XString并释放临时缓冲区
     XString* str = XString_create_utf8(buf);
-    XMemory_free(buf);
+    XFree_System(buf);
 
     return str;
 }
@@ -231,7 +231,7 @@ void XString_init(XString* str)
     if (!str) return;
     XContainer_init(str, sizeof(XChar));
     // 初始化原子引用计数（初始值为1）
-    str->m_ref_count = (XAtomic_int32_t*)XMemory_malloc(sizeof(XAtomic_int32_t));
+    str->m_ref_count = (XAtomic_int32_t*)XMalloc_System(sizeof(XAtomic_int32_t));
     if (str->m_ref_count) 
     {
         XAtomic_store_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 使用原子存储初始化
@@ -254,14 +254,14 @@ const char* XString_toUtf8(const XString* str)
     
     // 分配缓冲区（+1用于终止符）
     size_t buf_size = (size_t)utf8_len * sizeof(uint8_t) + sizeof(uint8_t);
-    uint16_t* utf8_buf = (uint16_t*)XMemory_malloc(buf_size);
+    uint16_t* utf8_buf = (uint16_t*)XMalloc_System(buf_size);
     if (!utf8_buf) return NULL;
 
     // 调用XChar转换函数（使用内部结束符自动处理）
     int64_t result = XChar_to_utf8_stream(XString_cdata(str), XString_length_base(str), (uint8_t*)utf8_buf, utf8_len+1);
     if (result <= 0) 
     {
-        XMemory_free(utf8_buf);
+        XFree_System(utf8_buf);
         return NULL;  // 转换失败
     }
     XString_initCache(str);
@@ -296,13 +296,13 @@ const uint16_t* XString_toUtf16(const XString* str)
 
     // 分配缓冲区（+1用于终止符）
     size_t buf_size = (size_t)utf16_len * sizeof(uint16_t) + sizeof(uint16_t);
-    uint16_t* utf16_buf = (uint16_t*)XMemory_malloc(buf_size);
+    uint16_t* utf16_buf = (uint16_t*)XMalloc_System(buf_size);
     if (!utf16_buf) return NULL;
 
     // 执行转换
     int64_t result = XChar_to_utf16_stream(XString_cdata(str), XString_length_base(str), utf16_buf, utf16_len + 1);
     if (result <= 0) {
-        XMemory_free(utf16_buf);
+        XFree_System(utf16_buf);
         return NULL;
     }
 
@@ -338,13 +338,13 @@ const uint32_t* XString_toUtf32(const XString* str)
 
     // 分配缓冲区（+1用于终止符）
     size_t buf_size = (size_t)utf32_len * sizeof(uint32_t) + sizeof(uint32_t);
-    uint32_t* utf32_buf = (uint32_t*)XMemory_malloc(buf_size);
+    uint32_t* utf32_buf = (uint32_t*)XMalloc_System(buf_size);
     if (!utf32_buf) return NULL;
 
     // 执行转换
     int64_t result = XChar_to_utf32_stream(XString_cdata(str), XString_length_base(str), utf32_buf, utf32_len + 1);
     if (result <= 0) {
-        XMemory_free(utf32_buf);
+        XFree_System(utf32_buf);
         return NULL;
     }
 
@@ -379,13 +379,13 @@ const char* XString_toGbk(const XString* str)
 
     // 分配缓冲区（+1用于终止符）
     size_t gbk_max_len = (size_t)gbk_len + 1;
-    char* gbk_buf = (char*)XMemory_malloc(gbk_max_len);
+    char* gbk_buf = (char*)XMalloc_System(gbk_max_len);
     if (!gbk_buf) return NULL;
 
     // 执行转换
     int64_t result = XChar_to_gbk_stream(XString_cdata(str), XString_length_base(str), gbk_buf, gbk_max_len);
     if (result <= 0) {
-        XMemory_free(gbk_buf);
+        XFree_System(gbk_buf);
         return NULL;
     }
 
@@ -716,7 +716,7 @@ bool XString_assign_fmt_utf8(XString* str, const char* utf8_format, ...)
 
     // 第二步：分配临时缓冲区并执行格式化
     // +1 用于存储字符串终止符'\0'
-    char* utf8_buf = (char*)XMemory_malloc(fmt_len + 1);
+    char* utf8_buf = (char*)XMalloc_System(fmt_len + 1);
     if (!utf8_buf) {
         return false; // 内存分配失败
     }
@@ -731,7 +731,7 @@ bool XString_assign_fmt_utf8(XString* str, const char* utf8_format, ...)
     bool success = XString_assign_utf8(str, utf8_buf);
 
     // 释放临时缓冲区（无论成功与否都需要释放）
-    XMemory_free(utf8_buf);
+    XFree_System(utf8_buf);
 
     return success;
 }
@@ -894,7 +894,7 @@ bool XString_replace(XString* str, const XString* before, const XString* after, 
     size_t text_len = XString_length_base(str);
 
     // 预计算前缀表（KMP算法）
-    int* prefix = (int*)XMemory_malloc(before_len * sizeof(int));
+    int* prefix = (int*)XMalloc_System(before_len * sizeof(int));
     if (!prefix) return false;
     compute_prefix(before_data, before_len, prefix, cs);
 
@@ -914,14 +914,14 @@ bool XString_replace(XString* str, const XString* before, const XString* after, 
         // 1. 移除原子串
         if (!XString_remove_base(str, (size_t)pos, before_len)) 
         {
-            XMemory_free(prefix);
+            XFree_System(prefix);
             return false;
         }
 
         // 2. 插入新子串
         if (!XString_insert(str, (size_t)pos, after)) 
         {
-            XMemory_free(prefix);
+            XFree_System(prefix);
             return false;
         }
 
@@ -933,7 +933,7 @@ bool XString_replace(XString* str, const XString* before, const XString* after, 
         pos += after_len;
     }
 
-    XMemory_free(prefix);
+    XFree_System(prefix);
     return replaced; // 即使没有替换也返回true（操作成功但无匹配）
 }
 
@@ -1077,7 +1077,7 @@ int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t fro
     const XChar* pattern = XString_cdata(substr_str);  // 模式串XChar数组
 
     // 分配并计算前缀表
-    int* prefix = (int*)XMemory_malloc(substr_len * sizeof(int));
+    int* prefix = (int*)XMalloc_System(substr_len * sizeof(int));
     if (!prefix) {
         XString_delete_base(substr_str);
         return -1;
@@ -1088,7 +1088,7 @@ int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t fro
     int64_t result = kmp_search(text, str_len, pattern, substr_len, prefix, cs, from);
 
     // 清理资源
-    XMemory_free(prefix);
+    XFree_System(prefix);
     XString_delete_base(substr_str);
     return result;
 }
@@ -1097,7 +1097,7 @@ int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, si
     XCharCaseSensitivity cs, size_t start_idx)
 {
     // 计算前缀表（正向匹配用，与子串方向一致）
-    int* prefix = (int*)XMemory_malloc(m * sizeof(int));
+    int* prefix = (int*)XMalloc_System(m * sizeof(int));
     if (!prefix) return -1;
     compute_prefix(pattern, m, prefix, cs);
 
@@ -1111,7 +1111,7 @@ int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, si
             j++;
             if (j == (int)m) {
                 // 找到完整匹配，返回起始索引i
-                XMemory_free(prefix);
+                XFree_System(prefix);
                 return i;
             }
         }
@@ -1128,7 +1128,7 @@ int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, si
     }
 
     // 未找到匹配
-    XMemory_free(prefix);
+    XFree_System(prefix);
     return -1;
 }
 
@@ -1153,7 +1153,7 @@ int64_t XString_index_of(const XString* str, const XString* substr, size_t from,
     const XChar* pattern = XString_cdata(substr);  // 模式串XChar数组
 
     // 分配并计算前缀表
-    int* prefix = (int*)XMemory_malloc(substr_len * sizeof(int));
+    int* prefix = (int*)XMalloc_System(substr_len * sizeof(int));
     if (!prefix) {
         return -1;
     }
@@ -1163,7 +1163,7 @@ int64_t XString_index_of(const XString* str, const XString* substr, size_t from,
     int64_t result = kmp_search(text, str_len, pattern, substr_len, prefix, cs, from);
 
     // 清理资源
-    XMemory_free(prefix);
+    XFree_System(prefix);
     return result;
 }
 
@@ -1281,7 +1281,7 @@ bool XString_contains(const XString* str, const XString* substr, XCharCaseSensit
     const XChar* pattern = XString_cdata(substr); // 子串的XChar数组
 
     // 分配KMP算法所需的前缀表
-    int* prefix = (int*)XMemory_malloc(substr_len * sizeof(int));
+    int* prefix = (int*)XMalloc_System(substr_len * sizeof(int));
     if (!prefix) return false;
 
     // 计算前缀表（用于KMP搜索）
@@ -1291,7 +1291,7 @@ bool XString_contains(const XString* str, const XString* substr, XCharCaseSensit
     int64_t found_pos = kmp_search(text, str_len, pattern, substr_len, prefix, cs, 0);
 
     // 释放前缀表内存
-    XMemory_free(prefix);
+    XFree_System(prefix);
 
     // 找到匹配位置则返回true
     return found_pos != -1;
@@ -1882,7 +1882,7 @@ bool XString_reserve(XString* str, size_t capacity)
     // 实际需要容量= 新容量 + 1（结束符）
     if (XString_cdata(str) == NULL || XAtomic_load_int32(str->m_ref_count, XAtomic_MemoryOrder_Relaxed) > 1)
     {
-        new_data = XMemory_malloc((new_capacity + 1) * sizeof(XChar));
+        new_data = XMalloc_System((new_capacity + 1) * sizeof(XChar));
         if (XString_cdata(str))
         {
             memcpy(new_data, XString_cdata(str),(XString_length_base(str)+1)*sizeof(XChar));
@@ -1892,9 +1892,9 @@ bool XString_reserve(XString* str, size_t capacity)
             // 原子减少原引用计数（若减到0，原数据会被其他持有者释放）
             int32_t old_ref = XAtomic_fetch_sub_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
             // 为新数据创建独立的引用计数（初始化为1）
-            XAtomic_int32_t* new_ref_count = (XAtomic_int32_t*)XMemory_malloc(sizeof(XAtomic_int32_t));
+            XAtomic_int32_t* new_ref_count = (XAtomic_int32_t*)XMalloc_System(sizeof(XAtomic_int32_t));
             if (!new_ref_count) {
-                XMemory_free(new_data);
+                XFree_System(new_data);
                 // 恢复原引用计数（拷贝失败需回滚）
                 XAtomic_fetch_add_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
                 return;
@@ -1905,7 +1905,7 @@ bool XString_reserve(XString* str, size_t capacity)
     }
     else
     {
-        new_data = (XChar*)XMemory_realloc(XString_data(str), (new_capacity + 1) * sizeof(XChar));
+        new_data = (XChar*)XCalloc_System(XString_data(str), (new_capacity + 1) * sizeof(XChar));
     }
     
     if (new_data) 
@@ -2119,7 +2119,7 @@ char* XStrdup(char* str)
 {
     size_t len = strlen(str);
     if (!len)return NULL;
-    char* s = XMemory_malloc(len + 1);
+    char* s = XMalloc_System(len + 1);
     memcpy(s, str, len + 1);
     return s;
 }
@@ -2154,7 +2154,7 @@ void XString_detach(XString* str)
     size_t curr_capacity = XContainerCapacity(str);
 
     // 分配新的缓冲区（保留原有容量，避免后续频繁分配）
-    XChar* new_data = (XChar*)XMemory_malloc((curr_capacity + 1) * sizeof(XChar));
+    XChar* new_data = (XChar*)XMalloc_System((curr_capacity + 1) * sizeof(XChar));
     if (!new_data) return; // 内存分配失败（可根据需求添加错误处理）
 
     // 复制现有数据（包含终止符）
@@ -2163,9 +2163,9 @@ void XString_detach(XString* str)
     // 原子减少原引用计数（若减到0，原数据会被其他持有者释放）
     int32_t old_ref = XAtomic_fetch_sub_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
     // 为新数据创建独立的引用计数（初始化为1）
-    XAtomic_int32_t* new_ref_count = (XAtomic_int32_t*)XMemory_malloc(sizeof(XAtomic_int32_t));
+    XAtomic_int32_t* new_ref_count = (XAtomic_int32_t*)XMalloc_System(sizeof(XAtomic_int32_t));
     if (!new_ref_count) {
-        XMemory_free(new_data);
+        XFree_System(new_data);
         // 恢复原引用计数（拷贝失败需回滚）
         XAtomic_fetch_add_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
         return;
@@ -2188,7 +2188,7 @@ void XString_deinitCache(XString* str)
     {
         if (str->m_cache[i].m_data == NULL)
             continue;
-        XMemory_free(str->m_cache[i].m_data);
+        XFree_System(str->m_cache[i].m_data);
         if (str->m_cache[i].m_data == local)
             local = NULL;
         str->m_cache[i].m_data = NULL;
@@ -2196,7 +2196,7 @@ void XString_deinitCache(XString* str)
     }
     if (local != NULL)
     {
-        XMemory_free(local);
+        XFree_System(local);
     }
     str->m_cache[0].m_data = NULL;
     str->m_cache[0].m_length = 0;
@@ -2206,5 +2206,5 @@ void XString_initCache(XString* str)
 {
     if (str == NULL || str->m_cache != NULL)
         return;
-    str->m_cache=XMemory_calloc(XStringCache_Size,sizeof(XStringCache));
+    str->m_cache=XCalloc_System(XStringCache_Size,sizeof(XStringCache));
 }

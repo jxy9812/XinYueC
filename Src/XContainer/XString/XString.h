@@ -141,7 +141,7 @@ void XString_init(XString* str);
  * 4. 调用XString_assign_utf8用格式化字符串给XString赋值
  *
  * 注意：
- * - 该宏在栈上创建XString对象，无需手动调用XMemory_malloc分配内存
+ * - 该宏在栈上创建XString对象，无需手动调用XMalloc_System分配内存
  * - 使用完毕后需根据XString的内存管理规则进行清理（如调用XString_deinit等）
  */
 #define XString_Init_Utf8(name,utf8_str)  XString _##name,*name=&_##name;XString_init(name);XString_assign_utf8(name,utf8_str)
@@ -159,7 +159,7 @@ void XString_init(XString* str);
   *
   * 注意：
   * - 使用##__VA_ARGS__是为了兼容GCC等编译器，在可变参数为空时自动消除多余逗号
-  * - 该宏在栈上创建XString对象，无需手动调用XMemory_malloc分配内存
+  * - 该宏在栈上创建XString对象，无需手动调用XMalloc_System分配内存
   * - 使用完毕后需根据XString的内存管理规则进行清理（如调用XString_deinit等）
   */
 #define XString_Init_Fmt_Utf8(name,utf8_format, ...)     XString _##name,*name=&_##name;XString_init(name);XString_assign_fmt_utf8(name,utf8_format,##__VA_ARGS__)

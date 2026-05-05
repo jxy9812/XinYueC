@@ -8,7 +8,7 @@ XBTreeNode* XBTreeNode_create(const char* pvData, const size_t typeSize)
 {
 	if (typeSize == 0)
 		return NULL;
-	XBTreeNode* node = XMemory_malloc(XBTreeNode_typeSize() + typeSize);
+	XBTreeNode* node = XMalloc_System(XBTreeNode_typeSize() + typeSize);
 	if (node)
 		XBTreeNode_init(node, XBTreeNode_typeSize(), pvData, typeSize);
 	return node;

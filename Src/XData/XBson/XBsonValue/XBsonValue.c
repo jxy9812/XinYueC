@@ -8,7 +8,7 @@
 #include <stdio.h>
 
 XBsonValue* XBsonValue_create(XBsonType type) {
-    XBsonValue* value = (XBsonValue*)XMemory_malloc(sizeof(XBsonValue));
+    XBsonValue* value = (XBsonValue*)XMalloc_System(sizeof(XBsonValue));
     if (value) {
         XBsonValue_init(value, type);
     }
@@ -573,7 +573,7 @@ void XBsonValue_deinit(XBsonValue* value)
 void XBsonValue_delete(XBsonValue* value) {
     if (value) {
         XBsonValue_deinit(value);
-        XMemory_free(value);
+        XFree_System(value);
     }
 }
 
@@ -713,12 +713,12 @@ XJsonValue* XBsonValue_to_json(const XBsonValue* bson_val) {
         XJsonObject_insert_keyUtf8_int(bin_obj, "$binarySubtype", bson_val->data.binary.subtype);
 
         // 二进制数据转为十六进制字符串
-        char* hex_str = (char*)XMemory_malloc(XByteArray_size_base(bson_val->data.binary.data) * 2 + 1);
+        char* hex_str = (char*)XMalloc_System(XByteArray_size_base(bson_val->data.binary.data) * 2 + 1);
         for (size_t i = 0; i < XByteArray_size_base(bson_val->data.binary.data); i++) {
             sprintf(hex_str + i * 2, "%02x", XByteArray_At_Base(bson_val->data.binary.data, i));
         }
         XJsonObject_insert_keyUtf8_utf8(bin_obj, "$binaryData", hex_str);
-        XMemory_free(hex_str);
+        XFree_System(hex_str);
 
         XJsonValue_setObject_move(json_val, bin_obj);
         XJsonObject_delete_base(bin_obj);

@@ -19,7 +19,7 @@ XPair* XPair_create(const size_t firstTypeSize, const size_t secondTypeSize)
 		return NULL;
 	}
 	size_t size = ALIGN_UP(firstTypeSize + secondTypeSize + sizeof(XPair), sizeof(void*));
-	XPair* this_pair = (XPair*)XMemory_malloc(size);
+	XPair* this_pair = (XPair*)XMalloc_System(size);
 	if (!this_pair)return NULL;
 	XPair_init(this_pair, firstTypeSize, secondTypeSize);
 	return this_pair;
@@ -115,7 +115,7 @@ size_t XPair_size2(XPair* this_pair)
 }
 void XPair_delete(XPair* this_pair)
 {
-	XMemory_free(this_pair);
+	XFree_System(this_pair);
 }
 
 int32_t XPair_compare(const XPair* lhs, const XPair* rhs)

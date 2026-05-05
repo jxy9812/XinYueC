@@ -4,7 +4,7 @@
 #include <string.h>
 XPLCTask* XPLCTask_create()
 {
-	XPLCTask* plc = XMemory_malloc(sizeof(XPLCTask));
+	XPLCTask* plc = XMalloc_System(sizeof(XPLCTask));
 	XPLCTask_init(plc);
 	return plc;
 }

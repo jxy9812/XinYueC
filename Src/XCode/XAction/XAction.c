@@ -4,7 +4,7 @@
 #include <string.h>
 XAction* XAction_create(const char* text)
 {
-	XAction* action = XMemory_malloc(sizeof(XAction));
+	XAction* action = XMalloc_System(sizeof(XAction));
 	if (action)
 		XAction_init(action, text);
 	return action;
@@ -24,14 +24,14 @@ void XAction_setText(XAction* action, const char* text)
 	if (action == NULL)
 		return;
 	if (action->text)
-		XMemory_free(action->text);
+		XFree_System(action->text);
 	char* str = NULL;
 	if (text)
 	{
 		size_t len = strlen(text) + 1;
 		if (len > 0)
 		{
-			str = XMemory_malloc(len);
+			str = XMalloc_System(len);
 			memcpy(str, text, len);
 		}
 	}
@@ -58,10 +58,10 @@ void XAction_delete(XAction* action)
 	if (action == NULL)
 		return;
 	if (action->text)
-		XMemory_free(action->text);
+		XFree_System(action->text);
 	if (action->data)
 		XVariant_delete_base(action->data);
-	XMemory_free(action);
+	XFree_System(action);
 }
 
 void XAction_trigger(XAction* action)

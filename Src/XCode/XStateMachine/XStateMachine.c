@@ -40,10 +40,10 @@ XVtable* XStateMachine_class_init()
 }
 
 XStateMachine* XStateMachine_create() {
-    XStateMachine* machine = (XStateMachine*)XMemory_malloc(sizeof(XStateMachine));
+    XStateMachine* machine = (XStateMachine*)XMalloc_System(sizeof(XStateMachine));
     if (machine) {
         XStateMachine_init(machine);
-        Set_Class_MemoryFree(machine, XFree);
+        Set_Class_MemoryFree(machine, XFree_System);
     }
     return machine;
 }
@@ -55,7 +55,7 @@ void XStateMachine_init(XStateMachine* machine) {
     XClassGetVtable(machine) = XStateMachine_class_init();
     machine->m_initialState = NULL;
     machine->m_activeStateCapacity = INITIAL_STATE_CAPACITY;
-    machine->m_activeStates = (XAbstractState**)XMemory_malloc(
+    machine->m_activeStates = (XAbstractState**)XMalloc_System(
         sizeof(XAbstractState*) * machine->m_activeStateCapacity
     );
     machine->m_activeStateCount = 0;
@@ -172,7 +172,7 @@ void XStateMachine_handleEventCB(const XEvent* event) {
     if(!machine || machine->m_status != XStateMachineRunning) return ;
 
     // 保存当前激活状态的快照，防止处理过程中状态变化影响遍历
-    XAbstractState** snapshot = (XAbstractState**)XMemory_malloc(
+    XAbstractState** snapshot = (XAbstractState**)XMalloc_System(
         sizeof(XAbstractState*) * machine->m_activeStateCount
     );
     if (!snapshot) return ;
@@ -205,7 +205,7 @@ void XStateMachine_handleEventCB(const XEvent* event) {
         }
     }
 
-    XMemory_free(snapshot);
+    XFree_System(snapshot);
     //return eventHandled;
 }
 
@@ -387,7 +387,7 @@ void XStateMachine_addActiveState(XStateMachine* machine, XAbstractState* state)
     // 扩容
     if (machine->m_activeStateCount >= machine->m_activeStateCapacity) {
         size_t newCapacity = machine->m_activeStateCapacity * 2;
-        XAbstractState** newStates = (XAbstractState**)XMemory_realloc(
+        XAbstractState** newStates = (XAbstractState**)XCalloc_System(
             machine->m_activeStates, sizeof(XAbstractState*) * newCapacity
         );
         if (!newStates) return;
@@ -422,7 +422,7 @@ void VXStateMachine_deinit(XStateMachine* machine)
     XStateMachine_stop(machine);
 
     // 释放激活状态列表
-    XMemory_free(machine->m_activeStates);
+    XFree_System(machine->m_activeStates);
     //调用父类释放函数
     XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(machine);
 }

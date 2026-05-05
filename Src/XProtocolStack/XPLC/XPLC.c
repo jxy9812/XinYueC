@@ -3,7 +3,7 @@
 #include"XTimer.h"
 XPLC* XPLC_create()
 {
-	XPLC* plc = XMemory_malloc(sizeof(XPLC));
+	XPLC* plc = XMalloc_System(sizeof(XPLC));
 	XPLC_init(plc);
 	return plc;
 }

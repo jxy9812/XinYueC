@@ -6,9 +6,9 @@
 #include<string.h>
 XHashMap*XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare)
 {
-	XHashMap*map = XMemory_malloc(sizeof(XHashMap));
+	XHashMap*map = XMalloc_System(sizeof(XHashMap));
 	XHashMap_init(map,keyTypeSize,valTypeSize,hash,compare);
-	Set_Class_MemoryFree(map, XFree);
+	Set_Class_MemoryFree(map, XFree_System);
 	return map;
 }
 XHashMap* XHashMap_create_copy(const XHashMap* other)
@@ -40,9 +40,9 @@ void XHashMap_init(XHashMap*this_map, const size_t keyTypeSize, const size_t val
 	this_map->m_hash = hash;
 	XContainerCapacity(this_map)= DEFAULT_CAPACITY;
 	size_t size = sizeof(void*) * XContainerCapacity(this_map);
-	XContainerDataPtr(this_map) = XMemory_malloc(size);
+	XContainerDataPtr(this_map) = XMalloc_System(size);
 	if (XContainerDataPtr(this_map) == NULL)
-		XMemory_free(this_map);
+		XFree_System(this_map);
 	if(XContainerDataPtr(this_map))
 		memset(XContainerDataPtr(this_map),0,size);
 }

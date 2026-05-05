@@ -33,7 +33,7 @@ static int32_t  stable_sort_post_events_desc(const void* a, const void* b)
 
 XThreadData* XThreadData_create(XThread* thread)
 {
-    XThreadData* data = XMalloc(sizeof(XThreadData));
+    XThreadData* data = XMalloc_System(sizeof(XThreadData));
     XThreadData_init(data,thread);
     return data;
 }
@@ -59,13 +59,13 @@ void XThreadData_delete(XThreadData* data)
     }
     XLockFreeQueue_deinit_base(&data->m_tryPostEventList);
     XVector_deinit_base(&data->m_postEventList);
-    XVector_deinit_base(&data->m_handlerEventList);
+    //XVector_deinit_base(&data->m_handlerEventList);
     if (data->m_mutex)
     {
         XMutex_delete(data->m_mutex);
         data->m_mutex = NULL;
     }
-    XMemory_free(data);
+    XFree_System(data);
 }
 
 void XThreadData_init(XThreadData* data, XThread* thread)
@@ -75,7 +75,7 @@ void XThreadData_init(XThreadData* data, XThread* thread)
     data->m_mutex = XMutex_create(XLock_NonRecursive);
     XLockFreeQueue_init(&data->m_tryPostEventList,sizeof(XPostEvent),30);//中断队列大小按需修改
     XVector_init(&data->m_postEventList, sizeof(XPostEvent));
-    XVector_init(&data->m_handlerEventList, sizeof(XPostEvent));
+    //XVector_init(&data->m_handlerEventList, sizeof(XPostEvent));
     //data->m_postEventList=XVector_create(sizeof(XPostEvent));
     data->m_thread = thread;
     XAtomic_init(data->m_currentEventLoop, 0);
@@ -171,7 +171,7 @@ void XThreadData_popEventloop(XThreadData * data, XEventLoop * loop)
 void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) 
 {
     if (!receiver || !event) return;
-
+    
     XThread* th = receiver->m_thread;
     if (!th|| !th->m_data) return;
     XThreadData* td = th->m_data;
@@ -252,19 +252,20 @@ XVector* XThreadData_takePostedEvents(void)
 {
     XThreadData* td = XThreadData_current();
     if (!td) return NULL;
-    XVector* local = &td->m_handlerEventList;
+    XVector* local = NULL;
 
     XMutex_lock(td->m_mutex);
-    size_t count = XContainerSize(&td->m_postEventList) /*+ XLockFreeQueue_size_base(&td->m_tryPostEventList)*/;
-    if (count > XContainerCapacity(local))
-    {
-        XVector_resize_base(local, count);
-        XContainerSize(local) = 0;
-    }
-    if (XContainerIsEmpty(&td->m_postEventList))
+    if (XContainer_isEmpty_base(&td->m_postEventList))
     {
         XMutex_unlock(td->m_mutex);
         return NULL;
+    }
+    size_t count = XContainerSize(&td->m_postEventList) /*+ XLockFreeQueue_size_base(&td->m_tryPostEventList)*/;
+    if (count > 0)
+    {
+        local = XVector_create(sizeof(XPostEvent));
+        /*XVector_resize_base(local, count);
+        XContainerSize(local) = 0;*/
     }
     //把空的数组交换出来
     if(local)
@@ -277,7 +278,8 @@ XVector* XThreadData_takePostedEvents(void)
         XVector_push_back_base(local, &pe);
     }
     // 关键：稳定降序排序
-    XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
+    if(local)
+        XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
 
     return local;
 }

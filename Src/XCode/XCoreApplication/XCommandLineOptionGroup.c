@@ -6,7 +6,7 @@ XCommandLineOptionGroup* XCommandLineOptionGroup_create(const char* name,
     const char* description,
     bool isExclusive) {
     // 检查内存分配
-    XCommandLineOptionGroup* group = XMemory_malloc(sizeof(XCommandLineOptionGroup));
+    XCommandLineOptionGroup* group = XMalloc_System(sizeof(XCommandLineOptionGroup));
     if (!group) return NULL;
 
     // 初始化成员变量
@@ -17,7 +17,7 @@ XCommandLineOptionGroup* XCommandLineOptionGroup_create(const char* name,
 
     // 检查向量创建是否成功
     if (!group->options) {
-        XMemory_free(group);
+        XFree_System(group);
         return NULL;
     }
 
@@ -29,7 +29,7 @@ void XCommandLineOptionGroup_delete(XCommandLineOptionGroup* group) {
 
     // 释放向量资源（不释放选项本身，因为选项由解析器管理）
     XVector_delete_base(group->options);
-    XMemory_free(group);
+    XFree_System(group);
 }
 
 void XCommandLineOptionGroup_addOption(XCommandLineOptionGroup* group,

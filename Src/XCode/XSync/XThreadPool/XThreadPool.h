@@ -8,23 +8,7 @@ extern "C" {
 #include "XObject.h"
 #include "XRunnable.h"
 
-/**
- * @brief XThreadPool类结构体定义，用于管理线程池
- * @note 继承自XObject，提供线程池功能，管理一组工作线程
- */
-typedef struct XThreadPool
-{
-    XObject m_object;                    ///< 继承的基类成员
-
-    // 线程池核心属性
-    uint16_t max_thread_count;               ///< 最大线程数
-    uint16_t active_thread_count;            ///< 当前活跃线程数
-    uint32_t expiry_timeout;                 ///< 线程过期超时时间（毫秒）
-    uint32_t stack_size;                ///< 工作线程栈大小
-    // 内部实现相关
-    void* private_data;                 ///< 私有数据指针，指向内部实现
-} XThreadPool;
-
+typedef struct XThreadPool   XThreadPool;
 /**
  * @brief 开始定义XThreadPool类的虚函数表枚举
  * @note 继承QObject的所有虚函数，用于事件处理和对象生命周期管理
@@ -32,7 +16,7 @@ typedef struct XThreadPool
 XCLASS_DEFINE_BEGING(XThreadPool)
 // 继承自XObject(QObjec)的所有虚函数
 //XCLASS_DEFINE_ENUM(XThreadPool, Poll) = XCLASS_VTABLE_GET_SIZE(XObject),
-XCLASS_DEFINE_END(XThreadPool)
+XCLASS_DEFINE_EXTEND_END(XThreadPool, XObject)
 
 /**
  * @brief 初始化XThreadPool类的虚函数表
@@ -59,8 +43,8 @@ void XThreadPool_init(XThreadPool* pool, XObject* parent);
  * @param pool 要销毁的XThreadPool对象指针（非NULL）
  * @note 此函数会阻塞直到所有可运行任务完成
  */
-void XThreadPool_delete(XThreadPool* pool);
-
+#define XThreadPool_deleteLater      XObject_deleteLater
+#define XThreadPool_deinitLater      XObject_deinitLater
 /**
  * @brief 获取全局XThreadPool实例
  * @return 全局XThreadPool实例指针
@@ -75,16 +59,26 @@ XThreadPool* XThreadPool_globalInstance();
  * @param priority 任务优先级（默认为0）
  * @note 线程池会接管runnable的所有权（如果autoDelete为true）
  */
-void XThreadPool_start(XThreadPool* pool, XRunnable* runnable, int priority);
-
+void XThreadPool_start1(XThreadPool* pool, XRunnable* runnable, int priority);
+void XThreadPool_start2(XThreadPool* pool, XCallableToRun function, XVarList* argsList, int priority);
+/**
+ * @brief 在预留的线程上启动可运行任务
+ * @param pool 线程池对象指针（非NULL）
+ * @param runnable 可运行任务指针（非NULL）
+ * @note 释放一个之前通过reserveThread()预留的线程，并用它来执行runnable
+ * @note 线程池会接管runnable的所有权（如果autoDelete为true）
+ * @note 调用此函数后，不需要再调用releaseThread()
+ */
+void XThreadPool_startOnReservedThread1(XThreadPool* pool, XRunnable* runnable);
+void XThreadPool_startOnReservedThread2(XThreadPool* pool, XCallableToRun function, XVarList* argsList);
 /**
  * @brief 尝试启动可运行任务
  * @param pool 线程池对象指针（非NULL）
  * @param runnable 可运行任务指针（非NULL）
  * @return 如果成功启动返回true，否则返回false
  */
-bool XThreadPool_tryStart(XThreadPool* pool, XRunnable* runnable);
-
+bool XThreadPool_tryStart1(XThreadPool* pool, XRunnable* runnable);
+bool XThreadPool_tryStart2(XThreadPool* pool, XCallableToRun function, XVarList* argsList);
 /**
  * @brief 获取线程过期超时时间
  * @param pool 线程池对象指针（非NULL）
@@ -172,7 +166,27 @@ void XThreadPool_clear(XThreadPool* pool);
  */
 bool XThreadPool_tryTake(XThreadPool* pool, XRunnable* runnable);
 
+Signals
+/**
+ * @brief 工作线程创建信号
+ * @param pool 线程池对象指针
+ * @param thread 新创建的工作线程指针
+ */
+void* XThreadPool_threadCreated_signal(XThreadPool* pool, XThread* thread);
 
+/**
+ * @brief 工作线程删除信号
+ * @param pool 线程池对象指针
+ * @param thread 即将被删除的工作线程指针
+ */
+void* XThreadPool_threadDeleted_signal(XThreadPool* pool, XThread* thread);
+
+/**
+ * @brief 任务队列空信号
+ * @param pool 线程池对象指针
+ * @note 当所有任务队列（等待队列和预留队列）都为空时发出
+ */
+void* XThreadPool_tasksEmpty_signal(XThreadPool* pool);
 #ifdef __cplusplus
 }
 #endif

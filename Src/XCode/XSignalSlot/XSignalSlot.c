@@ -21,7 +21,7 @@ XSignalSlot* XSignalSlot_create(XObject* obj)
 {
 	XSignalSlot* manager = XNew(XSignalSlot);
 	XSignalSlot_init(manager,obj);
-	Set_Class_MemoryFree(obj, XFree);
+	Set_Class_MemoryFree(obj, XFree_System);
 	return manager;
 }
 
@@ -287,7 +287,7 @@ static void Auto_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count,
 	}
 }
 
-static void emit(XSignalSlot* manager, size_t signal, void* args, XAtomic_int32_t* ref_count, int priority)
+static void emit(XSignalSlot* manager, size_t signal, XVarList* args, XAtomic_int32_t* ref_count, int priority)
 {
 	if (manager == NULL)
 		return;
@@ -295,6 +295,8 @@ static void emit(XSignalSlot* manager, size_t signal, void* args, XAtomic_int32_
 	XSignal* signalObj = XMapBase_value_base(manager->signalMap, &signal);
 	if (signalObj == NULL)
 	{
+		if (args)
+			XVarList_delete(args);
 		XMutex_unlock(manager->mutex);  // 解锁
 		return;//没有连接的信号
 	}

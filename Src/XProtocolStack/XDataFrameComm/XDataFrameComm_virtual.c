@@ -536,7 +536,7 @@ XHandle VXDataFrameComm_addPeriodicData(XDataFrameComm* comm, XByteArray* data, 
 {
 	if (XVector_isEmpty_base(data))
 		return NULL;
-	PeriodicNode* node= XMemory_malloc(sizeof(PeriodicNode));
+	PeriodicNode* node= XMalloc_System(sizeof(PeriodicNode));
 	if (node == NULL)
 	{
 		return NULL;
@@ -544,7 +544,7 @@ XHandle VXDataFrameComm_addPeriodicData(XDataFrameComm* comm, XByteArray* data, 
 	XTimer* timer = XTimer_create();
 	if (timer == NULL)
 	{
-		XMemory_free(node);
+		XFree_System(node);
 		return NULL;
 	}
 	if (comm->m_sendValidCb)
@@ -574,7 +574,7 @@ bool VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle
 	PeriodicNode* node = handle;
 	XByteArray_delete_base(node->data);
 	XTimer_deleteLater(node->timer);
-	XMemory_free(node);
+	XFree_System(node);
 	return true;
 }
 //接收验证Crc16回调
@@ -623,7 +623,7 @@ void VXDataFrameComm_deinit(XDataFrameComm* comm)
 			PeriodicNode* node=XListSLinked_iterator_data(&it);
 			XByteArray_delete_base(node->data);
 			XTimer_deleteLater(node->timer);
-			XMemory_free(node);
+			XFree_System(node);
 		}
 		XListBase_delete_base(comm->m_periodicSendList);
 		comm->m_periodicSendList;
