@@ -299,19 +299,16 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, int
     {
         XListSNode* next = node->next;
         XTimerWheelData* timer = (XTimerWheelData*)XListSNode_DataPtr(node);
+        bool isdelete = false; // 标记是否因单次触发而需要删除
+        bool should_requeue = false; // 标记是否需要重新入队
 
-        // 检查是否已被标记删除（m_deleted == true 表示已删除/不运行）
+        // --- 关键修复1: 在处理逻辑前，先检查删除标记 ---
         if (XAtomic_load_bool(&timer->m_deleted, XAtomic_MemoryOrder_Relaxed)) {
-            // 通过事件释放节点
-            delete_timer_node(group, node);
-            XAtomic_fetch_sub_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
-            node = next;
-            continue;
+            goto final_cleanup;
         }
 
         // 计算剩余ticks（距离到期的滴答数）
         size_t remaining_ticks = timer->m_expire_ticks - group->m_class.m_current_tick;
-        bool isdelete = false;
 
         if (timer->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick)
         {
@@ -320,15 +317,13 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, int
 
             if ((!timer->m_data.m_isSingleShot) && (timer->m_data.m_interval > 0))
             {
-                // 有定时间隔的重新添加
-                size_t timeout_ticks = timer->m_data.m_interval / group->m_class.m_precision;
+                // 有定时间隔的重新添加 - 复用当前节点
+                size_t timeout_ticks = ceil_div(timer->m_data.m_interval, group->m_class.m_precision);
+                if (timeout_ticks == 0) timeout_ticks = 1;
                 timer->m_expire_ticks = ((XTimerGroupBase*)group)->m_current_tick + timeout_ticks;
 
-                // 创建新的链表节点
-                XListSNode* new_node = create_timer_node(&timer->m_data, timer->m_expire_ticks);
-                if (new_node) {
-                    addTimer_lockfree(group, new_node, timeout_ticks);
-                }
+                // 设置标志，稍后统一处理
+                should_requeue = true;
             }
             else if (timer->m_data.m_isSingleShot && timer->m_data.m_autoDelete)
             {
@@ -341,29 +336,61 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, int
             size_t lower_slots = XContainerSize(&lower_level->m_slots);
             size_t lower_max_ticks = lower_slots;
 
+            size_t requeue_ticks;
             if (remaining_ticks < lower_max_ticks) {
                 // 直接放入下一级轮
-                add_timer_to_wheel_lockfree(lower_level, node, remaining_ticks);
-                // 节点已重新链接，不需要释放
-                node = next;
-                continue;
+                requeue_ticks = remaining_ticks;
             }
             else {
                 // 先放入下一级轮，等待其后续降级
-                size_t relative_ticks = remaining_ticks / lower_max_ticks;
-                add_timer_to_wheel_lockfree(lower_level, node, relative_ticks);
-                // 节点已重新链接，不需要释放
-                node = next;
-                continue;
+                requeue_ticks = remaining_ticks / lower_max_ticks;
             }
+            // 设置标志，稍后统一处理
+            should_requeue = true;
         }
 
-        if (isdelete)
-        {
-            // 通过事件释放节点
+        // --- 关键修复2: 统一处理节点的命运 ---
+        if (should_requeue) {
+            // 在重新入队前，再做一次最终检查！这是防止竞态的关键。
+            if (!XAtomic_load_bool(&timer->m_deleted, XAtomic_MemoryOrder_Relaxed)) {
+                // 安全，可以复用节点
+                XTimeWheel* target_wheel;
+                if (timer->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick) {
+                    // 到期后重新入队，使用 addTimer_lockfree 选择合适的轮
+                    size_t timeout_ticks = ceil_div(timer->m_data.m_interval, group->m_class.m_precision);
+                    if (timeout_ticks == 0) timeout_ticks = 1;
+                    if (addTimer_lockfree(group, node, timeout_ticks)) {
+                        // 成功入队，跳过清理
+                        node = next;
+                        continue;
+                    }
+                }
+                else {
+                    // 降级，直接放入指定的 lower_level
+                    XTimeWheel* lower_level = XVector_at_base(&group->m_timeWheel, higher_level_idx - 1);
+                    size_t requeue_ticks = (timer->m_expire_ticks <= ((XTimerGroupBase*)group)->m_current_tick) ?
+                        ceil_div(timer->m_data.m_interval, group->m_class.m_precision) :
+                        (remaining_ticks < XContainerSize(&lower_level->m_slots) ?
+                            remaining_ticks :
+                            remaining_ticks / XContainerSize(&lower_level->m_slots));
+                    if (add_timer_to_wheel_lockfree(lower_level, node, requeue_ticks)) {
+                        // 成功入队，跳过清理
+                        node = next;
+                        continue;
+                    }
+                }
+                // 如果 addTimer_lockfree 或 add_timer_to_wheel_lockfree 失败，则 fallthrough 到清理步骤
+            }
+            // 如果在入队前发现已被标记删除，也 fallthrough 到清理步骤
+        }
+
+    final_cleanup:
+        // 在此处进行最终判断和清理
+        if (isdelete || XAtomic_load_bool(&timer->m_deleted, XAtomic_MemoryOrder_Relaxed)) {
             delete_timer_node(group, node);
             XAtomic_fetch_sub_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
         }
+        // 理论上，所有未被 'continue' 跳过的节点都应该在这里被清理。
 
         node = next;
     }

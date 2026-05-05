@@ -22,7 +22,7 @@ static void threadFunc( XVarList* list)
 	XTimer* timer = XTimer_create();
 	//XObject_moveToThread(timer, XThreadData_mainThread()->m_thread);
 	//XPrintf("XTimer:thread:%p\n",((XObject*)timer)->m_thread);
-	XTimer_setInterval(timer, 20);
+	XTimer_setInterval(timer, 50);
 
 	XTimer_setSingleShot(timer, true);
 	XTimer_setAutoDelete(timer, true);
