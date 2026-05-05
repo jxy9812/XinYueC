@@ -311,10 +311,8 @@ static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispa
     {
         IOCP_handle(dispatcher);
     }
-
-    // 4. 关键修复：正确判断是否需要等待
     // 只有当确实没有任何事件需要处理时，才进入等待状态
-    if (!XAbstractEventDispatcher_isMainThread(dispatcher)) // 子线程
+    //if (!XAbstractEventDispatcher_isMainThread(dispatcher)) // 子线程
     {
         // 检查是否还有未处理的 Windows 消息（非阻塞检查）
         bool hasPendingMessages = false;
@@ -332,7 +330,7 @@ static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispa
             //XPrintf("XThread:%p 进入睡眠\n", XThread_currentThread());
             self->wakeUpSent = false;
             XAbstractEventDispatcher_aboutToBlock_signal(dispatcher);
-            DWORD waitRet = MsgWaitForMultipleObjectsEx(0, NULL, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            DWORD waitRet = MsgWaitForMultipleObjectsEx(0, NULL, XAbstractEventDispatcher_isMainThread(dispatcher)? 1:INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
 
             //XPrintf("XThread:%p 被唤醒\n", XThread_currentThread());
             if (waitRet != WAIT_FAILED)
@@ -464,15 +462,12 @@ static void XTimerTimeWheelCallback(void* userData, XTimerData* timer)
 {
     XObject* object = (XObject*)userData;
     if (!object)return;
-    //XPrintf("XTimer:%p count:%d\n",timer,++timer->count);
-    //return;
-      
     XEvent* timerEvent = XEventTimer_create(XTimerData_timerId(timer));
     if (timerEvent)
     {
         timerEvent->posted = true;
         timerEvent->spontaneous = true;
-        XCoreApplication_postEvent(object, timerEvent, XEVENT_PRIORITY_HIGHEST);
+        XCoreApplication_postEvent(object, timerEvent, XEVENT_PRIORITY_NORMAL);
     }
 }
 static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, XTimerId timerId, XDuration intervalNs, XTimerType timerType, XObject* object)

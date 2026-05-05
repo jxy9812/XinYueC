@@ -7,13 +7,6 @@
 #include"XThread.h"
 #include"XTimer.h"
 #include"XAtomic.h"
-#include"XTimeWheelGroup.h"
-#include"XThreadData.h"
-static void deleteTimer(XTimer* timer)
-{
-	XPrintf("XTimer:%p 释放了\n",timer);
-	XTimer_deleteLater(timer);
-}
 static void threadFunc( XVarList* list)
 {
 	XThread* thread = XThread_currentThread();
@@ -32,19 +25,6 @@ static void threadFunc( XVarList* list)
 	
 	XThread_exec(thread);
 	
-	XTimeWheelGroup* group = XTimeWheelGroup_global();
-	//
-	//XTimerData data = { 0 };
-	//XTimerData_setSingleShot(&data, true);
-	//XTimerData_setAutoDelete(&data, true);
-	////XTimerData_setTimerId(&data, timerId);
-	//XTimerData_setInterval(&data, 10);
-	//XTimerData_setTimerCallback(&data, deleteTimer);
-	//XTimerData_setUserData(&data, timer);
-	//XTimeWheelGroup_addTimer_base(group, data);
-	//XPrintf("子线程:%p 任务退出\n", XThread_currentThread());
-	//XThread_deleteLater(thread);
-	//XTimer_deleteLater(timer);
 }
 void XThreadPoolTest()
 {
@@ -57,7 +37,7 @@ void XThreadPoolTest()
 		
 		//XThreadPool_setMaxThreadCount(pool,2);
 		
-		for (size_t i = 0; i < 16; i++)
+		for (size_t i = 0; i < 100; i++)
 		{
 			XThreadPool_start2(pool, threadFunc, NULL, 0);
 		}
