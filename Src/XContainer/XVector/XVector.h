@@ -9,7 +9,6 @@ extern "C" {
 #include<stdint.h>
 #include<stdarg.h>
 #include"XContainer.h"
-#include"XVectorTwo_func.h"
 #include"XVector_iterator.h"
 #include"XVector_reverse_iterator.h"
 #define XVECTOR_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XVector))       //XVector容器虚函数表大小

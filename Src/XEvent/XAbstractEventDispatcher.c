@@ -124,10 +124,10 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags)
 {
     //先处理定时器任务
-    if (XAbstractEventDispatcher_isMainThread(self)&& XTimeWheelGroup_GlobalExists())
+    if (XAbstractEventDispatcher_isMainThread(self) && XTimeWheelGroup_GlobalExists())
     {
         //XPrintf("轮询定时器中\n");
-        if(XTimeWheelGroup_count(XTimeWheelGroup_global()))
+        if (XTimeWheelGroup_count(XTimeWheelGroup_global()))
         {
             XTimeWheelGroup_handler(XTimeWheelGroup_global());
         }
@@ -139,6 +139,7 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     {
       /*  if (XAbstractEventDispatcher_isMainThread(self))
             XThread_yieldCurrentThread();*/
+        
         return false;
     }
     for_each_iterator(events, XVector, it)
@@ -160,10 +161,12 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
             //XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
             continue; // 跳过定时器事件
         }
-        /*if (ePost->event->type == XEVENT_TYPE_META_CALL)
-        {
-            XPrintf("XEventMetaCall:%p 出问题了\n", ePost->event);
-        }*/
+        //if (ePost->event->type == XEVENT_TYPE_META_CALL)
+        //{
+          //  XEventMetaCall* e = ePost->event;
+            //if(e->sem)
+            //XPrintf("VXAbstractEventDispatcher_processEvents XEventMetaCall:%p 出问题了&p\n", ePost->event ,e->sem);
+        //}
         if (!ePost->receiver||ePost->receiver->is_deleting_children)
         {
             XEvent_delete_base(ePost->event);

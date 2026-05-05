@@ -264,8 +264,8 @@ XVector* XThreadData_takePostedEvents(void)
     if (count > 0)
     {
         local = XVector_create(sizeof(XPostEvent));
-        /*XVector_resize_base(local, count);
-        XContainerSize(local) = 0;*/
+        XVector_resize_base(local, count);
+        XContainerSize(local) = 0;
     }
     //把空的数组交换出来
     if(local)

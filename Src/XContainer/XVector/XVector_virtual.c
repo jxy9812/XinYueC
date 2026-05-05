@@ -202,7 +202,6 @@ bool VXVector_resize(XVector* this_vector, size_t size)
 		}
 		return true;
 	}
-	//char* lpData = XContainerDataPtr(this_vector);
 	if (size > capacity)//大于最大容量
 	{
 		void* m_data = NULL;

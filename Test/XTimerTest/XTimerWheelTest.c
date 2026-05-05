@@ -46,7 +46,7 @@ void XTimerTimeWheelTest()
 		XTimerData_setInterval(&data,2);
 		XTimerData_setTimeout(&data, 50);
 		XTimerData_setTimerCallback(&data,Callback1);
-		XTimerWheelData* timer = XTimeWheelGroup_addTimer_base(wheel, data);
+		XHandle handle = XTimeWheelGroup_addTimer_base(wheel, data);
 	
 	}
 	{
@@ -56,7 +56,7 @@ void XTimerTimeWheelTest()
 		XTimerData_setTimeout(&data, 15);
 		XTimerData_setTimerCallback(&data, Callback2);
 		//XTimerData_setUserData(&data, timer);
-		XTimerWheelData* timer = XTimeWheelGroup_addTimer_base(wheel, data);
+		XHandle handle = XTimeWheelGroup_addTimer_base(wheel, data);
 		
 	}
 	XCoreApplication_exec();

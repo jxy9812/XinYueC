@@ -13,18 +13,18 @@ void XTimerGroupBase_init(XTimerGroupBase* group, uint16_t precision)
 	/*XClassGetVtable(group) = vtable;*/
 }
 
-XTimerData* XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData  data)
+XHandle XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData  data)
 {
 	if (ISNULL(group, "") || ISNULL(XClassGetVtable(group), ""))
 		return false;
-	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_Timer, XTimerData * (*)(XTimerGroupBase* , XTimerData))(group, data);
+	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_Timer, XHandle (*)(XTimerGroupBase* , XTimerData))(group, data);
 }
 
-bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerData* timer)
+bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XHandle handle)
 {
-	if (ISNULL(group, "") || ISNULL(timer, "") || ISNULL(XClassGetVtable(group), ""))
+	if (ISNULL(group, "") || ISNULL(handle, "") || ISNULL(XClassGetVtable(group), ""))
 		return false;
-	return XClassGetVirtualFunc(group, EXTimerGroupBase_Remove_Timer, bool(*)(XTimerGroupBase*, XTimerData*))(group, timer);
+	return XClassGetVirtualFunc(group, EXTimerGroupBase_Remove_Timer, bool(*)(XTimerGroupBase*, XHandle))(group, handle);
 }
 bool XTimerGroupBase_timeRange(XTimerGroupBase* group, size_t* min_time, size_t* max_time)
 {

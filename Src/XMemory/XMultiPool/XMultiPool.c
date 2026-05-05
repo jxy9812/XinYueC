@@ -475,13 +475,13 @@ bool XMultiPool_is_from_pool(const XMultiPool* multi_pool, const void* ptr)
 }
 
 static XMultiPool* global_pool = NULL;
-static XMutex* m_mutex = NULL;
+//static XMutex* m_mutex = NULL;
 static void XMultiPool_initGlobal()
 {
     if (global_pool)return;
     global_pool = XMultiPool_create();
     XMultiPool_enable_power_of_two_mode(global_pool,32,2);
-    m_mutex = XMutex_create(XLock_Spin);
+    //m_mutex = XMutex_create(XLock_NonRecursive);
    /* global_pool = XFixedPool_create(512, 500);
     return;*/
     XMultiPool_add_pool(global_pool, XFixedPool_create(32, 200));
@@ -499,9 +499,9 @@ XMultiPool* XMultiPool_global()
 void* XMultiPool_global_malloc(size_t size)
 {
     /*return XMalloc_System(size);*/
-    XMutex_lock(m_mutex);
+    //XMutex_lock(m_mutex);
     void* ptr = global_pool ? XMultiPool_malloc(global_pool, size) : NULL;
-    XMutex_unlock(m_mutex);
+    //XMutex_unlock(m_mutex);
     return ptr;
 }
 void* XMultiPool_global_calloc(size_t count, size_t size)
@@ -516,8 +516,8 @@ void XMultiPool_global_free(void* ptr)
 {
    /* XFree_System(ptr);
     return;*/
-    XMutex_lock(m_mutex);
+    //XMutex_lock(m_mutex);
     if(global_pool&&ptr)
         XMultiPool_free(global_pool, ptr);
-    XMutex_unlock(m_mutex);
+    //XMutex_unlock(m_mutex);
 }

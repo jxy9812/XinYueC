@@ -154,10 +154,10 @@ void XEventMetaCall_handler(XEventMetaCall* event, XObject* receiver)
 {
 	if (!event)
 		return; 
-	if (event->sem)
+	/*if (event->sem)
 	{
 		XPrintf("XEventMetaCall:%p 出问题了 %p\n", event,event->sem);
-	}
+	}*/
 	if (receiver)
 	{
 		receiver->sender = event->sender;

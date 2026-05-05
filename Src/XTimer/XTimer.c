@@ -237,6 +237,7 @@ void VXObject_timerEvent(XTimer* timer, XEventTimer* event)
 }
 void VXTimer_deinit(XTimer* timer)
 {
+	//XPrintf("XTimer:%p 释放了\n", timer);
 	//XPrintf("释放定时器\n");
 	XTimer_stop_base(timer);
 	// 释放父对象

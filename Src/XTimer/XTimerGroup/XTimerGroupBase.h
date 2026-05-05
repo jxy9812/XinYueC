@@ -23,9 +23,9 @@ typedef struct XTimerGroupBase
 	size_t m_current_tick;      // 当前系统滴答
 }XTimerGroupBase;
 void XTimerGroupBase_init(XTimerGroupBase*group, uint16_t precision);
-XTimerData* XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData data);
+XHandle XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData data);
 //仅从任务中删除，需要手动释放
-bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XTimerData* timer);
+bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XHandle handle);
 /**
  * @brief 获取定时器组可以管理的时间范围（以毫秒为单位）
  * @param group 定时器组指针

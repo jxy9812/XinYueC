@@ -19,19 +19,6 @@ typedef struct RecursivePrivate
 }RecursivePrivate;
 typedef struct PlatformPrivate PlatformPrivate;
 #define GetSpinPrivate(mutex)   ((SpinPrivate*)mutex->m_d)
-
-static RecursivePrivate* XMutex_getRecursivePrivate(XMutex* mutex)
-{
-    if (!mutex)return NULL;
-    if (mutex->type & XLock_Spin)
-        return GetSpinPrivate(mutex)->m_d;//挂在SpinPrivate后面
-    return (uint8_t*)(mutex->m_d)+ XMutex_PlatformPrivate_size();//挂在PlatformPrivate后面
-}
-//在抽象平台层调用
-PlatformPrivate* XMutex_getPlatformPrivate(XMutex* mutex)
-{
-    return GetSpinPrivate(mutex);//跟SpinPrivate是互斥的所以地址是一样的
-}
 //平台抽象数据大小
 size_t XMutex_PlatformPrivate_size();
 void XMutex_platform_init(PlatformPrivate* p);
@@ -40,7 +27,20 @@ void XMutex_platform_lock(PlatformPrivate* p);
 bool XMutex_platform_tryLock(PlatformPrivate* p);
 //bool _XMutex_platform_tryLockTimeout_private(XMutex_Private* priv, uint32_t timeout);
 void XMutex_platform_unlock(PlatformPrivate* p);
-//
+
+static RecursivePrivate* XMutex_getRecursivePrivate(XMutex* mutex)
+{
+    if (!mutex)return NULL;
+    if (mutex->type & XLock_Spin)
+        return GetSpinPrivate(mutex)->m_d;//挂在SpinPrivate后面
+    return (uint8_t*)(mutex->m_d) + XMutex_PlatformPrivate_size();//挂在PlatformPrivate后面
+}
+//在抽象平台层调用
+PlatformPrivate* XMutex_getPlatformPrivate(XMutex* mutex)
+{
+    return GetSpinPrivate(mutex);//跟SpinPrivate是互斥的所以地址是一样的
+}
+
 // ========== 判断是否为自旋模式 ==========
 static bool is_spin_mode(XLock_Type type) {
     return type & XLock_Spin;

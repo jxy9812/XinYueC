@@ -36,7 +36,7 @@ typedef struct {
     {
         UINT_PTR winTimerId;        ///< Windows 定时器 ID (来自 SetTimer)
         MMRESULT mmTimerId;         ///< 多媒体定时器 ID (来自 timeSetEvent)，用于高精度定时器
-        XTimerData* m_wheel;  ///时间轮定时器
+        XHandle* m_wheel;  ///时间轮定时器句柄
     };
     XObject* object;            ///< 关联的对象   
     void* highResContext;       // 指向 HighResTimerContext 的指针
@@ -460,16 +460,19 @@ static void CALLBACK XEventDispatcherWin32_HighResTimerCallback(
         );
     }
 }
-static void XTimerTimeWheelCallback(void* userData, XTimerWheelData* timer)
+static void XTimerTimeWheelCallback(void* userData, XTimerData* timer)
 {
     XObject* object = (XObject*)userData;
     if (!object)return;
+    //XPrintf("XTimer:%p count:%d\n",timer,++timer->count);
+    //return;
+      
     XEvent* timerEvent = XEventTimer_create(XTimerData_timerId(timer));
     if (timerEvent)
     {
         timerEvent->posted = true;
         timerEvent->spontaneous = true;
-        XCoreApplication_postEvent(object, timerEvent, XEVENT_PRIORITY_NORMAL);
+        XCoreApplication_postEvent(object, timerEvent, XEVENT_PRIORITY_HIGHEST);
     }
 }
 static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, XTimerId timerId, XDuration intervalNs, XTimerType timerType, XObject* object)
@@ -503,21 +506,18 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
         {//范围达标使用时间轮定时器
             //XEventFunc_create();
             XTimerData data = {0};
+            //XTimerData_setSingleShot(&data, true);
             XTimerData_setAutoDelete(&data, true);
             XTimerData_setTimerId(&data, timerId);
             XTimerData_setInterval(&data, intervalMs);
             XTimerData_setTimerCallback(&data, XTimerTimeWheelCallback);
             XTimerData_setUserData(&data, object);
-            XTimerWheelData* timer = XTimeWheelGroup_addTimer_base(group, data);
-            if (timer)
+            XHandle handle = XTimeWheelGroup_addTimer_base(group, data);
+            if (handle)
             {
                 timerInfo.isTimeWheel = true;
-                timerInfo.m_wheel = timer;
+                timerInfo.m_wheel = handle;
                 goto save;
-            }
-            else
-            {
-                XTimer_deleteLater(timer);
             }
 
         }
@@ -652,7 +652,6 @@ static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed,
     {
         if (timerInfo->isTimeWheel)
         {
-            XTimerData_setUserData(timerInfo->m_wheel,NULL);
             XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), timerInfo->m_wheel);
         }
         else if (timerInfo->mmTimerId != 0) 

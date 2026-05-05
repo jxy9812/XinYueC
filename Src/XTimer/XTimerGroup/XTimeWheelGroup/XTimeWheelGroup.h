@@ -23,6 +23,7 @@ typedef struct XTimeWheelGroup
 	XTimerGroupBase m_class;//继承
 	XVector m_timeWheel;//多时间轮	
 	XAtomic_size_t m_count;//正在管理的定时器数量
+	XMutex* m_mutex;
 }XTimeWheelGroup;
 XVtable* XTimeWheelGroup_class_init();
 XTimeWheelGroup* XTimeWheelGroup_create(uint16_t precision);
