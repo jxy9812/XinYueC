@@ -507,7 +507,7 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
             XTimerData_setInterval(&data, intervalMs);
             XTimerData_setTimerCallback(&data, XTimerTimeWheelCallback);
             XTimerData_setUserData(&data, object);
-            XHandle handle = XTimeWheelGroup_addTimer_base(group, data);
+            XHandle handle = XTimeWheelGroup_addTimerMs_base(group, data);
             if (handle)
             {
                 timerInfo.isTimeWheel = true;

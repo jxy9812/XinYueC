@@ -15,7 +15,7 @@ void XSetTest()
 {
 #if XHashMap_ON
 	XPrintf("XSet 测试\n");
-	//while (true)
+	while (true)
 	{
 		int arrayint[] = { 1,23,456,5,23 };
 		XSet* set = XSet_Create(int, int_compare);

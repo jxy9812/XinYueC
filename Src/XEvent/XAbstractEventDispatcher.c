@@ -129,7 +129,7 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
         //XPrintf("轮询定时器中\n");
         if (XTimeWheelGroup_count(XTimeWheelGroup_global()))
         {
-            XTimeWheelGroup_handler(XTimeWheelGroup_global());
+            XTimeWheelGroup_handler_base(XTimeWheelGroup_global());
         }
     }
     size_t size = 0;

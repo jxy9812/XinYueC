@@ -57,7 +57,7 @@ XVector* VXSetBase_keys(const XSetBase* this_set)
 	}
 	return v;
 }
-static void XSet_freeNodeData(void* key, XSet* this_set)
+static void XSet_deleteNodeData(void* key, XSet* this_set)
 {
 	if (XContainerDataDeinitMethod(this_set) != NULL)
 		XContainerDataDeinitMethod(this_set)(key);
@@ -66,7 +66,7 @@ void VXSet_clear(XSet* this_set)
 {
 	if (XSet_isEmpty_base(this_set))
 		return;
-	XTree_delete(XContainerDataPtr(this_set), XSet_freeNodeData, this_set);
+	XTree_delete(XContainerDataPtr(this_set), XSet_deleteNodeData, this_set);
 	XContainerCapacity(this_set) = 0;
 	XContainerSize(this_set) = 0;
 	XContainerDataPtr(this_set) = NULL;
@@ -154,29 +154,22 @@ void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* next)
 		return;
 	}
 
-	// 获取当前节点存储的键值
-	void* current_key = XBTreeNode_GetDataPtr(current_node);
-	if (!current_key)
-	{
-		if (next != NULL)
-			*next = next_it;
-		return;
-	}
-
 	// 从红黑树中删除当前节点
-	XRBTree_remove(
+	XRBTreeNode* removeNode = XRBTree_removeNode(
 		&XContainerDataPtr(this_set),                   // 红黑树根节点地址
 		((XContainer*)this_set)->m_compare,
 		XCompareRuleOne_XSet,									// 比较规则
-		current_key,										// 要删除的键值
-		XContainerTypeSize(this_set),
-		XSet_freeNodeData,								// 节点数据释放回调
-		this_set											// 传递容器作为额外参数
+		current_node,										// 要删除的键值
+		XContainerTypeSize(this_set)
 	);
-
-	// 更新容器大小信息
-	--XContainerCapacity(this_set);
-	--XContainerSize(this_set);
+	if (removeNode)
+	{
+		XSet_deleteNodeData(XBTreeNode_GetDataPtr(removeNode), this_set);
+		XRBTreeNode_delete(removeNode);
+		// 更新容器大小信息
+		--XContainerCapacity(this_set);
+		--XContainerSize(this_set);
+	}
 
 	// 设置下一个迭代器
 	if (next != NULL)
@@ -185,14 +178,13 @@ void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* next)
 
 bool VXSet_remove(XSet* this_set, const void* pvKey)
 {
-	if (ISNULL(this_set, "") || ISNULL(pvKey, ""))
+	if (XSet_isEmpty_base(this_set))
 		return false;
-	if (XSetBase_contains(this_set, pvKey))
+	XRBTreeNode* removeNode = XRBTree_remove(&XContainerDataPtr(this_set), ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, pvKey, XContainerTypeSize(this_set));
+	if (removeNode != NULL)
 	{
-		if (XContainerDataDeinitMethod(this_set) != NULL)
-			XContainerDataDeinitMethod(this_set)(pvKey);
-		XRBTree_remove(&XContainerDataPtr(this_set), ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, pvKey, XContainerTypeSize(this_set), XSet_freeNodeData, this_set);
-
+		XSet_deleteNodeData(XBTreeNode_GetDataPtr(removeNode), this_set);
+		XRBTreeNode_delete(removeNode);
 		--XContainerCapacity(this_set);
 		--XContainerSize(this_set);
 		return true;

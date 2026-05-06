@@ -37,7 +37,7 @@ void XThreadPoolTest()
 		
 		//XThreadPool_setMaxThreadCount(pool,2);
 		
-		for (size_t i = 0; i < 100; i++)
+		for (size_t i = 0; i < 16; i++)
 		{
 			XThreadPool_start2(pool, threadFunc, NULL, 0);
 		}

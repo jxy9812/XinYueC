@@ -35,10 +35,13 @@ void XRBTree_init(XRBTreeNode* this_root, size_t treeNodeSize, const char* pvDat
 //红黑树-自动创建节点，插入数据，并自动调整高度和旋转保证平衡
 XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule,const void* pvData, const size_t dataSize);
 XRBTreeNode* XRBTree_insertNode(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, XRBTreeNode* insertNode);
-XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule,const void* pvData, const size_t dataSize, XTreeNodeDataDeleteMethod method, void* args);
+//返回被解除关系的节点 返回被解除关系的节点，内部有数据替换，所以要删除的是返回的节点
+XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule,const void* pvData, const size_t dataSize);
+//删除节点但是不释放节点 返回被解除关系的节点，内部有数据替换，所以要删除的是返回的节点
+XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const XRBTreeNode*node, const size_t dataSize);
 //查找红黑树节点
 XRBTreeNode* XRBTree_findNode(XRBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData);
-//递归释放整颗树
+//释放节点
 #define XRBTreeNode_delete							XBTreeNode_delete
 //递归释放整颗树
 #define XRBTree_delete(this_root,method,args)		XTree_delete_base(this_root,XRBTreeNode_delete,method,args)

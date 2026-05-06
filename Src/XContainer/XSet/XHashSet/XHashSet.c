@@ -24,8 +24,9 @@ static XVector* VXSetBase_keys(const XSetBase* this_set);
 // 私有函数：扩容哈希表
 static bool XHashSet_resize(XHashSet* set, size_t new_capacity);
 
-static void XSet_freeNodeData(void* key, XHashSet* this_set)
+static void XSet_deleteNodeData(void* key, XHashSet* this_set)
 {
+    if (!key || this_set)return;
     if (XContainerDataDeinitMethod(this_set) != NULL)
         XContainerDataDeinitMethod(this_set)(key);
 }
@@ -163,29 +164,23 @@ void VXSet_erase(XHashSet* this_set, const XHashSet_iterator* it, XHashSet_itera
         return;
     }
 
-    // 获取当前节点存储的键值
-    void* current_key = XBTreeNode_GetDataPtr(current_node);
-    if (!current_key)
-    {
-        if (next != NULL)
-            *next = next_it;
-        return;
-    }
 
     // 从哈希表对应桶的红黑树中删除节点
     // 哈希表存储的是红黑树根节点数组，需传入对应桶的根节点地址
-    XRBTree_remove(
+    XRBTreeNode* removeNode=XRBTree_removeNode(
         &((XRBTreeNode**)XContainerDataPtr(this_set))[it->index],  // 对应桶的红黑树根节点指针
         ((XContainer*)this_set)->m_compare,
         XCompareRuleOne_XSet,                                       // 比较规则
-        current_key,                                               // 要删除的键值
-        XContainerTypeSize(this_set),
-        XSet_freeNodeData,                                         // 节点数据释放回调
-        this_set                                                   // 传递容器作为额外参数
+        current_node,                                               // 要删除的节点
+        XContainerTypeSize(this_set)                                     // 传递容器作为额外参数
     );
-
-    // 更新容器大小（哈希表容量不随元素删除改变，仅更新元素数量）
-    --XContainerSize(this_set);
+    if(removeNode)
+    {
+        XSet_deleteNodeData(XBTreeNode_GetDataPtr(removeNode), this_set);
+        XRBTreeNode_delete(removeNode);
+        // 更新容器大小（哈希表容量不随元素删除改变，仅更新元素数量）
+        --XContainerSize(this_set);
+    }
 
     // 设置下一个迭代器
     if (next != NULL)
@@ -197,13 +192,15 @@ bool VXSet_remove(XHashSet* this_set, const void* key)
     if (XSetBase_isEmpty_base(this_set))
         return false;
     size_t index = this_set->m_hash(key, XContainerTypeSize(this_set)) % XContainerCapacity(this_set);
-    XRBTreeNode* node = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_set))[index], ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key);
-    if (node != NULL)
+    XRBTreeNode* removeNode = XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key, XContainerTypeSize(this_set));
+    if (removeNode != NULL)
     {
-        XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_set)) + index, ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key, XContainerTypeSize(this_set), XSet_freeNodeData,this_set);
+        XSet_deleteNodeData(key,this_set);
+        XRBTreeNode_delete(removeNode);
         --XContainerSize(this_set);
         return true;
     }
+    return false;
 }
 
 bool VXSet_find(XHashSet* this_set, const void* key,XHashSet_iterator* it)
@@ -234,7 +231,7 @@ void VXSet_clear(XHashSet* this_set)
     for (size_t i = 0; i < XContainerCapacity(this_set); i++)
     {
         XRBTreeNode* root = ((XRBTreeNode**)XContainerDataPtr(this_set))[i];
-        XTree_delete(root, XSet_freeNodeData, this_set);
+        XTree_delete(root, XSet_deleteNodeData, this_set);
     }
     memset(XContainerDataPtr(this_set), 0, sizeof(XRBTreeNode*) * XContainerCapacity(this_set));
     XContainerSize(this_set) = 0;

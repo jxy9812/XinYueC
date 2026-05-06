@@ -17,7 +17,7 @@ XCLASS_DEFINE_BEGING(XTimeWheelGroup)
 XCLASS_DEFINE_ENUM(XTimeWheelGroup, Add_TimeWheel) = XCLASS_VTABLE_GET_SIZE(XTimerGroupBase),
 XCLASS_DEFINE_ENUM(XTimeWheelGroup, Remove_TimeWheel),
 XCLASS_DEFINE_END(XTimeWheelGroup)
-//定时器轮组
+//定时器轮组    -当前设计仅支持毫秒
 typedef struct XTimeWheelGroup
 {
 	XTimerGroupBase m_class;//继承
@@ -31,13 +31,13 @@ void XTimeWheelGroup_init(XTimeWheelGroup* group, uint16_t precision);
 void XTimeWheelGroup_addTimeWheel_base(XTimeWheelGroup* group,size_t slotsCount);
 void XTimeWheelGroup_removeTimeWheel_base(XTimeWheelGroup* group);
 size_t XTimeWheelGroup_count(XTimeWheelGroup* group);
-#define XTimeWheelGroup_addTimer_base				XTimerGroupBase_addTimer_base
+#define XTimeWheelGroup_addTimerMs_base				XTimerGroupBase_addTimerMs_base
 #define XTimeWheelGroup_removeTimer_base			XTimerGroupBase_removeTimer_base
 #define XTimeWheelGroup_timeRange					XTimerGroupBase_timeRange
 #define XTimeWheelGroup_min_time					XTimerGroupBase_min_time
 #define XTimeWheelGroup_max_time					XTimerGroupBase_max_time
 #define XTimeWheelGroup_tick_base					XTimerGroupBase_tick_base
-#define XTimeWheelGroup_handler						XTimerGroupBase_handler
+#define XTimeWheelGroup_handler_base				XTimerGroupBase_handler_base
 #define XTimeWheelGroup_deleteLater					XTimerGroupBase_deleteLater
 
 //全局时间轮

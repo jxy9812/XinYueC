@@ -100,8 +100,7 @@ XVector* XMapBase_values_base(const XMapBase* this_map)
 
 void XMapBase_deleteNodeData(XPair* pair, XMapBase* this_map)
 {
-	if (!pair)return;
-	//XPair* pair = *lpPair;
+	if (!pair|| !this_map)return;
 	if (XMapBaseKeyDeinitMethod(this_map))
 		XMapBaseKeyDeinitMethod(this_map)(XPair_first(pair));
 

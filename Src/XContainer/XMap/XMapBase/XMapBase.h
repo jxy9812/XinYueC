@@ -324,7 +324,7 @@ XVector* XMapBase_values_base(const XMapBase* this_map);
 * @param this_map 关联的XMapBase容器
 * @note 内部调用键和值的释放方法，最终删除XPair实例
 */
-void XMapBase_deleteNodeData(XPair** pair, XMapBase* this_map);
+void XMapBase_deleteNodeData(XPair* pair, XMapBase* this_map);
 
 #ifdef __cplusplus
 }

@@ -26,11 +26,11 @@ typedef struct XTimerData
 {
 	uint32_t m_autoDelete : 1;			///< 定时器超时后是否自动释放  
 	uint32_t m_isSingleShot : 1;		///< 是否为单次定时器（true：只触发一次，false：周期性触发）
-	size_t m_timeout;					///< 首次超时时间（毫秒）
-	size_t m_interval;					///< 周期性触发时间间隔（毫秒）
 	XTimerId timerId;					///< 定时器唯一标识ID
 	void* m_userData;					///< 用户自定义数据
 	XTimerCallback m_timerCallback; ///< 定时器超时回调函数
+	uint64_t m_timeout;                 ///< 首次超时时间（单位由调用者决定，通常为毫秒或纳秒）
+	uint64_t m_interval;                ///< 周期性触发时间间隔（单位由调用者决定，通常为毫秒或纳秒）
 }XTimerData;
 // === 构造与析构相关接口 ===
 /**

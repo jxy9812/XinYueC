@@ -46,7 +46,7 @@ static void delete_timer_node_event(XVarList* argList)
 static void delete_timer_node(XTimeWheelGroup* group, XListSNode* node)
 {
     XEventFunc* event = XEventFunc_create(delete_timer_node_event,XVarList_Create(XVar(XListSNode*, node)),NULL);
-    XCoreApplication_postEvent(group, event, XEVENT_PRIORITY_LOWEST);
+    XCoreApplication_tryPostEvent(group, event, XEVENT_PRIORITY_LOWEST);
 }
 // 辅助函数：向上取整除法
 static inline size_t ceil_div(size_t dividend, size_t divisor)
@@ -59,9 +59,11 @@ static XListSNode* create_timer_node(XTimerData* data, size_t expire_ticks);
 
 static size_t calculate_max_time_range(XTimeWheelGroup* group);
 static void VXTimeWheelGroup_deinit(XTimeWheelGroup* group);
-static XHandle VXTimerGroupBase_addTimer(XTimeWheelGroup* group, XTimerData data);
+static XHandle VXTimerGroupBase_addTimerMs(XTimeWheelGroup* group, XTimerData data);
+static XHandle VXTimerGroupBase_addTimerNs(XTimeWheelGroup* group, XTimerData data);
 static bool VXTimerGroupBase_removeTimer(XTimeWheelGroup* group, XHandle handle);
 static void VXTimeWheelGroup_tick(XTimeWheelGroup* group);
+static void VXTimerGroupBase_handler(XTimerGroupBase* group);
 static void VXTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group, size_t slotsCount);
 static void VXTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group);
 // 专用函数：创建包含 XTimerWheelData 的链表节点
@@ -96,7 +98,7 @@ XVtable* XTimeWheelGroup_class_init()
     // 继承类
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
-        VXTimerGroupBase_addTimer, VXTimerGroupBase_removeTimer,VXTimeWheelGroup_tick,
+        VXTimerGroupBase_addTimerMs, VXTimerGroupBase_addTimerNs,VXTimerGroupBase_removeTimer,VXTimeWheelGroup_tick,VXTimerGroupBase_handler,
         VXTimeWheelGroup_addTimeWheel, VXTimeWheelGroup_removeTimeWheel,
     };
     // 追加虚函数
@@ -157,7 +159,7 @@ static bool addTimer_lockfree(XTimeWheelGroup* group, XListSNode* timer_node, si
     return false;
 }
 
-XHandle VXTimerGroupBase_addTimer(XTimeWheelGroup* group, XTimerData data)
+XHandle VXTimerGroupBase_addTimerMs(XTimeWheelGroup* group, XTimerData data)
 {
     if (data.m_timerCallback == NULL || ((data.m_interval == 0) && (data.m_timeout == 0)))
         return NULL;
@@ -194,6 +196,11 @@ XHandle VXTimerGroupBase_addTimer(XTimeWheelGroup* group, XTimerData data)
     }
     XMutex_unlock(group->m_mutex);
     return timer_node;
+}
+
+XHandle VXTimerGroupBase_addTimerNs(XTimeWheelGroup* group, XTimerData data)
+{
+    return NULL;
 }
 
 bool VXTimerGroupBase_removeTimer(XTimeWheelGroup* groupBase, XHandle handle)
@@ -425,7 +432,24 @@ void VXTimeWheelGroup_tick(XTimeWheelGroup* group)
     // 当前节拍完成，增加全局节拍计数
     ++groupBase->m_current_tick;
 }
+void VXTimerGroupBase_handler(XTimerGroupBase* group)
+{
+    XTimerGroupBase* groupBase = ((XTimerGroupBase*)group);
+    if (!groupBase->m_high_res_time_func)return;
+    size_t tick = groupBase->m_high_res_time_func() / groupBase->m_precision; // 当前滴答数
 
+    if (tick <= groupBase->m_current_tick)
+    {
+        groupBase->m_current_tick = tick;
+        return;
+    }
+
+    // 处理时间跳跃：循环推进多个滴答
+    while (tick > groupBase->m_current_tick)
+    {
+        XTimerGroupBase_tick_base(group);
+    }
+}
 XTimeWheelGroup* XTimeWheelGroup_create(uint16_t precision)
 {
     if (precision == 0)
@@ -479,6 +503,7 @@ static void XTimeWheelGroup_global_init()
     if (global_XTimeWheelGroup)return;
     global_XTimeWheelGroup = XTimeWheelGroup_create(1);
     XObject_moveToThread(global_XTimeWheelGroup, XThreadData_mainThread()->m_thread);
+    XTimerGroupBase_setHighResTimeFunc(global_XTimeWheelGroup,XTimer_getCurrentTime);
     XTimeWheelGroup_addTimeWheel_base(global_XTimeWheelGroup, 30);
     XTimeWheelGroup_addTimeWheel_base(global_XTimeWheelGroup, 10);
     XTimeWheelGroup_addTimeWheel_base(global_XTimeWheelGroup, 10);

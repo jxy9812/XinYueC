@@ -189,29 +189,28 @@ void VXMap_erase(XHashMap* this_hash, const XHashMap_iterator* it, XHashMap_iter
 
 	// 获取当前节点数据
 	XRBTreeNode* current_node = (XRBTreeNode*)it->node;
-	XPair* current_pair = XBTreeNode_GetData(current_node, XPair*);
-	if (ISNULL(current_pair, ""))
+	if (!current_node)
 	{
 		if (next != NULL)
 			*next = next_it;
 		return;
 	}
-
+	
 	// 从哈希表的对应红黑树中删除节点
-	XRBTree_remove(
+	XRBTreeNode* removeNode=XRBTree_removeNode(
 		&((XRBTreeNode**)XContainerDataPtr(this_hash))[it->index],  // 对应桶的红黑树根节点地址
 		((XContainer*)this_hash)->m_compare,
 		XCompareRuleOne_XMap,                                       // 比较规则
-		XPair_first(current_pair),                                 // 要删除的键
-		XMapBasePairTypeSize(this_hash),
-		XMapBase_deleteNodeData,                                   // 节点数据释放回调
-		this_hash                                                   // 传递容器作为额外参数
+		current_node,                                 // 要删除的键
+		XMapBasePairTypeSize(this_hash)
 	);
-
-	// 更新容器大小
-	--XContainerSize(this_hash);
-
-	// 设置下一个迭代器
+	if(removeNode)
+	{
+		XMapBase_deleteNodeData(XBTreeNode_GetDataPtr(current_node), this_hash);
+		XRBTreeNode_delete(current_node);
+		// 更新容器大小
+		--XContainerSize(this_hash);
+	}
 	if (next != NULL)
 		*next = next_it;
 }
@@ -221,10 +220,11 @@ bool VXMap_remove(XHashMap*this_hash, const void* pvKey)
 	if (XMapBase_isEmpty_base(this_hash))
 		return false;
 	size_t index = this_hash->m_hash(pvKey, ((XMapBase*)this_hash)->m_keyTypeSize) % XContainerCapacity(this_hash);
-	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
-	if (nodes != NULL)
+	XRBTreeNode* removeNode = XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, XMapBasePairTypeSize(this_hash));
+	if (removeNode != NULL)
 	{
-		XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, XMapBasePairTypeSize(this_hash), XMapBase_deleteNodeData,this_hash);
+		XMapBase_deleteNodeData(XBTreeNode_GetDataPtr(removeNode),this_hash);
+		XRBTreeNode_delete(removeNode);
 		--XContainerSize(this_hash);
 		return true;
 	}

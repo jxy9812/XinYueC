@@ -13,11 +13,23 @@ void XTimerGroupBase_init(XTimerGroupBase* group, uint16_t precision)
 	/*XClassGetVtable(group) = vtable;*/
 }
 
-XHandle XTimerGroupBase_addTimer_base(XTimerGroupBase* group, XTimerData  data)
+void XTimerGroupBase_setHighResTimeFunc(XTimerGroupBase* base, XHighResTimeFunc func)
+{
+	if (base)base->m_high_res_time_func = func;
+}
+
+XHandle XTimerGroupBase_addTimerMs_base(XTimerGroupBase* group, XTimerData  data)
 {
 	if (ISNULL(group, "") || ISNULL(XClassGetVtable(group), ""))
 		return false;
-	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_Timer, XHandle (*)(XTimerGroupBase* , XTimerData))(group, data);
+	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_TimerMs, XHandle (*)(XTimerGroupBase* , XTimerData))(group, data);
+}
+
+XHandle XTimerGroupBase_addTimerNs_base(XTimerGroupBase* group, XTimerData data)
+{
+	if (ISNULL(group, "") || ISNULL(XClassGetVtable(group), ""))
+		return false;
+	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_TimerNs, XHandle(*)(XTimerGroupBase*, XTimerData))(group, data);
 }
 
 bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XHandle handle)
@@ -51,8 +63,11 @@ void XTimerGroupBase_tick_base(XTimerGroupBase* group)
 		void (*)(XTimerGroupBase*))(group);
 }
 
-void XTimerGroupBase_handler(XTimerGroupBase* group)
+void XTimerGroupBase_handler_base(XTimerGroupBase* group)
 {
+	if (ISNULL(group, "") || ISNULL(XClassGetVtable(group), ""))
+		return;
+	XClassGetVirtualFunc(group, EXTimerGroupBase_Handler,void (*)(XTimerGroupBase*))(group);
 	XTimerGroupBase* groupBase = ((XTimerGroupBase*)group);
 	size_t tick = XTimer_getCurrentTime() / groupBase->m_precision; // 当前滴答数
 

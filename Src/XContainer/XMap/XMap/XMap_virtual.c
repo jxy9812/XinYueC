@@ -126,8 +126,7 @@ void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)
 
 	// 获取当前迭代器指向的节点和键值对
 	XRBTreeNode* current_node = (XRBTreeNode*)it->node;
-	XPair* current_pair = XBTreeNode_GetData(current_node, XPair*);
-	if (ISNULL(current_pair, ""))
+	if (!current_node)
 	{
 		if (next != NULL)
 			*next = next_it;
@@ -135,19 +134,21 @@ void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)
 	}
 
 	// 从红黑树中删除当前节点
-	XRBTree_remove(
+	XRBTreeNode* removeNode = XRBTree_removeNode(
 		&XContainerDataPtr(this_map),
 		((XContainer*)this_map)->m_compare,
 		XCompareRuleOne_XMap,
-		XPair_first(current_pair),  // 传入键用于查找删除
-		XMapBasePairTypeSize(this_map),
-		XMapBase_deleteNodeData,    // 释放节点数据的回调
-		this_map                    // 传递容器作为额外参数
+		current_node,
+		XMapBasePairTypeSize(this_map)
 	);
-
-	// 更新容器大小信息
-	--XContainerCapacity(this_map);
-	--XContainerSize(this_map);
+	if (removeNode)
+	{
+		XMapBase_deleteNodeData(XBTreeNode_GetDataPtr(removeNode), this_map);
+		XRBTreeNode_delete(removeNode);
+		// 更新容器大小信息
+		--XContainerCapacity(this_map);
+		--XContainerSize(this_map);
+	}
 
 	// 设置下一个迭代器
 	if (next != NULL)
@@ -158,10 +159,11 @@ bool VXMap_remove(XMap* this_map, const void* key)
 {
 	if (ISNULL(this_map, "") || ISNULL(key, ""))
 		return false;
-	XRBTreeNode* nodes = XRBTree_findNode(XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key);
-	if (nodes != NULL)
+	XRBTreeNode* removeNode = XRBTree_remove(&XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key, XMapBasePairTypeSize(this_map));
+	if (removeNode != NULL)
 	{
-		XRBTree_remove(&XContainerDataPtr(this_map), ((XContainer*)this_map)->m_compare, XCompareRuleOne_XMap, key, XMapBasePairTypeSize(this_map), XMapBase_deleteNodeData,this_map);
+		XMapBase_deleteNodeData(XBTreeNode_GetDataPtr(removeNode), this_map);
+		XRBTreeNode_delete(removeNode);
 		--XContainerCapacity(this_map);
 		--XContainerSize(this_map);
 		return true;
@@ -184,8 +186,6 @@ void* VXMap_value(XMap* this_map, const void* key)
 
 bool VXMap_find(XMap* this_map, const void* key, XMap_iterator* it)
 {
-	/*if (ISNULL(this_map, "") || ISNULL(key, ""))
-		return NULL;*/
 	if (XMap_isEmpty_base(this_map))
 	{
 		if (it)
@@ -241,7 +241,6 @@ void VXMap_clear(XMap* this_map)
 {
 	if (XMap_isEmpty_base(this_map))
 		return;
-	//XMap_iterator_for_each(this_map, XMapBase_deleteNodeData, this_map);
 	XTree_delete(XContainerDataPtr(this_map), XMapBase_deleteNodeData, this_map);
 	XContainerCapacity(this_map) = 0;
 	XContainerSize(this_map) = 0;

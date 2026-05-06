@@ -9,8 +9,7 @@ size_t XRBTree_typeSize()
 XRBTreeNode* XRBTree_create(const char* pvData, const size_t dataTypeSize)
 {
 	XRBTreeNode* node = XMalloc_System(XRBTree_typeSize()+ dataTypeSize);
-	if (ISNULL(node, "创建红黑树节点失败"))
-		return NULL;
+	if (!node)return NULL;
 	XRBTree_init(node, XRBTree_typeSize(),pvData, dataTypeSize);
 	return node;
 }
@@ -196,7 +195,7 @@ static void eraseAdjustTree(XRBTreeNode** this_root, XRBTreeNode* nodes, XRBTree
 	}
 }
 //删除的是有一个孩子
-static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTreeNodeDataDeleteMethod method, void* args)
+static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 {
 	XRBTreeNode* Pchild = XBTreeNode_GetLChild(eraseNode);//孩子节点
 	if (Pchild == NULL)
@@ -218,9 +217,9 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTre
 	}
 	if (Pchild != NULL)
 		XBTreeNode_SetParent(Pchild, parent);
-	if (method)
+	/*if (method)
 		method(XTreeNode_GetDataPtr(eraseNode),args);
-	XTreeNode_delete(eraseNode);
+	XTreeNode_delete(eraseNode);*/
 	if (color == XRBTreeBlack && *this_root != NULL)
 	{
 		//调整树：
@@ -229,7 +228,7 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode, XTre
 
 }
 //删除的是有两个孩子
-static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode,size_t dataSize, XTreeNodeDataDeleteMethod method, void* args)
+static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode,size_t dataSize)
 {
 #if XVector_ON
 	XRBTreeNode* LPreplace = NULL; // 后继节点（用于替换）
@@ -264,18 +263,28 @@ static void TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode,size_
 	// 3. === 核心思想：现在，LPreplace 节点持有需要被清理的旧数据 ===
 	//    我们现在要做的就是像删除一个普通节点一样删除 LPreplace。
 	//    由于 LPreplace 是后继节点，它最多只有一个右孩子，所以可以直接调用 OneChild_erase。
-	OneChild_erase(this_root, LPreplace, method, args);
+	OneChild_erase(this_root, LPreplace);
+	return LPreplace;
 
 #else
 	IS_ON_DEBUG(XVector_ON);
 #endif
 }
-XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const void* pvData, const size_t dataSize, XTreeNodeDataDeleteMethod method, void* args)
+XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const void* pvData, const size_t dataSize)
 {
-	if (ISNULL(this_root, ""))
+	if (!this_root||!compare||!Rule||!pvData|| !dataSize)
 		return NULL;
 	XRBTreeNode* findErase = XBBTree_findNode(*this_root, compare, Rule, pvData);//删除的节点
 	//DEBUG_PRINTF("findErase=%p", findErase);
+	if (findErase == NULL)
+		return NULL;//要删除的节点没找到
+	return XRBTree_removeNode(this_root, compare, Rule, findErase, dataSize);	
+}
+
+XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const XRBTreeNode* findErase, const size_t dataSize)
+{
+	if (!this_root || !compare || !Rule || !findErase || !dataSize)
+		return NULL;
 	if (findErase == NULL)
 		return NULL;//要删除的节点没找到
 	size_t count = 0;
@@ -285,11 +294,11 @@ XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareR
 		++count;
 	if (count == 2) // 两个孩子
 	{
-		TwoChild_erase(this_root, findErase, dataSize, method, args);
+		return TwoChild_erase(this_root, findErase, dataSize);
 	}
 	else // 零个或一个孩子
 	{
-		OneChild_erase(this_root, findErase, method, args);
+		OneChild_erase(this_root, findErase);
 	}
 	return findErase;
 }
@@ -431,3 +440,5 @@ XRBTreeNode* XRBTree_insertNode(XRBTreeNode** this_root, XCompare compare, XComp
 	XRBTree_insertAdjust(this_root, insertNode);
 	return insertNode;
 }
+
+

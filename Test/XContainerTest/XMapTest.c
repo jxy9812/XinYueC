@@ -28,7 +28,7 @@ void XMapTest()
 	{
 		XPrintf("XMap 测试\n");
 		int arrayint[] = { 1,23,456,5,23 };
-		char arraychar[][100] = { "琦神","星小白","章鱼哥","jjjjjjj","玩蛇" };
+		char arraychar[][100] = { "1221212","dasdsadsa","czxcxzc","jjjjjjj","yutytuyt" };
 		
 		for (size_t i = 0; i < 500; i++)
 		{
