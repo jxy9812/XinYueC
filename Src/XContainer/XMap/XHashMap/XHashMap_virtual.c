@@ -199,8 +199,6 @@ void VXMap_erase(XHashMap* this_hash, const XHashMap_iterator* it, XHashMap_iter
 	// 从哈希表的对应红黑树中删除节点
 	XRBTreeNode* removeNode=XRBTree_removeNode(
 		&((XRBTreeNode**)XContainerDataPtr(this_hash))[it->index],  // 对应桶的红黑树根节点地址
-		((XContainer*)this_hash)->m_compare,
-		XCompareRuleOne_XMap,                                       // 比较规则
 		current_node,                                 // 要删除的键
 		XMapBasePairTypeSize(this_hash)
 	);

@@ -14,9 +14,8 @@ typedef struct XVector XVector;
 typedef struct XTimeWheelGroup XTimeWheelGroup;
 #define XTIMEWHEELGROUP_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimeWheelGroup))       //XTimeGroupWheel虚函数表大小
 XCLASS_DEFINE_BEGING(XTimeWheelGroup)
-XCLASS_DEFINE_ENUM(XTimeWheelGroup, Add_TimeWheel) = XCLASS_VTABLE_GET_SIZE(XTimerGroupBase),
-XCLASS_DEFINE_ENUM(XTimeWheelGroup, Remove_TimeWheel),
-XCLASS_DEFINE_END(XTimeWheelGroup)
+//XCLASS_DEFINE_ENUM(XTimeWheelGroup, Add_TimeWheel) = XCLASS_VTABLE_GET_SIZE(XTimerGroupBase),
+XCLASS_DEFINE_EXTEND_END(XTimeWheelGroup, XTimerGroupBase)
 //定时器轮组    -当前设计仅支持毫秒
 typedef struct XTimeWheelGroup
 {
@@ -28,8 +27,8 @@ typedef struct XTimeWheelGroup
 XVtable* XTimeWheelGroup_class_init();
 XTimeWheelGroup* XTimeWheelGroup_create(uint16_t precision);
 void XTimeWheelGroup_init(XTimeWheelGroup* group, uint16_t precision);
-void XTimeWheelGroup_addTimeWheel_base(XTimeWheelGroup* group,size_t slotsCount);
-void XTimeWheelGroup_removeTimeWheel_base(XTimeWheelGroup* group);
+void XTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group,size_t slotsCount);
+void XTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group);
 size_t XTimeWheelGroup_count(XTimeWheelGroup* group);
 #define XTimeWheelGroup_addTimerMs_base				XTimerGroupBase_addTimerMs_base
 #define XTimeWheelGroup_removeTimer_base			XTimerGroupBase_removeTimer_base
@@ -38,6 +37,7 @@ size_t XTimeWheelGroup_count(XTimeWheelGroup* group);
 #define XTimeWheelGroup_max_time					XTimerGroupBase_max_time
 #define XTimeWheelGroup_tick_base					XTimerGroupBase_tick_base
 #define XTimeWheelGroup_handler_base				XTimerGroupBase_handler_base
+#define XTimeWheelGroup_clear_base					XTimerGroupBase_clear_base
 #define XTimeWheelGroup_deleteLater					XTimerGroupBase_deleteLater
 
 //全局时间轮

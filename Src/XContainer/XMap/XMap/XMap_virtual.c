@@ -136,8 +136,6 @@ void VXMap_erase(XMap* this_map, const XMap_iterator* it, XMap_iterator* next)
 	// 从红黑树中删除当前节点
 	XRBTreeNode* removeNode = XRBTree_removeNode(
 		&XContainerDataPtr(this_map),
-		((XContainer*)this_map)->m_compare,
-		XCompareRuleOne_XMap,
 		current_node,
 		XMapBasePairTypeSize(this_map)
 	);

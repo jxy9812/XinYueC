@@ -15,6 +15,7 @@ XCLASS_DEFINE_ENUM(XTimerGroupBase, Add_TimerNs),
 XCLASS_DEFINE_ENUM(XTimerGroupBase,Remove_Timer),
 XCLASS_DEFINE_ENUM(XTimerGroupBase, Tick),
 XCLASS_DEFINE_ENUM(XTimerGroupBase, Handler),
+XCLASS_DEFINE_ENUM(XTimerGroupBase, Clear),
 XCLASS_DEFINE_END(XTimerGroupBase)
 /**
  * @brief 高精度时间获取函数指针类型
@@ -53,6 +54,7 @@ size_t XTimerGroupBase_min_time(XTimerGroupBase* group);
 size_t XTimerGroupBase_max_time(XTimerGroupBase* group);
 void XTimerGroupBase_tick_base(XTimerGroupBase* group);
 void XTimerGroupBase_handler_base(XTimerGroupBase* group);
+void XTimerGroupBase_clear_base(XTimerGroupBase* group);
 #define XTimerGroupBase_deleteLater			XObject_deleteLater
 #ifdef __cplusplus
 }

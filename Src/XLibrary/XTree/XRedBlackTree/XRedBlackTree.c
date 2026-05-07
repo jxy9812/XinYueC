@@ -278,12 +278,12 @@ XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareR
 	//DEBUG_PRINTF("findErase=%p", findErase);
 	if (findErase == NULL)
 		return NULL;//要删除的节点没找到
-	return XRBTree_removeNode(this_root, compare, Rule, findErase, dataSize);	
+	return XRBTree_removeNode(this_root, findErase, dataSize);	
 }
 
-XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const XRBTreeNode* findErase, const size_t dataSize)
+XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, const XRBTreeNode* findErase, const size_t dataSize)
 {
-	if (!this_root || !compare || !Rule || !findErase || !dataSize)
+	if (!this_root || !findErase || !dataSize)
 		return NULL;
 	if (findErase == NULL)
 		return NULL;//要删除的节点没找到
@@ -325,6 +325,33 @@ XRBTreeNode* XRBTree_findNode(XRBTreeNode* this_root, XCompare compare, XCompare
 	//	}
 	//}
 	//return NULL;
+}
+
+XRBTreeNode* XRBTree_findSuccessor(XRBTreeNode* node)
+{
+	if (!node) return NULL;
+
+	// 情况1: 如果有右子树，后继是右子树的最左节点
+	if (XBTreeNode_GetRChild(node) != NULL) {
+		XRBTreeNode* successor = (XRBTreeNode*)XBTreeNode_GetRChild(node);
+		while (XBTreeNode_GetLChild(successor) != NULL) {
+			successor = (XRBTreeNode*)XBTreeNode_GetLChild(successor);
+		}
+		return successor;
+	}
+
+	// 情况2: 没有右子树，需要向上回溯
+	XRBTreeNode* current = node;
+	XRBTreeNode* parent = (XRBTreeNode*)XBTreeNode_GetParent(current);
+
+	// 回溯直到找到一个节点，它是其父节点的左孩子
+	while (parent != NULL && current == XBTreeNode_GetRChild(parent)) {
+		current = parent;
+		parent = (XRBTreeNode*)XBTreeNode_GetParent(parent);
+	}
+
+	// 此时，parent 就是后继节点（如果存在的话）
+	return parent;
 }
  
 /*                                                  插入函数                                           */

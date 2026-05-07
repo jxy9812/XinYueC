@@ -24,6 +24,8 @@ XCLASS_DEFINE_EXTEND_END(XHrTimerGroup, XTimerGroupBase)
  */
 typedef struct XHrTimerNodeData 
 {
+    bool m_is_detached;        ///< 标记此节点是否已从红黑树中分离
+    bool m_is_was_deleted;     //已经被标记为删除
     uint64_t m_expire_time_ns; ///< 绝对到期时间（纳秒）
     XTimerData m_timer_data;   ///< 定时器参数 (内部时间单位: 纳秒)
 } XHrTimerNodeData;
@@ -55,7 +57,8 @@ void XHrTimerGroup_init(XHrTimerGroup* group, uint64_t precision_ns);
 #define XHrTimerGroup_min_time              XTimerGroupBase_min_time
 #define XHrTimerGroup_max_time              XTimerGroupBase_max_time
 #define XHrTimerGroup_tick_base             XTimerGroupBase_tick_base
-#define XHrTimerGroup_handler               XTimerGroupBase_handler_base
+#define XHrTimerGroup_handler_base          XTimerGroupBase_handler_base
+#define XHrTimerGroup_clear_base            XTimerGroupBase_clear_base
 #define XHrTimerGroup_deleteLater           XTimerGroupBase_deleteLater
 
 #ifdef __cplusplus

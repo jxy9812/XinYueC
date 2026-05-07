@@ -169,8 +169,6 @@ void VXSet_erase(XHashSet* this_set, const XHashSet_iterator* it, XHashSet_itera
     // 哈希表存储的是红黑树根节点数组，需传入对应桶的根节点地址
     XRBTreeNode* removeNode=XRBTree_removeNode(
         &((XRBTreeNode**)XContainerDataPtr(this_set))[it->index],  // 对应桶的红黑树根节点指针
-        ((XContainer*)this_set)->m_compare,
-        XCompareRuleOne_XSet,                                       // 比较规则
         current_node,                                               // 要删除的节点
         XContainerTypeSize(this_set)                                     // 传递容器作为额外参数
     );

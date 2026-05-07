@@ -74,7 +74,7 @@ void XMenu_XTimerTest(XMenu* root)
 	XMenu* menu = XMenu_create("定时器");
 	XMenu_addMenu(root, menu);
 	XMenu_XTimerTimeWheelTest(menu);
-
+	XMenu_XHrTimerTest(menu);
 	{
 		XMenu* tmenu = XMenu_create("XTimer(定时器)");
 		XMenu_addMenu(menu, tmenu);

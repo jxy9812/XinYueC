@@ -62,6 +62,13 @@ void XTimerGroupBase_tick_base(XTimerGroupBase* group)
 	XClassGetVirtualFunc(group, EXTimerGroupBase_Tick,
 		void (*)(XTimerGroupBase*))(group);
 }
+void XTimerGroupBase_clear_base(XTimerGroupBase* group)
+{
+	if (ISNULL(group, "") || ISNULL(XClassGetVtable(group), ""))
+		return;
+	XClassGetVirtualFunc(group, EXTimerGroupBase_Clear,
+		void (*)(XTimerGroupBase*))(group);
+}
 
 void XTimerGroupBase_handler_base(XTimerGroupBase* group)
 {
@@ -83,3 +90,4 @@ void XTimerGroupBase_handler_base(XTimerGroupBase* group)
 		XTimerGroupBase_tick_base(group);
 	}
 }
+

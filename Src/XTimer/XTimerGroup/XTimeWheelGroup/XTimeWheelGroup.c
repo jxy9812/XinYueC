@@ -64,8 +64,7 @@ static XHandle VXTimerGroupBase_addTimerNs(XTimeWheelGroup* group, XTimerData da
 static bool VXTimerGroupBase_removeTimer(XTimeWheelGroup* group, XHandle handle);
 static void VXTimeWheelGroup_tick(XTimeWheelGroup* group);
 static void VXTimerGroupBase_handler(XTimerGroupBase* group);
-static void VXTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group, size_t slotsCount);
-static void VXTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group);
+static void VXTimeWheelGroup_clear(XTimeWheelGroup* group);
 // 专用函数：创建包含 XTimerWheelData 的链表节点
 static XListSNode* create_timer_node(XTimerData* data, size_t expire_ticks)
 {
@@ -99,7 +98,7 @@ XVtable* XTimeWheelGroup_class_init()
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
         VXTimerGroupBase_addTimerMs, VXTimerGroupBase_addTimerNs,VXTimerGroupBase_removeTimer,VXTimeWheelGroup_tick,VXTimerGroupBase_handler,
-        VXTimeWheelGroup_addTimeWheel, VXTimeWheelGroup_removeTimeWheel,
+        VXTimeWheelGroup_clear
     };
     // 追加虚函数
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
@@ -112,7 +111,7 @@ XVtable* XTimeWheelGroup_class_init()
 void VXTimeWheelGroup_deinit(XTimeWheelGroup* group)
 {
     while (!XVector_isEmpty_base(&group->m_timeWheel))
-        XTimeWheelGroup_removeTimeWheel_base(group);
+        XTimeWheelGroup_removeTimeWheel(group);
     //XVector_delete_base(&&group->m_timeWheel);
     XVector_deinit_base(&group->m_timeWheel);
     // 释放父对象
@@ -236,7 +235,7 @@ size_t calculate_max_time_range(XTimeWheelGroup* group)
     return total_slots * precision;
 }
 
-void VXTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group, size_t slotsCount)
+void XTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group, size_t slotsCount)
 {
     XTimeWheel wheel = { 0 };
     wheel.m_tick = 0;
@@ -256,7 +255,7 @@ void VXTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group, size_t slotsCount)
     ((XTimerGroupBase*)group)->m_max_time = calculate_max_time_range(group);
 }
 
-void VXTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group)
+void XTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group)
 {
     if (XVector_isEmpty_base(&group->m_timeWheel))
         return;
@@ -283,6 +282,13 @@ void VXTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group)
     // 删除最后一个轮
     XVector_pop_back_base(&group->m_timeWheel);
     ((XTimerGroupBase*)group)->m_max_time = calculate_max_time_range(group);
+}
+void VXTimeWheelGroup_clear(XTimeWheelGroup* group)
+{
+    while (!XVector_isEmpty_base(&group->m_timeWheel))
+    {
+        XTimeWheelGroup_removeTimeWheel(group);
+    }
 }
 // 公共函数：处理一个定时器节点链表
 static void process_timer_list(XTimeWheelGroup* group, XListSNode* head, size_t current_tick)
@@ -479,20 +485,6 @@ void XTimeWheelGroup_init(XTimeWheelGroup* group, uint16_t precision)
     //group->m_mutex=XMutex_create(XLock_Spin);
 }
 
-void XTimeWheelGroup_addTimeWheel_base(XTimeWheelGroup* group, size_t slotsCount)
-{
-    if (ISNULL(group, "") || ISNULL(slotsCount, "") || ISNULL(XClassGetVtable(group), ""))
-        return;
-    XClassGetVirtualFunc(group, EXTimeWheelGroup_Add_TimeWheel, void(*)(XTimeWheelGroup*, size_t))(group, slotsCount);
-}
-
-void XTimeWheelGroup_removeTimeWheel_base(XTimeWheelGroup* group)
-{
-    if (ISNULL(group, "") || ISNULL(XClassGetVtable(group), ""))
-        return;
-    XClassGetVirtualFunc(group, EXTimeWheelGroup_Remove_TimeWheel, void(*)(XTimeWheelGroup*))(group);
-}
-
 size_t XTimeWheelGroup_count(XTimeWheelGroup* group)
 {
     return group ? XAtomic_load_size_t(&group->m_count, XAtomic_MemoryOrder_Relaxed) : 0;
@@ -504,9 +496,9 @@ static void XTimeWheelGroup_global_init()
     global_XTimeWheelGroup = XTimeWheelGroup_create(1);
     XObject_moveToThread(global_XTimeWheelGroup, XThreadData_mainThread()->m_thread);
     XTimerGroupBase_setHighResTimeFunc(global_XTimeWheelGroup,XTimer_getCurrentTime);
-    XTimeWheelGroup_addTimeWheel_base(global_XTimeWheelGroup, 30);
-    XTimeWheelGroup_addTimeWheel_base(global_XTimeWheelGroup, 10);
-    XTimeWheelGroup_addTimeWheel_base(global_XTimeWheelGroup, 10);
+    XTimeWheelGroup_addTimeWheel(global_XTimeWheelGroup, 30);
+    XTimeWheelGroup_addTimeWheel(global_XTimeWheelGroup, 10);
+    XTimeWheelGroup_addTimeWheel(global_XTimeWheelGroup, 10);
 }
 XTimeWheelGroup* XTimeWheelGroup_global()
 {

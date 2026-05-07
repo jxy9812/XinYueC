@@ -33,9 +33,9 @@ void XTimerTimeWheelTest()
 	XPrintf("时间轮定时器测试\n");
 	/*XTimeWheelGroup* wheel= XTimeWheelGroup_create(1);
 	wheel= XTimeWheelGroup_create(1);
-	XTimeWheelGroup_addTimeWheel_base(wheel,100);
-	XTimeWheelGroup_addTimeWheel_base(wheel,10);
-	XTimeWheelGroup_addTimeWheel_base(wheel,10);*/
+	XTimeWheelGroup_addTimeWheel(wheel,100);
+	XTimeWheelGroup_addTimeWheel(wheel,10);
+	XTimeWheelGroup_addTimeWheel(wheel,10);*/
 	XTimeWheelGroup* wheel = XTimeWheelGroup_global();
 	size_t min_time = 0, max_time = 0;
 	XTimeWheelGroup_timeRange(wheel,&min_time,&max_time);

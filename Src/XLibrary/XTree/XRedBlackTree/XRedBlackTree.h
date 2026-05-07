@@ -38,9 +38,16 @@ XRBTreeNode* XRBTree_insertNode(XRBTreeNode** this_root, XCompare compare, XComp
 //返回被解除关系的节点 返回被解除关系的节点，内部有数据替换，所以要删除的是返回的节点
 XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule,const void* pvData, const size_t dataSize);
 //删除节点但是不释放节点 返回被解除关系的节点，内部有数据替换，所以要删除的是返回的节点
-XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, XCompare compare, XCompareRuleOne Rule, const XRBTreeNode*node, const size_t dataSize);
+XRBTreeNode* XRBTree_removeNode(XRBTreeNode** this_root, const XRBTreeNode*node, const size_t dataSize);
 //查找红黑树节点
 XRBTreeNode* XRBTree_findNode(XRBTreeNode* this_root, XCompare compare, XCompareRuleOne rule, void* pvData);
+/**
+ * @brief 查找给定节点的中序后继节点。
+ *
+ * @param node 要查找后继的节点。
+ * @return XRBTreeNode* 后继节点，如果不存在则返回 NULL。
+ */
+XRBTreeNode* XRBTree_findSuccessor(XRBTreeNode* node);
 //释放节点
 #define XRBTreeNode_delete							XBTreeNode_delete
 //递归释放整颗树

@@ -8,7 +8,7 @@ extern "C" {
 #if DEMOTEST
 	void XMenu_XTimerTest(XMenu* root);
 	void XMenu_XTimerTimeWheelTest(XMenu* root);
-
+	void XMenu_XHrTimerTest(XMenu* root);
 	void XTimerTimeWheelTest();
 #endif // DEMOTEST
 

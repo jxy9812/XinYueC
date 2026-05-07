@@ -312,7 +312,7 @@ static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispa
         IOCP_handle(dispatcher);
     }
     // 只有当确实没有任何事件需要处理时，才进入等待状态
-    //if (!XAbstractEventDispatcher_isMainThread(dispatcher)) // 子线程
+    if (!XAbstractEventDispatcher_isMainThread(dispatcher)) // 子线程
     {
         // 检查是否还有未处理的 Windows 消息（非阻塞检查）
         bool hasPendingMessages = false;
