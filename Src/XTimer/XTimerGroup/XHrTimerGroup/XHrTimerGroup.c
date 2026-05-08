@@ -121,40 +121,7 @@ static void VXHrTimerGroup_deinit(XHrTimerGroup* group) {
 
 // --- 核心添加逻辑 ---
 static XHandle internal_add_timer(XHrTimerGroup* group, uint64_t timeout_ns, uint64_t interval_ns, bool is_single_shot, XTimerCallback callback, void* user_data) {
-    if (callback == NULL || ((interval_ns == 0) && (timeout_ns == 0))) {
-        return NULL;
-    }
-
-    uint64_t current_time_ns = get_current_time_ns(group);
-    uint64_t expire_time_ns = current_time_ns + timeout_ns;
-    if (timeout_ns == 0) {
-        expire_time_ns = current_time_ns + interval_ns;
-    }
-
-    XHrTimerNodeData node_data = { 0 };
-    node_data.m_expire_time_ns = expire_time_ns;
-    node_data.m_timer_data.timerId = 0;
-    node_data.m_timer_data.m_timeout = timeout_ns;
-    node_data.m_timer_data.m_interval = interval_ns;
-    node_data.m_timer_data.m_isSingleShot = is_single_shot;
-    node_data.m_timer_data.m_timerCallback = callback;
-    node_data.m_timer_data.m_userData = user_data;
-    node_data.m_is_detached = false;
-
-    XRBTreeNode* new_node = NULL;
-    XMutex_lock(group->m_mutex);
-    {
-        new_node = XRBTree_insert(&group->m_rbtree_root, compare_expire_time_ns, less_expire_time_ns, &node_data, sizeof(XHrTimerNodeData));
-        if (new_node) {
-            XAtomic_fetch_add_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
-            //XBTreeNode_GetData(new_node, XHrTimerNodeData).m_timer_data.timerId = (uint64_t)(uintptr_t)new_node; // 将指针转换为 uint64_t
-            // --- 统一使用 update_min_node 来保证一致性 ---
-            update_min_node(group);
-        }
-    }
-    XMutex_unlock(group->m_mutex);
-
-    return (XHandle)new_node;
+   
 }
 
 // --- 删除定时器 (已修正作用域和指针访问) ---
@@ -311,11 +278,48 @@ void VXHrTimerGroup_clear(XHrTimerGroup* group)
 // --- 虚函数：为了兼容性保留 ---
 static XHandle VXTimerGroupBase_addTimerMs(XHrTimerGroup* group, XTimerData data) {
     if (!group) return NULL;
-    return internal_add_timer(group, data.m_timeout * 1000000ULL, data.m_interval * 1000000ULL, data.m_isSingleShot, data.m_timerCallback, data.m_userData);
+    data.m_timeout *= 1000000ULL;
+    data.m_interval *= 1000000ULL;
+    return VXTimerGroupBase_addTimerNs(group, data);
+    //return internal_add_timer(group, data.m_timeout * 1000000ULL, data.m_interval * 1000000ULL, data.m_isSingleShot, data.m_timerCallback, data.m_userData);
 }
 static XHandle VXTimerGroupBase_addTimerNs(XHrTimerGroup* group, XTimerData data) {
     if (!group) return NULL;
-    return internal_add_timer(group, data.m_timeout, data.m_interval, data.m_isSingleShot, data.m_timerCallback, data.m_userData);
+    if (data.m_timerCallback == NULL ) {
+        return NULL;
+    }
+
+    uint64_t current_time_ns = get_current_time_ns(group);
+    uint64_t expire_time_ns = current_time_ns + data.m_timeout;
+    if (data.m_timeout == 0) {
+        expire_time_ns = current_time_ns + data.m_interval;
+    }
+
+    XHrTimerNodeData node_data = { 0 };
+    memcpy(&node_data.m_timer_data,&data,sizeof(XTimerData));
+    node_data.m_expire_time_ns = expire_time_ns;
+    //node_data.m_timer_data.timerId = 0;
+    //node_data.m_timer_data.m_timeout = data.m_timeout;
+    //node_data.m_timer_data.m_interval = data.m_interval;
+    //node_data.m_timer_data.m_isSingleShot = is_single_shot;
+    //node_data.m_timer_data.m_timerCallback = callback;
+    //node_data.m_timer_data.m_userData = user_data;
+    node_data.m_is_detached = false;
+
+    XRBTreeNode* new_node = NULL;
+    XMutex_lock(group->m_mutex);
+    {
+        new_node = XRBTree_insert(&group->m_rbtree_root, compare_expire_time_ns, less_expire_time_ns, &node_data, sizeof(XHrTimerNodeData));
+        if (new_node) {
+            XAtomic_fetch_add_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
+            //XBTreeNode_GetData(new_node, XHrTimerNodeData).m_timer_data.timerId = (uint64_t)(uintptr_t)new_node; // 将指针转换为 uint64_t
+            // --- 统一使用 update_min_node 来保证一致性 ---
+            update_min_node(group);
+        }
+    }
+    XMutex_unlock(group->m_mutex);
+
+    return (XHandle)new_node;
 }
 // --- 对外构造函数 ---
 XHrTimerGroup* XHrTimerGroup_create(uint64_t precision_ns) {
@@ -338,10 +342,33 @@ void XHrTimerGroup_init(XHrTimerGroup* group, uint64_t precision_ns) {
     group->m_rbtree_root = NULL;
     group->m_min_node = NULL; // 初始化最小节点指针
     XAtomic_init(group->m_count, 0);
-    group->m_mutex = XMutex_create(XLock_Spin);
-    //group->m_mutex = NULL;
+    //group->m_mutex = XMutex_create(XLock_Spin);
+    group->m_mutex = NULL;
     ((XTimerGroupBase*)group)->m_max_time = UINT64_MAX;
     ((XTimerGroupBase*)group)->m_min_time = precision_ns;
     ((XTimerGroupBase*)group)->m_high_res_time_func = NULL;
     //group->m_pending_delete_list = NULL;
+}
+
+uint64_t XHrTimerGroup_getNextExpireTime(XHrTimerGroup* group)
+{
+    if (!group) {
+        return UINT64_MAX;
+    }
+
+    uint64_t next_expire_time = UINT64_MAX;
+
+    // 加锁以确保在读取 m_min_node 时其状态是一致的
+    XMutex_lock(group->m_mutex);
+    {
+        if (group->m_min_node != NULL) {
+            XHrTimerNodeData* min_data = (XHrTimerNodeData*)XRBTree_getData(group->m_min_node);
+            if (min_data) {
+                next_expire_time = min_data->m_expire_time_ns;
+            }
+        }
+    }
+    XMutex_unlock(group->m_mutex);
+
+    return next_expire_time;
 }

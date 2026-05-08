@@ -25,12 +25,29 @@ extern "C" {
 #include "XTimer.h"
 #include <stdint.h>
 #include <stdbool.h>
+typedef struct XHrTimerGroup XHrTimerGroup;
+/**
+ * @brief 定时器信息结构体 (Windows 私有)
+ */
+typedef struct {
+    XTimerType timerType;       ///< 定时器类型
+    XTimerId timerId;           ///< 定时器 ID
+    union
+    {
+        XHandle* Xhandle;  ///定时器句柄
+    };
+    XObject* object;            ///< 关联的对象   
+    //XAbstractEventDispatcher* d;
+    int64_t interval;           ///< 间隔 (纳秒)
+} XAbstractEventDispatcher_TimerInfo;
 // 前向声明
 struct XAbstractNativeEventFilter;
 typedef struct XAbstractEventDispatcherPrivate
 {
     XVector* nativeFilters;///< 本地事件过滤器列表
     XVector* m_timerIds;//定时器id数组
+    XHashMap* timers;           ///< 定时器映射: timerId  -> XEventDispatcherWin32_TimerInfo*
+    XHashMap* sockets;          ///< 套接字映射: socket.value -> XEventDispatcherWin32_SocketInfo*
     XMutex* mutex;              ///< 保护 timers, sockets, nativeFilters 的互斥锁
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
@@ -91,6 +108,7 @@ typedef struct XAbstractEventDispatcher
 {
     XObject m_class; ///< 继承自 XObject
     XDispatcherThreadType type;
+    XHrTimerGroup* m_hrtimerGroup;//高精度定时器组
     // 私有数据（PIMPL）
     XAbstractEventDispatcherPrivate* d_ptr;
 } XAbstractEventDispatcher;

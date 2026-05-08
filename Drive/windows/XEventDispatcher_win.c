@@ -22,7 +22,9 @@
 #include <stdint.h>
 #include "XThreadData.h"
 #include "XTimeWheelGroup.h"
+#include "XHrTimerGroup.h"
 #pragma comment(lib, "winmm.lib")
+uint64_t get_current_nanoseconds_since_epoch();
 //static  HANDLE ioCompletionPort=NULL;    // 全局 IOCP 句柄;
 /**
  * @brief 定时器信息结构体 (Windows 私有)
@@ -329,15 +331,25 @@ static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispa
         {
             //XPrintf("XThread:%p 进入睡眠\n", XThread_currentThread());
             self->wakeUpSent = false;
-            XAbstractEventDispatcher_aboutToBlock_signal(dispatcher);
-            DWORD waitRet = MsgWaitForMultipleObjectsEx(0, NULL, XAbstractEventDispatcher_isMainThread(dispatcher)? 1:INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-
-            //XPrintf("XThread:%p 被唤醒\n", XThread_currentThread());
-            if (waitRet != WAIT_FAILED)
+           
+            //DWORD waitRet = MsgWaitForMultipleObjectsEx(0, NULL, XAbstractEventDispatcher_isMainThread(dispatcher)? 1:INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            size_t time = INFINITE;
+            if (dispatcher->m_hrtimerGroup)
             {
-                XAbstractEventDispatcher_awake_signal(dispatcher);
-                // 被唤醒后，确保 wakeUpSent 标志会在消息处理中重置
-                // 实际的消息处理会在下一次 processEvents 调用中完成
+                time=(XHrTimerGroup_getNextExpireTime(dispatcher->m_hrtimerGroup)- get_current_nanoseconds_since_epoch())/ 1000000;
+               // time = 100 / 1000000;
+            }
+            if(time)
+            {
+                XAbstractEventDispatcher_aboutToBlock_signal(dispatcher);
+                DWORD waitRet = MsgWaitForMultipleObjectsEx(0, NULL, time, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+                //XPrintf("XThread:%p 被唤醒\n", XThread_currentThread());
+                if (waitRet != WAIT_FAILED)
+                {
+                    XAbstractEventDispatcher_awake_signal(dispatcher);
+                    // 被唤醒后，确保 wakeUpSent 标志会在消息处理中重置
+                    // 实际的消息处理会在下一次 processEvents 调用中完成
+                }
             }
         }
     }
@@ -458,7 +470,7 @@ static void CALLBACK XEventDispatcherWin32_HighResTimerCallback(
         );
     }
 }
-static void XTimerTimeWheelCallback(void* userData, XTimerData* timer)
+static void TimerCallback(void* userData, XTimerData* timer)
 {
     XObject* object = (XObject*)userData;
     if (!object)return;
@@ -470,9 +482,38 @@ static void XTimerTimeWheelCallback(void* userData, XTimerData* timer)
         XCoreApplication_postEvent(object, timerEvent, XEVENT_PRIORITY_NORMAL);
     }
 }
+// 将 FILETIME 转换为 Unix 纪元（1970-01-01）以来的纳秒数
+uint64_t get_current_nanoseconds_since_epoch() {
+    FILETIME ft;
+    GetSystemTimePreciseAsFileTime(&ft); // 高精度 UTC 时间
+
+    // 合并高低32位为一个64位整数（单位：100纳秒）
+    ULARGE_INTEGER ull;
+    ull.LowPart = ft.dwLowDateTime;
+    ull.HighPart = ft.dwHighDateTime;
+
+    // 从 1601-01-01 到 1970-01-01 的 100-纳秒数（固定偏移）
+    const uint64_t UNIX_EPOCH_OFFSET_100NS = 116444736000000000ULL;
+
+    // 转为自 Unix 纪元以来的 100 纳秒数
+    uint64_t since_unix_100ns = ull.QuadPart - UNIX_EPOCH_OFFSET_100NS;
+
+    // 转为纳秒
+    return since_unix_100ns * 100; // 100ns * 100 = 1ns
+}
 static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, XTimerId timerId, XDuration intervalNs, XTimerType timerType, XObject* object)
 {
     if (!timerId || !intervalNs || !object)return;
+   /* uint64_t cu = get_current_nanoseconds_since_epoch();
+    Sleep(1);
+    uint64_t c = get_current_nanoseconds_since_epoch() - cu;*/
+    if (ed->m_hrtimerGroup == NULL)
+    {//初始化
+        ed->m_hrtimerGroup = XHrTimerGroup_create(1);
+        XHrTimerGroup_setHighResTimeFunc(ed->m_hrtimerGroup, get_current_nanoseconds_since_epoch);
+    }
+    XClass_Parent(XAbstractEventDispatcher, EXAbstractEventDispatcher_RegisterTimer, void(*)(XAbstractEventDispatcher*, XTimerId, XDuration, XTimerType, XObject*))(ed, timerId, intervalNs, timerType, object);
+    return;
     XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
@@ -505,7 +546,7 @@ static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, X
             XTimerData_setAutoDelete(&data, true);
             XTimerData_setTimerId(&data, timerId);
             XTimerData_setInterval(&data, intervalMs);
-            XTimerData_setTimerCallback(&data, XTimerTimeWheelCallback);
+            XTimerData_setTimerCallback(&data, TimerCallback);
             XTimerData_setUserData(&data, object);
             XHandle handle = XTimeWheelGroup_addTimerMs_base(group, data);
             if (handle)
@@ -898,9 +939,9 @@ XVtable* XEventDispatcherWin32_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterSocketNotifier, (void*)VXEventDispatcherWin32_registerSocketNotifier);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterSocketNotifier, (void*)VXEventDispatcherWin32_unregisterSocketNotifier);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterTimer, (void*)VXEventDispatcherWin32_registerTimer);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterTimer, (void*)VXEventDispatcherWin32_unregisterTimer);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterTimers, (void*)VXEventDispatcherWin32_unregisterTimers);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_TimersForObject, (void*)VXEventDispatcherWin32_timersForObject);
+    //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterTimer, (void*)VXEventDispatcherWin32_unregisterTimer);
+    //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterTimers, (void*)VXEventDispatcherWin32_unregisterTimers);
+    //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_TimersForObject, (void*)VXEventDispatcherWin32_timersForObject);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RemainingTime, (void*)VXEventDispatcherWin32_remainingTime);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_WakeUp, (void*)VXEventDispatcherWin32_wakeUp);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_Interrupt, (void*)VXEventDispatcherWin32_interrupt);

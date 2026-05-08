@@ -48,6 +48,12 @@ typedef struct XHrTimerGroup
 XVtable* XHrTimerGroup_class_init(void);
 XHrTimerGroup* XHrTimerGroup_create(uint64_t precision_ns);
 void XHrTimerGroup_init(XHrTimerGroup* group, uint64_t precision_ns);
+/**
+ * @brief 获取最近一个定时器的绝对到期时间（纳秒）。
+ * @param group 定时器组实例。
+ * @return 如果存在定时器，返回其绝对到期时间（纳秒）；如果定时器组为空，返回 UINT64_MAX。
+ */
+uint64_t XHrTimerGroup_getNextExpireTime(XHrTimerGroup* group);
 // 虚函数调用宏 (保持不变)
 #define XHrTimerGroup_setHighResTimeFunc    XTimerGroupBase_setHighResTimeFunc
 #define XHrTimerGroup_addTimerMs_base       XTimerGroupBase_addTimerMs_base

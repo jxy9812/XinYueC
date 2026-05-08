@@ -19,7 +19,7 @@ static void threadFunc( XVarList* list)
 
 	XTimer_setSingleShot(timer, true);
 	XTimer_setAutoDelete(timer, true);
-	XTimer_setTimerType(timer, XTimerType_PreciseTimer);
+	//XTimer_setTimerType(timer, XTimerType_PreciseTimer);
 	XObject_connect1(timer, XSignal(XTimer_timeout_signal), thread, XThread_quit, XConnectionType_Auto);
 	XTimer_start_base(timer);
 	
