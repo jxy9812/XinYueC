@@ -5,12 +5,13 @@
 #include"XCoreApplication.h"
 #include"XPrintf.h"
 #include"XThread.h"
+#include"XDateTime.h"
 static void Callback1(void* userData)
 {
 	static size_t current = 0;
 
-	XPrintf("定时器1触发:%d ms\n",XTimer_getCurrentTime()-current);
-	current = XTimer_getCurrentTime();
+	XPrintf("定时器1触发:%d ms\n",XDateTime_currentMSecsSinceEpoch()-current);
+	current = XDateTime_currentMSecsSinceEpoch();
 
 	/*XTimerTimeWheel* timer = XTimer_create();
 	XTimer_setUserData(timer, userData);
@@ -23,8 +24,8 @@ static void Callback2(void* userData)
 {
 	static size_t current = 0;
 
-	XPrintf("定时器2触发:%d ms\n", XTimer_getCurrentTime() - current);
-	current = XTimer_getCurrentTime();
+	XPrintf("定时器2触发:%d ms\n", XDateTime_currentMSecsSinceEpoch() - current);
+	current = XDateTime_currentMSecsSinceEpoch();
 	//XTimer_deleteLater(userData);
 }
 

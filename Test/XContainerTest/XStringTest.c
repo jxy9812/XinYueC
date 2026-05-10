@@ -133,7 +133,9 @@ void XStringTest()
 				XStringList_delete_base(v);
 			}
 		}
-		
+		/*XString_append_utf8(str,"1223dasdas31d32as1d23sa1d32sa123d1sa23d132sad");
+		XPrintf_string(str);
+		printf("\n");*/
 		XString_delete_base(str);
 	}
 	XCoreApplication_quit();

@@ -34,7 +34,7 @@ typedef struct XScheduleEntity {
     XSchedulePolicy policy;       // 调度策略：实体绑定的调度算法（FIFO/RR/CFS）
     uint64_t vruntime;            // 虚拟运行时间（CFS策略专用）：用于衡量任务"应该"运行的时间，决定调度优先级
     uint64_t runtime;             // 实际运行时间：任务累计占用CPU的实际时间
-    uint64_t slice;               // 时间片大小（RR策略专用）：每次分配的CPU时间上限（单位由XTimer_getCurrentTime决定）
+    uint64_t slice;               // 时间片大小（RR策略专用）：每次分配的CPU时间上限
     void (*run)(void*);           // 实体执行函数
     void* data;                   // 执行函数参数
 } XScheduleEntity;
@@ -56,7 +56,7 @@ XCLASS_DEFINE_END(XDispatcher)
 
 /**
  * @brief 调度器基类
- * 管理调度实体，时间相关字段单位均为毫秒（依赖XTimer_getCurrentTime()）
+ * 管理调度实体，时间相关字段单位均为毫秒
  */
 typedef struct XDispatcher {
     XClass m_class;                  // 父类（继承XClass）

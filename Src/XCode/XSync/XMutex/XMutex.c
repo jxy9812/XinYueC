@@ -1,6 +1,6 @@
 #include "XMutex.h"
 #include "XThread.h"
-#include "XTimer.h" // 引入XTimer.h以使用XTimer_getCurrentTime
+#include "XDateTime.h" 
 #include <string.h>
 typedef struct XMutex
 {
@@ -187,12 +187,12 @@ bool XMutex_tryLockTimeout(XMutex* mutex, uint32_t timeout_ms)
     if (!mutex) return false;
     if (timeout_ms == 0) return XMutex_tryLock(mutex);
 
-    size_t start_time = XTimer_getCurrentTime();
+    size_t start_time = XDateTime_currentMSecsSinceEpoch();
     while (true)
     {
         if (XMutex_tryLock(mutex))
             return true;
-        size_t current_time = XTimer_getCurrentTime();
+        size_t current_time = XDateTime_currentMSecsSinceEpoch();
         // 处理时间回绕的情况
         if (current_time - start_time >= timeout_ms) 
         {

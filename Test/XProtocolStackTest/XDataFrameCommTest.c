@@ -7,6 +7,7 @@
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
+#include"XDateTime.h"
 void XDataFrameCommTest()
 {
 	XPrintf("开始创建串口\n");
@@ -34,13 +35,13 @@ void XDataFrameCommTest()
 		XCoreApplication_quit();
 		return;
 	}
-	size_t speed=1,current = XTimer_getCurrentTime();
+	size_t speed=1,current = XDateTime_currentMSecsSinceEpoch();
 	while (true)
 	{
-		if (XTimer_getCurrentTime() > current + 1000)
+		if (XDateTime_currentMSecsSinceEpoch() > current + 1000)
 		{
 			//XDataFrameComm_sendTextFmt(comm, false,  "ain.cuttingMotorSp.val=%d", speed++);
-			current = XTimer_getCurrentTime();
+			current = XDateTime_currentMSecsSinceEpoch();
 		}
 		XDataFrameComm_poll_base(comm);
 	}

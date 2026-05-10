@@ -1905,11 +1905,14 @@ bool XString_reserve(XString* str, size_t capacity)
     }
     else
     {
-        new_data = (XChar*)XCalloc_System(XString_data(str), (new_capacity + 1) * sizeof(XChar));
+        //XPrintf_string(str);
+        //printf("\n");
+        new_data = (XChar*)XRealloc_System(XString_data(str), (new_capacity + 1) * sizeof(XChar));
     }
     
     if (new_data) 
     {
+        
         XContainerDataPtr(str)=new_data;
         XContainerCapacity(str)=new_capacity;
         // 设置结束符（当前有效长度位置）

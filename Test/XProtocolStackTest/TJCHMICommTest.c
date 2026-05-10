@@ -46,7 +46,6 @@ void TJCHMICommTest()
 		XCoreApplication_quit();
 		return;
 	}
-	//size_t speed = 1, current = XTimer_getCurrentTime();
 }
 
 void XMenu_TJCHMICommTest(XMenu* root)

@@ -2,6 +2,7 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XTimer.h"
+#include "XDateTime.h"
 #include "XCoreApplication.h"
 #include "XLockFreeQueue.h"
 #include "XThread.h"
@@ -677,8 +678,8 @@ size_t XESP8266Wifi_read(XESP8266Wifi* device, int connId, void* data, size_t si
     if (msecs <= 0)
         return size - remaining_size;//立即结束，返回当前获取的数据大小
     //延迟等待
-    size_t current= XTimer_getCurrentTime();
-    while (XTimer_getCurrentTime()< current+ msecs)
+    size_t current= XDateTime_currentMSecsSinceEpoch();
+    while (XDateTime_currentMSecsSinceEpoch()< current+ msecs)
     {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         if (remaining_size && XQueueBase_receive_base(queue, ((char*)data) + (size - remaining_size)))

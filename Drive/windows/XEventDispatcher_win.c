@@ -23,9 +23,11 @@
 #include "XThreadData.h"
 #include "XTimeWheelGroup.h"
 #include "XHrTimerGroup.h"
+#include "XDateTime.h"
 #pragma comment(lib, "winmm.lib")
+static HANDLE global_ioCompletionPort=NULL;
 uint64_t get_current_nanoseconds_since_epoch();
-//static  HANDLE ioCompletionPort=NULL;    // 全局 IOCP 句柄;
+//static  HANDLE global_ioCompletionPort=NULL;    // 全局 IOCP 句柄;
 /**
  * @brief 定时器信息结构体 (Windows 私有)
  */
@@ -50,11 +52,11 @@ typedef struct {
 typedef struct
 {
     XAbstractEventDispatcherPrivate m_dp;
-    HANDLE ioCompletionPort;
-    XHashMap* timers;           ///< 定时器映射: timerId  -> XEventDispatcherWin32_TimerInfo*
-    XHashMap* sockets;          ///< 套接字映射: socket.value -> XEventDispatcherWin32_SocketInfo*
-    bool timePeriodSet;          ///< 是否已调用 timeBeginPeriod(1)
-    int highPrecisionTimerCount; ///< 当前活跃的高精度定时器数量
+   
+    //XHashMap* timers;           ///< 定时器映射: timerId  -> XEventDispatcherWin32_TimerInfo*
+    //XHashMap* sockets;          ///< 套接字映射: socket.value -> XEventDispatcherWin32_SocketInfo*
+    //bool timePeriodSet;          ///< 是否已调用 timeBeginPeriod(1)
+    //int highPrecisionTimerCount; ///< 当前活跃的高精度定时器数量
 } MainThreadDataPrivate;
 
 typedef struct XEventDispatcherWin32
@@ -148,35 +150,35 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
     MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
     XEventSockAct* event = XEventSockAct_create(ioCtx->socket, XSocketAct_Invalid);
     if(!event)return;
-    XMutex_lock(GetXMutex(dispatcher));
+    //XMutex_lock(GetXMutex(dispatcher));
     if (ioCtx->eventMask & FD_READ)
         event->actType |= XSocketAct_Read;
     if (ioCtx->eventMask & FD_WRITE)
         event->actType |= XSocketAct_Write;
     XCoreApplication_postEvent(completionKey, event, XEVENT_PRIORITY_NORMAL);
     //套接字监听器
-    XVector* notifiers = XMapBase_value_base(d->sockets, &socket);
-    if (notifiers)
-    {
-        for_each_iterator(notifiers,XVector,it)
-        {
-            XSocketNotifier** lp = XVector_iterator_data(&it);
-            if (lp)
-            {
-                XSocketNotifier* notifier = *lp;
-                if(!notifier)continue;
-                if (!XSocketNotifier_isEnabled(notifier))
-                    continue;//当前监听器未启用
-                XSocketNotifierType t = XSocketNotifier_type(notifier);
-                if ((t & XSocketNotifier_Read && ioCtx->eventMask & FD_READ) || (t & XSocketNotifier_Write && ioCtx->eventMask & FD_WRITE))
-                {//类型符合投递事件
-                    XEventSockAct* e = XEventSockAct_create(ioCtx->socket, event->actType);
-                    XCoreApplication_postEvent(notifier, e, XEVENT_PRIORITY_NORMAL);
-                }
-            }
-        }
-    }
-    XMutex_unlock(GetXMutex(dispatcher));
+    //XVector* notifiers = XMapBase_value_base(d->sockets, &socket);
+    //if (notifiers)
+    //{
+    //    for_each_iterator(notifiers,XVector,it)
+    //    {
+    //        XSocketNotifier** lp = XVector_iterator_data(&it);
+    //        if (lp)
+    //        {
+    //            XSocketNotifier* notifier = *lp;
+    //            if(!notifier)continue;
+    //            if (!XSocketNotifier_isEnabled(notifier))
+    //                continue;//当前监听器未启用
+    //            XSocketNotifierType t = XSocketNotifier_type(notifier);
+    //            if ((t & XSocketNotifier_Read && ioCtx->eventMask & FD_READ) || (t & XSocketNotifier_Write && ioCtx->eventMask & FD_WRITE))
+    //            {//类型符合投递事件
+    //                XEventSockAct* e = XEventSockAct_create(ioCtx->socket, event->actType);
+    //                XCoreApplication_postEvent(notifier, e, XEVENT_PRIORITY_NORMAL);
+    //            }
+    //        }
+    //    }
+    //}
+    //XMutex_unlock(GetXMutex(dispatcher));
 }
 
 /**
@@ -184,7 +186,7 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
  */
 static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* dispatcher, UINT_PTR timerId)
 {
-    MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
+   /* MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
     XMutex_lock(GetXMutex(dispatcher));
 
     size_t timer_key = (size_t)timerId;
@@ -203,14 +205,14 @@ static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* disp
         }
     }
 
-    XMutex_unlock(GetXMutex(dispatcher));
+    XMutex_unlock(GetXMutex(dispatcher));*/
 }
 bool IOCP_bind(XSocketDescriptor socket, XObject* obj)
 {
-    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
+   /* XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
-    MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
-    return CreateIoCompletionPort((HANDLE)XSocketDescriptor_toIntptr(socket), d->ioCompletionPort, obj, 0);
+    MainThreadDataPrivate* d = PlatformPrivate(dispatcher);*/
+    return CreateIoCompletionPort((HANDLE)XSocketDescriptor_toIntptr(socket), global_ioCompletionPort, obj, 0);
 }
 static void IOCP_handle(XAbstractEventDispatcher* dispatcher)
 {
@@ -221,7 +223,7 @@ static void IOCP_handle(XAbstractEventDispatcher* dispatcher)
     LPOVERLAPPED overlapped = NULL;
 
     BOOL success = GetQueuedCompletionStatus(
-        d->ioCompletionPort,
+        global_ioCompletionPort,
         &bytesTransferred,
         &completionKey,
         &overlapped,
@@ -333,11 +335,16 @@ static bool VXEventDispatcherWin32_processEvents(XAbstractEventDispatcher* dispa
             self->wakeUpSent = false;
            
             //DWORD waitRet = MsgWaitForMultipleObjectsEx(0, NULL, XAbstractEventDispatcher_isMainThread(dispatcher)? 1:INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-            size_t time = INFINITE;
-            if (dispatcher->m_hrtimerGroup)
+            int64_t time = INFINITE;
+            if (dispatcher->d_ptr->m_hrtimerGroup&& XHrTimerGroup_count(dispatcher->d_ptr->m_hrtimerGroup))
             {
-                time=(XHrTimerGroup_getNextExpireTime(dispatcher->m_hrtimerGroup)- get_current_nanoseconds_since_epoch())/ 1000000;
+                time=(XHrTimerGroup_getNextExpireTime(dispatcher->d_ptr->m_hrtimerGroup)- XDateTime_currentNSecsSinceEpoch())/ 1000000;
                // time = 100 / 1000000;
+                if (time > 99999999999)
+                {
+                    //XPrintf("时间异常\n");
+                    time = 0;
+                }
             }
             if(time)
             {
@@ -366,35 +373,35 @@ static void VXEventDispatcherWin32_registerSocketNotifier(XAbstractEventDispatch
     XSocketDescriptor socket = XSocketNotifier_socket(notifier);
     if (!XSocketDescriptor_isValid(socket)) return;
 
-    XMutex_lock(GetXMutex(dispatcher));
-    if (!XMapBase_contains(d->sockets, &socket))
+    //XMutex_lock(GetXMutex(dispatcher));
+    if (!XMapBase_contains(d->m_dp.sockets, &socket))
     {
         XVector v = { 0 };
         XVector_init(&v,sizeof(XSocketNotifier*));
         XContainerSetCompare(&v,uintptr_t_compare);
-        XMapBase_insert_base(d->sockets, &socket,&v);
+        XMapBase_insert_base(d->m_dp.sockets, &socket,&v);
     }
-    XVector* notifiers = XMapBase_value_base(d->sockets, &socket);
+    XVector* notifiers = XMapBase_value_base(d->m_dp.sockets, &socket);
     if (notifiers&&XVector_indexOf(notifiers,&notifier,0)==-1)
     {
-       /* if (XVector_isEmpty_base(notifiers))
+        if (XVector_isEmpty_base(notifiers))
         {
-           if(CreateIoCompletionPort((HANDLE)XSocketDescriptor_toIntptr(socket), d->ioCompletionPort, notifiers, 0))
+           if(CreateIoCompletionPort((HANDLE)XSocketDescriptor_toIntptr(socket), global_ioCompletionPort, notifiers, 0))
                XVector_append_base(notifiers, &notifier);
         }
-        else*/
+        else
         {
             XVector_append_base(notifiers, &notifier);
         }
         
     }
 
-  /*  XEventDispatcherWin32_SocketInfo* sockInfo = XEventDispatcherWin32_findOrCreateSocketInfo(self, socket);
+    /*XEventDispatcherWin32_SocketInfo* sockInfo = XEventDispatcherWin32_findOrCreateSocketInfo(self, socket);
     if (sockInfo) {
         XVector_push_back_base(sockInfo->notifiers, &notifier);
         XEventDispatcherWin32_updateSocketEventMask(sockInfo);
     }*/
-    XMutex_unlock(GetXMutex(dispatcher));
+    //XMutex_unlock(GetXMutex(dispatcher));
 }
 
 static void VXEventDispatcherWin32_unregisterSocketNotifier(XAbstractEventDispatcher* dispatcher, XSocketNotifier* notifier)
@@ -405,13 +412,13 @@ static void VXEventDispatcherWin32_unregisterSocketNotifier(XAbstractEventDispat
     XSocketDescriptor socket = XSocketNotifier_socket(notifier);
     if (!XSocketDescriptor_isValid(socket)) return;
 
-    XMutex_lock(GetXMutex(dispatcher));
-    XVector* notifiers = XMapBase_value_base(d->sockets, &socket);
+    //XMutex_lock(GetXMutex(dispatcher));
+    XVector* notifiers = XMapBase_value_base(d->m_dp.sockets, &socket);
     if (notifiers)
     {
         int index = XVector_indexOf(notifiers, &notifier, 0);
         if (index != -1)
-            XVector_remove_base(d->sockets,index,1);
+            XVector_remove_base(d->m_dp.sockets,index,1);
     }
     //intptr_t socket_key = XSocketDescriptor_toIntptr(socket);
     //XHashMap_iterator it;
@@ -436,7 +443,7 @@ static void VXEventDispatcherWin32_unregisterSocketNotifier(XAbstractEventDispat
     //        XFree_System(sockInfo);
     //    }
     //}
-    XMutex_unlock(GetXMutex(dispatcher));
+    //XMutex_unlock(GetXMutex(dispatcher));
 }
 
 /**
@@ -446,30 +453,30 @@ static void VXEventDispatcherWin32_unregisterSocketNotifier(XAbstractEventDispat
  * 因此，它通过 PostMessage 将事件转发到 dispatcher 的内部窗口消息队列，
  * 由主事件循环在正确的线程上下文中处理。
  */
-static void CALLBACK XEventDispatcherWin32_HighResTimerCallback(
-    UINT uID,          // mmTimerId
-    UINT uMsg,
-    DWORD_PTR dwUser,  // = (DWORD_PTR)dispatcher
-    DWORD_PTR dw1,
-    DWORD_PTR dw2
-) {
-    (void)uID; (void)uMsg; (void)dw1; (void)dw2;
-    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
-    XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
-    MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
-    HANDLE ioCompletionPort = d->ioCompletionPort;
-    XEventContext_Timer* ctx = (XEventContext_Timer*)dwUser;
-
-    if(ctx->id)
-    {
-        PostQueuedCompletionStatus(
-            d->ioCompletionPort,           // IOCP 句柄
-            0,                 // dwNumberOfBytesTransferred: 0 表示定时事件
-            (ULONG_PTR)dwUser,// dwCompletionKey: 可传递用户数据（如 timer ID）
-            dwUser            // lpOverlapped: 通常为 notifierullptr
-        );
-    }
-}
+//static void CALLBACK XEventDispatcherWin32_HighResTimerCallback(
+//    UINT uID,          // mmTimerId
+//    UINT uMsg,
+//    DWORD_PTR dwUser,  // = (DWORD_PTR)dispatcher
+//    DWORD_PTR dw1,
+//    DWORD_PTR dw2
+//) {
+//    (void)uID; (void)uMsg; (void)dw1; (void)dw2;
+//    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
+//    XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
+//    MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
+//  
+//    XEventContext_Timer* ctx = (XEventContext_Timer*)dwUser;
+//
+//    if(ctx->id)
+//    {
+//        PostQueuedCompletionStatus(
+//            d->global_ioCompletionPort,           // IOCP 句柄
+//            0,                 // dwNumberOfBytesTransferred: 0 表示定时事件
+//            (ULONG_PTR)dwUser,// dwCompletionKey: 可传递用户数据（如 timer ID）
+//            dwUser            // lpOverlapped: 通常为 notifierullptr
+//        );
+//    }
+//}
 static void TimerCallback(void* userData, XTimerData* timer)
 {
     XObject* object = (XObject*)userData;
@@ -482,150 +489,150 @@ static void TimerCallback(void* userData, XTimerData* timer)
         XCoreApplication_postEvent(object, timerEvent, XEVENT_PRIORITY_NORMAL);
     }
 }
-// 将 FILETIME 转换为 Unix 纪元（1970-01-01）以来的纳秒数
-uint64_t get_current_nanoseconds_since_epoch() {
-    FILETIME ft;
-    GetSystemTimePreciseAsFileTime(&ft); // 高精度 UTC 时间
-
-    // 合并高低32位为一个64位整数（单位：100纳秒）
-    ULARGE_INTEGER ull;
-    ull.LowPart = ft.dwLowDateTime;
-    ull.HighPart = ft.dwHighDateTime;
-
-    // 从 1601-01-01 到 1970-01-01 的 100-纳秒数（固定偏移）
-    const uint64_t UNIX_EPOCH_OFFSET_100NS = 116444736000000000ULL;
-
-    // 转为自 Unix 纪元以来的 100 纳秒数
-    uint64_t since_unix_100ns = ull.QuadPart - UNIX_EPOCH_OFFSET_100NS;
-
-    // 转为纳秒
-    return since_unix_100ns * 100; // 100ns * 100 = 1ns
-}
+//// 将 FILETIME 转换为 Unix 纪元（1970-01-01）以来的纳秒数
+//uint64_t get_current_nanoseconds_since_epoch() {
+//    FILETIME ft;
+//    GetSystemTimePreciseAsFileTime(&ft); // 高精度 UTC 时间
+//
+//    // 合并高低32位为一个64位整数（单位：100纳秒）
+//    ULARGE_INTEGER ull;
+//    ull.LowPart = ft.dwLowDateTime;
+//    ull.HighPart = ft.dwHighDateTime;
+//
+//    // 从 1601-01-01 到 1970-01-01 的 100-纳秒数（固定偏移）
+//    const uint64_t UNIX_EPOCH_OFFSET_100NS = 116444736000000000ULL;
+//
+//    // 转为自 Unix 纪元以来的 100 纳秒数
+//    uint64_t since_unix_100ns = ull.QuadPart - UNIX_EPOCH_OFFSET_100NS;
+//
+//    // 转为纳秒
+//    return since_unix_100ns * 100; // 100ns * 100 = 1ns
+//}
 static void VXEventDispatcherWin32_registerTimer(XAbstractEventDispatcher* ed, XTimerId timerId, XDuration intervalNs, XTimerType timerType, XObject* object)
 {
     if (!timerId || !intervalNs || !object)return;
    /* uint64_t cu = get_current_nanoseconds_since_epoch();
     Sleep(1);
     uint64_t c = get_current_nanoseconds_since_epoch() - cu;*/
-    if (ed->m_hrtimerGroup == NULL)
-    {//初始化
-        ed->m_hrtimerGroup = XHrTimerGroup_create(1);
-        XHrTimerGroup_setHighResTimeFunc(ed->m_hrtimerGroup, get_current_nanoseconds_since_epoch);
-    }
-    XClass_Parent(XAbstractEventDispatcher, EXAbstractEventDispatcher_RegisterTimer, void(*)(XAbstractEventDispatcher*, XTimerId, XDuration, XTimerType, XObject*))(ed, timerId, intervalNs, timerType, object);
+    //if (ed->d_ptr->m_hrtimerGroup == NULL)
+    //{//初始化
+    //    ed->d_ptr->m_hrtimerGroup = XHrTimerGroup_create(1);
+    //    XHrTimerGroup_setHighResTimeFunc(ed->d_ptr->m_hrtimerGroup, get_current_nanoseconds_since_epoch);
+    //}
+   XClass_Parent(XAbstractEventDispatcher, EXAbstractEventDispatcher_RegisterTimer, void(*)(XAbstractEventDispatcher*, XTimerId, XDuration, XTimerType, XObject*))(ed, timerId, intervalNs, timerType, object);
     return;
-    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
-    XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
-    MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
+//    XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
+//    XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
+//    MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
+//
+//    // 将纳秒转换为毫秒
+//    size_t intervalMs = (intervalNs + 999999) / 1000000;
+//    if (intervalMs <= 0) intervalMs = 1;
+//    UINT uInterval = (UINT)(intervalMs > UINT_MAX ? UINT_MAX : intervalMs);
+//
+//    //XMutex_lock(GetXMutex(dispatcher));
+//
+//    XEventDispatcherWin32_TimerInfo timerInfo = { 0 };
+//    timerInfo.timerId = timerId;
+//    timerInfo.interval = intervalNs;
+//    timerInfo.timerType = timerType;
+//    timerInfo.object = object;
+//    timerInfo.isHighPrecision = false; // 默认为普通定时器
+//    timerInfo.isTimeWheel = false;
+//    timerInfo.highResContext = NULL;
+//    // --- 核心逻辑：根据 XTimerType 决定使用哪种定时器 ---
+//    if (timerType == XTimerType_PreciseTimer) {
+//        // --- 使用高精度多媒体定时器 ---
+//        timerInfo.isHighPrecision = true;
+//        XTimeWheelGroup* group = XTimeWheelGroup_global();
+//        if (group&& XTimeWheelGroup_max_time(group)> intervalMs)
+//        {//范围达标使用时间轮定时器
+//            //XEventFunc_create();
+//            XTimerData data = {0};
+//            //XTimerData_setSingleShot(&data, true);
+//            XTimerData_setAutoDelete(&data, true);
+//            XTimerData_setTimerId(&data, timerId);
+//            XTimerData_setInterval(&data, intervalMs);
+//            XTimerData_setTimerCallback(&data, TimerCallback);
+//            XTimerData_setUserData(&data, object);
+//            XHandle handle = XTimeWheelGroup_addTimerMs_base(group, data);
+//            if (handle)
+//            {
+//                timerInfo.isTimeWheel = true;
+//                timerInfo.m_wheel = handle;
+//                goto save;
+//            }
+//
+//        }
+//        // 全局设置系统时钟精度（仅在第一个高精度定时器注册时调用）
+//        if (!d->timePeriodSet) {
+//            timeBeginPeriod(1); // 请求 1ms 系统时钟精度
+//            d->timePeriodSet = true;
+//        }
+//        // --- 关键修改：分配回调上下文 ---
+//        XEventContext_Timer* ctx = (XEventContext_Timer*)XMalloc_System(sizeof(XEventContext_Timer));
+//        if (!ctx) 
+//        {
+//            //XMutex_unlock(GetXMutex(dispatcher));
+//            return; // 内存不足
+//        }
+//        ctx->type = XEventContextType_Type_Timer;
+//        ctx->id = timerId;
+//        // 将上下文指针传给 dwUser
+//        timerInfo.mmTimerId = timeSetEvent(
+//            uInterval,
+//            0, // 无延迟
+//            XEventDispatcherWin32_HighResTimerCallback,
+//            (DWORD_PTR)ctx,
+//            TIME_CALLBACK_FUNCTION | TIME_PERIODIC
+//        );
+//
+//        if (timerInfo.mmTimerId == 0)
+//        {
+//            // 失败：释放 ctx，回退到普通定时器
+//            XFree_System(ctx);
+//            // timeSetEvent 失败，回退到普通定时器
+//            timerInfo.isHighPrecision = false;
+//            timerInfo.winTimerId = SetTimer(self->internalHwnd, (UINT_PTR)timerId, uInterval, NULL);
+//            // 如果回退也失败，winTimerId 将为0，后续会被清理
+//        }
+//        else 
+//        {
+//            timerInfo.highResContext = ctx;
+//            // 成功，增加计数
+//            d->highPrecisionTimerCount++;
+//        }
+//    }
+//    else if (timerType == XTimerType_VeryCoarseTimer) 
+//    {
+//        // --- 使用秒级精度的普通窗口定时器 ---
+//        timerInfo.isHighPrecision = false;
+//
+//        // 将纳秒转换为秒，并向上取整
+//        size_t intervalSeconds = (intervalNs + 999999999ULL) / 1000000000ULL;
+//        if (intervalSeconds <= 0) intervalSeconds = 1;
+//
+//        // 转换回毫秒用于 SetTimer
+//        UINT uVeryCoarseInterval = (UINT)(intervalSeconds * 1000);
+//        if (uVeryCoarseInterval > UINT_MAX) uVeryCoarseInterval = UINT_MAX;
+//
+//        timerInfo.winTimerId = SetTimer(self->internalHwnd, (UINT_PTR)timerId, uVeryCoarseInterval, NULL);
+//    }
+//    else {
+//        // --- XTimerType_CoarseTimer: 使用普通的窗口定时器 ---
+//        timerInfo.isHighPrecision = false;
+//        timerInfo.winTimerId = SetTimer(self->internalHwnd, (UINT_PTR)timerId, uInterval, NULL);
+//    }
+//save:
+//    // 保存到 timers 表（无论哪种方式，只要有一个ID有效）
+//    bool hasValidId = (timerInfo.isHighPrecision && timerInfo.mmTimerId != 0) ||
+//        (!timerInfo.isHighPrecision && timerInfo.winTimerId != 0);
+//
+//    if (hasValidId) {
+//        XHashMap_insert_base(d->timers, &timerId, &timerInfo);
+//    }
 
-    // 将纳秒转换为毫秒
-    size_t intervalMs = (intervalNs + 999999) / 1000000;
-    if (intervalMs <= 0) intervalMs = 1;
-    UINT uInterval = (UINT)(intervalMs > UINT_MAX ? UINT_MAX : intervalMs);
-
-    XMutex_lock(GetXMutex(dispatcher));
-
-    XEventDispatcherWin32_TimerInfo timerInfo = { 0 };
-    timerInfo.timerId = timerId;
-    timerInfo.interval = intervalNs;
-    timerInfo.timerType = timerType;
-    timerInfo.object = object;
-    timerInfo.isHighPrecision = false; // 默认为普通定时器
-    timerInfo.isTimeWheel = false;
-    timerInfo.highResContext = NULL;
-    // --- 核心逻辑：根据 XTimerType 决定使用哪种定时器 ---
-    if (timerType == XTimerType_PreciseTimer) {
-        // --- 使用高精度多媒体定时器 ---
-        timerInfo.isHighPrecision = true;
-        XTimeWheelGroup* group = XTimeWheelGroup_global();
-        if (group&& XTimeWheelGroup_max_time(group)> intervalMs)
-        {//范围达标使用时间轮定时器
-            //XEventFunc_create();
-            XTimerData data = {0};
-            //XTimerData_setSingleShot(&data, true);
-            XTimerData_setAutoDelete(&data, true);
-            XTimerData_setTimerId(&data, timerId);
-            XTimerData_setInterval(&data, intervalMs);
-            XTimerData_setTimerCallback(&data, TimerCallback);
-            XTimerData_setUserData(&data, object);
-            XHandle handle = XTimeWheelGroup_addTimerMs_base(group, data);
-            if (handle)
-            {
-                timerInfo.isTimeWheel = true;
-                timerInfo.m_wheel = handle;
-                goto save;
-            }
-
-        }
-        // 全局设置系统时钟精度（仅在第一个高精度定时器注册时调用）
-        if (!d->timePeriodSet) {
-            timeBeginPeriod(1); // 请求 1ms 系统时钟精度
-            d->timePeriodSet = true;
-        }
-        // --- 关键修改：分配回调上下文 ---
-        XEventContext_Timer* ctx = (XEventContext_Timer*)XMalloc_System(sizeof(XEventContext_Timer));
-        if (!ctx) 
-        {
-            XMutex_unlock(GetXMutex(dispatcher));
-            return; // 内存不足
-        }
-        ctx->type = XEventContextType_Type_Timer;
-        ctx->id = timerId;
-        // 将上下文指针传给 dwUser
-        timerInfo.mmTimerId = timeSetEvent(
-            uInterval,
-            0, // 无延迟
-            XEventDispatcherWin32_HighResTimerCallback,
-            (DWORD_PTR)ctx,
-            TIME_CALLBACK_FUNCTION | TIME_PERIODIC
-        );
-
-        if (timerInfo.mmTimerId == 0)
-        {
-            // 失败：释放 ctx，回退到普通定时器
-            XFree_System(ctx);
-            // timeSetEvent 失败，回退到普通定时器
-            timerInfo.isHighPrecision = false;
-            timerInfo.winTimerId = SetTimer(self->internalHwnd, (UINT_PTR)timerId, uInterval, NULL);
-            // 如果回退也失败，winTimerId 将为0，后续会被清理
-        }
-        else 
-        {
-            timerInfo.highResContext = ctx;
-            // 成功，增加计数
-            d->highPrecisionTimerCount++;
-        }
-    }
-    else if (timerType == XTimerType_VeryCoarseTimer) 
-    {
-        // --- 使用秒级精度的普通窗口定时器 ---
-        timerInfo.isHighPrecision = false;
-
-        // 将纳秒转换为秒，并向上取整
-        size_t intervalSeconds = (intervalNs + 999999999ULL) / 1000000000ULL;
-        if (intervalSeconds <= 0) intervalSeconds = 1;
-
-        // 转换回毫秒用于 SetTimer
-        UINT uVeryCoarseInterval = (UINT)(intervalSeconds * 1000);
-        if (uVeryCoarseInterval > UINT_MAX) uVeryCoarseInterval = UINT_MAX;
-
-        timerInfo.winTimerId = SetTimer(self->internalHwnd, (UINT_PTR)timerId, uVeryCoarseInterval, NULL);
-    }
-    else {
-        // --- XTimerType_CoarseTimer: 使用普通的窗口定时器 ---
-        timerInfo.isHighPrecision = false;
-        timerInfo.winTimerId = SetTimer(self->internalHwnd, (UINT_PTR)timerId, uInterval, NULL);
-    }
-save:
-    // 保存到 timers 表（无论哪种方式，只要有一个ID有效）
-    bool hasValidId = (timerInfo.isHighPrecision && timerInfo.mmTimerId != 0) ||
-        (!timerInfo.isHighPrecision && timerInfo.winTimerId != 0);
-
-    if (hasValidId) {
-        XHashMap_insert_base(d->timers, &timerId, &timerInfo);
-    }
-
-    XMutex_unlock(GetXMutex(dispatcher));
+    //XMutex_unlock(GetXMutex(dispatcher));
 }
 // 清理高精度定时的普通定时器回调
 static VOID CALLBACK CleanupTimerCallback(
@@ -677,45 +684,45 @@ static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed,
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
 
-    XMutex_lock(GetXMutex(dispatcher));
-    XEventDispatcherWin32_TimerInfo* timerInfo = XHashMap_value_base(d->timers,&timerId);
-    if (!timerInfo)
-    {
-        XMutex_unlock(GetXMutex(dispatcher));
-        return false;
-    }
-    if (timerInfo->isHighPrecision) 
-    {
-        if (timerInfo->isTimeWheel)
-        {
-            XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), timerInfo->m_wheel);
-        }
-        else if (timerInfo->mmTimerId != 0) 
-        {
-            XEventContext_Timer* ctx = (XEventContext_Timer*)timerInfo->highResContext;
-            ctx->id = 0;
-            // 1. 立即杀死高精度多媒体定时器
-            timeKillEvent((MMRESULT)timerInfo->mmTimerId);
-            timerInfo->mmTimerId = 0;
-            d->highPrecisionTimerCount--;
-            clearHighPrecisionTimer(ctx);
-            // 如果这是最后一个高精度定时器，恢复系统时钟精度
-            if (d->highPrecisionTimerCount == 0 && d->timePeriodSet) {
-                timeEndPeriod(1);
-                d->timePeriodSet = false;
-            }
-            // 注意：此时我们不释放 ctx，而是将其“托管”给线程池定时器
-            timerInfo->highResContext = NULL;
-        }
-    }
-    else 
-    {
-        KillTimer(self->internalHwnd, (UINT_PTR)timerInfo->winTimerId);
-    }
-    //将id放回列表
-    XVector_push_back_base(d->m_dp.m_timerIds,&timerId);
-    XHashMap_remove_base(d->timers, &timerId);
-    XMutex_unlock(GetXMutex(dispatcher));
+    //XMutex_lock(GetXMutex(dispatcher));
+    //XEventDispatcherWin32_TimerInfo* timerInfo = XHashMap_value_base(d->timers,&timerId);
+    //if (!timerInfo)
+    //{
+    //    //XMutex_unlock(GetXMutex(dispatcher));
+    //    return false;
+    //}
+    //if (timerInfo->isHighPrecision) 
+    //{
+    //    if (timerInfo->isTimeWheel)
+    //    {
+    //        XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), timerInfo->m_wheel);
+    //    }
+    //    else if (timerInfo->mmTimerId != 0) 
+    //    {
+    //        //XEventContext_Timer* ctx = (XEventContext_Timer*)timerInfo->highResContext;
+    //        //ctx->id = 0;
+    //        //// 1. 立即杀死高精度多媒体定时器
+    //        //timeKillEvent((MMRESULT)timerInfo->mmTimerId);
+    //        //timerInfo->mmTimerId = 0;
+    //        //d->highPrecisionTimerCount--;
+    //        //clearHighPrecisionTimer(ctx);
+    //        //// 如果这是最后一个高精度定时器，恢复系统时钟精度
+    //        //if (d->highPrecisionTimerCount == 0 && d->timePeriodSet) {
+    //        //    timeEndPeriod(1);
+    //        //    d->timePeriodSet = false;
+    //        //}
+    //        //// 注意：此时我们不释放 ctx，而是将其“托管”给线程池定时器
+    //        //timerInfo->highResContext = NULL;
+    //    }
+    //}
+    //else 
+    //{
+    //    KillTimer(self->internalHwnd, (UINT_PTR)timerInfo->winTimerId);
+    //}
+    ////将id放回列表
+    ////XVector_push_back_base(d->m_dp.m_timerIds,&timerId);
+    //XHashMap_remove_base(d->timers, &timerId);
+    //XMutex_unlock(GetXMutex(dispatcher));
     return true;
 }
 
@@ -726,49 +733,50 @@ static bool VXEventDispatcherWin32_unregisterTimers(XAbstractEventDispatcher* ed
     MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
 
     bool found = false;
-    XMutex_lock(GetXMutex(dispatcher));
+    //XMutex_lock(GetXMutex(dispatcher));
 
-    XHashMap_iterator it = XHashMap_begin(d->timers);
-    while (!XHashMap_iterator_isEnd(&it)) {
-        XPair* pair = XHashMap_iterator_data(&it);
-        XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
-        if (timerInfo && timerInfo->object == object) 
-        {
-            if (timerInfo->isHighPrecision) 
-            {
-                if (timerInfo->isTimeWheel)
-                {
-                    XTimer_stop_base(timerInfo->m_wheel);
-                }
-                else if (timerInfo->mmTimerId != 0) 
-                {
-                    XEventContext_Timer* ctx = (XEventContext_Timer*)timerInfo->highResContext;
-                    ctx->id = 0;
-                    timeKillEvent((MMRESULT)timerInfo->mmTimerId);
-                    timerInfo->mmTimerId = 0;
-                    d->highPrecisionTimerCount--;
-                    clearHighPrecisionTimer(ctx);
-                }
-            }
-            else {
-                KillTimer(self->internalHwnd, (UINT_PTR)timerInfo->winTimerId);
-            }
-            //将id放回列表
-            XVector_push_back_base(d->m_dp.m_timerIds, &timerInfo->timerId);
-            XHashMap_erase_base(d->timers, &it, &it);
-            found = true;
-        }
-        else {
-            XHashMap_iterator_add(d->timers, &it);
-        }
-    }
-    // 如果这是最后一个高精度定时器，恢复系统时钟精度
-    if (d->highPrecisionTimerCount == 0 && d->timePeriodSet) {
-        timeEndPeriod(1);
-        d->timePeriodSet = false;
-    }
-    XMutex_unlock(GetXMutex(dispatcher));
-    return found;
+    //XHashMap_iterator it = XHashMap_begin(d->timers);
+    //while (!XHashMap_iterator_isEnd(&it)) {
+    //    XPair* pair = XHashMap_iterator_data(&it);
+    //    XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
+    //    if (timerInfo && timerInfo->object == object) 
+    //    {
+    //        if (timerInfo->isHighPrecision) 
+    //        {
+    //            if (timerInfo->isTimeWheel)
+    //            {
+    //                XTimer_stop_base(timerInfo->m_wheel);
+    //            }
+    //            else if (timerInfo->mmTimerId != 0) 
+    //            {
+    //                XEventContext_Timer* ctx = (XEventContext_Timer*)timerInfo->highResContext;
+    //                ctx->id = 0;
+    //                timeKillEvent((MMRESULT)timerInfo->mmTimerId);
+    //                timerInfo->mmTimerId = 0;
+    //                d->highPrecisionTimerCount--;
+    //                clearHighPrecisionTimer(ctx);
+    //            }
+    //        }
+    //        else {
+    //            KillTimer(self->internalHwnd, (UINT_PTR)timerInfo->winTimerId);
+    //        }
+    //        //将id放回列表
+    //        //XVector_push_back_base(d->m_dp.m_timerIds, &timerInfo->timerId);
+    //        XHashMap_erase_base(d->timers, &it, &it);
+    //        found = true;
+    //    }
+    //    else {
+    //        XHashMap_iterator_add(d->timers, &it);
+    //    }
+    //}
+    //// 如果这是最后一个高精度定时器，恢复系统时钟精度
+    //if (d->highPrecisionTimerCount == 0 && d->timePeriodSet) {
+    //    timeEndPeriod(1);
+    //    d->timePeriodSet = false;
+    //}
+    ////XMutex_unlock(GetXMutex(dispatcher));
+    //return found;
+    return true;
 }
 
 static XVector* VXEventDispatcherWin32_timersForObject(const XAbstractEventDispatcher* dispatcher, const XObject* object)
@@ -779,24 +787,24 @@ static XVector* VXEventDispatcherWin32_timersForObject(const XAbstractEventDispa
     XVector* result = XVector_Create(XAbstractEventDispatcher_TimerInfoV2);
     if (!result) return NULL;
 
-    XMutex_lock(GetXMutex(dispatcher));
+    //XMutex_lock(GetXMutex(dispatcher));
 
-    XHashMap_iterator it = XHashMap_begin(d->timers);
-    while (!XHashMap_iterator_isEnd(&it)) {
-        XPair* pair = XHashMap_iterator_data(&it);
-        XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
-        if (timerInfo && timerInfo->object == (XObject*)object) {
-            XAbstractEventDispatcher_TimerInfoV2 info = {
-                .interval = timerInfo->interval,
-                .timerId = timerInfo->timerId,
-                .timerType = timerInfo->timerType
-            };
-            XVector_push_back_base(result, &info);
-        }
-        XHashMap_iterator_add(d->timers, &it);
-    }
+    //XHashMap_iterator it = XHashMap_begin(d->timers);
+    //while (!XHashMap_iterator_isEnd(&it)) {
+    //    XPair* pair = XHashMap_iterator_data(&it);
+    //    XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
+    //    if (timerInfo && timerInfo->object == (XObject*)object) {
+    //        XAbstractEventDispatcher_TimerInfoV2 info = {
+    //            .interval = timerInfo->interval,
+    //            .timerId = timerInfo->timerId,
+    //            .timerType = timerInfo->timerType
+    //        };
+    //        XVector_push_back_base(result, &info);
+    //    }
+    //    XHashMap_iterator_add(d->timers, &it);
+    //}
 
-    XMutex_unlock(GetXMutex(dispatcher));
+    //XMutex_unlock(GetXMutex(dispatcher));
     return result;
 }
 
@@ -852,53 +860,12 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
     //XPrintf("事件调度器清理\n");
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)obj;
     MainThreadDataPrivate* d = PlatformPrivate(obj);
-    if (d)
+    if (XAbstractEventDispatcher_isMainThread(self)&& d)
     {
-        // 清理所有定时器
-        XMutex_lock(d->m_dp.mutex);
-        // --- 修复点 9: 正确遍历并清理 timers HashMap ---
-        XHashMap_iterator it_timers = XHashMap_begin(d->timers);
-        while (!XHashMap_iterator_isEnd(&it_timers)) {
-            XPair* pair = XHashMap_iterator_data(&it_timers);
-            XEventDispatcherWin32_TimerInfo* timerInfo = (XEventDispatcherWin32_TimerInfo*)XPair_second(pair);
-            if (timerInfo) {
-                if (timerInfo->isHighPrecision) {
-                    if (timerInfo->winTimerId != 0) {
-                        timeKillEvent((MMRESULT)timerInfo->mmTimerId);
-                        d->highPrecisionTimerCount--;
-                    }
-                }
-                else {
-                    KillTimer(self->internalHwnd, (UINT_PTR)timerInfo->winTimerId);
-                }
-            }
-            // 注意：不能在这里 erase，因为 deinit 不需要保留容器结构
-            // 我们只是释放数据，容器本身会在 delete_base 中销毁
-            XHashMap_iterator_add(d->timers, &it_timers);
-        }
-        // --- 恢复系统时钟精度 ---
-        if (d->highPrecisionTimerCount > 0 && d->timePeriodSet) {
-            timeEndPeriod(1);
-            d->timePeriodSet = false;
-        }
-        // 清理所有套接字
-        //XHashMap_iterator it_sockets = XHashMap_begin(d->sockets);
-        //while (!XHashMap_iterator_isEnd(&it_sockets)) {
-        //    XPair* pair = XHashMap_iterator_data(&it_sockets);
-        //    XEventDispatcherWin32_SocketInfo* sockInfo = (XEventDispatcherWin32_SocketInfo*)XPair_second(pair);
-        //    if (sockInfo) {
-        //        SOCKET s = (SOCKET)XSocketDescriptor_toIntptr(sockInfo->socket);
-        //        WSAAsyncSelect(s, NULL, 0, 0);
-        //        //XVector_delete_base(sockInfo->notifiers);
-        //        XFree_System(sockInfo);
-        //    }
-        //    XHashMap_iterator_add(d->sockets, &it_sockets);
-        //}
-        XMutex_unlock(d->m_dp.mutex);
         // 清理本地过滤器
         XAbstractEventDispatcherPrivate_deinit(d);
         // 销毁容器
-        if (d->timers)
+       /* if (d->timers)
         {
             XHashMap_delete_base(d->timers);
             d->timers = NULL;
@@ -907,7 +874,12 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
         {
             XHashMap_delete_base(d->sockets);
             d->sockets = NULL;
-        }
+        }*/
+        XFree_System(d);
+    }
+    else if(d)
+    {
+        XAbstractEventDispatcherPrivate_deinit(d);
         XFree_System(d);
     }
    
@@ -938,7 +910,7 @@ XVtable* XEventDispatcherWin32_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_ProcessEvents, (void*)VXEventDispatcherWin32_processEvents);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterSocketNotifier, (void*)VXEventDispatcherWin32_registerSocketNotifier);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterSocketNotifier, (void*)VXEventDispatcherWin32_unregisterSocketNotifier);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterTimer, (void*)VXEventDispatcherWin32_registerTimer);
+    //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterTimer, (void*)VXEventDispatcherWin32_registerTimer);
     //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterTimer, (void*)VXEventDispatcherWin32_unregisterTimer);
     //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterTimers, (void*)VXEventDispatcherWin32_unregisterTimers);
     //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_TimersForObject, (void*)VXEventDispatcherWin32_timersForObject);
@@ -966,6 +938,9 @@ static void timersDataDeinit(XEventDispatcherWin32_TimerInfo* info)
 
 XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
 {
+    if(!global_ioCompletionPort)
+        global_ioCompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+
     XEventDispatcherWin32* self = XNew(XEventDispatcherWin32);
     if (!self) return NULL;
 
@@ -984,26 +959,27 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
         ((XAbstractEventDispatcher*)self)->type = XDISPATCHER_THREAD_TYPE_MAIN;
         XAbstractEventDispatcherPrivate_init(&d->m_dp);
         //d->m_dp.m_timerIds = XVector_Create(XTimerId);
-        d->timers = NULL;
-        d->sockets = NULL;
+        /*d->timers = NULL;
+        d->sockets = NULL;*/
 
-        d->timers = XHashMap_Create(size_t, XEventDispatcherWin32_TimerInfo, size_t_compare);
-        XContainerSetDataDeinitMethod(d->timers, timersDataDeinit);
-        d->sockets = XHashMap_Create(intptr_t, XVector, int_compareptr_t);
+        //d->timers = XHashMap_Create(size_t, XEventDispatcherWin32_TimerInfo, size_t_compare);
+        //XContainerSetDataDeinitMethod(d->timers, timersDataDeinit);
+        //d->sockets = XHashMap_Create(intptr_t, XVector, int_compareptr_t);
 
-        if (!d->timers || !d->sockets) {
-            // 错误处理
-            if (d->timers) XHashMap_delete_base(d->timers);
-            if (d->sockets) XHashMap_delete_base(d->sockets);
-            XFree_System(d);
-            XFree_System(self);
-            return NULL;
-        }
-        d->ioCompletionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);
+        //if (!d->timers || !d->sockets) {
+        //    // 错误处理
+        //    if (d->timers) XHashMap_delete_base(d->timers);
+        //    if (d->sockets) XHashMap_delete_base(d->sockets);
+        //    XFree_System(d);
+        //    XFree_System(self);
+        //    return NULL;
+        //}
+       
     }
     else
     {
-      
+        d = (XAbstractEventDispatcherPrivate*)XCalloc_System(1, sizeof(XAbstractEventDispatcherPrivate));
+        XAbstractEventDispatcherPrivate_init(d);
         ((XAbstractEventDispatcher*)self)->type = XDISPATCHER_THREAD_TYPE_WORKER;
     }
     self->m_class.d_ptr = d;
@@ -1027,8 +1003,8 @@ XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
     {
         if(XAbstractEventDispatcher_isMainThread(self))
         {
-            XHashMap_delete_base(d->timers);
-            XHashMap_delete_base(d->sockets);
+           /* XHashMap_delete_base(d->timers);
+            XHashMap_delete_base(d->sockets);*/
             XAbstractEventDispatcherPrivate_deinit(&d->m_dp);
             XFree_System(d);
         }

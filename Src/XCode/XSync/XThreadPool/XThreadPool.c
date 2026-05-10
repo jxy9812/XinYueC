@@ -5,7 +5,7 @@
 #include"XPriorityQueue.h"
 #include"XCircularQueue.h"  
 #include"XCoreApplication.h"
-#include"XTimer.h"
+#include"XDateTime.h"
 static  void XThreadPool_worker_thread(XThread* thread, XThreadPool* pool);
 // 在文件顶部添加（在结构体定义之后）
 typedef struct {
@@ -549,14 +549,14 @@ bool XThreadPool_waitForDone(XThreadPool* pool, int msecs)
     }
     else {
         // 有限等待
-        uint64_t start_time = XTimer_getCurrentTime();
+        uint64_t start_time = XDateTime_currentMSecsSinceEpoch();
         uint64_t end_time = start_time + (uint64_t)msecs;
 
         while (!XContainer_isEmpty_base(&pool->m_waitQueue) ||
             !XContainer_isEmpty_base(&pool->m_reservedQueue) ||
             XAtomic_load_uint32(&pool->active_thread_count, XAtomic_MemoryOrder_Relaxed) !=
             XAtomic_load_uint32(&pool->idle_thread_count, XAtomic_MemoryOrder_Relaxed)) {
-            uint64_t current_time = XTimer_getCurrentTime();
+            uint64_t current_time = XDateTime_currentMSecsSinceEpoch();
             if (current_time >= end_time) {
                 result = false;
                 break;

@@ -3,6 +3,7 @@
 #include "XVector.h"
 #include "XMemory.h"
 #include "XCircularQueue.h"
+#include "XDateTime.h"
 #include <string.h>
 #include <assert.h>
 static void VXCommunicatorBase_deinit(XCommunicatorBase* comm);
@@ -110,7 +111,7 @@ size_t VXCommunicatorBase_recv(XCommunicatorBase* comm, void* data, size_t maxSi
 	//XTimerTimeWheel* timer = NULL;
 	if (comm->m_opt_timeout != 0)
 	{//设置了超时时间
-		comm->m_currentTimeout = XTimer_getCurrentTime();
+		comm->m_currentTimeout = XDateTime_currentMSecsSinceEpoch();
 	}
 	while (size < maxSize)
 	{
@@ -119,7 +120,7 @@ size_t VXCommunicatorBase_recv(XCommunicatorBase* comm, void* data, size_t maxSi
 		{
 			size += XIODevice_read(comm->m_io, ((char*)data) + size, (maxSize - size) > readSize ? readSize : (maxSize - size));
 		}
-		else if (comm->m_opt_timeout != 0 && (comm->m_currentTimeout + comm->m_opt_timeout) < XTimer_getCurrentTime())
+		else if (comm->m_opt_timeout != 0 && (comm->m_currentTimeout + comm->m_opt_timeout) < XDateTime_currentMSecsSinceEpoch())
 		{//超时退出
 			break;
 		}

@@ -54,6 +54,7 @@ void XHrTimerGroup_init(XHrTimerGroup* group, uint64_t precision_ns);
  * @return 如果存在定时器，返回其绝对到期时间（纳秒）；如果定时器组为空，返回 UINT64_MAX。
  */
 uint64_t XHrTimerGroup_getNextExpireTime(XHrTimerGroup* group);
+size_t XHrTimerGroup_count(XHrTimerGroup* group);
 // 虚函数调用宏 (保持不变)
 #define XHrTimerGroup_setHighResTimeFunc    XTimerGroupBase_setHighResTimeFunc
 #define XHrTimerGroup_addTimerMs_base       XTimerGroupBase_addTimerMs_base

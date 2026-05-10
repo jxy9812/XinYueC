@@ -1,5 +1,6 @@
 #include "XHrTimerGroup.h"
 #include "XMemory.h"
+#include "XDateTime.h"
 #include "XThreadData.h"
 #include "XCoreApplication.h"
 #include <string.h>
@@ -77,7 +78,7 @@ static inline uint64_t get_current_time_ns(XHrTimerGroup* group) {
     }
     else {
         // 回退到原有的毫秒时间源并转换
-        return (uint64_t)XTimer_getCurrentTime() * 1000000ULL;
+        return (uint64_t)XDateTime_currentMSecsSinceEpoch() * 1000000ULL;
     }
 }
 
@@ -369,6 +370,17 @@ uint64_t XHrTimerGroup_getNextExpireTime(XHrTimerGroup* group)
         }
     }
     XMutex_unlock(group->m_mutex);
+    //XPrintf("时间:%lld\n", next_expire_time);
+    /*uint64_t current_time_ns = get_current_time_ns(group);
+    if (next_expire_time - current_time_ns > 30 * 1000000)
+    {
+        XPrintf("时间异常\n");
 
+    }*/
     return next_expire_time;
+}
+
+size_t XHrTimerGroup_count(XHrTimerGroup* group)
+{
+    return group ? XAtomic_load_size_t(&group->m_count, XAtomic_MemoryOrder_Relaxed) : 0;
 }

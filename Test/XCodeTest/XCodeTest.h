@@ -11,6 +11,7 @@ void XMenu_XDebugTest(XMenu* root);
 void XMenu_XThreadTest(XMenu* root);
 void XMenu_XThreadPoolTest(XMenu* root);
 void XMenu_XStateMachineTest(XMenu* root);
+void XMenu_XDateTimeTest(XMenu* root);
 void XStateMachineEventTest();
 void XStateMachineSignalTest();
 void XHistoryState_Test();

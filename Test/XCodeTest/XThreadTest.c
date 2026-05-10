@@ -49,7 +49,7 @@ void XThreadTest()
 	while (true)
 	{
 		//XPrintf("主线程:%p\n", XThread_currentThread());
-		for (size_t i = 0; i < 1; i++)
+		for (size_t i = 0; i < 16; i++)
 		{
 			XAtomic_fetch_add_int32(rt, 1, XAtomic_MemoryOrder_Relaxed);
 			XThread* th = XThread_create_func(threadFunc, XVarList_Create(XVar(XAtomic_int32_t*, rt)));

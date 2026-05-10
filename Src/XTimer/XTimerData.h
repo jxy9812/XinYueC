@@ -137,27 +137,7 @@ bool   XTimerData_isAutoDelete(XTimerData* timer);
 * @param timer XTimerData实例指针
 */
 void XTimerData_out(XTimerData* timer);
-// === 时间戳相关接口 ===
-/**
-* @brief 累加当前时间戳（以毫秒为单位）
-* @param tick_period 要累加的时间（毫秒）
-*/
-void XTimer_inc(size_t tick_period);
-/**
-* @brief 设置当前时间戳（以毫秒为单位）
-* @param time 要设置的时间戳
-*/
-void XTimer_setCurrentTime(size_t time);
-/**
-* @brief 获取当前时间戳（以毫秒为单位）
-* @return 当前时间戳（毫秒）
-*/
-size_t XTimer_getCurrentTime();
-/**
-* @brief 设置获取当前时间戳的函数
-* @param get 自定义的时间获取函数指针
-*/
-void XTimer_setCurrentTimeFunc(size_t(*get)());
+
 #ifdef __cplusplus
 }
 #endif

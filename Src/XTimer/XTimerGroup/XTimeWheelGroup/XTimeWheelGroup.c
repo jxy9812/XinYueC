@@ -4,6 +4,7 @@
 #include"XStack.h"
 #include"XThreadData.h"
 #include"XCoreApplication.h"
+#include"XDateTime.h"
 #include<string.h>
 // 单个时间轮结构
 typedef struct XTimeWheel {
@@ -166,7 +167,7 @@ XHandle VXTimerGroupBase_addTimerMs(XTimeWheelGroup* group, XTimerData data)
         data.m_isSingleShot = true;*/
 
     //校准下时间
-    group->m_class.m_current_tick = XTimer_getCurrentTime() / group->m_class.m_precision;
+    group->m_class.m_current_tick =  ((XTimerGroupBase*)group)->m_high_res_time_func() / group->m_class.m_precision;
     // 计算超时时间（转换为）
     size_t timeout_ticks = ceil_div(data.m_timeout, group->m_class.m_precision);
     if (timeout_ticks == 0)timeout_ticks = ceil_div(data.m_interval, group->m_class.m_precision);//如果超时时间是0就直接使用周期时间
@@ -480,7 +481,7 @@ void XTimeWheelGroup_init(XTimeWheelGroup* group, uint16_t precision)
     XVector_init(&group->m_timeWheel, sizeof(XTimeWheel));
     XContainerSetDataDeinitMethod(&group->m_timeWheel, XVector_deinit_base);
     //group->m_timeWheel = XVector_Create(XTimeWheel);
-    group->m_class.m_current_tick = XTimer_getCurrentTime() / group->m_class.m_precision;
+    //group->m_class.m_current_tick = ((XTimerGroupBase*)group)->m_high_res_time_func() / group->m_class.m_precision;
     XAtomic_init(group->m_count, 0);
     //group->m_mutex=XMutex_create(XLock_Spin);
 }
@@ -495,7 +496,7 @@ static void XTimeWheelGroup_global_init()
     if (global_XTimeWheelGroup)return;
     global_XTimeWheelGroup = XTimeWheelGroup_create(1);
     XObject_moveToThread(global_XTimeWheelGroup, XThreadData_mainThread()->m_thread);
-    XTimerGroupBase_setHighResTimeFunc(global_XTimeWheelGroup,XTimer_getCurrentTime);
+    XTimerGroupBase_setHighResTimeFunc(global_XTimeWheelGroup,XDateTime_currentMSecsSinceEpoch );
     XTimeWheelGroup_addTimeWheel(global_XTimeWheelGroup, 30);
     XTimeWheelGroup_addTimeWheel(global_XTimeWheelGroup, 10);
     XTimeWheelGroup_addTimeWheel(global_XTimeWheelGroup, 10);

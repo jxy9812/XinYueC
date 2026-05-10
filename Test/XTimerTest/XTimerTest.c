@@ -2,6 +2,7 @@
 #include"XMenu.h"
 #include"XAction.h"
 #include"XTimer.h"
+#include"XDateTime.h"
 #include"XThread.h"
 #include"XTimeWheelGroup.h"
 #include"XEventLoop.h"
@@ -15,8 +16,8 @@ static void Callback(XObject* sender, XVarList* args)
 {
 	
 
-	XPrintf("定时器1触发:%d ms\n", XTimer_getCurrentTime() - currentTimer);
-	currentTimer = XTimer_getCurrentTime();
+	XPrintf("定时器1触发:%d ms\n", XDateTime_currentMSecsSinceEpoch() - currentTimer);
+	currentTimer = XDateTime_currentMSecsSinceEpoch();
 
 	/*XTimerTimeWheel* timer = XTimer_create();
 	XTimer_setUserData(timer, userData);
@@ -27,7 +28,7 @@ static void Callback(XObject* sender, XVarList* args)
 }
 void XTimerTest()
 {
-	currentTimer = XTimer_getCurrentTime();	
+	currentTimer = XDateTime_currentMSecsSinceEpoch();	
 	while (true)//测试内存是否泄漏
 	{
 		/*XCoreApplication_processEventsWithMaxTime(0, 1000);
