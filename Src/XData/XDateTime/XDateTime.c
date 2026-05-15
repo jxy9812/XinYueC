@@ -3,6 +3,33 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+/**
+ * @brief （内部使用）获取自午夜以来的毫秒数。
+ * @param time XTime 对象指针。
+ * @return 自午夜以来的毫秒数。
+ */
+int XTime_msecsSinceStartOfDay(const XTime* time);
+
+/**
+ * @brief （内部使用）从自午夜以来的毫秒数创建 XTime 对象。
+ * @param msecs 自午夜以来的毫秒数。
+ * @return 对应的 XTime 对象。
+ */
+XTime XTime_fromMSecsSinceStartOfDay(int msecs);
+
+/**
+ * @brief （内部使用）获取儒略日数值。
+ * @param date XDate 对象指针。
+ * @return 儒略日数值。
+ */
+int64_t XDate_toJulianDay(const XDate* date);
+
+/**
+ * @brief （内部使用）从儒略日创建 XDate 对象。
+ * @param jd 儒略日数值。
+ * @return 对应的 XDate 对象。
+ */
+XDate XDate_fromJulianDay(int64_t jd);
 
 // Unix epoch in Julian Day
 #define UNIX_EPOCH_JD 2440588LL // 1970-01-01

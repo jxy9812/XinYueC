@@ -146,6 +146,18 @@ size_t XAtomic_pack_index_version(size_t index, size_t version, size_t index_bit
 size_t XAtomic_unpack_index(size_t packed, size_t index_mask);
 // 从打包值中解包出版本号
 size_t XAtomic_unpack_version(size_t packed, size_t index_bits, size_t version_mask);
+
+#ifndef CACHE_LINE_SIZE
+#define CACHE_LINE_SIZE 64
+#endif
+#if defined(__GNUC__) || defined(__clang__)
+#define CACHE_ALIGN __attribute__((aligned(CACHE_LINE_SIZE)))
+#elif defined(_MSC_VER)
+#define CACHE_ALIGN __declspec(align(CACHE_LINE_SIZE))
+#else
+#define CACHE_ALIGN
+#endif
+
 #ifdef __cplusplus
 }
 #endif

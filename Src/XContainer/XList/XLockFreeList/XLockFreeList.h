@@ -43,8 +43,8 @@ typedef struct XLockFreeListNode
 typedef struct XLockFreeList 
 {
 	XListBase m_class;              ///< 继承自链表基类，包含链表通用属性（大小、容量、虚函数表等）
-	XAtomic_size_t m_head;          ///< 头节点指针（打包了指针和版本号）
-	XAtomic_size_t m_tail;          ///< 尾节点指针（打包了指针和版本号）
+	CACHE_ALIGN XAtomic_size_t m_head;          ///< 头节点指针（打包了指针和版本号）
+	CACHE_ALIGN XAtomic_size_t m_tail;          ///< 尾节点指针（打包了指针和版本号）
 } XLockFreeList;
 // ------------------------------ 类初始化与创建 ------------------------------
 /**

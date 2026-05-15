@@ -82,18 +82,6 @@ bool IOCP_bind(XSocketDescriptor socket,XObject* obj);
 #define PlatformPrivate(Dispatcher)  ((MainThreadDataPrivate*)((XAbstractEventDispatcher*)Dispatcher)->d_ptr)
 #define GetXMutex(Dispatcher)         PlatformPrivate(Dispatcher)->m_dp.mutex
 // ========================
-// XHashMap 键比较和哈希函数 (用于 timers 和 sockets)
-// ========================
-
-// 用于 sockets HashMap: 键是 socket value (intptr_t)
-static int int_compareptr_t(const void* a, const void* b) {
-    intptr_t va = *(const intptr_t*)a;
-    intptr_t vb = *(const intptr_t*)b;
-    if (va < vb) return -1;
-    if (va > vb) return 1;
-    return 0;
-}
-// ========================
 // 辅助函数实现
 // ========================
 
