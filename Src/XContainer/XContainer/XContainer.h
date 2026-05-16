@@ -20,6 +20,7 @@ extern "C" {
 #include "XMemory.h"     ///< 内存管理工具，提供内存分配、释放等函数
 #include "XTypes.h"      ///< 基础数据类型定义，统一跨平台类型（如size_t等）
 #include "XCompare.h"    ///< 比较函数接口，提供元素比较的标准定义
+#include "XSharedData.h"
 /**
  * @brief 数据释放方法回调函数类型
  * @details 用于定义容器中元素的释放逻辑，由用户根据元素类型自定义实现
@@ -74,13 +75,11 @@ XCLASS_DEFINE_END(XContainer)
 typedef struct XContainer
 {
     XClass m_class;  ///< 继承自XClass，用于实现类的继承关系和虚函数机制
-
     XCDataCopyMethod m_dataCopyMethod;      ///< 数据拷贝回调函数，用于元素深拷贝
     XCDataMoveMethod m_dataMoveMethod;      ///< 数据移动回调函数，用于元素所有权转移
     XCDataDeinitMethod m_dataDeinitMethod;  ///< 数据释放回调函数，用于元素内存释放
     XCompare m_compare;                     ///< 元素比较回调函数，用于元素大小比较
-
-    void* m_data;             ///< 指向容器实际存储数据的指针（数据区首地址）
+    XSharedData* m_data;      ///< 指向隐式共享数据块（支持 COW 的容器使用，否则为 NULL）
     size_t m_capacity;        ///< 容器当前可容纳的最大元素数量（容量）
     size_t m_size;            ///< 容器当前实际存储的元素数量（大小）
     size_t m_typeSize;        ///< 单个元素的类型大小（字节数，如int为4字节）
@@ -97,116 +96,118 @@ typedef struct XContainer
 
 /**
 * @brief 获取容器的数据区指针
-* @details 返回容器内部存储数据的首地址
-* @param Object XContainer实例指针（可传入派生类实例指针）
-* @return 数据区首地址（void*类型）
+* @details 返回容器内部存储数据的首地址。
+*          使用 COW 的容器通过 m_data->data 获取实际数据指针；
+* @param object XContainer实例指针（可传入派生类实例指针）
+* @return 数据区首地址（void*类型），失败或未初始化返回 NULL
 */
-#define XContainerDataPtr(Object) (((XContainer*)(Object))->m_data)
+#define XContainerDataPtr(object) ((XContainer*)(object))->m_data->data
 
+#define XContainerSharedData(object) ((XContainer*)(object))->m_data
  /**
 * @brief 获取容器数据区的实际数据（指定类型）
 * @details 将数据区指针转换为指定类型的指针并解引用，直接获取数据值
-* @param Object XContainer实例指针
+* @param object XContainer实例指针
 * @param Type 数据类型（如int数组则传入int[]）
 * @return 转换后的Type类型数据
 */
-#define XContainerData(Object, Type) (*(Type*)XContainerDataPtr(Object))
+#define XContainerData(object, Type) (*(Type*)XContainerDataPtr(object))
 
 /**
 * @brief 获取容器的容量
 * @details 返回容器当前可容纳的最大元素数量
-* @param Object XContainer实例指针
+* @param object XContainer实例指针
 * @return 容量值（size_t类型）
 */
-#define XContainerCapacity(Object) (((XContainer*)(Object))->m_capacity)
+#define XContainerCapacity(object) (((XContainer*)(object))->m_capacity)
 
 /**
  * @brief 获取容器当前元素数量
  * @details 返回容器中实际存储的元素个数
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @return 元素数量（size_t类型）
  */
-#define XContainerSize(Object) (((XContainer*)(Object))->m_size)
+#define XContainerSize(object) (((XContainer*)(object))->m_size)
 
 /**
  * @brief 判断容器是否为空
  * @details 当容器元素数量为0时返回true，否则返回false
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @return 布尔值（true为空，false为非空）
  */
-#define XContainerIsEmpty(Object) (XContainerSize(Object) == 0)
+#define XContainerIsEmpty(object) (XContainerSize(object) == 0)
 
 /**
  * @brief 获取容器中单个元素的类型大小
  * @details 返回单个元素占用的字节数
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @return 类型大小（字节数，size_t类型）
  */
-#define XContainerTypeSize(Object) (((XContainer*)(Object))->m_typeSize)
+#define XContainerTypeSize(object) (((XContainer*)(object))->m_typeSize)
 
 /**
  * @brief 获取容器的数据拷贝方法
  * @details 返回当前设置的元素拷贝回调函数
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @return 数据拷贝方法（XCDataCopyMethod类型）
  */
-#define XContainerDataCopyMethod(Object) (((XContainer*)(Object))->m_dataCopyMethod)
+#define XContainerDataCopyMethod(object) (((XContainer*)(object))->m_dataCopyMethod)
 
 /**
  * @brief 设置容器的数据拷贝方法
  * @details 自定义元素的拷贝逻辑（如深拷贝、浅拷贝）
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @param method 数据拷贝回调函数（XCDataCopyMethod类型）
  */
-#define XContainerSetDataCopyMethod(Object, method) (((XContainer*)(Object))->m_dataCopyMethod = method)
+#define XContainerSetDataCopyMethod(object, method) (((XContainer*)(object))->m_dataCopyMethod = method)
 
 /**
  * @brief 获取容器的数据移动方法
  * @details 返回当前设置的元素移动回调函数
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @return 数据移动方法（XCDataMoveMethod类型）
  */
-#define XContainerDataMoveMethod(Object) (((XContainer*)(Object))->m_dataMoveMethod)
+#define XContainerDataMoveMethod(object) (((XContainer*)(object))->m_dataMoveMethod)
 
 /**
  * @brief 设置容器的数据移动方法
  * @details 自定义元素的移动逻辑（如转移指针所有权）
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @param method 数据移动回调函数（XCDataMoveMethod类型）
  */
-#define XContainerSetDataMoveMethod(Object, method) (((XContainer*)(Object))->m_dataMoveMethod = method)
+#define XContainerSetDataMoveMethod(object, method) (((XContainer*)(object))->m_dataMoveMethod = method)
 
 /**
  * @brief 获取容器的数据释放方法
  * @details 返回当前设置的元素释放回调函数
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @return 数据释放方法（XCDataDeinitMethod类型）
  */
-#define XContainerDataDeinitMethod(Object) (((XContainer*)(Object))->m_dataDeinitMethod)
+#define XContainerDataDeinitMethod(object) (((XContainer*)(object))->m_dataDeinitMethod)
 
 /**
  * @brief 设置容器的数据释放方法
  * @details 自定义元素的内存释放逻辑（如释放动态分配的成员）
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @param method 数据释放回调函数（XCDataDeinitMethod类型）
  */
-#define XContainerSetDataDeinitMethod(Object, method) (((XContainer*)(Object))->m_dataDeinitMethod = method)
+#define XContainerSetDataDeinitMethod(object, method) (((XContainer*)(object))->m_dataDeinitMethod = method)
 
 /**
  * @brief 获取容器的元素比较方法
  * @details 返回当前设置的元素比较回调函数
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @return 比较方法（XCompare类型）
  */
-#define XContainerCompare(Object) (((XContainer*)(Object))->m_compare)
+#define XContainerCompare(object) (((XContainer*)(object))->m_compare)
 
 /**
  * @brief 设置容器的元素比较方法
  * @details 自定义元素的大小比较逻辑（用于排序、查找等操作）
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  * @param compare 比较回调函数（XCompare类型）
  */
-#define XContainerSetCompare(Object, compare) (((XContainer*)(Object))->m_compare = compare)
+#define XContainerSetCompare(object, compare) (((XContainer*)(object))->m_compare = compare)
 
 /**
 * @brief 拷贝操作的基础实现
@@ -241,57 +242,57 @@ XVtable* XContainer_class_init();
 /**
  * @brief 初始化XContainer实例
  * @details 初始化容器的基础属性（如类型大小、虚函数表等），为容器使用做准备
- * @param Object 待初始化的XContainer实例指针
+ * @param object 待初始化的XContainer实例指针
  * @param typeSize 容器中元素的类型大小（字节数）
  */
-void XContainer_init(XContainer* Object, size_t typeSize);
+void XContainer_init(XContainer* object, size_t typeSize);
 
 /**
  * @brief 获取容器元素数量的基础实现
  * @details 通过虚函数调用获取容器当前元素数量，支持多态
- * @param Object XContainer实例指针（const修饰，不可修改）
+ * @param object XContainer实例指针（const修饰，不可修改）
  * @return 元素数量（size_t类型）
  */
-size_t XContainer_size_base(const XContainer* Object);
+size_t XContainer_size_base(const XContainer* object);
 
 /**
  * @brief 判断容器是否为空的基础实现
  * @details 通过虚函数调用判断容器是否为空，支持多态
- * @param Object XContainer实例指针（const修饰，不可修改）
+ * @param object XContainer实例指针（const修饰，不可修改）
  * @return 布尔值（true为空，false为非空）
  */
-bool XContainer_isEmpty_base(const XContainer* Object);
+bool XContainer_isEmpty_base(const XContainer* object);
 
 /**
  * @brief 获取容器容量的基础实现
  * @details 通过虚函数调用获取容器当前容量，支持多态
- * @param Object XContainer实例指针（const修饰，不可修改）
+ * @param object XContainer实例指针（const修饰，不可修改）
  * @return 容量值（size_t类型）
  */
-size_t XContainer_capacity_base(const XContainer* Object);
+size_t XContainer_capacity_base(const XContainer* object);
 
 /**
  * @brief 获取元素类型大小的基础实现
  * @details 通过虚函数调用获取单个元素的类型大小，支持多态
- * @param Object XContainer实例指针（const修饰，不可修改）
+ * @param object XContainer实例指针（const修饰，不可修改）
  * @return 类型大小（字节数，size_t类型）
  */
-size_t XContainer_typeSize_base(const XContainer* Object);
+size_t XContainer_typeSize_base(const XContainer* object);
 
 /**
  * @brief 交换两个容器内容的基础实现
  * @details 通过虚函数调用交换两个容器的内容（数据、容量、大小等），支持多态
- * @param ObjectOne 第一个容器实例指针
- * @param ObjectTwo 第二个容器实例指针
+ * @param objectOne 第一个容器实例指针
+ * @param objectTwo 第二个容器实例指针
  */
-void XContainer_swap_base(XContainer* ObjectOne, XContainer* ObjectTwo);
+void XContainer_swap_base(XContainer* objectOne, XContainer* objectTwo);
 
 /**
  * @brief 清空容器的基础实现
  * @details 通过虚函数调用清空容器内容（保留容量，重置大小），支持多态
- * @param Object XContainer实例指针
+ * @param object XContainer实例指针
  */
-void XContainer_clear_base(XContainer* Object);
+void XContainer_clear_base(XContainer* object);
 
 #ifdef __cplusplus
 }

@@ -50,8 +50,9 @@ void XHashMapTest()
 
 		/*XPair* pair = XHashMap_find_base(map, arrayint + 1,NULL);
 		XPrintf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair, char*));*/
-		XHashMap_clear_base(map);
+		XHashMap* copy=XHashMap_create_copy(map);
 		XHashMap_delete_base(map);
+		XHashMap_delete_base(copy);
 	}
 #endif
 	XCoreApplication_quit();

@@ -80,40 +80,50 @@ void VXContainer_clear(XContainer* Object)
 
 void VXClass_copy(XContainer* object, const XContainer* src)
 {
-	if (XContainerDataPtr(object))
-		XFree_System(XContainerDataPtr(object));
-	memcpy(object,src,sizeof(XContainer));
-	XContainerDataPtr(object) = XMalloc_System(XContainerSize(object)* XContainerTypeSize(object));
-	memcpy(XContainerDataPtr(object), XContainerDataPtr(src), XContainerSize(object) * XContainerTypeSize(object));
-	XContainerCapacity(object) = XContainerSize(object);
+    // 释放目标对象原有共享块
+    if (object->m_data)
+        XSharedData_release_with(object->m_data, XFree_System,NULL);
+    
+    // 拷贝所有字段（共享同一块 XSharedData）
+    memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XContainer) - sizeof(XClass));
+    
+    // 增加源数据块的引用计数
+    if (object->m_data)
+        XSharedData_addRef(object->m_data);
 }
 
 void VXClass_move(XContainer* object, XContainer* src)
 {
-	if (XContainerDataPtr(object))
-		XFree_System(XContainerDataPtr(object));
-	memcpy(object, src, sizeof(XContainer));
-	XContainerDataPtr(src) = NULL;
-	XContainerCapacity(src) = 0;
-	XContainerSize(src)=0;
+    // 释放目标对象原有共享块
+    if (object->m_data)
+        XSharedData_release_with(object->m_data, XFree_System, NULL);
+    
+    // 转移所有权
+    memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XContainer) - sizeof(XClass));
+    
+    // 清空源对象
+    src->m_data = NULL;
+    src->m_capacity = 0;
+    src->m_size = 0;
 }
 
-void VXContainer_deinit(XContainer* Object)
+void VXContainer_deinit(XContainer* object)
 {
-	if (ISNULL(Object, ""))
-		return ;
-	//printf("准备释放\n");
-	XContainer_clear_base(Object);
-	//XClassGetVtable(Object) = NULL;
-	Object->m_capacity = 0;
-	Object->m_size = 0;
-	Object->m_typeSize = 0;
-	if (Object->m_data)
-	{
-		XFree_System(Object->m_data);
-		Object->m_data = NULL;
-	}
-	//XFree_System(Object);
+    if (ISNULL(object, ""))
+        return;
+    
+    // 让子容器清理元素和数据（通过虚函数调用 clear）
+    XContainer_clear_base(object);
+    
+    object->m_capacity = 0;
+    object->m_size = 0;
+    object->m_typeSize = 0;
+    
+        // 减少引用计数，最后一个引用时由 dataDeleter 释放 data
+    if (object->m_data) {
+        XSharedData_release_with(object->m_data, XFree_System, NULL);
+        object->m_data = NULL;
+    }
 }
 
 

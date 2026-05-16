@@ -24,43 +24,52 @@ struct people
 void XVectorTest()
 {
 #if XVector_ON
-	XPrintf("XVector 测试\n");
-	XVector* v = XVector_Create(int);
-	XContainerSetCompare(v, int_compare);
-	//v->m_equality = XEquality_int;
-	//XVector_resize_base(v,11);
-	int arr[]={100,123,456,4,8496,3,321,23,3,132,0};
-	
-	
-	for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
+	while (true)
 	{
-		int n = arr[i];
-		XVector_Push_Front_Base(v,int,arr[i]);
+		XPrintf("XVector 测试\n");
+		XVector* v = XVector_Create(int);
+		XContainerSetCompare(v, int_compare);
+		//v->m_equality = XEquality_int;
+		//XVector_resize_base(v,11);
+		int arr[] = { 100,123,456,4,8496,3,321,23,3,132,0 };
+
+
+		for (size_t i = 0; i < sizeof(arr) / sizeof(arr[0]); i++)
+		{
+			int n = arr[i];
+			XVector_Push_Front_Base(v, int, arr[i]);
+		}
+		//XPrintf("当前Size:%d\n",XVector_size_base(v)); 
+		XVector_Push_Front_Base(v, int, 9999);
+		//XVector_append_array_base(v, arr, sizeof(arr) / sizeof(arr[0]));
+		/*XPrintf("插入数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
+		XVector_remove_base(v, 2, 10);
+		XPrintf("删除数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");*/
+		XVector_sort_base(v, XSORT_ASC);
+		XPrintf("排序数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
+		int findVal = 100;
+		int64_t index = XVector_indexOf(v, &findVal, 0);
+		if (index != -1)
+			XPrintf("找到的数字,索引号:%d\n", index);
+		XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
+		for (XVector_iterator it = XVector_begin(v), endIt = XVector_end(v); !XVector_iterator_equality(&it, &endIt);)
+		{
+			void* pValue = XVector_iterator_data(&it);
+			//XPrintf("%d \n", *(int*)pValue);
+			if (*((int*)pValue) == 23)
+				XVector_erase_base(v, &it, &it);
+			else
+				XVector_iterator_add(v, &it);
+		}
+		XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
+		
+
+		XVector* copy = XVector_create_copy(v);
+		
+		XVector_delete_base(v);
+		XVector_delete_base(copy);
 	}
-	//XPrintf("当前Size:%d\n",XVector_size_base(v)); 
-	XVector_Push_Front_Base(v,int,9999);
-	//XVector_append_array_base(v, arr, sizeof(arr) / sizeof(arr[0]));
-	/*XPrintf("插入数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
-	XVector_remove_base(v, 2, 10);
-	XPrintf("删除数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");*/
-	XVector_sort_base(v, XSORT_ASC);
-	XPrintf("排序数据\t"); XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
-	int findVal = 100;
-	int64_t index = XVector_indexOf(v, &findVal,0);
-	if(index !=-1)
-		XPrintf("找到的数字,索引号:%d\n", index);
-	XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
-	for (XVector_iterator it = XVector_begin(v), endIt = XVector_end(v); !XVector_iterator_equality(&it, &endIt);)
-	{
-		void* pValue=XVector_iterator_data(&it);
-		//XPrintf("%d \n", *(int*)pValue);
-		if (*((int*)pValue) == 23)
-			XVector_erase_base(v, &it,&it);
-		else
-			XVector_iterator_add(v, &it);
-	}
-	XVector_iterator_for_each(v, XFor_each_int, NULL); XPrintf("\n");
-	XVector_delete_base(v);
+	
 
 
 #else

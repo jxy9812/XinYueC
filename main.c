@@ -10,6 +10,7 @@
 //#include <crtdbg.h>
 int main(int argc, char* args[])
 {
+	//XVectorTest();
 	// 启用内存泄漏检测
 	//_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 	int n = 8,n1=666,sum=n+n1;
@@ -29,7 +30,7 @@ int main(int argc, char* args[])
 	//XAtomic_store_bool(&b,false);
 	//printf("%d\n",XAtomic_load_bool(&b));
 #if DEMOTEST
-	//XVectorTest();
+	
 	//XStringVectorTest();
 	//XStringTest();
 	//XBase64Test();

@@ -61,7 +61,7 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 		return ;
 	}
 	XMapBase_init(this_map, keyTypeSize, valTypeSize, compare);
-	XClassGetVtable(this_map) = XMap_class_init();
+	XClassSetVtable(this_map, XMap);
 	//this_map->m_KeyLess = KeyLess;
 }
 XVariantMap* XMap_create_XVariantMap()

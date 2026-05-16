@@ -22,10 +22,11 @@ static void map_dataDelete(char** lpStr)
 void XMapTest()
 {
 #if XMap_ON
-	XMap* map = XMap_Create(int, char*, int_compare);
-	XContainerSetDataDeinitMethod(map, map_dataDelete);
 	while (1)
 	{
+	XMap* map = XMap_Create(int, char*, int_compare);
+	XContainerSetDataDeinitMethod(map, map_dataDelete);
+	
 		XPrintf("XMap 测试\n");
 		int arrayint[] = { 1,23,456,5,23 };
 		char arraychar[][100] = { "1221212","dasdsadsa","czxcxzc","jjjjjjj","yutytuyt" };
@@ -60,9 +61,10 @@ void XMapTest()
 		/*XPair* pair = XMap_find_base(map, arrayint);
 		XPrintf("查询到:key:%d val:%s\n", XPair_First(pair, int), XPair_Second(pair, char*));*/
 		
-	}
-	XMap_clear_base(map);
+	
+	//XMap_clear_base(map);
 	XMap_delete_base(map);
+	}
 #endif
 	XCoreApplication_quit();
 }

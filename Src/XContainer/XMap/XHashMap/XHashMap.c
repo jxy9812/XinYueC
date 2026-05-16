@@ -35,16 +35,10 @@ void XHashMap_init(XHashMap*this_map, const size_t keyTypeSize, const size_t val
 {
 	if (this_map == NULL)
 		return;
-	XMapBase_init(this_map, keyTypeSize, valTypeSize,compare);
+	XMapBase_init(this_map, keyTypeSize, valTypeSize, compare);
 	XClassGetVtable(this_map) = XHashMap_class_init();
 	this_map->m_hash = hash;
-	XContainerCapacity(this_map)= DEFAULT_CAPACITY;
-	size_t size = sizeof(void*) * XContainerCapacity(this_map);
-	XContainerDataPtr(this_map) = XMalloc_System(size);
-	if (XContainerDataPtr(this_map) == NULL)
-		XFree_System(this_map);
-	if(XContainerDataPtr(this_map))
-		memset(XContainerDataPtr(this_map),0,size);
+	XContainerSharedData(this_map) = NULL;
 }
 
 XVariantHashMap* XHashMap_create_XVariantHashMap()
