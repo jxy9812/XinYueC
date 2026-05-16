@@ -2417,7 +2417,7 @@ short XChar_to_short_stream(const XChar* xchars, size_t input_count, int base, b
  */
 int XChar_to_int_stream(const XChar* xchars, size_t input_count, int base, bool* success) {
     long long value = XChar_parse_signed(xchars, input_count, base, success);
-    if (!*success) return 0;
+    //if (!*success) return 0;
     if (value < INT_MIN || value > INT_MAX) {
         if (success) *success = false;
         return 0;

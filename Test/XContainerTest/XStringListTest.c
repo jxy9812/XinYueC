@@ -8,7 +8,7 @@
 #include"XPrintf.h"
 static void XFor_each_XString(XString* string, void* args)
 {
-	XPrintf("%s \n",XString_c_str(string) );
+	printf("%s \n",XString_c_str(string) );
 }
 
 void XStringListTest()
@@ -17,6 +17,7 @@ void XStringListTest()
 	while (true)
 	{
 		XStringList* list = XStringList_create();
+
 		XStringList_push_back_utf8(list, "你好");
 		XStringList_push_back_utf8(list, "非常好");
 		XStringList_push_back_utf8(list, "世界");

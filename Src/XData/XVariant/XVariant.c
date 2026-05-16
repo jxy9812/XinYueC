@@ -1474,8 +1474,14 @@ void VXVariant_copy(XVariant* var, const XVariant* src)
 {
 	if (var == NULL || src == NULL)
 		return;
-	if (var->m_type != src->m_type)
+	if (((XClass*)var)->m_vtable == NULL)
+	{
+		XVariant_init(var, NULL,0, XVariantType_NULL);
+	}
+	else if (var->m_type != src->m_type)
+	{
 		XVariant_deinit_base(var);//
+	}
 	if (XVariant_DataPtr(var) == NULL)
 	{
 		var->m_data = XCalloc_System(1,src->m_dataSize);
@@ -1541,8 +1547,14 @@ void VXVariant_move(XVariant* var, XVariant* src)
 {
 	if (var == NULL || src == NULL)
 		return;
-	if (var->m_data!=NULL)
+	if (((XClass*)var)->m_vtable == NULL)
+	{
+		XVariant_init(var, NULL, 0, XVariantType_NULL);
+	}
+	else if (var->m_type != src->m_type)
+	{
 		XVariant_deinit_base(var);//
+	}
 	if (var->m_class.m_vtable == NULL)
 		var->m_class = src->m_class;
 	if (XVariant_DataPtr(var) == NULL)

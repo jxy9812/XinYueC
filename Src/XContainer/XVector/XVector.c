@@ -339,9 +339,11 @@ bool VXVector_resize(XVector* this_vector, size_t size)
 bool VXVector_push_front(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod)
 {
 	if (XContainer_isEmpty_base(this_vector))
-		return XVector_push_back_base(this_vector, pvValue);
+		return XClassGetVirtualFunc(this_vector, EXVector_Push_Back, bool (*)(XVector*, void*, XCDataCreatMethod))(this_vector, pvValue, dataCreatMethod);
+		//return XVector_push_back_base(this_vector, pvValue);
 	else
-		return XVector_insert(this_vector, 0, pvValue);
+		//return XVector_insert(this_vector, 0, pvValue);
+		return XClassGetVirtualFunc(this_vector, EXVector_Insert_Array, bool (*)(XVector*, int64_t, void*, size_t, XCDataCreatMethod))(this_vector, 0, pvValue, 1, dataCreatMethod);
 }
 bool VXVector_push_back(XVector* this_vector, void* pvValue, XCDataCreatMethod dataCreatMethod)
 {

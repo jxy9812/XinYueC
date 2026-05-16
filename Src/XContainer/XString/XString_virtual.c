@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <math.h>
 #include "XAlgorithm.h"
+
 // 内部常量定义
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量
@@ -22,6 +23,11 @@ void XString_detach(XString* str);
  * @param str XString 对象指针
  */
 void XString_deinitCache(XString* str);
+
+/**
+ * @brief 删除字符串数据（用于 XSharedData 回调）
+ */
+static void VXStringDataDelete(void* data, XString* str);
 
 // 获取可修改的内部XChar数组
 XChar* XString_data(XString* str);
@@ -203,27 +209,47 @@ void VXString_Erase(XString* str, const XString_iterator* it, XString_iterator* 
     }
 }
 
+// 删除字符串数据（用于 XSharedData 回调）
+static void VXStringDataDelete(void* data, XString* str)
+{
+    if (data == NULL || str == NULL)
+        return;
+
+    XFree_System(data);
+    XContainerSize(str) = 0;
+    XContainerCapacity(str) = 0;
+    XContainerSharedData(str) = NULL;
+
+    // 释放缓存
+    if (str->m_cache)
+    {
+        XString_deinitCache(str);
+        XFree_System(str->m_cache);
+        str->m_cache = NULL;
+    }
+}
+
 // 类方法：拷贝
 static void VXClass_copy(XString* object, const XString* src)
 {
-    //printf("拷贝\n");
     if (((XClass*)object)->m_vtable == NULL)
     {
         XString_init(object);
     }
-    else if (!XString_isEmpty_base(object))
+    else if (XContainerSharedData(object))
     {
-        XString_clear_base(object);
+        XSharedData_release_with(XContainerSharedData(object), VXStringDataDelete, object);
     }
-    XContainerDataPtr(object)= XContainerDataPtr(src);
+
+    // 共享源数据的 XSharedData（COW 机制）
+    XContainerSharedData(object) = XContainerSharedData(src);
+    if (XContainerSharedData(object))
+    {
+        XSharedData_addRef(XContainerSharedData(object));
+    }
+
     XContainerSize(object) = XContainerSize(src);
     XContainerCapacity(object) = XContainerCapacity(src);
-    if (object->m_ref_count)
-        XFree_System(object->m_ref_count);
-    object->m_ref_count = src->m_ref_count;
-    if (object->m_ref_count) {
-        XAtomic_fetch_add_int32(object->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子加1
-    }
     object->m_cache = NULL;
 }
 
@@ -234,12 +260,18 @@ static void VXClass_move(XString* object, XString* src)
     {
         XString_init(object);
     }
-    else if( !XString_isEmpty_base(object))
+    else if (XContainerSharedData(object))
     {
-        XString_clear_base(object);
+        XSharedData_release_with(XContainerSharedData(object), VXStringDataDelete, object);
     }
+
+    // 转移所有权
     XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XString) - sizeof(XClass));
-    //memset((XClass*)src, 0, sizeof(XString) - sizeof(XClass));
+
+    //// 清空源对象的共享数据指针
+    //XContainerSharedData(src) = NULL;
+    //XContainerCapacity(src) = 0;
+    //XContainerSize(src) = 0;
 }
 
 // 类方法：销毁
@@ -247,21 +279,10 @@ static void VXClass_deinit(XString* str)
 {
     if (!str) return;
 
-    if (str->m_ref_count) 
-    {
-        // 原子减少原引用计数（若减到0，原数据会被其他持有者释放）
-        if (XAtomic_fetch_sub_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed) == 0)
-        {
-            if (XContainerDataPtr(str)) 
-            {
-                XFree_System(XContainerDataPtr(str));
-            }
-            XFree_System(str->m_ref_count);
-            
-        }
-        str->m_ref_count = NULL;
-        XContainerDataPtr(str) = NULL;
-    }
+    XSharedData_release_with(XContainerSharedData(str), VXStringDataDelete, str);
+    XContainerSize(str) = 0;
+    XContainerCapacity(str) = 0;
+    XContainerSharedData(str) = NULL;
 
     //释放缓存
     if (str->m_cache)
@@ -270,11 +291,6 @@ static void VXClass_deinit(XString* str)
         XFree_System(str->m_cache);
         str->m_cache = NULL;
     }
-
-    XContainerDataPtr(str) = NULL;
-    XContainerSize(str) = 0;
-    XContainerCapacity(str) =0;
-    //XVtableGetFunc(XContainer_class_init(), EXClass_Deinit, void(*)(XClass*))((XClass*)str);
 }
 
 // 容器方法：清空
@@ -289,26 +305,39 @@ static void VXContainer_clear(XString* str)
         return;
     }
 
-    //XString_detach(str);
-    
-    if (XAtomic_load_int32(str->m_ref_count, XAtomic_MemoryOrder_Relaxed) >1)
-    {//被其他对象拷贝引用了,将缓冲区交给其他对象管理
-        int32_t old_ref = XAtomic_fetch_sub_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
-        // 为新数据创建独立的引用计数（初始化为1）
-        XAtomic_int32_t* new_ref_count = (XAtomic_int32_t*)XMalloc_System(sizeof(XAtomic_int32_t));
-        if (!new_ref_count) {
-            // 恢复原引用计数（拷贝失败需回滚）
-            XAtomic_fetch_add_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
-            return;
+    // 如果数据被共享，减少引用并创建空数据
+    if (XContainerSharedData(str) && XSharedData_isShared(XContainerSharedData(str)))
+    {
+        XSharedData_release(XContainerSharedData(str));
+
+        // 创建新的空数据
+        void* newData = XMalloc_System(sizeof(XChar) * (XSTRING_MIN_CAPACITY + 1));
+        if (newData)
+        {
+            memset(newData, 0, sizeof(XChar) * (XSTRING_MIN_CAPACITY + 1));
+            XSharedData* newShared = XSharedData_create(newData);
+            if (newShared)
+            {
+                XContainerSharedData(str) = newShared;
+                XContainerCapacity(str) = XSTRING_MIN_CAPACITY;
+            }
+            else
+            {
+                XFree_System(newData);
+                XContainerSharedData(str) = NULL;
+                XContainerCapacity(str) = 0;
+            }
         }
-        XAtomic_store_int32(new_ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子初始化新计数
-        str->m_ref_count = new_ref_count;
-        XContainerDataPtr(str) = XMalloc_System(sizeof(XChar)*(XContainerCapacity(str)+1));
+        XContainerSize(str) = 0;
+        XString_deinitCache(str);
+        return;
     }
+
+    // 不共享，直接清空数据
     if (XContainerDataPtr(str)) 
     {
         XContainerSize(str) = 0;
-        ((XChar*)XContainerDataPtr(str))[XString_length_base(str)] = 0;
+        ((XChar*)XContainerDataPtr(str))[0] = 0;
     }
 
     XString_deinitCache(str);

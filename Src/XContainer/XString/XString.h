@@ -52,8 +52,7 @@ typedef struct XStringCache
  */
 typedef struct XString
 {
-    XContainer parent;  // 继承容器基类，m_data 指向 XChar 数组（UTF-16 存储）
-    XAtomic_int32_t* m_ref_count;         // 引用计数：用于 Copy-On-Write 机制的资源管理
+    XContainer parent;  // 继承容器基类，m_data 指向 XChar 数组（UTF-16 存储），使用父类的 XSharedData 实现隐式共享
     XStringCache* m_cache;           // 编码缓存数组：存储各类型编码的转换结果（索引对应 XStringCacheType）
 } XString;
 

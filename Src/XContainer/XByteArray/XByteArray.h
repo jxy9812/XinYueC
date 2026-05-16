@@ -22,7 +22,7 @@ extern "C" {
 */
 typedef struct XByteArray
 {
-XVector m_class;  ///< 继承自XVector基类，包含数据存储、大小、容量等核心成员
+	XVector m_class;  ///< 继承自XVector基类，包含数据存储、大小、容量等核心成员
 } XByteArray;
 //============================= 创建与初始化 =============================
 

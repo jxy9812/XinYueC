@@ -230,15 +230,24 @@ void XString_init(XString* str)
 {
     if (!str) return;
     XContainer_init(str, sizeof(XChar));
-    // 初始化原子引用计数（初始值为1）
-    str->m_ref_count = (XAtomic_int32_t*)XMalloc_System(sizeof(XAtomic_int32_t));
-    if (str->m_ref_count) 
-    {
-        XAtomic_store_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 使用原子存储初始化
-    }
-    str->m_cache = NULL;
 
-    XClassGetVtable((XClass*)str) = XString_class_init();
+    //// 创建初始数据缓冲区
+    //void* data = XMalloc_System(sizeof(XChar) * (XSTRING_MIN_CAPACITY + 1));
+    //if (data)
+    //{
+    //    memset(data, 0, sizeof(XChar) * (XSTRING_MIN_CAPACITY + 1));
+    //    XSharedData* sd = XSharedData_create(data);
+    //    if (sd)
+    //        XContainerSharedData(str) = sd;
+    //    else
+    //    {
+    //        XFree_System(data);
+    //    }
+    //}
+    //XContainerCapacity(str) = XSTRING_MIN_CAPACITY;
+    XContainerSharedData(str) = NULL;
+    str->m_cache = NULL;
+    XClassSetVtable(str,XString);
 }
 
 const char* XString_toUtf8(const XString* str)
@@ -392,6 +401,7 @@ const char* XString_toGbk(const XString* str)
     // 初始化缓存并存储结果
     XString_initCache((XString*)str);
     str->m_cache[XStringCache_Gbk].m_data = gbk_buf;
+    str->m_cache[XStringCache_Gbk].m_length = gbk_max_len;
     return gbk_buf;
 }
 
@@ -1508,17 +1518,15 @@ bool XString_isNull(const XString* str)
         return true;
     }
 
+     // 检查共享数据是否异常（未初始化的对象可能无共享数据）
+    if (XContainerSharedData(str) == NULL) {
+        return true;
+    }
     // 检查内部数据指针是否未初始化（根据XContainer结构特性）
     // 结合XString_init逻辑，未初始化的对象其数据指针可能为NULL
     if (XContainerDataPtr(str) == NULL) {
         return true;
     }
-
-    // 检查引用计数是否异常（未初始化的对象可能无引用计数）
-    if (str->m_ref_count == NULL) {
-        return true;
-    }
-
     return false;
 }
 
@@ -1874,33 +1882,48 @@ bool XString_reserve(XString* str, size_t capacity)
 {
     if (!str || capacity <= XContainerCapacity(str)) 
         return false;
-
     //XString_detach(str);  // 确保可修改
     // 新容量，且不小于最小容量
     size_t new_capacity = (capacity < XSTRING_MIN_CAPACITY) ? XSTRING_MIN_CAPACITY : capacity;
     XChar* new_data = NULL;
+    if (!XContainerSharedData(str))
+    {
+        // 创建初始数据缓冲区
+        new_data = XMalloc_System(sizeof(XChar) * (new_capacity + 1));
+        if (new_data)
+        {
+            memset(new_data, 0, sizeof(XChar) * (new_capacity + 1));
+            XSharedData* sd = XSharedData_create(new_data);
+            if (sd)
+            {
+                XContainerSharedData(str) = sd;
+            }
+            else
+            {
+                XFree_System(new_data);
+                new_data = NULL;
+            }
+        }
+    }
     // 实际需要容量= 新容量 + 1（结束符）
-    if (XString_cdata(str) == NULL || XAtomic_load_int32(str->m_ref_count, XAtomic_MemoryOrder_Relaxed) > 1)
+    else if (XString_cdata(str) == NULL || XSharedData_isShared(XContainerSharedData(str)))
     {
         new_data = XMalloc_System((new_capacity + 1) * sizeof(XChar));
         if (XString_cdata(str))
         {
             memcpy(new_data, XString_cdata(str),(XString_length_base(str)+1)*sizeof(XChar));
         }
-        if (XAtomic_load_int32(str->m_ref_count, XAtomic_MemoryOrder_Relaxed) > 1)
+        if (XSharedData_isShared(XContainerSharedData(str)))
         {
-            // 原子减少原引用计数（若减到0，原数据会被其他持有者释放）
-            int32_t old_ref = XAtomic_fetch_sub_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
-            // 为新数据创建独立的引用计数（初始化为1）
-            XAtomic_int32_t* new_ref_count = (XAtomic_int32_t*)XMalloc_System(sizeof(XAtomic_int32_t));
-            if (!new_ref_count) {
+            // 创建新的 XSharedData
+            XSharedData* newShared = XSharedData_create(new_data);
+            if (!newShared) {
                 XFree_System(new_data);
-                // 恢复原引用计数（拷贝失败需回滚）
-                XAtomic_fetch_add_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
-                return;
+                return false;
             }
-            XAtomic_store_int32(new_ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子初始化新计数
-            str->m_ref_count = new_ref_count;
+            // 减少旧引用，设置新引用
+            XSharedData_release(XContainerSharedData(str));
+            XContainerSharedData(str) = newShared;
         }
     }
     else
@@ -2137,46 +2160,37 @@ XChar* XString_data(XString* str)
 // 分离共享数据（Copy-On-Write机制）
 void XString_detach(XString* str)
 {
-    if (!str/*|| !str->m_is_shared*/) return;
+    if (!str) return;
 
-    // 1. 空字符串无需处理（无数据可共享）
-    if (!XContainerDataPtr(str)) {
-       // str->m_is_shared = false;
+    // 不共享，无需分离
+    if (!XContainerSharedData(str) || !XSharedData_isShared(XContainerSharedData(str)))
         return;
-    }
 
-    // 2. 无共享引用时，直接标记为可修改，无需拷贝
-    //    （引用计数为1说明没有其他持有者）
-    if (XAtomic_load_int32(str->m_ref_count, XAtomic_MemoryOrder_Relaxed) == 1) {
-       // str->m_is_shared = false;
-        return;
-    }
-
-    // 3. 存在共享引用，必须拷贝数据（真正的写时复制点）
+    // 存在共享引用，必须拷贝数据（真正的写时复制点）
     size_t curr_size = XContainerSize(str);
     size_t curr_capacity = XContainerCapacity(str);
 
     // 分配新的缓冲区（保留原有容量，避免后续频繁分配）
     XChar* new_data = (XChar*)XMalloc_System((curr_capacity + 1) * sizeof(XChar));
-    if (!new_data) return; // 内存分配失败（可根据需求添加错误处理）
+    if (!new_data) return;
 
     // 复制现有数据（包含终止符）
-    memcpy(new_data, XContainerDataPtr(str), (curr_size + 1) * sizeof(XChar));
+    if (curr_size > 0 && XContainerDataPtr(str))
+        memcpy(new_data, XContainerDataPtr(str), (curr_size + 1) * sizeof(XChar));
+    else
+        memset(new_data, 0, (curr_capacity + 1) * sizeof(XChar));
 
-    // 原子减少原引用计数（若减到0，原数据会被其他持有者释放）
-    int32_t old_ref = XAtomic_fetch_sub_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
-    // 为新数据创建独立的引用计数（初始化为1）
-    XAtomic_int32_t* new_ref_count = (XAtomic_int32_t*)XMalloc_System(sizeof(XAtomic_int32_t));
-    if (!new_ref_count) {
+    // 创建新的 XSharedData
+    XSharedData* newShared = XSharedData_create(new_data);
+    if (!newShared)
+    {
         XFree_System(new_data);
-        // 恢复原引用计数（拷贝失败需回滚）
-        XAtomic_fetch_add_int32(str->m_ref_count, 1, XAtomic_MemoryOrder_Relaxed);
         return;
     }
-    XAtomic_store_int32(new_ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子初始化新计数
-    // 替换数据指针，标记为非共享
-    XContainerDataPtr(str) = new_data;
-    str->m_ref_count = new_ref_count;
+
+    // 减少旧引用，设置新引用
+    XSharedData_release(XContainerSharedData(str));
+    XContainerSharedData(str) = newShared;
 
     // 缓存失效（数据已变更）
     XString_deinitCache(str);
