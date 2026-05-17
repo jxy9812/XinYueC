@@ -79,7 +79,7 @@ typedef struct XContainer
     XCDataMoveMethod m_dataMoveMethod;      ///< 数据移动回调函数，用于元素所有权转移
     XCDataDeinitMethod m_dataDeinitMethod;  ///< 数据释放回调函数，用于元素内存释放
     XCompare m_compare;                     ///< 元素比较回调函数，用于元素大小比较
-    XSharedData* m_data;      ///< 指向隐式共享数据块（支持 COW 的容器使用，否则为 NULL）
+    void* m_data;      ///< 指向隐式共享数据块或普通数据（支持 COW 的容器使用，否则为 NULL）
     size_t m_capacity;        ///< 容器当前可容纳的最大元素数量（容量）
     size_t m_size;            ///< 容器当前实际存储的元素数量（大小）
     size_t m_typeSize;        ///< 单个元素的类型大小（字节数，如int为4字节）
@@ -94,17 +94,18 @@ typedef struct XContainer
  */
 #define XContainerValue(LPVal, type) (*(type*)LPVal)
 
-/**
-* @brief 获取容器的数据区指针
-* @details 返回容器内部存储数据的首地址。
-*          使用 COW 的容器通过 m_data->data 获取实际数据指针；
-* @param object XContainer实例指针（可传入派生类实例指针）
-* @return 数据区首地址（void*类型），失败或未初始化返回 NULL
-*/
-#define XContainerSharedDataPtr(object) ((XContainer*)(object))->m_data->data
-#define XContainerSharedData(object) ((XContainer*)(object))->m_data
+
+#define XContainerSharedData(object)        ((XSharedData*)((XContainer*)(object))->m_data)
+ /**
+ * @brief 获取容器的数据区指针
+ * @details 返回容器内部存储数据的首地址。
+ *          使用 COW 的容器通过 m_data->data 获取实际数据指针；
+ * @param object XContainer实例指针（可传入派生类实例指针）
+ * @return 数据区首地址（void*类型），失败或未初始化返回 NULL
+ */
+#define XContainerSharedDataPtr(object)     XContainerSharedData(object)->data
 //容器不使用共享模式的数据指针
-#define XContainerDataPtr(object) ((XContainer*)(object))->m_data
+#define XContainerDataPtr(object)           ((XContainer*)(object))->m_data
  /**
 * @brief 获取容器数据区的实际数据（指定类型）
 * @details 将数据区指针转换为指定类型的指针并解引用，直接获取数据值

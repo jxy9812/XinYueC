@@ -353,7 +353,7 @@ static void VXClass_copy(XRingChunk* object, const XRingChunk* src)
 {
     if (((XClass*)object)->m_vtable == NULL)
     {
-        XRingChunk_init(object, XContainerCapacity(src)); // 使用逻辑容量
+        XRingChunk_init(object, XContainerCapacity(src));
     }
     else if (!XRingChunk_isEmpty_base(object))
     {
@@ -361,21 +361,18 @@ static void VXClass_copy(XRingChunk* object, const XRingChunk* src)
     }
 
     size_t srcPhysicalCap = getPhysicalCapacity(src);
-    if (getPhysicalCapacity(object) < srcPhysicalCap)
+    size_t dstPhysicalCap = getPhysicalCapacity(object);
+
+    if (dstPhysicalCap < srcPhysicalCap)
     {
-        // 需要重新分配内存
+        // 需要重新分配更大的内存
+        void* newData = XMalloc_System(srcPhysicalCap);
+        if (!newData) return;  // 分配失败，保持原状
+
         if (XContainerDataPtr(object))
             XFree_System(XContainerDataPtr(object));
-
-        XContainerDataPtr(object) = XMalloc_System(srcPhysicalCap);
-        if (XContainerDataPtr(object) == NULL)
-        {
-            XContainerCapacity(object) = 0;
-            XContainerSize(object) = 0;
-            return;
-        }
-        // 对外容量保持不变
-        XContainerCapacity(object) = XContainerCapacity(src);
+        XContainerDataPtr(object) = newData;
+        XContainerCapacity(object) = XContainerCapacity(src);  // 更新逻辑容量
     }
 
     // 复制整个物理内存块
@@ -385,6 +382,7 @@ static void VXClass_copy(XRingChunk* object, const XRingChunk* src)
     XContainerSize(object) = XContainerSize(src);
     object->m_readPos = src->m_readPos;
     object->m_writePos = src->m_writePos;
+    object->m_markPos = src->m_markPos;
 }
 
 static void VXClass_move(XRingChunk* object, XRingChunk* src)

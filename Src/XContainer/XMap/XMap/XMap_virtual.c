@@ -160,6 +160,7 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue,
     if (!XMap_find_base(this_map, pvKey, &it))
     {
         pair = XMapBasePairBuffer(this_map);
+        XPair_init(pair,((XMapBase*)this_map)->m_keyTypeSize, XContainerTypeSize(this_map));
         if (keyCreatMethod)
             keyCreatMethod(XPair_first(pair), pvKey);
         else
@@ -337,7 +338,8 @@ XVector* VXMapBase_keys(const XMapBase* this_map)
     XContainerSetDataCopyMethod(v, XMapBaseKeyCopyMethod(this_map));
     XContainerSetDataMoveMethod(v, XMapBaseKeyMoveMethod(this_map));
     XContainerSetDataDeinitMethod(v, XMapBaseKeyDeinitMethod(this_map));
-    for_each_iterator(this_map, XMap, it) {
+    for_each_iterator(this_map, XMap, it) 
+    {
         XVector_push_back_base(v, XPair_first(XMap_iterator_data(&it)));
     }
     return v;

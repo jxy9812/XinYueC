@@ -253,12 +253,8 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue, X
 	XPair* pair = NULL;
 	if (!XHashMap_find_base(this_hash, pvKey, &it))
 	{//节点不存在
-		//pair = XPair_create(((XMapBase*)this_hash)->m_keyTypeSize, XContainerTypeSize(this_hash));
-		//if (!pair) {
-		//	// XPair_create 失败，直接返回 false
-		//	return false;
-		//}
 		pair = XMapBasePairBuffer(this_hash);
+		XPair_init(pair, ((XMapBase*)this_hash)->m_keyTypeSize, XContainerTypeSize(this_hash));
 		if (keyCreatMethod)
 			keyCreatMethod(XPair_first(pair), pvKey);
 		else

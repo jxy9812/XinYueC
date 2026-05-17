@@ -35,20 +35,28 @@ void XJsonObjectTest()
 
 
 		XJsonObject_insert_keyUtf8_int(object, "数字", 66666);
-		//XJsonObject_insert_keyUtf8_object(object,"对象", object);
+		XJsonObject_insert_keyUtf8_object(object,"对象", object);
 
-		/*XJsonValue_setObject(value, object);
-		XJsonArray_append_move_base(array, value);*/
+		XJsonValue_setObject(value, object);
+		XJsonArray_append_move_base(array, value);
 
-		//XJsonObject_insert_keyUtf8_array(object, "数组", array);
+		XJsonObject_insert_keyUtf8_array(object, "数组", array);
 		XJsonObject_insert_keyUtf8_utf8(object, "字符串", "测试");
 
-		//XJsonObject_insert_keyUtf8_object(object, "嵌套", object);
-		/*XJsonObject_insert_keyUtf8_object(object, "嵌套1", object);
-		XJsonObject_insert_keyUtf8_object(object, "嵌套3", object);*/
+		XJsonObject_insert_keyUtf8_object(object, "嵌套", object);
+		XJsonObject_insert_keyUtf8_object(object, "嵌套1", object);
+		XJsonObject_insert_keyUtf8_object(object, "嵌套3", object);
 
-
+		/*XVector* keys=XMapBase_keys_base(object);
 		
+		for_each_iterator(keys, XVector, it)
+		{
+			XString* key = XVector_iterator_data(&it);
+			XPrintf_string(key);
+			printf("\n");
+		}
+		XVector_delete_base(keys);*/
+
 		//printf("\n\n\n\n\n\n");
 		XJsonDocument* doc = XJsonDocument_create_object(object);
 		XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Indented);

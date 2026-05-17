@@ -6,7 +6,6 @@ void XMenu_XLibraryTest(XMenu* root)
 	XMenu_addMenu(root, menu);
 	XMenu_FindTest(menu);
 	XMenu_XTreeTest(menu);
-	XMenu_CJsonTest(menu);
 	XMenu_XBase64Test(menu);
 	XMenu_zlibTest(menu);
 }
