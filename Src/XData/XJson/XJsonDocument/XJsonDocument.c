@@ -279,7 +279,7 @@ XJsonArray* XJsonDocument_array(XJsonDocument* document)
 
 bool XJsonDocument_setArray(XJsonDocument* document, const XJsonArray* array)
 {
-    if (!document || array) 
+    if (!document || !array) 
         return false;
     XJsonValue_setArray(document, array);
     return true;
@@ -287,7 +287,7 @@ bool XJsonDocument_setArray(XJsonDocument* document, const XJsonArray* array)
 
 bool XJsonDocument_setObject(XJsonDocument* document, const XJsonObject* object)
 {
-    if (!document || object)
+    if (!document || !object)
         return false;
     XJsonValue_setObject(document, object);
     return true;
@@ -295,7 +295,7 @@ bool XJsonDocument_setObject(XJsonDocument* document, const XJsonObject* object)
 
 bool XJsonDocument_setArray_move(XJsonDocument* document, XJsonArray* array)
 {
-    if (!document || array)
+    if (!document || !array)
         return false;
     XJsonValue_setArray_move(document, array);
     return true;
@@ -303,7 +303,7 @@ bool XJsonDocument_setArray_move(XJsonDocument* document, XJsonArray* array)
 
 bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object)
 {
-    if (!document || object)
+    if (!document || !object)
         return false;
     XJsonValue_setObject_move(document, object);
     return true;

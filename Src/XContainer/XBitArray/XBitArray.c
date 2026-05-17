@@ -54,32 +54,30 @@ static bool VXBitArrayDetachIfNeeded(XBitArray* array)
 {
     if (!XContainerSharedData(array) || !XSharedData_isShared(XContainerSharedData(array)))
         return true; // 不共享，无需分离
+
     size_t byteCount = BYTE_COUNT(XBitArray_count(array));
-    // 分配新内存
-    void* newData = XMalloc_System(byteCount > 0 ? byteCount : 1);
-    if (!newData)
-        return false;
-    // 拷贝数据
-    if (byteCount > 0 && XContainerDataPtr(array))
-        memcpy(newData, XContainerDataPtr(array), byteCount);
-    // 创建新的 XSharedData
-    XSharedData* newShared = XSharedData_create(newData);
+    if (byteCount == 0) byteCount = 1;
+
+    // 创建新的 XSharedData（一次分配）
+    XSharedData* newShared = XSharedData_create(NULL, byteCount);
     if (!newShared)
-    {
-        XFree_System(newData);
         return false;
-    }
+
+    // 拷贝数据
+    if (XContainerSharedDataPtr(array) && byteCount > 0)
+        memcpy(newShared->data, XContainerSharedDataPtr(array), byteCount);
+
     // 减少旧引用，设置新引用
     XSharedData_release(XContainerSharedData(array));
     XContainerSharedData(array) = newShared;
     return true;
 }
-// 删除BitArray数据
+// 删除BitArray数据（XSharedData释放回调）
 static void VXBitArrayDataDelete(void* data, XBitArray* array)
 {
-    if (data == NULL || array == NULL)
+    if (array == NULL)
         return;
-    XFree_System(data);
+    // 注意：data 不需要单独释放，XSharedData 的柔性数组会一起释放
     XContainerSize(array) = 0;
     XContainerCapacity(array) = 0;
     XContainerSharedData(array) = NULL;
@@ -156,22 +154,21 @@ bool VXBitArray_clear(XBitArray* array) {
     }
 
     // 如果数据被共享，减少引用并创建空数据
-    if (XContainerSharedData(array) && XSharedData_isShared(XContainerSharedData(array)))
-    {
-        XSharedData_release(XContainerSharedData(array));
-
-        // 初始容量至少为1字节
-        size_t initialBytes = BYTE_COUNT(XContainerSize(array));
-        void* data = XMalloc_System(initialBytes);
-        XSharedData* sd = XSharedData_create(data);
-        if (sd == NULL)
+        if (XContainerSharedData(array) && XSharedData_isShared(XContainerSharedData(array)))
         {
-            XFree_System(data);
-            XContainerSharedData(array) = NULL;
-            return;
+            XSharedData_release(XContainerSharedData(array));
+
+            // 创建新的空数据（一次分配）
+            size_t initialBytes = 1;
+            XSharedData* sd = XSharedData_create(NULL, initialBytes);
+            if (sd == NULL)
+            {
+                XContainerSharedData(array) = NULL;
+                return true;
+            }
+            XContainerSharedData(array) = sd;
+            XContainerCapacity(array) = initialBytes * 8;
         }
-        XContainerSharedData(array) = sd;
-    }
 
     // 不共享，直接清空数据
     XBitArray_fill(array, false);
@@ -215,21 +212,17 @@ void XBitArray_init(XBitArray* array, size_t initialBitCount)
 
     // 初始容量至少为1字节
     size_t initialBytes = BYTE_COUNT(initialBitCount);
-    void* data = XMalloc_System(initialBytes);
-    XSharedData* sd = XSharedData_create(data);
-    if (sd == NULL)
-    {
-        XFree_System(data);
-        XFree_System(array);
-        return;
-    }
-    XContainerSharedData(array) = sd;
+    if (initialBytes == 0) initialBytes = 1;
 
-    if (XContainerDataPtr(array)) {
-        memset(XContainerDataPtr(array), 0, initialBytes);
-        XContainerCapacity(array) = initialBytes * 8; // 容量以比特为单位
-        XContainerSize(array) = initialBitCount;      // 初始比特数
-    }
+    // 创建 XSharedData（一次分配）
+    XSharedData* sd = XSharedData_create(NULL, initialBytes);
+    if (sd == NULL)
+        return;
+
+    XContainerSharedData(array) = sd;
+    memset(XContainerSharedDataPtr(array), 0, initialBytes);
+    XContainerCapacity(array) = initialBytes * 8; // 容量以比特为单位
+    XContainerSize(array) = initialBitCount;      // 初始比特数
     array->m_bitOrder = XBIT_ORDER_LSB_FIRST;
 }
 
@@ -240,7 +233,7 @@ bool XBitArray_setBit(XBitArray* array, size_t index, bool value)
     // COW分离
     if (!VXBitArrayDetachIfNeeded(array)) return false;
 
-    uint8_t* data = (uint8_t*)XContainerDataPtr(array);
+    uint8_t* data = (uint8_t*)XContainerSharedDataPtr(array);
     size_t byteIdx = index / 8;
     uint8_t bitMask = (array->m_bitOrder == XBIT_ORDER_MSB_FIRST) ? 1 << (7 - (index % 8)) : 1 << ((index % 8));//1 << (7-(index % 8))
 
@@ -257,7 +250,7 @@ bool XBitArray_getBit(const XBitArray* array, size_t index)
 {
     if (!array || index >= XBitArray_count(array)) return false;
 
-    const uint8_t* data = (const uint8_t*)XContainerDataPtr(array);
+    const uint8_t* data = (const uint8_t*)XContainerSharedDataPtr(array);
     size_t byteIdx = index / 8;
     uint8_t bitMask = (array->m_bitOrder == XBIT_ORDER_MSB_FIRST) ? 1 << (7-(index % 8)): 1 << ((index % 8));//1 << (7-(index % 8))
 
@@ -271,7 +264,7 @@ bool XBitArray_toggleBit(XBitArray* array, size_t index)
     // COW分离
     if (!VXBitArrayDetachIfNeeded(array)) return false;
 
-    uint8_t* data = (uint8_t*)XContainerDataPtr(array);
+    uint8_t* data = (uint8_t*)XContainerSharedDataPtr(array);
     size_t byteIdx = index / 8;
     uint8_t bitMask = (array->m_bitOrder == XBIT_ORDER_MSB_FIRST) ? 1 << (7 - (index % 8)) : 1 << ((index % 8));
 
@@ -291,9 +284,9 @@ bool XBitArray_resize(XBitArray* array, size_t newBitCount)
 
     // 容量不足时重新分配内存
     if (newBytes > oldBytes) {
-        void* newData = XRealloc_System(XContainerDataPtr(array), newBytes);
+        void* newData = XRealloc_System(XContainerSharedDataPtr(array), newBytes);
         if (!newData) return false;
-        XContainerDataPtr(array) = newData;
+        //XContainerSharedDataPtr(array) = newData;
         XContainerCapacity(array) = newBytes * 8;
     }
 
@@ -311,7 +304,7 @@ void XBitArray_fill(XBitArray* array, bool value)
 
     size_t fullBytes = XBitArray_count(array) / 8;
     size_t remBits = XBitArray_count(array) % 8;
-    uint8_t* data = (uint8_t*)XContainerDataPtr(array);
+    uint8_t* data = (uint8_t*)XContainerSharedDataPtr(array);
 
     // 填充完整字节
     memset(data, value ? 0xFF : 0x00, fullBytes);
@@ -356,7 +349,7 @@ bool  XBitArray_clearBits(XBitArray* array, size_t index)
     uint8_t bitPos = index % 8;    // 比特在字节中的位置（0~7）
 
     // 获取存储比特数据的字节数组指针
-    uint8_t* data = (uint8_t*)XContainerDataPtr(array);
+    uint8_t* data = (uint8_t*)XContainerSharedDataPtr(array);
 
     // 用位运算清除指定比特（与操作：保留其他位，当前位设为0）
     data[byteIndex] &= ~(1 << bitPos);
@@ -389,7 +382,7 @@ bool XBitArray_writeBits(XBitArray* array, size_t startIndex, size_t bitCount, c
         XContainerSize(array) = requiredSize;
     }
 
-    uint8_t* data = (uint8_t*)XContainerDataPtr(array);
+    uint8_t* data = (uint8_t*)XContainerSharedDataPtr(array);
     XBitOrder bitOrder = array->m_bitOrder;
     size_t startByte = startIndex / 8;
     size_t bitOffset; // 起始位在字节内的偏移（0-7，对应实际存储的位位置）
@@ -490,7 +483,7 @@ bool XBitArray_readBits(const XBitArray* array, size_t startIndex, size_t bitCou
     // 初始化目标缓冲区（清空有效字节）
     memset(dest, 0, requiredBytes);
 
-    const uint8_t* data = (const uint8_t*)XContainerDataPtr(array);
+    const uint8_t* data = (const uint8_t*)XContainerSharedDataPtr(array);
     XBitOrder bitOrder = array->m_bitOrder;
     size_t startByte = startIndex / 8;
     size_t bitOffset; // 起始位在字节内的偏移（0-7，对应实际存储的位位置）
@@ -590,8 +583,8 @@ const char* XBitArray_bits(const XBitArray* array)
     }
 
     // 获取内部存储的字节数组指针，转换为const char*类型返回
-    // XContainerDataPtr返回void*，指向存储比特的uint8_t数组
-    return (const char*)XContainerDataPtr(array);
+    // XContainerSharedDataPtr返回void*，指向存储比特的uint8_t数组
+    return (const char*)XContainerSharedDataPtr(array);
 }
 
 void XBitArray_truncate(XBitArray* array, int64_t pos)

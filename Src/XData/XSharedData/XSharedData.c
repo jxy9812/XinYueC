@@ -3,13 +3,18 @@
  * @brief 隐式共享（Copy-On-Write）数据块实现
  */
 #include "XSharedData.h"
-
-XSharedData* XSharedData_create(void* dataPtr)
+#include "XVtable.h"
+#include <string.h>
+XSharedData* XSharedData_create(void* dataPtr, size_t  dataSize)
 {
-    XSharedData* sd = (XSharedData*)XMalloc_System(sizeof(XSharedData));
-    if (sd) {
+    XSharedData* sd = (XSharedData*)XMalloc_System(ALIGN_UP(sizeof(XSharedData)+dataSize,sizeof(void*)));
+    if (sd) 
+    {
         XAtomic_store_int32(&sd->refCount, 1, XAtomic_MemoryOrder_Relaxed);
-        sd->data = dataPtr;
+        if (dataPtr)
+            memcpy(sd->data, dataPtr, dataSize);
+        else
+            memset(sd->data,0, dataSize);
     }
     return sd;
 }

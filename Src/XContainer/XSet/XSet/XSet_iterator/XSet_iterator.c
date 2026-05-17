@@ -9,7 +9,7 @@ XSet_iterator XSet_begin(XSet* this_map)
 	XSet_iterator it = { 0 };
 	if (this_map == NULL)
 		return it;
-	XRBTreeNode* current = XContainerDataPtr(this_map);
+	XRBTreeNode* current = *(XRBTreeNode**)XContainerSharedDataPtr(this_map);
 	if (current == NULL) return it;
 	while (XBTreeNode_GetLChild(current)!= NULL) {
 		current = XBTreeNode_GetLChild(current);
@@ -23,7 +23,7 @@ XSet_iterator XSet_end(XSet* this_map)
 	XSet_iterator it = { 0 };
 	if (this_map == NULL)
 		return it;
-	XRBTreeNode* this_root = XContainerDataPtr(this_map);
+	XRBTreeNode* this_root = XContainerSharedDataPtr(this_map);
 	return it;
 }
 

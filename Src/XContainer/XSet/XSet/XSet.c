@@ -59,7 +59,7 @@ static bool VXSetDetachIfNeeded(XSet* this_set)
 		return true; // 不共享，无需分离
 	size_t typeSize = XContainerTypeSize(this_set);
 	// 获取旧红黑树根节点
-	XRBTreeNode* oldRoot = (XRBTreeNode*)XContainerDataPtr(this_set);
+	XRBTreeNode* oldRoot = *(XRBTreeNode**)XContainerSharedDataPtr(this_set);
 	if (oldRoot == NULL)
 		return true;
 	// 创建新红黑树（深拷贝）
@@ -70,7 +70,7 @@ static bool VXSetDetachIfNeeded(XSet* this_set)
 	XRBTreeNode* newRoot = NULL;
 	for (size_t i = 0; i < XVector_size_base(nodes); i++)
 	{
-		XRBTreeNode* oldNode = ((XRBTreeNode**)XContainerDataPtr(nodes))[i];
+		XRBTreeNode* oldNode = ((XRBTreeNode**)XContainerSharedDataPtr(nodes))[i];
 		void* oldData = XBTreeNode_GetDataPtr(oldNode);
 		// 创建新节点
 		XRBTreeNode* newNode = XRBTree_create(NULL, typeSize);
@@ -91,15 +91,16 @@ static bool VXSetDetachIfNeeded(XSet* this_set)
 		((XTreeNode*)newNode)->parentNode = NULL;
 		XRBTree_insertNode(&newRoot, XContainerCompare(this_set), XCompareRuleTwo_XSet, newNode);
 	}
-	XVector_delete_base(nodes);
-	// 创建新的 XSharedData
-	XSharedData* newShared = XSharedData_create(newRoot);
+		XVector_delete_base(nodes);
+	// 创建新的 XSharedData（存储根节点指针）
+	XSharedData* newShared = XSharedData_create(NULL, sizeof(XRBTreeNode*));
 	if (!newShared)
 	{
 		// 释放已创建的新树
 		XTree_delete(newRoot, NULL, NULL);
 		return false;
 	}
+	*(XRBTreeNode**)newShared->data = newRoot;
 	// 减少旧引用，设置新引用
 	XSharedData_release(XContainerSharedData(this_set));
 	XContainerSharedData(this_set) = newShared;
@@ -125,8 +126,9 @@ static void VXSetDataDelete(void* data, XSet* this_set)
 {
 	if (data == NULL || this_set == NULL)
 		return;
-	XRBTreeNode* root = (XRBTreeNode*)data;
-	XTree_delete(root, XSet_deleteNodeData, this_set);
+	XRBTreeNode* root = *(XRBTreeNode**)data;
+	if (root)
+		XTree_delete(root, XSet_deleteNodeData, this_set);
 	XContainerSize(this_set) = 0;
 	XContainerCapacity(this_set) = 0;
 	XContainerSharedData(this_set) = NULL;
@@ -147,10 +149,10 @@ void VXSet_clear(XSet* this_set)
 	}
 
 	// 不共享，直接删除数据
-	XTree_delete(XContainerDataPtr(this_set), XSet_deleteNodeData, this_set);
+	XTree_delete(*(XRBTreeNode**)XContainerSharedDataPtr(this_set), XSet_deleteNodeData, this_set);
 	XContainerCapacity(this_set) = 0;
 	XContainerSize(this_set) = 0;
-	XContainerDataPtr(this_set) = NULL;
+	*(XRBTreeNode**)XContainerSharedDataPtr(this_set) = NULL;
 }
 
 void VXClass_copy(XSet* object, const XSet* src)
@@ -217,17 +219,17 @@ bool VXSet_insert(XSet* this_set, const void* pvKey, XCDataCreatMethod dataCreat
 	if (!XSetBase_contains(this_set, pvKey))//当前没有这个键值
 	{
 		if(!XContainerSharedData(this_set))
-			XContainerSharedData(this_set) = XSharedData_create(NULL);
+			XContainerSharedData(this_set) = XSharedData_create(NULL, sizeof(XRBTreeNode*));
 		if (dataCreatMethod)
 		{
 			void* temp = XCalloc_System(1,XContainerTypeSize(this_set));
 			dataCreatMethod(temp, pvKey);
-			XRBTree_insert(&XContainerDataPtr(this_set), XContainerCompare(this_set), XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
+			XRBTree_insert((XRBTreeNode**)XContainerSharedDataPtr(this_set), XContainerCompare(this_set), XCompareRuleTwo_XSet, temp, XContainerTypeSize(this_set));
 			XFree_System(temp);
 		}
 		else
 		{
-			XRBTree_insert(&XContainerDataPtr(this_set), XContainerCompare(this_set), XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
+			XRBTree_insert((XRBTreeNode**)XContainerSharedDataPtr(this_set), XContainerCompare(this_set), XCompareRuleTwo_XSet, pvKey, XContainerTypeSize(this_set));
 		}
 		
 		++XContainerCapacity(this_set);
@@ -268,9 +270,9 @@ void VXSet_erase(XSet* this_set, const XSet_iterator* it, XSet_iterator* next)
 	}
 
 	// 从红黑树中删除当前节点
-	XRBTreeNode* removeNode = XRBTree_removeNode(
-		&XContainerDataPtr(this_set),                   // 红黑树根节点地址
-		current_node,										// 要删除的键值
+		XRBTreeNode* removeNode = XRBTree_removeNode(
+		(XRBTreeNode**)XContainerSharedDataPtr(this_set),     // 红黑树根节点地址
+		current_node,									// 要删除的键值
 		XContainerTypeSize(this_set)
 	);
 	if (removeNode)
@@ -295,7 +297,7 @@ bool VXSet_remove(XSet* this_set, const void* pvKey)
 	// COW分离
 	if (!VXSetDetachIfNeeded(this_set))
 		return false;
-	XRBTreeNode* removeNode = XRBTree_remove(&XContainerDataPtr(this_set), ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, pvKey, XContainerTypeSize(this_set));
+	XRBTreeNode* removeNode = XRBTree_remove((XRBTreeNode**)XContainerSharedDataPtr(this_set), ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, pvKey, XContainerTypeSize(this_set));
 	if (removeNode != NULL)
 	{
 		XSet_deleteNodeData(XBTreeNode_GetDataPtr(removeNode), this_set);
@@ -315,7 +317,7 @@ bool VXSet_find(XSet* this_set, const void* key, XSet_iterator* it)
 			*it = XSet_end(this_set);
 		return false;
 	}
-	XTreeNode* node = XRBTree_findNode(XContainerDataPtr(this_set), ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key);
+	XTreeNode* node = XRBTree_findNode(*(XRBTreeNode**)XContainerSharedDataPtr(this_set), ((XContainer*)this_set)->m_compare, XCompareRuleOne_XSet, key);
 	if (node == NULL)
 	{
 		if (it)

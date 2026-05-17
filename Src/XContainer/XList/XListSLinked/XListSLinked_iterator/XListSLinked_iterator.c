@@ -8,7 +8,9 @@ XListSLinked_iterator XListSLinked_begin(XListSLinked* this_list)
 	XListSLinked_iterator it = { 0 };
 	if (ISNULL(this_list, "XListSLinked_begin"))
 		return it;
-	it.node = XContainerDataPtr(this_list);
+	if (!XContainerSharedData(this_list))
+		return it;
+	it.node = *(XListSNode**)XContainerSharedDataPtr(this_list);
 	return it;
 }
 

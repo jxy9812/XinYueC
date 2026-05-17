@@ -101,9 +101,10 @@ typedef struct XContainer
 * @param object XContainer实例指针（可传入派生类实例指针）
 * @return 数据区首地址（void*类型），失败或未初始化返回 NULL
 */
-#define XContainerDataPtr(object) ((XContainer*)(object))->m_data->data
-
+#define XContainerSharedDataPtr(object) ((XContainer*)(object))->m_data->data
 #define XContainerSharedData(object) ((XContainer*)(object))->m_data
+//容器不使用共享模式的数据指针
+#define XContainerDataPtr(object) ((XContainer*)(object))->m_data
  /**
 * @brief 获取容器数据区的实际数据（指定类型）
 * @details 将数据区指针转换为指定类型的指针并解引用，直接获取数据值
@@ -111,7 +112,7 @@ typedef struct XContainer
 * @param Type 数据类型（如int数组则传入int[]）
 * @return 转换后的Type类型数据
 */
-#define XContainerData(object, Type) (*(Type*)XContainerDataPtr(object))
+#define XContainerData(object, Type) (*(Type*)XContainerSharedDataPtr(object))
 
 /**
 * @brief 获取容器的容量

@@ -8,7 +8,9 @@ XListDLinked_iterator XListDLinked_begin(XListDLinked* this_list)
 	XListDLinked_iterator it = { 0 };
 	if (ISNULL(this_list, "XListDLinked_begin"))
 		return it;
-	it.node= XContainerDataPtr(this_list);
+	if (!XContainerSharedData(this_list))
+		return it;
+	it.node = *(XListDNode**)XContainerSharedDataPtr(this_list);
 	return it;
 }
 
@@ -29,7 +31,14 @@ void XListDLinked_iterator_add(XListDLinked* this_list,XListDLinked_iterator*it)
 		return ;
 	if (ISNULL(it, "XListDLinked_iterator_add  XStruct XListDLinked_iterator*"))
 		return ;
-	XListDLinked_iterator*  back= XContainerData(this_list, XListDNode*)->prev;
+	if (!XContainerSharedData(this_list))
+	{	
+		it->node = NULL;
+		return;
+	}
+	XListDNode* head = *(XListDNode**)XContainerSharedDataPtr(this_list);
+	if (!head) return;
+	XListDNode* back = head->prev;
 	if (it->node == back)//如果是最后一个元素则返回空表示遍历完成了
 	{
 		it->node = NULL;

@@ -131,9 +131,11 @@ void XJsonValue_copy(XJsonValue* var, const XJsonValue* src)
 
 void XJsonValue_move(XJsonValue* var, XJsonValue* src)
 {
+    if (var == src) return;
     XJsonValue_deinit(var);
-    if (!var) return;
-    XSwap(var,src,sizeof(XJsonValue));
+    memcpy(var, src, sizeof(XJsonValue));
+    src->type = XJsonValue_Null;
+    memset(&src->data, 0, sizeof(src->data));
 }
 
 void XJsonValue_deinit(XJsonValue* value)

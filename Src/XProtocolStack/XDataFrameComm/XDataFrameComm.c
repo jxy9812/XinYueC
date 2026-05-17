@@ -343,7 +343,7 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEvent* event)
 	XByteArray* str = XByteArray_to16HexUtf8(frame);
 	if (str != NULL)
 	{
-		XPrintf("\n16进制接收帧:%s\n", XContainerDataPtr(str));
+		XPrintf("\n16进制接收帧:%s\n", XContainerSharedDataPtr(str));
 		XByteArray_delete_base(str);
 	}
 #endif // XDFC_RECV_FRAME_16HEX_SHOW
@@ -352,12 +352,12 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEvent* event)
 	{
 		char c = 0;
 		XVector_push_back_base(frame, &c);
-		XPrintf("\nString接收帧:%s\n", XContainerDataPtr(frame));
+		XPrintf("\nString接收帧:%s\n", XContainerSharedDataPtr(frame));
 		--XContainerSize(frame);
 	}
 	else
 	{
-		XPrintf("\nString接收帧:%s\n", XContainerDataPtr(frame));
+		XPrintf("\nString接收帧:%s\n", XContainerSharedDataPtr(frame));
 	}
 #endif // XDFC_RECV_FRAME_STR_SHOW
 	XDataFrameComm* comm =NULL;

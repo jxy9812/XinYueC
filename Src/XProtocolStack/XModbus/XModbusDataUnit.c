@@ -95,7 +95,7 @@ bool XModbusDataUnit_setValues(XModbusDataUnit* unit, XVector* values)
 	if (!unit->m_values)
 		unit->m_values = XVector_Create(int16_t);
 	XVector_clear_base(unit->m_values);
-	XVector_append_array_base(unit->m_values,XContainerDataPtr(values),XContainerSize(values));
+	XVector_append_array_base(unit->m_values,XContainerSharedDataPtr(values),XContainerSize(values));
 	return true;
 }
 

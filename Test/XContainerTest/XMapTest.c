@@ -42,7 +42,7 @@ void XMapTest()
 		XMap_iterator_for_each(map, XFor_each_pair, NULL);
 
 		XVector* list = XMapBase_keys_base(map);
-		XDerangement(XContainerDataPtr(list), XContainerSize(list), XContainerTypeSize(list));
+		XDerangement(XContainerSharedDataPtr(list), XContainerSize(list), XContainerTypeSize(list));
 		for_each_iterator(list, XVector, it)
 		{
 			int* key = XVector_iterator_data(&it);

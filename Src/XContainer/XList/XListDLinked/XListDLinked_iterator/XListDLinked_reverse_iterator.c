@@ -28,7 +28,7 @@ void XListDLinked_reverse_iterator_add(XListDLinked* this_list, XListDLinked_rev
 		return ;
 	if (ISNULL(it, "XListDLinked_iterator_add  Xstruct XListDLinked_iterator*"))
 		return ;
-	XListDLinked_reverse_iterator* front = XContainerDataPtr(this_list);
+	XListDLinked_reverse_iterator* front = XContainerSharedDataPtr(this_list);
 	if (it->node == front)//如果是第一个元素则返回空表示遍历完成了
 	{
 		it->node = NULL;

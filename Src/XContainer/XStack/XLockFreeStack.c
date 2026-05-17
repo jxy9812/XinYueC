@@ -176,7 +176,7 @@ bool VXLockFreeStack_push(XLockFreeStack* this_stack, void* pvValue, XCDataCreat
     // 安全写入数据到栈顶位置（注意：栈顶索引是从1开始的，所以实际位置是old_top_index-1？）
     // 修正：对于栈来说，索引0是第一个元素，所以栈顶索引就是下一个可用位置
     // 当前栈顶索引是old_top_index，所以新元素应该放在old_top_index位置
-    char* data_ptr = (char*)XContainerDataPtr(this_stack);
+    char* data_ptr = (char*)XContainerSharedDataPtr(this_stack);
     size_t type_size = XContainerTypeSize(this_stack);
     void* write_slot = data_ptr + (old_top_index * type_size);
 
@@ -213,7 +213,7 @@ void* VXLockFreeStack_top(XLockFreeStack* this_stack)
     }
 
     // 返回栈顶元素地址（栈顶元素在top_index-1位置）
-    return ((char*)XContainerDataPtr(this_stack)) + ((top_index - 1) * XContainerTypeSize(this_stack));
+    return ((char*)XContainerSharedDataPtr(this_stack)) + ((top_index - 1) * XContainerTypeSize(this_stack));
 }
 
 bool VXLockFreeStack_receive(XLockFreeStack* this_stack, void* pvBuffer)
@@ -237,7 +237,7 @@ bool VXLockFreeStack_receive(XLockFreeStack* this_stack, void* pvBuffer)
 
         // 安全读取数据（从栈顶位置读取）
         if (pvBuffer) {
-            char* data_ptr = (char*)XContainerDataPtr(this_stack);
+            char* data_ptr = (char*)XContainerSharedDataPtr(this_stack);
             size_t type_size = XContainerTypeSize(this_stack);
             void* read_slot = data_ptr + ((old_top_index - 1) * type_size);
             memcpy(pvBuffer, read_slot, type_size);

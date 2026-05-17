@@ -136,7 +136,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			XVector_push_back_base(recvVector, &ucByte);  // 存储第一个字节
 			if (comm->m_recvFrameHead && !XVector_isEmpty_base(comm->m_recvFrameHead))
 			{//存在接收帧头
-				if (memcmp(XContainerDataPtr(recvVector), XContainerDataPtr(comm->m_recvFrameHead), 1) != 0)
+				if (memcmp(XContainerSharedDataPtr(recvVector), XContainerSharedDataPtr(comm->m_recvFrameHead), 1) != 0)
 				{//比较第一个
 					return;//第一个就不一样 重新来过
 				}
@@ -168,7 +168,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			}
 			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
 			size_t size = XContainerSize(recvVector);
-			if (memcmp((uint8_t*)(XContainerDataPtr(recvVector)) + size - 1, ((uint8_t*)XContainerDataPtr(comm->m_recvFrameHead)) + size - 1, 1) != 0)
+			if (memcmp((uint8_t*)(XContainerSharedDataPtr(recvVector)) + size - 1, ((uint8_t*)XContainerSharedDataPtr(comm->m_recvFrameHead)) + size - 1, 1) != 0)
 			{
 				comm->m_eRcvState = XDFC_STATE_RX_IDLE;  // 切换到接收空闲状态
 				return;//校验失败重新开始
@@ -214,7 +214,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			}
 			size_t size = XContainerSize(comm->m_recvFrameTail);
 			XByteArray* recvVector = comm->m_class.m_recvAsyncBuffer;
-			if ((XContainerSize(recvVector) >= size) && memcmp((uint8_t*)(XContainerDataPtr(recvVector)) + XContainerSize(recvVector) - size, XContainerDataPtr(comm->m_recvFrameTail), size) == 0)
+			if ((XContainerSize(recvVector) >= size) && memcmp((uint8_t*)(XContainerSharedDataPtr(recvVector)) + XContainerSize(recvVector) - size, XContainerSharedDataPtr(comm->m_recvFrameTail), size) == 0)
 			{//检测到帧结束标志
 				XContainerSize(recvVector) -= size;//缓冲区删除结束标志
 				if (XContainerSize(recvVector) != 0)
@@ -243,7 +243,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			}
 			if (comm->m_sendFrameHead)
 			{//当存在发送帧头先发送帧头
-				XIODevice_write(comm->m_class.m_io, XContainerDataPtr(comm->m_sendFrameHead), XContainerSize(comm->m_sendFrameHead));
+				XIODevice_write(comm->m_class.m_io, XContainerSharedDataPtr(comm->m_sendFrameHead), XContainerSize(comm->m_sendFrameHead));
 				//XIODevice_writeFull_base(comm->m_class.m_io);
 			}
 			comm->m_eSndState = XDFC_STATE_TX_XMIT;
@@ -255,7 +255,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			{
 				if (comm->m_sentBytes < XVector_size_base(frame))
 				{//
-					XIODevice_write(comm->m_class.m_io, ((uint8_t*)XContainerDataPtr(frame)) + comm->m_sentBytes, 1);
+					XIODevice_write(comm->m_class.m_io, ((uint8_t*)XContainerSharedDataPtr(frame)) + comm->m_sentBytes, 1);
 					//XIODevice_writeFull_base(comm->m_class.m_io);
 					++comm->m_sentBytes;
 					return;
@@ -263,21 +263,21 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			}
 			else//整体一起发送
 			{
-				XIODevice_write(comm->m_class.m_io, XContainerDataPtr(frame), XContainerSize(frame));
+				XIODevice_write(comm->m_class.m_io, XContainerSharedDataPtr(frame), XContainerSize(frame));
 				//XIODevice_writeFull_base(comm->m_class.m_io);
 			}
 			//发送完成
 			//XPrintf("设置发送帧尾巴\n");
 			if (comm->m_sendFrameTail)
 			{//当存在发送帧尾先发送帧尾
-				XIODevice_write(comm->m_class.m_io, XContainerDataPtr(comm->m_sendFrameTail), XContainerSize(comm->m_sendFrameTail));
+				XIODevice_write(comm->m_class.m_io, XContainerSharedDataPtr(comm->m_sendFrameTail), XContainerSize(comm->m_sendFrameTail));
 				//XIODevice_writeFull_base(comm->m_class.m_io);
 			}
 #if XDFC_SEND_FRAME_16HEX_SHOW
 			XByteArray* str = XByteArray_to16HexUtf8(frame);
 			if (str != NULL)
 			{
-				XPrintf("\n16进制发送帧:%s\n", XContainerDataPtr(str));
+				XPrintf("\n16进制发送帧:%s\n", XContainerSharedDataPtr(str));
 				XByteArray_delete_base(str);
 			}
 #endif // 
@@ -287,7 +287,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 				char c = 0;
 				XVector_push_back_base(frame, &c);
 			}
-			XPrintf("\nString发送帧:%s\n", XContainerDataPtr(frame));
+			XPrintf("\nString发送帧:%s\n", XContainerSharedDataPtr(frame));
 #endif // 
 			//发送完成释放资源
 			XQueueBase_pop_base(queue);
@@ -580,7 +580,7 @@ bool VXDataFrameComm_removePeriodicSendData(XDataFrameComm* comm, XHandle handle
 //接收验证Crc16回调
 static bool XRecvValidCrc16Cb(XDataFrameComm* comm, const XByteArray* data)
 {
-	return  XCrc_get16(XContainerDataPtr(data), XContainerSize(data)) == 0;
+	return  XCrc_get16(XContainerSharedDataPtr(data), XContainerSize(data)) == 0;
 }
 void VXDataFrameComm_setRecvValidCRC16(XDataFrameComm* comm, bool enableCRC16)
 {

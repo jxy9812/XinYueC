@@ -16,5 +16,6 @@ void XListSLinked_init(XListSLinked* this_list, size_t typeSize)
 	XListBase_init(this_list, typeSize);
 	XClassGetVtable(this_list) = XListSLinked_class_init();
 	this_list->m_tail = NULL;
+	XContainerSharedData(this_list) = NULL;
 }
 #endif

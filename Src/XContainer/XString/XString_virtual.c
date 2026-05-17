@@ -9,7 +9,7 @@
 // 内部常量定义
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量
-#define XString_cdata(str) ((const XChar*)XContainerDataPtr(str))
+#define XString_cdata(str) ((const XChar*)XContainerSharedDataPtr(str))
 
 /**
  * @brief 分离共享数据（Copy-On-Write 机制）
@@ -151,61 +151,43 @@ static bool VXString_Remove(XString* str, size_t pos, size_t len) {
 
 void VXString_Erase(XString* str, const XString_iterator* it, XString_iterator* next)
 {
-    // 检查参数有效性（str和it为必需参数，next可空）
+    // 参数有效性检查
     if (!str || !it) {
         return;
     }
-
-    // 初始化下一个迭代器（若next非空）
-    if (next != NULL) 
-    {
+    if (next != NULL) {
         *next = XString_end(str);
     }
 
-    // 检查迭代器数据有效性
-    if (!it->data)
-    {
+    // 获取数据区指针和长度
+    const XChar* data = (const XChar*)XContainerSharedDataPtr(str);
+    if (!data) {
         return;
     }
-
-    // 获取字符串数据起始地址
-    XChar* data = (XChar*)XContainerDataPtr(str);
-    if (!data) 
-    {
-        return;
-    }
-
-    // 计算当前迭代器指向的字符位置
-    size_t pos = ((XChar*)it->data) - data;
     size_t current_len = XString_length_base(str);
 
-    // 检查位置是否有效
+    // 计算迭代器指向的字符索引（整数，不依赖指针有效性）
+    size_t pos = (const XChar*)it->data - data;
     if (pos >= current_len) {
         return;
     }
 
-    // 执行删除操作（删除当前位置的1个字符）
+    // 执行删除（内部会分离并可能重新分配内存）
     if (!XString_remove_base(str, pos, 1)) {
         return;
     }
 
-    // 若不需要返回下一个迭代器，直接返回
-    if (next == NULL) {
-        return;
-    }
-
-    // 删除后获取新的字符串数据和长度
-    XChar* new_data = (XChar*)XContainerDataPtr(str);
-    size_t new_len = XString_length_base(str);
-
-    // 设置下一个迭代器位置
-    if (new_data && pos < new_len) {
-        // 未到达末尾时，下一个位置为当前位置（原后续字符已前移）
-        next->data = new_data + pos;
-    }
-    else {
-        // 到达末尾时，下一个迭代器为结束迭代器
-        *next = XString_end(str);
+    // 如果需要返回下一个迭代器
+    if (next != NULL) {
+        const XChar* new_data = (const XChar*)XContainerSharedDataPtr(str);
+        size_t new_len = XString_length_base(str);
+        if (new_data && pos < new_len) {
+            // 下一个字符在相同索引位置（原 pos+1 已前移）
+            next->data = (void*)(new_data + pos);
+        }
+        else {
+            *next = XString_end(str);
+        }
     }
 }
 
@@ -215,7 +197,7 @@ static void VXStringDataDelete(void* data, XString* str)
     if (data == NULL || str == NULL)
         return;
 
-    XFree_System(data);
+    //XFree_System(data);
     XContainerSize(str) = 0;
     XContainerCapacity(str) = 0;
     XContainerSharedData(str) = NULL;
@@ -265,21 +247,25 @@ static void VXClass_move(XString* object, XString* src)
         XSharedData_release_with(XContainerSharedData(object), VXStringDataDelete, object);
     }
 
-    // 转移所有权
-    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XString) - sizeof(XClass));
+    // 转移资源所有权
+    XContainerSharedData(object) = XContainerSharedData(src);
+    XContainerSize(object) = XContainerSize(src);
+    XContainerCapacity(object) = XContainerCapacity(src);
+    object->m_cache = src->m_cache;
 
-    //// 清空源对象的共享数据指针
-    //XContainerSharedData(src) = NULL;
-    //XContainerCapacity(src) = 0;
-    //XContainerSize(src) = 0;
+    // 清空源对象（使其处于有效但为空的状态）
+    XContainerSharedData(src) = NULL;
+    XContainerSize(src) = 0;
+    XContainerCapacity(src) = 0;
+    src->m_cache = NULL;
 }
 
 // 类方法：销毁
 static void VXClass_deinit(XString* str) 
 {
     if (!str) return;
-
-    XSharedData_release_with(XContainerSharedData(str), VXStringDataDelete, str);
+    if(XContainerSharedData(str))
+        XSharedData_release_with(XContainerSharedData(str), VXStringDataDelete, str);
     XContainerSize(str) = 0;
     XContainerCapacity(str) = 0;
     XContainerSharedData(str) = NULL;
@@ -310,23 +296,19 @@ static void VXContainer_clear(XString* str)
     {
         XSharedData_release(XContainerSharedData(str));
 
-        // 创建新的空数据
-        void* newData = XMalloc_System(sizeof(XChar) * (XSTRING_MIN_CAPACITY + 1));
-        if (newData)
+                // 创建新的空数据（一次分配）
+        size_t bytes = sizeof(XChar) * (XSTRING_MIN_CAPACITY + 1);
+        XSharedData* newShared = XSharedData_create(NULL, bytes);
+        if (newShared)
         {
-            memset(newData, 0, sizeof(XChar) * (XSTRING_MIN_CAPACITY + 1));
-            XSharedData* newShared = XSharedData_create(newData);
-            if (newShared)
-            {
-                XContainerSharedData(str) = newShared;
-                XContainerCapacity(str) = XSTRING_MIN_CAPACITY;
-            }
-            else
-            {
-                XFree_System(newData);
-                XContainerSharedData(str) = NULL;
-                XContainerCapacity(str) = 0;
-            }
+            memset(newShared->data, 0, bytes);
+            XContainerSharedData(str) = newShared;
+            XContainerCapacity(str) = XSTRING_MIN_CAPACITY;
+        }
+        else
+        {
+            XContainerSharedData(str) = NULL;
+            XContainerCapacity(str) = 0;
         }
         XContainerSize(str) = 0;
         XString_deinitCache(str);
@@ -334,10 +316,10 @@ static void VXContainer_clear(XString* str)
     }
 
     // 不共享，直接清空数据
-    if (XContainerDataPtr(str)) 
+    if (XContainerSharedDataPtr(str)) 
     {
         XContainerSize(str) = 0;
-        ((XChar*)XContainerDataPtr(str))[0] = 0;
+        ((XChar*)XContainerSharedDataPtr(str))[0] = 0;
     }
 
     XString_deinitCache(str);

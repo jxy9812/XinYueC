@@ -10,7 +10,7 @@ XVector_iterator XVector_begin(XVector* this_vector)
 	if (ISNULL(this_vector, ""))
 		return it;
 	//printf("开始\n");
-	it.data=XContainerDataPtr(this_vector);
+	it.data=XContainerSharedDataPtr(this_vector);
 	return it;
 }
 

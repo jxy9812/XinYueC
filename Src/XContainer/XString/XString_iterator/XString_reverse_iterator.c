@@ -5,7 +5,7 @@ XString_reverse_iterator XString_rbegin(XString* str)
 {
 	if (XString_isEmpty_base(str))
 		return XString_rend(str);
-	XChar* back = ((XChar*)XContainerDataPtr(str)) + (XString_length_base(str) - 1);
+	XChar* back = ((XChar*)XContainerSharedDataPtr(str)) + (XString_length_base(str) - 1);
 	return  (XString_reverse_iterator) { back };
 }
 
@@ -28,7 +28,7 @@ void XString_reverse_iterator_add(XString* str, XString_reverse_iterator* it)
 		*it = XString_rend(str);
 		return;
 	}
-	XChar* front = ((XChar*)XContainerDataPtr(str));
+	XChar* front = ((XChar*)XContainerSharedDataPtr(str));
 	if (it->data == front)//如果是第一个元素表示遍历完成了
 	{
 		it->data = NULL;

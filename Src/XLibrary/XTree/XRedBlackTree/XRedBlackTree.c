@@ -440,7 +440,7 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareR
 	if (ISNULL(nodes, ""))
 		return NULL;
 	//DEBUG_PRINTF("nodes=%p\n",nodes);
-	XRBTree_insertNode(this_root, compare, lessRule, nodes);
+	return XRBTree_insertNode(this_root, compare, lessRule, nodes);
 }
 
 XRBTreeNode* XRBTree_insertNode(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, XRBTreeNode* insertNode)

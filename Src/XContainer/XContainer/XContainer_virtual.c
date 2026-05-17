@@ -82,7 +82,7 @@ void VXClass_copy(XContainer* object, const XContainer* src)
 {
     // 释放目标对象原有共享块
     if (object->m_data)
-        XSharedData_release_with(object->m_data, XFree_System,NULL);
+        XSharedData_release_with(object->m_data, NULL,NULL);
     
     // 拷贝所有字段（共享同一块 XSharedData）
     memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XContainer) - sizeof(XClass));
@@ -96,7 +96,7 @@ void VXClass_move(XContainer* object, XContainer* src)
 {
     // 释放目标对象原有共享块
     if (object->m_data)
-        XSharedData_release_with(object->m_data, XFree_System, NULL);
+        XSharedData_release_with(object->m_data, NULL, NULL);
     
     // 转移所有权
     memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XContainer) - sizeof(XClass));
@@ -121,7 +121,7 @@ void VXContainer_deinit(XContainer* object)
     
         // 减少引用计数，最后一个引用时由 dataDeleter 释放 data
     if (object->m_data) {
-        XSharedData_release_with(object->m_data, XFree_System, NULL);
+        XSharedData_release_with(object->m_data, NULL, NULL);
         object->m_data = NULL;
     }
 }

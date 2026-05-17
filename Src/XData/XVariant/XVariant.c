@@ -275,7 +275,7 @@ XVariant* XVariant_create_byteArray(const void* data, size_t size)
 	XVariant* var = XVariant_create(NULL, sizeof(XByteArray), XVariantType_ByteArray);
 	XByteArray_init(XVariant_DataPtr(var));
 	XByteArray_resize_base(XVariant_DataPtr(var),size);
-	memcpy(XContainerDataPtr(XVariant_DataPtr(var)),data,size);
+	memcpy(XContainerSharedDataPtr(XVariant_DataPtr(var)),data,size);
 	return var;
 }
 
@@ -1071,7 +1071,7 @@ void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size)
 		XByteArray_init(XVariant_DataPtr(var));
 	}
 	XByteArray_resize_base(XVariant_DataPtr(var), size);
-	memcpy(XContainerDataPtr(XVariant_DataPtr(var)), data, size);
+	memcpy(XContainerSharedDataPtr(XVariant_DataPtr(var)), data, size);
 }
 
 static void setValue_String(XVariant* var, const XString* str, XCDataCreatMethod dataCreatMethod)

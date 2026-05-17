@@ -37,10 +37,10 @@ void XJsonObjectTest()
 		XJsonObject_insert_keyUtf8_int(object, "数字", 66666);
 		//XJsonObject_insert_keyUtf8_object(object,"对象", object);
 
-		XJsonValue_setObject(value, object);
-		XJsonArray_append_move_base(array, value);
+		/*XJsonValue_setObject(value, object);
+		XJsonArray_append_move_base(array, value);*/
 
-		XJsonObject_insert_keyUtf8_array(object, "数组", array);
+		//XJsonObject_insert_keyUtf8_array(object, "数组", array);
 		XJsonObject_insert_keyUtf8_utf8(object, "字符串", "测试");
 
 		//XJsonObject_insert_keyUtf8_object(object, "嵌套", object);
@@ -53,7 +53,7 @@ void XJsonObjectTest()
 		XJsonDocument* doc = XJsonDocument_create_object(object);
 		XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Indented);
 		XJsonDocument_delete(doc);
-		XPrintf_utf8(XContainerDataPtr(json));
+		XPrintf_utf8(XContainerSharedDataPtr(json));
 		XPrintf_utf8("\n开始从json文本转json对象\n");
 		doc = XJsonDocument_fromJson(json);
 		XByteArray_delete_base(json);

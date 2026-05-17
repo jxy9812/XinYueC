@@ -30,6 +30,6 @@ bool XTJCHMIComm_GetFuncCodeCb(XDataFrameComm* comm, XByteArray* data, uint8_t* 
 {
 	if (data == NULL || XVector_isEmpty_base(data) || code == NULL)
 		return false;
-	*code = *((uint8_t*)XContainerDataPtr(data));
+	*code = *((uint8_t*)XContainerSharedDataPtr(data));
 	return true;
 }

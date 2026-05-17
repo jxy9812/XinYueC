@@ -3,8 +3,15 @@
 #include "XLockFreeQueue.h"
 #include "XMap.h"
 #include <string.h>
-#define GetMap(queue)				((XMapBase*)XContainerDataPtr(queue)) //获取map
+#define GetMap(queue)				(*(XMapBase**)XContainerSharedDataPtr(queue)) //获取map（解引用柔性数组中的指针）
 #define GetPrioritySize(queue)		GetMap(queue)->m_keyTypeSize
+
+// COW分离与数据删除
+static bool VXPriorityMapQueueDetachIfNeeded(XPriorityMapQueue* this_queue);
+static void VXPriorityMapQueueDataDelete(void* data, XPriorityMapQueue* this_queue);
+// 确保 XSharedData 存在
+static bool ensureSharedData(XPriorityMapQueue* this_queue);
+
 //插入到队列的队尾
 static bool VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue, XCDataCreatMethod priorityCreatMethod, XCDataCreatMethod dataCreatMethod);
 //出队
@@ -15,6 +22,8 @@ static bool VXPriorityQueue_receive(XPriorityMapQueue* this_queue, void* pvBuffe
 static bool VXPriorityQueue_isFull(const XPriorityMapQueue* this_queue);
 //static bool VXPriorityQueue_isEmpty(const XPriorityMapQueue* this_queue);
 static void VXClass_deinit(XPriorityMapQueue* this_queue);
+static void VXClass_copy(XPriorityMapQueue* object, const XPriorityMapQueue* src);
+static void VXClass_move(XPriorityMapQueue* object, XPriorityMapQueue* src);
 XVtable* XPriorityMapQueue_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -31,6 +40,8 @@ XVtable* XPriorityMapQueue_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 	//XVTABLE_OVERLOAD_DEFAULT(EXContainer_IsEmpty, VXPriorityQueue_isEmpty);
 #if SHOWCONTAINERSIZE
 	printf("XPriorityMapQueue size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -43,7 +54,16 @@ void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize, 
 		return;
 	XContainer_init(this_queue, typeSize);
 	XClassGetVtable(this_queue) = XPriorityMapQueue_class_init();
-	XContainerDataPtr(this_queue)= XMap_create(prioritySize, sizeof(XCircularQueue), priorityCom);
+
+	// 创建 XSharedData 存储 XMap 指针
+	XContainerSharedData(this_queue) = XSharedData_create(NULL, sizeof(XMapBase*));
+	if (XContainerSharedData(this_queue))
+	{
+		// 创建 XMap 并存储到 XSharedData 中
+		XMapBase* map = XMap_create(prioritySize, sizeof(XCircularQueue), priorityCom);
+		*(XMapBase**)XContainerSharedDataPtr(this_queue) = map;
+	}
+
 	XContainerSetDataMoveMethod(GetMap(this_queue), XCircularQueue_move_base);
 	XContainerSetDataCopyMethod(GetMap(this_queue), XCircularQueue_copy_base);
 	XContainerSetDataDeinitMethod(GetMap(this_queue), XCircularQueue_deinit_base);
@@ -53,6 +73,89 @@ void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize, 
 	this_queue->m_priorityDeinitMethod = NULL;
 	this_queue->low_freq_queue = XPriorityQueue_create(prioritySize+typeSize, priorityCom, priorityOrder);
 	this_queue->mapPriority = NULL;
+}
+
+// 确保 XSharedData 存在
+static bool ensureSharedData(XPriorityMapQueue* this_queue)
+{
+    if (!XContainerSharedData(this_queue))
+    {
+        XContainerSharedData(this_queue) = XSharedData_create(NULL, sizeof(XMapBase*));
+        if (!XContainerSharedData(this_queue))
+            return false;
+        *(XMapBase**)XContainerSharedDataPtr(this_queue) = NULL;
+    }
+    return true;
+}
+
+// COW分离：如果数据被共享，创建独立副本
+static bool VXPriorityMapQueueDetachIfNeeded(XPriorityMapQueue* this_queue)
+{
+    if (!XContainerSharedData(this_queue) || !XSharedData_isShared(XContainerSharedData(this_queue)))
+        return true; // 不共享，无需分离
+
+    // 获取原 XMap
+    XMapBase* oldMap = GetMap(this_queue);
+    if (!oldMap)
+        return true;
+
+    // 创建新的 XSharedData
+    XSharedData* newShared = XSharedData_create(NULL, sizeof(XMapBase*));
+    if (!newShared) return false;
+
+    // 深拷贝 XMap
+    XMapBase* newMap = XMap_create(XContainerTypeSize(oldMap), XContainerCapacity(oldMap), XContainerCompare(oldMap));
+    if (!newMap)
+    {
+        XSharedData_release(newShared);
+        return false;
+    }
+
+    // 拷贝 XMap 中的元素
+    // 注意：这里需要深拷贝每个 XCircularQueue
+    // 由于 XMap 的 COW 机制，这里简化处理
+    // 实际上应该调用 XMap 的深拷贝
+    XMap_copy_base(newMap, oldMap);
+
+    *(XMapBase**)newShared->data = newMap;
+
+    // 减少旧引用，设置新引用
+    XSharedData_release(XContainerSharedData(this_queue));
+    XContainerSharedData(this_queue) = newShared;
+
+    // 更新回调函数
+    XContainerSetDataMoveMethod(newMap, XCircularQueue_move_base);
+    XContainerSetDataCopyMethod(newMap, XCircularQueue_copy_base);
+    XContainerSetDataDeinitMethod(newMap, XCircularQueue_deinit_base);
+
+    return true;
+}
+
+// 删除数据（XSharedData释放回调）
+static void VXPriorityMapQueueDataDelete(void* data, XPriorityMapQueue* this_queue)
+{
+    if (this_queue == NULL) return;
+    XMapBase* map = data ? *(XMapBase**)data : NULL;
+    if (map)
+    {
+        // 清空并删除 XMap
+        XMap_clear_base(map);
+        XMap_delete_base(map);
+    }
+    if (this_queue->low_freq_queue)
+    {
+        XPriorityQueue_clear_base(this_queue->low_freq_queue);
+        XPriorityQueue_delete_base(this_queue->low_freq_queue);
+        this_queue->low_freq_queue = NULL;
+    }
+    if (this_queue->mapPriority)
+    {
+        XFree_System(this_queue->mapPriority);
+        this_queue->mapPriority = NULL;
+    }
+    XContainerSharedData(this_queue) = NULL;
+    XContainerSize(this_queue) = 0;
+    XContainerCapacity(this_queue) = 0;
 }
 
 XPriorityMapQueue* XPriorityMapQueue_create(size_t prioritySize, XCompare priorityCom, XSortOrder priorityOrder, size_t typeSize)
@@ -98,6 +201,8 @@ bool XPriorityMapQueue_addFifoQueue(XPriorityMapQueue* this_queue, void* priorit
 {
 	if (this_queue == NULL || priority == NULL|| queueSize==0)
 		return false;
+    if (!ensureSharedData(this_queue) || !VXPriorityMapQueueDetachIfNeeded(this_queue))
+        return false;
 	if (XMapBase_value_base(GetMap(this_queue), priority))
 		return false;//已经添加了
 	XCircularQueue* queue = XLockFreeQueue_create(XContainerTypeSize(this_queue),queueSize);
@@ -119,6 +224,8 @@ bool XPriorityMapQueue_removeFifoQueue(XPriorityMapQueue* this_queue, void* prio
 {
 	if (this_queue == NULL || priority == NULL)
 		return false;
+    if (!ensureSharedData(this_queue) || !VXPriorityMapQueueDetachIfNeeded(this_queue))
+        return false;
 	XMap_iterator it;
 	if (!XMapBase_find_base(GetMap(this_queue), priority,&it))
 		return false;//要删除的不存在
@@ -166,6 +273,8 @@ bool XPriorityMapQueue_push_fifo_move(XPriorityMapQueue* this_queue, void* pvPri
 
 bool VXPriorityQueue_push(XPriorityMapQueue* this_queue, void* pvPriority, void* pvValue, XCDataCreatMethod priorityCreatMethod, XCDataCreatMethod dataCreatMethod)
 {
+    if (!ensureSharedData(this_queue) || !VXPriorityMapQueueDetachIfNeeded(this_queue))
+        return false;
 	if (!XMap_isEmpty_base(GetMap(this_queue)))
 	{//存在高频队列
 		XCircularQueue* queue=XMap_value_base(GetMap(this_queue), pvPriority);
@@ -247,6 +356,8 @@ static bool getMapQueue(XPriorityMapQueue* this_queue,XCircularQueue** getCq)
 }
 void VXPriorityQueue_pop(XPriorityMapQueue* this_queue)
 {
+    if (!ensureSharedData(this_queue) || !VXPriorityMapQueueDetachIfNeeded(this_queue))
+        return;
 	XCircularQueue* getCq=NULL;
 	if (getMapQueue(this_queue, &getCq))
 	{
@@ -325,6 +436,8 @@ void* VXPriorityQueue_top(XPriorityMapQueue* this_queue)
 
 bool VXPriorityQueue_receive(XPriorityMapQueue* this_queue, void* pvBuffer)
 {
+    if (!ensureSharedData(this_queue) || !VXPriorityMapQueueDetachIfNeeded(this_queue))
+        return false;
 	XCircularQueue* getCq = NULL;
 	if (getMapQueue(this_queue, &getCq))
 	{
@@ -371,24 +484,110 @@ bool VXPriorityQueue_isFull(const XPriorityMapQueue* this_queue)
 
 void VXClass_deinit(XPriorityMapQueue* this_queue)
 {
-	while (!XQueueBase_isEmpty_base(this_queue))
-	{
-		XQueueBase_pop_base(this_queue);
-	}
-	if (GetMap(this_queue))
-	{
-		XMap_delete_base(GetMap(this_queue));
-		XContainerDataPtr(this_queue) = NULL;
-	}
-	if(this_queue->low_freq_queue)
-	{
-		XPriorityQueue_delete_base(this_queue->low_freq_queue);
-		this_queue->low_freq_queue = NULL;
-	}
-	if (this_queue->mapPriority)
-	{
-		XFree_System(this_queue->mapPriority);
-		this_queue->mapPriority = NULL;
-	}
+    if (XContainerSharedData(this_queue))
+    {
+        XSharedData_release_with(XContainerSharedData(this_queue), VXPriorityMapQueueDataDelete, this_queue);
+    }
+    else
+    {
+        // 没有共享数据时，手动清理
+        while (!XQueueBase_isEmpty_base(this_queue))
+        {
+            XQueueBase_pop_base(this_queue);
+        }
+        XMapBase* map = GetMap(this_queue);
+        if (map)
+        {
+            XMap_delete_base(map);
+        }
+        if (this_queue->low_freq_queue)
+        {
+            XPriorityQueue_delete_base(this_queue->low_freq_queue);
+            this_queue->low_freq_queue = NULL;
+        }
+                if (this_queue->mapPriority)
+        {
+            XFree_System(this_queue->mapPriority);
+            this_queue->mapPriority = NULL;
+        }
+    }
+    XContainerSharedData(this_queue) = NULL;
+    XContainerSize(this_queue) = 0;
+    XContainerCapacity(this_queue) = 0;
+}
 
+void VXClass_copy(XPriorityMapQueue* object, const XPriorityMapQueue* src)
+{
+    // 如果目标还未初始化，先初始化
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XPriorityMapQueue_init(object,
+            XContainerTypeSize(src->low_freq_queue) - XContainerTypeSize(src),
+            XContainerCompare(src->low_freq_queue),
+            src->low_freq_queue->m_order,
+            XContainerTypeSize(src));
+    }
+    else if (XContainerSharedData(object))
+    {
+        XSharedData_release_with(XContainerSharedData(object), VXPriorityMapQueueDataDelete, object);
+    }
+
+    // 复制回调函数
+    XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
+    XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
+    XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
+    object->m_priorityCopyMethod = src->m_priorityCopyMethod;
+    object->m_priorityMoveMethod = src->m_priorityMoveMethod;
+    object->m_priorityDeinitMethod = src->m_priorityDeinitMethod;
+
+    // 共享源数据的 XSharedData（COW 机制）
+    XContainerSharedData(object) = XContainerSharedData(src);
+    if (XContainerSharedData(object))
+    {
+        XSharedData_addRef(XContainerSharedData(object));
+    }
+
+    // 共享 low_freq_queue（简化处理）
+    object->low_freq_queue = src->low_freq_queue;
+
+    XContainerSize(object) = XContainerSize(src);
+    XContainerCapacity(object) = XContainerCapacity(src);
+    XContainerTypeSize(object) = XContainerTypeSize(src);
+
+    // 共享 mapPriority
+    object->mapPriority = src->mapPriority;
+}
+
+void VXClass_move(XPriorityMapQueue* object, XPriorityMapQueue* src)
+{
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XPriorityMapQueue_init(object,
+            XContainerTypeSize(src->low_freq_queue) - XContainerTypeSize(src),
+            XContainerCompare(src->low_freq_queue),
+            src->low_freq_queue->m_order,
+            XContainerTypeSize(src));
+    }
+    else if (XContainerSharedData(object))
+    {
+        XSharedData_release_with(XContainerSharedData(object), VXPriorityMapQueueDataDelete, object);
+    }
+
+    // 转移所有权
+    XContainerSharedData(object) = XContainerSharedData(src);
+    object->low_freq_queue = src->low_freq_queue;
+    object->mapPriority = src->mapPriority;
+    object->m_priorityCopyMethod = src->m_priorityCopyMethod;
+    object->m_priorityMoveMethod = src->m_priorityMoveMethod;
+    object->m_priorityDeinitMethod = src->m_priorityDeinitMethod;
+    XContainerSize(object) = XContainerSize(src);
+    XContainerCapacity(object) = XContainerCapacity(src);
+    XContainerTypeSize(object) = XContainerTypeSize(src);
+
+    // 清空源对象
+    XContainerSharedData(src) = NULL;
+    src->low_freq_queue = NULL;
+    src->mapPriority = NULL;
+    XContainerSize(src) = 0;
+    XContainerCapacity(src) = 0;
 }

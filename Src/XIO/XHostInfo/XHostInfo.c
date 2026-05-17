@@ -188,7 +188,7 @@ int XHostInfo_lookupHost_toObject(const char* name, XObject* receiver, size_t me
 
 void XHostInfo_abortHostLookup(int lookupId) {
     XMutex_lock(g_XHostInfo_task_mutex);
-    XListSNode* node = XContainerDataPtr(g_XHostInfo_pending_tasks);
+    XListSNode* node = XContainerSharedDataPtr(g_XHostInfo_pending_tasks);
     while (node) {
         XHostInfo_LookupTask** ptask = (XHostInfo_LookupTask**)XListSNode_DataPtr(node);
         if (*ptask && (*ptask)->lookupId == lookupId) {

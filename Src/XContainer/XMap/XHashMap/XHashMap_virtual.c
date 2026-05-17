@@ -70,13 +70,14 @@ static bool VXHashMapDetachIfNeeded(XHashMap* this_hash)
 	size_t keyTypeSize = ((XMapBase*)this_hash)->m_keyTypeSize;
 
 	// 分配新的桶数组
-	size_t newSize = capacity * sizeof(XRBTreeNode*);
-	XRBTreeNode** newData = XMalloc_System(newSize);
-	if (!newData)
+		size_t newSize = capacity * sizeof(XRBTreeNode*);
+	XSharedData* newShared = XSharedData_create(NULL, newSize);
+	if (!newShared)
 		return false;
+	XRBTreeNode** newData = (XRBTreeNode**)newShared->data;
 	memset(newData, 0, newSize);
 
-	XRBTreeNode** oldData = (XRBTreeNode**)XContainerDataPtr(this_hash);
+	XRBTreeNode** oldData = (XRBTreeNode**)XContainerSharedDataPtr(this_hash);
 
 	// 深拷贝每个桶的红黑树
 	for (size_t i = 0; i < capacity; i++)
@@ -86,16 +87,16 @@ static bool VXHashMapDetachIfNeeded(XHashMap* this_hash)
 		{
 			// 遍历红黑树，拷贝节点到新树
 			XVector* nodes = XVector_create(sizeof(XRBTreeNode*));
-			if (!nodes)
+						if (!nodes)
 			{
-				XFree_System(newData);
+				XSharedData_release(newShared);
 				return false;
 			}
 			XBTree_TraversingToXVector(root, XBTreePreorder, nodes);
 		
 			for (size_t j = 0; j < XVector_size_base(nodes); j++)
 			{
-				XRBTreeNode* oldNode = ((XRBTreeNode**)XContainerDataPtr(nodes))[j];
+				XRBTreeNode* oldNode = ((XRBTreeNode**)XContainerSharedDataPtr(nodes))[j];
 				XPair* oldPair = XBTreeNode_GetDataPtr(oldNode);
 			
 				// 创建新节点
@@ -103,7 +104,7 @@ static bool VXHashMapDetachIfNeeded(XHashMap* this_hash)
 				if (!newNode)
 				{
 					XVector_delete_base(nodes);
-					XFree_System(newData);
+					XSharedData_release(newShared);
 					return false;
 				}
 			
@@ -127,15 +128,7 @@ static bool VXHashMapDetachIfNeeded(XHashMap* this_hash)
 			}
 			XVector_delete_base(nodes);
 		}
-	}
-
-	// 创建新的 XSharedData
-	XSharedData* newShared = XSharedData_create(newData);
-	if (!newShared)
-	{
-		XFree_System(newData);
-		return false;
-	}
+		}
 
 	// 减少旧引用，设置新引用
 	XSharedData_release(XContainerSharedData(this_hash));
@@ -146,7 +139,7 @@ static bool VXHashMapDetachIfNeeded(XHashMap* this_hash)
 // 删除HashMap数据
 static void VXHashMapDataDelete(void* data, XHashMap* this_hash)
 {
-	if (data == NULL || this_hash == NULL)
+	if (this_hash == NULL)
 		return;
 
 	XRBTreeNode** buckets = (XRBTreeNode**)data;
@@ -161,7 +154,7 @@ static void VXHashMapDataDelete(void* data, XHashMap* this_hash)
 		}
 	}
 
-	XFree_System(data);
+	// data 不需要单独释放，XSharedData 的柔性数组会一起释放
 	XContainerSize(this_hash) = 0;
 	XContainerCapacity(this_hash) = 0;
 	XContainerSharedData(this_hash) = NULL;
@@ -171,10 +164,11 @@ static void VXHashMapDataDelete(void* data, XHashMap* this_hash)
 static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 {
 	size_t new_size = new_capacity * sizeof(XRBTreeNode*);
-	XRBTreeNode** newData = XMalloc_System(new_size);
-	memset(newData, 0, new_size);
-	if (newData == NULL)
+	XSharedData* newShared = XSharedData_create(NULL, new_size);
+	if (!newShared)
 		return false;
+	XRBTreeNode** newData = (XRBTreeNode**)newShared->data;
+	memset(newData, 0, new_size);
 
 	// 获取原数据
 	XSharedData* oldSD = XContainerSharedData(map);
@@ -194,7 +188,7 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 			{
 				for (size_t j = 0; j < XVector_size_base(nodes); j++)
 				{
-					XRBTreeNode* node = ((XRBTreeNode**)XContainerDataPtr(nodes))[j];
+					XRBTreeNode* node = ((XRBTreeNode**)XContainerSharedDataPtr(nodes))[j];
 					XPair* pair = XBTreeNode_GetDataPtr(node);
 					size_t index = map->m_hash(XPair_first(pair), ((XMapBase*)map)->m_keyTypeSize) % new_capacity;
 
@@ -215,27 +209,9 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
 		// 注意：由于 VXMap_insert 已调用 VXHashMapDetachIfNeeded，
 		// 这里数据应该不被共享。但为了安全，仍需正确处理。
 		// 如果被共享，只减少引用计数；如果不被共享，释放数据。
-		if (XSharedData_isShared(oldSD))
-		{
-			// 被共享：只减少引用计数，不释放数据
-			XSharedData_release(oldSD);
-		}
-		else
-		{
-			// 不被共享：可以安全释放
-			if (oldSD->data)
-				XFree_System(oldSD->data);//红黑树节点已经被重新插入新的数组中所以直接释放数组
-			XSharedData_release(oldSD);
-		}
+				XSharedData_release(oldSD);
 	}
 
-	// 创建新的 XSharedData
-	XSharedData* newShared = XSharedData_create(newData);
-	if (!newShared)
-	{
-		XFree_System(newData);
-		return false;
-	}
 	XContainerSharedData(map) = newShared;
 	XContainerCapacity(map) = new_capacity;
 	return true;
@@ -250,22 +226,15 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue, X
 		XContainerCapacity(this_hash) = DEFAULT_CAPACITY;
 
 		size_t size = sizeof(void*) * XContainerCapacity(this_hash);
-		void* data = XMalloc_System(size);
-		if (data == NULL)
-		{
-			XFree_System(this_hash);
-			return false;
-		}
-		memset(data, 0, size);
 
-		// 创建 XSharedData 包装数据
-		XSharedData* sd = XSharedData_create(data);
+		// 创建 XSharedData（一次分配）
+		XSharedData* sd = XSharedData_create(NULL, size);
 		if (sd == NULL)
 		{
-			XFree_System(data);
-			XFree_System(this_hash);
+			//XFree_System(this_hash);
 			return false;
 		}
+		memset(sd->data, 0, size);
 		XContainerSharedData(this_hash) = sd;
 	}
 	else if ((double)XContainerSize(this_hash) / XContainerCapacity(this_hash) >= DEFAULT_LOAD_FACTOR)
@@ -300,7 +269,7 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue, X
 			XPair_insertSecond(pair, pvValue);
 
 		XRBTreeNode* inserted_node = XRBTree_insert(
-			&((XRBTreeNode**)XContainerDataPtr(this_hash))[index],
+			&((XRBTreeNode**)XContainerSharedDataPtr(this_hash))[index],
 			XContainerCompare(this_hash),
 			XCompareRuleTwo_XMap,
 			pair,
@@ -369,7 +338,7 @@ void VXMap_erase(XHashMap* this_hash, const XHashMap_iterator* it, XHashMap_iter
 	
 	// 从哈希表的对应红黑树中删除节点
 	XRBTreeNode* removeNode=XRBTree_removeNode(
-		&((XRBTreeNode**)XContainerDataPtr(this_hash))[it->index],  // 对应桶的红黑树根节点地址
+		&((XRBTreeNode**)XContainerSharedDataPtr(this_hash))[it->index],  // 对应桶的红黑树根节点地址
 		current_node,                                 // 要删除的键
 		XMapBasePairTypeSize(this_hash)
 	);
@@ -393,7 +362,7 @@ bool VXMap_remove(XHashMap*this_hash, const void* pvKey)
 	if (!VXHashMapDetachIfNeeded(this_hash))
 		return false;
 	size_t index = this_hash->m_hash(pvKey, ((XMapBase*)this_hash)->m_keyTypeSize) % XContainerCapacity(this_hash);
-	XRBTreeNode* removeNode = XRBTree_remove(((XRBTreeNode**)XContainerDataPtr(this_hash)) + index, ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, XMapBasePairTypeSize(this_hash));
+	XRBTreeNode* removeNode = XRBTree_remove(((XRBTreeNode**)XContainerSharedDataPtr(this_hash)) + index, ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey, XMapBasePairTypeSize(this_hash));
 	if (removeNode != NULL)
 	{
 		XMapBase_deleteNodeData(XBTreeNode_GetDataPtr(removeNode),this_hash);
@@ -428,7 +397,7 @@ bool VXMap_find(XHashMap*this_hash, const void* pvKey, XHashMap_iterator* it)
 		return false;
 	}
 	size_t index = this_hash->m_hash(pvKey, ((XMapBase*)this_hash)->m_keyTypeSize) % XContainerCapacity(this_hash);
-	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerDataPtr(this_hash))[index], ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
+	XRBTreeNode* nodes = XRBTree_findNode(((XRBTreeNode**)XContainerSharedDataPtr(this_hash))[index], ((XContainer*)this_hash)->m_compare, XCompareRuleOne_XMap, pvKey);
 	if (nodes == NULL)
 	{
 		if (it)
@@ -493,10 +462,10 @@ void VXMap_clear(XHashMap*this_hash)
 	// 不共享，直接删除数据
 	for (size_t i = 0; i < XContainerCapacity(this_hash); i++)
 	{
-		XRBTreeNode* root= ((XRBTreeNode**)XContainerDataPtr(this_hash))[i];
+		XRBTreeNode* root= ((XRBTreeNode**)XContainerSharedDataPtr(this_hash))[i];
 		XTree_delete(root, XMapBase_deleteNodeData, this_hash);
 	}
-	memset(XContainerDataPtr(this_hash),0, sizeof(XRBTreeNode*) * XContainerCapacity(this_hash));
+	memset(XContainerSharedDataPtr(this_hash),0, sizeof(XRBTreeNode*) * XContainerCapacity(this_hash));
 	XContainerSize(this_hash)=0;
 }
 

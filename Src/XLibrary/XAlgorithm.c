@@ -99,14 +99,14 @@ void XStackCopyXVector(const XStack* stack, XVector* vector)
 	char* pTail = XStack_top_base(stack);//数组末尾元素
 	char* pHead = pTail - TypeSize * (Size - 1);//数组头元素
 	
-	XContainerDataPtr(vector) = XMalloc_System(Size * TypeSize);
-	if (XContainerDataPtr(vector)==NULL)
+	//XContainerSharedDataPtr(vector) = XMalloc_System(Size * TypeSize);
+	if (XContainerSharedDataPtr(vector)==NULL)
 		return;
 	XContainerCapacity(vector) = Size;
 	XContainerSize(vector) = Size;
 	for (size_t i = 0; i < Size; i++)
 	{
-		memcpy((char*)XContainerDataPtr(vector) + i * TypeSize, pTail - i * TypeSize, TypeSize);
+		memcpy((char*)XContainerSharedDataPtr(vector) + i * TypeSize, pTail - i * TypeSize, TypeSize);
 	}
 #else
 	IS_ON_DEBUG(XStack_ON);

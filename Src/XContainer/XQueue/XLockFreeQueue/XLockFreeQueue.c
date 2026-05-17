@@ -91,7 +91,7 @@ void XLockFreeQueue_init(XLockFreeQueue* this_queue, size_t typeSize, size_t cou
     //printf("Actual buffer size (slots): %zu\n", actual_buffer_size);
     //printf("XContainerCapacity reports: %zu\n", XContainerCapacity(this_queue)); // 应该等于 actual_buffer_size
     //printf("XContainerSize reports: %zu\n", XContainerSize(this_queue)); // 初始化后应该为 0
-    //printf("Data ptr: %p\n", XContainerDataPtr(this_queue));
+    //printf("Data ptr: %p\n", XContainerSharedDataPtr(this_queue));
 }
 bool VXLockFreeQueue_isEmpty(const XLockFreeQueue* this_queue)
 {
@@ -194,7 +194,7 @@ bool VXLockFreeQueue_push(XLockFreeQueue* this_queue, void* pvValue, XCDataCreat
     }
 
     // 安全写入数据
-    char* data_ptr = (char*)XContainerDataPtr(this_queue);
+    char* data_ptr = (char*)XContainerSharedDataPtr(this_queue);
     size_t type_size = XContainerTypeSize(this_queue);
     void* write_slot = data_ptr + (old_tail_index * type_size);
 
@@ -239,7 +239,7 @@ void* VXLockFreeQueue_top(XLockFreeQueue* this_queue)
     }
 
     // 此时，由于 Acquire-Release 同步，我们可以安全地读取 head_index 槽位的数据
-    return ((char*)XContainerDataPtr(this_queue)) + (head_index * XContainerTypeSize(this_queue));
+    return ((char*)XContainerSharedDataPtr(this_queue)) + (head_index * XContainerTypeSize(this_queue));
 }
 
 bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer)
@@ -264,7 +264,7 @@ bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer)
         // 安全读取数据
         if(pvBuffer)
         {
-            char* data_ptr = (char*)XContainerDataPtr(this_queue);
+            char* data_ptr = (char*)XContainerSharedDataPtr(this_queue);
             size_t type_size = XContainerTypeSize(this_queue);
             void* read_slot = data_ptr + (old_head_index * type_size);
             memcpy(pvBuffer, read_slot, type_size);

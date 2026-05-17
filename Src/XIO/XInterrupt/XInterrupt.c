@@ -17,7 +17,7 @@ static void List_Handler(void** data, uint16_t index)
 {
 	XListSLinked* list = data[index];
 	//for_each_iterator(list,XListSLinked,it)
-	XListSNode* node = XContainerDataPtr(list);
+	XListSNode* node = XContainerSharedDataPtr(list);
 	{
 		XInterruptNode* i = XListSNode_DataPtr(node);
 		i->callback(i->userData);

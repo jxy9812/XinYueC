@@ -1278,7 +1278,7 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
     memset(buffer, 0, sizeof(buffer));
     XVector_resize_base(str, default_buffer_size);
     /* create m_buffer */
-    buffer->buffer = XContainerDataPtr(str);
+    buffer->buffer = XContainerSharedDataPtr(str);
     buffer->length = default_buffer_size;
     buffer->format = format;
     //m_buffer->hooks = *hooks;
@@ -1302,7 +1302,7 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
             goto fail;
         }
         buffer->buffer = NULL;
-        XContainerDataPtr(str) = printed;
+        //XContainerSharedDataPtr(str) = printed;
         XContainerCapacity(str) = buffer->offset + 1;
         XContainerSize(str) = buffer->offset;
     }
@@ -1319,7 +1319,7 @@ static XString* print_XString(const cJSON * const item, cJSON_bool format/*, con
         /* free the m_buffer */
         XFree_System(buffer->buffer);
         buffer->buffer = NULL;
-        XContainerDataPtr(str) = printed;
+        //XContainerSharedDataPtr(str) = printed;
         XContainerCapacity(str) = buffer->offset + 1;
         XContainerSize(str) = buffer->offset;
     }

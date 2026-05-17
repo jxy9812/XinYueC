@@ -11,7 +11,7 @@ XHashMap_iterator XHashMap_begin(XHashMap*this_map)
 	XRBTreeNode* node = NULL;
 	for (size_t i = 0; i < XContainerCapacity(this_map); i++)
 	{
-		node= ((XRBTreeNode**)XContainerDataPtr(this_map))[i];
+		node= ((XRBTreeNode**)XContainerSharedDataPtr(this_map))[i];
 		if (node == NULL)
 			continue;
 		while (XBTreeNode_GetLChild(node) != NULL) 
@@ -19,7 +19,7 @@ XHashMap_iterator XHashMap_begin(XHashMap*this_map)
 			node = XBTreeNode_GetLChild(node);
 		}
 		
-		//node = ((XHashNode**)XContainerDataPtr(this_map))[i];
+		//node = ((XHashNode**)XContainerSharedDataPtr(this_map))[i];
 		if (node != NULL)
 		{
 			it.node = node;
@@ -73,7 +73,7 @@ void XHashMap_iterator_add(XHashMap*this_map, XHashMap_iterator* it)
 		return;
 	for (size_t i = it->index+1; i < XContainerCapacity(this_map); i++)
 	{
-		it->node = ((XRBTreeNode**)XContainerDataPtr(this_map))[i];
+		it->node = ((XRBTreeNode**)XContainerSharedDataPtr(this_map))[i];
 		if (it->node == NULL)
 			continue;
 		while (XBTreeNode_GetLChild(it->node) != NULL)
@@ -101,7 +101,7 @@ void XHashMap_iterator_add(XHashMap*this_map, XHashMap_iterator* it)
 
 	//for (size_t i = curent->index+1; i < XContainerCapacity(this_map); i++)
 	//{
-	//	node = ((XHashNode**)XContainerDataPtr(this_map))[i];
+	//	node = ((XHashNode**)XContainerSharedDataPtr(this_map))[i];
 	//	if (node != NULL)
 	//	{
 	//		curent->node = node;

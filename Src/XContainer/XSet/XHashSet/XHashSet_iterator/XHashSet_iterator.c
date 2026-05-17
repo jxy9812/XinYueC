@@ -10,7 +10,7 @@ XHashSet_iterator XHashSet_begin(XHashSet* this_set)
     XRBTreeNode* node = NULL;
     for (size_t i = 0; i < XContainerCapacity(this_set); i++)
     {
-        node = ((XRBTreeNode**)XContainerDataPtr(this_set))[i];
+        node = ((XRBTreeNode**)XContainerSharedDataPtr(this_set))[i];
         if (node == NULL)
             continue;
         while (XBTreeNode_GetLChild(node) != NULL)
@@ -69,7 +69,7 @@ void XHashSet_iterator_add(XHashSet* this_set, XHashSet_iterator* it)
 		return;
 	for (size_t i = it->index + 1; i < XContainerCapacity(this_set); i++)
 	{
-		it->node = ((XRBTreeNode**)XContainerDataPtr(this_set))[i];
+		it->node = ((XRBTreeNode**)XContainerSharedDataPtr(this_set))[i];
 		if (it->node == NULL)
 			continue;
 		while (XBTreeNode_GetLChild(it->node) != NULL)

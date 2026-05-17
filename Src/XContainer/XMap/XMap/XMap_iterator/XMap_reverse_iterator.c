@@ -8,7 +8,7 @@ XMap_reverse_iterator XMap_rbegin(XMap* this_map)
 	XMap_reverse_iterator it = { 0 };
 	if (this_map == NULL)
 		return it;
-	XRBTreeNode* current = XContainerDataPtr(this_map);
+	XRBTreeNode* current = XContainerSharedDataPtr(this_map);
 	if (current == NULL) return it;
 	while (XBTreeNode_GetRChild(current) != NULL) {
 		current = XBTreeNode_GetRChild(current);
@@ -23,7 +23,7 @@ XMap_reverse_iterator XMap_rend(XMap* this_map)
 	XMap_reverse_iterator it = { 0 };
 	//if (this_map == NULL)
 		return it;
-	/*XRBTreeNode* this_root = XContainerDataPtr(this_map);
+	/*XRBTreeNode* this_root = XContainerSharedDataPtr(this_map);
 	return it;*/
 }
 

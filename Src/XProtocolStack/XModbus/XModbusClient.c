@@ -174,7 +174,7 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
 
     XModbusRequest* req = XModbusRequest_create_with_code(code);
     if (req) {
-        XModbusPdu_setData(&req->m_base, XContainerDataPtr(payload), XByteArray_size_base(payload));
+        XModbusPdu_setData(&req->m_base, XContainerSharedDataPtr(payload), XByteArray_size_base(payload));
     }
     XByteArray_delete_base(payload);
     return req;

@@ -29,7 +29,7 @@ void zlibByteArrayTest()
 	XByteArray* compress_buff = XByteArray_toCompress(data);
 	XPrintf("压缩后大小:%d\n", XByteArray_size_base(compress_buff));
 	XByteArray* decompress_buff = XByteArray_toDecompress(compress_buff);
-	XPrintf("解压后大小:%d\t数据:%s\n", XByteArray_size_base(decompress_buff), XContainerDataPtr(decompress_buff));
+	XPrintf("解压后大小:%d\t数据:%s\n", XByteArray_size_base(decompress_buff), XContainerSharedDataPtr(decompress_buff));
 	XByteArray_delete_base(data);
 	XByteArray_delete_base(compress_buff);
 	XByteArray_delete_base(decompress_buff);

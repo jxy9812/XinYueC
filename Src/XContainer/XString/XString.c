@@ -15,7 +15,7 @@
 // 内部常量定义
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量（不含结束符）
-#define XString_cdata(str) ((const XChar*)XContainerDataPtr(str))
+#define XString_cdata(str) ((const XChar*)XContainerSharedDataPtr(str))
 //#define XString_copy        XString_create_copy
 
 // -------------------------- 内部机制辅助函数 --------------------------
@@ -480,8 +480,8 @@ XChar XString_back(const XString* str)
 const XChar* XString_unicode(const XString* str)
 {
     if (!str) return NULL;
-    // 直接XString的内部数据通过XContainerDataPtr访问，返回常量指针确保不被修改
-    return (const XChar*)XContainerDataPtr(str);
+    // 直接XString的内部数据通过XContainerSharedDataPtr访问，返回常量指针确保不被修改
+    return (const XChar*)XContainerSharedDataPtr(str);
 }
 
 const uint16_t* XString_utf16(const XString* str)
@@ -1524,7 +1524,7 @@ bool XString_isNull(const XString* str)
     }
     // 检查内部数据指针是否未初始化（根据XContainer结构特性）
     // 结合XString_init逻辑，未初始化的对象其数据指针可能为NULL
-    if (XContainerDataPtr(str) == NULL) {
+    if (XContainerSharedDataPtr(str) == NULL) {
         return true;
     }
     return false;
@@ -1627,7 +1627,7 @@ XString* XString_toUpper(const XString* str) {
 XString* XString_trimmed(const XString* str) {
     if (!str || XString_isEmpty_base(str)) return XString_create_copy(str);
 
-    const XChar* data = XContainerDataPtr(str);
+    const XChar* data = XContainerSharedDataPtr(str);
     size_t start = 0;
     size_t end = XString_length_base(str) - 1;
 
@@ -1680,7 +1680,7 @@ short XString_toShort(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_short_stream(XContainerDataPtr(str),XContainerSize(str),base,ok);
+    return XChar_to_short_stream(XContainerSharedDataPtr(str),XContainerSize(str),base,ok);
 }
 
 int XString_toInt(const XString* str, bool* ok, int base) {
@@ -1688,7 +1688,7 @@ int XString_toInt(const XString* str, bool* ok, int base) {
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_int_stream(XContainerDataPtr(str), XContainerSize(str), base, ok);
+    return XChar_to_int_stream(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
 }
 
 long XString_toLong(const XString* str, bool* ok, int base)
@@ -1697,7 +1697,7 @@ long XString_toLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_long_stream(XContainerDataPtr(str), XContainerSize(str), base, ok);
+    return XChar_to_long_stream(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
 }
 
 long long XString_toLongLong(const XString* str, bool* ok, int base)
@@ -1706,7 +1706,7 @@ long long XString_toLongLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_longlong_stream(XContainerDataPtr(str), XContainerSize(str), base, ok);
+    return XChar_to_longlong_stream(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
 }
 
 unsigned long XString_toULong(const XString* str, bool* ok, int base)
@@ -1715,7 +1715,7 @@ unsigned long XString_toULong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_ulong_stream(XContainerDataPtr(str), XContainerSize(str), base, ok);
+    return XChar_to_ulong_stream(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
 }
 
 unsigned long long XString_toULongLong(const XString* str, bool* ok, int base)
@@ -1724,7 +1724,7 @@ unsigned long long XString_toULongLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_ulonglong_stream(XContainerDataPtr(str), XContainerSize(str), base, ok);
+    return XChar_to_ulonglong_stream(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
 }
 
 float XString_toFloat(const XString* str, bool* ok)
@@ -1733,7 +1733,7 @@ float XString_toFloat(const XString* str, bool* ok)
         if (ok) *ok = false;
         return 0.0f;
     }
-    return XChar_to_float_stream(XContainerDataPtr(str), XContainerSize(str), ok);
+    return XChar_to_float_stream(XContainerSharedDataPtr(str), XContainerSize(str), ok);
 }
 
 double XString_toDouble(const XString* str, bool* ok) {
@@ -1741,7 +1741,7 @@ double XString_toDouble(const XString* str, bool* ok) {
         if (ok) *ok = false;
         return 0.0;
     }
-    return XChar_to_double_stream(XContainerDataPtr(str), XContainerSize(str), ok);
+    return XChar_to_double_stream(XContainerSharedDataPtr(str), XContainerSize(str), ok);
 }
 
 bool XString_setNum_int(XString* str, int n, int base)
@@ -1880,68 +1880,57 @@ XString* XString_mid(const XString* str, size_t pos, size_t n)
 // 预分配空间（额外+1存储结束符）
 bool XString_reserve(XString* str, size_t capacity)
 {
-    if (!str || capacity <= XContainerCapacity(str)) 
+    if (!str)
         return false;
-    //XString_detach(str);  // 确保可修改
-    // 新容量，且不小于最小容量
+
+    // 容量足够，无需操作，返回 true
+    if (capacity <= XContainerCapacity(str))
+        return true;
+
+    // 新容量不小于最小容量
     size_t new_capacity = (capacity < XSTRING_MIN_CAPACITY) ? XSTRING_MIN_CAPACITY : capacity;
-    XChar* new_data = NULL;
+
+    // 如果还没有共享数据块，创建新的
     if (!XContainerSharedData(str))
     {
-        // 创建初始数据缓冲区
-        new_data = XMalloc_System(sizeof(XChar) * (new_capacity + 1));
-        if (new_data)
+        size_t bytes = sizeof(XChar) * (new_capacity + 1);
+        XSharedData* sd = XSharedData_create(NULL, bytes);
+        if (sd)
         {
-            memset(new_data, 0, sizeof(XChar) * (new_capacity + 1));
-            XSharedData* sd = XSharedData_create(new_data);
-            if (sd)
-            {
-                XContainerSharedData(str) = sd;
-            }
-            else
-            {
-                XFree_System(new_data);
-                new_data = NULL;
-            }
+            memset(sd->data, 0, bytes);
+            XContainerSharedData(str) = sd;
+        }
+        else
+        {
+            return false;
         }
     }
-    // 实际需要容量= 新容量 + 1（结束符）
-    else if (XString_cdata(str) == NULL || XSharedData_isShared(XContainerSharedData(str)))
-    {
-        new_data = XMalloc_System((new_capacity + 1) * sizeof(XChar));
-        if (XString_cdata(str))
-        {
-            memcpy(new_data, XString_cdata(str),(XString_length_base(str)+1)*sizeof(XChar));
-        }
-        if (XSharedData_isShared(XContainerSharedData(str)))
-        {
-            // 创建新的 XSharedData
-            XSharedData* newShared = XSharedData_create(new_data);
-            if (!newShared) {
-                XFree_System(new_data);
-                return false;
-            }
-            // 减少旧引用，设置新引用
-            XSharedData_release(XContainerSharedData(str));
-            XContainerSharedData(str) = newShared;
-        }
-    }
+    // 已有共享块，且容量不足
     else
     {
-        //XPrintf_string(str);
-        //printf("\n");
-        new_data = (XChar*)XRealloc_System(XString_data(str), (new_capacity + 1) * sizeof(XChar));
+        size_t bytes = (new_capacity + 1) * sizeof(XChar);
+        XSharedData* newShared = XSharedData_create(NULL, bytes);
+        if (!newShared)
+            return false;
+
+        // 拷贝现有数据（包含结束符）
+        if (XString_cdata(str))
+        {
+            memcpy(newShared->data, XString_cdata(str), (XString_length_base(str) + 1) * sizeof(XChar));
+        }
+        else
+        {
+            memset(newShared->data, 0, bytes);
+        }
+
+        XSharedData_release(XContainerSharedData(str));
+        XContainerSharedData(str) = newShared;
     }
-    
-    if (new_data) 
-    {
-        
-        XContainerDataPtr(str)=new_data;
-        XContainerCapacity(str)=new_capacity;
-        // 设置结束符（当前有效长度位置）
-        new_data[XString_length_base(str)] = 0;
-    }
-    return new_data != NULL;
+
+    XContainerCapacity(str) = new_capacity;
+    // 确保终止符存在
+    ((XChar*)XContainerSharedDataPtr(str))[XString_length_base(str)] = 0;
+    return true;
 }
 
 void XString_resize(XString* str, size_t size)
@@ -2154,7 +2143,7 @@ XChar* XString_data(XString* str)
 {
     if (!str) return NULL;
     XString_detach(str);  // 修改前确保分离
-    return (XChar*)XContainerDataPtr(str);
+    return (XChar*)XContainerSharedDataPtr(str);
 }
 
 // 分离共享数据（Copy-On-Write机制）
@@ -2171,22 +2160,16 @@ void XString_detach(XString* str)
     size_t curr_capacity = XContainerCapacity(str);
 
     // 分配新的缓冲区（保留原有容量，避免后续频繁分配）
-    XChar* new_data = (XChar*)XMalloc_System((curr_capacity + 1) * sizeof(XChar));
-    if (!new_data) return;
+        size_t bytes = (curr_capacity + 1) * sizeof(XChar);
+    // 创建新的 XSharedData（一次分配）
+    XSharedData* newShared = XSharedData_create(NULL, bytes);
+    if (!newShared) return;
 
     // 复制现有数据（包含终止符）
-    if (curr_size > 0 && XContainerDataPtr(str))
-        memcpy(new_data, XContainerDataPtr(str), (curr_size + 1) * sizeof(XChar));
+    if (curr_size > 0 && XContainerSharedDataPtr(str))
+        memcpy(newShared->data, XContainerSharedDataPtr(str), (curr_size + 1) * sizeof(XChar));
     else
-        memset(new_data, 0, (curr_capacity + 1) * sizeof(XChar));
-
-    // 创建新的 XSharedData
-    XSharedData* newShared = XSharedData_create(new_data);
-    if (!newShared)
-    {
-        XFree_System(new_data);
-        return;
-    }
+        memset(newShared->data, 0, bytes);
 
     // 减少旧引用，设置新引用
     XSharedData_release(XContainerSharedData(str));
