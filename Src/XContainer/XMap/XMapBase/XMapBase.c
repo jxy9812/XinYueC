@@ -7,22 +7,20 @@ XVtable* XMapBase_class_init()
 	return XContainer_class_init();
 }
 
-void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare)
+void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow)
 {
 	if (ISNULL(this_map, ""))
 		return NULL;
 	if (keyTypeSize == 0 || valTypeSize == 0)
 	{
-		printf("类型参数不能为0");
+		//printf("类型参数不能为0");
 		return NULL;
 	}
 	if (ISNULL(this_map, ""))
 		return NULL;
-	XContainer_init(&this_map->m_class, valTypeSize);
+	XContainer_init(&this_map->m_class, valTypeSize, useCow);
 	XClassGetVtable(this_map) = XMapBase_class_init();
 	this_map->m_keyTypeSize = keyTypeSize;
-	/*this_map->m_KeyEquality = KeyEquality;
-	this_map->m_KeyLess = KeyLess;*/
 	XContainerSetCompare(this_map,compare);
 	this_map->m_keyCopyMethod = NULL;
 	this_map->m_keyMoveMethod = NULL;

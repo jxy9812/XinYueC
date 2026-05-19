@@ -35,7 +35,7 @@ void XVariantList_init(XVariantList* list)
 {
 	if (list == NULL)
 		return;
-	XVector_init(list, sizeof(XVariant));
+	XVector_init(list, sizeof(XVariant),true);
 	XClassGetVtable(list) = XVariantList_class_init();
 	XContainerSetDataCopyMethod(list, XVariant_copy_base);
 	XContainerSetDataMoveMethod(list, XVariant_move_base);

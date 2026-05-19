@@ -241,7 +241,7 @@ XVariant* XVariant_create_ByteArray(const XByteArray* array)
 	if (array == NULL)
 		return NULL;
 	XVariant* var=XVariant_create(NULL,sizeof(XByteArray), XVariantType_ByteArray);
-	XByteArray_init(XVariant_DataPtr(var));
+	XByteArray_init(XVariant_DataPtr(var),true);
 	XByteArray_copy_base(XVariant_DataPtr(var),array);
 	return var;
 }
@@ -251,7 +251,7 @@ XVariant* XVariant_create_ByteArray_move(XByteArray* array)
 	if (array == NULL)
 		return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XByteArray), XVariantType_ByteArray);
-	XByteArray_init(XVariant_DataPtr(var));
+	XByteArray_init(XVariant_DataPtr(var), true);
 	XByteArray_move_base(XVariant_DataPtr(var), array);
 	return var;
 }
@@ -273,7 +273,7 @@ XVariant* XVariant_create_byteArray(const void* data, size_t size)
 	if (data == NULL||size==0)
 		return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XByteArray), XVariantType_ByteArray);
-	XByteArray_init(XVariant_DataPtr(var));
+	XByteArray_init(XVariant_DataPtr(var), true);
 	XByteArray_resize_base(XVariant_DataPtr(var),size);
 	memcpy(XContainerSharedDataPtr(XVariant_DataPtr(var)),data,size);
 	return var;
@@ -388,7 +388,7 @@ XVariant* XVariant_create_map(const XVariantMap* map)
 	if (map == NULL)
 		return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XVariantMap), XVariantType_Map);
-	XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize,XContainerTypeSize(map), XContainerCompare(map));
+	XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize,XContainerTypeSize(map), XContainerCompare(map), true);
 	XMap_copy_base(XVariant_DataPtr(var), map);
 	return var;
 }
@@ -398,7 +398,7 @@ XVariant* XVariant_create_map_move(XVariantMap* map)
 	if (map == NULL)
 		return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XVariantMap), XVariantType_Map);
-	XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize, XContainerTypeSize(map), XContainerCompare(map));
+	XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize, XContainerTypeSize(map), XContainerCompare(map), true);
 	XMap_move_base(XVariant_DataPtr(var), map);
 	return var;
 }
@@ -1037,7 +1037,7 @@ static void setValue_ByteArray(XVariant* var, XByteArray* array, XCDataCreatMeth
 	if (var->m_type != XVariantType_ByteArray)
 	{
 		setValue(var, NULL, sizeof(XByteArray), XVariantType_ByteArray);
-		XByteArray_init(XVariant_DataPtr(var));
+		XByteArray_init(XVariant_DataPtr(var), true);
 	}
 	dataCreatMethod(XVariant_DataPtr(var), array);
 }
@@ -1068,7 +1068,7 @@ void XVariant_setValue_byteArray(XVariant* var, const void* data, size_t size)
 	if (var->m_type != XVariantType_ByteArray)
 	{
 		setValue(var, NULL, sizeof(XByteArray), XVariantType_ByteArray);
-		XByteArray_init(XVariant_DataPtr(var));
+		XByteArray_init(XVariant_DataPtr(var), true);
 	}
 	XByteArray_resize_base(XVariant_DataPtr(var), size);
 	memcpy(XContainerSharedDataPtr(XVariant_DataPtr(var)), data, size);
@@ -1189,7 +1189,7 @@ static void setValue_map(XVariant* var, const XVariantMap* map, XCDataCreatMetho
 	if (var->m_type != XVariantType_Map)
 	{
 		setValue(var, NULL, sizeof(XVariantMap), XVariantType_Map);
-		XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize, XContainerTypeSize(map), XContainerCompare(map));
+		XMap_init(XVariant_DataPtr(var), ((XMapBase*)map)->m_keyTypeSize, XContainerTypeSize(map), XContainerCompare(map), true);
 	}
 	dataCreatMethod(XVariant_DataPtr(var), map);
 }

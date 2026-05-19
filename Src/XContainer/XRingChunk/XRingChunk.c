@@ -63,7 +63,7 @@ void XRingChunk_init(XRingChunk* chunk, size_t logicalCapacity)
     if (ISNULL(chunk, "") || ISNULL(logicalCapacity, ""))
         return;
 
-    XContainer_init(chunk, sizeof(uint8_t));
+    XContainer_init(chunk, sizeof(uint8_t),false);
     XClassGetVtable(chunk) = XRingChunk_class_init();
 
     // --- 核心修正点 ---

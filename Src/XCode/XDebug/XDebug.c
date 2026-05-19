@@ -7,7 +7,7 @@
 
 // 初始化XDebug结构体
 static void XDebug_init(XDebug* debug, const char* file, const char* function, int line) {
-    XVector_init(&debug->buffer, sizeof(char));
+    XVector_init(&debug->buffer, sizeof(char),false);
     debug->target = XDEBUG_TARGET_STDOUT;
     debug->file_fd = 1;
     debug->auto_newline = true;

@@ -48,8 +48,8 @@ XVtable* XVector_class_init();
  * @return 新创建的XVector指针，失败返回NULL
  * @note 需确保typeSize大于0，否则创建失败
  */
-XVector* XVector_create(size_t typeSize);
-
+XVector* XVector_create_ex(size_t typeSize, bool useCow);
+#define XVector_create(typeSize)   XVector_create_ex(typeSize,true)
 /**
  * @brief 通过拷贝另一个XVector创建新的XVector
  * @param other 被拷贝的源XVector
@@ -80,7 +80,7 @@ XVector* XVector_create_move(XVector* other);
  * @param typeSize 数组中元素的类型大小（字节数）
  * @note 需确保this_vector不为NULL且typeSize大于0，否则初始化无效
  */
-void XVector_init(XVector* this_vector, size_t typeSize);
+void XVector_init(XVector* this_vector, size_t typeSize, bool useCow);
 
 /**
  * @brief 调整XVector的大小

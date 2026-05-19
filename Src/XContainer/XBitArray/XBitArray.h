@@ -29,8 +29,8 @@ typedef struct XBitArray
  * @param initialBitCount 初始比特数量
  * @return 成功返回创建的XBitArray对象指针，失败返回NULL
  */
-XBitArray* XBitArray_create(size_t initialBitCount);
-
+XBitArray* XBitArray_create_ex(size_t initialBitCount, bool useCow);
+#define XBitArray_create(initialBitCount) XBitArray_create_ex(initialBitCount, true)
 /**
  * @brief 基于另一个比特数组创建一个新的副本
  * @param other 被复制的比特数组
@@ -57,7 +57,7 @@ XBitArray* XBitArray_create_move(XBitArray* other);
  * @param array 要初始化的XBitArray对象
  * @param initialBitCount 初始比特数量
  */
-void XBitArray_init(XBitArray* array, size_t initialBitCount);
+void XBitArray_init(XBitArray* array, size_t initialBitCount, bool useCow);
 
 /**
  * @brief 设置指定索引的比特值（核心操作基础实现）

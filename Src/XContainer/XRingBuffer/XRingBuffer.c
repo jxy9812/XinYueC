@@ -53,7 +53,7 @@ void XRingBuffer_init(XRingBuffer* buffer, size_t chunkSize)
     if (ISNULL(buffer, "") || ISNULL(chunkSize, ""))
         return;
 
-    XContainer_init(buffer, sizeof(uint8_t));
+    XContainer_init(buffer, sizeof(uint8_t),false);
     XClassGetVtable(buffer) = XRingBuffer_class_init();
 
     // 创建chunks向量

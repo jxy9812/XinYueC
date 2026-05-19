@@ -52,7 +52,7 @@ void XPriorityMapQueue_init(XPriorityMapQueue* this_queue, size_t prioritySize, 
 {
 	if (ISNULL(this_queue, "") || ISNULL(typeSize, ""))
 		return;
-	XContainer_init(this_queue, typeSize);
+	XContainer_init(this_queue, typeSize,false);
 	XClassGetVtable(this_queue) = XPriorityMapQueue_class_init();
 
 	// 创建 XSharedData 存储 XMap 指针

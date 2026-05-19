@@ -4,7 +4,7 @@
 #include "XStack.h"
 #include "XVariantList.h"
 #include <string.h>
-
+bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* output);
 XBsonArray* XBsonArray_create() 
 {
     XBsonArray* array = (XBsonArray*)XMalloc_System(sizeof(XBsonArray));
@@ -41,7 +41,7 @@ void XBsonArray_init(XBsonArray* array)
 {
     if (!array) return;
 
-    XVector_init(array, sizeof(XBsonValue));
+    XVector_init(array, sizeof(XBsonValue),true);
     XContainerSetDataDeinitMethod(array, XBsonValue_deinit);
     XContainerSetDataCopyMethod(array, XBsonValue_copy);
     XContainerSetDataMoveMethod(array, XBsonValue_move);
@@ -95,7 +95,7 @@ XBsonArray* XBsonArray_fromBson(XByteArray* data)
     if(!data||XByteArray_isEmpty_base(data))
         return NULL;
     XBsonArray* array = XBsonArray_create();
-    if (!XBsonArray_from_bytes(array, XContainerDataPtr(data), XContainerSize(data)))
+    if (!XBsonArray_from_bytes(array, XContainerDataAddr(data), XContainerSize(data)))
     {
         XBsonArray_delete_base(array);
         return NULL;
@@ -108,8 +108,8 @@ XByteArray* XBsonArray_to_bytes(const XBsonArray* array)
     if (!array||XBsonArray_isEmpty_base(array)) return NULL;
 
     // 先计算总大小
-    XByteArray* bytes = XByteArray_create(4);//预留总长度4字节
-
+    XByteArray* bytes = XByteArray_create();//预留总长度4字节大小
+    XByteArray_resize_base(bytes, 4);
     // 写入元素
     for (size_t i = 0; i < XBsonArray_size_base(array); i++)
     {
@@ -122,7 +122,7 @@ XByteArray* XBsonArray_to_bytes(const XBsonArray* array)
     // 添加终止符
     XByteArray_push_back_base(bytes, 0x00);
     //开头写入总长度
-    XMemory_write_data(XContainerDataPtr(bytes), XBYTE_ORDER_LITTLE_ENDIAN, &XContainerSize(bytes), sizeof(uint32_t));
+    XMemory_write_data(XContainerDataAddr(bytes), XBYTE_ORDER_LITTLE_ENDIAN, &XContainerSize(bytes), sizeof(uint32_t));
     return bytes;
 }
 

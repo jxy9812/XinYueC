@@ -311,7 +311,7 @@ bool XJsonDocument_setObject_move(XJsonDocument* document, XJsonObject* object)
 XJsonDocument* XJsonDocument_fromString(const XString* json)
 {
     if (!json || XString_isEmpty_base(json)) return NULL;
-    XByteArray* buff = XByteArray_create();
+    XByteArray* buff = XByteArray_create_ex(false);
     //引用
     XContainerDataPtr(buff)= XString_toUtf8(json);
     XContainerSize(buff)= XString_toUtf8_length(json)+1;
@@ -328,7 +328,7 @@ XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentForm
 {
     if (!document ) return NULL;
     XByteArray* json = XJsonDocument_toJson(document, format);
-    XString* str = XString_create_utf8(XContainerDataPtr(json));
+    XString* str = XString_create_utf8(XContainerDataAddr(json));
     XByteArray_delete_base(json);
     return str;
 }
@@ -337,7 +337,7 @@ XJsonDocument* XJsonDocument_fromJson(const XByteArray* json)
 {
     if (!json || XByteArray_isEmpty_base(json)) return NULL;
 
-    const char* data = XContainerDataPtr(json);
+    const char* data = XContainerDataAddr(json);
     const char* end = data + XByteArray_size_base(json)-1;
     const char* ptr = data;
 
@@ -500,52 +500,6 @@ XVariant* XJsonDocument_toVariant_ref(XJsonDocument* doc)
     var->m_dataSize = sizeof(XJsonDocument);
     return var;
 }
-
-//XJsonDocument* XJsonDocument_fromString(const XString* json) {
-//    // 实际实现需要解析JSON字符串
-//    // 这里仅作为框架示例
-//    XJsonDocument* doc = XJsonDocument_create();
-//    if (doc && json) {
-//        // 解析逻辑将在这里实现
-//    }
-//    return doc;
-//}
-//
-//XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentFormat format) {
-//    if (!document ) return NULL;
-//
-//    switch (document->root.type) {
-//    case XJsonValue_Object:
-//        return XJsonObject_toString(document->root.data.object);
-//    case XJsonValue_Array:
-//        return XJsonArray_toString(document->root.data.array);
-//    default:
-//        return NULL;
-//    }
-//}
-//
-//XVariant* XJsonDocument_toVariant(const XJsonDocument* document) {
-//    if (!document ) return NULL;
-//    return XJsonValue_toVariant(document->root);
-//}
-//
-//XJsonDocument* XJsonDocument_fromVariant(const XVariant* variant) {
-//    if (!variant) return NULL;
-//
-//    XJsonDocument* doc = XJsonDocument_create();
-//    if (doc) {
-//        XJsonValue* root = XJsonValue_fromVariant(variant);
-//        if (root) {
-//            XJsonDocument_setRoot(doc, root);
-//        }
-//        else {
-//            XJsonDocument_delete(doc);
-//            return NULL;
-//        }
-//    }
-//
-//    return doc;
-//}
 
 void XJson_append_escaped_string_byteArray(const XString* str, XByteArray* output)
 {
@@ -783,7 +737,7 @@ XString* Json_parse_string(const char** ptr, const char* end)
     (*ptr)++; // 跳过开头引号
     const char* start = *ptr;
     XString* str = XString_create();
-    XByteArray* buff = XByteArray_create();
+    XByteArray* buff = XByteArray_create_ex(false);
     while (*ptr < end && **ptr != '"') {
         if (**ptr == '\\') {
             // 处理转义字符

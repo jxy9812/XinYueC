@@ -9,7 +9,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
-XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XCompare compare)
+XMap* XMap_create_ex(const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow)
 {
 	if (keyTypeSize == 0 || valTypeSize == 0)
 	{
@@ -22,7 +22,7 @@ XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XCompare c
 		return NULL;
 	}
 	XMap* this_map = (XMap*)XMalloc_System(sizeof(XMap));
-	XMap_init(this_map,keyTypeSize,valTypeSize, compare);
+	XMap_init(this_map,keyTypeSize,valTypeSize, compare, useCow);
 	Set_Class_MemoryFree(this_map, XFree_System);
 	return this_map;
 }
@@ -46,7 +46,7 @@ XMap* XMap_create_move(XMap* other)
 	XMap_move_base(map, other);
 	return map;
 }
-void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare)
+void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow)
 {
 	if (ISNULL(this_map, ""))
 		return ;
@@ -60,7 +60,7 @@ void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSiz
 		printf("compare比较函数NULL");
 		return ;
 	}
-	XMapBase_init(this_map, keyTypeSize, valTypeSize, compare);
+	XMapBase_init(this_map, keyTypeSize, valTypeSize, compare, useCow);
 	XClassSetVtable(this_map, XMap);
 	//this_map->m_KeyLess = KeyLess;
 }

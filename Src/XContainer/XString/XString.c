@@ -229,7 +229,7 @@ XString* XString_create_fmt_utf8(const char* format, ...)
 void XString_init(XString* str)
 {
     if (!str) return;
-    XContainer_init(str, sizeof(XChar));
+    XContainer_init(str, sizeof(XChar),true);
 
     //// 创建初始数据缓冲区
     //void* data = XMalloc_System(sizeof(XChar) * (XSTRING_MIN_CAPACITY + 1));

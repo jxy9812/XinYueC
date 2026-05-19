@@ -242,7 +242,7 @@ void XTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group, size_t slotsCount)
     wheel.m_tick = 0;
 
     // 创建原子指针数组
-    XVector_init(&wheel.m_slots, sizeof(XAtomic_uintptr_t));
+    XVector_init(&wheel.m_slots, sizeof(XAtomic_uintptr_t),false);
     XVector_resize_base(&wheel.m_slots, slotsCount);
 
     // 初始化每个槽位为 NULL
@@ -478,7 +478,7 @@ void XTimeWheelGroup_init(XTimeWheelGroup* group, uint16_t precision)
     XTimerGroupBase_init(group, precision);
     XClassGetVtable(group) = XTimeWheelGroup_class_init();
     //初始化数据
-    XVector_init(&group->m_timeWheel, sizeof(XTimeWheel));
+    XVector_init(&group->m_timeWheel, sizeof(XTimeWheel),false);
     XContainerSetDataDeinitMethod(&group->m_timeWheel, XVector_deinit_base);
     //group->m_timeWheel = XVector_Create(XTimeWheel);
     //group->m_class.m_current_tick = ((XTimerGroupBase*)group)->m_high_res_time_func() / group->m_class.m_precision;

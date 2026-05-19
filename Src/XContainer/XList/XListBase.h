@@ -57,7 +57,6 @@ XCLASS_DEFINE_END(XListBase)
 typedef struct XListBase
 {
 	XContainer m_class; /** @brief 继承自容器基类，包含通用容器属性（如大小、容量、数据操作方法等） */
-	//XEquality m_equality;//相等比较函数（预留字段，暂未使用）
 }XListBase;
 
 /**
@@ -72,12 +71,13 @@ typedef struct XListBaseNode XListBaseNode;
 */
 
 /**
-* @brief 初始化链表基类实例
-* @param this_list 待初始化的链表指针
-* @param typeSize 单个元素的类型大小（字节数，如sizeof(int)）
-* @note 需先手动分配链表实例内存，再调用此函数初始化基类成员
-*/
-void XListBase_init(XListBase* this_list, size_t typeSize);
+ * @brief 初始化链表基类实例
+ * @param this_list 待初始化的链表指针
+ * @param typeSize 单个元素的类型大小（字节数，如sizeof(int)）
+ * @param useCow 是否启用COW模式（true=COW，false=非COW）
+ * @note 需先手动分配链表实例内存，再调用此函数初始化基类成员
+ */
+void XListBase_init(XListBase* this_list, size_t typeSize, bool useCow);
 
 
 /**

@@ -909,7 +909,7 @@ XLockFreeList* XLockFreeList_create(size_t typeSize) {
 void XLockFreeList_init(XLockFreeList* this_list, size_t typeSize) {
     if (this_list == NULL || typeSize == 0) return;
 
-    XListBase_init(this_list, typeSize);
+    XListBase_init(this_list, typeSize,false);
     XClassGetVtable(this_list) = XLockFreeList_class_init();
     // --- 关键修改：初始化为 size_t 类型的 0 ---
     XAtomic_init(this_list->m_head, (size_t)0);

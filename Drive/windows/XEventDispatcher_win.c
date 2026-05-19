@@ -365,7 +365,7 @@ static void VXEventDispatcherWin32_registerSocketNotifier(XAbstractEventDispatch
     if (!XMapBase_contains(d->m_dp.sockets, &socket))
     {
         XVector v = { 0 };
-        XVector_init(&v,sizeof(XSocketNotifier*));
+        XVector_init(&v,sizeof(XSocketNotifier*),false);
         XContainerSetCompare(&v,uintptr_t_compare);
         XMapBase_insert_base(d->m_dp.sockets, &socket,&v);
     }

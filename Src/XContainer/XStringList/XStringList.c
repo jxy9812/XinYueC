@@ -55,7 +55,7 @@ void XStringList_init(XStringList* strList)
 {
 	if (strList == NULL)
 		return;
-	XVector_init(strList,sizeof(XString));
+	XVector_init(strList,sizeof(XString),true);
 	XClassGetVtable(strList) = XStringList_class_init();
 	XContainerSetDataCopyMethod(strList, XClass_copy_base);
 	XContainerSetDataMoveMethod(strList, XClass_move_base);

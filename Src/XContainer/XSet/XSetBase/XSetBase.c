@@ -5,23 +5,23 @@ XVtable* XSetBase_class_init()
     return XContainer_class_init();
 }
 
-void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XCompare compare)
+void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XCompare compare, bool useCow)
 {
     if (ISNULL(this_set, ""))
         return;
     if (keyTypeSize == 0)
     {
-        printf("类型参数不能为0");
+       // printf("类型参数不能为0");
         return;
     }
     if (compare == NULL)
     {
-        printf("compare比较函数NULL");
+        //printf("compare比较函数NULL");
         return;
     }
-    XContainer_init(&this_set->m_class, keyTypeSize);
+    XContainer_init(&this_set->m_class, keyTypeSize, useCow);   // 传递 useCow
     XClassGetVtable(this_set) = XSetBase_class_init();
-    XContainerTypeSize(this_set)= keyTypeSize;
+    //XContainerTypeSize(this_set)= keyTypeSize;
     XContainerSetCompare(this_set,compare);
 }
 

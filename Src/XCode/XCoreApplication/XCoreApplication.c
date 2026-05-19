@@ -75,7 +75,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     ((XObject*)app)->m_thread = XThread_createMainThread(app);
     //app->m_eventLoop = XEventLoop_create();
     //app->m_eventLoop = NULL;
-    XBitArray_init(&app->m_attribute, XCORE_APPLICATION_ATTRIBUTE_COUNT);
+    XBitArray_init(&app->m_attribute, XCORE_APPLICATION_ATTRIBUTE_COUNT,false);
 
 
     // 设置全局实例

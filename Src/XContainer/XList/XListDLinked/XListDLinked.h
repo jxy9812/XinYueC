@@ -64,7 +64,8 @@ XVtable* XListDLinked_class_init();
 * @param TypeSize 链表存储元素的类型大小（字节数，如sizeof(int)）
 * @return 成功返回创建的链表指针（XListDLinked*），失败返回NULL
 */
-XListDLinked* XListDLinked_create(size_t TypeSize);
+XListDLinked* XListDLinked_create_ex(size_t typeSize, bool useCow);
+#define XListDLinked_create(typeSize) XListDLinked_create_ex(typeSize, true)
 /**
 * @brief 简化创建指定类型的双向链表（类型安全宏）
 * @param Type 链表存储元素的类型（如int、float等）
@@ -77,7 +78,7 @@ XListDLinked* XListDLinked_create(size_t TypeSize);
 * @param this_list 待初始化的链表指针（需提前分配内存）
 * @param typeSize 链表存储元素的类型大小（字节数）
 */
-void XListDLinked_init(XListDLinked* this_list, size_t typeSize);
+void XListDLinked_init(XListDLinked* this_list, size_t typeSize, bool useCow);
 // ------------------------------ 插入操作 ------------------------------
 /**
 * @brief 链表头部插入元素（拷贝语义，基础版本）

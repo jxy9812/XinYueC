@@ -32,7 +32,7 @@ void XQueue_init(XQueue* this_queue, size_t typeSize)
 {
 	if (ISNULL(this_queue, "") || ISNULL(typeSize, ""))
 		return;
-	XListSLinked_init(this_queue, typeSize);
+	XListSLinked_init(this_queue, typeSize,false);
 	XClassGetVtable(this_queue) = XQueue_class_init();
 }
 

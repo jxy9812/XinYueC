@@ -95,14 +95,14 @@ void VXPriorityQueue_push(XPriorityQueue* this_queue, void* pvData, XCDataCreatM
 	XVtableGetFunc(XVector_class_init(), EXVector_Push_Back,void(*)(XVector*,void*, XCDataCreatMethod))(this_queue, pvData,dataCreatMethod);
 	size_t size = XContainerSize(this_queue) - 1;
 	if (size > 0)//一个元素不用调整
-		AdjustUp(XContainerSharedDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->compare, this_queue->m_order);
+		AdjustUp(XContainerDataPtr(this_queue), XContainerTypeSize(this_queue), size, this_queue->compare, this_queue->m_order);
 }
 
 void VXPriorityQueue_pop(XPriorityQueue* this_queue)
 {
 	if (ISNULL(this_queue, "")|| XContainer_isEmpty_base(this_queue))
 		return ;
-	char* LParr = XContainerSharedDataPtr(this_queue);//指向数组的开始
+	char* LParr = XContainerDataPtr(this_queue);//指向数组的开始
 	size_t arrSize = XContainer_size_base(this_queue);//数组元素数量
 	size_t TypeSize = XContainer_typeSize_base(this_queue);//单个元素大小字节
 	//拷贝最后一个元素到第一个
@@ -148,7 +148,7 @@ size_t XPriorityQueue_remove(XPriorityQueue* this_queue, const void* value, size
 	// 遍历所有元素，查找匹配的元素
 	size_t i = 0;
 	while (i < current_size && removed_count < n) {
-		void* current_element = (char*)XContainerSharedDataPtr(this_queue) + i * element_size;
+		void* current_element = (char*)XContainerDataPtr(this_queue) + i * element_size;
 
 		// 使用比较函数检查是否匹配（假设比较函数返回0表示相等）
 		if (compare(current_element, value) == XCompare_Equality) {
@@ -156,8 +156,8 @@ size_t XPriorityQueue_remove(XPriorityQueue* this_queue, const void* value, size
 
 			// 如果不是最后一个元素，将最后一个元素移到当前位置
 			if (i < current_size - 1) {
-				memcpy((char*)XContainerSharedDataPtr(this_queue) + i * element_size,
-					(char*)XContainerSharedDataPtr(this_queue) + (current_size - 1) * element_size,
+				memcpy((char*)XContainerDataPtr(this_queue) + i * element_size,
+					(char*)XContainerDataPtr(this_queue) + (current_size - 1) * element_size,
 					element_size);
 			}
 
@@ -170,8 +170,8 @@ size_t XPriorityQueue_remove(XPriorityQueue* this_queue, const void* value, size
 			if (current_size > 0) {
 				// 获取当前元素与父元素的比较结果，决定向上还是向下调整
 				size_t parent_index = (i == 0) ? 0 : (i - 1) / 2;
-				void* current_elem = (char*)XContainerSharedDataPtr(this_queue) + i * element_size;
-				void* parent_elem = (char*)XContainerSharedDataPtr(this_queue) + parent_index * element_size;
+				void* current_elem = (char*)XContainerDataPtr(this_queue) + i * element_size;
+				void* parent_elem = (char*)XContainerDataPtr(this_queue) + parent_index * element_size;
 
 				int cmp_result = compare(current_elem, parent_elem);
 				XSortOrder order = this_queue->m_order;
@@ -187,11 +187,11 @@ size_t XPriorityQueue_remove(XPriorityQueue* this_queue, const void* value, size
 
 				if (need_adjust_up) {
 					// 向上调整
-					AdjustUp(XContainerSharedDataPtr(this_queue), element_size, i, compare, order);
+					AdjustUp(XContainerDataPtr(this_queue), element_size, i, compare, order);
 				}
 				else {
 					// 向下调整
-					AdjustDwon(XContainerSharedDataPtr(this_queue), current_size, element_size, i, compare, order);
+					AdjustDwon(XContainerDataPtr(this_queue), current_size, element_size, i, compare, order);
 				}
 			}
 

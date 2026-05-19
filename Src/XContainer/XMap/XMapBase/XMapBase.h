@@ -59,7 +59,7 @@ XVtable* XMapBase_class_init();
 * @param compare 键的比较函数（用于排序和查找）
 * @note 需确保this_map不为NULL，keyTypeSize和valTypeSize大于0，否则初始化无效
 */
-void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare);
+void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow);
 
 // ========================= 插入操作 =========================
 

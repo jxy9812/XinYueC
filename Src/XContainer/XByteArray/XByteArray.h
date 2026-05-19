@@ -31,7 +31,8 @@ typedef struct XByteArray
 * @param size 初始字节数量（若为0则创建空数组）
 * @return 成功返回XByteArray实例指针，失败返回NULL（内存分配失败）
 */
-XByteArray* XByteArray_create();
+XByteArray* XByteArray_create_ex(bool useCow);
+#define XByteArray_create() XByteArray_create_ex(true)
 XByteArray* XByteArray_create_with_data(const char* data,size_t size);
 /**
 * @brief 基于已有XByteArray创建深拷贝实例
@@ -53,7 +54,7 @@ XByteArray* XByteArray_create_move(XByteArray* other);
 * @param array 待初始化的XByteArray实例指针（需提前分配内存，不可为NULL）
 * @details 初始化内部继承的XVector结构，设置元素类型为uint8_t并配置比较函数
 */
-void XByteArray_init(XByteArray* array);
+void XByteArray_init(XByteArray* array, bool useCow);
 
 
 //============================= 元素添加 =============================

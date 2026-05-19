@@ -86,7 +86,7 @@ bool VXCircularQueueDetachIfNeeded(XCircularQueue* this_queue)
     if (!newShared) return false;
 
     // 深拷贝元素
-    uint8_t* oldData = (uint8_t*)XContainerSharedDataPtr(this_queue);
+    uint8_t* oldData = (uint8_t*)XContainerDataPtr(this_queue);
     uint8_t* newData = (uint8_t*)newShared->data;
     size_t src_index = this_queue->m_head;
     for (size_t i = 0; i < count; i++)
@@ -116,7 +116,7 @@ void VXCircularQueueDataDelete(void* data, XCircularQueue* this_queue)
     {
         size_t typeSize = XContainerTypeSize(this_queue);
         size_t capacity = XContainerSize(this_queue);
-        uint8_t* buffer = (uint8_t*)XContainerSharedDataPtr(this_queue);
+        uint8_t* buffer = (uint8_t*)XContainerDataPtr(this_queue);
         size_t current = this_queue->m_head;
         while (current != this_queue->m_tail)
         {
@@ -167,7 +167,7 @@ void VXCircularQueue_clear(XCircularQueue* this_queue)
     {
         size_t typeSize = XContainerTypeSize(this_queue);
         size_t capacity = XContainerSize(this_queue);
-        uint8_t* buffer = (uint8_t*)XContainerSharedDataPtr(this_queue);
+        uint8_t* buffer = (uint8_t*)XContainerDataPtr(this_queue);
         size_t current = this_queue->m_head;
         while (current != this_queue->m_tail)
         {
@@ -211,7 +211,7 @@ bool VXCircularQueue_push(XCircularQueue* this_queue, void* pvValue, XCDataCreat
 		// 复制元素到新数组（按元素大小复制，不是逐字节）
 		size_t count = VXCircularQueue_size(this_queue);
 		size_t src_index = this_queue->m_head;
-		uint8_t* oldData = (uint8_t*)XContainerSharedDataPtr(this_queue);
+		uint8_t* oldData = (uint8_t*)XContainerDataPtr(this_queue);
 		uint8_t* newData = (uint8_t*)newShared->data;
 
 		for (size_t i = 0; i < count; i++) {
@@ -233,12 +233,12 @@ bool VXCircularQueue_push(XCircularQueue* this_queue, void* pvValue, XCDataCreat
 	}
 	if (dataCreatMethod)
 	{
-		memset(((char*)XContainerSharedDataPtr(this_queue)) + this_queue->m_tail * XContainerTypeSize(this_queue),0, XContainerTypeSize(this_queue));
-		dataCreatMethod(((char*)XContainerSharedDataPtr(this_queue)) + this_queue->m_tail * XContainerTypeSize(this_queue), pvValue);
+		memset(((char*)XContainerDataPtr(this_queue)) + this_queue->m_tail * XContainerTypeSize(this_queue),0, XContainerTypeSize(this_queue));
+		dataCreatMethod(((char*)XContainerDataPtr(this_queue)) + this_queue->m_tail * XContainerTypeSize(this_queue), pvValue);
 	}
 	else
 	{
-		memcpy(((char*)XContainerSharedDataPtr(this_queue)) + this_queue->m_tail * XContainerTypeSize(this_queue), pvValue, XContainerTypeSize(this_queue));
+		memcpy(((char*)XContainerDataPtr(this_queue)) + this_queue->m_tail * XContainerTypeSize(this_queue), pvValue, XContainerTypeSize(this_queue));
 	}
 	this_queue->m_tail = (this_queue->m_tail + 1) % XContainerSize(this_queue);//指针后移取模实现环形
 	return true;
@@ -259,7 +259,7 @@ void* VXCircularQueue_top(XCircularQueue* this_queue)
 {
 	if(VXCircularQueue_isEmpty(this_queue))
 		return NULL;
-	return ((char*)XContainerSharedDataPtr(this_queue)) + (this_queue->m_head * XContainerTypeSize(this_queue));
+	return ((char*)XContainerDataPtr(this_queue)) + (this_queue->m_head * XContainerTypeSize(this_queue));
 }
 bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer)
 {
@@ -267,7 +267,7 @@ bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer)
 		return false;
     if (!ensureSharedData(this_queue) || !VXCircularQueueDetachIfNeeded(this_queue))
         return false;
-	void* pvTop = ((char*)XContainerSharedDataPtr(this_queue)) + (this_queue->m_head * XContainerTypeSize(this_queue));
+	void* pvTop = ((char*)XContainerDataPtr(this_queue)) + (this_queue->m_head * XContainerTypeSize(this_queue));
 	memcpy(pvBuffer, pvTop, XContainerTypeSize(this_queue));
 	if (XContainerDataDeinitMethod(this_queue) != NULL)
 		XContainerDataDeinitMethod(this_queue)(pvTop);
@@ -347,7 +347,7 @@ void XCircularQueue_init(XCircularQueue* this_queue, size_t typeSize, size_t cou
 {
     if (ISNULL(this_queue, "") || ISNULL(typeSize, "") || ISNULL(count, ""))
         return;
-    XVector_init(this_queue, typeSize);
+    XVector_init(this_queue, typeSize,false);
     XVector_resize_base(this_queue, count + 1);
     this_queue->m_autoExpansion = false;
     this_queue->m_head = 0;
@@ -380,7 +380,7 @@ size_t XCircularQueue_remove(XCircularQueue* this_queue, const void* value, size
         return 0;
     }
 
-    uint8_t* buffer = (uint8_t*)XContainerSharedDataPtr(this_queue);
+    uint8_t* buffer = (uint8_t*)XContainerDataPtr(this_queue);
     size_t elem_size = XContainerTypeSize(this_queue);
     size_t capacity = XContainerSize(this_queue); // 实际分配的容量
 
@@ -461,7 +461,7 @@ size_t XCircularQueue_remove(XCircularQueue* this_queue, const void* value, size
             // 只有一个元素，直接清空
             this_queue->m_head = 0;
             this_queue->m_tail = 0;
-            buffer = (uint8_t*)XContainerSharedDataPtr(this_queue); // 重新获取buffer
+            buffer = (uint8_t*)XContainerDataPtr(this_queue); // 重新获取buffer
             capacity = XContainerSize(this_queue);
         }
         else if (target_index == this_queue->m_head) {
@@ -529,7 +529,7 @@ size_t XCircularQueue_remove(XCircularQueue* this_queue, const void* value, size
         }
 
         removed_count++;
-        buffer = (uint8_t*)XContainerSharedDataPtr(this_queue); // 重新获取buffer，因为可能扩容/缩容
+        buffer = (uint8_t*)XContainerDataPtr(this_queue); // 重新获取buffer，因为可能扩容/缩容
         capacity = XContainerSize(this_queue);
     }
 

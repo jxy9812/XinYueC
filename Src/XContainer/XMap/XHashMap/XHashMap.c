@@ -35,7 +35,7 @@ void XHashMap_init(XHashMap*this_map, const size_t keyTypeSize, const size_t val
 {
 	if (this_map == NULL)
 		return;
-	XMapBase_init(this_map, keyTypeSize, valTypeSize, compare);
+	XMapBase_init(this_map, keyTypeSize, valTypeSize, compare,true);
 	XClassGetVtable(this_map) = XHashMap_class_init();
 	this_map->m_hash = hash;
 	XContainerSharedData(this_map) = NULL;

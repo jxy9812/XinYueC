@@ -66,7 +66,8 @@ XVtable* XListSLinked_class_init();
 * @return 新创建的单链表实例指针，失败返回NULL
 * @note 内部会分配内存并初始化链表，需通过XListSLinked_delete_base释放
 */
-XListSLinked* XListSLinked_create(size_t typeSize);
+XListSLinked* XListSLinked_create_ex(size_t typeSize, bool useCow);
+#define XListSLinked_create(typeSize) XListSLinked_create_ex(typeSize, true)
 /**
 * @brief 类型安全的单链表创建宏
 * @param Type 元素数据类型（如int、float等）
@@ -80,7 +81,7 @@ XListSLinked* XListSLinked_create(size_t typeSize);
 * @param typeSize 单个元素的类型大小（字节数）
 * @note 需手动分配链表实例内存后调用，初始化基类成员和内部状态
 */
-void XListSLinked_init(XListSLinked* this_list, size_t typeSize);
+void XListSLinked_init(XListSLinked* this_list, size_t typeSize, bool useCow);
 // 插入函数
 /**
 * @brief 在链表头部插入已有节点（转移节点所有权）

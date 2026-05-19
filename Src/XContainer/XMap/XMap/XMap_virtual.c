@@ -393,7 +393,7 @@ void VXClass_copy(XMap* object, const XMap* src)
 {
     if (((XClass*)object)->m_vtable == NULL) {
         XMapBase* map = (XMapBase*)src;
-        XMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), XContainerCompare(map));
+        XMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), XContainerCompare(map),true);
     }
     else if (XContainerSharedData(object)) {
         XSharedData_release_with(XContainerSharedData(object), VXMapDataDelete, object);
@@ -421,7 +421,7 @@ void VXClass_move(XMap* object, XMap* src)
 {
     if (((XClass*)object)->m_vtable == NULL) {
         XMapBase* map = (XMapBase*)src;
-        XMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), XContainerCompare(map));
+        XMap_init(object, map->m_keyTypeSize, XContainerTypeSize(src), XContainerCompare(map),true);
     }
     else if (XContainerSharedData(object)) {
         XSharedData_release_with(XContainerSharedData(object), VXMapDataDelete, object);

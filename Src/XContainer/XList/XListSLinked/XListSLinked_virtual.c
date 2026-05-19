@@ -4,6 +4,15 @@
 #include"XAlgorithm.h"
 #include<stdlib.h>
 #include<string.h>
+// 获取头节点指针的地址（统一 COW/非 COW 模式）
+static inline XListSNode** XListSLinked_head_ptr(XListSLinked* list) {
+    if (XContainerIsCow(list)) {
+        return (XListSNode**)XContainerSharedDataPtr(list);
+    }
+    else {
+        return (XListSNode**)&XContainerDataPtr(list);
+    }
+}
 //插入
 static bool VXListBase_push_front_node(XListSLinked* this_list, XListSNode* node);
 static bool VXListBase_push_back_node(XListSLinked* this_list, XListSNode* node);
@@ -77,12 +86,19 @@ XVtable* XListSLinked_class_init()
 // 确保 XSharedData 存在（延迟创建）
 static bool ensureSharedData(XListSLinked* this_list)
 {
-    if (!XContainerSharedData(this_list))
-    {
-        XContainerSharedData(this_list) = XSharedData_create(NULL, sizeof(XListSNode*));
-        if (!XContainerSharedData(this_list))
-            return false;
-        *(XListSNode**)XContainerSharedDataPtr(this_list) = NULL;
+    if (XContainerIsCow(this_list)) {
+        if (!XContainerSharedData(this_list)) {
+            XSharedData* sd = XSharedData_create(NULL, sizeof(XListSNode*));
+            if (!sd) return false;
+            XContainerSharedData(this_list) = sd;
+            *(XListSNode**)sd->data = NULL;
+        }
+    }
+    else {
+        // 非 COW 模式：确保头指针初始为 NULL
+        if (!XContainerDataPtr(this_list)) {
+            XContainerDataPtr(this_list) = NULL;
+        }
     }
     return true;
 }
@@ -90,11 +106,13 @@ static bool ensureSharedData(XListSLinked* this_list)
 // COW分离：如果数据被共享，创建独立副本（深拷贝链表节点）
 static bool VXListSLinkedDetachIfNeeded(XListSLinked* this_list)
 {
+    if (!XContainerIsCow(this_list)) return true;  // 非 COW 永远不需要分离
+
     if (!XContainerSharedData(this_list) || !XSharedData_isShared(XContainerSharedData(this_list)))
         return true; // 不共享，无需分离
 
     size_t typeSize = XContainerTypeSize(this_list);
-    XListSNode* oldHead = *(XListSNode**)XContainerSharedDataPtr(this_list);
+    XListSNode* oldHead = *XListSLinked_head_ptr(this_list);
 
     // 创建新的 XSharedData 存储头节点指针
     XSharedData* newShared = XSharedData_create(NULL, sizeof(XListSNode*));
@@ -152,7 +170,7 @@ static void VXListSLinkedDataDelete(void* data, XListSLinked* this_list)
     this_list->m_tail = NULL;
     XContainerSize(this_list) = 0;
     XContainerCapacity(this_list) = 0;
-    XContainerSharedData(this_list) = NULL;
+    //XContainerSharedData(this_list) = NULL;
 }
 
 bool VXListBase_push_front_node(XListSLinked* this_list, XListSNode* node)
@@ -161,8 +179,8 @@ bool VXListBase_push_front_node(XListSLinked* this_list, XListSNode* node)
         return false;
     if (!ensureSharedData(this_list) || !VXListSLinkedDetachIfNeeded(this_list))
         return false;
-    XListSNode* head = *(XListSNode**)XContainerSharedDataPtr(this_list);//获取头指针
-    *(XListSNode**)XContainerSharedDataPtr(this_list) = node;//新节点成为新的头
+    XListSNode* head = *XListSLinked_head_ptr(this_list);//获取头指针
+    *XListSLinked_head_ptr(this_list) = node;//新节点成为新的头
     node->next = head;//修改指向下一个节点为原先的头
     if (XListBase_isEmpty_base(this_list))
         this_list->m_tail = node;
@@ -183,7 +201,7 @@ bool VXListBase_push_back_node(XListSLinked* this_list, XListSNode* node)
     node->next = NULL;//新节点指向NULL
     this_list->m_tail = node;//更新记录的尾节点
     if (XListBase_isEmpty_base(this_list))
-        *(XListSNode**)XContainerSharedDataPtr(this_list) = node;
+        *XListSLinked_head_ptr(this_list) = node;
     //更新记录数量
     ++XContainerSize(this_list);
     ++XContainerCapacity(this_list);
@@ -247,7 +265,7 @@ bool VXList_insert(XListSLinked* this_list, XListSNode* curNode, void* pvData, X
         return false;
     //遍历节点
     XListSNode* prev = NULL;//前一个节点
-    XListSNode* node = *(XListSNode**)XContainerSharedDataPtr(this_list);//当前节点
+    XListSNode* node = *XListSLinked_head_ptr(this_list);//当前节点
     while (node)
     {
         if (node == curNode)
@@ -278,7 +296,7 @@ bool VXList_insert(XListSLinked* this_list, XListSNode* curNode, void* pvData, X
     //更新节点信息
     if (prev == NULL)
     {
-        *(XListSNode**)XContainerSharedDataPtr(this_list) = NewNode;//更新头节点
+        *XListSLinked_head_ptr(this_list) = NewNode;//更新头节点
     }
     else
     {
@@ -296,7 +314,7 @@ size_t VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, const v
         return 0;
     //遍历节点
     XListSNode* prev = NULL;//前一个节点
-    XListSNode* node = *(XListSNode**)XContainerSharedDataPtr(this_list);//当前节点
+    XListSNode* node = *XListSLinked_head_ptr(this_list);//当前节点
     if (curNode != NULL)
     {
         while (node)
@@ -354,9 +372,9 @@ size_t VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, const v
             NewListTail = NewListNode;
         }
     }
-    if (*(XListSNode**)XContainerSharedDataPtr(this_list) == NULL)
+    if (*XListSLinked_head_ptr(this_list) == NULL)
     {//链表是空的情况
-        *(XListSNode**)XContainerSharedDataPtr(this_list) = NewListHead;//更新头节点
+        *XListSLinked_head_ptr(this_list) = NewListHead;//更新头节点
         this_list->m_tail = NewListTail;//更新尾节点
         NewListTail->next = NULL;
         //更新数量
@@ -372,10 +390,10 @@ size_t VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, const v
         this_list->m_tail = NewListTail;//更新尾节点
         NewListTail->next = NULL;
     }
-    else if (curNode == *(XListSNode**)XContainerSharedDataPtr(this_list))
+    else if (curNode == *XListSLinked_head_ptr(this_list))
     {//插入到链表头
-        NewListTail->next = *(XListSNode**)XContainerSharedDataPtr(this_list);
-        *(XListSNode**)XContainerSharedDataPtr(this_list) = NewListHead;
+        NewListTail->next = *XListSLinked_head_ptr(this_list);
+        *XListSLinked_head_ptr(this_list) = NewListHead;
     }
     else
     {//插入到原先链表中间
@@ -392,7 +410,7 @@ static void removeNode(XListSLinked* this_list, XListSNode* prev, XListSNode* re
 {
     if (prev == NULL)
     {//删除的是头节点
-        *(XListSNode**)XContainerSharedDataPtr(this_list) = removeNode->next;
+        *XListSLinked_head_ptr(this_list) = removeNode->next;
     }
     else
     {
@@ -416,7 +434,7 @@ bool VXList_pop_front(XListSLinked* this_list)
 {
     if (!ensureSharedData(this_list) || !VXListSLinkedDetachIfNeeded(this_list))
         return false;
-    XListSNode* head = *(XListSNode**)XContainerSharedDataPtr(this_list);
+    XListSNode* head = *XListSLinked_head_ptr(this_list);
     if (head == NULL)
         return false;//链表是空的
     removeNode(this_list,NULL, head);
@@ -430,7 +448,7 @@ bool VXList_pop_back(XListSLinked* this_list)
     XListSNode* tail = this_list->m_tail;
     if (tail == NULL)
         return false;
-    XListSNode* node = *(XListSNode**)XContainerSharedDataPtr(this_list);//当前节点
+    XListSNode* node = *XListSLinked_head_ptr(this_list);//当前节点
     while (node)
     {
         if (node->next == tail)
@@ -460,7 +478,7 @@ void VXList_erase(XListSLinked* this_list, const XListSLinked_iterator* it, XLis
     }
     XListSNode* node = it->node;
     XListSNode* prev = NULL;//前一个节点
-    XListSNode* curNode = *(XListSNode**)XContainerSharedDataPtr(this_list);//当前节点
+    XListSNode* curNode = *XListSLinked_head_ptr(this_list);//当前节点
     while (curNode)
     {
         if (curNode == node)
@@ -487,7 +505,7 @@ bool VXList_remove(XListSLinked* this_list, void* pvData)
     if (XContainerCompare(this_list) == NULL)
         return false;
     XListSNode* prev = NULL;//前一个节点
-    XListSNode* curNode = *(XListSNode**)XContainerSharedDataPtr(this_list);//当前节点
+    XListSNode* curNode = *XListSLinked_head_ptr(this_list);//当前节点
     while (curNode)
     {
         if (XContainerCompare(this_list)(&(curNode->data), pvData)==XCompare_Equality)
@@ -516,7 +534,7 @@ void VXList_clear(XListSLinked* this_list)
         return;
     }
     XListSNode* prev = NULL;//前一个节点
-    XListSNode* node = *(XListSNode**)XContainerSharedDataPtr(this_list);//当前节点
+    XListSNode* node = *XListSLinked_head_ptr(this_list);//当前节点
     while (node)
     {
         prev = node;
@@ -526,15 +544,15 @@ void VXList_clear(XListSLinked* this_list)
         XFree_System(prev);
     }
     this_list->m_tail = NULL;
-    *(XListSNode**)XContainerSharedDataPtr(this_list) = NULL;
+    *XListSLinked_head_ptr(this_list) = NULL;
     XContainerSize(this_list) = 0;
     XContainerCapacity(this_list) = 0;
 }
 
 void* VXList_front(XListSLinked* this_list)
 {
-    if (*(XListSNode**)XContainerSharedDataPtr(this_list))
-        return XListSNode_DataPtr(*(XListSNode**)XContainerSharedDataPtr(this_list));
+    if (*XListSLinked_head_ptr(this_list))
+        return XListSNode_DataPtr(*XListSLinked_head_ptr(this_list));
     return NULL;
 }
 
@@ -553,7 +571,7 @@ bool VXList_find(const XListSLinked* this_list, void* pvData, XListSLinked_itera
             *it = XListSLinked_end(this_list);
         return false;
     }
-    XListSNode* node = *(XListSNode**)XContainerSharedDataPtr(this_list);//当前节点
+    XListSNode* node = *XListSLinked_head_ptr(this_list);//当前节点
     while (node)
     {
         if (XContainerCompare(this_list))
@@ -633,7 +651,7 @@ void VXList_sort(XListSLinked* this_list, XSortOrder order)
     if (!ensureSharedData(this_list) || !VXListSLinkedDetachIfNeeded(this_list))
         return;
     //printf("进入排序\n");
-    XListSNode* head = *(XListSNode**)XContainerSharedDataPtr(this_list);
+    XListSNode* head = *XListSLinked_head_ptr(this_list);
     XListSNode* tail = findTail(head);
 
     // 使用现有的XStack
@@ -688,65 +706,157 @@ void VXList_sort(XListSLinked* this_list, XSortOrder order)
 
 void VXClass_copy(XListSLinked* object, const XListSLinked* src)
 {
-    // 如果目标还未初始化，先初始化
+    // 如果目标未初始化，先初始化（模式与源相同）
     if (((XClass*)object)->m_vtable == NULL)
     {
-        XListSLinked_init(object, XContainerTypeSize(src));
+        XListSLinked_init(object, XContainerTypeSize(src), XContainerIsCow(src));
     }
-    else if (XContainerSharedData(object))// 释放目标原有数据
+    else
     {
-        XSharedData_release_with(XContainerSharedData(object), VXListSLinkedDataDelete, object);
+        // 释放目标原有资源
+        if (XContainerIsCow(object))
+        {
+            if (XContainerSharedData(object))
+                XSharedData_release_with(XContainerSharedData(object), VXListSLinkedDataDelete, object);
+        }
+        else
+        {
+            XListSNode* head = (XListSNode*)XContainerDataPtr(object);
+            while (head)
+            {
+                XListSNode* next = head->next;
+                if (XContainerDataDeinitMethod(object))
+                    XContainerDataDeinitMethod(object)(XListSNode_DataPtr(head));
+                XFree_System(head);
+                head = next;
+            }
+        }
     }
 
-    // 复制回调函数
-    XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
-    XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
-    XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
+    // 复制所有成员（包括 m_tail、m_data 等）
+    memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XListSLinked) - sizeof(XClass));
 
-    // 共享源数据的 XSharedData（COW 机制）
-    XContainerSharedData(object) = XContainerSharedData(src);
-    if (XContainerSharedData(object))
+    // 根据源模式调整引用计数或深拷贝
+    if (XContainerIsCow(src))
     {
-        XSharedData_addRef(XContainerSharedData(object));
+        if (XContainerSharedData(object))
+            XSharedData_addRef(XContainerSharedData(object));
     }
+    else
+    {
+        // 非 COW 模式：需要深拷贝链表数据（因为上面 memcpy 只是拷贝了指针）
+        XListSNode* srcHead = (XListSNode*)XContainerDataPtr(src);
+        XListSNode* newHead = NULL;
+        XListSNode* newTail = NULL;
+        XListSNode* srcNode = srcHead;
+        size_t typeSize = XContainerTypeSize(src);
 
-    XContainerSize(object) = XContainerSize(src);
-    XContainerCapacity(object) = XContainerCapacity(src);
-    XContainerTypeSize(object) = XContainerTypeSize(src);
-    object->m_tail = src->m_tail;
+        while (srcNode)
+        {
+            XListSNode* newNode = XMalloc_System(ALIGN_UP(sizeof(XListSNode) + typeSize, sizeof(void*)));
+            if (!newNode)
+            {
+                while (newHead)
+                {
+                    XListSNode* tmp = newHead;
+                    newHead = newHead->next;
+                    if (XContainerDataDeinitMethod(object))
+                        XContainerDataDeinitMethod(object)(XListSNode_DataPtr(tmp));
+                    XFree_System(tmp);
+                }
+                return;
+            }
+            if (XContainerDataCopyMethod(object))
+                XContainerDataCopyMethod(object)(XListSNode_DataPtr(newNode), XListSNode_DataPtr(srcNode));
+            else
+                memcpy(XListSNode_DataPtr(newNode), XListSNode_DataPtr(srcNode), typeSize);
+            newNode->next = NULL;
+            if (!newHead)
+                newHead = newTail = newNode;
+            else
+            {
+                newTail->next = newNode;
+                newTail = newNode;
+            }
+            srcNode = srcNode->next;
+        }
+        XContainerDataPtr(object) = newHead;
+        object->m_tail = newTail;
+        // 大小和容量已经在 memcpy 中复制，但那是源的值，仍然正确
+    }
 }
 
 void VXClass_move(XListSLinked* object, XListSLinked* src)
 {
+    // 如果目标未初始化，先初始化（模式与源相同）
     if (((XClass*)object)->m_vtable == NULL)
     {
-        XListSLinked_init(object, XContainerTypeSize(src));
+        bool useCow = XContainerIsCow(src);
+        XListSLinked_init(object, XContainerTypeSize(src), useCow);
     }
-    else if (XContainerSharedData(object))
+    else
     {
-        XSharedData_release_with(XContainerSharedData(object), VXListSLinkedDataDelete, object);
+        // 目标已初始化，释放其原有资源
+        if (XContainerIsCow(object))
+        {
+            if (XContainerSharedData(object))
+                XSharedData_release_with(XContainerSharedData(object), VXListSLinkedDataDelete, object);
+        }
+        else
+        {
+            XListSNode* head = (XListSNode*)XContainerDataPtr(object);
+            while (head)
+            {
+                XListSNode* next = head->next;
+                if (XContainerDataDeinitMethod(object))
+                    XContainerDataDeinitMethod(object)(XListSNode_DataPtr(head));
+                XFree_System(head);
+                head = next;
+            }
+            XContainerDataPtr(object) = NULL;
+            object->m_tail = NULL;
+            XContainerSize(object) = 0;
+            XContainerCapacity(object) = 0;
+        }
     }
 
-    // 转移所有权（指针拷贝）
+    // 转移所有权：直接将源的内存拷贝到目标（包括 m_data, m_tail, m_useCow 等）
     memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XListSLinked) - sizeof(XClass));
 
-    // 清空源对象
-    XContainerSharedData(src) = NULL;
-    XContainerCapacity(src) = 0;
-    XContainerSize(src) = 0;
-    src->m_tail = NULL;
+    // 清空源对象资源（根据源模式）
+    if (XContainerIsCow(src))
+    {
+        XContainerSharedData(src) = NULL;
+    }
+    else
+    {
+        XContainerDataPtr(src) = NULL;
+        src->m_tail = NULL;
+        XContainerSize(src) = 0;
+        XContainerCapacity(src) = 0;
+    }
 }
 
 void VXList_deinit(XListSLinked* this_list)
 {
-    if (XContainerSharedData(this_list))
-    {
-        XSharedData_release_with(XContainerSharedData(this_list), VXListSLinkedDataDelete, this_list);
+    if (XContainerIsCow(this_list)) {
+        if (XContainerSharedData(this_list))
+            XSharedData_release_with(XContainerSharedData(this_list), VXListSLinkedDataDelete, this_list);
+    }
+    else {
+        XListSNode* head = (XListSNode*)XContainerDataPtr(this_list);
+        while (head) {
+            XListSNode* next = head->next;
+            if (XContainerDataDeinitMethod(this_list))
+                XContainerDataDeinitMethod(this_list)(XListSNode_DataPtr(head));
+            XFree_System(head);
+            head = next;
+        }
+        XContainerDataPtr(this_list) = NULL;
+        this_list->m_tail = NULL;
     }
     XContainerSize(this_list) = 0;
     XContainerCapacity(this_list) = 0;
-    XContainerSharedData(this_list) = NULL;
-    this_list->m_tail = NULL;
 }
 
 #endif

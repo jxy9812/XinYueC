@@ -49,7 +49,7 @@ XVtable* XSetBase_class_init();
 * @param compare 键的比较函数（用于判断键的相等性和排序）
 * @note 需确保this_set不为NULL，keyTypeSize大于0且compare不为NULL，否则初始化无效
 */
-void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XCompare compare);
+void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XCompare compare, bool useCow);
 
 // ========================= 插入操作 =========================
 

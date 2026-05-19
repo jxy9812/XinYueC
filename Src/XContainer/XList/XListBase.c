@@ -1,12 +1,11 @@
 ﻿#include "XListBase.h"
 #if XList_ON
-void XListBase_init(XListBase* this_list, size_t typeSize)
+void XListBase_init(XListBase* this_list, size_t typeSize, bool useCow)
 {
 	if (ISNULL(this_list, "") || ISNULL(typeSize, ""))
 		return;
-	XContainer_init(this_list, typeSize);
+	XContainer_init(this_list, typeSize, useCow);
 	XClassGetVtable(this_list) = XContainer_class_init();
-	//this_list->m_equality = NULL;
 }
 bool XListBase_push_front_node_base(XListBase* this_list, XListBaseNode* node)
 {

@@ -2,12 +2,13 @@
 #if XByteArray_ON
 #include "XString.h"
 #include <string.h>
-XByteArray* XByteArray_create()
+static inline void* XByteArray_data(XByteArray* vec);
+XByteArray* XByteArray_create_ex(bool useCow)
 {
 	XByteArray* array = XMalloc_System(sizeof(XByteArray));
 	if (array == NULL)
 		return NULL;
-	XByteArray_init(array);
+	XByteArray_init(array, useCow);
 	Set_Class_MemoryFree(array, XFree_System);
 	return array;
 }
@@ -42,13 +43,12 @@ XByteArray* XByteArray_create_move(XByteArray* other)
 	return v;
 }
 
-void XByteArray_init(XByteArray* array)
+void XByteArray_init(XByteArray* array, bool useCow)
 {
 	if (array == NULL)
 		return;
-	XVector_init(array,sizeof(uint8_t));
+	XVector_init((XVector*)array, sizeof(uint8_t), useCow);
 	XContainerSetCompare(array, uint8_t_compare);
-	//array->m_class.m_equality = XEquality_uint8_t;
 }
 
 bool XByteArray_push_front_base(XByteArray* array, const uint8_t byte)
@@ -94,7 +94,7 @@ int32_t XByteArray_compare(const XByteArray* lhs, const XByteArray* rhs)
 		return XCompare_Greater;
 	if (XByteArray_isEmpty_base(lhs) && XByteArray_isEmpty_base(rhs))
 		return XCompare_Equality;
-	int cmp = memcmp(XContainerSharedDataPtr(lhs), XContainerSharedDataPtr(rhs), XContainerSize(lhs));
+	int cmp = memcmp(XByteArray_data(lhs), XByteArray_data(rhs), XContainerSize(lhs));
 	if(cmp==0)
 		return XCompare_Equality;
 	if(cmp<0)
@@ -140,7 +140,7 @@ XByteArray* XByteArray_toBase64(XByteArray* array)
 		return NULL;
 	XByteArray_resize_base(base64, XBase64_encoded_size(XContainerSize(array)));
 	size_t len = XContainerSize(base64);
-	if (XBase64_encode(XContainerSharedDataPtr(array), XContainerSize(array), XContainerSharedDataPtr(base64), &len) != 0)
+	if (XBase64_encode(XByteArray_data(array), XContainerSize(array), XByteArray_data(base64), &len) != 0)
 	{
 		XByteArray_delete_base(base64);
 		return NULL;
@@ -155,9 +155,9 @@ XByteArray* XByteArray_fromBase64(XByteArray* base64)
 	XByteArray* data = XByteArray_create();
 	if (data == NULL)
 		return NULL;
-	XByteArray_resize_base(data, XBase64_decoded_size(XContainerSharedDataPtr(base64), XContainerSize(base64)));
+	XByteArray_resize_base(data, XBase64_decoded_size(XByteArray_data(base64), XContainerSize(base64)));
 	size_t len = XContainerSize(data);
-	if (XBase64_decode(XContainerSharedDataPtr(base64), XContainerSize(base64), XContainerSharedDataPtr(data), &len) != 0)
+	if (XBase64_decode(XByteArray_data(base64), XContainerSize(base64), XByteArray_data(data), &len) != 0)
 	{
 		XByteArray_delete_base(data);
 		return NULL;
@@ -173,7 +173,7 @@ XByteArray* XByteArray_toCompress(XByteArray* sData)
 		return NULL;
 
 	// 获取输入数据
-	const uint8_t* input_data = XContainerSharedDataPtr(sData);
+	const uint8_t* input_data = XByteArray_data(sData);
 	uLongf input_len = XContainerSize(sData);
 
 	// 计算压缩缓冲区所需的最大大小
@@ -184,7 +184,7 @@ XByteArray* XByteArray_toCompress(XByteArray* sData)
 	if (compressed == NULL)
 		return NULL;
 
-	uint8_t* output_data = XContainerSharedDataPtr(compressed);
+	uint8_t* output_data = XByteArray_data(compressed);
 
 	// 执行压缩
 	int ret = compress(output_data, &output_len, input_data, input_len);
@@ -204,7 +204,7 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData)
 		return NULL;
 
 	// 获取压缩数据
-	const uint8_t* input_data = XContainerSharedDataPtr(sData);
+	const uint8_t* input_data = XByteArray_data(sData);
 	uLongf input_len = XContainerSize(sData);
 
 	// 初始解压缓冲区大小（设为输入大小的4倍，可根据实际情况调整）
@@ -219,7 +219,7 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData)
 
 	while (attempts < max_attempts)
 	{
-		uint8_t* output_data = XContainerSharedDataPtr(decompressed);
+		uint8_t* output_data = XByteArray_data(decompressed);
 		uLongf current_output_len = output_len;
 
 		// 执行解压
@@ -254,4 +254,10 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData)
 	XByteArray_delete_base(decompressed);
 	return NULL;
 }
+
+inline void* XByteArray_data(XByteArray* vec)
+{
+	return XContainerIsCow(vec) ? XContainerSharedDataPtr(vec) : XContainerDataPtr(vec);
+}
+
 #endif

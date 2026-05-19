@@ -50,7 +50,8 @@ XVtable* XHashSet_class_init();
 * @return 创建成功的XHashSet实例指针，失败返回NULL
 * @note 动态分配内存并调用XHashSet_init完成初始化，需确保参数有效
 */
-XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XCompare compare);
+XHashSet* XHashSet_create_ex(const size_t keyTypeSize, XHashFunc hash, XCompare compare, bool useCow);
+#define XHashSet_create(keyTypeSize, hash, compare) XHashSet_create_ex(keyTypeSize, hash, compare, true)
 /**
 * @brief 类型安全的XHashSet创建宏
 * @param keyType 键的数据类型（如int、XString）
@@ -67,7 +68,7 @@ XHashSet* XHashSet_create(const size_t keyTypeSize, XHashFunc hash, XCompare com
 * @param compare 键的比较函数（非NULL）
 * @note 初始化基础数据成员、绑定虚函数表，设置初始容量和哈希函数
 */
-void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash, XCompare compare);
+void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash, XCompare compare, bool useCow);
 // ------------------------------ 插入操作 ------------------------------
 /**
 * @brief 插入键（拷贝语义，基础版本）

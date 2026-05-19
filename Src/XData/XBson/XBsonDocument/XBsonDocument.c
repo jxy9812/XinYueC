@@ -5,7 +5,7 @@
 #include "XString.h"
 #include "XStack.h"
 #include <string.h>
-
+bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* output);
 XBsonDocument* XBsonDocument_create() {
     XBsonDocument* doc = (XBsonDocument*)XMalloc_System(sizeof(XBsonDocument));
     if (doc) {
@@ -39,7 +39,7 @@ void XBsonDocument_init(XBsonDocument* doc) {
     if (!doc) return;
 
     XMap_init(doc, sizeof(XString), sizeof(XBsonValue),
-        XString_compare);
+        XString_compare,true);
 
     XMapBaseSetKeyCopyMethod(doc, XString_copy_base);
     XMapBaseSetKeyMoveMethod(doc, XString_move_base);
@@ -354,8 +354,8 @@ XByteArray* XBsonDocument_toBson(const XBsonDocument* doc)
     if (!doc) return NULL;
 
     // 先计算总大小
-    XByteArray* bytes = XByteArray_create(4);//预留总长度4字节大小
-
+    XByteArray* bytes = XByteArray_create();//预留总长度4字节大小
+    XByteArray_resize_base(bytes,4);
     // 写入成员
     for_each_iterator(doc,XMap,it)
     {
@@ -369,7 +369,7 @@ XByteArray* XBsonDocument_toBson(const XBsonDocument* doc)
     // 添加终止符
     XByteArray_push_back_base(bytes, 0x00);
     //开头写入总长度
-    XMemory_write_data(XContainerDataPtr(bytes),XBYTE_ORDER_LITTLE_ENDIAN,&XContainerSize(bytes), sizeof(uint32_t));
+    XMemory_write_data(XContainerDataAddr(bytes),XBYTE_ORDER_LITTLE_ENDIAN,&XContainerSize(bytes), sizeof(uint32_t));
     return bytes;
 }
 
@@ -377,7 +377,7 @@ XBsonDocument* XBsonDocument_fromBson(XByteArray* data) {
     if (!data || XContainerSize(data) < 5) return NULL; // 最小BSON对象: 4字节长度 + 1字节终止符
 
     XBsonDocument* doc = XBsonDocument_create();
-    if (!XBsonDocument_from_bytes(doc, XContainerDataPtr(data), XContainerSize(data)))
+    if (!XBsonDocument_from_bytes(doc, XContainerDataAddr(data), XContainerSize(data)))
     {
         XBsonDocument_delete_base(doc);
         return NULL;

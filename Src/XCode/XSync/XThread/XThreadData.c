@@ -74,7 +74,7 @@ void XThreadData_init(XThreadData* data, XThread* thread)
     memset(data,0,sizeof(XThreadData));
     data->m_mutex = XMutex_create(XLock_NonRecursive);
     XLockFreeQueue_init(&data->m_tryPostEventList,sizeof(XPostEvent),30);//中断队列大小按需修改
-    XVector_init(&data->m_postEventList, sizeof(XPostEvent));
+    XVector_init(&data->m_postEventList, sizeof(XPostEvent),false);
     //XVector_init(&data->m_handlerEventList, sizeof(XPostEvent));
     //data->m_postEventList=XVector_create(sizeof(XPostEvent));
     data->m_thread = thread;
@@ -263,7 +263,7 @@ XVector* XThreadData_takePostedEvents(void)
     size_t count = XContainerSize(&td->m_postEventList) /*+ XLockFreeQueue_size_base(&td->m_tryPostEventList)*/;
     if (count > 0)
     {
-        local = XVector_create(sizeof(XPostEvent));
+        local = XVector_create_ex(sizeof(XPostEvent), false);
         XVector_resize_base(local, count);
         XContainerSize(local) = 0;
     }

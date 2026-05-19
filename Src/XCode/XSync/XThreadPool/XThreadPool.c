@@ -82,7 +82,7 @@ void XThreadPool_init(XThreadPool* pool, XObject* parent)
     XObject_setParent(pool, parent);
     // 初始化成员变量
     XPriorityQueue_init(&pool->m_waitQueue, sizeof(PrioritizedTask), prioritizedTask_compare, XSORT_ASC);
-    XVector_init(&pool->m_threadGroup, sizeof(XThread*));
+    XVector_init(&pool->m_threadGroup, sizeof(XThread*),false);
     XContainerSetCompare(&pool->m_waitQueue, uintptr_t_compare);
     XContainerSetCompare(&pool->m_threadGroup, uintptr_t_compare);
     XCircularQueue_init(&pool->m_reservedQueue, sizeof(XRunnable*), 64);
@@ -244,7 +244,8 @@ static uint16_t XThreadPool_getMaxThreadCount(const XThreadPool* pool)
             XMutex_unlock(pool->m_mutex);
             // 执行任务
             XRunnable_run_base(runnable);
-            if (XRunnable_autoDelete(runnable)) {
+            if (XRunnable_autoDelete(runnable)) 
+            {
                 XRunnable_delete_base(runnable);
             }
             continue;

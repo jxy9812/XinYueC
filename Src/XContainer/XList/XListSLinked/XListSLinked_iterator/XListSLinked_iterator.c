@@ -6,11 +6,17 @@
 XListSLinked_iterator XListSLinked_begin(XListSLinked* this_list)
 {
 	XListSLinked_iterator it = { 0 };
-	if (ISNULL(this_list, "XListSLinked_begin"))
-		return it;
-	if (!XContainerSharedData(this_list))
-		return it;
-	it.node = *(XListSNode**)XContainerSharedDataPtr(this_list);
+	if (ISNULL(this_list, "")) return it;
+	// 获取头节点指针
+	XListSNode* head = NULL;
+	if (XContainerIsCow(this_list)) {
+		XSharedData* sd = XContainerSharedData(this_list);
+		head = sd ? *(XListSNode**)sd->data : NULL;
+	}
+	else {
+		head = (XListSNode*)XContainerDataPtr(this_list);
+	}
+	it.node = head;
 	return it;
 }
 

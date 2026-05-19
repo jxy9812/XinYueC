@@ -32,7 +32,7 @@ void XStack_init(XStack* this_stack, size_t typeSize)
 {
 	if (ISNULL(this_stack, "") || ISNULL(typeSize, ""))
 		return;
-	XVector_init(this_stack, typeSize);
+	XVector_init(this_stack, typeSize,false);
 	XClassGetVtable(this_stack)= XStack_class_init();
 }
 bool XStack_resize(XStack* this_stack, size_t new_capacity)

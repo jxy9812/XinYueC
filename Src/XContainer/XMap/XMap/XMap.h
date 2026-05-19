@@ -35,14 +35,21 @@ typedef struct XMap
 XVtable* XMap_class_init();
 // ------------------------------ 创建与初始化 ------------------------------
 /**
-* @brief 创建XMap实例
-* @param keyTypeSize 键的类型大小（字节数，如sizeof(int)）
-* @param valTypeSize 值的类型大小（字节数，如sizeof(float)）
-* @param compare 键的比较函数（用于排序和查找，非NULL）
-* @return 成功返回创建的XMap指针（XMap*），失败返回NULL
-* @note 需确保keyTypeSize和valTypeSize大于0，compare不为NULL
-*/
-XMap* XMap_create(const size_t keyTypeSize, const size_t valTypeSize, XCompare compare);
+ * @brief 创建 XMap 实例（底层实现，可指定 COW 模式）
+ * @param keyTypeSize 键的类型大小
+ * @param valTypeSize 值的类型大小
+ * @param compare 键的比较函数
+ * @param useCow 是否启用 COW（true=COW，false=非COW）
+ * @return 成功返回 XMap 指针，失败返回 NULL
+ */
+XMap* XMap_create_ex(const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow);
+
+/**
+ * @brief 创建 XMap 实例（默认使用 COW 模式）
+ * @note 宏定义，展开为 XMap_create_ex(keyTypeSize, valTypeSize, compare, true)
+ */
+#define XMap_create(keyTypeSize, valTypeSize, compare) \
+    XMap_create_ex(keyTypeSize, valTypeSize, compare, true)
 /**
 * @brief 拷贝创建XMap实例
 * @param other 待拷贝的XMap实例指针
@@ -74,7 +81,7 @@ XMap* XMap_create_move(XMap* other);
 * @param compare 键的比较函数（非NULL）
 * @note 需确保this_map不为NULL，keyTypeSize和valTypeSize大于0，compare不为NULL
 */
-void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare);
+void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow);
 // ------------------------------ 插入操作 ------------------------------
 /**
 * @brief 插入键值对（拷贝语义，基础版本）

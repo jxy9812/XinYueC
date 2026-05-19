@@ -35,7 +35,7 @@ void XJsonArray_init(XJsonArray* array)
 {
     if (array==NULL)
         return;
-    XVector_init(array, sizeof(XJsonValue));
+    XVector_init(array, sizeof(XJsonValue),true);
     XContainerSetDataDeinitMethod(array, XJsonValue_deinit);
     XContainerSetDataCopyMethod(array, XJsonValue_copy);
     XContainerSetDataMoveMethod(array, XJsonValue_move);
