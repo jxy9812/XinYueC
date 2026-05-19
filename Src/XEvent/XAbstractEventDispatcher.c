@@ -4,7 +4,6 @@
 #include "XVector.h"
 #include "XTimeWheelGroup.h"
 #include "XAbstractNativeEventFilter.h"
-#include "XPriorityMapQueue.h"
 #include "XThreadData.h"
 #include "XThread.h"
 #include "XHrTimerGroup.h"

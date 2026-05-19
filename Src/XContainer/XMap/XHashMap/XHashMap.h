@@ -53,7 +53,8 @@ XVtable* XHashMap_class_init();
 * @return 成功返回创建的XHashMap指针（XHashMap*），失败返回NULL
 * @note 需确保keyTypeSize、valTypeSize大于0，hash和compare不为NULL
 */
-XHashMap* XHashMap_create(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare);
+XHashMap* XHashMap_create_ex(const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare, bool useCow);
+#define XHashMap_create(keyTypeSize, valTypeSize, hash, compare) XHashMap_create_ex(keyTypeSize, valTypeSize, hash, compare, true)
 /**
 * @brief 拷贝创建XHashMap实例
 * @param other 待拷贝的XHashMap实例指针
@@ -86,7 +87,7 @@ XHashMap* XHashMap_create_move(XHashMap* other);
 * @param compare 键的比较函数（非NULL）
 * @note 需确保this_map不为NULL，keyTypeSize、valTypeSize大于0，hash和compare不为NULL
 */
-void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare);
+void XHashMap_init(XHashMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XHashFunc hash, XCompare compare, bool useCow);
 // ------------------------------ 插入操作 ------------------------------
 /**
 * @brief 插入键值对（拷贝语义，基础版本）

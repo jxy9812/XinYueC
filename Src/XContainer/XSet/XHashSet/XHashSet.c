@@ -414,10 +414,12 @@ void VXClass_copy(XHashSet* object, const XHashSet* src)
 
 void VXClass_move(XHashSet* object, XHashSet* src)
 {
+    // 如果目标未初始化，先初始化（模式与源相同）
     if (((XClass*)object)->m_vtable == NULL) {
         XHashSet_init(object, XContainerTypeSize(src), src->m_hash, XContainerCompare(src), XContainerIsCow(src));
     }
     else {
+        // 释放目标原有资源
         if (XContainerIsCow(object)) {
             if (XContainerSharedData(object))
                 XSharedData_release_with(XContainerSharedData(object), VXHashSetDataDelete, object);
@@ -434,18 +436,13 @@ void VXClass_move(XHashSet* object, XHashSet* src)
             }
             XContainerDataPtr(object) = NULL;
         }
+        // 清空目标的大小和容量，准备交换
+        XContainerSize(object) = 0;
+        XContainerCapacity(object) = 0;
     }
 
-    memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XHashSet) - sizeof(XClass));
-
-    if (XContainerIsCow(src)) {
-        XContainerSharedData(src) = NULL;
-    }
-    else {
-        XContainerDataPtr(src) = NULL;
-    }
-    XContainerCapacity(src) = 0;
-    XContainerSize(src) = 0;
+    // 交换目标与源的所有成员（跳过 XClass 部分，包括 m_data/m_useCow/m_capacity/m_size/m_hash 等）
+    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XHashSet) - sizeof(XClass));
 }
 
 void VXSet_deinit(XHashSet* this_set)

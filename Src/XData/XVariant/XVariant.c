@@ -420,7 +420,7 @@ XVariant* XVariant_create_hash(const XHashMap* hash)
 	if (hash == NULL)
 		return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XHashMap), XVariantType_Hash);
-	XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, XContainerCompare(hash));
+	XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, XContainerCompare(hash),true);
 	XHashMap_copy_base(XVariant_DataPtr(var), hash);
 	return var;
 }
@@ -429,7 +429,7 @@ XVariant* XVariant_create_hash_move(XHashMap* hash)
 	if (hash == NULL)
 		return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XHashMap), XVariantType_Hash);
-	XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, XContainerCompare(hash));
+	XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, XContainerCompare(hash),true);
 	XHashMap_move_base(XVariant_DataPtr(var), hash);
 	return var;
 }
@@ -1221,7 +1221,7 @@ static void setValue_hash(XVariant* var, const XVariantHashMap* hash, XCDataCrea
 	if (var->m_type != XVariantType_Hash)
 	{
 		setValue(var, NULL, sizeof(XVariantHashMap), XVariantType_Hash);
-		XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, XContainerCompare(hash));
+		XHashMap_init(XVariant_DataPtr(var), ((XMapBase*)hash)->m_keyTypeSize, XContainerTypeSize(hash), hash->m_hash, XContainerCompare(hash),true);
 	}
 	dataCreatMethod(XVariant_DataPtr(var), hash);
 }

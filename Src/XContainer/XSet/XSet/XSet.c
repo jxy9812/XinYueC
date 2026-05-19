@@ -225,15 +225,17 @@ void VXClass_move(XSet* object, XSet* src)
             XContainerDataPtr(object) = NULL;
         }
     }
+   
+    //memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XSet) - sizeof(XClass));
 
-    memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XSet) - sizeof(XClass));
-
-    if (XContainerIsCow(src))
-        XContainerSharedData(src) = NULL;
+    if (XContainerIsCow(object))
+        XContainerSharedData(object) = NULL;
     else
-        XContainerDataPtr(src) = NULL;
-    XContainerCapacity(src) = 0;
-    XContainerSize(src) = 0;
+        XContainerDataPtr(object) = NULL;
+    XContainerCapacity(object) = 0;
+    XContainerSize(object) = 0;
+
+    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XSet) - sizeof(XClass));
 }
 
 void VXSet_deinit(XSet* this_set)

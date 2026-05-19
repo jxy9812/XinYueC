@@ -718,7 +718,7 @@ XVector* XVector_create_copy(const XVector* other)
 {
     if (other == NULL)
         return NULL;
-    XVector* v = XVector_create(XContainerTypeSize(other));
+    XVector* v = XVector_create_ex((((XContainer*)(other))->m_typeSize), XContainerIsCow(other));
     XVector_copy_base(v, other);
     return v;
 }
@@ -727,7 +727,7 @@ XVector* XVector_create_move(XVector* other)
 {
     if (other == NULL)
         return NULL;
-    XVector* v = XVector_create(XContainerTypeSize(other));
+    XVector* v = XVector_create_ex((((XContainer*)(other))->m_typeSize), XContainerIsCow(other));
     XVector_move_base(v, other);
     return v;
 }
