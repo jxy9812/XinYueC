@@ -1,6 +1,17 @@
 ﻿# XinYueC - 纯 C 语言面向对象库
 
-**官方完整文档**
+[![许可证](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+------
+
+## 目录
+
+- [基本介绍](#基本介绍)
+- [核心特性](#核心特性)
+- [项目结构](#项目结构)
+- [模块文档](#模块文档)
+- [快速开始](#快速开始)
+- [许可证](#许可证)
 
 ------
 
@@ -14,7 +25,6 @@ XinYueC 是一个使用纯 C 语言实现的、功能丰富的面向对象库。
 
 - **纯 C 实现**: 不依赖任何第三方库，仅使用标准 C 库。
 - **泛型容器**: 提供多种数据结构（如链表、动态数组、映射等），支持任意数据类型。
-- **丰富算法**: 包含排序、查找、迷宫生成与寻路等多种经典算法。
 - **面向对象风格**: 通过结构体和函数指针模拟类、继承和多态。
 - **跨平台**: 提供了针对不同操作系统的抽象层，确保代码可移植性。
 - **内存安全**: 容器支持自定义的元素拷贝、移动和析构回调，有效管理复杂对象的生命周期。
@@ -22,6 +32,161 @@ XinYueC 是一个使用纯 C 语言实现的、功能丰富的面向对象库。
 ### 许可证
 
 本项目采用 **MIT 开源许可协议**。
+
+------
+
+## 项目结构
+
+```
+XinYueC/
+├── Src/                      # 源代码目录
+│   ├── XClass/               # 面向对象基础模块
+│   ├── XCode/                # 核心代码模块
+│   ├── XContainer/           # 容器模块
+│   ├── XData/                # 数据处理模块
+│   ├── XEvent/               # 事件系统模块
+│   ├── XMemory/              # 内存管理模块
+│   └── XTimer/               # 定时器模块
+├── Drive/                    # 平台驱动实现
+│   ├── msvc/                 # MSVC编译器实现（原子操作）
+│   ├── gcc/                  # GCC编译器实现（原子操作）
+│   ├── windows/              # Windows平台实现（线程、互斥锁、IOCP等）
+│   ├── Posix/                # POSIX平台实现（线程、互斥锁等）
+│   ├── FreeRTOS/             # FreeRTOS实时操作系统实现
+│   ├── keil/                 # Keil编译器实现
+│   └── STM32/                # STM32单片机实现
+├── Test/                     # 测试代码目录
+│   ├── XMenuTest.c/h         # 菜单测试框架（交互式测试入口）
+│   ├── XCodeTest/            # XCode模块测试
+│   ├── XContainerTest/       # XContainer模块测试
+│   ├── XTimerTest/           # XTimer模块测试
+│   ├── XDeviceTest/          # 设备测试
+│   ├── XIOTest/              # IO测试
+│   ├── XLibraryTest/         # 库测试
+│   ├── XMemoryTest/          # 内存测试
+│   └── XProtocolStackTest/   # 协议栈测试
+├── CMakeLists.txt            # CMake配置文件
+└── README.md                 # 项目说明文档
+```
+
+> ⚠️ **平台支持说明**：因一人精力有限，目前完整的实现只有 **Windows 平台**。其他平台（Linux、macOS、FreeRTOS、STM32等）的部分功能可能尚未完成或未经充分测试，欢迎贡献代码！
+
+------
+
+## 模块文档
+
+XinYueC 由多个独立模块组成，每个模块都有详细的文档说明。
+
+### XClass 面向对象基础
+
+XClass模块是整个框架的基石，实现了C语言中的面向对象编程支持。
+
+**主要功能：**
+- 类、继承、多态的实现
+- 虚函数表机制
+- RTTI（运行时类型信息）
+
+**详细文档：** [XClass.md](Src/XClass/XClass.md)
+
+---
+
+### XCode 核心代码
+
+XCode模块提供了应用程序开发的核心功能支持。
+
+**主要功能：**
+- **XAction** - 动作封装
+- **XAtomic** - 跨平台原子操作
+- **XCoreApplication** - 应用程序核心、事件循环
+- **XMenu** - 层级菜单管理
+- **XSignalSlot** - 信号与槽机制
+- **XSocketNotifier** - 套接字I/O事件监控
+- **XSync** - 线程同步原语（互斥锁、读写锁、信号量、条件变量）
+- **XThread** - 线程封装
+- **XThreadPool** - 线程池
+
+**平台实现说明：**
+- 原子操作：Windows使用Interlocked API，Linux使用GCC内置原子操作
+- 事件循环：Windows使用消息队列，Linux使用epoll，macOS使用kqueue
+- 线程同步：Windows使用CRITICAL_SECTION/SRWLock，Linux使用pthread
+
+**详细文档：** [XCode.md](Src/XCode/XCode.md)
+
+---
+
+### XContainer 容器
+
+XContainer模块提供了丰富的泛型容器，支持任意数据类型。
+
+**主要功能：**
+- **XVector** - 动态数组，类似std::vector
+- **XList** - 双向链表，类似std::list
+- **XMap** - 红黑树映射，类似std::map
+- **XHashMap** - 哈希映射，类似std::unordered_map
+- **XSet** - 集合
+- **XStack** - 栈
+- **XQueue** - 队列
+- **XDeque** - 双端队列
+
+**详细文档：** [XContainer.md](Src/XContainer/XContainer.md)
+
+---
+
+### XData 数据处理
+
+XData模块提供了常用数据类型的封装和处理。
+
+**主要功能：**
+- **XString** - Unicode字符串
+- **XStringList** - 字符串列表
+- **XByteArray** - 字节数组
+- **XDate/XTime/XDateTime** - 日期时间处理
+- **XVariant** - 变体类型
+- **JSON** - JSON解析与序列化
+- **BSON** - BSON二进制JSON格式
+
+**详细文档：** [XData.md](Src/XData/XData.md)
+
+---
+
+### XEvent 事件系统
+
+XEvent模块实现了事件驱动的编程模型。
+
+**主要功能：**
+- **XEvent** - 事件基类
+- **XEventLoop** - 事件循环
+- **XEventDispatcher** - 事件分发器
+- **XObject** - 事件处理对象基类
+- 定时器事件、自定义事件
+
+**详细文档：** [XEvent.md](Src/XEvent/XEvent.md)
+
+---
+
+### XMemory 内存管理
+
+XMemory模块提供了内存管理功能。
+
+**主要功能：**
+- 内存池
+- 智能指针
+- 内存分配器
+
+**详细文档：** [XMemory.md](Src/XMemory/XMemory.md)
+
+---
+
+### XTimer 定时器
+
+XTimer模块提供了定时器功能。
+
+**主要功能：**
+- 单次定时器
+- 周期定时器
+- 高精度定时器
+
+**详细文档：** [XTimer.md](Src/XTimer/XTimer.md)
 
 ------
 
@@ -301,7 +466,7 @@ XinYueC 的核心架构围绕几个关键概念构建：`XClass`（基类）、`
 
 ------
 
-## 使用方法
+## 快速开始
 
 ### CMake 集成
 
@@ -344,4 +509,100 @@ XinYueC 的核心架构围绕几个关键概念构建：`XClass`（基类）、`
 
 每次添加或删除源文件后，只需右键点击 `CMakeLists.txt` 并重新配置即可。
 
-> **探索更多细节，请访问项目源码**: https://gitee.com/xin___yue/XinYueC/tree/develop/
+### 运行测试
+
+项目提供了交互式菜单测试系统，方便测试各个模块功能。
+
+**测试目录结构：**
+
+```
+Test/
+├── XMenuTest.c/h         # 菜单测试框架（交互式测试入口）
+├── XCodeTest/            # XCode模块测试
+│   ├── XThreadTest.c         # 线程测试
+│   ├── XThreadPoolTest.c     # 线程池测试
+│   ├── XDateTimeTest.c       # 日期时间测试
+│   └── XStateMachineTest.c   # 状态机测试
+├── XContainerTest/       # 容器模块测试
+│   ├── XVectorTest.c         # 动态数组测试
+│   ├── XListDLinkedTest.c    # 双向链表测试
+│   ├── XMapTest.c            # 映射测试
+│   ├── XHashMapTest.c        # 哈希映射测试
+│   ├── XJsonTest.c           # JSON测试
+│   ├── XBsonTest.c           # BSON测试
+│   └── ...                   # 更多测试
+├── XTimerTest/           # 定时器模块测试
+│   ├── XTimerTest.c          # 定时器测试
+│   ├── XHrTimerTest.c        # 高精度定时器测试
+│   └── XTimerWheelTest.c     # 时间轮测试
+├── XDeviceTest/          # 设备测试
+├── XIOTest/              # IO测试
+├── XLibraryTest/         # 库测试
+├── XMemoryTest/          # 内存测试
+└── XProtocolStackTest/   # 协议栈测试
+```
+
+**使用方法：**
+
+1. 编译项目后运行可执行文件
+2. 程序启动后会显示交互式菜单
+3. 通过输入数字选择要测试的模块
+4. 测试完成后自动返回上级菜单
+
+**菜单示例：**
+
+```
+---------------测试代码---------------
+1. 库测试
+2. 容器测试
+3. 核心代码测试
+4. IO测试
+5. 设备测试
+6. 协议栈测试
+7. 定时器测试
+8. 内存测试
+请输入选择:
+```
+
+------
+
+## 许可证
+
+本项目采用 **MIT 开源许可协议**。
+
+```
+MIT License
+
+Copyright (c) 2024 XinYueC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+------
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+------
+
+## 联系方式
+
+项目地址：[Gitee](https://gitee.com/xin___yue/XinYueC)
+
