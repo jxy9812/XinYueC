@@ -614,7 +614,3 @@ SOFTWARE.
 
 ------
 
-## 联系方式
-
-项目地址：[Gitee](https://gitee.com/xin___yue/XinYueC)
-

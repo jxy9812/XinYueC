@@ -2,7 +2,7 @@
 #if XByteArray_ON
 #include "XString.h"
 #include <string.h>
-static inline void* XByteArray_data(XByteArray* vec);
+uint8_t * XByteArray_data(XByteArray* other);
 XByteArray* XByteArray_create_ex(bool useCow)
 {
 	XByteArray* array = XMalloc_System(sizeof(XByteArray));
@@ -22,6 +22,14 @@ XByteArray* XByteArray_create_with_data(const char* data,size_t size)
 	//	XVector_resize_base(array, size);
 	//}
 	XByteArray_append_array_base(array,data,size);
+	return array;
+}
+
+XByteArray* XByteArray_create_utf8(const char* utf8)
+{
+	if (!utf8)return NULL;
+	XByteArray* array = XByteArray_create();
+	XByteArray_append_utf8(array,utf8);
 	return array;
 }
 
@@ -180,7 +188,8 @@ XByteArray* XByteArray_toCompress(XByteArray* sData)
 	uLongf output_len = compressBound(input_len);
 
 	// 创建压缩结果缓冲区
-	XByteArray* compressed = XByteArray_create(output_len);
+	XByteArray* compressed = XByteArray_create();
+	XByteArray_resize_base(compressed, output_len);
 	if (compressed == NULL)
 		return NULL;
 
@@ -209,7 +218,8 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData)
 
 	// 初始解压缓冲区大小（设为输入大小的4倍，可根据实际情况调整）
 	uLongf output_len = input_len * 4;
-	XByteArray* decompressed = XByteArray_create(output_len);
+	XByteArray* decompressed = XByteArray_create();
+	XByteArray_resize_base(decompressed, output_len);
 	if (decompressed == NULL)
 		return NULL;
 
@@ -255,9 +265,9 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData)
 	return NULL;
 }
 
-inline void* XByteArray_data(XByteArray* vec)
+uint8_t* XByteArray_data(XByteArray* other)
 {
-	return XContainerIsCow(vec) ? XContainerSharedDataPtr(vec) : XContainerDataPtr(vec);
+	return XContainerDataAddr(other) ;
 }
 
 #endif

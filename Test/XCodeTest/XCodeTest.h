@@ -7,6 +7,7 @@ extern "C" {
 #include"XClass.h"
 #if DEMOTEST
 void XMenu_XCodeTest(XMenu* root);
+void XMenu_XRcodeTest(XMenu* root);
 void XMenu_XDebugTest(XMenu* root);
 void XMenu_XThreadTest(XMenu* root);
 void XMenu_XThreadPoolTest(XMenu* root);

@@ -110,7 +110,7 @@ typedef struct XContainer
 #define XContainerIsCow(object)                ((XContainer*)(object))->m_useCow
 // 获取容器的真实数据区首地址（适用于所有模式）
 #define XContainerDataAddr(object) \
-    (XContainerIsCow(object) ? XContainerSharedDataPtr(object) : ((XContainer*)(object))->m_data)
+   ((XContainer*)(object))->m_data? ((XContainerIsCow(object) ? XContainerSharedDataPtr(object) : ((XContainer*)(object))->m_data)):NULL
  /**
 * @brief 获取容器数据区的实际数据（指定类型）
 * @details 将数据区指针转换为指定类型的指针并解引用，直接获取数据值

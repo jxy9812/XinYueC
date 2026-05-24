@@ -34,6 +34,8 @@ typedef struct XByteArray
 XByteArray* XByteArray_create_ex(bool useCow);
 #define XByteArray_create() XByteArray_create_ex(true)
 XByteArray* XByteArray_create_with_data(const char* data,size_t size);
+//用字符串创建
+XByteArray* XByteArray_create_utf8(const char* utf8);
 /**
 * @brief 基于已有XByteArray创建深拷贝实例
 * @param other 被复制的XByteArray实例指针（不可为NULL）
@@ -176,7 +178,7 @@ bool XByteArray_append_utf8(XByteArray* array, const char* utf8);
 
 
 //============================= 元素访问与查询 =============================
-
+uint8_t* XByteArray_data(XByteArray* other);
 /**
 * @brief 复用XVector的接口，获取指定索引的元素指针
 * @return 成功返回元素指针，失败返回NULL（索引越界）
