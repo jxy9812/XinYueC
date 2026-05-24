@@ -9,7 +9,7 @@
 - [基本介绍](#基本介绍)
 - [核心特性](#核心特性)
 - [项目结构](#项目结构)
-- [模块文档](#模块文档)
+- [📚 API 文档](#-api-文档)
 - [快速开始](#快速开始)
 - [许可证](#许可证)
 
@@ -73,11 +73,23 @@ XinYueC/
 
 ------
 
-## 模块文档
+## 📚 API 文档
 
 XinYueC 由多个独立模块组成，每个模块都有详细的文档说明。
 
-### XClass 面向对象基础
+| 模块 | 说明 | 文档链接 |
+|------|------|----------|
+| **XClass** | 面向对象基础（类、继承、多态、虚函数表） | [XClass.md](Src/XClass/XClass.md) |
+| **XCode** | 核心代码（原子操作、信号槽、线程、线程池、同步原语） | [XCode.md](Src/XCode/XCode.md) |
+| **XContainer** | 泛型容器（Vector、List、Map、HashMap、Set等） | [XContainer.md](Src/XContainer/XContainer.md) |
+| **XData** | 数据处理（String、ByteArray、DateTime、JSON、BSON） | [XData.md](Src/XData/XData.md) |
+| **XEvent** | 事件系统（Event、EventLoop、EventDispatcher、XObject） | [XEvent.md](Src/XEvent/XEvent.md) |
+| **XMemory** | 内存管理（内存池、智能指针、分配器） | [XMemory.md](Src/XMemory/XMemory.md) |
+| **XTimer** | 定时器（单次定时器、周期定时器、高精度定时器） | [XTimer.md](Src/XTimer/XTimer.md) |
+
+### 模块详情
+
+#### XClass 面向对象基础
 
 XClass模块是整个框架的基石，实现了C语言中的面向对象编程支持。
 
@@ -90,7 +102,7 @@ XClass模块是整个框架的基石，实现了C语言中的面向对象编程�
 
 ---
 
-### XCode 核心代码
+#### XCode 核心代码
 
 XCode模块提供了应用程序开发的核心功能支持。
 
@@ -114,7 +126,7 @@ XCode模块提供了应用程序开发的核心功能支持。
 
 ---
 
-### XContainer 容器
+#### XContainer 容器
 
 XContainer模块提供了丰富的泛型容器，支持任意数据类型。
 
@@ -132,7 +144,7 @@ XContainer模块提供了丰富的泛型容器，支持任意数据类型。
 
 ---
 
-### XData 数据处理
+#### XData 数据处理
 
 XData模块提供了常用数据类型的封装和处理。
 
@@ -149,7 +161,7 @@ XData模块提供了常用数据类型的封装和处理。
 
 ---
 
-### XEvent 事件系统
+#### XEvent 事件系统
 
 XEvent模块实现了事件驱动的编程模型。
 
@@ -164,7 +176,7 @@ XEvent模块实现了事件驱动的编程模型。
 
 ---
 
-### XMemory 内存管理
+#### XMemory 内存管理
 
 XMemory模块提供了内存管理功能。
 
@@ -177,7 +189,7 @@ XMemory模块提供了内存管理功能。
 
 ---
 
-### XTimer 定时器
+#### XTimer 定时器
 
 XTimer模块提供了定时器功能。
 
