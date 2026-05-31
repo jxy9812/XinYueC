@@ -1,5 +1,4 @@
 ﻿#include"XBinaryTree.h"
-#include"XAlgorithm.h"
 #include"XStack.h"
 size_t XBTreeNode_typeSize()
 {
