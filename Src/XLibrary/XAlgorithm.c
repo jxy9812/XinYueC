@@ -6,14 +6,6 @@
 #include<stdlib.h>
 #include<string.h>
 #include<time.h>
-#ifdef _WIN32
-#include<Windows.h>
-void gotoxy(short x, short y) 
-{
-	COORD coord = { x, y };
-	SetConsoleCursorPosition(GetStdHandle(STD_OUTPUT_HANDLE), coord);
-}
-#endif // _Win32
 void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据类型的函数
 {
 	if (valOne == NULL || valTwo == NULL || typeSize <= 0)
@@ -94,35 +86,37 @@ void XStackCopyXVector(const XStack* stack, XVector* vector)
 	size_t Size = XStack_size_base(stack);
 	if (Size == 0)
 		return;
+	XVector_resize_base(vector, XContainerSize(stack));
 	XVector_clear_base(vector);
 	size_t TypeSize = XStack_typeSize_base(stack);
 	char* pTail = XStack_top_base(stack);//数组末尾元素
 	char* pHead = pTail - TypeSize * (Size - 1);//数组头元素
 	
 	//XContainerSharedDataPtr(vector) = XMalloc_System(Size * TypeSize);
-	if (XContainerSharedDataPtr(vector)==NULL)
+	if (!XContainerDataAddr(vector))
 		return;
-	XContainerCapacity(vector) = Size;
+	//XContainerCapacity(vector) = Size;
 	XContainerSize(vector) = Size;
 	for (size_t i = 0; i < Size; i++)
 	{
-		memcpy((char*)XContainerSharedDataPtr(vector) + i * TypeSize, pTail - i * TypeSize, TypeSize);
+		void* ptr = XContainerDataAddr(vector);
+		memcpy((char*)ptr + i * TypeSize, pTail - i * TypeSize, TypeSize);
 	}
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif
 }
 
-void XDelay(const size_t msec)
-{
-	clock_t  time_front = clock();
-	while (true)
-	{
-		clock_t time_after = clock();
-		if (time_after - time_front > msec)
-			break;
-	}
-}
+//void XDelay(const size_t msec)
+//{
+//	clock_t  time_front = clock();
+//	while (true)
+//	{
+//		clock_t time_after = clock();
+//		if (time_after - time_front > msec)
+//			break;
+//	}
+//}
 
 uint16_t SwapEndian16(uint16_t data, uint8_t mode)
 {

@@ -279,7 +279,7 @@ XVector* XThreadData_takePostedEvents(void)
     }
     // 关键：稳定降序排序
     if(local)
-        XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
+        XInsertSort(XContainerDataAddr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
 
     return local;
 }
