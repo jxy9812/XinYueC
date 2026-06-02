@@ -347,19 +347,3 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal, XVarList* args, void(
 		args->argsDel = del;
 	emit(manager, signal, args, ref_count, priority);
 }
-
-void XSignalSlot_emit_queue(XSignalSlot* manager, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority)
-{
-	if (manager == NULL)
-	{
-		if (args && del)
-			del(args);
-		if(ref_count)
-			XAtomic_delete(ref_count);
-		return;
-	}
-	if (del&&!ref_count)
-		ref_count = XAtomic_create(int32_t);
-	//XCoreApplication_postSendSignal(emit, manager, signal, argList, del,ref_count, priority);
-}
-

@@ -46,7 +46,47 @@ void* XVtable_at(XVtable* this_vtable, size_t index);
 //获取类虚函数表大小
 #define XCLASS_VTABLE_GET_SIZE(Class)   E##Class##_END_SIZE
 
-// 简化版 container_of，兼容 MSVC 和 GCC
+/**
+ * @brief 通过结构体成员的指针反推出该结构体的起始指针。
+ *
+ * 这是 Linux 内核中广为使用的经典宏，也是实现通用容器（链表、队列、红黑树等）
+ * 和“面向对象风格”类型继承的基础设施。已知某个成员（member）在结构体（type）
+ * 内部的地址（ptr），该宏可以在编译期计算出包含此成员的整个结构体的首地址。
+ *
+ * @param[in] ptr     指向结构体中某个成员的指针（该成员必须属于 type 类型）
+ * @param[in] type    希望获取的结构体类型名称（例如 struct person）
+ * @param[in] member  ptr 所指向的成员在结构体 type 中的名称
+ *
+ * @return 指向包含该成员的整个结构体的指针（类型为 type*）
+ *
+ * @note 宏内部使用 offsetof()，它会在编译时求值，不会产生运行时开销。
+ * @note 必须包含头文件 <stddef.h> 以获得 offsetof 的定义。
+ * @warning 若 ptr 为 NULL，本宏的行为是未定义的（虽然大多数实现会返回 NULL - offset，
+ *          但不应依赖于此）。
+ * @warning 调用者必须确保 ptr 确实指向 type 类型结构体中的 member 成员；
+ *          否则会造成数据错乱且没有错误提示。
+ *
+ * @par 示例
+ * @code
+ * struct person {
+ *     char name[16];
+ *     int age;
+ *     struct list_head node;   // 链表节点
+ * };
+ *
+ * // 在链表遍历回调中，我们只能拿到 node 的指针
+ * struct list_head *p = &some_person->node;
+ *
+ * // 通过 container_of 反向获取 person 结构体的起始地址
+ * struct person *parent = container_of(p, struct person, node);
+ *
+ * // 现在可以访问 person 的其他成员
+ * printf("age = %d\n", parent->age);
+ * @endcode
+ *
+ * @see offsetof()
+ * @see list_entry()  许多内核 API 中的同功能宏
+ */
 #define container_of(ptr, type, member) \
     ((type *)((char *)(ptr) - offsetof(type, member)))
 //内存对齐宏

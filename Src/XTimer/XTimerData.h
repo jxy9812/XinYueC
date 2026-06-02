@@ -12,7 +12,7 @@ extern "C" {
 * @brief 定时器超时回调函数类型
 * @param userData 用户自定义数据
 */
-typedef void (*XTimerCallback)(void* userData, XObject* timer);
+typedef void (*XTimerCallback)(void* userData);
 /**
 * @brief 定时器基类结构体前向声明
 */

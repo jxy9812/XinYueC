@@ -104,8 +104,6 @@ bool XSignalSlot_disconnect2(XConnection* conn);
  * @param priority  信号与槽队列连接的时候的优先级(内部走的是事件投递)
  */
 void XSignalSlot_emit(XSignalSlot* manager, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_int32_t* ref_count, int priority);
-void XSignalSlot_emit_queue(XSignalSlot* manager, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority);
-
 #ifdef __cplusplus
 }
 #endif

@@ -366,12 +366,6 @@ void XObject_emitSignal(XObject* object, size_t signal, XVarList* args, void(*de
 		XSignalSlot_emit(object->m_signalSlot, signal, args,del, ref_count,priority);
 }
 
-void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority)
-{
-	if (object)
-		XSignalSlot_emit_queue(object->m_signalSlot, signal, args, del, ref_count,priority);
-}
-
 void* XObject_destroyed_signal(XObject* object)
 {
 	XEmitSignal(object, XObject_destroyed_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);

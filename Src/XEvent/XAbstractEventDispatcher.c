@@ -45,6 +45,7 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
     dp->timers = XHashMap_Create(size_t, XAbstractEventDispatcher_TimerInfo, size_t_compare);
     //XContainerSetDataDeinitMethod(d->timers, timersDataDeinit);
     dp->sockets = XHashMap_Create(intptr_t, XVector, uintptr_t_compare);
+    XContainerSetDataDeinitMethod(dp->sockets, XVector_delete_base);
     //dp->mutex = XMutex_create(XLock_NonRecursive);
 }
 
@@ -226,14 +227,39 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
 
 static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
 {
-    (void)self; (void)notifier;
-    // 纯虚函数
+    if (!notifier)return;
+    XSocketDescriptor socket = XSocketNotifier_socket(notifier);
+    if (!XSocketDescriptor_isValid(socket)) return;
+    if (!self->d_ptr || !self->d_ptr->sockets)return;
+    XHashMap* sockets = self->d_ptr->sockets;
+    if (!XMapBase_contains(sockets, &socket))
+    {
+        XVector v = { 0 };
+        XVector_init(&v, sizeof(XSocketNotifier*), false);
+        XContainerSetCompare(&v, uintptr_t_compare);
+        XMapBase_insert_base(sockets, &socket, &v);
+    }
+    XVector* notifiers = XMapBase_value_base(sockets, &socket);
+    if (notifiers && XVector_indexOf(notifiers, &notifier, 0) == -1)
+    {
+        XVector_append_base(notifiers, &notifier);
+    }
 }
 
 static void VXAbstractEventDispatcher_unregisterSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
 {
-    (void)self; (void)notifier;
-    // 纯虚函数
+    if (!notifier)return;
+    XSocketDescriptor socket = XSocketNotifier_socket(notifier);
+    if (!XSocketDescriptor_isValid(socket)) return;
+    if (!self->d_ptr || !self->d_ptr->sockets)return;
+    XHashMap* sockets = self->d_ptr->sockets;
+    XVector* notifiers = XMapBase_value_base(sockets, &socket);
+    if (notifiers)
+    {
+        int index = XVector_indexOf(notifiers, &notifier, 0);
+        if (index != -1)
+            XVector_remove_base(sockets, index, 1);
+    }
 }
 static void TimerCallback(void* userData, XTimerData* timer)
 {

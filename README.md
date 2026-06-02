@@ -77,15 +77,15 @@ XinYueC/
 
 XinYueC 由多个独立模块组成，每个模块都有详细的文档说明。
 
-| 模块 | 说明 |
-|------|------|
-| **XClass** | 面向对象基础（类、继承、多态、虚函数表） |
-| **XCode** | 核心代码（原子操作、信号槽、线程、线程池、同步原语） |
-| **XContainer** | 泛型容器（Vector、List、Map、HashMap、Set等） |
-| **XData** | 数据处理（String、ByteArray、DateTime、JSON、BSON） |
-| **XEvent** | 事件系统（Event、EventLoop、EventDispatcher、XObject） |
-| **XMemory** | 内存管理（内存池、智能指针、分配器） |
-| **XTimer** | 定时器（单次定时器、周期定时器、高精度定时器） |
+| 模块 | 说明 | 文档链接 |
+|------|------|----------|
+| **XClass** | 面向对象基础（类、继承、多态、虚函数表） | [XClass.md](Src/XClass/XClass.md) |
+| **XCode** | 核心代码（原子操作、信号槽、线程、线程池、同步原语） | [XCode.md](Src/XCode/XCode.md) |
+| **XContainer** | 泛型容器（Vector、List、Map、HashMap、Set等） | [XContainer.md](Src/XContainer/XContainer.md) |
+| **XData** | 数据处理（String、ByteArray、DateTime、JSON、BSON） | [XData.md](Src/XData/XData.md) |
+| **XEvent** | 事件系统（Event、EventLoop、EventDispatcher、XObject） | [XEvent.md](Src/XEvent/XEvent.md) |
+| **XMemory** | 内存管理（内存池、智能指针、分配器） | [XMemory.md](Src/XMemory/XMemory.md) |
+| **XTimer** | 定时器（单次定时器、周期定时器、高精度定时器） | [XTimer.md](Src/XTimer/XTimer.md) |
 
 ### 模块详情
 

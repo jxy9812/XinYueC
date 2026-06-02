@@ -385,18 +385,6 @@ void XObject_objectNameChanged_signal(XObject* object,const XString* objectName)
  */
 void XObject_emitSignal(XObject* object, size_t signal, XVarList * args, void(*del)(XVarList*), XAtomic_int32_t* ref_count, XEventPriority priority);
 
-/**
-* @brief 异步发射信号（队列模式，事件循环中延迟发送,可用在中断中,延迟发送）
-* @param object 发送信号的对象指针（非NULL）
-* @param signal 信号标识
-* @param argList 信号参数（可为NULL）
-* @param del 参数释放回调（可为NULL，用于释放args资源）
-* @param ref_count 引用计数（可为NULL，用于管理参数生命周期）
-* @param priority 信号优先级
-*/
-void XObject_emitSignal_queue(XObject* object, size_t signal, void* args, void(*del)(void*), XAtomic_int32_t* ref_count, XEventPriority priority);
-
-
 #ifdef __cplusplus
 }
 #endif

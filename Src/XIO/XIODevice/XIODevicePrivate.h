@@ -9,7 +9,7 @@ extern "C" {
 #include <stdbool.h>
 #include "XRingBuffer.h"
 #include "XString.h"
-#include "XVector.h" // 引入 XVector 用于动态管理通道
+#include "XVector.h" 
 
 struct XIODevice;
 
@@ -29,12 +29,10 @@ typedef struct XIODevicePrivate {
 
     // --- 事务相关 ---
     bool transactionStarted;            /**< @brief 标志位，指示是否已调用 startTransaction()。 */
+    bool aboutToCloseEmitted;           /**< @brief 标志位，防止 aboutToClose 信号重复发射。 */
     int64_t transactionReadPos;         /**< @brief 事务开始时的读位置（针对默认通道）。 */
-
     // --- 错误 & 状态 ---
     struct XString* errorString;        /**< @brief 存储最近一次 I/O 操作的错误信息。 */
-    bool aboutToCloseEmitted;           /**< @brief 标志位，防止 aboutToClose 信号重复发射。 */
-
     struct XIODevice* q_ptr;            /**< @brief 反向指针，指向公有接口 XIODevice 实例。 */
 } XIODevicePrivate;
 

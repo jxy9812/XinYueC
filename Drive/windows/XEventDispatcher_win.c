@@ -143,29 +143,36 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
         event->actType |= XSocketAct_Read;
     if (ioCtx->eventMask & FD_WRITE)
         event->actType |= XSocketAct_Write;
+    XEvent* e = (XEvent*)event;
+    e->posted = true;
+    e->spontaneous = true;
     XCoreApplication_postEvent(completionKey, event, XEVENT_PRIORITY_NORMAL);
     //套接字监听器
-    //XVector* notifiers = XMapBase_value_base(d->sockets, &socket);
-    //if (notifiers)
-    //{
-    //    for_each_iterator(notifiers,XVector,it)
-    //    {
-    //        XSocketNotifier** lp = XVector_iterator_data(&it);
-    //        if (lp)
-    //        {
-    //            XSocketNotifier* notifier = *lp;
-    //            if(!notifier)continue;
-    //            if (!XSocketNotifier_isEnabled(notifier))
-    //                continue;//当前监听器未启用
-    //            XSocketNotifierType t = XSocketNotifier_type(notifier);
-    //            if ((t & XSocketNotifier_Read && ioCtx->eventMask & FD_READ) || (t & XSocketNotifier_Write && ioCtx->eventMask & FD_WRITE))
-    //            {//类型符合投递事件
-    //                XEventSockAct* e = XEventSockAct_create(ioCtx->socket, event->actType);
-    //                XCoreApplication_postEvent(notifier, e, XEVENT_PRIORITY_NORMAL);
-    //            }
-    //        }
-    //    }
-    //}
+    XVector* notifiers = XMapBase_value_base(d->m_dp.sockets, &socket);
+    if (notifiers)
+    {
+        for_each_iterator(notifiers,XVector,it)
+        {
+            XSocketNotifier** lp = XVector_iterator_data(&it);
+            if (lp)
+            {
+                XSocketNotifier* notifier = *lp;
+                if(!notifier)continue;
+                if (!XSocketNotifier_isEnabled(notifier))
+                    continue;//当前监听器未启用
+                XSocketNotifierType t = XSocketNotifier_type(notifier);
+                if ((t & XSocketNotifier_Read && ioCtx->eventMask & FD_READ) || (t & XSocketNotifier_Write && ioCtx->eventMask & FD_WRITE))
+                {//类型符合投递事件
+                    XEventSockAct* event = XEventSockAct_create(ioCtx->socket, event->actType);
+                    if (!event)continue;
+                    XEvent* e = (XEvent*)event;
+                    e->posted = true;
+                    e->spontaneous = true;
+                    XCoreApplication_postEvent(notifier, event, XEVENT_PRIORITY_NORMAL);
+                }
+            }
+        }
+    }
     //XMutex_unlock(GetXMutex(dispatcher));
 }
 
@@ -852,17 +859,6 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
     {
         // 清理本地过滤器
         XAbstractEventDispatcherPrivate_deinit(d);
-        // 销毁容器
-       /* if (d->timers)
-        {
-            XHashMap_delete_base(d->timers);
-            d->timers = NULL;
-        }
-        if (d->sockets)
-        {
-            XHashMap_delete_base(d->sockets);
-            d->sockets = NULL;
-        }*/
         XFree_System(d);
     }
     else if(d)
@@ -896,8 +892,8 @@ XVtable* XEventDispatcherWin32_class_init()
     XVTABLE_INHERIT_XCLASS(XAbstractEventDispatcher);
     //XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_ProcessEvents, (void*)VXEventDispatcherWin32_processEvents);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterSocketNotifier, (void*)VXEventDispatcherWin32_registerSocketNotifier);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterSocketNotifier, (void*)VXEventDispatcherWin32_unregisterSocketNotifier);
+    //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterSocketNotifier, (void*)VXEventDispatcherWin32_registerSocketNotifier);
+    //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterSocketNotifier, (void*)VXEventDispatcherWin32_unregisterSocketNotifier);
     //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_RegisterTimer, (void*)VXEventDispatcherWin32_registerTimer);
     //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterTimer, (void*)VXEventDispatcherWin32_unregisterTimer);
     //XVTABLE_OVERLOAD_DEFAULT(EXAbstractEventDispatcher_UnregisterTimers, (void*)VXEventDispatcherWin32_unregisterTimers);
