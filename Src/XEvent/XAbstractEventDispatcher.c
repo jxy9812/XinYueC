@@ -259,6 +259,8 @@ static void VXAbstractEventDispatcher_unregisterSocketNotifier(XAbstractEventDis
         int index = XVector_indexOf(notifiers, &notifier, 0);
         if (index != -1)
             XVector_remove_base(sockets, index, 1);
+        if (XVector_isEmpty_base(notifiers))//当前套接字监视列表空了,删除当前的容器
+            XHashMap_remove_base(sockets,&socket);
     }
 }
 static void TimerCallback(void* userData, XTimerData* timer)

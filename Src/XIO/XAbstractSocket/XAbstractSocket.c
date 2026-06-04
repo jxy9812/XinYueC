@@ -11,6 +11,7 @@
 #include <string.h>
 #include <assert.h>
 
+void XAbstractSocket_platform_init(XAbstractSocket* sock, XAbstractSocket_SocketType type);
 // ==================== 内部辅助函数声明 ====================
 static void VXAbstractSocket_deinit(XAbstractSocket* sock);
 static bool VXAbstractSocket_open(XAbstractSocket* self, XIODeviceBaseMode mode);
@@ -115,14 +116,16 @@ static void VXAbstractSocket_deinit(XAbstractSocket* sock)
     if (sock->peerName) {
         XString_delete_base(sock->peerName);
         sock->peerName = NULL;
-    }
-
-    // 清理私有数据（PIMPL）——由子类负责释放 d_ptr，此处不处理
-    // if (sock->d_ptr) { ... }
-
-    // 释放 platformHandle（如果需要）
-    // 注意：通常由 setSocketDescriptor 的用户管理，此处不 close()
-
+          }
+    if (sock->protocolTag) {
+              XString_delete_base(sock->protocolTag);
+              sock->protocolTag = NULL;
+          }
+          // 释放代理配置资源
+          XNetworkProxy_deinit(&sock->proxy);
+          // 释放地址对象
+    XHostAddress_deinit_base((XHostAddress*)&sock->localAddress);
+    XHostAddress_deinit_base((XHostAddress*)&sock->peerAddress);
     // 调用父类析构（XIODevice → XObject → XClass）
     XClass_Deinit_Parent(XIODevice, sock);
 }
@@ -141,16 +144,21 @@ void XAbstractSocket_init(XAbstractSocket* sock, XAbstractSocket_SocketType type
     sock->state = XAbstractSocket_UnconnectedState;
     sock->error = XAbstractSocket_UnknownSocketError;
     sock->errorString = NULL;
+    XHostAddress_init(&sock->localAddress);
     XHostAddress_setAddressSpecial(&sock->localAddress, XHostAddress_NullSpecial);
     sock->localPort = 0;
+    XHostAddress_init(&sock->peerAddress);
     XHostAddress_setAddressSpecial(&sock->peerAddress, XHostAddress_NullSpecial);
     sock->peerPort = 0;
     sock->peerName = NULL;
     sock->readBufferSize = -1; // 无限制
     sock->m_pauseMode = XAbstractSocket_PauseNever;
     sock->autoDeleteOnDisconnect = false;
-    sock->isValidFlag = false;
-    sock->d_ptr = NULL; // 由子类初始化
+          sock->isValidFlag = false;
+                      sock->protocolTag = NULL;
+                      XNetworkProxy_init(&sock->proxy);
+                      sock->d_ptr = NULL; // 由子类初始化
+    XAbstractSocket_platform_init(sock, type);
 }
 
 // ==================== Getter 实现 ====================
@@ -213,9 +221,14 @@ XAbstractSocket_PauseModes XAbstractSocket_pauseMode(const XAbstractSocket* sock
 }
 
 bool XAbstractSocket_isValid(const XAbstractSocket* sock)
-{
-    return sock && sock->isValidFlag;
-}
+  {
+      return sock && sock->isValidFlag;
+  }
+
+  XString* XAbstractSocket_protocolTag(const XAbstractSocket* sock)
+  {
+      return sock ? sock->protocolTag : NULL;
+  }
 
 // ==================== Setter 实现 ====================
 void XAbstractSocket_setReadBufferSize_base(XAbstractSocket* sock, int64_t size)
@@ -226,8 +239,70 @@ void XAbstractSocket_setReadBufferSize_base(XAbstractSocket* sock, int64_t size)
 }
 
 void XAbstractSocket_setPauseMode(XAbstractSocket* sock, XAbstractSocket_PauseModes mode)
-{
-    if (sock) sock->m_pauseMode = mode;
+  {
+      if (sock) sock->m_pauseMode = mode;
+  }
+
+  void XAbstractSocket_setProtocolTag(XAbstractSocket* sock, const char* tag)
+    {
+        if (!sock) return;
+      
+        // 释放旧的标签
+        if (sock->protocolTag) {
+            XString_delete_base(sock->protocolTag);
+            sock->protocolTag = NULL;
+        }
+      
+        // 创建新的标签
+        if (tag && tag[0] != '\0') {
+            sock->protocolTag = XString_create_fmt_utf8(tag);
+        }
+    }
+
+    void XAbstractSocket_setProxy(XAbstractSocket* sock, const XNetworkProxy* proxy)
+    {
+        if (!sock) return;
+      
+        // 释放旧的代理配置资源
+        XNetworkProxy_deinit(&sock->proxy);
+      
+        if (proxy) {
+            // 深拷贝代理配置
+            sock->proxy.type = proxy->type;
+            sock->proxy.capabilities = proxy->capabilities;
+            sock->proxy.port = proxy->port;
+            sock->proxy.hostName = proxy->hostName ? XStrdup(proxy->hostName) : NULL;
+            sock->proxy.user = proxy->user ? XStrdup(proxy->user) : NULL;
+            sock->proxy.password = proxy->password ? XStrdup(proxy->password) : NULL;
+        } else {
+            // 使用默认代理配置
+            XNetworkProxy_init(&sock->proxy);
+        }
+    }
+
+    XNetworkProxy* XAbstractSocket_proxy(const XAbstractSocket* sock)
+    {
+        return sock ? (XNetworkProxy*)&sock->proxy : NULL;
+    }
+
+// flush - 刷新发送缓冲区，等待所有待发送数据发送完毕
+bool XAbstractSocket_flush(XAbstractSocket* sock) {
+    if (!sock) return false;
+    //XAbstractSocketPrivate* priv = getPriv(sock);
+    //if (!priv || priv->socketHandle == INVALID_SOCKET) return false;
+
+    XIODevice* io = (XIODevice*)sock;
+
+    // 检查是否有待发送数据
+    while (XIODevice_bytesToWrite_base(io) > 0) {
+        // 等待数据发送完成
+        if (!XAbstractSocket_waitForBytesWritten(sock, 100)) {
+            // 超时或出错
+            return false;
+        }
+    }
+
+    return true;
 }
 
 // ==================== 受保护的 setter ====================
@@ -332,13 +407,6 @@ void XAbstractSocket_connectToHost_base(XAbstractSocket* sock, const char* hostN
         return ;
     XClassGetVirtualFunc(sock, EXAbstractSocket_ConnectToHost, bool(*)(XAbstractSocket*, const char*, uint16_t, XAbstractSocket_BindMode, XAbstractSocket_NetworkLayerProtocol))(sock, hostName, port, mode, protocol);
 }
-
-void XAbstractSocket_connectToAddress(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XIODeviceBaseMode mode)
-{
-    (void)sock; (void)address; (void)port; (void)mode;
-    // 抽象类，子类必须实现
-}
-
 void XAbstractSocket_disconnectFromHost_base(XAbstractSocket* sock)
 {
     if (ISNULL(sock, "") || ISNULL(XClassGetVtable(sock), ""))
@@ -408,12 +476,6 @@ bool XAbstractSocket_waitForDisconnected_base(XAbstractSocket* sock, int msecs)
 bool XAbstractSocket_waitForBytesWritten(XAbstractSocket* sock, int msecs)
 {
     return XIODevice_waitForBytesWritten_base((XIODevice*)sock, msecs);
-}
-
-bool XAbstractSocket_flush(XAbstractSocket* sock)
-{
-    (void)sock;
-    return true; // 抽象类视为成功
 }
 
 // ==================== 虚函数重载 ====================
@@ -586,42 +648,25 @@ static bool VXAbstractSocket_WaitForDisconnected(XAbstractSocket* self, int msec
 
 void* XAbstractSocket_hostFound_signal(XAbstractSocket* sock)
 {
-    if (sock) {
-        XObject_emitSignal((XObject*)sock, XAbstractSocket_hostFound_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
-    }
-    return XAbstractSocket_hostFound_signal;
+    XEmitSignal(sock, XAbstractSocket_hostFound_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XAbstractSocket_connected_signal(XAbstractSocket* sock)
 {
-    if (sock) {
-        XObject_emitSignal((XObject*)sock, XAbstractSocket_connected_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
-    }
-    return XAbstractSocket_connected_signal;
+    XEmitSignal(sock, XAbstractSocket_connected_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XAbstractSocket_disconnected_signal(XAbstractSocket* sock)
 {
-    if (sock) {
-        XObject_emitSignal((XObject*)sock, XAbstractSocket_disconnected_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
-    }
-    return XAbstractSocket_disconnected_signal;
+    XEmitSignal(sock, XAbstractSocket_disconnected_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XAbstractSocket_stateChanged_signal(XAbstractSocket* sock, XAbstractSocket_SocketState state)
 {
-    if (sock) {
-        XVariant* var = XVariant_create_int((int)state);
-        XObject_emitSignal((XObject*)sock, XAbstractSocket_stateChanged_signal, var, XVariant_delete_base, NULL, XEVENT_PRIORITY_NORMAL);
-    }
-    return XAbstractSocket_stateChanged_signal;
+    XEmitSignal(sock, XAbstractSocket_stateChanged_signal, XVarList_Create(XVar(XAbstractSocket_SocketState, state)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XAbstractSocket_errorOccurred_signal(XAbstractSocket* sock, XAbstractSocket_SocketError error)
 {
-    if (sock) {
-        XVariant* var = XVariant_create_int((int)error);
-        XObject_emitSignal((XObject*)sock, XAbstractSocket_errorOccurred_signal, var, XVariant_delete_base, NULL, XEVENT_PRIORITY_NORMAL);
-    }
-    return XAbstractSocket_errorOccurred_signal;
+    XEmitSignal(sock, XAbstractSocket_stateChanged_signal, XVarList_Create(XVar(XAbstractSocket_SocketError, error)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }

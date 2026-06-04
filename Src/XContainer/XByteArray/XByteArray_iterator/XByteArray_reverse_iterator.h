@@ -57,7 +57,7 @@ typedef  XVector_reverse_iterator XByteArray_reverse_iterator;
 * @brief 获取反向迭代器当前指向的字节数据指针
 * @details 复用XVector_reverse_iterator_data实现
 */
-#define XByteArray_reverse_iterator_data				XVector_reverse_iterator_data
+#define XByteArray_reverse_iterator_data(it)				*((uint8_t*)XVector_reverse_iterator_data(it))
 
 #ifdef __cplusplus
 }

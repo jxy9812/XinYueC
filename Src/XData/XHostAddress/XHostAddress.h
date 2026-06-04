@@ -58,10 +58,10 @@ XCLASS_DEFINE_EXTEND_END(XHostAddress, XClass)
 typedef struct XHostAddress 
 {
     XClass m_class;                     ///< 基类虚表指针
-    uint8_t a6[16];                     ///< 统一以 IPv6 格式存储地址
-    XHostAddress_NetworkLayerProtocol protocol; ///< 协议类型
-    char scopeId[64];                   ///< IPv6 zone ID（最大 63 字符）
     bool isNull;                        ///< 是否为 null 地址（protocol == Unknown）
+    XHostAddress_NetworkLayerProtocol protocol; ///< 协议类型
+    uint8_t a6[16];                     ///< 统一以 IPv6 格式存储地址
+    char scopeId[64];                   ///< IPv6 zone ID（最大 63 字符）
 } XHostAddress;
 
 XVtable* XHostAddress_class_init(void);

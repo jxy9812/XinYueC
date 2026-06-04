@@ -23,6 +23,7 @@ extern "C" {
 #include "XIODevice.h"
 #include "XHostAddress.h"
 #include "XVariant.h"
+#include "XNetworkProxy.h"
 
 // =============== 枚举定义（与 Qt6 语义一致）===============
 
@@ -141,7 +142,7 @@ XCLASS_DEFINE_ENUM(XAbstractSocket, WaitForDisconnected),
 XCLASS_DEFINE_END(XAbstractSocket)
 
 // =============== 前向声明 ===============
-struct XAbstractSocketPrivate;
+typedef struct XAbstractSocketPrivate XAbstractSocketPrivate;
 
 // =============== 核心结构体 ===============
 
@@ -160,17 +161,19 @@ typedef struct XAbstractSocket {
     XString* errorString;                           ///< 错误描述字符串（UTF-8，可为 NULL）
 
     XHostAddress localAddress;                      ///< 本地绑定地址
-    uint16_t localPort;                             ///< 本地绑定端口（主机字节序）
     XHostAddress peerAddress;                       ///< 对端地址
+    uint16_t localPort;                             ///< 本地绑定端口（主机字节序）
     uint16_t peerPort;                              ///< 对端端口（主机字节序）
     XString* peerName;                              ///< 对端主机名（connectToHost 时解析并缓存）
 
-    int64_t readBufferSize;                         ///< 读缓冲区大小（字节），-1 表示无限制
     XAbstractSocket_PauseModes m_pauseMode;         ///< SSL 错误暂停策略
     bool autoDeleteOnDisconnect;                    ///< 若为 true，disconnect 后自动 delete
     bool isValidFlag;                               ///< 是否处于有效状态（已连接且无致命错误）
+    XString* protocolTag;                           ///< 协议标签（用于调试和日志）
+    XNetworkProxy proxy;                            ///< 代理配置
 
     struct XAbstractSocketPrivate* d_ptr;           ///< 私有数据指针（PIMPL）
+    int64_t readBufferSize;                         ///< 读缓冲区大小（字节），-1 表示无限制
 } XAbstractSocket;
 
 // =============== 继承自 XIODevice 的 API（符号重命名，无参数包装）===============
@@ -285,6 +288,13 @@ XAbstractSocket_PauseModes XAbstractSocket_pauseMode(const XAbstractSocket* sock
  */
 bool XAbstractSocket_isValid(const XAbstractSocket* sock);
 
+/**
+ * @brief 获取协议标签。
+ * @param sock 套接字实例（非 NULL）
+ * @return 协议标签字符串（可能为 NULL）
+ */
+XString* XAbstractSocket_protocolTag(const XAbstractSocket* sock);
+
 // =============== Setter 函数 ===============
 
 /**
@@ -300,6 +310,27 @@ void XAbstractSocket_setReadBufferSize_base(XAbstractSocket* sock, int64_t size)
  * @param mode 暂停模式位掩码
  */
 void XAbstractSocket_setPauseMode(XAbstractSocket* sock, XAbstractSocket_PauseModes mode);
+
+/**
+ * @brief 设置协议标签（用于调试和日志）。
+ * @param sock 套接字实例（非 NULL）
+ * @param tag 协议标签字符串（如 "http", "mqtt" 等）
+ */
+void XAbstractSocket_setProtocolTag(XAbstractSocket* sock, const char* tag);
+
+/**
+ * @brief 设置套接字的代理配置。
+ * @param sock 套接字实例（非 NULL）
+ * @param proxy 代理配置
+ */
+void XAbstractSocket_setProxy(XAbstractSocket* sock, const XNetworkProxy* proxy);
+
+/**
+ * @brief 获取套接字的代理配置。
+ * @param sock 套接字实例（非 NULL）
+ * @return 指向代理配置的指针（不应被释放）
+ */
+XNetworkProxy* XAbstractSocket_proxy(const XAbstractSocket* sock);
 
 // =============== 核心操作函数 ===============
 
@@ -331,16 +362,6 @@ bool XAbstractSocket_bindAny(XAbstractSocket* sock, uint16_t port, XAbstractSock
  * @param protocol 网络协议（IPv4/IPv6/Any）
  */
 void XAbstractSocket_connectToHost_base(XAbstractSocket* sock, const char* hostName, uint16_t port, XIODeviceBaseMode mode, XAbstractSocket_NetworkLayerProtocol protocol);
-
-/**
- * @brief 异步连接到指定 IP 地址和端口。
- * @param sock 套接字实例（非 NULL）
- * @param address 远程 IP 地址
- * @param port 远程端口（主机字节序）
- * @param mode 打开模式
- */
-void XAbstractSocket_connectToAddress(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XIODeviceBaseMode mode);
-
 /**
  * @brief 正常断开连接（优雅关闭）。
  * @param sock 套接字实例（非 NULL）

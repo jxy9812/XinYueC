@@ -57,7 +57,7 @@ typedef  XVector_iterator XByteArray_iterator;
 * @brief 获取迭代器当前指向的字节数据指针
 * @details 复用XVector_iterator_data实现
 */
-#define XByteArray_iterator_data				XVector_iterator_data
+#define XByteArray_iterator_data(it)				*((uint8_t*)XVector_iterator_data(it))
 
 #ifdef __cplusplus
 }

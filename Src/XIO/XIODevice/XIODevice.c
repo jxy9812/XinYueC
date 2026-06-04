@@ -87,17 +87,17 @@ int XIODevice_currentReadChannel(const XIODevice* self) {
 }
 void XIODevice_setCurrentReadChannel(XIODevice* self, int channelIndex) {
 	if (!self || channelIndex < 0) {
-		return false;
+		return ;
 	}
 
 	// 尝试获取或创建该通道的缓冲区以验证其有效性
 	struct XRingBuffer* buf = XIODevicePrivate_getOrCreateReadBuffer(self->m_d, channelIndex);
 	if (!buf) {
-		return false; // 缓冲区创建失败，通道无效
+		return ; // 缓冲区创建失败，通道无效
 	}
 
 	self->m_currentReadChannel = channelIndex;
-	return true;
+	return ;
 }
 
 int XIODevice_currentWriteChannel(const XIODevice* self) {
@@ -109,17 +109,17 @@ int XIODevice_currentWriteChannel(const XIODevice* self) {
 
 void XIODevice_setCurrentWriteChannel(XIODevice* self, int channelIndex) {
 	if (!self || channelIndex < 0) {
-		return false;
+		return ;
 	}
 
 	// 尝试获取或创建该通道的缓冲区以验证其有效性
 	struct XRingBuffer* buf = XIODevicePrivate_getOrCreateWriteBuffer(self->m_d, channelIndex);
 	if (!buf) {
-		return false; // 缓冲区创建失败，通道无效
+		return ; // 缓冲区创建失败，通道无效
 	}
 
 	self->m_currentWriteChannel = channelIndex;
-	return true;
+	return ;
 }
 
 // ========== 核心读写 API ==========
@@ -176,7 +176,7 @@ XByteArray* XIODevice_read_new(XIODevice* self, int64_t maxlen)
 XByteArray* XIODevice_readAll(XIODevice* self)
 {
 	XByteArray* result = XByteArray_create();
-	char buffer[4096];
+	char buffer[2048];
 	int64_t n;
 	while ((n = XIODevice_read(self, buffer, sizeof(buffer))) > 0) {
 		XByteArray_append_array_base(result, buffer, n);

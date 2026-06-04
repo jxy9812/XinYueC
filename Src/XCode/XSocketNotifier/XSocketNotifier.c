@@ -3,7 +3,7 @@
 #include "XMemory.h"
 #include "XVariant.h"
 #include "XVariantList.h"
-
+#include "XThread.h"
 #include "XAbstractEventDispatcher.h"
 #include <string.h>
 
@@ -39,7 +39,7 @@ void VXSocketNotifier_deinit(XObject* obj)
 {
     XSocketNotifier* self = (XSocketNotifier*)obj;
     // 注销（由 dispatcher 实现，安全处理无效状态）
-    XAbstractEventDispatcher_unregisterSocketNotifier_base(NULL, self);
+    XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentDispatcher(), self);
     XClass_Deinit_Parent(XObject, obj);
 }
 
@@ -86,17 +86,16 @@ void XSocketNotifier_init(XSocketNotifier* notifier, XSocketNotifierType type)
 void XSocketNotifier_setSocket(XSocketNotifier* notifier, XSocketDescriptor socket)
 {
     if (!notifier) return;
-
     // 先注销旧的（如果有效）
     if (XSocketDescriptor_isValid(notifier->socket)) {
-        XAbstractEventDispatcher_unregisterSocketNotifier_base(NULL, notifier);
+        XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentDispatcher(), notifier);
     }
 
     notifier->socket = socket;
 
     // 如果新 socket 有效且已启用，则注册
     if (notifier->enabled && XSocketDescriptor_isValid(socket)) {
-        XAbstractEventDispatcher_registerSocketNotifier_base(NULL, notifier);
+        XAbstractEventDispatcher_registerSocketNotifier_base(XThread_currentDispatcher(), notifier);
     }
 }
 
@@ -128,21 +127,14 @@ void XSocketNotifier_setEnabled(XSocketNotifier* notifier, bool enabled)
     notifier->enabled = enabled;
 
     if (enabled && XSocketDescriptor_isValid(notifier->socket)) {
-        XAbstractEventDispatcher_registerSocketNotifier_base(NULL, notifier);
+        XAbstractEventDispatcher_registerSocketNotifier_base(XThread_currentDispatcher(), notifier);
     }
     else {
-        XAbstractEventDispatcher_unregisterSocketNotifier_base(NULL, notifier);
+        XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentDispatcher(), notifier);
     }
 }
 
 void* XSocketNotifier_activated_signal(XSocketNotifier* notifier, XSocketDescriptor socket, XSocketNotifierType type)
 {
-    if (notifier)
-    {
-        XVariantList* args = XVariantList_create();
-        XVariantList_push_back_move_base(args, XVariant_create_int(socket.value));
-        XVariantList_push_back_move_base(args, XVariant_create_int(type));
-        XEmitSignal(notifier, XSocketNotifier_activated_signal, args, XVariantList_delete_base, NULL, XEVENT_PRIORITY_NORMAL);
-    }
-    return XSocketNotifier_activated_signal;
+    XEmitSignal(notifier, XSocketNotifier_activated_signal, XVarList_Create(XVar(XSocketDescriptor, socket),XVar(XSocketNotifierType, type)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }

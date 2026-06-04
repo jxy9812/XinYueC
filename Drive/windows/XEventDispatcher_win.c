@@ -69,9 +69,9 @@ typedef struct XEventDispatcherWin32
 XVtable* XEventDispatcherWin32_class_init();
 // 辅助函数声明
 static LRESULT CALLBACK XEventDispatcherWin32_WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dispatcher, _Out_ DWORD NumberOfBytesTransferred,
-    _Out_ ULONG_PTR CompletionKey,
-    _Out_ LPOVERLAPPED* Overlapped);
+static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dispatcher, DWORD bytesTransferred,
+    ULONG_PTR completionKey,
+    LPOVERLAPPED overlapped);
 static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* dispatcher, UINT_PTR timerId);
 //iocp绑定
 bool IOCP_bind(XSocketDescriptor socket,XObject* obj);
@@ -130,24 +130,35 @@ static LRESULT CALLBACK XEventDispatcherWin32_WndProc(HWND hwnd, UINT msg, WPARA
 /**
  * @brief 处理网络事件消息
  */
-static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dispatcher, _Out_ DWORD NumberOfBytesTransferred,
-    _Out_ ULONG_PTR completionKey,
-    _Out_ LPOVERLAPPED* overlapped)
+static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dispatcher, DWORD bytesTransferred,
+    ULONG_PTR completionKey,
+    LPOVERLAPPED overlapped)
 {
     XEventContext_IOCP* ioCtx = (XEventContext_IOCP*)overlapped;
     MainThreadDataPrivate* d = PlatformPrivate(dispatcher);
+    
+    // 保存传输字节数到 IOCP 上下文
+    ioCtx->finishedBytes = bytesTransferred;
+    
     XEventSockAct* event = XEventSockAct_create(ioCtx->socket, XSocketAct_Invalid);
     if(!event)return;
-    //XMutex_lock(GetXMutex(dispatcher));
+    
+    // 根据事件掩码设置活动类型
     if (ioCtx->eventMask & FD_READ)
         event->actType |= XSocketAct_Read;
     if (ioCtx->eventMask & FD_WRITE)
         event->actType |= XSocketAct_Write;
+    // 注意：FD_CONNECT 用于连接完成事件
+    
     XEvent* e = (XEvent*)event;
     e->posted = true;
     e->spontaneous = true;
-    XCoreApplication_postEvent(completionKey, event, XEVENT_PRIORITY_NORMAL);
-    //套接字监听器
+    
+    // 将事件发送给关联的对象（completionKey 是 IOCP_bind 时传入的对象）
+    XCoreApplication_postEvent((XObject*)completionKey, event, XEVENT_PRIORITY_NORMAL);
+    
+    // 套接字监听器（XSocketNotifier）
+    XSocketDescriptor socket = ioCtx->socket;
     XVector* notifiers = XMapBase_value_base(d->m_dp.sockets, &socket);
     if (notifiers)
     {
@@ -159,21 +170,22 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
                 XSocketNotifier* notifier = *lp;
                 if(!notifier)continue;
                 if (!XSocketNotifier_isEnabled(notifier))
-                    continue;//当前监听器未启用
+                    continue;
                 XSocketNotifierType t = XSocketNotifier_type(notifier);
-                if ((t & XSocketNotifier_Read && ioCtx->eventMask & FD_READ) || (t & XSocketNotifier_Write && ioCtx->eventMask & FD_WRITE))
-                {//类型符合投递事件
-                    XEventSockAct* event = XEventSockAct_create(ioCtx->socket, event->actType);
-                    if (!event)continue;
-                    XEvent* e = (XEvent*)event;
-                    e->posted = true;
-                    e->spontaneous = true;
-                    XCoreApplication_postEvent(notifier, event, XEVENT_PRIORITY_NORMAL);
+                if ((t & XSocketNotifier_Read && ioCtx->eventMask & FD_READ) || 
+                    (t & XSocketNotifier_Write && ioCtx->eventMask & FD_WRITE))
+                {
+                    XSocketNotifier_activated_signal(notifier, socket, t);
+                  /*  XEventSockAct* notifierEvent = XEventSockAct_create(ioCtx->socket, event->actType);
+                    if (!notifierEvent)continue;
+                    XEvent* ne = (XEvent*)notifierEvent;
+                    ne->posted = true;
+                    ne->spontaneous = true;
+                    XCoreApplication_postEvent((XObject*)notifier, notifierEvent, XEVENT_PRIORITY_NORMAL);*/
                 }
             }
         }
     }
-    //XMutex_unlock(GetXMutex(dispatcher));
 }
 
 /**
@@ -202,6 +214,7 @@ static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* disp
 
     XMutex_unlock(GetXMutex(dispatcher));*/
 }
+
 bool IOCP_bind(XSocketDescriptor socket, XObject* obj)
 {
    /* XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
@@ -242,20 +255,29 @@ static void IOCP_handle(XAbstractEventDispatcher* dispatcher)
             }
         }
         else
-        {
-            // 情况 2: I/O 操作失败完成
-            DWORD lastError = GetLastError(); // 注意：这里用 GetLastError() 而不是 WSAGetLastError()
-            // 常见的“连接关闭”错误码
-            if (lastError == ERROR_NETNAME_DELETED ||      // 64
-                lastError == ERROR_OPERATION_ABORTED ||    // 995
-                lastError == WSAENETRESET ||               // 10052
-                lastError == WSAECONNRESET) {              // 10054
+                {
+                    // 情况 2: I/O 操作失败完成
+                    DWORD lastError = GetLastError(); // 注意：这里用 GetLastError() 而不是 WSAGetLastError()
+            
+                    // 即使失败也需要通知对象，让它处理错误
+                    if (ioCtx->type == XEventContextType_Type_Socket || ioCtx->type == XEventContextType_Type_File)
+                    {
+                        // 设置 finishedBytes 为 0 表示错误
+                        ioCtx->finishedBytes = 0;
+                        XEventDispatcherWin32_handleSocketMessage(dispatcher, 0, completionKey, overlapped);
+                    }
+            
+                    // 常见的“连接关闭”错误码
+                    if (lastError == ERROR_NETNAME_DELETED ||      // 64
+                        lastError == ERROR_OPERATION_ABORTED ||    // 995
+                        lastError == WSAENETRESET ||               // 10052
+                        lastError == WSAECONNRESET) {              // 10054
 
-                //printf("Client disconnected! Error: %lu\notifier", lastError);
-                //CleanupClient(pIoData); // 执行清理
-                return;
-            }
-        }
+                        //printf("Client disconnected! Error: %lu\notifier", lastError);
+                        //CleanupClient(pIoData); // 执行清理
+                        return;
+                    }
+                }
         //// 创建跨平台 I/O 事件
         //XIoEvent* ioEvent = XEventIo_create(
         //    ioCtx->eventType,

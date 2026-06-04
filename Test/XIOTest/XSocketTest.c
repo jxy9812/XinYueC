@@ -1,16 +1,40 @@
 ﻿#include"XIOTest.h"
-#include"XSocket.h"
+#include"XTcpSocket.h"
 #include"XMemory.h"
 #include"XMenu.h"
 #include"XAction.h"
+#include"XByteArray.h"
 #include"XCoreApplication.h"
+#include"XSocketNotifier.h"
 static void XSocketTest();
+static void readData(XObject* sender, XVarList* args)
+{
+	XByteArray* data= XTcpSocket_readAll(sender);
+	for_each_iterator(data, XByteArray,it)
+	{
+		putchar(XByteArray_iterator_data(&it));
+	}
+	XByteArray_delete_base(data);
+	//XPrintf_utf8(XContainerDataAddr(data));
+}
 
+static void XSocketNotifierSlot(XObject* sender, XVarList* args)
+{
+	XVarList_args_2(args, XSocketDescriptor ,socket, XSocketNotifierType ,type);
+	XPrintf_utf8("套接字监视\n");
+}
 void XSocketTest()
 {
-	XSocket* socket = XSocket_create();
-	XSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODevice_ReadWrite);
-	//XSocketBase_waitForConnected_base(socket, 3000);
+	XSocket* socket = XTcpSocket_create();
+	XObject_connect2(socket,XSignal(XIODevice_readyRead_signal), readData);
+	//XAbstractSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
+	XAbstractSocket_connectToHost_base(socket, "192.168.1.46", 6666, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
+	XTcpSocket_waitForConnected_base(socket, 3000);
+	XSocketDescriptor s = XSocketDescriptor_fromIntptr(XTcpSocket_socketDescriptor_base(socket));
+	XSocketNotifier* notifier = XSocketNotifier_createWithSocket(s,XSocketAct_Read);
+	XObject_connect2(notifier, XSignal(XSocketNotifier_activated_signal), XSocketNotifierSlot);
+	XTcpSocket_write(socket,"hello",6);
+	XCoreApplication_exec();
 }
 void XMenu_XSocketTest(XMenu* root)
 {
