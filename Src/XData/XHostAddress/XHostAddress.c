@@ -185,27 +185,23 @@ int XHostAddress_operator_compare(const XHostAddress* a, const XHostAddress* b) 
 
 // ==================== 虚函数表 ====================
 
-XVtable* XHostAddress_class_init(void) {
-    static XVtable* vtable = NULL;
-    if (!vtable) {
-        XVTABLE_CREAT_DEFAULT
+XVtable* XHostAddress_class_init(void) 
+{
+    XVTABLE_CREAT_DEFAULT
+        //虚函数表初始化
 #if VTABLE_ISSTACK
         XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHostAddress))
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        //    void* table[] = {
-        //        (void*)VXHostAddress_isEqual,
-        //        (void*)VXHostAddress_toString,
-        //        (void*)VXHostAddress_compare
-        //};
-        //XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+        XVTABLE_INHERIT_XCLASS(XClass);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXHostAddress_copy);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXHostAddress_move);
         XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHostAddress_deinit);
-        vtable = XVTABLE_DEFAULT;
-    }
-    return vtable;
+#if SHOWCONTAINERSIZE
+        printf("XHostAddress size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+#endif
+        return XVTABLE_DEFAULT;
 }
 
 // ==================== 初始化 ====================

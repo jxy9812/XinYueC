@@ -12,6 +12,8 @@ extern "C" {
 #include "XClass.h"
 #include "XHostAddress.h"
 #include "XObject.h"
+#include "XString.h"
+#include "XVector.h"
 
 /**
  * @brief 主机信息查询结果状态。
@@ -23,22 +25,23 @@ typedef enum XHostInfo_Error {
     XHostInfo_HostNotFound = 1, ///< 主机名无法解析（NXDOMAIN 或类似错误）。
     XHostInfo_UnknownError = 2  ///< 发生未知错误（如网络不可达、超时等）。
 } XHostInfo_Error;
-
-// 前向声明私有数据结构
-struct XHostInfoPrivate;
-
+XCLASS_DEFINE_BEGING(XHostInfo)
+XCLASS_DEFINE_EXTEND_END(XHostInfo, XClass);
 /**
  * @brief 表示主机名解析结果。
  *
  * XHostInfo 封装了从主机名到 IP 地址列表的映射结果。
- * 它是值语义对象，支持拷贝，并通过 PIMPL 模式隐藏平台相关细节。
+ * 它是值语义对象，支持拷贝。
  *
  * @note 此类不进行 DNS 缓存，每次查询均为实时请求。
- * @note 所有公共 API 均为线程安全（内部使用互斥锁保护）。
  */
 typedef struct XHostInfo {
     XClass m_class;                     ///< 基类虚表指针
-    struct XHostInfoPrivate* d;         ///< 私有数据指针（PIMPL）
+    XString* hostName;                  ///< 被查询的主机名
+    XVector* addresses;                 ///< IP地址列表 (XHostAddress)
+    XHostInfo_Error error;              ///< 错误码
+    XString* errorString;               ///< 错误描述
+    int lookupId;                       ///< 异步查询ID
 } XHostInfo;
 
 // ==================== 构造与析构 ====================
@@ -58,6 +61,12 @@ XHostInfo* XHostInfo_create_copy(const XHostInfo* other);
 
 void XHostInfo_init(XHostInfo* info);
 
+/**
+ * @brief 初始化 XHostInfo 类的虚函数表。
+ * @return 虚函数表指针。
+ */
+XVtable* XHostInfo_class_init(void);
+
 #define XHostInfo_delete_base    XClass_delete_base
 #define XHostInfo_deinit_base    XClass_deinit_base
 #define XHostInfo_copy_base      XClass_copy_base
@@ -68,24 +77,23 @@ void XHostInfo_init(XHostInfo* info);
 /**
  * @brief 获取被查询的主机名。
  * @param info XHostInfo 实例。
- * @return 主机名字符串（若未设置则返回空字符串）。
+ * @return XString 指针（可能为 NULL）。
  */
-const char* XHostInfo_hostName(const XHostInfo* info);
+XString* XHostInfo_hostName(const XHostInfo* info);
 
 /**
  * @brief 设置主机名。
  * @param info XHostInfo 实例。
- * @param name 主机名（会被复制）。
+ * @param name XString 主机名（会被复制）。
  */
-void XHostInfo_setHostName(XHostInfo* info, const char* name);
+void XHostInfo_setHostName(XHostInfo* info, const XString* name);
 
 /**
  * @brief 获取解析得到的 IP 地址列表。
  * @param info XHostInfo 实例。
- * @param count 输出参数，返回地址数量。
  * @return 指向 XHostAddress 数组的指针，若无地址则返回 NULL。
  */
-const XHostAddress* XHostInfo_addresses(const XHostInfo* info, int* count);
+const XVector* XHostInfo_addresses_const(const XHostInfo* info);
 
 /**
  * @brief 设置 IP 地址列表。
@@ -112,16 +120,16 @@ void XHostInfo_setError(XHostInfo* info, XHostInfo_Error error);
 /**
  * @brief 获取人类可读的错误描述。
  * @param info XHostInfo 实例。
- * @return 错误字符串（若无则返回空字符串）。
+ * @return XString 指针（可能为 NULL）。
  */
-const char* XHostInfo_errorString(const XHostInfo* info);
+XString* XHostInfo_errorString(const XHostInfo* info);
 
 /**
  * @brief 设置错误描述。
  * @param info XHostInfo 实例。
- * @param str 错误描述（会被复制）。
+ * @param str XString 错误描述（会被复制）。
  */
-void XHostInfo_setErrorString(XHostInfo* info, const char* str);
+void XHostInfo_setErrorString(XHostInfo* info, const XString* str);
 
 /**
  * @brief 获取本次异步查询的唯一 ID。
@@ -144,25 +152,25 @@ void XHostInfo_setLookupId(XHostInfo* info, int id);
  *
  * 此函数会阻塞调用线程直到查询完成或失败。
  *
- * @param name 要解析的主机名（如 "www.example.com"）。
+ * @param name 要解析的主机名（XString）。
  * @return 包含查询结果的 XHostInfo 实例。
  */
-XHostInfo* XHostInfo_fromName(const char* name);
-
+XHostInfo* XHostInfo_fromName1(const XString* name);
+XHostInfo* XHostInfo_fromName2(const char* name);
 /**
  * @brief 获取本机的主机名。
  *
- * @return 动态分配的主机名字符串（需调用 XFree_System 释放），失败返回 NULL。
+ * @return XString 指针（需调用 XString_delete_base 释放），失败返回 NULL。
  */
-char* XHostInfo_localHostName(void);
+XString* XHostInfo_localHostName(void);
 
 /**
  * @brief 获取本机的域名（若系统支持）。
  *
  * @note 在大多数 POSIX 系统上，此函数可能无法可靠获取域名。
- * @return 动态分配的域名字符串（需调用 XFree_System 释放），失败或不支持返回 NULL。
+ * @return XString 指针（需调用 XString_delete_base 释放），失败或不支持返回 NULL。
  */
-char* XHostInfo_localDomainName(void);
+XString* XHostInfo_localDomainName(void);
 
 // ==================== 异步查询接口 ====================
 
@@ -182,12 +190,12 @@ typedef void (*XHostInfo_Callback)(XHostInfo* result, void* userData);
  * 查询在后台线程执行，完成后通过你的事件系统将结果投递到主线程，
  * 并调用指定的回调函数。
  *
- * @param name 要解析的主机名。
+ * @param name 要解析的主机名（XString）。
  * @param callback 查询完成后的回调函数。
  * @param userData 用户数据（透传给回调）。
  * @return 唯一的 lookup ID（可用于 XHostInfo_abortHostLookup 中止查询）。
  */
-int XHostInfo_lookupHost(const char* name, XHostInfo_Callback callback, void* userData);
+int XHostInfo_lookupHost(const XString* name, XHostInfo_Callback callback, void* userData);
 
 /**
  * @brief 异步执行 DNS 主机名查询（QObject 信号槽版本）。
@@ -195,12 +203,12 @@ int XHostInfo_lookupHost(const char* name, XHostInfo_Callback callback, void* us
  * 完全模拟 Qt 的 QHostInfo::lookupHost 接口。
  * 查询完成后，会向指定的 receiver 对象发射一个信号。
  *
- * @param name 要解析的主机名。
+ * @param name 要解析的主机名（XString）。
  * @param receiver 接收信号的对象（必须是 XObject 子类）。
  * @param member 信号签名（如 "hostResolved(XHostInfo*)"）。
  * @return 唯一的 lookup ID。
  */
-int XHostInfo_lookupHost_toObject(const char* name, XObject* receiver, size_t member);
+int XHostInfo_lookupHost_toObject(const XString* name, XObject* receiver, size_t member);
 
 /**
  * @brief 中止正在进行的异步 DNS 查询。

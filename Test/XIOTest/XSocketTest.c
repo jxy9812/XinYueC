@@ -6,6 +6,7 @@
 #include"XByteArray.h"
 #include"XCoreApplication.h"
 #include"XSocketNotifier.h"
+#include"XHostInfo.h"
 static void XSocketTest();
 static void readData(XObject* sender, XVarList* args)
 {
@@ -25,6 +26,22 @@ static void XSocketNotifierSlot(XObject* sender, XVarList* args)
 }
 void XSocketTest()
 {
+	//while (true)
+	//{
+	//	XHostInfo* info = XHostInfo_fromName2("wwww.baidu.com");
+	//	const XVector* address = XHostInfo_addresses_const(info);
+	//	for_each_iterator(address, XVector, it)
+	//	{
+	//		XHostAddress* addr = XVector_iterator_data(&it);
+	//		XString* a = XHostAddress_toString(addr);
+	//		XPrintf_string(a);
+	//		putchar(0);
+	//		XString_delete_base(a);
+	//	}
+	//	XHostInfo_delete_base(info);
+	//	XCoreApplication_processEvents(XEventLoop_AllEvents);
+	//}
+
 	XSocket* socket = XTcpSocket_create();
 	XObject_connect2(socket,XSignal(XIODevice_readyRead_signal), readData);
 	//XAbstractSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
