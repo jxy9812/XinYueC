@@ -342,7 +342,7 @@ XNetworkProxy* XAbstractSocket_proxy(const XAbstractSocket* sock);
  * @param mode 绑定标志组合（如 ShareAddress）
  * @return 成功返回 true，否则 false
  */
-bool XAbstractSocket_bind(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XAbstractSocket_BindMode mode);
+bool XAbstractSocket_bind_base(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XAbstractSocket_BindMode mode);
 
 /**
  * @brief 绑定到任意本地地址（INADDR_ANY / in6addr_any）。
