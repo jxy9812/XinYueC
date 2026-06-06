@@ -76,6 +76,7 @@ typedef void (*XCallableToRun)(XVarList*);
  * @brief 定时器唯一标识符。
  */
 typedef size_t XTimerId;
+#define  XTIMER_INVALID_ID  0
 /**
  * @brief 时间持续量（Duration）。
  */

@@ -121,7 +121,8 @@ void* XModbusReply_errorOccurred_signal(XModbusReply* reply, XModbusDevice_Error
 * @brief 触发 intermediateErrorOccurred 信号
 */
 void* XModbusReply_intermediateErrorOccurred_signal(XModbusReply* reply, XModbusDevice_IntermediateError error);
-
+#define XModbusReply_deleteLater		XObject_deleteLater
+#define XModbusReply_deinitLater		XObject_deinitLater
 #ifdef __cplusplus
 }
 #endif

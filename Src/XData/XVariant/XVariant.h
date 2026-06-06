@@ -980,6 +980,12 @@ void XVariant_setValue_uchar(XVariant* var, unsigned char val);
 * @param val: int数据
 */
 void XVariant_setValue_int(XVariant* var, int val);
+/**
+ * @brief 检查XVariant是否有效（非空且类型不为NULL）
+ * @param var XVariant对象指针
+ * @return 有效返回true，无效返回false
+ */
+bool XVariant_isValid(const XVariant* var);
 void XVariant_clear(XVariant* var);
 void XVariant_swap(XVariant* var, XVariant* other);
 int XVariant_type(XVariant* var);

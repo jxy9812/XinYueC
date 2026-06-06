@@ -33,6 +33,8 @@ inline static bool XModbusClient_processPrivateResponse_base(XModbusClient* clie
 static void VXModbusClient_deinit(XModbusClient* client);
 static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 static bool VXModbusClient_processPrivateResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
+static XModbusReply* VXModbusClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress);
+
 // ================== 虚表初始化 ==================
 XVtable* XModbusClient_class_init(void) 
 {
@@ -44,9 +46,13 @@ XVtable* XModbusClient_class_init(void)
 #endif
     // 继承 XModbusDevice
     XVTABLE_INHERIT_XCLASS(XModbusDevice);
-    void* table[] = { VXModbusClient_processResponse,VXModbusClient_processPrivateResponse };
+    void* table[] = { 
+        VXModbusClient_processResponse,
+        VXModbusClient_processPrivateResponse,
+        VXModbusClient_sendRawRequest 
+    };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-     // 重载析构
+    // 重载析构
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusClient_deinit);
 #if SHOWCONTAINERSIZE
     printf("XModbusClient size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -212,7 +218,7 @@ XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbus
     if (!request) {
         return NULL;
     }
-    XModbusReply* reply = XModbusClient_sendRawRequest(client, request, serverAddress);
+    XModbusReply* reply = XModbusClient_sendRawRequest_base(client, request, serverAddress);
     XModbusRequest_delete_base(request);
     return reply;
 }
@@ -225,46 +231,141 @@ XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbu
     if (!request) {
         return NULL;
     }
-    XModbusReply* reply = XModbusClient_sendRawRequest(client, request, serverAddress);
+    XModbusReply* reply = XModbusClient_sendRawRequest_base(client, request, serverAddress);
     XModbusRequest_delete_base(request);
     return reply;
 }
 
+// ================== 辅助函数：构建读写组合请求PDU (FC 0x17) ==================
+/**
+* @brief 构建读写组合请求PDU
+* @param readUnit 读取数据单元
+* @param writeUnit 写入数据单元
+* @return 请求PDU，失败返回NULL
+*/
+static XModbusRequest* buildReadWriteRequest(const XModbusDataUnit* readUnit, const XModbusDataUnit* writeUnit) {
+    if (!readUnit || !writeUnit || 
+        !XModbusDataUnit_isValid(readUnit) || !XModbusDataUnit_isValid(writeUnit)) {
+        return NULL;
+    }
+    
+    // 只支持保持寄存器
+    if (readUnit->m_type != XModbusHoldingRegisters || writeUnit->m_type != XModbusHoldingRegisters) {
+        return NULL;
+    }
+    
+    size_t readCount = XModbusDataUnit_valueCount(readUnit);
+    size_t writeCount = XModbusDataUnit_valueCount(writeUnit);
+    
+    if (readCount == 0 || readCount > 125 || writeCount == 0 || writeCount > 121) {
+        return NULL;  // Modbus规范限制
+    }
+    
+    // 请求格式：
+    // 读起始地址(2) + 读取数量(2) + 写起始地址(2) + 写入数量(2) + 字节计数(1) + 写入数据(N)
+    uint16_t readStartAddr = (uint16_t)XModbusDataUnit_startAddress(readUnit);
+    uint16_t writeStartAddr = (uint16_t)XModbusDataUnit_startAddress(writeUnit);
+    uint8_t writeByteCount = (uint8_t)(writeCount * 2);
+    
+    size_t dataSize = 9 + writeByteCount;
+    uint8_t* data = (uint8_t*)XMalloc_System(dataSize);
+    if (!data) return NULL;
+    
+    // 读起始地址
+    data[0] = (uint8_t)((readStartAddr >> 8) & 0xFF);
+    data[1] = (uint8_t)(readStartAddr & 0xFF);
+    // 读取数量
+    data[2] = (uint8_t)((readCount >> 8) & 0xFF);
+    data[3] = (uint8_t)(readCount & 0xFF);
+    // 写起始地址
+    data[4] = (uint8_t)((writeStartAddr >> 8) & 0xFF);
+    data[5] = (uint8_t)(writeStartAddr & 0xFF);
+    // 写入数量
+    data[6] = (uint8_t)((writeCount >> 8) & 0xFF);
+    data[7] = (uint8_t)(writeCount & 0xFF);
+    // 字节计数
+    data[8] = writeByteCount;
+    
+    // 写入数据（大端序）
+    for (size_t i = 0; i < writeCount; i++) {
+        uint16_t val = (uint16_t)XModbusDataUnit_value(writeUnit, i);
+        data[9 + i * 2] = (uint8_t)((val >> 8) & 0xFF);
+        data[9 + i * 2 + 1] = (uint8_t)(val & 0xFF);
+    }
+    
+    XModbusRequest* req = XModbusRequest_create_with_code_and_data(XModbusPdu_ReadWriteMultipleRegisters, data, dataSize);
+    XFree_System(data);
+    return req;
+}
+
 XModbusReply* XModbusClient_sendReadWriteRequest(XModbusClient* client, const XModbusDataUnit* read, const XModbusDataUnit* write, int serverAddress) {
-    // TODO: Implement ReadWriteMultipleRegisters (FC 0x17)
-    // This is a placeholder. You would need to build the specific PDU for FC 0x17.
-    (void)client; (void)read; (void)write; (void)serverAddress;
+    if (!client || !read || !write || serverAddress < 0) {
+        return NULL;
+    }
+    
+    XModbusRequest* request = buildReadWriteRequest(read, write);
+    if (!request) {
+        return NULL;
+    }
+    
+    XModbusReply* reply = XModbusClient_sendRawRequest_base(client, request, serverAddress);
+    XModbusRequest_delete_base(request);
+    return reply;
+}
+
+// ================== sendRawRequest 虚函数实现 ==================
+
+/**
+ * @brief 默认的 sendRawRequest 实现
+ * @note 基类不提供实际发送功能，子类必须重写此函数
+ */
+static XModbusReply* VXModbusClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress) {
+    // 基类是抽象的，不提供默认实现
+    (void)client; (void)request; (void)serverAddress;
     return NULL;
 }
 
-XModbusReply* XModbusClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress) {
+/**
+ * @brief 通过虚函数表调用 sendRawRequest
+ */
+XModbusReply* XModbusClient_sendRawRequest_base(XModbusClient* client, const XModbusRequest* request, int serverAddress) {
+    if (!client || !XClassGetVtable(client)) return NULL;
+    XModbusReply* (*func)(XModbusClient*, const XModbusRequest*, int) = 
+        XClassGetVirtualFunc(client, EXModbusClient_SendRawRequest, 
+            XModbusReply*(*)(XModbusClient*, const XModbusRequest*, int));
+    if (!func) return NULL;
+    return func(client, request, serverAddress);
+}
+
+/**
+ * @brief 辅助函数：创建并初始化 Reply 对象
+ * @note 供子类在实现 sendRawRequest 时调用
+ */
+XModbusReply* XModbusClient_createReply(XModbusClient* client, const XModbusRequest* request, int serverAddress) {
     if (!client || !request || serverAddress < 0) {
         return NULL;
     }
 
-    // Determine reply type
+        // 确定回复类型
     XModbusReply_ReplyType type = XModbusReply_Raw;
-    if (request->m_base.m_code == XModbusPdu_ReadCoils ||
-        request->m_base.m_code == XModbusPdu_ReadDiscreteInputs ||
-        request->m_base.m_code == XModbusPdu_ReadInputRegisters ||
-        request->m_base.m_code == XModbusPdu_ReadHoldingRegisters ||
-        request->m_base.m_code == XModbusPdu_WriteSingleCoil ||
-        request->m_base.m_code == XModbusPdu_WriteSingleRegister ||
-        request->m_base.m_code == XModbusPdu_WriteMultipleCoils ||
-        request->m_base.m_code == XModbusPdu_WriteMultipleRegisters) {
+    XModbusPdu_FunctionCode fc = XModbusPdu_functionCode((const XModbusPdu*)request);
+    
+    if (fc == XModbusPdu_ReadCoils ||
+        fc == XModbusPdu_ReadDiscreteInputs ||
+        fc == XModbusPdu_ReadInputRegisters ||
+        fc == XModbusPdu_ReadHoldingRegisters ||
+        fc == XModbusPdu_WriteSingleCoil ||
+        fc == XModbusPdu_WriteSingleRegister ||
+        fc == XModbusPdu_WriteMultipleCoils ||
+        fc == XModbusPdu_WriteMultipleRegisters ||
+        fc == XModbusPdu_ReadWriteMultipleRegisters) {
         type = XModbusReply_Common;
     }
 
+    // 创建 Reply 对象
     XModbusReply* reply = XModbusReply_create(type, serverAddress);
     if (!reply) return NULL;
-
-    // TODO: Here you would typically enqueue the request to be sent by the underlying transport layer (e.g., serial port).
-    // For now, we just create the reply object. The actual sending and receiving logic would be in a derived class
-    // like XModbusRtuClient or XModbusTcpClient, which overrides the device's event loop.
-
-    // Simulate that the request has been sent and is pending
-    // In a real implementation, you'd store this reply in a map keyed by transaction ID or something similar.
-
+    
     return reply;
 }
 
@@ -345,12 +446,17 @@ bool VXModbusClient_processResponse(XModbusClient* client, const XModbusResponse
         return true;
     }
 
-    if (fc == XModbusPdu_ReadInputRegisters || fc == XModbusPdu_ReadHoldingRegisters) {
+        if (fc == XModbusPdu_ReadInputRegisters || fc == XModbusPdu_ReadHoldingRegisters ||
+        fc == XModbusPdu_ReadWriteMultipleRegisters) {
         if (XModbusPdu_dataSize(&response->m_base) < 1) return false;
         uint8_t byteCount = XByteArray_At_Base(response->m_base.m_data, 0);
         if (byteCount % 2 != 0) return false; // Must be even
 
-        data->m_type = (fc == XModbusPdu_ReadInputRegisters) ? XModbusInputRegisters : XModbusHoldingRegisters;
+        if (fc == XModbusPdu_ReadInputRegisters) {
+            data->m_type = XModbusInputRegisters;
+        } else {
+            data->m_type = XModbusHoldingRegisters;  // ReadHoldingRegisters 和 ReadWriteMultipleRegisters
+        }
         XModbusDataUnit_setValueCount(data, byteCount / 2);
 
         for (size_t i = 0; i < data->m_valueCount; i++) {

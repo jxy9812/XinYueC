@@ -1622,6 +1622,12 @@ void VXVariant_deinit(XVariant* var)
 	XVariant_DataPtr(var) = NULL;
 }
 
+bool XVariant_isValid(const XVariant* var)
+{
+	if (var == NULL) return false;
+	return var->m_type != XVariantType_NULL;
+}
+
 void XVariant_clear(XVariant* var)
 {
 	if (var == NULL || XVariant_DataPtr(var) == NULL || var->m_dataSize == 0)

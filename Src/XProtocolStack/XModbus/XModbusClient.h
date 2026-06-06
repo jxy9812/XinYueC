@@ -14,6 +14,7 @@ extern "C" {
 XCLASS_DEFINE_BEGING(XModbusClient)
 XCLASS_DEFINE_ENUM(XModbusClient, ProcessResponse) = XCLASS_VTABLE_GET_SIZE(XModbusDevice),
 XCLASS_DEFINE_ENUM(XModbusClient, ProcessPrivateResponse),
+XCLASS_DEFINE_ENUM(XModbusClient, SendRawRequest),    ///< 发送原始请求（虚函数，子类重写）
 XCLASS_DEFINE_END(XModbusClient)
 /**
  * @brief Modbus客户端核心结构体（继承自XModbusDevice）
@@ -88,14 +89,25 @@ XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbu
 XModbusReply* XModbusClient_sendReadWriteRequest(XModbusClient* client, const XModbusDataUnit* read, const XModbusDataUnit* write, int serverAddress);
 
 /**
-* @brief 发送原始Modbus请求PDU
+* @brief 发送原始Modbus请求PDU（虚函数，通过虚函数表调用）
 * @param client 客户端实例指针（非NULL）
 * @param request 原始请求PDU
 * @param serverAddress 目标从站地址
 * @return 成功返回指向XModbusReply对象的指针，失败返回NULL
 * @note 调用者拥有返回的XModbusReply对象，需负责其生命周期管理
+* @note 子类必须重写此虚函数，实现协议特定的帧构建和发送逻辑
 */
-XModbusReply* XModbusClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress);
+XModbusReply* XModbusClient_sendRawRequest_base(XModbusClient* client, const XModbusRequest* request, int serverAddress);
+
+/**
+* @brief 辅助函数：创建并初始化 Reply 对象
+* @param client 客户端实例指针（非NULL）
+* @param request 原始请求PDU
+* @param serverAddress 目标从站地址
+* @return 成功返回指向XModbusReply对象的指针，失败返回NULL
+* @note 供子类在实现 sendRawRequest 时调用，用于创建 Reply 对象
+*/
+XModbusReply* XModbusClient_createReply(XModbusClient* client, const XModbusRequest* request, int serverAddress);
 
 /**
 * @brief 获取当前请求超时时间
@@ -137,7 +149,10 @@ void XModbusClient_setNumberOfRetries(XModbusClient* client, int number);
  * @return 信号标识
  */
 void* XModbusClient_timeoutChanged_signal(XModbusClient* client, int newTimeout);
-
+#define XModbusClient_deleteLater		XObject_deleteLater
+#define XModbusClient_deinitLater		XObject_deinitLater
+//#define XModbusClient_move_base			XObject_move_base
+//#define XModbusClient_copy_base			XObject_copy_base
 #ifdef __cplusplus
 }
 #endif

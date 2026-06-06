@@ -1,36 +1,11 @@
 ﻿#include "XModbusDevice.h"
 #include "XMemory.h"
 #include <string.h>
+
+// =============== 虚函数前置声明 ===============
 static void VXModbusDevice_deinit(XModbusDevice* dev);
-// 私有数据结构：用于存储连接参数
-struct XModbusDevicePrivate 
-{
-    XVariant* params[XModbusDevice_NetworkAddressParameter + 1]; // Size based on enum
-    XIODevice* io_device; ///< 底层IO设备，对应 QModbusDevice::device()
-};
 
-// ----------------- Private Helper Functions -----------------
-static void XModbusDevicePrivate_init(XModbusDevicePrivate* d) {
-    if (!d) return;
-    memset(d->params, 0, sizeof(d->params));
-    d->io_device = NULL; // <<<--- 初始化为 NULL
-}
-
-static void XModbusDevicePrivate_destroy(XModbusDevicePrivate* d) {
-    if (!d) return;
-    for (size_t i = 0; i < sizeof(d->params) / sizeof(d->params[0]); ++i) {
-        if (d->params[i]) {
-            XVariant_delete_base(d->params[i]);
-            d->params[i] = NULL;
-        }
-    }
-    // 注意: XModbusDevice 不负责 delete io_device!
-    // 生命周期由子类管理。
-    d->io_device = NULL; // <<<--- 仅置空
-    XFree_System(d);
-}
-
-// 错误字符串映射
+// =============== 辅助函数 ===============
 static const char* errorToString(XModbusDevice_Error err) {
     switch (err) {
     case XModbusDevice_NoError: return "No error";
@@ -47,32 +22,30 @@ static const char* errorToString(XModbusDevice_Error err) {
     }
 }
 
-// ----------------- Virtual Function Table -----------------
-// The actual open/close implementations are provided by subclasses.
-// We just declare the slots in the vtable.
-
-XVtable* XModbusDevice_class_init() 
+// =============== 类初始化 ===============
+XVtable* XModbusDevice_class_init()
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XModbusDevice))
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XModbusDevice))
 #else
-    XVTABLE_HEAP_INIT_DEFAULT
+        XVTABLE_HEAP_INIT_DEFAULT
 #endif
-    // 继承 XModbusDevice
-    XVTABLE_INHERIT_XCLASS(XObject);
-    void* table[] = { NULL,NULL };
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-    // 重载析构
+        // 继承 XObject
+        XVTABLE_INHERIT_XCLASS(XObject);
+
+    // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusDevice_deinit);
+
 #if SHOWCONTAINERSIZE
-    printf("XModbusDevice size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+    printf("XModbusDevice vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
     return XVTABLE_DEFAULT;
 }
 
-// ----------------- Constructor/Destructor -----------------
-XModbusDevice* XModbusDevice_create() {
+// =============== 创建/初始化 ===============
+XModbusDevice* XModbusDevice_create()
+{
     XModbusDevice* dev = (XModbusDevice*)XMalloc_System(sizeof(XModbusDevice));
     if (dev) {
         XModbusDevice_init(dev);
@@ -81,151 +54,202 @@ XModbusDevice* XModbusDevice_create() {
     return dev;
 }
 
-void XModbusDevice_init(XModbusDevice* dev) {
+void XModbusDevice_init(XModbusDevice* dev)
+{
     if (!dev) return;
 
-    // Initialize base class
+    // 初始化基类
     XObject_init((XObject*)dev);
     XClassGetVtable(dev) = XModbusDevice_class_init();
 
-    // Initialize members
+    // 初始化成员
     dev->m_state = XModbusDevice_UnconnectedState;
     dev->m_error = XModbusDevice_NoError;
     dev->m_errorString = NULL;
-    dev->m_d = (XModbusDevicePrivate*)XCalloc_System(1, sizeof(XModbusDevicePrivate));
-    if (dev->m_d) {
-        XModbusDevicePrivate_init(dev->m_d);
+    dev->m_ioDevice = NULL;
+
+    // 初始化参数数组
+    for (int i = 0; i < XModbusDevice_ParameterCount; i++) {
+        dev->m_params[i] = NULL;
     }
 }
 
-// Destructor (called via virtual table)
-void VXModbusDevice_deinit(XModbusDevice* dev) {
+// =============== 析构函数 ===============
+static void VXModbusDevice_deinit(XModbusDevice* dev)
+{
     if (!dev) return;
 
-    // Clean up private data
-    if (dev->m_d) {
-        XModbusDevicePrivate_destroy(dev->m_d);
-        dev->m_d = NULL;
-    }
-
-    // Clean up error string
+    // 释放错误字符串
     if (dev->m_errorString) {
         XString_delete_base(dev->m_errorString);
         dev->m_errorString = NULL;
     }
 
-    // Call base class destructor
-   XClass_Deinit_Parent(XObject,(XObject*)dev);
+    // 释放参数数组
+    for (int i = 0; i < XModbusDevice_ParameterCount; i++) {
+        if (dev->m_params[i]) {
+            XVariant_delete_base(dev->m_params[i]);
+            dev->m_params[i] = NULL;
+        }
+    }
+
+    // 注意：m_ioDevice 由子类管理，这里不释放
+    dev->m_ioDevice = NULL;
+
+    // 调用基类析构
+    XClass_Deinit_Parent(XObject, dev);
 }
 
-// ----------------- Public API Implementation -----------------
-XVariant* XModbusDevice_connectionParameter(const XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter) {
-    if (!dev || !dev->m_d || parameter < 0 || parameter >= (int)(sizeof(dev->m_d->params) / sizeof(dev->m_d->params[0]))) {
+// =============== 连接参数 API ===============
+XVariant* XModbusDevice_connectionParameter(const XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter)
+{
+    if (!dev || parameter < 0 || parameter >= XModbusDevice_ParameterCount) {
         return NULL;
     }
-    if (dev->m_d->params[parameter]) {
-        return XVariant_create_copy(dev->m_d->params[parameter]);
+
+    if (dev->m_params[parameter]) {
+        return XVariant_create_copy(dev->m_params[parameter]);
     }
     return NULL;
 }
 
-void XModbusDevice_setConnectionParameter(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value) {
-    if (!dev || !dev->m_d || !value || parameter < 0 || parameter >= (int)(sizeof(dev->m_d->params) / sizeof(dev->m_d->params[0]))) {
+void XModbusDevice_setConnectionParameter(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value)
+{
+    if (!dev || !value || parameter < 0 || parameter >= XModbusDevice_ParameterCount) {
         return;
     }
-    if (dev->m_d->params[parameter]) {
-        XVariant_delete_base(dev->m_d->params[parameter]);
+
+    // 释放旧值
+    if (dev->m_params[parameter]) {
+        XVariant_delete_base(dev->m_params[parameter]);
     }
-    dev->m_d->params[parameter] = XVariant_create_copy(value);
+
+    // 设置新值（复制）
+    dev->m_params[parameter] = XVariant_create_copy(value);
 }
 
-bool XModbusDevice_connectDevice(XModbusDevice* dev) {
+// =============== 连接管理 API ===============
+bool XModbusDevice_connectDevice(XModbusDevice* dev)
+{
     if (!dev) return false;
-    // Call the pure virtual open() function through the vtable
+
+    // 通过虚函数表调用 open()
     bool (*open_func)(XModbusDevice*) = XClassGetVirtualFunc(dev, EXModbusDevice_Open, bool(*)(XModbusDevice*));
     if (open_func) {
         return open_func(dev);
     }
-    return false; // Should not happen if subclass is implemented correctly
+    return false;
 }
 
-void XModbusDevice_disconnectDevice(XModbusDevice* dev) {
+void XModbusDevice_disconnectDevice(XModbusDevice* dev)
+{
     if (!dev) return;
-    // Call the pure virtual close() function through the vtable
+
+    // 通过虚函数表调用 close()
     void (*close_func)(XModbusDevice*) = XClassGetVirtualFunc(dev, EXModbusDevice_Close, void(*)(XModbusDevice*));
     if (close_func) {
         close_func(dev);
     }
 }
 
-XModbusDevice_State XModbusDevice_state(const XModbusDevice* dev) {
+// =============== 状态/错误查询 API ===============
+XModbusDevice_State XModbusDevice_state(const XModbusDevice* dev)
+{
     return dev ? dev->m_state : XModbusDevice_UnconnectedState;
 }
 
-XModbusDevice_Error XModbusDevice_error(const XModbusDevice* dev) {
+XModbusDevice_Error XModbusDevice_error(const XModbusDevice* dev)
+{
     return dev ? dev->m_error : XModbusDevice_UnknownError;
 }
 
-XString* XModbusDevice_errorString(const XModbusDevice* dev) {
+XString* XModbusDevice_errorString(const XModbusDevice* dev)
+{
     if (!dev) return XString_create_fmt_utf8("Device is NULL");
+
     if (dev->m_errorString) {
         return XString_create_copy(dev->m_errorString);
     }
-    // Fallback to default error message
+
+    // 使用默认错误消息
     return XString_create_fmt_utf8("%s", errorToString(dev->m_error));
 }
 
 XIODevice* XModbusDevice_device(const XModbusDevice* dev)
 {
-    if (!dev || !dev->m_d) return NULL;
-    return dev->m_d->io_device; // <<<--- 直接返回指针
+    return dev ? dev->m_ioDevice : NULL;
 }
 
-// ----------------- Protected API Implementation -----------------
-void XModbusDevice_setState(XModbusDevice* dev, XModbusDevice_State newState) {
+// =============== 受保护的 API (供子类使用) ===============
+void XModbusDevice_setState(XModbusDevice* dev, XModbusDevice_State newState)
+{
     if (!dev || dev->m_state == newState) return;
+
     dev->m_state = newState;
-    // Emit signal
+
+    // 发射状态改变信号
     XModbusDevice_stateChanged_signal(dev, newState);
 }
 
-void XModbusDevice_setError(XModbusDevice* dev, const char* errorText, XModbusDevice_Error error) {
+void XModbusDevice_setError(XModbusDevice* dev, XModbusDevice_Error error, const char* errorText)
+{
     if (!dev) return;
+
     dev->m_error = error;
+
+    // 释放旧错误字符串
     if (dev->m_errorString) {
         XString_delete_base(dev->m_errorString);
         dev->m_errorString = NULL;
     }
+
+    // 设置新错误字符串
     if (errorText) {
         dev->m_errorString = XString_create_fmt_utf8("%s", errorText);
     }
     else {
-        // Use default error string
         dev->m_errorString = XString_create_fmt_utf8("%s", errorToString(error));
     }
-    // Emit signal
+
+    // 发射错误信号
     XModbusDevice_errorOccurred_signal(dev, error);
 }
 
+// =============== 虚函数调用接口 ===============
 bool XModbusDevice_open_base(XModbusDevice* dev)
 {
-    if (ISNULL(dev, "") || ISNULL(XClassGetVtable(dev), ""))
-        return false;
-    return XClassGetVirtualFunc(dev, EXModbusDevice_Open, bool(*)(XModbusDevice*))(dev);
+    if (!dev) return false;
+
+    bool (*open_func)(XModbusDevice*) = XClassGetVirtualFunc(dev, EXModbusDevice_Open, bool(*)(XModbusDevice*));
+    if (open_func) {
+        return open_func(dev);
+    }
+    return false;
 }
 
 void XModbusDevice_close_base(XModbusDevice* dev)
 {
-    if (ISNULL(dev, "") || ISNULL(XClassGetVtable(dev), ""))
-        return;
-    XClassGetVirtualFunc(dev, EXModbusDevice_Close, void(*)(XModbusDevice*))(dev);
+    if (!dev) return;
+
+    void (*close_func)(XModbusDevice*) = XClassGetVirtualFunc(dev, EXModbusDevice_Close, void(*)(XModbusDevice*));
+    if (close_func) {
+        close_func(dev);
+    }
 }
 
-// ----------------- Signal Emitters -----------------
-void* XModbusDevice_errorOccurred_signal(XModbusDevice* dev, XModbusDevice_Error error) {
-    XEmitSignal(dev, XModbusDevice_errorOccurred_signal, XVariant_create_int((int)error), XVariant_delete_base, NULL, XEVENT_PRIORITY_LOWEST);
+// =============== 信号发射 ===============
+void* XModbusDevice_errorOccurred_signal(XModbusDevice* dev, XModbusDevice_Error error)
+{
+    XEmitSignal(dev, XModbusDevice_errorOccurred_signal,
+        XVariant_create_int((int)error), XVariant_delete_base,
+        NULL, XEVENT_PRIORITY_LOWEST);
+    return NULL;
 }
 
-void* XModbusDevice_stateChanged_signal(XModbusDevice* dev, XModbusDevice_State state) {
-    XEmitSignal(dev, XModbusDevice_stateChanged_signal, XVariant_create_int((int)state), XVariant_delete_base, NULL, XEVENT_PRIORITY_LOWEST);
+void* XModbusDevice_stateChanged_signal(XModbusDevice* dev, XModbusDevice_State state)
+{
+    XEmitSignal(dev, XModbusDevice_stateChanged_signal,
+        XVariant_create_int((int)state), XVariant_delete_base,
+        NULL, XEVENT_PRIORITY_LOWEST);
+    return NULL;
 }
