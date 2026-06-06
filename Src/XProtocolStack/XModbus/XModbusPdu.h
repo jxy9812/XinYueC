@@ -97,7 +97,7 @@ extern "C" {
     // =============== 创建/初始化函数 ===============
 // --- XModbusPdu ---
     XModbusPdu* XModbusPdu_create(void);
-    XModbusPdu* XModbusPdu_create_copy(XModbusPdu* pdu);
+    XModbusPdu* XModbusPdu_create_copy(const XModbusPdu* pdu);
     XModbusPdu* XModbusPdu_create_with_code(XModbusPdu_FunctionCode code);
     XModbusPdu* XModbusPdu_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t dataSize);
     void XModbusPdu_init(XModbusPdu* pdu);

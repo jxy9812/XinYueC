@@ -173,9 +173,9 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
     }
 
     XModbusRequest* req = XModbusRequest_create_with_code(code);
-    if (req) {
-        XModbusPdu_setData(&req->m_base, XContainerSharedDataPtr(payload), XByteArray_size_base(payload));
-    }
+        if (req) {
+            XModbusPdu_setData(&req->m_base, XContainerDataAddr(payload), XByteArray_size_base(payload));
+        }
     XByteArray_delete_base(payload);
     return req;
 }
@@ -269,14 +269,14 @@ bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResp
 {
     if (ISNULL(client, "") || ISNULL(XClassGetVtable(client), ""))
         return false;
-    return XClassGetVirtualFunc(client, EXModbusClient_ProcessResponse, bool(*)(const XModbusResponse*, XModbusDataUnit*))(response, data);
+    return XClassGetVirtualFunc(client, EXModbusClient_ProcessResponse, bool(*)(XModbusClient*, const XModbusResponse*, XModbusDataUnit*))(client, response, data);
 }
 
 bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data)
 {
     if (ISNULL(client, "") || ISNULL(XClassGetVtable(client), ""))
         return false;
-    return XClassGetVirtualFunc(client, EXModbusClient_ProcessPrivateResponse, bool(*)(const XModbusResponse*, XModbusDataUnit*))(response, data);
+    return XClassGetVirtualFunc(client, EXModbusClient_ProcessPrivateResponse, bool(*)(XModbusClient*, const XModbusResponse*, XModbusDataUnit*))(client, response, data);
 }
 
 // ================== Protected API ==================

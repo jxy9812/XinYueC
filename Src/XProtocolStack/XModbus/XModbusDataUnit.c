@@ -2,8 +2,8 @@
 #include"XVector.h"
 #include"XMemory.h"
 #include<string.h>
-static void VXModbusDataUnit_move(XModbusDataUnit* unit, XVariant* src);
-static void VXModbusDataUnit_copy(XModbusDataUnit* unit, const XVariant* src);
+static void VXModbusDataUnit_move(XModbusDataUnit* unit, XModbusDataUnit* src);
+static void VXModbusDataUnit_copy(XModbusDataUnit* unit, const XModbusDataUnit* src);
 static void VXModbusDataUnit_deinit(XModbusDataUnit* unit);
 
 XVtable* XModbusDataUnit_class_init()
@@ -35,14 +35,18 @@ XModbusDataUnit* XModbusDataUnit_create()
 	return unit;
 }
 
-XModbusDataUnit* XModbusDataUnit_create_copy(XModbusDataUnit* unit)
+XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit)
 {
-	XModbusDataUnit* new = XModbusDataUnit_create();
-	new->m_type = unit->m_type;
-	new->m_startAddress = unit->m_startAddress;
-	new->m_valueCount = unit->m_valueCount;
-	XVector_copy_base(new->m_values, unit->m_values);
-	return new;
+	if (!unit) return NULL;
+	XModbusDataUnit* newUnit = XModbusDataUnit_create();
+	if (!newUnit) return NULL;
+	newUnit->m_type = unit->m_type;
+	newUnit->m_startAddress = unit->m_startAddress;
+	newUnit->m_valueCount = unit->m_valueCount;
+	if (unit->m_values) {
+		XVector_copy_base(newUnit->m_values, unit->m_values);
+	}
+	return newUnit;
 }
 
 void XModbusDataUnit_init(XModbusDataUnit* unit)
@@ -144,29 +148,72 @@ XVector* XModbusDataUnit_values(const XModbusDataUnit* unit)
 	return XVector_create_copy(unit->m_values);
 }
 
-void VXModbusDataUnit_move(XModbusDataUnit* unit, XVariant* src)
+void VXModbusDataUnit_move(XModbusDataUnit* unit, XModbusDataUnit* src)
 {
-	if (!unit || !src)
-		return;
-
+	if (!unit || !src) return;
+	
+	// 检查是否需要初始化
+	if (((XClass*)unit)->m_vtable == NULL) {
+		// 目标未初始化，直接移动数据
+		unit->m_type = src->m_type;
+		unit->m_startAddress = src->m_startAddress;
+		unit->m_valueCount = src->m_valueCount;
+		unit->m_values = src->m_values;
+	} else {
+		// 目标已初始化，先清理再移动
+		if (unit->m_values) {
+			XVector_delete_base(unit->m_values);
+		}
+		unit->m_type = src->m_type;
+		unit->m_startAddress = src->m_startAddress;
+		unit->m_valueCount = src->m_valueCount;
+		unit->m_values = src->m_values;
+	}
+	
+	// 重置源
+	src->m_values = NULL;
+	src->m_type = XModbusInvalid;
+	src->m_startAddress = 0xFFFF;
+	src->m_valueCount = 0;
 }
 
-void VXModbusDataUnit_copy(XModbusDataUnit* unit, const XVariant* src)
+void VXModbusDataUnit_copy(XModbusDataUnit* unit, const XModbusDataUnit* src)
 {
-	if (!unit || !src)
-		return;
+	if (!unit || !src) return;
+	
+	// 检查是否需要初始化
+	if (((XClass*)unit)->m_vtable == NULL) {
+		XModbusDataUnit_init(unit);
+	}
+	
+	// 复制基本字段
+	unit->m_type = src->m_type;
+	unit->m_startAddress = src->m_startAddress;
+	unit->m_valueCount = src->m_valueCount;
+	
+	// 复制数据容器
+	if (src->m_values) {
+		if (unit->m_values) {
+			XVector_delete_base(unit->m_values);
+		}
+		unit->m_values = XVector_create_copy(src->m_values);
+	}
 }
 
 void VXModbusDataUnit_deinit(XModbusDataUnit* unit)
 {
-	if (!unit)
-		return;
-	if (unit->m_values)
-	{
-		XVector_deinit_base(unit->m_values);
+	if (!unit) return;
+	
+	// 释放数据容器
+	if (unit->m_values) {
+		XVector_delete_base(unit->m_values);
 		unit->m_values = NULL;
 	}
-	unit->m_startAddress = -1;
-	unit->m_type =XModbusInvalid ;
+	
+	unit->m_startAddress = 0xFFFF;
+	unit->m_type = XModbusInvalid;
 	unit->m_valueCount = 0;
+	
+	// 调用父类析构
+	//XClass_deinit_base((XClass*)unit);
 }

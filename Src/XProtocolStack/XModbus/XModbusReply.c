@@ -77,8 +77,8 @@ static void VXModbusReply_deinit(XModbusReply* reply) {
         reply->m_intermediateErrors = NULL;
     }
 
-    // 调用基类析构
-    XObject_deinitLater((XObject*)reply);
+        // 调用基类析构
+    XClass_Deinit_Parent(XObject, reply);
 }
 
 // --- Getters ---
