@@ -14,9 +14,10 @@ XVtable* XModbusPdu_class_init(void)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-
-        // 重载析构函数
-        XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusPdu_deinit);
+    // 继承 XModbusDevice
+    XVTABLE_INHERIT_XCLASS(XClass);
+    // 重载析构函数
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusPdu_deinit);
 
 #if SHOWCONTAINERSIZE
     printf("XModbusPdu size: %zu\n", sizeof(XModbusPdu));

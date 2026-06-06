@@ -55,9 +55,11 @@ XVtable* XModbusDataUnit_class_init()
 #else
 		XVTABLE_HEAP_INIT_DEFAULT
 #endif
-		//	void* table[] = { VXClass_copy,VXClass_move,VXClass_deinit };
-		//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-		//重载
+	// 继承 XModbusDevice
+	XVTABLE_INHERIT_XCLASS(XClass);
+	//	void* table[] = { VXClass_copy,VXClass_move,VXClass_deinit };
+	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXModbusDataUnit_move);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXModbusDataUnit_copy);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusDataUnit_deinit);
@@ -282,6 +284,18 @@ bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits)
 	unit->m_bitArray = XBitArray_create_copy(bits);
 	unit->m_valueCount = XBitArray_size_base(bits);
 	return true;
+}
+
+XModbusDataUnitMap* XModbusDataUnitMap_create()
+{
+	XModbusDataUnitMap* map = XMap_Create(XModbusRegisterType, XModbusDataUnit,int_compare);
+	if (map)
+	{
+		XContainerSetDataCopyMethod(map, XModbusDataUnit_copy_base);
+		XContainerSetDataMoveMethod(map, XModbusDataUnit_move_base);
+		XContainerSetDataDeinitMethod(map, XModbusDataUnit_deinit_base);
+	}
+	return map;
 }
 
 void VXModbusDataUnit_move(XModbusDataUnit* unit, XModbusDataUnit* src)

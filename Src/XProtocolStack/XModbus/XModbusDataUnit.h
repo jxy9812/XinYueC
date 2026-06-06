@@ -7,7 +7,7 @@
 #include "XClass.h"
 #include "XBitArray.h"
 #include "XVector.h"
-
+#include "XMap.h"
 /**
 * @file XModbusDataUnit.h
 * @brief Modbus数据单元核心头文件
@@ -203,4 +203,11 @@ bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits);
 */
 #define XModbusDataUnit_delete_base		    XClass_delete_base
 
+/**
+* @brief Modbus服务器数据映射表
+* @details 存储所有寄存器类型的数据范围
+*/
+typedef XMap XModbusDataUnitMap;
+XModbusDataUnitMap* XModbusDataUnitMap_create();
+#define XModbusDataUnitMap_delete_base XMapBase_delete_base
 #endif // XMODBUSDATAUNIT_H

@@ -5,6 +5,29 @@
 #include "XByteArray.h"
 #include <string.h>
 
+/******************************************************************************************
+ * Protected API (供子类重载)
+ ******************************************************************************************/
+
+ /**
+ * @brief 处理标准Modbus响应（受保护，供内部调用）
+ * @param client 客户端实例指针（非NULL）
+ * @param response 收到的响应PDU
+ * @param data 用于填充解析结果的数据单元
+ * @return 解析成功返回true，失败返回false
+ * @note 此为虚函数入口，实际逻辑由子类实现
+ */
+inline static bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
+
+/**
+* @brief 处理私有/自定义Modbus响应（受保护，供内部调用）
+* @param client 客户端实例指针（非NULL）
+* @param response 收到的响应PDU
+* @param data 用于填充解析结果的数据单元
+* @return 解析成功返回true，失败返回false
+* @note 此为虚函数入口，实际逻辑由子类实现
+*/
+inline static bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 
 // 虚函数重载声明
 static void VXModbusClient_deinit(XModbusClient* client);
@@ -15,16 +38,16 @@ XVtable* XModbusClient_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XModbusDevice))
+    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XModbusClient))
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
-     // 继承 XModbusDevice
-     XVTABLE_INHERIT_XCLASS(XModbusDevice);
+    // 继承 XModbusDevice
+    XVTABLE_INHERIT_XCLASS(XModbusDevice);
     void* table[] = { VXModbusClient_processResponse,VXModbusClient_processPrivateResponse };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
      // 重载析构
-     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusClient_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusClient_deinit);
 #if SHOWCONTAINERSIZE
     printf("XModbusClient size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -359,5 +382,7 @@ bool VXModbusClient_processPrivateResponse(XModbusClient* client, const XModbusR
 
 // ================== Signals ==================
 void* XModbusClient_timeoutChanged_signal(XModbusClient* client, int newTimeout) {
-    XEmitSignal(client, XModbusClient_timeoutChanged_signal, XVariant_create_int(newTimeout), XVariant_delete_base, NULL, XEVENT_PRIORITY_LOWEST);
+    XEmitSignal(client, XModbusClient_timeoutChanged_signal, 
+                XVarList_Create(XVar(int, newTimeout)), 
+                NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }

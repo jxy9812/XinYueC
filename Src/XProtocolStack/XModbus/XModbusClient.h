@@ -21,7 +21,7 @@ XCLASS_DEFINE_END(XModbusClient)
  *          这是一个抽象基类，具体的通信后端（如RTU/TCP）需由子类实现。
  */
 typedef struct XModbusClient {
-    XModbusDevice m_class; ///< 继承自XModbusDevice基类
+    XModbusDevice m_base;  ///< 继承自XModbusDevice基类
     int m_timeout;         ///< 请求超时时间（毫秒）
     int m_numberOfRetries; ///< 请求重试次数
 } XModbusClient;
@@ -125,30 +125,6 @@ int XModbusClient_numberOfRetries(const XModbusClient* client);
 * @param number 新的重试次数
 */
 void XModbusClient_setNumberOfRetries(XModbusClient* client, int number);
-
-/******************************************************************************************
- * Protected API (供子类重载)
- ******************************************************************************************/
-
-/**
-* @brief 处理标准Modbus响应（受保护，供内部调用）
-* @param client 客户端实例指针（非NULL）
-* @param response 收到的响应PDU
-* @param data 用于填充解析结果的数据单元
-* @return 解析成功返回true，失败返回false
-* @note 此为虚函数入口，实际逻辑由子类实现
-*/
-bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
-
-/**
-* @brief 处理私有/自定义Modbus响应（受保护，供内部调用）
-* @param client 客户端实例指针（非NULL）
-* @param response 收到的响应PDU
-* @param data 用于填充解析结果的数据单元
-* @return 解析成功返回true，失败返回false
-* @note 此为虚函数入口，实际逻辑由子类实现
-*/
-bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 
 /******************************************************************************************
  * 信号接口

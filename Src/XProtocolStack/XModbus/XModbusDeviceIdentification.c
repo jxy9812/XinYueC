@@ -16,9 +16,10 @@ XVtable* XModbusDeviceIdentification_class_init(void) {
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-
-        // 重载析构函数
-        XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusDeviceIdentification_deinit);
+    // 继承 XModbusDevice
+    XVTABLE_INHERIT_XCLASS(XClass);
+    // 重载析构函数
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusDeviceIdentification_deinit);
 
 #if SHOWCONTAINERSIZE
     printf("XModbusDeviceIdentification size: %zu\n", sizeof(XModbusDeviceIdentification));
