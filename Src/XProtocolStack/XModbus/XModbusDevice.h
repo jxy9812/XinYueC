@@ -25,7 +25,7 @@ XCLASS_DEFINE_END(XModbusDevice)
 /**
  * @brief Modbus设备错误类型枚举
  */
-    typedef enum {
+typedef enum {
     XModbusDevice_NoError = 0,
     XModbusDevice_ReadError,
     XModbusDevice_WriteError,

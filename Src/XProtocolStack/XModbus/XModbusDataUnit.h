@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "XClass.h"
+#include "XBitArray.h"
+#include "XVector.h"
 
 /**
 * @file XModbusDataUnit.h
@@ -28,19 +30,21 @@ typedef enum {
 
 /**
 * @brief Modbus数据单元核心结构体
-* @details 封装Modbus寄存器的类型、起始地址、数据容器及数据数量，
-*          基于XClass实现继承特性，XVector作为通用数据容器适配不同类型寄存器
-* @note 数据容器m_values的存储类型由m_type决定：
-*       - XModbusDiscreteInputs/XModbusCoils → 存储bool类型
-*       - XModbusInputRegisters/XModbusHoldingRegisters → 存储uint16_t类型
+* @details 根据寄存器类型自动选择最优存储容器：
+*       - XModbusDiscreteInputs/XModbusCoils → 使用XBitArray存储，节省8倍内存
+*       - XModbusInputRegisters/XModbusHoldingRegisters → 使用XVector存储uint16_t
 */
 typedef struct XModbusDataUnit
 {
-    XClass m_class;               ///< 基类信息（继承自XClass，实现面向对象核心特性）
-    XModbusRegisterType m_type;   ///< 寄存器类型（决定数据存储类型和读写权限）
-    uint16_t m_startAddress;      ///< 寄存器起始地址（Modbus协议地址，可从0或1开始，取决于协议配置）
-    XVector* m_values;            ///< 通用数据容器指针（存储寄存器数据，根据m_type强转使用）
-    size_t m_valueCount;          ///< 寄存器数据数量（m_values中有效数据的个数）
+    XClass m_class;                           ///< 基类信息
+    XModbusRegisterType m_type;               ///< 寄存器类型
+    uint16_t m_startAddress;                  ///< 寄存器起始地址
+    union {
+        void* m_data;                         ///< 通用数据指针
+        struct XBitArray* m_bitArray;         ///< 位数据容器
+        struct XVector* m_vector;             ///< 寄存器数据容器
+    };
+    size_t m_valueCount;                      ///< 数据数量
 } XModbusDataUnit;
 
 /**
@@ -60,13 +64,10 @@ XVtable* XModbusDataUnit_class_init();
 *          - 数据数量：0
 */
 XModbusDataUnit* XModbusDataUnit_create();
+XModbusDataUnit* XModbusDataUnit_create_ex(XModbusRegisterType type, uint16_t startAddress, size_t valueCount);
 XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit);
-/**
-* @brief 初始化Modbus数据单元实例
-* @param unit 待初始化的XModbusDataUnit实例指针（非NULL）
-* @details 初始化基类XClass，绑定虚函数表，清空成员变量并设置默认值
-*/
 void XModbusDataUnit_init(XModbusDataUnit* unit);
+void XModbusDataUnit_init_ex(XModbusDataUnit* unit, XModbusRegisterType type, uint16_t startAddress, size_t valueCount);
 
 /**
 * @brief 设置数据单元的寄存器类型
@@ -95,7 +96,7 @@ void XModbusDataUnit_setStartAddress(XModbusDataUnit* unit, uint16_t startAddres
 *          3. index超出有效范围（index >= m_valueCount）
 *          4. 数值类型与寄存器类型不匹配
 */
-bool XModbusDataUnit_setValue(XModbusDataUnit* unit, size_t index, int16_t value);
+bool XModbusDataUnit_setValue(XModbusDataUnit* unit, size_t index, uint16_t value);
 
 /**
 * @brief 设置数据单元的有效数据数量
@@ -150,7 +151,7 @@ int XModbusDataUnit_startAddress(const XModbusDataUnit* unit);
 *          1. unit或m_values为NULL
 *          2. index超出有效范围
 */
-int16_t XModbusDataUnit_value(const XModbusDataUnit* unit, size_t index);
+uint16_t XModbusDataUnit_value(const XModbusDataUnit* unit, size_t index);
 
 /**
 * @brief 获取数据单元的有效数据数量
@@ -160,12 +161,23 @@ int16_t XModbusDataUnit_value(const XModbusDataUnit* unit, size_t index);
 size_t XModbusDataUnit_valueCount(const XModbusDataUnit* unit);
 
 /**
-* @brief 获取数据单元的完整数据容器（拷贝版）
+* @brief 获取寄存器数据容器（仅当类型为Holding/InputRegisters时有效）
 * @param unit XModbusDataUnit实例指针（const，不修改实例）
 * @return 返回数据容器的拷贝指针，unit为NULL时返回NULL
 * @note 返回的是拷贝后的XVector，需手动释放，避免内存泄漏
 */
-XVector* XModbusDataUnit_values(const XModbusDataUnit* unit);
+XVector* XModbusDataUnit_values1(const XModbusDataUnit* unit);
+const XVector* XModbusDataUnit_values1_const(const XModbusDataUnit* unit);
+/**
+* @brief 获取位数据容器（仅当类型为Coils/DiscreteInputs时有效）
+* @return 返回内部XBitArray指针，其他类型返回NULL
+*/
+XBitArray* XModbusDataUnit_values2(const XModbusDataUnit* unit);
+const XBitArray* XModbusDataUnit_values2_const(const XModbusDataUnit* unit);
+/**
+* @brief 设置位数据（仅对Coils/DiscreteInputs有效）
+*/
+bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits);
 
 /**
 * @brief 基类拷贝宏（继承自XClass）
