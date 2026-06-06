@@ -230,7 +230,6 @@ static void VXModbusPdu_deinit(XModbusPdu* pdu) {
         XByteArray_delete_base(pdu->m_data);
         pdu->m_data = NULL;
     }
-    XClass_deinit_base((XClass*)pdu);
 }
 
 // --- 核心接口实现 ---

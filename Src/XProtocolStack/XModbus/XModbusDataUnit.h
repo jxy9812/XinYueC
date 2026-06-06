@@ -55,7 +55,7 @@ XVtable* XModbusDataUnit_class_init();
 * @return 成功返回XModbusDataUnit实例指针，失败返回NULL
 * @details 动态分配内存并初始化数据单元，默认初始值：
 *          - 寄存器类型：XModbusInvalid
-*          - 起始地址：-1（无效地址）
+*          - 起始地址：0xFFFF（无效地址）
 *          - 数据容器：创建空的int16_t类型XVector
 *          - 数据数量：0
 */
@@ -123,7 +123,7 @@ bool XModbusDataUnit_setValues(XModbusDataUnit* unit, XVector* values);
 * @details 有效条件：
 *           1. unit非NULL
 *           2. 寄存器类型非XModbusInvalid
-*           3. 起始地址非-1（无效地址）
+*           3. 起始地址非0xFFFF（无效地址）
 */
 bool XModbusDataUnit_isValid(const XModbusDataUnit* unit);
 
@@ -155,7 +155,7 @@ int16_t XModbusDataUnit_value(const XModbusDataUnit* unit, size_t index);
 /**
 * @brief 获取数据单元的有效数据数量
 * @param unit XModbusDataUnit实例指针（const，不修改实例）
-* @return 返回有效数据数量，unit为NULL时返回-1
+* @return 返回有效数据数量，unit为NULL时返回0
 */
 size_t XModbusDataUnit_valueCount(const XModbusDataUnit* unit);
 

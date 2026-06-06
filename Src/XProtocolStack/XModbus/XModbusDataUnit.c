@@ -30,6 +30,7 @@ XVtable* XModbusDataUnit_class_init()
 XModbusDataUnit* XModbusDataUnit_create()
 {
 	XModbusDataUnit* unit = XMalloc_System(sizeof(XModbusDataUnit));
+	if (!unit) return NULL;
 	XModbusDataUnit_init(unit);
 	Set_Class_MemoryFree(unit, XFree_System);
 	return unit;
@@ -51,10 +52,11 @@ XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit)
 
 void XModbusDataUnit_init(XModbusDataUnit* unit)
 {
+	if (!unit) return;
 	XClass_init(unit);
 	XClassGetVtable(unit) = XModbusDataUnit_class_init();
 	memset(((XClass*)unit) + 1, 0, sizeof(XModbusDataUnit) - sizeof(XClass));
-	unit->m_startAddress = -1;
+	unit->m_startAddress = 0xFFFF; // 使用 0xFFFF 表示无效地址
 	unit->m_values = XVector_Create(int16_t);
 }
 
@@ -105,9 +107,8 @@ bool XModbusDataUnit_setValues(XModbusDataUnit* unit, XVector* values)
 
 bool XModbusDataUnit_isValid(const XModbusDataUnit* unit)
 {
-	if (!unit)
-		return false;
-	return unit->m_type != XModbusInvalid && unit->m_startAddress != -1;
+	if (!unit) return false;
+	return unit->m_type != XModbusInvalid && unit->m_startAddress != 0xFFFF;
 }
 
 XModbusRegisterType XModbusDataUnit_registerType(const XModbusDataUnit* unit)
@@ -119,9 +120,8 @@ XModbusRegisterType XModbusDataUnit_registerType(const XModbusDataUnit* unit)
 
 int XModbusDataUnit_startAddress(const XModbusDataUnit* unit)
 {
-	if (!unit)
-		return -1;
-	return unit->m_startAddress;
+	if (!unit) return -1;
+	return (int)unit->m_startAddress;
 }
 
 int16_t XModbusDataUnit_value(const XModbusDataUnit* unit, size_t index)
@@ -136,8 +136,7 @@ int16_t XModbusDataUnit_value(const XModbusDataUnit* unit, size_t index)
 
 size_t XModbusDataUnit_valueCount(const XModbusDataUnit* unit)
 {
-	if (!unit)
-		return -1;
+	if (!unit) return 0;
 	return unit->m_valueCount;
 }
 
@@ -213,7 +212,4 @@ void VXModbusDataUnit_deinit(XModbusDataUnit* unit)
 	unit->m_startAddress = 0xFFFF;
 	unit->m_type = XModbusInvalid;
 	unit->m_valueCount = 0;
-	
-	// 调用父类析构
-	//XClass_deinit_base((XClass*)unit);
 }

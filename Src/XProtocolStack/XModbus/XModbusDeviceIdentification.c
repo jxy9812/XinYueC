@@ -28,7 +28,8 @@ XVtable* XModbusDeviceIdentification_class_init(void) {
 
 XModbusDeviceIdentification* XModbusDeviceIdentification_create(void) {
     XModbusDeviceIdentification* id = (XModbusDeviceIdentification*)XMalloc_System(sizeof(XModbusDeviceIdentification));
-    if (id) XModbusDeviceIdentification_init(id);
+    if (!id) return NULL;
+    XModbusDeviceIdentification_init(id);
     Set_Class_MemoryFree(id, XFree_System);
     return id;
 }
@@ -52,8 +53,6 @@ static void VXModbusDeviceIdentification_deinit(XModbusDeviceIdentification* id)
         XMap_delete_base(id->m_objects);
         id->m_objects = NULL;
     }
-
-    XClass_deinit_base((XClass*)id);
 }
 
 // --- 核心接口实现 ---
