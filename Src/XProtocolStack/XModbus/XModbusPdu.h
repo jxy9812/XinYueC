@@ -406,7 +406,7 @@ brief 初始化已分配的XModbusExceptionResponse实例（带功能码和异�
 param exc XModbusExceptionResponse指针（非NULL）
 param functionCode 功能码
 param exceptionCode 异常码
-
+*/
 void XModbusExceptionResponse_init_with_function_and_exception(
     XModbusExceptionResponse* exc, XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode);
 

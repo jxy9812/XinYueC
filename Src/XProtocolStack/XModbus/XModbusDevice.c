@@ -103,12 +103,17 @@ static void VXModbusDevice_deinit(XModbusDevice* dev)
 // =============== 连接参数 API ===============
 XVariant* XModbusDevice_connectionParameter(const XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter)
 {
+    return XVariant_create_copy(XModbusDevice_connectionParameter_const(dev, parameter));
+}
+
+const XVariant* XModbusDevice_connectionParameter_const(const XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter)
+{
     if (!dev || parameter < 0 || parameter >= XModbusDevice_ParameterCount) {
         return NULL;
     }
 
     if (dev->m_params[parameter]) {
-        return XVariant_create_copy(dev->m_params[parameter]);
+        return dev->m_params[parameter];
     }
     return NULL;
 }
@@ -119,13 +124,44 @@ void XModbusDevice_setConnectionParameter(XModbusDevice* dev, XModbusDevice_Conn
         return;
     }
 
-    // 释放旧值
+    //移动
+    if (dev->m_params[parameter]) {
+        XVariant_copy_base(dev->m_params[parameter], value);
+    }
+    else
+    {
+        // 设置新值（复制）
+        dev->m_params[parameter] = XVariant_create_copy(value);
+    }
+}
+
+void XModbusDevice_setConnectionParameter_move(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value)
+{
+    if (!dev || !value || parameter < 0 || parameter >= XModbusDevice_ParameterCount) {
+        return;
+    }
+
+    //移动
+    if (dev->m_params[parameter]) {
+        XVariant_move_base(dev->m_params[parameter], value);
+    }
+    else
+    {
+        // 设置新值（复制）
+        dev->m_params[parameter] = XVariant_create_move(value);
+    }
+}
+
+void XModbusDevice_setConnectionParameter_ref(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value)
+{
+    if (!dev || !value || parameter < 0 || parameter >= XModbusDevice_ParameterCount) {
+        return;
+    }
     if (dev->m_params[parameter]) {
         XVariant_delete_base(dev->m_params[parameter]);
     }
-
     // 设置新值（复制）
-    dev->m_params[parameter] = XVariant_create_copy(value);
+    dev->m_params[parameter] = value;
 }
 
 // =============== 连接管理 API ===============
@@ -241,15 +277,13 @@ void XModbusDevice_close_base(XModbusDevice* dev)
 void* XModbusDevice_errorOccurred_signal(XModbusDevice* dev, XModbusDevice_Error error)
 {
     XEmitSignal(dev, XModbusDevice_errorOccurred_signal,
-        XVariant_create_int((int)error), XVariant_delete_base,
+        XVarList_Create(XVar(XModbusDevice_Error, error)), NULL,
         NULL, XEVENT_PRIORITY_LOWEST);
-    return NULL;
 }
 
 void* XModbusDevice_stateChanged_signal(XModbusDevice* dev, XModbusDevice_State state)
 {
     XEmitSignal(dev, XModbusDevice_stateChanged_signal,
-        XVariant_create_int((int)state), XVariant_delete_base,
+        XVarList_Create(XVar(XModbusDevice_State, state)), NULL,
         NULL, XEVENT_PRIORITY_LOWEST);
-    return NULL;
 }

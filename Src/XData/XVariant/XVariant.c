@@ -100,6 +100,7 @@ XVariant* XVariant_create(void* data, size_t dataSize, int type)
 
 XVariant* XVariant_create_copy(const XVariant* copy)
 {
+	if (!copy)return NULL;
 	XJsonArray* var = XVariant_create_null();
 	if (var && copy)
 		XVariant_copy_base(var, copy);
@@ -766,6 +767,11 @@ XByteArray* XVariant_toByteArray_ref(const XVariant* var)
 XString* XVariant_toString(const XVariant* var)
 {
 	return XString_create_copy(XVariant_toString_ref(var));
+}
+
+const XString* XVariant_toString_const(const XVariant* var)
+{
+	return XVariant_toRef(var, XVariantType_String);
 }
 
 XString* XVariant_toString_ref(const XVariant* var)

@@ -321,14 +321,17 @@ int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t 
     XIODevicePrivate* d = ((XIODevice*)port)->m_d;
     int currentWriteChannel = XIODevice_currentWriteChannel(port);
     struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentWriteChannel);
-    size_t written = 0;
+    int64_t written = 0;
+
     if (!port->bytesWrittenTriggered)
-    {//当前还在写操作，写到缓冲区
-       
-        written += XRingBuffer_write(writeBuf, data, (size_t)len);
+    {
+        // 当前还在写操作，写到缓冲区
+        written = XRingBuffer_write(writeBuf, data, (size_t)len);
     }
     else
     {
+        // 关键：清零 OVERLAPPED 结构！
+        memset(&win32->write, 0, sizeof(OVERLAPPED));
         win32->write.type = XEventContextType_Type_File;
         win32->write.buffer = win32->writeBuff;
         win32->write.bufferSize = BUFFSIZE;
@@ -337,19 +340,33 @@ int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t 
         win32->write.finishedBytes = 0;
         port->bytesWrittenTriggered = false;
 
-        if(len<= BUFFSIZE)
-        {
-            memcpy(win32->writeBuff, data, len);
-            written += WriteFile(win32->handle, win32->writeBuff, (DWORD)len, &win32->write
-                .finishedBytes, &win32->write);
+        size_t toWrite = (len <= BUFFSIZE) ? (size_t)len : BUFFSIZE;
+        memcpy(win32->writeBuff, data, toWrite);
+        //BOOL r = ReadFile(win32->handle, win32->readBuff, (DWORD)BUFFSIZE, &win32->read
+        //    .finishedBytes, &win32->read);
+        BOOL success = WriteFile(win32->handle, win32->writeBuff, (DWORD)toWrite,
+            &win32->write.finishedBytes, &win32->write);
+
+        if (success) {
+            // 写入立即同步完成
+            written = win32->write.finishedBytes;
         }
-        else
-        {
-            memcpy(win32->writeBuff, data, BUFFSIZE);
-            written += WriteFile(win32->handle, win32->writeBuff, (DWORD)BUFFSIZE, &win32->write
-                .finishedBytes, &win32->write);
-            //剩余的进缓冲器
-            written += XRingBuffer_write(writeBuf, data+ BUFFSIZE, (size_t)len- BUFFSIZE);
+        else {
+            DWORD error = GetLastError();
+            if (error == ERROR_IO_PENDING) {
+                // 异步操作正在进行，假设会成功写入
+                written = toWrite;
+            }
+            else {
+                // 真正的写入失败
+                port->bytesWrittenTriggered = true;
+                return -1;
+            }
+        }
+
+        // 剩余数据写入缓冲区
+        if (len > BUFFSIZE) {
+            written += XRingBuffer_write(writeBuf, data + BUFFSIZE, (size_t)len - BUFFSIZE);
         }
     }
     return written;

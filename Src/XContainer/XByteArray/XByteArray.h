@@ -115,22 +115,12 @@ bool XByteArray_append_utf8(XByteArray* array, const char* utf8);
 /**
 * @brief 复用XVector的接口，追加单个元素
 */
-#define XByteArray_append_base						XVector_append_base
-
-/**
-* @brief 复用XVector的接口，追加另一个数组的资源（移动语义）
-*/
-#define XByteArray_append_move_base					XVector_append_move_base
+#define XByteArray_append_base						XByteArray_push_back_base
 
 /**
 * @brief 复用XVector的接口，在头部 prepend 数据
 */
-#define XByteArray_prepend_base						XVector_prepend_base
-
-/**
-* @brief 复用XVector的接口，在头部 prepend 另一个数组的资源（移动语义）
-*/
-#define XByteArray_prepend_move_base				XVector_prepend_move_base
+#define XByteArray_prepend_base						XByteArray_push_front_base
 
 
 //============================= 元素删除 =============================
@@ -197,27 +187,13 @@ uint8_t* XByteArray_data(XByteArray* other);
 * @brief 复用XVector的接口，获取头部第一个元素的指针
 * @return 成功返回指针，数组为空时返回NULL
 */
-#define XByteArray_front_base						XVector_front_base
-
-/**
-* @brief 获取头部第一个元素的值（宏封装）
-* @param array 目标XByteArray实例指针
-* @return 返回uint8_t类型的元素值
-*/
-#define XByteArray_Front_Base(array)				XVector_Front_Base(array,uint8_t)
+#define XByteArray_front_base(array)						XVector_Front_Base(array,uint8_t)
 
 /**
 * @brief 复用XVector的接口，获取尾部最后一个元素的指针
 * @return 成功返回指针，数组为空时返回NULL
 */
-#define XByteArray_back_base						XVector_back_base
-
-/**
-* @brief 获取尾部最后一个元素的值（宏封装）
-* @param array 目标XByteArray实例指针
-* @return 返回uint8_t类型的元素值
-*/
-#define XByteArray_Back_Base(array)					XVector_Back_Base(array,uint8_t)
+#define XByteArray_back_base(array)							XVector_Back_Base(array,uint8_t)
 
 /**
 * @brief 在字节数组中查找指定字节
@@ -254,11 +230,6 @@ bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteA
 
 
 //============================= 容器操作 =============================
-
-/**
-* @brief 复用XVector的接口，对数组元素进行排序
-*/
-#define XByteArray_sort_base						XVector_sort_base
 
 /**
 * @brief 复用XVector的接口，复制另一个数组的内容到当前数组

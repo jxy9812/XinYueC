@@ -26,7 +26,7 @@ static void XFuncCodeCb0x30(uint8_t code, void* obj, void* data, void* userData)
 void TJCHMICommTest()
 {
 	XPrintf("开始创建串口\n");
-	XSerialPortBase* USART = XSerialPort_create();
+	XSerialPort* USART = XSerialPort_create();
 
 	//XIODevice_setReadBuffer_base(USART, 1024);
 	//XIODevice_setWriteBuffer_base(USART, 1024);

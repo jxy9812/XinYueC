@@ -54,7 +54,6 @@ typedef struct XStack XStack;
 typedef struct XPoint XPoint;
 typedef struct XBitArray XBitArray;
 typedef struct XVariant XVariant;
-typedef struct XSerialPortBase XSerialPortBase;
 typedef struct XVariantList XVariantList;
 typedef struct XJsonArray XJsonArray;
 typedef struct XJsonDocument XJsonDocument;

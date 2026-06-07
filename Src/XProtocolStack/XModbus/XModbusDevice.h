@@ -208,7 +208,7 @@ void XModbusDevice_init(XModbusDevice* dev);
   * @endcode
   */
 XVariant* XModbusDevice_connectionParameter(const XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter);
-
+const XVariant* XModbusDevice_connectionParameter_const(const XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter);
 /**
  * @brief 设置连接参数值
  * @param dev XModbusDevice实例指针（非NULL）
@@ -224,7 +224,8 @@ XVariant* XModbusDevice_connectionParameter(const XModbusDevice* dev, XModbusDev
  * @endcode
  */
 void XModbusDevice_setConnectionParameter(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value);
-
+void XModbusDevice_setConnectionParameter_move(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value);
+void XModbusDevice_setConnectionParameter_ref(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value);
 /******************************************************************************************
  * 连接管理接口
  ******************************************************************************************/

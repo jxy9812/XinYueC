@@ -711,6 +711,7 @@ XByteArray* XVariant_toByteArray_ref(const XVariant* var);
 * @retval 指向XString数据的指针，类型不匹配返回NULL
 */
 XString* XVariant_toString(const XVariant* var);
+const XString* XVariant_toString_const(const XVariant* var);
 /**
 * @brief 获取XVariant中XString数据的引用指针
 * @param var: XVariant对象指针

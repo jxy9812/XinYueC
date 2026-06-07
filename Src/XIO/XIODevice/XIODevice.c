@@ -178,7 +178,8 @@ XByteArray* XIODevice_readAll(XIODevice* self)
 	XByteArray* result = XByteArray_create();
 	char buffer[2048];
 	int64_t n;
-	while ((n = XIODevice_read(self, buffer, sizeof(buffer))) > 0) {
+	while (n=XIODevice_bytesAvailable_base(self)) {
+		n=XIODevice_read(self, buffer, n>sizeof(buffer)? sizeof(buffer):n);
 		XByteArray_append_array_base(result, buffer, n);
 	}
 	return result;
