@@ -72,7 +72,7 @@ typedef struct XModbusRtuSerialClient {
     uint8_t m_currentServerAddress; ///< 当前请求的从站地址
     uint8_t m_retryCount;           ///< 当前重试次数
     bool m_waitingForTurnaround;    ///< 是否正在等待广播响应延迟
-    XByteArray* m_requestPdu;       ///< 请求PDU数据（用于重试，仅在重试次数>0时保存）
+    XByteArray* m_requestPdu;       ///< 请求数据（用于重试）
 } XModbusRtuSerialClient;
 
 /******************************************************************************************

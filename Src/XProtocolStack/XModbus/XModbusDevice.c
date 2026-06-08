@@ -1,6 +1,45 @@
 ﻿#include "XModbusDevice.h"
 #include "XMemory.h"
 #include <string.h>
+/******************************************************************************************
+ * 受保护接口（供子类使用）
+ ******************************************************************************************/
+
+ /**
+  * @brief 设置设备状态（供子类使用）
+  * @param dev XModbusDevice实例指针（非NULL）
+  * @param newState 新状态
+  * @note 状态改变时会发射stateChanged信号
+  */
+void XModbusDevice_setState(XModbusDevice* dev, XModbusDevice_State newState);
+
+/**
+ * @brief 设置设备错误（供子类使用）
+ * @param dev XModbusDevice实例指针（非NULL）
+ * @param error 错误码
+ * @param errorText 错误描述文本（可为NULL，使用默认描述）
+ * @note 设置错误时会发射errorOccurred信号
+ */
+void XModbusDevice_setError(XModbusDevice* dev, XModbusDevice_Error error, const char* errorText);
+
+/******************************************************************************************
+ * 虚函数调用接口
+ ******************************************************************************************/
+
+ /**
+  * @brief 打开设备（虚函数）
+  * @param dev XModbusDevice实例指针（非NULL）
+  * @return 成功返回true，失败返回false
+  * @note 通过虚函数表调用，由子类实现具体逻辑
+  */
+bool XModbusDevice_open_base(XModbusDevice* dev);
+
+/**
+ * @brief 关闭设备（虚函数）
+ * @param dev XModbusDevice实例指针（非NULL）
+ * @note 通过虚函数表调用，由子类实现具体逻辑
+ */
+void XModbusDevice_close_base(XModbusDevice* dev);
 
 // =============== 虚函数前置声明 ===============
 static void VXModbusDevice_deinit(XModbusDevice* dev);
@@ -31,9 +70,12 @@ XVtable* XModbusDevice_class_init()
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        // 继承 XObject
-        XVTABLE_INHERIT_XCLASS(XObject);
-
+    // 继承 XObject
+    XVTABLE_INHERIT_XCLASS(XObject);
+    void* table[] = {
+     NULL,NULL
+    };
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusDevice_deinit);
 

@@ -6,9 +6,8 @@
 #include <string.h>
 
 /******************************************************************************************
- * Protected API (供子类重载)
+ * 受保护接口（供子类使用）
  ******************************************************************************************/
-
  /**
  * @brief 处理标准Modbus响应（受保护，供内部调用）
  * @param client 客户端实例指针（非NULL）
@@ -17,7 +16,7 @@
  * @return 解析成功返回true，失败返回false
  * @note 此为虚函数入口，实际逻辑由子类实现
  */
-inline static bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
+inline bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 
 /**
 * @brief 处理私有/自定义Modbus响应（受保护，供内部调用）
@@ -27,7 +26,7 @@ inline static bool XModbusClient_processResponse_base(XModbusClient* client, con
 * @return 解析成功返回true，失败返回false
 * @note 此为虚函数入口，实际逻辑由子类实现
 */
-inline static bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
+inline bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 
 // 虚函数重载声明
 static void VXModbusClient_deinit(XModbusClient* client);

@@ -54,6 +54,7 @@ void XModbusTest()
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils,0,1);
     XModbusDataUnit_setValue(read,0,true);
     XModbusReply* reply= XModbusClient_sendWriteRequest(serial, read,1);
+     reply = XModbusClient_sendWriteRequest(serial, read, 1);
     XCoreApplication_exec();
 }
 
