@@ -83,10 +83,16 @@ XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit)
 	if (!unit) return NULL;
 	XModbusDataUnit* newUnit = XModbusDataUnit_create();
 	if (!newUnit) return NULL;
-	newUnit->m_type = unit->m_type;
-	newUnit->m_startAddress = unit->m_startAddress;
-	newUnit->m_valueCount = unit->m_valueCount;
-	newUnit->m_data = XModbusDataUnit_copyContainer(unit->m_type, unit->m_data);
+	XModbusDataUnit_copy_base(newUnit,unit);
+	return newUnit;
+}
+
+XModbusDataUnit* XModbusDataUnit_create_move(const XModbusDataUnit* unit)
+{
+	if (!unit) return NULL;
+	XModbusDataUnit* newUnit = XModbusDataUnit_create();
+	if (!newUnit) return NULL;
+	XModbusDataUnit_move_base(newUnit, unit);
 	return newUnit;
 }
 
@@ -117,6 +123,7 @@ void XModbusDataUnit_init(XModbusDataUnit* unit)
 	XClassGetVtable(unit) = XModbusDataUnit_class_init();
 	memset(((XClass*)unit) + 1, 0, sizeof(XModbusDataUnit) - sizeof(XClass));
 	unit->m_startAddress = 0xFFFF;
+	unit->m_valueCount = 0;
 	unit->m_data = NULL;
 }
 

@@ -118,13 +118,25 @@ XModbusDevice_Error XModbusReply_error(const XModbusReply* reply) {
 
 // --- Setters ---
 void XModbusReply_setResult(XModbusReply* reply, const XModbusDataUnit* unit) {
+    if (!reply||!unit) return;
+    XModbusReply_setResult_ref(reply, XModbusDataUnit_create_copy(unit));
+}
+
+void XModbusReply_setResult_move(XModbusReply* reply, const XModbusDataUnit* unit)
+{
+    if (!reply || !unit) return;
+    XModbusReply_setResult_ref(reply, XModbusDataUnit_create_move(unit));
+}
+
+void XModbusReply_setResult_ref(XModbusReply * reply, const XModbusDataUnit * unit)
+{
     if (!reply) return;
     if (reply->m_result) {
         XModbusDataUnit_delete_base(reply->m_result);
         reply->m_result = NULL;
     }
     if (unit) {
-        reply->m_result = (XModbusDataUnit*)XModbusDataUnit_create_copy(unit);
+        reply->m_result = unit;
     }
 }
 
@@ -142,12 +154,14 @@ void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* respo
 void XModbusReply_setFinished(XModbusReply* reply, bool finished) {
     if (reply) {
         reply->m_isFinished = finished;
+        XModbusReply_finished_signal(reply);
     }
 }
 
 void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const char* errorText) {
     if (!reply) return;
     reply->m_error = error;
+    if (XModbusDevice_NoError == error)return;//无错误退出
     if (reply->m_errorString) {
         XString_delete_base(reply->m_errorString);
         reply->m_errorString = NULL;
@@ -155,6 +169,7 @@ void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const
     if (errorText) {
         reply->m_errorString = XString_create_fmt_utf8("%s", errorText);
     }
+    XModbusReply_errorOccurred_signal(reply, error);
 }
 
 // --- Intermediate Errors ---

@@ -5,16 +5,24 @@
 #include "XTimer.h"
 #include "string.h"
 
+/******************************************************************************************
+ * 父类虚函数声明（外部链接，供子类调用父类实现）
+ ******************************************************************************************/
+extern bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
+extern bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
+
 // =============== 虚函数前置声明 ===============
 static bool VXModbusRtuSerialClient_open(XModbusDevice* device);
 static void VXModbusRtuSerialClient_close(XModbusDevice* device);
 static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client);
 static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event);
 static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress);
+//static bool VXModbusRtuSerialClient_processResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
+//static bool VXModbusRtuSerialClient_processPrivateResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 
 // =============== 槽函数声明 ===============
 static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args);
-
+static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* receiveBuffer);
 // =============== 辅助函数 ===============
 static int calculateInterFrameDelay(int baudRate) {
     if (baudRate <= 0) return 1750;
@@ -48,17 +56,20 @@ XVtable* XModbusRtuSerialClient_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XModbusRtuSerialClient))
+        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XModbusRtuSerialClient))
 #else
-    XVTABLE_HEAP_INIT_DEFAULT
+        XVTABLE_HEAP_INIT_DEFAULT
 #endif
-    XVTABLE_INHERIT_XCLASS(XModbusClient);
+        XVTABLE_INHERIT_XCLASS(XModbusClient);
 
     XVTABLE_OVERLOAD_DEFAULT(EXModbusDevice_Open, VXModbusRtuSerialClient_open);
     XVTABLE_OVERLOAD_DEFAULT(EXModbusDevice_Close, VXModbusRtuSerialClient_close);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusRtuSerialClient_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXModbusRtuSerialClient_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_SendRawRequest, VXModbusRtuSerialClient_sendRawRequest);
+    // 重写 ProcessResponse 和 ProcessPrivateResponse
+    //XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_ProcessResponse, VXModbusRtuSerialClient_processResponse);
+    //XVTABLE_OVERLOAD_DEFAULT(EXModbusClient_ProcessPrivateResponse, VXModbusRtuSerialClient_processPrivateResponse);
 
 #if SHOWCONTAINERSIZE
     printf("XModbusRtuSerialClient vtable size: %d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -99,7 +110,6 @@ void XModbusRtuSerialClient_init(XModbusRtuSerialClient* client)
     client->m_currentReply = NULL;
     client->m_timeoutTimer = XTIMER_INVALID_ID;
     client->m_interFrameTimer = XTIMER_INVALID_ID;
-    client->m_receiveBuffer = XByteArray_create();
     client->m_currentServerAddress = 0;
     client->m_retryCount = 0;
     client->m_waitingForTurnaround = false;
@@ -171,6 +181,20 @@ XSerialPort* XModbusRtuSerialClient_serialPort(const XModbusRtuSerialClient* cli
     return (XSerialPort*)io;
 }
 
+//// =============== ProcessResponse 虚函数重写 ===============
+//static bool VXModbusRtuSerialClient_processResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data)
+//{
+//    // RTU客户端不需要特殊处理，直接调用父类实现
+//    return VXModbusClient_processResponse(client, response, data);
+//}
+//
+//// =============== ProcessPrivateResponse 虚函数重写 ===============
+//static bool VXModbusRtuSerialClient_processPrivateResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data)
+//{
+//    // RTU客户端不需要特殊处理，直接调用父类实现
+//    return VXModbusClient_processPrivateResponse(client, response, data);
+//}
+
 // =============== 虚函数实现 ===============
 static bool VXModbusRtuSerialClient_open(XModbusDevice* device)
 {
@@ -190,7 +214,6 @@ static bool VXModbusRtuSerialClient_open(XModbusDevice* device)
         XString* portName = XVariant_toString_const(portNameVar);
         if (portName) {
             XSerialPort_setPortName(serialPort, XString_toUtf8(portName));
-            //XString_delete_base(portName);
         }
     }
 
@@ -225,11 +248,8 @@ static bool VXModbusRtuSerialClient_open(XModbusDevice* device)
     }
 
     // 清除缓冲区
-    XByteArray* array= XIODevice_readAll((XIODevice*)serialPort);
-    XByteArray_delete_base(array);
-    if (client->m_receiveBuffer) {
-        XByteArray_clear_base(client->m_receiveBuffer);
-    }
+    XByteArray* array = XIODevice_readAll((XIODevice*)serialPort);
+    if (array) XByteArray_delete_base(array);
 
     XModbusDevice_setState(device, XModbusDevice_ConnectedState);
     XModbusDevice_setError(device, XModbusDevice_NoError, NULL);
@@ -259,17 +279,13 @@ static void VXModbusRtuSerialClient_close(XModbusDevice* device)
         client->m_currentReply = NULL;
     }
 
- /*   if (client->m_requestPdu) {
+    if (client->m_requestPdu) {
         XByteArray_delete_base(client->m_requestPdu);
         client->m_requestPdu = NULL;
-    }*/
+    }
 
     client->m_retryCount = 0;
     client->m_waitingForTurnaround = false;
-
-    if (client->m_receiveBuffer) {
-        XByteArray_clear_base(client->m_receiveBuffer);
-    }
 
     if (serialPort) {
         XSerialPort_close_base(serialPort);
@@ -290,7 +306,6 @@ static bool sendRtuRequest(XModbusRtuSerialClient* client, uint8_t serverAddress
 
     const uint8_t* pduData = XContainerDataAddr((XByteArray*)pdu);
 
-    XByteArray_clear_base(client->m_receiveBuffer);
 
     uint8_t frame[256];
     size_t frameLen = buildRtuFrame(serverAddress, pduData, pduLen, frame);
@@ -303,7 +318,7 @@ static bool sendRtuRequest(XModbusRtuSerialClient* client, uint8_t serverAddress
 }
 
 // =============== 响应处理 ===============
-static void processResponse(XModbusRtuSerialClient* client) {
+static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* receiveBuffer) {
     if (!client || !client->m_currentReply) return;
 
     if (client->m_timeoutTimer != XTIMER_INVALID_ID) {
@@ -311,8 +326,8 @@ static void processResponse(XModbusRtuSerialClient* client) {
         client->m_timeoutTimer = XTIMER_INVALID_ID;
     }
 
-    const uint8_t* data = XContainerDataAddr(client->m_receiveBuffer);
-    size_t len = XByteArray_size_base(client->m_receiveBuffer);
+    const uint8_t* data = XContainerDataAddr(receiveBuffer);
+    size_t len = XByteArray_size_base(receiveBuffer);
 
     if (!validateRtuFrame(data, len)) {
         XModbusReply_setError(client->m_currentReply, XModbusDevice_UnknownError, "CRC check failed");
@@ -324,12 +339,12 @@ static void processResponse(XModbusRtuSerialClient* client) {
         goto cleanup;
     }
 
-    // 解析响应
+    // 解析响应PDU
     XModbusResponse response;
     XModbusResponse_init(&response);
 
     uint8_t fc = data[1];
-    XModbusPdu_setFunctionCode(&response.m_base, (XModbusPdu_FunctionCode)fc);
+    XModbusPdu_setFunctionCode(&response, (XModbusPdu_FunctionCode)fc);
 
     // 检查异常响应
     if (fc & XMODBUS_PDU_EXCEPTION_BYTE) {
@@ -355,32 +370,41 @@ static void processResponse(XModbusRtuSerialClient* client) {
         goto cleanup;
     }
 
-    // 正常响应
-    if (len > 3) {
-        XModbusPdu_setData(&response.m_base, data + 1, len - 3);
+    // 正常响应：设置PDU数据（不含地址、功能码和CRC）
+    // data + 2 跳过地址和功能码
+    // len - 4 = 总长度 - 地址(1) - 功能码(1) - CRC(2)
+    if (len > 4) {
+        XModbusPdu_setData(&response, data + 2, len - 4);
     }
 
-    // 处理响应
-    XModbusDataUnit* resultUnit = XModbusReply_result(client->m_currentReply);
-    bool success = XClassGetVirtualFunc(client, EXModbusClient_ProcessResponse,
-        bool(*)(XModbusClient*, const XModbusResponse*, XModbusDataUnit*))
-        ((XModbusClient*)&client->m_base, &response, resultUnit);
+    // 获取结果单元
+    XModbusDataUnit* resultUnit = XModbusDataUnit_create();
+    //XString* text= XByteArray_to16HexString(receiveBuffer);
+    //XPrintf_string(text);
+    //XPrintf("\n");
+    //XString_delete_base(text);
+    // 通过保护API调用虚函数（会调到子类重写的实现）
+    bool success = XModbusClient_processResponse_base((XModbusClient*)client, &response, resultUnit);
 
     if (success) {
-        XModbusReply_setResult(client->m_currentReply, resultUnit);
+        XModbusReply_setResult_ref(client->m_currentReply, resultUnit);
     }
     else {
         XModbusReply_setError(client->m_currentReply, XModbusDevice_UnknownError, "Response processing failed");
+        // 释放临时结果单元
+        if (resultUnit) {
+            XModbusDataUnit_delete_base(resultUnit);
+        }
     }
-
+    XModbusResponse_deinit_base(&response);
 cleanup:
     XModbusReply_setFinished(client->m_currentReply, true);
     client->m_currentReply = NULL;
     client->m_retryCount = 0;
 
     if (client->m_requestPdu) {
-        XByteArray_clear_base(client->m_requestPdu);
-        //client->m_requestPdu = NULL;
+        XByteArray_delete_base(client->m_requestPdu);
+        client->m_requestPdu = NULL;
     }
 }
 
@@ -398,17 +422,12 @@ static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args
         if (data) XByteArray_delete_base(data);
         return;
     }
-
-    XByteArray_append_array_base(client->m_receiveBuffer,
-        XContainerDataAddr(data),
-        XByteArray_size_base(data));
-    XByteArray_delete_base(data);
-
-    size_t bufLen = XByteArray_size_base(client->m_receiveBuffer);
+    size_t bufLen = XByteArray_size_base(data);
     if (bufLen >= 5) {
-        uint8_t fc = XByteArray_At_Base(client->m_receiveBuffer, 1);
+        uint8_t fc = XByteArray_At_Base(data, 1);
         size_t expectedLen = 0;
 
+        // 异常响应固定5字节
         if (fc & XMODBUS_PDU_EXCEPTION_BYTE) {
             expectedLen = 5;
         }
@@ -419,27 +438,33 @@ static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args
             case XModbusPdu_ReadHoldingRegisters:
             case XModbusPdu_ReadInputRegisters:
             case XModbusPdu_ReadWriteMultipleRegisters:
+                // 读响应：地址(1) + 功能码(1) + 字节数(1) + 数据(N) + CRC(2)
                 if (bufLen >= 3) {
-                    uint8_t byteCount = XByteArray_At_Base(client->m_receiveBuffer, 2);
+                    uint8_t byteCount = XByteArray_At_Base(data, 2);
                     expectedLen = 3 + byteCount + 2;
                 }
                 break;
             case XModbusPdu_WriteSingleCoil:
             case XModbusPdu_WriteSingleRegister:
+                // 写单个响应：8字节
                 expectedLen = 8;
                 break;
             case XModbusPdu_WriteMultipleCoils:
             case XModbusPdu_WriteMultipleRegisters:
+                // 写多个响应：8字节
                 expectedLen = 8;
                 break;
             default:
+                // 未知功能码，等待超时
                 break;
-            }        }
+            }
+        }
 
         if (expectedLen > 0 && bufLen >= expectedLen) {
-            processResponse(client);
+            processReceivedFrame(client,data);
         }
     }
+    XByteArray_delete_base(data);
 }
 
 // =============== 定时器事件处理 ===============
@@ -461,10 +486,10 @@ static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event)
                 client->m_waitingForTurnaround = false;
                 XModbusReply_setFinished(client->m_currentReply, true);
                 client->m_currentReply = NULL;
-               /* if (client->m_requestPdu) {
+                if (client->m_requestPdu) {
                     XByteArray_delete_base(client->m_requestPdu);
                     client->m_requestPdu = NULL;
-                }*/
+                }
                 return;
             }
 
@@ -472,9 +497,6 @@ static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event)
             int maxRetries = XModbusClient_numberOfRetries((XModbusClient*)client);
             if (client->m_retryCount < maxRetries && client->m_requestPdu) {
                 client->m_retryCount++;
-
-                // 清空接收缓冲区
-                XByteArray_clear_base(client->m_receiveBuffer);
 
                 // 重新发送
                 bool sent = sendRtuRequest(client, client->m_currentServerAddress, client->m_requestPdu);
@@ -490,6 +512,11 @@ static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event)
             XModbusReply_setFinished(client->m_currentReply, true);
             client->m_currentReply = NULL;
             client->m_retryCount = 0;
+
+            if (client->m_requestPdu) {
+                XByteArray_delete_base(client->m_requestPdu);
+                client->m_requestPdu = NULL;
+            }
         }
         return;
     }
@@ -512,11 +539,6 @@ static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client)
     if (client->m_interFrameTimer != XTIMER_INVALID_ID) {
         XObject_killTimer((XObject*)client, client->m_interFrameTimer);
         client->m_interFrameTimer = XTIMER_INVALID_ID;
-    }
-
-    if (client->m_receiveBuffer) {
-        XByteArray_delete_base(client->m_receiveBuffer);
-        client->m_receiveBuffer = NULL;
     }
 
     if (client->m_requestPdu) {
@@ -574,6 +596,7 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
         rtuClient->m_requestPdu = XByteArray_create();
     }
     XByteArray_clear_base(rtuClient->m_requestPdu);
+
     // 添加功能码
     uint8_t fc = (uint8_t)XModbusPdu_functionCode((const XModbusPdu*)request);
     XByteArray_append_base(rtuClient->m_requestPdu, fc);
@@ -590,8 +613,8 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
     if (!sent) {
         XModbusReply_deleteLater(reply);
         if (rtuClient->m_requestPdu) {
-            XByteArray_clear_base(rtuClient->m_requestPdu);
-            //rtuClient->m_requestPdu = NULL;
+            XByteArray_delete_base(rtuClient->m_requestPdu);
+            rtuClient->m_requestPdu = NULL;
         }
         return NULL;
     }
@@ -600,6 +623,7 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
     rtuClient->m_retryCount = 0;
 
     if (serverAddress == 0) {
+        // 广播消息，等待 turnaround 延迟
         rtuClient->m_waitingForTurnaround = true;
         rtuClient->m_timeoutTimer = XObject_startTimer_ms((XObject*)rtuClient,
             rtuClient->m_turnaroundDelay, XTimerType_CoarseTimer);

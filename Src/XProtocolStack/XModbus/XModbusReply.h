@@ -95,6 +95,8 @@ XModbusDevice_Error XModbusReply_error(const XModbusReply* reply);
 
 // --- Setter（公开，供设备层调用）---
 void XModbusReply_setResult(XModbusReply* reply, const XModbusDataUnit* unit);
+void XModbusReply_setResult_move(XModbusReply* reply, const XModbusDataUnit* unit);
+void XModbusReply_setResult_ref(XModbusReply* reply, const XModbusDataUnit* unit);
 void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* response);
 void XModbusReply_setFinished(XModbusReply* reply, bool finished);
 void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const char* errorText);

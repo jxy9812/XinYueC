@@ -66,6 +66,7 @@ XVtable* XModbusDataUnit_class_init();
 XModbusDataUnit* XModbusDataUnit_create();
 XModbusDataUnit* XModbusDataUnit_create_ex(XModbusRegisterType type, uint16_t startAddress, size_t valueCount);
 XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit);
+XModbusDataUnit* XModbusDataUnit_create_move(const XModbusDataUnit* unit);
 void XModbusDataUnit_init(XModbusDataUnit* unit);
 void XModbusDataUnit_init_ex(XModbusDataUnit* unit, XModbusRegisterType type, uint16_t startAddress, size_t valueCount);
 
