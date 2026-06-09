@@ -118,7 +118,7 @@ XByteArray* XByteArray_to16HexUtf8(XByteArray* array)
 	uint8_t temp[6];
 	for (size_t i = 0; i < XByteArray_size_base(array); i++)
 	{
-		sprintf(temp,"%02X ", XByteArray_At_Base(array, i));
+		sprintf(temp,"%02X ", XByteArray_at_base(array, i));
 		XByteArray_append_array_base(bytes,temp,3);
 	}
 	XByteArray_back_base(bytes) = 0;
@@ -132,7 +132,7 @@ XString* XByteArray_to16HexString(XByteArray* array)
 	uint8_t temp[6];
 	for (size_t i = 0; i < XByteArray_size_base(array); i++)
 	{
-		sprintf(temp, "%02X ", XByteArray_At_Base(array, i));
+		sprintf(temp, "%02X ", XByteArray_at_base(array, i));
 		XString_append_with_length_utf8(str, temp,3);
 	}
 	return str;

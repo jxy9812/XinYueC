@@ -36,25 +36,34 @@
 //{
 //    printf("in1:%s\n", sw->m_state ? "true" : "false");
 //}
-//static void StateChangeCallback2(XSwitchDeviceBase* sw)
-//{
-//    printf("in2:%s\n", sw->m_state ? "true" : "false");
-//}
+static void finished(XObject* sender, XVarList* args)
+{
+    XModbusRtuSerialClient* rtu = XObject_parent(sender);
+    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    XModbusDataUnit_setValue(read, 0, true);
+    XModbusReply* reply = XModbusClient_sendWriteRequest(rtu, read, 1);
+    XObject_setParent(reply, rtu);
+    XObject_connect2(reply, XSignal(XModbusReply_finished_signal), finished);
+    XObject_deleteLater(sender);
+    XModbusDataUnit_delete_base(read);
+}
 void XModbusTest()
 {
-    XModbusRtuSerialClient* serial = XModbusRtuSerialClient_create();
-    XModbusDevice_setConnectionParameter_ref(serial, XModbusDevice_SerialPortNameParameter,XVariant_create_utf8_str("COM26"));
-    XModbusDevice_setConnectionParameter_ref(serial, XModbusDevice_SerialBaudRateParameter, XVariant_create_int(9600));
-    if (!XModbusDevice_connectDevice(serial))
+    XModbusRtuSerialClient* rtu = XModbusRtuSerialClient_create();
+    XModbusDevice_setConnectionParameter_ref(rtu, XModbusDevice_SerialPortNameParameter,XVariant_create_utf8_str("COM26"));
+    XModbusDevice_setConnectionParameter_ref(rtu, XModbusDevice_SerialBaudRateParameter, XVariant_create_int(9600));
+    if (!XModbusDevice_connectDevice(rtu))
     {
         XPrintf_utf8("失败了\n");
-        XModbusRtuSerialClient_deleteLater(serial);
+        XModbusRtuSerialClient_deleteLater(rtu);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
     }
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils,0,1);
     XModbusDataUnit_setValue(read,0,true);
-    XModbusReply* reply= XModbusClient_sendWriteRequest(serial, read,1);
-     reply = XModbusClient_sendWriteRequest(serial, read, 1);
+    XModbusReply* reply= XModbusClient_sendWriteRequest(rtu, read,1);
+    XObject_setParent(reply, rtu);
+    XObject_connect2(reply,XSignal(XModbusReply_finished_signal), finished);
+     reply = XModbusClient_sendWriteRequest(rtu, read, 1);
     XCoreApplication_exec();
 }
 

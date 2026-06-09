@@ -274,7 +274,7 @@ int64_t XIODevice_write_cstr(XIODevice* self, const char* data) {
 
 int64_t XIODevice_write_byteArray(XIODevice* self, const XByteArray* data) {
 	if (!data) return 0;
-	return XIODevice_write(self, XContainerSharedDataPtr(data), XByteArray_size_base(data));
+	return XIODevice_write(self, XContainerDataAddr(data), XByteArray_size_base(data));
 }
 
 bool XIODevice_flush(XIODevice* self)

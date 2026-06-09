@@ -176,10 +176,10 @@ static void set_format_info(XRcode* qr, int masking);
 static int  get_penalty_count(XRcode* qr);
 
 static inline unsigned char matrix_get(const XRcode* qr, int x, int y) {
-    return XByteArray_At_Base(&qr->matrix, y * qr->size + x);
+    return XByteArray_at_base(&qr->matrix, y * qr->size + x);
 }
 static inline void matrix_set(XRcode* qr, int x, int y, unsigned char val) {
-    XByteArray_At_Base(&qr->matrix, y * qr->size + x) = val;
+    XByteArray_at_base(&qr->matrix, y * qr->size + x) = val;
 }
 
 XRcode* XRcode_create(void) {
@@ -272,7 +272,7 @@ static int set_encode_data(XRcode* qr, const XByteArray* data) {
     count = set_data_code(qr, count, 0x04, 4);
     count = set_data_code(qr, count, (int)size, 8);
     for (size_t i = 0; i < size; ++i)
-        count = set_data_code(qr, count, XByteArray_At_Base(data, i), 8);
+        count = set_data_code(qr, count, XByteArray_at_base(data, i), 8);
     count = set_data_code(qr, count, 0x00, 4);
     return count;
 }

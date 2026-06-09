@@ -69,15 +69,6 @@ XModbusPdu* XModbusPdu_create_with_code(XModbusPdu_FunctionCode code) {
     return pdu;
 }
 
-XModbusPdu* XModbusPdu_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t dataSize) {
-    XModbusPdu* pdu = (XModbusPdu*)XMalloc_System(sizeof(XModbusPdu));
-    if (pdu) {
-        XModbusPdu_init_with_code_and_data(pdu, code, data, dataSize);
-        Set_Class_MemoryFree(pdu, XFree_System);
-    }
-    return pdu;
-}
-
 void XModbusPdu_init(XModbusPdu* pdu) {
     if (!pdu) return;
     XClass_init((XClass*)pdu);
@@ -89,13 +80,6 @@ void XModbusPdu_init(XModbusPdu* pdu) {
 void XModbusPdu_init_with_code(XModbusPdu* pdu, XModbusPdu_FunctionCode code) {
     XModbusPdu_init(pdu);
     if (pdu) pdu->m_code = code;
-}
-
-void XModbusPdu_init_with_code_and_data(XModbusPdu* pdu, XModbusPdu_FunctionCode code, const uint8_t* data, size_t dataSize) {
-    XModbusPdu_init_with_code(pdu, code);
-    if (pdu && data && dataSize > 0) {
-        XByteArray_append_array_base(pdu->m_data, data, dataSize);
-    }
 }
 
 XModbusRequest* XModbusRequest_create(void)
@@ -115,13 +99,6 @@ XModbusRequest* XModbusRequest_create_with_code(XModbusPdu_FunctionCode code)
     return req;
 }
 
-XModbusRequest* XModbusRequest_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t size)
-{
-    XModbusRequest* req = XModbusRequest_create();
-    if (req) XModbusRequest_init_with_code_and_data(req, code, data, size);
-    return req;
-}
-
 void XModbusRequest_init(XModbusRequest* req)
 {
     if (!req) return;
@@ -133,14 +110,6 @@ void XModbusRequest_init_with_code(XModbusRequest* req, XModbusPdu_FunctionCode 
 {
     XModbusRequest_init(req);
     if (req) req->m_base.m_code = code;
-}
-
-void XModbusRequest_init_with_code_and_data(XModbusRequest* req, XModbusPdu_FunctionCode code, const uint8_t* data, size_t size)
-{
-    XModbusRequest_init_with_code(req, code);
-    if (req && data && size > 0) {
-        XByteArray_append_array_base(req->m_base.m_data, data, size);
-    }
 }
 
 XModbusResponse* XModbusResponse_create(void)
@@ -158,12 +127,6 @@ XModbusResponse* XModbusResponse_create_with_code(XModbusPdu_FunctionCode code) 
     return resp;
 }
 
-XModbusResponse* XModbusResponse_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t size) {
-    XModbusResponse* resp = XModbusResponse_create();
-    if (resp) XModbusResponse_init_with_code_and_data(resp, code, data, size);
-    return resp;
-}
-
 void XModbusResponse_init(XModbusResponse* resp) {
     if (!resp) return;
     XModbusPdu_init(&resp->m_base);
@@ -173,13 +136,6 @@ void XModbusResponse_init(XModbusResponse* resp) {
 void XModbusResponse_init_with_code(XModbusResponse* resp, XModbusPdu_FunctionCode code) {
     XModbusResponse_init(resp);
     if (resp) resp->m_base.m_code = code;
-}
-
-void XModbusResponse_init_with_code_and_data(XModbusResponse* resp, XModbusPdu_FunctionCode code, const uint8_t* data, size_t size) {
-    XModbusResponse_init_with_code(resp, code);
-    if (resp && data && size > 0) {
-        XByteArray_append_array_base(resp->m_base.m_data, data, size);
-    }
 }
 XModbusExceptionResponse* XModbusExceptionResponse_create(void) {
     XModbusExceptionResponse* exc = (XModbusExceptionResponse*)XMalloc_System(sizeof(XModbusExceptionResponse));
@@ -249,7 +205,7 @@ XModbusPdu_ExceptionCode XModbusPdu_exceptionCode(const XModbusPdu* pdu) {
     if (!pdu || !XModbusPdu_isException(pdu) || XByteArray_isEmpty_base(pdu->m_data)) {
         return XModbusPdu_ExtendedException;
     }
-    return (XModbusPdu_ExceptionCode)XByteArray_At_Base(pdu->m_data, 0);
+    return (XModbusPdu_ExceptionCode)XByteArray_at_base(pdu->m_data, 0);
 }
 
 int16_t XModbusPdu_size(const XModbusPdu* pdu) {

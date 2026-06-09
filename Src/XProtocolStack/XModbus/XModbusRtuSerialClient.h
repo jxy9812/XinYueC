@@ -68,11 +68,10 @@ typedef struct XModbusRtuSerialClient {
     XModbusReply* m_currentReply;   ///< 当前等待响应的Reply对象
     XTimerId m_timeoutTimer;        ///< 超时定时器ID
     XTimerId m_interFrameTimer;     ///< 帧间延迟定时器ID
-    //XByteArray* m_receiveBuffer;    ///< 接收缓冲区
     uint8_t m_currentServerAddress; ///< 当前请求的从站地址
     uint8_t m_retryCount;           ///< 当前重试次数
     bool m_waitingForTurnaround;    ///< 是否正在等待广播响应延迟
-    XByteArray* m_requestPdu;       ///< 请求数据（用于重试）
+    XByteArray* m_requestData;       ///< 请求数据（用于重试）
 } XModbusRtuSerialClient;
 
 /******************************************************************************************

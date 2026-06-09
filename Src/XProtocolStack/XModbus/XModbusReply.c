@@ -191,13 +191,12 @@ void* XModbusReply_finished_signal(XModbusReply* reply) {
 }
 
 void* XModbusReply_errorOccurred_signal(XModbusReply* reply, XModbusDevice_Error error) {
-    XEmitSignal(reply, XModbusReply_errorOccurred_signal,
-        XVariant_create_int((int)error), XVariant_delete_base,
+    XEmitSignal(reply, XModbusReply_errorOccurred_signal, XVarList_Create(XVar(XModbusDevice_Error, error)),NULL,
         NULL, XEVENT_PRIORITY_LOWEST);
 }
 
 void* XModbusReply_intermediateErrorOccurred_signal(XModbusReply* reply, XModbusDevice_IntermediateError error) {
     XEmitSignal(reply, XModbusReply_intermediateErrorOccurred_signal,
-        XVariant_create_int((int)error), XVariant_delete_base,
+        XVarList_Create(XVar(XModbusDevice_IntermediateError, error)), NULL,
         NULL, XEVENT_PRIORITY_LOWEST);
 }

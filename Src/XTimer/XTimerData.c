@@ -109,6 +109,6 @@ void XTimerData_out(XTimerData* timer)
 		return;
 	//++timer->number;
 	if (timer->m_timerCallback != NULL)
-		timer->m_timerCallback(timer->m_userData);
+		timer->m_timerCallback(timer->m_userData, timer);
 
 }

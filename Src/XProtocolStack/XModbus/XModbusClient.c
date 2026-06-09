@@ -73,7 +73,7 @@ void XModbusClient_init(XModbusClient* client) {
     XClassGetVtable(client) = XModbusClient_class_init();
 
     // 初始化成员变量
-    client->m_timeout = 1000; // 默认1秒
+    client->m_timeout = 200; // 默认200毫秒
     client->m_numberOfRetries = 3; // 默认3次
 }
 
@@ -108,8 +108,11 @@ static XModbusRequest* buildReadRequest(const XModbusDataUnit* unit) {
         (uint8_t)((quantity >> 8) & 0xFF),
         (uint8_t)(quantity & 0xFF)
     };
-
-    return XModbusRequest_create_with_code_and_data(code, data, 4);
+    XModbusRequest* req = XModbusRequest_create();
+    if (!req)return NULL;
+    XModbusPdu_setFunctionCode(req, code);
+    XModbusPdu_setData(req, data, 4);
+    return req;
 }
 
 static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
@@ -119,7 +122,9 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
     if (count == 0) return NULL;
 
     XModbusPdu_FunctionCode code;
-    XByteArray* payload = XByteArray_create();
+    XModbusRequest* req = XModbusRequest_create();
+    if (!req)return NULL;
+    XByteArray* payload = ((XModbusPdu*)req)->m_data;
 
     if (count == 1) {
         // Single Write
@@ -130,7 +135,7 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             code = XModbusPdu_WriteSingleRegister;
         }
         else {
-            XByteArray_delete_base(payload);
+            //XByteArray_delete_base(payload);
             return NULL;
         }
 
@@ -157,7 +162,7 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             code = XModbusPdu_WriteMultipleRegisters;
         }
         else {
-            XByteArray_delete_base(payload);
+            //XByteArray_delete_base(payload);
             return NULL;
         }
 
@@ -195,12 +200,7 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             }
         }
     }
-
-    XModbusRequest* req = XModbusRequest_create_with_code(code);
-    if (req) {
-        XModbusPdu_setData(&req->m_base, XContainerDataAddr(payload), XByteArray_size_base(payload));
-    }
-    XByteArray_delete_base(payload);
+    XModbusPdu_setFunctionCode(req, code);
     return req;
 }
 
@@ -209,7 +209,8 @@ static XModbusRequest* buildReadWriteRequest(const XModbusDataUnit* readUnit, co
         !XModbusDataUnit_isValid(readUnit) || !XModbusDataUnit_isValid(writeUnit)) {
         return NULL;
     }
-
+    XModbusRequest* req = XModbusRequest_create();
+    if (!req)return NULL;
     // 只支持保持寄存器
     if (readUnit->m_type != XModbusHoldingRegisters || writeUnit->m_type != XModbusHoldingRegisters) {
         return NULL;
@@ -227,9 +228,9 @@ static XModbusRequest* buildReadWriteRequest(const XModbusDataUnit* readUnit, co
     uint8_t writeByteCount = (uint8_t)(writeCount * 2);
 
     size_t dataSize = 9 + writeByteCount;
-    uint8_t* data = (uint8_t*)XMalloc_System(dataSize);
-    if (!data) return NULL;
-
+    XByteArray* pdu = ((XModbusPdu*)req)->m_data;
+    XByteArray_resize_base(pdu, dataSize);
+    uint8_t* data = XContainerDataAddr(pdu);
     // 读起始地址
     data[0] = (uint8_t)((readStartAddr >> 8) & 0xFF);
     data[1] = (uint8_t)(readStartAddr & 0xFF);
@@ -251,9 +252,7 @@ static XModbusRequest* buildReadWriteRequest(const XModbusDataUnit* readUnit, co
         data[9 + i * 2] = (uint8_t)((val >> 8) & 0xFF);
         data[9 + i * 2 + 1] = (uint8_t)(val & 0xFF);
     }
-
-    XModbusRequest* req = XModbusRequest_create_with_code_and_data(XModbusPdu_ReadWriteMultipleRegisters, data, dataSize);
-    XFree_System(data);
+    XModbusPdu_setFunctionCode(req, XModbusPdu_ReadWriteMultipleRegisters);
     return req;
 }
 

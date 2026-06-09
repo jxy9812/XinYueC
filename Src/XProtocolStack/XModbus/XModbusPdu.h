@@ -250,15 +250,6 @@ XModbusPdu* XModbusPdu_create_copy(const XModbusPdu* pdu);
 XModbusPdu* XModbusPdu_create_with_code(XModbusPdu_FunctionCode code);
 
 /**
- * @brief 创建带功能码和数据的XModbusPdu
- * @param code 功能码
- * @param data 数据指针
- * @param dataSize 数据大小
- * @return 成功返回XModbusPdu指针，失败返回NULL
- */
-XModbusPdu* XModbusPdu_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t dataSize);
-
-/**
  * @brief 初始化已分配的XModbusPdu实例
  * @param pdu XModbusPdu指针（非NULL）
  */
@@ -270,15 +261,6 @@ void XModbusPdu_init(XModbusPdu* pdu);
  * @param code 功能码
  */
 void XModbusPdu_init_with_code(XModbusPdu* pdu, XModbusPdu_FunctionCode code);
-
-/**
- * @brief 初始化已分配的XModbusPdu实例（带功能码和数据）
- * @param pdu XModbusPdu指针（非NULL）
- * @param code 功能码
- * @param data 数据指针
- * @param dataSize 数据大小
- */
-void XModbusPdu_init_with_code_and_data(XModbusPdu* pdu, XModbusPdu_FunctionCode code, const uint8_t* data, size_t dataSize);
 
 /******************************************************************************************
  * XModbusRequest 创建/初始化接口
@@ -298,15 +280,6 @@ XModbusRequest* XModbusRequest_create(void);
 XModbusRequest* XModbusRequest_create_with_code(XModbusPdu_FunctionCode code);
 
 /**
- * @brief 创建带功能码和数据的XModbusRequest
- * @param code 功能码
- * @param data 数据指针
- * @param size 数据大小
- * @return 成功返回XModbusRequest指针，失败返回NULL
- */
-XModbusRequest* XModbusRequest_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t size);
-
-/**
  * @brief 初始化已分配的XModbusRequest实例
  * @param req XModbusRequest指针（非NULL）
  */
@@ -318,15 +291,6 @@ void XModbusRequest_init(XModbusRequest* req);
  * @param code 功能码
  */
 void XModbusRequest_init_with_code(XModbusRequest* req, XModbusPdu_FunctionCode code);
-
-/**
- * @brief 初始化已分配的XModbusRequest实例（带功能码和数据）
- * @param req XModbusRequest指针（非NULL）
- * @param code 功能码
- * @param data 数据指针
- * @param size 数据大小
- */
-void XModbusRequest_init_with_code_and_data(XModbusRequest* req, XModbusPdu_FunctionCode code, const uint8_t* data, size_t size);
 
 /******************************************************************************************
  * XModbusResponse 创建/初始化接口
@@ -346,15 +310,6 @@ XModbusResponse* XModbusResponse_create(void);
 XModbusResponse* XModbusResponse_create_with_code(XModbusPdu_FunctionCode code);
 
 /**
- * @brief 创建带功能码和数据的XModbusResponse
- * @param code 功能码
- * @param data 数据指针
- * @param size 数据大小
- * @return 成功返回XModbusResponse指针，失败返回NULL
- */
-XModbusResponse* XModbusResponse_create_with_code_and_data(XModbusPdu_FunctionCode code, const uint8_t* data, size_t size);
-
-/**
  * @brief 初始化已分配的XModbusResponse实例
  * @param resp XModbusResponse指针（非NULL）
  */
@@ -367,14 +322,6 @@ void XModbusResponse_init(XModbusResponse* resp);
  */
 void XModbusResponse_init_with_code(XModbusResponse* resp, XModbusPdu_FunctionCode code);
 
-/**
- * @brief 初始化已分配的XModbusResponse实例（带功能码和数据）
- * @param resp XModbusResponse指针（非NULL）
- * @param code 功能码
- * @param data 数据指针
- * @param size 数据大小
- */
-void XModbusResponse_init_with_code_and_data(XModbusResponse* resp, XModbusPdu_FunctionCode code, const uint8_t* data, size_t size);
 
 /******************************************************************************************
  * XModbusExceptionResponse 创建/初始化接口

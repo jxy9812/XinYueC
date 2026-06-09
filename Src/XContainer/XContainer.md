@@ -2668,10 +2668,10 @@ void* XByteArray_at_base(const XByteArray* array, int64_t index)
 
 ---
 
-##### XByteArray_At_Base
+##### XByteArray_at_base
 
 ```c
-#define XByteArray_At_Base(array, index) XVector_At_Base(array, uint8_t, index)
+#define XByteArray_at_base(array, index) XVector_At_Base(array, uint8_t, index)
 ```
 
 获取指定位置的字节值。

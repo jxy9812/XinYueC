@@ -715,7 +715,7 @@ XJsonValue* XBsonValue_to_json(const XBsonValue* bson_val) {
         // 二进制数据转为十六进制字符串
         char* hex_str = (char*)XMalloc_System(XByteArray_size_base(bson_val->data.binary.data) * 2 + 1);
         for (size_t i = 0; i < XByteArray_size_base(bson_val->data.binary.data); i++) {
-            sprintf(hex_str + i * 2, "%02x", XByteArray_At_Base(bson_val->data.binary.data, i));
+            sprintf(hex_str + i * 2, "%02x", XByteArray_at_base(bson_val->data.binary.data, i));
         }
         XJsonObject_insert_keyUtf8_utf8(bin_obj, "$binaryData", hex_str);
         XFree_System(hex_str);
@@ -876,7 +876,7 @@ XBsonValue* XBsonValue_from_json(const XJsonValue* json_val)
             size_t len = XString_length_base(bin_str) / 2;
             XByteArray_resize_base(bson_val->data.binary.data, len);
             for (size_t i = 0; i < len; i++) {
-                sscanf(bin_utf8 + i * 2, "%02hhx", XByteArray_At_Base(bson_val->data.binary.data, i));
+                sscanf(bin_utf8 + i * 2, "%02hhx", XByteArray_at_base(bson_val->data.binary.data, i));
             }
         }
         else {

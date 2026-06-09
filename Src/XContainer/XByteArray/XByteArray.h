@@ -173,15 +173,7 @@ uint8_t* XByteArray_data(XByteArray* other);
 * @brief 复用XVector的接口，获取指定索引的元素指针
 * @return 成功返回元素指针，失败返回NULL（索引越界）
 */
-#define XByteArray_at_base							XVector_at_base
-
-/**
-* @brief 获取指定索引的元素值（宏封装）
-* @param array 目标XByteArray实例指针
-* @param index 元素索引
-* @return 返回uint8_t类型的元素值
-*/
-#define XByteArray_At_Base(array,index)				XVector_At_Base(array,index,uint8_t)
+#define XByteArray_at_base(array,index)						XVector_At_Base(array,index,uint8_t)
 
 /**
 * @brief 复用XVector的接口，获取头部第一个元素的指针
