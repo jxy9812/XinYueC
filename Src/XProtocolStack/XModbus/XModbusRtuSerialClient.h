@@ -66,11 +66,12 @@ typedef struct XModbusRtuSerialClient {
     int m_interFrameDelay;          ///< 帧间延迟（微秒），0表示自动计算
     int m_turnaroundDelay;          ///< 响应延迟（毫秒）
     XModbusReply* m_currentReply;   ///< 当前等待响应的Reply对象
-    XTimerId m_timeoutTimer;        ///< 超时定时器ID
+
     XTimerId m_interFrameTimer;     ///< 帧间延迟定时器ID
     uint8_t m_currentServerAddress; ///< 当前请求的从站地址
     uint8_t m_retryCount;           ///< 当前重试次数
     bool m_waitingForTurnaround;    ///< 是否正在等待广播响应延迟
+    XByteArray* m_receiveBuffer;
     XByteArray* m_requestData;       ///< 请求数据（用于重试）
 } XModbusRtuSerialClient;
 

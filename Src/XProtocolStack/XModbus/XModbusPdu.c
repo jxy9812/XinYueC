@@ -1,11 +1,13 @@
 ﻿#include "XModbusPdu.h"
 #include "XMemory.h"
 #include "XByteArray.h"
+#include "XAlgorithm.h"
 #include <string.h>
 
 // 虚函数重载
 static void VXModbusPdu_deinit(XModbusPdu* pdu);
-
+static void VXModbusPdu_copy(XModbusPdu* pdu, XModbusPdu* src);
+static void VXModbusPdu_move(XModbusPdu* pdu, XModbusPdu* src);
 XVtable* XModbusPdu_class_init(void) 
 {
     XVTABLE_CREAT_DEFAULT
@@ -18,7 +20,8 @@ XVtable* XModbusPdu_class_init(void)
     XVTABLE_INHERIT_XCLASS(XClass);
     // 重载析构函数
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusPdu_deinit);
-
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXModbusPdu_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXModbusPdu_move);
 #if SHOWCONTAINERSIZE
     printf("XModbusPdu size: %zu\n", sizeof(XModbusPdu));
 #endif
@@ -52,11 +55,15 @@ XModbusPdu* XModbusPdu_create_copy(const XModbusPdu* pdu)
 {
     if (!pdu) return NULL;
     XModbusPdu* newPdu = XModbusPdu_create();
-    if (!newPdu) return NULL;
-    newPdu->m_code = pdu->m_code;
-    if (pdu->m_data) {
-        XByteArray_copy_base(newPdu->m_data, pdu->m_data);
-    }
+    if (newPdu) XModbusPdu_copy_base(newPdu,pdu);
+    return newPdu;
+}
+
+XModbusPdu* XModbusPdu_create_move(XModbusPdu* pdu)
+{
+    if (!pdu) return NULL;
+    XModbusPdu* newPdu = XModbusPdu_create();
+    if (newPdu) XModbusPdu_move_base(newPdu, pdu);
     return newPdu;
 }
 
@@ -92,6 +99,20 @@ XModbusRequest* XModbusRequest_create(void)
     return req;
 }
 
+XModbusRequest* XModbusRequest_create_copy(const XModbusRequest* req)
+{
+    XModbusRequest* newReq = XModbusRequest_create();
+    if (newReq)XModbusRequest_copy_base(newReq,req);
+    return newReq;
+}
+
+XModbusRequest* XModbusRequest_create_move(XModbusRequest* req)
+{
+    XModbusRequest* newReq = XModbusRequest_create();
+    if (newReq)XModbusRequest_move_base(newReq, req);
+    return newReq;
+}
+
 XModbusRequest* XModbusRequest_create_with_code(XModbusPdu_FunctionCode code)
 {
     XModbusRequest* req = XModbusRequest_create();
@@ -121,6 +142,18 @@ XModbusResponse* XModbusResponse_create(void)
     }
     return resp;
 }
+XModbusResponse* XModbusResponse_create_copy(XModbusResponse* response)
+{
+    XModbusResponse* resp = XModbusResponse_create();
+    if (resp)XModbusResponse_copy_base(resp, response);
+    return resp;
+}
+XModbusResponse* XModbusResponse_create_move(XModbusResponse* response)
+{
+    XModbusResponse* resp = XModbusResponse_create();
+    if (resp)XModbusResponse_move_base(resp, response);
+    return resp;
+}
 XModbusResponse* XModbusResponse_create_with_code(XModbusPdu_FunctionCode code) {
     XModbusResponse* resp = XModbusResponse_create();
     if (resp) XModbusResponse_init_with_code(resp, code);
@@ -144,6 +177,20 @@ XModbusExceptionResponse* XModbusExceptionResponse_create(void) {
         Set_Class_MemoryFree(exc, XFree_System);
     }
     return exc;
+}
+
+XModbusExceptionResponse* XModbusExceptionResponse_create_copy(const XModbusExceptionResponse* res)
+{
+    XModbusExceptionResponse* newExc = XModbusExceptionResponse_create();
+    if (newExc)XModbusExceptionResponse_copy_base(newExc,res);
+    return newExc;
+}
+
+XModbusExceptionResponse* XModbusExceptionResponse_create_move(XModbusExceptionResponse* res)
+{
+    XModbusExceptionResponse* newExc = XModbusExceptionResponse_create();
+    if (newExc)XModbusExceptionResponse_move_base(newExc, res);
+    return newExc;
 }
 
 XModbusExceptionResponse* XModbusExceptionResponse_create_with_function_and_exception(
@@ -187,6 +234,21 @@ static void VXModbusPdu_deinit(XModbusPdu* pdu) {
         XByteArray_delete_base(pdu->m_data);
         pdu->m_data = NULL;
     }
+}
+
+void VXModbusPdu_copy(XModbusPdu* pdu, XModbusPdu* src)
+{
+    if (((XClass*)pdu)->m_vtable == NULL)
+        XModbusPdu_init(pdu);
+    pdu->m_code = src->m_code;
+    XByteArray_copy_base(pdu->m_data,src->m_data);
+}
+
+void VXModbusPdu_move(XModbusPdu * pdu, XModbusPdu * src)
+{
+    if (((XClass*)pdu)->m_vtable == NULL)
+        XModbusPdu_init(pdu);
+    XSwap(pdu,src,sizeof(XModbusPdu));
 }
 
 // --- 核心接口实现 ---

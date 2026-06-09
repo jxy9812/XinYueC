@@ -233,7 +233,7 @@ static void VXHrTimerGroup_tick(XHrTimerGroup* group) {
 
         // 执行用户回调
         if (data->m_timer_data.m_timerCallback) {
-            data->m_timer_data.m_timerCallback(data->m_timer_data.m_userData, data);
+            data->m_timer_data.m_timerCallback(data->m_timer_data.m_userData, &data->m_timer_data);
         }
 
         // --- 第三阶段：决定是释放还是重新调度 ---

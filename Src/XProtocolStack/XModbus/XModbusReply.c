@@ -2,6 +2,15 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XVariant.h"
+// --- Setter（公开，供设备层调用）---
+void XModbusReply_setResult(XModbusReply* reply, const XModbusDataUnit* unit);
+void XModbusReply_setResult_move(XModbusReply* reply, const XModbusDataUnit* unit);
+void XModbusReply_setResult_ref(XModbusReply* reply, const XModbusDataUnit* unit);
+void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* response);
+void XModbusReply_setRawResult_move(XModbusReply* reply, const XModbusResponse* response);
+void XModbusReply_setRawResult_ref(XModbusReply* reply, const XModbusResponse* response);
+void XModbusReply_setFinished(XModbusReply* reply, bool finished);
+void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const char* errorText);
 
 // 虚函数重载
 static void VXModbusReply_deinit(XModbusReply* reply);
@@ -118,14 +127,26 @@ XModbusDevice_Error XModbusReply_error(const XModbusReply* reply) {
 
 // --- Setters ---
 void XModbusReply_setResult(XModbusReply* reply, const XModbusDataUnit* unit) {
-    if (!reply||!unit) return;
-    XModbusReply_setResult_ref(reply, XModbusDataUnit_create_copy(unit));
+    if (!reply) return;
+    if (reply->m_result) {
+        XModbusDataUnit_copy_base(reply->m_result, unit);
+    }
+    else
+    {
+        reply->m_result = XModbusDataUnit_create_copy(unit);
+    }
 }
 
 void XModbusReply_setResult_move(XModbusReply* reply, const XModbusDataUnit* unit)
 {
-    if (!reply || !unit) return;
-    XModbusReply_setResult_ref(reply, XModbusDataUnit_create_move(unit));
+    if (!reply) return;
+    if (reply->m_result) {
+        XModbusDataUnit_move_base(reply->m_result, unit);
+    }
+    else
+    {
+        reply->m_result = XModbusDataUnit_create_move(unit);
+    }
 }
 
 void XModbusReply_setResult_ref(XModbusReply * reply, const XModbusDataUnit * unit)
@@ -142,12 +163,30 @@ void XModbusReply_setResult_ref(XModbusReply * reply, const XModbusDataUnit * un
 
 void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* response) {
     if (!reply) return;
+    if (reply->m_rawResult) 
+        XModbusResponse_copy_base(reply->m_rawResult, response);
+    else
+        reply->m_rawResult = (XModbusResponse*)XModbusResponse_create_copy((XModbusPdu*)response);
+}
+
+void XModbusReply_setRawResult_move(XModbusReply* reply, const XModbusResponse* response)
+{
+    if (!reply) return;
+    if (reply->m_rawResult)
+        XModbusResponse_move_base(reply->m_rawResult, response);
+    else
+        reply->m_rawResult = (XModbusResponse*)XModbusResponse_create_move((XModbusPdu*)response);
+}
+
+void XModbusReply_setRawResult_ref(XModbusReply * reply, const XModbusResponse * response)
+{
+    if (!reply) return;
     if (reply->m_rawResult) {
         XModbusPdu_delete_base((XModbusPdu*)reply->m_rawResult);
         reply->m_rawResult = NULL;
     }
     if (response) {
-        reply->m_rawResult = (XModbusResponse*)XModbusPdu_create_copy((XModbusPdu*)response);
+        reply->m_rawResult = response;
     }
 }
 

@@ -25,6 +25,7 @@ typedef struct XModbusClient {
     XModbusDevice m_base;  ///< 继承自XModbusDevice基类
     int m_timeout;         ///< 请求超时时间（毫秒）
     int m_numberOfRetries; ///< 请求重试次数
+    XTimerId m_timeoutTimer;        ///< 超时定时器ID
 } XModbusClient;
 
 

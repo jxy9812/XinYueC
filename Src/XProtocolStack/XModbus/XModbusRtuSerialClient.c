@@ -10,6 +10,18 @@
  ******************************************************************************************/
 extern bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 extern bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
+// --- Setter（公开，供设备层调用）---
+void XModbusReply_setResult(XModbusReply* reply, const XModbusDataUnit* unit);
+void XModbusReply_setResult_move(XModbusReply* reply, const XModbusDataUnit* unit);
+void XModbusReply_setResult_ref(XModbusReply* reply, const XModbusDataUnit* unit);
+void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* response);
+void XModbusReply_setRawResult_move(XModbusReply* reply, const XModbusResponse* response);
+void XModbusReply_setRawResult_ref(XModbusReply* reply, const XModbusResponse* response);
+void XModbusReply_setFinished(XModbusReply* reply, bool finished);
+void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const char* errorText);
+
+void XModbusDevice_setState(XModbusDevice* dev, XModbusDevice_State newState);
+void XModbusDevice_setError(XModbusDevice* dev, XModbusDevice_Error error, const char* errorText);
 
 // =============== 虚函数前置声明 ===============
 static bool VXModbusRtuSerialClient_open(XModbusDevice* device);
@@ -24,13 +36,50 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
 static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args);
 static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* receiveBuffer);
 // =============== 辅助函数 ===============
-static int calculateInterFrameDelay(int baudRate) {
+static inline void interFrameTimerStop(XModbusRtuSerialClient* client)
+{
+    if (client->m_interFrameTimer != XTIMER_INVALID_ID) {
+        //XPrintf("remove timerId:%d\n", client->m_interFrameTimer);
+        XObject_killTimer((XObject*)client, client->m_interFrameTimer);
+        client->m_interFrameTimer = XTIMER_INVALID_ID;
+    }
+}
+static inline void interFrameTimerStart(XModbusRtuSerialClient* client)
+{
+    interFrameTimerStop(client);
+    int interFrameDelayMs = (client->m_interFrameDelay + 999) / 1000;
+    if (interFrameDelayMs < 1) interFrameDelayMs = 1;
+    client->m_interFrameTimer = XObject_startTimer_ms((XObject*)client,
+        interFrameDelayMs, XTimerType_CoarseTimer);
+    //XPrintf("add timerId:%d\n", client->m_interFrameTimer);
+}
+static inline void timeoutFrameTimerStop(XModbusRtuSerialClient* client)
+{
+    if (((XModbusClient*)client)->m_timeoutTimer != XTIMER_INVALID_ID) {
+       /* XPrintf("remove timerId:%d\n", ((XModbusClient*)client)->m_timeout);*/
+        XObject_killTimer((XObject*)client, ((XModbusClient*)client)->m_timeoutTimer);
+        ((XModbusClient*)client)->m_timeoutTimer = XTIMER_INVALID_ID;
+    }
+}
+static inline void timeoutFrameTimerStart(XModbusRtuSerialClient* client)
+{
+    timeoutFrameTimerStop(client);
+    ((XModbusClient*)client)->m_timeoutTimer = XObject_startTimer_ms((XObject*)client,
+        XModbusClient_timeout(client), XTimerType_CoarseTimer);
+}
+static inline void turnaroundFrameTimerStart(XModbusRtuSerialClient* client)
+{
+    timeoutFrameTimerStop(client);
+    ((XModbusClient*)client)->m_timeoutTimer = XObject_startTimer_ms((XObject*)client,
+        client->m_turnaroundDelay, XTimerType_CoarseTimer);
+}
+static inline int calculateInterFrameDelay(int baudRate) {
     if (baudRate <= 0) return 1750;
     int delay = (int)(38500000 / baudRate);
     return delay < 1750 ? 1750 : delay;
 }
 
-static bool validateRtuFrame(const uint8_t* frame, size_t frameLen) {
+static inline bool validateRtuFrame(const uint8_t* frame, size_t frameLen) {
     if (!frame || frameLen < 4) return false;
 
     uint16_t calculatedCrc = XCrc_get16((uint8_t*)frame, frameLen - 2);
@@ -96,12 +145,12 @@ void XModbusRtuSerialClient_init(XModbusRtuSerialClient* client)
     client->m_interFrameDelay = 0;
     client->m_turnaroundDelay = 100;
     client->m_currentReply = NULL;
-    client->m_timeoutTimer = XTIMER_INVALID_ID;
     client->m_interFrameTimer = XTIMER_INVALID_ID;
     client->m_currentServerAddress = 0;
     client->m_retryCount = 0;
     client->m_waitingForTurnaround = false;
     client->m_requestData = NULL;
+    client->m_receiveBuffer = XByteArray_create();  // 创建接收缓冲区
 }
 
 // =============== 帧间延迟 ===============
@@ -241,7 +290,8 @@ static bool VXModbusRtuSerialClient_open(XModbusDevice* device)
 
     XModbusDevice_setState(device, XModbusDevice_ConnectedState);
     XModbusDevice_setError(device, XModbusDevice_NoError, NULL);
-
+    if(((XModbusRtuSerialClient*)device)->m_interFrameDelay==0)
+        ((XModbusRtuSerialClient*)device)->m_interFrameDelay = XModbusRtuSerialClient_interFrameDelay(client);
     return true;
 }
 
@@ -250,16 +300,9 @@ static void VXModbusRtuSerialClient_close(XModbusDevice* device)
     if (!device) return;
 
     XModbusRtuSerialClient* client = (XModbusRtuSerialClient*)device;
-    XSerialPort* serialPort = XModbusRtuSerialClient_serialPort(client);
-
-    if (client->m_timeoutTimer != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)client, client->m_timeoutTimer);
-        client->m_timeoutTimer = XTIMER_INVALID_ID;
-    }
-    if (client->m_interFrameTimer != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)client, client->m_interFrameTimer);
-        client->m_interFrameTimer = XTIMER_INVALID_ID;
-    }
+    
+    interFrameTimerStop(device);
+    timeoutFrameTimerStop(device);
 
     if (client->m_currentReply) {
         XModbusReply_setError(client->m_currentReply, XModbusDevice_ConnectionError, "Device closed");
@@ -274,7 +317,7 @@ static void VXModbusRtuSerialClient_close(XModbusDevice* device)
 
     client->m_retryCount = 0;
     client->m_waitingForTurnaround = false;
-
+    XSerialPort* serialPort = XModbusRtuSerialClient_serialPort(client);
     if (serialPort) {
         XSerialPort_close_base(serialPort);
     }
@@ -286,11 +329,7 @@ static void VXModbusRtuSerialClient_close(XModbusDevice* device)
 static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* receiveBuffer) {
     if (!client || !client->m_currentReply) return;
 
-    if (client->m_timeoutTimer != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)client, client->m_timeoutTimer);
-        client->m_timeoutTimer = XTIMER_INVALID_ID;
-    }
-
+   
     const uint8_t* data = XContainerDataAddr(receiveBuffer);
     size_t len = XByteArray_size_base(receiveBuffer);
 
@@ -368,7 +407,6 @@ cleanup:
     client->m_retryCount = 0;
     XModbusReply_setFinished(reply, true);
 }
-
 // =============== 槽函数实现 ===============
 static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args) {
     (void)args;
@@ -383,131 +421,158 @@ static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args
         if (data) XByteArray_delete_base(data);
         return;
     }
-    size_t bufLen = XByteArray_size_base(data);
-    if (bufLen >= 5) {
-        uint8_t fc = XByteArray_at_base(data, 1);
-        size_t expectedLen = 0;
 
-        // 异常响应固定5字节
-        if (fc & XMODBUS_PDU_EXCEPTION_BYTE) {
-            expectedLen = 5;
-        }
-        else {
-            switch (fc) {
-            case XModbusPdu_ReadCoils:
-            case XModbusPdu_ReadDiscreteInputs:
-            case XModbusPdu_ReadHoldingRegisters:
-            case XModbusPdu_ReadInputRegisters:
-            case XModbusPdu_ReadWriteMultipleRegisters:
-                // 读响应：地址(1) + 功能码(1) + 字节数(1) + 数据(N) + CRC(2)
-                if (bufLen >= 3) {
-                    uint8_t byteCount = XByteArray_at_base(data, 2);
-                    expectedLen = 3 + byteCount + 2;
-                }
-                break;
-            case XModbusPdu_WriteSingleCoil:
-            case XModbusPdu_WriteSingleRegister:
-                // 写单个响应：8字节
-                expectedLen = 8;
-                break;
-            case XModbusPdu_WriteMultipleCoils:
-            case XModbusPdu_WriteMultipleRegisters:
-                // 写多个响应：8字节
-                expectedLen = 8;
-                break;
-            default:
-                // 未知功能码，等待超时
-                break;
+    // 将数据追加到接收缓冲区
+    XByteArray_append_array_base(client->m_receiveBuffer,
+        XContainerDataAddr(data),
+        XByteArray_size_base(data));
+    XByteArray_delete_base(data);
+
+    // 启动/重启帧间延迟定时器
+    // 如果在帧间延迟时间内没有新数据，认为一帧接收完成
+    //interFrameTimerStop(client);
+    //int interFrameDelayUs = XModbusRtuSerialClient_interFrameDelay(client);
+    // 微秒转毫秒，至少1ms
+    interFrameTimerStart(client);
+
+}
+/**
+ * @brief 处理帧间延迟超时
+ * @param client RTU客户端
+ */
+static void handleInterFrameTimeout(XModbusRtuSerialClient* client) 
+{
+    interFrameTimerStop(client);
+    size_t bufLen = XByteArray_size_base(client->m_receiveBuffer);
+    if (bufLen < 5) return false;  // 最小帧长度：地址(1) + 功能码(1) + 数据(1) + CRC(2)
+
+    const uint8_t* data = XContainerDataAddr(client->m_receiveBuffer);
+    uint8_t fc = data[1];
+    size_t expectedLen = 0;
+
+    // 异常响应固定5字节
+    if (fc & XMODBUS_PDU_EXCEPTION_BYTE) {
+        expectedLen = 5;
+    }
+    else {
+        switch (fc) {
+        case XModbusPdu_ReadCoils:
+        case XModbusPdu_ReadDiscreteInputs:
+        case XModbusPdu_ReadHoldingRegisters:
+        case XModbusPdu_ReadInputRegisters:
+        case XModbusPdu_ReadWriteMultipleRegisters:
+            // 读响应：地址(1) + 功能码(1) + 字节数(1) + 数据(N) + CRC(2)
+            if (bufLen >= 3) {
+                uint8_t byteCount = data[2];
+                expectedLen = 3 + byteCount + 2;
             }
-        }
-
-        if (expectedLen > 0 && bufLen >= expectedLen) {
-            processReceivedFrame(client,data);
+            break;
+        case XModbusPdu_WriteSingleCoil:
+        case XModbusPdu_WriteSingleRegister:
+        case XModbusPdu_WriteMultipleCoils:
+        case XModbusPdu_WriteMultipleRegisters:
+            // 写响应：8字节
+            expectedLen = 8;
+            break;
+        default:
+            // 未知功能码，无法确定长度
+            break;
         }
     }
-    XByteArray_delete_base(data);
+
+    if (expectedLen > 0 && bufLen >= expectedLen) {
+        processReceivedFrame(client, client->m_receiveBuffer);
+        XByteArray_clear_base(client->m_receiveBuffer);
+        return true;
+    }
+
+    return false;
 }
 
+/**
+ * @brief 处理请求超时
+ * @param client RTU客户端
+ */
+static void handleRequestTimeout(XModbusRtuSerialClient* client) 
+{
+    timeoutFrameTimerStop(client);
+    if (!client->m_currentReply) return;
+
+    // 广播消息的 turnaround 延迟结束
+    if (client->m_waitingForTurnaround) {
+        client->m_waitingForTurnaround = false;
+        XModbusReply* reply = client->m_currentReply;
+        client->m_currentReply = NULL;
+        XModbusReply_setFinished(reply, true);
+        return;
+    }
+
+    // 尝试重试
+    int maxRetries = XModbusClient_numberOfRetries((XModbusClient*)client);
+    if (client->m_retryCount < maxRetries &&
+        client->m_requestData && !XByteArray_isEmpty_base(client->m_requestData)) {
+        client->m_retryCount++;
+
+        // 重新发送
+        int64_t sent = XIODevice_write_byteArray(
+            ((XModbusDevice*)client)->m_ioDevice,
+            client->m_requestData);
+
+        if (sent) {
+            // 清空接收缓冲区
+            if (client->m_receiveBuffer) {
+                XByteArray_clear_base(client->m_receiveBuffer);
+            }
+            timeoutFrameTimerStart(client);
+            return;
+        }
+    }
+
+    // 重试次数用尽或重试失败
+    XModbusReply_setError(client->m_currentReply, XModbusDevice_TimeoutError, "Request timeout");
+    XModbusReply* reply = client->m_currentReply;
+    client->m_currentReply = NULL;
+    client->m_retryCount = 0;
+    XModbusReply_setFinished(reply, true);
+}
 // =============== 定时器事件处理 ===============
 static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event) {
-    if (!obj || !event) goto end;
+    if (!obj || !event) goto parent_call;
+
     XEvent_accept(event);
     XModbusRtuSerialClient* client = (XModbusRtuSerialClient*)obj;
     XTimerId timerId = XEventTimer_timerId(event);
 
-    if (timerId == client->m_timeoutTimer)
-    {
-        client->m_timeoutTimer = XTIMER_INVALID_ID;
-
-        if (client->m_currentReply)
-        {
-            // 广播消息的 turnaround 延迟结束
-            if (client->m_waitingForTurnaround)
-            {
-                client->m_waitingForTurnaround = false;
-                XModbusReply* reply = client->m_currentReply;
-                client->m_currentReply = NULL;
-                XModbusReply_setFinished(reply, true);
-                XEvent_accept(event);
-                return;
-            }
-
-            // 尝试重试
-            int maxRetries = XModbusClient_numberOfRetries((XModbusClient*)client);
-            if (client->m_retryCount < maxRetries &&  client->m_requestData||!XByteArray_isEmpty_base(client->m_requestData)) {
-                client->m_retryCount++;
-
-                // 重新发送
-                int64_t sent = XIODevice_write_byteArray(((XModbusDevice*)client)->m_ioDevice, client->m_requestData);
-                if (sent) {
-                    int timeout = XModbusClient_timeout((XModbusClient*)client);
-                    client->m_timeoutTimer = XObject_startTimer_ms(obj, timeout, XTimerType_CoarseTimer);
-                    XEvent_accept(event);
-                    return;
-                }
-            }
-
-            // 重试次数用尽或重试失败
-            XModbusReply_setError(client->m_currentReply, XModbusDevice_TimeoutError, "Request timeout");
-            XModbusReply* reply = client->m_currentReply;
-            client->m_currentReply = NULL;
-            client->m_retryCount = 0;
-            XModbusReply_setFinished(reply, true);
-        }
-        XEvent_accept(event);
-        return;
-    }
-
-    // 处理帧间延迟定时器
+    // 处理帧间延迟定时器 - 一帧接收完成
     if (timerId == client->m_interFrameTimer) {
-        client->m_interFrameTimer = XTIMER_INVALID_ID;
-        XEvent_accept(event);
+        handleInterFrameTimeout(client);
         return;
     }
-end:
-    
-    XClass_Parent(XModbusClient,EXObject_TimerEvent, void (*)(XObject* , XEventTimer*))(obj,event);
+
+    // 处理请求超时定时器
+    if (timerId == ((XModbusClient*)client)->m_timeoutTimer) {
+        handleRequestTimeout(client);
+        return;
+    }
+
+parent_call:
+    XClass_Parent(XModbusClient, EXObject_TimerEvent, void (*)(XObject*, XEventTimer*))(obj, event);
 }
 
 // =============== 析构函数 ===============
 static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client)
 {
     if (!client) return;
-
-    if (client->m_timeoutTimer != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)client, client->m_timeoutTimer);
-        client->m_timeoutTimer = XTIMER_INVALID_ID;
-    }
-    if (client->m_interFrameTimer != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)client, client->m_interFrameTimer);
-        client->m_interFrameTimer = XTIMER_INVALID_ID;
-    }
+    XModbusDevice_disconnectDevice(client);
 
     if (client->m_requestData) {
         XByteArray_delete_base(client->m_requestData);
         client->m_requestData = NULL;
     }
-
+    if (client->m_receiveBuffer) {
+        XByteArray_delete_base(client->m_receiveBuffer);
+        client->m_receiveBuffer = NULL;
+    }
     if (client->m_currentReply) {
         XModbusReply_setError(client->m_currentReply, XModbusDevice_TimeoutError, "Device closed");
         XModbusReply* reply = client->m_currentReply;
@@ -573,10 +638,12 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
     uint16_t crc = XCrc_get16(XContainerDataAddr(rtuClient->m_requestData), XContainerSize(rtuClient->m_requestData));
     XCrc_set16Data(&XByteArray_back_base(rtuClient->m_requestData) + 1, crc, XCRC_BYTE_ORDER_LITTLE_ENDIAN);
     XContainerSize(rtuClient->m_requestData) +=2;
-    XString* text= XByteArray_to16HexString(rtuClient->m_requestData);
-    XPrintf_string(text);
-    XPrintf("\n");
-    XString_delete_base(text);
+
+    //XString* text= XByteArray_to16HexString(rtuClient->m_requestData);
+    //XPrintf_string(text);
+    //XPrintf("\n");
+    //XString_delete_base(text);
+    
     // 发送RTU请求
     int64_t sent = XIODevice_write_byteArray(io, rtuClient->m_requestData);
     if (!sent) {
@@ -590,13 +657,13 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
     if (serverAddress == 0) {
         // 广播消息，等待 turnaround 延迟
         rtuClient->m_waitingForTurnaround = true;
-        rtuClient->m_timeoutTimer = XObject_startTimer_ms((XObject*)rtuClient,
-            rtuClient->m_turnaroundDelay, XTimerType_CoarseTimer);
+        turnaroundFrameTimerStart(client);
     }
     else {
         int timeout = XModbusClient_timeout(client);
-        rtuClient->m_timeoutTimer = XObject_startTimer_ms((XObject*)rtuClient,
-            timeout, XTimerType_CoarseTimer);
+        timeoutFrameTimerStart(client);
+        interFrameTimerStart(client);
+    
     }
 
     return reply;

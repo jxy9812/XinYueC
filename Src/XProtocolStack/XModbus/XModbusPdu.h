@@ -241,7 +241,7 @@ XModbusPdu* XModbusPdu_create(void);
  * @return 成功返回新XModbusPdu指针，失败返回NULL
  */
 XModbusPdu* XModbusPdu_create_copy(const XModbusPdu* pdu);
-
+XModbusPdu* XModbusPdu_create_move(XModbusPdu* pdu);
 /**
  * @brief 创建带功能码的XModbusPdu
  * @param code 功能码
@@ -271,7 +271,8 @@ void XModbusPdu_init_with_code(XModbusPdu* pdu, XModbusPdu_FunctionCode code);
   * @return 成功返回XModbusRequest指针，失败返回NULL
   */
 XModbusRequest* XModbusRequest_create(void);
-
+XModbusRequest* XModbusRequest_create_copy(const XModbusRequest* req);
+XModbusRequest* XModbusRequest_create_move(XModbusRequest* req);
 /**
  * @brief 创建带功能码的XModbusRequest
  * @param code 功能码
@@ -301,7 +302,8 @@ void XModbusRequest_init_with_code(XModbusRequest* req, XModbusPdu_FunctionCode 
   * @return 成功返回XModbusResponse指针，失败返回NULL
   */
 XModbusResponse* XModbusResponse_create(void);
-
+XModbusResponse* XModbusResponse_create_copy(XModbusResponse* response);
+XModbusResponse* XModbusResponse_create_move(XModbusResponse* response);
 /**
  * @brief 创建带功能码的XModbusResponse
  * @param code 功能码
@@ -332,7 +334,8 @@ void XModbusResponse_init_with_code(XModbusResponse* resp, XModbusPdu_FunctionCo
   * @return 成功返回XModbusExceptionResponse指针，失败返回NULL
   */
 XModbusExceptionResponse* XModbusExceptionResponse_create(void);
-
+XModbusExceptionResponse* XModbusExceptionResponse_create_copy(const XModbusExceptionResponse* res);
+XModbusExceptionResponse* XModbusExceptionResponse_create_move(XModbusExceptionResponse* res);
 /**
  * @brief 创建带功能码和异常码的XModbusExceptionResponse
  * @param functionCode 功能码
