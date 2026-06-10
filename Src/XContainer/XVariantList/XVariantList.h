@@ -69,32 +69,32 @@ void XVariantList_init(XVariantList* list);
 * @brief 向前端插入元素（拷贝语义，基础版本）
 * @note 基于XVector的接口，拷贝XVariant元素到列表前端
 */
-#define XVariantList_push_front_base		XVector_push_front_base
+#define XVariantList_push_front_base		XVector_push_front_1_base
 /**
 * @brief 向前端插入元素（移动语义，基础版本）
 * @note 基于XVector的接口，转移XVariant元素所有权到列表前端
 */
-#define XVariantList_push_front_move_base XVector_push_front_move_base
+#define XVariantList_push_front_move_base XVector_push_front_move_1_base
 /**
 * @brief 向后端插入元素（拷贝语义，基础版本）
 * @note 基于XVector的接口，拷贝XVariant元素到列表后端
 */
-#define XVariantList_push_back_base		XVector_push_back_base
+#define XVariantList_push_back_base		XVector_push_back_1_base
 /**
 * @brief 向后端插入元素（移动语义，基础版本）
 * @note 基于XVector的接口，转移XVariant元素所有权到列表后端
 */
-#define XVariantList_push_back_move_base XVector_push_back_move_base
+#define XVariantList_push_back_move_base XVector_push_back_move_1_base
 /**
 * @brief 在指定位置插入元素（拷贝语义）
 * @note 基于XVector的接口，拷贝XVariant元素到指定索引位置
 */
-#define XVariantList_insert				XVector_insert
+#define XVariantList_insert				XVector_insert_2
 /**
 * @brief 在指定位置插入元素（移动语义）
 * @note 基于XVector的接口，转移XVariant元素所有权到指定索引位置
 */
-#define XVariantList_insert_move		XVector_insert_move
+#define XVariantList_insert_move		XVector_insert_move_2
 // ------------------------------ 访问操作 ------------------------------
 /**
 * @brief 获取指定索引的元素（基础版本）

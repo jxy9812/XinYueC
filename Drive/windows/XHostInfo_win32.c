@@ -95,7 +95,7 @@ bool XHostInfo_platform_lookupName(const XString* name, XVector* addresses,
             XHostAddress_setScopeId(&addr, addr6->sin6_scope_id);
         }
         
-        XVector_push_back_base(addresses, &addr);
+        XVector_push_back_1_base(addresses, &addr);
         ptr = ptr->ai_next;
     }
     

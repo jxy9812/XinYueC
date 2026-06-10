@@ -195,7 +195,7 @@ bool XModbusDataUnit_setValues(XModbusDataUnit* unit, XVector* values)
 		unit->m_vector = XVector_create_copy(values);
 	} else {
 		XVector_clear_base(unit->m_vector);
-		XVector_append_array_base(unit->m_vector, XContainerSharedDataPtr(values), XContainerSize(values));
+		XVector_push_back_2(unit->m_vector, XContainerSharedDataPtr(values), XContainerSize(values));
 	}
 	unit->m_valueCount = XContainerSize(values);
 	return true;

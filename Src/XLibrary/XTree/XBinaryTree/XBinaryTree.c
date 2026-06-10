@@ -42,7 +42,7 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XTreeNode* this_ro
 			XStack_push_base(stack, &LChild);
 		if (RChild != NULL)
 			XStack_push_base(stack, &RChild);
-		XVector_push_back_base(vector, &currentNode);
+		XVector_push_back_1_base(vector, &currentNode);
 	}
 	XStack_delete_base(stack);
 	return vector;
@@ -71,7 +71,7 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XTreeNode* this_roo
 		else
 		{
 			struct XTreeNode* XListDNode = *(struct XTreeNode**)XStack_top_base(stack);
-			XVector_push_back_base(vector, &XListDNode);
+			XVector_push_back_1_base(vector, &XListDNode);
 			currentNode = XBTreeNode_GetRChild(XListDNode);
 			XStack_pop_base(stack);
 		}

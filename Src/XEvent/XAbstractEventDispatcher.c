@@ -242,7 +242,7 @@ static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispa
     XVector* notifiers = XMapBase_value_base(sockets, &socket);
     if (notifiers && XVector_indexOf(notifiers, &notifier, 0) == -1)
     {
-        XVector_append_base(notifiers, &notifier);
+        XVector_append_1(notifiers, &notifier);
     }
 }
 
@@ -368,7 +368,7 @@ static bool VXAbstractEventDispatcher_unregisterTimer(XAbstractEventDispatcher* 
     //将id放回列表
     //XMutex_lock(GetXMutex(dispatcher));
     Global_Lock;
-    XVector_push_back_base(global_timerIds, &timerId);
+    XVector_push_back_1_base(global_timerIds, &timerId);
     Global_UnLock;
 
     XHashMap_remove_base(d->timers, &timerId);
@@ -399,7 +399,7 @@ static bool VXAbstractEventDispatcher_unregisterTimers(XAbstractEventDispatcher*
             }
             //将id放回列表
             Global_Lock;
-            XVector_push_back_base(global_timerIds, &timerInfo->timerId);
+            XVector_push_back_1_base(global_timerIds, &timerInfo->timerId);
             Global_UnLock;
             XHashMap_erase_base(d->timers, &it, &it);
             found = true;
@@ -429,7 +429,7 @@ static XVector* VXAbstractEventDispatcher_timersForObject(const XAbstractEventDi
                 .timerId = timerInfo->timerId,
                 .timerType = timerInfo->timerType
             };
-            XVector_push_back_base(result, &info);
+            XVector_push_back_1_base(result, &info);
         }
         XHashMap_iterator_add(d->timers, &it);
     }

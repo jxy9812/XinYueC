@@ -47,7 +47,7 @@ XVtable* XVector_class_init()
     void* table[] = {
         VXVector_resize,
         VXVector_push_front, VXVector_push_back,
-        VXVector_insert_array, VXVector_append_array,
+        VXVector_insert_array, /*VXVector_append_array,*/
         VXVector_pop_front, VXVector_pop_back, VXVector_erase, VXVector_remove,
         VXVector_rcopy,
         VXVector_at, VXVector_front, VXVector_back, VXVector_find,
@@ -360,8 +360,9 @@ bool VXVector_insert_array(XVector* this_vector, int64_t index, const void* begi
 
     // 尾部追加优化
     if (current_size == 0 || index == (int64_t)current_size)
-        return XClassGetVirtualFunc(this_vector, EXVector_append_Array,
-            bool (*)(XVector*, void*, size_t, XCDataCreatMethod))(this_vector, begin, n, dataCreatMethod);
+        return VXVector_append_array(this_vector, begin, n, dataCreatMethod);
+        //return XClassGetVirtualFunc(this_vector, EXVector_append_Array,
+           // bool (*)(XVector*, void*, size_t, XCDataCreatMethod))(this_vector, begin, n, dataCreatMethod);
 
     void* ptr = VXVector_at(this_vector, index);
     if (ptr >= VXVector_front(this_vector) && ptr <= VXVector_back(this_vector))
@@ -740,7 +741,7 @@ bool XVector_resize_base(XVector* this_vector, size_t size)
     return XClassGetVirtualFunc(this_vector, EXVector_Resize, bool (*)(XVector*, size_t))(this_vector, size);
 }
 
-bool XVector_push_front_base(XVector* this_vector, void* pvValue)
+bool XVector_push_front_1_base(XVector* this_vector, void* pvValue)
 {
     if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
         return false;
@@ -748,7 +749,21 @@ bool XVector_push_front_base(XVector* this_vector, void* pvValue)
         bool (*)(XVector*, void*, XCDataCreatMethod))(this_vector, pvValue, XContainerDataCopyMethod(this_vector));
 }
 
-bool XVector_push_front_move_base(XVector* this_vector, void* pvValue)
+bool XVector_push_front_2(XVector* this_vector, const void* begin, size_t n)
+{
+    if (!this_vector || !begin || n==0)
+        return false;
+    return XVector_insert_1_base(this_vector, 0, begin, n);
+}
+
+bool XVector_push_front_3(XVector* this_vector,const XVector* pvValue)
+{
+    if(!this_vector||!pvValue|| XContainerTypeSize(this_vector)!= XContainerTypeSize(pvValue))
+        return false;
+    return XVector_push_front_2(this_vector, XVector_front_base(pvValue), XContainerSize(pvValue));
+}
+
+bool XVector_push_front_move_1_base(XVector* this_vector, void* pvValue)
 {
     if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
         return false;
@@ -756,7 +771,26 @@ bool XVector_push_front_move_base(XVector* this_vector, void* pvValue)
         bool (*)(XVector*, void*, XCDataCreatMethod))(this_vector, pvValue, XContainerDataMoveMethod(this_vector));
 }
 
-bool XVector_push_back_base(XVector* this_vector, void* pvValue)
+bool XVector_push_front_move_2(XVector* this_vector, void* begin, size_t n)
+{
+    if (!this_vector || !begin || n == 0)
+        return false;
+    return XVector_insert_move_1_base(this_vector, 0, begin, n);
+}
+
+bool XVector_push_front_move_3(XVector* this_vector, XVector* pvValue)
+{
+    if (!this_vector || !pvValue || XContainerTypeSize(this_vector) != XContainerTypeSize(pvValue))
+        return false;
+    if (XVector_insert_move_1_base(this_vector, 0, XVector_front_base(pvValue), XContainerSize(pvValue)))
+    {
+        XContainerSize(pvValue) = 0;
+        return true;
+    }
+    return false;
+}
+
+bool XVector_push_back_1_base(XVector* this_vector, void* pvValue)
 {
     if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
         return false;
@@ -764,7 +798,21 @@ bool XVector_push_back_base(XVector* this_vector, void* pvValue)
         bool (*)(XVector*, void*, XCDataCreatMethod))(this_vector, pvValue, XContainerDataCopyMethod(this_vector));
 }
 
-bool XVector_push_back_move_base(XVector* this_vector, void* pvValue)
+bool XVector_push_back_2(XVector* this_vector, const void* begin, size_t n)
+{
+    if (!this_vector || !begin || n == 0)
+        return false;
+    return XVector_insert_1_base(this_vector, XContainerSize(this_vector), begin, n);
+}
+
+bool XVector_push_back_3(XVector* this_vector, const XVector* pvValue)
+{
+    if (!this_vector || !pvValue || XContainerTypeSize(this_vector) != XContainerTypeSize(pvValue))
+        return false;
+    return XVector_insert_1_base(this_vector, XContainerSize(this_vector), XVector_front_base(pvValue), XContainerSize(pvValue));
+}
+
+bool XVector_push_back_move_1_base(XVector* this_vector, void* pvValue)
 {
     if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
         return false;
@@ -772,21 +820,57 @@ bool XVector_push_back_move_base(XVector* this_vector, void* pvValue)
         bool (*)(XVector*, void*, XCDataCreatMethod))(this_vector, pvValue, XContainerDataMoveMethod(this_vector));
 }
 
-bool XVector_insert(XVector* this_vector, int64_t index, const void* pvValue)
+bool XVector_push_back_move_2(XVector* this_vector, void* begin, size_t n)
+{
+    if (!this_vector || !begin || n == 0)
+        return false;
+    return XVector_insert_move_1_base(this_vector, XContainerSize(this_vector), begin, n);
+}
+
+bool XVector_push_back_move_3(XVector* this_vector, XVector* pvValue)
+{
+    if (!this_vector || !pvValue || XContainerTypeSize(this_vector) != XContainerTypeSize(pvValue))
+        return false;
+    if (XVector_insert_move_1_base(this_vector, XContainerSize(this_vector), XVector_front_base(pvValue), XContainerSize(pvValue)))
+    {
+        XContainerSize(pvValue)=0;
+        return true;
+    }
+    return false;
+}
+
+bool XVector_insert_2(XVector* this_vector, int64_t index, const void* pvValue)
 {
     if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
         return false;
-    return XVector_insert_array_base(this_vector, index, pvValue, 1);
+    return XVector_insert_1_base(this_vector, index, pvValue, 1);
 }
 
-bool XVector_insert_move(XVector* this_vector, int64_t index, const void* pvValue)
+bool XVector_insert_3(XVector* this_vector, int64_t index, const XVector* pvValue)
+{
+    if (!this_vector || !pvValue)return false;
+    return XVector_insert_1_base(this_vector, index, XVector_front_base(pvValue),XContainerSize(pvValue));
+}
+
+bool XVector_insert_move_2(XVector* this_vector, int64_t index, const void* pvValue)
 {
     if (ISNULL(this_vector, "") || ISNULL(XClassGetVtable(this_vector), ""))
         return false;
-    return XVector_insert_array_move_base(this_vector, index, pvValue, 1);
+    return XVector_insert_move_1_base(this_vector, index, pvValue, 1);
 }
 
-bool XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n)
+bool XVector_insert_move_3(XVector* this_vector, int64_t index, XVector* pvValue)
+{
+    if(!this_vector||!pvValue)return false;
+    if (XVector_insert_move_1_base(this_vector, index, XVector_front_base(pvValue), XContainerSize(pvValue)))
+    {
+        XContainerSize(pvValue)=0;
+        return true;
+    }
+    return false;
+}
+
+bool XVector_insert_1_base(XVector* this_vector, int64_t index, const void* begin, size_t n)
 {
     if (ISNULL(this_vector, "") || ISNULL(begin, "") || ISNULL(n, "") || ISNULL(XClassGetVtable(this_vector), ""))
         return false;
@@ -794,28 +878,12 @@ bool XVector_insert_array_base(XVector* this_vector, int64_t index, const void* 
         bool (*)(XVector*, int64_t, void*, size_t, XCDataCreatMethod))(this_vector, index, begin, n, XContainerDataCopyMethod(this_vector));
 }
 
-bool XVector_insert_array_move_base(XVector* this_vector, int64_t index, const void* begin, size_t n)
+bool XVector_insert_move_1_base(XVector* this_vector, int64_t index, const void* begin, size_t n)
 {
     if (ISNULL(this_vector, "") || ISNULL(begin, "") || ISNULL(n, "") || ISNULL(XClassGetVtable(this_vector), ""))
         return false;
     return XClassGetVirtualFunc(this_vector, EXVector_Insert_Array,
         bool (*)(XVector*, int64_t, void*, size_t, XCDataCreatMethod))(this_vector, index, begin, n, XContainerDataMoveMethod(this_vector));
-}
-
-bool XVector_append_array_base(XVector* this_vector, const void* begin, size_t n)
-{
-    if (ISNULL(this_vector, "") || ISNULL(begin, "") || ISNULL(n, "") || ISNULL(XClassGetVtable(this_vector), ""))
-        return false;
-    return XClassGetVirtualFunc(this_vector, EXVector_append_Array,
-        bool (*)(XVector*, void*, size_t, XCDataCreatMethod))(this_vector, begin, n, XContainerDataCopyMethod(this_vector));
-}
-
-bool XVector_append_array_move_base(XVector* this_vector, const void* begin, size_t n)
-{
-    if (ISNULL(this_vector, "") || ISNULL(begin, "") || ISNULL(n, "") || ISNULL(XClassGetVtable(this_vector), ""))
-        return false;
-    return XClassGetVirtualFunc(this_vector, EXVector_append_Array,
-        bool (*)(XVector*, void*, size_t, XCDataCreatMethod))(this_vector, begin, n, XContainerDataMoveMethod(this_vector));
 }
 
 void XVector_pop_front_base(XVector* this_vector)
@@ -972,7 +1040,7 @@ XVector* XVector_mid(const XVector* this_vector, int64_t pos, int64_t length)
     for (size_t i = 0; i < actualLen; ++i)
     {
         const void* elem = srcData + (pos + i) * typeSize;
-        if (!XVector_push_back_base(result, elem))
+        if (!XVector_push_back_1_base(result, elem))
         {
             XVector_delete_base(result);
             return NULL;
@@ -993,7 +1061,7 @@ void XVector_sort_base(XVector* this_vector, XSortOrder order)
     XClassGetVirtualFunc(this_vector, EXVector_Sort, void (*)(XVector*, XSortOrder))(this_vector, order);
 }
 
-bool XVector_replace(XVector* this_vector, int64_t index, void* pvValue)
+bool XVector_replace_1(XVector* this_vector, int64_t index, void* pvValue)
 {
     if (this_vector == NULL || index < -1 || index >= XVector_count_base(this_vector) || pvValue == NULL)
         return false;
@@ -1011,7 +1079,15 @@ bool XVector_replace(XVector* this_vector, int64_t index, void* pvValue)
     return true;
 }
 
-bool XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue)
+bool XVector_replace_2(XVector* this_vector, int64_t index,const XVector* pvValue)
+{
+    if(!this_vector||!pvValue)
+        return false;
+    XVector_remove_base(this_vector, index,1);
+    return  XVector_insert_3(this_vector, index, pvValue);
+}
+
+bool XVector_replace_move_1(XVector* this_vector, int64_t index, void* pvValue)
 {
     if (this_vector == NULL || index < -1 || index >= XVector_count_base(this_vector) || pvValue == NULL)
         return false;
@@ -1027,6 +1103,14 @@ bool XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue)
     else
         memcpy(oldValue, pvValue, XContainerTypeSize(this_vector));
     return true;
+}
+
+bool XVector_replace_move_2(XVector* this_vector, int64_t index, XVector* pvValue)
+{
+    if (!this_vector || !pvValue)
+        return false;
+    XVector_remove_base(this_vector, index, 1);
+    return  XVector_insert_move_3(this_vector, index, pvValue);
 }
 
 bool XVector_format_text_core(XVector* vector, bool appendNull, const char* format, va_list args)

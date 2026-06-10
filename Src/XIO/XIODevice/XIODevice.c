@@ -164,12 +164,16 @@ int64_t XIODevice_read_1(XIODevice* self, char* data, int64_t maxlen)
 		return -1;
 	}
 }
-int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen)
+int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen, bool isAppend)
 {
 	if (!self || !buff|| maxlen <= 0) return 0;
-	XByteArray_resize_base(buff, maxlen);
-	int64_t n = XIODevice_read_1(self, XContainerDataAddr(buff), maxlen);
-	XContainerSize(buff) = n;
+	size_t count = XByteArray_size_base(buff);
+	if(isAppend)
+		XByteArray_resize_base(buff, maxlen+ count);
+	else
+		XByteArray_resize_base(buff, maxlen);
+	int64_t n = XIODevice_read_1(self, isAppend? &XByteArray_at_base(buff, count): XContainerDataAddr(buff), maxlen);
+	XContainerSize(buff) = isAppend ? (n + count) : n;
 	return n;
 }
 
@@ -177,7 +181,7 @@ XByteArray* XIODevice_read_3(XIODevice* self, int64_t maxlen)
 {
 	if (!self || maxlen <= 0) return NULL;
 	XByteArray* buff = XByteArray_create();
-	XIODevice_read_2(self, buff, maxlen);
+	XIODevice_read_2(self, buff, maxlen,false);
 	return buff;
 }
 int64_t XIODevice_readAll_1(XIODevice* self, char* buff, int64_t buffSize)
@@ -186,17 +190,17 @@ int64_t XIODevice_readAll_1(XIODevice* self, char* buff, int64_t buffSize)
 	int64_t len = XIODevice_bytesAvailable_base(self);
 	return XIODevice_read_1(self, buff, len>buffSize? buffSize:len);
 }
-int64_t XIODevice_readAll_2(XIODevice* self, XByteArray* buff)
+int64_t XIODevice_readAll_2(XIODevice* self, XByteArray* buff, bool isAppend)
 {
 	if (!self || !buff ) return 0;
-	return XIODevice_read_2(self, buff, XIODevice_bytesAvailable_base(self));
+	return XIODevice_read_2(self, buff, XIODevice_bytesAvailable_base(self), isAppend);
 }
 
 XByteArray* XIODevice_readAll_3(XIODevice* self)
 {
 	if (!self)return NULL;
 	XByteArray* result = XByteArray_create();
-	if (result)XIODevice_readAll_2(self,result);
+	if (result)XIODevice_readAll_2(self,result,false);
 	return result;
 }
 

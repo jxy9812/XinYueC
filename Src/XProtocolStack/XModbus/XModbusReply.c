@@ -219,7 +219,7 @@ XVector* XModbusReply_intermediateErrors(const XModbusReply* reply) {
 
 void XModbusReply_addIntermediateError(XModbusReply* reply, XModbusDevice_IntermediateError error) {
     if (!reply || !reply->m_intermediateErrors) return;
-    XVector_append_base(reply->m_intermediateErrors, &error);
+    XVector_append_1(reply->m_intermediateErrors, &error);
     // 发射信号
     XModbusReply_intermediateErrorOccurred_signal(reply, error);
 }

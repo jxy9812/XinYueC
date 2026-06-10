@@ -252,7 +252,7 @@ void XTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group, size_t slotsCount)
     }
 
     // 无锁添加时间轮（假设只在初始化时调用）
-    XVector_push_back_base(&group->m_timeWheel, &wheel);
+    XVector_push_back_1_base(&group->m_timeWheel, &wheel);
     ((XTimerGroupBase*)group)->m_max_time = calculate_max_time_range(group);
 }
 

@@ -73,7 +73,7 @@ void XModbusClient_init(XModbusClient* client) {
     XClassGetVtable(client) = XModbusClient_class_init();
 
     // 初始化成员变量
-    client->m_timeout = 200; // 默认200毫秒
+    client->m_timeout = 2000; // 默认200毫秒
     client->m_numberOfRetries = 3; // 默认3次
     client->m_timeoutTimer= XTIMER_INVALID_ID;
 }

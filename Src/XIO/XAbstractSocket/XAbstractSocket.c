@@ -51,8 +51,8 @@ static void VXAbstractSocket_close(XAbstractSocket* self);
 static int64_t VXAbstractSocket_readData(XAbstractSocket* self, char* data, int64_t maxlen);
 static int64_t VXAbstractSocket_writeData(XAbstractSocket* self, const char* data, int64_t len);
 static bool VXAbstractSocket_isSequential(const XAbstractSocket* self);
-static int64_t VXAbstractSocket_bytesAvailable(const XAbstractSocket* self);
-static int64_t VXAbstractSocket_bytesToWrite(const XAbstractSocket* self);
+//static int64_t XAbstractSocket_bytesAvailable_base(const XAbstractSocket* self);
+//static int64_t XAbstractSocket_bytesToWrite_base(const XAbstractSocket* self);
 static bool VXAbstractSocket_canReadLine(const XAbstractSocket* self);
 static bool VXAbstractSocket_waitForReadyRead(XAbstractSocket* self, int msecs);
 static bool VXAbstractSocket_waitForBytesWritten(XAbstractSocket* self, int msecs);
@@ -110,9 +110,9 @@ XVtable* XAbstractSocket_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadData, VXAbstractSocket_readData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData, VXAbstractSocket_writeData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_IsSequential, VXAbstractSocket_isSequential);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesAvailable, VXAbstractSocket_bytesAvailable);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesToWrite, VXAbstractSocket_bytesToWrite);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_CanReadLine, VXAbstractSocket_canReadLine);
+    //XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesAvailable, XAbstractSocket_bytesAvailable_base);
+    //XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesToWrite, XAbstractSocket_bytesToWrite_base);
+    //XVTABLE_OVERLOAD_DEFAULT(EXIODevice_CanReadLine, VXAbstractSocket_canReadLine);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForReadyRead, VXAbstractSocket_waitForReadyRead);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForBytesWritten, VXAbstractSocket_waitForBytesWritten);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_AtEnd, VXAbstractSocket_atEnd);
@@ -558,19 +558,6 @@ static bool VXAbstractSocket_isSequential(const XAbstractSocket* self)
     return true; // 所有套接字都是顺序设备
 }
 
-static int64_t VXAbstractSocket_bytesAvailable(const XAbstractSocket* self)
-{
-    // 通用实现：返回内部缓冲区可读字节数
-    if (!self || !self->base.m_d) return 0;
-    return XIODevice_bytesAvailable_base((XIODevice*)self);
-}
-
-static int64_t VXAbstractSocket_bytesToWrite(const XAbstractSocket* self)
-{
-    // 通用实现：返回内部缓冲区待写字节数
-    if (!self || !self->base.m_d) return 0;
-    return XIODevice_bytesToWrite_base((XIODevice*)self);
-}
 
 static bool VXAbstractSocket_canReadLine(const XAbstractSocket* self)
 {
@@ -583,10 +570,10 @@ static bool VXAbstractSocket_waitForReadyRead(XAbstractSocket* self, int msecs)
 {
     // 通用实现：事件循环等待
     if (!self) return false;
-    if (VXAbstractSocket_bytesAvailable(self) > 0) return true;
+    if (XAbstractSocket_bytesAvailable_base(self) > 0) return true;
     
     uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + msecs;
-    while (VXAbstractSocket_bytesAvailable(self) == 0) {
+    while (XAbstractSocket_bytesAvailable_base(self) == 0) {
         if (self->state != XAbstractSocket_ConnectedState) return false;
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) return false;
@@ -598,10 +585,10 @@ static bool VXAbstractSocket_waitForBytesWritten(XAbstractSocket* self, int msec
 {
     // 通用实现：事件循环等待
     if (!self) return false;
-    if (VXAbstractSocket_bytesToWrite(self) == 0) return true;
+    if (XAbstractSocket_bytesToWrite_base(self) == 0) return true;
     
     uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + msecs;
-    while (VXAbstractSocket_bytesToWrite(self) > 0) {
+    while (XAbstractSocket_bytesToWrite_base(self) > 0) {
         if (self->state != XAbstractSocket_ConnectedState) return false;
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) return false;
@@ -614,7 +601,7 @@ static bool VXAbstractSocket_atEnd(XAbstractSocket* self)
     // 通用实现：未连接或无数据可读
     if (!self) return true;
     if (self->state != XAbstractSocket_ConnectedState) return true;
-    return VXAbstractSocket_bytesAvailable(self) == 0;
+    return XAbstractSocket_bytesAvailable_base(self) == 0;
 }
 
 static int64_t VXAbstractSocket_pos(const XAbstractSocket* self)

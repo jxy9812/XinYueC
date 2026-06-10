@@ -180,7 +180,7 @@ void XIODevice_setCurrentWriteChannel(XIODevice* self, int channel);
  * @note 此函数会调用底层的 readData 虚函数
  */
 int64_t XIODevice_read_1(XIODevice* self, char* data, int64_t maxlen);
-int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen);
+int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen, bool isAppend);
 /**
  * @brief 从设备中读取最多 maxlen 个字节的数据，并返回一个新的 XByteArray 对象
  * @param self 指向 XIODevice 对象的指针
@@ -197,7 +197,7 @@ XByteArray* XIODevice_read_3(XIODevice* self, int64_t maxlen);
  * @note 返回的对象需要手动释放。此函数会循环调用 read 直到无数据可读
  */
 int64_t XIODevice_readAll_1(XIODevice* self, char* buff, int64_t buffSize);
-int64_t XIODevice_readAll_2(XIODevice* self, XByteArray* buff);
+int64_t XIODevice_readAll_2(XIODevice* self, XByteArray* buff,bool isAppend);
 XByteArray* XIODevice_readAll_3(XIODevice* self);
 
 /**

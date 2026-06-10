@@ -1943,10 +1943,10 @@ bool XVector_insert_array_move_base(XVector* vec, int64_t index, const void* beg
 
 ---
 
-##### XVector_append_array_base
+##### XVector_push_back_2
 
 ```c
-bool XVector_append_array_base(XVector* vec, const void* begin, size_t n)
+bool XVector_push_back_2(XVector* vec, const void* begin, size_t n)
 ```
 
 在尾部追加数组(拷贝语义)。

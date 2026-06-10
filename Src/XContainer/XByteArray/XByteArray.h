@@ -110,7 +110,7 @@ bool XByteArray_append_utf8(XByteArray* array, const char* utf8);
 * @brief 复用XVector的接口，追加另一个数组的所有数据
 * @details 将另一个字节数组的所有元素追加到当前数组尾部
 */
-#define XByteArray_append_array_base				XVector_append_array_base
+#define XByteArray_append_array_base				XVector_push_back_2
 
 /**
 * @brief 复用XVector的接口，追加单个元素
@@ -164,7 +164,7 @@ bool XByteArray_append_utf8(XByteArray* array, const char* utf8);
 /**
 * @brief 复用XVector的接口，在指定位置插入另一个数组的指定范围数据
 */
-#define XByteArray_insert_array_base				XVector_insert_array_base
+#define XByteArray_insert_array_base				XVector_insert_1_base
 
 
 //============================= 元素访问与查询 =============================

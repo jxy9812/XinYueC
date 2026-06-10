@@ -18,7 +18,6 @@ XCLASS_DEFINE_ENUM(XVector, Resize) = XCLASS_VTABLE_GET_SIZE(XContainer),
 XCLASS_DEFINE_ENUM(XVector, Push_Front),
 XCLASS_DEFINE_ENUM(XVector, Push_Back),
 XCLASS_DEFINE_ENUM(XVector, Insert_Array),
-XCLASS_DEFINE_ENUM(XVector, append_Array),
 XCLASS_DEFINE_ENUM(XVector, Pop_Front),
 XCLASS_DEFINE_ENUM(XVector, Pop_Back),
 XCLASS_DEFINE_ENUM(XVector, Erase),
@@ -98,8 +97,9 @@ bool XVector_resize_base(XVector* this_vector, size_t size);
  * @return 添加成功返回true，失败返回false
  * @note 若this_vector或pvValue为NULL，返回false；内部通过拷贝方式添加元素
  */
-bool XVector_push_front_base(XVector* this_vector, void* pvValue);
-
+bool XVector_push_front_1_base(XVector* this_vector, void* pvValue);
+bool XVector_push_front_2(XVector* this_vector, const void* begin, size_t n);
+bool XVector_push_front_3(XVector* this_vector,const XVector* pvValue);
 /**
  * @brief 宏定义：向XVector头部添加指定类型的元素（拷贝语义）
  * @param this_vector 目标XVector
@@ -107,7 +107,7 @@ bool XVector_push_front_base(XVector* this_vector, void* pvValue);
  * @param value 待添加的元素值
  * @note 内部通过创建临时变量拷贝值后调用XVector_push_front_base
  */
-#define XVector_Push_Front_Base(this_vector,type,value){type t=value;XVector_push_front_base(this_vector,&t);}
+#define XVector_Push_Front_Base(this_vector,type,value){type t=value;XVector_push_front_1_base(this_vector,&t);}
 
  /**
   * @brief 向XVector头部添加一个元素（移动语义）
@@ -116,8 +116,9 @@ bool XVector_push_front_base(XVector* this_vector, void* pvValue);
   * @return 添加成功返回true，失败返回false
   * @note 若this_vector或pvValue为NULL，返回false；内部通过移动方式添加元素，源数据可能失效
   */
-bool XVector_push_front_move_base(XVector* this_vector, void* pvValue);
-
+bool XVector_push_front_move_1_base(XVector* this_vector, void* pvValue);
+bool XVector_push_front_move_2(XVector* this_vector,void* begin, size_t n);
+bool XVector_push_front_move_3(XVector* this_vector,XVector* pvValue);
 /**
  * @brief 向XVector尾部添加一个元素（拷贝语义）
  * @param this_vector 目标XVector
@@ -125,8 +126,9 @@ bool XVector_push_front_move_base(XVector* this_vector, void* pvValue);
  * @return 添加成功返回true，失败返回false
  * @note 若this_vector或pvValue为NULL，返回false；内部通过拷贝方式添加元素
  */
-bool XVector_push_back_base(XVector* this_vector, void* pvValue);
-
+bool XVector_push_back_1_base(XVector* this_vector, void* pvValue);
+bool XVector_push_back_2(XVector* this_vector, const void* begin, size_t n);
+bool XVector_push_back_3(XVector* this_vector, const XVector* pvValue);
 /**
  * @brief 宏定义：向XVector尾部添加指定类型的元素（拷贝语义）
  * @param this_vector 目标XVector
@@ -134,7 +136,7 @@ bool XVector_push_back_base(XVector* this_vector, void* pvValue);
  * @param value 待添加的元素值
  * @note 内部通过创建临时变量拷贝值后调用XVector_push_back_base
  */
-#define XVector_Push_Back_Base(this_vector,type,value){type t=value;XVector_push_back_base(this_vector,&t);}
+#define XVector_Push_Back_Base(this_vector,type,value){type t=value;XVector_push_back_1_base(this_vector,&t);}
 
  /**
   * @brief 向XVector尾部添加一个元素（移动语义）
@@ -143,38 +145,9 @@ bool XVector_push_back_base(XVector* this_vector, void* pvValue);
   * @return 添加成功返回true，失败返回false
   * @note 若this_vector或pvValue为NULL，返回false；内部通过移动方式添加元素，源数据可能失效
   */
-bool XVector_push_back_move_base(XVector* this_vector, void* pvValue);
-
-/**
- * @brief 向XVector指定索引位置插入一个元素（拷贝语义）
- * @param this_vector 目标XVector
- * @param index 插入位置索引（0-based）
- * @param pvValue 待插入元素的指针
- * @return 插入成功返回true，失败返回false
- * @note 若index超出范围（<0或>=大小），可能插入到头部或尾部；内部通过拷贝方式插入
- */
-bool XVector_insert(XVector* this_vector, int64_t index, const void* pvValue);
-
-/**
- * @brief 宏定义：向XVector指定索引位置插入指定类型的元素（拷贝语义）
- * @param this_vector 目标XVector
- * @param index 插入位置索引（0-based）
- * @param type 元素类型
- * @param value 待插入的元素值
- * @note 内部通过创建临时变量拷贝值后调用XVector_insert
- */
-#define XVector_Insert(this_vector,index,type,value){type t=value;XVector_insert(this_vector,index,&t);}
-
- /**
-  * @brief 向XVector指定索引位置插入一个元素（移动语义）
-  * @param this_vector 目标XVector
-  * @param index 插入位置索引（0-based）
-  * @param pvValue 待插入元素的指针
-  * @return 插入成功返回true，失败返回false
-  * @note 若index超出范围（<0或>=大小），可能插入到头部或尾部；内部通过移动方式插入，源数据可能失效
-  */
-bool XVector_insert_move(XVector* this_vector, int64_t index, const void* pvValue);
-
+bool XVector_push_back_move_1_base(XVector* this_vector, void* pvValue);
+bool XVector_push_back_move_2(XVector* this_vector, void* begin, size_t n);
+bool XVector_push_back_move_3(XVector* this_vector,XVector* pvValue);
 /**
  * @brief 向XVector指定索引位置插入一个数组（拷贝语义）
  * @param this_vector 目标XVector
@@ -184,18 +157,48 @@ bool XVector_insert_move(XVector* this_vector, int64_t index, const void* pvValu
  * @return 插入成功返回true，失败返回false
  * @note 若index超出范围，可能插入到头部或尾部；n为0时插入无效
  */
-bool XVector_insert_array_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
-
+bool XVector_insert_1_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
 /**
- * @brief 向XVector指定索引位置插入一个数组（移动语义）
+ * @brief 向XVector指定索引位置插入一个元素（拷贝语义）
  * @param this_vector 目标XVector
  * @param index 插入位置索引（0-based）
- * @param begin 数组起始地址
- * @param n 数组元素数量
+ * @param pvValue 待插入元素的指针
  * @return 插入成功返回true，失败返回false
- * @note 若index超出范围，可能插入到头部或尾部；n为0时插入无效；源数组数据可能失效
+ * @note 若index超出范围（<0或>=大小），可能插入到头部或尾部；内部通过拷贝方式插入
  */
-bool XVector_insert_array_move_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
+bool XVector_insert_2(XVector* this_vector, int64_t index, const void* pvValue);
+bool XVector_insert_3(XVector* this_vector, int64_t index, const XVector* pvValue);
+
+/**
+ * @brief 宏定义：向XVector指定索引位置插入指定类型的元素（拷贝语义）
+ * @param this_vector 目标XVector
+ * @param index 插入位置索引（0-based）
+ * @param type 元素类型
+ * @param value 待插入的元素值
+ * @note 内部通过创建临时变量拷贝值后调用XVector_insert
+ */
+#define XVector_Insert(this_vector,index,type,value){type t=value;XVector_insert_2(this_vector,index,&t);}
+
+ /**
+  * @brief 向XVector指定索引位置插入一个数组（移动语义）
+  * @param this_vector 目标XVector
+  * @param index 插入位置索引（0-based）
+  * @param begin 数组起始地址
+  * @param n 数组元素数量
+  * @return 插入成功返回true，失败返回false
+  * @note 若index超出范围，可能插入到头部或尾部；n为0时插入无效；源数组数据可能失效
+  */
+bool XVector_insert_move_1_base(XVector* this_vector, int64_t index, const void* begin, size_t n);
+ /**
+  * @brief 向XVector指定索引位置插入一个元素（移动语义）
+  * @param this_vector 目标XVector
+  * @param index 插入位置索引（0-based）
+  * @param pvValue 待插入元素的指针
+  * @return 插入成功返回true，失败返回false
+  * @note 若index超出范围（<0或>=大小），可能插入到头部或尾部；内部通过移动方式插入，源数据可能失效
+  */
+bool XVector_insert_move_2(XVector* this_vector, int64_t index, const void* pvValue);
+bool XVector_insert_move_3(XVector* this_vector, int64_t index, XVector* pvValue);
 
 /**
  * @brief 向XVector尾部追加一个数组（拷贝语义）
@@ -205,7 +208,9 @@ bool XVector_insert_array_move_base(XVector* this_vector, int64_t index, const v
  * @return 追加成功返回true，失败返回false
  * @note n为0时追加无效；内部通过拷贝方式添加元素
  */
-bool XVector_append_array_base(XVector* this_vector, const void* begin, size_t n);
+#define XVector_append_1   XVector_push_back_1_base
+#define XVector_append_2   XVector_push_back_2
+#define XVector_append_3   XVector_push_back_3
 
 /**
  * @brief 向XVector尾部追加一个数组（移动语义）
@@ -215,7 +220,8 @@ bool XVector_append_array_base(XVector* this_vector, const void* begin, size_t n
  * @return 追加成功返回true，失败返回false
  * @note n为0时追加无效；内部通过移动方式添加元素，源数组数据可能失效
  */
-bool XVector_append_array_move_base(XVector* this_vector, const void* begin, size_t n);
+#define XVector_append_move_1   XVector_push_back_move_1_base
+#define XVector_append_move_2   XVector_push_back_move_2
 
 /**
  * @brief 删除XVector的第一个元素
@@ -389,8 +395,8 @@ void  XVector_sort_base(XVector* this_vector, XSortOrder order);
  * @return 替换成功返回true，失败返回false
  * @note 若index超出范围，返回false；内部通过拷贝方式替换
  */
-bool  XVector_replace(XVector* this_vector, int64_t index, void* pvValue);
-
+bool  XVector_replace_1(XVector* this_vector, int64_t index, void* pvValue);
+bool  XVector_replace_2(XVector* this_vector, int64_t index,const XVector* pvValue);
 /**
  * @brief 替换XVector中指定索引位置的元素（移动语义）
  * @param this_vector 目标XVector
@@ -399,8 +405,8 @@ bool  XVector_replace(XVector* this_vector, int64_t index, void* pvValue);
  * @return 替换成功返回true，失败返回false
  * @note 若index超出范围，返回false；内部通过移动方式替换，源数据可能失效
  */
-bool  XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue);
-
+bool  XVector_replace_move_1(XVector* this_vector, int64_t index, void* pvValue);
+bool  XVector_replace_move_2(XVector* this_vector, int64_t index, XVector* pvValue);
 #define XVector_copy_base							XContainer_copy_base	
 #define XVector_move_base							XContainer_move_base	
 #define XVector_deinit_base							XContainer_deinit_base	
@@ -413,10 +419,12 @@ bool  XVector_replace_move(XVector* this_vector, int64_t index, void* pvValue);
 #define XVector_typeSize_base						XContainer_typeSize_base
 #define XVector_count_base							XVector_size_base
 #define XVector_length_base							XVector_size_base
-#define XVector_append_base							XVector_push_back_base
-#define XVector_append_move_base					XVector_push_back_move_base
-#define XVector_prepend_base						XVector_push_front_base
-#define XVector_prepend_move_base					XVector_push_front_move_base
+#define XVector_prepend_1							XVector_push_front_1_base
+#define XVector_prepend_2							XVector_push_front_2
+#define XVector_prepend_3							XVector_push_front_3
+#define XVector_prepend_move_1						XVector_push_front_move_1_base
+#define XVector_prepend_move_2						XVector_push_front_move_2
+#define XVector_prepend_move_3						XVector_push_front_move_3
 #define XVector_removeAt_base(vector,index)			XVector_remove_base(vector,index,1)
 
 /**

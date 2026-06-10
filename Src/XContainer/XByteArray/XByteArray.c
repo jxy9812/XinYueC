@@ -61,22 +61,22 @@ void XByteArray_init(XByteArray* array, bool useCow)
 
 bool XByteArray_push_front_base(XByteArray* array, const uint8_t byte)
 {
-	return XVector_push_front_base(array,&byte);
+	return XVector_push_front_1_base(array,&byte);
 }
 
 bool XByteArray_push_back_base(XByteArray* array, const uint8_t byte)
 {
-	return XVector_push_back_base(array, &byte);
+	return XVector_push_back_1_base(array, &byte);
 }
 
 bool XByteArray_insert_base(XByteArray* array, int64_t index, const uint8_t byte)
 {
-	return XVector_insert(array,index,&byte);
+	return XVector_insert_2(array,index,&byte);
 }
 
 bool XByteArray_inserts_base(XByteArray* array, int64_t index, uint8_t byte, size_t n)
 {
-	return XVector_insert_array_base(array, index, &byte,n);
+	return XVector_insert_1_base(array, index, &byte,n);
 }
 
 bool XByteArray_append_utf8(XByteArray* array, const char* utf8)

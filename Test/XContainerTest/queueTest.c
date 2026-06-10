@@ -49,7 +49,7 @@ void XPriorityQueueTest()
 	XVector* v = XVector_Create(int);
 	for (size_t i = 0; i < 10; i++)
 	{
-		XVector_push_back_base(v, &i);
+		XVector_push_back_1_base(v, &i);
 	}
 	XDerangement(XContainerSharedDataPtr(v),XVector_size_base(v), sizeof(int));
 	

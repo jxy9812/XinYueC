@@ -350,7 +350,7 @@ static bool XThreadPool_startWorkerThread(XThreadPool* pool)
         return false;
     }
     // 将线程添加到线程组
-    if (!XVector_push_back_base(&pool->m_threadGroup, &thread))
+    if (!XVector_push_back_1_base(&pool->m_threadGroup, &thread))
     {
         XThread_deleteLater(thread);
         return false;

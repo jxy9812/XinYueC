@@ -110,22 +110,22 @@ void XJsonArray_init(XJsonArray* array);
 * @brief 基于XVector的尾部添加基础操作（深拷贝）
 * @details 调用XVector的尾部添加接口，深拷贝元素到数组末尾
 */
-#define XJsonArray_append_base						XVector_append_base			
+#define XJsonArray_append_base						XVector_append_1			
 /**
 * @brief 基于XVector的尾部添加基础操作（转移所有权）
 * @details 调用XVector的尾部添加接口，将元素所有权转移到数组末尾
 */
-#define XJsonArray_append_move_base					XVector_append_move_base
+#define XJsonArray_append_move_base					XVector_append_move_1
 /**
 * @brief 基于XVector的头部添加基础操作（深拷贝）
 * @details 调用XVector的头部添加接口，深拷贝元素到数组开头
 */
-#define XJsonArray_prepend_base						XVector_prepend_base	
+#define XJsonArray_prepend_base						XVector_prepend_1	
 /**
 * @brief 基于XVector的头部添加基础操作（转移所有权）
 * @details 调用XVector的头部添加接口，将元素所有权转移到数组开头
 */
-#define XJsonArray_prepend_move_base				XVector_prepend_move_base
+#define XJsonArray_prepend_move_base				XVector_prepend_move_1
 /**
 * @brief 基于XVector的插入操作（深拷贝）
 * @details 调用XVector的插入接口，在指定索引位置深拷贝插入元素
@@ -133,7 +133,7 @@ void XJsonArray_init(XJsonArray* array);
 * @param index 插入位置索引
 * @param value 待插入的XJsonValue元素（将被拷贝）
 */
-#define XJsonArray_insert                           XVector_insert
+#define XJsonArray_insert                           XVector_insert_2
 /**
 * @brief 基于XVector的插入操作（转移所有权）
 * @details 调用XVector的插入接口，在指定索引位置转移插入元素所有权
@@ -141,7 +141,7 @@ void XJsonArray_init(XJsonArray* array);
 * @param index 插入位置索引
 * @param value 待插入的XJsonValue元素（所有权将被转移）
 */
-#define XJsonArray_insert_move                      XVector_insert_move
+#define XJsonArray_insert_move                      XVector_insert_move_2
 /**
 * @brief 基于XVector的指定位置移除基础操作
 * @details 调用XVector的移除接口，移除指定索引位置的元素并释放其资源
@@ -156,7 +156,7 @@ void XJsonArray_init(XJsonArray* array);
 * @param index 待替换元素的索引
 * @param value 替换用的XJsonValue元素（将被拷贝）
 */
-#define XJsonArray_replace                          XVector_replace
+#define XJsonArray_replace                          XVector_replace_1
 /**
 * @brief 基于XVector的替换操作（转移所有权）
 * @details 调用XVector的替换接口，用新元素转移所有权替换指定索引位置的元素
@@ -164,7 +164,7 @@ void XJsonArray_init(XJsonArray* array);
 * @param index 待替换元素的索引
 * @param value 替换用的XJsonValue元素（所有权将被转移）
 */
-#define XJsonArray_replace_move                     XVector_replace_move 
+#define XJsonArray_replace_move                     XVector_replace_move_1 
 // 元素访问函数
 /**
 * @brief 获取指定索引位置的XJsonValue元素（可修改）

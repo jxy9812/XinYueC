@@ -132,6 +132,7 @@ void XModbusRtuSerialClient_init(XModbusRtuSerialClient* client)
     XClassGetVtable(client) = XModbusRtuSerialClient_class_init();
 
     XSerialPort* serialPort = XSerialPort_create();
+    //XPrintf("串口:%p\n", serialPort);
     if (serialPort) {
         ((XModbusDevice*)client)->m_ioDevice = (XIODevice*)serialPort;
 
@@ -410,23 +411,26 @@ cleanup:
 // =============== 槽函数实现 ===============
 static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args) {
     (void)args;
+    //XPrintf("收到数据\n");
     XModbusRtuSerialClient* client = (XModbusRtuSerialClient*)receiver;
     if (!client || !client->m_currentReply) return;
 
     XIODevice* io = ((XModbusDevice*)client)->m_ioDevice;
     if (!io) return;
 
-    XByteArray* data = XIODevice_readAll_3(io);
-    if (!data || XByteArray_size_base(data) == 0) {
-        if (data) XByteArray_delete_base(data);
-        return;
-    }
+    XIODevice_readAll_2(io, client->m_receiveBuffer, true);
 
-    // 将数据追加到接收缓冲区
-    XByteArray_append_array_base(client->m_receiveBuffer,
-        XContainerDataAddr(data),
-        XByteArray_size_base(data));
-    XByteArray_delete_base(data);
+    //XByteArray* data = XIODevice_readAll_3(io);
+    //if (!data || XByteArray_size_base(data) == 0) {
+    //    if (data) XByteArray_delete_base(data);
+    //    return;
+    //}
+
+    //// 将数据追加到接收缓冲区
+    //XByteArray_append_array_base(client->m_receiveBuffer,
+    //    XContainerDataAddr(data),
+    //    XByteArray_size_base(data));
+    //XByteArray_delete_base(data);
 
     // 启动/重启帧间延迟定时器
     // 如果在帧间延迟时间内没有新数据，认为一帧接收完成
@@ -551,6 +555,7 @@ static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event)
 
     // 处理请求超时定时器
     if (timerId == ((XModbusClient*)client)->m_timeoutTimer) {
+        //timeoutFrameTimerStop(client);
         handleRequestTimeout(client);
         return;
     }

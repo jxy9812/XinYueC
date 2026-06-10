@@ -87,7 +87,7 @@ void XRingBuffer_init(XRingBuffer* buffer, size_t chunkSize)
         return;
     }
 
-    XVector_push_back_base(buffer->m_chunks, &firstChunk);
+    XVector_push_back_1_base(buffer->m_chunks, &firstChunk);
 
     // --- 关键修正: 容量语义 ---
    // XRingBuffer是动态扩容的，没有固定总容量，故设为0。
@@ -362,7 +362,7 @@ bool XRingBuffer_addChunk(XRingBuffer* buffer, size_t chunkSize)
     if (newChunk == NULL)
         return false;
 
-    if (!XVector_push_back_base(buffer->m_chunks, &newChunk))
+    if (!XVector_push_back_1_base(buffer->m_chunks, &newChunk))
     {
         XRingChunk_delete_base(newChunk);
         return false;
@@ -537,7 +537,7 @@ static void VXClass_copy(XRingBuffer* object, const XRingBuffer* src)
             XRingChunk* newChunk = XRingChunk_create_copy(*srcChunkPtr);
             if (newChunk)
             {
-                XVector_push_back_base(object->m_chunks, &newChunk);
+                XVector_push_back_1_base(object->m_chunks, &newChunk);
             }
         }
     }

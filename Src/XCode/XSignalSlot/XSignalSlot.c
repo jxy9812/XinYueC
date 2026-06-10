@@ -130,13 +130,13 @@ XConnection* XSignalSlot_connect1(XSignalSlot* manager,size_t signal, XObject* r
 		}
 	}
 	//添加
-	XVector_push_back_base(signalObj->connList,&conn);
+	XVector_push_back_1_base(signalObj->connList,&conn);
 	XConnection* ptr=XVector_back_base(signalObj->connList);
 	if (receiver&&receiver!= manager->obj)
 	{//存在接收对象 添加绑定的信号
 		if(receiver->m_signalSlot==NULL)
 			receiver->m_signalSlot = XSignalSlot_create(receiver);
-		XVector_push_back_base(receiver->m_signalSlot->bindSignalList, &ptr);
+		XVector_push_back_1_base(receiver->m_signalSlot->bindSignalList, &ptr);
 		//触发回调
 		XObject_connectNotify_base(receiver,signal);
 	}

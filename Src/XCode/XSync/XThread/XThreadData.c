@@ -180,7 +180,7 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority)
     
     XMutex_lock(td->m_mutex);
     XVector* local = &td->m_postEventList;
-    XVector_push_back_base(local, &pe);
+    XVector_push_back_1_base(local, &pe);
     // 关键：稳定降序排序
     //XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
   
@@ -220,7 +220,7 @@ void XThreadData_push_front_list(const XVector* events)
         if (ePost->event)
         {
             XMutex_lock(td->m_mutex);
-            XVector_push_back_base(&td->m_postEventList, ePost);
+            XVector_push_back_1_base(&td->m_postEventList, ePost);
             XMutex_unlock(td->m_mutex);
         }
     }
@@ -233,14 +233,14 @@ void XThreadData_push_front_list(const XVector* events)
     //{
     //    XPostEvent* ePost = XVector_iterator_data(&it);
     //    if (ePost->event)
-    //        XVector_push_back_base(temp,ePost);
+    //        XVector_push_back_1_base(temp,ePost);
     //}
     //if(XVector_size_base(temp))
     //{
     //    XMutex_lock(td->m_mutex);
     //    XVector* local = &td->m_postEventList;
     //    //整个一起插入到头部
-    //    XVector_insert_array_base(local, 0, XContainerDataPtr(temp), XVector_size_base(temp));
+    //    XVector_insert_1_base(local, 0, XContainerDataPtr(temp), XVector_size_base(temp));
     //    // 关键：稳定降序排序
     //    XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
     //    XMutex_unlock(td->m_mutex);
@@ -275,7 +275,7 @@ XVector* XThreadData_takePostedEvents(void)
     XPostEvent pe = { 0 };
     while (XLockFreeQueue_receive_base(&td->m_tryPostEventList, &pe))
     {
-        XVector_push_back_base(local, &pe);
+        XVector_push_back_1_base(local, &pe);
     }
     // 关键：稳定降序排序
     if(local)

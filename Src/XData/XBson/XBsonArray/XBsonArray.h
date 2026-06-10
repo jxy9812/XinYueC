@@ -117,28 +117,28 @@ void XBsonArray_init(XBsonArray* array);
 * @param value 要添加的XBsonValue元素（将被拷贝）
 * @return 添加成功返回true，失败返回false
 */
-#define XBsonArray_append_base						XVector_append_base			
+#define XBsonArray_append_base						XVector_append_1			
 /**
 * @brief 在数组末尾添加元素（移动），映射到XVector_append_move_base
 * @param array XBsonArray实例指针
 * @param value 要添加的XBsonValue元素（所有权转移）
 * @return 添加成功返回true，失败返回false
 */
-#define XBsonArray_append_move_base					XVector_append_move_base
+#define XBsonArray_append_move_base					XVector_append_move_1
 /**
 * @brief 在数组开头添加元素（拷贝），映射到XVector_prepend_base
 * @param array XBsonArray实例指针
 * @param value 要添加的XBsonValue元素（将被拷贝）
 * @return 添加成功返回true，失败返回false
 */
-#define XBsonArray_prepend_base						XVector_prepend_base	
+#define XBsonArray_prepend_base						XVector_prepend_1	
 /**
 * @brief 在数组开头添加元素（移动），映射到XVector_prepend_move_base
 * @param array XBsonArray实例指针
 * @param value 要添加的XBsonValue元素（所有权转移）
 * @return 添加成功返回true，失败返回false
 */
-#define XBsonArray_prepend_move_base				XVector_prepend_move_base
+#define XBsonArray_prepend_move_base				XVector_prepend_move_1
 /**
 * @brief 在指定索引插入元素（拷贝），映射到XVector_insert
 * @param array XBsonArray实例指针
@@ -146,7 +146,7 @@ void XBsonArray_init(XBsonArray* array);
 * @param value 要插入的XBsonValue元素（将被拷贝）
 * @return 插入成功返回true，失败返回false
 */
-#define XBsonArray_insert                           XVector_insert
+#define XBsonArray_insert                           XVector_insert_2
 /**
 * @brief 在指定索引插入元素（移动），映射到XVector_insert_move
 * @param array XBsonArray实例指针
@@ -154,7 +154,7 @@ void XBsonArray_init(XBsonArray* array);
 * @param value 要插入的XBsonValue元素（所有权转移）
 * @return 插入成功返回true，失败返回false
 */
-#define XBsonArray_insert_move                      XVector_insert_move
+#define XBsonArray_insert_move                      XVector_insert_move_2
 /**
 * @brief 移除指定索引的元素，映射到XVector_removeAt_base
 * @param array XBsonArray实例指针
@@ -169,7 +169,7 @@ void XBsonArray_init(XBsonArray* array);
 * @param value 新的XBsonValue元素（将被拷贝）
 * @return 替换成功返回true，失败返回false
 */
-#define XBsonArray_replace                          XVector_replace
+#define XBsonArray_replace                          XVector_replace_1
 /**
 * @brief 替换指定索引的元素（移动），映射到XVector_replace_move
 * @param array XBsonArray实例指针
@@ -177,7 +177,7 @@ void XBsonArray_init(XBsonArray* array);
 * @param value 新的XBsonValue元素（所有权转移）
 * @return 替换成功返回true，失败返回false
 */
-#define XBsonArray_replace_move                     XVector_replace_move 
+#define XBsonArray_replace_move                     XVector_replace_move_1 
 // 转换函数
 /**
 * @brief 将XBsonArray转换为XJsonArray

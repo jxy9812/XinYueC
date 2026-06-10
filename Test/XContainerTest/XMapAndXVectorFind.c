@@ -27,7 +27,7 @@ void XMapAndXVectorFindTest()
 	int count = 1000000;//测试数据量
 	for (size_t i = 0; i < count; i++)
 	{
-		XVector_push_back_base(VArray,&i);
+		XVector_push_back_1_base(VArray,&i);
 	}
 	XPrintf("打乱前\n");
 	//XVector_iterator_for_each(VArray, ForPrint, NULL);

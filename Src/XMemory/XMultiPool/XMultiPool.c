@@ -391,7 +391,7 @@ bool XMultiPool_add_pool(XMultiPool* multi_pool, XFixedPool* sub_pool) {
         multi_pool->next_expected_size *= multi_pool->growth_multiplier;
 
         // 在倍数模式下，直接追加到末尾，保持 O(1) 插入
-        if (!XVector_push_back_base(multi_pool->sub_pools, &sub_pool)) {
+        if (!XVector_push_back_1_base(multi_pool->sub_pools, &sub_pool)) {
             return false;
         }
     }
@@ -401,8 +401,8 @@ bool XMultiPool_add_pool(XMultiPool* multi_pool, XFixedPool* sub_pool) {
         size_t insert_pos = find_insert_position(multi_pool->sub_pools, sub_pool->user_block_size);
 
         // 2. 在指定位置插入指针
-        // XVector_insert 的 index 参数是 int64_t 类型
-        return XVector_insert(multi_pool->sub_pools, (int64_t)insert_pos, &sub_pool);
+        // XVector_insert_2 的 index 参数是 int64_t 类型
+        return XVector_insert_2(multi_pool->sub_pools, (int64_t)insert_pos, &sub_pool);
     }
 }
 

@@ -86,7 +86,7 @@ XDFC_ErrorCode XDataFrameComm_sendText(XDataFrameComm* comm, bool appendNull, co
 	XByteArray* data =XByteArray_create();
 	if (data == NULL)
 		return XDFC_ENORES;
-	XVector_append_array_base(data, str, strlen(str) + (appendNull ? 1 : 0));
+	XVector_push_back_2(data, str, strlen(str) + (appendNull ? 1 : 0));
 	return XDataFrameComm_sendData_base(comm, data);
 }
 
@@ -124,7 +124,7 @@ XHandle XDataFrameComm_addPeriodicSendText(XDataFrameComm* comm, bool appendNull
 	XByteArray* data =XByteArray_create();
 	if (data == NULL)
 		return NULL;
-	XVector_append_array_base(data, str, strlen(str) + (appendNull ? 1 : 0));
+	XVector_push_back_2(data, str, strlen(str) + (appendNull ? 1 : 0));
 	return XDataFrameComm_addPeriodicSendData_base(comm,data,time);
 }
 
@@ -351,7 +351,7 @@ void XDataFrameComm_EvnetFrame_ReceivedCb(XEvent* event)
 	if (XVector_Back_Base(frame, char) != 0)
 	{
 		char c = 0;
-		XVector_push_back_base(frame, &c);
+		XVector_push_back_1_base(frame, &c);
 		XPrintf("\nString接收帧:%s\n", XContainerSharedDataPtr(frame));
 		--XContainerSize(frame);
 	}

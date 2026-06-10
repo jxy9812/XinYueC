@@ -218,7 +218,7 @@ void XHostInfo_setAddresses(XHostInfo* info, const XHostAddress* addrs, int coun
     
     // 添加新地址
     for (int i = 0; i < count; i++) {
-        XVector_push_back_base(info->addresses, &addrs[i]);
+        XVector_push_back_1_base(info->addresses, &addrs[i]);
     }
 }
 
@@ -419,7 +419,7 @@ int XHostInfo_lookupHost(const XString* name, XHostInfo_Callback callback, void*
     
     XMutex_lock(g_lookupMutex);
     req->id = g_nextLookupId++;
-    XVector_push_back_base(g_lookupRequests, &req);
+    XVector_push_back_1_base(g_lookupRequests, &req);
     XMutex_unlock(g_lookupMutex);
     
     // 使用全局线程池运行异步任务
@@ -453,7 +453,7 @@ int XHostInfo_lookupHost_toObject(const XString* name, XObject* receiver, size_t
 
     XMutex_lock(g_lookupMutex);
     req->id = g_nextLookupId++;
-    XVector_push_back_base(g_lookupRequests, &req);
+    XVector_push_back_1_base(g_lookupRequests, &req);
     XMutex_unlock(g_lookupMutex);
 
     // 使用全局线程池运行异步任务

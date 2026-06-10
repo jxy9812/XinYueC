@@ -156,7 +156,7 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
     
     // 将事件发送给关联的对象（completionKey 是 IOCP_bind 时传入的对象）
     XCoreApplication_postEvent((XObject*)completionKey, event, XEVENT_PRIORITY_NORMAL);
-    
+    //XPrintf("发送收到数据事件:%p\n", completionKey);
     // 套接字监听器（XSocketNotifier）
     XSocketDescriptor socket = ioCtx->socket;
     XVector* notifiers = XMapBase_value_base(d->m_dp.sockets, &socket);
@@ -404,18 +404,18 @@ static void VXEventDispatcherWin32_registerSocketNotifier(XAbstractEventDispatch
         if (XVector_isEmpty_base(notifiers))
         {
            if(CreateIoCompletionPort((HANDLE)XSocketDescriptor_toIntptr(socket), global_ioCompletionPort, notifiers, 0))
-               XVector_append_base(notifiers, &notifier);
+               XVector_append_1(notifiers, &notifier);
         }
         else
         {
-            XVector_append_base(notifiers, &notifier);
+            XVector_append_1(notifiers, &notifier);
         }
         
     }
 
     /*XEventDispatcherWin32_SocketInfo* sockInfo = XEventDispatcherWin32_findOrCreateSocketInfo(self, socket);
     if (sockInfo) {
-        XVector_push_back_base(sockInfo->notifiers, &notifier);
+        XVector_push_back_1_base(sockInfo->notifiers, &notifier);
         XEventDispatcherWin32_updateSocketEventMask(sockInfo);
     }*/
     //XMutex_unlock(GetXMutex(dispatcher));
@@ -737,7 +737,7 @@ static bool VXEventDispatcherWin32_unregisterTimer(XAbstractEventDispatcher* ed,
     //    KillTimer(self->internalHwnd, (UINT_PTR)timerInfo->winTimerId);
     //}
     ////将id放回列表
-    ////XVector_push_back_base(d->m_dp.m_timerIds,&timerId);
+    ////XVector_push_back_1_base(d->m_dp.m_timerIds,&timerId);
     //XHashMap_remove_base(d->timers, &timerId);
     //XMutex_unlock(GetXMutex(dispatcher));
     return true;
@@ -778,7 +778,7 @@ static bool VXEventDispatcherWin32_unregisterTimers(XAbstractEventDispatcher* ed
     //            KillTimer(self->internalHwnd, (UINT_PTR)timerInfo->winTimerId);
     //        }
     //        //将id放回列表
-    //        //XVector_push_back_base(d->m_dp.m_timerIds, &timerInfo->timerId);
+    //        //XVector_push_back_1_base(d->m_dp.m_timerIds, &timerInfo->timerId);
     //        XHashMap_erase_base(d->timers, &it, &it);
     //        found = true;
     //    }
@@ -816,7 +816,7 @@ static XVector* VXEventDispatcherWin32_timersForObject(const XAbstractEventDispa
     //            .timerId = timerInfo->timerId,
     //            .timerType = timerInfo->timerType
     //        };
-    //        XVector_push_back_base(result, &info);
+    //        XVector_push_back_1_base(result, &info);
     //    }
     //    XHashMap_iterator_add(d->timers, &it);
     //}

@@ -47,14 +47,14 @@ void XStringList_init(XStringList* strList);
  * @param strList 指向XStringList对象的指针
  * @param value 待插入的XString对象指针
  */
-#define XStringList_push_front_base								XVector_push_front_base
+#define XStringList_push_front_base								XVector_push_front_1_base
 
 /**
 * @brief 向前端插入一个XString对象（移动语义）
 * @param strList 指向XStringList对象的指针
 * @param value 待移动插入的XString对象指针
 */
-#define XStringList_push_front_move_base						XVector_push_front_move_base
+#define XStringList_push_front_move_base						XVector_push_front_move_1_base
 
 /**
 * @brief 向前端插入一个UTF-8字符串
@@ -68,14 +68,14 @@ void XStringList_push_front_utf8(XStringList* strList, const char* utf8_str);
  * @param strList 指向XStringList对象的指针
  * @param value 待插入的XString对象指针
  */
-#define XStringList_push_back_base								XVector_push_back_base
+#define XStringList_push_back_base								XVector_push_back_1_base
 
 /**
 * @brief 向后端插入一个XString对象（移动语义）
 * @param strList 指向XStringList对象的指针
 * @param value 待移动插入的XString对象指针
 */
-#define XStringList_push_back_move_base							XVector_push_back_move_base
+#define XStringList_push_back_move_base							XVector_push_back_move_1_base
 
 /**
 * @brief 向后端插入一个UTF-8字符串
@@ -91,7 +91,7 @@ void XStringList_push_back_utf8(XStringList* strList, const char* utf8_str);
 * @param value 待插入的XString对象指针
 * @return 成功返回0，失败返回-1
 */
-#define XStringList_insert_base									XVector_insert
+#define XStringList_insert_base									XVector_insert_2
 
 /**
 * @brief 在指定索引位置插入一个XString对象（移动语义）
@@ -100,7 +100,7 @@ void XStringList_push_back_utf8(XStringList* strList, const char* utf8_str);
 * @param value 待移动插入的XString对象指针
 * @return 成功返回0，失败返回-1
 */
-#define XStringList_insert_move_base							XVector_insert_move
+#define XStringList_insert_move_base							XVector_insert_move_2
 
 /**
 * @brief 在指定索引位置插入一个UTF-8字符串

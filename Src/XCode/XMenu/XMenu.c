@@ -59,7 +59,7 @@ XAction* XMenu_addAction(XMenu* menu, const char* text)
 		return NULL;
 	XMenuData* data = XTreeNode_getData(menu);
 	XAction* action=XAction_create(text);
-	XVector_push_back_base(data->actions,&action);
+	XVector_push_back_1_base(data->actions,&action);
 	return action;
 }
 
@@ -121,7 +121,7 @@ XVector* XMenu_getMenus(XMenu* menu)
 	while (child)
 	{
 		XMenuData* data = XTreeNode_getData(child);
-		XVector_push_back_base(v, &child);
+		XVector_push_back_1_base(v, &child);
 		child = XHTreeNode_GetNextSibling(child);
 	}
 	return v;

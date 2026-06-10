@@ -133,7 +133,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 		case XDFC_STATE_RX_IDLE:  // 空闲状态（接收到新帧起始字节）
 		{
 			XContainerSize(recvVector) = 0;  // 重置接收缓冲区位置
-			XVector_push_back_base(recvVector, &ucByte);  // 存储第一个字节
+			XVector_push_back_1_base(recvVector, &ucByte);  // 存储第一个字节
 			if (comm->m_recvFrameHead && !XVector_isEmpty_base(comm->m_recvFrameHead))
 			{//存在接收帧头
 				if (memcmp(XContainerSharedDataPtr(recvVector), XContainerSharedDataPtr(comm->m_recvFrameHead), 1) != 0)
@@ -166,7 +166,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				XDataFrameComm_postEvent(comm, XEvent_create(XDFC_RX_BUFFER_OVERFLOW));
 				return;
 			}
-			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
+			XVector_push_back_1_base(recvVector, &ucByte);  // 存储字节到缓冲区
 			size_t size = XContainerSize(recvVector);
 			if (memcmp((uint8_t*)(XContainerSharedDataPtr(recvVector)) + size - 1, ((uint8_t*)XContainerSharedDataPtr(comm->m_recvFrameHead)) + size - 1, 1) != 0)
 			{
@@ -190,7 +190,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 				XDataFrameComm_postEvent(comm, XEvent_create(XDFC_RX_BUFFER_OVERFLOW));
 				return;
 			}
-			XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
+			XVector_push_back_1_base(recvVector, &ucByte);  // 存储字节到缓冲区
 			break;
 		}
 		}
@@ -285,7 +285,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			if (XVector_Back_Base(frame, char) != 0)
 			{
 				char c = 0;
-				XVector_push_back_base(frame, &c);
+				XVector_push_back_1_base(frame, &c);
 			}
 			XPrintf("\nString发送帧:%s\n", XContainerSharedDataPtr(frame));
 #endif // 
@@ -683,7 +683,7 @@ void VXDataFrameComm_setRecvFrameHead(XDataFrameComm* comm, const uint8_t* data,
 		if (comm->m_recvFrameHead == NULL)
 		{
 			XByteArray* v =XByteArray_create();
-			XVector_append_array_base(v, data, dataSize);
+			XVector_push_back_2(v, data, dataSize);
 			comm->m_recvFrameHead = v;
 
 		}
@@ -707,7 +707,7 @@ void VXDataFrameComm_setRecvFrameTail(XDataFrameComm* comm, const uint8_t* data,
 		if (comm->m_recvFrameTail == NULL)
 		{
 			XByteArray* v =XByteArray_create();
-			XVector_append_array_base(v, data, dataSize);
+			XVector_push_back_2(v, data, dataSize);
 			comm->m_recvFrameTail = v;
 		}
 	}
@@ -730,7 +730,7 @@ void VXDataFrameComm_setSendFrameHead(XDataFrameComm* comm, const uint8_t* data,
 		if (comm->m_sendFrameHead == NULL)
 		{
 			XByteArray* v =XByteArray_create();
-			XVector_append_array_base(v, data, dataSize);
+			XVector_push_back_2(v, data, dataSize);
 			comm->m_sendFrameHead = v;
 		}
 	}
@@ -754,7 +754,7 @@ void VXDataFrameComm_setSendFrameTail(XDataFrameComm* comm, const uint8_t* data,
 		if (comm->m_sendFrameTail == NULL)
 		{
 			XByteArray* v =XByteArray_create();
-			XVector_append_array_base(v, data, dataSize);
+			XVector_push_back_2(v, data, dataSize);
 			comm->m_sendFrameTail = v;
 		}
 	}

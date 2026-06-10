@@ -344,7 +344,7 @@ void XChildEvent_handler(XChildEvent* event, XObject* receiver)
 	//		children = receiver->children;
 	//	}
 	//	if (-1 == XVector_indexOf(children, &event->child, 0))//确保新父节点没有自己
-	//		XVector_push_back_base(children, &event->child);
+	//		XVector_push_back_1_base(children, &event->child);
 	//}
 	//else if (XChildEvent_removed(event))
 	//{

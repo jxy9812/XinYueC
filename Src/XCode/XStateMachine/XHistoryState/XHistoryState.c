@@ -218,7 +218,7 @@ static void collectDeepHistory(XAbstractState* state, XVector* result) {
     if (!state || !result || !state->m_isRunning) return;
 
     // 先添加当前状态，再递归添加子状态，保证父->子顺序
-    XVector_push_back_base(result, &state);
+    XVector_push_back_1_base(result, &state);
 
     // 只处理基本状态的子状态
     if (state->m_type == XStateType_Basic) {

@@ -72,7 +72,7 @@ XDebug* XDebug_write_(XDebug* debug, const char* data, size_t len) {
     if (!debug || !data || len == 0 || !debug->is_active) return debug;
 
     for (size_t i = 0; i < len; i++) {
-        XVector_push_back_base(&debug->buffer, &data[i]);
+        XVector_push_back_1_base(&debug->buffer, &data[i]);
     }
     return debug;
 }

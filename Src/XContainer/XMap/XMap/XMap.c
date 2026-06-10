@@ -291,7 +291,7 @@ XVector* VXMapBase_keys(const XMapBase* this_map)
     XContainerSetDataMoveMethod(v, XMapBaseKeyMoveMethod(this_map));
     XContainerSetDataDeinitMethod(v, XMapBaseKeyDeinitMethod(this_map));
     for_each_iterator(this_map, XMap, it) {
-        XVector_push_back_base(v, XPair_first(XMap_iterator_data(&it)));
+        XVector_push_back_1_base(v, XPair_first(XMap_iterator_data(&it)));
     }
     return v;
 }
@@ -303,7 +303,7 @@ XVector* VXMapBase_values(const XMapBase* this_map)
     XContainerSetDataMoveMethod(v, XContainerDataMoveMethod(this_map));
     XContainerSetDataDeinitMethod(v, XContainerDataDeinitMethod(this_map));
     for_each_iterator(this_map, XMap, it) {
-        XVector_push_back_base(v, XPair_second(XMap_iterator_data(&it)));
+        XVector_push_back_1_base(v, XPair_second(XMap_iterator_data(&it)));
     }
     return v;
 }

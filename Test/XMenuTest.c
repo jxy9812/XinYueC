@@ -85,7 +85,7 @@ void XMenuTest_show(XMenu* menu, int column)
 			XPrintf("%d 返回上级目录 -----返回\n",XContainerSize(v));
 			data.action = gotoParent;
 			data.data = menu;
-			XVector_push_back_base(v,&data);
+			XVector_push_back_1_base(v,&data);
 		}
 		size_t menuSize = XVector_size_base(menus);
 		for (int i = 0; i < menuSize; i++)
@@ -95,7 +95,7 @@ void XMenuTest_show(XMenu* menu, int column)
 			if ((i + 1) % column == 0 || (i + 1) == menuSize)printf("\n");//换行
 			data.action = gotoChild;
 			data.data = child;
-			XVector_push_back_base(v, &data);
+			XVector_push_back_1_base(v, &data);
 		}
 		for (int i = 0; i < XVector_size_base(actions); i++)
 		{
@@ -104,7 +104,7 @@ void XMenuTest_show(XMenu* menu, int column)
 			if ((i + 1+ menuSize) % column == 0 || (i + 1+ menuSize) == XVector_size_base(actions))printf("\n");//换行
 			data.action = trigger;
 			data.data = child;
-			XVector_push_back_base(v, &data);
+			XVector_push_back_1_base(v, &data);
 		}
 		XVector_delete_base(menus);
 		XPrintf("---------------%s---------------\n", XMenu_getTitle(menu));

@@ -14,7 +14,7 @@ void XBinarySearchTest()
 	int count = 10000000;//测试数据量
 	for (size_t i = 0; i < count; i++)
 	{
-		XVector_push_back_base(VArray, &i);
+		XVector_push_back_1_base(VArray, &i);
 	}
 	int findVal = 9999999;
 	int* ret=XBinarySearch(XContainerSharedDataPtr(VArray), count,sizeof(size_t),int_compare,&findVal);

@@ -79,7 +79,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 	case XDFC_STATE_RX_IDLE:  // 空闲状态（接收到新帧起始字节）
 	{
 		XContainerSize(recvVector) = 0;  // 重置接收缓冲区位置
-		XVector_push_back_base(recvVector, &ucByte);  // 存储第一个字节
+		XVector_push_back_1_base(recvVector, &ucByte);  // 存储第一个字节
 		if (comm->m_recvFrameHead && !XVector_isEmpty_base(comm->m_recvFrameHead))
 		{//存在接收帧头
 			if (memcmp(XContainerSharedDataPtr(recvVector), XContainerSharedDataPtr(comm->m_recvFrameHead), 1) != 0)
@@ -112,7 +112,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			XDataFrameComm_postEvent(comm, XEvent_create(XDFC_RX_BUFFER_OVERFLOW));
 			return;
 		}
-		XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
+		XVector_push_back_1_base(recvVector, &ucByte);  // 存储字节到缓冲区
 		size_t size = XContainerSize(recvVector);
 		if (memcmp((uint8_t*)(XContainerSharedDataPtr(recvVector)) + size - 1, ((uint8_t*)XContainerSharedDataPtr(comm->m_recvFrameHead)) + size - 1, 1) != 0)
 		{
@@ -136,7 +136,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 			XDataFrameComm_postEvent(comm, XEvent_create(XDFC_RX_BUFFER_OVERFLOW));
 			return;
 		}
-		XVector_push_back_base(recvVector, &ucByte);  // 存储字节到缓冲区
+		XVector_push_back_1_base(recvVector, &ucByte);  // 存储字节到缓冲区
 
 		if (comm->m_frameEndMode == XDFC_FRAME_END_TIMEOUT)
 		{

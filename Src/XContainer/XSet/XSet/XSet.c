@@ -364,7 +364,7 @@ XVector* VXSetBase_keys(const XSetBase* this_set)
     XVector* v = XVector_create(XContainerTypeSize(this_set));
     for_each_iterator(this_set, XSet, it)
     {
-        XVector_push_back_base(v, XSet_iterator_data(&it));
+        XVector_push_back_1_base(v, XSet_iterator_data(&it));
     }
     return v;
 }

@@ -146,6 +146,7 @@ void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort*
         //win32->read.eventMask = FD_READ;
         //win32->read.socket = XSocketDescriptor_fromIntptr(win32->handle);
         win32->read.finishedBytes = 0;
+        memset(&win32->read, 0, sizeof(OVERLAPPED));
         BOOL r = ReadFile(win32->handle, win32->readBuff, (DWORD)win32->read.bufferSize, &win32->read
             .finishedBytes, &win32->read);
     }

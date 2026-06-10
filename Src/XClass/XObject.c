@@ -165,7 +165,7 @@ void XObject_setParent(XObject* object, XObject* parent)
 			parent->children = XVector_create(sizeof(XObject*));
 		}
 		if (parent->children) {
-			XVector_push_back_base(parent->children, &object);
+			XVector_push_back_1_base(parent->children, &object);
 		}
 		// 向新父对象发送 CHILD_ADDED 事件
 		XCoreApplication_postEvent(parent, XChildEvent_create(XEVENT_TYPE_CHILD_ADDED, object), XEVENT_PRIORITY_NORMAL);
@@ -469,7 +469,7 @@ void XObject_installEventFilter(XObject* self, XObject* filterObj)
 	}
 	
 	if (-1 == XVector_indexOf(filters, &filterObj, 0))//确保新父节点没有自己
-		XVector_push_back_base(filters, &filterObj);
+		XVector_push_back_1_base(filters, &filterObj);
 }
 
 void XObject_removeEventFilter(XObject* self, XObject* obj)
@@ -534,7 +534,7 @@ XObjectList* XObject_findChildren(const XObject* self, const char* name, XFindCh
 				XStack_push_base(sk, &child);
 				if (child && child->object_name && XString_compare(child->object_name, name) == XCompare_Equality)
 				{
-					XVector_push_back_base(list,&child);
+					XVector_push_back_1_base(list,&child);
 				}
 			}
 		}
@@ -546,7 +546,7 @@ XObjectList* XObject_findChildren(const XObject* self, const char* name, XFindCh
 		{
 			XObject* child = *((XObject**)XVector_iterator_data(&it));
 			if (child && child->object_name && XString_compare(child->object_name, name) == XCompare_Equality)
-				XVector_push_back_base(list, &child);
+				XVector_push_back_1_base(list, &child);
 		}
 	}
 	return list;

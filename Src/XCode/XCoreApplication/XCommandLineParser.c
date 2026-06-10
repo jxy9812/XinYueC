@@ -66,7 +66,7 @@ static void splitOptionAndValue(const char* name, char** key, char** value, XVec
     }
 
     // 保存分配的字符串，以便后续释放
-    XVector_push_back_base(allocatedStrings, &copy);
+    XVector_push_back_1_base(allocatedStrings, &copy);
 
     *key = copy;
     *value = strchr(copy, '=');
@@ -107,7 +107,7 @@ static void checkExclusiveGroups(XCommandLineParser* parser) {
 
         // 互斥组中出现多个选项
         if (foundCount > 1) {
-            XVector_push_back_base(parser->result->exclusiveGroupConflicts, &lastFound);
+            XVector_push_back_1_base(parser->result->exclusiveGroupConflicts, &lastFound);
         }
     }
 }
@@ -217,12 +217,12 @@ void XCommandLineParser_addOption(XCommandLineParser* parser,
         .requiresValue = requiresValue,
         .isHidden = isHidden
     };
-    XVector_push_back_base(parser->options, &opt);
+    XVector_push_back_1_base(parser->options, &opt);
 }
 
 void XCommandLineParser_addOptionGroup(XCommandLineParser* parser, XCommandLineOptionGroup* group) {
     if (!parser || !group) return;
-    XVector_push_back_base(parser->groups, &group);
+    XVector_push_back_1_base(parser->groups, &group);
 }
 
 bool XCommandLineParser_parse(XCommandLineParser* parser, int argc, char** argv) {
@@ -233,14 +233,14 @@ bool XCommandLineParser_parse(XCommandLineParser* parser, int argc, char** argv)
         char* arg = argv[i];
         if (!isOption(arg)) {
             // 位置参数 - 不复制，因为我们只读取不修改
-            XVector_push_back_base(parser->result->positionalArgs, &arg);
+            XVector_push_back_1_base(parser->result->positionalArgs, &arg);
             continue;
         }
 
         bool isLong;
         const char* name = getOptionName(arg, &isLong);
         if (!name) {
-            XVector_push_back_base(parser->result->unrecognizedOpts, &arg);
+            XVector_push_back_1_base(parser->result->unrecognizedOpts, &arg);
             continue;
         }
 
@@ -274,7 +274,7 @@ bool XCommandLineParser_parse(XCommandLineParser* parser, int argc, char** argv)
                         // 复制值，避免引用argv原始数据
                         char* valCopy = XStrDup(argv[i + 1]);
                         if (valCopy) {
-                            XVector_push_back_base(parser->result->allocatedStrings, &valCopy);
+                            XVector_push_back_1_base(parser->result->allocatedStrings, &valCopy);
                             value = valCopy;
                         }
                         i++;
@@ -284,7 +284,7 @@ bool XCommandLineParser_parse(XCommandLineParser* parser, int argc, char** argv)
                         if (opt->defaultValue) {
                             char* defCopy = XStrDup(opt->defaultValue);
                             if (defCopy) {
-                                XVector_push_back_base(parser->result->allocatedStrings, &defCopy);
+                                XVector_push_back_1_base(parser->result->allocatedStrings, &defCopy);
                                 value = defCopy;
                             }
                             else {
@@ -293,7 +293,7 @@ bool XCommandLineParser_parse(XCommandLineParser* parser, int argc, char** argv)
                         }
                         else {
                             // 无默认值则视为未识别
-                            XVector_push_back_base(parser->result->unrecognizedOpts, &arg);
+                            XVector_push_back_1_base(parser->result->unrecognizedOpts, &arg);
                             recognized = false;
                         }
                     }
@@ -318,7 +318,7 @@ bool XCommandLineParser_parse(XCommandLineParser* parser, int argc, char** argv)
             }
         }
         else {
-            XVector_push_back_base(parser->result->unrecognizedOpts, &arg);
+            XVector_push_back_1_base(parser->result->unrecognizedOpts, &arg);
         }
     }
 

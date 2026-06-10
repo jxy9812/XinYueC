@@ -35,5 +35,5 @@ void XCommandLineOptionGroup_delete(XCommandLineOptionGroup* group) {
 void XCommandLineOptionGroup_addOption(XCommandLineOptionGroup* group,
     const XCommandLineOption* option) {
     if (!group || !option) return;
-    XVector_push_back_base(group->options, &option);
+    XVector_push_back_1_base(group->options, &option);
 }
