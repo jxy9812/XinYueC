@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <stdio.h>
 #include "XSerialPort.h"
+#include "XRingBuffer.h"
 #include "XMemory.h"
 #include "XMutex.h"
 #include "XWaitCondition.h"

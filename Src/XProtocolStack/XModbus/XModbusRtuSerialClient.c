@@ -1,27 +1,12 @@
 #include "XModbusRtuSerialClient.h"
+#include "XModbusClient_Protected.h"
+#include "XModbusReply_Protected.h"
+#include "XModbusDevice_Protected.h"
 #include "XMemory.h"
 #include "XCrc.h"
 #include "XByteArray.h"
 #include "XTimer.h"
 #include "string.h"
-
-/******************************************************************************************
- * 父类虚函数声明（外部链接，供子类调用父类实现）
- ******************************************************************************************/
-extern bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
-extern bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
-// --- Setter（公开，供设备层调用）---
-void XModbusReply_setResult(XModbusReply* reply, const XModbusDataUnit* unit);
-void XModbusReply_setResult_move(XModbusReply* reply, const XModbusDataUnit* unit);
-void XModbusReply_setResult_ref(XModbusReply* reply, const XModbusDataUnit* unit);
-void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* response);
-void XModbusReply_setRawResult_move(XModbusReply* reply, const XModbusResponse* response);
-void XModbusReply_setRawResult_ref(XModbusReply* reply, const XModbusResponse* response);
-void XModbusReply_setFinished(XModbusReply* reply, bool finished);
-void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const char* errorText);
-
-void XModbusDevice_setState(XModbusDevice* dev, XModbusDevice_State newState);
-void XModbusDevice_setError(XModbusDevice* dev, XModbusDevice_Error error, const char* errorText);
 
 // =============== 虚函数前置声明 ===============
 static bool VXModbusRtuSerialClient_open(XModbusDevice* device);
@@ -427,7 +412,7 @@ static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args
     //}
 
     //// 将数据追加到接收缓冲区
-    //XByteArray_append_array_base(client->m_receiveBuffer,
+    //XByteArray_push_back_2(client->m_receiveBuffer,
     //    XContainerDataAddr(data),
     //    XByteArray_size_base(data));
     //XByteArray_delete_base(data);
@@ -633,12 +618,12 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
     XByteArray_resize_base(rtuClient->m_requestData, XByteArray_size_base(pdu)+4);
     XByteArray_clear_base(rtuClient->m_requestData);
     //添加地址
-    XByteArray_push_back_base(rtuClient->m_requestData, serverAddress);
+    XByteArray_push_back_1(rtuClient->m_requestData, serverAddress);
     // 添加功能码
     uint8_t fc = (uint8_t)XModbusPdu_functionCode((const XModbusPdu*)request);
-    XByteArray_push_back_base(rtuClient->m_requestData, fc);
+    XByteArray_push_back_1(rtuClient->m_requestData, fc);
     // 添加数据
-    XByteArray_append_array_base(rtuClient->m_requestData, XContainerDataAddr(pdu),XContainerSize(pdu));
+    XByteArray_push_back_2(rtuClient->m_requestData, XContainerDataAddr(pdu),XContainerSize(pdu));
     //添加Crc16
     uint16_t crc = XCrc_get16(XContainerDataAddr(rtuClient->m_requestData), XContainerSize(rtuClient->m_requestData));
     XCrc_set16Data(&XByteArray_back_base(rtuClient->m_requestData) + 1, crc, XCRC_BYTE_ORDER_LITTLE_ENDIAN);

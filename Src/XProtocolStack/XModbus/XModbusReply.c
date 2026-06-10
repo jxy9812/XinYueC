@@ -1,16 +1,8 @@
 ﻿#include "XModbusReply.h"
+#include "XModbusReply_Protected.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XVariant.h"
-// --- Setter（公开，供设备层调用）---
-void XModbusReply_setResult(XModbusReply* reply, const XModbusDataUnit* unit);
-void XModbusReply_setResult_move(XModbusReply* reply, const XModbusDataUnit* unit);
-void XModbusReply_setResult_ref(XModbusReply* reply, const XModbusDataUnit* unit);
-void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* response);
-void XModbusReply_setRawResult_move(XModbusReply* reply, const XModbusResponse* response);
-void XModbusReply_setRawResult_ref(XModbusReply* reply, const XModbusResponse* response);
-void XModbusReply_setFinished(XModbusReply* reply, bool finished);
-void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const char* errorText);
 
 // 虚函数重载
 static void VXModbusReply_deinit(XModbusReply* reply);
@@ -219,7 +211,7 @@ XVector* XModbusReply_intermediateErrors(const XModbusReply* reply) {
 
 void XModbusReply_addIntermediateError(XModbusReply* reply, XModbusDevice_IntermediateError error) {
     if (!reply || !reply->m_intermediateErrors) return;
-    XVector_append_1(reply->m_intermediateErrors, &error);
+    XVector_append_1_base(reply->m_intermediateErrors, &error);
     // 发射信号
     XModbusReply_intermediateErrorOccurred_signal(reply, error);
 }

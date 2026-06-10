@@ -68,25 +68,18 @@ void XByteArray_init(XByteArray* array, bool useCow);
 * @return 添加成功返回true，失败返回false（参数无效或扩容失败）
 * @note 原数据会依次后移，可能触发容器扩容
 */
-bool XByteArray_push_front_base(XByteArray* array, const uint8_t byte);
-
+bool XByteArray_push_front_1(XByteArray* array, const uint8_t byte);
+#define XByteArray_push_front_2						XVector_push_front_2
+#define XByteArray_push_front_3						XVector_push_front_3
 /**
 * @brief 在字节数组尾部添加一个字节
 * @param array 目标XByteArray实例指针（不可为NULL）
 * @param byte 待添加的字节（uint8_t类型）
 * @return 添加成功返回true，失败返回false（参数无效或扩容失败）
 */
-bool XByteArray_push_back_base(XByteArray* array, const uint8_t byte);
-
-/**
-* @brief 在指定索引位置插入一个字节
-* @param array 目标XByteArray实例指针（不可为NULL）
-* @param index 插入位置索引（支持负数，-1表示末尾）
-* @param byte 待插入的字节（uint8_t类型）
-* @return 插入成功返回true，失败返回false（参数无效、索引越界或扩容失败）
-* @note 原index及之后的数据会后移
-*/
-bool XByteArray_insert_base(XByteArray* array, int64_t index, const uint8_t byte);
+bool XByteArray_push_back_1(XByteArray* array, const uint8_t byte);
+#define XByteArray_push_back_2							XVector_push_back_2
+#define XByteArray_push_back_3							XVector_push_back_3
 
 /**
 * @brief 在指定索引位置插入n个相同字节
@@ -96,8 +89,17 @@ bool XByteArray_insert_base(XByteArray* array, int64_t index, const uint8_t byte
 * @param n 插入的字节数量（需大于0）
 * @return 插入成功返回true，失败返回false（参数无效、索引越界或扩容失败）
 */
-bool XByteArray_inserts_base(XByteArray* array, int64_t index, uint8_t byte, size_t n);
-
+bool XByteArray_insert_1_base(XByteArray* array, int64_t index, uint8_t byte, size_t n);
+/**
+* @brief 在指定索引位置插入一个字节
+* @param array 目标XByteArray实例指针（不可为NULL）
+* @param index 插入位置索引（支持负数，-1表示末尾）
+* @param byte 待插入的字节（uint8_t类型）
+* @return 插入成功返回true，失败返回false（参数无效、索引越界或扩容失败）
+* @note 原index及之后的数据会后移
+*/
+bool XByteArray_insert_2(XByteArray* array, int64_t index, const uint8_t byte);
+#define XByteArray_insert_3						XVector_insert_3	
 /**
 * @brief 追加UTF8字符串到字节数组（不含终止符'\0'）
 * @param array 目标XByteArray实例指针（不可为NULL）
@@ -106,22 +108,12 @@ bool XByteArray_inserts_base(XByteArray* array, int64_t index, uint8_t byte, siz
 */
 bool XByteArray_append_utf8(XByteArray* array, const char* utf8);
 
-/**
-* @brief 复用XVector的接口，追加另一个数组的所有数据
-* @details 将另一个字节数组的所有元素追加到当前数组尾部
-*/
-#define XByteArray_append_array_base				XVector_push_back_2
-
-/**
-* @brief 复用XVector的接口，追加单个元素
-*/
-#define XByteArray_append_base						XByteArray_push_back_base
-
-/**
-* @brief 复用XVector的接口，在头部 prepend 数据
-*/
-#define XByteArray_prepend_base						XByteArray_push_front_base
-
+#define XByteArray_prepend_1							XByteArray_push_front_1
+#define XByteArray_prepend_2							XByteArray_push_front_2
+#define XByteArray_prepend_3							XByteArray_push_front_3
+#define XByteArray_append_1								XByteArray_push_back_1
+#define XByteArray_append_2								XByteArray_push_back_2
+#define XByteArray_append_3								XByteArray_push_back_3
 
 //============================= 元素删除 =============================
 

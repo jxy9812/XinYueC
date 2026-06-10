@@ -120,7 +120,7 @@ XByteArray* XBsonArray_to_bytes(const XBsonArray* array)
     }
 
     // 添加终止符
-    XByteArray_push_back_base(bytes, 0x00);
+    XByteArray_push_back_1(bytes, 0x00);
     //开头写入总长度
     XMemory_write_data(XContainerDataAddr(bytes), XBYTE_ORDER_LITTLE_ENDIAN, &XContainerSize(bytes), sizeof(uint32_t));
     return bytes;

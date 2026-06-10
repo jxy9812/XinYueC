@@ -21,7 +21,7 @@ XByteArray* XByteArray_create_with_data(const char* data,size_t size)
 	//{
 	//	XVector_resize_base(array, size);
 	//}
-	XByteArray_append_array_base(array,data,size);
+	XByteArray_push_back_2(array,data,size);
 	return array;
 }
 
@@ -59,22 +59,22 @@ void XByteArray_init(XByteArray* array, bool useCow)
 	XContainerSetCompare(array, uint8_t_compare);
 }
 
-bool XByteArray_push_front_base(XByteArray* array, const uint8_t byte)
+bool XByteArray_push_front_1(XByteArray* array, const uint8_t byte)
 {
 	return XVector_push_front_1_base(array,&byte);
 }
 
-bool XByteArray_push_back_base(XByteArray* array, const uint8_t byte)
+bool XByteArray_push_back_1(XByteArray* array, const uint8_t byte)
 {
 	return XVector_push_back_1_base(array, &byte);
 }
 
-bool XByteArray_insert_base(XByteArray* array, int64_t index, const uint8_t byte)
+bool XByteArray_insert_2(XByteArray* array, int64_t index, const uint8_t byte)
 {
 	return XVector_insert_2(array,index,&byte);
 }
 
-bool XByteArray_inserts_base(XByteArray* array, int64_t index, uint8_t byte, size_t n)
+bool XByteArray_insert_1_base(XByteArray* array, int64_t index, uint8_t byte, size_t n)
 {
 	return XVector_insert_1_base(array, index, &byte,n);
 }
@@ -86,7 +86,7 @@ bool XByteArray_append_utf8(XByteArray* array, const char* utf8)
 	size_t len = strlen(utf8);
 	if (len == 0)
 		return false;
-	return XByteArray_append_array_base(array,utf8,len);
+	return XByteArray_push_back_2(array,utf8,len);
 }
 
 bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteArray_iterator* it)
@@ -119,7 +119,7 @@ XByteArray* XByteArray_to16HexUtf8(XByteArray* array)
 	for (size_t i = 0; i < XByteArray_size_base(array); i++)
 	{
 		sprintf(temp,"%02X ", XByteArray_at_base(array, i));
-		XByteArray_append_array_base(bytes,temp,3);
+		XByteArray_push_back_2(bytes,temp,3);
 	}
 	XByteArray_back_base(bytes) = 0;
 	return bytes;

@@ -131,14 +131,14 @@ void XBsonArray_init(XBsonArray* array);
 * @param value 要添加的XBsonValue元素（将被拷贝）
 * @return 添加成功返回true，失败返回false
 */
-#define XBsonArray_prepend_base						XVector_prepend_1	
+#define XBsonArray_prepend_base						XVector_prepend_1_base	
 /**
 * @brief 在数组开头添加元素（移动），映射到XVector_prepend_move_base
 * @param array XBsonArray实例指针
 * @param value 要添加的XBsonValue元素（所有权转移）
 * @return 添加成功返回true，失败返回false
 */
-#define XBsonArray_prepend_move_base				XVector_prepend_move_1
+#define XBsonArray_prepend_move_base				XVector_prepend_move_1_base
 /**
 * @brief 在指定索引插入元素（拷贝），映射到XVector_insert
 * @param array XBsonArray实例指针

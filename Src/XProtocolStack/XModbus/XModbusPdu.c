@@ -218,14 +218,14 @@ void XModbusExceptionResponse_init_with_function_and_exception(
         // 设置异常码为数据
         uint8_t ec = (uint8_t)exceptionCode;
         XByteArray_clear_base(exc->m_base.m_base.m_data);
-        XByteArray_append_array_base(exc->m_base.m_base.m_data, &ec, 1);
+        XByteArray_push_back_2(exc->m_base.m_base.m_data, &ec, 1);
     }
 }
 void XModbusExceptionResponse_setExceptionCode(XModbusExceptionResponse* exc, XModbusPdu_ExceptionCode ec) {
     if (!exc) return;
     uint8_t code = (uint8_t)ec;
     XByteArray_clear_base(exc->m_base.m_base.m_data);
-    XByteArray_append_array_base(exc->m_base.m_base.m_data, &code, 1);
+    XByteArray_push_back_2(exc->m_base.m_base.m_data, &code, 1);
 }
 // --- 析构 ---
 static void VXModbusPdu_deinit(XModbusPdu* pdu) {
@@ -299,6 +299,6 @@ void XModbusPdu_setData(XModbusPdu* pdu, const uint8_t* newData, size_t size) {
     if (!pdu || !pdu->m_data) return;
     XByteArray_clear_base(pdu->m_data);
     if (newData && size > 0) {
-        XByteArray_append_array_base(pdu->m_data, newData, size);
+        XByteArray_push_back_2(pdu->m_data, newData, size);
     }
 }

@@ -120,12 +120,12 @@ void XJsonArray_init(XJsonArray* array);
 * @brief 基于XVector的头部添加基础操作（深拷贝）
 * @details 调用XVector的头部添加接口，深拷贝元素到数组开头
 */
-#define XJsonArray_prepend_base						XVector_prepend_1	
+#define XJsonArray_prepend_base						XVector_prepend_1_base	
 /**
 * @brief 基于XVector的头部添加基础操作（转移所有权）
 * @details 调用XVector的头部添加接口，将元素所有权转移到数组开头
 */
-#define XJsonArray_prepend_move_base				XVector_prepend_move_1
+#define XJsonArray_prepend_move_base				XVector_prepend_move_1_base
 /**
 * @brief 基于XVector的插入操作（深拷贝）
 * @details 调用XVector的插入接口，在指定索引位置深拷贝插入元素

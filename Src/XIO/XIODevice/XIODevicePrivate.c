@@ -1,8 +1,10 @@
 ﻿#include "XIODevicePrivate.h"
 #include "XIODevice.h"
 #include "XRingChunk.h"
+#include "XRingBuffer.h"
 #include "XVector.h"
 #include "XMemory.h"
+#include "XString.h"
 #include <string.h>
 
 #define DEFAULT_CHUNK_SIZE 4096

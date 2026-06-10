@@ -25,7 +25,7 @@ void zlibByteArrayTest()
 	XPrintf_utf8("zlib XByteArray压缩测试\n");
 	const char* str = "aaaaaaaaaaaaaa6666666";
 	XByteArray* data = XByteArray_create();
-	XByteArray_append_array_base(data, str, strlen(str) + 1);
+	XByteArray_push_back_2(data, str, strlen(str) + 1);
 	XByteArray* compress_buff = XByteArray_toCompress(data);
 	XPrintf("压缩后大小:%d\n", XByteArray_size_base(compress_buff));
 	XByteArray* decompress_buff = XByteArray_toDecompress(compress_buff);

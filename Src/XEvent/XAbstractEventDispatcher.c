@@ -242,7 +242,7 @@ static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispa
     XVector* notifiers = XMapBase_value_base(sockets, &socket);
     if (notifiers && XVector_indexOf(notifiers, &notifier, 0) == -1)
     {
-        XVector_append_1(notifiers, &notifier);
+        XVector_append_1_base(notifiers, &notifier);
     }
 }
 

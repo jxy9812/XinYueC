@@ -401,7 +401,7 @@ XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFor
         break;
     }
     //添加结束符号
-    XByteArray_push_back_base(output,0);
+    XByteArray_push_back_1(output,0);
     // 清理资源
     XStack_delete_base(stack);
     return output;
@@ -510,27 +510,27 @@ void XJson_append_escaped_string_byteArray(const XString* str, XByteArray* outpu
     size_t len = XString_toUtf8_length(str);
 
     // 添加引号
-    XByteArray_append_array_base(output, "\"", 1);
+    XByteArray_push_back_2(output, "\"", 1);
 
     // 转义特殊字符
     for (size_t i = 0; i < len; i++) {
         switch (utf8_str[i]) {
-        case '\"': XByteArray_append_array_base(output, "\\\"", 2); break;
-        case '\\': XByteArray_append_array_base(output, "\\\\", 2); break;
-        case '\b': XByteArray_append_array_base(output, "\\b", 2); break;
-        case '\f': XByteArray_append_array_base(output, "\\f", 2); break;
-        case '\n': XByteArray_append_array_base(output, "\\n", 2); break;
-        case '\r': XByteArray_append_array_base(output, "\\r", 2); break;
-        case '\t': XByteArray_append_array_base(output, "\\t", 2); break;
+        case '\"': XByteArray_push_back_2(output, "\\\"", 2); break;
+        case '\\': XByteArray_push_back_2(output, "\\\\", 2); break;
+        case '\b': XByteArray_push_back_2(output, "\\b", 2); break;
+        case '\f': XByteArray_push_back_2(output, "\\f", 2); break;
+        case '\n': XByteArray_push_back_2(output, "\\n", 2); break;
+        case '\r': XByteArray_push_back_2(output, "\\r", 2); break;
+        case '\t': XByteArray_push_back_2(output, "\\t", 2); break;
         default:
             // 直接添加UTF-8字节
-            XByteArray_append_array_base(output, &(utf8_str[i]), 1);
+            XByteArray_push_back_2(output, &(utf8_str[i]), 1);
             break;
         }
     }
 
     // 添加结束引号
-    XByteArray_append_array_base(output, "\"", 1);
+    XByteArray_push_back_2(output, "\"", 1);
 }
 
 void XJson_append_indent(XJsonDocumentFormat format, XStack* stack, XByteArray* output)
@@ -546,7 +546,7 @@ void XJson_append_indent(XJsonDocumentFormat format, XStack* stack, XByteArray* 
     // 每个层级添加4个空格（UTF-8编码）
     const char space[] = "    ";
     for (int i = 0; i < depth; i++) {
-        XByteArray_append_array_base(output, space, sizeof(space) - 1);
+        XByteArray_push_back_2(output, space, sizeof(space) - 1);
     }
 }
 
@@ -554,7 +554,7 @@ void XJsonObject_toByteArray(const XJsonObject* object, XJsonDocumentFormat form
 {
     if (!object || !stack || !output || XJsonObject_isEmpty_base(object)) 
     {
-        XByteArray_append_array_base(output, "{}", 2);
+        XByteArray_push_back_2(output, "{}", 2);
         return;
     }
 
@@ -563,9 +563,9 @@ void XJsonObject_toByteArray(const XJsonObject* object, XJsonDocumentFormat form
     XStack_push_base(stack, &new_depth);
 
     // 写入对象开始符
-    XByteArray_append_array_base(output, "{", 1);
+    XByteArray_push_back_2(output, "{", 1);
     if (format == XJsonDocument_Indented) {
-        XByteArray_append_array_base(output, "\n", 1);
+        XByteArray_push_back_2(output, "\n", 1);
     }
 
     // 获取键列表
@@ -584,7 +584,7 @@ void XJsonObject_toByteArray(const XJsonObject* object, XJsonDocumentFormat form
         XJson_append_escaped_string_byteArray(key, output);
 
         // 键值分隔符
-        XByteArray_append_array_base(output, format == XJsonDocument_Indented ? ": " : ":",
+        XByteArray_push_back_2(output, format == XJsonDocument_Indented ? ": " : ":",
             format == XJsonDocument_Indented ? 2 : 1);
 
         // 写入值
@@ -592,9 +592,9 @@ void XJsonObject_toByteArray(const XJsonObject* object, XJsonDocumentFormat form
 
         // 分隔符（最后一个元素不加）
         if (i != key_count - 1) {
-            XByteArray_append_array_base(output, ",", 1);
+            XByteArray_push_back_2(output, ",", 1);
             if (format == XJsonDocument_Indented) {
-                XByteArray_append_array_base(output, "\n", 1);
+                XByteArray_push_back_2(output, "\n", 1);
             }
         }
     }
@@ -607,16 +607,16 @@ void XJsonObject_toByteArray(const XJsonObject* object, XJsonDocumentFormat form
 
     // 写入对象结束符
     if (format == XJsonDocument_Indented) {
-        XByteArray_append_array_base(output, "\n", 1);
+        XByteArray_push_back_2(output, "\n", 1);
         XJson_append_indent(format, stack, output);
     }
-    XByteArray_append_array_base(output, "}", 1);
+    XByteArray_push_back_2(output, "}", 1);
 }
 
 void XJsonArray_toByteArray(const XJsonArray* array, XJsonDocumentFormat format, XStack* stack, XByteArray* output)
 {
     if (!array || !stack || !output || XJsonArray_isEmpty_base(array)) {
-        XByteArray_append_array_base(output, "[]", 2);
+        XByteArray_push_back_2(output, "[]", 2);
         return;
     }
 
@@ -625,9 +625,9 @@ void XJsonArray_toByteArray(const XJsonArray* array, XJsonDocumentFormat format,
     XStack_push_base(stack, &new_depth);
 
     // 写入数组开始符
-    XByteArray_append_array_base(output, "[", 1);
+    XByteArray_push_back_2(output, "[", 1);
     if (format == XJsonDocument_Indented) {
-        XByteArray_append_array_base(output, "\n", 1);
+        XByteArray_push_back_2(output, "\n", 1);
     }
 
     // 遍历元素
@@ -644,9 +644,9 @@ void XJsonArray_toByteArray(const XJsonArray* array, XJsonDocumentFormat format,
 
         // 分隔符（最后一个元素不加）
         if (i != elem_count - 1) {
-            XByteArray_append_array_base(output, ",", 1);
+            XByteArray_push_back_2(output, ",", 1);
             if (format == XJsonDocument_Indented) {
-                XByteArray_append_array_base(output, "\n", 1);
+                XByteArray_push_back_2(output, "\n", 1);
             }
         }
     }
@@ -656,10 +656,10 @@ void XJsonArray_toByteArray(const XJsonArray* array, XJsonDocumentFormat format,
 
     // 写入数组结束符
     if (format == XJsonDocument_Indented) {
-        XByteArray_append_array_base(output, "\n", 1);
+        XByteArray_push_back_2(output, "\n", 1);
         XJson_append_indent(format, stack, output);
     }
-    XByteArray_append_array_base(output, "]", 1);
+    XByteArray_push_back_2(output, "]", 1);
 }
 
 void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat format, XStack* stack, XByteArray* output)
@@ -668,15 +668,15 @@ void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat format,
 
     switch (value->type) {
     case XJsonValue_Null:
-        XByteArray_append_array_base(output, "null", 4);
+        XByteArray_push_back_2(output, "null", 4);
         break;
 
     case XJsonValue_Bool:
         if (value->data.boolean) {
-            XByteArray_append_array_base(output, "true", 4);
+            XByteArray_push_back_2(output, "true", 4);
         }
         else {
-            XByteArray_append_array_base(output, "false", 5);
+            XByteArray_push_back_2(output, "false", 5);
         }
         break;
     case XJsonValue_Int: {
@@ -718,7 +718,7 @@ void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat format,
         break;
 
     default:
-        XByteArray_append_array_base(output, "null", 4);
+        XByteArray_push_back_2(output, "null", 4);
         break;
     }
 }
@@ -768,7 +768,7 @@ XString* Json_parse_string(const char** ptr, const char* end)
         }
         else {
             // 直接添加普通字符（UTF-8兼容）
-            XByteArray_push_back_base(buff, **ptr);
+            XByteArray_push_back_1(buff, **ptr);
             //XString_append_char(str, XChar_from(**ptr));
             (*ptr)++;
         }

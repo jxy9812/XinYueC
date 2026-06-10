@@ -11,7 +11,7 @@ void XBase64Test()
 	XPrintf_utf8("XBase64测试\n");
 	char buff[] = "adss12313212345555555555456456";
 	XByteArray* sour = XByteArray_create(), *toBase=NULL,* fromBase64=NULL;
-	XByteArray_append_array_base(sour,buff,sizeof(buff));
+	XByteArray_push_back_2(sour,buff,sizeof(buff));
 	if (sour)
 	{
 		toBase = XByteArray_toBase64(sour);

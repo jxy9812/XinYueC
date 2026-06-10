@@ -1,25 +1,10 @@
 ﻿#include "XModbusClient.h"
+#include "XModbusClient_Protected.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XVariant.h"
 #include "XByteArray.h"
 #include <string.h>
-
-/******************************************************************************************
- * 受保护接口声明（供子类和内部模块使用，不暴露给用户）
- ******************************************************************************************/
-
- /**
-  * @brief 处理标准Modbus响应（通过虚函数表调用）
-  * @note 子类可重载此虚函数实现特定协议处理
-  */
-bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
-
-/**
- * @brief 处理私有/自定义Modbus响应（通过虚函数表调用）
- * @note 子类可重载此虚函数实现自定义功能码处理
- */
-bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 
 // 虚函数重载声明
 static void VXModbusClient_deinit(XModbusClient* client);
@@ -73,7 +58,7 @@ void XModbusClient_init(XModbusClient* client) {
     XClassGetVtable(client) = XModbusClient_class_init();
 
     // 初始化成员变量
-    client->m_timeout = 2000; // 默认200毫秒
+    client->m_timeout = 200; // 默认200毫秒
     client->m_numberOfRetries = 3; // 默认3次
     client->m_timeoutTimer= XTIMER_INVALID_ID;
 }
@@ -152,7 +137,7 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             (uint8_t)((value >> 8) & 0xFF),
             (uint8_t)(value & 0xFF)
         };
-        XByteArray_append_array_base(payload, data, 4);
+        XByteArray_push_back_2(payload, data, 4);
     }
     else {
         // Multiple Write
@@ -177,7 +162,7 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             (uint8_t)(count & 0xFF),
             byteCount
         };
-        XByteArray_append_array_base(payload, header, 5);
+        XByteArray_push_back_2(payload, header, 5);
 
         // Pack coils into bytes
         if (unit->m_type == XModbusCoils) {
@@ -187,7 +172,7 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
                     coilByte |= (1 << (i % 8));
                 }
                 if ((i % 8) == 7 || i == count - 1) {
-                    XByteArray_push_back_base(payload, coilByte);
+                    XByteArray_push_back_1(payload, coilByte);
                     coilByte = 0;
                 }
             }
@@ -196,8 +181,8 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             // Holding Registers
             for (size_t i = 0; i < count; i++) {
                 uint16_t val = (uint16_t)XModbusDataUnit_value(unit, i);
-                XByteArray_push_back_base(payload, (uint8_t)((val >> 8) & 0xFF));
-                XByteArray_push_back_base(payload, (uint8_t)(val & 0xFF));
+                XByteArray_push_back_1(payload, (uint8_t)((val >> 8) & 0xFF));
+                XByteArray_push_back_1(payload, (uint8_t)(val & 0xFF));
             }
         }
     }

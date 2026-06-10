@@ -7,10 +7,7 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "XRingBuffer.h"
-#include "XString.h"
-#include "XVector.h" 
-
+#include "XTypes.h"
 struct XIODevice;
 
 /**

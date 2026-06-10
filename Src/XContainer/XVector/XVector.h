@@ -208,9 +208,9 @@ bool XVector_insert_move_3(XVector* this_vector, int64_t index, XVector* pvValue
  * @return 追加成功返回true，失败返回false
  * @note n为0时追加无效；内部通过拷贝方式添加元素
  */
-#define XVector_append_1   XVector_push_back_1_base
-#define XVector_append_2   XVector_push_back_2
-#define XVector_append_3   XVector_push_back_3
+#define XVector_append_1_base			XVector_push_back_1_base
+#define XVector_append_2				XVector_push_back_2
+#define XVector_append_3				XVector_push_back_3
 
 /**
  * @brief 向XVector尾部追加一个数组（移动语义）
@@ -222,6 +222,7 @@ bool XVector_insert_move_3(XVector* this_vector, int64_t index, XVector* pvValue
  */
 #define XVector_append_move_1   XVector_push_back_move_1_base
 #define XVector_append_move_2   XVector_push_back_move_2
+#define XVector_append_move_3   XVector_push_back_move_3
 
 /**
  * @brief 删除XVector的第一个元素
@@ -419,10 +420,10 @@ bool  XVector_replace_move_2(XVector* this_vector, int64_t index, XVector* pvVal
 #define XVector_typeSize_base						XContainer_typeSize_base
 #define XVector_count_base							XVector_size_base
 #define XVector_length_base							XVector_size_base
-#define XVector_prepend_1							XVector_push_front_1_base
+#define XVector_prepend_1_base						XVector_push_front_1_base
 #define XVector_prepend_2							XVector_push_front_2
 #define XVector_prepend_3							XVector_push_front_3
-#define XVector_prepend_move_1						XVector_push_front_move_1_base
+#define XVector_prepend_move_1_base					XVector_push_front_move_1_base
 #define XVector_prepend_move_2						XVector_push_front_move_2
 #define XVector_prepend_move_3						XVector_push_front_move_3
 #define XVector_removeAt_base(vector,index)			XVector_remove_base(vector,index,1)

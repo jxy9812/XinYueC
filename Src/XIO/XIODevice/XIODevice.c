@@ -5,6 +5,7 @@
 #include "XVariant.h"
 #include "XVariantList.h"
 #include "XByteArray.h"
+#include "XString.h"
 #include <string.h>
 #include <stdarg.h>
 #include <assert.h> // for assert
