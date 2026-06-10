@@ -157,7 +157,7 @@ int64_t XIODevicePrivate_peek(XIODevicePrivate* d, char* data, int64_t maxlen, X
         int64_t toRead = maxlen - available;
         char* temp = (char*)XMalloc_System(toRead);
         if (temp) {
-            int64_t n = XIODevice_read(device, temp, toRead);
+            int64_t n = XIODevice_read_1(device, temp, toRead);
             if (n > 0) {
                 XRingBuffer_write(defaultReadBuf, temp, n);
             }

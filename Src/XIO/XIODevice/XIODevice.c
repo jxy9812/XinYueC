@@ -1,4 +1,5 @@
 ﻿#include "XIODevice.h"
+#include "XIODevice_Protected.h"
 #include "XIODevicePrivate.h"
 #include "XMemory.h"
 #include "XVariant.h"
@@ -8,6 +9,8 @@
 #include <stdarg.h>
 #include <assert.h> // for assert
 #define XIO_DEFAULT_CHANNEL_ID 0
+
+
 XIODevice* XIODevice_create()
 {
 	XIODevice* io = XMalloc_System(sizeof(XIODevice));
@@ -125,7 +128,7 @@ void XIODevice_setCurrentWriteChannel(XIODevice* self, int channelIndex) {
 // ========== 核心读写 API ==========
 // 这些函数现在使用新的单通道 XIODevicePrivate
 
-int64_t XIODevice_read(XIODevice* self, char* data, int64_t maxlen)
+int64_t XIODevice_read_1(XIODevice* self, char* data, int64_t maxlen)
 {
 	if (!self || !data || maxlen <= 0) return -1;
 	if (!XIODevice_isReadable(self)) return -1;
@@ -161,31 +164,43 @@ int64_t XIODevice_read(XIODevice* self, char* data, int64_t maxlen)
 		return -1;
 	}
 }
-
-XByteArray* XIODevice_read_new(XIODevice* self, int64_t maxlen)
+int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen)
 {
-	if (maxlen <= 0) return XByteArray_create();
-	char* buf = (char*)XMalloc_System(maxlen);
-	if (!buf) return XByteArray_create();
-	int64_t n = XIODevice_read(self, buf, maxlen);
-	XByteArray* result = XByteArray_create(buf, (n > 0) ? n : 0);
-	XFree_System(buf);
-	return result;
+	if (!self || !buff|| maxlen <= 0) return 0;
+	XByteArray_resize_base(buff, maxlen);
+	int64_t n = XIODevice_read_1(self, XContainerDataAddr(buff), maxlen);
+	XContainerSize(buff) = n;
+	return n;
 }
 
-XByteArray* XIODevice_readAll(XIODevice* self)
+XByteArray* XIODevice_read_3(XIODevice* self, int64_t maxlen)
 {
+	if (!self || maxlen <= 0) return NULL;
+	XByteArray* buff = XByteArray_create();
+	XIODevice_read_2(self, buff, maxlen);
+	return buff;
+}
+int64_t XIODevice_readAll_1(XIODevice* self, char* buff, int64_t buffSize)
+{
+	if (!self || !buff || buffSize <= 0) return 0;
+	int64_t len = XIODevice_bytesAvailable_base(self);
+	return XIODevice_read_1(self, buff, len>buffSize? buffSize:len);
+}
+int64_t XIODevice_readAll_2(XIODevice* self, XByteArray* buff)
+{
+	if (!self || !buff ) return 0;
+	return XIODevice_read_2(self, buff, XIODevice_bytesAvailable_base(self));
+}
+
+XByteArray* XIODevice_readAll_3(XIODevice* self)
+{
+	if (!self)return NULL;
 	XByteArray* result = XByteArray_create();
-	char buffer[2048];
-	int64_t n;
-	while (n=XIODevice_bytesAvailable_base(self)) {
-		n=XIODevice_read(self, buffer, n>sizeof(buffer)? sizeof(buffer):n);
-		XByteArray_append_array_base(result, buffer, n);
-	}
+	if (result)XIODevice_readAll_2(self,result);
 	return result;
 }
 
-int64_t XIODevice_readLine(XIODevice* self, char* data, int64_t maxlen)
+int64_t XIODevice_readLine_1(XIODevice* self, char* data, int64_t maxlen)
 {
 	if (!self || !self->m_d || !data || maxlen <= 0) return -1;
 	if (!XIODevice_isReadable(self)) return -1;
@@ -206,14 +221,19 @@ int64_t XIODevice_readLine(XIODevice* self, char* data, int64_t maxlen)
 	return -1;
 }
 
-XByteArray* XIODevice_readLine_new(XIODevice* self, int64_t maxlen)
+int64_t XIODevice_readLine_2(XIODevice* self, XByteArray* buff)
 {
-	if (maxlen <= 0) maxlen = 1024;
-	char* buf = (char*)XMalloc_System(maxlen);
-	if (!buf) return XByteArray_create();
-	int64_t n = XIODevice_readLine(self, buf, maxlen);
-	XByteArray* result = XByteArray_create_with_data(buf, (n > 0) ? n : 0);
-	XFree_System(buf);
+	if (!self || !buff) return 0;
+	int64_t maxLen=XIODevice_bytesAvailable_base(self);
+	XByteArray_resize_base(buff, maxLen);
+	return XIODevice_readLine_1(self, XContainerDataAddr(buff), maxLen);
+}
+
+XByteArray* XIODevice_readLine_3(XIODevice* self)
+{
+	if (!self)return NULL;
+	XByteArray* result = XByteArray_create();
+	if (result)XIODevice_readLine_2(self, result);
 	return result;
 }
 
@@ -239,7 +259,7 @@ bool XIODevice_isTransactionStarted(const XIODevice* self) {
 	return self && self->m_d && self->m_d->transactionStarted;
 }
 
-int64_t XIODevice_write(XIODevice* self, const char* data, int64_t len)
+int64_t XIODevice_write_1(XIODevice* self, const char* data, int64_t len)
 {
 	if (!self || !data || len <= 0 || !XIODevice_isWritable(self)) {
 		return -1;
@@ -267,14 +287,14 @@ int64_t XIODevice_write(XIODevice* self, const char* data, int64_t len)
 	return written;
 }
 
-int64_t XIODevice_write_cstr(XIODevice* self, const char* data) {
+int64_t XIODevice_write_3(XIODevice* self, const char* data) {
 	if (!data) return 0;
-	return XIODevice_write(self, data, strlen(data));
+	return XIODevice_write_1(self, data, strlen(data));
 }
 
-int64_t XIODevice_write_byteArray(XIODevice* self, const XByteArray* data) {
+int64_t XIODevice_write_2(XIODevice* self, const XByteArray* data) {
 	if (!data) return 0;
-	return XIODevice_write(self, XContainerDataAddr(data), XByteArray_size_base(data));
+	return XIODevice_write_1(self, XContainerDataAddr(data), XByteArray_size_base(data));
 }
 
 bool XIODevice_flush(XIODevice* self)
@@ -331,20 +351,26 @@ bool XIODevice_flush(XIODevice* self)
 	return success;
 }
 
-int64_t XIODevice_peek(XIODevice* self, char* data, int64_t maxlen)
+int64_t XIODevice_peek_1(XIODevice* self, char* data, int64_t maxlen)
 {
 	if (!self || !self->m_d || !data || maxlen <= 0 || !XIODevice_isReadable(self)) return 0;
 	return XIODevicePrivate_peek(self->m_d, data, maxlen, self);
 }
 
-XByteArray* XIODevice_peek_new(XIODevice* self, int64_t maxlen)
+int64_t XIODevice_peek_2(XIODevice* self, XByteArray* buff, int64_t maxlen)
 {
-	if (maxlen <= 0) return XByteArray_create();
-	char* buf = (char*)XMalloc_System(maxlen);
-	if (!buf) return XByteArray_create();
-	int64_t n = XIODevice_peek(self, buf, maxlen);
-	XByteArray* result = XByteArray_create_with_data(buf, n);
-	XFree_System(buf);
+	if (!self || !buff) return 0;
+	int64_t len = XIODevice_bytesAvailable_base(self);
+	len = len > maxlen ? maxlen : len;
+	XByteArray_resize_base(buff, len);
+	return XIODevice_peek_1(self, XContainerDataAddr(buff), len);
+}
+
+XByteArray* XIODevice_peek_3(XIODevice* self, int64_t maxlen)
+{
+	if (!self)return NULL;
+	XByteArray* result = XByteArray_create();
+	if (result)XIODevice_peek_2(self, result, maxlen);
 	return result;
 }
 
@@ -363,14 +389,14 @@ void XIODevice_ungetChar(XIODevice* self, char c)
 
 bool XIODevice_putChar(XIODevice* self, char c)
 {
-	return XIODevice_write(self, &c, 1) == 1;
+	return XIODevice_write_1(self, &c, 1) == 1;
 }
 
 bool XIODevice_getChar(XIODevice* self, char* c)
 {
 	if (!self || !c) return false;
 	if (self->m_d && XIODevicePrivate_getChar(self->m_d, c)) return true;
-	return XIODevice_read(self, c, 1) == 1;
+	return XIODevice_read_1(self, c, 1) == 1;
 }
 
 XString* XIODevice_errorString(const XIODevice* self)

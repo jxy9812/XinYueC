@@ -135,7 +135,7 @@ void XModbusRtuSerialClient_init(XModbusRtuSerialClient* client)
     if (serialPort) {
         ((XModbusDevice*)client)->m_ioDevice = (XIODevice*)serialPort;
 
-        XObject_connect1((XObject*)serialPort,
+        XObject_connect_1((XObject*)serialPort,
             XSignal(XIODevice_readyRead_signal),
             (XObject*)client,
             XModbusRtuSerialClient_onReadyRead,
@@ -285,7 +285,7 @@ static bool VXModbusRtuSerialClient_open(XModbusDevice* device)
     }
 
     // 清除缓冲区
-    XByteArray* array = XIODevice_readAll((XIODevice*)serialPort);
+    XByteArray* array = XIODevice_readAll_3((XIODevice*)serialPort);
     if (array) XByteArray_delete_base(array);
 
     XModbusDevice_setState(device, XModbusDevice_ConnectedState);
@@ -416,7 +416,7 @@ static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args
     XIODevice* io = ((XModbusDevice*)client)->m_ioDevice;
     if (!io) return;
 
-    XByteArray* data = XIODevice_readAll(io);
+    XByteArray* data = XIODevice_readAll_3(io);
     if (!data || XByteArray_size_base(data) == 0) {
         if (data) XByteArray_delete_base(data);
         return;
@@ -514,7 +514,7 @@ static void handleRequestTimeout(XModbusRtuSerialClient* client)
         client->m_retryCount++;
 
         // 重新发送
-        int64_t sent = XIODevice_write_byteArray(
+        int64_t sent = XIODevice_write_2(
             ((XModbusDevice*)client)->m_ioDevice,
             client->m_requestData);
 
@@ -645,7 +645,7 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
     //XString_delete_base(text);
     
     // 发送RTU请求
-    int64_t sent = XIODevice_write_byteArray(io, rtuClient->m_requestData);
+    int64_t sent = XIODevice_write_2(io, rtuClient->m_requestData);
     if (!sent) {
         XModbusReply_deleteLater(reply);
         return NULL;

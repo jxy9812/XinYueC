@@ -116,7 +116,7 @@ void XEventLoop_delay(size_t msec)
         loop->m_deley = timer;
         XTimer_setAutoDelete(timer, false);
         XTimer_setSingleShot(timer, true);
-        XObject_connect1(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
+        XObject_connect_1(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
     }
  
     XTimer_setTimeout(timer,msec);

@@ -108,7 +108,7 @@
 //	{
 //		//读取当前电平状态
 //		bool trigger;
-//		XIODevice_read(sw, &trigger, 1);
+//		XIODevice_read_1(sw, &trigger, 1);
 //		bool state;
 //		switch (base->m_triggerMode)
 //		{

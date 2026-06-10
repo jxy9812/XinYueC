@@ -36,11 +36,11 @@ typedef struct XTcpSocket {
 #define XTcpSocket_isOpen                   XIODevice_isOpen
 
 // 读写操作
-#define XTcpSocket_read                     XIODevice_read
-#define XTcpSocket_write                    XIODevice_write
-#define XTcpSocket_readAll                  XIODevice_readAll
-#define XTcpSocket_readLine_base            XIODevice_readLine
-#define XTcpSocket_peek                     XIODevice_peek
+#define XTcpSocket_read_1                     XIODevice_read_1
+#define XTcpSocket_write_1                    XIODevice_write_1
+#define XTcpSocket_readAll_2                  XIODevice_readAll_3
+#define XTcpSocket_readLine_1                 XIODevice_readLine_1
+#define XTcpSocket_peek_1                     XIODevice_peek_1
 
 // 状态查询
 #define XTcpSocket_isReadable               XIODevice_isReadable

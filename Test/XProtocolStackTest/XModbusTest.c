@@ -43,7 +43,7 @@ static void finished(XObject* sender, XVarList* args)
     XModbusDataUnit_setValue(read, 0, true);
     XModbusReply* reply = XModbusClient_sendWriteRequest(rtu, read, 1);
     XObject_setParent(reply, rtu);
-    XObject_connect2(reply, XSignal(XModbusReply_finished_signal), finished);
+    XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), finished);
     XObject_deleteLater(sender);
     XModbusDataUnit_delete_base(read);
 }
@@ -62,7 +62,7 @@ void XModbusTest()
     XModbusDataUnit_setValue(read,0,true);
     XModbusReply* reply= XModbusClient_sendWriteRequest(rtu, read,1);
     XObject_setParent(reply, rtu);
-    XObject_connect2(reply,XSignal(XModbusReply_finished_signal), finished);
+    XObject_connect_2(reply,XSignal(XModbusReply_finished_signal), finished);
      reply = XModbusClient_sendWriteRequest(rtu, read, 1);
     XCoreApplication_exec();
 }

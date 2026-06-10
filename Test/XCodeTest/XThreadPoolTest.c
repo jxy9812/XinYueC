@@ -20,7 +20,7 @@ static void threadFunc( XVarList* list)
 	XTimer_setSingleShot(timer, true);
 	XTimer_setAutoDelete(timer, true);
 	//XTimer_setTimerType(timer, XTimerType_PreciseTimer);
-	XObject_connect1(timer, XSignal(XTimer_timeout_signal), thread, XThread_quit, XConnectionType_Auto);
+	XObject_connect_1(timer, XSignal(XTimer_timeout_signal), thread, XThread_quit, XConnectionType_Auto);
 	XTimer_start_base(timer);
 	
 	XThread_exec(thread);
@@ -30,7 +30,7 @@ void XThreadPoolTest()
 {
 	XAtomic_int32_t* rt= XAtomic_create(int32_t);
 	XThreadPool* pool = XThreadPool_create(NULL);
-	XObject_connect1(pool, XSignal(XThreadPool_tasksEmpty_signal), xApp, XCoreApplication_quit, XConnectionType_Auto);
+	XObject_connect_1(pool, XSignal(XThreadPool_tasksEmpty_signal), xApp, XCoreApplication_quit, XConnectionType_Auto);
 	while (true)
 	{
 		//XPrintf("主线程:%p\n", XThread_currentThread());

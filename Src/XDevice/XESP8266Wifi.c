@@ -102,14 +102,14 @@ void XESP8266Wifi_init(XESP8266Wifi* device, XIODevice* io) {
 
     // 绑定底层设备的readyRead信号
     if (device->m_io) {
-        XObject_connect1(device->m_io,
+        XObject_connect_1(device->m_io,
             XIODevice_readyRead_signal,
             device,
             VXESP8266_processResponse,XConnectionType_Auto);
     }
-    XConnection* timeroutComm = XObject_connect1(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
-    XConnection* okComm = XObject_connect1(device, XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
-    XConnection* errComm = XObject_connect1(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+    XConnection* timeroutComm = XObject_connect_1(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+    XConnection* okComm = XObject_connect_1(device, XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+    XConnection* errComm = XObject_connect_1(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
 }
 void VXESP8266_deinit(XESP8266Wifi* device)
 {
@@ -294,7 +294,7 @@ static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XE
         char atCmd[256];
         snprintf(atCmd, sizeof(atCmd), "%s\r\n", cmd);
 
-        size_t sent = XIODevice_write(device->m_io, atCmd, strlen(atCmd));
+        size_t sent = XIODevice_write_1(device->m_io, atCmd, strlen(atCmd));
         if (sent != strlen(atCmd)) {
             DEBUG_PRINTF("AT command send failed: %s", cmd);
             return false;
@@ -304,17 +304,17 @@ static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XE
     // 启动超时定时器
     if (msecs > 0) 
     {
-       /* XConnection*timeroutComm= XObject_connect1(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
-        XConnection* okComm = XObject_connect1(device,XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
-        XConnection* errComm = XObject_connect1(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);*/
+       /* XConnection*timeroutComm= XObject_connect_1(device->m_timeoutTimer, XSignal(XTimer_timeout_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+        XConnection* okComm = XObject_connect_1(device,XSignal(XESP8266Wifi_ok_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);
+        XConnection* errComm = XObject_connect_1(device, XSignal(XESP8266Wifi_error_signal), device->m_loop, XEventLoop_quit, XConnectionType_Auto);*/
         
         XTimer_setInterval(device->m_timeoutTimer, msecs);
         XTimer_setTimeout(device->m_timeoutTimer, msecs);
         XTimer_start_base(device->m_timeoutTimer);
         XEventLoop_exec(device->m_loop);
-        //XObject_disconnect2(timeroutComm);
-        //XObject_disconnect2(okComm);
-        //XObject_disconnect2(errComm);
+        //XObject_disconnect_2(timeroutComm);
+        //XObject_disconnect_2(okComm);
+        //XObject_disconnect_2(errComm);
     }
     else if(msecs==-1)
     {//-1无限等待
@@ -592,7 +592,7 @@ size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, si
     {//非多连接模式
         if (device->m_transparentMode) {
             // 透传模式直接发送
-            return XIODevice_write(device->m_io, data, size);
+            return XIODevice_write_1(device->m_io, data, size);
         }
         else {
             // 非透传模式使用AT指令
@@ -603,7 +603,7 @@ size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, si
             }
             // 等待"> "提示符（简单处理，实际可能需要更复杂的等待逻辑）
             //XEventLoop_delay(100);
-            if (XIODevice_write(device->m_io, data, size) == size)
+            if (XIODevice_write_1(device->m_io, data, size) == size)
             {
                 if (XESP8266Wifi_sendATCommand(device, NULL, XESP8266_Op_WriteData, msecs)) 
                 {
@@ -626,7 +626,7 @@ size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, si
             return 0;
         }
         // 透传模式发送数据
-        return XIODevice_write(device->m_io, data, size) == size;
+        return XIODevice_write_1(device->m_io, data, size) == size;
     }
     else {
         // 非透传模式：AT+CIPSEND=<connId>,<size>
@@ -636,7 +636,7 @@ size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, si
             return 0;
         }
         // 发送实际数据
-        if (XIODevice_write(device->m_io, data, size) == size)
+        if (XIODevice_write_1(device->m_io, data, size) == size)
         {
             if (XESP8266Wifi_sendATCommand(device, NULL, XESP8266_Op_WriteData, msecs))
             {
@@ -644,7 +644,7 @@ size_t XESP8266Wifi_write(XESP8266Wifi* device, int connId, const void* data, si
             }
         }
         return 0;
-        //return XIODevice_write(device->m_io, data, size);
+        //return XIODevice_write_1(device->m_io, data, size);
     }
 }
 
@@ -758,7 +758,7 @@ bool XESP8266Wifi_exitTransparentMode(XESP8266Wifi* device, int msecs)
         return false;
 
     // 发送+++退出透传（无回车）
-    size_t sent = XIODevice_write(device->m_io, "+++", 3);
+    size_t sent = XIODevice_write_1(device->m_io, "+++", 3);
     if (sent != 3) return false;
     XEventLoop_delay(100);
     if (!XESP8266Wifi_sendATCommand(device, "AT+CIPMODE=0", XESP8266_Op_SetTransparent, msecs)) {

@@ -45,7 +45,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 	if (XIODevice_bytesAvailable_base(((XCommunicatorBase*)comm)->m_io) == 0)
 		return;//没有可以接收的
 	uint8_t           ucByte;
-	XIODevice_read(comm->m_class.m_io, &ucByte, 1);
+	XIODevice_read_1(comm->m_class.m_io, &ucByte, 1);
 	XVector* recvVector = comm->m_class.m_recvAsyncBuffer;
 	switch (comm->m_eRcvState)//if (mode == XDFC_FRAME_END_TIMEOUT)
 	{

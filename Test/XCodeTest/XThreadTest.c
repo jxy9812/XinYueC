@@ -17,7 +17,7 @@ static void threadFunc(XThread* thread, XVarList* list)
 	XTimer_setSingleShot(timer, true);
 	XTimer_setAutoDelete(timer, true);
 	XTimer_setTimerType(timer, XTimerType_PreciseTimer);
-	XObject_connect1(timer, XSignal(XTimer_timeout_signal), thread, XThread_quit, XConnectionType_Auto);
+	XObject_connect_1(timer, XSignal(XTimer_timeout_signal), thread, XThread_quit, XConnectionType_Auto);
 	XTimer_start_base(timer);
 
 	XThread_exec(thread);
@@ -53,7 +53,7 @@ void XThreadTest()
 		{
 			XAtomic_fetch_add_int32(rt, 1, XAtomic_MemoryOrder_Relaxed);
 			XThread* th = XThread_create_func(threadFunc, XVarList_Create(XVar(XAtomic_int32_t*, rt)));
-			//XObject_connect1(th, XSignal(XThread_finished_signal), th, XThread_deleteLater, XConnectionType_Auto);
+			//XObject_connect_1(th, XSignal(XThread_finished_signal), th, XThread_deleteLater, XConnectionType_Auto);
 			//XPrintf("XThread:%p XVector* children:%p\n", th, ((XObject*)th)->children);
 			if (!XThread_start(th))
 			{

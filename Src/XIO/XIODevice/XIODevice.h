@@ -179,8 +179,8 @@ void XIODevice_setCurrentWriteChannel(XIODevice* self, int channel);
  * @return 实际读取的字节数，若发生错误则返回 -1
  * @note 此函数会调用底层的 readData 虚函数
  */
-int64_t XIODevice_read(XIODevice* self, char* data, int64_t maxlen);
-
+int64_t XIODevice_read_1(XIODevice* self, char* data, int64_t maxlen);
+int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen);
 /**
  * @brief 从设备中读取最多 maxlen 个字节的数据，并返回一个新的 XByteArray 对象
  * @param self 指向 XIODevice 对象的指针
@@ -188,7 +188,7 @@ int64_t XIODevice_read(XIODevice* self, char* data, int64_t maxlen);
  * @return 包含读取数据的 XByteArray 对象指针
  * @note 返回的对象需要手动释放
  */
-XByteArray* XIODevice_read_new(XIODevice* self, int64_t maxlen);
+XByteArray* XIODevice_read_3(XIODevice* self, int64_t maxlen);
 
 /**
  * @brief 从设备中读取所有可用数据
@@ -196,7 +196,9 @@ XByteArray* XIODevice_read_new(XIODevice* self, int64_t maxlen);
  * @return 包含所有读取数据的 XByteArray 对象指针
  * @note 返回的对象需要手动释放。此函数会循环调用 read 直到无数据可读
  */
-XByteArray* XIODevice_readAll(XIODevice* self);
+int64_t XIODevice_readAll_1(XIODevice* self, char* buff, int64_t buffSize);
+int64_t XIODevice_readAll_2(XIODevice* self, XByteArray* buff);
+XByteArray* XIODevice_readAll_3(XIODevice* self);
 
 /**
  * @brief 从设备中读取一行数据（直到遇到换行符 '\\n' 或达到 maxlen 限制）
@@ -205,8 +207,8 @@ XByteArray* XIODevice_readAll(XIODevice* self);
  * @param maxlen 缓冲区的最大长度
  * @return 实际读取的字节数（包含换行符），若发生错误则返回 -1
  */
-int64_t XIODevice_readLine(XIODevice* self, char* data, int64_t maxlen);
-
+int64_t XIODevice_readLine_1(XIODevice* self, char* data, int64_t maxlen);
+int64_t XIODevice_readLine_2(XIODevice* self, XByteArray* buff);
 /**
  * @brief 从设备中读取一行数据，并返回一个新的 XByteArray 对象
  * @param self 指向 XIODevice 对象的指针
@@ -214,8 +216,7 @@ int64_t XIODevice_readLine(XIODevice* self, char* data, int64_t maxlen);
  * @return 包含读取行数据的 XByteArray 对象指针
  * @note 返回的对象需要手动释放
  */
-XByteArray* XIODevice_readLine_new(XIODevice* self, int64_t maxlen);
-
+XByteArray* XIODevice_readLine_3(XIODevice* self);
 /**
  * @brief 开始一个 I/O 事务
  * @param self 指向 XIODevice 对象的指针
@@ -252,15 +253,7 @@ bool XIODevice_isTransactionStarted(const XIODevice* self);
  * @return 实际写入的字节数，若发生错误则返回 -1
  * @note 成功写入后会触发 bytesWritten 信号
  */
-int64_t XIODevice_write(XIODevice* self, const char* data, int64_t len);
-
-/**
- * @brief 向设备写入一个以空字符结尾的 C 字符串
- * @param self 指向 XIODevice 对象的指针
- * @param data 指向要写入的 C 字符串
- * @return 实际写入的字节数
- */
-int64_t XIODevice_write_cstr(XIODevice* self, const char* data);
+int64_t XIODevice_write_1(XIODevice* self, const char* data, int64_t len);
 
 /**
  * @brief 向设备写入一个 XByteArray 对象的内容
@@ -268,7 +261,15 @@ int64_t XIODevice_write_cstr(XIODevice* self, const char* data);
  * @param data 指向要写入的 XByteArray 对象
  * @return 实际写入的字节数
  */
-int64_t XIODevice_write_byteArray(XIODevice* self, const XByteArray* data);
+int64_t XIODevice_write_2(XIODevice* self, const XByteArray* data);
+
+/**
+ * @brief 向设备写入一个以空字符结尾的 C 字符串
+ * @param self 指向 XIODevice 对象的指针
+ * @param data 指向要写入的 C 字符串
+ * @return 实际写入的字节数
+ */
+int64_t XIODevice_write_3(XIODevice* self, const char* data);
 
 /**
  * @brief 刷新写缓冲区，将所有待发送数据写入底层设备。
@@ -283,8 +284,8 @@ bool XIODevice_flush(XIODevice* self);
  * @param maxlen 要窥探的最大字节数
  * @return 实际窥探到的字节数
  */
-int64_t XIODevice_peek(XIODevice* self, char* data, int64_t maxlen);
-
+int64_t XIODevice_peek_1(XIODevice* self, char* data, int64_t maxlen);
+int64_t XIODevice_peek_2(XIODevice* self, XByteArray* buff, int64_t maxlen);
 /**
  * @brief 从设备中窥探（不移除）最多 maxlen 个字节的数据，并返回一个新的 XByteArray 对象
  * @param self 指向 XIODevice 对象的指针
@@ -292,7 +293,7 @@ int64_t XIODevice_peek(XIODevice* self, char* data, int64_t maxlen);
  * @return 包含窥探数据的 XByteArray 对象指针
  * @note 返回的对象需要手动释放
  */
-XByteArray* XIODevice_peek_new(XIODevice* self, int64_t maxlen);
+XByteArray* XIODevice_peek_3(XIODevice* self, int64_t maxlen);
 
 /**
  * @brief 从输入流中跳过最多 maxSize 个字节
@@ -333,32 +334,8 @@ bool XIODevice_getChar(XIODevice* self, char* c);
  */
 XString* XIODevice_errorString(const XIODevice* self);
 
-/**
- * @brief 设置设备的错误描述字符串
- * @param self 指向 XIODevice 对象的指针
- * @param str 错误描述的 C 字符串，若为 NULL 则清空错误信息
- */
-void XIODevice_setErrorString(XIODevice* self, const char* str);
 
 // —————— 虚函数（_base） ——————
-
-/**
- * @brief 虚函数：从设备读取原始数据（纯虚函数，子类必须实现）
- * @param self 指向 XIODevice 对象的指针
- * @param data 指向用于存放读取数据的缓冲区
- * @param maxlen 要读取的最大字节数
- * @return 实际读取的字节数
- */
-int64_t XIODevice_readData_base(XIODevice* self, char* data, int64_t maxlen);
-
-/**
- * @brief 虚函数：向设备写入原始数据（纯虚函数，子类必须实现）
- * @param self 指向 XIODevice 对象的指针
- * @param data 指向要写入的数据缓冲区
- * @param len 要写入的字节数
- * @return 实际写入的字节数
- */
-int64_t XIODevice_writeData_base(XIODevice* self, const char* data, int64_t len);
 
 /**
  * @brief 虚函数：打开设备
@@ -453,23 +430,6 @@ bool XIODevice_waitForReadyRead_base(XIODevice* self, int msecs);
  * @return 若在超时前完成则返回 true，否则返回 false
  */
 bool XIODevice_waitForBytesWritten_base(XIODevice* self, int msecs);
-
-/**
- * @brief 虚函数：从设备读取一行原始数据
- * @param self 指向 XIODevice 对象的指针
- * @param data 指向用于存放读取数据的缓冲区
- * @param maxlen 要读取的最大字节数
- * @return 实际读取的字节数
- */
-int64_t XIODevice_readLineData_base(XIODevice* self, char* data, int64_t maxlen);
-
-/**
- * @brief 虚函数：从输入流中跳过原始数据
- * @param self 指向 XIODevice 对象的指针
- * @param maxSize 要跳过的最大字节数
- * @return 实际跳过的字节数
- */
-int64_t XIODevice_skipData_base(XIODevice* self, int64_t maxSize);
 
 // —————— 信号 ——————
 

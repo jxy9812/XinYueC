@@ -1,12 +1,14 @@
-﻿#include"XIODevice.h"
-#include"XCircularQueue.h"
-#include"XLockFreeQueue.h"
+﻿#include "XIODevice.h"
+#include "XIODevice_Protected.h"
+#include "XCircularQueue.h"
+#include "XLockFreeQueue.h"
 #include "XMemory.h"
 #include "XIODevicePrivate.h"
 #include "XCoreApplication.h"
 #include "XDateTime.h"
 #include <string.h>
 #include <assert.h>
+
 static void VXIODevice_deinit(XIODevice* io);
 static int64_t VXIODevice_readData(XIODevice* self, char* data, int64_t maxlen);
 static int64_t VXIODevice_writeData(XIODevice* self, const char* data, int64_t len);

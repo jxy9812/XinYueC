@@ -43,7 +43,7 @@ void VXSwitchDevice_setState(XSwitchDeviceBase* sw, bool state)
 				ISNULL(0, "发生错误"); break;
 				break;
 			}
-			XIODevice_write(sw, &trigger, sizeof(bool));
+			XIODevice_write_1(sw, &trigger, sizeof(bool));
 			sw->m_state = state;
 			
 			if (sw->m_stateChangeCallback)
@@ -70,7 +70,7 @@ void VXIODevice_poll(XSwitchDeviceBase* sw)
 		
 		//读取当前电平状态
 		bool trigger;
-		XIODevice_read(sw, &trigger, 1);
+		XIODevice_read_1(sw, &trigger, 1);
 		bool state;
 		switch (sw->m_triggerMode)
 		{

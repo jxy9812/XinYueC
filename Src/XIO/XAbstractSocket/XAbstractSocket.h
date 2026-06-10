@@ -180,10 +180,10 @@ typedef struct XAbstractSocket {
 
 #define XAbstractSocket_open_base                XIODevice_open_base
 #define XAbstractSocket_close_base               XIODevice_close_base
-#define XAbstractSocket_read                     XIODevice_read
-#define XAbstractSocket_write                    XIODevice_write
-#define XAbstractSocket_readAll                  XIODevice_readAll
-#define XAbstractSocket_readLine_base            XIODevice_readLine
+#define XAbstractSocket_read                     XIODevice_read_1
+#define XAbstractSocket_write                    XIODevice_write_1
+#define XAbstractSocket_readAll                  XIODevice_readAll_3
+#define XAbstractSocket_readLine_base            XIODevice_readLine_1
 #define XAbstractSocket_bytesAvailable_base      XIODevice_bytesAvailable_base
 #define XAbstractSocket_bytesToWrite_base        XIODevice_bytesToWrite_base
 #define XAbstractSocket_canReadLine_base         XIODevice_canReadLine_base

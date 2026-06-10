@@ -99,7 +99,7 @@ void VXDataFrameComm_RecvFrameFSM(XDataFrameComm* comm)
 	{
 		//return;//没有可以接收的
 		uint8_t           ucByte;
-		XIODevice_read(comm->m_class.m_io, &ucByte, 1);
+		XIODevice_read_1(comm->m_class.m_io, &ucByte, 1);
 		XByteArray* recvVector = comm->m_class.m_recvAsyncBuffer;
 		switch (comm->m_eRcvState)//if (mode == XDFC_FRAME_END_TIMEOUT)
 		{
@@ -243,7 +243,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			}
 			if (comm->m_sendFrameHead)
 			{//当存在发送帧头先发送帧头
-				XIODevice_write(comm->m_class.m_io, XContainerSharedDataPtr(comm->m_sendFrameHead), XContainerSize(comm->m_sendFrameHead));
+				XIODevice_write_1(comm->m_class.m_io, XContainerSharedDataPtr(comm->m_sendFrameHead), XContainerSize(comm->m_sendFrameHead));
 				//XIODevice_writeFull_base(comm->m_class.m_io);
 			}
 			comm->m_eSndState = XDFC_STATE_TX_XMIT;
@@ -255,7 +255,7 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			{
 				if (comm->m_sentBytes < XVector_size_base(frame))
 				{//
-					XIODevice_write(comm->m_class.m_io, ((uint8_t*)XContainerSharedDataPtr(frame)) + comm->m_sentBytes, 1);
+					XIODevice_write_1(comm->m_class.m_io, ((uint8_t*)XContainerSharedDataPtr(frame)) + comm->m_sentBytes, 1);
 					//XIODevice_writeFull_base(comm->m_class.m_io);
 					++comm->m_sentBytes;
 					return;
@@ -263,14 +263,14 @@ void VXDataFrameComm_SendFrameFSM(XDataFrameComm* comm)
 			}
 			else//整体一起发送
 			{
-				XIODevice_write(comm->m_class.m_io, XContainerSharedDataPtr(frame), XContainerSize(frame));
+				XIODevice_write_1(comm->m_class.m_io, XContainerSharedDataPtr(frame), XContainerSize(frame));
 				//XIODevice_writeFull_base(comm->m_class.m_io);
 			}
 			//发送完成
 			//XPrintf("设置发送帧尾巴\n");
 			if (comm->m_sendFrameTail)
 			{//当存在发送帧尾先发送帧尾
-				XIODevice_write(comm->m_class.m_io, XContainerSharedDataPtr(comm->m_sendFrameTail), XContainerSize(comm->m_sendFrameTail));
+				XIODevice_write_1(comm->m_class.m_io, XContainerSharedDataPtr(comm->m_sendFrameTail), XContainerSize(comm->m_sendFrameTail));
 				//XIODevice_writeFull_base(comm->m_class.m_io);
 			}
 #if XDFC_SEND_FRAME_16HEX_SHOW

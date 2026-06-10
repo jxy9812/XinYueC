@@ -184,7 +184,7 @@ bool ConnectWiFi(XESP8266Wifi* device)
             }
         }
        
-        XIODevice_write(device->m_io, device->m_responseBuffer, strlen(device->m_responseBuffer));
+        XIODevice_write_1(device->m_io, device->m_responseBuffer, strlen(device->m_responseBuffer));
         device->m_responseLen = 0;
         return false;
     }
@@ -228,7 +228,7 @@ bool ConnectServer(XESP8266Wifi* device)
         //device->m_operationResult = false;
         XESP8266Wifi_serverStatusChanged_signal(device, connId, XESP8266_Status_Error);
         *strstr(device->m_responseBuffer, "ERROR") = 0;
-        XIODevice_write(device->m_io, device->m_responseBuffer, strlen(device->m_responseBuffer));
+        XIODevice_write_1(device->m_io, device->m_responseBuffer, strlen(device->m_responseBuffer));
         device->m_responseLen = 0;
         return false;
     }
@@ -446,7 +446,7 @@ void VXESP8266_processResponse(XESP8266Wifi* device)
     // 读取数据到响应缓冲区
     if (device->m_responseLen + available < sizeof(device->m_responseBuffer) - 1) 
     {
-        available = XIODevice_read(device->m_io,
+        available = XIODevice_read_1(device->m_io,
             device->m_responseBuffer + device->m_responseLen,
             available);
         device->m_responseLen += available;

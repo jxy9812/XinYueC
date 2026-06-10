@@ -287,7 +287,7 @@ XAbstractEventDispatcher* XObject_eventDispatcher(XObject* object);
  * @return 连接对象指针（XConnection*），失败返回NULL
  * @note 建立信号与槽的关联，当信号发射时触发槽函数
  */
-XConnection* XObject_connect1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type);
+XConnection* XObject_connect_1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func, XConnectionType type);
 /**
  * @brief 为对象的信号绑定接收者的槽函数（信号与槽连接）
  * @param object 发送信号的对象指针（非NULL）
@@ -296,7 +296,7 @@ XConnection* XObject_connect1(XObject* object, size_t signal, XObject* receiver,
  * @return 连接对象指针（XConnection*），失败返回NULL
  * @note 建立信号与槽的关联，当信号发射时触发槽函数，没有接收者，所以是同步触发
  */
-XConnection* XObject_connect2(XObject* object, size_t signal,XSlotFunc2 slot_func);
+XConnection* XObject_connect_2(XObject* object, size_t signal,XSlotFunc2 slot_func);
 /**
  * @brief 信号绑定辅助宏，用于生成信号标识
  * @param signal 信号函数名
@@ -313,14 +313,14 @@ XConnection* XObject_connect2(XObject* object, size_t signal,XSlotFunc2 slot_fun
 * @param slot_func1 槽函数指针（XSlotFunc类型）
 * @return 断开成功返回true，失败返回false
 */
-bool XObject_disconnect1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1);
+bool XObject_disconnect_1(XObject* object, size_t signal, XObject* receiver, XSlotFunc1 slot_func1);
 
 /**
  * @brief 通过连接对象断开信号与槽的连接
  * @param conn 连接对象指针（XConnection*，非NULL）
  * @return 断开成功返回true，失败返回false
  */
-bool XObject_disconnect2(XConnection* conn);
+bool XObject_disconnect_2(XConnection* conn);
 
 /**
  * @brief 栈区对象延迟释放

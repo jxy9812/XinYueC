@@ -10,7 +10,7 @@
 static void XSocketTest();
 static void readData(XObject* sender, XVarList* args)
 {
-	XByteArray* data= XTcpSocket_readAll(sender);
+	XByteArray* data= XTcpSocket_readAll_2(sender);
 	for_each_iterator(data, XByteArray,it)
 	{
 		putchar(XByteArray_iterator_data(&it));
@@ -43,14 +43,14 @@ void XSocketTest()
 	//}
 
 	XSocket* socket = XTcpSocket_create();
-	XObject_connect2(socket,XSignal(XIODevice_readyRead_signal), readData);
+	XObject_connect_2(socket,XSignal(XIODevice_readyRead_signal), readData);
 	//XAbstractSocket_connectToHost_base(socket, "192.168.1.117", 500, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
 	XAbstractSocket_connectToHost_base(socket, "192.168.1.46", 6666, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
 	XTcpSocket_waitForConnected_base(socket, 3000);
 	XSocketDescriptor s = XSocketDescriptor_fromIntptr(XTcpSocket_socketDescriptor_base(socket));
 	XSocketNotifier* notifier = XSocketNotifier_createWithSocket(s,XSocketAct_Read);
-	XObject_connect2(notifier, XSignal(XSocketNotifier_activated_signal), XSocketNotifierSlot);
-	XTcpSocket_write(socket,"hello",6);
+	XObject_connect_2(notifier, XSignal(XSocketNotifier_activated_signal), XSocketNotifierSlot);
+	XTcpSocket_write_1(socket,"hello",6);
 	XCoreApplication_exec();
 }
 void XMenu_XSocketTest(XMenu* root)
