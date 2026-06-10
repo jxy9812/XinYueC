@@ -21,7 +21,7 @@ XVtable* XSwitchDeviceBase_class_init()
 	//追加虚函数
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll,VXIODevice_poll);
+	//XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll,VXIODevice_poll);
 #if SHOWCONTAINERSIZE
 	printf("XSwitchDeviceBase size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

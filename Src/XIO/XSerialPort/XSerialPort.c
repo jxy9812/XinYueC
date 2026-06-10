@@ -14,7 +14,6 @@ void XSerialPort_platform_close(XSerialPort* port);
 int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize);
 int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t len);
 bool XSerialPort_platform_applyConfig(XSerialPort* port);
-void XSerialPort_platform_poll(XSerialPort* port);
 //bool XSerialPort_platform_waitForReadyRead(XSerialPort* port, int msecs);
 //bool XSerialPort_platform_waitForBytesWritten(XSerialPort* port, int msecs);
 XHandle XSerialPort_platform_handle(const XSerialPort* port);
@@ -42,24 +41,6 @@ bool VXObject_event(XSerialPort* port, XEvent* e)
 }
 
 // ========== 虚函数重写 ==========
-static void VXSerialPort_poll(XObject* obj) {
-    XSerialPort* port = (XSerialPort*)obj;
-
-    // 首先，让平台层处理其特定的轮询逻辑（例如，检查 WaitCommEvent 是否完成）
-    XSerialPort_platform_poll(port);
-
-    // 然后，执行通用的可读性检查
-    // 只有打开且可读时才检测
-    if (!port || !port->isOpen || !XIODevice_isReadable(&port->base)) {
-        return;
-    }
-
-    // 检查是否有新数据可读
-    int64_t available = XSerialPort_bytesAvailable_base(port);
-    if (available > 0) {
-        XIODevice_readyRead_signal(port);  // emit readyRead
-    }
-}
 
 static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode) {
     XSerialPort* port = (XSerialPort*)io;
@@ -208,7 +189,6 @@ XVtable* XSerialPort_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadLineData, VXIODevice_readLineData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData, VXSerialPort_writeData);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSerialPort_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXSerialPort_poll);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXObject_event);
 #if SHOWCONTAINERSIZE
     printf("XSerialPort size:%d\n", XVtable_size(XVTABLE_DEFAULT));

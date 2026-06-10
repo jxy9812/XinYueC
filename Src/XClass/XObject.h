@@ -16,8 +16,8 @@ extern "C" {
  * @note 用于实现C语言中的多态机制，枚举值对应虚函数在表中的索引
  */
 XCLASS_DEFINE_BEGING(XObject)
-XCLASS_DEFINE_ENUM(XObject, Poll) = XCLASS_VTABLE_GET_SIZE(XClass),
-XCLASS_DEFINE_ENUM(XObject, Event),
+//XCLASS_DEFINE_ENUM(XObject, Poll) = XCLASS_VTABLE_GET_SIZE(XClass),
+XCLASS_DEFINE_ENUM(XObject, Event) = XCLASS_VTABLE_GET_SIZE(XClass),
 XCLASS_DEFINE_ENUM(XObject, EventFilter),
 XCLASS_DEFINE_ENUM(XObject, ChildEvent),
 XCLASS_DEFINE_ENUM(XObject, ConnectNotify),
@@ -230,24 +230,6 @@ bool XObject_isSignalConnected(const XObject* self, size_t signal);
 
 // 返回连接到此对象上某个信号的接收者数量。
 int XObject_receivers(const XObject* self, size_t signal);
-
-
-/**
- * @brief 轮询函数的基础实现（多态入口）
- * @param object 调用轮询的XObject对象指针（非NULL）
- * @note 通过虚函数表调用实际的Poll虚函数，子类可重写该函数实现自定义轮询逻辑
- */
-void XObject_poll_base(XObject* object);
-
-/**
- * @brief 设置轮询间隔时间
- * @param object 目标XObject对象指针（非NULL）
- * @param interval 轮询间隔（毫秒），0表示关闭轮询
- * @note 通过定时器控制Poll函数的调用频率
- */
-void XObject_setPollTime(XObject* object, size_t interval);
-
-
 
 /**
  * @brief 向对象投递异步执行的函数

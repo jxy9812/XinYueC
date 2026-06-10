@@ -32,7 +32,6 @@ bool XPLC_addInIODevice_base(XPLC* plc, int32_t id, XIODevice* io);
 bool XPLC_removeOutId_base(XPLC* plc, int32_t id);
 bool XPLC_removeInId_base(XPLC* plc, int32_t id);
 bool XPLC_removeIODevice_base(XPLC* plc,XIODevice* io);
-#define XPLC_poll_base      XObject_poll_base
 
 //设置扫描周期
 void XPLC_setScanPeriod(XPLC* plc, uint16_t delay_ms);

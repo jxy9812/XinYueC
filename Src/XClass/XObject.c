@@ -28,7 +28,7 @@ XVtable* XObject_class_init()
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
 	void* table[] = { 
-		VXObject_poll,VXObject_event ,VXObject_eventFilter,
+		/*VXObject_poll,*/VXObject_event ,VXObject_eventFilter,
 	NULL,NULL,NULL,NULL,VXObject_timerEvent };
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
@@ -84,30 +84,6 @@ int XObject_receivers(const XObject* self, size_t signal)
 {
 	if (!self) return 0;
 	return XSignalSlot_receivers(self->m_signalSlot, signal);
-}
-
-void XObject_poll_base(XObject* object)
-{
-	if (ISNULL(object, "") || ISNULL(XClassGetVtable(object), ""))
-		return;
-	XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*))(object);
-}
-
-void XObject_setPollTime(XObject* object, size_t interval)
-{
-	if (object == NULL|| XClassGetVirtualFunc(object, EXObject_Poll, void(*)(XObject*))==NULL)
-		return;
-	//间隔是0的时候关闭轮询
-	if (interval == 0&& object->pollId)
-	{//关闭轮询
-		XObject_killTimer(object, object->pollId);
-		object->pollId = 0;
-		return;
-	}
-	if (!object->pollId)
-	{
-		object->pollId = XObject_startTimer_ms(object, interval,XTimerType_PreciseTimer);
-	}
 }
 
 void XObject_setParent(XObject* object, XObject* parent)
@@ -453,7 +429,6 @@ void VXObject_timerEvent(XObject* self, XEventTimer* event)
 {
 	if (self->pollId == event->timerId)
 	{
-		XObject_poll_base(self);
 		XEvent_accept(event);
 	}
 }

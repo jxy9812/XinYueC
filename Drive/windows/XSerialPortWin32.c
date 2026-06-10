@@ -433,20 +433,6 @@ bool XSerialPort_setFlowControl(XSerialPort* port, XSerialPort_FlowControl flowC
     }
     return ok;
 }
-void XSerialPort_platform_poll(XSerialPort* port)
-{
-    if (!port) return ;
-    XSerialPortWin32* win32 = (XSerialPort*)port;
-
-    //if (!win32->pendingWait) return;
-
-    //DWORD transferred = 0;
-    //if (GetOverlappedResult(win32->handle, &win32->waitOverlapped, &transferred, FALSE)) {
-    //    win32->pendingWait = false;
-    //    startWaitCommEvent(win32); // 重新监听
-    //    XIODevice_readyRead_signal((XIODevice*)port); // ✅ 安全 emit
-    //}
-}
 bool XSerialPort_platform_applyConfig(XSerialPort* port)
 {
     XSerialPortWin32* win32 = (XSerialPortWin32*)port;

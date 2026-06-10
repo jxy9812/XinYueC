@@ -40,7 +40,7 @@ XVtable* XCommunicatorBase_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCommunicatorBase_deinit);
-	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXCommunicatorBase_poll);
+	//XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXCommunicatorBase_poll);
 #if SHOWCONTAINERSIZE
 	printf("XIODevice size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

@@ -53,7 +53,6 @@ void XPLCTask_setState_base(XPLCTask* task, uint16_t state);
 void XPLCTask_start_base(XPLCTask* task);//开始任务
 void XPLCTask_finish_base(XPLCTask* task);//结束任务
 #define XPLCTask_delete_base	XClass_delete_base
-#define XPLCTask_poll_base      XObject_poll_base
 #ifdef __cplusplus
 }
 #endif

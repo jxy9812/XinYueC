@@ -32,7 +32,7 @@ XVtable* XStateMachine_class_init()
 
     //XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStateMachine_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, NULL);
+    //XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, NULL);
 #if SHOWCONTAINERSIZE
     printf("XStateMachine size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

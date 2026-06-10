@@ -43,7 +43,7 @@ void XDataFrameCommTest()
 			//XDataFrameComm_sendTextFmt(comm, false,  "ain.cuttingMotorSp.val=%d", speed++);
 			current = XDateTime_currentMSecsSinceEpoch();
 		}
-		XDataFrameComm_poll_base(comm);
+		//XDataFrameComm_poll_base(comm);
 	}
 }
 

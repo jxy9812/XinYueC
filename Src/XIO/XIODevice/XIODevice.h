@@ -76,7 +76,6 @@ XIODevice* XIODevice_create();
 void XIODevice_init(XIODevice* io);
 #define XIODevice_deleteLater		XObject_deleteLater
 #define XIODevice_deinitLater		XObject_deinitLater
-#define XIODevice_poll_base         XObject_poll_base
 // —————— Public API ——————
 
 /**

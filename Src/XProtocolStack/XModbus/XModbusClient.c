@@ -61,6 +61,7 @@ void XModbusClient_init(XModbusClient* client) {
     client->m_timeout = 200; // 默认200毫秒
     client->m_numberOfRetries = 3; // 默认3次
     client->m_timeoutTimer= XTIMER_INVALID_ID;
+    client->m_pool = NULL;
 }
 
 static void VXModbusClient_deinit(XModbusClient* client) {

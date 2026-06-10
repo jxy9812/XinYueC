@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "XModbusDevice.h" // Inherits from XModbusDevice
+#include "XModbusDevice.h" 
 #include "XModbusReply.h"
 #include "XModbusDataUnit.h"
 #include "XModbusPdu.h"
@@ -26,6 +26,7 @@ typedef struct XModbusClient {
     int m_timeout;         ///< 请求超时时间（毫秒）
     int m_numberOfRetries; ///< 请求重试次数
     XTimerId m_timeoutTimer;        ///< 超时定时器ID
+    XHashMap* m_pool;      //轮询映射表 <XTimerId,XModbusReply*>
 } XModbusClient;
 
 

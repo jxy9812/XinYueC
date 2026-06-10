@@ -26,7 +26,7 @@ VXTimer_start,VXTimer_stop
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTimer_deinit);
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXObject_timerEvent);
-	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll,NULL);
+	//XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll,NULL);
 #if SHOWCONTAINERSIZE
 	printf("XTimer size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

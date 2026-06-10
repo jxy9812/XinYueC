@@ -30,7 +30,7 @@ XVtable* XPLC_class_init()
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
-	XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXPLC_poll);
+	//XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, VXPLC_poll);
 #if SHOWCONTAINERSIZE
 	printf("XPLCTask size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif

@@ -54,7 +54,6 @@ bool XCommunicatorBase_recvAsync_base(XCommunicatorBase* comm, size_t maxSize); 
 void XCommunicatorBase_setOption_base(XCommunicatorBase* comm, int optionId, const void* value, size_t size);
 void XCommunicatorBase_getOption_base(XCommunicatorBase* comm, int optionId, void* value, size_t* size);
 #define XCommunicatorBase_delete_base			XObject_deleteLater
-#define XCommunicatorBase_poll_base				XObject_poll_base
 /*										信号											*/	
 void* XCommunicatorBase_connect_signal(XCommunicatorBase* comm);
 void* XCommunicatorBase_disconnect_signal(XCommunicatorBase* comm);

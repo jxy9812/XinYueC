@@ -363,7 +363,6 @@ void* XESP8266Wifi_connect_signal(XESP8266Wifi* device, int connId);
 void* XESP8266Wifi_disconnect_signal(XESP8266Wifi* device, int connId);
 // 基础方法宏定义
 #define XESP8266Wifi_delete_base        XIODevice_deleteLater
-#define XESP8266Wifi_poll_base          XObject_poll_base
 
 #ifdef __cplusplus
 }

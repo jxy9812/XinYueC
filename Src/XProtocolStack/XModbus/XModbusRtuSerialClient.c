@@ -328,19 +328,20 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
         XModbusReply_setError(client->m_currentReply, XModbusDevice_UnknownError, "Server address mismatch");
         goto cleanup;
     }
-
+    if (!client->m_currentReply->m_rawResult)
+        client->m_currentReply->m_rawResult = XModbusResponse_create();
     // 解析响应PDU
-    XModbusResponse response;
-    XModbusResponse_init(&response);
-
+   /* XModbusResponse response;
+    XModbusResponse_init(&response);*/
+    XModbusResponse* response= client->m_currentReply->m_rawResult;
     uint8_t fc = data[1];
-    XModbusPdu_setFunctionCode(&response, (XModbusPdu_FunctionCode)fc);
+    XModbusPdu_setFunctionCode(response, (XModbusPdu_FunctionCode)fc);
 
     // 检查异常响应
     if (fc & XMODBUS_PDU_EXCEPTION_BYTE) {
         if (len >= 4) {
             uint8_t exceptionCode = data[2];
-            XModbusPdu_setData(&response.m_base, &exceptionCode, 1);
+            XModbusPdu_setData(response, &exceptionCode, 1);
 
             const char* errorMsg = "Modbus exception";
             switch (exceptionCode) {
@@ -364,29 +365,35 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
     // data + 2 跳过地址和功能码
     // len - 4 = 总长度 - 地址(1) - 功能码(1) - CRC(2)
     if (len > 4) {
-        XModbusPdu_setData(&response, data + 2, len - 4);
+        XModbusPdu_setData(response, data + 2, len - 4);
     }
 
+
+
+    if(!client->m_currentReply->m_result)
+        client->m_currentReply->m_result= XModbusDataUnit_create();
+
     // 获取结果单元
-    XModbusDataUnit* resultUnit = XModbusDataUnit_create();
+    //XModbusDataUnit* resultUnit = XModbusDataUnit_create();
+    XModbusDataUnit* resultUnit = client->m_currentReply->m_result;
     //XString* text= XByteArray_to16HexString(receiveBuffer);
     //XPrintf_string(text);
     //XPrintf("\n");
     //XString_delete_base(text);
     // 通过保护API调用虚函数（会调到子类重写的实现）
-    bool success = XModbusClient_processResponse_base((XModbusClient*)client, &response, resultUnit);
+    bool success = XModbusClient_processResponse_base((XModbusClient*)client, response, resultUnit);
 
     if (success) {
-        XModbusReply_setResult_ref(client->m_currentReply, resultUnit);
+        //XModbusReply_setResult_ref(client->m_currentReply, resultUnit);
     }
     else {
         XModbusReply_setError(client->m_currentReply, XModbusDevice_UnknownError, "Response processing failed");
         // 释放临时结果单元
-        if (resultUnit) {
+        /*if (resultUnit) {
             XModbusDataUnit_delete_base(resultUnit);
-        }
+        }*/
     }
-    XModbusResponse_deinit_base(&response);
+    //XModbusResponse_deinit_base(&response);
 cleanup:
     XModbusReply* reply = client->m_currentReply;
     client->m_currentReply = NULL;
@@ -655,6 +662,6 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
         interFrameTimerStart(client);
     
     }
-
+    ((XModbusRtuSerialClient*)client)->m_currentServerAddress = serverAddress;
     return reply;
 }
