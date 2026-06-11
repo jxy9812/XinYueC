@@ -26,7 +26,7 @@ typedef struct XModbusClient {
     int m_timeout;         ///< 请求超时时间（毫秒）
     int m_numberOfRetries; ///< 请求重试次数
     XTimerId m_timeoutTimer;        ///< 超时定时器ID
-    XHashMap* m_pool;      //轮询映射表 <XTimerId,XModbusReply*>
+    XHashMap* m_poolMap;      //轮询映射表 <XTimerId,XModbusReply*>
 } XModbusClient;
 
 
@@ -68,7 +68,7 @@ void XModbusClient_init(XModbusClient* client);
  * @note 调用者拥有返回的XModbusReply对象，需负责其生命周期管理
  */
 XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbusDataUnit* read, int serverAddress);
-
+XModbusReply* XModbusClient_pollReadRequest(XModbusClient* client, const XModbusDataUnit* read, int serverAddress, int pollIntervalMs);
 /**
 * @brief 发送Modbus写入请求
 * @param client 客户端实例指针（非NULL）
@@ -78,7 +78,7 @@ XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbus
 * @note 调用者拥有返回的XModbusReply对象，需负责其生命周期管理
 */
 XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbusDataUnit* write, int serverAddress);
-
+XModbusReply* XModbusClient_pollWriteRequest(XModbusClient* client, const XModbusDataUnit* write, int serverAddress, int pollIntervalMs);
 /**
 * @brief 发送Modbus读写组合请求（仅支持0x17功能码）
 * @param client 客户端实例指针（非NULL）
@@ -89,7 +89,7 @@ XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbu
 * @note 调用者拥有返回的XModbusReply对象，需负责其生命周期管理
 */
 XModbusReply* XModbusClient_sendReadWriteRequest(XModbusClient* client, const XModbusDataUnit* read, const XModbusDataUnit* write, int serverAddress);
-
+XModbusReply* XModbusClient_pollReadWriteRequest(XModbusClient* client, const XModbusDataUnit* read, const XModbusDataUnit* write, int serverAddress,int pollIntervalMs);
 /**
 * @brief 发送原始Modbus请求PDU（虚函数，通过虚函数表调用）
 * @param client 客户端实例指针（非NULL）
@@ -100,16 +100,36 @@ XModbusReply* XModbusClient_sendReadWriteRequest(XModbusClient* client, const XM
 * @note 子类必须重写此虚函数，实现协议特定的帧构建和发送逻辑
 */
 XModbusReply* XModbusClient_sendRawRequest_base(XModbusClient* client, const XModbusRequest* request, int serverAddress);
-
+XModbusReply* XModbusClient_sendRawRequest_move_base(XModbusClient* client, const XModbusRequest* request, int serverAddress);
+XModbusReply* XModbusClient_sendRawRequest_ref_base(XModbusClient* client, const XModbusRequest* request, int serverAddress);
 /**
-* @brief 辅助函数：创建并初始化 Reply 对象
-* @param client 客户端实例指针（非NULL）
-* @param request 原始请求PDU
-* @param serverAddress 目标从站地址
-* @return 成功返回指向XModbusReply对象的指针，失败返回NULL
-* @note 供子类在实现 sendRawRequest 时调用，用于创建 Reply 对象
-*/
-XModbusReply* XModbusClient_createReply(XModbusClient* client, const XModbusRequest* request, int serverAddress);
+ * @brief 轮询方式发送Modbus请求并等待响应（阻塞直到成功或超时）
+ * @param client        客户端实例指针（非NULL）
+ * @param request       原始请求PDU
+ * @param serverAddress 目标从站地址
+ * @param pollIntervalMs 轮询间隔（毫秒），每隔此时间检查一次接收缓冲
+ * @return 成功返回指向XModbusReply对象的指针（调用者负责释放），失败返回NULL
+ */
+XModbusReply* XModbusClient_pollRawRequest(XModbusClient* client,
+    const XModbusRequest* request,
+    int serverAddress,
+    int pollIntervalMs);
+XModbusReply* XModbusClient_pollRawRequest_move(XModbusClient* client,
+    const XModbusRequest* request,
+    int serverAddress,
+    int pollIntervalMs);
+XModbusReply* XModbusClient_pollRawRequest_ref(XModbusClient* client,
+    XModbusRequest* request,
+    int serverAddress,
+    int pollIntervalMs);
+/**
+ * @brief 取消指定客户端的当前轮询请求（如果有正在进行的轮询）
+ * @param client 客户端实例指针
+ * @return 
+ * @note 线程安全，可在另一个线程或信号处理函数中调用
+ * @note 被取消的轮询函数将返回 NULL，且不会产生 XModbusReply 对象
+ */
+bool XModbusClient_cancelPoll(XModbusClient* client, XModbusReply*reply);
 
 /**
 * @brief 获取当前请求超时时间

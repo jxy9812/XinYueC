@@ -82,7 +82,8 @@ void VXContainer_clear(XContainer* Object)
 void VXClass_copy(XContainer* dst, const XContainer* src)
 {
     // 1. 释放目标原有资源
-    if (dst->m_useCow) {
+    if (XContainerIsCow(dst))
+    {
         if (dst->m_data)
             XSharedData_release_with(dst->m_data, NULL, NULL);
     }
@@ -95,7 +96,7 @@ void VXClass_copy(XContainer* dst, const XContainer* src)
     memcpy((XClass*)dst + 1, (XClass*)src + 1, sizeof(XContainer) - sizeof(XClass));
 
     // 3. 根据源模式拷贝数据
-    if (src->m_useCow) {
+    if (XContainerIsCow(dst)) {
         // COW 模式：共享 XSharedData，增加引用计数
         dst->m_data = src->m_data;
         if (dst->m_data)
@@ -119,7 +120,7 @@ void VXClass_copy(XContainer* dst, const XContainer* src)
 void VXClass_move(XContainer* dst, XContainer* src)
 {
     // 1. 释放目标原有资源
-    if (dst->m_useCow) {
+    if (XContainerIsCow(dst)) {
         if (dst->m_data)
             XSharedData_release_with(dst->m_data, NULL, NULL);
     }

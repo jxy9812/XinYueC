@@ -71,6 +71,13 @@ typedef XMap XVariantMap;
 typedef XHashMap XVariantHashMap;
 
 typedef void (*XCallableToRun)(XVarList*);
+//函数参数类型
+typedef enum XFuncParamType
+{
+	XFuncParamType_Copy,//拷贝模式
+	XFuncParamType_Move,//移动模式
+	XFuncParamType_Ref//引用模式
+}XFuncParamType;
 /**
  * @brief 定时器唯一标识符。
  */

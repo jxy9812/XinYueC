@@ -55,8 +55,8 @@ XVtable* XVector_class_init()
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXVector_clear);
-    //XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
-    //XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
 #if SHOWCONTAINERSIZE
     printf("XVector size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -204,11 +204,12 @@ static void VXVectorDataDelete(void* data, XVector* this_vector)
 // ========================
 void VXClass_copy(XVector* object, const XVector* src)
 {
-    //// 如果目标还未初始化，先初始化
-    //if (((XClass*)object)->m_vtable == NULL)
-    //{
-    //    XVector_init(object, XContainerTypeSize(src));
-    //}
+    // 如果目标还未初始化，先初始化
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XVector_init(object, XContainerTypeSize(src), XContainerIsCow(src));
+    }
+    XClass_Parent(XContainer,EXClass_Copy,void(*)(XVector*, const XVector*))(object, src);
     //else if (XContainerSharedData(object))
     //{
     //    XSharedData_release_with(XContainerSharedData(object), (XCDataDeinitMethod)VXVectorDataDelete, object);
@@ -233,10 +234,11 @@ void VXClass_copy(XVector* object, const XVector* src)
 
 void VXClass_move(XVector* object, XVector* src)
 {
-    //if (((XClass*)object)->m_vtable == NULL)
-    //{
-    //    XVector_init(object, XContainerTypeSize(src));
-    //}
+    if (((XClass*)object)->m_vtable == NULL)
+    {
+        XVector_init(object, XContainerTypeSize(src), XContainerIsCow(src));
+    }
+    XClass_Parent(XContainer, EXClass_Move, void(*)(XVector*, const XVector*))(object, src);
     //else if (XContainerSharedData(object))
     //{
     //    XSharedData_release_with(XContainerSharedData(object), (XCDataDeinitMethod)VXVectorDataDelete, object);

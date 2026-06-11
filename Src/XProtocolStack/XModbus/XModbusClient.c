@@ -4,13 +4,14 @@
 #include "XString.h"
 #include "XVariant.h"
 #include "XByteArray.h"
+#include "XHashMap.h"
 #include <string.h>
 
 // 虚函数重载声明
 static void VXModbusClient_deinit(XModbusClient* client);
 static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 static bool VXModbusClient_processPrivateResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
-static XModbusReply* VXModbusClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress);
+static XModbusReply* VXModbusClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress, XFuncParamType type);
 
 // ================== 虚表初始化 ==================
 XVtable* XModbusClient_class_init(void)
@@ -61,11 +62,16 @@ void XModbusClient_init(XModbusClient* client) {
     client->m_timeout = 200; // 默认200毫秒
     client->m_numberOfRetries = 3; // 默认3次
     client->m_timeoutTimer= XTIMER_INVALID_ID;
-    client->m_pool = NULL;
+    client->m_poolMap = NULL;
 }
 
 static void VXModbusClient_deinit(XModbusClient* client) {
     if (!client) return;
+    if (client->m_poolMap)
+    {
+        XMapBase_delete_base(client->m_poolMap);
+        client->m_poolMap = NULL;
+    }
     // 调用基类析构
     XClass_Deinit_Parent(XModbusDevice, client);
 }
@@ -252,8 +258,22 @@ XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbus
     if (!request) {
         return NULL;
     }
-    XModbusReply* reply = XModbusClient_sendRawRequest_base(client, request, serverAddress);
-    XModbusRequest_delete_base(request);
+    XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
+    //XModbusRequest_delete_base(request);
+    return reply;
+}
+
+XModbusReply* XModbusClient_pollReadRequest(XModbusClient* client, const XModbusDataUnit* read, int serverAddress, int pollIntervalMs)
+{
+    if (!client || !read || serverAddress < 0) {
+        return NULL;
+    }
+    XModbusRequest* request = buildReadRequest(read);
+    if (!request) {
+        return NULL;
+    }
+    XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, request, serverAddress, pollIntervalMs);
+    //XModbusRequest_delete_base(request);
     return reply;
 }
 
@@ -265,8 +285,22 @@ XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbu
     if (!request) {
         return NULL;
     }
-    XModbusReply* reply = XModbusClient_sendRawRequest_base(client, request, serverAddress);
-    XModbusRequest_delete_base(request);
+    XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
+    //XModbusRequest_delete_base(request);
+    return reply;
+}
+
+XModbusReply* XModbusClient_pollWriteRequest(XModbusClient* client, const XModbusDataUnit* write, int serverAddress, int pollIntervalMs)
+{
+    if (!client || !write || serverAddress < 0) {
+        return NULL;
+    }
+    XModbusRequest* request = buildWriteRequest(write);
+    if (!request) {
+        return NULL;
+    }
+    XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, request, serverAddress, pollIntervalMs);
+    //XModbusRequest_delete_base(request);
     return reply;
 }
 
@@ -280,8 +314,24 @@ XModbusReply* XModbusClient_sendReadWriteRequest(XModbusClient* client, const XM
         return NULL;
     }
 
-    XModbusReply* reply = XModbusClient_sendRawRequest_base(client, request, serverAddress);
-    XModbusRequest_delete_base(request);
+    XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
+    //XModbusRequest_delete_base(request);
+    return reply;
+}
+
+XModbusReply* XModbusClient_pollReadWriteRequest(XModbusClient* client, const XModbusDataUnit* read, const XModbusDataUnit* write, int serverAddress, int pollIntervalMs)
+{
+    if (!client || !read || !write || serverAddress < 0) {
+        return NULL;
+    }
+
+    XModbusRequest* request = buildReadWriteRequest(read, write);
+    if (!request) {
+        return NULL;
+    }
+
+    XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, request, serverAddress, pollIntervalMs);
+    //XModbusRequest_delete_base(request);
     return reply;
 }
 
@@ -291,7 +341,7 @@ XModbusReply* XModbusClient_sendReadWriteRequest(XModbusClient* client, const XM
  * @brief 默认的 sendRawRequest 实现
  * @note 基类不提供实际发送功能，子类必须重写此函数
  */
-static XModbusReply* VXModbusClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress) {
+static XModbusReply* VXModbusClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress,XFuncParamType type) {
     // 基类是抽象的，不提供默认实现
     (void)client; (void)request; (void)serverAddress;
     return NULL;
@@ -302,17 +352,98 @@ static XModbusReply* VXModbusClient_sendRawRequest(XModbusClient* client, const 
  */
 XModbusReply* XModbusClient_sendRawRequest_base(XModbusClient* client, const XModbusRequest* request, int serverAddress) {
     if (!client || !XClassGetVtable(client)) return NULL;
-    XModbusReply* (*func)(XModbusClient*, const XModbusRequest*, int) =
-        XClassGetVirtualFunc(client, EXModbusClient_SendRawRequest,
-            XModbusReply * (*)(XModbusClient*, const XModbusRequest*, int));
-    if (!func) return NULL;
-    return func(client, request, serverAddress);
+    return  XClassGetVirtualFunc(client, EXModbusClient_SendRawRequest,XModbusReply * (*)(XModbusClient*, const XModbusRequest*, int, XFuncParamType))(client, request, serverAddress, XFuncParamType_Copy);
+}
+
+XModbusReply* XModbusClient_sendRawRequest_move_base(XModbusClient* client, const XModbusRequest* request, int serverAddress)
+{
+    if (!client || !XClassGetVtable(client)) return NULL;
+    return  XClassGetVirtualFunc(client, EXModbusClient_SendRawRequest, XModbusReply * (*)(XModbusClient*, const XModbusRequest*, int, XFuncParamType))(client, request, serverAddress, XFuncParamType_Move);
+}
+
+XModbusReply* XModbusClient_sendRawRequest_ref_base(XModbusClient* client, const XModbusRequest* request, int serverAddress)
+{
+    if (!client || !XClassGetVtable(client)) return NULL;
+    return  XClassGetVirtualFunc(client, EXModbusClient_SendRawRequest, XModbusReply * (*)(XModbusClient*, const XModbusRequest*, int, XFuncParamType))(client, request, serverAddress, XFuncParamType_Ref);
+}
+
+XModbusReply* XModbusClient_pollRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress, int pollIntervalMs)
+{
+    if (!client || !request || serverAddress < 0) {
+        return NULL;
+    }
+    XModbusRequest* req = XModbusRequest_create_copy(request);
+    if (!req)return NULL;
+    XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, req, serverAddress, pollIntervalMs);
+    if (!reply)XModbusRequest_delete_base(req);
+    return reply;
+}
+
+XModbusReply* XModbusClient_pollRawRequest_move(XModbusClient* client, const XModbusRequest* request, int serverAddress, int pollIntervalMs)
+{
+    if (!client || !request || serverAddress < 0) {
+        return NULL;
+    }
+    XModbusRequest* req=XModbusRequest_create_move(request);
+    if (!req)return NULL;
+    XModbusReply* reply=XModbusClient_pollRawRequest_ref(client, req, serverAddress, pollIntervalMs);
+    if (!reply)XModbusRequest_delete_base(req);
+    return reply;
+}
+
+XModbusReply* XModbusClient_pollRawRequest_ref(XModbusClient* client, XModbusRequest* request, int serverAddress, int pollIntervalMs)
+{
+    if (!client || !request || serverAddress < 0) {
+        return NULL;
+    }
+    XModbusReply* reply = XModbusClient_createReply_ref(client, request, serverAddress);
+    if (!request) {
+        return NULL;
+    }
+    XTimerId id = XObject_startTimer_ms(client, pollIntervalMs, XTimerType_CoarseTimer);
+    if (id == XTIMER_INVALID_ID)
+    {
+        XModbusReply_deleteLater(reply);
+        return NULL;
+    }
+    if (!client->m_poolMap)
+    {
+        client->m_poolMap = XHashMap_Create(XTimerId, XModbusReply*, size_t_compare);
+    }
+    XHashMap_insert_base(client->m_poolMap, &id, &reply);
+    return reply;
 }
 
 /**
  * @brief 辅助函数：创建并初始化 Reply 对象
  */
 XModbusReply* XModbusClient_createReply(XModbusClient* client, const XModbusRequest* request, int serverAddress) {
+    if (!client || !request || serverAddress < 0) {
+        return NULL;
+    }
+    XModbusRequest* req = XModbusRequest_create_copy(request);
+    if (!req)return NULL;
+    XModbusReply* reply = XModbusClient_createReply_ref(client, XModbusRequest_create_move(request), serverAddress);
+    if (!reply)
+        XModbusRequest_delete_base(req);
+    return reply;
+}
+
+XModbusReply* XModbusClient_createReply_move(XModbusClient* client, XModbusRequest* request, int serverAddress)
+{
+    if (!client || !request || serverAddress < 0) {
+        return NULL;
+    }
+    XModbusRequest* req = XModbusRequest_create_move(request);
+    if (!req)return NULL;
+    XModbusReply* reply= XModbusClient_createReply_ref(client, XModbusRequest_create_move(request), serverAddress);
+    if (!reply)
+        XModbusRequest_delete_base(req);
+    return reply;
+}
+
+XModbusReply* XModbusClient_createReply_ref(XModbusClient* client, XModbusRequest* request, int serverAddress)
+{
     if (!client || !request || serverAddress < 0) {
         return NULL;
     }
@@ -336,8 +467,26 @@ XModbusReply* XModbusClient_createReply(XModbusClient* client, const XModbusRequ
     // 创建 Reply 对象
     XModbusReply* reply = XModbusReply_create(type, serverAddress);
     if (!reply) return NULL;
-
+    reply->m_request = request;
     return reply;
+}
+
+bool XModbusClient_cancelPoll(XModbusClient* client, XModbusReply* reply)
+{
+    if (!client || !reply ||!client->m_poolMap) {
+        return false;
+    }
+    for_each_iterator(client->m_poolMap,XHashMap,it)
+    {
+        XPair* pair = XHashMap_iterator_data(&it);
+        if (reply == XPair_Second(pair, XModbusReply*))
+        {
+            XObject_killTimer(client, XPair_First(pair, XTimerId));
+            XHashMap_erase_base(client->m_poolMap, &it, NULL);
+            return true;
+        }
+    }
+    return false;
 }
 
 // --- Configuration Getters/Setters ---

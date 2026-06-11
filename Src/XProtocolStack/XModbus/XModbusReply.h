@@ -47,7 +47,7 @@ typedef struct XModbusReply {
 
     XModbusDataUnit* m_result;         ///< 结构化结果（Common 类型时有效）
     XModbusResponse* m_rawResult;      ///< 原始 PDU 结果（Raw 类型时有效）
-
+    XModbusRequest* m_request;          //请求 信息
     XVector* m_intermediateErrors;       ///< 中间错误列表 (XList<XModbusDevice_IntermediateError>)
 } XModbusReply;
 

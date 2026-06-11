@@ -72,6 +72,12 @@ static void VXModbusReply_deinit(XModbusReply* reply) {
         reply->m_rawResult = NULL;
     }
 
+    if (reply->m_request)
+    {
+        XModbusRequest_delete_base(reply->m_request);
+        reply->m_request = NULL;
+    }
+
     if (reply->m_intermediateErrors) {
         XVector_delete_base(reply->m_intermediateErrors);
         reply->m_intermediateErrors = NULL;

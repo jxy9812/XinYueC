@@ -38,6 +38,7 @@
 //}
 static void finished(XObject* sender, XVarList* args)
 {
+    //XPrintf("结束了\n");
     XModbusRtuSerialClient* rtu = XObject_parent(sender);
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
     XModbusDataUnit_setValue(read, 0, true);
@@ -46,6 +47,7 @@ static void finished(XObject* sender, XVarList* args)
     XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), finished);
     XObject_deleteLater(sender);
     XModbusDataUnit_delete_base(read);
+   
 }
 void XModbusTest()
 {
@@ -60,10 +62,14 @@ void XModbusTest()
     }
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils,0,1);
     XModbusDataUnit_setValue(read,0,true);
+
     XModbusReply* reply= XModbusClient_sendWriteRequest(rtu, read,1);
     XObject_setParent(reply, rtu);
     XObject_connect_2(reply,XSignal(XModbusReply_finished_signal), finished);
-     reply = XModbusClient_sendWriteRequest(rtu, read, 1);
+     //reply = XModbusClient_sendWriteRequest(rtu, read, 1);
+
+    //XModbusClient_pollWriteRequest(rtu, read, 1,10);
+
     XCoreApplication_exec();
 }
 
