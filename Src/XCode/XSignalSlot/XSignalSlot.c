@@ -333,17 +333,18 @@ static void emit(XSignalSlot* manager, size_t signal, XVarList* args, XAtomic_in
 }
 void XSignalSlot_emit(XSignalSlot* manager, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_int32_t* ref_count, int priority)
 {
+	if (args)
+		args->argsDel = del;
 	if (manager == NULL)
 	{
-		if (args && del)
-			del(args);
+		if (args)
+			XVarList_delete(args);
 		if (ref_count)
 			XAtomic_delete(ref_count);
 		return;
 	}
 	if (del && !ref_count)
 		ref_count = XAtomic_create(int32_t);
-	if (del)
-		args->argsDel = del;
+	
 	emit(manager, signal, args, ref_count, priority);
 }

@@ -45,12 +45,13 @@ void XModbusReply_init(XModbusReply* reply, XModbusReply_ReplyType type, int ser
     // 初始化成员
     reply->m_type = type;
     reply->m_serverAddress = serverAddress;
-    reply->m_isFinished = false;
+    reply->m_state = XModbusReply_State_No_Started;
     reply->m_error = XModbusDevice_NoError;
     reply->m_errorString = NULL;
     reply->m_result = NULL;
     reply->m_rawResult = NULL;
-    reply->m_intermediateErrors = XVector_create(sizeof(XModbusDevice_IntermediateError));
+    reply->m_intermediateErrors = NULL;
+    reply->m_request = NULL;
 }
 
 static void VXModbusReply_deinit(XModbusReply* reply) {
@@ -92,12 +93,18 @@ XModbusReply_ReplyType XModbusReply_type(const XModbusReply* reply) {
     return reply ? reply->m_type : XModbusReply_Raw;
 }
 
+XModbusReply_State XModbusReply_state(const XModbusReply* reply)
+{
+    return reply ? reply->m_state : XModbusReply_State_No_Started;
+}
+
 int XModbusReply_serverAddress(const XModbusReply* reply) {
     return reply ? reply->m_serverAddress : -1;
 }
 
-bool XModbusReply_isFinished(const XModbusReply* reply) {
-    return reply && reply->m_isFinished;
+bool XModbusReply_isFinished(const XModbusReply* reply) 
+{
+    return reply && (reply->m_state == XModbusReply_State_Finished);
 }
 
 XModbusDataUnit* XModbusReply_result(const XModbusReply* reply) {
@@ -105,9 +112,32 @@ XModbusDataUnit* XModbusReply_result(const XModbusReply* reply) {
     return (XModbusDataUnit*)XModbusDataUnit_create_copy(reply->m_result);
 }
 
+const XModbusDataUnit* XModbusReply_result_const(const XModbusReply* reply)
+{
+    if (!reply || !reply->m_result) return NULL;
+    return reply->m_result;
+}
+
 XModbusResponse* XModbusReply_rawResult(const XModbusReply* reply) {
     if (!reply || !reply->m_rawResult) return NULL;
     return (XModbusResponse*)XModbusPdu_create_copy((XModbusPdu*)reply->m_rawResult);
+}
+
+const XModbusResponse* XModbusReply_rawResult_const(const XModbusReply* reply)
+{
+    if (!reply || !reply->m_rawResult) return NULL;
+    return reply->m_rawResult;
+}
+
+XModbusRequest* XModbusReply_request(const XModbusReply* reply)
+{
+    return XModbusRequest_create_copy(XModbusReply_request_const(reply));
+}
+
+const XModbusRequest* XModbusReply_request_const(const XModbusReply* reply)
+{
+    if (!reply || !reply->m_request) return NULL;
+    return reply->m_request;
 }
 
 XString* XModbusReply_errorString(const XModbusReply* reply) {
@@ -188,13 +218,14 @@ void XModbusReply_setRawResult_ref(XModbusReply * reply, const XModbusResponse *
     }
 }
 
-void XModbusReply_setFinished(XModbusReply* reply, bool finished) {
-    if (reply) {
-        reply->m_isFinished = finished;
+void XModbusReply_setState(XModbusReply* reply, XModbusReply_State state)
+{
+    if (!reply|| reply->m_state == state)return;
+    reply->m_state = state;
+    XModbusReply_stateChanged_signal(reply, state);
+    if (state == XModbusReply_State_Finished|| state == XModbusReply_State_Timeout)
         XModbusReply_finished_signal(reply);
-    }
 }
-
 void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const char* errorText) {
     if (!reply) return;
     reply->m_error = error;
@@ -216,24 +247,37 @@ XVector* XModbusReply_intermediateErrors(const XModbusReply* reply) {
 }
 
 void XModbusReply_addIntermediateError(XModbusReply* reply, XModbusDevice_IntermediateError error) {
-    if (!reply || !reply->m_intermediateErrors) return;
+    if (!reply ) return;
+    if (!reply->m_intermediateErrors)reply->m_intermediateErrors=XVector_create(sizeof(XModbusDevice_IntermediateError));
     XVector_append_1_base(reply->m_intermediateErrors, &error);
     // 发射信号
     XModbusReply_intermediateErrorOccurred_signal(reply, error);
 }
 
+void XModbusReply_clearIntermediateError(XModbusReply* reply)
+{
+    if (!reply|| !reply->m_intermediateErrors) return;
+    XVector_clear_base(reply->m_intermediateErrors);
+}
+
 // --- Signals ---
 void* XModbusReply_finished_signal(XModbusReply* reply) {
-    XEmitSignal(reply, XModbusReply_finished_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
+    XEmitSignal(reply, XModbusReply_finished_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XModbusReply_stateChanged_signal(XModbusReply* reply, XModbusReply_State state)
+{
+    XEmitSignal(reply, XModbusReply_stateChanged_signal, XVarList_Create(XVar(XModbusReply_State, state)), NULL,
+        NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XModbusReply_errorOccurred_signal(XModbusReply* reply, XModbusDevice_Error error) {
     XEmitSignal(reply, XModbusReply_errorOccurred_signal, XVarList_Create(XVar(XModbusDevice_Error, error)),NULL,
-        NULL, XEVENT_PRIORITY_LOWEST);
+        NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XModbusReply_intermediateErrorOccurred_signal(XModbusReply* reply, XModbusDevice_IntermediateError error) {
     XEmitSignal(reply, XModbusReply_intermediateErrorOccurred_signal,
         XVarList_Create(XVar(XModbusDevice_IntermediateError, error)), NULL,
-        NULL, XEVENT_PRIORITY_LOWEST);
+        NULL, XEVENT_PRIORITY_NORMAL);
 }

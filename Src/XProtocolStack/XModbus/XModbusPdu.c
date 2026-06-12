@@ -101,6 +101,7 @@ XModbusRequest* XModbusRequest_create(void)
 
 XModbusRequest* XModbusRequest_create_copy(const XModbusRequest* req)
 {
+    if (!req)return NULL;
     XModbusRequest* newReq = XModbusRequest_create();
     if (newReq)XModbusRequest_copy_base(newReq,req);
     return newReq;
@@ -108,6 +109,7 @@ XModbusRequest* XModbusRequest_create_copy(const XModbusRequest* req)
 
 XModbusRequest* XModbusRequest_create_move(XModbusRequest* req)
 {
+    if (!req)return NULL;
     XModbusRequest* newReq = XModbusRequest_create();
     if (newReq)XModbusRequest_move_base(newReq, req);
     return newReq;

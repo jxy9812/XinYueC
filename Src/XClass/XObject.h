@@ -341,7 +341,7 @@ void XObject_objectNameChanged_signal(XObject* object,const XString* objectName)
 * @return 信号标识
 * @note 自动检查对象有效性，立即发射信号，触发绑定的槽函数
 */
-#define XEmitSignal(object,signal,args,del,ref_count,priority) if(object)XObject_emitSignal(object,signal,args,del,ref_count,priority);return signal
+#define XEmitSignal(object,signal,args,del,ref_count,priority) if(object&&((XObject*)object)->m_signalSlot)XObject_emitSignal(object,signal,args,del,ref_count,priority);return signal
 
 /**
 * @brief 精简信号发射宏（队列模式，异步发射）

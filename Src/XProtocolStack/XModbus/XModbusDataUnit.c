@@ -112,7 +112,7 @@ void XModbusDataUnit_init_ex(XModbusDataUnit* unit, XModbusRegisterType type, ui
 	
 	unit->m_type = type;
 	unit->m_startAddress = startAddress;
-	unit->m_valueCount = valueCount;
+	//unit->m_valueCount = valueCount;
 	unit->m_data = XModbusDataUnit_createContainer(type, valueCount);
 }
 
@@ -123,7 +123,7 @@ void XModbusDataUnit_init(XModbusDataUnit* unit)
 	XClassGetVtable(unit) = XModbusDataUnit_class_init();
 	memset(((XClass*)unit) + 1, 0, sizeof(XModbusDataUnit) - sizeof(XClass));
 	unit->m_startAddress = 0xFFFF;
-	unit->m_valueCount = 0;
+	//unit->m_valueCount = 0;
 	unit->m_data = NULL;
 }
 
@@ -137,13 +137,16 @@ void XModbusDataUnit_setRegisterType(XModbusDataUnit* unit, XModbusRegisterType 
 	if (!unit) return;
 	
 	// 只有容器类型变化时才需要重建（位类型 <-> 寄存器类型）
-	if (!XModbusDataUnit_sameContainerType(unit->m_type, type)) {
+	if (!XModbusDataUnit_sameContainerType(unit->m_type, type)) 
+	{
+		size_t count = 0;
 		// 释放旧容器
 		if (unit->m_data) {
+			count = XContainerSize(unit->m_data);
 			XContainer_delete_base(unit->m_data);
 		}
 		// 创建新容器
-		unit->m_data = XModbusDataUnit_createContainer(type, unit->m_valueCount);
+		unit->m_data = XModbusDataUnit_createContainer(type, count);
 	}
 	unit->m_type = type;
 }
@@ -156,7 +159,7 @@ void XModbusDataUnit_setStartAddress(XModbusDataUnit* unit, uint16_t startAddres
 
 bool XModbusDataUnit_setValue(XModbusDataUnit* unit, size_t index, uint16_t value)
 {
-	if (!unit || !unit->m_data || index >= unit->m_valueCount)
+	if (!unit || !(unit->m_data) || index >= XContainerSize(unit->m_data))
 		return false;
 	
 	if (XModbusDataUnit_isBitType(unit->m_type)) {
@@ -173,7 +176,7 @@ void XModbusDataUnit_setValueCount(XModbusDataUnit* unit, size_t newCount)
 {
 	if (!unit) return;
 	
-	unit->m_valueCount = newCount;
+	//unit->m_valueCount = newCount;
 	
 	if (!unit->m_data) {
 		unit->m_data = XModbusDataUnit_createContainer(unit->m_type, newCount);
@@ -197,7 +200,7 @@ bool XModbusDataUnit_setValues(XModbusDataUnit* unit, XVector* values)
 		XVector_clear_base(unit->m_vector);
 		XVector_push_back_2(unit->m_vector, XContainerSharedDataPtr(values), XContainerSize(values));
 	}
-	unit->m_valueCount = XContainerSize(values);
+	//unit->m_valueCount = XContainerSize(values);
 	return true;
 }
 
@@ -222,7 +225,7 @@ int XModbusDataUnit_startAddress(const XModbusDataUnit* unit)
 
 uint16_t XModbusDataUnit_value(const XModbusDataUnit* unit, size_t index)
 {
-	if (!unit || !unit->m_data || index >= unit->m_valueCount)
+	if (!unit || !unit->m_data || index >= XContainerSize(unit->m_data))
 		return 0;
 	
 	if (XModbusDataUnit_isBitType(unit->m_type)) {
@@ -235,21 +238,22 @@ uint16_t XModbusDataUnit_value(const XModbusDataUnit* unit, size_t index)
 
 size_t XModbusDataUnit_valueCount(const XModbusDataUnit* unit)
 {
-	if (!unit) return 0;
-	return unit->m_valueCount;
+	if (!unit || !(unit->m_data)) return 0;
+	return XContainerSize(unit->m_data);
 }
 
 XVector* XModbusDataUnit_values1(const XModbusDataUnit* unit)
 {
-	if (!unit) return NULL;
+	if (!unit || !(unit->m_data)|| XContainerSize(unit->m_data)==0) return NULL;
 	
+	size_t count = XContainerSize(unit->m_data);
 	// 为了保持向后兼容，将数据转换为XVector
 	if (XModbusDataUnit_isBitType(unit->m_type)) {
 		// 位类型：转换为uint16_t向量
 		XVector* vec = XVector_Create(uint16_t);
 		if (!vec) return NULL;
-		XVector_resize_base(vec, unit->m_valueCount);
-		for (size_t i = 0; i < unit->m_valueCount; i++) {
+		XVector_resize_base(vec, count);
+		for (size_t i = 0; i < count; i++) {
 			uint16_t val = XBitArray_getBit(unit->m_bitArray, i) ? 1 : 0;
 			XVector_At_Base(vec, i, uint16_t) = val;
 		}
@@ -289,7 +293,7 @@ bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits)
 		XContainer_delete_base(unit->m_data);
 	}
 	unit->m_bitArray = XBitArray_create_copy(bits);
-	unit->m_valueCount = XBitArray_size_base(bits);
+	//unit->m_valueCount = XBitArray_size_base(bits);
 	return true;
 }
 
@@ -313,7 +317,7 @@ void VXModbusDataUnit_move(XModbusDataUnit* unit, XModbusDataUnit* src)
 	if (((XClass*)unit)->m_vtable == NULL) {
 		unit->m_type = src->m_type;
 		unit->m_startAddress = src->m_startAddress;
-		unit->m_valueCount = src->m_valueCount;
+		//unit->m_valueCount = src->m_valueCount;
 		unit->m_data = src->m_data;
 	} else {
 		// 目标已初始化，先清理再移动
@@ -322,7 +326,7 @@ void VXModbusDataUnit_move(XModbusDataUnit* unit, XModbusDataUnit* src)
 		}
 		unit->m_type = src->m_type;
 		unit->m_startAddress = src->m_startAddress;
-		unit->m_valueCount = src->m_valueCount;
+		//unit->m_valueCount = src->m_valueCount;
 		unit->m_data = src->m_data;
 	}
 	
@@ -330,7 +334,7 @@ void VXModbusDataUnit_move(XModbusDataUnit* unit, XModbusDataUnit* src)
 	src->m_data = NULL;
 	src->m_type = XModbusInvalid;
 	src->m_startAddress = 0xFFFF;
-	src->m_valueCount = 0;
+	//src->m_valueCount = 0;
 }
 
 void VXModbusDataUnit_copy(XModbusDataUnit* unit, const XModbusDataUnit* src)
@@ -350,7 +354,7 @@ void VXModbusDataUnit_copy(XModbusDataUnit* unit, const XModbusDataUnit* src)
 	// 复制基本字段
 	unit->m_type = src->m_type;
 	unit->m_startAddress = src->m_startAddress;
-	unit->m_valueCount = src->m_valueCount;
+	//unit->m_valueCount = src->m_valueCount;
 	
 	// 复制数据容器
 	unit->m_data = XModbusDataUnit_copyContainer(src->m_type, src->m_data);
@@ -368,5 +372,5 @@ void VXModbusDataUnit_deinit(XModbusDataUnit* unit)
 	
 	unit->m_startAddress = 0xFFFF;
 	unit->m_type = XModbusInvalid;
-	unit->m_valueCount = 0;
+	//unit->m_valueCount = 0;
 }

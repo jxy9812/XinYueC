@@ -15,9 +15,10 @@ void XModbusReply_setResult_ref(XModbusReply* reply, const XModbusDataUnit* unit
 void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* response);
 void XModbusReply_setRawResult_move(XModbusReply* reply, const XModbusResponse* response);
 void XModbusReply_setRawResult_ref(XModbusReply* reply, const XModbusResponse* response);
-void XModbusReply_setFinished(XModbusReply* reply, bool finished);
+void XModbusReply_setState(XModbusReply* reply, XModbusReply_State state);
 void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const char* errorText);
-
+void XModbusReply_addIntermediateError(XModbusReply* reply, XModbusDevice_IntermediateError error);
+void XModbusReply_clearIntermediateError(XModbusReply* reply);
 #ifdef __cplusplus
 }
 #endif

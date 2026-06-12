@@ -25,8 +25,9 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
 
 // =============== 槽函数声明 ===============
 static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args);
-static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* receiveBuffer);
+static void processReceivedFrame(XModbusRtuSerialClient* client,XByteArray* receiveBuffer);
 static bool startNewRequest(XModbusRtuSerialClient* client);
+static void handleRequestTimeout(XModbusRtuSerialClient* client);
 // =============== 辅助函数 ===============
 static inline void interFrameTimerStop(XModbusRtuSerialClient* client)
 {
@@ -302,7 +303,8 @@ static void VXModbusRtuSerialClient_close(XModbusDevice* device)
         XModbusReply_setError(client->m_currentReply, XModbusDevice_ConnectionError, "Device closed");
         XModbusReply* reply = client->m_currentReply;
         client->m_currentReply = NULL;
-        XModbusReply_setFinished(reply, true);
+        XModbusReply_setState(reply, XModbusReply_State_No_Started);
+        //XModbusReply_setFinished(reply, true);
     }
 
     if (client->m_requestData) {
@@ -322,19 +324,26 @@ static void VXModbusRtuSerialClient_close(XModbusDevice* device)
 // =============== 响应处理 ===============
 static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* receiveBuffer) {
     if (!client || !client->m_currentReply) return;
-
-   
+    
+    XModbusReply* reply = client->m_currentReply;
+    XModbusReply_setState(reply, XModbusReply_State_Responding);
     const uint8_t* data = XContainerDataAddr(receiveBuffer);
     size_t len = XByteArray_size_base(receiveBuffer);
 
     if (!validateRtuFrame(data, len)) {
-        XModbusReply_setError(client->m_currentReply, XModbusDevice_UnknownError, "CRC check failed");
-        goto cleanup;
+        XModbusReply_setError(reply, XModbusDevice_UnknownError, "CRC check failed");
+        XModbusReply_addIntermediateError(reply, XModbusDevice_ResponseCrcError);
+        handleRequestTimeout(client);//重发请求
+        return;
+        //goto cleanup;
     }
 
     if (data[0] != client->m_currentServerAddress) {
-        XModbusReply_setError(client->m_currentReply, XModbusDevice_UnknownError, "Server address mismatch");
-        goto cleanup;
+        XModbusReply_setError(reply, XModbusDevice_UnknownError, "Server address mismatch");
+        XModbusReply_addIntermediateError(reply, XModbusDevice_ResponseRequestMismatch);
+        handleRequestTimeout(client);//重发请求
+        return;
+        //goto cleanup;
     }
     if (!client->m_currentReply->m_rawResult)
         client->m_currentReply->m_rawResult = XModbusResponse_create();
@@ -405,11 +414,12 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
     }
     //XModbusResponse_deinit_base(&response);
 cleanup:
-    XModbusReply* reply = client->m_currentReply;
+    //XModbusReply* reply = client->m_currentReply;
     client->m_currentReply = NULL;
     client->m_retryCount = 0;
     //XPrintf("准备调用槽函数\n");
-    XModbusReply_setFinished(reply, true);
+    //XModbusReply_setFinished(reply, true);
+    XModbusReply_setState(reply, XModbusReply_State_Finished);
     if (!client->m_currentReply)//当前是空闲的
            startNewRequest(client);
 }
@@ -444,6 +454,8 @@ bool startNewRequest(XModbusRtuSerialClient* client)
         return false;
    /* XModbusReply* reply = XModbusClient_createReply(client, request, serverAddress);
     if (!reply) return NULL;*/
+    
+    XModbusReply_setState(reply, XModbusReply_State_Requesting);
 
     // 构建PDU数据
     if (!rtuClient->m_requestData) {
@@ -470,10 +482,10 @@ bool startNewRequest(XModbusRtuSerialClient* client)
 
     // 发送RTU请求
     int64_t sent = XIODevice_write_2(io, rtuClient->m_requestData);
-   /* if (!sent) {
-        XModbusReply_deleteLater(reply);
-        return NULL;
-    }*/
+    if (!sent) {
+        return  startNewRequest(client);;
+    }
+    XModbusReply_clearIntermediateError(reply);
 
     rtuClient->m_currentReply = reply;
     rtuClient->m_retryCount = 0;
@@ -490,6 +502,7 @@ bool startNewRequest(XModbusRtuSerialClient* client)
 
     }
     ((XModbusRtuSerialClient*)client)->m_currentServerAddress = serverAddress;
+    XModbusReply_setState(reply, XModbusReply_State_Waiting);
     return true;
 }
 // =============== 槽函数实现 ===============
@@ -569,7 +582,7 @@ static void handleInterFrameTimeout(XModbusRtuSerialClient* client)
     }
 
     if (expectedLen > 0 && bufLen >= expectedLen) {
-        processReceivedFrame(client, client->m_receiveBuffer);
+        processReceivedFrame(client,  client->m_receiveBuffer);
         XByteArray_clear_base(client->m_receiveBuffer);
         return true;
     }
@@ -591,7 +604,8 @@ static void handleRequestTimeout(XModbusRtuSerialClient* client)
         client->m_waitingForTurnaround = false;
         XModbusReply* reply = client->m_currentReply;
         client->m_currentReply = NULL;
-        XModbusReply_setFinished(reply, true);
+        XModbusReply_setState(reply, XModbusReply_State_Timeout);
+        //XModbusReply_setFinished(reply, true);
         return;
     }
 
@@ -621,7 +635,8 @@ static void handleRequestTimeout(XModbusRtuSerialClient* client)
     XModbusReply* reply = client->m_currentReply;
     client->m_currentReply = NULL;
     client->m_retryCount = 0;
-    XModbusReply_setFinished(reply, true);
+    //XModbusReply_setFinished(reply, true);
+    XModbusReply_setState(reply, XModbusReply_State_Timeout);
 }
 // =============== 定时器事件处理 ===============
 static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event) {
@@ -670,7 +685,8 @@ static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client)
         XModbusReply_setError(client->m_currentReply, XModbusDevice_TimeoutError, "Device closed");
         XModbusReply* reply = client->m_currentReply;
         client->m_currentReply = NULL;
-        XModbusReply_setFinished(reply, true);
+        XModbusReply_setState(reply, XModbusReply_State_No_Started);
+        //XModbusReply_setFinished(reply, true);
     }
 
     XIODevice* io = ((XModbusDevice*)client)->m_ioDevice;
@@ -697,87 +713,20 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
     XModbusRtuSerialClient* rtuClient = (XModbusRtuSerialClient*)client;
     XModbusDevice* device = (XModbusDevice*)client;
 
-    {
-        XModbusReply* reply = NULL;
-        if(type== XFuncParamType_Copy)
-            reply= XModbusClient_createReply(client, request, serverAddress);
-        else if (type == XFuncParamType_Move)
-            reply = XModbusClient_createReply_move(client, request, serverAddress);
-        else if (type == XFuncParamType_Ref)
-            reply = XModbusClient_createReply_ref(client, request, serverAddress);
-        if (!reply) return NULL;
-        if (!XQueueBase_push_base(rtuClient->m_queue, &reply))
-        {
-            XModbusReply_deleteLater(reply);
-            return NULL;
-        }
-        if (!rtuClient->m_currentReply)//当前是空闲的
-            startNewRequest(client);
-        return reply;
-    }
-
-    if (XModbusDevice_state(device) != XModbusDevice_ConnectedState) {
-        return NULL;
-    }
-
-    XIODevice* io = device->m_ioDevice;
-    if (!io || !XIODevice_isOpen(io)) {
-        return NULL;
-    }
-
-    if (rtuClient->m_currentReply != NULL) {
-        return NULL;
-    }
-    XByteArray* pdu = ((XModbusPdu*)request)->m_data;
-    if (!pdu || XByteArray_isEmpty_base(pdu))
-        return NULL;
-    XModbusReply* reply = XModbusClient_createReply(client, request, serverAddress);
+    XModbusReply* reply = NULL;
+    if (type == XFuncParamType_Copy)
+        reply = XModbusClient_createReply(client, request, serverAddress);
+    else if (type == XFuncParamType_Move)
+        reply = XModbusClient_createReply_move(client, request, serverAddress);
+    else if (type == XFuncParamType_Ref)
+        reply = XModbusClient_createReply_ref(client, request, serverAddress);
     if (!reply) return NULL;
-   
-    // 构建PDU数据
-    if (!rtuClient->m_requestData) {
-        rtuClient->m_requestData = XByteArray_create();
-    }
-    XByteArray_resize_base(rtuClient->m_requestData, XByteArray_size_base(pdu)+4);
-    XByteArray_clear_base(rtuClient->m_requestData);
-    //添加地址
-    XByteArray_push_back_1(rtuClient->m_requestData, serverAddress);
-    // 添加功能码
-    uint8_t fc = (uint8_t)XModbusPdu_functionCode((const XModbusPdu*)request);
-    XByteArray_push_back_1(rtuClient->m_requestData, fc);
-    // 添加数据
-    XByteArray_push_back_2(rtuClient->m_requestData, XContainerDataAddr(pdu),XContainerSize(pdu));
-    //添加Crc16
-    uint16_t crc = XCrc_get16(XContainerDataAddr(rtuClient->m_requestData), XContainerSize(rtuClient->m_requestData));
-    XCrc_set16Data(&XByteArray_back_base(rtuClient->m_requestData) + 1, crc, XCRC_BYTE_ORDER_LITTLE_ENDIAN);
-    XContainerSize(rtuClient->m_requestData) +=2;
-
-    //XString* text= XByteArray_to16HexString(rtuClient->m_requestData);
-    //XPrintf_string(text);
-    //XPrintf("\n");
-    //XString_delete_base(text);
-    
-    // 发送RTU请求
-    int64_t sent = XIODevice_write_2(io, rtuClient->m_requestData);
-    if (!sent) {
+    if (!XQueueBase_push_base(rtuClient->m_queue, &reply))
+    {
         XModbusReply_deleteLater(reply);
         return NULL;
     }
-
-    rtuClient->m_currentReply = reply;
-    rtuClient->m_retryCount = 0;
-
-    if (serverAddress == 0) {
-        // 广播消息，等待 turnaround 延迟
-        rtuClient->m_waitingForTurnaround = true;
-        turnaroundFrameTimerStart(client);
-    }
-    else {
-        int timeout = XModbusClient_timeout(client);
-        timeoutFrameTimerStart(client);
-        interFrameTimerStart(client);
-    
-    }
-    ((XModbusRtuSerialClient*)client)->m_currentServerAddress = serverAddress;
+    if (!rtuClient->m_currentReply)//当前是空闲的
+        startNewRequest(client);
     return reply;
 }

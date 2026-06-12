@@ -301,12 +301,12 @@ void* XModbusDevice_errorOccurred_signal(XModbusDevice* dev, XModbusDevice_Error
 {
     XEmitSignal(dev, XModbusDevice_errorOccurred_signal,
         XVarList_Create(XVar(XModbusDevice_Error, error)), NULL,
-        NULL, XEVENT_PRIORITY_LOWEST);
+        NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 void* XModbusDevice_stateChanged_signal(XModbusDevice* dev, XModbusDevice_State state)
 {
     XEmitSignal(dev, XModbusDevice_stateChanged_signal,
         XVarList_Create(XVar(XModbusDevice_State, state)), NULL,
-        NULL, XEVENT_PRIORITY_LOWEST);
+        NULL, XEVENT_PRIORITY_NORMAL);
 }

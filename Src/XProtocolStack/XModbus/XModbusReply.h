@@ -19,7 +19,14 @@ extern "C" {
 * @details 该文件实现了Qt6 QModbusReply类的纯C等价封装，继承XObject基类。
 * 它用于表示一个异步Modbus请求的结果，包含状态、错误信息和响应数据。
 */
-
+typedef enum {
+    XModbusReply_State_No_Started,   // 未开始
+    XModbusReply_State_Requesting,   // 请求中
+    XModbusReply_State_Waiting,      // 等待中
+    XModbusReply_State_Responding,   // 响应中
+    XModbusReply_State_Finished,     // 已结束
+    XModbusReply_State_Timeout       //已超时，正常流程之外，遇到错误导致超时请求失败
+} XModbusReply_State;
 /**
  * @brief 回复类型枚举（对齐 QModbusReply::ReplyType）
  */
@@ -35,14 +42,13 @@ typedef enum {
 * @details 封装了Modbus请求的最终结果，包括类型、从站地址、完成状态、
 * 错误信息、结构化结果、原始PDU结果以及中间错误列表。
 */
-typedef struct XModbusReply {
+typedef struct XModbusReply 
+{
     XObject m_class;                    ///< 继承自XObject基类
-
-    XModbusReply_ReplyType m_type;     ///< 回复类型
-    int m_serverAddress;               ///< 从站地址
-    bool m_isFinished;                 ///< 是否已完成
-
-    XModbusDevice_Error m_error;       ///< 最终错误码
+    uint8_t    m_state;                 //状态
+    uint8_t/*XModbusReply_ReplyType*/ m_type;     ///< 回复类型
+    uint8_t m_serverAddress;               ///< 从站地址
+    uint8_t /*XModbusDevice_Error*/ m_error;       ///< 最终错误码
     XString* m_errorString;            ///< 错误描述字符串
 
     XModbusDataUnit* m_result;         ///< 结构化结果（Common 类型时有效）
@@ -82,22 +88,22 @@ void XModbusReply_init(XModbusReply* reply, XModbusReply_ReplyType type, int ser
 
  // --- 属性查询 ---
 XModbusReply_ReplyType XModbusReply_type(const XModbusReply* reply);
+XModbusReply_State XModbusReply_state(const XModbusReply* reply);
 int XModbusReply_serverAddress(const XModbusReply* reply);
 bool XModbusReply_isFinished(const XModbusReply* reply);
 
 // --- 结果获取 ---
 XModbusDataUnit* XModbusReply_result(const XModbusReply* reply);        // 返回拷贝
+const XModbusDataUnit* XModbusReply_result_const(const XModbusReply* reply);
 XModbusResponse* XModbusReply_rawResult(const XModbusReply* reply);     // 返回拷贝
-
+const XModbusResponse* XModbusReply_rawResult_const(const XModbusReply* reply);
+XModbusRequest* XModbusReply_request(const XModbusReply* reply);
+const XModbusRequest* XModbusReply_request_const(const XModbusReply* reply);
 // --- 错误信息 ---
 XString* XModbusReply_errorString(const XModbusReply* reply);           // 返回拷贝
 XModbusDevice_Error XModbusReply_error(const XModbusReply* reply);
-
-
-
 // --- 中间错误 ---
 XVector* XModbusReply_intermediateErrors(const XModbusReply* reply); // 返回拷贝列表
-void XModbusReply_addIntermediateError(XModbusReply* reply, XModbusDevice_IntermediateError error);
 
 /******************************************************************************************
 * 信号接口 (严格对齐 Qt 信号)
@@ -108,6 +114,7 @@ void XModbusReply_addIntermediateError(XModbusReply* reply, XModbusDevice_Interm
  */
 void* XModbusReply_finished_signal(XModbusReply* reply);
 
+void* XModbusReply_stateChanged_signal(XModbusReply* reply, XModbusReply_State state);
 /**
 * @brief 触发 errorOccurred 信号
 */

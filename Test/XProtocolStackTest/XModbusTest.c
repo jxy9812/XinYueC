@@ -66,6 +66,7 @@ void XModbusTest()
     XModbusReply* reply= XModbusClient_sendWriteRequest(rtu, read,1);
     XObject_setParent(reply, rtu);
     XObject_connect_2(reply,XSignal(XModbusReply_finished_signal), finished);
+
      //reply = XModbusClient_sendWriteRequest(rtu, read, 1);
 
     //XModbusClient_pollWriteRequest(rtu, read, 1,10);
