@@ -43,4 +43,4 @@ bool XModbusServer_readData_base(XModbusServer* server, XModbusDataUnit* unit);
 }
 #endif
 
-#endif // XIODEVICEPRIVATE_H
+#endif // XMODBUSSERVER_PROTECTED_H

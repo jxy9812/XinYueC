@@ -76,7 +76,10 @@ static inline bool validateRtuFrame(const uint8_t* frame, size_t frameLen) {
     if (!frame || frameLen < 4) return false;
 
     uint16_t calculatedCrc = XCrc_get16((uint8_t*)frame, frameLen - 2);
-    uint16_t receivedCrc = (frame[frameLen - 1] << 8) | frame[frameLen - 2];
+
+    // Modbus RTU CRC 是小端序
+    uint16_t receivedCrc;
+    XMemory_read_data(frame + frameLen - 2, XBYTE_ORDER_LITTLE_ENDIAN, (uint8_t*)&receivedCrc, sizeof(uint16_t));
 
     return calculatedCrc == receivedCrc;
 }

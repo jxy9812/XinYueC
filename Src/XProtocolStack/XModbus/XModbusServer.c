@@ -243,10 +243,18 @@ static XModbusResponse* createExceptionResponse(XModbusPdu_FunctionCode fc, XMod
     return (XModbusResponse*)exc;
 }
 
-// =============== 辅助函数：从PDU数据读取uint16 ===============
+// =============== 辅助函数：从PDU数据读取uint16（大端序）==============
 static inline uint16_t readUint16FromData(const uint8_t* data, size_t offset)
 {
-    return ((uint16_t)data[offset] << 8) | data[offset + 1];
+    uint16_t value;
+    XMemory_read_data(data + offset, XBYTE_ORDER_BIG_ENDIAN, (uint8_t*)&value, sizeof(uint16_t));
+    return value;
+}
+
+// =============== 辅助函数：写入uint16到PDU数据（大端序）==============
+static inline void writeUint16ToData(uint8_t* data, size_t offset, uint16_t value)
+{
+    XMemory_write_data(data + offset, XBYTE_ORDER_BIG_ENDIAN, (const uint8_t*)&value, sizeof(uint16_t));
 }
 
 // =============== 完整的 processRequest 实现 ===============
@@ -381,10 +389,12 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
 
         XByteArray_push_back_1(respData, byteCount);
 
+        // 使用 XMemory_write_data 写入大端序数据
         for (uint16_t i = 0; i < quantity; i++) {
             uint16_t reg = XModbusDataUnit_value(unit, i);
-            XByteArray_push_back_1(respData, (uint8_t)((reg >> 8) & 0xFF));
-            XByteArray_push_back_1(respData, (uint8_t)(reg & 0xFF));
+            uint8_t regBytes[2];
+            XMemory_write_data(regBytes, XBYTE_ORDER_BIG_ENDIAN, (const uint8_t*)&reg, 2);
+            XByteArray_push_back_2(respData, regBytes, 2);
         }
 
         XModbusDataUnit_delete_base(unit);
@@ -422,8 +432,9 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
 
         for (uint16_t i = 0; i < quantity; i++) {
             uint16_t reg = XModbusDataUnit_value(unit, i);
-            XByteArray_push_back_1(respData, (uint8_t)((reg >> 8) & 0xFF));
-            XByteArray_push_back_1(respData, (uint8_t)(reg & 0xFF));
+            uint8_t regBytes[2];
+            XMemory_write_data(regBytes, XBYTE_ORDER_BIG_ENDIAN, (const uint8_t*)&reg, 2);
+            XByteArray_push_back_2(respData, regBytes, 2);
         }
 
         XModbusDataUnit_delete_base(unit);
@@ -542,11 +553,13 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         case 0x0010: // 返回从站NAK计数
         case 0x0011: // 返回从站忙计数
         case 0x0012: // 返回总线字符溢出计数
-            XByteArray_push_back_1(respData, (uint8_t)((subFunc >> 8) & 0xFF));
-            XByteArray_push_back_1(respData, (uint8_t)(subFunc & 0xFF));
-            XByteArray_push_back_1(respData, (uint8_t)((dataValue >> 8) & 0xFF));
-            XByteArray_push_back_1(respData, (uint8_t)(dataValue & 0xFF));
-            break;
+        {
+            uint8_t respBytes[4];
+            writeUint16ToData(respBytes, 0, subFunc);
+            writeUint16ToData(respBytes, 2, dataValue);
+            XByteArray_push_back_2(respData, respBytes, 4);
+        }
+        break;
 
         default:
             XModbusResponse_delete_base(response);
@@ -560,10 +573,10 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         XModbusResponse* response = XModbusResponse_create_with_code(code);
         XByteArray* respData = ((XModbusPdu*)response)->m_data;
 
-        XByteArray_push_back_1(respData, 0xFF);
-        XByteArray_push_back_1(respData, 0xFF);
-        XByteArray_push_back_1(respData, 0x00);
-        XByteArray_push_back_1(respData, 0x00);
+        uint8_t respBytes[4];
+        writeUint16ToData(respBytes, 0, 0xFFFF); // 状态
+        writeUint16ToData(respBytes, 2, 0x0000); // 事件计数
+        XByteArray_push_back_2(respData, respBytes, 4);
         return response;
     }
 
@@ -572,13 +585,13 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         XModbusResponse* response = XModbusResponse_create_with_code(code);
         XByteArray* respData = ((XModbusPdu*)response)->m_data;
 
-        XByteArray_push_back_1(respData, 6);
-        XByteArray_push_back_1(respData, 0xFF);
-        XByteArray_push_back_1(respData, 0xFF);
-        XByteArray_push_back_1(respData, 0x00);
-        XByteArray_push_back_1(respData, 0x00);
-        XByteArray_push_back_1(respData, 0x00);
-        XByteArray_push_back_1(respData, 0x00);
+        XByteArray_push_back_1(respData, 6); // 字节计数
+
+        uint8_t respBytes[6];
+        writeUint16ToData(respBytes, 0, 0xFFFF); // 状态
+        writeUint16ToData(respBytes, 2, 0x0000); // 事件计数
+        writeUint16ToData(respBytes, 4, 0x0000); // 消息计数
+        XByteArray_push_back_2(respData, respBytes, 6);
         return response;
     }
 
@@ -621,10 +634,10 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         XModbusResponse* response = XModbusResponse_create_with_code(code);
         XByteArray* respData = ((XModbusPdu*)response)->m_data;
 
-        XByteArray_push_back_1(respData, (uint8_t)((startAddress >> 8) & 0xFF));
-        XByteArray_push_back_1(respData, (uint8_t)(startAddress & 0xFF));
-        XByteArray_push_back_1(respData, (uint8_t)((quantity >> 8) & 0xFF));
-        XByteArray_push_back_1(respData, (uint8_t)(quantity & 0xFF));
+        uint8_t respBytes[4];
+        writeUint16ToData(respBytes, 0, startAddress);
+        writeUint16ToData(respBytes, 2, quantity);
+        XByteArray_push_back_2(respData, respBytes, 4);
 
         XModbusDataUnit_delete_base(unit);
         return response;
@@ -635,6 +648,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         if (dataSize < 5) {
             return createExceptionResponse(code, XModbusPdu_IllegalDataValue);
         }
+
         uint16_t startAddress = readUint16FromData(data, 0);
         uint16_t quantity = readUint16FromData(data, 2);
         uint8_t byteCount = data[4];
@@ -665,10 +679,10 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         XModbusResponse* response = XModbusResponse_create_with_code(code);
         XByteArray* respData = ((XModbusPdu*)response)->m_data;
 
-        XByteArray_push_back_1(respData, (uint8_t)((startAddress >> 8) & 0xFF));
-        XByteArray_push_back_1(respData, (uint8_t)(startAddress & 0xFF));
-        XByteArray_push_back_1(respData, (uint8_t)((quantity >> 8) & 0xFF));
-        XByteArray_push_back_1(respData, (uint8_t)(quantity & 0xFF));
+        uint8_t respBytes[4];
+        writeUint16ToData(respBytes, 0, startAddress);
+        writeUint16ToData(respBytes, 2, quantity);
+        XByteArray_push_back_2(respData, respBytes, 4);
 
         XModbusDataUnit_delete_base(unit);
         return response;
@@ -690,7 +704,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         size_t addDataLen = 14;
 
         if (addDataVar) {
-            XString* addStr = XVariant_toString_const(addDataVar);
+            const XString* addStr = XVariant_toString_const(addDataVar);
             if (addStr) {
                 addDataStr = XString_toUtf8(addStr);
                 addDataLen = XString_size_base(addStr);
@@ -806,8 +820,9 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
 
         for (uint16_t i = 0; i < readQuantity; i++) {
             uint16_t reg = XModbusDataUnit_value(readUnit, i);
-            XByteArray_push_back_1(respData, (uint8_t)((reg >> 8) & 0xFF));
-            XByteArray_push_back_1(respData, (uint8_t)(reg & 0xFF));
+            uint8_t regBytes[2];
+            XMemory_write_data(regBytes, XBYTE_ORDER_BIG_ENDIAN, (const uint8_t*)&reg, 2);
+            XByteArray_push_back_2(respData, regBytes, 2);
         }
 
         XModbusDataUnit_delete_base(readUnit);
@@ -829,12 +844,11 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         XModbusResponse* response = XModbusResponse_create_with_code(code);
         XByteArray* respData = ((XModbusPdu*)response)->m_data;
 
-        // 字节计数
-        XByteArray_push_back_1(respData, 0x00);
-        XByteArray_push_back_1(respData, 0x02);
-        // FIFO计数
-        XByteArray_push_back_1(respData, 0x00);
-        XByteArray_push_back_1(respData, 0x00);
+        // 字节计数 (2字节) + FIFO计数 (2字节)
+        uint8_t respBytes[4];
+        writeUint16ToData(respBytes, 0, 2);  // 字节计数
+        writeUint16ToData(respBytes, 2, 0);  // FIFO计数
+        XByteArray_push_back_2(respData, respBytes, 4);
 
         return response;
     }

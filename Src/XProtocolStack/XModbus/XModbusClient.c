@@ -13,6 +13,21 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
 static bool VXModbusClient_processPrivateResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 static XModbusReply* VXModbusClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress, XFuncParamType type);
 
+// =============== 字节序辅助函数 ===============
+// 从大端序数据读取uint16
+static inline uint16_t readUint16BE(const uint8_t* data, size_t offset)
+{
+    uint16_t value;
+    XMemory_read_data(data + offset, XBYTE_ORDER_BIG_ENDIAN, (uint8_t*)&value, sizeof(uint16_t));
+    return value;
+}
+
+// 写入uint16到大端序数据
+static inline void writeUint16BE(uint8_t* data, size_t offset, uint16_t value)
+{
+    XMemory_write_data(data + offset, XBYTE_ORDER_BIG_ENDIAN, (const uint8_t*)&value, sizeof(uint16_t));
+}
+
 // ================== 虚表初始化 ==================
 XVtable* XModbusClient_class_init(void)
 {
@@ -95,14 +110,12 @@ static XModbusRequest* buildReadRequest(const XModbusDataUnit* unit) {
     // 检查数量是否在有效范围内
     if (quantity == 0 || quantity > 2000) return NULL;
 
-    uint8_t data[4] = {
-        (uint8_t)((startAddress >> 8) & 0xFF),
-        (uint8_t)(startAddress & 0xFF),
-        (uint8_t)((quantity >> 8) & 0xFF),
-        (uint8_t)(quantity & 0xFF)
-    };
+    uint8_t data[4];
+    writeUint16BE(data, 0, startAddress);
+    writeUint16BE(data, 2, quantity);
+
     XModbusRequest* req = XModbusRequest_create();
-    if (!req)return NULL;
+    if (!req) return NULL;
     XModbusPdu_setFunctionCode(req, code);
     XModbusPdu_setData(req, data, 4);
     return req;
@@ -116,7 +129,7 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
 
     XModbusPdu_FunctionCode code;
     XModbusRequest* req = XModbusRequest_create();
-    if (!req)return NULL;
+    if (!req) return NULL;
     XByteArray* payload = ((XModbusPdu*)req)->m_data;
 
     if (count == 1) {
@@ -128,7 +141,6 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             code = XModbusPdu_WriteSingleRegister;
         }
         else {
-            //XByteArray_delete_base(payload);
             return NULL;
         }
 
@@ -138,12 +150,9 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             value = value ? 0xFF00 : 0x0000; // Coils use 0xFF00 for ON
         }
 
-        uint8_t data[4] = {
-            (uint8_t)((address >> 8) & 0xFF),
-            (uint8_t)(address & 0xFF),
-            (uint8_t)((value >> 8) & 0xFF),
-            (uint8_t)(value & 0xFF)
-        };
+        uint8_t data[4];
+        writeUint16BE(data, 0, address);
+        writeUint16BE(data, 2, value);
         XByteArray_push_back_2(payload, data, 4);
     }
     else {
@@ -155,20 +164,16 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             code = XModbusPdu_WriteMultipleRegisters;
         }
         else {
-            //XByteArray_delete_base(payload);
             return NULL;
         }
 
         uint16_t address = (uint16_t)XModbusDataUnit_startAddress(unit);
         uint16_t byteCount = (count % 8 == 0) ? (count / 8) : (count / 8 + 1);
 
-        uint8_t header[5] = {
-            (uint8_t)((address >> 8) & 0xFF),
-            (uint8_t)(address & 0xFF),
-            (uint8_t)((count >> 8) & 0xFF),
-            (uint8_t)(count & 0xFF),
-            byteCount
-        };
+        uint8_t header[5];
+        writeUint16BE(header, 0, address);
+        writeUint16BE(header, 2, count);
+        header[4] = byteCount;
         XByteArray_push_back_2(payload, header, 5);
 
         // Pack coils into bytes
@@ -185,11 +190,12 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             }
         }
         else {
-            // Holding Registers
+            // Holding Registers - 大端序
             for (size_t i = 0; i < count; i++) {
                 uint16_t val = (uint16_t)XModbusDataUnit_value(unit, i);
-                XByteArray_push_back_1(payload, (uint8_t)((val >> 8) & 0xFF));
-                XByteArray_push_back_1(payload, (uint8_t)(val & 0xFF));
+                uint8_t valBytes[2];
+                XMemory_write_data(valBytes, XBYTE_ORDER_BIG_ENDIAN, (const uint8_t*)&val, 2);
+                XByteArray_push_back_2(payload, valBytes, 2);
             }
         }
     }
@@ -203,7 +209,8 @@ static XModbusRequest* buildReadWriteRequest(const XModbusDataUnit* readUnit, co
         return NULL;
     }
     XModbusRequest* req = XModbusRequest_create();
-    if (!req)return NULL;
+    if (!req) return NULL;
+
     // 只支持保持寄存器
     if (readUnit->m_type != XModbusHoldingRegisters || writeUnit->m_type != XModbusHoldingRegisters) {
         return NULL;
@@ -224,27 +231,20 @@ static XModbusRequest* buildReadWriteRequest(const XModbusDataUnit* readUnit, co
     XByteArray* pdu = ((XModbusPdu*)req)->m_data;
     XByteArray_resize_base(pdu, dataSize);
     uint8_t* data = XContainerDataAddr(pdu);
-    // 读起始地址
-    data[0] = (uint8_t)((readStartAddr >> 8) & 0xFF);
-    data[1] = (uint8_t)(readStartAddr & 0xFF);
-    // 读取数量
-    data[2] = (uint8_t)((readCount >> 8) & 0xFF);
-    data[3] = (uint8_t)(readCount & 0xFF);
-    // 写起始地址
-    data[4] = (uint8_t)((writeStartAddr >> 8) & 0xFF);
-    data[5] = (uint8_t)(writeStartAddr & 0xFF);
-    // 写入数量
-    data[6] = (uint8_t)((writeCount >> 8) & 0xFF);
-    data[7] = (uint8_t)(writeCount & 0xFF);
-    // 字节计数
+
+    // 大端序写入各字段
+    writeUint16BE(data, 0, readStartAddr);
+    writeUint16BE(data, 2, readCount);
+    writeUint16BE(data, 4, writeStartAddr);
+    writeUint16BE(data, 6, writeCount);
     data[8] = writeByteCount;
 
     // 写入数据（大端序）
     for (size_t i = 0; i < writeCount; i++) {
         uint16_t val = (uint16_t)XModbusDataUnit_value(writeUnit, i);
-        data[9 + i * 2] = (uint8_t)((val >> 8) & 0xFF);
-        data[9 + i * 2 + 1] = (uint8_t)(val & 0xFF);
+        writeUint16BE(data, 9 + i * 2, val);
     }
+
     XModbusPdu_setFunctionCode(req, XModbusPdu_ReadWriteMultipleRegisters);
     return req;
 }
@@ -547,7 +547,6 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
 
     const uint8_t* respData = XContainerDataAddr(((XModbusPdu*)response)->m_data);
     size_t respSize = XByteArray_size_base(((XModbusPdu*)response)->m_data);
-   
 
     // =============== 读线圈响应 (FC 01) ===============
     if (fc == XModbusPdu_ReadCoils) {
@@ -558,12 +557,10 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
 
         data->m_type = XModbusCoils;
 
-        // 计算位数
         size_t bitCount = byteCount * 8;
         XModbusDataUnit_setValueCount(data, bitCount);
 
         size_t count = XModbusDataUnit_valueCount(data);
-        // 解析位数据
         size_t bitIndex = 0;
         for (int i = 1; i <= byteCount && bitIndex < count; i++) {
             uint8_t byteVal = respData[i];
@@ -612,7 +609,7 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
         XModbusDataUnit_setValueCount(data, regCount);
 
         for (size_t i = 0; i < regCount; i++) {
-            uint16_t reg = ((uint16_t)respData[1 + i * 2] << 8) | respData[1 + i * 2 + 1];
+            uint16_t reg = readUint16BE(respData, 1 + i * 2);
             XModbusDataUnit_setValue(data, i, reg);
         }
         return true;
@@ -631,7 +628,7 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
         XModbusDataUnit_setValueCount(data, regCount);
 
         for (size_t i = 0; i < regCount; i++) {
-            uint16_t reg = ((uint16_t)respData[1 + i * 2] << 8) | respData[1 + i * 2 + 1];
+            uint16_t reg = readUint16BE(respData, 1 + i * 2);
             XModbusDataUnit_setValue(data, i, reg);
         }
         return true;
@@ -639,11 +636,10 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
 
     // =============== 写单个线圈响应 (FC 05) ===============
     if (fc == XModbusPdu_WriteSingleCoil) {
-        // 响应格式：输出地址(2字节) + 输出值(2字节)
         if (respSize < 4) return false;
 
-        uint16_t address = ((uint16_t)respData[0] << 8) | respData[1];
-        uint16_t value = ((uint16_t)respData[2] << 8) | respData[3];
+        uint16_t address = readUint16BE(respData, 0);
+        uint16_t value = readUint16BE(respData, 2);
 
         data->m_type = XModbusCoils;
         XModbusDataUnit_setStartAddress(data, address);
@@ -654,11 +650,10 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
 
     // =============== 写单个寄存器响应 (FC 06) ===============
     if (fc == XModbusPdu_WriteSingleRegister) {
-        // 响应格式：寄存器地址(2字节) + 寄存器值(2字节)
         if (respSize < 4) return false;
 
-        uint16_t address = ((uint16_t)respData[0] << 8) | respData[1];
-        uint16_t value = ((uint16_t)respData[2] << 8) | respData[3];
+        uint16_t address = readUint16BE(respData, 0);
+        uint16_t value = readUint16BE(respData, 2);
 
         data->m_type = XModbusHoldingRegisters;
         XModbusDataUnit_setStartAddress(data, address);
@@ -669,11 +664,10 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
 
     // =============== 写多个线圈响应 (FC 15) ===============
     if (fc == XModbusPdu_WriteMultipleCoils) {
-        // 响应格式：起始地址(2字节) + 输出数量(2字节)
         if (respSize < 4) return false;
 
-        uint16_t address = ((uint16_t)respData[0] << 8) | respData[1];
-        uint16_t quantity = ((uint16_t)respData[2] << 8) | respData[3];
+        uint16_t address = readUint16BE(respData, 0);
+        uint16_t quantity = readUint16BE(respData, 2);
 
         data->m_type = XModbusCoils;
         XModbusDataUnit_setStartAddress(data, address);
@@ -683,11 +677,10 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
 
     // =============== 写多个寄存器响应 (FC 16) ===============
     if (fc == XModbusPdu_WriteMultipleRegisters) {
-        // 响应格式：起始地址(2字节) + 寄存器数量(2字节)
         if (respSize < 4) return false;
 
-        uint16_t address = ((uint16_t)respData[0] << 8) | respData[1];
-        uint16_t quantity = ((uint16_t)respData[2] << 8) | respData[3];
+        uint16_t address = readUint16BE(respData, 0);
+        uint16_t quantity = readUint16BE(respData, 2);
 
         data->m_type = XModbusHoldingRegisters;
         XModbusDataUnit_setStartAddress(data, address);
@@ -697,7 +690,6 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
 
     // =============== 读写多个寄存器响应 (FC 23) ===============
     if (fc == XModbusPdu_ReadWriteMultipleRegisters) {
-        // 响应格式：字节数(1字节) + 寄存器数据(N字节)
         if (respSize < 1) return false;
 
         uint8_t byteCount = respData[0];
@@ -709,7 +701,7 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
         XModbusDataUnit_setValueCount(data, regCount);
 
         for (size_t i = 0; i < regCount; i++) {
-            uint16_t reg = ((uint16_t)respData[1 + i * 2] << 8) | respData[1 + i * 2 + 1];
+            uint16_t reg = readUint16BE(respData, 1 + i * 2);
             XModbusDataUnit_setValue(data, i, reg);
         }
         return true;
