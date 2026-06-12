@@ -78,6 +78,13 @@ typedef enum XFuncParamType
 	XFuncParamType_Move,//移动模式
 	XFuncParamType_Ref//引用模式
 }XFuncParamType;
+//函数返回类型
+typedef enum XFuncReturnType
+{
+	XFuncReturnType_Copy,//拷贝模式
+	XFuncReturnType_Move,//移动模式
+	XFuncReturnType_Ref//引用模式
+}XFuncReturnType;
 /**
  * @brief 定时器唯一标识符。
  */

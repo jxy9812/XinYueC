@@ -49,7 +49,8 @@ XCLASS_DEFINE_END(XModbusServer)
 * @brief Modbus服务器结构体
 * @details 继承自XModbusDevice，提供服务器端数据存储和请求处理功能
 */
-typedef struct XModbusServer {
+typedef struct XModbusServer 
+{
     XModbusDevice m_base;           ///< 继承自XModbusDevice
     int m_serverAddress;            ///< 服务器地址
     XModbusDataUnitMap* m_dataMap;      ///< 数据映射表 (XModbusRegisterType -> XModbusDataUnit)
@@ -89,15 +90,6 @@ int XModbusServer_serverAddress(const XModbusServer* server);
 void XModbusServer_setServerAddress(XModbusServer* server, int address);
 
 /**
-* @brief 设置数据映射表（虚函数）
-* @param server XModbusServer实例指针（非NULL）
-* @param map 数据映射表指针
-* @return 成功返回true，失败返回false
-* @details 设置服务器端的数据存储区域，包括各寄存器类型的地址范围
-*/
-bool XModbusServer_setMap(XModbusServer* server, const XModbusDataUnitMap* map);
-
-/**
 * @brief 读取数据到XModbusDataUnit
 * @param server XModbusServer实例指针（非NULL）
 * @param unit 用于存储读取数据的XModbusDataUnit指针
@@ -134,24 +126,6 @@ bool XModbusServer_setData2(XModbusServer* server, XModbusRegisterType table,
 */
 bool XModbusServer_data2(const XModbusServer* server, XModbusRegisterType table, 
                                  uint16_t address, uint16_t* value);
-
-/**
-* @brief 获取选项值（虚函数）
-* @param server XModbusServer实例指针（非NULL）
-* @param option 选项类型
-* @return 返回选项值的XVariant指针，需要调用者释放
-*/
-XVariant* XModbusServer_value(const XModbusServer* server, int option);
-
-/**
-* @brief 设置选项值（虚函数）
-* @param server XModbusServer实例指针（非NULL）
-* @param option 选项类型
-* @param value 要设置的值
-* @return 成功返回true，失败返回false
-*/
-bool XModbusServer_setValue(XModbusServer* server, int option, const XVariant* value);
-
 /**
 * @brief 检查是否处理广播（虚函数）
 * @param server XModbusServer实例指针
@@ -162,7 +136,8 @@ bool XModbusServer_processesBroadcast(const XModbusServer* server);
 * @brief 设置数据映射表（虚函数基类实现）
 */
 bool XModbusServer_setMap_base(XModbusServer* server, const XModbusDataUnitMap* map);
-
+bool XModbusServer_setMap_move_base(XModbusServer* server,XModbusDataUnitMap* map);
+bool XModbusServer_setMap_ref_base(XModbusServer* server,XModbusDataUnitMap* map);
 /**
 * @brief 检查是否处理广播（虚函数基类实现）
 */
@@ -172,12 +147,12 @@ bool XModbusServer_processesBroadcast_base(const XModbusServer* server);
 * @brief 获取选项值（虚函数基类实现）
 */
 XVariant* XModbusServer_value_base(const XModbusServer* server, int option);
-
+const XVariant* XModbusServer_value_const_base(const XModbusServer* server, int option);
 /**
 * @brief 设置选项值（虚函数基类实现）
 */
 bool XModbusServer_setValue_base(XModbusServer* server, int option, const XVariant* value);
-
+bool XModbusServer_setValue_move_base(XModbusServer* server, int option, XVariant* value);
 /**
 * @brief 数据写入信号
 * @param server XModbusServer实例指针
@@ -188,10 +163,11 @@ bool XModbusServer_setValue_base(XModbusServer* server, int option, const XVaria
 void* XModbusServer_dataWritten_signal(XModbusServer* server, XModbusRegisterType table, int address, int size);
 
 // =============== 内存管理宏 ===============
-#define XModbusServer_copy_base     XModbusDevice_copy_base
-#define XModbusServer_move_base     XModbusDevice_move_base
-#define XModbusServer_deinit_base   XModbusDevice_deinit_base
-#define XModbusServer_delete_base   XModbusDevice_delete_base
+//#define XModbusServer_copy_base     XModbusDevice_copy_base
+//#define XModbusServer_move_base     XModbusDevice_move_base
+
+#define XModbusServer_deinitLater   XModbusDevice_deinitLater
+#define XModbusServer_deleteLater   XModbusDevice_deleteLater
 
 #ifdef __cplusplus
 }

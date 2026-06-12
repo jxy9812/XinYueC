@@ -529,9 +529,6 @@ bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XMod
 
 // ================== 虚函数默认实现 ==================
 
-/**
- * @brief 默认 ProcessResponse 实现 - 处理标准Modbus响应
- */
  /**
   * @brief 默认 ProcessResponse 实现 - 处理标准Modbus响应
   */
@@ -550,6 +547,7 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
 
     const uint8_t* respData = XContainerDataAddr(((XModbusPdu*)response)->m_data);
     size_t respSize = XByteArray_size_base(((XModbusPdu*)response)->m_data);
+   
 
     // =============== 读线圈响应 (FC 01) ===============
     if (fc == XModbusPdu_ReadCoils) {
@@ -564,11 +562,12 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
         size_t bitCount = byteCount * 8;
         XModbusDataUnit_setValueCount(data, bitCount);
 
+        size_t count = XModbusDataUnit_valueCount(data);
         // 解析位数据
         size_t bitIndex = 0;
-        for (int i = 1; i <= byteCount && bitIndex < data->m_valueCount; i++) {
+        for (int i = 1; i <= byteCount && bitIndex < count; i++) {
             uint8_t byteVal = respData[i];
-            for (int j = 0; j < 8 && bitIndex < data->m_valueCount; j++) {
+            for (int j = 0; j < 8 && bitIndex < count; j++) {
                 XModbusDataUnit_setValue(data, bitIndex, (byteVal >> j) & 1);
                 bitIndex++;
             }
@@ -588,10 +587,11 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
         size_t bitCount = byteCount * 8;
         XModbusDataUnit_setValueCount(data, bitCount);
 
+        size_t count = XModbusDataUnit_valueCount(data);
         size_t bitIndex = 0;
-        for (int i = 1; i <= byteCount && bitIndex < data->m_valueCount; i++) {
+        for (int i = 1; i <= byteCount && bitIndex < count; i++) {
             uint8_t byteVal = respData[i];
-            for (int j = 0; j < 8 && bitIndex < data->m_valueCount; j++) {
+            for (int j = 0; j < 8 && bitIndex < count; j++) {
                 XModbusDataUnit_setValue(data, bitIndex, (byteVal >> j) & 1);
                 bitIndex++;
             }

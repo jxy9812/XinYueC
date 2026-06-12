@@ -37,7 +37,7 @@ typedef enum {
 typedef struct XModbusDataUnit
 {
     XClass m_class;                           ///< 基类信息
-    uint16_t /*XModbusRegisterType*/ m_type;               ///< 寄存器类型
+    uint16_t /*XModbusRegisterType*/ m_type;  ///< 寄存器类型
     uint16_t m_startAddress;                  ///< 寄存器起始地址
     union {
         void* m_data;                         ///< 通用数据指针
