@@ -16,6 +16,7 @@
 #include "XPair.h"
 #include "XEvent.h"
 #include "XAbstractEventDispatcher.h"
+#include "XAbstractSocket.h"
 #include "XCoreApplication.h"
 #include "XListSLinked.h"
 #include <string.h>
@@ -254,7 +255,7 @@ static void IOCP_handle(XAbstractEventDispatcher* dispatcher)
                 XEventDispatcherWin32_handleSocketMessage(dispatcher, bytesTransferred, completionKey, overlapped);
             }
         }
-        else
+                else
                 {
                     // 情况 2: I/O 操作失败完成
                     DWORD lastError = GetLastError(); // 注意：这里用 GetLastError() 而不是 WSAGetLastError()
@@ -273,7 +274,16 @@ static void IOCP_handle(XAbstractEventDispatcher* dispatcher)
                         lastError == WSAENETRESET ||               // 10052
                         lastError == WSAECONNRESET) {              // 10054
 
-                        //printf("Client disconnected! Error: %lu\notifier", lastError);
+                       //printf("Client disconnected! Error: %lu\notifier", lastError);
+                        // 发送套接字关闭事件到关联对象
+                        if (completionKey) {
+                            XEvent* closeEvent = XEventSockClose_create(XSocketDescriptor_fromIntptr(XAbstractSocket_socketDescriptor_base(completionKey)));
+                            if (closeEvent) {
+                                closeEvent->posted = true;
+                                closeEvent->spontaneous = true;
+                                XCoreApplication_postEvent((XObject*)completionKey, closeEvent, XEVENT_PRIORITY_NORMAL);
+                            }
+                        }
                         //CleanupClient(pIoData); // 执行清理
                         return;
                     }

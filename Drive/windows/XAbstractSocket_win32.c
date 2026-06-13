@@ -185,9 +185,14 @@ static void handleReadCompletion(XAbstractSocket* sock, DWORD bytesTransferred) 
     
     if (bytesTransferred == 0) {
         // TCP连接关闭
-        if (sock->socketType == XAbstractSocket_TcpSocket) {
-            priv->connected = false;
-            XAbstractSocket_setSocketState(sock, XAbstractSocket_UnconnectedState);
+        if (sock->socketType == XAbstractSocket_TcpSocket) 
+        {
+            XEvent* closeEvent = XEventSockClose_create(XSocketDescriptor_fromIntptr(XAbstractSocket_socketDescriptor_base(sock)));
+            if (closeEvent) {
+                closeEvent->posted = true;
+                closeEvent->spontaneous = true;
+                XCoreApplication_postEvent((XObject*)sock, closeEvent, XEVENT_PRIORITY_NORMAL);
+            }
         }
         return;
     }
@@ -393,6 +398,25 @@ bool XAbstractSocket_platform_event(XAbstractSocket* self, XEvent* e) {
             if (priv->connectPending) {
                 handleConnectCompletion(self);
             }
+        }
+        XEvent_setAccepted_base(e, true);
+        return true;
+    }
+    else if (e->type == XEVENT_TYPE_SOCK_CLOSE)
+    {
+        // 对端关闭连接或网络错误导致套接字关闭
+        XAbstractSocketPrivate* priv = getPriv(self);
+        if (priv) {
+            priv->connected = false;
+            if (priv->socketHandle != INVALID_SOCKET) {
+                CancelIo((HANDLE)priv->socketHandle);
+                closesocket(priv->socketHandle);
+                priv->socketHandle = INVALID_SOCKET;
+            }
+            priv->readPending = false;
+            priv->writePending = false;
+            priv->connectPending = false;
+            XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
         }
         XEvent_setAccepted_base(e, true);
         return true;

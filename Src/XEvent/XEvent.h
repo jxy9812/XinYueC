@@ -150,6 +150,12 @@ typedef struct XEventSockAct
     XSocketActType actType;//活动类型
 }XEventSockAct;
 XEventSockAct* XEventSockAct_create(XSocketDescriptor socket, XSocketActType actType);
+typedef struct XEventSockClose
+{
+    XEvent m_base;
+    XSocketDescriptor socket;
+}XEventSockClose;
+XEventSockClose* XEventSockClose_create(XSocketDescriptor socket);
 //孩子事件
 typedef struct {
     XEvent m_base;

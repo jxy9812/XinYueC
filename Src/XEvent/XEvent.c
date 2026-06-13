@@ -295,7 +295,15 @@ XEventSockAct* XEventSockAct_create(XSocketDescriptor socket, XSocketActType act
 	Set_Class_MemoryFree(event, XFree_MultiPool);
 	return event;
 }
-
+XEventSockClose* XEventSockClose_create(XSocketDescriptor socket)
+{
+	XEventSockClose* event = XMalloc_MultiPool(sizeof(XEventSockClose));
+	if (!event)return NULL;
+	XEvent_init(event, XEVENT_TYPE_SOCK_CLOSE);
+	event->socket = socket;
+	Set_Class_MemoryFree(event, XFree_MultiPool);
+	return event;
+}
 XChildEvent* XChildEvent_create(XEventType type, XObject* child)
 {
 	XChildEvent* event = XMalloc_MultiPool(sizeof(XChildEvent));
