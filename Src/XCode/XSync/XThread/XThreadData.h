@@ -50,7 +50,7 @@ void XThreadData_popEventloop(XThreadData* data, XEventLoop* loop);
 // 向当前线程投递事件（内部使用）
 void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority);
 //无锁投递,设计用在中断中,多线程并发无法保证顺序
-void XThreadData_tryPostEvent(XObject* receiver, XEvent* event, int priority);
+bool XThreadData_tryPostEvent(XObject* receiver, XEvent* event, int priority);
 //向当前线程事件队列头部追加未处理的事件列表传入 XThreadData_takePostedEvents(void) 的返回值
 void XThreadData_push_front_list(const XVector* events);
 // 消费并清空当前线程的 posted events（副本自己管理）

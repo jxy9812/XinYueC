@@ -90,7 +90,7 @@ static void* ThreadFunction(void* arg)
 // 启动线程
 static bool VXThread_start(XThread* Object) {
     if (Object == NULL || Object->m_handle != 0) {
-        DEBUG_PRINTF("Thread already started or invalid object");
+        XDEBUG_PRINTF("Thread already started or invalid object");
         return false;
     }
 
@@ -98,7 +98,7 @@ static bool VXThread_start(XThread* Object) {
     pthread_attr_t attr;
     int ret = pthread_attr_init(&attr);
     if (ret != 0) {
-        DEBUG_PRINTF("pthread_attr_init failed: %d", ret);
+        XDEBUG_PRINTF("pthread_attr_init failed: %d", ret);
         return false;
     }
 
@@ -106,7 +106,7 @@ static bool VXThread_start(XThread* Object) {
     if (Object->m_stackSize > 0) {
         ret = pthread_attr_setstacksize(&attr, Object->m_stackSize);
         if (ret != 0) {
-            DEBUG_PRINTF("pthread_attr_setstacksize failed: %d", ret);
+            XDEBUG_PRINTF("pthread_attr_setstacksize failed: %d", ret);
             pthread_attr_destroy(&attr);
             return false;
         }
@@ -117,7 +117,7 @@ static bool VXThread_start(XThread* Object) {
     pthread_attr_destroy(&attr);
 
     if (ret != 0) {
-        DEBUG_PRINTF("pthread_create failed: %d", ret);
+        XDEBUG_PRINTF("pthread_create failed: %d", ret);
         return false;
     }
 
@@ -129,7 +129,7 @@ static bool VXThread_start(XThread* Object) {
 // 等待线程结束（支持超时）
 static bool VXThread_wait(XThread* Object, unsigned long time) {
     if (Object == NULL || Object->m_handle == 0) {
-        DEBUG_PRINTF("Invalid thread object or handle");
+        XDEBUG_PRINTF("Invalid thread object or handle");
         return false;
     }
 
@@ -138,7 +138,7 @@ static bool VXThread_wait(XThread* Object, unsigned long time) {
         // 无限等待
         int ret = pthread_join(thread, NULL);
         if (ret != 0) {
-            DEBUG_PRINTF("pthread_join failed: %d", ret);
+            XDEBUG_PRINTF("pthread_join failed: %d", ret);
             return false;
         }
         return true;
@@ -147,7 +147,7 @@ static bool VXThread_wait(XThread* Object, unsigned long time) {
         // 超时等待模拟
         const struct timespec start = { 0 };
         if (clock_gettime(CLOCK_MONOTONIC, &start) != 0) {
-            DEBUG_PRINTF("clock_gettime failed: %d", errno);
+            XDEBUG_PRINTF("clock_gettime failed: %d", errno);
             return false;
         }
         const unsigned long timeout_ns = time * 1000000;
@@ -155,13 +155,13 @@ static bool VXThread_wait(XThread* Object, unsigned long time) {
         while (!Object->m_finished) {
             struct timespec now = { 0 };
             if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
-                DEBUG_PRINTF("clock_gettime failed: %d", errno);
+                XDEBUG_PRINTF("clock_gettime failed: %d", errno);
                 return false;
             }
             unsigned long elapsed = (now.tv_sec - start.tv_sec) * 1000000000 +
                 (now.tv_nsec - start.tv_nsec);
             if (elapsed >= timeout_ns) {
-                DEBUG_PRINTF("Thread wait timed out");
+                XDEBUG_PRINTF("Thread wait timed out");
                 return false;
             }
             usleep(1000); // 1ms轮询
@@ -198,26 +198,26 @@ static XThread_Priority VXThread_priority(const XThread* Object) {
 }
 static bool VXThread_terminate(XThread* Object) {
     if (Object == NULL || Object->m_handle == 0) {
-        DEBUG_PRINTF("Invalid thread object or handle (NULL or uninitialized)");
+        XDEBUG_PRINTF("Invalid thread object or handle (NULL or uninitialized)");
         return false;
     }
     pthread_t thread = (pthread_t)Object->m_handle;
     // 尝试取消线程
     int ret = pthread_cancel(thread);
     if (ret != 0) {
-        DEBUG_PRINTF("pthread_cancel failed with error: % d", ret);
+        XDEBUG_PRINTF("pthread_cancel failed with error: % d", ret);
         return false;
     }
     // 等待线程终止并回收资源
     void* thread_result;
     ret = pthread_join(thread, &thread_result);
     if (ret != 0) {
-        DEBUG_PRINTF("pthread_join failed with error: % d", ret);
+        XDEBUG_PRINTF("pthread_join failed with error: % d", ret);
         return false;
     }
     // 验证线程终止状态
     if (thread_result != PTHREAD_CANCELED) {
-        DEBUG_PRINTF("Thread did not terminate via cancellation");
+        XDEBUG_PRINTF("Thread did not terminate via cancellation");
     }
     // 更新线程状态
     Object->m_finished = true;
@@ -253,7 +253,7 @@ static void VXThread_setPriority(XThread* Object, XThread_Priority priority) {
     pthread_t thread = (pthread_t)Object->m_handle;
 
     if (pthread_getschedparam(thread, &policy, &param) != 0) {
-        DEBUG_PRINTF("pthread_getschedparam failed: %d", errno);
+        XDEBUG_PRINTF("pthread_getschedparam failed: %d", errno);
         return;
     }
 
@@ -299,7 +299,7 @@ static void VXThread_setPriority(XThread* Object, XThread_Priority priority) {
     }
 
     if (pthread_setschedparam(thread, policy, &param) != 0) {
-        DEBUG_PRINTF("Failed to set thread priority: %d", errno);
+        XDEBUG_PRINTF("Failed to set thread priority: %d", errno);
     }
 }
 

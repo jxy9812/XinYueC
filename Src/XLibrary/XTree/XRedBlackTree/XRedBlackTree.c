@@ -275,7 +275,7 @@ XRBTreeNode* XRBTree_remove(XRBTreeNode** this_root, XCompare compare, XCompareR
 	if (!this_root||!compare||!Rule||!pvData|| !dataSize)
 		return NULL;
 	XRBTreeNode* findErase = XBBTree_findNode(*this_root, compare, Rule, pvData);//删除的节点
-	//DEBUG_PRINTF("findErase=%p", findErase);
+	//XDEBUG_PRINTF("findErase=%p", findErase);
 	if (findErase == NULL)
 		return NULL;//要删除的节点没找到
 	return XRBTree_removeNode(this_root, findErase, dataSize);	
@@ -429,7 +429,7 @@ static void XRBTree_insertAdjust(XRBTreeNode** this_root, XRBTreeNode* currentNo
 }
 XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareRuleTwo lessRule, const void* pvData, const size_t dataSize)
 {
-	//DEBUG_PRINTF("less=%p pvData=%p dataTypeSize=%u\n",less,pvData,dataTypeSize);
+	//XDEBUG_PRINTF("less=%p pvData=%p dataTypeSize=%u\n",less,pvData,dataTypeSize);
 	if (ISNULL(compare, ""))
 		return NULL;
 	if (ISNULL(pvData, ""))
@@ -439,7 +439,7 @@ XRBTreeNode* XRBTree_insert(XRBTreeNode** this_root, XCompare compare, XCompareR
 	XRBTreeNode* nodes = XRBTree_create(pvData, dataSize);//创建一个红黑树节点并且初始化,默认红色
 	if (ISNULL(nodes, ""))
 		return NULL;
-	//DEBUG_PRINTF("nodes=%p\n",nodes);
+	//XDEBUG_PRINTF("nodes=%p\n",nodes);
 	return XRBTree_insertNode(this_root, compare, lessRule, nodes);
 }
 

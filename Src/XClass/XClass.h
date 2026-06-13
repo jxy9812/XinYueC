@@ -52,7 +52,7 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 {\
 		if (Type >= Vtable->capacity)\
 		{\
-			XPrintf("文件:%s 函数:%s 行号:%d 重载索引超出范围了 索引:%d 容量:%d个\n", __FILE__, __func__, __LINE__, Type, Vtable->capacity); \
+			XERROR_PRINTF("文件:%s 函数:%s 行号:%d 重载索引超出范围了 索引:%d 容量:%d个\n", __FILE__, __func__, __LINE__, Type, Vtable->capacity); \
 			exit(-1); \
 		}\
 			XVtable_At(Vtable, Type) = Func; \
@@ -62,7 +62,7 @@ bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名
 { \
 	if(Vtable->isStack&&((Vtable->size)+(sizeof(table) / sizeof(table[0])))>Vtable->capacity)\
 	{\
-		XPrintf("文件:%s 函数:%s 行号:%d 追加的函数超出最大容量了,超出:%d个\n",__FILE__,__func__,__LINE__,(Vtable->size)+(sizeof(table) / sizeof(table[0]))-Vtable->capacity);\
+		XERROR_PRINTF("文件:%s 函数:%s 行号:%d 追加的函数超出最大容量了,超出:%d个\n",__FILE__,__func__,__LINE__,(Vtable->size)+(sizeof(table) / sizeof(table[0]))-Vtable->capacity);\
 		exit(-1);\
 	}\
 	XVtable_append_array(Vtable, table, sizeof(table) / sizeof(table[0]));\

@@ -214,7 +214,7 @@ XListSNode* VXList_push_front(XListSLinked* this_list, void* pvData, XCDataCreat
     XListSNode* newNode = CreatNode(this_list);//新节点
     if (newNode == NULL)
     {
-        perror("开辟节点失败");
+        XERROR_PRINTF("开辟节点失败");
         return NULL;
     }
     if (dataCreatMethod)
@@ -237,7 +237,7 @@ XListSNode* VXList_push_back(XListSLinked* this_list, void* pvData, XCDataCreatM
     XListSNode* NewNode = CreatNode(this_list);//新节点
     if (NewNode == NULL)
     {
-        perror("开辟节点失败");
+        XERROR_PRINTF("开辟节点失败");
         return NULL;
     }
     if (dataCreatMethod)
@@ -280,7 +280,7 @@ bool VXList_insert(XListSLinked* this_list, XListSNode* curNode, void* pvData, X
     XListSNode* NewNode = CreatNode(this_list);//新节点
     if (NewNode == NULL)
     {
-        perror("开辟节点失败");
+        XERROR_PRINTF("开辟节点失败");
         return false;
     }
     if (dataCreatMethod)
@@ -339,7 +339,7 @@ size_t VXList_insert_array(XListSLinked* this_list, XListSNode* curNode, const v
         NewListNode = CreatNode(this_list);//新节点
         if (NewListNode == NULL)
         {
-            perror("开辟节点失败");
+            XERROR_PRINTF("开辟节点失败");
             // 释放已创建的节点
             while (NewListHead != NULL) {
                 XListSNode* temp = NewListHead;

@@ -484,11 +484,11 @@ static void XMultiPool_initGlobal()
     //m_mutex = XMutex_create(XLock_NonRecursive);
    /* global_pool = XFixedPool_create(512, 500);
     return;*/
-    XMultiPool_add_pool(global_pool, XFixedPool_create(32, 200));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(64, 100));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(128, 50));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(256, 10));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(512, 5));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(32, 512));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(64, 256));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(128, 128));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(256, 64));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(512, 32));
 }
 XMultiPool* XMultiPool_global()
 {
@@ -498,7 +498,7 @@ XMultiPool* XMultiPool_global()
 }
 void* XMultiPool_global_malloc(size_t size)
 {
-    /*return XMalloc_System(size);*/
+   /* return XMalloc_System(size);*/
     //XMutex_lock(m_mutex);
     void* ptr = global_pool ? XMultiPool_malloc(global_pool, size) : NULL;
     //XMutex_unlock(m_mutex);
@@ -514,8 +514,8 @@ void* XMultiPool_global_realloc(void* ptr, size_t size)
 }
 void XMultiPool_global_free(void* ptr)
 {
-   /* XFree_System(ptr);
-    return;*/
+    //XFree_System(ptr);
+    //return;
     //XMutex_lock(m_mutex);
     if(global_pool&&ptr)
         XMultiPool_free(global_pool, ptr);

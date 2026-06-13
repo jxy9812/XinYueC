@@ -47,7 +47,12 @@ static void delete_timer_node_event(XVarList* argList)
 static void delete_timer_node(XTimeWheelGroup* group, XListSNode* node)
 {
     XEventFunc* event = XEventFunc_create(delete_timer_node_event,XVarList_Create(XVar(XListSNode*, node)),NULL);
-    XCoreApplication_tryPostEvent(group, event, XEVENT_PRIORITY_LOWEST);
+    if(!XCoreApplication_tryPostEvent(group, event, XEVENT_PRIORITY_LOWEST))
+    {
+        //改用普通队列
+        XCoreApplication_postEvent(group, event, XEVENT_PRIORITY_LOWEST);
+    }
+    XAtomic_fetch_sub_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
 }
 // 辅助函数：向上取整除法
 static inline size_t ceil_div(size_t dividend, size_t divisor)
@@ -343,7 +348,6 @@ static void process_timer_list(XTimeWheelGroup* group, XListSNode* head, size_t 
     final_cleanup:
         if (isdelete) {
             delete_timer_node(group, node);
-            XAtomic_fetch_sub_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
         }
 
         node = next;
@@ -370,7 +374,6 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, int
         // 检查是否已被标记删除
         if (XAtomic_load_bool(&timer->m_deleted, XAtomic_MemoryOrder_Relaxed)) {
             delete_timer_node(group, node);
-            XAtomic_fetch_sub_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
             node = next;
             continue;
         }
@@ -390,7 +393,6 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, int
         else {
             // 降级失败，清理节点
             delete_timer_node(group, node);
-            XAtomic_fetch_sub_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
         }
 
         node = next;

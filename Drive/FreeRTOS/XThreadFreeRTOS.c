@@ -50,7 +50,7 @@ XVtable* XThread_class_init() {
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXThread_deinit);
 #if SHOWCONTAINERSIZE
-	DEBUG_PRINTF("XThread(FreeRTOS) size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+	XDEBUG_PRINTF("XThread(FreeRTOS) size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
@@ -60,7 +60,7 @@ static void ThreadFunction(void* arg)
 	XThread* Object = (XThread*)arg;
 	XThread_mapInsert(Object);
 	if (!Object) {
-		DEBUG_PRINTF("Invalid thread object");
+		XDEBUG_PRINTF("Invalid thread object");
 		vTaskDelete(NULL);
 		return;
 	}
@@ -103,14 +103,14 @@ static UBaseType_t mapPriority(XThread_Priority priority) {
 	case XThread_InheritPriority:
 		return uxTaskPriorityGet(NULL); // 继承当前任务优先级
 	default:
-		DEBUG_PRINTF("Unknown priority level, using normal");
+		XDEBUG_PRINTF("Unknown priority level, using normal");
 		return maxPriority / 2;
 	}
 }
 // 启动线程
 static bool VXThread_start(XThread* Object) {
 	if (!Object || Object->m_handle != 0) {
-		DEBUG_PRINTF("Invalid thread object or already started");
+		XDEBUG_PRINTF("Invalid thread object or already started");
 		return false;
 	}
 #if defined(configSUPPORT_STATIC_ALLOCATION)&&configSUPPORT_STATIC_ALLOCATION
@@ -120,7 +120,7 @@ static bool VXThread_start(XThread* Object) {
 	((XThreadFreeRTOS*)Object)->completion_sem = xSemaphoreCreateBinary();
 #endif
 	if (!((XThreadFreeRTOS*)Object)->completion_sem) {
-		DEBUG_PRINTF("Failed to create completion semaphore");
+		XDEBUG_PRINTF("Failed to create completion semaphore");
 		return false;
 	}
 
@@ -128,7 +128,7 @@ static bool VXThread_start(XThread* Object) {
 	uint32_t stackWords = Object->m_stackSize / sizeof(StackType_t);
 	if (stackWords < configMINIMAL_STACK_SIZE) {
 		stackWords = configMINIMAL_STACK_SIZE;
-		DEBUG_PRINTF("Stack size too small, using minimal size: % u", stackWords * sizeof(StackType_t));
+		XDEBUG_PRINTF("Stack size too small, using minimal size: % u", stackWords * sizeof(StackType_t));
 	}
 	// 创建 FreeRTOS 任务
 	TaskHandle_t taskHandle;
@@ -141,25 +141,25 @@ static bool VXThread_start(XThread* Object) {
 		&taskHandle
 	);
 	if (result != pdPASS) {
-		DEBUG_PRINTF("Failed to create task, error: %d", result);
+		XDEBUG_PRINTF("Failed to create task, error: %d", result);
 		vSemaphoreDelete(((XThreadFreeRTOS*)Object)->completion_sem);
 		((XThreadFreeRTOS*)Object)->completion_sem = NULL;
 		return false;
 	}
 	Object->m_handle = (XHandle)taskHandle;
-	DEBUG_PRINTF("Thread started, handle: %p", taskHandle);
+	XDEBUG_PRINTF("Thread started, handle: %p", taskHandle);
 	return true;
 }
 // 等待线程结束
 static bool VXThread_wait(XThread* Object, unsigned long time) {
 	if (!Object || Object->m_handle == 0) {
-		DEBUG_PRINTF("Invalid thread object or not running");
+		XDEBUG_PRINTF("Invalid thread object or not running");
 		return false;
 	}
 	TickType_t ticks = (time == UINT32_MAX) ? portMAX_DELAY : pdMS_TO_TICKS(time);
 	BaseType_t result = xSemaphoreTake(((XThreadFreeRTOS*)Object)->completion_sem, ticks);
 	if (result != pdTRUE) {
-		DEBUG_PRINTF("Thread wait timed out or failed");
+		XDEBUG_PRINTF("Thread wait timed out or failed");
 		return false;
 	}
 	return true;
@@ -190,7 +190,7 @@ static XThread_Priority VXThread_priority(const XThread* Object) {
 // 终止线程
 static bool VXThread_terminate(XThread* Object) {
 	if (!Object || Object->m_handle == 0) {
-		DEBUG_PRINTF("Invalid thread object or not running");
+		XDEBUG_PRINTF("Invalid thread object or not running");
 		return false;
 	}
 	vTaskDelete((TaskHandle_t)Object->m_handle);
@@ -201,7 +201,7 @@ static bool VXThread_terminate(XThread* Object) {
 	vSemaphoreDelete(((XThreadFreeRTOS*)Object)->completion_sem);
 	((XThreadFreeRTOS*)Object)->completion_sem = NULL;
 	//}
-	DEBUG_PRINTF("Thread terminated");
+	XDEBUG_PRINTF("Thread terminated");
 	return true;
 }
 // 请求中断线程
@@ -218,7 +218,7 @@ static void VXThread_requestInterruption(XThread* Object) {
 	if (Object->m_handle != 0) {
 		xTaskNotifyGive((TaskHandle_t)Object->m_handle);
 	}
-	DEBUG_PRINTF("Interruption requested for thread");
+	XDEBUG_PRINTF("Interruption requested for thread");
 }
 // 设置线程优先级
 static void VXThread_setPriority(XThread* Object, XThread_Priority priority) {
@@ -229,14 +229,14 @@ static void VXThread_setPriority(XThread* Object, XThread_Priority priority) {
 	if (Object->m_handle != 0) {
 		UBaseType_t newPriority = mapPriority(priority);
 		vTaskPrioritySet((TaskHandle_t)Object->m_handle, newPriority);
-		DEBUG_PRINTF("Thread priority set to %u", newPriority);
+		XDEBUG_PRINTF("Thread priority set to %u", newPriority);
 	}
 }
 // 设置栈大小（仅在启动前有效）
 static void VXThread_setStackSize(XThread* Object, uint32_t stackSize) {
 	if (Object) {
 		Object->m_stackSize = stackSize;
-		DEBUG_PRINTF("Thread stack size set to % u", stackSize);
+		XDEBUG_PRINTF("Thread stack size set to % u", stackSize);
 	}
 }
 // 销毁线程对象
@@ -248,7 +248,7 @@ static void VXThread_deinit(XThread* Object) {
 		if (!XThread_wait(Object, 100)) {
 			// 超时未结束，强制终止
 			VXThread_terminate(Object);
-			DEBUG_PRINTF("Thread forced termination");
+			XDEBUG_PRINTF("Thread forced termination");
 		}
 	}
 	// 清理事件循环
@@ -258,7 +258,7 @@ static void VXThread_deinit(XThread* Object) {
 	}
 	// 从线程映射中移除
 	XThread_mapRemove(Object);
-	DEBUG_PRINTF("Thread object deinitialized");
+	XDEBUG_PRINTF("Thread object deinitialized");
 }
 // 获取当前线程 ID（使用任务句柄作为唯一标识）
 XHandle XThread_currentThreadId() {

@@ -10,7 +10,7 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 
 	if (temp == NULL)
 	{
-		perror("临时数组失败\n");
+		XERROR_PRINTF("临时数组失败\n");
 	}
 	//memset(tmp, 0, n * size);
 	size_t gap = 1;

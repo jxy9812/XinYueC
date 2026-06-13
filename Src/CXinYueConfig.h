@@ -9,6 +9,7 @@ extern "C" {
 #define VTABLE_ISSTACK					1//虚函数表定义在栈上
 #define SHOWCONTAINERSIZE				0//显示容器大小
 #define DEBUG_ON						0
+#define XERROR_ON						1//错误输出
 #define DEMOTEST						1//测试代码
 /*                容器                              */
 #define XContainer_ON				1
@@ -62,37 +63,38 @@ extern "C" {
 #define	XVectorTwo_ON					0
 #define	XStringVector_ON				0
 #endif
-// 事件循环调度器的队列大小
-#ifndef XEventLoop_QueueSize
+// 事件投递 无锁队列大小
+#ifndef TryPostEvent_QueueSize
 #if defined(_WIN32) || defined(_WIN64) || defined(__linux__) || defined(__APPLE__)
-#define XEventLoop_QueueSize      512 
+#define TryPostEvent_QueueSize      512 
 #else
-#define XEventLoop_QueueSize      64   /* 适配嵌入式设备节省RAM */
+#define TryPostEvent_QueueSize      64   /* 适配嵌入式设备节省RAM */
 #endif
 #endif
 
-#ifndef XEpoll_Size
-#if defined(_WIN32) || defined(_WIN64) || defined(__linux__) || defined(__APPLE__)
-#define XEpoll_Size      256 
-#else
-#define XEpoll_Size      32   /* 适配嵌入式设备节省RAM */
-#endif
-#endif
 #define IS_ON_DEBUG(on)						ISNULL(on,"此函数需要开启"#on",在CXinYueConfig.h")
 
+//定义debug信息输出方式
 #ifdef DEBUG_ON
 #if ((DEBUG_ON) && defined(_DEBUG))
-#define DEBUG_PRINTF(fmt,...) printf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
+#define XDEBUG_PRINTF(fmt,...) XPrintf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
 #else
-#define DEBUG_PRINTF(fmt,...)
+#define XDEBUG_PRINTF(fmt,...)
 #endif
 #else
 #if defined _DEBUG
-#define DEBUG_PRINTF(fmt,...) printf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
+#define XDEBUG_PRINTF(fmt,...) XPrintf("Debug [FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
 #else
-#define DEBUG_PRINTF(fmt,...)
+#define XDEBUG_PRINTF(fmt,...)
 #endif
 #endif // !DEBUG_ON
+
+//定义错误信息输出方式
+#if ((XERROR_ON))
+#define XERROR_PRINTF(fmt,...) XPrintf("XError [FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
+#else
+#define XERROR_PRINTF(fmt,...)
+#endif
 
 #ifdef __cplusplus
 }

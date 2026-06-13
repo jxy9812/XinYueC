@@ -84,7 +84,7 @@ static inline void parseMbapHeader(const uint8_t* buffer, uint16_t* transactionI
 }
 
 // =============== 待处理请求管理 ===============
-static XModbusTcpPendingRequest* createPendingRequest(XModbusReply* reply, uint16_t transactionId, uint8_t unitId, XByteArray* requestData)
+static XModbusTcpPendingRequest* createPendingRequest(XModbusReply* reply, uint16_t transactionId, uint8_t unitId)
 {
     XModbusTcpPendingRequest* pending = (XModbusTcpPendingRequest*)XMalloc_System(sizeof(XModbusTcpPendingRequest));
     if (!pending) return NULL;
@@ -93,12 +93,39 @@ static XModbusTcpPendingRequest* createPendingRequest(XModbusReply* reply, uint1
     pending->transactionId = transactionId;
     pending->unitId = unitId;
     pending->timeoutTimer = XTIMER_INVALID_ID;
-    //pending->requestData = requestData;
     pending->retryCount = 0;
 
     return pending;
 }
+/**
+ * @brief 清理所有待处理请求
+ */
+static void clearAllPendingRequests(XModbusTcpClient* client, XModbusDevice_Error error, const char* errorMsg)
+{
+    if (!client || !client->m_pendingRequests) return;
 
+    for_each_iterator(client->m_pendingRequests, XHashMap, it)
+    {
+        XPair* pair = XHashMap_iterator_data(&it);
+        XModbusTcpPendingRequest* pending = XPair_Second(pair, XModbusTcpPendingRequest*);
+        if (pending) {
+            if (pending->timeoutTimer != XTIMER_INVALID_ID) {
+                XHashMap_remove_base(client->m_timerMap, &pending->timeoutTimer);
+                XObject_killTimer((XObject*)client, pending->timeoutTimer);
+            }
+            if (pending->reply && error != XModbusDevice_NoError) {
+                XModbusReply_setError(pending->reply, error, errorMsg);
+                XModbusReply_setState(pending->reply, XModbusReply_State_No_Started);
+            }
+        }
+    }
+    XHashMap_clear_base(client->m_pendingRequests);
+
+    // 清空定时器映射
+    if (client->m_timerMap) {
+        XHashMap_clear_base(client->m_timerMap);
+    }
+}
 static void deletePendingRequest(XModbusTcpPendingRequest* pending)
 {
     if (!pending) return;
@@ -133,6 +160,7 @@ static inline void timeoutTimerStop(XModbusTcpClient* client, XTimerId* timerId)
 
 static inline XTimerId timeoutTimerStart(XModbusTcpClient* client, int timeout)
 {
+    return 0;//返回0禁用超时定时器
     return XObject_startTimer_ms((XObject*)client, timeout, XTimerType_CoarseTimer);
 }
 /**
@@ -185,9 +213,10 @@ static bool buildAndSendRequest(XModbusTcpClient* client, XModbusReply* reply,
     XTimerId timerId = timeoutTimerStart(client, timeout);
 
     // 创建待处理请求
-    XModbusTcpPendingRequest* pending = createPendingRequest(reply, transactionId, (uint8_t)serverAddress, NULL);
+    XModbusTcpPendingRequest* pending = createPendingRequest(reply, transactionId, (uint8_t)serverAddress);
     if (!pending) {
         timeoutTimerStop(client, &timerId);
+       
         return false;
     }
     pending->timeoutTimer = timerId;
@@ -370,23 +399,7 @@ static void VXModbusTcpClient_close(XModbusDevice* device)
     if (client->m_receiveBuffer) {
         XByteArray_clear_base(client->m_receiveBuffer);
     }
-
-    // 先停止所有定时器
-    if (client->m_pendingRequests) {
-        for_each_iterator(client->m_pendingRequests, XHashMap, it)
-        {
-            XPair* pair = XHashMap_iterator_data(&it);
-            XModbusTcpPendingRequest* pending = XPair_Second(pair, XModbusTcpPendingRequest*);
-            if (pending) {
-                if (pending->reply) {
-                    XModbusReply_setError(pending->reply, XModbusDevice_ConnectionError, "Device closed");
-                    XModbusReply_setState(pending->reply, XModbusReply_State_No_Started);
-                }
-            }
-        }
-        // 容器会自动调用 pendingRequestDeinit 释放元素
-        XHashMap_clear_base(client->m_pendingRequests);
-    }
+    clearAllPendingRequests(client, XModbusDevice_ConnectionError, "Device closed");
 
     if (socket) {
         XAbstractSocket_disconnectFromHost_base(socket);
@@ -445,6 +458,11 @@ static void processReceivedFrame(XModbusTcpClient* client)
     XByteArray* buffer = client->m_receiveBuffer;
     size_t bufLen = XByteArray_size_base(buffer);
 
+   /* XString* text= XByteArray_to16HexString(buffer);
+    XPrintf_string(text);
+    XPrintf("\n");
+    XString_delete_base(text);*/
+
     while (bufLen >= 7) {
         const uint8_t* data = XContainerDataAddr(buffer);
 
@@ -452,17 +470,26 @@ static void processReceivedFrame(XModbusTcpClient* client)
         uint8_t unitId;
         parseMbapHeader(data, &transactionId, &protocolId, &length, &unitId);
 
+        // 协议检查
         if (protocolId != 0x0000) {
             XByteArray_clear_base(buffer);
             return;
         }
 
-        size_t expectedLen = 6 + length;
-        if (bufLen < expectedLen) {
+        // Length 有效性检查
+        if (length < 1 || length > 254) {
+            XByteArray_clear_base(buffer);
             return;
         }
 
-        XModbusTcpPendingRequest** ppPending = (XModbusTcpPendingRequest**)XMapBase_value_base(client->m_pendingRequests, &transactionId);
+        size_t expectedLen = 6 + length;  // MBAP 前 6 字节 + Length 字段的值
+        if (bufLen < expectedLen) {
+            // 半帧，等待更多数据
+            return;
+        }
+
+        // 查找对应的 pending 请求
+        XModbusTcpPendingRequest** ppPending = (XModbusTcpPendingRequest**)XHashMap_value_base(client->m_pendingRequests, &transactionId);
         if (!ppPending || !*ppPending) {
             XByteArray_remove_base(buffer, 0, expectedLen);
             bufLen = XByteArray_size_base(buffer);
@@ -472,28 +499,40 @@ static void processReceivedFrame(XModbusTcpClient* client)
         XModbusTcpPendingRequest* pending = *ppPending;
         XModbusReply* reply = pending->reply;
 
-        // 在停止超时定时器后
-        timeoutTimerStop(client, &pending->timeoutTimer);
-
-        // 从定时器反向映射中移除
+        // 先从 timerMap 移除，再停止定时器
         if (pending->timeoutTimer != XTIMER_INVALID_ID) {
             XHashMap_remove_base(client->m_timerMap, &pending->timeoutTimer);
         }
+        timeoutTimerStop(client, &pending->timeoutTimer);
+
         XModbusReply_setState(reply, XModbusReply_State_Responding);
 
+        // Unit ID 检查
         if (unitId != pending->unitId) {
-            XModbusReply_setError(reply, XModbusDevice_ResponseRequestMismatch, "Unit ID mismatch");
+            XModbusReply_setError(reply, XModbusReply_State_Finished, "Unit ID mismatch");
             XModbusReply_setState(reply, XModbusReply_State_Finished);
             XHashMap_remove_base(client->m_pendingRequests, &transactionId);
-            //deletePendingRequest(pending);
             XByteArray_remove_base(buffer, 0, expectedLen);
             bufLen = XByteArray_size_base(buffer);
             continue;
         }
 
+        // PDU 数据：跳过 MBAP(6) + Unit ID(1) = 7 字节
+        // PDU 长度 = Length - 1 (减去 Unit ID)
         const uint8_t* pduData = data + 7;
-        size_t pduLen = length - 1;
+        size_t pduLen = length - 1;  // FC + Data 的总长度
 
+        if (pduLen < 1) {
+            // 至少要有 FC
+            XModbusReply_setError(reply, XModbusDevice_ProtocolError, "Invalid PDU");
+            XModbusReply_setState(reply, XModbusReply_State_Finished);
+            XHashMap_remove_base(client->m_pendingRequests, &transactionId);
+            XByteArray_remove_base(buffer, 0, expectedLen);
+            bufLen = XByteArray_size_base(buffer);
+            continue;
+        }
+
+        // 创建响应对象
         if (!reply->m_rawResult) {
             reply->m_rawResult = XModbusResponse_create();
         }
@@ -502,30 +541,53 @@ static void processReceivedFrame(XModbusTcpClient* client)
         uint8_t fc = pduData[0];
 
         if (fc & XMODBUS_PDU_EXCEPTION_BYTE) {
+            // 异常响应
             XModbusPdu_setFunctionCode(response, (XModbusPdu_FunctionCode)(fc & 0x7F));
             if (pduLen >= 2) {
                 uint8_t exceptionCode = pduData[1];
                 XModbusPdu_setData(response, &exceptionCode, 1);
-                XModbusReply_setError(reply, XModbusDevice_ProtocolError, "Modbus exception");
+
+                const char* errorMsg = "Modbus exception";
+                switch (exceptionCode) {
+                case XModbusPdu_IllegalFunction: errorMsg = "Illegal function"; break;
+                case XModbusPdu_IllegalDataAddress: errorMsg = "Illegal data address"; break;
+                case XModbusPdu_IllegalDataValue: errorMsg = "Illegal data value"; break;
+                case XModbusPdu_ServerDeviceFailure: errorMsg = "Server device failure"; break;
+                case XModbusPdu_Acknowledge: errorMsg = "Acknowledge"; break;
+                case XModbusPdu_ServerDeviceBusy: errorMsg = "Server device busy"; break;
+                default: break;
+                }
+                XModbusReply_setError(reply, XModbusDevice_ProtocolError, errorMsg);
             }
         }
         else {
+            // 正常响应
             XModbusPdu_setFunctionCode(response, (XModbusPdu_FunctionCode)fc);
+
+            // 数据部分：跳过 FC(1)，长度 = pduLen - 1
             if (pduLen > 1) {
                 XModbusPdu_setData(response, pduData + 1, pduLen - 1);
             }
 
+            // 处理响应数据
             if (!reply->m_result) {
                 reply->m_result = XModbusDataUnit_create();
             }
-            XModbusClient_processResponse_base((XModbusClient*)client, response, reply->m_result);
+ //            XString* text= XByteArray_to16HexString(response->m_base.m_data);
+ //XPrintf_string(text);
+ //XPrintf("\n");
+ //XString_delete_base(text);
+            bool success = XModbusClient_processResponse_base((XModbusClient*)client, response, reply->m_result);
+            if (!success) {
+                XModbusReply_setError(reply, XModbusDevice_UnknownError, "Response processing failed");
+            }
         }
 
-        XModbusReply_setState(reply, XModbusReply_State_Finished);
-        //deletePendingRequest(pending);
         XHashMap_remove_base(client->m_pendingRequests, &transactionId);
         XByteArray_remove_base(buffer, 0, expectedLen);
         bufLen = XByteArray_size_base(buffer);
+        //printf("触发结束信号\n");
+        XModbusReply_setState(reply, XModbusReply_State_Finished);
     }
 }
 
@@ -641,7 +703,7 @@ parent_call:
 // =============== 槽函数实现 ===============
 static void XModbusTcpClient_onReadyRead(XObject* receiver, XVarList* args)
 {
-    //XPrintf("收到数据\n");
+    
     (void)args;
     XModbusTcpClient* client = (XModbusTcpClient*)receiver;
     if (!client) return;
@@ -652,6 +714,7 @@ static void XModbusTcpClient_onReadyRead(XObject* receiver, XVarList* args)
     XIODevice_readAll_2(io, client->m_receiveBuffer, true);
     
     //XByteArray_clear_base(client->m_receiveBuffer);
+    //XPrintf("收到数据:%d\n",XContainerSize(client->m_receiveBuffer));
     processReceivedFrame(client);
 }
 
@@ -675,19 +738,7 @@ static void XModbusTcpClient_onDisconnected(XObject* receiver, XVarList* args)
         XByteArray_clear_base(client->m_receiveBuffer);
     }
 
-    if (client->m_pendingRequests) {
-        for_each_iterator(client->m_pendingRequests, XHashMap, it)
-        {
-            XPair* pair = XHashMap_iterator_data(&it);
-            XModbusTcpPendingRequest* pending = XPair_Second(pair, XModbusTcpPendingRequest*);
-            if (pending && pending->reply) {
-                XModbusReply_setError(pending->reply, XModbusDevice_ConnectionError, "Connection lost");
-                XModbusReply_setState(pending->reply, XModbusReply_State_No_Started);
-            }
-        }
-        // 容器会自动调用 pendingRequestDeinit 释放元素
-        XHashMap_clear_base(client->m_pendingRequests);
-    }
+    clearAllPendingRequests(client, XModbusDevice_ConnectionError, "Connection lost");
 
     XModbusDevice_setState((XModbusDevice*)client, XModbusDevice_UnconnectedState);
 }
@@ -717,17 +768,7 @@ static void VXModbusTcpClient_deinit(XModbusTcpClient* client)
         client->m_requestData = NULL;
     }
   
-    // 先停止所有定时器
-    if (client->m_pendingRequests) {
-        for_each_iterator(client->m_pendingRequests, XHashMap, it)
-        {
-            XPair* pair = XHashMap_iterator_data(&it);
-            XModbusTcpPendingRequest* pending = XPair_Second(pair, XModbusTcpPendingRequest*);
-            if (pending && pending->timeoutTimer != XTIMER_INVALID_ID) {
-                XObject_killTimer((XObject*)client, pending->timeoutTimer);
-            }
-        }
-    }
+    clearAllPendingRequests(client, XModbusDevice_ConnectionError, "Connection lost");
 
     // 容器会自动调用 pendingRequestDeinit 释放元素
     if (client->m_pendingRequests) {

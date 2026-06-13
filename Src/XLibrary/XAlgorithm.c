@@ -18,7 +18,7 @@ void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据�
 {
 	if (valOne == NULL || valTwo == NULL || typeSize <= 0)
 	{
-		perror("swap传入参数有问题\n");
+		XERROR_PRINTF("swap传入参数有问题\n");
 		return;
 	}
 	if (valOne != valTwo)
@@ -52,7 +52,7 @@ void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据�
 			void* valMiddle = XMalloc_System(typeSize);
 			if (valMiddle == NULL)
 			{
-				perror("交换函数创建p临时空间失败");
+				XERROR_PRINTF("交换函数创建p临时空间失败");
 				exit(-1);
 			}
 			memcpy(valMiddle, valOne, typeSize);

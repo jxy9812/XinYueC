@@ -119,7 +119,7 @@ XTreeNode** XTreeNode_getChildRef(XTreeNode* this_root, const uint8_t nodeType)
 	size_t count = this_root->nodeCount;
 	if (nodeType >= count)
 	{
-		DEBUG_PRINTF("nodeType:%d>=总量:%d", nodeType, count);
+		XDEBUG_PRINTF("nodeType:%d>=总量:%d", nodeType, count);
 		return;
 	}
 	return &XTreeNode_GetChild(this_root, nodeType);

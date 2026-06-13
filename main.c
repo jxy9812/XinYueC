@@ -6,13 +6,9 @@
 #include"XCoreApplication.h"
 #include <stdarg.h>
 #include"XVarList.h"
-// 在 main/入口最开头加
-//#include <crtdbg.h>
 int main(int argc, char* args[])
 {
 	//XVectorTest();
-	// 启用内存泄漏检测
-	//_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
 	int n = 8,n1=666,sum=n+n1;
 	char* str = "dadasdsad";
 	XVarList* list=XVarList_Create(XVar(int,n), XVar(int, n1), XVar(char*, str));

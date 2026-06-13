@@ -275,9 +275,9 @@ void XCoreApplication_postEvent(XObject* receiver, XEvent* event, int priority)
     XThreadData_postEvent(receiver,event,priority);
 }
 
-void XCoreApplication_tryPostEvent(XObject* receiver, XEvent* event, int priority)
+bool XCoreApplication_tryPostEvent(XObject* receiver, XEvent* event, int priority)
 {
-    XThreadData_tryPostEvent(receiver, event, priority);
+    return XThreadData_tryPostEvent(receiver, event, priority);
 }
 
 void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)

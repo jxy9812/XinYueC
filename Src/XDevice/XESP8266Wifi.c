@@ -296,7 +296,7 @@ static bool XESP8266Wifi_sendATCommand(XESP8266Wifi* device, const char* cmd, XE
 
         size_t sent = XIODevice_write_1(device->m_io, atCmd, strlen(atCmd));
         if (sent != strlen(atCmd)) {
-            DEBUG_PRINTF("AT command send failed: %s", cmd);
+            XDEBUG_PRINTF("AT command send failed: %s", cmd);
             return false;
         }
     }
@@ -334,7 +334,7 @@ static void VXESP8266_timeoutCallback(void* userData)
     XESP8266Wifi* device = (XESP8266Wifi*)userData;
     if (ISNULL(device, "device is NULL")) return;
 
-    DEBUG_PRINTF("Operation timeout, op: %d", device->m_currentOp);
+    XDEBUG_PRINTF("Operation timeout, op: %d", device->m_currentOp);
 
     // 设置错误状态
     switch (device->m_currentOp) {
@@ -480,12 +480,12 @@ int XESP8266Wifi_connectServer(XESP8266Wifi* device, XESP8266WifiProtocol protoc
                 }
             }
             if (actualConnId == -1) {
-                DEBUG_PRINTF("No available connection slot");
+                XDEBUG_PRINTF("No available connection slot");
                 return -1;
             }
         }
         else if (actualConnId < 0 || actualConnId >= XESP8266_MAX_CONNS) {
-            DEBUG_PRINTF("Invalid connId: %d", actualConnId);
+            XDEBUG_PRINTF("Invalid connId: %d", actualConnId);
             return -1;
         }
     }

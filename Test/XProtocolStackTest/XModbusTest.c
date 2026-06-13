@@ -75,16 +75,32 @@ void XModbusRtuSerialClientTest()
 }
 static void tcpFinished(XObject* sender, XVarList* args)
 {
-    //XPrintf("结束了\n");
+    //XPrintf("结束了，准备重启\n");
     XModbusRtuSerialClient* rtu = XObject_parent(sender);
     XModbusTcpClient* client = XObject_parent(sender);
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
     XModbusDataUnit_setValue(read, 0, true);
     XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
+    if (!read)return;
     XObject_setParent(reply, client);
-    XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply, XObject_deleteLater, XConnectionType_Auto);
     XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), tcpFinished);
-    //XObject_deleteLater(sender);
+    //XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), XObject_deleteLater);
+    XObject_deleteLater(sender);
+
+    XModbusDataUnit_delete_base(read);
+}
+
+static void tcpStart(XObject* sender, XVarList* args)
+{
+    //XPrintf("结束了\n");
+    XModbusTcpClient* client = XObject_parent(sender);
+    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    XModbusDataUnit_setValue(read, 0, true);
+    XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
+    if (!read)return;
+    XObject_setParent(reply, client);
+    XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), tcpFinished);
+
     XModbusDataUnit_delete_base(read);
 
 }
@@ -104,21 +120,12 @@ void XModbusTcpClientTest()
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         return;
     }
-    XObject_connect_2((XObject*)XModbusDevice_device(client),XSignal(XTcpSocket_connected_signal), tcpFinished);
+    XObject_connect_2((XObject*)XModbusDevice_device(client),XSignal(XTcpSocket_connected_signal), tcpStart);
 
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
 
     XModbusDataUnit_setValue(read, 0, true);
-
-
-   /* while (true)
-    {
-        XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
-        XCoreApplication_processEvents(0);
-    }*/
-   
-  /*  XObject_setParent(reply, client);
-    XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), finished);*/
+  
     
     //XModbusClient_pollWriteRequest(client, read, 1, 2);
     XCoreApplication_exec();

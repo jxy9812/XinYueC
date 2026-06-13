@@ -14,7 +14,7 @@ static void XVtableEnlargeCapacity(XVtable* this_vtable)
 		this_vtable->data = XMalloc_System(sizeof(void*)* VECTORNUM);
 		if (this_vtable->data == NULL)
 		{
-			perror("动态创建虚函数表失败\n");
+			XERROR_PRINTF("动态创建虚函数表失败\n");
 			exit(-1);
 		}
 		else
@@ -29,7 +29,7 @@ static void XVtableEnlargeCapacity(XVtable* this_vtable)
 		void* m_data = XRealloc_System(this_vtable->data, this_vtable->capacity * sizeof(void*) * 1.5);
 		if (m_data == NULL)
 		{
-			perror("扩容失败虚函数失败\n");
+			XERROR_PRINTF("扩容失败虚函数失败\n");
 			exit(-1);
 		}
 		else

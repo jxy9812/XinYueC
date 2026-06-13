@@ -636,10 +636,21 @@ static bool VXModbusClient_processResponse(XModbusClient* client, const XModbusR
 
     // =============== 写单个线圈响应 (FC 05) ===============
     if (fc == XModbusPdu_WriteSingleCoil) {
-        if (respSize < 4) return false;
+        // 标准响应：Address(2) + Value(2)，共 4 字节
+        // 简化响应：Address(2) + Value(1)，共 3 字节
+        if (respSize < 3) return false;
 
         uint16_t address = readUint16BE(respData, 0);
-        uint16_t value = readUint16BE(respData, 2);
+        uint16_t value;
+
+        if (respSize >= 4) {
+            // 标准响应
+            value = readUint16BE(respData, 2);
+        }
+        else {
+            // 简化响应：1 字节 Value
+            value = (respData[2] == 0xFF) ? 0xFF00 : 0x0000;
+        }
 
         data->m_type = XModbusCoils;
         XModbusDataUnit_setStartAddress(data, address);

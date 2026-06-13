@@ -73,7 +73,7 @@ void XThreadData_init(XThreadData* data, XThread* thread)
     if (!data)return;
     memset(data,0,sizeof(XThreadData));
     data->m_mutex = XMutex_create(XLock_NonRecursive);
-    XLockFreeQueue_init(&data->m_tryPostEventList,sizeof(XPostEvent),30);//中断队列大小按需修改
+    XLockFreeQueue_init(&data->m_tryPostEventList,sizeof(XPostEvent), TryPostEvent_QueueSize);//中断队列大小按需修改
     XVector_init(&data->m_postEventList, sizeof(XPostEvent),false);
     //XVector_init(&data->m_handlerEventList, sizeof(XPostEvent));
     //data->m_postEventList=XVector_create(sizeof(XPostEvent));
@@ -194,7 +194,7 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority)
     
 }
 
-void XThreadData_tryPostEvent(XObject* receiver, XEvent* event, int priority)
+bool XThreadData_tryPostEvent(XObject* receiver, XEvent* event, int priority)
 {
     if (!receiver || !event) return;
 
@@ -202,11 +202,16 @@ void XThreadData_tryPostEvent(XObject* receiver, XEvent* event, int priority)
     if (!th || !th->m_data) return;
     XThreadData* td = th->m_data;
     XPostEvent pe = { receiver, event, priority };
-    XLockFreeQueue_push_base(&td->m_tryPostEventList,&pe);
-    // 唤醒事件循环
-    if (td->m_dispatcher) {
-        XAbstractEventDispatcher_wakeUp_base(td->m_dispatcher);
-    }
+  if(XLockFreeQueue_push_base(&td->m_tryPostEventList, &pe))
+  {
+      // 唤醒事件循环
+      if (td->m_dispatcher) {
+          XAbstractEventDispatcher_wakeUp_base(td->m_dispatcher);
+      }
+      return true;
+  }
+  XERROR_PRINTF("XThreadData_tryPostEvent,线程调度器中无锁队列满了,入队失败，count:%d\n",XQueueBase_size_base(&td->m_tryPostEventList));
+  return false;
 }
 
 void XThreadData_push_front_list(const XVector* events)
