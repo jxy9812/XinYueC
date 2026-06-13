@@ -173,6 +173,7 @@ void* XFixedPool_malloc(XFixedPool* pool) {
         &pool->free_list_head_packed, &old_head_packed, new_head_packed,
         XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
 
+    //memset(old_head_block,0, pool->block_size);
     // --- 标记为已分配 ---
     *(volatile size_t*)old_head_block = XFIXEDPOOL_BLOCK_ALLOCATED;
     return get_user_data_ptr(old_head_block);

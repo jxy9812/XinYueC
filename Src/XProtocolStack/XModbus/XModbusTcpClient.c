@@ -160,7 +160,7 @@ static inline void timeoutTimerStop(XModbusTcpClient* client, XTimerId* timerId)
 
 static inline XTimerId timeoutTimerStart(XModbusTcpClient* client, int timeout)
 {
-    return 0;//返回0禁用超时定时器
+    //return 0;//返回0禁用超时定时器
     return XObject_startTimer_ms((XObject*)client, timeout, XTimerType_CoarseTimer);
 }
 /**

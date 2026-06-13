@@ -240,7 +240,7 @@ void* XMultiPool_malloc(XMultiPool* multi_pool, size_t size) {
     }
 
     // 所有合适的池都已耗尽
-    XPrintf("所有池子都耗尽了\n");
+    XERROR_PRINTF("XMultiPool,所有池子都耗尽了,当前请求块大小:%d\n", size);
     return NULL;
 }
 void* XMultiPool_calloc(XMultiPool* multi_pool, size_t count, size_t size)
@@ -498,7 +498,7 @@ XMultiPool* XMultiPool_global()
 }
 void* XMultiPool_global_malloc(size_t size)
 {
-   /* return XMalloc_System(size);*/
+    //return XMalloc_System(size);
     //XMutex_lock(m_mutex);
     void* ptr = global_pool ? XMultiPool_malloc(global_pool, size) : NULL;
     //XMutex_unlock(m_mutex);
