@@ -57,7 +57,7 @@ uint64_t XHrTimerGroup_getNextExpireTime(XHrTimerGroup* group);
 size_t XHrTimerGroup_count(XHrTimerGroup* group);
 // 虚函数调用宏 (保持不变)
 #define XHrTimerGroup_setHighResTimeFunc    XTimerGroupBase_setHighResTimeFunc
-#define XHrTimerGroup_addTimerMs_base       XTimerGroupBase_addTimerMs_base
+#define XHrTimerGroup_addTimerMs_base       XTimerGroupBase_addTimerMs
 #define XHrTimerGroup_addTimerNs_base       XTimerGroupBase_addTimerNs_base
 #define XHrTimerGroup_removeTimer_base      XTimerGroupBase_removeTimer_base
 #define XHrTimerGroup_timeRange             XTimerGroupBase_timeRange

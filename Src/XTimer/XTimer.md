@@ -575,10 +575,10 @@ void XTimerGroupBase_setHighResTimeFunc(XTimerGroupBase* base, XHighResTimeFunc 
 
 ### 添加定时器
 
-#### XTimerGroupBase_addTimerMs_base
+#### XTimerGroupBase_addTimerMs
 
 ```c
-XHandle XTimerGroupBase_addTimerMs_base(XTimerGroupBase* group, XTimerData data)
+XHandle XTimerGroupBase_addTimerMs(XTimerGroupBase* group, XTimerData data)
 ```
 
 添加毫秒级定时器。
@@ -812,7 +812,7 @@ bool XTimeWheelGroup_GlobalExists(void)
 ### 继承的操作宏
 
 ```c
-#define XTimeWheelGroup_addTimerMs_base    XTimerGroupBase_addTimerMs_base
+#define XTimeWheelGroup_addTimerMs_base    XTimerGroupBase_addTimerMs
 #define XTimeWheelGroup_removeTimer_base   XTimerGroupBase_removeTimer_base
 #define XTimeWheelGroup_timeRange          XTimerGroupBase_timeRange
 #define XTimeWheelGroup_min_time           XTimerGroupBase_min_time
@@ -925,7 +925,7 @@ size_t XHrTimerGroup_count(XHrTimerGroup* group)
 
 ```c
 #define XHrTimerGroup_setHighResTimeFunc XTimerGroupBase_setHighResTimeFunc
-#define XHrTimerGroup_addTimerMs_base    XTimerGroupBase_addTimerMs_base
+#define XHrTimerGroup_addTimerMs_base    XTimerGroupBase_addTimerMs
 #define XHrTimerGroup_addTimerNs_base    XTimerGroupBase_addTimerNs_base
 #define XHrTimerGroup_removeTimer_base   XTimerGroupBase_removeTimer_base
 #define XHrTimerGroup_timeRange          XTimerGroupBase_timeRange

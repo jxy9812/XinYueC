@@ -10,8 +10,7 @@ extern "C" {
 #include"XTimerData.h"
 #define XTIMERGROUPBASE_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XTimerGroupBase))       //XTimerGroupBase虚函数表大小
 XCLASS_DEFINE_BEGING(XTimerGroupBase)
-XCLASS_DEFINE_ENUM(XTimerGroupBase, Add_TimerMs) = XCLASS_VTABLE_GET_SIZE(XObject),
-XCLASS_DEFINE_ENUM(XTimerGroupBase, Add_TimerNs),
+XCLASS_DEFINE_ENUM(XTimerGroupBase, Add_TimerNs) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XTimerGroupBase,Remove_Timer),
 XCLASS_DEFINE_ENUM(XTimerGroupBase, Tick),
 XCLASS_DEFINE_ENUM(XTimerGroupBase, Handler),
@@ -38,7 +37,7 @@ void XTimerGroupBase_init(XTimerGroupBase*group, uint16_t precision);
  * @param func 高精度时间获取函数
  */
 void XTimerGroupBase_setHighResTimeFunc(XTimerGroupBase* base, XHighResTimeFunc func);
-XHandle XTimerGroupBase_addTimerMs_base(XTimerGroupBase* group, XTimerData data);
+XHandle XTimerGroupBase_addTimerMs(XTimerGroupBase* group, XTimerData data);
 XHandle XTimerGroupBase_addTimerNs_base(XTimerGroupBase* group, XTimerData data);
 //仅从任务中删除，需要手动释放
 bool XTimerGroupBase_removeTimer_base(XTimerGroupBase* group, XHandle handle);

@@ -24,7 +24,7 @@ static void Callback(XObject* sender, XVarList* args)
 	XTimer_setTimeout(timer, 5);
 	XTimer_setTimerCallback(timer, Callback1);
 	XTimer_start_base(timer);
-	XTimerGroupBase_addTimerMs_base(userData, timer);*/
+	XTimerGroupBase_addTimerMs(userData, timer);*/
 }
 void XTimerTest()
 {

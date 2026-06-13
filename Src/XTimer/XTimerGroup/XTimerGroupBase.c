@@ -18,11 +18,11 @@ void XTimerGroupBase_setHighResTimeFunc(XTimerGroupBase* base, XHighResTimeFunc 
 	if (base)base->m_high_res_time_func = func;
 }
 
-XHandle XTimerGroupBase_addTimerMs_base(XTimerGroupBase* group, XTimerData  data)
+XHandle XTimerGroupBase_addTimerMs(XTimerGroupBase* group, XTimerData  data)
 {
-	if (ISNULL(group, "") || ISNULL(XClassGetVtable(group), ""))
-		return false;
-	return XClassGetVirtualFunc(group, EXTimerGroupBase_Add_TimerMs, XHandle (*)(XTimerGroupBase* , XTimerData))(group, data);
+	data.m_timeout *= 1000000ULL;
+	data.m_interval *= 1000000ULL;
+	return XTimerGroupBase_addTimerNs_base(group, data);
 }
 
 XHandle XTimerGroupBase_addTimerNs_base(XTimerGroupBase* group, XTimerData data)

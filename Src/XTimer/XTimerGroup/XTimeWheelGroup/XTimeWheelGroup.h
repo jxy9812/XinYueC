@@ -30,7 +30,7 @@ void XTimeWheelGroup_init(XTimeWheelGroup* group, uint16_t precision);
 void XTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group,size_t slotsCount);
 void XTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group);
 size_t XTimeWheelGroup_count(XTimeWheelGroup* group);
-#define XTimeWheelGroup_addTimerMs_base				XTimerGroupBase_addTimerMs_base
+#define XTimeWheelGroup_addTimerMs_base				XTimerGroupBase_addTimerMs
 #define XTimeWheelGroup_removeTimer_base			XTimerGroupBase_removeTimer_base
 #define XTimeWheelGroup_timeRange					XTimerGroupBase_timeRange
 #define XTimeWheelGroup_min_time					XTimerGroupBase_min_time

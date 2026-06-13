@@ -7,7 +7,6 @@
 
 // --- 内部辅助函数声明 ---
 static void VXHrTimerGroup_deinit(XHrTimerGroup* group);
-static XHandle VXTimerGroupBase_addTimerMs(XHrTimerGroup* group, XTimerData data);
 static XHandle VXTimerGroupBase_addTimerNs(XHrTimerGroup* group, XTimerData data);
 static bool VXTimerGroupBase_removeTimer(XHrTimerGroup* group, XHandle handle);
 static void VXHrTimerGroup_tick(XHrTimerGroup* group);
@@ -92,7 +91,6 @@ XVtable* XHrTimerGroup_class_init(void) {
 #endif
         XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
-        VXTimerGroupBase_addTimerMs,
         VXTimerGroupBase_addTimerNs,
         VXTimerGroupBase_removeTimer,
         VXHrTimerGroup_tick,VXHrTimerGroup_tick,
@@ -119,12 +117,6 @@ static void VXHrTimerGroup_deinit(XHrTimerGroup* group) {
     XClass_Deinit_Parent(XObject,group);
     //XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(group);
 }
-
-// --- 核心添加逻辑 ---
-static XHandle internal_add_timer(XHrTimerGroup* group, uint64_t timeout_ns, uint64_t interval_ns, bool is_single_shot, XTimerCallback callback, void* user_data) {
-   
-}
-
 // --- 删除定时器 (已修正作用域和指针访问) ---
 static bool VXTimerGroupBase_removeTimer(XHrTimerGroup* group, XHandle handle) {
     XRBTreeNode* node_to_remove = (XRBTreeNode*)handle;
@@ -276,14 +268,6 @@ void VXHrTimerGroup_clear(XHrTimerGroup* group)
     }
 }
 
-// --- 虚函数：为了兼容性保留 ---
-static XHandle VXTimerGroupBase_addTimerMs(XHrTimerGroup* group, XTimerData data) {
-    if (!group) return NULL;
-    data.m_timeout *= 1000000ULL;
-    data.m_interval *= 1000000ULL;
-    return VXTimerGroupBase_addTimerNs(group, data);
-    //return internal_add_timer(group, data.m_timeout * 1000000ULL, data.m_interval * 1000000ULL, data.m_isSingleShot, data.m_timerCallback, data.m_userData);
-}
 static XHandle VXTimerGroupBase_addTimerNs(XHrTimerGroup* group, XTimerData data) {
     if (!group) return NULL;
     if (data.m_timerCallback == NULL ) {

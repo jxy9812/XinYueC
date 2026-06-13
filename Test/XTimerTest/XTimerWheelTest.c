@@ -18,7 +18,7 @@ static void Callback1(void* userData)
 	XTimer_setTimeout(timer, 5);
 	XTimer_setTimerCallback(timer, Callback1);
 	XTimer_start_base(timer);
-	XTimerGroupBase_addTimerMs_base(userData, timer);*/
+	XTimerGroupBase_addTimerMs(userData, timer);*/
 }
 static void Callback2(void* userData)
 {
