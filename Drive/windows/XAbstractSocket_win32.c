@@ -272,11 +272,9 @@ static void handleConnectCompletion(XAbstractSocket* sock) {
               }
               
               priv->connected = true;
-                            XAbstractSocket_setSocketState(sock, XAbstractSocket_ConnectedState);
-                            // 设置打开模式
-                            ((XIODevice*)sock)->m_openMode = XIODevice_ReadWrite;
-                            priv->autoRead = true;
-                            startAsyncRead(sock);
+              XAbstractSocket_setSocketState(sock, XAbstractSocket_ConnectedState);
+              priv->autoRead = true;
+              startAsyncRead(sock);
           } else {
               // 连接失败
               XAbstractSocket_setSocketError(sock, winsockErrorToSocketError(error), "Connection failed");
@@ -372,13 +370,6 @@ int64_t XAbstractSocket_platform_writeData(XAbstractSocket* self, const char* da
     XIODevice_bytesWritten_signal((XIODevice*)self, sent);
     return sent;
 }
-
-
-
-
-
-
-
 
 // event 虚函数重写，处理 IOCP 完成事件
 bool XAbstractSocket_platform_event(XAbstractSocket* self, XEvent* e) {

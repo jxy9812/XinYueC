@@ -9,11 +9,6 @@
 #include "XByteArray.h"
 #include "XTimer.h"
 #include "string.h"
-//typedef struct PoolTask
-//{
-//    XModbusRequest* request;
-//    int serverAddress;
-//};
 // =============== 虚函数前置声明 ===============
 static bool VXModbusRtuSerialClient_open(XModbusDevice* device);
 static void VXModbusRtuSerialClient_close(XModbusDevice* device);

@@ -12,7 +12,8 @@ extern "C" {
 	void XMenu_TJCHMICommTest(XMenu* root);
 	void XMenu_XModbusTest(XMenu* root);
 
-	void XModbusTest();
+	void XModbusRtuSerialClientTest();
+	void XModbusTcpClientTest();
 	void XDataFrameCommTest();
 	void TJCHMICommTest();
 #endif // DEMOTEST

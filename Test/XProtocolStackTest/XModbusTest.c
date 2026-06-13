@@ -1,12 +1,10 @@
 ﻿#include"XProtocolStackTest.h"
 #include"XModbusRtuSerialClient.h"
+#include"XModbusTcpClient.h"
 #include"XSerialPort.h"
 #include"XMemory.h"
 #include"XCrc.h"
-//#include"XModbusFrame.h"
 #include"XTimerGroupBase.h"
-//#include"XModbusRegister.h"
-//#include"XModbusDigitalSwitch.h"
 #include"XSwitchDeviceModbus.h"
 #include"XMenu.h"
 #include"XAction.h"
@@ -36,20 +34,21 @@
 //{
 //    printf("in1:%s\n", sw->m_state ? "true" : "false");
 //}
-static void finished(XObject* sender, XVarList* args)
+static void rtuFinished(XObject* sender, XVarList* args)
 {
     //XPrintf("结束了\n");
-    XModbusRtuSerialClient* rtu = XObject_parent(sender);
+    XModbusClient* client = XObject_parent(sender);
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
     XModbusDataUnit_setValue(read, 0, true);
-    XModbusReply* reply = XModbusClient_sendWriteRequest(rtu, read, 1);
-    XObject_setParent(reply, rtu);
-    XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), finished);
-    XObject_deleteLater(sender);
+    XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
+    XObject_setParent(reply, client);
+    XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), rtuFinished);
+    XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply, XObject_deleteLater, XConnectionType_Auto);
+    //XObject_deleteLater(sender);
     XModbusDataUnit_delete_base(read);
-   
 }
-void XModbusTest()
+
+void XModbusRtuSerialClientTest()
 {
     XModbusRtuSerialClient* rtu = XModbusRtuSerialClient_create();
     XModbusDevice_setConnectionParameter_ref(rtu, XModbusDevice_SerialPortNameParameter,XVariant_create_utf8_str("COM26"));
@@ -59,28 +58,82 @@ void XModbusTest()
         XPrintf_utf8("失败了\n");
         XModbusRtuSerialClient_deleteLater(rtu);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
+        return;
     }
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils,0,1);
     XModbusDataUnit_setValue(read,0,true);
 
     XModbusReply* reply= XModbusClient_sendWriteRequest(rtu, read,1);
     XObject_setParent(reply, rtu);
-    XObject_connect_2(reply,XSignal(XModbusReply_finished_signal), finished);
+    XObject_connect_2(reply,XSignal(XModbusReply_finished_signal), rtuFinished);
 
-     //reply = XModbusClient_sendWriteRequest(rtu, read, 1);
+     //reply = XModbusClient_sendWriteRequest(client, read, 1);
 
-    //XModbusClient_pollWriteRequest(rtu, read, 1,10);
+    //XModbusClient_pollWriteRequest(client, read, 1,10);
 
     XCoreApplication_exec();
 }
+static void tcpFinished(XObject* sender, XVarList* args)
+{
+    //XPrintf("结束了\n");
+    XModbusRtuSerialClient* rtu = XObject_parent(sender);
+    XModbusTcpClient* client = XObject_parent(sender);
+    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    XModbusDataUnit_setValue(read, 0, true);
+    XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
+    XObject_setParent(reply, client);
+    XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply, XObject_deleteLater, XConnectionType_Auto);
+    XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), tcpFinished);
+    //XObject_deleteLater(sender);
+    XModbusDataUnit_delete_base(read);
 
+}
+void XModbusTcpClientTest()
+{
+     // 创建TCP客户端
+    XModbusTcpClient* client = XModbusTcpClient_create();
+    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
+    XModbusDevice_NetworkAddressParameter, XVariant_create_utf8_str("192.168.1.117"));
+    XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
+    XModbusDevice_NetworkPortParameter, XVariant_create_int(502));
+  
+    if (!XModbusDevice_connectDevice(client))
+    {
+        XPrintf_utf8("失败了\n");
+        XModbusTcpClient_deleteLater(client);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        return;
+    }
+    XObject_connect_2((XObject*)XModbusDevice_device(client),XSignal(XTcpSocket_connected_signal), tcpFinished);
+
+    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+
+    XModbusDataUnit_setValue(read, 0, true);
+
+
+   /* while (true)
+    {
+        XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
+        XCoreApplication_processEvents(0);
+    }*/
+   
+  /*  XObject_setParent(reply, client);
+    XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), finished);*/
+    
+    //XModbusClient_pollWriteRequest(client, read, 1, 2);
+    XCoreApplication_exec();
+}
 
 void XMenu_XModbusTest(XMenu* root)
 {
     XMenu* menu = XMenu_create("XModbus(modbus)");
     XMenu_addMenu(root, menu);
     {
-        XAction* action = XMenu_addAction(menu, "主测试");
-        XAction_setAction(action, XModbusTest);
+        XAction* action = XMenu_addAction(menu, "RtuSerialClient测试");
+        XAction_setAction(action, XModbusRtuSerialClientTest);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "TcpClient测试");
+        XAction_setAction(action, XModbusTcpClientTest);
     }
 }

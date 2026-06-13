@@ -253,14 +253,14 @@ XAbstractSocket_PauseModes XAbstractSocket_pauseMode(const XAbstractSocket* sock
 }
 
 bool XAbstractSocket_isValid(const XAbstractSocket* sock)
-  {
-      return sock && sock->isValidFlag;
-  }
+{
+    return sock && sock->isValidFlag;
+}
 
-  XString* XAbstractSocket_protocolTag(const XAbstractSocket* sock)
-  {
-      return sock ? sock->protocolTag : NULL;
-  }
+XString* XAbstractSocket_protocolTag(const XAbstractSocket* sock)
+{
+    return sock ? sock->protocolTag : NULL;
+}
 
 // ==================== Setter 实现 ====================
 void XAbstractSocket_setReadBufferSize_base(XAbstractSocket* sock, int64_t size)
@@ -271,54 +271,55 @@ void XAbstractSocket_setReadBufferSize_base(XAbstractSocket* sock, int64_t size)
 }
 
 void XAbstractSocket_setPauseMode(XAbstractSocket* sock, XAbstractSocket_PauseModes mode)
-  {
-      if (sock) sock->m_pauseMode = mode;
-  }
+{
+    if (sock) sock->m_pauseMode = mode;
+}
 
-  void XAbstractSocket_setProtocolTag(XAbstractSocket* sock, const char* tag)
-    {
-        if (!sock) return;
-      
-        // 释放旧的标签
-        if (sock->protocolTag) {
-            XString_delete_base(sock->protocolTag);
-            sock->protocolTag = NULL;
-        }
-      
-        // 创建新的标签
-        if (tag && tag[0] != '\0') {
-            sock->protocolTag = XString_create_fmt_utf8(tag);
-        }
+void XAbstractSocket_setProtocolTag(XAbstractSocket* sock, const char* tag)
+{
+    if (!sock) return;
+  
+    // 释放旧的标签
+    if (sock->protocolTag) {
+        XString_delete_base(sock->protocolTag);
+        sock->protocolTag = NULL;
     }
+  
+    // 创建新的标签
+    if (tag && tag[0] != '\0') {
+        sock->protocolTag = XString_create_fmt_utf8(tag);
+    }
+}
 
-    void XAbstractSocket_setProxy(XAbstractSocket* sock, const XNetworkProxy* proxy)
-    {
-        if (!sock) return;
-      
-        // 释放旧的代理配置资源
-        XNetworkProxy_deinit(&sock->proxy);
-      
-        if (proxy) {
-            // 深拷贝代理配置
-            sock->proxy.type = proxy->type;
-            sock->proxy.capabilities = proxy->capabilities;
-            sock->proxy.port = proxy->port;
-            sock->proxy.hostName = proxy->hostName ? XStrdup(proxy->hostName) : NULL;
-            sock->proxy.user = proxy->user ? XStrdup(proxy->user) : NULL;
-            sock->proxy.password = proxy->password ? XStrdup(proxy->password) : NULL;
-        } else {
-            // 使用默认代理配置
-            XNetworkProxy_init(&sock->proxy);
-        }
+void XAbstractSocket_setProxy(XAbstractSocket* sock, const XNetworkProxy* proxy)
+{
+    if (!sock) return;
+  
+    // 释放旧的代理配置资源
+    XNetworkProxy_deinit(&sock->proxy);
+  
+    if (proxy) {
+        // 深拷贝代理配置
+        sock->proxy.type = proxy->type;
+        sock->proxy.capabilities = proxy->capabilities;
+        sock->proxy.port = proxy->port;
+        sock->proxy.hostName = proxy->hostName ? XStrdup(proxy->hostName) : NULL;
+        sock->proxy.user = proxy->user ? XStrdup(proxy->user) : NULL;
+        sock->proxy.password = proxy->password ? XStrdup(proxy->password) : NULL;
+    } else {
+        // 使用默认代理配置
+        XNetworkProxy_init(&sock->proxy);
     }
+}
 
-    XNetworkProxy* XAbstractSocket_proxy(const XAbstractSocket* sock)
-    {
-        return sock ? (XNetworkProxy*)&sock->proxy : NULL;
-    }
+XNetworkProxy* XAbstractSocket_proxy(const XAbstractSocket* sock)
+{
+    return sock ? (XNetworkProxy*)&sock->proxy : NULL;
+}
 
 // flush - 刷新发送缓冲区，等待所有待发送数据发送完毕
-bool XAbstractSocket_flush(XAbstractSocket* sock) {
+bool XAbstractSocket_flush(XAbstractSocket* sock)
+{
     if (!sock) return false;
     //XAbstractSocketPrivate* priv = getPriv(sock);
     //if (!priv || priv->socketHandle == INVALID_SOCKET) return false;
@@ -386,11 +387,19 @@ void XAbstractSocket_setSocketState(XAbstractSocket* sock, XAbstractSocket_Socke
     XAbstractSocket_stateChanged_signal(sock, state);
 
     // 特殊状态转换处理
-    if (oldState == XAbstractSocket_HostLookupState && state == XAbstractSocket_ConnectedState) {
-        XAbstractSocket_hostFound_signal(sock);
+    if (state == XAbstractSocket_ConnectedState) 
+    {
+        XIODevice_open_base(sock, XIODevice_ReadWrite);
+        // 从 HostLookupState 转换时，先发出 hostFound 信号
+        if (oldState == XAbstractSocket_HostLookupState) {
+            XAbstractSocket_hostFound_signal(sock);
+        }
+        // 无论从哪个状态转换到 ConnectedState，都发出 connected 信号
         XAbstractSocket_connected_signal(sock);
     }
-    else if (state == XAbstractSocket_UnconnectedState && oldState != XAbstractSocket_UnconnectedState) {
+    else if (state == XAbstractSocket_UnconnectedState && oldState != XAbstractSocket_UnconnectedState) 
+    {
+        ((XIODevice*)sock)->m_openMode = XIODevice_NotOpen;
         XAbstractSocket_disconnected_signal(sock);
         if (sock->autoDeleteOnDisconnect) {
             XAbstractSocket_delete_base(sock);
@@ -400,15 +409,17 @@ void XAbstractSocket_setSocketState(XAbstractSocket* sock, XAbstractSocket_Socke
 
 void XAbstractSocket_setSocketError(XAbstractSocket* sock, XAbstractSocket_SocketError error, const char* str)
 {
-    if (!sock|| !str) return;
+    if (!sock) return;
+
     sock->error = error;
-    if (sock->errorString) 
-    {
-        XString_assign_utf8(sock->errorString, str);
-    }
-    else
-    {
-        sock->errorString = XString_create_utf8(str);
+
+    if (str) {
+        if (sock->errorString) {
+            XString_assign_utf8(sock->errorString, str);
+        }
+        else {
+            sock->errorString = XString_create_utf8(str);
+        }
     }
 
     // 发射 errorOccurred 信号
@@ -439,7 +450,7 @@ void XAbstractSocket_connectToHost_base(XAbstractSocket* sock, const char* hostN
 {
     if (ISNULL(sock, "") || ISNULL(XClassGetVtable(sock), ""))
         return ;
-    XClassGetVirtualFunc(sock, EXAbstractSocket_ConnectToHost, bool(*)(XAbstractSocket*, const char*, uint16_t, XAbstractSocket_BindMode, XAbstractSocket_NetworkLayerProtocol))(sock, hostName, port, mode, protocol);
+    XClassGetVirtualFunc(sock, EXAbstractSocket_ConnectToHost, bool(*)(XAbstractSocket*, const char*, uint16_t, XIODeviceBaseMode, XAbstractSocket_NetworkLayerProtocol))(sock, hostName, port, mode, protocol);
 }
 void XAbstractSocket_disconnectFromHost_base(XAbstractSocket* sock)
 {
