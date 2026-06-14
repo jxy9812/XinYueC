@@ -245,7 +245,7 @@ static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNo
 	//size_t dataSize = ((XTreeNode*)eraseNode)->dataSize;
 	if (dataSize > 0) 
 	{
-		char* tempBuffer = (char*)XMalloc_System(dataSize); // 创建临时缓冲区
+		char* tempBuffer = (char*)XMalloc_Hybrid(dataSize); // 创建临时缓冲区
 		if (tempBuffer == NULL) {
 			// 处理内存分配失败的情况，例如直接返回或采取其他措施
 			return;
@@ -253,7 +253,7 @@ static XRBTreeNode* TwoChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNo
 		memcpy(tempBuffer, XTreeNode_GetDataPtr(eraseNode), dataSize);
 		memcpy(XTreeNode_GetDataPtr(eraseNode), XTreeNode_GetDataPtr(LPreplace), dataSize);
 		memcpy(XTreeNode_GetDataPtr(LPreplace), tempBuffer, dataSize);
-		XFree_System(tempBuffer); // 释放临时缓冲区
+		XFree_Hybrid(tempBuffer); // 释放临时缓冲区
 	}
 	//void* tempData = XTreeNode_GetDataPtr(eraseNode);
 	//memcpy();

@@ -35,7 +35,7 @@ void XTimerTest()
 		XPrintf("正式结束\n");
 		continue;*/
 		XTimer* timer = XTimer_create();
-		XTimer_setInterval(timer, 1000);
+		XTimer_setInterval(timer, 100);
 		//XTimer_setTimeout(timer, 5000);
 		XTimer_setSingleShot(timer, true);
 		XTimer_setAutoDelete(timer, true);

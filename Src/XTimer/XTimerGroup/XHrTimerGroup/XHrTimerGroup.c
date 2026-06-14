@@ -11,6 +11,24 @@ static XHandle VXTimerGroupBase_addTimerNs(XHrTimerGroup* group, XTimerData data
 static bool VXTimerGroupBase_removeTimer(XHrTimerGroup* group, XHandle handle);
 static void VXHrTimerGroup_tick(XHrTimerGroup* group);
 static void VXHrTimerGroup_clear(XHrTimerGroup* group);
+
+static inline XRBTreeNode* create_hr_timer_node(const void* pvData, const size_t dataTypeSize)
+{
+    XRBTreeNode* node = XMalloc_MultiPool(XRBTree_typeSize() + dataTypeSize);
+    if (!node)return NULL;
+    XRBTree_init(node, XRBTree_typeSize(), pvData, dataTypeSize);
+    return node;
+}
+static inline void delete_hr_timer_node(XHrTimerGroup* group, XRBTreeNode* node) {
+    if (node) {
+        XFree_MultiPool(node); // 或者您项目中对应的简单 free 函数
+    }
+    /*XEventFunc* event = XEventFunc_create(delete_hr_timer_node_event,
+        XVarList_Create(XVar(XRBTreeNode*, node)),
+        NULL);
+    XCoreApplication_tryPostEvent(group, event, XEVENT_PRIORITY_LOWEST);*/
+}
+
 // --- 红黑树比较函数 ---
 static int compare_expire_time_ns(const void* a, const void* b) {
     uint64_t time_a = ((const XHrTimerNodeData*)a)->m_expire_time_ns;
@@ -32,22 +50,13 @@ static bool equal_expire_time_and_id(const void* node_data, const void* target) 
 }
 
 // --- 内存管理 ---
-static void delete_hr_timer_node_event(XVarList* argList) {
-    XVarList_args_1(argList, XRBTreeNode*, node);
-    if (node) {
-        XRBTree_delete(node, NULL, NULL);
-    }
-}
+//static void delete_hr_timer_node_event(XVarList* argList) {
+//    XVarList_args_1(argList, XRBTreeNode*, node);
+//    if (node) {
+//        XRBTree_delete(node, NULL, NULL);
+//    }
+//}
 
-static void delete_hr_timer_node(XHrTimerGroup* group, XRBTreeNode* node) {
-    if (node) {
-        XFree_System(node); // 或者您项目中对应的简单 free 函数
-    }
-    /*XEventFunc* event = XEventFunc_create(delete_hr_timer_node_event,
-        XVarList_Create(XVar(XRBTreeNode*, node)),
-        NULL);
-    XCoreApplication_tryPostEvent(group, event, XEVENT_PRIORITY_LOWEST);*/
-}
 
 // --- 辅助函数：更新最小节点指针 (已修正) ---
 /**
@@ -85,11 +94,11 @@ static inline uint64_t get_current_time_ns(XHrTimerGroup* group) {
 XVtable* XHrTimerGroup_class_init(void) {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XHRTIMERGROUP_VTABLE_SIZE)
+    XVTABLE_STACK_INIT_DEFAULT(XHRTIMERGROUP_VTABLE_SIZE)
 #else
-        XVTABLE_HEAP_INIT_DEFAULT
+    XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_XCLASS(XObject);
+    XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
         VXTimerGroupBase_addTimerNs,
         VXTimerGroupBase_removeTimer,
@@ -103,19 +112,14 @@ XVtable* XHrTimerGroup_class_init(void) {
 
 // --- 析构函数 ---
 static void VXHrTimerGroup_deinit(XHrTimerGroup* group) {
-    //XMutex_lock(group->m_mutex);
+    // 先调用clear清理树中所有节点
     XHrTimerGroup_clear_base(group);
-  /*  XRBTree_delete(group->m_rbtree_root, NULL, NULL);
-    group->m_rbtree_root = NULL;
-    group->m_min_node = NULL;*/
-    //XMutex_unlock(group->m_mutex);
     if(group->m_mutex)
     {
         XMutex_delete(group->m_mutex);
         group->m_mutex = NULL;
     }
     XClass_Deinit_Parent(XObject,group);
-    //XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(group);
 }
 // --- 删除定时器 (已修正作用域和指针访问) ---
 static bool VXTimerGroupBase_removeTimer(XHrTimerGroup* group, XHandle handle) {
@@ -213,9 +217,8 @@ static void VXHrTimerGroup_tick(XHrTimerGroup* group) {
                 break;
             }
         }
-        // 此时，group->m_min_node 已经正确指向了下一个未过期的最小节点（或 NULL）
     }
-    XMutex_unlock(group->m_mutex); // 【关键】尽早解锁！
+    XMutex_unlock(group->m_mutex);
 
     // --- 第二阶段：无锁，遍历过期链表并执行回调 ---
     XRBTreeNode* current_expired = expired_list_head;
@@ -233,14 +236,14 @@ static void VXHrTimerGroup_tick(XHrTimerGroup* group) {
             // 单次定时器或已被外部 remove 的定时器：释放内存
             delete_hr_timer_node(group, current_expired);
         }
-        else {
+                else {
             // 周期性定时器：重新计算下次到期时间
             data->m_expire_time_ns = current_time_ns + data->m_timer_data.m_interval;
-            data->m_is_detached = false; // 重新插入前清除标记
 
             // 重新加锁以安全地插入回红黑树
             XMutex_lock(group->m_mutex);
             {
+                data->m_is_detached = false; // 重新插入前清除标记（在锁内执行）
                 XRBTree_insertNode(&group->m_rbtree_root, compare_expire_time_ns, less_expire_time_ns,current_expired);
                 XAtomic_fetch_add_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
                 update_min_node(group);
@@ -294,7 +297,8 @@ static XHandle VXTimerGroupBase_addTimerNs(XHrTimerGroup* group, XTimerData data
     XRBTreeNode* new_node = NULL;
     XMutex_lock(group->m_mutex);
     {
-        new_node = XRBTree_insert(&group->m_rbtree_root, compare_expire_time_ns, less_expire_time_ns, &node_data, sizeof(XHrTimerNodeData));
+        new_node=create_hr_timer_node(&node_data, sizeof(XHrTimerNodeData));
+        new_node = XRBTree_insertNode(&group->m_rbtree_root, compare_expire_time_ns, less_expire_time_ns, new_node);
         if (new_node) {
             XAtomic_fetch_add_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
             //XBTreeNode_GetData(new_node, XHrTimerNodeData).m_timer_data.timerId = (uint64_t)(uintptr_t)new_node; // 将指针转换为 uint64_t
