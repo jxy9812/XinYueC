@@ -148,8 +148,8 @@ typedef enum {
   */
 typedef struct XModbusDevice {
     XObject m_class;                                      ///< 继承自XObject基类
-    XModbusDevice_State m_state;                          ///< 当前设备连接状态
-    XModbusDevice_Error m_error;                          ///< 当前错误码
+    uint16_t/*XModbusDevice_State*/ m_state;                          ///< 当前设备连接状态
+    uint16_t/*XModbusDevice_Error*/ m_error;                          ///< 当前错误码
     XString* m_errorString;                               ///< 错误描述字符串
     XVariant* m_params[XModbusDevice_ParameterCount];     ///< 连接参数数组
     XIODevice* m_ioDevice;                                ///< 底层IO设备

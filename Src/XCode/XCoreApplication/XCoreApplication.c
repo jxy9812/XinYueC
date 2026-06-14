@@ -442,7 +442,7 @@ bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
     }
 
     //调用接收者的事件过滤器
-    XVector* filters = receiver->filters;
+    XVector* filters = receiver->m_filters;
     if (filters)
     {
         for_each_iterator(filters, XVector, it)

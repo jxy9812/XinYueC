@@ -245,6 +245,7 @@ void* XMultiPool_malloc(XMultiPool* multi_pool, size_t size) {
 }
 void* XMultiPool_calloc(XMultiPool* multi_pool, size_t count, size_t size)
 {
+    if (!multi_pool)return;
     // 处理乘法溢出和边界情况
     if (count == 0 || size == 0) {
         return NULL;
@@ -264,6 +265,7 @@ void* XMultiPool_calloc(XMultiPool* multi_pool, size_t count, size_t size)
 }
 void* XMultiPool_realloc(XMultiPool* multi_pool, void* ptr, size_t new_size)
 {
+    if (!multi_pool)return;
     // 边界情况 1: 新大小为 0 -> 释放并返回 NULL
     if (new_size == 0) {
         if (ptr != NULL) {
@@ -480,7 +482,7 @@ static void XMultiPool_initGlobal()
 {
     if (global_pool)return;
     global_pool = XMultiPool_create();
-    XMultiPool_enable_power_of_two_mode(global_pool,32,2);
+    //XMultiPool_enable_power_of_two_mode(global_pool,32,2);
     //m_mutex = XMutex_create(XLock_NonRecursive);
    /* global_pool = XFixedPool_create(512, 500);
     return;*/
@@ -498,11 +500,10 @@ XMultiPool* XMultiPool_global()
 }
 void* XMultiPool_global_malloc(size_t size)
 {
-    //return XMalloc_System(size);
+    /*return XMalloc_System(size);*/
     //XMutex_lock(m_mutex);
-    void* ptr = global_pool ? XMultiPool_malloc(global_pool, size) : NULL;
+    return XMultiPool_malloc(global_pool, size);
     //XMutex_unlock(m_mutex);
-    return ptr;
 }
 void* XMultiPool_global_calloc(size_t count, size_t size)
 {
@@ -514,10 +515,9 @@ void* XMultiPool_global_realloc(void* ptr, size_t size)
 }
 void XMultiPool_global_free(void* ptr)
 {
-    //XFree_System(ptr);
-    //return;
+    /*XFree_System(ptr);
+    return;*/
     //XMutex_lock(m_mutex);
-    if(global_pool&&ptr)
-        XMultiPool_free(global_pool, ptr);
+    XMultiPool_free(global_pool, ptr);
     //XMutex_unlock(m_mutex);
 }

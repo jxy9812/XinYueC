@@ -26,11 +26,10 @@
  *
  * 内部块 = 隐藏的 next 指针 + 用户数据区 + 可能的填充（为了对齐）
  */
-static size_t calculate_internal_block_size(size_t user_block_size) 
+static inline size_t calculate_internal_block_size(size_t user_block_size) 
 {
     // 我们需要确保整个内部块是 XFIXEDPOOL_ALIGN 对齐的
-    size_t internal_size = sizeof(size_t) + user_block_size;
-    return ALIGN_UP(internal_size, sizeof(void*));
+    return ALIGN_UP(sizeof(size_t) + user_block_size, sizeof(void*));
 }
 
 /**
@@ -63,7 +62,7 @@ static inline void* get_block_by_index(XFixedPool* pool, size_t index) {
 static void initialize_free_list(XFixedPool* pool) {
     char* memory = (char*)pool->raw_memory;
     const size_t num_blocks = pool->num_blocks;
-
+    if (!memory||!num_blocks)return;
     // 使用 char* 进行指针算术更清晰
     char* current = memory;
     for (size_t i = 0; i < num_blocks; ++i)
@@ -176,6 +175,7 @@ void* XFixedPool_malloc(XFixedPool* pool) {
     //memset(old_head_block,0, pool->block_size);
     // --- 标记为已分配 ---
     *(volatile size_t*)old_head_block = XFIXEDPOOL_BLOCK_ALLOCATED;
+    //printf("user_block:%d\n", pool->user_block_size);
     return get_user_data_ptr(old_head_block);
 }
 
@@ -280,7 +280,7 @@ XFixedPool* XFixedPool_create(size_t block_size, size_t num_blocks) {
     if (!raw_memory) {
         return NULL;
     }
-    //memset(raw_memory,0, total_bytes);
+    memset(raw_memory,0, total_bytes);
     XFixedPool* pool = XFixedPool_create_from_memory(raw_memory, total_bytes, block_size);
     if (pool) {
         pool->owns_memory = true; // 标记为完全拥有

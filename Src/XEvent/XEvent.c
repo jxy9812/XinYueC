@@ -160,10 +160,10 @@ void XEventMetaCall_handler(XEventMetaCall* event, XObject* receiver)
 	}*/
 	if (receiver)
 	{
-		receiver->sender = event->sender;
+		receiver->m_sender = event->sender;
 		if (event->func)
 			event->func(receiver, event->argList);
-		receiver->sender = NULL;
+		receiver->m_sender = NULL;
 	}
 	if (event->sem)
 		XSemaphore_release(event->sem, 1);

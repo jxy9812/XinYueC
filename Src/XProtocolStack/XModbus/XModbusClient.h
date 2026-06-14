@@ -23,12 +23,12 @@ XCLASS_DEFINE_END(XModbusClient)
  */
 typedef struct XModbusClient {
     XModbusDevice m_base;           ///< 继承自XModbusDevice基类
-    size_t m_timeout;                  ///< 请求超时时间（毫秒）
+    size_t m_timeout;               ///< 请求超时时间（毫秒）
     XTimerId m_timeoutTimer;        ///< 超时定时器ID
     XHashMap* m_poolMap;            //轮询映射表 <XTimerId,XModbusReply*>
     // 自动重连配置
-    bool m_autoReconnect;           ///< 是否启用自动重连
-    int16_t m_numberOfRetries;          ///< 请求重试次数
+    bool m_autoReconnect;               ///< 是否启用自动重连
+    int16_t m_numberOfRetries;          ///< 请求超时重试次数
     int16_t m_reconnectAttempts;        ///< 当前重连尝试次数
     int16_t m_maxReconnectAttempts;     ///< 最大重连次数（-1表示无限）
     size_t m_reconnectInterval;        ///< 重连间隔（毫秒）

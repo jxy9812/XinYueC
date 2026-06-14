@@ -49,13 +49,12 @@ typedef struct XObject
 	uint32_t was_widget : 1;        // 析构时曾是窗口部件
 	uint32_t receive_parent_events : 1; // 是否接收父对象事件
 	uint32_t unused : 20;           // 保留位
-	XTimerId pollId;//轮询id
 	XSignalSlot* m_signalSlot;           ///< 信号与槽控制器：管理当前对象的所有信号与槽连接关系
 	// 父子关系
-	XObject* parent;//父对象
-	XVector* children; //子对象列表
-	XObject* sender;              // 发送者对象
-	XVector* filters;//过滤器列表
+	XObject* m_parent;//父对象
+	XVector* m_children; //子对象列表
+	XObject* m_sender;              // 发送者对象
+	XVector* m_filters;//过滤器列表
 	XThread* m_thread;                   ///< 所属线程指针：对象关联的线程，事件处理在该线程执行
 	// 事件与元对象
 	//int posted_events;              // 已投递但未处理的事件计数
@@ -63,7 +62,7 @@ typedef struct XObject
 	//void* binding_storage;          // 绑定存储 (void* 作为占位)
 
 	// 对象名称
-	XString* object_name;
+	XString* m_object_name;
 }XObject;
 
 /**

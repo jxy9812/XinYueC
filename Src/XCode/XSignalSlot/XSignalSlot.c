@@ -222,10 +222,10 @@ static void Direct_emit(XConnection* conn, void* args,  XAtomic_int32_t* ref_cou
 	{
 		if(conn->receiver)
 		{
-			conn->receiver->sender = conn->signal->sender;
+			conn->receiver->m_sender = conn->signal->sender;
 			if(conn->slot_func1)
 				conn->slot_func1(conn->receiver, args);
-			conn->receiver->sender = NULL;
+			conn->receiver->m_sender = NULL;
 		}
 		else if (conn->slot_func2)
 		{
