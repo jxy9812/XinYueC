@@ -22,11 +22,17 @@ XCLASS_DEFINE_END(XModbusClient)
  *          这是一个抽象基类，具体的通信后端（如RTU/TCP）需由子类实现。
  */
 typedef struct XModbusClient {
-    XModbusDevice m_base;  ///< 继承自XModbusDevice基类
-    int m_timeout;         ///< 请求超时时间（毫秒）
-    int m_numberOfRetries; ///< 请求重试次数
+    XModbusDevice m_base;           ///< 继承自XModbusDevice基类
+    size_t m_timeout;                  ///< 请求超时时间（毫秒）
     XTimerId m_timeoutTimer;        ///< 超时定时器ID
-    XHashMap* m_poolMap;      //轮询映射表 <XTimerId,XModbusReply*>
+    XHashMap* m_poolMap;            //轮询映射表 <XTimerId,XModbusReply*>
+    // 自动重连配置
+    bool m_autoReconnect;           ///< 是否启用自动重连
+    int16_t m_numberOfRetries;          ///< 请求重试次数
+    int16_t m_reconnectAttempts;        ///< 当前重连尝试次数
+    int16_t m_maxReconnectAttempts;     ///< 最大重连次数（-1表示无限）
+    size_t m_reconnectInterval;        ///< 重连间隔（毫秒）
+    XTimerId m_reconnectTimer;      ///< 重连定时器ID
 } XModbusClient;
 
 
@@ -136,7 +142,7 @@ bool XModbusClient_cancelPoll(XModbusClient* client, XModbusReply*reply);
 * @param client 客户端实例指针（非NULL）
 * @return 超时时间（毫秒）
 */
-int XModbusClient_timeout(const XModbusClient* client);
+size_t XModbusClient_timeout(const XModbusClient* client);
 
 /**
 * @brief 设置请求超时时间
@@ -144,21 +150,74 @@ int XModbusClient_timeout(const XModbusClient* client);
 * @param newTimeout 新的超时时间（毫秒）
 * @note 设置后会触发 timeoutChanged 信号
 */
-void XModbusClient_setTimeout(XModbusClient* client, int newTimeout);
+void XModbusClient_setTimeout(XModbusClient* client, size_t newTimeout);
 
 /**
 * @brief 获取当前请求重试次数
 * @param client 客户端实例指针（非NULL）
 * @return 重试次数
 */
-int XModbusClient_numberOfRetries(const XModbusClient* client);
+int16_t XModbusClient_numberOfRetries(const XModbusClient* client);
 
 /**
 * @brief 设置请求重试次数
 * @param client 客户端实例指针（非NULL）
 * @param number 新的重试次数
 */
-void XModbusClient_setNumberOfRetries(XModbusClient* client, int number);
+void XModbusClient_setNumberOfRetries(XModbusClient* client, uint8_t number);
+
+/******************************************************************************************
+ * 自动重连配置 API
+ ******************************************************************************************/
+
+/**
+* @brief 检查是否启用自动重连
+* @param client 客户端实例指针（非NULL）
+* @return true表示启用自动重连
+*/
+bool XModbusClient_autoReconnect(const XModbusClient* client);
+
+/**
+* @brief 设置是否启用自动重连
+* @param client 客户端实例指针（非NULL）
+* @param enabled 是否启用
+*/
+void XModbusClient_setAutoReconnect(XModbusClient* client, bool enabled);
+
+/**
+* @brief 获取重连间隔
+* @param client 客户端实例指针（非NULL）
+* @return 重连间隔（毫秒）
+*/
+size_t XModbusClient_reconnectInterval(const XModbusClient* client);
+
+/**
+* @brief 设置重连间隔
+* @param client 客户端实例指针（非NULL）
+* @param interval 重连间隔（毫秒）
+*/
+void XModbusClient_setReconnectInterval(XModbusClient* client, size_t interval);
+
+/**
+* @brief 获取最大重连次数
+* @param client 客户端实例指针（非NULL）
+* @return 最大重连次数（-1表示无限）
+*/
+int16_t XModbusClient_maxReconnectAttempts(const XModbusClient* client);
+
+/**
+* @brief 设置最大重连次数
+* @param client 客户端实例指针（非NULL）
+* @param attempts 最大重连次数（-1表示无限）
+*/
+void XModbusClient_setMaxReconnectAttempts(XModbusClient* client, int16_t attempts);
+
+/**
+* @brief 获取当前重连尝试次数
+* @param client 客户端实例指针（非NULL）
+* @return 当前重连尝试次数
+*/
+int16_t XModbusClient_reconnectAttempts(const XModbusClient* client);
 
 /******************************************************************************************
  * 信号接口

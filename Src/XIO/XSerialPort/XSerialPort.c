@@ -71,7 +71,8 @@ static void VXSerialPort_close(XIODevice* io) {
     if (port->isOpen) {
         XSerialPort_platform_close(port);
     }
-    XIODevice_close_base(io);
+    XClass_Parent(XIODevice,EXIODevice_Close,void(*)(XIODevice*))(io);
+    //XIODevice_close_base(io);
 }
 
 static bool VXSerialPort_isSequential(const XIODevice* io) {

@@ -229,6 +229,8 @@ void XModbusDevice_setState(XModbusDevice* dev, XModbusDevice_State newState)
 
     // 发射状态改变信号
     XModbusDevice_stateChanged_signal(dev, newState);
+    /*if (newState == XModbusDevice_UnconnectedState)
+        XPrintf("未连接\n");*/
 }
 
 void XModbusDevice_setError(XModbusDevice* dev, XModbusDevice_Error error, const char* errorText)

@@ -30,6 +30,11 @@ bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XMod
 XModbusReply* XModbusClient_createReply(XModbusClient* client, const XModbusRequest* request, int serverAddress);
 XModbusReply* XModbusClient_createReply_move(XModbusClient* client,XModbusRequest* request, int serverAddress);
 XModbusReply* XModbusClient_createReply_ref(XModbusClient* client, XModbusRequest* request, int serverAddress);
+
+void XModbusClient_timeoutTimerStop(XModbusClient* client);
+void XModbusClient_timeoutTimerStart(XModbusClient* client);
+void XModbusClient_reconnectTimerStop(XModbusClient* client);
+void XModbusClient_reconnectTimerStart(XModbusClient* client);
 #ifdef __cplusplus
 }
 #endif

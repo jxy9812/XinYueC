@@ -50,24 +50,24 @@ static void rtuFinished(XObject* sender, XVarList* args)
 
 void XModbusRtuSerialClientTest()
 {
-    XModbusRtuSerialClient* rtu = XModbusRtuSerialClient_create();
-    XModbusDevice_setConnectionParameter_ref(rtu, XModbusDevice_SerialPortNameParameter,XVariant_create_utf8_str("COM26"));
-    XModbusDevice_setConnectionParameter_ref(rtu, XModbusDevice_SerialBaudRateParameter, XVariant_create_int(9600));
-    if (!XModbusDevice_connectDevice(rtu))
+    XModbusRtuSerialClient* client = XModbusRtuSerialClient_create();
+    XModbusClient_setAutoReconnect(client, true);
+    XModbusDevice_setConnectionParameter_ref(client, XModbusDevice_SerialPortNameParameter,XVariant_create_utf8_str("COM26"));
+    XModbusDevice_setConnectionParameter_ref(client, XModbusDevice_SerialBaudRateParameter, XVariant_create_int(9600));
+    if (!XModbusDevice_connectDevice(client))
     {
         XPrintf_utf8("失败了\n");
-        XModbusRtuSerialClient_deleteLater(rtu);
+        XModbusRtuSerialClient_deleteLater(client);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         return;
     }
     XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils,0,1);
     XModbusDataUnit_setValue(read,0,true);
 
-    XModbusReply* reply= XModbusClient_sendWriteRequest(rtu, read,1);
-    XObject_setParent(reply, rtu);
+    XModbusReply* reply= XModbusClient_sendWriteRequest(client, read,1);
+    XObject_setParent(reply, client);
     XObject_connect_2(reply,XSignal(XModbusReply_finished_signal), rtuFinished);
 
-     //reply = XModbusClient_sendWriteRequest(client, read, 1);
 
     //XModbusClient_pollWriteRequest(client, read, 1,10);
 
@@ -108,6 +108,7 @@ void XModbusTcpClientTest()
 {
      // 创建TCP客户端
     XModbusTcpClient* client = XModbusTcpClient_create();
+    XModbusClient_setAutoReconnect(client,true);
     XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,
     XModbusDevice_NetworkAddressParameter, XVariant_create_utf8_str("192.168.1.117"));
     XModbusDevice_setConnectionParameter_ref((XModbusDevice*)client,

@@ -78,10 +78,24 @@ void XModbusClient_init(XModbusClient* client) {
     client->m_numberOfRetries = 3; // 默认3次
     client->m_timeoutTimer= XTIMER_INVALID_ID;
     client->m_poolMap = NULL;
+
+    // 初始化自动重连配置
+    client->m_autoReconnect = false;       // 默认关闭
+    client->m_reconnectInterval = 1000;    // 默认1秒
+    client->m_maxReconnectAttempts = -1;   // 默认无限次
+    client->m_reconnectAttempts = 0;       // 当前重连次数
+    client->m_reconnectTimer = XTIMER_INVALID_ID;
 }
 
 static void VXModbusClient_deinit(XModbusClient* client) {
     if (!client) return;
+
+    // 停止重连定时器
+    XModbusClient_timeoutTimerStop(client);
+    if (client->m_reconnectTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)client, client->m_reconnectTimer);
+        client->m_reconnectTimer = XTIMER_INVALID_ID;
+    }
     if (client->m_poolMap)
     {
         XMapBase_delete_base(client->m_poolMap);
@@ -490,23 +504,54 @@ bool XModbusClient_cancelPoll(XModbusClient* client, XModbusReply* reply)
 }
 
 // --- Configuration Getters/Setters ---
-int XModbusClient_timeout(const XModbusClient* client) {
+size_t XModbusClient_timeout(const XModbusClient* client) {
     return client ? client->m_timeout : 1000;
 }
 
-void XModbusClient_setTimeout(XModbusClient* client, int newTimeout) {
+void XModbusClient_setTimeout(XModbusClient* client, size_t newTimeout) {
     if (!client || client->m_timeout == newTimeout) return;
     client->m_timeout = newTimeout;
     XModbusClient_timeoutChanged_signal(client, newTimeout);
 }
 
-int XModbusClient_numberOfRetries(const XModbusClient* client) {
+int16_t XModbusClient_numberOfRetries(const XModbusClient* client) {
     return client ? client->m_numberOfRetries : 3;
 }
 
-void XModbusClient_setNumberOfRetries(XModbusClient* client, int number) {
+void XModbusClient_setNumberOfRetries(XModbusClient* client, uint8_t number) {
     if (!client) return;
     client->m_numberOfRetries = number;
+}
+// ================== 自动重连配置 API ==================
+bool XModbusClient_autoReconnect(const XModbusClient* client) {
+    return client ? client->m_autoReconnect : false;
+}
+void XModbusClient_setAutoReconnect(XModbusClient* client, bool enabled) {
+    if (!client) return;
+    client->m_autoReconnect = enabled;
+
+    // 如果禁用自动重连，停止正在进行的重连定时器
+    if (!enabled && client->m_reconnectTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)client, client->m_reconnectTimer);
+        client->m_reconnectTimer = XTIMER_INVALID_ID;
+    }
+}
+size_t XModbusClient_reconnectInterval(const XModbusClient* client) {
+    return client ? client->m_reconnectInterval : 1000;
+}
+void XModbusClient_setReconnectInterval(XModbusClient* client, size_t interval) {
+    if (!client || interval < 0) return;
+    client->m_reconnectInterval = interval;
+}
+int16_t XModbusClient_maxReconnectAttempts(const XModbusClient* client) {
+    return client ? client->m_maxReconnectAttempts : -1;
+}
+void XModbusClient_setMaxReconnectAttempts(XModbusClient* client, int16_t attempts) {
+    if (!client) return;
+    client->m_maxReconnectAttempts = attempts;
+}
+int16_t XModbusClient_reconnectAttempts(const XModbusClient* client) {
+    return client ? client->m_reconnectAttempts : 0;
 }
 
 // ================== 受保护的API实现（供子类调用）==================
@@ -737,4 +782,41 @@ void* XModbusClient_timeoutChanged_signal(XModbusClient* client, int newTimeout)
     XEmitSignal(client, XModbusClient_timeoutChanged_signal,
         XVarList_Create(XVar(int, newTimeout)),
         NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void XModbusClient_timeoutTimerStop(XModbusClient* client)
+{
+    if (!client)return;
+    if (client->m_timeoutTimer != XTIMER_INVALID_ID) 
+    {
+        XObject_killTimer((XObject*)client, client->m_timeoutTimer);
+        client->m_timeoutTimer = XTIMER_INVALID_ID;
+    }
+}
+
+void XModbusClient_timeoutTimerStart(XModbusClient* client)
+{
+    if (!client)return;
+    XModbusClient_timeoutTimerStop(client);
+    client->m_timeoutTimer = XObject_startTimer_ms((XObject*)client,
+        XModbusClient_timeout(client), XTimerType_CoarseTimer);
+}
+
+void XModbusClient_reconnectTimerStop(XModbusClient* client)
+{
+    if (!client)return;
+    if (client->m_reconnectTimer != XTIMER_INVALID_ID)
+    {
+        XObject_killTimer((XObject*)client, client->m_reconnectTimer);
+        client->m_reconnectTimer = XTIMER_INVALID_ID;
+    }
+}
+
+void XModbusClient_reconnectTimerStart(XModbusClient* client)
+{
+    if (!client)return;
+    XModbusClient_reconnectTimerStop(client);
+    client->m_reconnectTimer = XObject_startTimer_ms((XObject*)client,
+        XModbusClient_reconnectInterval(client), XTimerType_CoarseTimer);
+    //XPrintf("reconnectTimer:%d\n", client->m_reconnectTimer);
 }

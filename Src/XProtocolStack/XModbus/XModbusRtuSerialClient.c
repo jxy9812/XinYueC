@@ -20,9 +20,11 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
 
 // =============== 槽函数声明 ===============
 static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args);
+static void XModbusRtuSerialClient_onErrorOccurred(XObject* receiver, XVarList* args);
 static void processReceivedFrame(XModbusRtuSerialClient* client,XByteArray* receiveBuffer);
 static bool startNewRequest(XModbusRtuSerialClient* client);
 static void handleRequestTimeout(XModbusRtuSerialClient* client);
+static void XModbusRtuSerialClient_attemptReconnect(XModbusRtuSerialClient* client);
 // =============== 辅助函数 ===============
 static inline void interFrameTimerStop(XModbusRtuSerialClient* client)
 {
@@ -41,23 +43,9 @@ static inline void interFrameTimerStart(XModbusRtuSerialClient* client)
         interFrameDelayMs, XTimerType_CoarseTimer);
     //XPrintf("add timerId:%d\n", client->m_interFrameTimer);
 }
-static inline void timeoutFrameTimerStop(XModbusRtuSerialClient* client)
-{
-    if (((XModbusClient*)client)->m_timeoutTimer != XTIMER_INVALID_ID) {
-       /* XPrintf("remove timerId:%d\n", ((XModbusClient*)client)->m_timeout);*/
-        XObject_killTimer((XObject*)client, ((XModbusClient*)client)->m_timeoutTimer);
-        ((XModbusClient*)client)->m_timeoutTimer = XTIMER_INVALID_ID;
-    }
-}
-static inline void timeoutFrameTimerStart(XModbusRtuSerialClient* client)
-{
-    timeoutFrameTimerStop(client);
-    ((XModbusClient*)client)->m_timeoutTimer = XObject_startTimer_ms((XObject*)client,
-        XModbusClient_timeout(client), XTimerType_CoarseTimer);
-}
 static inline void turnaroundFrameTimerStart(XModbusRtuSerialClient* client)
 {
-    timeoutFrameTimerStop(client);
+    XModbusClient_timeoutTimerStop(client);
     ((XModbusClient*)client)->m_timeoutTimer = XObject_startTimer_ms((XObject*)client,
         client->m_turnaroundDelay, XTimerType_CoarseTimer);
 }
@@ -122,17 +110,7 @@ void XModbusRtuSerialClient_init(XModbusRtuSerialClient* client)
     XModbusClient_init(&client->m_base);
     XClassGetVtable(client) = XModbusRtuSerialClient_class_init();
 
-    XSerialPort* serialPort = XSerialPort_create();
-    //XPrintf("串口:%p\n", serialPort);
-    if (serialPort) {
-        ((XModbusDevice*)client)->m_ioDevice = (XIODevice*)serialPort;
-
-        XObject_connect_1((XObject*)serialPort,
-            XSignal(XIODevice_readyRead_signal),
-            (XObject*)client,
-            XModbusRtuSerialClient_onReadyRead,
-            XConnectionType_Auto);
-    }
+   
 
     client->m_interFrameDelay = 0;
     client->m_turnaroundDelay = 100;
@@ -232,10 +210,29 @@ static bool VXModbusRtuSerialClient_open(XModbusDevice* device)
 
     XModbusRtuSerialClient* client = (XModbusRtuSerialClient*)device;
     XSerialPort* serialPort = XModbusRtuSerialClient_serialPort(client);
+    if (!serialPort) 
+    {
+        serialPort = XSerialPort_create();
+        if (serialPort) {
+            ((XModbusDevice*)client)->m_ioDevice = (XIODevice*)serialPort;
 
-    if (!serialPort) {
-        XModbusDevice_setError(device, XModbusDevice_ConnectionError, "Serial port not available");
-        return false;
+            XObject_connect_1((XObject*)serialPort,
+                XSignal(XIODevice_readyRead_signal),
+                (XObject*)client,
+                XModbusRtuSerialClient_onReadyRead,
+                XConnectionType_Auto);
+
+            XObject_connect_1((XObject*)serialPort,
+                XSignal(XSerialPort_errorOccurred_signal),
+                (XObject*)client,
+                XModbusRtuSerialClient_onErrorOccurred,
+                XConnectionType_Auto);
+        }
+        else
+        {
+            XModbusDevice_setError(device, XModbusDevice_ConnectionError, "Serial port not available");
+            return false;
+        }
     }
 
     // 设置串口参数
@@ -281,8 +278,13 @@ static bool VXModbusRtuSerialClient_open(XModbusDevice* device)
     XByteArray* array = XIODevice_readAll_3((XIODevice*)serialPort);
     if (array) XByteArray_delete_base(array);
 
-    XModbusDevice_setState(device, XModbusDevice_ConnectedState);
+        XModbusDevice_setState(device, XModbusDevice_ConnectedState);
     XModbusDevice_setError(device, XModbusDevice_NoError, NULL);
+    
+    // 连接成功，重置重连计数器
+    ((XModbusClient*)client)->m_reconnectAttempts = 0;
+    XModbusClient_reconnectTimerStop((XModbusClient*)client);
+    
     if(((XModbusRtuSerialClient*)device)->m_interFrameDelay==0)
         ((XModbusRtuSerialClient*)device)->m_interFrameDelay = XModbusRtuSerialClient_interFrameDelay(client);
     return true;
@@ -295,7 +297,7 @@ static void VXModbusRtuSerialClient_close(XModbusDevice* device)
     XModbusRtuSerialClient* client = (XModbusRtuSerialClient*)device;
     
     interFrameTimerStop(device);
-    timeoutFrameTimerStop(device);
+    XModbusClient_timeoutTimerStop(device);
 
     if (client->m_currentReply) {
         XModbusReply_setError(client->m_currentReply, XModbusDevice_ConnectionError, "Device closed");
@@ -495,7 +497,7 @@ bool startNewRequest(XModbusRtuSerialClient* client)
     }
     else {
         int timeout = XModbusClient_timeout(client);
-        timeoutFrameTimerStart(client);
+        XModbusClient_timeoutTimerStart(client);
         interFrameTimerStart(client);
 
     }
@@ -594,7 +596,7 @@ static void handleInterFrameTimeout(XModbusRtuSerialClient* client)
  */
 static void handleRequestTimeout(XModbusRtuSerialClient* client) 
 {
-    timeoutFrameTimerStop(client);
+    XModbusClient_timeoutTimerStop(client);
     if (!client->m_currentReply) return;
 
     // 广播消息的 turnaround 延迟结束
@@ -623,7 +625,7 @@ static void handleRequestTimeout(XModbusRtuSerialClient* client)
             if (client->m_receiveBuffer) {
                 XByteArray_clear_base(client->m_receiveBuffer);
             }
-            timeoutFrameTimerStart(client);
+            XModbusClient_timeoutTimerStart(client);
             return;
         }
     }
@@ -643,24 +645,40 @@ static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event)
     XEvent_accept(event);
     XModbusRtuSerialClient* client = (XModbusRtuSerialClient*)obj;
     XTimerId timerId = XEventTimer_timerId(event);
+    if (XModbusDevice_state(client) == XModbusDevice_ConnectedState)
+    {
+        // 处理帧间延迟定时器 - 一帧接收完成
+        if (timerId == client->m_interFrameTimer) {
+            handleInterFrameTimeout(client);
+            return;
+        }
 
-    // 处理帧间延迟定时器 - 一帧接收完成
-    if (timerId == client->m_interFrameTimer) {
-        handleInterFrameTimeout(client);
-        return;
+        // 处理请求超时定时器
+        if (timerId == ((XModbusClient*)client)->m_timeoutTimer) {
+            //XModbusClient_timeoutTimerStop(client);
+            handleRequestTimeout(client);
+            return;
+        }
+        XModbusReply** pReply =XHashMap_value_base(client->m_base.m_poolMap, &timerId);
+        if(pReply)
+        {
+            XQueueBase_push_base(client->m_queue, pReply /*XHashMap_value_base(client->m_base.m_poolMap, &timerId)*/);
+            if (!client->m_currentReply)//当前是空闲的
+                startNewRequest(client);
+            return;
+        }
     }
 
-    // 处理请求超时定时器
-    if (timerId == ((XModbusClient*)client)->m_timeoutTimer) {
-        //timeoutFrameTimerStop(client);
-        handleRequestTimeout(client);
+    // 检查是否是重连定时器
+    if (timerId == ((XModbusClient*)client)->m_reconnectTimer) {
+        // 重连定时器只触发一次，停止它
+        XModbusClient_reconnectTimerStop((XModbusClient*)client);
+        
+        // 执行重连尝试
+        XModbusRtuSerialClient_attemptReconnect(client);
         return;
     }
-    //XModbusReply* reply = *((XModbusReply**)XHashMap_value_base(client->m_base.m_poolMap, &timerId));
-    XQueueBase_push_base(client->m_queue, XHashMap_value_base(client->m_base.m_poolMap, &timerId));
-    if(!client->m_currentReply)//当前是空闲的
-        startNewRequest(client);
-    return;
+    
 parent_call:
     XClass_Parent(XModbusClient, EXObject_TimerEvent, void (*)(XObject*, XEventTimer*))(obj, event);
 }
@@ -724,7 +742,114 @@ static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* clien
         XModbusReply_deleteLater(reply);
         return NULL;
     }
-    if (!rtuClient->m_currentReply)//当前是空闲的
+        if (!rtuClient->m_currentReply)//当前是空闲的
         startNewRequest(client);
     return reply;
+}
+
+// =============== 错误处理槽函数 ===============
+static void XModbusRtuSerialClient_onErrorOccurred(XObject* receiver, XVarList* args)
+{
+    XModbusRtuSerialClient* client = (XModbusRtuSerialClient*)receiver;
+    if (!client) return;
+
+    (void)args;  // 可从中获取具体的串口错误码
+    
+    XModbusDevice* device = (XModbusDevice*)client;
+    
+    // 停止当前请求
+    interFrameTimerStop(client);
+    XModbusClient_timeoutTimerStop((XModbusClient*)client);
+    
+    if (client->m_currentReply) 
+    {
+        XModbusReply* reply = client->m_currentReply;
+        int maxRetries = XModbusClient_numberOfRetries((XModbusClient*)client);
+        if (client->m_retryCount >= maxRetries)
+        {
+            client->m_currentReply = NULL;
+        }
+        XModbusReply_setError(client->m_currentReply, XModbusDevice_ConnectionError, "Serial port error");
+        XModbusReply_setState(reply, XModbusReply_State_No_Started);
+    }
+
+    XModbusDevice_setState(device, XModbusDevice_UnconnectedState);
+    XModbusDevice_setError(device, XModbusDevice_ConnectionError, "Serial port error");
+
+    // 检查是否需要自动重连
+    XModbusClient* baseClient = (XModbusClient*)client;
+    if (baseClient->m_autoReconnect) {
+        // 检查是否达到最大重连次数
+        if (baseClient->m_maxReconnectAttempts < 0 || 
+            baseClient->m_reconnectAttempts < baseClient->m_maxReconnectAttempts) {
+            
+            // 启动重连定时器
+            XModbusClient_reconnectTimerStart((XModbusClient*)client);
+        }
+    }
+}
+
+// =============== 重连处理 ===============
+static void XModbusRtuSerialClient_attemptReconnect(XModbusRtuSerialClient* client)
+{
+    if (!client) return;
+
+    XModbusClient* baseClient = (XModbusClient*)client;
+    XModbusDevice* device = (XModbusDevice*)client;
+
+    // 停止重连定时器
+    XModbusClient_reconnectTimerStop(baseClient);
+
+    // 检查是否已经连接
+    if (XModbusDevice_state(device) == XModbusDevice_ConnectedState) {
+        baseClient->m_reconnectAttempts = 0;
+        return;
+    }
+
+    // 增加重连计数
+    baseClient->m_reconnectAttempts++;
+
+    // 尝试重新连接
+    XModbusDevice_setState(device, XModbusDevice_ConnectingState);
+
+    XSerialPort* serialPort = XModbusRtuSerialClient_serialPort(client);
+    if (!serialPort) {
+        XModbusDevice_setError(device, XModbusDevice_ConfigurationError, "Serial port not available for reconnection");
+        XModbusDevice_setState(device, XModbusDevice_UnconnectedState);
+        return;
+    }
+
+    // 如果串口之前是打开的，先关闭
+    if (XSerialPort_isOpen(serialPort)) {
+        XSerialPort_close_base(serialPort);
+    }
+
+    // 重新打开串口
+    bool result = XSerialPort_open_base(serialPort, XIODevice_ReadWrite);
+    if (!result) {
+        XModbusDevice_setError(device, XModbusDevice_ConnectionError, "Failed to reopen serial port");
+        XModbusDevice_setState(device, XModbusDevice_UnconnectedState);
+        
+        // 重连失败，检查是否需要继续尝试
+        if (baseClient->m_autoReconnect &&
+            (baseClient->m_maxReconnectAttempts < 0 || 
+             baseClient->m_reconnectAttempts < baseClient->m_maxReconnectAttempts)) {
+            XModbusClient_reconnectTimerStart(baseClient);
+        }
+        return;
+    }
+
+    // 清除缓冲区
+    XByteArray* array = XIODevice_readAll_3((XIODevice*)serialPort);
+    if (array) XByteArray_delete_base(array);
+
+    // 重连成功
+    XModbusDevice_setState(device, XModbusDevice_ConnectedState);
+    XModbusDevice_setError(device, XModbusDevice_NoError, NULL);
+    baseClient->m_reconnectAttempts = 0;
+    
+    // 更新帧间延迟
+    if (client->m_interFrameDelay == 0) {
+        client->m_interFrameDelay = XModbusRtuSerialClient_interFrameDelay(client);
+    }
 }

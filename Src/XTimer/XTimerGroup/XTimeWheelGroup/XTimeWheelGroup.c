@@ -172,10 +172,10 @@ XHandle VXTimerGroupBase_addTimerNs(XTimeWheelGroup* group, XTimerData data)
 {
     if (data.m_timerCallback == NULL || ((data.m_interval == 0) && (data.m_timeout == 0)))
         return NULL;
-    /*data.m_interval /= 1000000ULL;
-    data.m_timeout /= 1000000ULL;*/
+    data.m_interval /= 1000000ULL;
+    data.m_timeout /= 1000000ULL;
     //校准下时间
-    group->m_class.m_current_tick =  ((XTimerGroupBase*)group)->m_high_res_time_func()* 1000000ULL / group->m_class.m_precision;
+    group->m_class.m_current_tick =  ((XTimerGroupBase*)group)->m_high_res_time_func()/** 1000000ULL *// group->m_class.m_precision;
     // 计算超时时间（转换为）
     size_t timeout_ticks = ceil_div(data.m_timeout, group->m_class.m_precision);
     if (timeout_ticks == 0)timeout_ticks = ceil_div(data.m_interval, group->m_class.m_precision);//如果超时时间是0就直接使用周期时间

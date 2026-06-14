@@ -311,8 +311,9 @@ static void VXAbstractEventDispatcher_registerTimer(XAbstractEventDispatcher* di
                 timerInfo.Xhandle = handle;
                 goto save;
             }
-
+            //XPrintf("出现意外\n");
         }
+        //XPrintf("出现意外\n");
     }
     if (dispatcher->d_ptr->m_hrtimerGroup == NULL)
     {//初始化

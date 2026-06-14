@@ -16,6 +16,9 @@ static void VXModbusTcpClient_deinit(XModbusTcpClient* client);
 static void VXModbusTcpClient_timerEvent(XObject* obj, XEventTimer* event);
 static XModbusReply* VXModbusTcpClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress, XFuncParamType type);
 
+// =============== 内部函数前置声明 ===============
+static void XModbusTcpClient_attemptReconnect(XModbusTcpClient* client);
+
 // =============== 槽函数声明 ===============
 static void XModbusTcpClient_onReadyRead(XObject* receiver, XVarList* args);
 static void XModbusTcpClient_onConnected(XObject* receiver, XVarList* args);
@@ -277,8 +280,6 @@ static bool VXModbusTcpClient_open(XModbusDevice* device)
     {
         socket = XTcpSocket_create();
         XObject_setParent(socket, client);
-    }
-    if (socket) {
         ((XModbusDevice*)client)->m_ioDevice = (XIODevice*)socket;
 
         // 连接信号
@@ -600,58 +601,130 @@ static void VXModbusTcpClient_timerEvent(XObject* obj, XEventTimer* event)
     XEvent_accept(event);
     XModbusTcpClient* client = (XModbusTcpClient*)obj;
     XTimerId timerId = XEventTimer_timerId(event);
-
-    // 通过反向映射快速查找（O(1)）
-    uint16_t* pTransactionId = (uint16_t*)XHashMap_value_base(client->m_timerMap, &timerId);
-    if (pTransactionId) {
-        uint16_t transactionId = *pTransactionId;
-        // 从反向映射中移除
-        XHashMap_remove_base(client->m_timerMap, &timerId);
-        handleRequestTimeout(client, transactionId);
-        return;
-    }
-    //return;
-    // 检查是否是轮询定时器
-    if (client->m_base.m_poolMap) {
-        XModbusReply** ppReply = (XModbusReply**)XHashMap_value_base(client->m_base.m_poolMap, &timerId);
-        if (ppReply && *ppReply) {
-            XModbusReply* reply = *ppReply;
-
-            // 检查上一个请求是否已完成
-            XModbusReply_State state = XModbusReply_state(reply);
-            if (state == XModbusReply_State_Waiting || state == XModbusReply_State_Requesting) {
-                return;
-            }
-
-            // 重新发送轮询请求（复用原有Reply）
-            if (reply->m_request && reply->m_serverAddress >= 0) {
-                // 重置Reply状态
-                XModbusReply_setState(reply, XModbusReply_State_Requesting);
-                XModbusReply_setError(reply, XModbusDevice_NoError, NULL);
-                XModbusReply_clearIntermediateError(reply);
-
-                // 清理旧的结果
-                if (reply->m_rawResult) {
-                    XModbusResponse_delete_base(reply->m_rawResult);
-                    reply->m_rawResult = NULL;
-                }
-                if (reply->m_result) {
-                    XModbusDataUnit_delete_base(reply->m_result);
-                    reply->m_result = NULL;
-                }
-
-                // 获取新的交易ID并发送请求
-                uint16_t transactionId = XModbusTcpClient_nextTransactionId(client);
-                if (buildAndSendRequest(client, reply, transactionId, reply->m_request, reply->m_serverAddress)) {
-                    XModbusReply_setState(reply, XModbusReply_State_Waiting);
-                }
-            }
+    if(XModbusDevice_state(client)== XModbusDevice_ConnectedState)
+    {
+        // 通过反向映射快速查找（O(1)）
+        uint16_t* pTransactionId = (uint16_t*)XHashMap_value_base(client->m_timerMap, &timerId);
+        if (pTransactionId) {
+            uint16_t transactionId = *pTransactionId;
+            // 从反向映射中移除
+            XHashMap_remove_base(client->m_timerMap, &timerId);
+            handleRequestTimeout(client, transactionId);
             return;
         }
+        //return;
+        // 检查是否是轮询定时器
+        if (client->m_base.m_poolMap) {
+            XModbusReply** ppReply = (XModbusReply**)XHashMap_value_base(client->m_base.m_poolMap, &timerId);
+            if (ppReply && *ppReply) {
+                XModbusReply* reply = *ppReply;
+
+                // 检查上一个请求是否已完成
+                XModbusReply_State state = XModbusReply_state(reply);
+                if (state == XModbusReply_State_Waiting || state == XModbusReply_State_Requesting) {
+                    return;
+                }
+
+                // 重新发送轮询请求（复用原有Reply）
+                if (reply->m_request && reply->m_serverAddress >= 0) {
+                    // 重置Reply状态
+                    XModbusReply_setState(reply, XModbusReply_State_Requesting);
+                    XModbusReply_setError(reply, XModbusDevice_NoError, NULL);
+                    XModbusReply_clearIntermediateError(reply);
+
+                    // 清理旧的结果
+                    if (reply->m_rawResult) {
+                        XModbusResponse_delete_base(reply->m_rawResult);
+                        reply->m_rawResult = NULL;
+                    }
+                    if (reply->m_result) {
+                        XModbusDataUnit_delete_base(reply->m_result);
+                        reply->m_result = NULL;
+                    }
+
+                    // 获取新的交易ID并发送请求
+                    uint16_t transactionId = XModbusTcpClient_nextTransactionId(client);
+                    if (buildAndSendRequest(client, reply, transactionId, reply->m_request, reply->m_serverAddress)) {
+                        XModbusReply_setState(reply, XModbusReply_State_Waiting);
+                    }
+                }
+                return;
+            }
+        }
+    }
+
+    // 检查是否是重连定时器
+    XModbusClient* baseClient = (XModbusClient*)client;
+    if (timerId == baseClient->m_reconnectTimer) 
+    {
+        // 重连定时器只触发一次，停止它
+        XModbusClient_reconnectTimerStop(client);
+        
+        // 执行重连尝试
+        XModbusTcpClient_attemptReconnect(client);
+        return;
     }
 
 parent_call:
     XClass_Parent(XModbusClient, EXObject_TimerEvent, void (*)(XObject*, XEventTimer*))(obj, event);
+}
+
+// =============== 重连处理 ===============
+static void XModbusTcpClient_attemptReconnect(XModbusTcpClient* client)
+{
+    if (!client) return;
+
+    XModbusClient* baseClient = (XModbusClient*)client;
+    
+    // 停止重连定时器
+    XModbusClient_reconnectTimerStop(client);
+
+    // 检查是否已经连接
+    if (XModbusDevice_state((XModbusDevice*)client) == XModbusDevice_ConnectedState) {
+        baseClient->m_reconnectAttempts = 0;
+        return;
+    }
+
+    // 增加重连计数
+    baseClient->m_reconnectAttempts++;
+
+    // 尝试重新连接
+    XModbusDevice_setState((XModbusDevice*)client, XModbusDevice_ConnectingState);
+    
+    // 获取连接参数
+    const char* hostName = NULL;
+    char hostNameBuf[256] = { 0 };
+
+    const XVariant* addrVar = XModbusDevice_connectionParameter_const((XModbusDevice*)client, XModbusDevice_NetworkAddressParameter);
+    if (addrVar) {
+        XString* str = XVariant_toString_const(addrVar);
+        if (str) {
+            const char* utf8 = XString_toUtf8(str);
+            if (utf8) {
+                strncpy(hostNameBuf, utf8, sizeof(hostNameBuf) - 1);
+                hostName = hostNameBuf;
+            }
+        }
+    }
+
+    if (!hostName || hostName[0] == '\0') {
+        // 无法重连，配置丢失
+        XModbusDevice_setError((XModbusDevice*)client, XModbusDevice_ConfigurationError, "Server address not configured for reconnection");
+        XModbusDevice_setState((XModbusDevice*)client, XModbusDevice_UnconnectedState);
+        return;
+    }
+
+    uint16_t port = 502;
+    const XVariant* portVar = XModbusDevice_connectionParameter_const((XModbusDevice*)client, XModbusDevice_NetworkPortParameter);
+    if (portVar) {
+        port = (uint16_t)XVariant_toInt(portVar);
+    }
+
+    // 发起连接
+    XAbstractSocket* socket = (XAbstractSocket*)XModbusTcpClient_socket(client);
+    if (socket) {
+        XAbstractSocket_connectToHost_base(socket, hostName, port, XIODevice_ReadWrite, XAbstractSocket_AnyIPProtocol);
+    }
 }
 
 // =============== 槽函数实现 ===============
@@ -678,6 +751,13 @@ static void XModbusTcpClient_onConnected(XObject* receiver, XVarList* args)
     XModbusTcpClient* client = (XModbusTcpClient*)receiver;
     if (!client) return;
 
+    // 连接成功，重置重连计数器
+    XModbusClient* baseClient = (XModbusClient*)client;
+    baseClient->m_reconnectAttempts = 0;
+    
+    // 停止可能存在的重连定时器
+    XModbusClient_reconnectTimerStop(client);
+
     XModbusDevice_setState((XModbusDevice*)client, XModbusDevice_ConnectedState);
     XModbusDevice_setError((XModbusDevice*)client, XModbusDevice_NoError, NULL);
 }
@@ -695,6 +775,18 @@ static void XModbusTcpClient_onDisconnected(XObject* receiver, XVarList* args)
     clearAllPendingRequests(client, XModbusDevice_ConnectionError, "Connection lost");
 
     XModbusDevice_setState((XModbusDevice*)client, XModbusDevice_UnconnectedState);
+
+    // 检查是否需要自动重连
+    XModbusClient* baseClient = (XModbusClient*)client;
+    if (baseClient->m_autoReconnect) {
+        // 检查是否达到最大重连次数
+        if (baseClient->m_maxReconnectAttempts < 0 || 
+            baseClient->m_reconnectAttempts < baseClient->m_maxReconnectAttempts) {
+            
+            // 启动重连定时器
+            XModbusClient_reconnectTimerStart(client);
+        }
+    }
 }
 
 static void XModbusTcpClient_onErrorOccurred(XObject* receiver, XVarList* args)
