@@ -17,6 +17,7 @@ extern "C" {
 #include <stdbool.h>
 #include "XFixedPool.h"
 #include "XVector.h"
+#include "XAtomic.h"
 //多级内存池
 typedef struct XMultiPool //因为线程安全可以全局创建一个后公用
 {
@@ -33,7 +34,7 @@ typedef struct XMultiPool //因为线程安全可以全局创建一个后公用
      */
     bool owns_memory;
     // ============ 新增字段 ============
-  /** 标记是否启用了倍数模式 */
+    /** 标记是否启用了倍数模式 */
     bool is_power_of_two_mode;
 
     size_t  initial_size;//初始大小
@@ -42,6 +43,12 @@ typedef struct XMultiPool //因为线程安全可以全局创建一个后公用
 
     /** 在倍数模式下，增长倍数（例如2） */
     size_t growth_multiplier;
+    
+    // ============ 内存统计字段 ============
+    /** 总用户可用内存大小（字节），初始化时计算 */
+    size_t total_user_size;
+    /** 剩余用户可用内存大小（字节），原子变量，线程安全 */
+    XAtomic_size_t free_user_size;
 } XMultiPool;
 
 // ============================================================================
@@ -167,6 +174,27 @@ void XMultiPool_free(XMultiPool* multi_pool, void* ptr);
  * @return bool 如果指针有效且属于此多级内存池，则返回 `true`；否则返回 `false`。
  */
 bool XMultiPool_is_from_pool(const XMultiPool* multi_pool, const void* ptr);
+
+/**
+ * @brief 获取多级内存池中剩余可用内存大小（字节）
+ *
+ * 此函数是线程安全的，使用原子读取。
+ * 返回值为所有子池剩余用户可用内存的总和。
+ *
+ * @param multi_pool 指向多级内存池的指针。
+ * @return size_t 剩余可用内存字节数。如果 multi_pool 为 NULL，返回 0。
+ */
+size_t XMultiPool_freeSize(XMultiPool* multi_pool);
+
+/**
+ * @brief 获取多级内存池的总用户可用内存大小（字节）
+ *
+ * 返回值为所有子池用户可用内存的总和。
+ *
+ * @param multi_pool 指向多级内存池的指针。
+ * @return size_t 总用户可用内存字节数。如果 multi_pool 为 NULL，返回 0。
+ */
+size_t XMultiPool_totalSize(XMultiPool* multi_pool);
 
 XMultiPool* XMultiPool_global();
 //用全局池分配

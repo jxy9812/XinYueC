@@ -222,7 +222,7 @@ void* XMultiPool_malloc(XMultiPool* multi_pool, size_t size) {
         XFixedPool* pool = *(XFixedPool**)XVector_at_base(sub_pools, i);
         if (pool->user_block_size < required_size)
             continue;
-        // 1. 尝试从当前子池获取原始块
+                // 1. 尝试从当前子池获取原始块
         void* raw_block = XFixedPool_malloc(pool);
         if (raw_block) 
         {
@@ -231,7 +231,12 @@ void* XMultiPool_malloc(XMultiPool* multi_pool, size_t size) {
             // 2. 分配成功，在原始块中写入当前池的索引
            // 布局: [next_ptr | pool_index | ...]
             void* user_data_start = get_final_user_ptr(raw_block);
-            // 3. 返回最终的用户指针
+            
+            // 3. 更新剩余内存统计（减去用户可用大小）
+            size_t allocated_user_size = pool->user_block_size - POOL_INDEX_SIZE;
+            XAtomic_fetch_sub_size_t(&multi_pool->free_user_size, allocated_user_size, XAtomic_MemoryOrder_Release);
+            
+            // 4. 返回最终的用户指针
             //XPrintf("XMultiPool  malloc index:%i ptr:%p\n", i, user_data_start);
             return user_data_start;
         }
@@ -333,6 +338,10 @@ void XMultiPool_free(XMultiPool* multi_pool, void* ptr) {
     void* raw_block = get_raw_block_for_fixed_pool(ptr);
     //XPrintf("XMultiPool free index:%i ptr:%p\n", pool_idx, ptr);
     XFixedPool_free(pool, raw_block);
+    
+    // 4. 更新剩余内存统计（加回用户可用大小）
+    size_t freed_user_size = pool->user_block_size - POOL_INDEX_SIZE;
+    XAtomic_fetch_add_size_t(&multi_pool->free_user_size, freed_user_size, XAtomic_MemoryOrder_Release);
 }
 
 
@@ -404,8 +413,18 @@ bool XMultiPool_add_pool(XMultiPool* multi_pool, XFixedPool* sub_pool) {
 
         // 2. 在指定位置插入指针
         // XVector_insert_2 的 index 参数是 int64_t 类型
-        return XVector_insert_2(multi_pool->sub_pools, (int64_t)insert_pos, &sub_pool);
+        if (!XVector_insert_2(multi_pool->sub_pools, (int64_t)insert_pos, &sub_pool)) {
+            return false;
+        }
     }
+    
+    // ========== 更新内存统计 ==========
+    // 用户可用大小 = (user_block_size - POOL_INDEX_SIZE) * num_blocks
+    size_t pool_user_size = (sub_pool->user_block_size - POOL_INDEX_SIZE) * sub_pool->num_blocks;
+    multi_pool->total_user_size += pool_user_size;
+    XAtomic_fetch_add_size_t(&multi_pool->free_user_size, pool_user_size, XAtomic_MemoryOrder_Release);
+    
+    return true;
 }
 
 // ----------------------------------------------------------------------------
@@ -425,6 +444,8 @@ bool XMultiPool_init(XMultiPool* multi_pool) {
     }
 
     multi_pool->owns_memory = false; // 静态模式下不拥有所有权
+    multi_pool->total_user_size = 0;
+    XAtomic_init(multi_pool->free_user_size, 0);
     return true;
 }
 
@@ -520,4 +541,24 @@ void XMultiPool_global_free(void* ptr)
     //XMutex_lock(m_mutex);
     XMultiPool_free(global_pool, ptr);
     //XMutex_unlock(m_mutex);
+}
+
+// ----------------------------------------------------------------------------
+// 内存统计 API 实现
+// ----------------------------------------------------------------------------
+
+size_t XMultiPool_freeSize(XMultiPool* multi_pool)
+{
+    if (!multi_pool) {
+        return 0;
+    }
+    return XAtomic_load_size_t(&multi_pool->free_user_size, XAtomic_MemoryOrder_Relaxed);
+}
+
+size_t XMultiPool_totalSize(XMultiPool* multi_pool)
+{
+    if (!multi_pool) {
+        return 0;
+    }
+    return multi_pool->total_user_size;
 }

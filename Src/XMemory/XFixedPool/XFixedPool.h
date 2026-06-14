@@ -22,6 +22,7 @@ extern "C" {
 typedef struct XFixedPool 
 {
     XAtomic_size_t  free_list_head_packed; //打包头指针 (index + version)
+    XAtomic_size_t  free_count;            //当前剩余可用块数量（原子变量）
     size_t block_size;          // 对齐后的块大小
     size_t user_block_size;     // 用户视角的块大小
     void* raw_memory;           // 指向数据缓冲区的指针
@@ -125,6 +126,45 @@ void XFixedPool_free(XFixedPool* pool, void* block);
  * @return bool 如果指针有效且属于此内存池，则返回 `true`；否则返回 `false`。
  */
 bool XFixedPool_is_from_pool(const XFixedPool* pool, const void* ptr);
+
+/**
+ * @brief 获取内存池中剩余可用块数量
+ *
+ * 此函数是线程安全的，使用原子读取。
+ *
+ * @param pool 指向内存池的指针。
+ * @return size_t 剩余可用块数量。如果 pool 为 NULL，返回 0。
+ */
+size_t XFixedPool_freeCount(const XFixedPool* pool);
+
+/**
+ * @brief 获取内存池的总块数量
+ *
+ * @param pool 指向内存池的指针。
+ * @return size_t 总块数量。如果 pool 为 NULL，返回 0。
+ */
+size_t XFixedPool_totalCount(const XFixedPool* pool);
+
+/**
+ * @brief 获取内存池中剩余可用内存大小（字节）
+ *
+ * 此函数是线程安全的，返回值 = freeCount * user_block_size。
+ *
+ * @param pool 指向内存池的指针。
+ * @return size_t 剩余可用内存字节数。如果 pool 为 NULL，返回 0。
+ */
+size_t XFixedPool_freeSize(const XFixedPool* pool);
+
+/**
+ * @brief 获取内存池的总用户可用内存大小（字节）
+ *
+ * 返回值 = num_blocks * user_block_size。
+ *
+ * @param pool 指向内存池的指针。
+ * @return size_t 总用户可用内存字节数。如果 pool 为 NULL，返回 0。
+ */
+size_t XFixedPool_totalSize(const XFixedPool* pool);
+
 #ifdef __cplusplus
 }
 #endif

@@ -112,7 +112,8 @@ bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t 
         return false;
     }
     pool->block_size = internal_block_size;
-    pool->user_block_size = block_size;
+    //pool->user_block_size = block_size;
+    pool->user_block_size = internal_block_size-sizeof(size_t);
     pool->raw_memory = memory;
     pool->total_raw_size = total_bytes;
     pool->num_blocks = num_blocks;
@@ -128,11 +129,14 @@ bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t 
         return false; // ABA风险过高
     }
 
-    initialize_free_list(pool);
+        initialize_free_list(pool);
 
     // --- 初始化打包的头指针 (初始索引为0) ---
     size_t initial_packed = XAtomic_pack_index_version(0, 0, pool->index_bits,pool->version_mask);
     XAtomic_init(pool->free_list_head_packed, initial_packed); // XAtomic_init 会处理 size_t
+    
+    // --- 初始化空闲块计数 ---
+    XAtomic_init(pool->free_count, num_blocks);
     return true;
 }
 
@@ -172,9 +176,13 @@ void* XFixedPool_malloc(XFixedPool* pool) {
         &pool->free_list_head_packed, &old_head_packed, new_head_packed,
         XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
 
-    //memset(old_head_block,0, pool->block_size);
+        //memset(old_head_block,0, pool->block_size);
     // --- 标记为已分配 ---
     *(volatile size_t*)old_head_block = XFIXEDPOOL_BLOCK_ALLOCATED;
+    
+    // --- 原子减少空闲块计数 ---
+    XAtomic_fetch_sub_size_t(&pool->free_count, 1, XAtomic_MemoryOrder_Release);
+    
     //printf("user_block:%d\n", pool->user_block_size);
     return get_user_data_ptr(old_head_block);
 }
@@ -206,10 +214,13 @@ void XFixedPool_free(XFixedPool* pool, void* user_ptr) {
         size_t old_version = XAtomic_unpack_version(old_head_packed, pool->index_bits, pool->version_mask);
         new_head_packed = XAtomic_pack_index_version(freed_index, old_version + 1, pool->index_bits, pool->version_mask);
 
-        // d. 尝试原子地更新头指针 (使用 _size_t 后缀的 CAS)
+                // d. 尝试原子地更新头指针 (使用 _size_t 后缀的 CAS)
     } while (!XAtomic_compare_exchange_strong_size_t(
         &pool->free_list_head_packed, &old_head_packed, new_head_packed,
         XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed));
+    
+    // --- 原子增加空闲块计数 ---
+    XAtomic_fetch_add_size_t(&pool->free_count, 1, XAtomic_MemoryOrder_Release);
 }
 
 bool XFixedPool_is_from_pool(const XFixedPool* pool, const void* ptr)
@@ -303,4 +314,37 @@ void XFixedPool_delete(XFixedPool* pool) {
     }
     // 无论如何都要释放 pool 结构体本身
     XFree_System(pool);
+}
+
+// ----------------------------------------------------------------------------
+// 查询函数实现
+// ----------------------------------------------------------------------------
+
+size_t XFixedPool_freeCount(const XFixedPool* pool) {
+    if (!pool) {
+        return 0;
+    }
+    return XAtomic_load_size_t(&pool->free_count, XAtomic_MemoryOrder_Relaxed);
+}
+
+size_t XFixedPool_totalCount(const XFixedPool* pool) {
+    if (!pool) {
+        return 0;
+    }
+    return pool->num_blocks;
+}
+
+size_t XFixedPool_freeSize(const XFixedPool* pool) {
+    if (!pool) {
+        return 0;
+    }
+    size_t free_cnt = XAtomic_load_size_t(&pool->free_count, XAtomic_MemoryOrder_Relaxed);
+    return free_cnt * pool->user_block_size;
+}
+
+size_t XFixedPool_totalSize(const XFixedPool* pool) {
+    if (!pool) {
+        return 0;
+    }
+    return pool->num_blocks * pool->user_block_size;
 }

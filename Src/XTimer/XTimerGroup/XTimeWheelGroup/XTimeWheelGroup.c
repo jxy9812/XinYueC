@@ -394,7 +394,8 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, siz
         size_t current_tick = group->m_class.m_current_tick;
         if (timer->m_expire_ticks <= current_tick) {
             node->next = NULL;
-            add_timer_to_wheel_lockfree(lower_level, node, 0);
+            if(!add_timer_to_wheel_lockfree(lower_level, node, 0))
+                delete_timer_node(group, node);
             node = next;
             continue;
         }
