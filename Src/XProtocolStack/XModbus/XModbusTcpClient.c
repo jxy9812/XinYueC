@@ -82,21 +82,6 @@ static inline void parseMbapHeader(const uint8_t* buffer, uint16_t* transactionI
     *length = readUint16BE(buffer, 4);
     *unitId = buffer[6];
 }
-
-// =============== 待处理请求管理 ===============
-static XModbusTcpPendingRequest* createPendingRequest(XModbusReply* reply, uint16_t transactionId, uint8_t unitId)
-{
-    XModbusTcpPendingRequest* pending = (XModbusTcpPendingRequest*)XMalloc_System(sizeof(XModbusTcpPendingRequest));
-    if (!pending) return NULL;
-
-    pending->reply = reply;
-    pending->transactionId = transactionId;
-    pending->unitId = unitId;
-    pending->timeoutTimer = XTIMER_INVALID_ID;
-    pending->retryCount = 0;
-
-    return pending;
-}
 /**
  * @brief 清理所有待处理请求
  */
@@ -107,7 +92,7 @@ static void clearAllPendingRequests(XModbusTcpClient* client, XModbusDevice_Erro
     for_each_iterator(client->m_pendingRequests, XHashMap, it)
     {
         XPair* pair = XHashMap_iterator_data(&it);
-        XModbusTcpPendingRequest* pending = XPair_Second(pair, XModbusTcpPendingRequest*);
+        XModbusTcpPendingRequest* pending = XPair_second(pair);
         if (pending) {
             if (pending->timeoutTimer != XTIMER_INVALID_ID) {
                 XHashMap_remove_base(client->m_timerMap, &pending->timeoutTimer);
@@ -124,29 +109,6 @@ static void clearAllPendingRequests(XModbusTcpClient* client, XModbusDevice_Erro
     // 清空定时器映射
     if (client->m_timerMap) {
         XHashMap_clear_base(client->m_timerMap);
-    }
-}
-static void deletePendingRequest(XModbusTcpPendingRequest* pending)
-{
-    if (!pending) return;
-
-    // 不删除reply，由外部管理
-   /* if (pending->requestData) {
-        XByteArray_delete_base(pending->requestData);
-    }*/
-    XFree_System(pending);
-}
-// 用于容器自动释放的回调函数
-static void pendingRequestDeinit(void* data)
-{
-    XModbusTcpPendingRequest** ppPending = (XModbusTcpPendingRequest**)data;
-    if (ppPending && *ppPending) {
-        XModbusTcpPendingRequest* pending = *ppPending;
-        // 停止超时定时器
-        if (pending->timeoutTimer != XTIMER_INVALID_ID) {
-            // 注意：这里无法获取client指针，需要在其他地方处理
-        }
-        deletePendingRequest(pending);
     }
 }
 // =============== 辅助函数 ===============
@@ -213,14 +175,10 @@ static bool buildAndSendRequest(XModbusTcpClient* client, XModbusReply* reply,
     XTimerId timerId = timeoutTimerStart(client, timeout);
 
     // 创建待处理请求
-    XModbusTcpPendingRequest* pending = createPendingRequest(reply, transactionId, (uint8_t)serverAddress);
-    if (!pending) {
-        timeoutTimerStop(client, &timerId);
-       
-        return false;
-    }
-    pending->timeoutTimer = timerId;
-
+    //XModbusTcpPendingRequest pending = createPendingRequest(reply, transactionId, (uint8_t)serverAddress);
+  
+    //pending.timeoutTimer = timerId;
+    XModbusTcpPendingRequest pending = { .reply = reply,.transactionId = transactionId ,.unitId = serverAddress,.timeoutTimer = timerId ,.retryCount = 0 };
     // 添加到待处理映射表
     XHashMap_insert_base(client->m_pendingRequests, &transactionId, &pending);
     // 添加到定时器反向映射
@@ -268,8 +226,8 @@ void XModbusTcpClient_init(XModbusTcpClient* client)
     XClassGetVtable(client) = XModbusTcpClient_class_init();
 
     client->m_transactionId = 0;
-    client->m_pendingRequests = XHashMap_Create(uint16_t, XModbusTcpPendingRequest*, uint16_t_compare);
-    XContainerSetDataDeinitMethod(client->m_pendingRequests, pendingRequestDeinit);
+    client->m_pendingRequests = XHashMap_Create(uint16_t, XModbusTcpPendingRequest, uint16_t_compare);
+    //XContainerSetDataDeinitMethod(client->m_pendingRequests, pendingRequestDeinit);
     client->m_timerMap = XHashMap_Create(XTimerId, uint16_t, size_t_compare);
     client->m_receiveBuffer = XByteArray_create();
     client->m_requestData = XByteArray_create();
@@ -489,14 +447,12 @@ static void processReceivedFrame(XModbusTcpClient* client)
         }
 
         // 查找对应的 pending 请求
-        XModbusTcpPendingRequest** ppPending = (XModbusTcpPendingRequest**)XHashMap_value_base(client->m_pendingRequests, &transactionId);
-        if (!ppPending || !*ppPending) {
+        XModbusTcpPendingRequest* pending = (XModbusTcpPendingRequest*)XHashMap_value_base(client->m_pendingRequests, &transactionId);
+        if (!pending) {
             XByteArray_remove_base(buffer, 0, expectedLen);
             bufLen = XByteArray_size_base(buffer);
             continue;
         }
-
-        XModbusTcpPendingRequest* pending = *ppPending;
         XModbusReply* reply = pending->reply;
 
         // 先从 timerMap 移除，再停止定时器
@@ -596,10 +552,8 @@ static void handleRequestTimeout(XModbusTcpClient* client, uint16_t transactionI
 {
     if (!client || !client->m_pendingRequests) return;
 
-    XModbusTcpPendingRequest** ppPending = (XModbusTcpPendingRequest**)XHashMap_value_base(client->m_pendingRequests, &transactionId);
-    if (!ppPending || !*ppPending) return;
-
-    XModbusTcpPendingRequest* pending = *ppPending;
+    XModbusTcpPendingRequest* pending = (XModbusTcpPendingRequest*)XHashMap_value_base(client->m_pendingRequests, &transactionId);
+    if (!pending) return;
     // 从定时器反向映射中移除
     if (pending->timeoutTimer != XTIMER_INVALID_ID) {
         XHashMap_remove_base(client->m_timerMap, &pending->timeoutTimer);
