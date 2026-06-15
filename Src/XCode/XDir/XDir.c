@@ -70,6 +70,12 @@ static void VXDir_deinit(XDir* self)
         XStringList_delete_base(self->m_nameFilters);
         self->m_nameFilters = NULL;
     }
+    
+    // 释放缓存
+    if (self->m_cachedEntries) {
+        XStringList_delete_base(self->m_cachedEntries);
+        self->m_cachedEntries = NULL;
+    }
 }
 
 /* ============================================================================
@@ -143,6 +149,12 @@ void XDir_init_1(XDir* dir)
     dir->m_nameFilters = XStringList_create();
     dir->m_filters = XDir_AllEntries;
     dir->m_sorting = XDir_Name | XDir_IgnoreCase;
+    
+    // 初始化缓存
+    dir->m_cachedEntries = NULL;
+    dir->m_cachedFilters = XDir_NoFilter;
+    dir->m_cachedSorting = XDir_NoSort;
+    dir->m_cacheValid = false;
 }
 
 void XDir_init_2(XDir* dir, const XString* path)
@@ -156,6 +168,12 @@ void XDir_init_2(XDir* dir, const XString* path)
     dir->m_nameFilters = XStringList_create();
     dir->m_filters = XDir_AllEntries;
     dir->m_sorting = XDir_Name | XDir_IgnoreCase;
+    
+    // 初始化缓存
+    dir->m_cachedEntries = NULL;
+    dir->m_cachedFilters = XDir_NoFilter;
+    dir->m_cachedSorting = XDir_NoSort;
+    dir->m_cacheValid = false;
 }
 
 void XDir_init_3(XDir* dir, const XString* path, const XStringList* nameFilters,
@@ -170,6 +188,12 @@ void XDir_init_3(XDir* dir, const XString* path, const XStringList* nameFilters,
     dir->m_nameFilters = XStringList_create_copy(nameFilters);
     dir->m_filters = (filters == XDir_NoFilter) ? XDir_AllEntries : filters;
     dir->m_sorting = (sort == XDir_NoSort) ? (XDir_Name | XDir_IgnoreCase) : sort;
+    
+    // 初始化缓存
+    dir->m_cachedEntries = NULL;
+    dir->m_cachedFilters = XDir_NoFilter;
+    dir->m_cachedSorting = XDir_NoSort;
+    dir->m_cacheValid = false;
 }
 
 /* ============================================================================
@@ -184,6 +208,9 @@ void XDir_setPath(XDir* dir, const XString* path)
         XString_delete_base(dir->m_path);
     }
     dir->m_path = XString_create_copy(path);
+    
+    // 使缓存失效
+    dir->m_cacheValid = false;
 }
 
 const XString* XDir_path(const XDir* dir)
@@ -267,7 +294,12 @@ XString* XDir_filePath(const XDir* dir, const XString* fileName)
 void XDir_setFilter(XDir* dir, XDirFilters filters)
 {
     if (!dir) return;
-    dir->m_filters = filters;
+    
+    // 如果过滤器改变了，使缓存失效
+    if (dir->m_filters != filters) {
+        dir->m_filters = filters;
+        dir->m_cacheValid = false;
+    }
 }
 
 XDirFilters XDir_filter(const XDir* dir)
@@ -279,7 +311,12 @@ XDirFilters XDir_filter(const XDir* dir)
 void XDir_setSorting(XDir* dir, XDirSortFlags sort)
 {
     if (!dir) return;
-    dir->m_sorting = sort;
+    
+    // 如果排序改变了，使缓存失效
+    if (dir->m_sorting != sort) {
+        dir->m_sorting = sort;
+        dir->m_cacheValid = false;
+    }
 }
 
 XDirSortFlags XDir_sorting(const XDir* dir)
@@ -296,6 +333,9 @@ void XDir_setNameFilters(XDir* dir, const XStringList* nameFilters)
         XStringList_delete_base(dir->m_nameFilters);
     }
     dir->m_nameFilters = XStringList_create_copy(nameFilters);
+    
+    // 使缓存失效
+    dir->m_cacheValid = false;
 }
 
 const XStringList* XDir_nameFilters(const XDir* dir)
@@ -666,33 +706,60 @@ bool XDir_makeAbsolute(XDir* dir)
 
 size_t XDir_count(const XDir* dir)
 {
-    XStringList* list = XDir_entryList_1(dir, XDir_NoFilter, XDir_NoSort);
-    if (!list) return 0;
+    if (!dir) return 0;
     
-    size_t count = XStringList_size_base(list);
-    XStringList_delete_base(list);
-    return count;
+    // 检查缓存是否有效，如果无效则更新缓存
+    if (!dir->m_cacheValid || !dir->m_cachedEntries) {
+        // 使用默认过滤器和排序更新缓存
+        XStringList* list = XDir_entryList_1(dir, XDir_NoFilter, XDir_NoSort);
+        if (!list) return 0;
+        
+        // 更新缓存
+        XDir* mutableDir = (XDir*)dir;
+        if (mutableDir->m_cachedEntries) {
+            XStringList_delete_base(mutableDir->m_cachedEntries);
+        }
+        mutableDir->m_cachedEntries = list;
+        mutableDir->m_cachedFilters = dir->m_filters;
+        mutableDir->m_cachedSorting = dir->m_sorting;
+        mutableDir->m_cacheValid = true;
+    }
+    
+    return XStringList_size_base(dir->m_cachedEntries);
 }
 
 XString* XDir_at(const XDir* dir, size_t pos)
 {
-    XStringList* list = XDir_entryList_1(dir, XDir_NoFilter, XDir_NoSort);
-    if (!list) return NULL;
+    if (!dir) return NULL;
     
-    if (pos >= XStringList_size_base(list)) {
-        XStringList_delete_base(list);
+    // 确保 count() 已经更新了缓存
+    size_t count = XDir_count(dir);
+    
+    if (pos >= count || !dir->m_cachedEntries) {
         return NULL;
     }
     
-    const XString* entry = XStringList_at_base(list, pos);
-    XString* result = XString_create_copy(entry);
-    
-    XStringList_delete_base(list);
-    return result;
+    const XString* entry = XStringList_at_base(dir->m_cachedEntries, pos);
+    return XString_create_copy(entry);
 }
 
 XStringList* XDir_entryList_1(const XDir* dir, XDirFilters filters, XDirSortFlags sort)
 {
+    if (!dir) return NULL;
+    
+    // 确定实际使用的过滤器和排序
+    XDirFilters actualFilters = (filters == XDir_NoFilter) ? dir->m_filters : filters;
+    XDirSortFlags actualSort = (sort == XDir_NoSort) ? dir->m_sorting : sort;
+    
+    // 检查缓存是否有效且过滤器和排序匹配
+    if (dir->m_cacheValid && dir->m_cachedEntries &&
+        dir->m_cachedFilters == actualFilters &&
+        dir->m_cachedSorting == actualSort) {
+        // 返回缓存的副本
+        return XStringList_create_copy(dir->m_cachedEntries);
+    }
+    
+    // 缓存无效或参数不匹配，需要重新获取
     return XDir_entryList_2(dir, dir->m_nameFilters, filters, sort);
 }
 
@@ -714,8 +781,16 @@ bool XDir_isEmpty(const XDir* dir, XDirFilters filters)
 
 void XDir_refresh(XDir* dir)
 {
-    // 目录信息通常是实时获取的，此函数暂时为空
-    (void)dir;
+    if (!dir) return;
+    
+    // 使缓存失效
+    dir->m_cacheValid = false;
+    
+    // 释放缓存的条目列表
+    if (dir->m_cachedEntries) {
+        XStringList_delete_base(dir->m_cachedEntries);
+        dir->m_cachedEntries = NULL;
+    }
 }
 
 bool XDir_isRelativePath(const XString* path)

@@ -13,6 +13,8 @@
 #include "XClass.h"
 #include "XString.h"
 #include "XStringList.h"
+#include "XVector.h"
+#include "XFileInfo.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -94,6 +96,12 @@ typedef struct XDir {
     XStringList* m_nameFilters;   /**< 名称过滤器列表 */
     XDirFilters m_filters;        /**< 过滤器标志 */
     XDirSortFlags m_sorting;      /**< 排序标志 */
+    
+    /* 缓存字段 */
+    XStringList* m_cachedEntries; /**< 缓存的条目列表 */
+    XDirFilters m_cachedFilters;  /**< 缓存时的过滤器 */
+    XDirSortFlags m_cachedSorting; /**< 缓存时的排序标志 */
+    bool m_cacheValid;            /**< 缓存是否有效 */
 } XDir;
 
 /* ============================================================================
@@ -283,6 +291,26 @@ XStringList* XDir_entryList_1(const XDir* dir, XDirFilters filters, XDirSortFlag
  */
 XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
                               XDirFilters filters, XDirSortFlags sort);
+
+/**
+ * @brief 获取目录条目信息列表（使用默认过滤器和排序）
+ * @param dir XDir 对象指针
+ * @param filters 过滤器标志，使用 XDir_NoFilter 表示使用默认过滤器
+ * @param sort 排序标志，使用 XDir_NoSort 表示使用默认排序
+ * @return XFileInfo 数组指针（需要调用者释放，使用 XFileInfo_delete_base 释放每个元素）
+ */
+XVector* XDir_entryInfoList_1(const XDir* dir, XDirFilters filters, XDirSortFlags sort);
+
+/**
+ * @brief 使用指定名称过滤器获取目录条目信息列表
+ * @param dir XDir 对象指针
+ * @param nameFilters 名称过滤器列表（XStringList对象）
+ * @param filters 过滤器标志
+ * @param sort 排序标志
+ * @return XFileInfo 数组指针（需要调用者释放）
+ */
+XVector* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
+                               XDirFilters filters, XDirSortFlags sort);
 
 /**
  * @brief 检查目录是否为空

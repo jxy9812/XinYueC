@@ -10,6 +10,121 @@
 #include <locale.h>
 
 /* ============================================================================
+ * XFileInfo 列表辅助函数
+ * ============================================================================ */
+
+// 用于排序 XFileInfo 的信息结构
+typedef struct {
+    XFileInfo info;      // 直接存储 XFileInfo 结构体
+    bool isDir;
+    int64_t size;
+    int64_t time;
+} XDirInfoEntry;
+
+// 比较函数（用于 XFileInfo 列表排序）
+static int compareInfoEntry(const XDirInfoEntry* a, const XDirInfoEntry* b, XDirSortFlags flags)
+{
+    int result = 0;
+    
+    // DirsFirst 或 DirsLast 处理
+    if ((flags & XDir_DirsFirst) || (flags & XDir_DirsLast)) {
+        if (a->isDir && !b->isDir) {
+            return (flags & XDir_DirsFirst) ? -1 : 1;
+        }
+        if (!a->isDir && b->isDir) {
+            return (flags & XDir_DirsFirst) ? 1 : -1;
+        }
+    }
+    
+        // 获取文件名用于排序
+    XString* nameA = XFileInfo_fileName(&a->info);
+    XString* nameB = XFileInfo_fileName(&b->info);
+    const char* strA = XString_toUtf8(nameA);
+    const char* strB = XString_toUtf8(nameB);
+    
+    bool ignoreCase = (flags & XDir_IgnoreCase) != 0;
+    bool localeAware = (flags & XDir_LocaleAware) != 0;
+    
+    if (flags & XDir_Type) {
+        // 按类型（扩展名）排序
+        const char* extA = strrchr(strA, '.');
+        const char* extB = strrchr(strB, '.');
+        if (!extA) extA = "";
+        if (!extB) extB = "";
+        
+        if (localeAware) {
+            result = XDir_localeCompare(extA, extB, ignoreCase);
+        } else if (ignoreCase) {
+            result = _stricmp(extA, extB);
+        } else {
+            result = strcmp(extA, extB);
+        }
+        
+        if (result == 0) {
+            if (localeAware) {
+                result = XDir_localeCompare(strA, strB, ignoreCase);
+            } else if (ignoreCase) {
+                result = _stricmp(strA, strB);
+            } else {
+                result = strcmp(strA, strB);
+            }
+        }
+    } else {
+        switch (flags & XDir_SortByMask) {
+            case XDir_Time:
+                if (a->time < b->time) result = -1;
+                else if (a->time > b->time) result = 1;
+                else result = 0;
+                break;
+            case XDir_Size:
+                if (a->size < b->size) result = -1;
+                else if (a->size > b->size) result = 1;
+                else result = 0;
+                break;
+            case XDir_Name:
+            case XDir_Unsorted:
+            default:
+                if (localeAware) {
+                    result = XDir_localeCompare(strA, strB, ignoreCase);
+                } else if (ignoreCase) {
+                    result = _stricmp(strA, strB);
+                } else {
+                    result = strcmp(strA, strB);
+                }
+                break;
+        }
+    }
+    
+    XString_delete_base(nameA);
+    XString_delete_base(nameB);
+    
+    // 反向处理
+    if (flags & XDir_Reversed) {
+        result = -result;
+    }
+    
+    return result;
+}
+
+// 快速排序实现
+static void sortInfoEntries(XDirInfoEntry* entries, size_t count, XDirSortFlags flags)
+{
+    if (count <= 1) return;
+    
+    // 简单插入排序（对于小数组效率可以）
+    for (size_t i = 1; i < count; i++) {
+        XDirInfoEntry key = entries[i];
+        int64_t j = (int64_t)i - 1;
+        
+        while (j >= 0 && compareInfoEntry(&entries[j], &key, flags) > 0) {
+            entries[j + 1] = entries[j];
+            j--;
+        }
+        entries[j + 1] = key;
+    }
+}
+
+/* ============================================================================
  * 本地化比较 - Windows 实现
  * ============================================================================ */
 
@@ -524,6 +639,45 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
     if (actualFilters == XDir_NoFilter) {
         actualFilters = XDir_AllEntries;
     }
+    
+    // 检查缓存是否有效
+    // 注意：entryList_2 使用传入的 nameFilters，而 entryList_1 使用 dir->m_nameFilters
+    // 所以只有当 nameFilters == dir->m_nameFilters 时才能使用缓存
+    bool canUseCache = dir->m_cacheValid && dir->m_cachedEntries &&
+                       dir->m_cachedFilters == actualFilters &&
+                       dir->m_cachedSorting == actualSort;
+    
+    // 检查 nameFilters 是否匹配
+    if (canUseCache && nameFilters && dir->m_nameFilters) {
+        // 比较两个 nameFilters 列表
+        size_t nfCount = XStringList_size_base(nameFilters);
+        size_t cachedNfCount = XStringList_size_base(dir->m_nameFilters);
+        if (nfCount != cachedNfCount) {
+            canUseCache = false;
+        } else {
+            for (size_t i = 0; i < nfCount && canUseCache; i++) {
+                const XString* nf1 = XStringList_at_base(nameFilters, i);
+                const XString* nf2 = XStringList_at_base(dir->m_nameFilters, i);
+                const char* s1 = XString_toUtf8((XString*)nf1);
+                const char* s2 = XString_toUtf8((XString*)nf2);
+                if (!s1 || !s2 || strcmp(s1, s2) != 0) {
+                    canUseCache = false;
+                }
+            }
+        }
+    } else if (canUseCache) {
+        // nameFilters 为空或 dir->m_nameFilters 为空
+        bool nfEmpty = (!nameFilters || XStringList_size_base(nameFilters) == 0);
+        bool cachedNfEmpty = (!dir->m_nameFilters || XStringList_size_base(dir->m_nameFilters) == 0);
+        if (nfEmpty != cachedNfEmpty) {
+            canUseCache = false;
+        }
+    }
+    
+    if (canUseCache) {
+        // 返回缓存的副本
+        return XStringList_create_copy(dir->m_cachedEntries);
+    }
 
     // 构建搜索路径
     size_t len = strlen(pathUtf8) + 3;  // "\\*"
@@ -728,12 +882,57 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
 
     FindClose(hFind);
 
-    // 调用排序函数
+        // 调用排序函数
     XDir_sortEntryList(result, actualSort, sizes, times, isDirs);
     
     XFree_System(sizes);
     XFree_System(times);
     XFree_System(isDirs);
+
+    // 更新缓存（只有使用默认 nameFilters 时才缓存）
+    // 判断是否使用的是 dir->m_nameFilters
+    bool shouldCache = (filters == XDir_NoFilter || filters == dir->m_filters) &&
+                       (sort == XDir_NoSort || sort == dir->m_sorting);
+    
+    // 检查 nameFilters 是否与 dir->m_nameFilters 相同
+    if (shouldCache && nameFilters && dir->m_nameFilters) {
+        size_t nfCount = XStringList_size_base(nameFilters);
+        size_t dirNfCount = XStringList_size_base(dir->m_nameFilters);
+        if (nfCount != dirNfCount) {
+            shouldCache = false;
+        } else {
+            for (size_t i = 0; i < nfCount && shouldCache; i++) {
+                const XString* nf1 = XStringList_at_base(nameFilters, i);
+                const XString* nf2 = XStringList_at_base(dir->m_nameFilters, i);
+                const char* s1 = XString_toUtf8((XString*)nf1);
+                const char* s2 = XString_toUtf8((XString*)nf2);
+                if (!s1 || !s2 || strcmp(s1, s2) != 0) {
+                    shouldCache = false;
+                }
+            }
+        }
+    } else if (shouldCache) {
+        bool nfEmpty = (!nameFilters || XStringList_size_base(nameFilters) == 0);
+        bool dirNfEmpty = (!dir->m_nameFilters || XStringList_size_base(dir->m_nameFilters) == 0);
+        if (nfEmpty != dirNfEmpty) {
+            shouldCache = false;
+        }
+    }
+    
+    if (shouldCache) {
+        XDir* mutableDir = (XDir*)dir;
+        
+        // 释放旧的缓存
+        if (mutableDir->m_cachedEntries) {
+            XStringList_delete_base(mutableDir->m_cachedEntries);
+        }
+        
+        // 保存新的缓存
+        mutableDir->m_cachedEntries = XStringList_create_copy(result);
+        mutableDir->m_cachedFilters = actualFilters;
+        mutableDir->m_cachedSorting = actualSort;
+        mutableDir->m_cacheValid = true;
+    }
 
     return result;
 }
@@ -1041,6 +1240,235 @@ XString* XDir_relativeFilePath(const XDir* dir, const XString* fileName)
     freePathParts(baseParts, baseCount);
     freePathParts(targetParts, targetCount);
     
+        return result;
+}
+
+/* ============================================================================
+ * XFileInfo 列表 - Windows 实现
+ * ============================================================================ */
+
+XVector* XDir_entryInfoList_1(const XDir* dir, XDirFilters filters, XDirSortFlags sort)
+{
+    return XDir_entryInfoList_2(dir, dir->m_nameFilters, filters, sort);
+}
+
+XVector* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
+                               XDirFilters filters, XDirSortFlags sort)
+{
+    if (!dir || !dir->m_path) return NULL;
+
+    const char* pathUtf8 = XString_toUtf8(dir->m_path);
+    if (!pathUtf8) return NULL;
+
+    XDirFilters actualFilters = (filters == XDir_NoFilter) ? dir->m_filters : filters;
+    XDirSortFlags actualSort = (sort == XDir_NoSort) ? dir->m_sorting : sort;
+
+    if (actualFilters == XDir_NoFilter) {
+        actualFilters = XDir_AllEntries;
+    }
+
+    // 构建搜索路径
+    size_t len = strlen(pathUtf8) + 3;
+    char* searchPath = (char*)XMalloc_System(len);
+    if (!searchPath) return NULL;
+
+    snprintf(searchPath, len, "%s\\*", pathUtf8);
+
+    // 创建存储 XFileInfo* 的 Vector
+        // 创建存储 XFileInfo 的 Vector（直接存储结构体）
+        XVector* result = XVector_create(sizeof(XFileInfo));
+        if (!result) {
+            XFree_System(searchPath);
+            return NULL;
+        }
+    
+        // 设置元素释放方法，自动释放 XFileInfo
+        XContainerSetDataDeinitMethod(result, (XCDataDeinitMethod)XFileInfo_deinit_base);
+        // 设置元素拷贝方法，实现深拷贝
+        XContainerSetDataCopyMethod(result, (XCDataCopyMethod)XFileInfo_copy_base);
+        // 设置元素移动方法
+        XContainerSetDataMoveMethod(result, (XCDataMoveMethod)XFileInfo_move_base);
+       // return NULL;
+    //}
+
+    WIN32_FIND_DATAA findData;
+    HANDLE hFind = FindFirstFileA(searchPath, &findData);
+    XFree_System(searchPath);
+
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return result;
+    }
+
+    // 用于排序的临时数组
+    size_t capacity = 256;
+    XDirInfoEntry* entries = (XDirInfoEntry*)XMalloc_System(capacity * sizeof(XDirInfoEntry));
+    if (!entries) {
+        FindClose(hFind);
+        return result;
+    }
+
+    size_t entryCount = 0;
+
+    do {
+        const char* name = findData.cFileName;
+
+        // 过滤 "." 和 ".."
+        if (strcmp(name, ".") == 0) {
+            if (actualFilters & XDir_NoDot) continue;
+            if (!(actualFilters & XDir_AllDirs) && !(actualFilters & XDir_Dirs)) continue;
+        }
+        if (strcmp(name, "..") == 0) {
+            if (actualFilters & XDir_NoDotDot) continue;
+            if (!(actualFilters & XDir_AllDirs) && !(actualFilters & XDir_Dirs)) continue;
+        }
+
+        bool isDir = (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        bool isFile = !isDir;
+        bool isHidden = (findData.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
+        bool isSystem = (findData.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) != 0;
+        bool isSymLink = (findData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+
+        // 应用符号链接过滤器
+        if (isSymLink && (actualFilters & XDir_NoSymLinks)) {
+            continue;
+        }
+
+        if (isDir && (actualFilters & XDir_AllDirs)) {
+            // AllDirs - 包含所有目录
+        }
+        else if (isDir && (actualFilters & XDir_Dirs)) {
+            // Dirs - 包含目录
+        }
+        else if (isFile && (actualFilters & XDir_Files)) {
+            // Files - 包含文件
+        }
+        else if (!(actualFilters & (XDir_Dirs | XDir_Files | XDir_AllDirs))) {
+            continue;
+        }
+
+        if (isHidden && !(actualFilters & XDir_Hidden)) continue;
+        if (isSystem && !(actualFilters & XDir_System)) continue;
+
+        // 应用权限过滤器
+        if (actualFilters & (XDir_Readable | XDir_Writable | XDir_Executable)) {
+            size_t checkLen = strlen(pathUtf8) + 1 + strlen(name) + 1;
+            char* checkPath = (char*)XMalloc_System(checkLen);
+            if (checkPath) {
+                snprintf(checkPath, checkLen, "%s\\%s", pathUtf8, name);
+
+                if (actualFilters & XDir_Readable) {
+                    HANDLE hFile = CreateFileA(checkPath, GENERIC_READ,
+                                               FILE_SHARE_READ, NULL,
+                                               OPEN_EXISTING, 0, NULL);
+                    if (hFile == INVALID_HANDLE_VALUE) {
+                        XFree_System(checkPath);
+                        continue;
+                    }
+                    CloseHandle(hFile);
+                }
+
+                if (actualFilters & XDir_Writable) {
+                    HANDLE hFile = CreateFileA(checkPath, GENERIC_WRITE,
+                                               FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                               NULL, OPEN_EXISTING, 0, NULL);
+                    if (hFile == INVALID_HANDLE_VALUE) {
+                        XFree_System(checkPath);
+                        continue;
+                    }
+                    CloseHandle(hFile);
+                }
+
+                if ((actualFilters & XDir_Executable) && !isDir) {
+                    const char* ext = strrchr(name, '.');
+                    if (!ext) {
+                        XFree_System(checkPath);
+                        continue;
+                    }
+                    if (_stricmp(ext, ".exe") != 0 &&
+                        _stricmp(ext, ".bat") != 0 &&
+                        _stricmp(ext, ".cmd") != 0 &&
+                        _stricmp(ext, ".com") != 0) {
+                        XFree_System(checkPath);
+                        continue;
+                    }
+                }
+
+                XFree_System(checkPath);
+            }
+        }
+
+        // 应用名称过滤器
+        if (nameFilters && XStringList_size_base(nameFilters) > 0) {
+            XString* nameStr = XString_create_utf8(name);
+            bool matchResult;
+            if (actualFilters & XDir_CaseSensitive) {
+                matchResult = false;
+                for (size_t fi = 0; fi < XStringList_size_base(nameFilters); fi++) {
+                    const XString* filter = XStringList_at_base(nameFilters, fi);
+                    const char* filterUtf8 = XString_toUtf8((XString*)filter);
+                    extern bool matchWildcardCaseSensitive(const char* pattern, const char* str);
+                    if (matchWildcardCaseSensitive(filterUtf8, name)) {
+                        matchResult = true;
+                        break;
+                    }
+                }
+            } else {
+                matchResult = XDir_match_2(nameFilters, nameStr);
+            }
+            if (!matchResult) {
+                XString_delete_base(nameStr);
+                continue;
+            }
+            XString_delete_base(nameStr);
+        }
+
+        // 检查是否需要扩容
+        if (entryCount >= capacity) {
+            capacity *= 2;
+            XDirInfoEntry* newEntries = (XDirInfoEntry*)XMalloc_System(capacity * sizeof(XDirInfoEntry));
+            if (!newEntries) break;
+            memcpy(newEntries, entries, entryCount * sizeof(XDirInfoEntry));
+            XFree_System(entries);
+            entries = newEntries;
+        }
+
+        // 构建 XFileInfo
+        size_t fullPathLen = strlen(pathUtf8) + 1 + strlen(name) + 1;
+        char* fullPath = (char*)XMalloc_System(fullPathLen);
+        if (fullPath) {
+            snprintf(fullPath, fullPathLen, "%s\\%s", pathUtf8, name);
+            XString* filePath = XString_create_utf8(fullPath);
+            XFree_System(fullPath);
+            
+                        // 初始化 XFileInfo 结构体
+            XFileInfo_init_2(&entries[entryCount].info, filePath);
+            XString_delete_base(filePath);
+            
+            entries[entryCount].isDir = isDir;
+            entries[entryCount].size = ((int64_t)findData.nFileSizeHigh << 32) | findData.nFileSizeLow;
+            ULARGE_INTEGER ul;
+            ul.LowPart = findData.ftLastWriteTime.dwLowDateTime;
+            ul.HighPart = findData.ftLastWriteTime.dwHighDateTime;
+            entries[entryCount].time = (int64_t)((ul.QuadPart - 116444736000000000LL) / 10000000);
+            entryCount++;
+        }
+
+    } while (FindNextFileA(hFind, &findData));
+
+    FindClose(hFind);
+
+    // 排序
+    if ((actualSort & XDir_SortByMask) != XDir_Unsorted && actualSort != XDir_NoSort) {
+        sortInfoEntries(entries, entryCount, actualSort);
+    }
+
+        // 将排序后的结果添加到 Vector
+    for (size_t i = 0; i < entryCount; i++) {
+        XVector_push_back_1_base(result, &entries[i].info);
+    }
+    
+    // 释放临时数组（但不释放 XFileInfo，因为它们已转移到 Vector）
+    XFree_System(entries);
     return result;
 }
 
