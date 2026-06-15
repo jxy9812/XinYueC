@@ -58,7 +58,6 @@ typedef enum XDirSortFlag {
     XDir_Name        = 0x00,  /**< 按名称排序 */
     XDir_Time        = 0x01,  /**< 按时间排序 */
     XDir_Size        = 0x02,  /**< 按大小排序 */
-    XDir_Type        = 0x80,  /**< 按类型（扩展名）排序 */
     XDir_Unsorted    = 0x03,  /**< 不排序 */
     XDir_SortByMask  = 0x03,
     
@@ -67,6 +66,7 @@ typedef enum XDirSortFlag {
     XDir_IgnoreCase  = 0x10,  /**< 忽略大小写 */
     XDir_DirsLast    = 0x20,  /**< 文件优先 */
     XDir_LocaleAware = 0x40,  /**< 使用本地化排序 */
+    XDir_Type        = 0x80,  /**< 按类型（扩展名）排序 */
     XDir_NoSort      = -1
 } XDirSortFlag;
 
@@ -621,6 +621,38 @@ void XDir_addSearchPath(const XString* prefix, const XString* path);
  * @return XStringList 指针（需要调用者释放）
  */
 XStringList* XDir_searchPaths(const XString* prefix);
+
+/* ============================================================================
+ * 内部函数（供平台实现调用）
+ * ============================================================================ */
+
+/**
+ * @brief 对条目列表进行排序（内部函数）
+ * @param list 条目列表
+ * @param flags 排序标志
+ * @param sizes 文件大小数组（可为 NULL）
+ * @param times 修改时间数组（可为 NULL）
+ * @param isDirs 是否为目录数组（可为 NULL）
+ */
+void XDir_sortEntryList(XStringList* list, XDirSortFlags flags, 
+                        const int64_t* sizes, const int64_t* times, const bool* isDirs);
+
+/**
+ * @brief 本地化字符串比较（内部函数，平台相关）
+ * @param str1 字符串1
+ * @param str2 字符串2
+ * @param ignoreCase 是否忽略大小写
+ * @return 比较结果：小于0表示str1<str2，等于0表示相等，大于0表示str1>str2
+ */
+int XDir_localeCompare(const char* str1, const char* str2, bool ignoreCase);
+
+/**
+ * @brief 区分大小写的通配符匹配（内部函数）
+ * @param pattern 通配符模式（支持 * 和 ?）
+ * @param str 要匹配的字符串
+ * @return 匹配返回 true，否则返回 false
+ */
+bool matchWildcardCaseSensitive(const char* pattern, const char* str);
 
 #ifdef __cplusplus
 }

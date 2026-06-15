@@ -6,6 +6,64 @@
 #include <shlobj.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
+#include <locale.h>
+
+/* ============================================================================
+ * 本地化比较 - Windows 实现
+ * ============================================================================ */
+
+int XDir_localeCompare(const char* str1, const char* str2, bool ignoreCase)
+{
+    if (!str1 || !str2) {
+        if (!str1 && !str2) return 0;
+        return str1 ? 1 : -1;
+    }
+    
+    if (ignoreCase) {
+        // 使用 Windows API CompareStringA 进行本地化比较
+        // LOCALE_USER_DEFAULT 使用用户默认区域设置
+        // NORM_IGNORECASE 忽略大小写
+        int result = CompareStringA(
+            LOCALE_USER_DEFAULT,
+            NORM_IGNORECASE,
+            str1, -1,
+            str2, -1
+        );
+        
+        // CompareStringA 返回值：
+        // CSTR_LESS_THAN (1) = str1 < str2
+        // CSTR_EQUAL (2) = str1 == str2  
+        // CSTR_GREATER_THAN (3) = str1 > str2
+        // 0 表示错误
+        
+        switch (result) {
+            case CSTR_LESS_THAN: return -1;
+            case CSTR_EQUAL: return 0;
+            case CSTR_GREATER_THAN: return 1;
+            default:
+                // 失败时回退到简单比较
+                return _stricmp(str1, str2);
+        }
+    } else {
+        // 区分大小写的本地化比较
+        int result = CompareStringA(
+            LOCALE_USER_DEFAULT,
+            0,  // 不设置特殊标志
+            str1, -1,
+            str2, -1
+        );
+        
+        switch (result) {
+            case CSTR_LESS_THAN: return -1;
+            case CSTR_EQUAL: return 0;
+            case CSTR_GREATER_THAN: return 1;
+            default:
+                // 失败时回退到简单比较
+                return strcmp(str1, str2);
+        }
+    }
+}
 
 /* ============================================================================
  * 路径操作 - Windows 实现
@@ -42,31 +100,6 @@ XString* XDir_canonicalPath(const XDir* dir)
         }
     }
     return NULL;
-}
-
-XString* XDir_absoluteFilePath(const XDir* dir, const XString* fileName)
-{
-    if (!dir || !dir->m_path || !fileName) return NULL;
-
-    XString* absPath = XDir_absolutePath(dir);
-    if (!absPath) return NULL;
-
-    const char* absUtf8 = XString_toUtf8(absPath);
-    const char* fileUtf8 = XString_toUtf8(fileName);
-
-        size_t len = strlen(absUtf8) + 1 + strlen(fileUtf8) + 1;
-    char* fullPath = (char*)XMalloc_System(len);
-    if (!fullPath) {
-        XString_delete_base(absPath);
-        return NULL;
-    }
-
-    snprintf(fullPath, len, "%s\\%s", absUtf8, fileUtf8);
-    XString* result = XString_create_utf8(fullPath);
-
-    XFree_System(fullPath);
-    XString_delete_base(absPath);
-    return result;
 }
 
 /* ============================================================================
@@ -166,14 +199,32 @@ bool XDir_isRoot(const XDir* dir)
         return false;
     }
 
-    // 检查是否是根目录 "C:\" 或 "\\server\share\"
     size_t len = strlen(absPath);
+
+    // 驱动器根目录 "C:\"
     if (len == 3 && isalpha((unsigned char)absPath[0]) &&
         absPath[1] == ':' && absPath[2] == '\\') {
-        return true;  // 驱动器根目录
+        return true;
     }
 
-    // TODO: UNC 路径检查
+    // UNC 路径检查 "\\server\share\"
+    if (absPath[0] == '\\' && absPath[1] == '\\') {
+        // 找到服务器名后的反斜杠
+        const char* p = absPath + 2;
+        while (*p && *p != '\\') p++;
+        if (*p == '\\') {
+            p++;
+            // 找到共享名后的反斜杠
+            while (*p && *p != '\\') p++;
+            // 如果路径到此结束，说明是 UNC 根目录
+            if (*p == '\\' && *(p + 1) == '\0') {
+                return true;
+            }
+            if (*p == '\0') {
+                return true;  // "\\server\share" 也是根目录
+            }
+        }
+    }
 
     return false;
 }
@@ -339,10 +390,81 @@ bool XDir_rmpath(XDir* dir, const XString* dirPath)
 
 bool XDir_removeRecursively(XDir* dir)
 {
-    // TODO: 需要递归删除所有文件和子目录
-    // 依赖 XFile 和完整的 entryList 实现
-    (void)dir;
-    return false;
+    if (!dir || !dir->m_path) return false;
+    
+    const char* pathUtf8 = XString_toUtf8(dir->m_path);
+    if (!pathUtf8) return false;
+    
+    // 构建搜索路径
+    size_t len = strlen(pathUtf8) + 3;  // "\*"
+    char* searchPath = (char*)XMalloc_System(len);
+    if (!searchPath) return false;
+    
+    snprintf(searchPath, len, "%s\\*", pathUtf8);
+    
+    WIN32_FIND_DATAA findData;
+    HANDLE hFind = FindFirstFileA(searchPath, &findData);
+    XFree_System(searchPath);
+    
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    
+    bool success = true;
+    
+    do {
+        const char* name = findData.cFileName;
+        
+        // 跳过 "." 和 ".."
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+            continue;
+        }
+        
+        // 构建完整路径
+        size_t itemLen = strlen(pathUtf8) + 1 + strlen(name) + 1;
+        char* itemPath = (char*)XMalloc_System(itemLen);
+        if (!itemPath) {
+            success = false;
+            continue;
+        }
+        
+        snprintf(itemPath, itemLen, "%s\\%s", pathUtf8, name);
+        
+        if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            // 递归删除子目录
+            XString* subPath = XString_create_utf8(itemPath);
+            XDir* subDir = XDir_create_2(subPath);
+            XString_delete_base(subPath);
+            
+            if (subDir) {
+                if (!XDir_removeRecursively(subDir)) {
+                    success = false;
+                }
+                XClass_delete_base((XClass*)subDir);
+            } else {
+                success = false;
+            }
+        } else {
+            // 删除文件
+            if (!DeleteFileA(itemPath)) {
+                success = false;
+            }
+        }
+        
+        XFree_System(itemPath);
+        
+    } while (FindNextFileA(hFind, &findData));
+    
+    FindClose(hFind);
+    
+    // 删除目录本身
+    if (success) {
+        if (!RemoveDirectoryA(pathUtf8)) {
+            success = false;
+        }
+    }
+    
+    return success;
 }
 
 bool XDir_remove(XDir* dir, const XString* fileName)
@@ -403,7 +525,7 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
         actualFilters = XDir_AllEntries;
     }
 
-        // 构建搜索路径
+    // 构建搜索路径
     size_t len = strlen(pathUtf8) + 3;  // "\\*"
     char* searchPath = (char*)XMalloc_System(len);
     if (!searchPath) return NULL;
@@ -420,7 +542,19 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
         return result;
     }
 
-    bool ignoreCase = (actualSort & XDir_IgnoreCase) != 0;
+    // 用于排序的临时数组
+    size_t capacity = 256;
+    int64_t* sizes = (int64_t*)XMalloc_System(capacity * sizeof(int64_t));
+    int64_t* times = (int64_t*)XMalloc_System(capacity * sizeof(int64_t));
+    bool* isDirs = (bool*)XMalloc_System(capacity * sizeof(bool));
+    
+    if (!sizes || !times || !isDirs) {
+        if (sizes) XFree_System(sizes);
+        if (times) XFree_System(times);
+        if (isDirs) XFree_System(isDirs);
+        FindClose(hFind);
+        return result;
+    }
 
     do {
         const char* name = findData.cFileName;
@@ -435,11 +569,17 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
             if (!(actualFilters & XDir_AllDirs) && !(actualFilters & XDir_Dirs)) continue;
         }
 
-        // 应用类型过滤器
+                // 应用类型过滤器
         bool isDir = (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         bool isFile = !isDir;
         bool isHidden = (findData.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
         bool isSystem = (findData.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) != 0;
+        bool isSymLink = (findData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+        
+        // 应用符号链接过滤器
+        if (isSymLink && (actualFilters & XDir_NoSymLinks)) {
+            continue;
+        }
 
         if (isDir && (actualFilters & XDir_AllDirs)) {
             // AllDirs - 包含所有目录
@@ -454,28 +594,146 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
             continue;
         }
 
-        // 应用隐藏和系统过滤器
+                // 应用隐藏和系统过滤器
         if (isHidden && !(actualFilters & XDir_Hidden)) continue;
         if (isSystem && !(actualFilters & XDir_System)) continue;
+        
+        // 应用权限过滤器
+        if (actualFilters & (XDir_Readable | XDir_Writable | XDir_Executable)) {
+            // 构建完整路径检查权限
+            size_t checkLen = strlen(pathUtf8) + 1 + strlen(name) + 1;
+            char* checkPath = (char*)XMalloc_System(checkLen);
+            if (checkPath) {
+                snprintf(checkPath, checkLen, "%s\\%s", pathUtf8, name);
+                
+                // 检查可读性
+                if (actualFilters & XDir_Readable) {
+                    DWORD attrs = GetFileAttributesA(checkPath);
+                    if (attrs == INVALID_FILE_ATTRIBUTES) {
+                        XFree_System(checkPath);
+                        continue;
+                    }
+                    // Windows 没有直接的"可读"权限，检查是否可以打开
+                    HANDLE hFile = CreateFileA(checkPath, GENERIC_READ, 
+                                               FILE_SHARE_READ, NULL, 
+                                               OPEN_EXISTING, 0, NULL);
+                    if (hFile == INVALID_HANDLE_VALUE) {
+                        XFree_System(checkPath);
+                        continue;
+                    }
+                    CloseHandle(hFile);
+                }
+                
+                // 检查可写性
+                if (actualFilters & XDir_Writable) {
+                    HANDLE hFile = CreateFileA(checkPath, GENERIC_WRITE, 
+                                               FILE_SHARE_READ | FILE_SHARE_WRITE, 
+                                               NULL, OPEN_EXISTING, 0, NULL);
+                    if (hFile == INVALID_HANDLE_VALUE) {
+                        XFree_System(checkPath);
+                        continue;
+                    }
+                    CloseHandle(hFile);
+                }
+                
+                // 检查可执行性（Windows 上检查扩展名）
+                if ((actualFilters & XDir_Executable) && !isDir) {
+                    const char* ext = strrchr(name, '.');
+                    if (!ext) {
+                        XFree_System(checkPath);
+                        continue;  // 无扩展名
+                    }
+                    // 检查是否为可执行文件扩展名
+                    if (_stricmp(ext, ".exe") != 0 && 
+                        _stricmp(ext, ".bat") != 0 && 
+                        _stricmp(ext, ".cmd") != 0 && 
+                        _stricmp(ext, ".com") != 0) {
+                        XFree_System(checkPath);
+                        continue;
+                    }
+                }
+                
+                XFree_System(checkPath);
+            }
+        }
 
-        // 应用名称过滤器
+                // 应用名称过滤器
         if (nameFilters && XStringList_size_base(nameFilters) > 0) {
             XString* nameStr = XString_create_utf8(name);
-            if (!XDir_match_2(nameFilters, nameStr)) {
+            // CaseSensitive 过滤器影响名称匹配
+            bool matchResult;
+            if (actualFilters & XDir_CaseSensitive) {
+                // 区分大小写的匹配
+                matchResult = false;
+                for (size_t fi = 0; fi < XStringList_size_base(nameFilters); fi++) {
+                    const XString* filter = XStringList_at_base(nameFilters, fi);
+                    const char* filterUtf8 = XString_toUtf8((XString*)filter);
+                    // 使用区分大小写的通配符匹配
+                    extern bool matchWildcardCaseSensitive(const char* pattern, const char* str);
+                    if (matchWildcardCaseSensitive(filterUtf8, name)) {
+                        matchResult = true;
+                        break;
+                    }
+                }
+            } else {
+                matchResult = XDir_match_2(nameFilters, nameStr);
+            }
+            if (!matchResult) {
                 XString_delete_base(nameStr);
                 continue;
             }
             XString_delete_base(nameStr);
         }
 
+        // 检查是否需要扩容
+        size_t count = XStringList_size_base(result);
+        if (count >= capacity) {
+            capacity *= 2;
+            int64_t* newSizes = (int64_t*)XMalloc_System(capacity * sizeof(int64_t));
+            int64_t* newTimes = (int64_t*)XMalloc_System(capacity * sizeof(int64_t));
+            bool* newIsDirs = (bool*)XMalloc_System(capacity * sizeof(bool));
+            
+            if (!newSizes || !newTimes || !newIsDirs) {
+                if (newSizes) XFree_System(newSizes);
+                if (newTimes) XFree_System(newTimes);
+                if (newIsDirs) XFree_System(newIsDirs);
+                break;
+            }
+            
+            memcpy(newSizes, sizes, count * sizeof(int64_t));
+            memcpy(newTimes, times, count * sizeof(int64_t));
+            memcpy(newIsDirs, isDirs, count * sizeof(bool));
+            
+            XFree_System(sizes);
+            XFree_System(times);
+            XFree_System(isDirs);
+            
+            sizes = newSizes;
+            times = newTimes;
+            isDirs = newIsDirs;
+        }
+        
+        // 保存条目信息用于排序
+        sizes[count] = ((int64_t)findData.nFileSizeHigh << 32) | findData.nFileSizeLow;
+        // 将 FILETIME 转换为 Unix 时间戳
+        ULARGE_INTEGER ul;
+        ul.LowPart = findData.ftLastWriteTime.dwLowDateTime;
+        ul.HighPart = findData.ftLastWriteTime.dwHighDateTime;
+        times[count] = (int64_t)((ul.QuadPart - 116444736000000000LL) / 10000000);
+        isDirs[count] = isDir;
+        
         XStringList_push_back_utf8(result, name);
 
     } while (FindNextFileA(hFind, &findData));
 
     FindClose(hFind);
 
-    // TODO: 排序实现
-    // 需要根据 actualSort 进行排序
+    // 调用排序函数
+    XDir_sortEntryList(result, actualSort, sizes, times, isDirs);
+    
+    XFree_System(sizes);
+    XFree_System(times);
+    XFree_System(isDirs);
 
     return result;
 }
@@ -501,31 +759,6 @@ bool XDir_isAbsolutePath(const XString* path)
         return true;  // 驱动器路径
     }
     return false;
-}
-
-XString* XDir_cleanPath(const XString* path)
-{
-    if (!path) return NULL;
-
-    const char* pathUtf8 = XString_toUtf8(path);
-    if (!pathUtf8) return NULL;
-
-        size_t len = strlen(pathUtf8);
-    char* result = (char*)XMalloc_System(len + 1);
-    if (!result) return NULL;
-
-    // 统一分隔符为 '/'
-    for (size_t i = 0; i <= len; i++) {
-        result[i] = (pathUtf8[i] == '\\') ? '/' : pathUtf8[i];
-    }
-
-    // 简化路径（移除多余的 "." 和 ".."）
-    // TODO: 实现完整的路径简化逻辑
-
-    XString* cleanStr = XString_create_utf8(result);
-    XFree_System(result);
-
-    return cleanStr;
 }
 
 XDir* XDir_current(void)
@@ -648,6 +881,99 @@ XStringList* XDir_drives(void)
  * 相对路径计算 - Windows 实现
  * ============================================================================ */
 
+// 辅助函数：分割路径为组件
+static int splitPath(const char* path, char** parts, int maxParts)
+{
+    char* dup = XStrdup(path);
+    if (!dup) return 0;
+    
+    int count = 0;
+    char* p = dup;
+    
+    // 跳过驱动器前缀
+    if (isalpha((unsigned char)p[0]) && p[1] == ':') {
+        p += 2;
+    }
+    
+    // 跳过 UNC 前缀
+    if (p[0] == '\\' && p[1] == '\\') {
+        p += 2;
+        // 跳过服务器名
+        while (*p && *p != '\\') p++;
+        if (*p == '\\') p++;
+        // 跳过共享名
+        while (*p && *p != '\\') p++;
+    }
+    
+    // 跳过根目录斜杠
+    while (*p == '\\') p++;
+    
+    // 分割路径
+    char* start = p;
+    while (*p && count < maxParts) {
+        if (*p == '\\') {
+            *p = '\0';
+            if (strlen(start) > 0) {
+                parts[count++] = XStrdup(start);
+            }
+            p++;
+            while (*p == '\\') p++;  // 跳过连续斜杠
+            start = p;
+        } else {
+            p++;
+        }
+    }
+    
+    // 最后一部分
+    if (*start && count < maxParts) {
+        parts[count++] = XStrdup(start);
+    }
+    
+    XFree_System(dup);
+    return count;
+}
+
+// 辅助函数：释放分割的路径组件
+static void freePathParts(char** parts, int count)
+{
+    for (int i = 0; i < count; i++) {
+        if (parts[i]) {
+            XFree_System(parts[i]);
+            parts[i] = NULL;
+        }
+    }
+}
+
+// 辅助函数：检查两个路径是否在同一驱动器
+static bool sameDrive(const char* path1, const char* path2)
+{
+    char drive1[3] = {0};
+    char drive2[3] = {0};
+    
+    if (isalpha((unsigned char)path1[0]) && path1[1] == ':') {
+        drive1[0] = toupper((unsigned char)path1[0]);
+        drive1[1] = ':';
+    }
+    if (isalpha((unsigned char)path2[0]) && path2[1] == ':') {
+        drive2[0] = toupper((unsigned char)path2[0]);
+        drive2[1] = ':';
+    }
+    
+    // 如果都是 UNC 路径，比较服务器和共享名
+    if (path1[0] == '\\' && path1[1] == '\\' &&
+        path2[0] == '\\' && path2[1] == '\\') {
+        // 简化处理：假设 UNC 路径相同
+        return true;
+    }
+    
+    // 如果都没有驱动器（相对路径）
+    if (drive1[0] == '\0' && drive2[0] == '\0') {
+        return true;
+    }
+    
+    return strcmp(drive1, drive2) == 0;
+}
+
 XString* XDir_relativeFilePath(const XDir* dir, const XString* fileName)
 {
     if (!dir || !dir->m_path || !fileName) return NULL;
@@ -664,22 +990,58 @@ XString* XDir_relativeFilePath(const XDir* dir, const XString* fileName)
     if (!_fullpath(absBase, basePath, MAX_PATH)) return NULL;
     if (!_fullpath(absTarget, targetPath, MAX_PATH)) return NULL;
 
-    // 简单实现：如果目标在基准目录下，返回相对路径
-    // TODO: 实现完整的相对路径计算逻辑
-
-    size_t baseLen = strlen(absBase);
-    size_t targetLen = strlen(absTarget);
-
-    // 检查是否以基准路径开头
-    if (_strnicmp(absBase, absTarget, baseLen) == 0) {
-        // 目标在基准目录下
-        if (absTarget[baseLen] == '\\' || absTarget[baseLen] == '/') {
-            return XString_create_utf8(absTarget + baseLen + 1);
-        }
+    // 如果不在同一驱动器，返回绝对路径
+    if (!sameDrive(absBase, absTarget)) {
+        return XString_create_utf8(absTarget);
     }
 
-    // 无法计算相对路径，返回绝对路径
-    return XString_create_utf8(absTarget);
+    // 分割路径
+    #define MAX_PATH_PARTS 64
+    char* baseParts[MAX_PATH_PARTS] = {0};
+    char* targetParts[MAX_PATH_PARTS] = {0};
+    
+    int baseCount = splitPath(absBase, baseParts, MAX_PATH_PARTS);
+    int targetCount = splitPath(absTarget, targetParts, MAX_PATH_PARTS);
+    
+    // 找到公共前缀
+    int commonLen = 0;
+    while (commonLen < baseCount && commonLen < targetCount) {
+        if (_stricmp(baseParts[commonLen], targetParts[commonLen]) == 0) {
+            commonLen++;
+        } else {
+            break;
+        }
+    }
+    
+    // 构建相对路径
+    XString* result = XString_create_utf8("");
+    
+    // 添加 ".." 返回到公共祖先
+    for (int i = commonLen; i < baseCount; i++) {
+        if (XString_length_base(result) > 0) {
+            XString_append_utf8(result, "/");
+        }
+        XString_append_utf8(result, "..");
+    }
+    
+    // 添加目标路径的剩余部分
+    for (int i = commonLen; i < targetCount; i++) {
+        if (XString_length_base(result) > 0) {
+            XString_append_utf8(result, "/");
+        }
+        XString_append_utf8(result, targetParts[i]);
+    }
+    
+    // 如果结果为空，返回 "."
+    if (XString_length_base(result) == 0) {
+        XString_append_utf8(result, ".");
+    }
+    
+    // 释放分割的路径组件
+    freePathParts(baseParts, baseCount);
+    freePathParts(targetParts, targetCount);
+    
+    return result;
 }
 
 #endif // _WIN32

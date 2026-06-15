@@ -1,6 +1,9 @@
 #include "XDir.h"
+#include "XSort.h"
+#include "XCompare.h"
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 /* ============================================================================
  * 虚函数实现
@@ -335,6 +338,12 @@ static bool matchWildcard(const char* pattern, const char* str, bool ignoreCase)
     return !*pattern && !*str;
 }
 
+// 区分大小写的通配符匹配（供外部调用）
+bool matchWildcardCaseSensitive(const char* pattern, const char* str)
+{
+    return matchWildcard(pattern, str, false);
+}
+
 bool XDir_match_1(const XString* filter, const XString* fileName)
 {
     if (!filter || !fileName) return false;
@@ -342,6 +351,7 @@ bool XDir_match_1(const XString* filter, const XString* fileName)
     const char* filterUtf8 = XString_toUtf8(filter);
     const char* fileUtf8 = XString_toUtf8(fileName);
     
+    // Qt 的 match() 默认忽略大小写
     return matchWildcard(filterUtf8, fileUtf8, true);
 }
 
@@ -444,6 +454,193 @@ XStringList* XDir_nameFiltersFromString(const XString* nameFilter)
     XFree_System(dup);
     return result;
 }
+
+/* ============================================================================
+ * 排序功能（平台无关）- 使用 XSort 通用排序 API
+ * ============================================================================ */
+
+// 用于排序的条目信息
+typedef struct {
+    const char* name;
+    bool isDir;
+    int64_t size;
+    int64_t time;
+} XDirEntryInfo;
+
+// 全局排序标志（用于比较函数）
+static XDirSortFlags g_sortFlags = 0;
+
+// 按名称比较
+static int compareByName(const XDirEntryInfo* a, const XDirEntryInfo* b)
+{
+    bool ignoreCase = (g_sortFlags & XDir_IgnoreCase) != 0;
+    bool localeAware = (g_sortFlags & XDir_LocaleAware) != 0;
+    
+    const char* nameA = a->name;
+    const char* nameB = b->name;
+    
+    // 本地化排序
+    if (localeAware) {
+        return XDir_localeCompare(nameA, nameB, ignoreCase);
+    }
+    
+    // 非本地化排序
+    if (ignoreCase) {
+        while (*nameA && *nameB) {
+            char ca = tolower((unsigned char)*nameA);
+            char cb = tolower((unsigned char)*nameB);
+            if (ca != cb) return ca - cb;
+            nameA++;
+            nameB++;
+        }
+        return tolower((unsigned char)*nameA) - tolower((unsigned char)*nameB);
+    }
+    
+    return strcmp(nameA, nameB);
+}
+
+// 按时间比较
+static int compareByTime(const XDirEntryInfo* a, const XDirEntryInfo* b)
+{
+    if (a->time < b->time) return XCompare_Less;
+    if (a->time > b->time) return XCompare_Greater;
+    return XCompare_Equality;
+}
+
+// 按大小比较
+static int compareBySize(const XDirEntryInfo* a, const XDirEntryInfo* b)
+{
+    if (a->size < b->size) return XCompare_Less;
+    if (a->size > b->size) return XCompare_Greater;
+    return XCompare_Equality;
+}
+
+// 按类型（扩展名）比较
+static int compareByType(const XDirEntryInfo* a, const XDirEntryInfo* b)
+{
+    const char* extA = strrchr(a->name, '.');
+    const char* extB = strrchr(b->name, '.');
+    
+    if (!extA) extA = "";
+    if (!extB) extB = "";
+    
+    bool ignoreCase = (g_sortFlags & XDir_IgnoreCase) != 0;
+    int result;
+    
+#ifdef _WIN32
+    result = ignoreCase ? _stricmp(extA, extB) : strcmp(extA, extB);
+#else
+    result = ignoreCase ? strcasecmp(extA, extB) : strcmp(extA, extB);
+#endif
+    
+    if (result == 0) {
+        result = compareByName(a, b);
+    }
+    
+    return result;
+}
+
+// XSort 比较回调函数
+static int32_t XDirEntryInfo_compare(const void* lhs, const void* rhs)
+{
+    const XDirEntryInfo* a = (const XDirEntryInfo*)lhs;
+    const XDirEntryInfo* b = (const XDirEntryInfo*)rhs;
+    
+    int result = 0;
+    
+    // DirsFirst 或 DirsLast 处理
+    if ((g_sortFlags & XDir_DirsFirst) || (g_sortFlags & XDir_DirsLast)) {
+        if (a->isDir && !b->isDir) {
+            return (g_sortFlags & XDir_DirsFirst) ? XCompare_Less : XCompare_Greater;
+        }
+        if (!a->isDir && b->isDir) {
+            return (g_sortFlags & XDir_DirsFirst) ? XCompare_Greater : XCompare_Less;
+        }
+    }
+    
+    // 根据排序类型选择比较方式
+    // Type 是独立标志，需要单独检查
+    if (g_sortFlags & XDir_Type) {
+        result = compareByType(a, b);
+    } else {
+        switch (g_sortFlags & XDir_SortByMask) {
+            case XDir_Time:
+                result = compareByTime(a, b);
+                break;
+            case XDir_Size:
+                result = compareBySize(a, b);
+                break;
+            case XDir_Name:
+            case XDir_Unsorted:
+            default:
+                result = compareByName(a, b);
+                break;
+        }
+    }
+    
+    // 反向处理
+    if (g_sortFlags & XDir_Reversed) {
+        result = -result;
+    }
+    
+    return result;
+}
+
+// 对字符串列表进行排序（内部函数）
+void XDir_sortEntryList(XStringList* list, XDirSortFlags flags, 
+                        const int64_t* sizes, const int64_t* times, const bool* isDirs)
+{
+    if (!list || flags == XDir_NoSort) return;
+    
+    // Unsorted 表示不排序
+    if ((flags & XDir_SortByMask) == XDir_Unsorted) {
+        return;  // 保持原始顺序
+    }
+    
+    size_t count = XStringList_size_base(list);
+    if (count <= 1) return;
+    
+    // 创建条目信息数组
+    XDirEntryInfo* entries = (XDirEntryInfo*)XMalloc_System(count * sizeof(XDirEntryInfo));
+    if (!entries) return;
+    
+    // 填充条目信息
+    for (size_t i = 0; i < count; i++) {
+        const XString* str = XStringList_at_base(list, i);
+        entries[i].name = XString_toUtf8((XString*)str);
+        entries[i].isDir = isDirs ? isDirs[i] : false;
+        entries[i].size = sizes ? sizes[i] : 0;
+        entries[i].time = times ? times[i] : 0;
+    }
+    
+    // 设置全局排序标志
+    g_sortFlags = flags;
+    
+    // 使用 XSort 的快速排序
+    XQuickSort(entries, count, sizeof(XDirEntryInfo), XDirEntryInfo_compare, XSORT_ASC);
+    
+    // 创建新的有序列表
+    XStringList* sortedList = XStringList_create();
+    for (size_t i = 0; i < count; i++) {
+        XStringList_push_back_utf8(sortedList, entries[i].name);
+    }
+    
+    // 将排序后的内容替换原列表
+    // 清空原列表
+    while (XStringList_size_base(list) > 0) {
+        XStringList_pop_back_base(list);
+    }
+    
+    // 复制排序后的内容
+    for (size_t i = 0; i < count; i++) {
+        const XString* str = XStringList_at_base(sortedList, i);
+        XStringList_push_back_base(list, str);
+    }
+    
+    XStringList_delete_base(sortedList);
+    XFree_System(entries);
+}
+
 /* ============================================================================
  * 通用函数（平台无关）
  * ============================================================================ */
@@ -556,6 +753,155 @@ XDir* XDir_temp(void)
     return dir;
 }
 
+XString* XDir_absoluteFilePath(const XDir* dir, const XString* fileName)
+{
+    if (!dir || !dir->m_path || !fileName) return NULL;
+    
+    XString* absPath = XDir_absolutePath(dir);
+    if (!absPath) return NULL;
+    
+    // 构建临时 XDir 对象来使用 XDir_filePath（统一使用 '/' 分隔符）
+    XDir tempDir;
+    tempDir.m_path = absPath;
+    
+    XString* result = XDir_filePath(&tempDir, fileName);
+    
+    XString_delete_base(absPath);
+    return result;
+}
+
+XString* XDir_cleanPath(const XString* path)
+{
+    if (!path) return NULL;
+    
+    const char* pathUtf8 = XString_toUtf8(path);
+    if (!pathUtf8) return NULL;
+    
+    size_t len = strlen(pathUtf8);
+    if (len == 0) return XString_create();
+    
+    // 使用栈数组处理路径（避免动态分配）
+    char* result = (char*)XMalloc_System(len + 1);
+    if (!result) return NULL;
+    
+    // 第一步：统一分隔符为 '/'
+    for (size_t i = 0; i <= len; i++) {
+        result[i] = (pathUtf8[i] == '\\') ? '/' : pathUtf8[i];
+    }
+    
+    // 第二步：处理 "." 和 ".." 以及冗余的 "//"
+    // 使用指针数组存储路径的各个部分
+    char** parts = (char**)XMalloc_System(sizeof(char*) * (len + 1));
+    if (!parts) {
+        XFree_System(result);
+        return NULL;
+    }
+    
+    int partCount = 0;
+    char* p = result;
+    
+    // 检查是否有驱动器前缀 (Windows: "C:/")
+    bool hasDrivePrefix = false;
+    if (len >= 2 && result[1] == ':' && 
+        ((result[0] >= 'A' && result[0] <= 'Z') || 
+         (result[0] >= 'a' && result[0] <= 'z'))) {
+        hasDrivePrefix = true;
+    }
+    
+    // 检查是否以 '/' 开头（绝对路径或 UNC）
+    bool isAbsolute = (result[0] == '/');
+    
+    // 分割路径并处理 "." 和 ".."
+    while (*p) {
+        // 跳过多余的 '/'
+        while (*p == '/') p++;
+        if (!*p) break;
+        
+        // 记录这部分路径的起始位置
+        char* start = p;
+        
+        // 找到这部分路径的结束位置
+        while (*p && *p != '/') p++;
+        
+        size_t partLen = p - start;
+        
+        // 处理 "."
+        if (partLen == 1 && start[0] == '.') {
+            continue;  // 忽略 "."
+        }
+        
+        // 处理 ".."
+        if (partLen == 2 && start[0] == '.' && start[1] == '.') {
+            if (partCount > 0) {
+                // 回退一级（但不能越过驱动器前缀或根目录）
+                if (isAbsolute && partCount == 1) {
+                    // 已经在根目录，不能回退
+                } else if (hasDrivePrefix && partCount == 1) {
+                    // 已经在驱动器根目录，不能回退
+                } else {
+                    partCount--;  // 移除上一级
+                }
+            }
+            continue;
+        }
+        
+        // 保存这部分路径
+        start[partLen] = '\0';  // 临时截断
+        parts[partCount++] = start;
+    }
+    
+    // 第三步：重建路径
+    char* finalPath = (char*)XMalloc_System(len + 1);
+    if (!finalPath) {
+        XFree_System(result);
+        XFree_System(parts);
+        return NULL;
+    }
+    
+    finalPath[0] = '\0';
+    size_t pos = 0;
+    
+    // 添加驱动器前缀
+    if (hasDrivePrefix) {
+        finalPath[0] = result[0];
+        finalPath[1] = ':';
+        finalPath[2] = '\0';
+        pos = 2;
+    }
+    
+    // 添加根目录标记
+    if (isAbsolute) {
+        finalPath[pos++] = '/';
+        finalPath[pos] = '\0';
+    }
+    
+    // 添加各个路径部分
+    for (int i = 0; i < partCount; i++) {
+        if (pos > 0 && finalPath[pos - 1] != '/') {
+            finalPath[pos++] = '/';
+        }
+        size_t partLen = strlen(parts[i]);
+        memcpy(finalPath + pos, parts[i], partLen);
+        pos += partLen;
+    }
+    
+    finalPath[pos] = '\0';
+    
+    // 处理空路径情况
+    if (pos == 0) {
+        finalPath[0] = '.';
+        finalPath[1] = '\0';
+    }
+    
+    XString* cleanStr = XString_create_utf8(finalPath);
+    
+    XFree_System(result);
+    XFree_System(parts);
+    XFree_System(finalPath);
+    
+    return cleanStr;
+}
+
 /* ============================================================================
  * 搜索路径（平台无关）
  * ============================================================================ */
@@ -650,7 +996,6 @@ XStringList* XDir_searchPaths(const XString* prefix)
 
 // XString* XDir_absolutePath(const XDir* dir);
 // XString* XDir_canonicalPath(const XDir* dir);
-// XString* XDir_absoluteFilePath(const XDir* dir, const XString* fileName);
 // XString* XDir_relativeFilePath(const XDir* dir, const XString* fileName);
 // bool XDir_cd(XDir* dir, const XString* dirName);
 // bool XDir_cdUp(XDir* dir);
@@ -672,7 +1017,6 @@ XStringList* XDir_searchPaths(const XString* prefix)
 // bool XDir_isAbsolute(const XDir* dir);
 // bool XDir_isRoot(const XDir* dir);
 // bool XDir_isAbsolutePath(const XString* path);
-// XString* XDir_cleanPath(const XString* path);
 // XDir* XDir_current(void);
 // XString* XDir_currentPath(void);
 // bool XDir_setCurrent(const XString* path);
