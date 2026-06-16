@@ -13,17 +13,24 @@
  * XFileInfo 列表辅助函数
  * ============================================================================ */
 
-// 用于排序 XFileInfo 的信息结构
-typedef struct {
-    XFileInfo info;      // 直接存储 XFileInfo 结构体
+// 用于排序 XFileInfo 的信息结构（继承自 XFileInfo）
+typedef struct XDirInfoEntry {
+    XFileInfo info;      // 基类 XFileInfo（必须放在第一位）
     bool isDir;
     int64_t size;
     int64_t time;
 } XDirInfoEntry;
 
-// 比较函数（用于 XFileInfo 列表排序）
-static int compareInfoEntry(const XDirInfoEntry* a, const XDirInfoEntry* b, XDirSortFlags flags)
+// 全局排序标志（用于比较函数）
+static XDirSortFlags g_entryInfoSortFlags = 0;
+
+// XVector 排序比较函数
+static int32_t compareDirInfoEntry(const void* lhs, const void* rhs)
 {
+    const XDirInfoEntry* a = (const XDirInfoEntry*)lhs;
+    const XDirInfoEntry* b = (const XDirInfoEntry*)rhs;
+    XDirSortFlags flags = g_entryInfoSortFlags;
+    
     int result = 0;
     
     // DirsFirst 或 DirsLast 处理
@@ -36,7 +43,7 @@ static int compareInfoEntry(const XDirInfoEntry* a, const XDirInfoEntry* b, XDir
         }
     }
     
-        // 获取文件名用于排序
+    // 获取文件名用于排序
     XString* nameA = XFileInfo_fileName(&a->info);
     XString* nameB = XFileInfo_fileName(&b->info);
     const char* strA = XString_toUtf8(nameA);
@@ -106,22 +113,33 @@ static int compareInfoEntry(const XDirInfoEntry* a, const XDirInfoEntry* b, XDir
     return result;
 }
 
-// 快速排序实现
-static void sortInfoEntries(XDirInfoEntry* entries, size_t count, XDirSortFlags flags)
+// XDirInfoEntry 的释放方法
+static void XDirInfoEntry_deinit(void* data)
 {
-    if (count <= 1) return;
-    
-    // 简单插入排序（对于小数组效率可以）
-    for (size_t i = 1; i < count; i++) {
-        XDirInfoEntry key = entries[i];
-        int64_t j = (int64_t)i - 1;
-        
-        while (j >= 0 && compareInfoEntry(&entries[j], &key, flags) > 0) {
-            entries[j + 1] = entries[j];
-            j--;
-        }
-        entries[j + 1] = key;
-    }
+    XDirInfoEntry* entry = (XDirInfoEntry*)data;
+    XFileInfo_deinit_base(&entry->info);
+}
+
+// XDirInfoEntry 的拷贝方法
+static void XDirInfoEntry_copy(void* dest, const void* src)
+{
+    XDirInfoEntry* d = (XDirInfoEntry*)dest;
+    const XDirInfoEntry* s = (const XDirInfoEntry*)src;
+    XFileInfo_copy_base(&d->info, &s->info);
+    d->isDir = s->isDir;
+    d->size = s->size;
+    d->time = s->time;
+}
+
+// XDirInfoEntry 的移动方法
+static void XDirInfoEntry_move(void* dest, void* src)
+{
+    XDirInfoEntry* d = (XDirInfoEntry*)dest;
+    XDirInfoEntry* s = (XDirInfoEntry*)src;
+    XFileInfo_move_base(&d->info, &s->info);
+    d->isDir = s->isDir;
+    d->size = s->size;
+    d->time = s->time;
 }
 
 /* ============================================================================
@@ -1247,12 +1265,12 @@ XString* XDir_relativeFilePath(const XDir* dir, const XString* fileName)
  * XFileInfo 列表 - Windows 实现
  * ============================================================================ */
 
-XVector* XDir_entryInfoList_1(const XDir* dir, XDirFilters filters, XDirSortFlags sort)
+XFileInfoList* XDir_entryInfoList_1(const XDir* dir, XDirFilters filters, XDirSortFlags sort)
 {
     return XDir_entryInfoList_2(dir, dir->m_nameFilters, filters, sort);
 }
 
-XVector* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
+XFileInfoList* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
                                XDirFilters filters, XDirSortFlags sort)
 {
     if (!dir || !dir->m_path) return NULL;
@@ -1274,22 +1292,21 @@ XVector* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
 
     snprintf(searchPath, len, "%s\\*", pathUtf8);
 
-    // 创建存储 XFileInfo* 的 Vector
-        // 创建存储 XFileInfo 的 Vector（直接存储结构体）
-        XVector* result = XVector_create(sizeof(XFileInfo));
-        if (!result) {
-            XFree_System(searchPath);
-            return NULL;
-        }
+    // 创建存储 XDirInfoEntry 的 Vector
+    XFileInfoList* result = XVector_create(sizeof(XDirInfoEntry));
+    if (!result) {
+        XFree_System(searchPath);
+        return NULL;
+    }
     
-        // 设置元素释放方法，自动释放 XFileInfo
-        XContainerSetDataDeinitMethod(result, (XCDataDeinitMethod)XFileInfo_deinit_base);
-        // 设置元素拷贝方法，实现深拷贝
-        XContainerSetDataCopyMethod(result, (XCDataCopyMethod)XFileInfo_copy_base);
-        // 设置元素移动方法
-        XContainerSetDataMoveMethod(result, (XCDataMoveMethod)XFileInfo_move_base);
-       // return NULL;
-    //}
+    // 设置元素释放方法
+    XContainerSetDataDeinitMethod(result, XDirInfoEntry_deinit);
+    // 设置元素拷贝方法
+    XContainerSetDataCopyMethod(result, XDirInfoEntry_copy);
+    // 设置元素移动方法
+    XContainerSetDataMoveMethod(result, XDirInfoEntry_move);
+    // 设置元素比较方法
+    XContainerSetCompare(result, compareDirInfoEntry);
 
     WIN32_FIND_DATAA findData;
     HANDLE hFind = FindFirstFileA(searchPath, &findData);
@@ -1298,16 +1315,6 @@ XVector* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
     if (hFind == INVALID_HANDLE_VALUE) {
         return result;
     }
-
-    // 用于排序的临时数组
-    size_t capacity = 256;
-    XDirInfoEntry* entries = (XDirInfoEntry*)XMalloc_System(capacity * sizeof(XDirInfoEntry));
-    if (!entries) {
-        FindClose(hFind);
-        return result;
-    }
-
-    size_t entryCount = 0;
 
     do {
         const char* name = findData.cFileName;
@@ -1422,17 +1429,7 @@ XVector* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
             XString_delete_base(nameStr);
         }
 
-        // 检查是否需要扩容
-        if (entryCount >= capacity) {
-            capacity *= 2;
-            XDirInfoEntry* newEntries = (XDirInfoEntry*)XMalloc_System(capacity * sizeof(XDirInfoEntry));
-            if (!newEntries) break;
-            memcpy(newEntries, entries, entryCount * sizeof(XDirInfoEntry));
-            XFree_System(entries);
-            entries = newEntries;
-        }
-
-        // 构建 XFileInfo
+        // 构建 XDirInfoEntry 并添加到 Vector
         size_t fullPathLen = strlen(pathUtf8) + 1 + strlen(name) + 1;
         char* fullPath = (char*)XMalloc_System(fullPathLen);
         if (fullPath) {
@@ -1440,35 +1437,32 @@ XVector* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
             XString* filePath = XString_create_utf8(fullPath);
             XFree_System(fullPath);
             
-                        // 初始化 XFileInfo 结构体
-            XFileInfo_init_2(&entries[entryCount].info, filePath);
+            // 创建 XDirInfoEntry
+            XDirInfoEntry entry;
+            XFileInfo_init_2(&entry.info, filePath);
             XString_delete_base(filePath);
             
-            entries[entryCount].isDir = isDir;
-            entries[entryCount].size = ((int64_t)findData.nFileSizeHigh << 32) | findData.nFileSizeLow;
+            entry.isDir = isDir;
+            entry.size = ((int64_t)findData.nFileSizeHigh << 32) | findData.nFileSizeLow;
             ULARGE_INTEGER ul;
             ul.LowPart = findData.ftLastWriteTime.dwLowDateTime;
             ul.HighPart = findData.ftLastWriteTime.dwHighDateTime;
-            entries[entryCount].time = (int64_t)((ul.QuadPart - 116444736000000000LL) / 10000000);
-            entryCount++;
+            entry.time = (int64_t)((ul.QuadPart - 116444736000000000LL) / 10000000);
+            
+            // 添加到 Vector
+            XVector_push_back_1_base(result, &entry);
         }
 
     } while (FindNextFileA(hFind, &findData));
 
     FindClose(hFind);
 
-    // 排序
+    // 使用 XVector 的排序 API
     if ((actualSort & XDir_SortByMask) != XDir_Unsorted && actualSort != XDir_NoSort) {
-        sortInfoEntries(entries, entryCount, actualSort);
+        g_entryInfoSortFlags = actualSort;
+        XVector_sort_base(result, XSORT_ASC);
     }
 
-        // 将排序后的结果添加到 Vector
-    for (size_t i = 0; i < entryCount; i++) {
-        XVector_push_back_1_base(result, &entries[i].info);
-    }
-    
-    // 释放临时数组（但不释放 XFileInfo，因为它们已转移到 Vector）
-    XFree_System(entries);
     return result;
 }
 

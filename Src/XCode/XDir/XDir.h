@@ -299,7 +299,7 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
  * @param sort 排序标志，使用 XDir_NoSort 表示使用默认排序
  * @return XFileInfo 数组指针（需要调用者释放，使用 XFileInfo_delete_base 释放每个元素）
  */
-XVector* XDir_entryInfoList_1(const XDir* dir, XDirFilters filters, XDirSortFlags sort);
+XFileInfoList* XDir_entryInfoList_1(const XDir* dir, XDirFilters filters, XDirSortFlags sort);
 
 /**
  * @brief 使用指定名称过滤器获取目录条目信息列表
@@ -309,9 +309,8 @@ XVector* XDir_entryInfoList_1(const XDir* dir, XDirFilters filters, XDirSortFlag
  * @param sort 排序标志
  * @return XFileInfo 数组指针（需要调用者释放）
  */
-XVector* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
+XFileInfoList* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
                                XDirFilters filters, XDirSortFlags sort);
-
 /**
  * @brief 检查目录是否为空
  * @param dir XDir 对象指针
