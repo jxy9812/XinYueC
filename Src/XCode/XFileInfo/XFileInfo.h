@@ -53,10 +53,10 @@ typedef int XFilePermissions;
  * @brief 文件时间类型
  */
 typedef enum XFileTime {
-    XFile_BirthTime          = 0,  /**< 创建时间 */
-    XFile_MetadataChangeTime = 1,  /**< 元数据修改时间 */
-    XFile_ModificationTime   = 2,  /**< 内容修改时间 */
-    XFile_AccessTime         = 3   /**< 访问时间 */
+    XFile_AccessTime         = 0,  /**< 访问时间 */
+    XFile_BirthTime          = 1,  /**< 创建时间 */
+    XFile_MetadataChangeTime = 2,  /**< 元数据修改时间 */
+    XFile_ModificationTime   = 3   /**< 内容修改时间 */
 } XFileTime;
 
 /* ============================================================================

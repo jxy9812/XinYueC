@@ -9,8 +9,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <initguid.h>
+#include <shobjidl.h>
+#include <objbase.h>
 
 #pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "shell32.lib")
 
 // 如果 SE_FILE_OBJECT 未定义，使用替代定义
 #ifndef SE_FILE_OBJECT
@@ -60,6 +65,67 @@ static int64_t fileTimeToUnixTime(const FILETIME* ft)
     // Unix 时间戳是从 1970-01-01 开始
     // 两者相差 11644473600 秒
     return (int64_t)((ul.QuadPart - 116444736000000000LL) / 10000000);
+}
+
+// 解析快捷方式 (.lnk) 文件的目标路径
+static XString* XFileInfo_resolveShortcut(const char* lnkPath)
+{
+    if (!lnkPath) return XString_create();
+    
+    HRESULT hr;
+    IShellLinkA* pShellLink = NULL;
+    IPersistFile* pPersistFile = NULL;
+    XString* result = XString_create();
+    
+    // 初始化 COM
+    hr = CoInitialize(NULL);
+    if (FAILED(hr)) {
+        // COM 可能已经初始化
+    }
+    
+    // 创建 ShellLink 对象
+    hr = CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER,
+                          &IID_IShellLinkA, (void**)&pShellLink);
+    if (FAILED(hr) || !pShellLink) {
+        CoUninitialize();
+        return result;
+    }
+    
+    // 获取 IPersistFile 接口
+    hr = pShellLink->lpVtbl->QueryInterface(pShellLink, &IID_IPersistFile, (void**)&pPersistFile);
+    if (FAILED(hr) || !pPersistFile) {
+        pShellLink->lpVtbl->Release(pShellLink);
+        CoUninitialize();
+        return result;
+    }
+    
+    // 将路径转换为宽字符
+    wchar_t wPath[MAX_PATH];
+    MultiByteToWideChar(CP_UTF8, 0, lnkPath, -1, wPath, MAX_PATH);
+    
+    // 加载快捷方式文件
+    hr = pPersistFile->lpVtbl->Load(pPersistFile, wPath, STGM_READ);
+    if (SUCCEEDED(hr)) {
+        // 解析快捷方式（可能需要查找目标）
+        hr = pShellLink->lpVtbl->Resolve(pShellLink, NULL, SLR_NO_UI);
+        
+        if (SUCCEEDED(hr)) {
+            // 获取目标路径
+            char targetPath[MAX_PATH];
+            hr = pShellLink->lpVtbl->GetPath(pShellLink, targetPath, MAX_PATH, NULL, 0);
+            
+            if (SUCCEEDED(hr) && targetPath[0] != '\0') {
+                XString_delete_base(result);
+                result = XString_create_utf8(targetPath);
+            }
+        }
+    }
+    
+    pPersistFile->lpVtbl->Release(pPersistFile);
+    pShellLink->lpVtbl->Release(pShellLink);
+    CoUninitialize();
+    
+    return result;
 }
 
 // 检查路径是否为绝对路径（静态版本）
@@ -413,7 +479,8 @@ bool XFileInfo_makeAbsolute(XFileInfo* info)
 {
     if (!info || !info->m_filePath) return false;
     
-    if (XFileInfo_isAbsolute(info)) return false;
+    // 如果已经是绝对路径，返回 true（无需转换）
+    if (XFileInfo_isAbsolute(info)) return true;
     
     XString* absPath = XFileInfo_absoluteFilePath(info);
     if (!absPath || XString_length_base(absPath) == 0) {
@@ -714,10 +781,7 @@ XString* XFileInfo_symLinkTarget(const XFileInfo* info)
     // 检查是否为快捷方式
     size_t len = strlen(pathUtf8);
     if (len > 4 && _stricmp(pathUtf8 + len - 4, ".lnk") == 0) {
-        // 使用 IShellLink 解析快捷方式
-        // 这里简化处理，返回空字符串
-        // 完整实现需要 COM 接口
-        return XString_create();
+        return XFileInfo_resolveShortcut(pathUtf8);
     }
     
     // 检查是否为符号链接或 Junction
@@ -741,9 +805,9 @@ XString* XFileInfo_symLinkTarget(const XFileInfo* info)
     
     CloseHandle(hFile);
     
-        PREPARSE_DATA_BUFFER reparse = (PREPARSE_DATA_BUFFER)buffer;
+    PREPARSE_DATA_BUFFER reparse = (PREPARSE_DATA_BUFFER)buffer;
     
-        if (reparse->ReparseTag == IO_REPARSE_TAG_SYMLINK) {
+    if (reparse->ReparseTag == IO_REPARSE_TAG_SYMLINK) {
         // 符号链接
         USHORT nameOffset = reparse->SymbolicLinkReparseBuffer.SubstituteNameOffset / sizeof(WCHAR);
         USHORT nameLength = reparse->SymbolicLinkReparseBuffer.SubstituteNameLength / sizeof(WCHAR);
@@ -765,7 +829,7 @@ XString* XFileInfo_symLinkTarget(const XFileInfo* info)
         
         return XString_create_utf8(finalPath);
     }
-        else if (reparse->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT) {
+    else if (reparse->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT) {
         // Junction
         USHORT nameOffset = reparse->MountPointReparseBuffer.SubstituteNameOffset / sizeof(WCHAR);
         USHORT nameLength = reparse->MountPointReparseBuffer.SubstituteNameLength / sizeof(WCHAR);
