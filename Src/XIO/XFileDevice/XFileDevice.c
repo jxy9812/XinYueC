@@ -1,17 +1,7 @@
 #include "XFileDevice.h"
+#include "XFileSystem_platform.h"
 #include <stdlib.h>
 #include <string.h>
-
-/* ============================================================================
- * 平台相关函数声明（在 Drive/windows/XFileDevice_win32.c 或
- * Drive/linux/XFileDevice_linux.c 中实现）
- * ============================================================================ */
-
-extern int64_t XFileDevice_pos_impl(const XFileDevice* device);
-extern int64_t XFileDevice_size_impl(const XFileDevice* device);
-extern bool XFileDevice_seek_impl(XFileDevice* device, int64_t pos);
-extern int64_t XFileDevice_readData_impl(XFileDevice* device, char* data, int64_t maxlen);
-extern int64_t XFileDevice_writeData_impl(XFileDevice* device, const char* data, int64_t len);
 
 /* ============================================================================
  * 虚函数实现（重写父类虚函数）
@@ -51,7 +41,7 @@ static int64_t VXFileDevice_pos(const XFileDevice* device)
     if (!device || device->m_fileHandle < 0) {
         return 0;
     }
-    return XFileDevice_pos_impl(device);
+    return XFileSystem_pos(device->m_fileHandle);
 }
 
 /**
@@ -68,7 +58,8 @@ static int64_t VXFileDevice_size(const XFileDevice* device)
         return device->m_cachedSize;
     }
     
-    return XFileDevice_size_impl(device);
+
+    return XFileSystem_size(device->m_fileHandle);
 }
 
 /**
@@ -85,7 +76,8 @@ static bool VXFileDevice_seek(XFileDevice* device, int64_t pos)
         return false;
     }
     
-    return XFileDevice_seek_impl(device, pos);
+
+    return XFileSystem_seek(device->m_fileHandle, pos);
 }
 
 /**
@@ -164,8 +156,8 @@ static int64_t VXFileDevice_readData(XFileDevice* device, char* data, int64_t ma
     if (!XIODevice_isReadable(&device->m_parent)) {
         return -1;
     }
-    
-    return XFileDevice_readData_impl(device, data, maxlen);
+
+    return XFileSystem_read(device->m_fileHandle, data, maxlen);
 }
 
 /**
@@ -185,7 +177,7 @@ static int64_t VXFileDevice_writeData(XFileDevice* device, const char* data, int
         return -1;
     }
     
-    return XFileDevice_writeData_impl(device, data, len);
+    return XFileSystem_write(device->m_fileHandle, data, len);
 }
 
 /**
@@ -201,16 +193,12 @@ static int64_t VXFileDevice_readLineData(XFileDevice* device, char* data, int64_
         return -1;
     }
     
-    if (!XIODevice_isReadable(&device->m_parent)) {
-        return -1;
-    }
-    
     // 逐字节读取直到遇到换行符或达到最大长度
-    int64_t bytesRead = 0;
-    char c;
+        int64_t bytesRead = 0;
+        char c;
     
-    while (bytesRead < maxlen - 1) {
-        int64_t n = XFileDevice_readData_impl(device, &c, 1);
+        while (bytesRead < maxlen - 1) {
+        int64_t n = XFileSystem_read(device->m_fileHandle, &c, 1);
         if (n <= 0) {
             break;
         }
@@ -248,7 +236,8 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
         while (skipped < maxSize) {
             int64_t remaining = maxSize - skipped;
             int64_t toRead = (remaining > (int64_t)sizeof(temp)) ? (int64_t)sizeof(temp) : remaining;
-            int64_t n = XFileDevice_readData_impl(device, temp, toRead);
+
+            int64_t n = XFileSystem_read(device->m_fileHandle, temp, toRead);
             if (n <= 0) break;
             skipped += n;
         }
@@ -257,7 +246,7 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
     }
     
     // 随机访问设备：直接 seek
-    int64_t currentPos = XFileDevice_pos_base(device);
+        int64_t currentPos = XFileDevice_pos_base(device);
     int64_t fileSize = XFileDevice_size_base(device);
     
     int64_t newPos = currentPos + maxSize;
@@ -267,7 +256,7 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
     
     int64_t actualSkip = newPos - currentPos;
     if (actualSkip > 0) {
-        XFileDevice_seek_impl(device, newPos);
+        XFileSystem_seek(device->m_fileHandle, newPos);
     }
     
     return actualSkip;
@@ -442,19 +431,62 @@ bool XFileDevice_setPermissions_base(XFileDevice* device, XFilePermissions permi
 }
 
 /* ============================================================================
- * 非虚函数 - 依赖平台实现
+ * 非虚函数 - 使用 XFileSystem API 实现
  * ============================================================================ */
 
-// 以下函数在 Drive/windows/XFileDevice_win32.c 或
-// Drive/linux/XFileDevice_linux.c 中实现：
-// - XFileDevice_flush()
-// - XFileDevice_handle()
-// - XFileDevice_fileTime()
-// - XFileDevice_setFileTime()
-// - XFileDevice_map()
-// - XFileDevice_unmap()
-// - XFileDevice_pos_impl()
-// - XFileDevice_size_impl()
-// - XFileDevice_seek_impl()
-// - XFileDevice_readData_impl()
-// - XFileDevice_writeData_impl()
+bool XFileDevice_flush(XFileDevice* device)
+{
+    if (!device || device->m_fileHandle < 0) return false;
+    return XFileSystem_flush(device->m_fileHandle);
+}
+
+int XFileDevice_handle(XFileDevice* device)
+{
+    if (!device) return -1;
+    return device->m_fileHandle;
+}
+
+XDateTime XFileDevice_fileTime(XFileDevice* device, XFileTime time)
+{
+    XDateTime result = XDateTime_create();
+    if (!device || device->m_fileHandle < 0) return result;
+    
+    XFileStat stat;
+    if (!XFileSystem_fstat(device->m_fileHandle, &stat)) return result;
+    
+    int64_t timestamp = 0;
+    switch (time) {
+        case XFile_BirthTime: timestamp = stat.birthTime; break;
+        case XFile_MetadataChangeTime: timestamp = stat.metadataChangeTime; break;
+        case XFile_ModificationTime: timestamp = stat.modificationTime; break;
+        case XFile_AccessTime: timestamp = stat.accessTime; break;
+    }
+    
+    if (timestamp > 0) {
+        XDateTime_setSecsSinceEpoch(&result, timestamp);
+    }
+    return result;
+}
+
+bool XFileDevice_setFileTime(XFileDevice* device, const XDateTime* newDate, XFileTime time)
+{
+    if (!device || device->m_fileHandle < 0 || !newDate) return false;
+    int64_t timestamp = XDateTime_toSecsSinceEpoch(newDate);
+    return XFileSystem_setFileTime(device->m_fileHandle, time, timestamp);
+}
+
+void* XFileDevice_map(XFileDevice* device, int64_t offset, int64_t size, XFileDeviceMemoryMapFlags flags)
+{
+    if (!device || device->m_fileHandle < 0) return NULL;
+    bool writable = (device->m_parent.m_openMode & XIODevice_WriteOnly) != 0;
+    (void)flags;  // MapPrivateOption 暂时不支持
+    return XFileSystem_map(device->m_fileHandle, offset, size, writable);
+}
+
+bool XFileDevice_unmap(XFileDevice* device, void* address)
+{
+    if (!device || !address) return false;
+    // 注意：XFileSystem_unmap 需要 size 参数，但 XFileDevice_unmap 不提供
+    // 这里使用一个变通方案，获取映射大小
+    return XFileSystem_unmap(address, 0);  // TODO: 需要跟踪映射大小
+}

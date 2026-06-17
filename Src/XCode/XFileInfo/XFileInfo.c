@@ -1,4 +1,5 @@
 #include "XFileInfo.h"
+#include "XFileSystem_platform.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -462,45 +463,454 @@ bool XFileInfo_isRelative(const XFileInfo* info)
 }
 
 /* ============================================================================
- * 以下函数依赖平台实现，在 Drive/windows/XFileInfo_win32.c 或 
- * Drive/linux/XFileInfo_linux.c 中实现
+ * 内部辅助函数 - 使用 XFileSystem API
  * ============================================================================ */
 
-// XString* XFileInfo_absoluteFilePath(const XFileInfo* info);
-// XString* XFileInfo_canonicalFilePath(const XFileInfo* info);
-// XString* XFileInfo_absolutePath(const XFileInfo* info);
-// XString* XFileInfo_canonicalPath(const XFileInfo* info);
-// bool XFileInfo_exists(const XFileInfo* info);
-// bool XFileInfo_exists_static(const XString* path);
-// void XFileInfo_stat(XFileInfo* info);
-// bool XFileInfo_isFile(const XFileInfo* info);
-// bool XFileInfo_isDir(const XFileInfo* info);
-// bool XFileInfo_isSymLink(const XFileInfo* info);
-// bool XFileInfo_isSymbolicLink(const XFileInfo* info);
-// bool XFileInfo_isShortcut(const XFileInfo* info);
-// bool XFileInfo_isJunction(const XFileInfo* info);
-// bool XFileInfo_isRoot(const XFileInfo* info);
-// bool XFileInfo_isBundle(const XFileInfo* info);
-// bool XFileInfo_isHidden(const XFileInfo* info);
-// bool XFileInfo_isAbsolute(const XFileInfo* info);
-// bool XFileInfo_isAbsolutePath_static(const char* path);
-// bool XFileInfo_isNativePath(const XFileInfo* info);
-// bool XFileInfo_makeAbsolute(XFileInfo* info);
-// bool XFileInfo_isReadable(const XFileInfo* info);
-// bool XFileInfo_isWritable(const XFileInfo* info);
-// bool XFileInfo_isExecutable(const XFileInfo* info);
-// bool XFileInfo_permission(const XFileInfo* info, XFilePermissions permissions);
-// XFilePermissions XFileInfo_permissions(const XFileInfo* info);
-// int64_t XFileInfo_size(const XFileInfo* info);
-// XDateTime XFileInfo_birthTime(const XFileInfo* info);
-// XDateTime XFileInfo_metadataChangeTime(const XFileInfo* info);
-// XDateTime XFileInfo_lastModified(const XFileInfo* info);
-// XDateTime XFileInfo_lastRead(const XFileInfo* info);
-// XDateTime XFileInfo_fileTime(const XFileInfo* info, XFileTime time);
-// XString* XFileInfo_owner(const XFileInfo* info);
-// uint32_t XFileInfo_ownerId(const XFileInfo* info);
-// XString* XFileInfo_group(const XFileInfo* info);
-// uint32_t XFileInfo_groupId(const XFileInfo* info);
-// XString* XFileInfo_symLinkTarget(const XFileInfo* info);
-// XString* XFileInfo_readSymLink(const XFileInfo* info);
-// XString* XFileInfo_junctionTarget(const XFileInfo* info);
+static void XFileInfo_updateCache(XFileInfo* info)
+{
+    if (!info || !info->m_filePath) return;
+    if (info->m_cacheValid && info->m_caching) return;
+    
+    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
+    if (!pathUtf8) return;
+    
+    XFileStat stat;
+    if (!XFileSystem_stat(pathUtf8, &stat)) {
+        info->m_exists = false;
+        info->m_isFile = false;
+        info->m_isDir = false;
+        info->m_cacheValid = true;
+        return;
+    }
+    
+    info->m_exists = stat.exists;
+    info->m_isDir = stat.isDir;
+    info->m_isFile = stat.isFile;
+    info->m_isHidden = stat.isHidden;
+    info->m_isSymLink = stat.isSymLink;
+    
+    // 检查 Junction 和 Shortcut（Windows 特有）
+    info->m_isJunction = XFileSystem_isJunction(pathUtf8);
+    info->m_isShortcut = XFileSystem_isShortcut(pathUtf8, NULL, 0);
+    info->m_size = stat.size;
+    info->m_birthTime = stat.birthTime;
+    info->m_modificationTime = stat.modificationTime;
+    info->m_accessTime = stat.accessTime;
+    info->m_metadataChangeTime = stat.metadataChangeTime;
+    info->m_isReadable = stat.isReadable;
+    info->m_isWritable = stat.isWritable;
+    info->m_isExecutable = stat.isExecutable;
+    info->m_permissions = stat.permissions;
+    info->m_ownerId = stat.ownerId;
+    info->m_groupId = stat.groupId;
+    info->m_cacheValid = true;
+}
+
+/* ============================================================================
+ * 路径操作
+ * ============================================================================ */
+
+XString* XFileInfo_absoluteFilePath(const XFileInfo* info)
+{
+    if (!info || !info->m_filePath) return XString_create();
+    
+    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
+    char absPath[1024];
+    
+    if (XFileSystem_absolutePath(pathUtf8, absPath, sizeof(absPath))) {
+        return XString_create_utf8(absPath);
+    }
+    return XString_create();
+}
+
+XString* XFileInfo_canonicalFilePath(const XFileInfo* info)
+{
+    return XFileInfo_absoluteFilePath(info);
+}
+
+XString* XFileInfo_absolutePath(const XFileInfo* info)
+{
+    XString* absFilePath = XFileInfo_absoluteFilePath(info);
+    if (!absFilePath || XString_length_base(absFilePath) == 0) {
+        if (absFilePath) XString_delete_base(absFilePath);
+        return XString_create();
+    }
+    
+    const char* pathUtf8 = XString_toUtf8(absFilePath);
+    char* lastSlash = strrchr((char*)pathUtf8, '/');
+    if (!lastSlash) lastSlash = strrchr((char*)pathUtf8, '\\');
+    
+    XString* result;
+    if (lastSlash) {
+        *lastSlash = '\0';
+        result = XString_create_utf8(pathUtf8);
+    } else {
+        result = XString_create_utf8(".");
+    }
+    
+    XString_delete_base(absFilePath);
+    return result;
+}
+
+XString* XFileInfo_canonicalPath(const XFileInfo* info)
+{
+    return XFileInfo_absolutePath(info);
+}
+
+/* ============================================================================
+ * 文件类型检查
+ * ============================================================================ */
+
+bool XFileInfo_exists(const XFileInfo* info)
+{
+    if (!info) return false;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_exists;
+}
+
+bool XFileInfo_exists_static(const XString* path)
+{
+    if (!path) return false;
+    return XFileSystem_exists(XString_toUtf8(path));
+}
+
+void XFileInfo_stat(XFileInfo* info)
+{
+    if (!info) return;
+    info->m_cacheValid = false;
+    XFileInfo_updateCache(info);
+}
+
+bool XFileInfo_isFile(const XFileInfo* info)
+{
+    if (!info) return false;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_isFile;
+}
+
+bool XFileInfo_isDir(const XFileInfo* info)
+{
+    if (!info) return false;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_isDir;
+}
+
+bool XFileInfo_isSymLink(const XFileInfo* info)
+{
+    if (!info) return false;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_isSymLink;
+}
+
+bool XFileInfo_isSymbolicLink(const XFileInfo* info)
+{
+    return XFileInfo_isSymLink(info);
+}
+
+bool XFileInfo_isShortcut(const XFileInfo* info)
+{
+    if (!info) return false;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_isShortcut;
+}
+
+bool XFileInfo_isJunction(const XFileInfo* info)
+{
+    if (!info) return false;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_isJunction;
+}
+
+bool XFileInfo_isRoot(const XFileInfo* info)
+{
+    if (!info || !info->m_filePath) return false;
+    
+    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
+    if (!pathUtf8) return false;
+    
+    char absPath[1024];
+    if (!XFileSystem_absolutePath(pathUtf8, absPath, sizeof(absPath))) return false;
+    
+    size_t len = strlen(absPath);
+    
+    // Windows: "C:\" or "\\server\share\"
+    if (len == 3 && isalpha((unsigned char)absPath[0]) &&
+        absPath[1] == ':' && (absPath[2] == '\\' || absPath[2] == '/')) {
+        return true;
+    }
+    
+    // Unix: "/"
+    if (len == 1 && absPath[0] == '/') {
+        return true;
+    }
+    
+    return false;
+}
+
+bool XFileInfo_isBundle(const XFileInfo* info)
+{
+    (void)info;
+    return false;  // Bundle 只在 macOS/iOS 上存在
+}
+
+bool XFileInfo_isHidden(const XFileInfo* info)
+{
+    if (!info) return false;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_isHidden;
+}
+
+/* ============================================================================
+ * 路径类型检查
+ * ============================================================================ */
+
+bool XFileInfo_isAbsolute(const XFileInfo* info)
+{
+    if (!info || !info->m_filePath) return false;
+    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
+    return XFileInfo_isAbsolutePath_static(pathUtf8);
+}
+
+bool XFileInfo_isAbsolutePath_static(const char* path)
+{
+    if (!path || !path[0]) return false;
+    
+    // Windows: "C:\" or "\\server\share"
+    if (path[0] == '\\' && path[1] == '\\') return true;
+    if (path[0] == '\\') return true;
+    if (isalpha((unsigned char)path[0]) && path[1] == ':') return true;
+    
+    // Unix: "/path"
+    if (path[0] == '/') return true;
+    
+    return false;
+}
+
+bool XFileInfo_isNativePath(const XFileInfo* info)
+{
+    if (!info || !info->m_filePath) return false;
+    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
+    if (!pathUtf8) return false;
+    // 以 ":" 开头的是资源路径，不是本地路径
+    return pathUtf8[0] != ':';
+}
+
+bool XFileInfo_makeAbsolute(XFileInfo* info)
+{
+    if (!info || !info->m_filePath) return false;
+    if (XFileInfo_isAbsolute(info)) return true;
+    
+    XString* absPath = XFileInfo_absoluteFilePath(info);
+    if (!absPath || XString_length_base(absPath) == 0) {
+        if (absPath) XString_delete_base(absPath);
+        return false;
+    }
+    
+    XString_delete_base(info->m_filePath);
+    info->m_filePath = absPath;
+    info->m_cacheValid = false;
+    return true;
+}
+
+/* ============================================================================
+ * 权限检查
+ * ============================================================================ */
+
+bool XFileInfo_isReadable(const XFileInfo* info)
+{
+    if (!info) return false;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_isReadable;
+}
+
+bool XFileInfo_isWritable(const XFileInfo* info)
+{
+    if (!info) return false;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_isWritable;
+}
+
+bool XFileInfo_isExecutable(const XFileInfo* info)
+{
+    if (!info) return false;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_isExecutable;
+}
+
+bool XFileInfo_permission(const XFileInfo* info, XFilePermissions permissions)
+{
+    if (!info) return false;
+    XFilePermissions perms = XFileInfo_permissions(info);
+    return (perms & permissions) == permissions;
+}
+
+XFilePermissions XFileInfo_permissions(const XFileInfo* info)
+{
+    if (!info) return 0;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_permissions;
+}
+
+/* ============================================================================
+ * 文件属性
+ * ============================================================================ */
+
+int64_t XFileInfo_size(const XFileInfo* info)
+{
+    if (!info) return 0;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_size;
+}
+
+XDateTime XFileInfo_birthTime(const XFileInfo* info)
+{
+    return XFileInfo_fileTime(info, XFile_BirthTime);
+}
+
+XDateTime XFileInfo_metadataChangeTime(const XFileInfo* info)
+{
+    return XFileInfo_fileTime(info, XFile_MetadataChangeTime);
+}
+
+XDateTime XFileInfo_lastModified(const XFileInfo* info)
+{
+    return XFileInfo_fileTime(info, XFile_ModificationTime);
+}
+
+XDateTime XFileInfo_lastRead(const XFileInfo* info)
+{
+    return XFileInfo_fileTime(info, XFile_AccessTime);
+}
+
+XDateTime XFileInfo_fileTime(const XFileInfo* info, XFileTime time)
+{
+    XDateTime result = XDateTime_create();
+    if (!info) return result;
+    
+    XFileInfo_updateCache((XFileInfo*)info);
+    
+    int64_t timestamp = 0;
+    switch (time) {
+        case XFile_BirthTime:
+            timestamp = info->m_birthTime;
+            break;
+        case XFile_MetadataChangeTime:
+            timestamp = info->m_metadataChangeTime;
+            break;
+        case XFile_ModificationTime:
+            timestamp = info->m_modificationTime;
+            break;
+        case XFile_AccessTime:
+            timestamp = info->m_accessTime;
+            break;
+    }
+    
+    if (timestamp > 0) {
+        XDateTime_setSecsSinceEpoch(&result, timestamp);
+    }
+    
+    return result;
+}
+
+/* ============================================================================
+ * 所有者信息
+ * ============================================================================ */
+
+XString* XFileInfo_owner(const XFileInfo* info)
+{
+    if (!info || !info->m_filePath) return XString_create();
+    
+    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
+    char owner[256];
+    
+    if (XFileSystem_getOwner(pathUtf8, owner, sizeof(owner), NULL)) {
+        return XString_create_utf8(owner);
+    }
+    return XString_create();
+}
+
+uint32_t XFileInfo_ownerId(const XFileInfo* info)
+{
+    if (!info) return (uint32_t)-2;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_ownerId;
+}
+
+XString* XFileInfo_group(const XFileInfo* info)
+{
+    if (!info || !info->m_filePath) return XString_create();
+    
+    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
+    char group[256];
+    
+    if (XFileSystem_getGroup(pathUtf8, group, sizeof(group), NULL)) {
+        return XString_create_utf8(group);
+    }
+    return XString_create();
+}
+
+uint32_t XFileInfo_groupId(const XFileInfo* info)
+{
+    if (!info) return (uint32_t)-2;
+    XFileInfo_updateCache((XFileInfo*)info);
+    return info->m_groupId;
+}
+
+/* ============================================================================
+ * 符号链接
+ * ============================================================================ */
+
+XString* XFileInfo_symLinkTarget(const XFileInfo* info)
+{
+    if (!info || !info->m_filePath) return XString_create();
+    
+    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
+    char target[1024];
+    
+    if (!XFileSystem_readLink(pathUtf8, target, sizeof(target))) {
+        return XString_create();
+    }
+    
+    return XString_create_utf8(target);
+}
+
+XString* XFileInfo_readSymLink(const XFileInfo* info)
+{
+    return XFileInfo_symLinkTarget(info);
+}
+
+XString* XFileInfo_junctionTarget(const XFileInfo* info)
+{
+    if (!info) return XString_create();
+    if (!XFileInfo_isJunction(info)) return XString_create();
+    return XFileInfo_symLinkTarget(info);
+}
+
+/* ============================================================================
+ * 比较操作
+ * ============================================================================ */
+
+bool XFileInfo_equals(const XFileInfo* lhs, const XFileInfo* rhs)
+{
+    if (!lhs || !rhs) return false;
+    if (lhs == rhs) return true;
+    
+    XString* path1 = XFileInfo_canonicalFilePath(lhs);
+    XString* path2 = XFileInfo_canonicalFilePath(rhs);
+    
+    if (!path1 || !path2) {
+        if (path1) XString_delete_base(path1);
+        if (path2) XString_delete_base(path2);
+        return false;
+    }
+    
+    const char* p1 = XString_toUtf8(path1);
+    const char* p2 = XString_toUtf8(path2);
+    
+    bool result = (strcmp(p1, p2) == 0);
+    
+    XString_delete_base(path1);
+    XString_delete_base(path2);
+    
+    return result;
+}

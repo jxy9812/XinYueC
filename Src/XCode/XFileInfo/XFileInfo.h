@@ -294,7 +294,7 @@ bool XFileInfo_isHidden(const XFileInfo* info);
  * @brief 检查路径是否为绝对路径
  */
 bool XFileInfo_isAbsolute(const XFileInfo* info);
-
+bool XFileInfo_isAbsolutePath_static(const char* path);
 /**
  * @brief 检查路径是否为相对路径
  */
