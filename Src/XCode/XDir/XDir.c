@@ -1079,15 +1079,9 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
     XDirSortFlags actualSort = (sort == XDir_NoSort) ? dir->m_sorting : sort;
     
     XStringList* result = XStringList_create();
-
-
-
-
-
-
     XVector* sizes = XVector_create(sizeof(int64_t));
-        XVector* times = XVector_create(sizeof(int64_t));
-        XVector* isDirs = XVector_create(sizeof(bool));
+    XVector* times = XVector_create(sizeof(int64_t));
+    XVector* isDirs = XVector_create(sizeof(bool));
     
     XDirIterator iter = XFileSystem_opendir(pathUtf8);
     if (!iter) {
@@ -1427,12 +1421,17 @@ XFileInfoList* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilt
     if (!names) return NULL;
     
     XFileInfoList* result = XVector_create(sizeof(XFileInfo));
-    if (!result) {
-        XStringList_delete_base(names);
-        return NULL;
-    }
+        if (!result) {
+            XStringList_delete_base(names);
+            return NULL;
+        }
     
-    size_t count = XStringList_size_base(names);
+        // 设置元素操作方法（XFileInfo内部有动态分配成员，需要正确的拷贝/移动/释放）
+        XContainerSetDataCopyMethod(result, (XCDataCopyMethod)XFileInfo_copy_base);
+        XContainerSetDataMoveMethod(result, (XCDataMoveMethod)XFileInfo_move_base);
+        XContainerSetDataDeinitMethod(result, (XCDataDeinitMethod)XFileInfo_deinit_base);
+    
+        size_t count = XStringList_size_base(names);
         for (size_t i = 0; i < count; i++) {
             const XString* name = XStringList_at_base(names, i);
             XString* fullPath = XDir_filePath(dir, name);
