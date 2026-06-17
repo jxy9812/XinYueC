@@ -17,13 +17,165 @@ int XFileDevice_handle(const XFileDevice* device)
 }
 
 /* ============================================================================
+ * 平台相关核心函数实现
+ * ============================================================================ */
+
+/**
+ * @brief 获取当前文件位置
+ */
+int64_t XFileDevice_pos_impl(const XFileDevice* device)
+{
+    if (!device || device->m_fileHandle < 0) {
+        return 0;
+    }
+    
+    // 使用 _lseeki64 获取当前位置
+    int64_t pos = _lseeki64(device->m_fileHandle, 0, SEEK_CUR);
+    if (pos == -1LL) {
+        return 0;
+    }
+    
+    return pos;
+}
+
+/**
+ * @brief 获取文件大小
+ */
+int64_t XFileDevice_size_impl(const XFileDevice* device)
+{
+    if (!device || device->m_fileHandle < 0) {
+        return -1;
+    }
+    
+    // 获取文件大小
+    struct _stati64 st;
+    if (_fstati64(device->m_fileHandle, &st) != 0) {
+        return -1;
+    }
+    
+    return st.st_size;
+}
+
+/**
+ * @brief 定位文件指针
+ */
+bool XFileDevice_seek_impl(XFileDevice* device, int64_t pos)
+{
+    if (!device || device->m_fileHandle < 0 || pos < 0) {
+        return false;
+    }
+    
+    int64_t result = _lseeki64(device->m_fileHandle, pos, SEEK_SET);
+    if (result == -1LL) {
+        device->m_error = XFileDevice_PositionError;
+        return false;
+    }
+    
+    return true;
+}
+
+/**
+ * @brief 读取数据
+ */
+int64_t XFileDevice_readData_impl(XFileDevice* device, char* data, int64_t maxlen)
+{
+    if (!device || !data || maxlen <= 0 || device->m_fileHandle < 0) {
+        return -1;
+    }
+    
+    // 处理文本模式下的换行符转换
+    if (device->m_parent.m_textModeEnabled) {
+        // 文本模式读取
+        DWORD bytesRead = 0;
+        HANDLE hFile = (HANDLE)_get_osfhandle(device->m_fileHandle);
+        if (hFile == INVALID_HANDLE_VALUE) {
+            device->m_error = XFileDevice_ReadError;
+            return -1;
+        }
+        
+        if (!ReadFile(hFile, data, (DWORD)maxlen, &bytesRead, NULL)) {
+            device->m_error = XFileDevice_ReadError;
+            return -1;
+        }
+        
+        return (int64_t)bytesRead;
+    }
+    
+    // 二进制模式读取
+    int64_t totalRead = 0;
+    while (totalRead < maxlen) {
+        int64_t toRead = maxlen - totalRead;
+        if (toRead > UINT_MAX) toRead = UINT_MAX;
+        
+        size_t bytesRead = _read(device->m_fileHandle, data + totalRead, (unsigned int)toRead);
+        if (bytesRead < 0) {
+            device->m_error = XFileDevice_ReadError;
+            return -1;
+        }
+        if (bytesRead == 0) {
+            break; // EOF
+        }
+        totalRead += bytesRead;
+    }
+    
+    return totalRead;
+}
+
+/**
+ * @brief 写入数据
+ */
+int64_t XFileDevice_writeData_impl(XFileDevice* device, const char* data, int64_t len)
+{
+    if (!device || !data || len <= 0 || device->m_fileHandle < 0) {
+        return -1;
+    }
+    
+    // 处理文本模式下的换行符转换
+    if (device->m_parent.m_textModeEnabled) {
+        // 文本模式写入
+        DWORD bytesWritten = 0;
+        HANDLE hFile = (HANDLE)_get_osfhandle(device->m_fileHandle);
+        if (hFile == INVALID_HANDLE_VALUE) {
+            device->m_error = XFileDevice_WriteError;
+            return -1;
+        }
+        
+        if (!WriteFile(hFile, data, (DWORD)len, &bytesWritten, NULL)) {
+            device->m_error = XFileDevice_WriteError;
+            return -1;
+        }
+        
+        return (int64_t)bytesWritten;
+    }
+    
+    // 二进制模式写入
+    int64_t totalWritten = 0;
+    while (totalWritten < len) {
+        int64_t toWrite = len - totalWritten;
+        if (toWrite > UINT_MAX) toWrite = UINT_MAX;
+        
+        size_t bytesWritten = _write(device->m_fileHandle, data + totalWritten, (unsigned int)toWrite);
+        if (bytesWritten < 0) {
+            device->m_error = XFileDevice_WriteError;
+            return -1;
+        }
+        if (bytesWritten == 0) {
+            break;
+        }
+        totalWritten += bytesWritten;
+    }
+    
+    return totalWritten;
+}
+
+/* ============================================================================
  * 刷新缓冲区
  * ============================================================================ */
 
 bool XFileDevice_flush(XFileDevice* device)
 {
     if (!device || device->m_fileHandle < 0) {
-        device->m_error = XFileDevice_ResourceError;
+        if (device) device->m_error = XFileDevice_ResourceError;
         return false;
     }
     
@@ -59,27 +211,30 @@ XDateTime XFileDevice_fileTime(const XFileDevice* device, XFileTime time)
         return result;
     }
     
-    FILETIME ft;
-    BOOL success = FALSE;
+    FILETIME ftCreate, ftAccess, ftWrite;
+    if (!GetFileTime(hFile, &ftCreate, &ftAccess, &ftWrite)) {
+        return result;
+    }
     
+    FILETIME* ft = NULL;
     switch (time) {
         case XFile_AccessTime:
-            success = GetFileTime(hFile, NULL, NULL, &ft);
+            ft = &ftAccess;
             break;
         case XFile_BirthTime:
-            success = GetFileTime(hFile, &ft, NULL, NULL);
+            ft = &ftCreate;
             break;
         case XFile_MetadataChangeTime:
         case XFile_ModificationTime:
-            success = GetFileTime(hFile, NULL, NULL, &ft);
+            ft = &ftWrite;
             break;
     }
     
-    if (success) {
+    if (ft) {
         // 转换 FILETIME 到 Unix 时间戳
         ULARGE_INTEGER ul;
-        ul.LowPart = ft.dwLowDateTime;
-        ul.HighPart = ft.dwHighDateTime;
+        ul.LowPart = ft->dwLowDateTime;
+        ul.HighPart = ft->dwHighDateTime;
         int64_t timestamp = (int64_t)((ul.QuadPart - 116444736000000000LL) / 10000000);
         XDateTime_setSecsSinceEpoch(&result, timestamp);
     }
@@ -109,22 +264,24 @@ bool XFileDevice_setFileTime(XFileDevice* device, const XDateTime* newDate, XFil
     ft.dwLowDateTime = ul.LowPart;
     ft.dwHighDateTime = ul.HighPart;
     
-    BOOL success = FALSE;
+    FILETIME* ftCreate = NULL;
+    FILETIME* ftAccess = NULL;
+    FILETIME* ftWrite = NULL;
     
     switch (time) {
         case XFile_AccessTime:
-            success = SetFileTime(hFile, NULL, &ft, NULL);
+            ftAccess = &ft;
             break;
         case XFile_BirthTime:
-            success = SetFileTime(hFile, &ft, NULL, NULL);
+            ftCreate = &ft;
             break;
         case XFile_MetadataChangeTime:
         case XFile_ModificationTime:
-            success = SetFileTime(hFile, NULL, NULL, &ft);
+            ftWrite = &ft;
             break;
     }
     
-    if (!success) {
+    if (!SetFileTime(hFile, ftCreate, ftAccess, ftWrite)) {
         device->m_error = XFileDevice_WriteError;
         return false;
     }

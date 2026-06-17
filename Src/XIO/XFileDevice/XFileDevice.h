@@ -102,6 +102,7 @@ typedef struct XFileDevice {
     XFileDeviceError m_error;         /**< 最后的错误码 */
     int m_fileHandle;                 /**< 文件句柄（-1 表示无效） */
     XFileDeviceFileHandleFlags m_handleFlags; /**< 句柄标志 */
+    int64_t m_cachedSize;             /**< 缓存的文件大小 */
 } XFileDevice;
 
 /* ============================================================================
@@ -134,19 +135,61 @@ void XFileDevice_init(XFileDevice* device);
  * 继承自 XIODevice 的虚函数（使用宏映射）
  * ============================================================================ */
 
+#define XFileDevice_open_base             XIODevice_open_base
 #define XFileDevice_close_base            XIODevice_close_base
 #define XFileDevice_isSequential_base     XIODevice_isSequential_base
 #define XFileDevice_pos_base              XIODevice_pos_base
 #define XFileDevice_seek_base             XIODevice_seek_base
 #define XFileDevice_atEnd_base            XIODevice_atEnd_base
+#define XFileDevice_reset_base            XIODevice_reset_base
 #define XFileDevice_size_base             XIODevice_size_base
+#define XFileDevice_bytesAvailable_base   XIODevice_bytesAvailable_base
+#define XFileDevice_bytesToWrite_base     XIODevice_bytesToWrite_base
+#define XFileDevice_readData_base         XIODevice_readData_base
+#define XFileDevice_writeData_base        XIODevice_writeData_base
+#define XFileDevice_readLineData_base     XIODevice_readLineData_base
+#define XFileDevice_skipData_base         XIODevice_skipData_base
 
 /* ============================================================================
  * 析构函数（继承自 XObject）
  * ============================================================================ */
 
-#define XFileDevice_deinit_base           XIODevice_deinit_base
-#define XFileDevice_delete_base           XIODevice_delete_base
+#define XFileDevice_deinitLater           XIODevice_deinitLater
+#define XFileDevice_deleteLater           XIODevice_deleteLater
+
+/* ============================================================================
+ * XFileDevice 特有虚函数
+ * ============================================================================ */
+
+/**
+ * @brief 虚函数：获取文件名
+ * @param device XFileDevice 对象指针
+ * @return 文件名（内部数据，不要释放），默认返回空字符串
+ */
+const XString* XFileDevice_fileName_base(const XFileDevice* device);
+
+/**
+ * @brief 虚函数：调整文件大小
+ * @param device XFileDevice 对象指针
+ * @param sz 新大小（字节）
+ * @return 成功返回 true，失败返回 false
+ */
+bool XFileDevice_resize_base(XFileDevice* device, int64_t sz);
+
+/**
+ * @brief 虚函数：获取文件权限
+ * @param device XFileDevice 对象指针
+ * @return 权限标志组合
+ */
+XFilePermissions XFileDevice_permissions_base(const XFileDevice* device);
+
+/**
+ * @brief 虚函数：设置文件权限
+ * @param device XFileDevice 对象指针
+ * @param permissions 权限标志组合
+ * @return 成功返回 true，失败返回 false
+ */
+bool XFileDevice_setPermissions_base(XFileDevice* device, XFilePermissions permissions);
 
 /* ============================================================================
  * 错误处理（非虚函数）
@@ -166,59 +209,25 @@ XFileDeviceError XFileDevice_error(const XFileDevice* device);
 void XFileDevice_unsetError(XFileDevice* device);
 
 /* ============================================================================
- * 文件信息（新增虚函数）
+ * 文件特有操作（非虚函数）
  * ============================================================================ */
 
 /**
- * @brief 获取文件名（虚函数）
- * @param device XFileDevice 对象指针
- * @return 文件名（内部数据，不要释放），默认返回空字符串
- */
-const XString* XFileDevice_fileName_base(const XFileDevice* device);
-
-/* ============================================================================
- * 文件特有操作
- * ============================================================================ */
-
-/**
- * @brief 刷新缓冲区（非虚函数）
+ * @brief 刷新缓冲区
  * @param device XFileDevice 对象指针
  * @return 成功返回 true，失败返回 false
  */
 bool XFileDevice_flush(XFileDevice* device);
 
 /**
- * @brief 获取文件句柄（非虚函数）
+ * @brief 获取文件句柄
  * @param device XFileDevice 对象指针
  * @return 文件句柄，失败返回 -1
  */
 int XFileDevice_handle(const XFileDevice* device);
 
-/**
- * @brief 调整文件大小（虚函数）
- * @param device XFileDevice 对象指针
- * @param sz 新大小（字节）
- * @return 成功返回 true，失败返回 false
- */
-bool XFileDevice_resize_base(XFileDevice* device, int64_t sz);
-
-/**
- * @brief 获取文件权限（虚函数）
- * @param device XFileDevice 对象指针
- * @return 权限标志组合
- */
-XFilePermissions XFileDevice_permissions_base(const XFileDevice* device);
-
-/**
- * @brief 设置文件权限（虚函数）
- * @param device XFileDevice 对象指针
- * @param permissions 权限标志组合
- * @return 成功返回 true，失败返回 false
- */
-bool XFileDevice_setPermissions_base(XFileDevice* device, XFilePermissions permissions);
-
 /* ============================================================================
- * 文件时间（非虚函数）
+ * 文件时间操作（非虚函数，平台相关实现）
  * ============================================================================ */
 
 /**
@@ -240,7 +249,7 @@ XDateTime XFileDevice_fileTime(const XFileDevice* device, XFileTime time);
 bool XFileDevice_setFileTime(XFileDevice* device, const XDateTime* newDate, XFileTime time);
 
 /* ============================================================================
- * 内存映射（非虚函数）
+ * 内存映射（非虚函数，平台相关实现）
  * ============================================================================ */
 
 /**
