@@ -194,7 +194,7 @@ static int64_t VXFileDevice_readLineData(XFileDevice* device, char* data, int64_
     }
     
     // 逐字节读取直到遇到换行符或达到最大长度
-        int64_t bytesRead = 0;
+        int64_t bytesRead = 0;  // 声明并初始化
         char c;
     
         while (bytesRead < maxlen - 1) {

@@ -1,9 +1,14 @@
 #include "XDir.h"
+#include "XFileSystem_platform.h"
 #include "XSort.h"
 #include "XCompare.h"
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+
+#ifndef MAX_PATH
+#define MAX_PATH 260
+#endif
 
 /* ============================================================================
  * 虚函数实现
@@ -519,12 +524,6 @@ static int compareByName(const XDirEntryInfo* a, const XDirEntryInfo* b)
     const char* nameA = a->name;
     const char* nameB = b->name;
     
-    // 本地化排序
-    if (localeAware) {
-        return XDir_localeCompare(nameA, nameB, ignoreCase);
-    }
-    
-    // 非本地化排序
     if (ignoreCase) {
         while (*nameA && *nameB) {
             char ca = tolower((unsigned char)*nameA);
@@ -1065,37 +1064,388 @@ XStringList* XDir_searchPaths(const XString* prefix)
 }
 
 /* ============================================================================
- * 以下函数依赖平台实现，在 Drive/windows/XDir_win32.c 或 
- * Drive/linux/XDir_linux.c 中实现
+ * 目录内容（使用 XFileSystem API）
  * ============================================================================ */
 
-// XString* XDir_absolutePath(const XDir* dir);
-// XString* XDir_canonicalPath(const XDir* dir);
-// XString* XDir_relativeFilePath(const XDir* dir, const XString* fileName);
-// bool XDir_cd(XDir* dir, const XString* dirName);
-// bool XDir_cdUp(XDir* dir);
-// size_t XDir_count(const XDir* dir);
-// XString* XDir_at(const XDir* dir, size_t pos);
-// XStringList* XDir_entryList_1(const XDir* dir, XDirFilters filters, XDirSortFlags sort);
-// XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters, XDirFilters filters, XDirSortFlags sort);
-// bool XDir_isEmpty(const XDir* dir, XDirFilters filters);
-// bool XDir_mkdir(XDir* dir, const XString* dirName);
-// bool XDir_mkpath(XDir* dir, const XString* dirPath);
-// bool XDir_rmdir(XDir* dir, const XString* dirName);
-// bool XDir_rmpath(XDir* dir, const XString* dirPath);
-// bool XDir_removeRecursively(XDir* dir);
-// bool XDir_remove(XDir* dir, const XString* fileName);
-// bool XDir_rename(XDir* dir, const XString* oldName, const XString* newName);
-// bool XDir_exists_1(const XDir* dir);
-// bool XDir_exists_2(const XDir* dir, const XString* name);
-// bool XDir_isReadable(const XDir* dir);
-// bool XDir_isAbsolute(const XDir* dir);
-// bool XDir_isRoot(const XDir* dir);
-// bool XDir_isAbsolutePath(const XString* path);
-// XDir* XDir_current(void);
-// XString* XDir_currentPath(void);
-// bool XDir_setCurrent(const XString* path);
-// XString* XDir_homePath(void);
-// XString* XDir_rootPath(void);
-// XString* XDir_tempPath(void);
-// XStringList* XDir_drives(void);
+XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
+                              XDirFilters filters, XDirSortFlags sort)
+{
+    if (!dir || !dir->m_path) return NULL;
+    
+    const char* pathUtf8 = XString_toUtf8(dir->m_path);
+    if (!pathUtf8) return NULL;
+    
+    XDirFilters actualFilters = (filters == XDir_NoFilter) ? dir->m_filters : filters;
+    XDirSortFlags actualSort = (sort == XDir_NoSort) ? dir->m_sorting : sort;
+    
+    XStringList* result = XStringList_create();
+
+
+
+
+
+
+    XVector* sizes = XVector_create(sizeof(int64_t));
+        XVector* times = XVector_create(sizeof(int64_t));
+        XVector* isDirs = XVector_create(sizeof(bool));
+    
+    XDirIterator iter = XFileSystem_opendir(pathUtf8);
+    if (!iter) {
+        XStringList_delete_base(result);
+        XVector_delete_base(sizes);
+        XVector_delete_base(times);
+        XVector_delete_base(isDirs);
+        return result;
+    }
+    
+    XDirEntry entry;
+    while (XFileSystem_readdir(iter, &entry)) {
+        if (strcmp(entry.name, ".") == 0 || strcmp(entry.name, "..") == 0) {
+            if ((actualFilters & XDir_NoDotAndDotDot) == XDir_NoDotAndDotDot) continue;
+        }
+        
+        if ((actualFilters & XDir_Dirs) && !entry.isDir) continue;
+        if ((actualFilters & XDir_Files) && entry.isFile) continue;
+        if ((actualFilters & XDir_Hidden) && !entry.isHidden) continue;
+        if ((actualFilters & XDir_NoSymLinks) && entry.isSymLink) continue;
+        
+        if (nameFilters && XStringList_size_base(nameFilters) > 0) {
+            XString* fileName = XString_create_utf8(entry.name);
+            bool matched = XDir_match_2(nameFilters, fileName);
+            XString_delete_base(fileName);
+            if (!matched) continue;
+        }
+        
+        XStringList_push_back_utf8(result, entry.name);
+
+
+
+        XVector_push_back_1_base(sizes, &(int64_t){0});
+                XVector_push_back_1_base(times, &(int64_t){0});
+                XVector_push_back_1_base(isDirs, &entry.isDir);
+    }
+    
+    XFileSystem_closedir(iter);
+    
+    if ((actualSort & XDir_SortByMask) != XDir_Unsorted) {
+            XDir_sortEntryList(result, actualSort, 
+                              (const int64_t*)XContainerSharedDataPtr(sizes),
+                              (const int64_t*)XContainerSharedDataPtr(times),
+                              (const bool*)XContainerSharedDataPtr(isDirs));
+        }
+    
+    XVector_delete_base(sizes);
+    XVector_delete_base(times);
+    XVector_delete_base(isDirs);
+    
+    return result;
+}
+
+bool XDir_mkdir(XDir* dir, const XString* dirName)
+{
+    if (!dir || !dirName) return false;
+    XString* fullPath = XDir_filePath(dir, dirName);
+    if (!fullPath) return false;
+    const char* pathUtf8 = XString_toUtf8(fullPath);
+    bool result = XFileSystem_mkdir(pathUtf8);
+    XString_delete_base(fullPath);
+    return result;
+}
+
+bool XDir_mkpath(XDir* dir, const XString* dirPath)
+{
+    if (!dir || !dirPath) return false;
+    XString* fullPath = XDir_filePath(dir, dirPath);
+    if (!fullPath) return false;
+    const char* pathUtf8 = XString_toUtf8(fullPath);
+    bool result = XFileSystem_mkdir_p(pathUtf8);
+    XString_delete_base(fullPath);
+    return result;
+}
+
+bool XDir_rmdir(XDir* dir, const XString* dirName)
+{
+    if (!dir || !dirName) return false;
+    XString* fullPath = XDir_filePath(dir, dirName);
+    if (!fullPath) return false;
+    const char* pathUtf8 = XString_toUtf8(fullPath);
+    bool result = XFileSystem_rmdir(pathUtf8);
+    XString_delete_base(fullPath);
+    return result;
+}
+
+bool XDir_rmpath(XDir* dir, const XString* dirPath)
+{
+    if (!dir || !dirPath) return false;
+    XString* fullPath = XDir_filePath(dir, dirPath);
+    if (!fullPath) return false;
+    const char* pathUtf8 = XString_toUtf8(fullPath);
+    bool result = XFileSystem_rmdir(pathUtf8);
+    XString_delete_base(fullPath);
+    return result;
+}
+
+bool XDir_removeRecursively(XDir* dir)
+{
+    if (!dir || !dir->m_path) return false;
+    const char* pathUtf8 = XString_toUtf8(dir->m_path);
+    return XFileSystem_rmdir_recursive(pathUtf8);
+}
+
+bool XDir_remove(XDir* dir, const XString* fileName)
+{
+    if (!dir || !fileName) return false;
+    XString* fullPath = XDir_filePath(dir, fileName);
+    if (!fullPath) return false;
+    const char* pathUtf8 = XString_toUtf8(fullPath);
+    bool result = XFileSystem_remove(pathUtf8);
+    XString_delete_base(fullPath);
+    return result;
+}
+
+bool XDir_rename(XDir* dir, const XString* oldName, const XString* newName)
+{
+    if (!dir || !oldName || !newName) return false;
+    XString* oldPath = XDir_filePath(dir, oldName);
+    XString* newPath = XDir_filePath(dir, newName);
+    if (!oldPath || !newPath) {
+        if (oldPath) XString_delete_base(oldPath);
+        if (newPath) XString_delete_base(newPath);
+        return false;
+    }
+    const char* oldUtf8 = XString_toUtf8(oldPath);
+    const char* newUtf8 = XString_toUtf8(newPath);
+    bool result = XFileSystem_rename(oldUtf8, newUtf8);
+    XString_delete_base(oldPath);
+    XString_delete_base(newPath);
+    return result;
+}
+
+bool XDir_exists_1(const XDir* dir)
+{
+    if (!dir || !dir->m_path) return false;
+    const char* pathUtf8 = XString_toUtf8(dir->m_path);
+    return XFileSystem_exists(pathUtf8);
+}
+
+bool XDir_exists_2(const XDir* dir, const XString* name)
+{
+    if (!dir || !name) return false;
+    XString* fullPath = XDir_filePath(dir, name);
+    if (!fullPath) return false;
+    const char* pathUtf8 = XString_toUtf8(fullPath);
+    bool result = XFileSystem_exists(pathUtf8);
+    XString_delete_base(fullPath);
+    return result;
+}
+
+bool XDir_isReadable(const XDir* dir)
+{
+    if (!dir || !dir->m_path) return false;
+    const char* pathUtf8 = XString_toUtf8(dir->m_path);
+    XFileStat stat;
+    if (!XFileSystem_stat(pathUtf8, &stat)) return false;
+    return stat.isReadable;
+}
+
+bool XDir_isAbsolute(const XDir* dir)
+{
+    if (!dir || !dir->m_path) return false;
+    return XDir_isAbsolutePath(dir->m_path);
+}
+
+bool XDir_isRoot(const XDir* dir)
+{
+    if (!dir || !dir->m_path) return false;
+    const char* pathUtf8 = XString_toUtf8(dir->m_path);
+    if (!pathUtf8) return false;
+    XString* clean = XDir_cleanPath(dir->m_path);
+    if (!clean) return false;
+    const char* cleanUtf8 = XString_toUtf8(clean);
+    size_t len = strlen(cleanUtf8);
+    bool isRoot = false;
+#ifdef _WIN32
+    if (len == 3 && cleanUtf8[1] == ':' && 
+        (cleanUtf8[2] == '\\' || cleanUtf8[2] == '/')) {
+        isRoot = true;
+    }
+#else
+    isRoot = (len == 1 && cleanUtf8[0] == '/');
+#endif
+    XString_delete_base(clean);
+    return isRoot;
+}
+
+bool XDir_isAbsolutePath(const XString* path)
+{
+    if (!path) return false;
+    const char* pathUtf8 = XString_toUtf8(path);
+    if (!pathUtf8) return false;
+#ifdef _WIN32
+    if (isalpha((unsigned char)pathUtf8[0]) && pathUtf8[1] == ':') return true;
+    if (pathUtf8[0] == '\\' && pathUtf8[1] == '\\') return true;
+    return false;
+#else
+    return pathUtf8[0] == '/';
+#endif
+}
+
+XString* XDir_absolutePath(const XDir* dir)
+{
+    if (!dir || !dir->m_path) return NULL;
+    const char* pathUtf8 = XString_toUtf8(dir->m_path);
+    char absPath[MAX_PATH];
+    if (!XFileSystem_absolutePath(pathUtf8, absPath, MAX_PATH)) return NULL;
+    return XString_create_utf8(absPath);
+}
+
+XString* XDir_canonicalPath(const XDir* dir)
+{
+    if (!dir || !dir->m_path) return NULL;
+    const char* pathUtf8 = XString_toUtf8(dir->m_path);
+    char canPath[MAX_PATH];
+    if (!XFileSystem_canonicalPath(pathUtf8, canPath, MAX_PATH)) return NULL;
+    return XString_create_utf8(canPath);
+}
+
+XString* XDir_relativeFilePath(const XDir* dir, const XString* fileName)
+{
+    if (!dir || !dir->m_path || !fileName) return NULL;
+    XString* absDir = XDir_absolutePath(dir);
+    XString* absFile = XDir_absoluteFilePath(dir, fileName);
+    if (!absDir || !absFile) {
+        if (absDir) XString_delete_base(absDir);
+        if (absFile) XString_delete_base(absFile);
+        return NULL;
+    }
+    XString_delete_base(absDir);
+    return absFile;
+}
+
+bool XDir_cd(XDir* dir, const XString* dirName)
+{
+    if (!dir || !dirName) return false;
+    XString* newPath = XDir_filePath(dir, dirName);
+    if (!newPath) return false;
+    const char* pathUtf8 = XString_toUtf8(newPath);
+    if (!XFileSystem_exists(pathUtf8)) {
+        XString_delete_base(newPath);
+        return false;
+    }
+    XFileStat stat;
+    if (!XFileSystem_stat(pathUtf8, &stat) || !stat.isDir) {
+        XString_delete_base(newPath);
+        return false;
+    }
+    XString_delete_base(dir->m_path);
+    dir->m_path = newPath;
+    dir->m_cacheValid = false;
+    return true;
+}
+
+bool XDir_cdUp(XDir* dir)
+{
+    if (!dir || !dir->m_path) return false;
+    XString* parent = XString_create_utf8("..");
+    bool result = XDir_cd(dir, parent);
+    XString_delete_base(parent);
+    return result;
+}
+
+XDir* XDir_current(void)
+{
+    XString* path = XDir_currentPath();
+    if (!path) return NULL;
+    XDir* dir = XDir_create_2(path);
+    XString_delete_base(path);
+    return dir;
+}
+
+XString* XDir_currentPath(void)
+{
+    char path[MAX_PATH];
+    if (!XFileSystem_currentPath(path, MAX_PATH)) return NULL;
+    return XString_create_utf8(path);
+}
+
+bool XDir_setCurrent(const XString* path)
+{
+    if (!path) return false;
+    const char* pathUtf8 = XString_toUtf8(path);
+    return XFileSystem_setCurrentPath(pathUtf8);
+}
+
+XString* XDir_homePath(void)
+{
+    char path[MAX_PATH];
+    if (!XFileSystem_homePath(path, MAX_PATH)) return NULL;
+    return XString_create_utf8(path);
+}
+
+XString* XDir_rootPath(void)
+{
+    char path[MAX_PATH];
+    if (!XFileSystem_rootPath(path, MAX_PATH)) return NULL;
+    return XString_create_utf8(path);
+}
+
+XString* XDir_tempPath(void)
+{
+    char path[MAX_PATH];
+    if (!XFileSystem_tempPath(path, MAX_PATH)) return NULL;
+    return XString_create_utf8(path);
+}
+
+XStringList* XDir_drives(void)
+{
+    XStringList* result = XStringList_create();
+    XDriveIterator iter = XFileSystem_beginDrives();
+    if (!iter) return result;
+    char drive[4];
+    while (XFileSystem_nextDrive(iter, drive, 4)) {
+        XStringList_push_back_utf8(result, drive);
+    }
+    XFileSystem_endDrives(iter);
+    return result;
+}
+
+/* ============================================================================
+ * 目录条目信息列表
+ * ============================================================================ */
+
+XFileInfoList* XDir_entryInfoList_1(const XDir* dir, XDirFilters filters, XDirSortFlags sort)
+{
+    return XDir_entryInfoList_2(dir, NULL, filters, sort);
+}
+
+XFileInfoList* XDir_entryInfoList_2(const XDir* dir, const XStringList* nameFilters,
+                                    XDirFilters filters, XDirSortFlags sort)
+{
+    if (!dir || !dir->m_path) return NULL;
+    
+    XStringList* names = XDir_entryList_2(dir, nameFilters, filters, sort);
+    if (!names) return NULL;
+    
+    XFileInfoList* result = XVector_create(sizeof(XFileInfo));
+    if (!result) {
+        XStringList_delete_base(names);
+        return NULL;
+    }
+    
+    size_t count = XStringList_size_base(names);
+        for (size_t i = 0; i < count; i++) {
+            const XString* name = XStringList_at_base(names, i);
+            XString* fullPath = XDir_filePath(dir, name);
+            if (fullPath) {
+                XFileInfo info;
+                XFileInfo_init_1(&info);
+                XFileInfo_setFile_1(&info, fullPath);
+                XVector_push_back_1_base(result, &info);
+                XFileInfo_deinit_base(&info);
+                XString_delete_base(fullPath);
+            }
+        }
+    
+    XStringList_delete_base(names);
+    return result;
+}

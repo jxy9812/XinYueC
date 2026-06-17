@@ -81,6 +81,12 @@ typedef struct XDirEntry {
 typedef void* XDirIterator;
 
 /* ============================================================================
+ * 驱动器迭代器
+ * ============================================================================ */
+
+typedef void* XDriveIterator;
+
+/* ============================================================================
  * 核心文件操作
  * ============================================================================ */
 
@@ -164,8 +170,32 @@ bool XFileSystem_junctionTarget(const char* path, char* target, int targetSize);
 int64_t XFileSystem_totalSpace(const char* path);
 int64_t XFileSystem_availableSpace(const char* path);
 
+/* ============================================================================
+ * 特殊路径
+ * ============================================================================ */
+
+bool XFileSystem_currentPath(char* path, int pathSize);
+bool XFileSystem_setCurrentPath(const char* path);
+bool XFileSystem_homePath(char* path, int pathSize);
+bool XFileSystem_rootPath(char* path, int pathSize);
+bool XFileSystem_tempPath(char* path, int pathSize);
+
+/* ============================================================================
+ * 驱动器列表
+ * ============================================================================ */
+
+XDriveIterator XFileSystem_beginDrives(void);
+bool XFileSystem_nextDrive(XDriveIterator iter, char* drive, int driveSize);
+void XFileSystem_endDrives(XDriveIterator iter);
+
+/* ============================================================================
+ * 递归删除目录
+ * ============================================================================ */
+
+bool XFileSystem_rmdir_recursive(const char* path);
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif // XFILESYSTEM_PLATFORM_H
+#endif // XFILESYSTEM_PLATFORM_H"

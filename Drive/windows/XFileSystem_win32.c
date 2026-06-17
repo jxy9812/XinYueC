@@ -920,4 +920,145 @@ int64_t XFileSystem_availableSpace(const char* path)
     return (int64_t)freeBytes.QuadPart;
 }
 
+/* ============================================================================
+ * 特殊路径
+ * ============================================================================ */
+
+bool XFileSystem_currentPath(char* path, int pathSize)
+{
+    if (!path || pathSize <= 0) return false;
+    return _getcwd(path, pathSize) != NULL;
+}
+
+bool XFileSystem_setCurrentPath(const char* path)
+{
+    if (!path) return false;
+    return _chdir(path) == 0;
+}
+
+bool XFileSystem_homePath(char* path, int pathSize)
+{
+    if (!path || pathSize <= 0) return false;
+    
+    char* home = getenv("USERPROFILE");
+    if (home) {
+        strncpy(path, home, pathSize);
+        return true;
+    }
+    
+    char* homeDrive = getenv("HOMEDRIVE");
+    char* homePath = getenv("HOMEPATH");
+    if (homeDrive && homePath) {
+        _snprintf(path, pathSize, "%s%s", homeDrive, homePath);
+        return true;
+    }
+    
+    return false;
+}
+
+bool XFileSystem_rootPath(char* path, int pathSize)
+{
+    if (!path || pathSize < 4) return false;
+    
+    char cwd[MAX_PATH];
+    if (_getcwd(cwd, MAX_PATH) && cwd[0] && cwd[1] == ':') {
+        path[0] = cwd[0];
+        path[1] = ':';
+        path[2] = '\\';
+        path[3] = '\0';
+        return true;
+    }
+    
+    strcpy(path, "C:\\");
+    return true;
+}
+
+bool XFileSystem_tempPath(char* path, int pathSize)
+{
+    if (!path || pathSize <= 0) return false;
+    
+    wchar_t wTempPath[MAX_PATH];
+    DWORD len = GetTempPathW(MAX_PATH, wTempPath);
+    if (len == 0 || len >= MAX_PATH) return false;
+    
+    WideCharToMultiByte(CP_UTF8, 0, wTempPath, -1, path, pathSize, NULL, NULL);
+    return true;
+}
+
+/* ============================================================================
+ * 驱动器列表
+ * ============================================================================ */
+
+struct DriveIteratorData {
+    DWORD drives;
+    int current;
+};
+
+XDriveIterator XFileSystem_beginDrives(void)
+{
+    struct DriveIteratorData* iter = (struct DriveIteratorData*)XMalloc_System(sizeof(struct DriveIteratorData));
+    if (!iter) return NULL;
+    
+    iter->drives = GetLogicalDrives();
+    iter->current = 0;
+    return (XDriveIterator)iter;
+}
+
+bool XFileSystem_nextDrive(XDriveIterator iter, char* drive, int driveSize)
+{
+    if (!iter || !drive || driveSize < 4) return false;
+    struct DriveIteratorData* data = (struct DriveIteratorData*)iter;
+    
+    while (data->current < 26) {
+        if (data->drives & (1 << data->current)) {
+            drive[0] = 'A' + data->current;
+            drive[1] = ':';
+            drive[2] = '\\';
+            drive[3] = '\0';
+            data->current++;
+            return true;
+        }
+        data->current++;
+    }
+    return false;
+}
+
+void XFileSystem_endDrives(XDriveIterator iter)
+{
+    if (iter) XFree_System(iter);
+}
+
+/* ============================================================================
+ * 递归删除目录
+ * ============================================================================ */
+
+bool XFileSystem_rmdir_recursive(const char* path)
+{
+    if (!path) return false;
+    
+    wchar_t* wpath = toWidePath(path);
+    if (!wpath) return false;
+    
+    size_t len = wcslen(wpath);
+    wchar_t* wpathDouble = (wchar_t*)XMalloc_System((len + 2) * sizeof(wchar_t));
+    if (!wpathDouble) {
+        XFree_System(wpath);
+        return false;
+    }
+    wcscpy(wpathDouble, wpath);
+    wpathDouble[len] = 0;
+    wpathDouble[len + 1] = 0;
+    XFree_System(wpath);
+    
+    SHFILEOPSTRUCTW shfos = {0};
+    shfos.wFunc = FO_DELETE;
+    shfos.pFrom = wpathDouble;
+    shfos.fFlags = FOF_NOCONFIRMATION | FOF_SILENT;
+    
+    int result = SHFileOperationW(&shfos);
+    XFree_System(wpathDouble);
+    
+    return result == 0;
+}
+
 #endif // _WIN32
