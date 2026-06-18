@@ -76,8 +76,21 @@ XCLASS_DEFINE_EXTEND_END(XFileInfo, XClass)
 typedef struct XFileInfo {
     XClass m_class;               /**< 基类 */
     XString* m_filePath;          /**< 文件路径 */
-    bool m_caching;               /**< 是否启用缓存 */
-    bool m_cacheValid;            /**< 缓存是否有效 */
+    
+    /* 状态标志（使用位字段节省内存） */
+    uint16_t m_caching      : 1;  /**< 是否启用缓存 */
+    uint16_t m_cacheValid   : 1;  /**< 缓存是否有效 */
+    uint16_t m_exists       : 1;  /**< 是否存在 */
+    uint16_t m_isFile       : 1;  /**< 是否为文件 */
+    uint16_t m_isDir        : 1;  /**< 是否为目录 */
+    uint16_t m_isSymLink    : 1;  /**< 是否为符号链接 */
+    uint16_t m_isShortcut   : 1;  /**< 是否为快捷方式(Windows) */
+    uint16_t m_isJunction   : 1;  /**< 是否为Junction(Windows) */
+    uint16_t m_isHidden     : 1;  /**< 是否为隐藏 */
+    uint16_t m_isReadable   : 1;  /**< 是否可读 */
+    uint16_t m_isWritable   : 1;  /**< 是否可写 */
+    uint16_t m_isExecutable : 1;  /**< 是否可执行 */
+    uint16_t _reserved      : 4;  /**< 保留位 */
     
     /* 缓存的文件信息 */
     int64_t m_size;               /**< 文件大小 */
@@ -88,16 +101,6 @@ typedef struct XFileInfo {
     XFilePermissions m_permissions; /**< 文件权限 */
     uint32_t m_ownerId;           /**< 所有者ID */
     uint32_t m_groupId;           /**< 用户组ID */
-    bool m_exists;                /**< 是否存在 */
-    bool m_isFile;                /**< 是否为文件 */
-    bool m_isDir;                 /**< 是否为目录 */
-    bool m_isSymLink;             /**< 是否为符号链接 */
-    bool m_isShortcut;            /**< 是否为快捷方式(Windows) */
-    bool m_isJunction;            /**< 是否为Junction(Windows) */
-    bool m_isHidden;              /**< 是否为隐藏 */
-    bool m_isReadable;            /**< 是否可读 */
-    bool m_isWritable;            /**< 是否可写 */
-    bool m_isExecutable;          /**< 是否可执行 */
 } XFileInfo;
 
 /* ============================================================================

@@ -38,7 +38,6 @@ XCLASS_DEFINE_EXTEND_END(XFile, XFileDevice)
  */
 typedef struct XFile {
     XFileDevice m_parent;           /**< 基类 XFileDevice */
-    
     /* XFile 特有成员 */
     XString* m_fileName;            /**< 文件名 */
 } XFile;

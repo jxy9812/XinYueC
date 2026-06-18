@@ -31,7 +31,7 @@ typedef enum XFileSystemOpenMode {
 } XFileSystemOpenMode;
 
 /* ============================================================================
- * 文件属性结构体（扩展版）
+ * 文件属性结构体（扩展版，使用位字段节省内存）
  * ============================================================================ */
 
 typedef struct XFileStat {
@@ -51,31 +51,31 @@ typedef struct XFileStat {
     uint32_t ownerId;
     uint32_t groupId;
     
-    /* 类型标志 */
-    bool exists;
-    bool isFile;
-    bool isDir;
-    bool isSymLink;
-    bool isHidden;
-    bool isReadable;
-    bool isWritable;
-    bool isExecutable;
-    
-    /* Windows 特有 */
-    bool isJunction;
-    bool isShortcut;
+    /* 类型标志（使用位字段，10个标志位仅需4字节） */
+    uint32_t exists       : 1;  /**< 文件是否存在 */
+    uint32_t isFile       : 1;  /**< 是否为普通文件 */
+    uint32_t isDir        : 1;  /**< 是否为目录 */
+    uint32_t isSymLink    : 1;  /**< 是否为符号链接 */
+    uint32_t isHidden     : 1;  /**< 是否为隐藏文件 */
+    uint32_t isReadable   : 1;  /**< 是否可读 */
+    uint32_t isWritable   : 1;  /**< 是否可写 */
+    uint32_t isExecutable : 1;  /**< 是否可执行 */
+    uint32_t isJunction   : 1;  /**< 是否为 Junction (Windows) */
+    uint32_t isShortcut   : 1;  /**< 是否为快捷方式 (Windows) */
+    uint32_t _reserved    : 22; /**< 保留位 */
 } XFileStat;
 
 /* ============================================================================
- * 目录迭代器
+ * 目录迭代器（使用位字段节省内存）
  * ============================================================================ */
 
 typedef struct XDirEntry {
-    char name[256];
-    bool isDir;
-    bool isFile;
-    bool isSymLink;
-    bool isHidden;
+    char name[256];               /**< 文件名 */
+    uint8_t isDir       : 1;      /**< 是否为目录 */
+    uint8_t isFile      : 1;      /**< 是否为普通文件 */
+    uint8_t isSymLink   : 1;      /**< 是否为符号链接 */
+    uint8_t isHidden    : 1;      /**< 是否为隐藏文件 */
+    uint8_t _reserved   : 4;      /**< 保留位 */
 } XDirEntry;
 
 typedef void* XDirIterator;

@@ -49,10 +49,10 @@ typedef struct XIODevice
 {
 	XObject m_class;//继承类
 	//void* device;//设备
-	uint16_t m_openMode;//打开模式
     bool m_textModeEnabled;
-    int m_currentReadChannel;       // ← 多通道支持
-    int m_currentWriteChannel;
+    uint8_t m_openMode;//打开模式
+    uint8_t m_currentReadChannel;       // ← 多通道支持
+    uint8_t m_currentWriteChannel;
     XIODevicePrivate* m_d;
 }XIODevice;
 /**

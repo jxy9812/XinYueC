@@ -44,11 +44,14 @@ typedef struct XSaveFile {
     /* XSaveFile 特有成员 */
     XString* m_fileName;            /**< 目标文件名 */
     XString* m_tempFileName;        /**< 临时文件名 */
-    bool m_useTempFile;             /**< 是否使用临时文件（directWriteFallback 时为 false） */
-    bool m_canceled;                /**< 是否已取消写入 */
-    bool m_committed;               /**< 是否已提交 */
-    bool m_directWriteFallback;     /**< 是否允许直接写入回退 */
-    bool m_writeError;              /**< 写入过程中是否发生错误 */
+    
+    /* 状态标志（使用位字段节省内存） */
+    uint8_t m_useTempFile        : 1;  /**< 是否使用临时文件（directWriteFallback 时为 false） */
+    uint8_t m_canceled           : 1;  /**< 是否已取消写入 */
+    uint8_t m_committed          : 1;  /**< 是否已提交 */
+    uint8_t m_directWriteFallback: 1;  /**< 是否允许直接写入回退 */
+    uint8_t m_writeError         : 1;  /**< 写入过程中是否发生错误 */
+    uint8_t _reserved            : 3;  /**< 保留位 */
 } XSaveFile;
 
 /* ============================================================================
@@ -100,11 +103,17 @@ void XSaveFile_init_2(XSaveFile* file, const XString* name);
 #define XSaveFile_deleteLater           XFileDevice_deleteLater
 
 /* ============================================================================
- * 继承自 XFileDevice 的函数（使用宏映射）
+ * 继承自 XFileDevice 的虚函数（使用宏映射）
  * ============================================================================ */
+
 #define XSaveFile_fileName_base         XFileDevice_fileName_base
 #define XSaveFile_open_base             XIODevice_open_base
 #define XSaveFile_close_base            XIODevice_close_base
+
+/* ============================================================================
+ * 继承自 XFileDevice 的非虚函数（使用宏映射）
+ * ============================================================================ */
+
 #define XSaveFile_error                 XFileDevice_error
 #define XSaveFile_unsetError            XFileDevice_unsetError
 #define XSaveFile_flush                 XFileDevice_flush
@@ -118,7 +127,7 @@ void XSaveFile_init_2(XSaveFile* file, const XString* name);
 #define XSaveFile_resize_base           XFileDevice_resize_base
 
 /* ============================================================================
- * 继承自 XIODevice 的函数（使用宏映射）
+ * 继承自 XIODevice 的虚函数（使用宏映射）
  * ============================================================================ */
 
 #define XSaveFile_isSequential_base     XIODevice_isSequential_base
