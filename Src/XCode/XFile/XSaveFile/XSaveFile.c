@@ -60,6 +60,16 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
     if (mode & XIODevice_ReadOnly) {
         return false;
     }
+    if (mode & XIODevice_Append) {
+        // XSaveFile 不支持追加模式，因为它使用临时文件机制
+        return false;
+    }
+    if (mode & XIODevice_NewOnly) {
+        return false;
+    }
+    if (mode & XIODevice_ExistingOnly) {
+        return false;
+    }
     
     // 初始化状态
     file->m_canceled = false;
@@ -154,7 +164,8 @@ static int64_t VXSaveFile_writeData(XFileDevice* device, const char* data, int64
     }
     
     // 调用父类的写入实现
-    int64_t written = XFileDevice_writeData_base(device, data, len);
+    int64_t written = XClass_Parent(XFileDevice,EXIODevice_WriteData, int64_t (*)(XFileDevice*, const char* , int64_t ))(device, data, len);
+    //int64_t written = XFileDevice_writeData_base(device, data, len);
     
     // 检测写入错误（如磁盘满）
     if (written < 0 || written < len) {

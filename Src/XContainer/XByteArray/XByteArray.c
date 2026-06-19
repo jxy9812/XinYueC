@@ -86,7 +86,7 @@ bool XByteArray_append_utf8(XByteArray* array, const char* utf8)
 	size_t len = strlen(utf8);
 	if (len == 0)
 		return false;
-	return XByteArray_push_back_2(array,utf8,len);
+	return XByteArray_push_back_2(array,utf8,len+1);
 }
 
 bool XByteArray_find_base(const XByteArray* array, const uint8_t findVal, XByteArray_iterator* it)

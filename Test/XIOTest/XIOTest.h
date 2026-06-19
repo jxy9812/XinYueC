@@ -10,6 +10,10 @@ extern "C" {
 	void XMenu_XSerialPortTest(XMenu* root);
 	void XMenu_XSocketTest(XMenu* root);
 	void XMenu_XHostInfoTest(XMenu* root);
+	void XMenu_XDirTest(XMenu* root);
+	void XMenu_XFileTest(XMenu* root);
+	void XMenu_XFileInfoTest(XMenu* root);
+	void XMenu_XSaveFileTest(XMenu* root);
 
 
 

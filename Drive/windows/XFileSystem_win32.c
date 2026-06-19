@@ -168,17 +168,20 @@ int XFileSystem_open(const char* path, int mode, int* error)
     if (mode & XFileSystem_ReadWrite) desiredAccess |= GENERIC_READ | GENERIC_WRITE;
     
     if (mode & XFileSystem_Append) {
-        desiredAccess |= GENERIC_WRITE;
-        creationDisposition = OPEN_ALWAYS;
-    } else if (mode & XFileSystem_Truncate) {
-        creationDisposition = CREATE_ALWAYS;
-    } else if (mode & XFileSystem_Create) {
-        creationDisposition = OPEN_ALWAYS;
-    } else if (mode & XFileSystem_NewOnly) {
-        creationDisposition = CREATE_NEW;
-    } else if (mode & XFileSystem_Existing) {
-        creationDisposition = OPEN_EXISTING;
-    }
+            desiredAccess |= GENERIC_WRITE;
+            creationDisposition = OPEN_ALWAYS;
+        } else if (mode & XFileSystem_Truncate) {
+            creationDisposition = CREATE_ALWAYS;
+        } else if (mode & XFileSystem_NewOnly) {
+            creationDisposition = CREATE_NEW;
+        } else if (mode & XFileSystem_Existing) {
+            creationDisposition = OPEN_EXISTING;
+        } else if (mode & XFileSystem_Create) {
+            creationDisposition = OPEN_ALWAYS;
+        } else if (mode & XFileSystem_WriteOnly) {
+            // 纯写入模式：如果文件不存在则创建，存在则打开
+            creationDisposition = OPEN_ALWAYS;
+        }
     
     HANDLE hFile = CreateFileW(wpath, desiredAccess, shareMode, NULL,
                                 creationDisposition, FILE_ATTRIBUTE_NORMAL, NULL);

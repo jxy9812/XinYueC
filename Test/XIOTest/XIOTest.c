@@ -7,4 +7,9 @@ void XMenu_XIOTest(XMenu* root)
 	XMenu_XSerialPortTest(menu);
 	XMenu_XSocketTest(menu);
 	XMenu_XHostInfoTest(menu);
+
+	XMenu_XDirTest(menu);
+	XMenu_XFileTest(menu);
+	XMenu_XFileInfoTest(menu);
+	XMenu_XSaveFileTest(menu);
 }
