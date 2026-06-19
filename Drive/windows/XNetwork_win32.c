@@ -193,12 +193,20 @@ bool XNetwork_isEAgain(int e)
 
 char* XNetwork_errorString(int ec)
 {
-    char* buf = NULL;
+    char* buf =NULL,*ret= NULL;
     FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER |
                    FORMAT_MESSAGE_FROM_SYSTEM |
                    FORMAT_MESSAGE_IGNORE_INSERTS,
                    NULL, (DWORD)ec, 0, (LPSTR)&buf, 0, NULL);
-    return buf;
+    if (buf) {
+        size_t len = strlen(buf) + 1;
+        ret = (char*)XMalloc_System(len);
+        if (ret) {
+            memcpy(ret, buf, len);
+        }
+        LocalFree(buf);
+    }
+    return ret;
 }
 
 int XNetwork_classifyError(int ec)

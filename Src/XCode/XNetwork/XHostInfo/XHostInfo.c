@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 #include "XHostInfo.h"
+#include "XNetwork_platform.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XVector.h"
@@ -13,15 +14,6 @@
 #include "XAtomic.h"
 #include <string.h>
 #include <stdlib.h>
-
-// ======================== 平台抽象函数声明 ========================
-
-bool XHostInfo_platform_lookupName(const XString* name, XVector* addresses,
-                                    XHostInfo_Error* error, XString** errorString);
-
-XString* XHostInfo_platform_localHostName(void);
-
-XString* XHostInfo_platform_localDomainName(void);
 
 // ======================== 异步查询管理 ========================
 
@@ -176,8 +168,6 @@ XHostInfo* XHostInfo_create_copy(const XHostInfo* other) {
     return info;
 }
 
-// XHostInfo_deinit 通过虚函数表重载实现，调用 XHostInfo_deinit_base 即可
-
 // ==================== 属性访问器 ====================
 
 XString* XHostInfo_hostName(const XHostInfo* info) {
@@ -211,12 +201,10 @@ const XVector* XHostInfo_addresses_const(const XHostInfo* info) {
 void XHostInfo_setAddresses(XHostInfo* info, const XHostAddress* addrs, int count) {
     if (!info || !info->addresses) return;
     
-    // 清空现有地址（XHostAddress 无动态资源，直接清空即可）
     XVector_clear_base(info->addresses);
     
     if (!addrs || count <= 0) return;
     
-    // 添加新地址
     for (int i = 0; i < count; i++) {
         XVector_push_back_1_base(info->addresses, &addrs[i]);
     }
@@ -276,15 +264,34 @@ XHostInfo* XHostInfo_fromName1(const XString* name) {
     XHostInfo* info = XHostInfo_create();
     XHostInfo_setHostName(info, name);
     
-    XHostInfo_Error error = XHostInfo_NoError;
-    XString* errorString = NULL;
+    // 调用 XNetwork 平台函数进行 DNS 查询
+    XNetwork_ensureInit();
     
-    // 直接使用 info->addresses 作为输出，避免冗余拷贝
-    (void)XHostInfo_platform_lookupName(name, info->addresses, &error, &errorString);
+    XHostAddress* addrs = NULL;
+    int count = 0;
     
-    XHostInfo_setError(info, error);
-    if (errorString) {
-        info->errorString = errorString;
+    if (!XNetwork_lookupName(XString_toUtf8(name), &addrs, &count)) {
+        XHostInfo_setError(info, XHostInfo_HostNotFound);
+        int errCode = XNetwork_lastError();
+        char* errStr = XNetwork_errorString(errCode);
+        if (errStr) {
+            info->errorString = XString_create_utf8(errStr);
+            XFree_System(errStr);
+        }
+        return info;
+    }
+    
+    // 将结果添加到 addresses 向量
+    for (int i = 0; i < count; i++) {
+        XVector_push_back_1_base(info->addresses, &addrs[i]);
+    }
+    
+    // 释放 XNetwork 分配的内存
+    for (int i = 0; i < count; i++) {
+        XHostAddress_deinit_base(&addrs[i]);
+    }
+    if (addrs) {
+        XFree_System(addrs);
     }
     
     return info;
@@ -300,28 +307,38 @@ XHostInfo* XHostInfo_fromName2(const char* name)
 }
 
 XString* XHostInfo_localHostName(void) {
-    return XHostInfo_platform_localHostName();
+    XNetwork_ensureInit();
+    char* hostname = XNetwork_localHostName();
+    if (hostname) {
+        XString* result = XString_create_utf8(hostname);
+        XFree_System(hostname);
+        return result;
+    }
+    return NULL;
 }
 
 XString* XHostInfo_localDomainName(void) {
-    return XHostInfo_platform_localDomainName();
+    XNetwork_ensureInit();
+    char* domain = XNetwork_localDomainName();
+    if (domain) {
+        XString* result = XString_create_utf8(domain);
+        XFree_System(domain);
+        return result;
+    }
+    return NULL;
 }
 
 // ==================== 异步查询实现 ====================
 
 static void ensureLookupInit(void) {
-    // 使用原子操作确保线程安全的单次初始化
     int32_t expected = 0;
     if (XAtomic_compare_exchange_strong_int32(&g_lookupInitialized, &expected, 1,
             XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
-        // 当前线程获得初始化权
         g_lookupMutex = XMutex_create(XLock_NonRecursive);
         g_lookupRequests = XVector_create(sizeof(XHostInfoLookupRequest*));
         XAtomic_store_int32(&g_lookupInitialized, 2, XAtomic_MemoryOrder_Release);
     } else if (expected == 1) {
-        // 其他线程正在初始化，等待完成
         while (XAtomic_load_int32(&g_lookupInitialized, XAtomic_MemoryOrder_Acquire) != 2) {
-            // 自旋等待
         }
     }
 }
@@ -358,7 +375,6 @@ static void removeRequest(int id) {
     }
 }
 
-// 线程池工作函数
 static void lookupWorker(XVarList* varlist) {
     XVarList_args_1(varlist, XHostInfoLookupRequest*, req);
     if (!req) return;
@@ -422,7 +438,6 @@ int XHostInfo_lookupHost(const XString* name, XHostInfo_Callback callback, void*
     XVector_push_back_1_base(g_lookupRequests, &req);
     XMutex_unlock(g_lookupMutex);
     
-    // 使用全局线程池运行异步任务
     XThreadPool_start2(XThreadPool_globalInstance(), lookupWorker, varlist, 0);
     
     return req->id;
@@ -456,7 +471,6 @@ int XHostInfo_lookupHost_toObject(const XString* name, XObject* receiver, size_t
     XVector_push_back_1_base(g_lookupRequests, &req);
     XMutex_unlock(g_lookupMutex);
 
-    // 使用全局线程池运行异步任务
     XThreadPool_start2(XThreadPool_globalInstance(), lookupWorker, varlist, 0);
 
     return req->id;

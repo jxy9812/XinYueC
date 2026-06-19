@@ -252,7 +252,7 @@ void XString_init(XString* str)
 
 const char* XString_toUtf8(const XString* str)
 {
-    if (!str) return NULL;
+    if (!str || XString_isEmpty_base(str)) return NULL;
 
     // 缓存已存在则直接返回
     if (str->m_cache&& str->m_cache[XStringCache_Utf8].m_data) return str->m_cache[XStringCache_Utf8].m_data;
@@ -282,7 +282,7 @@ const char* XString_toUtf8(const XString* str)
 
 size_t XString_toUtf8_length(const XString* str)
 {
-    if (!str)
+    if (!str || XString_isEmpty_base(str))
         return 0;
     if (XString_toUtf8(str))
         return str->m_cache[XStringCache_Utf8].m_length;
@@ -291,7 +291,7 @@ size_t XString_toUtf8_length(const XString* str)
 
 const uint16_t* XString_toUtf16(const XString* str)
 {
-    if (!str) return NULL;
+    if (!str || XString_isEmpty_base(str)) return NULL;
 
     // 检查缓存是否存在
     if (str->m_cache && str->m_cache[XStringCache_Utf16].m_data) 
@@ -333,7 +333,7 @@ size_t XString_toUtf16_length(const XString* str)
 
 const uint32_t* XString_toUtf32(const XString* str)
 {
-    if (!str) return NULL;
+    if (!str || XString_isEmpty_base(str)) return NULL;
 
     // 检查缓存是否存在
     if (str->m_cache && str->m_cache[XStringCache_Utf32].m_data) 
@@ -366,7 +366,7 @@ const uint32_t* XString_toUtf32(const XString* str)
 
 size_t XString_toUtf32_length(const XString* str)
 {
-    if (!str)
+    if (!str || XString_isEmpty_base(str))
         return 0;
     if (XString_toUtf32(str))
         return str->m_cache[XStringCache_Utf32].m_length;
@@ -375,7 +375,7 @@ size_t XString_toUtf32_length(const XString* str)
 
 const char* XString_toGbk(const XString* str)
 {
-    if (!str) return NULL;
+    if (!str||XString_isEmpty_base(str)) return NULL;
 
     // 检查缓存是否存在
     if (str->m_cache && str->m_cache[XStringCache_Gbk].m_data) {
@@ -407,7 +407,7 @@ const char* XString_toGbk(const XString* str)
 
 size_t XString_toGbk_length(const XString* str)
 {
-    if (!str) 
+    if (!str || XString_isEmpty_base(str))
         return 0;
     if (XString_toGbk(str)) 
         return str->m_cache[XStringCache_Gbk].m_length;
@@ -416,7 +416,7 @@ size_t XString_toGbk_length(const XString* str)
 
 const char* XString_toLocal(const XString* str)
 {
-    if (!str) return NULL;
+    if (!str || XString_isEmpty_base(str)) return NULL;
 
     // 本地编码缓存已存在则直接返回
     if (str->m_cache && str->m_cache[XStringCache_Local].m_data) 
@@ -437,7 +437,7 @@ const char* XString_toLocal(const XString* str)
 
 size_t XString_toUtfLocal_length(const XString* str)
 {
-    if (!str)
+    if (!str || XString_isEmpty_base(str))
         return 0;
     if (XString_toLocal(str))
         return str->m_cache[XStringCache_Local].m_length;
