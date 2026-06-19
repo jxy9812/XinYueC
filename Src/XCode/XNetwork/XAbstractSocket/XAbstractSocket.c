@@ -3,46 +3,22 @@
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
 #include "XAbstractSocket.h"
+#include "XNetwork_platform.h"
 #include "XMemory.h"
 #include "XString.h"
 #include "XVariant.h"
 #include "XVariantList.h"
 #include "XIODevicePrivate.h"
 #include "XDateTime.h"
+#include "XEvent.h"
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
 #include "XRingBuffer.h"
 #include <string.h>
 #include <assert.h>
 
-// ==================== 平台函数声明（只包含必须的平台特定操作）====================
-// 初始化/析构 - 平台特定数据
-void XAbstractSocket_platform_init(XAbstractSocket* sock, XAbstractSocket_SocketType type);
-void XAbstractSocket_platform_deinit(XAbstractSocket* sock);
-
-// 核心操作 - 必须平台实现
-bool XAbstractSocket_platform_bind(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XAbstractSocket_BindMode mode);
-void XAbstractSocket_platform_connectToHost(XAbstractSocket* sock, const char* hostName, uint16_t port, XIODeviceBaseMode mode, XAbstractSocket_NetworkLayerProtocol protocol);
-void XAbstractSocket_platform_disconnectFromHost(XAbstractSocket* sock);
-
-// IO 操作 - 必须平台实现
-int64_t XAbstractSocket_platform_readData(XAbstractSocket* sock, char* data, int64_t maxlen);
-int64_t XAbstractSocket_platform_writeData(XAbstractSocket* sock, const char* data, int64_t len);
-
-// 句柄操作 - 必须平台实现
-intptr_t XAbstractSocket_platform_socketDescriptor(const XAbstractSocket* sock);
-bool XAbstractSocket_platform_setSocketDescriptor(XAbstractSocket* sock, intptr_t socketDescriptor, XAbstractSocket_SocketState state, XIODeviceBaseMode openMode);
-
-// 选项操作 - 必须平台实现
-void XAbstractSocket_platform_setSocketOption(XAbstractSocket* sock, XAbstractSocket_SocketOption option, const XVariant* value);
-XVariant* XAbstractSocket_platform_socketOption(XAbstractSocket* sock, XAbstractSocket_SocketOption option);
-
-// 事件处理 - 平台特定（IOCP/epoll 等）
-bool XAbstractSocket_platform_event(XAbstractSocket* sock, XEvent* e);
-
-// 可选的平台钩子 - 如果平台需要特殊处理可实现
-// 设置 socket 缓冲区大小（可选，默认只设置字段值）
-void XAbstractSocket_platform_setReadBufferSize(XAbstractSocket* sock, int64_t size);
+// ==================== 辅助宏 ====================
+#define getPriv(sock) ((XNetworkSocketPrivate*)(sock)->d_ptr)
 
 // ==================== 内部辅助函数声明 ====================
 static void VXAbstractSocket_deinit(XAbstractSocket* sock);
@@ -135,8 +111,11 @@ static void VXAbstractSocket_deinit(XAbstractSocket* sock)
 {
     if (!sock) return;
 
-    // 调用平台析构
-    XAbstractSocket_platform_deinit(sock);
+    // 调用 XNetwork 清理私有数据
+    if (sock->d_ptr) {
+        XNetwork_deleteSocketPrivate(sock->d_ptr);
+        sock->d_ptr = NULL;
+    }
 
     // 清理自身资源
     if (sock->errorString) {
@@ -187,11 +166,12 @@ void XAbstractSocket_init(XAbstractSocket* sock, XAbstractSocket_SocketType type
     sock->isValidFlag = false;
     sock->protocolTag = NULL;
     XNetworkProxy_init(&sock->proxy);
-    sock->d_ptr = NULL; // 由平台层初始化
+        sock->d_ptr = NULL;
 
-    // 调用平台初始化
-    XAbstractSocket_platform_init(sock, type);
-}
+        // 初始化私有数据（通过 XNetwork 平台层）
+        XNetwork_ensureInit();
+        sock->d_ptr = XNetwork_createSocketPrivate(sock);
+    }
 
 // ==================== Getter 实现 ====================
 XAbstractSocket_SocketType XAbstractSocket_socketType(const XAbstractSocket* sock)
@@ -536,31 +516,42 @@ static bool VXAbstractSocket_open(XAbstractSocket* self, XIODeviceBaseMode mode)
 static void VXAbstractSocket_close(XAbstractSocket* self)
 {
     if (!self) return;
-    // 调用平台断开
-    XAbstractSocket_platform_disconnectFromHost(self);
-    // 调用父类 close
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (priv) {
+        XNetwork_socketDisconnect(priv);
+        self->isValidFlag = false;
+    }
     XClass_Parent(XIODevice, EXIODevice_Close, void (*)(XIODevice*))((XIODevice*)self);
 }
 
 static int64_t VXAbstractSocket_readData(XAbstractSocket* self, char* data, int64_t maxlen)
 {
-    // 先从内部缓冲区读取
-    if (!self || !self->base.m_d || maxlen <= 0) return -1;
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (!priv) return -1;
     
-    int currentReadChannel = XIODevice_currentReadChannel((XIODevice*)self);
-    struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(self->base.m_d, currentReadChannel);
-    if (!readBuf) return -1;
+    // 获取 ringBuffer
+    void* ringBuffer = NULL;
+    if (self->base.m_d) {
+        int channel = XIODevice_currentReadChannel((XIODevice*)self);
+        ringBuffer = XIODevicePrivate_getOrCreateReadBuffer(self->base.m_d, channel);
+    }
     
-    int64_t bytesFromBuffer = XRingBuffer_read(readBuf, data, maxlen);
-    if (bytesFromBuffer > 0) return bytesFromBuffer;
-    
-    // 缓冲区无数据，调用平台读取
-    return XAbstractSocket_platform_readData(self, data, maxlen);
+    return XNetwork_socketRead(priv, data, maxlen, self->socketType, ringBuffer);
 }
 
 static int64_t VXAbstractSocket_writeData(XAbstractSocket* self, const char* data, int64_t len)
 {
-    return XAbstractSocket_platform_writeData(self, data, len);
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (!priv) return -1;
+    
+    // 获取 ringBuffer
+    void* ringBuffer = NULL;
+    if (self->base.m_d) {
+        int channel = XIODevice_currentWriteChannel((XIODevice*)self);
+        ringBuffer = XIODevicePrivate_getOrCreateWriteBuffer(self->base.m_d, channel);
+    }
+    
+    return XNetwork_socketWrite(priv, data, len, self->socketType, &self->peerAddress, self->peerPort, ringBuffer);
 }
 
 static bool VXAbstractSocket_isSequential(const XAbstractSocket* self)
@@ -661,8 +652,61 @@ static int64_t VXAbstractSocket_skipData(XAbstractSocket* self, int64_t maxSize)
 
 static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
 {
-    // 平台特定事件处理（如 IOCP 完成）
-    return XAbstractSocket_platform_event(self, e);
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (!priv) return false;
+    
+    if (e->type == XEVENT_TYPE_SOCK_ACT) {
+        XEventSockAct* sockAct = (XEventSockAct*)e;
+        
+        // 统一调用平台层处理，更新内部状态
+        XNetwork_socketHandleEvent(priv, e);
+        
+        // 处理读取完成
+        if (sockAct->actType & XSocketAct_Read) {
+            size_t bytesTransferred = XNetwork_socketFinishedBytes(priv);
+            if (bytesTransferred > 0 && self->base.m_d) {
+                const char* readBuf = XNetwork_socketReadBuffer(priv);
+                int channel = XIODevice_currentReadChannel((XIODevice*)self);
+                struct XRingBuffer* rb = XIODevicePrivate_getOrCreateReadBuffer(self->base.m_d, channel);
+                if (rb && readBuf) {
+                    XRingBuffer_write(rb, readBuf, bytesTransferred);
+                    XIODevice_readyRead_signal((XIODevice*)self);
+                }
+            }
+            // 继续异步读取
+            bool isUdp = (self->socketType == XAbstractSocket_UdpSocket);
+            XNetwork_socketContinueRead(priv, isUdp);
+        }
+        
+        // 处理写入完成
+        if (sockAct->actType & XSocketAct_Write) {
+            size_t bytesWritten = XNetwork_socketFinishedBytes(priv);
+            if (bytesWritten > 0) {
+                XIODevice_bytesWritten_signal((XIODevice*)self, bytesWritten);
+            }
+        }
+        
+        // 处理连接完成
+        if (sockAct->actType & XSocketAct_Connect) {
+            if (XNetwork_socketIsConnected(priv)) {
+                XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
+                bool isUdp = (self->socketType == XAbstractSocket_UdpSocket);
+                XNetwork_socketContinueRead(priv, isUdp);
+            } else {
+                XAbstractSocket_setSocketError(self, XAbstractSocket_ConnectionRefusedError, "Connection failed");
+                XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+            }
+        }
+        
+        return true;
+    }
+    else if (e->type == XEVENT_TYPE_SOCK_CLOSE) {
+        XNetwork_socketDisconnect(priv);
+        XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+        return true;
+    }
+    
+    return false;
 }
 
 // ==================== XAbstractSocket 特有虚函数 ====================
@@ -674,44 +718,97 @@ static void VXAbstractSocket_Resume(XAbstractSocket* self)
 
 static bool VXAbstractSocket_Bind(XAbstractSocket* self, const XHostAddress* address, uint16_t port, XAbstractSocket_BindMode mode)
 {
-    return XAbstractSocket_platform_bind(self, address, port, mode);
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (!priv) return false;
+    
+    bool reuseAddr = (mode & XAbstractSocket_ShareAddress) || (mode & XAbstractSocket_ReuseAddressHint);
+    bool shareAddr = (mode & XAbstractSocket_ShareAddress) != 0;
+    
+    if (!XNetwork_socketBind(priv, address, port, reuseAddr, shareAddr, self->socketType)) {
+        return false;
+    }
+    
+    XAbstractSocket_setLocalAddress(self, address);
+    XAbstractSocket_setLocalPort(self, port);
+    XAbstractSocket_setSocketState(self, XAbstractSocket_BoundState);
+    return true;
 }
 
 static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* hostName, uint16_t port, XIODeviceBaseMode mode, XAbstractSocket_NetworkLayerProtocol protocol)
 {
-    XAbstractSocket_platform_connectToHost(self, hostName, port, mode, protocol);
+    (void)mode; // 由 XIODevice 管理
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (!priv) return;
+    
+    XAbstractSocket_setPeerName(self, hostName);
+    XAbstractSocket_setPeerPort(self, port);
+    XAbstractSocket_setSocketState(self, XAbstractSocket_HostLookupState);
+    
+    if (!XNetwork_socketConnect(priv, hostName, port, protocol, self->socketType, &self->proxy)) {
+        XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+        return;
+    }
+    
+    XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
 }
 
 static void VXAbstractSocket_DisconnectFromHost(XAbstractSocket* self)
 {
-    XAbstractSocket_platform_disconnectFromHost(self);
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (!priv) return;
+    
+    XAbstractSocket_setSocketState(self, XAbstractSocket_ClosingState);
+    XNetwork_socketDisconnect(priv);
+    XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
 }
 
 static intptr_t VXAbstractSocket_SocketDescriptor(const XAbstractSocket* self)
 {
-    return XAbstractSocket_platform_socketDescriptor(self);
+    return XNetwork_socketDescriptor(getPriv(self));
 }
 
 static bool VXAbstractSocket_SetSocketDescriptor(XAbstractSocket* self, intptr_t socketDescriptor, XAbstractSocket_SocketState state, XIODeviceBaseMode openMode)
 {
-    return XAbstractSocket_platform_setSocketDescriptor(self, socketDescriptor, state, openMode);
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (!priv) return false;
+    
+    if (!XNetwork_socketSetDescriptor(priv, socketDescriptor, state, openMode)) {
+        return false;
+    }
+    
+    XAbstractSocket_setSocketState(self, state);
+    self->base.m_openMode = openMode;
+    self->isValidFlag = (state == XAbstractSocket_ConnectedState);
+    return true;
 }
 
 static void VXAbstractSocket_SetSocketOption(XAbstractSocket* self, XAbstractSocket_SocketOption option, const XVariant* value)
 {
-    XAbstractSocket_platform_setSocketOption(self, option, value);
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (!priv) return;
+    XNetwork_socketSetOption(priv, option, value);
 }
 
 static XVariant* VXAbstractSocket_SocketOption(XAbstractSocket* self, XAbstractSocket_SocketOption option)
 {
-    return XAbstractSocket_platform_socketOption(self, option);
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (!priv) return NULL;
+    
+    void* result = XNetwork_socketGetOption(priv, option);
+    if (!result) return NULL;
+    
+    return XVariant_create_int(*(int*)result);
 }
 
 static void VXAbstractSocket_SetReadBufferSize(XAbstractSocket* self, int64_t size)
 {
     if (!self) return;
     self->readBufferSize = size;
-    XAbstractSocket_platform_setReadBufferSize(self, size);
+    
+    XNetworkSocketPrivate* priv = getPriv(self);
+    if (priv) {
+        XNetwork_socketSetReadBufferSize(priv, size);
+    }
 }
 
 static bool VXAbstractSocket_WaitForConnected(XAbstractSocket* self, int msecs)

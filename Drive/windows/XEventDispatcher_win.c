@@ -76,6 +76,8 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
 static void XEventDispatcherWin32_handleTimerMessage(XEventDispatcherWin32* dispatcher, UINT_PTR timerId);
 //iocp绑定
 bool IOCP_bind(XSocketDescriptor socket,XObject* obj);
+//获取全局IOCP端口
+HANDLE IOCP_getGlobalPort(void);
 // Windows 消息常量
 #define XDISPATCHER_WM_SOCKET (WM_USER + 1)
 #define XDISPATCHER_WM_WAKEUP (WM_USER + 2)
@@ -141,15 +143,16 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
     // 保存传输字节数到 IOCP 上下文
     ioCtx->finishedBytes = bytesTransferred;
     
-    XEventSockAct* event = XEventSockAct_create(ioCtx->socket, XSocketAct_Invalid);
-    if(!event)return;
+        XEventSockAct* event = XEventSockAct_create(ioCtx->socket, XSocketAct_Invalid);
+        if(!event)return;
     
-    // 根据事件掩码设置活动类型
-    if (ioCtx->eventMask & FD_READ)
-        event->actType |= XSocketAct_Read;
-    if (ioCtx->eventMask & FD_WRITE)
-        event->actType |= XSocketAct_Write;
-    // 注意：FD_CONNECT 用于连接完成事件
+        // 根据事件掩码设置活动类型
+        if (ioCtx->eventMask & FD_READ)
+            event->actType |= XSocketAct_Read;
+        if (ioCtx->eventMask & FD_WRITE)
+            event->actType |= XSocketAct_Write;
+        if (ioCtx->eventMask & FD_CONNECT)
+            event->actType |= XSocketAct_Connect;
     
     XEvent* e = (XEvent*)event;
     e->posted = true;
@@ -222,6 +225,11 @@ bool IOCP_bind(XSocketDescriptor socket, XObject* obj)
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     MainThreadDataPrivate* d = PlatformPrivate(dispatcher);*/
     return CreateIoCompletionPort((HANDLE)XSocketDescriptor_toIntptr(socket), global_ioCompletionPort, obj, 0);
+}
+
+HANDLE IOCP_getGlobalPort(void)
+{
+    return global_ioCompletionPort;
 }
 static void IOCP_handle(XAbstractEventDispatcher* dispatcher)
 {
