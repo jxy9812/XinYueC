@@ -63,14 +63,6 @@ void VXIODevice_deinit(XIODevice* obj)
 	XIODevice* self = (XIODevice*)obj;
 	if (!self) return;
 
-	//// 安全关闭
-	//if (self->m_openMode != XIODevice_NotOpen) {
-	//	if (!self->m_d->aboutToCloseEmitted) {
-	//		XIODevice_aboutToClose_signal(self);
-	//		self->m_d->aboutToCloseEmitted = true;
-	//	}
-	//	self->m_openMode = XIODevice_NotOpen;
-	//}
 	XIODevice_close_base(obj);
 	// 清理私有数据: 现在只需要删除单个 readBuffer 和 writeBuffer
 	if (self->m_d) {

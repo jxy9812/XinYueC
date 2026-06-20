@@ -46,7 +46,7 @@ static void onReadyRead(XObject* sender, XVarList* args)
         if (bytesRead > 0) {
             buffer[bytesRead] = '\0';
             
-            // 打印发送者信息
+            // 打印发送者信息uit
             XString* addrStr = XHostAddress_toString(&senderAddr);
             XPrintf("[UDP] 收到 %lld 字节，来自 %s:%u\n", 
                    (long long)bytesRead, 
@@ -192,12 +192,14 @@ static void XUdpSocketBasicTest(void)
         
         // 处理事件
         XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
     }
     
     // 等待并处理事件
     XHostAddress_deinit_base(&destAddr);
     XPrintf("\n[信息] 处理事件2秒...\n");
     for (int i = 0; i < 20; i++) {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         XThread_msleep(100);
     }
@@ -274,6 +276,7 @@ static void XUdpSocketBroadcastTest(void)
     
     // 处理事件
     for (int i = 0; i < 10; i++) {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         XThread_msleep(100);
     }
@@ -372,6 +375,7 @@ static void XUdpSocketMulticastTest(void)
     // 处理事件
     for (int i = 0; i < 10; i++) {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
         XThread_msleep(100);
     }
     
@@ -425,7 +429,7 @@ static void XUdpSocketClientTest(void)
         return;
     }
     // 绑定到任意端口
-    if (!XUdpSocket_bindAny(client, 6653, XAbstractSocket_DefaultForPlatform)) {
+    if (!XUdpSocket_bindAny(client, 0, XAbstractSocket_DefaultForPlatform)) {
         XPrintf("[错误] 绑定端口失败\n");
         XUdpSocket_abort(client);
         XUdpSocket_deleteLater(client);
@@ -478,8 +482,9 @@ static void XUdpSocketClientTest(void)
         } else {
             XPrintf("[发送] %lld 字节\n", (long long)sent);
         }
-        
+        //XThread_msleep(100);
         // 处理事件（接收可能的回复）
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
     }
     

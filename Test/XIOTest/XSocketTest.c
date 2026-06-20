@@ -44,7 +44,7 @@ void XSocketTest()
 
 	XSocket* socket = XTcpSocket_create();
 	XObject_connect_2(socket,XSignal(XIODevice_readyRead_signal), readData);
-	XAbstractSocket_connectToHost_base(socket, "192.168.1.117", 502, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
+	 (socket, "192.168.1.117", 502, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
 	//XAbstractSocket_connectToHost_base(socket, "192.168.1.46", 6666, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
 	XTcpSocket_waitForConnected_base(socket, 3000);
 	XSocketDescriptor s = XSocketDescriptor_fromIntptr(XTcpSocket_socketDescriptor_base(socket));
