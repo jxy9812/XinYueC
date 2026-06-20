@@ -828,7 +828,7 @@ static void VXModbusTcpClient_deinit(XModbusTcpClient* client)
 
     XIODevice* io = ((XModbusDevice*)client)->m_ioDevice;
     if (io) {
-        XTcpSocket_delete_base((XTcpSocket*)io);
+        XTcpSocket_deleteLater((XTcpSocket*)io);
         ((XModbusDevice*)client)->m_ioDevice = NULL;
     }
 

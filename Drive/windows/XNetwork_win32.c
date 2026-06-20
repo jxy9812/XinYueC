@@ -364,11 +364,11 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
  * 核心操作实现
  * ========================================================================= */
 
-bool XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* address,
-                         uint16_t port, bool reuseAddr, bool shareAddr, 
-                         XNetworkSocketType sockType)
+uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* address,
+                              uint16_t port, bool reuseAddr, bool shareAddr, 
+                              XNetworkSocketType sockType)
 {
-    if (!priv || !address) return false;
+    if (!priv || !address) return 0;
     
     /* 确保已初始化 */
     XNetwork_ensureInit();
@@ -379,7 +379,7 @@ bool XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* addres
     int proto = (sockType == XNetwork_Tcp) ? IPPROTO_TCP : IPPROTO_UDP;
     
     priv->socket = socket(af, type, proto);
-    if (priv->socket == INVALID_SOCKET) return false;
+    if (priv->socket == INVALID_SOCKET) return 0;
     
     /* 设置非阻塞 */
     u_long mode = 1;
@@ -399,14 +399,26 @@ bool XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* addres
     if (bind(priv->socket, (struct sockaddr*)&addrStorage, addrLen) == SOCKET_ERROR) {
         closesocket(priv->socket);
         priv->socket = INVALID_SOCKET;
-        return false;
+        return 0;
+    }
+    
+    /* 获取实际绑定的端口 */
+    uint16_t actualPort = 0;
+    struct sockaddr_storage boundAddr;
+    int boundAddrLen = sizeof(boundAddr);
+    if (getsockname(priv->socket, (struct sockaddr*)&boundAddr, &boundAddrLen) == 0) {
+        if (boundAddr.ss_family == AF_INET6) {
+            actualPort = ntohs(((struct sockaddr_in6*)&boundAddr)->sin6_port);
+        } else {
+            actualPort = ntohs(((struct sockaddr_in*)&boundAddr)->sin_port);
+        }
     }
     
     /* 关联到 IOCP */
     if (!iocp_assoc(priv->socket, priv->owner)) {
         closesocket(priv->socket);
         priv->socket = INVALID_SOCKET;
-        return false;
+        return 0;
     }
     
     priv->connected = true;
@@ -416,7 +428,7 @@ bool XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* addres
         startAsyncRead(priv, true);
     }
     
-    return true;
+    return actualPort;
 }
 
 bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
@@ -620,7 +632,7 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
             len = XNETWORK_WRITE_BUFFER_SIZE;
         }
         
-        bool isUdp = (sockType == XNetwork_Udp);
+        bool isUdp = (sockType == XNetwork_Udp); /* TCP only, UDP handled above */
         startAsyncWrite(priv, buf, len, destAddr, destPort, isUdp);
         return len;
     }
@@ -1344,6 +1356,24 @@ bool XNetwork_getLastDatagramSender(const XNetworkSocketPrivate* priv,
     }
     
     return true;
+}
+
+int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size,
+                               const XHostAddress* address, uint16_t port)
+{
+    if (sock < 0 || !data || size <= 0 || !address) return -1;
+    
+    struct sockaddr_storage dest;
+    int destLen = 0;
+    addr2sa(address, port, &dest, &destLen);
+    
+    int result = sendto((SOCKET)sock, (const char*)data, (int)size, 0,
+                       (struct sockaddr*)&dest, destLen);
+    
+    if (result == SOCKET_ERROR) {
+        return -1;
+    }
+    return result;
 }
 
 /* =========================================================================

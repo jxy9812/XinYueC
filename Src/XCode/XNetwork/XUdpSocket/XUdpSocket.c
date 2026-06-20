@@ -153,7 +153,10 @@ int64_t XUdpSocket_writeDatagram(XUdpSocket* sock, const char* data, int64_t siz
     if (!priv) return -1;
     
     /* 使用平台层的 socketWrite 进行 UDP 发送 */
-    return XNetwork_socketWrite(priv, data, size, XNetwork_Udp, address, port, NULL);
+    /* UDP 使用同步发送 */
+      intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
+      if (sd < 0) return -1;
+      return XNetwork_sendDatagram(sd, data, size, address, port);
 }
 
 int64_t XUdpSocket_writeDatagram_2(XUdpSocket* sock, const XByteArray* datagram,

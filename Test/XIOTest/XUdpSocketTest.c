@@ -404,24 +404,25 @@ static void XUdpSocketClientTest(void)
     
     // 输入服务器地址
     char serverIp[64] = {0};
-    uint16_t serverPort = 0;
+    uint32_t serverPort = 0;
     
     XPrintf("请输入服务器IP地址(直接回车使用127.0.0.1): ");
     if (scanf("%s",serverIp) == NULL || serverIp[0] == '\n') {
         strcpy(serverIp, "127.0.0.1");
     }
+   
     // 去除换行符
     size_t len = strlen(serverIp);
     if (len > 0 && serverIp[len - 1] == '\n') {
         serverIp[len - 1] = '\0';
     }
-    
+    /*return;*/
     XPrintf("请输入服务器端口(直接回车使用8888): ");
     if (scanf("%d",&serverPort) == NULL ) {
         serverPort = 8888;
     } 
     XPrintf("目标服务器: %s:%u\n", serverIp, serverPort);
-    
+
     // 创建 UDP 套接字
     XUdpSocket* client = XUdpSocket_create();
     if (!client) {
@@ -447,7 +448,7 @@ static void XUdpSocketClientTest(void)
     XObject_connect_2(client, XSignal(XIODevice_readyRead_signal), onReadyRead);
     
     XPrintf("\n========== 开始通信 (输入 quit 退出) ==========\n");
-    
+   
     char input[1024] = {0};
     while (1) {
         XPrintf("> ");
@@ -494,6 +495,7 @@ static void XUdpSocketClientTest(void)
     XUdpSocket_deleteLater(client);
     
     XPrintf("========== UDP 客户端测试完成 ==========\n\n");
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
 
 void XMenu_XUdpSocketTest(XMenu* root)

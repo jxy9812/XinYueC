@@ -28,7 +28,7 @@ typedef struct XTcpSocket {
 // =============== 继承自 XAbstractSocket 的 API（符号重命名）===============
 
 // 生命周期
-#define XTcpSocket_delete_base              XIODevice_deleteLater
+#define XTcpSocket_deleteLater              XIODevice_deleteLater
 
 // 打开/关闭
 #define XTcpSocket_open_base                XIODevice_open_base

@@ -89,12 +89,13 @@ bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv);
  * @param reuseAddr 是否重用地址
  * @param shareAddr 是否共享地址
  * @param sockType 套接字类型
- * @return 成功返回 true
+ * @return 成功返回实际端口
  * @note UDP 绑定后会自动启动异步读取
  */
-bool XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* address,
-                         uint16_t port, bool reuseAddr, bool shareAddr, 
-                         XNetworkSocketType sockType);
+uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* address,
+                              uint16_t port, bool reuseAddr, bool shareAddr, 
+                              XNetworkSocketType sockType);
+/* 返回实际绑定的端口号，失败返回 0 */
 
 /**
  * @brief 异步连接到主机
@@ -265,7 +266,13 @@ bool XNetwork_multicastLoopback(XSocketHandle sock);
 bool XNetwork_getLastDatagramSender(const XNetworkSocketPrivate* priv,
                                      XHostAddress* srcAddr, uint16_t* srcPort);
 
-/* =========================================================================
+/**
+ * @brief 同步发送 UDP 数据报
+ */
+int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size,
+                               const XHostAddress* address, uint16_t port);
+
+  /* =========================================================================
  * 十一、代理隧道
  * ========================================================================= */
 

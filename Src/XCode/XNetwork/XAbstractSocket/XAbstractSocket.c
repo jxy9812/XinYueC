@@ -731,21 +731,24 @@ static void VXAbstractSocket_Resume(XAbstractSocket* self)
 
 static bool VXAbstractSocket_Bind(XAbstractSocket* self, const XHostAddress* address, uint16_t port, XAbstractSocket_BindMode mode)
 {
-    XNetworkSocketPrivate* priv = getPriv(self);
+       XNetworkSocketPrivate* priv = getPriv(self);
     if (!priv) return false;
 
     bool reuseAddr = (mode & XAbstractSocket_ShareAddress) || (mode & XAbstractSocket_ReuseAddressHint);
     bool shareAddr = (mode & XAbstractSocket_ShareAddress) != 0;
 
-    if (!XNetwork_socketBind(priv, address, port, reuseAddr, shareAddr,
-        toNetworkSockType(self->socketType))) {
+    uint16_t actualPort = XNetwork_socketBind(priv, address, port, reuseAddr, shareAddr,
+        toNetworkSockType(self->socketType));
+    
+    if (actualPort == 0) {
         return false;
     }
+    
     XAbstractSocket_setLocalAddress(self, address);
-    XAbstractSocket_setLocalPort(self, port);
+    XAbstractSocket_setLocalPort(self, actualPort);  // 使用实际端口
     XAbstractSocket_setSocketState(self, XAbstractSocket_BoundState);
 
-    XClass_Parent(XIODevice,EXIODevice_Open, bool (*)(XIODevice * self, XIODeviceBaseMode mode))(self, XIODevice_ReadWrite);
+    XClass_Parent(XIODevice, EXIODevice_Open, bool (*)(XIODevice*, XIODeviceBaseMode))(self, XIODevice_ReadWrite);
     return true;
 }
 
