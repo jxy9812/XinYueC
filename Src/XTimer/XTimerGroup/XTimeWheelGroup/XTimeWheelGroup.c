@@ -121,7 +121,7 @@ void VXTimeWheelGroup_deinit(XTimeWheelGroup* group)
     //XVector_delete_base(&&group->m_timeWheel);
     XVector_deinit_base(&group->m_timeWheel);
     // 释放父对象
-    XVtableGetFunc(XIODevice_class_init(), EXClass_Deinit, void(*)(XIODevice*))(group);
+    XClass_Parent(XIODevice,EXClass_Deinit, void(*)(XIODevice*))(group);
 }
 // 无锁添加到时间轮槽位 - 使用 MPSC 链表
 static bool add_timer_to_wheel_lockfree(XTimeWheel* wheel, XListSNode* timer_node, size_t ticks)

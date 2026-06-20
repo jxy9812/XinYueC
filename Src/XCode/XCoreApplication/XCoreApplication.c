@@ -14,11 +14,10 @@
 #include "XThread.h"
 #include "XTimer.h"
 #include "XMultiPool.h"
-#include <assert.h>
 #include <string.h>
 static XCoreApplication* g_app = NULL; // 全局应用程序实例
 bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
-static void VXObject_timerEvent(XCoreApplication* app, XEventTimer* event);
+//static void VXObject_timerEvent(XCoreApplication* app, XEventTimer* event);
 static void VXCoreApplication_deinit(XCoreApplication* app);
 XVtable* XCoreApplication_class_init() {
     XVTABLE_CREAT_DEFAULT
@@ -456,7 +455,7 @@ bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
     }
     if (!event->accepted)
     {//如果还未被接受
-        XObject_event_base(receiver, event);
+        event->accepted=XObject_event_base(receiver, event);
     }
     if (!event->accepted&& XObject_isWidgetType(receiver))
     {//如果还未被接受向上冒泡
@@ -474,7 +473,7 @@ del:
         XEvent_delete_base(event);
         return true;
     }
-    assert(true,"事件发生内存泄漏\n");
+    XERROR_PRINTF("事件发生内存泄漏\n");
     return false;//事件未被处理
 }
 

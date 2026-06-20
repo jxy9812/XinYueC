@@ -56,7 +56,7 @@ void XModbusReply_init(XModbusReply* reply, XModbusReply_ReplyType type, int ser
 
 static void VXModbusReply_deinit(XModbusReply* reply) {
     if (!reply) return;
-
+    //XPrintf("释放:%p\n",reply);
     // 释放成员
     if (reply->m_errorString) {
         XString_delete_base(reply->m_errorString);
@@ -83,7 +83,6 @@ static void VXModbusReply_deinit(XModbusReply* reply) {
         XVector_delete_base(reply->m_intermediateErrors);
         reply->m_intermediateErrors = NULL;
     }
-
         // 调用基类析构
     XClass_Deinit_Parent(XObject, reply);
 }
@@ -230,12 +229,16 @@ void XModbusReply_setError(XModbusReply* reply, XModbusDevice_Error error, const
     if (!reply) return;
     reply->m_error = error;
     if (XModbusDevice_NoError == error)return;//无错误退出
-    if (reply->m_errorString) {
+   /* if (reply->m_errorString) {
         XString_delete_base(reply->m_errorString);
         reply->m_errorString = NULL;
-    }
-    if (errorText) {
-        reply->m_errorString = XString_create_fmt_utf8("%s", errorText);
+    }*/
+    if (errorText) 
+    {
+        if (reply->m_errorString)
+            XString_assign_fmt_utf8(reply->m_errorString, "%s", errorText);
+        else
+            reply->m_errorString = XString_create_fmt_utf8("%s", errorText);
     }
     XModbusReply_errorOccurred_signal(reply, error);
 }

@@ -149,16 +149,18 @@ static bool buildAndSendRequest(XModbusTcpClient* client, XModbusReply* reply,
     size_t pduSize = XByteArray_size_base(pdu);
     const uint8_t* pduData = XContainerDataAddr(pdu);
 
-    // 构建完整请求帧（MBAP头部 + PDU）
-    size_t frameSize = 7 + pduSize;
+    // 构建完整请求帧（MBAP头部 + FC + Data）
+    // PDU长度 = FC(1) + Data(pduSize)
+    size_t pduTotalLen = 1 + pduSize;
+    size_t frameSize = 7 + pduTotalLen;  // MBAP(7) + PDU(pduTotalLen)
     XByteArray* requestData = client->m_requestData;
     if (!requestData) return false;
 
     XByteArray_resize_base(requestData, frameSize);
     uint8_t* frameData = XContainerDataAddr(requestData);
 
-    // 构建MBAP头部
-    buildMbapHeader(frameData, transactionId, (uint16_t)pduSize, (uint8_t)serverAddress);
+    // 构建MBAP头部（length参数为PDU总长度：FC + Data）
+    buildMbapHeader(frameData, transactionId, (uint16_t)pduTotalLen, (uint8_t)serverAddress);
 
     // 复制PDU数据（功能码 + 数据）
     uint8_t fc = (uint8_t)XModbusPdu_functionCode((const XModbusPdu*)request);
@@ -417,10 +419,10 @@ static void processReceivedFrame(XModbusTcpClient* client)
     XByteArray* buffer = client->m_receiveBuffer;
     size_t bufLen = XByteArray_size_base(buffer);
 
-   /* XString* text= XByteArray_to16HexString(buffer);
-    XPrintf_2(text);
-    XPrintf("\n");
-    XString_delete_base(text);*/
+    //XString* text= XByteArray_to16HexString(buffer);
+    //XPrintf_2(text);
+    //XPrintf("\n");
+    //XString_delete_base(text);
 
     while (bufLen >= 7) {
         const uint8_t* data = XContainerDataAddr(buffer);
@@ -561,32 +563,40 @@ static void handleRequestTimeout(XModbusTcpClient* client, uint16_t transactionI
     }
     pending->timeoutTimer = XTIMER_INVALID_ID;
 
+    // 保存reply指针，避免pending在remove后变成悬空指针
+    XModbusReply* reply = pending->reply;
+    uint8_t retryCount = pending->retryCount;
+
     // 尝试重试
     int maxRetries = XModbusClient_numberOfRetries((XModbusClient*)client);
-    if (pending->retryCount < maxRetries && pending->reply) {
-        XModbusReply* reply = pending->reply;
-        
+    if (retryCount < maxRetries && reply) {
         // 检查连接状态
         XAbstractSocket* socket = (XAbstractSocket*)XModbusTcpClient_socket(client);
         if (socket && XTcpSocket_isOpen(socket) && reply->m_request) {
-            pending->retryCount++;
             
             // 获取新的事务ID
             uint16_t newTransactionId = XModbusTcpClient_nextTransactionId(client);
             
+            // 从映射表移除旧的事务ID（必须在buildAndSendRequest之前，因为后者会插入新条目）
+            XHashMap_remove_base(client->m_pendingRequests, &transactionId);
+            
             // 从Reply获取请求数据重新发送
             if (buildAndSendRequest(client, reply, newTransactionId, reply->m_request, reply->m_serverAddress)) {
-                // 从映射表移除旧的事务ID
-                XHashMap_remove_base(client->m_pendingRequests, &transactionId);
+                // 恢复重试计数（buildAndSendRequest创建的条目retryCount为0）
+                XModbusTcpPendingRequest* newPending = (XModbusTcpPendingRequest*)XHashMap_value_base(client->m_pendingRequests, &newTransactionId);
+                if (newPending) {
+                    newPending->retryCount = retryCount + 1;
+                }
                 return;
             }
+            // 发送失败，旧条目已在上面remove，直接走超时错误处理
         }
     }
 
     // 重试次数用尽或重试失败
-    if (pending->reply) {
-        XModbusReply_setError(pending->reply, XModbusDevice_TimeoutError, "Request timeout");
-        XModbusReply_setState(pending->reply, XModbusReply_State_Timeout);
+    if (reply) {
+        XModbusReply_setError(reply, XModbusDevice_TimeoutError, "Request timeout");
+        XModbusReply_setState(reply, XModbusReply_State_Timeout);
     }
 
     XHashMap_remove_base(client->m_pendingRequests, &transactionId);

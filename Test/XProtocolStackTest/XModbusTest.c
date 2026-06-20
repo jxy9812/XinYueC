@@ -73,8 +73,10 @@ void XModbusRtuSerialClientTest()
 
     XCoreApplication_exec();
 }
-static void tcpFinished(XObject* sender, XVarList* args)
+static void tcpFinished(XObject* receiver, XVarList* args)
 {
+    XObject* sender = receiver;
+    XCoreApplication_processEvents(0);
     //XPrintf("结束了，准备重启\n");
     XModbusRtuSerialClient* rtu = XObject_parent(sender);
     XModbusTcpClient* client = XObject_parent(sender);
@@ -84,9 +86,11 @@ static void tcpFinished(XObject* sender, XVarList* args)
     if (!read)return;
     XObject_setParent(reply, client);
     XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), tcpFinished);
-    //XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), XObject_deleteLater);
+    //XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply, tcpFinished, XConnectionType_Queued);
+   //XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), XObject_deleteLater);
     XObject_deleteLater(sender);
-
+    //XPrintf("请求释放:%p\n", sender);
+    //XClass_delete_base(sender);
     XModbusDataUnit_delete_base(read);
 }
 
@@ -99,7 +103,7 @@ static void tcpStart(XObject* sender, XVarList* args)
     XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
     if (!read)return;
     XObject_setParent(reply, client);
-    XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), tcpFinished);
+    XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply,tcpFinished,XConnectionType_Queued);
 
     XModbusDataUnit_delete_base(read);
 
@@ -123,11 +127,8 @@ void XModbusTcpClientTest()
     }
     XObject_connect_2((XObject*)XModbusDevice_device(client),XSignal(XTcpSocket_connected_signal), tcpStart);
 
-    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
-
-    XModbusDataUnit_setValue(read, 0, true);
-  
-    
+    //XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    //XModbusDataUnit_setValue(read, 0, true);
     //XModbusClient_pollWriteRequest(client, read, 1, 2);
     XCoreApplication_exec();
 }

@@ -411,7 +411,7 @@ XModbusReply* XModbusClient_pollRawRequest_ref(XModbusClient* client, XModbusReq
         return NULL;
     }
     XModbusReply* reply = XModbusClient_createReply_ref(client, request, serverAddress);
-    if (!request) {
+    if (!reply) {
         return NULL;
     }
     XTimerId id = XObject_startTimer_ms(client, pollIntervalMs, XTimerType_CoarseTimer);
@@ -436,8 +436,8 @@ XModbusReply* XModbusClient_createReply(XModbusClient* client, const XModbusRequ
         return NULL;
     }
     XModbusRequest* req = XModbusRequest_create_copy(request);
-    if (!req)return NULL;
-    XModbusReply* reply = XModbusClient_createReply_ref(client, XModbusRequest_create_move(request), serverAddress);
+    if (!req) return NULL;
+    XModbusReply* reply = XModbusClient_createReply_ref(client, req, serverAddress);
     if (!reply)
         XModbusRequest_delete_base(req);
     return reply;
@@ -450,7 +450,7 @@ XModbusReply* XModbusClient_createReply_move(XModbusClient* client, XModbusReque
     }
     XModbusRequest* req = XModbusRequest_create_move(request);
     if (!req)return NULL;
-    XModbusReply* reply= XModbusClient_createReply_ref(client, XModbusRequest_create_move(request), serverAddress);
+    XModbusReply* reply = XModbusClient_createReply_ref(client, req, serverAddress);
     if (!reply)
         XModbusRequest_delete_base(req);
     return reply;
@@ -540,7 +540,7 @@ size_t XModbusClient_reconnectInterval(const XModbusClient* client) {
     return client ? client->m_reconnectInterval : 1000;
 }
 void XModbusClient_setReconnectInterval(XModbusClient* client, size_t interval) {
-    if (!client || interval < 0) return;
+    if (!client) return;
     client->m_reconnectInterval = interval;
 }
 int16_t XModbusClient_maxReconnectAttempts(const XModbusClient* client) {
