@@ -16,13 +16,13 @@ static void readData(XObject* sender, XVarList* args)
 		putchar(XByteArray_iterator_data(&it));
 	}
 	XByteArray_delete_base(data);
-	//XPrintf_utf8(XContainerDataAddr(data));
+	//XPrintf_3(XContainerDataAddr(data));
 }
 
 static void XSocketNotifierSlot(XObject* sender, XVarList* args)
 {
 	XVarList_args_2(args, XSocketDescriptor ,socket, XSocketNotifierType ,type);
-	XPrintf_utf8("套接字监视\n");
+	XPrintf_3("套接字监视\n");
 }
 void XSocketTest()
 {
@@ -34,7 +34,7 @@ void XSocketTest()
 	//	{
 	//		XHostAddress* addr = XVector_iterator_data(&it);
 	//		XString* a = XHostAddress_toString(addr);
-	//		XPrintf_string(a);
+	//		XPrintf_2(a);
 	//		putchar(0);
 	//		XString_delete_base(a);
 	//	}

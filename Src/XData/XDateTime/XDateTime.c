@@ -284,7 +284,7 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
             XString_setNum_int(temp_num_str, second, 10);
            
             XString_append(result, temp_num_str);
-            //XPrintf_string(result);
+            //XPrintf_2(result);
             // -----------------------
 
             i = j - 1;
@@ -295,9 +295,9 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
             //XString_push_back_base(result, ch);
             XString_append_char(result, ch);
         }
-     /*   XPrintf_string(temp_num_str);
+     /*   XPrintf_2(temp_num_str);
         printf("\n");
-        XPrintf_string(result);
+        XPrintf_2(result);
           printf("\n");*/
     }
 

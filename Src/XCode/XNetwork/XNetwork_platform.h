@@ -239,7 +239,72 @@ uint16_t XNetwork_privatePendingPeerPort(const XNetworkSocketPrivate* priv);
 void XNetwork_privateSetPendingPeerPort(XNetworkSocketPrivate* priv, uint16_t port);
 
 /* =========================================================================
- * 十四、高级操作（供 XAbstractSocket 直接使用）
+ * 十四、UDP 数据报操作
+ * ========================================================================= */
+
+/**
+ * @brief 判断是否有待读的数据报
+ */
+bool XNetwork_hasPendingDatagrams(XSocketHandle sock);
+
+/**
+ * @brief 获取待读数据报大小
+ * @return 数据报字节数，无数据报时返回 -1
+ */
+int64_t XNetwork_pendingDatagramSize(XSocketHandle sock);
+
+/* =========================================================================
+ * 十五、多播组操作
+ * ========================================================================= */
+
+/**
+ * @brief 加入多播组
+ * @param sock 套接字句柄
+ * @param groupAddress 多播组地址
+ * @param interfaceIndex 网络接口索引（0 表示默认）
+ * @return 成功返回 true
+ */
+bool XNetwork_joinMulticastGroup(XSocketHandle sock, const XHostAddress* groupAddress,
+                                  uint32_t interfaceIndex);
+
+/**
+ * @brief 离开多播组
+ */
+bool XNetwork_leaveMulticastGroup(XSocketHandle sock, const XHostAddress* groupAddress,
+                                   uint32_t interfaceIndex);
+
+/**
+ * @brief 设置多播输出接口
+ */
+bool XNetwork_setMulticastInterface(XSocketHandle sock, uint32_t interfaceIndex);
+
+/**
+ * @brief 获取多播输出接口
+ */
+uint32_t XNetwork_multicastInterface(XSocketHandle sock);
+
+/**
+ * @brief 设置多播 TTL（跳数限制）
+ */
+bool XNetwork_setMulticastTtl(XSocketHandle sock, int ttl);
+
+/**
+ * @brief 获取多播 TTL
+ */
+int XNetwork_multicastTtl(XSocketHandle sock);
+
+/**
+ * @brief 设置多播回环
+ */
+bool XNetwork_setMulticastLoopback(XSocketHandle sock, bool enabled);
+
+/**
+ * @brief 获取多播回环设置
+ */
+bool XNetwork_multicastLoopback(XSocketHandle sock);
+
+/* =========================================================================
+ * 十六、高级操作（供 XAbstractSocket 直接使用）
  * 
  * 这些函数封装了完整的操作流程，包括 IOCP 异步 I/O
  * ========================================================================= */

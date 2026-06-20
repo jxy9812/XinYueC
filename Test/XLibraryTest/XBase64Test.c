@@ -8,7 +8,7 @@
 #include"XPrintf.h"
 void XBase64Test()
 {
-	XPrintf_utf8("XBase64测试\n");
+	XPrintf_3("XBase64测试\n");
 	char buff[] = "adss12313212345555555555456456";
 	XByteArray* sour = XByteArray_create(), *toBase=NULL,* fromBase64=NULL;
 	XByteArray_push_back_2(sour,buff,sizeof(buff));

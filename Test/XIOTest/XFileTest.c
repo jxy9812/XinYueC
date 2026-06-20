@@ -9,23 +9,23 @@
 #include"XDir.h"
 #include"XPrintf.h"
 
-void XFileTest_print_xstring(const char* label, const XString* str) {
+static void XFileTest_print_xstring(const char* label, const XString* str) {
     XPrintf("%s: ", label);
     if (str) {
-        XPrintf_string(str);
+        XPrintf_2(str);
     } else {
-        XPrintf_utf8("(NULL)");
+        XPrintf_3("(NULL)");
     }
-    XPrintf_utf8("\n");
+    XPrintf_3("\n");
 }
 
-void XFileTest_print_bytearray(const char* label, const XByteArray* ba) {
+static void XFileTest_print_bytearray(const char* label, const XByteArray* ba) {
     XPrintf("%s: ", label);
     if (!ba) {
-        XPrintf_utf8("(NULL)\n");
+        XPrintf_3("(NULL)\n");
         return;
     }
-    XPrintf_utf8("[");
+    XPrintf_3("[");
     size_t len = XByteArray_size_base(ba);
     if (len > 100) len = 100;
     for (size_t i = 0; i < len; i++) {
@@ -39,20 +39,20 @@ void XFileTest_print_bytearray(const char* label, const XByteArray* ba) {
             }
         }
     }
-    XPrintf_utf8("]\n");
+    XPrintf_3("]\n");
 }
 
 void XFileTest()
 {
-    XPrintf_utf8("\n=== XFile 综合测试 ===\n\n");
+    XPrintf_3("\n=== XFile 综合测试 ===\n\n");
 
     // ====== 1. 基本创建与打开 ======
-    XPrintf_utf8("========== 1. 基本创建与打开 ==========\n");
+    XPrintf_3("========== 1. 基本创建与打开 ==========\n");
 
     // 1.1 创建空文件对象
     XFile* file1 = XFile_create_1();
     if (file1) {
-        XPrintf_utf8("创建空 XFile 对象: 成功\n");
+        XPrintf_3("创建空 XFile 对象: 成功\n");
         XFile_deleteLater(file1);
     }
 
@@ -82,7 +82,7 @@ void XFileTest()
     }
 
     // ====== 2. 读取文件 ======
-    XPrintf_utf8("\n========== 2. 读取文件 ==========\n");
+    XPrintf_3("\n========== 2. 读取文件 ==========\n");
 
     XFile* file3 = XFile_create_2(testFileName);
     if (file3) {
@@ -106,7 +106,7 @@ void XFileTest()
     }
 
     // ====== 3. 文件操作 ======
-    XPrintf_utf8("\n========== 3. 文件操作 ==========\n");
+    XPrintf_3("\n========== 3. 文件操作 ==========\n");
 
     // 检查文件是否存在
     bool exists = XFile_exists_static(testFileName);
@@ -131,7 +131,7 @@ void XFileTest()
     XPrintf("重命名文件存在: %s\n", renameExists ? "是" : "否");
 
     // ====== 4. 清理临时文件 ======
-    XPrintf_utf8("\n========== 4. 清理临时文件 ==========\n");
+    XPrintf_3("\n========== 4. 清理临时文件 ==========\n");
     
     bool removed1 = XFile_remove_static(testFileName);
     XPrintf("删除原文件: %s\n", removed1 ? "成功" : "失败");
@@ -144,7 +144,7 @@ void XFileTest()
     XString_delete_base(copyFileName);
     XString_delete_base(renameFileName);
 
-    XPrintf_utf8("\n=== XFile 测试完成 ===\n");
+    XPrintf_3("\n=== XFile 测试完成 ===\n");
 }
 
 void XMenu_XFileTest(XMenu* root)

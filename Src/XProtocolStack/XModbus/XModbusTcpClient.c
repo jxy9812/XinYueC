@@ -418,7 +418,7 @@ static void processReceivedFrame(XModbusTcpClient* client)
     size_t bufLen = XByteArray_size_base(buffer);
 
    /* XString* text= XByteArray_to16HexString(buffer);
-    XPrintf_string(text);
+    XPrintf_2(text);
     XPrintf("\n");
     XString_delete_base(text);*/
 
@@ -531,7 +531,7 @@ static void processReceivedFrame(XModbusTcpClient* client)
                 reply->m_result = XModbusDataUnit_create();
             }
  //            XString* text= XByteArray_to16HexString(response->m_base.m_data);
- //XPrintf_string(text);
+ //XPrintf_2(text);
  //XPrintf("\n");
  //XString_delete_base(text);
             bool success = XModbusClient_processResponse_base((XModbusClient*)client, response, reply->m_result);

@@ -13,21 +13,21 @@
 void XSaveFileTest_print_xstring(const char* label, const XString* str) {
     XPrintf("%s: ", label);
     if (str) {
-        XPrintf_string(str);
+        XPrintf_2(str);
     } else {
-        XPrintf_utf8("(NULL)");
+        XPrintf_3("(NULL)");
     }
-    XPrintf_utf8("\n");
+    XPrintf_3("\n");
 }
 
 void XSaveFileTest()
 {
-    XPrintf_utf8("\n=== XSaveFile 综合测试 ===\n\n");
+    XPrintf_3("\n=== XSaveFile 综合测试 ===\n\n");
 
     XString* testFileName = XString_create_utf8("XSaveFileTest_output.txt");
 
     // ====== 1. 基本创建与打开 ======
-    XPrintf_utf8("========== 1. 基本创建与打开 ==========\n");
+    XPrintf_3("========== 1. 基本创建与打开 ==========\n");
     size_t size = 0;
     XSaveFile* saveFile1 = XSaveFile_create_2(testFileName);
     if (saveFile1) {
@@ -44,8 +44,8 @@ void XSaveFileTest()
                 "这是第一行内容\n",
                 "这是第二行内容\n",
                 "这是第三行内容\n",
-                "测试完成\n"
-                //"end\n"
+                //"测试完成\n"
+                "end\n"
             };
 
             for (int i = 0; i < 5; i++) {
@@ -55,7 +55,7 @@ void XSaveFileTest()
                 XByteArray_delete_base(writeData);
             }
 
-            XPrintf_utf8("写入内容: 完成\n");
+            XPrintf_3("写入内容: 完成\n");
 
             // 提交更改
             bool committed = XSaveFile_commit(saveFile1);
@@ -66,7 +66,7 @@ void XSaveFileTest()
     }
 
     // ====== 2. 验证写入的文件 ======
-    XPrintf_utf8("\n========== 2. 验证写入的文件 ==========\n");
+    XPrintf_3("\n========== 2. 验证写入的文件 ==========\n");
 
     bool exists = XFile_exists_static(testFileName);
     XPrintf("文件存在: %s\n", exists ? "是" : "否");
@@ -76,11 +76,8 @@ void XSaveFileTest()
         if (readFile && XIODevice_open_base((XIODevice*)readFile, XIODevice_ReadOnly | XIODevice_Text)) {
             XByteArray* content = XIODevice_readAll_3((XIODevice*)readFile);
             if (content) {
-                XPrintf_utf8("文件内容:\n");
-                const char* data = (const char*)XByteArray_data(content);
-                if (data) {
-                    XPrintf_utf8(data);
-                }
+                XPrintf_3("文件内容:\n");
+                XPrintf_4(content);
                 XByteArray_delete_base(content);
             }
             XIODevice_close_base((XIODevice*)readFile);
@@ -89,7 +86,7 @@ void XSaveFileTest()
     }
 
     // ====== 3. 取消写入测试 ======
-    XPrintf_utf8("\n========== 3. 取消写入测试 ==========\n");
+    XPrintf_3("\n========== 3. 取消写入测试 ==========\n");
 
     XString* cancelFileName = XString_create_utf8("XSaveFileTest_cancel.txt");
     XSaveFile* saveFile2 = XSaveFile_create_2(cancelFileName);
@@ -101,11 +98,11 @@ void XSaveFileTest()
             XIODevice_write_2((XIODevice*)saveFile2, writeData);
             XByteArray_delete_base(writeData);
 
-            XPrintf_utf8("写入临时数据: 完成\n");
+            XPrintf_3("写入临时数据: 完成\n");
 
             // 取消写入
             XSaveFile_cancelWriting(saveFile2);
-            XPrintf_utf8("取消写入: 已调用\n");
+            XPrintf_3("取消写入: 已调用\n");
 
             // 尝试提交（应该失败）
             bool committed = XSaveFile_commit(saveFile2);
@@ -119,7 +116,7 @@ void XSaveFileTest()
     XPrintf("取消的文件存在: %s\n", cancelExists ? "是（意外）" : "否（预期）");
 
     // ====== 4. 直接写入回退模式 ======
-    XPrintf_utf8("\n========== 4. 直接写入回退模式 ==========\n");
+    XPrintf_3("\n========== 4. 直接写入回退模式 ==========\n");
 
     XString* directFileName = XString_create_utf8("XSaveFileTest_direct.txt");
     XSaveFile* saveFile3 = XSaveFile_create_2(directFileName);
@@ -146,9 +143,9 @@ void XSaveFileTest()
     XPrintf("直接写入文件存在: %s\n", directExists ? "是" : "否");
 
     // ====== 5. 追加模式测试 ======
-    XPrintf_utf8("\n========== 5. 追加模式测试 ==========\n");
-    XPrintf_utf8("注意: XSaveFile 不支持 Append 模式（因为它使用临时文件机制）\n");
-    XPrintf_utf8("如需追加内容，请使用 XFile 类\n");
+    XPrintf_3("\n========== 5. 追加模式测试 ==========\n");
+    XPrintf_3("注意: XSaveFile 不支持 Append 模式（因为它使用临时文件机制）\n");
+    XPrintf_3("如需追加内容，请使用 XFile 类\n");
     
     // 使用 XFile 进行追加操作演示
     XFile* appendFile = XFile_create_2(testFileName);
@@ -159,27 +156,27 @@ void XSaveFileTest()
             XIODevice_write_2((XIODevice*)appendFile, writeData);
             XByteArray_delete_base(writeData);
             XIODevice_close_base((XIODevice*)appendFile);
-            XPrintf_utf8("使用 XFile 追加内容: 成功\n");
+            XPrintf_3("使用 XFile 追加内容: 成功\n");
         } else {
-            XPrintf_utf8("打开文件追加模式: 失败\n");
+            XPrintf_3("打开文件追加模式: 失败\n");
         }
         XFile_deleteLater(appendFile);
     }
 
     // ====== 6. 清理测试文件 ======
-    XPrintf_utf8("\n========== 6. 清理测试文件 ==========\n");
+    XPrintf_3("\n========== 6. 清理测试文件 ==========\n");
 
     XFile_remove_static(testFileName);
     XFile_remove_static(cancelFileName);
     XFile_remove_static(directFileName);
 
-    XPrintf_utf8("删除测试文件: 完成\n");
+    XPrintf_3("删除测试文件: 完成\n");
 
     XString_delete_base(testFileName);
     XString_delete_base(cancelFileName);
     XString_delete_base(directFileName);
 
-    XPrintf_utf8("\n=== XSaveFile 测试完成 ===\n");
+    XPrintf_3("\n=== XSaveFile 测试完成 ===\n");
 }
 
 void XMenu_XSaveFileTest(XMenu* root)

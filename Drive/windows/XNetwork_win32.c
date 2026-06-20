@@ -153,14 +153,14 @@ static int addr2sa(const XHostAddress* a, uint16_t port,
         *ssLen = sizeof(*s6);
         return AF_INET6;
     } else {
-        struct sockaddr_in* s4 = (struct sockaddr_in*)ss;
-        s4->sin_family = AF_INET;
-        s4->sin_port   = htons(port);
-        uint32_t v4 = XHostAddress_toIPv4Address(a);
-        memcpy(&s4->sin_addr, &v4, 4);
-        *ssLen = sizeof(*s4);
-        return AF_INET;
-    }
+            struct sockaddr_in* s4 = (struct sockaddr_in*)ss;
+            s4->sin_family = AF_INET;
+            s4->sin_port   = htons(port);
+            uint32_t v4 = XHostAddress_toIPv4Address(a);
+            s4->sin_addr.s_addr = htonl(v4);  // 转换为网络字节序
+            *ssLen = sizeof(*s4);
+            return AF_INET;
+        }
 }
 
 /* ---- sockaddr → XHostAddress + port ---- */
@@ -1248,7 +1248,7 @@ bool XNetwork_socketSetOption(XNetworkSocketPrivate* priv, int option, const voi
         break;
     case XAbstractSocket_MulticastTtlOption:
         level = IPPROTO_IP;
-        optname = IP_TTL;
+        optname = IP_MULTICAST_TTL;
         intVal = XVariant_toInt(variant);
         break;
     case XAbstractSocket_MulticastLoopbackOption:
@@ -1270,10 +1270,15 @@ bool XNetwork_socketSetOption(XNetworkSocketPrivate* priv, int option, const voi
         intVal = XVariant_toInt(variant);
         break;
     case XAbstractSocket_PathMtuSocketOption:
-        // 只读选项，不能设置
-        return false;
+            // 只读选项，不能设置
+            return false;
+    case XAbstractSocket_BroadcastOption:
+        level = SOL_SOCKET;
+        optname = SO_BROADCAST;
+        intVal = XVariant_toBool(variant) ? 1 : 0;
+        break;
     default:
-        return false;
+            return false;
     }
     
     return setsockopt(priv->socket, level, optname, (const char*)&intVal, sizeof(intVal)) == 0;
@@ -1299,7 +1304,7 @@ void* XNetwork_socketGetOption(XNetworkSocketPrivate* priv, int option)
         break;
     case XAbstractSocket_MulticastTtlOption:
         level = IPPROTO_IP;
-        optname = IP_TTL;
+        optname = IP_MULTICAST_TTL;
         break;
     case XAbstractSocket_MulticastLoopbackOption:
         level = IPPROTO_IP;
@@ -1316,12 +1321,16 @@ void* XNetwork_socketGetOption(XNetworkSocketPrivate* priv, int option)
         optname = SO_RCVBUF;
         break;
     case XAbstractSocket_PathMtuSocketOption:
-        // 获取路径 MTU
-        level = IPPROTO_IP;
-        optname = IP_MTU_DISCOVER;
+            // 获取路径 MTU
+            level = IPPROTO_IP;
+            optname = IP_MTU_DISCOVER;
+            break;
+    case XAbstractSocket_BroadcastOption:
+        level = SOL_SOCKET;
+        optname = SO_BROADCAST;
         break;
     default:
-        return NULL;
+            return NULL;
     }
     
     if (getsockopt(priv->socket, level, optname, (char*)&result, &optlen) == SOCKET_ERROR) {
@@ -1396,6 +1405,209 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp)
     if (priv->autoRead && priv->connected) {
         XNetwork_startAsyncRead(priv, isUdp);
     }
+}
+
+/* ============================================================================
+ * UDP 数据报操作
+ * ============================================================================ */
+
+bool XNetwork_hasPendingDatagrams(XSocketHandle sock)
+{
+    if (sock < 0) return false;
+    
+    u_long bytesAvailable = 0;
+    if (ioctlsocket((SOCKET)sock, FIONREAD, &bytesAvailable) != 0) {
+        return false;
+    }
+    return bytesAvailable > 0;
+}
+
+int64_t XNetwork_pendingDatagramSize(XSocketHandle sock)
+{
+    if (sock < 0) return -1;
+    
+    u_long bytesAvailable = 0;
+    if (ioctlsocket((SOCKET)sock, FIONREAD, &bytesAvailable) != 0) {
+        return -1;
+    }
+    return (int64_t)bytesAvailable;
+}
+
+/* ============================================================================
+ * 多播组操作
+ * ============================================================================ */
+
+bool XNetwork_joinMulticastGroup(XSocketHandle sock, const XHostAddress* groupAddress,
+                                  uint32_t interfaceIndex)
+{
+    if (sock < 0 || !groupAddress) return false;
+    
+    if (groupAddress->protocol == XHostAddress_IPv4Protocol) {
+        struct ip_mreq mreq;
+        memset(&mreq, 0, sizeof(mreq));
+        uint32_t ip = XHostAddress_toIPv4Address(groupAddress);
+        mreq.imr_multiaddr.s_addr = htonl(ip);
+        mreq.imr_interface.s_addr = interfaceIndex ? htonl(interfaceIndex) : INADDR_ANY;
+        
+        return setsockopt((SOCKET)sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+                          (const char*)&mreq, sizeof(mreq)) == 0;
+    }
+    else if (groupAddress->protocol == XHostAddress_IPv6Protocol) {
+        struct ipv6_mreq mreq;
+        memset(&mreq, 0, sizeof(mreq));
+        XHostAddress_toIPv6Address(groupAddress, mreq.ipv6mr_multiaddr.s6_addr);
+        mreq.ipv6mr_interface = interfaceIndex;
+        
+        return setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP,
+                          (const char*)&mreq, sizeof(mreq)) == 0;
+    }
+    
+    return false;
+}
+
+bool XNetwork_leaveMulticastGroup(XSocketHandle sock, const XHostAddress* groupAddress,
+                                   uint32_t interfaceIndex)
+{
+    if (sock < 0 || !groupAddress) return false;
+    
+    if (groupAddress->protocol == XHostAddress_IPv4Protocol) {
+        struct ip_mreq mreq;
+        memset(&mreq, 0, sizeof(mreq));
+        uint32_t ip = XHostAddress_toIPv4Address(groupAddress);
+        mreq.imr_multiaddr.s_addr = htonl(ip);
+        mreq.imr_interface.s_addr = interfaceIndex ? htonl(interfaceIndex) : INADDR_ANY;
+        
+        return setsockopt((SOCKET)sock, IPPROTO_IP, IP_DROP_MEMBERSHIP,
+                          (const char*)&mreq, sizeof(mreq)) == 0;
+    }
+    else if (groupAddress->protocol == XHostAddress_IPv6Protocol) {
+        struct ipv6_mreq mreq;
+        memset(&mreq, 0, sizeof(mreq));
+        XHostAddress_toIPv6Address(groupAddress, mreq.ipv6mr_multiaddr.s6_addr);
+        mreq.ipv6mr_interface = interfaceIndex;
+        
+        return setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP,
+                          (const char*)&mreq, sizeof(mreq)) == 0;
+    }
+    
+    return false;
+}
+
+bool XNetwork_setMulticastInterface(XSocketHandle sock, uint32_t interfaceIndex)
+{
+    if (sock < 0) return false;
+    
+    // IPv4
+    struct in_addr addr;
+    addr.s_addr = interfaceIndex ? htonl(interfaceIndex) : INADDR_ANY;
+    if (setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_IF,
+                   (const char*)&addr, sizeof(addr)) != 0) {
+        // 尝试 IPv6
+        return setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_MULTICAST_IF,
+                          (const char*)&interfaceIndex, sizeof(interfaceIndex)) == 0;
+    }
+    return true;
+}
+
+uint32_t XNetwork_multicastInterface(XSocketHandle sock)
+{
+    if (sock < 0) return 0;
+    
+    // 尝试 IPv6
+    DWORD ifIndex = 0;
+    int optLen = sizeof(ifIndex);
+    if (getsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_MULTICAST_IF,
+                   (char*)&ifIndex, &optLen) == 0) {
+        return (uint32_t)ifIndex;
+    }
+    
+    // 尝试 IPv4
+    struct in_addr addr;
+    optLen = sizeof(addr);
+    if (getsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_IF,
+                   (char*)&addr, &optLen) == 0) {
+        return ntohl(addr.s_addr);
+    }
+    
+    return 0;
+}
+
+bool XNetwork_setMulticastTtl(XSocketHandle sock, int ttl)
+{
+    if (sock < 0 || ttl < 1 || ttl > 255) return false;
+    
+    // IPv4
+    BYTE ttlByte = (BYTE)ttl;
+    if (setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_TTL,
+                   (const char*)&ttlByte, sizeof(ttlByte)) != 0) {
+        // 尝试 IPv6
+        int ttlInt = ttl;
+        return setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS,
+                          (const char*)&ttlInt, sizeof(ttlInt)) == 0;
+    }
+    return true;
+}
+
+int XNetwork_multicastTtl(XSocketHandle sock)
+{
+    if (sock < 0) return -1;
+    
+    // 尝试 IPv6
+    int hops = -1;
+    int optLen = sizeof(hops);
+    if (getsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS,
+                   (char*)&hops, &optLen) == 0) {
+        return hops;
+    }
+    
+    // 尝试 IPv4
+    BYTE ttl = 0;
+    optLen = sizeof(ttl);
+    if (getsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_TTL,
+                   (char*)&ttl, &optLen) == 0) {
+        return (int)ttl;
+    }
+    
+    return -1;
+}
+
+bool XNetwork_setMulticastLoopback(XSocketHandle sock, bool enabled)
+{
+    if (sock < 0) return false;
+    
+    // IPv4
+    BYTE loop = enabled ? 1 : 0;
+    if (setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_LOOP,
+                   (const char*)&loop, sizeof(loop)) != 0) {
+        // 尝试 IPv6
+        int loopInt = enabled ? 1 : 0;
+        return setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_MULTICAST_LOOP,
+                          (const char*)&loopInt, sizeof(loopInt)) == 0;
+    }
+    return true;
+}
+
+bool XNetwork_multicastLoopback(XSocketHandle sock)
+{
+    if (sock < 0) return false;
+    
+    // 尝试 IPv6
+    int loop = 0;
+    int optLen = sizeof(loop);
+    if (getsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_MULTICAST_LOOP,
+                   (char*)&loop, &optLen) == 0) {
+        return loop != 0;
+    }
+    
+    // 尝试 IPv4
+    BYTE loopByte = 0;
+    optLen = sizeof(loopByte);
+    if (getsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_LOOP,
+                   (char*)&loopByte, &optLen) == 0) {
+        return loopByte != 0;
+    }
+    
+    return false;
 }
 
 #endif /* _WIN32 */

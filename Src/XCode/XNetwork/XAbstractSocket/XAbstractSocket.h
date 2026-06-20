@@ -101,7 +101,8 @@ typedef enum XAbstractSocket_SocketOption {
     XAbstractSocket_TypeOfServiceOption,           ///< 设置 IP TOS 字段（QoS）
     XAbstractSocket_SendBufferSizeSocketOption,    ///< 设置发送缓冲区大小（SO_SNDBUF）
     XAbstractSocket_ReceiveBufferSizeSocketOption, ///< 设置接收缓冲区大小（SO_RCVBUF）
-    XAbstractSocket_PathMtuSocketOption            ///< 获取路径 MTU（只读）
+    XAbstractSocket_PathMtuSocketOption,           ///< 获取路径 MTU（只读）
+    XAbstractSocket_BroadcastOption                ///< 启用 SO_BROADCAST（UDP广播）
 } XAbstractSocket_SocketOption;
 
 /**
@@ -189,7 +190,8 @@ typedef struct XAbstractSocket {
 #define XAbstractSocket_canReadLine_base         XIODevice_canReadLine_base
 #define XAbstractSocket_waitForReadyRead_base    XIODevice_waitForReadyRead_base
 #define XAbstractSocket_waitForBytesWritten_base XIODevice_waitForBytesWritten_base
-#define XAbstractSocket_delete_base              XIODevice_deleteLater
+#define XAbstractSocket_deinitLater              XIODevice_deinitLater
+#define XAbstractSocket_deleteLater              XIODevice_deleteLater
 
 #define XAbstractSocket_isOpen                   XIODevice_isOpen
 #define XAbstractSocket_isReadable               XIODevice_isReadable

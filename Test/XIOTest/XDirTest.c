@@ -12,17 +12,17 @@
 void XDirTest_print_xstring(const char* label, const XString* str) {
     XPrintf("%s: ", label);
     if (str) {
-        XPrintf_string(str);
+        XPrintf_2(str);
     } else {
-        XPrintf_utf8("(NULL)");
+        XPrintf_3("(NULL)");
     }
-    XPrintf_utf8("\n");
+    XPrintf_3("\n");
 }
 
 void XDirTest_print_stringlist(const char* label, const XStringList* list) {
     XPrintf("%s:\n", label);
     if (!list) {
-        XPrintf_utf8("  (NULL)\n");
+        XPrintf_3("  (NULL)\n");
         return;
     }
     size_t count = XStringList_size_base(list);
@@ -30,18 +30,18 @@ void XDirTest_print_stringlist(const char* label, const XStringList* list) {
         XString* item = (XString*)XStringList_at_base(list, (int64_t)i);
         if (item ) {
             XPrintf("  [%d] ", (int)i);
-            XPrintf_string(item);
-            XPrintf_utf8("\n");
+            XPrintf_2(item);
+            XPrintf_3("\n");
         }
     }
 }
 
 void XDirTest()
 {
-    XPrintf_utf8("\n=== XDir 综合测试 ===\n\n");
+    XPrintf_3("\n=== XDir 综合测试 ===\n\n");
 
     // ====== 1. 基本创建与路径操作 ======
-    XPrintf_utf8("========== 1. 基本创建与路径操作 ==========\n");
+    XPrintf_3("========== 1. 基本创建与路径操作 ==========\n");
 
     // 1.1 创建指向当前目录的 XDir
     XDir* dir1 = XDir_create_1();
@@ -73,7 +73,7 @@ void XDirTest()
     XString_delete_base(testPath);
 
     // ====== 2. 目录内容枚举 ======
-    XPrintf_utf8("\n========== 2. 目录内容枚举 ==========\n");
+    XPrintf_3("\n========== 2. 目录内容枚举 ==========\n");
 
     XString* dotPath = XString_create_utf8(".");
     XDir* dir3 = XDir_create_2(dotPath);
@@ -102,7 +102,7 @@ void XDirTest()
     XString_delete_base(dotPath);
 
     // ====== 3. 目录导航 ======
-    XPrintf_utf8("\n========== 3. 目录导航 ==========\n");
+    XPrintf_3("\n========== 3. 目录导航 ==========\n");
 
     XString* srcPath = XString_create_utf8("Src");
     XDir* dir4 = XDir_create_2(srcPath);
@@ -126,7 +126,7 @@ void XDirTest()
     XString_delete_base(srcPath);
 
     // ====== 4. 目录操作 ======
-    XPrintf_utf8("\n========== 4. 目录操作 ==========\n");
+    XPrintf_3("\n========== 4. 目录操作 ==========\n");
 
     // 创建测试目录
     XString* testDirPath = XString_create_utf8("TestDir_XDirTest");
@@ -149,7 +149,7 @@ void XDirTest()
     XString_delete_base(testDirPath);
 
     // ====== 5. 特殊目录 ======
-    XPrintf_utf8("\n========== 5. 特殊目录 ==========\n");
+    XPrintf_3("\n========== 5. 特殊目录 ==========\n");
 
     XString* homePath = XDir_homePath();
     XDirTest_print_xstring("用户主目录", homePath);
@@ -164,7 +164,7 @@ void XDirTest()
     XString_delete_base(rootPath);
 
     // ====== 6. 路径操作静态函数 ======
-    XPrintf_utf8("\n========== 6. 路径操作静态函数 ==========\n");
+    XPrintf_3("\n========== 6. 路径操作静态函数 ==========\n");
 
     XString* messyPath = XString_create_utf8("./Src/../Src/./XCode//");
     XString* cleanPath = XDir_cleanPath(messyPath);
@@ -183,7 +183,7 @@ void XDirTest()
     XPrintf("\"Src/XCode\" 是相对路径: %s\n", isRel ? "是" : "否");
     XString_delete_base(relTestPath);
 
-    XPrintf_utf8("\n=== XDir 测试完成 ===\n");
+    XPrintf_3("\n=== XDir 测试完成 ===\n");
 }
 
 void XMenu_XDirTest(XMenu* root)

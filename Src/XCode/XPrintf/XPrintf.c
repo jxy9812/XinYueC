@@ -1,6 +1,7 @@
 ﻿#include"XPrintf.h"
 #include"XString.h"
-int XPrintf_string(const XString* str)
+#include"XByteArray.h"
+int XPrintf_2(const XString* str)
 {
     if (str == NULL)
         return 0;
@@ -8,7 +9,7 @@ int XPrintf_string(const XString* str)
     return XString_length_base(str);
 }
 
-int XPrintf_utf8(const char* utf8_str)
+int XPrintf_3(const char* utf8_str)
 {
     if (!utf8_str) return 0;  // 空指针安全处理
 
@@ -37,6 +38,19 @@ int XPrintf_utf8(const char* utf8_str)
     // Linux平台：直接输出UTF-8（系统默认支持）
     return printf("%s", utf8_str);
 #endif
+}
+
+int XPrintf_4(const XByteArray* array)
+{
+    if(!array||XByteArray_isEmpty_base(array))
+        return 0;
+    size_t len = XByteArray_size_base(array);
+    for_each_iterator(array, XByteArray,it)
+    {
+        char c = XByteArray_iterator_data(&it);
+        putchar(c);
+    }
+    return len;
 }
 
 int XPrintf(const char* format, ...)
@@ -102,7 +116,7 @@ int XPrintf(const char* format, ...)
     return result;
 }
 
-int XPrintf_char(XChar* ch)
+int XPrintf_5(XChar* ch)
 {
     if (!ch) return 0; // 空指针安全处理
 

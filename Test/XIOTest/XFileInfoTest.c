@@ -13,31 +13,31 @@
 void XFileInfoTest_print_xstring(const char* label, const XString* str) {
     XPrintf("%s: ", label);
     if (str) {
-        XPrintf_string(str);
+        XPrintf_2(str);
     } else {
-        XPrintf_utf8("(NULL)");
+        XPrintf_3("(NULL)");
     }
-    XPrintf_utf8("\n");
+    XPrintf_3("\n");
 }
 
 void XFileInfoTest_print_datetime(const char* label, XDateTime* dt) {
     XPrintf("%s: ", label);
     if (dt && XDateTime_isValid(dt)) {
         XString* dtStr = XDateTime_toString_iso(dt);
-        XPrintf_string(dtStr);
+        XPrintf_2(dtStr);
         XString_delete_base(dtStr);
     } else {
-        XPrintf_utf8("(无效)");
+        XPrintf_3("(无效)");
     }
-    XPrintf_utf8("\n");
+    XPrintf_3("\n");
 }
 
 void XFileInfoTest()
 {
-    XPrintf_utf8("\n=== XFileInfo 综合测试 ===\n\n");
+    XPrintf_3("\n=== XFileInfo 综合测试 ===\n\n");
 
     // ====== 1. 创建测试文件 ======
-    XPrintf_utf8("========== 1. 创建测试文件 ==========\n");
+    XPrintf_3("========== 1. 创建测试文件 ==========\n");
 
     XString* testFileName = XString_create_utf8("XFileInfoTest_temp.txt");
     XFile* testFile = XFile_create_2(testFileName);
@@ -52,10 +52,10 @@ void XFileInfoTest()
         }
         XFile_deleteLater(testFile);
     }
-    XPrintf_utf8("创建测试文件: 完成\n");
+    XPrintf_3("创建测试文件: 完成\n");
 
     // ====== 2. 基本文件信息 ======
-    XPrintf_utf8("\n========== 2. 基本文件信息 ==========\n");
+    XPrintf_3("\n========== 2. 基本文件信息 ==========\n");
 
     XFileInfo* info1 = XFileInfo_create_2(testFileName);
     if (info1) {
@@ -78,7 +78,7 @@ void XFileInfoTest()
     }
 
     // ====== 3. 文件名解析 ======
-    XPrintf_utf8("\n========== 3. 文件名解析 ==========\n");
+    XPrintf_3("\n========== 3. 文件名解析 ==========\n");
 
     XFileInfo* info2 = XFileInfo_create_2(testFileName);
     if (info2) {
@@ -98,7 +98,7 @@ void XFileInfoTest()
     }
 
     // ====== 4. 文件类型检查 ======
-    XPrintf_utf8("\n========== 4. 文件类型检查 ==========\n");
+    XPrintf_3("\n========== 4. 文件类型检查 ==========\n");
 
     XFileInfo* info3 = XFileInfo_create_2(testFileName);
     if (info3) {
@@ -113,7 +113,7 @@ void XFileInfoTest()
     }
 
     // ====== 5. 文件属性 ======
-    XPrintf_utf8("\n========== 5. 文件属性 ==========\n");
+    XPrintf_3("\n========== 5. 文件属性 ==========\n");
 
     XFileInfo* info4 = XFileInfo_create_2(testFileName);
     if (info4) {
@@ -128,7 +128,7 @@ void XFileInfoTest()
     }
 
     // ====== 6. 时间信息 ======
-    XPrintf_utf8("\n========== 6. 时间信息 ==========\n");
+    XPrintf_3("\n========== 6. 时间信息 ==========\n");
 
     XFileInfo* info5 = XFileInfo_create_2(testFileName);
     if (info5) {
@@ -145,7 +145,7 @@ void XFileInfoTest()
     }
 
     // ====== 7. 路径类型检查 ======
-    XPrintf_utf8("\n========== 7. 路径类型检查 ==========\n");
+    XPrintf_3("\n========== 7. 路径类型检查 ==========\n");
 
     XFileInfo* info6 = XFileInfo_create_2(testFileName);
     if (info6) {
@@ -165,12 +165,12 @@ void XFileInfoTest()
     XString_delete_base(absTestPath);
 
     // ====== 8. 目录信息 ======
-    XPrintf_utf8("\n========== 8. 目录信息 ==========\n");
+    XPrintf_3("\n========== 8. 目录信息 ==========\n");
 
     XString* dotPath = XString_create_utf8(".");
     XFileInfo* dirInfo = XFileInfo_create_2(dotPath);
     if (dirInfo) {
-        XPrintf_utf8("当前目录信息:\n");
+        XPrintf_3("当前目录信息:\n");
         XPrintf("  存在: %s\n", XFileInfo_exists(dirInfo) ? "是" : "否");
         XPrintf("  是目录: %s\n", XFileInfo_isDir(dirInfo) ? "是" : "否");
         XPrintf("  是文件: %s\n", XFileInfo_isFile(dirInfo) ? "是" : "否");
@@ -180,14 +180,14 @@ void XFileInfoTest()
     XString_delete_base(dotPath);
 
     // ====== 9. 清理测试文件 ======
-    XPrintf_utf8("\n========== 9. 清理测试文件 ==========\n");
+    XPrintf_3("\n========== 9. 清理测试文件 ==========\n");
 
     bool removed = XFile_remove_static(testFileName);
     XPrintf("删除测试文件: %s\n", removed ? "成功" : "失败");
 
     XString_delete_base(testFileName);
 
-    XPrintf_utf8("\n=== XFileInfo 测试完成 ===\n");
+    XPrintf_3("\n=== XFileInfo 测试完成 ===\n");
 }
 
 void XMenu_XFileInfoTest(XMenu* root)

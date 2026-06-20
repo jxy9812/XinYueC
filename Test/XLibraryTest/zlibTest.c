@@ -10,7 +10,7 @@
 char compress_buff[100] = { 0 };
 void zlibTest()
 {
-    XPrintf_utf8("zlib 压缩测试\n");
+    XPrintf_3("zlib 压缩测试\n");
 	const char* str = "aaaaaaaaaaaaaa6666666";
 
 	char decompress_buff[100] = { 0 };
@@ -22,7 +22,7 @@ void zlibTest()
 }
 void zlibByteArrayTest()
 {
-	XPrintf_utf8("zlib XByteArray压缩测试\n");
+	XPrintf_3("zlib XByteArray压缩测试\n");
 	const char* str = "aaaaaaaaaaaaaa6666666";
 	XByteArray* data = XByteArray_create();
 	XByteArray_push_back_2(data, str, strlen(str) + 1);

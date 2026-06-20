@@ -382,7 +382,7 @@ void XAbstractSocket_setSocketState(XAbstractSocket* sock, XAbstractSocket_Socke
         ((XIODevice*)sock)->m_openMode = XIODevice_NotOpen;
         XAbstractSocket_disconnected_signal(sock);
         if (sock->autoDeleteOnDisconnect) {
-            XAbstractSocket_delete_base(sock);
+            XAbstractSocket_deleteLater(sock);
         }
     }
 }
@@ -417,13 +417,17 @@ bool XAbstractSocket_bind_base(XAbstractSocket* sock, const XHostAddress* addres
 bool XAbstractSocket_bindAny(XAbstractSocket* sock, uint16_t port, XAbstractSocket_BindMode mode)
 {
     XHostAddress any;
+    XHostAddress_init(&any);
+    //XHostAddress_setAddress(&any,"127.0.0.1");
     if (sock->socketType == XAbstractSocket_UdpSocket) {
         XHostAddress_setAddressSpecial(&any, XHostAddress_AnySpecial);
     }
     else {
         XHostAddress_setAddressSpecial(&any, XHostAddress_AnyIPv6Special);
     }
-    return XAbstractSocket_bind_base(sock, &any, port, mode);
+    bool result = XAbstractSocket_bind_base(sock, &any, port, mode);
+    XHostAddress_deinit_base(&any);
+    return result;
 }
 
 void XAbstractSocket_connectToHost_base(XAbstractSocket* sock, const char* hostName, uint16_t port, XIODeviceBaseMode mode, XAbstractSocket_NetworkLayerProtocol protocol)

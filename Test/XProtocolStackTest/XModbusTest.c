@@ -56,7 +56,7 @@ void XModbusRtuSerialClientTest()
     XModbusDevice_setConnectionParameter_ref(client, XModbusDevice_SerialBaudRateParameter, XVariant_create_int(9600));
     if (!XModbusDevice_connectDevice(client))
     {
-        XPrintf_utf8("失败了\n");
+        XPrintf_3("失败了\n");
         XModbusRtuSerialClient_deleteLater(client);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         return;
@@ -116,7 +116,7 @@ void XModbusTcpClientTest()
   
     if (!XModbusDevice_connectDevice(client))
     {
-        XPrintf_utf8("失败了\n");
+        XPrintf_3("失败了\n");
         XModbusTcpClient_deleteLater(client);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
         return;

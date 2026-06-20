@@ -60,13 +60,13 @@ void XBsonDocumentTest()
 			XByteArray_delete_base(utf8);
 		}
 		XBsonDocument_delete_base(doc);
-		/*XPrintf_utf8(XContainerSharedDataPtr(bson));
-		XPrintf_utf8("\n开始从bson文本转bson对象\n");*/
+		/*XPrintf_3(XContainerSharedDataPtr(bson));
+		XPrintf_3("\n开始从bson文本转bson对象\n");*/
 		doc = XBsonDocument_fromBson(bson);
 		XByteArray_delete_base(bson);
 
 		XString* str = XBsonDocument_toJson_string(doc, XJsonDocument_Indented);
-		XPrintf_string(str);
+		XPrintf_2(str);
 		printf("\n");
 		XString_delete_base(str);
 
@@ -112,7 +112,7 @@ void XBsonArrayTest()
 
 
 	/*	XString* str = XBsonArray_toString(array, XBsonDocument_Indented);
-		XPrintf_string(str);
+		XPrintf_2(str);
 		printf("\n");
 		XString_delete_base(str);
 

@@ -395,7 +395,7 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
     XModbusDataUnit* resultUnit = client->m_currentReply->m_result;
 
    /* XString* text= XByteArray_to16HexString(receiveBuffer);
-    XPrintf_string(text);
+    XPrintf_2(text);
     XPrintf("\n");
     XString_delete_base(text);*/
     
@@ -476,7 +476,7 @@ bool startNewRequest(XModbusRtuSerialClient* client)
     XContainerSize(rtuClient->m_requestData) += 2;
 
    /* XString* text= XByteArray_to16HexString(rtuClient->m_requestData);
-    XPrintf_string(text);
+    XPrintf_2(text);
     XPrintf("\n");
     XString_delete_base(text);*/
 

@@ -41,7 +41,7 @@ static void XHostInfo_syncLookupTest(void)
 			XString* errStr = XHostInfo_errorString(info);
 			if (errStr) {
 				XPrintf("  错误信息: ");
-				XPrintf_string(errStr);
+				XPrintf_2(errStr);
 				XPrintf("\n");
 			}
 			XHostInfo_delete_base(info);
@@ -52,7 +52,7 @@ static void XHostInfo_syncLookupTest(void)
 		XString* hostName = XHostInfo_hostName(info);
 		if (hostName) {
 			XPrintf("  主机名: ");
-			XPrintf_string(hostName);
+			XPrintf_2(hostName);
 			XPrintf("\n");
 		}
 		
@@ -65,7 +65,7 @@ static void XHostInfo_syncLookupTest(void)
 				XString* addrStr = XHostAddress_toString(addr);
 				if (addrStr) {
 					XPrintf("    - ");
-					XPrintf_string(addrStr);
+					XPrintf_2(addrStr);
 					XPrintf("\n");
 					XString_delete_base(addrStr);
 				}
@@ -95,7 +95,7 @@ static void onHostLookupComplete(XHostInfo* info, void* userData)
 	XString* hostName = XHostInfo_hostName(info);
 	if (hostName) {
 		XPrintf("  主机名: ");
-		XPrintf_string(hostName);
+		XPrintf_2(hostName);
 		XPrintf("\n");
 	}
 	
@@ -107,7 +107,7 @@ static void onHostLookupComplete(XHostInfo* info, void* userData)
 			XString* addrStr = XHostAddress_toString(addr);
 			if (addrStr) {
 				XPrintf("    - ");
-				XPrintf_string(addrStr);
+				XPrintf_2(addrStr);
 				XPrintf("\n");
 				XString_delete_base(addrStr);
 			}
@@ -153,7 +153,7 @@ static void XHostInfo_localInfoTest(void)
 	XString* localHost = XHostInfo_localHostName();
 	if (localHost) {
 		XPrintf("  本地主机名: ");
-		XPrintf_string(localHost);
+		XPrintf_2(localHost);
 		XPrintf("\n");
 		XString_delete_base(localHost);
 	} else {
@@ -164,7 +164,7 @@ static void XHostInfo_localInfoTest(void)
 	XString* localDomain = XHostInfo_localDomainName();
 	if (localDomain) {
 		XPrintf("  本地域名: ");
-		XPrintf_string(localDomain);
+		XPrintf_2(localDomain);
 		XPrintf("\n");
 		XString_delete_base(localDomain);
 	} else {

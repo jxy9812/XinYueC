@@ -11,7 +11,7 @@
 #include"XPrintf.h"
 void XVariantListTest()
 {
-	XPrintf_utf8("--------------------------XVariantList测试-----------------------\n");
+	XPrintf_3("--------------------------XVariantList测试-----------------------\n");
 	while (true)
 	{
 		XVariantList* list = XVariantList_create();
@@ -60,7 +60,7 @@ void XVariantListTest_list()
 {
 	//while(true)
 	{
-		XPrintf_utf8("--------------------------XVariant_toList测试-----------------------\n");
+		XPrintf_3("--------------------------XVariant_toList测试-----------------------\n");
 		XVariantList* list = XVariantList_create();
 		XVariant* var = XVariant_create_int(8);
 		XVariantList_push_back_base(list, var);
@@ -94,7 +94,7 @@ void XVariantListTest_map()
 {
 	//while (true)
 	{
-		XPrintf_utf8("--------------------------XVariant_toMap测试-----------------------\n");
+		XPrintf_3("--------------------------XVariant_toMap测试-----------------------\n");
 		//XMap* map = XMap_create_XVariantMap();
 		XVariantHashMap* map = XHashMap_create_XVariantHashMap();
 		{
@@ -131,7 +131,7 @@ void XVariantListTest_stringList()
 {
 	//while (true)
 	{
-		XPrintf_utf8("--------------------------XVariant_toStringList测试-----------------------\n");
+		XPrintf_3("--------------------------XVariant_toStringList测试-----------------------\n");
 		XStringList* list = XStringList_create();
 		XStringList_push_back_utf8(list, "你好");
 		XStringList_push_back_utf8(list, "非常好");
