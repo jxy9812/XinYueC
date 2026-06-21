@@ -148,7 +148,7 @@ static void VXAbstractSocket_deinit(XAbstractSocket* sock)
         sock->protocolTag = NULL;
     }
     // 释放代理配置资源
-    XNetworkProxy_deinit(&sock->proxy);
+    XNetworkProxy_deinit_base(&sock->proxy);
     // 释放地址对象
     XHostAddress_deinit_base((XHostAddress*)&sock->localAddress);
     XHostAddress_deinit_base((XHostAddress*)&sock->peerAddress);
@@ -293,7 +293,7 @@ void XAbstractSocket_setProxy(XAbstractSocket* sock, const XNetworkProxy* proxy)
     if (!sock) return;
   
     // 释放旧的代理配置资源
-    XNetworkProxy_deinit(&sock->proxy);
+    XNetworkProxy_deinit_base(&sock->proxy);
   
     if (proxy) {
         // 深拷贝代理配置

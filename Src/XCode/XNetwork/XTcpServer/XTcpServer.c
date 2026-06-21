@@ -203,7 +203,7 @@ static void VXTcpServer_deinit(XTcpServer* server)
 	XHostAddress_deinit_base(&server->lastAcceptedAddr);
 	
 	// 释放代理资源
-	XNetworkProxy_deinit(&server->proxy);
+	XNetworkProxy_deinit_base(&server->proxy);
 	
 	// 调用父类析构（XObject → XClass）
 	XClass_Deinit_Parent(XObject, server);
@@ -506,7 +506,7 @@ void XTcpServer_setProxy(XTcpServer* server, const XNetworkProxy* proxy)
 {
 	if (!server || !proxy) return;
 	// 先释放旧的代理资源
-	XNetworkProxy_deinit(&server->proxy);
+	XNetworkProxy_deinit_base(&server->proxy);
 	// 重新初始化并深拷贝
 	XNetworkProxy_init(&server->proxy);
 	server->proxy.type = proxy->type;

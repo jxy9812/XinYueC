@@ -58,19 +58,40 @@ typedef enum XNetworkProxy_Capability {
 
 typedef int XNetworkProxy_Capabilities; ///< 能力位掩码
 
+// =============== XNetworkProxyQuery 虚函数表定义 ===============
+
+#define XNetworkProxyQuery_VTABLE_SIZE    (XCLASS_VTABLE_GET_SIZE(XNetworkProxyQuery))  ///< XNetworkProxyQuery虚函数表大小
+
+/**
+ * @brief XNetworkProxyQuery虚函数表枚举，继承自XClass
+ * @note 父类XClass已有Copy、Move、Deinit虚函数，子类无需重新声明
+ */
+XCLASS_DEFINE_BEGING(XNetworkProxyQuery)
+XCLASS_DEFINE_EXTEND_END(XNetworkProxyQuery, XClass)
+
 // =============== XNetworkProxyQuery 结构体 ===============
 
 /**
  * @brief 代理查询条件，用于查询应使用的代理配置。
+ *        继承自 XClass，支持类继承和虚函数。
  */
 typedef struct XNetworkProxyQuery {
-    XNetworkProxyQuery_QueryType queryType;  ///< 查询类型
-    char* peerHostName;                       ///< 目标主机名
-    int peerPort;                             ///< 目标端口
-    int localPort;                            ///< 本地端口（用于服务器绑定）
-    char* protocolTag;                        ///< 协议标签
-    char* url;                                ///< URL（仅 UrlRequest 类型）
+    XClass base;                            ///< 基类（必须是第一个成员）
+    XNetworkProxyQuery_QueryType queryType; ///< 查询类型
+    XString* peerHostName;                  ///< 目标主机名
+    int peerPort;                           ///< 目标端口
+    int localPort;                          ///< 本地端口（用于服务器绑定）
+    XString* protocolTag;                   ///< 协议标签
+    XString* url;                           ///< URL（仅 UrlRequest 类型）
 } XNetworkProxyQuery;
+
+// =============== XNetworkProxyQuery 虚函数表 API ===============
+
+/**
+ * @brief 初始化 XNetworkProxyQuery 虚函数表。
+ * @return 虚函数表指针
+ */
+XVtable* XNetworkProxyQuery_class_init(void);
 
 // =============== XNetworkProxyQuery API ===============
 
@@ -92,7 +113,7 @@ XNetworkProxyQuery* XNetworkProxyQuery_create(void);
  * @param queryType 查询类型
  * @return 新创建的查询实例
  */
-XNetworkProxyQuery* XNetworkProxyQuery_create_withUrl(const char* url, XNetworkProxyQuery_QueryType queryType);
+XNetworkProxyQuery* XNetworkProxyQuery_create_2(const XString* url, XNetworkProxyQuery_QueryType queryType);
 
 /**
  * @brief 使用主机名和端口创建代理查询。
@@ -102,8 +123,8 @@ XNetworkProxyQuery* XNetworkProxyQuery_create_withUrl(const char* url, XNetworkP
  * @param queryType 查询类型
  * @return 新创建的查询实例
  */
-XNetworkProxyQuery* XNetworkProxyQuery_create_withHostPort(const char* hostname, int port, 
-                                                           const char* protocolTag, XNetworkProxyQuery_QueryType queryType);
+XNetworkProxyQuery* XNetworkProxyQuery_create_3(const XString* hostname, int port, 
+                                                           const XString* protocolTag, XNetworkProxyQuery_QueryType queryType);
 
 /**
  * @brief 使用绑定端口创建代理查询（用于服务器）。
@@ -112,28 +133,13 @@ XNetworkProxyQuery* XNetworkProxyQuery_create_withHostPort(const char* hostname,
  * @param queryType 查询类型
  * @return 新创建的查询实例
  */
-XNetworkProxyQuery* XNetworkProxyQuery_create_withBindPort(uint16_t bindPort, const char* protocolTag,
+XNetworkProxyQuery* XNetworkProxyQuery_create_4(uint16_t bindPort, const XString* protocolTag,
                                                            XNetworkProxyQuery_QueryType queryType);
 
 /**
  * @brief 释放 XNetworkProxyQuery 结构体内部资源。
  * @param query 查询实例
  */
-void XNetworkProxyQuery_deinit(XNetworkProxyQuery* query);
-
-/**
- * @brief 删除并释放 XNetworkProxyQuery 实例。
- * @param query 查询实例
- */
-void XNetworkProxyQuery_delete(XNetworkProxyQuery* query);
-
-/**
- * @brief 深拷贝一个 XNetworkProxyQuery 实例。
- * @param other 源查询实例
- * @return 新创建的副本
- */
-XNetworkProxyQuery* XNetworkProxyQuery_copy(const XNetworkProxyQuery* other);
-
 /**
  * @brief 获取查询类型。
  * @param query 查询实例
@@ -167,14 +173,14 @@ void XNetworkProxyQuery_setPeerPort(XNetworkProxyQuery* query, int port);
  * @param query 查询实例
  * @return 主机名字符串（可能为 NULL）
  */
-const char* XNetworkProxyQuery_peerHostName(const XNetworkProxyQuery* query);
-
+const XString* XNetworkProxyQuery_peerHostName_const(const XNetworkProxyQuery* query);
+XString* XNetworkProxyQuery_peerHostName(const XNetworkProxyQuery* query);
 /**
  * @brief 设置目标主机名。
  * @param query 查询实例
  * @param hostname 主机名字符串
  */
-void XNetworkProxyQuery_setPeerHostName(XNetworkProxyQuery* query, const char* hostname);
+void XNetworkProxyQuery_setPeerHostName(XNetworkProxyQuery* query, const XString* hostname);
 
 /**
  * @brief 获取本地端口。
@@ -195,28 +201,28 @@ void XNetworkProxyQuery_setLocalPort(XNetworkProxyQuery* query, int port);
  * @param query 查询实例
  * @return 协议标签字符串（可能为 NULL）
  */
-const char* XNetworkProxyQuery_protocolTag(const XNetworkProxyQuery* query);
-
+const XString* XNetworkProxyQuery_protocolTag_const(const XNetworkProxyQuery* query);
+XString* XNetworkProxyQuery_protocolTag(const XNetworkProxyQuery* query);
 /**
  * @brief 设置协议标签。
  * @param query 查询实例
  * @param tag 协议标签字符串
  */
-void XNetworkProxyQuery_setProtocolTag(XNetworkProxyQuery* query, const char* tag);
+void XNetworkProxyQuery_setProtocolTag(XNetworkProxyQuery* query, const XString* tag);
 
 /**
  * @brief 获取请求 URL。
  * @param query 查询实例
  * @return URL 字符串（可能为 NULL）
  */
-const char* XNetworkProxyQuery_url(const XNetworkProxyQuery* query);
-
+const XString* XNetworkProxyQuery_url_const(const XNetworkProxyQuery* query);
+XString* XNetworkProxyQuery_url(const XNetworkProxyQuery* query);
 /**
  * @brief 设置请求 URL。
  * @param query 查询实例
  * @param url URL 字符串
  */
-void XNetworkProxyQuery_setUrl(XNetworkProxyQuery* query, const char* url);
+void XNetworkProxyQuery_setUrl(XNetworkProxyQuery* query, const XString* url);
 
 /**
  * @brief 比较两个查询是否相等。
@@ -226,19 +232,47 @@ void XNetworkProxyQuery_setUrl(XNetworkProxyQuery* query, const char* url);
  */
 bool XNetworkProxyQuery_equal(const XNetworkProxyQuery* a, const XNetworkProxyQuery* b);
 
+// =============== 继承自 XClass 的 API（符号重命名，无参数包装）===============
+
+#define XNetworkProxyQuery_deinit_base    XClass_deinit_base
+#define XNetworkProxyQuery_delete_base    XClass_delete_base
+#define XNetworkProxyQuery_copy_base      XClass_copy_base
+#define XNetworkProxyQuery_move_base      XClass_move_base
+
+// =============== XNetworkProxy 虚函数表定义 ===============
+
+#define XNetworkProxy_VTABLE_SIZE    (XCLASS_VTABLE_GET_SIZE(XNetworkProxy))  ///< XNetworkProxy虚函数表大小
+
+/**
+ * @brief XNetworkProxy虚函数表枚举，继承自XClass
+ * @note 父类XClass已有Copy、Move、Deinit虚函数，子类无需重新声明
+ */
+XCLASS_DEFINE_BEGING(XNetworkProxy)
+XCLASS_DEFINE_EXTEND_END(XNetworkProxy,XClass)
+
 // =============== XNetworkProxy 结构体 ===============
 
 /**
  * @brief 网络代理配置，包含代理类型、地址、端口、认证等信息。
+ *        继承自 XClass，支持类继承和虚函数。
  */
 typedef struct XNetworkProxy {
-    XNetworkProxy_ProxyType type;         ///< 代理类型
+    XClass base;                           ///< 基类（必须是第一个成员）
+    XNetworkProxy_ProxyType type;          ///< 代理类型
     XNetworkProxy_Capabilities capabilities; ///< 能力标志
-    char* hostName;                        ///< 代理服务器主机名
+    XString* hostName;                     ///< 代理服务器主机名
     uint16_t port;                         ///< 代理服务器端口
-    char* user;                            ///< 认证用户名
-    char* password;                        ///< 认证密码
+    XString* user;                         ///< 认证用户名
+    XString* password;                     ///< 认证密码
 } XNetworkProxy;
+
+// =============== XNetworkProxy 虚函数表 API ===============
+
+/**
+ * @brief 初始化 XNetworkProxy 虚函数表。
+ * @return 虚函数表指针
+ */
+XVtable* XNetworkProxy_class_init(void);
 
 // =============== XNetworkProxy API ===============
 
@@ -263,20 +297,15 @@ XNetworkProxy* XNetworkProxy_create(void);
  * @param password 认证密码（可为 NULL）
  * @return 新创建的代理实例
  */
-XNetworkProxy* XNetworkProxy_create_withType(XNetworkProxy_ProxyType type, const char* hostName, 
-                                              uint16_t port, const char* user, const char* password);
+XNetworkProxy* XNetworkProxy_create_2(XNetworkProxy_ProxyType type, const XString* hostName, 
+                                              uint16_t port, const XString* user, const XString* password);
 
-/**
- * @brief 释放 XNetworkProxy 结构体内部资源。
- * @param proxy 代理实例
- */
-void XNetworkProxy_deinit(XNetworkProxy* proxy);
+// =============== 继承自 XClass 的 API（符号重命名，无参数包装）===============
 
-/**
- * @brief 删除并释放 XNetworkProxy 实例。
- * @param proxy 代理实例
- */
-void XNetworkProxy_delete(XNetworkProxy* proxy);
+#define XNetworkProxy_deinit_base    XClass_deinit_base
+#define XNetworkProxy_delete_base    XClass_delete_base
+#define XNetworkProxy_copy_base      XClass_copy_base
+#define XNetworkProxy_move_base      XClass_move_base
 
 /**
  * @brief 深拷贝一个 XNetworkProxy 实例。
@@ -333,42 +362,42 @@ bool XNetworkProxy_isTransparentProxy(const XNetworkProxy* proxy);
  * @param proxy 代理实例
  * @return 用户名字符串（可能为 NULL）
  */
-const char* XNetworkProxy_user(const XNetworkProxy* proxy);
-
+const XString* XNetworkProxy_user_const(const XNetworkProxy* proxy);
+XString* XNetworkProxy_user(const XNetworkProxy* proxy);
 /**
  * @brief 设置认证用户名。
  * @param proxy 代理实例
  * @param userName 用户名字符串
  */
-void XNetworkProxy_setUser(XNetworkProxy* proxy, const char* userName);
+void XNetworkProxy_setUser(XNetworkProxy* proxy, const XString* userName);
 
 /**
  * @brief 获取认证密码。
  * @param proxy 代理实例
  * @return 密码字符串（可能为 NULL）
  */
-const char* XNetworkProxy_password(const XNetworkProxy* proxy);
-
+const XString* XNetworkProxy_password_const(const XNetworkProxy* proxy);
+XString* XNetworkProxy_password(const XNetworkProxy* proxy);
 /**
  * @brief 设置认证密码。
  * @param proxy 代理实例
  * @param password 密码字符串
  */
-void XNetworkProxy_setPassword(XNetworkProxy* proxy, const char* password);
+void XNetworkProxy_setPassword(XNetworkProxy* proxy, const XString* password);
 
 /**
  * @brief 获取代理服务器主机名。
  * @param proxy 代理实例
  * @return 主机名字符串（可能为 NULL）
  */
-const char* XNetworkProxy_hostName(const XNetworkProxy* proxy);
-
+const XString* XNetworkProxy_hostName_const(const XNetworkProxy* proxy);
+XString* XNetworkProxy_hostName(const XNetworkProxy* proxy);
 /**
  * @brief 设置代理服务器主机名。
  * @param proxy 代理实例
  * @param hostName 主机名字符串
  */
-void XNetworkProxy_setHostName(XNetworkProxy* proxy, const char* hostName);
+void XNetworkProxy_setHostName(XNetworkProxy* proxy, const XString* hostName);
 
 /**
  * @brief 获取代理服务器端口。
@@ -406,10 +435,22 @@ void XNetworkProxy_setApplicationProxy(const XNetworkProxy* proxy);
  */
 XNetworkProxy* XNetworkProxy_applicationProxy(void);
 
+// =============== XNetworkProxyFactory 虚函数表定义 ===============
+
+#define XNetworkProxyFactory_VTABLE_SIZE    (XCLASS_VTABLE_GET_SIZE(XNetworkProxyFactory))  ///< XNetworkProxyFactory虚函数表大小
+
+/**
+ * @brief XNetworkProxyFactory虚函数表枚举，继承自XClass
+ * @note 父类XClass已有Copy、Move、Deinit虚函数，子类无需重新声明
+ */
+XCLASS_DEFINE_BEGING(XNetworkProxyFactory)
+XCLASS_DEFINE_EXTEND_END(XNetworkProxyFactory, XClass)
+
 // =============== XNetworkProxyFactory 结构体 ===============
 
 /**
  * @brief 代理工厂基类，用于自定义代理选择逻辑。
+ *        继承自 XClass，支持类继承和虚函数。
  */
 typedef struct XNetworkProxyFactory XNetworkProxyFactory;
 
@@ -422,8 +463,17 @@ typedef struct XNetworkProxyFactory XNetworkProxyFactory;
 typedef XNetworkProxy* (*XNetworkProxyFactory_QueryFunc)(XNetworkProxyFactory* factory, const XNetworkProxyQuery* query);
 
 struct XNetworkProxyFactory {
+    XClass base;                          ///< 基类（必须是第一个成员）
     XNetworkProxyFactory_QueryFunc queryProxy; ///< 查询代理回调
 };
+
+// =============== XNetworkProxyFactory 虚函数表 API ===============
+
+/**
+ * @brief 初始化 XNetworkProxyFactory 虚函数表。
+ * @return 虚函数表指针
+ */
+XVtable* XNetworkProxyFactory_class_init(void);
 
 // =============== XNetworkProxyFactory API ===============
 
@@ -441,17 +491,12 @@ void XNetworkProxyFactory_init(XNetworkProxyFactory* factory, XNetworkProxyFacto
  */
 XNetworkProxyFactory* XNetworkProxyFactory_create(XNetworkProxyFactory_QueryFunc queryFunc);
 
-/**
- * @brief 释放 XNetworkProxyFactory 结构体内部资源。
- * @param factory 工厂实例
- */
-void XNetworkProxyFactory_deinit(XNetworkProxyFactory* factory);
+// =============== 继承自 XClass 的 API（符号重命名，无参数包装）===============
 
-/**
- * @brief 删除并释放 XNetworkProxyFactory 实例。
- * @param factory 工厂实例
- */
-void XNetworkProxyFactory_delete(XNetworkProxyFactory* factory);
+#define XNetworkProxyFactory_deinit_base    XClass_deinit_base
+#define XNetworkProxyFactory_delete_base    XClass_delete_base
+#define XNetworkProxyFactory_copy_base      XClass_copy_base
+#define XNetworkProxyFactory_move_base      XClass_move_base
 
 /**
  * @brief 使用工厂查询代理配置。
