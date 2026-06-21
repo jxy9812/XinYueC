@@ -127,9 +127,12 @@ void XModbusTcpClientTest()
     }
     XObject_connect_2((XObject*)XModbusDevice_device(client),XSignal(XTcpSocket_connected_signal), tcpStart);
 
-    //XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
-    //XModbusDataUnit_setValue(read, 0, true);
-    //XModbusClient_pollWriteRequest(client, read, 1, 2);
+    //{
+    //    XModbusDataUnit* read = XModbusDataUnit_create_ex(XModbusCoils, 0, 1);
+    //    XModbusDataUnit_setValue(read, 0, true);
+    //    XModbusClient_pollWriteRequest(client, read, 1, 2);
+    //}
+
     XCoreApplication_exec();
 }
 

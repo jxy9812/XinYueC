@@ -22,6 +22,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "XHostAddress.h"
+#include "XNetworkProxy.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -182,7 +183,8 @@ void XNetwork_socketSetReadBufferSize(XNetworkSocketPrivate* priv, int64_t size)
 /** 获取异步读取缓冲区 */
 const char* XNetwork_socketReadBuffer(const XNetworkSocketPrivate* priv);
 /** 获取已完成的字节数 */
-size_t XNetwork_socketFinishedBytes(const XNetworkSocketPrivate* priv);
+size_t XNetwork_socketReadFinishedBytes(const XNetworkSocketPrivate* priv);
+size_t XNetwork_socketWriteFinishedBytes(const XNetworkSocketPrivate* priv);
 /** 是否有待读数据 */
 bool XNetwork_socketHasPendingData(const XNetworkSocketPrivate* priv);
 /** 继续异步读取（处理完数据后调用） */
@@ -192,12 +194,30 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp);
  * 六、TCP 服务器
  * ========================================================================= */
 
-XServerHandle XNetwork_serverCreate(const XHostAddress* addr, uint16_t port,
+XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv,const XHostAddress* addr, uint16_t port,
                                     int backlog, bool reuseAddr);
 XSocketHandle XNetwork_serverAccept(XServerHandle server,
                                     XHostAddress* clientAddr, uint16_t* clientPort);
 uint16_t XNetwork_serverPort(XServerHandle server);
 void XNetwork_serverClose(XServerHandle server);
+
+/**
+ * @brief 获取异步 Accept 完成后的客户端套接字
+ * @param priv 服务器套接字私有数据
+ * @param clientAddr 输出客户端地址（可为 NULL）
+ * @param clientPort 输出客户端端口（可为 NULL）
+ * @return 客户端套接字句柄，失败返回 -1
+ * @note 必须在收到 FD_ACCEPT 事件后调用
+ */
+XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
+                                               XHostAddress* clientAddr, uint16_t* clientPort);
+
+/**
+ * @brief 继续异步 Accept（处理完一个连接后调用）
+ * @param priv 服务器套接字私有数据
+ * @return 成功返回 true
+ */
+bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv);
 
 /* =========================================================================
  * 七、DNS 查询
@@ -272,27 +292,69 @@ bool XNetwork_getLastDatagramSender(const XNetworkSocketPrivate* priv,
 int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size,
                                const XHostAddress* address, uint16_t port);
 
-  /* =========================================================================
- * 十一、代理隧道
+/* =========================================================================
+ * 十一、代理隧道（使用 XNetworkProxy 模块类型）
  * ========================================================================= */
 
-typedef enum {
-    XNetworkProxy_None   = 0,
-    XNetworkProxy_Socks5 = 1,
-    XNetworkProxy_Http   = 2
-} XNetworkProxyType;
-
-typedef struct {
-    XNetworkProxyType type;
-    char    host[256];
-    uint16_t port;
-    char    user[128];
-    char    pass[128];
-    bool    hasAuth;
-} XNetworkProxyInfo;
-
-bool XNetwork_socks5Connect(XSocketHandle sock, const XNetworkProxyInfo* proxy,
+/**
+ * @brief SOCKS5 代理连接
+ * @param sock 已连接到代理服务器的套接字
+ * @param proxy 代理配置
+ * @param targetAddr 目标地址
+ * @param targetPort 目标端口
+ * @return 成功返回 true
+ */
+bool XNetwork_socks5Connect(XSocketHandle sock, const XNetworkProxy* proxy,
                             const XHostAddress* targetAddr, uint16_t targetPort);
+
+/**
+ * @brief HTTP 代理 CONNECT 隧道连接
+ * @param sock 已连接到代理服务器的套接字
+ * @param proxy 代理配置
+ * @param targetAddr 目标地址
+ * @param targetPort 目标端口
+ * @return 成功返回 true
+ */
+bool XNetwork_httpConnect(XSocketHandle sock, const XNetworkProxy* proxy,
+                          const XHostAddress* targetAddr, uint16_t targetPort);
+
+/**
+ * @brief SOCKS5 代理 BIND 命令（用于服务器监听）
+ * @param sock 已连接到代理服务器的套接字
+ * @param proxy 代理配置
+ * @param bindAddr 输出绑定的地址
+ * @param bindPort 输出绑定的端口
+ * @return 成功返回 true
+ * @note 用于通过 SOCKS5 代理建立反向连接
+ */
+bool XNetwork_socks5Bind(XSocketHandle sock, const XNetworkProxy* proxy,
+                         XHostAddress* bindAddr, uint16_t* bindPort);
+
+/**
+ * @brief 通过代理创建 TCP 服务器
+ * @param proxy 代理配置（NULL 表示不使用代理）
+ * @param addr 监听地址
+ * @param port 监听端口
+ * @param backlog 积压大小
+ * @param reuseAddr 是否重用地址
+ * @return 服务器句柄，失败返回 -1
+ * @note 如果代理支持 ListeningCapability，则通过代理建立监听
+ */
+XServerHandle XNetwork_serverCreateWithProxy(XNetworkSocketPrivate* priv,const XNetworkProxy* proxy,
+                                             const XHostAddress* addr, uint16_t port,
+                                             int backlog, bool reuseAddr);
+
+/**
+ * @brief 通过代理接受连接
+ * @param server 服务器句柄
+ * @param proxy 代理配置（可为 NULL）
+ * @param clientAddr 输出客户端地址
+ * @param clientPort 输出客户端端口
+ * @return 客户端套接字句柄，失败返回 -1
+ */
+XSocketHandle XNetwork_serverAcceptWithProxy(XServerHandle server,
+                                             const XNetworkProxy* proxy,
+                                             XHostAddress* clientAddr, uint16_t* clientPort);
 
 #ifdef __cplusplus
 }

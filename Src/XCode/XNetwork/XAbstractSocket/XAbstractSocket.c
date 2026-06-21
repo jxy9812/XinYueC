@@ -126,7 +126,8 @@ XVtable* XAbstractSocket_class_init(void)
 static void VXAbstractSocket_deinit(XAbstractSocket* sock)
 {
     if (!sock) return;
-
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
+    XCoreApplication_sendPostedEvents(sock, 0);
     // 调用 XNetwork 清理私有数据
     if (sock->d_ptr) {
         XNetwork_deleteSocketPrivate(sock->d_ptr);
@@ -491,7 +492,7 @@ XVariant* XAbstractSocket_socketOption_base(XAbstractSocket* sock, XAbstractSock
 // ==================== 平台句柄 ====================
 intptr_t XAbstractSocket_socketDescriptor_base(const XAbstractSocket* sock)
 {
-    if (ISNULL(sock, "") || ISNULL(XClassGetVtable(sock), ""))
+    if (ISNULL(sock, "") || ISNULL(XClassGetVtable(sock), "")|| XClassGetVtable(sock)->size< EXAbstractSocket_SocketDescriptor)
         return 0;
     return XClassGetVirtualFunc(sock, EXAbstractSocket_SocketDescriptor, intptr_t(*)(XAbstractSocket*))(sock);
 }
@@ -680,7 +681,7 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
         XNetwork_socketHandleEvent(priv, e);
 
         if (sockAct->actType & XSocketAct_Read) {
-            size_t bytesTransferred = XNetwork_socketFinishedBytes(priv);
+            size_t bytesTransferred = XNetwork_socketReadFinishedBytes(priv);
             if (bytesTransferred > 0 && self->base.m_d) {
                 const char* readBuf = XNetwork_socketReadBuffer(priv);
                 int channel = XIODevice_currentReadChannel((XIODevice*)self);
@@ -694,7 +695,7 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
         }
 
         if (sockAct->actType & XSocketAct_Write) {
-            size_t bytesWritten = XNetwork_socketFinishedBytes(priv);
+            size_t bytesWritten = XNetwork_socketWriteFinishedBytes(priv);
             if (bytesWritten > 0) {
                 XIODevice_bytesWritten_signal((XIODevice*)self, bytesWritten);
             }
@@ -719,7 +720,8 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
         return true;
     }
 
-    return false;
+    // 调用父类事件处理
+    return XClass_Parent(XObject, EXObject_Event, bool (*)(XObject*, XEvent*))((XObject*)self, e);
 }
 
 // ==================== XAbstractSocket 特有虚函数 ====================

@@ -116,7 +116,8 @@ typedef enum {
 	XSocketAct_Write = 2,
 	XSocketAct_ReadWrite = XSocketAct_Read | XSocketAct_Write,
 	XSocketAct_Connect = 4,       ///< 连接完成（TCP）
-	XSocketAct_Exception = 8
+	XSocketAct_Accept=8,
+	XSocketAct_Exception = 16
 } XSocketActType;
 
 /**

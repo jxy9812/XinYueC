@@ -39,6 +39,10 @@
 #define SO_UPDATE_CONNECT_CONTEXT 0x7010
 #endif
 
+#ifndef SO_UPDATE_ACCEPT_CONTEXT
+#define SO_UPDATE_ACCEPT_CONTEXT 0x700B
+#endif
+
 #ifndef IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED
 #define IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED 0x0004
 #endif
@@ -51,6 +55,14 @@ static PIP_ADAPTER_ADDRESSES current = 0;
 #define WSAID_CONNECTEX {0x25a207b9, 0xddf3, 0x4660, {0x8e, 0xe9, 0x76, 0xe5, 0x8c, 0x74, 0x06, 0x3e}}
 #endif
 
+#ifndef WSAID_ACCEPTEX
+#define WSAID_ACCEPTEX {0xb5367df1, 0xcbac, 0x11cf, {0x95, 0xca, 0x00, 0x80, 0x5f, 0x48, 0xa1, 0x92}}
+#endif
+
+#ifndef WSAID_GETACCEPTEXSOCKADDRS
+#define WSAID_GETACCEPTEXSOCKADDRS {0xb5367df2, 0xcbac, 0x11cf, {0x95, 0xca, 0x00, 0x80, 0x5f, 0x48, 0xa1, 0x92}}
+#endif
+
 typedef BOOL(PASCAL* LPFN_CONNECTEX)(
     SOCKET s,
     const struct sockaddr* name,
@@ -59,6 +71,28 @@ typedef BOOL(PASCAL* LPFN_CONNECTEX)(
     DWORD dwSendDataLength,
     LPDWORD lpdwBytesSent,
     LPOVERLAPPED lpOverlapped
+    );
+
+typedef BOOL(PASCAL* LPFN_ACCEPTEX)(
+    SOCKET sListenSocket,
+    SOCKET sAcceptSocket,
+    PVOID lpOutputBuffer,
+    DWORD dwReceiveDataLength,
+    DWORD dwLocalAddressLength,
+    DWORD dwRemoteAddressLength,
+    LPDWORD lpdwBytesReceived,
+    LPOVERLAPPED lpOverlapped
+    );
+
+typedef void(PASCAL* LPFN_GETACCEPTEXSOCKADDRS)(
+    PVOID lpOutputBuffer,
+    DWORD dwReceiveDataLength,
+    DWORD dwLocalAddressLength,
+    DWORD dwRemoteAddressLength,
+    struct sockaddr** LocalSockaddr,
+    LPINT LocalSockaddrLength,
+    struct sockaddr** RemoteSockaddr,
+    LPINT RemoteSockaddrLength
     );
 
 /* =========================================================================
@@ -75,6 +109,8 @@ typedef BOOL(PASCAL* LPFN_CONNECTEX)(
 static LONG    g_wsaRefCount = 0;
 static HANDLE  g_iocp = NULL;
 static LPFN_CONNECTEX g_ConnectEx = NULL;
+static LPFN_ACCEPTEX g_AcceptEx = NULL;
+static LPFN_GETACCEPTEXSOCKADDRS g_GetAcceptExSockaddrs = NULL;
 
 
 /* =========================================================================
@@ -145,14 +181,32 @@ void XNetwork_ensureInit(void)
         WSADATA wsaData;
         WSAStartup(MAKEWORD(2, 2), &wsaData);
         
-        /* 获取 ConnectEx 函数指针 */
+        /* 获取扩展函数指针 */
         SOCKET tempSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (tempSock != INVALID_SOCKET) {
             DWORD bytesReturned;
-            GUID guid = WSAID_CONNECTEX;
+            GUID guidConnectEx = WSAID_CONNECTEX;
+            GUID guidAcceptEx = WSAID_ACCEPTEX;
+            GUID guidGetAcceptExSockaddrs = WSAID_GETACCEPTEXSOCKADDRS;
+            
+            /* 获取 ConnectEx */
             WSAIoctl(tempSock, SIO_GET_EXTENSION_FUNCTION_POINTER,
-                     &guid, sizeof(guid), &g_ConnectEx, sizeof(g_ConnectEx),
+                     &guidConnectEx, sizeof(guidConnectEx), 
+                     &g_ConnectEx, sizeof(g_ConnectEx),
                      &bytesReturned, NULL, NULL);
+            
+            /* 获取 AcceptEx */
+            WSAIoctl(tempSock, SIO_GET_EXTENSION_FUNCTION_POINTER,
+                     &guidAcceptEx, sizeof(guidAcceptEx), 
+                     &g_AcceptEx, sizeof(g_AcceptEx),
+                     &bytesReturned, NULL, NULL);
+            
+            /* 获取 GetAcceptExSockaddrs */
+            WSAIoctl(tempSock, SIO_GET_EXTENSION_FUNCTION_POINTER,
+                     &guidGetAcceptExSockaddrs, sizeof(guidGetAcceptExSockaddrs), 
+                     &g_GetAcceptExSockaddrs, sizeof(g_GetAcceptExSockaddrs),
+                     &bytesReturned, NULL, NULL);
+            
             closesocket(tempSock);
         }
     }
@@ -202,6 +256,8 @@ struct XNetworkSocketPrivate {
     bool connectPending;
     bool connected;
     bool autoRead;
+    bool isServer;                          ///< 是否为服务器套接字
+    bool acceptPending;                     ///< 是否有待处理的 Accept
     
     /* UDP 来源地址 */
     struct sockaddr_in6 fromAddr;
@@ -210,15 +266,26 @@ struct XNetworkSocketPrivate {
     /* IOCP 上下文 */
     XEventContext_IOCP readContext;
     XEventContext_IOCP writeContext;
-    XEventContext_IOCP connectContext;
+    union {
+        XEventContext_IOCP connectContext;  ///< 客户端连接上下文
+        XEventContext_IOCP acceptContext;   ///< 服务器 AcceptEx 上下文
+    };
     
     /* 待连接信息 */
     XHostAddress pendingPeerAddr;
     uint16_t pendingPeerPort;
     
-    /* 缓冲区 */
-    char readBuffer[XNETWORK_READ_BUFFER_SIZE];
-    char writeBuffer[XNETWORK_WRITE_BUFFER_SIZE];
+    /* 缓冲区联合体（服务器用 acceptBuffer，客户端用 readBuffer/writeBuffer）*/
+    union {
+        struct {
+            char readBuffer[XNETWORK_READ_BUFFER_SIZE];
+            char writeBuffer[XNETWORK_WRITE_BUFFER_SIZE];
+        };
+        struct {
+            char acceptBuffer[sizeof(struct sockaddr_in6) * 2 + 32]; ///< AcceptEx 缓冲区
+            SOCKET acceptSocket;                    ///< AcceptEx 创建的套接字
+        };
+    };
 };
 
 /* =========================================================================
@@ -328,7 +395,7 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
     priv->writeContext.type = XEventContextType_Type_Socket;
     priv->writeContext.socket = XSocketDescriptor_fromIntptr(priv->socket);
     priv->writeContext.eventMask = FD_WRITE;
-    
+    priv->writeContext.finishedBytes = len;
     WSABUF buf;
     buf.buf = priv->writeBuffer;
     buf.len = (ULONG)len;
@@ -349,8 +416,13 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
     }
     
     if (result == 0) {
-        /* 立即完成 */
+        /* 立即完成 - 手动向 IOCP 投递完成通知 */
         priv->writePending = true;
+        HANDLE iocp = iocp_get();
+        if (iocp) {
+            PostQueuedCompletionStatus(iocp, (DWORD)len, (ULONG_PTR)priv, 
+                                       (OVERLAPPED*)&priv->writeContext);
+        }
     } else if (WSAGetLastError() == WSA_IO_PENDING) {
         /* 异步等待 */
         priv->writePending = true;
@@ -515,8 +587,8 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
     
     /* 代理处理 */
     if (proxy) {
-        const XNetworkProxyInfo* pi = (const XNetworkProxyInfo*)proxy;
-        if (pi->type == XNetworkProxy_Socks5) {
+        const XNetworkProxy* pi = (const XNetworkProxy*)proxy;
+        if (pi->type == XNetworkProxy_Socks5Proxy) {
             /* TODO: SOCKS5 握手 */
             if (!XNetwork_socks5Connect((XSocketHandle)priv->socket, pi, 
                                         &priv->pendingPeerAddr, port)) {
@@ -819,9 +891,14 @@ const char* XNetwork_socketReadBuffer(const XNetworkSocketPrivate* priv)
     return priv ? priv->readBuffer : NULL;
 }
 
-size_t XNetwork_socketFinishedBytes(const XNetworkSocketPrivate* priv)
+size_t XNetwork_socketReadFinishedBytes(const XNetworkSocketPrivate* priv)
 {
     return priv ? priv->readContext.finishedBytes : 0;
+}
+
+size_t XNetwork_socketWriteFinishedBytes(const XNetworkSocketPrivate* priv)
+{
+    return priv ? priv->writeContext.finishedBytes : 0;
 }
 
 bool XNetwork_socketHasPendingData(const XNetworkSocketPrivate* priv)
@@ -849,10 +926,75 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp)
 }
 
 /* =========================================================================
+ * 异步 Accept 启动
+ * ========================================================================= */
+
+static bool startAsyncAccept(XNetworkSocketPrivate* priv)
+{
+    if (!priv || priv->socket == INVALID_SOCKET || !g_AcceptEx) return false;
+    if (priv->acceptPending) return true; /* 已有待处理的 Accept */
+    
+    /* 获取监听套接字的地址族 */
+    struct sockaddr_storage addr;
+    int addrLen = sizeof(addr);
+    if (getsockname(priv->socket, (struct sockaddr*)&addr, &addrLen) == SOCKET_ERROR) {
+        return false;
+    }
+    int af = addr.ss_family;
+    
+    /* 创建预分配的接受套接字 */
+    SOCKET acceptSock = socket(af, SOCK_STREAM, IPPROTO_TCP);
+    if (acceptSock == INVALID_SOCKET) {
+        return false;
+    }
+    
+    priv->acceptSocket = acceptSock;
+    
+    /* 初始化 AcceptEx 上下文 */
+    memset(&priv->acceptContext, 0, sizeof(XEventContext_IOCP));
+    priv->acceptContext.type = XEventContextType_Type_Socket;
+    priv->acceptContext.socket = XSocketDescriptor_fromIntptr(priv->socket);
+    priv->acceptContext.eventMask = FD_ACCEPT;
+    
+    /* AcceptEx 缓冲区大小计算：
+     * 需要为本地地址和远程地址各预留 sockaddr_in6 + 16 字节
+     */
+    DWORD bytesReceived = 0;
+    
+    BOOL result = g_AcceptEx(
+        priv->socket,           /* 监听套接字 */
+        acceptSock,             /* 接受套接字 */
+        priv->acceptBuffer,     /* 输出缓冲区 */
+        0,                      /* 不接收数据，只接受连接 */
+        sizeof(struct sockaddr_in6) + 16,  /* 本地地址空间 */
+        sizeof(struct sockaddr_in6) + 16,  /* 远程地址空间 */
+        &bytesReceived,
+        (OVERLAPPED*)&priv->acceptContext
+    );
+    
+    if (result) {
+        /* 立即完成（罕见情况） */
+        priv->acceptPending = true;
+        return true;
+    }
+    
+    if (WSAGetLastError() == WSA_IO_PENDING) {
+        /* 异步等待 */
+        priv->acceptPending = true;
+        return true;
+    }
+    
+    /* 错误 */
+    closesocket(acceptSock);
+    priv->acceptSocket = INVALID_SOCKET;
+    return false;
+}
+
+/* =========================================================================
  * TCP 服务器
  * ========================================================================= */
 
-XServerHandle XNetwork_serverCreate(const XHostAddress* addr, uint16_t port,
+XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv,const XHostAddress* addr, uint16_t port,
                                     int backlog, bool reuseAddr)
 {
     XNetwork_ensureInit();
@@ -895,7 +1037,13 @@ XServerHandle XNetwork_serverCreate(const XHostAddress* addr, uint16_t port,
     }
     
     /* 关联到 IOCP */
-    iocp_assoc(s, NULL);
+    iocp_assoc(s, priv->owner);
+    priv->socket = s;
+    priv->isServer = true;
+    priv->connected = true;  /* 服务器套接字处于监听状态 */
+    
+    /* 启动异步 Accept */
+    startAsyncAccept(priv);
     
     return (XServerHandle)s;
 }
@@ -947,6 +1095,58 @@ void XNetwork_serverClose(XServerHandle server)
     if (server != -1) {
         closesocket((SOCKET)server);
     }
+}
+
+XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
+                                               XHostAddress* clientAddr, uint16_t* clientPort)
+{
+    if (!priv || priv->acceptSocket == INVALID_SOCKET) return -1;
+    
+    /* 更新接受套接字的上下文（SO_UPDATE_ACCEPT_CONTEXT） */
+    int opt = 1;
+    setsockopt(priv->acceptSocket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
+               (char*)&opt, sizeof(opt));
+    
+    /* 使用 GetAcceptExSockaddrs 获取客户端地址 */
+    if (clientAddr || clientPort) {
+        if (g_GetAcceptExSockaddrs) {
+            struct sockaddr* localAddr = NULL;
+            struct sockaddr* remoteAddr = NULL;
+            int localLen = 0, remoteLen = 0;
+            
+            g_GetAcceptExSockaddrs(
+                priv->acceptBuffer,
+                0,  /* 没有接收数据 */
+                sizeof(struct sockaddr_in6) + 16,
+                sizeof(struct sockaddr_in6) + 16,
+                &localAddr, &localLen,
+                &remoteAddr, &remoteLen
+            );
+            
+            if (remoteAddr && remoteLen > 0) {
+                sa2addr((struct sockaddr_storage*)remoteAddr, clientAddr, clientPort);
+            }
+        }
+    }
+    
+    /* 设置非阻塞 */
+    u_long mode = 1;
+    ioctlsocket(priv->acceptSocket, FIONBIO, &mode);
+    
+    /* 返回套接字并清除 */
+    SOCKET result = priv->acceptSocket;
+    priv->acceptSocket = INVALID_SOCKET;
+    priv->acceptPending = false;
+    
+    return (XSocketHandle)result;
+}
+
+bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv)
+{
+    if (!priv || priv->socket == INVALID_SOCKET) return false;
+    
+    priv->acceptPending = false;
+    return startAsyncAccept(priv);
 }
 
 /* =========================================================================
@@ -1081,6 +1281,9 @@ bool XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter, XNetworkInterfa
     /* 标志 */
     if (current->OperStatus == IfOperStatusUp) out->flags |= XNetworkIf_Up | XNetworkIf_Running;
     if (current->IfType == IF_TYPE_SOFTWARE_LOOPBACK) out->flags |= XNetworkIf_Loopback;
+#ifndef IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED
+#define IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED 0x0004
+#endif
     if (current->Flags & IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED) out->flags |= XNetworkIf_Multicast;
     if (current->IfType == IF_TYPE_ETHERNET_CSMACD || current->IfType == IF_TYPE_IEEE80211) {
         out->type = 1; /* Ethernet/WiFi */
@@ -1380,7 +1583,7 @@ int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size
  * 代理隧道
  * ========================================================================= */
 
-bool XNetwork_socks5Connect(XSocketHandle sock, const XNetworkProxyInfo* proxy,
+bool XNetwork_socks5Connect(XSocketHandle sock, const XNetworkProxy* proxy,
                             const XHostAddress* targetAddr, uint16_t targetPort)
 {
     if (sock == -1 || !proxy || !targetAddr) return false;
@@ -1388,10 +1591,12 @@ bool XNetwork_socks5Connect(XSocketHandle sock, const XNetworkProxyInfo* proxy,
     char buf[256];
     int bufLen = 0;
     
+    bool hasAuth = (proxy->user != NULL && proxy->password != NULL);
+    
     /* SOCKS5 握手：版本号 + 认证方法数量 + 认证方法列表 */
     buf[0] = 0x05; /* SOCKS5 */
     
-    if (proxy->hasAuth) {
+    if (hasAuth) {
         buf[1] = 0x02; /* 2 种方法 */
         buf[2] = 0x00; /* 无认证 */
         buf[3] = 0x02; /* 用户名/密码认证 */
@@ -1412,16 +1617,16 @@ bool XNetwork_socks5Connect(XSocketHandle sock, const XNetworkProxyInfo* proxy,
     if (recvLen != 2 || resp[0] != 0x05) return false;
     
     /* 检查认证方法 */
-    if (resp[1] == 0x02 && proxy->hasAuth) {
+    if (resp[1] == 0x02 && hasAuth) {
         /* 用户名/密码认证 */
         size_t userLen = strlen(proxy->user);
-        size_t passLen = strlen(proxy->pass);
+        size_t passLen = strlen(proxy->password);
         
         buf[0] = 0x01; /* 认证子协议版本 */
         buf[1] = (char)userLen;
         memcpy(buf + 2, proxy->user, userLen);
         buf[2 + userLen] = (char)passLen;
-        memcpy(buf + 3 + userLen, proxy->pass, passLen);
+        memcpy(buf + 3 + userLen, proxy->password, passLen);
         
         sent = send((SOCKET)sock, buf, (int)(3 + userLen + passLen), 0);
         if (sent != (int)(3 + userLen + passLen)) return false;
@@ -1480,4 +1685,290 @@ bool XNetwork_socks5Connect(XSocketHandle sock, const XNetworkProxyInfo* proxy,
     if (recvLen != addrLen + 2) return false;
     
     return true;
+}
+
+bool XNetwork_httpConnect(XSocketHandle sock, const XNetworkProxy* proxy,
+                          const XHostAddress* targetAddr, uint16_t targetPort)
+{
+    if (sock == -1 || !proxy || !targetAddr) return false;
+    
+    char request[512];
+    char hostStr[128];
+    int requestLen = 0;
+    
+    /* 获取目标地址字符串 */
+    XString* addrStr = XHostAddress_toString(targetAddr);
+    const char* hostStrPtr = addrStr ? XString_toUtf8(addrStr) : NULL;
+    if (!hostStrPtr) {
+        if (addrStr) XString_delete_base(addrStr);
+        return false;
+    }
+    strncpy(hostStr, hostStrPtr, sizeof(hostStr) - 1);
+    hostStr[sizeof(hostStr) - 1] = '\0';
+    if (addrStr) XString_delete_base(addrStr);
+    
+    bool hasAuth = (proxy->user != NULL && proxy->password != NULL);
+    
+    /* 构建 HTTP CONNECT 请求 */
+    if (hasAuth) {
+        /* Base64 编码 user:pass */
+        char auth[256];
+        snprintf(auth, sizeof(auth), "%s:%s", proxy->user, proxy->password);
+        
+        /* 简单的 Base64 编码（生产环境应使用标准库） */
+        static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        char b64Auth[512];
+        int ai = 0, bi = 0;
+        while (auth[ai]) {
+            uint32_t octet_a = (unsigned char)auth[ai++];
+            uint32_t octet_b = ai < (int)strlen(auth) ? (unsigned char)auth[ai++] : 0;
+            uint32_t octet_c = ai < (int)strlen(auth) ? (unsigned char)auth[ai++] : 0;
+            uint32_t triple = (octet_a << 16) + (octet_b << 8) + octet_c;
+            b64Auth[bi++] = b64[(triple >> 18) & 0x3F];
+            b64Auth[bi++] = b64[(triple >> 12) & 0x3F];
+            b64Auth[bi++] = b64[(triple >> 6) & 0x3F];
+            b64Auth[bi++] = b64[triple & 0x3F];
+        }
+        b64Auth[bi] = '\0';
+        
+        requestLen = snprintf(request, sizeof(request),
+            "CONNECT %s:%d HTTP/1.1\r\n"
+            "Host: %s:%d\r\n"
+            "Proxy-Authorization: Basic %s\r\n"
+            "\r\n",
+            hostStr, targetPort, hostStr, targetPort, b64Auth);
+    } else {
+        requestLen = snprintf(request, sizeof(request),
+            "CONNECT %s:%d HTTP/1.1\r\n"
+            "Host: %s:%d\r\n"
+            "\r\n",
+            hostStr, targetPort, hostStr, targetPort);
+    }
+    
+    /* 发送请求 */
+    int sent = send((SOCKET)sock, request, requestLen, 0);
+    if (sent != requestLen) return false;
+    
+    /* 接收响应 */
+    char response[256];
+    int recvLen = recv((SOCKET)sock, response, sizeof(response) - 1, 0);
+    if (recvLen <= 0) return false;
+    response[recvLen] = '\0';
+    
+    /* 检查响应状态码 */
+    if (strncmp(response, "HTTP/1.", 7) != 0) return false;
+    
+    int statusCode = 0;
+    if (sscanf(response, "HTTP/1.%*d %d", &statusCode) != 1) return false;
+    
+    /* 2xx 表示成功 */
+    return statusCode >= 200 && statusCode < 300;
+}
+
+bool XNetwork_socks5Bind(XSocketHandle sock, const XNetworkProxy* proxy,
+                         XHostAddress* bindAddr, uint16_t* bindPort)
+{
+    if (sock == -1 || !proxy) return false;
+    
+    char buf[256];
+    int bufLen = 0;
+    
+    bool hasAuth = (proxy->user != NULL && proxy->password != NULL);
+    
+    /* SOCKS5 握手（与 socks5Connect 相同） */
+    buf[0] = 0x05;
+    if (hasAuth) {
+        buf[1] = 0x02;
+        buf[2] = 0x00;
+        buf[3] = 0x02;
+        bufLen = 4;
+    } else {
+        buf[1] = 0x01;
+        buf[2] = 0x00;
+        bufLen = 3;
+    }
+    
+    int sent = send((SOCKET)sock, buf, bufLen, 0);
+    if (sent != bufLen) return false;
+    
+    char resp[2];
+    int recvLen = recv((SOCKET)sock, resp, 2, 0);
+    if (recvLen != 2 || resp[0] != 0x05) return false;
+    
+    /* 认证 */
+    if (resp[1] == 0x02 && hasAuth) {
+        size_t userLen = strlen(proxy->user);
+        size_t passLen = strlen(proxy->password);
+        buf[0] = 0x01;
+        buf[1] = (char)userLen;
+        memcpy(buf + 2, proxy->user, userLen);
+        buf[2 + userLen] = (char)passLen;
+        memcpy(buf + 3 + userLen, proxy->password, passLen);
+        sent = send((SOCKET)sock, buf, (int)(3 + userLen + passLen), 0);
+        if (sent != (int)(3 + userLen + passLen)) return false;
+        recvLen = recv((SOCKET)sock, resp, 2, 0);
+        if (recvLen != 2 || resp[1] != 0x00) return false;
+    } else if (resp[1] != 0x00) {
+        return false;
+    }
+    
+    /* 发送 BIND 请求 */
+    buf[0] = 0x05;
+    buf[1] = 0x02; /* BIND 命令 */
+    buf[2] = 0x00;
+    buf[3] = 0x01; /* IPv4 */
+    *((uint32_t*)(buf + 4)) = 0; /* 绑定所有地址 */
+    *((uint16_t*)(buf + 8)) = 0; /* 绑定端口由代理分配 */
+    bufLen = 10;
+    
+    sent = send((SOCKET)sock, buf, bufLen, 0);
+    if (sent != bufLen) return false;
+    
+    /* 接收绑定响应 */
+    recvLen = recv((SOCKET)sock, resp, 2, 0);
+    if (recvLen != 2 || resp[1] != 0x00) return false;
+    
+    char addrType;
+    recvLen = recv((SOCKET)sock, &addrType, 1, 0);
+    if (recvLen != 1) return false;
+    
+    int addrLen = 0;
+    switch (addrType) {
+        case 0x01: addrLen = 4; break;
+        case 0x04: addrLen = 16; break;
+        case 0x03:
+            recvLen = recv((SOCKET)sock, &addrLen, 1, 0);
+            if (recvLen != 1) return false;
+            break;
+        default: return false;
+    }
+    
+    /* 读取绑定地址和端口 */
+    char addrBuf[16];
+    recvLen = recv((SOCKET)sock, addrBuf, addrLen + 2, 0);
+    if (recvLen != addrLen + 2) return false;
+    
+    /* 解析绑定地址 */
+    if (bindAddr && addrType == 0x01) {
+        uint32_t ip = ntohl(*((uint32_t*)addrBuf));
+        XHostAddress_setAddressIPv4(bindAddr, ip);
+    }
+    if (bindPort) {
+        *bindPort = ntohs(*((uint16_t*)(addrBuf + addrLen)));
+    }
+    
+    return true;
+}
+
+XServerHandle XNetwork_serverCreateWithProxy(XNetworkSocketPrivate* priv,const XNetworkProxy* proxy,
+                                             const XHostAddress* addr, uint16_t port,
+                                             int backlog, bool reuseAddr)
+{
+    if (!addr) return -1;
+    
+    /* 无代理，使用普通服务器创建 */
+    if (!proxy || proxy->type == XNetworkProxy_NoProxy) {
+        return XNetwork_serverCreate(priv,addr, port, backlog, reuseAddr);
+    }
+    
+    /* SOCKS5 代理支持 BIND 命令 */
+    if (proxy->type == XNetworkProxy_Socks5Proxy) {
+        /* 创建到代理服务器的连接 */
+        SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (sock == INVALID_SOCKET) return -1;
+        
+        /* 连接到代理服务器 */
+        struct sockaddr_in proxyAddr;
+        memset(&proxyAddr, 0, sizeof(proxyAddr));
+        proxyAddr.sin_family = AF_INET;
+        proxyAddr.sin_port = htons(proxy->port);
+        
+        /* 解析代理主机名（简化实现，仅支持 IP） */
+        proxyAddr.sin_addr.s_addr = inet_addr(proxy->hostName ? proxy->hostName : "");
+        if (proxyAddr.sin_addr.s_addr == INADDR_NONE) {
+            /* 需要 DNS 解析 */
+            struct hostent* he = gethostbyname(proxy->hostName ? proxy->hostName : "");
+            if (!he) {
+                closesocket(sock);
+                return -1;
+            }
+            memcpy(&proxyAddr.sin_addr, he->h_addr_list[0], he->h_length);
+        }
+        
+        if (connect(sock, (struct sockaddr*)&proxyAddr, sizeof(proxyAddr)) == SOCKET_ERROR) {
+            closesocket(sock);
+            return -1;
+        }
+        
+        /* 发送 BIND 请求 */
+        XHostAddress bindAddr;
+        uint16_t bindPort;
+        if (!XNetwork_socks5Bind((XSocketHandle)sock, proxy, &bindAddr, &bindPort)) {
+            closesocket(sock);
+            return -1;
+        }
+        priv->socket = sock;
+        /* 返回套接字作为服务器句柄 */
+        return (XServerHandle)sock;
+    }
+    
+    /* HTTP 代理不支持 BIND */
+    return -1;
+}
+
+XSocketHandle XNetwork_serverAcceptWithProxy(XServerHandle server,
+                                             const XNetworkProxy* proxy,
+                                             XHostAddress* clientAddr, uint16_t* clientPort)
+{
+    if (server == -1) return -1;
+    
+    /* 无代理，使用普通 accept */
+    if (!proxy || proxy->type == XNetworkProxy_NoProxy) {
+        return XNetwork_serverAccept(server, clientAddr, clientPort);
+    }
+    
+    /* SOCKS5 代理：等待代理转发连接 */
+    if (proxy->type == XNetworkProxy_Socks5Proxy) {
+        SOCKET sock = (SOCKET)server;
+        
+        /* 等待代理发送第二个 BIND 响应 */
+        char resp[2];
+        int recvLen = recv(sock, resp, 2, 0);
+        if (recvLen != 2 || resp[1] != 0x00) return -1;
+        
+        /* 读取客户端地址类型 */
+        char addrType;
+        recvLen = recv(sock, &addrType, 1, 0);
+        if (recvLen != 1) return -1;
+        
+        int addrLen = 0;
+        switch (addrType) {
+            case 0x01: addrLen = 4; break;
+            case 0x04: addrLen = 16; break;
+            case 0x03:
+                recvLen = recv(sock, &addrLen, 1, 0);
+                if (recvLen != 1) return -1;
+                break;
+            default: return -1;
+        }
+        
+        /* 读取客户端地址和端口 */
+        char addrBuf[16];
+        recvLen = recv(sock, addrBuf, addrLen + 2, 0);
+        if (recvLen != addrLen + 2) return -1;
+        
+        /* 解析客户端地址 */
+        if (clientAddr && addrType == 0x01) {
+            uint32_t ip = ntohl(*((uint32_t*)addrBuf));
+            XHostAddress_setAddressIPv4(clientAddr, ip);
+        }
+        if (clientPort) {
+            *clientPort = ntohs(*((uint16_t*)(addrBuf + addrLen)));
+        }
+        
+        /* 返回同一个套接字（SOCKS5 BIND 复用连接） */
+        return (XSocketHandle)sock;
+    }
+    
+    return -1;
 }

@@ -100,10 +100,11 @@ XVtable* XHrTimerGroup_class_init(void) {
 #endif
     XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
-        VXTimerGroupBase_addTimerNs,
-        VXTimerGroupBase_removeTimer,
-        VXHrTimerGroup_tick,VXHrTimerGroup_tick,
-        VXHrTimerGroup_clear
+        VXTimerGroupBase_addTimerNs,   // Add_TimerNs
+        VXTimerGroupBase_removeTimer,  // Remove_Timer
+        VXHrTimerGroup_tick,           // Tick
+        VXHrTimerGroup_tick,           // Handler（复用 Tick 逻辑，避免重复定义）
+        VXHrTimerGroup_clear           // Clear
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXHrTimerGroup_deinit);
@@ -262,7 +263,7 @@ void VXHrTimerGroup_clear(XHrTimerGroup* group)
         XMutex_lock(group->m_mutex);
         if(group->m_rbtree_root)
         {
-            XTree_delete(group->m_rbtree_root, NULL, NULL);
+            XRBTree_delete(group->m_rbtree_root, NULL, NULL);
             group->m_rbtree_root = NULL;
             group->m_min_node = NULL;
             XAtomic_store_size_t(&group->m_count, 0, XAtomic_MemoryOrder_Relaxed);
@@ -297,12 +298,14 @@ static XHandle VXTimerGroupBase_addTimerNs(XHrTimerGroup* group, XTimerData data
     XRBTreeNode* new_node = NULL;
     XMutex_lock(group->m_mutex);
     {
-        new_node=create_hr_timer_node(&node_data, sizeof(XHrTimerNodeData));
+        new_node = create_hr_timer_node(&node_data, sizeof(XHrTimerNodeData));
+        if (!new_node) {
+            XMutex_unlock(group->m_mutex);
+            return NULL;
+        }
         new_node = XRBTree_insertNode(&group->m_rbtree_root, compare_expire_time_ns, less_expire_time_ns, new_node);
         if (new_node) {
             XAtomic_fetch_add_size_t(&group->m_count, 1, XAtomic_MemoryOrder_Release);
-            //XBTreeNode_GetData(new_node, XHrTimerNodeData).m_timer_data.timerId = (uint64_t)(uintptr_t)new_node; // 将指针转换为 uint64_t
-            // --- 统一使用 update_min_node 来保证一致性 ---
             update_min_node(group);
         }
     }

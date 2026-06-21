@@ -283,9 +283,20 @@ XVector* XThreadData_takePostedEvents(void)
         XVector_push_back_1_base(local, &pe);
     }
     // 关键：稳定降序排序
+    //XPrintf("排序前:\n");
+    //for_each_iterator(local,XVector,it)
+    //{
+    //    XPostEvent* pe = XVector_iterator_data(&it);
+    //    XPrintf("priority:%d\n",pe->priority);
+    //}
     if(local)
         XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
-
+   /* XPrintf("排序后:\n");
+    for_each_iterator(local, XVector, it)
+    {
+        XPostEvent* pe = XVector_iterator_data(&it);
+        XPrintf("priority:%d\n", pe->priority);
+    }*/
     return local;
 }
 

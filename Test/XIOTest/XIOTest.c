@@ -6,6 +6,7 @@ void XMenu_XIOTest(XMenu* root)
 	XMenu_addMenu(root, menu);
 	XMenu_XSerialPortTest(menu);
 	XMenu_XSocketTest(menu);
+	XMenu_XTcpServerTest(menu);
 	XMenu_XUdpSocketTest(menu);
 	XMenu_XTcpSocketTest(menu);
 	XMenu_XHostInfoTest(menu);

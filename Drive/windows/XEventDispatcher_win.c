@@ -153,6 +153,8 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
             event->actType |= XSocketAct_Write;
         if (ioCtx->eventMask & FD_CONNECT)
             event->actType |= XSocketAct_Connect;
+        if (ioCtx->eventMask & FD_ACCEPT)
+            event->actType |= XSocketAct_Accept;
     
     XEvent* e = (XEvent*)event;
     e->posted = true;
@@ -284,8 +286,11 @@ static void IOCP_handle(XAbstractEventDispatcher* dispatcher)
 
                        //printf("Client disconnected! Error: %lu\notifier", lastError);
                         // 发送套接字关闭事件到关联对象
-                        if (completionKey) {
-                            XEvent* closeEvent = XEventSockClose_create(XSocketDescriptor_fromIntptr(XAbstractSocket_socketDescriptor_base(completionKey)));
+                        //这个可能是服务器套接字
+                        if (completionKey)
+                        {
+                            XEvent* closeEvent = NULL;
+                            closeEvent = XEventSockClose_create(XSocketDescriptor_fromIntptr(XAbstractSocket_socketDescriptor_base(completionKey)));
                             if (closeEvent) {
                                 closeEvent->posted = true;
                                 closeEvent->spontaneous = true;
