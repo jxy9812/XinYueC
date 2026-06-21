@@ -12,6 +12,7 @@ extern "C" {
 typedef struct 
 {
 	void** data;//
+	char* name;
 	uint16_t size;
 	uint16_t capacity;//当前容器能容纳的最大元素数量
 	uint16_t isStack : 1;//定义在栈上

@@ -170,17 +170,44 @@ void XThreadData_popEventloop(XThreadData * data, XEventLoop * loop)
 
 void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) 
 {
-    if (!receiver || !event) return;
+    if (!receiver || !event)
+        return;
     
     XThread* th = receiver->m_thread;
-    if (!th|| !th->m_data) return;
+    if (!th|| !th->m_data)
+    {
+        XEventSockAct* e = event;
+        //XPrintf("异常:%p\n", receiver);
+        XEvent_delete_base(event);
+        return;
+    }
     XThreadData* td = th->m_data;
    // if (!td->m_postEventList)return;
     XPostEvent pe = { receiver, event, priority };
     
     XMutex_lock(td->m_mutex);
     XVector* local = &td->m_postEventList;
+   /* if (event->type == 50)
+    {
+        XPrintf("投递前\n");
+        for_each_iterator(local, XVector, it)
+        {
+            XPostEvent* p = XVector_iterator_data(&it);
+            XPrintf("事件地址:%p\n",p->event);
+        }
+     
+    }*/
     XVector_push_back_1_base(local, &pe);
+   /* if (event->type == 50)
+    {
+        XPrintf("投递后\n");
+        for_each_iterator(local, XVector, it)
+        {
+            XPostEvent* p = XVector_iterator_data(&it);
+            XPrintf("事件地址:%p\n", p->event);
+        }
+
+    }*/
     // 关键：稳定降序排序
     //XInsertSort(XContainerDataPtr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
   

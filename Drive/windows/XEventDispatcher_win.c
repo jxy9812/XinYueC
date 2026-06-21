@@ -142,26 +142,26 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
     
     // 保存传输字节数到 IOCP 上下文
     ioCtx->finishedBytes = bytesTransferred;
+    XEventSockAct* event = XEventSockAct_create(ioCtx->socket, XSocketAct_Invalid);
+    if(!event)return;
     
-        XEventSockAct* event = XEventSockAct_create(ioCtx->socket, XSocketAct_Invalid);
-        if(!event)return;
-    
-        // 根据事件掩码设置活动类型
-        if (ioCtx->eventMask & FD_READ)
-            event->actType |= XSocketAct_Read;
-        if (ioCtx->eventMask & FD_WRITE)
-            event->actType |= XSocketAct_Write;
-        if (ioCtx->eventMask & FD_CONNECT)
-            event->actType |= XSocketAct_Connect;
-        if (ioCtx->eventMask & FD_ACCEPT)
+    // 根据事件掩码设置活动类型
+    if (ioCtx->eventMask & FD_READ)
+        event->actType |= XSocketAct_Read;
+    if (ioCtx->eventMask & FD_WRITE)
+        event->actType |= XSocketAct_Write;
+    if (ioCtx->eventMask & FD_CONNECT)
+        event->actType |= XSocketAct_Connect;
+    if (ioCtx->eventMask & FD_ACCEPT)
             event->actType |= XSocketAct_Accept;
     
     XEvent* e = (XEvent*)event;
     e->posted = true;
     e->spontaneous = true;
-    
+    //XPrintf("入队:%p %d\n", event, event->actType);
     // 将事件发送给关联的对象（completionKey 是 IOCP_bind 时传入的对象）
     XCoreApplication_postEvent((XObject*)completionKey, event, XEVENT_PRIORITY_NORMAL);
+
     //XPrintf("发送收到数据事件:%p\n", completionKey);
     // 套接字监听器（XSocketNotifier）
     XSocketDescriptor socket = ioCtx->socket;
@@ -226,6 +226,7 @@ bool IOCP_bind(XSocketDescriptor socket, XObject* obj)
    /* XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)dispatcher;
     MainThreadDataPrivate* d = PlatformPrivate(dispatcher);*/
+   /* XPrintf("IOCP_bind:%p\n", obj);*/
     return CreateIoCompletionPort((HANDLE)XSocketDescriptor_toIntptr(socket), global_ioCompletionPort, obj, 0);
 }
 

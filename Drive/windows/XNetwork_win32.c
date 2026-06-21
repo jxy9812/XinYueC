@@ -127,10 +127,11 @@ static HANDLE iocp_get(void)
     return g_iocp;
 }
 
-static bool iocp_assoc(SOCKET s, void* key)
+static bool iocp_assoc(SOCKET s, XObject* key)
 {
     HANDLE h = iocp_get();
     if (!h) return false;
+    //XPrintf("帮:%p\n",key);
     return CreateIoCompletionPort((HANDLE)s, h, (ULONG_PTR)key, 0) != NULL;
 }
 
@@ -248,7 +249,7 @@ char* XNetwork_errorString(int errorCode)
 
 struct XNetworkSocketPrivate {
     SOCKET socket;                          ///< Windows SOCKET 句柄
-    void* owner;                            ///< 拥有者对象
+    XObject* owner;                            ///< 拥有者对象
     
     /* 状态标志 */
     bool readPending;
@@ -420,7 +421,7 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
         priv->writePending = true;
         HANDLE iocp = iocp_get();
         if (iocp) {
-            PostQueuedCompletionStatus(iocp, (DWORD)len, (ULONG_PTR)priv, 
+            PostQueuedCompletionStatus(iocp, (DWORD)len, (ULONG_PTR)priv->owner,
                                        (OVERLAPPED*)&priv->writeContext);
         }
     } else if (WSAGetLastError() == WSA_IO_PENDING) {
@@ -997,6 +998,7 @@ static bool startAsyncAccept(XNetworkSocketPrivate* priv)
 XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv,const XHostAddress* addr, uint16_t port,
                                     int backlog, bool reuseAddr)
 {
+    if (!priv) return -1;
     XNetwork_ensureInit();
     
     int af = (XHostAddress_protocol(addr) == XHostAddress_IPv6Protocol) ? AF_INET6 : AF_INET;
@@ -1063,8 +1065,8 @@ XSocketHandle XNetwork_serverAccept(XServerHandle server,
     u_long mode = 1;
     ioctlsocket(cs, FIONBIO, &mode);
     
-    /* 关联到 IOCP */
-    iocp_assoc(cs, NULL);
+    ///* 关联到 IOCP */
+    //iocp_assoc(cs, priv->owner);
     
     if (clientAddr && clientPort) {
         sa2addr(&client, clientAddr, clientPort);

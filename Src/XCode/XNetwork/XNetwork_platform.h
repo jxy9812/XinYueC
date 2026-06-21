@@ -196,7 +196,7 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp);
 
 XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv,const XHostAddress* addr, uint16_t port,
                                     int backlog, bool reuseAddr);
-XSocketHandle XNetwork_serverAccept(XServerHandle server,
+XSocketHandle XNetwork_serverAccept( XServerHandle server,
                                     XHostAddress* clientAddr, uint16_t* clientPort);
 uint16_t XNetwork_serverPort(XServerHandle server);
 void XNetwork_serverClose(XServerHandle server);

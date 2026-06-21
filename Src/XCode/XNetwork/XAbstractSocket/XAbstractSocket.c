@@ -677,7 +677,7 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
 
     if (e->type == XEVENT_TYPE_SOCK_ACT) {
         XEventSockAct* sockAct = (XEventSockAct*)e;
-
+        //XPrintf("消费:%p %d\n", e, sockAct->actType);
         XNetwork_socketHandleEvent(priv, e);
 
         if (sockAct->actType & XSocketAct_Read) {
@@ -721,7 +721,7 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
     }
 
     // 调用父类事件处理
-    return XClass_Parent(XObject, EXObject_Event, bool (*)(XObject*, XEvent*))((XObject*)self, e);
+    return XClass_Parent(XIODevice, EXObject_Event, bool (*)(XIODevice*, XEvent*))((XIODevice*)self, e);
 }
 
 // ==================== XAbstractSocket 特有虚函数 ====================
