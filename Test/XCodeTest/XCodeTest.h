@@ -13,6 +13,7 @@ void XMenu_XThreadTest(XMenu* root);
 void XMenu_XThreadPoolTest(XMenu* root);
 void XMenu_XStateMachineTest(XMenu* root);
 void XMenu_XDateTimeTest(XMenu* root);
+void XMenu_XCryptographicHashTest(XMenu* root);
 void XStateMachineEventTest();
 void XStateMachineSignalTest();
 void XHistoryState_Test();
