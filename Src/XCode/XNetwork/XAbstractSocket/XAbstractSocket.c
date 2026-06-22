@@ -765,7 +765,7 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
     XAbstractSocket_setSocketState(self, XAbstractSocket_HostLookupState);
 
     if (!XNetwork_socketConnect(priv, hostName, port, toNetworkProtocol(protocol),
-        toNetworkSockType(self->socketType), &self->proxy)) {
+        toNetworkSockType(self->socketType))) {
         XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
         return;
     }

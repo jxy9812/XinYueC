@@ -318,14 +318,21 @@ XString* XHostInfo_localHostName(void) {
 }
 
 XString* XHostInfo_localDomainName(void) {
+    /* 应用层实现：从本地主机名提取域名 */
     XNetwork_ensureInit();
-    char* domain = XNetwork_localDomainName();
-    if (domain) {
-        XString* result = XString_create_utf8(domain);
-        XFree_System(domain);
-        return result;
+    char* hostname = XNetwork_localHostName();
+    if (!hostname) return NULL;
+    
+    /* 查找第一个点号，提取域名部分 */
+    char* dot = strchr(hostname, '.');
+    XString* result = NULL;
+    if (dot && dot[1] != '\0') {
+        /* 跳过点号，返回域名部分 */
+        result = XString_create_utf8(dot + 1);
     }
-    return NULL;
+    
+    XFree_System(hostname);
+    return result;
 }
 
 // ==================== 异步查询实现 ====================

@@ -207,7 +207,7 @@ bool XUdpSocket_joinMulticastGroup(XUdpSocket* sock, const XHostAddress* groupAd
     intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
     if (sd < 0) return false;
     
-    return XNetwork_joinMulticastGroup(sd, groupAddress, 0);
+    return XNetwork_multicastGroup(sd, true, groupAddress, 0);
 }
 
 bool XUdpSocket_joinMulticastGroup_2(XUdpSocket* sock, const XHostAddress* groupAddress,
@@ -222,7 +222,7 @@ bool XUdpSocket_joinMulticastGroup_2(XUdpSocket* sock, const XHostAddress* group
     uint32_t ifIndex = 0;
     (void)iface;
     
-    return XNetwork_joinMulticastGroup(sd, groupAddress, ifIndex);
+    return XNetwork_multicastGroup(sd, true, groupAddress, ifIndex);
 }
 
 bool XUdpSocket_leaveMulticastGroup(XUdpSocket* sock, const XHostAddress* groupAddress)
@@ -232,7 +232,7 @@ bool XUdpSocket_leaveMulticastGroup(XUdpSocket* sock, const XHostAddress* groupA
     intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
     if (sd < 0) return false;
     
-    return XNetwork_leaveMulticastGroup(sd, groupAddress, 0);
+    return XNetwork_multicastGroup(sd, false, groupAddress, 0);
 }
 
 bool XUdpSocket_leaveMulticastGroup_2(XUdpSocket* sock, const XHostAddress* groupAddress,
@@ -247,7 +247,7 @@ bool XUdpSocket_leaveMulticastGroup_2(XUdpSocket* sock, const XHostAddress* grou
     uint32_t ifIndex = 0;
     (void)iface;
     
-    return XNetwork_leaveMulticastGroup(sd, groupAddress, ifIndex);
+    return XNetwork_multicastGroup(sd, false, groupAddress, ifIndex);
 }
 
 uint32_t XUdpSocket_multicastInterface(const XUdpSocket* sock)
@@ -257,7 +257,9 @@ uint32_t XUdpSocket_multicastInterface(const XUdpSocket* sock)
     intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
     if (sd < 0) return 0;
     
-    return XNetwork_multicastInterface(sd);
+    uint32_t ifIndex = 0;
+    XNetwork_multicastOp(sd, XMC_GetIf, &ifIndex);
+    return ifIndex;
 }
 
 void XUdpSocket_setMulticastInterface(XUdpSocket* sock, uint32_t interfaceIndex)
@@ -267,5 +269,5 @@ void XUdpSocket_setMulticastInterface(XUdpSocket* sock, uint32_t interfaceIndex)
     intptr_t sd = XAbstractSocket_socketDescriptor_base(&sock->base);
     if (sd < 0) return;
     
-    XNetwork_setMulticastInterface(sd, interfaceIndex);
+    XNetwork_multicastOp(sd, XMC_SetIf, &interfaceIndex);
 }

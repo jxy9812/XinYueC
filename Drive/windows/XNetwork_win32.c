@@ -321,14 +321,9 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv)
     XFree_System(priv);
 }
 
-XSocketHandle XNetwork_socketHandle(const XNetworkSocketPrivate* priv)
+intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv)
 {
-    return priv ? (XSocketHandle)priv->socket : -1;
-}
-
-void* XNetwork_socketOwner(const XNetworkSocketPrivate* priv)
-{
-    return priv ? priv->owner : NULL;
+    return priv ? (intptr_t)priv->socket : -1;
 }
 
 bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv)
@@ -586,23 +581,6 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
     sa2addr(&destAddr, &priv->pendingPeerAddr, &priv->pendingPeerPort);
     priv->pendingPeerPort = port;
     
-    /* 代理处理 */
-    if (proxy) {
-        const XNetworkProxy* pi = (const XNetworkProxy*)proxy;
-        if (pi->type == XNetworkProxy_Socks5Proxy) {
-            /* TODO: SOCKS5 握手 */
-            if (!XNetwork_socks5Connect((XSocketHandle)priv->socket, pi, 
-                                        &priv->pendingPeerAddr, port)) {
-                closesocket(priv->socket);
-                priv->socket = INVALID_SOCKET;
-                return false;
-            }
-            priv->connected = true;
-            priv->connectPending = false;
-            return true;
-        }
-    }
-    
     /* TCP 使用 ConnectEx 异步连接 */
     if (sockType == XNetwork_Tcp && g_ConnectEx) {
         memset(&priv->connectContext, 0, sizeof(XEventContext_IOCP));
@@ -769,28 +747,23 @@ bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd,
 {
     if (!priv || fd == -1) return false;
     (void)openMode;
-    
+
     priv->socket = (SOCKET)fd;
-    
+
     /* 关联到 IOCP */
     if (!iocp_assoc(priv->socket, priv->owner)) {
         priv->socket = INVALID_SOCKET;
         return false;
     }
-    
+
     priv->connected = (state == 3); /* XAbstractSocket_ConnectedState */
-    
+
     if (priv->connected) {
         priv->autoRead = true;
         startAsyncRead(priv, false);
     }
-    
-    return true;
-}
 
-intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv)
-{
-    return priv ? (intptr_t)priv->socket : -1;
+    return true;
 }
 
 bool XNetwork_socketSetOption(XNetworkSocketPrivate* priv, int option, const void* value)
@@ -807,9 +780,11 @@ bool XNetwork_socketSetOption(XNetworkSocketPrivate* priv, int option, const voi
             return setsockopt(priv->socket, SOL_SOCKET, SO_KEEPALIVE,
                             (char*)intVal, sizeof(int)) == 0;
         case 2: /* MulticastTtlOption */
-            return XNetwork_setMulticastTtl((XSocketHandle)priv->socket, *intVal);
-        case 3: /* MulticastLoopbackOption */
-            return XNetwork_setMulticastLoopback((XSocketHandle)priv->socket, *intVal != 0);
+            return XNetwork_multicastOp((XSocketHandle)priv->socket, XMC_SetTtl, intVal) == 0;
+        case 3: /* MulticastLoopbackOption */ {
+            bool enabled = (*intVal != 0);
+            return XNetwork_multicastOp((XSocketHandle)priv->socket, XMC_SetLoop, &enabled) == 0;
+        }
         case 4: /* TypeOfServiceOption - IP_TOS */
             return setsockopt(priv->socket, IPPROTO_IP, IP_TOS,
                             (char*)intVal, sizeof(int)) == 0;
@@ -843,11 +818,17 @@ void* XNetwork_socketGetOption(XNetworkSocketPrivate* priv, int option)
                 return &result;
             break;
         case 2: /* MulticastTtlOption */
-            result = XNetwork_multicastTtl((XSocketHandle)priv->socket);
-            return &result;
-        case 3: /* MulticastLoopbackOption */
-            result = XNetwork_multicastLoopback((XSocketHandle)priv->socket) ? 1 : 0;
-            return &result;
+            if (XNetwork_multicastOp((XSocketHandle)priv->socket, XMC_GetTtl, &result) == 0)
+                return &result;
+            break;
+        case 3: /* MulticastLoopbackOption */ {
+            bool enabled = false;
+            if (XNetwork_multicastOp((XSocketHandle)priv->socket, XMC_GetLoop, &enabled) == 0) {
+                result = enabled ? 1 : 0;
+                return &result;
+            }
+            break;
+        }
         case 4: /* TypeOfServiceOption */
             if (getsockopt(priv->socket, IPPROTO_IP, IP_TOS, (char*)&result, &optLen) == 0)
                 return &result;
@@ -1050,31 +1031,6 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv,const XHostAddre
     return (XServerHandle)s;
 }
 
-XSocketHandle XNetwork_serverAccept(XServerHandle server,
-                                    XHostAddress* clientAddr, uint16_t* clientPort)
-{
-    if (server == -1) return -1;
-    
-    struct sockaddr_storage client;
-    int clientLen = sizeof(client);
-    
-    SOCKET cs = accept((SOCKET)server, (struct sockaddr*)&client, &clientLen);
-    if (cs == INVALID_SOCKET) return -1;
-    
-    /* 设置非阻塞 */
-    u_long mode = 1;
-    ioctlsocket(cs, FIONBIO, &mode);
-    
-    ///* 关联到 IOCP */
-    //iocp_assoc(cs, priv->owner);
-    
-    if (clientAddr && clientPort) {
-        sa2addr(&client, clientAddr, clientPort);
-    }
-    
-    return (XSocketHandle)cs;
-}
-
 uint16_t XNetwork_serverPort(XServerHandle server)
 {
     if (server == -1) return 0;
@@ -1219,11 +1175,6 @@ char* XNetwork_localHostName(void)
     return NULL;
 }
 
-char* XNetwork_localDomainName(void)
-{
-    /* Windows 没有直接获取域名的 API，返回空 */
-    return NULL;
-}
 
 /* =========================================================================
  * 网络接口枚举
@@ -1403,10 +1354,11 @@ bool XNetwork_getInterfaceAddresses(const char* ifname,
 }
 
 /* =========================================================================
- * 多播组
+ * 多播组（精简为2个API）
  * ========================================================================= */
 
-bool XNetwork_joinMulticastGroup(XSocketHandle sock, const XHostAddress* groupAddress, uint32_t ifIndex)
+bool XNetwork_multicastGroup(XSocketHandle sock, bool join, 
+                             const XHostAddress* groupAddress, uint32_t ifIndex)
 {
     if (sock == -1 || !groupAddress) return false;
     
@@ -1415,125 +1367,89 @@ bool XNetwork_joinMulticastGroup(XSocketHandle sock, const XHostAddress* groupAd
         memset(&mreq, 0, sizeof(mreq));
         XHostAddress_toIPv6Address(groupAddress, &mreq.ipv6mr_multiaddr);
         mreq.ipv6mr_interface = ifIndex;
-        return setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_JOIN_GROUP, 
+        int opt = join ? IPV6_JOIN_GROUP : IPV6_LEAVE_GROUP;
+        return setsockopt((SOCKET)sock, IPPROTO_IPV6, opt, 
                          (char*)&mreq, sizeof(mreq)) == 0;
     } else {
         struct ip_mreq mreq;
         memset(&mreq, 0, sizeof(mreq));
         mreq.imr_multiaddr.s_addr = htonl(XHostAddress_toIPv4Address(groupAddress));
         mreq.imr_interface.s_addr = htonl(ifIndex);
-        return setsockopt((SOCKET)sock, IPPROTO_IP, IP_ADD_MEMBERSHIP,
+        int opt = join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP;
+        return setsockopt((SOCKET)sock, IPPROTO_IP, opt,
                          (char*)&mreq, sizeof(mreq)) == 0;
     }
 }
 
-bool XNetwork_leaveMulticastGroup(XSocketHandle sock, const XHostAddress* groupAddress, uint32_t ifIndex)
+int XNetwork_multicastOp(XSocketHandle sock, XMulticastOp op, void* arg)
 {
-    if (sock == -1 || !groupAddress) return false;
+    if (sock == -1 || !arg) return -1;
     
-    if (XHostAddress_protocol(groupAddress) == XHostAddress_IPv6Protocol) {
-        struct ipv6_mreq mreq;
-        memset(&mreq, 0, sizeof(mreq));
-        XHostAddress_toIPv6Address(groupAddress, &mreq.ipv6mr_multiaddr);
-        mreq.ipv6mr_interface = ifIndex;
-        return setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_LEAVE_GROUP,
-                         (char*)&mreq, sizeof(mreq)) == 0;
-    } else {
-        struct ip_mreq mreq;
-        memset(&mreq, 0, sizeof(mreq));
-        mreq.imr_multiaddr.s_addr = htonl(XHostAddress_toIPv4Address(groupAddress));
-        mreq.imr_interface.s_addr = htonl(ifIndex);
-        return setsockopt((SOCKET)sock, IPPROTO_IP, IP_DROP_MEMBERSHIP,
-                         (char*)&mreq, sizeof(mreq)) == 0;
+    switch (op) {
+        case XMC_SetIf: {
+            uint32_t ifIndex = *(uint32_t*)arg;
+            struct in_addr addr;
+            addr.s_addr = htonl(ifIndex);
+            return setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_IF,
+                             (char*)&addr, sizeof(addr)) == 0 ? 0 : -1;
+        }
+        case XMC_GetIf: {
+            struct in_addr addr;
+            int len = sizeof(addr);
+            if (getsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_IF, 
+                          (char*)&addr, &len) == 0) {
+                *(uint32_t*)arg = ntohl(addr.s_addr);
+                return 0;
+            }
+            return -1;
+        }
+        case XMC_SetTtl: {
+            int ttl = *(int*)arg;
+            /* IPv4 */
+            if (setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_TTL,
+                          (char*)&ttl, sizeof(ttl)) == SOCKET_ERROR) {
+                return -1;
+            }
+            /* IPv6 */
+            setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS,
+                      (char*)&ttl, sizeof(ttl));
+            return 0;
+        }
+        case XMC_GetTtl: {
+            int ttl = 0;
+            int len = sizeof(ttl);
+            if (getsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_TTL, 
+                          (char*)&ttl, &len) == 0) {
+                *(int*)arg = ttl;
+                return 0;
+            }
+            return -1;
+        }
+        case XMC_SetLoop: {
+            int loop = *(bool*)arg ? 1 : 0;
+            /* IPv4 */
+            if (setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_LOOP,
+                          (char*)&loop, sizeof(loop)) == SOCKET_ERROR) {
+                return -1;
+            }
+            /* IPv6 */
+            setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_MULTICAST_LOOP,
+                      (char*)&loop, sizeof(loop));
+            return 0;
+        }
+        case XMC_GetLoop: {
+            int loop = 0;
+            int len = sizeof(loop);
+            if (getsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_LOOP, 
+                          (char*)&loop, &len) == 0) {
+                *(bool*)arg = (loop != 0);
+                return 0;
+            }
+            return -1;
+        }
+        default:
+            return -1;
     }
-}
-
-bool XNetwork_setMulticastInterface(XSocketHandle sock, uint32_t ifIndex)
-{
-    if (sock == -1) return false;
-    
-    struct in_addr addr;
-    addr.s_addr = htonl(ifIndex);
-    return setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_IF,
-                     (char*)&addr, sizeof(addr)) == 0;
-}
-
-uint32_t XNetwork_multicastInterface(XSocketHandle sock)
-{
-    if (sock == -1) return 0;
-    
-    struct in_addr addr;
-    int len = sizeof(addr);
-    if (getsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_IF, (char*)&addr, &len) == 0) {
-        return ntohl(addr.s_addr);
-    }
-    return 0;
-}
-
-bool XNetwork_setMulticastTtl(XSocketHandle sock, int ttl)
-{
-    if (sock == -1) return false;
-    
-    /* IPv4 多播 TTL */
-    int ttlVal = ttl;
-    if (setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_TTL,
-                  (char*)&ttlVal, sizeof(ttlVal)) == SOCKET_ERROR) {
-        return false;
-    }
-    
-    /* IPv6 多播跳数 */
-    int hops = ttl;
-    setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS,
-              (char*)&hops, sizeof(hops));
-    
-    return true;
-}
-
-int XNetwork_multicastTtl(XSocketHandle sock)
-{
-    if (sock == -1) return -1;
-    
-    int ttl = 0;
-    int len = sizeof(ttl);
-    
-    if (getsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_TTL, (char*)&ttl, &len) == 0) {
-        return ttl;
-    }
-    
-    return -1;
-}
-
-bool XNetwork_setMulticastLoopback(XSocketHandle sock, bool enabled)
-{
-    if (sock == -1) return false;
-    
-    int loop = enabled ? 1 : 0;
-    
-    /* IPv4 */
-    if (setsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_LOOP,
-                  (char*)&loop, sizeof(loop)) == SOCKET_ERROR) {
-        return false;
-    }
-    
-    /* IPv6 */
-    setsockopt((SOCKET)sock, IPPROTO_IPV6, IPV6_MULTICAST_LOOP,
-              (char*)&loop, sizeof(loop));
-    
-    return true;
-}
-
-bool XNetwork_multicastLoopback(XSocketHandle sock)
-{
-    if (sock == -1) return false;
-    
-    int loop = 0;
-    int len = sizeof(loop);
-    
-    if (getsockopt((SOCKET)sock, IPPROTO_IP, IP_MULTICAST_LOOP, (char*)&loop, &len) == 0) {
-        return loop != 0;
-    }
-    
-    return false;
 }
 
 /* =========================================================================
@@ -1582,395 +1498,8 @@ int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size
 }
 
 /* =========================================================================
- * 代理隧道
+ * 代理隧道（已移至应用层实现）
  * ========================================================================= */
-
-bool XNetwork_socks5Connect(XSocketHandle sock, const XNetworkProxy* proxy,
-                            const XHostAddress* targetAddr, uint16_t targetPort)
-{
-    if (sock == -1 || !proxy || !targetAddr) return false;
-    
-    char buf[256];
-    int bufLen = 0;
-    
-    bool hasAuth = (proxy->user != NULL && proxy->password != NULL);
-    
-    /* SOCKS5 握手：版本号 + 认证方法数量 + 认证方法列表 */
-    buf[0] = 0x05; /* SOCKS5 */
-    
-    if (hasAuth) {
-        buf[1] = 0x02; /* 2 种方法 */
-        buf[2] = 0x00; /* 无认证 */
-        buf[3] = 0x02; /* 用户名/密码认证 */
-        bufLen = 4;
-    } else {
-        buf[1] = 0x01; /* 1 种方法 */
-        buf[2] = 0x00; /* 无认证 */
-        bufLen = 3;
-    }
-    
-    /* 发送握手请求 */
-    int sent = send((SOCKET)sock, buf, bufLen, 0);
-    if (sent != bufLen) return false;
-    
-    /* 接收握手响应 */
-    char resp[2];
-    int recvLen = recv((SOCKET)sock, resp, 2, 0);
-    if (recvLen != 2 || resp[0] != 0x05) return false;
-    
-    /* 检查认证方法 */
-    if (resp[1] == 0x02 && hasAuth) {
-        /* 用户名/密码认证 */
-        size_t userLen = strlen(proxy->user);
-        size_t passLen = strlen(proxy->password);
-        
-        buf[0] = 0x01; /* 认证子协议版本 */
-        buf[1] = (char)userLen;
-        memcpy(buf + 2, proxy->user, userLen);
-        buf[2 + userLen] = (char)passLen;
-        memcpy(buf + 3 + userLen, proxy->password, passLen);
-        
-        sent = send((SOCKET)sock, buf, (int)(3 + userLen + passLen), 0);
-        if (sent != (int)(3 + userLen + passLen)) return false;
-        
-        recvLen = recv((SOCKET)sock, resp, 2, 0);
-        if (recvLen != 2 || resp[1] != 0x00) return false;
-    } else if (resp[1] != 0x00) {
-        /* 不支持的认证方法 */
-        return false;
-    }
-    
-    /* 发送连接请求 */
-    buf[0] = 0x05; /* SOCKS5 */
-    buf[1] = 0x01; /* CONNECT 命令 */
-    buf[2] = 0x00; /* 保留 */
-    
-    if (XHostAddress_protocol(targetAddr) == XHostAddress_IPv6Protocol) {
-        buf[3] = 0x04; /* IPv6 地址类型 */
-        XHostAddress_toIPv6Address(targetAddr, (struct in6_addr*)(buf + 4));
-        *((uint16_t*)(buf + 20)) = htons(targetPort);
-        bufLen = 22;
-    } else {
-        buf[3] = 0x01; /* IPv4 地址类型 */
-        *((uint32_t*)(buf + 4)) = htonl(XHostAddress_toIPv4Address(targetAddr));
-        *((uint16_t*)(buf + 8)) = htons(targetPort);
-        bufLen = 10;
-    }
-    
-    sent = send((SOCKET)sock, buf, bufLen, 0);
-    if (sent != bufLen) return false;
-    
-    /* 接收连接响应 */
-    recvLen = recv((SOCKET)sock, resp, 2, 0);
-    if (recvLen != 2) return false;
-    
-    /* 读取剩余响应 */
-    char addrType;
-    recvLen = recv((SOCKET)sock, &addrType, 1, 0);
-    if (recvLen != 1) return false;
-    
-    int addrLen = 0;
-    switch (addrType) {
-        case 0x01: addrLen = 4; break;  /* IPv4 */
-        case 0x04: addrLen = 16; break; /* IPv6 */
-        case 0x03: /* 域名 */
-            recvLen = recv((SOCKET)sock, &addrLen, 1, 0);
-            if (recvLen != 1) return false;
-            break;
-        default:
-            return false;
-    }
-    
-    /* 读取绑定地址和端口 */
-    char dummy[256];
-    recvLen = recv((SOCKET)sock, dummy, addrLen + 2, 0);
-    if (recvLen != addrLen + 2) return false;
-    
-    return true;
-}
-
-bool XNetwork_httpConnect(XSocketHandle sock, const XNetworkProxy* proxy,
-                          const XHostAddress* targetAddr, uint16_t targetPort)
-{
-    if (sock == -1 || !proxy || !targetAddr) return false;
-    
-    char request[512];
-    char hostStr[128];
-    int requestLen = 0;
-    
-    /* 获取目标地址字符串 */
-    XString* addrStr = XHostAddress_toString(targetAddr);
-    const char* hostStrPtr = addrStr ? XString_toUtf8(addrStr) : NULL;
-    if (!hostStrPtr) {
-        if (addrStr) XString_delete_base(addrStr);
-        return false;
-    }
-    strncpy(hostStr, hostStrPtr, sizeof(hostStr) - 1);
-    hostStr[sizeof(hostStr) - 1] = '\0';
-    if (addrStr) XString_delete_base(addrStr);
-    
-    bool hasAuth = (proxy->user != NULL && proxy->password != NULL);
-    
-    /* 构建 HTTP CONNECT 请求 */
-    if (hasAuth) {
-        /* Base64 编码 user:pass */
-        char auth[256];
-        snprintf(auth, sizeof(auth), "%s:%s", proxy->user, proxy->password);
-        
-        /* 简单的 Base64 编码（生产环境应使用标准库） */
-        static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        char b64Auth[512];
-        int ai = 0, bi = 0;
-        while (auth[ai]) {
-            uint32_t octet_a = (unsigned char)auth[ai++];
-            uint32_t octet_b = ai < (int)strlen(auth) ? (unsigned char)auth[ai++] : 0;
-            uint32_t octet_c = ai < (int)strlen(auth) ? (unsigned char)auth[ai++] : 0;
-            uint32_t triple = (octet_a << 16) + (octet_b << 8) + octet_c;
-            b64Auth[bi++] = b64[(triple >> 18) & 0x3F];
-            b64Auth[bi++] = b64[(triple >> 12) & 0x3F];
-            b64Auth[bi++] = b64[(triple >> 6) & 0x3F];
-            b64Auth[bi++] = b64[triple & 0x3F];
-        }
-        b64Auth[bi] = '\0';
-        
-        requestLen = snprintf(request, sizeof(request),
-            "CONNECT %s:%d HTTP/1.1\r\n"
-            "Host: %s:%d\r\n"
-            "Proxy-Authorization: Basic %s\r\n"
-            "\r\n",
-            hostStr, targetPort, hostStr, targetPort, b64Auth);
-    } else {
-        requestLen = snprintf(request, sizeof(request),
-            "CONNECT %s:%d HTTP/1.1\r\n"
-            "Host: %s:%d\r\n"
-            "\r\n",
-            hostStr, targetPort, hostStr, targetPort);
-    }
-    
-    /* 发送请求 */
-    int sent = send((SOCKET)sock, request, requestLen, 0);
-    if (sent != requestLen) return false;
-    
-    /* 接收响应 */
-    char response[256];
-    int recvLen = recv((SOCKET)sock, response, sizeof(response) - 1, 0);
-    if (recvLen <= 0) return false;
-    response[recvLen] = '\0';
-    
-    /* 检查响应状态码 */
-    if (strncmp(response, "HTTP/1.", 7) != 0) return false;
-    
-    int statusCode = 0;
-    if (sscanf(response, "HTTP/1.%*d %d", &statusCode) != 1) return false;
-    
-    /* 2xx 表示成功 */
-    return statusCode >= 200 && statusCode < 300;
-}
-
-bool XNetwork_socks5Bind(XSocketHandle sock, const XNetworkProxy* proxy,
-                         XHostAddress* bindAddr, uint16_t* bindPort)
-{
-    if (sock == -1 || !proxy) return false;
-    
-    char buf[256];
-    int bufLen = 0;
-    
-    bool hasAuth = (proxy->user != NULL && proxy->password != NULL);
-    
-    /* SOCKS5 握手（与 socks5Connect 相同） */
-    buf[0] = 0x05;
-    if (hasAuth) {
-        buf[1] = 0x02;
-        buf[2] = 0x00;
-        buf[3] = 0x02;
-        bufLen = 4;
-    } else {
-        buf[1] = 0x01;
-        buf[2] = 0x00;
-        bufLen = 3;
-    }
-    
-    int sent = send((SOCKET)sock, buf, bufLen, 0);
-    if (sent != bufLen) return false;
-    
-    char resp[2];
-    int recvLen = recv((SOCKET)sock, resp, 2, 0);
-    if (recvLen != 2 || resp[0] != 0x05) return false;
-    
-    /* 认证 */
-    if (resp[1] == 0x02 && hasAuth) {
-        size_t userLen = strlen(proxy->user);
-        size_t passLen = strlen(proxy->password);
-        buf[0] = 0x01;
-        buf[1] = (char)userLen;
-        memcpy(buf + 2, proxy->user, userLen);
-        buf[2 + userLen] = (char)passLen;
-        memcpy(buf + 3 + userLen, proxy->password, passLen);
-        sent = send((SOCKET)sock, buf, (int)(3 + userLen + passLen), 0);
-        if (sent != (int)(3 + userLen + passLen)) return false;
-        recvLen = recv((SOCKET)sock, resp, 2, 0);
-        if (recvLen != 2 || resp[1] != 0x00) return false;
-    } else if (resp[1] != 0x00) {
-        return false;
-    }
-    
-    /* 发送 BIND 请求 */
-    buf[0] = 0x05;
-    buf[1] = 0x02; /* BIND 命令 */
-    buf[2] = 0x00;
-    buf[3] = 0x01; /* IPv4 */
-    *((uint32_t*)(buf + 4)) = 0; /* 绑定所有地址 */
-    *((uint16_t*)(buf + 8)) = 0; /* 绑定端口由代理分配 */
-    bufLen = 10;
-    
-    sent = send((SOCKET)sock, buf, bufLen, 0);
-    if (sent != bufLen) return false;
-    
-    /* 接收绑定响应 */
-    recvLen = recv((SOCKET)sock, resp, 2, 0);
-    if (recvLen != 2 || resp[1] != 0x00) return false;
-    
-    char addrType;
-    recvLen = recv((SOCKET)sock, &addrType, 1, 0);
-    if (recvLen != 1) return false;
-    
-    int addrLen = 0;
-    switch (addrType) {
-        case 0x01: addrLen = 4; break;
-        case 0x04: addrLen = 16; break;
-        case 0x03:
-            recvLen = recv((SOCKET)sock, &addrLen, 1, 0);
-            if (recvLen != 1) return false;
-            break;
-        default: return false;
-    }
-    
-    /* 读取绑定地址和端口 */
-    char addrBuf[16];
-    recvLen = recv((SOCKET)sock, addrBuf, addrLen + 2, 0);
-    if (recvLen != addrLen + 2) return false;
-    
-    /* 解析绑定地址 */
-    if (bindAddr && addrType == 0x01) {
-        uint32_t ip = ntohl(*((uint32_t*)addrBuf));
-        XHostAddress_setAddressIPv4(bindAddr, ip);
-    }
-    if (bindPort) {
-        *bindPort = ntohs(*((uint16_t*)(addrBuf + addrLen)));
-    }
-    
-    return true;
-}
-
-XServerHandle XNetwork_serverCreateWithProxy(XNetworkSocketPrivate* priv,const XNetworkProxy* proxy,
-                                             const XHostAddress* addr, uint16_t port,
-                                             int backlog, bool reuseAddr)
-{
-    if (!addr) return -1;
-    
-    /* 无代理，使用普通服务器创建 */
-    if (!proxy || proxy->type == XNetworkProxy_NoProxy) {
-        return XNetwork_serverCreate(priv,addr, port, backlog, reuseAddr);
-    }
-    
-    /* SOCKS5 代理支持 BIND 命令 */
-    if (proxy->type == XNetworkProxy_Socks5Proxy) {
-        /* 创建到代理服务器的连接 */
-        SOCKET sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (sock == INVALID_SOCKET) return -1;
-        
-        /* 连接到代理服务器 */
-        struct sockaddr_in proxyAddr;
-        memset(&proxyAddr, 0, sizeof(proxyAddr));
-        proxyAddr.sin_family = AF_INET;
-        proxyAddr.sin_port = htons(proxy->port);
-        
-        /* 解析代理主机名（简化实现，仅支持 IP） */
-        proxyAddr.sin_addr.s_addr = inet_addr(proxy->hostName ? proxy->hostName : "");
-        if (proxyAddr.sin_addr.s_addr == INADDR_NONE) {
-            /* 需要 DNS 解析 */
-            struct hostent* he = gethostbyname(proxy->hostName ? proxy->hostName : "");
-            if (!he) {
-                closesocket(sock);
-                return -1;
-            }
-            memcpy(&proxyAddr.sin_addr, he->h_addr_list[0], he->h_length);
-        }
-        
-        if (connect(sock, (struct sockaddr*)&proxyAddr, sizeof(proxyAddr)) == SOCKET_ERROR) {
-            closesocket(sock);
-            return -1;
-        }
-        
-        /* 发送 BIND 请求 */
-        XHostAddress bindAddr;
-        uint16_t bindPort;
-        if (!XNetwork_socks5Bind((XSocketHandle)sock, proxy, &bindAddr, &bindPort)) {
-            closesocket(sock);
-            return -1;
-        }
-        priv->socket = sock;
-        /* 返回套接字作为服务器句柄 */
-        return (XServerHandle)sock;
-    }
-    
-    /* HTTP 代理不支持 BIND */
-    return -1;
-}
-
-XSocketHandle XNetwork_serverAcceptWithProxy(XServerHandle server,
-                                             const XNetworkProxy* proxy,
-                                             XHostAddress* clientAddr, uint16_t* clientPort)
-{
-    if (server == -1) return -1;
-    
-    /* 无代理，使用普通 accept */
-    if (!proxy || proxy->type == XNetworkProxy_NoProxy) {
-        return XNetwork_serverAccept(server, clientAddr, clientPort);
-    }
-    
-    /* SOCKS5 代理：等待代理转发连接 */
-    if (proxy->type == XNetworkProxy_Socks5Proxy) {
-        SOCKET sock = (SOCKET)server;
-        
-        /* 等待代理发送第二个 BIND 响应 */
-        char resp[2];
-        int recvLen = recv(sock, resp, 2, 0);
-        if (recvLen != 2 || resp[1] != 0x00) return -1;
-        
-        /* 读取客户端地址类型 */
-        char addrType;
-        recvLen = recv(sock, &addrType, 1, 0);
-        if (recvLen != 1) return -1;
-        
-        int addrLen = 0;
-        switch (addrType) {
-            case 0x01: addrLen = 4; break;
-            case 0x04: addrLen = 16; break;
-            case 0x03:
-                recvLen = recv(sock, &addrLen, 1, 0);
-                if (recvLen != 1) return -1;
-                break;
-            default: return -1;
-        }
-        
-        /* 读取客户端地址和端口 */
-        char addrBuf[16];
-        recvLen = recv(sock, addrBuf, addrLen + 2, 0);
-        if (recvLen != addrLen + 2) return -1;
-        
-        /* 解析客户端地址 */
-        if (clientAddr && addrType == 0x01) {
-            uint32_t ip = ntohl(*((uint32_t*)addrBuf));
-            XHostAddress_setAddressIPv4(clientAddr, ip);
-        }
-        if (clientPort) {
-            *clientPort = ntohs(*((uint16_t*)(addrBuf + addrLen)));
-        }
-        
-        /* 返回同一个套接字（SOCKS5 BIND 复用连接） */
-        return (XSocketHandle)sock;
-    }
-    
-    return -1;
-}
+/* 注意：XNetwork_socks5Connect、XNetwork_httpConnect、XNetwork_socks5Bind、
+ * XNetwork_serverCreateWithProxy、XNetwork_serverAcceptWithProxy
+ * 这些代理相关函数已从平台层移除，请在 XNetworkProxy 模块或应用层实现 */

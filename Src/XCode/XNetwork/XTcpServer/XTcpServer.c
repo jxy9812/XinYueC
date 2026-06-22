@@ -269,18 +269,10 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	}
 	if (!server->d_ptr)
 		server->d_ptr = XNetwork_createSocketPrivate(server);
-	// 调用平台 API 创建服务器（支持代理）
-	XServerHandle handle;
-	if (server->proxy.type != XNetworkProxy_NoProxy && 
-	    server->proxy.type != XNetworkProxy_DefaultProxy) {
-		// 使用代理创建服务器
-		handle = XNetwork_serverCreateWithProxy(server->d_ptr,
-			&server->proxy, &listenAddr, port, server->listenBacklogSize, true);
-	} else {
-		// 普通服务器创建
-		handle = XNetwork_serverCreate(server->d_ptr,
-			&listenAddr, port, server->listenBacklogSize, true);
-	}
+	// 调用平台 API 创建服务器
+	// 注意：代理服务器功能已移至应用层实现，平台层不再提供代理API
+	XServerHandle handle = XNetwork_serverCreate(server->d_ptr,
+		&listenAddr, port, server->listenBacklogSize, true);
 
 	if (!XSocketDescriptor_isValid(XSocketDescriptor_fromIntptr(handle))) {
 		XHostAddress_deinit_base(&listenAddr);
@@ -373,8 +365,7 @@ const XHostAddress* XTcpServer_serverAddress(const XTcpServer* server)
 intptr_t XTcpServer_socketDescriptor(const XTcpServer* server)
 {
 	if (!server||!server->d_ptr) return -1;
-	return XNetwork_socketHandle(server->d_ptr);
-	//return XSocketDescriptor_toIntptr();
+	return XNetwork_socketDescriptor(server->d_ptr);
 }
 
 bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescriptor)
