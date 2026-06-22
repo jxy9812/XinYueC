@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include "XFileSystem_platform.h"
+#include "XFileDevice.h"
 #include "XMemory.h"
 #include <windows.h>
 #include <io.h>
@@ -152,7 +153,6 @@ static bool fillFileStat(const char* path, WIN32_FILE_ATTRIBUTE_DATA* attrData, 
 int XFileSystem_open(const char* path, int mode, int* error)
 {
     if (!path) return -1;
-    
     wchar_t* wpath = toWidePath(path);
     if (!wpath) {
         if (error) *error = XFileDevice_ResourceError;
@@ -573,28 +573,40 @@ bool XFileSystem_unmap(void* addr, int64_t size)
  * 路径操作
  * ============================================================================ */
 
-bool XFileSystem_absolutePath(const char* path, char* absPath, int absPathSize)
+bool XFileSystem_resolvePath(const char* path, char* result, int size, XPathStyle style)
 {
-    if (!path || !absPath || absPathSize <= 0) return false;
-    return _fullpath(absPath, path, absPathSize) != NULL;
-}
-
-bool XFileSystem_canonicalPath(const char* path, char* canPath, int canPathSize)
-{
-    if (!path || !canPath || canPathSize <= 0) return false;
+    if (!path || !result || size <= 0) return false;
     
-    char absPath[MAX_PATH];
-    if (!_fullpath(absPath, path, MAX_PATH)) return false;
+    // 获取绝对路径
+    if (!_fullpath(result, path, size)) return false;
     
-    wchar_t* wpath = toWidePath(absPath);
-    if (!wpath) return false;
+    // 如果需要规范化路径（解析符号链接）
+    if (style == XPathStyle_Canonical) {
+        wchar_t* wpath = toWidePath(result);
+        if (!wpath) return false;
+        
+        // 检查路径是否存在
+        DWORD attrs = GetFileAttributesW(wpath);
+        XFree_System(wpath);
+        
+        if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+        
+        // 对于符号链接，获取真实路径
+        if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
+            HANDLE hFile = CreateFileW(wpath, 0, FILE_SHARE_READ, NULL,
+                                        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+            if (hFile != INVALID_HANDLE_VALUE) {
+                wchar_t targetPath[MAX_PATH];
+                DWORD len = GetFinalPathNameByHandleW(hFile, targetPath, MAX_PATH, VOLUME_NAME_DOS);
+                CloseHandle(hFile);
+                
+                if (len > 0 && len < MAX_PATH) {
+                    WideCharToMultiByte(CP_UTF8, 0, targetPath, -1, result, size, NULL, NULL);
+                }
+            }
+        }
+    }
     
-    DWORD attrs = GetFileAttributesW(wpath);
-    XFree_System(wpath);
-    
-    if (attrs == INVALID_FILE_ATTRIBUTES) return false;
-    
-    strncpy(canPath, absPath, canPathSize);
     return true;
 }
 
@@ -602,30 +614,19 @@ bool XFileSystem_canonicalPath(const char* path, char* canPath, int canPathSize)
  * 目录操作
  * ============================================================================ */
 
-bool XFileSystem_mkdir(const char* path)
-{
-    if (!path) return false;
-    wchar_t* wpath = toWidePath(path);
-    if (!wpath) return false;
-    BOOL result = CreateDirectoryW(wpath, NULL);
-    XFree_System(wpath);
-    return result != 0;
-}
-
-bool XFileSystem_rmdir(const char* path)
-{
-    if (!path) return false;
-    wchar_t* wpath = toWidePath(path);
-    if (!wpath) return false;
-    BOOL result = RemoveDirectoryW(wpath);
-    XFree_System(wpath);
-    return result != 0;
-}
-
-bool XFileSystem_mkdir_p(const char* path)
+bool XFileSystem_mkdir(const char* path, bool recursive)
 {
     if (!path) return false;
     
+    if (!recursive) {
+        wchar_t* wpath = toWidePath(path);
+        if (!wpath) return false;
+        BOOL result = CreateDirectoryW(wpath, NULL);
+        XFree_System(wpath);
+        return result != 0;
+    }
+    
+    // 递归创建目录
     char* pathCopy = _strdup(path);
     if (!pathCopy) return false;
     
@@ -664,6 +665,16 @@ bool XFileSystem_mkdir_p(const char* path)
     
     free(pathCopy);
     return result;
+}
+
+bool XFileSystem_rmdir(const char* path)
+{
+    if (!path) return false;
+    wchar_t* wpath = toWidePath(path);
+    if (!wpath) return false;
+    BOOL result = RemoveDirectoryW(wpath);
+    XFree_System(wpath);
+    return result != 0;
 }
 
 struct DirIteratorData {
@@ -992,43 +1003,24 @@ bool XFileSystem_tempPath(char* path, int pathSize)
  * 驱动器列表
  * ============================================================================ */
 
-struct DriveIteratorData {
-    DWORD drives;
-    int current;
-};
-
-XDriveIterator XFileSystem_beginDrives(void)
+int XFileSystem_drives(char drives[][16], int maxCount)
 {
-    struct DriveIteratorData* iter = (struct DriveIteratorData*)XMalloc_System(sizeof(struct DriveIteratorData));
-    if (!iter) return NULL;
+    if (!drives || maxCount <= 0) return 0;
     
-    iter->drives = GetLogicalDrives();
-    iter->current = 0;
-    return (XDriveIterator)iter;
-}
-
-bool XFileSystem_nextDrive(XDriveIterator iter, char* drive, int driveSize)
-{
-    if (!iter || !drive || driveSize < 4) return false;
-    struct DriveIteratorData* data = (struct DriveIteratorData*)iter;
+    DWORD driveMask = GetLogicalDrives();
+    int count = 0;
     
-    while (data->current < 26) {
-        if (data->drives & (1 << data->current)) {
-            drive[0] = 'A' + data->current;
-            drive[1] = ':';
-            drive[2] = '\\';
-            drive[3] = '\0';
-            data->current++;
-            return true;
+    for (int i = 0; i < 26 && count < maxCount; i++) {
+        if (driveMask & (1 << i)) {
+            drives[count][0] = 'A' + i;
+            drives[count][1] = ':';
+            drives[count][2] = '\\';
+            drives[count][3] = '\0';
+            count++;
         }
-        data->current++;
     }
-    return false;
-}
-
-void XFileSystem_endDrives(XDriveIterator iter)
-{
-    if (iter) XFree_System(iter);
+    
+    return count;
 }
 
 /* ============================================================================

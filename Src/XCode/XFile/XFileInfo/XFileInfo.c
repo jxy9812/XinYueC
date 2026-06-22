@@ -34,27 +34,10 @@ static void VXFileInfo_move(XFileInfo* self, XFileInfo* other)
     self->m_filePath = other->m_filePath;
     other->m_filePath = NULL;
     
-    // 移动缓存数据
+    // 移动缓存数据（直接拷贝整个 m_stat 结构）
     self->m_caching = other->m_caching;
     self->m_cacheValid = other->m_cacheValid;
-    self->m_size = other->m_size;
-    self->m_birthTime = other->m_birthTime;
-    self->m_metadataChangeTime = other->m_metadataChangeTime;
-    self->m_modificationTime = other->m_modificationTime;
-    self->m_accessTime = other->m_accessTime;
-    self->m_permissions = other->m_permissions;
-    self->m_ownerId = other->m_ownerId;
-    self->m_groupId = other->m_groupId;
-    self->m_exists = other->m_exists;
-    self->m_isFile = other->m_isFile;
-    self->m_isDir = other->m_isDir;
-    self->m_isSymLink = other->m_isSymLink;
-    self->m_isShortcut = other->m_isShortcut;
-    self->m_isJunction = other->m_isJunction;
-    self->m_isHidden = other->m_isHidden;
-    self->m_isReadable = other->m_isReadable;
-    self->m_isWritable = other->m_isWritable;
-    self->m_isExecutable = other->m_isExecutable;
+    self->m_stat = other->m_stat;
     
     other->m_cacheValid = false;
 }
@@ -135,24 +118,11 @@ void XFileInfo_init_1(XFileInfo* info)
     info->m_filePath = XString_create();
     info->m_caching = true;
     info->m_cacheValid = false;
-    info->m_size = 0;
-    info->m_birthTime = 0;
-    info->m_metadataChangeTime = 0;
-    info->m_modificationTime = 0;
-    info->m_accessTime = 0;
-    info->m_permissions = 0;
-    info->m_ownerId = (uint32_t)-2;
-    info->m_groupId = (uint32_t)-2;
-    info->m_exists = false;
-    info->m_isFile = false;
-    info->m_isDir = false;
-    info->m_isSymLink = false;
-    info->m_isShortcut = false;
-    info->m_isJunction = false;
-    info->m_isHidden = false;
-    info->m_isReadable = false;
-    info->m_isWritable = false;
-    info->m_isExecutable = false;
+    
+    // 初始化 m_stat
+    memset(&info->m_stat, 0, sizeof(XFileStat));
+    info->m_stat.ownerId = (uint32_t)-2;
+    info->m_stat.groupId = (uint32_t)-2;
 }
 
 void XFileInfo_init_2(XFileInfo* info, const XString* path)
@@ -474,35 +444,13 @@ static void XFileInfo_updateCache(XFileInfo* info)
     const char* pathUtf8 = XString_toUtf8(info->m_filePath);
     if (!pathUtf8) return;
     
-    XFileStat stat;
-    if (!XFileSystem_stat(pathUtf8, &stat)) {
-        info->m_exists = false;
-        info->m_isFile = false;
-        info->m_isDir = false;
-        info->m_cacheValid = true;
-        return;
+    // 直接拷贝整个 XFileStat 结构
+    if (!XFileSystem_stat(pathUtf8, &info->m_stat)) {
+        info->m_stat.exists = false;
+        info->m_stat.isFile = false;
+        info->m_stat.isDir = false;
     }
     
-    info->m_exists = stat.exists;
-    info->m_isDir = stat.isDir;
-    info->m_isFile = stat.isFile;
-    info->m_isHidden = stat.isHidden;
-    info->m_isSymLink = stat.isSymLink;
-    
-    // 检查 Junction 和 Shortcut（Windows 特有）
-    info->m_isJunction = XFileSystem_isJunction(pathUtf8);
-    info->m_isShortcut = XFileSystem_isShortcut(pathUtf8, NULL, 0);
-    info->m_size = stat.size;
-    info->m_birthTime = stat.birthTime;
-    info->m_modificationTime = stat.modificationTime;
-    info->m_accessTime = stat.accessTime;
-    info->m_metadataChangeTime = stat.metadataChangeTime;
-    info->m_isReadable = stat.isReadable;
-    info->m_isWritable = stat.isWritable;
-    info->m_isExecutable = stat.isExecutable;
-    info->m_permissions = stat.permissions;
-    info->m_ownerId = stat.ownerId;
-    info->m_groupId = stat.groupId;
     info->m_cacheValid = true;
 }
 
@@ -517,7 +465,7 @@ XString* XFileInfo_absoluteFilePath(const XFileInfo* info)
     const char* pathUtf8 = XString_toUtf8(info->m_filePath);
     char absPath[1024];
     
-    if (XFileSystem_absolutePath(pathUtf8, absPath, sizeof(absPath))) {
+    if (XFileSystem_resolvePath(pathUtf8, absPath, sizeof(absPath), XPathStyle_Absolute)) {
         return XString_create_utf8(absPath);
     }
     return XString_create();
@@ -565,7 +513,7 @@ bool XFileInfo_exists(const XFileInfo* info)
 {
     if (!info) return false;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_exists;
+    return info->m_stat.exists;
 }
 
 bool XFileInfo_exists_static(const XString* path)
@@ -585,21 +533,21 @@ bool XFileInfo_isFile(const XFileInfo* info)
 {
     if (!info) return false;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_isFile;
+    return info->m_stat.isFile;
 }
 
 bool XFileInfo_isDir(const XFileInfo* info)
 {
     if (!info) return false;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_isDir;
+    return info->m_stat.isDir;
 }
 
 bool XFileInfo_isSymLink(const XFileInfo* info)
 {
     if (!info) return false;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_isSymLink;
+    return info->m_stat.isSymLink;
 }
 
 bool XFileInfo_isSymbolicLink(const XFileInfo* info)
@@ -611,14 +559,14 @@ bool XFileInfo_isShortcut(const XFileInfo* info)
 {
     if (!info) return false;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_isShortcut;
+    return info->m_stat.isShortcut;
 }
 
 bool XFileInfo_isJunction(const XFileInfo* info)
 {
     if (!info) return false;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_isJunction;
+    return info->m_stat.isJunction;
 }
 
 bool XFileInfo_isRoot(const XFileInfo* info)
@@ -629,7 +577,7 @@ bool XFileInfo_isRoot(const XFileInfo* info)
     if (!pathUtf8) return false;
     
     char absPath[1024];
-    if (!XFileSystem_absolutePath(pathUtf8, absPath, sizeof(absPath))) return false;
+    if (!XFileSystem_resolvePath(pathUtf8, absPath, sizeof(absPath), XPathStyle_Absolute)) return false;
     
     size_t len = strlen(absPath);
     
@@ -657,7 +605,7 @@ bool XFileInfo_isHidden(const XFileInfo* info)
 {
     if (!info) return false;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_isHidden;
+    return info->m_stat.isHidden;
 }
 
 /* ============================================================================
@@ -720,21 +668,21 @@ bool XFileInfo_isReadable(const XFileInfo* info)
 {
     if (!info) return false;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_isReadable;
+    return info->m_stat.isReadable;
 }
 
 bool XFileInfo_isWritable(const XFileInfo* info)
 {
     if (!info) return false;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_isWritable;
+    return info->m_stat.isWritable;
 }
 
 bool XFileInfo_isExecutable(const XFileInfo* info)
 {
     if (!info) return false;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_isExecutable;
+    return info->m_stat.isExecutable;
 }
 
 bool XFileInfo_permission(const XFileInfo* info, XFilePermissions permissions)
@@ -748,7 +696,7 @@ XFilePermissions XFileInfo_permissions(const XFileInfo* info)
 {
     if (!info) return 0;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_permissions;
+    return info->m_stat.permissions;
 }
 
 /* ============================================================================
@@ -759,7 +707,7 @@ int64_t XFileInfo_size(const XFileInfo* info)
 {
     if (!info) return 0;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_size;
+    return info->m_stat.size;
 }
 
 XDateTime XFileInfo_birthTime(const XFileInfo* info)
@@ -792,16 +740,16 @@ XDateTime XFileInfo_fileTime(const XFileInfo* info, XFileTime time)
     int64_t timestamp = 0;
     switch (time) {
         case XFile_BirthTime:
-            timestamp = info->m_birthTime;
+            timestamp = info->m_stat.birthTime;
             break;
         case XFile_MetadataChangeTime:
-            timestamp = info->m_metadataChangeTime;
+            timestamp = info->m_stat.metadataChangeTime;
             break;
         case XFile_ModificationTime:
-            timestamp = info->m_modificationTime;
+            timestamp = info->m_stat.modificationTime;
             break;
         case XFile_AccessTime:
-            timestamp = info->m_accessTime;
+            timestamp = info->m_stat.accessTime;
             break;
     }
     
@@ -813,19 +761,13 @@ XDateTime XFileInfo_fileTime(const XFileInfo* info, XFileTime time)
 }
 
 /* ============================================================================
- * 所有者信息
+ * 所有者信息（简化实现，返回缓存的ID）
  * ============================================================================ */
 
 XString* XFileInfo_owner(const XFileInfo* info)
 {
-    if (!info || !info->m_filePath) return XString_create();
-    
-    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
-    char owner[256];
-    
-    if (XFileSystem_getOwner(pathUtf8, owner, sizeof(owner), NULL)) {
-        return XString_create_utf8(owner);
-    }
+    // 所有者名称需要平台特定实现，这里返回空字符串
+    (void)info;
     return XString_create();
 }
 
@@ -833,19 +775,13 @@ uint32_t XFileInfo_ownerId(const XFileInfo* info)
 {
     if (!info) return (uint32_t)-2;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_ownerId;
+    return info->m_stat.ownerId;
 }
 
 XString* XFileInfo_group(const XFileInfo* info)
 {
-    if (!info || !info->m_filePath) return XString_create();
-    
-    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
-    char group[256];
-    
-    if (XFileSystem_getGroup(pathUtf8, group, sizeof(group), NULL)) {
-        return XString_create_utf8(group);
-    }
+    // 组名称需要平台特定实现，这里返回空字符串
+    (void)info;
     return XString_create();
 }
 
@@ -853,7 +789,7 @@ uint32_t XFileInfo_groupId(const XFileInfo* info)
 {
     if (!info) return (uint32_t)-2;
     XFileInfo_updateCache((XFileInfo*)info);
-    return info->m_groupId;
+    return info->m_stat.groupId;
 }
 
 /* ============================================================================

@@ -1089,7 +1089,7 @@ bool XDir_mkdir(XDir* dir, const XString* dirName)
     XString* fullPath = XDir_filePath(dir, dirName);
     if (!fullPath) return false;
     const char* pathUtf8 = XString_toUtf8(fullPath);
-    bool result = XFileSystem_mkdir(pathUtf8);
+    bool result = XFileSystem_mkdir(pathUtf8, false);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1100,7 +1100,7 @@ bool XDir_mkpath(XDir* dir, const XString* dirPath)
     XString* fullPath = XDir_filePath(dir, dirPath);
     if (!fullPath) return false;
     const char* pathUtf8 = XString_toUtf8(fullPath);
-    bool result = XFileSystem_mkdir_p(pathUtf8);
+    bool result = XFileSystem_mkdir(pathUtf8, true);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1237,7 +1237,7 @@ XString* XDir_absolutePath(const XDir* dir)
     if (!dir || !dir->m_path) return NULL;
     const char* pathUtf8 = XString_toUtf8(dir->m_path);
     char absPath[MAX_PATH];
-    if (!XFileSystem_absolutePath(pathUtf8, absPath, MAX_PATH)) return NULL;
+    if (!XFileSystem_resolvePath(pathUtf8, absPath, MAX_PATH, XPathStyle_Absolute)) return NULL;
     return XString_create_utf8(absPath);
 }
 
@@ -1246,7 +1246,7 @@ XString* XDir_canonicalPath(const XDir* dir)
     if (!dir || !dir->m_path) return NULL;
     const char* pathUtf8 = XString_toUtf8(dir->m_path);
     char canPath[MAX_PATH];
-    if (!XFileSystem_canonicalPath(pathUtf8, canPath, MAX_PATH)) return NULL;
+    if (!XFileSystem_resolvePath(pathUtf8, canPath, MAX_PATH, XPathStyle_Canonical)) return NULL;
     return XString_create_utf8(canPath);
 }
 
@@ -1341,13 +1341,11 @@ XString* XDir_tempPath(void)
 XStringList* XDir_drives(void)
 {
     XStringList* result = XStringList_create();
-    XDriveIterator iter = XFileSystem_beginDrives();
-    if (!iter) return result;
-    char drive[4];
-    while (XFileSystem_nextDrive(iter, drive, 4)) {
-        XStringList_push_back_utf8(result, drive);
+    char drives[26][16];
+    int count = XFileSystem_drives(drives, 26);
+    for (int i = 0; i < count; i++) {
+        XStringList_push_back_utf8(result, drives[i]);
     }
-    XFileSystem_endDrives(iter);
     return result;
 }
 
