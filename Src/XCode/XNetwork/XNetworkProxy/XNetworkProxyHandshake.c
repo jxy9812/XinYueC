@@ -11,21 +11,22 @@
 #include "XBase64.h"
 #include "XMemory.h"
 #include "XNetwork_platform.h"
+#include "XRandomGenerator.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
 #include <ctype.h>
 
 /**
  * @brief 生成随机cnonce（客户端nonce）
+ * @note 使用 XRandomGenerator（对齐Qt QRandomGenerator）
  */
 static void generateCnonce(char* buffer, size_t bufferSize) {
     static const char hexChars[] = "0123456789abcdef";
-    srand((unsigned int)time(NULL));
     
+    /* 使用全局随机数生成器生成随机十六进制字符串 */
     for (size_t i = 0; i < bufferSize - 1 && i < 32; i++) {
-        buffer[i] = hexChars[rand() % 16];
+        buffer[i] = hexChars[XRandomGenerator_boundedU32(XRandomGenerator_global(), 16)];
     }
     buffer[bufferSize - 1] = '\0';
 }

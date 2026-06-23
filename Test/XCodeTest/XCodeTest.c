@@ -11,4 +11,5 @@ void XMenu_XCodeTest(XMenu* root)
 	XMenu_XThreadPoolTest(menu);
 	XMenu_XDateTimeTest(menu);
 	XMenu_XCryptographicHashTest(menu);
+	XMenu_XRandomGeneratorTest(menu);
 }
