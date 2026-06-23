@@ -25,6 +25,9 @@ extern "C" {
 #include "XVariant.h"
 #include "XNetworkProxy.h"
 
+// 前向声明代理握手上下文
+typedef struct XProxyHandshakeContext XProxyHandshakeContext;
+
 // =============== 枚举定义（与 Qt6 语义一致）===============
 
 /**
@@ -172,6 +175,7 @@ typedef struct XAbstractSocket {
     bool isValidFlag;                               ///< 是否处于有效状态（已连接且无致命错误）
     XString* protocolTag;                           ///< 协议标签（用于调试和日志）
     XNetworkProxy proxy;                            ///< 代理配置
+    XProxyHandshakeContext* proxyHandshakeCtx;      ///< 代理握手上下文（异步握手时使用）
 
     struct XAbstractSocketPrivate* d_ptr;           ///< 私有数据指针（PIMPL）
     int64_t readBufferSize;                         ///< 读缓冲区大小（字节），-1 表示无限制

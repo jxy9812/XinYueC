@@ -14,6 +14,7 @@
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
 #include "XRingBuffer.h"
+#include "XNetworkProxyHandshake.h"
 #include <string.h>
 #include <assert.h>
 
@@ -149,6 +150,11 @@ static void VXAbstractSocket_deinit(XAbstractSocket* sock)
     }
     // 释放代理配置资源
     XNetworkProxy_deinit_base(&sock->proxy);
+    // 释放代理握手上下文
+    if (sock->proxyHandshakeCtx) {
+        XNetworkProxyHandshake_destroyContext(sock->proxyHandshakeCtx);
+        sock->proxyHandshakeCtx = NULL;
+    }
     // 释放地址对象
     XHostAddress_deinit_base((XHostAddress*)&sock->localAddress);
     XHostAddress_deinit_base((XHostAddress*)&sock->peerAddress);
@@ -183,6 +189,7 @@ void XAbstractSocket_init(XAbstractSocket* sock, XAbstractSocket_SocketType type
     sock->isValidFlag = false;
     sock->protocolTag = NULL;
     XNetworkProxy_init(&sock->proxy);
+    sock->proxyHandshakeCtx = NULL;
     sock->d_ptr = NULL;
 
     // 初始化私有数据（通过 XNetwork 平台层）
@@ -681,30 +688,93 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
         XNetwork_socketHandleEvent(priv, e);
 
         if (sockAct->actType & XSocketAct_Read) {
-            size_t bytesTransferred = XNetwork_socketReadFinishedBytes(priv);
-            if (bytesTransferred > 0 && self->base.m_d) {
-                const char* readBuf = XNetwork_socketReadBuffer(priv);
-                int channel = XIODevice_currentReadChannel((XIODevice*)self);
-                struct XRingBuffer* rb = XIODevicePrivate_getOrCreateReadBuffer(self->base.m_d, channel);
-                if (rb && readBuf) {
-                    XRingBuffer_write(rb, readBuf, bytesTransferred);
-                    XIODevice_readyRead_signal((XIODevice*)self);
+            // 检查是否在代理握手过程中
+            if (self->proxyHandshakeCtx && !XNetworkProxyHandshake_isCompleted(self->proxyHandshakeCtx)) {
+                // 处理代理握手读事件
+                XProxyHandshakeState hsState = XNetworkProxyHandshake_process(self, self->proxyHandshakeCtx);
+                
+                if (hsState == XProxyHandshakeState_Completed) {
+                    // 代理握手完成，进入连接状态
+                    XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
+                    XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
+                    self->proxyHandshakeCtx = NULL;
+                    XNetwork_socketContinueRead(priv, self->socketType == XAbstractSocket_UdpSocket);
                 }
+                else if (hsState == XProxyHandshakeState_Failed) {
+                    // 代理握手失败
+                    XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyProtocolError,
+                        XNetworkProxyHandshake_errorMessage(self->proxyHandshakeCtx));
+                    XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+                    XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
+                    self->proxyHandshakeCtx = NULL;
+                }
+                // 否则握手仍在进行中，继续等待
             }
-            XNetwork_socketContinueRead(priv, self->socketType == XAbstractSocket_UdpSocket);
+            else {
+                // 正常数据读取
+                size_t bytesTransferred = XNetwork_socketReadFinishedBytes(priv);
+                if (bytesTransferred > 0 && self->base.m_d) {
+                    const char* readBuf = XNetwork_socketReadBuffer(priv);
+                    int channel = XIODevice_currentReadChannel((XIODevice*)self);
+                    struct XRingBuffer* rb = XIODevicePrivate_getOrCreateReadBuffer(self->base.m_d, channel);
+                    if (rb && readBuf) {
+                        XRingBuffer_write(rb, readBuf, bytesTransferred);
+                        XIODevice_readyRead_signal((XIODevice*)self);
+                    }
+                }
+                XNetwork_socketContinueRead(priv, self->socketType == XAbstractSocket_UdpSocket);
+            }
         }
 
         if (sockAct->actType & XSocketAct_Write) {
-            size_t bytesWritten = XNetwork_socketWriteFinishedBytes(priv);
-            if (bytesWritten > 0) {
-                XIODevice_bytesWritten_signal((XIODevice*)self, bytesWritten);
+            // 检查是否在代理握手过程中
+            if (self->proxyHandshakeCtx && !XNetworkProxyHandshake_isCompleted(self->proxyHandshakeCtx)) {
+                // 处理代理握手写事件
+                XProxyHandshakeState hsState = XNetworkProxyHandshake_process(self, self->proxyHandshakeCtx);
+                
+                if (hsState == XProxyHandshakeState_Completed) {
+                    // 代理握手完成，进入连接状态
+                    XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
+                    XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
+                    self->proxyHandshakeCtx = NULL;
+                }
+                else if (hsState == XProxyHandshakeState_Failed) {
+                    // 代理握手失败
+                    XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyProtocolError,
+                        XNetworkProxyHandshake_errorMessage(self->proxyHandshakeCtx));
+                    XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+                    XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
+                    self->proxyHandshakeCtx = NULL;
+                }
+            }
+            else {
+                // 正常数据写入完成
+                size_t bytesWritten = XNetwork_socketWriteFinishedBytes(priv);
+                if (bytesWritten > 0) {
+                    XIODevice_bytesWritten_signal((XIODevice*)self, bytesWritten);
+                }
             }
         }
 
         if (sockAct->actType & XSocketAct_Connect) {
             if (XNetwork_socketIsConnected(priv)) {
-                XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
-                XNetwork_socketContinueRead(priv, self->socketType == XAbstractSocket_UdpSocket);
+                // 检查是否需要代理握手
+                if (self->proxyHandshakeCtx) {
+                    // 开始异步代理握手
+                    if (!XNetworkProxyHandshake_start(self, self->proxyHandshakeCtx)) {
+                        XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyProtocolError, 
+                            XNetworkProxyHandshake_errorMessage(self->proxyHandshakeCtx));
+                        XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+                        XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
+                        self->proxyHandshakeCtx = NULL;
+                    }
+                    // 握手开始，等待读写事件继续处理
+                }
+                else {
+                    // 无代理，直接连接成功
+                    XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
+                    XNetwork_socketContinueRead(priv, self->socketType == XAbstractSocket_UdpSocket);
+                }
             }
             else {
                 XAbstractSocket_setSocketError(self, XAbstractSocket_ConnectionRefusedError, "Connection failed");
@@ -762,15 +832,54 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
 
     XAbstractSocket_setPeerName(self, hostName);
     XAbstractSocket_setPeerPort(self, port);
-    XAbstractSocket_setSocketState(self, XAbstractSocket_HostLookupState);
 
-    if (!XNetwork_socketConnect(priv, hostName, port, toNetworkProtocol(protocol),
-        toNetworkSockType(self->socketType))) {
-        XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
-        return;
+    // 检查是否需要使用代理
+    if (self->proxy.type != XNetworkProxy_NoProxy && self->proxy.type != XNetworkProxy_DefaultProxy) {
+        // 使用代理连接
+        if (!self->proxy.hostName || self->proxy.port == 0) {
+            XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyNotFoundError, "Proxy server not configured");
+            XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+            return;
+        }
+
+        // 销毁旧的代理握手上下文
+        if (self->proxyHandshakeCtx) {
+            XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
+        }
+        
+        // 创建代理握手上下文
+        self->proxyHandshakeCtx = XNetworkProxyHandshake_createContext(
+            &self->proxy, hostName, port);
+        
+        if (!self->proxyHandshakeCtx) {
+            XAbstractSocket_setSocketError(self, XAbstractSocket_OperationError, "Failed to create proxy handshake context");
+            XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+            return;
+        }
+
+        // 先连接到代理服务器
+        XAbstractSocket_setSocketState(self, XAbstractSocket_HostLookupState);
+
+        if (!XNetwork_socketConnect(priv, self->proxy.hostName, self->proxy.port, 
+            toNetworkProtocol(protocol), toNetworkSockType(self->socketType))) {
+            XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+            return;
+        }
+
+        XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
     }
+    else {
+        // 直接连接（无代理）
+        XAbstractSocket_setSocketState(self, XAbstractSocket_HostLookupState);
 
-    XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
+        if (!XNetwork_socketConnect(priv, hostName, port, toNetworkProtocol(protocol),
+            toNetworkSockType(self->socketType))) {
+            XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
+            return;
+        }
+
+        XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
+    }
 }
 
 

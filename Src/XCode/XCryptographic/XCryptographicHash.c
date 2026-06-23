@@ -1725,3 +1725,231 @@ const char* XCryptographicHash_algorithmName(XCryptographicHash_Algorithm method
     }
     return g_algorithmNames[method];
 }
+
+// ==================== HMAC 实现 ====================
+
+/**
+ * @brief HMAC内部实现（RFC 2104）
+ * 
+ * HMAC(K, m) = H((K ^ opad) || H((K ^ ipad) || m))
+ * 
+ * 其中：
+ * - K: 密钥（如果长度超过块大小，先进行哈希）
+ * - m: 消息
+ * - H: 哈希函数
+ * - opad: 0x5c重复块大小次
+ * - ipad: 0x36重复块大小次
+ * - ||: 连接操作
+ */
+
+/**
+ * @brief 获取算法的块大小（字节）
+ * @param method 哈希算法
+ * @return 块大小（字节）
+ */
+static int getBlockSize(XCryptographicHash_Algorithm method)
+{
+    switch (method) {
+        case XCryptographicHash_Md4:
+        case XCryptographicHash_Md5:
+        case XCryptographicHash_Sha1:
+        case XCryptographicHash_Sha224:
+        case XCryptographicHash_Sha256:
+        case XCryptographicHash_RealSha3_224:
+        case XCryptographicHash_RealSha3_256:
+        case XCryptographicHash_Keccak_224:
+        case XCryptographicHash_Keccak_256:
+        case XCryptographicHash_Blake2s_128:
+        case XCryptographicHash_Blake2s_160:
+        case XCryptographicHash_Blake2s_224:
+        case XCryptographicHash_Blake2s_256:
+            return 64;  // 512 bits
+        
+        case XCryptographicHash_Sha384:
+        case XCryptographicHash_Sha512:
+        case XCryptographicHash_RealSha3_384:
+        case XCryptographicHash_RealSha3_512:
+        case XCryptographicHash_Keccak_384:
+        case XCryptographicHash_Keccak_512:
+        case XCryptographicHash_Blake2b_160:
+        case XCryptographicHash_Blake2b_256:
+        case XCryptographicHash_Blake2b_384:
+        case XCryptographicHash_Blake2b_512:
+            return 128; // 1024 bits
+        
+        default:
+            return 64;
+    }
+}
+
+XByteArrayView XCryptographicHash_hmacInto(
+    char* buffer, size_t bufferSize,
+    const char* key, size_t keyLen,
+    const char* message, size_t msgLen,
+    XCryptographicHash_Algorithm method
+)
+{
+    XByteArrayView empty = { NULL, 0 };
+    
+    int hashLen = XCryptographicHash_hashLength(method);
+    int blockSize = getBlockSize(method);
+    
+    if (!buffer || bufferSize < (size_t)hashLen) {
+        return empty;
+    }
+    
+    // 分配内部缓冲区
+    char* ipad = (char*)XMalloc_System(blockSize);
+    char* opad = (char*)XMalloc_System(blockSize);
+    char* kkey = (char*)XMalloc_System(blockSize);
+    
+    if (!ipad || !opad || !kkey) {
+        if (ipad) XFree_System(ipad);
+        if (opad) XFree_System(opad);
+        if (kkey) XFree_System(kkey);
+        return empty;
+    }
+    
+    // 初始化kkey
+    memset(kkey, 0, blockSize);
+    
+    // 如果密钥长度超过块大小，先进行哈希
+    if (keyLen > (size_t)blockSize) {
+        XByteArray* hashedKey = XCryptographicHash_hash(key, keyLen, method);
+        if (hashedKey) {
+            size_t hashedLen = XByteArray_size_base(hashedKey);
+            const char* hashedData = XByteArray_data(hashedKey);
+            if (hashedData && hashedLen <= (size_t)blockSize) {
+                memcpy(kkey, hashedData, hashedLen);
+            }
+            XByteArray_delete_base(hashedKey);
+        }
+    } else if (keyLen > 0) {
+        memcpy(kkey, key, keyLen);
+    }
+    
+    // 准备ipad和opad
+    for (int i = 0; i < blockSize; i++) {
+        ipad[i] = kkey[i] ^ 0x36;
+        opad[i] = kkey[i] ^ 0x5c;
+    }
+    
+    // 计算内部哈希: H((K ^ ipad) || message)
+    char* innerHash = (char*)XMalloc_System(hashLen);
+    if (!innerHash) {
+        XFree_System(ipad);
+        XFree_System(opad);
+        XFree_System(kkey);
+        return empty;
+    }
+    
+    {
+        XCryptographicHash* ctx = XCryptographicHash_create(method);
+        if (!ctx) {
+            XFree_System(innerHash);
+            XFree_System(ipad);
+            XFree_System(opad);
+            XFree_System(kkey);
+            return empty;
+        }
+        
+        XCryptographicHash_addData(ctx, ipad, blockSize);
+        if (message && msgLen > 0) {
+            XCryptographicHash_addData(ctx, message, msgLen);
+        }
+        
+        XByteArray* innerResult = XCryptographicHash_result(ctx);
+        if (innerResult) {
+            const char* innerData = XByteArray_data(innerResult);
+            if (innerData) {
+                memcpy(innerHash, innerData, hashLen);
+            }
+            XByteArray_delete_base(innerResult);
+        }
+        
+        XCryptographicHash_delete_base(ctx);
+    }
+    
+    // 计算外部哈希: H((K ^ opad) || innerHash)
+    {
+        XCryptographicHash* ctx = XCryptographicHash_create(method);
+        if (!ctx) {
+            XFree_System(innerHash);
+            XFree_System(ipad);
+            XFree_System(opad);
+            XFree_System(kkey);
+            return empty;
+        }
+        
+        XCryptographicHash_addData(ctx, opad, blockSize);
+        XCryptographicHash_addData(ctx, innerHash, hashLen);
+        
+        XByteArray* outerResult = XCryptographicHash_result(ctx);
+        if (outerResult) {
+            const char* outerData = XByteArray_data(outerResult);
+            if (outerData) {
+                memcpy(buffer, outerData, hashLen);
+            }
+            XByteArray_delete_base(outerResult);
+        }
+        
+        XCryptographicHash_delete_base(ctx);
+    }
+    
+    // 清理
+    XFree_System(innerHash);
+    XFree_System(ipad);
+    XFree_System(opad);
+    XFree_System(kkey);
+    
+    XByteArrayView result = { buffer, (size_t)hashLen };
+    return result;
+}
+
+XByteArray* XCryptographicHash_hmac(
+    const char* key, size_t keyLen,
+    const char* message, size_t msgLen,
+    XCryptographicHash_Algorithm method
+)
+{
+    int hashLen = XCryptographicHash_hashLength(method);
+    XByteArray* result = XByteArray_create();
+    if (!result) return NULL;
+    
+    XByteArray_resize_base(result, hashLen);
+    char* data = (char*)XByteArray_data(result);
+    
+    XByteArrayView view = XCryptographicHash_hmacInto(data, hashLen, key, keyLen, message, msgLen, method);
+    
+    if (!view.data) {
+        XByteArray_delete_base(result);
+        return NULL;
+    }
+    
+    return result;
+}
+
+XByteArray* XCryptographicHash_hmac_2(
+    XByteArrayView key,
+    XByteArrayView message,
+    XCryptographicHash_Algorithm method
+)
+{
+    return XCryptographicHash_hmac(key.data, key.size, message.data, message.size, method);
+}
+
+XByteArray* XCryptographicHash_hmac_3(
+    const XByteArray* key,
+    const XByteArray* message,
+    XCryptographicHash_Algorithm method
+)
+{
+    if (!key || !message) return NULL;
+    
+    const char* keyData = (const char*)XByteArray_data((XByteArray*)key);
+    size_t keyLen = XByteArray_size_base((XByteArray*)key);
+    const char* msgData = (const char*)XByteArray_data((XByteArray*)message);
+    size_t msgLen = XByteArray_size_base((XByteArray*)message);
+    
+    return XCryptographicHash_hmac(keyData, keyLen, msgData, msgLen, method);
+}

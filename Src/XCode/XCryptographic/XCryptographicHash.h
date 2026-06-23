@@ -286,6 +286,68 @@ bool XCryptographicHash_supportsAlgorithm(XCryptographicHash_Algorithm method);
  */
 const char* XCryptographicHash_algorithmName(XCryptographicHash_Algorithm method);
 
+// =============== HMAC 函数（对齐Qt QMessageAuthenticationCode）===============
+
+/**
+ * @brief 计算HMAC（Hash-based Message Authentication Code）
+ * @param key 密钥数据
+ * @param keyLen 密钥长度
+ * @param message 消息数据
+ * @param msgLen 消息长度
+ * @param method 哈希算法
+ * @return HMAC结果字节数组（调用者需删除）
+ * @note 对齐Qt QMessageAuthenticationCode::hash()
+ */
+XByteArray* XCryptographicHash_hmac(
+    const char* key, size_t keyLen,
+    const char* message, size_t msgLen,
+    XCryptographicHash_Algorithm method
+);
+
+/**
+ * @brief 计算HMAC（字节数组视图版本）
+ * @param key 密钥视图
+ * @param message 消息视图
+ * @param method 哈希算法
+ * @return HMAC结果字节数组（调用者需删除）
+ */
+XByteArray* XCryptographicHash_hmac_2(
+    XByteArrayView key,
+    XByteArrayView message,
+    XCryptographicHash_Algorithm method
+);
+
+/**
+ * @brief 计算HMAC（XByteArray版本）
+ * @param key 密钥字节数组
+ * @param message 消息字节数组
+ * @param method 哈希算法
+ * @return HMAC结果字节数组（调用者需删除）
+ */
+XByteArray* XCryptographicHash_hmac_3(
+    const XByteArray* key,
+    const XByteArray* message,
+    XCryptographicHash_Algorithm method
+);
+
+/**
+ * @brief 将HMAC结果写入提供的缓冲区（无内存分配）
+ * @param buffer 输出缓冲区
+ * @param bufferSize 缓冲区大小
+ * @param key 密钥数据
+ * @param keyLen 密钥长度
+ * @param message 消息数据
+ * @param msgLen 消息长度
+ * @param method 哈希算法
+ * @return 成功返回有效视图，缓冲区不足返回空视图
+ */
+XByteArrayView XCryptographicHash_hmacInto(
+    char* buffer, size_t bufferSize,
+    const char* key, size_t keyLen,
+    const char* message, size_t msgLen,
+    XCryptographicHash_Algorithm method
+);
+
 #ifdef __cplusplus
 }
 #endif

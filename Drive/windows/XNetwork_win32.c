@@ -30,6 +30,7 @@
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "secur32.lib")
 
 /* =========================================================================
  * 手动定义缺失的宏（兼容旧版 SDK）
@@ -1503,3 +1504,223 @@ int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size
 /* 注意：XNetwork_socks5Connect、XNetwork_httpConnect、XNetwork_socks5Bind、
  * XNetwork_serverCreateWithProxy、XNetwork_serverAcceptWithProxy
  * 这些代理相关函数已从平台层移除，请在 XNetworkProxy 模块或应用层实现 */
+
+/* =========================================================================
+ * 系统代理获取（Windows）
+ * ========================================================================= */
+
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
+
+bool XNetwork_getSystemProxy(const char* queryUrl, XNetworkProxy* outProxy)
+{
+    if (!outProxy) return false;
+    
+    XNetworkProxy_init(outProxy);
+    
+    /* 1. 尝试使用 WinHttpGetProxyForUrl (WPAD) */
+    HINTERNET hSession = WinHttpOpen(L"XinYueC/1.0",
+                                      WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                      WINHTTP_NO_PROXY_NAME,
+                                      WINHTTP_NO_PROXY_BYPASS,
+                                      0);
+    if (hSession) {
+        WINHTTP_PROXY_INFO proxyInfo = {0};
+        WCHAR wideUrl[1024] = {0};
+        
+        if (queryUrl) {
+            MultiByteToWideChar(CP_UTF8, 0, queryUrl, -1, wideUrl, 1024);
+        }
+        
+        /* 获取 IE 代理设置 */
+        if (WinHttpGetDefaultProxyConfiguration(&proxyInfo)) {
+            if (proxyInfo.lpszProxy && wcslen(proxyInfo.lpszProxy) > 0) {
+                /* 解析代理字符串 "host:port" */
+                char proxyHost[256] = {0};
+                WideCharToMultiByte(CP_UTF8, 0, proxyInfo.lpszProxy, -1, 
+                                    proxyHost, sizeof(proxyHost), NULL, NULL);
+                
+                char* colon = strchr(proxyHost, ':');
+                if (colon) {
+                    *colon = '\0';
+                    XString* host = XString_create_utf8(proxyHost);
+                    XNetworkProxy_setHostName(outProxy, host);
+                    XNetworkProxy_setPort(outProxy, (uint16_t)atoi(colon + 1));
+                    XNetworkProxy_setType(outProxy, XNetworkProxy_HttpProxy);
+                    XString_delete_base(host);
+                }
+            }
+            
+            if (proxyInfo.lpszProxyBypass) {
+                GlobalFree(proxyInfo.lpszProxyBypass);
+            }
+            if (proxyInfo.lpszProxy) {
+                GlobalFree(proxyInfo.lpszProxy);
+            }
+        }
+        
+        WinHttpCloseHandle(hSession);
+        
+        if (XNetworkProxy_port(outProxy) > 0) {
+            return true;
+        }
+    }
+    
+    /* 2. 回退到注册表读取 */
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, 
+                      "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+                      0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        
+        DWORD proxyEnable = 0;
+        DWORD size = sizeof(DWORD);
+        
+        if (RegQueryValueExA(hKey, "ProxyEnable", NULL, NULL, 
+                             (LPBYTE)&proxyEnable, &size) == ERROR_SUCCESS && proxyEnable) {
+            
+            char proxyServer[256] = {0};
+            size = sizeof(proxyServer);
+            
+            if (RegQueryValueExA(hKey, "ProxyServer", NULL, NULL, 
+                                 (LPBYTE)proxyServer, &size) == ERROR_SUCCESS) {
+                /* 解析 "protocol=host:port" 或 "host:port" 格式 */
+                char* eq = strchr(proxyServer, '=');
+                char* proxyStr = eq ? (eq + 1) : proxyServer;
+                
+                char* colon = strchr(proxyStr, ':');
+                if (colon) {
+                    *colon = '\0';
+                    XString* host = XString_create_utf8(proxyStr);
+                    XNetworkProxy_setHostName(outProxy, host);
+                    XNetworkProxy_setPort(outProxy, (uint16_t)atoi(colon + 1));
+                    XNetworkProxy_setType(outProxy, XNetworkProxy_HttpProxy);
+                    XString_delete_base(host);
+                }
+            }
+        }
+        
+        RegCloseKey(hKey);
+    }
+    
+    return XNetworkProxy_port(outProxy) > 0;
+}
+
+/* =========================================================================
+ * GSSAPI 认证（Windows SSPI）
+ * ========================================================================= */
+
+#define SECURITY_WIN32
+#include <security.h>
+#include <sspi.h>
+
+/* GSSAPI 上下文结构 */
+typedef struct {
+    CredHandle credHandle;
+    CtxtHandle ctxtHandle;
+    bool hasCred;
+    bool hasCtxt;
+    char* targetName;
+} WinGssapiContext;
+
+int XNetwork_gssapiAuth(const char* serviceName,
+                         const XByteArray* inputToken,
+                         XByteArray* outputToken,
+                         void** context)
+{
+    if (!outputToken) return -1;
+    
+    WinGssapiContext* ctx = (WinGssapiContext*)*context;
+    
+    /* 首次调用，初始化上下文 */
+    if (!ctx) {
+        ctx = (WinGssapiContext*)XMalloc_System(sizeof(WinGssapiContext));
+        if (!ctx) return -1;
+        
+        memset(ctx, 0, sizeof(WinGssapiContext));
+        SecInvalidateHandle(&ctx->credHandle);
+        SecInvalidateHandle(&ctx->ctxtHandle);
+        
+        /* 获取默认凭据 */
+        TimeStamp expiry;
+        SECURITY_STATUS status = AcquireCredentialsHandleA(
+            NULL, "Negotiate", SECPKG_CRED_OUTBOUND,
+            NULL, NULL, NULL, NULL, &ctx->credHandle, &expiry);
+        
+        if (status != SEC_E_OK) {
+            XFree_System(ctx);
+            return -1;
+        }
+        ctx->hasCred = true;
+        
+        if (serviceName) {
+            ctx->targetName = _strdup(serviceName);
+        }
+        
+        *context = ctx;
+    }
+    
+    /* 准备输入缓冲区 */
+    SecBufferDesc inDesc = {0};
+    SecBuffer inBuf = {0};
+    if (inputToken && XByteArray_size_base(inputToken) > 0) {
+        inDesc.ulVersion = SECBUFFER_VERSION;
+        inDesc.cBuffers = 1;
+        inDesc.pBuffers = &inBuf;
+        inBuf.BufferType = SECBUFFER_TOKEN;
+        inBuf.cbBuffer = (unsigned long)XByteArray_size_base(inputToken);
+        inBuf.pvBuffer = (void*)XByteArray_data(inputToken);
+    }
+    
+    /* 准备输出缓冲区 */
+    SecBufferDesc outDesc = {0};
+    SecBuffer outBuf = {0};
+    BYTE outTokenBuf[4096];
+    
+    outDesc.ulVersion = SECBUFFER_VERSION;
+    outDesc.cBuffers = 1;
+    outDesc.pBuffers = &outBuf;
+    outBuf.BufferType = SECBUFFER_TOKEN;
+    outBuf.cbBuffer = sizeof(outTokenBuf);
+    outBuf.pvBuffer = outTokenBuf;
+    
+    /* 初始化安全上下文 */
+    ULONG attr = 0;
+    TimeStamp expiry;
+    SECURITY_STATUS status;
+    
+    if (inputToken && XByteArray_size_base(inputToken) > 0) {
+        status = InitializeSecurityContextA(
+            &ctx->credHandle, &ctx->ctxtHandle,
+            ctx->targetName, ISC_REQ_CONNECTION,
+            0, SECURITY_NETWORK_DREP,
+            &inDesc, 0, &ctx->ctxtHandle,
+            &outDesc, &attr, &expiry);
+    } else {
+        status = InitializeSecurityContextA(
+            &ctx->credHandle, NULL,
+            ctx->targetName, ISC_REQ_CONNECTION,
+            0, SECURITY_NETWORK_DREP,
+            NULL, 0, &ctx->ctxtHandle,
+            &outDesc, &attr, &expiry);
+    }
+    
+    if (status == SEC_E_OK) {
+        /* 认证完成 */
+        if (outBuf.cbBuffer > 0) {
+            XByteArray_resize_base(outputToken, outBuf.cbBuffer);
+            memcpy(XByteArray_data(outputToken), outTokenBuf, outBuf.cbBuffer);
+        }
+        return 0;
+    } else if (status == SEC_I_CONTINUE_NEEDED) {
+        /* 需要继续 */
+        if (outBuf.cbBuffer > 0) {
+            XByteArray_resize_base(outputToken, outBuf.cbBuffer);
+            memcpy(XByteArray_data(outputToken), outTokenBuf, outBuf.cbBuffer);
+        }
+        ctx->hasCtxt = true;
+        return 1;
+    }
+    
+    /* 失败 */
+    return -1;
+}

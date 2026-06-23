@@ -24,6 +24,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "XHostAddress.h"
+#include "XNetworkProxy.h"
+#include "XByteArray.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -454,6 +456,32 @@ bool XNetwork_getLastDatagramSender(const XNetworkSocketPrivate* priv,
  */
 int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size,
                                const XHostAddress* address, uint16_t port);
+
+/* =========================================================================
+ * 十一、系统代理与GSSAPI（平台相关）
+ * ========================================================================= */
+
+/**
+ * @brief 获取系统代理配置
+ * @param queryUrl 查询URL（可为NULL）
+ * @param outProxy 输出代理配置（需XNetworkProxy_delete_base释放）
+ * @return 成功返回true
+ * @note Windows: WinHttpGetProxyForUrl/注册表; Linux: 环境变量; macOS: CFProxySupport
+ */
+bool XNetwork_getSystemProxy(const char* queryUrl, XNetworkProxy* outProxy);
+
+/**
+ * @brief GSSAPI认证处理
+ * @param serviceName 服务名称（如 "HTTP@proxy.example.com"）
+ * @param inputToken 输入令牌（可为NULL表示初始化）
+ * @param outputToken 输出令牌（XByteArray）
+ * @param context 上下文指针（内部维护状态，首次传NULL）
+ * @return 0=完成, 1=继续, -1=失败
+ */
+int XNetwork_gssapiAuth(const char* serviceName,
+                         const XByteArray* inputToken,
+                         XByteArray* outputToken,
+                         void** context);
 
 #ifdef __cplusplus
 }

@@ -52,6 +52,8 @@ extern "C" {
 
 #include "XNetworkProxy.h"
 #include "XHostAddress.h"
+#include "XString.h"
+#include "XByteArray.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -197,12 +199,12 @@ typedef struct XSocks5UdpAssociateResult {
  * @brief HTTP Digest 认证参数
  */
 typedef struct XHttpDigestParams {
-    char* realm;                        ///< 认证域
-    char* nonce;                        ///< 服务器nonce
-    char* opaque;                       ///< 透明值
-    char* algorithm;                    ///< 算法 (MD5, MD5-sess, SHA-256等)
-    char* qop;                          ///< 质量保护 (auth, auth-int)
-    char* cnonce;                       ///< 客户端nonce
+    XString* realm;                     ///< 认证域
+    XString* nonce;                     ///< 服务器nonce
+    XString* opaque;                    ///< 透明值
+    XString* algorithm;                 ///< 算法 (MD5, MD5-sess, SHA-256等)
+    XString* qop;                       ///< 质量保护 (auth, auth-int)
+    XString* cnonce;                    ///< 客户端nonce
     int nc;                             ///< nonce计数
 } XHttpDigestParams;
 
@@ -212,14 +214,11 @@ typedef struct XHttpDigestParams {
  * @brief NTLM 认证上下文
  */
 typedef struct XNtlmContext {
-    uint8_t* type1Message;              ///< Type-1消息
-    size_t type1Length;                 ///< Type-1消息长度
-    uint8_t* type2Message;              ///< Type-2消息（服务器响应）
-    size_t type2Length;                 ///< Type-2消息长度
-    uint8_t* type3Message;              ///< Type-3消息
-    size_t type3Length;                 ///< Type-3消息长度
-    char* workstation;                  ///< 工作站名
-    char* domain;                       ///< 域名
+    XByteArray* type1Message;           ///< Type-1消息
+    XByteArray* type2Message;           ///< Type-2消息（服务器响应）
+    XByteArray* type3Message;           ///< Type-3消息
+    XString* workstation;               ///< 工作站名
+    XString* domain;                    ///< 域名
 } XNtlmContext;
 
 // =============== 代理握手上下文 ===============
@@ -231,13 +230,13 @@ typedef struct XProxyHandshakeContext {
     /* 基本配置 */
     XProxyHandshakeState state;         ///< 当前状态
     XNetworkProxy* proxy;               ///< 代理配置（不拥有）
-    char* targetHost;                   ///< 目标主机名
+    XString* targetHost;                ///< 目标主机名
     uint16_t targetPort;                ///< 目标端口
     XSocks5Command socks5Command;       ///< SOCKS5命令类型
     
     /* SOCKS5 状态 */
     XSocks5AuthMethod socks5AuthMethod; ///< 协商的认证方法
-    uint8_t socks5Buffer[520];          ///< SOCKS5缓冲区（最大地址+端口）
+    XByteArray* socks5Buffer;           ///< SOCKS5缓冲区（最大地址+端口）
     size_t socks5BufferLen;             ///< 缓冲区数据长度
     size_t socks5BytesNeeded;           ///< 需要接收的字节数
     
@@ -248,11 +247,9 @@ typedef struct XProxyHandshakeContext {
     XSocks5UdpAssociateResult udpResult;///< UDP ASSOCIATE结果
     
     /* HTTP 状态 */
-    char* httpBuffer;                   ///< HTTP响应缓冲区
-    size_t httpBufferSize;              ///< 缓冲区大小
-    size_t httpBufferLen;               ///< 已接收数据长度
+    XByteArray* httpBuffer;             ///< HTTP响应缓冲区
     int httpResponseCode;               ///< HTTP响应码
-    char* httpAuthHeader;               ///< WWW-Authenticate头
+    XByteArray* httpAuthHeader;         ///< WWW-Authenticate头
     XHttpProxyAuthType httpAuthType;    ///< HTTP认证类型
     
     /* HTTP Digest 参数 */
@@ -266,7 +263,7 @@ typedef struct XProxyHandshakeContext {
     
     /* 错误信息 */
     XProxyHandshakeError errorCode;     ///< 错误码
-    char errorMessage[256];             ///< 错误描述
+    XString* errorMessage;              ///< 错误描述
     
     /* 超时控制 */
     int64_t startTime;                  ///< 开始时间（毫秒）
