@@ -153,6 +153,8 @@ static bool isIPv6Global(const uint8_t ip6[16]) {
 
 static void VXHostAddress_copy(XHostAddress* self, const XHostAddress* other) {
     if (!self || !other) return;
+    // 检查目标对象是否已初始化，如果未初始化则先初始化
+    XClassEnsureVtable(self, XHostAddress);
     memcpy(self->a6, other->a6, 16);
     self->protocol = other->protocol;
     strcpy(self->scopeId, other->scopeId);
@@ -161,6 +163,8 @@ static void VXHostAddress_copy(XHostAddress* self, const XHostAddress* other) {
 
 static void VXHostAddress_move(XHostAddress* self, XHostAddress* other) {
     if (!self || !other) return;
+    // 检查目标对象是否已初始化，如果未初始化则先初始化
+    XClassEnsureVtable(self, XHostAddress);
     memcpy(self, other, sizeof(XHostAddress));
 }
 

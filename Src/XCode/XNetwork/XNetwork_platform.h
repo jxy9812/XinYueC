@@ -26,10 +26,15 @@
 #include "XHostAddress.h"
 #include "XNetworkProxy.h"
 #include "XByteArray.h"
+#include "XString.h"
+#include "XVector.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 前置声明 - XNetworkInterface 在 XNetworkInterface.h 中定义 */
+typedef struct XNetworkInterface XNetworkInterface;
 
 /* =========================================================================
  * 一、基础类型
@@ -339,19 +344,6 @@ char* XNetwork_localHostName(void);
 /* =========================================================================
  * 八、网络接口枚举
  * ========================================================================= */
-
-/** 网络接口信息结构 */
-typedef struct {
-    char     name[128];         /**< 接口名称（如 eth0） */
-    char     readableName[256]; /**< 可读名称（如 "以太网"） */
-    int      index;             /**< 接口索引 */
-    uint8_t  hwAddr[32];        /**< 硬件地址（MAC） */
-    int      hwAddrLen;         /**< 硬件地址长度 */
-    uint32_t flags;             /**< 接口标志（XNetworkIf_*） */
-    uint32_t type;              /**< 接口类型 */
-    int      mtu;               /**< MTU 大小 */
-} XNetworkInterfaceEntry;
-
 /** 接口标志位 */
 enum {
     XNetworkIf_Up        = 1 << 0,  /**< 接口已启动 */
@@ -372,10 +364,9 @@ XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void);
 /**
  * @brief 获取下一个网络接口
  * @param iter 迭代器句柄
- * @param out 输出接口信息
- * @return 成功返回 true，枚举结束返回 false
+ * @return 网络接口对象（需调用者释放），枚举结束返回 NULL
  */
-bool XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter, XNetworkInterfaceEntry* out);
+XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter);
 
 /**
  * @brief 结束枚举网络接口
@@ -384,15 +375,12 @@ bool XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter, XNetworkInterfa
 void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter);
 
 /**
- * @brief 获取指定接口的 IP 地址
- * @param ifname 接口名称
- * @param addrs 输出地址数组，需调用者释放
- * @param masks 输出掩码数组，需调用者释放
- * @param count 输出地址数量
- * @return 成功返回 true
+ * @brief 获取指定接口的 IP 地址条目
+ * @param ifname 接口名称（XString 类型）
+ * @return 成功返回 XVector<XNetworkAddressEntry>*，失败返回 NULL
+ * @note 调用者需要使用 XVector_delete_base 释放返回的向量
  */
-bool XNetwork_getInterfaceAddresses(const char* ifname,
-                                    XHostAddress** addrs, XHostAddress** masks, int* count);
+XVector* XNetwork_getInterfaceAddresses(const XString* ifname);
 
 /* =========================================================================
  * 九、多播组（精简为2个API）

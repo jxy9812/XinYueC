@@ -26,6 +26,8 @@ static void VXNetworkProxyQuery_deinit(XNetworkProxyQuery* query) {
 
 static void VXNetworkProxyQuery_copy(XNetworkProxyQuery* dest, const XNetworkProxyQuery* src) {
     if (!dest || !src) return;
+    // 检查目标对象是否已初始化，如果未初始化则先初始化
+    XClassEnsureVtable(dest, XNetworkProxyQuery);
     dest->queryType = src->queryType;
     dest->peerPort = src->peerPort;
     dest->localPort = src->localPort;
@@ -42,6 +44,8 @@ static void VXNetworkProxyQuery_copy(XNetworkProxyQuery* dest, const XNetworkPro
 
 static void VXNetworkProxyQuery_move(XNetworkProxyQuery* dest, XNetworkProxyQuery* src) {
     if (!dest || !src) return;
+    // 检查目标对象是否已初始化，如果未初始化则先初始化
+    XClassEnsureVtable(dest, XNetworkProxyQuery);
     dest->queryType = src->queryType;
     dest->peerPort = src->peerPort;
     dest->localPort = src->localPort;
@@ -222,6 +226,8 @@ static void VXNetworkProxy_deinit_base(XNetworkProxy* proxy) {
 
 static void VXNetworkProxy_copy(XNetworkProxy* dest, const XNetworkProxy* src) {
     if (!dest || !src) return;
+    // 检查目标对象是否已初始化，如果未初始化则先初始化
+    XClassEnsureVtable(dest, XNetworkProxy);
     dest->type = src->type;
     dest->capabilities = src->capabilities;
     dest->port = src->port;
@@ -232,6 +238,8 @@ static void VXNetworkProxy_copy(XNetworkProxy* dest, const XNetworkProxy* src) {
 
 static void VXNetworkProxy_move(XNetworkProxy* dest, XNetworkProxy* src) {
     if (!dest || !src) return;
+    // 检查目标对象是否已初始化，如果未初始化则先初始化
+    XClassEnsureVtable(dest, XNetworkProxy);
     dest->type = src->type;
     dest->capabilities = src->capabilities;
     dest->port = src->port;
@@ -476,11 +484,15 @@ static void VXNetworkProxyFactory_deinit(XNetworkProxyFactory* factory) {
 
 static void VXNetworkProxyFactory_copy(XNetworkProxyFactory* dest, const XNetworkProxyFactory* src) {
     if (!dest || !src) return;
+    // 检查目标对象是否已初始化，如果未初始化则先初始化
+    XClassEnsureVtable(dest, XNetworkProxyFactory);
     dest->queryProxy = src->queryProxy;
 }
 
 static void VXNetworkProxyFactory_move(XNetworkProxyFactory* dest, XNetworkProxyFactory* src) {
     if (!dest || !src) return;
+    // 检查目标对象是否已初始化，如果未初始化则先初始化
+    XClassEnsureVtable(dest, XNetworkProxyFactory);
     dest->queryProxy = src->queryProxy;
     src->queryProxy = NULL;
 }

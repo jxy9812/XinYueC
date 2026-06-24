@@ -39,6 +39,8 @@ static int g_nextLookupId = 1;
 
 static void VXHostInfo_copy(XHostInfo* self, const XHostInfo* src) {
     if (!self || !src) return;
+    // 检查目标对象是否已初始化，如果未初始化则先初始化
+    XClassEnsureVtable(self, XHostInfo);
     
     // 先释放旧资源
     if (self->hostName) {
@@ -71,6 +73,8 @@ static void VXHostInfo_copy(XHostInfo* self, const XHostInfo* src) {
 
 static void VXHostInfo_move(XHostInfo* self, XHostInfo* src) {
     if (!self || !src) return;
+    // 检查目标对象是否已初始化，如果未初始化则先初始化
+    XClassEnsureVtable(self, XHostInfo);
     
     // 先释放旧资源
     if (self->hostName) {

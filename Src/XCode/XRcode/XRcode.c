@@ -1,7 +1,7 @@
 #include "XRcode.h"
+#include "XMemory.h"
 #include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 /* =========================== RS 编码相关表格 =========================== */
 /* GF(2^8) 指数到系数表 */
@@ -183,7 +183,7 @@ static inline void matrix_set(XRcode* qr, int x, int y, unsigned char val) {
 }
 
 XRcode* XRcode_create(void) {
-    XRcode* qr = (XRcode*)malloc(sizeof(XRcode));
+    XRcode* qr = (XRcode*)XMalloc_System(sizeof(XRcode));
     if (!qr) return NULL;
     memset(qr, 0, sizeof(XRcode));
     XByteArray_init(&qr->data_code, true);
@@ -202,7 +202,7 @@ void XRcode_delete(XRcode* qr) {
     XByteArray_deinit_base(&qr->rsec_code);
     XByteArray_deinit_base(&qr->code_word);
     XByteArray_deinit_base(&qr->matrix);
-    free(qr);
+    XFree_System(qr);
 }
 
 /* 检查指定版本是否满足数据容量和预留空白限制 */

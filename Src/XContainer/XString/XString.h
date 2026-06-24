@@ -98,6 +98,21 @@ XString* XString_create_fmt_utf8(const char* utf8_format, ...);
 XString* XString_create_with_length_utf8(const char* utf8_str, size_t len);
 
 /**
+ * @brief 从 UTF-16 字符串创建 XString 对象
+ * @param utf16_str 输入的 UTF-16 字符串（uint16_t 数组，NULL 则创建空字符串）
+ * @return 成功返回 XString 指针，失败返回 NULL
+ */
+XString* XString_create_utf16(const uint16_t* utf16_str);
+
+/**
+ * @brief 从指定长度的 UTF-16 字符串创建 XString 对象
+ * @param utf16_str 输入的 UTF-16 字符串（uint16_t 数组）
+ * @param len 字符串长度（字符数，不含终止符）
+ * @return 成功返回 XString 指针，失败返回 NULL
+ */
+XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len);
+
+/**
  * @brief 从 GBK 字符串创建 XString 对象
  * @param gbk_str 输入的 GBK 字符串（NULL 则创建空字符串）
  * @return 成功返回 XString 指针，失败返回 NULL

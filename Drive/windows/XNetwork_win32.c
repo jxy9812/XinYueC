@@ -21,6 +21,10 @@
 #include "XRingBuffer.h"
 #include "XEvent.h"
 #include "XHostAddress.h"
+#include "XNetworkInterface.h"
+#include "XNetworkAddressEntry.h"
+#include "XVector.h"
+#include "XString.h"
 
 /* ====== Windows SDK 头文件 ====== */
 #include <winsock2.h>
@@ -46,6 +50,10 @@
 
 #ifndef IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED
 #define IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED 0x0004
+#endif
+
+#ifndef IP_ADAPTER_ADDRESS_SKIP_AS_SOURCE
+#define IP_ADAPTER_ADDRESS_SKIP_AS_SOURCE 0x0080
 #endif
 static PIP_ADAPTER_ADDRESSES current = 0;
  /* =========================================================================
@@ -1201,11 +1209,9 @@ XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void)
     return (XNetworkInterfaceIterator)adapterAddresses;
 }
 
-bool XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter, XNetworkInterfaceEntry* out)
+XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter)
 {
-    if (!iter || !out) return false;
-    
-
+    if (!iter) return NULL;
     
     if (current == NULL) {
         current = (PIP_ADAPTER_ADDRESSES)iter;
@@ -1213,37 +1219,106 @@ bool XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter, XNetworkInterfa
         current = current->Next;
     }
     
-    if (current == NULL) return false;
+    if (current == NULL) return NULL;
     
-    memset(out, 0, sizeof(XNetworkInterfaceEntry));
+    /* 创建 XNetworkInterface 对象 */
+    XNetworkInterface* iface = XNetworkInterface_create();
+    if (!iface) return NULL;
     
-    /* 名称 */
-    WideCharToMultiByte(CP_UTF8, 0, current->FriendlyName, -1,
-                       out->readableName, sizeof(out->readableName), NULL, NULL);
-    WideCharToMultiByte(CP_ACP, 0, current->AdapterName, -1,
-                       out->name, sizeof(out->name), NULL, NULL);
+    /* 名称 - AdapterName 是 ASCII/ANSI 编码（网卡 GUID），使用 GBK 转换 */
+    //char nameBuf[1024] = {0};
+    //WideCharToMultiByte(CP_ACP, 0, current->AdapterName, -1, nameBuf, sizeof(nameBuf), NULL, NULL);
+   //printf("%s\n",nameBuf);
+     if (iface->name)
+        XString_assign(iface->name, current->AdapterName);
+    else
+        iface->name = XString_create_utf8(current->AdapterName);
+    iface->humanReadableName = XString_create_utf16(current->FriendlyName);
     
-    out->index = current->IfIndex;
-    out->mtu = (int)current->Mtu;
+    iface->index = (int)current->IfIndex;
+    iface->mtu = (int)current->Mtu;
     
-    /* 硬件地址 */
+    /* 硬件地址 (MAC) */
     if (current->PhysicalAddressLength > 0 && current->PhysicalAddressLength <= 32) {
-        memcpy(out->hwAddr, current->PhysicalAddress, current->PhysicalAddressLength);
-        out->hwAddrLen = current->PhysicalAddressLength;
+        char macStr[64];
+        int pos = 0;
+        for (ULONG i = 0; i < current->PhysicalAddressLength; i++) {
+            pos += sprintf(macStr + pos, "%02X:", current->PhysicalAddress[i]);
+        }
+        if (pos > 0) macStr[pos - 1] = '\0'; /* 移除最后的冒号 */
+        if (iface->hardwareAddress)
+            XString_assign_fmt_utf8(iface->hardwareAddress, macStr);
+        else
+            iface->hardwareAddress = XString_create_fmt_utf8(macStr);
+        //iface->hardwareAddress = XString_create_fmt_utf8(macStr);
     }
     
     /* 标志 */
-    if (current->OperStatus == IfOperStatusUp) out->flags |= XNetworkIf_Up | XNetworkIf_Running;
-    if (current->IfType == IF_TYPE_SOFTWARE_LOOPBACK) out->flags |= XNetworkIf_Loopback;
-#ifndef IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED
-#define IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED 0x0004
-#endif
-    if (current->Flags & IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED) out->flags |= XNetworkIf_Multicast;
+    if (current->OperStatus == IfOperStatusUp) {
+        iface->flags |= XNetworkInterface_IsUp | XNetworkInterface_IsRunning;
+    }
+    if (current->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+        iface->flags |= XNetworkInterface_IsLoopBack;
+    }
+    if (current->Flags & IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED) {
+        iface->flags |= XNetworkInterface_CanMulticast;
+    }
     if (current->IfType == IF_TYPE_ETHERNET_CSMACD || current->IfType == IF_TYPE_IEEE80211) {
-        out->type = 1; /* Ethernet/WiFi */
+        iface->type = XNetworkInterface_Ethernet;
+        iface->flags |= XNetworkInterface_CanBroadcast | XNetworkInterface_CanMulticast;
+    } else if (current->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+        iface->type = XNetworkInterface_Loopback;
     }
     
-    return true;
+    iface->isValid = true;
+    
+    /* 获取 IP 地址条目 */
+    PIP_ADAPTER_UNICAST_ADDRESS ua = current->FirstUnicastAddress;
+    while (ua) {
+        XNetworkAddressEntry entry;
+        XNetworkAddressEntry_init(&entry);
+        
+        XHostAddress addr;
+        XHostAddress_init(&addr);
+        sa2addr((struct sockaddr_storage*)ua->Address.lpSockaddr, &addr, NULL);
+        XNetworkAddressEntry_setIp(&entry, &addr);
+        
+        /* 计算子网掩码 */
+        uint8_t prefixLen = ua->OnLinkPrefixLength;
+        if (ua->Address.lpSockaddr->sa_family == AF_INET) {
+            uint32_t maskVal = prefixLen >= 32 ? 0xFFFFFFFF : htonl(0xFFFFFFFF << (32 - prefixLen));
+            XHostAddress mask;
+            XHostAddress_init(&mask);
+            XHostAddress_setAddressIPv4(&mask, maskVal);
+            XNetworkAddressEntry_setNetmask(&entry, &mask);
+            XHostAddress_deinit_base(&mask);
+        } else {
+            uint8_t maskBytes[16] = {0};
+            uint8_t tempPrefix = prefixLen;
+            for (int j = 0; j < 16 && tempPrefix > 0; j++) {
+                if (tempPrefix >= 8) {
+                    maskBytes[j] = 0xFF;
+                    tempPrefix -= 8;
+                } else {
+                    maskBytes[j] = (uint8_t)(0xFF << (8 - tempPrefix));
+                    tempPrefix = 0;
+                }
+            }
+            XHostAddress mask;
+            XHostAddress_init(&mask);
+            XHostAddress_setAddressIPv6(&mask, maskBytes);
+            XNetworkAddressEntry_setNetmask(&entry, &mask);
+            XHostAddress_deinit_base(&mask);
+        }
+        
+        XVector_push_back_move_1_base(iface->addressEntries, &entry);
+        XNetworkAddressEntry_deinit_base(&entry);
+        XHostAddress_deinit_base(&addr);
+        
+        ua = ua->Next;
+    }
+    
+    return iface;
 }
 
 void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter)
@@ -1256,26 +1331,25 @@ void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter)
     current = NULL;
 }
 
-bool XNetwork_getInterfaceAddresses(const char* ifname,
-                                    XHostAddress** addrs, XHostAddress** masks, int* count)
+XVector* XNetwork_getInterfaceAddresses(const XString* ifname)
 {
-    if (!ifname || !addrs || !count) return false;
+    if (!ifname) return NULL;
     
-    *count = 0;
-    *addrs = NULL;
-    if (masks) *masks = NULL;
+    /* 获取接口名称的 C 字符串 */
+    const char* ifnameStr = XString_toUtf8(ifname);
+    if (!ifnameStr) return NULL;
     
     PIP_ADAPTER_ADDRESSES adapterAddresses = NULL;
     ULONG size = 0;
     
     GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, NULL, NULL, &size);
     adapterAddresses = (PIP_ADAPTER_ADDRESSES)XMalloc_System(size);
-    if (!adapterAddresses) return false;
+    if (!adapterAddresses) return NULL;
     
     if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, NULL,
                              adapterAddresses, &size) != ERROR_SUCCESS) {
         XFree_System(adapterAddresses);
-        return false;
+        return NULL;
     }
     
     /* 查找指定接口 */
@@ -1284,7 +1358,7 @@ bool XNetwork_getInterfaceAddresses(const char* ifname,
         char name[128];
         WideCharToMultiByte(CP_ACP, 0, adapter->AdapterName, -1, name, sizeof(name), NULL, NULL);
         
-        if (strcmp(name, ifname) == 0) {
+        if (strcmp(name, ifnameStr) == 0) {
             /* 计算地址数量 */
             int addrCount = 0;
             PIP_ADAPTER_UNICAST_ADDRESS ua = adapter->FirstUnicastAddress;
@@ -1295,63 +1369,99 @@ bool XNetwork_getInterfaceAddresses(const char* ifname,
             
             if (addrCount == 0) {
                 XFree_System(adapterAddresses);
-                return false;
+                return NULL;
             }
             
-            /* 分配数组 */
-            XHostAddress* addrArray = (XHostAddress*)XCalloc_System(addrCount, sizeof(XHostAddress));
-            XHostAddress* maskArray = masks ? (XHostAddress*)XCalloc_System(addrCount, sizeof(XHostAddress)) : NULL;
-            
-            if (!addrArray) {
+            /* 创建向量 */
+            XVector* entries = XVector_create(sizeof(XNetworkAddressEntry));
+            if (!entries) {
                 XFree_System(adapterAddresses);
-                return false;
+                return NULL;
             }
             
-            /* 填充地址 */
+            /* 设置向量的数据拷贝、移动和释放方法 */
+            XContainerSetDataCopyMethod(entries, XNetworkAddressEntry_copy_base);
+            XContainerSetDataMoveMethod(entries, XNetworkAddressEntry_move_base);
+            XContainerSetDataDeinitMethod(entries, XNetworkAddressEntry_deinit_base);
+            
+            /* 填充地址条目 */
             ua = adapter->FirstUnicastAddress;
-            for (int i = 0; i < addrCount && ua; i++) {
-                XHostAddress_init(&addrArray[i]);
-                sa2addr((struct sockaddr_storage*)ua->Address.lpSockaddr, &addrArray[i], NULL);
+            while (ua) {
+                XNetworkAddressEntry entry;
+                XNetworkAddressEntry_init(&entry);
                 
-                if (maskArray) {
-                    XHostAddress_init(&maskArray[i]);
-                    /* 从前缀长度计算掩码 */
-                    uint8_t prefixLen = ua->OnLinkPrefixLength;
-                    if (ua->Address.lpSockaddr->sa_family == AF_INET) {
-                        uint32_t mask = prefixLen >= 32 ? 0xFFFFFFFF : htonl(0xFFFFFFFF << (32 - prefixLen));
-                        XHostAddress_setAddressIPv4(&maskArray[i], mask);
-                    } else {
-                        /* IPv6 掩码 */
-                        uint8_t maskBytes[16] = {0};
-                        for (int j = 0; j < 16 && prefixLen > 0; j++) {
-                            if (prefixLen >= 8) {
-                                maskBytes[j] = 0xFF;
-                                prefixLen -= 8;
-                            } else {
-                                maskBytes[j] = (uint8_t)(0xFF << (8 - prefixLen));
-                                prefixLen = 0;
-                            }
+                /* 设置 IP 地址 */
+                sa2addr((struct sockaddr_storage*)ua->Address.lpSockaddr, &entry.ip, NULL);
+                
+                /* 从前缀长度计算掩码 */
+                uint8_t prefixLen = ua->OnLinkPrefixLength;
+                if (ua->Address.lpSockaddr->sa_family == AF_INET) {
+                    uint32_t maskVal = prefixLen >= 32 ? 0xFFFFFFFF : htonl(0xFFFFFFFF << (32 - prefixLen));
+                    XHostAddress_setAddressIPv4(&entry.netmask, maskVal);
+                } else {
+                    /* IPv6 掩码 */
+                    uint8_t maskBytes[16] = {0};
+                    uint8_t tempPrefix = prefixLen;
+                    for (int j = 0; j < 16 && tempPrefix > 0; j++) {
+                        if (tempPrefix >= 8) {
+                            maskBytes[j] = 0xFF;
+                            tempPrefix -= 8;
+                        } else {
+                            maskBytes[j] = (uint8_t)(0xFF << (8 - tempPrefix));
+                            tempPrefix = 0;
                         }
-                        XHostAddress_setAddressIPv6(&maskArray[i], maskBytes);
+                    }
+                    XHostAddress_setAddressIPv6(&entry.netmask, maskBytes);
+                }
+                
+                /* 设置广播地址（如果支持） */
+                if (adapter->Flags & IP_ADAPTER_NO_MULTICAST) {
+                    entry.broadcastIsValid = false;
+                } else {
+                    /* 计算广播地址：IP | ~掩码 */
+                    if (ua->Address.lpSockaddr->sa_family == AF_INET) {
+                        uint32_t ipVal = XHostAddress_toIPv4Address(&entry.ip);
+                        uint32_t maskVal = XHostAddress_toIPv4Address(&entry.netmask);
+                        uint32_t broadcastVal = ipVal | ~maskVal;
+                        XHostAddress_setAddressIPv4(&entry.broadcast, broadcastVal);
+                        entry.broadcastIsValid = true;
+                    } else {
+                        entry.broadcastIsValid = false;  /* IPv6 没有广播 */
                     }
                 }
+                
+                /* 设置地址生命周期 */
+                entry.preferredLifetime = (int64_t)ua->PreferredLifetime * 1000;  /* 转换为毫秒 */
+                entry.validityLifetime = (int64_t)ua->ValidLifetime * 1000;       /* 转换为毫秒 */
+                entry.lifetimeKnown = true;
+                
+                /* 设置 DNS 资格状态 */
+                /* SkipAsSource 表示该地址不应用于出站连接，通常也不应注册到 DNS */
+                if (ua->Flags & IP_ADAPTER_ADDRESS_SKIP_AS_SOURCE) {
+                    entry.dnsEligibilityStatus = XNetworkAddressEntry_DnsIneligible;
+                } else {
+                    entry.dnsEligibilityStatus = XNetworkAddressEntry_DnsEligible;
+                }
+                
+                /* 设置是否为永久地址 */
+                /* 永久地址：生命周期为无限（0xFFFFFFFF 或很大的值） */
+                entry.isPermanent = (ua->ValidLifetime == 0xFFFFFFFF || ua->ValidLifetime > 86400);
+                
+                XVector_push_back_move_1_base(entries, &entry);
+                XNetworkAddressEntry_deinit_base(&entry);  /* 释放临时变量的堆区资源 */
                 
                 ua = ua->Next;
             }
             
-            *count = addrCount;
-            *addrs = addrArray;
-            if (masks) *masks = maskArray;
-            
             XFree_System(adapterAddresses);
-            return true;
+            return entries;
         }
         
         adapter = adapter->Next;
     }
     
     XFree_System(adapterAddresses);
-    return false;
+    return NULL;
 }
 
 /* =========================================================================

@@ -1,9 +1,11 @@
 ﻿#include"XIOTest.h"
+#include"XNetworkTest.h"
 #include"XMenu.h"
 void XMenu_XIOTest(XMenu* root)
 {
 	XMenu* menu = XMenu_create("IO");
 	XMenu_addMenu(root, menu);
+	XMenu_XNetworkTest(menu);
 	XMenu_XSerialPortTest(menu);
 	XMenu_XSocketTest(menu);
 	XMenu_XTcpServerTest(menu);

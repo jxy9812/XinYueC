@@ -96,6 +96,57 @@ XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
     return str;
 }
 
+XString* XString_create_utf16(const uint16_t* utf16_str)
+{
+    if (!utf16_str) return NULL;
+    // 计算 UTF-16 字符串长度
+    size_t len = 0;
+    while (utf16_str[len] != 0) {
+        len++;
+    }
+    return XString_create_with_length_utf16(utf16_str, len);
+}
+
+XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
+{
+    if (!utf16_str || len == 0) {
+        return NULL;
+    }
+
+    // 步骤1：计算转换所需的XChar数量（首次调用获取长度）
+    int64_t xchar_count = XChar_from_utf16_stream(utf16_str, len, NULL, 0);
+    if (xchar_count <= 0) {
+        return NULL;
+    }
+
+    // 步骤2：创建并初始化XString
+    XString* str = (XString*)XMalloc_System(sizeof(XString));
+    if (!str) {
+        return NULL;
+    }
+    XString_init(str);
+
+    // 步骤3：预留足够空间（包含终止符）
+    XString_reserve(str, (size_t)xchar_count);
+
+    // 步骤4：执行实际转换
+    XChar* data = XString_data(str);
+    xchar_count = XChar_from_utf16_stream(utf16_str, len, data, (size_t)xchar_count + 1);
+
+    if (xchar_count <= 0) {
+        XString_delete_base(str);
+        return NULL;
+    }
+
+    // 步骤5：设置长度和终止符
+    str->parent.m_size = (size_t)xchar_count;
+    data[xchar_count] = (XChar){ 0 };
+
+    XString_deinitCache(str);
+    Set_Class_MemoryFree(str, XFree_System);
+    return str;
+}
+
 XString* XString_create_gbk(const char* gbk_str)
 {
     if (!gbk_str) return NULL;

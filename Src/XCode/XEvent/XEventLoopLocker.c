@@ -1,6 +1,6 @@
 ﻿#include "XEventLoopLocker.h"
 //#include "XApplication.h"
-#include <stdlib.h>
+#include "XMemory.h"
 #include <stdint.h>
 
 // 内部类型编码（模仿 Qt 的指针低位标记技巧）
@@ -90,7 +90,7 @@ static void release_lock(XEventLoopLocker_Type type, void* ptr) {
 
 // --- 构造函数 ---
 XEventLoopLocker* XEventLoopLocker_create(void) {
-    XEventLoopLocker* self = (XEventLoopLocker*)malloc(sizeof(XEventLoopLocker));
+    XEventLoopLocker* self = (XEventLoopLocker*)XMalloc_System(sizeof(XEventLoopLocker));
     if (!self) return NULL;
     self->data = (uintptr_t)XEventLoopLocker_Type_Application; // 无指针，仅类型
     acquire_lock(XEventLoopLocker_Type_Application, NULL);
@@ -102,7 +102,7 @@ XEventLoopLocker* XEventLoopLocker_createForLoop(XEventLoop* loop) {
         // 指针未对齐！这在正常分配下不会发生，但需防御
         return NULL;
     }
-    XEventLoopLocker* self = (XEventLoopLocker*)malloc(sizeof(XEventLoopLocker));
+    XEventLoopLocker* self = (XEventLoopLocker*)XMalloc_System(sizeof(XEventLoopLocker));
     if (!self) return NULL;
     self->data = ((uintptr_t)loop) | (uintptr_t)XEventLoopLocker_Type_EventLoop;
     acquire_lock(XEventLoopLocker_Type_EventLoop, loop);
@@ -113,7 +113,7 @@ XEventLoopLocker* XEventLoopLocker_createForThread(XThread* thread) {
     if (((uintptr_t)thread & XEL_TYPE_MASK) != 0) {
         return NULL;
     }
-    XEventLoopLocker* self = (XEventLoopLocker*)malloc(sizeof(XEventLoopLocker));
+    XEventLoopLocker* self = (XEventLoopLocker*)XMalloc_System(sizeof(XEventLoopLocker));
     if (!self) return NULL;
     self->data = ((uintptr_t)thread) | (uintptr_t)XEventLoopLocker_Type_Thread;
     acquire_lock(XEventLoopLocker_Type_Thread, thread);
@@ -126,13 +126,13 @@ void XEventLoopLocker_destroy(XEventLoopLocker* self) {
     XEventLoopLocker_Type type = get_type(self->data);
     void* ptr = get_pointer(self->data);
     release_lock(type, ptr);
-    free(self);
+    XFree_System(self);
 }
 
 // --- 移动语义（模拟 C++ move）---
 XEventLoopLocker* XEventLoopLocker_move(XEventLoopLocker* other) {
     if (!other) return NULL;
-    XEventLoopLocker* self = (XEventLoopLocker*)malloc(sizeof(XEventLoopLocker));
+    XEventLoopLocker* self = (XEventLoopLocker*)XMalloc_System(sizeof(XEventLoopLocker));
     if (!self) return NULL;
     self->data = other->data;
     // 将 other 置为空（避免重复释放）

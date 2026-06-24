@@ -23,6 +23,8 @@ typedef struct XClass
 #define XVtableGetFunc(Vtable,Offset,Type) ((Type)((((XVtable*)Vtable)->data)[Offset]))//用虚函数表获取函数
 #define XClassGetVtable(Object) ((XClass*)Object)->m_vtable  //用获取类中的虚函数表
 #define XClassSetVtable(Obj,Type) (XClassGetVtable(Obj)=Type##_class_init())
+#define XClassIsVtableNull(Obj) (XClassGetVtable(Obj) == NULL)  // 检查虚函数表是否为空
+#define XClassEnsureVtable(Obj,Type) do { if (XClassIsVtableNull(Obj)) XClassSetVtable(Obj, Type); } while(0)  // 确保虚函数表已初始化
 //#define XClassGetVirtualFunc(Object,Offset,Type) ((Type)((((XClass*)Object)->m_vtable->data)[Offset]))
 #define XClassGetVirtualFunc(Object,Offset,Type)      XVtableGetFunc((XClassGetVtable(Object)),Offset,Type)//用XClassObject及其子类获取虚函数
 #define isNULLInfo(args,str) args,#args,str ,__FUNCTION__,__FILE__,__LINE__
