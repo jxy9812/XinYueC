@@ -43,19 +43,6 @@ add_executable(${PROJECT_NAME}
 ${TEST_FILE}
 "./main.c"
  )
- # 区分系统：仅在 Linux 下链接数学库
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Linux 系统需要显式链接数学库 libm
-    target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME} m)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    # Windows 系统通常不需要链接额外的数学库（数学函数在 msvcrt 等默认库中）
-    # 若有特殊需求可在此添加 Windows 特定链接逻辑
-    target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME})
-
-    # 操作物理磁盘需要管理员权限，通过清单文件请求UAC提权
-    #set_target_properties(${PROJECT_NAME} PROPERTIES
-     #   LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
-endif()
-
+target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME})
 #安装
 include(CMake_Install.cmake)

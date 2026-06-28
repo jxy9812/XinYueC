@@ -827,6 +827,365 @@ XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar
 XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter, size_t limit, XChar_CaseSensitivity cs);
 
 
+// -------------------------- Qt 6.8 对齐：子串操作函数 --------------------------
+
+/**
+ * @brief 返回从pos开始到末尾的子串（对齐Qt6.0 QString::sliced(pos)）
+ * @param str 源XString对象指针
+ * @param pos 起始位置
+ * @return 成功返回新XString指针，失败返回NULL
+ * @note pos必须 <= size()，否则行为未定义
+ */
+XString* XString_sliced(const XString* str, size_t pos);
+
+/**
+ * @brief 返回从pos开始长度为n的子串（对齐Qt6.0 QString::sliced(pos, n)）
+ * @param str 源XString对象指针
+ * @param pos 起始位置
+ * @param n 子串长度
+ * @return 成功返回新XString指针，失败返回NULL
+ * @note pos+n必须 <= size()，否则行为未定义
+ */
+XString* XString_sliced_2(const XString* str, size_t pos, size_t n);
+
+/**
+ * @brief 返回前n个字符的子串（对齐Qt6.0 QString::first(n)）
+ * @param str 源XString对象指针
+ * @param n 字符数
+ * @return 成功返回新XString指针，失败返回NULL
+ * @note n必须 <= size()，否则行为未定义
+ */
+XString* XString_first(const XString* str, size_t n);
+
+/**
+ * @brief 返回后n个字符的子串（对齐Qt6.0 QString::last(n)）
+ * @param str 源XString对象指针
+ * @param n 字符数
+ * @return 成功返回新XString指针，失败返回NULL
+ * @note n必须 <= size()，否则行为未定义
+ */
+XString* XString_last(const XString* str, size_t n);
+
+/**
+ * @brief 返回去掉末尾len个字符的子串（对齐Qt QString::chopped(len)）
+ * @param str 源XString对象指针
+ * @param len 要去掉的末尾字符数
+ * @return 成功返回新XString指针，失败返回NULL
+ * @note len必须 <= size()，否则行为未定义
+ */
+XString* XString_chopped(const XString* str, size_t len);
+
+// -------------------------- Qt 6.8 对齐：原地修改函数 --------------------------
+
+/**
+ * @brief 移除末尾n个字符（对齐Qt QString::chop(n)）
+ * @param str XString对象指针
+ * @param n 要移除的字符数
+ */
+void XString_chop(XString* str, size_t n);
+
+/**
+ * @brief 调整字符串大小，新位置填充指定字符（对齐Qt QString::resize(n, fillChar)）
+ * @param str XString对象指针
+ * @param size 新的长度
+ * @param fillChar 填充字符
+ */
+void XString_resize_fill(XString* str, size_t size, XChar fillChar);
+
+/**
+ * @brief 用指定字符填充整个字符串（对齐Qt QString::fill(ch, size)）
+ * @param str XString对象指针
+ * @param ch 填充字符
+ * @param size 新的大小（-1表示保持当前大小）
+ * @return 成功返回true，失败返回false
+ */
+bool XString_fill(XString* str, XChar ch, int64_t size);
+
+/**
+ * @brief 交换两个字符串内容（对齐Qt QString::swap(other)）
+ * @param str XString对象指针
+ * @param other 另一个XString对象指针
+ */
+void XString_swap(XString* str, XString* other);
+
+/**
+ * @brief 释放多余容量（对齐Qt QString::squeeze()）
+ * @param str XString对象指针
+ */
+void XString_squeeze(XString* str);
+
+/**
+ * @brief 释放多余容量（对齐Qt QString::shrink_to_fit()，等价于squeeze）
+ * @param str XString对象指针
+ */
+#define XString_shrink_to_fit XString_squeeze
+
+/**
+ * @brief 原地切片：从pos开始到末尾（对齐Qt6.8 QString::slice(pos)）
+ * @param str XString对象指针
+ * @param pos 起始位置
+ * @return 成功返回true，失败返回false
+ */
+bool XString_slice(XString* str, size_t pos);
+
+/**
+ * @brief 原地切片：从pos开始长度为n（对齐Qt6.8 QString::slice(pos, n)）
+ * @param str XString对象指针
+ * @param pos 起始位置
+ * @param n 子串长度
+ * @return 成功返回true，失败返回false
+ */
+bool XString_slice_2(XString* str, size_t pos, size_t n);
+
+/**
+ * @brief 调整大小用于覆写（对齐Qt6.8 QString::resizeForOverwrite(size)）
+ * @param str XString对象指针
+ * @param size 新的大小
+ */
+void XString_resizeForOverwrite(XString* str, size_t size);
+
+// -------------------------- Qt 6.8 对齐：转换函数 --------------------------
+
+/**
+ * @brief 转换为大小写折叠形式（对齐Qt QString::toCaseFolded()）
+ * @param str 源XString对象指针
+ * @return 成功返回新XString指针，失败返回NULL
+ */
+XString* XString_toCaseFolded(const XString* str);
+
+/**
+ * @brief 转换为HTML转义字符串（对齐Qt QString::toHtmlEscaped()）
+ * @param str 源XString对象指针
+ * @return 成功返回新XString指针，失败返回NULL
+ */
+XString* XString_toHtmlEscaped(const XString* str);
+
+/**
+ * @brief 左对齐填充（对齐Qt QString::leftJustified(width, fill, truncate)）
+ * @param str 源XString对象指针
+ * @param width 目标宽度
+ * @param fill 填充字符
+ * @param truncate 超出时是否截断
+ * @return 成功返回新XString指针，失败返回NULL
+ */
+XString* XString_leftJustified(const XString* str, size_t width, XChar fill, bool truncate);
+
+/**
+ * @brief 右对齐填充（对齐Qt QString::rightJustified(width, fill, truncate)）
+ * @param str 源XString对象指针
+ * @param width 目标宽度
+ * @param fill 填充字符
+ * @param truncate 超出时是否截断
+ * @return 成功返回新XString指针，失败返回NULL
+ */
+XString* XString_rightJustified(const XString* str, size_t width, XChar fill, bool truncate);
+
+/**
+ * @brief 简化空白（对齐Qt QString::simplified()）
+ * @param str 源XString对象指针
+ * @return 成功返回新XString指针（去除首尾空白，内部连续空白替换为单个空格），失败返回NULL
+ */
+XString* XString_simplified(const XString* str);
+
+/**
+ * @brief 重复字符串（对齐Qt QString::repeated(times)）
+ * @param str 源XString对象指针
+ * @param times 重复次数（<1返回空字符串）
+ * @return 成功返回新XString指针，失败返回NULL
+ */
+XString* XString_repeated(const XString* str, size_t times);
+
+// -------------------------- Qt 6.8 对齐：查询函数 --------------------------
+
+/**
+ * @brief 统计子串出现次数（对齐Qt QString::count(str, cs)）
+ * @param str 源XString对象指针
+ * @param sub 子串（XString）
+ * @param cs 大小写敏感性
+ * @return 出现次数
+ */
+size_t XString_count(const XString* str, const XString* sub, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 统计UTF-8子串出现次数
+ * @param str 源XString对象指针
+ * @param sub 子串（UTF-8）
+ * @param cs 大小写敏感性
+ * @return 出现次数
+ */
+size_t XString_count_utf8(const XString* str, const char* sub, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 统计字符出现次数（对齐Qt QString::count(ch, cs)）
+ * @param str 源XString对象指针
+ * @param ch 要统计的字符
+ * @param cs 大小写敏感性
+ * @return 出现次数
+ */
+size_t XString_count_char(const XString* str, XChar ch, XChar_CaseSensitivity cs);
+
+// -------------------------- Qt 6.8 对齐：静态/最大值函数 --------------------------
+
+/**
+ * @brief 获取XString理论最大容量（对齐Qt6.8 QString::maxSize()）
+ * @return 理论最大字符数
+ */
+size_t XString_maxSize(void);
+
+// -------------------------- Qt 6.8 对齐：数值转字符串静态函数 --------------------------
+
+/**
+ * @brief 将int转为XString（对齐Qt QString::number(int, base)）
+ * @param n 整数值
+ * @param base 进制（2-36，默认10）
+ * @return 成功返回新XString指针，失败返回NULL
+ */
+XString* XString_number_int(int n, int base);
+
+/**
+ * @brief 将unsigned int转为XString（对齐Qt QString::number(uint, base)）
+ */
+XString* XString_number_uint(unsigned int n, int base);
+
+/**
+ * @brief 将long转为XString（对齐Qt QString::number(long, base)）
+ */
+XString* XString_number_long(long n, int base);
+
+/**
+ * @brief 将unsigned long转为XString（对齐Qt QString::number(ulong, base)）
+ */
+XString* XString_number_ulong(unsigned long n, int base);
+
+/**
+ * @brief 将long long转为XString（对齐Qt QString::number(qlonglong, base)）
+ */
+XString* XString_number_llong(long long n, int base);
+
+/**
+ * @brief 将unsigned long long转为XString（对齐Qt QString::number(qulonglong, base)）
+ */
+XString* XString_number_ullong(unsigned long long n, int base);
+
+/**
+ * @brief 将double转为XString（对齐Qt QString::number(double, format, precision)）
+ * @param n 浮点数值
+ * @param format 格式（'e'/'E'科学计数, 'f'/'F'定点, 'g'/'G'自动）
+ * @param precision 精度（默认6）
+ * @return 成功返回新XString指针，失败返回NULL
+ */
+XString* XString_number_double(double n, char format, int precision);
+
+/**
+ * @brief 将float转为XString（对齐Qt QString::number(float, format, precision)）
+ */
+XString* XString_number_float(float n, char format, int precision);
+
+// -------------------------- Qt 6.8 对齐：数据访问函数 --------------------------
+
+/**
+ * @brief 获取可修改的XChar数据指针（对齐Qt QString::data()）
+ * @param str XString对象指针
+ * @return XChar数据指针，失败返回NULL
+ * @note 返回指针在字符串被修改前有效
+ */
+XChar* XString_data_ptr(XString* str);
+
+/**
+ * @brief 获取常量XChar数据指针（对齐Qt QString::constData()）
+ * @param str XString对象指针
+ * @return 常量XChar数据指针，失败返回NULL
+ */
+const XChar* XString_constData(const XString* str);
+
+/**
+ * @brief 获取字符串长度（等价于size，对齐Qt QString::length()）
+ * @param str XString对象指针
+ * @return 字符数
+ */
+#define XString_length XString_length_base
+
+/**
+ * @brief 获取元素大小（对齐Qt value_type相关）
+ */
+#define XString_typeSize XString_typeSize_base
+
+// -------------------------- Qt 6.8 对齐：setNum扩展 --------------------------
+
+/**
+ * @brief 将short转为字符串并设置（对齐Qt QString::setNum(short, base)）
+ */
+bool XString_setNum_short(XString* str, short n, int base);
+
+// -------------------------- Qt 6.8 对齐：setUnicode/setUtf16/setRawData --------------------------
+
+/**
+ * @brief 从XChar数组设置内容（对齐Qt QString::setUnicode(unicode, size)）
+ * @param str XString对象指针
+ * @param unicode XChar数组
+ * @param size 字符数
+ * @return 成功返回true，失败返回false
+ */
+bool XString_setUnicode(XString* str, const XChar* unicode, size_t size);
+
+/**
+ * @brief 从uint16_t数组设置内容（对齐Qt QString::setUtf16(unicode, size)）
+ * @param str XString对象指针
+ * @param unicode uint16_t数组（UTF-16）
+ * @param size 字符数
+ * @return 成功返回true，失败返回false
+ */
+bool XString_setUtf16(XString* str, const uint16_t* unicode, size_t size);
+
+// -------------------------- Qt 6.8 对齐：XChar重载查找/包含/替换/移除 --------------------------
+
+/**
+ * @brief 查找字符首次出现的位置（对齐Qt QString::indexOf(QChar, from, cs)）
+ * @param str XString对象指针
+ * @param ch 要查找的字符
+ * @param from 起始位置
+ * @param cs 大小写敏感性
+ * @return 成功返回索引，失败返回-1
+ */
+int64_t XString_indexOf_char(const XString* str, XChar ch, size_t from, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 查找字符最后出现的位置（对齐Qt6.3 QString::lastIndexOf(QChar, cs)）
+ * @param str XString对象指针
+ * @param ch 要查找的字符
+ * @param cs 大小写敏感性
+ * @return 成功返回索引，失败返回-1
+ */
+int64_t XString_lastIndexOf_char(const XString* str, XChar ch, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 检查是否包含指定字符（对齐Qt QString::contains(QChar, cs)）
+ * @param str 源XString对象指针
+ * @param ch 要查找的字符
+ * @param cs 大小写敏感性
+ * @return 包含返回true，否则返回false
+ */
+bool XString_contains_char(const XString* str, XChar ch, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 移除所有指定字符（对齐Qt QString::remove(QChar, cs)）
+ * @param str XString对象指针
+ * @param ch 要移除的字符
+ * @param cs 大小写敏感性
+ * @return 成功返回true，失败返回false
+ */
+bool XString_remove_char(XString* str, XChar ch, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 替换字符（对齐Qt QString::replace(QChar before, QChar after, cs)）
+ * @param str XString对象指针
+ * @param before 要替换的字符
+ * @param after 替换后的字符
+ * @param cs 大小写敏感性
+ * @return 成功返回true，失败返回false
+ */
+bool XString_replace_char(XString* str, XChar before, XChar after, XChar_CaseSensitivity cs);
+
 //拷贝字符串并返回
 char* XStrdup(char* str);
 #ifdef __cplusplus

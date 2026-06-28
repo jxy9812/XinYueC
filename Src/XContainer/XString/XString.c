@@ -6,17 +6,65 @@
 #include <limits.h>
 #include "XStringList.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
-
 // 内部常量定义
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
 #define XSTRING_MIN_CAPACITY 16  // 最小容量（不含结束符）
 #define XString_cdata(str) ((const XChar*)XContainerSharedDataPtr(str))
-//#define XString_copy        XString_create_copy
+
+// ==================== 内部公共宏：消除重复模式 ====================
+
+// setNum系列宏：整数类型统一实现
+#define DEFINE_SETNUM_INT(FuncName, FromFunc, IntType) \
+bool FuncName(XString* str, IntType n, int base) { \
+    if (!str || base < 2 || base > 36) return false; \
+    int64_t len = FromFunc(n, base, NULL, 0, true); \
+    if (len == -1) return false; \
+    XString_resize(str, len); \
+    return FromFunc(n, base, XString_data(str), len + 1, true) != -1; \
+}
+
+// setNum浮点类型统一实现
+#define DEFINE_SETNUM_FLOAT(FuncName, FromFunc, FloatType) \
+bool FuncName(XString* str, FloatType n, char format, int precision) { \
+    if (!str) return false; \
+    int64_t len = FromFunc(n, format, NULL, 0, precision); \
+    if (len == -1) return false; \
+    XString_resize(str, len); \
+    return FromFunc(n, format, XString_data(str), len + 1, precision) != -1; \
+}
+
+// number系列宏：基于setNum创建新XString
+#define DEFINE_NUMBER(FuncName, SetNumFunc, NumType) \
+XString* FuncName(NumType n, int base) { \
+    XString* str = XString_create(); \
+    if (!str) return NULL; \
+    if (!SetNumFunc(str, n, base)) { XString_delete_base(str); return NULL; } \
+    return str; \
+}
+
+// number浮点系列宏
+#define DEFINE_NUMBER_FLOAT(FuncName, SetNumFunc, FloatType) \
+XString* FuncName(FloatType n, char format, int precision) { \
+    XString* str = XString_create(); \
+    if (!str) return NULL; \
+    if (!SetNumFunc(str, n, format, precision)) { XString_delete_base(str); return NULL; } \
+    return str; \
+}
+
+// 数值转换系列宏：XString -> 数值
+#define DEFINE_TO_NUM(FuncName, RetType, ToFunc, DefaultVal) \
+RetType FuncName(const XString* str, bool* ok, int base) { \
+    if (!str) { if (ok) *ok = false; return DefaultVal; } \
+    return ToFunc(XContainerSharedDataPtr(str), XContainerSize(str), base, ok); \
+}
+
+// toXxx_length缓存长度查询宏
+#define DEFINE_TO_LENGTH(FuncName, ToFunc, CacheType) \
+size_t FuncName(const XString* str) { \
+    if (!str || XString_isEmpty_base(str)) return 0; \
+    if (ToFunc(str)) return str->m_cache[CacheType].m_length; \
+    return 0; \
+}
 
 // -------------------------- 内部机制辅助函数 --------------------------
 
@@ -138,7 +186,7 @@ XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
         return NULL;
     }
 
-    // 步骤5：设置长度和终止符
+    // 步骤5：设置长度和终止符（与Qt QString一致，内部保留尾部0）
     str->parent.m_size = (size_t)xchar_count;
     data[xchar_count] = (XChar){ 0 };
 
@@ -232,7 +280,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
         return NULL;
     }
 
-    // 步骤6：设置长度和终止符
+    // 步骤6：设置长度和终止符（与Qt QString一致，内部保留尾部0）
     str->parent.m_size = (size_t)xchar_count;
     data[xchar_count] = (XChar){ 0 };
 
@@ -538,11 +586,10 @@ const XChar* XString_unicode(const XString* str)
 const uint16_t* XString_utf16(const XString* str)
 {
     if (!str) return NULL;
-
-    // 利用已有的UTF-16转换缓存
-    const uint16_t* utf16_data = XString_toUtf16(str);
-    // 由于uint16_t在UTF-16场景下通常为16位，可直接转换为uint16_t指针
-    return (const uint16_t*)utf16_data;
+    // XChar本质就是uint16_t（UTF-16编码），内部存储已经是UTF-16
+    // 直接返回内部数据指针，与Qt QString::utf16()行为一致
+    // 返回的是以0终止的UTF-16数组（reserve时已预留终止符空间）
+    return (const uint16_t*)XContainerSharedDataPtr(str);
 }
 
 bool XString_append(XString* str, const XString* app_str)
@@ -576,46 +623,8 @@ bool XString_append(XString* str, const XString* app_str)
     return true;
 }
 
-bool XString_append_utf8(XString* str, const char* utf8_str)
-{
-    if (!str || !utf8_str) return false;
-
-    // 先计算需要转换的XChar数量（不含终止符）
-    int64_t xchar_count = XChar_fromUtf8Stream((const uint8_t*)utf8_str,0, NULL, 0);
-    if (xchar_count <= 0) return false;
-
-    XString_detach(str);
-    size_t current_size = XString_length_base(str);
-    size_t new_size = current_size + (size_t)xchar_count;
-
-    // 预留足够空间（包含终止符）
-    XString_reserve(str, new_size);
-
-    // 直接转换到目标缓冲区
-    XChar* data = XString_data(str);
-    int64_t result = XChar_fromUtf8Stream(
-        (const uint8_t*)utf8_str,
-        0,
-        data + current_size,  // 直接写到当前字符串末尾
-        (size_t)xchar_count + 1  // 包含终止符的空间（实际不会覆盖原终止符）
-    );
-
-    if (result <= 0) {
-        // 转换失败时恢复原长度和终止符
-        XContainerSize(str) = current_size;
-        data[current_size]=0;
-        return false;
-    }
-
-    // 更新字符串长度和终止符
-    XContainerSize(str) = new_size;
-    data[new_size]=0;
-
-    XString_deinitCache(str);
-    return true;
-}
-
-bool XString_append_with_length_utf8(XString* str, const char* utf8_str, size_t len)
+// 内部公共函数：追加UTF-8字符串（len=0表示使用strlen自动计算长度）
+static bool XString_append_utf8_internal(XString* str, const char* utf8_str, size_t len)
 {
     if (!str || !utf8_str) return false;
 
@@ -635,23 +644,31 @@ bool XString_append_with_length_utf8(XString* str, const char* utf8_str, size_t 
     int64_t result = XChar_fromUtf8Stream(
         (const uint8_t*)utf8_str,
         len,
-        data + current_size,  // 直接写到当前字符串末尾
-        (size_t)xchar_count + 1  // 包含终止符的空间（实际不会覆盖原终止符）
+        data + current_size,
+        (size_t)xchar_count + 1
     );
 
     if (result <= 0) {
-        // 转换失败时恢复原长度和终止符
         XContainerSize(str) = current_size;
         data[current_size] = 0;
         return false;
     }
 
-    // 更新字符串长度和终止符
     XContainerSize(str) = new_size;
     data[new_size] = 0;
 
     XString_deinitCache(str);
     return true;
+}
+
+bool XString_append_utf8(XString* str, const char* utf8_str)
+{
+    return XString_append_utf8_internal(str, utf8_str, 0);
+}
+
+bool XString_append_with_length_utf8(XString* str, const char* utf8_str, size_t len)
+{
+    return XString_append_utf8_internal(str, utf8_str, len);
 }
 
 bool XString_append_char(XString* str, XChar ch)
@@ -1725,58 +1742,12 @@ unsigned int XString_toUInt(const XString* str, bool* ok, int base)
     return success ? (unsigned int)val : 0;
 }
 
-short XString_toShort(const XString* str, bool* ok, int base)
-{
-    if (!str) {
-        if (ok) *ok = false;
-        return 0;
-    }
-    return XChar_toShort(XContainerSharedDataPtr(str),XContainerSize(str),base,ok);
-}
-
-int XString_toInt(const XString* str, bool* ok, int base) {
-    if (!str) {
-        if (ok) *ok = false;
-        return 0;
-    }
-    return XChar_toInt(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
-}
-
-long XString_toLong(const XString* str, bool* ok, int base)
-{
-    if (!str) {
-        if (ok) *ok = false;
-        return 0;
-    }
-    return XChar_toLong(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
-}
-
-long long XString_toLongLong(const XString* str, bool* ok, int base)
-{
-    if (!str) {
-        if (ok) *ok = false;
-        return 0;
-    }
-    return XChar_toLongLong(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
-}
-
-unsigned long XString_toULong(const XString* str, bool* ok, int base)
-{
-    if (!str) {
-        if (ok) *ok = false;
-        return 0;
-    }
-    return XChar_toULong(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
-}
-
-unsigned long long XString_toULongLong(const XString* str, bool* ok, int base)
-{
-    if (!str) {
-        if (ok) *ok = false;
-        return 0;
-    }
-    return XChar_toULongLong(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
-}
+DEFINE_TO_NUM(XString_toShort, short, XChar_toShort, 0)
+DEFINE_TO_NUM(XString_toInt, int, XChar_toInt, 0)
+DEFINE_TO_NUM(XString_toLong, long, XChar_toLong, 0)
+DEFINE_TO_NUM(XString_toLongLong, long long, XChar_toLongLong, 0)
+DEFINE_TO_NUM(XString_toULong, unsigned long, XChar_toULong, 0)
+DEFINE_TO_NUM(XString_toULongLong, unsigned long long, XChar_toULongLong, 0)
 
 float XString_toFloat(const XString* str, bool* ok)
 {
@@ -1795,103 +1766,14 @@ double XString_toDouble(const XString* str, bool* ok) {
     return XChar_toDouble(XContainerSharedDataPtr(str), XContainerSize(str), ok);
 }
 
-bool XString_setNum_int(XString* str, int n, int base)
-{
-    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
-        return false;
-    }
-    int64_t len=XChar_fromInt(n,base,NULL,0,true);
-    if (len == -1)
-        return false;
-    XString_resize(str,len);
-    return XChar_fromInt(n, base, XString_data(str), len+1, true)!=-1;
-}
-
-bool XString_setNum_uInt(XString* str, unsigned int n, int base)
-{
-    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
-        return false;
-    }
-    int64_t len = XChar_fromUInt(n, base, NULL, 0, true);
-    if (len == -1)
-        return false;
-    XString_resize(str, len);
-    return XChar_fromUInt(n, base, XString_data(str), len + 1, true) != -1;
-}
-
-bool XString_setNum_long(XString* str, long n, int base)
-{
-    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
-        return false;
-    }
-    int64_t len = XChar_fromLong(n, base, NULL, 0, true);
-    if (len == -1)
-        return false;
-    XString_resize(str, len);
-    return XChar_fromLong(n, base, XString_data(str), len + 1, true) != -1;
-}
-
-bool XString_setNum_uLong(XString* str, unsigned long n, int base)
-{
-    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
-        return false;
-    }
-    int64_t len = XChar_fromULong(n, base, NULL, 0, true);
-    if (len == -1)
-        return false;
-    XString_resize(str, len);
-    return XChar_fromULong(n, base, XString_data(str), len + 1, true) != -1;
-}
-
-bool XString_setNum_llong(XString* str, long long n, int base)
-{
-    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
-        return false;
-    }
-    int64_t len = XChar_fromLongLong(n, base, NULL, 0, true);
-    if (len == -1)
-        return false;
-    XString_resize(str, len);
-    return XChar_fromLongLong(n, base, XString_data(str), len + 1, true) != -1;
-}
-
-bool XString_setNum_uLLong(XString* str, unsigned long long n, int base)
-{
-    if (!str || base < 2 || base > 36) {  // 补充str空指针检查
-        return false;
-    }
-    int64_t len = XChar_fromULongLong(n, base, NULL, 0, true);
-    if (len == -1)
-        return false;
-    XString_resize(str, len);
-    return XChar_fromULongLong(n, base, XString_data(str), len + 1, true) != -1;
-}
-
-bool XString_setNum_float(XString* str, float f, char format, int precision)
-{
-    if (!str ) { 
-        return false;
-    }
-    int64_t len = XChar_fromFloat((double)f,format,NULL,0,precision);
-    if (len == -1)
-        return false;
-    XString_resize(str, len);
-    return XChar_fromFloat((double)f, format, XString_data(str), len + 1, precision) != -1;
-    // 转换为double处理，避免精度损失
-    return XString_setNum_double(str, (double)f, format, precision);
-}
-
-bool XString_setNum_double(XString* str, double d, char format, int precision)
-{
-    if (!str) {
-        return false;
-    }
-    int64_t len = XChar_fromDouble(d, format, NULL, 0, precision);
-    if (len == -1)
-        return false;
-    XString_resize(str, len);
-    return XChar_fromDouble(d, format, XString_data(str), len + 1, precision) != -1;
-}
+DEFINE_SETNUM_INT(XString_setNum_int, XChar_fromInt, int)
+DEFINE_SETNUM_INT(XString_setNum_uInt, XChar_fromUInt, unsigned int)
+DEFINE_SETNUM_INT(XString_setNum_long, XChar_fromLong, long)
+DEFINE_SETNUM_INT(XString_setNum_uLong, XChar_fromULong, unsigned long)
+DEFINE_SETNUM_INT(XString_setNum_llong, XChar_fromLongLong, long long)
+DEFINE_SETNUM_INT(XString_setNum_uLLong, XChar_fromULongLong, unsigned long long)
+DEFINE_SETNUM_FLOAT(XString_setNum_double, XChar_fromDouble, double)
+DEFINE_SETNUM_FLOAT(XString_setNum_float, XChar_fromFloat, float)
 
 XString* XString_left(const XString* str, size_t n)
 {
@@ -2253,9 +2135,538 @@ void XString_deinitCache(XString* str)
     str->m_cache[0].m_length = 0;
 }
 
-void XString_initCache(XString* str)
+static void XString_initCache(XString* str)
 {
     if (str == NULL || str->m_cache != NULL)
         return;
     str->m_cache=XCalloc_System(XStringCache_Size,sizeof(XStringCache));
+}
+
+/* ========================================================================== */
+/*                 Qt 6.8 对齐：子串操作函数                                    */
+/* ========================================================================== */
+
+XString* XString_sliced(const XString* str, size_t pos)
+{
+    if (!str) return NULL;
+    size_t len = XString_length_base(str);
+    if (pos > len) return NULL;
+    return XString_mid(str, pos, len - pos);
+}
+
+XString* XString_sliced_2(const XString* str, size_t pos, size_t n)
+{
+    if (!str) return NULL;
+    return XString_mid(str, pos, n);
+}
+
+XString* XString_first(const XString* str, size_t n)
+{
+    if (!str) return NULL;
+    return XString_left(str, n);
+}
+
+XString* XString_last(const XString* str, size_t n)
+{
+    if (!str) return NULL;
+    return XString_right(str, n);
+}
+
+XString* XString_chopped(const XString* str, size_t len)
+{
+    if (!str) return NULL;
+    size_t str_len = XString_length_base(str);
+    if (len >= str_len) return XString_create_utf8("");
+    return XString_mid(str, 0, str_len - len);
+}
+
+/* ========================================================================== */
+/*                 Qt 6.8 对齐：原地修改函数                                    */
+/* ========================================================================== */
+
+void XString_chop(XString* str, size_t n)
+{
+    if (!str) return;
+    size_t len = XString_length_base(str);
+    if (n >= len) {
+        XString_clear_base(str);
+        return;
+    }
+    XString_truncate(str, len - n);
+}
+
+void XString_resize_fill(XString* str, size_t size, XChar fillChar)
+{
+    if (!str) return;
+    size_t current_size = XString_length_base(str);
+    if (size == current_size) return;
+
+    XString_detach(str);
+    XString_reserve(str, size);
+
+    XChar* data = XString_data(str);
+    if (size > current_size) {
+        for (size_t i = current_size; i < size; ++i) {
+            data[i] = fillChar;
+        }
+    }
+    XContainerSize(str) = size;
+    data[size] = (XChar){ 0 };
+    XString_deinitCache(str);
+}
+
+bool XString_fill(XString* str, XChar ch, int64_t size)
+{
+    if (!str) return false;
+    XString_detach(str);
+
+    size_t new_size = (size < 0) ? XString_length_base(str) : (size_t)size;
+    XString_reserve(str, new_size);
+
+    XChar* data = XString_data(str);
+    for (size_t i = 0; i < new_size; ++i) {
+        data[i] = ch;
+    }
+    XContainerSize(str) = new_size;
+    data[new_size] = (XChar){ 0 };
+    XString_deinitCache(str);
+    return true;
+}
+
+void XString_swap(XString* str, XString* other)
+{
+    if (!str || !other) return;
+    // 交换所有字段
+    XContainer temp = str->parent;
+    str->parent = other->parent;
+    other->parent = temp;
+
+    XStringCache* cache = str->m_cache;
+    str->m_cache = other->m_cache;
+    other->m_cache = cache;
+}
+
+void XString_squeeze(XString* str)
+{
+    if (!str) return;
+    size_t len = XString_length_base(str);
+    size_t cap = XContainerCapacity(str);
+    if (len == cap) return;
+
+    XString_detach(str);
+
+    size_t bytes = (len + 1) * sizeof(XChar);
+    XSharedData* newShared = XSharedData_create(NULL, bytes);
+    if (!newShared) return;
+
+    if (XString_cdata(str) && len > 0) {
+        memcpy(newShared->data, XString_cdata(str), bytes);
+    } else {
+        memset(newShared->data, 0, bytes);
+    }
+
+    XSharedData_release(XContainerSharedData(str));
+    XContainerSharedData(str) = newShared;
+    XContainerCapacity(str) = len;
+}
+
+bool XString_slice(XString* str, size_t pos)
+{
+    if (!str) return false;
+    size_t len = XString_length_base(str);
+    if (pos > len) return false;
+    if (pos == 0) return true;
+
+    XString_detach(str);
+    size_t new_len = len - pos;
+    XChar* data = XString_data(str);
+    memmove(data, data + pos, new_len * sizeof(XChar));
+    XContainerSize(str) = new_len;
+    data[new_len] = (XChar){ 0 };
+    XString_deinitCache(str);
+    return true;
+}
+
+bool XString_slice_2(XString* str, size_t pos, size_t n)
+{
+    if (!str) return false;
+    if (pos + n > XString_length_base(str)) return false;
+
+    XString_detach(str);
+    XChar* data = XString_data(str);
+    memmove(data, data + pos, n * sizeof(XChar));
+    XContainerSize(str) = n;
+    data[n] = (XChar){ 0 };
+    XString_deinitCache(str);
+    return true;
+}
+
+void XString_resizeForOverwrite(XString* str, size_t size)
+{
+    if (!str) return;
+    XString_resize(str, size);
+}
+
+/* ========================================================================== */
+/*                 Qt 6.8 对齐：转换函数                                        */
+/* ========================================================================== */
+
+XString* XString_toCaseFolded(const XString* str)
+{
+    if (!str) return NULL;
+    XString* result = XString_create_copy(str);
+    if (!result) return NULL;
+    XString_detach(result);
+
+    XChar* data = XString_data(result);
+    for (size_t i = 0; i < XString_length_base(result); i++) {
+        data[i] = XChar_toCaseFolded(data[i]);
+    }
+    data[XString_length_base(result)] = (XChar){ 0 };
+    XString_deinitCache(result);
+    return result;
+}
+
+XString* XString_toHtmlEscaped(const XString* str)
+{
+    if (!str) return NULL;
+    XString* result = XString_create_utf8("");
+    if (!result) return NULL;
+
+    size_t len = XString_length_base(str);
+    const XChar* data = XString_cdata(str);
+    XString_reserve(result, len * 6); // 最坏情况每个字符变成6个
+
+    for (size_t i = 0; i < len; i++) {
+        // 使用XChar的unicode值判断，避免HTML实体在源码中被误解析
+        XChar ch = data[i];
+        if (XChar_equals(ch, XChar_from('&'), XChar_CaseSensitive)) {
+            XString_append_utf8(result, "&" "a" "m" "p" ";");
+        } else if (XChar_equals(ch, XChar_from('<'), XChar_CaseSensitive)) {
+            XString_append_utf8(result, "&" "l" "t" ";");
+        } else if (XChar_equals(ch, XChar_from('>'), XChar_CaseSensitive)) {
+            XString_append_utf8(result, "&" "g" "t" ";");
+        } else if (XChar_equals(ch, XChar_from('"'), XChar_CaseSensitive)) {
+            XString_append_utf8(result, "&" "q" "u" "o" "t" ";");
+        } else if (XChar_equals(ch, XChar_from('\''), XChar_CaseSensitive)) {
+            XString_append_utf8(result, "&" "#" "3" "9" ";");
+        } else {
+            XString_append_char(result, data[i]);
+        }
+    }
+    return result;
+}
+
+XString* XString_leftJustified(const XString* str, size_t width, XChar fill, bool truncate)
+{
+    if (!str) return NULL;
+    size_t len = XString_length_base(str);
+
+    if (len >= width) {
+        if (truncate) return XString_mid(str, 0, width);
+        return XString_create_copy(str);
+    }
+
+    XString* result = XString_create_copy(str);
+    if (!result) return NULL;
+    XString_detach(result);
+    XString_reserve(result, width);
+
+    XChar* data = XString_data(result);
+    for (size_t i = len; i < width; i++) {
+        data[i] = fill;
+    }
+    XContainerSize(result) = width;
+    data[width] = (XChar){ 0 };
+    XString_deinitCache(result);
+    return result;
+}
+
+XString* XString_rightJustified(const XString* str, size_t width, XChar fill, bool truncate)
+{
+    if (!str) return NULL;
+    size_t len = XString_length_base(str);
+
+    if (len >= width) {
+        if (truncate) return XString_mid(str, 0, width);
+        return XString_create_copy(str);
+    }
+
+    XString* result = XString_create_utf8("");
+    if (!result) return NULL;
+    XString_detach(result);
+    XString_reserve(result, width);
+
+    XChar* data = XString_data(result);
+    size_t prefix = width - len;
+    for (size_t i = 0; i < prefix; i++) {
+        data[i] = fill;
+    }
+    memcpy(data + prefix, XString_cdata(str), len * sizeof(XChar));
+    XContainerSize(result) = width;
+    data[width] = (XChar){ 0 };
+    XString_deinitCache(result);
+    return result;
+}
+
+XString* XString_simplified(const XString* str)
+{
+    if (!str || XString_isEmpty_base(str)) return XString_create_utf8("");
+
+    XString* result = XString_create_utf8("");
+    if (!result) return NULL;
+
+    size_t len = XString_length_base(str);
+    const XChar* data = XString_cdata(str);
+    bool in_whitespace = true; // 开始时视为空白状态（跳过前导空白）
+    XChar space = XChar_from(' ');
+
+    for (size_t i = 0; i < len; i++) {
+        if (XChar_isSpace(data[i])) {
+            in_whitespace = true;
+        } else {
+            if (in_whitespace && XString_length_base(result) > 0) {
+                XString_append_char(result, space); // 内部连续空白替换为单个空格
+            }
+            XString_append_char(result, data[i]);
+            in_whitespace = false;
+        }
+    }
+    return result;
+}
+
+XString* XString_repeated(const XString* str, size_t times)
+{
+    if (!str || times == 0) return XString_create_utf8("");
+    if (times == 1) return XString_create_copy(str);
+
+    size_t len = XString_length_base(str);
+    XString* result = XString_create_utf8("");
+    if (!result) return NULL;
+    XString_detach(result);
+    XString_reserve(result, len * times);
+
+    for (size_t i = 0; i < times; i++) {
+        XString_append(result, str);
+    }
+    return result;
+}
+
+/* ========================================================================== */
+/*                 Qt 6.8 对齐：查询函数                                        */
+/* ========================================================================== */
+
+size_t XString_count(const XString* str, const XString* sub, XChar_CaseSensitivity cs)
+{
+    if (!str || !sub) return 0;
+    size_t sub_len = XString_length_base(sub);
+    if (sub_len == 0) return 0;
+
+    size_t count = 0;
+    size_t str_len = XString_length_base(str);
+    const XChar* text = XString_cdata(str);
+    const XChar* pattern = XString_cdata(sub);
+
+    int* prefix = (int*)XMalloc_System(sub_len * sizeof(int));
+    if (!prefix) return 0;
+    compute_prefix(pattern, sub_len, prefix, cs);
+
+    size_t from = 0;
+    while (from < str_len) {
+        int64_t pos = kmp_search(text, str_len, pattern, sub_len, prefix, cs, from);
+        if (pos == -1) break;
+        count++;
+        from = (size_t)pos + 1;
+    }
+
+    XFree_System(prefix);
+    return count;
+}
+
+size_t XString_count_utf8(const XString* str, const char* sub, XChar_CaseSensitivity cs)
+{
+    if (!str || !sub) return 0;
+    XString* sub_str = XString_create_utf8(sub);
+    if (!sub_str) return 0;
+    size_t result = XString_count(str, sub_str, cs);
+    XString_delete_base(sub_str);
+    return result;
+}
+
+size_t XString_count_char(const XString* str, XChar ch, XChar_CaseSensitivity cs)
+{
+    if (!str) return 0;
+    size_t len = XString_length_base(str);
+    const XChar* data = XString_cdata(str);
+    size_t count = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (XChar_equals(data[i], ch, cs)) count++;
+    }
+    return count;
+}
+
+/* ========================================================================== */
+/*                 Qt 6.8 对齐：静态/最大值函数                                  */
+/* ========================================================================== */
+
+size_t XString_maxSize(void)
+{
+    // 与Qt一致，返回理论最大值（受平台和内存限制）
+    return (size_t)-1 / sizeof(XChar) - 1;
+}
+
+/* ========================================================================== */
+/*                 Qt 6.8 对齐：数值转字符串静态函数                              */
+/* ========================================================================== */
+
+DEFINE_NUMBER(XString_number_int, XString_setNum_int, int)
+DEFINE_NUMBER(XString_number_uint, XString_setNum_uInt, unsigned int)
+DEFINE_NUMBER(XString_number_long, XString_setNum_long, long)
+DEFINE_NUMBER(XString_number_ulong, XString_setNum_uLong, unsigned long)
+DEFINE_NUMBER(XString_number_llong, XString_setNum_llong, long long)
+DEFINE_NUMBER(XString_number_ullong, XString_setNum_uLLong, unsigned long long)
+DEFINE_NUMBER_FLOAT(XString_number_double, XString_setNum_double, double)
+DEFINE_NUMBER_FLOAT(XString_number_float, XString_setNum_float, float)
+
+/* ========================================================================== */
+/*                 Qt 6.8 对齐：数据访问函数                                    */
+/* ========================================================================== */
+
+XChar* XString_data_ptr(XString* str)
+{
+    return XString_data(str);
+}
+
+const XChar* XString_constData(const XString* str)
+{
+    if (!str) return NULL;
+    return XString_cdata(str);
+}
+
+/* ========================================================================== */
+/*                 Qt 6.8 对齐：setNum扩展                                      */
+/* ========================================================================== */
+
+bool XString_setNum_short(XString* str, short n, int base)
+{
+    return XString_setNum_int(str, (int)n, base);
+}
+
+/* ========================================================================== */
+/*                 Qt 6.8 对齐：setUnicode/setUtf16                             */
+/* ========================================================================== */
+
+bool XString_setUnicode(XString* str, const XChar* unicode, size_t size)
+{
+    if (!str) return false;
+    XString_clear_base(str);
+    if (!unicode || size == 0) return true;
+
+    XString_detach(str);
+    XString_reserve(str, size);
+
+    XChar* data = XString_data(str);
+    memcpy(data, unicode, size * sizeof(XChar));
+    XContainerSize(str) = size;
+    data[size] = (XChar){ 0 };
+    XString_deinitCache(str);
+    return true;
+}
+
+bool XString_setUtf16(XString* str, const uint16_t* unicode, size_t size)
+{
+    if (!str) return false;
+    XString_clear_base(str);
+    if (!unicode || size == 0) return true;
+
+    int64_t xchar_count = XChar_fromUtf16Stream(unicode, size, NULL, 0);
+    if (xchar_count <= 0) return false;
+
+    XString_detach(str);
+    XString_reserve(str, (size_t)xchar_count);
+
+    XChar* data = XString_data(str);
+    xchar_count = XChar_fromUtf16Stream(unicode, size, data, (size_t)xchar_count + 1);
+    if (xchar_count <= 0) return false;
+
+    XContainerSize(str) = (size_t)xchar_count;
+    data[xchar_count] = (XChar){ 0 };
+    XString_deinitCache(str);
+    return true;
+}
+
+/* ========================================================================== */
+/*                 Qt 6.8 对齐：XChar重载操作函数                                */
+/* ========================================================================== */
+
+int64_t XString_indexOf_char(const XString* str, XChar ch, size_t from, XChar_CaseSensitivity cs)
+{
+    if (!str) return -1;
+    size_t len = XString_length_base(str);
+    if (from >= len) return -1;
+    const XChar* data = XString_cdata(str);
+    for (size_t i = from; i < len; i++) {
+        if (XChar_equals(data[i], ch, cs)) return (int64_t)i;
+    }
+    return -1;
+}
+
+int64_t XString_lastIndexOf_char(const XString* str, XChar ch, XChar_CaseSensitivity cs)
+{
+    if (!str) return -1;
+    size_t len = XString_length_base(str);
+    if (len == 0) return -1;
+    const XChar* data = XString_cdata(str);
+    for (size_t i = len; i > 0; i--) {
+        if (XChar_equals(data[i - 1], ch, cs)) return (int64_t)(i - 1);
+    }
+    return -1;
+}
+
+bool XString_contains_char(const XString* str, XChar ch, XChar_CaseSensitivity cs)
+{
+    return XString_indexOf_char(str, ch, 0, cs) != -1;
+}
+
+bool XString_remove_char(XString* str, XChar ch, XChar_CaseSensitivity cs)
+{
+    if (!str) return false;
+    XString_detach(str);
+
+    size_t len = XString_length_base(str);
+    XChar* data = XString_data(str);
+    size_t write_idx = 0;
+
+    for (size_t i = 0; i < len; i++) {
+        if (!XChar_equals(data[i], ch, cs)) {
+            if (write_idx != i) data[write_idx] = data[i];
+            write_idx++;
+        }
+    }
+
+    if (write_idx == len) return false; // 没有移除任何字符
+    XContainerSize(str) = write_idx;
+    data[write_idx] = (XChar){ 0 };
+    XString_deinitCache(str);
+    return true;
+}
+
+bool XString_replace_char(XString* str, XChar before, XChar after, XChar_CaseSensitivity cs)
+{
+    if (!str) return false;
+    XString_detach(str);
+
+    size_t len = XString_length_base(str);
+    XChar* data = XString_data(str);
+    bool replaced = false;
+
+    for (size_t i = 0; i < len; i++) {
+        if (XChar_equals(data[i], before, cs)) {
+            data[i] = after;
+            replaced = true;
+        }
+    }
+
+    if (replaced) XString_deinitCache(str);
+    return replaced;
 }
