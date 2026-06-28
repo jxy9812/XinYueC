@@ -9,6 +9,9 @@ void XMenu_XNetworkInterfaceTest(XMenu* root);
 // 地址条目测试
 void XMenu_XNetworkAddressEntryTest(XMenu* root);
 
+// 网络代理测试
+void XMenu_XNetworkProxyTest(XMenu* root);
+
 // 网络测试菜单
 void XMenu_XNetworkTest(XMenu* root);
 

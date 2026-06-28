@@ -9,4 +9,5 @@ void XMenu_XNetworkTest(XMenu* root)
     // 添加网络相关测试
     XMenu_XNetworkInterfaceTest(menu);
     XMenu_XNetworkAddressEntryTest(menu);
+    XMenu_XNetworkProxyTest(menu);
 }

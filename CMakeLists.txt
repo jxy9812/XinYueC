@@ -27,9 +27,16 @@ file(GLOB_RECURSE SRC_FILE "Src/*.c" )
 file(GLOB_RECURSE TEST_FILE "Test/*.c" )
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 
+#引入外部库
+include_directories("Library/zlib")
+file(GLOB_RECURSE TEMP_LIBRARY_FILE "Library/zlib/*.c")
+list(APPEND LIBRARY_FILE ${TEMP_LIBRARY_FILE})
+include_directories("Library/Fatfs")
+file(GLOB_RECURSE TEMP_LIBRARY_FILE "Library/Fatfs/*.c")
+list(APPEND LIBRARY_FILE ${TEMP_LIBRARY_FILE})
 
-add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE} ${DRIVE_FILE})
-add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${PUBLIC_HDRS})
+add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE})
+add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE} ${PUBLIC_HDRS})
 
 #添加参加编译的文件
 add_executable(${PROJECT_NAME}
