@@ -86,7 +86,7 @@ void XFile_init_2(XFile* file, const XString* name);
  * @brief 析构 XFile 对象（供子类调用）
  * @param file XFile 对象指针
  */
-void XFile_deinit_base(XFile* file);
+//void XFile_deinit_base(XFile* file);
 
 /* ============================================================================
  * 析构函数（继承自 XObject）

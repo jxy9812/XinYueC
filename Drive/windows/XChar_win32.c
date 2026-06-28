@@ -1,4 +1,5 @@
 #ifdef _WIN32
+#ifndef XCHAR_USE_FILE_GBK
 #include "XChar.h"
 #include "XMemory.h"
 #include <windows.h>
@@ -158,4 +159,5 @@ int64_t XCharPlatform_gbkToUtf8Stream(const char* gbk_str, size_t input_size, ch
     return (int64_t)utf8_len;
 }
 
+#endif /* !XCHAR_USE_FILE_GBK */
 #endif /* _WIN32 */

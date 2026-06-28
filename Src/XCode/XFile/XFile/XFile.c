@@ -165,15 +165,15 @@ void XFile_init_2(XFile* file, const XString* name)
     if (file && name) XFile_setFileName(file, name);
 }
 
-void XFile_deinit_base(XFile* file)
-{
-    if (!file) return;
-    if (file->m_fileName) {
-        XString_delete_base(file->m_fileName);
-        file->m_fileName = NULL;
-    }
-    XClass_Deinit_Parent(XFileDevice, file);
-}
+//void XFile_deinit_base(XFile* file)
+//{
+//    if (!file) return;
+//    if (file->m_fileName) {
+//        XString_delete_base(file->m_fileName);
+//        file->m_fileName = NULL;
+//    }
+//    XClass_Deinit_Parent(XFileDevice, file);
+//}
 
 /* ============================================================================
  * 文件名操作
@@ -314,7 +314,8 @@ bool XFile_resize_static(const XString* fileName, int64_t sz)
     XFile file;
     XFile_init_2(&file, fileName);
     bool result = XFile_resize_base(&file, sz);
-    XFile_deinit_base(&file);
+    //XFile_deinit_base(&file);
+    XClass_deinit_base(&file);
     return result;
 }
 
@@ -323,7 +324,7 @@ XFilePermissions XFile_permissions_static(const XString* fileName)
     XFile file;
     XFile_init_2(&file, fileName);
     XFilePermissions perms = XFile_permissions_base(&file);
-    XFile_deinit_base(&file);
+    XClass_deinit_base(&file);
     return perms;
 }
 
@@ -332,7 +333,7 @@ bool XFile_setPermissions_static(const XString* fileName, XFilePermissions permi
     XFile file;
     XFile_init_2(&file, fileName);
     bool result = XFile_setPermissions_base(&file, permissions);
-    XFile_deinit_base(&file);
+    XClass_deinit_base(&file);
     return result;
 }
 

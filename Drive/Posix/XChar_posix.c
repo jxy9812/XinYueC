@@ -1,4 +1,5 @@
 #if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
+#ifndef XCHAR_USE_FILE_GBK
 #include "XChar.h"
 /* ========================================================================== */
 /*                      平台抽象函数（在对应平台目录实现）                         */
@@ -69,4 +70,5 @@ int64_t XCharPlatform_gbkToUtf8Stream(const char* gbk_str, size_t input_size, ch
     return -1; /* Posix平台不支持GBK，返回失败 */
 }
 
-#endif 
+#endif /* !XCHAR_USE_FILE_GBK */
+#endif
