@@ -12,6 +12,9 @@
 #include "XTypes.h"
 #include "XVarList.h"
 #include "XAtomic.h"
+#include "XHashMap.h"
+//#include "XHashFunc.h"
+#include "XDateTime.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -34,6 +37,13 @@ static XVector* g_lookupRequests = NULL;
 static XMutex* g_lookupMutex = NULL;
 static XAtomic_int32_t g_lookupInitialized = {0};
 static int g_nextLookupId = 1;
+
+// ======================== DNS缓存前向声明 ========================
+struct XString;
+struct XHostInfo;
+
+static XHostInfo* getFromCache(const XString* hostName);
+static void putToCache(const XString* hostName, const XHostInfo* info);
 
 // ======================== 虚函数 ========================
 
@@ -229,7 +239,8 @@ XString* XHostInfo_errorString(const XHostInfo* info) {
     return info->errorString;
 }
 
-void XHostInfo_setErrorString(XHostInfo* info, const XString* str) {
+void XHostInfo_setErrorString(XHostInfo* info, const XString* str) 
+{
     if (!info) return;
     
     if (info->errorString) {
@@ -265,10 +276,16 @@ XHostInfo* XHostInfo_fromName1(const XString* name) {
         return info;
     }
     
+    /* 尝试从缓存获取 */
+    XHostInfo* cached = getFromCache(name);
+    if (cached) {
+        return cached;
+    }
+    
     XHostInfo* info = XHostInfo_create();
     XHostInfo_setHostName(info, name);
     
-    // 调用 XNetwork 平台函数进行 DNS 查询
+    /* 调用 XNetwork 平台函数进行 DNS 查询 */
     XNetwork_ensureInit();
     
     XHostAddress* addrs = NULL;
@@ -285,18 +302,21 @@ XHostInfo* XHostInfo_fromName1(const XString* name) {
         return info;
     }
     
-    // 将结果添加到 addresses 向量
+    /* 将结果添加到 addresses 向量 */
     for (int i = 0; i < count; i++) {
         XVector_push_back_1_base(info->addresses, &addrs[i]);
     }
     
-    // 释放 XNetwork 分配的内存
+    /* 释放 XNetwork 分配的内存 */
     for (int i = 0; i < count; i++) {
         XHostAddress_deinit_base(&addrs[i]);
     }
     if (addrs) {
         XFree_System(addrs);
     }
+    
+    /* 存入缓存 */
+    putToCache(name, info);
     
     return info;
 }
@@ -499,4 +519,223 @@ void XHostInfo_abortHostLookup(int lookupId) {
         XMutex_unlock(req->mutex);
     }
     XMutex_unlock(g_lookupMutex);
+}
+
+// ======================== DNS缓存实现 ========================
+
+/**
+ * @brief DNS缓存条目结构
+ */
+typedef struct XHostInfoCacheEntry {
+    XHostInfo* info;           /**< 缓存的主机信息 */
+    int64_t timestamp;         /**< 缓存时间戳（秒） */
+} XHostInfoCacheEntry;
+
+/**
+ * @brief DNS缓存管理器结构
+ */
+typedef struct XHostInfoCacheManager {
+    XHashMap* cache;           /**< 缓存哈希表 */
+    XMutex* mutex;             /**< 缓存互斥锁 */
+    XAtomic_int32_t initialized; /**< 初始化状态 */
+    bool enabled : 1;          /**< 是否启用缓存（位域） */
+    unsigned int ttl : 31;     /**< 缓存TTL（秒），最大约68年（位域） */
+} XHostInfoCacheManager;
+
+/* 全局缓存管理器 */
+static XHostInfoCacheManager g_cacheManager = {
+    .cache = NULL,
+    .mutex = NULL,
+    .initialized = {0},
+    .enabled = true,
+    .ttl = 60  /* 默认60秒 */
+};
+
+/**
+ * @brief 初始化DNS缓存
+ */
+static void ensureCacheInit(void) {
+    int32_t expected = 0;
+    if (XAtomic_compare_exchange_strong_int32(&g_cacheManager.initialized, &expected, 1,
+            XAtomic_MemoryOrder_Acquire, XAtomic_MemoryOrder_Relaxed)) {
+        g_cacheManager.mutex = XMutex_create(XLock_NonRecursive);
+        /* 使用XHashMap_Create宏创建缓存，键为XString，值为XHostInfoCacheEntry */
+        g_cacheManager.cache = XHashMap_Create(XString, XHostInfoCacheEntry, XString_compare);
+        XAtomic_store_int32(&g_cacheManager.initialized, 2, XAtomic_MemoryOrder_Release);
+    } else if (expected == 1) {
+        while (XAtomic_load_int32(&g_cacheManager.initialized, XAtomic_MemoryOrder_Acquire) != 2) {
+            /* 等待初始化完成 */
+        }
+    }
+}
+
+/**
+ * @brief 检查缓存条目是否过期
+ */
+static bool isCacheEntryExpired(const XHostInfoCacheEntry* entry) {
+    if (!entry || g_cacheManager.ttl <= 0) return false;  /* TTL为0表示永不过期 */
+    
+    int64_t currentTime = XDateTime_currentSecsSinceEpoch();
+    return (currentTime - entry->timestamp) > g_cacheManager.ttl;
+}
+
+/**
+ * @brief 从缓存获取主机信息
+ * @return 如果缓存命中且未过期，返回拷贝的XHostInfo；否则返回NULL
+ */
+static XHostInfo* getFromCache(const XString* hostName) {
+    if (!g_cacheManager.enabled || !hostName) return NULL;
+    
+    ensureCacheInit();
+    
+    XMutex_lock(g_cacheManager.mutex);
+    
+    XHashMap_iterator it;
+    if (XHashMap_find_base(g_cacheManager.cache, hostName, &it)) {
+        XPair* pair = XHashMap_iterator_data(&it);
+        XHostInfoCacheEntry* entry = (XHostInfoCacheEntry*)XPair_second(pair);
+        if (entry && entry->info) {
+            /* 检查是否过期 */
+            if (!isCacheEntryExpired(entry)) {
+                /* 缓存命中，返回拷贝 */
+                XHostInfo* result = XHostInfo_create_copy(entry->info);
+                XMutex_unlock(g_cacheManager.mutex);
+                return result;
+            }
+            /* 已过期，移除缓存 */
+            XHostInfo_delete_base(entry->info);
+            XHashMap_erase_base(g_cacheManager.cache, &it, NULL);
+        }
+    }
+    
+    XMutex_unlock(g_cacheManager.mutex);
+    return NULL;
+}
+
+/**
+ * @brief 将主机信息存入缓存
+ */
+static void putToCache(const XString* hostName, const XHostInfo* info) {
+    if (!g_cacheManager.enabled || !hostName || !info) return;
+    if (info->error != XHostInfo_NoError) return;  /* 不缓存失败的查询 */
+    
+    ensureCacheInit();
+    
+    XMutex_lock(g_cacheManager.mutex);
+    
+    /* 检查是否已存在 */
+    XHashMap_iterator it;
+    if (XHashMap_find_base(g_cacheManager.cache, hostName, &it)) {
+        /* 更新现有条目 */
+        XPair* pair = XHashMap_iterator_data(&it);
+        XHostInfoCacheEntry* existing = (XHostInfoCacheEntry*)XPair_second(pair);
+        if (existing) {
+            if (existing->info) {
+                XHostInfo_delete_base(existing->info);
+            }
+            existing->info = XHostInfo_create_copy(info);
+            existing->timestamp = XDateTime_currentSecsSinceEpoch();
+        }
+    } else {
+        /* 创建新条目 */
+        XHostInfoCacheEntry newEntry;
+        newEntry.info = XHostInfo_create_copy(info);
+        newEntry.timestamp = XDateTime_currentSecsSinceEpoch();
+        XHashMap_insert_base(g_cacheManager.cache, hostName, &newEntry);
+    }
+    
+    XMutex_unlock(g_cacheManager.mutex);
+}
+
+/* 预取回调函数 */
+static void prefetchCallback(XHostInfo* result, void* userData) {
+    (void)userData;  /* 未使用 */
+    if (result && result->error == XHostInfo_NoError) {
+        putToCache(result->hostName, result);
+    }
+    if (result) {
+        XHostInfo_delete_base(result);
+    }
+}
+
+/* ==================== DNS缓存管理API ==================== */
+
+void XHostInfo_setCacheEnabled(bool enabled) {
+    ensureCacheInit();
+    XMutex_lock(g_cacheManager.mutex);
+    g_cacheManager.enabled = enabled;
+    if (!enabled) {
+        /* 禁用时清空缓存 */
+        XHashMap_clear_base(g_cacheManager.cache);
+    }
+    XMutex_unlock(g_cacheManager.mutex);
+}
+
+bool XHostInfo_isCacheEnabled(void) {
+    return g_cacheManager.enabled;
+}
+
+void XHostInfo_setCacheTtl(int ttlSeconds) {
+    ensureCacheInit();
+    XMutex_lock(g_cacheManager.mutex);
+    g_cacheManager.ttl = ttlSeconds;
+    XMutex_unlock(g_cacheManager.mutex);
+}
+
+int XHostInfo_cacheTtl(void) {
+    return g_cacheManager.ttl;
+}
+
+void XHostInfo_clearCache(void) {
+    if (!g_cacheManager.mutex) return;
+    
+    XMutex_lock(g_cacheManager.mutex);
+    
+    /* 遍历并释放所有缓存条目 */
+    XHashMap_iterator it = XHashMap_begin(g_cacheManager.cache);
+    while (!XHashMap_iterator_isEnd(&it)) {
+        XPair* pair = XHashMap_iterator_data(&it);
+        XHostInfoCacheEntry* entry = (XHostInfoCacheEntry*)XPair_second(pair);
+        if (entry && entry->info) {
+            XHostInfo_delete_base(entry->info);
+            entry->info = NULL;
+        }
+        XHashMap_iterator_add(g_cacheManager.cache, &it);
+    }
+    
+    XHashMap_clear_base(g_cacheManager.cache);
+    XMutex_unlock(g_cacheManager.mutex);
+}
+
+void XHostInfo_removeFromCache(const XString* hostName) {
+    if (!hostName || !g_cacheManager.mutex) return;
+    
+    XMutex_lock(g_cacheManager.mutex);
+    
+    /* 使用迭代器查找并删除 */
+    XHashMap_iterator it;
+    if (XHashMap_find_base(g_cacheManager.cache, hostName, &it)) {
+        XPair* pair = XHashMap_iterator_data(&it);
+        XHostInfoCacheEntry* entry = (XHostInfoCacheEntry*)XPair_second(pair);
+        if (entry && entry->info) {
+            XHostInfo_delete_base(entry->info);
+        }
+        XHashMap_erase_base(g_cacheManager.cache, &it, NULL);
+    }
+    
+    XMutex_unlock(g_cacheManager.mutex);
+}
+
+void XHostInfo_prefetchName(const XString* hostName) {
+    if (!hostName || XString_size_base(hostName) == 0) return;
+    
+    /* 检查缓存是否已存在 */
+    XHostInfo* cached = getFromCache(hostName);
+    if (cached) {
+        XHostInfo_delete_base(cached);
+        return;  /* 已缓存，无需预取 */
+    }
+    
+    /* 异步查询并存入缓存 */
+    XHostInfo_lookupHost(hostName, prefetchCallback, NULL);
 }

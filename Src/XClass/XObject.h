@@ -16,7 +16,6 @@ extern "C" {
  * @note 用于实现C语言中的多态机制，枚举值对应虚函数在表中的索引
  */
 XCLASS_DEFINE_BEGING(XObject)
-//XCLASS_DEFINE_ENUM(XObject, Poll) = XCLASS_VTABLE_GET_SIZE(XClass),
 XCLASS_DEFINE_ENUM(XObject, Event) = XCLASS_VTABLE_GET_SIZE(XClass),
 XCLASS_DEFINE_ENUM(XObject, EventFilter),
 XCLASS_DEFINE_ENUM(XObject, ChildEvent),

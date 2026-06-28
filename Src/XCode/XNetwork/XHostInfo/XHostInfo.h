@@ -217,6 +217,52 @@ int XHostInfo_lookupHost_toObject(const XString* name, XObject* receiver, size_t
  */
 void XHostInfo_abortHostLookup(int lookupId);
 
+// ==================== DNS缓存管理 ====================
+
+/**
+ * @brief 设置DNS缓存是否启用。
+ * @param enabled true启用缓存，false禁用缓存
+ * @note 默认启用缓存
+ */
+void XHostInfo_setCacheEnabled(bool enabled);
+
+/**
+ * @brief 获取DNS缓存是否启用。
+ * @return true表示缓存已启用
+ */
+bool XHostInfo_isCacheEnabled(void);
+
+/**
+ * @brief 设置DNS缓存过期时间。
+ * @param ttlSeconds 缓存有效期（秒），默认60秒
+ * @note 设置为0表示缓存永不过期
+ */
+void XHostInfo_setCacheTtl(int ttlSeconds);
+
+/**
+ * @brief 获取DNS缓存过期时间。
+ * @return 缓存有效期（秒）
+ */
+int XHostInfo_cacheTtl(void);
+
+/**
+ * @brief 清空DNS缓存。
+ */
+void XHostInfo_clearCache(void);
+
+/**
+ * @brief 从缓存中移除指定主机名的记录。
+ * @param hostName 主机名
+ */
+void XHostInfo_removeFromCache(const XString* hostName);
+
+/**
+ * @brief 预热缓存 - 预先解析并缓存主机名。
+ * @param hostName 主机名
+ * @note 异步执行，结果存入缓存
+ */
+void XHostInfo_prefetchName(const XString* hostName);
+
 #ifdef __cplusplus
 }
 #endif
