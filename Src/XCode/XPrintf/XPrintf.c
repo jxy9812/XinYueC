@@ -16,7 +16,7 @@ int XPrintf_3(const char* utf8_str)
 #ifdef _WIN32
     // Windows平台：UTF-8 -> GBK 转换后输出
     // 1. 计算所需GBK缓冲区大小
-    int64_t gbk_len = XUTF8_to_gbk_stream(utf8_str, 0, NULL, 0);
+    int64_t gbk_len = XChar_utf8ToGbkStream(utf8_str, 0, NULL, 0);
     if (gbk_len <= 0) return 0;  // 转换失败
 
     // 2. 分配GBK缓冲区（+1用于终止符）
@@ -24,7 +24,7 @@ int XPrintf_3(const char* utf8_str)
     if (!gbk_buf) return 0;
 
     // 3. 执行UTF-8到GBK的转换
-    if (XUTF8_to_gbk_stream(utf8_str, 0, gbk_buf, gbk_len + 1) <= 0) {
+    if (XChar_utf8ToGbkStream(utf8_str, 0, gbk_buf, gbk_len + 1) <= 0) {
         XFree_System(gbk_buf);
         return 0;
     }
@@ -88,7 +88,7 @@ int XPrintf(const char* format, ...)
     int result = 0;
 #ifdef _WIN32
     // Windows：UTF-8 → GBK（保持不变）
-    int gbk_len = XUTF8_to_gbk_stream(utf8_buf, 0, NULL, 0);
+    int gbk_len = XChar_utf8ToGbkStream(utf8_buf, 0, NULL, 0);
     if (gbk_len <= 0)
     {
         XFree_System(utf8_buf);
@@ -102,7 +102,7 @@ int XPrintf(const char* format, ...)
         return 0;
     }
 
-    if (XUTF8_to_gbk_stream(utf8_buf, 0, gbk_buf, gbk_len + 1) > 0)
+    if (XChar_utf8ToGbkStream(utf8_buf, 0, gbk_buf, gbk_len + 1) > 0)
     {
         result = printf("%s", gbk_buf);
     }
@@ -122,6 +122,6 @@ int XPrintf_5(XChar* ch)
 
     XChar chs[] = { *ch,0 };
     char buff[5] = { 0 };
-    XChar_to_local_stream(&chs, 1, buff, 5);
+    XChar_toLocalStream(&chs, 1, buff, 5);
     return printf(buff);
 }

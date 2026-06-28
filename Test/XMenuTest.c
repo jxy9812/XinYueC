@@ -15,6 +15,7 @@
 #include"XLibraryTest.h"
 #include"XDeviceTest.h"
 #include"XMemoryTest.h"
+#include"XDataTest.h"
 XMenu* XMenuTest_create()
 {
 	XMenu* root = XMenu_create("测试代码");
@@ -26,6 +27,7 @@ XMenu* XMenuTest_create()
 	XMenu_XProtocolStackTest(root);
 	XMenu_XTimerTest(root);
 	XMenu_XMemoryTest(root);
+	XMenu_XDataTest(root);
 	return root;
 }
 

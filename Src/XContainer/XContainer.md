@@ -4339,7 +4339,7 @@ bool XString_remove_base(XString* str, size_t pos, size_t len)
 ##### XString_replace
 
 ```c
-bool XString_replace(XString* str, const XString* before, const XString* after, XCharCaseSensitivity cs)
+bool XString_replace(XString* str, const XString* before, const XString* after, XChar_CaseSensitivity cs)
 ```
 
 替换字符串中的子串。
@@ -4390,7 +4390,7 @@ bool XString_pop_back_base(XString* str)
 ##### XString_index_of
 
 ```c
-int64_t XString_index_of(const XString* str, const XString* substr, size_t from, XCharCaseSensitivity cs)
+int64_t XString_index_of(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs)
 ```
 
 查找子串首次出现的位置。
@@ -4408,7 +4408,7 @@ int64_t XString_index_of(const XString* str, const XString* substr, size_t from,
 ##### XString_contains
 
 ```c
-bool XString_contains(const XString* str, const XString* substr, XCharCaseSensitivity cs)
+bool XString_contains(const XString* str, const XString* substr, XChar_CaseSensitivity cs)
 ```
 
 检查字符串是否包含指定子串。
@@ -4443,7 +4443,7 @@ int32_t XString_compare(const XString* str1, const XString* str2)
 ##### XString_equals
 
 ```c
-bool XString_equals(const XString* str1, const XString* str2, XCharCaseSensitivity cs)
+bool XString_equals(const XString* str1, const XString* str2, XChar_CaseSensitivity cs)
 ```
 
 判断两个字符串是否相等。
@@ -4460,7 +4460,7 @@ bool XString_equals(const XString* str1, const XString* str2, XCharCaseSensitivi
 ##### XString_starts_with
 
 ```c
-bool XString_starts_with(const XString* str, const XString* prefix, XCharCaseSensitivity cs)
+bool XString_starts_with(const XString* str, const XString* prefix, XChar_CaseSensitivity cs)
 ```
 
 判断字符串是否以指定前缀开头。
@@ -4477,7 +4477,7 @@ bool XString_starts_with(const XString* str, const XString* prefix, XCharCaseSen
 ##### XString_ends_with
 
 ```c
-bool XString_ends_with(const XString* str, const XString* suffix, XCharCaseSensitivity cs)
+bool XString_ends_with(const XString* str, const XString* suffix, XChar_CaseSensitivity cs)
 ```
 
 判断字符串是否以指定后缀结尾。
@@ -4724,7 +4724,7 @@ bool XString_reserve(XString* str, size_t capacity)
 ##### XString_split_utf8
 
 ```c
-XStringList* XString_split_utf8(const XString* str, const char* delimiter, XCharCaseSensitivity cs)
+XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar_CaseSensitivity cs)
 ```
 
 按分隔符拆分字符串为字符串列表。

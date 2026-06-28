@@ -121,7 +121,7 @@ XDebug* XDebug_vprintf_(XDebug* debug, const char* format, va_list args) {
       // 步骤2：根据平台转换为本地编码并输出
 #ifdef _WIN32
     // Windows：UTF-8 → GBK
-    int gbk_len = XUTF8_to_gbk_stream(temp, 0, NULL, 0);  // 获取所需GBK长度
+    int gbk_len = XChar_utf8ToGbkStream(temp, 0, NULL, 0);  // 获取所需GBK长度
     if (gbk_len <= 0)
     {
         XFree_System(temp);
@@ -135,7 +135,7 @@ XDebug* XDebug_vprintf_(XDebug* debug, const char* format, va_list args) {
         return 0;
     }
 
-    if (XUTF8_to_gbk_stream(temp, 0, gbk_buf, gbk_len + 1) > 0)
+    if (XChar_utf8ToGbkStream(temp, 0, gbk_buf, gbk_len + 1) > 0)
     {
         //result = printf("%s", gbk_buf);  // 输出GBK
     }

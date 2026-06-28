@@ -97,9 +97,9 @@ XString* XStringList_join(const XStringList* strList, const XString* separator)
 			XString_append(str, separator);
 		}
 	}
-	if (XString_ends_with(str, separator, XCharCaseInsensitive))
+	if (XString_ends_with(str, separator, XChar_CaseInsensitive))
 	{
-		XString_remove_base(str, XString_last_index_of(str, separator, 0, XCharCaseInsensitive),XString_length_base(separator));
+		XString_remove_base(str, XString_last_index_of(str, separator, 0, XChar_CaseInsensitive),XString_length_base(separator));
 	}
 	return str;
 }

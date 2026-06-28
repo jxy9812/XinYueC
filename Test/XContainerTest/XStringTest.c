@@ -73,12 +73,12 @@ void XStringOperateTest()
 			XString_delete_base(mid);
 		}
 		{
-			int64_t index = XString_index_of_utf8(str, "例子", 0, XCharCaseInsensitive);
+			int64_t index = XString_index_of_utf8(str, "例子", 0, XChar_CaseInsensitive);
 			if (index != -1)
 				XPrintf("找到了,index:%d\n", index);
 		}
 		{
-			if (XString_replace_utf8(str, "一", "1", XCharCaseInsensitive))
+			if (XString_replace_utf8(str, "一", "1", XChar_CaseInsensitive))
 			{
 				XPrintf_2(str);
 				printf("\n");
@@ -111,7 +111,7 @@ void XStringTest()
 {
 	//char* utf8 = "1234567890";
 	//XChar buff [100];
-	//XChar_from_utf8_stream(utf8,0,buff,100);
+	//XChar_fromUtf8Stream(utf8,0,buff,100);
 	//for (size_t i = 0; i < 10; i++)
 	//{
 	//	printf("utf8:%d utf16:%d %d\n",utf8[i],buff[i].code, buff[i].code&(~0x80));//c & 0x80
@@ -126,7 +126,7 @@ void XStringTest()
 		XString* str = XString_create_utf8("你好-在吗");
 		if (str)
 		{
-			XStringList* v = XString_split_utf8(str, "-",XCharCaseInsensitive);
+			XStringList* v = XString_split_utf8(str, "-",XChar_CaseInsensitive);
 			if (v)
 			{
 				XStringList_iterator_for_each(v, XFor_each_XString, NULL);

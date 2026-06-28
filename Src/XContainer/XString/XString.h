@@ -346,7 +346,7 @@ void XString_erase_base(XString* str, const XString_iterator* it, XString_iterat
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回 true，失败返回 false
  */
-bool XString_replace(XString* str, const XString* before, const XString* after, XCharCaseSensitivity cs);
+bool XString_replace(XString* str, const XString* before, const XString* after, XChar_CaseSensitivity cs);
 
 /**
  * @brief 替换字符串中的子串
@@ -356,7 +356,7 @@ bool XString_replace(XString* str, const XString* before, const XString* after, 
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回 true，失败返回 false
  */
-bool XString_replace_utf8(XString* str, const char* before, const char* after, XCharCaseSensitivity cs);
+bool XString_replace_utf8(XString* str, const char* before, const char* after, XChar_CaseSensitivity cs);
 
 /**
  * @brief 在字符串末尾插入单个 XChar 字符
@@ -398,7 +398,7 @@ bool XString_pop_front_base(XString* str);
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回子串起始索引，失败返回 -1
  */
-int64_t XString_index_of(const XString* str, const XString* substr, size_t from, XCharCaseSensitivity cs);
+int64_t XString_index_of(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs);
 /**
  * @brief 查找子串首次出现的位置
  * @param str XString 对象指针
@@ -407,7 +407,7 @@ int64_t XString_index_of(const XString* str, const XString* substr, size_t from,
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回子串起始索引，失败返回 -1
  */
-int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t from, XCharCaseSensitivity cs);
+int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs);
 /**
  * @brief 查找子串最后一次出现的位置
  * @param str XString 对象指针
@@ -416,7 +416,7 @@ int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t fro
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回子串起始索引，失败返回 -1
  */
-int64_t XString_last_index_of(const XString* str, const XString* substr, size_t from, XCharCaseSensitivity cs);
+int64_t XString_last_index_of(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs);
 /**
  * @brief 查找子串最后一次出现的位置
  * @param str XString 对象指针
@@ -425,16 +425,16 @@ int64_t XString_last_index_of(const XString* str, const XString* substr, size_t 
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回子串起始索引，失败返回 -1
  */
-int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_t from, XCharCaseSensitivity cs);
+int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs);
 /**
  * @brief 检查字符串是否包含指定子串
  * @param str 源字符串
  * @param substr 要查找的子串
- * @param cs 大小写敏感性（XCharCaseSensitive/XCharCaseInsensitive）
+ * @param cs 大小写敏感性（XCharCaseSensitive/XChar_CaseInsensitive）
  * @return 包含返回true，否则返回false
  * @note 行为类似QString::contains，支持大小写敏感/不敏感匹配
  */
-bool XString_contains(const XString* str, const XString* substr, XCharCaseSensitivity cs);
+bool XString_contains(const XString* str, const XString* substr, XChar_CaseSensitivity cs);
 /**
  * @brief 重载版本：检查字符串是否包含UTF-8编码的子串
  * @param str 源字符串
@@ -442,7 +442,7 @@ bool XString_contains(const XString* str, const XString* substr, XCharCaseSensit
  * @param cs 大小写敏感性
  * @return 包含返回true，否则返回false
  */
-bool XString_contains_utf8(const XString* str, const char* utf8_substr, XCharCaseSensitivity cs);
+bool XString_contains_utf8(const XString* str, const char* utf8_substr, XChar_CaseSensitivity cs);
 // -------------------------- 字符串比较操作函数 --------------------------
 
 const bool XLess_XString(const XString* str1, const XString* str2);
@@ -461,7 +461,7 @@ int32_t XString_compare(const XString* str1, const XString* str2);
  * @param cs 大小写敏感性（区分/不区分）
  * @return 相等返回 true，否则返回 false
  */
-bool XString_equals(const XString* str1, const XString* str2, XCharCaseSensitivity cs);
+bool XString_equals(const XString* str1, const XString* str2, XChar_CaseSensitivity cs);
 
 /**
  * @brief 判断字符串是否以指定前缀开头
@@ -470,7 +470,7 @@ bool XString_equals(const XString* str1, const XString* str2, XCharCaseSensitivi
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
-bool XString_starts_with(const XString* str, const XString* prefix, XCharCaseSensitivity cs);
+bool XString_starts_with(const XString* str, const XString* prefix, XChar_CaseSensitivity cs);
 
 /**
  * @brief 判断字符串是否以指定前缀开头
@@ -479,7 +479,7 @@ bool XString_starts_with(const XString* str, const XString* prefix, XCharCaseSen
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
-bool XString_starts_with_utf8(const XString* str, const char* prefix, XCharCaseSensitivity cs);
+bool XString_starts_with_utf8(const XString* str, const char* prefix, XChar_CaseSensitivity cs);
 
 /**
  * @brief 判断字符串是否以指定后缀结尾
@@ -488,7 +488,7 @@ bool XString_starts_with_utf8(const XString* str, const char* prefix, XCharCaseS
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
-bool XString_ends_with(const XString* str, const XString* suffix, XCharCaseSensitivity cs);
+bool XString_ends_with(const XString* str, const XString* suffix, XChar_CaseSensitivity cs);
 
 /**
  * @brief 判断字符串是否以指定后缀结尾
@@ -497,7 +497,7 @@ bool XString_ends_with(const XString* str, const XString* suffix, XCharCaseSensi
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
-bool XString_ends_with_utf8(const XString* str, const char* suffix, XCharCaseSensitivity cs);
+bool XString_ends_with_utf8(const XString* str, const char* suffix, XChar_CaseSensitivity cs);
 
 /**
  * @brief 判断检查当前检查字符串是否全部由小写字符组成
@@ -814,7 +814,7 @@ void XString_truncate(XString* str, size_t position);
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回 XStringList 指针（需手动释放），失败返回 NULL
  */
-XStringList* XString_split_utf8(const XString* str, const char* delimiter, XCharCaseSensitivity cs);
+XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar_CaseSensitivity cs);
 
 /**
  * @brief 按分隔符拆分字符串（限制最大拆分次数）
@@ -824,7 +824,7 @@ XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回 XStringList 指针（需手动释放），失败返回 NULL
  */
-XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter, size_t limit, XCharCaseSensitivity cs);
+XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter, size_t limit, XChar_CaseSensitivity cs);
 
 
 //拷贝字符串并返回

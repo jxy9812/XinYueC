@@ -36,12 +36,12 @@ void XString_deinitCache(XString* str);
 // 获取可修改的内部XChar数组
 XChar* XString_data(XString* str);
 // 辅助函数：计算KMP前缀表
-static void compute_prefix(const XChar* pattern, size_t m, int* prefix, XCharCaseSensitivity cs);
+static void compute_prefix(const XChar* pattern, size_t m, int* prefix, XChar_CaseSensitivity cs);
 // 辅助函数：KMP反向搜索（用于last_index_of）
 static int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, size_t m,
-    XCharCaseSensitivity cs, size_t start_idx);
+    XChar_CaseSensitivity cs, size_t start_idx);
 // 辅助函数：KMP正向搜索
-static int64_t kmp_search(const XChar* text, size_t n,const XChar* pattern, size_t m,const int* prefix, XCharCaseSensitivity cs,size_t from);
+static int64_t kmp_search(const XChar* text, size_t n,const XChar* pattern, size_t m,const int* prefix, XChar_CaseSensitivity cs,size_t from);
 
 //初始化缓存
 static void XString_initCache(XString* str);
@@ -85,10 +85,10 @@ XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
     size_t actual_len = (len == 0 && utf8_str) ? strlen(utf8_str) : len;
     if (utf8_str && actual_len > 0)
     {
-        int xchar_count = XChar_from_utf8_stream((const uint8_t*)utf8_str,len, NULL, 0);
+        int xchar_count = XChar_fromUtf8Stream((const uint8_t*)utf8_str,len, NULL, 0);
         if (xchar_count > 0) {
             XString_reserve(str, xchar_count);
-            xchar_count = XChar_from_utf8_stream((const uint8_t*)utf8_str,len, XString_data(str), xchar_count + 1);
+            xchar_count = XChar_fromUtf8Stream((const uint8_t*)utf8_str,len, XString_data(str), xchar_count + 1);
             str->parent.m_size = xchar_count;
         }
     }
@@ -114,7 +114,7 @@ XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
     }
 
     // 步骤1：计算转换所需的XChar数量（首次调用获取长度）
-    int64_t xchar_count = XChar_from_utf16_stream(utf16_str, len, NULL, 0);
+    int64_t xchar_count = XChar_fromUtf16Stream(utf16_str, len, NULL, 0);
     if (xchar_count <= 0) {
         return NULL;
     }
@@ -131,7 +131,7 @@ XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
 
     // 步骤4：执行实际转换
     XChar* data = XString_data(str);
-    xchar_count = XChar_from_utf16_stream(utf16_str, len, data, (size_t)xchar_count + 1);
+    xchar_count = XChar_fromUtf16Stream(utf16_str, len, data, (size_t)xchar_count + 1);
 
     if (xchar_count <= 0) {
         XString_delete_base(str);
@@ -205,7 +205,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     temp_gbk[len] = '\0'; // 添加空终止符，适配XChar_from_gbk的要求
 
     // 步骤2：计算转换所需的XChar数量（首次调用获取长度）
-    int64_t xchar_count = XChar_from_gbk_stream(temp_gbk, len, NULL, 0);
+    int64_t xchar_count = XChar_fromGbkStream(temp_gbk, len, NULL, 0);
     if (xchar_count <= 0) {
         XFree_System(temp_gbk); // 释放临时缓冲区
         return NULL;
@@ -224,7 +224,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
 
     // 步骤5：执行实际转换（使用临时缓冲区）
     XChar* data = XString_data(str);
-    xchar_count = XChar_from_gbk_stream(temp_gbk, len, data, (size_t)xchar_count + 1); // +1 预留终止符位置
+    xchar_count = XChar_fromGbkStream(temp_gbk, len, data, (size_t)xchar_count + 1); // +1 预留终止符位置
     XFree_System(temp_gbk); // 转换完成后释放临时缓冲区
 
     if (xchar_count <= 0) {
@@ -309,7 +309,7 @@ const char* XString_toUtf8(const XString* str)
     if (str->m_cache&& str->m_cache[XStringCache_Utf8].m_data) return str->m_cache[XStringCache_Utf8].m_data;
 
     // 计算所需UTF-8缓冲区大小（不包含结束符）
-    int64_t utf8_len = XChar_to_utf8_stream(XString_cdata(str), XString_length_base(str), NULL, 0);
+    int64_t utf8_len = XChar_toUtf8Stream(XString_cdata(str), XString_length_base(str), NULL, 0);
     if (utf8_len <= 0) return NULL;
     
     // 分配缓冲区（+1用于终止符）
@@ -318,7 +318,7 @@ const char* XString_toUtf8(const XString* str)
     if (!utf8_buf) return NULL;
 
     // 调用XChar转换函数（使用内部结束符自动处理）
-    int64_t result = XChar_to_utf8_stream(XString_cdata(str), XString_length_base(str), (uint8_t*)utf8_buf, utf8_len+1);
+    int64_t result = XChar_toUtf8Stream(XString_cdata(str), XString_length_base(str), (uint8_t*)utf8_buf, utf8_len+1);
     if (result <= 0) 
     {
         XFree_System(utf8_buf);
@@ -351,7 +351,7 @@ const uint16_t* XString_toUtf16(const XString* str)
     }
 
     // 计算UTF-16所需缓冲区大小（包含终止符）
-    int64_t utf16_len = XChar_to_utf16_stream(XString_cdata(str), XString_length_base(str), NULL, 0);
+    int64_t utf16_len = XChar_toUtf16Stream(XString_cdata(str), XString_length_base(str), NULL, 0);
     if (utf16_len <= 0) return NULL;
 
     // 分配缓冲区（+1用于终止符）
@@ -360,7 +360,7 @@ const uint16_t* XString_toUtf16(const XString* str)
     if (!utf16_buf) return NULL;
 
     // 执行转换
-    int64_t result = XChar_to_utf16_stream(XString_cdata(str), XString_length_base(str), utf16_buf, utf16_len + 1);
+    int64_t result = XChar_toUtf16Stream(XString_cdata(str), XString_length_base(str), utf16_buf, utf16_len + 1);
     if (result <= 0) {
         XFree_System(utf16_buf);
         return NULL;
@@ -393,7 +393,7 @@ const uint32_t* XString_toUtf32(const XString* str)
     }
 
     // 计算UTF-32所需缓冲区大小（包含终止符）
-    int64_t utf32_len = XChar_to_utf32_stream(XString_cdata(str), XString_length_base(str), NULL, 0);
+    int64_t utf32_len = XChar_toUtf32Stream(XString_cdata(str), XString_length_base(str), NULL, 0);
     if (utf32_len <= 0) return NULL;
 
     // 分配缓冲区（+1用于终止符）
@@ -402,7 +402,7 @@ const uint32_t* XString_toUtf32(const XString* str)
     if (!utf32_buf) return NULL;
 
     // 执行转换
-    int64_t result = XChar_to_utf32_stream(XString_cdata(str), XString_length_base(str), utf32_buf, utf32_len + 1);
+    int64_t result = XChar_toUtf32Stream(XString_cdata(str), XString_length_base(str), utf32_buf, utf32_len + 1);
     if (result <= 0) {
         XFree_System(utf32_buf);
         return NULL;
@@ -434,7 +434,7 @@ const char* XString_toGbk(const XString* str)
     }
 
     // 计算GBK所需缓冲区大小（包含终止符）
-    int64_t gbk_len = XChar_to_gbk_stream(XString_cdata(str), XString_length_base(str), NULL, 0);
+    int64_t gbk_len = XChar_toGbkStream(XString_cdata(str), XString_length_base(str), NULL, 0);
     if (gbk_len <= 0) return NULL;
 
     // 分配缓冲区（+1用于终止符）
@@ -443,7 +443,7 @@ const char* XString_toGbk(const XString* str)
     if (!gbk_buf) return NULL;
 
     // 执行转换
-    int64_t result = XChar_to_gbk_stream(XString_cdata(str), XString_length_base(str), gbk_buf, gbk_max_len);
+    int64_t result = XChar_toGbkStream(XString_cdata(str), XString_length_base(str), gbk_buf, gbk_max_len);
     if (result <= 0) {
         XFree_System(gbk_buf);
         return NULL;
@@ -581,7 +581,7 @@ bool XString_append_utf8(XString* str, const char* utf8_str)
     if (!str || !utf8_str) return false;
 
     // 先计算需要转换的XChar数量（不含终止符）
-    int64_t xchar_count = XChar_from_utf8_stream((const uint8_t*)utf8_str,0, NULL, 0);
+    int64_t xchar_count = XChar_fromUtf8Stream((const uint8_t*)utf8_str,0, NULL, 0);
     if (xchar_count <= 0) return false;
 
     XString_detach(str);
@@ -593,7 +593,7 @@ bool XString_append_utf8(XString* str, const char* utf8_str)
 
     // 直接转换到目标缓冲区
     XChar* data = XString_data(str);
-    int64_t result = XChar_from_utf8_stream(
+    int64_t result = XChar_fromUtf8Stream(
         (const uint8_t*)utf8_str,
         0,
         data + current_size,  // 直接写到当前字符串末尾
@@ -620,7 +620,7 @@ bool XString_append_with_length_utf8(XString* str, const char* utf8_str, size_t 
     if (!str || !utf8_str) return false;
 
     // 先计算需要转换的XChar数量（不含终止符）
-    int64_t xchar_count = XChar_from_utf8_stream((const uint8_t*)utf8_str, len, NULL, 0);
+    int64_t xchar_count = XChar_fromUtf8Stream((const uint8_t*)utf8_str, len, NULL, 0);
     if (xchar_count <= 0) return false;
 
     XString_detach(str);
@@ -632,7 +632,7 @@ bool XString_append_with_length_utf8(XString* str, const char* utf8_str, size_t 
 
     // 直接转换到目标缓冲区
     XChar* data = XString_data(str);
-    int64_t result = XChar_from_utf8_stream(
+    int64_t result = XChar_fromUtf8Stream(
         (const uint8_t*)utf8_str,
         len,
         data + current_size,  // 直接写到当前字符串末尾
@@ -724,7 +724,7 @@ bool XString_assign_with_length_utf8(XString* str, const char* utf8_str, size_t 
     if (!utf8_str || *utf8_str == '\0') return true;
 
     // 先计算需要转换的XChar数量（不含终止符）
-    int64_t xchar_count = XChar_from_utf8_stream((const uint8_t*)utf8_str, len, NULL, 0);
+    int64_t xchar_count = XChar_fromUtf8Stream((const uint8_t*)utf8_str, len, NULL, 0);
     if (xchar_count <= 0) return false;
 
     XString_detach(str);
@@ -733,7 +733,7 @@ bool XString_assign_with_length_utf8(XString* str, const char* utf8_str, size_t 
 
     // 直接转换到目标缓冲区
     XChar* data = XString_data(str);
-    int64_t result = XChar_from_utf8_stream(
+    int64_t result = XChar_fromUtf8Stream(
         (const uint8_t*)utf8_str,
         len,
         data,
@@ -942,7 +942,7 @@ void XString_erase_base(XString* str, const XString_iterator* it, XString_iterat
     XClassGetVirtualFunc(str, EXString_Erase, bool (*)(XString*, const XString_iterator*,XString_iterator*))(str, it, next);
 }
 
-bool XString_replace(XString* str, const XString* before, const XString* after, XCharCaseSensitivity cs)
+bool XString_replace(XString* str, const XString* before, const XString* after, XChar_CaseSensitivity cs)
 {
     if (!str || !before || !after) return false;
 
@@ -998,7 +998,7 @@ bool XString_replace(XString* str, const XString* before, const XString* after, 
     return replaced; // 即使没有替换也返回true（操作成功但无匹配）
 }
 
-bool XString_replace_utf8(XString* str, const char* before, const char* after, XCharCaseSensitivity cs)
+bool XString_replace_utf8(XString* str, const char* before, const char* after, XChar_CaseSensitivity cs)
 {
     if (!str || !before || !after) return false;
 
@@ -1055,7 +1055,7 @@ bool XString_pop_front_base(XString* str) {
 }
 //查找算法
 // 辅助函数：计算KMP前缀表
-void compute_prefix(const XChar* pattern, size_t m, int* prefix, XCharCaseSensitivity cs) 
+void compute_prefix(const XChar* pattern, size_t m, int* prefix, XChar_CaseSensitivity cs) 
 {
     prefix[0] = 0;
     int len = 0;  // 当前最长前缀后缀长度
@@ -1081,7 +1081,7 @@ void compute_prefix(const XChar* pattern, size_t m, int* prefix, XCharCaseSensit
 // 辅助函数：KMP正向搜索
 int64_t kmp_search(const XChar* text, size_t n,
     const XChar* pattern, size_t m,
-    const int* prefix, XCharCaseSensitivity cs,
+    const int* prefix, XChar_CaseSensitivity cs,
     size_t from)
 {
     if (m == 0) return from <= n ? (int64_t)from : -1;  // 空模式串处理
@@ -1111,7 +1111,7 @@ int64_t kmp_search(const XChar* text, size_t n,
 }
 
 
-int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t from, XCharCaseSensitivity cs)
+int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs)
 {
     if (!str || !substr) return -1;
 
@@ -1155,7 +1155,7 @@ int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t fro
 }
 // 辅助函数：KMP反向搜索（用于last_index_of）
 int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, size_t m,
-    XCharCaseSensitivity cs, size_t start_idx)
+    XChar_CaseSensitivity cs, size_t start_idx)
 {
     // 计算前缀表（正向匹配用，与子串方向一致）
     int* prefix = (int*)XMalloc_System(m * sizeof(int));
@@ -1193,7 +1193,7 @@ int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, si
     return -1;
 }
 
-int64_t XString_index_of(const XString* str, const XString* substr, size_t from, XCharCaseSensitivity cs)
+int64_t XString_index_of(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs)
 {
     if (!str || !substr) return -1;
 
@@ -1228,7 +1228,7 @@ int64_t XString_index_of(const XString* str, const XString* substr, size_t from,
     return result;
 }
 
-int64_t XString_last_index_of(const XString* str, const XString* substr, size_t from, XCharCaseSensitivity cs)
+int64_t XString_last_index_of(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs)
 {
     // 空指针检查
     if (!str || !substr) return -1;
@@ -1275,7 +1275,7 @@ int64_t XString_last_index_of(const XString* str, const XString* substr, size_t 
     return kmp_reverse_search(text, str_len, pattern, substr_len, cs, start_idx);
 }
 
-int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_t from, XCharCaseSensitivity cs)
+int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs)
 {
     if (!str || !substr) return -1;
 
@@ -1326,7 +1326,7 @@ int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_
     return result;
 }
 
-bool XString_contains(const XString* str, const XString* substr, XCharCaseSensitivity cs)
+bool XString_contains(const XString* str, const XString* substr, XChar_CaseSensitivity cs)
 {
     if (!str || !substr) return false;
 
@@ -1358,7 +1358,7 @@ bool XString_contains(const XString* str, const XString* substr, XCharCaseSensit
     return found_pos != -1;
 }
 
-bool XString_contains_utf8(const XString* str, const char* utf8_substr, XCharCaseSensitivity cs)
+bool XString_contains_utf8(const XString* str, const char* utf8_substr, XChar_CaseSensitivity cs)
 {
     if (!utf8_substr) return false;
 
@@ -1398,7 +1398,7 @@ int32_t XString_compare(const XString* str1, const XString* str2)
         (XString_length_base(str1) > XString_length_base(str2)) ? 1 : 0;
 }
 
-bool XString_equals(const XString* str1, const XString* str2, XCharCaseSensitivity cs)
+bool XString_equals(const XString* str1, const XString* str2, XChar_CaseSensitivity cs)
 {
     // 空指针处理：两者都为空则相等，仅有一个为空则不等
     if (!str1 && !str2) return true;
@@ -1423,7 +1423,7 @@ bool XString_equals(const XString* str1, const XString* str2, XCharCaseSensitivi
     return true;
 }
 
-bool XString_starts_with(const XString* str, const XString* prefix, XCharCaseSensitivity cs) {
+bool XString_starts_with(const XString* str, const XString* prefix, XChar_CaseSensitivity cs) {
     if (!str || !prefix) return false;
 
     size_t str_len = XString_length_base(str);
@@ -1452,7 +1452,7 @@ const bool XLess_XString(const XString* str1, const XString* str2)
     return XString_compare(str1, str2) <0;
 }
 
-bool XString_starts_with_utf8(const XString* str, const char* prefix, XCharCaseSensitivity cs) 
+bool XString_starts_with_utf8(const XString* str, const char* prefix, XChar_CaseSensitivity cs) 
 {
     if (!str || !prefix) return false;
 
@@ -1465,7 +1465,7 @@ bool XString_starts_with_utf8(const XString* str, const char* prefix, XCharCaseS
     return result;
 }
 
-bool XString_ends_with(const XString* str, const XString* suffix, XCharCaseSensitivity cs) {
+bool XString_ends_with(const XString* str, const XString* suffix, XChar_CaseSensitivity cs) {
     if (!str || !suffix) return false;
 
     size_t str_len = XString_length_base(str);
@@ -1491,7 +1491,7 @@ bool XString_ends_with(const XString* str, const XString* suffix, XCharCaseSensi
     return true;
 }
 
-bool XString_ends_with_utf8(const XString* str, const char* suffix, XCharCaseSensitivity cs)
+bool XString_ends_with_utf8(const XString* str, const char* suffix, XChar_CaseSensitivity cs)
 {
     if (!str || !suffix) return false;
 
@@ -1519,9 +1519,9 @@ bool XString_isLower(const XString* str)
 
     for (size_t i = 0; i < len; ++i) {
         const XChar ch = chars[i];
-        if (XChar_is_letter(ch)) { // 仅检查字母字符
+        if (XChar_isLetter(ch)) { // 仅检查字母字符
             has_letter = true;
-            if (!XChar_is_lower(ch)) { // 发现大写字母则直接返回false
+            if (!XChar_isLower(ch)) { // 发现大写字母则直接返回false
                 return false;
             }
         }
@@ -1545,12 +1545,12 @@ bool XString_isUpper(const XString* str)
     for (size_t i = 0; i < len; ++i) {
         const XChar ch = chars[i];
         // 跳过代理字符（已在XChar层级处理完整字符）
-        if (XChar_is_surrogate(ch)) {
+        if (XChar_isSurrogate(ch)) {
             continue;
         }
-        if (XChar_is_letter(ch)) { // 仅检查字母字符
+        if (XChar_isLetter(ch)) { // 仅检查字母字符
             has_letter = true;
-            if (!XChar_is_upper(ch)) { // 发现小写字母则直接返回false
+            if (!XChar_isUpper(ch)) { // 发现小写字母则直接返回false
                 return false;
             }
         }
@@ -1593,15 +1593,15 @@ bool XString_isValidUtf16(const XString* str)
     for (size_t i = 0; i < len; ++i) {
         const XChar* ch = &chars[i];
         // 检查高代理字符
-        if (XChar_is_high_surrogate(ch)) {
+        if (XChar_isHighSurrogate(ch)) {
             // 高代理后面必须跟一个低代理，且不能是最后一个字符
-            if (i + 1 >= len || !XChar_is_low_surrogate(chars[i + 1])) {
+            if (i + 1 >= len || !XChar_isLowSurrogate(chars[i + 1])) {
                 return false;
             }
             i++; // 跳过下一个低代理，避免重复检查
         }
         // 检查孤立的低代理字符（前面没有高代理）
-        else if (XChar_is_low_surrogate(ch)) {
+        else if (XChar_isLowSurrogate(ch)) {
             return false;
         }
         // 其他字符无需特殊处理（包括基本平面字符）
@@ -1651,7 +1651,7 @@ XString* XString_toLower(const XString* str) {
 
     XChar* data = XString_data(result);
     for (size_t i = 0; i < XString_length_base(result); i++) {
-        data[i] = XChar_to_lower(data[i]);
+        data[i] = XChar_toLower(data[i]);
     }
     data[XString_length_base(result)] = (XChar){ 0 };  // 更新结束符
 
@@ -1667,7 +1667,7 @@ XString* XString_toUpper(const XString* str) {
 
     XChar* data = XString_data(result);
     for (size_t i = 0; i < XString_length_base(result); i++) {
-        data[i] = XChar_to_upper(data[i]);
+        data[i] = XChar_toUpper(data[i]);
     }
     data[XString_length_base(result)] = (XChar){ 0 };  // 更新结束符
 
@@ -1683,9 +1683,9 @@ XString* XString_trimmed(const XString* str) {
     size_t end = XString_length_base(str) - 1;
 
     // 跳过前导空白
-    while (start <= end && XChar_is_space(data[start])) start++;
+    while (start <= end && XChar_isSpace(data[start])) start++;
     // 跳过后导空白
-    while (end >= start && XChar_is_space(data[end])) end--;
+    while (end >= start && XChar_isSpace(data[end])) end--;
 
     if (start > end) return XString_create();  // 全是空白
     return XString_mid(str, start, end - start + 1);
@@ -1731,7 +1731,7 @@ short XString_toShort(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_short_stream(XContainerSharedDataPtr(str),XContainerSize(str),base,ok);
+    return XChar_toShort(XContainerSharedDataPtr(str),XContainerSize(str),base,ok);
 }
 
 int XString_toInt(const XString* str, bool* ok, int base) {
@@ -1739,7 +1739,7 @@ int XString_toInt(const XString* str, bool* ok, int base) {
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_int_stream(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
+    return XChar_toInt(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
 }
 
 long XString_toLong(const XString* str, bool* ok, int base)
@@ -1748,7 +1748,7 @@ long XString_toLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_long_stream(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
+    return XChar_toLong(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
 }
 
 long long XString_toLongLong(const XString* str, bool* ok, int base)
@@ -1757,7 +1757,7 @@ long long XString_toLongLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_longlong_stream(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
+    return XChar_toLongLong(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
 }
 
 unsigned long XString_toULong(const XString* str, bool* ok, int base)
@@ -1766,7 +1766,7 @@ unsigned long XString_toULong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_ulong_stream(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
+    return XChar_toULong(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
 }
 
 unsigned long long XString_toULongLong(const XString* str, bool* ok, int base)
@@ -1775,7 +1775,7 @@ unsigned long long XString_toULongLong(const XString* str, bool* ok, int base)
         if (ok) *ok = false;
         return 0;
     }
-    return XChar_to_ulonglong_stream(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
+    return XChar_toULongLong(XContainerSharedDataPtr(str), XContainerSize(str), base, ok);
 }
 
 float XString_toFloat(const XString* str, bool* ok)
@@ -1784,7 +1784,7 @@ float XString_toFloat(const XString* str, bool* ok)
         if (ok) *ok = false;
         return 0.0f;
     }
-    return XChar_to_float_stream(XContainerSharedDataPtr(str), XContainerSize(str), ok);
+    return XChar_toFloat(XContainerSharedDataPtr(str), XContainerSize(str), ok);
 }
 
 double XString_toDouble(const XString* str, bool* ok) {
@@ -1792,7 +1792,7 @@ double XString_toDouble(const XString* str, bool* ok) {
         if (ok) *ok = false;
         return 0.0;
     }
-    return XChar_to_double_stream(XContainerSharedDataPtr(str), XContainerSize(str), ok);
+    return XChar_toDouble(XContainerSharedDataPtr(str), XContainerSize(str), ok);
 }
 
 bool XString_setNum_int(XString* str, int n, int base)
@@ -1800,11 +1800,11 @@ bool XString_setNum_int(XString* str, int n, int base)
     if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
-    int64_t len=XChar_from_int_stream(n,base,NULL,0,true);
+    int64_t len=XChar_fromInt(n,base,NULL,0,true);
     if (len == -1)
         return false;
     XString_resize(str,len);
-    return XChar_from_int_stream(n, base, XString_data(str), len+1, true)!=-1;
+    return XChar_fromInt(n, base, XString_data(str), len+1, true)!=-1;
 }
 
 bool XString_setNum_uInt(XString* str, unsigned int n, int base)
@@ -1812,11 +1812,11 @@ bool XString_setNum_uInt(XString* str, unsigned int n, int base)
     if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
-    int64_t len = XChar_from_uint_stream(n, base, NULL, 0, true);
+    int64_t len = XChar_fromUInt(n, base, NULL, 0, true);
     if (len == -1)
         return false;
     XString_resize(str, len);
-    return XChar_from_uint_stream(n, base, XString_data(str), len + 1, true) != -1;
+    return XChar_fromUInt(n, base, XString_data(str), len + 1, true) != -1;
 }
 
 bool XString_setNum_long(XString* str, long n, int base)
@@ -1824,11 +1824,11 @@ bool XString_setNum_long(XString* str, long n, int base)
     if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
-    int64_t len = XChar_from_long_stream(n, base, NULL, 0, true);
+    int64_t len = XChar_fromLong(n, base, NULL, 0, true);
     if (len == -1)
         return false;
     XString_resize(str, len);
-    return XChar_from_long_stream(n, base, XString_data(str), len + 1, true) != -1;
+    return XChar_fromLong(n, base, XString_data(str), len + 1, true) != -1;
 }
 
 bool XString_setNum_uLong(XString* str, unsigned long n, int base)
@@ -1836,11 +1836,11 @@ bool XString_setNum_uLong(XString* str, unsigned long n, int base)
     if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
-    int64_t len = XChar_from_ulong_stream(n, base, NULL, 0, true);
+    int64_t len = XChar_fromULong(n, base, NULL, 0, true);
     if (len == -1)
         return false;
     XString_resize(str, len);
-    return XChar_from_ulong_stream(n, base, XString_data(str), len + 1, true) != -1;
+    return XChar_fromULong(n, base, XString_data(str), len + 1, true) != -1;
 }
 
 bool XString_setNum_llong(XString* str, long long n, int base)
@@ -1848,11 +1848,11 @@ bool XString_setNum_llong(XString* str, long long n, int base)
     if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
-    int64_t len = XChar_from_ulonglong_stream(n, base, NULL, 0, true);
+    int64_t len = XChar_fromLongLong(n, base, NULL, 0, true);
     if (len == -1)
         return false;
     XString_resize(str, len);
-    return XChar_from_ulonglong_stream(n, base, XString_data(str), len + 1, true) != -1;
+    return XChar_fromLongLong(n, base, XString_data(str), len + 1, true) != -1;
 }
 
 bool XString_setNum_uLLong(XString* str, unsigned long long n, int base)
@@ -1860,11 +1860,11 @@ bool XString_setNum_uLLong(XString* str, unsigned long long n, int base)
     if (!str || base < 2 || base > 36) {  // 补充str空指针检查
         return false;
     }
-    int64_t len = XChar_from_ulonglong_stream(n, base, NULL, 0, true);
+    int64_t len = XChar_fromULongLong(n, base, NULL, 0, true);
     if (len == -1)
         return false;
     XString_resize(str, len);
-    return XChar_from_ulonglong_stream(n, base, XString_data(str), len + 1, true) != -1;
+    return XChar_fromULongLong(n, base, XString_data(str), len + 1, true) != -1;
 }
 
 bool XString_setNum_float(XString* str, float f, char format, int precision)
@@ -1872,11 +1872,11 @@ bool XString_setNum_float(XString* str, float f, char format, int precision)
     if (!str ) { 
         return false;
     }
-    int64_t len = XChar_from_float_stream((double)f,format,NULL,0,precision);
+    int64_t len = XChar_fromFloat((double)f,format,NULL,0,precision);
     if (len == -1)
         return false;
     XString_resize(str, len);
-    return XChar_from_float_stream((double)f, format, XString_data(str), len + 1, precision) != -1;
+    return XChar_fromFloat((double)f, format, XString_data(str), len + 1, precision) != -1;
     // 转换为double处理，避免精度损失
     return XString_setNum_double(str, (double)f, format, precision);
 }
@@ -1886,11 +1886,11 @@ bool XString_setNum_double(XString* str, double d, char format, int precision)
     if (!str) {
         return false;
     }
-    int64_t len = XChar_from_double_stream(d, format, NULL, 0, precision);
+    int64_t len = XChar_fromDouble(d, format, NULL, 0, precision);
     if (len == -1)
         return false;
     XString_resize(str, len);
-    return XChar_from_double_stream(d, format, XString_data(str), len + 1, precision) != -1;
+    return XChar_fromDouble(d, format, XString_data(str), len + 1, precision) != -1;
 }
 
 XString* XString_left(const XString* str, size_t n)
@@ -2037,7 +2037,7 @@ void XString_truncate(XString* str, size_t position)
 }
 
 // 辅助函数：查找下一个分隔符位置
-static int64_t find_next_delimiter(const XString* str, const char* delimiter, size_t current_pos, XCharCaseSensitivity cs)
+static int64_t find_next_delimiter(const XString* str, const char* delimiter, size_t current_pos, XChar_CaseSensitivity cs)
 {
     if (!str || !delimiter || current_pos > XString_length_base(str)) {
         return -1;
@@ -2046,7 +2046,7 @@ static int64_t find_next_delimiter(const XString* str, const char* delimiter, si
 }
 
 // 按分隔符拆分字符串
-XStringList* XString_split_utf8(const XString* str, const char* delimiter, XCharCaseSensitivity cs) 
+XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar_CaseSensitivity cs) 
 {
     if (!str || !delimiter) {
         return NULL;
@@ -2108,7 +2108,7 @@ XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar
 }
 
 // 按分隔符拆分字符串（限制最大拆分次数）
-XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter, size_t limit, XCharCaseSensitivity cs)
+XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter, size_t limit, XChar_CaseSensitivity cs)
 {
     if (!str || !delimiter || limit == 0) {
         return NULL;
