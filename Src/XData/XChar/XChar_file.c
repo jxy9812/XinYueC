@@ -1,19 +1,22 @@
 /**
  * @file XChar_file.c
- * @brief GBK编码转换的文件读写实现（公共平台）
+ * @brief GBK编码转换的文件读取实现（二进制格式）
  *
- * 通过读取 XCHAR.TXT 合并映射文件实现 GBK↔Unicode 转换。
+ * 通过读取 XCHAR_COMPACT.BIN 文件实现 GBK↔Unicode 转换。
  * 适用于嵌入式平台（如 STM32 + FatFs），无需系统 API。
  *
- * 文件格式（二进制写入）：
- *   头部 32 字节：
- *     "GBKTBL:XXXXXXXX\n"  (16字节，GBK表起始偏移，十六进制)
- *     "UNITBL:XXXXXXXX\n"  (16字节，Unicode表起始偏移，十六进制)
- *   GBK 表：21920 × 14 字节（按 GBK 排序，"0xGBK\t0xUnicode\n"）
- *   Unicode 表：21920 × 14 字节（按 Unicode 排序，"0xUnicode\t0xGBK\n"）
+ * 二进制格式（XCHAR_COMPACT.BIN）- 由 XChar_generateCodeTable() 生成：
+ *   无头部，直接是二进制数据：
+ *   GBK 表：N × 4 字节（GBK高、GBK低、Unicode高、Unicode低，按 GBK 排序）
+ *   Unicode 表：N × 4 字节（Unicode高、Unicode低、GBK高、GBK低，按 Unicode 排序）
  *
- * 查找方式：纯文件二分，每行14字节可直接计算文件偏移。
+ * 查找方式：纯文件二分，每项4字节。
  * 只需一个 XFile 单例，内存开销为零。
+ *
+ * 三种模式优先级（从高到低）：
+ *   1. XCHAR_USE_CODE_GBK   - 代码模式（静态数组）
+ *   2. XCHAR_USE_FILE_GBK   - 文件模式（读取外部文件）
+ *   3. XCHAR_USE_SYSTEM_GBK - 系统API模式（调用系统API）
  *
  * 使用方式：在编译配置中定义 XCHAR_USE_FILE_GBK 宏即可启用此实现。
  */
@@ -30,18 +33,12 @@
 /*                        配置宏                                              */
 /* ========================================================================== */
 
-#ifndef XCHAR_TABLE_PATH
-#define XCHAR_TABLE_PATH "XCHAR.TXT"
+#ifndef XCHAR_COMPACT_PATH
+#define XCHAR_COMPACT_PATH "XCHAR_COMPACT.BIN"
 #endif
 
-/** 头部：两行 × 16字节 = 32字节 */
-#define HEADER_BYTES    32
-
-/** 数据行宽："0xNNNN\t0xNNNN\n" = 14字节（二进制写入无 \r） */
-#define LINE_BYTES      14
-
-/** 总条目数（每表 21920） */
-#define TABLE_ENTRY_COUNT  21920
+/** 二进制格式每项字节数 */
+#define BINARY_ENTRY_SIZE  4
 
 /* ========================================================================== */
 /*                        全局状态                                             */
@@ -52,7 +49,7 @@ typedef struct {
     bool file_opened;       /**< 是否已打开 */
     int64_t gbk_offset;     /**< GBK表起始偏移 */
     int64_t uni_offset;     /**< Unicode表起始偏移 */
-    int line_bytes;         /**< 检测到的行宽（14或15，兼容 \r\n） */
+    uint32_t entry_count;   /**< 条目数量 */
 } XChar_FileGlobal;
 
 static XChar_FileGlobal s_files = { NULL, false, 0, 0, 0 };
@@ -62,142 +59,75 @@ static XChar_FileGlobal s_files = { NULL, false, 0, 0, 0 };
 /* ========================================================================== */
 
 /**
- * @brief 打开映射文件单例并解析头部
+ * @brief 打开二进制格式文件
+ * @return 成功返回文件指针，失败返回NULL
  */
-static XFile* get_table_file(void)
+static XFile* open_binary_file(void)
 {
-    if (s_files.file_opened && s_files.file) return s_files.file;
+    XString* xpath = XString_create_utf8(XCHAR_COMPACT_PATH);
+    if (!xpath) return NULL;
 
     s_files.file = XFile_create_1();
-    if (!s_files.file) return NULL;
-
-    XString* xpath = XString_create_utf8(XCHAR_TABLE_PATH);
-    if (!xpath) { XFile_deleteLater(s_files.file); s_files.file = NULL; return NULL; }
+    if (!s_files.file) { XString_delete_base(xpath); return NULL; }
 
     XFile_setFileName(s_files.file, xpath);
     XString_delete_base(xpath);
 
-    /* 二进制模式，确保 seek/position 一致 */
     if (!XFile_open_2(s_files.file, XIODevice_ReadOnly, 0)) {
-        XFile_deleteLater(s_files.file); s_files.file = NULL; return NULL;
-    }
-
-    s_files.file_opened = true;
-
-    /* 解析头部：读取前32字节 */
-    char hdr[36];
-    XIODevice_seek_base((XIODevice*)s_files.file, 0);
-    int64_t n = XIODevice_read_1((XIODevice*)s_files.file, hdr, HEADER_BYTES);
-    if (n < HEADER_BYTES) {
         XFile_deleteLater(s_files.file); s_files.file = NULL;
-        s_files.file_opened = false; return NULL;
+        return NULL;
     }
 
-    /* 解析 "GBKTBL:XXXXXXXX\n" (G=0,B=1,K=2,T=3,B=4,L=5,:=6,hex=7..14,\n=15) */
-    unsigned int gbk_off = 0, uni_off = 0;
-    if (hdr[6] == ':') {
-        const char* p = hdr + 7;
-        while (*p && *p != '\n' && *p != '\r') {
-            char c = *p++;
-            unsigned int d;
-            if (c >= '0' && c <= '9') d = c - '0';
-            else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
-            else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
-            else break;
-            gbk_off = (gbk_off << 4) | d;
-        }
-    }
-    /* 解析 "UNITBL:XXXXXXXX\n" (U=0,N=1,I=2,T=3,B=4,L=5,:=6,hex=7..14,\n=15) */
-    if (hdr[22] == ':') {
-        const char* p = hdr + 23;
-        while (*p && *p != '\n' && *p != '\r') {
-            char c = *p++;
-            unsigned int d;
-            if (c >= '0' && c <= '9') d = c - '0';
-            else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
-            else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
-            else break;
-            uni_off = (uni_off << 4) | d;
-        }
+    /* 计算文件大小来确定条目数 */
+    int64_t file_size = XIODevice_size_base((XIODevice*)s_files.file);
+    if (file_size <= 0) {
+        XFile_deleteLater(s_files.file); s_files.file = NULL;
+        return NULL;
     }
 
-    s_files.gbk_offset = (int64_t)gbk_off;
-    s_files.uni_offset = (int64_t)uni_off;
-
-    /* 检测行宽：读取第一个数据行的前15字节 */
-    XIODevice_seek_base((XIODevice*)s_files.file, s_files.gbk_offset);
-    {
-        char probe[16];
-        int64_t pn = XIODevice_read_1((XIODevice*)s_files.file, probe, 15);
-        s_files.line_bytes = LINE_BYTES; /* 默认14 */
-        {
-            int i;
-            for (i = 0; i < (int)pn; i++) {
-                if (probe[i] == '\n') { s_files.line_bytes = i + 1; break; }
-            }
-        }
+    /* 二进制格式：两个表，每项4字节 */
+    uint32_t total_entries = (uint32_t)(file_size / (BINARY_ENTRY_SIZE * 2));
+    if (total_entries == 0) {
+        XFile_deleteLater(s_files.file); s_files.file = NULL;
+        return NULL;
     }
+
+    s_files.entry_count = total_entries;
+    s_files.gbk_offset = 0;  /* GBK表在文件开头 */
+    s_files.uni_offset = (int64_t)total_entries * BINARY_ENTRY_SIZE;  /* Unicode表紧随其后 */
+    s_files.file_opened = true;
 
     return s_files.file;
 }
 
 /**
- * @brief 快速解析十六进制值
+ * @brief 获取文件单例
  */
-static bool parse_hex_pair(const char* buf, uint16_t* first, uint16_t* second)
+static XFile* get_table_file(void)
 {
-    unsigned int v1 = 0, v2 = 0;
-    const char* p;
-
-    p = buf + 2; /* 跳过 "0x" */
-    while (*p && *p != '\t') {
-        char c = *p++;
-        unsigned int d;
-        if (c >= '0' && c <= '9') d = c - '0';
-        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
-        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
-        else break;
-        v1 = (v1 << 4) | d;
-    }
-
-    p++; /* 跳过 \t */
-    p += 2; /* 跳过 "0x" */
-    while (*p && *p != '\n' && *p != '\r') {
-        char c = *p++;
-        unsigned int d;
-        if (c >= '0' && c <= '9') d = c - '0';
-        else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
-        else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
-        else break;
-        v2 = (v2 << 4) | d;
-    }
-
-    *first = (uint16_t)v1;
-    *second = (uint16_t)v2;
-    return true;
+    if (s_files.file_opened && s_files.file) return s_files.file;
+    return open_binary_file();
 }
 
 /**
- * @brief 在指定表中二分查找
- * @param table_offset 表的起始文件偏移
- * @param key 要查找的键值
- * @param out_val 输出对应值
+ * @brief 在二进制格式表中二分查找
  */
 static bool binary_search_table(XFile* file, int64_t table_offset, uint16_t key, uint16_t* out_val)
 {
-    int lo = 0, hi = TABLE_ENTRY_COUNT - 1;
-    char buf[16];
+    int lo = 0, hi = (int)s_files.entry_count - 1;
+    uint8_t buf[4];
 
     while (lo <= hi) {
         int mid = lo + (hi - lo) / 2;
-        int64_t offset = table_offset + (int64_t)mid * s_files.line_bytes;
+        int64_t offset = table_offset + (int64_t)mid * BINARY_ENTRY_SIZE;
 
         XIODevice_seek_base((XIODevice*)file, offset);
-        int64_t n = XIODevice_read_1((XIODevice*)file, buf, s_files.line_bytes);
-        if (n < LINE_BYTES) break;
+        int64_t n = XIODevice_read_1((XIODevice*)file, buf, BINARY_ENTRY_SIZE);
+        if (n < BINARY_ENTRY_SIZE) break;
 
-        uint16_t file_key = 0, file_val = 0;
-        parse_hex_pair(buf, &file_key, &file_val);
+        /* 大端序读取键和值 */
+        uint16_t file_key = ((uint16_t)buf[0] << 8) | buf[1];
+        uint16_t file_val = ((uint16_t)buf[2] << 8) | buf[3];
 
         if (file_key == key) {
             if (out_val) *out_val = file_val;

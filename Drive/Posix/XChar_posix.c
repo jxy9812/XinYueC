@@ -1,5 +1,29 @@
+/**
+ * @file XChar_posix.c
+ * @brief GBK编码转换的系统API模式实现（Posix平台）
+ *
+ * Posix平台（Linux/macOS/BSD）本地编码为UTF-8，不原生支持GBK。
+ * 此文件提供桩实现，返回失败。
+ *
+ * 在Posix平台上，建议使用：
+ *   - XCHAR_USE_CODE_GBK：代码模式（静态数组）
+ *   - XCHAR_USE_FILE_GBK：文件模式（读取外部文件）
+ *
+ * 使用方式：在编译配置中定义 XCHAR_USE_SYSTEM_GBK 宏启用此实现。
+ * 
+ * 三种模式优先级（从高到低）：
+ *   1. XCHAR_USE_CODE_GBK   - 代码模式（静态数组）
+ *   2. XCHAR_USE_FILE_GBK   - 文件模式（读取外部文件）
+ *   3. XCHAR_USE_SYSTEM_GBK - 系统API模式（调用系统API）
+ *
+ * 注意：同一时间只能启用一种模式。
+ */
+
 #if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
-#ifndef XCHAR_USE_FILE_GBK
+
+/* 只有在未定义代码模式和文件模式时，才使用系统API模式 */
+#if defined(XCHAR_USE_SYSTEM_GBK) || (!defined(XCHAR_USE_CODE_GBK) && !defined(XCHAR_USE_FILE_GBK))
+
 #include "XChar.h"
 /* ========================================================================== */
 /*                      平台抽象函数（在对应平台目录实现）                         */
@@ -70,5 +94,5 @@ int64_t XCharPlatform_gbkToUtf8Stream(const char* gbk_str, size_t input_size, ch
     return -1; /* Posix平台不支持GBK，返回失败 */
 }
 
-#endif /* !XCHAR_USE_FILE_GBK */
-#endif
+#endif /* XCHAR_USE_SYSTEM_GBK || (!XCHAR_USE_CODE_GBK && !XCHAR_USE_FILE_GBK) */
+#endif /* __linux__ || __APPLE__ || __BSD__ */

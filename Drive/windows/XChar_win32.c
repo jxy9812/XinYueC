@@ -1,5 +1,25 @@
+/**
+ * @file XChar_win32.c
+ * @brief GBK编码转换的系统API模式实现（Windows平台）
+ *
+ * 使用Windows系统API（MultiByteToWideChar/WideCharToMultiByte）实现GBK↔Unicode转换。
+ * 无需外部文件或静态表，依赖系统运行时支持。
+ *
+ * 使用方式：在编译配置中定义 XCHAR_USE_SYSTEM_GBK 宏启用此实现。
+ * 
+ * 三种模式优先级（从高到低）：
+ *   1. XCHAR_USE_CODE_GBK   - 代码模式（静态数组）
+ *   2. XCHAR_USE_FILE_GBK   - 文件模式（读取外部文件）
+ *   3. XCHAR_USE_SYSTEM_GBK - 系统API模式（调用系统API）
+ *
+ * 注意：同一时间只能启用一种模式。
+ */
+
 #ifdef _WIN32
-#ifndef XCHAR_USE_FILE_GBK
+
+/* 只有在未定义代码模式和文件模式时，才使用系统API模式 */
+#if defined(XCHAR_USE_SYSTEM_GBK) || (!defined(XCHAR_USE_CODE_GBK) && !defined(XCHAR_USE_FILE_GBK))
+
 #include "XChar.h"
 #include "XMemory.h"
 #include <windows.h>
@@ -159,5 +179,5 @@ int64_t XCharPlatform_gbkToUtf8Stream(const char* gbk_str, size_t input_size, ch
     return (int64_t)utf8_len;
 }
 
-#endif /* !XCHAR_USE_FILE_GBK */
+#endif /* XCHAR_USE_SYSTEM_GBK || (!XCHAR_USE_CODE_GBK && !XCHAR_USE_FILE_GBK) */
 #endif /* _WIN32 */

@@ -16,9 +16,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
 
 # ==================== GBK转换实现切换 ====================
 # 启用文件读写方式实现GBK转换（适用于嵌入式），注释此行则使用平台系统API
-add_compile_definitions(XCHAR_USE_FILE_GBK)
+add_compile_definitions(XCHAR_USE_CODE_GBK)
 # 映射表文件路径（干净格式，无注释，固定14字节/行，支持文件二分）
-add_compile_definitions(XCHAR_TABLE_PATH="${CMAKE_CURRENT_LIST_DIR}/Library/XCHAR.TXT")
+add_compile_definitions(XCHAR_COMPACT_PATH="${CMAKE_CURRENT_LIST_DIR}/Library/XCHAR_COMPACT.BIN")
 
 include(CMake_Config.cmake)
 #查找include目录下的所有*.hpp,*.h头文件,并路径列表保存到变量中
