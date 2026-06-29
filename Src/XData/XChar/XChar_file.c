@@ -5,7 +5,7 @@
  * 通过读取 XCHAR_COMPACT.BIN 文件实现 GBK↔Unicode 转换。
  * 适用于嵌入式平台（如 STM32 + FatFs），无需系统 API。
  *
- * 二进制格式（XCHAR_COMPACT.BIN）- 由 XChar_generateCodeTable() 生成：
+ * 二进制格式（XCHAR_COMPACT.BIN）-
  *   无头部，直接是二进制数据：
  *   GBK 表：N × 4 字节（GBK高、GBK低、Unicode高、Unicode低，按 GBK 排序）
  *   Unicode 表：N × 4 字节（Unicode高、Unicode低、GBK高、GBK低，按 Unicode 排序）
@@ -21,7 +21,7 @@
  * 使用方式：在编译配置中定义 XCHAR_USE_FILE_GBK 宏即可启用此实现。
  */
 
-#ifdef XCHAR_USE_FILE_GBK
+#if defined(XCHAR_USE_FILE_GBK)
 
 #include "XChar.h"
 #include "XMemory.h"
@@ -45,11 +45,11 @@
 /* ========================================================================== */
 
 typedef struct {
-    XFile* file;            /**< 文件单例 */
-    bool file_opened;       /**< 是否已打开 */
-    int64_t gbk_offset;     /**< GBK表起始偏移 */
-    int64_t uni_offset;     /**< Unicode表起始偏移 */
-    uint32_t entry_count;   /**< 条目数量 */
+    XFile* file;                    /**< 文件单例 */
+    uint32_t file_opened : 1;       /**< 是否已打开 */
+    uint32_t entry_count : 31;      /**< 条目数量 */
+    int64_t gbk_offset;             /**< GBK表起始偏移 */
+    int64_t uni_offset;             /**< Unicode表起始偏移 */
 } XChar_FileGlobal;
 
 static XChar_FileGlobal s_files = { NULL, false, 0, 0, 0 };

@@ -10,11 +10,9 @@
  *   Unicode 表：N × 4 字节（Unicode 2字节 + GBK 2字节，按 Unicode 排序，大端序）
  *
  * 使用方式：在编译配置中定义 XCHAR_USE_CODE_GBK 宏启用此实现。
- * 
- * 生成方式：运行 main.c 中的 XChar_generateCodeTable() 函数生成此表。
  */
 
-#ifdef XCHAR_USE_CODE_GBK
+#if defined(XCHAR_USE_CODE_GBK) && !defined(XCHAR_USE_FILE_GBK) && !defined(XCHAR_USE_SYSTEM_GBK)
 
 #include "XChar.h"
 #include "XMemory.h"

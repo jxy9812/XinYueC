@@ -17,8 +17,8 @@
 
 #ifdef _WIN32
 
-/* 只有在未定义代码模式和文件模式时，才使用系统API模式 */
-#if defined(XCHAR_USE_SYSTEM_GBK) || (!defined(XCHAR_USE_CODE_GBK) && !defined(XCHAR_USE_FILE_GBK))
+/* 只有在未定义文件模式时，才使用系统API模式 */
+#if defined(XCHAR_USE_SYSTEM_GBK) && (!defined(XCHAR_USE_FILE_GBK))
 
 #include "XChar.h"
 #include "XMemory.h"
