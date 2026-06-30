@@ -36,7 +36,7 @@ static bool VXFile_open(XIODevice* device, XIODeviceBaseMode mode)
     if (mode & XIODevice_NewOnly) fsMode |= XFileSystem_NewOnly;
     
     int error = 0;
-    int fd = XFileSystem_open(file->m_fileName, fsMode, &error);
+    intptr_t fd = XFileSystem_open(file->m_fileName, fsMode, &error);
     
     if (fd < 0) {
         file->m_parent.m_error = error;

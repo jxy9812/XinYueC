@@ -77,63 +77,63 @@ typedef enum {
  * @param path 文件路径（XString）
  * @param mode 打开模式（XFileSystemOpenMode组合）
  * @param error 输出错误码（可为NULL）
- * @return 文件描述符，失败返回-1
+ * @return 文件句柄，失败返回-1
  */
-int XFileSystem_open(const XString* path, int mode, int* error);
+intptr_t XFileSystem_open(const XString* path, int mode, int* error);
 
 /**
  * @brief 关闭文件
- * @param fd 文件描述符
+ * @param fd 文件句柄
  */
-void XFileSystem_close(int fd);
+void XFileSystem_close(intptr_t fd);
 
 /**
  * @brief 获取文件当前位置
- * @param fd 文件描述符
+ * @param fd 文件句柄
  * @return 当前位置，失败返回-1
  */
-int64_t XFileSystem_pos(int fd);
+int64_t XFileSystem_pos(intptr_t fd);
 
 /**
  * @brief 移动文件指针
- * @param fd 文件描述符
+ * @param fd 文件句柄
  * @param pos 目标位置
  * @return 成功返回true
  */
-bool XFileSystem_seek(int fd, int64_t pos);
+bool XFileSystem_seek(intptr_t fd, int64_t pos);
 
 /**
  * @brief 读取文件数据
- * @param fd 文件描述符
+ * @param fd 文件句柄
  * @param buf 目标缓冲区
  * @param len 最大读取长度
  * @return 实际读取字节数，-1表示错误
  */
-int64_t XFileSystem_read(int fd, void* buf, int64_t len);
+int64_t XFileSystem_read(intptr_t fd, void* buf, int64_t len);
 
 /**
  * @brief 写入文件数据
- * @param fd 文件描述符
+ * @param fd 文件句柄
  * @param buf 数据缓冲区
  * @param len 数据长度
  * @return 实际写入字节数，-1表示错误
  */
-int64_t XFileSystem_write(int fd, const void* buf, int64_t len);
+int64_t XFileSystem_write(intptr_t fd, const void* buf, int64_t len);
 
 /**
  * @brief 刷新文件缓冲区
- * @param fd 文件描述符
+ * @param fd 文件句柄
  * @return 成功返回true
  */
-bool XFileSystem_flush(int fd);
+bool XFileSystem_flush(intptr_t fd);
 
 /**
  * @brief 调整文件大小
- * @param fd 文件描述符
+ * @param fd 文件句柄
  * @param size 新大小
  * @return 成功返回true
  */
-bool XFileSystem_resize(int fd, int64_t size);
+bool XFileSystem_resize(intptr_t fd, int64_t size);
 
 /* ============================================================================
  * 二、文件属性操作（2个）- 必需实现
@@ -149,11 +149,11 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat);
 
 /**
  * @brief 获取文件属性（通过句柄）
- * @param fd 文件描述符
+ * @param fd 文件句柄
  * @param stat 输出文件属性结构
  * @return 成功返回true
  */
-bool XFileSystem_fstat(int fd, XFileStat* stat);
+bool XFileSystem_fstat(intptr_t fd, XFileStat* stat);
 
 /* ============================================================================
  * 三、文件系统操作（4个）- 必需实现
@@ -319,13 +319,13 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
 
 /**
  * @brief 内存映射文件
- * @param fd 文件描述符
+ * @param fd 文件句柄
  * @param offset 映射起始偏移
  * @param size 映射大小
  * @param writable 是否可写
  * @return 映射地址，失败返回NULL
  */
-void* XFileSystem_map(int fd, int64_t offset, int64_t size, bool writable);
+void* XFileSystem_map(intptr_t fd, int64_t offset, int64_t size, bool writable);
 
 /**
  * @brief 取消内存映射
@@ -352,12 +352,12 @@ bool XFileSystem_rmdir_recursive(const XString* path);
 
 /**
  * @brief 设置文件时间
- * @param fd 文件描述符
+ * @param fd 文件句柄
  * @param timeType 时间类型（访问时间/修改时间/创建时间）
  * @param timeValue 时间值（Unix时间戳，毫秒）
  * @return 成功返回true
  */
-bool XFileSystem_setFileTime(int fd, XFileTime timeType, int64_t timeValue);
+bool XFileSystem_setFileTime(intptr_t fd, XFileTime timeType, int64_t timeValue);
 
 /* ============================================================================
  * 十二、驱动器列表（1个）- 可选

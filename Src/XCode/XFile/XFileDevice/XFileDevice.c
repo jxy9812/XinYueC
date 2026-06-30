@@ -442,7 +442,7 @@ bool XFileDevice_flush(XFileDevice* device)
     return XFileSystem_flush(device->m_fileHandle);
 }
 
-int XFileDevice_handle(XFileDevice* device)
+intptr_t XFileDevice_handle(const XFileDevice* device)
 {
     if (!device) return -1;
     return device->m_fileHandle;

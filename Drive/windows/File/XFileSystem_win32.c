@@ -185,7 +185,7 @@ static bool fillFileStat(const XString* path, WIN32_FILE_ATTRIBUTE_DATA* attrDat
  * 核心文件操作
  * ============================================================================ */
 
-int XFileSystem_open(const XString* path, int mode, int* error)
+intptr_t XFileSystem_open(const XString* path, int mode, int* error)
 {
     wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) {
@@ -240,26 +240,26 @@ int XFileSystem_open(const XString* path, int mode, int* error)
     return fd;
 }
 
-void XFileSystem_close(int fd)
+void XFileSystem_close(intptr_t fd)
 {
     if (fd >= 0) {
         _close(fd);
     }
 }
 
-int64_t XFileSystem_pos(int fd)
+int64_t XFileSystem_pos(intptr_t fd)
 {
     if (fd < 0) return -1;
     return _lseeki64(fd, 0, SEEK_CUR);
 }
 
-bool XFileSystem_seek(int fd, int64_t pos)
+bool XFileSystem_seek(intptr_t fd, int64_t pos)
 {
     if (fd < 0 || pos < 0) return false;
     return _lseeki64(fd, pos, SEEK_SET) >= 0;
 }
 
-int64_t XFileSystem_read(int fd, void* buf, int64_t len)
+int64_t XFileSystem_read(intptr_t fd, void* buf, int64_t len)
 {
     if (fd < 0 || !buf || len <= 0) return -1;
     
@@ -276,7 +276,7 @@ int64_t XFileSystem_read(int fd, void* buf, int64_t len)
     return totalRead;
 }
 
-int64_t XFileSystem_write(int fd, const void* buf, int64_t len)
+int64_t XFileSystem_write(intptr_t fd, const void* buf, int64_t len)
 {
     if (fd < 0 || !buf || len <= 0) return -1;
     
@@ -293,7 +293,7 @@ int64_t XFileSystem_write(int fd, const void* buf, int64_t len)
     return totalWritten;
 }
 
-bool XFileSystem_flush(int fd)
+bool XFileSystem_flush(intptr_t fd)
 {
     if (fd < 0) return false;
     
@@ -303,7 +303,7 @@ bool XFileSystem_flush(int fd)
     return FlushFileBuffers(hFile) != 0;
 }
 
-bool XFileSystem_resize(int fd, int64_t size)
+bool XFileSystem_resize(intptr_t fd, int64_t size)
 {
     if (fd < 0 || size < 0) return false;
     
@@ -333,7 +333,7 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat)
     return fillFileStat(path, &attrData, stat);
 }
 
-bool XFileSystem_fstat(int fd, XFileStat* stat)
+bool XFileSystem_fstat(intptr_t fd, XFileStat* stat)
 {
     if (fd < 0 || !stat) return false;
     
@@ -777,7 +777,7 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  * 内存映射
  * ============================================================================ */
 
-void* XFileSystem_map(int fd, int64_t offset, int64_t size, bool writable)
+void* XFileSystem_map(intptr_t fd, int64_t offset, int64_t size, bool writable)
 {
     if (fd < 0 || size <= 0) return NULL;
     
@@ -845,7 +845,7 @@ bool XFileSystem_rmdir_recursive(const XString* path)
  * 文件时间修改
  * ============================================================================ */
 
-bool XFileSystem_setFileTime(int fd, XFileTime timeType, int64_t timeValue)
+bool XFileSystem_setFileTime(intptr_t fd, XFileTime timeType, int64_t timeValue)
 {
     if (fd < 0) return false;
     

@@ -2,6 +2,10 @@
 /* A Sample Code of User Provided OS Dependent Functions for FatFs        */
 /*------------------------------------------------------------------------*/
 
+#include "XFileSystem_config.h"
+
+#if defined(XFILE_USE_FATFS)
+
 #include "ff.h"
 
 
@@ -276,3 +280,4 @@ void ff_mutex_give (
 
 #endif	/* FF_FS_REENTRANT */
 
+#endif

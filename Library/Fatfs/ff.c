@@ -20,6 +20,10 @@
 
 
 #include <string.h>
+#include "XFileSystem_config.h"
+
+#if defined(XFILE_USE_FATFS)
+
 #include "ff.h"			/* Declarations of FatFs API */
 #include "diskio.h"		/* Declarations of device I/O functions */
 
@@ -7105,3 +7109,5 @@ FRESULT f_setcp (
 }
 #endif	/* FF_CODE_PAGE == 0 */
 
+
+#endif /* XFILE_USE_FATFS */

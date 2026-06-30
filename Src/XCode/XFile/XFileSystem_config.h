@@ -41,8 +41,8 @@ extern "C" {
 
 /* 取消注释以启用对应模式 */
 
-#define XFILE_USE_PLATFORM_API     /* 平台API模式 */
-/* #define XFILE_USE_FATFS         */  /* FatFS模式 */
+//#define XFILE_USE_PLATFORM_API     /* 平台API模式 */
+#define XFILE_USE_FATFS           /* FatFS模式 */
 
 /* ========================================================================== */
 /*                        FatFS模式配置                                        */

@@ -26,9 +26,8 @@
 /* 此选项用于切换过滤目录读取函数f_findfirst()和f_findnext()的启用状态。(0: 禁用, 1: 启用 2: 同时匹配altname[]启用)
 /  已关闭：XFile使用opendir/readdir实现目录遍历 */
 
-#define FF_USE_MKFS		0
+#define FF_USE_MKFS		1
 /* 此选项用于切换f_mkfs()函数的启用状态。(0: 禁用 或 1: 启用)
-/  已关闭：XFile不需要格式化功能 */
 
 #define FF_USE_FASTSEEK	1
 /* 此选项用于切换快速查找功能的启用状态。(0: 禁用 或 1: 启用) */
