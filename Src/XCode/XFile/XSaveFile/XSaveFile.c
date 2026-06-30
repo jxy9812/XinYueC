@@ -8,21 +8,12 @@
  * 内部函数：生成临时文件名
  * ============================================================================ */
 
-bool XSaveFile_generateTempFileName(const char* targetPath, char* tempPath, int tempPathSize)
+bool XSaveFile_generateTempFileName(const XString* targetPath, XString* tempPath)
 {
-    if (!targetPath || !tempPath || tempPathSize <= 0) return false;
+    if (!targetPath || !tempPath) return false;
     
-    // 查找最后一个分隔符
-    size_t len = strlen(targetPath);
-    if (len == 0) return false;
-    
-    // 复制路径
-    if ((int)(len + 10) > tempPathSize) return false;
-    
-    strcpy(tempPath, targetPath);
-    
-    // 添加后缀 ".XXXXXX" (用于 mkstemp 风格)
-    strcat(tempPath, ".XXXXXX");
+    XString_assign(tempPath, targetPath);
+    XString_append_utf8(tempPath, ".XXXXXX");
     
     return true;
 }
@@ -77,24 +68,25 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
     file->m_writeError = false;
     file->m_useTempFile = true;
     
-    const char* pathUtf8 = XString_toUtf8(file->m_fileName);
-    char tempPath[1024];
-    
     // 尝试创建临时文件
     if (!file->m_directWriteFallback) {
         // 必须使用临时文件
-        if (!XSaveFile_generateTempFileName(pathUtf8, tempPath, sizeof(tempPath))) {
+        file->m_tempFileName = XString_create();
+        if (!file->m_tempFileName) return false;
+        
+        if (!XSaveFile_generateTempFileName(file->m_fileName, file->m_tempFileName)) {
+            XString_delete_base(file->m_tempFileName);
+            file->m_tempFileName = NULL;
             return false;
         }
         
         // 保存临时文件名
-        file->m_tempFileName = XString_create_utf8(tempPath);
         file->m_useTempFile = true;
         
         // 打开临时文件
         int fsMode = XFileSystem_WriteOnly | XFileSystem_Create | XFileSystem_Truncate;
         int error = 0;
-        int fd = XFileSystem_open(tempPath, fsMode, &error);
+        int fd = XFileSystem_open(file->m_tempFileName, fsMode, &error);
         
         if (fd < 0) {
             XString_delete_base(file->m_tempFileName);
@@ -111,7 +103,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
         // 允许回退到直接写入
         int fsMode = XFileSystem_WriteOnly | XFileSystem_Create | XFileSystem_Truncate;
         int error = 0;
-        int fd = XFileSystem_open(pathUtf8, fsMode, &error);
+        int fd = XFileSystem_open(file->m_fileName, fsMode, &error);
         
         if (fd >= 0) {
             // 直接写入成功
@@ -125,14 +117,17 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
         }
         
         // 尝试创建临时文件
-        if (!XSaveFile_generateTempFileName(pathUtf8, tempPath, sizeof(tempPath))) {
+        file->m_tempFileName = XString_create();
+        if (!file->m_tempFileName) return false;
+        
+        if (!XSaveFile_generateTempFileName(file->m_fileName, file->m_tempFileName)) {
+            XString_delete_base(file->m_tempFileName);
+            file->m_tempFileName = NULL;
             return false;
         }
-        
-        file->m_tempFileName = XString_create_utf8(tempPath);
         file->m_useTempFile = true;
         
-        fd = XFileSystem_open(tempPath, fsMode, &error);
+        fd = XFileSystem_open(file->m_tempFileName, fsMode, &error);
         
         if (fd < 0) {
             XString_delete_base(file->m_tempFileName);
@@ -182,8 +177,7 @@ static void VXSaveFile_deinit(XSaveFile* file)
     
     // 如果没有 commit，删除临时文件
     if (file->m_useTempFile && file->m_tempFileName && !file->m_committed) {
-        const char* tempPath = XString_toUtf8(file->m_tempFileName);
-        XFileSystem_remove(tempPath);
+        XFileSystem_remove(file->m_tempFileName);
     }
     
     // 关闭文件句柄
@@ -303,8 +297,7 @@ bool XSaveFile_commit(XSaveFile* file)
     // 已经提交或取消
     if (file->m_committed || file->m_canceled) {
         if (file->m_useTempFile && file->m_tempFileName) {
-            const char* tempPath = XString_toUtf8(file->m_tempFileName);
-            XFileSystem_remove(tempPath);
+            XFileSystem_remove(file->m_tempFileName);
             XString_delete_base(file->m_tempFileName);
             file->m_tempFileName = NULL;
         }
@@ -314,8 +307,7 @@ bool XSaveFile_commit(XSaveFile* file)
     // 写入过程中有错误
     if (file->m_writeError) {
         if (file->m_useTempFile && file->m_tempFileName) {
-            const char* tempPath = XString_toUtf8(file->m_tempFileName);
-            XFileSystem_remove(tempPath);
+            XFileSystem_remove(file->m_tempFileName);
             XString_delete_base(file->m_tempFileName);
             file->m_tempFileName = NULL;
         }
@@ -345,16 +337,13 @@ bool XSaveFile_commit(XSaveFile* file)
     }
     
     // 重命名临时文件为目标文件
-    const char* tempPath = XString_toUtf8(file->m_tempFileName);
-    const char* targetPath = XString_toUtf8(file->m_fileName);
-    
-    bool result = XFileSystem_rename(tempPath, targetPath);
+    bool result = XFileSystem_rename(file->m_tempFileName, file->m_fileName);
     
     if (!result) {
         // 重命名失败，尝试复制后删除
-        result = XFileSystem_copy(tempPath, targetPath);
+        result = XFileSystem_copy(file->m_tempFileName, file->m_fileName);
         if (result) {
-            XFileSystem_remove(tempPath);
+            XFileSystem_remove(file->m_tempFileName);
         }
         file->m_parent.m_error = XFileDevice_RenameError;
     }

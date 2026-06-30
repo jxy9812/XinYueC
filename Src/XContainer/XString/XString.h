@@ -462,7 +462,14 @@ int32_t XString_compare(const XString* str1, const XString* str2);
  * @return 相等返回 true，否则返回 false
  */
 bool XString_equals(const XString* str1, const XString* str2, XChar_CaseSensitivity cs);
-
+/**
+ * @brief 判断字符串是否与 UTF-8 字符串相等
+ * @param str XString 对象指针
+ * @param utf8_str UTF-8 字符串
+ * @param cs 大小写敏感性
+ * @return 相等返回 true，否则返回 false
+ */
+bool XString_equals_utf8(const XString* str, const char* utf8_str, XChar_CaseSensitivity cs);
 /**
  * @brief 判断字符串是否以指定前缀开头
  * @param str XString 对象指针

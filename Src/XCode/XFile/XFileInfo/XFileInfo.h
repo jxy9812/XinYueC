@@ -201,7 +201,7 @@ bool XFileInfo_isHidden(const XFileInfo* info);
  * ============================================================================ */
 
 bool XFileInfo_isAbsolute(const XFileInfo* info);
-bool XFileInfo_isAbsolutePath_static(const char* path);
+bool XFileInfo_isAbsolutePath_static(const XString* path);
 bool XFileInfo_isRelative(const XFileInfo* info);
 bool XFileInfo_makeAbsolute(XFileInfo* info);
 bool XFileInfo_isNativePath(const XFileInfo* info);

@@ -204,7 +204,7 @@ bool XSaveFile_directWriteFallback(const XSaveFile* file);
  * @param tempPathSize 缓冲区大小
  * @return 成功返回 true，失败返回 false
  */
-bool XSaveFile_generateTempFileName(const char* targetPath, char* tempPath, int tempPathSize);
+bool XSaveFile_generateTempFileName(const XString* targetPath, XString* tempPath);
 
 #ifdef __cplusplus
 }

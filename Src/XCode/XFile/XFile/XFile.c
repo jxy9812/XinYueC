@@ -35,9 +35,8 @@ static bool VXFile_open(XIODevice* device, XIODeviceBaseMode mode)
     if (mode & XIODevice_Truncate) fsMode |= XFileSystem_Truncate;
     if (mode & XIODevice_NewOnly) fsMode |= XFileSystem_NewOnly;
     
-    const char* pathUtf8 = XString_toUtf8(file->m_fileName);
     int error = 0;
-    int fd = XFileSystem_open(pathUtf8, fsMode, &error);
+    int fd = XFileSystem_open(file->m_fileName, fsMode, &error);
     
     if (fd < 0) {
         file->m_parent.m_error = error;
@@ -78,9 +77,8 @@ static XFilePermissions VXFile_permissions(const XFileDevice* device)
     const XFile* file = (const XFile*)device;
     if (!file || !file->m_fileName) return 0;
     
-    const char* pathUtf8 = XString_toUtf8(file->m_fileName);
     XFileStat stat;
-    if (!XFileSystem_stat(pathUtf8, &stat)) return 0;
+    if (!XFileSystem_stat(file->m_fileName, &stat)) return 0;
     return stat.permissions;
 }
 
@@ -89,8 +87,7 @@ static bool VXFile_setPermissions(XFileDevice* device, XFilePermissions permissi
     const XFile* file = (const XFile*)device;
     if (!file || !file->m_fileName) return false;
     
-    const char* pathUtf8 = XString_toUtf8(file->m_fileName);
-    return XFileSystem_setPermissions(pathUtf8, permissions);
+    return XFileSystem_setPermissions(file->m_fileName, permissions);
 }
 
 static void VXFile_deinit(XFile* file)
@@ -225,7 +222,7 @@ bool XFile_exists(const XFile* file)
 bool XFile_exists_static(const XString* fileName)
 {
     if (!fileName) return false;
-    return XFileSystem_exists(XString_toUtf8(fileName));
+    return XFileSystem_exists(fileName);
 }
 
 bool XFile_remove(XFile* file)
@@ -237,7 +234,7 @@ bool XFile_remove(XFile* file)
 bool XFile_remove_static(const XString* fileName)
 {
     if (!fileName) return false;
-    return XFileSystem_remove(XString_toUtf8(fileName));
+    return XFileSystem_remove(fileName);
 }
 
 bool XFile_rename(XFile* file, const XString* newName)
@@ -249,7 +246,7 @@ bool XFile_rename(XFile* file, const XString* newName)
 bool XFile_rename_static(const XString* oldName, const XString* newName)
 {
     if (!oldName || !newName) return false;
-    return XFileSystem_rename(XString_toUtf8(oldName), XString_toUtf8(newName));
+    return XFileSystem_rename(oldName, newName);
 }
 
 bool XFile_copy(XFile* file, const XString* newName)
@@ -261,7 +258,7 @@ bool XFile_copy(XFile* file, const XString* newName)
 bool XFile_copy_static(const XString* fileName, const XString* newName)
 {
     if (!fileName || !newName) return false;
-    return XFileSystem_copy(XString_toUtf8(fileName), XString_toUtf8(newName));
+    return XFileSystem_copy(fileName, newName);
 }
 
 bool XFile_link(XFile* file, const XString* linkName)
@@ -273,7 +270,7 @@ bool XFile_link(XFile* file, const XString* linkName)
 bool XFile_link_static(const XString* fileName, const XString* linkName)
 {
     if (!fileName || !linkName) return false;
-    return XFileSystem_link(XString_toUtf8(fileName), XString_toUtf8(linkName));
+    return XFileSystem_link(fileName, linkName);
 }
 
 bool XFile_moveToTrash(XFile* file)
@@ -286,7 +283,7 @@ bool XFile_moveToTrash_static(const XString* fileName, XString* pathInTrash)
 {
     (void)pathInTrash;
     if (!fileName) return false;
-    return XFileSystem_moveToTrash(XString_toUtf8(fileName));
+    return XFileSystem_remove(fileName);
 }
 
 XString* XFile_symLinkTarget(const XFile* file)
@@ -298,11 +295,14 @@ XString* XFile_symLinkTarget(const XFile* file)
 XString* XFile_symLinkTarget_static(const XString* fileName)
 {
     if (!fileName) return XString_create();
-    char target[1024];
-    if (!XFileSystem_readLink(XString_toUtf8(fileName), target, sizeof(target))) {
-        return XString_create();
+    XString* target = XString_create();
+    if (!target) return NULL;
+    
+    if (!XFileSystem_readLink(fileName, target)) {
+        XString_delete_base(target);
+        return NULL;
     }
-    return XString_create_utf8(target);
+    return target;
 }
 
 /* ============================================================================

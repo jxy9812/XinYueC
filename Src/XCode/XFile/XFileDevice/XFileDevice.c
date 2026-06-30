@@ -59,7 +59,9 @@ static int64_t VXFileDevice_size(const XFileDevice* device)
     }
     
 
-    return XFileSystem_size(device->m_fileHandle);
+    XFileStat stat;
+    if (!XFileSystem_fstat(device->m_fileHandle, &stat)) return -1;
+    return stat.size;
 }
 
 /**

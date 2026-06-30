@@ -1,7 +1,14 @@
 #ifdef _WIN32
+
+#include "XFileSystem_config.h"  /* 文件系统配置 */
+
+/* 仅在启用平台API模式时编译此文件 */
+#if defined(XFILE_USE_PLATFORM_API)
+
 #include "XFileSystem_platform.h"
 #include "XFileDevice.h"
 #include "XMemory.h"
+#include "XString.h"
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
@@ -22,7 +29,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 
-// 重解析点结构体
+/* 重解析点结构体 */
 #pragma pack(push, 1)
 typedef struct _REPARSE_DATA_BUFFER {
     ULONG ReparseTag;
@@ -60,20 +67,32 @@ typedef struct _REPARSE_DATA_BUFFER {
  * ============================================================================ */
 
 /**
- * @brief 将 UTF-8 路径转换为 Windows 宽字符路径
+ * @brief 将 XString 转换为 Windows 宽字符路径
  */
-static wchar_t* toWidePath(const char* path)
+static wchar_t* XStringToWidePath(const XString* path)
 {
     if (!path) return NULL;
     
-    int len = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    const char* utf8Path = XString_toUtf8(path);
+    if (!utf8Path) return NULL;
+    
+    int len = MultiByteToWideChar(CP_UTF8, 0, utf8Path, -1, NULL, 0);
     if (len <= 0) return NULL;
     
     wchar_t* wpath = (wchar_t*)XMalloc_System(len * sizeof(wchar_t));
     if (!wpath) return NULL;
     
-    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, len);
+    MultiByteToWideChar(CP_UTF8, 0, utf8Path, -1, wpath, len);
     return wpath;
+}
+
+/**
+ * @brief 将 XString 转换为 UTF-8 字符串指针
+ */
+static const char* XStringToUtf8(const XString* str)
+{
+    if (!str) return NULL;
+    return XString_toUtf8(str);
 }
 
 /**
@@ -89,44 +108,51 @@ static int64_t fileTimeToUnixTime(const FILETIME* ft)
 }
 
 /**
- * @brief 获取文件属性并填充 XFileStat
+ * @brief 获取文件属性并填充 XFileStat（内部函数，使用UTF-8路径）
  */
-static bool fillFileStat(const char* path, WIN32_FILE_ATTRIBUTE_DATA* attrData, XFileStat* stat)
+static bool fillFileStatUtf8(const char* path, WIN32_FILE_ATTRIBUTE_DATA* attrData, XFileStat* stat)
 {
     if (!path || !stat) return false;
     
     memset(stat, 0, sizeof(XFileStat));
     
-    if (!GetFileAttributesExA(path, GetFileExInfoStandard, attrData)) {
+    /* 转换为宽字符 */
+    int len = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    if (len <= 0) return false;
+    
+    wchar_t* wpath = (wchar_t*)XMalloc_System(len * sizeof(wchar_t));
+    if (!wpath) return false;
+    
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, len);
+    
+    if (!GetFileAttributesExW(wpath, GetFileExInfoStandard, attrData)) {
+        XFree_System(wpath);
         stat->exists = false;
         return false;
     }
+    XFree_System(wpath);
     
     stat->exists = true;
     stat->isDir = (attrData->dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     stat->isFile = !stat->isDir;
     stat->isHidden = (attrData->dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
     stat->isSymLink = (attrData->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-    stat->isJunction = false;  // 默认值，需要进一步检查
-    stat->isShortcut = false;  // 默认值，需要检查 .lnk 文件
+    stat->isJunction = false;
+    stat->isShortcut = false;
     
-    // 文件大小
     ULARGE_INTEGER fileSize;
     fileSize.LowPart = attrData->nFileSizeLow;
     fileSize.HighPart = attrData->nFileSizeHigh;
     stat->size = (int64_t)fileSize.QuadPart;
     
-    // 时间信息
     stat->birthTime = fileTimeToUnixTime(&attrData->ftCreationTime);
     stat->modificationTime = fileTimeToUnixTime(&attrData->ftLastWriteTime);
     stat->accessTime = fileTimeToUnixTime(&attrData->ftLastAccessTime);
     stat->metadataChangeTime = stat->modificationTime;
     
-    // 权限
     stat->isReadable = true;
     stat->isWritable = (attrData->dwFileAttributes & FILE_ATTRIBUTE_READONLY) == 0;
     
-    // 可执行性检查
     if (stat->isFile) {
         const char* ext = strrchr(path, '.');
         if (ext) {
@@ -137,23 +163,31 @@ static bool fillFileStat(const char* path, WIN32_FILE_ATTRIBUTE_DATA* attrData, 
         }
     }
     
-    // 权限标志
     stat->permissions = 0;
-    if (stat->isReadable) stat->permissions |= 0x0400; // XFile_ReadUser
-    if (stat->isWritable) stat->permissions |= 0x0200; // XFile_WriteUser
-    if (stat->isExecutable) stat->permissions |= 0x0100; // XFile_ExeUser
+    if (stat->isReadable) stat->permissions |= 0x0400;
+    if (stat->isWritable) stat->permissions |= 0x0200;
+    if (stat->isExecutable) stat->permissions |= 0x0100;
     
     return true;
+}
+
+/**
+ * @brief 获取文件属性并填充 XFileStat
+ */
+static bool fillFileStat(const XString* path, WIN32_FILE_ATTRIBUTE_DATA* attrData, XFileStat* stat)
+{
+    const char* utf8Path = XStringToUtf8(path);
+    if (!utf8Path) return false;
+    return fillFileStatUtf8(utf8Path, attrData, stat);
 }
 
 /* ============================================================================
  * 核心文件操作
  * ============================================================================ */
 
-int XFileSystem_open(const char* path, int mode, int* error)
+int XFileSystem_open(const XString* path, int mode, int* error)
 {
-    if (!path) return -1;
-    wchar_t* wpath = toWidePath(path);
+    wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) {
         if (error) *error = XFileDevice_ResourceError;
         return -1;
@@ -168,20 +202,19 @@ int XFileSystem_open(const char* path, int mode, int* error)
     if (mode & XFileSystem_ReadWrite) desiredAccess |= GENERIC_READ | GENERIC_WRITE;
     
     if (mode & XFileSystem_Append) {
-            desiredAccess |= GENERIC_WRITE;
-            creationDisposition = OPEN_ALWAYS;
-        } else if (mode & XFileSystem_Truncate) {
-            creationDisposition = CREATE_ALWAYS;
-        } else if (mode & XFileSystem_NewOnly) {
-            creationDisposition = CREATE_NEW;
-        } else if (mode & XFileSystem_Existing) {
-            creationDisposition = OPEN_EXISTING;
-        } else if (mode & XFileSystem_Create) {
-            creationDisposition = OPEN_ALWAYS;
-        } else if (mode & XFileSystem_WriteOnly) {
-            // 纯写入模式：如果文件不存在则创建，存在则打开
-            creationDisposition = OPEN_ALWAYS;
-        }
+        desiredAccess |= GENERIC_WRITE;
+        creationDisposition = OPEN_ALWAYS;
+    } else if (mode & XFileSystem_Truncate) {
+        creationDisposition = CREATE_ALWAYS;
+    } else if (mode & XFileSystem_NewOnly) {
+        creationDisposition = CREATE_NEW;
+    } else if (mode & XFileSystem_Existing) {
+        creationDisposition = OPEN_EXISTING;
+    } else if (mode & XFileSystem_Create) {
+        creationDisposition = OPEN_ALWAYS;
+    } else if (mode & XFileSystem_WriteOnly) {
+        creationDisposition = OPEN_ALWAYS;
+    }
     
     HANDLE hFile = CreateFileW(wpath, desiredAccess, shareMode, NULL,
                                 creationDisposition, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -292,7 +325,7 @@ bool XFileSystem_resize(int fd, int64_t size)
  * 文件属性操作
  * ============================================================================ */
 
-bool XFileSystem_stat(const char* path, XFileStat* stat)
+bool XFileSystem_stat(const XString* path, XFileStat* stat)
 {
     if (!path || !stat) return false;
     
@@ -319,25 +352,15 @@ bool XFileSystem_fstat(int fd, XFileStat* stat)
     return true;
 }
 
-int64_t XFileSystem_size(int fd)
-{
-    if (fd < 0) return -1;
-    
-    struct _stati64 st;
-    if (_fstati64(fd, &st) != 0) return -1;
-    
-    return st.st_size;
-}
-
 /* ============================================================================
  * 文件系统操作
  * ============================================================================ */
 
-bool XFileSystem_exists(const char* path)
+bool XFileSystem_exists(const XString* path)
 {
     if (!path) return false;
     
-    wchar_t* wpath = toWidePath(path);
+    wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) return false;
     
     DWORD attrs = GetFileAttributesW(wpath);
@@ -346,11 +369,11 @@ bool XFileSystem_exists(const char* path)
     return attrs != INVALID_FILE_ATTRIBUTES;
 }
 
-bool XFileSystem_remove(const char* path)
+bool XFileSystem_remove(const XString* path)
 {
     if (!path) return false;
     
-    wchar_t* wpath = toWidePath(path);
+    wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) return false;
     
     BOOL result = DeleteFileW(wpath);
@@ -362,12 +385,12 @@ bool XFileSystem_remove(const char* path)
     return result != 0;
 }
 
-bool XFileSystem_rename(const char* oldPath, const char* newPath)
+bool XFileSystem_rename(const XString* oldPath, const XString* newPath)
 {
     if (!oldPath || !newPath) return false;
     
-    wchar_t* wold = toWidePath(oldPath);
-    wchar_t* wnew = toWidePath(newPath);
+    wchar_t* wold = XStringToWidePath(oldPath);
+    wchar_t* wnew = XStringToWidePath(newPath);
     
     if (!wold || !wnew) {
         if (wold) XFree_System(wold);
@@ -382,12 +405,12 @@ bool XFileSystem_rename(const char* oldPath, const char* newPath)
     return result != 0;
 }
 
-bool XFileSystem_copy(const char* srcPath, const char* dstPath)
+bool XFileSystem_copy(const XString* srcPath, const XString* dstPath)
 {
     if (!srcPath || !dstPath) return false;
     
-    wchar_t* wsrc = toWidePath(srcPath);
-    wchar_t* wdst = toWidePath(dstPath);
+    wchar_t* wsrc = XStringToWidePath(srcPath);
+    wchar_t* wdst = XStringToWidePath(dstPath);
     
     if (!wsrc || !wdst) {
         if (wsrc) XFree_System(wsrc);
@@ -402,232 +425,27 @@ bool XFileSystem_copy(const char* srcPath, const char* dstPath)
     return result != 0;
 }
 
-bool XFileSystem_link(const char* targetPath, const char* linkPath)
-{
-    if (!targetPath || !linkPath) return false;
-    
-    wchar_t* wtarget = toWidePath(targetPath);
-    wchar_t* wlink = toWidePath(linkPath);
-    
-    if (!wtarget || !wlink) {
-        if (wtarget) XFree_System(wtarget);
-        if (wlink) XFree_System(wlink);
-        return false;
-    }
-    
-    BOOLEAN result = CreateSymbolicLinkW(wlink, wtarget, 0);
-    if (!result) {
-        result = CreateHardLinkW(wlink, wtarget, NULL);
-    }
-    
-    XFree_System(wtarget);
-    XFree_System(wlink);
-    
-    return result != 0;
-}
-
-bool XFileSystem_moveToTrash(const char* path)
-{
-    if (!path) return false;
-    
-    wchar_t* wpath = toWidePath(path);
-    if (!wpath) return false;
-    
-    // 需要双空终止
-    size_t len = wcslen(wpath);
-    wchar_t* wpathDouble = (wchar_t*)XMalloc_System((len + 2) * sizeof(wchar_t));
-    if (!wpathDouble) {
-        XFree_System(wpath);
-        return false;
-    }
-    wcscpy(wpathDouble, wpath);
-    wpathDouble[len] = 0;
-    wpathDouble[len + 1] = 0;
-    XFree_System(wpath);
-    
-    SHFILEOPSTRUCTW shfos = {0};
-    shfos.wFunc = FO_DELETE;
-    shfos.pFrom = wpathDouble;
-    shfos.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT;
-    
-    int result = SHFileOperationW(&shfos);
-    XFree_System(wpathDouble);
-    
-    return result == 0;
-}
-
-bool XFileSystem_readLink(const char* path, char* target, int targetSize)
-{
-    if (!path || !target || targetSize <= 0) return false;
-    
-    wchar_t* wpath = toWidePath(path);
-    if (!wpath) return false;
-    
-    HANDLE hFile = CreateFileW(wpath, 0, FILE_SHARE_READ, NULL,
-                                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
-    XFree_System(wpath);
-    
-    if (hFile == INVALID_HANDLE_VALUE) return false;
-    
-    wchar_t targetPath[MAX_PATH];
-    DWORD len = GetFinalPathNameByHandleW(hFile, targetPath, MAX_PATH, VOLUME_NAME_DOS);
-    CloseHandle(hFile);
-    
-    if (len == 0 || len > MAX_PATH) return false;
-    
-    WideCharToMultiByte(CP_UTF8, 0, targetPath, len, target, targetSize, NULL, NULL);
-    return true;
-}
-
-bool XFileSystem_setPermissions(const char* path, uint32_t permissions)
-{
-    if (!path) return false;
-    
-    wchar_t* wpath = toWidePath(path);
-    if (!wpath) return false;
-    
-    DWORD attrs = GetFileAttributesW(wpath);
-    if (attrs == INVALID_FILE_ATTRIBUTES) {
-        XFree_System(wpath);
-        return false;
-    }
-    
-    // Windows 只支持只读属性
-    if (!(permissions & 0x0200)) { // 无写权限
-        attrs |= FILE_ATTRIBUTE_READONLY;
-    } else {
-        attrs &= ~FILE_ATTRIBUTE_READONLY;
-    }
-    
-    BOOL result = SetFileAttributesW(wpath, attrs);
-    XFree_System(wpath);
-    
-    return result != 0;
-}
-
-bool XFileSystem_setFileTime(int fd, int timeType, int64_t timeValue)
-{
-    if (fd < 0) return false;
-    
-    HANDLE hFile = (HANDLE)_get_osfhandle(fd);
-    if (hFile == INVALID_HANDLE_VALUE) return false;
-    
-    // 转换为 FILETIME
-    ULARGE_INTEGER ul;
-    ul.QuadPart = (timeValue * 10000000LL) + 116444736000000000LL;
-    
-    FILETIME ft;
-    ft.dwLowDateTime = ul.LowPart;
-    ft.dwHighDateTime = ul.HighPart;
-    
-    FILETIME* ftCreate = NULL;
-    FILETIME* ftAccess = NULL;
-    FILETIME* ftWrite = NULL;
-    
-    switch (timeType) {
-        case 0: ftAccess = &ft; break;      // AccessTime
-        case 1: ftCreate = &ft; break;      // BirthTime
-        case 2: 
-        case 3: ftWrite = &ft; break;       // MetadataChangeTime, ModificationTime
-    }
-    
-    return SetFileTime(hFile, ftCreate, ftAccess, ftWrite) != 0;
-}
-
-/* ============================================================================
- * 内存映射
- * ============================================================================ */
-
-void* XFileSystem_map(int fd, int64_t offset, int64_t size, bool writable)
-{
-    if (fd < 0 || size <= 0) return NULL;
-    
-    HANDLE hFile = (HANDLE)_get_osfhandle(fd);
-    if (hFile == INVALID_HANDLE_VALUE) return NULL;
-    
-    DWORD protect = writable ? PAGE_READWRITE : PAGE_READONLY;
-    DWORD sizeHigh = (DWORD)(size >> 32);
-    DWORD sizeLow = (DWORD)(size & 0xFFFFFFFF);
-    
-    HANDLE hMap = CreateFileMappingA(hFile, NULL, protect, sizeHigh, sizeLow, NULL);
-    if (!hMap) return NULL;
-    
-    DWORD access = writable ? FILE_MAP_WRITE : FILE_MAP_READ;
-    DWORD offsetHigh = (DWORD)(offset >> 32);
-    DWORD offsetLow = (DWORD)(offset & 0xFFFFFFFF);
-    
-    void* address = MapViewOfFile(hMap, access, offsetHigh, offsetLow, (SIZE_T)size);
-    CloseHandle(hMap);
-    
-    return address;
-}
-
-bool XFileSystem_unmap(void* addr, int64_t size)
-{
-    (void)size;
-    if (!addr) return false;
-    return UnmapViewOfFile(addr) != 0;
-}
-
-/* ============================================================================
- * 路径操作
- * ============================================================================ */
-
-bool XFileSystem_resolvePath(const char* path, char* result, int size, XPathStyle style)
-{
-    if (!path || !result || size <= 0) return false;
-    
-    // 获取绝对路径
-    if (!_fullpath(result, path, size)) return false;
-    
-    // 如果需要规范化路径（解析符号链接）
-    if (style == XPathStyle_Canonical) {
-        wchar_t* wpath = toWidePath(result);
-        if (!wpath) return false;
-        
-        // 检查路径是否存在
-        DWORD attrs = GetFileAttributesW(wpath);
-        XFree_System(wpath);
-        
-        if (attrs == INVALID_FILE_ATTRIBUTES) return false;
-        
-        // 对于符号链接，获取真实路径
-        if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
-            HANDLE hFile = CreateFileW(wpath, 0, FILE_SHARE_READ, NULL,
-                                        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
-            if (hFile != INVALID_HANDLE_VALUE) {
-                wchar_t targetPath[MAX_PATH];
-                DWORD len = GetFinalPathNameByHandleW(hFile, targetPath, MAX_PATH, VOLUME_NAME_DOS);
-                CloseHandle(hFile);
-                
-                if (len > 0 && len < MAX_PATH) {
-                    WideCharToMultiByte(CP_UTF8, 0, targetPath, -1, result, size, NULL, NULL);
-                }
-            }
-        }
-    }
-    
-    return true;
-}
-
 /* ============================================================================
  * 目录操作
  * ============================================================================ */
 
-bool XFileSystem_mkdir(const char* path, bool recursive)
+bool XFileSystem_mkdir(const XString* path, bool recursive)
 {
     if (!path) return false;
     
+    const char* utf8Path = XStringToUtf8(path);
+    if (!utf8Path) return false;
+    
     if (!recursive) {
-        wchar_t* wpath = toWidePath(path);
+        wchar_t* wpath = XStringToWidePath(path);
         if (!wpath) return false;
         BOOL result = CreateDirectoryW(wpath, NULL);
         XFree_System(wpath);
         return result != 0;
     }
     
-    // 递归创建目录
-    char* pathCopy = _strdup(path);
+    /* 递归创建目录 */
+    char* pathCopy = XStrdup(utf8Path);
     if (!pathCopy) return false;
     
     for (char* p = pathCopy; *p; p++) {
@@ -641,7 +459,7 @@ bool XFileSystem_mkdir(const char* path, bool recursive)
     while (*p) {
         if (*p == '\\') {
             *p = '\0';
-            wchar_t* wpath = toWidePath(pathCopy);
+            wchar_t* wpath = XStringToWidePath(path);
             if (wpath) {
                 if (GetFileAttributesW(wpath) == INVALID_FILE_ATTRIBUTES) {
                     if (!CreateDirectoryW(wpath, NULL)) result = false;
@@ -654,7 +472,7 @@ bool XFileSystem_mkdir(const char* path, bool recursive)
     }
     
     if (result) {
-        wchar_t* wpath = toWidePath(pathCopy);
+        wchar_t* wpath = XStringToWidePath(path);
         if (wpath) {
             if (GetFileAttributesW(wpath) == INVALID_FILE_ATTRIBUTES) {
                 result = CreateDirectoryW(wpath, NULL) != 0;
@@ -663,14 +481,14 @@ bool XFileSystem_mkdir(const char* path, bool recursive)
         }
     }
     
-    free(pathCopy);
+    XFree_System(pathCopy);
     return result;
 }
 
-bool XFileSystem_rmdir(const char* path)
+bool XFileSystem_rmdir(const XString* path)
 {
     if (!path) return false;
-    wchar_t* wpath = toWidePath(path);
+    wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) return false;
     BOOL result = RemoveDirectoryW(wpath);
     XFree_System(wpath);
@@ -683,14 +501,17 @@ struct DirIteratorData {
     bool firstEntry;
 };
 
-XDirIterator XFileSystem_opendir(const char* path)
+XDirIterator XFileSystem_opendir(const XString* path)
 {
     if (!path) return NULL;
     
-    char searchPath[MAX_PATH];
-    _snprintf(searchPath, MAX_PATH, "%s\\*", path);
+    /* 构造搜索通配符路径 "path\*" */
+    XString* searchPathStr = XString_create_copy(path);
+    if (!searchPathStr) return NULL;
+    XString_append_utf8(searchPathStr, "\\*");
     
-    wchar_t* wpath = toWidePath(searchPath);
+    wchar_t* wpath = XStringToWidePath(searchPathStr);
+    XString_delete_base(searchPathStr);
     if (!wpath) return NULL;
     
     struct DirIteratorData* iter = (struct DirIteratorData*)XMalloc_System(sizeof(struct DirIteratorData));
@@ -723,7 +544,13 @@ bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry)
     
     if (!result) return false;
     
-    WideCharToMultiByte(CP_UTF8, 0, data->findData.cFileName, -1, entry->name, sizeof(entry->name), NULL, NULL);
+    /* 将宽字符文件名转换为UTF-8并设置到XString */
+    char utf8Buf[MAX_PATH];
+    WideCharToMultiByte(CP_UTF8, 0, data->findData.cFileName, -1, utf8Buf, MAX_PATH, NULL, NULL);
+    if (entry->name) {
+        XString_assign_utf8(entry->name, utf8Buf);
+    }
+    
     entry->isDir = (data->findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
     entry->isFile = !entry->isDir;
     entry->isSymLink = (data->findData.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
@@ -740,298 +567,256 @@ void XFileSystem_closedir(XDirIterator iter)
 }
 
 /* ============================================================================
- * 所有者操作
+ * 路径操作
  * ============================================================================ */
 
-bool XFileSystem_getOwner(const char* path, char* owner, int ownerSize, uint32_t* ownerId)
+bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle style)
 {
-    if (!path) return false;
+    if (!path || !result) return false;
     
-    PSID pOwnerSid = NULL;
-    PSECURITY_DESCRIPTOR pSD = NULL;
+    const char* utf8Path = XStringToUtf8(path);
+    if (!utf8Path) return false;
     
-    if (GetNamedSecurityInfoA(path, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION,
-                              &pOwnerSid, NULL, NULL, NULL, &pSD) != ERROR_SUCCESS) {
-        return false;
-    }
+    char absPath[MAX_PATH];
+    if (!_fullpath(absPath, utf8Path, MAX_PATH)) return false;
     
-    bool result = false;
-    if (owner && ownerSize > 0) {
-        char name[256], domain[256];
-        DWORD nameLen = sizeof(name), domainLen = sizeof(domain);
-        SID_NAME_USE use;
-        if (LookupAccountSidA(NULL, pOwnerSid, name, &nameLen, domain, &domainLen, &use)) {
-            strncpy(owner, name, ownerSize);
-            result = true;
+    if (style == XPathStyle_Canonical) {
+        wchar_t* wpath = XStringToWidePath(path);
+        if (!wpath) return false;
+        
+        DWORD attrs = GetFileAttributesW(wpath);
+        XFree_System(wpath);
+        
+        if (attrs == INVALID_FILE_ATTRIBUTES) return false;
+        
+        if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
+            wchar_t* wpath2 = XStringToWidePath(path);
+            if (wpath2) {
+                HANDLE hFile = CreateFileW(wpath2, 0, FILE_SHARE_READ, NULL,
+                                            OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+                if (hFile != INVALID_HANDLE_VALUE) {
+                    wchar_t targetPath[MAX_PATH];
+                    DWORD len = GetFinalPathNameByHandleW(hFile, targetPath, MAX_PATH, VOLUME_NAME_DOS);
+                    CloseHandle(hFile);
+                    
+                    if (len > 0 && len < MAX_PATH) {
+                        char utf8Target[MAX_PATH];
+                        WideCharToMultiByte(CP_UTF8, 0, targetPath, -1, utf8Target, MAX_PATH, NULL, NULL);
+                        XString_assign_utf8(result, utf8Target);
+                        return true;
+                    }
+                }
+                XFree_System(wpath2);
+            }
         }
     }
-    if (ownerId) {
-        PUCHAR subAuthCount = GetSidSubAuthorityCount(pOwnerSid);
-        if (subAuthCount && *subAuthCount > 0) {
-            *ownerId = *GetSidSubAuthority(pOwnerSid, *subAuthCount - 1);
-            result = true;
-        }
-    }
-    LocalFree(pSD);
-    return result;
-}
-
-bool XFileSystem_getGroup(const char* path, char* group, int groupSize, uint32_t* groupId)
-{
-    if (!path) return false;
     
-    PSID pGroupSid = NULL;
-    PSECURITY_DESCRIPTOR pSD = NULL;
-    
-    if (GetNamedSecurityInfoA(path, SE_FILE_OBJECT, GROUP_SECURITY_INFORMATION,
-                              NULL, &pGroupSid, NULL, NULL, &pSD) != ERROR_SUCCESS) {
-        return false;
-    }
-    
-    bool result = false;
-    if (group && groupSize > 0) {
-        char name[256], domain[256];
-        DWORD nameLen = sizeof(name), domainLen = sizeof(domain);
-        SID_NAME_USE use;
-        if (LookupAccountSidA(NULL, pGroupSid, name, &nameLen, domain, &domainLen, &use)) {
-            strncpy(group, name, groupSize);
-            result = true;
-        }
-    }
-    if (groupId) {
-        PUCHAR subAuthCount = GetSidSubAuthorityCount(pGroupSid);
-        if (subAuthCount && *subAuthCount > 0) {
-            *groupId = *GetSidSubAuthority(pGroupSid, *subAuthCount - 1);
-            result = true;
-        }
-    }
-    LocalFree(pSD);
-    return result;
-}
-
-bool XFileSystem_setOwner(const char* path, uint32_t ownerId)
-{
-    (void)path; (void)ownerId;
-    return false; // 需要管理员权限
-}
-
-bool XFileSystem_setGroup(const char* path, uint32_t groupId)
-{
-    (void)path; (void)groupId;
-    return false; // 需要管理员权限
-}
-
-/* ============================================================================
- * 符号链接高级操作
- * ============================================================================ */
-
-bool XFileSystem_isJunction(const char* path)
-{
-    if (!path) return false;
-    wchar_t* wpath = toWidePath(path);
-    if (!wpath) return false;
-    
-    HANDLE hFile = CreateFileW(wpath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                               NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
-    XFree_System(wpath);
-    if (hFile == INVALID_HANDLE_VALUE) return false;
-    
-    BYTE buffer[MAX_PATH * 2];
-    DWORD bytesReturned;
-    bool isJunction = false;
-    
-    if (DeviceIoControl(hFile, FSCTL_GET_REPARSE_POINT, NULL, 0, buffer, sizeof(buffer), &bytesReturned, NULL)) {
-        PREPARSE_DATA_BUFFER reparse = (PREPARSE_DATA_BUFFER)buffer;
-        isJunction = (reparse->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT);
-    }
-    CloseHandle(hFile);
-    return isJunction;
-}
-
-bool XFileSystem_isShortcut(const char* path, char* target, int targetSize)
-{
-    if (!path) return false;
-    size_t len = strlen(path);
-    if (len < 5 || _stricmp(path + len - 4, ".lnk") != 0) return false;
-    
-    if (target && targetSize > 0) {
-        // 简化实现：返回空字符串
-        target[0] = '\0';
-    }
+    XString_assign_utf8(result, absPath);
     return true;
-}
-
-bool XFileSystem_junctionTarget(const char* path, char* target, int targetSize)
-{
-    if (!path || !target || targetSize <= 0) return false;
-    wchar_t* wpath = toWidePath(path);
-    if (!wpath) return false;
-    
-    HANDLE hFile = CreateFileW(wpath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                               NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
-    XFree_System(wpath);
-    if (hFile == INVALID_HANDLE_VALUE) return false;
-    
-    BYTE buffer[MAX_PATH * 2];
-    DWORD bytesReturned;
-    if (!DeviceIoControl(hFile, FSCTL_GET_REPARSE_POINT, NULL, 0, buffer, sizeof(buffer), &bytesReturned, NULL)) {
-        CloseHandle(hFile);
-        return false;
-    }
-    CloseHandle(hFile);
-    
-    PREPARSE_DATA_BUFFER reparse = (PREPARSE_DATA_BUFFER)buffer;
-    if (reparse->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT) {
-        USHORT nameOffset = reparse->MountPointReparseBuffer.SubstituteNameOffset / sizeof(WCHAR);
-        USHORT nameLength = reparse->MountPointReparseBuffer.SubstituteNameLength / sizeof(WCHAR);
-        
-        wchar_t targetPath[MAX_PATH];
-        wcsncpy_s(targetPath, MAX_PATH, reparse->MountPointReparseBuffer.PathBuffer + nameOffset, nameLength);
-        targetPath[nameLength] = L'\0';
-        
-        char targetUtf8[MAX_PATH];
-        WideCharToMultiByte(CP_UTF8, 0, targetPath, -1, targetUtf8, MAX_PATH, NULL, NULL);
-        
-        char* finalPath = targetUtf8;
-        if (strncmp(targetUtf8, "\\??\\", 4) == 0) finalPath = targetUtf8 + 4;
-        strncpy(target, finalPath, targetSize);
-        return true;
-    }
-    return false;
-}
-
-/* ============================================================================
- * 文件系统信息
- * ============================================================================ */
-
-int64_t XFileSystem_totalSpace(const char* path)
-{
-    if (!path) return 0;
-    wchar_t* wpath = toWidePath(path);
-    if (!wpath) return 0;
-    
-    ULARGE_INTEGER totalBytes;
-    if (!GetDiskFreeSpaceExW(wpath, NULL, &totalBytes, NULL)) {
-        XFree_System(wpath);
-        return 0;
-    }
-    XFree_System(wpath);
-    return (int64_t)totalBytes.QuadPart;
-}
-
-int64_t XFileSystem_availableSpace(const char* path)
-{
-    if (!path) return 0;
-    wchar_t* wpath = toWidePath(path);
-    if (!wpath) return 0;
-    
-    ULARGE_INTEGER freeBytes;
-    if (!GetDiskFreeSpaceExW(wpath, &freeBytes, NULL, NULL)) {
-        XFree_System(wpath);
-        return 0;
-    }
-    XFree_System(wpath);
-    return (int64_t)freeBytes.QuadPart;
 }
 
 /* ============================================================================
  * 特殊路径
  * ============================================================================ */
 
-bool XFileSystem_currentPath(char* path, int pathSize)
-{
-    if (!path || pathSize <= 0) return false;
-    return _getcwd(path, pathSize) != NULL;
-}
-
-bool XFileSystem_setCurrentPath(const char* path)
+bool XFileSystem_currentPath(XString* path)
 {
     if (!path) return false;
-    return _chdir(path) == 0;
-}
-
-bool XFileSystem_homePath(char* path, int pathSize)
-{
-    if (!path || pathSize <= 0) return false;
     
-    char* home = getenv("USERPROFILE");
-    if (home) {
-        strncpy(path, home, pathSize);
-        return true;
-    }
+    wchar_t wPath[MAX_PATH];
+    if (GetCurrentDirectoryW(MAX_PATH, wPath) == 0) return false;
     
-    char* homeDrive = getenv("HOMEDRIVE");
-    char* homePath = getenv("HOMEPATH");
-    if (homeDrive && homePath) {
-        _snprintf(path, pathSize, "%s%s", homeDrive, homePath);
-        return true;
-    }
-    
-    return false;
-}
-
-bool XFileSystem_rootPath(char* path, int pathSize)
-{
-    if (!path || pathSize < 4) return false;
-    
-    char cwd[MAX_PATH];
-    if (_getcwd(cwd, MAX_PATH) && cwd[0] && cwd[1] == ':') {
-        path[0] = cwd[0];
-        path[1] = ':';
-        path[2] = '\\';
-        path[3] = '\0';
-        return true;
-    }
-    
-    strcpy(path, "C:\\");
+    char utf8Path[MAX_PATH];
+    WideCharToMultiByte(CP_UTF8, 0, wPath, -1, utf8Path, MAX_PATH, NULL, NULL);
+    XString_assign_utf8(path, utf8Path);
     return true;
 }
 
-bool XFileSystem_tempPath(char* path, int pathSize)
+bool XFileSystem_setCurrentPath(const XString* path)
 {
-    if (!path || pathSize <= 0) return false;
+    if (!path) return false;
+    
+    wchar_t* wpath = XStringToWidePath(path);
+    if (!wpath) return false;
+    
+    BOOL result = SetCurrentDirectoryW(wpath);
+    XFree_System(wpath);
+    
+    return result != 0;
+}
+
+bool XFileSystem_homePath(XString* path)
+{
+    if (!path) return false;
+    
+    wchar_t wPath[MAX_PATH];
+    if (SHGetFolderPathW(NULL, CSIDL_PROFILE, NULL, 0, wPath) != S_OK) return false;
+    
+    char utf8Path[MAX_PATH];
+    WideCharToMultiByte(CP_UTF8, 0, wPath, -1, utf8Path, MAX_PATH, NULL, NULL);
+    XString_assign_utf8(path, utf8Path);
+    return true;
+}
+
+bool XFileSystem_rootPath(XString* path)
+{
+    if (!path) return false;
+    
+    wchar_t wPath[MAX_PATH];
+    if (GetCurrentDirectoryW(MAX_PATH, wPath) == 0) {
+        XString_assign_utf8(path, "C:\\");
+        return true;
+    }
+    
+    char utf8Path[4];
+    utf8Path[0] = (char)wPath[0];
+    utf8Path[1] = ':';
+    utf8Path[2] = '\\';
+    utf8Path[3] = '\0';
+    XString_assign_utf8(path, utf8Path);
+    return true;
+}
+
+bool XFileSystem_tempPath(XString* path)
+{
+    if (!path) return false;
     
     wchar_t wTempPath[MAX_PATH];
     DWORD len = GetTempPathW(MAX_PATH, wTempPath);
     if (len == 0 || len >= MAX_PATH) return false;
     
-    WideCharToMultiByte(CP_UTF8, 0, wTempPath, -1, path, pathSize, NULL, NULL);
+    char utf8Path[MAX_PATH];
+    WideCharToMultiByte(CP_UTF8, 0, wTempPath, -1, utf8Path, MAX_PATH, NULL, NULL);
+    XString_assign_utf8(path, utf8Path);
     return true;
 }
 
 /* ============================================================================
- * 驱动器列表
+ * 符号链接操作
  * ============================================================================ */
 
-int XFileSystem_drives(char drives[][16], int maxCount)
+bool XFileSystem_link(const XString* targetPath, const XString* linkPath)
 {
-    if (!drives || maxCount <= 0) return 0;
+    if (!targetPath || !linkPath) return false;
     
-    DWORD driveMask = GetLogicalDrives();
-    int count = 0;
+    wchar_t* wtarget = XStringToWidePath(targetPath);
+    wchar_t* wlink = XStringToWidePath(linkPath);
     
-    for (int i = 0; i < 26 && count < maxCount; i++) {
-        if (driveMask & (1 << i)) {
-            drives[count][0] = 'A' + i;
-            drives[count][1] = ':';
-            drives[count][2] = '\\';
-            drives[count][3] = '\0';
-            count++;
-        }
+    if (!wtarget || !wlink) {
+        if (wtarget) XFree_System(wtarget);
+        if (wlink) XFree_System(wlink);
+        return false;
     }
     
-    return count;
+    BOOLEAN result = CreateSymbolicLinkW(wlink, wtarget, 0);
+    if (!result) {
+        result = CreateHardLinkW(wlink, wtarget, NULL);
+    }
+    
+    XFree_System(wtarget);
+    XFree_System(wlink);
+    
+    return result != 0;
+}
+
+bool XFileSystem_readLink(const XString* path, XString* target)
+{
+    if (!path || !target) return false;
+    
+    wchar_t* wpath = XStringToWidePath(path);
+    if (!wpath) return false;
+    
+    HANDLE hFile = CreateFileW(wpath, 0, FILE_SHARE_READ, NULL,
+                                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    XFree_System(wpath);
+    
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+    
+    wchar_t targetPath[MAX_PATH];
+    DWORD len = GetFinalPathNameByHandleW(hFile, targetPath, MAX_PATH, VOLUME_NAME_DOS);
+    CloseHandle(hFile);
+    
+    if (len == 0 || len > MAX_PATH) return false;
+    
+    char utf8Target[MAX_PATH];
+    WideCharToMultiByte(CP_UTF8, 0, targetPath, -1, utf8Target, MAX_PATH, NULL, NULL);
+    XString_assign_utf8(target, utf8Target);
+    return true;
+}
+
+/* ============================================================================
+ * 权限操作
+ * ============================================================================ */
+
+bool XFileSystem_setPermissions(const XString* path, XFilePermissions permissions)
+{
+    if (!path) return false;
+    
+    wchar_t* wpath = XStringToWidePath(path);
+    if (!wpath) return false;
+    
+    DWORD attrs = GetFileAttributesW(wpath);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        XFree_System(wpath);
+        return false;
+    }
+    
+    if (!(permissions & 0x0200)) {
+        attrs |= FILE_ATTRIBUTE_READONLY;
+    } else {
+        attrs &= ~FILE_ATTRIBUTE_READONLY;
+    }
+    
+    BOOL result = SetFileAttributesW(wpath, attrs);
+    XFree_System(wpath);
+    
+    return result != 0;
+}
+
+/* ============================================================================
+ * 内存映射
+ * ============================================================================ */
+
+void* XFileSystem_map(int fd, int64_t offset, int64_t size, bool writable)
+{
+    if (fd < 0 || size <= 0) return NULL;
+    
+    HANDLE hFile = (HANDLE)_get_osfhandle(fd);
+    if (hFile == INVALID_HANDLE_VALUE) return NULL;
+    
+    DWORD protect = writable ? PAGE_READWRITE : PAGE_READONLY;
+    DWORD sizeHigh = (DWORD)(size >> 32);
+    DWORD sizeLow = (DWORD)(size & 0xFFFFFFFF);
+    
+    HANDLE hMap = CreateFileMappingW(hFile, NULL, protect, sizeHigh, sizeLow, NULL);
+    if (!hMap) return NULL;
+    
+    DWORD access = writable ? FILE_MAP_WRITE : FILE_MAP_READ;
+    DWORD offsetHigh = (DWORD)(offset >> 32);
+    DWORD offsetLow = (DWORD)(offset & 0xFFFFFFFF);
+    
+    void* address = MapViewOfFile(hMap, access, offsetHigh, offsetLow, (SIZE_T)size);
+    CloseHandle(hMap);
+    
+    return address;
+}
+
+bool XFileSystem_unmap(void* addr, int64_t size)
+{
+    (void)size;
+    if (!addr) return false;
+    return UnmapViewOfFile(addr) != 0;
 }
 
 /* ============================================================================
  * 递归删除目录
  * ============================================================================ */
 
-bool XFileSystem_rmdir_recursive(const char* path)
+bool XFileSystem_rmdir_recursive(const XString* path)
 {
     if (!path) return false;
     
-    wchar_t* wpath = toWidePath(path);
+    wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) return false;
     
     size_t len = wcslen(wpath);
@@ -1056,4 +841,248 @@ bool XFileSystem_rmdir_recursive(const char* path)
     return result == 0;
 }
 
-#endif // _WIN32
+/* ============================================================================
+ * 文件时间修改
+ * ============================================================================ */
+
+bool XFileSystem_setFileTime(int fd, XFileTime timeType, int64_t timeValue)
+{
+    if (fd < 0) return false;
+    
+    HANDLE hFile = (HANDLE)_get_osfhandle(fd);
+    if (hFile == INVALID_HANDLE_VALUE) return false;
+    
+    ULARGE_INTEGER ul;
+    ul.QuadPart = (timeValue * 10000000LL) + 116444736000000000LL;
+    
+    FILETIME ft;
+    ft.dwLowDateTime = ul.LowPart;
+    ft.dwHighDateTime = ul.HighPart;
+    
+    FILETIME* ftCreate = NULL;
+    FILETIME* ftAccess = NULL;
+    FILETIME* ftWrite = NULL;
+    
+    switch (timeType) {
+        case XFile_AccessTime: ftAccess = &ft; break;
+        case XFile_BirthTime: ftCreate = &ft; break;
+        case XFile_MetadataChangeTime:
+        case XFile_ModificationTime: ftWrite = &ft; break;
+    }
+    
+    return SetFileTime(hFile, ftCreate, ftAccess, ftWrite) != 0;
+}
+
+/* ============================================================================
+ * 驱动器列表
+ * ============================================================================ */
+
+int XFileSystem_drives_count(void)
+{
+    DWORD driveMask = GetLogicalDrives();
+    int count = 0;
+    
+    for (int i = 0; i < 26; i++) {
+        if (driveMask & (1 << i)) {
+            count++;
+        }
+    }
+    
+    return count;
+}
+
+bool XFileSystem_drives_at(int index, XString* path)
+{
+    if (!path || index < 0) return false;
+    
+    DWORD driveMask = GetLogicalDrives();
+    int count = 0;
+    
+    for (int i = 0; i < 26; i++) {
+        if (driveMask & (1 << i)) {
+            if (count == index) {
+                char drivePath[4];
+                drivePath[0] = 'A' + i;
+                drivePath[1] = ':';
+                drivePath[2] = '\\';
+                drivePath[3] = '\0';
+                XString_assign_utf8(path, drivePath);
+                return true;
+            }
+            count++;
+        }
+    }
+    
+    return false;
+}
+
+/* ============================================================================
+ * 存储设备信息
+ * ============================================================================ */
+
+bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info)
+{
+    if (!path || !info) return false;
+    
+    const char* utf8Path = XStringToUtf8(path);
+    if (!utf8Path) return false;
+    
+    wchar_t* wpath = XStringToWidePath(path);
+    if (!wpath) return false;
+    
+    /* 获取磁盘空间信息 */
+    ULARGE_INTEGER freeBytesAvailable, totalBytes, freeBytes;
+    if (!GetDiskFreeSpaceExW(wpath, &freeBytesAvailable, &totalBytes, &freeBytes)) {
+        XFree_System(wpath);
+        return false;
+    }
+    
+    info->bytesTotal = (int64_t)totalBytes.QuadPart;
+    info->bytesFree = (int64_t)freeBytes.QuadPart;
+    info->bytesAvailable = (int64_t)freeBytesAvailable.QuadPart;
+    
+    /* 获取簇大小 */
+    DWORD sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters;
+    if (GetDiskFreeSpaceW(wpath, &sectorsPerCluster, &bytesPerSector, &numberOfFreeClusters, &totalNumberOfClusters)) {
+        info->blockSize = sectorsPerCluster * bytesPerSector;
+    } else {
+        info->blockSize = 4096; /* 默认值 */
+    }
+    
+    /* 获取卷信息 */
+    wchar_t volumeName[MAX_PATH + 1];
+    wchar_t fileSystemName[MAX_PATH + 1];
+    DWORD volumeSerialNumber, maximumComponentLength, fileSystemFlags;
+    
+    if (GetVolumeInformationW(wpath, volumeName, MAX_PATH, &volumeSerialNumber,
+                               &maximumComponentLength, &fileSystemFlags, fileSystemName, MAX_PATH)) {
+        /* 设置卷标名称 */
+        if (info->volumeName) {
+            char utf8VolumeName[MAX_PATH];
+            WideCharToMultiByte(CP_UTF8, 0, volumeName, -1, utf8VolumeName, MAX_PATH, NULL, NULL);
+            XString_assign_utf8(info->volumeName, utf8VolumeName);
+        }
+        
+        /* 设置文件系统类型 */
+        if (info->fileSystemType) {
+            char utf8FsType[MAX_PATH];
+            WideCharToMultiByte(CP_UTF8, 0, fileSystemName, -1, utf8FsType, MAX_PATH, NULL, NULL);
+            XString_assign_utf8(info->fileSystemType, utf8FsType);
+        }
+        
+        info->isReadOnly = (fileSystemFlags & FILE_READ_ONLY_VOLUME) != 0;
+    } else {
+        if (info->volumeName) XString_assign_utf8(info->volumeName, "");
+        if (info->fileSystemType) XString_assign_utf8(info->fileSystemType, "");
+        info->isReadOnly = false;
+    }
+    
+    /* 获取设备路径（卷GUID） */
+    if (info->device) {
+        HANDLE hFile = CreateFileW(wpath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                   NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            wchar_t volumePath[MAX_PATH];
+            DWORD len = GetFinalPathNameByHandleW(hFile, volumePath, MAX_PATH, VOLUME_NAME_GUID);
+            CloseHandle(hFile);
+            
+            if (len > 0 && len < MAX_PATH) {
+                char utf8Device[MAX_PATH];
+                WideCharToMultiByte(CP_UTF8, 0, volumePath, -1, utf8Device, MAX_PATH, NULL, NULL);
+                XString_assign_utf8(info->device, utf8Device);
+            } else {
+                XString_assign_utf8(info->device, "");
+            }
+        } else {
+            XString_assign_utf8(info->device, "");
+        }
+    }
+    
+    /* 子卷名称（Windows不支持） */
+    if (info->subvolume) {
+        XString_assign_utf8(info->subvolume, "");
+    }
+    
+    info->isValid = true;
+    info->isReady = true;
+    info->isRemovable = false; /* 需要额外检测 */
+    
+    XFree_System(wpath);
+    return true;
+}
+
+/* ============================================================================
+ * 磁盘格式化
+ * ============================================================================ */
+
+/**
+ * @brief 格式化磁盘（Windows实现）
+ * 
+ * Windows下有几种格式化方式：
+ * 1. SHFormatDrive - 显示系统格式化对话框
+ * 2. FormatEx (fmifs.dll) - 命令行格式化
+ * 3. CreateFile + FSCTL_SET_BOOTSECTOR - 低级格式化
+ * 
+ * 这里使用SHFormatDrive，因为它最安全且由系统处理
+ */
+bool XFileSystem_format(const XString* drive, 
+                        XFileSystemType fsType,
+                        const XString* volumeName,
+                        int flags,
+                        int clusterSize,
+                        XFileSystemFormatProgress progress,
+                        void* userData)
+{
+    if (!drive) return false;
+    
+    const char* utf8Drive = XStringToUtf8(drive);
+    if (!utf8Drive) return false;
+    
+    /* 获取驱动器号 */
+    char driveLetter = 0;
+    if (strlen(utf8Drive) >= 2 && utf8Drive[1] == ':') {
+        driveLetter = toupper(utf8Drive[0]);
+    }
+    if (driveLetter < 'A' || driveLetter > 'Z') {
+        return false;
+    }
+    
+    /* 使用SHFormatDrive显示格式化对话框 */
+    /* 注意：这需要COM初始化和用户交互 */
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
+        return false;
+    }
+    
+    /* SHFormatDrive参数 */
+    /* SHFMT_ID == 0xFFFF是当前版本 */
+    /* SHFMT_OPT_FULL = 0, SHFMT_OPT_QUICK = 1 */
+    int fmtOptions = (flags & XFileSystemFormat_Quick) ? 1 : 0;
+    
+    /* 调用系统格式化对话框 */
+    DWORD result = SHFormatDrive(NULL, driveLetter - 'A', 0xFFFF, fmtOptions);
+    
+    CoUninitialize();
+    
+    /* 结果检查 */
+    /* SHFMT_OK = 0, SHFMT_ERROR = ... */
+    if (result == 0) {
+        /* 如果指定了卷标名称，需要设置 */
+        if (volumeName) {
+            wchar_t* wdrive = XStringToWidePath(drive);
+            wchar_t* wlabel = XStringToWidePath(volumeName);
+            if (wdrive && wlabel) {
+                SetVolumeLabelW(wdrive, wlabel);
+            }
+            if (wdrive) XFree_System(wdrive);
+            if (wlabel) XFree_System(wlabel);
+        }
+        return true;
+    }
+    
+    return false;
+}
+
+#endif /* XFILE_USE_PLATFORM_API */
+
+#endif /* _WIN32 */

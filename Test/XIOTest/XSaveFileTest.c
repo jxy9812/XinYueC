@@ -76,8 +76,11 @@ void XSaveFileTest()
         if (readFile && XIODevice_open_base((XIODevice*)readFile, XIODevice_ReadOnly | XIODevice_Text)) {
             XByteArray* content = XIODevice_readAll_3((XIODevice*)readFile);
             if (content) {
+                XByteArray_append_1(content, 0);
+                XString* strContent = XString_create_utf8((const char*)XByteArray_data(content));
                 XPrintf_3("文件内容:\n");
-                XPrintf_4(content);
+                XPrintf_2(strContent);
+                XString_delete_base(strContent);
                 XByteArray_delete_base(content);
             }
             XIODevice_close_base((XIODevice*)readFile);

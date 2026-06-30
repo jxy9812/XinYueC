@@ -1524,6 +1524,18 @@ bool XString_ends_with_utf8(const XString* str, const char* suffix, XChar_CaseSe
     return result;
 }
 
+bool XString_equals_utf8(const XString* str, const char* utf8_str, XChar_CaseSensitivity cs)
+{
+    if (!str || !utf8_str) return false;
+
+    XString* tmp = XString_create_utf8(utf8_str);
+    if (!tmp) return false;
+
+    bool result = XString_equals(str, tmp, cs);
+    XString_delete_base(tmp);
+    return result;
+}
+
 bool XString_isLower(const XString* str)
 {
     if (!str || XString_isEmpty_base(str)) {

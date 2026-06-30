@@ -146,7 +146,7 @@ void XFileInfo_init_3(XFileInfo* info, const XString* dir, const XString* path)
     if (!dirUtf8 || !pathUtf8) return;
     
     // 如果 path 是绝对路径，忽略 dir
-    if (XFileInfo_isAbsolutePath_static(pathUtf8)) {
+    if (XFileInfo_isAbsolutePath_static(path)) {
         XString_delete_base(info->m_filePath);
         info->m_filePath = XString_create_copy(path);
         return;
@@ -246,19 +246,11 @@ XString* XFileInfo_baseName(const XFileInfo* info)
     XString* fileName = XFileInfo_fileName(info);
     if (!fileName) return XString_create();
     
-    const char* nameUtf8 = XString_toUtf8(fileName);
-    if (!nameUtf8) {
-        XString_delete_base(fileName);
-        return XString_create();
-    }
-    
-    // 查找第一个 '.'
-    const char* dot = strchr(nameUtf8, '.');
+    int64_t dotPos = XString_index_of_utf8(fileName, ".", 0, XChar_CaseSensitive);
     XString* result;
     
-    if (dot) {
-        result = XString_create_utf8("");
-        XString_append_with_length_utf8(result, nameUtf8, dot - nameUtf8);
+    if (dotPos > 0) {
+        result = XString_mid(fileName, 0, (size_t)dotPos);
     } else {
         result = XString_create_copy(fileName);
     }
@@ -272,27 +264,11 @@ XString* XFileInfo_completeBaseName(const XFileInfo* info)
     XString* fileName = XFileInfo_fileName(info);
     if (!fileName) return XString_create();
     
-    const char* nameUtf8 = XString_toUtf8(fileName);
-    if (!nameUtf8) {
-        XString_delete_base(fileName);
-        return XString_create();
-    }
-    
-    size_t len = strlen(nameUtf8);
-    const char* lastDot = NULL;
-    
-    // 查找最后一个 '.'（从末尾开始）
-    for (size_t i = len; i > 0; i--) {
-        if (nameUtf8[i - 1] == '.') {
-            lastDot = nameUtf8 + i - 1;
-            break;
-        }
-    }
-    
+    int64_t dotPos = XString_last_index_of_utf8(fileName, ".", 0, XChar_CaseSensitive);
     XString* result;
-    if (lastDot && lastDot != nameUtf8) {
-        result = XString_create_utf8("");
-        XString_append_with_length_utf8(result, nameUtf8, lastDot - nameUtf8);
+    
+    if (dotPos > 0) {
+        result = XString_mid(fileName, 0, (size_t)dotPos);
     } else {
         result = XString_create_copy(fileName);
     }
@@ -306,26 +282,17 @@ XString* XFileInfo_suffix(const XFileInfo* info)
     XString* fileName = XFileInfo_fileName(info);
     if (!fileName) return XString_create();
     
-    const char* nameUtf8 = XString_toUtf8(fileName);
-    if (!nameUtf8) {
-        XString_delete_base(fileName);
-        return XString_create();
-    }
-    
-    size_t len = strlen(nameUtf8);
-    const char* lastDot = NULL;
-    
-    // 查找最后一个 '.'
-    for (size_t i = len; i > 0; i--) {
-        if (nameUtf8[i - 1] == '.') {
-            lastDot = nameUtf8 + i - 1;
-            break;
-        }
-    }
-    
+    int64_t dotPos = XString_last_index_of_utf8(fileName, ".", 0, XChar_CaseSensitive);
     XString* result;
-    if (lastDot && lastDot[1] != '\0') {
-        result = XString_create_utf8(lastDot + 1);
+    
+    if (dotPos >= 0) {
+        size_t suffixStart = (size_t)(dotPos + 1);
+        size_t len = XString_length_base(fileName);
+        if (suffixStart < len) {
+            result = XString_mid(fileName, suffixStart, len - suffixStart);
+        } else {
+            result = XString_create();
+        }
     } else {
         result = XString_create();
     }
@@ -339,18 +306,17 @@ XString* XFileInfo_completeSuffix(const XFileInfo* info)
     XString* fileName = XFileInfo_fileName(info);
     if (!fileName) return XString_create();
     
-    const char* nameUtf8 = XString_toUtf8(fileName);
-    if (!nameUtf8) {
-        XString_delete_base(fileName);
-        return XString_create();
-    }
-    
-    // 查找第一个 '.'
-    const char* firstDot = strchr(nameUtf8, '.');
+    int64_t dotPos = XString_index_of_utf8(fileName, ".", 0, XChar_CaseSensitive);
     XString* result;
     
-    if (firstDot && firstDot[1] != '\0') {
-        result = XString_create_utf8(firstDot + 1);
+    if (dotPos >= 0) {
+        size_t suffixStart = (size_t)(dotPos + 1);
+        size_t len = XString_length_base(fileName);
+        if (suffixStart < len) {
+            result = XString_mid(fileName, suffixStart, len - suffixStart);
+        } else {
+            result = XString_create();
+        }
     } else {
         result = XString_create();
     }
@@ -441,11 +407,8 @@ static void XFileInfo_updateCache(XFileInfo* info)
     if (!info || !info->m_filePath) return;
     if (info->m_cacheValid && info->m_caching) return;
     
-    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
-    if (!pathUtf8) return;
-    
     // 直接拷贝整个 XFileStat 结构
-    if (!XFileSystem_stat(pathUtf8, &info->m_stat)) {
+    if (!XFileSystem_stat(info->m_filePath, &info->m_stat)) {
         info->m_stat.exists = false;
         info->m_stat.isFile = false;
         info->m_stat.isDir = false;
@@ -462,13 +425,14 @@ XString* XFileInfo_absoluteFilePath(const XFileInfo* info)
 {
     if (!info || !info->m_filePath) return XString_create();
     
-    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
-    char absPath[1024];
+    XString* result = XString_create();
+    if (!result) return NULL;
     
-    if (XFileSystem_resolvePath(pathUtf8, absPath, sizeof(absPath), XPathStyle_Absolute)) {
-        return XString_create_utf8(absPath);
+    if (!XFileSystem_resolvePath(info->m_filePath, result, XPathStyle_Absolute)) {
+        XString_delete_base(result);
+        return NULL;
     }
-    return XString_create();
+    return result;
 }
 
 XString* XFileInfo_canonicalFilePath(const XFileInfo* info)
@@ -519,7 +483,7 @@ bool XFileInfo_exists(const XFileInfo* info)
 bool XFileInfo_exists_static(const XString* path)
 {
     if (!path) return false;
-    return XFileSystem_exists(XString_toUtf8(path));
+    return XFileSystem_exists(path);
 }
 
 void XFileInfo_stat(XFileInfo* info)
@@ -573,26 +537,30 @@ bool XFileInfo_isRoot(const XFileInfo* info)
 {
     if (!info || !info->m_filePath) return false;
     
-    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
-    if (!pathUtf8) return false;
+    XString* absPath = XFileInfo_absoluteFilePath(info);
+    if (!absPath) return false;
     
-    char absPath[1024];
-    if (!XFileSystem_resolvePath(pathUtf8, absPath, sizeof(absPath), XPathStyle_Absolute)) return false;
+    const char* absUtf8 = XString_toUtf8(absPath);
+    if (!absUtf8) {
+        XString_delete_base(absPath);
+        return false;
+    }
     
-    size_t len = strlen(absPath);
+    size_t len = strlen(absUtf8);
+    bool result = false;
     
     // Windows: "C:\" or "\\server\share\"
-    if (len == 3 && isalpha((unsigned char)absPath[0]) &&
-        absPath[1] == ':' && (absPath[2] == '\\' || absPath[2] == '/')) {
-        return true;
+    if (len == 3 && isalpha((unsigned char)absUtf8[0]) &&
+        absUtf8[1] == ':' && (absUtf8[2] == '\\' || absUtf8[2] == '/')) {
+        result = true;
     }
-    
     // Unix: "/"
-    if (len == 1 && absPath[0] == '/') {
-        return true;
+    else if (len == 1 && absUtf8[0] == '/') {
+        result = true;
     }
     
-    return false;
+    XString_delete_base(absPath);
+    return result;
 }
 
 bool XFileInfo_isBundle(const XFileInfo* info)
@@ -615,21 +583,22 @@ bool XFileInfo_isHidden(const XFileInfo* info)
 bool XFileInfo_isAbsolute(const XFileInfo* info)
 {
     if (!info || !info->m_filePath) return false;
-    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
-    return XFileInfo_isAbsolutePath_static(pathUtf8);
+    return XFileInfo_isAbsolutePath_static(info->m_filePath);
 }
 
-bool XFileInfo_isAbsolutePath_static(const char* path)
+bool XFileInfo_isAbsolutePath_static(const XString* path)
 {
-    if (!path || !path[0]) return false;
+    if (!path) return false;
+    const char* pathUtf8 = XString_toUtf8(path);
+    if (!pathUtf8 || !pathUtf8[0]) return false;
     
     // Windows: "C:\" or "\\server\share"
-    if (path[0] == '\\' && path[1] == '\\') return true;
-    if (path[0] == '\\') return true;
-    if (isalpha((unsigned char)path[0]) && path[1] == ':') return true;
+    if (pathUtf8[0] == '\\' && pathUtf8[1] == '\\') return true;
+    if (pathUtf8[0] == '\\') return true;
+    if (isalpha((unsigned char)pathUtf8[0]) && pathUtf8[1] == ':') return true;
     
     // Unix: "/path"
-    if (path[0] == '/') return true;
+    if (pathUtf8[0] == '/') return true;
     
     return false;
 }
@@ -800,14 +769,15 @@ XString* XFileInfo_symLinkTarget(const XFileInfo* info)
 {
     if (!info || !info->m_filePath) return XString_create();
     
-    const char* pathUtf8 = XString_toUtf8(info->m_filePath);
-    char target[1024];
+    XString* target = XString_create();
+    if (!target) return NULL;
     
-    if (!XFileSystem_readLink(pathUtf8, target, sizeof(target))) {
-        return XString_create();
+    if (!XFileSystem_readLink(info->m_filePath, target)) {
+        XString_delete_base(target);
+        return NULL;
     }
     
-    return XString_create_utf8(target);
+    return target;
 }
 
 XString* XFileInfo_readSymLink(const XFileInfo* info)
@@ -840,10 +810,7 @@ bool XFileInfo_equals(const XFileInfo* lhs, const XFileInfo* rhs)
         return false;
     }
     
-    const char* p1 = XString_toUtf8(path1);
-    const char* p2 = XString_toUtf8(path2);
-    
-    bool result = (strcmp(p1, p2) == 0);
+    bool result = XString_equals(path1, path2, XChar_CaseSensitive);
     
     XString_delete_base(path1);
     XString_delete_base(path2);
