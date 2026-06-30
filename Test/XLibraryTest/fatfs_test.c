@@ -101,7 +101,7 @@ void  fatfs_test()
        
         // 无有效文件系统，执行格式化
         XPrintf("未检测到文件系统，开始格式化...\n");
-        res = f_mkfs(PATH, FM_FAT32, work_buf, sizeof(work_buf));
+        //res = f_mkfs(PATH, FM_FAT32, work_buf, sizeof(work_buf));
         if (res != FR_OK) {
             XPrintf("格式化失败：");
             print_fatfs_error(res);

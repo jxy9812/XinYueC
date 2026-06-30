@@ -11,37 +11,67 @@
  *   Unicode 表：N × 4 字节（Unicode高、Unicode低、GBK高、GBK低，按 Unicode 排序）
  *
  * 查找方式：纯文件二分，每项4字节。
- * 只需一个 XFile 单例，内存开销为零。
  *
- * 三种模式优先级（从高到低）：
- *   1. XCHAR_USE_CODE_GBK   - 代码模式（静态数组）
- *   2. XCHAR_USE_FILE_GBK   - 文件模式（读取外部文件）
- *   3. XCHAR_USE_SYSTEM_GBK - 系统API模式（调用系统API）
+ * 线程安全：根据 XCHAR_FILE_THREAD_SAFE 配置启用/禁用
  *
- * 使用方式：在编译配置中定义 XCHAR_USE_FILE_GBK 宏即可启用此实现。
+ * 配置文件：XChar_conf.h
  */
-
-#if defined(XCHAR_USE_FILE_GBK)
-
+#include "XChar_conf.h"
+#if defined(XCHAR_USE_FILE_GBK) && !defined(XCHAR_USE_CODE_GBK) && !defined(XCHAR_USE_SYSTEM_GBK)
 #include "XChar.h"
 #include "XMemory.h"
 #include "XFile.h"
 #include "XString.h"
 #include <string.h>
 
+#if XCHAR_FILE_THREAD_SAFE
+#include "XHashMap.h"
+#include "XReadWriteLock.h"
+#include "XThread.h"
+#endif
+
 /* ========================================================================== */
 /*                        配置宏                                              */
 /* ========================================================================== */
-
-#ifndef XCHAR_COMPACT_PATH
-#define XCHAR_COMPACT_PATH "XCHAR_COMPACT.BIN"
-#endif
 
 /** 二进制格式每项字节数 */
 #define BINARY_ENTRY_SIZE  4
 
 /* ========================================================================== */
-/*                        全局状态                                             */
+/*                        线程局部存储结构                                     */
+/* ========================================================================== */
+
+#if XCHAR_FILE_THREAD_SAFE
+
+/**
+ * @brief 每个线程的文件句柄信息
+ */
+typedef struct {
+    XFile* file;                    /**< 文件句柄（每个线程独立） */
+    uint32_t entry_count;           /**< 条目数量（所有线程共享，首次打开时设置） */
+    int64_t gbk_offset;             /**< GBK表起始偏移 */
+    int64_t uni_offset;             /**< Unicode表起始偏移 */
+    uint8_t initialized;            /**< 是否已初始化 */
+} XChar_ThreadFile;
+
+/* ========================================================================== */
+/*                        全局状态（线程安全模式）                              */
+/* ========================================================================== */
+
+/** 全局共享的条目数量（首次打开后设置，所有线程共享） */
+static uint32_t g_entry_count = 0;
+static int64_t g_gbk_offset = 0;
+static int64_t g_uni_offset = 0;
+static uint8_t g_global_initialized = 0;
+
+/** 线程局部存储映射：线程ID -> XChar_ThreadFile* */
+static XHashMap* g_thread_map = NULL;
+static XReadWriteLock* g_lock = NULL;
+
+#else /* !XCHAR_FILE_THREAD_SAFE */
+
+/* ========================================================================== */
+/*                        全局状态（单线程模式）                                */
 /* ========================================================================== */
 
 typedef struct {
@@ -54,8 +84,167 @@ typedef struct {
 
 static XChar_FileGlobal s_files = { NULL, false, 0, 0, 0 };
 
+#endif /* XCHAR_FILE_THREAD_SAFE */
+
 /* ========================================================================== */
-/*                        内部辅助函数                                         */
+/*                        线程安全模式实现                                      */
+/* ========================================================================== */
+
+#if XCHAR_FILE_THREAD_SAFE
+
+/**
+ * @brief 初始化全局状态
+ */
+static void init_global_state(void)
+{
+    if (g_lock == NULL)
+    {
+        g_lock = XReadWriteLock_create(XLock_NonRecursive);
+    }
+    if (g_thread_map == NULL)
+    {
+        g_thread_map = XHashMap_Create(XHandle, XChar_ThreadFile*, size_t_compare);
+    }
+}
+
+/**
+ * @brief 获取当前线程的文件句柄（线程安全）
+ * @return 成功返回文件句柄，失败返回NULL
+ */
+static XChar_ThreadFile* get_thread_file(void)
+{
+    /* 初始化全局状态 */
+    init_global_state();
+    
+    XHandle thread_id = XThread_currentThreadId();
+    
+    /* 先用读锁查找 */
+    XReadWriteLock_lockForRead(g_lock);
+    XChar_ThreadFile** lptr = XHashMap_value_base(g_thread_map, &thread_id);
+    XChar_ThreadFile* tf = lptr ? *lptr : NULL;
+    XReadWriteLock_unlock(g_lock);
+    
+    if (tf && tf->initialized)
+    {
+        return tf;
+    }
+    
+    /* 需要创建新的线程文件句柄 */
+    XReadWriteLock_lockForWrite(g_lock);
+    
+    /* 双重检查 */
+    lptr = XHashMap_value_base(g_thread_map, &thread_id);
+    tf = lptr ? *lptr : NULL;
+    
+    if (tf == NULL)
+    {
+        /* 创建新的线程文件结构 */
+        tf = (XChar_ThreadFile*)XMalloc_System(sizeof(XChar_ThreadFile));
+        if (tf)
+        {
+            memset(tf, 0, sizeof(XChar_ThreadFile));
+            XMapBase_insert_base(g_thread_map, &thread_id, &tf);
+        }
+    }
+    
+    XReadWriteLock_unlock(g_lock);
+    
+    return tf;
+}
+
+/**
+ * @brief 打开文件并初始化线程局部数据
+ * @param tf 线程文件结构
+ * @return 成功返回true
+ */
+static bool open_file_for_thread(XChar_ThreadFile* tf)
+{
+    if (tf->initialized && tf->file)
+    {
+        return true;
+    }
+    
+    XString* xpath = XString_create_utf8(XCHAR_COMPACT_PATH);
+    if (!xpath) return false;
+    
+    tf->file = XFile_create_1();
+    if (!tf->file)
+    {
+        XString_delete_base(xpath);
+        return false;
+    }
+    
+    XFile_setFileName(tf->file, xpath);
+    XString_delete_base(xpath);
+    
+    if (!XFile_open_2(tf->file, XIODevice_ReadOnly, 0))
+    {
+        XFile_deleteLater(tf->file);
+        tf->file = NULL;
+        return false;
+    }
+    
+    /* 计算文件大小来确定条目数 */
+    int64_t file_size = XIODevice_size_base((XIODevice*)tf->file);
+    if (file_size <= 0)
+    {
+        XFile_deleteLater(tf->file);
+        tf->file = NULL;
+        return false;
+    }
+    
+    /* 二进制格式：两个表，每项4字节 */
+    uint32_t total_entries = (uint32_t)(file_size / (BINARY_ENTRY_SIZE * 2));
+    if (total_entries == 0)
+    {
+        XFile_deleteLater(tf->file);
+        tf->file = NULL;
+        return false;
+    }
+    
+    /* 设置全局偏移（所有线程共享） */
+    if (!g_global_initialized)
+    {
+        g_entry_count = total_entries;
+        g_gbk_offset = 0;  /* GBK表在文件开头 */
+        g_uni_offset = (int64_t)total_entries * BINARY_ENTRY_SIZE;  /* Unicode表紧随其后 */
+        g_global_initialized = 1;
+    }
+    
+    tf->entry_count = g_entry_count;
+    tf->gbk_offset = g_gbk_offset;
+    tf->uni_offset = g_uni_offset;
+    tf->initialized = 1;
+    
+    return true;
+}
+
+/**
+ * @brief 获取已打开的文件（确保文件已打开）
+ * @return 成功返回XFile指针，失败返回NULL
+ */
+static XFile* get_opened_file(void)
+{
+    XChar_ThreadFile* tf = get_thread_file();
+    if (!tf) return NULL;
+    
+    if (tf->initialized && tf->file)
+    {
+        return tf->file;
+    }
+    
+    if (open_file_for_thread(tf))
+    {
+        return tf->file;
+    }
+    
+    return NULL;
+}
+
+#else /* !XCHAR_FILE_THREAD_SAFE */
+
+/* ========================================================================== */
+/*                        单线程模式实现                                        */
 /* ========================================================================== */
 
 /**
@@ -103,18 +292,28 @@ static XFile* open_binary_file(void)
 /**
  * @brief 获取文件单例
  */
-static XFile* get_table_file(void)
+static XFile* get_opened_file(void)
 {
     if (s_files.file_opened && s_files.file) return s_files.file;
     return open_binary_file();
 }
+
+#endif /* XCHAR_FILE_THREAD_SAFE */
+
+/* ========================================================================== */
+/*                        内部辅助函数                                         */
+/* ========================================================================== */
 
 /**
  * @brief 在二进制格式表中二分查找
  */
 static bool binary_search_table(XFile* file, int64_t table_offset, uint16_t key, uint16_t* out_val)
 {
+#if XCHAR_FILE_THREAD_SAFE
+    int lo = 0, hi = (int)g_entry_count - 1;
+#else
     int lo = 0, hi = (int)s_files.entry_count - 1;
+#endif
     uint8_t buf[4];
 
     while (lo <= hi) {
@@ -152,10 +351,14 @@ static bool file_lookup_by_gbk(uint16_t gbk_code, uint16_t* unicode)
         return true;
     }
 
-    XFile* file = get_table_file();
+    XFile* file = get_opened_file();
     if (!file) return false;
 
+#if XCHAR_FILE_THREAD_SAFE
+    return binary_search_table(file, g_gbk_offset, gbk_code, unicode);
+#else
     return binary_search_table(file, s_files.gbk_offset, gbk_code, unicode);
+#endif
 }
 
 static bool file_lookup_by_unicode(uint16_t unicode_code, uint16_t* gbk)
@@ -165,10 +368,14 @@ static bool file_lookup_by_unicode(uint16_t unicode_code, uint16_t* gbk)
         return true;
     }
 
-    XFile* file = get_table_file();
+    XFile* file = get_opened_file();
     if (!file) return false;
 
+#if XCHAR_FILE_THREAD_SAFE
+    return binary_search_table(file, g_uni_offset, unicode_code, gbk);
+#else
     return binary_search_table(file, s_files.uni_offset, unicode_code, gbk);
+#endif
 }
 
 /* ========================================================================== */
@@ -347,5 +554,98 @@ int64_t XCharPlatform_gbkToUtf8Stream(const char* gbk_str, size_t input_size, ch
     XFree_System(xchars);
     return result;
 }
+
+/* ========================================================================== */
+/*                   清理函数                                                  */
+/* ========================================================================== */
+
+#if XCHAR_FILE_THREAD_SAFE
+
+/**
+ * @brief 清理当前线程的文件句柄
+ * @note 线程退出前可调用此函数释放资源
+ */
+void XCharPlatform_cleanupThread(void)
+{
+    if (!g_lock || !g_thread_map) return;
+    
+    XHandle thread_id = XThread_currentThreadId();
+    
+    XReadWriteLock_lockForWrite(g_lock);
+    XChar_ThreadFile** lptr = XHashMap_value_base(g_thread_map, &thread_id);
+    XChar_ThreadFile* tf = lptr ? *lptr : NULL;
+    
+    if (tf)
+    {
+        if (tf->file)
+        {
+            XFile_deleteLater(tf->file);
+            tf->file = NULL;
+        }
+        XFree_System(tf);
+        XMapBase_remove_base(g_thread_map, &thread_id);
+    }
+    
+    XReadWriteLock_unlock(g_lock);
+}
+
+/**
+ * @brief 清理所有线程的文件句柄
+ * @note 程序退出前可调用此函数释放所有资源
+ */
+void XCharPlatform_cleanupAll(void)
+{
+    if (!g_lock || !g_thread_map) return;
+    
+    XReadWriteLock_lockForWrite(g_lock);
+    
+    /* 遍历所有线程文件并清理 */
+    for_each_iterator(g_thread_map, XHashMap, it)
+    {
+        XPair* pair = XHashMap_iterator_data(&it);
+        if (pair)
+        {
+            XChar_ThreadFile* tf = *(XChar_ThreadFile**)XPair_second(pair);
+            if (tf)
+            {
+                if (tf->file)
+                {
+                    XFile_deleteLater(tf->file);
+                }
+                XFree_System(tf);
+            }
+        }
+    }
+    
+    XMapBase_clear_base(g_thread_map);
+    XHashMap_delete_base(g_thread_map);
+    g_thread_map = NULL;
+    
+    XReadWriteLock_unlock(g_lock);
+    XReadWriteLock_delete(g_lock);
+    g_lock = NULL;
+    
+    g_global_initialized = 0;
+    g_entry_count = 0;
+}
+
+#else /* !XCHAR_FILE_THREAD_SAFE */
+
+/**
+ * @brief 清理文件句柄
+ * @note 程序退出前可调用此函数释放资源
+ */
+void XCharPlatform_cleanup(void)
+{
+    if (s_files.file)
+    {
+        XFile_deleteLater(s_files.file);
+        s_files.file = NULL;
+    }
+    s_files.file_opened = false;
+    s_files.entry_count = 0;
+}
+
+#endif /* XCHAR_FILE_THREAD_SAFE */
 
 #endif /* XCHAR_USE_FILE_GBK */

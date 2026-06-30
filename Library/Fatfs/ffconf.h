@@ -5,7 +5,7 @@
 #define FFCONF_DEF	5380	/* 修订版本ID */
 
 /*---------------------------------------------------------------------------/
-/ 功能配置
+/ 功能配置（针对XFile模块优化）
 /---------------------------------------------------------------------------*/
 
 #define FF_FS_READONLY	0
@@ -22,33 +22,39 @@
 /   2: 在级别1的基础上，再移除f_opendir()、f_readdir()和f_closedir()函数。
 /   3: 在级别2的基础上，再移除f_lseek()函数。 */
 
-#define FF_USE_FIND		1
-/* 此选项用于切换过滤目录读取函数f_findfirst()和f_findnext()的启用状态。(0: 禁用, 1: 启用 2: 同时匹配altname[]启用) */
+#define FF_USE_FIND		0
+/* 此选项用于切换过滤目录读取函数f_findfirst()和f_findnext()的启用状态。(0: 禁用, 1: 启用 2: 同时匹配altname[]启用)
+/  已关闭：XFile使用opendir/readdir实现目录遍历 */
 
-#define FF_USE_MKFS		1
-/* 此选项用于切换f_mkfs()函数的启用状态。(0: 禁用 或 1: 启用) */
+#define FF_USE_MKFS		0
+/* 此选项用于切换f_mkfs()函数的启用状态。(0: 禁用 或 1: 启用)
+/  已关闭：XFile不需要格式化功能 */
 
 #define FF_USE_FASTSEEK	1
 /* 此选项用于切换快速查找功能的启用状态。(0: 禁用 或 1: 启用) */
 
-#define FF_USE_EXPAND	1
-/* 此选项用于切换f_expand()函数的启用状态。(0: 禁用 或 1: 启用) */
+#define FF_USE_EXPAND	0
+/* 此选项用于切换f_expand()函数的启用状态。(0: 禁用 或 1: 启用)
+/  已关闭：可用f_truncate替代 */
 
 #define FF_USE_CHMOD	1
 /* 此选项用于切换属性控制API函数f_chmod()和f_utime()的启用状态。
 /  (0: 禁用 或 1: 启用) 此外，要启用此选项，FF_FS_READONLY必须为0。 */
 
-#define FF_USE_LABEL	1
+#define FF_USE_LABEL	0
 /* 此选项用于切换卷标API函数f_getlabel()和f_setlabel()的启用状态。
-/  (0: 禁用 或 1: 启用) */
+/  (0: 禁用 或 1: 启用)
+/  已关闭：XFile不需要卷标操作 */
 
-#define FF_USE_FORWARD	1
-/* 此选项用于切换f_forward()函数的启用状态。(0: 禁用 或 1: 启用) */
+#define FF_USE_FORWARD	0
+/* 此选项用于切换f_forward()函数的启用状态。(0: 禁用 或 1: 启用)
+/  已关闭：XFile不使用流式转发 */
 
-#define FF_USE_STRFUNC	1
-#define FF_PRINT_LLI	1
-#define FF_PRINT_FLOAT	1
-#define FF_STRF_ENCODE	3		 // 字符串API使用UTF-8编码
+#define FF_USE_STRFUNC	0
+#define FF_PRINT_LLI	0
+#define FF_PRINT_FLOAT	0
+#define FF_STRF_ENCODE	0
+/* 已关闭：XFile有自己的字符串处理，不需要Fatfs的printf支持 */
 /* FF_USE_STRFUNC用于切换字符串API函数f_gets()、f_putc()、f_puts()和f_printf()的启用状态。
 /
 /   0: 禁用。FF_PRINT_LLI、FF_PRINT_FLOAT和FF_STRF_ENCODE无效。

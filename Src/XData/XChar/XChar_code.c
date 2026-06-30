@@ -11,8 +11,8 @@
  *
  * 使用方式：在编译配置中定义 XCHAR_USE_CODE_GBK 宏启用此实现。
  */
-
-#if defined(XCHAR_USE_CODE_GBK) && !defined(XCHAR_USE_FILE_GBK) && !defined(XCHAR_USE_SYSTEM_GBK)
+#include "XChar_conf.h"
+#if defined(XCHAR_USE_CODE_GBK)
 
 #include "XChar.h"
 #include "XMemory.h"

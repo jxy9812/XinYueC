@@ -16,7 +16,7 @@
  */
 
 #ifdef _WIN32
-
+#include "XChar_conf.h"
 /* 只有在未定义文件模式时，才使用系统API模式 */
 #if defined(XCHAR_USE_SYSTEM_GBK) && (!defined(XCHAR_USE_FILE_GBK))
 
