@@ -38,6 +38,13 @@ int XFatfsDrives_count(void);
  */
 bool XFatfsDrives_at(int index, XString* path);
 
+/**
+ * @brief 通过驱动器前缀字符串查找索引（最长前缀匹配）
+ * @param prefix 驱动器前缀字符串（如 "C:", "sd:", "usb:"）
+ * @return diskio 索引（0~最大驱动器数-1），失败返回 -1
+ */
+int XFatfsDrives_prefixToIndex(const char* prefix);
+
 /* ============================================================================
  * 二、当前工作目录（平台实现）
  * ============================================================================ */

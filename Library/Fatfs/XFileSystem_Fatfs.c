@@ -37,13 +37,13 @@ DWORD get_fattime(void)
 #define MAX_FILES XFILE_FATFS_MAX_FILES
 #define MAX_DIRS  XFILE_FATFS_MAX_DIRS
 
-static FIL g_fileTable[MAX_FILES];
-static bool g_fileInUse[MAX_FILES];
+static FIL*  g_fileTable[MAX_FILES];   /* NULL = 未分配，按需 XMalloc_System */
+static bool  g_fileInUse[MAX_FILES];
 
-static DIR g_dirTable[MAX_DIRS];
-static FILINFO g_dirInfo[MAX_DIRS];
-static bool g_dirInUse[MAX_DIRS];
-static bool g_dirFirst[MAX_DIRS];
+static DIR*  g_dirTable[MAX_DIRS];     /* NULL = 未分配 */
+static FILINFO* g_dirInfo[MAX_DIRS];   /* NULL = 未分配 */
+static bool  g_dirInUse[MAX_DIRS];
+static bool  g_dirFirst[MAX_DIRS];
 
 /* ============================================================================
  * 卷管理
@@ -75,46 +75,60 @@ static FATFS* XFATFS_getFs(int idx)
  */
 static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath)
 {
-    /* 检查是否有 "X:" 前缀 */
-    if (utf8Path[0] && utf8Path[1] == ':') {
-        int idx = (utf8Path[0] >= 'a' && utf8Path[0] <= 'z')
-                   ? utf8Path[0] - 'a' : utf8Path[0] - 'A';
-        if (idx < 0 || idx >= XFATFS_MAX_VOLUMES) return NULL;
+    /* 遍历所有驱动器前缀，匹配最长前缀（如 "C:", "sd:", "usb:"） */
+    int driveCount = XFatfsDrives_count();
+    int bestIdx = -1;
+    size_t bestLen = 0;
 
-        *outPath = utf8Path + 2;
+    for (int i = 0; i < driveCount && i < XFATFS_MAX_VOLUMES; i++) {
+        XString* prefix = XString_create();
+        if (!prefix) continue;
+        if (XFatfsDrives_at(i, prefix)) {
+            const char* prefixUtf8 = XString_toUtf8(prefix);
+            if (prefixUtf8) {
+                size_t len = strlen(prefixUtf8);
+                if (len > bestLen && strncmp(utf8Path, prefixUtf8, len) == 0) {
+                    bestLen = len;
+                    bestIdx = i;
+                }
+            }
+        }
+        XString_delete_base(prefix);
+    }
+
+    if (bestIdx >= 0 && bestLen > 0) {
+        *outPath = utf8Path + bestLen;
         while (**outPath == '/' || **outPath == '\\') (*outPath)++;
 
-        /* 首次使用：分配并尝试挂载 */
-        FATFS* fs = XFATFS_getFs(idx);
+        FATFS* fs = XFATFS_getFs(bestIdx);
         if (!fs) return NULL;
 
-        if (g_defaultIndex < 0) g_defaultIndex = idx;
+        if (g_defaultIndex < 0) g_defaultIndex = bestIdx;
 
-        if (!(g_mountedMask & (1u << idx))) {
+        if (!(g_mountedMask & (1u << bestIdx))) {
             char mountStr[4];
-            mountStr[0] = '0' + idx;
+            mountStr[0] = '0' + bestIdx;
             mountStr[1] = ':';
             mountStr[2] = '\0';
 
             FRESULT fr = f_mount(fs, mountStr, 1);
             if (fr == FR_NO_FILESYSTEM) {
-                /* 空镜像 → 自动格式化 */
-                f_mount(NULL, mountStr, 0);  /* 先卸载 */
-                memset(fs, 0, sizeof(FATFS));  /* 清除工作区残留 */
-                MKFS_PARM opt = { FM_ANY, 0, 0, 1, 0 };
+                f_mount(NULL, mountStr, 0);
+                memset(fs, 0, sizeof(FATFS));
+                MKFS_PARM opt = { XFILE_FATFS_DEFAULT_FORMAT_TYPE, 0, 0, 1, 0 };
                 BYTE work[FF_MAX_SS];
                 if (f_mkfs(mountStr, &opt, work, sizeof(work)) == FR_OK) {
                     fr = f_mount(fs, mountStr, 1);
                 }
             }
             if (fr == FR_OK) {
-                g_mountedMask |= (1u << idx);
+                g_mountedMask |= (1u << bestIdx);
                 f_chdir(mountStr);
             }
         }
 
         static char driveNum[4];
-        driveNum[0] = '0' + idx;
+        driveNum[0] = '0' + bestIdx;
         driveNum[1] = ':';
         driveNum[2] = '/';
         driveNum[3] = '\0';
@@ -136,9 +150,8 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
 
         FRESULT fr = f_mount(fs, mountStr, 1);
         if (fr == FR_NO_FILESYSTEM) {
-            /* 空镜像 → 自动格式化 */
-            f_mount(NULL, mountStr, 0);  /* 先卸载 */
-            memset(fs, 0, sizeof(FATFS));  /* 清除工作区残留 */
+            f_mount(NULL, mountStr, 0);
+            memset(fs, 0, sizeof(FATFS));
             MKFS_PARM opt = { FM_ANY, 0, 0, 1, 0 };
             BYTE work[FF_MAX_SS];
             if (f_mkfs(mountStr, &opt, work, sizeof(work)) == FR_OK) {
@@ -202,7 +215,11 @@ static intptr_t XFATFS_allocFile(void)
 {
     for (int i = 0; i < MAX_FILES; i++) {
         if (!g_fileInUse[i]) {
-            memset(&g_fileTable[i], 0, sizeof(FIL));
+            if (!g_fileTable[i]) {
+                g_fileTable[i] = (FIL*)XMalloc_System(sizeof(FIL));
+                if (!g_fileTable[i]) return -1;
+            }
+            memset(g_fileTable[i], 0, sizeof(FIL));
             g_fileInUse[i] = true;
             return (intptr_t)i;
         }
@@ -213,13 +230,15 @@ static intptr_t XFATFS_allocFile(void)
 static FIL* XFATFS_getFile(intptr_t fd)
 {
     if (fd < 0 || fd >= MAX_FILES || !g_fileInUse[fd]) return NULL;
-    return &g_fileTable[fd];
+    return g_fileTable[fd];
 }
 
 static void XFATFS_freeFile(intptr_t fd)
 {
     if (fd >= 0 && fd < MAX_FILES && g_fileInUse[fd]) {
-        f_close(&g_fileTable[fd]);
+        if (g_fileTable[fd]) {
+            f_close(g_fileTable[fd]);
+        }
         g_fileInUse[fd] = false;
     }
 }
@@ -228,8 +247,16 @@ static intptr_t XFATFS_allocDir(void)
 {
     for (int i = 0; i < MAX_DIRS; i++) {
         if (!g_dirInUse[i]) {
-            memset(&g_dirTable[i], 0, sizeof(DIR));
-            memset(&g_dirInfo[i], 0, sizeof(FILINFO));
+            if (!g_dirTable[i]) {
+                g_dirTable[i] = (DIR*)XMalloc_System(sizeof(DIR));
+                if (!g_dirTable[i]) return -1;
+            }
+            if (!g_dirInfo[i]) {
+                g_dirInfo[i] = (FILINFO*)XMalloc_System(sizeof(FILINFO));
+                if (!g_dirInfo[i]) return -1;
+            }
+            memset(g_dirTable[i], 0, sizeof(DIR));
+            memset(g_dirInfo[i], 0, sizeof(FILINFO));
             g_dirInUse[i] = true;
             g_dirFirst[i] = true;
             return (intptr_t)i;
@@ -241,7 +268,7 @@ static intptr_t XFATFS_allocDir(void)
 static DIR* XFATFS_getDir(intptr_t iter)
 {
     if (iter < 0 || iter >= MAX_DIRS || !g_dirInUse[iter]) return NULL;
-    return &g_dirTable[iter];
+    return g_dirTable[iter];
 }
 
 /* ============================================================================
@@ -581,7 +608,7 @@ bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry)
     if (idx < 0 || idx >= MAX_DIRS || !g_dirInUse[idx]) return false;
     
     DIR* dp = XFATFS_getDir(idx);
-    FILINFO* fno = &g_dirInfo[idx];
+    FILINFO* fno = g_dirInfo[idx];
     
     FRESULT fr = f_readdir(dp, fno);
     if (fr != FR_OK || fno->fname[0] == 0) return false;
@@ -606,7 +633,9 @@ void XFileSystem_closedir(XDirIterator iter)
     intptr_t idx = (intptr_t)(uintptr_t)iter;
     if (idx < 0 || idx >= MAX_DIRS || !g_dirInUse[idx]) return;
     
-    f_closedir(XFATFS_getDir(idx));
+    if (g_dirTable[idx]) {
+        f_closedir(g_dirTable[idx]);
+    }
     g_dirInUse[idx] = false;
 }
 
@@ -627,7 +656,15 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
     if (cwd[0] >= '0' && cwd[0] <= '9' && cwd[1] == ':') {
         int volIdx = cwd[0] - '0';
         if (volIdx >= 0 && volIdx < XFATFS_MAX_VOLUMES && g_volumes[volIdx]) {
-            snprintf(absPath, sizeof(absPath), "%c:%s", 'A' + volIdx, cwd + 2);
+            XString* xDrive = XString_create();
+            if (xDrive && XFatfsDrives_at(volIdx, xDrive)) {
+                const char* driveUtf8 = XString_toUtf8(xDrive);
+                if (driveUtf8) {
+                    snprintf(absPath, sizeof(absPath), "%s%s", driveUtf8, cwd + 2);
+                }
+            }
+            if (xDrive) XString_delete_base(xDrive);
+            if (absPath[0] == '\0') strcpy(absPath, cwd);
         } else {
             strcpy(absPath, cwd);
         }
@@ -660,10 +697,18 @@ bool XFileSystem_currentPath(XString* path)
     if (cwd[0] >= '0' && cwd[0] <= '9' && cwd[1] == ':') {
         int volIdx = cwd[0] - '0';
         if (volIdx >= 0 && volIdx < XFATFS_MAX_VOLUMES && g_volumes[volIdx]) {
-            char converted[256];
-            snprintf(converted, sizeof(converted), "%c:%s", 'A' + volIdx, cwd + 2);
-            XString_assign_utf8(path, converted);
-            return true;
+            XString* xDrive = XString_create();
+            if (xDrive && XFatfsDrives_at(volIdx, xDrive)) {
+                const char* driveUtf8 = XString_toUtf8(xDrive);
+                if (driveUtf8) {
+                    char converted[256];
+                    snprintf(converted, sizeof(converted), "%s%s", driveUtf8, cwd + 2);
+                    XString_assign_utf8(path, converted);
+                    XString_delete_base(xDrive);
+                    return true;
+                }
+            }
+            if (xDrive) XString_delete_base(xDrive);
         }
     }
     

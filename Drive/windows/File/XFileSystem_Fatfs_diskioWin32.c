@@ -21,15 +21,11 @@
 #endif
 
 #ifndef XFILE_FATFS_DISK_IMAGE_PATH
-#define XFILE_FATFS_DISK_IMAGE_PATH   "fatfs_disk.img"
-#endif
-
-#ifndef XFILE_FATFS_DISK_PHYSICAL_DRIVE
-#define XFILE_FATFS_DISK_PHYSICAL_DRIVE "\\\\.\\D:"
+#define XFILE_FATFS_DISK_IMAGE_PATH   "fatfs_disk"
 #endif
 
 /* ============================================================================
- * 内部状态（动态分配，适配 FF_VOLUMES=26）
+ * 内部状态（动态分配，适配 FF_VOLUMES=10）
  * ============================================================================ */
 
 static HANDLE* g_diskHandles = NULL;       /* HANDLE[FF_VOLUMES]，首次 initialize 时分配 */
@@ -66,7 +62,7 @@ DSTATUS disk_initialize(BYTE pdrv)
     /* 文件镜像模式：动态生成文件名 fatfs_diskX.img */
     {
         char imgPath[64];
-        snprintf(imgPath, sizeof(imgPath), XFILE_FATFS_DISK_IMAGE_PATH "%d", pdrv);
+        snprintf(imgPath, sizeof(imgPath), XFILE_FATFS_DISK_IMAGE_PATH "%d.img", pdrv);
         g_diskHandles[pdrv] = CreateFileA(
             imgPath,
             GENERIC_READ | GENERIC_WRITE,
@@ -270,6 +266,19 @@ bool XFatfsDrives_at(int index, XString* path)
     return true;
 }
 
+int XFatfsDrives_prefixToIndex(const char* prefix)
+{
+    if (!prefix) return -1;
+    size_t prefixLen = strlen(prefix);
+    for (int i = 0; i < XFILE_FATFS_FILEMODE_DRIVE_COUNT; i++) {
+        size_t driveLen = strlen(g_fileDrivePrefixes[i]);
+        if (prefixLen >= driveLen && memcmp(prefix, g_fileDrivePrefixes[i], driveLen) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 #else
 /* 物理磁盘模式：枚举系统逻辑驱动器 */
 
@@ -304,6 +313,17 @@ bool XFatfsDrives_at(int index, XString* path)
         }
     }
     return false;
+}
+
+int XFatfsDrives_prefixToIndex(const char* prefix)
+{
+    if (!prefix) return -1;
+    /* 物理磁盘模式：匹配单字母+冒号（如 "C:", "D:"） */
+    if (prefix[0] && prefix[1] == ':' && !prefix[2]) {
+        char letter = (prefix[0] >= 'a' && prefix[0] <= 'z') ? prefix[0] - 'a' + 'A' : prefix[0];
+        if (letter >= 'A' && letter <= 'Z') return letter - 'A';
+    }
+    return -1;
 }
 #endif
 
