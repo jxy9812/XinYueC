@@ -42,7 +42,7 @@ void XFileInfoTest()
     XString* testFileName = XString_create_utf8("XFileInfoTest_temp.txt");
     XFile* testFile = XFile_create_2(testFileName);
     if (testFile) {
-        bool opened = XIODevice_open_base((XIODevice*)testFile, XIODevice_WriteOnly | XIODevice_Text);
+        bool opened = XIODevice_open_base((XIODevice*)testFile, XIODevice_WriteOnly| XIODevice_NewOnly | XIODevice_Text);
         if (opened) {
             const char* content = "Hello, XFileInfo!\nThis is a test file.\n";
             XByteArray* writeData = XByteArray_create_utf8(content);

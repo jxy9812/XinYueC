@@ -206,6 +206,63 @@ extern "C" {
 #define XFILE_FATFS_USE_MKFS      1
 #endif
 
+/**
+ * @brief FatFS 磁盘I/O模式
+ *
+ * 0 = 文件镜像模式（Windows调试用）
+ * 1 = 物理磁盘模式
+ */
+#ifndef XFILE_FATFS_DISKIO_MODE
+#define XFILE_FATFS_DISKIO_MODE       0
+#endif
+
+/**
+ * @brief 文件镜像模式下的驱动器配置
+ */
+#if XFILE_FATFS_DISKIO_MODE == 0
+
+/* 镜像文件路径前缀 */
+#ifndef XFILE_FATFS_DISK_IMAGE_PATH
+#define XFILE_FATFS_DISK_IMAGE_PATH   "fatfs_disk"
+#endif
+
+/* 文件镜像模式下可用驱动器数量 */
+#ifndef XFILE_FATFS_FILEMODE_DRIVE_COUNT
+#define XFILE_FATFS_FILEMODE_DRIVE_COUNT  2
+#endif
+
+/* 文件镜像模式磁盘镜像大小（字节） */
+#ifndef XFILE_FATFS_DISK_IMAGE_SIZE
+#define XFILE_FATFS_DISK_IMAGE_SIZE       (64LL * 1024 * 1024)  /* 32 MB */
+#endif
+
+/* 自动格式化时使用的文件系统类型 */
+#ifndef XFILE_FATFS_DEFAULT_FORMAT_TYPE
+#define XFILE_FATFS_DEFAULT_FORMAT_TYPE   FM_ANY   /* FM_ANY/FM_FAT32/FM_EXFAT/FM_FAT */
+#endif
+
+/* 文件镜像模式下驱动器前缀列表 */
+#ifndef XFILE_FATFS_FILEMODE_DRIVE_STRS
+#define XFILE_FATFS_FILEMODE_DRIVE_STRS   "C:", "D:"
+#endif
+
+/* 文件镜像模式下主目录 */
+#ifndef XFILE_FATFS_HOME_PATH
+#define XFILE_FATFS_HOME_PATH     "C:/home"
+#endif
+
+/* 文件镜像模式下根目录 */
+#ifndef XFILE_FATFS_ROOT_PATH
+#define XFILE_FATFS_ROOT_PATH     "C:/"
+#endif
+
+/* 文件镜像模式下临时目录 */
+#ifndef XFILE_FATFS_TEMP_PATH
+#define XFILE_FATFS_TEMP_PATH     "C:/tmp"
+#endif
+
+#endif /* XFILE_FATFS_DISKIO_MODE == 0 */
+
 #endif /* XFILE_USE_FATFS */
 
 /* ========================================================================== */

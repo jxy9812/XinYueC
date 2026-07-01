@@ -357,7 +357,7 @@ bool XFileSystem_rmdir_recursive(const XString* path);
  * @param timeValue 时间值（Unix时间戳，毫秒）
  * @return 成功返回true
  */
-bool XFileSystem_setFileTime(intptr_t fd, XFileTime timeType, int64_t timeValue);
+bool XFileSystem_setFileTime(const XString* path, XFileTime timeType, int64_t timeValue);
 
 /* ============================================================================
  * 十二、驱动器列表（1个）- 可选

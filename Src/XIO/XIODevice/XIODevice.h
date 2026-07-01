@@ -36,13 +36,15 @@ typedef enum /*XIODevice*/
 	XIODevice_NotOpen      = 0x0000, ///< 设备未打开
     XIODevice_ReadOnly     = 0x0001, ///< 只读
     XIODevice_WriteOnly    = 0x0002, ///< 只写
-    XIODevice_ReadWrite    = XIODevice_ReadOnly | XIODevice_WriteOnly, ///< 读写
+    XIODevice_ReadWrite    = 0x0003, ///< 读写 (ReadOnly|WriteOnly)
     XIODevice_Append       = 0x0004, ///< 追加模式
     XIODevice_Truncate     = 0x0008, ///< 打开时截断
-    XIODevice_Text         = 0x0010, ///< 文本模式（自动处理换行符）
-    XIODevice_Unbuffered   = 0x0020, ///< 绕过缓冲（保留 Qt 内部标志）
-    XIODevice_NewOnly      = 0x0040, ///< 仅当不存在时创建
-    XIODevice_ExistingOnly = 0x0080  ///< 仅当存在时打开
+    XIODevice_Create       = 0x0010, ///< 若不存在则创建
+    XIODevice_NewOnly      = 0x0020, ///< 仅当不存在时创建（失败若已存在）
+    XIODevice_Existing     = 0x0040, ///< 仅当存在时打开（失败若不存在）
+    XIODevice_Text         = 0x0080, ///< 文本模式（自动处理换行符）
+    XIODevice_Unbuffered   = 0x0100, ///< 绕过缓冲（保留 Qt 内部标志）
+    XIODevice_ExistingOnly = 0x1000  ///< 仅当存在时打开（与 Existing 同义但可独立组合）
 }XIODeviceBaseMode;
 //IO设备
 typedef struct XIODevice

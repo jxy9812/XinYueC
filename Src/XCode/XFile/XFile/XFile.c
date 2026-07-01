@@ -27,16 +27,8 @@ static bool VXFile_open(XIODevice* device, XIODeviceBaseMode mode)
     XFile* file = (XFile*)device;
     if (!file || !file->m_fileName) return false;
     
-    int fsMode = 0;
-    if (mode & XIODevice_ReadOnly) fsMode |= XFileSystem_ReadOnly;
-    if (mode & XIODevice_WriteOnly) fsMode |= XFileSystem_WriteOnly;
-    if (mode & XIODevice_ReadWrite) fsMode |= XFileSystem_ReadWrite;
-    if (mode & XIODevice_Append) fsMode |= XFileSystem_Append;
-    if (mode & XIODevice_Truncate) fsMode |= XFileSystem_Truncate;
-    if (mode & XIODevice_NewOnly) fsMode |= XFileSystem_NewOnly;
-    
     int error = 0;
-    intptr_t fd = XFileSystem_open(file->m_fileName, fsMode, &error);
+    intptr_t fd = XFileSystem_open(file->m_fileName, (int)mode, &error);
     
     if (fd < 0) {
         file->m_parent.m_error = error;

@@ -7,6 +7,8 @@
 #include"XString.h"
 #include"XStringList.h"
 #include"XFileInfo.h"
+#include"XFileSystem_platform.h"
+#include"XStorageInfo.h"
 #include"XPrintf.h"
 
 void XDirTest_print_xstring(const char* label, const XString* str) {
@@ -186,6 +188,154 @@ void XDirTest()
     XPrintf_3("\n=== XDir 测试完成 ===\n");
 }
 
+/* ============================================================================
+ * 辅助：检查文件系统是否被 Fatfs 支持
+ * ============================================================================ */
+
+static bool XDirTest_fatfs_isSupportedFileSystem(const XString* fsType)
+{
+    if (!fsType) return false;
+    const char* utf8 = XString_toUtf8(fsType);
+    if (!utf8) return false;
+
+    /* Fatfs 仅支持 FAT12/FAT16/FAT32/exFAT，NTFS/CDFS/UDF 等不可用 */
+    bool supported = (strcmp(utf8, "FAT12") == 0)
+                  || (strcmp(utf8, "FAT16") == 0)
+                  || (strcmp(utf8, "FAT32") == 0)
+                  || (strcmp(utf8, "exFAT") == 0);
+    return supported;
+}
+
+/* ============================================================================
+ * XDir Fatfs 驱动器测试
+ * ============================================================================ */
+
+void XDirTest_fatfs(void)
+{
+    XPrintf_3("\n=== XDir Fatfs 驱动器测试 ===\n\n");
+
+    /* 1. 枚举驱动器（含文件系统格式） */
+    XPrintf_3("========== 1. 枚举驱动器 ==========\n");
+    int driveCount = XFileSystem_drives_count();
+    XPrintf("可用驱动器数量: %d\n\n", driveCount);
+
+    if (driveCount <= 0) {
+        XPrintf_3("没有可用的驱动器，测试终止。\n");
+        return;
+    }
+
+    XString** drives = (XString**)XMalloc_System((size_t)(driveCount + 1) * sizeof(XString*));
+    XStorageInfoData** infos = (XStorageInfoData**)XMalloc_System((size_t)(driveCount + 1) * sizeof(XStorageInfoData*));
+
+    for (int i = 0; i < driveCount; i++) {
+        drives[i] = XString_create();
+        XFileSystem_drives_at(i, drives[i]);
+
+        infos[i] = (XStorageInfoData*)XMalloc_System(sizeof(XStorageInfoData));
+        memset(infos[i], 0, sizeof(XStorageInfoData));
+        infos[i]->fileSystemType = XString_create();
+        XFileSystem_getStorageInfo(drives[i], infos[i]);
+
+        XPrintf("  [%d] ", i);
+        XPrintf_2(drives[i]);
+        if (infos[i]->isValid && infos[i]->fileSystemType) {
+            XPrintf("  (");
+            XPrintf_2(infos[i]->fileSystemType);
+            if (XDirTest_fatfs_isSupportedFileSystem(infos[i]->fileSystemType)) {
+                XPrintf_3(", Fatfs支持)");
+            } else {
+                XPrintf_3(", 不支持)");
+            }
+        } else {
+            XPrintf_3("  (无存储信息)");
+        }
+        XPrintf_3("\n");
+    }
+
+    /* 2. 选择第一个 Fatfs 支持的驱动器进行测试 */
+    XPrintf_3("\n========== 2. 选择驱动器并测试目录操作 ==========\n");
+
+    bool foundValid = false;
+    for (int i = 0; i < driveCount; i++) {
+        if (infos[i]->isValid
+            && infos[i]->isReady
+            && XDirTest_fatfs_isSupportedFileSystem(infos[i]->fileSystemType))
+        {
+            XDirTest_print_xstring("使用驱动器", drives[i]);
+
+            XDir* dir = XDir_create_2(drives[i]);
+            if (!dir) {
+                XPrintf_3("XDir 创建失败，尝试下一个驱动器。\n");
+                continue;
+            }
+
+            /* 2a. 创建测试目录 */
+            XString* testDirName = XString_create_utf8("FatfsTestDir");
+            bool created = XDir_mkdir(dir, testDirName);
+            XPrintf("创建目录 \"FatfsTestDir\": %s\n", created ? "成功" : "失败");
+
+            /* 2b. 检查目录是否存在 */
+            bool exists = XDir_exists_2(dir, testDirName);
+            XPrintf("目录是否存在: %s\n", exists ? "是" : "否");
+
+            /* 2c. 切换到测试目录 */
+            if (XDir_cd(dir, testDirName)) {
+                XDirTest_print_xstring("cd FatfsTestDir 后", XDir_path(dir));
+            }
+
+            /* 2d. 在测试目录下列出内容 */
+            XStringList* entries = XDir_entryList_1(dir, XDir_Files | XDir_Dirs, XDir_Name);
+            XDirTest_print_stringlist("测试目录内容", entries);
+            XStringList_delete_base(entries);
+
+            /* 2e. 返回上级目录 */
+            if (XDir_cdUp(dir)) {
+                XDirTest_print_xstring("cdUp 后", XDir_path(dir));
+            }
+
+            /* 2f. 删除测试目录 */
+            bool removed = XDir_rmdir(dir, testDirName);
+            XPrintf("删除目录 \"FatfsTestDir\": %s\n", removed ? "成功" : "失败");
+
+            XDir_delete_base(dir);
+            XString_delete_base(testDirName);
+            foundValid = true;
+            break;
+        }
+    }
+    if (!foundValid) {
+        XPrintf_3("没有找到就绪且被 Fatfs 支持的驱动器（FAT12/FAT16/FAT32/exFAT）。\n");
+    }
+
+    /* 3. 特殊路径测试 */
+    XPrintf_3("\n========== 3. 特殊路径 ==========\n");
+    XString* home = XDir_homePath();
+    XDirTest_print_xstring("homePath", home);
+    XString_delete_base(home);
+
+    XString* temp = XDir_tempPath();
+    XDirTest_print_xstring("tempPath", temp);
+    XString_delete_base(temp);
+
+    XString* root = XDir_rootPath();
+    XDirTest_print_xstring("rootPath", root);
+    XString_delete_base(root);
+
+    for (int i = 0; i < driveCount; i++) {
+        XString_delete_base(drives[i]);
+        if (infos[i]) {
+            if (infos[i]->fileSystemType) {
+                XString_delete_base(infos[i]->fileSystemType);
+            }
+            XFree_System(infos[i]);
+        }
+    }
+    XFree_System(drives);
+    XFree_System(infos);
+
+    XPrintf_3("\n=== Fatfs 驱动器测试完成 ===\n");
+}
+
 void XMenu_XDirTest(XMenu* root)
 {
     XMenu* menu = XMenu_create("XDir(目录操作)");
@@ -193,5 +343,9 @@ void XMenu_XDirTest(XMenu* root)
     {
         XAction* action = XMenu_addAction(menu, "主测试");
         XAction_setAction(action, XDirTest);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "Fatfs驱动器测试");
+        XAction_setAction(action, XDirTest_fatfs);
     }
 }

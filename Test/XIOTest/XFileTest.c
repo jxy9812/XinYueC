@@ -63,7 +63,7 @@ void XFileTest()
         XFileTest_print_xstring("文件名", testFileName);
 
         // 打开文件进行写入
-        bool opened = XIODevice_open_base((XIODevice*)file2, XIODevice_WriteOnly | XIODevice_Text);
+        bool opened = XIODevice_open_base((XIODevice*)file2, XIODevice_WriteOnly |XIODevice_NewOnly| XIODevice_Text);
         XPrintf("打开文件(写入模式): %s\n", opened ? "成功" : "失败");
 
         if (opened) {

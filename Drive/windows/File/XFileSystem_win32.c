@@ -845,32 +845,39 @@ bool XFileSystem_rmdir_recursive(const XString* path)
  * 文件时间修改
  * ============================================================================ */
 
-bool XFileSystem_setFileTime(intptr_t fd, XFileTime timeType, int64_t timeValue)
+bool XFileSystem_setFileTime(const XString* path, XFileTime timeType, int64_t timeValue)
 {
-    if (fd < 0) return false;
-    
-    HANDLE hFile = (HANDLE)_get_osfhandle(fd);
+    if (!path) return false;
+
+    wchar_t* wpath = XStringToWidePath(path);
+    if (!wpath) return false;
+
+    HANDLE hFile = CreateFileW(wpath, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    XFree_System(wpath);
     if (hFile == INVALID_HANDLE_VALUE) return false;
-    
+
     ULARGE_INTEGER ul;
-    ul.QuadPart = (timeValue * 10000000LL) + 116444736000000000LL;
-    
+    ul.QuadPart = (uint64_t)timeValue * 10000000ULL + 116444736000000000ULL;
+
     FILETIME ft;
     ft.dwLowDateTime = ul.LowPart;
     ft.dwHighDateTime = ul.HighPart;
-    
+
     FILETIME* ftCreate = NULL;
     FILETIME* ftAccess = NULL;
     FILETIME* ftWrite = NULL;
-    
+
     switch (timeType) {
         case XFile_AccessTime: ftAccess = &ft; break;
         case XFile_BirthTime: ftCreate = &ft; break;
         case XFile_MetadataChangeTime:
         case XFile_ModificationTime: ftWrite = &ft; break;
     }
-    
-    return SetFileTime(hFile, ftCreate, ftAccess, ftWrite) != 0;
+
+    BOOL result = SetFileTime(hFile, ftCreate, ftAccess, ftWrite);
+    CloseHandle(hFile);
+    return result != 0;
 }
 
 /* ============================================================================

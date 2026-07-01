@@ -17,6 +17,7 @@
 #include "XClass.h"
 #include "XString.h"
 #include "XDateTime.h"
+#include "XIODevice.h"   /* XIODeviceBaseMode 枚举，XFileSystemOpenMode 通过宏映射到 XIODevice_* */
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,17 +61,17 @@ typedef enum XFileTime {
  * 文件打开模式标志
  * ============================================================================ */
 
-typedef enum XFileSystemOpenMode {
-    XFileSystem_ReadOnly = 0x0001,
-    XFileSystem_WriteOnly = 0x0002,
-    XFileSystem_ReadWrite = 0x0003,
-    XFileSystem_Append = 0x0004,
-    XFileSystem_Truncate = 0x0008,
-    XFileSystem_Create = 0x0010,
-    XFileSystem_NewOnly = 0x0020,
-    XFileSystem_Existing = 0x0040,
-    XFileSystem_Text = 0x0080
-} XFileSystemOpenMode;
+/* XFileSystemOpenMode 已统一到 XIODeviceBaseMode（位值完全对齐）
+ * 以下宏保留向后兼容性，直接映射到 XIODevice_* */
+#define XFileSystem_ReadOnly   XIODevice_ReadOnly
+#define XFileSystem_WriteOnly  XIODevice_WriteOnly
+#define XFileSystem_ReadWrite  XIODevice_ReadWrite
+#define XFileSystem_Append     XIODevice_Append
+#define XFileSystem_Truncate   XIODevice_Truncate
+#define XFileSystem_Create     XIODevice_Create
+#define XFileSystem_NewOnly    XIODevice_NewOnly
+#define XFileSystem_Existing   XIODevice_Existing
+#define XFileSystem_Text       XIODevice_Text
 /* ============================================================================
  * 文件属性结构体（纯数据结构，供平台层使用）
  *
