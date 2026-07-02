@@ -75,28 +75,21 @@ static FATFS* XFATFS_getFs(int idx)
  */
 static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath)
 {
-    /* 遍历所有驱动器前缀，匹配最长前缀（如 "C:", "sd:", "usb:"） */
-    int driveCount = XFatfsDrives_count();
-    int bestIdx = -1;
-    size_t bestLen = 0;
-
-    for (int i = 0; i < driveCount && i < XFATFS_MAX_VOLUMES; i++) {
-        XString* prefix = XString_create();
-        if (!prefix) continue;
-        if (XFatfsDrives_at(i, prefix)) {
-            const char* prefixUtf8 = XString_toUtf8(prefix);
-            if (prefixUtf8) {
-                size_t len = strlen(prefixUtf8);
-                if (len > bestLen && strncmp(utf8Path, prefixUtf8, len) == 0) {
-                    bestLen = len;
-                    bestIdx = i;
-                }
-            }
+    /* 通过平台函数在驱动器前缀列表中查找索引 */
+    int bestIdx = XFatfsDrives_prefixToIndex(utf8Path);
+    if (bestIdx >= 0) {
+        /* 获取匹配的前缀长度（如 "C:"=2, "sd:"=3） */
+        XString* xDrive = XString_create();
+        if (!xDrive) return NULL;
+        const char* driveUtf8 = NULL;
+        size_t bestLen = 0;
+        if (XFatfsDrives_at(bestIdx, xDrive)) {
+            driveUtf8 = XString_toUtf8(xDrive);
+            if (driveUtf8) bestLen = strlen(driveUtf8);
         }
-        XString_delete_base(prefix);
-    }
+        XString_delete_base(xDrive);
+        if (!driveUtf8 || bestLen == 0) return NULL;
 
-    if (bestIdx >= 0 && bestLen > 0) {
         *outPath = utf8Path + bestLen;
         while (**outPath == '/' || **outPath == '\\') (*outPath)++;
 
@@ -112,6 +105,7 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
             mountStr[2] = '\0';
 
             FRESULT fr = f_mount(fs, mountStr, 1);
+#if XFILE_FATFS_DISKIO_MODE == 0
             if (fr == FR_NO_FILESYSTEM) {
                 f_mount(NULL, mountStr, 0);
                 memset(fs, 0, sizeof(FATFS));
@@ -121,17 +115,22 @@ static const char* XFATFS_parseVolume(const char* utf8Path, const char** outPath
                     fr = f_mount(fs, mountStr, 1);
                 }
             }
+#endif
             if (fr == FR_OK) {
                 g_mountedMask |= (1u << bestIdx);
                 f_chdir(mountStr);
             }
         }
 
-        static char driveNum[4];
-        driveNum[0] = '0' + bestIdx;
-        driveNum[1] = ':';
-        driveNum[2] = '/';
-        driveNum[3] = '\0';
+        static char driveNum[8];
+        if (bestIdx <= 9) {
+            driveNum[0] = '0' + bestIdx;
+            driveNum[1] = ':';
+            driveNum[2] = '/';
+            driveNum[3] = '\0';
+        } else {
+            snprintf(driveNum, sizeof(driveNum), "%d:/", bestIdx);
+        }
         return driveNum;
     }
 

@@ -97,7 +97,7 @@ DSTATUS disk_initialize(BYTE pdrv)
             FILE_SHARE_READ | FILE_SHARE_WRITE,
             NULL,
             OPEN_EXISTING,
-            FILE_FLAG_NO_BUFFERING,
+            FILE_ATTRIBUTE_NORMAL,  /* 去掉 FILE_FLAG_NO_BUFFERING，避免对齐问题 */
             NULL
         );
 
@@ -109,7 +109,7 @@ DSTATUS disk_initialize(BYTE pdrv)
                 FILE_SHARE_READ | FILE_SHARE_WRITE,
                 NULL,
                 OPEN_EXISTING,
-                FILE_FLAG_NO_BUFFERING,
+                FILE_ATTRIBUTE_NORMAL,
                 NULL
             );
             if (g_diskHandles[pdrv] == INVALID_HANDLE_VALUE) {
@@ -138,6 +138,25 @@ DSTATUS disk_status(BYTE pdrv)
 }
 
 /* ============================================================================
+ * 物理磁盘 I/O 辅助 —— 分配扇区对齐缓冲区
+ * ============================================================================ */
+
+#if XFILE_FATFS_DISKIO_MODE == 1
+static BYTE* g_alignedBuf = NULL;
+static UINT  g_alignedBufSize = 0;
+
+static BYTE* ensureAlignedBuf(UINT size)
+{
+    if (g_alignedBuf && g_alignedBufSize >= size) return g_alignedBuf;
+    if (g_alignedBuf) { XFree_System(g_alignedBuf); g_alignedBuf = NULL; }
+    /* _aligned_malloc 返回扇区对齐（512字节）的内存 */
+    g_alignedBuf = (BYTE*)_aligned_malloc(size, FF_MAX_SS);
+    if (g_alignedBuf) g_alignedBufSize = size;
+    return g_alignedBuf;
+}
+#endif
+
+/* ============================================================================
  * disk_read - 读取扇区
  * ============================================================================ */
 
@@ -147,20 +166,40 @@ DRESULT disk_read(BYTE pdrv, BYTE* buff, LBA_t sector, UINT count)
         return RES_PARERR;
     }
 
-    LARGE_INTEGER offset;
-    offset.QuadPart = (LONGLONG)sector * FF_MAX_SS;
-    if (!SetFilePointerEx(g_diskHandles[pdrv], offset, NULL, FILE_BEGIN)) {
-        return RES_ERROR;
-    }
+#if XFILE_FATFS_DISKIO_MODE == 1
+    /* 物理磁盘模式：使用 OVERLAPPED + 对齐缓冲区 */
+    {
+        UINT size = count * FF_MAX_SS;
+        BYTE* alignedBuf = ensureAlignedBuf(size);
+        if (!alignedBuf) return RES_ERROR;
 
-    DWORD bytesRead;
-    if (!ReadFile(g_diskHandles[pdrv], buff, count * FF_MAX_SS, &bytesRead, NULL)) {
-        return RES_ERROR;
+        OVERLAPPED ol = {0};
+        ol.Offset = (DWORD)(sector * FF_MAX_SS);
+        ol.OffsetHigh = 0;
+
+        DWORD bytesRead;
+        if (!ReadFile(g_diskHandles[pdrv], alignedBuf, size, &bytesRead, &ol)) {
+            return RES_ERROR;
+        }
+        if (bytesRead < size) {
+            memset(alignedBuf + bytesRead, 0, size - bytesRead);
+        }
+        memcpy(buff, alignedBuf, size);
     }
-    /* 读取不足的部分用零填充（空文件或文件末尾） */
-    if (bytesRead < count * FF_MAX_SS) {
-        memset(buff + bytesRead, 0, count * FF_MAX_SS - bytesRead);
+#else
+    /* 文件镜像模式：顺序 I/O */
+    {
+        LARGE_INTEGER offset;
+        offset.QuadPart = (LONGLONG)sector * FF_MAX_SS;
+        if (!SetFilePointerEx(g_diskHandles[pdrv], offset, NULL, FILE_BEGIN)) return RES_ERROR;
+
+        DWORD bytesRead;
+        if (!ReadFile(g_diskHandles[pdrv], buff, count * FF_MAX_SS, &bytesRead, NULL)) return RES_ERROR;
+        if (bytesRead < count * FF_MAX_SS) {
+            memset(buff + bytesRead, 0, count * FF_MAX_SS - bytesRead);
+        }
     }
+#endif
 
     return RES_OK;
 }
@@ -176,35 +215,45 @@ DRESULT disk_write(BYTE pdrv, const BYTE* buff, LBA_t sector, UINT count)
     }
 
 #if XFILE_FATFS_DISKIO_MODE == 1
-    /* 物理磁盘模式检查写保护 */
-    DWORD status = disk_status(pdrv);
-    if (status & STA_PROTECT) return RES_WRPRT;
+    /* 物理磁盘模式：检查写保护后使用 OVERLAPPED + 对齐缓冲区 */
+    {
+        DWORD status = disk_status(pdrv);
+        if (status & STA_PROTECT) return RES_WRPRT;
+
+        UINT size = count * FF_MAX_SS;
+        BYTE* alignedBuf = ensureAlignedBuf(size);
+        if (!alignedBuf) return RES_ERROR;
+        memcpy(alignedBuf, buff, size);
+
+        OVERLAPPED ol = {0};
+        ol.Offset = (DWORD)(sector * FF_MAX_SS);
+        ol.OffsetHigh = 0;
+
+        DWORD bytesWritten;
+        if (!WriteFile(g_diskHandles[pdrv], alignedBuf, size, &bytesWritten, &ol)) {
+            return RES_ERROR;
+        }
+        if (bytesWritten < size) return RES_ERROR;
+    }
+#else
+    /* 文件镜像模式：顺序 I/O */
+    {
+        LARGE_INTEGER offset;
+        offset.QuadPart = (LONGLONG)sector * FF_MAX_SS;
+        if (!SetFilePointerEx(g_diskHandles[pdrv], offset, NULL, FILE_BEGIN)) return RES_ERROR;
+
+        DWORD bytesWritten;
+        if (!WriteFile(g_diskHandles[pdrv], buff, count * FF_MAX_SS, &bytesWritten, NULL)) return RES_ERROR;
+        if (bytesWritten < count * FF_MAX_SS) {
+            LARGE_INTEGER newEnd;
+            newEnd.QuadPart = offset.QuadPart + count * FF_MAX_SS;
+            if (!SetFilePointerEx(g_diskHandles[pdrv], newEnd, NULL, FILE_BEGIN)
+                || !SetEndOfFile(g_diskHandles[pdrv])) return RES_ERROR;
+            SetFilePointerEx(g_diskHandles[pdrv], offset, NULL, FILE_BEGIN);
+            if (!WriteFile(g_diskHandles[pdrv], buff, count * FF_MAX_SS, &bytesWritten, NULL)) return RES_ERROR;
+        }
+    }
 #endif
-
-    LARGE_INTEGER offset;
-    offset.QuadPart = (LONGLONG)sector * FF_MAX_SS;
-    if (!SetFilePointerEx(g_diskHandles[pdrv], offset, NULL, FILE_BEGIN)) {
-        return RES_ERROR;
-    }
-
-    DWORD bytesWritten;
-    if (!WriteFile(g_diskHandles[pdrv], buff, count * FF_MAX_SS, &bytesWritten, NULL)) {
-        return RES_ERROR;
-    }
-    /* 写入不足时扩展文件（稀疏文件扩展） */
-    if (bytesWritten < count * FF_MAX_SS) {
-        LARGE_INTEGER newEnd;
-        newEnd.QuadPart = offset.QuadPart + count * FF_MAX_SS;
-        if (!SetFilePointerEx(g_diskHandles[pdrv], newEnd, NULL, FILE_BEGIN)
-            || !SetEndOfFile(g_diskHandles[pdrv])) {
-            return RES_ERROR;
-        }
-        /* 重新定位到写入位置并重试 */
-        if (!SetFilePointerEx(g_diskHandles[pdrv], offset, NULL, FILE_BEGIN)
-            || !WriteFile(g_diskHandles[pdrv], buff, count * FF_MAX_SS, &bytesWritten, NULL)) {
-            return RES_ERROR;
-        }
-    }
 
     return RES_OK;
 }
@@ -318,8 +367,8 @@ bool XFatfsDrives_at(int index, XString* path)
 int XFatfsDrives_prefixToIndex(const char* prefix)
 {
     if (!prefix) return -1;
-    /* 物理磁盘模式：匹配单字母+冒号（如 "C:", "D:"） */
-    if (prefix[0] && prefix[1] == ':' && !prefix[2]) {
+    /* 物理磁盘模式：匹配单字母+冒号前缀（如 "C:", "C:/", "D:\"） */
+    if (prefix[0] && prefix[1] == ':') {
         char letter = (prefix[0] >= 'a' && prefix[0] <= 'z') ? prefix[0] - 'a' + 'A' : prefix[0];
         if (letter >= 'A' && letter <= 'Z') return letter - 'A';
     }

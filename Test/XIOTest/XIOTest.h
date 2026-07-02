@@ -17,6 +17,7 @@ extern "C" {
 	void XMenu_XFileTest(XMenu* root);
 	void XMenu_XFileInfoTest(XMenu* root);
 	void XMenu_XSaveFileTest(XMenu* root);
+	void XMenu_XFileDescriptorTest(XMenu* root);
 
 
 

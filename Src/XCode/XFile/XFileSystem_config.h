@@ -253,7 +253,7 @@ extern "C" {
 
 /* 文件镜像模式下根目录 */
 #ifndef XFILE_FATFS_ROOT_PATH
-#define XFILE_FATFS_ROOT_PATH     "C:/"
+#define XFILE_FATFS_ROOT_PATH     "C:/root"
 #endif
 
 /* 文件镜像模式下临时目录 */

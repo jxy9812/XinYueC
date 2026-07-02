@@ -82,7 +82,84 @@ void XFixedPool_delete(XFixedPool* pool);
  * @param block_size 用户期望的每个内存块的大小（字节）。
  * @return bool 初始化成功返回 `true`，失败（如参数无效）返回 `false`。
  */
+/**
+ * @brief （静态/栈模式）初始化一个内存池实例
+ *
+ * 此函数不进行任何动态内存分配。用户必须自行提供：
+ * 1. 一个 `XFixedPool` 结构体实例（在栈、全局区或自定义内存中）。
+ * 2. 一个足够大的、连续的内存缓冲区 `memory`。
+ *
+ * @param pool 指向待初始化的 `XFixedPool` 结构体的指针。
+ * @param memory 指向用户提供的内存缓冲区的指针。
+ * @param total_bytes `memory` 缓冲区的总大小（字节）。
+ * @param block_size 用户期望的每个内存块的大小（字节）。
+ * @return bool 初始化成功返回 `true`，失败（如参数无效）返回 `false`。
+ */
 bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t block_size);
+
+/**
+ * @brief （便捷宏）在静态/全局区创建固定大小内存池
+ *
+ * 此宏自动计算所需缓冲区大小，并在静态区分配 XFixedPool 结构体和数据缓冲区。
+ *
+ * 使用示例：
+ *   XFIXEDPOOL_STATIC(myPool, sizeof(MyStruct), 64);
+ *   XFixedPool_malloc(&myPool);
+ *
+ * @param name      内存池变量名（生成 XFixedPool 实例）
+ * @param block_size 每个块的用户期望大小
+ * @param count      预分配的块数量
+ */
+/**
+ * @brief （便捷宏）在静态/全局区定义固定大小内存池的数据（仅声明，不执行代码）
+ *
+ * 在文件作用域使用此宏定义结构体和缓冲区。初始化必须调用 XFIXEDPOOL_INIT。
+ *
+ * 使用示例：
+ *   // 文件作用域
+ *   XFIXEDPOOL_DEFINE(myPool, sizeof(MyStruct), 64);
+ *   // 在 XFd_init() 中调用
+ *   XFIXEDPOOL_INIT(myPool, sizeof(MyStruct));
+ */
+#define XFIXEDPOOL_DEFINE(name, block_size, count)                            \
+    static struct {                                                            \
+        XFixedPool pool;                                                       \
+        char buf[count * XFIXEDPOOL_ALIGN_UP(sizeof(size_t) + (block_size), sizeof(void*))]; \
+    } name##_data = {0};                                                       \
+    static XFixedPool* name = NULL
+
+/**
+ * @brief （便捷宏）初始化由 XFIXEDPOOL_DEFINE 定义的静态内存池
+ *
+ * 必须在函数内调用（如 XFd_init 或 main 开头）。
+ *
+ * @param name      内存池变量名
+ * @param block_size 每个块的用户期望大小
+ */
+#define XFIXEDPOOL_INIT(name, block_size)                                     \
+    do {                                                                       \
+        XFixedPool_init(&name##_data.pool, name##_data.buf,                    \
+                        sizeof(name##_data.buf), block_size);                  \
+        name = &name##_data.pool;                                              \
+    } while(0)
+
+/** @brief 对齐辅助：将 size 向上对齐到 align 的倍数 */
+#define XFIXEDPOOL_ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
+
+/**
+ * @brief （便捷宏）在栈上创建固定大小内存池（函数内使用）
+ *
+ * 使用示例：
+ *   void func(void) {
+ *       XFIXEDPOOL_STACK(myPool, sizeof(MyStruct), 128);
+ *       void* p = XFixedPool_malloc(&myPool);
+ *       XFixedPool_free(&myPool, p);
+ *   }
+ */
+#define XFIXEDPOOL_STACK(name, block_size, count)                             \
+    XFixedPool name;                                                           \
+    char name##_buf[count * XFIXEDPOOL_ALIGN_UP(sizeof(size_t) + (block_size), sizeof(void*))]; \
+    XFixedPool_init(&name, name##_buf, sizeof(name##_buf), block_size)
 
 /**
  * @brief （静态/栈模式）反初始化一个内存池实例

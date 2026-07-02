@@ -16,4 +16,5 @@ void XMenu_XIOTest(XMenu* root)
 	XMenu_XFileTest(menu);
 	XMenu_XFileInfoTest(menu);
 	XMenu_XSaveFileTest(menu);
+	XMenu_XFileDescriptorTest(menu);
 }

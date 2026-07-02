@@ -1,5 +1,6 @@
 ﻿#include"XVarList.h"
 #include"XMultiPool.h"
+#include"XVtable.h"
 #include<stdarg.h>
 #include<string.h>
 void XVarList_delete(XVarList* list)
