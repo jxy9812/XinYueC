@@ -36,7 +36,7 @@ typedef struct {
     {
         XHandle* Xhandle;  ///定时器句柄
     };
-    XObject* object;            ///< 关联的对象   
+    //XObject* object;            ///< 关联的对象   
     int64_t interval;           ///< 间隔 (纳秒)
 } XAbstractEventDispatcher_TimerInfo;
 // 前向声明
@@ -44,7 +44,6 @@ struct XAbstractNativeEventFilter;
 typedef struct XAbstractEventDispatcherPrivate
 {
     XHrTimerGroup* m_hrtimerGroup;//高精度定时器组
-    XHashMap* timers;           ///< 定时器映射: timerId  -> XEventDispatcherWin32_TimerInfo*
     XHashMap* sockets;          ///< 套接字映射: socket.value -> XEventDispatcherWin32_SocketInfo*
     //XMutex* mutex;              ///< 保护 timers, sockets, global_nativeFilters 的互斥锁
 }XAbstractEventDispatcherPrivate;
@@ -55,7 +54,6 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp)
 // ===================================================================
 
 
-#define XTIMER_ID_INVALID ((XTimerId)0)
 
 /**
  * @brief 定时器信息结构体（高精度版本）。
@@ -261,7 +259,7 @@ bool XAbstractEventDispatcher_filterNativeEvent(XAbstractEventDispatcher* self, 
  * @param interval 间隔（纳秒）。
  * @param timerType 定时器类型。
  * @param object 所属对象。
- * @return 新分配的 XTimerId，失败返回 XTIMER_ID_INVALID。
+ * @return 新分配的 XTimerId，失败返回 XTIMER_INVALID_ID。
  */
 XTimerId XAbstractEventDispatcher_registerTimer(
     XAbstractEventDispatcher* self,

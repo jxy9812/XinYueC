@@ -41,6 +41,7 @@ void XTimer_init(XTimer* timer)
 	XObject_init(timer);
 	XClassGetVtable(timer) = XTimer_class_init();
 	timer->m_type = XTimerType_CoarseTimer;
+	timer->m_timerData.timerId = XTIMER_INVALID_ID;
 }
 
 void XTimer_start_base(XTimer* timer)
@@ -252,18 +253,18 @@ void VXTimer_start(XTimer* timer)
 		timer->m_timerData.timerId = XObject_startTimer_ms(timer, timer->m_timerData.m_timeout, XTimer_timerType(timer));
 	else if(XTimer_interval(timer))
 		timer->m_timerData.timerId = XObject_startTimer_ms(timer, XTimer_interval(timer), XTimer_timerType(timer));
-	if(timer->m_timerData.timerId)
+	if(timer->m_timerData.timerId!= XTIMER_INVALID_ID)
 		timer->m_isRun = true;
 }
 void VXTimer_stop(XTimer* timer)
 {
 	//printf("停止定时器\n");
-	if (timer->m_timerData.timerId && XTimer_isRunning(timer))
+	if (timer->m_timerData.timerId!= XTIMER_INVALID_ID && XTimer_isRunning(timer))
 	{
 		// 关闭定时器
 		XObject_killTimer(timer, timer->m_timerData.timerId);
 		//XPrintf("停止定时器: id:%d\n", timer->timerId);
-		timer->m_timerData.timerId = 0;
+		timer->m_timerData.timerId = XTIMER_INVALID_ID;
 		timer->m_isRun = false;
 	}
 }

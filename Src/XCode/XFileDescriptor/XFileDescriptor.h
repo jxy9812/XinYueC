@@ -47,7 +47,7 @@ typedef enum {
 typedef struct XFileDescriptor {
     void*    handle;            /**< 平台句柄 */
     void*    ctx;               /**< 所属 XObject* */
-    uint16_t type  : 4;         /**< XFdType 枚举值 */
+    uint16_t type  : 4;         /**< XFdType 枚举值 0-15 */
     uint16_t refCount : 12;     /**< 引用计数 0-4095 */
 } XFileDescriptor;
 
@@ -70,7 +70,7 @@ void XFd_init(void);
 intptr_t XFd_alloc(XFdType type, void* handle, void* ctx);
 
 /**
- * @brief 释放文件描述符，O(1) XFixedPool 归还 + 位图清除
+ * @brief 释放文件描述符，O(1) XFixedPool 归还
  */
 void XFd_free(intptr_t fd);
 

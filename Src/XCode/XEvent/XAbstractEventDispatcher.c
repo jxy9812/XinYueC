@@ -8,11 +8,10 @@
 #include "XThread.h"
 #include "XHrTimerGroup.h"
 #include "XDateTime.h"
+#include "XFileDescriptor.h"
 #include <string.h>
 static XVector* global_nativeFilters;///< 本地事件过滤器列表
-static XAtomic_size_t global_nextTimerId = { .value = 1 };
 static XMutex* global_mutex = NULL;
-static XVector* global_timerIds = NULL;
 #define PlatformPrivate(Dispatcher)  (((XAbstractEventDispatcher*)Dispatcher)->d_ptr)
 #define GetXMutex(Dispatcher)         PlatformPrivate(Dispatcher)->mutex
 #define Global_Lock             XMutex_lock(global_mutex)
@@ -40,13 +39,8 @@ static void global_init();
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 {
     dp->m_hrtimerGroup = NULL;
-    //dp->global_nativeFilters = XVector_Create(void*);
-    //dp->m_timerIds = XVector_Create(XTimerId);
-    dp->timers = XHashMap_Create(size_t, XAbstractEventDispatcher_TimerInfo, size_t_compare);
-    //XContainerSetDataDeinitMethod(d->timers, timersDataDeinit);
     dp->sockets = XHashMap_Create(intptr_t, XVector, uintptr_t_compare);
     XContainerSetDataDeinitMethod(dp->sockets, XVector_delete_base);
-    //dp->mutex = XMutex_create(XLock_NonRecursive);
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
@@ -54,33 +48,12 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
     if (dp->m_hrtimerGroup)
     {
         XClass_delete_base(dp->m_hrtimerGroup);
-        //XHrTimerGroup_deleteLater(self->m_hrtimerGroup);
         dp->m_hrtimerGroup = NULL;
     }
-   /* if (dp->global_nativeFilters)
-    {
-        XVector_delete_base(dp->global_nativeFilters);
-        dp->global_nativeFilters = NULL;
-    }*/
-   /* if (dp->mutex)
-    {
-        XMutex_delete(dp->mutex);
-        dp->mutex = NULL;
-    }*/
-    //if (dp->m_timerIds)
-    //{
-    //    XVector_delete_base(dp->m_timerIds);
-    //    dp->m_timerIds = NULL;
-    //}
     if (dp->sockets)
     {
         XMapBase_delete_base(dp->sockets);
         dp->sockets = NULL;
-    }
-    if (dp->timers)
-    {
-        XMapBase_delete_base(dp->timers);
-        dp->timers = NULL;
     }
 }
 
@@ -277,15 +250,22 @@ static void TimerCallback(void* userData, XTimerData* timer)
 }
 static void VXAbstractEventDispatcher_registerTimer(XAbstractEventDispatcher* dispatcher, XTimerId timerId, XDuration intervalNs, XTimerType timerType, XObject* object)
 {
-    if (!timerId || !intervalNs || !object)return;
-    //XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();//低精度使用全局时间轮定时器;
-    XAbstractEventDispatcher_TimerInfo timerInfo = { 0 };
-    timerInfo.timerId = timerId;
-    timerInfo.interval = intervalNs;
-    timerInfo.timerType = timerType;
-    timerInfo.object = object;
+    if (!intervalNs || !object)return;
+    XFileDescriptor* desc = XFd_get(timerId);
+    if (!desc) return;
+
+    XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)XMalloc_Hybrid(sizeof(XAbstractEventDispatcher_TimerInfo));
+    if (!timerInfo) {
+        XFd_free(timerId);
+        return;
+    }
+    memset(timerInfo, 0, sizeof(XAbstractEventDispatcher_TimerInfo));
+    timerInfo->timerId = timerId;
+    timerInfo->interval = intervalNs;
+    timerInfo->timerType = timerType;
+    //timerInfo->object = object;
+
     XTimerData data = { 0 };
-    //XTimerData_setSingleShot(&data, true);
     XTimerData_setAutoDelete(&data, true);
     XTimerData_setTimerId(&data, timerId);
     XTimerData_setTimerCallback(&data, TimerCallback);
@@ -293,148 +273,126 @@ static void VXAbstractEventDispatcher_registerTimer(XAbstractEventDispatcher* di
 
     if (timerType != XTimerType_PreciseTimer)
     {
-        // 将纳秒转换为毫秒
         size_t intervalMs = (intervalNs + 999999) / 1000000;
-        //if (intervalMs <= 0) intervalMs = 1;
         if (timerType == XTimerType_VeryCoarseTimer)
             intervalMs=((intervalMs + 999) / 1000) * 1000;
         XTimeWheelGroup* group = XTimeWheelGroup_global();
         if (group && XTimeWheelGroup_max_time(group) > intervalMs)
-        {//范围达标使用时间轮定时器
+        {
             XTimerData_setInterval(&data, intervalMs);
-            //XMutex_lock(GetXMutex(dispatcher));
             XHandle handle = XTimeWheelGroup_addTimerMs_base(group, data);
-            //XMutex_unlock(GetXMutex(dispatcher));
             if (handle)
             {
-                //timerInfo.d = dispatcher;
-                timerInfo.Xhandle = handle;
-                goto save;
+                timerInfo->Xhandle = handle;
+                desc->handle = timerInfo;
+                return;
             }
-            //XPrintf("出现意外\n");
         }
-        //XPrintf("出现意外\n");
     }
     if (dispatcher->d_ptr->m_hrtimerGroup == NULL)
-    {//初始化
+    {
         dispatcher->d_ptr->m_hrtimerGroup = XHrTimerGroup_create(1);
         XHrTimerGroup_setHighResTimeFunc(dispatcher->d_ptr->m_hrtimerGroup,XDateTime_currentNSecsSinceEpoch);
     }
-    timerInfo.timerType = XTimerType_PreciseTimer;
+    timerInfo->timerType = XTimerType_PreciseTimer;
     XTimerData_setInterval(&data, intervalNs);
     XHandle handle = XHrTimerGroup_addTimerNs_base(dispatcher->d_ptr->m_hrtimerGroup, data);
     if (handle)
     {
-        timerInfo.Xhandle = handle;
-        //uint64_t current_time_ns = XHrTimerGroup_getNextExpireTime(self->m_hrtimerGroup);
+        timerInfo->Xhandle = handle;
+        desc->handle = timerInfo;
         XAbstractEventDispatcher_wakeUp_base(dispatcher);
-        //XPrintf("唤醒\n");
-        goto save;
+        return;
     }
-    return;
-save:
-    //XMutex_lock(GetXMutex(dispatcher));
-    // 保存到 timers 表（无论哪种方式，只要有一个ID有效）
-    XAbstractEventDispatcherPrivate* d = PlatformPrivate(dispatcher);
-    if (timerInfo.Xhandle) 
-    {
-        XHashMap_insert_base(d->timers, &timerId, &timerInfo);
-    }
-
-    //XMutex_unlock(GetXMutex(dispatcher));
+    XFree_Hybrid(timerInfo);
+    XFd_free(timerId);
 }
 
 static bool VXAbstractEventDispatcher_unregisterTimer(XAbstractEventDispatcher* dispatcher, XTimerId timerId)
 {
-    if (!timerId )return false;
-    //XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
-    XAbstractEventDispatcherPrivate* d = PlatformPrivate(dispatcher);
-    //XMutex_lock(GetXMutex(dispatcher));
-    XAbstractEventDispatcher_TimerInfo* timerInfo = XHashMap_value_base(d->timers, &timerId);
-    //XMutex_unlock(GetXMutex(dispatcher));
-    if (!timerInfo)
-    {
-        return false;
-    }
+    if (timerId == XTIMER_INVALID_ID) return false;
+    XFileDescriptor* desc = XFd_get(timerId);
+    if (!desc) return false;
+    XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->handle;
+    if (!timerInfo) return false;
+
     bool is_ok = false;
     if (timerInfo->timerType != XTimerType_PreciseTimer)
     {
-        is_ok=XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), timerInfo->Xhandle);
+        is_ok = XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), timerInfo->Xhandle);
     }
     else
     {
-        is_ok=XHrTimerGroup_removeTimer_base(dispatcher->d_ptr->m_hrtimerGroup, timerInfo->Xhandle);
+        is_ok = XHrTimerGroup_removeTimer_base(dispatcher->d_ptr->m_hrtimerGroup, timerInfo->Xhandle);
     }
-    if (!is_ok)return false;
-    //将id放回列表
-    //XMutex_lock(GetXMutex(dispatcher));
-    Global_Lock;
-    XVector_push_back_1_base(global_timerIds, &timerId);
-    Global_UnLock;
+    if (!is_ok) return false;
 
-    XHashMap_remove_base(d->timers, &timerId);
-    //XMutex_unlock(GetXMutex(dispatcher));
+    XFree_Hybrid(timerInfo);
+    XFd_free(timerId);
     return true;
 }
 
 static bool VXAbstractEventDispatcher_unregisterTimers(XAbstractEventDispatcher* dispatcher, XObject* object)
 {
-    //XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
-    XAbstractEventDispatcherPrivate* d = PlatformPrivate(dispatcher);
+    if (!object) return false;
+    XThread* objectThread = XObject_thread((XObject*)object);
+    XThread* dispatcherThread = XObject_thread((XObject*)dispatcher);
     bool found = false;
-    //XMutex_lock(GetXMutex(dispatcher));
-    XHashMap_iterator it = XHashMap_begin(d->timers);
-    while (!XHashMap_iterator_isEnd(&it))
+    /* 遍历整个 XFd 表，查找属于指定 object 且同线程的定时器 */
+    for (int i = 0; i < XFD_TABLE_SIZE; i++)
     {
-        XPair* pair = XHashMap_iterator_data(&it);
-        XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)XPair_second(pair);
-        if (timerInfo && timerInfo->object == object)
+        XFileDescriptor* desc = XFd_get(i);
+        if (!desc) continue;
+        if ((XFdType)desc->type != XFD_TYPE_TIMER) continue;
+        if (desc->ctx != object) continue;
+        /* 检查所属线程 */
+        if (objectThread && dispatcherThread && objectThread != dispatcherThread) continue;
+
+        XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->handle;
+        if (!timerInfo) continue;
+
+        if (timerInfo->timerType != XTimerType_PreciseTimer)
         {
-            if (timerInfo->timerType != XTimerType_PreciseTimer)
-            {
-                XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), timerInfo->Xhandle);
-            }
-            else
-            {
-                XHrTimerGroup_removeTimer_base(dispatcher->d_ptr->m_hrtimerGroup, timerInfo->Xhandle);
-            }
-            //将id放回列表
-            Global_Lock;
-            XVector_push_back_1_base(global_timerIds, &timerInfo->timerId);
-            Global_UnLock;
-            XHashMap_erase_base(d->timers, &it, &it);
-            found = true;
+            XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), timerInfo->Xhandle);
         }
-        else {
-            XHashMap_iterator_add(d->timers, &it);
+        else
+        {
+            XHrTimerGroup_removeTimer_base(dispatcher->d_ptr->m_hrtimerGroup, timerInfo->Xhandle);
         }
+        XFree_Hybrid(timerInfo);
+        XFd_free(i);
+        found = true;
     }
-    //XMutex_unlock(GetXMutex(dispatcher));
     return found;
 }
 
 static XVector* VXAbstractEventDispatcher_timersForObject(const XAbstractEventDispatcher* dispatcher, const XObject* object)
 {
-    //XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
-    XAbstractEventDispatcherPrivate* d = PlatformPrivate(dispatcher);
+    if (!object) return NULL;
+    XThread* objectThread = XObject_thread((XObject*)object);
+    XThread* dispatcherThread = XObject_thread((XObject*)dispatcher);
+
     XVector* result = XVector_Create(XAbstractEventDispatcher_TimerInfoV2);
     if (!result) return NULL;
-    //XMutex_lock(GetXMutex(dispatcher));
-    XHashMap_iterator it = XHashMap_begin(d->timers);
-    while (!XHashMap_iterator_isEnd(&it)) {
-        XPair* pair = XHashMap_iterator_data(&it);
-        XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)XPair_second(pair);
-        if (timerInfo && timerInfo->object == (XObject*)object) {
-            XAbstractEventDispatcher_TimerInfoV2 info = {
-                .interval = timerInfo->interval,
-                .timerId = timerInfo->timerId,
-                .timerType = timerInfo->timerType
-            };
-            XVector_push_back_1_base(result, &info);
-        }
-        XHashMap_iterator_add(d->timers, &it);
+
+    for (int i = 0; i < XFD_TABLE_SIZE; i++)
+    {
+        XFileDescriptor* desc = XFd_get(i);
+        if (!desc) continue;
+        if ((XFdType)desc->type != XFD_TYPE_TIMER) continue;
+        if (desc->ctx != object) continue;
+        if (objectThread && dispatcherThread && objectThread != dispatcherThread) continue;
+
+        XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->handle;
+        if (!timerInfo) continue;
+
+        XAbstractEventDispatcher_TimerInfoV2 info = {
+            .interval = timerInfo->interval,
+            .timerId = timerInfo->timerId,
+            .timerType = timerInfo->timerType
+        };
+        XVector_push_back_1_base(result, &info);
     }
-    //XMutex_unlock(GetXMutex(dispatcher));
     return result;
 }
 
@@ -472,7 +430,7 @@ void global_init()
 {
     if (global_mutex)return;
     global_mutex = XMutex_create(XLock_Spin);
-    global_timerIds = XVector_create(sizeof(size_t));
+    XFd_init();
 }
 // ===================================================================
 // === 虚函数多态入口（_base 函数）====================================
@@ -627,22 +585,11 @@ XTimerId XAbstractEventDispatcher_registerTimer(
     XTimerType timerType,
     XObject* object)
 {
-    if (ISNULL(self, "")) return XTIMER_ID_INVALID;
-    XTimerId id = 0;
-    Global_Lock;
-    if (XVector_isEmpty_base(global_timerIds))
-    {
-        id = XAtomic_fetch_add_size_t(&global_nextTimerId, 1, XAtomic_MemoryOrder_Relaxed);
-    }
-    else
-    {
-        id = XVector_Back_Base(global_timerIds, XTimerId);
-        XVector_pop_back_base(global_timerIds);
-    }
-    Global_UnLock;
-    if (id == 0) id = XAtomic_fetch_add_size_t(&global_nextTimerId, 1, XAtomic_MemoryOrder_Relaxed); // 避免 0
-    XAbstractEventDispatcher_registerTimer_base(self, id, interval, timerType, object);
-    return id;
+    if (ISNULL(self, "")) return XTIMER_INVALID_ID;
+    intptr_t fd = XFd_alloc(XFD_TYPE_TIMER, NULL, object);
+    if (fd < 0) return XTIMER_INVALID_ID;
+    XAbstractEventDispatcher_registerTimer_base(self, (XTimerId)fd, interval, timerType, object);
+    return (XTimerId)fd;
 }
 
 XAbstractEventDispatcher* XAbstractEventDispatcher_instance(XThread* thread)

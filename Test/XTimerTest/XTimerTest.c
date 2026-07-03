@@ -39,7 +39,7 @@ void XTimerTest()
 		//XTimer_setTimeout(timer, 5000);
 		XTimer_setSingleShot(timer, true);
 		XTimer_setAutoDelete(timer, true);
-		XTimer_setTimerType(timer, XTimerType_PreciseTimer);
+		XTimer_setTimerType(timer, XTimerType_CoarseTimer);
 		//XConnection* conn=XObject_connect_1(timer,XSignal(XTimer_timeout_signal),timer, timerSlotFunc,XConnectionType_Queued);
 		//XObject_disconnect_2(conn);
 		//XObject_disconnect_1(timer, XSignal(XTimer_timeout_signal), NULL, timerSlotFunc);

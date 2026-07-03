@@ -194,6 +194,8 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XComp
 			{
 				*ppLChild = insertNode;
 				XBTreeNode_SetParent(insertNode, currentNode);
+				XBTreeNode_SetLChild(insertNode, NULL);
+				XBTreeNode_SetRChild(insertNode, NULL);//清除残留子节点，防止形成环
 				return true;
 			}
 			else
@@ -208,6 +210,8 @@ bool XBBTree_insertAlign(XBBTreeNode** this_root, XBBTreeNode* insertNode, XComp
 			{
 				*ppRChild = insertNode;
 				XBTreeNode_SetParent(insertNode, currentNode);
+				XBTreeNode_SetLChild(insertNode, NULL);
+				XBTreeNode_SetRChild(insertNode, NULL);//清除残留子节点，防止形成环
 				return true;
 			}
 			else

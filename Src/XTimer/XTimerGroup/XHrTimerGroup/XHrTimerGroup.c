@@ -30,23 +30,17 @@ static inline void delete_hr_timer_node(XHrTimerGroup* group, XRBTreeNode* node)
 }
 
 // --- 红黑树比较函数 ---
-static int compare_expire_time_ns(const void* a, const void* b) {
+static int32_t compare_expire_time_ns(const XHrTimerNodeData* a, const XHrTimerNodeData* b) {
     uint64_t time_a = ((const XHrTimerNodeData*)a)->m_expire_time_ns;
     uint64_t time_b = ((const XHrTimerNodeData*)b)->m_expire_time_ns;
-    if (time_a < time_b) return -1;
-    if (time_a > time_b) return 1;
-    return 0;
+    if (time_a < time_b) return XCompare_Less;
+    if (time_a > time_b) return XCompare_Greater;
+    return XCompare_Equality;
 }
 
-static bool less_expire_time_ns(const void* a, const void* b) {
-    return ((const XHrTimerNodeData*)a)->m_expire_time_ns < ((const XHrTimerNodeData*)b)->m_expire_time_ns;
-}
-
-static bool equal_expire_time_and_id(const void* node_data, const void* target) {
-    const XHrTimerNodeData* node = (const XHrTimerNodeData*)node_data;
-    const XHrTimerNodeData* target_node = (const XHrTimerNodeData*)target;
-    return (node->m_expire_time_ns == target_node->m_expire_time_ns) &&
-        (node->m_timer_data.timerId == target_node->m_timer_data.timerId);
+static int32_t less_expire_time_ns(XCompare compare, const void* a, const void* b) {
+    (void)compare;
+    return compare(a, b);
 }
 
 // --- 内存管理 ---
