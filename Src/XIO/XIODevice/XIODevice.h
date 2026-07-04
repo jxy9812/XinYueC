@@ -6,6 +6,7 @@ extern "C" {
 #include<stdint.h>
 #include<stdbool.h>
 #include"XObject.h"
+#include"XFileDescriptor.h"
 //缓冲区大小
 #define XBuffSize						256
 #define XIODevice_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XIODevice))       //XIODeviceBase虚函数表大小
@@ -57,6 +58,10 @@ typedef struct XIODevice
     uint8_t m_currentWriteChannel;
     XIODevicePrivate* m_d;
 }XIODevice;
+
+/** XFileDescriptor 统一标识符（继承层级使用） */
+//#define XIODevice_fd(io) ((io) && ((XIODevice*)io)->m_d ? ((XIODevice*)io)->m_d->xfd : XFD_INVALID)
+
 /**
  * @brief 获取 XIODevice 类的虚函数表
  * @return 指向 XIODevice 虚函数表的指针
@@ -79,7 +84,12 @@ void XIODevice_init(XIODevice* io);
 #define XIODevice_deleteLater		XObject_deleteLater
 #define XIODevice_deinitLater		XObject_deinitLater
 // —————— Public API ——————
-
+/**
+ * @brief 获取 XFileDescriptor 统一标识符。
+ * @param sock 套接字实例（非 NULL）
+ * @return XFileDescriptor fd，未分配返回 XFD_INVALID
+ */
+XFd XIODevice_fd(const XIODevice* self);
 /**
  * @brief 获取设备的打开模式
  * @param self 指向 XIODevice 对象的指针

@@ -511,10 +511,10 @@ bool XAbstractSocket_setSocketDescriptor_base(XAbstractSocket* sock, intptr_t so
     return XClassGetVirtualFunc(sock, EXAbstractSocket_SetSocketDescriptor, bool (*)(XAbstractSocket*, intptr_t, XAbstractSocket_SocketState, XIODeviceBaseMode))(sock, socketDescriptor, state, openMode);
 }
 
-XFd XAbstractSocket_fd(const XAbstractSocket* sock)
-{
-    return XNetwork_socketFd(sock->d_ptr);
-}
+//XFd XAbstractSocket_fd(const XAbstractSocket* sock)
+//{
+//    return XNetwork_socketFd(sock->d_ptr);
+//}
 
 // ==================== 同步等待 ====================
 bool XAbstractSocket_waitForConnected_base(XAbstractSocket* sock, int msecs)

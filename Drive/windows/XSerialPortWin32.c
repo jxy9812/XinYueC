@@ -11,7 +11,7 @@
 #include "XAbstractEventDispatcher.h"
 #include "XIODevicePrivate.h"
 #include "IOCPInfo.h"
-//XEventDispatcher_win.c引入
+
 bool IOCP_bind(XSocketDescriptor socket, XObject* obj);
 bool XSerialPort_platform_applyConfig(XSerialPort* port);
 static DWORD toDCBRate(int32_t rate);
@@ -20,19 +20,45 @@ static BYTE toDCBParity(XSerialPort_Parity p);
 static BYTE toDCBStopBits(XSerialPort_StopBits sb);
 //缓冲区大小
 #define BUFFSIZE 2048
-typedef struct XSerialPortWin32
+
+/** XSerialPort 平台私有数据（继承 XIODevicePrivate） */
+typedef struct XSerialPortPrivate 
 {
-    XSerialPort base;
+    XIODevicePrivate base;          /**< 第一位继承父类私有数据 */
     XEventContext_IOCP read;
     XEventContext_IOCP write;
     HANDLE handle;
     char readBuff[BUFFSIZE];
     char writeBuff[BUFFSIZE];
-} XSerialPortWin32;
+} XSerialPortPrivate;
+
+/* 便捷转换宏 */
+#define SPP(p) ((XSerialPortPrivate*)((XIODevice*)(p))->m_d)
+
 size_t XSerialPort_typetSize()
 {
-    return sizeof(XSerialPortWin32);
+    return sizeof(XSerialPort);
 }
+
+/* =========================================================================
+ * 私有数据管理
+ * ========================================================================= */
+static XSerialPortPrivate* XSerialPortPrivate_create(void)
+{
+    XSerialPortPrivate* priv = (XSerialPortPrivate*)XCalloc_System(1, sizeof(XSerialPortPrivate));
+    if (!priv) return NULL;
+    XIODevicePrivate_init(&priv->base, NULL);
+    priv->handle = INVALID_HANDLE_VALUE;
+    return priv;
+}
+
+static void XSerialPortPrivate_delete(XSerialPortPrivate* priv)
+{
+    if (!priv) return;
+    XIODevicePrivate_deinit(&priv->base);
+    XFree_System(priv);
+}
+
 void XSerialPort_init(XSerialPort* serial)
 {
     if (serial == NULL)
@@ -40,9 +66,18 @@ void XSerialPort_init(XSerialPort* serial)
     // 只清零 XSerialPort 部分
     memset(((XIODevice*)serial) + 1, 0, sizeof(XSerialPort) - sizeof(XIODevice));
     XIODevice_init(serial);
+
+    /* 替换父类默认的 XIODevicePrivate 为 XSerialPortPrivate */
+    XSerialPortPrivate* priv = XSerialPortPrivate_create();
+    if (!priv) return;
+    if (((XIODevice*)serial)->m_d)
+        XIODevicePrivate_delete(((XIODevice*)serial)->m_d);
+    ((XIODevice*)serial)->m_d = (XIODevicePrivate*)priv;
+    priv->base.q_ptr = (XIODevice*)serial;
+
     XClassGetVtable(serial) = XSerialPort_class_init();
     // 设置常用的默认串口参数
-    serial->baudRate = XSerialPort_Baud9600; // 或者直接写 9600
+    serial->baudRate = XSerialPort_Baud9600;
     serial->dataBits = XSerialPort_Data8;
     serial->parity = XSerialPort_NoParity;
     serial->stopBits = XSerialPort_OneStop;
@@ -51,13 +86,11 @@ void XSerialPort_init(XSerialPort* serial)
     serial->bytesWrittenTriggered = true;
     // 设置默认的读缓冲区大小 (Qt 的默认值是 512 KB)
     serial->readBufferSize = 512 * 1024;
-
-    XSerialPortWin32* win32 = (XSerialPortWin32*)serial;
 }
 
 XSerialPort* XSerialPort_create()
 {
-    XSerialPort* port = XNew(XSerialPortWin32);
+    XSerialPort* port = XNew(XSerialPort);
     if (!port)return NULL;
     XSerialPort_init(port);
     Set_Class_MemoryFree(port, XFree_System);
@@ -80,17 +113,11 @@ DWORD toDCBRate(int32_t rate) {
 }
 BYTE toDCBDataBits(XSerialPort_DataBits d) {
     switch (d) {
-    case XSerialPort_Data5:
-        return 5;
-    case XSerialPort_Data6:
-        return 6;
-    case XSerialPort_Data7:
-        return 7;
-    case XSerialPort_Data8:
-        return 8;
-    default:
-        // 防御性编程：未知值回退到最常用的 8 数据位
-        return 8;
+    case XSerialPort_Data5: return 5;
+    case XSerialPort_Data6: return 6;
+    case XSerialPort_Data7: return 7;
+    case XSerialPort_Data8: return 8;
+    default: return 8;
     }
 }
 BYTE toDCBParity(XSerialPort_Parity p) 
@@ -113,26 +140,24 @@ BYTE toDCBStopBits(XSerialPort_StopBits sb) {
     default: return ONESTOPBIT;
     }
 }
+
+/* =========================================================================
+ * 事件处理
+ * ========================================================================= */
 void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort* receiver)
 {
-    XSerialPortWin32* win32 = (XSerialPortWin32*)receiver;
-    if (!event)return;
+    XSerialPortPrivate* priv = SPP(receiver);
+    if (!event || !priv) return;
     int currentReadChannel = 0;
     if ((event->actType & XSocketAct_Read))
     {
-        if(win32->read.finishedBytes)
+        if(priv->read.finishedBytes)
         {
-            //写入到缓冲区
             XIODevicePrivate* d = ((XIODevice*)receiver)->m_d;
-            // 获取当前读通道ID
-         
             struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
-            if (!readBuf) {
-                return -1; // 无法获取或创建缓冲区
-            }
+            if (!readBuf) return;
 
-            // 1. 首先尝试从当前通道的缓冲区读取
-            int64_t bytesFromBuffer = XRingBuffer_write(readBuf, win32->read.buffer, win32->read.finishedBytes);
+            int64_t bytesFromBuffer = XRingBuffer_write(readBuf, priv->read.buffer, priv->read.finishedBytes);
             if (bytesFromBuffer)
             {
                 receiver->readyReadTriggered = true;
@@ -140,52 +165,43 @@ void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort*
                 XIODevice_channelReadyRead_signal(receiver, currentReadChannel);
             }
         }
-        //再次读取
-        //win32->read.type = XEventContextType_Type_File;
-        //win32->read.buffer = win32->readBuff;
-        //win32->read.bufferSize = BUFFSIZE;
-        //win32->read.eventMask = FD_READ;
-        //win32->read.socket = XSocketDescriptor_fromIntptr(win32->handle);
-        win32->read.finishedBytes = 0;
-        memset(&win32->read, 0, sizeof(OVERLAPPED));
-        BOOL r = ReadFile(win32->handle, win32->readBuff, (DWORD)win32->read.bufferSize, &win32->read
-            .finishedBytes, &win32->read);
+        priv->read.finishedBytes = 0;
+        memset(&priv->read, 0, sizeof(OVERLAPPED));
+        ReadFile(priv->handle, priv->readBuff, (DWORD)priv->read.bufferSize, &priv->read.finishedBytes, &priv->read);
     }
     if (event->actType & XSocketAct_Write)
     {
-        if (win32->write.finishedBytes)
+        if (priv->write.finishedBytes)
         {
-            XIODevice_bytesWritten_signal(receiver, win32->write.finishedBytes);
-            XIODevice_channelBytesWritten_signal(receiver, currentReadChannel, win32->write.finishedBytes);
+            XIODevice_bytesWritten_signal(receiver, priv->write.finishedBytes);
+            XIODevice_channelBytesWritten_signal(receiver, currentReadChannel, priv->write.finishedBytes);
         }
-        //写入到缓冲区
         XIODevicePrivate* d = ((XIODevice*)receiver)->m_d;
-        // 获取当前读通道ID
         struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentReadChannel);
-        if (!writeBuf) {
-            return -1; // 无法获取或创建缓冲区
-        }
-        int64_t bytesFromBuffer = XRingBuffer_read(writeBuf, win32->write.buffer, win32->write.bufferSize);
+        if (!writeBuf) return;
+
+        int64_t bytesFromBuffer = XRingBuffer_read(writeBuf, priv->write.buffer, priv->write.bufferSize);
         if (bytesFromBuffer)
         {
-           BOOL r = WriteFile(win32->handle, win32->writeBuff, (DWORD)bytesFromBuffer, &win32->write
-               .finishedBytes, &win32->write);
-           receiver->bytesWrittenTriggered = false;
+            WriteFile(priv->handle, priv->writeBuff, (DWORD)bytesFromBuffer, &priv->write.finishedBytes, &priv->write);
+            receiver->bytesWrittenTriggered = false;
         }
         else
         {
             receiver->bytesWrittenTriggered = true;
         }
-       
     }
     XEvent_setAccepted_base(event,true);
 }
-int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize);
 
-// ========== 平台函数实现 ==========
+/* =========================================================================
+ * 平台函数实现
+ * ========================================================================= */
 bool XSerialPort_platform_open(XSerialPort* port, XIODeviceBaseMode mode) {
     if (!port->portName) return false;
-    XSerialPortWin32* win32 = (XSerialPortWin32*)port;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!priv) return false;
+    
     DWORD access = 0;
     if (mode & XIODevice_ReadOnly) access |= GENERIC_READ;
     if (mode & XIODevice_WriteOnly) access |= GENERIC_WRITE;
@@ -199,174 +215,131 @@ bool XSerialPort_platform_open(XSerialPort* port, XIODeviceBaseMode mode) {
     }
     fullPortName[sizeof(fullPortName) - 1] = '\0';
 
-    // 打开串口：必须使用 FILE_FLAG_OVERLAPPED
     HANDLE h = CreateFileA(fullPortName, access, 0, NULL, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
 
     if (h == INVALID_HANDLE_VALUE) return false;
 
-    // 设置缓冲区大小（可选）
     if (port->readBufferSize > 0) {
         DWORD writeBuf = (port->readBufferSize > 2048) ? (DWORD)port->readBufferSize : 2048;
         SetupComm(h, (DWORD)port->readBufferSize, writeBuf);
     }
 
-    // 设置超时：非阻塞模式（对重叠 I/O 实际影响不大，但建议设为 0）
     COMMTIMEOUTS timeouts = { 0 };
-    timeouts.ReadIntervalTimeout = MAXDWORD; // 仅当有第一个字节后才计时
+    timeouts.ReadIntervalTimeout = MAXDWORD;
     timeouts.ReadTotalTimeoutMultiplier = 0;
     timeouts.ReadTotalTimeoutConstant = 0;
     timeouts.WriteTotalTimeoutMultiplier = 0;
     timeouts.WriteTotalTimeoutConstant = 0;
     SetCommTimeouts(h, &timeouts);
-    // 清空缓冲区
     PurgeComm(h, PURGE_TXCLEAR | PURGE_RXCLEAR);
 
-    //// >>>>>> 关键修复：必须调用 SetCommMask <<<<<<
-    //if (!SetCommMask(h, EV_RXCHAR | EV_ERR)) {
-    //    DWORD err = GetLastError();
-    //    printf("SetCommMask failed with error %lu\n", err);
-    //    CloseHandle(h);
-    //    return false;
-    //}
     XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
-   /* XSocketNotifier_setSocket(win32->notifier, XSocketDescriptor_fromIntptr(h));
-    XAbstractEventDispatcher_registerSocketNotifier_base(dispatcher,win32->notifier);*/
     if (!IOCP_bind(XSocketDescriptor_fromIntptr(h), port))
     {
         CloseHandle(h);
         return false;
     }
-    win32->handle = h;
-    // >>>>>> 关键：显式清零 OVERLAPPED <<<<<<
- /*   memset(&win32->waitOverlapped, 0, sizeof(OVERLAPPED));
-    win32->waitEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
-    if (!win32->waitEvent) {
-        CloseHandle(h);
-        return false;
-    }
-    win32->waitOverlapped.hEvent = win32->waitEvent;*/
+    priv->handle = h;
 
-    // 应用串口配置
     if (!XSerialPort_platform_applyConfig(port)) {
-        //CloseHandle(win32->waitEvent);
         CloseHandle(h);
         return false;
     }
 
-    // 启动事件监听
-   /* if (!startWaitCommEvent(port)) {
-        CloseHandle(win32->waitEvent);
-        CloseHandle(h);
-        return false;
-    }*/
-  
     port->isOpen = true;
-    //XObject_setPollTime(port, 10);
+
+    /* 分配 XFileDescriptor 统一标识符 */
+    XIODevicePrivate* d = ((XIODevice*)port)->m_d;
+    if (d->xfd == XFD_INVALID) {
+        d->xfd = XFd_alloc(XFD_TYPE_SERIAL, priv, (XIODevice*)port);
+    }
 
     //打开成功发起异步接收
-    memset(&win32->read, 0, sizeof(OVERLAPPED)); // hEvent 必须为 NULL！
-    win32->read.type = XEventContextType_Type_File;
-    win32->read.buffer = win32->readBuff;
-    win32->read.bufferSize = BUFFSIZE;
-    win32->read.eventMask = FD_READ;
-    win32->read.socket=XSocketDescriptor_fromIntptr(win32->handle);
-    win32->read.finishedBytes = 0;
-    BOOL r = ReadFile(win32->handle, win32->readBuff, (DWORD)BUFFSIZE, &win32->read
-        .finishedBytes, &win32->read);
+    memset(&priv->read, 0, sizeof(OVERLAPPED));
+    priv->read.base.type = XEventContextType_Type_File;
+    priv->read.base.fd = priv->base.xfd;
+    priv->read.buffer = priv->readBuff;
+    priv->read.bufferSize = BUFFSIZE;
+    priv->read.eventMask = FD_READ;
+    priv->read.socket = XSocketDescriptor_fromIntptr(priv->handle);
+    priv->read.finishedBytes = 0;
+    ReadFile(priv->handle, priv->readBuff, (DWORD)BUFFSIZE, &priv->read.finishedBytes, &priv->read);
     return true;
 }
 
 void XSerialPort_platform_close(XSerialPort* port) {
-    XSerialPortWin32* win32 = (XSerialPortWin32*)port;
-    if (!port->isOpen) return;
-    //XObject_setPollTime(port, 0);
-    CancelIo(win32->handle);
-    PurgeComm(win32->handle, PURGE_TXABORT | PURGE_RXABORT);
-    CloseHandle(win32->handle);
-    win32->handle = 0;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!port->isOpen || !priv) return;
+    
+    CancelIo(priv->handle);
+    PurgeComm(priv->handle, PURGE_TXABORT | PURGE_RXABORT);
+    CloseHandle(priv->handle);
+    priv->handle = INVALID_HANDLE_VALUE;
 
     XAbstractEventDispatcher* dispatcher = XCoreApplication_eventDispatcher();
-    //XAbstractEventDispatcher_unregisterSocketNotifier_base(dispatcher, win32->notifier);
-    /*if (win32->waitEvent) 
-    {
-        CloseHandle(win32->waitEvent);
-        win32->waitEvent = 0;
-    }*/
-
     port->isOpen = false;
 }
 
 int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize) 
 {
     if (!port || !data || maxSize <= 0) return -1;
-    XSerialPortWin32* win32 = (XSerialPortWin32*)port;
-    XIODevicePrivate* d = ((XIODevice*)port)->m_d;
-    // 获取当前读通道ID
+    XSerialPortPrivate* priv = SPP(port);
+    XIODevicePrivate* d = (XIODevicePrivate*)priv;
     int currentReadChannel = XIODevice_currentReadChannel(port);
     struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
-    if (!readBuf) {
-        return -1; // 无法获取或创建缓冲区
-    }
-    //XEventLoop* loop=XEventLoop_create();
-    while (XRingBuffer_size_base(readBuf)< maxSize)
+    if (!readBuf) return -1;
+
+    while (XRingBuffer_size_base(readBuf) < (size_t)maxSize)
     {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
     }
-    int64_t bytesFromBuffer = XRingBuffer_read(readBuf, data, maxSize);
-    return bytesFromBuffer; // 
+    return XRingBuffer_read(readBuf, data, maxSize);
 }
 
 int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t len) {
     if (!port || !data || len <= 0) return -1;
-    XSerialPortWin32* win32 = (XSerialPortWin32*)port;
-    XIODevicePrivate* d = ((XIODevice*)port)->m_d;
+    XSerialPortPrivate* priv = SPP(port);
+    XIODevicePrivate* d = (XIODevicePrivate*)priv;
     int currentWriteChannel = XIODevice_currentWriteChannel(port);
     struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentWriteChannel);
     int64_t written = 0;
 
     if (!port->bytesWrittenTriggered)
     {
-        // 当前还在写操作，写到缓冲区
         written = XRingBuffer_write(writeBuf, data, (size_t)len);
     }
     else
     {
-        // 关键：清零 OVERLAPPED 结构！
-        memset(&win32->write, 0, sizeof(OVERLAPPED));
-        win32->write.type = XEventContextType_Type_File;
-        win32->write.buffer = win32->writeBuff;
-        win32->write.bufferSize = BUFFSIZE;
-        win32->write.eventMask = FD_WRITE;
-        win32->write.socket = XSocketDescriptor_fromIntptr(win32->handle);
-        win32->write.finishedBytes = 0;
+        memset(&priv->write, 0, sizeof(OVERLAPPED));
+        priv->write.base.type = XEventContextType_Type_File;
+        priv->write.base.fd = priv->base.xfd;
+        priv->write.buffer = priv->writeBuff;
+        priv->write.bufferSize = BUFFSIZE;
+        priv->write.eventMask = FD_WRITE;
+        priv->write.socket = XSocketDescriptor_fromIntptr(priv->handle);
+        priv->write.finishedBytes = 0;
         port->bytesWrittenTriggered = false;
 
         size_t toWrite = (len <= BUFFSIZE) ? (size_t)len : BUFFSIZE;
-        memcpy(win32->writeBuff, data, toWrite);
-        //BOOL r = ReadFile(win32->handle, win32->readBuff, (DWORD)BUFFSIZE, &win32->read
-        //    .finishedBytes, &win32->read);
-        BOOL success = WriteFile(win32->handle, win32->writeBuff, (DWORD)toWrite,
-            &win32->write.finishedBytes, &win32->write);
+        memcpy(priv->writeBuff, data, toWrite);
+        BOOL success = WriteFile(priv->handle, priv->writeBuff, (DWORD)toWrite,
+            &priv->write.finishedBytes, &priv->write);
 
         if (success) {
-            // 写入立即同步完成
-            written = win32->write.finishedBytes;
+            written = priv->write.finishedBytes;
         }
         else {
             DWORD error = GetLastError();
             if (error == ERROR_IO_PENDING) {
-                // 异步操作正在进行，假设会成功写入
                 written = toWrite;
             }
             else {
-                // 真正的写入失败
                 port->bytesWrittenTriggered = true;
                 return -1;
             }
         }
 
-        // 剩余数据写入缓冲区
         if (len > BUFFSIZE) {
             written += XRingBuffer_write(writeBuf, data + BUFFSIZE, (size_t)len - BUFFSIZE);
         }
@@ -376,7 +349,6 @@ int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t 
 
 bool XSerialPort_setDataBits(XSerialPort* port, XSerialPort_DataBits dataBits) {
     if (!port) return false;
-    XSerialPortWin32* win32 = (XSerialPort*)port;
     if (port->dataBits == dataBits) return true;
     port->dataBits = dataBits;
     bool ok = true;
@@ -390,7 +362,6 @@ bool XSerialPort_setDataBits(XSerialPort* port, XSerialPort_DataBits dataBits) {
 }
 bool XSerialPort_setParity(XSerialPort* port, XSerialPort_Parity parity) {
     if (!port) return false;
-    XSerialPortWin32* win32 = (XSerialPort*)port;
     if (port->parity == parity) return true;
     port->parity = parity;
     bool ok = true;
@@ -405,7 +376,6 @@ bool XSerialPort_setParity(XSerialPort* port, XSerialPort_Parity parity) {
 }
 bool XSerialPort_setStopBits(XSerialPort* port, XSerialPort_StopBits stopBits) {
     if (!port) return false;
-    XSerialPortWin32* win32 = (XSerialPort*)port;
     if (port->stopBits == stopBits) return true;
     port->stopBits = stopBits;
     bool ok = true;
@@ -420,7 +390,6 @@ bool XSerialPort_setStopBits(XSerialPort* port, XSerialPort_StopBits stopBits) {
 }
 bool XSerialPort_setFlowControl(XSerialPort* port, XSerialPort_FlowControl flowControl) {
     if (!port) return false;
-    XSerialPortWin32* win32 = (XSerialPort*)port;
     if (port->flowControl == flowControl) return true;
     port->flowControl = flowControl;
     bool ok = true;
@@ -435,17 +404,16 @@ bool XSerialPort_setFlowControl(XSerialPort* port, XSerialPort_FlowControl flowC
 }
 bool XSerialPort_platform_applyConfig(XSerialPort* port)
 {
-    XSerialPortWin32* win32 = (XSerialPortWin32*)port;
+    XSerialPortPrivate* priv = SPP(port);
     DCB dcb = { 0 };
     dcb.DCBlength = sizeof(DCB);
-    if (!GetCommState(win32->handle, &dcb)) return false;
+    if (!GetCommState(priv->handle, &dcb)) return false;
 
     dcb.BaudRate = toDCBRate(port->baudRate);
     dcb.ByteSize = toDCBDataBits(port->dataBits);
     dcb.Parity = toDCBParity(port->parity);
     dcb.StopBits = toDCBStopBits(port->stopBits);
 
-    // 流控设置
     switch (port->flowControl) {
     case XSerialPort_NoFlowControl:
         dcb.fOutxCtsFlow = FALSE;
@@ -467,47 +435,15 @@ bool XSerialPort_platform_applyConfig(XSerialPort* port)
         break;
     }
 
-    return SetCommState(win32->handle, &dcb) != FALSE;
+    return SetCommState(priv->handle, &dcb) != FALSE;
 }
-// ========== 新增的平台等待函数 ==========
-//bool XSerialPort_platform_waitForReadyRead(XSerialPort* port, int msecs) {
-//    if (XSerialPort_bytesAvailable_base(port) > 0) return true;
-//
-//    size_t current = XTimer_getCurrentTime();
-//    while (XSerialPort_bytesAvailable_base(port)< 0)
-//    {
-//        XCoreApplication_processEvents(XEventLoop_AllEvents);
-//        if (XTimer_getCurrentTime() > current + msecs)
-//            return false;
-//    }
-//    return true; // 
-//}
-//
-//bool XSerialPort_platform_waitForBytesWritten(XSerialPort* port, int msecs) {
-//    if (XSerialPort_bytesToWrite_base(port) == 0) return true;
-//
-//   /* XMutex_lock(port->waitMutex);
-//    port->bytesWrittenTriggered = false;
-//    XMutex_unlock(port->waitMutex);
-//
-//    XMutex_lock(port->waitMutex);
-//    bool result = XWaitCondition_wait(port->waitCondition, port->waitMutex, msecs);
-//    if (!result) {
-//        port->error = XSerialPort_TimeoutError;
-//    }
-//    bool triggered = port->bytesWrittenTriggered;
-//    port->bytesWrittenTriggered = false;
-//    XMutex_unlock(port->waitMutex);*/
-//
-//}
 
-// NEW: pinoutSignals
 XSerialPort_PinoutSignal XSerialPort_pinoutSignals(const XSerialPort* port)
 {
-    XSerialPortWin32* win32 = (XSerialPort*)port;
+    XSerialPortPrivate* priv = SPP(port);
     if (!port || !port->isOpen) return XSerialPort_NoSignal;
     DWORD modemStat;
-    if (!GetCommModemStatus((HANDLE)win32->handle, &modemStat)) return XSerialPort_NoSignal;
+    if (!GetCommModemStatus((HANDLE)priv->handle, &modemStat)) return XSerialPort_NoSignal;
     XSerialPort_PinoutSignal signals = XSerialPort_NoSignal;
     if (modemStat & MS_CTS_ON) signals |= XSerialPort_ClearToSendSignal;
     if (modemStat & MS_DSR_ON) signals |= XSerialPort_DataSetReadySignal;
@@ -518,15 +454,12 @@ XSerialPort_PinoutSignal XSerialPort_pinoutSignals(const XSerialPort* port)
     return signals;
 }
 
-
-// ========== Control Functions ==========
-
 bool XSerialPort_setDataTerminalReady(XSerialPort* port, bool set) {
     if (!port) return false;
-    XSerialPortWin32* win32 = (XSerialPort*)port;
+    XSerialPortPrivate* priv = SPP(port);
     if (port->dataTerminalReady == set) return true;
 
-    if (port->isOpen&& EscapeCommFunction((HANDLE)win32->handle, set ? SETDTR : CLRDTR))
+    if (port->isOpen && EscapeCommFunction((HANDLE)priv->handle, set ? SETDTR : CLRDTR))
     {
         port->dataTerminalReady = set;
         XSerialPort_dataTerminalReadyChanged_signal(port, set);
@@ -537,11 +470,11 @@ bool XSerialPort_setDataTerminalReady(XSerialPort* port, bool set) {
 bool XSerialPort_setRequestToSend(XSerialPort* port, bool set)
 {
     if (!port) return false;
-    XSerialPortWin32* win32 = (XSerialPort*)port;
+    XSerialPortPrivate* priv = SPP(port);
     if (port->requestToSend == set) return true;
 
-    if (port->isOpen && port->flowControl != XSerialPort_HardwareControl&&
-        EscapeCommFunction((HANDLE)win32->handle, set ? SETRTS : CLRRTS))
+    if (port->isOpen && port->flowControl != XSerialPort_HardwareControl &&
+        EscapeCommFunction((HANDLE)priv->handle, set ? SETRTS : CLRRTS))
     {
         port->requestToSend = set;
         XSerialPort_requestToSendChanged_signal(port, set);
@@ -552,9 +485,9 @@ bool XSerialPort_setRequestToSend(XSerialPort* port, bool set)
 bool XSerialPort_setBreakEnabled(XSerialPort* port, bool enable) 
 {
     if (!port) return false;
-    XSerialPortWin32* win32 = (XSerialPort*)port;
+    XSerialPortPrivate* priv = SPP(port);
     if (port->breakEnabled == enable) return true;
-    if (port->isOpen&& EscapeCommFunction((HANDLE)win32->handle, enable ? SETBREAK : CLRBREAK))
+    if (port->isOpen && EscapeCommFunction((HANDLE)priv->handle, enable ? SETBREAK : CLRBREAK))
     {
         port->breakEnabled = enable;
         XSerialPort_breakEnabledChanged_signal(port, enable);
@@ -562,12 +495,11 @@ bool XSerialPort_setBreakEnabled(XSerialPort* port, bool enable)
     }
     return false;
 }
-// ========== Flush / Clear ==========
 bool XSerialPort_flush(XSerialPort* port)
 {
-    if (!port)return;
-    XSerialPortWin32* win32 = (XSerialPort*)port;
-    if (!FlushFileBuffers((HANDLE)win32->handle)) {
+    if (!port) return false;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!FlushFileBuffers((HANDLE)priv->handle)) {
         port->error = XSerialPort_WriteError;
         return false;
     }
@@ -576,13 +508,13 @@ bool XSerialPort_flush(XSerialPort* port)
 
 bool XSerialPort_clear(XSerialPort* port, XSerialPort_Direction directions)
 {
-    if (!port)return;
-    XSerialPortWin32* win32 = (XSerialPort*)port;
+    if (!port) return false;
+    XSerialPortPrivate* priv = SPP(port);
     DWORD flags = 0;
     if (directions & XSerialPort_Input)  flags |= PURGE_RXCLEAR;
     if (directions & XSerialPort_Output) flags |= PURGE_TXCLEAR;
 
-    if (!PurgeComm((HANDLE)win32->handle, flags)) {
+    if (!PurgeComm((HANDLE)priv->handle, flags)) {
         port->error = XSerialPort_ResourceError;
         return false;
     }
@@ -591,8 +523,7 @@ bool XSerialPort_clear(XSerialPort* port, XSerialPort_Direction directions)
 XHandle XSerialPort_platform_handle(const XSerialPort* port)
 {
     if (!port) return -1;
-    XSerialPortWin32* win32 = (XSerialPortWin32*)port;
-    // Windows 的 HANDLE 可以直接转换为 intptr_t
-    return (XHandle)(win32->handle);
+    XSerialPortPrivate* priv = SPP(port);
+    return (XHandle)(priv->handle);
 }
 #endif // _WIN32

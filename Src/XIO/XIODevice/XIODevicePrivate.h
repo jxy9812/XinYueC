@@ -31,20 +31,34 @@ typedef struct XIODevicePrivate {
     // --- 错误 & 状态 ---
     struct XString* errorString;        /**< @brief 存储最近一次 I/O 操作的错误信息。 */
     struct XIODevice* q_ptr;            /**< @brief 反向指针，指向公有接口 XIODevice 实例。 */
+    XFd      xfd;                       /**< @brief XFileDescriptor 统一标识符（继承层级使用） */
 } XIODevicePrivate;
 
 /**
- * @brief 创建一个 XIODevicePrivate 实例。
+ * @brief 创建并初始化一个 XIODevicePrivate 实例（堆内存）。
  * @param q 指向所属的 XIODevice 公有对象的指针。
  * @return 成功时返回新实例指针；失败时返回 NULL。
  */
 XIODevicePrivate* XIODevicePrivate_create(struct XIODevice* q);
 
 /**
- * @brief 销毁一个 XIODevicePrivate 实例。
+ * @brief 销毁一个 XIODevicePrivate 实例并释放内存。
  * @param d 指向要销毁的实例的指针。
  */
 void XIODevicePrivate_delete(XIODevicePrivate* d);
+
+/**
+ * @brief 初始化一个已分配的 XIODevicePrivate 实例（栈或子类继承使用）。
+ * @param d 指向已分配内存的 XIODevicePrivate 指针。
+ * @param q 指向所属的 XIODevice 公有对象的指针。
+ */
+void XIODevicePrivate_init(XIODevicePrivate* d, struct XIODevice* q);
+
+/**
+ * @brief 释放 XIODevicePrivate 的资源但不释放内存（栈或子类继承使用）。
+ * @param d 指向已分配内存的 XIODevicePrivate 指针。
+ */
+void XIODevicePrivate_deinit(XIODevicePrivate* d);
 
 // === 多通道操作 API ===
 

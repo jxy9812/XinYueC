@@ -40,6 +40,8 @@ static void global_init();
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 {
     dp->m_hrtimerGroup = NULL;
+    dp->notifiers = NULL;
+    
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
@@ -48,6 +50,11 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
     {
         XClass_delete_base(dp->m_hrtimerGroup);
         dp->m_hrtimerGroup = NULL;
+    }
+    if (dp->notifiers)
+    {
+        XHashMap_delete_base(dp->notifiers);
+        dp->notifiers = NULL;
     }
 }
 
@@ -115,11 +122,11 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
     // 设置父对象
     XObject_setParent((XObject*)self, (XObject*)parent);
 
-    /* 分配并初始化私有数据 */
-    self->d_ptr = (XAbstractEventDispatcherPrivate*)XMalloc_System(sizeof(XAbstractEventDispatcherPrivate));
-    if (self->d_ptr) {
-        XAbstractEventDispatcherPrivate_init(self->d_ptr);
-    }
+    ///* 不能在这里分配并初始化私有数据，这个类要被继承，子类需要扩展数据*/
+    //self->d_ptr = (XAbstractEventDispatcherPrivate*)XMalloc_System(sizeof(XAbstractEventDispatcherPrivate));
+    //if (self->d_ptr) {
+    //    XAbstractEventDispatcherPrivate_init(self->d_ptr);
+    //}
 
     global_init();
     //self->m_hrtimerGroup = XHrTimerGroup_create(1);
@@ -201,52 +208,49 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
 
 static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
 {
-    if (!notifier)return;
+    if (!notifier || !self || !self->d_ptr) return;
     XFd fd = XSocketNotifier_socket(notifier);
     if (fd < 0) return;
-    XFileDescriptor* desc = XFd_get(fd);
-    if (!desc) return;
-
-    /* 从 desc->handle 获取 XNetworkSocketPrivate* */
-    XNetworkSocketPrivate* priv = (XNetworkSocketPrivate*)desc->handle;
-    if (!priv) return;
-
-    /* 首次注册时分配 XVector */
-    if (!priv->notifiers)
+    if (!self->d_ptr->notifiers)
     {
-        XVector* v = (XVector*)XMalloc_Hybrid(sizeof(XVector));
-        if (!v) return;
-        XVector_init(v, sizeof(XSocketNotifier*), false);
-        XContainerSetCompare(v, uintptr_t_compare);
-        priv->notifiers = v;
+        self->d_ptr->notifiers = XHashMap_Create(XFd, XVector, uintptr_t_compare);
+        XContainerSetDataDeinitMethod(self->d_ptr->notifiers, XVector_deinit_base);
     }
-    if (XVector_indexOf(priv->notifiers, &notifier, 0) == -1)
+    /* 从 dispatcher 全局 HashMap 查找或创建 XVector */
+    XVector* v = (XVector*)XHashMap_value_base(self->d_ptr->notifiers, &fd);
+    if (!v)
     {
-        XVector_append_1_base(priv->notifiers, &notifier);
+        v = XVector_Create(XSocketNotifier*);
+        XContainerSetCompare(v, uintptr_t_compare);
+        XMapBase_insert_valueMove_base(self->d_ptr->notifiers, &fd, v);
+        XVector_delete_base(v);
+        v = (XVector*)XHashMap_value_base(self->d_ptr->notifiers, &fd);
+        if (!v)return;
+    }
+    if (XVector_indexOf(v, &notifier, 0) == -1)
+    {
+        XVector_append_1_base(v, &notifier);
     }
 }
 
 static void VXAbstractEventDispatcher_unregisterSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
 {
-    if (!notifier)return;
+    if (!notifier || !self || !self->d_ptr || !self->d_ptr->notifiers) return;
     XFd fd = XSocketNotifier_socket(notifier);
     if (fd < 0) return;
-    XFileDescriptor* desc = XFd_get(fd);
-    if (!desc) return;
 
-    XNetworkSocketPrivate* priv = (XNetworkSocketPrivate*)desc->handle;
-    if (!priv || !priv->notifiers) return;
+    XVector* v = (XVector*)XHashMap_value_base(self->d_ptr->notifiers, &fd);
+    if (!v) return;
 
-    int index = XVector_indexOf(priv->notifiers, &notifier, 0);
+    int index = XVector_indexOf(v, &notifier, 0);
     if (index != -1)
     {
-        XVector_remove_base(priv->notifiers, index, 1);
+        XVector_remove_base(v, index, 1);
     }
-    if (XVector_isEmpty_base(priv->notifiers))
+    if (XVector_isEmpty_base(v))
     {
-        XVector_deinit_base(priv->notifiers);
-        XFree_Hybrid(priv->notifiers);
-        priv->notifiers = NULL;
+        XHashMap_remove_base(self->d_ptr->notifiers, &fd);
+        //XVector_delete_base(v);
     }
 }
 static void TimerCallback(void* userData, XTimerData* timer)

@@ -428,7 +428,7 @@ bool XAbstractSocket_setSocketDescriptor_base(XAbstractSocket* sock, intptr_t so
  * @param sock 套接字实例（非 NULL）
  * @return XFileDescriptor fd，未分配返回 XFD_INVALID
  */
-XFd XAbstractSocket_fd(const XAbstractSocket* sock);
+#define XAbstractSocket_fd          XIODevice_fd
 
 // =============== 同步等待函数 ===============
 

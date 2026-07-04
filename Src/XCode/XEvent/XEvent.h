@@ -138,7 +138,11 @@ void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver
 typedef struct XEventTimer
 {
     XEvent m_base;
-    XTimerId timerId;
+    union 
+    {
+        XTimerId timerId;//本质就是XFd
+        XFd fd;
+    };
 }XEventTimer;
 XEventTimer* XEventTimer_create(XTimerId id);
 XTimerId XEventTimer_timerId(const XEventTimer* event);
@@ -146,16 +150,18 @@ XTimerId XEventTimer_timerId(const XEventTimer* event);
 typedef struct XEventSockAct
 {
     XEvent m_base;
-    XSocketDescriptor socket;
+    //XSocketDescriptor socket;
+    XFd fd;
     XSocketActType actType;//活动类型
 }XEventSockAct;
-XEventSockAct* XEventSockAct_create(XSocketDescriptor socket, XSocketActType actType);
+XEventSockAct* XEventSockAct_create(XFd fd, XSocketActType actType);
 typedef struct XEventSockClose
 {
     XEvent m_base;
-    XSocketDescriptor socket;
+    //XSocketDescriptor socket;
+    XFd fd;
 }XEventSockClose;
-XEventSockClose* XEventSockClose_create(XSocketDescriptor socket);
+XEventSockClose* XEventSockClose_create(XFd fd);
 //孩子事件
 typedef struct {
     XEvent m_base;

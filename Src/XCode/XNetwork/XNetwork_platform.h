@@ -101,7 +101,6 @@ char* XNetwork_errorString(int errorCode);
 
 typedef struct XNetworkSocketPrivate {
     void*    owner;                     /**< 拥有者 XAbstractSocket */
-    XFd      xfd;                       /**< XFileDescriptor 统一标识符 */
     XVector* notifiers;                /**< XVector<XSocketNotifier*>，socket notifier 列表 */
 } XNetworkSocketPrivate;
 

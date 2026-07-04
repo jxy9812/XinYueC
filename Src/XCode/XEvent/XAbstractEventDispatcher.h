@@ -23,6 +23,8 @@ extern "C" {
 #include "XEventLoop.h"
 #include "XSocketNotifier.h"
 #include "XTimer.h"
+#include "XHashMap.h"
+#include "XFileDescriptor.h"
 #include <stdint.h>
 #include <stdbool.h>
 typedef struct XHrTimerGroup XHrTimerGroup;
@@ -44,6 +46,7 @@ struct XAbstractNativeEventFilter;
 typedef struct XAbstractEventDispatcherPrivate
 {
     XHrTimerGroup* m_hrtimerGroup;//高精度定时器组
+    XHashMap* notifiers;           ///< XFd → XVector<XSocketNotifier*>，notifier 注册表
     //XMutex* mutex;              ///< 保护原生事件过滤器的互斥锁
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);

@@ -35,6 +35,11 @@ void XIODevice_init(XIODevice* io)
 	io->m_currentWriteChannel = XIO_DEFAULT_CHANNEL_ID;
 }
 
+XFd XIODevice_fd(const XIODevice* io)
+{
+	return ((io) && ((XIODevice*)io)->m_d ? ((XIODevice*)io)->m_d->xfd : XFD_INVALID);
+}
+
 XIODeviceBaseMode XIODevice_openMode(const XIODevice* self)
 {
 	return self ? self->m_openMode : XIODevice_NotOpen;

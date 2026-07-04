@@ -17,7 +17,7 @@
 #include "XEvent.h"
 #include "XAbstractEventDispatcher.h"
 #include "XAbstractSocket.h"
-#include "XNetwork_platform.h"
+#include "XIODevicePrivate.h"
 #include "XCoreApplication.h"
 #include "XListSLinked.h"
 #include "XFileDescriptor.h"
@@ -159,13 +159,13 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
     // 仅在有实际活动时创建并投递事件
     if (actType != XSocketAct_Invalid && completionKey)
     {
-        XEventSockAct* event = XEventSockAct_create(ioCtx->socket, (XSocketActType)actType);
+        XEventSockAct* event = XEventSockAct_create(ioCtx->base.fd, (XSocketActType)actType);
         if (event)
         {
-            // 0 字节 + FD_READ 表示对端 FIN，发送关闭事件
-            if (bytesTransferred == 0 && (actType & XSocketAct_Read))
+            // 0 字节 + FD_READ 对套接字表示对端 FIN，发送关闭事件；对文件/串口则忽略
+            if (bytesTransferred == 0 && (actType & XSocketAct_Read) && ioCtx->base.type == XEventContextType_Type_Socket)
             {
-                XEvent* closeEvent = XEventSockClose_create(ioCtx->socket);
+                XEvent* closeEvent = XEventSockClose_create(ioCtx->base.fd);
                 if (closeEvent)
                 {
                     closeEvent->posted = true;
@@ -181,33 +181,28 @@ static void XEventDispatcherWin32_handleSocketMessage(XEventDispatcherWin32* dis
             XCoreApplication_postEvent((XObject*)completionKey, event, XEVENT_PRIORITY_NORMAL);
         }
     }
-    // 套接字监听器（XSocketNotifier）：通过 XFileDescriptor 查找
-    if (completionKey)
+    /* 套接字/串口设备 notifier 统一查找
+     * 通过 XEventContext 基类直接获取 xfd，无需再猜设备类型 */
     {
-        XFd xfd = XAbstractSocket_fd((XAbstractSocket*)completionKey);
-        if (xfd >= 0)
+        XFd xfd = ((XEventContext*)overlapped)->fd;
+        if (xfd >= 0 && dispatcher->m_class.d_ptr && dispatcher->m_class.d_ptr->notifiers)
         {
-            XFileDescriptor* desc = XFd_get(xfd);
-            if (desc && desc->handle)
+            XVector* v = (XVector*)XHashMap_value_base(dispatcher->m_class.d_ptr->notifiers, &xfd);
+            if (v)
             {
-                XNetworkSocketPrivate* sp = (XNetworkSocketPrivate*)desc->handle;
-                if (sp && sp->notifiers)
+                for_each_iterator(v, XVector, it)
                 {
-                    XVector* notifiers = sp->notifiers;
-                    for_each_iterator(notifiers, XVector, it)
+                    XSocketNotifier** lp = XVector_iterator_data(&it);
+                    if (lp && *lp)
                     {
-                        XSocketNotifier** lp = XVector_iterator_data(&it);
-                        if (lp && *lp)
+                        XSocketNotifier* notifier = *lp;
+                        if (!XSocketNotifier_isEnabled(notifier))
+                            continue;
+                        XSocketNotifierType t = XSocketNotifier_type(notifier);
+                        if ((t & XSocketNotifier_Read && ioCtx->eventMask & FD_READ) ||
+                            (t & XSocketNotifier_Write && ioCtx->eventMask & FD_WRITE))
                         {
-                            XSocketNotifier* notifier = *lp;
-                            if (!XSocketNotifier_isEnabled(notifier))
-                                continue;
-                            XSocketNotifierType t = XSocketNotifier_type(notifier);
-                            if ((t & XSocketNotifier_Read && ioCtx->eventMask & FD_READ) ||
-                                (t & XSocketNotifier_Write && ioCtx->eventMask & FD_WRITE))
-                            {
-                                XSocketNotifier_activated_signal(notifier, ioCtx->socket, t);
-                            }
+                            XSocketNotifier_activated_signal(notifier, ioCtx->socket, t);
                         }
                     }
                 }
@@ -274,35 +269,44 @@ static void IOCP_handle(XAbstractEventDispatcher* dispatcher)
 
     if (overlapped != NULL) 
     {
+        XEventContext* ctx = (XEventContext*)overlapped;
         XEventContext_IOCP* ioCtx = (XEventContext_IOCP*)overlapped;
         if(success)
         {
-            if (ioCtx->type == XEventContextType_Type_Timer)
+            if (ctx->type == XEventContextType_Type_Timer)
             {
-                XEventDispatcherWin32_handleTimerMessage(dispatcher, ((XEventContext_Timer*)ioCtx)->id);
+                XEventDispatcherWin32_handleTimerMessage(dispatcher, (UINT_PTR)ctx->fd);
             }
-            else if (ioCtx->type == XEventContextType_Type_Socket || ioCtx->type == XEventContextType_Type_File)
+            else if (ctx->type == XEventContextType_Type_Socket || ctx->type == XEventContextType_Type_File)
             {
                 XEventDispatcherWin32_handleSocketMessage(dispatcher, bytesTransferred, completionKey, overlapped);
             }
         }
         else
         {
-            // I/O 失败完成，仅处理连接关闭错误码
+            // I/O 失败完成，处理连接/设备断开
             DWORD lastError = GetLastError();
-            if (lastError == ERROR_NETNAME_DELETED ||      // 64
-                lastError == ERROR_OPERATION_ABORTED ||    // 995
-                lastError == WSAENETRESET ||               // 10052
-                lastError == WSAECONNRESET)                // 10054
+            bool isConnectionLost = false;
+            if (ioCtx->base.type == XEventContextType_Type_Socket)
             {
-                if (completionKey)
-                {
-                    XEvent* closeEvent = XEventSockClose_create(ioCtx->socket);
-                    if (closeEvent) {
-                        closeEvent->posted = true;
-                        closeEvent->spontaneous = true;
-                        XCoreApplication_postEvent((XObject*)completionKey, closeEvent, XEVENT_PRIORITY_NORMAL);
-                    }
+                isConnectionLost = (lastError == ERROR_NETNAME_DELETED ||      // 64
+                                    lastError == WSAENETRESET ||               // 10052
+                                    lastError == WSAECONNRESET ||              // 10054
+                                    lastError == ERROR_OPERATION_ABORTED);     // 995
+            }
+            else if (ioCtx->base.type == XEventContextType_Type_File)
+            {
+                isConnectionLost = (lastError == ERROR_OPERATION_ABORTED ||    // 995
+                                    lastError == ERROR_DEVICE_NOT_CONNECTED || // 1167
+                                    lastError == ERROR_DEVICE_REMOVED);        // 1617
+            }
+            if (isConnectionLost && completionKey)
+            {
+                XEvent* closeEvent = XEventSockClose_create(ioCtx->base.fd);
+                if (closeEvent) {
+                    closeEvent->posted = true;
+                    closeEvent->spontaneous = true;
+                    XCoreApplication_postEvent((XObject*)completionKey, closeEvent, XEVENT_PRIORITY_NORMAL);
                 }
             }
         }
@@ -461,17 +465,17 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
     //XPrintf("事件调度器清理\n");
     XEventDispatcherWin32* self = (XEventDispatcherWin32*)obj;
     MainThreadDataPrivate* d = PlatformPrivate(obj);
-    if (XAbstractEventDispatcher_isMainThread(self)&& d)
-    {
-        // 清理本地过滤器
-        XAbstractEventDispatcherPrivate_deinit(d);
-        XFree_System(d);
-    }
-    else if(d)
-    {
-        XAbstractEventDispatcherPrivate_deinit(d);
-        XFree_System(d);
-    }
+    //if (XAbstractEventDispatcher_isMainThread(self)&& d)
+    //{
+    //    // 清理本地过滤器
+    //    XAbstractEventDispatcherPrivate_deinit(d);
+    //    XFree_System(d);
+    //}
+    //else if(d)
+    //{
+    //    XAbstractEventDispatcherPrivate_deinit(d);
+    //    XFree_System(d);
+    //}
    
 
     if (self->internalHwnd) {
@@ -480,7 +484,7 @@ static void VXEventDispatcherWin32_deinit(XObject* obj)
     }
 
    
-    PlatformPrivate(obj) = NULL;
+    //PlatformPrivate(obj) = NULL;
     XClass_Deinit_Parent(XAbstractEventDispatcher, obj);
 }
 

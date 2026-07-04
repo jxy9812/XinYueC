@@ -68,30 +68,25 @@ static struct XRingBuffer* getOrCreateBuffer(struct XVector* buffers, int channe
 
 // --- Public API Implementation ---
 
-XIODevicePrivate* XIODevicePrivate_create(XIODevice* q) {
-    XIODevicePrivate* d = (XIODevicePrivate*)XMalloc_System(sizeof(XIODevicePrivate));
-    if (!d) return NULL;
+void XIODevicePrivate_init(XIODevicePrivate* d, struct XIODevice* q)
+{
+    if (!d) return;
     memset(d, 0, sizeof(XIODevicePrivate));
-
     d->readBuffers = XVector_Create(struct XRingBuffer*);
     d->writeBuffers = XVector_Create(struct XRingBuffer*);
-    d->errorString = NULL;
-    d->transactionStarted = false;
-    d->aboutToCloseEmitted = false;
     d->q_ptr = q;
-
-    if (!d->readBuffers || !d->writeBuffers) {
-        XIODevicePrivate_delete(d);
-        return NULL;
-    }
-
-    return d;
+    d->xfd = XFD_INVALID;
 }
 
-void XIODevicePrivate_delete(XIODevicePrivate* d) {
+void XIODevicePrivate_deinit(XIODevicePrivate* d)
+{
     if (!d) return;
 
-    // 销毁所有读缓冲区
+    if (d->xfd >= 0) {
+        XFd_free(d->xfd);
+        d->xfd = XFD_INVALID;
+    }
+
     if (d->readBuffers) {
         for (size_t i = 0; i < XVector_size_base(d->readBuffers); ++i) {
             XRingBuffer** bufPtr = (XRingBuffer**)XVector_at_base(d->readBuffers, i);
@@ -100,9 +95,9 @@ void XIODevicePrivate_delete(XIODevicePrivate* d) {
             }
         }
         XVector_delete_base(d->readBuffers);
+        d->readBuffers = NULL;
     }
 
-    // 销毁所有写缓冲区
     if (d->writeBuffers) {
         for (size_t i = 0; i < XVector_size_base(d->writeBuffers); ++i) {
             XRingBuffer** bufPtr = (XRingBuffer**)XVector_at_base(d->writeBuffers, i);
@@ -111,9 +106,30 @@ void XIODevicePrivate_delete(XIODevicePrivate* d) {
             }
         }
         XVector_delete_base(d->writeBuffers);
+        d->writeBuffers = NULL;
     }
 
-    if (d->errorString) XString_delete_base(d->errorString);
+    if (d->errorString) {
+        XString_delete_base(d->errorString);
+        d->errorString = NULL;
+    }
+}
+
+XIODevicePrivate* XIODevicePrivate_create(XIODevice* q) {
+    XIODevicePrivate* d = (XIODevicePrivate*)XMalloc_System(sizeof(XIODevicePrivate));
+    if (!d) return NULL;
+    XIODevicePrivate_init(d, q);
+    if (!d->readBuffers || !d->writeBuffers) {
+        XIODevicePrivate_deinit(d);
+        XFree_System(d);
+        return NULL;
+    }
+    return d;
+}
+
+void XIODevicePrivate_delete(XIODevicePrivate* d) {
+    if (!d) return;
+    XIODevicePrivate_deinit(d);
     XFree_System(d);
 }
 
