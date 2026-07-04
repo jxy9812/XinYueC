@@ -1,5 +1,6 @@
 #include "XFileDevice.h"
 #include "XFileSystem_platform.h"
+#include "XIODevice_Protected.h"  /* XIODevice_setFd */
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,7 +16,7 @@ static void VXFileDevice_deinit(XFileDevice* device)
     if (!device) return;
 
     // 关闭文件（调用 close 虚函数，由子类实现具体关闭逻辑）
-    if (device->m_fileHandle >= 0) {
+    if (XIODevice_fd(&device->m_parent) >= 0) {
         XIODevice_close_base(&device->m_parent);
     }
 
@@ -38,10 +39,10 @@ static bool VXFileDevice_isSequential(const XFileDevice* device)
  */
 static int64_t VXFileDevice_pos(const XFileDevice* device)
 {
-    if (!device || device->m_fileHandle < 0) {
+    if (!device || XIODevice_fd(&device->m_parent) < 0) {
         return 0;
     }
-    return XFileSystem_pos(device->m_fileHandle);
+    return XFileSystem_pos(XIODevice_fd(&device->m_parent));
 }
 
 /**
@@ -49,7 +50,7 @@ static int64_t VXFileDevice_pos(const XFileDevice* device)
  */
 static int64_t VXFileDevice_size(const XFileDevice* device)
 {
-    if (!device || device->m_fileHandle < 0) {
+    if (!device || XIODevice_fd(&device->m_parent) < 0) {
         return -1;
     }
     
@@ -60,7 +61,7 @@ static int64_t VXFileDevice_size(const XFileDevice* device)
     
 
     XFileStat stat;
-    if (!XFileSystem_fstat(device->m_fileHandle, &stat)) return -1;
+    if (!XFileSystem_fstat(XIODevice_fd(&device->m_parent), &stat)) return -1;
     return stat.size;
 }
 
@@ -69,7 +70,7 @@ static int64_t VXFileDevice_size(const XFileDevice* device)
  */
 static bool VXFileDevice_seek(XFileDevice* device, int64_t pos)
 {
-    if (!device || device->m_fileHandle < 0 || pos < 0) {
+    if (!device || XIODevice_fd(&device->m_parent) < 0 || pos < 0) {
         return false;
     }
     
@@ -79,7 +80,7 @@ static bool VXFileDevice_seek(XFileDevice* device, int64_t pos)
     }
     
 
-    return XFileSystem_seek(device->m_fileHandle, pos);
+    return XFileSystem_seek(XIODevice_fd(&device->m_parent), pos);
 }
 
 /**
@@ -87,7 +88,7 @@ static bool VXFileDevice_seek(XFileDevice* device, int64_t pos)
  */
 static bool VXFileDevice_atEnd(const XFileDevice* device)
 {
-    if (!device || device->m_fileHandle < 0) {
+    if (!device || XIODevice_fd(&device->m_parent) < 0) {
         return true;
     }
     
@@ -106,7 +107,7 @@ static bool VXFileDevice_atEnd(const XFileDevice* device)
  */
 static bool VXFileDevice_reset(XFileDevice* device)
 {
-    if (!device || device->m_fileHandle < 0) {
+    if (!device || XIODevice_fd(&device->m_parent) < 0) {
         return false;
     }
     
@@ -122,7 +123,7 @@ static bool VXFileDevice_reset(XFileDevice* device)
  */
 static int64_t VXFileDevice_bytesAvailable(const XFileDevice* device)
 {
-    if (!device || device->m_fileHandle < 0) {
+    if (!device || XIODevice_fd(&device->m_parent) < 0) {
         return 0;
     }
     
@@ -151,7 +152,7 @@ static int64_t VXFileDevice_readData(XFileDevice* device, char* data, int64_t ma
         return -1;
     }
     
-    if (device->m_fileHandle < 0) {
+    if (XIODevice_fd(&device->m_parent) < 0) {
         return -1;
     }
     
@@ -159,7 +160,7 @@ static int64_t VXFileDevice_readData(XFileDevice* device, char* data, int64_t ma
         return -1;
     }
 
-    return XFileSystem_read(device->m_fileHandle, data, maxlen);
+    return XFileSystem_read(XIODevice_fd(&device->m_parent), data, maxlen);
 }
 
 /**
@@ -171,7 +172,7 @@ static int64_t VXFileDevice_writeData(XFileDevice* device, const char* data, int
         return -1;
     }
     
-    if (device->m_fileHandle < 0) {
+    if (XIODevice_fd(&device->m_parent) < 0) {
         return -1;
     }
     
@@ -179,7 +180,7 @@ static int64_t VXFileDevice_writeData(XFileDevice* device, const char* data, int
         return -1;
     }
     
-    return XFileSystem_write(device->m_fileHandle, data, len);
+    return XFileSystem_write(XIODevice_fd(&device->m_parent), data, len);
 }
 
 /**
@@ -191,7 +192,7 @@ static int64_t VXFileDevice_readLineData(XFileDevice* device, char* data, int64_
         return -1;
     }
     
-    if (device->m_fileHandle < 0) {
+    if (XIODevice_fd(&device->m_parent) < 0) {
         return -1;
     }
     
@@ -200,7 +201,7 @@ static int64_t VXFileDevice_readLineData(XFileDevice* device, char* data, int64_
         char c;
     
         while (bytesRead < maxlen - 1) {
-        int64_t n = XFileSystem_read(device->m_fileHandle, &c, 1);
+        int64_t n = XFileSystem_read(XIODevice_fd(&device->m_parent), &c, 1);
         if (n <= 0) {
             break;
         }
@@ -226,7 +227,7 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
         return 0;
     }
     
-    if (device->m_fileHandle < 0) {
+    if (XIODevice_fd(&device->m_parent) < 0) {
         return 0;
     }
     
@@ -239,7 +240,7 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
             int64_t remaining = maxSize - skipped;
             int64_t toRead = (remaining > (int64_t)sizeof(temp)) ? (int64_t)sizeof(temp) : remaining;
 
-            int64_t n = XFileSystem_read(device->m_fileHandle, temp, toRead);
+            int64_t n = XFileSystem_read(XIODevice_fd(&device->m_parent), temp, toRead);
             if (n <= 0) break;
             skipped += n;
         }
@@ -258,7 +259,7 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
     
     int64_t actualSkip = newPos - currentPos;
     if (actualSkip > 0) {
-        XFileSystem_seek(device->m_fileHandle, newPos);
+        XFileSystem_seek(XIODevice_fd(&device->m_parent), newPos);
     }
     
     return actualSkip;
@@ -378,7 +379,7 @@ void XFileDevice_init(XFileDevice* device)
 
     // 初始化成员
     device->m_error = XFileDevice_NoError;
-    device->m_fileHandle = -1;
+    XIODevice_setFd(&device->m_parent, XFD_INVALID);
     device->m_handleFlags = XFileDevice_DontCloseHandle;
     device->m_cachedSize = -1;  // -1 表示无缓存
 }
@@ -438,23 +439,23 @@ bool XFileDevice_setPermissions_base(XFileDevice* device, XFilePermissions permi
 
 bool XFileDevice_flush(XFileDevice* device)
 {
-    if (!device || device->m_fileHandle < 0) return false;
-    return XFileSystem_flush(device->m_fileHandle);
+    if (!device || XIODevice_fd(&device->m_parent) < 0) return false;
+    return XFileSystem_flush(XIODevice_fd(&device->m_parent));
 }
 
-intptr_t XFileDevice_handle(const XFileDevice* device)
+XFd XFileDevice_handle(const XFileDevice* device)
 {
-    if (!device) return -1;
-    return device->m_fileHandle;
+    if (!device) return XFD_INVALID;
+    return XIODevice_fd(&device->m_parent);
 }
 
 XDateTime XFileDevice_fileTime(XFileDevice* device, XFileTime time)
 {
     XDateTime result = XDateTime_create();
-    if (!device || device->m_fileHandle < 0) return result;
+    if (!device || XIODevice_fd(&device->m_parent) < 0) return result;
     
     XFileStat stat;
-    if (!XFileSystem_fstat(device->m_fileHandle, &stat)) return result;
+    if (!XFileSystem_fstat(XIODevice_fd(&device->m_parent), &stat)) return result;
     
     int64_t timestamp = 0;
     switch (time) {
@@ -472,17 +473,17 @@ XDateTime XFileDevice_fileTime(XFileDevice* device, XFileTime time)
 
 bool XFileDevice_setFileTime(XFileDevice* device, const XDateTime* newDate, XFileTime time)
 {
-    if (!device || device->m_fileHandle < 0 || !newDate) return false;
+    if (!device || XIODevice_fd(&device->m_parent) < 0 || !newDate) return false;
     int64_t timestamp = XDateTime_toSecsSinceEpoch(newDate);
-    return XFileSystem_setFileTime(device->m_fileHandle, time, timestamp);
+    return XFileSystem_setFileTime(XIODevice_fd(&device->m_parent), time, timestamp);
 }
 
 void* XFileDevice_map(XFileDevice* device, int64_t offset, int64_t size, XFileDeviceMemoryMapFlags flags)
 {
-    if (!device || device->m_fileHandle < 0) return NULL;
+    if (!device || XIODevice_fd(&device->m_parent) < 0) return NULL;
     bool writable = (device->m_parent.m_openMode & XIODevice_WriteOnly) != 0;
     (void)flags;  // MapPrivateOption 暂时不支持
-    return XFileSystem_map(device->m_fileHandle, offset, size, writable);
+    return XFileSystem_map(XIODevice_fd(&device->m_parent), offset, size, writable);
 }
 
 bool XFileDevice_unmap(XFileDevice* device, void* address)

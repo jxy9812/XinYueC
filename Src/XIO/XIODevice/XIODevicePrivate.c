@@ -75,17 +75,17 @@ void XIODevicePrivate_init(XIODevicePrivate* d, struct XIODevice* q)
     d->readBuffers = XVector_Create(struct XRingBuffer*);
     d->writeBuffers = XVector_Create(struct XRingBuffer*);
     d->q_ptr = q;
-    d->xfd = XFD_INVALID;
+    //d->xfd = XFD_INVALID;
 }
 
 void XIODevicePrivate_deinit(XIODevicePrivate* d)
 {
     if (!d) return;
 
-    if (d->xfd >= 0) {
+   /* if (d->xfd >= 0) {
         XFd_free(d->xfd);
         d->xfd = XFD_INVALID;
-    }
+    }*/
 
     if (d->readBuffers) {
         for (size_t i = 0; i < XVector_size_base(d->readBuffers); ++i) {

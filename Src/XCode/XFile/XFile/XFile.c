@@ -1,5 +1,6 @@
 #include "XFile.h"
 #include "XFileSystem_platform.h"
+#include "XIODevice_Protected.h"  /* XIODevice_setFd */
 #include <stdlib.h>
 #include <string.h>
 
@@ -28,14 +29,14 @@ static bool VXFile_open(XIODevice* device, XIODeviceBaseMode mode)
     if (!file || !file->m_fileName) return false;
     
     int error = 0;
-    intptr_t fd = XFileSystem_open(file->m_fileName, (int)mode, &error);
+    XFd fd = XFileSystem_open(file->m_fileName, (int)mode, &error);
     
     if (fd < 0) {
         file->m_parent.m_error = error;
         return false;
     }
     
-    file->m_parent.m_fileHandle = fd;
+    XIODevice_setFd(device, fd);
     file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
     file->m_parent.m_error = XFileDevice_NoError;
     device->m_openMode = mode;
@@ -45,23 +46,23 @@ static bool VXFile_open(XIODevice* device, XIODeviceBaseMode mode)
 static void VXFile_close(XIODevice* device)
 {
     XFile* file = (XFile*)device;
-    if (!file || file->m_parent.m_fileHandle < 0) return;
+    if (!file || XIODevice_fd(device) < 0) return;
     
     XIODevice_aboutToClose_signal(device);
     
     if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
-        XFileSystem_close(file->m_parent.m_fileHandle);
+        XFileSystem_close(XIODevice_fd(device));
     }
     
-    file->m_parent.m_fileHandle = -1;
+    XIODevice_setFd(device, XFD_INVALID);
     device->m_openMode = XIODevice_NotOpen;
     file->m_parent.m_cachedSize = -1;
 }
 
 static bool VXFile_resize(XFileDevice* device, int64_t sz)
 {
-    if (!device || device->m_fileHandle < 0) return false;
-    return XFileSystem_resize(device->m_fileHandle, sz);
+    if (!device || XIODevice_fd(&device->m_parent) < 0) return false;
+    return XFileSystem_resize(XIODevice_fd(&device->m_parent), sz);
 }
 
 static XFilePermissions VXFile_permissions(const XFileDevice* device)
@@ -124,23 +125,23 @@ XVtable* XFile_class_init(void)
  * 构造与析构
  * ============================================================================ */
 
-XFile* XFile_create_1(void)
+XFile* XFile_create(void)
 {
     XFile* file = (XFile*)XMalloc_System(sizeof(XFile));
     if (!file) return NULL;
-    XFile_init_1(file);
+    XFile_init(file);
     Set_Class_MemoryFree(file, XFree_System);
     return file;
 }
 
 XFile* XFile_create_2(const XString* name)
 {
-    XFile* file = XFile_create_1();
+    XFile* file = XFile_create();
     if (file && name) XFile_setFileName(file, name);
     return file;
 }
 
-void XFile_init_1(XFile* file)
+void XFile_init(XFile* file)
 {
     if (!file) return;
     XFileDevice_init(&file->m_parent);
@@ -150,19 +151,9 @@ void XFile_init_1(XFile* file)
 
 void XFile_init_2(XFile* file, const XString* name)
 {
-    XFile_init_1(file);
+    XFile_init(file);
     if (file && name) XFile_setFileName(file, name);
 }
-
-//void XFile_deinit_base(XFile* file)
-//{
-//    if (!file) return;
-//    if (file->m_fileName) {
-//        XString_delete_base(file->m_fileName);
-//        file->m_fileName = NULL;
-//    }
-//    XClass_Deinit_Parent(XFileDevice, file);
-//}
 
 /* ============================================================================
  * 文件名操作
@@ -171,7 +162,7 @@ void XFile_init_2(XFile* file, const XString* name)
 void XFile_setFileName(XFile* file, const XString* name)
 {
     if (!file || !name) return;
-    if (file->m_parent.m_fileHandle >= 0) return;
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) return;
     
     if (file->m_fileName) XString_delete_base(file->m_fileName);
     file->m_fileName = XString_create_copy(name);
@@ -191,10 +182,10 @@ bool XFile_open_2(XFile* file, XIODeviceBaseMode mode, XFilePermissions permissi
 bool XFile_open_3(XFile* file, int fd, XIODeviceBaseMode mode, XFileDeviceFileHandleFlags handleFlags)
 {
     if (!file || fd < 0) return false;
-    if (file->m_parent.m_fileHandle >= 0) {
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
         XIODevice_close_base(&file->m_parent.m_parent);
     }
-    file->m_parent.m_fileHandle = fd;
+    XIODevice_setFd(&file->m_parent.m_parent, (XFd)fd);
     file->m_parent.m_handleFlags = handleFlags;
     file->m_parent.m_error = XFileDevice_NoError;
     file->m_parent.m_parent.m_openMode = mode;

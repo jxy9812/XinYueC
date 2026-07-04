@@ -79,20 +79,20 @@ typedef enum {
  * @param error 输出错误码（可为NULL）
  * @return 文件句柄，失败返回-1
  */
-intptr_t XFileSystem_open(const XString* path, int mode, int* error);
+XFd XFileSystem_open(const XString* path, int mode, int* error);
 
 /**
  * @brief 关闭文件
  * @param fd 文件句柄
  */
-void XFileSystem_close(intptr_t fd);
+void XFileSystem_close(XFd fd);
 
 /**
  * @brief 获取文件当前位置
  * @param fd 文件句柄
  * @return 当前位置，失败返回-1
  */
-int64_t XFileSystem_pos(intptr_t fd);
+int64_t XFileSystem_pos(XFd fd);
 
 /**
  * @brief 移动文件指针
@@ -100,7 +100,7 @@ int64_t XFileSystem_pos(intptr_t fd);
  * @param pos 目标位置
  * @return 成功返回true
  */
-bool XFileSystem_seek(intptr_t fd, int64_t pos);
+bool XFileSystem_seek(XFd fd, int64_t pos);
 
 /**
  * @brief 读取文件数据
@@ -109,7 +109,7 @@ bool XFileSystem_seek(intptr_t fd, int64_t pos);
  * @param len 最大读取长度
  * @return 实际读取字节数，-1表示错误
  */
-int64_t XFileSystem_read(intptr_t fd, void* buf, int64_t len);
+int64_t XFileSystem_read(XFd fd, void* buf, int64_t len);
 
 /**
  * @brief 写入文件数据
@@ -118,14 +118,14 @@ int64_t XFileSystem_read(intptr_t fd, void* buf, int64_t len);
  * @param len 数据长度
  * @return 实际写入字节数，-1表示错误
  */
-int64_t XFileSystem_write(intptr_t fd, const void* buf, int64_t len);
+int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len);
 
 /**
  * @brief 刷新文件缓冲区
  * @param fd 文件句柄
  * @return 成功返回true
  */
-bool XFileSystem_flush(intptr_t fd);
+bool XFileSystem_flush(XFd fd);
 
 /**
  * @brief 调整文件大小
@@ -133,7 +133,7 @@ bool XFileSystem_flush(intptr_t fd);
  * @param size 新大小
  * @return 成功返回true
  */
-bool XFileSystem_resize(intptr_t fd, int64_t size);
+bool XFileSystem_resize(XFd fd, int64_t size);
 
 /* ============================================================================
  * 二、文件属性操作（2个）- 必需实现
@@ -153,7 +153,7 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat);
  * @param stat 输出文件属性结构
  * @return 成功返回true
  */
-bool XFileSystem_fstat(intptr_t fd, XFileStat* stat);
+bool XFileSystem_fstat(XFd fd, XFileStat* stat);
 
 /* ============================================================================
  * 三、文件系统操作（4个）- 必需实现
@@ -325,7 +325,7 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  * @param writable 是否可写
  * @return 映射地址，失败返回NULL
  */
-void* XFileSystem_map(intptr_t fd, int64_t offset, int64_t size, bool writable);
+void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, bool writable);
 
 /**
  * @brief 取消内存映射

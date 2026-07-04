@@ -43,6 +43,14 @@ int64_t XIODevice_skipData_base(XIODevice* self, int64_t maxSize);
  * @return 实际读取的字节数
  */
 int64_t XIODevice_readLineData_base(XIODevice* self, char* data, int64_t maxlen);
+
+/**
+ * @brief 设置设备的 XFd 文件描述符（仅供子类使用）
+ * @param self 指向 XIODevice 对象的指针
+ * @param fd 要设置的文件描述符
+ */
+void XIODevice_setFd(XIODevice* self, XFd fd);
+
 #ifdef __cplusplus
 }
 #endif

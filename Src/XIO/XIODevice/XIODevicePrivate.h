@@ -31,7 +31,7 @@ typedef struct XIODevicePrivate {
     // --- 错误 & 状态 ---
     struct XString* errorString;        /**< @brief 存储最近一次 I/O 操作的错误信息。 */
     struct XIODevice* q_ptr;            /**< @brief 反向指针，指向公有接口 XIODevice 实例。 */
-    XFd      xfd;                       /**< @brief XFileDescriptor 统一标识符（继承层级使用） */
+
 } XIODevicePrivate;
 
 /**

@@ -167,7 +167,7 @@ static bool open_file_for_thread(XChar_ThreadFile* tf)
     XString* xpath = XString_create_utf8(XCHAR_COMPACT_PATH);
     if (!xpath) return false;
     
-    tf->file = XFile_create_1();
+    tf->file = XFile_create();
     if (!tf->file)
     {
         XString_delete_base(xpath);
@@ -256,7 +256,7 @@ static XFile* open_binary_file(void)
     XString* xpath = XString_create_utf8(XCHAR_COMPACT_PATH);
     if (!xpath) return NULL;
 
-    s_files.file = XFile_create_1();
+    s_files.file = XFile_create();
     if (!s_files.file) { XString_delete_base(xpath); return NULL; }
 
     XFile_setFileName(s_files.file, xpath);

@@ -6,7 +6,7 @@ extern "C" {
 #include<stdint.h>
 #include<stdbool.h>
 #include"XObject.h"
-#include"XFileDescriptor.h"
+//#include"XFileDescriptor.h"
 //缓冲区大小
 #define XBuffSize						256
 #define XIODevice_VTABLE_SIZE		(XCLASS_VTABLE_GET_SIZE(XIODevice))       //XIODeviceBase虚函数表大小
@@ -51,7 +51,7 @@ typedef enum /*XIODevice*/
 typedef struct XIODevice
 {
 	XObject m_class;//继承类
-	//void* device;//设备
+    XFd      m_fd;                       /**< @brief XFileDescriptor 统一标识符（继承层级使用） */
     bool m_textModeEnabled;
     uint8_t m_openMode;//打开模式
     uint8_t m_currentReadChannel;       // ← 多通道支持

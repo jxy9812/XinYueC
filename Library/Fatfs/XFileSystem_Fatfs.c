@@ -8,8 +8,10 @@
 #include "XFileDevice.h"
 #include "XMemory.h"
 #include "XString.h"
-#include "XDateTime.h"   /* XDateTime_currentDateTime 等 */
-#include "ff.h"           /* FatFs API */
+#include "XDateTime.h"        /* XDateTime_currentDateTime 等 */
+#include "XTypes.h"           /* XFd, XFD_INVALID */
+#include "XFileDescriptor.h"  /* XFd_alloc, XFd_free, XFd_handle */
+#include "ff.h"               /* FatFs API */
 #include <string.h>
 
 /* ============================================================================
@@ -31,14 +33,10 @@ DWORD get_fattime(void)
 }
 
 /* ============================================================================
- * 句柄映射表 - 将 intptr_t fd 映射到 Fatfs FIL 对象
+ * 句柄映射表 - XFd 通过全局 XFileDescriptor 表管理，handle 存 FIL*
  * ============================================================================ */
 
-#define MAX_FILES XFILE_FATFS_MAX_FILES
 #define MAX_DIRS  XFILE_FATFS_MAX_DIRS
-
-static FIL*  g_fileTable[MAX_FILES];   /* NULL = 未分配，按需 XMalloc_System */
-static bool  g_fileInUse[MAX_FILES];
 
 static DIR*  g_dirTable[MAX_DIRS];     /* NULL = 未分配 */
 static FILINFO* g_dirInfo[MAX_DIRS];   /* NULL = 未分配 */
@@ -207,39 +205,24 @@ static bool XFATFS_convertPath(const XString* path, char* fatfsPath, size_t bufS
 }
 
 /* ============================================================================
- * 句柄表管理
+ * 句柄表管理 —— 通过全局 XFileDescriptor 表管理，handle 存 FIL*
  * ============================================================================ */
 
-static intptr_t XFATFS_allocFile(void)
+/** 通过 XFd 获取 Fatfs FIL 指针 */
+static FIL* XFATFS_getFile(XFd fd)
 {
-    for (int i = 0; i < MAX_FILES; i++) {
-        if (!g_fileInUse[i]) {
-            if (!g_fileTable[i]) {
-                g_fileTable[i] = (FIL*)XMalloc_System(sizeof(FIL));
-                if (!g_fileTable[i]) return -1;
-            }
-            memset(g_fileTable[i], 0, sizeof(FIL));
-            g_fileInUse[i] = true;
-            return (intptr_t)i;
-        }
-    }
-    return -1;
+    FIL* fp = (FIL*)XFd_handle(fd);
+    if (!fp || XFd_type(fd) != XFD_TYPE_FILE) return NULL;
+    return fp;
 }
 
-static FIL* XFATFS_getFile(intptr_t fd)
+/** 释放文件描述符（f_close + XFd_free + XFree_System） */
+static void XFATFS_freeFile(XFd fd)
 {
-    if (fd < 0 || fd >= MAX_FILES || !g_fileInUse[fd]) return NULL;
-    return g_fileTable[fd];
-}
-
-static void XFATFS_freeFile(intptr_t fd)
-{
-    if (fd >= 0 && fd < MAX_FILES && g_fileInUse[fd]) {
-        if (g_fileTable[fd]) {
-            f_close(g_fileTable[fd]);
-        }
-        g_fileInUse[fd] = false;
-    }
+    FIL* fp = (FIL*)XFd_handle(fd);
+    if (fp) f_close(fp);
+    XFd_free(fd);
+    if (fp) XFree_System(fp);
 }
 
 static intptr_t XFATFS_allocDir(void)
@@ -274,12 +257,12 @@ static DIR* XFATFS_getDir(intptr_t iter)
  * 一、核心文件操作（8个）
  * ============================================================================ */
 
-intptr_t XFileSystem_open(const XString* path, int mode, int* error)
+XFd XFileSystem_open(const XString* path, int mode, int* error)
 {
     char fatfsPath[512];
     if (!XFATFS_convertPath(path, fatfsPath, sizeof(fatfsPath))) {
         if (error) *error = XFileDevice_ResourceError;
-        return -1;
+        return XFD_INVALID;
     }
     
     BYTE fatfsMode = 0;
@@ -292,15 +275,17 @@ intptr_t XFileSystem_open(const XString* path, int mode, int* error)
     if (mode & XFileSystem_Append) fatfsMode |= FA_OPEN_APPEND;
     if (fatfsMode == 0) fatfsMode = FA_READ;
     
-    intptr_t fd = XFATFS_allocFile();
-    if (fd < 0) {
+    /* 按需分配 FIL 对象 */
+    FIL* fil = (FIL*)XMalloc_System(sizeof(FIL));
+    if (!fil) {
         if (error) *error = XFileDevice_ResourceError;
-        return -1;
+        return XFD_INVALID;
     }
+    memset(fil, 0, sizeof(FIL));
     
-    FRESULT fr = f_open(XFATFS_getFile(fd), fatfsPath, fatfsMode);
+    FRESULT fr = f_open(fil, fatfsPath, fatfsMode);
     if (fr != FR_OK) {
-        g_fileInUse[fd] = false;
+        XFree_System(fil);
         if (error) {
             switch (fr) {
                 case FR_NO_FILE: *error = XFileDevice_OpenError; break;
@@ -308,37 +293,46 @@ intptr_t XFileSystem_open(const XString* path, int mode, int* error)
                 default: *error = XFileDevice_OpenError; break;
             }
         }
-        return -1;
+        return XFD_INVALID;
+    }
+    
+    /* 分配全局 fd，handle 存 FIL* */
+    XFd fd = XFd_alloc(XFD_TYPE_FILE, fil, NULL);
+    if (fd == XFD_INVALID) {
+        f_close(fil);
+        XFree_System(fil);
+        if (error) *error = XFileDevice_ResourceError;
+        return XFD_INVALID;
     }
     
     if (mode & XFileSystem_Append) {
-        f_lseek(XFATFS_getFile(fd), f_size(XFATFS_getFile(fd)));
+        f_lseek(fil, f_size(fil));
     }
     
     if (error) *error = XFileDevice_NoError;
     return fd;
 }
 
-void XFileSystem_close(intptr_t fd)
+void XFileSystem_close(XFd fd)
 {
     XFATFS_freeFile(fd);
 }
 
-int64_t XFileSystem_pos(intptr_t fd)
+int64_t XFileSystem_pos(XFd fd)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp) return -1;
     return (int64_t)f_tell(fp);
 }
 
-bool XFileSystem_seek(intptr_t fd, int64_t pos)
+bool XFileSystem_seek(XFd fd, int64_t pos)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp || pos < 0) return false;
     return f_lseek(fp, (FSIZE_t)pos) == FR_OK;
 }
 
-int64_t XFileSystem_read(intptr_t fd, void* buf, int64_t len)
+int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp || !buf || len <= 0) return -1;
@@ -349,7 +343,7 @@ int64_t XFileSystem_read(intptr_t fd, void* buf, int64_t len)
     return (int64_t)bytesRead;
 }
 
-int64_t XFileSystem_write(intptr_t fd, const void* buf, int64_t len)
+int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp || !buf || len <= 0) return -1;
@@ -360,14 +354,14 @@ int64_t XFileSystem_write(intptr_t fd, const void* buf, int64_t len)
     return (int64_t)bytesWritten;
 }
 
-bool XFileSystem_flush(intptr_t fd)
+bool XFileSystem_flush(XFd fd)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp) return false;
     return f_sync(fp) == FR_OK;
 }
 
-bool XFileSystem_resize(intptr_t fd, int64_t size)
+bool XFileSystem_resize(XFd fd, int64_t size)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp || size < 0) return false;
@@ -432,7 +426,7 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat)
     return true;
 }
 
-bool XFileSystem_fstat(intptr_t fd, XFileStat* stat)
+bool XFileSystem_fstat(XFd fd, XFileStat* stat)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp || !stat) return false;
@@ -786,7 +780,7 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  * 九、内存映射（2个）- 不支持
  * ============================================================================ */
 
-void* XFileSystem_map(intptr_t fd, int64_t offset, int64_t size, bool writable)
+void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, bool writable)
 {
     FIL* fp = XFATFS_getFile(fd);
     if (!fp || size <= 0) return NULL;

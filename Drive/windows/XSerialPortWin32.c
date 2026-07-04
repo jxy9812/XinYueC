@@ -11,7 +11,7 @@
 #include "XAbstractEventDispatcher.h"
 #include "XIODevicePrivate.h"
 #include "IOCPInfo.h"
-
+#include "XIODevice_Protected.h"
 bool IOCP_bind(XSocketDescriptor socket, XObject* obj);
 bool XSerialPort_platform_applyConfig(XSerialPort* port);
 static DWORD toDCBRate(int32_t rate);
@@ -250,15 +250,15 @@ bool XSerialPort_platform_open(XSerialPort* port, XIODeviceBaseMode mode) {
     port->isOpen = true;
 
     /* 分配 XFileDescriptor 统一标识符 */
-    XIODevicePrivate* d = ((XIODevice*)port)->m_d;
-    if (d->xfd == XFD_INVALID) {
-        d->xfd = XFd_alloc(XFD_TYPE_SERIAL, priv, (XIODevice*)port);
+    //XIODevicePrivate* d = ((XIODevice*)port)->m_d;
+    if (XIODevice_fd((XIODevice*)port) == XFD_INVALID) {
+        XIODevice_setFd((XIODevice*)port, XFd_alloc(XFD_TYPE_SERIAL, priv, (XIODevice*)port));
     }
 
     //打开成功发起异步接收
     memset(&priv->read, 0, sizeof(OVERLAPPED));
     priv->read.base.type = XEventContextType_Type_File;
-    priv->read.base.fd = priv->base.xfd;
+    priv->read.base.fd = XIODevice_fd((XIODevice*)port);
     priv->read.buffer = priv->readBuff;
     priv->read.bufferSize = BUFFSIZE;
     priv->read.eventMask = FD_READ;
@@ -313,7 +313,7 @@ int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t 
     {
         memset(&priv->write, 0, sizeof(OVERLAPPED));
         priv->write.base.type = XEventContextType_Type_File;
-        priv->write.base.fd = priv->base.xfd;
+        priv->write.base.fd = XIODevice_fd((XIODevice*)port);
         priv->write.buffer = priv->writeBuff;
         priv->write.bufferSize = BUFFSIZE;
         priv->write.eventMask = FD_WRITE;

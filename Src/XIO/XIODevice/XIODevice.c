@@ -30,6 +30,7 @@ void XIODevice_init(XIODevice* io)
 	XObject_init(io);
 	XClassGetVtable(io) = XIODevice_class_init();
 	// 为 XIODevice 分配并初始化其私有数据
+	io->m_fd = XFD_INVALID;
 	io->m_d = XIODevicePrivate_create(io);
 	io->m_currentReadChannel = XIO_DEFAULT_CHANNEL_ID;
 	io->m_currentWriteChannel = XIO_DEFAULT_CHANNEL_ID;
@@ -37,7 +38,12 @@ void XIODevice_init(XIODevice* io)
 
 XFd XIODevice_fd(const XIODevice* io)
 {
-	return ((io) && ((XIODevice*)io)->m_d ? ((XIODevice*)io)->m_d->xfd : XFD_INVALID);
+	return io?io->m_fd: XFD_INVALID;
+}
+
+void XIODevice_setFd(XIODevice* self, XFd fd)
+{
+	if (self) self->m_fd = fd;
 }
 
 XIODeviceBaseMode XIODevice_openMode(const XIODevice* self)

@@ -5,6 +5,7 @@
 #include "XMemory.h"
 #include "XIODevicePrivate.h"
 #include "XCoreApplication.h"
+#include "XFileDescriptor.h"
 #include "XDateTime.h"
 #include <string.h>
 #include <assert.h>
@@ -68,6 +69,10 @@ void VXIODevice_deinit(XIODevice* obj)
 	if (self->m_d) {
 		XIODevicePrivate_delete(self->m_d); // 直接调用新的 delete 函数
 		self->m_d = NULL;
+	}
+	 if (obj->m_fd >= 0) {
+		XFd_free(obj->m_fd);
+		obj->m_fd = XFD_INVALID;
 	}
 	// 释放父对象
 	XClass_Deinit_Parent(XObject, obj);

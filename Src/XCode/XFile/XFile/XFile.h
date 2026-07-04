@@ -60,7 +60,7 @@ XVtable* XFile_class_init(void);
  * @brief 创建 XFile 对象
  * @return XFile 对象指针，失败返回 NULL
  */
-XFile* XFile_create_1(void);
+XFile* XFile_create(void);
 
 /**
  * @brief 创建 XFile 对象并设置文件名
@@ -73,7 +73,7 @@ XFile* XFile_create_2(const XString* name);
  * @brief 初始化 XFile 对象
  * @param file XFile 对象指针
  */
-void XFile_init_1(XFile* file);
+void XFile_init(XFile* file);
 
 /**
  * @brief 初始化 XFile 对象并设置文件名

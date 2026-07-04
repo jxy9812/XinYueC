@@ -50,7 +50,7 @@ void XFileTest()
     XPrintf_3("========== 1. 基本创建与打开 ==========\n");
 
     // 1.1 创建空文件对象
-    XFile* file1 = XFile_create_1();
+    XFile* file1 = XFile_create();
     if (file1) {
         XPrintf_3("创建空 XFile 对象: 成功\n");
         XFile_deleteLater(file1);

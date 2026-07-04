@@ -100,7 +100,6 @@ typedef struct XFileDevice {
     
     /* 文件设备特有成员 */
     XFileDeviceError m_error;         /**< 最后的错误码 */
-    intptr_t m_fileHandle;            /**< 文件句柄（-1 表示无效） */
     XFileDeviceFileHandleFlags m_handleFlags; /**< 句柄标志 */
     int64_t m_cachedSize;             /**< 缓存的文件大小 */
 } XFileDevice;
@@ -224,7 +223,7 @@ bool XFileDevice_flush(XFileDevice* device);
  * @param device XFileDevice 对象指针
  * @return 文件句柄，失败返回 -1
  */
-intptr_t XFileDevice_handle(const XFileDevice* device);
+XFd XFileDevice_handle(const XFileDevice* device);
 
 /* ============================================================================
  * 文件时间操作（非虚函数，平台相关实现）

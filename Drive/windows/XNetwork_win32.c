@@ -15,6 +15,7 @@
 /* ====== 项目头文件 ====== */
 #include "XNetwork_platform.h"
 #include "XIODevice.h"
+#include "XIODevice_Protected.h"
 #include "XIODevicePrivate.h"
 #include "IOCPInfo.h"
 #include "XMemory.h"
@@ -332,10 +333,10 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv)
     }
 
     if (priv->owner) {
-        XFd xfd = ((XIODevice*)priv->owner)->m_d->xfd;
+        XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
         if (xfd >= 0) {
             XFd_free(xfd);
-            ((XIODevice*)priv->owner)->m_d->xfd = XFD_INVALID;
+            XIODevice_setFd((XIODevice*)priv->owner, XFD_INVALID);
         }
     }
     
@@ -350,7 +351,7 @@ intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv)
 
 XFd XNetwork_socketFd(const XNetworkSocketPrivate* priv)
 {
-    return (priv && priv->owner) ? ((XIODevice*)priv->owner)->m_d->xfd : XFD_INVALID;
+    return (priv && priv->owner) ? XIODevice_fd((XIODevice*)priv->owner) : XFD_INVALID;
 }
 
 bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv)
@@ -369,7 +370,7 @@ static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
     
     memset(&p->readContext, 0, sizeof(XEventContext_IOCP));
     p->readContext.base.type = XEventContextType_Type_Socket;
-    p->readContext.base.fd = ((XIODevice*)priv->owner)->m_d->xfd;
+    p->readContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
     p->readContext.socket = XSocketDescriptor_fromIntptr(p->socket);
     p->readContext.eventMask = FD_READ;
     
@@ -418,7 +419,7 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
     
     memset(&p->writeContext, 0, sizeof(XEventContext_IOCP));
     p->writeContext.base.type = XEventContextType_Type_Socket;
-    p->writeContext.base.fd = ((XIODevice*)priv->owner)->m_d->xfd;
+    p->writeContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
     p->writeContext.socket = XSocketDescriptor_fromIntptr(p->socket);
     p->writeContext.eventMask = FD_WRITE;
     p->writeContext.finishedBytes = len;
@@ -511,9 +512,10 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
     
     p->connected = true;
     {
-        XFd* xfd = &((XIODevice*)priv->owner)->m_d->xfd;
-        if (*xfd == XFD_INVALID) {
-            *xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+        XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
+        if (xfd == XFD_INVALID) {
+            xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+            XIODevice_setFd((XIODevice*)priv->owner, xfd);
         }
     }
 
@@ -581,14 +583,15 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
     
     if (sockType == XNetwork_Tcp && g_ConnectEx) {
         {
-            XFd* xfd = &((XIODevice*)priv->owner)->m_d->xfd;
-            if (*xfd == XFD_INVALID) {
-                *xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+            XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
+            if (xfd == XFD_INVALID) {
+                xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+                XIODevice_setFd((XIODevice*)priv->owner, xfd);
             }
         }
         memset(&p->connectContext, 0, sizeof(XEventContext_IOCP));
         p->connectContext.base.type = XEventContextType_Type_Socket;
-        p->connectContext.base.fd = ((XIODevice*)priv->owner)->m_d->xfd;
+        p->connectContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
         p->connectContext.socket = XSocketDescriptor_fromIntptr(p->socket);
         p->connectContext.eventMask = FD_CONNECT;
         
@@ -607,9 +610,10 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
         p->connected = true;
         p->connectPending = false;
         {
-            XFd* xfd = &((XIODevice*)priv->owner)->m_d->xfd;
-            if (*xfd == XFD_INVALID) {
-                *xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+            XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
+            if (xfd == XFD_INVALID) {
+                xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+                XIODevice_setFd((XIODevice*)priv->owner, xfd);
             }
         }
         startAsyncRead(priv, true);
@@ -731,9 +735,10 @@ bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, int 
     if (!iocp_assoc(p->socket, priv->owner)) { p->socket = INVALID_SOCKET; return false; }
     p->connected = (state == 3);
     {
-        XFd* xfd = &((XIODevice*)priv->owner)->m_d->xfd;
-        if (*xfd == XFD_INVALID) {
-            *xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+        XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
+        if (xfd == XFD_INVALID) {
+            xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+            XIODevice_setFd((XIODevice*)priv->owner, xfd);
         }
     }
     if (p->connected) { p->autoRead = true; startAsyncRead(priv, false); }
@@ -847,7 +852,7 @@ static bool startAsyncAccept(XNetworkSocketPrivate* priv)
     
     memset(&p->acceptContext, 0, sizeof(XEventContext_IOCP));
     p->acceptContext.base.type = XEventContextType_Type_Socket;
-    p->acceptContext.base.fd = ((XIODevice*)priv->owner)->m_d->xfd;
+    p->acceptContext.base.fd = XIODevice_fd((XIODevice*)priv->owner);
     p->acceptContext.socket = XSocketDescriptor_fromIntptr(p->socket);
     p->acceptContext.eventMask = FD_ACCEPT;
     

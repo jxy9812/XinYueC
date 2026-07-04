@@ -86,7 +86,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
         // 打开临时文件
         int fsMode = XFileSystem_WriteOnly | XFileSystem_Create | XFileSystem_Truncate;
         int error = 0;
-        int fd = XFileSystem_open(file->m_tempFileName, fsMode, &error);
+        XFd fd = XFileSystem_open(file->m_tempFileName, fsMode, &error);
         
         if (fd < 0) {
             XString_delete_base(file->m_tempFileName);
@@ -94,7 +94,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
             return false;
         }
         
-        file->m_parent.m_fileHandle = fd;
+        XIODevice_setFd(device, fd);
         file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
         file->m_parent.m_error = XFileDevice_NoError;
         device->m_openMode = mode;
@@ -103,13 +103,13 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
         // 允许回退到直接写入
         int fsMode = XFileSystem_WriteOnly | XFileSystem_Create | XFileSystem_Truncate;
         int error = 0;
-        int fd = XFileSystem_open(file->m_fileName, fsMode, &error);
+        XFd fd = XFileSystem_open(file->m_fileName, fsMode, &error);
         
         if (fd >= 0) {
             // 直接写入成功
             file->m_tempFileName = NULL;
             file->m_useTempFile = false;
-            file->m_parent.m_fileHandle = fd;
+            XIODevice_setFd(device, fd);
             file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
             file->m_parent.m_error = XFileDevice_NoError;
             device->m_openMode = mode;
@@ -135,7 +135,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
             return false;
         }
         
-        file->m_parent.m_fileHandle = fd;
+        XIODevice_setFd(device, fd);
         file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
         file->m_parent.m_error = XFileDevice_NoError;
         device->m_openMode = mode;
@@ -160,7 +160,6 @@ static int64_t VXSaveFile_writeData(XFileDevice* device, const char* data, int64
     
     // 调用父类的写入实现
     int64_t written = XClass_Parent(XFileDevice,EXIODevice_WriteData, int64_t (*)(XFileDevice*, const char* , int64_t ))(device, data, len);
-    //int64_t written = XFileDevice_writeData_base(device, data, len);
     
     // 检测写入错误（如磁盘满）
     if (written < 0 || written < len) {
@@ -181,11 +180,11 @@ static void VXSaveFile_deinit(XSaveFile* file)
     }
     
     // 关闭文件句柄
-    if (file->m_parent.m_fileHandle >= 0) {
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
         if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
-            XFileSystem_close(file->m_parent.m_fileHandle);
+            XFileSystem_close(XIODevice_fd(&file->m_parent.m_parent));
         }
-        file->m_parent.m_fileHandle = -1;
+        XIODevice_setFd(&file->m_parent.m_parent, XFD_INVALID);
     }
     
     // 释放字符串
@@ -280,7 +279,7 @@ void XSaveFile_deinit_base(XSaveFile* file)
 void XSaveFile_setFileName(XSaveFile* file, const XString* name)
 {
     if (!file || !name) return;
-    if (file->m_parent.m_fileHandle >= 0) return;  // 文件已打开，不能修改
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) return;  // 文件已打开，不能修改
     
     if (file->m_fileName) XString_delete_base(file->m_fileName);
     file->m_fileName = XString_create_copy(name);
@@ -316,16 +315,16 @@ bool XSaveFile_commit(XSaveFile* file)
     }
     
     // 刷新缓冲区
-    if (file->m_parent.m_fileHandle >= 0) {
-        XFileSystem_flush(file->m_parent.m_fileHandle);
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        XFileSystem_flush(XIODevice_fd(&file->m_parent.m_parent));
     }
     
     // 关闭文件
-    if (file->m_parent.m_fileHandle >= 0) {
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
         if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
-            XFileSystem_close(file->m_parent.m_fileHandle);
+            XFileSystem_close(XIODevice_fd(&file->m_parent.m_parent));
         }
-        file->m_parent.m_fileHandle = -1;
+        XIODevice_setFd(&file->m_parent.m_parent, XFD_INVALID);
     }
     
     file->m_parent.m_parent.m_openMode = XIODevice_NotOpen;
