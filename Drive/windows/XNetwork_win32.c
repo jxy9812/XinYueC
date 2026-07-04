@@ -25,6 +25,7 @@
 #include "XNetworkAddressEntry.h"
 #include "XVector.h"
 #include "XString.h"
+#include "XFileDescriptor.h"
 
 /* ====== Windows SDK 头文件 ====== */
 #include <winsock2.h>
@@ -253,13 +254,13 @@ char* XNetwork_errorString(int errorCode)
 }
 
 /* =========================================================================
- * 套接字私有数据结构
+ * 套接字私有数据结构（平台无关基类 + Win32 扩展）
  * ========================================================================= */
 
-struct XNetworkSocketPrivate {
+typedef struct XNetworkSocketPrivateWin32 {
+    XNetworkSocketPrivate base;             /**< 第一位：平台无关基类 (owner/xfd/notifiers) */
     SOCKET socket;                          ///< Windows SOCKET 句柄
-    XObject* owner;                            ///< 拥有者对象
-    
+
     /* 状态标志 */
     bool readPending;
     bool writePending;
@@ -296,7 +297,10 @@ struct XNetworkSocketPrivate {
             SOCKET acceptSocket;                    ///< AcceptEx 创建的套接字
         };
     };
-};
+} XNetworkSocketPrivateWin32;
+
+/* 便捷转换宏 */
+#define W32(p) ((XNetworkSocketPrivateWin32*)(p))
 
 /* =========================================================================
  * 私有数据管理
@@ -304,40 +308,59 @@ struct XNetworkSocketPrivate {
 
 XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner)
 {
-    XNetworkSocketPrivate* priv = (XNetworkSocketPrivate*)XCalloc_System(1, sizeof(XNetworkSocketPrivate));
-    if (!priv) return NULL;
+    XNetworkSocketPrivateWin32* p = (XNetworkSocketPrivateWin32*)XCalloc_System(1, sizeof(XNetworkSocketPrivateWin32));
+    if (!p) return NULL;
     
-    priv->socket = INVALID_SOCKET;
-    priv->owner = owner;
-    priv->autoRead = true;
+    p->socket = INVALID_SOCKET;
+    p->base.owner = owner;
+    p->base.xfd = XFD_INVALID;
+    p->base.notifiers = NULL;
+    p->autoRead = true;
     
-    XHostAddress_init(&priv->pendingPeerAddr);
-    XHostAddress_setAddressSpecial(&priv->pendingPeerAddr, XHostAddress_NullSpecial);
+    XHostAddress_init(&p->pendingPeerAddr);
+    XHostAddress_setAddressSpecial(&p->pendingPeerAddr, XHostAddress_NullSpecial);
     
-    return priv;
+    return (XNetworkSocketPrivate*)p;
 }
 
 void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv)
 {
     if (!priv) return;
+    XNetworkSocketPrivateWin32* p = W32(priv);
     
-    if (priv->socket != INVALID_SOCKET) {
-        closesocket(priv->socket);
-        priv->socket = INVALID_SOCKET;
+    if (p->socket != INVALID_SOCKET) {
+        closesocket(p->socket);
+        p->socket = INVALID_SOCKET;
+    }
+
+    if (priv->xfd >= 0) {
+        XFd_free(priv->xfd);
+        priv->xfd = XFD_INVALID;
     }
     
-    XHostAddress_deinit_base(&priv->pendingPeerAddr);
-    XFree_System(priv);
+    /* 释放 notifier 列表 */
+    if (priv->notifiers) {
+        XVector_delete_base(priv->notifiers);
+        priv->notifiers = NULL;
+    }
+    
+    XHostAddress_deinit_base(&p->pendingPeerAddr);
+    XFree_System(p);
 }
 
 intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv)
 {
-    return priv ? (intptr_t)priv->socket : -1;
+    return priv ? (intptr_t)W32(priv)->socket : -1;
+}
+
+XFd XNetwork_socketFd(const XNetworkSocketPrivate* priv)
+{
+    return priv ? priv->xfd : XFD_INVALID;
 }
 
 bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv)
 {
-    return priv ? priv->connected : false;
+    return priv ? W32(priv)->connected : false;
 }
 /* =========================================================================
  * 异步读取启动
@@ -345,40 +368,41 @@ bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv)
 
 static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
 {
-    if (!priv || priv->readPending || priv->socket == INVALID_SOCKET) return;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (!p || p->readPending || p->socket == INVALID_SOCKET) return;
     (void)isUdp;
     
-    memset(&priv->readContext, 0, sizeof(XEventContext_IOCP));
-    priv->readContext.type = XEventContextType_Type_Socket;
-    priv->readContext.socket = XSocketDescriptor_fromIntptr(priv->socket);
-    priv->readContext.eventMask = FD_READ;
+    memset(&p->readContext, 0, sizeof(XEventContext_IOCP));
+    p->readContext.type = XEventContextType_Type_Socket;
+    p->readContext.socket = XSocketDescriptor_fromIntptr(p->socket);
+    p->readContext.eventMask = FD_READ;
     
     WSABUF buf;
-    buf.buf = priv->readBuffer;
+    buf.buf = p->readBuffer;
     buf.len = XNETWORK_READ_BUFFER_SIZE;
     
     DWORD flags = 0;
     int result;
     
     if (isUdp) {
-        priv->fromAddrLen = sizeof(priv->fromAddr);
-        result = WSARecvFrom(priv->socket, &buf, 1, NULL, &flags,
-                            (struct sockaddr*)&priv->fromAddr, &priv->fromAddrLen,
-                            (OVERLAPPED*)&priv->readContext, NULL);
+        p->fromAddrLen = sizeof(p->fromAddr);
+        result = WSARecvFrom(p->socket, &buf, 1, NULL, &flags,
+                            (struct sockaddr*)&p->fromAddr, &p->fromAddrLen,
+                            (OVERLAPPED*)&p->readContext, NULL);
     } else {
-        result = WSARecv(priv->socket, &buf, 1, NULL, &flags,
-                        (OVERLAPPED*)&priv->readContext, NULL);
+        result = WSARecv(p->socket, &buf, 1, NULL, &flags,
+                        (OVERLAPPED*)&p->readContext, NULL);
     }
     
     if (result == 0) {
         /* 立即完成 */
-        priv->readPending = true;
+        p->readPending = true;
     } else if (WSAGetLastError() == WSA_IO_PENDING) {
         /* 异步等待 */
-        priv->readPending = true;
+        p->readPending = true;
     } else {
         /* 错误 */
-        priv->readPending = false;
+        p->readPending = false;
     }
 }
 
@@ -389,20 +413,20 @@ static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
 static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64_t len,
                             const XHostAddress* destAddr, uint16_t destPort, bool isUdp)
 {
-    if (!priv || priv->writePending || priv->socket == INVALID_SOCKET) return;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (!p || p->writePending || p->socket == INVALID_SOCKET) return;
     if (len <= 0 || len > XNETWORK_WRITE_BUFFER_SIZE) return;
     (void)destAddr; (void)destPort; (void)isUdp;
     
-    /* 复制数据到写缓冲区 */
-    memcpy(priv->writeBuffer, data, (size_t)len);
+    memcpy(p->writeBuffer, data, (size_t)len);
     
-    memset(&priv->writeContext, 0, sizeof(XEventContext_IOCP));
-    priv->writeContext.type = XEventContextType_Type_Socket;
-    priv->writeContext.socket = XSocketDescriptor_fromIntptr(priv->socket);
-    priv->writeContext.eventMask = FD_WRITE;
-    priv->writeContext.finishedBytes = len;
+    memset(&p->writeContext, 0, sizeof(XEventContext_IOCP));
+    p->writeContext.type = XEventContextType_Type_Socket;
+    p->writeContext.socket = XSocketDescriptor_fromIntptr(p->socket);
+    p->writeContext.eventMask = FD_WRITE;
+    p->writeContext.finishedBytes = len;
     WSABUF buf;
-    buf.buf = priv->writeBuffer;
+    buf.buf = p->writeBuffer;
     buf.len = (ULONG)len;
     
     int result;
@@ -412,28 +436,25 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
         int destLen;
         addr2sa(destAddr, destPort, &dest, &destLen);
         
-        result = WSASendTo(priv->socket, &buf, 1, NULL, 0,
+        result = WSASendTo(p->socket, &buf, 1, NULL, 0,
                           (struct sockaddr*)&dest, destLen,
-                          (OVERLAPPED*)&priv->writeContext, NULL);
+                          (OVERLAPPED*)&p->writeContext, NULL);
     } else {
-        result = WSASend(priv->socket, &buf, 1, NULL, 0,
-                        (OVERLAPPED*)&priv->writeContext, NULL);
+        result = WSASend(p->socket, &buf, 1, NULL, 0,
+                        (OVERLAPPED*)&p->writeContext, NULL);
     }
     
     if (result == 0) {
-        /* 立即完成 - 手动向 IOCP 投递完成通知 */
-        priv->writePending = true;
+        p->writePending = true;
         HANDLE iocp = iocp_get();
         if (iocp) {
             PostQueuedCompletionStatus(iocp, (DWORD)len, (ULONG_PTR)priv->owner,
-                                       (OVERLAPPED*)&priv->writeContext);
+                                       (OVERLAPPED*)&p->writeContext);
         }
     } else if (WSAGetLastError() == WSA_IO_PENDING) {
-        /* 异步等待 */
-        priv->writePending = true;
+        p->writePending = true;
     } else {
-        /* 错误 */
-        priv->writePending = false;
+        p->writePending = false;
     }
 }
 
@@ -446,44 +467,38 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
                               XNetworkSocketType sockType)
 {
     if (!priv || !address) return 0;
+    XNetworkSocketPrivateWin32* p = W32(priv);
     
-    /* 确保已初始化 */
     XNetwork_ensureInit();
-    
-    /* 创建套接字 */
     int af = (XHostAddress_protocol(address) == XHostAddress_IPv6Protocol) ? AF_INET6 : AF_INET;
     int type = (sockType == XNetwork_Tcp) ? SOCK_STREAM : SOCK_DGRAM;
     int proto = (sockType == XNetwork_Tcp) ? IPPROTO_TCP : IPPROTO_UDP;
     
-    priv->socket = socket(af, type, proto);
-    if (priv->socket == INVALID_SOCKET) return 0;
+    p->socket = socket(af, type, proto);
+    if (p->socket == INVALID_SOCKET) return 0;
     
-    /* 设置非阻塞 */
     u_long mode = 1;
-    ioctlsocket(priv->socket, FIONBIO, &mode);
+    ioctlsocket(p->socket, FIONBIO, &mode);
     
-    /* 设置地址重用 */
     if (reuseAddr) {
         int opt = 1;
-        setsockopt(priv->socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
+        setsockopt(p->socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
     }
     
-    /* 绑定 */
     struct sockaddr_storage addrStorage;
     int addrLen;
     addr2sa(address, port, &addrStorage, &addrLen);
     
-    if (bind(priv->socket, (struct sockaddr*)&addrStorage, addrLen) == SOCKET_ERROR) {
-        closesocket(priv->socket);
-        priv->socket = INVALID_SOCKET;
+    if (bind(p->socket, (struct sockaddr*)&addrStorage, addrLen) == SOCKET_ERROR) {
+        closesocket(p->socket);
+        p->socket = INVALID_SOCKET;
         return 0;
     }
     
-    /* 获取实际绑定的端口 */
     uint16_t actualPort = 0;
     struct sockaddr_storage boundAddr;
     int boundAddrLen = sizeof(boundAddr);
-    if (getsockname(priv->socket, (struct sockaddr*)&boundAddr, &boundAddrLen) == 0) {
+    if (getsockname(p->socket, (struct sockaddr*)&boundAddr, &boundAddrLen) == 0) {
         if (boundAddr.ss_family == AF_INET6) {
             actualPort = ntohs(((struct sockaddr_in6*)&boundAddr)->sin6_port);
         } else {
@@ -491,20 +506,18 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
         }
     }
     
-    /* 关联到 IOCP */
-    if (!iocp_assoc(priv->socket, priv->owner)) {
-        closesocket(priv->socket);
-        priv->socket = INVALID_SOCKET;
+    if (!iocp_assoc(p->socket, priv->owner)) {
+        closesocket(p->socket);
+        p->socket = INVALID_SOCKET;
         return 0;
     }
     
-    priv->connected = true;
-    
-    /* UDP 绑定后立即启动异步读取 */
-    if (sockType == XNetwork_Udp) {
-        startAsyncRead(priv, true);
+    p->connected = true;
+    if (priv->xfd == XFD_INVALID) {
+        priv->xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
     }
-    
+
+    if (sockType == XNetwork_Udp) startAsyncRead(priv, true);
     return actualPort;
 }
 
@@ -513,138 +526,114 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
                             XNetworkSocketType sockType, const void* proxy)
 {
     if (!priv || !hostName) return false;
+    XNetworkSocketPrivateWin32* p = W32(priv);
     
     XNetwork_ensureInit();
-    
-    /* DNS 解析 */
     struct addrinfo hints = {0}, *result = NULL;
     hints.ai_family = (protocol == XNetwork_IPv6) ? AF_INET6 : 
                       (protocol == XNetwork_IPv4) ? AF_INET : AF_UNSPEC;
     hints.ai_socktype = (sockType == XNetwork_Tcp) ? SOCK_STREAM : SOCK_DGRAM;
     
-    if (getaddrinfo(hostName, NULL, &hints, &result) != 0) {
-        return false;
-    }
+    if (getaddrinfo(hostName, NULL, &hints, &result) != 0) return false;
     
-    /* 选择第一个地址 */
-    struct addrinfo* p = result;
-    while (p && p->ai_family != hints.ai_family) {
-        p = p->ai_next;
-    }
-    if (!p) p = result;
+    struct addrinfo* ai = result;
+    while (ai && ai->ai_family != hints.ai_family) ai = ai->ai_next;
+    if (!ai) ai = result;
     
-    /* 创建套接字 */
     int type = (sockType == XNetwork_Tcp) ? SOCK_STREAM : SOCK_DGRAM;
     int proto = (sockType == XNetwork_Tcp) ? IPPROTO_TCP : IPPROTO_UDP;
     
-    priv->socket = socket(p->ai_family, type, proto);
-    if (priv->socket == INVALID_SOCKET) {
-        freeaddrinfo(result);
-        return false;
-    }
+    p->socket = socket(ai->ai_family, type, proto);
+    if (p->socket == INVALID_SOCKET) { freeaddrinfo(result); return false; }
     
-    /* 设置非阻塞 */
     u_long mode = 1;
-    ioctlsocket(priv->socket, FIONBIO, &mode);
+    ioctlsocket(p->socket, FIONBIO, &mode);
     
-    /* 绑定到任意本地地址（ConnectEx 需要） */
     struct sockaddr_storage localAddr = {0};
-    int localLen = (p->ai_family == AF_INET6) ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
-    ((struct sockaddr*)&localAddr)->sa_family = p->ai_family;
+    int localLen = (ai->ai_family == AF_INET6) ? sizeof(struct sockaddr_in6) : sizeof(struct sockaddr_in);
+    ((struct sockaddr*)&localAddr)->sa_family = ai->ai_family;
     
-    if (bind(priv->socket, (struct sockaddr*)&localAddr, localLen) == SOCKET_ERROR) {
-        closesocket(priv->socket);
-        priv->socket = INVALID_SOCKET;
-        freeaddrinfo(result);
-        return false;
+    if (bind(p->socket, (struct sockaddr*)&localAddr, localLen) == SOCKET_ERROR) {
+        closesocket(p->socket); p->socket = INVALID_SOCKET; freeaddrinfo(result); return false;
     }
     
-    /* 关联到 IOCP */
-    if (!iocp_assoc(priv->socket, priv->owner)) {
-        closesocket(priv->socket);
-        priv->socket = INVALID_SOCKET;
-        freeaddrinfo(result);
-        return false;
+    if (!iocp_assoc(p->socket, priv->owner)) {
+        closesocket(p->socket); p->socket = INVALID_SOCKET; freeaddrinfo(result); return false;
     }
     
-    /* 设置目标地址 */
     struct sockaddr_storage destAddr;
     int destLen;
-    if (p->ai_family == AF_INET6) {
+    if (ai->ai_family == AF_INET6) {
         struct sockaddr_in6* s6 = (struct sockaddr_in6*)&destAddr;
-        s6->sin6_family = AF_INET6;
-        s6->sin6_port = htons(port);
-        memcpy(&s6->sin6_addr, &((struct sockaddr_in6*)p->ai_addr)->sin6_addr, sizeof(struct in6_addr));
+        s6->sin6_family = AF_INET6; s6->sin6_port = htons(port);
+        memcpy(&s6->sin6_addr, &((struct sockaddr_in6*)ai->ai_addr)->sin6_addr, sizeof(struct in6_addr));
         destLen = sizeof(struct sockaddr_in6);
     } else {
         struct sockaddr_in* s4 = (struct sockaddr_in*)&destAddr;
-        s4->sin_family = AF_INET;
-        s4->sin_port = htons(port);
-        s4->sin_addr = ((struct sockaddr_in*)p->ai_addr)->sin_addr;
+        s4->sin_family = AF_INET; s4->sin_port = htons(port);
+        s4->sin_addr = ((struct sockaddr_in*)ai->ai_addr)->sin_addr;
         destLen = sizeof(struct sockaddr_in);
     }
-    
     freeaddrinfo(result);
     
-    /* 保存目标信息 */
-    sa2addr(&destAddr, &priv->pendingPeerAddr, &priv->pendingPeerPort);
-    priv->pendingPeerPort = port;
+    sa2addr(&destAddr, &p->pendingPeerAddr, &p->pendingPeerPort);
+    p->pendingPeerPort = port;
     
-    /* TCP 使用 ConnectEx 异步连接 */
     if (sockType == XNetwork_Tcp && g_ConnectEx) {
-        memset(&priv->connectContext, 0, sizeof(XEventContext_IOCP));
-        priv->connectContext.type = XEventContextType_Type_Socket;
-        priv->connectContext.socket = XSocketDescriptor_fromIntptr(priv->socket);
-        priv->connectContext.eventMask = FD_CONNECT;
+        if (priv->xfd == XFD_INVALID) {
+            priv->xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+        }
+        memset(&p->connectContext, 0, sizeof(XEventContext_IOCP));
+        p->connectContext.type = XEventContextType_Type_Socket;
+        p->connectContext.socket = XSocketDescriptor_fromIntptr(p->socket);
+        p->connectContext.eventMask = FD_CONNECT;
         
-        if (!g_ConnectEx(priv->socket, (struct sockaddr*)&destAddr, destLen,
-                        NULL, 0, NULL, (OVERLAPPED*)&priv->connectContext)) {
+        if (!g_ConnectEx(p->socket, (struct sockaddr*)&destAddr, destLen,
+                        NULL, 0, NULL, (OVERLAPPED*)&p->connectContext)) {
             if (WSAGetLastError() != WSA_IO_PENDING) {
-                closesocket(priv->socket);
-                priv->socket = INVALID_SOCKET;
+                closesocket(p->socket); p->socket = INVALID_SOCKET;
                 return false;
             }
         }
-        priv->connectPending = true;
+        p->connectPending = true;
         return true;
     }
     
-    /* UDP 直接连接 */
     if (sockType == XNetwork_Udp) {
-        priv->connected = true;
-        priv->connectPending = false;
-        /* 启动异步读取 */
+        p->connected = true;
+        p->connectPending = false;
+        if (priv->xfd == XFD_INVALID) {
+            priv->xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+        }
         startAsyncRead(priv, true);
         return true;
     }
-    
     return true;
 }
 
 void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv)
 {
     if (!priv) return;
+    XNetworkSocketPrivateWin32* p = W32(priv);
     
-    if (priv->socket != INVALID_SOCKET) {
-        /* 取消所有待处理操作 */
-        CancelIo((HANDLE)priv->socket);
-        closesocket(priv->socket);
-        priv->socket = INVALID_SOCKET;
+    if (p->socket != INVALID_SOCKET) {
+        CancelIo((HANDLE)p->socket);
+        closesocket(p->socket);
+        p->socket = INVALID_SOCKET;
     }
-    
-    priv->connected = false;
-    priv->connectPending = false;
-    priv->readPending = false;
-    priv->writePending = false;
+    p->connected = false;
+    p->connectPending = false;
+    p->readPending = false;
+    p->writePending = false;
 }
 
 int64_t XNetwork_socketRead(XNetworkSocketPrivate* priv, void* buf, int64_t len,
                             XNetworkSocketType sockType, void* ringBuffer)
 {
     if (!priv || !buf || len <= 0) return -1;
-    if (priv->socket == INVALID_SOCKET) return -1;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (p->socket == INVALID_SOCKET) return -1;
     
-    /* 优先从环形缓冲区读取 */
     if (ringBuffer) {
         struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
         size_t available = XRingBuffer_available(rb);
@@ -653,8 +642,6 @@ int64_t XNetwork_socketRead(XNetworkSocketPrivate* priv, void* buf, int64_t len,
             return XRingBuffer_read(rb, buf, toRead);
         }
     }
-    
-    /* 如果没有数据可读 */
     return 0;
 }
 
@@ -663,27 +650,23 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
                              uint16_t destPort, void* ringBuffer)
 {
     if (!priv || !buf || len <= 0) return -1;
-    if (priv->socket == INVALID_SOCKET) return -1;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (p->socket == INVALID_SOCKET) return -1;
     
-    /* 如果有环形缓冲区且有待发送数据，先处理 */
     if (ringBuffer) {
         struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
         size_t pending = XRingBuffer_available(rb);
-        if (pending > 0 && !priv->writePending) {
-            /* 先发送缓冲区中的数据 */
+        if (pending > 0 && !p->writePending) {
             char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
             size_t toSend = XRingBuffer_peek(rb, tempBuf, XNETWORK_WRITE_BUFFER_SIZE);
             if (toSend > 0) {
-                startAsyncWrite(priv, tempBuf, toSend, destAddr, destPort, 
-                               sockType == XNetwork_Udp);
+                startAsyncWrite(priv, tempBuf, toSend, destAddr, destPort, sockType == XNetwork_Udp);
             }
         }
     }
     
-    /* 如果没有待发送操作，直接异步发送 */
-    if (!priv->writePending) {
+    if (!p->writePending) {
         if (len > XNETWORK_WRITE_BUFFER_SIZE) {
-            /* 数据太大，分批发送，存入环形缓冲区 */
             if (ringBuffer) {
                 struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
                 XRingBuffer_write(rb, buf, len);
@@ -691,186 +674,107 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
             }
             len = XNETWORK_WRITE_BUFFER_SIZE;
         }
-        
-        bool isUdp = (sockType == XNetwork_Udp); /* TCP only, UDP handled above */
-        startAsyncWrite(priv, buf, len, destAddr, destPort, isUdp);
+        startAsyncWrite(priv, buf, len, destAddr, destPort, sockType == XNetwork_Udp);
         return len;
     }
     
-    /* 当前有发送操作，存入环形缓冲区 */
     if (ringBuffer) {
         struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
         return XRingBuffer_write(rb, buf, len);
     }
-    
     return -1;
 }
 
 bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event)
 {
     if (!priv || !event) return false;
+    XNetworkSocketPrivateWin32* p = W32(priv);
     
     XEvent* e = (XEvent*)event;
     if (e->type != XEVENT_TYPE_SOCK_ACT) return false;
     
     XEventSockAct* sockAct = (XEventSockAct*)e;
     
-    /* 处理读取完成 */
     if (sockAct->actType & XSocketAct_Read) {
-        priv->readPending = false;
-        
-        size_t bytesTransferred = priv->readContext.finishedBytes;
-        if (bytesTransferred > 0) {
-            /* 通知上层有数据可读 */
-            /* 数据在 priv->readBuffer 中 */
-            return true;
-        }
+        p->readPending = false;
+        return p->readContext.finishedBytes > 0;
     }
-    
-    /* 处理写入完成 */
     if (sockAct->actType & XSocketAct_Write) {
-        priv->writePending = false;
+        p->writePending = false;
         return true;
     }
-    
-    /* 处理连接完成 */
     if (sockAct->actType & XSocketAct_Connect) {
-        priv->connectPending = false;
-        priv->connected = true;
-        
-        /* 更新套接字选项 */
+        p->connectPending = false;
+        p->connected = true;
         int opt = 1;
-        setsockopt(priv->socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, 
-                  (char*)&opt, sizeof(opt));
-        
-        /* 启动异步读取 */
+        setsockopt(p->socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, (char*)&opt, sizeof(opt));
         startAsyncRead(priv, false);
         return true;
     }
-    
     return false;
 }
 
-bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, 
-                                  int state, int openMode)
+bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, int state, int openMode)
 {
     if (!priv || fd == -1) return false;
     (void)openMode;
-
-    priv->socket = (SOCKET)fd;
-
-    /* 关联到 IOCP */
-    if (!iocp_assoc(priv->socket, priv->owner)) {
-        priv->socket = INVALID_SOCKET;
-        return false;
-    }
-
-    priv->connected = (state == 3); /* XAbstractSocket_ConnectedState */
-
-    if (priv->connected) {
-        priv->autoRead = true;
-        startAsyncRead(priv, false);
-    }
-
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    
+    p->socket = (SOCKET)fd;
+    if (!iocp_assoc(p->socket, priv->owner)) { p->socket = INVALID_SOCKET; return false; }
+    p->connected = (state == 3);
+    if (priv->xfd == XFD_INVALID) priv->xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+    if (p->connected) { p->autoRead = true; startAsyncRead(priv, false); }
     return true;
 }
 
 bool XNetwork_socketSetOption(XNetworkSocketPrivate* priv, int option, const void* value)
 {
-    if (!priv || !value || priv->socket == INVALID_SOCKET) return false;
-    
+    if (!priv || !value) return false;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (p->socket == INVALID_SOCKET) return false;
     int* intVal = (int*)value;
-    
     switch (option) {
-        case 0: /* LowDelayOption - TCP_NODELAY */
-            return setsockopt(priv->socket, IPPROTO_TCP, TCP_NODELAY,
-                            (char*)intVal, sizeof(int)) == 0;
-        case 1: /* KeepAliveOption - SO_KEEPALIVE */
-            return setsockopt(priv->socket, SOL_SOCKET, SO_KEEPALIVE,
-                            (char*)intVal, sizeof(int)) == 0;
-        case 2: /* MulticastTtlOption */
-            return XNetwork_multicastOp((XSocketHandle)priv->socket, XMC_SetTtl, intVal) == 0;
-        case 3: /* MulticastLoopbackOption */ {
-            bool enabled = (*intVal != 0);
-            return XNetwork_multicastOp((XSocketHandle)priv->socket, XMC_SetLoop, &enabled) == 0;
-        }
-        case 4: /* TypeOfServiceOption - IP_TOS */
-            return setsockopt(priv->socket, IPPROTO_IP, IP_TOS,
-                            (char*)intVal, sizeof(int)) == 0;
-        case 5: /* SendBufferSizeOption */
-            return setsockopt(priv->socket, SOL_SOCKET, SO_SNDBUF,
-                            (char*)intVal, sizeof(int)) == 0;
-        case 6: /* ReceiveBufferSizeOption */
-            return setsockopt(priv->socket, SOL_SOCKET, SO_RCVBUF,
-                            (char*)intVal, sizeof(int)) == 0;
-        case 8: /* BroadcastOption - SO_BROADCAST */
-            return setsockopt(priv->socket, SOL_SOCKET, SO_BROADCAST,
-                            (char*)intVal, sizeof(int)) == 0;
-        default:
-            return false;
+        case 0: return setsockopt(p->socket, IPPROTO_TCP, TCP_NODELAY, (char*)intVal, sizeof(int)) == 0;
+        case 1: return setsockopt(p->socket, SOL_SOCKET, SO_KEEPALIVE, (char*)intVal, sizeof(int)) == 0;
+        case 2: return XNetwork_multicastOp((XSocketHandle)p->socket, XMC_SetTtl, intVal) == 0;
+        case 3: { bool enabled = (*intVal != 0); return XNetwork_multicastOp((XSocketHandle)p->socket, XMC_SetLoop, &enabled) == 0; }
+        case 4: return setsockopt(p->socket, IPPROTO_IP, IP_TOS, (char*)intVal, sizeof(int)) == 0;
+        case 5: return setsockopt(p->socket, SOL_SOCKET, SO_SNDBUF, (char*)intVal, sizeof(int)) == 0;
+        case 6: return setsockopt(p->socket, SOL_SOCKET, SO_RCVBUF, (char*)intVal, sizeof(int)) == 0;
+        case 8: return setsockopt(p->socket, SOL_SOCKET, SO_BROADCAST, (char*)intVal, sizeof(int)) == 0;
+        default: return false;
     }
 }
+
 void* XNetwork_socketGetOption(XNetworkSocketPrivate* priv, int option)
 {
-    if (!priv || priv->socket == INVALID_SOCKET) return NULL;
-    
-    static int result;
-    int optLen = sizeof(int);
-    
+    if (!priv) return NULL;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (p->socket == INVALID_SOCKET) return NULL;
+    static int result; int optLen = sizeof(int);
     switch (option) {
-        case 0: /* LowDelayOption */
-            if (getsockopt(priv->socket, IPPROTO_TCP, TCP_NODELAY, (char*)&result, &optLen) == 0)
-                return &result;
-            break;
-        case 1: /* KeepAliveOption */
-            if (getsockopt(priv->socket, SOL_SOCKET, SO_KEEPALIVE, (char*)&result, &optLen) == 0)
-                return &result;
-            break;
-        case 2: /* MulticastTtlOption */
-            if (XNetwork_multicastOp((XSocketHandle)priv->socket, XMC_GetTtl, &result) == 0)
-                return &result;
-            break;
-        case 3: /* MulticastLoopbackOption */ {
-            bool enabled = false;
-            if (XNetwork_multicastOp((XSocketHandle)priv->socket, XMC_GetLoop, &enabled) == 0) {
-                result = enabled ? 1 : 0;
-                return &result;
-            }
-            break;
-        }
-        case 4: /* TypeOfServiceOption */
-            if (getsockopt(priv->socket, IPPROTO_IP, IP_TOS, (char*)&result, &optLen) == 0)
-                return &result;
-            break;
-        case 5: /* SendBufferSizeOption */
-            if (getsockopt(priv->socket, SOL_SOCKET, SO_SNDBUF, (char*)&result, &optLen) == 0)
-                return &result;
-            break;
-        case 6: /* ReceiveBufferSizeOption */
-            if (getsockopt(priv->socket, SOL_SOCKET, SO_RCVBUF, (char*)&result, &optLen) == 0)
-                return &result;
-            break;
-        case 7: /* PathMtuOption */
-            if (getsockopt(priv->socket, IPPROTO_IP, IP_MTU, (char*)&result, &optLen) == 0)
-                return &result;
-            break;
-        case 8: /* BroadcastOption */
-            if (getsockopt(priv->socket, SOL_SOCKET, SO_BROADCAST, (char*)&result, &optLen) == 0)
-                return &result;
-            break;
-        default:
-            break;
+        case 0: if (getsockopt(p->socket, IPPROTO_TCP, TCP_NODELAY, (char*)&result, &optLen) == 0) return &result; break;
+        case 1: if (getsockopt(p->socket, SOL_SOCKET, SO_KEEPALIVE, (char*)&result, &optLen) == 0) return &result; break;
+        case 2: if (XNetwork_multicastOp((XSocketHandle)p->socket, XMC_GetTtl, &result) == 0) return &result; break;
+        case 3: { bool e = false; if (XNetwork_multicastOp((XSocketHandle)p->socket, XMC_GetLoop, &e) == 0) { result = e ? 1 : 0; return &result; } break; }
+        case 4: if (getsockopt(p->socket, IPPROTO_IP, IP_TOS, (char*)&result, &optLen) == 0) return &result; break;
+        case 5: if (getsockopt(p->socket, SOL_SOCKET, SO_SNDBUF, (char*)&result, &optLen) == 0) return &result; break;
+        case 6: if (getsockopt(p->socket, SOL_SOCKET, SO_RCVBUF, (char*)&result, &optLen) == 0) return &result; break;
+        case 7: if (getsockopt(p->socket, IPPROTO_IP, IP_MTU, (char*)&result, &optLen) == 0) return &result; break;
+        case 8: if (getsockopt(p->socket, SOL_SOCKET, SO_BROADCAST, (char*)&result, &optLen) == 0) return &result; break;
+        default: break;
     }
-    
     return NULL;
 }
 
 void XNetwork_socketSetReadBufferSize(XNetworkSocketPrivate* priv, int64_t size)
 {
-    if (!priv || priv->socket == INVALID_SOCKET || size <= 0) return;
-    
+    if (!priv) return;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (p->socket == INVALID_SOCKET || size <= 0) return;
     int bufSize = (int)((size > INT_MAX) ? INT_MAX : size);
-    setsockopt(priv->socket, SOL_SOCKET, SO_RCVBUF, (char*)&bufSize, sizeof(bufSize));
+    setsockopt(p->socket, SOL_SOCKET, SO_RCVBUF, (char*)&bufSize, sizeof(bufSize));
 }
 
 /* =========================================================================
@@ -879,41 +783,34 @@ void XNetwork_socketSetReadBufferSize(XNetworkSocketPrivate* priv, int64_t size)
 
 const char* XNetwork_socketReadBuffer(const XNetworkSocketPrivate* priv)
 {
-    return priv ? priv->readBuffer : NULL;
+    return priv ? W32(priv)->readBuffer : NULL;
 }
 
 size_t XNetwork_socketReadFinishedBytes(const XNetworkSocketPrivate* priv)
 {
-    return priv ? priv->readContext.finishedBytes : 0;
+    return priv ? W32(priv)->readContext.finishedBytes : 0;
 }
 
 size_t XNetwork_socketWriteFinishedBytes(const XNetworkSocketPrivate* priv)
 {
-    return priv ? priv->writeContext.finishedBytes : 0;
+    return priv ? W32(priv)->writeContext.finishedBytes : 0;
 }
 
 bool XNetwork_socketHasPendingData(const XNetworkSocketPrivate* priv)
 {
-    if (!priv || priv->socket == INVALID_SOCKET) return false;
-    
-    /* 检查是否有待读的数据报 */
+    if (!priv) return false;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (p->socket == INVALID_SOCKET) return false;
     unsigned long available = 0;
-    if (ioctlsocket(priv->socket, FIONREAD, &available) == 0) {
-        return available > 0;
-    }
-    return false;
+    return ioctlsocket(p->socket, FIONREAD, &available) == 0 && available > 0;
 }
 
 void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp)
 {
     if (!priv) return;
-    
-    priv->readPending = false;
-    
-    /* 如果启用了自动读取，继续启动异步读取 */
-    if (priv->autoRead && priv->connected) {
-        startAsyncRead(priv, isUdp);
-    }
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    p->readPending = false;
+    if (p->autoRead && p->connected) startAsyncRead(priv, isUdp);
 }
 
 /* =========================================================================
@@ -922,62 +819,35 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp)
 
 static bool startAsyncAccept(XNetworkSocketPrivate* priv)
 {
-    if (!priv || priv->socket == INVALID_SOCKET || !g_AcceptEx) return false;
-    if (priv->acceptPending) return true; /* 已有待处理的 Accept */
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (!p || p->socket == INVALID_SOCKET || !g_AcceptEx) return false;
+    if (p->acceptPending) return true;
     
-    /* 获取监听套接字的地址族 */
     struct sockaddr_storage addr;
     int addrLen = sizeof(addr);
-    if (getsockname(priv->socket, (struct sockaddr*)&addr, &addrLen) == SOCKET_ERROR) {
-        return false;
-    }
+    if (getsockname(p->socket, (struct sockaddr*)&addr, &addrLen) == SOCKET_ERROR) return false;
     int af = addr.ss_family;
     
-    /* 创建预分配的接受套接字 */
     SOCKET acceptSock = socket(af, SOCK_STREAM, IPPROTO_TCP);
-    if (acceptSock == INVALID_SOCKET) {
-        return false;
-    }
+    if (acceptSock == INVALID_SOCKET) return false;
     
-    priv->acceptSocket = acceptSock;
+    p->acceptSocket = acceptSock;
     
-    /* 初始化 AcceptEx 上下文 */
-    memset(&priv->acceptContext, 0, sizeof(XEventContext_IOCP));
-    priv->acceptContext.type = XEventContextType_Type_Socket;
-    priv->acceptContext.socket = XSocketDescriptor_fromIntptr(priv->socket);
-    priv->acceptContext.eventMask = FD_ACCEPT;
+    memset(&p->acceptContext, 0, sizeof(XEventContext_IOCP));
+    p->acceptContext.type = XEventContextType_Type_Socket;
+    p->acceptContext.socket = XSocketDescriptor_fromIntptr(p->socket);
+    p->acceptContext.eventMask = FD_ACCEPT;
     
-    /* AcceptEx 缓冲区大小计算：
-     * 需要为本地地址和远程地址各预留 sockaddr_in6 + 16 字节
-     */
     DWORD bytesReceived = 0;
+    BOOL result = g_AcceptEx(p->socket, acceptSock, p->acceptBuffer, 0,
+        sizeof(struct sockaddr_in6) + 16, sizeof(struct sockaddr_in6) + 16,
+        &bytesReceived, (OVERLAPPED*)&p->acceptContext);
     
-    BOOL result = g_AcceptEx(
-        priv->socket,           /* 监听套接字 */
-        acceptSock,             /* 接受套接字 */
-        priv->acceptBuffer,     /* 输出缓冲区 */
-        0,                      /* 不接收数据，只接受连接 */
-        sizeof(struct sockaddr_in6) + 16,  /* 本地地址空间 */
-        sizeof(struct sockaddr_in6) + 16,  /* 远程地址空间 */
-        &bytesReceived,
-        (OVERLAPPED*)&priv->acceptContext
-    );
+    if (result) { p->acceptPending = true; return true; }
+    if (WSAGetLastError() == WSA_IO_PENDING) { p->acceptPending = true; return true; }
     
-    if (result) {
-        /* 立即完成（罕见情况） */
-        priv->acceptPending = true;
-        return true;
-    }
-    
-    if (WSAGetLastError() == WSA_IO_PENDING) {
-        /* 异步等待 */
-        priv->acceptPending = true;
-        return true;
-    }
-    
-    /* 错误 */
     closesocket(acceptSock);
-    priv->acceptSocket = INVALID_SOCKET;
+    p->acceptSocket = INVALID_SOCKET;
     return false;
 }
 
@@ -989,30 +859,27 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv,const XHostAddre
                                     int backlog, bool reuseAddr)
 {
     if (!priv) return -1;
+    XNetworkSocketPrivateWin32* p = W32(priv);
     XNetwork_ensureInit();
     
     int af = (XHostAddress_protocol(addr) == XHostAddress_IPv6Protocol) ? AF_INET6 : AF_INET;
     
-    SOCKET s = socket(af, SOCK_STREAM, IPPROTO_TCP);
+    SOCKET s = WSASocket(af, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
     if (s == INVALID_SOCKET) return -1;
     
-    /* 设置非阻塞 */
     u_long mode = 1;
     ioctlsocket(s, FIONBIO, &mode);
     
-    /* 地址重用 */
     if (reuseAddr) {
         int opt = 1;
         setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
     }
     
-    /* IPv6 双栈 */
     if (af == AF_INET6) {
         int ipv6only = 0;
         setsockopt(s, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&ipv6only, sizeof(ipv6only));
     }
     
-    /* 绑定 */
     struct sockaddr_storage addrStorage;
     int addrLen;
     addr2sa(addr, port, &addrStorage, &addrLen);
@@ -1022,21 +889,17 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv,const XHostAddre
         return -1;
     }
     
-    /* 监听 */
     if (listen(s, backlog > 0 ? backlog : SOMAXCONN) == SOCKET_ERROR) {
         closesocket(s);
         return -1;
     }
     
-    /* 关联到 IOCP */
     iocp_assoc(s, priv->owner);
-    priv->socket = s;
-    priv->isServer = true;
-    priv->connected = true;  /* 服务器套接字处于监听状态 */
+    p->socket = s;
+    p->isServer = true;
+    p->connected = true;
     
-    /* 启动异步 Accept */
     startAsyncAccept(priv);
-    
     return (XServerHandle)s;
 }
 
@@ -1067,28 +930,22 @@ void XNetwork_serverClose(XServerHandle server)
 XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
                                                XHostAddress* clientAddr, uint16_t* clientPort)
 {
-    if (!priv || priv->acceptSocket == INVALID_SOCKET) return -1;
+    if (!priv) return -1;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (p->acceptSocket == INVALID_SOCKET) return -1;
     
-    /* 更新接受套接字的上下文（SO_UPDATE_ACCEPT_CONTEXT） */
     int opt = 1;
-    setsockopt(priv->acceptSocket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
-               (char*)&opt, sizeof(opt));
+    setsockopt(p->acceptSocket, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT, (char*)&opt, sizeof(opt));
     
-    /* 使用 GetAcceptExSockaddrs 获取客户端地址 */
     if (clientAddr || clientPort) {
         if (g_GetAcceptExSockaddrs) {
             struct sockaddr* localAddr = NULL;
             struct sockaddr* remoteAddr = NULL;
             int localLen = 0, remoteLen = 0;
             
-            g_GetAcceptExSockaddrs(
-                priv->acceptBuffer,
-                0,  /* 没有接收数据 */
-                sizeof(struct sockaddr_in6) + 16,
-                sizeof(struct sockaddr_in6) + 16,
-                &localAddr, &localLen,
-                &remoteAddr, &remoteLen
-            );
+            g_GetAcceptExSockaddrs(p->acceptBuffer, 0,
+                sizeof(struct sockaddr_in6) + 16, sizeof(struct sockaddr_in6) + 16,
+                &localAddr, &localLen, &remoteAddr, &remoteLen);
             
             if (remoteAddr && remoteLen > 0) {
                 sa2addr((struct sockaddr_storage*)remoteAddr, clientAddr, clientPort);
@@ -1096,23 +953,21 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
         }
     }
     
-    /* 设置非阻塞 */
     u_long mode = 1;
-    ioctlsocket(priv->acceptSocket, FIONBIO, &mode);
+    ioctlsocket(p->acceptSocket, FIONBIO, &mode);
     
-    /* 返回套接字并清除 */
-    SOCKET result = priv->acceptSocket;
-    priv->acceptSocket = INVALID_SOCKET;
-    priv->acceptPending = false;
-    
+    SOCKET result = p->acceptSocket;
+    p->acceptSocket = INVALID_SOCKET;
+    p->acceptPending = false;
     return (XSocketHandle)result;
 }
 
 bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv)
 {
-    if (!priv || priv->socket == INVALID_SOCKET) return false;
-    
-    priv->acceptPending = false;
+    if (!priv) return false;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (p->socket == INVALID_SOCKET) return false;
+    p->acceptPending = false;
     return startAsyncAccept(priv);
 }
 
@@ -1576,15 +1431,15 @@ bool XNetwork_getLastDatagramSender(const XNetworkSocketPrivate* priv,
 {
     if (!priv) return false;
     
-    /* 从 priv->fromAddr 获取发送者信息 */
-    const XNetworkSocketPrivate* p = (const XNetworkSocketPrivate*)priv;
+    /* 从 wp->fromAddr 获取发送者信息 */
+    const XNetworkSocketPrivateWin32* wp = (const XNetworkSocketPrivateWin32*)priv;
     
-    if (p->fromAddrLen <= 0) {
+    if (wp->fromAddrLen <= 0) {
         return false;
     }
     
     if (srcAddr || srcPort) {
-        sa2addr((const struct sockaddr_storage*)&p->fromAddr, srcAddr, srcPort);
+        sa2addr((const struct sockaddr_storage*)&wp->fromAddr, srcAddr, srcPort);
     }
     
     return true;

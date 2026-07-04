@@ -19,6 +19,12 @@ extern "C" {
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "XTypes.h"
+/* ============================================================================
+ * 统一标识符类型
+ * ============================================================================ */
+
+
 
 /* ============================================================================
  * 配置
@@ -61,38 +67,38 @@ typedef struct XFileDescriptor {
 void XFd_init(void);
 
 /**
- * @brief 分配一个文件描述符，O(1) 位图扫描 + XFixedPool 无锁分配
+ * @brief 分配一个文件描述符，O(1)  XFixedPool 无锁分配
  * @param type   资源类型
  * @param handle 平台句柄
  * @param ctx    所属 XObject
  * @return fd（>=0），失败返回 -1
  */
-intptr_t XFd_alloc(XFdType type, void* handle, void* ctx);
+XFd XFd_alloc(XFdType type, void* handle, void* ctx);
 
 /**
  * @brief 释放文件描述符，O(1) XFixedPool 归还
  */
-void XFd_free(intptr_t fd);
+void XFd_free(XFd fd);
 
 /**
  * @brief 通过 fd 获取 XFileDescriptor*，O(1)
  */
-XFileDescriptor* XFd_get(intptr_t fd);
+XFileDescriptor* XFd_get(XFd fd);
 
 /**
  * @brief 获取底层句柄
  */
-void* XFd_handle(intptr_t fd);
+void* XFd_handle(XFd fd);
 
 /**
  * @brief 获取资源类型
  */
-XFdType XFd_type(intptr_t fd);
+XFdType XFd_type(XFd fd);
 
 /**
  * @brief 获取所属 XObject 上下文
  */
-void* XFd_ctx(intptr_t fd);
+void* XFd_ctx(XFd fd);
 
 #ifdef __cplusplus
 }

@@ -44,11 +44,11 @@ void XSocketTest()
 
 	XSocket* socket = XTcpSocket_create();
 	XObject_connect_2(socket,XSignal(XIODevice_readyRead_signal), readData);
-	 (socket, "192.168.1.117", 502, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
-	//XAbstractSocket_connectToHost_base(socket, "192.168.1.46", 6666, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
+	 //(socket, "192.168.1.117", 502, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
+	XAbstractSocket_connectToHost_base(socket, "192.168.1.46", 6666, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
 	XTcpSocket_waitForConnected_base(socket, 3000);
-	XSocketDescriptor s = XSocketDescriptor_fromIntptr(XTcpSocket_socketDescriptor_base(socket));
-	XSocketNotifier* notifier = XSocketNotifier_createWithSocket(s,XSocketAct_Read);
+	XFd fd = XAbstractSocket_fd(socket);
+	XSocketNotifier* notifier = XSocketNotifier_createWithSocket(fd, XSocketNotifier_Read);
 	XObject_connect_2(notifier, XSignal(XSocketNotifier_activated_signal), XSocketNotifierSlot);
 	XTcpSocket_write_1(socket,"hello",6);
 	XCoreApplication_exec();

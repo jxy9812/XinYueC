@@ -45,14 +45,14 @@ void XFd_init(void)
     g_fdInitDone = true;
 }
 
-intptr_t XFd_alloc(XFdType type, void* handle, void* ctx)
+XFd XFd_alloc(XFdType type, void* handle, void* ctx)
 {
     if (!g_fdInitDone) XFd_init();
-    if (!g_fdPool) return -1;
+    if (!g_fdPool) return XFD_INVALID;
 
     /* XFixedPool_malloc 返回空闲块指针 → 指针算术算出索引即 fd */
     XFileDescriptor* desc = (XFileDescriptor*)XFixedPool_malloc(g_fdPool);
-    if (!desc) return -1;
+    if (!desc) return XFD_INVALID;
 
     memset(desc, 0, sizeof(XFileDescriptor));
     desc->handle = handle;
@@ -60,10 +60,10 @@ intptr_t XFd_alloc(XFdType type, void* handle, void* ctx)
     desc->type = type;
     desc->refCount = 1;
 
-    return (intptr_t)XFd_indexOf(desc);
+    return (XFd)XFd_indexOf(desc);
 }
 
-void XFd_free(intptr_t fd)
+void XFd_free(XFd fd)
 {
     if (fd < 0 || fd >= XFD_TABLE_SIZE) return;
     XFileDescriptor* desc = XFd_byIndex((int)fd);
@@ -72,26 +72,26 @@ void XFd_free(intptr_t fd)
     XFixedPool_free(g_fdPool, desc);
 }
 
-XFileDescriptor* XFd_get(intptr_t fd)
+XFileDescriptor* XFd_get(XFd fd)
 {
     if (fd < 0 || fd >= XFD_TABLE_SIZE) return NULL;
     XFileDescriptor* desc = XFd_byIndex((int)fd);
     return ((XFdType)desc->type != XFD_TYPE_FREE) ? desc : NULL;
 }
 
-void* XFd_handle(intptr_t fd)
+void* XFd_handle(XFd fd)
 {
     XFileDescriptor* desc = XFd_get(fd);
     return desc ? desc->handle : NULL;
 }
 
-XFdType XFd_type(intptr_t fd)
+XFdType XFd_type(XFd fd)
 {
     XFileDescriptor* desc = XFd_get(fd);
     return desc ? (XFdType)desc->type : XFD_TYPE_FREE;
 }
 
-void* XFd_ctx(intptr_t fd)
+void* XFd_ctx(XFd fd)
 {
     XFileDescriptor* desc = XFd_get(fd);
     return desc ? desc->ctx : NULL;

@@ -24,6 +24,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "XHostAddress.h"
+#include "XFileDescriptor.h"
 #include "XNetworkProxy.h"
 #include "XByteArray.h"
 #include "XString.h"
@@ -98,7 +99,11 @@ char* XNetwork_errorString(int errorCode);
  * 三、套接字私有数据（由平台层管理异步IO状态）
  * ========================================================================= */
 
-typedef struct XNetworkSocketPrivate XNetworkSocketPrivate;
+typedef struct XNetworkSocketPrivate {
+    void*    owner;                     /**< 拥有者 XAbstractSocket */
+    XFd      xfd;                       /**< XFileDescriptor 统一标识符 */
+    XVector* notifiers;                /**< XVector<XSocketNotifier*>，socket notifier 列表 */
+} XNetworkSocketPrivate;
 
 /**
  * @brief 创建套接字私有数据
@@ -119,6 +124,7 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv);
  * @return 套接字描述符，无效返回 -1
  */
 intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv);
+XFd XNetwork_socketFd(const XNetworkSocketPrivate* priv);
 
 /**
  * @brief 检查套接字是否已连接

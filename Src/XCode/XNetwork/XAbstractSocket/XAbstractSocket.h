@@ -24,7 +24,6 @@ extern "C" {
 #include "XHostAddress.h"
 #include "XVariant.h"
 #include "XNetworkProxy.h"
-
 // 前向声明代理握手上下文
 typedef struct XProxyHandshakeContext XProxyHandshakeContext;
 
@@ -423,6 +422,13 @@ intptr_t XAbstractSocket_socketDescriptor_base(const XAbstractSocket* sock);
  * @return 成功返回 true
  */
 bool XAbstractSocket_setSocketDescriptor_base(XAbstractSocket* sock, intptr_t socketDescriptor, XAbstractSocket_SocketState state, XIODeviceBaseMode openMode);
+
+/**
+ * @brief 获取 XFileDescriptor 统一标识符。
+ * @param sock 套接字实例（非 NULL）
+ * @return XFileDescriptor fd，未分配返回 XFD_INVALID
+ */
+XFd XAbstractSocket_fd(const XAbstractSocket* sock);
 
 // =============== 同步等待函数 ===============
 

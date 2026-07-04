@@ -57,10 +57,10 @@ XSocketNotifier* XSocketNotifier_createWithType(XSocketNotifierType type)
     return notifier;
 }
 
-XSocketNotifier* XSocketNotifier_createWithSocket(XSocketDescriptor socket, XSocketNotifierType type)
+XSocketNotifier* XSocketNotifier_createWithSocket(XFd socket, XSocketNotifierType type)
 {
     XSocketNotifier* notifier = XSocketNotifier_createWithType(type);
-    if (notifier && XSocketDescriptor_isValid(socket)) {
+    if (notifier && socket >= 0) {
         XSocketNotifier_setSocket(notifier, socket);
     }
     return notifier;
@@ -72,7 +72,7 @@ void XSocketNotifier_init(XSocketNotifier* notifier, XSocketNotifierType type)
     XObject_init(notifier);
     XClassGetVtable(notifier) = XSocketNotifier_class_init();
 
-    notifier->socket = XSocketDescriptor_Invalid();
+    notifier->socket = XFD_INVALID;
     if ((type & ~(XSocketNotifier_Read | XSocketNotifier_Write | XSocketNotifier_Exception)) != 0) {
         notifier->type = XSocketNotifier_ReadWrite;
     }
@@ -83,25 +83,25 @@ void XSocketNotifier_init(XSocketNotifier* notifier, XSocketNotifierType type)
     notifier->enabled = true; // Qt 默认启用
 }
 
-void XSocketNotifier_setSocket(XSocketNotifier* notifier, XSocketDescriptor socket)
+void XSocketNotifier_setSocket(XSocketNotifier* notifier, XFd socket)
 {
     if (!notifier) return;
     // 先注销旧的（如果有效）
-    if (XSocketDescriptor_isValid(notifier->socket)) {
+    if (notifier->socket >= 0) {
         XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentDispatcher(), notifier);
     }
 
     notifier->socket = socket;
 
     // 如果新 socket 有效且已启用，则注册
-    if (notifier->enabled && XSocketDescriptor_isValid(socket)) {
+    if (notifier->enabled && socket >= 0) {
         XAbstractEventDispatcher_registerSocketNotifier_base(XThread_currentDispatcher(), notifier);
     }
 }
 
-XSocketDescriptor XSocketNotifier_socket(const XSocketNotifier* notifier)
+XFd XSocketNotifier_socket(const XSocketNotifier* notifier)
 {
-    return notifier ? notifier->socket : XSocketDescriptor_Invalid();
+    return notifier ? notifier->socket : XFD_INVALID;
 }
 
 XSocketNotifierType XSocketNotifier_type(const XSocketNotifier* notifier)
@@ -111,7 +111,7 @@ XSocketNotifierType XSocketNotifier_type(const XSocketNotifier* notifier)
 
 bool XSocketNotifier_isValid(const XSocketNotifier* notifier)
 {
-    return notifier && XSocketDescriptor_isValid(notifier->socket);
+    return notifier && notifier->socket >= 0;
 }
 
 bool XSocketNotifier_isEnabled(const XSocketNotifier* notifier)
@@ -126,7 +126,7 @@ void XSocketNotifier_setEnabled(XSocketNotifier* notifier, bool enabled)
 
     notifier->enabled = enabled;
 
-    if (enabled && XSocketDescriptor_isValid(notifier->socket)) {
+    if (enabled && notifier->socket >= 0) {
         XAbstractEventDispatcher_registerSocketNotifier_base(XThread_currentDispatcher(), notifier);
     }
     else {

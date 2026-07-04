@@ -44,8 +44,7 @@ struct XAbstractNativeEventFilter;
 typedef struct XAbstractEventDispatcherPrivate
 {
     XHrTimerGroup* m_hrtimerGroup;//高精度定时器组
-    XHashMap* sockets;          ///< 套接字映射: socket.value -> XEventDispatcherWin32_SocketInfo*
-    //XMutex* mutex;              ///< 保护 timers, sockets, global_nativeFilters 的互斥锁
+    //XMutex* mutex;              ///< 保护原生事件过滤器的互斥锁
 }XAbstractEventDispatcherPrivate;
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp);

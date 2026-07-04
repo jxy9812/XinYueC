@@ -2,7 +2,7 @@
 #ifndef XSOCKETNOTIFIER_H
 #define XSOCKETNOTIFIER_H
 #include "XObject.h"
-#include "XSocketDescriptor.h"
+#include "XFileDescriptor.h"
 #include <stdbool.h>
 #include <stdint.h>
 #ifdef __cplusplus
@@ -27,7 +27,7 @@ XCLASS_DEFINE_EXTEND_END(XSocketNotifier, XObject)
  */
 typedef struct XSocketNotifier {
     XObject base;                     // 继承 XObject
-    XSocketDescriptor socket;         // 当前绑定的 socket
+    XFd socket;                       // 当前绑定的 XFileDescriptor fd（统一标识符）
     XSocketNotifierType type;         // 监听类型
     bool enabled;                     // 是否启用
 }XSocketNotifier;
@@ -40,7 +40,7 @@ XSocketNotifier* XSocketNotifier_createWithType(XSocketNotifierType type);
 /**
  * @brief 构造函数 2：指定 socket 和类型
  */
-XSocketNotifier* XSocketNotifier_createWithSocket(XSocketDescriptor socket, XSocketNotifierType type);
+XSocketNotifier* XSocketNotifier_createWithSocket(XFd socket, XSocketNotifierType type);
 
 void XSocketNotifier_init(XSocketNotifier* notifier, XSocketNotifierType type);
 /**
@@ -52,12 +52,12 @@ void XSocketNotifier_init(XSocketNotifier* notifier, XSocketNotifierType type);
 /**
  * @brief 设置要监控的 socket
  */
-void XSocketNotifier_setSocket(XSocketNotifier* notifier, XSocketDescriptor socket);
+void XSocketNotifier_setSocket(XSocketNotifier* notifier, XFd socket);
 
 /**
  * @brief 获取当前 socket
  */
-XSocketDescriptor XSocketNotifier_socket(const XSocketNotifier* notifier);
+XFd XSocketNotifier_socket(const XSocketNotifier* notifier);
 
 /**
  * @brief 获取类型

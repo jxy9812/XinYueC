@@ -9,6 +9,7 @@
 #include "XHrTimerGroup.h"
 #include "XDateTime.h"
 #include "XFileDescriptor.h"
+#include "XNetwork_platform.h"
 #include <string.h>
 static XVector* global_nativeFilters;///< 本地事件过滤器列表
 static XMutex* global_mutex = NULL;
@@ -39,8 +40,6 @@ static void global_init();
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 {
     dp->m_hrtimerGroup = NULL;
-    dp->sockets = XHashMap_Create(intptr_t, XVector, uintptr_t_compare);
-    XContainerSetDataDeinitMethod(dp->sockets, XVector_delete_base);
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
@@ -49,11 +48,6 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
     {
         XClass_delete_base(dp->m_hrtimerGroup);
         dp->m_hrtimerGroup = NULL;
-    }
-    if (dp->sockets)
-    {
-        XMapBase_delete_base(dp->sockets);
-        dp->sockets = NULL;
     }
 }
 
@@ -120,6 +114,13 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
 
     // 设置父对象
     XObject_setParent((XObject*)self, (XObject*)parent);
+
+    /* 分配并初始化私有数据 */
+    self->d_ptr = (XAbstractEventDispatcherPrivate*)XMalloc_System(sizeof(XAbstractEventDispatcherPrivate));
+    if (self->d_ptr) {
+        XAbstractEventDispatcherPrivate_init(self->d_ptr);
+    }
+
     global_init();
     //self->m_hrtimerGroup = XHrTimerGroup_create(1);
   
@@ -201,39 +202,51 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
 static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
 {
     if (!notifier)return;
-    XSocketDescriptor socket = XSocketNotifier_socket(notifier);
-    if (!XSocketDescriptor_isValid(socket)) return;
-    if (!self->d_ptr || !self->d_ptr->sockets)return;
-    XHashMap* sockets = self->d_ptr->sockets;
-    if (!XMapBase_contains(sockets, &socket))
+    XFd fd = XSocketNotifier_socket(notifier);
+    if (fd < 0) return;
+    XFileDescriptor* desc = XFd_get(fd);
+    if (!desc) return;
+
+    /* 从 desc->handle 获取 XNetworkSocketPrivate* */
+    XNetworkSocketPrivate* priv = (XNetworkSocketPrivate*)desc->handle;
+    if (!priv) return;
+
+    /* 首次注册时分配 XVector */
+    if (!priv->notifiers)
     {
-        XVector v = { 0 };
-        XVector_init(&v, sizeof(XSocketNotifier*), false);
-        XContainerSetCompare(&v, uintptr_t_compare);
-        XMapBase_insert_base(sockets, &socket, &v);
+        XVector* v = (XVector*)XMalloc_Hybrid(sizeof(XVector));
+        if (!v) return;
+        XVector_init(v, sizeof(XSocketNotifier*), false);
+        XContainerSetCompare(v, uintptr_t_compare);
+        priv->notifiers = v;
     }
-    XVector* notifiers = XMapBase_value_base(sockets, &socket);
-    if (notifiers && XVector_indexOf(notifiers, &notifier, 0) == -1)
+    if (XVector_indexOf(priv->notifiers, &notifier, 0) == -1)
     {
-        XVector_append_1_base(notifiers, &notifier);
+        XVector_append_1_base(priv->notifiers, &notifier);
     }
 }
 
 static void VXAbstractEventDispatcher_unregisterSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
 {
     if (!notifier)return;
-    XSocketDescriptor socket = XSocketNotifier_socket(notifier);
-    if (!XSocketDescriptor_isValid(socket)) return;
-    if (!self->d_ptr || !self->d_ptr->sockets)return;
-    XHashMap* sockets = self->d_ptr->sockets;
-    XVector* notifiers = XMapBase_value_base(sockets, &socket);
-    if (notifiers)
+    XFd fd = XSocketNotifier_socket(notifier);
+    if (fd < 0) return;
+    XFileDescriptor* desc = XFd_get(fd);
+    if (!desc) return;
+
+    XNetworkSocketPrivate* priv = (XNetworkSocketPrivate*)desc->handle;
+    if (!priv || !priv->notifiers) return;
+
+    int index = XVector_indexOf(priv->notifiers, &notifier, 0);
+    if (index != -1)
     {
-        int index = XVector_indexOf(notifiers, &notifier, 0);
-        if (index != -1)
-            XVector_remove_base(sockets, index, 1);
-        if (XVector_isEmpty_base(notifiers))//当前套接字监视列表空了,删除当前的容器
-            XHashMap_remove_base(sockets,&socket);
+        XVector_remove_base(priv->notifiers, index, 1);
+    }
+    if (XVector_isEmpty_base(priv->notifiers))
+    {
+        XVector_deinit_base(priv->notifiers);
+        XFree_Hybrid(priv->notifiers);
+        priv->notifiers = NULL;
     }
 }
 static void TimerCallback(void* userData, XTimerData* timer)
@@ -423,7 +436,11 @@ static void VXAbstractEventDispatcher_closingDown(XAbstractEventDispatcher* self
 }
 void VXAbstractEventDispatcher_deinit(XAbstractEventDispatcher* self)
 {
-    
+    if (self->d_ptr) {
+        XAbstractEventDispatcherPrivate_deinit(self->d_ptr);
+        XFree_System(self->d_ptr);
+        self->d_ptr = NULL;
+    }
     XClass_Deinit_Parent(XObject, self);
 }
 void global_init()
@@ -586,7 +603,7 @@ XTimerId XAbstractEventDispatcher_registerTimer(
     XObject* object)
 {
     if (ISNULL(self, "")) return XTIMER_INVALID_ID;
-    intptr_t fd = XFd_alloc(XFD_TYPE_TIMER, NULL, object);
+    XFd fd = XFd_alloc(XFD_TYPE_TIMER, NULL, object);
     if (fd < 0) return XTIMER_INVALID_ID;
     XAbstractEventDispatcher_registerTimer_base(self, (XTimerId)fd, interval, timerType, object);
     return (XTimerId)fd;

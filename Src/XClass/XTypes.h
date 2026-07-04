@@ -70,6 +70,9 @@ typedef XMapBase XFuncCodeMap;
 typedef XMap XVariantMap;
 typedef XHashMap XVariantHashMap;
 
+typedef intptr_t XFd;               /**< 统一文件描述符/标识符 */
+#define XFD_INVALID  ((XFd)(-1))   /**< 无效标识符 */
+
 typedef void (*XCallableToRun)(XVarList*);
 //函数参数类型
 typedef enum XFuncParamType
@@ -88,7 +91,7 @@ typedef enum XFuncReturnType
 /**
  * @brief 定时器唯一标识符。
  */
-typedef intptr_t XTimerId;
+typedef XFd XTimerId;
 #define  XTIMER_INVALID_ID  ((XTimerId)(-1))
 /**
  * @brief 时间持续量（Duration）。
