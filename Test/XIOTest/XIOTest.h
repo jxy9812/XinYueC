@@ -18,9 +18,6 @@ extern "C" {
 	void XMenu_XFileInfoTest(XMenu* root);
 	void XMenu_XSaveFileTest(XMenu* root);
 	void XMenu_XFileDescriptorTest(XMenu* root);
-
-
-
 	void XPWMDeviceTest();
 #endif // DEMOTEST
 

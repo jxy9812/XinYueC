@@ -7,34 +7,6 @@
 #include <stdlib.h>
 #include <ctype.h>
 
-// ==================== 工具函数 ====================
-
-static uint32_t ipv4FromBytes(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
-    return ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)c << 8) | (uint32_t)d;
-}
-
-static void ipv4ToBytes(uint32_t ip, uint8_t* a, uint8_t* b, uint8_t* c, uint8_t* d) {
-    *a = (ip >> 24) & 0xFF;
-    *b = (ip >> 16) & 0xFF;
-    *c = (ip >> 8) & 0xFF;
-    *d = ip & 0xFF;
-}
-
-static void ipv4ToIpv6Mapped(uint8_t out[16], uint32_t ipv4) {
-    static const uint8_t prefix[12] = { 0,0,0,0,0,0,0,0,0,0,0xff,0xff };
-    memcpy(out, prefix, 12);
-    ipv4ToBytes(ipv4, &out[12], &out[13], &out[14], &out[15]);
-}
-
-static uint32_t ipv6MappedToIpv4(const uint8_t ip6[16]) {
-    return ipv4FromBytes(ip6[12], ip6[13], ip6[14], ip6[15]);
-}
-
-static bool isIPv4MappedAddress(const uint8_t ip6[16]) {
-    static const uint8_t prefix[12] = { 0,0,0,0,0,0,0,0,0,0,0xff,0xff };
-    return memcmp(ip6, prefix, 12) == 0;
-}
-
 // ==================== IPv4 解析 ====================
 
 static bool parseIPv4(const char* src, uint32_t* out) {
@@ -42,35 +14,26 @@ static bool parseIPv4(const char* src, uint32_t* out) {
     unsigned int a, b, c, d;
     if (sscanf(src, "%u.%u.%u.%u", &a, &b, &c, &d) != 4) return false;
     if (a > 255 || b > 255 || c > 255 || d > 255) return false;
-    *out = ipv4FromBytes((uint8_t)a, (uint8_t)b, (uint8_t)c, (uint8_t)d);
+    *out = ((uint32_t)a << 24) | ((uint32_t)b << 16) | ((uint32_t)c << 8) | (uint32_t)d;
     return true;
 }
 
-// ==================== IPv6 解析（支持 :: 和 %zone）====================
+// ==================== IPv6 解析（支持 :: 格式）====================
 
-static bool parseIPv6(const char* src, uint8_t dst[16], char scopeOut[64]) {
+static bool parseIPv6(const char* src, uint8_t dst[16]) {
     if (!src || !dst) return false;
     memset(dst, 0, 16);
-    if (scopeOut) scopeOut[0] = '\0';
 
     char buf[64];
     size_t len = strlen(src);
     if (len >= sizeof(buf)) return false;
     strcpy(buf, src);
 
-    // 提取 scope ID
+    // Strip scope ID (e.g., %eth0)
     char* percent = strchr(buf, '%');
-    if (percent) {
-        if (scopeOut) {
-            size_t slen = strlen(percent + 1);
-            if (slen >= 64) slen = 63;
-            memcpy(scopeOut, percent + 1, slen);
-            scopeOut[slen] = '\0';
-        }
-        *percent = '\0';
-    }
+    if (percent) *percent = '\0';
 
-    // 去掉方括号
+    // Strip brackets
     char* s = buf;
     if (*s == '[') {
         s++;
@@ -78,7 +41,7 @@ static bool parseIPv6(const char* src, uint8_t dst[16], char scopeOut[64]) {
         if (end) *end = '\0';
     }
 
-    // 快速处理常见情况
+    // Handle common shortcuts
     if (strcmp(s, "::1") == 0) {
         dst[15] = 1;
         return true;
@@ -87,7 +50,7 @@ static bool parseIPv6(const char* src, uint8_t dst[16], char scopeOut[64]) {
         return true;
     }
 
-    // 分段解析
+    // Parse segments
     int parts[8] = { 0 };
     int count = 0;
     char temp[64];
@@ -95,8 +58,7 @@ static bool parseIPv6(const char* src, uint8_t dst[16], char scopeOut[64]) {
     char* token = strtok(temp, ":");
     while (token && count < 8) {
         if (strlen(token) == 0) {
-            // 遇到 "::"，停止计数
-            break;
+            break; // "::" encountered
         }
         char* endptr;
         unsigned long val = strtoul(token, &endptr, 16);
@@ -113,8 +75,6 @@ static bool parseIPv6(const char* src, uint8_t dst[16], char scopeOut[64]) {
         return true;
     }
 
-    // 简化：不支持压缩格式以外的复杂 IPv6（如 "1::2:3"）
-    // 若需完全兼容 RFC 4291，可后续增强
     return false;
 }
 
@@ -126,9 +86,9 @@ static bool isIPv4LinkLocal(uint32_t ip) { return (ip & 0xFFFF0000U) == 0xA9FE00
 static bool isIPv4Broadcast(uint32_t ip) { return ip == 0xFFFFFFFFU; }
 static bool isIPv4Global(uint32_t ip) {
     if (isIPv4Loopback(ip) || isIPv4LinkLocal(ip) || isIPv4Broadcast(ip)) return false;
-    if ((ip & 0xFF000000U) == 0x0A000000U) return false; // 10.0.0.0/8
-    if ((ip & 0xFFF00000U) == 0xAC100000U) return false; // 172.16.0.0/12
-    if ((ip & 0xFFFF0000U) == 0xC0A80000U) return false; // 192.168.0.0/16
+    if ((ip & 0xFF000000U) == 0x0A000000U) return false;
+    if ((ip & 0xFFF00000U) == 0xAC100000U) return false;
+    if ((ip & 0xFFFF0000U) == 0xC0A80000U) return false;
     return true;
 }
 
@@ -145,7 +105,6 @@ static bool isIPv6Global(const uint8_t ip6[16]) {
         isIPv6SiteLocal(ip6) || isIPv6UniqueLocal(ip6) ||
         isIPv6Multicast(ip6)) return false;
     if (memcmp(ip6, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", 16) == 0) return false;
-    if (isIPv4MappedAddress(ip6)) return false;
     return true;
 }
 
@@ -153,38 +112,42 @@ static bool isIPv6Global(const uint8_t ip6[16]) {
 
 static void VXHostAddress_copy(XHostAddress* self, const XHostAddress* other) {
     if (!self || !other) return;
-    // 检查目标对象是否已初始化，如果未初始化则先初始化
     XClassEnsureVtable(self, XHostAddress);
-    memcpy(self->a6, other->a6, 16);
     self->protocol = other->protocol;
-    strcpy(self->scopeId, other->scopeId);
     self->isNull = other->isNull;
+    if (other->protocol == XHostAddress_IPv4Protocol) {
+        self->ip4 = other->ip4;
+    } else {
+        memcpy(self->ip6, other->ip6, 16);
+    }
 }
 
 static void VXHostAddress_move(XHostAddress* self, XHostAddress* other) {
     if (!self || !other) return;
-    // 检查目标对象是否已初始化，如果未初始化则先初始化
     XClassEnsureVtable(self, XHostAddress);
     memcpy(self, other, sizeof(XHostAddress));
 }
 
 static void VXHostAddress_deinit(XHostAddress* self) {
-    (void)self; // 无动态资源
+    (void)self;
 }
 
 bool XHostAddress_operator_equal(const XHostAddress* a, const XHostAddress* b) {
     if (!a || !b) return false;
     if (a->protocol != b->protocol) return false;
-    if (memcmp(a->a6, b->a6, 16) != 0) return false;
-    return strcmp(a->scopeId, b->scopeId) == 0;
+    if (a->protocol == XHostAddress_IPv4Protocol) return a->ip4 == b->ip4;
+    return memcmp(a->ip6, b->ip6, 16) == 0;
 }
 
 int XHostAddress_operator_compare(const XHostAddress* a, const XHostAddress* b) {
     if (!a || !b) return (a != NULL) - (b != NULL);
     if (a->protocol != b->protocol) return (int)a->protocol - (int)b->protocol;
-    int cmp = memcmp(a->a6, b->a6, 16);
-    if (cmp != 0) return cmp;
-    return strcmp(a->scopeId, b->scopeId);
+    if (a->protocol == XHostAddress_IPv4Protocol) {
+        if (a->ip4 < b->ip4) return -1;
+        if (a->ip4 > b->ip4) return 1;
+        return 0;
+    }
+    return memcmp(a->ip6, b->ip6, 16);
 }
 
 // ==================== 虚函数表 ====================
@@ -192,7 +155,6 @@ int XHostAddress_operator_compare(const XHostAddress* a, const XHostAddress* b) 
 XVtable* XHostAddress_class_init(void) 
 {
     XVTABLE_CREAT_DEFAULT
-        //虚函数表初始化
 #if VTABLE_ISSTACK
         XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XHostAddress))
 #else
@@ -262,7 +224,7 @@ XHostAddress* XHostAddress_create_fromSpecial(XHostAddress_SpecialAddress specia
 
 void XHostAddress_setAddress(XHostAddress* addr, const char* address) {
     if (!addr || !address) {
-        XHostAddress_setAddressSpecial(addr, XHostAddress_NullSpecial);
+        if (addr) { addr->protocol = XHostAddress_UnknownNetworkLayerProtocol; addr->isNull = true; }
         return;
     }
 
@@ -272,37 +234,34 @@ void XHostAddress_setAddress(XHostAddress* addr, const char* address) {
         return;
     }
 
-    char scope[64] = { 0 };
-    if (parseIPv6(address, addr->a6, scope)) {
-        addr->protocol = XHostAddress_IPv6Protocol;
-        strcpy(addr->scopeId, scope);
-        addr->isNull = false;
+    uint8_t ip6[16];
+    if (parseIPv6(address, ip6)) {
+        XHostAddress_setAddressIPv6(addr, ip6);
         return;
     }
 
-    XHostAddress_setAddressSpecial(addr, XHostAddress_NullSpecial);
+    addr->protocol = XHostAddress_UnknownNetworkLayerProtocol;
+    addr->isNull = true;
 }
 
 void XHostAddress_setAddressIPv4(XHostAddress* addr, uint32_t ip) {
     if (!addr) return;
-    ipv4ToIpv6Mapped(addr->a6, ip);
+    addr->ip4 = ip;
     addr->protocol = XHostAddress_IPv4Protocol;
-    addr->scopeId[0] = '\0';
     addr->isNull = false;
 }
 
 void XHostAddress_setAddressIPv6(XHostAddress* addr, const uint8_t ip[16]) {
     if (!addr || !ip) return;
-    memcpy(addr->a6, ip, 16);
+    memcpy(addr->ip6, ip, 16);
     addr->protocol = XHostAddress_IPv6Protocol;
-    addr->scopeId[0] = '\0';
     addr->isNull = false;
 }
 
 void XHostAddress_setAddressSpecial(XHostAddress* addr, XHostAddress_SpecialAddress special) {
     if (!addr) return;
-    memset(addr->a6, 0, 16);
-    addr->scopeId[0] = '\0';
+    memset(&addr->ip4, 0, sizeof(addr->ip4) > 16 ? sizeof(addr->ip4) : 16);
+    memset(addr->ip6, 0, 16);
     addr->isNull = false;
 
     switch (special) {
@@ -312,22 +271,22 @@ void XHostAddress_setAddressSpecial(XHostAddress* addr, XHostAddress_SpecialAddr
         break;
     case XHostAddress_AnySpecial:
     case XHostAddress_AnyIPv4Special:
-        ipv4ToIpv6Mapped(addr->a6, 0);
+        addr->ip4 = 0;
         addr->protocol = XHostAddress_IPv4Protocol;
         break;
     case XHostAddress_AnyIPv6Special:
         addr->protocol = XHostAddress_IPv6Protocol;
         break;
     case XHostAddress_LocalHostSpecial:
-        ipv4ToIpv6Mapped(addr->a6, 0x7F000001U);
+        addr->ip4 = 0x7F000001U;
         addr->protocol = XHostAddress_IPv4Protocol;
         break;
     case XHostAddress_LocalHostIPv6Special:
-        addr->a6[15] = 1;
+        addr->ip6[15] = 1;
         addr->protocol = XHostAddress_IPv6Protocol;
         break;
     case XHostAddress_BroadcastSpecial:
-        ipv4ToIpv6Mapped(addr->a6, 0xFFFFFFFFU);
+        addr->ip4 = 0xFFFFFFFFU;
         addr->protocol = XHostAddress_IPv4Protocol;
         break;
     case XHostAddress_AnyAllSpecial:
@@ -337,16 +296,9 @@ void XHostAddress_setAddressSpecial(XHostAddress* addr, XHostAddress_SpecialAddr
 }
 
 void XHostAddress_setScopeId(XHostAddress* addr, const char* id) {
-    if (!addr || addr->protocol != XHostAddress_IPv6Protocol) return;
-    if (id) {
-        size_t len = strlen(id);
-        if (len >= 64) len = 63;
-        memcpy(addr->scopeId, id, len);
-        addr->scopeId[len] = '\0';
-    }
-    else {
-        addr->scopeId[0] = '\0';
-    }
+    (void)addr;
+    (void)id;
+    // scope ID is not stored (aligned with Qt QHostAddress)
 }
 
 // ==================== 查询函数 ====================
@@ -361,7 +313,7 @@ XHostAddress_NetworkLayerProtocol XHostAddress_protocol(const XHostAddress* addr
 
 uint32_t XHostAddress_toIPv4Address(const XHostAddress* addr) {
     if (!addr || addr->protocol != XHostAddress_IPv4Protocol) return 0;
-    return ipv6MappedToIpv4(addr->a6);
+    return addr->ip4;
 }
 
 void XHostAddress_toIPv6Address(const XHostAddress* addr, uint8_t out[16]) {
@@ -369,38 +321,40 @@ void XHostAddress_toIPv6Address(const XHostAddress* addr, uint8_t out[16]) {
         if (out) memset(out, 0, 16);
         return;
     }
-    memcpy(out, addr->a6, 16);
+    if (addr->protocol == XHostAddress_IPv4Protocol) {
+        memset(out, 0, 10);
+        out[10] = 0xFF; out[11] = 0xFF;
+        out[12] = (addr->ip4 >> 24) & 0xFF;
+        out[13] = (addr->ip4 >> 16) & 0xFF;
+        out[14] = (addr->ip4 >> 8) & 0xFF;
+        out[15] = addr->ip4 & 0xFF;
+    } else {
+        memcpy(out, addr->ip6, 16);
+    }
 }
 
 const char* XHostAddress_scopeId(const XHostAddress* addr) {
-    return addr ? addr->scopeId : "";
+    (void)addr;
+    return "";
 }
 
 XString* XHostAddress_toString(const XHostAddress* addr) {
-    if (!addr || addr->isNull) {
-        return NULL;
-    }
+    if (!addr || addr->isNull) return NULL;
 
     char buffer[128];
     int len = 0;
 
     if (addr->protocol == XHostAddress_IPv4Protocol) {
-        uint32_t ip = ipv6MappedToIpv4(addr->a6);
         len = snprintf(buffer, sizeof(buffer), "%d.%d.%d.%d",
-            (ip >> 24) & 0xFF, (ip >> 16) & 0xFF,
-            (ip >> 8) & 0xFF, ip & 0xFF);
-    }
-    else if (addr->protocol == XHostAddress_IPv6Protocol) {
-        // 简化输出（不压缩零段，但功能正确）
+            (addr->ip4 >> 24) & 0xFF, (addr->ip4 >> 16) & 0xFF,
+            (addr->ip4 >> 8) & 0xFF, addr->ip4 & 0xFF);
+    } else if (addr->protocol == XHostAddress_IPv6Protocol) {
         len = snprintf(buffer, sizeof(buffer),
             "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-            addr->a6[0], addr->a6[1], addr->a6[2], addr->a6[3],
-            addr->a6[4], addr->a6[5], addr->a6[6], addr->a6[7],
-            addr->a6[8], addr->a6[9], addr->a6[10], addr->a6[11],
-            addr->a6[12], addr->a6[13], addr->a6[14], addr->a6[15]);
-        if (addr->scopeId[0]) {
-            len += snprintf(buffer + len, sizeof(buffer) - len, "%%%s", addr->scopeId);
-        }
+            addr->ip6[0], addr->ip6[1], addr->ip6[2], addr->ip6[3],
+            addr->ip6[4], addr->ip6[5], addr->ip6[6], addr->ip6[7],
+            addr->ip6[8], addr->ip6[9], addr->ip6[10], addr->ip6[11],
+            addr->ip6[12], addr->ip6[13], addr->ip6[14], addr->ip6[15]);
     }
 
     if (len <= 0) return NULL;
@@ -409,61 +363,41 @@ XString* XHostAddress_toString(const XHostAddress* addr) {
 
 bool XHostAddress_isLoopback(const XHostAddress* addr) {
     if (!addr || addr->isNull) return false;
-    if (addr->protocol == XHostAddress_IPv4Protocol) {
-        return isIPv4Loopback(ipv6MappedToIpv4(addr->a6));
-    }
-    if (addr->protocol == XHostAddress_IPv6Protocol) {
-        return isIPv6Loopback(addr->a6);
-    }
+    if (addr->protocol == XHostAddress_IPv4Protocol) return isIPv4Loopback(addr->ip4);
+    if (addr->protocol == XHostAddress_IPv6Protocol) return isIPv6Loopback(addr->ip6);
     return false;
 }
 
 bool XHostAddress_isMulticast(const XHostAddress* addr) {
     if (!addr || addr->isNull) return false;
-    if (addr->protocol == XHostAddress_IPv4Protocol) {
-        return isIPv4Multicast(ipv6MappedToIpv4(addr->a6));
-    }
-    if (addr->protocol == XHostAddress_IPv6Protocol) {
-        return isIPv6Multicast(addr->a6);
-    }
+    if (addr->protocol == XHostAddress_IPv4Protocol) return isIPv4Multicast(addr->ip4);
+    if (addr->protocol == XHostAddress_IPv6Protocol) return isIPv6Multicast(addr->ip6);
     return false;
 }
 
 bool XHostAddress_isGlobal(const XHostAddress* addr) {
     if (!addr || addr->isNull) return false;
-    if (addr->protocol == XHostAddress_IPv4Protocol) {
-        return isIPv4Global(ipv6MappedToIpv4(addr->a6));
-    }
-    if (addr->protocol == XHostAddress_IPv6Protocol) {
-        return isIPv6Global(addr->a6);
-    }
+    if (addr->protocol == XHostAddress_IPv4Protocol) return isIPv4Global(addr->ip4);
+    if (addr->protocol == XHostAddress_IPv6Protocol) return isIPv6Global(addr->ip6);
     return false;
 }
 
 bool XHostAddress_isLinkLocal(const XHostAddress* addr) {
     if (!addr || addr->isNull) return false;
-    if (addr->protocol == XHostAddress_IPv4Protocol) {
-        return isIPv4LinkLocal(ipv6MappedToIpv4(addr->a6));
-    }
-    if (addr->protocol == XHostAddress_IPv6Protocol) {
-        return isIPv6LinkLocal(addr->a6);
-    }
+    if (addr->protocol == XHostAddress_IPv4Protocol) return isIPv4LinkLocal(addr->ip4);
+    if (addr->protocol == XHostAddress_IPv6Protocol) return isIPv6LinkLocal(addr->ip6);
     return false;
 }
 
 bool XHostAddress_isSiteLocal(const XHostAddress* addr) {
     if (!addr || addr->isNull) return false;
-    if (addr->protocol == XHostAddress_IPv6Protocol) {
-        return isIPv6SiteLocal(addr->a6);
-    }
+    if (addr->protocol == XHostAddress_IPv6Protocol) return isIPv6SiteLocal(addr->ip6);
     return false;
 }
 
 bool XHostAddress_isUniqueLocal(const XHostAddress* addr) {
     if (!addr || addr->isNull) return false;
-    if (addr->protocol == XHostAddress_IPv6Protocol) {
-        return isIPv6UniqueLocal(addr->a6);
-    }
+    if (addr->protocol == XHostAddress_IPv6Protocol) return isIPv6UniqueLocal(addr->ip6);
     return false;
 }
 
@@ -475,29 +409,29 @@ bool XHostAddress_isInSubnet(const XHostAddress* addr, const XHostAddress* subne
     int bits = (addr->protocol == XHostAddress_IPv4Protocol) ? 32 : 128;
     if (prefixLength > bits) prefixLength = bits;
 
+    const uint8_t* a = (addr->protocol == XHostAddress_IPv4Protocol) ? ((const uint8_t*)&addr->ip4) : addr->ip6;
+    const uint8_t* s = (subnet->protocol == XHostAddress_IPv4Protocol) ? ((const uint8_t*)&subnet->ip4) : subnet->ip6;
+    int byteLen = (addr->protocol == XHostAddress_IPv4Protocol) ? 4 : 16;
+
     int full_bytes = prefixLength / 8;
     int remaining_bits = prefixLength % 8;
 
-    if (memcmp(addr->a6, subnet->a6, full_bytes) != 0) return false;
-
+    if (memcmp(a, s, full_bytes) != 0) return false;
     if (remaining_bits > 0) {
         uint8_t mask = (0xFF << (8 - remaining_bits)) & 0xFF;
-        if ((addr->a6[full_bytes] & mask) != (subnet->a6[full_bytes] & mask)) {
-            return false;
-        }
+        if ((a[full_bytes] & mask) != (s[full_bytes] & mask)) return false;
     }
-
     return true;
 }
 
 bool XHostAddress_parseSubnet(const char* subnetStr, XHostAddress* host, int* prefixLen) {
     if (!subnetStr || !host || !prefixLen) return false;
 
-    char* slash = strchr(subnetStr, '/');
+    const char* slash = strchr(subnetStr, '/');
     if (!slash) return false;
 
-    int len = (int)(slash - subnetStr);
-    if (len <= 0) return false;
+    size_t len = slash - subnetStr;
+    if (len == 0) return false;
 
     char* addrStr = (char*)XMalloc_System(len + 1);
     if (!addrStr) return false;
@@ -505,90 +439,18 @@ bool XHostAddress_parseSubnet(const char* subnetStr, XHostAddress* host, int* pr
     addrStr[len] = '\0';
 
     int prefix = atoi(slash + 1);
-    if (prefix <= 0) {
-        XFree_System(addrStr);
-        return false;
-    }
+    if (prefix <= 0) { XFree_System(addrStr); return false; }
 
     XHostAddress* tmp = XHostAddress_create_fromString(addrStr);
     XFree_System(addrStr);
 
-    if (!tmp || XHostAddress_isNull(tmp)) {
-        XHostAddress_delete_base(tmp);
-        return false;
-    }
+    if (!tmp || XHostAddress_isNull(tmp)) { XHostAddress_delete_base(tmp); return false; }
 
     XClass_move_base(host, tmp);
     XHostAddress_delete_base(tmp);
     *prefixLen = prefix;
     return true;
 }
-
-// ==================== 静态常量 ====================
-
-const XHostAddress XHostAddress_Null = {
-    .m_class = {0},
-    .a6 = {0},
-    .protocol = XHostAddress_UnknownNetworkLayerProtocol,
-    .scopeId = {0},
-    .isNull = true
-};
-
-const XHostAddress XHostAddress_Any = {
-    .m_class = {0},
-    .a6 = {0,0,0,0,0,0,0,0,0,0,0xff,0xff,0,0,0,0},
-    .protocol = XHostAddress_IPv4Protocol,
-    .scopeId = {0},
-    .isNull = false
-};
-
-const XHostAddress XHostAddress_AnyIPv4 = {
-    .m_class = {0},
-    .a6 = {0,0,0,0,0,0,0,0,0,0,0xff,0xff,0,0,0,0},
-    .protocol = XHostAddress_IPv4Protocol,
-    .scopeId = {0},
-    .isNull = false
-};
-
-const XHostAddress XHostAddress_AnyIPv6 = {
-    .m_class = {0},
-    .a6 = {0},
-    .protocol = XHostAddress_IPv6Protocol,
-    .scopeId = {0},
-    .isNull = false
-};
-
-const XHostAddress XHostAddress_LocalHost = {
-    .m_class = {0},
-    .a6 = {0,0,0,0,0,0,0,0,0,0,0xff,0xff,127,0,0,1},
-    .protocol = XHostAddress_IPv4Protocol,
-    .scopeId = {0},
-    .isNull = false
-};
-
-const XHostAddress XHostAddress_LocalHostIPv6 = {
-    .m_class = {0},
-    .a6 = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},
-    .protocol = XHostAddress_IPv6Protocol,
-    .scopeId = {0},
-    .isNull = false
-};
-
-const XHostAddress XHostAddress_Broadcast = {
-    .m_class = {0},
-    .a6 = {0,0,0,0,0,0,0,0,0,0,0xff,0xff,255,255,255,255},
-    .protocol = XHostAddress_IPv4Protocol,
-    .scopeId = {0},
-    .isNull = false
-};
-
-const XHostAddress XHostAddress_AnyAll = {
-    .m_class = {0},
-    .a6 = {0},
-    .protocol = XHostAddress_IPv6Protocol,
-    .scopeId = {0},
-    .isNull = false
-};
 
 // ==================== 辅助函数 ====================
 
@@ -599,5 +461,63 @@ bool XHostAddress_isIPv4Address(const char* address) {
 
 bool XHostAddress_isIPv6Address(const char* address) {
     uint8_t dummy[16];
-    return parseIPv6(address, dummy, NULL);
+    return parseIPv6(address, dummy);
 }
+
+// ==================== 静态常量 ====================
+
+const XHostAddress XHostAddress_Null = {
+    .m_class = {0},
+    .protocol = XHostAddress_UnknownNetworkLayerProtocol,
+    .isNull = true,
+    .ip6 = {0}
+};
+
+const XHostAddress XHostAddress_Any = {
+    .m_class = {0},
+    .protocol = XHostAddress_IPv4Protocol,
+    .isNull = false,
+    .ip4 = 0
+};
+
+const XHostAddress XHostAddress_AnyIPv4 = {
+    .m_class = {0},
+    .protocol = XHostAddress_IPv4Protocol,
+    .isNull = false,
+    .ip4 = 0
+};
+
+const XHostAddress XHostAddress_AnyIPv6 = {
+    .m_class = {0},
+    .protocol = XHostAddress_IPv6Protocol,
+    .isNull = false,
+    .ip6 = {0}
+};
+
+const XHostAddress XHostAddress_LocalHost = {
+    .m_class = {0},
+    .protocol = XHostAddress_IPv4Protocol,
+    .isNull = false,
+    .ip4 = 0x7F000001U
+};
+
+const XHostAddress XHostAddress_LocalHostIPv6 = {
+    .m_class = {0},
+    .protocol = XHostAddress_IPv6Protocol,
+    .isNull = false,
+    .ip6 = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1}
+};
+
+const XHostAddress XHostAddress_Broadcast = {
+    .m_class = {0},
+    .protocol = XHostAddress_IPv4Protocol,
+    .isNull = false,
+    .ip4 = 0xFFFFFFFFU
+};
+
+const XHostAddress XHostAddress_AnyAll = {
+    .m_class = {0},
+    .protocol = XHostAddress_IPv6Protocol,
+    .isNull = false,
+    .ip6 = {0}
+};
