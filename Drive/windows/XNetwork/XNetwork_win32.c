@@ -2,6 +2,10 @@
  * @file XNetwork_win32.c
  * @brief Windows 平台网络实现（IOCP 异步 I/O）
  */
+ /* ====== 配置文件 ====== */
+#include "XNetwork_config.h"
+
+#ifdef XNETWORK_USE_PLATFORM_API
 
  /* ====== Windows 宏定义必须在所有头文件之前 ======*/
 #ifndef WIN32_LEAN_AND_MEAN
@@ -11,6 +15,8 @@
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600
 #endif
+
+
 
 /* ====== 项目头文件 ====== */
 #include "XNetwork_platform.h"
@@ -695,6 +701,8 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
     }
     return -1;
 }
+
+
 
 bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event)
 {
@@ -1707,3 +1715,4 @@ int XNetwork_gssapiAuth(const char* serviceName,
     /* 失败 */
     return -1;
 }
+#endif /* XNETWORK_USE_PLATFORM_API */

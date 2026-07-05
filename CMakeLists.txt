@@ -42,6 +42,11 @@ include_directories("Library/Fatfs")
 file(GLOB_RECURSE TEMP_LIBRARY_FILE "Library/Fatfs/*.c")
 list(APPEND LIBRARY_FILE ${TEMP_LIBRARY_FILE})
 
+include_directories("Library/lwip")
+include_directories("Library/lwip/include")
+file(GLOB_RECURSE TEMP_LIBRARY_FILE "Library/lwip/*.c")
+list(APPEND LIBRARY_FILE ${TEMP_LIBRARY_FILE})
+
 add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE})
 add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE} ${PUBLIC_HDRS})
 

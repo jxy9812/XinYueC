@@ -26,6 +26,7 @@
 #include "XHostAddress.h"
 #include "XFileDescriptor.h"
 #include "XNetworkProxy.h"
+#include "XNetwork_config.h"
 #include "XByteArray.h"
 #include "XString.h"
 #include "XVector.h"
@@ -35,6 +36,12 @@ extern "C" {
 #endif
 
 /* 前置声明 - XNetworkInterface 在 XNetworkInterface.h 中定义 */
+
+/* lwIP 平台额外声明 */
+#ifdef XNETWORK_USE_LWIP
+#include "XNetwork_lwip_platform.h"
+#endif
+
 typedef struct XNetworkInterface XNetworkInterface;
 
 /* =========================================================================
