@@ -317,7 +317,7 @@ static void XNetworkInterface_copyTest(void)
 static void XNetworkInterface_comprehensiveTest(void)
 {
     XPrintf("\n========== XNetworkInterface 综合测试 ==========\n\n");
-    while(true)
+    //while(true)
     {
         XNetworkInterface_allInterfacesTest();
         XPrintf("\n");

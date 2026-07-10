@@ -1,4 +1,4 @@
-// XNetworkInterface.h
+﻿// XNetworkInterface.h
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
@@ -19,6 +19,15 @@ extern "C" {
 #include "XVector.h"
 #include <stdbool.h>
 #include <stdint.h>
+
+typedef void* XNetworkInterfaceIterator;
+
+/* 网络接口枚举器（前向声明） */
+struct XNetworkInterface;
+XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void);
+struct XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter);
+void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter);
+
 
 // =============== 枚举定义 ===============
 

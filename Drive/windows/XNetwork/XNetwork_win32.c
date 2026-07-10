@@ -1,13 +1,13 @@
-/**
+﻿/**
  * @file XNetwork_win32.c
- * @brief Windows 平台网络实现（IOCP 异步 I/O）
+ * @brief Windows 骞冲彴缃戠粶瀹炵幇锛圛OCP 寮傛 I/O锛?
  */
- /* ====== 配置文件 ====== */
+ /* ====== 閰嶇疆鏂囦欢 ====== */
 #include "XNetwork_config.h"
 
 #ifdef XNETWORK_USE_PLATFORM_API
 
- /* ====== Windows 宏定义必须在所有头文件之前 ======*/
+ /* ====== Windows 瀹忓畾涔夊繀椤诲湪鎵€鏈夊ご鏂囦欢涔嬪墠 ======*/
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -18,7 +18,7 @@
 
 
 
-/* ====== 项目头文件 ====== */
+/* ====== 椤圭洰澶存枃浠?====== */
 #include "XNetwork_platform.h"
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
@@ -34,7 +34,7 @@
 #include "XString.h"
 #include "XFileDescriptor.h"
 
-/* ====== Windows SDK 头文件 ====== */
+/* ====== Windows SDK 澶存枃浠?====== */
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
@@ -45,7 +45,7 @@
 #pragma comment(lib, "secur32.lib")
 
 /* =========================================================================
- * 手动定义缺失的宏（兼容旧版 SDK）
+ * 鎵嬪姩瀹氫箟缂哄け鐨勫畯锛堝吋瀹规棫鐗?SDK锛?
  * ========================================================================= */
 
 #ifndef SO_UPDATE_CONNECT_CONTEXT
@@ -65,7 +65,7 @@
 #endif
 static PIP_ADAPTER_ADDRESSES current = 0;
  /* =========================================================================
-  * ConnectEx 函数指针及 GUID
+  * ConnectEx 鍑芥暟鎸囬拡鍙?GUID
   * ========================================================================= */
 
 #ifndef WSAID_CONNECTEX
@@ -113,14 +113,14 @@ typedef void(PASCAL* LPFN_GETACCEPTEXSOCKADDRS)(
     );
 
 /* =========================================================================
- * 内部宏定义
+ * 鍐呴儴瀹忓畾涔?
  * ========================================================================= */
 
 #define XNETWORK_READ_BUFFER_SIZE  8192
 #define XNETWORK_WRITE_BUFFER_SIZE 8192
 
  /* =========================================================================
-  * 全局状态
+  * 鍏ㄥ眬鐘舵€?
   * ========================================================================= */
 
 static LONG    g_wsaRefCount = 0;
@@ -131,13 +131,13 @@ static LPFN_GETACCEPTEXSOCKADDRS g_GetAcceptExSockaddrs = NULL;
 
 
 /* =========================================================================
- * IOCP 辅助函数
+ * IOCP 杈呭姪鍑芥暟
  * ========================================================================= */
 
 static HANDLE iocp_get(void)
 {
     if (!g_iocp) {
-        /* 尝试从 XEventDispatcher 获取全局 IOCP 端口 */
+        /* 灏濊瘯浠?XEventDispatcher 鑾峰彇鍏ㄥ眬 IOCP 绔彛 */
         extern HANDLE IOCP_getGlobalPort(void);
         g_iocp = IOCP_getGlobalPort();
     }
@@ -148,12 +148,12 @@ static bool iocp_assoc(SOCKET s, XObject* key)
 {
     HANDLE h = iocp_get();
     if (!h) return false;
-    //XPrintf("帮:%p\n",key);
+    //XPrintf("甯?%p\n",key);
     return CreateIoCompletionPort((HANDLE)s, h, (ULONG_PTR)key, 0) != NULL;
 }
 
 /* =========================================================================
- * 地址转换辅助函数
+ * 鍦板潃杞崲杈呭姪鍑芥暟
  * ========================================================================= */
 
 static void addr2sa(const XHostAddress* addr, uint16_t port, 
@@ -190,7 +190,7 @@ static void sa2addr(const struct sockaddr_storage* ss, XHostAddress* addr, uint1
 }
 
 /* =========================================================================
- * 平台初始化
+ * 骞冲彴鍒濆鍖?
  * ========================================================================= */
 
 void XNetwork_ensureInit(void)
@@ -199,7 +199,7 @@ void XNetwork_ensureInit(void)
         WSADATA wsaData;
         WSAStartup(MAKEWORD(2, 2), &wsaData);
         
-        /* 获取扩展函数指针 */
+        /* 鑾峰彇鎵╁睍鍑芥暟鎸囬拡 */
         SOCKET tempSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (tempSock != INVALID_SOCKET) {
             DWORD bytesReturned;
@@ -207,19 +207,19 @@ void XNetwork_ensureInit(void)
             GUID guidAcceptEx = WSAID_ACCEPTEX;
             GUID guidGetAcceptExSockaddrs = WSAID_GETACCEPTEXSOCKADDRS;
             
-            /* 获取 ConnectEx */
+            /* 鑾峰彇 ConnectEx */
             WSAIoctl(tempSock, SIO_GET_EXTENSION_FUNCTION_POINTER,
                      &guidConnectEx, sizeof(guidConnectEx), 
                      &g_ConnectEx, sizeof(g_ConnectEx),
                      &bytesReturned, NULL, NULL);
             
-            /* 获取 AcceptEx */
+            /* 鑾峰彇 AcceptEx */
             WSAIoctl(tempSock, SIO_GET_EXTENSION_FUNCTION_POINTER,
                      &guidAcceptEx, sizeof(guidAcceptEx), 
                      &g_AcceptEx, sizeof(g_AcceptEx),
                      &bytesReturned, NULL, NULL);
             
-            /* 获取 GetAcceptExSockaddrs */
+            /* 鑾峰彇 GetAcceptExSockaddrs */
             WSAIoctl(tempSock, SIO_GET_EXTENSION_FUNCTION_POINTER,
                      &guidGetAcceptExSockaddrs, sizeof(guidGetAcceptExSockaddrs), 
                      &g_GetAcceptExSockaddrs, sizeof(g_GetAcceptExSockaddrs),
@@ -261,56 +261,56 @@ char* XNetwork_errorString(int errorCode)
 }
 
 /* =========================================================================
- * 套接字私有数据结构（平台无关基类 + Win32 扩展）
+ * 濂楁帴瀛楃鏈夋暟鎹粨鏋勶紙骞冲彴鏃犲叧鍩虹被 + Win32 鎵╁睍锛?
  * ========================================================================= */
 
 typedef struct XNetworkSocketPrivateWin32 {
-    XNetworkSocketPrivate base;             /**< 第一位：平台无关基类 (owner/xfd/notifiers) */
-    SOCKET socket;                          ///< Windows SOCKET 句柄
+    XNetworkSocketPrivate base;             /**< 绗竴浣嶏細骞冲彴鏃犲叧鍩虹被 (owner/xfd/notifiers) */
+    SOCKET socket;                          ///< Windows SOCKET 鍙ユ焺
 
-    /* 状态标志 */
+    /* 鐘舵€佹爣蹇?*/
     bool readPending;
     bool writePending;
     bool connectPending;
     bool connected;
     bool autoRead;
-    bool isServer;                          ///< 是否为服务器套接字
-    bool acceptPending;                     ///< 是否有待处理的 Accept
+    bool isServer;                          ///< 鏄惁涓烘湇鍔″櫒濂楁帴瀛?
+    bool acceptPending;                     ///< 鏄惁鏈夊緟澶勭悊鐨?Accept
     
-    /* UDP 来源地址 */
+    /* UDP 鏉ユ簮鍦板潃 */
     struct sockaddr_in6 fromAddr;
     int fromAddrLen;
     
-    /* IOCP 上下文 */
+    /* IOCP 涓婁笅鏂?*/
     XEventContext_IOCP readContext;
     XEventContext_IOCP writeContext;
     union {
-        XEventContext_IOCP connectContext;  ///< 客户端连接上下文
-        XEventContext_IOCP acceptContext;   ///< 服务器 AcceptEx 上下文
+        XEventContext_IOCP connectContext;  ///< 瀹㈡埛绔繛鎺ヤ笂涓嬫枃
+        XEventContext_IOCP acceptContext;   ///< 鏈嶅姟鍣?AcceptEx 涓婁笅鏂?
     };
     
-    /* 待连接信息 */
+    /* 寰呰繛鎺ヤ俊鎭?*/
     XHostAddress pendingPeerAddr;
     uint16_t pendingPeerPort;
     
-    /* 缓冲区联合体（服务器用 acceptBuffer，客户端用 readBuffer/writeBuffer）*/
+    /* 缂撳啿鍖鸿仈鍚堜綋锛堟湇鍔″櫒鐢?acceptBuffer锛屽鎴风鐢?readBuffer/writeBuffer锛?/
     union {
         struct {
             char readBuffer[XNETWORK_READ_BUFFER_SIZE];
             char writeBuffer[XNETWORK_WRITE_BUFFER_SIZE];
         };
         struct {
-            char acceptBuffer[sizeof(struct sockaddr_in6) * 2 + 32]; ///< AcceptEx 缓冲区
-            SOCKET acceptSocket;                    ///< AcceptEx 创建的套接字
+            char acceptBuffer[sizeof(struct sockaddr_in6) * 2 + 32]; ///< AcceptEx 缂撳啿鍖?
+            SOCKET acceptSocket;                    ///< AcceptEx 鍒涘缓鐨勫鎺ュ瓧
         };
     };
 } XNetworkSocketPrivateWin32;
 
-/* 便捷转换宏 */
+/* 渚挎嵎杞崲瀹?*/
 #define W32(p) ((XNetworkSocketPrivateWin32*)(p))
 
 /* =========================================================================
- * 私有数据管理
+ * 绉佹湁鏁版嵁绠＄悊
  * ========================================================================= */
 
 XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner)
@@ -365,7 +365,7 @@ bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv)
     return priv ? W32(priv)->connected : false;
 }
 /* =========================================================================
- * 异步读取启动
+ * 寮傛璇诲彇鍚姩
  * ========================================================================= */
 
 static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
@@ -398,19 +398,19 @@ static void startAsyncRead(XNetworkSocketPrivate* priv, bool isUdp)
     }
     
     if (result == 0) {
-        /* 立即完成 */
+        /* 绔嬪嵆瀹屾垚 */
         p->readPending = true;
     } else if (WSAGetLastError() == WSA_IO_PENDING) {
-        /* 异步等待 */
+        /* 寮傛绛夊緟 */
         p->readPending = true;
     } else {
-        /* 错误 */
+        /* 閿欒 */
         p->readPending = false;
     }
 }
 
 /* =========================================================================
- * 异步写入启动
+ * 寮傛鍐欏叆鍚姩
  * ========================================================================= */
 
 static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64_t len,
@@ -463,7 +463,7 @@ static void startAsyncWrite(XNetworkSocketPrivate* priv, const void* data, int64
 }
 
 /* =========================================================================
- * 核心操作实现
+ * 鏍稿績鎿嶄綔瀹炵幇
  * ========================================================================= */
 
 uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* address,
@@ -803,7 +803,7 @@ void XNetwork_socketSetReadBufferSize(XNetworkSocketPrivate* priv, int64_t size)
 }
 
 /* =========================================================================
- * 异步读取状态
+ * 寮傛璇诲彇鐘舵€?
  * ========================================================================= */
 
 const char* XNetwork_socketReadBuffer(const XNetworkSocketPrivate* priv)
@@ -839,7 +839,7 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp)
 }
 
 /* =========================================================================
- * 异步 Accept 启动
+ * 寮傛 Accept 鍚姩
  * ========================================================================= */
 
 static bool startAsyncAccept(XNetworkSocketPrivate* priv)
@@ -878,7 +878,7 @@ static bool startAsyncAccept(XNetworkSocketPrivate* priv)
 }
 
 /* =========================================================================
- * TCP 服务器
+ * TCP 鏈嶅姟鍣?
  * ========================================================================= */
 
 XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv,const XHostAddress* addr, uint16_t port,
@@ -946,7 +946,7 @@ uint16_t XNetwork_serverPort(XServerHandle server)
     return 0;
 }
 
-void XNetwork_serverClose(XServerHandle server)
+void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server)
 {
     if (server != -1) {
         closesocket((SOCKET)server);
@@ -998,7 +998,7 @@ bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv)
 }
 
 /* =========================================================================
- * DNS 查询
+ * DNS 鏌ヨ
  * ========================================================================= */
 
 bool XNetwork_lookupName(const char* name, XHostAddress** addrs, int* count)
@@ -1017,7 +1017,7 @@ bool XNetwork_lookupName(const char* name, XHostAddress** addrs, int* count)
         return false;
     }
     
-    /* 计算地址数量 */
+    /* 璁＄畻鍦板潃鏁伴噺 */
     int addrCount = 0;
     struct addrinfo* p = result;
     while (p) {
@@ -1032,7 +1032,7 @@ bool XNetwork_lookupName(const char* name, XHostAddress** addrs, int* count)
         return false;
     }
     
-    /* 分配地址数组 */
+    /* 鍒嗛厤鍦板潃鏁扮粍 */
     XHostAddress* addrArray = (XHostAddress*)XCalloc_System(addrCount, sizeof(XHostAddress));
     if (!addrArray) {
         freeaddrinfo(result);
@@ -1041,7 +1041,7 @@ bool XNetwork_lookupName(const char* name, XHostAddress** addrs, int* count)
         return false;
     }
     
-    /* 填充地址 */
+    /* 濉厖鍦板潃 */
     p = result;
     for (int i = 0; i < addrCount && p; i++) {
         XHostAddress_init(&addrArray[i]);
@@ -1067,7 +1067,7 @@ char* XNetwork_localHostName(void)
 
 
 /* =========================================================================
- * 网络接口枚举
+ * 缃戠粶鎺ュ彛鏋氫妇
  * ========================================================================= */
 
 XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void)
@@ -1075,7 +1075,7 @@ XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void)
     PIP_ADAPTER_ADDRESSES adapterAddresses = NULL;
     ULONG size = 0;
     
-    /* 获取所需大小 */
+    /* 鑾峰彇鎵€闇€澶у皬 */
     GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, NULL, NULL, &size);
     
     adapterAddresses = (PIP_ADAPTER_ADDRESSES)XMalloc_System(size);
@@ -1102,11 +1102,11 @@ XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter)
     
     if (current == NULL) return NULL;
     
-    /* 创建 XNetworkInterface 对象 */
+    /* 鍒涘缓 XNetworkInterface 瀵硅薄 */
     XNetworkInterface* iface = XNetworkInterface_create();
     if (!iface) return NULL;
     
-    /* 名称 - AdapterName 是 ASCII/ANSI 编码（网卡 GUID），使用 GBK 转换 */
+    /* 鍚嶇О - AdapterName 鏄?ASCII/ANSI 缂栫爜锛堢綉鍗?GUID锛夛紝浣跨敤 GBK 杞崲 */
     //char nameBuf[1024] = {0};
     //WideCharToMultiByte(CP_ACP, 0, current->AdapterName, -1, nameBuf, sizeof(nameBuf), NULL, NULL);
    //printf("%s\n",nameBuf);
@@ -1119,14 +1119,14 @@ XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter)
     iface->index = (int)current->IfIndex;
     iface->mtu = (int)current->Mtu;
     
-    /* 硬件地址 (MAC) */
+    /* 纭欢鍦板潃 (MAC) */
     if (current->PhysicalAddressLength > 0 && current->PhysicalAddressLength <= 32) {
         char macStr[64];
         int pos = 0;
         for (ULONG i = 0; i < current->PhysicalAddressLength; i++) {
             pos += sprintf(macStr + pos, "%02X:", current->PhysicalAddress[i]);
         }
-        if (pos > 0) macStr[pos - 1] = '\0'; /* 移除最后的冒号 */
+        if (pos > 0) macStr[pos - 1] = '\0'; /* 绉婚櫎鏈€鍚庣殑鍐掑彿 */
         if (iface->hardwareAddress)
             XString_assign_fmt_utf8(iface->hardwareAddress, macStr);
         else
@@ -1134,7 +1134,7 @@ XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter)
         //iface->hardwareAddress = XString_create_fmt_utf8(macStr);
     }
     
-    /* 标志 */
+    /* 鏍囧織 */
     if (current->OperStatus == IfOperStatusUp) {
         iface->flags |= XNetworkInterface_IsUp | XNetworkInterface_IsRunning;
     }
@@ -1153,7 +1153,7 @@ XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter)
     
     iface->isValid = true;
     
-    /* 获取 IP 地址条目 */
+    /* 鑾峰彇 IP 鍦板潃鏉＄洰 */
     PIP_ADAPTER_UNICAST_ADDRESS ua = current->FirstUnicastAddress;
     while (ua) {
         XNetworkAddressEntry entry;
@@ -1164,7 +1164,7 @@ XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter)
         sa2addr((struct sockaddr_storage*)ua->Address.lpSockaddr, &addr, NULL);
         XNetworkAddressEntry_setIp(&entry, &addr);
         
-        /* 计算子网掩码 */
+        /* 璁＄畻瀛愮綉鎺╃爜 */
         uint8_t prefixLen = ua->OnLinkPrefixLength;
         if (ua->Address.lpSockaddr->sa_family == AF_INET) {
             uint32_t maskVal = prefixLen >= 32 ? 0xFFFFFFFF : htonl(0xFFFFFFFF << (32 - prefixLen));
@@ -1207,7 +1207,7 @@ void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter)
     if (iter) {
         XFree_System(iter);
     }
-    /* 重置静态变量 */
+    /* 閲嶇疆闈欐€佸彉閲?*/
     //extern PIP_ADAPTER_ADDRESSES current;
     current = NULL;
 }
@@ -1216,7 +1216,7 @@ XVector* XNetwork_getInterfaceAddresses(const XString* ifname)
 {
     if (!ifname) return NULL;
     
-    /* 获取接口名称的 C 字符串 */
+    /* 鑾峰彇鎺ュ彛鍚嶇О鐨?C 瀛楃涓?*/
     const char* ifnameStr = XString_toUtf8(ifname);
     if (!ifnameStr) return NULL;
     
@@ -1233,14 +1233,14 @@ XVector* XNetwork_getInterfaceAddresses(const XString* ifname)
         return NULL;
     }
     
-    /* 查找指定接口 */
+    /* 鏌ユ壘鎸囧畾鎺ュ彛 */
     PIP_ADAPTER_ADDRESSES adapter = adapterAddresses;
     while (adapter) {
         char name[128];
         WideCharToMultiByte(CP_ACP, 0, adapter->AdapterName, -1, name, sizeof(name), NULL, NULL);
         
         if (strcmp(name, ifnameStr) == 0) {
-            /* 计算地址数量 */
+            /* 璁＄畻鍦板潃鏁伴噺 */
             int addrCount = 0;
             PIP_ADAPTER_UNICAST_ADDRESS ua = adapter->FirstUnicastAddress;
             while (ua) {
@@ -1253,34 +1253,34 @@ XVector* XNetwork_getInterfaceAddresses(const XString* ifname)
                 return NULL;
             }
             
-            /* 创建向量 */
+            /* 鍒涘缓鍚戦噺 */
             XVector* entries = XVector_create(sizeof(XNetworkAddressEntry));
             if (!entries) {
                 XFree_System(adapterAddresses);
                 return NULL;
             }
             
-            /* 设置向量的数据拷贝、移动和释放方法 */
+            /* 璁剧疆鍚戦噺鐨勬暟鎹嫹璐濄€佺Щ鍔ㄥ拰閲婃斁鏂规硶 */
             XContainerSetDataCopyMethod(entries, XNetworkAddressEntry_copy_base);
             XContainerSetDataMoveMethod(entries, XNetworkAddressEntry_move_base);
             XContainerSetDataDeinitMethod(entries, XNetworkAddressEntry_deinit_base);
             
-            /* 填充地址条目 */
+            /* 濉厖鍦板潃鏉＄洰 */
             ua = adapter->FirstUnicastAddress;
             while (ua) {
                 XNetworkAddressEntry entry;
                 XNetworkAddressEntry_init(&entry);
                 
-                /* 设置 IP 地址 */
+                /* 璁剧疆 IP 鍦板潃 */
                 sa2addr((struct sockaddr_storage*)ua->Address.lpSockaddr, &entry.ip, NULL);
                 
-                /* 从前缀长度计算掩码 */
+                /* 浠庡墠缂€闀垮害璁＄畻鎺╃爜 */
                 uint8_t prefixLen = ua->OnLinkPrefixLength;
                 if (ua->Address.lpSockaddr->sa_family == AF_INET) {
                     uint32_t maskVal = prefixLen >= 32 ? 0xFFFFFFFF : htonl(0xFFFFFFFF << (32 - prefixLen));
                     XHostAddress_setAddressIPv4(&entry.netmask, maskVal);
                 } else {
-                    /* IPv6 掩码 */
+                    /* IPv6 鎺╃爜 */
                     uint8_t maskBytes[16] = {0};
                     uint8_t tempPrefix = prefixLen;
                     for (int j = 0; j < 16 && tempPrefix > 0; j++) {
@@ -1295,11 +1295,11 @@ XVector* XNetwork_getInterfaceAddresses(const XString* ifname)
                     XHostAddress_setAddressIPv6(&entry.netmask, maskBytes);
                 }
                 
-                /* 设置广播地址（如果支持） */
+                /* 璁剧疆骞挎挱鍦板潃锛堝鏋滄敮鎸侊級 */
                 if (adapter->Flags & IP_ADAPTER_NO_MULTICAST) {
                     entry.broadcastIsValid = false;
                 } else {
-                    /* 计算广播地址：IP | ~掩码 */
+                    /* 璁＄畻骞挎挱鍦板潃锛欼P | ~鎺╃爜 */
                     if (ua->Address.lpSockaddr->sa_family == AF_INET) {
                         uint32_t ipVal = XHostAddress_toIPv4Address(&entry.ip);
                         uint32_t maskVal = XHostAddress_toIPv4Address(&entry.netmask);
@@ -1307,29 +1307,29 @@ XVector* XNetwork_getInterfaceAddresses(const XString* ifname)
                         XHostAddress_setAddressIPv4(&entry.broadcast, broadcastVal);
                         entry.broadcastIsValid = true;
                     } else {
-                        entry.broadcastIsValid = false;  /* IPv6 没有广播 */
+                        entry.broadcastIsValid = false;  /* IPv6 娌℃湁骞挎挱 */
                     }
                 }
                 
-                /* 设置地址生命周期 */
-                entry.preferredLifetime = (int64_t)ua->PreferredLifetime * 1000;  /* 转换为毫秒 */
-                entry.validityLifetime = (int64_t)ua->ValidLifetime * 1000;       /* 转换为毫秒 */
+                /* 璁剧疆鍦板潃鐢熷懡鍛ㄦ湡 */
+                entry.preferredLifetime = (int64_t)ua->PreferredLifetime * 1000;  /* 杞崲涓烘绉?*/
+                entry.validityLifetime = (int64_t)ua->ValidLifetime * 1000;       /* 杞崲涓烘绉?*/
                 entry.lifetimeKnown = true;
                 
-                /* 设置 DNS 资格状态 */
-                /* SkipAsSource 表示该地址不应用于出站连接，通常也不应注册到 DNS */
+                /* 璁剧疆 DNS 璧勬牸鐘舵€?*/
+                /* SkipAsSource 琛ㄧず璇ュ湴鍧€涓嶅簲鐢ㄤ簬鍑虹珯杩炴帴锛岄€氬父涔熶笉搴旀敞鍐屽埌 DNS */
                 if (ua->Flags & IP_ADAPTER_ADDRESS_SKIP_AS_SOURCE) {
                     entry.dnsEligibilityStatus = XNetworkAddressEntry_DnsIneligible;
                 } else {
                     entry.dnsEligibilityStatus = XNetworkAddressEntry_DnsEligible;
                 }
                 
-                /* 设置是否为永久地址 */
-                /* 永久地址：生命周期为无限（0xFFFFFFFF 或很大的值） */
+                /* 璁剧疆鏄惁涓烘案涔呭湴鍧€ */
+                /* 姘镐箙鍦板潃锛氱敓鍛藉懆鏈熶负鏃犻檺锛?xFFFFFFFF 鎴栧緢澶х殑鍊硷級 */
                 entry.isPermanent = (ua->ValidLifetime == 0xFFFFFFFF || ua->ValidLifetime > 86400);
                 
                 XVector_push_back_move_1_base(entries, &entry);
-                XNetworkAddressEntry_deinit_base(&entry);  /* 释放临时变量的堆区资源 */
+                XNetworkAddressEntry_deinit_base(&entry);  /* 閲婃斁涓存椂鍙橀噺鐨勫爢鍖鸿祫婧?*/
                 
                 ua = ua->Next;
             }
@@ -1346,7 +1346,7 @@ XVector* XNetwork_getInterfaceAddresses(const XString* ifname)
 }
 
 /* =========================================================================
- * 多播组（精简为2个API）
+ * 澶氭挱缁勶紙绮剧畝涓?涓狝PI锛?
  * ========================================================================= */
 
 bool XNetwork_multicastGroup(XSocketHandle sock, bool join, 
@@ -1445,19 +1445,19 @@ int XNetwork_multicastOp(XSocketHandle sock, XMulticastOp op, void* arg)
 }
 
 /* =========================================================================
- * UDP 特有
+ * UDP 鐗规湁
  * ========================================================================= */
 
-/* XNetwork_hasPendingDatagrams 和 XNetwork_pendingDatagramSize 已移除
- * 原因：在 IOCP 异步模型中，数据已被读取到 ringBuffer，
- * 请使用 XIODevice_bytesAvailable 检查待读取数据 */
+/* XNetwork_hasPendingDatagrams 鍜?XNetwork_pendingDatagramSize 宸茬Щ闄?
+ * 鍘熷洜锛氬湪 IOCP 寮傛妯″瀷涓紝鏁版嵁宸茶璇诲彇鍒?ringBuffer锛?
+ * 璇蜂娇鐢?XIODevice_bytesAvailable 妫€鏌ュ緟璇诲彇鏁版嵁 */
 
 bool XNetwork_getLastDatagramSender(const XNetworkSocketPrivate* priv,
                                      XHostAddress* srcAddr, uint16_t* srcPort)
 {
     if (!priv) return false;
     
-    /* 从 wp->fromAddr 获取发送者信息 */
+    /* 浠?wp->fromAddr 鑾峰彇鍙戦€佽€呬俊鎭?*/
     const XNetworkSocketPrivateWin32* wp = (const XNetworkSocketPrivateWin32*)priv;
     
     if (wp->fromAddrLen <= 0) {
@@ -1490,14 +1490,14 @@ int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size
 }
 
 /* =========================================================================
- * 代理隧道（已移至应用层实现）
+ * 浠ｇ悊闅ч亾锛堝凡绉昏嚦搴旂敤灞傚疄鐜帮級
  * ========================================================================= */
-/* 注意：XNetwork_socks5Connect、XNetwork_httpConnect、XNetwork_socks5Bind、
- * XNetwork_serverCreateWithProxy、XNetwork_serverAcceptWithProxy
- * 这些代理相关函数已从平台层移除，请在 XNetworkProxy 模块或应用层实现 */
+/* 娉ㄦ剰锛歑Network_socks5Connect銆乆Network_httpConnect銆乆Network_socks5Bind銆?
+ * XNetwork_serverCreateWithProxy銆乆Network_serverAcceptWithProxy
+ * 杩欎簺浠ｇ悊鐩稿叧鍑芥暟宸蹭粠骞冲彴灞傜Щ闄わ紝璇峰湪 XNetworkProxy 妯″潡鎴栧簲鐢ㄥ眰瀹炵幇 */
 
 /* =========================================================================
- * 系统代理获取（Windows）
+ * 绯荤粺浠ｇ悊鑾峰彇锛圵indows锛?
  * ========================================================================= */
 
 #include <winhttp.h>
@@ -1509,7 +1509,7 @@ bool XNetwork_getSystemProxy(const char* queryUrl, XNetworkProxy* outProxy)
     
     XNetworkProxy_init(outProxy);
     
-    /* 1. 尝试使用 WinHttpGetProxyForUrl (WPAD) */
+    /* 1. 灏濊瘯浣跨敤 WinHttpGetProxyForUrl (WPAD) */
     HINTERNET hSession = WinHttpOpen(L"XinYueC/1.0",
                                       WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                       WINHTTP_NO_PROXY_NAME,
@@ -1523,10 +1523,10 @@ bool XNetwork_getSystemProxy(const char* queryUrl, XNetworkProxy* outProxy)
             MultiByteToWideChar(CP_UTF8, 0, queryUrl, -1, wideUrl, 1024);
         }
         
-        /* 获取 IE 代理设置 */
+        /* 鑾峰彇 IE 浠ｇ悊璁剧疆 */
         if (WinHttpGetDefaultProxyConfiguration(&proxyInfo)) {
             if (proxyInfo.lpszProxy && wcslen(proxyInfo.lpszProxy) > 0) {
-                /* 解析代理字符串 "host:port" */
+                /* 瑙ｆ瀽浠ｇ悊瀛楃涓?"host:port" */
                 char proxyHost[256] = {0};
                 WideCharToMultiByte(CP_UTF8, 0, proxyInfo.lpszProxy, -1, 
                                     proxyHost, sizeof(proxyHost), NULL, NULL);
@@ -1557,7 +1557,7 @@ bool XNetwork_getSystemProxy(const char* queryUrl, XNetworkProxy* outProxy)
         }
     }
     
-    /* 2. 回退到注册表读取 */
+    /* 2. 鍥為€€鍒版敞鍐岃〃璇诲彇 */
     HKEY hKey;
     if (RegOpenKeyExA(HKEY_CURRENT_USER, 
                       "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
@@ -1574,7 +1574,7 @@ bool XNetwork_getSystemProxy(const char* queryUrl, XNetworkProxy* outProxy)
             
             if (RegQueryValueExA(hKey, "ProxyServer", NULL, NULL, 
                                  (LPBYTE)proxyServer, &size) == ERROR_SUCCESS) {
-                /* 解析 "protocol=host:port" 或 "host:port" 格式 */
+                /* 瑙ｆ瀽 "protocol=host:port" 鎴?"host:port" 鏍煎紡 */
                 char* eq = strchr(proxyServer, '=');
                 char* proxyStr = eq ? (eq + 1) : proxyServer;
                 
@@ -1597,14 +1597,14 @@ bool XNetwork_getSystemProxy(const char* queryUrl, XNetworkProxy* outProxy)
 }
 
 /* =========================================================================
- * GSSAPI 认证（Windows SSPI）
+ * GSSAPI 璁よ瘉锛圵indows SSPI锛?
  * ========================================================================= */
 
 #define SECURITY_WIN32
 #include <security.h>
 #include <sspi.h>
 
-/* GSSAPI 上下文结构 */
+/* GSSAPI 涓婁笅鏂囩粨鏋?*/
 typedef struct {
     CredHandle credHandle;
     CtxtHandle ctxtHandle;
@@ -1622,7 +1622,7 @@ int XNetwork_gssapiAuth(const char* serviceName,
     
     WinGssapiContext* ctx = (WinGssapiContext*)*context;
     
-    /* 首次调用，初始化上下文 */
+    /* 棣栨璋冪敤锛屽垵濮嬪寲涓婁笅鏂?*/
     if (!ctx) {
         ctx = (WinGssapiContext*)XMalloc_System(sizeof(WinGssapiContext));
         if (!ctx) return -1;
@@ -1631,7 +1631,7 @@ int XNetwork_gssapiAuth(const char* serviceName,
         SecInvalidateHandle(&ctx->credHandle);
         SecInvalidateHandle(&ctx->ctxtHandle);
         
-        /* 获取默认凭据 */
+        /* 鑾峰彇榛樿鍑嵁 */
         TimeStamp expiry;
         SECURITY_STATUS status = AcquireCredentialsHandleA(
             NULL, "Negotiate", SECPKG_CRED_OUTBOUND,
@@ -1650,7 +1650,7 @@ int XNetwork_gssapiAuth(const char* serviceName,
         *context = ctx;
     }
     
-    /* 准备输入缓冲区 */
+    /* 鍑嗗杈撳叆缂撳啿鍖?*/
     SecBufferDesc inDesc = {0};
     SecBuffer inBuf = {0};
     if (inputToken && XByteArray_size_base(inputToken) > 0) {
@@ -1662,7 +1662,7 @@ int XNetwork_gssapiAuth(const char* serviceName,
         inBuf.pvBuffer = (void*)XByteArray_data(inputToken);
     }
     
-    /* 准备输出缓冲区 */
+    /* 鍑嗗杈撳嚭缂撳啿鍖?*/
     SecBufferDesc outDesc = {0};
     SecBuffer outBuf = {0};
     BYTE outTokenBuf[4096];
@@ -1674,7 +1674,7 @@ int XNetwork_gssapiAuth(const char* serviceName,
     outBuf.cbBuffer = sizeof(outTokenBuf);
     outBuf.pvBuffer = outTokenBuf;
     
-    /* 初始化安全上下文 */
+    /* 鍒濆鍖栧畨鍏ㄤ笂涓嬫枃 */
     ULONG attr = 0;
     TimeStamp expiry;
     SECURITY_STATUS status;
@@ -1696,14 +1696,14 @@ int XNetwork_gssapiAuth(const char* serviceName,
     }
     
     if (status == SEC_E_OK) {
-        /* 认证完成 */
+        /* 璁よ瘉瀹屾垚 */
         if (outBuf.cbBuffer > 0) {
             XByteArray_resize_base(outputToken, outBuf.cbBuffer);
             memcpy(XByteArray_data(outputToken), outTokenBuf, outBuf.cbBuffer);
         }
         return 0;
     } else if (status == SEC_I_CONTINUE_NEEDED) {
-        /* 需要继续 */
+        /* 闇€瑕佺户缁?*/
         if (outBuf.cbBuffer > 0) {
             XByteArray_resize_base(outputToken, outBuf.cbBuffer);
             memcpy(XByteArray_data(outputToken), outTokenBuf, outBuf.cbBuffer);
@@ -1712,7 +1712,7 @@ int XNetwork_gssapiAuth(const char* serviceName,
         return 1;
     }
     
-    /* 失败 */
+    /* 澶辫触 */
     return -1;
 }
 #endif /* XNETWORK_USE_PLATFORM_API */

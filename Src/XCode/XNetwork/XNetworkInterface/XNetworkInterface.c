@@ -264,7 +264,7 @@ XVector* XNetworkInterface_allAddresses(void)
     size_t i, j, ifaceCount, entryCount;
     ifaceCount = XVector_size_base(interfaces);
     for (i = 0; i < ifaceCount; i++) {
-        XNetworkInterface* iface = *(XNetworkInterface**)XVector_at_base(interfaces, i);
+        XNetworkInterface* iface = (XNetworkInterface*)XVector_at_base(interfaces, i);
         if (!iface) continue;
         
         XVector* entries = iface->addressEntries;

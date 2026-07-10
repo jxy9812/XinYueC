@@ -8,12 +8,12 @@
  * - 套接字私有数据管理
  * 
  * 架构层级：
- *   XAbstractSocket / XTcpSocket / XUdpSocket  ← 业务中间层（通用代码）
- *        │
- *   XNetwork_platform.h (本文件)              ← 平台抽象
- *   ├────── windows/XNetwork_win32.c          ← Windows IOCP 实现
- *   ├────── linux/XNetwork_linux.c            ← Linux epoll 实现
- *   └────── ...
+ *   XAbstractSocket / XTcpSocket / XUdpSocket  -> 业务中间层（通用代码）
+ *        |
+ *   XNetwork_platform.h (本文件)               -> 平台抽象
+ *   |-- windows/XNetwork_win32.c               -> Windows IOCP 实现
+ *   |-- linux/XNetwork_linux.c                 -> Linux epoll 实现
+ *   |-- ...
  * 
  * 代理协议（SOCKS5/HTTP）在 XNetworkProxy 模块中用通用代码实现
  */
@@ -147,7 +147,7 @@ bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv);
  * @brief 绑定套接字到地址/端口
  * @param priv 私有数据
  * @param address 绑定地址
- * @param port 端口（0 表示自动分配）
+ * @param port 端口，0 表示自动分配
  * @param reuseAddr 是否重用地址（SO_REUSEADDR）
  * @param shareAddr 是否共享地址（SO_EXCLUSIVEADDRUSE 的反向）
  * @param sockType 套接字类型
@@ -294,7 +294,7 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp);
  * @brief 创建 TCP 服务器
  * @param priv 服务器套接字私有数据
  * @param addr 绑定地址
- * @param port 端口（0 表示自动分配）
+ * @param port 端口，0 表示自动分配
  * @param backlog 监听队列最大长度
  * @param reuseAddr 是否重用地址
  * @return 服务器句柄，失败返回 -1
@@ -303,99 +303,83 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
                                      uint16_t port, int backlog, bool reuseAddr);
 
 /**
- * @brief 获取服务器监听端口
+ * @brief 异步接受客户端连接
+ * @param priv 服务器私有数据
  * @param server 服务器句柄
- * @return 实际监听端口，失败返回 0
+ * @note 接受结果通过事件通知，成功后创建客户端套接字
+ */
+void XNetwork_serverAccept(XNetworkSocketPrivate* priv, XServerHandle server);
+
+/**
+ * @brief 关闭 TCP 服务器
+ * @param priv 服务器私有数据
+ * @param server 服务器句柄
+ */
+void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server);
+
+/**
+ * @brief 获取服务器绑定的端口
+ * @param server 服务器句柄
+ * @return 绑定的端口号，失败返回 0
  */
 uint16_t XNetwork_serverPort(XServerHandle server);
 
 /**
- * @brief 关闭服务器
- * @param server 服务器句柄
- */
-void XNetwork_serverClose(XServerHandle server);
-
-/**
- * @brief 获取异步 Accept 完成后的客户端套接字
- * @param priv 服务器套接字私有数据
+ * @brief 获取已接受的客户端 Socket
+ * @param priv 服务器私有数据
  * @param clientAddr 输出客户端地址（可为 NULL）
  * @param clientPort 输出客户端端口（可为 NULL）
- * @return 客户端套接字句柄，失败返回 -1
- * @note 必须在收到 FD_ACCEPT 事件后调用
+ * @return 客户端 Socket 句柄，失败返回 -1
+ * @note 调用后客户端 Socket 从待处理队列中移除，调用者负责管理其生命周期
  */
-XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
-                                               XHostAddress* clientAddr, uint16_t* clientPort);
+XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv, XHostAddress* clientAddr, uint16_t* clientPort);
 
 /**
- * @brief 继续异步 Accept
- * @param priv 服务器套接字私有数据
+ * @brief 继续接受下一个客户端连接
+ * @param priv 服务器私有数据
  * @return 成功返回 true
- * @note 处理完一个连接后调用，准备接受下一个连接
+ * @note 处理完当前客户端连接后调用，允许接受下一个连接
  */
 bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv);
 
 /* =========================================================================
- * 七、DNS 查询
+ * 七、Socket 创建（平台直接创建原生套接字）
  * ========================================================================= */
 
 /**
- * @brief 同步 DNS 查询
- * @param name 主机名
- * @param addrs 输出地址数组，需调用者释放
- * @param count 输出地址数量
- * @return 成功返回 true
+ * @brief 创建原生 TCP 套接字
+ * @param protocol 协议类型
+ * @return 套接字描述符，失败返回 -1
  */
-bool XNetwork_lookupName(const char* name, XHostAddress** addrs, int* count);
+XSocketHandle XNetwork_createTcpSocket(XNetworkProtocol protocol);
 
 /**
- * @brief 获取本地主机名
- * @return 主机名字符串，需调用者 XFree_System 释放
+ * @brief 创建原生 UDP 套接字
+ * @param protocol 协议类型
+ * @return 套接字描述符，失败返回 -1
  */
-char* XNetwork_localHostName(void);
+XSocketHandle XNetwork_createUdpSocket(XNetworkProtocol protocol);
+
+/**
+ * @brief 关闭原生套接字
+ * @param sock 套接字描述符
+ */
+void XNetwork_closeSocket(XSocketHandle sock);
 
 /* =========================================================================
- * 八、网络接口枚举
+ * 八、网络接口信息
  * ========================================================================= */
-/** 接口标志位 */
-enum {
-    XNetworkIf_Up        = 1 << 0,  /**< 接口已启动 */
-    XNetworkIf_Running   = 1 << 1,  /**< 接口正在运行 */
-    XNetworkIf_Loopback  = 1 << 2,  /**< 回环接口 */
-    XNetworkIf_Multicast = 1 << 3,  /**< 支持多播 */
-    XNetworkIf_Broadcast = 1 << 4   /**< 支持广播 */
-};
-
-typedef void* XNetworkInterfaceIterator;
 
 /**
- * @brief 开始枚举网络接口
- * @return 迭代器句柄，失败返回 NULL
- */
-XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void);
-
-/**
- * @brief 获取下一个网络接口
- * @param iter 迭代器句柄
- * @return 网络接口对象（需调用者释放），枚举结束返回 NULL
- */
-XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter);
-
-/**
- * @brief 结束枚举网络接口
- * @param iter 迭代器句柄
- */
-void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter);
-
-/**
- * @brief 获取指定接口的 IP 地址条目
- * @param ifname 接口名称（XString 类型）
+ * @brief 获取所有网络接口信息
+ * @param ifname 接口名称过滤（XString 类型），NULL 表示所有接口
  * @return 成功返回 XVector<XNetworkAddressEntry>*，失败返回 NULL
  * @note 调用者需要使用 XVector_delete_base 释放返回的向量
  */
 XVector* XNetwork_getInterfaceAddresses(const XString* ifname);
 
 /* =========================================================================
- * 九、多播组（精简为2个API）
+ * 九、多播组（精简为 2 个 API）
  * ========================================================================= */
 
 /** 多播操作类型 */
@@ -415,7 +399,7 @@ typedef enum {
  * @param sock 套接字句柄
  * @param join true=加入, false=离开
  * @param groupAddress 多播组地址
- * @param ifIndex 接口索引（0 表示默认接口）
+ * @param ifIndex 接口索引，0 表示默认接口
  * @return 成功返回 true
  */
 bool XNetwork_multicastGroup(XSocketHandle sock, bool join, 

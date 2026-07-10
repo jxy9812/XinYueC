@@ -325,7 +325,7 @@ dhcp_handle_nak(struct netif *netif)
 {
   struct dhcp *dhcp = netif_dhcp_data(netif);
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_handle_nak(netif=%p) %c%c%"U16_F"\n",
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp处理NAK(netif=%p) %c%c%"U16_F"\n",
               (void *)netif, netif->name[0], netif->name[1], (u16_t)netif->num));
   /* Change to a defined state - set this before assigning the address
      to ensure the callback can use dhcp_supplied_address() */
@@ -367,7 +367,7 @@ dhcp_conflict_callback(struct netif *netif, acd_callback_enum_t state)
        dhcp_set_state(dhcp, DHCP_STATE_BACKING_OFF);
        msecs = 10 * 1000;
        dhcp->request_timeout = (u16_t)((msecs + DHCP_FINE_TIMER_MSECS - 1) / DHCP_FINE_TIMER_MSECS);
-       LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_decline(): set request timeout %"U16_F" msecs\n", msecs));
+       LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp拒绝: 设置请求超时 %"U16_F" msecs\n", msecs));
       break;
     case ACD_DECLINE:
       /* remove IP address from interface
@@ -394,7 +394,7 @@ dhcp_check(struct netif *netif)
 {
   struct dhcp *dhcp = netif_dhcp_data(netif);
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_check(netif=%p) %c%c\n", (void *)netif, (s16_t)netif->name[0],
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp检查(netif=%p) %c%c\n", (void *)netif, (s16_t)netif->name[0],
               (s16_t)netif->name[1]));
   dhcp_set_state(dhcp, DHCP_STATE_CHECKING);
 
@@ -413,19 +413,21 @@ dhcp_handle_offer(struct netif *netif, struct dhcp_msg *msg_in)
 {
   struct dhcp *dhcp = netif_dhcp_data(netif);
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_handle_offer(netif=%p) %c%c%"U16_F"\n",
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp处理提供(netif=%p) %c%c%"U16_F"\n",
               (void *)netif, netif->name[0], netif->name[1], (u16_t)netif->num));
   /* obtain the server address */
   if (dhcp_option_given(dhcp, DHCP_OPTION_IDX_SERVER_ID)) {
     dhcp->request_timeout = 0; /* stop timer */
 
     ip_addr_set_ip4_u32(&dhcp->server_ip_addr, lwip_htonl(dhcp_get_option_value(dhcp, DHCP_OPTION_IDX_SERVER_ID)));
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp_handle_offer(): server 0x%08"X32_F"\n",
-                ip4_addr_get_u32(ip_2_ip4(&dhcp->server_ip_addr))));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp处理提供: 服务器 %"U16_F".%"U16_F".%"U16_F".%"U16_F"\n",
+                ip4_addr1_16(ip_2_ip4(&dhcp->server_ip_addr)), ip4_addr2_16(ip_2_ip4(&dhcp->server_ip_addr)),
+                ip4_addr3_16(ip_2_ip4(&dhcp->server_ip_addr)), ip4_addr4_16(ip_2_ip4(&dhcp->server_ip_addr))));
     /* remember offered address */
     ip4_addr_copy(dhcp->offered_ip_addr, msg_in->yiaddr);
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp_handle_offer(): offer for 0x%08"X32_F"\n",
-                ip4_addr_get_u32(&dhcp->offered_ip_addr)));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp处理提供: 收到的IP %"U16_F".%"U16_F".%"U16_F".%"U16_F"\n",
+                ip4_addr1_16(&dhcp->offered_ip_addr), ip4_addr2_16(&dhcp->offered_ip_addr),
+                ip4_addr3_16(&dhcp->offered_ip_addr), ip4_addr4_16(&dhcp->offered_ip_addr)));
 
     dhcp_select(netif);
   } else {
@@ -456,7 +458,7 @@ dhcp_select(struct netif *netif)
   dhcp = netif_dhcp_data(netif);
   LWIP_ERROR("dhcp_select: dhcp != NULL", (dhcp != NULL), return ERR_VAL;);
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_select(netif=%p) %c%c%"U16_F"\n", (void *)netif, netif->name[0], netif->name[1], (u16_t)netif->num));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp选择(netif=%p) %c%c%"U16_F"\n", (void *)netif, netif->name[0], netif->name[1], (u16_t)netif->num));
   dhcp_set_state(dhcp, DHCP_STATE_REQUESTING);
 
   /* create and initialize the DHCP message header */
@@ -488,9 +490,9 @@ dhcp_select(struct netif *netif)
     /* send broadcast to any DHCP server */
     result = udp_sendto_if_src(dhcp_pcb, p_out, IP_ADDR_BROADCAST, LWIP_IANA_PORT_DHCP_SERVER, netif, IP4_ADDR_ANY);
     pbuf_free(p_out);
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_select: REQUESTING\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp选择: 正在请求\n"));
   } else {
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_LEVEL_WARNING, ("dhcp_select: could not allocate DHCP request\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_LEVEL_WARNING, ("dhcp选择: 无法分配DHCP请求\n"));
     result = ERR_MEM;
   }
   if (dhcp->tries < 255) {
@@ -498,7 +500,7 @@ dhcp_select(struct netif *netif)
   }
   msecs = (u16_t)((dhcp->tries < 6 ? 1 << dhcp->tries : 60) * 1000);
   dhcp->request_timeout = (u16_t)((msecs + DHCP_FINE_TIMER_MSECS - 1) / DHCP_FINE_TIMER_MSECS);
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp_select(): set request timeout %"U16_F" msecs\n", msecs));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp选择: 设置请求超时 %"U16_F" msecs\n", msecs));
   return result;
 }
 
@@ -510,7 +512,7 @@ void
 dhcp_coarse_tmr(void)
 {
   struct netif *netif;
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_coarse_tmr()\n"));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp粗粒度定时器\n"));
   /* iterate through all network interfaces */
   NETIF_FOREACH(netif) {
     /* only act on DHCP configured interfaces */
@@ -518,18 +520,18 @@ dhcp_coarse_tmr(void)
     if ((dhcp != NULL) && (dhcp->state != DHCP_STATE_OFF)) {
       /* compare lease time to expire timeout */
       if (dhcp->t0_timeout && (++dhcp->lease_used == dhcp->t0_timeout)) {
-        LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_coarse_tmr(): t0 timeout\n"));
+        LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp粗粒度定时器: t0 timeout\n"));
         /* this clients' lease time has expired */
         dhcp_release_and_stop(netif);
         dhcp_start(netif);
         /* timer is active (non zero), and triggers (zeroes) now? */
       } else if (dhcp->t2_rebind_time && (dhcp->t2_rebind_time-- == 1)) {
-        LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_coarse_tmr(): t2 timeout\n"));
+        LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp粗粒度定时器: t2 timeout\n"));
         /* this clients' rebind timeout triggered */
         dhcp_t2_timeout(netif);
         /* timer is active (non zero), and triggers (zeroes) now */
       } else if (dhcp->t1_renew_time && (dhcp->t1_renew_time-- == 1)) {
-        LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_coarse_tmr(): t1 timeout\n"));
+        LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp粗粒度定时器: t1 timeout\n"));
         /* this clients' renewal timeout triggered */
         dhcp_t1_timeout(netif);
       }
@@ -559,7 +561,7 @@ dhcp_fine_tmr(void)
       } else if (dhcp->request_timeout == 1) {
         dhcp->request_timeout--;
         /* { dhcp->request_timeout == 0 } */
-        LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_fine_tmr(): request timeout\n"));
+        LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp细粒度定时器: 请求超时\n"));
         /* this client's request timeout triggered */
         dhcp_timeout(netif);
       }
@@ -580,18 +582,18 @@ dhcp_timeout(struct netif *netif)
 {
   struct dhcp *dhcp = netif_dhcp_data(netif);
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_timeout()\n"));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp超时\n"));
   /* back-off period has passed, or server selection timed out */
   if ((dhcp->state == DHCP_STATE_BACKING_OFF) || (dhcp->state == DHCP_STATE_SELECTING)) {
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_timeout(): restarting discovery\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp超时: 重新开始发现\n"));
     dhcp_discover(netif);
     /* receiving the requested lease timed out */
   } else if (dhcp->state == DHCP_STATE_REQUESTING) {
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_timeout(): REQUESTING, DHCP request timed out\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp超时: 正在请求, DHCP请求超时\n"));
     if (dhcp->tries <= 5) {
       dhcp_select(netif);
     } else {
-      LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_timeout(): REQUESTING, releasing, restarting\n"));
+      LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp超时: 正在请求, 释放并重新开始\n"));
       dhcp_release_and_stop(netif);
       dhcp_start(netif);
     }
@@ -614,7 +616,7 @@ dhcp_t1_timeout(struct netif *netif)
 {
   struct dhcp *dhcp = netif_dhcp_data(netif);
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp_t1_timeout()\n"));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp T1超时\n"));
   if ((dhcp->state == DHCP_STATE_REQUESTING) || (dhcp->state == DHCP_STATE_BOUND) ||
       (dhcp->state == DHCP_STATE_RENEWING)) {
     /* just retry to renew - note that the rebind timer (t2) will
@@ -641,7 +643,7 @@ dhcp_t2_timeout(struct netif *netif)
 {
   struct dhcp *dhcp = netif_dhcp_data(netif);
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_t2_timeout()\n"));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp T2超时\n"));
   if ((dhcp->state == DHCP_STATE_REQUESTING) || (dhcp->state == DHCP_STATE_BOUND) ||
       (dhcp->state == DHCP_STATE_RENEWING) || (dhcp->state == DHCP_STATE_REBINDING)) {
     /* just retry to rebind */
@@ -816,29 +818,29 @@ dhcp_start(struct netif *netif)
   LWIP_ERROR("netif != NULL", (netif != NULL), return ERR_ARG;);
   LWIP_ERROR("netif is not up, old style port?", netif_is_up(netif), return ERR_ARG;);
   dhcp = netif_dhcp_data(netif);
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_start(netif=%p) %c%c%"U16_F"\n", (void *)netif, netif->name[0], netif->name[1], (u16_t)netif->num));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp启动(netif=%p) %c%c%"U16_F"\n", (void *)netif, netif->name[0], netif->name[1], (u16_t)netif->num));
 
   /* check MTU of the netif */
   if (netif->mtu < DHCP_MAX_MSG_LEN_MIN_REQUIRED) {
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_start(): Cannot use this netif with DHCP: MTU is too small\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp启动: 无法使用此网卡进行DHCP: MTU太小\n"));
     return ERR_MEM;
   }
 
   /* no DHCP client attached yet? */
   if (dhcp == NULL) {
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_start(): mallocing new DHCP client\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp启动: 分配新的DHCP客户端\n"));
     dhcp = (struct dhcp *)mem_malloc(sizeof(struct dhcp));
     if (dhcp == NULL) {
-      LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_start(): could not allocate dhcp\n"));
+      LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp启动: 无法分配dhcp结构\n"));
       return ERR_MEM;
     }
 
     /* store this dhcp client in the netif */
     netif_set_client_data(netif, LWIP_NETIF_CLIENT_DATA_INDEX_DHCP, dhcp);
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_start(): allocated dhcp\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp启动: 已分配dhcp结构\n"));
     /* already has DHCP client attached */
   } else {
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_start(): restarting DHCP configuration\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp启动: 重新开始DHCP配置\n"));
 
     if (dhcp->pcb_allocated != 0) {
       dhcp_dec_pcb_refcount(); /* free DHCP PCB if not needed any more */
@@ -857,7 +859,7 @@ dhcp_start(struct netif *netif)
 #endif /* LWIP_DHCP_DOES_ACD_CHECK */
 
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_start(): starting DHCP configuration\n"));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp启动: 开始DHCP配置\n"));
 
   if (dhcp_inc_pcb_refcount() != ERR_OK) { /* ensure DHCP PCB is allocated */
     return ERR_MEM;
@@ -917,13 +919,13 @@ dhcp_inform(struct netif *netif)
     LWIP_HOOK_DHCP_APPEND_OPTIONS(netif, &dhcp, DHCP_STATE_INFORMING, msg_out, DHCP_INFORM, &options_out_len);
     dhcp_option_trailer(options_out_len, msg_out->options, p_out);
 
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_inform: INFORMING\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp通知: 正在通知\n"));
 
     udp_sendto_if(dhcp_pcb, p_out, IP_ADDR_BROADCAST, LWIP_IANA_PORT_DHCP_SERVER, netif);
 
     pbuf_free(p_out);
   } else {
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_LEVEL_SERIOUS, ("dhcp_inform: could not allocate DHCP request\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_LEVEL_SERIOUS, ("dhcp通知: 无法分配DHCP请求\n"));
   }
 
   dhcp_dec_pcb_refcount(); /* delete DHCP PCB if not needed any more */
@@ -983,7 +985,7 @@ dhcp_decline(struct netif *netif)
   struct pbuf *p_out;
   u16_t options_out_len;
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_decline()\n"));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp拒绝\n"));
   dhcp_set_state(dhcp, DHCP_STATE_BACKING_OFF);
 
   /* create and initialize the DHCP message header */
@@ -999,7 +1001,7 @@ dhcp_decline(struct netif *netif)
     /* per section 4.4.4, broadcast DECLINE messages */
     result = udp_sendto_if_src(dhcp_pcb, p_out, IP_ADDR_BROADCAST, LWIP_IANA_PORT_DHCP_SERVER, netif, IP4_ADDR_ANY);
     pbuf_free(p_out);
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_decline: BACKING OFF\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp拒绝: 正在退避\n"));
   } else {
     LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_LEVEL_SERIOUS,
                 ("dhcp_decline: could not allocate DHCP request\n"));
@@ -1025,7 +1027,7 @@ dhcp_discover(struct netif *netif)
   struct pbuf *p_out;
   u16_t options_out_len;
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_discover()\n"));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp发现\n"));
 
 #if LWIP_DHCP_AUTOIP_COOP
   if (dhcp->tries >= LWIP_DHCP_AUTOIP_COOP_TRIES) {
@@ -1039,7 +1041,7 @@ dhcp_discover(struct netif *netif)
   p_out = dhcp_create_msg(netif, dhcp, DHCP_DISCOVER, &options_out_len);
   if (p_out != NULL) {
     struct dhcp_msg *msg_out = (struct dhcp_msg *)p_out->payload;
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_discover: making request\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp发现: 构造请求\n"));
 
     options_out_len = dhcp_option(options_out_len, msg_out->options, DHCP_OPTION_MAX_MSG_SIZE, DHCP_OPTION_MAX_MSG_SIZE_LEN);
     options_out_len = dhcp_option_short(options_out_len, msg_out->options, DHCP_MAX_MSG_LEN(netif));
@@ -1055,11 +1057,11 @@ dhcp_discover(struct netif *netif)
     LWIP_HOOK_DHCP_APPEND_OPTIONS(netif, dhcp, DHCP_STATE_SELECTING, msg_out, DHCP_DISCOVER, &options_out_len);
     dhcp_option_trailer(options_out_len, msg_out->options, p_out);
 
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_discover: sendto(DISCOVER, IP_ADDR_BROADCAST, LWIP_IANA_PORT_DHCP_SERVER)\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp发现: 发送(发现, 广播地址, DHCP服务器端口)\n"));
     udp_sendto_if_src(dhcp_pcb, p_out, IP_ADDR_BROADCAST, LWIP_IANA_PORT_DHCP_SERVER, netif, IP4_ADDR_ANY);
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_discover: deleting()\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp发现: 清理旧数据\n"));
     pbuf_free(p_out);
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_discover: SELECTING\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp发现: 正在选择\n"));
   } else {
     LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_LEVEL_SERIOUS, ("dhcp_discover: could not allocate DHCP request\n"));
   }
@@ -1069,7 +1071,7 @@ dhcp_discover(struct netif *netif)
   }
   msecs = DHCP_REQUEST_BACKOFF_SEQUENCE(dhcp->tries);
   dhcp->request_timeout = (u16_t)((msecs + DHCP_FINE_TIMER_MSECS - 1) / DHCP_FINE_TIMER_MSECS);
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_discover(): set request timeout %"U16_F" msecs\n", msecs));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp发现: 设置请求超时 %"U16_F" msecs\n", msecs));
   return result;
 }
 
@@ -1087,31 +1089,31 @@ dhcp_bind(struct netif *netif)
   LWIP_ERROR("dhcp_bind: netif != NULL", (netif != NULL), return;);
   dhcp = netif_dhcp_data(netif);
   LWIP_ERROR("dhcp_bind: dhcp != NULL", (dhcp != NULL), return;);
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_bind(netif=%p) %c%c%"U16_F"\n", (void *)netif, netif->name[0], netif->name[1], (u16_t)netif->num));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp绑定(netif=%p) %c%c%"U16_F"\n", (void *)netif, netif->name[0], netif->name[1], (u16_t)netif->num));
 
   /* reset time used of lease */
   dhcp->lease_used = 0;
 
   if (dhcp->offered_t0_lease != 0xffffffffUL) {
     /* set renewal period timer */
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_bind(): t0 renewal timer %"U32_F" secs\n", dhcp->offered_t0_lease));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp绑定: t0续租定时器 %"U32_F" secs\n", dhcp->offered_t0_lease));
     DHCP_SET_TIMEOUT_FROM_OFFERED_T0_LEASE(dhcp->t0_timeout, dhcp);
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_bind(): set request timeout %"U32_F" msecs\n", dhcp->offered_t0_lease * 1000));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp绑定: 设置请求超时 %"U32_F" msecs\n", dhcp->offered_t0_lease * 1000));
   }
 
   /* temporary DHCP lease? */
   if (dhcp->offered_t1_renew != 0xffffffffUL) {
     /* set renewal period timer */
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_bind(): t1 renewal timer %"U32_F" secs\n", dhcp->offered_t1_renew));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp绑定: t1续租定时器 %"U32_F" secs\n", dhcp->offered_t1_renew));
     DHCP_SET_TIMEOUT_FROM_OFFERED_T1_RENEW(dhcp->t1_timeout, dhcp);
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_bind(): set request timeout %"U32_F" msecs\n", dhcp->offered_t1_renew * 1000));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp绑定: 设置请求超时 %"U32_F" msecs\n", dhcp->offered_t1_renew * 1000));
     dhcp->t1_renew_time = dhcp->t1_timeout;
   }
   /* set renewal period timer */
   if (dhcp->offered_t2_rebind != 0xffffffffUL) {
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_bind(): t2 rebind timer %"U32_F" secs\n", dhcp->offered_t2_rebind));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp绑定: t2重新绑定定时器 %"U32_F" secs\n", dhcp->offered_t2_rebind));
     DHCP_SET_TIMEOUT_FROM_OFFERED_T2_REBIND(dhcp->t2_timeout, dhcp);
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp_bind(): set request timeout %"U32_F" msecs\n", dhcp->offered_t2_rebind * 1000));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_STATE, ("dhcp绑定: 设置请求超时 %"U32_F" msecs\n", dhcp->offered_t2_rebind * 1000));
     dhcp->t2_rebind_time = dhcp->t2_timeout;
   }
 
@@ -1137,8 +1139,10 @@ dhcp_bind(struct netif *netif)
 
   ip4_addr_copy(gw_addr, dhcp->offered_gw_addr);
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp_bind(): IP: 0x%08"X32_F" SN: 0x%08"X32_F" GW: 0x%08"X32_F"\n",
-              ip4_addr_get_u32(&dhcp->offered_ip_addr), ip4_addr_get_u32(&sn_mask), ip4_addr_get_u32(&gw_addr)));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp绑定: IP=%"U16_F".%"U16_F".%"U16_F".%"U16_F" SN: %"U16_F".%"U16_F".%"U16_F".%"U16_F" GW: %"U16_F".%"U16_F".%"U16_F".%"U16_F"\n",
+              ip4_addr1_16(&dhcp->offered_ip_addr), ip4_addr2_16(&dhcp->offered_ip_addr), ip4_addr3_16(&dhcp->offered_ip_addr), ip4_addr4_16(&dhcp->offered_ip_addr),
+              ip4_addr1_16(&sn_mask), ip4_addr2_16(&sn_mask), ip4_addr3_16(&sn_mask), ip4_addr4_16(&sn_mask),
+              ip4_addr1_16(&gw_addr), ip4_addr2_16(&gw_addr), ip4_addr3_16(&gw_addr), ip4_addr4_16(&gw_addr)));
   /* netif is now bound to DHCP leased address - set this before assigning the address
      to ensure the callback can use dhcp_supplied_address() */
   dhcp_set_state(dhcp, DHCP_STATE_BOUND);
@@ -1643,7 +1647,7 @@ again:
         break;
       default:
         decode_len = 0;
-        LWIP_DEBUGF(DHCP_DEBUG, ("skipping option %"U16_F" in options\n", (u16_t)op));
+        LWIP_DEBUGF(DHCP_DEBUG, ("跳过选项 %"U16_F" in options\n", (u16_t)op));
         LWIP_HOOK_DHCP_PARSE_OPTION(ip_current_netif(), dhcp, dhcp->state, msg_in,
                                     dhcp_option_given(dhcp, DHCP_OPTION_IDX_MSG_TYPE) ? (u8_t)dhcp_get_option_value(dhcp, DHCP_OPTION_IDX_MSG_TYPE) : 0,
                                     op, len, q, val_offset);
@@ -1779,8 +1783,8 @@ dhcp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr,
 
   LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("dhcp_recv(pbuf = %p) from DHCP server %"U16_F".%"U16_F".%"U16_F".%"U16_F" port %"U16_F"\n", (void *)p,
               ip4_addr1_16(ip_2_ip4(addr)), ip4_addr2_16(ip_2_ip4(addr)), ip4_addr3_16(ip_2_ip4(addr)), ip4_addr4_16(ip_2_ip4(addr)), port));
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("pbuf->len = %"U16_F"\n", p->len));
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("pbuf->tot_len = %"U16_F"\n", p->tot_len));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("pbuf长度=%"U16_F"\n", p->len));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("pbuf总长度=%"U16_F"\n", p->tot_len));
   /* prevent warnings about unused arguments */
   LWIP_UNUSED_ARG(pcb);
   LWIP_UNUSED_ARG(addr);
@@ -1817,7 +1821,7 @@ dhcp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr,
     goto free_pbuf_and_return;
   }
 
-  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("searching DHCP_OPTION_MESSAGE_TYPE\n"));
+  LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("搜索 DHCP消息类型选项\n"));
   /* obtain pointer to DHCP message type */
   if (!dhcp_option_given(dhcp, DHCP_OPTION_IDX_MSG_TYPE)) {
     LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE | LWIP_DBG_LEVEL_WARNING, ("DHCP_OPTION_MESSAGE_TYPE option not found\n"));
@@ -1829,7 +1833,7 @@ dhcp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr,
   msg_type = (u8_t)dhcp_get_option_value(dhcp, DHCP_OPTION_IDX_MSG_TYPE);
   /* message type is DHCP ACK? */
   if (msg_type == DHCP_ACK) {
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("DHCP_ACK received\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("收到DHCP确认\n"));
     /* in requesting state or just reconnected to the network? */
     if ((dhcp->state == DHCP_STATE_REQUESTING) ||
         (dhcp->state == DHCP_STATE_REBOOTING)) {
@@ -1863,7 +1867,7 @@ dhcp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr,
   }
   /* received a DHCP_OFFER in DHCP_STATE_SELECTING state? */
   else if ((msg_type == DHCP_OFFER) && (dhcp->state == DHCP_STATE_SELECTING)) {
-    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("DHCP_OFFER received in DHCP_STATE_SELECTING state\n"));
+    LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_TRACE, ("收到DHCP提供 当前状态:正在选择\n"));
     /* remember offered lease */
     dhcp_handle_offer(netif, msg_in);
   }
