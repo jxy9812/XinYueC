@@ -1140,9 +1140,12 @@ dhcp_bind(struct netif *netif)
   ip4_addr_copy(gw_addr, dhcp->offered_gw_addr);
 
   LWIP_DEBUGF(DHCP_DEBUG | LWIP_DBG_STATE, ("dhcp绑定: IP=%"U16_F".%"U16_F".%"U16_F".%"U16_F" SN: %"U16_F".%"U16_F".%"U16_F".%"U16_F" GW: %"U16_F".%"U16_F".%"U16_F".%"U16_F"\n",
-              ip4_addr1_16(&dhcp->offered_ip_addr), ip4_addr2_16(&dhcp->offered_ip_addr), ip4_addr3_16(&dhcp->offered_ip_addr), ip4_addr4_16(&dhcp->offered_ip_addr),
-              ip4_addr1_16(&sn_mask), ip4_addr2_16(&sn_mask), ip4_addr3_16(&sn_mask), ip4_addr4_16(&sn_mask),
-              ip4_addr1_16(&gw_addr), ip4_addr2_16(&gw_addr), ip4_addr3_16(&gw_addr), ip4_addr4_16(&gw_addr)));
+              ip4_addr1_16(&dhcp->offered_ip_addr), ip4_addr2_16(&dhcp->offered_ip_addr),
+              ip4_addr3_16(&dhcp->offered_ip_addr), ip4_addr4_16(&dhcp->offered_ip_addr),
+              ip4_addr1_16(&sn_mask), ip4_addr2_16(&sn_mask),
+              ip4_addr3_16(&sn_mask), ip4_addr4_16(&sn_mask),
+              ip4_addr1_16(&gw_addr), ip4_addr2_16(&gw_addr),
+              ip4_addr3_16(&gw_addr), ip4_addr4_16(&gw_addr)));
   /* netif is now bound to DHCP leased address - set this before assigning the address
      to ensure the callback can use dhcp_supplied_address() */
   dhcp_set_state(dhcp, DHCP_STATE_BOUND);

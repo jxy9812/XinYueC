@@ -24,7 +24,7 @@ int main(int argc, char* args[])
 	XVarList_delete(list);
 
 	XCoreApplication* app = XCoreApplication_create(argc,args);
-	XSocketTest();
+	//XSocketTest();
 	//XThreadTest();
 	//XCoreApplication_setApplicationDescription
 	//XAtomic_bool b;
