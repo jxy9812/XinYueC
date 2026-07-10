@@ -81,7 +81,8 @@ void XSocketTest()
 	XSocket* socket = XTcpSocket_create();
 	XObject_connect_2(socket,XSignal(XIODevice_readyRead_signal), readData);
 	XAbstractSocket_connectToHost_base(socket, "192.168.1.117", 502, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
-	XTcpSocket_waitForConnected_base(socket, 3000);
+	bool conn = XTcpSocket_waitForConnected_base(socket, 10000);
+	XPrintf("[测试] TCP连接到192.168.1.117:502 %s\n", conn ? "成功" : "失败");
 	XFd fd = XAbstractSocket_fd(socket);
 	XSocketNotifier* notifier = XSocketNotifier_createWithSocket(fd, XSocketNotifier_Read);
 	XObject_connect_2(notifier, XSignal(XSocketNotifier_activated_signal), XSocketNotifierSlot);

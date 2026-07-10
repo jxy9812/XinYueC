@@ -45,10 +45,10 @@
 #define MEM_CUSTOM_CALLOC       XCalloc_System
 #define MEMP_MEM_MALLOC         0
 #define MEM_ALIGNMENT           4
-#define MEM_SIZE                32768
+#define MEM_SIZE                131072
 
 /* ==================== 内存池数量 ==================== */
-#define MEMP_NUM_PBUF           16
+#define MEMP_NUM_PBUF           64
 #define MEMP_NUM_UDP_PCB        8
 #define MEMP_NUM_TCP_PCB        8
 #define MEMP_NUM_TCP_PCB_LISTEN 4

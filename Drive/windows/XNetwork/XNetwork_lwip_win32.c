@@ -21,6 +21,7 @@
  * 原因：避免 lwIP 的 IP_STATS/ICMP_STATS/TCP_STATS/UDP_STATS/IP6_STATS
  * 与 Windows iprtrmib.h 中的同名宏产生冲突
  * ================================================================ */
+#define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <windows.h>
 #include <iphlpapi.h>
@@ -81,6 +82,7 @@ typedef pcap_t (*pcap_open_live_t)(const char*,int,int,int,char*);
 typedef int (*pcap_findalldevs_t)(pcap_if_t**,char*);
 typedef void (*pcap_freealldevs_t)(pcap_if_t*);
 typedef int (*pcap_next_ex_t)(pcap_t,struct pcap_pkthdr**,const u_char**);
+typedef int (*pcap_dispatch_t)(pcap_t,int,void(*)(u_char*,const struct pcap_pkthdr*,const u_char*),u_char*);
 typedef int (*pcap_sendpacket_t)(pcap_t,const u_char*,int);
 typedef void (*pcap_close_t)(pcap_t);
 typedef int (*pcap_compile_t)(pcap_t,struct bpf_program*,const char*,int,bpf_u_int32);
@@ -93,6 +95,7 @@ static pcap_open_live_t pfn_open = NULL;
 static pcap_findalldevs_t pfn_findall = NULL;
 static pcap_freealldevs_t pfn_freeall = NULL;
 static pcap_next_ex_t pfn_next = NULL;
+static pcap_dispatch_t pfn_dispatch = NULL;
 static pcap_sendpacket_t pfn_send = NULL;
 static pcap_close_t pfn_close = NULL;
 static pcap_compile_t pfn_compile = NULL;
@@ -112,13 +115,14 @@ static bool load_npcap(void) {
     pfn_findall = (pcap_findalldevs_t)GetProcAddress(g_dll, "pcap_findalldevs");
     pfn_freeall = (pcap_freealldevs_t)GetProcAddress(g_dll, "pcap_freealldevs");
     pfn_next = (pcap_next_ex_t)GetProcAddress(g_dll, "pcap_next_ex");
+    pfn_dispatch = (pcap_dispatch_t)GetProcAddress(g_dll, "pcap_dispatch");
     pfn_send = (pcap_sendpacket_t)GetProcAddress(g_dll, "pcap_sendpacket");
     pfn_close = (pcap_close_t)GetProcAddress(g_dll, "pcap_close");
     pfn_compile = (pcap_compile_t)GetProcAddress(g_dll, "pcap_compile");
     pfn_setfilter = (pcap_setfilter_t)GetProcAddress(g_dll, "pcap_setfilter");
     pfn_freecode = (pcap_freecode_t)GetProcAddress(g_dll, "pcap_freecode");
-    LWIP_DBG("[Npcap] wpcap.dll 加载成功, 函数指针: open=%p send=%p next=%p close=%p filter=%p compile=%p\n",
-             (void*)pfn_open, (void*)pfn_send, (void*)pfn_next, (void*)pfn_close, (void*)pfn_setfilter, (void*)pfn_compile);
+    LWIP_DBG("[Npcap] wpcap.dll 加载成功, 函数指针: open=%p send=%p next=%p dispatch=%p close=%p\n",
+             (void*)pfn_open, (void*)pfn_send, (void*)pfn_next, (void*)pfn_dispatch, (void*)pfn_close);
     return pfn_open && pfn_findall && pfn_next && pfn_send;
 }
 
@@ -140,6 +144,8 @@ typedef struct {
     uint32_t winMask;            /* Windows 协议栈掩码 */
     uint32_t winGw;              /* Windows 协议栈网关 */
     uint32_t dhcpStartTime;      /* DHCP 启动时间（用于超时检测） */
+    uint8_t winMac[6];           /* Windows 真实 MAC 地址（用于 BPF 排除过滤） */
+    bool hasWinMac;              /* winMac 是否有效 */
 } npcap_ctx_t;
 
 static npcap_ctx_t g_npcapCtxs[NPCAP_MAX_ADAPTERS];
@@ -205,7 +211,7 @@ static bool is_physical_adapter(const char* desc) {
  * 注意：Windows API 返回的 FriendlyName/Description 是 wchar_t* 类型，
  * 需要通过 WideCharToMultiByte 转换为 UTF-8 字符串后再与 Npcap 描述进行匹配 */
 static bool find_windows_ip_for_adapter(PIP_ADAPTER_ADDRESSES aa, const char* npcapDesc,
-                                         uint32_t* ipOut, uint32_t* maskOut, uint32_t* gwOut) {
+                                         uint32_t* ipOut, uint32_t* maskOut, uint32_t* gwOut, uint8_t* macOut) {
     if (!aa || !npcapDesc || !ipOut || !maskOut || !gwOut) return false;
 
     PIP_ADAPTER_ADDRESSES a = aa;
@@ -258,13 +264,21 @@ static bool find_windows_ip_for_adapter(PIP_ADAPTER_ADDRESSES aa, const char* np
                                 *gwOut = 0;
                             }
 
+                            /* 获取 Windows 真实 MAC 地址（用于 BPF 排除过滤） */
+                            if (macOut && a->PhysicalAddressLength == 6) {
+                                memcpy(macOut, a->PhysicalAddress, 6);
+                            }
+
                             uint32_t hgw = ntohl(*gwOut);
-                            LWIP_DBG("[Windows网卡匹配] Npcap=\"%s\" -> Win=\"%s\" IP=%d.%d.%d.%d GW=%d.%d.%d.%d\n",
+                            LWIP_DBG("[Windows网卡匹配] Npcap=\"%s\" -> Win=\"%s\" IP=%d.%d.%d.%d GW=%d.%d.%d.%d MAC=%02X:%02X:%02X:%02X:%02X:%02X\n",
                                      npcapDesc, winName,
                                      (int)(hip>>24)&0xFF, (int)(hip>>16)&0xFF,
                                      (int)(hip>>8)&0xFF, (int)(hip)&0xFF,
                                      (int)(hgw>>24)&0xFF, (int)(hgw>>16)&0xFF,
-                                     (int)(hgw>>8)&0xFF, (int)(hgw)&0xFF);
+                                     (int)(hgw>>8)&0xFF, (int)(hgw)&0xFF,
+                                     macOut ? (int)macOut[0] : 0, macOut ? (int)macOut[1] : 0,
+                                     macOut ? (int)macOut[2] : 0, macOut ? (int)macOut[3] : 0,
+                                     macOut ? (int)macOut[4] : 0, macOut ? (int)macOut[5] : 0);
                             return true;
                         }
                     }
@@ -296,28 +310,10 @@ static err_t npcap_init(struct netif* netif) {
     netif->linkoutput = npcap_linkoutput;
     netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_LINK_UP;
 
-    /* 设置 Npcap BPF 过滤器：只接收目标 MAC 为 lwIP MAC 或广播地址的数据包
-     * 过滤掉 Windows 协议栈的流量，避免混杂模式下接收大量无关数据包导致延迟 */
-    if (ctx->pcap && pfn_compile && pfn_setfilter && pfn_freecode) {
-        char filter[256];
-        snprintf(filter, sizeof(filter),
-                 "ether dst %02x:%02x:%02x:%02x:%02x:%02x or ether broadcast",
-                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-        struct bpf_program fp;
-        if (pfn_compile(ctx->pcap, &fp, filter, 1, 0) == 0) {
-            if (pfn_setfilter(ctx->pcap, &fp) == 0) {
-                LWIP_DBG("[网卡] %c%c%d BPF过滤器设置成功: %s\n",
-                         netif->name[0], netif->name[1], netif->num, filter);
-            } else {
-                LWIP_DBG("[网卡] %c%c%d BPF过滤器设置失败: setfilter\n",
-                         netif->name[0], netif->name[1], netif->num);
-            }
-            pfn_freecode(&fp);
-        } else {
-            LWIP_DBG("[网卡] %c%c%d BPF过滤器编译失败: %s\n",
-                     netif->name[0], netif->name[1], netif->num, filter);
-        }
-    }
+    /* 混杂模式 + 用户态软 MAC 过滤：
+     * Npcap 在 Mellanox 网卡上 BPF 不可靠，不使用 BPF。
+     * XNetworkLwip_pollPcap 中只保留目标MAC匹配 lwIP MAC 或广播的包，
+     * 丢弃所有其他单播包。 */
 
     LWIP_DBG("[网卡] %c%c%d 初始化完成 MAC=%02X:%02X:%02X:%02X:%02X:%02X mtu=%d\n",
              netif->name[0], netif->name[1], netif->num,
@@ -397,7 +393,7 @@ static err_t npcap_linkoutput(struct netif* netif, struct pbuf* p) {
     return ERR_OK;
 }
 
-/* 网卡状态回调 - DHCP 获取到有效 IP 后自动设置为默认路由 */
+/* 网卡状态回调 - DHCP 获取到有效 IP 后自动设置为默认路由，并切换 BPF 为 IP 过滤 */
 static void npcap_status_callback(struct netif* netif) {
     if (!netif) return;
     if (netif_is_up(netif) && !ip_addr_isany(&netif->ip_addr)) {
@@ -406,6 +402,15 @@ static void npcap_status_callback(struct netif* netif) {
         /* 跳过 127.x.x.x (回环) 和 169.254.x.x (APIPA) */
         if (((hip >> 24) & 0xFF) != 127 && ((hip >> 16) & 0xFFFF) != 0xA9FE) {
             npcap_ctx_t* ctx = (npcap_ctx_t*)netif->state;
+
+            /* 保持初始 BPF 过滤器 "not ether host <Windows MAC>"
+             * 不在此处切换为 IP 过滤。
+             *
+             * 原因：Mellanox 网卡上 Npcap 的 "host <IP>" BPF 无法可靠匹配
+             * ARP 回复包（ARP 回复有时到达、有时不到），导致 TCP 连接不稳定。
+             *
+             * "not ether host <WinMAC>" 排除策略始终有效，排除 Windows 流量后
+             * 剩余流量极少（1-2%），lwIP 能正常处理。 */
             LWIP_DBG("[IF_STATUS] %c%c%d IP=%s MASK=%s GW=%s DEV=%s\n",
                      netif->name[0], netif->name[1], netif->num,
                      ip4addr_ntoa_r(ip_2_ip4(&netif->ip_addr), ip_str, sizeof(ip_str)),
@@ -479,41 +484,94 @@ static void npcap_status_callback(struct netif* netif) {
 /* DHCP 超时阈值（毫秒）：30秒内未获取到 DHCP IP，则 fallback 到 Windows IP */
 #define DHCP_FALLBACK_TIMEOUT_MS 30000
 
-/* 轮询所有 Npcap 网卡接收数据包，喂给 lwIP 协议栈 */
+/* 广播 MAC 地址常量 */
+static const uint8_t g_broadcastMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+/* pcap_dispatch 回调：参考 lwIP 官方 pcapif.c 的 pcapif_input 实现
+ *
+ * 混杂模式下 Npcap 会收到所有包（包括发给 Windows 协议栈的包和 lwIP 自己发出的包）。
+ * 此回调在 pbuf 分配前做轻量级过滤：
+ *   1. 发送回环过滤：源 MAC == lwIP MAC → 丢弃（官方 pcaipf_is_tx_packet 简化版）
+ *   2. 目标 MAC 过滤：只保留匹配 lwIP MAC 或广播的包（官方 pcapif_low_level_input 中的 MAC 过滤）
+ *   3. VLAN 标签剥离（企业网络需要，官方无此功能）
+ *   4. pbuf 分配 + netif->input
+ *
+ * 这两个过滤步骤与官方完全一致，确保在混杂模式下只处理 lwIP 关心的包。
+ */
+static void pcapif_input_callback(u_char* user, const struct pcap_pkthdr* hdr, const u_char* data) {
+    npcap_ctx_t* ctx = (npcap_ctx_t*)user;
+    struct netif* netif = ctx->netif;
+    uint16_t pktLen = (uint16_t)hdr->len;
+
+    if (!netif || pktLen < 14) return;
+
+    /* 步骤1：发送回环过滤 — 如果源 MAC 等于 lwIP 的 MAC，说明是自己发出的包被 Npcap 回环收回来了
+     * 参考官方 pcaipf_is_tx_packet (非 PCAPIF_RECEIVE_PROMISCUOUS 模式)：
+     *   const struct eth_addr *src = (const struct eth_addr *)packet + 1;
+     *   if (!memcmp(src, netif->hwaddr, ETH_HWADDR_LEN)) return 1;
+     */
+    if (!memcmp(data + 6, netif->hwaddr, 6)) {
+        return;  /* 自己发出的包，丢弃 */
+    }
+
+    /* 步骤2：目标 MAC 过滤 — 只保留目标 MAC 匹配 lwIP MAC 或广播的包
+     * 参考官方 pcapif_low_level_input 中的 MAC 过滤（非 PCAPIF_RECEIVE_PROMISCUOUS 模式）：
+     *   if (memcmp(dest, &netif->hwaddr, ETH_HWADDR_LEN) && memcmp(dest, bcast, 6)) return NULL;
+     */
+    if (memcmp(data, netif->hwaddr, 6) && memcmp(data, g_broadcastMac, 6)) {
+        return;  /* 不是发给 lwIP 也不是广播，丢弃 */
+    }
+
+    /* 步骤3：VLAN 标签剥离（802.1Q）
+     * 保留企业网络 VLAN 支持，官方 pcapif.c 无此功能 */
+    const u_char* pktData = data;
+    uint8_t vlanStripped[2048];
+    if (pktLen >= 18 && data[12] == 0x81 && data[13] == 0x00) {
+        uint16_t realLen = (uint16_t)(pktLen - 4);
+        if (realLen <= sizeof(vlanStripped)) {
+            memcpy(vlanStripped, data, 12);
+            memcpy(vlanStripped + 12, data + 16, realLen - 12);
+            pktData = vlanStripped;
+            pktLen = realLen;
+        }
+    }
+
+    /* 步骤4：分配 pbuf 并喂给 lwIP 协议栈
+     * 使用 PBUF_RAW + PBUF_RAM（需要拷贝，因为 VLAN 剥离修改了数据） */
+    struct pbuf* p = pbuf_alloc(PBUF_RAW, pktLen, PBUF_RAM);
+    if (p) {
+        memcpy(p->payload, pktData, pktLen);
+        if (netif->input(p, netif) != ERR_OK) {
+            pbuf_free(p);
+        }
+    }
+}
+
+/* 轮询所有 Npcap 网卡接收数据包，喂给 lwIP 协议栈
+ *
+ * 参考 lwIP 官方 pcapif.c 的 pcapif_poll 实现：
+ *   pcap_dispatch(pa->adapter, -1, pcapif_input, (u_char*)pa);
+ *   -1 表示处理当前 Npcap 缓冲区中所有可用包（非阻塞，处理完就返回）
+ */
 void XNetworkLwip_pollPcap(void) {
     static uint32_t lastFallbackCheck = 0;
     uint32_t now = sys_now();
 
     for (int i = 0; i < g_npcapCtxCount; i++) {
         npcap_ctx_t* ctx = &g_npcapCtxs[i];
-        if (!ctx->pcap || !ctx->netif || !pfn_next) continue;
+        if (!ctx->pcap || !ctx->netif) continue;
 
-        struct pcap_pkthdr* hdr = NULL;
-        const u_char* data = NULL;
-        int ret = pfn_next(ctx->pcap, &hdr, &data);
-
-        if (ret == 1 && hdr && data && hdr->len > 0) {
-            g_rxCount[i]++;
-            /* 每收到50个包打印一次统计（单独为此网卡打印） */
-            if (g_rxCount[i] % 50 == 1) {
-                char name[8];
-                snprintf(name, sizeof(name), "%c%c%d",
-                         ctx->netif->name[0], ctx->netif->name[1], ctx->netif->num);
-                uint16_t ethType = (hdr->len >= 14) ? ((uint16_t)data[12] << 8) | data[13] : 0;
-                const char* pktType = (ethType == 0x0806) ? "ARP" :
-                                     (ethType == 0x0800) ? "IP" : "?";
-                LWIP_DBG("[RX-%s] %s #%u len=%d (tx=%u)\n", pktType,
-                         name, g_rxCount[i], (int)hdr->len, g_txCount[i]);
-            }
-            /* 分配 pbuf 并将数据喂给 lwIP */
-            struct pbuf* p = pbuf_alloc(PBUF_RAW, (u16_t)hdr->len, PBUF_RAM);
-            if (p) {
-                memcpy(p->payload, data, hdr->len);
-                if (ctx->netif) {
-                    ctx->netif->input(p, ctx->netif);
-                } else {
-                    pbuf_free(p);
-                }
+        if (pfn_dispatch) {
+            /* 官方方式：pcap_dispatch(-1, callback, user) 批量处理所有可用包
+             * 回调中完成 MAC 过滤 + 发送回环过滤 + VLAN 剥离 + pbuf 分配 */
+            pfn_dispatch(ctx->pcap, -1, pcapif_input_callback, (u_char*)ctx);
+        } else if (pfn_next) {
+            /* fallback: pcap_dispatch 不可用（极旧的 WinPcap），使用 pcap_next_ex 逐包读取 */
+            struct pcap_pkthdr* hdr = NULL;
+            const u_char* data = NULL;
+            int ret = pfn_next(ctx->pcap, &hdr, &data);
+            if (ret == 1 && hdr && data && hdr->len > 0) {
+                pcapif_input_callback((u_char*)ctx, hdr, data);
             }
         }
     }
@@ -630,10 +688,11 @@ struct netif* XNetworkLwip_platform_init(void) {
                         continue;
                     }
 
-                    /* 动态 IP 配置：尝试从 Windows 获取对应网卡的 IP 信息 */
+                    /* 动态 IP 配置：尝试从 Windows 获取对应网卡的 IP 信息和 MAC 地址 */
                     bool hasIp = false;
                     uint32_t ip = 0, mask = 0, gw = 0;
-                    hasIp = find_windows_ip_for_adapter(aa, desc, &ip, &mask, &gw);
+                    uint8_t winMacBuf[6] = {0};
+                    hasIp = find_windows_ip_for_adapter(aa, desc, &ip, &mask, &gw, winMacBuf);
 
                     /* 只处理 192.168.1.x 段的有线网卡（Mellanox/以太网），其他网卡全部跳过 */
                     bool isTargetNic = false;
@@ -665,6 +724,10 @@ struct netif* XNetworkLwip_platform_init(void) {
                     LWIP_DBG("[Npcap] 目标网卡(%d): %s -> %s (192.168.1.x段)\n", targetNicCount, d->name, desc);
 
                     /* 打开 Npcap 设备 */
+                    /* 混杂模式：接收所有包，在用户态 pollPcap 中进行软 MAC 过滤
+                     * 原因：非混杂模式下网卡硬件只接收匹配网卡硬件MAC的包，而Npcap
+                     * 没有提供API注册额外的MAC地址。lwIP的随机MAC无法被网卡识别，
+                     * 导致DHCP OFFER/ACK、ARP回复等都无法收到。 */
                     pcap_t pcap = pfn_open(d->name, 65536, PCAP_OPENFLAG_PROMISCUOUS,
                                            NPCAP_READ_TIMEOUT_MS, errbuf);
                     if (!pcap) {
@@ -684,6 +747,12 @@ struct netif* XNetworkLwip_platform_init(void) {
                         ctx->winIp = ip;
                         ctx->winMask = mask;
                         ctx->winGw = gw;
+                        /* 保存 Windows 真实 MAC 用于 BPF 排除过滤 */
+                        if (winMacBuf[0] != 0 || winMacBuf[1] != 0 || winMacBuf[2] != 0 ||
+                            winMacBuf[3] != 0 || winMacBuf[4] != 0 || winMacBuf[5] != 0) {
+                            memcpy(ctx->winMac, winMacBuf, 6);
+                            ctx->hasWinMac = true;
+                        }
                     } else {
                         ctx->winIp = 0;
                         ctx->winMask = 0;
