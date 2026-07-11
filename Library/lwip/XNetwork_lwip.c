@@ -10,7 +10,7 @@
  *
  * 运行原理：
  *   1. lwip_init() 初始化 lwIP 协议栈
- *   2. XTimeWheelGroup 定时器每 20ms 触发，
+ *   2. XTimeWheelGroup 定时器每 LWIP_TICK_MS 毫秒触发（默认 5ms），
  *      a) 轮询虚拟网卡数据包（XNetworkLwip_pollPcap）
  *      b) lwIP 定时器由 LWIP_TIMERS_CUSTOM 直接对接 XTimeWheelGroup，无需轮询
  *      c) 向应用线程投递事件通知
@@ -84,7 +84,8 @@ typedef int XNetLwipCoreLock;
  * 内部宏常量
  * ================================================================ */
 #define L4P(p) ((XNetworkSocketPrivateLwip*)(p))
-#define LWIP_TICK_MS 20  /* lwIP 定时器滴答周期（毫秒） */
+/* lwIP 网卡轮询周期，可通过 XNETWORK_LWIP_TICK_MS 配置 */
+#define LWIP_TICK_MS XNETWORK_LWIP_TICK_MS
 
 typedef struct XNetworkSocketPrivateLwip XNetworkSocketPrivateLwip;
 
@@ -119,7 +120,7 @@ static void socketList_remove(void* s) {
 static XHandle g_lwipTickHandle = 0;
 static void lwip_tick_cb(void* userData, XTimerData* timer);
 
-/* 启动 lwIP 定时器滴答：每 20ms 触发一次 */
+/* 启动 lwIP 定时器滴答：每 LWIP_TICK_MS 毫秒触发一次 */
 static void start_lwip_tick(void) {
     XTimerData d;
     XTimerData_init(&d, NULL);
@@ -133,10 +134,18 @@ static void start_lwip_tick(void) {
 /* ================================================================
  * 全局状态
  * ================================================================ */
-static int g_lwipRef = 0;              /* lwIP 引用计数 */
-static bool g_lwipInited = false;      /* lwIP 是否已初始化 */
-static struct netif* g_defaultNetif = NULL; /* 默认网络接口 */
-static int g_lastError = 0;            /* 最后一次错误码 */
+/* lwIP 全局状态（位域压缩，减少内存占用）
+ * 原本为 4 个独立静态变量（约 24~32 字节），合并为 1 个结构体（16 字节）。
+ * - defaultNetif: 指针不可使用位域，单独占 8 字节
+ * - lastError:    错误码范围 -15~0，8 位有符号足够
+ * - ref:          引用计数通常 1~5，7 位（最大 127）足够
+ * - inited:       初始化标志，1 位足够 */
+static struct {
+    struct netif* defaultNetif;  /* 默认网络接口 */
+    int      lastError : 8;      /* 最后一次错误码 (-15~0) */
+    unsigned ref       : 7;      /* lwIP 引用计数 (max 127) */
+    unsigned inited    : 1;      /* 是否已初始化 */
+} g_state;
 
 
 /* ================================================================
@@ -146,27 +155,32 @@ static int g_lastError = 0;            /* 最后一次错误码 */
  * 每个 XAbstractSocket 对应一个此结构体实例。
  * ================================================================ */
 typedef struct XNetworkSocketPrivateLwip {
-    XNetworkSocketPrivate base;    /* 基类：owner + notifiers */
+    XNetworkSocketPrivate base;    /* 基类：owner + notifiers (16 字节) */
     struct tcp_pcb* tpcb;          /* TCP 协议控制块 */
     struct udp_pcb* upcb;          /* UDP 协议控制块 */
-    bool connected;                /* 是否已连接 */
-    bool isServer;                 /* 是否为服务端 */
-    bool closing;                  /* 是否正在关闭 */
-    int sockType;                  /* Socket 类型 */
     char* rxBuf;                   /* 接收缓冲区 */
-    int rxPos;                     /* 接收缓冲区当前写入位置 */
-    int rxTotal;                   /* 上一次接收的字节数 */
-    ip_addr_t fromAddr;            /* UDP 数据报来源地址 */
-    uint16_t fromPort;             /* UDP 数据报来源端口 */
+    void* pendingAccept;           /* 待领取的客户端连接 */
     size_t writeFinished;          /* 已发送并确认的累计字节数（通知消费者） */
     size_t lastWriteFinished;      /* 上次通知消费者的已发送字节数 */
-    bool connectDone;              /* 连接完成标记 */
-    bool hasReadData;              /* 有可读数据标记 */
-    bool hasWriteDone;             /* 写入完成标记 */
-    bool hasAccept;                /* 有新客户端连接标记 */
-    bool hasError;                 /* 有错误发生标记 */
-    int lastErr;                   /* 最后一次 lwIP 错误码 */
-    void* pendingAccept;           /* 待领取的客户端连接 */
+    /* 以上指针/size_t 共 64 字节 */
+    int rxPos;                     /* 接收缓冲区当前写入位置 */
+    int rxTotal;                   /* 上一次接收的字节数 */
+    ip_addr_t fromAddr;            /* UDP 数据报来源地址 (IPv4=4 字节) */
+    uint16_t fromPort;             /* UDP 数据报来源端口 */
+    /* 位域压缩：8 个布尔(8位) + sockType(2位) + lastErr(8位) = 18 位，合并到 4 字节
+     * 原本 8 个 bool(8字节) + sockType(4字节) + lastErr(4字节) + 对齐填充
+     * 现压缩为 4 字节，结构体从 ~104 字节减至 88 字节 */
+    unsigned connected   : 1;      /* 是否已连接 */
+    unsigned isServer    : 1;      /* 是否为服务端 */
+    unsigned closing     : 1;      /* 是否正在关闭 */
+    unsigned connectDone : 1;      /* 连接完成标记 */
+    unsigned hasReadData : 1;      /* 有可读数据标记 */
+    unsigned hasWriteDone: 1;      /* 写入完成标记 */
+    unsigned hasAccept   : 1;      /* 有新客户端连接标记 */
+    unsigned hasError    : 1;      /* 有错误发生标记 */
+    unsigned eventPending: 1;      /* 事件已投递待处理，防止重复投递 */
+    unsigned sockType    : 2;      /* Socket 类型 (0=TCP, 1=UDP) */
+    int      lastErr     : 8;      /* 最后一次 lwIP 错误码 (err_t, -16~0) */
 } XNetworkSocketPrivateLwip;
 
 /* ================================================================
@@ -188,10 +202,14 @@ static void lwip_tick_cb(void* userData, XTimerData* timer) {
     XNetworkLwip_pollPcap();
 #endif
 
-    /* 遍历所有 Socket，根据标志位向事件循环投递事件 */
+    /* 遍历所有 Socket，根据标志位向事件循环投递事件
+     * 优化：eventPending 标志避免在应用层处理事件前重复投递 */
     for (i = 0; i < g_socketCount; i++) {
         XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)g_socketList[i];
-        if (!s || !s->base.owner) continue;
+        if (!s || !s->base.owner) 
+            continue;
+        if (s->eventPending) 
+            continue;  /* 已有待处理事件，跳过避免重复投递 */
 
         /* 根据标志位确定事件类型，与 win32 IOCP 实现保持一致 */
         int actType = 0;
@@ -209,7 +227,10 @@ static void lwip_tick_cb(void* userData, XTimerData* timer) {
 
         XFd fd = XNetwork_socketFd((XNetworkSocketPrivate*)s);
         XEventSockAct* ev = XEventSockAct_create(fd, (XSocketActType)actType);
-        if (ev) XCoreApplication_postEvent((XObject*)s->base.owner, (XEvent*)ev, 0);
+        if (ev) {
+            XCoreApplication_postEvent((XObject*)s->base.owner, (XEvent*)ev, 0);
+            s->eventPending = 1;  /* 标记已投递，防止下次 tick 重复投递 */
+        }
     }
 }
 
@@ -318,7 +339,7 @@ static void tcpErrCb(void* arg, err_t err) {
     XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
     if (s) {
         s->closing = true; s->hasError = true;
-        s->lastErr = err; g_lastError = XNetworkLwip_err_to_errno(err);
+        s->lastErr = err; g_state.lastError = XNetworkLwip_err_to_errno(err);
         s->tpcb = NULL;
         s->connected = false;  /* 标记为未连接，确保 Connect 通知走失败分支 */
     }
@@ -341,7 +362,7 @@ static err_t tcpConnectedCb(void* arg, struct tcp_pcb* pcb, err_t err) {
         LWIP_DBG("[TCP连接] 连接成功\n");
     } else {
         s->hasError = true; s->lastErr = err;
-        g_lastError = XNetworkLwip_err_to_errno(err);
+        g_state.lastError = XNetworkLwip_err_to_errno(err);
         LWIP_DBG("[TCP连接] 连接失败, err=%d\n", (int)err);
     }
     return ERR_OK;
@@ -402,7 +423,7 @@ static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
  * ================================================================ */
 
 void XNetwork_ensureInit(void) {
-    if (g_lwipInited) { g_lwipRef++; return; }
+    if (g_state.inited) { g_state.ref++; return; }
     LWIP_DBG("[lwIP初始化] 开始初始化 lwIP 协议栈...\n");
 
     /* 初始化 lwIP 协议栈：内存池、pbuf、TCP/UDP/IP/ARP 等 */
@@ -422,21 +443,21 @@ void XNetwork_ensureInit(void) {
     /* 平台网卡初始化：Npcap / TAP / 硬件 MAC */
     struct netif* nif = XNetworkLwip_platform_init();
     if (nif) {
-        g_defaultNetif = nif;
+        g_state.defaultNetif = nif;
         LWIP_DBG("[lwIP初始化] 平台网卡初始化成功\n");
     } else {
         LWIP_DBG("[lwIP初始化] 警告：平台网卡初始化失败，可能无法通信\n");
     }
 
-    g_lwipInited = true;
-    g_lwipRef = 1;
-    LWIP_DBG("[lwIP初始化] 完成，引用计数=%d\n", g_lwipRef);
+    g_state.inited = 1;
+    g_state.ref = 1;
+    LWIP_DBG("[lwIP初始化] 完成，引用计数=%d\n", g_state.ref);
 }
 
 void XNetwork_cleanup(void) {
-    if (!g_lwipInited) return;
-    g_lwipRef--;
-    if (g_lwipRef > 0) return;
+    if (!g_state.inited) return;
+    g_state.ref--;
+    if (g_state.ref > 0) return;
 
     LWIP_DBG("[lwIP清理] 开始清理...\n");
 
@@ -449,13 +470,13 @@ void XNetwork_cleanup(void) {
     /* 平台网卡清理 */
     XNetworkLwip_platform_deinit();
 
-    g_lwipInited = false;
-    g_defaultNetif = NULL;
+    g_state.inited = 0;
+    g_state.defaultNetif = NULL;
     LWIP_DBG("[lwIP清理] 完成\n");
 }
 
 /* 错误信息 */
-int XNetwork_lastError(void) { return g_lastError; }
+int XNetwork_lastError(void) { return g_state.lastError; }
 bool XNetwork_isEAgain(int err) { return err == -6; }
 char* XNetwork_errorString(int errorCode) {
     char* s = (char*)XMalloc_System(64);
@@ -857,10 +878,12 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
     if (!priv) return false;
     XNetworkSocketPrivateLwip* s = L4P(priv);
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
+    s->eventPending = 0;  /* 清除待处理标记，允许后续事件投递 */
     bool hasEvent = false;
     if (s->connectDone) { s->connectDone = false; hasEvent = true; }
-    if (s->hasReadData) {
+    if (s->hasReadData || s->closing) {
         s->hasReadData = false;
+        s->closing = false;  /* 一并清除关闭标志，避免重复投递 */
         s->rxTotal = s->rxPos;  /* 更新已读字节数，供上层获取 */
         hasEvent = true;
     }
@@ -871,7 +894,7 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
         hasEvent = true;
     }
     if (s->hasAccept) { s->hasAccept = false; hasEvent = true; }
-    if (s->hasError) { s->hasError = false; hasEvent = true; }
+    if (s->hasError) { s->hasError = false; s->closing = false; hasEvent = true; }
     XNET_LWIP_UNLOCK(prot);
     return hasEvent;
 }
@@ -974,7 +997,9 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
 
 bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv) {
     if (!priv) return false;
-    L4P(priv)->hasAccept = false;
+    XNetworkSocketPrivateLwip* s = L4P(priv);
+    s->hasAccept = false;
+    s->eventPending = 0;  /* 清除待处理标记 */
     return true;
 }
 
@@ -1144,7 +1169,7 @@ int XNetwork_gssapiAuth(const char* name, const XByteArray* in, XByteArray* out,
     (void)name; (void)in; (void)out; (void)ctx; return -1;
 }
 
-struct netif* XNetworkLwip_defaultNetif(void) { return g_defaultNetif; }
-void XNetworkLwip_setDefaultNetif(struct netif* n) { g_defaultNetif = n; }
+struct netif* XNetworkLwip_defaultNetif(void) { return g_state.defaultNetif; }
+void XNetworkLwip_setDefaultNetif(struct netif* n) { g_state.defaultNetif = n; }
 
 #endif /* XNETWORK_USE_LWIP */

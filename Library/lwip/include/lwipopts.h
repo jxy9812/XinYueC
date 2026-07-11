@@ -21,7 +21,7 @@
  * ================================================================ */
 
 /* 适配层调试总开关：1=开启 XPrintf 输出，0=静默（不影响 lwIP 内部 LWIP_DEBUG） */
-#define LWIP_NET_DEBUG            1
+#define LWIP_NET_DEBUG            0
 #if LWIP_NET_DEBUG
   /* 适配层自定义调试输出，用于 XNetwork_lwip.c / sys_arch.c 等 */
   #define LWIP_DBG(fmt, ...)  XPrintf(fmt, ##__VA_ARGS__)
@@ -269,10 +269,17 @@
 
 /* 平台诊断输出宏：lwIP 内部 LWIP_DEBUGF 使用 printf+fflush
  * 与适配层 LWIP_DBG(XPrintf) 分离，互不影响 */
-#define LWIP_PLATFORM_DIAG(x)   do { printf x; fflush(stdout); } while(0)
+#define LWIP_PLATFORM_DIAG(x)   do { XPrintf x; fflush(stdout); } while(0)
 
-/* lwIP 调试总开关：1=允许各模块的 LWIP_DEBUGF 输出 */
-#define LWIP_DEBUG              1
+/* lwIP 调试总开关
+ * 重要：不能写 #define LWIP_DEBUG 0！
+ * C 预处理器 #ifdef 检查“是否定义”而非“值是否非零”。
+ * #define LWIP_DEBUG 0 仍然算已定义，LWIP_DEBUGF 仍然输出。
+ * 正确做法：关闭时不定义此宏，开启时定义为 1。
+ * 由 XNETWORK_LWIP_DEBUG 控制：0=不定义（关闭），1=定义为 1（开启） */
+#if XNETWORK_LWIP_DEBUG
+#define LWIP_DEBUG 1
+#endif
 
 /* 调试最低级别：LWIP_DBG_LEVEL_ALL=输出所有级别（含 trace/warning/serious/fatal） */
 #define LWIP_DBG_MIN_LEVEL      LWIP_DBG_LEVEL_ALL

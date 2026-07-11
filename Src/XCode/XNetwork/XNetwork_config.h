@@ -83,6 +83,9 @@ extern "C" {
 #define XNETWORK_LWIP_DNS_TIMEOUT_MS  5000
 #endif
 
+#ifndef XNETWORK_LWIP_TICK_MS
+#define XNETWORK_LWIP_TICK_MS  1
+#endif
 /**
  * @brief lwIP 操作系统模式选择
  *
