@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XNetwork_lwip_win32.c
  * @brief lwIP Windows 平台虚拟网卡实现 - 基于 Npcap 虚拟网卡
  *
@@ -437,8 +437,8 @@ static void npcap_status_callback(struct netif* netif) {
             bool newHasGw = !ip_addr_isany(&netif->gw);
             bool curHasGw = netif_default && !ip_addr_isany(&netif_default->gw);
             /* 检查网关是否与网卡IP在同一子网（排除192.168.1.x之类的跨子网网关） */
-            bool newGwInSubnet = newHasGw && ip_addr_netcmp(&netif->gw, &netif->ip_addr, &netif->netmask);
-            bool curGwInSubnet = netif_default && curHasGw && ip_addr_netcmp(&netif_default->gw, &netif_default->ip_addr, &netif_default->netmask);
+            bool newGwInSubnet = newHasGw && ip_addr_netcmp(&netif->gw, &netif->ip_addr, netif_ip4_netmask(netif));
+            bool curGwInSubnet = netif_default && curHasGw && ip_addr_netcmp(&netif_default->gw, &netif_default->ip_addr, netif_ip4_netmask(netif_default));
 
             /* 检测是否为虚拟网卡（VMware/VirtualBox等，不是真正的物理网卡） */
             bool newIsVirtual = ctx && ctx->winDesc &&

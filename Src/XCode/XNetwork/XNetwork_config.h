@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XNetwork_config.h
  * @brief XNetwork 模块网络后端配置文件
  *
@@ -98,6 +98,25 @@ extern "C" {
  * @note 两种模式都使用 sys_arch_protect（递归互斥锁）保证线程安全，
  *       都通过 XTimeWheelGroup 定时器轮询 sys_check_timeouts()。
  */
+/**
+ * @brief lwIP IPv6 支持
+ *
+ * 0 = 关闭 IPv6（默认），仅 IPv4
+ * 1 = 开启 IPv6 双栈支持
+ */
+#ifndef XNETWORK_LWIP_IPV6
+#define XNETWORK_LWIP_IPV6  1
+#endif
+
+/**
+ * @brief lwIP IGMP 多播支持
+ *
+ * 0 = 关闭 IGMP（默认）
+ * 1 = 开启 IGMP 多播组管理
+ */
+#ifndef XNETWORK_LWIP_IGMP
+#define XNETWORK_LWIP_IGMP  1
+#endif
 #ifndef XNETWORK_LWIP_NO_SYS
 #define XNETWORK_LWIP_NO_SYS  1
 #endif

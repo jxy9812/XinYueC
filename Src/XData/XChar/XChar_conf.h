@@ -48,9 +48,9 @@ extern "C" {
 
 /* 取消注释以启用对应模式 */
 
- #define XCHAR_USE_CODE_GBK      /* 代码模式 */
-/* #define XCHAR_USE_FILE_GBK    */  /* 文件模式 */
- /*#define XCHAR_USE_SYSTEM_GBK   */ /* 系统API模式 */
+ //#define XCHAR_USE_CODE_GBK      /* 代码模式 */
+ //#define XCHAR_USE_FILE_GBK      /* 文件模式 */
+ #define XCHAR_USE_SYSTEM_GBK    /* 系统API模式 */
 
 /* ========================================================================== */
 /*                        文件模式配置                                         */

@@ -38,17 +38,18 @@
 #define LWIP_DHCP_DOES_ACD_CHECK   0
 #define LWIP_ACD                   0
 #define LWIP_IPV4               1
-#define LWIP_IPV6               0       /* 暂关闭IPv6，减少复杂度 */
-#define LWIP_IGMP               0
+#define LWIP_IPV6               XNETWORK_LWIP_IPV6
+#define LWIP_IGMP               XNETWORK_LWIP_IGMP
 #define LWIP_AUTOIP             0
 #define LWIP_DNS                1
-
+/* IPv6 fragment reassembly: must be 1 on 64-bit (ip6_reass_helper > IP6_FRAG_HLEN) */
+#define IPV6_FRAG_COPYHEADER    1
 /* ==================== 内存管理 ==================== */
 #define MEM_CUSTOM_ALLOCATOR    1
-#define MEM_CUSTOM_MALLOC       XMalloc_System
-#define MEM_CUSTOM_FREE         XFree_System
-#define MEM_CUSTOM_CALLOC       XCalloc_System
-#define MEMP_MEM_MALLOC         0
+#define MEM_CUSTOM_MALLOC       XMalloc_Hybrid
+#define MEM_CUSTOM_FREE         XFree_Hybrid
+#define MEM_CUSTOM_CALLOC       XCalloc_Hybrid
+#define MEMP_MEM_MALLOC         1
 #define MEM_ALIGNMENT           4
 #define MEM_SIZE                131072
 
