@@ -36,12 +36,17 @@ DWORD get_fattime(void)
  * 句柄映射表 - XFd 通过全局 XFileDescriptor 表管理，handle 存 FIL*
  * ============================================================================ */
 
-#define MAX_DIRS  XFILE_FATFS_MAX_DIRS
+/* 文件句柄包装：FIL + 路径（供 fstat/fsetFileTime 使用 f_stat/f_utime） */
+typedef struct XFATFS_FileHandle {
+    FIL  fil;            /* FatFs 文件对象 */
+    char path[512];      /* FatFs 格式路径（供 fstat/fsetFileTime 使用） */
+} XFATFS_FileHandle;
 
-static DIR*  g_dirTable[MAX_DIRS];     /* NULL = 未分配 */
-static FILINFO* g_dirInfo[MAX_DIRS];   /* NULL = 未分配 */
-static bool  g_dirInUse[MAX_DIRS];
-static bool  g_dirFirst[MAX_DIRS];
+/* 目录句柄包装：DIR + FILINFO */
+typedef struct XFATFS_DirHandle {
+    DIR     dir;
+    FILINFO info;
+} XFATFS_DirHandle;
 
 /* ============================================================================
  * 卷管理
@@ -208,49 +213,40 @@ static bool XFATFS_convertPath(const XString* path, char* fatfsPath, size_t bufS
  * 句柄表管理 —— 通过全局 XFileDescriptor 表管理，handle 存 FIL*
  * ============================================================================ */
 
-/** 通过 XFd 获取 Fatfs FIL 指针 */
+/** 通过 XFd 获取 FatFs FIL 指针（从 XFATFS_FileHandle 包装中取出 &fh->fil） */
 static FIL* XFATFS_getFile(XFd fd)
 {
-    FIL* fp = (FIL*)XFd_handle(fd);
-    if (!fp || XFd_type(fd) != XFD_TYPE_FILE) return NULL;
-    return fp;
+    if (fd < 0) return NULL;
+    XFATFS_FileHandle* fh = (XFATFS_FileHandle*)XFd_handle(fd);
+    if (!fh || XFd_type(fd) != XFD_TYPE_FILE) return NULL;
+    return &fh->fil;
+}
+
+/** 通过 XFd 获取完整的 XFATFS_FileHandle（含路径，供 fstat/fsetFileTime 使用） */
+static XFATFS_FileHandle* XFATFS_getFileHandle(XFd fd)
+{
+    if (fd < 0) return NULL;
+    XFATFS_FileHandle* fh = (XFATFS_FileHandle*)XFd_handle(fd);
+    if (!fh || XFd_type(fd) != XFD_TYPE_FILE) return NULL;
+    return fh;
 }
 
 /** 释放文件描述符（f_close + XFd_free + XFree_System） */
 static void XFATFS_freeFile(XFd fd)
 {
-    FIL* fp = (FIL*)XFd_handle(fd);
-    if (fp) f_close(fp);
+    XFATFS_FileHandle* fh = XFATFS_getFileHandle(fd);
+    if (fh) f_close(&fh->fil);
     XFd_free(fd);
-    if (fp) XFree_System(fp);
+    if (fh) XFree_System(fh);
 }
 
-static intptr_t XFATFS_allocDir(void)
+/** 通过 XFd 获取 FatFs 目录句柄包装 */
+static XFATFS_DirHandle* XFATFS_getDirHandle(XFd fd)
 {
-    for (int i = 0; i < MAX_DIRS; i++) {
-        if (!g_dirInUse[i]) {
-            if (!g_dirTable[i]) {
-                g_dirTable[i] = (DIR*)XMalloc_System(sizeof(DIR));
-                if (!g_dirTable[i]) return -1;
-            }
-            if (!g_dirInfo[i]) {
-                g_dirInfo[i] = (FILINFO*)XMalloc_System(sizeof(FILINFO));
-                if (!g_dirInfo[i]) return -1;
-            }
-            memset(g_dirTable[i], 0, sizeof(DIR));
-            memset(g_dirInfo[i], 0, sizeof(FILINFO));
-            g_dirInUse[i] = true;
-            g_dirFirst[i] = true;
-            return (intptr_t)i;
-        }
-    }
-    return -1;
-}
-
-static DIR* XFATFS_getDir(intptr_t iter)
-{
-    if (iter < 0 || iter >= MAX_DIRS || !g_dirInUse[iter]) return NULL;
-    return g_dirTable[iter];
+    if (fd < 0) return NULL;
+    XFATFS_DirHandle* dh = (XFATFS_DirHandle*)XFd_handle(fd);
+    if (!dh || XFd_type(fd) != XFD_TYPE_DIR) return NULL;
+    return dh;
 }
 
 /* ============================================================================
@@ -275,17 +271,18 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
     if (mode & XFileSystem_Append) fatfsMode |= FA_OPEN_APPEND;
     if (fatfsMode == 0) fatfsMode = FA_READ;
     
-    /* 按需分配 FIL 对象 */
-    FIL* fil = (FIL*)XMalloc_System(sizeof(FIL));
-    if (!fil) {
+    /* 分配 XFATFS_FileHandle 包装（FIL + 路径），路径供 fstat/fsetFileTime 使用 */
+    XFATFS_FileHandle* fh = (XFATFS_FileHandle*)XMalloc_System(sizeof(XFATFS_FileHandle));
+    if (!fh) {
         if (error) *error = XFileDevice_ResourceError;
         return XFD_INVALID;
     }
-    memset(fil, 0, sizeof(FIL));
+    memset(fh, 0, sizeof(XFATFS_FileHandle));
+    strncpy(fh->path, fatfsPath, sizeof(fh->path) - 1);
     
-    FRESULT fr = f_open(fil, fatfsPath, fatfsMode);
+    FRESULT fr = f_open(&fh->fil, fatfsPath, fatfsMode);
     if (fr != FR_OK) {
-        XFree_System(fil);
+        XFree_System(fh);
         if (error) {
             switch (fr) {
                 case FR_NO_FILE: *error = XFileDevice_OpenError; break;
@@ -296,17 +293,17 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
         return XFD_INVALID;
     }
     
-    /* 分配全局 fd，handle 存 FIL* */
-    XFd fd = XFd_alloc(XFD_TYPE_FILE, fil, NULL);
+    /* 分配全局 fd，handle 存 XFATFS_FileHandle* */
+    XFd fd = XFd_alloc(XFD_TYPE_FILE, fh, NULL);
     if (fd == XFD_INVALID) {
-        f_close(fil);
-        XFree_System(fil);
+        f_close(&fh->fil);
+        XFree_System(fh);
         if (error) *error = XFileDevice_ResourceError;
         return XFD_INVALID;
     }
     
     if (mode & XFileSystem_Append) {
-        f_lseek(fil, f_size(fil));
+        f_lseek(&fh->fil, f_size(&fh->fil));
     }
     
     if (error) *error = XFileDevice_NoError;
@@ -428,26 +425,26 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat)
 
 bool XFileSystem_fstat(XFd fd, XFileStat* stat)
 {
-    FIL* fp = XFATFS_getFile(fd);
-    if (!fp || !stat) return false;
+    XFATFS_FileHandle* fh = XFATFS_getFileHandle(fd);
+    if (!fh || !stat) return false;
 
     memset(stat, 0, sizeof(XFileStat));
     stat->exists = true;
     stat->isFile = true;
     stat->isDir = false;
-    stat->size = (int64_t)f_size(fp);
+    stat->size = (int64_t)f_size(&fh->fil);
     stat->isReadable = true;
     stat->isWritable = true;
 
-    /* fstat 通过 FIL 无法获取时间戳，设为当前时间 */
-    {
-        DWORD fattime = get_fattime();
-        int year  = ((fattime >> 25) & 0x7F) + 1980;
-        int month = (fattime >> 21) & 0x0F;
-        int day   = (fattime >> 16) & 0x1F;
-        int hour  = (fattime >> 11) & 0x1F;
-        int min   = (fattime >> 5) & 0x3F;
-        int sec   = (fattime & 0x1F) * 2;
+    /* 通过存储的路径调用 f_stat 获取真实文件时间戳 */
+    FILINFO fno;
+    if (f_stat(fh->path, &fno) == FR_OK) {
+        int year  = ((fno.fdate >> 9) & 0x7F) + 1980;
+        int month = (fno.fdate >> 5) & 0x0F;
+        int day   = fno.fdate & 0x1F;
+        int hour  = (fno.ftime >> 11) & 0x1F;
+        int min   = (fno.ftime >> 5) & 0x3F;
+        int sec   = (fno.ftime & 0x1F) * 2;
 
         XDate date = XDate_create_date(year, month, day);
         XTime time = XTime_create_time(hour, min, sec, 0);
@@ -580,40 +577,45 @@ XDirIterator XFileSystem_opendir(const XString* path)
     char fatfsPath[512];
     if (!XFATFS_convertPath(path, fatfsPath, sizeof(fatfsPath))) return NULL;
     
-    intptr_t idx = XFATFS_allocDir();
-    if (idx < 0) return NULL;
+    /* 分配 XFATFS_DirHandle 包装，通过 XFileDescriptor 表管理（XFD_TYPE_DIR） */
+    XFATFS_DirHandle* dh = (XFATFS_DirHandle*)XMalloc_System(sizeof(XFATFS_DirHandle));
+    if (!dh) return NULL;
+    memset(dh, 0, sizeof(XFATFS_DirHandle));
     
-    DIR* dp = XFATFS_getDir(idx);
-    if (f_opendir(dp, fatfsPath) != FR_OK) {
-        g_dirInUse[idx] = false;
+    if (f_opendir(&dh->dir, fatfsPath) != FR_OK) {
+        XFree_System(dh);
         return NULL;
     }
     
-    g_dirFirst[idx] = true;
-    return (XDirIterator)(uintptr_t)idx;
+    XFd fd = XFd_alloc(XFD_TYPE_DIR, dh, NULL);
+    if (fd == XFD_INVALID) {
+        f_closedir(&dh->dir);
+        XFree_System(dh);
+        return NULL;
+    }
+    
+    return (XDirIterator)(uintptr_t)fd;
 }
 
 bool XFileSystem_readdir(XDirIterator iter, XDirEntry* entry)
 {
     if (!iter || !entry) return false;
     
-    intptr_t idx = (intptr_t)(uintptr_t)iter;
-    if (idx < 0 || idx >= MAX_DIRS || !g_dirInUse[idx]) return false;
+    XFd fd = (XFd)(intptr_t)(uintptr_t)iter;
+    XFATFS_DirHandle* dh = XFATFS_getDirHandle(fd);
+    if (!dh) return false;
     
-    DIR* dp = XFATFS_getDir(idx);
-    FILINFO* fno = g_dirInfo[idx];
-    
-    FRESULT fr = f_readdir(dp, fno);
-    if (fr != FR_OK || fno->fname[0] == 0) return false;
+    FRESULT fr = f_readdir(&dh->dir, &dh->info);
+    if (fr != FR_OK || dh->info.fname[0] == 0) return false;
     
     /* 设置文件名 */
     if (entry->name) {
-        XString_assign_utf8(entry->name, fno->fname);
+        XString_assign_utf8(entry->name, dh->info.fname);
     }
     
-    entry->isDir = (fno->fattrib & AM_DIR) != 0;
+    entry->isDir = (dh->info.fattrib & AM_DIR) != 0;
     entry->isFile = !entry->isDir;
-    entry->isHidden = (fno->fattrib & AM_HID) != 0;
+    entry->isHidden = (dh->info.fattrib & AM_HID) != 0;
     entry->isSymLink = false;
     
     return true;
@@ -623,13 +625,13 @@ void XFileSystem_closedir(XDirIterator iter)
 {
     if (!iter) return;
     
-    intptr_t idx = (intptr_t)(uintptr_t)iter;
-    if (idx < 0 || idx >= MAX_DIRS || !g_dirInUse[idx]) return;
-    
-    if (g_dirTable[idx]) {
-        f_closedir(g_dirTable[idx]);
+    XFd fd = (XFd)(intptr_t)(uintptr_t)iter;
+    XFATFS_DirHandle* dh = XFATFS_getDirHandle(fd);
+    if (dh) {
+        f_closedir(&dh->dir);
     }
-    g_dirInUse[idx] = false;
+    XFd_free(fd);
+    if (dh) XFree_System(dh);
 }
 
 /* ============================================================================
@@ -879,6 +881,33 @@ bool XFileSystem_setFileTime(const XString* path, XFileTime timeType, int64_t ti
     (void)timeType; /* FatFs 的 f_utime 同时设置修改时间和创建时间 */
 
     return f_utime(fatfsPath, &fno) == FR_OK;
+}
+
+/**
+ * @brief 通过已打开的文件描述符设置文件时间（fd 版）
+ * @note FatFs 无 f_futime(FIL*) 接口，但 XFATFS_FileHandle 包装中存储了路径，
+ *       通过 f_utime(path, &fno) 实现基于 fd 的时间设置。
+ *       FatFs 的 f_utime 同时设置修改时间和创建时间，timeType 参数被忽略。
+ */
+bool XFileSystem_fsetFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
+{
+    XFATFS_FileHandle* fh = XFATFS_getFileHandle(fd);
+    if (!fh) return false;
+
+    /* 将 Unix 时间戳转换为 FatFs 日期时间格式 */
+    XDateTime dt;
+    XDateTime_setSecsSinceEpoch(&dt, timeValue);
+    XDate date = XDateTime_date(&dt);
+    XTime time = XDateTime_time(&dt);
+
+    FILINFO fno;
+    memset(&fno, 0, sizeof(fno));
+    fno.fdate = (WORD)(((XDate_year(&date) - 1980) << 9) | (XDate_month(&date) << 5) | XDate_day(&date));
+    fno.ftime = (WORD)((XTime_hour(&time) << 11) | (XTime_minute(&time) << 5) | (XTime_second(&time) / 2));
+
+    (void)timeType; /* FatFs 的 f_utime 同时设置修改时间和创建时间 */
+
+    return f_utime(fh->path, &fno) == FR_OK;
 }
 
 /* ============================================================================

@@ -98,6 +98,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
         file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
         file->m_parent.m_error = XFileDevice_NoError;
         device->m_openMode = mode;
+        XFileDevice_registerAsync(&file->m_parent);
         return true;
     } else {
         // 允许回退到直接写入
@@ -113,6 +114,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
             file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
             file->m_parent.m_error = XFileDevice_NoError;
             device->m_openMode = mode;
+            XFileDevice_registerAsync(&file->m_parent);
             return true;
         }
         
@@ -139,6 +141,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
         file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
         file->m_parent.m_error = XFileDevice_NoError;
         device->m_openMode = mode;
+        XFileDevice_registerAsync(&file->m_parent);
         return true;
     }
 }
@@ -181,6 +184,7 @@ static void VXSaveFile_deinit(XSaveFile* file)
     
     // 关闭文件句柄
     if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        XFileDevice_unregisterAsync(&file->m_parent);
         if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
             XFileSystem_close(XIODevice_fd(&file->m_parent.m_parent));
         }
@@ -321,6 +325,7 @@ bool XSaveFile_commit(XSaveFile* file)
     
     // 关闭文件
     if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        XFileDevice_unregisterAsync(&file->m_parent);
         if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
             XFileSystem_close(XIODevice_fd(&file->m_parent.m_parent));
         }

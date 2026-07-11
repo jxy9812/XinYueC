@@ -40,6 +40,7 @@ static bool VXFile_open(XIODevice* device, XIODeviceBaseMode mode)
     file->m_parent.m_handleFlags = XFileDevice_AutoCloseHandle;
     file->m_parent.m_error = XFileDevice_NoError;
     device->m_openMode = mode;
+    XFileDevice_registerAsync(&file->m_parent);
     return true;
 }
 
@@ -49,6 +50,8 @@ static void VXFile_close(XIODevice* device)
     if (!file || XIODevice_fd(device) < 0) return;
     
     XIODevice_aboutToClose_signal(device);
+    
+    XFileDevice_unregisterAsync(&file->m_parent);
     
     if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
         XFileSystem_close(XIODevice_fd(device));
@@ -189,6 +192,7 @@ bool XFile_open_3(XFile* file, int fd, XIODeviceBaseMode mode, XFileDeviceFileHa
     file->m_parent.m_handleFlags = handleFlags;
     file->m_parent.m_error = XFileDevice_NoError;
     file->m_parent.m_parent.m_openMode = mode;
+    XFileDevice_registerAsync(&file->m_parent);
     return true;
 }
 

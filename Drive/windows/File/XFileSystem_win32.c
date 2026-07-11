@@ -9,6 +9,7 @@
 #include "XFileDevice.h"
 #include "XMemory.h"
 #include "XString.h"
+#include "XFileDescriptor.h"  /* XFd_alloc, XFd_free, XFd_handle, XFd_type */
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
@@ -108,6 +109,18 @@ static int64_t fileTimeToUnixTime(const FILETIME* ft)
 }
 
 /**
+ * @brief 通过 XFd 获取底层 Windows HANDLE（XFileDescriptor 表中存储的是 HANDLE）
+ */
+static HANDLE XW32_getFile(XFd fd)
+{
+    if (fd < 0) return INVALID_HANDLE_VALUE;
+    HANDLE h = (HANDLE)XFd_handle(fd);
+    if (h == INVALID_HANDLE_VALUE || !h) return INVALID_HANDLE_VALUE;
+    if (XFd_type(fd) != XFD_TYPE_FILE) return INVALID_HANDLE_VALUE;
+    return h;
+}
+
+/**
  * @brief 获取文件属性并填充 XFileStat（内部函数，使用UTF-8路径）
  */
 static bool fillFileStatUtf8(const char* path, WIN32_FILE_ATTRIBUTE_DATA* attrData, XFileStat* stat)
@@ -190,7 +203,7 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
     wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) {
         if (error) *error = XFileDevice_ResourceError;
-        return -1;
+        return XFD_INVALID;
     }
     
     DWORD desiredAccess = 0;
@@ -222,18 +235,21 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
     
     if (hFile == INVALID_HANDLE_VALUE) {
         if (error) *error = XFileDevice_OpenError;
-        return -1;
+        return XFD_INVALID;
     }
     
-    XFd fd = (XFd)_open_osfhandle((intptr_t)hFile, 0);
-    if (fd < 0) {
+    /* 将 HANDLE 存入 XFileDescriptor 统一 fd 表 */
+    XFd fd = XFd_alloc(XFD_TYPE_FILE, hFile, NULL);
+    if (fd == XFD_INVALID) {
         CloseHandle(hFile);
-        if (error) *error = XFileDevice_OpenError;
-        return -1;
+        if (error) *error = XFileDevice_ResourceError;
+        return XFD_INVALID;
     }
     
     if (mode & XFileSystem_Append) {
-        _lseeki64(fd, 0, SEEK_END);
+        LARGE_INTEGER zero;
+        zero.QuadPart = 0;
+        SetFilePointerEx(hFile, zero, NULL, FILE_END);
     }
     
     if (error) *error = XFileDevice_NoError;
@@ -242,34 +258,48 @@ XFd XFileSystem_open(const XString* path, int mode, int* error)
 
 void XFileSystem_close(XFd fd)
 {
-    if (fd >= 0) {
-        _close((int)fd);
+    HANDLE h = XW32_getFile(fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        CloseHandle(h);
     }
+    XFd_free(fd);
 }
 
 int64_t XFileSystem_pos(XFd fd)
 {
-    if (fd < 0) return -1;
-    return _lseeki64((int)fd, 0, SEEK_CUR);
+    HANDLE h = XW32_getFile(fd);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    LARGE_INTEGER zero;
+    zero.QuadPart = 0;
+    LARGE_INTEGER pos;
+    if (!SetFilePointerEx(h, zero, &pos, FILE_CURRENT)) return -1;
+    return (int64_t)pos.QuadPart;
 }
 
 bool XFileSystem_seek(XFd fd, int64_t pos)
 {
-    if (fd < 0 || pos < 0) return false;
-    return _lseeki64((int)fd, pos, SEEK_SET) >= 0;
+    HANDLE h = XW32_getFile(fd);
+    if (h == INVALID_HANDLE_VALUE || pos < 0) return false;
+    LARGE_INTEGER li;
+    li.QuadPart = (LONGLONG)pos;
+    LARGE_INTEGER newpos;
+    return SetFilePointerEx(h, li, &newpos, FILE_BEGIN) != 0;
 }
 
 int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
 {
-    if (fd < 0 || !buf || len <= 0) return -1;
+    HANDLE h = XW32_getFile(fd);
+    if (h == INVALID_HANDLE_VALUE || !buf || len <= 0) return -1;
     
     int64_t totalRead = 0;
     while (totalRead < len) {
         int64_t toRead = len - totalRead;
-        if (toRead > UINT_MAX) toRead = UINT_MAX;
+        if (toRead > 0xFFFFFFFF) toRead = 0xFFFFFFFF;
         
-        size_t bytesRead = _read(fd, (char*)buf + totalRead, (unsigned int)toRead);
-        if (bytesRead < 0) return -1;
+        DWORD bytesRead = 0;
+        if (!ReadFile(h, (char*)buf + totalRead, (DWORD)toRead, &bytesRead, NULL)) {
+            return -1;
+        }
         if (bytesRead == 0) break;
         totalRead += bytesRead;
     }
@@ -278,15 +308,18 @@ int64_t XFileSystem_read(XFd fd, void* buf, int64_t len)
 
 int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
 {
-    if (fd < 0 || !buf || len <= 0) return -1;
+    HANDLE h = XW32_getFile(fd);
+    if (h == INVALID_HANDLE_VALUE || !buf || len <= 0) return -1;
     
     int64_t totalWritten = 0;
     while (totalWritten < len) {
         int64_t toWrite = len - totalWritten;
-        if (toWrite > UINT_MAX) toWrite = UINT_MAX;
+        if (toWrite > 0xFFFFFFFF) toWrite = 0xFFFFFFFF;
         
-        size_t bytesWritten = _write(fd, (const char*)buf + totalWritten, (unsigned int)toWrite);
-        if (bytesWritten < 0) return -1;
+        DWORD bytesWritten = 0;
+        if (!WriteFile(h, (const char*)buf + totalWritten, (DWORD)toWrite, &bytesWritten, NULL)) {
+            return -1;
+        }
         if (bytesWritten == 0) break;
         totalWritten += bytesWritten;
     }
@@ -295,29 +328,35 @@ int64_t XFileSystem_write(XFd fd, const void* buf, int64_t len)
 
 bool XFileSystem_flush(XFd fd)
 {
-    if (fd < 0) return false;
-    
-    HANDLE hFile = (HANDLE)_get_osfhandle(fd);
-    if (hFile == INVALID_HANDLE_VALUE) return false;
-    
-    return FlushFileBuffers(hFile) != 0;
+    HANDLE h = XW32_getFile(fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    return FlushFileBuffers(h) != 0;
 }
 
 bool XFileSystem_resize(XFd fd, int64_t size)
 {
-    if (fd < 0 || size < 0) return false;
+    HANDLE h = XW32_getFile(fd);
+    if (h == INVALID_HANDLE_VALUE || size < 0) return false;
     
-    int64_t oldPos = _telli64(fd);
+    /* 保存当前位置 */
+    LARGE_INTEGER zero;
+    zero.QuadPart = 0;
+    LARGE_INTEGER oldPos;
+    if (!SetFilePointerEx(h, zero, &oldPos, FILE_CURRENT)) return false;
     
-    if (_lseeki64(fd, size, SEEK_SET) < 0) return false;
+    /* 定位到目标大小 */
+    LARGE_INTEGER li;
+    li.QuadPart = (LONGLONG)size;
+    if (!SetFilePointerEx(h, li, NULL, FILE_BEGIN)) return false;
     
-    HANDLE hFile = (HANDLE)_get_osfhandle(fd);
-    if (!SetEndOfFile(hFile)) {
-        _lseeki64(fd, oldPos, SEEK_SET);
+    if (!SetEndOfFile(h)) {
+        /* 恢复原位置 */
+        SetFilePointerEx(h, oldPos, NULL, FILE_BEGIN);
         return false;
     }
     
-    _lseeki64(fd, oldPos, SEEK_SET);
+    /* 恢复原位置 */
+    SetFilePointerEx(h, oldPos, NULL, FILE_BEGIN);
     return true;
 }
 
@@ -335,26 +374,37 @@ bool XFileSystem_stat(const XString* path, XFileStat* stat)
 
 bool XFileSystem_fstat(XFd fd, XFileStat* stat)
 {
-    if (fd < 0 || !stat) return false;
+    HANDLE h = XW32_getFile(fd);
+    if (h == INVALID_HANDLE_VALUE || !stat) return false;
     
-    struct _stati64 st;
-    if (_fstati64(fd, &st) != 0) return false;
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle(h, &info)) return false;
     
     memset(stat, 0, sizeof(XFileStat));
     stat->exists = true;
-    stat->isFile = (st.st_mode & _S_IFREG) != 0;
-    stat->isDir = (st.st_mode & _S_IFDIR) != 0;
-    stat->size = st.st_size;
-    stat->modificationTime = st.st_mtime;
-    stat->accessTime = st.st_atime;
-    stat->birthTime = st.st_ctime;
+    stat->isDir = (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    stat->isFile = !stat->isDir;
+    stat->isHidden = (info.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
+    stat->isSymLink = (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    stat->isJunction = false;
+    stat->isShortcut = false;
+    
+    ULARGE_INTEGER fileSize;
+    fileSize.LowPart = info.nFileSizeLow;
+    fileSize.HighPart = info.nFileSizeHigh;
+    stat->size = (int64_t)fileSize.QuadPart;
+    
+    stat->birthTime = fileTimeToUnixTime(&info.ftCreationTime);
+    stat->modificationTime = fileTimeToUnixTime(&info.ftLastWriteTime);
+    stat->accessTime = fileTimeToUnixTime(&info.ftLastAccessTime);
+    stat->metadataChangeTime = stat->modificationTime;
+    
+    stat->isReadable = true;
+    stat->isWritable = (info.dwFileAttributes & FILE_ATTRIBUTE_READONLY) == 0;
     
     return true;
 }
 
-/* ============================================================================
- * 文件系统操作
- * ============================================================================ */
 
 bool XFileSystem_exists(const XString* path)
 {
@@ -781,7 +831,7 @@ void* XFileSystem_map(XFd fd, int64_t offset, int64_t size, bool writable)
 {
     if (fd < 0 || size <= 0) return NULL;
     
-    HANDLE hFile = (HANDLE)_get_osfhandle(fd);
+    HANDLE hFile = XW32_getFile(fd);
     if (hFile == INVALID_HANDLE_VALUE) return NULL;
     
     DWORD protect = writable ? PAGE_READWRITE : PAGE_READONLY;
@@ -878,6 +928,37 @@ bool XFileSystem_setFileTime(const XString* path, XFileTime timeType, int64_t ti
     BOOL result = SetFileTime(hFile, ftCreate, ftAccess, ftWrite);
     CloseHandle(hFile);
     return result != 0;
+}
+
+/**
+ * @brief 通过已打开的文件描述符设置文件时间（fd 版）
+ * @note 直接对 XFileDescriptor 表中的 HANDLE 调用 SetFileTime，
+ *       无需路径，不重新打开文件。要求句柄以写入模式打开。
+ */
+bool XFileSystem_fsetFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
+{
+    HANDLE h = XW32_getFile(fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+
+    ULARGE_INTEGER ul;
+    ul.QuadPart = (uint64_t)timeValue * 10000000ULL + 116444736000000000ULL;
+
+    FILETIME ft;
+    ft.dwLowDateTime = ul.LowPart;
+    ft.dwHighDateTime = ul.HighPart;
+
+    FILETIME* ftCreate = NULL;
+    FILETIME* ftAccess = NULL;
+    FILETIME* ftWrite = NULL;
+
+    switch (timeType) {
+        case XFile_AccessTime: ftAccess = &ft; break;
+        case XFile_BirthTime: ftCreate = &ft; break;
+        case XFile_MetadataChangeTime:
+        case XFile_ModificationTime: ftWrite = &ft; break;
+    }
+
+    return SetFileTime(h, ftCreate, ftAccess, ftWrite) != 0;
 }
 
 /* ============================================================================

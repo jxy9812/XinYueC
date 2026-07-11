@@ -96,3 +96,9 @@ void* XFd_ctx(XFd fd)
     XFileDescriptor* desc = XFd_get(fd);
     return desc ? desc->ctx : NULL;
 }
+
+void XFd_setCtx(XFd fd, void* ctx)
+{
+    XFileDescriptor* desc = XFd_get(fd);
+    if (desc) desc->ctx = ctx;
+}

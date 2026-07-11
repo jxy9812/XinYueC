@@ -359,6 +359,18 @@ bool XFileSystem_rmdir_recursive(const XString* path);
  */
 bool XFileSystem_setFileTime(const XString* path, XFileTime timeType, int64_t timeValue);
 
+/**
+ * @brief 通过已打开的文件描述符设置文件时间
+ * @param fd 文件描述符（XFileDescriptor 表索引）
+ * @param timeType 时间类型（访问时间/修改时间/创建时间）
+ * @param timeValue 时间值（Unix时间戳，秒）
+ * @return 成功返回true
+ * @note 直接操作已打开的句柄，无需路径。Win32 用 SetFileTime(HANDLE)，
+ *       FatFs 无 f_futime 接口，返回 false（不支持）。
+ *       调用方可回退到路径版 XFileSystem_setFileTime。
+ */
+bool XFileSystem_fsetFileTime(XFd fd, XFileTime timeType, int64_t timeValue);
+
 /* ============================================================================
  * 十二、驱动器列表（1个）- 可选
  * ============================================================================ */

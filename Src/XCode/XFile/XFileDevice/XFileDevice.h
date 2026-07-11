@@ -248,6 +248,25 @@ XDateTime XFileDevice_fileTime(const XFileDevice* device, XFileTime time);
 bool XFileDevice_setFileTime(XFileDevice* device, const XDateTime* newDate, XFileTime time);
 
 /* ============================================================================
+ * IoRing 异步注册（将 fd 关联到全局 XAbstractNetIoRing）
+ * ============================================================================ */
+
+/**
+ * @brief 将文件描述符注册到全局 IoRing，启用异步 I/O 完成通知
+ * @param device XFileDevice 对象指针
+ * @note 在 open 成功后调用，设置 ctx 为 device 以供完成事件分发
+ *       平台无 IoRing 时为空操作
+ */
+void XFileDevice_registerAsync(XFileDevice* device);
+
+/**
+ * @brief 从全局 IoRing 注销文件描述符
+ * @param device XFileDevice 对象指针
+ * @note 在 close 之前调用
+ */
+void XFileDevice_unregisterAsync(XFileDevice* device);
+
+/* ============================================================================
  * 内存映射（非虚函数，平台相关实现）
  * ============================================================================ */
 

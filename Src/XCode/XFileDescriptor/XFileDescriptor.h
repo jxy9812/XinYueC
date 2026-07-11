@@ -42,6 +42,7 @@ typedef enum {
     XFD_TYPE_SOCKET,            /**< 网络套接字（TCP/UDP） */
     XFD_TYPE_SERIAL,            /**< 串口设备 */
     XFD_TYPE_TIMER,             /**< 定时器 */
+    XFD_TYPE_DIR,               /**< 目录迭代器 */
 } XFdType;
 
 /* ============================================================================
@@ -97,6 +98,13 @@ XFdType XFd_type(XFd fd);
  * @brief 获取所属 XObject 上下文
  */
 void* XFd_ctx(XFd fd);
+
+/**
+ * @brief 设置所属 XObject 上下文（供 IoRing 完成事件分发查找 owner）
+ * @param fd  文件描述符
+ * @param ctx 所属 XObject 上下文（可为 NULL）
+ */
+void XFd_setCtx(XFd fd, void* ctx);
 
 #ifdef __cplusplus
 }

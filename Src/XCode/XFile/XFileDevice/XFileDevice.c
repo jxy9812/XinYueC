@@ -1,6 +1,8 @@
 #include "XFileDevice.h"
 #include "XFileSystem_platform.h"
 #include "XIODevice_Protected.h"  /* XIODevice_setFd */
+#include "XFileDescriptor.h"   /* XFd_setCtx */
+#include "XAbstractNetIoRing.h"  /* XAbstractNetIoRing_global, registerEvent_base */
 #include <stdlib.h>
 #include <string.h>
 
@@ -385,6 +387,38 @@ void XFileDevice_init(XFileDevice* device)
 }
 
 /* ============================================================================
+ * IoRing 异步注册（将 fd 关联到全局 XAbstractNetIoRing）
+ * ============================================================================ */
+
+void XFileDevice_registerAsync(XFileDevice* device)
+{
+#if XAbstractNetIoRing_ON
+    if (!device) return;
+    XFd fd = XIODevice_fd(&device->m_parent);
+    if (fd < 0) return;
+    /* 设置 ctx 为 device 指针，供 IoRing 完成事件分发查找 owner */
+    XFd_setCtx(fd, (void*)device);
+    XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+    if (ring) {
+        XAbstractNetIoRing_registerEvent_base(ring, fd);
+    }
+#endif
+}
+
+void XFileDevice_unregisterAsync(XFileDevice* device)
+{
+#if XAbstractNetIoRing_ON
+    if (!device) return;
+    XFd fd = XIODevice_fd(&device->m_parent);
+    if (fd < 0) return;
+    XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
+    if (ring) {
+        XAbstractNetIoRing_unregisterEvent_base(ring, fd);
+    }
+#endif
+}
+
+/* ============================================================================
  * 错误处理
  * ============================================================================ */
 
@@ -475,7 +509,21 @@ bool XFileDevice_setFileTime(XFileDevice* device, const XDateTime* newDate, XFil
 {
     if (!device || XIODevice_fd(&device->m_parent) < 0 || !newDate) return false;
     int64_t timestamp = XDateTime_toSecsSinceEpoch(newDate);
-    return XFileSystem_setFileTime(XIODevice_fd(&device->m_parent), time, timestamp);
+    XFd fd = XIODevice_fd(&device->m_parent);
+
+    /* 优先使用 fd 版：直接操作已打开的句柄，无需路径。
+       Win32 后端通过 SetFileTime(HANDLE) 实现；
+       FatFs 后端无 f_futime 接口，返回 false。*/
+    if (XFileSystem_fsetFileTime(fd, time, timestamp))
+        return true;
+
+    /* 回退到路径版：通过虚函数 fileName() 获取路径。
+       FatFs 后端用 f_utime(path) 实现文件时间设置。
+       注意：XSaveFile 临时文件场景下 fileName() 返回目标文件名，
+       可能与实际打开的临时文件不一致。*/
+    const XString* fileName = XFileDevice_fileName_base(device);
+    if (!fileName) return false;
+    return XFileSystem_setFileTime(fileName, time, timestamp);
 }
 
 void* XFileDevice_map(XFileDevice* device, int64_t offset, int64_t size, XFileDeviceMemoryMapFlags flags)

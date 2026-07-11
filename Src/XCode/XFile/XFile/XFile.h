@@ -163,10 +163,11 @@ bool XFile_open_2(XFile* file, XIODeviceBaseMode mode, XFilePermissions permissi
 /**
  * @brief 从文件描述符打开文件
  * @param file XFile 对象指针
- * @param fd 文件描述符
+ * @param fd XFileDescriptor 表索引（XFd，非 CRT fd），底层句柄存储于 XFileDescriptor.handle
  * @param mode 打开模式
  * @param handleFlags 句柄标志
  * @return 成功返回 true，失败返回 false
+ * @note fd 必须是通过 XFd_alloc 分配的 XFileDescriptor 索引
  */
 bool XFile_open_3(XFile* file, int fd, XIODeviceBaseMode mode, XFileDeviceFileHandleFlags handleFlags);
 
