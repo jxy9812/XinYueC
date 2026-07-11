@@ -12,7 +12,7 @@
  *   1. lwip_init() 初始化 lwIP 协议栈
  *   2. XTimeWheelGroup 定时器每 20ms 触发，
  *      a) 轮询虚拟网卡数据包（XNetworkLwip_pollPcap）
- *      b) 处理 lwIP 内部定时器（sys_check_timeouts）
+ *      b) lwIP 定时器由 LWIP_TIMERS_CUSTOM 直接对接 XTimeWheelGroup，无需轮询
  *      c) 向应用线程投递事件通知
  *   3. 应用线程通过 Raw API 操作，sys_arch_protect 提供递归锁保护
  *
@@ -183,7 +183,6 @@ static void lwip_tick_cb(void* userData, XTimerData* timer) {
 #if NO_SYS
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
     XNetworkLwip_pollPcap();
-    sys_check_timeouts();
     XNET_LWIP_UNLOCK(prot);
 #else
     XNetworkLwip_pollPcap();
@@ -417,7 +416,7 @@ void XNetwork_ensureInit(void) {
     tcpip_init(NULL, NULL);
 #endif
 
-    /* 在 platform_init 之前启动定时器，确保 DHCP 等 sys_check_timeouts 能正常驱动 */
+    /* 在 platform_init 之前启动定时器，确保 DHCP 等 lwIP 定时器能正常驱动 */
     start_lwip_tick();
 
     /* 平台网卡初始化：Npcap / TAP / 硬件 MAC */
@@ -615,7 +614,6 @@ static void ensure_network_ready(uint32_t timeoutMs) {
         {
             XNetLwipCoreLock prot = XNET_LWIP_LOCK();
             XNetworkLwip_pollPcap();
-            sys_check_timeouts();
             XNET_LWIP_UNLOCK(prot);
         }
 #else
@@ -705,7 +703,6 @@ static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeo
             {
                 XNetLwipCoreLock prot = XNET_LWIP_LOCK();
                 XNetworkLwip_pollPcap();
-                sys_check_timeouts();
                 XNET_LWIP_UNLOCK(prot);
             }
 #else

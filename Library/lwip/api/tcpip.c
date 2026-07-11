@@ -658,10 +658,9 @@ tcpip_callback_wait(tcpip_callback_fn function, void *ctx)
 void
 tcpip_init(tcpip_init_done_fn initfunc, void *arg)
 {
-  lwip_init();
-
-  tcpip_init_done = initfunc;
-  tcpip_init_done_arg = arg;
+  /* Create mbox and core lock BEFORE lwip_init(), because our custom
+   * sys_timeouts_init() (LWIP_TIMERS_CUSTOM=1) uses LOCK_TCPIP_CORE()
+   * to register cyclic timers, and timer callbacks also use it. */
   if (sys_mbox_new(&tcpip_mbox, TCPIP_MBOX_SIZE) != ERR_OK) {
     LWIP_ASSERT("failed to create tcpip_thread mbox", 0);
   }
@@ -670,6 +669,11 @@ tcpip_init(tcpip_init_done_fn initfunc, void *arg)
     LWIP_ASSERT("failed to create lock_tcpip_core", 0);
   }
 #endif /* LWIP_TCPIP_CORE_LOCKING */
+
+  lwip_init();
+
+  tcpip_init_done = initfunc;
+  tcpip_init_done_arg = arg;
 
   sys_thread_new(TCPIP_THREAD_NAME, tcpip_thread, NULL, TCPIP_THREAD_STACKSIZE, TCPIP_THREAD_PRIO);
 }

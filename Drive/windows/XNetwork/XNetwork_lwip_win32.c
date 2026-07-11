@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XNetwork_lwip_win32.c
  * @brief lwIP Windows 平台虚拟网卡实现 - 基于 Npcap 虚拟网卡
  *
@@ -704,34 +704,28 @@ struct netif* XNetworkLwip_platform_init(void) {
                     uint8_t winMacBuf[6] = {0};
                     hasIp = find_windows_ip_for_adapter(aa, desc, &ip, &mask, &gw, winMacBuf);
 
-                    /* 只处理 192.168.1.x 段的有线网卡（Mellanox/以太网），其他网卡全部跳过 */
-                    bool isTargetNic = false;
-                    if (hasIp) {
+                    /* 多网卡自动路由：为所有有有效 IP 的物理网卡创建虚拟网卡
+                     * lwIP 的 ip4_route() 会根据目标 IP 自动选择出站网卡：
+                     *   - 目标在某个网卡子网内 -> 用该网卡直接发送（直接路由）
+                     *   - 目标不在任何子网 -> 用 netif_default（默认网关）发送
+                     * 默认网卡由 npcap_status_callback 按优先级自动选择
+                     *   （DHCP+有同子网网关的物理网卡优先级最高=100） */
+                    if (!hasIp) {
+                        LWIP_DBG("[Npcap] 跳过无IP网卡: %s -> %s\n", d->name, desc);
+                        continue;
+                    }
+                    {
                         uint32_t hip = ntohl(ip);
-                        /* 检查是否为 192.168.1.x 段 */
-                        isTargetNic = ((hip >> 24) & 0xFF) == 192 &&
-                                      ((hip >> 16) & 0xFF) == 168 &&
-                                      ((hip >> 8) & 0xFF) == 1;
+                        /* 跳过回环(127.x.x.x)和APIPA(169.254.x.x)地址 */
+                        if (((hip >> 24) & 0xFF) == 127 || ((hip >> 16) & 0xFFFF) == 0xA9FE) {
+                            LWIP_DBG("[Npcap] 跳过无效IP网卡(%d.%d.%d.%d): %s -> %s\n",
+                                     (int)(hip>>24)&0xFF, (int)(hip>>16)&0xFF,
+                                     (int)(hip>>8)&0xFF, (int)hip&0xFF,
+                                     d->name, desc);
+                            continue;
+                        }
                     }
-                    if (!isTargetNic) {
-                        LWIP_DBG("[Npcap] 跳过非目标网卡(%d.%d.%d.%d段): %s -> %s\n",
-                                 hasIp ? (int)(ntohl(ip)>>24)&0xFF : 0,
-                                 hasIp ? (int)(ntohl(ip)>>16)&0xFF : 0,
-                                 hasIp ? (int)(ntohl(ip)>>8)&0xFF : 0,
-                                 d->name, desc);
-                        continue;
-                    }
-                    /* 只保留第一个 Mellanox 网卡用于 DHCP，跳过 Windows 协议栈管理的其他端口 */
-                    static int targetNicCount = 0;
-                    if (targetNicCount >= 1) {
-                        LWIP_DBG("[Npcap] 跳过额外网卡(WinIP=%d.%d.%d.%d): %s -> %s\n",
-                                 (int)(ntohl(ip)>>24)&0xFF, (int)(ntohl(ip)>>16)&0xFF,
-                                 (int)(ntohl(ip)>>8)&0xFF, (int)(ntohl(ip))&0xFF,
-                                 d->name, desc);
-                        continue;
-                    }
-                    targetNicCount++;
-                    LWIP_DBG("[Npcap] 目标网卡(%d): %s -> %s (192.168.1.x段)\n", targetNicCount, d->name, desc);
+                    LWIP_DBG("[Npcap] 创建虚拟网卡(%d): %s -> %s\n", g_npcapCtxCount + 1, d->name, desc);
 
                     /* 打开 Npcap 设备 */
                     /* 混杂模式：接收所有包，在用户态 pollPcap 中进行软 MAC 过滤

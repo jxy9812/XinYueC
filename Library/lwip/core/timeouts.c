@@ -1,3 +1,8 @@
+/* LWIP_TIMERS_CUSTOM=1 时,定时器数据与逻辑均由 sys_arch.c 提供, */
+/* 本文件整体排除编译,避免重复定义并减小代码体积。 */
+#include "lwip/opt.h"  /* 必须在 #if 前引入,以获取 LWIP_TIMERS_CUSTOM 定义 */
+#if !LWIP_TIMERS_CUSTOM
+
 /**
  * @file
  * Stack-internal timers implementation.
@@ -449,3 +454,5 @@ tcp_timer_needed(void)
 {
 }
 #endif /* LWIP_TIMERS && !LWIP_TIMERS_CUSTOM */
+
+#endif /* !LWIP_TIMERS_CUSTOM */
