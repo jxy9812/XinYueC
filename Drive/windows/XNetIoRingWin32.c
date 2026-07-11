@@ -3,7 +3,8 @@
  * @brief XAbstractNetIoRing Windows IOCP 后端实现
  *
  * 继承 XAbstractNetIoRing，通过重载虚函数包装 Windows IOCP socket/file 异步 I/O。
- * 本文件仅处理 IOCP 相关逻辑，不涉及 lwIP pcap 轮询（由 XNetIoRing_lwip.c 提供）。
+ * 本文件仅处理 IOCP 相关逻辑，不涉及 lwIP pcap 轮询
+ * （由基类 XAbstractNetIoRing.c 的 pollLwip() 提供）。
  *
  * 核心流程：
  *   pollPlatform:
@@ -11,24 +12,25 @@
  *       -> XEventContext_IOCP 提取 eventMask / fd / bytes
  *       -> 转换为 CQ 条目推入 CQ
  *
- *   dispatchCQEntry:
+ *   dispatchCQEntry（基类默认实现）:
  *     从 CQ 条目创建 XEventSockAct / XEventSockClose
  *       -> XCoreApplication_postEvent 投递到应用层
- *       -> 0 字节 + Read + Socket 类型 => XEventSockClose（对端 FIN）
+ *       -> 0 字节 + Read + IOCP 来源 => XEventSockClose（对端 FIN）
  *
  *   waitForEvents:
  *     GetQueuedCompletionStatus(timeout) 阻塞等待
  *       -> wakeUp 通过 PostQueuedCompletionStatus(NULL overlapped) 唤醒
  *
  * 虚函数表：
- *   由于 XAbstractNetIoRing 是纯虚类（无 class_init），本类直接从 XClass 继承，
- *   然后添加全部 9 个虚函数。省去了一层基类虚函数表，节约内存。
+ *   本类继承 XAbstractNetIoRing（含 class_init + 9 个默认虚函数实现），
+ *   仅重载 6 个 IOCP 专属虚函数：GetEventFd、PollPlatform、RegisterEvent、
+ *   WaitForEvents、WakeUp、Deinit。其余沿用基类默认实现。
  */
 
 #include "CXinYueConfig.h"
 #if XAbstractNetIoRing_ON
 
-#ifdef _WIN32
+#if XPLATFORM_WINDOWS
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -68,18 +70,12 @@ typedef struct XNetIoRingWin32 {
 } XNetIoRingWin32;
 
 /* ==================== 前向声明 ==================== */
-static XFd VXNetIoRingWin32_getEventFd(XAbstractNetIoRing* self);
-static void VXNetIoRingWin32_processSource(XAbstractNetIoRing* self,
-                                            const XAbstractNetIoRing_SQEntry* entry);
-static void VXNetIoRingWin32_pollPlatform(XAbstractNetIoRing* self);
-static bool VXNetIoRingWin32_hasPendingInput(const XAbstractNetIoRing* self);
-static bool VXNetIoRingWin32_registerEvent(XAbstractNetIoRing* self, XFd fd);
-static bool VXNetIoRingWin32_unregisterEvent(XAbstractNetIoRing* self, XFd fd);
-static void VXNetIoRingWin32_dispatchCQEntry(XAbstractNetIoRing* self,
-                                              const XAbstractNetIoRing_CQEntry* entry);
-static void VXNetIoRingWin32_waitForEvents(XAbstractNetIoRing* self, int timeoutMs);
-static void VXNetIoRingWin32_wakeUp(XAbstractNetIoRing* self);
-static void VXNetIoRingWin32_deinit(XAbstractNetIoRing* obj);
+static XFd   VXNetIoRingWin32_getEventFd(XAbstractNetIoRing* self);
+static void  VXNetIoRingWin32_pollPlatform(XAbstractNetIoRing* self);
+static bool  VXNetIoRingWin32_registerEvent(XAbstractNetIoRing* self, XFd fd);
+static void  VXNetIoRingWin32_waitForEvents(XAbstractNetIoRing* self, int timeoutMs);
+static void  VXNetIoRingWin32_wakeUp(XAbstractNetIoRing* self);
+static void  VXNetIoRingWin32_deinit(XAbstractNetIoRing* obj);
 
 /* ================================================================
  * IOCP 完成处理（公共辅助函数）
@@ -139,7 +135,7 @@ static void processOneCompletion(XAbstractNetIoRing* self, BOOL success,
 }
 
 /* ================================================================
- * 默认虚函数实现
+ * 重载虚函数实现（仅 IOCP 专属，其余沿用基类默认实现）
  * ================================================================ */
 
 /* 轮询 IOCP 完成端口（非阻塞），将完成事件转换为 CQ 条目 */
@@ -167,26 +163,11 @@ static void VXNetIoRingWin32_pollPlatform(XAbstractNetIoRing* self) {
     }
 }
 
-/* 处理 SQ 条目：IOCP 后端无额外源处理（完成已在 pollPlatform 中直接推入 CQ） */
-static void VXNetIoRingWin32_processSource(XAbstractNetIoRing* self,
-                                            const XAbstractNetIoRing_SQEntry* entry) {
-    (void)self;
-    (void)entry;
-}
-
 /* 获取平台事件 fd：返回 IOCP 句柄作为事件源标识 */
 static XFd VXNetIoRingWin32_getEventFd(XAbstractNetIoRing* self) {
     XNetIoRingWin32* win = (XNetIoRingWin32*)self;
     if (!win || !win->m_iocp) return XFD_INVALID;
     return (XFd)(intptr_t)win->m_iocp;
-}
-
-/* 检查是否有待处理输入 */
-static bool VXNetIoRingWin32_hasPendingInput(const XAbstractNetIoRing* self) {
-    if (!self) return false;
-    if (self->m_sq && !XLockFreeQueue_isEmpty_base(self->m_sq))
-        return true;
-    return false;
 }
 
 /* 注册事件源：关联 socket/file HANDLE 到 IOCP 端口 */
@@ -201,52 +182,6 @@ static bool VXNetIoRingWin32_registerEvent(XAbstractNetIoRing* self, XFd fd) {
 
     return CreateIoCompletionPort((HANDLE)desc->handle, win->m_iocp,
                                   (ULONG_PTR)desc->ctx, 0) != NULL;
-}
-
-/* 注销事件源：IOCP 不支持显式注销，关闭 HANDLE 即可 */
-static bool VXNetIoRingWin32_unregisterEvent(XAbstractNetIoRing* self, XFd fd) {
-    (void)self;
-    (void)fd;
-    return true;
-}
-
-/* 分发 CQ 完成事件到应用层 */
-static void VXNetIoRingWin32_dispatchCQEntry(XAbstractNetIoRing* self,
-                                              const XAbstractNetIoRing_CQEntry* entry) {
-    XFileDescriptor* desc;
-    XObject* owner;
-
-    if (!self || !entry) return;
-
-    desc = XFd_get(entry->m_fd);
-    if (!desc || !desc->ctx) return;
-    owner = (XObject*)desc->ctx;
-
-    /* 0 字节 + Read 事件 + Socket 类型 => 对端 FIN，发送关闭事件 */
-    if (entry->m_bytes == 0 &&
-        (entry->m_events & XSocketAct_Read) &&
-        entry->m_sourceType == XAbstractNetIoRing_Source_IOCP) {
-        XEventSockClose* closeEvent = XEventSockClose_create(entry->m_fd);
-        if (closeEvent) {
-            ((XEvent*)closeEvent)->posted = true;
-            ((XEvent*)closeEvent)->spontaneous = true;
-            XCoreApplication_postEvent(owner, (XEvent*)closeEvent,
-                                       XEVENT_PRIORITY_NORMAL);
-        }
-        return;
-    }
-
-    /* 常规事件：创建 XEventSockAct 投递到应用层 */
-    if (entry->m_events != 0) {
-        XEventSockAct* ev = XEventSockAct_create(entry->m_fd,
-                                                   (XSocketActType)entry->m_events);
-        if (ev) {
-            ((XEvent*)ev)->posted = true;
-            ((XEvent*)ev)->spontaneous = true;
-            XCoreApplication_postEvent(owner, (XEvent*)ev,
-                                       XEVENT_PRIORITY_NORMAL);
-        }
-    }
 }
 
 /* 阻塞等待事件（虚函数） */
@@ -280,10 +215,9 @@ static void VXNetIoRingWin32_wakeUp(XAbstractNetIoRing* self) {
 /* ================================================================
  * deinit 析构实现
  *
- * 由于 XAbstractNetIoRing 是纯虚类（无 deinit），本函数直接清理：
+ * 清理顺序：
  *   1. Win32 专属资源（IOCP 端口）
- *   2. 基类 SQ/CQ 队列（通过 XAbstractNetIoRing_cleanupQueues）
- *   3. XClass 基类
+ *   2. 调用基类 deinit（清理 SQ/CQ 队列 + XClass 基类）
  * ================================================================ */
 static void VXNetIoRingWin32_deinit(XAbstractNetIoRing* obj) {
     XNetIoRingWin32* win = (XNetIoRingWin32*)obj;
@@ -297,17 +231,15 @@ static void VXNetIoRingWin32_deinit(XAbstractNetIoRing* obj) {
     win->m_iocp = NULL;
     win->m_ownsIocp = false;
 
-    /* 清理 SQ/CQ 队列（基类纯虚，无 deinit，需手动清理） */
-    XAbstractNetIoRing_cleanupQueues(obj);
-
-    /* 调用 XClass 基类 deinit */
-    XClass_Deinit_Parent(XClass, (XClass*)obj);
+    /* 调用基类 deinit（清理 SQ/CQ 队列 + XClass 基类） */
+    XClass_Deinit_Parent(XAbstractNetIoRing, obj);
 }
 
 /* ================================================================
  * 虚函数表初始化
  *
- * 纯虚基类无 class_init，本类直接从 XClass 继承并添加全部 9 个虚函数。
+ * 继承基类 XAbstractNetIoRing 的虚函数表（含 9 个默认实现），
+ * 仅重载 6 个 IOCP 专属虚函数。
  * ================================================================ */
 XVtable* XNetIoRingWin32_class_init(void) {
     XVTABLE_CREAT_DEFAULT
@@ -316,22 +248,15 @@ XVtable* XNetIoRingWin32_class_init(void) {
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
-    /* 继承 XClass 虚函数表（Copy/Move/Deinit） */
-    XVTABLE_INHERIT_XCLASS(XClass);
+    /* 继承 XAbstractNetIoRing 虚函数表（含默认实现） */
+    XVTABLE_INHERIT_XCLASS(XAbstractNetIoRing);
 
-    /* 添加全部 9 个虚函数（XAbstractNetIoRing 的虚函数） */
-    void* table[] = {
-        VXNetIoRingWin32_getEventFd,
-        VXNetIoRingWin32_processSource,
-        VXNetIoRingWin32_pollPlatform,
-        VXNetIoRingWin32_hasPendingInput,
-        VXNetIoRingWin32_registerEvent,
-        VXNetIoRingWin32_unregisterEvent,
-        VXNetIoRingWin32_dispatchCQEntry,
-        VXNetIoRingWin32_waitForEvents,
-        VXNetIoRingWin32_wakeUp
-    };
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+    /* 重载 IOCP 专属虚函数 */
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_GetEventFd,    VXNetIoRingWin32_getEventFd);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_PollPlatform,  VXNetIoRingWin32_pollPlatform);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_RegisterEvent, VXNetIoRingWin32_registerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_WaitForEvents, VXNetIoRingWin32_waitForEvents);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractNetIoRing_WakeUp,        VXNetIoRingWin32_wakeUp);
 
     /* 重载 deinit */
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetIoRingWin32_deinit);
@@ -348,10 +273,10 @@ void XNetIoRingWin32_init(XNetIoRingWin32* ring) {
     /* 清零整个子类结构体 */
     memset(ring, 0, sizeof(XNetIoRingWin32));
 
-    /* 初始化基类（创建 SQ/CQ 队列，不设置虚函数表） */
+    /* 初始化基类（设置基类虚函数表 + 创建 SQ/CQ 队列） */
     XAbstractNetIoRing_init((XAbstractNetIoRing*)ring);
 
-    /* 设置本类的虚函数表 */
+    /* 重载为本类的虚函数表（继承基类默认实现 + IOCP 重载） */
     XClassSetVtable(ring, XNetIoRingWin32);
 
     /* 创建 IOCP 完成端口 */
@@ -415,6 +340,6 @@ XAbstractNetIoRing* XAbstractNetIoRing_createPlatform(void) {
     return (XAbstractNetIoRing*)XNetIoRingWin32_create();
 }
 
-#endif /* _WIN32 */
+#endif /* XPLATFORM_WINDOWS */
 
 #endif /* XAbstractNetIoRing_ON */

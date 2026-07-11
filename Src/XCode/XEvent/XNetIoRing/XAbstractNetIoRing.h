@@ -28,11 +28,12 @@ extern "C" {
 #endif
 
 /* ================================================================
- * 虚函数表定义（纯虚类，无 class_init，子类自行创建虚函数表）
+ * 虚函数表定义（基类，提供 class_init 和默认虚函数实现）
  *
  * 平台后端（XNetIoRingWin32 / XNetIoRingLinux 等）通过继承本类，
- * 在各自的 class_init 中从 XClass 继承并添加以下虚函数，
- * 实现平台特定的 I/O 事件源注册、数据包处理、IOCP/epoll 轮询等。
+ * 在各自的 class_init 中调用 XVTABLE_INHERIT_XCLASS(XAbstractNetIoRing)
+ * 继承默认实现，然后仅重载平台特定的虚函数（如 PollPlatform、
+ * WaitForEvents、WakeUp、GetEventFd、RegisterEvent、Deinit）。
  * ================================================================ */
 XCLASS_DEFINE_BEGING(XAbstractNetIoRing)
 XCLASS_DEFINE_ENUM(XAbstractNetIoRing, GetEventFd) = XCLASS_VTABLE_GET_SIZE(XClass), /**< 获取平台事件 fd */
@@ -81,13 +82,20 @@ typedef struct {
 } XAbstractNetIoRing_CQEntry;
 
 /* ================================================================
- * XAbstractNetIoRing 类结构体（纯虚基类）
+ * XAbstractNetIoRing 类结构体（基类，提供默认虚函数实现）
  *
  * 继承 XClass，内含 SQ/CQ 双无锁环形队列。
- * 本类不提供 class_init 和默认虚函数实现，子类必须：
- *   1. 在自己的 class_init 中从 XClass 继承并添加全部 9 个虚函数
- *   2. 在 init 中调用 XAbstractNetIoRing_init 后设置自己的虚函数表
- *   3. 在 deinit 中调用 XAbstractNetIoRing_cleanupQueues 清理 SQ/CQ
+ * 本类提供 class_init 和全部 9 个虚函数的默认实现（平台无关）：
+ *   - GetEventFd:        返回 XFD_INVALID（无单一事件源）
+ *   - ProcessSource:     空操作
+ *   - PollPlatform:      空操作（由子类重载为 IOCP/epoll 轮询）
+ *   - HasPendingInput:   检查 SQ + CQ 是否有待处理条目
+ *   - RegisterEvent:     返回 true（默认允许）
+ *   - UnregisterEvent:   返回 true（默认允许）
+ *   - DispatchCQEntry:   从 CQ 条目创建 XEventSockAct/XEventSockClose 投递
+ *   - WaitForEvents:     空操作（裸机单线程不阻塞）
+ *   - WakeUp:            空操作
+ * 子类只需重载平台特定的虚函数，其余沿用基类默认实现。
  * ================================================================ */
 typedef struct XAbstractNetIoRing {
     XClass m_class;                /**< 基类（必须位于第一位） */
@@ -100,12 +108,28 @@ typedef struct XAbstractNetIoRing {
 /* ==================== 构造与析构 ==================== */
 
 /**
- * @brief 初始化基类部分（创建 SQ/CQ 无锁队列）
+ * @brief 初始化基类部分（设置虚函数表 + 创建 SQ/CQ 无锁队列）
  * @param ring 待初始化的 XAbstractNetIoRing 实例指针
- * @note 不设置虚函数表，子类必须在调用本函数后自行 XClassSetVtable。
+ * @note 设置基类虚函数表（含默认实现），子类可在调用本函数后
+ *       通过 XClassSetVtable 重载为子类虚函数表。
  *       子类 init 应先 memset 清零整个子类结构体。
  */
 void XAbstractNetIoRing_init(XAbstractNetIoRing* ring);
+
+/**
+ * @brief 虚函数表初始化（创建并返回基类虚函数表）
+ * @return 基类虚函数表指针（含 XClass + 9 个默认虚函数实现）
+ * @note 子类 class_init 中通过 XVTABLE_INHERIT_XCLASS(XAbstractNetIoRing) 继承
+ */
+XVtable* XAbstractNetIoRing_class_init(void);
+
+/**
+ * @brief 创建基类实例（堆分配，使用默认虚函数实现）
+ * @return 新创建的 XAbstractNetIoRing 指针，失败返回 NULL
+ * @note 用于无 IOCP/epoll 的平台（裸机 / 嵌入式），直接使用基类默认实现。
+ *       平台后端（如 XNetIoRingWin32）使用各自的 _create 函数。
+ */
+XAbstractNetIoRing* XAbstractNetIoRing_create(void);
 
 /**
  * @brief 清理 SQ/CQ 队列资源（非虚函数，供子类 deinit 调用）
@@ -250,7 +274,7 @@ void XAbstractNetIoRing_wakeUp_base(XAbstractNetIoRing* ring);
 
 /**
  * @brief 平台钩子：创建平台特定的 XAbstractNetIoRing 后端
- * @return 平台后端实例（Win32->XNetIoRingWin32, Linux->XNetIoRingLinux, 裸机->XNetIoRingLwip）
+ * @return 平台后端实例（Win32->XNetIoRingWin32, Linux/裸机->基类默认实现）
  * @note 由各平台 Drive 层实现，XAbstractEventDispatcher 通过此函数创建 I/O 后端
  */
 XAbstractNetIoRing* XAbstractNetIoRing_createPlatform(void);
@@ -273,7 +297,7 @@ void XAbstractNetIoRing_setGlobal(XAbstractNetIoRing* ring);
 
 #ifdef XNETWORK_USE_LWIP
 /**
- * @brief 轮询 lwIP pcap 网卡数据包（通用实现，由 XNetIoRing_lwip.c 提供）
+ * @brief 轮询 lwIP pcap 网卡数据包（通用实现，由 XAbstractNetIoRing.c 提供）
  * @note 仅在 XNETWORK_USE_LWIP 模式下编译，由事件调度器在 processEvents 中调用。
  *       仅负责 pcap 数据包轮询，Socket 事件由 lwIP 回调直接投递 CQ（无需轮询）。
  */

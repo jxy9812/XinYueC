@@ -71,14 +71,19 @@
 
 /* ================================================================
  * Core locking abstraction
- * NO_SYS=0 (OS/standard thread mode): LOCK_TCPIP_CORE (official)
- * NO_SYS=1 (bare-metal mode): sys_arch_protect (lightweight protection)
- * Both share the same recursive mutex g_coreLock in sys_arch.c
+ *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0: 单线程，锁为空操作（零开销）
+ *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=1: sys_arch_protect（递归锁）
+ *   NO_SYS=0: LOCK_TCPIP_CORE（与 tcpip_thread 同步）
  * ================================================================ */
-#if NO_SYS
+#if NO_SYS && SYS_LIGHTWEIGHT_PROT
 typedef sys_prot_t XNetLwipCoreLock;
 #define XNET_LWIP_LOCK()        sys_arch_protect()
 #define XNET_LWIP_UNLOCK(l)     sys_arch_unprotect(l)
+#elif NO_SYS
+/* 单线程模式：所有 lwIP 操作在主线程，无并发访问，锁为空操作 */
+typedef int XNetLwipCoreLock;
+#define XNET_LWIP_LOCK()        (0)
+#define XNET_LWIP_UNLOCK(l)     ((void)(l))
 #else
 typedef int XNetLwipCoreLock;
 #define XNET_LWIP_LOCK()        (LOCK_TCPIP_CORE(), 0)

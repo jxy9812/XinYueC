@@ -37,7 +37,7 @@
  *   0 = OS 模式：完整 sys_arch（线程/信号量/邮箱/互斥锁），lwIP 内部创建 tcpip_thread
  *   1 = 裸机模式：最小 sys_arch（仅 sys_arch_protect / sys_now 等），无 tcpip_thread
  * 裸机模式下需手动调用 lwip_init() 和 XNetworkLwip_ensureNetworkReady() */
-#define NO_SYS                  XNETWORK_LWIP_NO_SYS
+#define NO_SYS                  1 //当前架构始终裸机模式效率最高
 
 /* ================================================================
  * 协议栈功能开关
@@ -152,17 +152,12 @@
 #define LWIP_TCPIP_CORE_LOCKING 1
 #endif
 
-/* 轻量级临界区保护：1=提供 sys_arch_protect/sys_arch_unprotect
- * 基于 XMutex（递归锁），用于保护 lwIP 内部共享数据
- * 无论 NO_SYS 取值均启用 */
-#define SYS_LIGHTWEIGHT_PROT    1
-
-/* NO_SYS=1 时 sys.h 不会包含 arch/sys_arch.h，需提前引入 arch/cc.h
- * 以获得 sys_prot_t 类型定义（SYS_LIGHTWEIGHT_PROT 需要）。
- * cc.h 有包含守卫，重复包含安全。 */
-#if NO_SYS && SYS_LIGHTWEIGHT_PROT
-#include "arch/cc.h"
-#endif
+/* 轻量级临界区保护：1=提供 sys_arch_protect/sys_arch_unprotect（递归锁）
+ *   0=不提供，适用于 NO_SYS=1 单线程架构
+ * 当前架构：NO_SYS=1 + LWIP_TIMERS_CUSTOM=1，所有 lwIP 操作在主线程
+ * （定时器回调、pcap 轮询、Socket 操作均在主线程事件循环），无并发访问，可安全关闭
+ * 关闭后 lwIP 内部 SYS_ARCH_PROTECT/UNPROTECT 宏为空操作，零开销 */
+#define SYS_LIGHTWEIGHT_PROT    0
 
 /* ================================================================
  * 协议栈参数
@@ -233,7 +228,7 @@
 #define LWIP_NETIF_LINK_CALLBACK     1
 
 /* 回环接口（lo0）：0=关闭（由平台层自行创建回环网卡） */
-#define LWIP_HAVE_LOOPIF             0
+#define LWIP_HAVE_LOOPIF             1
 
 /* 网卡环回：1=启用（目标 IP 为本机时，数据不经过物理网卡直接环回） */
 #define LWIP_NETIF_LOOPBACK          1

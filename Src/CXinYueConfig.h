@@ -76,9 +76,51 @@ extern "C" {
 #define	XStringVector_ON				0
 #endif
 #define	XAbstractNetIoRing_ON					1
+/* ========================================================================== */
+/*                        平台/操作系统自动检测                                */
+/* ========================================================================== */
+/* 单平台互斥宏（仅一个为 1，其余为 0）
+ * 检测优先级：FreeRTOS > Windows > POSIX(Linux/macOS/BSD) > 裸机
+ * 用法：用 #if XPLATFORM_WINDOWS / XPLATFORM_POSIX / XPLATFORM_FREERTOS /
+ *       XPLATFORM_BAREMETAL 做平台条件编译，替代散落的 _WIN32/__linux__ 判断
+ */
+#if defined(__FreeRTOS__)
+  #define XPLATFORM_FREERTOS    1
+  #define XPLATFORM_WINDOWS     0
+  #define XPLATFORM_POSIX       0
+  #define XPLATFORM_BAREMETAL   0
+#elif defined(_WIN32) || defined(_WIN64)
+  #define XPLATFORM_FREERTOS    0
+  #define XPLATFORM_WINDOWS     1
+  #define XPLATFORM_POSIX       0
+  #define XPLATFORM_BAREMETAL   0
+#elif defined(__linux__) || defined(__APPLE__) || defined(__BSD__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+  #define XPLATFORM_FREERTOS    0
+  #define XPLATFORM_WINDOWS     0
+  #define XPLATFORM_POSIX       1
+  #define XPLATFORM_BAREMETAL   0
+#else
+  #define XPLATFORM_FREERTOS    0
+  #define XPLATFORM_WINDOWS     0
+  #define XPLATFORM_POSIX       0
+  #define XPLATFORM_BAREMETAL   1
+#endif
+
+/* 派生宏：是否有操作系统（桌面/POSIX/FreeRTOS 均视为有 OS） */
+#define XPLATFORM_HAS_OS        (XPLATFORM_WINDOWS || XPLATFORM_POSIX || XPLATFORM_FREERTOS)
+/* 桌面平台（Windows / Linux / macOS），用于选择大缓冲区等配置 */
+#define XPLATFORM_DESKTOP       (XPLATFORM_WINDOWS || XPLATFORM_POSIX)
+
+/* 与 lwIP NO_SYS 对接的推荐默认值：
+ *   裸机环境 -> NO_SYS=1（最小 sys_arch，无 tcpip_thread）
+ *   有 OS 环境 -> NO_SYS=0（完整 sys_arch，lwIP 内部创建 tcpip_thread）
+ * @note 实际取值由 XNetwork_config.h 的 XNETWORK_LWIP_NO_SYS 引用，
+ *       用户可显式 #define XNETWORK_LWIP_NO_SYS 覆盖此默认值 */
+#define XPLATFORM_LWIP_NO_SYS_DEFAULT   (XPLATFORM_BAREMETAL ? 1 : 0)
+
 // 事件投递 无锁队列大小
 #ifndef TryPostEvent_QueueSize
-#if defined(_WIN32) || defined(_WIN64) || defined(__linux__) || defined(__APPLE__)
+#if XPLATFORM_DESKTOP
 #define TryPostEvent_QueueSize      512 
 #else
 #define TryPostEvent_QueueSize      64   /* 适配嵌入式设备节省RAM */

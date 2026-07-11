@@ -22,12 +22,21 @@
 #include "lwip/err.h"
 #include "lwip/tcpip.h"
 
-#include "XMutex.h"
+#if SYS_LIGHTWEIGHT_PROT || !NO_SYS
+#include "XMutex.h"        /* sys_arch_protect / sys_lock_tcpip_core 需要 */
+#endif
+#include "XDateTime.h"     /* 始终需要：sys_now / sys_jiffies */
+#include "XMemory.h"       /* 始终需要：定时器 XMalloc/XFree */
+#if !NO_SYS
+/* 以下头文件仅在 OS 模式（NO_SYS=0）需要：
+ *   XSemaphore - 信号量 + 邮箱实现
+ *   XThread    - sys_thread_new + sys_arch_msleep
+ *   XVarList   - sys_thread_new 参数传递
+ * 裸机模式（NO_SYS=1）不编译，减少代码体积 */
 #include "XSemaphore.h"
 #include "XThread.h"
-#include "XDateTime.h"
-#include "XMemory.h"
 #include "XVarList.h"
+#endif /* !NO_SYS */
 #include <string.h>
 
 /* ================================================================
@@ -36,17 +45,21 @@
 
 /* ================================================================
  * 核心锁(sys_arch_protect 与 sys_lock_tcpip_core 共用)
- * 递归互斥锁,由 FreeRTOS xSemaphoreCreateRecursiveMutex 替代
- * 确保任意线程可重入保护,无死锁
+ * 递归互斥锁,确保任意线程可重入保护,无死锁
+ * NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0 时不需要,不编译以减少体积
  * ================================================================ */
+#if SYS_LIGHTWEIGHT_PROT || !NO_SYS
 static XMutex* g_coreLock = NULL;
+#endif
 
 void sys_init(void)
 {
+#if SYS_LIGHTWEIGHT_PROT || !NO_SYS
     /* 在 lwip_init() 之前调用,此时可能未初始化,需创建 */
     if (!g_coreLock) {
         g_coreLock = XMutex_create(XLock_Recursive);
     }
+#endif
 }
 
 /* ================================================================
@@ -72,14 +85,20 @@ u32_t sys_jiffies(void)
     return (u32_t)XDateTime_currentMSecsSinceEpoch();
 }
 
+#if !NO_SYS
 /**
- * @brief 毫秒级睡眠(阻塞)
+ * @brief 毫秒级睡眠(阻塞) - 仅 OS 模式需要
  * @param delay_ms 睡眠毫秒数
+ * @note 裸机模式（NO_SYS=1）下：
+ *   - lwIP 的 sys_msleep 是空宏（sys.h 中 #define sys_msleep(t) 为空）
+ *   - sys_arch.h 不被包含，此函数声明不可见
+ *   - 此函数为死代码，不编译以减少体积
  */
 void sys_arch_msleep(u32_t delay_ms)
 {
     XThread_msleep(delay_ms);
 }
+#endif /* !NO_SYS */
 
 /* ================================================================
  * 临界区保护(SYS_LIGHTWEIGHT_PROT)
@@ -235,11 +254,12 @@ static void lwip_timer_wrapper(void* userData, XTimerData* timer) {
     if (!ctx) return;
 
     /* Acquire lwIP core lock:
-     * NO_SYS=1 -> sys_arch_protect (g_coreLock, the only core lock)
+     * NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=1 -> sys_arch_protect (g_coreLock)
+     * NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0 -> no lock (single-threaded, zero overhead)
      * NO_SYS=0 -> LOCK_TCPIP_CORE (synchronize with tcpip_thread) */
-#if NO_SYS
+#if NO_SYS && SYS_LIGHTWEIGHT_PROT
     sys_prot_t prot = sys_arch_protect();
-#else
+#elif !NO_SYS
     LOCK_TCPIP_CORE();
 #endif
 
@@ -251,9 +271,9 @@ static void lwip_timer_wrapper(void* userData, XTimerData* timer) {
         ctx->handler(ctx->arg);
     }
 
-#if NO_SYS
+#if NO_SYS && SYS_LIGHTWEIGHT_PROT
     sys_arch_unprotect(prot);
-#else
+#elif !NO_SYS
     UNLOCK_TCPIP_CORE();
 #endif
     XFree_Hybrid(ctx);
@@ -314,9 +334,9 @@ void sys_check_timeouts(void) {
 }
 
 void sys_timeouts_init(void) {
-#if NO_SYS
+#if NO_SYS && SYS_LIGHTWEIGHT_PROT
     sys_prot_t prot = sys_arch_protect();
-#else
+#elif !NO_SYS
     LOCK_TCPIP_CORE();
 #endif
     size_t i;
@@ -329,9 +349,9 @@ void sys_timeouts_init(void) {
                     lwip_cyclic_timer_cb,
                     (void*)&lwip_cyclic_timers[i]);
     }
-#if NO_SYS
+#if NO_SYS && SYS_LIGHTWEIGHT_PROT
     sys_arch_unprotect(prot);
-#else
+#elif !NO_SYS
     UNLOCK_TCPIP_CORE();
 #endif
 }

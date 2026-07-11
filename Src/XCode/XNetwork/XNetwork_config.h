@@ -13,6 +13,10 @@
 #ifndef XNETWORK_CONFIG_H
 #define XNETWORK_CONFIG_H
 
+/* 引入平台自动检测宏（XPLATFORM_* 系列），
+ * 保证 lwIP 源码编译时 XPLATFORM_LWIP_NO_SYS_DEFAULT 可用 */
+#include "CXinYueConfig.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -121,7 +125,11 @@ extern "C" {
 #define XNETWORK_LWIP_IGMP  1
 #endif
 #ifndef XNETWORK_LWIP_NO_SYS
-#define XNETWORK_LWIP_NO_SYS  1
+/* 对接 CXinYueConfig.h 的平台自动检测：
+ *   裸机环境 -> NO_SYS=1（最小 sys_arch，无 tcpip_thread）
+ *   有 OS 环境 -> NO_SYS=0（完整 sys_arch，lwIP 内部创建 tcpip_thread）
+ * 用户可在此处上方显式 #define XNETWORK_LWIP_NO_SYS 覆盖默认值 */
+#define XNETWORK_LWIP_NO_SYS  XPLATFORM_LWIP_NO_SYS_DEFAULT
 #endif
 
 #endif /* XNETWORK_USE_LWIP */
