@@ -185,7 +185,8 @@ static void push_socket_cq(XNetworkSocketPrivateLwip* s, uint32_t actType) {
     XAbstractNetIoRing_CQEntry cq = {
         .m_fd = fd,
         .m_events = actType,
-        .m_sourceType = XAbstractNetIoRing_Source_Netif
+        .m_sourceType = XAbstractNetIoRing_Source_Netif,
+        .m_fdType = XFD_TYPE_SOCKET
     };
     XAbstractNetIoRing_pushCompletion(ring, &cq);
 #else

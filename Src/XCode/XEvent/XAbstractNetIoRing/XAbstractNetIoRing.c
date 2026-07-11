@@ -155,8 +155,8 @@ static bool VXAbstractNetIoRing_unregisterEvent(XAbstractNetIoRing* self, XFd fd
  * owner（XObject*），创建 XEventSockAct / XEventSockClose 并通过
  * XCoreApplication_postEvent 投递到应用层。
  *
- * 对端关闭检测（IOCP）：
- *   0 字节 + Read 事件 + 来源为 IOCP => XEventSockClose（对端 FIN）。
+ * 对端关闭检测（原生 I/O）：
+ *   0 字节 + Read 事件 + 来源为 NativeIO => XEventSockClose（对端 FIN）。
  *   lwIP 来源的事件不触发此检测（来源为 Source_Netif，带明确事件掩码）。 */
 static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
                                                   const XAbstractNetIoRing_CQEntry* entry) {
@@ -166,15 +166,17 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
     (void)self;
     if (!entry) return;
 
-    /* 通过 fd 查找 owner */
+    /* 通过 fd 查找 owner。
+     * entry->m_fdType 可用于类型感知的分发（如区分 Socket/File/Timer），
+     * 当前统一走 Socket 事件路径。 */
     desc = XFd_get(entry->m_fd);
     if (!desc || !desc->ctx) return;
     owner = (XObject*)desc->ctx;
 
-    /* IOCP 对端关闭检测：0 字节 + Read + IOCP 来源 => 关闭事件 */
+    /* 原生 I/O 对端关闭检测：0 字节 + Read + NativeIO 来源 => 关闭事件 */
     if (entry->m_bytes == 0 &&
         (entry->m_events & XSocketAct_Read) &&
-        entry->m_sourceType == XAbstractNetIoRing_Source_IOCP) {
+        entry->m_sourceType == XAbstractNetIoRing_Source_NativeIO) {
         XEventSockClose* closeEvent = XEventSockClose_create(entry->m_fd);
         if (closeEvent) {
             ((XEvent*)closeEvent)->posted = true;

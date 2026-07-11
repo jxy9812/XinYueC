@@ -111,7 +111,8 @@ static void processOneCompletion(XAbstractNetIoRing* self, BOOL success,
         cqEntry.m_fd = ctx->fd;
         cqEntry.m_bytes = bytesTransferred;
         cqEntry.m_error = (int)lastError;
-        cqEntry.m_sourceType = XAbstractNetIoRing_Source_IOCP;  /* IOCP 完成来源（区别于 lwIP 的 Source_Netif） */
+        cqEntry.m_sourceType = XAbstractNetIoRing_Source_NativeIO;  /* 原生 I/O 完成（区别于 lwIP 的 Source_Netif） */
+    cqEntry.m_fdType = XFd_type(ctx->fd);  /* 从 fd 表获取类型（Socket/File） */
 
         /* IOCP eventMask (FD_*) -> XSocketActType 转换
          * 注意：FD_CONNECT(16) != XSocketAct_Connect(4)，不能直接使用位掩码 */

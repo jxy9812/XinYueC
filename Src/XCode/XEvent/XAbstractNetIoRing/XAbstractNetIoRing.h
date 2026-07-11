@@ -51,34 +51,41 @@ XCLASS_DEFINE_END(XAbstractNetIoRing)
  * 事件来源类型
  * ================================================================ */
 typedef enum {
-    XAbstractNetIoRing_Source_None   = 0,   /**< 无 */
-    XAbstractNetIoRing_Source_Netif  = 1,   /**< 网卡数据包就绪（pcap / TAP / 硬件 ISR） */
-    XAbstractNetIoRing_Source_IOCP   = 2,   /**< IOCP 完成通知（Windows socket/file I/O） */
-    XAbstractNetIoRing_Source_Timer  = 3,   /**< 定时器到期（PostQueuedCompletionStatus） */
-    XAbstractNetIoRing_Source_Custom = 4    /**< 自定义事件 */
+    XAbstractNetIoRing_Source_None     = 0,   /**< 无 */
+    XAbstractNetIoRing_Source_Netif    = 1,   /**< 网卡数据包就绪（pcap / TAP / 硬件 ISR） */
+    XAbstractNetIoRing_Source_NativeIO = 2,   /**< 系统原生异步 I/O 完成（Windows=IOCP, Linux=epoll/io_uring） */
+    XAbstractNetIoRing_Source_Timer    = 3,   /**< 定时器到期（系统定时机制） */
+    XAbstractNetIoRing_Source_Custom   = 4,   /**< 自定义事件 */
+    XAbstractNetIoRing_Source_ISR      = 5    /**< 裸机硬件中断（UART/SPI/Ethernet DMA ISR） */
 } XAbstractNetIoRing_SourceType;
 
 /* ================================================================
  * SQ 条目 - 提交队列（平台 -> 核心）
  * ================================================================ */
 typedef struct {
-    XFd      m_fd;          /**< 关联的文件描述符 */
-    uint32_t m_sourceType;  /**< 事件来源类型（XAbstractNetIoRing_SourceType） */
-    uint32_t m_sourceData;  /**< 来源特定数据（网卡索引 / IOCP key 等） */
-    uint32_t m_events;      /**< 事件掩码（XSocketActType 位掩码） */
-    uint32_t m_bytes;       /**< 传输字节数（IOCP 完成时有效） */
-    int      m_error;       /**< 错误码（0=成功） */
+    XFd      m_fd;              /**< 文件描述符（fd 表索引，O(1) 查找） */
+    uint32_t m_sourceData;      /**< 来源特定数据（网卡索引 / IOCP key 等） */
+    uint32_t m_bytes;           /**< 传输字节数（IOCP 完成时有效） */
+    /* 位域压缩：原 3×4=12B -> 4B，结构体从 24B 降至 16B */
+    uint32_t m_events     : 5;  /**< 事件掩码（XSocketActType 位掩码，0-31） */
+    uint32_t m_sourceType : 3;  /**< 事件来源（XAbstractNetIoRing_SourceType，0-4） */
+    uint32_t m_fdType     : 4;  /**< fd 类型（XFdType，0-4，预留扩展至 15） */
+    int      m_error      : 16; /**< 错误码（-32768~32767，覆盖 Windows/lwIP 错误码） */
+    uint32_t              : 4;  /**< 保留位 */
 } XAbstractNetIoRing_SQEntry;
 
 /* ================================================================
  * CQ 条目 - 完成队列（核心 -> 应用）
  * ================================================================ */
 typedef struct {
-    XFd      m_fd;          /**< 目标 Socket 的文件描述符 */
-    uint32_t m_events;      /**< 事件掩码（XSocketActType 位掩码） */
-    uint32_t m_bytes;       /**< 传输字节数 */
-    int      m_error;       /**< 错误码（0=成功） */
-    uint32_t m_sourceType;  /**< 来源类型（用于区分 socket/file/timer） */
+    XFd      m_fd;              /**< 文件描述符（fd 表索引，O(1) 查找） */
+    uint32_t m_bytes;           /**< 传输字节数 */
+    /* 位域压缩：原 3×4=12B -> 4B，结构体从 20B 降至 12B */
+    uint32_t m_events     : 5;  /**< 事件掩码（XSocketActType 位掩码，0-31） */
+    uint32_t m_sourceType : 3;  /**< 事件来源（XAbstractNetIoRing_SourceType，0-4） */
+    uint32_t m_fdType     : 4;  /**< fd 类型（XFdType，0-4，预留扩展至 15） */
+    int      m_error      : 16; /**< 错误码（-32768~32767） */
+    uint32_t              : 4;  /**< 保留位 */
 } XAbstractNetIoRing_CQEntry;
 
 /* ================================================================
