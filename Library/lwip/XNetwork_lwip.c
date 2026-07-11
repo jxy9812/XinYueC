@@ -16,7 +16,7 @@
  *      c) 向应用线程投递事件通知
  *   3. 应用线程通过 Raw API 操作，sys_arch_protect 提供递归锁保护
  *
- * 参考 STM32F407+FreeRTOS 成功移植经验，适配 XSync + XMemory 系统。
+ * 基于 XSync + XMemory 系统实现，平台无关。
  * 内存分配统一使用 XMalloc_System / XFree_System。
  * 定时器使用 XTimeWheelGroup 全局时间轮。
  * 随机数使用 XRandomGenerator_system()。
@@ -100,31 +100,6 @@ typedef int XNetLwipCoreLock;
 typedef struct XNetworkSocketPrivateLwip XNetworkSocketPrivateLwip;
 
 /* ================================================================
- * Socket 注册表 - 用于定时器回调中遍历所有活跃 Socket
- * ================================================================ */
-static void* g_socketList[XNETWORK_LWIP_MAX_SOCKETS];
-static int g_socketCount = 0;
-
-/* 向注册表添加 Socket（自动去重） */
-static void socketList_add(void* s) {
-    int i;
-    for (i = 0; i < g_socketCount; i++)
-        if (g_socketList[i] == s) return;
-    if (g_socketCount < XNETWORK_LWIP_MAX_SOCKETS)
-        g_socketList[g_socketCount++] = s;
-}
-
-/* 从注册表移除 Socket（swap-and-pop，O(1)） */
-static void socketList_remove(void* s) {
-    int i;
-    for (i = 0; i < g_socketCount; i++)
-        if (g_socketList[i] == s) {
-            g_socketList[i] = g_socketList[--g_socketCount];
-            return;
-        }
-}
-
-/* ================================================================
  * 全局状态
  * ================================================================ */
 /* lwIP 全局状态（位域压缩，减少内存占用）
@@ -149,13 +124,14 @@ static struct {
  * ================================================================ */
 typedef struct XNetworkSocketPrivateLwip {
     XNetworkSocketPrivate base;    /* 基类：owner + notifiers (16 字节) */
+    XFd fd;                       /* 缓存的文件描述符（避免回调中 vtable 查找） */
     struct tcp_pcb* tpcb;          /* TCP 协议控制块 */
     struct udp_pcb* upcb;          /* UDP 协议控制块 */
     char* rxBuf;                   /* 接收缓冲区 */
     void* pendingAccept;           /* 待领取的客户端连接 */
     size_t writeFinished;          /* 已发送并确认的累计字节数（通知消费者） */
     size_t lastWriteFinished;      /* 上次通知消费者的已发送字节数 */
-    /* 以上指针/size_t 共 64 字节 */
+    /* 以上指针/size_t 在 64 位下共 72 字节（含 XFd fd 字段） */
     int rxPos;                     /* 接收缓冲区当前写入位置 */
     int rxTotal;                   /* 上一次接收的字节数 */
     ip_addr_t fromAddr;            /* UDP 数据报来源地址 (IPv4=4 字节) */
@@ -194,20 +170,23 @@ typedef struct XNetworkSocketPrivateLwip {
  */
 static void push_socket_cq(XNetworkSocketPrivateLwip* s, uint32_t actType) {
 #if XAbstractNetIoRing_ON
-    XAbstractNetIoRing* ring;
-    XAbstractNetIoRing_CQEntry cq;
-    XFd fd;
-
     if (!s || !s->base.owner || actType == 0) return;
 
-    ring = XAbstractNetIoRing_global();
+    XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
     if (!ring) return;
 
-    fd = XNetwork_socketFd((XNetworkSocketPrivate*)s);
-    memset(&cq, 0, sizeof(cq));
-    cq.m_fd = fd;
-    cq.m_events = actType;
-    cq.m_sourceType = XAbstractNetIoRing_Source_Netif;
+    XFd fd = s->fd;
+    if (fd == XFD_INVALID) {
+        /* 回调在 ensure_xfd 之前触发（极少）：直接从设备获取并缓存 */
+        fd = XIODevice_fd((XIODevice*)s->base.owner);
+        s->fd = fd;
+    }
+
+    XAbstractNetIoRing_CQEntry cq = {
+        .m_fd = fd,
+        .m_events = actType,
+        .m_sourceType = XAbstractNetIoRing_Source_Netif
+    };
     XAbstractNetIoRing_pushCompletion(ring, &cq);
 #else
     (void)s;
@@ -249,11 +228,10 @@ static void ip_to_addr(const ip_addr_t* ip, XHostAddress* a) {
 /* 确保 Socket 已分配文件描述符，供事件系统地址查找 */
 static void ensure_xfd(XNetworkSocketPrivate* priv) {
     if (!priv || !priv->owner) return;
-    XFd xfd = XIODevice_fd((XIODevice*)priv->owner);
-    if (xfd == XFD_INVALID) {
-        xfd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
-        XIODevice_setFd((XIODevice*)priv->owner, xfd);
-    }
+    XNetworkSocketPrivateLwip* s = L4P(priv);
+    if (s->fd != XFD_INVALID) return;
+    s->fd = XFd_alloc(XFD_TYPE_SOCKET, priv, priv->owner);
+    XIODevice_setFd((XIODevice*)priv->owner, s->fd);
 }
 
 
@@ -299,14 +277,19 @@ static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err
         push_socket_cq(s, XSocketAct_Read);
         return ERR_OK; }
     int total = p->tot_len;
+    int acked = 0;
     if (total > 0 && s->rxBuf) {
         int space = XNETWORK_LWIP_RECV_BUFFER_SIZE - s->rxPos;
         int copy = total < space ? total : space;
-        pbuf_copy_partial(p, s->rxBuf + s->rxPos, copy, 0);
-        s->rxPos += copy; s->hasReadData = true;
-    push_socket_cq(s, XSocketAct_Read);
+        if (copy > 0) {
+            pbuf_copy_partial(p, s->rxBuf + s->rxPos, copy, 0);
+            s->rxPos += copy;
+            s->hasReadData = true;
+            push_socket_cq(s, XSocketAct_Read);
+        }
+        acked = copy;  /* 只确认已缓冲的字节数，未缓冲的由 lwIP 重传 */
     }
-    tcp_recved(pcb, total);
+    if (acked > 0) tcp_recved(pcb, (u16_t)acked);
     pbuf_free(p);
     return ERR_OK;
 }
@@ -334,7 +317,7 @@ static void tcpErrCb(void* arg, err_t err) {
 
 /* TCP 轮询回调（保持连接，防超时断开）
  * 参数 interval 为 tcp_poll 的调用间隔，单位 0.5 秒。
- * interval=2 表示 1 秒间隔，STM32 移植一般用此值 */
+ * interval=2 表示 1 秒间隔（每秒轮询一次） */
 static err_t tcpPollCb(void* arg, struct tcp_pcb* pcb) {
     (void)arg; (void)pcb; return ERR_OK;
 }
@@ -367,6 +350,7 @@ static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err) {
     XNetworkSocketPrivateLwip* cs = (XNetworkSocketPrivateLwip*)XMalloc_System(sizeof(*cs));
     if (!cs) return ERR_MEM;
     memset(cs, 0, sizeof(*cs));
+    cs->fd = XFD_INVALID;
     cs->tpcb = newPcb;
     cs->connected = true;
     cs->sockType = XNetwork_Tcp;
@@ -400,9 +384,12 @@ static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
     if (total > 0 && s->rxBuf) {
         int space = XNETWORK_LWIP_RECV_BUFFER_SIZE - s->rxPos;
         int copy = total < space ? total : space;
-        pbuf_copy_partial(p, s->rxBuf + s->rxPos, copy, 0);
-        s->rxPos += copy; s->hasReadData = true;
-        push_socket_cq(s, XSocketAct_Read);
+        if (copy > 0) {
+            pbuf_copy_partial(p, s->rxBuf + s->rxPos, copy, 0);
+            s->rxPos += copy;
+            s->hasReadData = true;
+            push_socket_cq(s, XSocketAct_Read);
+        }
     }
     pbuf_free(p);
 }
@@ -473,18 +460,17 @@ XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner) {
     XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)XMalloc_System(sizeof(*s));
     if (!s) return NULL;
     memset(s, 0, sizeof(*s));
+    s->fd = XFD_INVALID;
     s->base.owner = owner;
     s->base.notifiers = XVector_create(sizeof(void*));
     s->rxBuf = (char*)XMalloc_System(XNETWORK_LWIP_RECV_BUFFER_SIZE);
     if (!s->rxBuf) { XFree_System(s); return NULL; }
-    socketList_add(s);
     return (XNetworkSocketPrivate*)s;
 }
 
 void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
     if (!priv) return;
     XNetworkSocketPrivateLwip* s = L4P(priv);
-    socketList_remove(s);
 
     /* 关闭 lwIP PCB，需要持有核心锁 */
     if (s->tpcb || s->upcb) {
@@ -512,7 +498,12 @@ intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv) {
     return priv ? (intptr_t)priv : -1;
 }
 XFd XNetwork_socketFd(const XNetworkSocketPrivate* priv) {
-    return (priv && priv->owner) ? XIODevice_fd((XIODevice*)priv->owner) : XFD_INVALID;
+    if (!priv) return XFD_INVALID;
+    /* 快速路径：直接返回缓存的 fd，避免 vtable 查找 */
+    XFd fd = L4P(priv)->fd;
+    if (fd != XFD_INVALID) return fd;
+    /* 回退：fd 尚未分配（理论上不会发生，ensure_xfd 已提前分配） */
+    return priv->owner ? XIODevice_fd((XIODevice*)priv->owner) : XFD_INVALID;
 }
 bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv) {
     return priv ? L4P(priv)->connected : false;
@@ -554,9 +545,7 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
         s->isServer = true;
         tcp_arg(s->tpcb, s);
         tcp_accept(s->tpcb, tcpAcceptCb);
-        /* TCP 服务端已在 socketList 中，accept 回调会设置 pendingAccept */
-        socketList_add(s);
-        LWIP_DBG("[绑定] TCP服务端 port=%d backlog=%d\n", (int)port, XNETWORK_LWIP_MAX_LISTEN_BACKLOG);
+            LWIP_DBG("[绑定] TCP服务端 port=%d backlog=%d\n", (int)port, XNETWORK_LWIP_MAX_LISTEN_BACKLOG);
     } else {
         /* UDP：创建 PCB 并绑定 */
         s->upcb = udp_new();
@@ -987,7 +976,6 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
     s->pendingAccept = NULL;
     if (clientAddr && cs->tpcb) ip_to_addr(&cs->tpcb->remote_ip, clientAddr);
     if (clientPort && cs->tpcb) *clientPort = cs->tpcb->remote_port;
-    socketList_add(cs);
     LWIP_DBG("[TCP服务] 领取客户端Socket=%p\n", (void*)cs);
     return (XSocketHandle)(intptr_t)cs;
 }
