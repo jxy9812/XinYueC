@@ -10,6 +10,18 @@ extern "C" {
 #define SHOWCONTAINERSIZE				0//显示容器大小
 #define DEBUG_ON						0
 #define XERROR_ON						1//错误输出
+/* ========================================================================== */
+/*                        XPrintf 输出编码模式                                */
+/* ========================================================================== */
+/* XPRINTF_UTF8_CONSOLE = 1  强制控制台为UTF-8，直接输出UTF-8（Windows桌面推荐）
+ *                          - 源码是UTF-8，/utf-8编译后字面量也是UTF-8，无需转换
+ *                          - 与lwIP的SetConsoleOutputCP(CP_UTF8)兼容
+ *                          - 首次调用XPrintf时自动设置控制台代码页
+ * XPRINTF_UTF8_CONSOLE = 0  转换为本地编码(GBK)后输出（嵌入式GBK串口终端推荐）
+ *                          - 调用XChar_utf8ToGbkStream做UTF-8->GBK转换
+ *                          - 适用于串口终端等只支持GBK的场景
+ * 注意：Linux/macOS始终直接输出UTF-8，此宏仅影响Windows */
+#define XPRINTF_UTF8_CONSOLE			1
 #define DEMOTEST						1//测试代码
 /*                容器                              */
 #define XContainer_ON				1

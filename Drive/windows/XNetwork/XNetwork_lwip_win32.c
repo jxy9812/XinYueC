@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XNetwork_lwip_win32.c
  * @brief lwIP Windows 平台虚拟网卡实现 - 基于 Npcap 虚拟网卡
  *
@@ -13,6 +13,7 @@
  *   5. 使用 XRandomGenerator 生成随机 MAC 地址，避免与 Windows 网卡冲突
  */
 #ifdef _WIN32
+#include "CXinYueConfig.h"
 #include "XNetwork_config.h"
 #if defined(XNETWORK_USE_LWIP)
 
@@ -653,9 +654,6 @@ static err_t loopback_init(struct netif* netif) {
 }
 /* 平台初始化 - 创建回环网卡 + Npcap 虚拟网卡 */
 struct netif* XNetworkLwip_platform_init(void) {
-    /* 设置控制台输出编码为 UTF-8，避免中文调试信息显示乱码 */
-    SetConsoleOutputCP(CP_UTF8);
-    setlocale(LC_ALL, ".utf8");  /* 设置 C 运行时库输出为 UTF-8，配合 SetConsoleOutputCP 确保 printf 中文输出正确 */
     LWIP_DBG("[平台初始化] 开始...\n");
 
     /* 第一步：创建回环网卡 lo0 (127.0.0.1) */

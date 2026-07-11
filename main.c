@@ -7,6 +7,10 @@
 #include <stdarg.h>
 #include"XVarList.h"
 #include <stdint.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <locale.h>
+#endif
 void XSocketTest();
 int main(int argc, char* args[])
 {
