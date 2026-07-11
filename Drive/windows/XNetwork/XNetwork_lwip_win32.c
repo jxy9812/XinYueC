@@ -46,6 +46,13 @@
 #include "lwip/pbuf.h"
 #include "netif/ethernet.h"
 
+/* Netif input function: tcpip_input (NO_SYS=0, via tcpip_thread) or ethernet_input (NO_SYS=1, direct) */
+#if NO_SYS
+#define XNETIF_INPUT_FN  ethernet_input
+#else
+#define XNETIF_INPUT_FN  tcpip_input
+#endif
+
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "bcrypt.lib")
@@ -657,7 +664,7 @@ struct netif* XNetworkLwip_platform_init(void) {
     IP4_ADDR(&loopMask, 255, 0, 0, 0);
     IP4_ADDR(&loopGw, 127, 0, 0, 1);
     memset(&g_loopNetif, 0, sizeof(g_loopNetif));
-    struct netif* lnif = netif_add(&g_loopNetif, &loopIp, &loopMask, &loopGw, NULL, loopback_init, ethernet_input);
+    struct netif* lnif = netif_add(&g_loopNetif, &loopIp, &loopMask, &loopGw, NULL, loopback_init, XNETIF_INPUT_FN);
     if (lnif) {
         netif_set_up(&g_loopNetif);
         LWIP_DBG("[平台初始化] 回环网卡 lo0 创建成功\n");
@@ -773,7 +780,7 @@ struct netif* XNetworkLwip_platform_init(void) {
                     struct netif* n = (struct netif*)XMalloc_System(sizeof(struct netif));
                     if (n) {
                         memset(n, 0, sizeof(struct netif));
-                        struct netif* result = netif_add(n, &sip, &smask, &sgw, ctx, npcap_init, ethernet_input);
+                        struct netif* result = netif_add(n, &sip, &smask, &sgw, ctx, npcap_init, XNETIF_INPUT_FN);
                         if (result) {
                             ctx->netif = result;
                             netif_set_up(result);
@@ -806,7 +813,7 @@ struct netif* XNetworkLwip_platform_init(void) {
                         struct netif* n = (struct netif*)XMalloc_System(sizeof(struct netif));
                         if (n) {
                             memset(n, 0, sizeof(struct netif));
-                            struct netif* result = netif_add(n, &iip, &imask, &igw, ctx, npcap_init, ethernet_input);
+                            struct netif* result = netif_add(n, &iip, &imask, &igw, ctx, npcap_init, XNETIF_INPUT_FN);
                             if (result) {
                                 ctx->netif = result;
                                 netif_set_up(result);

@@ -1,6 +1,7 @@
 #ifndef LWIP_LWIPOPTS_H
 #define LWIP_LWIPOPTS_H
 #include"XMemory.h"
+#include "XNetwork_config.h"   /* 获取 XNETWORK_LWIP_NO_SYS 宏开关 */
 /**
  * @file lwipopts.h
  * @brief lwIP 配置选项
@@ -23,7 +24,11 @@
 #endif
 
 /* ==================== 操作系统模式 ==================== */
-#define NO_SYS                  0
+/* NO_SYS 受 XNETWORK_LWIP_NO_SYS 控制（见 XNetwork_config.h）
+ *   0 = OS 模式：完整 sys_arch（线程/信号量/邮箱/互斥锁）
+ *   1 = 裸机模式：最小 sys_arch（仅 sys_arch_protect/sys_now 等） */
+#define NO_SYS                  XNETWORK_LWIP_NO_SYS
+
 
 /* ==================== 协议栈功能 ==================== */
 #define LWIP_TCP                1
@@ -58,8 +63,20 @@
 #define MEMP_NUM_NETCONN        4
 
 /* ==================== 线程与同步 ==================== */
+/* NO_SYS=1 时必须为 0（无 tcpip_thread）；NO_SYS=0 时为 1（支持核心锁定） */
+#if NO_SYS
+#define LWIP_TCPIP_CORE_LOCKING 0
+#else
 #define LWIP_TCPIP_CORE_LOCKING 1
+#endif
 #define SYS_LIGHTWEIGHT_PROT    1
+
+/* NO_SYS=1 时 sys.h 不会包含 arch/sys_arch.h，需提前引入 arch/cc.h
+ * 以获得 sys_prot_t 类型定义（SYS_LIGHTWEIGHT_PROT 需要）。
+ * cc.h 有包含守卫，重复包含安全。 */
+#if NO_SYS && SYS_LIGHTWEIGHT_PROT
+#include "arch/cc.h"
+#endif
 
 /* ==================== 协议栈参数 ==================== */
 #define TCP_MSS                 1460
@@ -106,5 +123,12 @@
 #define LWIP_TIMERS             1
 #define LWIP_ETHERNET           1
 #define TCPIP_THREAD_NAME       "tcpip_thread"
+
+/* tcpip_thread configuration (NO_SYS=0 only) */
+#if !NO_SYS
+#define TCPIP_MBOX_SIZE         128     /* tcpip_thread mailbox size (0=default, we set explicit) */
+#define TCPIP_THREAD_STACKSIZE  4096    /* tcpip_thread stack size in bytes */
+#define TCPIP_THREAD_PRIO       1       /* tcpip_thread priority */
+#endif
 
 #endif /* LWIP_LWIPOPTS_H */

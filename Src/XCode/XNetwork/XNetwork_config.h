@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XNetwork_config.h
  * @brief XNetwork 模块网络后端配置文件
  *
@@ -81,6 +81,25 @@ extern "C" {
  */
 #ifndef XNETWORK_LWIP_DNS_TIMEOUT_MS
 #define XNETWORK_LWIP_DNS_TIMEOUT_MS  5000
+#endif
+
+/**
+ * @brief lwIP 操作系统模式选择
+ *
+ * 两种模式：
+ *   0 = OS 模式（NO_SYS=0）：使用 XMutex/XSemaphore/XThread 完整 sys_arch，
+ *        lwIP 内部可创建线程/信号量/邮箱，支持 LWIP_TCPIP_CORE_LOCKING。
+ *        适用：Windows/Linux 桌面、FreeRTOS 等带 OS 的环境。
+ *
+ *   1 = 裸机模式（NO_SYS=1）：最小 sys_arch，仅保留 sys_arch_protect/sys_now
+ *        等必要接口，lwIP 内部不创建线程/信号量/邮箱，所有处理由主循环轮询。
+ *        适用：STM32 裸机、无 OS 的嵌入式环境。
+ *
+ * @note 两种模式都使用 sys_arch_protect（递归互斥锁）保证线程安全，
+ *       都通过 XTimeWheelGroup 定时器轮询 sys_check_timeouts()。
+ */
+#ifndef XNETWORK_LWIP_NO_SYS
+#define XNETWORK_LWIP_NO_SYS  1
 #endif
 
 #endif /* XNETWORK_USE_LWIP */
