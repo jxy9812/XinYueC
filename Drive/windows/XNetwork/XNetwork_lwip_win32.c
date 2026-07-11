@@ -219,7 +219,8 @@ static bool is_physical_adapter(const char* desc) {
  * 注意：Windows API 返回的 FriendlyName/Description 是 wchar_t* 类型，
  * 需要通过 WideCharToMultiByte 转换为 UTF-8 字符串后再与 Npcap 描述进行匹配 */
 static bool find_windows_ip_for_adapter(PIP_ADAPTER_ADDRESSES aa, const char* npcapDesc,
-                                         uint32_t* ipOut, uint32_t* maskOut, uint32_t* gwOut, uint8_t* macOut) {
+                                         uint32_t* ipOut, uint32_t* maskOut, uint32_t* gwOut,
+                                         uint8_t* macOut) {
     if (!aa || !npcapDesc || !ipOut || !maskOut || !gwOut) return false;
 
     PIP_ADAPTER_ADDRESSES a = aa;
@@ -276,6 +277,7 @@ static bool find_windows_ip_for_adapter(PIP_ADAPTER_ADDRESSES aa, const char* np
                             if (macOut && a->PhysicalAddressLength == 6) {
                                 memcpy(macOut, a->PhysicalAddress, 6);
                             }
+
 
                             uint32_t hgw = ntohl(*gwOut);
                             LWIP_DBG("[Windows网卡匹配] Npcap=\"%s\" -> Win=\"%s\" IP=%d.%d.%d.%d GW=%d.%d.%d.%d MAC=%02X:%02X:%02X:%02X:%02X:%02X\n",
@@ -555,6 +557,35 @@ static void pcapif_input_callback(u_char* user, const struct pcap_pkthdr* hdr, c
     }
 }
 
+/* DHCP 超时 fallback：DHCP 超时后将仍为 0.0.0.0 的网卡设置为 Windows IP */
+static void check_dhcp_fallback(uint32_t now) {
+    int i;
+    for (i = 0; i < g_npcapCtxCount; i++) {
+        npcap_ctx_t* ctx = &g_npcapCtxs[i];
+        struct netif* n = ctx->netif;
+        if (!n || !ctx->dhcpEnabled || !ctx->winIp) continue;
+
+        if (ip_addr_isany(&n->ip_addr) && ctx->dhcpStartTime > 0 &&
+            now - ctx->dhcpStartTime >= DHCP_FALLBACK_TIMEOUT_MS) {
+            ip4_addr_t fallbackIp, fallbackMask, fallbackGw;
+            ip4_addr_set_u32(&fallbackIp, ctx->winIp);
+            ip4_addr_set_u32(&fallbackMask, ctx->winMask);
+            ip4_addr_set_u32(&fallbackGw, ctx->winGw);
+            netif_set_addr(n, &fallbackIp, &fallbackMask, &fallbackGw);
+            char fbIp[20];
+            LWIP_DBG("[DHCP] %c%c%d DHCP超时(%dms)，fallback到Windows IP=%s\n",
+                     n->name[0], n->name[1], n->num,
+                     DHCP_FALLBACK_TIMEOUT_MS,
+                     ip4addr_ntoa_r(&fallbackIp, fbIp, sizeof(fbIp)));
+            if (!netif_default) {
+                netif_set_default(n);
+                XNetworkLwip_setDefaultNetif(n);
+            }
+            ctx->dhcpStartTime = 0;
+        }
+    }
+}
+
 /* 轮询所有 Npcap 网卡接收数据包，喂给 lwIP 协议栈
  *
  * 参考 lwIP 官方 pcapif.c 的 pcapif_poll 实现：
@@ -587,33 +618,7 @@ void XNetworkLwip_pollPcap(void) {
     /* DHCP 超时 fallback 检测：每隔1秒检查一次 */
     if (now - lastFallbackCheck >= 1000) {
         lastFallbackCheck = now;
-        for (int i = 0; i < g_npcapCtxCount; i++) {
-            npcap_ctx_t* ctx = &g_npcapCtxs[i];
-            struct netif* n = ctx->netif;
-            if (!n || !ctx->dhcpEnabled || !ctx->winIp) continue;
-
-            /* 如果 netif IP 仍为 0.0.0.0 且 DHCP 已超时，fallback 到 Windows IP */
-            if (ip_addr_isany(&n->ip_addr) && ctx->dhcpStartTime > 0) {
-                if (now - ctx->dhcpStartTime >= DHCP_FALLBACK_TIMEOUT_MS) {
-                    ip4_addr_t fallbackIp, fallbackMask, fallbackGw;
-                    ip4_addr_set_u32(&fallbackIp, ctx->winIp);
-                    ip4_addr_set_u32(&fallbackMask, ctx->winMask);
-                    ip4_addr_set_u32(&fallbackGw, ctx->winGw);
-                    netif_set_addr(n, &fallbackIp, &fallbackMask, &fallbackGw);
-                    char fbIp[20];
-                    LWIP_DBG("[DHCP] %c%c%d DHCP超时(%dms)，fallback到Windows IP=%s\n",
-                             n->name[0], n->name[1], n->num,
-                             DHCP_FALLBACK_TIMEOUT_MS,
-                             ip4addr_ntoa_r(&fallbackIp, fbIp, sizeof(fbIp)));
-
-                    /* 设置为默认路由 */
-                    if (!netif_default) {
-                        netif_set_default(n);
-                        XNetworkLwip_setDefaultNetif(n);
-                    }
-                }
-            }
-        }
+        check_dhcp_fallback(now);
     }
 }
 /* 回环网卡 IPv4 输出包装函数 - 适配 netif->output 签名 (3 参数)

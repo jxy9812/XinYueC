@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XNetwork_lwip.c
  * @brief lwIP 平台网络实现（平台无关 + Raw API 回调模式）
  *
@@ -537,6 +537,7 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
     ip_addr_t bindAddr;
     if (address) addr_to_ip(address, &bindAddr); else bindAddr = *IP_ADDR_ANY;
 
+    err_t err;
     if (sockType == XNetwork_Tcp) {
         /* TCP 服务端：创建 PCB 并开始监听 */
         s->tpcb = tcp_new();
@@ -570,31 +571,164 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
     return port;
 }
 
-/* 等待 DHCP 获取 IP 地址 */
-static bool wait_for_dhcp(struct netif* n, uint32_t timeoutMs) {
+
+/* ================================================================
+ * 网络就绪保障 + 异步 DNS 解析
+ *
+ * 问题背景：
+ *   1. dns_gethostbyname 传 NULL 回调时，只能解析已缓存或 IP 字符串，
+ *      对未缓存域名返回 ERR_INPROGRESS 后永远不会通知完成。
+ *   2. Windows 上 DHCP 通常无法完成（宿主机已持有 IP 租约），
+ *      netif 仍为 0.0.0.0，DNS 查询无源 IP；且无 DNS 服务器。
+ *
+ * 解决方案：
+ *   ensure_network_ready(): 等待/强制网卡获取 IP + 设置 fallback DNS 服务器
+ *   lwip_resolve_name():    dns_gethostbyname + 回调 + 轮询等待结果
+ * ================================================================ */
+
+/* 判断 netif 是否拥有有效的非回环 IPv4 地址 */
+static bool netif_has_valid_ipv4(struct netif* n) {
+    if (!n || ip_addr_isany(&n->ip_addr) || !(n->flags & NETIF_FLAG_UP)) return false;
+    uint32_t hip = lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(&n->ip_addr)));
+    /* 跳过 127.x.x.x (回环) 和 169.254.x.x (APIPA) */
+    if ((hip >> 24) == 127 || (hip >> 16) == 0xA9FE) return false;
+    return true;
+}
+
+/* 确保网络就绪：
+ *   1. 等待网卡通过 DHCP 获取有效 IP（DHCP 完成时 lwIP 自动设置 IP/网关/DNS）
+ *   2. 确保有默认路由 */
+static void ensure_network_ready(uint32_t timeoutMs) {
+    struct netif* n;
+    bool hasIp = false;
     uint32_t start = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF);
-    LWIP_DBG("[DHCP等待] 开始等待 netif=%c%c%d link_up=%d\n",
-             n->name[0], n->name[1], n->num, netif_is_link_up(n));
-    while (!dhcp_supplied_address(n)) {
+
+    /* 等待至少一个网卡通过 DHCP 获取有效 IP */
+    while (!hasIp) {
         uint32_t elapsed = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF) - start;
-        if (elapsed >= timeoutMs) {
-            LWIP_DBG("[DHCP等待] 超时(%dms), 当前IP=%s\n",
-                     (int)timeoutMs, ip4addr_ntoa(netif_ip4_addr(n)));
-            return false;
+        if (elapsed >= timeoutMs) break;
+        for (n = netif_list; n; n = n->next) {
+            if (netif_has_valid_ipv4(n)) { hasIp = true; break; }
         }
-        /* 核心锁保护下轮询网卡和驱动超时 */
+        if (hasIp) break;
 #if NO_SYS
-        XNetLwipCoreLock prot = XNET_LWIP_LOCK();
-        XNetworkLwip_pollPcap();
-        sys_check_timeouts();
-        XNET_LWIP_UNLOCK(prot);
+        {
+            XNetLwipCoreLock prot = XNET_LWIP_LOCK();
+            XNetworkLwip_pollPcap();
+            sys_check_timeouts();
+            XNET_LWIP_UNLOCK(prot);
+        }
 #else
         XNetworkLwip_pollPcap();
 #endif
         XThread_msleep(50);
     }
-    LWIP_DBG("[DHCP等待] 获取IP成功: %s\n", ip4addr_ntoa(netif_ip4_addr(n)));
-    return true;
+
+    if (hasIp) {
+        LWIP_DBG("[网络就绪] DHCP已完成，网卡已获取IP\n");
+    } else {
+        LWIP_DBG("[网络就绪] 等待DHCP超时(%dms)，无可用IP\n", (int)timeoutMs);
+    }
+
+    /* 确保有默认路由 */
+    if (!netif_default) {
+        for (n = netif_list; n; n = n->next) {
+            if (netif_has_valid_ipv4(n)) {
+                netif_set_default(n);
+                LWIP_DBG("[网络就绪] 设置默认网卡: %s\n", ip4addr_ntoa(ip_2_ip4(&n->ip_addr)));
+                break;
+            }
+        }
+    }
+}
+
+/* DNS 异步解析回调上下文 */
+typedef struct {
+    ip_addr_t ip;
+    volatile bool done;
+    volatile bool found;
+} DnsResolveCtx;
+
+/* dns_gethostbyname 完成回调 */
+static void dns_found_cb(const char* name, const ip_addr_t* ipaddr, void* arg) {
+    (void)name;
+    DnsResolveCtx* ctx = (DnsResolveCtx*)arg;
+    if (ipaddr) {
+        ctx->ip = *ipaddr;
+        ctx->found = true;
+    } else {
+        ctx->found = false;
+    }
+    ctx->done = true;
+}
+
+/* 异步解析域名：dns_gethostbyname + 回调 + 轮询等待
+ * @param name       域名或 IP 字符串
+ * @param outIp      输出解析结果
+ * @param timeoutMs  超时时间
+ * @return true=解析成功 */
+static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeoutMs) {
+    ip_addr_t ip;
+    DnsResolveCtx ctx;
+    err_t e;
+
+    ip4_addr_set_any(ip_2_ip4(&ip));
+    ctx.done = false;
+    ctx.found = false;
+    ip4_addr_set_any(ip_2_ip4(&ctx.ip));
+
+#if NO_SYS
+    {
+        XNetLwipCoreLock prot = XNET_LWIP_LOCK();
+        e = dns_gethostbyname(name, &ip, dns_found_cb, &ctx);
+        XNET_LWIP_UNLOCK(prot);
+    }
+#else
+    e = dns_gethostbyname(name, &ip, dns_found_cb, &ctx);
+#endif
+
+    if (e == ERR_OK) {
+        /* 已缓存或为 IP 字符串，直接返回 */
+        *outIp = ip;
+        return true;
+    }
+    if (e == ERR_INPROGRESS) {
+        /* 异步查询中，轮询 pcap + 超时处理，等待回调通知 */
+        uint32_t start = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF);
+        while (!ctx.done) {
+            uint32_t elapsed = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF) - start;
+            if (elapsed >= timeoutMs) {
+                LWIP_DBG("[DNS] 解析超时(%dms): %s\n", (int)timeoutMs, name);
+                return false;
+            }
+#if NO_SYS
+            {
+                XNetLwipCoreLock prot = XNET_LWIP_LOCK();
+                XNetworkLwip_pollPcap();
+                sys_check_timeouts();
+                XNET_LWIP_UNLOCK(prot);
+            }
+#else
+            XNetworkLwip_pollPcap();
+#endif
+            XThread_msleep(20);
+        }
+        if (ctx.found) {
+            *outIp = ctx.ip;
+            LWIP_DBG("[DNS] 解析成功: %s -> %s\n", name, ipaddr_ntoa(outIp));
+            return true;
+        }
+        LWIP_DBG("[DNS] 解析失败(域名不存在): %s\n", name);
+        return false;
+    }
+
+    /* ERR_ARG 或其他错误：尝试直接当 IP 地址解析 */
+    if (ipaddr_aton(name, &ip)) {
+        *outIp = ip;
+        return true;
+    }
+    LWIP_DBG("[DNS] dns_gethostbyname错误=%d: %s\n", (int)e, name);
+    return false;
 }
 
 /* ================================================================
@@ -609,41 +743,20 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
     XNetwork_ensureInit();
     s->sockType = (int)sockType;
 
-    /* DNS 解析域名到 IP 地址 */
+    /* 确保网卡有 IP + DNS 服务器就绪（等待 DHCP 或强制 fallback） */
+    ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS);
+
+    /* 异步 DNS 解析（带回调 + 轮询等待） */
     ip_addr_t ip;
-    err_t err = dns_gethostbyname(hostName, &ip, NULL, NULL);
-    LWIP_DBG("[连接] DNS解析结果=%d\n", (int)err);
-    if (err != ERR_OK && ipaddr_aton(hostName, &ip) == 0) {
+    if (!lwip_resolve_name(hostName, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) {
         LWIP_DBG("[连接] DNS和IP解析均失败\n");
         return false;
     }
     LWIP_DBG("[连接] 目标IP解析成功\n");
-
-    /* 如果 DHCP 网卡还没有 IP，等待 DHCP */
-    {
-        struct netif* n;
-        for (n = netif_list; n; n = n->next) {
-            if (ip_addr_isany(&n->ip_addr) && (n->flags & NETIF_FLAG_UP) && netif_dhcp_data(n)) {
-                LWIP_DBG("[连接] DHCP网卡 %c%c%d 无IP，等待DHCP...\n", n->name[0], n->name[1], n->num);
-                wait_for_dhcp(n, XNETWORK_LWIP_DNS_TIMEOUT_MS);
-            }
-        }
-    }
-
-    /* 确保默认网卡 */
-    if (!netif_default) {
-        LWIP_DBG("[连接] 无默认网卡，扫描可用网卡...\n");
-        struct netif* n;
-        for (n = netif_list; n; n = n->next)
-            if (!ip_addr_isany(&n->ip_addr)) {
-                netif_set_default(n);
-                LWIP_DBG("[连接] 设置默认网卡: %s\n", ip4addr_ntoa(&n->ip_addr));
-                break;
-            }
-    }
     LWIP_DBG("[连接] 默认网卡=%s\n",
-             netif_default ? ip4addr_ntoa(&netif_default->ip_addr) : "NULL");
+             netif_default ? ip4addr_ntoa(ip_2_ip4(&netif_default->ip_addr)) : "NULL");
 
+    err_t err;
     if (sockType == XNetwork_Tcp) {
         /* TCP 客户端连接 */
         s->tpcb = tcp_new();
@@ -709,6 +822,7 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
     XNetworkSocketPrivateLwip* s = L4P(priv);
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
 
+    err_t err;
     if (sockType == XNetwork_Tcp) {
         if (!s->tpcb) { XNET_LWIP_UNLOCK(prot); return -1; }
         u16_t sndBuf = tcp_sndbuf(s->tpcb);
@@ -870,9 +984,14 @@ bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv) {
 bool XNetwork_lookupName(const char* name, XHostAddress** addrs, int* count) {
     if (!name || !addrs || !count) return false;
     XNetwork_ensureInit();
+
+    /* 确保网卡有 IP + DNS 服务器就绪 */
+    ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS);
+
+    /* 异步 DNS 解析（带回调 + 轮询等待） */
     ip_addr_t ip;
-    err_t e = dns_gethostbyname(name, &ip, NULL, NULL);
-    if (e != ERR_OK && ipaddr_aton(name, &ip) == 0) return false;
+    if (!lwip_resolve_name(name, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) return false;
+
     XHostAddress* addr = XHostAddress_create();
     if (!addr) return false;
     ip_to_addr(&ip, addr);
