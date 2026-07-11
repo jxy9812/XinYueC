@@ -4,8 +4,7 @@
  */
  /* ====== 配置文件 ====== */
 #include "XNetwork_config.h"
-
-#ifdef XNETWORK_USE_PLATFORM_API
+#if defined(XNETWORK_USE_PLATFORM_API) &&defined(_WIN32) 
 
  /* ====== Windows 宏定义必须在所有头文件之前 ======*/
 #ifndef WIN32_LEAN_AND_MEAN
@@ -580,6 +579,7 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
 
     struct sockaddr_storage destAddr;
     int destLen;
+    memset(&destAddr, 0, sizeof(destAddr));
     if (ai->ai_family == AF_INET6) {
         struct sockaddr_in6* s6 = (struct sockaddr_in6*)&destAddr;
         s6->sin6_family = AF_INET6; s6->sin6_port = htons(port);
@@ -734,10 +734,18 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event)
     }
     if (sockAct->actType & XSocketAct_Connect) {
         p->connectPending = false;
-        p->connected = true;
-        int opt = 1;
-        setsockopt(p->socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, (char*)&opt, sizeof(opt));
-        startAsyncRead(priv, false);
+        /* 检查连接是否真正成功（ConnectEx 失败时 SO_ERROR 非零） */
+        int soError = 0;
+        int soLen = sizeof(soError);
+        getsockopt(p->socket, SOL_SOCKET, SO_ERROR, (char*)&soError, &soLen);
+        if (soError == 0) {
+            p->connected = true;
+            int opt = 1;
+            setsockopt(p->socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, (char*)&opt, sizeof(opt));
+            startAsyncRead(priv, false);
+        } else {
+            p->connected = false;
+        }
         return true;
     }
     return false;

@@ -61,6 +61,11 @@
 #include "lwip/mem.h"
 #include "lwip/tcpip.h"
 #include "lwip/dhcp.h"
+
+#include "CXinYueConfig.h"  /* XAbstractNetIoRing_ON */
+#if XAbstractNetIoRing_ON
+#include "XAbstractNetIoRing.h"  /* CQ push from callbacks */
+#endif
 #include <string.h>
 #include <stdio.h>
 
@@ -115,23 +120,6 @@ static void socketList_remove(void* s) {
 }
 
 /* ================================================================
- * 定时器 - 使用 XTimeWheelGroup 全局时间轮
- * ================================================================ */
-static XHandle g_lwipTickHandle = 0;
-static void lwip_tick_cb(void* userData, XTimerData* timer);
-
-/* 启动 lwIP 定时器滴答：每 LWIP_TICK_MS 毫秒触发一次 */
-static void start_lwip_tick(void) {
-    XTimerData d;
-    XTimerData_init(&d, NULL);
-    XTimerData_setTimeout(&d, LWIP_TICK_MS);
-    XTimerData_setInterval(&d, LWIP_TICK_MS);
-    XTimerData_setTimerCallback(&d, lwip_tick_cb);
-    XTimerData_setSingleShot(&d, false);
-    g_lwipTickHandle = XTimeWheelGroup_addTimerMs_base(XTimeWheelGroup_global(), d);
-}
-
-/* ================================================================
  * 全局状态
  * ================================================================ */
 /* lwIP 全局状态（位域压缩，减少内存占用）
@@ -178,61 +166,50 @@ typedef struct XNetworkSocketPrivateLwip {
     unsigned hasWriteDone: 1;      /* 写入完成标记 */
     unsigned hasAccept   : 1;      /* 有新客户端连接标记 */
     unsigned hasError    : 1;      /* 有错误发生标记 */
-    unsigned eventPending: 1;      /* 事件已投递待处理，防止重复投递 */
     unsigned sockType    : 2;      /* Socket 类型 (0=TCP, 1=UDP) */
     int      lastErr     : 8;      /* 最后一次 lwIP 错误码 (err_t, -16~0) */
 } XNetworkSocketPrivateLwip;
 
 /* ================================================================
- * 定时器回调：轮询数据包 + 处理超时 + 投递事件
+ * Socket 事件直接投递（回调驱动，替代轮询）
  *
- * 所有操作在 sys_arch_protect 保护下执行，确保线程安全。
+ * 由 lwIP Raw API 回调函数调用，将指定类型的事件 CQ 条目
+ * 推入全局 IoRing。每个回调推送自己的事件类型，无需合并标志，
+ * 无 eventPending 防重复机制--重复 CQ 条目在应用层处理时
+ * 因标志已清除而成为空操作（no-op），不会造成数据重复。
  * ================================================================ */
-static void lwip_tick_cb(void* userData, XTimerData* timer) {
-    int i;
-    (void)userData;
-    (void)timer;
 
-    /* 在核心锁保护下轮询网卡数据包并处理超时 */
-#if NO_SYS
-    XNetLwipCoreLock prot = XNET_LWIP_LOCK();
-    XNetworkLwip_pollPcap();
-    XNET_LWIP_UNLOCK(prot);
+/**
+ * @brief 从 lwIP 回调中投递指定类型的 Socket 事件到 IoRing CQ
+ * @param s       Socket 私有数据指针
+ * @param actType 事件类型掩码（XSocketActType 位掩码）
+ *
+ * 调用时机：lwIP 回调函数设置标志位之后、返回之前。
+ * 已在核心锁保护下执行（回调由 lwIP 核心在锁内调用）。
+ */
+static void push_socket_cq(XNetworkSocketPrivateLwip* s, uint32_t actType) {
+#if XAbstractNetIoRing_ON
+    XAbstractNetIoRing* ring;
+    XAbstractNetIoRing_CQEntry cq;
+    XFd fd;
+
+    if (!s || !s->base.owner || actType == 0) return;
+
+    ring = XAbstractNetIoRing_global();
+    if (!ring) return;
+
+    fd = XNetwork_socketFd((XNetworkSocketPrivate*)s);
+    memset(&cq, 0, sizeof(cq));
+    cq.m_fd = fd;
+    cq.m_events = actType;
+    cq.m_sourceType = XAbstractNetIoRing_Source_Netif;
+    XAbstractNetIoRing_pushCompletion(ring, &cq);
 #else
-    XNetworkLwip_pollPcap();
+    (void)s;
+    (void)actType;
 #endif
-
-    /* 遍历所有 Socket，根据标志位向事件循环投递事件
-     * 优化：eventPending 标志避免在应用层处理事件前重复投递 */
-    for (i = 0; i < g_socketCount; i++) {
-        XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)g_socketList[i];
-        if (!s || !s->base.owner) 
-            continue;
-        if (s->eventPending) 
-            continue;  /* 已有待处理事件，跳过避免重复投递 */
-
-        /* 根据标志位确定事件类型，与 win32 IOCP 实现保持一致 */
-        int actType = 0;
-        if (s->connectDone) 
-            actType |= XSocketAct_Connect;   /* TCP 连接完成 */
-        if (s->hasReadData || s->closing) 
-            actType |= XSocketAct_Read;  /* 有可读数据或远端关闭 */
-        if (s->hasWriteDone) 
-            actType |= XSocketAct_Write;    /* 写入完成 */
-        if (s->hasAccept) 
-            actType |= XSocketAct_Accept;      /* 服务端有新连接 */
-        if (s->hasError)
-            actType |= XSocketAct_Connect;      /* 连接错误也走 Connect 通知路径 */
-        if (actType == 0) continue;
-
-        XFd fd = XNetwork_socketFd((XNetworkSocketPrivate*)s);
-        XEventSockAct* ev = XEventSockAct_create(fd, (XSocketActType)actType);
-        if (ev) {
-            XCoreApplication_postEvent((XObject*)s->base.owner, (XEvent*)ev, 0);
-            s->eventPending = 1;  /* 标记已投递，防止下次 tick 重复投递 */
-        }
-    }
 }
+
 
 /* ================================================================
  * 地址转换工具函数
@@ -313,13 +290,16 @@ static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err
     (void)err;
     XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
     if (!s) return ERR_ABRT;
-    if (!p) { s->closing = true; s->hasReadData = true; return ERR_OK; }
+    if (!p) { s->closing = true; s->hasReadData = true;
+        push_socket_cq(s, XSocketAct_Read);
+        return ERR_OK; }
     int total = p->tot_len;
     if (total > 0 && s->rxBuf) {
         int space = XNETWORK_LWIP_RECV_BUFFER_SIZE - s->rxPos;
         int copy = total < space ? total : space;
         pbuf_copy_partial(p, s->rxBuf + s->rxPos, copy, 0);
         s->rxPos += copy; s->hasReadData = true;
+    push_socket_cq(s, XSocketAct_Read);
     }
     tcp_recved(pcb, total);
     pbuf_free(p);
@@ -331,6 +311,7 @@ static err_t tcpSentCb(void* arg, struct tcp_pcb* pcb, u16_t len) {
     (void)pcb;
     XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
     if (s) { s->writeFinished += len; s->hasWriteDone = true; }
+    push_socket_cq(s, XSocketAct_Write);
     return ERR_OK;
 }
 
@@ -342,6 +323,7 @@ static void tcpErrCb(void* arg, err_t err) {
         s->lastErr = err; g_state.lastError = XNetworkLwip_err_to_errno(err);
         s->tpcb = NULL;
         s->connected = false;  /* 标记为未连接，确保 Connect 通知走失败分支 */
+        push_socket_cq(s, XSocketAct_Connect);
     }
 }
 
@@ -365,6 +347,7 @@ static err_t tcpConnectedCb(void* arg, struct tcp_pcb* pcb, err_t err) {
         g_state.lastError = XNetworkLwip_err_to_errno(err);
         LWIP_DBG("[TCP连接] 连接失败, err=%d\n", (int)err);
     }
+    push_socket_cq(s, XSocketAct_Connect);
     return ERR_OK;
 }
 
@@ -395,6 +378,7 @@ static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err) {
     /* 存入服务端的待领取队列 */
     ss->pendingAccept = cs;
     ss->hasAccept = true;
+    push_socket_cq(ss, XSocketAct_Accept);
     LWIP_DBG("[TCP服务] 新客户端连接\n");
     return ERR_OK;
 }
@@ -413,6 +397,7 @@ static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
         int copy = total < space ? total : space;
         pbuf_copy_partial(p, s->rxBuf + s->rxPos, copy, 0);
         s->rxPos += copy; s->hasReadData = true;
+        push_socket_cq(s, XSocketAct_Read);
     }
     pbuf_free(p);
 }
@@ -437,9 +422,6 @@ void XNetwork_ensureInit(void) {
     tcpip_init(NULL, NULL);
 #endif
 
-    /* 在 platform_init 之前启动定时器，确保 DHCP 等 lwIP 定时器能正常驱动 */
-    start_lwip_tick();
-
     /* 平台网卡初始化：Npcap / TAP / 硬件 MAC */
     struct netif* nif = XNetworkLwip_platform_init();
     if (nif) {
@@ -460,12 +442,6 @@ void XNetwork_cleanup(void) {
     if (g_state.ref > 0) return;
 
     LWIP_DBG("[lwIP清理] 开始清理...\n");
-
-    /* 停止定时器 */
-    if (g_lwipTickHandle) {
-        XTimeWheelGroup_removeTimer_base(XTimeWheelGroup_global(), g_lwipTickHandle);
-        g_lwipTickHandle = 0;
-    }
 
     /* 平台网卡清理 */
     XNetworkLwip_platform_deinit();
@@ -874,27 +850,42 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
 
 /* 处理 Socket 事件：清除标志位并返回是否有事件 */
 bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
-    (void)event;
-    if (!priv) return false;
+    if (!priv || !event) return false;
+    XEvent* e = (XEvent*)event;
+    if (e->type != XEVENT_TYPE_SOCK_ACT) return false;
+
+    XEventSockAct* sockAct = (XEventSockAct*)e;
     XNetworkSocketPrivateLwip* s = L4P(priv);
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
-    s->eventPending = 0;  /* 清除待处理标记，允许后续事件投递 */
     bool hasEvent = false;
-    if (s->connectDone) { s->connectDone = false; hasEvent = true; }
-    if (s->hasReadData || s->closing) {
+
+    /* 仅清除与当前事件类型匹配的标志位，避免丢失其他类型的事件。
+     * 例如：Connect 事件到达时只清除 connectDone/hasError，
+     * 不清除 hasReadData--后者由后续 Read 事件处理。 */
+    if ((sockAct->actType & XSocketAct_Connect) &&
+        (s->connectDone || s->hasError)) {
+        s->connectDone = false;
+        s->hasError = false;
+        s->closing = false;  /* 连接错误/完成时一并清除关闭标志 */
+        hasEvent = true;
+    }
+    if ((sockAct->actType & XSocketAct_Read) &&
+        (s->hasReadData || s->closing)) {
         s->hasReadData = false;
-        s->closing = false;  /* 一并清除关闭标志，避免重复投递 */
+        s->closing = false;
         s->rxTotal = s->rxPos;  /* 更新已读字节数，供上层获取 */
         hasEvent = true;
     }
-    if (s->hasWriteDone) {
+    if ((sockAct->actType & XSocketAct_Write) && s->hasWriteDone) {
         s->hasWriteDone = false;
         s->lastWriteFinished = s->writeFinished;  /* 记录已确认字节数 */
         s->writeFinished = 0;                      /* 重置计数器 */
         hasEvent = true;
     }
-    if (s->hasAccept) { s->hasAccept = false; hasEvent = true; }
-    if (s->hasError) { s->hasError = false; s->closing = false; hasEvent = true; }
+    if ((sockAct->actType & XSocketAct_Accept) && s->hasAccept) {
+        s->hasAccept = false;
+        hasEvent = true;
+    }
     XNET_LWIP_UNLOCK(prot);
     return hasEvent;
 }
@@ -941,7 +932,8 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp) {
         memmove(s->rxBuf, s->rxBuf + consumed, remaining);
         s->rxPos = (int)remaining;
         s->rxTotal = 0;
-        s->hasReadData = true;  /* 仍有剩余数据可读，通知上层 */
+        s->hasReadData = true;  /* 仍有剩余数据可读 */
+        push_socket_cq(s, XSocketAct_Read);  /* 投递 Read 事件通知上层 */
     } else {
         /* 全部已消费，清空缓冲区 */
         s->rxPos = 0;
@@ -999,7 +991,6 @@ bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv) {
     if (!priv) return false;
     XNetworkSocketPrivateLwip* s = L4P(priv);
     s->hasAccept = false;
-    s->eventPending = 0;  /* 清除待处理标记 */
     return true;
 }
 

@@ -75,6 +75,7 @@ extern "C" {
 #define	XVectorTwo_ON					0
 #define	XStringVector_ON				0
 #endif
+#define	XAbstractNetIoRing_ON					1
 // 事件投递 无锁队列大小
 #ifndef TryPostEvent_QueueSize
 #if defined(_WIN32) || defined(_WIN64) || defined(__linux__) || defined(__APPLE__)

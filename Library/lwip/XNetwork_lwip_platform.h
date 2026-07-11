@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "XTypes.h"    /* XFd */
 
 #ifdef __cplusplus
 extern "C" {

@@ -6,6 +6,7 @@
 #include "XVector.h" // 假设你有 XVector 实现（基于 realloc）
 #include "XLockFreeQueue.h"
 #include "XAtomic.h"
+#include "XSemaphore.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,6 +27,7 @@ typedef struct XThreadData{
     XAtomic_size_t m_loopLevel; // <-- 关键：一个原子整数计数器
     XLockFreeQueue/*<XPostEvent>*/   m_tryPostEventList;  //无锁投递队列
     XVector/*<XPostEvent>*/ m_postEventList;  //互斥锁投递队列
+    XSemaphore* m_wakeSemaphore;       //线程局部唤醒信号量（工作线程阻塞等待用）
     //XVector/*<XPostEvent>*/ m_handlerEventList;  //事件处理专用队列
 } XThreadData;
 
@@ -58,6 +60,11 @@ XVector*/*<XPostEvent>*/ XThreadData_takePostedEvents(void);
 
 // 设置当前线程的事件分发器
 void XThreadData_setEventDispatcher(XAbstractEventDispatcher* dispatcher);
+
+// 等待唤醒信号（工作线程阻塞等待用，超时返回）
+void XThreadData_waitForWake(XThreadData* td, int timeoutMs);
+// 发出唤醒信号（跨线程唤醒目标线程）
+void XThreadData_signalWake(XThreadData* td);
 
 #ifdef __cplusplus
 }

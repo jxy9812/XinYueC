@@ -6,6 +6,7 @@
 #include "XMutex.h"
 #include "XReadWriteLock.h"
 #include "XAbstractEventDispatcher.h"
+#include "XSemaphore.h"
 #include "XCoreApplication.h"
 #include <stdlib.h>
 #include <string.h>
@@ -60,6 +61,11 @@ void XThreadData_delete(XThreadData* data)
     XLockFreeQueue_deinit_base(&data->m_tryPostEventList);
     XVector_deinit_base(&data->m_postEventList);
     //XVector_deinit_base(&data->m_handlerEventList);
+    if (data->m_wakeSemaphore)
+    {
+        XSemaphore_delete(data->m_wakeSemaphore);
+        data->m_wakeSemaphore = NULL;
+    }
     if (data->m_mutex)
     {
         XMutex_delete(data->m_mutex);
@@ -73,6 +79,7 @@ void XThreadData_init(XThreadData* data, XThread* thread)
     if (!data)return;
     memset(data,0,sizeof(XThreadData));
     data->m_mutex = XMutex_create(XLock_NonRecursive);
+    data->m_wakeSemaphore = XSemaphore_create(0, 0x7FFFFFFF);
     XLockFreeQueue_init(&data->m_tryPostEventList,sizeof(XPostEvent), TryPostEvent_QueueSize);//中断队列大小按需修改
     XVector_init(&data->m_postEventList, sizeof(XPostEvent),false);
     //XVector_init(&data->m_handlerEventList, sizeof(XPostEvent));
@@ -332,4 +339,17 @@ void XThreadData_setEventDispatcher(XAbstractEventDispatcher* dispatcher) {
     if (td) {
         td->m_dispatcher = dispatcher;
     }
+}
+
+void XThreadData_waitForWake(XThreadData* td, int timeoutMs)
+{
+    if (!td || !td->m_wakeSemaphore) return;
+    if (timeoutMs < 0) timeoutMs = 20;
+    XSemaphore_tryAcquireTimeout(td->m_wakeSemaphore, 1, (uint32_t)timeoutMs);
+}
+
+void XThreadData_signalWake(XThreadData* td)
+{
+    if (!td || !td->m_wakeSemaphore) return;
+    XSemaphore_release(td->m_wakeSemaphore, 1);
 }

@@ -9,6 +9,7 @@
 #include "XHrTimerGroup.h"
 #include "XDateTime.h"
 #include "XFileDescriptor.h"
+#include "XAbstractNetIoRing.h"
 #include "XNetwork_platform.h"
 #include <string.h>
 static XVector* global_nativeFilters;///< 本地事件过滤器列表
@@ -41,7 +42,9 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 {
     dp->m_hrtimerGroup = NULL;
     dp->notifiers = NULL;
-    
+    dp->m_ioRing = NULL;
+    dp->m_interrupt = false;
+    dp->m_threadData = NULL;
 }
 
 void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp)
@@ -56,6 +59,8 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
         XHashMap_delete_base(dp->notifiers);
         dp->notifiers = NULL;
     }
+    /* ioRing 是全局单例，生命周期独立，此处仅清空指针 */
+    dp->m_ioRing = NULL;
 }
 
 XVtable* XAbstractEventDispatcher_class_init(void)
@@ -139,10 +144,9 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
 
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags)
 {
-    //先处理定时器任务
+    /* 1. 先处理定时器任务 */
     if (XAbstractEventDispatcher_isMainThread(self) && XTimeWheelGroup_GlobalExists())
     {
-        //XPrintf("轮询定时器中\n");
         if (XTimeWheelGroup_count(XTimeWheelGroup_global()))
         {
             XTimeWheelGroup_handler_base(XTimeWheelGroup_global());
@@ -152,58 +156,95 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     {
         XHrTimerGroup_handler_base(self->d_ptr->m_hrtimerGroup);
     }
+    XAbstractNetIoRing* ioRing = self->d_ptr->m_ioRing;
+    if (XAbstractEventDispatcher_isMainThread(self))
+    {
+        /* 2. 处理 I/O 事件（仅主线程轮询共享 IOCP/epoll 完成端口，
+         *    工作线程不触碰共享 IOCP，防止窃取主线程的 I/O 完成事件） */
+#ifdef XNETWORK_USE_LWIP
+        XAbstractNetIoRing_pollLwip();
+#endif
+        if (ioRing && XAbstractNetIoRing_isEnabled(ioRing))
+        {
+            XAbstractNetIoRing_processReady(ioRing);
+        }
+    }
+
+    /* 3. 处理投递事件（含定时器/I/O 产生的事件） */
     size_t size = 0;
-    //处理事件
     XVector* events = XThreadData_takePostedEvents();
-    if (!events)
+    if (events)
     {
-      /*  if (XAbstractEventDispatcher_isMainThread(self))
-            XThread_yieldCurrentThread();*/
-        
-        return false;
+        for_each_iterator(events, XVector, it)
+        {
+            XPostEvent* ePost = XVector_iterator_data(&it);
+            if (!ePost|| !ePost->event) continue;
+            if ((flags & XEventLoop_ExcludeUserInputEvents) && ePost->event->input_event == XEventLoop_ExcludeUserInputEvents)
+            {
+                continue;
+            }
+            if ((flags & XEventLoop_ExcludeSocketNotifiers) && ePost->event->type == XEVENT_TYPE_SOCK_ACT) {
+                continue;
+            }
+            if ((flags & XEventLoop_X11ExcludeTimers) && ePost->event->type == XEVENT_TYPE_TIMER) {
+                continue;
+            }
+            if (!ePost->receiver||ePost->receiver->is_deleting_children)
+            {
+                XEvent_delete_base(ePost->event);
+                ++size;
+            }
+            XEvent* e = ePost->event;
+            ePost->event = NULL;
+            if(XCoreApplication_sendEvent(ePost->receiver, e))
+               ++size;
+        }
+        if(size< XVector_size_base(events))
+            XThreadData_push_front_list(events);
+        XVector_delete_base(events);
     }
-    for_each_iterator(events, XVector, it)
+
+    /* 4. 阻塞等待（WaitForMoreEvents 标志且无事件处理且未中断） */
+    if ((flags & XEventLoop_WaitForMoreEvents) && size == 0 && !self->d_ptr->m_interrupt)
     {
-        XPostEvent* ePost = XVector_iterator_data(&it);
-        if (!ePost|| !ePost->event) continue;
-        // 根据 flags 排除特定事件类型
-        if ((flags & XEventLoop_ExcludeUserInputEvents) && ePost->event->input_event == XEventLoop_ExcludeUserInputEvents)
+        /* 计算超时：优先使用高精度定时器的下次到期时间 */
+        int timeoutMs = -1;
+        if (self->d_ptr->m_hrtimerGroup &&
+            XHrTimerGroup_count(self->d_ptr->m_hrtimerGroup))
         {
-            //XCoreApplication_postEvent(ePost->receiver,ePost->event,ePost->priority);
+            int64_t ns = XHrTimerGroup_getNextExpireTime(self->d_ptr->m_hrtimerGroup)
+                       - XDateTime_currentNSecsSinceEpoch();
+            timeoutMs = (int)(ns / 1000000);
+            if (timeoutMs < 0) timeoutMs = 0;
+            if (timeoutMs > 999999999) timeoutMs = 0;
+        }
+        /* 限制最大阻塞时间，确保时间轮/定时器定期轮询 */
+        if (timeoutMs < 0 || timeoutMs > 20) timeoutMs = 20;
 
-            continue; // 跳过用户输入事件
-        }
-        if ((flags & XEventLoop_ExcludeSocketNotifiers) && ePost->event->type == XEVENT_TYPE_SOCK_ACT) {
-            //XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
-            continue; // 跳过 socket 事件
-        }
-        if ((flags & XEventLoop_X11ExcludeTimers) && ePost->event->type == XEVENT_TYPE_TIMER) {
-            //XCoreApplication_postEvent(ePost->receiver, ePost->event, ePost->priority);
-            continue; // 跳过定时器事件
-        }
-        //if (ePost->event->type == XEVENT_TYPE_META_CALL)
-        //{
-          //  XEventMetaCall* e = ePost->event;
-            //if(e->sem)
-            //XPrintf("VXAbstractEventDispatcher_processEvents XEventMetaCall:%p 出问题了&p\n", ePost->event ,e->sem);
-        //}
-        if (!ePost->receiver||ePost->receiver->is_deleting_children)
+        if (XAbstractEventDispatcher_isMainThread(self))
         {
-            XEvent_delete_base(ePost->event);
-            ++size;
+            /* 主线程：阻塞在 IOCP 完成端口上（I/O 完成事件唤醒） */
+            if (ioRing && XAbstractNetIoRing_isEnabled(ioRing))
+            {
+                XAbstractEventDispatcher_aboutToBlock_signal(self);
+                XAbstractNetIoRing_waitForEvents_base(ioRing, timeoutMs);
+                XAbstractEventDispatcher_awake_signal(self);
+            }
         }
-        XEvent* e = ePost->event;
-        ePost->event = NULL;//处理过的事件置空
-        if(XCoreApplication_sendEvent(ePost->receiver, e))
-           ++size;
+        else
+        {
+            /* 工作线程：阻塞在线程局部信号量上（不触碰共享 IOCP，
+             *    防止窃取主线程的 I/O 完成事件；由 postEvent -> signalWake 唤醒） */
+            if (self->d_ptr->m_threadData)
+            {
+                XAbstractEventDispatcher_aboutToBlock_signal(self);
+                XThreadData_waitForWake(self->d_ptr->m_threadData, timeoutMs);
+                XAbstractEventDispatcher_awake_signal(self);
+            }
+        }
     }
-    //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
-    if(size< XVector_size_base(events))
-        XThreadData_push_front_list(events);
-    //XVector_clear_base(events);
-    XVector_delete_base(events);
 
-    return size;
+    return size > 0;
 }
 
 static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
@@ -421,12 +462,28 @@ static XDuration VXAbstractEventDispatcher_remainingTime(const XAbstractEventDis
 
 static void VXAbstractEventDispatcher_wakeUp(XAbstractEventDispatcher* self)
 {
-    return;
+    if (!self || !self->d_ptr) return;
+    if (XAbstractEventDispatcher_isMainThread(self))
+    {
+        /* 主线程：通过 IOCP 唤醒（主线程在 GetQueuedCompletionStatus 上阻塞） */
+        if (self->d_ptr->m_ioRing)
+            XAbstractNetIoRing_wakeUp_base(self->d_ptr->m_ioRing);
+    }
+    else
+    {
+        /* 工作线程：通过线程局部信号量唤醒（不触碰共享 IOCP） */
+        if (self->d_ptr->m_threadData)
+            XThreadData_signalWake(self->d_ptr->m_threadData);
+    }
 }
 
 static void VXAbstractEventDispatcher_interrupt(XAbstractEventDispatcher* self)
 {
-    (void)self;
+    if (self && self->d_ptr)
+    {
+        self->d_ptr->m_interrupt = true;
+        XAbstractEventDispatcher_wakeUp_base(self);
+    }
 }
 
 static void VXAbstractEventDispatcher_startingUp(XAbstractEventDispatcher* self)
@@ -452,6 +509,58 @@ void global_init()
     if (global_mutex)return;
     global_mutex = XMutex_create(XLock_Spin);
     XFd_init();
+}
+
+/* ================================================================
+ * 工厂函数（平台无关）
+ *
+ * 创建 XAbstractEventDispatcher 实例 + 分配私有数据 + 创建平台 I/O 后端。
+ * 原实现位于 XEventDispatcher_win32.c，现迁移至此处实现平台无关化。
+ * ================================================================ */
+XAbstractEventDispatcher* XEventDispatcher_create(XObject* parent)
+{
+    XAbstractEventDispatcher* self = (XAbstractEventDispatcher*)XMalloc_System(sizeof(XAbstractEventDispatcher));
+    if (!self) return NULL;
+
+    /* 初始化基类（设置 XAbstractEventDispatcher 虚函数表） */
+    XAbstractEventDispatcher_init(self, parent);
+
+    /* 分配私有数据 */
+    XAbstractEventDispatcherPrivate* d = (XAbstractEventDispatcherPrivate*)XCalloc_System(1, sizeof(XAbstractEventDispatcherPrivate));
+    if (!d)
+    {
+        XFree_System(self);
+        return NULL;
+    }
+    XAbstractEventDispatcherPrivate_init(d);
+    self->d_ptr = d;
+
+    /* 设置线程类型 */
+    if (XThread_isMainThread())
+        self->type = XDISPATCHER_THREAD_TYPE_MAIN;
+    else
+        self->type = XDISPATCHER_THREAD_TYPE_WORKER;
+
+    /* 建立反向引用：调度器 -> 所属线程的 XThreadData（工作线程信号量唤醒用） */
+    d->m_threadData = XThreadData_current();
+
+    /* 创建 I/O 事件环（平台钩子） */
+#if XAbstractNetIoRing_ON
+    if (!XAbstractNetIoRing_global())
+    {
+        d->m_ioRing = XAbstractNetIoRing_createPlatform();
+        if (d->m_ioRing)
+            XAbstractNetIoRing_setGlobal(d->m_ioRing);
+    }
+    else
+    {
+        /* 后续线程复用全局 ioRing 实例 */
+        d->m_ioRing = XAbstractNetIoRing_global();
+    }
+#endif
+
+    Set_Class_MemoryFree(self, XFree_System);
+    return self;
 }
 // ===================================================================
 // === 虚函数多态入口（_base 函数）====================================
