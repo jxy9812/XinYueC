@@ -18,7 +18,14 @@ typedef signed     long    s32_t;
 typedef uintptr_t          mem_ptr_t;
 typedef u32_t              sys_prot_t;
 
-#define BYTE_ORDER LITTLE_ENDIAN
+/* 字节序: 统一使用 CXinYueConfig.h 的 IS_BIG_ENDIAN 自动检测
+ * LITTLE_ENDIAN/BIG_ENDIAN 由 lwip/arch.h 在本文件之前定义 */
+#include "CXinYueConfig.h"
+#if IS_BIG_ENDIAN
+  #define BYTE_ORDER BIG_ENDIAN
+#else
+  #define BYTE_ORDER LITTLE_ENDIAN
+#endif
 
 #if defined (__ICCARM__)
 #define PACK_STRUCT_BEGIN

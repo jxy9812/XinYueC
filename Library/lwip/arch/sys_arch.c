@@ -1,20 +1,22 @@
 /**
  * @file sys_arch.c
- * @brief lwIP OS 抽象层 基于 XSync 实现（原 STM32F407+FreeRTOS 移植参考代码）
+ * @brief lwIP OS 抽象层（平台无关，基于 XSync/XThread/XTimeWheelGroup 实现）
  *
- * 本文件将 lwIP 的 OS 抽象层接口（sys_arch_protect 等、信号量、互斥锁、
- * 邮箱、线程等）映射到 XSync 实现
+ * 本文件将 lwIP 的 OS 抽象层接口（信号量、互斥锁、邮箱、线程等）
+ * 映射到 XSync / XThread / XLockFreeQueue / XTimeWheelGroup 实现
  *
- * 对应关系:
- *   FreeRTOS xSemaphoreCreateRecursiveMutex -> XMutex (XLock_Recursive)
- *   FreeRTOS xSemaphoreCreateBinary        -> XSemaphore
- *   FreeRTOS xQueueCreate                  -> XVector + XMutex + XSemaphore(计数型)
- *   FreeRTOS xTaskCreate                   -> XThread
+ * 接口映射:
+ *   sys_mutex   -> XMutex (XLock_Recursive)
+ *   sys_sem     -> XSemaphore
+ *   sys_mbox    -> XLockFreeQueue (无锁队列) + XSemaphore (阻塞通知)
+ *   sys_thread  -> XThread
+ *   sys_timeout -> XTimeWheelGroup (事件驱动，无轮询)
  *
  * 注意事项:
- *   - 所有内存分配走 XMalloc_System / XFree_System
+ *   - 所有内存分配走 XMalloc_System / XMalloc_Hybrid / XFree_System / XFree_Hybrid
  *   - sys_arch_protect 与 sys_lock_tcpip_core 使用同一把递归锁
  *   - 定时器已改为事件驱动 + 时间轮 + 无轮询
+ *   - 全部基于 X 框架抽象层，无任何平台特定代码
  */
 
 #include "lwip/opt.h"
@@ -29,13 +31,15 @@
 #include "XMemory.h"       /* 始终需要：定时器 XMalloc/XFree */
 #if !NO_SYS
 /* 以下头文件仅在 OS 模式（NO_SYS=0）需要：
- *   XSemaphore - 信号量 + 邮箱实现
- *   XThread    - sys_thread_new + sys_arch_msleep
- *   XVarList   - sys_thread_new 参数传递
+ *   XSemaphore     - 信号量（邮箱阻塞等待通知）
+ *   XThread        - sys_thread_new + sys_arch_msleep
+ *   XVarList       - sys_thread_new 参数传递
+ *   XLockFreeQueue - 无锁队列（邮箱消息存储，替代互斥锁+环形缓冲）
  * 裸机模式（NO_SYS=1）不编译，减少代码体积 */
 #include "XSemaphore.h"
 #include "XThread.h"
 #include "XVarList.h"
+#include "XLockFreeQueue.h"
 #endif /* !NO_SYS */
 #include <string.h>
 
@@ -372,8 +376,7 @@ u32_t sys_timeouts_sleeptime(void) {
 /* ================================================================
  * 互斥锁
  *
- * 递归互斥锁,由 FreeRTOS xSemaphoreCreateRecursiveMutex 替代
- * 确保任意线程可重入保护,无死锁
+ * 递归互斥锁，确保任意线程可重入保护，无死锁
  * ================================================================ */
 
 err_t sys_mutex_new(sys_mutex_t* mutex)
@@ -404,8 +407,7 @@ void sys_mutex_free(sys_mutex_t* mutex)
 /* ================================================================
  * 信号量
  *
- * 二值信号量用于事件通知,由 FreeRTOS xSemaphoreCreateBinary 替代
- * 计数型用于资源池管理
+ * 信号量用事件通知与资源同步
  * ================================================================ */
 
 err_t sys_sem_new(sys_sem_t* sem, u8_t initial_count)
@@ -448,23 +450,17 @@ void sys_sem_free(sys_sem_t* sem)
 /* ================================================================
  * 邮箱(消息队列)
  *
- * XSync 无原生邮箱,用互斥锁 + 信号量 + 环形缓冲实现
+ * 使用 XLockFreeQueue 无锁队列存储消息，原子操作保证线程安全
+ * 信号量仅用于阻塞等待通知（非锁）
  * 特性:
- *   - 固定大小元素队列(void*)
- *   - 线程安全入队出队
+ *   - 无锁入队/出队（原子 CAS，零互斥锁开销）
  *   - 支持超时等待获取
- *   - 替代 FreeRTOS xQueueCreate
  * ================================================================ */
 
-/* 邮箱实现: 环形缓冲 + 互斥锁 + 信号量 */
+/* 邮箱实现: 无锁队列 + 信号量（仅阻塞通知） */
 typedef struct {
-    XMutex*   mutex;          /* 互斥锁:保护队列操作 */
-    XSemaphore* sem;           /* 信号量:通知有消息到达 */
-    void**    msgBuf;          /* 消息缓冲区数组 */
-    uint32_t  head;            /* 队头索引(读取) */
-    uint32_t  tail;            /* 队尾索引(写入) */
-    uint32_t  count;           /* 当前消息数量 */
-    uint32_t  maxSize;         /* 最大容量 */
+    XLockFreeQueue* queue;  /* 无锁队列：存储 void* 消息，原子操作保证线程安全 */
+    XSemaphore* sem;        /* 信号量：通知有消息到达（仅用于阻塞 fetch） */
 } mbox_impl_t;
 
 err_t sys_mbox_new(sys_mbox_t* mbox, int size)
@@ -472,27 +468,16 @@ err_t sys_mbox_new(sys_mbox_t* mbox, int size)
     if (!mbox) return ERR_ARG;
     if (size <= 0) size = 128;  /* TCPIP_MBOX_SIZE=0 means use default size */
 
-    /* 用 XMalloc_System 分配,因 lwipopts.h 中 MEM_CUSTOM_MALLOC 已开启 */
     mbox_impl_t* impl = (mbox_impl_t*)XMalloc_System(sizeof(mbox_impl_t));
     if (!impl) return ERR_MEM;
-
     memset(impl, 0, sizeof(*impl));
-    impl->maxSize = (uint32_t)size;
 
-    impl->msgBuf = (void**)XMalloc_System(sizeof(void*) * impl->maxSize);
-    if (!impl->msgBuf) {
-        XFree_System(impl);
-        return ERR_MEM;
-    }
+    impl->queue = XLockFreeQueue_create(sizeof(void*), (size_t)size);
+    impl->sem = XSemaphore_create(0, (int32_t)size);
 
-    impl->mutex = XMutex_create(XLock_NonRecursive);
-    impl->sem = XSemaphore_create(0, (int32_t)impl->maxSize);
-
-    if (!impl->mutex || !impl->sem) {
-        /* 创建失败,清理已分配资源 */
-        if (impl->mutex) XMutex_delete(impl->mutex);
+    if (!impl->queue || !impl->sem) {
+        if (impl->queue) XLockFreeQueue_delete_base(impl->queue);
         if (impl->sem) XSemaphore_delete(impl->sem);
-        XFree_System(impl->msgBuf);
         XFree_System(impl);
         return ERR_MEM;
     }
@@ -506,18 +491,9 @@ void sys_mbox_post(sys_mbox_t* mbox, void* msg)
     if (!mbox || !mbox->mbx) return;
     mbox_impl_t* impl = (mbox_impl_t*)mbox->mbx;
 
-    XMutex_lock(impl->mutex);
-    if (impl->count < impl->maxSize) {
-        /* 队列未满,入队 */
-        impl->msgBuf[impl->tail] = msg;
-        impl->tail = (impl->tail + 1) % impl->maxSize;
-        impl->count++;
-        XMutex_unlock(impl->mutex);
-        /* 通知消费者,有新消息 */
+    /* 无锁入队，队列满时丢弃（与原行为一致） */
+    if (XLockFreeQueue_push_base(impl->queue, &msg)) {
         XSemaphore_release(impl->sem, 1);
-    } else {
-        XMutex_unlock(impl->mutex);
-        /* 队列满,丢弃(与 FreeRTOS 行为:post 不阻塞) */
     }
 }
 
@@ -526,22 +502,16 @@ err_t sys_mbox_trypost(sys_mbox_t* mbox, void* msg)
     if (!mbox || !mbox->mbx) return ERR_ARG;
     mbox_impl_t* impl = (mbox_impl_t*)mbox->mbx;
 
-    XMutex_lock(impl->mutex);
-    if (impl->count < impl->maxSize) {
-        impl->msgBuf[impl->tail] = msg;
-        impl->tail = (impl->tail + 1) % impl->maxSize;
-        impl->count++;
-        XMutex_unlock(impl->mutex);
+    if (XLockFreeQueue_push_base(impl->queue, &msg)) {
         XSemaphore_release(impl->sem, 1);
         return ERR_OK;
     }
-    XMutex_unlock(impl->mutex);
     return ERR_MEM;
 }
 
 err_t sys_mbox_trypost_fromisr(sys_mbox_t* mbox, void* msg)
 {
-    /* Windows 无 ISR 概念,直接调用 trypost */
+    /* 非 RTOS 平台无 ISR 概念，直接调用 trypost */
     return sys_mbox_trypost(mbox, msg);
 }
 
@@ -550,7 +520,7 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t* mbox, void** msg, u32_t timeout_ms)
     if (!mbox || !mbox->mbx || !msg) return SYS_ARCH_TIMEOUT;
     mbox_impl_t* impl = (mbox_impl_t*)mbox->mbx;
 
-    /* 永久等待(无超时) */
+    /* 等待信号量（阻塞或超时） */
     if (!timeout_ms) {
         XSemaphore_acquire(impl->sem, 1);
     } else {
@@ -560,17 +530,10 @@ u32_t sys_arch_mbox_fetch(sys_mbox_t* mbox, void** msg, u32_t timeout_ms)
         }
     }
 
-    /* 取出消息 */
-    XMutex_lock(impl->mutex);
-    if (impl->count > 0) {
-        *msg = impl->msgBuf[impl->head];
-        impl->head = (impl->head + 1) % impl->maxSize;
-        impl->count--;
-    } else {
-        *msg = NULL;
-    }
-    XMutex_unlock(impl->mutex);
-
+    /* 无锁出队 */
+    void* outMsg = NULL;
+    XLockFreeQueue_receive_base(impl->queue, &outMsg);
+    *msg = outMsg;
     return 1;
 }
 
@@ -585,16 +548,9 @@ u32_t sys_arch_mbox_tryfetch(sys_mbox_t* mbox, void** msg)
         return SYS_MBOX_EMPTY;
     }
 
-    XMutex_lock(impl->mutex);
-    if (impl->count > 0) {
-        *msg = impl->msgBuf[impl->head];
-        impl->head = (impl->head + 1) % impl->maxSize;
-        impl->count--;
-    } else {
-        *msg = NULL;
-    }
-    XMutex_unlock(impl->mutex);
-
+    void* outMsg = NULL;
+    XLockFreeQueue_receive_base(impl->queue, &outMsg);
+    *msg = outMsg;
     return 0;
 }
 
@@ -603,10 +559,8 @@ void sys_mbox_free(sys_mbox_t* mbox)
     if (!mbox || !mbox->mbx) return;
     mbox_impl_t* impl = (mbox_impl_t*)mbox->mbx;
 
-    /* 释放所有资源 */
-    XMutex_delete(impl->mutex);
+    XLockFreeQueue_delete_base(impl->queue);
     XSemaphore_delete(impl->sem);
-    XFree_System(impl->msgBuf);   /* 用 XFree_System 与 XMalloc_System 配对 */
     XFree_System(impl);
     mbox->mbx = NULL;
 }
@@ -614,7 +568,7 @@ void sys_mbox_free(sys_mbox_t* mbox)
 /* ================================================================
  * 线程
  *
- * 用 XThread 创建线程,替代 FreeRTOS xTaskCreate
+ * 用 XThread 创建线程（平台无关）
  * 需要把 lwIP 线程函数包装成 XThread 可调用形式
  * ================================================================ */
 

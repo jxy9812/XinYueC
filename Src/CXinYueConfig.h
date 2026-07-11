@@ -4,7 +4,23 @@
 extern "C" {
 #endif
 #include"XTimerConfig.h"
-#define IS_BIG_ENDIAN                   0 //当前是大端吗     默认是小端
+/* ==================== 字节序(大小端)自动检测 ==================== */
+/* 编译器预定义宏自动检测字节序，无需手动配置
+ * GCC/Clang: __BYTE_ORDER__ + __ORDER_BIG_ENDIAN__
+ * IAR/ARM:   __BIG_ENDIAN / __ARM_BIG_ENDIAN
+ * MSVC:      x86/x64/ARM 均为小端序
+ * 若需手动指定，可在编译命令行覆盖: -DIS_BIG_ENDIAN=1 */
+#ifndef IS_BIG_ENDIAN
+  #if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__)
+    #define IS_BIG_ENDIAN (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+  #elif defined(__BIG_ENDIAN) || defined(__ARM_BIG_ENDIAN)
+    #define IS_BIG_ENDIAN 1
+  #elif defined(_MSC_VER)
+    #define IS_BIG_ENDIAN 0
+  #else
+    #define IS_BIG_ENDIAN 0
+  #endif
+#endif
 //数据结构配置文件
 #define VTABLE_ISSTACK					1//虚函数表定义在栈上
 #define SHOWCONTAINERSIZE				0//显示容器大小
