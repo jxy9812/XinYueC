@@ -21,7 +21,6 @@ extern "C" {
  */
 typedef struct XSharedData {
     XAtomic_int32_t refCount;  ///< 原子引用计数（初始为1）
-    //void* data;                ///< 指向实际数据区
     char data[];
 } XSharedData;
 

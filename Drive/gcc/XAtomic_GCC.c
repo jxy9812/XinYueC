@@ -181,7 +181,28 @@ DEFINE_CAS_FUNC(uint32_t, uint32_t)
 DEFINE_CAS_FUNC(int64_t, int64_t)
 DEFINE_CAS_FUNC(uint64_t, uint64_t)
 DEFINE_CAS_FUNC(size_t, size_t)
-DEFINE_CAS_FUNC(ptr, void*)
+DEFINE_CAS_FUNC(uintptr_t, uintptr_t)
+
+// 头文件中声明的不带 _t 后缀的 CAS 函数（类型名带 _t，但函数名不带）
+bool XAtomic_compare_exchange_strong_int32(XAtomic_int32_t* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+{
+    return __atomic_compare_exchange_n(&var->value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+}
+
+bool XAtomic_compare_exchange_strong_uint32(XAtomic_uint32_t* var, uint32_t* expected, uint32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+{
+    return __atomic_compare_exchange_n(&var->value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+}
+
+bool XAtomic_compare_exchange_strong_int64(XAtomic_int64_t* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+{
+    return __atomic_compare_exchange_n(&var->value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+}
+
+bool XAtomic_compare_exchange_strong_uint64(XAtomic_uint64_t* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+{
+    return __atomic_compare_exchange_n(&var->value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+}
 
 // ========== 加法/减法操作 (Fetch Add/Sub) ==========
 // Fetch Add
@@ -234,6 +255,16 @@ uint64_t XAtomic_fetch_sub_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic
 size_t XAtomic_fetch_sub_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
 {
     return __atomic_fetch_sub(&var->value, value, xatomic_to_gcc_memory_order(order));
+}
+
+uintptr_t XAtomic_fetch_add_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+{
+    return (uintptr_t)XAtomic_fetch_add_size_t((XAtomic_size_t*)var, (size_t)value, order);
+}
+
+uintptr_t XAtomic_fetch_sub_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+{
+    return (uintptr_t)XAtomic_fetch_sub_size_t((XAtomic_size_t*)var, (size_t)value, order);
 }
 
 // ========== 内存屏障 API ==========

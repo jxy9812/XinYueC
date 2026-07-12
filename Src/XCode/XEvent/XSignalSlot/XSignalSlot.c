@@ -64,6 +64,8 @@ void XSignalSlot_deinit(XSignalSlot* manager)
 	for_each_iterator(manager->bindSignalList, XVector, it)
 	{
 		XConnection* conn = (*(XConnection**)XVector_iterator_data(&it));
+		if(conn==NULL)
+			continue;
 		XSignal* signalObj = conn->signal;
 		if (signalObj == NULL)
 			continue;

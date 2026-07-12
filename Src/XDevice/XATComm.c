@@ -204,7 +204,8 @@ static void VXATComm_timerEvent(XObject* self, XEventTimer* event)
 
 void* XATComm_response_signal(XATComm* comm, const char* data)
 {
-    XVarList* list = XVarList_Create(XVar(char*, (char*)data));
+    char* data_ptr = (char*)data;
+    XVarList* list = XVarList_Create(XVar(char*, data_ptr));
     XEmitSignal(comm, XATComm_response_signal, list, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
@@ -215,7 +216,8 @@ void* XATComm_ok_signal(XATComm* comm)
 
 void* XATComm_error_signal(XATComm* comm, const char* errorMsg)
 {
-    XVarList* list = XVarList_Create(XVar(char*, (char*)errorMsg));
+    char* msg_ptr = (char*)errorMsg;
+    XVarList* list = XVarList_Create(XVar(char*, msg_ptr));
     XEmitSignal(comm, XATComm_error_signal, list, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 

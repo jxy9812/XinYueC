@@ -80,4 +80,29 @@ XDateTime XDateTime_currentDateTime(void) {
 
     return XDateTime_create_datetime(date, time);
 }
+
+int64_t XDateTime_currentMSecsSinceEpoch(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+        return 0;
+    }
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+}
+
+int64_t XDateTime_currentSecsSinceEpoch(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+        return 0;
+    }
+    return (int64_t)ts.tv_sec;
+}
+
+int64_t XDateTime_currentNSecsSinceEpoch(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+        return 0;
+    }
+    return (int64_t)ts.tv_sec * 1000000000 + (int64_t)ts.tv_nsec;
+}
+
 #endif

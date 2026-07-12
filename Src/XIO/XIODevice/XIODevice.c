@@ -438,7 +438,7 @@ void XIODevice_setErrorString(XIODevice* self, const char* str)
 // —————— 虚函数（_base） ——————
 // 这部分保持不变，因为它只是调用虚函数表
 
-bool XIODevice_atEnd_base(XIODevice* io)
+bool XIODevice_atEnd_base(const XIODevice* io)
 {
 	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
 		return false;
@@ -587,4 +587,8 @@ void* XIODevice_readyRead_signal(XIODevice* self)
 void* XIODevice_bytesWritten_signal(XIODevice* self, int64_t bytes)
 {
 	XEmitSignal(self, XIODevice_bytesWritten_signal, XVarList_Create(XVar(int64_t, bytes)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void XIODevice_poll_base(XIODevice* self) {
+	(void)self;
 }

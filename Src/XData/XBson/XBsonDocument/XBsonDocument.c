@@ -5,6 +5,7 @@
 #include "XString.h"
 #include "XStack.h"
 #include <string.h>
+XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XString** key_out) ;
 bool XBsonValue_serialize(const XBsonValue* value, const char* key, XByteArray* output);
 XBsonDocument* XBsonDocument_create() {
     XBsonDocument* doc = (XBsonDocument*)XMalloc_System(sizeof(XBsonDocument));

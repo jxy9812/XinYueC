@@ -6,7 +6,12 @@
 #include"XPrintf.h"
 #include"XThread.h"
 #include <assert.h>
+#ifdef _WIN32
 #include <windows.h> // for Sleep
+#else
+#include <unistd.h> // for usleep
+#define Sleep(x) usleep((x) * 1000)
+#endif
 // 全局变量用于测试回调
 static int g_callback_count = 0;
 static int g_single_shot_fired = 0;

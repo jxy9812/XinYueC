@@ -1,6 +1,7 @@
 #include "XFileDescriptor.h"
 #include "XFixedPool.h"
 #include <string.h>
+#include <stddef.h>
 
 /* ============================================================================
  * XFixedPool 状态

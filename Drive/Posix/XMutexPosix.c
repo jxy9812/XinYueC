@@ -19,7 +19,7 @@ PlatformPrivate* XMutex_getPlatformPrivate(XMutex* mutex);
 
 pthread_mutex_t* XMutex_get_pthread_mutex_t(XMutex* mutex)
 {
-    if (!mutex || mutex->type & XMutex_Spin)return NULL;
+    if (!mutex || XMutex_type(mutex) & XLock_Spin)return NULL;
     PlatformPrivate* p = XMutex_getPlatformPrivate(mutex);
     return p ? &p->mutex : NULL;
 }
@@ -39,7 +39,7 @@ void XMutex_platform_init(PlatformPrivate* p)
 
     // 初始化为非递归（快速）互斥锁
     // 因为递归逻辑已经在 XMutex.c 中处理了
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_NORMAL);
+    pthread_mutexattr_settype(&attr, 0);  /* PTHREAD_MUTEX_DEFAULT = PTHREAD_MUTEX_NORMAL = 0 */
 
     pthread_mutex_init(&p->mutex, &attr);
     pthread_mutexattr_destroy(&attr);

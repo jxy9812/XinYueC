@@ -206,7 +206,7 @@ int XThread_exec(XThread* thread)
 
 void XThread_run_base(XThread* thread)
 {
-    return XClassGetVirtualFunc(thread, EXThread_Run, bool(*)(XThread*))(thread);
+    XClassGetVirtualFunc(thread, EXThread_Run, void(*)(XThread*))(thread);
 }
 //虚函数默认实现,供平台实现文件调用
 void VXThread_run(XThread* thread)

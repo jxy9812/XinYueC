@@ -1,17 +1,15 @@
-﻿#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
-// 在包含任何头文件之前定义 POSIX 特性宏
-#define _POSIX_C_SOURCE 200809L  // 或更高版本，确保包含 CLOCK_MONOTONIC 定义
-#define SCHED_IDLE SCHED_OTHER
-#if defined(__APPLE__) || defined(__BSD__)
-#define _BSD_SOURCE  // 部分 BSD 系统（如 macOS）需要此宏
-#endif
+﻿/**
+ * @file XThreadPosix.c
+ * @brief XThread POSIX 平台实现（Linux/macOS/BSD）
+ */
+
+#if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
+
+#define _POSIX_C_SOURCE 200809L
 #include "XThread.h"
-#include "XEvent.h"
-#include "XHashSet.h"
-#include "XMemory.h"
-#include "XObject.h"
+#include "XThreadData.h"
 #include "XEventLoop.h"
-#include "XEventDispatcher.h"
+#include "XMemory.h"
 #include "CXinYueConfig.h"
 #include <pthread.h>
 #include <sched.h>
@@ -19,248 +17,135 @@
 #include <unistd.h>
 #include <time.h>
 #include <stdio.h>
-void XThread_mapInsert(XThread* Object);
-void XThread_mapRemove(XThread* Object);
-// 前向声明虚函数
-static bool VXThread_start(XThread* Object);
-static bool VXThread_wait(XThread* Object, unsigned long time);
-static bool VXThread_isFinished(const XThread* Object);
-static bool VXThread_isRunning(const XThread* Object);
-static int VXThread_loopLevel(const XThread* Object);
-static XThread_Priority VXThread_priority(const XThread* Object);
-static void VXThread_requestInterruption(XThread* Object);
-static void VXThread_setPriority(XThread* Object, XThread_Priority priority);
-static void VXThread_setStackSize(XThread* Object, uint32_t stackSize);
-static void VXThread_deinit(XThread* Object);
-static bool VXThread_terminate(XThread* Object);
-// 虚函数表初始化
-XVtable* XThread_class_init() {
+#include <string.h>
+void VXThread_run(XThread* thread);
+/* =========================================================================
+ * 虚函数表
+ * ========================================================================= */
+static void VXThread_deinit(XThread* thread);
+
+XVtable* XThread_class_init()
+{
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XThread))
+    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XThread))
 #else
-        XVTABLE_HEAP_INIT_DEFAULT
+    XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_XCLASS(XClass);
-
+   //继承类
+    XVTABLE_INHERIT_XCLASS(XObject);
     void* table[] = {
-        VXThread_start, VXThread_wait,
-        VXThread_isFinished,
-        VXThread_isRunning, VXThread_loopLevel, VXThread_priority,VXThread_terminate,
-        VXThread_requestInterruption,
-        VXThread_setPriority, VXThread_setStackSize
+        VXThread_run
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXThread_deinit);
-
 #if SHOWCONTAINERSIZE
     printf("XThread(Posix) size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
     return XVTABLE_DEFAULT;
 }
 
-// 线程函数包装器
-static void* ThreadFunction(void* arg) 
+/* =========================================================================
+ * 线程函数包装器
+ * ========================================================================= */
+static void* ThreadFunction(void* arg)
 {
-    XThread* Object = (XThread*)arg;
-    XThread_mapInsert(Object);
-    // 执行用户线程函数
-    if (Object->m_start_routine) {
-        Object->m_start_routine(Object->m_varList);
-    }
-    // 运行事件循环
-    if (Object->loopLevel > 0 && Object->m_eventLoop) {
-        XEventLoop_exec(Object->m_eventLoop);
-    }
-    // 处理事件调度器逻辑
-    // if (Object->m_eventLoop && Object->m_eventLoop->m_dispatcher) {
-    //     XEventDispatcher* dispatcher = Object->m_eventLoop->m_dispatcher;
-    //     if (dispatcher->m_Objects && !XSetBase_isEmpty_base(dispatcher->m_Objects)) {
-    //         while (!Object->m_interruptionRequested) {
-    //             XEventDispatcherThread_handler_base(dispatcher);
-    //         }
-    //     }
-    // }
-    // 标记线程结束
-    Object->m_finished = true;
-    XThread_mapRemove(Object);
+    XThread* thread = (XThread*)arg;
+    XThread_run_base(thread);
     return NULL;
 }
 
-// 启动线程
-static bool VXThread_start(XThread* Object) {
-    if (Object == NULL || Object->m_handle != 0) {
-        XDEBUG_PRINTF("Thread already started or invalid object");
+/* =========================================================================
+ * 平台 API 实现
+ * ========================================================================= */
+bool XThread_start(XThread* thread)
+{
+    if (thread->m_handle != 0) {
         return false;
     }
 
-    pthread_t thread;
+    pthread_t pthread;
     pthread_attr_t attr;
     int ret = pthread_attr_init(&attr);
-    if (ret != 0) {
-        XDEBUG_PRINTF("pthread_attr_init failed: %d", ret);
-        return false;
-    }
+    if (ret != 0) return false;
 
-    // 设置栈大小
-    if (Object->m_stackSize > 0) {
-        ret = pthread_attr_setstacksize(&attr, Object->m_stackSize);
+    if (thread->m_stackSize >= PTHREAD_STACK_MIN) {
+        ret = pthread_attr_setstacksize(&attr, thread->m_stackSize);
         if (ret != 0) {
-            XDEBUG_PRINTF("pthread_attr_setstacksize failed: %d", ret);
             pthread_attr_destroy(&attr);
             return false;
         }
     }
 
-    // 创建线程
-    ret = pthread_create(&thread, &attr, ThreadFunction, Object);
+    ret = pthread_create(&pthread, &attr, ThreadFunction, thread);
     pthread_attr_destroy(&attr);
 
-    if (ret != 0) {
-        XDEBUG_PRINTF("pthread_create failed: %d", ret);
-        return false;
-    }
+    if (ret != 0) return false;
 
-    Object->m_handle = (XHandle)thread;
-    XThread_setPriority(Object, XThread_priority(Object));
+    thread->m_handle = (XHandle)pthread;
+    XThread_setPriority(thread, XThread_priority(thread));
     return true;
 }
 
-// 等待线程结束（支持超时）
-static bool VXThread_wait(XThread* Object, unsigned long time) {
-    if (Object == NULL || Object->m_handle == 0) {
-        XDEBUG_PRINTF("Invalid thread object or handle");
-        return false;
-    }
+bool XThread_wait(XThread* thread, uint32_t time)
+{
+    if (thread->m_handle == 0) return false;
 
-    pthread_t thread = (pthread_t)Object->m_handle;
+    pthread_t pthread = (pthread_t)thread->m_handle;
     if (time == UINT32_MAX) {
-        // 无限等待
-        int ret = pthread_join(thread, NULL);
-        if (ret != 0) {
-            XDEBUG_PRINTF("pthread_join failed: %d", ret);
-            return false;
-        }
-        return true;
+        return pthread_join(pthread, NULL) == 0;
     }
-    else {
-        // 超时等待模拟
-        const struct timespec start = { 0 };
-        if (clock_gettime(CLOCK_MONOTONIC, &start) != 0) {
-            XDEBUG_PRINTF("clock_gettime failed: %d", errno);
-            return false;
-        }
-        const unsigned long timeout_ns = time * 1000000;
 
-        while (!Object->m_finished) {
-            struct timespec now = { 0 };
-            if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
-                XDEBUG_PRINTF("clock_gettime failed: %d", errno);
-                return false;
-            }
-            unsigned long elapsed = (now.tv_sec - start.tv_sec) * 1000000000 +
-                (now.tv_nsec - start.tv_nsec);
-            if (elapsed >= timeout_ns) {
-                XDEBUG_PRINTF("Thread wait timed out");
-                return false;
-            }
-            usleep(1000); // 1ms轮询
-        }
-        pthread_join(thread, NULL);
-        return true;
-    }
-}
+    struct timespec start;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    unsigned long timeout_ns = (unsigned long)time * 1000000;
 
-// 检查线程是否已结束
-static bool VXThread_isFinished(const XThread* Object) {
-    if (Object == NULL || Object->m_handle == 0) {
-        return false;
+    while (!thread->m_finished) {
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        unsigned long elapsed = (unsigned long)(now.tv_sec - start.tv_sec) * 1000000000UL +
+                                (unsigned long)(now.tv_nsec - start.tv_nsec);
+        if (elapsed >= timeout_ns) return false;
+        usleep(1000);
     }
-    return Object->m_finished;
-}
-
-// 检查线程是否正在运行
-static bool VXThread_isRunning(const XThread* Object) {
-    if (Object == NULL || Object->m_handle == 0) {
-        return false;
-    }
-    return !Object->m_finished;
-}
-
-// 获取循环级别
-static int VXThread_loopLevel(const XThread* Object) {
-    return Object ? Object->loopLevel : 0;
-}
-
-// 获取优先级
-static XThread_Priority VXThread_priority(const XThread* Object) {
-    return Object ? Object->m_priority : XThread_NormalPriority;
-}
-static bool VXThread_terminate(XThread* Object) {
-    if (Object == NULL || Object->m_handle == 0) {
-        XDEBUG_PRINTF("Invalid thread object or handle (NULL or uninitialized)");
-        return false;
-    }
-    pthread_t thread = (pthread_t)Object->m_handle;
-    // 尝试取消线程
-    int ret = pthread_cancel(thread);
-    if (ret != 0) {
-        XDEBUG_PRINTF("pthread_cancel failed with error: % d", ret);
-        return false;
-    }
-    // 等待线程终止并回收资源
-    void* thread_result;
-    ret = pthread_join(thread, &thread_result);
-    if (ret != 0) {
-        XDEBUG_PRINTF("pthread_join failed with error: % d", ret);
-        return false;
-    }
-    // 验证线程终止状态
-    if (thread_result != PTHREAD_CANCELED) {
-        XDEBUG_PRINTF("Thread did not terminate via cancellation");
-    }
-    // 更新线程状态
-    Object->m_finished = true;
-    Object->m_handle = 0; // 重置句柄，避免重复操作
-    Object->m_interruptionRequested = false;
+    pthread_join(pthread, NULL);
     return true;
 }
 
-// 请求中断线程
-static void VXThread_requestInterruption(XThread* Object) {
-    if (Object) {
-        Object->m_interruptionRequested = true;
-        // 唤醒事件循环
-        if (Object->m_eventLoop) {
-            XEventLoop_wakeUp(Object->m_eventLoop);
-        }
-    }
+bool XThread_terminate(XThread* thread)
+{
+    if (!thread || thread->m_handle == 0) return false;
+
+    pthread_t pthread = (pthread_t)thread->m_handle;
+    int ret = pthread_cancel(pthread);
+    if (ret != 0) return false;
+
+    void* result;
+    ret = pthread_join(pthread, &result);
+    if (ret != 0) return false;
+
+    thread->m_finished = true;
+    thread->m_handle = 0;
+    thread->m_interruptionRequested = false;
+    return true;
 }
 
-// 设置线程优先级
-static void VXThread_setPriority(XThread* Object, XThread_Priority priority) {
-    if (Object == NULL) {
-        return;
-    }
-
-    Object->m_priority = priority;
-    if (Object->m_handle == 0) {
-        return;
-    }
+void XThread_setPriority(XThread* thread, XThread_Priority priority)
+{
+    if (!thread) return;
+    thread->m_priority = priority;
+    if (thread->m_handle == 0) return;
 
     int policy;
-    struct sched_param param = { 0 };
-    pthread_t thread = (pthread_t)Object->m_handle;
+    struct sched_param param;
+    memset(&param, 0, sizeof(param));
+    pthread_t pthread = (pthread_t)thread->m_handle;
 
-    if (pthread_getschedparam(thread, &policy, &param) != 0) {
-        XDEBUG_PRINTF("pthread_getschedparam failed: %d", errno);
-        return;
-    }
+    if (pthread_getschedparam(pthread, &policy, &param) != 0) return;
 
-    // 优先级映射
     switch (priority) {
     case XThread_IdlePriority:
-        policy = SCHED_IDLE;
+        policy = SCHED_OTHER;
         param.sched_priority = 0;
         break;
     case XThread_LowestPriority:
@@ -298,56 +183,84 @@ static void VXThread_setPriority(XThread* Object, XThread_Priority priority) {
         break;
     }
 
-    if (pthread_setschedparam(thread, policy, &param) != 0) {
-        XDEBUG_PRINTF("Failed to set thread priority: %d", errno);
+    pthread_setschedparam(pthread, policy, &param);
+}
+
+static void VXThread_deinit(XThread* thread)
+{
+    if (!thread) return;
+
+    if (XThread_isRunning(thread)) {
+        XThread_requestInterruption(thread);
+        XThread_wait(thread, UINT32_MAX);
+    }
+
+    if (thread->m_loop) {
+        XEventLoop_deleteLater(thread->m_loop);
+        thread->m_loop = NULL;
+    }
+
+    thread->m_handle = 0;
+    thread->m_finished = false;
+    thread->m_interruptionRequested = false;
+    XThreadData* data = thread->m_data;
+    XClass_Deinit_Parent(XObject, thread);
+    if(data)
+    {
+        XThreadData_delete(data);
+        thread->m_data = NULL;
     }
 }
 
-// 设置栈大小
-static void VXThread_setStackSize(XThread* Object, uint32_t stackSize) {
-    if (Object) {
-        Object->m_stackSize = stackSize;
-    }
+bool XThread_isRunning(const XThread* thread)
+{
+    return thread && thread->m_handle != 0 && !thread->m_finished;
 }
 
-// 销毁线程对象
-static void VXThread_deinit(XThread* Object) {
-    if (Object == NULL) return;
-
-    if (XThread_isRunning(Object)) {
-        XThread_requestInterruption(Object);
-        XThread_wait(Object, UINT32_MAX);
-    }
-
-    if (Object->m_eventLoop) {
-        XEventLoop_deleteLater(Object->m_eventLoop);
-        Object->m_eventLoop = NULL;
-    }
-
-    XThread_mapRemove(Object);
-    Object->m_handle = 0;
-    Object->m_finished = false;
-    Object->m_interruptionRequested = false;
+XThread_Priority XThread_priority(const XThread* thread)
+{
+    return thread ? thread->m_priority : XThread_NormalPriority;
 }
 
-// 获取当前线程ID
-XHandle XThread_currentThreadId() {
+void XThread_setStackSize(XThread* thread, uint32_t stackSize)
+{
+    if (thread) thread->m_stackSize = stackSize;
+}
+
+uint32_t XThread_stackSize(const XThread* thread)
+{
+    return thread ? thread->m_stackSize : 0;
+}
+
+XHandle XThread_currentThreadId(void)
+{
     return (XHandle)pthread_self();
 }
-// 创建 XThread 对象
-XThread* XThread_create_func(void (*start_routine)(void*), void* arg)
+
+void XThread_msleep(uint32_t msecs)
 {
-    XThread* Object = (XThread*)XMalloc_System(sizeof(XThread));
-    if (Object == NULL) {
-        return NULL;
-    }
-    XThread_init(Object);
-    Set_Class_MemoryFree(Object);
-    Object->m_start_routine = start_routine;
-    Object->m_varList = arg;
-
-    XThread_currentThread();//初始化
-
-    return Object;
+    usleep(msecs * 1000);
 }
-#endif
+
+void XThread_sleep(uint32_t secs)
+{
+    sleep(secs);
+}
+
+void XThread_usleep(uint32_t usecs)
+{
+    usleep(usecs);
+}
+
+void XThread_yieldCurrentThread(void)
+{
+    sched_yield();
+}
+
+int XThread_idealThreadCount(void)
+{
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return (n > 0) ? (int)n : 1;
+}
+
+#endif /* POSIX */

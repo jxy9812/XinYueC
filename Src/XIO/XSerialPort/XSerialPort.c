@@ -216,7 +216,7 @@ const char* XSerialPort_portName(const XSerialPort* port) {
 
 
 
-int32_t XSerialPort_baudRate(const XSerialPort* port, XSerialPort_Direction directions) {
+uint32_t XSerialPort_baudRate(const XSerialPort* port, XSerialPort_Direction directions) {
 	(void)directions;
 	return port ? port->baudRate : 0;
 }

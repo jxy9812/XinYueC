@@ -43,8 +43,8 @@ extern "C" {
 
 /* 取消注释以启用对应模式 */
 
-//#define XNETWORK_USE_PLATFORM_API     /* 平台API模式 */
-#define XNETWORK_USE_LWIP           /* lwIP模式 */
+#define XNETWORK_USE_PLATFORM_API     /* 平台API模式 */
+//#define XNETWORK_USE_LWIP           /* lwIP模式 */
 
 /* ========================================================================== */
 /*                        lwIP模式配置                                         */

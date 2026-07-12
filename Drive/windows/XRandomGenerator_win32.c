@@ -6,6 +6,7 @@
  * 对应Qt在Windows上使用 RtlGenRandom 或 BCrypt
  */
 
+#ifdef _WIN32
 #include "XRandomGenerator.h"
 #include <windows.h>
 
@@ -74,3 +75,4 @@ bool XRandomGenerator_platformFillSecure(void* buffer, size_t size) {
 }
 
 #endif /* USE_BCRYPT */
+#endif /* _WIN32 */

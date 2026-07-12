@@ -71,3 +71,7 @@ void XPLCTask_finish_base(XPLCTask* task)
 		return;
 	XClassGetVirtualFunc(task, EXPLCTask_Finish, void(*)(XPLCTask*))(task);
 }
+
+void XPLCTask_poll_base(XPLCTask* task) {
+	(void)task;
+}

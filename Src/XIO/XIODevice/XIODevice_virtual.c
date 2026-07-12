@@ -142,7 +142,7 @@ bool VXIODevice_seek(XIODevice* self, int64_t pos)
 	return false;
 }
 
-bool VXIODevice_atEnd(XIODevice* self)
+bool VXIODevice_atEnd(const XIODevice* self)
 {
 	if (!self) return true;
 	if (!XIODevice_isOpen(self)) return true;

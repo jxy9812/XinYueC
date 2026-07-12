@@ -1,25 +1,44 @@
-﻿#ifdef __linux__ (defined(__unix__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__sun))
-// XSerialPortPosix.c
-#include "XSerialPort_p.h"
+﻿/**
+ * @file XSerialPortPosix.c
+ * @brief XSerialPort POSIX 平台实现（Linux/macOS/BSD）
+ * 保持与 Windows 平台一致的 API 签名
+ */
+
+#if defined(__linux__) || defined(__unix__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__sun)
+
+#include "XSerialPort.h"
+#include "XRingBuffer.h"
 #include "XMemory.h"
+#include "XMutex.h"
+#include "XWaitCondition.h"
+#include "XSocketNotifier.h"
+#include "XCoreApplication.h"
+#include "XAbstractEventDispatcher.h"
+#include "XIODevicePrivate.h"
+#include "XIODevice_Protected.h"
+#include "XFileDescriptor.h"
 
 #include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <errno.h>
 #include <string.h>
 #include <poll.h>
+#ifdef __linux__
+#include <linux/serial.h>
+#endif
 
-// ========== 平台兼容性宏 ==========
+/* =========================================================================
+ * 平台兼容性宏
+ * ========================================================================= */
 #ifndef IEXTEN
 #define IEXTEN 0
 #endif
-
 #ifndef CMSPAR
 #define CMSPAR 0
 #endif
-
 #ifndef CRTSCTS
 #ifdef CCTS_OFLOW
 #define CRTSCTS (CCTS_OFLOW | CRTS_IFLOW)
@@ -27,26 +46,37 @@
 #define CRTSCTS 0
 #endif
 #endif
-
-// 某些系统（如旧 macOS、Solaris）没有 TIOCMBIS/TIOCMBIC
 #if !defined(TIOCMBIS) || !defined(TIOCMBIC)
 #define USE_TIOCMGET_SET_FOR_DTR_RTS
 #endif
-
-// Solaris 使用 CBAUD 而非 cfsetispeed
 #ifdef __sun
 #define USE_CBAUD_HACK
 #endif
 
-// 平台私有数据
-struct PlatformData {
+#define BUFFSIZE 2048
+
+/* =========================================================================
+ * 平台私有数据（继承 XIODevicePrivate）
+ * ========================================================================= */
+typedef struct XSerialPortPrivate {
+    XIODevicePrivate base;
     int fd;
     struct termios originalTermios;
     bool isCustomBaud;
     int32_t customBaudRate;
-};
+} XSerialPortPrivate;
 
-// ========== 波特率映射（覆盖 Qt 支持的所有标准速率） ==========
+/* 便捷转换宏 */
+#define SPP(p) ((XSerialPortPrivate*)((XIODevice*)(p))->m_d)
+
+/* =========================================================================
+ * 前向声明
+ * ========================================================================= */
+bool XSerialPort_platform_applyConfig(XSerialPort* port);
+
+/* =========================================================================
+ * 波特率映射
+ * ========================================================================= */
 static speed_t toTermiosBaud(int32_t rate, bool* isCustom) {
     *isCustom = false;
     switch (rate) {
@@ -109,41 +139,43 @@ static speed_t toTermiosBaud(int32_t rate, bool* isCustom) {
 #endif
     default:
         *isCustom = true;
-        return B38400; // 占位符
+        return B38400;
     }
 }
 
-// ========== 自定义波特率（仅 Linux 尝试） ==========
-static bool setCustomBaudRate(PlatformData* pd, int32_t baud) {
+/* =========================================================================
+ * 自定义波特率（仅 Linux）
+ * ========================================================================= */
+static bool setCustomBaudRate(int fd, int32_t baud) {
 #ifdef __linux__
     struct serial_struct serinfo;
-    if (ioctl(pd->fd, TIOCGSERIAL, &serinfo) == 0) {
+    if (ioctl(fd, TIOCGSERIAL, &serinfo) == 0) {
         serinfo.flags &= ~ASYNC_SPD_MASK;
         serinfo.flags |= ASYNC_SPD_CUST;
         serinfo.custom_divisor = (serinfo.baud_base + (baud / 2)) / baud;
         if (serinfo.custom_divisor < 1) serinfo.custom_divisor = 1;
-        if (ioctl(pd->fd, TIOCSSERIAL, &serinfo) == 0) {
+        if (ioctl(fd, TIOCSSERIAL, &serinfo) == 0) {
             return true;
         }
     }
 #endif
+    (void)fd; (void)baud;
     return false;
 }
 
-// ========== 应用配置（核心） ==========
-static bool applyTermios(XSerialPortPrivate* d) {
-    PlatformData* pd = d->platform;
-    struct termios tio = pd->originalTermios;
-
-    // 进入 raw 模式（Qt 行为）
+/* =========================================================================
+ * 应用配置到 termios
+ * ========================================================================= */
+static bool applyTermios(XSerialPort* port) {
+    XSerialPortPrivate* priv = SPP(port);
+    if (!priv || priv->fd < 0) return false;
+    
+    struct termios tio = priv->originalTermios;
     cfmakeraw(&tio);
-
-    // 重新设置关键字段（cfmakeraw 可能覆盖部分）
     tio.c_cflag |= (CLOCAL | CREAD);
     tio.c_cflag &= ~(CSIZE | PARENB | PARODD | CMSPAR | CSTOPB | CRTSCTS);
 
-    // 数据位
-    switch (d->dataBits) {
+    switch (port->dataBits) {
     case XSerialPort_Data5: tio.c_cflag |= CS5; break;
     case XSerialPort_Data6: tio.c_cflag |= CS6; break;
     case XSerialPort_Data7: tio.c_cflag |= CS7; break;
@@ -151,109 +183,188 @@ static bool applyTermios(XSerialPortPrivate* d) {
     default:                tio.c_cflag |= CS8; break;
     }
 
-    // 校验位
-    switch (d->parity) {
-    case XSerialPort_NoParity:
-        break;
-    case XSerialPort_EvenParity:
-        tio.c_cflag |= PARENB;
-        break;
-    case XSerialPort_OddParity:
-        tio.c_cflag |= (PARENB | PARODD);
-        break;
+    switch (port->parity) {
+    case XSerialPort_NoParity:   break;
+    case XSerialPort_EvenParity: tio.c_cflag |= PARENB; break;
+    case XSerialPort_OddParity:  tio.c_cflag |= (PARENB | PARODD); break;
     case XSerialPort_SpaceParity:
-        if (CMSPAR) tio.c_cflag |= (PARENB | CMSPAR);
-        else { /* 降级为 NoParity */ }
-        break;
+        if (CMSPAR) tio.c_cflag |= (PARENB | CMSPAR); break;
     case XSerialPort_MarkParity:
-        if (CMSPAR) tio.c_cflag |= (PARENB | PARODD | CMSPAR);
-        else { /* 降级为 OddParity */ }
-        break;
+        if (CMSPAR) tio.c_cflag |= (PARENB | PARODD | CMSPAR); break;
     }
 
-    // 停止位
-    if (d->stopBits == XSerialPort_TwoStop)
+    if (port->stopBits == XSerialPort_TwoStop)
         tio.c_cflag |= CSTOPB;
 
-    // 流控
-    if (d->flowControl == XSerialPort_HardwareControl && CRTSCTS) {
+    if (port->flowControl == XSerialPort_HardwareControl && CRTSCTS) {
         tio.c_cflag |= CRTSCTS;
-    }
-    else if (d->flowControl == XSerialPort_SoftwareControl) {
+    } else if (port->flowControl == XSerialPort_SoftwareControl) {
         tio.c_iflag |= (IXON | IXOFF | IXANY);
     }
 
-    // 波特率
     bool isCustom = false;
-    speed_t stdBaud = toTermiosBaud(d->baudRate, &isCustom);
+    speed_t stdBaud = toTermiosBaud(port->baudRate, &isCustom);
 
 #ifdef USE_CBAUD_HACK
-    // Solaris 风格
     tio.c_cflag &= ~CBAUD;
     tio.c_cflag |= (stdBaud & CBAUD);
-    tio.c_cflag |= (CBAUDEXT & (stdBaud << 16));
 #else
     cfsetispeed(&tio, stdBaud);
     cfsetospeed(&tio, stdBaud);
 #endif
 
-    if (tcsetattr(pd->fd, TCSANOW, &tio) != 0)
+    if (tcsetattr(priv->fd, TCSANOW, &tio) != 0)
         return false;
 
     if (isCustom) {
-        pd->customBaudRate = d->baudRate;
-        pd->isCustomBaud = true;
-        if (!setCustomBaudRate(pd, d->baudRate)) {
-            // 自定义失败，但不报错（Qt 也如此）
-            return true;
-        }
-    }
-    else {
-        pd->isCustomBaud = false;
+        priv->customBaudRate = port->baudRate;
+        priv->isCustomBaud = true;
+        setCustomBaudRate(priv->fd, port->baudRate);
+    } else {
+        priv->isCustomBaud = false;
     }
 
     return true;
 }
 
-// ========== DTR/RTS 跨平台控制 ==========
-static bool setModemControlLine(PlatformData* pd, int line, bool set) {
+/* =========================================================================
+ * 调制解调器控制线
+ * ========================================================================= */
+static bool setModemControlLine(int fd, int line, bool set) {
 #ifdef USE_TIOCMGET_SET_FOR_DTR_RTS
     int status = 0;
-    if (ioctl(pd->fd, TIOCMGET, &status) != 0)
-        return false;
-    if (set)
-        status |= line;
-    else
-        status &= ~line;
-    return ioctl(pd->fd, TIOCMSET, &status) == 0;
+    if (ioctl(fd, TIOCMGET, &status) != 0) return false;
+    if (set) status |= line;
+    else status &= ~line;
+    return ioctl(fd, TIOCMSET, &status) == 0;
 #else
     int cmd = set ? TIOCMBIS : TIOCMBIC;
-    return ioctl(pd->fd, cmd, &line) == 0;
+    return ioctl(fd, cmd, &line) == 0;
 #endif
 }
 
-// ========== 错误码映射 ==========
-static XSerialPort_Error errnoToSerialError(int err) {
-    switch (err) {
-    case ENOENT:
-    case ENODEV:
-        return XSerialPort_DeviceNotFoundError;
-    case EACCES:
-    case EPERM:
-        return XSerialPort_PermissionError;
-    case EBUSY:
-        return XSerialPort_ResourceBusyError;
-    case EINVAL:
-        return XSerialPort_UnknownError;
-    default:
-        return XSerialPort_ReadError; // 通用回退
-    }
+/* =========================================================================
+ * 私有数据管理
+ * ========================================================================= */
+static XSerialPortPrivate* XSerialPortPrivate_create(void)
+{
+    XSerialPortPrivate* priv = (XSerialPortPrivate*)XCalloc_System(1, sizeof(XSerialPortPrivate));
+    if (!priv) return NULL;
+    XIODevicePrivate_init(&priv->base, NULL);
+    priv->fd = -1;
+    return priv;
 }
 
-// ========== 平台函数实现 ==========
+static void XSerialPortPrivate_delete(XSerialPortPrivate* priv)
+{
+    if (!priv) return;
+    XIODevicePrivate_deinit(&priv->base);
+    XFree_System(priv);
+}
 
-bool XSerialPort_platform_open(XSerialPortPrivate* d, XSerialPort* owner, const char* portName, XIODeviceBaseMode mode) {
-    if (!portName || !d || !owner) return false;
+/* =========================================================================
+ * 构造 / 析构
+ * ========================================================================= */
+size_t XSerialPort_typetSize(void)
+{
+    return sizeof(XSerialPort);
+}
+
+void XSerialPort_init(XSerialPort* serial)
+{
+    if (serial == NULL) return;
+    memset(((XIODevice*)serial) + 1, 0, sizeof(XSerialPort) - sizeof(XIODevice));
+    XIODevice_init(serial);
+
+    XSerialPortPrivate* priv = XSerialPortPrivate_create();
+    if (!priv) return;
+    if (((XIODevice*)serial)->m_d)
+        XIODevicePrivate_delete(((XIODevice*)serial)->m_d);
+    ((XIODevice*)serial)->m_d = (XIODevicePrivate*)priv;
+    priv->base.q_ptr = (XIODevice*)serial;
+
+    XClassGetVtable(serial) = XSerialPort_class_init();
+    serial->baudRate = XSerialPort_Baud9600;
+    serial->dataBits = XSerialPort_Data8;
+    serial->parity = XSerialPort_NoParity;
+    serial->stopBits = XSerialPort_OneStop;
+    serial->flowControl = XSerialPort_NoFlowControl;
+    serial->readyReadTriggered = false;
+    serial->bytesWrittenTriggered = true;
+    serial->readBufferSize = 512 * 1024;
+}
+
+XSerialPort* XSerialPort_create(void)
+{
+    XSerialPort* port = XNew(XSerialPort);
+    if (!port) return NULL;
+    XSerialPort_init(port);
+    Set_Class_MemoryFree(port, XFree_System);
+    return port;
+}
+
+/* =========================================================================
+ * 事件处理（POSIX 使用 select/poll 轮询）
+ * ========================================================================= */
+void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort* receiver)
+{
+    XSerialPortPrivate* priv = SPP(receiver);
+    if (!event || !priv || priv->fd < 0) return;
+
+    int currentReadChannel = XIODevice_currentReadChannel(receiver);
+
+    if (event->actType & XSocketAct_Read) {
+        char buf[BUFFSIZE];
+        ssize_t n = read(priv->fd, buf, sizeof(buf));
+        if (n > 0) {
+            XIODevicePrivate* d = ((XIODevice*)receiver)->m_d;
+            struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
+            if (readBuf) {
+                XRingBuffer_write(readBuf, buf, (size_t)n);
+                receiver->readyReadTriggered = true;
+                XIODevice_readyRead_signal(receiver);
+                XIODevice_channelReadyRead_signal(receiver, currentReadChannel);
+            }
+        }
+    }
+
+    if (event->actType & XSocketAct_Write) {
+        XIODevicePrivate* d = ((XIODevice*)receiver)->m_d;
+        struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentReadChannel);
+        if (writeBuf) {
+            size_t available = XRingBuffer_available(writeBuf);
+            if (available > 0) {
+                char buf[BUFFSIZE];
+                size_t toWrite = (available > BUFFSIZE) ? BUFFSIZE : available;
+                ssize_t written = XRingBuffer_read(writeBuf, buf, toWrite);
+                if (written > 0) {
+                    ssize_t n = write(priv->fd, buf, (size_t)written);
+                    if (n > 0) {
+                        XIODevice_bytesWritten_signal(receiver, (int64_t)n);
+                        XIODevice_channelBytesWritten_signal(receiver, currentReadChannel, (int64_t)n);
+                    }
+                    if (n < written) {
+                        /* 未写完的放回缓冲区 */
+                        XRingBuffer_write(writeBuf, buf + (n > 0 ? n : 0), (size_t)(written - (n > 0 ? n : 0)));
+                    }
+                }
+            }
+        }
+        if (XRingBuffer_available(writeBuf) == 0) {
+            receiver->bytesWrittenTriggered = true;
+        }
+    }
+
+    XEvent_setAccepted_base(event, true);
+}
+
+/* =========================================================================
+ * 平台函数实现
+ * ========================================================================= */
+bool XSerialPort_platform_open(XSerialPort* port, XIODeviceBaseMode mode) {
+    if (!port->portName) return false;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!priv) return false;
 
     int flags = O_NOCTTY | O_NONBLOCK;
     if ((mode & XIODevice_ReadOnly) && (mode & XIODevice_WriteOnly))
@@ -265,157 +376,226 @@ bool XSerialPort_platform_open(XSerialPortPrivate* d, XSerialPort* owner, const 
     else
         return false;
 
-    int fd = open(portName, flags);
-    if (fd == -1) {
-        d->error = errnoToSerialError(errno);
-        return false;
-    }
+    int fd = open(port->portName, flags);
+    if (fd == -1) return false;
 
-    PlatformData* pd = (PlatformData*)XCalloc_System(1, sizeof(PlatformData));
-    if (!pd) {
+    if (tcgetattr(fd, &priv->originalTermios) != 0) {
         close(fd);
-        d->error = XSerialPort_ResourceError;
         return false;
     }
 
-    if (tcgetattr(fd, &pd->originalTermios) != 0) {
-        XFree_System(pd);
+    priv->fd = fd;
+
+    if (!XSerialPort_platform_applyConfig(port)) {
         close(fd);
-        d->error = XSerialPort_OpenError;
+        priv->fd = -1;
         return false;
     }
 
-    pd->fd = fd;
-    d->platform = pd;
-    d->isOpen = true;
+    port->isOpen = true;
 
-    if (!applyTermios(d)) {
-        XSerialPort_platform_close(d);
-        d->error = XSerialPort_OpenError;
-        return false;
+    if (XIODevice_fd((XIODevice*)port) == XFD_INVALID) {
+        XIODevice_setFd((XIODevice*)port, XFd_alloc(XFD_TYPE_SERIAL, priv, (XIODevice*)port));
     }
 
     return true;
 }
 
-void XSerialPort_platform_close(XSerialPortPrivate* d) {
-    if (!d->isOpen || !d->platform) return;
-    PlatformData* pd = d->platform;
-    tcsetattr(pd->fd, TCSANOW, &pd->originalTermios);
-    close(pd->fd);
-    XFree_System(pd);
-    d->platform = NULL;
-    d->isOpen = false;
+void XSerialPort_platform_close(XSerialPort* port) {
+    XSerialPortPrivate* priv = SPP(port);
+    if (!port->isOpen || !priv || priv->fd < 0) return;
+
+    tcsetattr(priv->fd, TCSANOW, &priv->originalTermios);
+    close(priv->fd);
+    priv->fd = -1;
+    port->isOpen = false;
 }
 
-bool XSerialPort_platform_isOpen(const XSerialPortPrivate* d) {
-    return d && d->isOpen;
-}
+int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize) {
+    if (!port || !data || maxSize <= 0) return -1;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!priv || priv->fd < 0) return -1;
 
-int64_t XSerialPort_platform_read(XSerialPortPrivate* d, char* data, int64_t maxSize) {
-    if (!d || !data || maxSize <= 0 || !d->platform) return -1;
-    ssize_t r = read(d->platform->fd, data, (size_t)maxSize);
+    XIODevicePrivate* d = (XIODevicePrivate*)priv;
+    int currentReadChannel = XIODevice_currentReadChannel(port);
+    struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
+    if (!readBuf) return -1;
+
+    /* 先尝试从缓冲区读取 */
+    int64_t n = XRingBuffer_read(readBuf, data, (size_t)maxSize);
+    if (n > 0) return n;
+
+    /* 缓冲区为空，直接读取 */
+    ssize_t r = read(priv->fd, data, (size_t)maxSize);
     if (r == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-        d->error = XSerialPort_ReadError;
         return -1;
     }
     return (int64_t)r;
 }
 
-int64_t XSerialPort_platform_write(XSerialPortPrivate* d, const char* data, int64_t len) {
-    if (!d || !data || len <= 0 || !d->platform) return -1;
-    ssize_t r = write(d->platform->fd, data, (size_t)len);
-    if (r == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-        d->error = XSerialPort_WriteError;
+int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t len) {
+    if (!port || !data || len <= 0) return -1;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!priv || priv->fd < 0) return -1;
+
+    XIODevicePrivate* d = (XIODevicePrivate*)priv;
+    int currentWriteChannel = XIODevice_currentWriteChannel(port);
+    struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentWriteChannel);
+
+    if (!port->bytesWrittenTriggered && writeBuf) {
+        return XRingBuffer_write(writeBuf, data, (size_t)len);
+    }
+
+    ssize_t n = write(priv->fd, data, (size_t)len);
+    if (n == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (writeBuf) {
+                return XRingBuffer_write(writeBuf, data, (size_t)len);
+            }
+            return 0;
+        }
         return -1;
     }
-    return (int64_t)r;
+    port->bytesWrittenTriggered = false;
+    return (int64_t)n;
 }
 
-int64_t XSerialPort_platform_bytesAvailable(const XSerialPortPrivate* d) {
-    if (!d->platform) return 0;
-    int bytes = 0;
-    if (ioctl(d->platform->fd, FIONREAD, &bytes) == 0)
-        return (int64_t)bytes;
-    return 0;
+bool XSerialPort_platform_applyConfig(XSerialPort* port) {
+    return applyTermios(port);
 }
 
-int64_t XSerialPort_platform_bytesToWrite(const XSerialPortPrivate* d) {
-    (void)d;
-    return 0; // POSIX 无标准方法，Qt 也返回 0
+XHandle XSerialPort_platform_handle(const XSerialPort* port) {
+    XSerialPortPrivate* priv = SPP(port);
+    return (priv && priv->fd >= 0) ? priv->fd : -1;
 }
 
-void XSerialPort_platform_poll(XSerialPortPrivate* d) {
-    (void)d; // 事件驱动由上层处理
+/* =========================================================================
+ * 公共 API（平台相关实现）
+ * ========================================================================= */
+bool XSerialPort_setDataBits(XSerialPort* port, XSerialPort_DataBits dataBits) {
+    if (!port) return false;
+    if (port->dataBits == dataBits) return true;
+    port->dataBits = dataBits;
+    bool ok = true;
+    if (XSerialPort_isOpen(port)) {
+        ok = XSerialPort_platform_applyConfig(port);
+    }
+    if (ok) {
+        XSerialPort_dataBitsChanged_signal(port, dataBits);
+    }
+    return ok;
 }
 
-uint32_t XSerialPort_platform_pinoutSignals(const XSerialPortPrivate* d) {
-    if (!d || !d->isOpen) return 0;
-    int status = 0;
-    if (ioctl(d->platform->fd, TIOCMGET, &status) != 0)
-        return 0;
-
-    // 映射到 Qt 的信号位（与 Windows 一致）
-    uint32_t signals = 0;
-    if (status & TIOCM_DTR) signals |= 0x04; // DataTerminalReady
-    if (status & TIOCM_RTS) signals |= 0x40; // RequestToSend
-    if (status & TIOCM_CTS) signals |= 0x80; // ClearToSend
-    if (status & TIOCM_DSR) signals |= 0x10; // DataSetReady
-    if (status & TIOCM_RI)  signals |= 0x20; // RingIndicator
-    if (status & TIOCM_CD)  signals |= 0x08; // CarrierDetect
-    return signals;
+bool XSerialPort_setParity(XSerialPort* port, XSerialPort_Parity parity) {
+    if (!port) return false;
+    if (port->parity == parity) return true;
+    port->parity = parity;
+    bool ok = true;
+    if (XSerialPort_isOpen(port)) {
+        ok = XSerialPort_platform_applyConfig(port);
+    }
+    if (ok) {
+        XSerialPort_parityChanged_signal(port, parity);
+    }
+    return ok;
 }
 
-bool XSerialPort_platform_applyConfig(XSerialPortPrivate* d) {
-    return applyTermios(d);
+bool XSerialPort_setStopBits(XSerialPort* port, XSerialPort_StopBits stopBits) {
+    if (!port) return false;
+    if (port->stopBits == stopBits) return true;
+    port->stopBits = stopBits;
+    bool ok = true;
+    if (XSerialPort_isOpen(port)) {
+        ok = XSerialPort_platform_applyConfig(port);
+    }
+    if (ok) {
+        XSerialPort_stopBitsChanged_signal(port, stopBits);
+    }
+    return ok;
 }
 
-bool XSerialPort_platform_setDataTerminalReady(XSerialPortPrivate* d, bool set) {
-    if (!d->isOpen) return false;
-    return setModemControlLine(d->platform, TIOCM_DTR, set);
+bool XSerialPort_setFlowControl(XSerialPort* port, XSerialPort_FlowControl flowControl) {
+    if (!port) return false;
+    if (port->flowControl == flowControl) return true;
+    port->flowControl = flowControl;
+    bool ok = true;
+    if (XSerialPort_isOpen(port)) {
+        ok = XSerialPort_platform_applyConfig(port);
+    }
+    if (ok) {
+        XSerialPort_flowControlChanged_signal(port, flowControl);
+    }
+    return ok;
 }
 
-bool XSerialPort_platform_setRequestToSend(XSerialPortPrivate* d, bool set) {
-    if (!d->isOpen) return false;
-    return setModemControlLine(d->platform, TIOCM_RTS, set);
+bool XSerialPort_setDataTerminalReady(XSerialPort* port, bool set) {
+    if (!port) return false;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!port->isOpen || !priv || priv->fd < 0) return false;
+    bool ok = setModemControlLine(priv->fd, TIOCM_DTR, set);
+    if (ok) {
+        port->dataTerminalReady = set;
+        XSerialPort_dataTerminalReadyChanged_signal(port, set);
+    }
+    return ok;
 }
 
-bool XSerialPort_platform_setBreakEnabled(XSerialPortPrivate* d, bool set) {
-    if (!d->isOpen) return false;
-    return ioctl(d->platform->fd, set ? TIOCSBRK : TIOCCBRK, 0) == 0;
+bool XSerialPort_setRequestToSend(XSerialPort* port, bool set) {
+    if (!port) return false;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!port->isOpen || !priv || priv->fd < 0) return false;
+    bool ok = setModemControlLine(priv->fd, TIOCM_RTS, set);
+    if (ok) {
+        port->requestToSend = set;
+        XSerialPort_requestToSendChanged_signal(port, set);
+    }
+    return ok;
 }
 
-bool XSerialPort_platform_flush(XSerialPortPrivate* d) {
-    if (!d->isOpen) return false;
-    return tcdrain(d->platform->fd) == 0;
+bool XSerialPort_setBreakEnabled(XSerialPort* port, bool set) {
+    if (!port) return false;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!port->isOpen || !priv || priv->fd < 0) return false;
+    bool ok = (ioctl(priv->fd, set ? TIOCSBRK : TIOCCBRK, 0) == 0);
+    if (ok) {
+        port->breakEnabled = set;
+        XSerialPort_breakEnabledChanged_signal(port, set);
+    }
+    return ok;
 }
 
-bool XSerialPort_platform_clear(XSerialPortPrivate* d, XSerialPort_Direction dir) {
-    if (!d->isOpen) return false;
+bool XSerialPort_flush(XSerialPort* port) {
+    if (!port) return false;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!port->isOpen || !priv || priv->fd < 0) return false;
+    return tcdrain(priv->fd) == 0;
+}
+
+bool XSerialPort_clear(XSerialPort* port, XSerialPort_Direction dir) {
+    if (!port) return false;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!port->isOpen || !priv || priv->fd < 0) return false;
     int queue = TCIOFLUSH;
     if (dir == XSerialPort_Input) queue = TCIFLUSH;
     else if (dir == XSerialPort_Output) queue = TCOFLUSH;
-    return tcflush(d->platform->fd, queue) == 0;
+    return tcflush(priv->fd, queue) == 0;
 }
 
-bool XSerialPort_platform_waitForReadyRead(XSerialPortPrivate* d, int msecs) {
-    if (!d->isOpen) return false;
-    struct pollfd pfd = { .fd = d->platform->fd, .events = POLLIN };
-    int ret = poll(&pfd, 1, msecs);
-    if (ret > 0 && (pfd.revents & POLLIN))
-        return true;
-    if (ret == 0)
-        d->error = XSerialPort_TimeoutError;
-    return false;
+uint32_t XSerialPort_pinoutSignals(const XSerialPort* port) {
+    if (!port || !port->isOpen) return 0;
+    XSerialPortPrivate* priv = SPP(port);
+    if (!priv || priv->fd < 0) return 0;
+    int status = 0;
+    if (ioctl(priv->fd, TIOCMGET, &status) != 0) return 0;
+    uint32_t signals = 0;
+    if (status & TIOCM_DTR) signals |= 0x04;
+    if (status & TIOCM_RTS) signals |= 0x40;
+    if (status & TIOCM_CTS) signals |= 0x80;
+    if (status & TIOCM_DSR) signals |= 0x10;
+    if (status & TIOCM_RI)  signals |= 0x20;
+    if (status & TIOCM_CD)  signals |= 0x08;
+    return signals;
 }
 
-bool XSerialPort_platform_waitForBytesWritten(XSerialPortPrivate* d, int msecs) {
-    // Qt 在 Unix 上也简单等待
-    (void)d; (void)msecs;
-    usleep(1000); // 1ms
-    return true;
-}
-
-#endif // Posix 平台
+#endif /* POSIX 平台 */

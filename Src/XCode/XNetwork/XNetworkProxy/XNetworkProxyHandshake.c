@@ -941,7 +941,7 @@ int XHttpProxy_buildBasicAuth(
     // Base64编码
     int result = snprintf(buffer, bufferSize, "Basic ");
     if (result < 0 || (size_t)result >= bufferSize) {
-        free(credentials);
+        XFree_System(credentials);
         return -1;
     }
     
@@ -1806,8 +1806,9 @@ XProxyHandshakeState XNetworkProxyHandshake_process(
                         char* encoded = (char*)XMalloc_System(encodedLen);
                         if (encoded) {
                             // 简单Base64编码（使用XCryptographicHash如果有）
-                            extern int XBase64_encode(const char* input, size_t inputLen, char* output, size_t outputSize);
-                            if (XBase64_encode(tokenData, tokenLen, encoded, encodedLen) > 0) {
+                            extern int XBase64_encode(const uint8_t* input, size_t inputLen, char* output, size_t* outputLen);
+                            size_t outLen = encodedLen;
+                            if (XBase64_encode((const uint8_t*)tokenData, tokenLen, encoded, &outLen) == 0 && outLen > 0) {
                                 snprintf(authValue, sizeof(authValue), "Negotiate %s", encoded);
                                 authLen = (int)strlen(authValue);
                             }

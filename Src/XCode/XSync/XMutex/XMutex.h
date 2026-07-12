@@ -9,7 +9,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 #include "XAtomic.h"
-#include "Xtypes.h"
+#include "XTypes.h"
 // 只声明结构体，不定义具体实现
 typedef struct XMutex XMutex;
 

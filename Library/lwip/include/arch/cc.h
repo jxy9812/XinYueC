@@ -9,12 +9,12 @@
 #include <stdint.h>
 #include "XPrintf.h"
 
-typedef unsigned   char    u8_t;
-typedef signed     char    s8_t;
-typedef unsigned   short   u16_t;
-typedef signed     short   s16_t;
-typedef unsigned   long    u32_t;
-typedef signed     long    s32_t;
+typedef uint8_t   u8_t;
+typedef int8_t    s8_t;
+typedef uint16_t  u16_t;
+typedef int16_t   s16_t;
+typedef uint32_t  u32_t;
+typedef int32_t   s32_t;
 typedef uintptr_t          mem_ptr_t;
 typedef u32_t              sys_prot_t;
 
@@ -63,9 +63,9 @@ typedef u32_t              sys_prot_t;
 #define U16_F "4d"
 #define S16_F "4d"
 #define X16_F "4x"
-#define U32_F "8ld"
-#define S32_F "8ld"
-#define X32_F "8lx"
+#define U32_F "8u"
+#define S32_F "8d"
+#define X32_F "8x"
 
 #ifndef LWIP_PLATFORM_ASSERT
 #define LWIP_PLATFORM_ASSERT(x) \

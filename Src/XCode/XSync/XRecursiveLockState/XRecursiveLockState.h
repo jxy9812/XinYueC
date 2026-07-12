@@ -9,6 +9,7 @@ extern "C" {
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 // 前向声明 XHashMap
 typedef struct XHashMap XHashMap;

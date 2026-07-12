@@ -148,13 +148,13 @@ extern "C" {
 //定义debug信息输出方式
 #ifdef DEBUG_ON
 #if ((DEBUG_ON) && defined(_DEBUG))
-#define XDEBUG_PRINTF(fmt,...) XPrintf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
+#define XDEBUG_PRINTF(fmt,...) XPrintf("[FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,##__VA_ARGS__)
 #else
 #define XDEBUG_PRINTF(fmt,...)
 #endif
 #else
 #if defined _DEBUG
-#define XDEBUG_PRINTF(fmt,...) XPrintf("Debug [FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
+#define XDEBUG_PRINTF(fmt,...) XPrintf("Debug [FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,##__VA_ARGS__)
 #else
 #define XDEBUG_PRINTF(fmt,...)
 #endif
@@ -162,7 +162,7 @@ extern "C" {
 
 //定义错误信息输出方式
 #if ((XERROR_ON))
-#define XERROR_PRINTF(fmt,...) XPrintf("XError [FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,__VA_ARGS__)
+#define XERROR_PRINTF(fmt,...) XPrintf("XError [FILE:%s][FUNC:%s][LINE:%d]\n->"fmt"\n",__FILE__,__FUNCTION__,__LINE__,##__VA_ARGS__)
 #else
 #define XERROR_PRINTF(fmt,...)
 #endif

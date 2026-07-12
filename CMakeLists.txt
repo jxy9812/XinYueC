@@ -11,6 +11,11 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_DEBUG_POSTFIX "d")
 
+# Linux 平台需要 _GNU_SOURCE 以使用 PTHREAD_MUTEX_NORMAL 等
+if(UNIX AND NOT APPLE)
+    add_compile_definitions(_GNU_SOURCE)
+endif()
+
 #设置可执行文件的输出目录
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/bin)
 
@@ -55,6 +60,6 @@ add_executable(${PROJECT_NAME}
 ${TEST_FILE}
 "./main.c"
  )
-target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME})
+target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME} m pthread)
 #安装
 include(CMake_Install.cmake)

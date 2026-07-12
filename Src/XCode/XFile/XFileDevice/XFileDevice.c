@@ -483,7 +483,7 @@ XFd XFileDevice_handle(const XFileDevice* device)
     return XIODevice_fd(&device->m_parent);
 }
 
-XDateTime XFileDevice_fileTime(XFileDevice* device, XFileTime time)
+XDateTime XFileDevice_fileTime(const XFileDevice* device, XFileTime time)
 {
     XDateTime result = XDateTime_create();
     if (!device || XIODevice_fd(&device->m_parent) < 0) return result;
