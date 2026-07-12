@@ -337,14 +337,14 @@ void XString_init(XString* str)
     //    memset(data, 0, sizeof(XChar) * (XSTRING_MIN_CAPACITY + 1));
     //    XSharedData* sd = XSharedData_create(data);
     //    if (sd)
-    //        XContainerSharedData(str) = sd;
+    //        XContainerSetDataPtr(str, sd);
     //    else
     //    {
     //        XFree_System(data);
     //    }
     //}
     //XContainerCapacity(str) = XSTRING_MIN_CAPACITY;
-    XContainerSharedData(str) = NULL;
+    XContainerSetDataPtr(str, NULL);
     str->m_cache = NULL;
     XClassSetVtable(str,XString);
 }
@@ -1599,7 +1599,7 @@ bool XString_isNull(const XString* str)
     }
 
      // 检查共享数据是否异常（未初始化的对象可能无共享数据）
-    if (XContainerSharedData(str) == NULL) {
+    if ((XSharedData*)XContainerDataPtr(str) == NULL) {
         return true;
     }
     // 检查内部数据指针是否未初始化（根据XContainer结构特性）
@@ -1836,14 +1836,14 @@ bool XString_reserve(XString* str, size_t capacity)
     size_t new_capacity = (capacity < XSTRING_MIN_CAPACITY) ? XSTRING_MIN_CAPACITY : capacity;
 
     // 如果还没有共享数据块，创建新的
-    if (!XContainerSharedData(str))
+    if (!(XSharedData*)XContainerDataPtr(str))
     {
         size_t bytes = sizeof(XChar) * (new_capacity + 1);
         XSharedData* sd = XSharedData_create(NULL, bytes);
         if (sd)
         {
             memset(sd->data, 0, bytes);
-            XContainerSharedData(str) = sd;
+            XContainerSetDataPtr(str, sd);
         }
         else
         {
@@ -1868,8 +1868,8 @@ bool XString_reserve(XString* str, size_t capacity)
             memset(newShared->data, 0, bytes);
         }
 
-        XSharedData_release(XContainerSharedData(str));
-        XContainerSharedData(str) = newShared;
+        XSharedData_release((XSharedData*)XContainerDataPtr(str));
+        XContainerSetDataPtr(str, newShared);
     }
 
     XContainerCapacity(str) = new_capacity;
@@ -2097,7 +2097,7 @@ void XString_detach(XString* str)
     if (!str) return;
 
     // 不共享，无需分离
-    if (!XContainerSharedData(str) || !XSharedData_isShared(XContainerSharedData(str)))
+    if (!(XSharedData*)XContainerDataPtr(str) || !XSharedData_isShared((XSharedData*)XContainerDataPtr(str)))
         return;
 
     // 存在共享引用，必须拷贝数据（真正的写时复制点）
@@ -2117,8 +2117,8 @@ void XString_detach(XString* str)
         memset(newShared->data, 0, bytes);
 
     // 减少旧引用，设置新引用
-    XSharedData_release(XContainerSharedData(str));
-    XContainerSharedData(str) = newShared;
+    XSharedData_release((XSharedData*)XContainerDataPtr(str));
+    XContainerSetDataPtr(str, newShared);
 
     // 缓存失效（数据已变更）
     XString_deinitCache(str);
@@ -2277,8 +2277,8 @@ void XString_squeeze(XString* str)
         memset(newShared->data, 0, bytes);
     }
 
-    XSharedData_release(XContainerSharedData(str));
-    XContainerSharedData(str) = newShared;
+    XSharedData_release((XSharedData*)XContainerDataPtr(str));
+    XContainerSetDataPtr(str, newShared);
     XContainerCapacity(str) = len;
 }
 

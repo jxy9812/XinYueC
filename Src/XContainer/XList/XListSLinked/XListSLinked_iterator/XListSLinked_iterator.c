@@ -10,7 +10,7 @@ XListSLinked_iterator XListSLinked_begin(XListSLinked* this_list)
 	// 获取头节点指针
 	XListSNode* head = NULL;
 	if (XContainerIsCow(this_list)) {
-		XSharedData* sd = XContainerSharedData(this_list);
+		XSharedData* sd = (XSharedData*)XContainerDataPtr(this_list);
 		head = sd ? *(XListSNode**)sd->data : NULL;
 	}
 	else {

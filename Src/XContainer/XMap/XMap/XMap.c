@@ -70,7 +70,7 @@ static bool VXMapDetachIfNeeded(XMap* this_map)
 {
     if (!XContainerIsCow(this_map)) return true;  // 非 COW 不需要分离
 
-    XSharedData* sd = XContainerSharedData(this_map);
+    XSharedData* sd = (XSharedData*)XContainerDataPtr(this_map);
     if (!sd || !XSharedData_isShared(sd)) return true;
 
     size_t typeSize = XContainerTypeSize(this_map);
@@ -122,7 +122,7 @@ static bool VXMapDetachIfNeeded(XMap* this_map)
     }
     *(XRBTreeNode**)newShared->data = newRoot;
     XSharedData_release(sd);
-    XContainerSharedData(this_map) = newShared;
+    XContainerSetDataPtr(this_map, newShared);
     return true;
 }
 
@@ -134,7 +134,7 @@ static void VXMapDataDelete(void* data, XMap* this_map)
         XTree_delete(root, XMapBase_deleteNodeData, this_map);
     XContainerSize(this_map) = 0;
     XContainerCapacity(this_map) = 0;
-    XContainerSharedData(this_map) = NULL;
+    XContainerSetDataPtr(this_map, NULL);
 }
 
 bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue,
@@ -158,8 +158,8 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue,
             XPair_insertSecond(pair, pvValue);
 
         if (XContainerIsCow(this_map)) {
-            if (!XContainerSharedData(this_map)) {
-                XContainerSharedData(this_map) = XSharedData_create(NULL, sizeof(XRBTreeNode*));
+            if (!(XSharedData*)XContainerDataPtr(this_map)) {
+                XContainerSetDataPtr(this_map, XSharedData_create(NULL, sizeof(XRBTreeNode*)));
             }
         }
         else {
@@ -311,9 +311,9 @@ XVector* VXMapBase_values(const XMapBase* this_map)
 void VXMap_clear(XMap* this_map)
 {
     if (XMap_isEmpty_base(this_map)) return;
-    if (XContainerIsCow(this_map) && XContainerSharedData(this_map) && XSharedData_isShared(XContainerSharedData(this_map))) {
-        XSharedData_release(XContainerSharedData(this_map));
-        XContainerSharedData(this_map) = NULL;
+    if (XContainerIsCow(this_map) && (XSharedData*)XContainerDataPtr(this_map) && XSharedData_isShared((XSharedData*)XContainerDataPtr(this_map))) {
+        XSharedData_release((XSharedData*)XContainerDataPtr(this_map));
+        XContainerSetDataPtr(this_map, NULL);
         XContainerCapacity(this_map) = 0;
         XContainerSize(this_map) = 0;
         return;
@@ -337,8 +337,8 @@ void VXClass_copy(XMap* object, const XMap* src)
     else {
         // 释放目标原有资源
         if (XContainerIsCow(object)) {
-            if (XContainerSharedData(object))
-                XSharedData_release_with(XContainerSharedData(object), VXMapDataDelete, object);
+            if ((XSharedData*)XContainerDataPtr(object))
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXMapDataDelete, object);
         }
         else {
             XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(object);
@@ -356,9 +356,9 @@ void VXClass_copy(XMap* object, const XMap* src)
     XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
 
     if (XContainerIsCow(src)) {
-        XContainerSharedData(object) = XContainerSharedData(src);
-        if (XContainerSharedData(object))
-            XSharedData_addRef(XContainerSharedData(object));
+        XContainerSetDataPtr(object, (XSharedData*)XContainerDataPtr(src));
+        if ((XSharedData*)XContainerDataPtr(object))
+            XSharedData_addRef((XSharedData*)XContainerDataPtr(object));
         // 修复：复制大小和容量
         XContainerSize(object) = XContainerSize(src);
         XContainerCapacity(object) = XContainerCapacity(src);
@@ -419,8 +419,8 @@ void VXClass_move(XMap* object, XMap* src)
     else {
         // 2. 释放目标原有资源
         if (XContainerIsCow(object)) {
-            if (XContainerSharedData(object))
-                XSharedData_release_with(XContainerSharedData(object), VXMapDataDelete, object);
+            if ((XSharedData*)XContainerDataPtr(object))
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXMapDataDelete, object);
         }
         else {
             XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(object);
@@ -441,8 +441,8 @@ void VXClass_move(XMap* object, XMap* src)
 void VXMap_deinit(XMap* this_map)
 {
     if (XContainerIsCow(this_map)) {
-        if (XContainerSharedData(this_map))
-            XSharedData_release_with(XContainerSharedData(this_map), VXMapDataDelete, this_map);
+        if ((XSharedData*)XContainerDataPtr(this_map))
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_map), VXMapDataDelete, this_map);
     }
     else {
         XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(this_map);

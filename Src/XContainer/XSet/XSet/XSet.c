@@ -63,7 +63,7 @@ static bool VXSetDetachIfNeeded(XSet* this_set)
 {
     if (!XContainerIsCow(this_set)) return true;  // 非 COW 不需要分离
 
-    XSharedData* sd = XContainerSharedData(this_set);
+    XSharedData* sd = (XSharedData*)XContainerDataPtr(this_set);
     if (!sd || !XSharedData_isShared(sd)) return true;
 
     size_t typeSize = XContainerTypeSize(this_set);
@@ -105,7 +105,7 @@ static bool VXSetDetachIfNeeded(XSet* this_set)
     }
     *(XRBTreeNode**)newShared->data = newRoot;
     XSharedData_release(sd);
-    XContainerSharedData(this_set) = newShared;
+    XContainerSetDataPtr(this_set, newShared);
     return true;
 }
 
@@ -129,10 +129,10 @@ void VXSet_clear(XSet* this_set)
 {
     if (XSet_isEmpty_base(this_set)) return;
 
-    if (XContainerIsCow(this_set) && XContainerSharedData(this_set) && XSharedData_isShared(XContainerSharedData(this_set)))
+    if (XContainerIsCow(this_set) && (XSharedData*)XContainerDataPtr(this_set) && XSharedData_isShared((XSharedData*)XContainerDataPtr(this_set)))
     {
-        XSharedData_release(XContainerSharedData(this_set));
-        XContainerSharedData(this_set) = NULL;
+        XSharedData_release((XSharedData*)XContainerDataPtr(this_set));
+        XContainerSetDataPtr(this_set, NULL);
         XContainerCapacity(this_set) = 0;
         XContainerSize(this_set) = 0;
         return;
@@ -161,8 +161,8 @@ void VXClass_copy(XSet* object, const XSet* src)
     {
         if (XContainerIsCow(object))
         {
-            if (XContainerSharedData(object))
-                XSharedData_release_with(XContainerSharedData(object), VXSetDataDelete, object);
+            if ((XSharedData*)XContainerDataPtr(object))
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXSetDataDelete, object);
         }
         else
         {
@@ -179,9 +179,9 @@ void VXClass_copy(XSet* object, const XSet* src)
 
     if (XContainerIsCow(src))
     {
-        XContainerSharedData(object) = XContainerSharedData(src);
-        if (XContainerSharedData(object))
-            XSharedData_addRef(XContainerSharedData(object));
+        XContainerSetDataPtr(object, (XSharedData*)XContainerDataPtr(src));
+        if ((XSharedData*)XContainerDataPtr(object))
+            XSharedData_addRef((XSharedData*)XContainerDataPtr(object));
     }
     else
     {
@@ -214,8 +214,8 @@ void VXClass_move(XSet* object, XSet* src)
     {
         if (XContainerIsCow(object))
         {
-            if (XContainerSharedData(object))
-                XSharedData_release_with(XContainerSharedData(object), VXSetDataDelete, object);
+            if ((XSharedData*)XContainerDataPtr(object))
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXSetDataDelete, object);
         }
         else
         {
@@ -229,7 +229,7 @@ void VXClass_move(XSet* object, XSet* src)
     //memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XSet) - sizeof(XClass));
 
     if (XContainerIsCow(object))
-        XContainerSharedData(object) = NULL;
+        XContainerSetDataPtr(object, NULL);
     else
         XContainerDataPtr(object) = NULL;
     XContainerCapacity(object) = 0;
@@ -242,8 +242,8 @@ void VXSet_deinit(XSet* this_set)
 {
     if (XContainerIsCow(this_set))
     {
-        if (XContainerSharedData(this_set))
-            XSharedData_release_with(XContainerSharedData(this_set), VXSetDataDelete, this_set);
+        if ((XSharedData*)XContainerDataPtr(this_set))
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_set), VXSetDataDelete, this_set);
     }
     else
     {
@@ -264,8 +264,8 @@ bool VXSet_insert(XSet* this_set, const void* pvKey, XCDataCreatMethod dataCreat
     {
         if (XContainerIsCow(this_set))
         {
-            if (!XContainerSharedData(this_set))
-                XContainerSharedData(this_set) = XSharedData_create(NULL, sizeof(XRBTreeNode*));
+            if (!(XSharedData*)XContainerDataPtr(this_set))
+                XContainerSetDataPtr(this_set, XSharedData_create(NULL, sizeof(XRBTreeNode*)));
         }
         else
         {

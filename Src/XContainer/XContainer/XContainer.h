@@ -96,7 +96,6 @@ typedef struct XContainer
 #define XContainerValue(LPVal, type) (*(type*)LPVal)
 
 
-#define XContainerSharedData(object)        ((XSharedData*)((XContainer*)(object))->m_data)
  /**
  * @brief 获取容器的数据区指针
  * @details 返回容器内部存储数据的首地址。
@@ -104,9 +103,10 @@ typedef struct XContainer
  * @param object XContainer实例指针（可传入派生类实例指针）
  * @return 数据区首地址（void*类型），失败或未初始化返回 NULL
  */
-#define XContainerSharedDataPtr(object)     XContainerSharedData(object)->data
+#define XContainerSharedDataPtr(object)     ((XSharedData*)XContainerDataPtr(object))->data
 //容器不使用共享模式的数据指针
 #define XContainerDataPtr(object)              ((XContainer*)(object))->m_data
+#define XContainerSetDataPtr(object,ptr)       (XContainerDataPtr(object)=ptr )  
 #define XContainerIsCow(object)                ((XContainer*)(object))->m_useCow
 // 获取容器的真实数据区首地址（适用于所有模式）
 #define XContainerDataAddr(object) \

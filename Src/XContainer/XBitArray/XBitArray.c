@@ -51,7 +51,7 @@ static bool VXBitArrayDetachIfNeeded(XBitArray* array)
     // 非 COW 模式永远不需要分离
     if (!XContainerIsCow(array)) return true;
 
-    XSharedData* sd = XContainerSharedData(array);
+    XSharedData* sd = (XSharedData*)XContainerDataPtr(array);
     if (!sd || !XSharedData_isShared(sd))
         return true;
 
@@ -67,7 +67,7 @@ static bool VXBitArrayDetachIfNeeded(XBitArray* array)
         memcpy(newShared->data, oldData, byteCount);
 
     XSharedData_release(sd);
-    XContainerSharedData(array) = newShared;
+    XContainerSetDataPtr(array, newShared);
     return true;
 }
 
@@ -78,7 +78,7 @@ static void VXBitArrayDataDelete(void* data, XBitArray* array)
     // 注意：data 不需要单独释放，XSharedData 的柔性数组会一起释放
     XContainerSize(array) = 0;
     XContainerCapacity(array) = 0;
-    XContainerSharedData(array) = NULL;
+    XContainerSetDataPtr(array, NULL);
 }
 
 // 拷贝
@@ -88,8 +88,8 @@ void VXBitArray_copy(XBitArray* dest, const XBitArray* src)
 
     // 释放目标原有数据
     if (XContainerIsCow(dest)) {
-        if (XContainerSharedData(dest))
-            XSharedData_release_with(XContainerSharedData(dest), VXBitArrayDataDelete, dest);
+        if ((XSharedData*)XContainerDataPtr(dest))
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(dest), VXBitArrayDataDelete, dest);
     }
     else {
         if (XContainerDataPtr(dest))
@@ -102,9 +102,9 @@ void VXBitArray_copy(XBitArray* dest, const XBitArray* src)
     // 根据源模式拷贝数据
     if (XContainerIsCow(src)) {
         // COW 模式：共享 XSharedData，增加引用计数
-        XContainerSharedData(dest) = XContainerSharedData(src);
-        if (XContainerSharedData(dest))
-            XSharedData_addRef(XContainerSharedData(dest));
+        XContainerSetDataPtr(dest, (XSharedData*)XContainerDataPtr(src));
+        if ((XSharedData*)XContainerDataPtr(dest))
+            XSharedData_addRef((XSharedData*)XContainerDataPtr(dest));
     }
     else {
         // 非 COW 模式：深拷贝原始数据
@@ -133,8 +133,8 @@ void VXBitArray_move(XBitArray* dest, XBitArray* src)
 
     // 释放目标原有数据
     if (XContainerIsCow(dest)) {
-        if (XContainerSharedData(dest))
-            XSharedData_release_with(XContainerSharedData(dest), VXBitArrayDataDelete, dest);
+        if ((XSharedData*)XContainerDataPtr(dest))
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(dest), VXBitArrayDataDelete, dest);
     }
     else {
         if (XContainerDataPtr(dest))
@@ -146,7 +146,7 @@ void VXBitArray_move(XBitArray* dest, XBitArray* src)
 
     // 清空源对象
     if (XContainerIsCow(src)) {
-        XContainerSharedData(src) = NULL;
+        XContainerSetDataPtr(src, NULL);
     }
     else {
         XContainerDataPtr(src) = NULL;
@@ -161,8 +161,8 @@ void VXBitArray_deinit(XBitArray* array)
     if (!array) return;
 
     if (XContainerIsCow(array)) {
-        if (XContainerSharedData(array))
-            XSharedData_release_with(XContainerSharedData(array), VXBitArrayDataDelete, array);
+        if ((XSharedData*)XContainerDataPtr(array))
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(array), VXBitArrayDataDelete, array);
     }
     else {
         if (XContainerDataPtr(array))
@@ -170,7 +170,7 @@ void VXBitArray_deinit(XBitArray* array)
     }
     XContainerSize(array) = 0;
     XContainerCapacity(array) = 0;
-    XContainerSharedData(array) = NULL;
+    XContainerSetDataPtr(array, NULL);
 }
 
 // 清空
@@ -181,17 +181,17 @@ bool VXBitArray_clear(XBitArray* array)
     if (XBitArray_isEmpty_base(array)) return true;
 
     // COW 模式且共享：直接丢弃共享块，创建空数据
-    if (XContainerIsCow(array) && XContainerSharedData(array) && XSharedData_isShared(XContainerSharedData(array)))
+    if (XContainerIsCow(array) && (XSharedData*)XContainerDataPtr(array) && XSharedData_isShared((XSharedData*)XContainerDataPtr(array)))
     {
-        XSharedData_release(XContainerSharedData(array));
+        XSharedData_release((XSharedData*)XContainerDataPtr(array));
         // 创建至少1字节的空数据
         XSharedData* sd = XSharedData_create(NULL, 1);
         if (sd) {
-            XContainerSharedData(array) = sd;
+            XContainerSetDataPtr(array, sd);
             XContainerCapacity(array) = 8;
         }
         else {
-            XContainerSharedData(array) = NULL;
+            XContainerSetDataPtr(array, NULL);
             XContainerCapacity(array) = 0;
         }
         XContainerSize(array) = 0;
@@ -246,11 +246,11 @@ void XBitArray_init(XBitArray* array, size_t initialBitCount, bool useCow)
     if (XContainerIsCow(array)) {
         XSharedData* sd = XSharedData_create(NULL, initialBytes);
         if (sd) {
-            XContainerSharedData(array) = sd;
+            XContainerSetDataPtr(array, sd);
             memset(sd->data, 0, initialBytes);
         }
         else {
-            XContainerSharedData(array) = NULL;
+            XContainerSetDataPtr(array, NULL);
         }
     }
     else {
@@ -326,8 +326,8 @@ bool XBitArray_resize(XBitArray* array, size_t newBitCount)
             void* oldData = XContainerSharedDataPtr(array);
             if (oldData && oldBytes > 0)
                 memcpy(newSd->data, oldData, oldBytes);
-            XSharedData_release(XContainerSharedData(array));
-            XContainerSharedData(array) = newSd;
+            XSharedData_release((XSharedData*)XContainerDataPtr(array));
+            XContainerSetDataPtr(array, newSd);
         }
         else {
             void* newRaw = XRealloc_System(XContainerDataPtr(array), newBytes);

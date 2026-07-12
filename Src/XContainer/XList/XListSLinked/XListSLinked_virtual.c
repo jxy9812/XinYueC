@@ -87,10 +87,10 @@ XVtable* XListSLinked_class_init()
 static bool ensureSharedData(XListSLinked* this_list)
 {
     if (XContainerIsCow(this_list)) {
-        if (!XContainerSharedData(this_list)) {
+        if (!(XSharedData*)XContainerDataPtr(this_list)) {
             XSharedData* sd = XSharedData_create(NULL, sizeof(XListSNode*));
             if (!sd) return false;
-            XContainerSharedData(this_list) = sd;
+            XContainerSetDataPtr(this_list, sd);
             *(XListSNode**)sd->data = NULL;
         }
     }
@@ -108,7 +108,7 @@ static bool VXListSLinkedDetachIfNeeded(XListSLinked* this_list)
 {
     if (!XContainerIsCow(this_list)) return true;  // 非 COW 永远不需要分离
 
-    if (!XContainerSharedData(this_list) || !XSharedData_isShared(XContainerSharedData(this_list)))
+    if (!(XSharedData*)XContainerDataPtr(this_list) || !XSharedData_isShared((XSharedData*)XContainerDataPtr(this_list)))
         return true; // 不共享，无需分离
 
     size_t typeSize = XContainerTypeSize(this_list);
@@ -148,8 +148,8 @@ static bool VXListSLinkedDetachIfNeeded(XListSLinked* this_list)
     *(XListSNode**)newShared->data = newHead;
 
     // 减少旧引用，设置新引用
-    XSharedData_release(XContainerSharedData(this_list));
-    XContainerSharedData(this_list) = newShared;
+    XSharedData_release((XSharedData*)XContainerDataPtr(this_list));
+    XContainerSetDataPtr(this_list, newShared);
     this_list->m_tail = newTail;
     return true;
 }
@@ -170,7 +170,7 @@ static void VXListSLinkedDataDelete(void* data, XListSLinked* this_list)
     this_list->m_tail = NULL;
     XContainerSize(this_list) = 0;
     XContainerCapacity(this_list) = 0;
-    //XContainerSharedData(this_list) = NULL;
+    //XContainerSetDataPtr(this_list, NULL);
 }
 
 bool VXListBase_push_front_node(XListSLinked* this_list, XListSNode* node)
@@ -524,10 +524,10 @@ void VXList_clear(XListSLinked* this_list)
     if (XListBase_isEmpty_base(this_list))
         return;
     // 如果数据被共享，减少引用并置空
-    if (XContainerSharedData(this_list) && XSharedData_isShared(XContainerSharedData(this_list)))
+    if ((XSharedData*)XContainerDataPtr(this_list) && XSharedData_isShared((XSharedData*)XContainerDataPtr(this_list)))
     {
-        XSharedData_release(XContainerSharedData(this_list));
-        XContainerSharedData(this_list) = NULL;
+        XSharedData_release((XSharedData*)XContainerDataPtr(this_list));
+        XContainerSetDataPtr(this_list, NULL);
         this_list->m_tail = NULL;
         XContainerSize(this_list) = 0;
         XContainerCapacity(this_list) = 0;
@@ -716,8 +716,8 @@ void VXClass_copy(XListSLinked* object, const XListSLinked* src)
         // 释放目标原有资源
         if (XContainerIsCow(object))
         {
-            if (XContainerSharedData(object))
-                XSharedData_release_with(XContainerSharedData(object), VXListSLinkedDataDelete, object);
+            if ((XSharedData*)XContainerDataPtr(object))
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXListSLinkedDataDelete, object);
         }
         else
         {
@@ -739,8 +739,8 @@ void VXClass_copy(XListSLinked* object, const XListSLinked* src)
     // 根据源模式调整引用计数或深拷贝
     if (XContainerIsCow(src))
     {
-        if (XContainerSharedData(object))
-            XSharedData_addRef(XContainerSharedData(object));
+        if ((XSharedData*)XContainerDataPtr(object))
+            XSharedData_addRef((XSharedData*)XContainerDataPtr(object));
     }
     else
     {
@@ -799,8 +799,8 @@ void VXClass_move(XListSLinked* object, XListSLinked* src)
         // 目标已初始化，释放其原有资源
         if (XContainerIsCow(object))
         {
-            if (XContainerSharedData(object))
-                XSharedData_release_with(XContainerSharedData(object), VXListSLinkedDataDelete, object);
+            if ((XSharedData*)XContainerDataPtr(object))
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXListSLinkedDataDelete, object);
         }
         else
         {
@@ -826,7 +826,7 @@ void VXClass_move(XListSLinked* object, XListSLinked* src)
     // 清空源对象资源（根据源模式）
     if (XContainerIsCow(src))
     {
-        XContainerSharedData(src) = NULL;
+        XContainerSetDataPtr(src, NULL);
     }
     else
     {
@@ -840,8 +840,8 @@ void VXClass_move(XListSLinked* object, XListSLinked* src)
 void VXList_deinit(XListSLinked* this_list)
 {
     if (XContainerIsCow(this_list)) {
-        if (XContainerSharedData(this_list))
-            XSharedData_release_with(XContainerSharedData(this_list), VXListSLinkedDataDelete, this_list);
+        if ((XSharedData*)XContainerDataPtr(this_list))
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_list), VXListSLinkedDataDelete, this_list);
     }
     else {
         XListSNode* head = (XListSNode*)XContainerDataPtr(this_list);

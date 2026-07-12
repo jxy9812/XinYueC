@@ -74,7 +74,7 @@ static bool VXHashMapDetachIfNeeded(XHashMap* this_hash)
 {
     if (!XContainerIsCow(this_hash)) return true;
 
-    XSharedData* sd = XContainerSharedData(this_hash);
+    XSharedData* sd = (XSharedData*)XContainerDataPtr(this_hash);
     if (!sd || !XSharedData_isShared(sd)) return true;
 
     size_t capacity = XContainerCapacity(this_hash);
@@ -128,7 +128,7 @@ static bool VXHashMapDetachIfNeeded(XHashMap* this_hash)
     }
 
     XSharedData_release(sd);
-    XContainerSharedData(this_hash) = newShared;
+    XContainerSetDataPtr(this_hash, newShared);
     return true;
 }
 
@@ -190,9 +190,9 @@ static bool XHashMap_resize(XHashMap* map, size_t new_capacity)
     }
 
     if (XContainerIsCow(map)) {
-        if (XContainerSharedData(map))
-            XSharedData_release(XContainerSharedData(map));
-        XContainerSharedData(map) = newShared;
+        if ((XSharedData*)XContainerDataPtr(map))
+            XSharedData_release((XSharedData*)XContainerDataPtr(map));
+        XContainerSetDataPtr(map, newShared);
     } else {
         if (XContainerDataPtr(map))
             XFree_System(XContainerDataPtr(map));
@@ -210,12 +210,12 @@ bool VXMap_insert(XHashMap* this_hash, const void* pvKey, const void* pvValue,
 
     // 初始化桶数组（首次写入）
     if (XContainerIsCow(this_hash)) {
-        if (!XContainerSharedData(this_hash)) {
+        if (!(XSharedData*)XContainerDataPtr(this_hash)) {
             size_t size = DEFAULT_CAPACITY * sizeof(XRBTreeNode*);
             XSharedData* sd = XSharedData_create(NULL, size);
             if (!sd) return false;
             memset(sd->data, 0, size);
-            XContainerSharedData(this_hash) = sd;
+            XContainerSetDataPtr(this_hash, sd);
             XContainerCapacity(this_hash) = DEFAULT_CAPACITY;
         }
     } else {
@@ -390,9 +390,9 @@ XVector* VXMapBase_values(const XMapBase* this_hash)
 void VXMap_clear(XHashMap* this_hash)
 {
     if (XHashMap_isEmpty_base(this_hash)) return;
-    if (XContainerIsCow(this_hash) && XContainerSharedData(this_hash) && XSharedData_isShared(XContainerSharedData(this_hash))) {
-        XSharedData_release(XContainerSharedData(this_hash));
-        XContainerSharedData(this_hash) = NULL;
+    if (XContainerIsCow(this_hash) && (XSharedData*)XContainerDataPtr(this_hash) && XSharedData_isShared((XSharedData*)XContainerDataPtr(this_hash))) {
+        XSharedData_release((XSharedData*)XContainerDataPtr(this_hash));
+        XContainerSetDataPtr(this_hash, NULL);
         XContainerCapacity(this_hash) = 0;
         XContainerSize(this_hash) = 0;
         return;
@@ -404,7 +404,7 @@ void VXMap_clear(XHashMap* this_hash)
             XTree_delete(buckets[i], XMapBase_deleteNodeData, this_hash);
     }
     if (XContainerIsCow(this_hash)) {
-        if (XContainerSharedData(this_hash))
+        if ((XSharedData*)XContainerDataPtr(this_hash))
             memset(XContainerSharedDataPtr(this_hash), 0, cap * sizeof(XRBTreeNode*));
     } else {
         if (XContainerDataPtr(this_hash))
@@ -423,8 +423,8 @@ void VXClass_copy(XHashMap* object, const XHashMap* src)
     } else {
         // 释放目标原有资源
         if (XContainerIsCow(object)) {
-            if (XContainerSharedData(object))
-                XSharedData_release_with(XContainerSharedData(object), VXHashMapDataDelete, object);
+            if ((XSharedData*)XContainerDataPtr(object))
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXHashMapDataDelete, object);
         } else {
             XRBTreeNode** buckets = (XRBTreeNode**)XContainerDataPtr(object);
             if (buckets) {
@@ -447,9 +447,9 @@ void VXClass_copy(XHashMap* object, const XHashMap* src)
     XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
 
     if (XContainerIsCow(src)) {
-        XContainerSharedData(object) = XContainerSharedData(src);
-        if (XContainerSharedData(object))
-            XSharedData_addRef(XContainerSharedData(object));
+        XContainerSetDataPtr(object, (XSharedData*)XContainerDataPtr(src));
+        if ((XSharedData*)XContainerDataPtr(object))
+            XSharedData_addRef((XSharedData*)XContainerDataPtr(object));
         XContainerSize(object) = XContainerSize(src);
         XContainerCapacity(object) = XContainerCapacity(src);
     } else {
@@ -512,8 +512,8 @@ void VXClass_move(XHashMap* object, XHashMap* src)
     else {
         // 释放目标原有资源
         if (XContainerIsCow(object)) {
-            if (XContainerSharedData(object))
-                XSharedData_release_with(XContainerSharedData(object), VXHashMapDataDelete, object);
+            if ((XSharedData*)XContainerDataPtr(object))
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXHashMapDataDelete, object);
         }
         else {
             XRBTreeNode** buckets = (XRBTreeNode**)XContainerDataPtr(object);
@@ -539,8 +539,8 @@ void VXClass_move(XHashMap* object, XHashMap* src)
 void VXMap_deinit(XHashMap* this_hash)
 {
     if (XContainerIsCow(this_hash)) {
-        if (XContainerSharedData(this_hash))
-            XSharedData_release_with(XContainerSharedData(this_hash), VXHashMapDataDelete, this_hash);
+        if ((XSharedData*)XContainerDataPtr(this_hash))
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_hash), VXHashMapDataDelete, this_hash);
     } else {
         XRBTreeNode** buckets = (XRBTreeNode**)XContainerDataPtr(this_hash);
         if (buckets) {

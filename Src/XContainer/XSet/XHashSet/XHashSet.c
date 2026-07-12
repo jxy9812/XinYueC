@@ -57,7 +57,7 @@ static bool VXHashSetDetachIfNeeded(XHashSet* this_set)
 {
     if (!XContainerIsCow(this_set)) return true;
 
-    XSharedData* sd = XContainerSharedData(this_set);
+    XSharedData* sd = (XSharedData*)XContainerDataPtr(this_set);
     if (!sd || !XSharedData_isShared(sd)) return true;
 
     size_t capacity = XContainerCapacity(this_set);
@@ -104,7 +104,7 @@ static bool VXHashSetDetachIfNeeded(XHashSet* this_set)
     }
 
     XSharedData_release(sd);
-    XContainerSharedData(this_set) = newShared;
+    XContainerSetDataPtr(this_set, newShared);
     return true;
 }
 
@@ -164,9 +164,9 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
     }
 
     if (XContainerIsCow(set)) {
-        if (XContainerSharedData(set))
-            XSharedData_release(XContainerSharedData(set));
-        XContainerSharedData(set) = newShared;
+        if ((XSharedData*)XContainerDataPtr(set))
+            XSharedData_release((XSharedData*)XContainerDataPtr(set));
+        XContainerSetDataPtr(set, newShared);
     }
     else {
         if (XContainerDataPtr(set))
@@ -183,12 +183,12 @@ bool VXSet_insert(XHashSet* this_set, const void* key, XCDataCreatMethod dataCre
 
     // 初始分配
     if (XContainerIsCow(this_set)) {
-        if (!XContainerSharedData(this_set)) {
+        if (!(XSharedData*)XContainerDataPtr(this_set)) {
             size_t size = DEFAULT_CAPACITY * sizeof(XRBTreeNode*);
             XSharedData* sd = XSharedData_create(NULL, size);
             if (!sd) return false;
             memset(sd->data, 0, size);
-            XContainerSharedData(this_set) = sd;
+            XContainerSetDataPtr(this_set, sd);
             XContainerCapacity(this_set) = DEFAULT_CAPACITY;
         }
     }
@@ -311,9 +311,9 @@ bool VXSet_find(XHashSet* this_set, const void* key, XHashSet_iterator* it)
 void VXSet_clear(XHashSet* this_set)
 {
     if (XHashSet_isEmpty_base(this_set)) return;
-    if (XContainerIsCow(this_set) && XContainerSharedData(this_set) && XSharedData_isShared(XContainerSharedData(this_set))) {
-        XSharedData_release(XContainerSharedData(this_set));
-        XContainerSharedData(this_set) = NULL;
+    if (XContainerIsCow(this_set) && (XSharedData*)XContainerDataPtr(this_set) && XSharedData_isShared((XSharedData*)XContainerDataPtr(this_set))) {
+        XSharedData_release((XSharedData*)XContainerDataPtr(this_set));
+        XContainerSetDataPtr(this_set, NULL);
         XContainerCapacity(this_set) = 0;
         XContainerSize(this_set) = 0;
         return;
@@ -326,7 +326,7 @@ void VXSet_clear(XHashSet* this_set)
             XTree_delete(buckets[i], XSet_deleteNodeData, this_set);
     }
     if (XContainerIsCow(this_set)) {
-        if (XContainerSharedData(this_set))
+        if ((XSharedData*)XContainerDataPtr(this_set))
             memset(XContainerSharedDataPtr(this_set), 0, cap * sizeof(XRBTreeNode*));
     }
     else {
@@ -343,8 +343,8 @@ void VXClass_copy(XHashSet* object, const XHashSet* src)
     }
     else {
         if (XContainerIsCow(object)) {
-            if (XContainerSharedData(object))
-                XSharedData_release_with(XContainerSharedData(object), VXHashSetDataDelete, object);
+            if ((XSharedData*)XContainerDataPtr(object))
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXHashSetDataDelete, object);
         }
         else {
             XRBTreeNode** buckets = (XRBTreeNode**)XContainerDataPtr(object);
@@ -365,9 +365,9 @@ void VXClass_copy(XHashSet* object, const XHashSet* src)
     XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
 
     if (XContainerIsCow(src)) {
-        XContainerSharedData(object) = XContainerSharedData(src);
-        if (XContainerSharedData(object))
-            XSharedData_addRef(XContainerSharedData(object));
+        XContainerSetDataPtr(object, (XSharedData*)XContainerDataPtr(src));
+        if ((XSharedData*)XContainerDataPtr(object))
+            XSharedData_addRef((XSharedData*)XContainerDataPtr(object));
     }
     else {
         XRBTreeNode** srcBuckets = (XRBTreeNode**)XContainerDataPtr(src);
@@ -421,8 +421,8 @@ void VXClass_move(XHashSet* object, XHashSet* src)
     else {
         // 释放目标原有资源
         if (XContainerIsCow(object)) {
-            if (XContainerSharedData(object))
-                XSharedData_release_with(XContainerSharedData(object), VXHashSetDataDelete, object);
+            if ((XSharedData*)XContainerDataPtr(object))
+                XSharedData_release_with((XSharedData*)XContainerDataPtr(object), VXHashSetDataDelete, object);
         }
         else {
             XRBTreeNode** buckets = (XRBTreeNode**)XContainerDataPtr(object);
@@ -448,8 +448,8 @@ void VXClass_move(XHashSet* object, XHashSet* src)
 void VXSet_deinit(XHashSet* this_set)
 {
     if (XContainerIsCow(this_set)) {
-        if (XContainerSharedData(this_set))
-            XSharedData_release_with(XContainerSharedData(this_set), VXHashSetDataDelete, this_set);
+        if ((XSharedData*)XContainerDataPtr(this_set))
+            XSharedData_release_with((XSharedData*)XContainerDataPtr(this_set), VXHashSetDataDelete, this_set);
     }
     else {
         XRBTreeNode** buckets = (XRBTreeNode**)XContainerDataPtr(this_set);
