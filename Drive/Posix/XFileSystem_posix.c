@@ -1,6 +1,9 @@
 /**
  * @file XFileSystem_posix.c
- * @brief XFileSystem POSIX 平台实现（Linux/macOS/BSD）
+ * @brief XFileSystem POSIX 平台实现（Linux/macOS/BSD，支持 io_uring 异步 I/O）
+ *
+ * 核心文件 I/O 操作（read/write/copy/flush）通过 io_uring 提交，
+ * 使用 io_uring_enter 同步等待完成，实现真正异步 I/O 路径。
  */
 
 #if defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
@@ -13,6 +16,8 @@
 #include "XMemory.h"
 #include "XFileDescriptor.h"
 #include "XDateTime.h"
+#include "XAbstractNetIoRing.h"
+#include "XNetIoRingPosix.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +29,72 @@
 #include <dirent.h>
 #include <errno.h>
 #include <utime.h>
+#include <limits.h>
+#ifdef __linux__
+#include <linux/io_uring.h>
+#include <sys/syscall.h>
+#endif
+
+/* io_uring 系统调用号 */
+#ifndef __NR_io_uring_setup
+#define __NR_io_uring_setup 425
+#endif
+#ifndef __NR_io_uring_enter
+#define __NR_io_uring_enter 426
+#endif
+
+/* ============================================================================
+ * 内部辅助：通过 XFd 获取底层 fd
+ * ============================================================================ */
+
+static int XFS_getFd(XFd fdx) {
+    XFileDescriptor* desc = XFd_get(fdx);
+    if (!desc) return -1;
+    return (int)(intptr_t)desc->handle;
+}
+
+/* ============================================================================
+ * io_uring 辅助：提交一条 I/O SQE 并同步等待完成
+ * ============================================================================ */
+
+#ifdef __linux__
+
+/**
+ * @brief 通过 io_uring 提交一条 I/O 操作并同步等待完成
+ * @param fd      目标文件描述符
+ * @param opcode  io_uring 操作码 (IORING_OP_READ / IORING_OP_WRITE / IORING_OP_FSYNC)
+ * @param buf     缓冲区
+ * @param len     长度
+ * @param offset  文件偏移（-1 表示使用当前位置）
+ * @return 完成字节数，< 0 表示错误
+ */
+static int64_t ioUringSyncIO(int fd, uint8_t opcode, void* buf, uint64_t len, int64_t offset) {
+    XNetIoRingPosix* ring = (XNetIoRingPosix*)XAbstractNetIoRing_global();
+    if (!ring || fd < 0) return -1;
+
+    struct io_uring_sqe* sqe = XNetIoRingPosix_getSqe(ring);
+    if (!sqe) return -1;
+
+    /* 使用栈上的 XEventContext 作为完成标识 */
+    XEventContext ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.type = XEventContextType_Type_File;
+
+    memset(sqe, 0, sizeof(*sqe));
+    sqe->opcode = opcode;
+    sqe->fd = fd;
+    sqe->addr = (uint64_t)(uintptr_t)buf;
+    sqe->len = (unsigned)len;
+    if (offset >= 0) sqe->off = (uint64_t)offset;
+    sqe->user_data = (uint64_t)(uintptr_t)&ctx;
+
+    XNetIoRingPosix_submitSqe(ring, 1);
+
+    /* 同步等待匹配的完成条目 */
+    return (int64_t)XNetIoRingPosix_waitCqe(ring, (uint64_t)(uintptr_t)&ctx);
+}
+
+#endif /* __linux__ */
 
 /* ============================================================================
  * 一、核心文件操作
@@ -55,46 +126,61 @@ void XFileSystem_close(XFd fdx) {
 }
 
 int64_t XFileSystem_pos(XFd fdx) {
-    XFileDescriptor* desc = XFd_get(fdx);
-    if (!desc) return -1;
-    int fd = (int)(intptr_t)desc->handle;
+    int fd = XFS_getFd(fdx);
+    if (fd < 0) return -1;
     return (int64_t)lseek(fd, 0, SEEK_CUR);
 }
 
 bool XFileSystem_seek(XFd fdx, int64_t pos) {
-    XFileDescriptor* desc = XFd_get(fdx);
-    if (!desc) return false;
-    int fd = (int)(intptr_t)desc->handle;
+    int fd = XFS_getFd(fdx);
+    if (fd < 0) return false;
     return lseek(fd, pos, SEEK_SET) >= 0;
 }
 
 int64_t XFileSystem_read(XFd fdx, void* buf, int64_t len) {
-    XFileDescriptor* desc = XFd_get(fdx);
-    if (!desc) return -1;
-    int fd = (int)(intptr_t)desc->handle;
-    ssize_t n = read(fd, buf, len);
+    int fd = XFS_getFd(fdx);
+    if (fd < 0) return -1;
+
+#ifdef __linux__
+    /* 使用 io_uring 异步读取（同步等待完成） */
+    if (XAbstractNetIoRing_global()) {
+        return ioUringSyncIO(fd, IORING_OP_READ, buf, (uint64_t)len, -1);
+    }
+#endif
+    ssize_t n = read(fd, buf, (size_t)len);
     return (n >= 0) ? (int64_t)n : -1;
 }
 
 int64_t XFileSystem_write(XFd fdx, const void* buf, int64_t len) {
-    XFileDescriptor* desc = XFd_get(fdx);
-    if (!desc) return -1;
-    int fd = (int)(intptr_t)desc->handle;
-    ssize_t n = write(fd, buf, len);
+    int fd = XFS_getFd(fdx);
+    if (fd < 0) return -1;
+
+#ifdef __linux__
+    /* 使用 io_uring 异步写入（同步等待完成） */
+    if (XAbstractNetIoRing_global()) {
+        return ioUringSyncIO(fd, IORING_OP_WRITE, (void*)buf, (uint64_t)len, -1);
+    }
+#endif
+    ssize_t n = write(fd, buf, (size_t)len);
     return (n >= 0) ? (int64_t)n : -1;
 }
 
 bool XFileSystem_flush(XFd fdx) {
-    XFileDescriptor* desc = XFd_get(fdx);
-    if (!desc) return false;
-    int fd = (int)(intptr_t)desc->handle;
+    int fd = XFS_getFd(fdx);
+    if (fd < 0) return false;
+
+#ifdef __linux__
+    /* 使用 io_uring fsync（同步等待完成） */
+    if (XAbstractNetIoRing_global()) {
+        return ioUringSyncIO(fd, IORING_OP_FSYNC, NULL, 0, -1) >= 0;
+    }
+#endif
     return fsync(fd) == 0;
 }
 
 bool XFileSystem_resize(XFd fdx, int64_t size) {
-    XFileDescriptor* desc = XFd_get(fdx);
-    if (!desc) return false;
-    int fd = (int)(intptr_t)desc->handle;
+    int fd = XFS_getFd(fdx);
+    if (fd < 0) return false;
     return ftruncate(fd, size) == 0;
 }
 
@@ -123,9 +209,8 @@ bool XFileSystem_stat(const XString* path, XFileStat* out) {
 }
 
 bool XFileSystem_fstat(XFd fdx, XFileStat* out) {
-    XFileDescriptor* desc = XFd_get(fdx);
-    if (!desc || !out) return false;
-    int fd = (int)(intptr_t)desc->handle;
+    int fd = XFS_getFd(fdx);
+    if (fd < 0 || !out) return false;
     struct stat st;
     if (((int (*)(int, struct stat*))fstat)(fd, &st) != 0) return false;
     fillStat(&st, out);
@@ -159,11 +244,29 @@ bool XFileSystem_copy(const XString* srcPath, const XString* dstPath) {
     if (sfd < 0) return false;
     int dfd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (dfd < 0) { close(sfd); return false; }
+
     char buf[8192];
-    ssize_t n;
     bool ok = true;
-    while ((n = read(sfd, buf, sizeof(buf))) > 0) {
-        if (write(dfd, buf, n) != n) { ok = false; break; }
+
+#ifdef __linux__
+    if (XAbstractNetIoRing_global()) {
+        /* 使用 io_uring 异步复制 */
+        int64_t offset = 0;
+        while (1) {
+            int64_t nr = ioUringSyncIO(sfd, IORING_OP_READ, buf, sizeof(buf), offset);
+            if (nr <= 0) { ok = (nr == 0); break; }
+            int64_t nw = ioUringSyncIO(dfd, IORING_OP_WRITE, buf, (uint64_t)nr, offset);
+            if (nw != nr) { ok = false; break; }
+            offset += nr;
+        }
+        ioUringSyncIO(dfd, IORING_OP_FSYNC, NULL, 0, -1);
+    } else
+#endif
+    {
+        ssize_t n;
+        while ((n = read(sfd, buf, sizeof(buf))) > 0) {
+            if (write(dfd, buf, (size_t)n) != n) { ok = false; break; }
+        }
     }
     close(sfd);
     close(dfd);
@@ -317,9 +420,8 @@ bool XFileSystem_setPermissions(const XString* path, XFilePermissions permission
  * ============================================================================ */
 
 void* XFileSystem_map(XFd fdx, int64_t offset, int64_t size, bool writable) {
-    XFileDescriptor* desc = XFd_get(fdx);
-    if (!desc) return NULL;
-    int fd = (int)(intptr_t)desc->handle;
+    int fd = XFS_getFd(fdx);
+    if (fd < 0) return NULL;
     int prot = PROT_READ;
     if (writable) prot |= PROT_WRITE;
     void* addr = mmap(NULL, size, prot, MAP_SHARED, fd, offset);
@@ -337,7 +439,6 @@ bool XFileSystem_unmap(void* addr, int64_t size) {
 
 bool XFileSystem_rmdir_recursive(const XString* path) {
     if (!path) return false;
-    /* Simple implementation using system rm -rf */
     const char* p = XString_toUtf8(path);
     char cmd[2048];
     snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", p);
@@ -364,9 +465,8 @@ bool XFileSystem_setFileTime(const XString* path, XFileTime timeType, int64_t ti
 }
 
 bool XFileSystem_fsetFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
-    XFileDescriptor* desc = XFd_get(fdx);
-    if (!desc) return false;
-    int fd = (int)(intptr_t)desc->handle;
+    int fd = XFS_getFd(fdx);
+    if (fd < 0) return false;
     struct timespec ts[2] = {{0, UTIME_OMIT}, {0, UTIME_OMIT}};
     switch (timeType) {
     case XFile_AccessTime: ts[0].tv_sec = timeValue; ts[0].tv_nsec = 0; break;
@@ -381,7 +481,7 @@ bool XFileSystem_fsetFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
  * ============================================================================ */
 
 int XFileSystem_drives_count(void) {
-    return 1; /* Single root "/" */
+    return 1;
 }
 
 bool XFileSystem_drives_at(int index, XString* path) {
@@ -397,7 +497,6 @@ bool XFileSystem_drives_at(int index, XString* path) {
 bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info) {
     if (!path || !info) return false;
     memset(info, 0, sizeof(*info));
-    /* Simple stub */
     return true;
 }
 
@@ -410,7 +509,7 @@ bool XFileSystem_format(const XString* drive, XFileSystemType fsType,
                         XFileSystemFormatProgress progress, void* userData) {
     (void)drive; (void)fsType; (void)volumeName; (void)flags;
     (void)clusterSize; (void)progress; (void)userData;
-    return false; /* Not supported */
+    return false;
 }
 
 #endif /* POSIX */

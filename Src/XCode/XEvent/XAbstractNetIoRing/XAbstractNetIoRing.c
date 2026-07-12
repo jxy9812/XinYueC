@@ -442,7 +442,7 @@ void XAbstractNetIoRing_wakeUp_base(XAbstractNetIoRing* ring) {
  * 直接创建基类实例（使用默认虚函数实现）。
  * Windows 平台由 XNetIoRingWin32.c 提供 createPlatform（IOCP 后端）。
  * ================================================================ */
-#if !XPLATFORM_WINDOWS
+#if !XPLATFORM_HAS_OS
 XAbstractNetIoRing* XAbstractNetIoRing_createPlatform(void) {
     return XAbstractNetIoRing_create();
 }

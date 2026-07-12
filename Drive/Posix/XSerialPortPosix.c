@@ -1,6 +1,6 @@
 ﻿/**
  * @file XSerialPortPosix.c
- * @brief XSerialPort POSIX 平台实现（Linux/macOS/BSD）
+ * @brief XSerialPort POSIX 平台实现（Linux/macOS/BSD，支持 io_uring 异步 I/O）
  * 保持与 Windows 平台一致的 API 签名
  */
 
@@ -17,6 +17,8 @@
 #include "XIODevicePrivate.h"
 #include "XIODevice_Protected.h"
 #include "XFileDescriptor.h"
+#include "XAbstractNetIoRing.h"
+#include "XNetIoRingPosix.h"
 
 #include <termios.h>
 #include <unistd.h>
@@ -28,6 +30,7 @@
 #include <poll.h>
 #ifdef __linux__
 #include <linux/serial.h>
+#include <linux/io_uring.h>
 #endif
 
 /* =========================================================================
@@ -57,6 +60,7 @@
 
 /* =========================================================================
  * 平台私有数据（继承 XIODevicePrivate）
+ * 对标 Windows XSerialPortPrivate（含 XEventContext_IOCP read/write）
  * ========================================================================= */
 typedef struct XSerialPortPrivate {
     XIODevicePrivate base;
@@ -64,6 +68,12 @@ typedef struct XSerialPortPrivate {
     struct termios originalTermios;
     bool isCustomBaud;
     int32_t customBaudRate;
+
+    /* io_uring 异步 I/O 上下文（对标 Windows XEventContext_IOCP read/write） */
+    XEventContext_IO read;
+    XEventContext_IO write;
+    char readBuff[BUFFSIZE];
+    char writeBuff[BUFFSIZE];
 } XSerialPortPrivate;
 
 /* 便捷转换宏 */
@@ -244,6 +254,58 @@ static bool setModemControlLine(int fd, int line, bool set) {
 }
 
 /* =========================================================================
+ * io_uring 异步 I/O 辅助函数
+ * ========================================================================= */
+
+/* 提交 io_uring 异步读请求（对标 Windows ReadFile + OVERLAPPED） */
+static bool submitReadSqe(XSerialPortPrivate* priv) {
+#ifdef __linux__
+    XNetIoRingPosix* ring = (XNetIoRingPosix*)XAbstractNetIoRing_global();
+    if (!ring) return false;
+
+    struct io_uring_sqe* sqe = XNetIoRingPosix_getSqe(ring);
+    if (!sqe) return false;
+
+    memset(sqe, 0, sizeof(*sqe));
+    sqe->opcode = IORING_OP_READ;
+    sqe->fd = priv->fd;
+    sqe->addr = (uint64_t)(uintptr_t)priv->readBuff;
+    sqe->len = BUFFSIZE;
+    sqe->user_data = (uint64_t)(uintptr_t)&priv->read.base;
+
+    XNetIoRingPosix_submitSqe(ring, 1);
+    return true;
+#else
+    (void)priv;
+    return false;
+#endif
+}
+
+/* 提交 io_uring 异步写请求（对标 Windows WriteFile + OVERLAPPED） */
+static bool submitWriteSqe(XSerialPortPrivate* priv, size_t len) {
+#ifdef __linux__
+    XNetIoRingPosix* ring = (XNetIoRingPosix*)XAbstractNetIoRing_global();
+    if (!ring) return false;
+
+    struct io_uring_sqe* sqe = XNetIoRingPosix_getSqe(ring);
+    if (!sqe) return false;
+
+    memset(sqe, 0, sizeof(*sqe));
+    sqe->opcode = IORING_OP_WRITE;
+    sqe->fd = priv->fd;
+    sqe->addr = (uint64_t)(uintptr_t)priv->writeBuff;
+    sqe->len = (unsigned)len;
+    sqe->user_data = (uint64_t)(uintptr_t)&priv->write.base;
+
+    XNetIoRingPosix_submitSqe(ring, 1);
+    return true;
+#else
+    (void)priv; (void)len;
+    return false;
+#endif
+}
+
+/* =========================================================================
  * 私有数据管理
  * ========================================================================= */
 static XSerialPortPrivate* XSerialPortPrivate_create(void)
@@ -304,7 +366,8 @@ XSerialPort* XSerialPort_create(void)
 }
 
 /* =========================================================================
- * 事件处理（POSIX 使用 select/poll 轮询）
+ * 事件处理（io_uring 异步完成事件）
+ * 对标 Windows XSerialPort_platform_XChildEvent_handler
  * ========================================================================= */
 void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort* receiver)
 {
@@ -314,44 +377,46 @@ void XSerialPort_platform_XChildEvent_handler(XEventSockAct* event, XSerialPort*
     int currentReadChannel = XIODevice_currentReadChannel(receiver);
 
     if (event->actType & XSocketAct_Read) {
-        char buf[BUFFSIZE];
-        ssize_t n = read(priv->fd, buf, sizeof(buf));
-        if (n > 0) {
+        /* 读完成：对标 Windows 的 priv->read.finishedBytes 处理 */
+        if (priv->read.base.finishedBytes) {
             XIODevicePrivate* d = ((XIODevice*)receiver)->m_d;
             struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
             if (readBuf) {
-                XRingBuffer_write(readBuf, buf, (size_t)n);
-                receiver->readyReadTriggered = true;
-                XIODevice_readyRead_signal(receiver);
-                XIODevice_channelReadyRead_signal(receiver, currentReadChannel);
-            }
-        }
-    }
-
-    if (event->actType & XSocketAct_Write) {
-        XIODevicePrivate* d = ((XIODevice*)receiver)->m_d;
-        struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentReadChannel);
-        if (writeBuf) {
-            size_t available = XRingBuffer_available(writeBuf);
-            if (available > 0) {
-                char buf[BUFFSIZE];
-                size_t toWrite = (available > BUFFSIZE) ? BUFFSIZE : available;
-                ssize_t written = XRingBuffer_read(writeBuf, buf, toWrite);
-                if (written > 0) {
-                    ssize_t n = write(priv->fd, buf, (size_t)written);
-                    if (n > 0) {
-                        XIODevice_bytesWritten_signal(receiver, (int64_t)n);
-                        XIODevice_channelBytesWritten_signal(receiver, currentReadChannel, (int64_t)n);
-                    }
-                    if (n < written) {
-                        /* 未写完的放回缓冲区 */
-                        XRingBuffer_write(writeBuf, buf + (n > 0 ? n : 0), (size_t)(written - (n > 0 ? n : 0)));
-                    }
+                int64_t bytesFromBuffer = XRingBuffer_write(readBuf, priv->readBuff,
+                                                            priv->read.base.finishedBytes);
+                if (bytesFromBuffer) {
+                    receiver->readyReadTriggered = true;
+                    XIODevice_readyRead_signal(receiver);
+                    XIODevice_channelReadyRead_signal(receiver, currentReadChannel);
                 }
             }
         }
-        if (XRingBuffer_available(writeBuf) == 0) {
-            receiver->bytesWrittenTriggered = true;
+        priv->read.base.finishedBytes = 0;
+        /* 重新发起异步读（对标 Windows 的 ReadFile） */
+        submitReadSqe(priv);
+    }
+
+    if (event->actType & XSocketAct_Write) {
+        /* 写完成：对标 Windows 的 priv->write.finishedBytes 处理 */
+        if (priv->write.base.finishedBytes) {
+            XIODevice_bytesWritten_signal(receiver, (int64_t)priv->write.base.finishedBytes);
+            XIODevice_channelBytesWritten_signal(receiver, currentReadChannel,
+                                                 (int64_t)priv->write.base.finishedBytes);
+        }
+        priv->write.base.finishedBytes = 0;
+
+        XIODevicePrivate* d = ((XIODevice*)receiver)->m_d;
+        struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentReadChannel);
+        if (writeBuf) {
+            int64_t bytesFromBuffer = XRingBuffer_read(writeBuf, priv->writeBuff,
+                                                       (size_t)priv->write.base.bufferSize);
+            if (bytesFromBuffer) {
+                /* 设置写上下文（对标 Windows 的 WriteFile） */
+                submitWriteSqe(priv, (size_t)bytesFromBuffer);
+                receiver->bytesWrittenTriggered = false;
+            } else {
+                receiver->bytesWrittenTriggered = true;
+            }
         }
     }
 
@@ -394,9 +459,33 @@ bool XSerialPort_platform_open(XSerialPort* port, XIODeviceBaseMode mode) {
 
     port->isOpen = true;
 
+    /* 分配 XFileDescriptor 统一标识符 */
     if (XIODevice_fd((XIODevice*)port) == XFD_INVALID) {
         XIODevice_setFd((XIODevice*)port, XFd_alloc(XFD_TYPE_SERIAL, priv, (XIODevice*)port));
     }
+
+    /* 初始化 io_uring 异步读上下文（对标 Windows 的 ReadFile + OVERLAPPED） */
+    memset(&priv->read, 0, sizeof(priv->read));
+    priv->read.base.type = XEventContextType_Type_File;
+    priv->read.base.fd = XIODevice_fd((XIODevice*)port);
+    priv->read.base.buffer = priv->readBuff;
+    priv->read.base.bufferSize = BUFFSIZE;
+    priv->read.base.eventMask = XSocketAct_Read;
+    priv->read.socket = XSocketDescriptor_fromIntptr(priv->fd);
+    priv->read.base.finishedBytes = 0;
+
+    /* 初始化 io_uring 异步写上下文 */
+    memset(&priv->write, 0, sizeof(priv->write));
+    priv->write.base.type = XEventContextType_Type_File;
+    priv->write.base.fd = XIODevice_fd((XIODevice*)port);
+    priv->write.base.buffer = priv->writeBuff;
+    priv->write.base.bufferSize = BUFFSIZE;
+    priv->write.base.eventMask = XSocketAct_Write;
+    priv->write.socket = XSocketDescriptor_fromIntptr(priv->fd);
+    priv->write.base.finishedBytes = 0;
+
+    /* 发起首次异步读（对标 Windows 的 ReadFile） */
+    submitReadSqe(priv);
 
     return true;
 }
@@ -421,17 +510,11 @@ int64_t XSerialPort_platform_read(XSerialPort* port, char* data, int64_t maxSize
     struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(d, currentReadChannel);
     if (!readBuf) return -1;
 
-    /* 先尝试从缓冲区读取 */
-    int64_t n = XRingBuffer_read(readBuf, data, (size_t)maxSize);
-    if (n > 0) return n;
-
-    /* 缓冲区为空，直接读取 */
-    ssize_t r = read(priv->fd, data, (size_t)maxSize);
-    if (r == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return 0;
-        return -1;
+    /* 等待缓冲区有足够数据（对标 Windows 的 processEvents 循环） */
+    while (XRingBuffer_size_base(readBuf) < (size_t)maxSize) {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
     }
-    return (int64_t)r;
+    return XRingBuffer_read(readBuf, data, (size_t)maxSize);
 }
 
 int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t len) {
@@ -442,23 +525,37 @@ int64_t XSerialPort_platform_write(XSerialPort* port, const char* data, int64_t 
     XIODevicePrivate* d = (XIODevicePrivate*)priv;
     int currentWriteChannel = XIODevice_currentWriteChannel(port);
     struct XRingBuffer* writeBuf = XIODevicePrivate_getOrCreateWriteBuffer(d, currentWriteChannel);
+    int64_t written = 0;
 
     if (!port->bytesWrittenTriggered && writeBuf) {
-        return XRingBuffer_write(writeBuf, data, (size_t)len);
-    }
+        /* 写入缓冲区 */
+        written = XRingBuffer_write(writeBuf, data, (size_t)len);
+    } else {
+        /* 发起 io_uring 异步写（对标 Windows 的 WriteFile + OVERLAPPED） */
+        memset(&priv->write, 0, sizeof(priv->write.base));
+        priv->write.base.type = XEventContextType_Type_File;
+        priv->write.base.fd = XIODevice_fd((XIODevice*)port);
+        priv->write.base.buffer = priv->writeBuff;
+        priv->write.base.bufferSize = BUFFSIZE;
+        priv->write.base.eventMask = XSocketAct_Write;
+        priv->write.socket = XSocketDescriptor_fromIntptr(priv->fd);
+        priv->write.base.finishedBytes = 0;
+        port->bytesWrittenTriggered = false;
 
-    ssize_t n = write(priv->fd, data, (size_t)len);
-    if (n == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            if (writeBuf) {
-                return XRingBuffer_write(writeBuf, data, (size_t)len);
-            }
-            return 0;
+        size_t toWrite = ((size_t)len <= BUFFSIZE) ? (size_t)len : BUFFSIZE;
+        memcpy(priv->writeBuff, data, toWrite);
+        if (submitWriteSqe(priv, toWrite)) {
+            written = (int64_t)toWrite;
+        } else {
+            port->bytesWrittenTriggered = true;
+            return -1;
         }
-        return -1;
+
+        if ((size_t)len > BUFFSIZE) {
+            written += XRingBuffer_write(writeBuf, data + BUFFSIZE, (size_t)len - BUFFSIZE);
+        }
     }
-    port->bytesWrittenTriggered = false;
-    return (int64_t)n;
+    return written;
 }
 
 bool XSerialPort_platform_applyConfig(XSerialPort* port) {

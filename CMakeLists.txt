@@ -60,6 +60,13 @@ add_executable(${PROJECT_NAME}
 ${TEST_FILE}
 "./main.c"
  )
-target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME} m pthread)
+# Windows(MSVC): 数学函数内置于 C 运行时，线程使用 Drive/windows 的 Win32 实现，无需链接 m/pthread
+# Unix(Linux/macOS/BSD): 需链接数学库 m 与线程库 pthread（对应 Drive/Posix 实现，源码已用
+#                         __linux__/__APPLE__/__BSD__ 宏守护，仅在这些平台编译）
+if(UNIX)
+    target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME} m pthread)
+else()
+    target_link_libraries(${PROJECT_NAME} ${EXPORT_NAME})
+endif()
 #安装
 include(CMake_Install.cmake)
