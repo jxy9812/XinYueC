@@ -1,9 +1,9 @@
-/**
+﻿/**
  * @file XNetwork_platform.h
  * @brief 网络操作平台抽象接口（精简版）
  * 
  * 职责：
- * - 平台相关的所有网络操作（Windows IOCP / Linux epoll）
+ * - 平台相关的所有网络操作（Windows IOCP / Linux io_uring / lwIP）
  * - 异步 I/O 管理
  * - 套接字私有数据管理
  * 
@@ -12,8 +12,8 @@
  *        |
  *   XNetwork_platform.h (本文件)               -> 平台抽象
  *   |-- windows/XNetwork_win32.c               -> Windows IOCP 实现
- *   |-- linux/XNetwork_linux.c                 -> Linux epoll 实现
- *   |-- ...
+ *   |-- Posix/XNetwork_posix.c                 -> Linux io_uring 实现
+ *   |-- lwip/XNetwork_lwip.c                   -> lwIP 回调驱动实现
  * 
  * 代理协议（SOCKS5/HTTP）在 XNetworkProxy 模块中用通用代码实现
  */
@@ -43,6 +43,33 @@ extern "C" {
 #endif
 
 typedef struct XNetworkInterface XNetworkInterface;
+
+/* =========================================================================
+ * 平台移植指南
+ * =========================================================================
+ *
+ * 本文件声明的函数均为各平台必须实现的公共接口。移植新平台时，
+ * 根据异步 I/O 模型不同，额外需要实现以下平台内部函数：
+ *
+ * 【模型 A：投递 + 完成通知】— Windows IOCP / Linux io_uring
+ *   - static startAsyncRead(priv, isUdp)
+ *       向异步引擎投递一次读操作（WSARecv / IORING_OP_RECV）。
+ *       由 socketBind / socketConnect / socketRead / socketContinueRead 内部调用。
+ *   - static startAsyncWrite(priv, data, len, destAddr, destPort, isUdp)
+ *       向异步引擎投递一次写操作（WSASend / IORING_OP_SEND）。
+ *       由 socketWrite 内部调用。
+ *   以上两个函数为平台内部 static 实现，不在本头文件声明，
+ *   但移植 IOCP / io_uring 类平台时必须实现。
+ *
+ * 【模型 B：回调驱动】— lwIP
+ *   - 读：协议栈通过回调（tcp_recv / udp_recv）自动填充内部缓冲区，
+ *         应用层 pull 取数据，无需 startAsyncRead。
+ *   - 写：直接调用 tcp_write + tcp_output / udp_sendto，同步入栈，
+ *         无需 startAsyncWrite。
+ *   回调驱动平台不需要实现 startAsyncRead / startAsyncWrite。
+ *
+ * 两种模型都必须实现本文件声明的全部公共函数。
+ * ========================================================================= */
 
 /* =========================================================================
  * 一、基础类型
@@ -89,18 +116,29 @@ void XNetwork_cleanup(void);
 int XNetwork_lastError(void);
 
 /**
- * @brief 检查错误码是否为"需要重试"
- * @param err 错误码
- * @return 是 EAGAIN/EWOULDBLOCK 返回 true
- */
-bool XNetwork_isEAgain(int err);
-
-/**
  * @brief 将错误码转换为可读字符串
  * @param errorCode 错误码
  * @return 错误描述字符串，需调用者 XFree_System 释放
  */
 char* XNetwork_errorString(int errorCode);
+
+/* =========================================================================
+ * DNS
+ * ========================================================================= */
+
+/**
+ * @brief 获取本机主机名
+ * @return XString 主机名（调用者需用 XString_delete_base 释放），失败返回 NULL
+ */
+XString* XNetwork_localHostName(void);
+
+/**
+ * @brief 同步 DNS 查询
+ * @param name 待解析的主机名
+ * @return XVector<XHostAddress> 地址列表，失败返回 NULL
+ * @note 调用者需用 XVector_delete_base 释放返回的向量
+ */
+XVector* XNetwork_lookupName(const XString* name);
 
 /* =========================================================================
  * 三、套接字私有数据（由平台层管理异步IO状态）
@@ -130,7 +168,6 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv);
  * @return 套接字描述符，无效返回 -1
  */
 intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv);
-XFd XNetwork_socketFd(const XNetworkSocketPrivate* priv);
 
 /**
  * @brief 检查套接字是否已连接
@@ -168,7 +205,7 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
  * @return 成功发起连接返回 true，立即失败返回 false
  * @note 连接结果通过事件通知，成功后状态变为 ConnectedState
  */
-bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
+bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName,
                             uint16_t port, XNetworkProtocol protocol, 
                             XNetworkSocketType sockType);
 
@@ -303,12 +340,13 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
                                      uint16_t port, int backlog, bool reuseAddr);
 
 /**
- * @brief 异步接受客户端连接
+ * @brief 启动异步接受客户端连接
  * @param priv 服务器私有数据
- * @param server 服务器句柄
- * @note 接受结果通过事件通知，成功后创建客户端套接字
+ * @return 成功发起异步 Accept 返回 true，失败返回 false
+ * @note 在 serverCreate 成功后由用户层调用，启动异步 Accept；
+ *       每次处理完一个连接后再次调用以继续接受。接受结果通过事件通知。
  */
-void XNetwork_serverAccept(XNetworkSocketPrivate* priv, XServerHandle server);
+bool XNetwork_serverAccept(XNetworkSocketPrivate* priv);
 
 /**
  * @brief 关闭 TCP 服务器
@@ -334,52 +372,8 @@ uint16_t XNetwork_serverPort(XServerHandle server);
  */
 XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv, XHostAddress* clientAddr, uint16_t* clientPort);
 
-/**
- * @brief 继续接受下一个客户端连接
- * @param priv 服务器私有数据
- * @return 成功返回 true
- * @note 处理完当前客户端连接后调用，允许接受下一个连接
- */
-bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv);
-
 /* =========================================================================
- * 七、Socket 创建（平台直接创建原生套接字）
- * ========================================================================= */
-
-/**
- * @brief 创建原生 TCP 套接字
- * @param protocol 协议类型
- * @return 套接字描述符，失败返回 -1
- */
-XSocketHandle XNetwork_createTcpSocket(XNetworkProtocol protocol);
-
-/**
- * @brief 创建原生 UDP 套接字
- * @param protocol 协议类型
- * @return 套接字描述符，失败返回 -1
- */
-XSocketHandle XNetwork_createUdpSocket(XNetworkProtocol protocol);
-
-/**
- * @brief 关闭原生套接字
- * @param sock 套接字描述符
- */
-void XNetwork_closeSocket(XSocketHandle sock);
-
-/* =========================================================================
- * 八、网络接口信息
- * ========================================================================= */
-
-/**
- * @brief 获取所有网络接口信息
- * @param ifname 接口名称过滤（XString 类型），NULL 表示所有接口
- * @return 成功返回 XVector<XNetworkAddressEntry>*，失败返回 NULL
- * @note 调用者需要使用 XVector_delete_base 释放返回的向量
- */
-XVector* XNetwork_getInterfaceAddresses(const XString* ifname);
-
-/* =========================================================================
- * 九、多播组（精简为 2 个 API）
+ * 七、多播组（精简为 2 个 API）
  * ========================================================================= */
 
 /** 多播操作类型 */
@@ -415,7 +409,7 @@ bool XNetwork_multicastGroup(XSocketHandle sock, bool join,
 int XNetwork_multicastOp(XSocketHandle sock, XMulticastOp op, void* arg);
 
 /* =========================================================================
- * 十、UDP 特有
+ * 八、UDP 特有
  * ========================================================================= */
 
 /**
@@ -442,7 +436,7 @@ int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size
                                const XHostAddress* address, uint16_t port);
 
 /* =========================================================================
- * 十一、系统代理与GSSAPI（平台相关）
+ * 九、系统代理与GSSAPI（平台相关）
  * ========================================================================= */
 
 /**
@@ -452,7 +446,7 @@ int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size
  * @return 成功返回true
  * @note Windows: WinHttpGetProxyForUrl/注册表; Linux: 环境变量; macOS: CFProxySupport
  */
-bool XNetwork_getSystemProxy(const char* queryUrl, XNetworkProxy* outProxy);
+bool XNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outProxy);
 
 /**
  * @brief GSSAPI认证处理
@@ -462,7 +456,7 @@ bool XNetwork_getSystemProxy(const char* queryUrl, XNetworkProxy* outProxy);
  * @param context 上下文指针（内部维护状态，首次传NULL）
  * @return 0=完成, 1=继续, -1=失败
  */
-int XNetwork_gssapiAuth(const char* serviceName,
+int XNetwork_gssapiAuth(const XString* serviceName,
                          const XByteArray* inputToken,
                          XByteArray* outputToken,
                          void** context);

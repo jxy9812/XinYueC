@@ -84,7 +84,7 @@ static bool VXTcpServer_event(XTcpServer* server, XEvent* e)
 
 			// 璋冪敤铏氬嚱鏁板鐞嗘柊杩炴帴
 			XTcpServer_incomingConnection_base(server, clientHandle);
-			XNetwork_serverContinueAccept(server->d_ptr);
+			XNetwork_serverAccept(server->d_ptr);
 		}
 		return true;
 	}
@@ -290,6 +290,9 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	server->serverPort = XNetwork_serverPort(handle);
 	server->listening = true;
 	server->pauseAccepting = false;
+
+	/* 启动首次异步 Accept（serverCreate 仅创建，accept 由用户层显式启动） */
+	XNetwork_serverAccept(server->d_ptr);
 
 	return true;
 }

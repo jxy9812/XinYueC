@@ -43,9 +43,9 @@
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XCoreApplication.h"
-#include "IOCPInfo.h"
 #include "XSocketDescriptor.h"
 #include <winsock2.h>
+#include "XNetIoRingWin32.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -55,7 +55,8 @@
 #endif
 
 /* ================================================================
- * XNetIoRingWin32 类定义（原 XNetIoRingWin32.h 内容合并至此）
+ * XNetIoRingWin32 类定义（虚函数表枚举 + 结构体完整定义）
+ * 公开 API 与事件上下文类型见 XNetIoRingWin32.h
  * ================================================================ */
 
 /* 虚函数表枚举：继承 XAbstractNetIoRing，不添加新虚函数 */

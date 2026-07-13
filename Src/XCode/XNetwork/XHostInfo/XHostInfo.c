@@ -1,4 +1,4 @@
-// XHostInfo.c
+﻿// XHostInfo.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 #include "XHostInfo.h"
@@ -288,10 +288,8 @@ XHostInfo* XHostInfo_fromName1(const XString* name) {
     /* 调用 XNetwork 平台函数进行 DNS 查询 */
     XNetwork_ensureInit();
     
-    XHostAddress* addrs = NULL;
-    int count = 0;
-    
-    if (!XNetwork_lookupName(XString_toUtf8(name), &addrs, &count)) {
+    XVector* addrVec = XNetwork_lookupName(name);
+    if (!addrVec) {
         XHostInfo_setError(info, XHostInfo_HostNotFound);
         int errCode = XNetwork_lastError();
         char* errStr = XNetwork_errorString(errCode);
@@ -303,17 +301,14 @@ XHostInfo* XHostInfo_fromName1(const XString* name) {
     }
     
     /* 将结果添加到 addresses 向量 */
-    for (int i = 0; i < count; i++) {
-        XVector_push_back_1_base(info->addresses, &addrs[i]);
+    size_t addrCount = XVector_size_base(addrVec);
+    for (size_t i = 0; i < addrCount; i++) {
+        XHostAddress* addr = (XHostAddress*)XVector_at_base(addrVec, (int64_t)i);
+        XVector_push_back_1_base(info->addresses, addr);
     }
     
-    /* 释放 XNetwork 分配的内存 */
-    for (int i = 0; i < count; i++) {
-        XHostAddress_deinit_base(&addrs[i]);
-    }
-    if (addrs) {
-        XFree_System(addrs);
-    }
+    /* 释放 XVector */
+    XVector_delete_base(addrVec);
     
     /* 存入缓存 */
     putToCache(name, info);
@@ -332,30 +327,25 @@ XHostInfo* XHostInfo_fromName2(const char* name)
 
 XString* XHostInfo_localHostName(void) {
     XNetwork_ensureInit();
-    char* hostname = XNetwork_localHostName();
-    if (hostname) {
-        XString* result = XString_create_utf8(hostname);
-        XFree_System(hostname);
-        return result;
-    }
-    return NULL;
+    return XNetwork_localHostName();
 }
 
 XString* XHostInfo_localDomainName(void) {
     /* 应用层实现：从本地主机名提取域名 */
     XNetwork_ensureInit();
-    char* hostname = XNetwork_localHostName();
+    XString* hostname = XNetwork_localHostName();
     if (!hostname) return NULL;
     
     /* 查找第一个点号，提取域名部分 */
-    char* dot = strchr(hostname, '.');
+    const char* utf8 = XString_toUtf8(hostname);
+    const char* dot = strchr(utf8, '.');
     XString* result = NULL;
     if (dot && dot[1] != '\0') {
         /* 跳过点号，返回域名部分 */
         result = XString_create_utf8(dot + 1);
     }
     
-    XFree_System(hostname);
+    XString_delete_base(hostname);
     return result;
 }
 

@@ -1,9 +1,9 @@
-/**
+﻿/**
  * @file XNetIoRingPosix.h
  * @brief XAbstractNetIoRing Linux io_uring 后端头文件
  *
  * 包含：
- *   1. io_uring 事件上下文类型（对应 Windows IOCPInfo.h）
+ *   1. io_uring 事件上下文类型（对应 Windows XNetIoRingWin32.h）
  *   2. XNetIoRingPosix 类前置声明与 API
  */
 
@@ -26,10 +26,10 @@ extern "C" {
 #endif
 
 /* ================================================================
- * 一、事件上下文类型（对应 Windows IOCPInfo.h 的 XEventContext）
+ * 一、事件上下文类型（对应 Windows XNetIoRingWin32.h 的 XEventContext）
  * ================================================================ */
 
-/* 与 Windows IOCPInfo.h 保持一致的类型枚举 */
+/* 与 Windows XNetIoRingWin32.h 保持一致的类型枚举 */
 typedef enum {
     XEventContextType_Type_Socket = 1,   /* 套接字 */
     XEventContextType_Type_File,         /* 普通文件 / 管道 / 串口等 fd 类型 */

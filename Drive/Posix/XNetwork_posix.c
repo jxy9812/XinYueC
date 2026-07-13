@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XNetwork_posix.c
  * @brief XNetwork POSIX 平台实现（Linux io_uring 异步 I/O）
  *
@@ -112,11 +112,6 @@ void XNetwork_cleanup(void)
 int XNetwork_lastError(void)
 {
     return errno;
-}
-
-bool XNetwork_isEAgain(int err)
-{
-    return (err == EAGAIN || err == EWOULDBLOCK);
 }
 
 char* XNetwork_errorString(int errorCode)
@@ -346,11 +341,6 @@ intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv)
     return priv ? (intptr_t)P32(priv)->socket : -1;
 }
 
-XFd XNetwork_socketFd(const XNetworkSocketPrivate* priv)
-{
-    return (priv && priv->owner) ? XIODevice_fd((XIODevice*)priv->owner) : XFD_INVALID;
-}
-
 bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv)
 {
     return priv ? P32(priv)->connected : false;
@@ -427,11 +417,13 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
     return actualPort;
 }
 
-bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
+bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName,
                              uint16_t port, XNetworkProtocol protocol,
                              XNetworkSocketType sockType)
 {
     if (!priv || !hostName) return false;
+    const char* hostStr = XString_toUtf8(hostName);
+    if (!hostStr) return false;
     XNetworkSocketPrivatePosix* p = P32(priv);
 
     XNetwork_ensureInit();
@@ -440,7 +432,7 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
                        (protocol == XNetwork_IPv4) ? AF_INET : AF_UNSPEC;
     hints.ai_socktype = (sockType == XNetwork_Tcp) ? SOCK_STREAM : SOCK_DGRAM;
 
-    if (getaddrinfo(hostName, NULL, &hints, &result) != 0) return false;
+    if (getaddrinfo(hostStr, NULL, &hints, &result) != 0) return false;
 
     struct addrinfo* ai = result;
     while (ai && ai->ai_family != hints.ai_family) ai = ai->ai_next;
@@ -746,16 +738,16 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp)
 }
 
 /* =========================================================================
- * 异步 Accept 启动（对标 Windows startAsyncAccept）
+ * 异步 Accept（公开 API：启动首次异步接受）
  * ========================================================================= */
 
-#ifdef __linux__
-static bool startAsyncAccept(XNetworkSocketPrivate* priv)
+bool XNetwork_serverAccept(XNetworkSocketPrivate* priv)
 {
     XNetworkSocketPrivatePosix* p = P32(priv);
     if (!p || p->socket < 0) return false;
     if (p->acceptPending) return true;
 
+#ifdef __linux__
     struct sockaddr_storage addr;
     socklen_t addrLen = sizeof(addr);
     if (getsockname(p->socket, (struct sockaddr*)&addr, &addrLen) != 0) return false;
@@ -785,8 +777,15 @@ static bool startAsyncAccept(XNetworkSocketPrivate* priv)
     submitSqe(1);
     p->acceptPending = true;
     return true;
+#else
+    /* 非 io_uring 平台：同步 accept */
+    struct sockaddr_storage addr;
+    socklen_t addrLen = sizeof(addr);
+    p->acceptSocket = accept(p->socket, (struct sockaddr*)&addr, &addrLen);
+    p->acceptPending = true;
+    return p->acceptSocket >= 0;
+#endif
 }
-#endif /* __linux__ */
 
 /* =========================================================================
  * TCP 服务器
@@ -832,22 +831,6 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
     return (XServerHandle)(intptr_t)P32(priv);
 }
 
-void XNetwork_serverAccept(XNetworkSocketPrivate* priv, XServerHandle server)
-{
-    XNetworkSocketPrivatePosix* p = (XNetworkSocketPrivatePosix*)(intptr_t)server;
-    if (!p || p->acceptPending) return;
-
-#ifdef __linux__
-    startAsyncAccept(priv);
-#else
-    /* 非 io_uring 平台：同步 accept */
-    struct sockaddr_storage addr;
-    socklen_t addrLen = sizeof(addr);
-    p->acceptSocket = accept(p->socket, (struct sockaddr*)&addr, &addrLen);
-    p->acceptPending = true;
-#endif
-}
-
 void XNetwork_serverClose(XNetworkSocketPrivate* priv, XServerHandle server)
 {
     XNetworkSocketPrivatePosix* p = (XNetworkSocketPrivatePosix*)(intptr_t)server;
@@ -890,51 +873,9 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv, XHos
     return (XSocketHandle)acceptedFd;
 }
 
-bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv)
-{
-    XNetworkSocketPrivatePosix* p = P32(priv);
-    if (!p) return false;
-#ifdef __linux__
-    return startAsyncAccept(priv);
-#else
-    return true;
-#endif
-}
-
-/* =========================================================================
- * Socket 创建
- * ========================================================================= */
-
-XSocketHandle XNetwork_createTcpSocket(XNetworkProtocol protocol)
-{
-    int af = (protocol == XNetwork_IPv6) ? AF_INET6 : AF_INET;
-    int fd = socket(af, SOCK_STREAM, 0);
-    if (fd >= 0) setNonBlocking(fd);
-    return (XSocketHandle)fd;
-}
-
-XSocketHandle XNetwork_createUdpSocket(XNetworkProtocol protocol)
-{
-    int af = (protocol == XNetwork_IPv6) ? AF_INET6 : AF_INET;
-    int fd = socket(af, SOCK_DGRAM, 0);
-    if (fd >= 0) setNonBlocking(fd);
-    return (XSocketHandle)fd;
-}
-
-void XNetwork_closeSocket(XSocketHandle sock)
-{
-    if (sock >= 0) close((int)sock);
-}
-
 /* =========================================================================
  * 网络接口
  * ========================================================================= */
-
-XVector* XNetwork_getInterfaceAddresses(const XString* ifname)
-{
-    (void)ifname;
-    return NULL;
-}
 
 XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void) { return NULL; }
 struct XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter) { (void)iter; return NULL; }
@@ -993,14 +934,14 @@ int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size
  * 系统代理与GSSAPI
  * ========================================================================= */
 
-bool XNetwork_getSystemProxy(const char* queryUrl, XNetworkProxy* outProxy)
+bool XNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outProxy)
 {
     (void)queryUrl;
     XNetworkProxy_setType(outProxy, XNetworkProxy_NoProxy);
     return false;
 }
 
-int XNetwork_gssapiAuth(const char* serviceName,
+int XNetwork_gssapiAuth(const XString* serviceName,
                          const XByteArray* inputToken,
                          XByteArray* outputToken,
                          void** context)
@@ -1013,26 +954,40 @@ int XNetwork_gssapiAuth(const char* serviceName,
  * DNS 查找
  * ========================================================================= */
 
-bool XNetwork_lookupName(const char* hostName, XHostAddress* outAddr)
+XVector* XNetwork_lookupName(const XString* name)
 {
-    if (!hostName || !outAddr) return false;
+    if (!name) return NULL;
+    const char* nameStr = XString_toUtf8(name);
+    if (!nameStr) return NULL;
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
-    if (getaddrinfo(hostName, NULL, &hints, &res) != 0) return false;
+    if (getaddrinfo(nameStr, NULL, &hints, &res) != 0) return NULL;
+
+    XVector* vec = XVector_create(sizeof(XHostAddress));
+    if (!vec) {
+        freeaddrinfo(res);
+        return NULL;
+    }
+    XContainerSetDataMoveMethod(vec, XHostAddress_move_base);
+    XContainerSetDataCopyMethod(vec, XHostAddress_copy_base);
+    XContainerSetDataDeinitMethod(vec, XHostAddress_deinit_base);
+
+    XHostAddress addr;
+    XHostAddress_init(&addr);
     struct sockaddr_in* sin = (struct sockaddr_in*)res->ai_addr;
-    XHostAddress_setAddressIPv4(outAddr, sin->sin_addr.s_addr);
+    XHostAddress_setAddressIPv4(&addr, sin->sin_addr.s_addr);
+    XVector_push_back_1_base(vec, &addr);
+
     freeaddrinfo(res);
-    return true;
+    return vec;
 }
 
-bool XNetwork_localHostName(XString* outName)
+XString* XNetwork_localHostName(void)
 {
-    if (!outName) return false;
     char hostname[256];
-    if (gethostname(hostname, sizeof(hostname)) != 0) return false;
-    XString_assign_utf8(outName, hostname);
-    return true;
+    if (gethostname(hostname, sizeof(hostname)) != 0) return NULL;
+    return XString_create_utf8(hostname);
 }
 
 #endif /* XNETWORK_USE_PLATFORM_API && POSIX */

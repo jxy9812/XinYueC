@@ -446,7 +446,6 @@ void XNetwork_cleanup(void) {
 
 /* 错误信息 */
 int XNetwork_lastError(void) { return g_state.lastError; }
-bool XNetwork_isEAgain(int err) { return err == -6; }
 char* XNetwork_errorString(int errorCode) {
     char* s = (char*)XMalloc_System(64);
     if (s) snprintf(s, 64, "lwIP error: %d", errorCode);
@@ -497,14 +496,6 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
 
 intptr_t XNetwork_socketDescriptor(const XNetworkSocketPrivate* priv) {
     return priv ? (intptr_t)priv : -1;
-}
-XFd XNetwork_socketFd(const XNetworkSocketPrivate* priv) {
-    if (!priv) return XFD_INVALID;
-    /* 快速路径：直接返回缓存的 fd，避免 vtable 查找 */
-    XFd fd = L4P(priv)->fd;
-    if (fd != XFD_INVALID) return fd;
-    /* 回退：fd 尚未分配（理论上不会发生，ensure_xfd 已提前分配） */
-    return priv->owner ? XIODevice_fd((XIODevice*)priv->owner) : XFD_INVALID;
 }
 bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv) {
     return priv ? L4P(priv)->connected : false;
@@ -723,11 +714,13 @@ static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeo
 /* ================================================================
  * Socket 连接
  * ================================================================ */
-bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
+bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName,
                             uint16_t port, XNetworkProtocol protocol,
                             XNetworkSocketType sockType) {
     (void)protocol;
     if (!priv || !hostName) return false;
+    const char* hostStr = XString_toUtf8(hostName);
+    if (!hostStr) return false;
     XNetworkSocketPrivateLwip* s = L4P(priv);
     XNetwork_ensureInit();
     s->sockType = (int)sockType;
@@ -737,7 +730,7 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const char* hostName,
 
     /* 异步 DNS 解析（带回调 + 轮询等待） */
     ip_addr_t ip;
-    if (!lwip_resolve_name(hostName, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) {
+    if (!lwip_resolve_name(hostStr, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) {
         LWIP_DBG("[连接] DNS和IP解析均失败\n");
         return false;
     }
@@ -947,8 +940,10 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
     return (XServerHandle)(intptr_t)priv;
 }
 
-void XNetwork_serverAccept(XNetworkSocketPrivate* priv, XServerHandle server) {
-    (void)priv; (void)server;
+bool XNetwork_serverAccept(XNetworkSocketPrivate* priv) {
+    /* lwIP 通过 tcp_accept 回调接受连接（在 socketBind 中已设置），此处无需操作 */
+    (void)priv;
+    return true;
 }
 
 uint16_t XNetwork_serverPort(XServerHandle server) {
@@ -981,15 +976,10 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
     return (XSocketHandle)(intptr_t)cs;
 }
 
-bool XNetwork_serverContinueAccept(XNetworkSocketPrivate* priv) {
-    if (!priv) return false;
-    XNetworkSocketPrivateLwip* s = L4P(priv);
-    s->hasAccept = false;
-    return true;
-}
-
-bool XNetwork_lookupName(const char* name, XHostAddress** addrs, int* count) {
-    if (!name || !addrs || !count) return false;
+XVector* XNetwork_lookupName(const XString* name) {
+    if (!name) return NULL;
+    const char* nameStr = XString_toUtf8(name);
+    if (!nameStr) return NULL;
     XNetwork_ensureInit();
 
     /* 确保网卡有 IP + DNS 服务器就绪 */
@@ -997,19 +987,24 @@ bool XNetwork_lookupName(const char* name, XHostAddress** addrs, int* count) {
 
     /* 异步 DNS 解析（带回调 + 轮询等待） */
     ip_addr_t ip;
-    if (!lwip_resolve_name(name, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) return false;
+    if (!lwip_resolve_name(nameStr, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) return NULL;
 
-    XHostAddress* addr = XHostAddress_create();
-    if (!addr) return false;
-    ip_to_addr(&ip, addr);
-    *addrs = addr; *count = 1;
-    return true;
+    XVector* vec = XVector_create(sizeof(XHostAddress));
+    if (!vec) return NULL;
+    XContainerSetDataMoveMethod(vec, XHostAddress_move_base);
+    XContainerSetDataCopyMethod(vec, XHostAddress_copy_base);
+    XContainerSetDataDeinitMethod(vec, XHostAddress_deinit_base);
+
+    XHostAddress addr;
+    XHostAddress_init(&addr);
+    ip_to_addr(&ip, &addr);
+    XVector_push_back_1_base(vec, &addr);
+
+    return vec;
 }
 
-char* XNetwork_localHostName(void) {
-    char* name = (char*)XMalloc_System(32);
-    if (name) snprintf(name, 32, "lwip-device");
-    return name;
+XString* XNetwork_localHostName(void) {
+    return XString_create_utf8("lwip-device");
 }
 
 typedef struct { struct netif* next; int idx; } LwipIfIter;
@@ -1061,29 +1056,6 @@ XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter) {
 
 void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter) { if (iter) XFree_System(iter); }
 
-XVector* XNetwork_getInterfaceAddresses(const XString* ifname) {
-    if (!ifname) return NULL;
-    const char* name = XString_toUtf8(ifname); if (!name) return NULL;
-    XVector* entries = XVector_create(sizeof(XNetworkAddressEntry));
-    if (!entries) return NULL;
-    XContainerSetDataCopyMethod(entries, XNetworkAddressEntry_copy_base);
-    XContainerSetDataMoveMethod(entries, XNetworkAddressEntry_move_base);
-    XContainerSetDataDeinitMethod(entries, XNetworkAddressEntry_deinit_base);
-    struct netif* nif;
-    for (nif = netif_list; nif; nif = nif->next) {
-        char nifName[8]; snprintf(nifName, sizeof(nifName), "%c%c%d", nif->name[0], nif->name[1], nif->num);
-        if (strcmp(nifName, name) != 0) continue;
-        if (!ip_addr_isany(&nif->ip_addr)) {
-            XNetworkAddressEntry entry; XNetworkAddressEntry_init(&entry);
-            ip_to_addr(&nif->ip_addr, &entry.ip); ip_to_addr(&nif->netmask, &entry.netmask);
-            XVector_push_back_move_1_base(entries, &entry);
-            XNetworkAddressEntry_deinit_base(&entry);
-        }
-        break;
-    }
-    return entries;
-}
-
 bool XNetwork_multicastGroup(XSocketHandle sock, bool join, const XHostAddress* group, uint32_t ifIdx) {
     (void)sock; (void)join; (void)group; (void)ifIdx; return false;
 }
@@ -1114,43 +1086,10 @@ int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t sz,
     return (e == ERR_OK) ? sz : -1;
 }
 
-XSocketHandle XNetwork_createTcpSocket(XNetworkProtocol protocol) {
-    (void)protocol;
-    XNetwork_ensureInit();
-    XNetworkSocketPrivate* priv = XNetwork_createSocketPrivate(NULL);
-    if (!priv) return (XSocketHandle)(-1);
-    XNetworkSocketPrivateLwip* s = L4P(priv);
-    s->sockType = XNetwork_Tcp;
-    s->tpcb = tcp_new();
-    if (!s->tpcb) { XNetwork_deleteSocketPrivate(priv); return (XSocketHandle)(-1); }
-    tcp_arg(s->tpcb, s); tcp_recv(s->tpcb, tcpRecvCb); tcp_sent(s->tpcb, tcpSentCb);
-    tcp_err(s->tpcb, tcpErrCb); tcp_poll(s->tpcb, tcpPollCb, 2);
-    return (XSocketHandle)(intptr_t)priv;
-}
-
-XSocketHandle XNetwork_createUdpSocket(XNetworkProtocol protocol) {
-    (void)protocol;
-    XNetwork_ensureInit();
-    XNetworkSocketPrivate* priv = XNetwork_createSocketPrivate(NULL);
-    if (!priv) return (XSocketHandle)(-1);
-    XNetworkSocketPrivateLwip* s = L4P(priv);
-    s->sockType = XNetwork_Udp;
-    s->upcb = udp_new();
-    if (!s->upcb) { XNetwork_deleteSocketPrivate(priv); return (XSocketHandle)(-1); }
-    udp_recv(s->upcb, udpRecvCb, s);
-    return (XSocketHandle)(intptr_t)priv;
-}
-
-void XNetwork_closeSocket(XSocketHandle sock) {
-    if (sock == (XSocketHandle)(-1)) return;
-    XNetworkSocketPrivate* priv = (XNetworkSocketPrivate*)(intptr_t)sock;
-    XNetwork_deleteSocketPrivate(priv);
-}
-
-bool XNetwork_getSystemProxy(const char* url, XNetworkProxy* out) {
+bool XNetwork_getSystemProxy(const XString* url, XNetworkProxy* out) {
     (void)url; (void)out; return false;
 }
-int XNetwork_gssapiAuth(const char* name, const XByteArray* in, XByteArray* out, void** ctx) {
+int XNetwork_gssapiAuth(const XString* name, const XByteArray* in, XByteArray* out, void** ctx) {
     (void)name; (void)in; (void)out; (void)ctx; return -1;
 }
 

@@ -877,11 +877,14 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
         // 直接连接（无代理）
         XAbstractSocket_setSocketState(self, XAbstractSocket_HostLookupState);
 
-        if (!XNetwork_socketConnect(priv, hostName, port, toNetworkProtocol(protocol),
+        XString* hostStr = hostName ? XString_create_utf8(hostName) : NULL;
+        if (!XNetwork_socketConnect(priv, hostStr, port, toNetworkProtocol(protocol),
             toNetworkSockType(self->socketType))) {
+            XString_delete_base(hostStr);
             XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
             return;
         }
+        XString_delete_base(hostStr);
 
         XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
     }

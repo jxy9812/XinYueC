@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XNetworkProxyHandshake.c
  * @brief 代理握手协议实现（对齐Qt 6.8）
  */
@@ -1794,7 +1794,9 @@ XProxyHandshakeState XNetworkProxyHandshake_process(
                     snprintf(serviceName, sizeof(serviceName), "HTTP@%s", hostName);
                     
                     // 调用平台GSSAPI认证
-                    int gssResult = XNetwork_gssapiAuth(serviceName, NULL, outputToken, &ctx->gssContext);
+                    XString* svcStr = XString_create_utf8(serviceName);
+                    int gssResult = XNetwork_gssapiAuth(svcStr, NULL, outputToken, &ctx->gssContext);
+                    XString_delete_base(svcStr);
                     
                     if (gssResult >= 0 && XByteArray_size_base(outputToken) > 0) {
                         // Base64编码输出令牌
@@ -2047,7 +2049,10 @@ bool XNetworkProxy_getSystemProxy(
     
     // 首先尝试平台特定的系统代理获取（Windows/macOS）
     // XNetwork_getSystemProxy 在 Windows 上使用 WinHTTP，在其他平台可能使用不同机制
-    if (XNetwork_getSystemProxy(queryUrl, outProxy)) {
+    XString* queryUrlStr = queryUrl ? XString_create_utf8(queryUrl) : NULL;
+    bool sysProxyOk = XNetwork_getSystemProxy(queryUrlStr, outProxy);
+    XString_delete_base(queryUrlStr);
+    if (sysProxyOk) {
         // 平台函数成功获取代理
         // 检查是否需要绕过代理
         if (query && query->peerHostName) {

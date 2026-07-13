@@ -10,9 +10,8 @@
 #include "XCoreApplication.h"
 #include "XAbstractEventDispatcher.h"
 #include "XIODevicePrivate.h"
-#include "IOCPInfo.h"
+#include "XNetIoRingWin32.h"
 #include "XIODevice_Protected.h"
-bool IOCP_bind(XSocketDescriptor socket, XObject* obj);
 bool XSerialPort_platform_applyConfig(XSerialPort* port);
 static DWORD toDCBRate(int32_t rate);
 static BYTE toDCBDataBits(XSerialPort_DataBits d);

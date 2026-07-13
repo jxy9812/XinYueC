@@ -6,7 +6,7 @@
 #include "XJsonArray.h"
 #include <string.h>
 #include <stdio.h>
-
+XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end, XString** key_out);
 XBsonValue* XBsonValue_create(XBsonType type) {
     XBsonValue* value = (XBsonValue*)XMalloc_System(sizeof(XBsonValue));
     if (value) {
