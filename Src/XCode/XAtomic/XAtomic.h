@@ -1,4 +1,4 @@
-﻿#include"CXinYueConfig.h"
+#include"CXinYueConfig.h"
 #ifndef XATOMIC_H
 #define XATOMIC_H
 #ifdef __cplusplus
@@ -160,6 +160,21 @@ size_t XAtomic_unpack_version(size_t packed, size_t index_bits, size_t version_m
 #endif
 
 #define XCACHE_ALIGN  XALIGNAS(CACHE_LINE_SIZE)
+
+/* 指针大小对齐值。
+ * MSVC 的 __declspec(align(n)) 仅接受字面整数常量，不支持 sizeof 表达式，
+ * 因此预定义为常量 8 (64 位) 或 4 (32 位)；其他编译器直接使用 sizeof(void*)。
+ */
+#if defined(_MSC_VER)
+  #if defined(_WIN64)
+    #define XALIGN_PTR_SIZE 8
+  #else
+    #define XALIGN_PTR_SIZE 4
+  #endif
+#else
+  #define XALIGN_PTR_SIZE sizeof(void*)
+#endif
+
 #ifdef __cplusplus
 }
 #endif

@@ -40,7 +40,6 @@ typedef struct {
     {
         XHandle* Xhandle;  ///定时器句柄
     };
-    //XObject* object;            ///< 关联的对象   
     int64_t interval;           ///< 间隔 (纳秒)
 } XAbstractEventDispatcher_TimerInfo;
 // 前向声明

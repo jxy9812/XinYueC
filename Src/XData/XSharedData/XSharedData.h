@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSharedData.h
  * @brief 隐式共享（Copy-On-Write）数据块
  * @details 包含原子引用计数和数据指针，支持 COW 机制的容器通过此结构体管理共享数据。
@@ -21,7 +21,7 @@ extern "C" {
  */
 typedef struct XSharedData {
     XAtomic_int32_t refCount;  ///< 原子引用计数（初始为1）
-    XALIGNAS(sizeof(void*)) char data[];
+    XALIGNAS(XALIGN_PTR_SIZE) char data[];
 } XSharedData;
 
 /**
