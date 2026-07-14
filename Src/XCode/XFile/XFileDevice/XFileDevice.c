@@ -514,16 +514,18 @@ bool XFileDevice_setFileTime(XFileDevice* device, const XDateTime* newDate, XFil
     /* 优先使用 fd 版：直接操作已打开的句柄，无需路径。
        Win32 后端通过 SetFileTime(HANDLE) 实现；
        FatFs 后端无 f_futime 接口，返回 false。*/
-    if (XFileSystem_fsetFileTime(fd, time, timestamp))
+    if (XFileSystem_setFileTime(fd, time, timestamp))
         return true;
 
-    /* 回退到路径版：通过虚函数 fileName() 获取路径。
-       FatFs 后端用 f_utime(path) 实现文件时间设置。
-       注意：XSaveFile 临时文件场景下 fileName() 返回目标文件名，
-       可能与实际打开的临时文件不一致。*/
+    /* 回退到路径版：打开文件→设置时间→关闭 */
     const XString* fileName = XFileDevice_fileName_base(device);
     if (!fileName) return false;
-    return XFileSystem_setFileTime(fileName, time, timestamp);
+    int openErr = 0;
+    XFd tempFd = XFileSystem_open(fileName, XFileSystem_WriteOnly, &openErr);
+    if (tempFd == XFD_INVALID) return false;
+    bool result = XFileSystem_setFileTime(tempFd, time, timestamp);
+    XFileSystem_close(tempFd);
+    return result;
 }
 
 void* XFileDevice_map(XFileDevice* device, int64_t offset, int64_t size, XFileDeviceMemoryMapFlags flags)

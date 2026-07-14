@@ -406,19 +406,6 @@ bool XFileSystem_fstat(XFd fd, XFileStat* stat)
 }
 
 
-bool XFileSystem_exists(const XString* path)
-{
-    if (!path) return false;
-    
-    wchar_t* wpath = XStringToWidePath(path);
-    if (!wpath) return false;
-    
-    DWORD attrs = GetFileAttributesW(wpath);
-    XFree_System(wpath);
-    
-    return attrs != INVALID_FILE_ATTRIBUTES;
-}
-
 bool XFileSystem_remove(const XString* path)
 {
     if (!path) return false;
@@ -535,11 +522,26 @@ bool XFileSystem_mkdir(const XString* path, bool recursive)
     return result;
 }
 
-bool XFileSystem_rmdir(const XString* path)
-{
+bool XFileSystem_rmdir(const XString* path, bool recursive) {
     if (!path) return false;
     wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) return false;
+    if (recursive) {
+        size_t len = wcslen(wpath);
+        wchar_t* wpathDouble = (wchar_t*)XMalloc_System((len + 2) * sizeof(wchar_t));
+        if (!wpathDouble) { XFree_System(wpath); return false; }
+        wcscpy(wpathDouble, wpath);
+        wpathDouble[len] = 0;
+        wpathDouble[len + 1] = 0;
+        XFree_System(wpath);
+        SHFILEOPSTRUCTW shfos = {0};
+        shfos.wFunc = FO_DELETE;
+        shfos.pFrom = wpathDouble;
+        shfos.fFlags = FOF_NOCONFIRMATION | FOF_SILENT;
+        int result = SHFileOperationW(&shfos);
+        XFree_System(wpathDouble);
+        return result == 0;
+    }
     BOOL result = RemoveDirectoryW(wpath);
     XFree_System(wpath);
     return result != 0;
@@ -666,79 +668,65 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
 }
 
 /* ============================================================================
- * 特殊路径
+ * 六、特殊路径
  * ============================================================================ */
 
-bool XFileSystem_currentPath(XString* path)
+bool XFileSystem_getSpecialPath(XSpecialPath type, XString* path)
 {
     if (!path) return false;
-    
-    wchar_t wPath[MAX_PATH];
-    if (GetCurrentDirectoryW(MAX_PATH, wPath) == 0) return false;
-    
-    char utf8Path[MAX_PATH];
-    WideCharToMultiByte(CP_UTF8, 0, wPath, -1, utf8Path, MAX_PATH, NULL, NULL);
-    XString_assign_utf8(path, utf8Path);
-    return true;
+    switch (type) {
+    case XSpecialPath_Current: {
+        wchar_t wPath[MAX_PATH];
+        if (GetCurrentDirectoryW(MAX_PATH, wPath) == 0) return false;
+        char utf8Path[MAX_PATH];
+        WideCharToMultiByte(CP_UTF8, 0, wPath, -1, utf8Path, MAX_PATH, NULL, NULL);
+        XString_assign_utf8(path, utf8Path);
+        return true;
+    }
+    case XSpecialPath_Home: {
+        wchar_t wPath[MAX_PATH];
+        if (SHGetFolderPathW(NULL, CSIDL_PROFILE, NULL, 0, wPath) != S_OK) return false;
+        char utf8Path[MAX_PATH];
+        WideCharToMultiByte(CP_UTF8, 0, wPath, -1, utf8Path, MAX_PATH, NULL, NULL);
+        XString_assign_utf8(path, utf8Path);
+        return true;
+    }
+    case XSpecialPath_Root: {
+        wchar_t wSysPath[MAX_PATH];
+        if (GetSystemDirectoryW(wSysPath, MAX_PATH) == 0) {
+            XString_assign_utf8(path, "C:\\");
+            return true;
+        }
+        char utf8Path[4];
+        utf8Path[0] = (char)wSysPath[0];
+        utf8Path[1] = ':';
+        utf8Path[2] = '\\';
+        utf8Path[3] = '\0';
+        XString_assign_utf8(path, utf8Path);
+        return true;
+    }
+    case XSpecialPath_Temp: {
+        wchar_t wTempPath[MAX_PATH];
+        DWORD len = GetTempPathW(MAX_PATH, wTempPath);
+        if (len == 0 || len >= MAX_PATH) return false;
+        char utf8Path[MAX_PATH];
+        WideCharToMultiByte(CP_UTF8, 0, wTempPath, -1, utf8Path, MAX_PATH, NULL, NULL);
+        XString_assign_utf8(path, utf8Path);
+        return true;
+    }
+    default:
+        return false;
+    }
 }
 
 bool XFileSystem_setCurrentPath(const XString* path)
 {
     if (!path) return false;
-    
     wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) return false;
-    
     BOOL result = SetCurrentDirectoryW(wpath);
     XFree_System(wpath);
-    
     return result != 0;
-}
-
-bool XFileSystem_homePath(XString* path)
-{
-    if (!path) return false;
-    
-    wchar_t wPath[MAX_PATH];
-    if (SHGetFolderPathW(NULL, CSIDL_PROFILE, NULL, 0, wPath) != S_OK) return false;
-    
-    char utf8Path[MAX_PATH];
-    WideCharToMultiByte(CP_UTF8, 0, wPath, -1, utf8Path, MAX_PATH, NULL, NULL);
-    XString_assign_utf8(path, utf8Path);
-    return true;
-}
-
-bool XFileSystem_rootPath(XString* path)
-{
-    if (!path) return false;
-    
-    wchar_t wPath[MAX_PATH];
-    if (GetCurrentDirectoryW(MAX_PATH, wPath) == 0) {
-        XString_assign_utf8(path, "C:\\");
-        return true;
-    }
-    
-    char utf8Path[4];
-    utf8Path[0] = (char)wPath[0];
-    utf8Path[1] = ':';
-    utf8Path[2] = '\\';
-    utf8Path[3] = '\0';
-    XString_assign_utf8(path, utf8Path);
-    return true;
-}
-
-bool XFileSystem_tempPath(XString* path)
-{
-    if (!path) return false;
-    
-    wchar_t wTempPath[MAX_PATH];
-    DWORD len = GetTempPathW(MAX_PATH, wTempPath);
-    if (len == 0 || len >= MAX_PATH) return false;
-    
-    char utf8Path[MAX_PATH];
-    WideCharToMultiByte(CP_UTF8, 0, wTempPath, -1, utf8Path, MAX_PATH, NULL, NULL);
-    XString_assign_utf8(path, utf8Path);
-    return true;
 }
 
 /* ============================================================================
@@ -857,85 +845,16 @@ bool XFileSystem_unmap(void* addr, int64_t size)
     if (!addr) return false;
     return UnmapViewOfFile(addr) != 0;
 }
-
-/* ============================================================================
- * 递归删除目录
- * ============================================================================ */
-
-bool XFileSystem_rmdir_recursive(const XString* path)
-{
-    if (!path) return false;
-    
-    wchar_t* wpath = XStringToWidePath(path);
-    if (!wpath) return false;
-    
-    size_t len = wcslen(wpath);
-    wchar_t* wpathDouble = (wchar_t*)XMalloc_System((len + 2) * sizeof(wchar_t));
-    if (!wpathDouble) {
-        XFree_System(wpath);
-        return false;
-    }
-    wcscpy(wpathDouble, wpath);
-    wpathDouble[len] = 0;
-    wpathDouble[len + 1] = 0;
-    XFree_System(wpath);
-    
-    SHFILEOPSTRUCTW shfos = {0};
-    shfos.wFunc = FO_DELETE;
-    shfos.pFrom = wpathDouble;
-    shfos.fFlags = FOF_NOCONFIRMATION | FOF_SILENT;
-    
-    int result = SHFileOperationW(&shfos);
-    XFree_System(wpathDouble);
-    
-    return result == 0;
-}
-
-/* ============================================================================
- * 文件时间修改
- * ============================================================================ */
-
-bool XFileSystem_setFileTime(const XString* path, XFileTime timeType, int64_t timeValue)
-{
-    if (!path) return false;
-
-    wchar_t* wpath = XStringToWidePath(path);
-    if (!wpath) return false;
-
-    HANDLE hFile = CreateFileW(wpath, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
-    XFree_System(wpath);
-    if (hFile == INVALID_HANDLE_VALUE) return false;
-
-    ULARGE_INTEGER ul;
-    ul.QuadPart = (uint64_t)timeValue * 10000000ULL + 116444736000000000ULL;
-
-    FILETIME ft;
-    ft.dwLowDateTime = ul.LowPart;
-    ft.dwHighDateTime = ul.HighPart;
-
-    FILETIME* ftCreate = NULL;
-    FILETIME* ftAccess = NULL;
-    FILETIME* ftWrite = NULL;
-
-    switch (timeType) {
-        case XFile_AccessTime: ftAccess = &ft; break;
-        case XFile_BirthTime: ftCreate = &ft; break;
-        case XFile_MetadataChangeTime:
-        case XFile_ModificationTime: ftWrite = &ft; break;
-    }
-
-    BOOL result = SetFileTime(hFile, ftCreate, ftAccess, ftWrite);
-    CloseHandle(hFile);
-    return result != 0;
-}
-
 /**
- * @brief 通过已打开的文件描述符设置文件时间（fd 版）
- * @note 直接对 XFileDescriptor 表中的 HANDLE 调用 SetFileTime，
- *       无需路径，不重新打开文件。要求句柄以写入模式打开。
+ * @brief 通过文件描述符设置文件时间
+ * @param fd 文件描述符（XFileDescriptor 表索引）
+ * @param timeType 时间类型（访问时间/修改时间/创建时间）
+ * @param timeValue 时间值（Unix时间戳，秒）
+ * @return 成功返回true
+ * @note 直接操作已打开的 HANDLE，调用 SetFileTime。
+ *       路径版需求由上层通过 open→setFileTime→close 组合实现。
  */
-bool XFileSystem_fsetFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
+bool XFileSystem_setFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
 {
     HANDLE h = XW32_getFile(fd);
     if (h == INVALID_HANDLE_VALUE) return false;

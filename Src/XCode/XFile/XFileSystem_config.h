@@ -30,7 +30,7 @@ extern "C" {
  *                          优点：完整支持所有30个API，性能最优
  *                          缺点：依赖操作系统
  *                          适用：Windows/Linux/macOS桌面应用
- *                          API覆盖率：100%（30/30）
+ *                          API覆盖率：100%（31/31）
  *
  * XFILE_USE_FATFS         - FatFS模式
  *                          优点：跨平台，无操作系统依赖，适合嵌入式
@@ -378,7 +378,7 @@ extern "C" {
 #define XFILE_API_FSTAT             1
 
 /* 文件系统操作 - 两种模式均支持 */
-#define XFILE_API_EXISTS            1
+/* XFILE_API_EXISTS: merged into XFILE_API_STAT (inline wrapper) */
 #define XFILE_API_REMOVE            1
 #define XFILE_API_RENAME            1
 #define XFILE_API_COPY              1
@@ -395,17 +395,17 @@ extern "C" {
 
 /* 特殊路径 - 仅平台API模式完全支持 */
 #if defined(XFILE_USE_PLATFORM_API)
-#define XFILE_API_CURRENT_PATH      1
-#define XFILE_API_SET_CURRENT_PATH  1
-#define XFILE_API_HOME_PATH         1
-#define XFILE_API_ROOT_PATH         1
-#define XFILE_API_TEMP_PATH         1
+#define XFILE_API_SPECIAL_PATH     1
+#define XFILE_API_SET_CURRENT_PATH 1
+/* merged into XFILE_API_SPECIAL_PATH */
+/* merged into XFILE_API_SPECIAL_PATH */
+/* merged into XFILE_API_SPECIAL_PATH */
 #elif defined(XFILE_USE_FATFS)
-#define XFILE_API_CURRENT_PATH      1  /* FatFS: f_getcwd/f_chdir */
-#define XFILE_API_SET_CURRENT_PATH  1  /* FatFS: f_chdir/f_chdrive */
-#define XFILE_API_HOME_PATH         0  /* 返回预定义路径或失败 */
-#define XFILE_API_ROOT_PATH         0  /* 返回预定义路径 */
-#define XFILE_API_TEMP_PATH         0  /* 返回预定义路径 */
+#define XFILE_API_SPECIAL_PATH     1  /* FatFS: f_getcwd/f_chdir */
+#define XFILE_API_SET_CURRENT_PATH 1  /* FatFS: f_chdir/f_chdrive */
+/* merged into XFILE_API_SPECIAL_PATH */
+/* merged into XFILE_API_SPECIAL_PATH */
+/* merged into XFILE_API_SPECIAL_PATH */
 #endif
 
 /* 符号链接操作 - 仅平台API模式支持 */
@@ -434,13 +434,13 @@ extern "C" {
 #endif
 
 /* 递归删除目录 - 可在应用层实现 */
-#define XFILE_API_RMDIR_RECURSIVE   1
+/* XFILE_API_RMDIR_RECURSIVE: merged into XFILE_API_RMDIR (recursive parameter) */
 
 /* 文件时间修改 - FatFS有限支持（f_utime） */
 #if defined(XFILE_USE_PLATFORM_API)
-#define XFILE_API_SET_FILE_TIME     1
+#define XFILE_API_SET_FILE_TIME     1  /* fd-based, path version via open→set→close */
 #elif defined(XFILE_USE_FATFS)
-#define XFILE_API_SET_FILE_TIME     1  /* FatFS: f_utime有限支持 */
+#define XFILE_API_SET_FILE_TIME     1  /* fd-based, path version via open→set→close */  /* FatFS: f_utime有限支持 */
 #endif
 
 /* 驱动器列表 - 仅平台API模式完整支持 */

@@ -1051,7 +1051,7 @@ bool XDir_rmdir(XDir* dir, const XString* dirName)
     if (!dir || !dirName) return false;
     XString* fullPath = XDir_filePath(dir, dirName);
     if (!fullPath) return false;
-    bool result = XFileSystem_rmdir(fullPath);
+    bool result = XFileSystem_rmdir(fullPath, false);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1061,7 +1061,7 @@ bool XDir_rmpath(XDir* dir, const XString* dirPath)
     if (!dir || !dirPath) return false;
     XString* fullPath = XDir_filePath(dir, dirPath);
     if (!fullPath) return false;
-    bool result = XFileSystem_rmdir(fullPath);
+    bool result = XFileSystem_rmdir(fullPath, false);
     XString_delete_base(fullPath);
     return result;
 }
@@ -1069,7 +1069,7 @@ bool XDir_rmpath(XDir* dir, const XString* dirPath)
 bool XDir_removeRecursively(XDir* dir)
 {
     if (!dir || !dir->m_path) return false;
-    return XFileSystem_rmdir_recursive(dir->m_path);
+    return XFileSystem_rmdir(dir->m_path, true);
 }
 
 bool XDir_remove(XDir* dir, const XString* fileName)
@@ -1241,7 +1241,7 @@ XString* XDir_currentPath(void)
 {
     XString* path = XString_create();
     if (!path) return NULL;
-    if (!XFileSystem_currentPath(path)) {
+    if (!XFileSystem_getSpecialPath(XSpecialPath_Current, path)) {
         XString_delete_base(path);
         return NULL;
     }
@@ -1258,7 +1258,7 @@ XString* XDir_homePath(void)
 {
     XString* path = XString_create();
     if (!path) return NULL;
-    if (!XFileSystem_homePath(path)) {
+    if (!XFileSystem_getSpecialPath(XSpecialPath_Home, path)) {
         XString_delete_base(path);
         return NULL;
     }
@@ -1269,7 +1269,7 @@ XString* XDir_rootPath(void)
 {
     XString* path = XString_create();
     if (!path) return NULL;
-    if (!XFileSystem_rootPath(path)) {
+    if (!XFileSystem_getSpecialPath(XSpecialPath_Root, path)) {
         XString_delete_base(path);
         return NULL;
     }
@@ -1280,7 +1280,7 @@ XString* XDir_tempPath(void)
 {
     XString* path = XString_create();
     if (!path) return NULL;
-    if (!XFileSystem_tempPath(path)) {
+    if (!XFileSystem_getSpecialPath(XSpecialPath_Temp, path)) {
         XString_delete_base(path);
         return NULL;
     }

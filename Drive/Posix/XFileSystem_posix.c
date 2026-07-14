@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <utime.h>
 #include <limits.h>
+#include <pwd.h>
 #ifdef __linux__
 #include <linux/io_uring.h>
 #include <sys/syscall.h>
@@ -189,8 +190,9 @@ bool XFileSystem_resize(XFd fdx, int64_t size) {
  * ============================================================================ */
 
 static void fillStat(struct stat* st, XFileStat* out) {
+    memset(out, 0, sizeof(*out));
+    out->exists = true;
     out->size = st->st_size;
-    out->birthTime = 0;
     out->metadataChangeTime = st->st_ctime;
     out->modificationTime = st->st_mtime;
     out->accessTime = st->st_atime;
@@ -198,12 +200,24 @@ static void fillStat(struct stat* st, XFileStat* out) {
     out->isFile = S_ISREG(st->st_mode);
     out->isSymLink = S_ISLNK(st->st_mode);
     out->permissions = st->st_mode & 0777;
+#ifdef __APPLE__
+    out->birthTime = st->st_birthtime;
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    out->birthTime = st->st_birthtime;
+#else
+    /* Linux: stx.btime or st_ctime as fallback */
+    out->birthTime = st->st_ctime;
+#endif
 }
 
 bool XFileSystem_stat(const XString* path, XFileStat* out) {
     if (!path || !out) return false;
     struct stat st;
-    if (((int (*)(const char*, struct stat*))stat)(XString_toUtf8(path), &st) != 0) return false;
+    if (stat(XString_toUtf8(path), &st) != 0) {
+        memset(out, 0, sizeof(*out));
+        out->exists = false;
+        return false;
+    }
     fillStat(&st, out);
     return true;
 }
@@ -212,7 +226,11 @@ bool XFileSystem_fstat(XFd fdx, XFileStat* out) {
     int fd = XFS_getFd(fdx);
     if (fd < 0 || !out) return false;
     struct stat st;
-    if (((int (*)(int, struct stat*))fstat)(fd, &st) != 0) return false;
+    if (fstat(fd, &st) != 0) {
+        memset(out, 0, sizeof(*out));
+        out->exists = false;
+        return false;
+    }
     fillStat(&st, out);
     return true;
 }
@@ -220,11 +238,6 @@ bool XFileSystem_fstat(XFd fdx, XFileStat* out) {
 /* ============================================================================
  * 三、文件系统操作
  * ============================================================================ */
-
-bool XFileSystem_exists(const XString* path) {
-    if (!path) return false;
-    return access(XString_toUtf8(path), F_OK) == 0;
-}
 
 bool XFileSystem_remove(const XString* path) {
     if (!path) return false;
@@ -295,9 +308,42 @@ bool XFileSystem_mkdir(const XString* path, bool recursive) {
     return mkdir(p, 0755) == 0 || errno == EEXIST;
 }
 
-bool XFileSystem_rmdir(const XString* path) {
+bool XFileSystem_rmdir(const XString* path, bool recursive) {
     if (!path) return false;
-    return rmdir(XString_toUtf8(path)) == 0;
+    const char* p = XString_toUtf8(path);
+
+    if (!recursive) {
+        return rmdir(p) == 0;
+    }
+
+    /* ??????????????????????? */
+    DIR* d = opendir(p);
+    if (!d) return false;
+
+    struct dirent* de;
+    char fullPath[PATH_MAX];
+    size_t baseLen = strlen(p);
+
+    while ((de = readdir(d)) != NULL) {
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+            continue;
+
+        int n = snprintf(fullPath, sizeof(fullPath), "%s/%s", p, de->d_name);
+        if (n < 0 || (size_t)n >= sizeof(fullPath)) continue;
+
+        struct stat st;
+        if (lstat(fullPath, &st) == 0 && S_ISDIR(st.st_mode)) {
+            XString* subPath = XString_create_utf8(fullPath);
+            if (subPath) {
+                XFileSystem_rmdir(subPath, true);
+                XString_delete_base(subPath);
+            }
+        } else {
+            unlink(fullPath);
+        }
+    }
+    closedir(d);
+    return rmdir(p) == 0;
 }
 
 typedef struct { DIR* dir; } PosixDirIter;
@@ -352,39 +398,43 @@ bool XFileSystem_resolvePath(const XString* path, XString* result, XPathStyle st
  * 六、特殊路径
  * ============================================================================ */
 
-bool XFileSystem_currentPath(XString* path) {
+bool XFileSystem_getSpecialPath(XSpecialPath type, XString* path) {
     if (!path) return false;
-    char buf[1024];
-    if (!getcwd(buf, sizeof(buf))) return false;
-    XString_assign_utf8(path, buf);
-    return true;
+    switch (type) {
+    case XSpecialPath_Current: {
+        char buf[PATH_MAX];
+        if (!getcwd(buf, sizeof(buf))) return false;
+        XString_assign_utf8(path, buf);
+        return true;
+    }
+    case XSpecialPath_Home: {
+        const char* home = getenv("HOME");
+        if (!home) {
+            struct passwd* pw = getpwuid(getuid());
+            home = pw ? pw->pw_dir : "/";
+        }
+        XString_assign_utf8(path, home);
+        return true;
+    }
+    case XSpecialPath_Root: {
+        XString_assign_utf8(path, "/");
+        return true;
+    }
+    case XSpecialPath_Temp: {
+        const char* tmp = getenv("TMPDIR");
+        if (!tmp) tmp = getenv("TMP");
+        if (!tmp) tmp = "/tmp";
+        XString_assign_utf8(path, tmp);
+        return true;
+    }
+    default:
+        return false;
+    }
 }
 
 bool XFileSystem_setCurrentPath(const XString* path) {
     if (!path) return false;
     return chdir(XString_toUtf8(path)) == 0;
-}
-
-bool XFileSystem_homePath(XString* path) {
-    if (!path) return false;
-    const char* home = getenv("HOME");
-    if (!home) home = "/";
-    XString_assign_utf8(path, home);
-    return true;
-}
-
-bool XFileSystem_rootPath(XString* path) {
-    if (!path) return false;
-    XString_assign_utf8(path, "/");
-    return true;
-}
-
-bool XFileSystem_tempPath(XString* path) {
-    if (!path) return false;
-    const char* tmp = getenv("TMPDIR");
-    if (!tmp) tmp = "/tmp";
-    XString_assign_utf8(path, tmp);
-    return true;
 }
 
 /* ============================================================================
@@ -434,50 +484,52 @@ bool XFileSystem_unmap(void* addr, int64_t size) {
 }
 
 /* ============================================================================
- * 十、递归删除目录
+ * ????????
  * ============================================================================ */
 
-bool XFileSystem_rmdir_recursive(const XString* path) {
-    if (!path) return false;
-    const char* p = XString_toUtf8(path);
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", p);
-    return system(cmd) == 0;
-}
-
-/* ============================================================================
- * 十一、文件时间修改
- * ============================================================================ */
-
-bool XFileSystem_setFileTime(const XString* path, XFileTime timeType, int64_t timeValue) {
-    if (!path) return false;
-    struct utimbuf ut;
-    struct stat st;
-    if (stat(XString_toUtf8(path), &st) != 0) return false;
-    ut.actime = st.st_atime;
-    ut.modtime = st.st_mtime;
-    switch (timeType) {
-    case XFile_AccessTime: ut.actime = timeValue; break;
-    case XFile_ModificationTime: ut.modtime = timeValue; break;
-    default: break;
-    }
-    return utime(XString_toUtf8(path), &ut) == 0;
-}
-
-bool XFileSystem_fsetFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
+/**
+ * @brief ?????????????
+ * @param fdx ??????XFileDescriptor ????
+ * @param timeType ?????????/????/?????
+ * @param timeValue ????Unix??????
+ * @return ????true
+ * @note ?? futimens ???????? fd?
+ *       ?????????? open->setFileTime->close ?????
+ */
+bool XFileSystem_setFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return false;
-    struct timespec ts[2] = {{0, UTIME_OMIT}, {0, UTIME_OMIT}};
+
+    struct timespec ts[2];
+    ts[0].tv_nsec = UTIME_OMIT;  /* atime: ??? */
+    ts[1].tv_nsec = UTIME_OMIT;  /* mtime: ??? */
+
     switch (timeType) {
-    case XFile_AccessTime: ts[0].tv_sec = timeValue; ts[0].tv_nsec = 0; break;
-    case XFile_ModificationTime: ts[1].tv_sec = timeValue; ts[1].tv_nsec = 0; break;
-    default: break;
+        case XFile_AccessTime:
+            ts[0].tv_sec = timeValue;
+            ts[0].tv_nsec = 0;
+            break;
+        case XFile_ModificationTime:
+        case XFile_MetadataChangeTime:
+            ts[1].tv_sec = timeValue;
+            ts[1].tv_nsec = 0;
+            break;
+        case XFile_BirthTime:
+            /* POSIX ???????????????? atime/mtime ?????? */
+            ts[0].tv_sec = timeValue;
+            ts[0].tv_nsec = 0;
+            ts[1].tv_sec = timeValue;
+            ts[1].tv_nsec = 0;
+            break;
+        default:
+            return false;
     }
+
     return futimens(fd, ts) == 0;
 }
 
 /* ============================================================================
- * 十二、驱动器列表
+ * ????????
  * ============================================================================ */
 
 int XFileSystem_drives_count(void) {
