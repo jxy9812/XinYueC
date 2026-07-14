@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XFileSystem_posix.c
  * @brief XFileSystem POSIX 平台实现（Linux/macOS/BSD，支持 io_uring 异步 I/O）
  *
@@ -316,7 +316,7 @@ bool XFileSystem_rmdir(const XString* path, bool recursive) {
         return rmdir(p) == 0;
     }
 
-    /* ??????????????????????? */
+    /* 递归删除：遍历目录内容，先删除子项，再删除目录 */
     DIR* d = opendir(p);
     if (!d) return false;
 
@@ -484,25 +484,25 @@ bool XFileSystem_unmap(void* addr, int64_t size) {
 }
 
 /* ============================================================================
- * ????????
+ * 十、文件时间修改
  * ============================================================================ */
 
 /**
- * @brief ?????????????
- * @param fdx ??????XFileDescriptor ????
- * @param timeType ?????????/????/?????
- * @param timeValue ????Unix??????
- * @return ????true
- * @note ?? futimens ???????? fd?
- *       ?????????? open->setFileTime->close ?????
+ * @brief 通过文件描述符设置文件时间
+ * @param fdx 文件描述符（XFileDescriptor 表索引）
+ * @param timeType 时间类型（访问时间/修改时间/创建时间）
+ * @param timeValue 时间值（Unix时间戳，秒）
+ * @return 成功返回true
+ * @note 使用 futimens 直接操作已打开的 fd。
+ *       路径版需求由上层通过 open→setFileTime→close 组合实现。
  */
 bool XFileSystem_setFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
     int fd = XFS_getFd(fdx);
     if (fd < 0) return false;
 
     struct timespec ts[2];
-    ts[0].tv_nsec = UTIME_OMIT;  /* atime: ??? */
-    ts[1].tv_nsec = UTIME_OMIT;  /* mtime: ??? */
+    ts[0].tv_nsec = UTIME_OMIT;  /* atime: 不修改 */
+    ts[1].tv_nsec = UTIME_OMIT;  /* mtime: 不修改 */
 
     switch (timeType) {
         case XFile_AccessTime:
@@ -515,7 +515,7 @@ bool XFileSystem_setFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
             ts[1].tv_nsec = 0;
             break;
         case XFile_BirthTime:
-            /* POSIX ???????????????? atime/mtime ?????? */
+            /* POSIX 不支持独立设置创建时间，同时设置 atime/mtime 作为最佳努力 */
             ts[0].tv_sec = timeValue;
             ts[0].tv_nsec = 0;
             ts[1].tv_sec = timeValue;
@@ -529,7 +529,7 @@ bool XFileSystem_setFileTime(XFd fdx, XFileTime timeType, int64_t timeValue) {
 }
 
 /* ============================================================================
- * ????????
+ * 十一、驱动器列表
  * ============================================================================ */
 
 int XFileSystem_drives_count(void) {
@@ -543,7 +543,7 @@ bool XFileSystem_drives_at(int index, XString* path) {
 }
 
 /* ============================================================================
- * 十三、存储设备信息
+ * 十二、存储设备信息
  * ============================================================================ */
 
 bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info) {
@@ -553,15 +553,100 @@ bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info) {
 }
 
 /* ============================================================================
- * 十四、磁盘格式化
+ * 十三、磁盘格式化
  * ============================================================================ */
 
 bool XFileSystem_format(const XString* drive, XFileSystemType fsType,
                         const XString* volumeName, int flags, int clusterSize,
                         XFileSystemFormatProgress progress, void* userData) {
-    (void)drive; (void)fsType; (void)volumeName; (void)flags;
-    (void)clusterSize; (void)progress; (void)userData;
-    return false;
+    if (!drive) return false;
+
+    const char* devPath = XString_toUtf8(drive);
+    if (!devPath || !devPath[0]) return false;
+
+    /* 映射文件系统类型到 mkfs 命令 */
+    const char* mkfsCmd = NULL;
+    switch (fsType) {
+        case XFileSystemType_FAT32: mkfsCmd = "mkfs.vfat";  break;
+        case XFileSystemType_NTFS:  mkfsCmd = "mkfs.ntfs";  break;
+        case XFileSystemType_exFAT: mkfsCmd = "mkfs.exfat"; break;
+        case XFileSystemType_EXT4:  mkfsCmd = "mkfs.ext4";  break;
+        case XFileSystemType_F2FS:  mkfsCmd = "mkfs.f2fs";  break;
+        case XFileSystemType_Auto:
+        default:                    mkfsCmd = "mkfs.ext4";  break;
+    }
+
+    /* 构建命令行 */
+    char cmd[1024];
+    int cmdLen = 0;
+
+    /* 检查 mkfs 命令是否存在 */
+    {
+        char whichCmd[256];
+        snprintf(whichCmd, sizeof(whichCmd), "command -v %s >/dev/null 2>&1", mkfsCmd);
+        if (system(whichCmd) != 0) {
+            /* ??: ?? mkfs -t ?? */
+            const char* fstype = NULL;
+            switch (fsType) {
+                case XFileSystemType_FAT32: fstype = "vfat";  break;
+                case XFileSystemType_NTFS:  fstype = "ntfs";  break;
+                case XFileSystemType_exFAT: fstype = "exfat"; break;
+                case XFileSystemType_EXT4:  fstype = "ext4";  break;
+                case XFileSystemType_F2FS:  fstype = "f2fs";  break;
+                default:                    fstype = "ext4";  break;
+            }
+            cmdLen = snprintf(cmd, sizeof(cmd), "mkfs -t %s", fstype);
+        } else {
+            cmdLen = snprintf(cmd, sizeof(cmd), "%s", mkfsCmd);
+        }
+    }
+
+    /* 快速格式化标志 */
+    if (flags & XFileSystemFormat_Quick) {
+        if (fsType == XFileSystemType_EXT4 || fsType == XFileSystemType_Auto) {
+            cmdLen += snprintf(cmd + cmdLen, sizeof(cmd) - cmdLen,
+                               " -E lazy_itable_init=1, lazy_journal_init=1");
+        }
+    }
+
+    /* 强制标志 */
+    if (flags & XFileSystemFormat_Force) {
+        cmdLen += snprintf(cmd + cmdLen, sizeof(cmd) - cmdLen, " -F");
+    }
+
+    /* 簇大小（仅 FAT/exFAT 生效，ext4 使用 -b） */
+    if (clusterSize > 0) {
+        if (fsType == XFileSystemType_FAT32 || fsType == XFileSystemType_exFAT) {
+            cmdLen += snprintf(cmd + cmdLen, sizeof(cmd) - cmdLen,
+                               " -s %d", clusterSize / 512);
+        } else if (fsType == XFileSystemType_EXT4 || fsType == XFileSystemType_Auto) {
+            cmdLen += snprintf(cmd + cmdLen, sizeof(cmd) - cmdLen,
+                               " -b %d", clusterSize);
+        }
+    }
+
+    /* 簇大小（仅 FAT/exFAT 生效，ext4 使用 -b） */
+    if (volumeName) {
+        const char* label = XString_toUtf8(volumeName);
+        if (label && label[0]) {
+            cmdLen += snprintf(cmd + cmdLen, sizeof(cmd) - cmdLen,
+                               " -n "%s"", label);
+        }
+    }
+
+    /* 设备路径 */
+    cmdLen += snprintf(cmd + cmdLen, sizeof(cmd) - cmdLen,
+                       " %s 2>&1", devPath);
+
+    (void)cmdLen; /* 防止未使用警告 */
+
+    if (progress) progress(10, userData);
+
+    int result = system(cmd);
+
+    if (progress) progress(100, userData);
+
+    return result == 0;
 }
 
 #endif /* POSIX */
