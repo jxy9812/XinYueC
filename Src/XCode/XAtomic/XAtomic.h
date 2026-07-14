@@ -150,14 +150,16 @@ size_t XAtomic_unpack_version(size_t packed, size_t index_bits, size_t version_m
 #ifndef CACHE_LINE_SIZE
 #define CACHE_LINE_SIZE 64
 #endif
+
 #if defined(__GNUC__) || defined(__clang__)
-#define CACHE_ALIGN __attribute__((aligned(CACHE_LINE_SIZE)))
+#define XALIGNAS(n) __attribute__((aligned(n)))
 #elif defined(_MSC_VER)
-#define CACHE_ALIGN __declspec(align(CACHE_LINE_SIZE))
+#define XALIGNAS(n) __declspec(align(n))
 #else
-#define CACHE_ALIGN
+#define XALIGNAS(n) _Alignas(n)
 #endif
 
+#define XCACHE_ALIGN  XALIGNAS(CACHE_LINE_SIZE)
 #ifdef __cplusplus
 }
 #endif

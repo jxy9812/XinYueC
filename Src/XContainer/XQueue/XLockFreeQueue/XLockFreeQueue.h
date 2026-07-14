@@ -21,8 +21,8 @@ extern "C" {
 typedef struct XLockFreeQueue
 {
 	XVector m_vector;///< 底层向量容器，提供元素存储功能
-	CACHE_ALIGN XAtomic_size_t m_head;///< 原子化队头索引，标识队列头部位置
-	CACHE_ALIGN XAtomic_size_t m_tail;///< 原子化队尾索引，标识队列尾部位置
+	XCACHE_ALIGN XAtomic_size_t m_head;///< 原子化队头索引，标识队列头部位置
+	XCACHE_ALIGN XAtomic_size_t m_tail;///< 原子化队尾索引，标识队列尾部位置
 	// --- 无锁辅助字段 ---
 	size_t m_index_bits;        ///< 用于存储索引的位数
 	size_t m_index_mask;        ///< 索引掩码

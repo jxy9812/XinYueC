@@ -253,6 +253,7 @@ void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver
 	receiver->was_deleted = true;
 	if (XAtomic_load_uint32(&receiver->m_posted_events, XAtomic_MemoryOrder_Acquire)<=1)
 	{//正式释放
+		XAtomic_fetch_sub_uint32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Release);
 		receiver->is_deleting_children = true;
 		XObject_destroyed_signal(receiver);
 		if(event->isDelete)
@@ -262,8 +263,8 @@ void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver
 		XEvent_accept(event);
 	}
 	else
-	{//重新投递
-		//XAtomic_fetch_add_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Relaxed);
+	{//重新投递：递减计数后重新投递，确保下次检查时计数正确
+		XAtomic_fetch_sub_uint32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Release);
 		XCoreApplication_postEvent(receiver, event, XEVENT_PRIORITY_LOWEST);
 	}
 }

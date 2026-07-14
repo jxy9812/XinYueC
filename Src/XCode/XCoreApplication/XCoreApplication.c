@@ -318,6 +318,9 @@ void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventTyp
             continue;//如果有指定的接收者，跳过其他接收者
         if (eventType && eventType != ePost->event->type)
             continue;//如果有指定的事件类型，跳过其他事件
+        /* 递减接收者的投递事件计数，防止 deferred delete 因计数不准确而无限重投 */
+        if (ePost->receiver)
+            XAtomic_fetch_sub_uint32(&ePost->receiver->m_posted_events, 1, XAtomic_MemoryOrder_Release);
         XEvent_delete_base(ePost->event);
         ++size;
         ePost->event = NULL;//移除的事件置空

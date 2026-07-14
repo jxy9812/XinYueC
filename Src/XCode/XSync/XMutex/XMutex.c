@@ -5,12 +5,12 @@
 typedef struct XMutex
 {
     XLock_Type type;
-    char m_d[];//扩展数据
+    XALIGNAS(sizeof(void*)) char m_d[];//扩展数据
 }XMutex;
 typedef struct SpinPrivate
 {
 	XAtomic_bool state; // 用于自旋模式: false=unlocked, true=locked
-    char m_d[];//扩展数据
+    XALIGNAS(sizeof(void*)) char m_d[];//扩展数据
 }SpinPrivate;
 typedef struct RecursivePrivate
 {

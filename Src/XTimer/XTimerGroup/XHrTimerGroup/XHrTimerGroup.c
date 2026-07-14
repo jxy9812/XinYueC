@@ -129,7 +129,12 @@ static bool VXTimerGroupBase_removeTimer(XHrTimerGroup* group, XHandle handle) {
     {
         //基本可以断定是在回调函数中被调用了，tick后续还要访问该节点所以不能释放做一个标记释放交给tick函数
         if (node_data->m_is_detached) {
-            node_data->m_is_was_deleted = true;
+            if (node_data->m_is_was_deleted) {
+                // 节点已被 tick 标记删除，在此安全释放（计数已在 tick 中减少）
+                delete_hr_timer_node(group, node_to_remove);
+            } else {
+                node_data->m_is_was_deleted = true;
+            }
             removed_successfully = true;
         }
         else {
@@ -227,9 +232,14 @@ static void VXHrTimerGroup_tick(XHrTimerGroup* group) {
         }
 
         // --- 第三阶段：决定是释放还是重新调度 ---
-        if (data->m_timer_data.m_isSingleShot || data->m_is_was_deleted) {
-            // 单次定时器或已被外部 remove 的定时器：释放内存
+        if (data->m_is_was_deleted) {
+            // 已被外部 removeTimer 标记删除，在此释放内存
             delete_hr_timer_node(group, current_expired);
+        }
+        else if (data->m_timer_data.m_isSingleShot) {
+            // 单次定时器：不释放节点！标记后由 removeTimer 回调释放。
+            // 避免 tick 提前释放导致 removeTimer 访问已释放内存。
+            data->m_is_was_deleted = true;
         }
                 else {
             // 周期性定时器：重新计算下次到期时间

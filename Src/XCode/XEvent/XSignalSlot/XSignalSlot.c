@@ -282,7 +282,7 @@ static void Auto_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count,
 	}
 	else
 	{
-		if (XObject_thread(conn->signal->sender) == XObject_thread(conn->receiver))
+		if (XThread_currentThread() == XObject_thread(conn->receiver))
 			Direct_emit(conn, args, ref_count);
 		else
 			Queued_emit(conn, args,ref_count, priority);

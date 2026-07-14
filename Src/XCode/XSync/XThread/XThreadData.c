@@ -46,21 +46,26 @@ void XThreadData_delete(XThreadData* data)
     if (data->m_dispatcher)
     {
         XClass_delete_base(data->m_dispatcher);
-        //XObject_deleteLater(data->m_dispatcher);
         data->m_dispatcher = NULL;
     }
-    //XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
-    /*线程结束前已经处理了所有删除事件
-    遍历一遍丢弃其他所有事件*/
+    /* 清理 m_tryPostEventList 锁-free 队列中残留的事件，防止泄漏 */
+    {
+        XPostEvent pe;
+        while (XLockFreeQueue_receive_base(&data->m_tryPostEventList, &pe))
+        {
+            if (pe.event)
+                XEvent_delete_base(pe.event);
+        }
+    }
+    /* 遍历 m_postEventList 删除残留事件 */
     for_each_iterator(&data->m_postEventList, XVector, it)
     {
         XPostEvent* post = XVector_iterator_data(&it);
-        if (post)
+        if (post && post->event)
             XEvent_delete_base(post->event);
     }
     XLockFreeQueue_deinit_base(&data->m_tryPostEventList);
     XVector_deinit_base(&data->m_postEventList);
-    //XVector_deinit_base(&data->m_handlerEventList);
     if (data->m_wakeSemaphore)
     {
         XSemaphore_delete(data->m_wakeSemaphore);

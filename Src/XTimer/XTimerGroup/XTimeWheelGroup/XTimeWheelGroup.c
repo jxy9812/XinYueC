@@ -197,8 +197,8 @@ XHandle VXTimerGroupBase_addTimerNs(XTimeWheelGroup* group, XTimerData data)
     }
     else
     {
-        // 通过事件释放节点
-        delete_timer_node(group, timer_node);
+        /* 节点尚未计入 m_count，不能走会递减计数的删除路径。 */
+        free_timer_node(timer_node);
         XMutex_unlock(group->m_mutex);
         return NULL;
     }

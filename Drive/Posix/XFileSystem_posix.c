@@ -630,7 +630,7 @@ bool XFileSystem_format(const XString* drive, XFileSystemType fsType,
         const char* label = XString_toUtf8(volumeName);
         if (label && label[0]) {
             cmdLen += snprintf(cmd + cmdLen, sizeof(cmd) - cmdLen,
-                               " -n "%s"", label);
+                               " -n \"%s\"", label);
         }
     }
 

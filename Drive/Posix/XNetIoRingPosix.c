@@ -41,8 +41,11 @@
 #include "XSocketDescriptor.h"
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <poll.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/eventfd.h>
 #include <sys/syscall.h>
 #include <linux/io_uring.h>
 
@@ -75,6 +78,7 @@ XCLASS_DEFINE_EXTEND_END(XNetIoRingPosix, XAbstractNetIoRing)
 typedef struct XNetIoRingPosix {
     XAbstractNetIoRing m_class;   /**< 基类（必须位于第一位） */
     int     m_ringFd;             /**< io_uring 环形缓冲区 fd */
+    int     m_wakeFd;             /**< 跨线程唤醒事件循环的 eventfd */
     bool    m_ownsRing;           /**< 是否由本实例创建 io_uring */
     uint8_t m_pad[3];             /**< 对齐填充 */
 
@@ -108,6 +112,8 @@ static void  VXNetIoRingPosix_deinit(XAbstractNetIoRing* obj);
 
 /* 获取 SQ 空闲槽位索引，返回 SQE 指针 */
 static struct io_uring_sqe* getSqe(XNetIoRingPosix* posix) {
+    if (!posix->m_sqHeadPtr || !posix->m_sqTailPtr || !posix->m_sqMaskPtr || !posix->m_sqes)
+        return NULL;
     unsigned head = __atomic_load_n(posix->m_sqHeadPtr, __ATOMIC_ACQUIRE);
     unsigned tail = __atomic_load_n(posix->m_sqTailPtr, __ATOMIC_RELAXED);
     unsigned next = tail + 1;
@@ -134,11 +140,8 @@ static void submitSqe(XNetIoRingPosix* posix, int toSubmit) {
     /* 推进 SQ tail（发布到内核） */
     __atomic_store_n(posix->m_sqTailPtr, tail + toSubmit, __ATOMIC_RELEASE);
 
-    /* 通知内核有新的 SQ 条目 */
-    if (!(*posix->m_sqFlagsPtr & IORING_SQ_NEED_WAKEUP))
-        return;
-
-    syscall(__NR_io_uring_enter, posix->m_ringFd, toSubmit, 0, 0, NULL, NULL);
+    /* 非 SQPOLL 模式必须调用 io_uring_enter 才会真正提交 SQE。 */
+    syscall(__NR_io_uring_enter, posix->m_ringFd, toSubmit, 0, 0, NULL, 0);
 }
 
 /* 从 CQ 获取一个完成条目，非阻塞 */
@@ -266,18 +269,21 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self, int timeout
     /* 如果已有事件，直接返回 */
     if (peekCqe(posix) != NULL) return;
 
-    /* 构建超时参数 */
-    struct __kernel_timespec ts;
-    struct __kernel_timespec* pts = NULL;
-    if (timeoutMs >= 0) {
-        ts.tv_sec = timeoutMs / 1000;
-        ts.tv_nsec = (timeoutMs % 1000) * 1000000L;
-        pts = &ts;
-    }
+    struct pollfd fds[2];
+    nfds_t count = 0;
+    fds[count++] = (struct pollfd){ .fd = posix->m_ringFd, .events = POLLIN };
+    if (posix->m_wakeFd >= 0)
+        fds[count++] = (struct pollfd){ .fd = posix->m_wakeFd, .events = POLLIN };
 
-    /* io_uring_enter 阻塞等待至少 1 个完成事件 */
-    syscall(__NR_io_uring_enter, posix->m_ringFd, 0, 1,
-            IORING_ENTER_GETEVENTS, pts, NULL);
+    int result;
+    do {
+        result = poll(fds, count, timeoutMs);
+    } while (result < 0 && errno == EINTR);
+
+    if (result > 0 && count > 1 && (fds[1].revents & POLLIN)) {
+        uint64_t value;
+        while (read(posix->m_wakeFd, &value, sizeof(value)) < 0 && errno == EINTR) {}
+    }
 
     /* 处理完成事件（可能被 wakeUp 的 NOP 唤醒） */
     VXNetIoRingPosix_pollPlatform(self);
@@ -286,23 +292,10 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self, int timeout
 /* 唤醒阻塞中的 WaitForEvents（虚函数） */
 static void VXNetIoRingPosix_wakeUp(XAbstractNetIoRing* self) {
     XNetIoRingPosix* posix = (XNetIoRingPosix*)self;
-    if (!posix || posix->m_ringFd < 0) return;
+    if (!posix || posix->m_wakeFd < 0) return;
 
-    struct io_uring_sqe* sqe = getSqe(posix);
-    if (!sqe) {
-        /* SQ 已满，直接通过 io_uring_enter 无 SQ 唤醒 */
-        syscall(__NR_io_uring_enter, posix->m_ringFd, 0, 1,
-                IORING_ENTER_GETEVENTS, NULL, NULL);
-        return;
-    }
-
-    /* 提交 NOP SQE（user_data=0）唤醒阻塞的 waitForEvents，
-     * 对应 Win32 的 PostQueuedCompletionStatus(NULL overlapped) */
-    memset(sqe, 0, sizeof(*sqe));
-    sqe->opcode = IORING_OP_NOP;
-    sqe->user_data = 0;
-
-    submitSqe(posix, 1);
+    uint64_t value = 1;
+    while (write(posix->m_wakeFd, &value, sizeof(value)) < 0 && errno == EINTR) {}
 }
 
 /* ================================================================
@@ -344,7 +337,10 @@ static void VXNetIoRingPosix_deinit(XAbstractNetIoRing* obj) {
 
         close(posix->m_ringFd);
     }
+    if (posix->m_wakeFd >= 0)
+        close(posix->m_wakeFd);
     posix->m_ringFd = -1;
+    posix->m_wakeFd = -1;
     posix->m_ownsRing = false;
 
     /* 调用基类 deinit（清理 SQ/CQ 队列 + XClass 基类） */
@@ -429,12 +425,16 @@ static bool setupIoUring(XNetIoRingPosix* ring) {
 
     ring->m_sqes = (struct io_uring_sqe*)sqesPtr;
 
+    ring->m_wakeFd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (ring->m_wakeFd < 0) goto fail;
+
     return true;
 
 fail:
     if (ring->m_sqHeadPtr) { munmap(ring->m_sqHeadPtr, sqRingSize); ring->m_sqHeadPtr = NULL; }
     if (ring->m_cqHeadPtr) { munmap(ring->m_cqHeadPtr, cqRingSize); ring->m_cqHeadPtr = NULL; }
     if (ring->m_sqes)      { munmap(ring->m_sqes, sqesSize);      ring->m_sqes = NULL; }
+    if (ring->m_wakeFd >= 0) { close(ring->m_wakeFd); ring->m_wakeFd = -1; }
     close(ringFd);
     ring->m_ringFd = -1;
     ring->m_ownsRing = false;
@@ -449,6 +449,8 @@ void XNetIoRingPosix_init(XNetIoRingPosix* ring) {
 
     /* 清零整个子类结构体 */
     memset(ring, 0, sizeof(XNetIoRingPosix));
+    ring->m_ringFd = -1;
+    ring->m_wakeFd = -1;
 
     /* 初始化基类（设置基类虚函数表 + 创建 SQ/CQ 队列） */
     XAbstractNetIoRing_init((XAbstractNetIoRing*)ring);

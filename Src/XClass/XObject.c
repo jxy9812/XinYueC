@@ -250,13 +250,13 @@ bool XObject_blockSignals(XObject* self, bool block)
 XTimerId XObject_startTimer_ms(XObject* self, uint64_t interval, XTimerType timerType)
 {
 	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
-	if (!disp)return 0;
+	if (!disp)return XTIMER_INVALID_ID;
 	return XAbstractEventDispatcher_registerTimer(disp, interval*1000000, timerType, self);
 }
 XTimerId XObject_startTimer_ns(XObject* self, uint64_t interval_ns, XTimerType timerType)
 {
 	XAbstractEventDispatcher* disp = XObject_eventDispatcher(self);
-	if (!disp)return 0;
+	if (!disp)return XTIMER_INVALID_ID;
 	return XAbstractEventDispatcher_registerTimer(disp, interval_ns, timerType, self);
 }
 void XObject_killTimer(XObject* self, XTimerId timerId)

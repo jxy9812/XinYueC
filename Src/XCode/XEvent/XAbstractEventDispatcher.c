@@ -192,7 +192,9 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
             if (!ePost->receiver||ePost->receiver->is_deleting_children)
             {
                 XEvent_delete_base(ePost->event);
+                ePost->event = NULL;
                 ++size;
+                continue;
             }
             XEvent* e = ePost->event;
             ePost->event = NULL;
@@ -383,11 +385,11 @@ static bool VXAbstractEventDispatcher_unregisterTimer(XAbstractEventDispatcher* 
     {
         is_ok = XHrTimerGroup_removeTimer_base(dispatcher->d_ptr->m_hrtimerGroup, timerInfo->Xhandle);
     }
-    if (!is_ok) return false;
-
+    /* 无论 removeTimer 是否成功，都释放 timerInfo 和 XFd，防止泄漏。
+     * removeTimer 可能因 tick 已分离节点而返回 false，但定时器已停止。 */
     XFree_Hybrid(timerInfo);
     XFd_free(timerId);
-    return true;
+    return is_ok;
 }
 
 static bool VXAbstractEventDispatcher_unregisterTimers(XAbstractEventDispatcher* dispatcher, XObject* object)
@@ -715,10 +717,21 @@ XTimerId XAbstractEventDispatcher_registerTimer(
     XTimerType timerType,
     XObject* object)
 {
-    if (ISNULL(self, "")) return XTIMER_INVALID_ID;
+    if (ISNULL(self, "") || !object || interval == 0)
+        return XTIMER_INVALID_ID;
     XFd fd = XFd_alloc(XFD_TYPE_TIMER, NULL, object);
     if (fd < 0) return XTIMER_INVALID_ID;
     XAbstractEventDispatcher_registerTimer_base(self, (XTimerId)fd, interval, timerType, object);
+
+    /* 虚函数在注册失败时会释放 fd。不要把一个未注册的 ID
+     * 交给 XTimer，否则它会保持 running 并永久等待超时事件。 */
+    XFileDescriptor* desc = XFd_get(fd);
+    if (!desc || (XFdType)desc->type != XFD_TYPE_TIMER || !desc->handle)
+    {
+        if (desc && (XFdType)desc->type == XFD_TYPE_TIMER)
+            XFd_free(fd);
+        return XTIMER_INVALID_ID;
+    }
     return (XTimerId)fd;
 }
 

@@ -10,6 +10,7 @@
 #include "XThreadData.h"
 #include "XEventLoop.h"
 #include "XMemory.h"
+#include "XVarList.h"
 #include "CXinYueConfig.h"
 #include <pthread.h>
 #include <sched.h>
@@ -17,6 +18,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 void VXThread_run(XThread* thread);
 /* =========================================================================
@@ -60,7 +62,7 @@ static void* ThreadFunction(void* arg)
  * ========================================================================= */
 bool XThread_start(XThread* thread)
 {
-    if (thread->m_handle != 0) {
+    if (!thread || thread->m_handle != 0) {
         return false;
     }
 
@@ -77,10 +79,16 @@ bool XThread_start(XThread* thread)
         }
     }
 
+    thread->m_finished = false;
+    thread->m_running = true;
+    thread->m_interruptionRequested = false;
     ret = pthread_create(&pthread, &attr, ThreadFunction, thread);
     pthread_attr_destroy(&attr);
 
-    if (ret != 0) return false;
+    if (ret != 0) {
+        thread->m_running = false;
+        return false;
+    }
 
     thread->m_handle = (XHandle)pthread;
     XThread_setPriority(thread, XThread_priority(thread));
@@ -89,26 +97,55 @@ bool XThread_start(XThread* thread)
 
 bool XThread_wait(XThread* thread, uint32_t time)
 {
-    if (thread->m_handle == 0) return false;
+    if (!thread || thread->m_handle == 0) return false;
 
     pthread_t pthread = (pthread_t)thread->m_handle;
+    if (pthread_equal(pthread, pthread_self()))
+        return false;
+
+    int ret;
     if (time == UINT32_MAX) {
-        return pthread_join(pthread, NULL) == 0;
+        ret = pthread_join(pthread, NULL);
     }
-
-    struct timespec start;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    unsigned long timeout_ns = (unsigned long)time * 1000000;
-
-    while (!thread->m_finished) {
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        unsigned long elapsed = (unsigned long)(now.tv_sec - start.tv_sec) * 1000000000UL +
-                                (unsigned long)(now.tv_nsec - start.tv_nsec);
-        if (elapsed >= timeout_ns) return false;
-        usleep(1000);
+#if defined(__linux__)
+    else {
+        struct timespec deadline;
+        if (clock_gettime(CLOCK_REALTIME, &deadline) != 0)
+            return false;
+        deadline.tv_sec += time / 1000;
+        deadline.tv_nsec += (long)(time % 1000) * 1000000L;
+        if (deadline.tv_nsec >= 1000000000L) {
+            ++deadline.tv_sec;
+            deadline.tv_nsec -= 1000000000L;
+        }
+        ret = pthread_timedjoin_np(pthread, NULL, &deadline);
     }
-    pthread_join(pthread, NULL);
+#else
+    else {
+        struct timespec start;
+        if (clock_gettime(CLOCK_MONOTONIC, &start) != 0)
+            return false;
+        uint64_t timeout_ns = (uint64_t)time * 1000000ULL;
+        while (!thread->m_finished) {
+            struct timespec now;
+            if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+                return false;
+            uint64_t elapsed = (uint64_t)(now.tv_sec - start.tv_sec) * 1000000000ULL +
+                               (uint64_t)(now.tv_nsec - start.tv_nsec);
+            if (elapsed >= timeout_ns)
+                return false;
+            usleep(1000);
+        }
+        ret = pthread_join(pthread, NULL);
+    }
+#endif
+
+    if (ret != 0)
+        return false;
+
+    thread->m_handle = 0;
+    thread->m_running = false;
+    thread->m_finished = true;
     return true;
 }
 
@@ -125,6 +162,7 @@ bool XThread_terminate(XThread* thread)
     if (ret != 0) return false;
 
     thread->m_finished = true;
+    thread->m_running = false;
     thread->m_handle = 0;
     thread->m_interruptionRequested = false;
     return true;
@@ -190,8 +228,10 @@ static void VXThread_deinit(XThread* thread)
 {
     if (!thread) return;
 
-    if (XThread_isRunning(thread)) {
-        XThread_requestInterruption(thread);
+    if (thread->m_handle != 0) {
+        if (XThread_isRunning(thread))
+            XThread_requestInterruption(thread);
+        /* A finished POSIX thread remains joinable until pthread_join(). */
         XThread_wait(thread, UINT32_MAX);
     }
 
@@ -204,6 +244,10 @@ static void VXThread_deinit(XThread* thread)
     thread->m_finished = false;
     thread->m_interruptionRequested = false;
     XThreadData* data = thread->m_data;
+    if (thread->m_varList) {
+        XVarList_delete(thread->m_varList);
+        thread->m_varList = NULL;
+    }
     XClass_Deinit_Parent(XObject, thread);
     if(data)
     {
@@ -215,6 +259,11 @@ static void VXThread_deinit(XThread* thread)
 bool XThread_isRunning(const XThread* thread)
 {
     return thread && thread->m_handle != 0 && !thread->m_finished;
+}
+
+bool XThread_isFinished(const XThread* thread)
+{
+    return thread && thread->m_finished;
 }
 
 XThread_Priority XThread_priority(const XThread* thread)
