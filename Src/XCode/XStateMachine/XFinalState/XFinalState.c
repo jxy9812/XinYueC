@@ -39,6 +39,7 @@ XFinalState* XFinalState_create() {
 void XFinalState_init(XFinalState* state) {
     if (!state) return;
     XAbstractState_init(&state->m_class, XStateType_Final);
+    XClassGetVtable(state) = XFinalState_class_init();
 }
 
 void XFinalState_activate(XFinalState* state) {

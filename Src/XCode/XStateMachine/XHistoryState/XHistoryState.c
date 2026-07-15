@@ -57,6 +57,7 @@ XHistoryState* XHistoryState_create(XHistoryStateType type) {
 void XHistoryState_init(XHistoryState* state, XHistoryStateType type) {
     if (!state) return;
     XAbstractState_init(&state->m_class, XStateType_History);
+    XClassGetVtable(state) = XHistoryState_class_init();
     state->m_historyType = type;
     state->m_defaultState = NULL;
     state->m_storedShallow = NULL;

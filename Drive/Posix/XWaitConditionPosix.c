@@ -17,7 +17,11 @@ size_t XWaitCondition_typeSize()
 
 void XWaitCondition_init(XWaitCondition* cond) {
     if (cond == NULL) return;
-    pthread_cond_init(&cond->cond, NULL);
+    pthread_condattr_t attr;
+    pthread_condattr_init(&attr);
+    pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    pthread_cond_init(&cond->cond, &attr);
+    pthread_condattr_destroy(&attr);
 }
 
 void XWaitCondition_deinit(XWaitCondition* cond) {

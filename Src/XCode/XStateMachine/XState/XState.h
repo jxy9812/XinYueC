@@ -1,4 +1,4 @@
-﻿#ifndef XSTATE_H
+#ifndef XSTATE_H
 #define XSTATE_H
 #ifdef __cplusplus
 extern "C" {
@@ -7,8 +7,13 @@ extern "C" {
 #include "XAbstractTransition.h"
 XCLASS_DEFINE_BEGING(XState)
 XCLASS_DEFINE_EXTEND_END(XState, XAbstractState);
-//XCLASS_DEFINE_ENUM(XState, NULL) = XCLASS_VTABLE_GET_SIZE(XAbstractState),
-//XCLASS_DEFINE_END(XState)
+
+// Qt 6.8: 子状态模式
+typedef enum {
+    XState_ExclusiveStates,  // 互斥子状态（默认）
+    XState_ParallelStates,   // 并行子状态
+} XState_ChildMode;
+
 /**
  * @brief 基础状态类，可包含子状态和转换
  */
@@ -23,6 +28,10 @@ typedef struct XState
     size_t m_transitionCount;        // 转换数量
     size_t m_transitionCapacity;     // 转换容量
     XAbstractState* m_initialState;  // 初始子状态
+    // Qt 6.8: 子状态模式
+    XState_ChildMode m_childMode;    // 子状态模式
+    // Qt 6.8: 错误状态
+    XAbstractState* m_errorState;    // 错误时进入的状态
 } XState;
 XVtable* XState_class_init();
 /**
@@ -111,7 +120,7 @@ XAbstractTransition* XState_transition(const XState* state, size_t index);
 /**
  * @brief 设置初始子状态
  * @param state 父状态
- * @param m_initialState 初始子状态
+ * @param initialState 初始子状态
  */
 void XState_setInitialState(XState* state, XAbstractState* initialState);
 
@@ -122,19 +131,29 @@ void XState_setInitialState(XState* state, XAbstractState* initialState);
  */
 XAbstractState* XState_initialState(const XState* state);
 
+// Qt 6.8: 子状态模式
+XState_ChildMode XState_childMode(const XState* state);
+void XState_setChildMode(XState* state, XState_ChildMode mode);
+
+// Qt 6.8: 错误状态
+XAbstractState* XState_errorState(const XState* state);
+void XState_setErrorState(XState* state, XAbstractState* errorState);
+
 /**
  * @brief 状态激活时调用
  * @param state 状态实例
- * @param m_machine 所属状态机
  */
 void XState_activate_base(XState* state);
 
 /**
  * @brief 状态失活时调用
  * @param state 状态实例
- * @param m_machine 所属状态机
  */
 void XState_deactivate_base(XState* state);
+
+// Qt 6.8: finished 信号 — 子最终状态被进入时发出
+void* XState_finished_signal(XState* state);
+
 #ifdef __cplusplus
 }
 #endif

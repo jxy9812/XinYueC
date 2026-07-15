@@ -1,4 +1,4 @@
-﻿#include "XStateMachine.h"
+#include "XStateMachine.h"
 #include "XState.h"
 #include "XFinalState.h"
 #include "XHistoryState.h"
@@ -26,13 +26,7 @@ XVtable* XStateMachine_class_init()
 #endif
         XVTABLE_INHERIT_XCLASS(XObject);
 
-    //void* table[] = {
-    //  
-    //};
-
-    //XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStateMachine_deinit);
-    //XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, NULL);
 #if SHOWCONTAINERSIZE
     printf("XStateMachine size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
@@ -61,6 +55,10 @@ void XStateMachine_init(XStateMachine* machine) {
     machine->m_activeStateCount = 0;
     machine->m_status = XStateMachineStopped;
     machine->m_userData = NULL;
+    machine->m_error = XStateMachineNoError;
+    machine->m_errorString = NULL;
+    machine->m_globalRestorePolicy = XStateMachineGlobalRestorePolicy;
+    machine->m_animated = false;
 }
 
 void XStateMachine_setInitialState(XStateMachine* machine, XAbstractState* state) {
@@ -79,9 +77,7 @@ bool XStateMachine_addState(XStateMachine* machine, XAbstractState* state) {
     // 对于顶层状态（没有父状态），设置其所属状态机
     if (!XAbstractState_parentState(state)) 
     {
-        // 这里不需要实际存储状态，状态通过父状态关系管理
-        //((XAbstractState*)state)->m_machine = m_machine;
-        XAbstractState_setMachine_base(state,machine);
+        XAbstractState_setMachine_base(state, machine);
         if (machine->m_initialState == NULL)
             machine->m_initialState = state;
     }
@@ -118,10 +114,15 @@ bool XStateMachine_start(XStateMachine* machine) {
     }
     machine->m_activeStateCount = 0;
 
+    // 清除之前的错误
+    machine->m_error = XStateMachineNoError;
+    machine->m_errorString = NULL;
+
+    // 发送 runningChanged 信号 (Qt 6.8)
+    XStateMachine_runningChanged_signal(machine, true);
+
     // 进入初始状态
     XStateMachine_enterState(machine, machine->m_initialState);
-
-  
 
     // 发送启动信号
     XStateMachine_start_signal(machine);
@@ -132,6 +133,8 @@ bool XStateMachine_start(XStateMachine* machine) {
 void XStateMachine_stop(XStateMachine* machine) {
     if (!machine || machine->m_status == XStateMachineStopped) return;
 
+    bool wasRunning = (machine->m_status == XStateMachineRunning);
+
     // 退出所有激活状态
     for (size_t i = 0; i < machine->m_activeStateCount; i++) {
         XStateMachine_exitState(machine, machine->m_activeStates[i]);
@@ -141,6 +144,11 @@ void XStateMachine_stop(XStateMachine* machine) {
     // 设置状态机为停止状态
     machine->m_status = XStateMachineStopped;
 
+    // 发送 runningChanged 信号 (Qt 6.8)
+    if (wasRunning) {
+        XStateMachine_runningChanged_signal(machine, false);
+    }
+
     // 发送停止信号
     XStateMachine_stop_signal(machine);
 }
@@ -148,6 +156,7 @@ void XStateMachine_stop(XStateMachine* machine) {
 void XStateMachine_pause(XStateMachine* machine) {
     if (machine && machine->m_status == XStateMachineRunning) {
         machine->m_status = XStateMachinePaused;
+        XStateMachine_runningChanged_signal(machine, false);
         XStateMachine_pause_signal(machine);
     }
 }
@@ -155,6 +164,7 @@ void XStateMachine_pause(XStateMachine* machine) {
 void XStateMachine_resume(XStateMachine* machine) {
     if (machine && machine->m_status == XStateMachinePaused) {
         machine->m_status = XStateMachineRunning;
+        XStateMachine_runningChanged_signal(machine, true);
         XStateMachine_resume_signal(machine);
     }
 }
@@ -162,8 +172,7 @@ void XStateMachine_resume(XStateMachine* machine) {
 XStateMachineStatus XStateMachine_status(const XStateMachine* machine) {
     return machine ? machine->m_status : XStateMachineStopped;
 }
-//void (*XEventCB)(XEvent* event)
-//处理事件的回调
+
 void XStateMachine_handleEventCB(const XEvent* event) {
     if (!event) {
         return ;
@@ -206,85 +215,30 @@ void XStateMachine_handleEventCB(const XEvent* event) {
     }
 
     XFree_System(snapshot);
-    //return eventHandled;
 }
 
-// 辅助函数：判断状态是否为另一个状态的后代
-static bool isDescendant(XAbstractState* ancestor, XAbstractState* descendant) {
-    if (!ancestor || !descendant) return false;
-    if (ancestor == descendant) return true;
-
-    XAbstractState* parent = XAbstractState_parentState(descendant);
-    while (parent) {
-        if (parent == ancestor) return true;
-        parent = XAbstractState_parentState(parent);
-    }
-    return false;
-}
-
-/**
- * @brief 状态机转换逻辑
- * 修复点：深层历史恢复时避免父状态异常退出
- */
 bool XStateMachine_transition(XStateMachine* machine, XAbstractState* source, XAbstractState* target) {
-    if (!machine || !source || !target || machine->m_status != XStateMachineRunning) {
-        return false;
-    }
+    if (!machine || !source || !target) return false;
 
-    XAbstractState* actualTarget = target;
-    XVector* deepHistoryChain = NULL;
-    bool isDeepHistory = false;
+    // 退出源状态
+    XStateMachine_exitState(machine, source);
 
-    // 解析历史状态
-    if (target->m_type == XStateType_History) {
-        XHistoryState* history = (XHistoryState*)target;
-        actualTarget = XHistoryState_getActivatedTarget(history);;
+    // 进入目标状态
+    XStateMachine_enterState(machine, target);
 
-        if (history->m_historyType == XHistoryStateType_Deep) {
-            deepHistoryChain = XHistoryState_storedDeep(history);
-            isDeepHistory = true;
-        }
-
-        if (!actualTarget) return false;
-    }
-
-    // 判断目标是否为源状态的后代
-    bool targetIsDescendant = isDescendant(source, actualTarget);
-
-    // 处理退出逻辑：深层历史不退出源状态（修复点）
-    if (!targetIsDescendant && !isDeepHistory) {
-        XStateMachine_exitState(machine, source);
-    }
-    else if (source->m_type == XStateType_Basic) {
-        XState* basicSource = (XState*)source;
-        for (size_t i = 0; i < XState_childCount(basicSource); i++) {
-            XAbstractState* child = XState_child(basicSource, i);
-            if (child->m_isRunning && !isDescendant(child, actualTarget)) {
-                XStateMachine_exitState(machine, child);
+    // 检查是否到达最终状态 (Qt 6.8: finished signal)
+    if (target->m_type == XStateType_Final) {
+        // 检查是否是顶层最终状态
+        XState* parent = XAbstractState_parentState(target);
+        if (!parent || !XAbstractState_parentState((XAbstractState*)parent)) {
+            XStateMachine_finished_signal(machine);
+            XStateMachine_stop(machine);
+        } else {
+            // 子状态中的最终状态 -> 发送父状态的 finished 信号
+            if (parent->m_class.m_type == XStateType_Basic) {
+                XState_finished_signal((XState*)parent);
             }
         }
-    }
-
-    // 激活深层历史链
-    if (deepHistoryChain && XVector_size_base(deepHistoryChain) > 0) {
-        // 按顺序激活链中所有状态（从顶层到深层）
-        for (size_t i = 0; i < XVector_size_base(deepHistoryChain); i++) {
-            XAbstractState** statePtr = XVector_at_base(deepHistoryChain, i);
-            XAbstractState* stateInChain = *statePtr;
-
-            if (!stateInChain || stateInChain->m_isRunning) continue;
-
-            // 对于基本状态，跳过初始状态激活，避免覆盖历史
-            if (stateInChain->m_type == XStateType_Basic) {
-                ((XState*)stateInChain)->m_skipInitialState = true;
-            }
-
-            XStateMachine_enterState(machine, stateInChain);
-        }
-    }
-    else {
-        // 非深层历史：激活实际目标
-        XStateMachine_enterState(machine, actualTarget);
     }
 
     return true;
@@ -304,15 +258,7 @@ bool XStateMachine_isRunning(const XStateMachine* machine) {
 }
 
 bool XStateMachine_isFinished(const XStateMachine* machine) {
-    if (!machine || machine->m_activeStateCount == 0) return false;
-
-    // 检查所有激活状态是否都是最终状态
-    for (size_t i = 0; i < machine->m_activeStateCount; i++) {
-        if (machine->m_activeStates[i]->m_type != XStateType_Final) {
-            return false;
-        }
-    }
-    return true;
+    return machine && machine->m_status == XStateMachineStopped;
 }
 
 void XStateMachine_setUserData(XStateMachine* machine, void* data) {
@@ -325,17 +271,66 @@ void* XStateMachine_userData(const XStateMachine* machine) {
     return machine ? machine->m_userData : NULL;
 }
 
+// Qt 6.8: 错误处理
+XStateMachine_Error XStateMachine_error(const XStateMachine* machine) {
+    return machine ? machine->m_error : XStateMachineNoError;
+}
+
+const char* XStateMachine_errorString(const XStateMachine* machine) {
+    return machine ? machine->m_errorString : NULL;
+}
+
+void XStateMachine_clearError(XStateMachine* machine) {
+    if (machine) {
+        machine->m_error = XStateMachineNoError;
+        machine->m_errorString = NULL;
+    }
+}
+
+void XStateMachine_setError(XStateMachine* machine, XStateMachine_Error error, const char* errorString) {
+    if (machine) {
+        machine->m_error = error;
+        machine->m_errorString = errorString;
+        XStateMachine_error_signal(machine, error, errorString);
+    }
+}
+
+// Qt 6.8: globalRestorePolicy
+XStateMachine_GlobalRestorePolicy XStateMachine_globalRestorePolicy(const XStateMachine* machine) {
+    return machine ? machine->m_globalRestorePolicy : XStateMachineGlobalRestorePolicy;
+}
+
+void XStateMachine_setGlobalRestorePolicy(XStateMachine* machine, XStateMachine_GlobalRestorePolicy policy) {
+    if (machine) {
+        machine->m_globalRestorePolicy = policy;
+    }
+}
+
+// Qt 6.8: animated
+bool XStateMachine_isAnimated(const XStateMachine* machine) {
+    return machine ? machine->m_animated : false;
+}
+
+void XStateMachine_setAnimated(XStateMachine* machine, bool enabled) {
+    if (machine) {
+        machine->m_animated = enabled;
+    }
+}
+
+/*                                                          信号                                                          */    
+// 状态进入信号 — 修复: 传递 NULL 作为 args，避免裸指针被当作 XVarList 释放
 void* XStateMachine_entered_signal(XStateMachine* machine, XAbstractState* state)
 {
     if (machine)
-        XObject_emitSignal(machine, XStateMachine_entered_signal, state,NULL,NULL, XEVENT_PRIORITY_NORMAL);
+        XObject_emitSignal(machine, XStateMachine_entered_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return XStateMachine_entered_signal;
 }
 
+// 状态退出信号 — 修复: 传递 NULL 作为 args
 void* XStateMachine_exited_signal(XStateMachine* machine, XAbstractState* state)
 {
     if (machine)
-        XObject_emitSignal(machine, XStateMachine_exited_signal, state, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+        XObject_emitSignal(machine, XStateMachine_exited_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
     return XStateMachine_exited_signal;
 }
 
@@ -367,6 +362,30 @@ void* XStateMachine_resume_signal(XStateMachine* machine)
     return XStateMachine_resume_signal;
 }
 
+// Qt 6.8: finished 信号
+void* XStateMachine_finished_signal(XStateMachine* machine)
+{
+    if (machine)
+        XObject_emitSignal(machine, XStateMachine_finished_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    return XStateMachine_finished_signal;
+}
+
+// Qt 6.8: runningChanged 信号
+void* XStateMachine_runningChanged_signal(XStateMachine* machine, bool running)
+{
+    if (machine)
+        XObject_emitSignal(machine, XStateMachine_runningChanged_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    return XStateMachine_runningChanged_signal;
+}
+
+// Qt 6.8: error 信号
+void* XStateMachine_error_signal(XStateMachine* machine, XStateMachine_Error error, const char* errorString)
+{
+    if (machine)
+        XObject_emitSignal(machine, XStateMachine_error_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    return XStateMachine_error_signal;
+}
+
 // 私有函数实现
 bool XStateMachine_isActive(const XStateMachine* machine, const XAbstractState* state) {
     if (!machine || !state) return false;
@@ -387,7 +406,7 @@ void XStateMachine_addActiveState(XStateMachine* machine, XAbstractState* state)
     // 扩容
     if (machine->m_activeStateCount >= machine->m_activeStateCapacity) {
         size_t newCapacity = machine->m_activeStateCapacity * 2;
-        XAbstractState** newStates = (XAbstractState**)XCalloc_System(
+        XAbstractState** newStates = (XAbstractState**)XRealloc_System(
             machine->m_activeStates, sizeof(XAbstractState*) * newCapacity
         );
         if (!newStates) return;
@@ -446,16 +465,13 @@ void XStateMachine_enterState(XStateMachine* machine, XAbstractState* state) {
     case XStateType_Final:
         XFinalState_activate((XFinalState*)state);
         break;
- /*   case XStateType_History:
-        XHistoryState_activate_base((XHistoryState*)state);*/
-        break;
     case XStateType_Parallel:
         // 并行状态处理（类似于基本状态，但需要激活所有子状态）
         XState_activate_base((XState*)state);
         break;
     }
 
-    // 添加到激活状态列表
+    // 添加到激活状态列表 (只在这里添加一次)
     XStateMachine_addActiveState(machine, state);
 }
 

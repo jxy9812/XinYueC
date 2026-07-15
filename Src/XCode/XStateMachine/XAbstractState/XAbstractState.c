@@ -1,4 +1,4 @@
-﻿#include "XAbstractState.h"
+#include "XAbstractState.h"
 #include "XStateMachine.h"
 #include "XState.h"
 #include "XStack.h"
@@ -65,9 +65,6 @@ void XAbstractState_init(XAbstractState* state, XStateType type) {
     state->m_isRunning = false;
     state->m_userData = NULL;
     state->m_privateData = NULL;
-    //state->m_childCapacity = 0;
-    //state->m_childStates = 0;
-    //state->m_childCount = 0;
 
     // 初始化私有数据
     XAbstractState_private_init(state);
@@ -83,7 +80,7 @@ void VXAbstractState_activate(XAbstractState* state)
     if (d->enteredCallback) {
         d->enteredCallback(state);
     }
-    XStateMachine_addActiveState(state->m_machine, state);
+    // 修复: 不再在这里添加 activeState，由 XStateMachine_enterState 统一添加，避免双次添加
     // 发送状态进入信号
     XStateMachine_entered_signal(state->m_machine, state);
 }
@@ -98,7 +95,7 @@ void VXAbstractState_deactivate(XAbstractState* state)
     }
 
     state->m_isRunning = false;
-    XStateMachine_removeActiveState(state->m_machine, state);
+    // 修复: 不在这里移除 activeState，由 XStateMachine_exitState 统一移除
     // 发送状态退出信号
     XStateMachine_exited_signal(state->m_machine, state);
 }
@@ -120,7 +117,8 @@ void VXAbstractState_deinit(XAbstractState* state)
     // 释放私有数据
     XFree_System(state->m_privateData);
     state->m_privateData = NULL;
-    memset(state,0,sizeof(state));
+    // 修复: 使用正确的大小 sizeof(XAbstractState) 而不是 sizeof(state)
+    memset(state, 0, sizeof(XAbstractState));
 }
 XStateType XAbstractState_type(const XAbstractState* state) {
     return state ? state->m_type : XStateType_Basic;
@@ -154,7 +152,7 @@ bool XAbstractState_isRunning(const XAbstractState* state) {
 
 void XAbstractState_setUserData(XAbstractState* state, void* data) {
     if (state) {
-        state->m_userData = data;  // 仅设置用户数据，不影响私有数据
+        state->m_userData = data;
     }
 }
 
