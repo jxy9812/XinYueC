@@ -1,66 +1,97 @@
 ﻿#ifndef XSIGNALTRANSITION_H
 #define XSIGNALTRANSITION_H
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
 #include "XAbstractTransition.h"
-typedef struct XStateMachine XStateMachine;
 
 XCLASS_DEFINE_BEGING(XSignalTransition)
 XCLASS_DEFINE_EXTEND_END(XSignalTransition, XAbstractTransition);
-//XCLASS_DEFINE_ENUM(XState, NULL) = XCLASS_VTABLE_GET_SIZE(XAbstractState),
-//XCLASS_DEFINE_END(XState)
-/**
- * @brief 信号触发的转换类
- */
+
+/** @brief 由 XObject 信号触发的转换，对应 Qt 6.8 的 QSignalTransition。 */
 typedef struct XSignalTransition {
-    XAbstractTransition m_class;  // 继承XAbstractTransition
-    XObject* m_sender;             // 信号发送者
-    size_t m_signal;               // 信号
-    void* m_signalArgs;            //来自信号的参数
-    XConnection* m_connection;     // 信号连接
+    XAbstractTransition m_class; ///< 继承 XAbstractTransition。
+    const XObject* m_senderObject; ///< 信号发送对象，不取得所有权。
+    size_t m_signal;               ///< 信号标识。
+    XConnection* m_connection;     ///< 活动期间引用的共享内部连接。
+    XStateMachine* m_registeredMachine; ///< 当前注册连接所属的状态机。
 } XSignalTransition;
-XVtable* XSignalTransition_class_init();
-XSignalTransition* XSignalTransition_create();
-/**
- * @brief 创建信号转换实例
- * @param sender 信号发送者
- * @param signal 信号名称
- * @return 新创建的信号转换实例，失败返回NULL
- */
-XSignalTransition* XSignalTransition_create_signal(XObject* sender, size_t signal);
 
 /**
- * @brief 初始化信号转换
- * @param transition 信号转换实例
- * @param m_sender 信号发送者
- * @param m_signal 信号名称
+ * @brief 初始化 XSignalTransition 虚函数表。
+ * @return XSignalTransition 的共享虚函数表。
+ */
+XVtable* XSignalTransition_class_init(void);
+/**
+ * @brief 创建未绑定发送者和源状态的信号转换。
+ * @return 新信号转换；内存分配失败时返回 NULL。
+ */
+XSignalTransition* XSignalTransition_create(void);
+/**
+ * @brief 创建指定发送者、信号和源状态的信号转换。
+ * @param sender 信号发送对象，不转移所有权，可为 NULL。
+ * @param signal 由 XSignal 取得的信号标识，0 表示尚未绑定。
+ * @param sourceState 源状态，可为 NULL；非 NULL 时取得转换所有权。
+ * @return 新信号转换；内存分配失败时返回 NULL。
+ */
+XSignalTransition* XSignalTransition_create_ex(const XObject* sender, size_t signal, XState* sourceState);
+/**
+ * @brief 初始化空信号转换。
+ * @param transition 调用者提供的未初始化存储。
  */
 void XSignalTransition_init(XSignalTransition* transition);
+/**
+ * @brief 初始化指定发送者、信号和源状态的信号转换。
+ * @param transition 调用者提供的未初始化存储。
+ * @param sender 信号发送对象，不转移所有权，可为 NULL。
+ * @param signal 信号标识，0 表示尚未绑定。
+ * @param sourceState 源状态，可为 NULL；非 NULL 时取得转换所有权。
+ */
+void XSignalTransition_init_ex(XSignalTransition* transition, const XObject* sender, size_t signal, XState* sourceState);
+
+#define XSignalTransition_delete_base XAbstractTransition_delete_base
+#define XSignalTransition_deinit_base XAbstractTransition_deinit_base
 
 /**
- * @brief 销毁信号转换
- * @param transition 信号转换实例
+ * @brief 获取信号发送对象。
+ * @param transition 信号转换。
+ * @return 当前发送对象；未绑定或 transition 为 NULL 时返回 NULL。
  */
-#define XSignalTransition_delete_base       XAbstractTransition_delete_base
-#define XSignalTransition_deinit_base       XAbstractTransition_deinit_base
+const XObject* XSignalTransition_senderObject(const XSignalTransition* transition);
+/**
+ * @brief 设置信号发送对象，状态位于 configuration 时自动重新注册连接。
+ * @param transition 信号转换。
+ * @param sender 新发送对象，不转移所有权；NULL 表示取消绑定。
+ */
+void XSignalTransition_setSenderObject(XSignalTransition* transition, const XObject* sender);
+/**
+ * @brief 获取信号标识。
+ * @param transition 信号转换。
+ * @return 当前信号标识；未绑定或 transition 为 NULL 时返回 0。
+ */
+size_t XSignalTransition_signal(const XSignalTransition* transition);
+/**
+ * @brief 设置信号标识，状态位于 configuration 时自动重新注册连接。
+ * @param transition 信号转换。
+ * @param signal 新信号标识；0 表示取消绑定。
+ */
+void XSignalTransition_setSignal(XSignalTransition* transition, size_t signal);
 
 /**
- * @brief 获取信号发送者
- * @param transition 信号转换实例
- * @return 信号发送者指针
+ * @brief 信号发送对象变化信号。
+ * @param transition senderObject 已发生变化的转换。
+ * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  */
-XObject* XSignalTransition_sender(const XSignalTransition* transition);
-
+void* XSignalTransition_senderObjectChanged_signal(XSignalTransition* transition);
 /**
- * @brief 获取信号名称
- * @param transition 信号转换实例
- * @return 信号名称
+ * @brief 信号标识变化信号。
+ * @param transition signal 已发生变化的转换。
+ * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  */
-const char* XSignalTransition_signal(const XSignalTransition* transition);
+void* XSignalTransition_signalChanged_signal(XSignalTransition* transition);
 
-//链接信号
-bool XSignalTransition_connect(XSignalTransition* transition, XObject* sender, size_t signal,XConnectionType type);
 #ifdef __cplusplus
 }
 #endif

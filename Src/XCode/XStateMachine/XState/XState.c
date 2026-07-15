@@ -1,394 +1,333 @@
-#include "XState.h"
-#include "XMemory.h"
-#include "XStack.h"
-#include "XSignalTransition.h"
-#include "XHistoryState.h"
-#include "XFinalState.h"
-#include <string.h>
-#define INITIAL_CAPACITY 4
-bool XStateMachine_isActive(const XStateMachine* machine, const XAbstractState* state);
-void XStateMachine_addActiveState(XStateMachine* machine, XAbstractState* state);
-void XStateMachine_removeActiveState(XStateMachine* machine, XAbstractState* state);
+﻿#include "XState.h"
 
-static void VXState_activate(XState* state);
-static void VXState_deactivate(XState* state);
-static void VXState_setMachine(XState* state, XStateMachine* machine);
-static void VXState_setParentState(XState* state, XAbstractState* parent);
-static void VXState_deinit(XState* state);
-XVtable* XState_class_init()
+#include "XMemory.h"
+#include "XSignalTransition.h"
+#include "XStateMachine_p.h"
+
+#include <stdlib.h>
+
+static void VXState_deinit(XState* state)
+{
+    if (!state)
+        return;
+
+    if (state->m_transitions) {
+        for (int64_t i = 0;
+             i < (int64_t)XVector_size_base(
+                 (const XContainer*)state->m_transitions); ++i) {
+            XAbstractTransition* transition = XVector_At_Base(state->m_transitions, i, XAbstractTransition*);
+            XStateMachine_unregisterTransition_internal(state->m_class.m_machine, transition);
+            transition->m_sourceState = NULL;
+        }
+        XVector_delete_base((XClass*)state->m_transitions);
+        state->m_transitions = NULL;
+    }
+
+    if (state->m_childStates) {
+        for (int64_t i = 0;
+             i < (int64_t)XVector_size_base(
+                 (const XContainer*)state->m_childStates); ++i) {
+            XAbstractState* child = XVector_At_Base(state->m_childStates, i, XAbstractState*);
+            child->m_parentState = NULL;
+            XAbstractState_setMachine_internal(child, NULL);
+        }
+        XVector_delete_base((XClass*)state->m_childStates);
+        state->m_childStates = NULL;
+    }
+
+    state->m_initialState = NULL;
+    state->m_errorState = NULL;
+    XVtableGetFunc(XAbstractState_class_init(), EXClass_Deinit,
+                   void(*)(XAbstractState*))((XAbstractState*)state);
+}
+
+XVtable* XState_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XState))
+    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XState))
 #else
-        XVTABLE_HEAP_INIT_DEFAULT
+    XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_XCLASS(XAbstractState);
-
-   /* void* table[] =
-    {
-        VXAbstractState_activate,VXAbstractState_deactivate
-    };
-
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);*/
+    XVTABLE_INHERIT_XCLASS(XAbstractState);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXState_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_Activate, VXState_activate);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_Deactivate, VXState_deactivate);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_SetMachine, VXState_setMachine);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractState_SetParentState, VXState_setParentState);
-#if SHOWCONTAINERSIZE
-    printf("XState size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
     return XVTABLE_DEFAULT;
 }
 
-XState* XState_create() {
-    XState* state = (XState*)XMalloc_System(sizeof(XState));
-    if (state) {
-        XState_init(state);
-        Set_Class_MemoryFree(state, XFree_System);
-    }
+XState* XState_create(void)
+{
+    return XState_create_ex(XState_ExclusiveStates, NULL);
+}
+
+XState* XState_create_ex(XState_ChildMode childMode, XState* parent)
+{
+    XState* state = XNew(XState);
+    if (!state)
+        return NULL;
+    XState_init_ex(state, childMode, parent);
+    Set_Class_MemoryFree(state, XFree_System);
     return state;
 }
 
-void XState_init(XState* state) {
-    if (!state) return;
+void XState_init(XState* state)
+{
+    XState_init_ex(state, XState_ExclusiveStates, NULL);
+}
 
-    XAbstractState_init(state, XStateType_Basic);
-    XClassGetVtable(state) = XState_class_init();
-    state->m_transitionCapacity = INITIAL_CAPACITY;
-    state->m_transitions = (XAbstractTransition**)XMalloc_System(
-        sizeof(XAbstractTransition*) * state->m_transitionCapacity
-    );
-    state->m_transitionCount = 0;
+void XState_init_ex(XState* state, XState_ChildMode childMode, XState* parent)
+{
+    if (!state)
+        return;
 
+    XAbstractState_init((XAbstractState*)state, XAbstractState_StandardState, NULL);
+    XClassSetVtable(state, XState);
+    state->m_childStates = XVector_Create(XAbstractState*);
+    state->m_transitions = XVector_Create(XAbstractTransition*);
     state->m_initialState = NULL;
-    state->m_childCapacity = 0;
-    state->m_childStates = 0;
-    state->m_childCount = 0;
-    state->m_skipInitialState = false;
-    state->m_childMode = XState_ExclusiveStates;
     state->m_errorState = NULL;
+    state->m_childMode = childMode;
+    if (parent)
+        XState_addChild_internal(parent, (XAbstractState*)state);
 }
-bool XState_removeState(XState* state, XAbstractState* child)
+
+bool XState_addChild_internal(XState* parent, XAbstractState* child)
 {
-    if (!state || !child) return false;
+    if (!parent || !child || !parent->m_childStates || (XAbstractState*)parent == child)
+        return false;
 
-    for (size_t i = 0; i < state->m_childCount; i++) {
-        if (state->m_childStates[i] == child) {
-            // 前移元素
-            state->m_childCount--;
-            for (size_t j = i; j < state->m_childCount; j++) {
-                state->m_childStates[j] = state->m_childStates[j + 1];
-            }
-
-            // 清除子状态的父状态
-            XAbstractState_setParentState_base(child, NULL);
-            return true;
-        }
+    for (XState* ancestor = parent; ancestor; ancestor = ancestor->m_class.m_parentState) {
+        if ((XAbstractState*)ancestor == child)
+            return false;
     }
 
-    return false;
-}
-// 新增：判断某个状态是否是当前状态的子状态（包括间接子状态）
-bool XState_isChild(const XState* state, const XAbstractState* child)
-{
-    if (!state || !child) return false;
-
-    // 检查直接子状态
-    for (size_t i = 0; i < state->m_childCount; i++) {
-        if (state->m_childStates[i] == child) {
-            return true;
-        }
-        // 递归检查间接子状态（仅基本状态有子状态）
-        if (state->m_childStates[i]->m_type == XStateType_Basic) {
-            if (XState_isChild((XState*)state->m_childStates[i], child)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-size_t XState_childCount(const XState* state)
-{
-    return state ? state->m_childCount : 0;
-}
-XAbstractState* XState_child(const XState* state, size_t index)
-{
-    if (!state || index >= state->m_childCount) return NULL;
-    return state->m_childStates[index];
-}
-bool XState_addState(XState* state, XAbstractState* child)
-{
-    if (!state || !child) return false;
-    if (((XAbstractState*)state)->m_machine != ((XAbstractState*)child)->m_machine && ((XAbstractState*)child)->m_machine != NULL)return false;
-    if (state->m_childCapacity == 0)
-    {//初始化
-        state->m_childCapacity = INITIAL_CAPACITY;
-        state->m_childStates = (XAbstractState**)XMalloc_System(
-            sizeof(XAbstractState*) * state->m_childCapacity);
-    }
-    else
-    {
-        // 检查是否已存在
-        for (size_t i = 0; i < state->m_childCount; i++) {
-            if (state->m_childStates[i] == child) {
-                return false;
-            }
-        }
+    if (child->m_parentState == parent
+        && XVector_indexOf(parent->m_childStates, &child, 0) >= 0) {
+        return true;
     }
 
+    if (child->m_parentState)
+        XState_removeChild_internal(child->m_parentState, child);
 
-    // 扩容
-    if (state->m_childCount >= state->m_childCapacity) {
-        size_t newCapacity = state->m_childCapacity * 2;
-        XAbstractState** newChildren = (XAbstractState**)XRealloc_System(
-            state->m_childStates, sizeof(XAbstractState*) * newCapacity
-        );
-        if (!newChildren) return false;
+    if (!XVector_push_back_1_base(parent->m_childStates, &child))
+        return false;
 
-        state->m_childStates = newChildren;
-        state->m_childCapacity = newCapacity;
-    }
-
-    state->m_childStates[state->m_childCount++] = child;
-
-    XAbstractState_setParentState_base(child, state);
+    child->m_parentState = parent;
+    XStateMachine* machine = parent->m_class.m_kind == XAbstractState_StateMachine
+        ? (XStateMachine*)parent
+        : parent->m_class.m_machine;
+    XAbstractState_setMachine_internal(child, machine);
+    XObject_setParent((XObject*)child, (XObject*)parent);
     return true;
 }
 
-
-void VXState_deinit(XState* state)
+void XState_removeChild_internal(XState* parent, XAbstractState* child)
 {
-    if (!state) return;
-    
-    /* 移除所有子状态 */
-    for (size_t i = 0; i < state->m_childCount; i++) {
-        XAbstractState_delete_base(state->m_childStates[i]);
-    }
-    XFree_System(state->m_childStates);
-    state->m_childStates = NULL;
-    
-    /* 移除所有转换 */
-    for (size_t i = 0; i < state->m_transitionCount; i++) {
-        XAbstractTransition_delete_base(state->m_transitions[i]);
-    }
-    XFree_System(state->m_transitions);
-    state->m_transitions = NULL;
-    
-    /* 调用父类释放函数 */
-    XVtableGetFunc(XAbstractState_class_init(), EXClass_Deinit, void(*)(XAbstractState*))(state);
-}
-bool XState_addTransition(XState* state, XAbstractTransition* transition) {
-    if (!state || !transition) return false;
+    if (!parent || !child || !parent->m_childStates)
+        return;
 
-    // 防止重复添加
-    for (size_t i = 0; i < state->m_transitionCount; i++) {
-        if (state->m_transitions[i] == transition) {
+    int64_t index = XVector_indexOf(parent->m_childStates, &child, 0);
+    if (index < 0)
+        return;
+
+    XVector_removeAt_base(parent->m_childStates, index);
+    if (parent->m_initialState == child) {
+        parent->m_initialState = NULL;
+        XState_initialStateChanged_signal(parent);
+    }
+    if (parent->m_errorState == child) {
+        parent->m_errorState = NULL;
+        XState_errorStateChanged_signal(parent);
+    }
+    child->m_parentState = NULL;
+    XAbstractState_setMachine_internal(child, NULL);
+    if (XObject_parent((XObject*)child) == (XObject*)parent)
+        XObject_setParent((XObject*)child, NULL);
+}
+
+const XVector* XState_childStates_const_internal(const XState* state)
+{
+    return state ? state->m_childStates : NULL;
+}
+
+XAbstractState* XState_errorState(const XState* state)
+{
+    return state ? state->m_errorState : NULL;
+}
+
+bool XState_setErrorState(XState* state, XAbstractState* errorState)
+{
+    if (!state)
+        return false;
+    if (errorState && errorState->m_kind == XAbstractState_StateMachine)
+        return false;
+    if (errorState && state->m_class.m_machine && errorState->m_machine
+        && state->m_class.m_machine != errorState->m_machine) {
+        return false;
+    }
+    if (state->m_errorState == errorState)
+        return true;
+
+    state->m_errorState = errorState;
+    XState_errorStateChanged_signal(state);
+    return true;
+}
+
+bool XState_addTransition(XState* state, XAbstractTransition* transition)
+{
+    if (!state || !transition || !state->m_transitions)
+        return false;
+    if (transition->m_sourceState == state
+        && XVector_indexOf(state->m_transitions, &transition, 0) >= 0) {
+        return true;
+    }
+
+    const XVector* targets = XAbstractTransition_targetStates_const(transition);
+    for (int64_t i = 0;
+         targets
+             && i < (int64_t)XVector_size_base(
+                 (const XContainer*)targets); ++i) {
+        XAbstractState* target = XVector_At_Base(targets, i, XAbstractState*);
+        if (!target)
+            return false;
+        if (state->m_class.m_machine && target->m_machine
+            && state->m_class.m_machine != target->m_machine) {
             return false;
         }
     }
 
-    // 扩容
-    if (state->m_transitionCount >= state->m_transitionCapacity) {
-        size_t newCapacity = state->m_transitionCapacity * 2;
-        XAbstractTransition** newTransitions = (XAbstractTransition**)XRealloc_System(
-            state->m_transitions, sizeof(XAbstractTransition*) * newCapacity
-        );
-        if (!newTransitions) return false;
+    if (transition->m_sourceState)
+        XState_removeTransition(transition->m_sourceState, transition);
+    if (!XVector_push_back_1_base(state->m_transitions, &transition))
+        return false;
 
-        state->m_transitions = newTransitions;
-        state->m_transitionCapacity = newCapacity;
+    transition->m_sourceState = state;
+    XObject_setParent((XObject*)transition, (XObject*)state);
+    if (state->m_class.m_machine
+        && XStateMachine_isConfigured_internal(
+            state->m_class.m_machine, (XAbstractState*)state)) {
+        XStateMachine_registerTransition_internal(state->m_class.m_machine, transition);
     }
-
-    state->m_transitions[state->m_transitionCount++] = transition;
-
-    // 设置转换的源状态（如果还没有设置）
-    if (transition->m_sourceState != state) {
-        XAbstractTransition_setSourceState(transition, state);
-    }
-
     return true;
 }
 
-bool XState_removeTransition(XState* state, XAbstractTransition* transition) {
-    if (!state || !transition) return false;
+XSignalTransition* XState_addTransition_2(XState* state, const XObject* sender,
+                                          size_t signal, XAbstractState* target)
+{
+    if (!state || !sender || !signal || !target)
+        return NULL;
 
-    for (size_t i = 0; i < state->m_transitionCount; i++) {
-        if (state->m_transitions[i] == transition) {
-            // 前移元素
-            state->m_transitionCount--;
-            for (size_t j = i; j < state->m_transitionCount; j++) {
-                state->m_transitions[j] = state->m_transitions[j + 1];
-            }
-            return true;
-        }
+    XSignalTransition* transition = XSignalTransition_create_ex(sender, signal, state);
+    if (!transition)
+        return NULL;
+    if (!XAbstractTransition_setTargetState((XAbstractTransition*)transition, target)) {
+        XSignalTransition_delete_base((XClass*)transition);
+        return NULL;
     }
-
-    return false;
+    return transition;
 }
 
-size_t XState_transitionCount(const XState* state) {
-    return state ? state->m_transitionCount : 0;
-}
+XAbstractTransition* XState_addTransition_3(XState* state, XAbstractState* target)
+{
+    if (!state || !target)
+        return NULL;
 
-XAbstractTransition* XState_transition(const XState* state, size_t index) {
-    if (!state || index >= state->m_transitionCount) return NULL;
-    return state->m_transitions[index];
-}
-
-void XState_setInitialState(XState* state, XAbstractState* initialState) {
-    if (state) {
-        state->m_initialState = initialState;
+    XAbstractTransition* transition = XNew(XAbstractTransition);
+    if (!transition)
+        return NULL;
+    XAbstractTransition_init(transition, state);
+    Set_Class_MemoryFree(transition, XFree_System);
+    if (!XAbstractTransition_setTargetState(transition, target)) {
+        XAbstractTransition_delete_base((XClass*)transition);
+        return NULL;
     }
+    return transition;
 }
 
-XAbstractState* XState_initialState(const XState* state) {
+bool XState_removeTransition(XState* state, XAbstractTransition* transition)
+{
+    if (!state || !transition || !state->m_transitions)
+        return false;
+
+    int64_t index = XVector_indexOf(state->m_transitions, &transition, 0);
+    if (index < 0 || transition->m_sourceState != state)
+        return false;
+
+    if (state->m_class.m_machine)
+        XStateMachine_unregisterTransition_internal(state->m_class.m_machine, transition);
+    XVector_removeAt_base(state->m_transitions, index);
+    transition->m_sourceState = NULL;
+    if (XObject_parent((XObject*)transition) == (XObject*)state)
+        XObject_setParent((XObject*)transition, NULL);
+    return true;
+}
+
+const XVector* XState_transitions_const(const XState* state)
+{
+    return state ? state->m_transitions : NULL;
+}
+
+XAbstractState* XState_initialState(const XState* state)
+{
     return state ? state->m_initialState : NULL;
 }
 
-/**
- * @brief 状态激活时的处理函数
- * 修复: 支持所有子状态类型 (Basic, Final, Parallel)
- * 修复: 不再重置 m_childMode 和 m_errorState（这些是用户设置的属性）
- */
-void VXState_activate(XState* state)
+bool XState_setInitialState(XState* state, XAbstractState* initialState)
 {
-    // 激活当前状态
-    XVtableGetFunc(XAbstractState_class_init(), EXAbstractState_Activate ,void(*)(XAbstractState*))(state);
+    if (!state || state->m_childMode == XState_ParallelStates)
+        return false;
+    if (initialState && initialState->m_parentState != state)
+        return false;
+    if (state->m_initialState == initialState)
+        return true;
 
-    // 仅在不跳过且有初始状态时激活子状态
-    if (!state->m_skipInitialState && state->m_initialState) {
-        switch (state->m_initialState->m_type) {
-        case XStateType_Basic:
-        case XStateType_Parallel:
-            XState_activate_base((XState*)state->m_initialState);
-            break;
-        case XStateType_Final:
-            XFinalState_activate((XFinalState*)state->m_initialState);
-            // Final state 通过 XStateMachine_enterState 的路径添加，
-            // 但这里是通过 VXState_activate 直接激活的，需要手动添加到 activeStates
-            if (((XAbstractState*)state)->m_machine) {
-                XStateMachine_addActiveState(((XAbstractState*)state)->m_machine, state->m_initialState);
-            }
-            break;
-        default:
-            break;
-        }
-    }
-    // 激活后重置临时标记（仅重置 skip，不重置用户设置的属性）
-    state->m_skipInitialState = false;
+    state->m_initialState = initialState;
+    XState_initialStateChanged_signal(state);
+    return true;
 }
 
-/**
- * @brief 状态退出时的处理函数
- * 修复点：确保在退出前正确存储历史状态
- */
-void VXState_deactivate(XState* state) {
-    if (!state || !state->m_class.m_machine) return;
-
-    // 退出前存储历史状态（关键修复：确保在子状态退出前存储）
-    for (size_t i = 0; i < state->m_childCount; i++) {
-        XAbstractState* child = state->m_childStates[i];
-        if (child->m_type == XStateType_History) {
-            XHistoryState* history = (XHistoryState*)child;
-            // 强制存储当前状态，此时子状态仍处于运行状态
-            XHistoryState_storeCurrentState(history);
-        }
-    }
-
-    // 退出所有子状态
-    for (size_t i = 0; i < state->m_childCount; i++) {
-        XAbstractState* child = state->m_childStates[i];
-        if (child->m_isRunning) {
-            XAbstractState_deactivate_base(child);
-        }
-    }
-
-    // 调用父类退出函数
-    XVtableGetFunc(XAbstractState_class_init(), EXAbstractState_Deactivate, void(*)(XAbstractState*))(state);
-}
-
-void VXState_setMachine(XState* state, XStateMachine* machine)
+XState_ChildMode XState_childMode(const XState* state)
 {
-    //设置子状态所属的状态机
-    XStack* stack = XStack_create(sizeof(XAbstractState*));
-    XStack_push_base(stack, &state);
-    while (!XStack_isEmpty_base(stack))
-    {
-        XAbstractState* current = XStack_Top_Base(stack, XAbstractState*);
-        XStack_pop_base(stack);
-        if(XClassGetVtable(current) == XState_class_init())//看虚函数表判断是否是XState类
-        {
-            XState* s=((XState*)current);
-            for (size_t i = 0; i < s->m_childCount; i++)
-            {
-                XStack_push_base(stack, s->m_childStates + i);
-            }
-        }
-        ((XAbstractState*)current)->m_machine = machine;
-    }
-    XStack_delete_base(stack);
-    XVtableGetFunc(XAbstractState_class_init(), EXAbstractState_SetMachine, void(*)(XAbstractState*, XStateMachine*))(state, machine);
-}
-void VXState_setParentState(XState* state, XAbstractState* parent)
-{
-    if (((XAbstractState*)state)->m_parentState == parent)
-        return;
-    if (((XAbstractState*)state)->m_parentState != NULL)
-    {//先从原来的父状态删除
-        XState_removeState(((XAbstractState*)state)->m_parentState, state);
-    }
-    ((XAbstractState*)state)->m_parentState = parent;
-    XAbstractState_setMachine_base(state, parent->m_machine);
-}
-
-/**
- * @brief 状态激活
- * 修复: 添加 XStateMachine_addActiveState 确保子状态被正确追踪
- */
-void XState_activate_base(XState* state) 
-{
-    if (!state) return;
-
-    XAbstractState_activate_base(state);
-    // 添加状态到状态机的激活状态列表
-    if (((XAbstractState*)state)->m_machine) {
-        XStateMachine_addActiveState(((XAbstractState*)state)->m_machine, (XAbstractState*)state);
-    }
-}
-
-void XState_deactivate_base(XState* state)
-{
-    XAbstractState_deactivate_base(state);
-}
-// Qt 6.8: 子状态模式
-XState_ChildMode XState_childMode(const XState* state) {
     return state ? state->m_childMode : XState_ExclusiveStates;
 }
 
-void XState_setChildMode(XState* state, XState_ChildMode mode) {
-    if (state) {
-        state->m_childMode = mode;
+void XState_setChildMode(XState* state, XState_ChildMode mode)
+{
+    if (!state || state->m_childMode == mode)
+        return;
+    if (mode == XState_ParallelStates && state->m_initialState) {
+        state->m_initialState = NULL;
+        XState_initialStateChanged_signal(state);
     }
+    state->m_childMode = mode;
+    XState_childModeChanged_signal(state);
 }
 
-// Qt 6.8: 错误状态
-XAbstractState* XState_errorState(const XState* state) {
-    return state ? state->m_errorState : NULL;
+void* XState_finished_signal(XState* state)
+{
+    XEmitSignal((XObject*)state, XState_finished_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-void XState_setErrorState(XState* state, XAbstractState* errorState) {
-    if (state) {
-        state->m_errorState = errorState;
-    }
+void* XState_propertiesAssigned_signal(XState* state)
+{
+    XEmitSignal((XObject*)state, XState_propertiesAssigned_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-// Qt 6.8: finished 信号
-void* XState_finished_signal(XState* state) {
-    if (state && ((XAbstractState*)state)->m_machine) {
-        XObject_emitSignal((XObject*)((XAbstractState*)state)->m_machine, 
-                          XState_finished_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
-    }
-    return XState_finished_signal;
+void* XState_childModeChanged_signal(XState* state)
+{
+    XEmitSignal((XObject*)state, XState_childModeChanged_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XState_initialStateChanged_signal(XState* state)
+{
+    XEmitSignal((XObject*)state, XState_initialStateChanged_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XState_errorStateChanged_signal(XState* state)
+{
+    XEmitSignal((XObject*)state, XState_errorStateChanged_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }

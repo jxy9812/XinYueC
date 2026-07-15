@@ -1,25 +1,40 @@
-#include "XAbstractState.h"
-#include "XStateMachine.h"
-#include "XState.h"
-#include "XStack.h"
-#include "XMemory.h"
-#include <string.h>
-#define INITIAL_CAPACITY 4
-bool XStateMachine_isActive(const XStateMachine* machine, const XAbstractState* state);
-void XStateMachine_addActiveState(XStateMachine* machine, XAbstractState* state);
-void XStateMachine_removeActiveState(XStateMachine* machine, XAbstractState* state);
+﻿#include "XAbstractState.h"
 
-// 状态私有数据结构
-typedef struct {
-    XStateEnteredCallback enteredCallback;
-    XStateExitedCallback exitedCallback;
-} XAbstractStatePrivate;
-static void VXAbstractState_activate(XAbstractState* state);
-static void VXAbstractState_deactivate(XAbstractState* state);
-static void VXAbstractState_setMachine(XAbstractState* state, XStateMachine* machine);
-static void VXAbstractState_setParentState(XAbstractState* state, XAbstractState* parent);
-static void VXAbstractState_deinit(XAbstractState* state);
-XVtable* XAbstractState_class_init()
+#include "XMemory.h"
+#include "XStateMachine_p.h"
+
+#include <stdlib.h>
+
+static void VXAbstractState_onEntry(XAbstractState* state, XEvent* event)
+{
+    (void)state;
+    (void)event;
+}
+
+static void VXAbstractState_onExit(XAbstractState* state, XEvent* event)
+{
+    (void)state;
+    (void)event;
+}
+
+static void VXAbstractState_deinit(XAbstractState* state)
+{
+    if (!state)
+        return;
+
+    if (state->m_machine)
+        XStateMachine_removeTargetState_internal(state->m_machine, state);
+    if (state->m_parentState)
+        XState_removeChild_internal(state->m_parentState, state);
+
+    state->m_parentState = NULL;
+    state->m_machine = NULL;
+    state->m_active = false;
+    XVtableGetFunc(XObject_class_init(), EXClass_Deinit,
+                   void(*)(XObject*))((XObject*)state);
+}
+
+XVtable* XAbstractState_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
@@ -27,163 +42,102 @@ XVtable* XAbstractState_class_init()
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
-    XVTABLE_INHERIT_XCLASS(XClass);
-
-    void* table[] = 
-    {
-        VXAbstractState_activate,VXAbstractState_deactivate,
-        VXAbstractState_setMachine,VXAbstractState_setParentState
-    };
-
+    XVTABLE_INHERIT_XCLASS(XObject);
+    void* table[] = { VXAbstractState_onEntry, VXAbstractState_onExit };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXAbstractState_deinit);
-#if SHOWCONTAINERSIZE
-    printf("XAbstractState size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
     return XVTABLE_DEFAULT;
 }
 
-static void XAbstractState_private_init(XAbstractState* state) {
-    XAbstractStatePrivate* d = XMalloc_System(sizeof(XAbstractStatePrivate));
-    d->enteredCallback = NULL;
-    d->exitedCallback = NULL;
-    state->m_privateData = d;  // 存储私有数据
-}
+void XAbstractState_init(XAbstractState* state, XAbstractState_Kind kind, XState* parent)
+{
+    if (!state)
+        return;
 
-static XAbstractStatePrivate* XAbstractState_private(const XAbstractState* state) {
-    return (XAbstractStatePrivate*)state->m_privateData;
-}
-
-void XAbstractState_init(XAbstractState* state, XStateType type) {
-    if (!state) return;
-
-    XClass_init(state);
-    XClassGetVtable(state) = XAbstractState_class_init();
-    state->m_type = type;
+    XObject_init((XObject*)state);
+    XClassSetVtable(state, XAbstractState);
+    state->m_kind = kind;
     state->m_parentState = NULL;
     state->m_machine = NULL;
-    state->m_isRunning = false;
-    state->m_userData = NULL;
-    state->m_privateData = NULL;
+    state->m_active = false;
 
-    // 初始化私有数据
-    XAbstractState_private_init(state);
-}
-void VXAbstractState_activate(XAbstractState* state)
-{
-    if (!state || state->m_isRunning || !state->m_machine || !XStateMachine_isRunning(state->m_machine)) return;
-
-    state->m_isRunning = true;
-
-    // 触发进入回调
-    XAbstractStatePrivate* d = XAbstractState_private(state);
-    if (d->enteredCallback) {
-        d->enteredCallback(state);
-    }
-    // 修复: 不再在这里添加 activeState，由 XStateMachine_enterState 统一添加，避免双次添加
-    // 发送状态进入信号
-    XStateMachine_entered_signal(state->m_machine, state);
-}
-void VXAbstractState_deactivate(XAbstractState* state)
-{
-    if (!state || !state->m_isRunning || !state->m_machine || !XStateMachine_isRunning(state->m_machine)) return;
-   
-    // 触发退出回调
-    XAbstractStatePrivate* d = XAbstractState_private(state);
-    if (d->exitedCallback) {
-        d->exitedCallback(state);
-    }
-
-    state->m_isRunning = false;
-    // 修复: 不在这里移除 activeState，由 XStateMachine_exitState 统一移除
-    // 发送状态退出信号
-    XStateMachine_exited_signal(state->m_machine, state);
-}
-void VXAbstractState_setMachine(XAbstractState* state, XStateMachine* machine)
-{
-    state->m_machine = machine;
-}
-void VXAbstractState_setParentState(XAbstractState* state, XAbstractState* parent)
-{
-    if (state->m_parentState == parent)
-        return;
-    state->m_parentState = parent;
-    XAbstractState_setMachine_base(state, parent->m_machine);
-}
-void VXAbstractState_deinit(XAbstractState* state)
-{
-    if (!state) return;
-   
-    // 释放私有数据
-    XFree_System(state->m_privateData);
-    state->m_privateData = NULL;
-    // 修复: 使用正确的大小 sizeof(XAbstractState) 而不是 sizeof(state)
-    memset(state, 0, sizeof(XAbstractState));
-}
-XStateType XAbstractState_type(const XAbstractState* state) {
-    return state ? state->m_type : XStateType_Basic;
+    if (parent)
+        XState_addChild_internal(parent, state);
 }
 
-XState* XAbstractState_parentState(const XAbstractState* state) {
+XState* XAbstractState_parentState(const XAbstractState* state)
+{
     return state ? state->m_parentState : NULL;
 }
 
-void XAbstractState_setParentState_base(XAbstractState* state, XAbstractState* parent)
+XStateMachine* XAbstractState_machine(const XAbstractState* state)
 {
-    if (ISNULL(state, "") || ISNULL(XClassGetVtable(state), ""))
-        return;
-    XClassGetVirtualFunc(state, EXAbstractState_SetParentState, void(*)(XAbstractState*, XAbstractState*))(state, parent);
-}
-
-void XAbstractState_setMachine_base(XAbstractState* state, XStateMachine* machine)
-{
-    if (ISNULL(state, "") || ISNULL(XClassGetVtable(state), ""))
-        return;
-    XClassGetVirtualFunc(state, EXAbstractState_SetMachine, void(*)(XAbstractState*, XStateMachine*))(state, machine);
-}
-
-XStateMachine* XAbstractState_machine(const XAbstractState* state) {
     return state ? state->m_machine : NULL;
 }
 
-bool XAbstractState_isRunning(const XAbstractState* state) {
-    return state ? state->m_isRunning : false;
-}
-
-void XAbstractState_setUserData(XAbstractState* state, void* data) {
-    if (state) {
-        state->m_userData = data;
-    }
-}
-
-void* XAbstractState_userData(const XAbstractState* state) {
-    return state ? state->m_userData : NULL;
-}
-
-void XAbstractState_activate_base(XAbstractState* state) 
+bool XAbstractState_active(const XAbstractState* state)
 {
-    if (ISNULL(state, "") || ISNULL(XClassGetVtable(state), ""))
-        return;
-    XClassGetVirtualFunc(state, EXAbstractState_Activate, void(*)(XAbstractState*))(state);  
+    return state ? state->m_active : false;
 }
 
-void XAbstractState_deactivate_base(XAbstractState* state)
+void XAbstractState_onEntry_base(XAbstractState* state, XEvent* event)
 {
-    if (ISNULL(state, "") || ISNULL(XClassGetVtable(state), ""))
+    if (ISNULL(state, "XAbstractState") || ISNULL(XClassGetVtable(state), "Vtable"))
         return;
-    XClassGetVirtualFunc(state, EXAbstractState_Deactivate, void(*)(XAbstractState*))(state);
+    XClassGetVirtualFunc(state, EXAbstractState_OnEntry, void(*)(XAbstractState*, XEvent*))(state, event);
 }
 
-void XAbstractState_setEnteredCallback(XAbstractState* state, XStateEnteredCallback callback) {
-    if (state) {
-        XAbstractStatePrivate* d = XAbstractState_private(state);
-        d->enteredCallback = callback;
+void XAbstractState_onExit_base(XAbstractState* state, XEvent* event)
+{
+    if (ISNULL(state, "XAbstractState") || ISNULL(XClassGetVtable(state), "Vtable"))
+        return;
+    XClassGetVirtualFunc(state, EXAbstractState_OnExit, void(*)(XAbstractState*, XEvent*))(state, event);
+}
+
+void XAbstractState_setActive_internal(XAbstractState* state, bool active)
+{
+    if (!state || state->m_active == active)
+        return;
+    state->m_active = active;
+    XAbstractState_activeChanged_signal(state, active);
+}
+
+void XAbstractState_setMachine_internal(XAbstractState* state, XStateMachine* machine)
+{
+    if (!state || state->m_machine == machine)
+        return;
+
+    state->m_machine = machine;
+    if (state->m_kind != XAbstractState_StandardState && state->m_kind != XAbstractState_StateMachine)
+        return;
+
+    XState* group = (XState*)state;
+    const XVector* children = XState_childStates_const_internal(group);
+    if (!children)
+        return;
+
+    for (int64_t i = 0;
+         i < (int64_t)XVector_size_base((const XContainer*)children); ++i) {
+        XAbstractState* child = XVector_At_Base(children, i, XAbstractState*);
+        XAbstractState_setMachine_internal(child, machine);
     }
 }
 
-void XAbstractState_setExitedCallback(XAbstractState* state, XStateExitedCallback callback) {
-    if (state) {
-        XAbstractStatePrivate* d = XAbstractState_private(state);
-        d->exitedCallback = callback;
-    }
+void* XAbstractState_entered_signal(XAbstractState* state)
+{
+    XEmitSignal((XObject*)state, XAbstractState_entered_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XAbstractState_exited_signal(XAbstractState* state)
+{
+    XEmitSignal((XObject*)state, XAbstractState_exited_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XAbstractState_activeChanged_signal(XAbstractState* state, bool active)
+{
+    XEmitSignal((XObject*)state, XAbstractState_activeChanged_signal,
+                XVarList_create(2, sizeof(bool), &active),
+                NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }

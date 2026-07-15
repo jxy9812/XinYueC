@@ -34,6 +34,7 @@ typedef struct XVarList
 	uint8_t* ptr;  ///< 当前访问的指针位置，用于遍历元素
     FreeMethod m_free;//释放方法
     void(*argsDel)(struct XVarList*);//释放方法
+    size_t m_size; ///< data 区域的字节数，用于安全复制参数值。
     char data[];    ///< 存储变量数据的起始地址
 } XVarList;
 /**
@@ -93,6 +94,14 @@ void  XVarList_delete(XVarList*list);
 * @return 新创建的XVarList实例，失败返回NULL
 */
 XVarList* XVarList_create(uint8_t count, ...);
+
+/**
+ * @brief 创建参数值的浅拷贝。
+ * @param other 源参数列表。
+ * @return 新参数列表；失败返回 NULL。
+ * @note 仅复制 data 中的值，不复制指针指向的对象，也不继承 argsDel。
+ */
+XVarList* XVarList_create_copy(const XVarList* other);
 
 // 现在，所有 XVarList_args_N 宏都变得极其简单和一致
 #define XVarList_args_0(list)

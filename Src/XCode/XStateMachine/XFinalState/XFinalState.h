@@ -1,43 +1,54 @@
 ﻿#ifndef XFINALSTATE_H
 #define XFINALSTATE_H
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
 #include "XAbstractState.h"
+
 XCLASS_DEFINE_BEGING(XFinalState)
 XCLASS_DEFINE_EXTEND_END(XFinalState, XAbstractState);
+
 /**
- * @brief 最终状态类，表示状态机中的终止状态
+ * @brief 最终状态，对应 Qt 6.8 的 QFinalState。
+ * @note 最终状态自身不停止状态机；完成语义由 XStateMachine 统一处理。
  */
 typedef struct XFinalState {
-    XAbstractState m_class;  // 继承XAbstractState
+    XAbstractState m_class; ///< 继承 XAbstractState。
 } XFinalState;
-XVtable* XFinalState_class_init();
-/**
- * @brief 创建最终状态实例
- * @return 新创建的最终状态实例，失败返回NULL
- */
-XFinalState* XFinalState_create();
 
 /**
- * @brief 初始化最终状态
- * @param state 最终状态实例
+ * @brief 初始化 XFinalState 虚函数表。
+ * @return XFinalState 的共享虚函数表。
+ */
+XVtable* XFinalState_class_init(void);
+/**
+ * @brief 创建无父状态的最终状态。
+ * @return 新最终状态；内存分配失败时返回 NULL。
+ */
+XFinalState* XFinalState_create(void);
+/**
+ * @brief 创建指定父状态的最终状态。
+ * @param parent 父状态，可为 NULL；非 NULL 时取得最终状态所有权。
+ * @return 新最终状态；内存分配失败时返回 NULL。
+ */
+XFinalState* XFinalState_create_ex(XState* parent);
+/**
+ * @brief 初始化无父状态的最终状态。
+ * @param state 调用者提供的未初始化存储。
  */
 void XFinalState_init(XFinalState* state);
-
 /**
- * @brief 销毁最终状态
- * @param state 最终状态实例
+ * @brief 初始化指定父状态的最终状态。
+ * @param state 调用者提供的未初始化存储。
+ * @param parent 父状态，可为 NULL；非 NULL 时取得最终状态所有权。
  */
-#define XFinalState_delete_base       XAbstractState_delete_base
-#define XFinalState_deinit_base       XAbstractState_deinit_base
+void XFinalState_init_ex(XFinalState* state, XState* parent);
 
-/**
- * @brief 激活最终状态
- * @param state 最终状态实例
- * @param m_machine 所属状态机
- */
-void XFinalState_activate(XFinalState* state);
+#define XFinalState_delete_base XAbstractState_delete_base
+#define XFinalState_deinit_base XAbstractState_deinit_base
+
 #ifdef __cplusplus
 }
 #endif

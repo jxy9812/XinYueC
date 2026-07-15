@@ -1,146 +1,121 @@
 ﻿#ifndef XABSTRACTSTATE_H
 #define XABSTRACTSTATE_H
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "XClass.h"
 
-// 前向声明
-typedef struct XStateMachine XStateMachine;
+#include "XObject.h"
+
 typedef struct XState XState;
-XCLASS_DEFINE_BEGING(XAbstractState)
-XCLASS_DEFINE_ENUM(XAbstractState, Activate) = XCLASS_VTABLE_GET_SIZE(XClass),
-XCLASS_DEFINE_ENUM(XAbstractState, Deactivate),
-XCLASS_DEFINE_ENUM(XAbstractState, SetMachine),
-XCLASS_DEFINE_ENUM(XAbstractState, SetParentState),
-XCLASS_DEFINE_END(XAbstractState)
-/**
- * @brief 状态类型枚举
- */
-typedef enum {
-    XStateType_Basic,      // 基本状态
-    XStateType_Final,      // 最终状态
-    XStateType_History,    // 历史状态
-    XStateType_Parallel    // 并行状态
-} XStateType;
+typedef struct XStateMachine XStateMachine;
 
 /**
- * @brief 抽象状态类，所有状态的基类
+ * @brief 状态节点的内部种类。
+ * @note 该枚举仅用于状态机算法区分标准状态、伪状态和根状态机。
  */
-typedef struct XAbstractState 
-{
-    XClass m_class;                // 继承XObject
-    XStateType m_type;               // 状态类型
-    XState* m_parentState;           // 父状态
-    XStateMachine* m_machine;        // 所属状态机
-    bool m_isRunning;                // 是否处于激活状态
-    void* m_userData;                // 用户数据
-    void* m_privateData;             // 私有数据(内部使用)
+typedef enum XAbstractState_Kind {
+    XAbstractState_AtomicState,   ///< 不包含子状态的内部原子状态种类。
+    XAbstractState_StandardState, ///< 可包含子状态和转换的 XState。
+    XAbstractState_FinalState,    ///< 表示父状态完成的 XFinalState。
+    XAbstractState_HistoryState,  ///< 恢复历史配置的 XHistoryState 伪状态。
+    XAbstractState_StateMachine   ///< 作为状态图根节点的 XStateMachine。
+} XAbstractState_Kind;
+
+XCLASS_DEFINE_BEGING(XAbstractState)
+XCLASS_DEFINE_ENUM(XAbstractState, OnEntry) = XCLASS_VTABLE_GET_SIZE(XObject),
+XCLASS_DEFINE_ENUM(XAbstractState, OnExit),
+XCLASS_DEFINE_END(XAbstractState)
+
+/**
+ * @brief 所有状态节点的抽象基类，对应 Qt 6.8 的 QAbstractState。
+ * @note 状态只能由所属状态机进入或退出，调用者不应直接修改活动标志。
+ */
+typedef struct XAbstractState {
+    XObject m_class;                  ///< 继承 XObject，必须位于结构体第一位。
+    XAbstractState_Kind m_kind;       ///< 状态节点种类。
+    XState* m_parentState;            ///< 父状态，顶层状态的父状态为状态机根节点。
+    XStateMachine* m_machine;         ///< 所属状态机，未加入状态图时为 NULL。
+    bool m_active;                    ///< 当前是否位于状态机活动配置中。
 } XAbstractState;
 
 /**
- * @brief 状态进入事件回调函数
- * @param state 状态实例
- * @param m_machine 所属状态机
+ * @brief 初始化 XAbstractState 虚函数表。
+ * @return XAbstractState 的共享虚函数表。
  */
-typedef void (*XStateEnteredCallback)(XAbstractState* state);
+XVtable* XAbstractState_class_init(void);
 
 /**
- * @brief 状态退出事件回调函数
- * @param state 状态实例
- * @param m_machine 所属状态机
+ * @brief 初始化抽象状态的基类部分。
+ * @param state 待初始化的状态。
+ * @param kind 状态节点种类。
+ * @param parent 父状态，可为 NULL。
+ * @note 供状态子类构造函数调用，不直接创建抽象状态实例。
  */
-typedef void (*XStateExitedCallback)(XAbstractState* state);
-XVtable* XAbstractState_class_init();
-/**
- * @brief 初始化抽象状态
- * @param state 状态实例
- * @param m_type 状态类型
- */
-void XAbstractState_init(XAbstractState* state, XStateType type);
+void XAbstractState_init(XAbstractState* state, XAbstractState_Kind kind, XState* parent);
+
+#define XAbstractState_delete_base XClass_delete_base
+#define XAbstractState_deinit_base XClass_deinit_base
 
 /**
- * @brief 销毁抽象状态
- * @param state 状态实例
- */
-#define XAbstractState_delete_base       XClass_delete_base
-#define XAbstractState_deinit_base       XClass_deinit_base
-
-/**
- * @brief 获取状态类型
- * @param state 状态实例
- * @return 状态类型
- */
-XStateType XAbstractState_type(const XAbstractState* state);
-
-/**
- * @brief 获取父状态
- * @param state 状态实例
- * @return 父状态指针
+ * @brief 获取父状态。
+ * @param state 状态实例。
+ * @return 父状态；无父状态时返回 NULL。
  */
 XState* XAbstractState_parentState(const XAbstractState* state);
 
 /**
- * @brief 设置父状态
- * @param state 状态实例
- * @param m_class 父状态
- */
-void XAbstractState_setParentState_base(XAbstractState* state, XAbstractState* parent);
-
-void XAbstractState_setMachine_base(XAbstractState* state, XStateMachine* machine);
-/**
- * @brief 获取所属状态机
- * @param state 状态实例
- * @return 状态机指针
+ * @brief 获取状态所属的状态机。
+ * @param state 状态实例。
+ * @return 所属状态机；状态不在状态图中时返回 NULL。
  */
 XStateMachine* XAbstractState_machine(const XAbstractState* state);
 
 /**
- * @brief 检查状态是否处于激活中
- * @param state 状态实例
- * @return 激活返回true，否则返回false
+ * @brief 查询状态是否活动。
+ * @param state 状态实例。
+ * @return 状态位于当前活动配置中时返回 true。
  */
-bool XAbstractState_isRunning(const XAbstractState* state);
+bool XAbstractState_active(const XAbstractState* state);
 
 /**
- * @brief 设置用户数据
- * @param state 状态实例
- * @param data 用户数据指针
+ * @brief 调用状态进入虚函数。
+ * @param state 即将进入的状态。
+ * @param event 导致进入状态的事件，可为 NULL。
+ * @note 子类通过重载 EXAbstractState_OnEntry 实现进入动作。
  */
-void XAbstractState_setUserData(XAbstractState* state, void* data);
+void XAbstractState_onEntry_base(XAbstractState* state, XEvent* event);
 
 /**
- * @brief 获取用户数据
- * @param state 状态实例
- * @return 用户数据指针
+ * @brief 调用状态退出虚函数。
+ * @param state 即将退出的状态。
+ * @param event 导致退出状态的事件，可为 NULL。
+ * @note 子类通过重载 EXAbstractState_OnExit 实现退出动作。
  */
-void* XAbstractState_userData(const XAbstractState* state);
+void XAbstractState_onExit_base(XAbstractState* state, XEvent* event);
 
 /**
- * @brief 状态进入事件
- * @param state 状态实例
+ * @brief 状态完成 onEntry 后发出的 entered 信号。
+ * @param state 已经完成进入动作的状态。
+ * @return 信号标识，供 XSignal 宏和信号槽连接使用。
+ * @note 发出该信号时 active 属性尚未切换为 true，与 Qt 的时序一致。
  */
-void XAbstractState_activate_base(XAbstractState* state);
-
+void* XAbstractState_entered_signal(XAbstractState* state);
 /**
- * @brief 状态退出事件
- * @param state 状态实例
+ * @brief 状态完成 onExit 后发出的 exited 信号。
+ * @param state 已经完成退出动作的状态。
+ * @return 信号标识，供 XSignal 宏和信号槽连接使用。
+ * @note 发出该信号前 active 属性已经切换为 false。
  */
-void XAbstractState_deactivate_base(XAbstractState* state);
-
+void* XAbstractState_exited_signal(XAbstractState* state);
 /**
- * @brief 设置状态进入回调
- * @param state 状态实例
- * @param callback 回调函数
+ * @brief 状态活动属性变化时发出的 activeChanged 信号。
+ * @param state 活动属性发生变化的状态。
+ * @param active 新的活动状态；true 表示已进入 configuration。
+ * @return 信号标识，供 XSignal 宏和信号槽连接使用。
  */
-void XAbstractState_setEnteredCallback(XAbstractState* state, XStateEnteredCallback callback);
+void* XAbstractState_activeChanged_signal(XAbstractState* state, bool active);
 
-/**
- * @brief 设置状态退出回调
- * @param state 状态实例
- * @param callback 回调函数
- */
-void XAbstractState_setExitedCallback(XAbstractState* state, XStateExitedCallback callback);
 #ifdef __cplusplus
 }
 #endif

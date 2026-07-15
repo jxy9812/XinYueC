@@ -11,6 +11,40 @@
 #include"XCoreApplication.h"
 static void VXEvent_default_setAccepted(XEvent* event, bool accepted);
 static XEvent* VXEvent_default_clone(const XEvent* event);
+
+XCLASS_DEFINE_BEGING(XKeyEventClass)
+XCLASS_DEFINE_EXTEND_END(XKeyEventClass, XEvent);
+XCLASS_DEFINE_BEGING(XMouseEventClass)
+XCLASS_DEFINE_EXTEND_END(XMouseEventClass, XEvent);
+
+static XEvent* VXKeyEvent_clone(const XKeyEvent* event);
+static XEvent* VXMouseEvent_clone(const XMouseEvent* event);
+
+static XVtable* XKeyEvent_class_init(void)
+{
+	XVTABLE_CREAT_DEFAULT
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XKeyEventClass))
+#else
+	XVTABLE_HEAP_INIT_DEFAULT
+#endif
+	XVTABLE_INHERIT_XCLASS(XEvent);
+	XVTABLE_OVERLOAD_DEFAULT(EXEvent_Clone, VXKeyEvent_clone);
+	return XVTABLE_DEFAULT;
+}
+
+static XVtable* XMouseEvent_class_init(void)
+{
+	XVTABLE_CREAT_DEFAULT
+#if VTABLE_ISSTACK
+	XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XMouseEventClass))
+#else
+	XVTABLE_HEAP_INIT_DEFAULT
+#endif
+	XVTABLE_INHERIT_XCLASS(XEvent);
+	XVTABLE_OVERLOAD_DEFAULT(EXEvent_Clone, VXMouseEvent_clone);
+	return XVTABLE_DEFAULT;
+}
 XVtable* XEvent_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
@@ -223,6 +257,79 @@ XEventType XEvent_type(const XEvent* event)
 {
 	return event ? event->type : XEVENT_TYPE_NONE;
 }
+
+XKeyEvent* XKeyEvent_create(XEventType type, int key, XKeyboardModifiers modifiers)
+{
+	XKeyEvent* event = XNew(XKeyEvent);
+	if (!event)
+		return NULL;
+	XKeyEvent_init(event, type, key, modifiers);
+	Set_Class_MemoryFree(event, XFree_System);
+	return event;
+}
+
+void XKeyEvent_init(XKeyEvent* event, XEventType type, int key, XKeyboardModifiers modifiers)
+{
+	if (!event)
+		return;
+	XEvent_init((XEvent*)event, type);
+	XClassGetVtable(event) = XKeyEvent_class_init();
+	event->m_class.input_event = true;
+	event->m_key = key;
+	event->m_modifiers = modifiers;
+}
+
+int XKeyEvent_key(const XKeyEvent* event)
+{
+	return event ? event->m_key : 0;
+}
+
+XKeyboardModifiers XKeyEvent_modifiers(const XKeyEvent* event)
+{
+	return event ? event->m_modifiers : XKeyboardModifier_NoModifier;
+}
+
+XMouseEvent* XMouseEvent_create(XEventType type, XMouseButton button,
+	XKeyboardModifiers modifiers, XPoint position)
+{
+	XMouseEvent* event = XNew(XMouseEvent);
+	if (!event)
+		return NULL;
+	XMouseEvent_init(event, type, button, modifiers, position);
+	Set_Class_MemoryFree(event, XFree_System);
+	return event;
+}
+
+void XMouseEvent_init(XMouseEvent* event, XEventType type, XMouseButton button,
+	XKeyboardModifiers modifiers, XPoint position)
+{
+	if (!event)
+		return;
+	XEvent_init((XEvent*)event, type);
+	XClassGetVtable(event) = XMouseEvent_class_init();
+	event->m_class.input_event = true;
+	event->m_class.pointer_event = true;
+	event->m_class.single_point_event = true;
+	event->m_button = button;
+	event->m_modifiers = modifiers;
+	event->m_position = position;
+}
+
+XMouseButton XMouseEvent_button(const XMouseEvent* event)
+{
+	return event ? event->m_button : XMouseButton_NoButton;
+}
+
+XKeyboardModifiers XMouseEvent_modifiers(const XMouseEvent* event)
+{
+	return event ? event->m_modifiers : XKeyboardModifier_NoModifier;
+}
+
+XPoint XMouseEvent_position(const XMouseEvent* event)
+{
+	XPoint position = { 0, 0 };
+	return event ? event->m_position : position;
+}
 static int g_nextUserEventType = XEVENT_TYPE_USER;
 int XEvent_registerEventType(int hint)
 {
@@ -386,6 +493,27 @@ XEvent* VXEvent_default_clone(const XEvent* event)
 	XEvent* copy = (XEvent*)XMalloc_System(sizeof(XEvent));
 	if (copy) {
 		memcpy(copy, event, sizeof(XEvent));
+		Set_Class_MemoryFree(copy, XFree_System);
 	}
 	return copy;
+}
+
+static XEvent* VXKeyEvent_clone(const XKeyEvent* event)
+{
+	XKeyEvent* copy = XNew(XKeyEvent);
+	if (copy) {
+		memcpy(copy, event, sizeof(XKeyEvent));
+		Set_Class_MemoryFree(copy, XFree_System);
+	}
+	return (XEvent*)copy;
+}
+
+static XEvent* VXMouseEvent_clone(const XMouseEvent* event)
+{
+	XMouseEvent* copy = XNew(XMouseEvent);
+	if (copy) {
+		memcpy(copy, event, sizeof(XMouseEvent));
+		Set_Class_MemoryFree(copy, XFree_System);
+	}
+	return (XEvent*)copy;
 }

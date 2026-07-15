@@ -163,7 +163,7 @@ static bool disconnect_conn(XConnection* conn)
 		XObject_disconnectNotify_base(conn->receiver, conn->signal->type);
 	}
 
-	XVector_remove_base(signalObj->connList, XVector_indexOf(signalObj->connList,conn,0),0);
+	XVector_remove_base(signalObj->connList, XVector_indexOf(signalObj->connList, conn, 0), 1);
 	return true;
 }
 bool XSignalSlot_disconnect1(XSignalSlot* manager, size_t signal, XObject* receiver, XSlotFunc1 slot_func1)

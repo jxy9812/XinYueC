@@ -12,6 +12,7 @@ extern "C" {
 #include"XSignalSlot.h"
 #include"XAtomic.h"
 #include"XSocketDescriptor.h"
+#include"XPoint.h"
 // 事件回调函数类型
 typedef void (*XEventCB)(XEvent* event);
 
@@ -36,17 +37,15 @@ typedef struct XEvent
 XVtable* XEvent_class_init();
 /**
  * @brief 创建基础事件
- * @param receiver 事件接收对象
- * @param code 事件类型
- * @param timestamp 时间戳，0表示使用当前时间
- * @param priority 事件优先级
- * @return 新创建的基础事件
+ * @param code 事件类型，可使用 XEvent_registerEventType 返回的自定义类型。
+ * @return 新创建的基础事件；内存分配失败时返回 NULL。
+ * @note 返回对象由调用者拥有，成功投递到事件队列后转移所有权。
  */
 XEvent* XEvent_create(XEventType code);
 /**
  * @brief 初始化基础事件
- * @param event 要初始化的事件
- * @param code 事件类型
+ * @param event 调用者提供的未初始化事件存储，不可为 NULL。
+ * @param type 事件类型。
  */
 void XEvent_init(XEvent* event, XEventType type);
 #define XEvent_deinit_base                           XClass_deinit_base
@@ -122,8 +121,130 @@ bool XEvent_spontaneous(const XEvent* event);
  */
 XEventType XEvent_type(const XEvent* event);
 
+/**
+ * @brief 键盘修饰键位掩码，可按位组合。
+ * @note 多个修饰键使用按位或组合，例如 ControlModifier | ShiftModifier。
+ */
+typedef enum XKeyboardModifier {
+    XKeyboardModifier_NoModifier = 0x00000000,      ///< 未按下修饰键。
+    XKeyboardModifier_ShiftModifier = 0x00000001,   ///< Shift 修饰键。
+    XKeyboardModifier_ControlModifier = 0x00000002, ///< Control 修饰键。
+    XKeyboardModifier_AltModifier = 0x00000004,     ///< Alt 修饰键。
+    XKeyboardModifier_MetaModifier = 0x00000008,    ///< Meta 或系统修饰键。
+    XKeyboardModifier_KeypadModifier = 0x00000010   ///< 数字小键盘来源标志。
+} XKeyboardModifier;
+
+typedef uint32_t XKeyboardModifiers;
+
+/** @brief 鼠标按键位掩码，与 Qt::MouseButton 的常用取值对应。 */
+typedef enum XMouseButton {
+    XMouseButton_NoButton = 0x00000000,      ///< 无触发按键。
+    XMouseButton_LeftButton = 0x00000001,    ///< 鼠标左键。
+    XMouseButton_RightButton = 0x00000002,   ///< 鼠标右键。
+    XMouseButton_MiddleButton = 0x00000004,  ///< 鼠标中键。
+    XMouseButton_BackButton = 0x00000008,    ///< 鼠标后退键。
+    XMouseButton_ForwardButton = 0x00000010  ///< 鼠标前进键。
+} XMouseButton;
+
+/** @brief 携带按键和修饰键数据的键盘事件。 */
+typedef struct XKeyEvent {
+    XEvent m_class;                 ///< 继承 XEvent。
+    int m_key;                      ///< 与平台无关的按键码。
+    XKeyboardModifiers m_modifiers; ///< 事件发生时按下的修饰键。
+} XKeyEvent;
+
+/**
+ * @brief 创建键盘事件。
+ * @param type 键盘事件类型，通常为 XEVENT_TYPE_KEY_PRESS 或 XEVENT_TYPE_KEY_RELEASE。
+ * @param key 与平台无关的按键码。
+ * @param modifiers 事件发生时按下的修饰键组合。
+ * @return 新键盘事件；内存分配失败时返回 NULL。
+ * @note 返回对象由调用者拥有，投递成功后由事件队列取得所有权。
+ */
+XKeyEvent* XKeyEvent_create(XEventType type, int key, XKeyboardModifiers modifiers);
+/**
+ * @brief 初始化调用者提供的键盘事件存储。
+ * @param event 待初始化的键盘事件，不可为 NULL。
+ * @param type 键盘事件类型。
+ * @param key 与平台无关的按键码。
+ * @param modifiers 事件发生时按下的修饰键组合。
+ */
+void XKeyEvent_init(XKeyEvent* event, XEventType type, int key, XKeyboardModifiers modifiers);
+/**
+ * @brief 获取按键码。
+ * @param event 键盘事件实例。
+ * @return 按键码；event 为 NULL 时返回 0。
+ */
+int XKeyEvent_key(const XKeyEvent* event);
+/**
+ * @brief 获取修饰键位掩码。
+ * @param event 键盘事件实例。
+ * @return 修饰键组合；event 为 NULL 时返回 NoModifier。
+ */
+XKeyboardModifiers XKeyEvent_modifiers(const XKeyEvent* event);
+
+#define XKeyEvent_delete_base XEvent_delete_base
+#define XKeyEvent_deinit_base XEvent_deinit_base
+
+/** @brief 携带按键、修饰键和位置数据的鼠标事件。 */
+typedef struct XMouseEvent {
+    XEvent m_class;                 ///< 继承 XEvent。
+    XMouseButton m_button;          ///< 触发事件的鼠标按键。
+    XKeyboardModifiers m_modifiers; ///< 事件发生时按下的修饰键。
+    XPoint m_position;              ///< 事件源对象局部坐标。
+} XMouseEvent;
+
+/**
+ * @brief 创建鼠标事件。
+ * @param type 鼠标事件类型，例如按下、释放、双击或移动。
+ * @param button 触发该事件的鼠标按键；移动事件通常为 NoButton。
+ * @param modifiers 事件发生时按下的键盘修饰键组合。
+ * @param position 事件源对象坐标系中的局部位置。
+ * @return 新鼠标事件；内存分配失败时返回 NULL。
+ * @note 返回对象由调用者拥有，投递成功后由事件队列取得所有权。
+ */
+XMouseEvent* XMouseEvent_create(XEventType type, XMouseButton button,
+                                XKeyboardModifiers modifiers, XPoint position);
+/**
+ * @brief 初始化调用者提供的鼠标事件存储。
+ * @param event 待初始化的鼠标事件，不可为 NULL。
+ * @param type 鼠标事件类型。
+ * @param button 触发该事件的鼠标按键。
+ * @param modifiers 事件发生时按下的键盘修饰键组合。
+ * @param position 事件源对象坐标系中的局部位置。
+ */
+void XMouseEvent_init(XMouseEvent* event, XEventType type, XMouseButton button,
+                      XKeyboardModifiers modifiers, XPoint position);
+/**
+ * @brief 获取触发事件的鼠标按键。
+ * @param event 鼠标事件实例。
+ * @return 鼠标按键；event 为 NULL 时返回 NoButton。
+ */
+XMouseButton XMouseEvent_button(const XMouseEvent* event);
+/**
+ * @brief 获取修饰键位掩码。
+ * @param event 鼠标事件实例。
+ * @return 修饰键组合；event 为 NULL 时返回 NoModifier。
+ */
+XKeyboardModifiers XMouseEvent_modifiers(const XMouseEvent* event);
+/**
+ * @brief 获取事件源对象局部坐标。
+ * @param event 鼠标事件实例。
+ * @return 局部坐标；event 为 NULL 时返回零坐标。
+ */
+XPoint XMouseEvent_position(const XMouseEvent* event);
+
+#define XMouseEvent_delete_base XEvent_delete_base
+#define XMouseEvent_deinit_base XEvent_deinit_base
+
 // ------------------ 工具 ------------------
 
+/**
+ * @brief 注册一个可供应用程序使用的自定义事件类型。
+ * @param hint 期望使用的事件编号；传入 -1 表示自动分配可用编号。
+ * @return 成功时返回实际事件编号；没有可用编号时返回 -1。
+ * @note 指定的 hint 已被占用时会自动分配其他编号。
+ */
 int XEvent_registerEventType(int hint);
 
 //删除事件

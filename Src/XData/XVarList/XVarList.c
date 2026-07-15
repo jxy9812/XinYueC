@@ -44,6 +44,7 @@ XVarList* XVarList_create(uint8_t count, ...)
     if (!list)return NULL;
 
     XVarList_setArgsDel(list,NULL);
+    list->m_size = sumTypeSize;
     XVarList_start(list);//指向开头
     uint8_t* ptr = *((uint8_t**)list);
     size_t typeSize = 0;
@@ -63,4 +64,21 @@ XVarList* XVarList_create(uint8_t count, ...)
     }
     va_end(ap);  // 结束访问
 	return list;
+}
+
+XVarList* XVarList_create_copy(const XVarList* other)
+{
+    if (!other)
+        return NULL;
+
+    XVarList* list = XMalloc_System(ALIGN_UP(other->m_size + sizeof(XVarList), sizeof(void*)));
+    if (!list)
+        return NULL;
+
+    list->m_free = XFree_System;
+    list->argsDel = NULL;
+    list->m_size = other->m_size;
+    memcpy(list->data, other->data, other->m_size);
+    XVarList_start(list);
+    return list;
 }

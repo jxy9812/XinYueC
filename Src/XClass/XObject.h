@@ -283,7 +283,7 @@ XConnection* XObject_connect_2(XObject* object, size_t signal,XSlotFunc2 slot_fu
  * @return 信号对应的标识值
  * @note 将信号函数转换为统一的标识格式，方便信号与槽的绑定
  */
-#define XSignal(signal)      ((void*(*)(XObject*))signal)(NULL)
+#define XSignal(signal)      ((size_t)((void*(*)(XObject*))(signal))(NULL))
 
 /**
 * @brief 断开对象信号与接收者槽函数的连接
@@ -339,7 +339,7 @@ void XObject_objectNameChanged_signal(XObject* object,const XString* objectName)
 * @return 信号标识
 * @note 自动检查对象有效性，立即发射信号，触发绑定的槽函数
 */
-#define XEmitSignal(object,signal,args,del,ref_count,priority) if(object&&((XObject*)object)->m_signalSlot)XObject_emitSignal(object,signal,args,del,ref_count,priority);return signal
+#define XEmitSignal(object,signal,args,del,ref_count,priority) if(object&&((XObject*)object)->m_signalSlot)XObject_emitSignal(object,(size_t)(signal),args,del,ref_count,priority);return (void*)(size_t)(signal)
 
 /**
 * @brief 精简信号发射宏（队列模式，异步发射）
@@ -352,7 +352,7 @@ void XObject_objectNameChanged_signal(XObject* object,const XString* objectName)
 * @return 信号标识
 * @note 自动检查对象有效性，将信号加入事件队列，异步触发槽函数
 */
-#define XEmitSignalQueue(object,signal,args,del,ref_count,priority) if(object)XObject_emitSignal_queue(object,signal,args,del,ref_count,priority);return signal
+#define XEmitSignalQueue(object,signal,args,del,ref_count,priority) if(object)XObject_emitSignal_queue(object,(size_t)(signal),args,del,ref_count,priority);return (void*)(size_t)(signal)
 
 /**
  * @brief 同步发射信号

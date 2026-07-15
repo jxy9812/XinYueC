@@ -1,125 +1,189 @@
 ﻿#include "XAbstractTransition.h"
-#include "XStateMachine.h"
-#include "XState.h"
+
 #include "XMemory.h"
-#include <string.h>
-static void XAbstractTransition_deinit(XAbstractTransition* transition);
-XVtable* XAbstractTransition_class_init()
+#include "XStateMachine_p.h"
+
+#include <stdlib.h>
+
+static bool VXAbstractTransition_eventTest(XAbstractTransition* transition, XEvent* event)
+{
+    (void)transition;
+    return event && XEvent_type(event) == XEVENT_TYPE_NONE;
+}
+
+static void VXAbstractTransition_onTransition(XAbstractTransition* transition, XEvent* event)
+{
+    (void)transition;
+    (void)event;
+}
+
+static void VXAbstractTransition_deinit(XAbstractTransition* transition)
+{
+    if (!transition)
+        return;
+
+    XStateMachine* machine = XAbstractTransition_machine(transition);
+    if (machine)
+        XStateMachine_unregisterTransition_internal(machine, transition);
+    if (transition->m_sourceState)
+        XState_removeTransition(transition->m_sourceState, transition);
+    if (transition->m_targetStates) {
+        XVector_delete_base((XClass*)transition->m_targetStates);
+        transition->m_targetStates = NULL;
+    }
+    XVtableGetFunc(XObject_class_init(), EXClass_Deinit,
+                   void(*)(XObject*))((XObject*)transition);
+}
+
+XVtable* XAbstractTransition_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
 #if VTABLE_ISSTACK
-        XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XAbstractTransition))
+    XVTABLE_STACK_INIT_DEFAULT(XCLASS_VTABLE_GET_SIZE(XAbstractTransition))
 #else
-        XVTABLE_HEAP_INIT_DEFAULT
+    XVTABLE_HEAP_INIT_DEFAULT
 #endif
-        XVTABLE_INHERIT_XCLASS(XObject);
-
-  /*  void* table[] =
-    {
-    };
-
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);*/
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, XAbstractTransition_deinit);
-    //XVTABLE_OVERLOAD_DEFAULT(EXObject_Poll, NULL);
-#if SHOWCONTAINERSIZE
-    printf("XAbstractTransition size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-#endif
+    XVTABLE_INHERIT_XCLASS(XObject);
+    void* table[] = { VXAbstractTransition_eventTest, VXAbstractTransition_onTransition };
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXAbstractTransition_deinit);
     return XVTABLE_DEFAULT;
 }
 
-void XAbstractTransition_init(XAbstractTransition* transition, XTransitionType type) {
-    if (!transition) return;
-    memset(((XClass*)transition)+1,0,sizeof(XAbstractTransition)-sizeof(XClass));
-    XObject_init(transition);
-    XClassGetVtable(transition) = XAbstractTransition_class_init();
-    //transition->m_sourceState = NULL;
-    //transition->m_targetState = NULL;
-    //transition->m_condition = NULL;
-    //transition->m_userData = NULL;
-    transition->m_type = type;
+void XAbstractTransition_init(XAbstractTransition* transition, XState* sourceState)
+{
+    if (!transition)
+        return;
+
+    XObject_init((XObject*)transition);
+    XClassSetVtable(transition, XAbstractTransition);
+    transition->m_sourceState = NULL;
+    transition->m_targetStates = XVector_Create(XAbstractState*);
+    transition->m_transitionType = XAbstractTransition_ExternalTransition;
+    transition->m_kind = XAbstractTransition_CustomTransition;
+
+    if (sourceState)
+        XState_addTransition(sourceState, transition);
 }
 
-XAbstractState* XAbstractTransition_sourceState(const XAbstractTransition* transition) {
+XState* XAbstractTransition_sourceState(const XAbstractTransition* transition)
+{
     return transition ? transition->m_sourceState : NULL;
 }
 
-void XAbstractTransition_setSourceState(XAbstractTransition* transition, XAbstractState* state) {
-    if (!transition) return;
-
-    // 如果之前有源状态，从那里移除
-    if (transition->m_sourceState && transition->m_sourceState->m_type == XStateType_Basic) {
-        XState_removeTransition((XState*)transition->m_sourceState, transition);
-    }
-
-    transition->m_sourceState = state;
-
-    // 向新的源状态添加转换
-    if (state && state->m_type == XStateType_Basic) {
-        XState_addTransition((XState*)state, transition);
-    }
-}
-
-XAbstractState* XAbstractTransition_targetState(const XAbstractTransition* transition) {
-    return transition ? transition->m_targetState : NULL;
-}
-
-void XAbstractTransition_setTargetState(XAbstractTransition* transition, XAbstractState* state) {
-    if (transition) {
-        transition->m_targetState = state;
-    }
-}
-
-void XAbstractTransition_setCondition(XAbstractTransition* transition, XAbstractTransitionCondition condition) {
-    if (transition) {
-        transition->m_condition = condition;
-    }
-}
-
-bool XAbstractTransition_checkCondition(const XAbstractTransition* transition) {
-    if (!transition) return false;
-
-    // 如果没有条件，默认返回true
-    if (!transition->m_condition) return true;
-    // 调用条件函数
-    return transition->m_condition(transition);
-}
-
-bool XAbstractTransition_execute(XAbstractTransition* transition, XStateMachine* machine) {
-    if (!transition || !machine || !transition->m_sourceState || !transition->m_targetState) {
-        return false;
-    }
-
-    // 检查条件是否满足
-    if (!XAbstractTransition_checkCondition(transition)) 
-    {
-        return false;
-    }
-
-    // 发送转换触发信号
-    //XObject_emitSignal(&transition->m_class, "triggered()", NULL);
-
-    // 执行状态转换
-    return XStateMachine_transition(machine, transition->m_sourceState, transition->m_targetState);
-}
-
-void XAbstractTransition_setUserData(XAbstractTransition* transition, void* data) {
-    if (transition) {
-        transition->m_userData = data;
-    }
-}
-
-void* XAbstractTransition_userData(const XAbstractTransition* transition) {
-    return transition ? transition->m_userData : NULL;
-}
-
-void XAbstractTransition_deinit(XAbstractTransition* transition)
+XAbstractState* XAbstractTransition_targetState(const XAbstractTransition* transition)
 {
-    // 从源状态中移除转换
-    if (transition->m_sourceState && transition->m_sourceState->m_type == XStateType_Basic) 
-    {
-        XState_removeTransition((XState*)transition->m_sourceState, transition);
-        transition->m_sourceState = NULL;
+    if (!transition || !transition->m_targetStates
+        || XVector_isEmpty_base(
+            (const XContainer*)transition->m_targetStates))
+        return NULL;
+    return XVector_At_Base(transition->m_targetStates, 0, XAbstractState*);
+}
+
+bool XAbstractTransition_setTargetState(XAbstractTransition* transition, XAbstractState* target)
+{
+    if (!transition || !transition->m_targetStates)
+        return false;
+
+    XAbstractState* previous = XAbstractTransition_targetState(transition);
+    if (previous == target
+        && XVector_size_base(
+            (const XContainer*)transition->m_targetStates) <= 1)
+        return true;
+
+    XVector_clear_base((XContainer*)transition->m_targetStates);
+    if (target && !XVector_push_back_1_base(transition->m_targetStates, &target))
+        return false;
+
+    XAbstractTransition_targetStateChanged_signal(transition);
+    XAbstractTransition_targetStatesChanged_signal(transition);
+    return true;
+}
+
+const XVector* XAbstractTransition_targetStates_const(const XAbstractTransition* transition)
+{
+    return transition ? transition->m_targetStates : NULL;
+}
+
+bool XAbstractTransition_setTargetStates(XAbstractTransition* transition, const XVector* targets)
+{
+    if (!transition || !transition->m_targetStates)
+        return false;
+    if (targets
+        && XVector_typeSize_base((const XContainer*)targets)
+            != sizeof(XAbstractState*))
+        return false;
+
+    if (targets) {
+        for (int64_t i = 0;
+             i < (int64_t)XVector_size_base(
+                 (const XContainer*)targets); ++i) {
+            if (!XVector_At_Base(targets, i, XAbstractState*))
+                return false;
+        }
     }
-    //调用父类释放函数
-    XVtableGetFunc(XObject_class_init(), EXClass_Deinit, void(*)(XObject*))(transition);
+
+    XAbstractState* previous = XAbstractTransition_targetState(transition);
+    XVector_clear_base((XContainer*)transition->m_targetStates);
+    if (targets && !XVector_push_back_3(transition->m_targetStates, targets))
+        return false;
+
+    if (previous != XAbstractTransition_targetState(transition))
+        XAbstractTransition_targetStateChanged_signal(transition);
+    XAbstractTransition_targetStatesChanged_signal(transition);
+    return true;
+}
+
+XAbstractTransition_TransitionType XAbstractTransition_transitionType(const XAbstractTransition* transition)
+{
+    return transition ? transition->m_transitionType : XAbstractTransition_ExternalTransition;
+}
+
+void XAbstractTransition_setTransitionType(XAbstractTransition* transition, XAbstractTransition_TransitionType type)
+{
+    if (transition)
+        transition->m_transitionType = type;
+}
+
+XStateMachine* XAbstractTransition_machine(const XAbstractTransition* transition)
+{
+    return transition && transition->m_sourceState
+        ? XAbstractState_machine((XAbstractState*)transition->m_sourceState)
+        : NULL;
+}
+
+bool XAbstractTransition_eventTest_base(XAbstractTransition* transition, XEvent* event)
+{
+    if (ISNULL(transition, "XAbstractTransition") || ISNULL(XClassGetVtable(transition), "Vtable"))
+        return false;
+    return XClassGetVirtualFunc(transition, EXAbstractTransition_EventTest,
+                                bool(*)(XAbstractTransition*, XEvent*))(transition, event);
+}
+
+void XAbstractTransition_onTransition_base(XAbstractTransition* transition, XEvent* event)
+{
+    if (ISNULL(transition, "XAbstractTransition") || ISNULL(XClassGetVtable(transition), "Vtable"))
+        return;
+    XClassGetVirtualFunc(transition, EXAbstractTransition_OnTransition,
+                         void(*)(XAbstractTransition*, XEvent*))(transition, event);
+}
+
+void* XAbstractTransition_triggered_signal(XAbstractTransition* transition)
+{
+    XEmitSignal((XObject*)transition, XAbstractTransition_triggered_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XAbstractTransition_targetStateChanged_signal(XAbstractTransition* transition)
+{
+    XEmitSignal((XObject*)transition,
+                XAbstractTransition_targetStateChanged_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+void* XAbstractTransition_targetStatesChanged_signal(XAbstractTransition* transition)
+{
+    XEmitSignal((XObject*)transition,
+                XAbstractTransition_targetStatesChanged_signal,
+                NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
