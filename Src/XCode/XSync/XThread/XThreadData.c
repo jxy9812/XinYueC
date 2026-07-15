@@ -76,6 +76,7 @@ void XThreadData_delete(XThreadData* data)
         XMutex_delete(data->m_mutex);
         data->m_mutex = NULL;
     }
+    XStack_deinit_base(&data->m_senderStack);
     XFree_System(data);
 }
 
@@ -87,6 +88,7 @@ void XThreadData_init(XThreadData* data, XThread* thread)
     data->m_wakeSemaphore = XSemaphore_create(0, 0x7FFFFFFF);
     XLockFreeQueue_init(&data->m_tryPostEventList,sizeof(XPostEvent), TryPostEvent_QueueSize);//中断队列大小按需修改
     XVector_init(&data->m_postEventList, sizeof(XPostEvent),false);
+    XStack_init(&data->m_senderStack, sizeof(XSenderFrame));
     //XVector_init(&data->m_handlerEventList, sizeof(XPostEvent));
     //data->m_postEventList=XVector_create(sizeof(XPostEvent));
     data->m_thread = thread;
@@ -357,4 +359,32 @@ void XThreadData_signalWake(XThreadData* td)
 {
     if (!td || !td->m_wakeSemaphore) return;
     XSemaphore_release(td->m_wakeSemaphore, 1);
+}
+//发送者栈:仅当前线程访问,无需加锁
+void XThreadData_pushSender(XObject* receiver, XObject* sender)
+{
+    XThreadData* td = XThreadData_current();
+    if (!td) return;  //未注册线程(无事件循环)无法跟踪发送者,sender()将返回 NULL
+    XSenderFrame frame = { receiver, sender };
+    XStack_push_base(&td->m_senderStack, &frame);
+}
+void XThreadData_popSender(void)
+{
+    XThreadData* td = XThreadData_current();
+    if (!td || XStack_isEmpty_base(&td->m_senderStack)) return;
+    XStack_pop_base(&td->m_senderStack);
+}
+XObject* XThreadData_currentSender(XObject* receiver)
+{
+    XThreadData* td = XThreadData_current();
+    if (!td) return NULL;
+    //XStack 底层为连续缓冲,自顶向下查找首个 receiver 匹配的帧(对标 Qt sender():从栈顶向下遍历)
+    XSenderFrame* base = (XSenderFrame*)XContainerDataPtr(&td->m_senderStack);
+    int64_t n = (int64_t)XContainerSize(&td->m_senderStack);
+    for (int64_t i = n - 1; i >= 0; i--)
+    {
+        if (base[i].receiver == receiver)
+            return base[i].sender;
+    }
+    return NULL;
 }

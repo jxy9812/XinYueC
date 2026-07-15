@@ -581,5 +581,7 @@ void XObject_disconnectNotify_base(XObject * self, size_t signal)
 
 XObject* XObject_sender(const XObject* self)
 {
-	return self? self->m_sender:NULL;
+	//从当前线程的发送者栈中查找 receiver==self 的最近一次发射,返回其发送者
+	//(取代每对象 m_sender,消除跨线程竞争与嵌套发射错乱)
+	return XThreadData_currentSender((XObject*)self);
 }

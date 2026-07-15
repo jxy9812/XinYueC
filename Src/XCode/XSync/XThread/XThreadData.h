@@ -4,6 +4,7 @@
 #include "XAbstractEventDispatcher.h"
 #include "XMutex.h"
 #include "XVector.h" // 假设你有 XVector 实现（基于 realloc）
+#include "XStack.h"
 #include "XLockFreeQueue.h"
 #include "XAtomic.h"
 #include "XSemaphore.h"
@@ -17,6 +18,15 @@ typedef struct {
 } XPostEvent;
 
 /**
+ * @brief 发送者栈帧 - 记录当前线程正在派发的信号发送者(对标 Qt 的 per-thread sender 栈)
+ *        取代 XObject::m_sender 的每对象状态,消除跨线程竞争与嵌套发射时 sender() 错乱
+ */
+typedef struct {
+    XObject* receiver;  // 接收者(槽所属对象)
+    XObject* sender;    // 信号发送者
+} XSenderFrame;
+
+/**
  * @brief XThreadData - 每个线程的私有数据（对标 QThreadData）
  */
 typedef struct XThreadData{
@@ -28,6 +38,7 @@ typedef struct XThreadData{
     XLockFreeQueue/*<XPostEvent>*/   m_tryPostEventList;  //无锁投递队列
     XVector/*<XPostEvent>*/ m_postEventList;  //互斥锁投递队列
     XSemaphore* m_wakeSemaphore;       //线程局部唤醒信号量（工作线程阻塞等待用）
+    XStack/*<XSenderFrame>*/ m_senderStack;  //每线程发送者栈(Direct/队列连接派发槽函数时压栈,XObject_sender 据此返回当前发送者)
     //XVector/*<XPostEvent>*/ m_handlerEventList;  //事件处理专用队列
 } XThreadData;
 
@@ -65,6 +76,12 @@ void XThreadData_setEventDispatcher(XAbstractEventDispatcher* dispatcher);
 void XThreadData_waitForWake(XThreadData* td, int timeoutMs);
 // 发出唤醒信号（跨线程唤醒目标线程）
 void XThreadData_signalWake(XThreadData* td);
+
+// 发送者栈:Direct/队列连接派发槽函数前压栈,派发后弹栈;XObject_sender() 据此查询当前发送者
+// 未注册 XThreadData 的线程(无事件循环)调用为空操作,此时 sender() 返回 NULL(与 Qt 一致)
+void XThreadData_pushSender(XObject* receiver, XObject* sender);
+void XThreadData_popSender(void);
+XObject* XThreadData_currentSender(XObject* receiver);  // 返回栈顶 receiver==receiver 的帧的 sender
 
 #ifdef __cplusplus
 }

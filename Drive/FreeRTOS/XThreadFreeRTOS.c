@@ -281,4 +281,8 @@ XThread* XThread_create_func(void (*start_routine)(void*), void* arg)
 	((XThreadFreeRTOS*)Object)->completion_sem = NULL;
 	return Object;
 }
+//FreeRTOS 无通用 TLS 抽象:回退为空操作,线程私有数据仍由全局映射提供
+void XThreadStorage_set(void* p){(void)p;}
+void* XThreadStorage_get(void){return NULL;}
+
 #endif

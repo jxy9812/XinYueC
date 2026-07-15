@@ -52,7 +52,6 @@ typedef struct XObject
 	// 父子关系
 	XObject* m_parent;//父对象
 	XVector* m_children; //子对象列表
-	XObject* m_sender;              // 发送者对象
 	XVector* m_filters;//过滤器列表
 	XThread* m_thread;                   ///< 所属线程指针：对象关联的线程，事件处理在该线程执行
 	// 事件与元对象

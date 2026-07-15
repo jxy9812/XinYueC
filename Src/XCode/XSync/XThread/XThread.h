@@ -192,6 +192,9 @@ XThread* XThread_currentThread();
 //返回当前线程的事件循环
 XEventDispatcher* XThread_currentDispatcher();
 XHandle XThread_currentThreadId();
+// 每线程指针存储(TLS),对标 Qt 6.8 QThreadStorage:O(1) 无锁读取当前线程私有数据
+void  XThreadStorage_set(void* p);
+void* XThreadStorage_get(void);
 bool XThread_isMainThread();
 //返回理想的线程数量
 int XThread_idealThreadCount();

@@ -9,6 +9,7 @@
 #include"XVariant.h"
 #include"XSemaphore.h"
 #include"XCoreApplication.h"
+#include"XThreadData.h"
 static void VXEvent_default_setAccepted(XEvent* event, bool accepted);
 static XEvent* VXEvent_default_clone(const XEvent* event);
 
@@ -194,10 +195,11 @@ void XEventMetaCall_handler(XEventMetaCall* event, XObject* receiver)
 	}*/
 	if (receiver)
 	{
-		receiver->m_sender = event->sender;
+		//队列连接在接收者线程派发,同样用每线程发送者栈设置 sender()
+		XThreadData_pushSender(receiver, event->sender);
 		if (event->func)
 			event->func(receiver, event->argList);
-		receiver->m_sender = NULL;
+		XThreadData_popSender();
 	}
 	if (event->sem)
 		XSemaphore_release(event->sem, 1);

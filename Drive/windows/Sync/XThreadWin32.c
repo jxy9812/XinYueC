@@ -7,6 +7,7 @@
 #include"XEventLoop.h"
 #include"XThreadData.h"
 #include <windows.h>
+#include"XAtomic.h"
 void VXThread_run(XThread* thread);
 static void VXThread_deinit(XThread* thread);
 // 虚函数表初始化
@@ -322,4 +323,43 @@ void XThread_yieldCurrentThread()
 {
     SwitchToThread();
 }
+#ifndef TLS_OUT_OF_BOUNDS
+#define TLS_OUT_OF_BOUNDS ((DWORD)0xFFFFFFFF)   /* TlsAlloc 失败返回值,部分 SDK 未定义 */
+#endif
+//==================== TLS: 每线程指针存储 (对标 Qt 6.8 QThreadStorage) ====================
+//使用 TlsAlloc 分配 TLS 槽,首次访问通过原子 CAS 初始化(once 语义)
+//存储 (slotIndex+1) 以区分 "索引0合法" 的情况
+static XAtomic_uintptr_t g_tlsSlot = { 0 };
+
+static DWORD XThreadStorage_slot(void)
+{
+    uintptr_t v = XAtomic_load_uintptr_t(&g_tlsSlot, XAtomic_MemoryOrder_Acquire);
+    if (v)
+        return (DWORD)(v - 1);            //还原真实索引
+    DWORD slot = TlsAlloc();
+    if (slot == TLS_OUT_OF_BOUNDS)
+        return TLS_OUT_OF_BOUNDS;
+    uintptr_t expected = 0;
+    if (XAtomic_compare_exchange_strong_uintptr_t(&g_tlsSlot, &expected, (uintptr_t)slot + 1,
+            XAtomic_MemoryOrder_AcqRel, XAtomic_MemoryOrder_Acquire))
+        return slot;                       //赢家:已发布
+    TlsFree(slot);                         //输家:另一线程已发布,释放本次冗余
+    return (DWORD)(expected - 1);
+}
+
+void XThreadStorage_set(void* p)
+{
+    DWORD slot = XThreadStorage_slot();
+    if (slot != TLS_OUT_OF_BOUNDS)
+        TlsSetValue(slot, p);
+}
+
+void* XThreadStorage_get(void)
+{
+    DWORD slot = XThreadStorage_slot();
+    if (slot == TLS_OUT_OF_BOUNDS)
+        return NULL;
+    return TlsGetValue(slot);
+}
+
 #endif

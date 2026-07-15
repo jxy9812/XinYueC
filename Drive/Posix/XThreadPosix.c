@@ -312,4 +312,25 @@ int XThread_idealThreadCount(void)
     return (n > 0) ? (int)n : 1;
 }
 
+/* ===================== TLS: 每线程指针存储 (对标 Qt 6.8 QThreadStorage) ===================== */
+static pthread_key_t g_tlsKey;
+static pthread_once_t g_tlsOnce = PTHREAD_ONCE_INIT;
+
+static void XThreadStorage_createKey(void)
+{
+    pthread_key_create(&g_tlsKey, NULL);
+}
+
+void XThreadStorage_set(void* p)
+{
+    pthread_once(&g_tlsOnce, XThreadStorage_createKey);
+    pthread_setspecific(g_tlsKey, p);
+}
+
+void* XThreadStorage_get(void)
+{
+    pthread_once(&g_tlsOnce, XThreadStorage_createKey);
+    return pthread_getspecific(g_tlsKey);
+}
+
 #endif /* POSIX */
