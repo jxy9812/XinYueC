@@ -581,7 +581,17 @@ size_t XString_toGbk_length(const XString* str);
  * @return 成功返回常量本地编码字符串指针（内部缓存），失败返回 NULL
  */
 const char* XString_toLocal(const XString* str);
-size_t XString_toUtfLocal_length(const XString* str);
+/**
+ * @brief 获取本地编码字符串长度（对齐 toUtf8_length/toUtf16_length 命名风格）
+ * @param str XString 对象指针
+ * @return 本地编码字节数（不含终止符），失败返回0
+ */
+size_t XString_toLocal_length(const XString* str);
+/**
+ * @brief toUtfLocal_length 旧名别名（命名历史遗留，保持向后兼容）
+ * @note 宏实现，等价于 XString_toLocal_length
+ */
+#define XString_toUtfLocal_length		XString_toLocal_length
 // -------------------------- 字符串转换（大小写/修剪） --------------------------
 
 /**
@@ -1042,27 +1052,31 @@ size_t XString_maxSize(void);
 // -------------------------- Qt 6.8 对齐：数值转字符串静态函数 --------------------------
 
 /**
- * @brief 将int转为XString（对齐Qt QString::number(int, base)）
+ * @brief 将int转为XString（对齐Qt QString::number(int, base)，Qt内联委托number(qlonglong)）
  * @param n 整数值
  * @param base 进制（2-36，默认10）
  * @return 成功返回新XString指针，失败返回NULL
+ * @note 宏实现，等价于 XString_number_llong((long long)(n), base)
  */
-XString* XString_number_int(int n, int base);
+#define XString_number_int(n, base)  XString_number_llong((long long)(n), base)
 
 /**
- * @brief 将unsigned int转为XString（对齐Qt QString::number(uint, base)）
+ * @brief 将unsigned int转为XString（对齐Qt QString::number(uint, base)，Qt内联委托number(qulonglong)）
+ * @note 宏实现，等价于 XString_number_ullong((unsigned long long)(n), base)
  */
-XString* XString_number_uint(unsigned int n, int base);
+#define XString_number_uint(n, base)  XString_number_ullong((unsigned long long)(n), base)
 
 /**
- * @brief 将long转为XString（对齐Qt QString::number(long, base)）
+ * @brief 将long转为XString（对齐Qt QString::number(long, base)，Qt内联委托number(qlonglong)）
+ * @note 宏实现，等价于 XString_number_llong((long long)(n), base)
  */
-XString* XString_number_long(long n, int base);
+#define XString_number_long(n, base)  XString_number_llong((long long)(n), base)
 
 /**
- * @brief 将unsigned long转为XString（对齐Qt QString::number(ulong, base)）
+ * @brief 将unsigned long转为XString（对齐Qt QString::number(ulong, base)，Qt内联委托number(qulonglong)）
+ * @note 宏实现，等价于 XString_number_ullong((unsigned long long)(n), base)
  */
-XString* XString_number_ulong(unsigned long n, int base);
+#define XString_number_ulong(n, base)  XString_number_ullong((unsigned long long)(n), base)
 
 /**
  * @brief 将long long转为XString（对齐Qt QString::number(qlonglong, base)）
@@ -1085,8 +1099,9 @@ XString* XString_number_double(double n, char format, int precision);
 
 /**
  * @brief 将float转为XString（对齐Qt QString::number(float, format, precision)）
+ * @note 宏实现，等价于 XString_number_double((double)(n), format, precision)
  */
-XString* XString_number_float(float n, char format, int precision);
+#define XString_number_float(n, format, precision)  XString_number_double((double)(n), format, precision)
 
 // -------------------------- Qt 6.8 对齐：数据访问函数 --------------------------
 
@@ -1099,11 +1114,12 @@ XString* XString_number_float(float n, char format, int precision);
 XChar* XString_data_ptr(XString* str);
 
 /**
- * @brief 获取常量XChar数据指针（对齐Qt QString::constData()）
+ * @brief 获取常量XChar数据指针（对齐Qt QString::constData()，与unicode()实现等价）
  * @param str XString对象指针
  * @return 常量XChar数据指针，失败返回NULL
+ * @note 宏实现，等价于 XString_unicode
  */
-const XChar* XString_constData(const XString* str);
+#define XString_constData				XString_unicode
 
 /**
  * @brief 获取字符串长度（等价于size，对齐Qt QString::length()）
@@ -1192,6 +1208,247 @@ bool XString_remove_char(XString* str, XChar ch, XChar_CaseSensitivity cs);
  * @return 成功返回true，失败返回false
  */
 bool XString_replace_char(XString* str, XChar before, XChar after, XChar_CaseSensitivity cs);
+
+// -------------------------- Qt 6.8 对齐：SectionFlags 分段标志枚举 --------------------------
+
+/**
+ * @brief section() 的分段标志位（对齐Qt QString::SectionFlag）
+ * @details 多个标志可按位或组合，作为 XString_section 系列函数的 flags 参数
+ */
+typedef enum XString_SectionFlag {
+	XString_SectionDefault             = 0x00, /**< 默认：不跳过空段，分隔符大小写敏感 */
+	XString_SectionSkipEmpty           = 0x01, /**< 跳过空段（空段不计入段号） */
+	XString_SectionIncludeLeadingSep   = 0x02, /**< 结果包含起始段之前的分隔符 */
+	XString_SectionIncludeTrailingSep  = 0x04, /**< 结果包含结束段之后的分隔符 */
+	XString_SectionCaseInsensitiveSeps = 0x08  /**< 分隔符匹配大小写不敏感 */
+} XString_SectionFlag;
+
+// -------------------------- Qt 6.8 对齐：section() 分段提取 --------------------------
+
+/**
+ * @brief 按分隔符提取指定区间的段（对齐Qt QString::section(QString,start,end,flags)）
+ * @param str 源XString
+ * @param sep 分隔符XString
+ * @param start 起始段号（0基；负数从右计数，-1为最后一段）
+ * @param end 结束段号（含；-1表示到字符串末尾）
+ * @param flags XString_SectionFlag 标志按位或
+ * @return 成功返回新XString，失败/越界返回空串；str或sep为NULL返回空串
+ * @note 空分隔符时整个字符串视作单段；段号从0开始计数
+ */
+XString* XString_section(const XString* str, const XString* sep, int64_t start, int64_t end, int flags);
+
+/**
+ * @brief 按UTF-8分隔符提取段（对齐Qt QString::section(QLatin1String,...)）
+ * @param str 源XString
+ * @param sep UTF-8分隔符
+ * @param start 起始段号
+ * @param end 结束段号
+ * @param flags 分段标志
+ * @return 成功返回新XString，失败返回空串
+ * @note 内部构造分隔符XString后委托 XString_section 实现
+ */
+XString* XString_section_utf8(const XString* str, const char* sep, int64_t start, int64_t end, int flags);
+
+/**
+ * @brief 按单字符分隔符提取段（对齐Qt QString::section(QChar,...)）
+ * @param str 源XString
+ * @param sep 单个XChar分隔符
+ * @param start 起始段号
+ * @param end 结束段号
+ * @param flags 分段标志
+ * @return 成功返回新XString，失败返回空串
+ * @note 内部构造单字符分隔符XString后委托 XString_section 实现
+ */
+XString* XString_section_char(const XString* str, XChar sep, int64_t start, int64_t end, int flags);
+
+// -------------------------- Qt 6.8 对齐：arg() 占位符替换 --------------------------
+
+/**
+ * @brief 替换最低编号占位符%N为指定字符串（对齐Qt QString::arg(QString,fieldWidth,fillChar)）
+ * @param str 含占位符的源XString
+ * @param a 替换内容XString
+ * @param fieldWidth 最小占位宽度（>0右对齐左填充，<0左对齐右填充，0不填充）
+ * @param fillChar 填充字符
+ * @return 返回新XString；无占位符时返回源串拷贝
+ * @note 占位符为%1..%99，替换所有出现的最低编号占位符；支持%L前缀（按非本地化处理）
+ */
+XString* XString_arg(const XString* str, const XString* a, int fieldWidth, XChar fillChar);
+
+/**
+ * @brief 替换最低编号占位符为UTF-8字符串（对齐Qt QString::arg(QLatin1String,...)）
+ * @param str 含占位符的源XString
+ * @param a UTF-8替换内容
+ * @param fieldWidth 最小占位宽度
+ * @param fillChar 填充字符
+ * @return 返回新XString
+ * @note 内部构造XString后委托 XString_arg 实现
+ */
+XString* XString_arg_utf8(const XString* str, const char* a, int fieldWidth, XChar fillChar);
+
+/**
+ * @brief 替换最低编号占位符为单字符（对齐Qt QString::arg(QChar,...)）
+ * @param str 含占位符的源XString
+ * @param a 单个XChar替换内容
+ * @param fieldWidth 最小占位宽度
+ * @param fillChar 填充字符
+ * @return 返回新XString
+ * @note 内部构造单字符XString后委托 XString_arg 实现
+ */
+XString* XString_arg_char(const XString* str, XChar a, int fieldWidth, XChar fillChar);
+
+/**
+ * @brief 替换最低编号占位符为long long数值（对齐Qt QString::arg(qlonglong,fieldWidth,base,fillChar)）
+ * @param str 含占位符的源XString
+ * @param a 数值
+ * @param fieldWidth 最小占位宽度
+ * @param base 进制（2~36）
+ * @param fillChar 填充字符
+ * @return 返回新XString
+ * @note 数值按base格式化后委托 XString_arg 实现
+ */
+XString* XString_arg_llong(const XString* str, long long a, int fieldWidth, int base, XChar fillChar);
+
+/**
+ * @brief 替换最低编号占位符为unsigned long long数值（对齐Qt QString::arg(qulonglong,...)）
+ * @param str 含占位符的源XString
+ * @param a 数值
+ * @param fieldWidth 最小占位宽度
+ * @param base 进制（2~36）
+ * @param fillChar 填充字符
+ * @return 返回新XString
+ */
+XString* XString_arg_ullong(const XString* str, unsigned long long a, int fieldWidth, int base, XChar fillChar);
+
+/**
+ * @brief 替换最低编号占位符为double数值（对齐Qt QString::arg(double,fieldWidth,format,precision,fillChar)）
+ * @param str 含占位符的源XString
+ * @param a 浮点数值
+ * @param fieldWidth 最小占位宽度
+ * @param format 格式（'e'/'E'科学计数, 'f'/'F'定点, 'g'/'G'自动）
+ * @param precision 精度
+ * @param fillChar 填充字符
+ * @return 返回新XString
+ */
+XString* XString_arg_double(const XString* str, double a, int fieldWidth, char format, int precision, XChar fillChar);
+
+/**
+ * @brief arg(int,...) 重载，委托 XString_arg_llong（对齐Qt内联重载）
+ * @note 宏实现，等价于 XString_arg_llong(str,(long long)(a),fieldWidth,base,fillChar)
+ */
+#define XString_arg_int(str, a, fieldWidth, base, fillChar)  XString_arg_llong(str, (long long)(a), fieldWidth, base, fillChar)
+/**
+ * @brief arg(uint,...) 重载，委托 XString_arg_ullong（对齐Qt内联重载）
+ * @note 宏实现，等价于 XString_arg_ullong(str,(unsigned long long)(a),fieldWidth,base,fillChar)
+ */
+#define XString_arg_uint(str, a, fieldWidth, base, fillChar)  XString_arg_ullong(str, (unsigned long long)(a), fieldWidth, base, fillChar)
+/**
+ * @brief arg(long,...) 重载，委托 XString_arg_llong（对齐Qt内联重载）
+ * @note 宏实现，等价于 XString_arg_llong(str,(long long)(a),fieldWidth,base,fillChar)
+ */
+#define XString_arg_long(str, a, fieldWidth, base, fillChar)  XString_arg_llong(str, (long long)(a), fieldWidth, base, fillChar)
+/**
+ * @brief arg(ulong,...) 重载，委托 XString_arg_ullong（对齐Qt内联重载）
+ * @note 宏实现，等价于 XString_arg_ullong(str,(unsigned long long)(a),fieldWidth,base,fillChar)
+ */
+#define XString_arg_ulong(str, a, fieldWidth, base, fillChar)  XString_arg_ullong(str, (unsigned long long)(a), fieldWidth, base, fillChar)
+/**
+ * @brief arg(short,...) 重载，委托 XString_arg_llong（对齐Qt内联重载）
+ * @note 宏实现，等价于 XString_arg_llong(str,(long long)(a),fieldWidth,base,fillChar)
+ */
+#define XString_arg_short(str, a, fieldWidth, base, fillChar)  XString_arg_llong(str, (long long)(a), fieldWidth, base, fillChar)
+/**
+ * @brief arg(ushort,...) 重载，委托 XString_arg_ullong（对齐Qt内联重载）
+ * @note 宏实现，等价于 XString_arg_ullong(str,(unsigned long long)(a),fieldWidth,base,fillChar)
+ */
+#define XString_arg_ushort(str, a, fieldWidth, base, fillChar)  XString_arg_ullong(str, (unsigned long long)(a), fieldWidth, base, fillChar)
+/**
+ * @brief arg(float,...) 重载，委托 XString_arg_double（对齐Qt内联重载）
+ * @note 宏实现，等价于 XString_arg_double(str,(double)(a),fieldWidth,format,precision,fillChar)
+ */
+#define XString_arg_float(str, a, fieldWidth, format, precision, fillChar)  XString_arg_double(str, (double)(a), fieldWidth, format, precision, fillChar)
+
+// -------------------------- Qt 6.8 对齐：localeAwareCompare 区域感知比较 --------------------------
+
+/**
+ * @brief 按当前区域规则比较两个字符串（对齐Qt QString::localeAwareCompare）
+ * @param str1 字符串1
+ * @param str2 字符串2
+ * @return 小于0表示str1<str2，等于0表示相等，大于0表示str1>str2
+ * @note 基于C库strcoll实现，遵循LC_COLLATE区域设置；应用需setlocale(LC_ALL,"")以启用区域感知
+ */
+int32_t XString_localeAwareCompare(const XString* str1, const XString* str2);
+
+// -------------------------- Qt 6.8 对齐：fromLatin1/fromUcs4/fromLocal8Bit 创建 --------------------------
+
+/**
+ * @brief 从Latin-1字符串创建XString（对齐Qt QString::fromLatin1）
+ * @param latin1 Latin-1编码字符串
+ * @return 新XString，latin1为NULL返回NULL
+ */
+XString* XString_create_latin1(const char* latin1);
+
+/**
+ * @brief 从指定长度的Latin-1字符串创建XString（对齐Qt QString::fromLatin1）
+ * @param latin1 Latin-1编码字符串（uint8_t数组）
+ * @param len 字符串长度（字节数，不含终止符）
+ * @return 新XString，latin1为NULL或len为0返回空字符串
+ */
+XString* XString_create_with_length_latin1(const uint8_t* latin1, size_t len);
+
+/**
+ * @brief 从UTF-32(UCS-4)字符串创建XString（对齐Qt QString::fromUcs4）
+ * @param ucs4 UTF-32编码字符串（以0结尾）
+ * @return 新XString，ucs4为NULL返回NULL
+ */
+XString* XString_create_utf32(const uint32_t* ucs4);
+
+/**
+ * @brief 从指定长度的UTF-32(UCS-4)字符串创建XString（对齐Qt QString::fromUcs4）
+ * @param ucs4 UTF-32编码字符串（uint32_t数组）
+ * @param len 字符串长度（字符数，不含终止符）
+ * @return 新XString，ucs4为NULL或len为0返回空字符串
+ */
+XString* XString_create_with_length_utf32(const uint32_t* ucs4, size_t len);
+
+/**
+ * @brief 从本地8位编码字符串创建XString（对齐Qt QString::fromLocal8Bit）
+ * @param local_str 本地编码字符串（Windows为GBK，Linux为UTF-8）
+ * @return 新XString，local_str为NULL返回NULL
+ */
+XString* XString_create_local(const char* local_str);
+
+// -------------------------- Qt 6.8 对齐：别名宏 --------------------------
+
+/**
+ * @brief toLocal8Bit别名，返回本地8位编码（对齐Qt QString::toLocal8Bit）
+ * @note 宏实现，等价于 XString_toLocal
+ */
+#define XString_toLocal8Bit				XString_toLocal
+/**
+ * @brief toUcs4别名，返回UTF-32(UCS-4)编码（对齐Qt QString::toUcs4）
+ * @note 宏实现，等价于 XString_toUtf32
+ */
+#define XString_toUcs4					XString_toUtf32
+/**
+ * @brief fromLatin1别名（对齐Qt QString::fromLatin1）
+ * @note 宏实现，等价于 XString_create_latin1
+ */
+#define XString_fromLatin1				XString_create_latin1
+/**
+ * @brief fromUcs4别名（对齐Qt QString::fromUcs4）
+ * @note 宏实现，等价于 XString_create_utf32
+ */
+#define XString_fromUcs4					XString_create_utf32
+/**
+ * @brief fromLocal8Bit别名（对齐Qt QString::fromLocal8Bit）
+ * @note 宏实现，等价于 XString_create_local
+ */
+#define XString_fromLocal8Bit			XString_create_local
+/**
+ * @brief asprintf别名，按printf格式创建新XString（对齐Qt QString::asprintf）
+ * @note 宏实现，等价于 XString_create_fmt_utf8
+ */
+#define XString_asprintf					XString_create_fmt_utf8
 
 //拷贝字符串并返回
 char* XStrdup(char* str);

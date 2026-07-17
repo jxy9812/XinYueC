@@ -20,6 +20,7 @@ void XStringConvertTest(void);
 void XStringStaticTest(void);
 void XStringCharOpsTest(void);
 void XStringUtf16Test(void);
+void XStringQtAlignTest(void);
 static void XFor_each_XString(XString* str, void* args)
 {
 	XPrintf_2(str);
@@ -470,11 +471,294 @@ void XStringCharOpsTest()
 }
 
 // 全部测试：依次运行所有测试
+// Qt 6.8 对齐测试：section / arg / localeAwareCompare / 新创建函数
+void XStringQtAlignTest()
+{
+	XPrintf_3("========== Qt对齐测试 (section/arg/localeAwareCompare) ==========\n\n");
+
+	// ---------------- section 分段测试 ----------------
+	XPrintf_3("--- section 分段测试 ---\n");
+	{
+		XString* csv = XString_create_utf8("forename,middlename,surname,phone");
+		{
+			XString* s = XString_section_utf8(csv, ",", 2, 2, XString_SectionDefault);
+			XPrintf_3("csv.section(',',2,2)        = "); XPrintf_2(s); XPrintf_3("  (期望:surname)\n");
+			XString_delete_base(s);
+		}
+		{
+			XString* s = XString_section_utf8(csv, ",", -3, -2, XString_SectionDefault);
+			XPrintf_3("csv.section(',',-3,-2)      = "); XPrintf_2(s); XPrintf_3("  (期望:middlename,surname)\n");
+			XString_delete_base(s);
+		}
+		XString_delete_base(csv);
+	}
+	{
+		XString* path = XString_create_utf8("/usr/local/bin/myapp");
+		{
+			XString* s = XString_section_utf8(path, "/", 3, 4, XString_SectionDefault);
+			XPrintf_3("path.section('/',3,4)       = "); XPrintf_2(s); XPrintf_3("  (期望:bin/myapp)\n");
+			XString_delete_base(s);
+		}
+		{
+			XString* s = XString_section_utf8(path, "/", 3, 3, XString_SectionSkipEmpty);
+			XPrintf_3("path.section('/',3,3,Skip)  = "); XPrintf_2(s); XPrintf_3("  (期望:myapp)\n");
+			XString_delete_base(s);
+		}
+		{
+			XString* s = XString_section_utf8(path, "/", -1, -1, XString_SectionDefault);
+			XPrintf_3("path.section('/',-1)        = "); XPrintf_2(s); XPrintf_3("  (期望:myapp)\n");
+			XString_delete_base(s);
+		}
+		XString_delete_base(path);
+	}
+	{
+		// 多字符分隔符 + 单字符(XChar)分隔符 + 标志位
+		XString* data = XString_create_utf8("forename**middlename**surname**phone");
+		{
+			XString* s = XString_section_utf8(data, "**", -3, -2, XString_SectionDefault);
+			XPrintf_3("data.section('**',-3,-2)    = "); XPrintf_2(s); XPrintf_3("  (期望:middlename**surname)\n");
+			XString_delete_base(s);
+		}
+		XString_delete_base(data);
+
+		XString* csv = XString_create_utf8("forename,middlename,surname,phone");
+		{
+			XString* s = XString_section_char(csv, XChar_from(','), 2, 2,
+				XString_SectionIncludeLeadingSep | XString_SectionIncludeTrailingSep);
+			XPrintf_3("section_char(',',2,2,Lead|Trail) = "); XPrintf_2(s); XPrintf_3("  (期望:,surname,)\n");
+			XString_delete_base(s);
+		}
+		XString_delete_base(csv);
+	}
+
+	// ---------------- arg 占位符替换测试 ----------------
+	XPrintf_3("\n--- arg 占位符替换测试 ---\n");
+	{
+		// 字符串arg链式替换（最低编号优先）
+		XString* fmt = XString_create_utf8("%1 你好 %2");
+		XString* r1 = XString_arg_utf8(fmt, "世界", 0, XChar_from(' '));
+		XString* r2 = XString_arg_utf8(r1, "再见", 0, XChar_from(' '));
+		XPrintf_3("arg链式(%1 你好 %2)      = "); XPrintf_2(r2); XPrintf_3("  (期望:世界 你好 再见)\n");
+		XString_delete_base(r2);
+		XString_delete_base(r1);
+		XString_delete_base(fmt);
+	}
+	{
+		// 整数arg（宏委托arg_llong）
+		XString* fmt = XString_create_utf8("%1: 共 %2 项");
+		XString* r1 = XString_arg_int(fmt, 42, 0, 10, XChar_from(' '));
+		XString* r2 = XString_arg_llong(r1, 100, 0, 10, XChar_from(' '));
+		XPrintf_3("arg_int/llong(%1: 共 %2 项) = "); XPrintf_2(r2); XPrintf_3("  (期望:42: 共 100 项)\n");
+		XString_delete_base(r2);
+		XString_delete_base(r1);
+		XString_delete_base(fmt);
+	}
+	{
+		// double arg + fieldWidth 填充（右对齐/左对齐）
+		XString* fmt = XString_create_utf8("值=%1");
+		XString* r1 = XString_arg_double(fmt, 3.14, 8, 'f', 2, XChar_from('_'));
+			XPrintf_3("arg_double(fw=8 右对齐)    = "); XPrintf_2(r1); XPrintf_3("  (期望:值=____3.14)\n");
+		XString_delete_base(r1);
+		XString* r2 = XString_arg_double(fmt, 3.14, -8, 'f', 2, XChar_from('_'));
+			XPrintf_3("arg_double(fw=-8 左对齐)   = "); XPrintf_2(r2); XPrintf_3("  (期望:值=3.14____)\n");
+		XString_delete_base(r2);
+		XString_delete_base(fmt);
+	}
+	{
+		// 单字符arg
+		XString* fmt = XString_create_utf8("字母%1");
+		XString* r = XString_arg_char(fmt, XChar_from('X'), 0, XChar_from(' '));
+		XPrintf_3("arg_char('X')              = "); XPrintf_2(r); XPrintf_3("  (期望:字母X)\n");
+		XString_delete_base(r);
+		XString_delete_base(fmt);
+	}
+	{
+		// 无占位符：返回源串拷贝
+		XString* fmt = XString_create_utf8("无占位符");
+		XString* r = XString_arg_utf8(fmt, "x", 0, XChar_from(' '));
+		XPrintf_3("arg(无占位符)              = "); XPrintf_2(r); XPrintf_3("  (期望:无占位符)\n");
+		XString_delete_base(r);
+		XString_delete_base(fmt);
+	}
+	{
+		// 重复占位符 %1 全部替换
+		XString* fmt = XString_create_utf8("%1 和 %1");
+		XString* r = XString_arg_utf8(fmt, "A", 0, XChar_from(' '));
+		XPrintf_3("arg(%1 和 %1)            = "); XPrintf_2(r); XPrintf_3("  (期望:A 和 A)\n");
+		XString_delete_base(r);
+		XString_delete_base(fmt);
+	}
+
+	// ---------------- localeAwareCompare 区域感知比较 ----------------
+	XPrintf_3("\n--- localeAwareCompare 区域感知比较 ---\n");
+	{
+		XString* a = XString_create_utf8("apple");
+		XString* b = XString_create_utf8("banana");
+		XPrintf("compare(apple,banana) = %d  (期望:<0)\n", XString_localeAwareCompare(a, b));
+		XPrintf("compare(apple,apple)   = %d  (期望:0)\n", XString_localeAwareCompare(a, a));
+		XPrintf("compare(banana,apple) = %d  (期望:>0)\n", XString_localeAwareCompare(b, a));
+		XString_delete_base(a);
+		XString_delete_base(b);
+	}
+
+	// ---------------- 新创建函数 + 别名宏 ----------------
+	XPrintf_3("\n--- 新创建函数 + 别名宏 ---\n");
+	{
+		XString* s = XString_create_latin1("Hello");
+		XPrintf_3("create_latin1(Hello)       = "); XPrintf_2(s); XPrintf_3("  (期望:Hello)\n");
+		XString_delete_base(s);
+		XString* s2 = XString_fromLatin1("QtAlias");
+		XPrintf_3("fromLatin1(QtAlias)        = "); XPrintf_2(s2); XPrintf_3("  (期望:QtAlias)\n");
+		XString_delete_base(s2);
+	}
+	{
+		uint32_t ucs4[] = { 0x4F60, 0x597D, 0 };  // 你好
+		XString* s = XString_create_utf32(ucs4);
+		XPrintf_3("create_utf32(你好)          = "); XPrintf_2(s); XPrintf_3("  (期望:你好)\n");
+		XString_delete_base(s);
+		XString* s2 = XString_fromUcs4(ucs4);
+		XPrintf_3("fromUcs4(你好)              = "); XPrintf_2(s2); XPrintf_3("  (期望:你好)\n");
+		XString_delete_base(s2);
+	}
+	{
+		XString* s = XString_fromLocal8Bit("本地8位");
+		XPrintf_3("fromLocal8Bit(本地8位)      = "); XPrintf_2(s); XPrintf_3("  (期望:本地8位)\n");
+		XString_delete_base(s);
+	}
+	{
+		XString* s = XString_asprintf("%d年%s", 2026, "测试");
+		XPrintf_3("asprintf 结果              = "); XPrintf_2(s); XPrintf_3("  (期望:2026年测试)\n");
+		XString_delete_base(s);
+	}
+	{
+		// toLocal8Bit / toUcs4 别名
+		XString* s = XString_create_utf8("Ab你好");
+		const char* local = XString_toLocal8Bit(s);
+		XPrintf_3("toLocal8Bit(str)           = "); XPrintf_3(local); XPrintf_3("  (期望:Ab你好)\n");
+		const uint32_t* ucs4 = XString_toUcs4(s);
+		XPrintf("toUcs4(str)[0]=%u [2]=0x%04X  (期望:65,0x4F60)\n", (unsigned)ucs4[0], (unsigned)ucs4[2]);
+		XString_delete_base(s);
+	}
+
+	// ---------------- 宏化重构验证（number/constData 别名宏） ----------------
+	XPrintf_3("\n--- 宏化重构验证 (number/constData 别名宏) ---\n");
+	{
+		// number_int 宏委托 number_llong（对齐Qt: number(int)->number(qlonglong)）
+		XString* n1 = XString_number_int(255, 16);
+		XPrintf_3("number_int(255,16)         = "); XPrintf_2(n1); XPrintf_3("  (期望:FF)\n");
+		XString_delete_base(n1);
+		XString* n2 = XString_number_int(12345, 10);
+		XPrintf_3("number_int(12345,10)       = "); XPrintf_2(n2); XPrintf_3("  (期望:12345)\n");
+		XString_delete_base(n2);
+		// number_float 宏委托 number_double
+		XString* n3 = XString_number_float(3.14, 'f', 2);
+		XPrintf_3("number_float(3.14,f,2)     = "); XPrintf_2(n3); XPrintf_3("  (期望:3.14)\n");
+		XString_delete_base(n3);
+	}
+	{
+		// constData 宏等价于 unicode（返回同一指针）
+		XString* s = XString_create_utf8("abc");
+		XPrintf("constData==unicode 指针相同: %s  (期望:是)\n", (XString_unicode(s) == XString_constData(s)) ? "是" : "否");
+		XString_delete_base(s);
+	}
+
+	// ---------------- leftJustified / rightJustified 对齐填充测试 ----------------
+	XPrintf_3("\n--- leftJustified / rightJustified 对齐填充测试 ---\n");
+	{
+		// 基本左对齐填充
+		XString* s = XString_create_utf8("abc");
+		XString* r = XString_leftJustified(s, 7, XChar_from('_'), false);
+		XPrintf_3("leftJustified(abc,7,_,false)  = "); XPrintf_2(r); XPrintf_3("  (期望:abc____)\n");
+		XString_delete_base(r);
+		XString_delete_base(s);
+	}
+	{
+		// 基本右对齐填充
+		XString* s = XString_create_utf8("abc");
+		XString* r = XString_rightJustified(s, 7, XChar_from('_'), false);
+		XPrintf_3("rightJustified(abc,7,_,false) = "); XPrintf_2(r); XPrintf_3("  (期望:____abc)\n");
+		XString_delete_base(r);
+		XString_delete_base(s);
+	}
+	{
+		// 左对齐 + 截断 (width < len, truncate=true)
+		XString* s = XString_create_utf8("abcde");
+		XString* r = XString_leftJustified(s, 3, XChar_from('-'), true);
+		XPrintf_3("leftJustified(abcde,3,-,true) = "); XPrintf_2(r); XPrintf_3("  (期望:abc)\n");
+		XString_delete_base(r);
+		XString_delete_base(s);
+	}
+	{
+		// 右对齐 + 截断 (width < len, truncate=true)
+		XString* s = XString_create_utf8("abcde");
+		XString* r = XString_rightJustified(s, 3, XChar_from('-'), true);
+		XPrintf_3("rightJustified(abcde,3,-,true)= "); XPrintf_2(r); XPrintf_3("  (期望:abc)\n");
+		XString_delete_base(r);
+		XString_delete_base(s);
+	}
+	{
+		// 不截断：width < len, truncate=false → 返回原串拷贝
+		XString* s = XString_create_utf8("abcde");
+		XString* r = XString_leftJustified(s, 3, XChar_from('-'), false);
+		XPrintf_3("leftJustified(abcde,3,-,false)= "); XPrintf_2(r); XPrintf_3("  (期望:abcde)\n");
+		XString_delete_base(r);
+		XString_delete_base(s);
+	}
+	{
+		// 不截断：width < len, truncate=false → 返回原串拷贝
+		XString* s = XString_create_utf8("abcde");
+		XString* r = XString_rightJustified(s, 3, XChar_from('-'), false);
+		XPrintf_3("rightJustified(abcde,3,-,false)="); XPrintf_2(r); XPrintf_3("  (期望:abcde)\n");
+		XString_delete_base(r);
+		XString_delete_base(s);
+	}
+	{
+		// 等宽：width == len
+		XString* s = XString_create_utf8("abc");
+		XString* r = XString_leftJustified(s, 3, XChar_from('_'), false);
+		XPrintf_3("leftJustified(abc,3,_,false)  = "); XPrintf_2(r); XPrintf_3("  (期望:abc)\n");
+		XString_delete_base(r);
+		XString_delete_base(s);
+	}
+	{
+		// 空串填充
+		XString* s = XString_create_utf8("");
+		XString* r = XString_rightJustified(s, 5, XChar_from('*'), false);
+		XPrintf_3("rightJustified('',5,*,false)  = "); XPrintf_2(r); XPrintf_3("  (期望:*****)\n");
+		XString_delete_base(r);
+		XString_delete_base(s);
+	}
+	{
+		// NULL 安全性
+		XString* r = XString_leftJustified(NULL, 10, XChar_from('.'), false);
+		XPrintf("leftJustified(NULL)=%s  (期望:空)\n", r ? "非空" : "空");
+		XString_delete_base(r);
+	}
+	{
+		// NULL 安全性
+		XString* r = XString_rightJustified(NULL, 10, XChar_from('.'), true);
+		XPrintf("rightJustified(NULL)=%s  (期望:空)\n", r ? "非空" : "空");
+		XString_delete_base(r);
+	}
+	{
+		// 中文填充
+		XString* s = XString_create_utf8("你好");
+		XString* r = XString_leftJustified(s, 6, XChar_from(' '), false);
+		XPrintf_3("leftJustified(你好,6, ,false)  = "); XPrintf_2(r); XPrintf_3("  (期望:你好    )\n");
+		XString_delete_base(r);
+		XString_delete_base(s);
+	}
+	XPrintf_3("\n========== Qt对齐测试结束 ==========\n");
+	XCoreApplication_quit();
+}
+
 void XStringAllTest()
 {
 	//while(true)
 	{
 		XPrintf_3("========== XString 全部测试开始 ==========\n\n");
+
+		XStringQtAlignTest();
 
 		XStringSlicedTest();
 		XStringInplaceTest();
@@ -565,6 +849,10 @@ void XMenu_XStringTest(XMenu* root)
 	{
 		XAction* action = XMenu_addAction(menu, "utf16直接返回测试");
 		XAction_setAction(action, XStringUtf16Test);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "Qt对齐(section/arg/locale)");
+		XAction_setAction(action, XStringQtAlignTest);
 	}
 }
 #endif

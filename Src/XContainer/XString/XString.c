@@ -195,6 +195,69 @@ XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
     return str;
 }
 
+// 从Latin-1字符串创建XString（对齐Qt QString::fromLatin1）
+XString* XString_create_latin1(const char* latin1_str)
+{
+    if (!latin1_str) return NULL;
+    return XString_create_with_length_latin1((const uint8_t*)latin1_str, strlen(latin1_str));
+}
+
+XString* XString_create_with_length_latin1(const uint8_t* latin1, size_t len)
+{
+    if (!latin1 || len == 0) return XString_create();
+    int64_t xchar_count = XChar_fromLatin1Stream(latin1, len, NULL, 0);
+    if (xchar_count <= 0) return XString_create();
+    XString* str = (XString*)XMalloc_System(sizeof(XString));
+    if (!str) return NULL;
+    XString_init(str);
+    XString_reserve(str, (size_t)xchar_count);
+    XChar* data = XString_data(str);
+    xchar_count = XChar_fromLatin1Stream(latin1, len, data, (size_t)xchar_count + 1);
+    str->parent.m_size = (size_t)xchar_count;
+    data[xchar_count] = (XChar){ 0 };
+    XString_deinitCache(str);
+    Set_Class_MemoryFree(str, XFree_System);
+    return str;
+}
+
+// 从UTF-32(UCS-4)字符串创建XString（对齐Qt QString::fromUcs4）
+XString* XString_create_utf32(const uint32_t* ucs4)
+{
+    if (!ucs4) return NULL;
+    size_t len = 0;
+    while (ucs4[len] != 0) len++;
+    return XString_create_with_length_utf32(ucs4, len);
+}
+
+XString* XString_create_with_length_utf32(const uint32_t* ucs4, size_t len)
+{
+    if (!ucs4 || len == 0) return XString_create();
+    int64_t xchar_count = XChar_fromUtf32Stream(ucs4, len, NULL, 0);
+    if (xchar_count <= 0) return XString_create();
+    XString* str = (XString*)XMalloc_System(sizeof(XString));
+    if (!str) return NULL;
+    XString_init(str);
+    XString_reserve(str, (size_t)xchar_count);
+    XChar* data = XString_data(str);
+    xchar_count = XChar_fromUtf32Stream(ucs4, len, data, (size_t)xchar_count + 1);
+    str->parent.m_size = (size_t)xchar_count;
+    data[xchar_count] = (XChar){ 0 };
+    XString_deinitCache(str);
+    Set_Class_MemoryFree(str, XFree_System);
+    return str;
+}
+
+// 从本地8位编码字符串创建XString（对齐Qt QString::fromLocal8Bit）
+XString* XString_create_local(const char* local_str)
+{
+    if (!local_str) return NULL;
+#ifdef _WIN32
+    return XString_create_gbk(local_str);
+#else
+    return XString_create_utf8(local_str);
+#endif
+}
+
 XString* XString_create_gbk(const char* gbk_str)
 {
     if (!gbk_str) return NULL;
@@ -534,7 +597,7 @@ const char* XString_toLocal(const XString* str)
  return str->m_cache[XStringCache_Local].m_data;
 }
 
-size_t XString_toUtfLocal_length(const XString* str)
+size_t XString_toLocal_length(const XString* str)
 {
     if (!str || XString_isEmpty_base(str))
         return 0;
@@ -2532,14 +2595,9 @@ size_t XString_maxSize(void)
 /*                 Qt 6.8 对齐：数值转字符串静态函数                              */
 /* ========================================================================== */
 
-DEFINE_NUMBER(XString_number_int, XString_setNum_int, int)
-DEFINE_NUMBER(XString_number_uint, XString_setNum_uInt, unsigned int)
-DEFINE_NUMBER(XString_number_long, XString_setNum_long, long)
-DEFINE_NUMBER(XString_number_ulong, XString_setNum_uLong, unsigned long)
 DEFINE_NUMBER(XString_number_llong, XString_setNum_llong, long long)
 DEFINE_NUMBER(XString_number_ullong, XString_setNum_uLLong, unsigned long long)
 DEFINE_NUMBER_FLOAT(XString_number_double, XString_setNum_double, double)
-DEFINE_NUMBER_FLOAT(XString_number_float, XString_setNum_float, float)
 
 /* ========================================================================== */
 /*                 Qt 6.8 对齐：数据访问函数                                    */
@@ -2548,12 +2606,6 @@ DEFINE_NUMBER_FLOAT(XString_number_float, XString_setNum_float, float)
 XChar* XString_data_ptr(XString* str)
 {
     return XString_data(str);
-}
-
-const XChar* XString_constData(const XString* str)
-{
-    if (!str) return NULL;
-    return XString_cdata(str);
 }
 
 /* ========================================================================== */
@@ -2682,4 +2734,276 @@ bool XString_replace_char(XString* str, XChar before, XChar after, XChar_CaseSen
 
     if (replaced) XString_deinitCache(str);
     return replaced;
+}
+
+// ==========================================================================
+//          Qt 6.8 对齐：section() 分段提取
+// ==========================================================================
+
+XString* XString_section(const XString* str, const XString* sep, int64_t start, int64_t end, int flags)
+{
+    if (!str || !sep) return XString_create_utf8("");
+    size_t str_len = XString_length_base(str);
+    size_t sep_len = XString_length_base(sep);
+    XChar_CaseSensitivity cs = (flags & XString_SectionCaseInsensitiveSeps) ? XChar_CaseInsensitive : XChar_CaseSensitive;
+    bool skipEmpty = (flags & XString_SectionSkipEmpty) != 0;
+
+    // 空分隔符：整个字符串视作单段
+    if (sep_len == 0) {
+        int64_t s = start, e = end;
+        if (s < 0) s += 1;
+        if (e < 0) e += 1;
+        if (s >= 1 || e < 0 || s > e) return XString_create_utf8("");
+        return XString_create_copy(str);
+    }
+
+    // 第一遍：统计段数(KeepEmptyParts语义)与空段数
+    size_t sectionsSize = 1;
+    size_t emptyCount = 0;
+    {
+        size_t seg = 0;
+        while (true) {
+            int64_t p = XString_index_of(str, sep, seg, cs);
+            if (p == -1) break;
+            if ((size_t)p == seg) emptyCount++;
+            sectionsSize++;
+            seg = (size_t)p + sep_len;
+        }
+        if (str_len == seg) emptyCount++;  // 末段为空
+    }
+
+    // 段号负数修正（与Qt一致：从右计数）
+    int64_t s = start, e = end;
+    if (!skipEmpty) {
+        if (s < 0) s += (int64_t)sectionsSize;
+        if (e < 0) e += (int64_t)sectionsSize;
+    } else {
+        int64_t nonEmpty = (int64_t)(sectionsSize - emptyCount);
+        if (s < 0) s += nonEmpty;
+        if (e < 0) e += nonEmpty;
+    }
+    if (s >= (int64_t)sectionsSize || e < 0 || s > e) return XString_create_utf8("");
+
+    // 第二遍：构造结果（对齐Qt算法，x为计数码段号，i为原始段号）
+    XString* ret = XString_create_utf8("");
+    int64_t first_i = s, last_i = e;
+    int64_t x = 0, i = 0;
+    size_t seg = 0;
+    while (x <= e && i < (int64_t)sectionsSize) {
+        int64_t p = XString_index_of(str, sep, seg, cs);
+        size_t segEnd = (p == -1) ? str_len : (size_t)p;
+        bool empty = (segEnd == seg);
+        if (x >= s) {
+            if (x == s) first_i = i;
+            if (x == e) last_i = i;
+            if (x > s && i > 0) XString_append(ret, sep);
+            if (segEnd > seg) {
+                XString* piece = XString_mid(str, seg, segEnd - seg);
+                XString_append(ret, piece);
+                XString_delete_base(piece);
+            }
+        }
+        if (!empty || !skipEmpty) x++;
+        i++;
+        if (p == -1) break;
+        seg = (size_t)p + sep_len;
+    }
+    if ((flags & XString_SectionIncludeLeadingSep) && first_i > 0) XString_prepend(ret, sep);
+    if ((flags & XString_SectionIncludeTrailingSep) && last_i < (int64_t)sectionsSize - 1) XString_append(ret, sep);
+    return ret;
+}
+
+XString* XString_section_utf8(const XString* str, const char* sep, int64_t start, int64_t end, int flags)
+{
+    if (!str || !sep) return XString_create_utf8("");
+    XString* sepStr = XString_create_utf8(sep);
+    XString* ret = XString_section(str, sepStr, start, end, flags);
+    XString_delete_base(sepStr);
+    return ret;
+}
+
+XString* XString_section_char(const XString* str, XChar sep, int64_t start, int64_t end, int flags)
+{
+    if (!str) return XString_create_utf8("");
+    XString* sepStr = XString_create();
+    if (sepStr) XString_push_back_base(sepStr, sep);
+    XString* ret = XString_section(str, sepStr, start, end, flags);
+    XString_delete_base(sepStr);
+    return ret;
+}
+
+// ==========================================================================
+//          Qt 6.8 对齐：arg() 占位符替换
+// ==========================================================================
+
+XString* XString_arg(const XString* str, const XString* a, int fieldWidth, XChar fillChar)
+{
+    if (!str) return NULL;
+    size_t len = XString_length_base(str);
+    const XChar* data = XString_cdata(str);
+    XChar percent = XChar_from('%');
+    XChar Lch = XChar_from('L');
+
+    // 第一遍：查找最低编号占位符 %N（1~2位数字，可选%L前缀）
+    int min_escape = INT_MAX;
+    int64_t occurrences = 0;
+    int64_t escape_len = 0;
+    {
+        size_t i = 0;
+        while (i < len) {
+            while (i < len && data[i] != percent) i++;
+            if (i == len) break;
+            size_t esc_start = i;  // '%' 位置
+            i++;
+            if (i == len) break;
+            if (data[i] == Lch) { i++; if (i == len) break; }
+            int d1 = XChar_digitValue(data[i]);
+            if (d1 == -1) continue;  // 非占位符
+            int escape = d1;
+            i++;
+            if (i < len) {
+                int d2 = XChar_digitValue(data[i]);
+                if (d2 != -1) { escape = 10 * escape + d2; i++; }
+            }
+            if (escape > min_escape) continue;
+            if (escape < min_escape) { min_escape = escape; occurrences = 0; escape_len = 0; }
+            occurrences++;
+            escape_len += (int64_t)(i - esc_start);
+        }
+    }
+
+    // 无占位符：返回源串拷贝（对齐Qt：无占位符返回*this）
+    if (occurrences == 0) return XString_create_copy(str);
+
+    // 第二遍：构造结果，替换所有最低编号占位符
+    size_t a_len = a ? XString_length_base(a) : 0;
+    const XChar* asrc = a ? XString_cdata(a) : NULL;
+    int abs_fw = fieldWidth < 0 ? -fieldWidth : fieldWidth;
+    size_t use_len = ((size_t)abs_fw > a_len) ? (size_t)abs_fw : a_len;
+    size_t result_len = len - (size_t)escape_len + (size_t)occurrences * use_len;
+
+    XString* ret = XString_create_utf8("");
+    if (!ret) return NULL;
+    XString_reserve(ret, result_len > 0 ? result_len : 1);
+    XChar* dst = XString_data(ret);
+    size_t di = 0;
+    int64_t repl = 0;
+
+    size_t i = 0;
+    while (i < len) {
+        size_t text_start = i;
+        while (i < len && data[i] != percent) i++;
+        // 解析 i 处的占位符
+        size_t j = i;
+        int escape = -1;
+        if (j < len) {
+            j++;  // 跳过 '%'
+            if (j < len && data[j] == Lch) j++;  // 跳过 'L'
+            if (j < len) {
+                int d1 = XChar_digitValue(data[j]);
+                if (d1 != -1) {
+                    escape = d1; j++;
+                    if (j < len) { int d2 = XChar_digitValue(data[j]); if (d2 != -1) { escape = 10 * escape + d2; j++; } }
+                }
+            }
+        }
+        if (escape != min_escape) {
+            size_t endpos = (i == len) ? len : j;
+            if (endpos > text_start) { memcpy(dst + di, data + text_start, (endpos - text_start) * sizeof(XChar)); di += endpos - text_start; }
+            i = endpos;
+            if (i == len) break;
+        } else {
+            // 拷贝占位符之前的文本
+            if (i > text_start) { memcpy(dst + di, data + text_start, (i - text_start) * sizeof(XChar)); di += i - text_start; }
+            // 左填充（fieldWidth>0 右对齐）
+            if (fieldWidth > 0 && (size_t)abs_fw > a_len) {
+                size_t pad = (size_t)abs_fw - a_len;
+                for (size_t p = 0; p < pad; p++) dst[di++] = fillChar;
+            }
+            if (a_len) { memcpy(dst + di, asrc, a_len * sizeof(XChar)); di += a_len; }
+            // 右填充（fieldWidth<0 左对齐）
+            if (fieldWidth < 0 && (size_t)abs_fw > a_len) {
+                size_t pad = (size_t)abs_fw - a_len;
+                for (size_t p = 0; p < pad; p++) dst[di++] = fillChar;
+            }
+            i = j;
+            repl++;
+            if (repl == occurrences) {
+                if (len > i) { memcpy(dst + di, data + i, (len - i) * sizeof(XChar)); di += len - i; }
+                i = len;
+                break;
+            }
+        }
+    }
+    ret->parent.m_size = di;
+    dst[di] = (XChar){ 0 };
+    XString_deinitCache(ret);
+    return ret;
+}
+
+XString* XString_arg_utf8(const XString* str, const char* a, int fieldWidth, XChar fillChar)
+{
+    if (!str) return NULL;
+    XString* as = XString_create_utf8(a);
+    XString* ret = XString_arg(str, as, fieldWidth, fillChar);
+    XString_delete_base(as);
+    return ret;
+}
+
+XString* XString_arg_char(const XString* str, XChar a, int fieldWidth, XChar fillChar)
+{
+    if (!str) return NULL;
+    XString* as = XString_create();
+    if (as) XString_push_back_base(as, a);
+    XString* ret = XString_arg(str, as, fieldWidth, fillChar);
+    XString_delete_base(as);
+    return ret;
+}
+
+/**
+ * @brief arg整数系列实现宏：格式化数值后委托 XString_arg 替换最低编号占位符
+ * @param FuncName 生成的函数名
+ * @param SetNumFunc 数值格式化函数（XString_setNum_*）
+ * @param IntType 数值类型
+ * @note 内部宏，用于消除 arg_llong/arg_ullong 的重复实现
+ */
+#define DEFINE_ARG_INT(FuncName, SetNumFunc, IntType) \
+XString* FuncName(const XString* str, IntType a, int fieldWidth, int base, XChar fillChar) { \
+    XString* num = XString_create(); \
+    if (!num) return XString_create_copy(str); \
+    if (!SetNumFunc(num, a, base)) { XString_delete_base(num); return XString_create_copy(str); } \
+    XString* ret = XString_arg(str, num, fieldWidth, fillChar); \
+    XString_delete_base(num); \
+    return ret; \
+}
+
+DEFINE_ARG_INT(XString_arg_llong, XString_setNum_llong, long long)
+DEFINE_ARG_INT(XString_arg_ullong, XString_setNum_uLLong, unsigned long long)
+
+XString* XString_arg_double(const XString* str, double a, int fieldWidth, char format, int precision, XChar fillChar)
+{
+    if (!str) return NULL;
+    XString* num = XString_create();
+    if (!num) return XString_create_copy(str);
+    if (!XString_setNum_double(num, a, format, precision)) { XString_delete_base(num); return XString_create_copy(str); }
+    XString* ret = XString_arg(str, num, fieldWidth, fillChar);
+    XString_delete_base(num);
+    return ret;
+}
+
+// ==========================================================================
+//          Qt 6.8 对齐：localeAwareCompare 区域感知比较
+// ==========================================================================
+
+int32_t XString_localeAwareCompare(const XString* str1, const XString* str2)
+{
+    if (!str1 && !str2) return 0;
+    if (!str1) return -1;
+    if (!str2) return 1;
+
+    const char* l1 = XString_toLocal(str1);
+    const char* l2 = XString_toLocal(str2);
+    if (!l1) l1 = "";
+    if (!l2) l2 = "";
+    return (int32_t)strcoll(l1, l2);
 }
