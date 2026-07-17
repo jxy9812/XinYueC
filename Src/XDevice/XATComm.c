@@ -7,7 +7,7 @@
 #include <string.h>
 
 static void VXATComm_processResponse(XATComm* comm);
-static void VXATComm_timerEvent(XObject* self, XEventTimer* event);
+static void VXATComm_timerEvent(XObject* self, XTimerEvent* event);
 static void VXATComm_deinit(XATComm* comm);
 
 // readyRead 信号回调 → 通过虚函数表分发到子类实现
@@ -188,7 +188,7 @@ void VXATComm_processResponse(XATComm* comm)
 
 // ========== 定时器事件（超时处理） ==========
 
-static void VXATComm_timerEvent(XObject* self, XEventTimer* event)
+static void VXATComm_timerEvent(XObject* self, XTimerEvent* event)
 {
     (void)event;
     XATComm* comm = (XATComm*)self;

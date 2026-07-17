@@ -39,7 +39,7 @@ void VXSocketNotifier_deinit(XObject* obj)
 {
     XSocketNotifier* self = (XSocketNotifier*)obj;
     // 注销（由 dispatcher 实现，安全处理无效状态）
-    XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentDispatcher(), self);
+    XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentEventDispatcher(), self);
     XClass_Deinit_Parent(XObject, obj);
 }
 
@@ -88,14 +88,14 @@ void XSocketNotifier_setSocket(XSocketNotifier* notifier, XFd socket)
     if (!notifier) return;
     // 先注销旧的（如果有效）
     if (notifier->socket >= 0) {
-        XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentDispatcher(), notifier);
+        XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentEventDispatcher(), notifier);
     }
 
     notifier->socket = socket;
 
     // 如果新 socket 有效且已启用，则注册
     if (notifier->enabled && socket >= 0) {
-        XAbstractEventDispatcher_registerSocketNotifier_base(XThread_currentDispatcher(), notifier);
+        XAbstractEventDispatcher_registerSocketNotifier_base(XThread_currentEventDispatcher(), notifier);
     }
 }
 
@@ -127,10 +127,10 @@ void XSocketNotifier_setEnabled(XSocketNotifier* notifier, bool enabled)
     notifier->enabled = enabled;
 
     if (enabled && notifier->socket >= 0) {
-        XAbstractEventDispatcher_registerSocketNotifier_base(XThread_currentDispatcher(), notifier);
+        XAbstractEventDispatcher_registerSocketNotifier_base(XThread_currentEventDispatcher(), notifier);
     }
     else {
-        XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentDispatcher(), notifier);
+        XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentEventDispatcher(), notifier);
     }
 }
 

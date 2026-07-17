@@ -10,38 +10,24 @@
 #include "XLockFreeQueue.h"
 #include "XTimeWheelGroup.h"
 #include "XAtomic.h"
-//投递类型
-typedef enum PostType
-{
-    Post_SignalSlot,
-    //Post_Event,
-    Post_Func,
-}PostType;
-//投递的数据
-typedef struct PostData
-{
-    PostType type;
-    union
-    {
-        struct 
-        {
-            XSignalSlot* signalSlot;//控制区分是发送信号函数投递函数执行
-            void (*sendSignalFunc)(XSignalSlot*, size_t, void*, XAtomic_int32_t*, XEventPriority);//发送信号的函数
-            size_t signal;
-        };
-        struct
-        {
-            void (*run_func)(void* args);//需要被执行的函数
-            XObject* object;
-        };
-    };
-    void* args;
-    void(*del)(void*);              // 参数释放方式
-    XAtomic_int32_t* ref_count;//参数引用次数
-    XEventPriority priority;
-}PostData;//
+#include <stdlib.h>
 
 static void VXEventLoop_deinit(XEventLoop* loop);
+static bool VXEventLoop_event(XEventLoop* loop, XEvent* event);
+
+static XThreadData* XEventLoop_threadData(const XEventLoop* loop)
+{
+    if (!loop) return NULL;
+    XThreadData* td = XObject_threadData((const XObject*)loop);
+    if (!td) return XThreadData_current();
+    return td;
+}
+
+static XAbstractEventDispatcher* XEventLoop_dispatcher(XEventLoop* loop)
+{
+    XThreadData* data = XEventLoop_threadData(loop);
+    return data ? data->m_eventDispatcher : NULL;
+}
 
 /**
  * @brief 初始化事件循环类的虚函数表
@@ -56,11 +42,7 @@ XVtable* XEventLoop_class_init() {
 #endif
         XVTABLE_INHERIT_XCLASS(XObject);
 
-    //void* table[] = {
-    // 
-    //};
-
-    //XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXEventLoop_event);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXEventLoop_deinit);
 
 #if SHOWCONTAINERSIZE
@@ -71,20 +53,19 @@ XVtable* XEventLoop_class_init() {
 
 /**
  * @brief 创建事件循环实例
- * @param dispatcher 关联的事件调度器，NULL则创建默认调度器
  * @return 新创建的事件循环实例
  */
 XEventLoop* XEventLoop_create() {
     XEventLoop* loop = XMalloc_System(sizeof(XEventLoop));
+    if (!loop)
+        return NULL;
     XEventLoop_init(loop);
     Set_Class_MemoryFree(loop, XFree_System);
     return loop;
 }
 
 /**
- * @brief 初始化事件循环
- * @param loop 要初始化的事件循环
- * @param dispatcher 关联的事件调度器，NULL则创建默认调度器
+ * @brief 初始化事件循环（对标 Qt 6.8 QEventLoop 构造函数）
  */
 void XEventLoop_init(XEventLoop* loop)
 {
@@ -93,118 +74,158 @@ void XEventLoop_init(XEventLoop* loop)
     XObject_init(&loop->m_class);
     XClassGetVtable(loop) = XEventLoop_class_init();
 
-    // 初始化互斥锁和条件变量
-    //loop->m_mutex = XMutex_create();
     loop->m_deley = NULL;
-    //线程级别的事件循环
-   
-    loop->m_dispatcher= XThread_currentDispatcher();
+    XThreadData* data = XThreadData_current();
+    loop->m_dispatcher = XThreadData_ensureEventDispatcher(data);
     loop->m_state = XEventLoop_Suspended;
-    loop->m_exitCode = 0;
-   
+    loop->m_exitCode = -1;
+    loop->inExec = false;  // Qt 6.8: 初始未进入 exec
+    XAtomic_init(loop->m_exit, true);
+    XAtomic_init(loop->m_returnCode, -1);
 }
 
 void XEventLoop_delay(size_t msec)
 {
-   /* XEventLoop* loop = XThread_currentEventLoop();
-    if (loop == NULL)
-        return;
-    XTimer* timer = loop->m_deley;
-    if(loop->m_deley==NULL)
-    {
-        timer = XTimer_create();
-        loop->m_deley = timer;
-        XTimer_setAutoDelete(timer, false);
-        XTimer_setSingleShot(timer, true);
-        XObject_connect_1(timer, XSignal(XTimer_timeout_signal), loop, XEventLoop_quit, XConnectionType_Auto);
-    }
- 
-    XTimer_setTimeout(timer,msec);
-    XTimer_setInterval(timer, msec);
-    XTimer_start_base(timer);
-    XEventLoop_exec(loop);*/
+    (void)msec;
+    /* 保留接口，实现待定 */
 }
 
 /**
- * @brief 启动事件循环
- * @param loop 事件循环实例
- * @return 退出代码
+ * @brief 启动事件循环（对标 Qt 6.8 QEventLoop::exec()）
+ *
+ * Qt 6.8 关键行为:
+ *  1. 检查 quitNow → 立即返回 -1
+ *  2. 检查 inExec → 防止重入
+ *  3. 锁定线程互斥锁保护 QThread::exit 竞态
+ *  4. push/pop eventLoops 栈 + loopLevel 增减
+ *  5. 移除已投递的 Quit 事件
+ *  6. 循环 processEvents(flags | WaitForMoreEvents | EventLoopExec)
  */
-int XEventLoop_exec(XEventLoop* loop) {
-    if (!loop || loop->m_state == XEventLoop_Running) return -1;
+int XEventLoop_exec(XEventLoop* loop, XEventLoopProcessEventsFlags flags) {
+    if (!loop) return -1;
 
+    XThreadData* data = XEventLoop_threadData(loop);
+    if (!data || data != XThreadData_current()) return -1;
+
+    /* Qt 6.8: 对齐 QThread::exit 竞态保护 — 检查 quitNow */
+    if (data->m_quitNow)
+        return -1;
+
+    /* Qt 6.8: 防止重入 exec() */
+    if (loop->inExec) {
+        XERROR_PRINTF("XEventLoop::exec: instance %p has already called exec()\n", (void*)loop);
+        return -1;
+    }
+
+    /* Qt 6.8: 标记进入 exec，压入事件循环栈 */
+    loop->inExec = true;
     loop->m_state = XEventLoop_Running;
     loop->m_exitCode = 0;
-    XThreadData* data = XThreadData_current();
-    if (!data)return -1;
-    XEventLoop* parent = XThreadData_currentEventLoop(data);
-    XThreadData_pushEventloop(data,loop);
-    while (loop->m_state == XEventLoop_Running)
+    XAtomic_store_bool(&loop->m_exit, false, XAtomic_MemoryOrder_Release);
+    XAtomic_store_int32(&loop->m_returnCode, 0, XAtomic_MemoryOrder_Relaxed);
+
+    XThreadData_pushEventloop(data, loop);
+
+    /* Qt 6.8: 移除已投递的 Quit 事件（对标 removePostedEvents(app, QEvent::Quit)） */
+    XCoreApplication* app = XCoreApplication_instance();
+    if (app && XObject_threadData((XObject*)app) == XObject_threadData((const XObject*)loop))
+        XCoreApplication_removePostedEvents((XObject*)app, XEVENT_TYPE_QUIT);
+
+    /* Qt 6.8: 循环处理事件，携带 WaitForMoreEvents | EventLoopExec 标志 */
+    while (!XAtomic_load_bool(&loop->m_exit, XAtomic_MemoryOrder_Acquire))
     {
-        // 处理事件
-        XEventLoop_processEvents(loop, XEventLoop_AllEvents);
+        XEventLoop_processEvents(loop, flags | XEventLoop_WaitForMoreEvents | XEventLoop_EventLoopExec);
     }
-    XThreadData_popEventloop(data,parent);
-   
+
+    XThreadData_popEventloop(data, loop);
+    loop->inExec = false;
+
+    loop->m_exitCode = XAtomic_load_int32(&loop->m_returnCode, XAtomic_MemoryOrder_Relaxed);
+    loop->m_state = XEventLoop_Quit;
     return loop->m_exitCode;
 }
 
 /**
- * @brief 退出事件循环
- * @param loop 事件循环实例
- * @param exitCode 退出代码
+ * @brief 退出事件循环（对标 Qt 6.8 QEventLoop::exit()）
+ *
+ * Qt 6.8 关键行为:
+ *  1. 检查 hasEventDispatcher()
+ *  2. 设置 returnCode 和 exit 标志
+ *  3. 调用 dispatcher->interrupt() 唤醒阻塞等待
  */
 void XEventLoop_exit(XEventLoop* loop, int exitCode) {
     if (!loop) return;
 
-    //XMutex_lock(loop->m_mutex);
-    loop->m_state = XEventLoop_Quit;
-    loop->m_exitCode = exitCode;
-    //XMutex_unlock(loop->m_mutex);
+    XAbstractEventDispatcher* dispatcher = XEventLoop_dispatcher(loop);
+    if (!dispatcher)
+        return;
+
+    XAtomic_store_int32(&loop->m_returnCode, exitCode, XAtomic_MemoryOrder_Relaxed);
+    XAtomic_store_bool(&loop->m_exit, true, XAtomic_MemoryOrder_Release);
+
+    XAbstractEventDispatcher_interrupt_base(dispatcher);
 }
 
 void XEventLoop_quit(XEventLoop* loop)
 {
-    XEventLoop_exit(loop,0);
+    XEventLoop_exit(loop, 0);
 }
 
 /**
- * @brief 唤醒事件循环
- * @param loop 事件循环实例
+ * @brief 判断事件循环是否正在运行（对标 Qt 6.8 QEventLoop::isRunning()）
+ */
+bool XEventLoop_isRunning(XEventLoop* loop)
+{
+    return loop && !XAtomic_load_bool(&loop->m_exit, XAtomic_MemoryOrder_Acquire);
+}
+
+/**
+ * @brief 唤醒事件循环（对标 Qt 6.8 QEventLoop::wakeUp()）
  */
 void XEventLoop_wakeUp(XEventLoop* loop) {
     if (!loop) return;
 
-    //XMutex_lock(loop->m_mutex);
-    XAbstractEventDispatcher_wakeUp_base(loop->m_dispatcher);
-    //XMutex_unlock(loop->m_mutex);
+    XAbstractEventDispatcher* dispatcher = XEventLoop_dispatcher(loop);
+    if (!dispatcher)
+        return;
+
+    XAbstractEventDispatcher_wakeUp_base(dispatcher);
 }
 
 /**
- * @brief 处理当前待处理的事件
- * @param loop 事件循环对象
- * @param flags 事件处理标志
+ * @brief 处理当前待处理的事件（对标 Qt 6.8 QEventLoop::processEvents()）
+ *
+ * Qt 6.8 关键行为:
+ *  1. 检查 hasEventDispatcher()
+ *  2. 委托给 dispatcher->processEvents(flags)
+ *  3. 返回 bool
  */
-void XEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags)
+bool XEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags flags)
 {
-    if (!loop || !loop->m_dispatcher /*|| loop->m_state != XEventLoop_Running*/) return;
-    // 处理事件队列中的所有事件
-    for (size_t i = 0; i < 1; i++)
-    {
-        if (XAbstractEventDispatcher_processEvents_base(loop->m_dispatcher, flags))
-            return;
+    XAbstractEventDispatcher* dispatcher = XEventLoop_dispatcher(loop);
+    if (!dispatcher)
+        return false;
 
-    }
-    // 2. 【关键】如果没有事件，才考虑休眠
-    XAbstractEventDispatcher_processEvents_base(loop->m_dispatcher, XEventLoop_WaitForMoreEvents); // 
+    return XAbstractEventDispatcher_processEvents_base(dispatcher, flags);
 }
+
+static bool VXEventLoop_event(XEventLoop* loop, XEvent* event)
+{
+    if (!loop || !event) return false;
+    if (event->type == XEVENT_TYPE_QUIT) {
+        XEventLoop_quit(loop);
+        XEvent_accept(event);
+        return true;
+    }
+    return XClass_Parent(XObject, EXObject_Event,
+                         bool(*)(XObject*, XEvent*))((XObject*)loop, event);
+}
+
 /**
  * @brief 释放事件循环资源
- * @param loop 事件循环实例
  */
 static void VXEventLoop_deinit(XEventLoop* loop)
 {
     if (!loop) return;
-    // 释放父对象
     XClass_Deinit_Parent(XObject, loop);
 }

@@ -12,6 +12,7 @@
 #include "XAbstractNetIoRing.h"
 #include "XNetwork_platform.h"
 #include <string.h>
+#include <stdlib.h>
 static XVector* global_nativeFilters;///< 本地事件过滤器列表
 static XMutex* global_mutex = NULL;
 #define PlatformPrivate(Dispatcher)  (((XAbstractEventDispatcher*)Dispatcher)->d_ptr)
@@ -34,6 +35,7 @@ static void VXAbstractEventDispatcher_closingDown(XAbstractEventDispatcher* self
 static void VXAbstractEventDispatcher_deinit(XAbstractEventDispatcher* self);
 
 static void global_init();
+
 // ===================================================================
 // === 虚函数表初始化 ================================================
 // ===================================================================
@@ -43,7 +45,7 @@ void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
     dp->m_hrtimerGroup = NULL;
     dp->notifiers = NULL;
     dp->m_ioRing = NULL;
-    dp->m_interrupt = false;
+    XAtomic_init(dp->m_interrupt, false);
     dp->m_threadData = NULL;
 }
 
@@ -144,6 +146,8 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
 
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags)
 {
+    XAtomic_store_bool(&self->d_ptr->m_interrupt, false, XAtomic_MemoryOrder_Release);
+
     /* 1. 先处理定时器任务 */
     if (XAbstractEventDispatcher_isMainThread(self) && XTimeWheelGroup_GlobalExists())
     {
@@ -175,10 +179,21 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     XVector* events = XThreadData_takePostedEvents();
     if (events)
     {
+        if (!XThreadData_pushActivePostedEvents(events)) {
+            XThreadData_push_front_list(events);
+            XVector_delete_base(events);
+            return false;
+        }
         for_each_iterator(events, XVector, it)
         {
             XPostEvent* ePost = XVector_iterator_data(&it);
             if (!ePost|| !ePost->event) continue;
+            if (ePost->event->type == XEVENT_TYPE_DEFERRED_DELETE
+                && !XDeferredDeleteEvent_shouldDeliver((XDeferredDeleteEvent*)ePost->event,
+                                                        XThreadData_current(), false))
+            {
+                continue;
+            }
             if ((flags & XEventLoop_ExcludeUserInputEvents) && ePost->event->input_event == XEventLoop_ExcludeUserInputEvents)
             {
                 continue;
@@ -191,23 +206,25 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
             }
             if (!ePost->receiver||ePost->receiver->is_deleting_children)
             {
-                XEvent_delete_base(ePost->event);
-                ePost->event = NULL;
+                XThreadData_discardPostedEvent(ePost);
                 ++size;
                 continue;
             }
-            XEvent* e = ePost->event;
-            ePost->event = NULL;
-            if(XCoreApplication_sendEvent(ePost->receiver, e))
-               ++size;
+            XThreadData_deliverPostedEvent(ePost);
+            ++size;
         }
-        if(size< XVector_size_base(events))
-            XThreadData_push_front_list(events);
+        XThreadData_popActivePostedEvents(events);
+        XThreadData_push_front_list(events);
         XVector_delete_base(events);
     }
 
-    /* 4. 阻塞等待（WaitForMoreEvents 标志且无事件处理且未中断） */
-    if ((flags & XEventLoop_WaitForMoreEvents) && size == 0 && !self->d_ptr->m_interrupt)
+    /* 4. Qt 6.8: 阻塞等待（对标 QAbstractEventDispatcher::processEvents 的 WaitForMoreEvents）
+     *    - 检查 canWait: 有事件时不阻塞（对标 QThreadData::canWait）
+     *    - 检查 m_interrupt: 被 exit() 中断时不阻塞（对标 Qt 6.8 interrupt() 唤醒）
+     */
+    if ((flags & XEventLoop_WaitForMoreEvents) && size == 0
+        && !XAtomic_load_bool(&self->d_ptr->m_interrupt, XAtomic_MemoryOrder_Acquire)
+        && XThreadData_canWait(XThreadData_current()))
     {
         /* 计算超时：优先使用高精度定时器的下次到期时间 */
         int timeoutMs = -1;
@@ -300,7 +317,7 @@ static void TimerCallback(void* userData, XTimerData* timer)
 {
     XObject* object = (XObject*)userData;
     if (!object)return;
-    XEvent* timerEvent = XEventTimer_create(XTimerData_timerId(timer));
+    XEvent* timerEvent = XTimerEvent_create(XTimerData_timerId(timer));
     if (timerEvent)
     {
         timerEvent->posted = true;
@@ -483,7 +500,7 @@ static void VXAbstractEventDispatcher_interrupt(XAbstractEventDispatcher* self)
 {
     if (self && self->d_ptr)
     {
-        self->d_ptr->m_interrupt = true;
+        XAtomic_store_bool(&self->d_ptr->m_interrupt, true, XAtomic_MemoryOrder_Release);
         XAbstractEventDispatcher_wakeUp_base(self);
     }
 }

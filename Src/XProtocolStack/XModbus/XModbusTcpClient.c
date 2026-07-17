@@ -13,7 +13,7 @@
 static bool VXModbusTcpClient_open(XModbusDevice* device);
 static void VXModbusTcpClient_close(XModbusDevice* device);
 static void VXModbusTcpClient_deinit(XModbusTcpClient* client);
-static void VXModbusTcpClient_timerEvent(XObject* obj, XEventTimer* event);
+static void VXModbusTcpClient_timerEvent(XObject* obj, XTimerEvent* event);
 static XModbusReply* VXModbusTcpClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress, XFuncParamType type);
 
 // =============== 内部函数前置声明 ===============
@@ -604,13 +604,13 @@ static void handleRequestTimeout(XModbusTcpClient* client, uint16_t transactionI
 }
 
 // =============== 定时器事件处理 ===============
-static void VXModbusTcpClient_timerEvent(XObject* obj, XEventTimer* event)
+static void VXModbusTcpClient_timerEvent(XObject* obj, XTimerEvent* event)
 {
     if (!obj || !event) goto parent_call;
 
     XEvent_accept(event);
     XModbusTcpClient* client = (XModbusTcpClient*)obj;
-    XTimerId timerId = XEventTimer_timerId(event);
+    XTimerId timerId = XTimerEvent_timerId(event);
     if(XModbusDevice_state(client)== XModbusDevice_ConnectedState)
     {
         // 通过反向映射快速查找（O(1)）
@@ -676,7 +676,7 @@ static void VXModbusTcpClient_timerEvent(XObject* obj, XEventTimer* event)
     }
 
 parent_call:
-    XClass_Parent(XModbusClient, EXObject_TimerEvent, void (*)(XObject*, XEventTimer*))(obj, event);
+    XClass_Parent(XModbusClient, EXObject_TimerEvent, void (*)(XObject*, XTimerEvent*))(obj, event);
 }
 
 // =============== 重连处理 ===============

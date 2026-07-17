@@ -178,7 +178,7 @@ static void processOneCompletion(XAbstractNetIoRing* self, struct io_uring_cqe* 
         /* 定时器完成：直接投递定时器事件到应用层 */
         XFd timerFd = ctx->fd;
         if (timerFd != XFD_INVALID) {
-            XEventTimer* timerEv = XEventTimer_create((XTimerId)timerFd);
+            XTimerEvent* timerEv = XTimerEvent_create((XTimerId)timerFd);
             XEvent* timerEvent = (XEvent*)timerEv;
             if (timerEvent) {
                 timerEvent->posted = true;

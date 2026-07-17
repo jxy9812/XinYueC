@@ -54,7 +54,7 @@ void XTimerTest()
 		XObject_connect_2(timer, XSignal(XObject_destroyed_signal), deleteCb);
 		XTimer_start_base(timer);
 		//XPrintf("事件循环等待\n");
-		XEventLoop_exec(loop);
+		XEventLoop_exec(loop, XEventLoop_AllEvents);
 		XPrintf("事件循环结束\n");
 		//XObject_setParent(timer,loop);
 		

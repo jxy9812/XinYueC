@@ -13,6 +13,7 @@ extern "C" {
 #include"XAtomic.h"
 #include"XSocketDescriptor.h"
 #include"XPoint.h"
+typedef struct XThreadData XThreadData;
 // 事件回调函数类型
 typedef void (*XEventCB)(XEvent* event);
 
@@ -248,15 +249,20 @@ XPoint XMouseEvent_position(const XMouseEvent* event);
 int XEvent_registerEventType(int hint);
 
 //删除事件
-typedef struct XEventDeferredDelete
+typedef struct XDeferredDeleteEvent
 {
     XEvent m_base;
     bool isDelete;
-}XEventDeferredDelete;
-XEventDeferredDelete*XEventDeferredDelete_create(bool isDelete);
-void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver);
+    int loopLevel;   // Qt 6.8: 调用 deleteLater 时的事件循环嵌套层级
+    int scopeLevel;  // Qt 6.8: 调用 deleteLater 时的作用域层级
+}XDeferredDeleteEvent;
+XDeferredDeleteEvent*XDeferredDeleteEvent_create(bool isDelete, int loopLevel, int scopeLevel);
+bool XDeferredDeleteEvent_shouldDeliver(const XDeferredDeleteEvent* event,
+                                        const XThreadData* threadData,
+                                        bool explicitlyRequested);
+void XDeferredDeleteEvent_handler(XDeferredDeleteEvent* event, XObject* receiver);
 //定时器事件
-typedef struct XEventTimer
+typedef struct XTimerEvent
 {
     XEvent m_base;
     union 
@@ -264,9 +270,9 @@ typedef struct XEventTimer
         XTimerId timerId;//本质就是XFd
         XFd fd;
     };
-}XEventTimer;
-XEventTimer* XEventTimer_create(XTimerId id);
-XTimerId XEventTimer_timerId(const XEventTimer* event);
+}XTimerEvent;
+XTimerEvent* XTimerEvent_create(XTimerId id);
+XTimerId XTimerEvent_timerId(const XTimerEvent* event);
 //套接字活动事件
 typedef struct XEventSockAct
 {
@@ -356,16 +362,17 @@ void XEventFunc_handler(XEventFunc* event);
 
 
 //槽函数调用事件
-typedef struct XEventMetaCall
+typedef struct XMetaCallEvent
 {
     XEvent event;
     XSlotFunc1 func;               // 需要执行的槽函数
     XObject* sender;              // 发送者对象
+    size_t signal_id;          // Qt 6.8: 信号索引 (对标 QMetaCallEvent::signalId)
     XVarList* argList;            // 函数参数
     //void(*del)(XVarList*);        // XVarList释放函数
    XSemaphore* sem;              //信号量
    XAtomic_int32_t* ref_count;   // 参数引用计数
-}XEventMetaCall;
+}XMetaCallEvent;
 
 /**
  * @brief 创建槽函数事件
@@ -378,14 +385,14 @@ typedef struct XEventMetaCall
  * @param priority 事件优先级
  * @return 新创建的槽函数事件
  */
-XEventMetaCall* XEventMetaCall_create(XObject* sender, XSlotFunc1 func,
+XMetaCallEvent* XMetaCallEvent_create(XObject* sender, XSlotFunc1 func, size_t signal_id,
     XVarList* argList, XAtomic_int32_t* ref_count, XSemaphore* sem);
-XVtable* XEventMetaCall_class_init();
+XVtable* XMetaCallEvent_class_init();
 /**
  * @brief 执行槽函数事件的回调
  * @param event 槽函数事件
  */
-void XEventMetaCall_handler(XEventMetaCall* event, XObject* receiver);
+void XMetaCallEvent_handler(XMetaCallEvent* event, XObject* receiver);
 
 #ifdef __cplusplus
 }

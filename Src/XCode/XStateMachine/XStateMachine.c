@@ -27,7 +27,7 @@ static XEventType g_wrappedEventType = XEVENT_TYPE_NONE;
 
 static bool VXStateMachine_event(XStateMachine* machine, XEvent* event);
 static bool VXStateMachine_eventFilter(XStateMachine* machine, XObject* watched, XEvent* event);
-static void VXStateMachine_timerEvent(XStateMachine* machine, XEventTimer* event);
+static void VXStateMachine_timerEvent(XStateMachine* machine, XTimerEvent* event);
 static void VXStateMachine_deinit(XStateMachine* machine);
 static void VXStateMachine_hook(XStateMachine* machine, XEvent* event);
 
@@ -1100,11 +1100,11 @@ static bool VXStateMachine_eventFilter(XStateMachine* machine, XObject* watched,
     return false;
 }
 
-static void VXStateMachine_timerEvent(XStateMachine* machine, XEventTimer* event)
+static void VXStateMachine_timerEvent(XStateMachine* machine, XTimerEvent* event)
 {
     if (!machine || !event)
         return;
-    XTimerId timerId = XEventTimer_timerId(event);
+    XTimerId timerId = XTimerEvent_timerId(event);
     for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)machine->m_delayedEvents); ++i) {
         XStateMachine_DelayedEvent delayed = XVector_At_Base(
             machine->m_delayedEvents, i, XStateMachine_DelayedEvent);

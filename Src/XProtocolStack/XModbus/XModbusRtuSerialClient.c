@@ -13,7 +13,7 @@
 static bool VXModbusRtuSerialClient_open(XModbusDevice* device);
 static void VXModbusRtuSerialClient_close(XModbusDevice* device);
 static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client);
-static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event);
+static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XTimerEvent* event);
 static XModbusReply* VXModbusRtuSerialClient_sendRawRequest(XModbusClient* client, const XModbusRequest* request, int serverAddress, XFuncParamType type);
 //static bool VXModbusRtuSerialClient_processResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 //static bool VXModbusRtuSerialClient_processPrivateResponse(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
@@ -639,12 +639,12 @@ static void handleRequestTimeout(XModbusRtuSerialClient* client)
     XModbusReply_setState(reply, XModbusReply_State_Timeout);
 }
 // =============== 定时器事件处理 ===============
-static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event) {
+static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XTimerEvent* event) {
     if (!obj || !event) goto parent_call;
 
     XEvent_accept(event);
     XModbusRtuSerialClient* client = (XModbusRtuSerialClient*)obj;
-    XTimerId timerId = XEventTimer_timerId(event);
+    XTimerId timerId = XTimerEvent_timerId(event);
     if (XModbusDevice_state(client) == XModbusDevice_ConnectedState)
     {
         // 处理帧间延迟定时器 - 一帧接收完成
@@ -680,7 +680,7 @@ static void VXModbusRtuSerialClient_timerEvent(XObject* obj, XEventTimer* event)
     }
     
 parent_call:
-    XClass_Parent(XModbusClient, EXObject_TimerEvent, void (*)(XObject*, XEventTimer*))(obj, event);
+    XClass_Parent(XModbusClient, EXObject_TimerEvent, void (*)(XObject*, XTimerEvent*))(obj, event);
 }
 
 // =============== 析构函数 ===============

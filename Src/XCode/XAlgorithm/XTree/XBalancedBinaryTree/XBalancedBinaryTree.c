@@ -8,11 +8,12 @@ size_t XBBTreeNode_typeSize()
 }
 XBBTreeNode* XBBTree_create(const char* pvData, const size_t TypeSize)
 {
-	//struct XBBTreeNode* nodes = XBTree_creationNode(sizeof(XBBTreeNode),3,1,TypeSize);
-	XBBTreeNode* nodes = XMalloc_System(sizeof(XBBTreeNode));
+	//分配 [结构体][孩子指针槽][用户数据] 连续内存，与 XRBTree_create 保持一致
+	//原先仅分配 sizeof(XBBTreeNode)（无孩子指针槽与数据空间），XTreeNode_init 的 memset/memcpy 会越界写
+	XBBTreeNode* nodes = XMalloc_System(XBBTreeNode_typeSize() + TypeSize);
 	if (nodes == NULL)
 		return NULL;
-	XBTreeNode_init(nodes, XBBTreeNode_typeSize(2), pvData, TypeSize);
+	XBTreeNode_init(nodes, XBBTreeNode_typeSize(), pvData, TypeSize);
 	nodes->maxLayer = 1;
 	return nodes;
 }

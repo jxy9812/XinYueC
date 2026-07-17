@@ -1,6 +1,7 @@
 ﻿#include "XLockFreeQueue.h"
 #if XCircularQueue_ON
 #include"XAlgorithm.h"
+#include"XMemory.h"
 #include<string.h>
 #include<stdlib.h>
 static bool VXLockFreeQueue_isEmpty(const XLockFreeQueue* this_queue);
@@ -49,10 +50,10 @@ XLockFreeQueue* XLockFreeQueue_create(size_t typeSize, size_t count)
 {
     if (ISNULL(typeSize, "") || ISNULL(count, ""))
         return NULL;
-    XLockFreeQueue* this_queue = XMalloc_System(sizeof(XLockFreeQueue));
+    XLockFreeQueue* this_queue = XAlignedMalloc_System(sizeof(XLockFreeQueue), CACHE_LINE_SIZE);
     if (!this_queue) return NULL;
     XLockFreeQueue_init(this_queue, typeSize, count);
-    Set_Class_MemoryFree(this_queue, XFree_System);
+    Set_Class_MemoryFree(this_queue, XAlignedFree_System);
     return this_queue;
 }
 void XLockFreeQueue_init(XLockFreeQueue* this_queue, size_t typeSize, size_t count)

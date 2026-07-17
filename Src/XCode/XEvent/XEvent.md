@@ -678,7 +678,7 @@ XEventLoop负责处理事件队列和定时器，是事件系统的核心组件�
 ```c
 typedef struct XEventLoop {
     XObject m_class;                  // 父类
-    XAbstractEventDispatcher* m_dispatcher;  // 事件调度器
+    XAbstractEventDispatcher* m_eventDispatcher;  // 事件调度器
     XEventLoopState m_state;          // 事件循环状态
     XTimer* m_deley;                  // 延迟定时器
     int m_exitCode;                   // 退出代码

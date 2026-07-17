@@ -37,15 +37,40 @@ void XMemory_free(void* ptr, XMemoryType type)
 }
 void* XMalloc_System(size_t size)
 {
-	XMemory_malloc(size, XMEMORY_TYPE_SYSTEM);
+	return XMemory_malloc(size, XMEMORY_TYPE_SYSTEM);
 }
 void* XMalloc_MultiPool(size_t size)
 {
-	XMemory_malloc(size, XMEMORY_TYPE_MULTIPOOL);
+	return XMemory_malloc(size, XMEMORY_TYPE_MULTIPOOL);
 }
 void* XMalloc_Hybrid(size_t size)
 {
-	XMemory_malloc(size, XMEMORY_TYPE_HYBRID);
+	return XMemory_malloc(size, XMEMORY_TYPE_HYBRID);
+}
+void* XAlignedMalloc_System(size_t size, size_t alignment)
+{
+	if (alignment < sizeof(void*))
+		alignment = sizeof(void*);
+	if ((alignment & (alignment - 1)) != 0)
+		return NULL;
+
+	size_t overhead = alignment - 1 + sizeof(void*);
+	if (size > SIZE_MAX - overhead)
+		return NULL;
+
+	void* allocation = XMalloc_System(size + overhead);
+	if (!allocation)
+		return NULL;
+
+	uintptr_t address = (uintptr_t)allocation + sizeof(void*);
+	uintptr_t aligned = (address + alignment - 1) & ~(uintptr_t)(alignment - 1);
+	((void**)aligned)[-1] = allocation;
+	return (void*)aligned;
+}
+void XAlignedFree_System(void* ptr)
+{
+	if (ptr)
+		XFree_System(((void**)ptr)[-1]);
 }
 void XFree_System(void* ptr)
 {

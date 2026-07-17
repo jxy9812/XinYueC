@@ -312,13 +312,22 @@ int XThread_idealThreadCount(void)
     return (n > 0) ? (int)n : 1;
 }
 
-/* ===================== TLS: 每线程指针存储 (对标 Qt 6.8 QThreadStorage) ===================== */
+/* ===================== TLS: XThreadData 专用每线程指针存储 =====================
+ * 对标 Qt 6.8: thread_local currentThreadData + pthreadTlsKey (带析构函数)
+ * - XThreadStorage_get(): O(1) 无锁读取 (对标 get_thread_data / thread_local)
+ * - XThreadStorage_set(): 设置 TLS 值 (对标 set_thread_data)
+ * - 析构函数: 线程退出时自动清理 adopted 线程的 XThreadData (对标 destroy_current_thread_data)
+ */
 static pthread_key_t g_tlsKey;
 static pthread_once_t g_tlsOnce = PTHREAD_ONCE_INIT;
 
+/* Qt 6.8: pthread_key 析构函数 (对标 destroy_current_thread_data)
+ * 直接将 XThreadData_destroyTlsData 传给 pthread_key_create,无需中间包装层。
+ * 线程退出时由 pthreads 自动调用,清理未显式 clearCurrentThreadData() 的 adopted 线程数据。
+ * XThread 管理的线程在 VXThread_run 末尾已 set TLS(NULL),不会触发此回调。 */
 static void XThreadStorage_createKey(void)
 {
-    pthread_key_create(&g_tlsKey, NULL);
+    pthread_key_create(&g_tlsKey, XThreadData_destroyTlsData);
 }
 
 void XThreadStorage_set(void* p)

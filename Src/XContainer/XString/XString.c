@@ -1400,19 +1400,20 @@ int32_t XString_compare(const XString* str1, const XString* str2)
     if (!str2)
         return 1;
 
-    size_t min_len = XString_length_base(str1) < XString_length_base(str2)
-        ? XString_length_base(str1)
-        : XString_length_base(str2);
-    const XChar* data1 = XString_cdata(str1);
-    const XChar* data2 = XString_cdata(str2);
+    size_t len1 = XString_length_base(str1);
+    size_t len2 = XString_length_base(str2);
+    size_t min_len = len1 < len2 ? len1 : len2;
 
-    for (size_t i = 0; i < min_len; i++) {
-        if (data1[i] < data2[i]) return -1;
-        if (data1[i] > data2[i]) return 1;
+    if (min_len > 0) {
+        const XChar* data1 = XString_cdata(str1);
+        const XChar* data2 = XString_cdata(str2);
+        for (size_t i = 0; i < min_len; i++) {
+            if (data1[i] < data2[i]) return -1;
+            if (data1[i] > data2[i]) return 1;
+        }
     }
 
-    return (XString_length_base(str1) < XString_length_base(str2)) ? -1 :
-        (XString_length_base(str1) > XString_length_base(str2)) ? 1 : 0;
+    return len1 < len2 ? -1 : len1 > len2 ? 1 : 0;
 }
 
 bool XString_equals(const XString* str1, const XString* str2, XChar_CaseSensitivity cs)

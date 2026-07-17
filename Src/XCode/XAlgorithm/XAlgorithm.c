@@ -92,21 +92,16 @@ void XStackCopyXVector(const XStack* stack, XVector* vector)
 {
 #if XStack_ON
 	size_t Size = XStack_size_base(stack);
+	XVector_clear_base(vector);
 	if (Size == 0)
 		return;
-	XVector_clear_base(vector);
 	size_t TypeSize = XStack_typeSize_base(stack);
-	char* pTail = XStack_top_base(stack);//数组末尾元素
-	char* pHead = pTail - TypeSize * (Size - 1);//数组头元素
-	
-	//XContainerSharedDataPtr(vector) = XMalloc_System(Size * TypeSize);
-	if (XContainerSharedDataPtr(vector)==NULL)
-		return;
-	XContainerCapacity(vector) = Size;
-	XContainerSize(vector) = Size;
+	char* pTop = XStack_top_base(stack);//栈顶元素（底层数组末尾元素）
+	//从栈顶向栈底逐个压入目标向量，复用 XVector_push_back_1_base 的 COW 分离与扩容逻辑，
+	//确保目标向量缓冲区被正确分配。原先直接向未分配的 XContainerSharedDataPtr 写入会导致段错误。
 	for (size_t i = 0; i < Size; i++)
 	{
-		memcpy((char*)XContainerSharedDataPtr(vector) + i * TypeSize, pTail - i * TypeSize, TypeSize);
+		XVector_push_back_1_base(vector, pTop - i * TypeSize);
 	}
 #else
 	IS_ON_DEBUG(XStack_ON);

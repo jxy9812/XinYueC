@@ -76,7 +76,8 @@ bool XSemaphore_tryAcquireTimeout(XSemaphore* sem, int32_t n, uint32_t timeout) 
     if (!sem || n <= 0) return false;
 
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    /* sem_timedwait() uses CLOCK_REALTIME for its absolute deadline. */
+    clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += timeout / 1000;
     ts.tv_nsec += (timeout % 1000) * 1000000;
     if (ts.tv_nsec >= 1000000000) {
@@ -85,7 +86,11 @@ bool XSemaphore_tryAcquireTimeout(XSemaphore* sem, int32_t n, uint32_t timeout) 
     }
 
     for (int32_t i = 0; i < n; i++) {
-        if (sem_timedwait(&sem->handle, &ts) != 0) {
+        int result;
+        do {
+            result = sem_timedwait(&sem->handle, &ts);
+        } while (result != 0 && errno == EINTR);
+        if (result != 0) {
             // 部分获取失败时回滚
             if (i > 0) {
                 for (int32_t j = 0; j < i; j++) {

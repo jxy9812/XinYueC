@@ -5,6 +5,7 @@
 #include "XStack.h"
 #include "XLockFreeListConfig.h"
 #include"XAlgorithm.h"
+#include"XMemory.h"
 static inline tagged_ptr_t pack_ptr(void* ptr, uint32_t version);
 static inline void* unpack_ptr(tagged_ptr_t val);
 static inline uint32_t unpack_version(tagged_ptr_t val);
@@ -899,10 +900,10 @@ void VXListAtomic_deinit(XLockFreeList* this_list) {
 
 XLockFreeList* XLockFreeList_create(size_t typeSize) {
     if (typeSize == 0) return NULL;
-    XLockFreeList* this_list = (XLockFreeList*)XMalloc_System(sizeof(XLockFreeList));
+    XLockFreeList* this_list = (XLockFreeList*)XAlignedMalloc_System(sizeof(XLockFreeList), CACHE_LINE_SIZE);
     if (this_list == NULL) return NULL;
     XLockFreeList_init(this_list, typeSize);
-    Set_Class_MemoryFree(this_list, XFree_System);
+    Set_Class_MemoryFree(this_list, XAlignedFree_System);
     return this_list;
 }
 

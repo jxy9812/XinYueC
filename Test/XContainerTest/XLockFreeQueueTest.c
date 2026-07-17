@@ -31,7 +31,7 @@ static void ThreadReceive(XThread* thread, XVarList* list)
 		XEventLoop* l = NULL;
 		while (true)
 		{
-			XThread* t = ((XObject*)app)->m_thread;
+			XThread* t = XObject_thread((XObject*)app);
 			if (!t)continue;
 			l = t->m_loop;
 			if (!l)continue;

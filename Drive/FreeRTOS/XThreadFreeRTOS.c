@@ -8,8 +8,6 @@
 #include "semphr.h"
 #include "CXinYueConfig.h"
 
-void XThread_mapInsert(XThread* Object);
-void XThread_mapRemove(XThread* Object);
 
 // 前向声明虚函数
 static bool VXThread_start(XThread* Object);
@@ -58,7 +56,6 @@ XVtable* XThread_class_init() {
 static void ThreadFunction(void* arg)
 {
 	XThread* Object = (XThread*)arg;
-	XThread_mapInsert(Object);
 	if (!Object) {
 		XDEBUG_PRINTF("Invalid thread object");
 		vTaskDelete(NULL);
@@ -70,15 +67,13 @@ static void ThreadFunction(void* arg)
 	}
 	// 运行事件循环
 	if (Object->loopLevel > 0 && Object->m_eventLoop) {
-		XEventLoop_exec(Object->m_eventLoop);
+		XEventLoop_exec(Object->m_eventLoop, XEventLoop_AllEvents);
 	}
 	// 标记线程结束并释放信号量
 	Object->m_finished = true;
 	if (((XThreadFreeRTOS*)Object)->completion_sem) {
 		xSemaphoreGive(((XThreadFreeRTOS*)Object)->completion_sem);
 	}
-	// 从线程映射中移除
-	XThread_mapRemove(Object);
 	// 任务自删除
 	vTaskDelete(NULL);
 }
@@ -256,8 +251,6 @@ static void VXThread_deinit(XThread* Object) {
 		XEventLoop_deleteLater(Object->m_eventLoop);
 		Object->m_eventLoop = NULL;
 	}
-	// 从线程映射中移除
-	XThread_mapRemove(Object);
 	XDEBUG_PRINTF("Thread object deinitialized");
 }
 // 获取当前线程 ID（使用任务句柄作为唯一标识）

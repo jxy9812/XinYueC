@@ -49,7 +49,7 @@ typedef struct XAbstractEventDispatcherPrivate
     XHrTimerGroup* m_hrtimerGroup;//高精度定时器组
     XHashMap* notifiers;           ///< XFd → XVector<XSocketNotifier*>，notifier 注册表
     XAbstractNetIoRing* m_ioRing;          ///< I/O 事件环（平台无关 I/O 抽象）
-    bool m_interrupt;              ///< 中断标志，阻止阻塞等待
+    XAtomic_bool m_interrupt;      ///< 中断标志，阻止阻塞等待
     XThreadData* m_threadData;    ///< 反向引用：本调度器所属线程的 XThreadData（工作线程信号量唤醒用）
     //XMutex* mutex;              ///< 保护原生事件过滤器的互斥锁
 }XAbstractEventDispatcherPrivate;

@@ -158,6 +158,16 @@ bool XMemory_realloc_isNULL(XMemoryType type);
 void* XMalloc_System(size_t size);
 void* XMalloc_MultiPool(size_t size);
 void* XMalloc_Hybrid(size_t size);
+
+/**
+* @brief 使用系统内存方法申请满足指定对齐要求的内存
+* @param size 申请大小（字节）
+* @param alignment 对齐值，必须为2的幂
+* @return 成功返回对齐后的地址，失败返回NULL
+* @note 必须使用 XAlignedFree_System 释放
+*/
+void* XAlignedMalloc_System(size_t size, size_t alignment);
+void XAlignedFree_System(void* ptr);
 /**
 * @brief XFree_System的宏别名
 */

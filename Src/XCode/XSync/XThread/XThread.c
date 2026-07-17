@@ -71,7 +71,7 @@ void XThread_init(XThread* thread)
     thread->m_loop = NULL;
     thread->m_priority = XThread_NormalPriority;
     thread->m_stackSize = 512;
-    thread->m_data = NULL;
+    thread->m_data = XThreadData_create(thread);  /* Qt: QThreadPrivate creates QThreadData in constructor */
 }
 void* XThread_finished_signal(XThread* thread)
 {
@@ -92,7 +92,7 @@ XThread* XThread_currentThread()
     XThreadData* data = XThreadData_current();
     return data ? data->m_thread : NULL;
 }
-XEventDispatcher* XThread_currentDispatcher()
+XEventDispatcher* XThread_currentEventDispatcher(void)
 {
     XThread* th = XThread_currentThread();
     return th ? XThread_dispatcher(th) : NULL;
@@ -109,7 +109,7 @@ XHandle XThread_getHandle(XThread* thread)
 XEventDispatcher* XThread_dispatcher(const XThread* thread)
 {
     if (thread)
-        return thread->m_data? thread->m_data->m_dispatcher:NULL;
+        return thread->m_data? thread->m_data->m_eventDispatcher:NULL;
     return XCoreApplication_eventDispatcher();
 }
 bool XThread_isCurrentThread(const XThread* thread)
@@ -139,10 +139,10 @@ void XThread_setEventDispatcher(XThread* thread, XEventDispatcher* eventDispatch
     if (!thread->m_data) {
         return;
     }
-    if (thread->m_data->m_dispatcher) {
-        XClass_delete_base(thread->m_data->m_dispatcher);
+    if (thread->m_data->m_eventDispatcher) {
+        XClass_delete_base(thread->m_data->m_eventDispatcher);
     }
-    thread->m_data->m_dispatcher = eventDispatcher;
+    thread->m_data->m_eventDispatcher = eventDispatcher;
      XObject_setParent((XObject*)eventDispatcher, (XObject*)thread);
 }
 
@@ -159,8 +159,8 @@ void XThread_exit(XThread* thread, int returnCode)
     /* Wake first.  Once the loop state changes, the worker may immediately
      * destroy its dispatcher and thread data, so neither may be touched after
      * XEventLoop_exit(). */
-    if (data && data->m_dispatcher)
-        XAbstractEventDispatcher_wakeUp_base(data->m_dispatcher);
+    if (data && data->m_eventDispatcher)
+        XAbstractEventDispatcher_wakeUp_base(data->m_eventDispatcher);
     XEventLoop_exit(loop, returnCode);
 }
 void XThread_quit(XThread * thread)
@@ -174,7 +174,7 @@ int XThread_exec(XThread* thread)
     {
         thread->m_loop = XEventLoop_create();
     }
-    int result = XEventLoop_exec(thread->m_loop);
+    int result = XEventLoop_exec(thread->m_loop, XEventLoop_AllEvents);
     return result;
 }
 
@@ -188,26 +188,31 @@ void XThread_run_base(XThread* thread)
 void VXThread_run(XThread* thread)
 {
     if (!thread) return;
-    XHandle id = 0;
 
-    if (!thread->m_isMainThread)
+    /* 保存标志到局部变量: sendPostedEvents 可能通过 deleteLater 释放 thread 对象,
+     * 之后不能再访问 thread-> 成员 */
+    bool isMainThread = thread->m_isMainThread;
+    XThreadData* data = thread->m_data;
+
+    if (!isMainThread)
     {
-        thread->m_data = XThreadData_create(thread);
-        if (!thread->m_data)
+        /* Qt: XThreadData already created in XThread_init constructor.
+         * Update threadId and create dispatcher in the worker thread. */
+        if (!data)
         {
             thread->m_running = false;
             thread->m_finished = true;
             return;
         }
-        id = XThreadData_mapInsert(thread->m_data);
+        data->m_threadId = XThread_currentThreadId();
+        /* Qt 6.8: set_thread_data(data) - 注册到 TLS (对标 QThreadPrivate::start) */
+        XThreadStorage_set(data);
         /* The dispatcher belongs to XThreadData, not to the XThread QObject. */
-        thread->m_data->m_dispatcher = XEventDispatcher_create(NULL);
-        if (!thread->m_data->m_dispatcher)
+        data->m_eventDispatcher = XEventDispatcher_create(NULL);
+        if (!data->m_eventDispatcher)
         {
-            if (id)
-                XThreadData_mapRemove(id);
-            XThreadData_delete(thread->m_data);
-            thread->m_data = NULL;
+            /* Qt 6.8: clearCurrentThreadData() - 清除 TLS 后退出 */
+            XThreadData_clearCurrentThreadData();
             thread->m_running = false;
             thread->m_finished = true;
             return;
@@ -229,16 +234,22 @@ void VXThread_run(XThread* thread)
         XClass_delete_base((XClass*)thread->m_loop);
         thread->m_loop = NULL;
     }
-    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
 
-    if (id)
-        XThreadData_mapRemove(id);
-
-    XThreadData* data = thread->m_data;
-    thread->m_data = NULL;
-    if (data)
-        XThreadData_delete(data);
-
+    /* 在 sendPostedEvents 之前设置线程状态和清空 m_data:
+     * sendPostedEvents 可能通过 deleteLater 释放 thread 对象本身,
+     * 之后只能使用局部变量 isMainThread/data (对标 QThreadPrivate::finish) */
+    thread->m_data = NULL;  /* 防止 XThread 析构时 double-deref */
     thread->m_running = false;
     thread->m_finished = true;
+
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+
+    if (!isMainThread)
+        /* Qt 6.8: clearCurrentThreadData() - 清除 TLS (对标 QThreadData::clearCurrentThreadData) */
+        XThreadData_clearCurrentThreadData();
+
+    /* Qt: deref XThreadData held by XThread; moved objects keep their own refs.
+     * 在 sendPostedEvents 之后 deref: 确保 deferred delete 处理时 data 仍有效 */
+    if (data)
+        XThreadData_deref(data);
 }

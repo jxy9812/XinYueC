@@ -38,10 +38,11 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XTreeNode* this_ro
 		XStack_pop_base(stack);
 		XTreeNode* LChild = XBTreeNode_GetLChild(currentNode);
 		XTreeNode* RChild = XBTreeNode_GetRChild(currentNode);
-		if (LChild != NULL)
-			XStack_push_base(stack, &LChild);
+		//前序为“根左右”：先压右孩子再压左孩子，使左孩子位于栈顶先出栈，从而先访问左子树
 		if (RChild != NULL)
 			XStack_push_base(stack, &RChild);
+		if (LChild != NULL)
+			XStack_push_base(stack, &LChild);
 		XVector_push_back_1_base(vector, &currentNode);
 	}
 	XStack_delete_base(stack);

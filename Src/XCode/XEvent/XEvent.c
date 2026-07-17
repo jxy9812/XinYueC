@@ -10,6 +10,7 @@
 #include"XSemaphore.h"
 #include"XCoreApplication.h"
 #include"XThreadData.h"
+#include<stdlib.h>
 static void VXEvent_default_setAccepted(XEvent* event, bool accepted);
 static XEvent* VXEvent_default_clone(const XEvent* event);
 
@@ -134,10 +135,10 @@ void XEventFunc_handler(XEventFunc* event)
 {
 	if (event && event->func)
 		event->func(event->argList);
-	XEvent_accept(event);
+	XEvent_accept((XEvent*)event);
 }
 
-static void VXEventMetaCall_deinit(XEventMetaCall* ev)
+static void VXMetaCallEvent_deinit(XMetaCallEvent* ev)
 {
 	if (ev->ref_count)
 	{
@@ -151,7 +152,7 @@ static void VXEventMetaCall_deinit(XEventMetaCall* ev)
 		}
 	}
 }
-XVtable* XEventMetaCall_class_init()
+XVtable* XMetaCallEvent_class_init()
 {
 	XVTABLE_CREAT_DEFAULT
 		//虚函数表初始化
@@ -162,20 +163,21 @@ XVtable* XEventMetaCall_class_init()
 #endif
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XEvent);
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXEventMetaCall_deinit);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMetaCallEvent_deinit);
 #if SHOWCONTAINERSIZE
-	printf("XEventMetaCall size:%d\n", XVtable_size(XVTABLE_DEFAULT));
+	printf("XMetaCallEvent size:%d\n", XVtable_size(XVTABLE_DEFAULT));
 #endif
 	return XVTABLE_DEFAULT;
 }
-XEventMetaCall* XEventMetaCall_create(XObject* sender,XSlotFunc1 func, XVarList* argList,XAtomic_int32_t* ref_count,XSemaphore* sem)
+XMetaCallEvent* XMetaCallEvent_create(XObject* sender,XSlotFunc1 func, size_t signal_id, XVarList* argList,XAtomic_int32_t* ref_count,XSemaphore* sem)
 {
-	XEventMetaCall* event = XMalloc_MultiPool(sizeof(XEventMetaCall));
-	//XPrintf("XEventMetaCall:%p 创建\n", event);
+	XMetaCallEvent* event = XMalloc_MultiPool(sizeof(XMetaCallEvent));
+	//XPrintf("XMetaCallEvent:%p 创建\n", event);
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_META_CALL);
-	XClassGetVtable(event) = XEventMetaCall_class_init();
+	XClassGetVtable(event) = XMetaCallEvent_class_init();
 	event->sender = sender;
+	event->signal_id = signal_id;
 	event->func = func;
 	event->argList = argList;
 	event->ref_count = ref_count;
@@ -185,25 +187,25 @@ XEventMetaCall* XEventMetaCall_create(XObject* sender,XSlotFunc1 func, XVarList*
 	return event;
 }
 
-void XEventMetaCall_handler(XEventMetaCall* event, XObject* receiver)
+void XMetaCallEvent_handler(XMetaCallEvent* event, XObject* receiver)
 {
 	if (!event)
 		return; 
 	/*if (event->sem)
 	{
-		XPrintf("XEventMetaCall:%p 出问题了 %p\n", event,event->sem);
+		XPrintf("XMetaCallEvent:%p 出问题了 %p\n", event,event->sem);
 	}*/
 	if (receiver)
 	{
 		//队列连接在接收者线程派发,同样用每线程发送者栈设置 sender()
-		XThreadData_pushSender(receiver, event->sender);
+		XThreadData_pushSender(receiver, event->sender, event->signal_id);
 		if (event->func)
 			event->func(receiver, event->argList);
 		XThreadData_popSender();
 	}
 	if (event->sem)
 		XSemaphore_release(event->sem, 1);
-	XEvent_accept(event);
+	XEvent_accept((XEvent*)event);
 }
 
 void XEvent_accept(XEvent* event)
@@ -345,54 +347,63 @@ int XEvent_registerEventType(int hint)
 	return -1; // 失败
 }
 
-XEventDeferredDelete* XEventDeferredDelete_create(bool isDelete)
+XDeferredDeleteEvent* XDeferredDeleteEvent_create(bool isDelete, int loopLevel, int scopeLevel)
 {
-	XEventDeferredDelete* event = XMalloc_MultiPool(sizeof(XEventDeferredDelete));
-	//XPrintf("XEventDeferredDelete:%p 创建\n", event);
+	XDeferredDeleteEvent* event = XMalloc_MultiPool(sizeof(XDeferredDeleteEvent));
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_DEFERRED_DELETE);
 	event->isDelete = isDelete;
+	event->loopLevel = loopLevel;
+	event->scopeLevel = scopeLevel;
 	Set_Class_MemoryFree(event, XFree_MultiPool);
 	
 	return event;
 }
 
-void XEventDeferredDelete_handler(XEventDeferredDelete* event, XObject* receiver)
+void XDeferredDeleteEvent_handler(XDeferredDeleteEvent* event, XObject* receiver)
 {
-	receiver->was_deleted = true;
-	if (XAtomic_load_uint32(&receiver->m_posted_events, XAtomic_MemoryOrder_Acquire)<=1)
-	{//正式释放
-		XAtomic_fetch_sub_uint32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Release);
-		receiver->is_deleting_children = true;
-		XObject_destroyed_signal(receiver);
-		if(event->isDelete)
-			XClass_delete_base(receiver);
-		else
-			XClass_deinit_base(receiver);
-		XEvent_accept(event);
-	}
+	if (!event || !receiver)
+		return;
+
+	XEvent_accept((XEvent*)event);
+	if (event->isDelete)
+		XClass_delete_base(receiver);
 	else
-	{//重新投递：递减计数后重新投递，确保下次检查时计数正确
-		XAtomic_fetch_sub_uint32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Release);
-		XCoreApplication_postEvent(receiver, event, XEVENT_PRIORITY_LOWEST);
-	}
+		XClass_deinit_base(receiver);
 }
 
-XEventTimer* XEventTimer_create(XTimerId id)
+bool XDeferredDeleteEvent_shouldDeliver(const XDeferredDeleteEvent* event,
+	const XThreadData* threadData, bool explicitlyRequested)
 {
-	XEventTimer* event = XMalloc_MultiPool(sizeof(XEventTimer));
+	if (!event || !threadData) return false;
+
+	int currentLoopLevel = (int)XAtomic_load_size_t(
+		&threadData->m_loopLevel, XAtomic_MemoryOrder_Acquire);
+	int currentScopeLevel = threadData->m_scopeLevel;
+	int eventLevel = event->loopLevel + event->scopeLevel;
+	int currentLevel = currentLoopLevel + currentScopeLevel;
+	bool postedBeforeOutermostLoop = event->loopLevel == 0;
+
+	return eventLevel > currentLevel
+		|| (postedBeforeOutermostLoop && currentLoopLevel > 0)
+		|| (explicitlyRequested && eventLevel == currentLevel);
+}
+
+XTimerEvent* XTimerEvent_create(XTimerId id)
+{
+	XTimerEvent* event = XMalloc_MultiPool(sizeof(XTimerEvent));
 	
 	if (!event)return NULL;
 	XEvent_init(event, XEVENT_TYPE_TIMER);
 	event->timerId = id;
 	Set_Class_MemoryFree(event, XFree_MultiPool);
-	//XPrintf("XEventTimer:%p 创建 type:%d\n", event,event->m_base.type);
+	//XPrintf("XTimerEvent:%p 创建 type:%d\n", event,event->m_base.type);
 	return event;
 }
-XTimerId XEventTimer_timerId(const XEventTimer* event)
+XTimerId XTimerEvent_timerId(const XTimerEvent* event)
 {
 	return (event && event->m_base.type== XEVENT_TYPE_TIMER) ?
-		((XEventTimer*)event)->timerId : 0;
+		((XTimerEvent*)event)->timerId : 0;
 }
 
 XEventSockAct* XEventSockAct_create(XFd fd, XSocketActType actType)
@@ -469,7 +480,7 @@ void XChildEvent_handler(XChildEvent* event, XObject* receiver)
 	//	XVector* children= receiver->children;
 	//	XVector_remove_base(children, XVector_indexOf(children, &event->child, 0), 1);
 	//}
-	XEvent_accept(event);
+	XEvent_accept((XEvent*)event);
 }
 
 XDynamicPropertyChangeEvent* XDynamicPropertyChangeEvent_create(const char* name)

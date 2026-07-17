@@ -279,7 +279,7 @@ static void Direct_emit(XConnection* conn, void* args,  XAtomic_int32_t* ref_cou
 		if(conn->receiver)
 		{
 			//用每线程发送者栈替代每对象 m_sender,消除跨线程竞争与嵌套发射错乱
-			XThreadData_pushSender(conn->receiver, conn->signal->sender);
+			XThreadData_pushSender(conn->receiver, conn->signal->sender, conn->signal->type);
 			conn->slot_func1(conn->receiver, args);
 			XThreadData_popSender();
 		}
@@ -299,7 +299,7 @@ static void Queued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_coun
 	if (ref_count)
 		XAtomic_fetch_add_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子加1
 	//向接收者对象投递函数事件
-	XEventMetaCall* event = XEventMetaCall_create(conn->signal->sender, conn->slot_func1, args, ref_count, NULL);
+	XMetaCallEvent* event = XMetaCallEvent_create(conn->signal->sender, conn->slot_func1, conn->signal->type, args, ref_count, NULL);
 	if (event == NULL)
 	{//事件创建失败,回退引用计数,若为最后引用则释放参数
 		if (ref_count && XAtomic_fetch_sub_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed) == 1)
@@ -318,7 +318,7 @@ static void BlockingQueued_emit(XConnection* conn, void* args, XAtomic_int32_t* 
 	if (conn->receiver == NULL)
 		return;
 	//当前发送线程和接收线程是同一个不允许，会有死锁问题
-	if (XThread_currentThread()==conn->receiver->m_thread)
+	if (XThread_currentThread() == XObject_thread(conn->receiver))
 	{
 		// 相同线程：直接报错或返回，避免死锁
 		XPrintf("BlockingQueued: 发送线程与接收者线程相同，可能导致死锁\n");
@@ -338,7 +338,7 @@ static void BlockingQueued_emit(XConnection* conn, void* args, XAtomic_int32_t* 
 		return;
 	}
 	//向接收者对象投递信号事件(传入信号量,槽函数执行完后由事件handler释放,从而唤醒发送线程)
-	XEventMetaCall* event = XEventMetaCall_create(conn->signal->sender, conn->slot_func1, args, ref_count, sem);
+	XMetaCallEvent* event = XMetaCallEvent_create(conn->signal->sender, conn->slot_func1, conn->signal->type, args, ref_count, sem);
 	if (event == NULL)
 	{
 		if (ref_count && XAtomic_fetch_sub_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed) == 1)

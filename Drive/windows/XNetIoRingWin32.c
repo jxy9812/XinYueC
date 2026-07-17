@@ -93,7 +93,7 @@ static void processOneCompletion(XAbstractNetIoRing* self, BOOL success,
     if (ctx->type == XEventContextType_Type_Timer) {
         /* 定时器完成：直接投递定时器事件到应用层 */
         if (completionKey) {
-            XEventTimer* timerEv = XEventTimer_create((XTimerId)ctx->fd);
+            XTimerEvent* timerEv = XTimerEvent_create((XTimerId)ctx->fd);
             XEvent* timerEvent = (XEvent*)timerEv;
             if (timerEvent) {
                 timerEvent->posted = true;

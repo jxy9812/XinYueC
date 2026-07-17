@@ -16,8 +16,9 @@
 #include "XMultiPool.h"
 #include <string.h>
 static XCoreApplication* g_app = NULL; // 全局应用程序实例
+static XThread* g_mainThread = NULL; // Qt: QCoreApplicationPrivate::theMainThread
 bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
-//static void VXObject_timerEvent(XCoreApplication* app, XEventTimer* event);
+//static void VXObject_timerEvent(XCoreApplication* app, XTimerEvent* event);
 static void VXCoreApplication_deinit(XCoreApplication* app);
 XVtable* XCoreApplication_class_init() {
     XVTABLE_CREAT_DEFAULT
@@ -71,7 +72,16 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     // 初始化成员变量
     app->m_argc = argc;
     app->m_argv = argv;
-    ((XObject*)app)->m_thread = XThread_createMainThread(app);
+    g_mainThread = XThread_createMainThread(app);
+    // Update app's threadData to main thread's XThreadData (already set by XObject_init
+    // but we ensure it points to the actual main thread data)
+    if (g_mainThread && g_mainThread->m_data) {
+        XThreadData_ref(g_mainThread->m_data);
+        XThreadData* oldTd = (XThreadData*)XAtomic_exchange_uintptr_t(
+            &((XObject*)app)->m_threadData, (uintptr_t)g_mainThread->m_data,
+            XAtomic_MemoryOrder_AcqRel);
+        XThreadData_deref(oldTd);
+    }
     //app->m_eventLoop = XEventLoop_create();
     //app->m_eventLoop = NULL;
     XBitArray_init(&app->m_attribute, XCORE_APPLICATION_ATTRIBUTE_COUNT,false);
@@ -203,20 +213,20 @@ void XCoreApplication_exit(int returnCode)
 {
     XCoreApplication* app = XCoreApplication_instance();
     if (app)
-        XThread_exit(((XObject*)app)->m_thread, returnCode);
+        XThread_exit(g_mainThread, returnCode);
 }
 
 void XCoreApplication_quit() {
     XCoreApplication* app = XCoreApplication_instance();
     if (app)
-        XThread_quit(((XObject*)app)->m_thread);
+        XThread_quit(g_mainThread);
 }
 
 void XCoreApplication_processEvents(XEventLoopProcessEventsFlags flags) 
 {
     XThreadData* data = XThreadData_current();
     if(data)
-        XAbstractEventDispatcher_processEvents_base(data->m_dispatcher, flags);
+        XAbstractEventDispatcher_processEvents_base(data->m_eventDispatcher, flags);
 }
 
 void XCoreApplication_processEventsWithMaxTime(XEventLoopProcessEventsFlags flags, int maxtime)
@@ -246,14 +256,17 @@ bool XCoreApplication_notify_base(XObject* receiver, XEvent* e)
 {
     if (ISNULL(receiver, "") || ISNULL(XClassGetVtable(receiver), ""))
         return false;
-    return XClassGetVirtualFunc(XCoreApplication_instance(), EXCoreApplication_Notify, bool(*)(XObject*, XEvent*))(receiver, e);
+    XCoreApplication* app = XCoreApplication_instance();
+    if (!app)
+        return VXCoreApplication_notify(receiver, e);
+    return XClassGetVirtualFunc(app, EXCoreApplication_Notify, bool(*)(XObject*, XEvent*))(receiver, e);
 }
 int XCoreApplication_exec() 
 {
     XCoreApplication* app = XCoreApplication_instance();
     if (app == NULL )
         return -1;
-    int result = XThread_exec(((XObject*)app)->m_thread);
+    int result = XThread_exec(g_mainThread);
     // 发送即将退出信号
     XCoreApplication_aboutToQuit_signal(app);
     XCoreApplication_processEvents(XEventLoop_AllEvents);//处理事件，保证退出信号可以被调用
@@ -281,10 +294,13 @@ bool XCoreApplication_tryPostEvent(XObject* receiver, XEvent* event, int priorit
 
 void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)
 {
-    size_t size = 0;
-    //处理事件
     XVector* events = XThreadData_takePostedEvents();
     if (!events)return;
+    if (!XThreadData_pushActivePostedEvents(events)) {
+        XThreadData_push_front_list(events);
+        XVector_delete_base(events);
+        return;
+    }
     for_each_iterator(events, XVector, it)
     {
         XPostEvent* ePost = XVector_iterator_data(&it);
@@ -293,49 +309,43 @@ void XCoreApplication_sendPostedEvents(XObject * receiver, XEventType eventType)
             continue;//如果有指定的接收者，跳过其他接收者
         if(eventType&& eventType!=ePost->event->type)
             continue;//如果有指定的事件类型，跳过其他事件
-        if (XCoreApplication_sendEvent(ePost->receiver, ePost->event))
-            ++size;
-        ePost->event = NULL;//处理过的事件置空
+
+        if (ePost->event->type == XEVENT_TYPE_DEFERRED_DELETE
+            && !XDeferredDeleteEvent_shouldDeliver((XDeferredDeleteEvent*)ePost->event,
+                                                    XThreadData_current(),
+                                                    eventType == XEVENT_TYPE_DEFERRED_DELETE))
+            continue;
+
+        XThreadData_deliverPostedEvent(ePost);
     }
-    //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
-    if (size < XVector_size_base(events))
-        XThreadData_push_front_list(events);
-    //XVector_clear_base(events);
+    XThreadData_popActivePostedEvents(events);
+    XThreadData_push_front_list(events);
     XVector_delete_base(events);
 }
 
 void XCoreApplication_removePostedEvents(XObject * receiver, XEventType eventType)
 {
-    size_t size = 0;
-    //移除事件
+    XThreadData_discardActivePostedEvents(receiver, eventType);
     XVector* events = XThreadData_takePostedEvents();
     if (!events)return;
     for_each_iterator(events, XVector, it)
     {
         XPostEvent* ePost = XVector_iterator_data(&it);
-        if (!ePost) continue;
+        if (!ePost || !ePost->event) continue;
         if (receiver && ePost->receiver != receiver)
             continue;//如果有指定的接收者，跳过其他接收者
         if (eventType && eventType != ePost->event->type)
             continue;//如果有指定的事件类型，跳过其他事件
-        /* 递减接收者的投递事件计数，防止 deferred delete 因计数不准确而无限重投 */
-        if (ePost->receiver)
-            XAtomic_fetch_sub_uint32(&ePost->receiver->m_posted_events, 1, XAtomic_MemoryOrder_Release);
-        XEvent_delete_base(ePost->event);
-        ++size;
-        ePost->event = NULL;//移除的事件置空
+        XThreadData_discardPostedEvent(ePost);
     }
-    //如果有未处理的事件，再次投递到事件队列头部，保证及时处理
-    if (size < XVector_size_base(events))
-        XThreadData_push_front_list(events);
-    //XVector_clear_base(events);
+    XThreadData_push_front_list(events);
     XVector_delete_base(events);
 }
 
 XAbstractEventDispatcher* XCoreApplication_eventDispatcher(void)
 {
     XCoreApplication* app = XCoreApplication_instance();
-    return ((XObject*)app)->m_thread->m_data->m_dispatcher;
+    return XObject_threadData((XObject*)app)->m_eventDispatcher;
 }
 
 void XCoreApplication_setEventDispatcher(XAbstractEventDispatcher* dispatcher)
@@ -347,7 +357,7 @@ void XCoreApplication_setEventDispatcher(XAbstractEventDispatcher* dispatcher)
         return;
     }
 
-    XThreadData* data = ((XObject*)app)->m_thread->m_data;
+    XThreadData* data = XObject_threadData((XObject*)app);
     if (!data) {
         // 理论上主线程的 m_data 不应为空，但做安全检查
         return;
@@ -362,16 +372,16 @@ void XCoreApplication_setEventDispatcher(XAbstractEventDispatcher* dispatcher)
     }
 
     // 3. 清理旧的事件分发器
-    if (data->m_dispatcher != NULL) {
+    if (data->m_eventDispatcher != NULL) {
         // 使用 deleteLater 确保在当前事件循环迭代结束后再销毁，
         // 避免在处理事件时删除正在使用的分发器。
-        XObject_deleteLater((XObject*)(data->m_dispatcher));
-        data->m_dispatcher = NULL; // 立即置空指针，防止悬空指针
+        XObject_deleteLater((XObject*)(data->m_eventDispatcher));
+        data->m_eventDispatcher = NULL; // 立即置空指针，防止悬空指针
     }
 
     // 4. 设置新的事件分发器并建立所有权关系
     if (dispatcher != NULL) {
-        data->m_dispatcher = dispatcher;
+        data->m_eventDispatcher = dispatcher;
 
         // --- 关键改进：设置父对象 ---
         // 将新的分发器的父对象设置为应用程序实例。
@@ -438,49 +448,47 @@ void* XCoreApplication_organizationNameChanged_signal(XCoreApplication* app)
 
 bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
 {
-    // 安全检查
-    if (!receiver || !event) {
-        return false;
-    }
+    if (!receiver || !event) return false;
 
-    //调用接收者的事件过滤器
+    XThreadData* currentData = XThreadData_current();
+    XThreadData* receiverData = XObject_threadData(receiver);
+    if (receiverData && receiverData != currentData)
+        return false;
+    if (receiverData)
+        ++receiverData->m_scopeLevel;
+
+    bool handled = false;
+
     XVector* filters = receiver->m_filters;
     if (filters)
     {
         for_each_iterator(filters, XVector, it)
         {
             XObject* filter = *((XObject**)XVector_iterator_data(&it));
-            if (filter)//调用事件过滤器的过滤方法
-                XObject_eventFilter_base(filter, receiver, event);
-            if (event->accepted)//如果被处理则不在传播
-                goto del;
+            if (!filter || XObject_threadData(filter) != receiverData)
+                continue;
+            if (XObject_eventFilter_base(filter, receiver, event)) {
+                handled = true;
+                goto done;
+            }
         }
     }
-    if (!event->accepted)
-    {//如果还未被接受
-        event->accepted=XObject_event_base(receiver, event);
-    }
-    if (!event->accepted&& XObject_isWidgetType(receiver))
-    {//如果还未被接受向上冒泡
+
+    handled = XObject_event_base(receiver, event);
+    if (!handled && XObject_isWidgetType(receiver))
+    {
         XObject* parent = XObject_parent(receiver);
         if(parent)
-        {
-            XCoreApplication_postEvent(parent, event, 0);
-            return true;
-        }
+            handled = XCoreApplication_notify_base(parent, event);
     }
-    //释放事件
-del:
-    if (event->accepted)
-    {
-        XEvent_delete_base(event);
-        return true;
-    }
-    XERROR_PRINTF("事件发生内存泄漏\n");
-    return false;//事件未被处理
+
+done:
+    if (receiverData)
+        --receiverData->m_scopeLevel;
+    return handled;
 }
 
-//void VXObject_timerEvent(XCoreApplication* app, XEventTimer* event)
+//void VXObject_timerEvent(XCoreApplication* app, XTimerEvent* event)
 //{
 //    app->m_quit = true;//XCoreApplication_processEventsWithMaxTime 定时简单处理，如果类中有多个定时就要添加标志位单独处理
 //}
