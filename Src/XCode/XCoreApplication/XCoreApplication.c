@@ -1,4 +1,4 @@
-﻿#include "XCoreApplication.h"
+#include "XCoreApplication.h"
 #include "XMemory.h"
 #include "XHashMap.h"
 #include "XEvent.h"
@@ -418,7 +418,7 @@ void XCoreApplication_removeLibraryPath(const XString * path)
 {
     XCoreApplication* app = XCoreApplication_instance();
     if (!app || !app->m_paths||!path)return;
-    XStringList_remove_base(app->m_paths, XStringList_indexOf(app->m_paths, path,0),1);
+    XStringList_remove_base(app->m_paths, XStringList_indexOf(app->m_paths, path, 0, XChar_CaseSensitive),1);
 }
 
 void* XCoreApplication_aboutToQuit_signal(XCoreApplication* app) 

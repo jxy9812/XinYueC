@@ -254,8 +254,121 @@ XString* XStringList_join_utf8(const XStringList* strList, const char* separator
 */
 #define XStringList_typeSize_base								XVector_typeSize_base
 
-#define XStringList_indexOf                     XVector_indexOf
-#define XStringList_lastIndexOf                 XVector_lastIndexOf
+
+// -------------------------- Qt 6.8 对齐：字符串列表特有方法 --------------------------
+
+/**
+ * @brief 对字符串列表进行排序（对齐Qt QStringList::sort(cs)）
+ * @param strList XStringList对象指针
+ * @param cs 大小写敏感性（XChar_CaseSensitive 或 XChar_CaseInsensitive）
+ * @note 大小写敏感时按XChar值排序；大小写不敏感时按折叠后字符排序
+ */
+void XStringList_sort(XStringList* strList, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 移除重复的字符串（对齐Qt QStringList::removeDuplicates()）
+ * @param strList XStringList对象指针
+ * @return 移除的重复项数量
+ * @note 保留首次出现的字符串，按字符串值（区分大小写）比较
+ */
+size_t XStringList_removeDuplicates(XStringList* strList);
+
+/**
+ * @brief 筛选包含指定子串的字符串，返回新列表（对齐Qt QStringList::filter(str, cs)）
+ * @param strList 源XStringList对象指针
+ * @param str 要匹配的子串
+ * @param cs 大小写敏感性
+ * @return 成功返回包含匹配项的新XStringList，失败返回NULL
+ */
+XStringList* XStringList_filter(const XStringList* strList, const XString* str, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 筛选包含指定UTF-8子串的字符串，返回新列表（对齐Qt QStringList::filter(str, cs)）
+ * @param strList 源XStringList对象指针
+ * @param utf8_str 要匹配的UTF-8子串
+ * @param cs 大小写敏感性
+ * @return 成功返回包含匹配项的新XStringList，失败返回NULL
+ */
+XStringList* XStringList_filter_utf8(const XStringList* strList, const char* utf8_str, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 替换列表中所有字符串的指定子串（对齐Qt QStringList::replaceInStrings(before, after, cs)）
+ * @param strList XStringList对象指针（原地修改）
+ * @param before 要替换的子串
+ * @param after 替换后的子串
+ * @param cs 大小写敏感性
+ */
+void XStringList_replaceInStrings(XStringList* strList, const XString* before, const XString* after, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 替换列表中所有字符串的指定UTF-8子串（对齐Qt QStringList::replaceInStrings）
+ * @param strList XStringList对象指针（原地修改）
+ * @param before 要替换的UTF-8子串
+ * @param after 替换后的UTF-8子串
+ * @param cs 大小写敏感性
+ */
+void XStringList_replaceInStrings_utf8(XStringList* strList, const char* before, const char* after, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 判断列表中是否包含指定字符串（按值比较，对齐Qt QStringList::contains(str, cs)）
+ * @param strList XStringList对象指针
+ * @param str 要查找的字符串
+ * @param cs 大小写敏感性
+ * @return 包含返回true，否则返回false
+ * @note 按字符串值比较，非指针比较；重写父类XVector的指针版contains
+ */
+bool XStringList_contains(const XStringList* strList, const XString* str, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 判断列表中是否包含指定UTF-8字符串（按值比较，对齐Qt）
+ * @param strList XStringList对象指针
+ * @param utf8_str 要查找的UTF-8字符串
+ * @param cs 大小写敏感性
+ * @return 包含返回true，否则返回false
+ */
+bool XStringList_contains_utf8(const XStringList* strList, const char* utf8_str, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 查找字符串在列表中的索引（按值比较，对齐Qt QStringList::indexOf(str, from, cs)）
+ * @param strList XStringList对象指针
+ * @param str 要查找的字符串
+ * @param from 起始搜索位置（从0开始）
+ * @param cs 大小写敏感性
+ * @return 找到返回索引(>=0)，未找到返回-1
+ * @note 按字符串值比较，非指针比较；重写父类XVector的指针版indexOf
+ */
+int64_t XStringList_indexOf(const XStringList* strList, const XString* str, int64_t from, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 查找UTF-8字符串在列表中的索引（按值比较，对齐Qt）
+ * @param strList XStringList对象指针
+ * @param utf8_str 要查找的UTF-8字符串
+ * @param from 起始搜索位置（从0开始）
+ * @param cs 大小写敏感性
+ * @return 找到返回索引(>=0)，未找到返回-1
+ */
+int64_t XStringList_indexOf_utf8(const XStringList* strList, const char* utf8_str, int64_t from, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 反向查找字符串在列表中的索引（按值比较，对齐Qt QStringList::lastIndexOf(str, from, cs)）
+ * @param strList XStringList对象指针
+ * @param str 要查找的字符串
+ * @param from 起始搜索位置（从末尾开始，-1表示从最后一个元素开始）
+ * @param cs 大小写敏感性
+ * @return 找到返回索引(>=0)，未找到返回-1
+ * @note 按字符串值比较，非指针比较；重写父类XVector的指针版lastIndexOf
+ */
+int64_t XStringList_lastIndexOf(const XStringList* strList, const XString* str, int64_t from, XChar_CaseSensitivity cs);
+
+/**
+ * @brief 反向查找UTF-8字符串在列表中的索引（按值比较，对齐Qt）
+ * @param strList XStringList对象指针
+ * @param utf8_str 要查找的UTF-8字符串
+ * @param from 起始搜索位置（从末尾开始，-1表示从最后一个元素开始）
+ * @param cs 大小写敏感性
+ * @return 找到返回索引(>=0)，未找到返回-1
+ */
+int64_t XStringList_lastIndexOf_utf8(const XStringList* strList, const char* utf8_str, int64_t from, XChar_CaseSensitivity cs);
 #ifdef __cplusplus
 }
 #endif
