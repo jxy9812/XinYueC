@@ -702,6 +702,34 @@ size_t XVector_maxSize(size_t typeSize);
  * @note 宏实现，别名等价于XVector_size_base
  */
 #define XVector_length_base							XVector_size_base
+
+/**
+ * @brief 获取元素数量（对齐Qt QVector::size()，无_base后缀便捷版）
+ * @param this_vector 目标XVector
+ * @return 元素数量
+ * @note 宏实现，等价于 XVector_size_base
+ */
+#define XVector_size(this_vector)					XVector_size_base(this_vector)
+
+/**
+ * @brief 替换指定索引的元素（对齐Qt QVector::replace(index, value)）
+ * @param this_vector 目标XVector
+ * @param index 要替换的索引
+ * @param pvValue 新值的指针
+ * @return 替换成功返回true
+ * @note 宏实现，等价于 XVector_replace_1
+ */
+#define XVector_replace(this_vector, index, pvValue)	XVector_replace_1(this_vector, index, pvValue)
+
+/**
+ * @brief 统计指定值的出现次数（对齐Qt QVector::count(value)）
+ * @param this_vector 目标XVector
+ * @param value 要统计的值指针
+ * @return 出现次数
+ * @note 宏实现，等价于 XVector_count_value
+ */
+#define XVector_count(this_vector, value)			XVector_count_value(this_vector, value)
+
 /**
  * @brief 向头部添加单个元素（拷贝语义，对齐Qt QVector::prepend）
  * @note 宏实现，别名等价于XVector_push_front_1_base

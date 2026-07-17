@@ -398,7 +398,7 @@ bool XString_pop_front_base(XString* str);
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回子串起始索引，失败返回 -1
  */
-int64_t XString_index_of(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs);
+int64_t XString_indexOf(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs);
 /**
  * @brief 查找子串首次出现的位置
  * @param str XString 对象指针
@@ -407,7 +407,7 @@ int64_t XString_index_of(const XString* str, const XString* substr, size_t from,
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回子串起始索引，失败返回 -1
  */
-int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs);
+int64_t XString_indexOf_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs);
 /**
  * @brief 查找子串最后一次出现的位置
  * @param str XString 对象指针
@@ -416,7 +416,7 @@ int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t fro
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回子串起始索引，失败返回 -1
  */
-int64_t XString_last_index_of(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs);
+int64_t XString_lastIndexOf(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs);
 /**
  * @brief 查找子串最后一次出现的位置
  * @param str XString 对象指针
@@ -425,7 +425,7 @@ int64_t XString_last_index_of(const XString* str, const XString* substr, size_t 
  * @param cs 大小写敏感性（区分/不区分）
  * @return 成功返回子串起始索引，失败返回 -1
  */
-int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs);
+int64_t XString_lastIndexOf_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs);
 /**
  * @brief 检查字符串是否包含指定子串
  * @param str 源字符串
@@ -477,7 +477,7 @@ bool XString_equals_utf8(const XString* str, const char* utf8_str, XChar_CaseSen
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
-bool XString_starts_with(const XString* str, const XString* prefix, XChar_CaseSensitivity cs);
+bool XString_startsWith(const XString* str, const XString* prefix, XChar_CaseSensitivity cs);
 
 /**
  * @brief 判断字符串是否以指定前缀开头
@@ -486,7 +486,7 @@ bool XString_starts_with(const XString* str, const XString* prefix, XChar_CaseSe
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
-bool XString_starts_with_utf8(const XString* str, const char* prefix, XChar_CaseSensitivity cs);
+bool XString_startsWith_utf8(const XString* str, const char* prefix, XChar_CaseSensitivity cs);
 
 /**
  * @brief 判断字符串是否以指定后缀结尾
@@ -495,7 +495,7 @@ bool XString_starts_with_utf8(const XString* str, const char* prefix, XChar_Case
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
-bool XString_ends_with(const XString* str, const XString* suffix, XChar_CaseSensitivity cs);
+bool XString_endsWith(const XString* str, const XString* suffix, XChar_CaseSensitivity cs);
 
 /**
  * @brief 判断字符串是否以指定后缀结尾
@@ -504,7 +504,7 @@ bool XString_ends_with(const XString* str, const XString* suffix, XChar_CaseSens
  * @param cs 大小写敏感性（区分/不区分）
  * @return 是返回 true，否则返回 false
  */
-bool XString_ends_with_utf8(const XString* str, const char* suffix, XChar_CaseSensitivity cs);
+bool XString_endsWith_utf8(const XString* str, const char* suffix, XChar_CaseSensitivity cs);
 
 /**
  * @brief 判断检查当前检查字符串是否全部由小写字符组成
@@ -1111,7 +1111,7 @@ XString* XString_number_double(double n, char format, int precision);
  * @return XChar数据指针，失败返回NULL
  * @note 返回指针在字符串被修改前有效
  */
-XChar* XString_data_ptr(XString* str);
+XChar* XString_data(XString* str);
 
 /**
  * @brief 获取常量XChar数据指针（对齐Qt QString::constData()，与unicode()实现等价）
@@ -1120,6 +1120,39 @@ XChar* XString_data_ptr(XString* str);
  * @note 宏实现，等价于 XString_unicode
  */
 #define XString_constData				XString_unicode
+
+/**
+ * @brief 获取可写数据指针（对齐Qt QString::data()）
+ * @param str XString对象指针
+ * @return XChar数据指针，失败返回NULL
+/**
+ * @brief 移除指定范围的字符（对齐Qt QString::remove(i, len)）
+ * @param str XString对象指针
+ * @param pos 起始位置
+ * @param len 移除长度
+ * @return 移除成功返回true
+ * @note 宏实现，等价于 XString_remove_base
+ */
+#define XString_remove					XString_remove_base
+
+/**
+ * @brief 按分隔符拆分字符串（对齐Qt QString::split()）
+ * @param str XString对象指针
+ * @param delimiter 分隔符(UTF-8)
+ * @param cs 大小写敏感性
+ * @return 拆分后的XStringList，失败返回NULL
+ * @note 宏实现，等价于 XString_split_utf8
+ */
+#define XString_split					XString_split_utf8
+
+/**
+ * @brief 获取字符串长度（对齐Qt QString::size()）
+ * @param str XString对象指针
+ * @return 字符数
+ * @note 宏实现，等价于 XString_length_base
+ */
+#define XString_size					XString_length_base
+
 
 /**
  * @brief 获取字符串长度（等价于size，对齐Qt QString::length()）

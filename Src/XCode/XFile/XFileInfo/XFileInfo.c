@@ -246,7 +246,7 @@ XString* XFileInfo_baseName(const XFileInfo* info)
     XString* fileName = XFileInfo_fileName(info);
     if (!fileName) return XString_create();
     
-    int64_t dotPos = XString_index_of_utf8(fileName, ".", 0, XChar_CaseSensitive);
+    int64_t dotPos = XString_indexOf_utf8(fileName, ".", 0, XChar_CaseSensitive);
     XString* result;
     
     if (dotPos > 0) {
@@ -264,7 +264,7 @@ XString* XFileInfo_completeBaseName(const XFileInfo* info)
     XString* fileName = XFileInfo_fileName(info);
     if (!fileName) return XString_create();
     
-    int64_t dotPos = XString_last_index_of_utf8(fileName, ".", 0, XChar_CaseSensitive);
+    int64_t dotPos = XString_lastIndexOf_utf8(fileName, ".", 0, XChar_CaseSensitive);
     XString* result;
     
     if (dotPos > 0) {
@@ -282,7 +282,7 @@ XString* XFileInfo_suffix(const XFileInfo* info)
     XString* fileName = XFileInfo_fileName(info);
     if (!fileName) return XString_create();
     
-    int64_t dotPos = XString_last_index_of_utf8(fileName, ".", 0, XChar_CaseSensitive);
+    int64_t dotPos = XString_lastIndexOf_utf8(fileName, ".", 0, XChar_CaseSensitive);
     XString* result;
     
     if (dotPos >= 0) {
@@ -306,7 +306,7 @@ XString* XFileInfo_completeSuffix(const XFileInfo* info)
     XString* fileName = XFileInfo_fileName(info);
     if (!fileName) return XString_create();
     
-    int64_t dotPos = XString_index_of_utf8(fileName, ".", 0, XChar_CaseSensitive);
+    int64_t dotPos = XString_indexOf_utf8(fileName, ".", 0, XChar_CaseSensitive);
     XString* result;
     
     if (dotPos >= 0) {

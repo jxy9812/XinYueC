@@ -82,7 +82,6 @@ void XString_detach(XString* str);
 void XString_deinitCache(XString* str);
 
 // 获取可修改的内部XChar数组
-XChar* XString_data(XString* str);
 // 辅助函数：计算KMP前缀表
 static void compute_prefix(const XChar* pattern, size_t m, int* prefix, XChar_CaseSensitivity cs);
 // 辅助函数：KMP反向搜索（用于last_index_of）
@@ -1098,11 +1097,11 @@ bool XString_replace_utf8(XString* str, const char* before, const char* after, X
         return false;
     }
 
-    int64_t pos = XString_index_of_utf8(str, before, 0, cs);
+    int64_t pos = XString_indexOf_utf8(str, before, 0, cs);
     while (pos != -1) {
         if (!XString_remove_base(str, (size_t)pos, before_len)) break;
         if (!XString_insert_utf8(str, (size_t)pos, after)) break;
-        pos = XString_index_of_utf8(str, before, (size_t)pos + after_len, cs);
+        pos = XString_indexOf_utf8(str, before, (size_t)pos + after_len, cs);
     }
 
     XString_delete_base(before_str);
@@ -1191,7 +1190,7 @@ int64_t kmp_search(const XChar* text, size_t n,
 }
 
 
-int64_t XString_index_of_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs)
+int64_t XString_indexOf_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs)
 {
     if (!str || !substr) return -1;
 
@@ -1273,7 +1272,7 @@ int64_t kmp_reverse_search(const XChar* text, size_t n, const XChar* pattern, si
     return -1;
 }
 
-int64_t XString_index_of(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs)
+int64_t XString_indexOf(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs)
 {
     if (!str || !substr) return -1;
 
@@ -1308,7 +1307,7 @@ int64_t XString_index_of(const XString* str, const XString* substr, size_t from,
     return result;
 }
 
-int64_t XString_last_index_of(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs)
+int64_t XString_lastIndexOf(const XString* str, const XString* substr, size_t from, XChar_CaseSensitivity cs)
 {
     // 空指针检查
     if (!str || !substr) return -1;
@@ -1355,7 +1354,7 @@ int64_t XString_last_index_of(const XString* str, const XString* substr, size_t 
     return kmp_reverse_search(text, str_len, pattern, substr_len, cs, start_idx);
 }
 
-int64_t XString_last_index_of_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs)
+int64_t XString_lastIndexOf_utf8(const XString* str, const char* substr, size_t from, XChar_CaseSensitivity cs)
 {
     if (!str || !substr) return -1;
 
@@ -1504,7 +1503,7 @@ bool XString_equals(const XString* str1, const XString* str2, XChar_CaseSensitiv
     return true;
 }
 
-bool XString_starts_with(const XString* str, const XString* prefix, XChar_CaseSensitivity cs) {
+bool XString_startsWith(const XString* str, const XString* prefix, XChar_CaseSensitivity cs) {
     if (!str || !prefix) return false;
 
     size_t str_len = XString_length_base(str);
@@ -1533,7 +1532,7 @@ const bool XLess_XString(const XString* str1, const XString* str2)
     return XString_compare(str1, str2) <0;
 }
 
-bool XString_starts_with_utf8(const XString* str, const char* prefix, XChar_CaseSensitivity cs) 
+bool XString_startsWith_utf8(const XString* str, const char* prefix, XChar_CaseSensitivity cs) 
 {
     if (!str || !prefix) return false;
 
@@ -1541,12 +1540,12 @@ bool XString_starts_with_utf8(const XString* str, const char* prefix, XChar_Case
     if (!prefix_str) return false;
 
     bool result = (XString_length_base(prefix_str) <= XString_length_base(str)) &&
-        (XString_index_of_utf8(str, prefix, 0,cs) == 0);
+        (XString_indexOf_utf8(str, prefix, 0,cs) == 0);
     XString_delete_base(prefix_str);
     return result;
 }
 
-bool XString_ends_with(const XString* str, const XString* suffix, XChar_CaseSensitivity cs) {
+bool XString_endsWith(const XString* str, const XString* suffix, XChar_CaseSensitivity cs) {
     if (!str || !suffix) return false;
 
     size_t str_len = XString_length_base(str);
@@ -1572,7 +1571,7 @@ bool XString_ends_with(const XString* str, const XString* suffix, XChar_CaseSens
     return true;
 }
 
-bool XString_ends_with_utf8(const XString* str, const char* suffix, XChar_CaseSensitivity cs)
+bool XString_endsWith_utf8(const XString* str, const char* suffix, XChar_CaseSensitivity cs)
 {
     if (!str || !suffix) return false;
 
@@ -1582,7 +1581,7 @@ bool XString_ends_with_utf8(const XString* str, const char* suffix, XChar_CaseSe
     size_t str_len = XString_length_base(str);
     size_t suffix_len = XString_length_base(suffix_str);
     bool result = (suffix_len <= str_len) &&
-        (XString_last_index_of_utf8(str, suffix, str_len - suffix_len,cs) == (int64_t)(str_len - suffix_len));
+        (XString_lastIndexOf_utf8(str, suffix, str_len - suffix_len,cs) == (int64_t)(str_len - suffix_len));
 
     XString_delete_base(suffix_str);
     return result;
@@ -2000,7 +1999,7 @@ static int64_t find_next_delimiter(const XString* str, const char* delimiter, si
     if (!str || !delimiter || current_pos > XString_length_base(str)) {
         return -1;
     }
-    return XString_index_of_utf8(str, delimiter, current_pos,cs);
+    return XString_indexOf_utf8(str, delimiter, current_pos,cs);
 }
 
 // 按分隔符拆分字符串
@@ -2763,7 +2762,7 @@ XString* XString_section(const XString* str, const XString* sep, int64_t start, 
     {
         size_t seg = 0;
         while (true) {
-            int64_t p = XString_index_of(str, sep, seg, cs);
+            int64_t p = XString_indexOf(str, sep, seg, cs);
             if (p == -1) break;
             if ((size_t)p == seg) emptyCount++;
             sectionsSize++;
@@ -2790,7 +2789,7 @@ XString* XString_section(const XString* str, const XString* sep, int64_t start, 
     int64_t x = 0, i = 0;
     size_t seg = 0;
     while (x <= e && i < (int64_t)sectionsSize) {
-        int64_t p = XString_index_of(str, sep, seg, cs);
+        int64_t p = XString_indexOf(str, sep, seg, cs);
         size_t segEnd = (p == -1) ? str_len : (size_t)p;
         bool empty = (segEnd == seg);
         if (x >= s) {
