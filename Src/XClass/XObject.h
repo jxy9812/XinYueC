@@ -63,8 +63,7 @@ typedef struct XObject
 
     /* 动态属性存储（对标 QObjectPrivate::ExtraData） */
     XVector* m_dynamicPropertyNames;         ///< 动态属性名列表（XString*）
-    XVector* m_dynamicPropertyValues;        ///< 动态属性值列表（void*）
-    XVector* m_dynamicPropertyDeleters;      ///< 动态属性值释放函数列表
+    XVector* m_dynamicPropertyValues;        ///< 动态属性值列表（XVariant*）
 }XObject;
 
 /**
@@ -230,7 +229,7 @@ typedef XVector XObjectList;
  * @param options 查找选项
  * @return 匹配的子对象指针，未找到返回 NULL
  */
-XObject* XObject_findChild(const XObject* self, const char* name, XFindChildOption options);
+XObject* XObject_findChild(const XObject* self, const XString* name, XFindChildOption options);
 
 /**
  * @brief 查找所有匹配的子对象（对标 Qt 6.8 QObject::findChildren）
@@ -239,7 +238,7 @@ XObject* XObject_findChild(const XObject* self, const char* name, XFindChildOpti
  * @param options 查找选项
  * @return 匹配的子对象列表指针，未找到返回空列表
  */
-XObjectList* XObject_findChildren(const XObject* self, const char* name, XFindChildOption options);
+XObjectList* XObject_findChildren(const XObject* self, const XString* name, XFindChildOption options);
 
 /* ======================== 动态属性（对标 Qt 6.8 QObject::setProperty/property/dynamicPropertyNames） ======================== */
 
@@ -247,19 +246,18 @@ XObjectList* XObject_findChildren(const XObject* self, const char* name, XFindCh
  * @brief 设置动态属性（对标 Qt 6.8 QObject::setProperty）
  * @param self 目标对象指针
  * @param name 属性名
- * @param value 属性值（void*，由调用者管理生命周期）
- * @param del 属性值释放回调（可为 NULL）
+ * @param value 属性值（XVariant*，所有权转移给对象，由对象管理生命周期）
  * @return 设置成功返回 true，否则返回 false
  */
-bool XObject_setProperty(XObject* self, const char* name, void* value, void(*del)(void*));
+bool XObject_setProperty(XObject* self, const XString* name, XVariant* value);
 
 /**
  * @brief 获取动态属性（对标 Qt 6.8 QObject::property）
  * @param self 目标对象指针
  * @param name 属性名
- * @return 属性值指针，不存在返回 NULL
+ * @return 属性值指针（XVariant*），不存在返回 NULL
  */
-void* XObject_property(const XObject* self, const char* name);
+XVariant* XObject_property(const XObject* self, const XString* name);
 
 /**
  * @brief 获取所有动态属性的名称列表（对标 Qt 6.8 QObject::dynamicPropertyNames）
@@ -273,7 +271,7 @@ XVector* XObject_dynamicPropertyNames(const XObject* self);
  * @param self 目标对象指针
  * @param name 属性名
  */
-void XObject_removeProperty(XObject* self, const char* name);
+void XObject_removeProperty(XObject* self, const XString* name);
 
 /* ======================== 受保护的虚函数与辅助函数（需由子类实现或使用） ======================== */
 

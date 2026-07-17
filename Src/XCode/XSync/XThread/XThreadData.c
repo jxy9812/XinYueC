@@ -142,12 +142,12 @@ void XThreadData_delete(XThreadData* data)
         data->m_mutex = NULL;
     }
     XStack_deinit_base(&data->m_senderStack);
-    // Qt 6.8: 清理 TLS
-    if (data->m_tls)
-    {
-        XVector_delete_base(data->m_tls);
-        data->m_tls = NULL;
-    }
+    //// Qt 6.8: 清理 TLS
+    //if (data->m_tls)
+    //{
+    //    XVector_delete_base(data->m_tls);
+    //    data->m_tls = NULL;
+    //}
     XAlignedFree_System(data);
 }
 
@@ -241,7 +241,7 @@ void XThreadData_init(XThreadData* data, XThread* thread)
     data->m_requiresCoreApplication = true;
     data->m_scopeLevel = 0;
     data->m_threadId = XThread_currentThreadId();
-    data->m_tls = NULL;
+    //data->m_tls = NULL;
     data->m_eventDispatcher = NULL;
 }
 

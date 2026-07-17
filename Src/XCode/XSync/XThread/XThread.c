@@ -127,6 +127,10 @@ int XThread_loopLevel(const XThread* thread)
         return 0;
     return XAtomic_load_size_t(&thread->m_data->m_loopLevel, XAtomic_MemoryOrder_Relaxed);
 }
+XEventLoop* XThread_eventLoop(const XThread* thread)
+{
+    return thread ? thread->m_loop : NULL;
+}
 void XThread_requestInterruption(XThread* thread)
 {
     if (thread)

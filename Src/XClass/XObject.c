@@ -9,6 +9,7 @@
 #include "XMapBase.h"
 #include "XTimer.h"
 #include "XStack.h"
+#include "XVariant.h"
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -607,19 +608,13 @@ void VXObject_deinit(XObject* object)
 	}
 	if (object->m_dynamicPropertyValues)
 	{
-		void** values = (void**)XContainerDataAddr(object->m_dynamicPropertyValues);
-		void (**deleters)(void*) = object->m_dynamicPropertyDeleters
-			? (void (**)(void*))XContainerDataAddr(object->m_dynamicPropertyDeleters) : NULL;
+		XVariant** values = (XVariant**)XContainerDataAddr(object->m_dynamicPropertyValues);
 		for (size_t i = 0; i < XContainerSize(object->m_dynamicPropertyValues); ++i) {
-			if (deleters && deleters[i] && values[i])
-				deleters[i](values[i]);
+			if (values[i])
+				XVariant_delete_base(values[i]);
 		}
 		XVector_delete_base(object->m_dynamicPropertyValues);
 		object->m_dynamicPropertyValues = NULL;
-	}
-	if (object->m_dynamicPropertyDeleters) {
-		XVector_delete_base(object->m_dynamicPropertyDeleters);
-		object->m_dynamicPropertyDeleters = NULL;
 	}
 	// Qt 6.8: ~QObjectPrivate() - 释放线程亲和性引用 (对标 thisThreadData->deref())
 	// 放在所有子对象/信号槽清理之后: 清理过程可能仍需通过 threadData 访问当前线程。
@@ -698,15 +693,15 @@ void XObject_removeEventFilter(XObject* self, XObject* obj)
 		XVector_remove_base(filters, index, 1);
 }
 
-static bool XObject_nameMatches(const XObject* object, const char* name)
+static bool XObject_nameMatches(const XObject* object, const XString* name)
 {
 	if (!object) return false;
 	if (!name) return true;
-	if (!object->m_object_name) return name[0] == '\0';
-	return XString_equals_utf8(object->m_object_name, name, XChar_CaseSensitive);
+	if (!object->m_object_name) return XString_length_base(name) == 0;
+	return XString_equals(object->m_object_name, name, XChar_CaseSensitive);
 }
 
-static XObject* XObject_findChild_recursive(const XObject* parent, const char* name,
+static XObject* XObject_findChild_recursive(const XObject* parent, const XString* name,
 	XFindChildOption options)
 {
 	if (!parent || !parent->m_children) return NULL;
@@ -725,12 +720,12 @@ static XObject* XObject_findChild_recursive(const XObject* parent, const char* n
 	return NULL;
 }
 
-XObject* XObject_findChild(const XObject* self, const char* name, XFindChildOption options)
+XObject* XObject_findChild(const XObject* self, const XString* name, XFindChildOption options)
 {
 	return XObject_findChild_recursive(self, name, options);
 }
 
-static void XObject_findChildren_recursive(const XObject* parent, const char* name,
+static void XObject_findChildren_recursive(const XObject* parent, const XString* name,
 	XFindChildOption options, XObjectList* result)
 {
 	if (!parent || !parent->m_children || !result) return;
@@ -744,7 +739,7 @@ static void XObject_findChildren_recursive(const XObject* parent, const char* na
 	}
 }
 
-XObjectList* XObject_findChildren(const XObject* self, const char* name, XFindChildOption options)
+XObjectList* XObject_findChildren(const XObject* self, const XString* name, XFindChildOption options)
 {
 	if (!self) return NULL;
 	XObjectList* result = XVector_Create(XObject*);
@@ -822,36 +817,29 @@ int XObject_senderSignalIndex(const XObject* self)
 }
 
 // Qt 6.8: 动态属性系统 (对标 QObject::setProperty / property / dynamicPropertyNames)
-// 简化版: 不使用 QVariant，直接存储 void* 指针，由调用者管理生命周期
-bool XObject_setProperty(XObject* self, const char* name, void* value, void(*del)(void*))
+// 使用 XVariant 存储属性值，由对象管理 XVariant 生命周期
+bool XObject_setProperty(XObject* self, const XString* name, XVariant* value)
 {
 	if (!self || !name) return false;
 
 	// 懒初始化动态属性存储
 	if (!self->m_dynamicPropertyNames) {
 		self->m_dynamicPropertyNames = XVector_Create(XString*);
-		self->m_dynamicPropertyValues = XVector_Create(void*);
-		self->m_dynamicPropertyDeleters = XVector_create(sizeof(void(*)(void*)));
-		if (!self->m_dynamicPropertyNames || !self->m_dynamicPropertyValues
-			|| !self->m_dynamicPropertyDeleters) {
+		self->m_dynamicPropertyValues = XVector_Create(XVariant*);
+		if (!self->m_dynamicPropertyNames || !self->m_dynamicPropertyValues) {
 			if (self->m_dynamicPropertyNames) XVector_delete_base(self->m_dynamicPropertyNames);
 			if (self->m_dynamicPropertyValues) XVector_delete_base(self->m_dynamicPropertyValues);
-			if (self->m_dynamicPropertyDeleters) XVector_delete_base(self->m_dynamicPropertyDeleters);
 			self->m_dynamicPropertyNames = NULL;
 			self->m_dynamicPropertyValues = NULL;
-			self->m_dynamicPropertyDeleters = NULL;
 			return false;
 		}
 	}
 
 	// 查找是否已有同名属性
-	XString* key = XString_create();
-	if (!key) return false;
-	XString_assign_utf8(key, name);
 	int idx = -1;
 	for (int i = 0; i < (int)XContainerSize(self->m_dynamicPropertyNames); i++) {
 		XString** namePtr = (XString**)XContainerDataAddr(self->m_dynamicPropertyNames);
-		if (namePtr[i] && XString_compare(namePtr[i], key) == XCompare_Equality) {
+		if (namePtr[i] && XString_compare(namePtr[i], name) == XCompare_Equality) {
 			idx = i;
 			break;
 		}
@@ -859,16 +847,13 @@ bool XObject_setProperty(XObject* self, const char* name, void* value, void(*del
 
 	if (idx >= 0) {
 		// 已存在: 更新值
-		void** valPtr = (void**)XContainerDataAddr(self->m_dynamicPropertyValues);
-		void (**deleterPtr)(void*) = (void (**)(void*))XContainerDataAddr(
-			self->m_dynamicPropertyDeleters);
-		if (deleterPtr[idx] && valPtr[idx]) {
-			deleterPtr[idx](valPtr[idx]);
-		}
+		XVariant** valPtr = (XVariant**)XContainerDataAddr(self->m_dynamicPropertyValues);
+		if (valPtr[idx])
+			XVariant_delete_base(valPtr[idx]);
 		valPtr[idx] = value;
-		deleterPtr[idx] = del;
-		XString_delete_base(key);
 	} else {
+		XString* key = XString_create_copy(name);
+		if (!key) return false;
 		if (!XVector_push_back_1_base(self->m_dynamicPropertyNames, &key)) {
 			XString_delete_base(key);
 			return false;
@@ -879,37 +864,24 @@ bool XObject_setProperty(XObject* self, const char* name, void* value, void(*del
 			XString_delete_base(key);
 			return false;
 		}
-		if (!XVector_push_back_1_base(self->m_dynamicPropertyDeleters, &del)) {
-			XVector_remove_base(self->m_dynamicPropertyValues,
-				(int64_t)XContainerSize(self->m_dynamicPropertyValues) - 1, 1);
-			XVector_remove_base(self->m_dynamicPropertyNames,
-				(int64_t)XContainerSize(self->m_dynamicPropertyNames) - 1, 1);
-			XString_delete_base(key);
-			return false;
-		}
 	}
 
 	return true;
 }
 
-void* XObject_property(const XObject* self, const char* name)
+XVariant* XObject_property(const XObject* self, const XString* name)
 {
 	if (!self || !name || !self->m_dynamicPropertyNames) return NULL;
 
-	XString* key = XString_create();
-	if (!key) return NULL;
-	XString_assign_utf8(key, name);
-
-	void* result = NULL;
+	XVariant* result = NULL;
 	for (int i = 0; i < (int)XContainerSize(self->m_dynamicPropertyNames); i++) {
 		XString** namePtr = (XString**)XContainerDataAddr(self->m_dynamicPropertyNames);
-		if (namePtr[i] && XString_compare(namePtr[i], key) == XCompare_Equality) {
-			void** valPtr = (void**)XContainerDataAddr(self->m_dynamicPropertyValues);
+		if (namePtr[i] && XString_compare(namePtr[i], name) == XCompare_Equality) {
+			XVariant** valPtr = (XVariant**)XContainerDataAddr(self->m_dynamicPropertyValues);
 			result = valPtr[i];
 			break;
 		}
 	}
-	XString_delete_base(key);
 	return result;
 }
 
@@ -920,30 +892,22 @@ XVector* XObject_dynamicPropertyNames(const XObject* self)
 	return self->m_dynamicPropertyNames;
 }
 
-void XObject_removeProperty(XObject* self, const char* name)
+void XObject_removeProperty(XObject* self, const XString* name)
 {
 	if (!self || !name || !self->m_dynamicPropertyNames) return;
 
-	XString* key = XString_create();
-	if (!key) return;
-	XString_assign_utf8(key, name);
-
 	for (int i = 0; i < (int)XContainerSize(self->m_dynamicPropertyNames); i++) {
 		XString** namePtr = (XString**)XContainerDataAddr(self->m_dynamicPropertyNames);
-		if (namePtr[i] && XString_compare(namePtr[i], key) == XCompare_Equality) {
-			void** values = (void**)XContainerDataAddr(self->m_dynamicPropertyValues);
-			void (**deleters)(void*) = (void (**)(void*))XContainerDataAddr(
-				self->m_dynamicPropertyDeleters);
-			if (deleters[i] && values[i])
-				deleters[i](values[i]);
+		if (namePtr[i] && XString_compare(namePtr[i], name) == XCompare_Equality) {
+			XVariant** values = (XVariant**)XContainerDataAddr(self->m_dynamicPropertyValues);
+			if (values[i])
+				XVariant_delete_base(values[i]);
 			XString_delete_base(namePtr[i]);
 			XVector_remove_base(self->m_dynamicPropertyNames, i, 1);
 			XVector_remove_base(self->m_dynamicPropertyValues, i, 1);
-			XVector_remove_base(self->m_dynamicPropertyDeleters, i, 1);
 			break;
 		}
 	}
-	XString_delete_base(key);
 }
 
 // Qt 6.8: dumpObjectTree - 递归打印对象树 (对标 QObject::dumpObjectTree)

@@ -70,7 +70,7 @@ typedef struct XThreadData{
     XThread*        m_thread;         ///< 所属线程（对标 QAtomicPointer<QThread> thread）
     XHandle         m_threadId;       ///< 线程ID（对标 QAtomicPointer<void> threadId）
     XAbstractEventDispatcher* m_eventDispatcher; ///< 事件分发器（对标 QAtomicPointer<QAbstractEventDispatcher>）
-    XVector*        m_tls;            ///< 线程局部存储（对标 QList<void*> tls）
+    //XVector*        m_tls;            ///< 线程局部存储（对标 QList<void*> tls）
 
     XAtomic_bool    m_canWait;        ///< 是否可阻塞等待（对标 bool canWait）
     bool            m_quitNow;        ///< 立即退出标志（对标 bool quitNow）
