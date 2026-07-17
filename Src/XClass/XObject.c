@@ -621,6 +621,16 @@ void VXObject_deinit(XObject* object)
 		XVector_delete_base(object->m_dynamicPropertyDeleters);
 		object->m_dynamicPropertyDeleters = NULL;
 	}
+	// Qt 6.8: ~QObjectPrivate() - 释放线程亲和性引用 (对标 thisThreadData->deref())
+	// 放在所有子对象/信号槽清理之后: 清理过程可能仍需通过 threadData 访问当前线程。
+	// XObject_init 时 ref, moveToThread 时平衡 (ref 新/deref 旧), 析构时此处 deref 收尾。
+	XThreadData* td = (XThreadData*)XAtomic_load_uintptr_t(
+		(XAtomic_uintptr_t*)&object->m_threadData, XAtomic_MemoryOrder_Acquire);
+	if (td) {
+		XAtomic_store_uintptr_t(&object->m_threadData, (uintptr_t)NULL,
+			XAtomic_MemoryOrder_Release);
+		XThreadData_deref(td);
+	}
 }
 bool VXObject_event(XObject* self, XEvent* e)
 {

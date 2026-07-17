@@ -1,7 +1,8 @@
-#include "XThread.h"
+﻿#include "XThread.h"
 #include "XVtable.h"
 #include "XMemory.h"
 #include "XEventLoop.h"
+#include "XAbstractEventDispatcher.h"
 #include "XCoreApplication.h"
 #include "XThreadData.h"
 #include <string.h>
@@ -243,6 +244,17 @@ void VXThread_run(XThread* thread)
     thread->m_finished = true;
 
     XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+
+    /* Qt 6.8: QThreadPrivate::cleanup() - 删除事件分发器 (对标 delete eventDispatcher)
+     * 必须在 clearCurrentThreadData() 之前: dispatcher 析构 (VXObject_deinit) 需通过 TLS
+     * 访问当前线程数据,若 TLS 已清空会误创建 adopted 线程数据。删除后置空,
+     * 使后续 XThreadData_deref 触发的 XThreadData_delete 不再重复删除分发器。 */
+    if (!isMainThread && data && data->m_eventDispatcher)
+    {
+        XAbstractEventDispatcher* ed = data->m_eventDispatcher;
+        data->m_eventDispatcher = NULL;
+        XClass_delete_base((XClass*)ed);
+    }
 
     if (!isMainThread)
         /* Qt 6.8: clearCurrentThreadData() - 清除 TLS (对标 QThreadData::clearCurrentThreadData) */
