@@ -1445,6 +1445,16 @@ XString* XString_create_local(const char* local_str);
  */
 #define XString_fromLocal8Bit			XString_create_local
 /**
+ * @brief fromUtf8别名（对齐Qt QString::fromUtf8）
+ * @note 宏实现，等价于 XString_create_utf8
+ */
+#define XString_fromUtf8					XString_create_utf8
+/**
+ * @brief fromUtf16别名（对齐Qt QString::fromUtf16）
+ * @note 宏实现，等价于 XString_create_utf16
+ */
+#define XString_fromUtf16					XString_create_utf16
+/**
  * @brief asprintf别名，按printf格式创建新XString（对齐Qt QString::asprintf）
  * @note 宏实现，等价于 XString_create_fmt_utf8
  */
