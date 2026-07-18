@@ -26,6 +26,7 @@ void XMenu_VectorTest(XMenu* root)
 	XMenu_XVectorTest(menu);
 	XMenu_XStringListTest(menu);
 	XMenu_XVariantListTest(menu);
+	XMenu_XByteArrayTest(menu);
 }
 void XMenu_ListTest(XMenu* root)
 {

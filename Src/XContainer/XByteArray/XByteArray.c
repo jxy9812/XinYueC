@@ -270,4 +270,76 @@ uint8_t* XByteArray_data(XByteArray* other)
 	return XContainerDataAddr(other) ;
 }
 
+
+
+/* ============================== Qt 6.8 命名对齐: fill/truncate/chop/left/right/mid ============================== */
+
+XByteArray* XByteArray_fill_base(XByteArray* array, uint8_t byte, int64_t size)
+{
+    if (array == NULL) return NULL;
+    if (size >= 0) {
+        if (!XByteArray_resize_base(array, (size_t)size))
+            return NULL;
+    }
+    size_t n = XByteArray_size_base(array);
+    uint8_t* d = XByteArray_data(array);
+    if (d && n > 0) memset(d, byte, n);
+    return array;
+}
+
+void XByteArray_truncate_base(XByteArray* array, int64_t pos)
+{
+    if (array == NULL) return;
+    int64_t cur = (int64_t)XByteArray_size_base(array);
+    if (pos <= 0) { XByteArray_clear_base(array); return; }
+    if (pos >= cur) return;
+    // 删除从 pos 起的所有元素
+    XVector_remove_base((XVector*)array, pos, cur - pos);
+}
+
+void XByteArray_chop_base(XByteArray* array, int64_t n)
+{
+    if (array == NULL || n <= 0) return;
+    int64_t cur = (int64_t)XByteArray_size_base(array);
+    if (n >= cur) { XByteArray_clear_base(array); return; }
+    XVector_remove_base((XVector*)array, cur - n, n);
+}
+
+XByteArray* XByteArray_left_base(const XByteArray* array, int64_t n)
+{
+    if (array == NULL) return NULL;
+    int64_t cur = (int64_t)XByteArray_size_base(array);
+    if (n < 0 || n > cur) n = cur;
+    XByteArray* out = XByteArray_create();
+    if (!out || n == 0) return out;
+    XByteArray_push_back_2(out, (const char*)XByteArray_data((XByteArray*)array), (size_t)n);
+    return out;
+}
+
+XByteArray* XByteArray_right_base(const XByteArray* array, int64_t n)
+{
+    if (array == NULL) return NULL;
+    int64_t cur = (int64_t)XByteArray_size_base(array);
+    if (n < 0 || n > cur) n = cur;
+    XByteArray* out = XByteArray_create();
+    if (!out || n == 0) return out;
+    const uint8_t* src = XByteArray_data((XByteArray*)array) + (cur - n);
+    XByteArray_push_back_2(out, (const char*)src, (size_t)n);
+    return out;
+}
+
+XByteArray* XByteArray_mid_base(const XByteArray* array, int64_t pos, int64_t n)
+{
+    if (array == NULL) return NULL;
+    int64_t cur = (int64_t)XByteArray_size_base(array);
+    if (pos < 0) pos = 0;
+    if (pos >= cur) return XByteArray_create();
+    int64_t remain = cur - pos;
+    if (n < 0 || n > remain) n = remain;
+    XByteArray* out = XByteArray_create();
+    if (!out || n == 0) return out;
+    XByteArray_push_back_2(out, (const char*)(XByteArray_data((XByteArray*)array) + pos), (size_t)n);
+    return out;
+}
+
 #endif

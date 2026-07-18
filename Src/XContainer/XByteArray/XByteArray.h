@@ -320,6 +320,171 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData);
 */
 #define XByteArray_delete_base						XVector_delete_base
 
+
+
+//============================= Qt 6.8 命名对齐 =============================
+/* 说明：XByteArray 内部继承自 XVector，XVector 已提供大部分与 Qt QByteArray 同语义的
+ *       API（reserve/squeeze/indexOf/lastIndexOf/startsWith/endsWith/removeIf/removeAt 等）。
+ *       此处以宏别名的方式将 XByteArray 的对外接口对齐 Qt 6.8 QByteArray 命名，
+ *       同时补齐 fill / truncate / chop / left / right / mid / sliced 等轻量操作。
+ *       参考: qtbase/src/corelib/text/qbytearray.h (QByteArray)
+ */
+
+/**
+* @brief 元素个数（字节数）——Qt 别名
+* @note Qt 映射: QByteArray::length()（与 size() 等价）
+*/
+#define XByteArray_length_base            XByteArray_size_base
+
+/**
+* @brief 判空——Qt 别名
+* @note Qt 映射: QByteArray::empty()（与 isEmpty() 等价）
+*/
+#define XByteArray_empty_base             XByteArray_isEmpty_base
+
+/**
+* @brief 只读原始数据指针
+* @note Qt 映射: QByteArray::constData()（本项目共用 data，故仅命名别名）
+*/
+#define XByteArray_constData              XByteArray_data
+
+/**
+* @brief 预留容量——对齐 Qt QByteArray::reserve
+* @param array XByteArray 实例指针
+* @param size  期望容量下限
+* @return 成功返回 true，失败返回 false
+*/
+#define XByteArray_reserve_base           XVector_reserve_base
+
+/**
+* @brief 释放多余容量——对齐 Qt QByteArray::squeeze
+*/
+#define XByteArray_squeeze_base           XVector_squeeze_base
+
+/**
+* @brief 语义等价的 shrink_to_fit——STL 别名
+*/
+#define XByteArray_shrink_to_fit          XVector_squeeze_base
+
+/**
+* @brief 判断是否包含指定字节——对齐 Qt QByteArray::contains(char)
+* @param array XByteArray 实例指针
+* @param byte  待查找字节（uint8_t）
+* @return 存在返回 true
+*/
+#define XByteArray_contains(array, byte)  XVector_contains(array, &(uint8_t){(byte)})
+
+/**
+* @brief 查找指定字节首次出现位置——对齐 Qt QByteArray::indexOf(char, qsizetype from)
+* @param array XByteArray 实例指针
+* @param byte  待查找字节（uint8_t）
+* @param from  起始索引
+* @return 找到返回索引，找不到返回 -1
+*/
+#define XByteArray_indexOf(array, byte, from)     XVector_indexOf((const XVector*)(array), &(uint8_t){(byte)}, (from))
+
+/**
+* @brief 查找指定字节最后一次出现位置——对齐 Qt QByteArray::lastIndexOf
+* @param from 反向起始索引，-1 表示从末尾开始
+*/
+#define XByteArray_lastIndexOf(array, byte, from)     XVector_lastIndexOf((const XVector*)(array), &(uint8_t){(byte)}, (from))
+
+/**
+* @brief 判断是否以指定字节开头——对齐 Qt QByteArray::startsWith(char)
+*/
+#define XByteArray_startsWith(array, byte)     XVector_startsWith((const XVector*)(array), &(uint8_t){(byte)})
+
+/**
+* @brief 判断是否以指定字节结尾——对齐 Qt QByteArray::endsWith(char)
+*/
+#define XByteArray_endsWith(array, byte)     XVector_endsWith((const XVector*)(array), &(uint8_t){(byte)})
+
+/**
+* @brief 按谓词条件删除元素——对齐 Qt QByteArray::removeIf
+* @param array XByteArray 实例指针
+* @param pred  谓词函数（XEquality 类型: (const void* pv, const void* userData)->bool）
+* @param userData 透传参数
+* @return 被删除的字节数
+*/
+#define XByteArray_removeIf(array, pred, userData)     XVector_removeIf((XVector*)(array), (pred), (userData))
+
+/**
+* @brief 删除指定索引处单个字节——对齐 Qt QByteArray::removeAt
+*/
+#define XByteArray_removeAt_base(array, index)     XVector_removeAt_base((XVector*)(array), (index))
+
+/**
+* @brief 删除首字节——对齐 Qt QByteArray::removeFirst
+*/
+#define XByteArray_removeFirst_base       XByteArray_pop_front_base
+
+/**
+* @brief 删除尾字节——对齐 Qt QByteArray::removeLast
+*/
+#define XByteArray_removeLast_base        XByteArray_pop_back_base
+
+/**
+* @brief 十六进制字符串——对齐 Qt QByteArray::toHex
+* @note 本项目原名 to16HexUtf8；此为别名。
+*/
+#define XByteArray_toHex                  XByteArray_to16HexUtf8
+
+/**
+* @brief 以指定字节值填充/重置数组——对齐 Qt QByteArray::fill
+* @param array XByteArray 实例指针
+* @param byte  填充字节
+* @param size  若 >=0 则先 resize 到该大小；<0 保持当前大小
+* @return 成功返回 array，失败返回 NULL
+* @note Qt 映射: QByteArray::fill(char c, qsizetype size = -1)
+*/
+XByteArray* XByteArray_fill_base(XByteArray* array, uint8_t byte, int64_t size);
+
+/**
+* @brief 截断到指定长度——对齐 Qt QByteArray::truncate
+* @param array XByteArray 实例指针
+* @param pos   保留前 pos 个字节，超出部分被丢弃；pos<=0 时清空；pos>=size 时无操作
+* @note Qt 映射: QByteArray::truncate(qsizetype pos)
+*/
+void XByteArray_truncate_base(XByteArray* array, int64_t pos);
+
+/**
+* @brief 从尾部丢弃 n 个字节——对齐 Qt QByteArray::chop
+* @param array XByteArray 实例指针
+* @param n     待丢弃字节数；n<=0 无操作；n>=size 时清空
+* @note Qt 映射: QByteArray::chop(qsizetype n)
+*/
+void XByteArray_chop_base(XByteArray* array, int64_t n);
+
+/**
+* @brief 返回包含前 n 个字节的新数组——对齐 Qt QByteArray::left / first
+* @param array 源数组
+* @param n     取前 n 字节；n<0 或 n>size 时视为 size
+* @return 新 XByteArray；调用方负责释放
+* @note Qt 映射: QByteArray::left(qsizetype)/QByteArray::first(qsizetype)
+*/
+XByteArray* XByteArray_left_base(const XByteArray* array, int64_t n);
+
+/**
+* @brief 返回包含后 n 个字节的新数组——对齐 Qt QByteArray::right / last
+* @note Qt 映射: QByteArray::right(qsizetype)/QByteArray::last(qsizetype)
+*/
+XByteArray* XByteArray_right_base(const XByteArray* array, int64_t n);
+
+/**
+* @brief 返回从 pos 起、长度 n 的子数组——对齐 Qt QByteArray::mid / sliced
+* @param pos 起始索引（0 起）
+* @param n   长度；n<0 表示到结尾
+* @note Qt 映射: QByteArray::mid(qsizetype pos, qsizetype len=-1)/QByteArray::sliced()
+*/
+XByteArray* XByteArray_mid_base(const XByteArray* array, int64_t pos, int64_t n);
+
+/** @brief Qt QByteArray::first(n) 别名，等价于 XByteArray_left_base */
+#define XByteArray_first_base             XByteArray_left_base
+/** @brief Qt QByteArray::last(n) 别名，等价于 XByteArray_right_base */
+#define XByteArray_last_base              XByteArray_right_base
+/** @brief Qt QByteArray::sliced(pos, n) 别名，等价于 XByteArray_mid_base */
+#define XByteArray_sliced_base            XByteArray_mid_base
+
 #ifdef __cplusplus
 }
 #endif
