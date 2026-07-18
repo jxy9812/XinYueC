@@ -1,22 +1,22 @@
-﻿// XSslSocket.c
+﻿﻿﻿﻿﻿// XSslSocket.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
-// XSslSocket锛歍LS 瀹㈡埛绔?/ 鏈嶅姟绔?socket锛屽榻?Qt 6.8 QSslSocket銆?
-// 鍩轰簬 XClass 楠ㄦ灦锛岀户鎵胯嚜 XTcpSocket锛岄€氳繃 vtable 閲嶈浇鎶?TCP 鏄庢枃绠￠亾
-// 鏇挎崲涓?TLS 鍔犲瘑绠￠亾銆俆LS 浼氳瘽鐢?XSsl_session锛堝悗绔?mbedTLS锛夋壙鎷呫€?
+// XSslSocket: TLS client/server socket, aligned with Qt 6.8 QSslSocket.
+// Based on XClass framework, inherits XTcpSocket, overrides via vtable
+// to replace TCP plaintext channel with TLS encrypted channel.
 //
-// 璁捐瑕佺偣锛?
-//   - 缁ф壙锛歑SslSocket 缁ф壙鑷?XTcpSocket锛寁table 鍦?XSslSocket_init 闃舵
-//     鐢?XSslSocket_class_init() 鐢熸垚锛岄噸鍐?readData / writeData /
+// Design notes:
+//   - Inheritance: XSslSocket inherits XTcpSocket, vtable is set in XSslSocket_init
+//     by XSslSocket_class_init(), overriding readData / writeData /
 //     connectToHost / disconnectFromHost / close /
 //     waitForConnected / waitForReadyRead / waitForBytesWritten /
-//     waitForDisconnected 绛夎櫄鍑芥暟銆?
-//   - 鍒悕缁ф壙锛氱埗绫诲悓鍚?API锛圶TcpSocket_read_1 / write_1 绛夛級閫氳繃澶存枃浠跺畯
-//     鐩存帴鍒悕鍒?XIODevice_read_1 / write_1锛況ead_1 璧?vtable 鈫?xssl_v_readData
-//     鈫?mbedtls_ssl_read 鈫?BIO recv 鈫?鐖剁被 readData銆?
-//   - BIO锛歺ssl_bio_send/recv 閫氳繃 XClass_Parent(XAbstractSocket, ...)
-//     璋冪埗绫?readData/writeData 鐩存帴璇诲啓搴曞眰 socket锛岀粫杩?TLS 灞傘€?
+//     waitForDisconnected virtual functions.
+//   - Alias: Parent class same-name APIs aliased via header macros
+//     to XIODevice_read_1/write_1; read_1 goes vtable -> xssl_v_readData
+//     -> mbedtls_ssl_read -> BIO recv -> parent readData.
+//   - BIO：xssl_bio_send/recv 通过 XClass_Parent(XAbstractSocket, ...)
+//     to call parent readData/writeData directly, bypassing TLS layer.
 
 #include "XSslSocket.h"
 #include "XMemory.h"
@@ -36,31 +36,31 @@
 #include "XTypes.h"
 #include <stdlib.h>
 
-/* =============== 鍐呴儴缁撴瀯浣?=============== */
+/* = Internal Structure = */
 
 struct XSslSocket {
-    XTcpSocket           base;             /* 鐖剁被楠ㄦ灦锛歍CP 鏄庢枃绠￠亾鐢辩埗绫绘壙鎷?*/
+    XTcpSocket           base;             /* Parent class: TCP plaintext channel */
 
-    XSslSession*         session;          /* TLS 浼氳瘽锛坢bedTLS 鍚庣锛夛紝鑷寔鏈?*/
+    XSslSession*         session;          /* TLS session (mbedTLS backend), self-owned */
     XSslProtocol         protocol;
     XSslPeerVerifyMode   verifyMode;
     int                  peerVerifyDepth;
-    XString*             peerVerifyName;   /* 鏈熸湜鐨勫绔悕绉帮紙SNI / 涓绘満鍚嶆牎楠岋級 */
-    XSslCertificate*     localCert;        /* 寮曠敤锛屼笉鎷ユ湁 */
-    XSslKey*             privateKey;       /* 寮曠敤锛屼笉鎷ユ湁 */
-    XSslCertificate*     caCert;           /* 寮曠敤锛屼笉鎷ユ湁锛汳VP 鍙敮鎸佸崟寮?CA */
+    XString*             peerVerifyName;   /* Expected peer name (SNI/hostname verification) */
+    XSslCertificate*     localCert;        /* Reference, not owned */
+    XSslKey*             privateKey;       /* Reference, not owned */
+    XSslCertificate*     caCert;           /* Reference, not owned; MVP only supports single CA */
 
     XSslSocket_SslMode   mode;
-    bool                 encrypted;        /* 鎻℃墜鏄惁瀹屾垚 */
-    bool                 handshakePending; /* 鏄惁澶勪簬鎻℃墜涓紙璇诲啓浼?pump 鎻℃墜锛?*/
+    bool                 encrypted;        /* Whether handshake is complete */
+    bool                 handshakePending; /* Whether in handshake (read/write will pump handshake) */
     bool                 ignoreErrors;
-    XVector*             localCertChain;   /* Qt 6.8 setLocalCertificateChain锛沷wns */
-    XVector*             peerCertChain;    /* Qt 6.8 peerCertificateChain 缂撳瓨锛沷wns */
-    XVector*             handshakeErrors;  /* Qt 6.8 sslHandshakeErrors锛涙瘡鍏冪礌涓?int 閿欒鐮?*/
+    XVector*             localCertChain;   /* Qt 6.8 setLocalCertificateChain; owns */
+    XVector*             peerCertChain;    /* Qt 6.8 peerCertificateChain cache; owns */
+    XVector*             handshakeErrors;  /* Qt 6.8 sslHandshakeErrors; each element is int error code */
     struct XRingBuffer*  encRxBuf;
 };
 
-/* =============== 鐖剁被铏氬嚱鏁版寚閽堢被鍨嬶紙渚?XClass_Parent 浣跨敤锛?============ */
+/* = Parent Vtable Func Ptr Types (for XClass_Parent) = */
 
 typedef int64_t (*Fn_readData) (XIODevice*, char*, int64_t);
 typedef int64_t (*Fn_writeData)(XIODevice*, const char*, int64_t);
@@ -79,7 +79,7 @@ typedef bool    (*Fn_event) (XAbstractSocket*, XEvent*);
 #define PARENT_IO(SLOT, FnType)    XClass_Parent(XAbstractSocket, SLOT, FnType)
 #define PARENT_SOCK(SLOT, FnType)  XClass_Parent(XAbstractSocket, SLOT, FnType)
 
-/* =============== BIO锛歮bedTLS 閫氳繃杩欎袱涓洖璋冭鍐欏簳灞?socket锛岀粫杩?TLS 灞?============ */
+/* = BIO: mbedTLS callbacks for raw socket I/O (bypassing TLS) = */
 
 static int xssl_bio_send(void* u, const uint8_t* buf, size_t len) {
     XSslSocket* self = (XSslSocket*)u;
@@ -100,7 +100,7 @@ static int xssl_bio_recv(void* u, uint8_t* buf, size_t len) {
     return got > 0 ? (int)got : XSSL_BIO_WANT_READ;
 }
 
-/* =============== 浼氳瘽鎳掑垱寤?=============== */
+/* = Session Lazy Creation = */
 
 static bool xssl_ensure_session(XSslSocket* self, bool isServer) {
     if (self->session) return true;
@@ -121,7 +121,7 @@ static bool xssl_ensure_session(XSslSocket* self, bool isServer) {
     return true;
 }
 
-/* 鎺ㄥ姩涓€娆℃彙鎵嬶紝杩斿洖 XSSL_S_* */
+/* 鎺銊ュЗ涓鈧[0xac]娆鈩冨綑鎵嬶紝杩斿洖 XSSL_S_* */
 static int xssl_pump_handshake(XSslSocket* self) {
     if (!self->handshakePending) return XSSL_S_OK;
     if (!xssl_ensure_session(self, self->mode == XSslSocket_SslServerMode))
@@ -139,9 +139,9 @@ static int xssl_pump_handshake(XSslSocket* self) {
     }
     return r;
 }
-/* =============== 铏氬嚱鏁伴噸杞斤細鎶?TCP 鏄庢枃绠￠亾鏇挎崲涓?TLS 鍔犲瘑绠￠亾 =============== */
+/* = Vtable Override: Replace TCP Plaintext w/ TLS = */
 
-/* --- readData锛氳В瀵嗗悗浜ょ粰涓婂眰璋冪敤鑰咃紱鏈姞瀵嗘ā寮忕洿鎺ラ€忎紶鐖剁被 --- */
+    /* readData: decrypt then return to caller; unencrypted -> bypass */
 static int64_t xssl_v_readData(XIODevice* io, char* data, int64_t maxlen) {
     XSslSocket* self = (XSslSocket*)io;
 
@@ -150,14 +150,14 @@ static int64_t xssl_v_readData(XIODevice* io, char* data, int64_t maxlen) {
         return PARENT_IO(EXIODevice_ReadData, Fn_readData)(io, data, maxlen);
     }
 
-    /* 鍔犲瘑妯″紡锛氳嫢鎻℃墜灏氭湭瀹屾垚锛屽厛鎺ㄨ繘鎻℃墜锛涙湭瀹屾垚杩斿洖 0锛堣〃绀烘殏鏃舵棤鏁版嵁锛?*/
+    /* 鍔犲瘑妯鈥崇础锛氳嫢鎻鈩冨[0xa2]滅亸氭湭瀹屾垚锛屽厛鎺銊ㄧ箻鎻鈩冨[0xa2]滈敍涙湭瀹屾垚杩斿洖 0锛堣銆冪粈烘殏鏃舵棤鏁版嵁锛?*/
     if (!self->encrypted) {
         if (!self->handshakePending) {
             return 0; /* session ended (close_notify/error): no more direct plaintext */
         }
         int r = xssl_pump_handshake(self);
         if (r != XSSL_S_OK) {
-            /* 鎻℃墜涓垨鍑洪敊锛氳繑鍥?0 璁╀笂灞傜瓑寰呬簨浠跺惊鐜紝閿欒宸查€氳繃淇″彿涓婃姤 */
+            /* 鎻鈩冨[0xa2]滄稉垨鍑洪敊锛氳繑鍥?0 璁鈺[0x80]笂灞傜瓑寰呬簨浠跺惊鐜紝閿欒宸查鈧[0xac]氳繃淇鈥冲娇涓婃姤 */
             return 0;
         }
     }
@@ -166,11 +166,11 @@ static int64_t xssl_v_readData(XIODevice* io, char* data, int64_t maxlen) {
     int n = XSsl_sessionRead(self->session, (uint8_t*)data, (size_t)maxlen);
     if (n > 0) return (int64_t)n;
     if (n == 0) return 0;
-    if (n == XSSL_S_CLOSED) return 0;   /* 瀵圭 close_notify锛岃涓?EOF */
+    if (n == XSSL_S_CLOSED) return 0;   /* Peer closed w/ close_notify */
     return 0;   /* XSSL_S_ERROR -> 0: return 0 (not -1) so XIODevice_read_1 keeps already-buffered plaintext; error reported via sslErrors/socketError signals */
 }
 
-/* --- writeData锛氬姞瀵嗗悗鍐欏叆搴曞眰 socket锛涙湭鍔犲瘑妯″紡鐩存帴閫忎紶鐖剁被 --- */
+    /* writeData: encrypt then write to socket; unencrypted -> bypass */
 static int64_t xssl_v_writeData(XIODevice* io, const char* data, int64_t len) {
     XSslSocket* self = (XSslSocket*)io;
 
@@ -182,7 +182,7 @@ static int64_t xssl_v_writeData(XIODevice* io, const char* data, int64_t len) {
             return 0; /* session ended (close_notify/error): no more direct plaintext */
         }
         int r = xssl_pump_handshake(self);
-        if (r != XSSL_S_OK) return 0; /* 鎻℃墜鏈畬鎴愶細鏆傛椂鏃犳硶鍐欙紝璁╀笂灞傞噸璇?*/
+        if (r != XSSL_S_OK) return 0; /* 鎻鈩冨[0xa2]滈張畬鎴愶細鏆傛椂鏃犳硶鍐欙紝璁鈺[0x80]笂灞傞噸璇?*/
     }
     int n = XSsl_sessionWrite(self->session, (const uint8_t*)data, (size_t)len);
     if (n > 0) {
@@ -193,7 +193,7 @@ static int64_t xssl_v_writeData(XIODevice* io, const char* data, int64_t len) {
     return -1;
 }
 
-/* --- connectToHost锛氬鎴风妯″紡涓嬭嚜鍔ㄨ褰?SNI 鍚嶇О锛屽叾浣欓€忎紶鐖剁被 --- */
+    /* connectToHost: auto-record SNI in client mode, else bypass */
 static void xssl_v_connectToHost(XAbstractSocket* sock,
                                  const char* hostName, uint16_t port,
                                  XIODeviceBaseMode mode,
@@ -206,7 +206,7 @@ static void xssl_v_connectToHost(XAbstractSocket* sock,
         (sock, hostName, port, mode, proto);
 }
 
-/* --- disconnectFromHost锛氬厛鍙?close_notify锛屽啀璁╃埗绫绘柇寮€ TCP --- */
+    /* disconnectFromHost: send close_notify then parent disconnect */
 static void xssl_v_disconnectFromHost(XAbstractSocket* sock) {
     XSslSocket* self = (XSslSocket*)sock;
     if (self->session && self->encrypted) {
@@ -216,7 +216,7 @@ static void xssl_v_disconnectFromHost(XAbstractSocket* sock) {
     PARENT_SOCK(EXAbstractSocket_DisconnectFromHost, Fn_disconnectFromHost)(sock);
 }
 
-/* --- close锛氫笌 disconnect 绫讳技锛屾渶鍚庤皟鐖剁被鐨?XIODevice.close --- */
+    /* close: similar to disconnect, then parent XIODevice.close */
 static void xssl_v_close(XIODevice* io) {
     XSslSocket* self = (XSslSocket*)io;
     if (self->session && self->encrypted) {
@@ -226,8 +226,8 @@ static void xssl_v_close(XIODevice* io) {
     PARENT_IO(EXIODevice_Close, Fn_close)(io);
 }
 
-/* --- waitForConnected锛氱瓑寰呭簳灞?TCP 寤虹珛鍚庯紝鍦ㄥ鎴风妯″紡涓嬪皢 handshakePending
- *     缃綅锛岀湡姝ｇ殑鎻℃墜鐢卞悗缁?waitForEncrypted 鎴?read/write 瑙﹀彂銆?--- */
+/* --- waitForConnected锛氱瓑寰呭簳灞?TCP 寤虹珛鍚庯紝鍦銊ヮ吂鎴风妯鈥崇础涓嬪皢 handshakePending
+ *     缃綅锛岀湡姝ｇ殑鎻鈩冨[0xa2]滈悽卞悗缁?waitForEncrypted 鎴?read/write 瑙﹀彂銆?--- */
 static bool xssl_v_waitForConnected(XAbstractSocket* sock, int msecs) {
     bool ok = PARENT_SOCK(EXAbstractSocket_WaitForConnected, Fn_waitForConnected)(sock, msecs);
     if (!ok) return false;
@@ -236,7 +236,7 @@ static bool xssl_v_waitForConnected(XAbstractSocket* sock, int msecs) {
     return true;
 }
 
-/* --- waitForReadyRead锛氬厛鎶婃彙鎵嬫帹瀹岋紝鍐嶇瓑寰呮槑鏂囧彲璇?--- */
+    /* waitForReadyRead: complete handshake first, then wait for plaintext */
 static bool xssl_v_waitForReadyRead(XIODevice* io, int msecs) {
     XSslSocket* self = (XSslSocket*)io;
     if (self->mode == XSslSocket_UnencryptedMode) {
@@ -263,17 +263,17 @@ static bool xssl_v_waitForReadyRead(XIODevice* io, int msecs) {
     return true;
 }
 
-/* --- waitForBytesWritten锛氶€忎紶鐖剁被锛涘瘑鏂囧啓瀹屽嵆瑙嗕负鍐欏畬鎴?--- */
+    /* waitForBytesWritten: bypass to parent; encrypted written = done */
 static bool xssl_v_waitForBytesWritten(XIODevice* io, int msecs) {
     return PARENT_IO(EXIODevice_WaitForBytesWritten, Fn_waitFor)(io, msecs);
 }
 
-/* --- waitForDisconnected锛氶€忎紶鐖剁被 --- */
+    /* waitForDisconnected: bypass to parent */
 static bool xssl_v_waitForDisconnected(XAbstractSocket* sock, int msecs) {
     return PARENT_SOCK(EXAbstractSocket_WaitForDisconnected, Fn_waitForDisconnected)(sock, msecs);
 }
 
-/* --- deinit锛氶攢姣?TLS 浼氳瘽鍙婅嚜鎸佺殑瀛楃涓?/ 璇佷功閾剧紦瀛橈紝鏈€鍚庤皟鐖剁被 deinit --- */
+    /* deinit: destroy TLS session, cert chain caches, then parent deinit */
 static void xssl_v_deinit(XClass* obj) {
     XSslSocket* self = (XSslSocket*)obj;
     if (self->session)         { XSsl_sessionDestroy(self->session); self->session = NULL; }
@@ -282,11 +282,11 @@ static void xssl_v_deinit(XClass* obj) {
     if (self->localCertChain)  { XVector_delete_base((XContainer*)self->localCertChain);  self->localCertChain = NULL; }
     if (self->handshakeErrors) { XVector_delete_base((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
     if (self->encRxBuf)        { XRingBuffer_delete_base((XContainer*)self->encRxBuf);    self->encRxBuf = (struct XRingBuffer*)XRingBuffer_create(16384); }
-    /* localCert / privateKey / caCert 鏄閮ㄥ紩鐢紝鏈被涓嶆嫢鏈?*/
+    /* localCert / privateKey / caCert 鏄閮銊ョ穿鐢紝鏈被涓嶆嫢鏈?*/
     XClass_Deinit_Parent(XAbstractSocket, self);
 }
 
-/* =============== vtable 鍒濆鍖?=============== */
+/* =============== vtable 初始化 =============== */
 
 static void xssl_drain_encrypted(XSslSocket* self) {
     if (self->handshakePending && !self->encrypted) {
@@ -312,19 +312,19 @@ static void xssl_drain_encrypted(XSslSocket* self) {
     //XPrintf("[XSSL_TRACE] drain return\n");
 }
 
-/* --- SOCK_ACT 浜嬩欢鐩存帴鎺ョ锛氬湪瀵嗘枃鍏?IODevice 璇荤紦鍐蹭箣鍓嶈В瀵嗗埌鑷寔 encRxBuf 鍐嶅悙鏄庢枃 --- */
+    /* SOCK_ACT: decrypt to encRxBuf before IODevice read buffer */
 static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
     XSslSocket* self = (XSslSocket*)e; (void)self;
     self = (XSslSocket*)sock;
-    /* 鏈姞瀵嗘ā寮忥細鐩存帴閫忎紶鐖剁被 */
+    /* 鏈姞瀵嗘膩寮忥細鐩存帴閫忎紶鐖剁被 */
     if (self->mode == XSslSocket_UnencryptedMode) {
         return PARENT_SOCK(EXObject_Event, Fn_event)(sock, e);
     }
-    /* 闈?SOCK_ACT 浜嬩欢锛氶€忎紶鐖剁被锛堝 SOCK_CLOSE銆佸叾瀹冿級 */
+    /* 闈?SOCK_ACT 浜嬩欢锛氶鈧[0xac]忎紶鐖剁被锛堝 SOCK_CLOSE銆佸叾瀹冿級 */
     if (e->type != XEVENT_TYPE_SOCK_ACT) {
         return PARENT_SOCK(EXObject_Event, Fn_event)(sock, e);
     }
-    /* 瀛樺湪浠ｇ悊鎻℃墜涓婁笅鏂囨椂锛岃蛋鐖剁被鍏煎璺緞锛堜笉甯歌锛?*/
+    /* 瀛樺湪浠ｇ悊鎻鈩冨[0xa2]滄稉婁笅鏂囨椂锛岃蛋鐖剁被鍏煎璺緞锛堜笉甯歌锛?*/
     if (sock->proxyHandshakeCtx) {
         return PARENT_SOCK(EXObject_Event, Fn_event)(sock, e);
     }
@@ -335,10 +335,10 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
 
     XEventSockAct* sa = (XEventSockAct*)e;
     //XPrintf("[XSSL_TRACE] event actType=%d\n", sa->actType);
-    /* 椹卞姩搴曞眰 IOCP/select 鐘舵€佹満锛堢埗绫讳篃鏄厛璋冭繖涓€姝ワ級 */
+    /* 椹卞姩搴曞眰 IOCP/select 鐘舵鈧[0xac]佹満锛堢埗绫讳篃鏄厛璋冭繖涓鈧[0xac]姝銉[0xaf]級 */
     XNetwork_socketHandleEvent(priv, e);
 
-    /* Read锛氭妸搴曞眰鍒氳鍒扮殑瀵嗘枃濉炶繘 encRxBuf锛涗笉鍐?IODevice 璇荤紦鍐?*/
+    /* Read: encrypted data -> encRxBuf (not IODevice read buffer) */
     if (sa->actType & XSocketAct_Read) {
         size_t bytesTransferred = XNetwork_socketReadFinishedBytes(priv);
         //XPrintf("[XSSL_TRACE] Read event bytes=%zu\n", bytesTransferred);
@@ -348,14 +348,14 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
                 XRingBuffer_write(self->encRxBuf, readBuf, bytesTransferred);
             }
         }
-        /* 瑙ｅ瘑锛歮bedTLS 浠?encRxBuf 璇诲彇瀵嗘枃锛屾槑鏂囧啓鍏?IODevice 璇荤紦鍐插苟 emit readyRead */
+    /* Read: encrypted data -> encRxBuf (not IODevice read buffer) */
         xssl_drain_encrypted(self);
-        /* 缁х画鎶曢€掍笅涓€娆″紓姝ヨ */
+        /* 缁褏画鎶曢鈧[0xac]掍笅涓鈧[0xac]娆鈥崇磽姝銉[0xa8] */
         XNetwork_socketContinueRead(priv, sock->socketType == XAbstractSocket_UdpSocket);
     }
 
-    /* Write锛氭槑鏂囧嚭绔欏凡鐢?xssl_v_writeData 璧扮埗绫?writeData 瀹屾垚锛?
-       杩欓噷鍙鐞嗗簳灞傚啓瀹屾垚浜嬩欢锛宔mit bytesWritten 璁╀笂灞傜户缁?*/
+    /* Write: via xssl_v_writeData -> parent writeData; handle write-complete event */
+       杩欓噷鍙鐞嗗簳灞傚啓瀹屾垚浜嬩欢锛宔mit bytesWritten 璁鈺[0x80]笂灞傜户缁?*/
     if (sa->actType & XSocketAct_Write) {
         size_t bytesWritten = XNetwork_socketWriteFinishedBytes(priv);
         if (bytesWritten > 0) {
@@ -366,7 +366,7 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
         XNetwork_socketContinueWrite(priv, wrb, sock->socketType == XAbstractSocket_UdpSocket);
     }
 
-    /* Connect锛氬簳灞傚畬鎴愯繛鎺ユ椂鍒囨崲鐘舵€?*/
+    /* Connect锛氬簳灞傚畬鎴愯繛鎺銉︽[0xa4]傞崚囨崲鐘舵鈧[0xac]?*/
     if (sa->actType & XSocketAct_Connect) {
         if (XNetwork_socketIsConnected(priv)) {
             XAbstractSocket_setSocketState(sock, XAbstractSocket_ConnectedState);
@@ -380,7 +380,7 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
 }
 
 
-/* =============== 淇″彿瀹炵幇 =============== */
+/* =============== 淇鈥冲娇瀹炵幇 =============== */
 
 void* XSslSocket_encrypted_signal(XSslSocket* self)
 {
@@ -661,7 +661,7 @@ XTcpSocket* XSslSocket_plainSocket(XSslSocket* self)
 {
     return (XTcpSocket*)self;
 }
-/* =============== 内部辅助函数（loopback 测试用）=============== */
+/* =============== 简略名包装（loopback 测试用）=============== */
 
 void XSslSocket_setPrivateKey(XSslSocket* self, XSslKey* key)
 {
@@ -828,17 +828,17 @@ XVtable* XSslSocket_class_init(void) {
 #else
     XVTABLE_HEAP_INIT_DEFAULT
 #endif
-    /* 缁ф壙 XTcpSocket 鐨?vtable锛堣繘鑰岀户鎵?XAbstractSocket / XIODevice / XObject锛?*/
+    /* 缁褎壙 XTcpSocket 鐨?vtable锛堣繘鑰岀户鎵?XAbstractSocket / XIODevice / XObject锛?*/
     XVTABLE_INHERIT_XCLASS(XAbstractSocket);
 
-    /* IO 灞傦細璇汇€佸啓銆佸叧闂€佺瓑寰呭彲璇汇€佺瓑寰呭啓瀹?鈥斺€?鍏ㄩ儴瑕嗙洊涓?TLS 鐗堟湰 */
+    /* IO 灞傦細璇汇鈧[0xac]佸啓銆佸叧闂鈧[0xac]佺瓑寰呭彲璇汇鈧[0xac]佺瓑寰呭啓瀹?鈥斺鈧[0xac]?鍏銊╁劥瑕嗙洊涓?TLS 鐗堟湰 */
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadData,             xssl_v_readData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData,            xssl_v_writeData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close,                xssl_v_close);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForReadyRead,     xssl_v_waitForReadyRead);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForBytesWritten,  xssl_v_waitForBytesWritten);
 
-    /* Socket 灞傦細杩炴帴銆佹柇寮€銆佺瓑寰呰繛鎺ャ€佺瓑寰呮柇寮€ 鈥斺€?鍔犲叆 TLS 鐢熷懡鍛ㄦ湡 */
+    /* Socket 灞傦細杩炴帴銆佹柇寮鈧[0xac]銆佺瓑寰呰繛鎺銉ｂ偓佺瓑寰呮柇寮鈧[0xac] 鈥斺鈧[0xac]?鍔犲叆 TLS 鐢熷懡鍛銊︽埂 */
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSocket_ConnectToHost,      xssl_v_connectToHost);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSocket_DisconnectFromHost, xssl_v_disconnectFromHost);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSocket_WaitForConnected,   xssl_v_waitForConnected);
