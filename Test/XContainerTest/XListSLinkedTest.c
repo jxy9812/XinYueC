@@ -366,13 +366,14 @@ static void XListSLinkedAccessTest(void)
 		XListSLinked_delete_base(li);
 	}
 	{
+        int __v20 = 20; int __v999 = 999;
 		int arr[] = { 10, 20, 30, 20, 40, 20, 50 };
 		XListSLinked* li = XListSLinkedMakeInt(arr, 7);
 		int f = 20, n = 999;
 		XPrintf("Contains_Base(20): %s (期望:是)\n",
-			XListSLinked_Contains_Base(li, int, 20) ? "是" : "否");
+			XListSLinked_Contains_Base(li, &__v20) ? "是" : "否");
 		XPrintf("Contains_Base(999): %s (期望:否)\n",
-			XListSLinked_Contains_Base(li, int, 999) ? "是" : "否");
+			XListSLinked_Contains_Base(li, &__v999) ? "是" : "否");
 		XListBase_iterator it;
 		XPrintf("indexOf(20,0): %s\n",
 			XListSLinked_indexOf_base(li, &f, 0, &it) ? "是" : "否");
@@ -393,16 +394,17 @@ static void XListSLinkedAccessTest(void)
 		XListSLinked_delete_base(li);
 	}
 	{
+        int __v1 = 1; int __v5 = 5; int __v999 = 999;
 		int arr[] = { 1, 2, 3, 4, 5 };
 		XListSLinked* li = XListSLinkedMakeInt(arr, 5);
 		XPrintf("StartsWith_Base(1): %s (期望:是)\n",
-			XListSLinked_StartsWith_Base(li, int, 1) ? "是" : "否");
+			XListSLinked_StartsWith_Base(li, &__v1) ? "是" : "否");
 		XPrintf("StartsWith_Base(999): %s (期望:否)\n",
-			XListSLinked_StartsWith_Base(li, int, 999) ? "是" : "否");
+			XListSLinked_StartsWith_Base(li, &__v999) ? "是" : "否");
 		XPrintf("EndsWith_Base(5): %s (期望:是)\n",
-			XListSLinked_EndsWith_Base(li, int, 5) ? "是" : "否");
+			XListSLinked_EndsWith_Base(li, &__v5) ? "是" : "否");
 		XPrintf("EndsWith_Base(999): %s (期望:否)\n",
-			XListSLinked_EndsWith_Base(li, int, 999) ? "是" : "否");
+			XListSLinked_EndsWith_Base(li, &__v999) ? "是" : "否");
 		XListSLinked_delete_base(li);
 	}
 	{
@@ -567,6 +569,7 @@ static void XListSLinkedSafetyTest(void)
 		XListSLinked_delete_base(li);
 	}
 	{
+        int __v1 = 1;
 		XPrintf("NULL: isEmpty=%s, size=%zu\n",
 			XListSLinked_isEmpty_base(NULL) ? "是" : "否",
 			XListSLinked_size_base(NULL));
@@ -597,9 +600,9 @@ static void XListSLinkedSafetyTest(void)
 			XListSLinked_indexOf_base(NULL, &val, 0, &it) ? "是" : "否",
 			XListSLinked_lastIndexOf_base(NULL, &val, 0, &it) ? "是" : "否");
 		XPrintf("NULL: Contains=%s, StartsWith=%s, EndsWith=%s\n",
-			XListSLinked_Contains_Base(NULL, int, 1) ? "是" : "否",
-			XListSLinked_StartsWith_Base(NULL, int, 1) ? "是" : "否",
-			XListSLinked_EndsWith_Base(NULL, int, 1) ? "是" : "否");
+			XListSLinked_Contains_Base(NULL, &__v1) ? "是" : "否",
+			XListSLinked_StartsWith_Base(NULL, &__v1) ? "是" : "否",
+			XListSLinked_EndsWith_Base(NULL, &__v1) ? "是" : "否");
 		XPrintf("NULL: removeFirst=%s, removeLast=%s\n",
 			XListSLinked_removeFirst_base(NULL) ? "是" : "否",
 			XListSLinked_removeLast_base(NULL) ? "是" : "否");

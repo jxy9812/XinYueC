@@ -1,4 +1,4 @@
-﻿// XAbstractSocket.h
+// XAbstractSocket.h
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
@@ -367,6 +367,15 @@ bool XAbstractSocket_bindAny(XAbstractSocket* sock, uint16_t port, XAbstractSock
  * @param protocol 网络协议（IPv4/IPv6/Any）
  */
 void XAbstractSocket_connectToHost_base(XAbstractSocket* sock, const char* hostName, uint16_t port, XIODeviceBaseMode mode, XAbstractSocket_NetworkLayerProtocol protocol);
+
+/**
+ * @brief 直接向已解析地址发起连接（跳过 DNS）。对齐 Qt6 QAbstractSocket::connectToHost(QHostAddress&, ...)
+ * @param sock 套接字实例（非 NULL）
+ * @param address 已解析的主机地址（非 NULL）
+ * @param port 远程端口（主机字节序）
+ * @param mode 打开模式（如 ReadWrite）
+ */
+void XAbstractSocket_connectToHostByAddress(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XIODeviceBaseMode mode);
 /**
  * @brief 正常断开连接（优雅关闭）。
  * @param sock 套接字实例（非 NULL）
@@ -535,6 +544,15 @@ void* XAbstractSocket_stateChanged_signal(XAbstractSocket* sock, XAbstractSocket
  * @emits 当任何网络操作失败时触发（error 字段已更新）
  */
 void* XAbstractSocket_errorOccurred_signal(XAbstractSocket* sock, XAbstractSocket_SocketError error);
+
+/**
+ * @brief 信号：代理需要认证。对齐 Qt6 QAbstractSocket::proxyAuthenticationRequired。
+ * @param sock 套接字实例（可为 NULL，此时不 emit）
+ * @param proxy 触发认证请求的代理配置（可为 NULL）
+ * @param authenticator 用户填充的认证器（预留，可为 NULL）
+ * @return 函数指针自身
+ */
+void* XAbstractSocket_proxyAuthenticationRequired_signal(XAbstractSocket* sock, XNetworkProxy* proxy, void* authenticator);
 
 #ifdef __cplusplus
 }

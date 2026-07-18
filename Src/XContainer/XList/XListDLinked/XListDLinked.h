@@ -310,17 +310,17 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize, bool useCow);
  * @brief 类型安全的contains判断（对齐Qt contains，统一命名）
  * @note 内部调用find_base，统一使用XListBase_Contains_Base
  */
-#define XListDLinked_Contains_Base(list, type, value)    XListBase_Contains_Base(list, type, value)
+#define XListDLinked_Contains_Base(list, value_ptr)    XListBase_Contains_Base(list, value_ptr)
 
 /**
  * @brief 判断是否以指定值开头（对齐Qt startsWith）
  */
-#define XListDLinked_StartsWith_Base(list, type, value)  XListBase_StartsWith_Base(list, type, value)
+#define XListDLinked_StartsWith_Base(list, value_ptr)  XListBase_StartsWith_Base(list, value_ptr)
 
 /**
  * @brief 判断是否以指定值结尾（对齐Qt endsWith）
  */
-#define XListDLinked_EndsWith_Base(list, type, value)    XListBase_EndsWith_Base(list, type, value)
+#define XListDLinked_EndsWith_Base(list, value_ptr)    XListBase_EndsWith_Base(list, value_ptr)
 
 /**
  * @brief 移除头元素（对齐Qt removeFirst）

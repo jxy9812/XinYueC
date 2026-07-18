@@ -11,7 +11,7 @@ void XSocketTest();
 int main(int argc, char* args[])
 {
 	//fprintf(stderr, "[DEBUG] main() entered\n"); fflush(stderr);
-	//setvbuf(stdout, NULL, _IONBF, 0);  /* 禁用输出缓冲，确保调试信息即时显示 */
+	setvbuf(stdout, NULL, _IONBF, 0);  /* 禁用输出缓冲，确保调试信息即时显示 */
 	XPrintf("=== XinYueC 启动 ===\n");
 	//XVectorTest();
 	int n = 8,n1=666,sum=n+n1;

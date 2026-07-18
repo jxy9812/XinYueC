@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XNetwork_win32.c
  * @brief Windows 平台网络实现（IOCP 异步 I/O）
  */
@@ -733,7 +733,6 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event)
             p->connected = true;
             int opt = 1;
             setsockopt(p->socket, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, (char*)&opt, sizeof(opt));
-            startAsyncRead(priv, false);
         } else {
             p->connected = false;
         }
@@ -1572,3 +1571,20 @@ int XNetwork_gssapiAuth(const XString* serviceName,
     return -1;
 }
 #endif /* XNETWORK_USE_PLATFORM_API */
+
+void XNetwork_socketContinueWrite(XNetworkSocketPrivate* priv, XRingBuffer* ringBuffer, bool isUdp)
+{
+    if (!priv || !ringBuffer) return;
+    XNetworkSocketPrivateWin32* p = W32(priv);
+    if (p->writePending || p->socket == INVALID_SOCKET) return;
+    struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
+    size_t pending = XRingBuffer_available(rb);
+    if (pending == 0) return;
+    size_t chunk = pending;
+    if (chunk > XNETWORK_WRITE_BUFFER_SIZE) chunk = XNETWORK_WRITE_BUFFER_SIZE;
+    char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
+    size_t got = XRingBuffer_read(rb, tempBuf, chunk);
+    if (got > 0) {
+        startAsyncWrite(priv, tempBuf, (int64_t)got, NULL, 0, isUdp);
+    }
+}

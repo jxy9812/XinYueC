@@ -1,4 +1,4 @@
-﻿// XAbstractSocket.c
+// XAbstractSocket.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
@@ -758,6 +758,12 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                 if (bytesWritten > 0) {
                     XIODevice_bytesWritten_signal((XIODevice*)self, bytesWritten);
                 }
+                /* 继续投递写环形缓冲区中残留数据 */
+                {
+                    int __wch = XIODevice_currentWriteChannel((XIODevice*)self);
+                    struct XRingBuffer* __wrb = XIODevicePrivate_getOrCreateWriteBuffer(self->base.m_d, __wch);
+                    XNetwork_socketContinueWrite(priv, __wrb, self->socketType == XAbstractSocket_UdpSocket);
+                }
             }
         }
 
@@ -1016,4 +1022,25 @@ void* XAbstractSocket_stateChanged_signal(XAbstractSocket* sock, XAbstractSocket
 void* XAbstractSocket_errorOccurred_signal(XAbstractSocket* sock, XAbstractSocket_SocketError error)
 {
     XEmitSignal(sock, XAbstractSocket_errorOccurred_signal, XVarList_Create(XVar(XAbstractSocket_SocketError, error)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
+}
+
+// ==================== Qt6 对齐：按地址直连（跳过 DNS）====================
+void XAbstractSocket_connectToHostByAddress(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XIODeviceBaseMode mode)
+{
+    if (!sock || !address) return;
+    XString* s = XHostAddress_toString(address);
+    if (!s) return;
+    const char* hostStr = XString_toUtf8(s);
+    /* NetworkLayerProtocol: 依据地址决定 IPv4/IPv6，交给内部协议识别 */
+    XAbstractSocket_connectToHost_base(sock, hostStr, port, mode, XAbstractSocket_AnyIPProtocol);
+    XString_delete_base(s);
+}
+
+// ==================== Qt6 对齐：代理认证信号 ====================
+void* XAbstractSocket_proxyAuthenticationRequired_signal(XAbstractSocket* sock, XNetworkProxy* proxy, void* authenticator)
+{
+    XEmitSignal(sock, XAbstractSocket_proxyAuthenticationRequired_signal,
+                XVarList_Create(XVar(void*, proxy), XVar(void*, authenticator)),
+                NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    return (void*)XAbstractSocket_proxyAuthenticationRequired_signal;
 }

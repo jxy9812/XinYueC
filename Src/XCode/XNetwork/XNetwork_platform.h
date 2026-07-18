@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XNetwork_platform.h
  * @brief 网络操作平台抽象接口（精简版）
  * 
@@ -43,7 +43,7 @@ extern "C" {
 #endif
 
 typedef struct XNetworkInterface XNetworkInterface;
-
+typedef struct XRingBuffer XRingBuffer;
 /* =========================================================================
  * 平台移植指南
  * =========================================================================
@@ -322,6 +322,11 @@ size_t XNetwork_socketWriteFinishedBytes(const XNetworkSocketPrivate* priv);
  * @note 处理完数据后调用，发起下一次异步读取
  */
 void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp);
+
+/**
+ * @brief 继续异步写入（写完成后将写环形缓冲区中残留数据继续投递）
+ */
+void XNetwork_socketContinueWrite(XNetworkSocketPrivate* priv, XRingBuffer* ringBuffer, bool isUdp);
 
 /* =========================================================================
  * 六、TCP 服务器

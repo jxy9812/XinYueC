@@ -1,4 +1,4 @@
-﻿#include "XMultiPool.h"
+#include "XMultiPool.h"
 #include "XMemory.h"
 #include "XMutex.h"
 #include <string.h>
@@ -312,18 +312,22 @@ XMultiPool* XMultiPool_global(void) {
 }
 
 void* XMultiPool_global_malloc(size_t size) {
+    if (!global_pool_inited) XMultiPool_initGlobal();
     return XMultiPool_malloc(global_pool, size);
 }
 
 void* XMultiPool_global_calloc(size_t count, size_t size) {
+    if (!global_pool_inited) XMultiPool_initGlobal();
     return XMultiPool_calloc(global_pool, count, size);
 }
 
 void* XMultiPool_global_realloc(void* ptr, size_t size) {
+    if (!global_pool_inited) XMultiPool_initGlobal();
     return XMultiPool_realloc(global_pool, ptr, size);
 }
 
 void XMultiPool_global_free(void* ptr) {
+    if (!global_pool_inited) return;
     XMultiPool_free(global_pool, ptr);
 }
 

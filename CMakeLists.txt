@@ -52,8 +52,59 @@ include_directories("Library/lwip/include")
 file(GLOB_RECURSE TEMP_LIBRARY_FILE "Library/lwip/*.c")
 list(APPEND LIBRARY_FILE ${TEMP_LIBRARY_FILE})
 
+# ==================== mbedTLS（XSsl SSL/TLS 后端）====================
+# 显式清单集成：按三层库（crypto / x509 / TLS）组织，仅编必需源码；
+# 后量子密码 pqcp 体积大（约2.3MB），默认关闭，按需开启。
+# mbedTLS 平台依赖在 XSsl_mbedtls.c 中桥接到 XinYueC：随机数->XRandomGenerator，
+# 内存->XMemory(XMalloc_System/XMalloc_MultiPool)，文件->XFile，网络BIO->XAbstractSocket。
+option(MBEDTLS_ENABLE_PQCP "编译后量子密码 pqcp 驱动（嵌入式默认关）" OFF)
+
+# 头文件路径：TLS/X.509 公开头 + 加密头 + 内部头 + builtin 驱动头
+include_directories("Library/mbedtls/include")
+include_directories("Library/mbedtls/tf-psa-crypto/include")
+include_directories("Library/mbedtls/library")
+include_directories("Library/mbedtls/tf-psa-crypto/core")
+include_directories("Library/mbedtls/tf-psa-crypto/drivers/builtin/include")
+# mbedTLS 内部私有头（对应原生 CMake 的 TF_PSA_CRYPTO_PRIVATE_INCLUDE_DIRS）
+include_directories("Library/mbedtls/tf-psa-crypto/utilities")
+include_directories("Library/mbedtls/tf-psa-crypto/platform")
+include_directories("Library/mbedtls/tf-psa-crypto/extras")
+include_directories("Library/mbedtls/tf-psa-crypto/drivers/builtin/src")
+include_directories("Library/mbedtls/tf-psa-crypto/dispatch")
+
+# 1) 加密核心（tf-psa-crypto，独立库）+ 经典算法 builtin
+file(GLOB TEMP_LIBRARY_FILE
+    "Library/mbedtls/tf-psa-crypto/core/*.c"
+    "Library/mbedtls/tf-psa-crypto/utilities/*.c"
+    "Library/mbedtls/tf-psa-crypto/platform/*.c"
+    "Library/mbedtls/tf-psa-crypto/extras/*.c"
+    "Library/mbedtls/tf-psa-crypto/drivers/builtin/src/*.c")
+list(APPEND LIBRARY_FILE ${TEMP_LIBRARY_FILE})
+
+# 2) X.509 + TLS（顶层 library）
+file(GLOB TEMP_LIBRARY_FILE "Library/mbedtls/library/*.c")
+list(APPEND LIBRARY_FILE ${TEMP_LIBRARY_FILE})
+
+# 3) 后量子密码（可选，默认关）
+if(MBEDTLS_ENABLE_PQCP)
+    include_directories("Library/mbedtls/tf-psa-crypto/drivers/pqcp/include")
+    file(GLOB_RECURSE TEMP_LIBRARY_FILE "Library/mbedtls/tf-psa-crypto/drivers/pqcp/*.c")
+    list(APPEND LIBRARY_FILE ${TEMP_LIBRARY_FILE})
+endif()
+
+# Enable the XSsl mbedTLS backend (XSsl_mbedtls.c is guarded by XSSL_USE_MBEDTLS)
+add_compile_definitions(XSSL_USE_MBEDTLS)
+
 add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE})
 add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE} ${PUBLIC_HDRS})
+# Windows(MSVC): mbedtls_platform_get_entropy() 调用 BCryptGenRandom（需 bcrypt.lib）。
+# 已开启 MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG，TLS/PSA 运行时随机数走 XRandomGenerator；
+# 但 platform_util.c 仍被编译并链接，故 Windows 上必须链接 bcrypt 解析符号。
+# Linux 用 getrandom()/urandom，无需额外库。
+if(WIN32)
+    target_link_libraries(${EXPORT_NAME}S bcrypt)
+    target_link_libraries(${EXPORT_NAME}  bcrypt)
+endif()
 
 #添加参加编译的文件
 add_executable(${PROJECT_NAME}

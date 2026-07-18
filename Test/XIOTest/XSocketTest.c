@@ -1,5 +1,6 @@
 #include"XIOTest.h"
 #include"XTcpSocket.h"
+#include"XSslSocket.h"
 #include"XMemory.h"
 #include"XMenu.h"
 #include"XAction.h"
@@ -74,6 +75,88 @@ void XSocketTest_Baidu()
 	XCoreApplication_exec();
 }
 
+/* ===================================================================
+ * 百度 HTTPS 外网测试（XSslSocket，对齐 QSslSocket）
+ * -------------------------------------------------------------------
+ * 独立菜单入口：验证 mbedTLS 后端 + XSslSocket 继承 XTcpSocket 的
+ * 明文 read/write 语义。发送 HTTPS GET，握手 -> 加密 IO -> 关闭。
+ * =================================================================== */
+void XSocketTest_BaiduHttps()
+{
+	XPrintf("=== XSocketTest 百度 HTTPS 外网测试 (XSslSocket) ===\n");
+	XPrintf("[百度HTTPS] SSL 后端: %s\n", XSsl_backendName());
+
+	/* 1) DNS 解析（走 lwIP / 平台解析） */
+	XHostInfo* info = XHostInfo_fromName2("www.baidu.com");
+	if (info && XHostInfo_error(info) == XHostInfo_NoError) {
+		const XVector* address = XHostInfo_addresses_const(info);
+		if (address && XVector_count_base(address) > 0) {
+			const XHostAddress* addr = (const XHostAddress*)XVector_at_base(address, 0);
+			XString* ipStr = XHostAddress_toString(addr);
+			XPrintf("[百度HTTPS] DNS: ");
+			XPrintf_2(ipStr);
+			XPrintf("\n");
+			XString_delete_base(ipStr);
+		} else {
+			XPrintf("[百度HTTPS] DNS 解析: 无 IP 地址\n");
+		}
+		XHostInfo_delete_base(info);
+	} else {
+		XPrintf("[百度HTTPS] DNS 解析失败\n");
+		return;
+	}
+
+	/* 2) 创建 XSslSocket，客户端模式 */
+	XSslSocket* ssl = XSslSocket_create();
+	XSslSocket_setProtocol(ssl, XSSL_SecureProtocols);
+	XSslSocket_setPeerVerifyMode(ssl, XSSL_VerifyNone); /* 无 CA，只验证握手成功 */
+	XSslSocket_setPeerVerifyName(ssl, "www.baidu.com");
+
+	/* 3) 发起 TCP + TLS 加密连接 */
+	XPrintf("[百度HTTPS] 发起 TCP+TLS 加密连接 www.baidu.com:443 ...\n");
+	XSslSocket_connectToHostEncrypted(ssl, "www.baidu.com", 443);
+
+	if (!XSslSocket_waitForConnected_base(ssl, 10000)) {
+		XPrintf("[百度HTTPS] TCP 连接超时(10s)\n");
+		return;
+	}
+	XPrintf("[百度HTTPS] TCP 连接成功，等待 TLS 握手...\n");
+
+	if (!XSslSocket_waitForEncrypted(ssl, 15000)) {
+		XPrintf("[百度HTTPS] TLS 握手失败/超时(15s)\n");
+		return;
+	}
+	XPrintf("[百度HTTPS] TLS 握手成功: proto=%s cipher=%s\n",
+		XSslSocket_sessionProtocol((const XSslSocket*)ssl),
+		XSslSocket_sessionCipher((const XSslSocket*)ssl));
+
+	/* 4) 明文接口发送 HTTPS GET（内部自动加密） */
+	/*const char* httpReq =
+		"GET / HTTP/1.1\r\n"
+		"Host: www.baidu.com\r\n"
+		"User-Agent: XinYueC-XSslSocket-Test/1.0\r\n"
+		"Connection: close\r\n"
+		"\r\n";*/
+	const char* httpReq = "GET / HTTP/1.1\r\nHost: www.baidu.com\r\nConnection: close\r\n\r\n";
+	int64_t wrote = XSslSocket_write_1(ssl, httpReq, (int64_t)strlen(httpReq));
+	XPrintf("[百度HTTPS] 已发送 HTTPS GET 请求 (%lld bytes)，等待响应...\n", (long long)wrote);
+
+	/* 5) 同步循环读取解密后的明文响应 */
+	char buf[4096];
+	int64_t total = 0;
+	while (XSslSocket_waitForReadyRead_base(ssl, 10000)) {
+		int64_t n = XSslSocket_read_1(ssl, buf, (int64_t)sizeof(buf) - 1);
+		if (n <= 0) break;
+		buf[n] = '\0';
+		fwrite(buf, 1, (size_t)n, stdout);
+		total += n;
+	}
+	XPrintf("\n[百度HTTPS] HTTPS 响应接收完成，共 %lld 字节\n", (long long)total);
+
+	XSslSocket_disconnectFromHost_base(ssl);
+	XPrintf("[百度HTTPS] 连接已关闭\n");
+}
+
 void XSocketTest()
 {
 	XPrintf("=== XSocketTest 开始 ===\n");
@@ -100,5 +183,9 @@ void XMenu_XSocketTest(XMenu* root)
 	{
 		XAction* action = XMenu_addAction(menu, "百度外网测试");
 		XAction_setAction(action, XSocketTest_Baidu);
+	}
+	{
+		XAction* action = XMenu_addAction(menu, "百度HTTPS测试");
+		XAction_setAction(action, XSocketTest_BaiduHttps);
 	}
 }

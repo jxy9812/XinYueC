@@ -71,9 +71,9 @@ typedef struct XLFL_HPRec {
 static XLFL_HPRec           g_lfl_hp[XLFL_HP_MAX_THREADS];
 static XAtomic_uintptr_t    g_lfl_slot_used[XLFL_HP_MAX_THREADS]; /* 0/1，用 CAS 占位 */
 
-static __thread int         t_lfl_slot        = -1;
-static __thread XLockFreeListNode* t_lfl_retired[XLFL_RETIRE_CAPACITY];
-static __thread int         t_lfl_retired_n   = 0;
+static /*__thread*/ int         t_lfl_slot        = -1;
+static /*__thread*/ XLockFreeListNode* t_lfl_retired[XLFL_RETIRE_CAPACITY];
+static /*__thread*/ int         t_lfl_retired_n   = 0;
 
 /* 为当前线程申请一个 HP 槽（终身持有，不释放）。返回槽下标；失败 abort。 */
 static int _lfl_hp_acquire_slot(void)

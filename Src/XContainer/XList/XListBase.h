@@ -1,4 +1,4 @@
-﻿#include"CXinYueConfig.h"
+#include"CXinYueConfig.h"
 /**
 * @brief 条件编译控制
 * @note 防止头文件重复包含，且仅在XList模块启用时编译
@@ -540,10 +540,9 @@ size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const voi
  * @param value 待判断的元素值
  * @return 链表非空且首元素等于value返回true
  */
-#define XListBase_StartsWith_Base(this_list, type, value) \
+#define XListBase_StartsWith_Base(this_list, value_ptr) \
     (!XListBase_isEmpty_base(this_list) && \
-     ({type __v = (value); \
-       XContainerCompare(this_list)(XListBase_front_base(this_list), &__v) == XCompare_Equality;}))
+     XContainerCompare(this_list)(XListBase_front_base(this_list), (value_ptr)) == XCompare_Equality)
 
 /**
  * @brief 判断链表是否以指定值结尾（对齐Qt endsWith）
@@ -552,10 +551,9 @@ size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const voi
  * @param value 待判断的元素值
  * @return 链表非空且尾元素等于value返回true
  */
-#define XListBase_EndsWith_Base(this_list, type, value) \
+#define XListBase_EndsWith_Base(this_list, value_ptr) \
     (!XListBase_isEmpty_base(this_list) && \
-     ({type __v = (value); \
-       XContainerCompare(this_list)(XListBase_back_base(this_list), &__v) == XCompare_Equality;}))
+     XContainerCompare(this_list)(XListBase_back_base(this_list), (value_ptr)) == XCompare_Equality)
 
 /**
  * @brief 类型安全的contains判断（对齐Qt contains，统一命名）
@@ -565,9 +563,8 @@ size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const voi
  * @return 包含返回true，否则返回false
  * @note 内部调用find_base。子类通过此宏继承，不再额外定义contains_base
  */
-#define XListBase_Contains_Base(this_list, type, value) \
-    ({bool __found = false; type __v = (value); XListBase_iterator __it; \
-      if(XListBase_find_base(this_list, &__v, &__it)) __found = true; __found;})
+#define XListBase_Contains_Base(this_list, value_ptr) \
+    XListBase_contains(this_list, (value_ptr))
 
 /**
  * @brief 移除头元素（对齐Qt removeFirst，等价于pop_front_base）
