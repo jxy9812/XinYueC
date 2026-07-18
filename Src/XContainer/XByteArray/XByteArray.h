@@ -437,7 +437,7 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData);
 * @return 成功返回 array，失败返回 NULL
 * @note Qt 映射: QByteArray::fill(char c, qsizetype size = -1)
 */
-XByteArray* XByteArray_fill_base(XByteArray* array, uint8_t byte, int64_t size);
+XByteArray* XByteArray_fill(XByteArray* array, uint8_t byte, int64_t size);
 
 /**
 * @brief 截断到指定长度——对齐 Qt QByteArray::truncate
@@ -445,7 +445,7 @@ XByteArray* XByteArray_fill_base(XByteArray* array, uint8_t byte, int64_t size);
 * @param pos   保留前 pos 个字节，超出部分被丢弃；pos<=0 时清空；pos>=size 时无操作
 * @note Qt 映射: QByteArray::truncate(qsizetype pos)
 */
-void XByteArray_truncate_base(XByteArray* array, int64_t pos);
+void XByteArray_truncate(XByteArray* array, int64_t pos);
 
 /**
 * @brief 从尾部丢弃 n 个字节——对齐 Qt QByteArray::chop
@@ -453,7 +453,7 @@ void XByteArray_truncate_base(XByteArray* array, int64_t pos);
 * @param n     待丢弃字节数；n<=0 无操作；n>=size 时清空
 * @note Qt 映射: QByteArray::chop(qsizetype n)
 */
-void XByteArray_chop_base(XByteArray* array, int64_t n);
+void XByteArray_chop(XByteArray* array, int64_t n);
 
 /**
 * @brief 返回包含前 n 个字节的新数组——对齐 Qt QByteArray::left / first
@@ -462,13 +462,13 @@ void XByteArray_chop_base(XByteArray* array, int64_t n);
 * @return 新 XByteArray；调用方负责释放
 * @note Qt 映射: QByteArray::left(qsizetype)/QByteArray::first(qsizetype)
 */
-XByteArray* XByteArray_left_base(const XByteArray* array, int64_t n);
+XByteArray* XByteArray_left(const XByteArray* array, int64_t n);
 
 /**
 * @brief 返回包含后 n 个字节的新数组——对齐 Qt QByteArray::right / last
 * @note Qt 映射: QByteArray::right(qsizetype)/QByteArray::last(qsizetype)
 */
-XByteArray* XByteArray_right_base(const XByteArray* array, int64_t n);
+XByteArray* XByteArray_right(const XByteArray* array, int64_t n);
 
 /**
 * @brief 返回从 pos 起、长度 n 的子数组——对齐 Qt QByteArray::mid / sliced
@@ -476,14 +476,14 @@ XByteArray* XByteArray_right_base(const XByteArray* array, int64_t n);
 * @param n   长度；n<0 表示到结尾
 * @note Qt 映射: QByteArray::mid(qsizetype pos, qsizetype len=-1)/QByteArray::sliced()
 */
-XByteArray* XByteArray_mid_base(const XByteArray* array, int64_t pos, int64_t n);
+XByteArray* XByteArray_mid(const XByteArray* array, int64_t pos, int64_t n);
 
-/** @brief Qt QByteArray::first(n) 别名，等价于 XByteArray_left_base */
-#define XByteArray_first_base             XByteArray_left_base
-/** @brief Qt QByteArray::last(n) 别名，等价于 XByteArray_right_base */
-#define XByteArray_last_base              XByteArray_right_base
-/** @brief Qt QByteArray::sliced(pos, n) 别名，等价于 XByteArray_mid_base */
-#define XByteArray_sliced_base            XByteArray_mid_base
+/** @brief Qt QByteArray::first(n) 别名，等价于 XByteArray_left */
+#define XByteArray_first             XByteArray_left
+/** @brief Qt QByteArray::last(n) 别名，等价于 XByteArray_right */
+#define XByteArray_last              XByteArray_right
+/** @brief Qt QByteArray::sliced(pos, n) 别名，等价于 XByteArray_mid */
+#define XByteArray_sliced            XByteArray_mid
 
 
 /* ============================== Qt 6.8 命名对齐 (重量项): replace/split/simplified/trimmed/toUpper/toLower/toInt/toDouble/setNum/percentEncoding/compare ============================== */

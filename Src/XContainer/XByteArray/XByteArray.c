@@ -274,7 +274,7 @@ uint8_t* XByteArray_data(XByteArray* other)
 
 /* ============================== Qt 6.8 命名对齐: fill/truncate/chop/left/right/mid ============================== */
 
-XByteArray* XByteArray_fill_base(XByteArray* array, uint8_t byte, int64_t size)
+XByteArray* XByteArray_fill(XByteArray* array, uint8_t byte, int64_t size)
 {
     if (array == NULL) return NULL;
     if (size >= 0) {
@@ -287,7 +287,7 @@ XByteArray* XByteArray_fill_base(XByteArray* array, uint8_t byte, int64_t size)
     return array;
 }
 
-void XByteArray_truncate_base(XByteArray* array, int64_t pos)
+void XByteArray_truncate(XByteArray* array, int64_t pos)
 {
     if (array == NULL) return;
     int64_t cur = (int64_t)XByteArray_size_base(array);
@@ -297,7 +297,7 @@ void XByteArray_truncate_base(XByteArray* array, int64_t pos)
     XVector_remove_base((XVector*)array, pos, cur - pos);
 }
 
-void XByteArray_chop_base(XByteArray* array, int64_t n)
+void XByteArray_chop(XByteArray* array, int64_t n)
 {
     if (array == NULL || n <= 0) return;
     int64_t cur = (int64_t)XByteArray_size_base(array);
@@ -305,7 +305,7 @@ void XByteArray_chop_base(XByteArray* array, int64_t n)
     XVector_remove_base((XVector*)array, cur - n, n);
 }
 
-XByteArray* XByteArray_left_base(const XByteArray* array, int64_t n)
+XByteArray* XByteArray_left(const XByteArray* array, int64_t n)
 {
     if (array == NULL) return NULL;
     int64_t cur = (int64_t)XByteArray_size_base(array);
@@ -316,7 +316,7 @@ XByteArray* XByteArray_left_base(const XByteArray* array, int64_t n)
     return out;
 }
 
-XByteArray* XByteArray_right_base(const XByteArray* array, int64_t n)
+XByteArray* XByteArray_right(const XByteArray* array, int64_t n)
 {
     if (array == NULL) return NULL;
     int64_t cur = (int64_t)XByteArray_size_base(array);
@@ -328,7 +328,7 @@ XByteArray* XByteArray_right_base(const XByteArray* array, int64_t n)
     return out;
 }
 
-XByteArray* XByteArray_mid_base(const XByteArray* array, int64_t pos, int64_t n)
+XByteArray* XByteArray_mid(const XByteArray* array, int64_t pos, int64_t n)
 {
     if (array == NULL) return NULL;
     int64_t cur = (int64_t)XByteArray_size_base(array);

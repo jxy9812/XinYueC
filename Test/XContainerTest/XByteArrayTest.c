@@ -63,29 +63,29 @@ static void XByteArrayTest_QtNewApis(void)
 
     // fill
     XByteArray* ba = XByteArray_create();
-    XByteArray_fill_base(ba, 'x', 5);
+    XByteArray_fill(ba, 'x', 5);
     XPrintf("  fill('x',5) -> size=%zu data=%.*s (期望 5 xxxxx)\n",
         XByteArray_size_base(ba), (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
-    XByteArray_fill_base(ba, 'y', -1);
+    XByteArray_fill(ba, 'y', -1);
     XPrintf("  fill('y',-1) -> data=%.*s (期望 yyyyy)\n",
         (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
     XByteArray_delete_base(ba);
 
     // truncate / chop
     ba = XByteArray_create_utf8("HelloWorld");
-    XByteArray_truncate_base(ba, 5);
+    XByteArray_truncate(ba, 5);
     XPrintf("  truncate(5) -> %.*s (期望 Hello)\n",
         (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
-    XByteArray_chop_base(ba, 2);
+    XByteArray_chop(ba, 2);
     XPrintf("  chop(2)     -> %.*s (期望 Hel)\n",
         (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
     XByteArray_delete_base(ba);
 
     // left / right / mid
     ba = XByteArray_create_utf8("0123456789");
-    XByteArray* l = XByteArray_left_base(ba, 3);
-    XByteArray* r = XByteArray_right_base(ba, 3);
-    XByteArray* m = XByteArray_mid_base(ba, 2, 5);
+    XByteArray* l = XByteArray_left(ba, 3);
+    XByteArray* r = XByteArray_right(ba, 3);
+    XByteArray* m = XByteArray_mid(ba, 2, 5);
     XPrintf("  left(3) =%.*s (期望 012)\n", (int)XByteArray_size_base(l), (char*)XByteArray_data(l));
     XPrintf("  right(3)=%.*s (期望 789)\n", (int)XByteArray_size_base(r), (char*)XByteArray_data(r));
     XPrintf("  mid(2,5)=%.*s (期望 23456)\n", (int)XByteArray_size_base(m), (char*)XByteArray_data(m));
@@ -158,7 +158,7 @@ static void XByteArrayTest_Stress(void)
         if (XByteArray_contains(ba, (uint8_t)i)) ++hit;
     XPrintf("  contains 覆盖 %d/256 字节值\n", hit);
 
-    XByteArray_chop_base(ba, 5000);
+    XByteArray_chop(ba, 5000);
     XPrintf("  chop(5000): size=%zu\n", XByteArray_size_base(ba));
     XByteArray_squeeze_base(ba);
     XPrintf("  squeeze: capacity=%zu\n", XByteArray_capacity_base(ba));
