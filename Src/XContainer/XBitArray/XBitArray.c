@@ -471,4 +471,108 @@ void XBitArray_truncate(XBitArray* array, int64_t pos)
     XBitArray_resize(array, newCount);
 }
 
+
+
+/* ============================== Qt 6.8 命名对齐 (QBitArray) 实现 ============================== */
+
+bool XBitArray_setBit_one(XBitArray* array, size_t index)
+{
+    return XBitArray_setBit(array, index, true);
+}
+
+size_t XBitArray_countBits(const XBitArray* array, bool on)
+{
+    if (!array) return 0;
+    size_t n = XBitArray_count((XBitArray*)array);
+    size_t cnt = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (XBitArray_getBit(array, i)) ++cnt;
+    }
+    return on ? cnt : (n - cnt);
+}
+
+void XBitArray_fill_range(XBitArray* array, bool value, size_t first, size_t last)
+{
+    if (!array) return;
+    size_t n = XBitArray_count(array);
+    if (first > n) first = n;
+    if (last  > n) last  = n;
+    for (size_t i = first; i < last; ++i) {
+        XBitArray_setBit(array, i, value);
+    }
+}
+
+bool XBitArray_equals(const XBitArray* lhs, const XBitArray* rhs)
+{
+    if (lhs == rhs) return true;
+    if (!lhs || !rhs) return false;
+    size_t na = XBitArray_count((XBitArray*)lhs);
+    size_t nb = XBitArray_count((XBitArray*)rhs);
+    if (na != nb) return false;
+    for (size_t i = 0; i < na; ++i) {
+        if (XBitArray_getBit(lhs, i) != XBitArray_getBit(rhs, i)) return false;
+    }
+    return true;
+}
+
+XBitArray* XBitArray_and_inplace(XBitArray* lhs, const XBitArray* rhs)
+{
+    if (!lhs || !rhs) return lhs;
+    size_t n = XBitArray_count(lhs);
+    size_t m = XBitArray_count((XBitArray*)rhs);
+    size_t k = n < m ? n : m;
+    for (size_t i = 0; i < k; ++i) {
+        bool a = XBitArray_getBit(lhs, i);
+        bool b = XBitArray_getBit(rhs, i);
+        XBitArray_setBit(lhs, i, a && b);
+    }
+    for (size_t i = k; i < n; ++i) XBitArray_setBit(lhs, i, false);
+    return lhs;
+}
+
+XBitArray* XBitArray_or_inplace(XBitArray* lhs, const XBitArray* rhs)
+{
+    if (!lhs || !rhs) return lhs;
+    size_t n = XBitArray_count(lhs);
+    size_t m = XBitArray_count((XBitArray*)rhs);
+    size_t k = n < m ? n : m;
+    for (size_t i = 0; i < k; ++i) {
+        bool a = XBitArray_getBit(lhs, i);
+        bool b = XBitArray_getBit(rhs, i);
+        XBitArray_setBit(lhs, i, a || b);
+    }
+    return lhs;
+}
+
+XBitArray* XBitArray_xor_inplace(XBitArray* lhs, const XBitArray* rhs)
+{
+    if (!lhs || !rhs) return lhs;
+    size_t n = XBitArray_count(lhs);
+    size_t m = XBitArray_count((XBitArray*)rhs);
+    size_t k = n < m ? n : m;
+    for (size_t i = 0; i < k; ++i) {
+        bool a = XBitArray_getBit(lhs, i);
+        bool b = XBitArray_getBit(rhs, i);
+        XBitArray_setBit(lhs, i, a != b);
+    }
+    return lhs;
+}
+
+XBitArray* XBitArray_invert_inplace(XBitArray* array)
+{
+    if (!array) return NULL;
+    size_t n = XBitArray_count(array);
+    for (size_t i = 0; i < n; ++i) XBitArray_toggleBit(array, i);
+    return array;
+}
+
+XBitArray* XBitArray_inverted(const XBitArray* array)
+{
+    if (!array) return NULL;
+    XBitArray* out = XBitArray_create_copy(array);
+    if (!out) return NULL;
+    XBitArray_invert_inplace(out);
+    return out;
+}
+
 #endif // XBitArray_ON

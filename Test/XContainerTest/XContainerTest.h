@@ -15,6 +15,7 @@ extern "C" {
 	void XMenu_XStringListTest(XMenu* root);
 	void XMenu_XVariantListTest(XMenu* root);
 	void XMenu_XByteArrayTest(XMenu* root);
+	void XMenu_XBitArrayTest(XMenu* root);
 
 	void XMenu_ListTest(XMenu* root);
 	void XMenu_XListDLinkedTest(XMenu* root);

@@ -269,6 +269,64 @@ void XBitArray_truncate(XBitArray* array, int64_t pos);
 * @brief 初始化XBitArray的虚函数表，注册虚函数实现
 * @return 初始化后的XVtable指针
 */
+
+/* ============================== Qt 6.8 命名对齐 (QBitArray) ============================== */
+
+/** @brief Qt QBitArray::testBit 别名 */
+#define XBitArray_testBit                XBitArray_getBit
+/** @brief Qt QBitArray::clearBit 别名（等价于 setBit(i,false)） */
+#define XBitArray_clearBit               XBitArray_clearBits
+/** @brief Qt QBitArray::at 别名（已存在，此处兜底）*/
+#ifndef XBitArray_at
+#define XBitArray_at                     XBitArray_getBit
+#endif
+/** @brief Qt QBitArray::size / count 对齐到 size_base */
+#define XBitArray_count_base             XBitArray_size_base
+/** @brief Qt QBitArray::isNull （本项目按 isEmpty 语义对齐） */
+#define XBitArray_isNull_base            XBitArray_isEmpty_base
+
+/**
+* @brief 将指定位置为 1——对齐 Qt QBitArray::setBit(qsizetype)
+* @return 成功返回 true
+*/
+bool XBitArray_setBit_one(XBitArray* array, size_t index);
+
+/**
+* @brief 统计位数——对齐 Qt QBitArray::count(bool on)
+* @param on true 统计 1 的个数，false 统计 0 的个数
+*/
+size_t XBitArray_countBits(const XBitArray* array, bool on);
+
+/**
+* @brief 区间填充——对齐 Qt QBitArray::fill(bool val, qsizetype first, qsizetype last)
+* @param first 起始索引（含）
+* @param last  结束索引（不含），Qt 语义
+*/
+void XBitArray_fill_range(XBitArray* array, bool value, size_t first, size_t last);
+
+/**
+* @brief 相等比较——对齐 Qt QBitArray::operator==
+*/
+bool XBitArray_equals(const XBitArray* lhs, const XBitArray* rhs);
+
+/**
+* @brief 就地按位与——对齐 Qt QBitArray::operator&=
+* @note 若 rhs 更长，仅取到 min(size); Qt 语义为按 min 长度进行
+*/
+XBitArray* XBitArray_and_inplace(XBitArray* lhs, const XBitArray* rhs);
+
+/** @brief 就地按位或——对齐 Qt QBitArray::operator|= */
+XBitArray* XBitArray_or_inplace(XBitArray* lhs, const XBitArray* rhs);
+
+/** @brief 就地按位异或——对齐 Qt QBitArray::operator^= */
+XBitArray* XBitArray_xor_inplace(XBitArray* lhs, const XBitArray* rhs);
+
+/** @brief 就地按位取反——对齐 Qt QBitArray::operator~ (原地版本, 对应 inverted_inplace) */
+XBitArray* XBitArray_invert_inplace(XBitArray* array);
+
+/** @brief 返回新数组的取反版本——对齐 Qt QBitArray::operator~ */
+XBitArray* XBitArray_inverted(const XBitArray* array);
+
 XVtable* XBitArray_class_init();
 
 #ifdef __cplusplus
