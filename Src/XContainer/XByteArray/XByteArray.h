@@ -485,6 +485,102 @@ XByteArray* XByteArray_mid_base(const XByteArray* array, int64_t pos, int64_t n)
 /** @brief Qt QByteArray::sliced(pos, n) 别名，等价于 XByteArray_mid_base */
 #define XByteArray_sliced_base            XByteArray_mid_base
 
+
+/* ============================== Qt 6.8 命名对齐 (重量项): replace/split/simplified/trimmed/toUpper/toLower/toInt/toDouble/setNum/percentEncoding/compare ============================== */
+
+/**
+* @brief 按字节序列查找/替换——对齐 Qt QByteArray::replace(const char*, qsizetype, const char*, qsizetype)
+* @param array   原地修改的目标数组
+* @param before  待查找子串（可为空指针配合 beforeLen=0）
+* @param beforeLen 待查找子串长度
+* @param after   替换子串
+* @param afterLen 替换子串长度
+* @return 已替换次数
+*/
+size_t XByteArray_replace(XByteArray* array,
+    const uint8_t* before, size_t beforeLen,
+    const uint8_t* after,  size_t afterLen);
+
+/**
+* @brief 按单字节分隔符切分——对齐 Qt QByteArray::split(char)
+* @param array 源数组
+* @param sep   分隔字节
+* @return 新 XVector（元素为 XByteArray*，调用方负责释放每个元素及本 XVector）
+* @note 使用 XByteArray_split_free 一次性释放
+*/
+XVector* XByteArray_split(const XByteArray* array, uint8_t sep);
+
+/**
+* @brief 释放 XByteArray_split 的返回值
+*/
+void XByteArray_split_free(XVector* parts);
+
+/**
+* @brief 首尾空白裁剪——对齐 Qt QByteArray::trimmed()
+* @return 新 XByteArray；调用方负责释放
+* @note 空白: ' ' '\\t' '\\n' '\\r' '\\v' '\\f'
+*/
+XByteArray* XByteArray_trimmed(const XByteArray* array);
+
+/**
+* @brief 首尾裁剪+中间连续空白合并为单空格——对齐 Qt QByteArray::simplified()
+*/
+XByteArray* XByteArray_simplified(const XByteArray* array);
+
+/**
+* @brief 就地全大写（ASCII 范围）——对齐 Qt QByteArray::toUpper()
+*/
+XByteArray* XByteArray_toUpper(XByteArray* array);
+
+/**
+* @brief 就地全小写（ASCII 范围）——对齐 Qt QByteArray::toLower()
+*/
+XByteArray* XByteArray_toLower(XByteArray* array);
+
+/**
+* @brief 解析为 int64——对齐 Qt QByteArray::toLongLong(bool* ok, int base)
+* @param base 进制，0 表示自动（0x/0/十进制），2..36 有效
+* @param ok   可选输出，成功为 true
+*/
+int64_t XByteArray_toLongLong(const XByteArray* array, bool* ok, int base);
+
+/** @brief QByteArray::toInt */
+int32_t XByteArray_toInt(const XByteArray* array, bool* ok, int base);
+
+/** @brief QByteArray::toDouble */
+double  XByteArray_toDouble(const XByteArray* array, bool* ok);
+
+/**
+* @brief 覆盖为数值的十进制/指定进制字符串——对齐 Qt QByteArray::setNum(qlonglong, int base)
+*/
+XByteArray* XByteArray_setNum_i64(XByteArray* array, int64_t value, int base);
+
+/** @brief QByteArray::setNum(int, base) */
+XByteArray* XByteArray_setNum_i32(XByteArray* array, int32_t value, int base);
+
+/** @brief QByteArray::setNum(double, char f='g', int prec=6) */
+XByteArray* XByteArray_setNum_double(XByteArray* array, double value, char fmt, int prec);
+
+/**
+* @brief 百分号编码（URL 编码）——对齐 Qt QByteArray::toPercentEncoding()
+* @param array 源数据
+* @return 新 XByteArray，调用方负责释放
+*/
+XByteArray* XByteArray_toPercentEncoding(const XByteArray* array);
+
+/** @brief 百分号解码——对齐 Qt QByteArray::fromPercentEncoding() */
+XByteArray* XByteArray_fromPercentEncoding(const XByteArray* array);
+
+/**
+* @brief 大小写敏感比较（对齐 Qt QByteArrayView 语义）——对齐 QByteArray::compare(view, Qt::CaseSensitivity)
+* @param cs 0=不敏感 1=敏感
+* @return <0 / 0 / >0
+*/
+int32_t XByteArray_compareCS(const XByteArray* lhs, const XByteArray* rhs, int cs);
+
+/** @brief 大小写不敏感比较别名 */
+#define XByteArray_compareCI(lhs, rhs)    XByteArray_compareCS((lhs), (rhs), 0)
+
 #ifdef __cplusplus
 }
 #endif

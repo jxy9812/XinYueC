@@ -167,6 +167,133 @@ static void XByteArrayTest_Stress(void)
 }
 
 /* ==================== 主入口 ==================== */
+
+
+/* ==================== Qt 重量项：replace/split/simplified/trimmed/toUpper/toLower/toInt/toDouble/setNum/percent/compare ==================== */
+static void XByteArrayTest_QtHeavy(void)
+{
+    XPrintf("\n[XByteArray][Qt 重量项] replace/split/trimmed/simplified/toUpper/toLower/toInt/toDouble/setNum/percent/compareCS\n");
+
+    /* replace */
+    {
+        XByteArray* ba = XByteArray_create_utf8("foo-bar-foo-baz");
+        size_t n = XByteArray_replace(ba, (const uint8_t*)"foo", 3, (const uint8_t*)"XX", 2);
+        XPrintf("  replace('foo'->'XX')=%zu -> %.*s (期望 2, XX-bar-XX-baz)\n",
+            n, (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
+        /* replace 空插入 = 删除 */
+        n = XByteArray_replace(ba, (const uint8_t*)"XX", 2, (const uint8_t*)"", 0);
+        XPrintf("  replace('XX'->'')=%zu -> %.*s (期望 2, -bar--baz)\n",
+            n, (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
+        XByteArray_delete_base(ba);
+    }
+
+    /* split */
+    {
+        XByteArray* ba = XByteArray_create_utf8("a,,bb,ccc,");
+        XVector* parts = XByteArray_split(ba, ',');
+        XPrintf("  split(',') 段数=%zu (期望 5)\n", XVector_size_base(parts));
+        for (size_t i = 0; i < XVector_size_base(parts); ++i) {
+            XByteArray* p = *(XByteArray**)XVector_at_base(parts, (int64_t)i);
+            XPrintf("    [%zu]=\"%.*s\"\n", i,
+                (int)XByteArray_size_base(p), (char*)XByteArray_data(p));
+        }
+        XByteArray_split_free(parts);
+        XByteArray_delete_base(ba);
+    }
+
+    /* trimmed / simplified */
+    {
+        XByteArray* ba = XByteArray_create_utf8("  \t Hello   \n world  ");
+        XByteArray* t = XByteArray_trimmed(ba);
+        XByteArray* s2 = XByteArray_simplified(ba);
+        XPrintf("  trimmed = \"%.*s\" (期望 Hello   \\n world)\n",
+            (int)XByteArray_size_base(t), (char*)XByteArray_data(t));
+        XPrintf("  simplified = \"%.*s\" (期望 Hello world)\n",
+            (int)XByteArray_size_base(s2), (char*)XByteArray_data(s2));
+        XByteArray_delete_base(t);
+        XByteArray_delete_base(s2);
+        XByteArray_delete_base(ba);
+    }
+
+    /* toUpper / toLower */
+    {
+        XByteArray* ba = XByteArray_create_utf8("Hello-World-123");
+        XByteArray_toUpper(ba);
+        XPrintf("  toUpper = %.*s (期望 HELLO-WORLD-123)\n",
+            (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
+        XByteArray_toLower(ba);
+        XPrintf("  toLower = %.*s (期望 hello-world-123)\n",
+            (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
+        XByteArray_delete_base(ba);
+    }
+
+    /* toInt / toLongLong / toDouble */
+    {
+        bool ok = false;
+        XByteArray* ba = XByteArray_create_utf8("  -1234 ");
+        int v = XByteArray_toInt(ba, &ok, 10);
+        XPrintf("  toInt(\"-1234\")=%d ok=%d (期望 -1234 1)\n", v, ok);
+        XByteArray_delete_base(ba);
+
+        ba = XByteArray_create_utf8("0xff");
+        v = XByteArray_toInt(ba, &ok, 0);
+        XPrintf("  toInt(\"0xff\",base=0)=%d ok=%d (期望 255 1)\n", v, ok);
+        XByteArray_delete_base(ba);
+
+        ba = XByteArray_create_utf8("abc");
+        v = XByteArray_toInt(ba, &ok, 10);
+        XPrintf("  toInt(\"abc\")=%d ok=%d (期望 0 0)\n", v, ok);
+        XByteArray_delete_base(ba);
+
+        ba = XByteArray_create_utf8("3.14159");
+        double d = XByteArray_toDouble(ba, &ok);
+        XPrintf("  toDouble(\"3.14159\")=%.5f ok=%d (期望 3.14159 1)\n", d, ok);
+        XByteArray_delete_base(ba);
+    }
+
+    /* setNum */
+    {
+        XByteArray* ba = XByteArray_create();
+        XByteArray_setNum_i64(ba, -9876543210LL, 10);
+        XPrintf("  setNum_i64(-9876543210)=%.*s\n",
+            (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
+        XByteArray_setNum_i32(ba, 255, 16);
+        XPrintf("  setNum_i32(255,base=16)=%.*s (期望 ff)\n",
+            (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
+        XByteArray_setNum_double(ba, 3.14159, 'f', 3);
+        XPrintf("  setNum_double(3.14159,'f',3)=%.*s (期望 3.142)\n",
+            (int)XByteArray_size_base(ba), (char*)XByteArray_data(ba));
+        XByteArray_delete_base(ba);
+    }
+
+    /* percent encoding */
+    {
+        XByteArray* ba = XByteArray_create_utf8("Hello World / A+B=C");
+        XByteArray* enc = XByteArray_toPercentEncoding(ba);
+        XPrintf("  percentEncode: %.*s\n",
+            (int)XByteArray_size_base(enc), (char*)XByteArray_data(enc));
+        XByteArray* dec = XByteArray_fromPercentEncoding(enc);
+        XPrintf("  percentDecode: %.*s (期望 Hello World / A+B=C  注:+->空格)\n",
+            (int)XByteArray_size_base(dec), (char*)XByteArray_data(dec));
+        XByteArray_delete_base(enc);
+        XByteArray_delete_base(dec);
+        XByteArray_delete_base(ba);
+    }
+
+    /* compareCS */
+    {
+        XByteArray* a = XByteArray_create_utf8("Hello");
+        XByteArray* b = XByteArray_create_utf8("hello");
+        XByteArray* c = XByteArray_create_utf8("HELLO");
+        XPrintf("  compareCS(Hello,hello,cs=1) = %d (期望 <0)\n", XByteArray_compareCS(a, b, 1));
+        XPrintf("  compareCS(Hello,hello,cs=0) = %d (期望 0)\n",  XByteArray_compareCS(a, b, 0));
+        XPrintf("  compareCI(Hello,HELLO)      = %d (期望 0)\n",  XByteArray_compareCI(a, c));
+        XByteArray_delete_base(a);
+        XByteArray_delete_base(b);
+        XByteArray_delete_base(c);
+    }
+}
+
 static void XByteArrayTest_All(void)
 {
 #if XByteArray_ON
@@ -175,6 +302,7 @@ static void XByteArrayTest_All(void)
     XByteArrayTest_QtAliases();
     XByteArrayTest_QtNewApis();
     XByteArrayTest_Codec();
+    XByteArrayTest_QtHeavy();
     XByteArrayTest_Stress();
     XPrintf("\n[XByteArray] 全部测试完成\n");
 #endif

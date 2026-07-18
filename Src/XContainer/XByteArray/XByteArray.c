@@ -342,4 +342,319 @@ XByteArray* XByteArray_mid_base(const XByteArray* array, int64_t pos, int64_t n)
     return out;
 }
 
+
+
+/* ============================== Qt 6.8 命名对齐 (重量项): 实现 ============================== */
+
+#include <stdlib.h>
+#include <stdio.h>
+#include <ctype.h>
+
+/* ---- replace ---- */
+size_t XByteArray_replace(XByteArray* array,
+    const uint8_t* before, size_t beforeLen,
+    const uint8_t* after,  size_t afterLen)
+{
+    if (array == NULL || beforeLen == 0) return 0;
+    size_t count = 0;
+    size_t i = 0;
+    for (;;) {
+        size_t n = XByteArray_size_base(array);
+        if (i + beforeLen > n) break;
+        const uint8_t* d = XByteArray_data(array);
+        if (memcmp(d + i, before, beforeLen) == 0) {
+            /* 删除 before, 插入 after */
+            XVector_remove_base((XVector*)array, (int64_t)i, (int64_t)beforeLen);
+            if (afterLen > 0) {
+                XVector_insert_1_base((XVector*)array, (int64_t)i, after, afterLen);
+            }
+            i += afterLen;
+            ++count;
+        } else {
+            ++i;
+        }
+    }
+    return count;
+}
+
+/* ---- split ---- */
+XVector* XByteArray_split(const XByteArray* array, uint8_t sep)
+{
+    XVector* parts = XVector_create(sizeof(XByteArray*));
+    if (!parts || !array) return parts;
+    size_t n = XByteArray_size_base((XByteArray*)array);
+    const uint8_t* d = XByteArray_data((XByteArray*)array);
+    size_t start = 0;
+    for (size_t i = 0; i <= n; ++i) {
+        if (i == n || d[i] == sep) {
+            XByteArray* piece = XByteArray_create();
+            if (i > start) {
+                XByteArray_push_back_2(piece, (const char*)(d + start), i - start);
+            }
+            XVector_push_back_1_base(parts, &piece);
+            start = i + 1;
+        }
+    }
+    return parts;
+}
+
+void XByteArray_split_free(XVector* parts)
+{
+    if (!parts) return;
+    size_t n = XVector_size_base(parts);
+    for (size_t i = 0; i < n; ++i) {
+        XByteArray** pp = (XByteArray**)XVector_at_base(parts, i);
+        if (pp && *pp) XByteArray_delete_base(*pp);
+    }
+    XVector_delete_base(parts);
+}
+
+/* ---- trimmed / simplified ---- */
+static int xba_is_space(uint8_t c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+}
+
+XByteArray* XByteArray_trimmed(const XByteArray* array)
+{
+    XByteArray* out = XByteArray_create();
+    if (!array || !out) return out;
+    size_t n = XByteArray_size_base((XByteArray*)array);
+    const uint8_t* d = XByteArray_data((XByteArray*)array);
+    size_t a = 0, b = n;
+    while (a < b && xba_is_space(d[a])) ++a;
+    while (b > a && xba_is_space(d[b-1])) --b;
+    if (b > a) XByteArray_push_back_2(out, (const char*)(d + a), b - a);
+    return out;
+}
+
+XByteArray* XByteArray_simplified(const XByteArray* array)
+{
+    XByteArray* out = XByteArray_create();
+    if (!array || !out) return out;
+    size_t n = XByteArray_size_base((XByteArray*)array);
+    const uint8_t* d = XByteArray_data((XByteArray*)array);
+    size_t i = 0;
+    while (i < n && xba_is_space(d[i])) ++i;
+    bool prevSpace = false;
+    for (; i < n; ++i) {
+        if (xba_is_space(d[i])) {
+            prevSpace = true;
+        } else {
+            if (prevSpace) {
+                uint8_t sp = ' ';
+                XByteArray_push_back_1(out, sp);
+                prevSpace = false;
+            }
+            XByteArray_push_back_1(out, d[i]);
+        }
+    }
+    return out;
+}
+
+/* ---- toUpper / toLower ---- */
+XByteArray* XByteArray_toUpper(XByteArray* array)
+{
+    if (!array) return NULL;
+    size_t n = XByteArray_size_base(array);
+    uint8_t* d = XByteArray_data(array);
+    for (size_t i = 0; i < n; ++i) {
+        if (d[i] >= 'a' && d[i] <= 'z') d[i] = (uint8_t)(d[i] - 'a' + 'A');
+    }
+    return array;
+}
+
+XByteArray* XByteArray_toLower(XByteArray* array)
+{
+    if (!array) return NULL;
+    size_t n = XByteArray_size_base(array);
+    uint8_t* d = XByteArray_data(array);
+    for (size_t i = 0; i < n; ++i) {
+        if (d[i] >= 'A' && d[i] <= 'Z') d[i] = (uint8_t)(d[i] - 'A' + 'a');
+    }
+    return array;
+}
+
+/* ---- toLongLong / toInt / toDouble ---- */
+int64_t XByteArray_toLongLong(const XByteArray* array, bool* ok, int base)
+{
+    if (ok) *ok = false;
+    if (!array) return 0;
+    size_t n = XByteArray_size_base((XByteArray*)array);
+    if (n == 0) return 0;
+    /* 复制到栈缓冲以确保 NUL 终止 */
+    char buf[128];
+    char* p = (n < sizeof(buf) - 1) ? buf : (char*)malloc(n + 1);
+    if (!p) return 0;
+    memcpy(p, XByteArray_data((XByteArray*)array), n);
+    p[n] = 0;
+    char* end = NULL;
+    long long v = strtoll(p, &end, base);
+    if (end && end != p) {
+        /* 尾部允许空白 */
+        while (*end && xba_is_space((uint8_t)*end)) ++end;
+        if (*end == 0 && ok) *ok = true;
+    }
+    if (p != buf) free(p);
+    return (int64_t)v;
+}
+
+int32_t XByteArray_toInt(const XByteArray* array, bool* ok, int base)
+{
+    bool tmp = false;
+    int64_t v = XByteArray_toLongLong(array, &tmp, base);
+    if (tmp && (v < INT32_MIN || v > INT32_MAX)) tmp = false;
+    if (ok) *ok = tmp;
+    return (int32_t)v;
+}
+
+double XByteArray_toDouble(const XByteArray* array, bool* ok)
+{
+    if (ok) *ok = false;
+    if (!array) return 0.0;
+    size_t n = XByteArray_size_base((XByteArray*)array);
+    if (n == 0) return 0.0;
+    char buf[128];
+    char* p = (n < sizeof(buf) - 1) ? buf : (char*)malloc(n + 1);
+    if (!p) return 0.0;
+    memcpy(p, XByteArray_data((XByteArray*)array), n);
+    p[n] = 0;
+    char* end = NULL;
+    double v = strtod(p, &end);
+    if (end && end != p) {
+        while (*end && xba_is_space((uint8_t)*end)) ++end;
+        if (*end == 0 && ok) *ok = true;
+    }
+    if (p != buf) free(p);
+    return v;
+}
+
+/* ---- setNum ---- */
+XByteArray* XByteArray_setNum_i64(XByteArray* array, int64_t value, int base)
+{
+    if (!array) return NULL;
+    XByteArray_clear_base(array);
+    if (base < 2 || base > 36) base = 10;
+    char buf[80];
+    if (base == 10) {
+        snprintf(buf, sizeof(buf), "%lld", (long long)value);
+    } else {
+        /* 手动按 base 转换 */
+        char tmp[80]; int idx = 0;
+        uint64_t uv;
+        bool neg = false;
+        if (value < 0) { neg = true; uv = (uint64_t)(-(value + 1)) + 1; }
+        else           { uv = (uint64_t)value; }
+        if (uv == 0) tmp[idx++] = '0';
+        while (uv > 0) {
+            int r = (int)(uv % (uint64_t)base);
+            tmp[idx++] = (char)(r < 10 ? ('0' + r) : ('a' + r - 10));
+            uv /= (uint64_t)base;
+        }
+        int p = 0;
+        if (neg) buf[p++] = '-';
+        while (idx > 0) buf[p++] = tmp[--idx];
+        buf[p] = 0;
+    }
+    XByteArray_push_back_2(array, buf, strlen(buf));
+    return array;
+}
+
+XByteArray* XByteArray_setNum_i32(XByteArray* array, int32_t value, int base)
+{
+    return XByteArray_setNum_i64(array, (int64_t)value, base);
+}
+
+XByteArray* XByteArray_setNum_double(XByteArray* array, double value, char fmt, int prec)
+{
+    if (!array) return NULL;
+    XByteArray_clear_base(array);
+    if (prec < 0) prec = 6;
+    char pattern[16];
+    char f = (fmt == 'e' || fmt == 'E' || fmt == 'f' || fmt == 'F' || fmt == 'g' || fmt == 'G') ? fmt : 'g';
+    snprintf(pattern, sizeof(pattern), "%%.%d%c", prec, f);
+    char buf[64];
+    snprintf(buf, sizeof(buf), pattern, value);
+    XByteArray_push_back_2(array, buf, strlen(buf));
+    return array;
+}
+
+/* ---- toPercentEncoding / fromPercentEncoding ---- */
+static int xba_hexval(uint8_t c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+XByteArray* XByteArray_toPercentEncoding(const XByteArray* array)
+{
+    XByteArray* out = XByteArray_create();
+    if (!array || !out) return out;
+    size_t n = XByteArray_size_base((XByteArray*)array);
+    const uint8_t* d = XByteArray_data((XByteArray*)array);
+    const char* hex = "0123456789ABCDEF";
+    for (size_t i = 0; i < n; ++i) {
+        uint8_t c = d[i];
+        bool safe = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+                 || c == '-' || c == '.' || c == '_' || c == '~';
+        if (safe) {
+            XByteArray_push_back_1(out, c);
+        } else {
+            uint8_t triplet[3] = { '%', (uint8_t)hex[(c >> 4) & 0xF], (uint8_t)hex[c & 0xF] };
+            XByteArray_push_back_2(out, (const char*)triplet, 3);
+        }
+    }
+    return out;
+}
+
+XByteArray* XByteArray_fromPercentEncoding(const XByteArray* array)
+{
+    XByteArray* out = XByteArray_create();
+    if (!array || !out) return out;
+    size_t n = XByteArray_size_base((XByteArray*)array);
+    const uint8_t* d = XByteArray_data((XByteArray*)array);
+    for (size_t i = 0; i < n; ) {
+        uint8_t c = d[i];
+        if (c == '%' && i + 2 < n) {
+            int hi = xba_hexval(d[i+1]);
+            int lo = xba_hexval(d[i+2]);
+            if (hi >= 0 && lo >= 0) {
+                uint8_t b = (uint8_t)((hi << 4) | lo);
+                XByteArray_push_back_1(out, b);
+                i += 3;
+                continue;
+            }
+        }
+        if (c == '+') { XByteArray_push_back_1(out, ' '); ++i; continue; }
+        XByteArray_push_back_1(out, c);
+        ++i;
+    }
+    return out;
+}
+
+/* ---- compare with case sensitivity ---- */
+int32_t XByteArray_compareCS(const XByteArray* lhs, const XByteArray* rhs, int cs)
+{
+    if (lhs == rhs) return 0;
+    if (!lhs) return -1;
+    if (!rhs) return 1;
+    size_t na = XByteArray_size_base((XByteArray*)lhs);
+    size_t nb = XByteArray_size_base((XByteArray*)rhs);
+    size_t nm = na < nb ? na : nb;
+    const uint8_t* a = XByteArray_data((XByteArray*)lhs);
+    const uint8_t* b = XByteArray_data((XByteArray*)rhs);
+    for (size_t i = 0; i < nm; ++i) {
+        uint8_t x = a[i], y = b[i];
+        if (!cs) {
+            if (x >= 'A' && x <= 'Z') x = (uint8_t)(x - 'A' + 'a');
+            if (y >= 'A' && y <= 'Z') y = (uint8_t)(y - 'A' + 'a');
+        }
+        if (x < y) return -1;
+        if (x > y) return 1;
+    }
+    if (na < nb) return -1;
+    if (na > nb) return 1;
+    return 0;
+}
+
 #endif
