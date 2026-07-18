@@ -159,6 +159,73 @@ void XSet_init(XSet* this_set, const size_t keyTypeSize, XCompare compare, bool 
 * @note 基于XSetBase的接口，快速交换两个集合的元素和状态
 */
 #define XSet_swap_base XSetBase_swap_base
+
+/* ============================== Qt 6.8 命名对齐别名 ==============================
+ * 说明：核心 API(insert/remove/find/contains/clear/swap)已与 Qt QSet 同名，天然对齐；
+ *       此处仅补齐 QSet 的 count()/empty()/values() 命名。所有别名仅做命名映射，
+ *       不新增行为，语义与被映射函数完全等价。Qt 参考: QSet<T>。
+ *       语义提示：Set 中 key 即 value，故 values() 对应本项目 keys()。
+ * ============================================================================== */
+
+/**
+ * @brief 元素个数——Qt 别名，等价于 XSet_size_base
+ * @note Qt 映射: QSet::count()（与 size() 完全等价，仅命名不同）
+ */
+#define XSet_count_base            XSet_size_base
+
+/**
+ * @brief 判空——Qt 别名，等价于 XSet_isEmpty_base
+ * @note Qt 映射: QSet::empty()（QSet 同时提供 isEmpty）
+ */
+#define XSet_empty_base            XSet_isEmpty_base
+
+/**
+ * @brief 获取所有元素副本——Qt 别名，等价于 XSet_keys_base
+ * @note Qt 映射: QSet::values() 返回 QList<T>；本项目返回 XVector。
+ */
+#define XSet_values_base           XSet_keys_base
+
+/**
+ * @brief 只读语义查找——Qt 别名，等价于 XSet_find_base
+ * @note Qt 映射: QSet::constFind()
+ */
+#define XSet_constFind_base          XSet_find_base
+
+/**
+ * @brief 按谓词条件删除元素——Qt 别名，等价于 XSetBase_removeIf_base
+ * @note Qt 映射: QSet::removeIf(Pred)。返回被删除元素数量
+ */
+#define XSet_removeIf_base           XSetBase_removeIf_base
+
+/**
+ * @brief 条件删除自由函数别名——Qt 别名，等价于 XSet_removeIf_base
+ * @note Qt 映射: erase_if(QSet<T>&, Pred)
+ */
+#define XSet_erase_if_base           XSetBase_removeIf_base
+
+/**
+ * @brief 谓词函数指针类型——Qt 别名，等价于 XSetBase_predicate
+ * @note Qt 映射: QSet::removeIf 使用的 Pred 函数对象
+ */
+typedef XSetBase_predicate XSet_predicate;
+
+/**
+ * @brief 预分配容量——Qt 别名，红黑树实现下为无操作
+ * @param this_set XSet实例指针
+ * @param size 期望容量（本实现忽略此值）
+ * @return 恒返回 true
+ * @note Qt 映射: QSet::reserve(qsizetype)。本项目 XSet 底层为红黑树，节点按需分配，
+ *       无预留桶概念，故此接口仅作 API 命名对齐，不做实际预分配。
+ */
+static inline bool XSet_reserve_base(XSet* this_set, size_t size) { (void)this_set; (void)size; return true; }
+
+/**
+ * @brief 收缩容量——Qt 别名，红黑树实现下为无操作
+ * @note Qt 映射: QSet::squeeze()。同 reserve，红黑树无冗余桶可收缩。
+ */
+static inline void XSet_squeeze_base(XSet* this_set) { (void)this_set; }
+
+
 #ifdef __cplusplus
 }
 #endif

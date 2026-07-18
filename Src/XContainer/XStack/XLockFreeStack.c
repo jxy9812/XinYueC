@@ -82,7 +82,9 @@ void XLockFreeStack_init(XLockFreeStack* this_stack, size_t typeSize, size_t cap
     XVector_resize_base(this_stack, capacity);
 
     // 计算索引位数和掩码
-    this_stack->m_index_bits = XAtomic_index_bits(capacity - 1);
+    /* index_bits 必须能表示 top_index 的最大值 = capacity（非 capacity-1）,
+     * 否则当 top_index==capacity 时打包被截断为 0，绕过 isFull 检查。 */
+    this_stack->m_index_bits = XAtomic_index_bits(capacity);
     this_stack->m_index_mask = XAtomic_index_mask(this_stack->m_index_bits);
     this_stack->m_version_mask = XAtomic_version_mask(this_stack->m_index_bits);
 

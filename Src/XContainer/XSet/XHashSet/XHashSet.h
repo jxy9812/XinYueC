@@ -160,6 +160,75 @@ void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash,
 * @note 基于XSetBase的接口，快速交换两个集合的元素和状态
 */
 #define XHashSet_swap_base                  XSetBase_swap_base
+
+/* ============================== Qt 6.8 命名对齐别名 ==============================
+ * 说明：核心 API(insert/remove/find/contains/clear/swap)已与 Qt QSet 同名，天然对齐；
+ *       此处仅补齐 QSet 的 count()/empty()/values() 命名。所有别名仅做命名映射，
+ *       不新增行为，语义与被映射函数完全等价。Qt 参考: QSet<T>。
+ *       语义提示：Set 中 key 即 value，故 values() 对应本项目 keys()。
+ * ============================================================================== */
+
+/**
+ * @brief 元素个数——Qt 别名，等价于 XHashSet_size_base
+ * @note Qt 映射: QSet::count()（与 size() 完全等价，仅命名不同）
+ */
+#define XHashSet_count_base            XHashSet_size_base
+
+/**
+ * @brief 判空——Qt 别名，等价于 XHashSet_isEmpty_base
+ * @note Qt 映射: QSet::empty()（QSet 同时提供 isEmpty）
+ */
+#define XHashSet_empty_base            XHashSet_isEmpty_base
+
+/**
+ * @brief 获取所有元素副本——Qt 别名，等价于 XHashSet_keys_base
+ * @note Qt 映射: QSet::values() 返回 QList<T>；本项目返回 XVector。
+ */
+#define XHashSet_values_base           XHashSet_keys_base
+
+/**
+ * @brief 只读语义查找——Qt 别名，等价于 XHashSet_find_base
+ * @note Qt 映射: QSet::constFind()
+ */
+#define XHashSet_constFind_base          XHashSet_find_base
+
+/**
+ * @brief 按谓词条件删除元素——Qt 别名，等价于 XSetBase_removeIf_base
+ * @note Qt 映射: QSet::removeIf(Pred)。返回被删除元素数量
+ */
+#define XHashSet_removeIf_base           XSetBase_removeIf_base
+
+/**
+ * @brief 条件删除自由函数别名——Qt 别名，等价于 XSetBase_removeIf_base
+ * @note Qt 映射: erase_if(QSet<T>&, Pred)
+ */
+#define XHashSet_erase_if_base           XSetBase_removeIf_base
+
+/**
+ * @brief 谓词函数指针类型——Qt 别名，等价于 XSetBase_predicate
+ * @note Qt 映射: QSet::removeIf 使用的 Pred 函数对象
+ */
+typedef XSetBase_predicate XHashSet_predicate;
+
+/**
+ * @brief 预分配桶容量（对齐 Qt QSet::reserve）
+ * @param this_set XHashSet实例指针
+ * @param size 期望容纳的元素数量下限
+ * @return 分配成功返回 true；参数无效或分配失败返回 false
+ * @note Qt 映射: QSet::reserve(qsizetype)。仅在期望容量大于当前桶数时触发扩容；
+ *       扩容后桶数 >= size（哈希表按需保持负载因子上限，此处不缩小）。
+ */
+bool XHashSet_reserve_base(XHashSet* this_set, size_t size);
+
+/**
+ * @brief 释放多余桶空间（对齐 Qt QSet::squeeze）
+ * @param this_set XHashSet实例指针
+ * @note Qt 映射: QSet::squeeze()。将桶数下调至与元素数量相当的容量（不低于默认桶数 16），
+ *       用于长期使用后释放冗余内存。
+ */
+void XHashSet_squeeze_base(XHashSet* this_set);
+
+
 #ifdef __cplusplus
 }
 #endif

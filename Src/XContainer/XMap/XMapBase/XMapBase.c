@@ -1,5 +1,6 @@
 ﻿#include"XMapBase.h"
 #if XMap_ON
+#include"XVector.h"
 #include"XVariant.h"
 #include"XString.h"
 XVtable* XMapBase_class_init()
@@ -94,6 +95,35 @@ XVector* XMapBase_values_base(const XMapBase* this_map)
 	if (ISNULL(this_map, "") || ISNULL(XClassGetVtable(this_map), ""))
 		return NULL;
 	return XClassGetVirtualFunc(this_map, EXMapBase_Values, void* (*)(const XMapBase*))(this_map);
+}
+
+
+size_t XMapBase_removeIf_base(XMapBase* this_map, XMapBase_predicate pred, void* args)
+{
+    if (ISNULL(this_map, "") || ISNULL(pred, ""))
+        return 0;
+    // 拷贝所有 key 的副本，避免遍历中修改原容器
+    XVector* keys = XMapBase_keys_base(this_map);
+    if (!keys)
+        return 0;
+    size_t removed = 0;
+    size_t n = XVector_size_base(keys);
+    for (size_t i = 0; i < n; ++i)
+    {
+        void* pvKey = XVector_at_base(keys, (int64_t)i);
+        if (!pvKey)
+            continue;
+        void* pvValue = XMapBase_value_base(this_map, pvKey);
+        if (!pvValue)
+            continue;
+        if (pred(pvKey, pvValue, args))
+        {
+            if (XMapBase_remove_base(this_map, pvKey))
+                ++removed;
+        }
+    }
+    XVector_delete_base(keys);
+    return removed;
 }
 
 void XMapBase_deleteNodeData(XPair* pair, XMapBase* this_map)

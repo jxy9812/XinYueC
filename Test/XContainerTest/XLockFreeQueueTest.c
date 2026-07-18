@@ -1,107 +1,226 @@
-﻿#include"XDataStructTest.h"
+#include"XDataStructTest.h"
 #if DEMOTEST
 #include<stdint.h>
+#include<time.h>
+#include<stdlib.h>
 #include"XLockFreeQueue.h"
 #include"XThread.h"
 #include"XMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
-static void XLockFreeQueueTest();
+#include"XEvent.h"
 
-// 线程函数 1：输出 "Thread 1 is running"
-static void ThreadReceive(XThread* thread, XVarList* list)
-{
-	XVarList_args_3(list, XLockFreeQueue*, queue, XLockFreeQueue*, vqueue, XAtomic_int32_t*, count);
-	XHandle id = XThread_currentThreadId();
-	int value;
-	int index = 0;
-	while (!XLockFreeQueue_isEmpty_base(queue))
-	{
-		if (XLockFreeQueue_receive_base(queue, &value))
-		{
-			while (!XLockFreeQueue_push_base(vqueue, &value));
-			//XPrintf("XThread:%p count:%d value:%d size:%d\n", id, index++, value, XLockFreeQueue_size_base(queue));
-		}
-	}
-	value = XAtomic_fetch_sub_int32(count, 1, XAtomic_MemoryOrder_Relaxed);
-	if (value <= 1)
-	{
-		XCoreApplication* app = xApp;
-		XEventLoop* l = NULL;
-		while (true)
-		{
-			XThread* t = XObject_thread((XObject*)app);
-			if (!t)continue;
-			l = t->m_loop;
-			if (!l)continue;
-			break;
-		}
-
-		while (l->m_state != XEventLoop_Running);
-		XThread_deleteLater(thread);
-		XCoreApplication_quit();
-	}
-
-	return 0;
-}
-
-void XLockFreeQueueTest()
-{
 #if XLockFreeQueue_ON
-	XPrintf("循环队列 测试\n");
-	XLockFreeQueue* queue = XLockFreeQueue_Create(int,10000),*vqueue= XLockFreeQueue_Create(int, 10000);
-	XAtomic_int32_t active_consumer_count = { 0 },*lpcount=&active_consumer_count;
-	for (size_t i = 0; i < 10000; i++)
-	{
-		int n = i;
-		while (!XLockFreeQueue_push_base(queue, &n));
-		//Sleep(100);
-	}
-	for (size_t i = 0; i < 16; i++)
-	{
-		XThread* thread = XThread_create_func(ThreadReceive, XVarList_Create(XVar(XLockFreeQueue*, queue), XVar(XLockFreeQueue*, vqueue), XVar(XAtomic_int32_t*, lpcount)));
-		XAtomic_fetch_add_int32(&active_consumer_count, 1, XAtomic_MemoryOrder_Relaxed);
-		if (!XThread_start(thread))
-		{
-			XThread_deleteLater(thread);
-			int value = XAtomic_fetch_sub_int32(&active_consumer_count, 1, XAtomic_MemoryOrder_Relaxed);
 
-		}
-	}
+/* =========================================================
+ *  XLockFreeQueue（无锁环形队列）测试
+ *  单线程覆盖 + 多线程压力（多生产/多消费）
+ * ========================================================= */
 
-	XCoreApplication_exec();
-	
-	/*XThread_wait(thread,UINT32_MAX);
-	XThread_deleteLater(thread);*/
-	XLockFreeQueue_delete_base(queue);
-	int value;
-	int index = 0;
-	while (!XLockFreeQueue_isEmpty_base(vqueue))
-	{
-		if (XLockFreeQueue_receive_base(vqueue, &value))
-		{
-			XPrintf("count:%d value:%d size:%d\n", index++, value, XLockFreeQueue_size_base(vqueue));
-		}
-	}
-	XLockFreeQueue_delete_base(vqueue);
-	
-	XPrintf("循环队列 空\n");
+/* -------- 1. 基础 FIFO / Qt 别名 -------- */
+static void XLFQBasicTest(void)
+{
+    XPrintf("===== XLockFreeQueue 基础 FIFO / Qt 别名 =====\n");
+    XLockFreeQueue* q = XLockFreeQueue_Create(int, 16);
+    for (int i = 0; i < 8; i++) {
+        int val = i * 10;
+        while (!XLockFreeQueue_enqueue_base(q, &val)) { /* retry */ }
+    }
+    XPrintf("count=%zu length=%zu empty=%d isFull=%d\n",
+        XLockFreeQueue_count_base(q), XLockFreeQueue_length_base(q),
+        (int)XLockFreeQueue_empty_base(q),
+        (int)XLockFreeQueue_isFull_base(q));
 
-
-	
-#else
-	IS_ON_DEBUG(XLockFreeQueue_ON);
-#endif
-	XCoreApplication_quit();
+    int mismatch = 0;
+    for (int i = 0; i < 8; i++) {
+        int v = -1;
+        while (!XLockFreeQueue_dequeue_base(q, &v)) { /* retry */ }
+        if (v != i * 10) mismatch++;
+    }
+    XPrintf("FIFO 顺序 mismatch=%d empty=%d (期望:0/1)\n",
+        mismatch, (int)XLockFreeQueue_empty_base(q));
+    XLockFreeQueue_delete_base(q);
+    XCoreApplication_quit();
 }
+
+/* -------- 2. isFull(容量固定) -------- */
+static void XLFQFullTest(void)
+{
+    XPrintf("===== XLockFreeQueue isFull 边界 =====\n");
+    /* index_bits 要求 count 是 2 的幂，取 16 */
+    XLockFreeQueue* q = XLockFreeQueue_Create(int, 16);
+    int filled = 0;
+    for (int i = 0; i < 32; i++) {
+        int v = i;
+        if (XLockFreeQueue_enqueue_base(q, &v)) filled++;
+        else break;
+    }
+    XPrintf("实际填入=%d count=%zu isFull=%d\n",
+        filled, XLockFreeQueue_count_base(q),
+        (int)XLockFreeQueue_isFull_base(q));
+    XLockFreeQueue_delete_base(q);
+    XCoreApplication_quit();
+}
+
+/* -------- 3. 大量数据(单线程) -------- */
+static void XLFQBulkTest(void)
+{
+    XPrintf("===== XLockFreeQueue 大量数据(单线程 100000 轮) =====\n");
+    XLockFreeQueue* q = XLockFreeQueue_Create(int, 1024);
+    size_t pushed = 0, popped = 0;
+    for (int round = 0; round < 100000; round++) {
+        int v = round;
+        while (!XLockFreeQueue_enqueue_base(q, &v)) {
+            int out = 0;
+            if (XLockFreeQueue_dequeue_base(q, &out)) popped++;
+        }
+        pushed++;
+    }
+    int out = 0;
+    while (XLockFreeQueue_dequeue_base(q, &out)) popped++;
+    XPrintf("pushed=%zu popped=%zu 剩余count=%zu (期望:100000/100000/0)\n",
+        pushed, popped, XLockFreeQueue_count_base(q));
+    XLockFreeQueue_delete_base(q);
+    XCoreApplication_quit();
+}
+
+/* =========================================================
+ *  多生产/多消费并发测试
+ * ========================================================= */
+#define XLFQ_CAPACITY    2048
+#define XLFQ_PRODUCERS   4
+#define XLFQ_CONSUMERS   8
+#define XLFQ_PER_PROD    5000     /* 每个生产者产多少项 */
+
+typedef struct XLFQCtx {
+    XLockFreeQueue*  q;
+    XAtomic_size_t*  produced;
+    XAtomic_size_t*  consumed;
+    XAtomic_size_t*  producers_done;
+    XAtomic_size_t*  threads_finished;
+    size_t           threads_total;
+} XLFQCtx;
+
+static void XLFQProducer(XThread* thread, XVarList* vl)
+{
+    XVarList_args_1(vl, XLFQCtx*, ctx);
+    for (int i = 0; i < XLFQ_PER_PROD; i++) {
+        int v = i;
+        while (!XLockFreeQueue_enqueue_base(ctx->q, &v)) { /* retry */ }
+        XAtomic_fetch_add_size_t(ctx->produced, 1, XAtomic_MemoryOrder_Relaxed);
+    }
+    size_t d = XAtomic_fetch_add_size_t(ctx->producers_done, 1,
+        XAtomic_MemoryOrder_Relaxed) + 1;
+    XPrintf("[P] tid=%p 完成 %d 项 (%zu/%d)\n",
+        XThread_currentThreadId(), XLFQ_PER_PROD, d, XLFQ_PRODUCERS);
+    size_t fin = XAtomic_fetch_add_size_t(ctx->threads_finished, 1,
+        XAtomic_MemoryOrder_AcqRel) + 1;
+    XThread_deleteLater(thread);
+    if (fin == ctx->threads_total) XCoreApplication_quit();
+}
+
+static void XLFQConsumer(XThread* thread, XVarList* vl)
+{
+    XVarList_args_1(vl, XLFQCtx*, ctx);
+    int local = 0, idle = 0;
+    size_t target = (size_t)XLFQ_PRODUCERS * (size_t)XLFQ_PER_PROD;
+    for (;;) {
+        int v = 0;
+        if (XLockFreeQueue_dequeue_base(ctx->q, &v)) {
+            local++; idle = 0;
+            size_t total = XAtomic_fetch_add_size_t(ctx->consumed, 1,
+                XAtomic_MemoryOrder_Relaxed) + 1;
+            if (total >= target) break;
+        } else {
+            size_t pd = XAtomic_load_size_t(ctx->producers_done,
+                XAtomic_MemoryOrder_Relaxed);
+            if (pd >= XLFQ_PRODUCERS) {
+                size_t prod = XAtomic_load_size_t(ctx->produced,
+                    XAtomic_MemoryOrder_Relaxed);
+                size_t cons = XAtomic_load_size_t(ctx->consumed,
+                    XAtomic_MemoryOrder_Relaxed);
+                if (cons >= prod) break;
+                if (++idle > 200000) {
+                    XPrintf("[C] tid=%p 空转 %d 次退出 (cons=%zu/prod=%zu)\n",
+                        XThread_currentThreadId(), idle, cons, prod);
+                    break;
+                }
+            }
+        }
+    }
+    XPrintf("[C] tid=%p 消费=%d 累计=%zu 剩余count=%zu\n",
+        XThread_currentThreadId(), local,
+        XAtomic_load_size_t(ctx->consumed, XAtomic_MemoryOrder_Relaxed),
+        XLockFreeQueue_count_base(ctx->q));
+    size_t fin = XAtomic_fetch_add_size_t(ctx->threads_finished, 1,
+        XAtomic_MemoryOrder_AcqRel) + 1;
+    XThread_deleteLater(thread);
+    if (fin == ctx->threads_total) XCoreApplication_quit();
+}
+
+static void XLFQConcurrentTest(void)
+{
+    XPrintf("===== XLockFreeQueue 并发 %dP/%dC (%d 项/生产者) =====\n",
+        XLFQ_PRODUCERS, XLFQ_CONSUMERS, XLFQ_PER_PROD);
+
+    /* 预热 XEvent 子类 vtable，避免多线程首次调用 deleteLater 触发 lazy-init 竞争 */
+    (void)XEvent_class_init();
+    (void)XEventFunc_class_init();
+    XLockFreeQueue* q = XLockFreeQueue_Create(int, XLFQ_CAPACITY);
+    XAtomic_size_t produced = { 0 };
+    XAtomic_size_t consumed = { 0 };
+    XAtomic_size_t producers_done = { 0 };
+    XAtomic_size_t threads_finished = { 0 };
+    XLFQCtx ctx = { q, &produced, &consumed, &producers_done,
+        &threads_finished, (size_t)(XLFQ_PRODUCERS + XLFQ_CONSUMERS) };
+    XLFQCtx* pctx = &ctx;
+
+    for (int i = 0; i < XLFQ_PRODUCERS; i++) {
+        XThread* t = XThread_create_func(XLFQProducer,
+            XVarList_Create(XVar(XLFQCtx*, pctx)));
+        XThread_start(t);
+    }
+    for (int i = 0; i < XLFQ_CONSUMERS; i++) {
+        XThread* t = XThread_create_func(XLFQConsumer,
+            XVarList_Create(XVar(XLFQCtx*, pctx)));
+        XThread_start(t);
+    }
+    XCoreApplication_exec();
+
+    size_t total = (size_t)XLFQ_PRODUCERS * (size_t)XLFQ_PER_PROD;
+    XPrintf("并发结束: produced=%zu consumed=%zu remain=%zu (期望:%zu/%zu/0)\n",
+        XAtomic_load_size_t(&produced, XAtomic_MemoryOrder_Relaxed),
+        XAtomic_load_size_t(&consumed, XAtomic_MemoryOrder_Relaxed),
+        XLockFreeQueue_count_base(q),
+        total, total);
+    XLockFreeQueue_delete_base(q);
+    XPrintf("\n");
+    XCoreApplication_quit();
+}
+
+/* -------- 全部（不含并发） -------- */
+static void XLFQAllTest(void)
+{
+    XPrintf("========== XLockFreeQueue 全部测试开始(不含并发) ==========\n");
+    XLFQBasicTest();
+    XLFQFullTest();
+    XLFQBulkTest();
+    XPrintf("========== XLockFreeQueue 全部测试结束(不含并发) ==========\n");
+    XCoreApplication_quit();
+}
+#endif
+
 void XMenu_XLockFreeQueueTest(XMenu* root)
 {
-	XMenu* menu = XMenu_create("XLockFreeQueue(无锁环形队列)");
-	XMenu_addMenu(root, menu);
-	{
-		XAction* action = XMenu_addAction(menu, "主测试");
-		XAction_setAction(action, XLockFreeQueueTest);
-	}
+    XMenu* menu = XMenu_create("XLockFreeQueue(无锁环形队列)");
+    XMenu_addMenu(root, menu);
+#if XLockFreeQueue_ON
+    { XAction* a = XMenu_addAction(menu, "【全部测试(不含并发)】"); XAction_setAction(a, (Action)XLFQAllTest); }
+    { XAction* a = XMenu_addAction(menu, "基础 FIFO / Qt 别名"); XAction_setAction(a, (Action)XLFQBasicTest); }
+    { XAction* a = XMenu_addAction(menu, "isFull 边界"); XAction_setAction(a, (Action)XLFQFullTest); }
+    { XAction* a = XMenu_addAction(menu, "大量数据(单线程 100000)"); XAction_setAction(a, (Action)XLFQBulkTest); }
+    { XAction* a = XMenu_addAction(menu, "并发多生产/多消费"); XAction_setAction(a, (Action)XLFQConcurrentTest); }
+#endif
 }
 #endif

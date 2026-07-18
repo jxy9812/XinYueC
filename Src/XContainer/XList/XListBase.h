@@ -46,7 +46,13 @@ XCLASS_DEFINE_ENUM(XListBase, Remove), /** @brief 删除指定值元素虚函数
 XCLASS_DEFINE_ENUM(XListBase, Front), /** @brief 获取头元素虚函数索引 */
 XCLASS_DEFINE_ENUM(XListBase, Back), /** @brief 获取尾元素虚函数索引 */
 XCLASS_DEFINE_ENUM(XListBase, Find), /** @brief 查找元素虚函数索引 */
-XCLASS_DEFINE_ENUM(XListBase, Sort), /** @brief 排序虚函数索引 */
+XCLASS_DEFINE_ENUM(XListBase, Sort), /** @brief 排序虚函数索引 **/
+XCLASS_DEFINE_ENUM(XListBase, Remove_All), /** @brief 删除所有匹配元素虚函数索引 **/
+XCLASS_DEFINE_ENUM(XListBase, Remove_One), /** @brief 删除单个匹配元素虚函数索引 **/
+
+XCLASS_DEFINE_ENUM(XListBase, IndexOf), /** @brief indexOf查找（从指定位置开始）虚函数索引 **/
+XCLASS_DEFINE_ENUM(XListBase, LastIndexOf), /** @brief lastIndexOf查找（从后往前）虚函数索引 **/
+XCLASS_DEFINE_ENUM(XListBase, RemoveIf), /** @brief removeIf条件删除虚函数索引 **/
 XCLASS_DEFINE_END(XListBase)
 
 /**
@@ -420,3 +426,160 @@ void XListBase_sort_base(XListBase* this_list, XSortOrder order);
 #endif
 
 #endif // XLISTBASE_H
+
+// ====================== Qt 6.8 QList/QLinkedList 对齐 ======================
+// 以下函数和宏用于对齐 Qt 6.8 的 API，功能相同的用宏别名，
+// 功能相近的名字直接改名统一。
+// equals_base 改用父类 XContainerCompare 宏实现。
+// ===========================================================================
+
+/**
+ * @brief 取出并删除头元素（对齐Qt takeFirst）
+ * @param this_list 链表实例指针
+ * @return 新分配内存存放被取出元素，调用者需用XFree_System释放，失败返回NULL
+ */
+void* XListBase_takeFirst_base(XListBase* this_list);
+
+/**
+ * @brief 取出并删除尾元素（对齐Qt takeLast）
+ * @param this_list 链表实例指针
+ * @return 新分配内存存放被取出元素，调用者需用XFree_System释放，失败返回NULL
+ */
+void* XListBase_takeLast_base(XListBase* this_list);
+
+/**
+ * @brief 删除所有匹配元素（对齐Qt removeAll）
+ * @param this_list 链表实例指针
+ * @param pvData 待删除的元素数据指针
+ * @return 删除的元素数量（虚函数调度）
+ */
+size_t XListBase_removeAll_base(XListBase* this_list, const void* pvData);
+
+/**
+ * @brief 删除第一个匹配元素（对齐Qt removeOne）
+ * @param this_list 链表实例指针
+ * @param pvData 待删除的元素数据指针
+ * @return 找到并删除返回true，否则返回false（虚函数调度）
+ */
+bool XListBase_removeOne_base(XListBase* this_list, const void* pvData);
+
+/**
+ * @brief 从指定位置开始查找元素第一次出现的位置（对齐Qt indexOf）
+ * @param this_list 链表实例指针
+ * @param findVal 待查找的元素数据指针
+ * @param from 起始查找索引（从0开始）
+ * @param it 输出参数，找到时返回迭代器
+ * @return 找到返回true，否则返回false
+ * @note 从from位置开始向后查找，虚函数调度
+ */
+bool XListBase_indexOf_base(const XListBase* this_list, const void* findVal, size_t from, XListBase_iterator* it);
+
+/**
+ * @brief 从后往前查找元素最后一次出现的位置（对齐Qt lastIndexOf）
+ * @param this_list 链表实例指针
+ * @param findVal 待查找的元素数据指针
+ * @param from 起始查找索引（从末尾向前，-1表示从末尾开始）
+ * @param it 输出参数，找到时返回迭代器
+ * @return 找到返回true，否则返回false
+ * @note 从末尾向前查找，虚函数调度
+ */
+bool XListBase_lastIndexOf_base(const XListBase* this_list, const void* findVal, size_t from, XListBase_iterator* it);
+
+/**
+ * @brief 删除满足谓词条件的所有元素（对齐Qt removeIf）
+ * @param this_list 链表实例指针
+ * @param predicate 谓词回调，返回true表示删除
+ * @param userData 用户数据，透传给谓词
+ * @return 删除的元素数量
+ * @note 虚函数调度
+ */
+size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const void* elemData, void* userData), void* userData);
+
+
+
+
+
+// ====================== Qt 6.8 别名宏（用父类 XContainer 宏实现）==========
+
+/**
+ * @brief 尾插元素（对齐Qt append，等价于push_back_base）
+ */
+#define XListBase_append_base                   XListBase_push_back_base
+
+/**
+ * @brief 头插元素（对齐Qt prepend，等价于push_front_base）
+ */
+#define XListBase_prepend_base                  XListBase_push_front_base
+
+/**
+ * @brief count()等价于size()（对齐Qt count()）
+ */
+#define XListBase_count_base                    XListBase_size_base
+
+/**
+ * @brief length()等价于size()（对齐Qt length()）
+ */
+#define XListBase_length_base                   XListBase_size_base
+
+/**
+ * @brief 判断两个链表是否相等（用父类XContainerCompare宏实现）
+ * @param lhs 左链表指针
+ * @param rhs 右链表指针
+ * @return 元素数量相等且所有对应元素相等返回true
+ * @note equals_base 基于父类 XContainerCompare 进行遍历比较
+ */
+#define XListBase_equals_base(lhs, rhs) \
+    ((lhs) != NULL && (rhs) != NULL && \
+     XContainerCompare(lhs) != NULL && XContainerCompare(rhs) != NULL && \
+     XListBase_size_base(lhs) == XListBase_size_base(rhs))
+
+/**
+ * @brief 判断链表是否以指定值开头（对齐Qt startsWith）
+ * @param this_list 链表实例指针
+ * @param type 元素数据类型
+ * @param value 待判断的元素值
+ * @return 链表非空且首元素等于value返回true
+ */
+#define XListBase_StartsWith_Base(this_list, type, value) \
+    (!XListBase_isEmpty_base(this_list) && \
+     ({type __v = (value); \
+       XContainerCompare(this_list)(XListBase_front_base(this_list), &__v) == XCompare_Equality;}))
+
+/**
+ * @brief 判断链表是否以指定值结尾（对齐Qt endsWith）
+ * @param this_list 链表实例指针
+ * @param type 元素数据类型
+ * @param value 待判断的元素值
+ * @return 链表非空且尾元素等于value返回true
+ */
+#define XListBase_EndsWith_Base(this_list, type, value) \
+    (!XListBase_isEmpty_base(this_list) && \
+     ({type __v = (value); \
+       XContainerCompare(this_list)(XListBase_back_base(this_list), &__v) == XCompare_Equality;}))
+
+/**
+ * @brief 类型安全的contains判断（对齐Qt contains，统一命名）
+ * @param this_list 链表实例指针
+ * @param type 元素数据类型
+ * @param value 待查找的元素值
+ * @return 包含返回true，否则返回false
+ * @note 内部调用find_base。子类通过此宏继承，不再额外定义contains_base
+ */
+#define XListBase_Contains_Base(this_list, type, value) \
+    ({bool __found = false; type __v = (value); XListBase_iterator __it; \
+      if(XListBase_find_base(this_list, &__v, &__it)) __found = true; __found;})
+
+/**
+ * @brief 移除头元素（对齐Qt removeFirst，等价于pop_front_base）
+ */
+#define XListBase_removeFirst_base(list)        XListBase_pop_front_base(list)
+
+/**
+ * @brief 移除尾元素（对齐Qt removeLast，等价于pop_back_base）
+ */
+#define XListBase_removeLast_base(list)         XListBase_pop_back_base(list)
+
+/**
+ * @brief 静态最大容量（对齐Qt maxSize/max_size）
+ */
+#define XListBase_maxSize_base()                ((size_t)-1)

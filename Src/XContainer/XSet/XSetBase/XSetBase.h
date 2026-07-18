@@ -137,6 +137,28 @@ bool XSetBase_find_base(XSetBase* this_set, const void* pvKey, XSetBase_iterator
 */
 bool XSetBase_contains(XSetBase* this_set, const void* pvKey);
 
+// ========================= 条件删除 =========================
+
+/**
+* @brief 条件删除函数指针类型
+* @param pvKey 当前元素键的只读指针
+* @param args  透传给谓词的额外参数
+* @return 返回 true 表示该键需要删除，false 表示保留
+*/
+typedef bool (*XSetBase_predicate)(const void* pvKey, void* args);
+
+/**
+* @brief 按谓词条件批量删除元素（Qt QSet::removeIf 对齐）
+* @param this_set 目标XSetBase
+* @param pred 谓词函数（对每个键调用；返回true则删除）
+* @param args 透传给谓词的用户参数
+* @return 被删除的元素数量；参数无效返回0
+* @note Qt 映射: QSet::removeIf(Pred) 及自由函数 erase_if(set,pred)。
+*       实现细节：先通过 keys_base 拷贝出全部键的副本，再逐个 remove_base，
+*       避免在原容器上边迭代边删除引发迭代器失效。
+*/
+size_t XSetBase_removeIf_base(XSetBase* this_set, XSetBase_predicate pred, void* args);
+
 // ========================= 键集合 =========================
 
 /**
@@ -208,6 +230,53 @@ XVector* XSetBase_keys_base(const XSetBase* this_set);
 * @note 宏定义，等价于XContainer_typeSize_base，返回键的类型大小（字节数）
 */
 #define XSetBase_typeSize_base			    XContainer_typeSize_base
+
+
+/* ============================== Qt 6.8 命名对齐别名 ==============================
+ * 说明：本文件的核心 API(insert/remove/find/contains/clear/swap)已与 Qt QSet 同名，
+ *       天然对齐；此处仅补齐 QSet 的 count()/empty()/values() 命名。所有别名仅做
+ *       命名映射，不新增行为，语义与被映射函数完全等价。
+ *       Qt 参考: qtbase/src/corelib/tools/qset.h（QSet<T>）。
+ *       语义提示：在 Set 中 key 即 value，故 values() 对应本项目的 keys()。
+ * ============================================================================== */
+
+/**
+ * @brief 元素个数——Qt 别名，等价于 XSetBase_size_base
+ * @param this_set 集合实例指针
+ * @return 元素个数
+ * @note Qt 映射: QSet::count()（与 size() 完全等价，仅命名不同）
+ */
+#define XSetBase_count_base           XSetBase_size_base
+
+/**
+ * @brief 判空——Qt 别名，等价于 XSetBase_isEmpty_base
+ * @param this_set 集合实例指针
+ * @return 集合为空返回 true，否则返回 false
+ * @note Qt 映射: QSet::empty()（QSet 同时提供 isEmpty，本项目仅将 empty 对齐 Qt）
+ */
+#define XSetBase_empty_base           XSetBase_isEmpty_base
+
+/**
+ * @brief 获取所有元素副本——Qt 别名，等价于 XSetBase_keys_base
+ * @param this_set 集合实例指针
+ * @return 存储所有元素副本的 XVector 指针，失败返回 NULL；调用方负责释放
+ * @note Qt 映射: QSet::values() 返回 QList<T>；本项目返回 XVector（元素类型为 key）。
+ *       在 Set 语义下 key 即 value，此别名仅是命名对齐。
+ */
+#define XSetBase_values_base          XSetBase_keys_base
+
+/**
+ * @brief 只读语义查找——Qt 别名，等价于 XSetBase_find_base
+ * @note Qt 映射: QSet::constFind()（返回 const_iterator 语义；本项目迭代器无 const 分身，故直接复用）
+ */
+#define XSetBase_constFind_base       XSetBase_find_base
+
+/**
+ * @brief 条件删除自由函数别名——Qt 别名，等价于 XSetBase_removeIf_base
+ * @note Qt 映射: erase_if(QSet<T>&, Pred)（全局自由函数；与成员 removeIf 语义相同）
+ */
+#define XSetBase_erase_if_base        XSetBase_removeIf_base
+
 
 #ifdef __cplusplus
 }

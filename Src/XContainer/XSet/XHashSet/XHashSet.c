@@ -495,4 +495,50 @@ void XHashSet_init(XHashSet* this_set, const size_t keyTypeSize, XHashFunc hash,
     XContainerDataPtr(this_set) = NULL;  // 初始化为空，首次插入时会分配
 }
 
+/* ============================== Qt 6.8 命名对齐: reserve/squeeze ============================== */
+
+bool XHashSet_reserve_base(XHashSet* this_set, size_t size)
+{
+    if (!this_set) return false;
+    // 期望桶数 = ceil(size / DEFAULT_LOAD_FACTOR)，保证插入 size 个元素不会立即触发再次扩容
+    size_t need = (size_t)((double)size / (double)DEFAULT_LOAD_FACTOR) + 1;
+    if (need < DEFAULT_CAPACITY) need = DEFAULT_CAPACITY;
+    size_t cur = XContainerCapacity(this_set);
+    if (need <= cur) return true;  // 已满足需求，不缩小
+    // 桶数上取到 2 的幂（与内部 *2 扩容序列对齐，避免下一次插入立即再次 resize）
+    size_t pow2 = DEFAULT_CAPACITY;
+    while (pow2 < need) pow2 <<= 1;
+    // 首次插入前桶尚未分配：需先分配再 resize
+    if (cur == 0) {
+        if (XContainerIsCow(this_set)) {
+            XSharedData* sd = XSharedData_create(NULL, DEFAULT_CAPACITY * sizeof(XRBTreeNode*));
+            if (!sd) return false;
+            memset(sd->data, 0, DEFAULT_CAPACITY * sizeof(XRBTreeNode*));
+            XContainerSetDataPtr(this_set, sd);
+        } else {
+            void* p = XMalloc_System(DEFAULT_CAPACITY * sizeof(XRBTreeNode*));
+            if (!p) return false;
+            memset(p, 0, DEFAULT_CAPACITY * sizeof(XRBTreeNode*));
+            XContainerDataPtr(this_set) = p;
+        }
+        XContainerCapacity(this_set) = DEFAULT_CAPACITY;
+    }
+    return XHashSet_resize(this_set, pow2);
+}
+
+void XHashSet_squeeze_base(XHashSet* this_set)
+{
+    if (!this_set) return;
+    size_t cur = XContainerCapacity(this_set);
+    if (cur <= DEFAULT_CAPACITY) return;
+    size_t sz = XContainerSize(this_set);
+    // 目标 = 满足元素个数所需的最小 2 的幂桶数（不低于 DEFAULT_CAPACITY）
+    size_t need = (size_t)((double)sz / (double)DEFAULT_LOAD_FACTOR) + 1;
+    if (need < DEFAULT_CAPACITY) need = DEFAULT_CAPACITY;
+    size_t pow2 = DEFAULT_CAPACITY;
+    while (pow2 < need) pow2 <<= 1;
+    if (pow2 >= cur) return;  // 已经是最紧凑规格
+    (void)XHashSet_resize(this_set, pow2);
+}
+
 #endif

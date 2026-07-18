@@ -1,21 +1,18 @@
 ﻿#include"XLockFreeList_iterator.h"
 #if XLockFreeList_ON
 #include "XLockFreeList.h"
-#include "XLockFreeListConfig.h"
 #include <stdio.h>
+#include <stdint.h>
 
-static inline void* unpack_ptr(size_t val)
-{
-    return (void*)(val & PTR_MASK);
-}
 XLockFreeList_iterator XLockFreeList_begin(XLockFreeList * this_list)
 {
     XLockFreeList_iterator it = { 0 };
     if (this_list == NULL)
         return it;
-    // --- 关键修改：正确地从 tagged_ptr_t 中解包出指针 ---
-    size_t head_tagged = XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Relaxed);
-    it.node = (XLockFreeListNode*)unpack_ptr(head_tagged);
+    // head 现为哨兵节点，第一个真实元素是 head->next
+    XLockFreeListNode* head = (XLockFreeListNode*)(uintptr_t)
+        XAtomic_load_size_t(&this_list->m_head, XAtomic_MemoryOrder_Acquire);
+    it.node = head ? head->next : NULL;
     return it;
 }
 

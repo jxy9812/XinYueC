@@ -213,6 +213,42 @@ XVariantMap* XMap_create_XVariantMap();
 /**
 * @brief C++兼容性声明结束
 */
+
+/* ============================== Qt 6.8 命名对齐别名 ==============================
+ * 说明：本文件核心 API 已与 Qt QMap 天然同名；此处仅补齐 count/empty/constFind/
+ *       removeIf/erase_if 的命名，并对 reserve/squeeze 提供 no-op 桩以对齐 API
+ *       （QMap 底层为红黑树，Qt QMap 本身亦无 reserve/squeeze，此处保留以便与
+ *       QHash 一致地测试同名 API）。
+ * ============================================================================== */
+
+/** @brief 元素个数——Qt 别名，等价于 XMap_size_base @note Qt: QMap::count() */
+#define XMap_count_base           XMap_size_base
+/** @brief 判空——Qt 别名，等价于 XMap_isEmpty_base @note Qt: QMap::empty() */
+#define XMap_empty_base           XMap_isEmpty_base
+/** @brief 只读语义查找——Qt 别名，等价于 XMap_find_base @note Qt: QMap::constFind() */
+#define XMap_constFind_base       XMap_find_base
+/** @brief 条件删除——Qt 别名，等价于 XMapBase_removeIf_base @note Qt: QMap::removeIf(Pred) */
+#define XMap_removeIf_base        XMapBase_removeIf_base
+/** @brief 条件删除自由函数别名——Qt: erase_if(QMap<K,V>&, Pred) */
+#define XMap_erase_if_base        XMapBase_removeIf_base
+/** @brief 谓词函数指针类型——Qt 别名，等价于 XMapBase_predicate */
+typedef XMapBase_predicate XMap_predicate;
+
+/**
+ * @brief 预分配容量——红黑树实现下为无操作
+ * @param this_map XMap 实例指针
+ * @param size 期望容量（本实现忽略此值）
+ * @return 恒返回 true
+ * @note QMap 底层为红黑树，节点按需分配，Qt 本身未提供 reserve；此桩仅用于跨容器统一测试。
+ */
+static inline bool XMap_reserve_base(XMap* this_map, size_t size) { (void)this_map; (void)size; return true; }
+
+/**
+ * @brief 收缩容量——红黑树实现下为无操作
+ * @note 同 reserve，红黑树无冗余桶可收缩。
+ */
+static inline void XMap_squeeze_base(XMap* this_map) { (void)this_map; }
+
 #ifdef __cplusplus
 }
 #endif

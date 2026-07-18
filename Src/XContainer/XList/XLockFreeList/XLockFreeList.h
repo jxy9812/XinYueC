@@ -43,8 +43,13 @@ typedef struct XLockFreeListNode
 typedef struct XLockFreeList 
 {
 	XListBase m_class;              ///< 继承自链表基类，包含链表通用属性（大小、容量、虚函数表等）
-	XCACHE_ALIGN XAtomic_size_t m_head;          ///< 头节点指针（打包了指针和版本号）
-	XCACHE_ALIGN XAtomic_size_t m_tail;          ///< 尾节点指针（打包了指针和版本号）
+	// —— 真无锁 Michael-Scott 队列：始终存在一个哨兵节点 —— 
+	// m_head 指向当前哨兵节点（空时 m_head==m_tail，均指向同一哨兵）；
+	// m_tail 指向最后一个节点。push_back 追加到 m_tail->next 并 CAS 推进 m_tail；
+	// pop_front 先读 head->next 的数据再 CAS 推进 m_head，旧哨兵进入 hazard-pointer 退休链，
+	// 待所有观测线程释放对它的引用后才真正 free，避免 ABA 与 use-after-free。
+	XCACHE_ALIGN XAtomic_size_t m_head;          ///< 当前哨兵节点指针（原子）
+	XCACHE_ALIGN XAtomic_size_t m_tail;          ///< 最后一个节点指针（原子）；空表时等于 m_head
 } XLockFreeList;
 // ------------------------------ 类初始化与创建 ------------------------------
 /**
@@ -127,12 +132,12 @@ void XLockFreeList_init(XLockFreeList* this_list, size_t typeSize);
 * @brief 在指定节点前插入数组元素（拷贝语义，基础版本）
 * @note 继承自XListBase的数组插入操作，需指定数组元素数量
 */
-#define XListSLinked_insert_array_base                  XListBase_insert_array_base
+#define XLockFreeList_insert_array_base                 XListBase_insert_array_base
 /**
 * @brief 在指定节点前插入数组元素（移动语义，基础版本）
 * @note 继承自XListBase的数组插入操作（移动语义），需指定数组元素数量
 */
-#define XListSLinked_insert_array_move_base             XListBase_insert_array_move_base
+#define XLockFreeList_insert_array_move_base            XListBase_insert_array_move_base
 // ------------------------------ 删除操作 ------------------------------
 /**
  * @brief 原子地删除链表头部元素，并将其数据拷贝到指定位置。
@@ -201,6 +206,30 @@ bool XLockFreeList_pop_and_move_front(XLockFreeList* this_list, void* pvOutData)
 * @note 继承自XListBase的查找操作，返回找到的节点指针（未找到返回NULL）
 */
 #define XLockFreeList_find_base                    XListBase_find_base
+/**
+* @brief 判断链表是否包含指定值（基础版本，Qt 6.8 对齐）
+*/
+#define XLockFreeList_contains                     XListBase_contains
+/**
+* @brief 查找指定值的首个索引（基础版本，Qt 6.8 对齐）
+*/
+#define XLockFreeList_indexOf_base(list, val, from, it)     XListBase_indexOf_base(list, val, from, it)
+/**
+* @brief 查找指定值的最后索引（基础版本，Qt 6.8 对齐）
+*/
+#define XLockFreeList_lastIndexOf_base(list, val, from, it) XListBase_lastIndexOf_base(list, val, from, it)
+/**
+* @brief 删除所有匹配指定值的元素（基础版本，Qt 6.8 对齐）
+*/
+#define XLockFreeList_removeAll_base               XListBase_removeAll_base
+/**
+* @brief 删除首个匹配指定值的元素（基础版本，Qt 6.8 对齐）
+*/
+#define XLockFreeList_removeOne_base               XListBase_removeOne_base
+/**
+* @brief 按谓词条件删除元素（基础版本，Qt 6.8 对齐）
+*/
+#define XLockFreeList_removeIf_base(list, pred, udata)      XListBase_removeIf_base(list, pred, udata)
 // ------------------------------ 其他操作 ------------------------------
 /**
 * @brief 对链表进行排序（基础版本）

@@ -105,6 +105,7 @@ bool VXQueue_receive(XQueue* this_queue, void* pvBuffer)
 		return false;
 	void* val=XQueue_top_base(this_queue);
 	memcpy(pvBuffer,val,XContainerTypeSize(this_queue));
+	XQueue_pop_base(this_queue);
 	return true;
 }
 

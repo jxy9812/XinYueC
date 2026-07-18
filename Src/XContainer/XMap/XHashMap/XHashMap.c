@@ -613,4 +613,49 @@ XVariantHashMap* XHashMap_create_XVariantHashMap()
     XContainerSetDataDeinitMethod(hash, XVariant_deinit_base);
     return hash;
 }
+
+/* ============================== Qt 6.8 命名对齐: reserve/squeeze ============================== */
+
+bool XHashMap_reserve_base(XHashMap* this_hash, size_t size)
+{
+    if (!this_hash) return false;
+    size_t need = (size_t)((double)size / (double)DEFAULT_LOAD_FACTOR) + 1;
+    if (need < DEFAULT_CAPACITY) need = DEFAULT_CAPACITY;
+    size_t cur = XContainerCapacity(this_hash);
+    if (need <= cur) return true;
+    size_t pow2 = DEFAULT_CAPACITY;
+    while (pow2 < need) pow2 <<= 1;
+    if (cur == 0) {
+        if (XContainerIsCow(this_hash)) {
+            size_t szBytes = DEFAULT_CAPACITY * sizeof(XRBTreeNode*);
+            XSharedData* sd = XSharedData_create(NULL, szBytes);
+            if (!sd) return false;
+            memset(sd->data, 0, szBytes);
+            XContainerSetDataPtr(this_hash, sd);
+        } else {
+            size_t szBytes = DEFAULT_CAPACITY * sizeof(XRBTreeNode*);
+            void* p2 = XMalloc_System(szBytes);
+            if (!p2) return false;
+            memset(p2, 0, szBytes);
+            XContainerDataPtr(this_hash) = p2;
+        }
+        XContainerCapacity(this_hash) = DEFAULT_CAPACITY;
+    }
+    return XHashMap_resize(this_hash, pow2);
+}
+
+void XHashMap_squeeze_base(XHashMap* this_hash)
+{
+    if (!this_hash) return;
+    size_t cur = XContainerCapacity(this_hash);
+    if (cur <= DEFAULT_CAPACITY) return;
+    size_t sz = XContainerSize(this_hash);
+    size_t need = (size_t)((double)sz / (double)DEFAULT_LOAD_FACTOR) + 1;
+    if (need < DEFAULT_CAPACITY) need = DEFAULT_CAPACITY;
+    size_t pow2 = DEFAULT_CAPACITY;
+    while (pow2 < need) pow2 <<= 1;
+    if (pow2 >= cur) return;
+    (void)XHashMap_resize(this_hash, pow2);
+}
+
 #endif
