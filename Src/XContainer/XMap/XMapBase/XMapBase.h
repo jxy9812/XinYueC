@@ -326,6 +326,61 @@ XVector* XMapBase_values_base(const XMapBase* this_map);
 */
 void XMapBase_deleteNodeData(XPair* pair, XMapBase* this_map);
 
+
+/* ============================== Qt 6.8 命名对齐别名 ==============================
+ * 说明：核心 API(insert/remove/find/contains/clear/swap/value/keys/values) 已与
+ *       Qt QMap/QHash 语义天然对齐；此处仅补齐 count/empty/constFind/erase_if 的命名
+ *       并新增 removeIf 谓词删除。所有别名仅做命名映射，不改变行为。
+ *       Qt 参考: qtbase/src/corelib/tools/qmap.h（QMap<K,V>）与 qhash.h（QHash<K,V>）
+ * ============================================================================== */
+
+/**
+ * @brief 元素个数——Qt 别名，等价于 XMapBase_size_base
+ * @note Qt 映射: QMap::count()/QHash::count()（与 size() 完全等价，仅命名不同）
+ */
+#define XMapBase_count_base           XMapBase_size_base
+
+/**
+ * @brief 判空——Qt 别名，等价于 XMapBase_isEmpty_base
+ * @note Qt 映射: QMap::empty()/QHash::empty()（QMap/QHash 同时提供 isEmpty）
+ */
+#define XMapBase_empty_base           XMapBase_isEmpty_base
+
+/**
+ * @brief 只读语义查找——Qt 别名，等价于 XMapBase_find_base
+ * @note Qt 映射: QMap::constFind()/QHash::constFind()（返回 const_iterator 语义；
+ *       本项目迭代器无 const 分身，故直接复用 find_base）
+ */
+#define XMapBase_constFind_base       XMapBase_find_base
+
+/**
+ * @brief 条件删除谓词函数指针类型
+ * @param pvKey   当前元素键的只读指针
+ * @param pvValue 当前元素值的可写指针（透传给用户；只读语义由使用方约束）
+ * @param args    透传给谓词的额外参数
+ * @return true 表示该键值对需要删除，false 表示保留
+ * @note Qt 映射: QMap::removeIf/QHash::removeIf 使用的 Pred 函数对象
+ */
+typedef bool (*XMapBase_predicate)(const void* pvKey, void* pvValue, void* args);
+
+/**
+ * @brief 按谓词条件批量删除元素（Qt QMap::removeIf/QHash::removeIf 对齐）
+ * @param this_map 目标 XMapBase
+ * @param pred     谓词函数（对每个键值对调用；返回 true 则删除）
+ * @param args     透传给谓词的用户参数
+ * @return 被删除的元素数量；参数无效返回 0
+ * @note Qt 映射: QMap::removeIf(Pred)/QHash::removeIf(Pred) 及自由函数 erase_if(map,pred)。
+ *       实现细节：先通过 keys_base 拷出全部键副本，再逐个 remove_base，
+ *       避免在原容器上边迭代边删除引发迭代器失效。
+ */
+size_t XMapBase_removeIf_base(XMapBase* this_map, XMapBase_predicate pred, void* args);
+
+/**
+ * @brief 条件删除自由函数别名——Qt 别名，等价于 XMapBase_removeIf_base
+ * @note Qt 映射: erase_if(QMap<K,V>&, Pred)/erase_if(QHash<K,V>&, Pred)
+ */
+#define XMapBase_erase_if_base        XMapBase_removeIf_base
+
 #ifdef __cplusplus
 }
 #endif

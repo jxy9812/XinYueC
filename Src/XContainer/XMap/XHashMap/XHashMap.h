@@ -178,6 +178,43 @@ XVariantHashMap* XHashMap_create_XVariantHashMap();
 /**
 * @brief C++兼容性声明结束
 */
+
+/* ============================== Qt 6.8 命名对齐别名 ==============================
+ * 说明：核心 API 已与 Qt QHash 天然同名；此处补齐 count/empty/constFind/removeIf/
+ *       erase_if 命名，并新增 reserve/squeeze 与 QHash::reserve()/squeeze() 对齐。
+ *       Qt 参考: qtbase/src/corelib/tools/qhash.h（QHash<K,V>）
+ * ============================================================================== */
+
+/** @brief 元素个数——Qt 别名，等价于 XHashMap_size_base @note Qt: QHash::count() */
+#define XHashMap_count_base           XHashMap_size_base
+/** @brief 判空——Qt 别名，等价于 XHashMap_isEmpty_base @note Qt: QHash::empty() */
+#define XHashMap_empty_base           XHashMap_isEmpty_base
+/** @brief 只读语义查找——Qt 别名，等价于 XHashMap_find_base @note Qt: QHash::constFind() */
+#define XHashMap_constFind_base       XHashMap_find_base
+/** @brief 条件删除——Qt 别名，等价于 XMapBase_removeIf_base @note Qt: QHash::removeIf(Pred) */
+#define XHashMap_removeIf_base        XMapBase_removeIf_base
+/** @brief 条件删除自由函数别名——Qt: erase_if(QHash<K,V>&, Pred) */
+#define XHashMap_erase_if_base        XMapBase_removeIf_base
+/** @brief 谓词函数指针类型——Qt 别名，等价于 XMapBase_predicate */
+typedef XMapBase_predicate XHashMap_predicate;
+
+/**
+ * @brief 预分配桶容量（对齐 Qt QHash::reserve）
+ * @param this_map XHashMap 实例指针
+ * @param size 期望容纳的元素数量下限
+ * @return 分配成功返回 true；参数无效或分配失败返回 false
+ * @note Qt 映射: QHash::reserve(qsizetype)。仅在期望容量大于当前桶数时触发扩容；
+ *       桶数按 2 的幂上取，负载因子上限为 DEFAULT_LOAD_FACTOR。
+ */
+bool XHashMap_reserve_base(XHashMap* this_map, size_t size);
+
+/**
+ * @brief 释放多余桶空间（对齐 Qt QHash::squeeze）
+ * @param this_map XHashMap 实例指针
+ * @note Qt 映射: QHash::squeeze()。将桶数下调至与元素数量相当（不低于默认桶数 16）。
+ */
+void XHashMap_squeeze_base(XHashMap* this_map);
+
 #ifdef __cplusplus
 }
 #endif
