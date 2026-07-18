@@ -111,8 +111,11 @@ bool VXStack_receive(XStack* stack, void* pvBuffer)
 {
 	if (XStack_isEmpty_base(stack))
 		return false;
-	void* val = XStack_top_base(stack);
-	memcpy(pvBuffer, val, XContainerTypeSize(stack));
+	if (pvBuffer) {
+		void* val = XStack_top_base(stack);
+		memcpy(pvBuffer, val, XContainerTypeSize(stack));
+	}
+	VXStack_pop(stack);
 	return true;
 }
 

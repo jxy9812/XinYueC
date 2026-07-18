@@ -192,6 +192,48 @@ XLockFreeStack* XLockFreeStack_create(size_t typeSize, size_t capacity);
 */
 #define XLockFreeStack_swap_base            XStackBase_swap_base
 
+
+/* ============================== Qt 6.8 命名对齐别名 ==============================
+ * 说明：本文件的核心 API(push/pop/top)已与 Qt QStack 同名，天然对齐；
+ *       此处仅补齐 QList 系列名称(count/length/empty)与 Qt QStack::pop 的
+ *       "弹出并返回" 语义(映射到本项目的 receive_base)。所有别名仅做命名映射，
+ *       不新增行为，语义与被映射函数完全等价。
+ *       Qt 参考: QStack<T> : QList<T>。
+ * ============================================================================== */
+
+/**
+ * @brief 弹栈并返回栈顶——Qt 别名，等价于 XLockFreeStack_receive_base
+ * @param this_stack 栈实例指针
+ * @param pvBuffer   接收栈顶元素的缓冲区（不可为 NULL）
+ * @return 成功接收并移除栈顶返回 true；栈为空或参数非法返回 false
+ * @note Qt 映射: QStack::pop() 返回 T；本项目 XLockFreeStack_pop_base 为 void 出栈，
+ *       "读+弹" 语义使用本别名或直接调 XLockFreeStack_receive_base
+ */
+#define XLockFreeStack_pop_return_base    XLockFreeStack_receive_base
+
+/**
+ * @brief 栈中当前元素个数——Qt 别名，等价于 XLockFreeStack_size_base
+ * @param this_stack 栈实例指针
+ * @return 元素个数
+ * @note Qt 映射: QList::count()
+ */
+#define XLockFreeStack_count_base         XLockFreeStack_size_base
+/**
+ * @brief 栈中当前元素个数——Qt 别名，等价于 XLockFreeStack_size_base
+ * @param this_stack 栈实例指针
+ * @return 元素个数
+ * @note Qt 映射: QList::length()，与 count() 完全等价，仅命名不同
+ */
+#define XLockFreeStack_length_base        XLockFreeStack_size_base
+
+/**
+ * @brief 判空——Qt 别名，等价于 XLockFreeStack_isEmpty_base
+ * @param this_stack 栈实例指针
+ * @return 栈为空返回 true，否则返回 false
+ * @note Qt 映射: QList::empty()（QList 同时提供 isEmpty，本项目仅将 empty 对齐 Qt）
+ */
+#define XLockFreeStack_empty_base         XLockFreeStack_isEmpty_base
+
 #ifdef __cplusplus
 }
 #endif
