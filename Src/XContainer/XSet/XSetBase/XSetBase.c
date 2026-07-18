@@ -1,4 +1,5 @@
 ﻿#include "XSetBase.h"
+#include "XVector.h"
 #if XSet_ON
 XVtable* XSetBase_class_init()
 {
@@ -63,6 +64,31 @@ bool XSetBase_find_base(XSetBase* this_set, const void* pvKey, XSetBase_iterator
 bool XSetBase_contains(XSetBase* this_set, const void* pvKey)
 {
     return XSetBase_find_base(this_set,pvKey,NULL);
+}
+
+size_t XSetBase_removeIf_base(XSetBase* this_set, XSetBase_predicate pred, void* args)
+{
+    if (ISNULL(this_set, "") || ISNULL(pred, ""))
+        return 0;
+    // 先取出全部键的副本，避免遍历中修改原容器
+    XVector* keys = XSetBase_keys_base(this_set);
+    if (!keys)
+        return 0;
+    size_t removed = 0;
+    size_t n = XVector_size_base(keys);
+    for (size_t i = 0; i < n; ++i)
+    {
+        void* pvKey = XVector_at_base(keys, (int64_t)i);
+        if (!pvKey)
+            continue;
+        if (pred(pvKey, args))
+        {
+            if (XSetBase_remove_base(this_set, pvKey))
+                ++removed;
+        }
+    }
+    XVector_delete_base(keys);
+    return removed;
 }
 
 XVector* XSetBase_keys_base(const XSetBase* this_set)
