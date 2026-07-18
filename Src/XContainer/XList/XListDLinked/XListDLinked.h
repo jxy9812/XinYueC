@@ -254,4 +254,112 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize, bool useCow);
 #ifdef __cplusplus
 }
 #endif
+
 #endif // XLISTDLINKED_H
+
+// ====================== Qt 6.8 QList/QLinkedList 对齐 ======================
+// 以下宏继承自 XListBase 的 Qt 对齐实现。
+// ===========================================================================
+
+/**
+ * @brief 取出并删除头元素（对齐Qt takeFirst）
+ */
+#define XListDLinked_takeFirst_base             XListBase_takeFirst_base
+
+/**
+ * @brief 取出并删除尾元素（对齐Qt takeLast）
+ */
+#define XListDLinked_takeLast_base              XListBase_takeLast_base
+
+/**
+ * @brief 删除所有匹配元素（对齐Qt removeAll）
+ */
+#define XListDLinked_removeAll_base             XListBase_removeAll_base
+
+/**
+ * @brief 删除单个匹配元素（对齐Qt removeOne）
+ */
+#define XListDLinked_removeOne_base             XListBase_removeOne_base
+
+/**
+ * @brief 尾插元素（对齐Qt append，等价于push_back_base）
+ */
+#define XListDLinked_append_base                XListDLinked_push_back_base
+
+/**
+ * @brief 头插元素（对齐Qt prepend，等价于push_front_base）
+ */
+#define XListDLinked_prepend_base               XListDLinked_push_front_base
+
+/**
+ * @brief 判断两个链表是否相等（用父类XContainerCompare宏实现）
+ */
+#define XListDLinked_equals_base(lhs, rhs)      XListBase_equals_base(lhs, rhs)
+
+/**
+ * @brief count()等价于size()（对齐Qt count()）
+ */
+#define XListDLinked_count_base                 XListDLinked_size_base
+
+/**
+ * @brief length()等价于size()（对齐Qt length()）
+ */
+#define XListDLinked_length_base                XListDLinked_size_base
+
+/**
+ * @brief 类型安全的contains判断（对齐Qt contains，统一命名）
+ * @note 内部调用find_base，统一使用XListBase_Contains_Base
+ */
+#define XListDLinked_Contains_Base(list, type, value)    XListBase_Contains_Base(list, type, value)
+
+/**
+ * @brief 判断是否以指定值开头（对齐Qt startsWith）
+ */
+#define XListDLinked_StartsWith_Base(list, type, value)  XListBase_StartsWith_Base(list, type, value)
+
+/**
+ * @brief 判断是否以指定值结尾（对齐Qt endsWith）
+ */
+#define XListDLinked_EndsWith_Base(list, type, value)    XListBase_EndsWith_Base(list, type, value)
+
+/**
+ * @brief 移除头元素（对齐Qt removeFirst）
+ */
+#define XListDLinked_removeFirst_base(list)     XListBase_removeFirst_base(list)
+
+/**
+ * @brief 移除尾元素（对齐Qt removeLast）
+ */
+#define XListDLinked_removeLast_base(list)      XListBase_removeLast_base(list)
+
+/**
+ * @brief 从指定位置开始查找（对齐Qt indexOf）
+ */
+
+/**
+ * @brief 从后往前查找（对齐Qt lastIndexOf）
+ */
+
+/**
+ * @brief 条件删除（对齐Qt removeIf）
+ */
+
+/**
+ * @brief 静态最大容量（对齐Qt maxSize）
+ */
+#define XListDLinked_maxSize_base()             XListBase_maxSize_base()
+
+/**
+ * @brief 从指定位置开始查找（对齐Qt indexOf）
+ */
+#define XListDLinked_indexOf_base(list, val, from, it)   XListBase_indexOf_base(list, val, from, it)
+
+/**
+ * @brief 从后往前查找（对齐Qt lastIndexOf）
+ */
+#define XListDLinked_lastIndexOf_base(list, val, from, it) XListBase_lastIndexOf_base(list, val, from, it)
+
+/**
+ * @brief 条件删除（对齐Qt removeIf）
+ */
+#define XListDLinked_removeIf_base(list, pred, udata)   XListBase_removeIf_base(list, pred, udata)

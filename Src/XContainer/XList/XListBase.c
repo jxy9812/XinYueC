@@ -109,14 +109,88 @@ bool XListBase_find_base(const XListBase* this_list, const void* findVal, XListB
 		return false;
 	return XClassGetVirtualFunc(this_list, EXListBase_Find, bool(*)(XListBase*, const void*, XListBase_iterator*))(this_list, findVal,it);
 }
+/*     Qt 6.8 对齐：takeFirst / takeLast（基层实现）+ count / removeAll / removeOne / equals（虚函数调度） */
+/* ========================================================================== */
+
+void* XListBase_takeFirst_base(XListBase* this_list)
+{
+	if (ISNULL(this_list, "") || XListBase_isEmpty_base(this_list))
+		return NULL;
+	void* frontData = XListBase_front_base(this_list);
+	if (!frontData) return NULL;
+	size_t typeSize = XListBase_typeSize_base(this_list);
+	void* result = XMalloc_System(typeSize);
+	if (!result) return NULL;
+	memcpy(result, frontData, typeSize);
+	XListBase_pop_front_base(this_list);
+	return result;
+}
+
+void* XListBase_takeLast_base(XListBase* this_list)
+{
+	if (ISNULL(this_list, "") || XListBase_isEmpty_base(this_list))
+		return NULL;
+	void* backData = XListBase_back_base(this_list);
+	if (!backData) return NULL;
+	size_t typeSize = XListBase_typeSize_base(this_list);
+	void* result = XMalloc_System(typeSize);
+	if (!result) return NULL;
+	memcpy(result, backData, typeSize);
+	XListBase_pop_back_base(this_list);
+	return result;
+}
+
+
+size_t XListBase_removeAll_base(XListBase* this_list, const void* pvData)
+{
+	if (ISNULL(this_list, "") || ISNULL(pvData, "") || ISNULL(XClassGetVtable(this_list), ""))
+		return 0;
+	return XClassGetVirtualFunc(this_list, EXListBase_Remove_All, size_t(*)(XListBase*, const void*))(this_list, pvData);
+}
+
+bool XListBase_removeOne_base(XListBase* this_list, const void* pvData)
+{
+	if (ISNULL(this_list, "") || ISNULL(pvData, "") || ISNULL(XClassGetVtable(this_list), ""))
+		return false;
+	return XClassGetVirtualFunc(this_list, EXListBase_Remove_One, bool(*)(XListBase*, const void*))(this_list, pvData);
+}
+
+#endif
+
 bool XListBase_contains(const XListBase* this_list, const void* value)
 {
-	return XListBase_find_base(this_list,value,NULL);
+	return XListBase_find_base(this_list, value, NULL);
 }
+
 void XListBase_sort_base(XListBase* this_list, XSortOrder order)
 {
 	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
-		return NULL;
-	return XClassGetVirtualFunc(this_list, EXListBase_Sort, void* (*)(XListBase*, XSortOrder))(this_list, order);
+		return;
+	XClassGetVirtualFunc(this_list, EXListBase_Sort, void(*)(XListBase*, XSortOrder))(this_list, order);
 }
-#endif
+
+
+/* ========================================================================== */
+/*     Qt 6.8 对齐：indexOf / lastIndexOf / removeIf（虚函数调度）              */
+/* ========================================================================== */
+
+bool XListBase_indexOf_base(const XListBase* this_list, const void* findVal, size_t from, XListBase_iterator* it)
+{
+	if (ISNULL(this_list, "") || ISNULL(findVal, "") || ISNULL(XClassGetVtable(this_list), ""))
+		return false;
+	return XClassGetVirtualFunc(this_list, EXListBase_IndexOf, bool(*)(const XListBase*, const void*, size_t, XListBase_iterator*))(this_list, findVal, from, it);
+}
+
+bool XListBase_lastIndexOf_base(const XListBase* this_list, const void* findVal, size_t from, XListBase_iterator* it)
+{
+	if (ISNULL(this_list, "") || ISNULL(findVal, "") || ISNULL(XClassGetVtable(this_list), ""))
+		return false;
+	return XClassGetVirtualFunc(this_list, EXListBase_LastIndexOf, bool(*)(const XListBase*, const void*, size_t, XListBase_iterator*))(this_list, findVal, from, it);
+}
+
+size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const void* elemData, void* userData), void* userData)
+{
+	if (ISNULL(this_list, "") || ISNULL(predicate, "") || ISNULL(XClassGetVtable(this_list), ""))
+		return 0;
+	return XClassGetVirtualFunc(this_list, EXListBase_RemoveIf, size_t(*)(XListBase*, bool (*)(const void*, void*), void*))(this_list, predicate, userData);
+}

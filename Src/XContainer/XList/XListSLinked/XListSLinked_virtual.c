@@ -41,6 +41,13 @@ static void VXList_sort(XListSLinked* this_list, XSortOrder order);
 static void VXClass_copy(XListSLinked* object, const XListSLinked* src);
 static void VXClass_move(XListSLinked* object, XListSLinked* src);
 static void VXList_deinit(XListSLinked* this_list);
+//Qt 6.8 对齐新增
+static size_t VXList_remove_all(XListSLinked* this_list, const void* pvData);
+static bool VXList_remove_one(XListSLinked* this_list, const void* pvData);
+static bool VXList_remove_one(XListSLinked* this_list, const void* pvData);
+static bool VXList_indexOf(const XListSLinked* this_list, const void* findVal, size_t from, XListSLinked_iterator* it);
+static bool VXList_lastIndexOf(const XListSLinked* this_list, const void* findVal, size_t from, XListSLinked_iterator* it);
+static size_t VXList_removeIf(XListSLinked* this_list, bool (*predicate)(const void* elemData, void* userData), void* userData);
 
 XVtable* XListSLinked_class_init()
 {
@@ -74,6 +81,13 @@ XVtable* XListSLinked_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXList_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXList_clear);
+
+    // Qt 6.8 对齐
+    XVTABLE_OVERLOAD_DEFAULT(EXListBase_Remove_All, VXList_remove_all);
+    XVTABLE_OVERLOAD_DEFAULT(EXListBase_Remove_One, VXList_remove_one);
+    XVTABLE_OVERLOAD_DEFAULT(EXListBase_IndexOf, VXList_indexOf);
+    XVTABLE_OVERLOAD_DEFAULT(EXListBase_LastIndexOf, VXList_lastIndexOf);
+    XVTABLE_OVERLOAD_DEFAULT(EXListBase_RemoveIf, VXList_removeIf);
 
 #if SHOWCONTAINERSIZE
     printf("XListSLinked size:%d\n", XVtable_size(XVTABLE_DEFAULT));
@@ -859,4 +873,119 @@ void VXList_deinit(XListSLinked* this_list)
     XContainerCapacity(this_list) = 0;
 }
 
+/* ========================================================================== */
+
+/* ========================================================================== */
+/*     Qt 6.8 对齐：indexOf / lastIndexOf / removeIf 实现                     */
+/* ========================================================================== */
+
+static bool VXList_indexOf(const XListSLinked* this_list, const void* findVal, size_t from, XListSLinked_iterator* it)
+{
+	XListSLinked_iterator tmpIt = XListSLinked_begin((XListSLinked*)this_list);
+	if (!it) it = &tmpIt;
+	size_t idx = 0;
+	while (!XListSLinked_iterator_isEnd(&tmpIt)) {
+		if (idx >= from &&
+			XContainerCompare(this_list)(XListSLinked_iterator_data(&tmpIt), findVal) == XCompare_Equality) {
+			*it = tmpIt;
+			return true;
+		}
+		XListSLinked_iterator_add((XListSLinked*)this_list, &tmpIt);
+		idx++;
+	}
+	return false;
+}
+
+static bool VXList_lastIndexOf(const XListSLinked* this_list, const void* findVal, size_t from, XListSLinked_iterator* it)
+{
+	bool found = false;
+	XListSLinked_iterator tmpIt = XListSLinked_begin((XListSLinked*)this_list);
+	XListSLinked_iterator lastFound;
+	lastFound.node = NULL;
+	size_t idx = 0;
+	while (!XListSLinked_iterator_isEnd(&tmpIt)) {
+		if ((from == (size_t)-1 || idx <= from) &&
+			XContainerCompare(this_list)(XListSLinked_iterator_data(&tmpIt), findVal) == XCompare_Equality) {
+			lastFound = tmpIt;
+			found = true;
+		}
+		XListSLinked_iterator_add((XListSLinked*)this_list, &tmpIt);
+		idx++;
+	}
+	if (found && it) *it = lastFound;
+	return found;
+}
+
+static size_t VXList_removeIf(XListSLinked* this_list, bool (*predicate)(const void* elemData, void* userData), void* userData)
+{
+	if (!ensureSharedData(this_list) || !VXListSLinkedDetachIfNeeded(this_list))
+		return 0;
+	size_t removed = 0;
+	XListSNode* node = *XListSLinked_head_ptr(this_list);
+	XListSNode* prev = NULL;
+	while (node) {
+		XListSNode* next = node->next;
+		if (predicate(XListSNode_DataPtr(node), userData)) {
+			removeNode(this_list, prev, node);
+			removed++;
+			node = prev ? prev->next : *XListSLinked_head_ptr(this_list);
+		} else {
+			prev = node;
+			node = next;
+		}
+	}
+	return removed;
+}
+
 #endif
+/*           Qt 6.8 对齐：count / removeAll / removeOne / equals               */
+/* ========================================================================== */
+static size_t VXList_remove_all(XListSLinked* this_list, const void* pvData)
+{
+	if (XListBase_isEmpty_base(this_list) || ISNULL(pvData, "pvData"))
+		return 0;
+	if (!ensureSharedData(this_list) || !VXListSLinkedDetachIfNeeded(this_list))
+		return 0;
+	size_t removed = 0;
+	XListSNode* node = *XListSLinked_head_ptr(this_list);
+	XListSNode* prev = NULL;
+	while (node)
+	{
+		XListSNode* next = node->next;
+		if (XContainerCompare(this_list)(XListSNode_DataPtr(node), pvData) == XCompare_Equality)
+		{
+			removeNode(this_list, prev, node);
+			removed++;
+			node = prev ? prev->next : *XListSLinked_head_ptr(this_list);
+		}
+		else
+		{
+			prev = node;
+			node = next;
+		}
+	}
+	return removed;
+}
+
+static bool VXList_remove_one(XListSLinked* this_list, const void* pvData)
+{
+	if (XListBase_isEmpty_base(this_list) || ISNULL(pvData, "pvData"))
+		return false;
+	if (!ensureSharedData(this_list) || !VXListSLinkedDetachIfNeeded(this_list))
+		return false;
+	XListSNode* node = *XListSLinked_head_ptr(this_list);
+	XListSNode* prev = NULL;
+	while (node)
+	{
+		if (XContainerCompare(this_list)(XListSNode_DataPtr(node), pvData) == XCompare_Equality)
+		{
+			removeNode(this_list, prev, node);
+			return true;
+		}
+		prev = node;
+		node = node->next;
+	}
+	return false;
+}
+
+
