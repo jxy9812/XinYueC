@@ -159,6 +159,26 @@ XLockFreeQueue* XLockFreeQueue_create(size_t typeSize, size_t count);
 * @note 复用XQueueBase的接口，快速交换两个队列的内部数据
 */
 #define XLockFreeQueue_swap_base			XQueueBase_swap_base
+
+/* ------------------------------ Qt 6.8 对齐别名（宏），仅命名映射，不新增行为 ------------------------------ */
+/* enqueue = push（Qt: QQueue::enqueue -> QList::append） */
+#define XLockFreeQueue_Enqueue_Base       XLockFreeQueue_Push_Base
+#define XLockFreeQueue_enqueue_base       XLockFreeQueue_push_base
+#define XLockFreeQueue_Enqueue_Move_Base  XLockFreeQueue_Push_Move_Base
+#define XLockFreeQueue_enqueue_move_base  XLockFreeQueue_push_move_base
+/* dequeue = receive（Qt: QQueue::dequeue -> QList::takeFirst，"出+返"） */
+#define XLockFreeQueue_dequeue_base       XLockFreeQueue_receive_base
+/* dequeue_void = pop（无返回值出队；Qt 没有直接对应，保留语义） */
+#define XLockFreeQueue_dequeue_void_base  XLockFreeQueue_pop_base
+/* head = top（Qt: QQueue::head -> QList::first） */
+#define XLockFreeQueue_Head_Base          XLockFreeQueue_Top_Base
+#define XLockFreeQueue_head_base          XLockFreeQueue_top_base
+/* count / length = size（Qt: QList::count/length） */
+#define XLockFreeQueue_count_base         XLockFreeQueue_size_base
+#define XLockFreeQueue_length_base        XLockFreeQueue_size_base
+/* empty = isEmpty（Qt: QList::empty） */
+#define XLockFreeQueue_empty_base         XLockFreeQueue_isEmpty_base
+
 #ifdef __cplusplus
 }
 #endif

@@ -44,7 +44,7 @@ typedef struct XQueueBase
 * @note 自动创建临时变量存储value，通过XQueueBase_push_base实现入队，简化类型转换
 */
 #define XQueueBase_Push_Base(this_queue, type, value) \
-{ type t = value; XQueueBase_push_base(this_vector, &t); }
+{ type t = value; XQueueBase_push_base(this_queue, &t); }
 /**
 * @brief 入队操作（拷贝语义，基础版本）
 * @param this_queue 队列实例指针
@@ -61,7 +61,7 @@ bool XQueueBase_push_base(XQueueBase* this_queue, void* pvData);
 * @note 自动创建临时变量存储value，通过XQueueBase_push_move_base实现入队，结合移动语义提升性能
 */
 #define XQueueBase_Push_Move_Base(this_queue, type, value) \
-{ type t = value; XQueueBase_push_move_base(this_vector, &t); }
+{ type t = value; XQueueBase_push_move_base(this_queue, &t); }
 /**
 * @brief 入队操作（移动语义，基础版本）
 * @param this_queue 队列实例指针
@@ -163,6 +163,26 @@ bool XQueueBase_isFull_base(XQueueBase* this_queue);
 /**
 * @brief C++兼容性声明结束
 */
+
+/* ------------------------------ Qt 6.8 对齐别名（宏），仅命名映射，不新增行为 ------------------------------ */
+/* enqueue = push（Qt: QQueue::enqueue -> QList::append） */
+#define XQueueBase_Enqueue_Base       XQueueBase_Push_Base
+#define XQueueBase_enqueue_base       XQueueBase_push_base
+#define XQueueBase_Enqueue_Move_Base  XQueueBase_Push_Move_Base
+#define XQueueBase_enqueue_move_base  XQueueBase_push_move_base
+/* dequeue = receive（Qt: QQueue::dequeue -> QList::takeFirst，"出+返"） */
+#define XQueueBase_dequeue_base       XQueueBase_receive_base
+/* dequeue_void = pop（无返回值出队；Qt 没有直接对应，保留语义） */
+#define XQueueBase_dequeue_void_base  XQueueBase_pop_base
+/* head = top（Qt: QQueue::head -> QList::first） */
+#define XQueueBase_Head_Base          XQueueBase_Top_Base
+#define XQueueBase_head_base          XQueueBase_top_base
+/* count / length = size（Qt: QList::count/length） */
+#define XQueueBase_count_base         XQueueBase_size_base
+#define XQueueBase_length_base        XQueueBase_size_base
+/* empty = isEmpty（Qt: QList::empty） */
+#define XQueueBase_empty_base         XQueueBase_isEmpty_base
+
 #ifdef __cplusplus
 }
 #endif

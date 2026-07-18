@@ -174,6 +174,26 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue, bool autoExpans
 * @note 基于XQueueBase的接口，快速交换两个队列的内部数据
 */
 #define XCircularQueue_swap_base			XQueueBase_swap_base
+
+/* ------------------------------ Qt 6.8 对齐别名（宏），仅命名映射，不新增行为 ------------------------------ */
+/* enqueue = push（Qt: QQueue::enqueue -> QList::append） */
+#define XCircularQueue_Enqueue_Base       XCircularQueue_Push_Base
+#define XCircularQueue_enqueue_base       XCircularQueue_push_base
+#define XCircularQueue_Enqueue_Move_Base  XCircularQueue_Push_Move_Base
+#define XCircularQueue_enqueue_move_base  XCircularQueue_push_move_base
+/* dequeue = receive（Qt: QQueue::dequeue -> QList::takeFirst，"出+返"） */
+#define XCircularQueue_dequeue_base       XCircularQueue_receive_base
+/* dequeue_void = pop（无返回值出队；Qt 没有直接对应，保留语义） */
+#define XCircularQueue_dequeue_void_base  XCircularQueue_pop_base
+/* head = top（Qt: QQueue::head -> QList::first） */
+#define XCircularQueue_Head_Base          XCircularQueue_Top_Base
+#define XCircularQueue_head_base          XCircularQueue_top_base
+/* count / length = size（Qt: QList::count/length） */
+#define XCircularQueue_count_base         XCircularQueue_size_base
+#define XCircularQueue_length_base        XCircularQueue_size_base
+/* empty = isEmpty（Qt: QList::empty） */
+#define XCircularQueue_empty_base         XCircularQueue_isEmpty_base
+
 #ifdef __cplusplus
 }
 #endif

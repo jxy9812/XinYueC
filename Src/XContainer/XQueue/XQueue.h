@@ -153,6 +153,26 @@ XQueue* XQueue_create(size_t typeSize);
 /**
 * @brief C++兼容性声明结束
 */
+
+/* ------------------------------ Qt 6.8 对齐别名（宏），仅命名映射，不新增行为 ------------------------------ */
+/* enqueue = push（Qt: QQueue::enqueue -> QList::append） */
+#define XQueue_Enqueue_Base       XQueue_Push_Base
+#define XQueue_enqueue_base       XQueue_push_base
+#define XQueue_Enqueue_Move_Base  XQueue_Push_Move_Base
+#define XQueue_enqueue_move_base  XQueue_push_move_base
+/* dequeue = receive（Qt: QQueue::dequeue -> QList::takeFirst，"出+返"） */
+#define XQueue_dequeue_base       XQueue_receive_base
+/* dequeue_void = pop（无返回值出队；Qt 没有直接对应，保留语义） */
+#define XQueue_dequeue_void_base  XQueue_pop_base
+/* head = top（Qt: QQueue::head -> QList::first） */
+#define XQueue_Head_Base          XQueue_Top_Base
+#define XQueue_head_base          XQueue_top_base
+/* count / length = size（Qt: QList::count/length） */
+#define XQueue_count_base         XQueue_size_base
+#define XQueue_length_base        XQueue_size_base
+/* empty = isEmpty（Qt: QList::empty） */
+#define XQueue_empty_base         XQueue_isEmpty_base
+
 #ifdef __cplusplus
 }
 #endif

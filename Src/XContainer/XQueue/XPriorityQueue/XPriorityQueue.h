@@ -166,6 +166,26 @@ size_t XPriorityQueue_remove(XPriorityQueue* this_queue, const void* value, size
 * @note 复用XQueueBase的接口，快速交换两个队列的内部数据
 */
 #define XPriorityQueue_swap_base				XQueueBase_swap_base
+
+/* ------------------------------ Qt 6.8 对齐别名（宏），仅命名映射，不新增行为 ------------------------------ */
+/* enqueue = push（Qt: QQueue::enqueue -> QList::append） */
+#define XPriorityQueue_Enqueue_Base       XPriorityQueue_Push_Base
+#define XPriorityQueue_enqueue_base       XPriorityQueue_push_base
+#define XPriorityQueue_Enqueue_Move_Base  XPriorityQueue_Push_Move_Base
+#define XPriorityQueue_enqueue_move_base  XPriorityQueue_push_move_base
+/* dequeue = receive（Qt: QQueue::dequeue -> QList::takeFirst，"出+返"） */
+#define XPriorityQueue_dequeue_base       XPriorityQueue_receive_base
+/* dequeue_void = pop（无返回值出队；Qt 没有直接对应，保留语义） */
+#define XPriorityQueue_dequeue_void_base  XPriorityQueue_pop_base
+/* head = top（Qt: QQueue::head -> QList::first） */
+#define XPriorityQueue_Head_Base          XPriorityQueue_Top_Base
+#define XPriorityQueue_head_base          XPriorityQueue_top_base
+/* count / length = size（Qt: QList::count/length） */
+#define XPriorityQueue_count_base         XPriorityQueue_size_base
+#define XPriorityQueue_length_base        XPriorityQueue_size_base
+/* empty = isEmpty（Qt: QList::empty） */
+#define XPriorityQueue_empty_base         XPriorityQueue_isEmpty_base
+
 #ifdef __cplusplus
 }
 #endif
