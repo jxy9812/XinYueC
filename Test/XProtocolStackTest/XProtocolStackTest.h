@@ -1,4 +1,4 @@
-﻿#ifndef XPROTOCOLSTACKTEST_H
+#ifndef XPROTOCOLSTACKTEST_H
 #define XPROTOCOLSTACKTEST_H
 #ifdef __cplusplus
 extern "C" {
@@ -6,7 +6,7 @@ extern "C" {
 #include"CXinYueConfig.h"
 #include"XClass.h"
 #if DEMOTEST
-	//协议栈
+	//Э��ջ
 	void XMenu_XProtocolStackTest(XMenu* root);
 	void XMenu_XDataFrameCommTest(XMenu* root);
 	void XMenu_TJCHMICommTest(XMenu* root);
@@ -14,6 +14,7 @@ extern "C" {
 
 	void XModbusRtuSerialClientTest();
 	void XModbusTcpClientTest();
+	void XModbusCommEventTest();
 	void XDataFrameCommTest();
 	void TJCHMICommTest();
 #endif // DEMOTEST

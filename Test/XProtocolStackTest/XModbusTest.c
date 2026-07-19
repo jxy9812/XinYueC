@@ -136,9 +136,227 @@ void XModbusTcpClientTest()
     XCoreApplication_exec();
 }
 
+#include "XModbusCommEvent.h"
+
+/**
+ * @brief XModbusCommEvent 单元测试
+ * @details 测试所有 API 函数，验证枚举值、位操作和事件判断
+ */
+void XModbusCommEventTest()
+{
+    int pass = 0, fail = 0;
+    XPrintf_3("========== XModbusCommEvent 单元测试开始 ==========\n");
+
+    // 1. 测试 create 和默认值
+    {
+        XModbusCommEvent e = XModbusCommEvent_create(XModbusCommEvent_InitiatedCommunicationRestart);
+        uint8_t byte = XModbusCommEvent_toUint8(&e);
+        if (byte == 0x00) {
+            XPrintf("  [PASS] create(InitiatedCommunicationRestart) = 0x%02X\n", byte);
+            pass++;
+        } else {
+            XPrintf("  [FAIL] create(InitiatedCommunicationRestart) = 0x%02X, expected 0x00\n", byte);
+            fail++;
+        }
+    }
+
+    // 2. 测试 fromUint8 和 toUint8
+    {
+        uint8_t testByte = 0xA5;
+        XModbusCommEvent e = XModbusCommEvent_fromUint8(testByte);
+        uint8_t result = XModbusCommEvent_toUint8(&e);
+        if (result == testByte) {
+            XPrintf("  [PASS] fromUint8/toUint8 roundtrip: 0x%02X\n", result);
+            pass++;
+        } else {
+            XPrintf("  [FAIL] fromUint8/toUint8: 0x%02X, expected 0x%02X\n", result, testByte);
+            fail++;
+        }
+    }
+
+    // 3. 测试 NULL 指针保护
+    {
+        bool ok = true;
+        if (XModbusCommEvent_toUint8(NULL) != 0) ok = false;
+        if (XModbusCommEvent_toEventByte(NULL) != XModbusCommEvent_InitiatedCommunicationRestart) ok = false;
+        if (XModbusCommEvent_testSendFlag(NULL, XModbusCommEvent_ReadExceptionSent) != false) ok = false;
+        if (XModbusCommEvent_testReceiveFlag(NULL, XModbusCommEvent_CommunicationError) != false) ok = false;
+        if (XModbusCommEvent_isSentEvent(NULL) != false) ok = false;
+        if (XModbusCommEvent_isReceiveEvent(NULL) != false) ok = false;
+        if (XModbusCommEvent_isListenOnlyMode(NULL) != false) ok = false;
+        if (XModbusCommEvent_isRestartEvent(NULL) != false) ok = false;
+        if (ok) {
+            XPrintf_3("  [PASS] NULL 指针保护全部正确\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] NULL 指针保护异常\n");
+            fail++;
+        }
+    }
+
+    // 4. 测试 setEventByte
+    {
+        XModbusCommEvent e = XModbusCommEvent_create(XModbusCommEvent_InitiatedCommunicationRestart);
+        XModbusCommEvent_setEventByte(&e, XModbusCommEvent_SentEvent);
+        if (XModbusCommEvent_toUint8(&e) == 0x40) {
+            XPrintf("  [PASS] setEventByte(SentEvent) = 0x%02X\n", XModbusCommEvent_toUint8(&e));
+            pass++;
+        } else {
+            XPrintf("  [FAIL] setEventByte(SentEvent) = 0x%02X, expected 0x40\n", XModbusCommEvent_toUint8(&e));
+            fail++;
+        }
+    }
+
+    // 5. 测试 orWithSendFlag 和 testSendFlag
+    {
+        XModbusCommEvent e = XModbusCommEvent_create(XModbusCommEvent_SentEvent);
+        XModbusCommEvent_orWithSendFlag(&e, XModbusCommEvent_ReadExceptionSent);
+        // SentEvent(0x40) | ReadExceptionSent(0x01) = 0x41
+        uint8_t byte = XModbusCommEvent_toUint8(&e);
+        if (byte == 0x41 &&
+            XModbusCommEvent_testSendFlag(&e, XModbusCommEvent_ReadExceptionSent) &&
+            !XModbusCommEvent_testSendFlag(&e, XModbusCommEvent_ServerAbortExceptionSent) &&
+            XModbusCommEvent_isSentEvent(&e)) {
+            XPrintf("  [PASS] orWithSendFlag(ReadException) = 0x%02X, testSendFlag=true, isSent=true\n", byte);
+            pass++;
+        } else {
+            XPrintf("  [FAIL] orWithSendFlag(ReadException) = 0x%02X, expected 0x41\n", byte);
+            fail++;
+        }
+    }
+
+    // 6. 测试 orWithReceiveFlag 和 testReceiveFlag
+    {
+        XModbusCommEvent e = XModbusCommEvent_create(XModbusCommEvent_ReceiveEvent);
+        XModbusCommEvent_orWithReceiveFlag(&e, XModbusCommEvent_BroadcastReceived);
+        // ReceiveEvent(0x80) | BroadcastReceived(0x40) = 0xC0
+        uint8_t byte = XModbusCommEvent_toUint8(&e);
+        if (byte == 0xC0 &&
+            XModbusCommEvent_testReceiveFlag(&e, XModbusCommEvent_BroadcastReceived) &&
+            !XModbusCommEvent_testReceiveFlag(&e, XModbusCommEvent_CommunicationError) &&
+            XModbusCommEvent_isReceiveEvent(&e)) {
+            XPrintf("  [PASS] orWithReceiveFlag(Broadcast) = 0x%02X, testReceiveFlag=true, isReceive=true\n", byte);
+            pass++;
+        } else {
+            XPrintf("  [FAIL] orWithReceiveFlag(Broadcast) = 0x%02X, expected 0xC0\n", byte);
+            fail++;
+        }
+    }
+
+    // 7. 测试 isListenOnlyMode
+    {
+        XModbusCommEvent e = XModbusCommEvent_create(XModbusCommEvent_EnteredListenOnlyMode);
+        if (XModbusCommEvent_isListenOnlyMode(&e)) {
+            XPrintf_3("  [PASS] isListenOnlyMode(EnteredListenOnlyMode) = true\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] isListenOnlyMode(EnteredListenOnlyMode) = false\n");
+            fail++;
+        }
+    }
+
+    // 8. 测试 isRestartEvent
+    {
+        XModbusCommEvent e = XModbusCommEvent_create(XModbusCommEvent_InitiatedCommunicationRestart);
+        if (XModbusCommEvent_isRestartEvent(&e)) {
+            XPrintf_3("  [PASS] isRestartEvent(InitiatedCommunicationRestart) = true\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] isRestartEvent(InitiatedCommunicationRestart) = false\n");
+            fail++;
+        }
+    }
+
+    // 9. 测试 combineEventByte
+    {
+        XModbusCommEvent_EventByte result = XModbusCommEvent_combineEventByte(
+            XModbusCommEvent_SentEvent, XModbusCommEvent_ServerAbortExceptionSent);
+        // SentEvent(0x40) | ServerAbortExceptionSent(0x02) = 0x42
+        if ((uint8_t)result == 0x42) {
+            XPrintf("  [PASS] combineEventByte(SentEvent, ServerAbort) = 0x%02X\n", (uint8_t)result);
+            pass++;
+        } else {
+            XPrintf("  [FAIL] combineEventByte(SentEvent, ServerAbort) = 0x%02X, expected 0x42\n", (uint8_t)result);
+            fail++;
+        }
+    }
+
+    // 10. 测试 combineEventByteWithReceive
+    {
+        XModbusCommEvent_EventByte result = XModbusCommEvent_combineEventByteWithReceive(
+            XModbusCommEvent_ReceiveEvent, XModbusCommEvent_CommunicationError);
+        // ReceiveEvent(0x80) | CommunicationError(0x02) = 0x82
+        if ((uint8_t)result == 0x82) {
+            XPrintf("  [PASS] combineEventByteWithReceive(ReceiveEvent, CommError) = 0x%02X\n", (uint8_t)result);
+            pass++;
+        } else {
+            XPrintf("  [FAIL] combineEventByteWithReceive(ReceiveEvent, CommError) = 0x%02X, expected 0x82\n", (uint8_t)result);
+            fail++;
+        }
+    }
+
+    // 11. 测试多标志组合
+    {
+        XModbusCommEvent e = XModbusCommEvent_create(XModbusCommEvent_ReceiveEvent);
+        XModbusCommEvent_orWithReceiveFlag(&e, XModbusCommEvent_CharacterOverrun);
+        XModbusCommEvent_orWithReceiveFlag(&e, XModbusCommEvent_CommunicationError);
+        // ReceiveEvent(0x80) | CharacterOverrun(0x10) | CommunicationError(0x02) = 0x92
+        uint8_t byte = XModbusCommEvent_toUint8(&e);
+        if (byte == 0x92 &&
+            XModbusCommEvent_testReceiveFlag(&e, XModbusCommEvent_CharacterOverrun) &&
+            XModbusCommEvent_testReceiveFlag(&e, XModbusCommEvent_CommunicationError) &&
+            !XModbusCommEvent_testReceiveFlag(&e, XModbusCommEvent_BroadcastReceived) &&
+            XModbusCommEvent_isReceiveEvent(&e)) {
+            XPrintf("  [PASS] 多标志组合: 0x%02X, 所有位测试正确\n", byte);
+            pass++;
+        } else {
+            XPrintf("  [FAIL] 多标志组合: 0x%02X, expected 0x92\n", byte);
+            fail++;
+        }
+    }
+
+    // 12. 测试 setEventByte 重置事件
+    {
+        XModbusCommEvent e = XModbusCommEvent_fromUint8(0xFF);
+        XModbusCommEvent_setEventByte(&e, XModbusCommEvent_InitiatedCommunicationRestart);
+        if (XModbusCommEvent_isRestartEvent(&e) && XModbusCommEvent_toUint8(&e) == 0x00) {
+            XPrintf_3("  [PASS] setEventByte 重置为 InitiatedCommunicationRestart = 0x00\n");
+            pass++;
+        } else {
+            XPrintf("  [FAIL] setEventByte 重置后 = 0x%02X, expected 0x00\n", XModbusCommEvent_toUint8(&e));
+            fail++;
+        }
+    }
+
+    // 13. 测试 setEventByte 对 NULL 的保护
+    {
+        XModbusCommEvent_setEventByte(NULL, XModbusCommEvent_ReceiveEvent);
+        XPrintf_3("  [PASS] setEventByte(NULL) 不崩溃\n");
+        pass++;
+    }
+
+    // 14. 测试 orWithSendFlag 对 NULL 的保护
+    {
+        XModbusCommEvent* result = XModbusCommEvent_orWithSendFlag(NULL, XModbusCommEvent_ReadExceptionSent);
+        if (result == NULL) {
+            XPrintf_3("  [PASS] orWithSendFlag(NULL) 返回 NULL\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] orWithSendFlag(NULL) 返回非 NULL\n");
+            fail++;
+        }
+    }
+
+    XPrintf("========== XModbusCommEvent 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);
+}
+
 void XMenu_XModbusTest(XMenu* root)
 {
     XMenu* menu = XMenu_create("XModbus(modbus)");
+    {
+        XAction* action = XMenu_addAction(menu, "CommEvent单元测试");
+        XAction_setAction(action, XModbusCommEventTest);
+    }
     XMenu_addMenu(root, menu);
     {
         XAction* action = XMenu_addAction(menu, "RtuSerialClient测试");

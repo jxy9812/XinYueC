@@ -1,10 +1,10 @@
-ï»¿#include "XModbusPdu.h"
+#include "XModbusPdu.h"
 #include "XMemory.h"
 #include "XByteArray.h"
 #include "XAlgorithm.h"
 #include <string.h>
 
-// è™šå‡½æ•°é‡è½½
+// Ğéº¯ÊıÖØÔØ
 static void VXModbusPdu_deinit(XModbusPdu* pdu);
 static void VXModbusPdu_copy(XModbusPdu* pdu, XModbusPdu* src);
 static void VXModbusPdu_move(XModbusPdu* pdu, XModbusPdu* src);
@@ -16,14 +16,321 @@ XVtable* XModbusPdu_class_init(void)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-    // ç»§æ‰¿ XModbusDevice
+    // ¼Ì³Ğ XModbusDevice
     XVTABLE_INHERIT_XCLASS(XClass);
-    // é‡è½½ææ„å‡½æ•°
+    // ÖØÔØÎö¹¹º¯Êı
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXModbusPdu_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXModbusPdu_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXModbusPdu_move);
 #if SHOWCONTAINERSIZE
     printf("XModbusPdu size: %zu\n", sizeof(XModbusPdu));
+
+// =============== Êı¾İ´óĞ¡¼ÆËãÆ÷ÊµÏÖ ===============
+
+/**
+ * @brief ÇëÇó×îĞ¡Êı¾İ´óĞ¡±í
+ * ¸ù¾İModbusĞ­Òé¹æ·¶£¬Ã¿¸ö¹¦ÄÜÂëµÄ×îĞ¡Êı¾İ´óĞ¡£¨²»º¬¹¦ÄÜÂë×Ö½Ú£©
+ */
+static int16_t requestMinimumDataSizeForCode(XModbusPdu_FunctionCode fc) {
+    switch (fc) {
+    case XModbusPdu_ReadCoils:              return 4;  // ÆğÊ¼µØÖ· + ÊıÁ¿
+    case XModbusPdu_ReadDiscreteInputs:     return 4;
+    case XModbusPdu_ReadHoldingRegisters:    return 4;
+    case XModbusPdu_ReadInputRegisters:     return 4;
+    case XModbusPdu_WriteSingleCoil:        return 4;  // µØÖ· + Öµ
+    case XModbusPdu_WriteSingleRegister:    return 4;
+    case XModbusPdu_ReadExceptionStatus:    return 0;
+    case XModbusPdu_Diagnostics:            return 2;  // ×Ó¹¦ÄÜÂë
+    case XModbusPdu_GetCommEventCounter:    return 0;
+    case XModbusPdu_GetCommEventLog:        return 0;
+    case XModbusPdu_WriteMultipleCoils:     return 5;  // µØÖ· + ÊıÁ¿ + ×Ö½ÚÊı
+    case XModbusPdu_WriteMultipleRegisters: return 5;
+    case XModbusPdu_ReportServerId:         return 0;
+    case XModbusPdu_ReadFileRecord:         return 5;  // ×Ö½ÚÊı + ÒıÓÃÀàĞÍ + ÎÄ¼şºÅ + ¼ÇÂ¼ºÅ + ¼ÇÂ¼³¤¶È
+    case XModbusPdu_WriteFileRecord:        return 5;
+    case XModbusPdu_MaskWriteRegister:      return 6;  // µØÖ· + AndÑÚÂë + OrÑÚÂë
+    case XModbusPdu_ReadWriteMultipleRegisters: return 9;  // ¶ÁµØÖ· + ¶ÁÊıÁ¿ + Ğ´µØÖ· + Ğ´ÊıÁ¿ + ×Ö½ÚÊı
+    case XModbusPdu_ReadFifoQueue:          return 2;  // FIFOµØÖ·
+    case XModbusPdu_EncapsulatedInterfaceTransport: return 2;  // MEIÀàĞÍ + Êı¾İ
+    default:                                return -1; // Î´Öª¹¦ÄÜÂë
+    }
+}
+
+/**
+ * @brief ÏìÓ¦×îĞ¡Êı¾İ´óĞ¡±í
+ */
+static int16_t responseMinimumDataSizeForCode(XModbusPdu_FunctionCode fc) {
+    switch (fc) {
+    case XModbusPdu_ReadCoils:              return 1;  // ×Ö½ÚÊı
+    case XModbusPdu_ReadDiscreteInputs:     return 1;
+    case XModbusPdu_ReadHoldingRegisters:    return 1;
+    case XModbusPdu_ReadInputRegisters:     return 1;
+    case XModbusPdu_WriteSingleCoil:        return 4;  // »ØÏÔµØÖ· + Öµ
+    case XModbusPdu_WriteSingleRegister:    return 4;
+    case XModbusPdu_ReadExceptionStatus:    return 1;  // ×´Ì¬×Ö½Ú
+    case XModbusPdu_Diagnostics:            return 2;  // ×Ó¹¦ÄÜÂë + Êı¾İ
+    case XModbusPdu_GetCommEventCounter:    return 4;  // ×´Ì¬ + ÊÂ¼ş¼ÆÊı
+    case XModbusPdu_GetCommEventLog:        return 5;  // ×´Ì¬ + ÊÂ¼ş¼ÆÊı + ±¨ÎÄ¼ÆÊı + ÊÂ¼ş
+    case XModbusPdu_WriteMultipleCoils:     return 4;  // µØÖ· + ÊıÁ¿
+    case XModbusPdu_WriteMultipleRegisters: return 4;
+    case XModbusPdu_ReportServerId:         return 1;  // ×Ö½ÚÊı
+    case XModbusPdu_ReadFileRecord:         return 3;  // ×Ö½ÚÊı + Êı¾İ
+    case XModbusPdu_WriteFileRecord:        return 3;
+    case XModbusPdu_MaskWriteRegister:      return 6;  // µØÖ· + AndÑÚÂë + OrÑÚÂë
+    case XModbusPdu_ReadWriteMultipleRegisters: return 1;  // ×Ö½ÚÊı
+    case XModbusPdu_ReadFifoQueue:          return 2;  // ×Ö½ÚÊı (2×Ö½Ú¼ÆÊı)
+    case XModbusPdu_EncapsulatedInterfaceTransport: return 2;  // MEIÀàĞÍ + Êı¾İ
+    default:                                return -1;
+    }
+}
+
+/**
+ * @brief ¼ÆËãÇëÇóPDUµÄÊµ¼ÊÊı¾İ´óĞ¡
+ * ¶ÔÓÚ¹Ì¶¨³¤¶ÈµÄÇëÇó£¬Ö±½Ó·µ»Ø×îĞ¡´óĞ¡£»¶ÔÓÚ±ä³¤ÇëÇó£¬½âÎöPDUÊı¾İ¼ÆËã
+ */
+static int16_t calculateRequestDataSize(const XModbusRequest* pdu) {
+    if (!pdu) return -1;
+    XModbusPdu_FunctionCode fc = XModbusPdu_functionCode((const XModbusPdu*)pdu);
+
+    // ¶ÔÓÚ¹Ì¶¨³¤¶ÈÇëÇó£¬×îĞ¡´óĞ¡¼´ÎªÊµ¼Ê´óĞ¡
+    switch (fc) {
+    case XModbusPdu_ReadCoils:
+    case XModbusPdu_ReadDiscreteInputs:
+    case XModbusPdu_ReadHoldingRegisters:
+    case XModbusPdu_ReadInputRegisters:
+    case XModbusPdu_WriteSingleCoil:
+    case XModbusPdu_WriteSingleRegister:
+    case XModbusPdu_ReadExceptionStatus:
+    case XModbusPdu_Diagnostics:            // ¹Ì¶¨2×Ö½Ú×Ó¹¦ÄÜÂë
+    case XModbusPdu_GetCommEventCounter:
+    case XModbusPdu_GetCommEventLog:
+    case XModbusPdu_ReportServerId:
+    case XModbusPdu_MaskWriteRegister:
+    case XModbusPdu_ReadFifoQueue:
+        return requestMinimumDataSizeForCode(fc);
+    case XModbusPdu_WriteMultipleCoils: {
+        // Êı¾İ = µØÖ·2 + ÊıÁ¿2 + ×Ö½ÚÊı1 + Êµ¼ÊÊı¾İ
+        int16_t minSize = requestMinimumDataSizeForCode(fc);
+        if (minSize < 0) return -1;
+        const XByteArray* data = ((const XModbusPdu*)pdu)->m_data;
+        if (!data || XByteArray_size_base(data) < minSize) return -1;
+        // µÚ4¸ö×Ö½Ú£¨Ë÷Òı4£©ÊÇ×Ö½ÚÊı
+        uint8_t byteCount = XByteArray_at_base(data, 4);
+        return minSize + byteCount;
+    }
+    case XModbusPdu_WriteMultipleRegisters: {
+        int16_t minSize = requestMinimumDataSizeForCode(fc);
+        if (minSize < 0) return -1;
+        const XByteArray* data = ((const XModbusPdu*)pdu)->m_data;
+        if (!data || XByteArray_size_base(data) < minSize) return -1;
+        uint8_t byteCount = XByteArray_at_base(data, 4);
+        return minSize + byteCount;
+    }
+    case XModbusPdu_ReadFileRecord:
+    case XModbusPdu_WriteFileRecord: {
+        const XByteArray* data = ((const XModbusPdu*)pdu)->m_data;
+        if (!data || XByteArray_isEmpty_base(data)) return -1;
+        // µÚ0¸ö×Ö½ÚÊÇ×Ö½ÚÊı£¨°üº¬×ÔÉí£©
+        uint8_t byteCount = XByteArray_at_base(data, 0);
+        return (int16_t)(1 + byteCount);  // 1×Ö½Ú¼ÆÊı + Êµ¼ÊÊı¾İ
+    }
+    case XModbusPdu_ReadWriteMultipleRegisters: {
+        int16_t minSize = requestMinimumDataSizeForCode(fc);
+        if (minSize < 0) return -1;
+        const XByteArray* data = ((const XModbusPdu*)pdu)->m_data;
+        if (!data || XByteArray_size_base(data) < minSize) return -1;
+        // µÚ8¸ö×Ö½Ú£¨Ë÷Òı8£©ÊÇĞ´¼Ä´æÆ÷×Ö½ÚÊı
+        uint8_t byteCount = XByteArray_at_base(data, 8);
+        return minSize + byteCount;
+    }
+    case XModbusPdu_EncapsulatedInterfaceTransport: {
+        // MEIÀàĞÍ1×Ö½Ú + ±ä³¤Êı¾İ
+        int16_t minSize = requestMinimumDataSizeForCode(fc);
+        if (minSize < 0) return -1;
+        const XByteArray* data = ((const XModbusPdu*)pdu)->m_data;
+        if (!data) return -1;
+        return (int16_t)XByteArray_size_base(data);
+    }
+    default:
+        return -1;
+    }
+}
+
+/**
+ * @brief ¼ÆËãÏìÓ¦PDUµÄÊµ¼ÊÊı¾İ´óĞ¡
+ */
+static int16_t calculateResponseDataSize(const XModbusResponse* pdu) {
+    if (!pdu) return -1;
+    XModbusPdu_FunctionCode fc = XModbusPdu_functionCode((const XModbusPdu*)pdu);
+
+    // Èç¹ûÒì³£ÏìÓ¦£¬Êı¾İ´óĞ¡Îª1£¨Òì³£Âë£©
+    if (XModbusPdu_isException((const XModbusPdu*)pdu)) return 1;
+
+    switch (fc) {
+    case XModbusPdu_ReadCoils:
+    case XModbusPdu_ReadDiscreteInputs:
+    case XModbusPdu_ReadHoldingRegisters:
+    case XModbusPdu_ReadInputRegisters:
+    case XModbusPdu_WriteSingleCoil:
+    case XModbusPdu_WriteSingleRegister:
+    case XModbusPdu_ReadExceptionStatus:
+    case XModbusPdu_WriteMultipleCoils:
+    case XModbusPdu_WriteMultipleRegisters:
+    case XModbusPdu_MaskWriteRegister:
+        return responseMinimumDataSizeForCode(fc);
+    case XModbusPdu_Diagnostics: {
+        // ×Ó¹¦ÄÜÂë2×Ö½Ú + Êı¾İ
+        const XByteArray* data = ((const XModbusPdu*)pdu)->m_data;
+        if (!data) return -1;
+        return (int16_t)XByteArray_size_base(data);
+    }
+    case XModbusPdu_GetCommEventCounter:
+    case XModbusPdu_GetCommEventLog:
+    case XModbusPdu_ReportServerId:
+    case XModbusPdu_ReadFileRecord:
+    case XModbusPdu_WriteFileRecord: {
+        // ±ä³¤ÏìÓ¦£¬·µ»ØÊµ¼ÊÊı¾İ´óĞ¡
+        const XByteArray* data = ((const XModbusPdu*)pdu)->m_data;
+        if (!data) return -1;
+        return (int16_t)XByteArray_size_base(data);
+    }
+    case XModbusPdu_ReadWriteMultipleRegisters: {
+        const XByteArray* data = ((const XModbusPdu*)pdu)->m_data;
+        if (!data) return -1;
+        return (int16_t)XByteArray_size_base(data);
+    }
+    case XModbusPdu_ReadFifoQueue: {
+        const XByteArray* data = ((const XModbusPdu*)pdu)->m_data;
+        if (!data || XByteArray_size_base(data) < 2) return -1;
+        // Ç°2×Ö½ÚÊÇ×Ö½Ú¼ÆÊı£¨°üº¬×ÔÉí£©
+        uint16_t byteCount = (uint16_t)(XByteArray_at_base(data, 0) << 8 | XByteArray_at_base(data, 1));
+        return (int16_t)(2 + byteCount);  // 2×Ö½Ú¼ÆÊı + Êµ¼ÊÊı¾İ
+    }
+    case XModbusPdu_EncapsulatedInterfaceTransport: {
+        const XByteArray* data = ((const XModbusPdu*)pdu)->m_data;
+        if (!data) return -1;
+        return (int16_t)XByteArray_size_base(data);
+    }
+    default:
+        return -1;
+    }
+}
+
+// =============== ÇëÇó¼ÆËãÆ÷×¢²á±í ===============
+#define MAX_CALC_REGISTRATIONS 32
+
+typedef struct {
+    XModbusPdu_FunctionCode fc;
+    XModbusRequest_CalcFuncPtr func;
+} RequestCalcEntry;
+
+typedef struct {
+    XModbusPdu_FunctionCode fc;
+    XModbusResponse_CalcFuncPtr func;
+} ResponseCalcEntry;
+
+static RequestCalcEntry s_requestCalcRegistry[MAX_CALC_REGISTRATIONS];
+static int s_requestCalcCount = 0;
+static ResponseCalcEntry s_responseCalcRegistry[MAX_CALC_REGISTRATIONS];
+static int s_responseCalcCount = 0;
+
+// =============== ¹«¹²APIÊµÏÖ ===============
+
+int16_t XModbusRequest_minimumDataSize(const XModbusRequest* pdu) {
+    if (!pdu) return -1;
+    XModbusPdu_FunctionCode fc = XModbusPdu_functionCode((const XModbusPdu*)pdu);
+    return requestMinimumDataSizeForCode(fc);
+}
+
+int16_t XModbusRequest_calculateDataSize(const XModbusRequest* pdu) {
+    if (!pdu) return -1;
+    XModbusPdu_FunctionCode fc = XModbusPdu_functionCode((const XModbusPdu*)pdu);
+
+    // ÏÈ²éÑ¯×¢²á±íÖĞÊÇ·ñÓĞ×Ô¶¨Òå¼ÆËãÆ÷
+    for (int i = 0; i < s_requestCalcCount; i++) {
+        if (s_requestCalcRegistry[i].fc == fc) {
+            return s_requestCalcRegistry[i].func(pdu);
+        }
+    }
+    // Ê¹ÓÃÄ¬ÈÏÊµÏÖ
+    return calculateRequestDataSize(pdu);
+}
+
+void XModbusRequest_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XModbusRequest_CalcFuncPtr func) {
+    if (!func) {
+        // ´«ÈëNULL£ºÒÆ³ı×¢²á
+        for (int i = 0; i < s_requestCalcCount; i++) {
+            if (s_requestCalcRegistry[i].fc == fc) {
+                s_requestCalcRegistry[i] = s_requestCalcRegistry[--s_requestCalcCount];
+                return;
+            }
+        }
+        return;
+    }
+
+    // Èç¹ûÒÑ×¢²á£¬¸üĞÂ
+    for (int i = 0; i < s_requestCalcCount; i++) {
+        if (s_requestCalcRegistry[i].fc == fc) {
+            s_requestCalcRegistry[i].func = func;
+            return;
+        }
+    }
+
+    // ĞÂÔö×¢²á
+    if (s_requestCalcCount < MAX_CALC_REGISTRATIONS) {
+        s_requestCalcRegistry[s_requestCalcCount].fc = fc;
+        s_requestCalcRegistry[s_requestCalcCount].func = func;
+        s_requestCalcCount++;
+    }
+}
+
+int16_t XModbusResponse_minimumDataSize(const XModbusResponse* pdu) {
+    if (!pdu) return -1;
+    XModbusPdu_FunctionCode fc = XModbusPdu_functionCode((const XModbusPdu*)pdu);
+    // Òì³£ÏìÓ¦¹Ì¶¨1×Ö½Ú
+    if (XModbusPdu_isException((const XModbusPdu*)pdu)) return 1;
+    return responseMinimumDataSizeForCode(fc);
+}
+
+int16_t XModbusResponse_calculateDataSize(const XModbusResponse* pdu) {
+    if (!pdu) return -1;
+    XModbusPdu_FunctionCode fc = XModbusPdu_functionCode((const XModbusPdu*)pdu);
+
+    // ÏÈ²éÑ¯×¢²á±íÖĞÊÇ·ñÓĞ×Ô¶¨Òå¼ÆËãÆ÷
+    for (int i = 0; i < s_responseCalcCount; i++) {
+        if (s_responseCalcRegistry[i].fc == fc) {
+            return s_responseCalcRegistry[i].func(pdu);
+        }
+    }
+    // Ê¹ÓÃÄ¬ÈÏÊµÏÖ
+    return calculateResponseDataSize(pdu);
+}
+
+void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XModbusResponse_CalcFuncPtr func) {
+    if (!func) {
+        for (int i = 0; i < s_responseCalcCount; i++) {
+            if (s_responseCalcRegistry[i].fc == fc) {
+                s_responseCalcRegistry[i] = s_responseCalcRegistry[--s_responseCalcCount];
+                return;
+            }
+        }
+        return;
+    }
+
+    for (int i = 0; i < s_responseCalcCount; i++) {
+        if (s_responseCalcRegistry[i].fc == fc) {
+            s_responseCalcRegistry[i].func = func;
+            return;
+        }
+    }
+
+    if (s_responseCalcCount < MAX_CALC_REGISTRATIONS) {
+        s_responseCalcRegistry[s_responseCalcCount].fc = fc;
+        s_responseCalcRegistry[s_responseCalcCount].func = func;
+        s_responseCalcCount++;
+    }
+}
+
 #endif
     return XVTABLE_DEFAULT;
 }
@@ -43,7 +350,7 @@ XVtable* XModbusExceptionResponse_class_init(void)
     return XModbusResponse_class_init();
 }
 
-// --- åˆ›å»ºä¸åˆå§‹åŒ– ---
+// --- ´´½¨Óë³õÊ¼»¯ ---
 XModbusPdu* XModbusPdu_create(void) {
     XModbusPdu* pdu = (XModbusPdu*)XMalloc_System(sizeof(XModbusPdu));
     if (pdu) XModbusPdu_init(pdu);
@@ -214,10 +521,10 @@ void XModbusExceptionResponse_init_with_function_and_exception(
     XModbusExceptionResponse* exc, XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode) {
     XModbusExceptionResponse_init(exc);
     if (exc) {
-        // è®¾ç½®å¸¦å¼‚å¸¸ä½çš„åŠŸèƒ½ç 
+        // ÉèÖÃ´øÒì³£Î»µÄ¹¦ÄÜÂë
         XModbusPdu_FunctionCode excCode = (XModbusPdu_FunctionCode)(functionCode | XMODBUS_PDU_EXCEPTION_BYTE);
         exc->m_base.m_base.m_code = excCode;
-        // è®¾ç½®å¼‚å¸¸ç ä¸ºæ•°æ®
+        // ÉèÖÃÒì³£ÂëÎªÊı¾İ
         uint8_t ec = (uint8_t)exceptionCode;
         XByteArray_clear_base(exc->m_base.m_base.m_data);
         XByteArray_push_back_2(exc->m_base.m_base.m_data, &ec, 1);
@@ -229,7 +536,7 @@ void XModbusExceptionResponse_setExceptionCode(XModbusExceptionResponse* exc, XM
     XByteArray_clear_base(exc->m_base.m_base.m_data);
     XByteArray_push_back_2(exc->m_base.m_base.m_data, &code, 1);
 }
-// --- ææ„ ---
+// --- Îö¹¹ ---
 static void VXModbusPdu_deinit(XModbusPdu* pdu) {
     if (!pdu) return;
     if (pdu->m_data) {
@@ -253,7 +560,7 @@ void VXModbusPdu_move(XModbusPdu * pdu, XModbusPdu * src)
     XSwap(pdu,src,sizeof(XModbusPdu));
 }
 
-// --- æ ¸å¿ƒæ¥å£å®ç° ---
+// --- ºËĞÄ½Ó¿ÚÊµÏÖ ---
 bool XModbusPdu_isValid(const XModbusPdu* pdu) {
     if (!pdu) return false;
     bool validCode = (pdu->m_code >= XModbusPdu_ReadCoils && pdu->m_code < XModbusPdu_UndefinedFunctionCode);
