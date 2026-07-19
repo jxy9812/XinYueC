@@ -18,6 +18,7 @@ CMakeSettings.json
 mono_crash.*
 
 # Build results
+build_x64
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/

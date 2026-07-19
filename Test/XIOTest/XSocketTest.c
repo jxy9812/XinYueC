@@ -1,4 +1,4 @@
-#include"XIOTest.h"
+﻿#include"XIOTest.h"
 #include"XTcpSocket.h"
 #include"XSslSocket.h"
 #include"XMemory.h"
@@ -110,11 +110,15 @@ void XSocketTest_BaiduHttps()
 	XSslSocket* ssl = XSslSocket_create();
 	XSslSocket_setProtocol(ssl, XSSL_SecureProtocols);
 	XSslSocket_setPeerVerifyMode(ssl, XSSL_VerifyNone); /* 无 CA，只验证握手成功 */
-	XSslSocket_setPeerVerifyName(ssl, "www.baidu.com");
+	XString* verifyName = XString_create_utf8("www.baidu.com");
+	XSslSocket_setPeerVerifyName(ssl, verifyName);
+	XString_delete_base(verifyName);
 
 	/* 3) 发起 TCP + TLS 加密连接 */
 	XPrintf("[百度HTTPS] 发起 TCP+TLS 加密连接 www.baidu.com:443 ...\n");
-	XSslSocket_connectToHostEncrypted(ssl, "www.baidu.com", 443);
+	XString* hostName = XString_create_utf8("www.baidu.com");
+	XSslSocket_connectToHostEncrypted(ssl, hostName, 443);
+	XString_delete_base(hostName);
 
 	if (!XSslSocket_waitForConnected_base(ssl, 10000)) {
 		XPrintf("[百度HTTPS] TCP 连接超时(10s)\n");
@@ -126,9 +130,13 @@ void XSocketTest_BaiduHttps()
 		XPrintf("[百度HTTPS] TLS 握手失败/超时(15s)\n");
 		return;
 	}
+	XString* proto = XSslSocket_sessionProtocol((const XSslSocket*)ssl);
+	XString* cipher = XSslSocket_sessionCipher((const XSslSocket*)ssl);
 	XPrintf("[百度HTTPS] TLS 握手成功: proto=%s cipher=%s\n",
-		XSslSocket_sessionProtocol((const XSslSocket*)ssl),
-		XSslSocket_sessionCipher((const XSslSocket*)ssl));
+		XString_toUtf8(proto),
+		XString_toUtf8(cipher));
+	XString_delete_base(proto);
+	XString_delete_base(cipher);
 
 	/* 4) 明文接口发送 HTTPS GET（内部自动加密） */
 	/*const char* httpReq =

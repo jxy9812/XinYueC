@@ -1,4 +1,4 @@
-// XSslSocket.h
+﻿// XSslSocket.h
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
@@ -31,6 +31,8 @@ extern "C" {
 #include "XTcpSocket.h"
 #include "XSsl_platform.h"
 #include "XSsl_session.h"
+#include "XString.h"
+#include "XByteArray.h"
 
 /* =============== 类元信息（虚函数表） ================= */
 
@@ -53,6 +55,9 @@ typedef enum XSslSocket_SslMode {
 /* =============== 结构体（前向，实现私有） =============== */
 
 typedef struct XSslSocket XSslSocket;
+
+/* =============== 前向声明（对齐 Qt 6.8 QSslConfiguration） =============== */
+typedef struct XSslConfiguration XSslConfiguration;
 
 /* =============== 生命周期 =============== */
 
@@ -132,18 +137,28 @@ XSslSocket* XSslSocket_create(void);
  *        执行 TCP 连接并在连接完成后启动客户端 TLS 握手。
  */
 void XSslSocket_connectToHostEncrypted(XSslSocket* self,
-                                       const char* hostName,
+                                       const XString* hostName,
                                        uint16_t port);
 
 /**
- * @brief 对齐 QSslSocket::connectToHostEncrypted()（重载2，带 sslPeerName）。
- *        当远端证书 CN/SAN 与 hostName 不同时使用；等价于先 setPeerVerifyName
- *        再 connectToHostEncrypted。
+ * @brief 对齐 QSslSocket::connectToHostEncrypted()（重载2，带 mode/protocol）。
  */
 void XSslSocket_connectToHostEncrypted_2(XSslSocket* self,
-                                         const char* hostName,
+                                       const XString* hostName,
                                          uint16_t port,
-                                         const char* sslPeerName);
+                                         XIODeviceBaseMode mode,
+                                         XAbstractSocket_NetworkLayerProtocol proto);
+
+/**
+ * @brief 对齐 QSslSocket::connectToHostEncrypted()（重载3，带 sslPeerName）。
+ *        指定 SNI 名称独立于连接主机名。
+ */
+void XSslSocket_connectToHostEncrypted_3(XSslSocket* self,
+                                         const XString* hostName,
+                                         uint16_t port,
+                                         const XString* sslPeerName,
+                                         XIODeviceBaseMode mode,
+                                         XAbstractSocket_NetworkLayerProtocol proto);
 
 /** 对齐 QSslSocket::startClientEncryption() —— 在已建立的明文连接上做客户端握手。 */
 void XSslSocket_startClientEncryption(XSslSocket* self);
@@ -154,6 +169,9 @@ void XSslSocket_startServerEncryption(XSslSocket* self);
 /** 对齐 QSslSocket::ignoreSslErrors() —— 忽略此后的证书校验错误，握手照常继续。 */
 void XSslSocket_ignoreSslErrors(XSslSocket* self);
 
+/** 对齐 QSslSocket::resume() —— 恢复被中断的握手或代理认证。 */
+void XSslSocket_resume(XSslSocket* self);
+
 /* --- 配置 setter / getter（对齐 QSslSocket）--- */
 void         XSslSocket_setProtocol(XSslSocket* self, XSslProtocol protocol);
 XSslProtocol XSslSocket_protocol(const XSslSocket* self);
@@ -161,8 +179,16 @@ XSslProtocol XSslSocket_protocol(const XSslSocket* self);
 void                XSslSocket_setLocalCertificate(XSslSocket* self, XSslCertificate* cert);
 XSslCertificate*    XSslSocket_localCertificate(const XSslSocket* self);
 
+/** 对齐 QSslSocket::setLocalCertificate(fileName, format) —— 从文件加载证书。 */
+void XSslSocket_setLocalCertificate_2(XSslSocket* self, const XString* fileName, XSslEncodingFormat format);
+
 void      XSslSocket_setPrivateKey(XSslSocket* self, XSslKey* key);
 XSslKey*  XSslSocket_privateKey(const XSslSocket* self);
+
+/** 对齐 QSslSocket::setPrivateKey(fileName, algo, format, passPhrase) —— 从文件加载私钥。 */
+void XSslSocket_setPrivateKey_2(XSslSocket* self, const XString* fileName,
+                                XSslKeyAlgorithm algo, XSslEncodingFormat fmt,
+                                const XByteArray* passPhrase);
 
 /** 追加 CA 证书用于校验对端。可多次调用累积。 */
 void XSslSocket_addCaCertificate(XSslSocket* self, XSslCertificate* ca);
@@ -170,8 +196,8 @@ void XSslSocket_addCaCertificate(XSslSocket* self, XSslCertificate* ca);
 void               XSslSocket_setPeerVerifyMode(XSslSocket* self, XSslPeerVerifyMode mode);
 XSslPeerVerifyMode XSslSocket_peerVerifyMode(const XSslSocket* self);
 
-void        XSslSocket_setPeerVerifyName(XSslSocket* self, const char* name);
-const char* XSslSocket_peerVerifyName(const XSslSocket* self);
+void        XSslSocket_setPeerVerifyName(XSslSocket* self, const XString* name);
+XString* XSslSocket_peerVerifyName(const XSslSocket* self);
 
 void XSslSocket_setPeerVerifyDepth(XSslSocket* self, int depth);
 int  XSslSocket_peerVerifyDepth(const XSslSocket* self);
@@ -179,8 +205,8 @@ int  XSslSocket_peerVerifyDepth(const XSslSocket* self);
 /* --- 查询（对齐 QSslSocket）--- */
 XSslSocket_SslMode XSslSocket_mode(const XSslSocket* self);
 bool               XSslSocket_isEncrypted(const XSslSocket* self);
-const char*        XSslSocket_sessionProtocol(const XSslSocket* self); /* "TLSv1.2"/"TLSv1.3" */
-const char*        XSslSocket_sessionCipher(const XSslSocket* self);   /* cipher suite name */
+XString* XSslSocket_sessionProtocol(const XSslSocket* self); /* "TLSv1.2"/"TLSv1.3" */
+XString* XSslSocket_sessionCipher(const XSslSocket* self);   /* cipher suite name */
 
 /* --- 同步等待（QSslSocket 新增的加密等待） --- */
 
@@ -237,28 +263,68 @@ void XSslSocket_ignoreSslErrors_2(XSslSocket* self, const XVector* errors);
 /** 恢复被 emit sslErrors 中断的握手（对齐 QSslSocket::continueInterruptedHandshake）。 */
 void XSslSocket_continueInterruptedHandshake(XSslSocket* self);
 
+/** 获取 OCSP 装订响应列表（对齐 QSslSocket::ocspResponses()）。 */
+XVector* XSslSocket_ocspResponses(const XSslSocket* self);
+
+/** 获取/设置 SSL 配置快照（对齐 QSslSocket::sslConfiguration / setSslConfiguration）。 */
+XSslConfiguration* XSslSocket_sslConfiguration(const XSslSocket* self);
+void XSslSocket_setSslConfiguration(XSslSocket* self, const XSslConfiguration* config);
+
 // ---- 静态 / 全局查询（对齐 QSslSocket 静态成员）----
 bool          XSslSocket_supportsSsl(void);
 long          XSslSocket_sslLibraryVersionNumber(void);
-const char*   XSslSocket_sslLibraryVersionString(void);
+XString* XSslSocket_sslLibraryVersionString(void);
 long          XSslSocket_sslLibraryBuildVersionNumber(void);
-const char*   XSslSocket_sslLibraryBuildVersionString(void);
+XString* XSslSocket_sslLibraryBuildVersionString(void);
 XVector*      XSslSocket_availableBackends(void);
-const char*   XSslSocket_activeBackend(void);
-bool          XSslSocket_setActiveBackend(const char* backendName);
-XVector*      XSslSocket_supportedProtocols(const char* backendName);
-bool          XSslSocket_isProtocolSupported(XSslProtocol protocol, const char* backendName);
+XString* XSslSocket_activeBackend(void);
+bool          XSslSocket_setActiveBackend(const XString* backendName);
+XVector*      XSslSocket_supportedProtocols(const XString* backendName);
+bool          XSslSocket_isProtocolSupported(XSslProtocol protocol, const XString* backendName);
+XVector*      XSslSocket_implementedClasses(const XString* backendName);
+bool          XSslSocket_isClassImplemented(XSslImplementedClass cl, const XString* backendName);
+XVector*      XSslSocket_supportedFeatures(const XString* backendName);
+bool          XSslSocket_isFeatureSupported(XSslSupportedFeature feat, const XString* backendName);
 
 // ---- Qt6.8 新增信号 ----
 void* XSslSocket_newSessionTicketReceived_signal(XSslSocket* self);
-void* XSslSocket_alertSent_signal(XSslSocket* self, XSslAlertLevel level, XSslAlertType type, const char* description);
-void* XSslSocket_alertReceived_signal(XSslSocket* self, XSslAlertLevel level, XSslAlertType type, const char* description);
+void* XSslSocket_alertSent_signal(XSslSocket* self, XSslAlertLevel level, XSslAlertType type, const XString* description);
+void* XSslSocket_alertReceived_signal(XSslSocket* self, XSslAlertLevel level, XSslAlertType type, const XString* description);
 void* XSslSocket_handshakeInterruptedOnError_signal(XSslSocket* self, int errorCode);
 void* XSslSocket_preSharedKeyAuthenticationRequired_signal(XSslSocket* self, void* authenticator);
 
 // ---- 对齐 XAbstractSocket 新增的按地址直连 ----
 #define XSslSocket_connectToHostByAddress   XAbstractSocket_connectToHostByAddress
 #define XSslSocket_proxyAuthenticationRequired_signal XAbstractSocket_proxyAuthenticationRequired_signal
+
+
+// =============== XSslConfiguration API（对齐 Qt 6.8 QSslConfiguration） ===============
+
+/** 创建并初始化一个 XSslConfiguration 实例。 */
+XSslConfiguration* XSslConfiguration_create(void);
+/** 销毁 XSslConfiguration 实例并释放持有的资源。 */
+void XSslConfiguration_delete(XSslConfiguration* config);
+/** 深拷贝一个 XSslConfiguration 实例。 */
+XSslConfiguration* XSslConfiguration_copy(const XSslConfiguration* other);
+
+XSslProtocol XSslConfiguration_protocol(const XSslConfiguration* self);
+void XSslConfiguration_setProtocol(XSslConfiguration* self, XSslProtocol protocol);
+
+XSslPeerVerifyMode XSslConfiguration_peerVerifyMode(const XSslConfiguration* self);
+void XSslConfiguration_setPeerVerifyMode(XSslConfiguration* self, XSslPeerVerifyMode mode);
+
+int XSslConfiguration_peerVerifyDepth(const XSslConfiguration* self);
+void XSslConfiguration_setPeerVerifyDepth(XSslConfiguration* self, int depth);
+
+XSslCertificate* XSslConfiguration_localCertificate(const XSslConfiguration* self);
+void XSslConfiguration_setLocalCertificate(XSslConfiguration* self, XSslCertificate* cert);
+
+XVector* XSslConfiguration_localCertificateChain(const XSslConfiguration* self);
+void XSslConfiguration_setLocalCertificateChain(XSslConfiguration* self, XVector* chain);
+
+XSslKey* XSslConfiguration_privateKey(const XSslConfiguration* self);
+void XSslConfiguration_setPrivateKey(XSslConfiguration* self, XSslKey* key);
+
 
 #ifdef __cplusplus
 }
