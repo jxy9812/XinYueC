@@ -3,21 +3,6 @@
 #include "XCrc.h"
 #include <string.h>
 
-// =============== 辅助函数 ===============
-
-/**
- * @brief CRC16反射（用于字节交换）
- */
-static uint16_t crc_reflect(uint16_t data, int len)
-{
-    uint16_t ret = data & 0x01;
-    for (int i = 1; i < len; i++) {
-        data >>= 1;
-        ret = (ret << 1) | (data & 0x01);
-    }
-    return ret;
-}
-
 // =============== ADU帧创建 ===============
 
 XByteArray* XModbusAdu_createRtuFrame(int serverAddress, const XModbusPdu* pdu)
@@ -41,7 +26,7 @@ XByteArray* XModbusAdu_createRtuFrame(int serverAddress, const XModbusPdu* pdu)
     frame[0] = (uint8_t)(serverAddress & 0xFF);
     frame[1] = (uint8_t)fc;
     if (pduData && pduDataSize > 0) {
-        XMemory_read_data(XByteArray_data_base(pduData), XBYTE_ORDER_NATIVE, frame + 2, pduDataSize);
+        XMemory_read_data(XByteArray_data(pduData), XBYTE_ORDER_NATIVE, frame + 2, pduDataSize);
     }
 
     // 计算CRC并附加（小端序）
@@ -82,7 +67,7 @@ XByteArray* XModbusAdu_createAsciiFrame(int serverAddress, const XModbusPdu* pdu
     binData[0] = (uint8_t)(serverAddress & 0xFF);
     binData[1] = (uint8_t)fc;
     if (pduData && pduDataSize > 0) {
-        XMemory_read_data(XByteArray_data_base(pduData), XBYTE_ORDER_NATIVE, binData + 2, pduDataSize);
+        XMemory_read_data(XByteArray_data(pduData), XBYTE_ORDER_NATIVE, binData + 2, pduDataSize);
     }
 
     // 计算LRC
