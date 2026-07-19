@@ -107,7 +107,7 @@ static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const 
             }
 
             // 发送响应
-            XTcpSocket_write((XTcpSocket*)client, (const char*)respFrame, respFrameSize);
+            XTcpSocket_write_1((XTcpSocket*)client, (const char*)respFrame, respFrameSize);
             XFree_System(respFrame);
         }
 
@@ -200,7 +200,7 @@ static void VXModbusTcpServer_deinit(XModbusTcpServer* server)
             XTcpSocket* socket = (XTcpSocket*)XPair_first(pair);
             if (socket) {
                 XObject_disconnect_1((XObject*)socket, 0, (XObject*)server, NULL);
-                XTcpSocket_close(socket);
+                XTcpSocket_close_base(socket);
             }
         }
         XMapBase_delete_base(server->m_connectedClients);
@@ -223,28 +223,28 @@ static bool VXModbusTcpServer_open(XModbusDevice* device)
         XModbusDevice_NetworkAddressParameter);
 
     uint16_t port = 502; // 默认Modbus TCP端口
-    XHostAddress addr = XHostAddress_Any;
-
+    XHostAddress* addr = NULL;
     if (portVar) {
         port = (uint16_t)XVariant_toInt(portVar);
     }
     if (addrVar) {
         XString* addrStr = XVariant_toString(addrVar);
         if (addrStr) {
-            XHostAddress_fromString(&addr, XString_getData(addrStr));
+            addr=XHostAddress_create_fromString(XString_constData(addrStr));
             XString_delete_base(addrStr);
         }
     }
 
     // 开始监听
-    bool result = XTcpServer_listen(server->m_tcpServer, &addr, port);
+    bool result = XTcpServer_listen(server->m_tcpServer, addr, port);
     if (result) {
         XModbusDevice_setState(device, XModbusDevice_ConnectedState);
     } else {
         XModbusDevice_setError(device, XModbusDevice_ConnectionError,
             "Failed to start TCP server");
     }
-
+    if(addr)
+        XHostAddress_delete_base(addr);
     return result;
 }
 
@@ -261,7 +261,7 @@ static void VXModbusTcpServer_close(XModbusDevice* device)
             XTcpSocket* socket = (XTcpSocket*)XPair_first(pair);
             if (socket) {
                 XObject_disconnect_1((XObject*)socket, 0, (XObject*)server, NULL);
-                XTcpSocket_close(socket);
+                XTcpSocket_close_base(socket);
             }
         }
         XMap_clear_base(server->m_connectedClients);
@@ -310,7 +310,7 @@ static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args)
         // 检查观察器是否允许连接
         if (server->m_observer && server->m_observer->acceptNewConnection) {
             if (!server->m_observer->acceptNewConnection(server->m_observer->context, client)) {
-                XTcpSocket_close(client);
+                XTcpSocket_close_base(client);
                 continue;
             }
         }
@@ -318,13 +318,14 @@ static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args)
         // 创建接收缓冲区
         XByteArray* buffer = XByteArray_create();
         if (!buffer) {
-            XTcpSocket_close(client);
+            XTcpSocket_close_base(client);
             continue;
         }
 
         // 保存到客户端映射
-        XMap_insert_ref_base(server->m_connectedClients, &client, buffer);
-
+        XMap_insert_valueMove_base(server->m_connectedClients, &client, buffer);
+        if (buffer)
+            XByteArray_delete_base(buffer);
         // 连接信号
         XObject_connect_1((XObject*)client,
             XSignal(XTcpSocket_readyRead_signal),
@@ -360,10 +361,10 @@ static void XModbusTcpServer_onClientReadyRead(XObject* receiver, XVarList* args
 
     // 读取数据
     char tempBuf[4096];
-    int64_t bytesRead = XTcpSocket_read(client, tempBuf, sizeof(tempBuf));
+    int64_t bytesRead = XTcpSocket_read_1(client, tempBuf, sizeof(tempBuf));
     while (bytesRead > 0) {
         XByteArray_push_back_2(buffer, (const uint8_t*)tempBuf, (size_t)bytesRead);
-        bytesRead = XTcpSocket_read(client, tempBuf, sizeof(tempBuf));
+        bytesRead = XTcpSocket_read_1(client, tempBuf, sizeof(tempBuf));
     }
 
     // 处理完整帧
