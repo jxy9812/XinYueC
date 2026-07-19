@@ -1570,8 +1570,6 @@ int XNetwork_gssapiAuth(const XString* serviceName,
     /* 失败 */
     return -1;
 }
-#endif /* XNETWORK_USE_PLATFORM_API */
-
 void XNetwork_socketContinueWrite(XNetworkSocketPrivate* priv, XRingBuffer* ringBuffer, bool isUdp)
 {
     if (!priv || !ringBuffer) return;
@@ -1588,3 +1586,6 @@ void XNetwork_socketContinueWrite(XNetworkSocketPrivate* priv, XRingBuffer* ring
         startAsyncWrite(priv, tempBuf, (int64_t)got, NULL, 0, isUdp);
     }
 }
+#endif /* XNETWORK_USE_PLATFORM_API */
+
+

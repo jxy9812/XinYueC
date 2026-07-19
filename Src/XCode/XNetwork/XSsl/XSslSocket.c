@@ -36,6 +36,7 @@
 #include "XTypes.h"
 #include <stdlib.h>
 
+#define DEFAULT_CHUNK_SIZE 4096
 /* = 内部结构体 = */
 
 struct XSslSocket {
@@ -318,7 +319,7 @@ static void xssl_v_deinit(XClass* obj) {
     if (self->peerCertChain)   { XVector_delete_base((XContainer*)self->peerCertChain);   self->peerCertChain = NULL; }
     if (self->localCertChain)  { XVector_delete_base((XContainer*)self->localCertChain);  self->localCertChain = NULL; }
     if (self->handshakeErrors) { XVector_delete_base((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
-    if (self->encRxBuf)        { XRingBuffer_delete_base((XContainer*)self->encRxBuf);    self->encRxBuf = (struct XRingBuffer*)XRingBuffer_create(16384); }
+    if (self->encRxBuf) { XRingBuffer_delete_base((XContainer*)self->encRxBuf);    self->encRxBuf = NULL;/*(struct XRingBuffer*)XRingBuffer_create(16384);*/ }
     /* localCert/privateKey/caCert 为外部引用，本类不持有 */
     XClass_Deinit_Parent(XAbstractSocket, self);
 }
@@ -469,7 +470,7 @@ void XSslSocket_init(XSslSocket* self)
     self->localCertChain = NULL;
     self->peerCertChain = NULL;
     self->handshakeErrors = NULL;
-    self->encRxBuf = (struct XRingBuffer*)XRingBuffer_create(16384);
+    self->encRxBuf = (struct XRingBuffer*)XRingBuffer_create(DEFAULT_CHUNK_SIZE);
 }
 
 XSslSocket* XSslSocket_create(void)

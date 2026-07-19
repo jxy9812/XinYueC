@@ -12,13 +12,6 @@
 #include "XClass.h"
 #include <string.h>
 #include <stdio.h>
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <unistd.h>
-#include <fcntl.h>
-#endif
-
 /* 1. Memory bridge */
 void *xssl_mbedtls_calloc(size_t n, size_t s) {
     if(n&&s>(size_t)-1/n)return NULL;
@@ -133,7 +126,7 @@ XSslCertificate* XSsl_certificateFromDer(const uint8_t*d,size_t l){
     int r=mbedtls_x509_crt_parse_der(&c->crt,d,l);
     if(r<0){mbedtls_x509_crt_free(&c->crt);XFree_System(c);return NULL;}return c;
 }
-XSslCertificate* XSsl_certificateLoad(const char*path,int format){
+XSslCertificate* XSsl_certificateLoad(const char*path, XSslEncodingFormat format){
     size_t len=0;
     unsigned char*buf=xssl_read_file_all(path,&len);
     if(!buf)return NULL;
@@ -147,26 +140,26 @@ XSslCertificate* XSsl_certificateLoad(const char*path,int format){
 void XSsl_certificateDestroy(XSslCertificate*c){if(!c)return;mbedtls_x509_crt_free(&c->crt);XFree_System(c);}
 
 /* 8. Keys */
-XSslKey* XSsl_keyFromPem(const char*d,size_t l,int algo,int type,const char*pp){
-    if(!d||!l)return NULL;
+XSslKey* XSsl_keyFromPem(const char*data,size_t len, XSslKeyAlgorithm algo, XSslKeyType type,const char*pp){
+    if(!data||!len)return NULL;
     XSslKey*k=(XSslKey*)XMalloc_System(sizeof(XSslKey));
     if(!k)return NULL;memset(k,0,sizeof(*k));mbedtls_pk_init(&k->pk);
     k->algorithm=(XSslKeyAlgorithm)algo;k->type=(XSslKeyType)type;
-    unsigned char*b=(unsigned char*)XMalloc_System(l+1);
+    unsigned char*b=(unsigned char*)XMalloc_System(len+1);
     if(!b){XFree_System(k);return NULL;}
-    memcpy(b,d,l);b[l]='\0';
+    memcpy(b,data,len);b[len]='\0';
     const unsigned char*pwd=(const unsigned char*)pp;
     size_t pl=pp?strlen(pp):0;
-    int r=(type==1)?mbedtls_pk_parse_public_key(&k->pk,b,l+1):mbedtls_pk_parse_key(&k->pk,b,l+1,pwd,pl);
+    int r=(type==1)?mbedtls_pk_parse_public_key(&k->pk,b,len+1):mbedtls_pk_parse_key(&k->pk,b,len+1,pwd,pl);
     XFree_System(b);
     if(r){mbedtls_pk_free(&k->pk);XFree_System(k);return NULL;}return k;
 }
-XSslKey* XSsl_keyFromDer(const uint8_t*d,size_t l,int algo,int type){
-    if(!d||!l)return NULL;
+XSslKey* XSsl_keyFromDer(const uint8_t*data,size_t len, XSslKeyAlgorithm algo, XSslKeyType type){
+    if(!data||!len)return NULL;
     XSslKey*k=(XSslKey*)XMalloc_System(sizeof(XSslKey));
     if(!k)return NULL;memset(k,0,sizeof(*k));mbedtls_pk_init(&k->pk);
     k->algorithm=(XSslKeyAlgorithm)algo;k->type=(XSslKeyType)type;
-    int r=(type==1)?mbedtls_pk_parse_public_key(&k->pk,d,l):mbedtls_pk_parse_key(&k->pk,d,l,NULL,0);
+    int r=(type==1)?mbedtls_pk_parse_public_key(&k->pk,data,len):mbedtls_pk_parse_key(&k->pk,data,len,NULL,0);
     if(r){mbedtls_pk_free(&k->pk);XFree_System(k);return NULL;}return k;
 }
 void XSsl_keyDestroy(XSslKey*k){if(!k)return;mbedtls_pk_free(&k->pk);XFree_System(k);}

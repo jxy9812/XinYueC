@@ -73,61 +73,108 @@ void XSslSocket_init(XSslSocket* self);
 XSslSocket* XSslSocket_create(void);
 
 /* 继承自 XObject 的生命周期 */
+/** 延迟销毁对象，对齐 QSslSocket::deleteLater()。 */
 #define XSslSocket_deleteLater              XObject_deleteLater
 
 /* =============== 继承自 XTcpSocket / XAbstractSocket / XIODevice 的 API
  *                （全部走 #define 别名，避免重复实现） =============== */
 
 /* --- XIODevice --- */
+/** 以指定模式打开设备，对齐 QSslSocket::open()。 */
 #define XSslSocket_open_base                XIODevice_open_base
+/** 关闭设备，对齐 QSslSocket::close()。 */
 #define XSslSocket_close_base               XIODevice_close_base
+/** 检查设备是否已打开。 */
 #define XSslSocket_isOpen                   XIODevice_isOpen
+/** 检查设备是否可读。 */
 #define XSslSocket_isReadable               XIODevice_isReadable
+/** 检查设备是否可写。 */
 #define XSslSocket_isWritable               XIODevice_isWritable
+/** 检查设备是否为顺序访问设备（套接字为顺序设备）。 */
 #define XSslSocket_isSequential             XIODevice_isSequential
+/** 检查是否已读到末尾。 */
 #define XSslSocket_atEnd_base               XIODevice_atEnd_base
+/** 获取可读字节数。 */
 #define XSslSocket_bytesAvailable_base      XIODevice_bytesAvailable_base
+/** 获取待写入字节数。 */
 #define XSslSocket_bytesToWrite_base        XIODevice_bytesToWrite_base
+/** 检查是否可读一整行。 */
 #define XSslSocket_canReadLine_base         XIODevice_canReadLine_base
+/** 从套接字读取明文数据（经过 TLS 解密）。 */
 #define XSslSocket_read_1                   XIODevice_read_1     /* 明文（虚函数 readData 解密） */
+/** 向套接字写入明文数据（经过 TLS 加密后发送）。 */
 #define XSslSocket_write_1                  XIODevice_write_1    /* 明文（虚函数 writeData 加密） */
+/** 读取所有可用数据。 */
 #define XSslSocket_readAll_2                XIODevice_readAll_3
+/** 读取一行数据。 */
 #define XSslSocket_readLine_1               XIODevice_readLine_1
+/** 预览数据但不移除。 */
 #define XSslSocket_peek_1                   XIODevice_peek_1
+/** 等待数据可读。 */
 #define XSslSocket_waitForReadyRead_base    XIODevice_waitForReadyRead_base
+/** 等待数据写入完成。 */
 #define XSslSocket_waitForBytesWritten_base XIODevice_waitForBytesWritten_base
 
 /* --- XAbstractSocket --- */
+/** 连接到主机，对齐 QSslSocket::connectToHost()。 */
 #define XSslSocket_connectToHost_base       XAbstractSocket_connectToHost_base
+/** 断开连接，对齐 QSslSocket::disconnectFromHost()。 */
 #define XSslSocket_disconnectFromHost_base  XAbstractSocket_disconnectFromHost_base
+/** 等待连接建立。 */
 #define XSslSocket_waitForConnected_base    XAbstractSocket_waitForConnected_base
+/** 等待连接断开。 */
 #define XSslSocket_waitForDisconnected_base XAbstractSocket_waitForDisconnected_base
+/** 获取当前套接字状态。 */
 #define XSslSocket_state                    XAbstractSocket_state
+/** 获取最后一次错误。 */
 #define XSslSocket_error                    XAbstractSocket_error
+/** 获取错误描述字符串。 */
 #define XSslSocket_errorString              XAbstractSocket_errorString
+/** 检查套接字是否有效。 */
 #define XSslSocket_isValid                  XAbstractSocket_isValid
+/** 获取本地地址。 */
 #define XSslSocket_localAddress             XAbstractSocket_localAddress
+/** 获取本地端口。 */
 #define XSslSocket_localPort                XAbstractSocket_localPort
+/** 获取对端地址。 */
 #define XSslSocket_peerAddress              XAbstractSocket_peerAddress
+/** 获取对端端口。 */
 #define XSslSocket_peerPort                 XAbstractSocket_peerPort
+/** 获取对端主机名。 */
 #define XSslSocket_peerName                 XAbstractSocket_peerName
+/** 获取套接字描述符。 */
 #define XSslSocket_socketDescriptor_base    XAbstractSocket_socketDescriptor_base
+/** 设置套接字选项。 */
 #define XSslSocket_setSocketOption_base     XAbstractSocket_setSocketOption_base
+/** 获取套接字选项。 */
 #define XSslSocket_socketOption_base        XAbstractSocket_socketOption_base
+/** 获取读取缓冲区大小。 */
 #define XSslSocket_readBufferSize           XAbstractSocket_readBufferSize
+/** 设置读取缓冲区大小。 */
 #define XSslSocket_setReadBufferSize_base   XAbstractSocket_setReadBufferSize_base
+/** 刷新写入缓冲区。 */
 #define XSslSocket_flush                    XAbstractSocket_flush
+/** 立即终止连接。 */
 #define XSslSocket_abort                    XAbstractSocket_abort
+/** 获取文件描述符。 */
 #define XSslSocket_fd                       XAbstractSocket_fd
 
 /* --- 继承信号（连接/断开/错误/状态/读写） --- */
+/** 主机解析完成时发射的信号。 */
 #define XSslSocket_hostFound_signal         XAbstractSocket_hostFound_signal
+/** 连接建立时发射的信号。 */
 #define XSslSocket_connected_signal         XAbstractSocket_connected_signal
+/** 连接断开时发射的信号。 */
 #define XSslSocket_disconnected_signal      XAbstractSocket_disconnected_signal
+/** 状态改变时发射的信号。 */
 #define XSslSocket_stateChanged_signal      XAbstractSocket_stateChanged_signal
+/** 发生错误时发射的信号。 */
 #define XSslSocket_errorOccurred_signal     XAbstractSocket_errorOccurred_signal
+/** 数据可读时发射的信号。 */
 #define XSslSocket_readyRead_signal         XIODevice_readyRead_signal
+/** 数据写出时发射的信号。 */
 #define XSslSocket_bytesWritten_signal      XIODevice_bytesWritten_signal
+/** 即将关闭时发射的信号。 */
 #define XSslSocket_aboutToClose_signal      XIODevice_aboutToClose_signal
 
 /* =============== QSslSocket 新增 API（本类特有） =============== */
@@ -173,16 +220,46 @@ void XSslSocket_ignoreSslErrors(XSslSocket* self);
 void XSslSocket_resume(XSslSocket* self);
 
 /* --- 配置 setter / getter（对齐 QSslSocket）--- */
+/**
+ * @brief 设置 SSL/TLS 协议版本。
+ * @param self     XSslSocket 实例指针
+ * @param protocol 协议版本（如 XSSL_TlsV1_2 / XSSL_TlsV1_3）
+ */
 void         XSslSocket_setProtocol(XSslSocket* self, XSslProtocol protocol);
+/**
+ * @brief 获取当前使用的 SSL/TLS 协议版本。
+ * @param self XSslSocket 实例指针
+ * @return 当前协议版本枚举值
+ */
 XSslProtocol XSslSocket_protocol(const XSslSocket* self);
 
+/**
+ * @brief 设置本地证书。
+ * @param self XSslSocket 实例指针
+ * @param cert 本地证书对象，传入后所有权转移给 self
+ */
 void                XSslSocket_setLocalCertificate(XSslSocket* self, XSslCertificate* cert);
+/**
+ * @brief 获取本地证书。
+ * @param self XSslSocket 实例指针
+ * @return 指向本地证书的指针，未设置返回 NULL；所有权仍归 self
+ */
 XSslCertificate*    XSslSocket_localCertificate(const XSslSocket* self);
 
 /** 对齐 QSslSocket::setLocalCertificate(fileName, format) —— 从文件加载证书。 */
 void XSslSocket_setLocalCertificate_2(XSslSocket* self, const XString* fileName, XSslEncodingFormat format);
 
+/**
+ * @brief 设置私钥。
+ * @param self XSslSocket 实例指针
+ * @param key 私钥对象，传入后所有权转移给 self
+ */
 void      XSslSocket_setPrivateKey(XSslSocket* self, XSslKey* key);
+/**
+ * @brief 获取私钥。
+ * @param self XSslSocket 实例指针
+ * @return 指向私钥的指针，未设置返回 NULL；所有权仍归 self
+ */
 XSslKey*  XSslSocket_privateKey(const XSslSocket* self);
 
 /** 对齐 QSslSocket::setPrivateKey(fileName, algo, format, passPhrase) —— 从文件加载私钥。 */
@@ -193,19 +270,69 @@ void XSslSocket_setPrivateKey_2(XSslSocket* self, const XString* fileName,
 /** 追加 CA 证书用于校验对端。可多次调用累积。 */
 void XSslSocket_addCaCertificate(XSslSocket* self, XSslCertificate* ca);
 
+/**
+ * @brief 设置对端证书验证模式。
+ * @param self XSslSocket 实例指针
+ * @param mode 验证模式（如 None / QueryPeer / VerifyPeer / AutoVerifyPeer）
+ */
 void               XSslSocket_setPeerVerifyMode(XSslSocket* self, XSslPeerVerifyMode mode);
+/**
+ * @brief 获取对端证书验证模式。
+ * @param self XSslSocket 实例指针
+ * @return 当前验证模式
+ */
 XSslPeerVerifyMode XSslSocket_peerVerifyMode(const XSslSocket* self);
 
+/**
+ * @brief 设置用于 SNI 和证书验证的对端名称。
+ * @param self XSslSocket 实例指针
+ * @param name 对端名称字符串
+ */
 void        XSslSocket_setPeerVerifyName(XSslSocket* self, const XString* name);
+/**
+ * @brief 获取用于 SNI 和证书验证的对端名称。
+ * @param self XSslSocket 实例指针
+ * @return 对端名称字符串，调用者负责释放
+ */
 XString* XSslSocket_peerVerifyName(const XSslSocket* self);
 
+/**
+ * @brief 设置证书链验证深度。
+ * @param self  XSslSocket 实例指针
+ * @param depth 验证深度（0 表示不限制）
+ */
 void XSslSocket_setPeerVerifyDepth(XSslSocket* self, int depth);
+/**
+ * @brief 获取证书链验证深度。
+ * @param self XSslSocket 实例指针
+ * @return 当前验证深度
+ */
 int  XSslSocket_peerVerifyDepth(const XSslSocket* self);
 
 /* --- 查询（对齐 QSslSocket）--- */
+/**
+ * @brief 获取当前 SSL 模式。
+ * @param self XSslSocket 实例指针
+ * @return 当前模式（UnencryptedMode / SslClientMode / SslServerMode）
+ */
 XSslSocket_SslMode XSslSocket_mode(const XSslSocket* self);
+/**
+ * @brief 检查当前是否已进入加密状态。
+ * @param self XSslSocket 实例指针
+ * @return 已加密返回 true，否则 false
+ */
 bool               XSslSocket_isEncrypted(const XSslSocket* self);
+/**
+ * @brief 获取当前会话使用的协议版本字符串。
+ * @param self XSslSocket 实例指针
+ * @return 协议版本字符串（如 TLSv1.3），调用者负责释放
+ */
 XString* XSslSocket_sessionProtocol(const XSslSocket* self); /* "TLSv1.2"/"TLSv1.3" */
+/**
+ * @brief 获取当前会话使用的加密套件名称。
+ * @param self XSslSocket 实例指针
+ * @return 加密套件名称字符串，调用者负责释放
+ */
 XString* XSslSocket_sessionCipher(const XSslSocket* self);   /* cipher suite name */
 
 /* --- 同步等待（QSslSocket 新增的加密等待） --- */
@@ -218,6 +345,11 @@ bool XSslSocket_waitForEncrypted(XSslSocket* self, int msecs);
  * 会自动驱动 TLS 握手。所以用户仍旧调 XTcpSocket_waitForReadyRead_base 等。 */
 
 /* --- 平台后端句柄（调试/进阶用途） --- */
+/**
+ * @brief 获取当前 SSL 会话对象，用于会话复用（TLS Session Resumption）。
+ * @param self XSslSocket 实例指针
+ * @return 指向 SSL 会话的指针，未建立返回 NULL；所有权仍归 self
+ */
 XSslSession* XSslSocket_session(XSslSocket* self);
 
 /* =============== 新增信号（对齐 QSslSocket 特有信号） =============== */
@@ -268,33 +400,139 @@ XVector* XSslSocket_ocspResponses(const XSslSocket* self);
 
 /** 获取/设置 SSL 配置快照（对齐 QSslSocket::sslConfiguration / setSslConfiguration）。 */
 XSslConfiguration* XSslSocket_sslConfiguration(const XSslSocket* self);
+/**
+ * @brief 设置 SSL 配置快照（对齐 QSslSocket::setSslConfiguration）。
+ * @param self   XSslSocket 实例指针
+ * @param config SSL 配置对象的指针，传入后所有权不转移
+ */
 void XSslSocket_setSslConfiguration(XSslSocket* self, const XSslConfiguration* config);
 
 // ---- 静态 / 全局查询（对齐 QSslSocket 静态成员）----
+/**
+ * @brief 查询当前平台是否支持 SSL/TLS。
+ * @return 支持返回 true，否则 false
+ */
 bool          XSslSocket_supportsSsl(void);
+/**
+ * @brief 获取运行时 SSL 库版本号（数字格式）。
+ * @return SSL 库版本号
+ */
 long          XSslSocket_sslLibraryVersionNumber(void);
+/**
+ * @brief 获取运行时 SSL 库版本号（字符串格式）。
+ * @return SSL 库版本字符串，调用者负责释放
+ */
 XString* XSslSocket_sslLibraryVersionString(void);
+/**
+ * @brief 获取编译时 SSL 库版本号（数字格式）。
+ * @return 编译时 SSL 库版本号
+ */
 long          XSslSocket_sslLibraryBuildVersionNumber(void);
+/**
+ * @brief 获取编译时 SSL 库版本号（字符串格式）。
+ * @return 编译时 SSL 库版本字符串，调用者负责释放
+ */
 XString* XSslSocket_sslLibraryBuildVersionString(void);
+/**
+ * @brief 获取可用的 SSL 后端列表。
+ * @return 后端名称列表，调用者负责释放
+ */
 XVector*      XSslSocket_availableBackends(void);
+/**
+ * @brief 获取当前活动的 SSL 后端名称。
+ * @return 后端名称字符串，调用者负责释放
+ */
 XString* XSslSocket_activeBackend(void);
+/**
+ * @brief 设置活动 SSL 后端。
+ * @param backendName 后端名称
+ * @return 设置成功返回 true，失败返回 false
+ */
 bool          XSslSocket_setActiveBackend(const XString* backendName);
+/**
+ * @brief 获取指定后端支持的协议列表。
+ * @param backendName 后端名称，NULL 表示当前活动后端
+ * @return 协议列表，调用者负责释放
+ */
 XVector*      XSslSocket_supportedProtocols(const XString* backendName);
+/**
+ * @brief 查询指定后端是否支持某个协议。
+ * @param protocol    协议版本
+ * @param backendName 后端名称，NULL 表示当前活动后端
+ * @return 支持返回 true，否则 false
+ */
 bool          XSslSocket_isProtocolSupported(XSslProtocol protocol, const XString* backendName);
+/**
+ * @brief 获取指定后端实现的类列表。
+ * @param backendName 后端名称，NULL 表示当前活动后端
+ * @return 类列表，调用者负责释放
+ */
 XVector*      XSslSocket_implementedClasses(const XString* backendName);
+/**
+ * @brief 查询指定后端是否实现了某个类。
+ * @param cl          实现的类枚举值
+ * @param backendName 后端名称，NULL 表示当前活动后端
+ * @return 已实现返回 true，否则 false
+ */
 bool          XSslSocket_isClassImplemented(XSslImplementedClass cl, const XString* backendName);
+/**
+ * @brief 获取指定后端支持的功能列表。
+ * @param backendName 后端名称，NULL 表示当前活动后端
+ * @return 功能列表，调用者负责释放
+ */
 XVector*      XSslSocket_supportedFeatures(const XString* backendName);
+/**
+ * @brief 查询指定后端是否支持某个功能。
+ * @param feat        功能枚举值
+ * @param backendName 后端名称，NULL 表示当前活动后端
+ * @return 支持返回 true，否则 false
+ */
 bool          XSslSocket_isFeatureSupported(XSslSupportedFeature feat, const XString* backendName);
 
 // ---- Qt6.8 新增信号 ----
+/**
+ * @brief 对齐 QSslSocket::newSessionTicketReceived() —— 收到新的 Session Ticket 时发射。
+ * @param self XSslSocket 实例指针
+ * @return 信号连接句柄
+ */
 void* XSslSocket_newSessionTicketReceived_signal(XSslSocket* self);
+/**
+ * @brief 对齐 QSslSocket::alertSent() —— 发出 TLS 告警时发射。
+ * @param self        XSslSocket 实例指针
+ * @param level       告警级别
+ * @param type        告警类型
+ * @param description 告警描述
+ * @return 信号连接句柄
+ */
 void* XSslSocket_alertSent_signal(XSslSocket* self, XSslAlertLevel level, XSslAlertType type, const XString* description);
+/**
+ * @brief 对齐 QSslSocket::alertReceived() —— 收到 TLS 告警时发射。
+ * @param self        XSslSocket 实例指针
+ * @param level       告警级别
+ * @param type        告警类型
+ * @param description 告警描述
+ * @return 信号连接句柄
+ */
 void* XSslSocket_alertReceived_signal(XSslSocket* self, XSslAlertLevel level, XSslAlertType type, const XString* description);
+/**
+ * @brief 对齐 QSslSocket::handshakeInterruptedOnError() —— 握手因错误中断时发射。
+ * @param self      XSslSocket 实例指针
+ * @param errorCode 错误码
+ * @return 信号连接句柄
+ */
 void* XSslSocket_handshakeInterruptedOnError_signal(XSslSocket* self, int errorCode);
+/**
+ * @brief 对齐 QSslSocket::preSharedKeyAuthenticationRequired() —— 需要 PSK 认证时发射。
+ * @param self          XSslSocket 实例指针
+ * @param authenticator PSK 认证器指针
+ * @return 信号连接句柄
+ */
 void* XSslSocket_preSharedKeyAuthenticationRequired_signal(XSslSocket* self, void* authenticator);
 
 // ---- 对齐 XAbstractSocket 新增的按地址直连 ----
+/** 通过地址直接连接（跳过 DNS 解析）。 */
 #define XSslSocket_connectToHostByAddress   XAbstractSocket_connectToHostByAddress
+/** 代理认证需要时发射的信号。 */
 #define XSslSocket_proxyAuthenticationRequired_signal XAbstractSocket_proxyAuthenticationRequired_signal
 
 
@@ -307,22 +545,82 @@ void XSslConfiguration_delete(XSslConfiguration* config);
 /** 深拷贝一个 XSslConfiguration 实例。 */
 XSslConfiguration* XSslConfiguration_copy(const XSslConfiguration* other);
 
+/**
+ * @brief 获取 SSL 协议版本配置。
+ * @param self XSslConfiguration 实例指针
+ * @return 当前配置的协议版本
+ */
 XSslProtocol XSslConfiguration_protocol(const XSslConfiguration* self);
+/**
+ * @brief 设置 SSL 协议版本。
+ * @param self     XSslConfiguration 实例指针
+ * @param protocol 协议版本
+ */
 void XSslConfiguration_setProtocol(XSslConfiguration* self, XSslProtocol protocol);
 
+/**
+ * @brief 获取对端证书验证模式配置。
+ * @param self XSslConfiguration 实例指针
+ * @return 当前验证模式
+ */
 XSslPeerVerifyMode XSslConfiguration_peerVerifyMode(const XSslConfiguration* self);
+/**
+ * @brief 设置对端证书验证模式。
+ * @param self XSslConfiguration 实例指针
+ * @param mode 验证模式
+ */
 void XSslConfiguration_setPeerVerifyMode(XSslConfiguration* self, XSslPeerVerifyMode mode);
 
+/**
+ * @brief 获取证书链验证深度配置。
+ * @param self XSslConfiguration 实例指针
+ * @return 当前验证深度
+ */
 int XSslConfiguration_peerVerifyDepth(const XSslConfiguration* self);
+/**
+ * @brief 设置证书链验证深度。
+ * @param self  XSslConfiguration 实例指针
+ * @param depth 验证深度
+ */
 void XSslConfiguration_setPeerVerifyDepth(XSslConfiguration* self, int depth);
 
+/**
+ * @brief 获取本地证书配置。
+ * @param self XSslConfiguration 实例指针
+ * @return 指向本地证书的指针，未设置返回 NULL；所有权仍归 self
+ */
 XSslCertificate* XSslConfiguration_localCertificate(const XSslConfiguration* self);
+/**
+ * @brief 设置本地证书。
+ * @param self XSslConfiguration 实例指针
+ * @param cert 本地证书对象，传入后所有权转移给 self
+ */
 void XSslConfiguration_setLocalCertificate(XSslConfiguration* self, XSslCertificate* cert);
 
+/**
+ * @brief 获取本地证书链配置。
+ * @param self XSslConfiguration 实例指针
+ * @return 指向证书链 XVector 的指针，未设置返回 NULL；所有权仍归 self
+ */
 XVector* XSslConfiguration_localCertificateChain(const XSslConfiguration* self);
+/**
+ * @brief 设置本地证书链。
+ * @param self  XSslConfiguration 实例指针
+ * @param chain 证书链 XVector，传入后所有权转移给 self
+ */
 void XSslConfiguration_setLocalCertificateChain(XSslConfiguration* self, XVector* chain);
 
+/**
+ * @brief 获取私钥配置。
+ * @param self XSslConfiguration 实例指针
+ * @return 指向私钥的指针，未设置返回 NULL；所有权仍归 self
+ */
 XSslKey* XSslConfiguration_privateKey(const XSslConfiguration* self);
+/**
+ * @brief 设置私钥。
+ * @param self XSslConfiguration 实例指针
+ * @param key 私钥对象，传入后所有权转移给 self
+ */
 void XSslConfiguration_setPrivateKey(XSslConfiguration* self, XSslKey* key);
 
 

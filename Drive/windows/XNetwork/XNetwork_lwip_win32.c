@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XNetwork_lwip_win32.c
  * @brief lwIP Windows 平台虚拟网卡实现 - 基于 Npcap 虚拟网卡
  *
@@ -33,6 +33,7 @@
 #include <locale.h>
 
 #include "XNetwork_lwip_platform.h"
+#include "XNetwork_platform.h"
 #include "XMemory.h"
 #include "XThread.h"
 #include "XPrintf.h"
@@ -923,6 +924,5 @@ void XNetworkLwip_platform_deinit(void) {
     unload_npcap();
     LWIP_DBG("[平台清理] 完成\n");
 }
-
 #endif /* XNETWORK_USE_LWIP */
 #endif /* _WIN32 */

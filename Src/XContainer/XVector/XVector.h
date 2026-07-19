@@ -855,20 +855,6 @@ size_t XVector_maxSize(size_t typeSize);
  */
 #define XVector_constLast(this_vector)				XVector_back_base(this_vector)
 /**
- * @brief 获取首元素的可写指针（对齐STL front）
- * @param this_vector 目标XVector
- * @return 指向首元素的指针，向量为空返回NULL
- * @note 宏实现，等价于XVector_front_base
- */
-#define XVector_front(this_vector)					XVector_front_base(this_vector)
-/**
- * @brief 获取尾元素的可写指针（对齐STL back）
- * @param this_vector 目标XVector
- * @return 指向尾元素的指针，向量为空返回NULL
- * @note 宏实现，等价于XVector_back_base
- */
-#define XVector_back(this_vector)					XVector_back_base(this_vector)
-/**
  * @brief 获取从指定位置到末尾的子向量（对齐Qt QVector::sliced(pos)）
  * @param this_vector 源向量
  * @param pos 起始位置索引（0-based）

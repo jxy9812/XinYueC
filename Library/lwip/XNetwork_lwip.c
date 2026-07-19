@@ -1,25 +1,25 @@
-ï»¿/**
+/**
  * @file XNetwork_lwip.c
- * @brief lwIP å¹³å°ç½‘ç»œå®ç°ï¼ˆå¹³å°æ— å…³ + Raw API å›è°ƒæ¨¡å¼ï¼‰
+ * @brief lwIP Æ½Ì¨ÍøÂçÊµÏÖ£¨Æ½Ì¨ÎŞ¹Ø + Raw API »Øµ÷Ä£Ê½£©
  *
- * æ¶æ„åˆ†å±‚ï¼š
- *   XNetwork_platform.h                    -> ç»Ÿä¸€å¹³å°æŠ½è±¡æ¥å£
- *   +-- XNetwork_win32.c                   -> Windows IOCP å®ç°
- *   +-- XNetwork_lwip.cï¼ˆæœ¬æ–‡ä»¶ï¼‰          -> lwIP é€‚é…å±‚ï¼ˆå¹³å°æ— å…³ï¼‰
- *       +-- XNetwork_lwip_win32.c          -> Npcap è™šæ‹Ÿç½‘å¡ï¼ˆWindows å¹³å°ï¼‰
+ * ¼Ü¹¹·Ö²ã£º
+ *   XNetwork_platform.h                    -> Í³Ò»Æ½Ì¨³éÏó½Ó¿Ú
+ *   +-- XNetwork_win32.c                   -> Windows IOCP ÊµÏÖ
+ *   +-- XNetwork_lwip.c£¨±¾ÎÄ¼ş£©          -> lwIP ÊÊÅä²ã£¨Æ½Ì¨ÎŞ¹Ø£©
+ *       +-- XNetwork_lwip_win32.c          -> Npcap ĞéÄâÍø¿¨£¨Windows Æ½Ì¨£©
  *
- * è¿è¡ŒåŸç†ï¼š
- *   1. lwip_init() åˆå§‹åŒ– lwIP åè®®æ ˆ
- *   2. XTimeWheelGroup å®šæ—¶å™¨æ¯ LWIP_TICK_MS æ¯«ç§’è§¦å‘ï¼ˆé»˜è®¤ 5msï¼‰ï¼Œ
- *      a) è½®è¯¢è™šæ‹Ÿç½‘å¡æ•°æ®åŒ…ï¼ˆXNetworkLwip_pollPcapï¼‰
- *      b) lwIP å®šæ—¶å™¨ç”± LWIP_TIMERS_CUSTOM ç›´æ¥å¯¹æ¥ XTimeWheelGroupï¼Œæ— éœ€è½®è¯¢
- *      c) å‘åº”ç”¨çº¿ç¨‹æŠ•é€’äº‹ä»¶é€šçŸ¥
- *   3. åº”ç”¨çº¿ç¨‹é€šè¿‡ Raw API æ“ä½œï¼Œsys_arch_protect æä¾›é€’å½’é”ä¿æŠ¤
+ * ÔËĞĞÔ­Àí£º
+ *   1. lwip_init() ³õÊ¼»¯ lwIP Ğ­ÒéÕ»
+ *   2. XTimeWheelGroup ¶¨Ê±Æ÷Ã¿ LWIP_TICK_MS ºÁÃë´¥·¢£¨Ä¬ÈÏ 5ms£©£¬
+ *      a) ÂÖÑ¯ĞéÄâÍø¿¨Êı¾İ°ü£¨XNetworkLwip_pollPcap£©
+ *      b) lwIP ¶¨Ê±Æ÷ÓÉ LWIP_TIMERS_CUSTOM Ö±½Ó¶Ô½Ó XTimeWheelGroup£¬ÎŞĞèÂÖÑ¯
+ *      c) ÏòÓ¦ÓÃÏß³ÌÍ¶µİÊÂ¼şÍ¨Öª
+ *   3. Ó¦ÓÃÏß³ÌÍ¨¹ı Raw API ²Ù×÷£¬sys_arch_protect Ìá¹©µİ¹éËø±£»¤
  *
- * åŸºäº XSync + XMemory ç³»ç»Ÿå®ç°ï¼Œå¹³å°æ— å…³ã€‚
- * å†…å­˜åˆ†é…ç»Ÿä¸€ä½¿ç”¨ XMalloc_System / XFree_Systemã€‚
- * å®šæ—¶å™¨ä½¿ç”¨ XTimeWheelGroup å…¨å±€æ—¶é—´è½®ã€‚
- * éšæœºæ•°ä½¿ç”¨ XRandomGenerator_system()ã€‚
+ * »ùÓÚ XSync + XMemory ÏµÍ³ÊµÏÖ£¬Æ½Ì¨ÎŞ¹Ø¡£
+ * ÄÚ´æ·ÖÅäÍ³Ò»Ê¹ÓÃ XMalloc_System / XFree_System¡£
+ * ¶¨Ê±Æ÷Ê¹ÓÃ XTimeWheelGroup È«¾ÖÊ±¼äÂÖ¡£
+ * Ëæ»úÊıÊ¹ÓÃ XRandomGenerator_system()¡£
  */
 
 #include "XNetwork_config.h"
@@ -71,16 +71,16 @@
 
 /* ================================================================
  * Core locking abstraction
- *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0: å•çº¿ç¨‹ï¼Œé”ä¸ºç©ºæ“ä½œï¼ˆé›¶å¼€é”€ï¼‰
- *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=1: sys_arch_protectï¼ˆé€’å½’é”ï¼‰
- *   NO_SYS=0: LOCK_TCPIP_COREï¼ˆä¸ tcpip_thread åŒæ­¥ï¼‰
+ *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0: µ¥Ïß³Ì£¬ËøÎª¿Õ²Ù×÷£¨Áã¿ªÏú£©
+ *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=1: sys_arch_protect£¨µİ¹éËø£©
+ *   NO_SYS=0: LOCK_TCPIP_CORE£¨Óë tcpip_thread Í¬²½£©
  * ================================================================ */
 #if NO_SYS && SYS_LIGHTWEIGHT_PROT
 typedef sys_prot_t XNetLwipCoreLock;
 #define XNET_LWIP_LOCK()        sys_arch_protect()
 #define XNET_LWIP_UNLOCK(l)     sys_arch_unprotect(l)
 #elif NO_SYS
-/* å•çº¿ç¨‹æ¨¡å¼ï¼šæ‰€æœ‰ lwIP æ“ä½œåœ¨ä¸»çº¿ç¨‹ï¼Œæ— å¹¶å‘è®¿é—®ï¼Œé”ä¸ºç©ºæ“ä½œ */
+/* µ¥Ïß³ÌÄ£Ê½£ºËùÓĞ lwIP ²Ù×÷ÔÚÖ÷Ïß³Ì£¬ÎŞ²¢·¢·ÃÎÊ£¬ËøÎª¿Õ²Ù×÷ */
 typedef int XNetLwipCoreLock;
 #define XNET_LWIP_LOCK()        (0)
 #define XNET_LWIP_UNLOCK(l)     ((void)(l))
@@ -91,82 +91,82 @@ typedef int XNetLwipCoreLock;
 #endif
 
 /* ================================================================
- * å†…éƒ¨å®å¸¸é‡
+ * ÄÚ²¿ºê³£Á¿
  * ================================================================ */
 #define L4P(p) ((XNetworkSocketPrivateLwip*)(p))
-/* lwIP ç½‘å¡è½®è¯¢å‘¨æœŸï¼Œå¯é€šè¿‡ XNETWORK_LWIP_TICK_MS é…ç½® */
+/* lwIP Íø¿¨ÂÖÑ¯ÖÜÆÚ£¬¿ÉÍ¨¹ı XNETWORK_LWIP_TICK_MS ÅäÖÃ */
 #define LWIP_TICK_MS XNETWORK_LWIP_TICK_MS
 
 typedef struct XNetworkSocketPrivateLwip XNetworkSocketPrivateLwip;
 
 /* ================================================================
- * å…¨å±€çŠ¶æ€
+ * È«¾Ö×´Ì¬
  * ================================================================ */
-/* lwIP å…¨å±€çŠ¶æ€ï¼ˆä½åŸŸå‹ç¼©ï¼Œå‡å°‘å†…å­˜å ç”¨ï¼‰
- * åŸæœ¬ä¸º 4 ä¸ªç‹¬ç«‹é™æ€å˜é‡ï¼ˆçº¦ 24~32 å­—èŠ‚ï¼‰ï¼Œåˆå¹¶ä¸º 1 ä¸ªç»“æ„ä½“ï¼ˆ16 å­—èŠ‚ï¼‰ã€‚
- * - defaultNetif: æŒ‡é’ˆä¸å¯ä½¿ç”¨ä½åŸŸï¼Œå•ç‹¬å  8 å­—èŠ‚
- * - lastError:    é”™è¯¯ç èŒƒå›´ -15~0ï¼Œ8 ä½æœ‰ç¬¦å·è¶³å¤Ÿ
- * - ref:          å¼•ç”¨è®¡æ•°é€šå¸¸ 1~5ï¼Œ7 ä½ï¼ˆæœ€å¤§ 127ï¼‰è¶³å¤Ÿ
- * - inited:       åˆå§‹åŒ–æ ‡å¿—ï¼Œ1 ä½è¶³å¤Ÿ */
+/* lwIP È«¾Ö×´Ì¬£¨Î»ÓòÑ¹Ëõ£¬¼õÉÙÄÚ´æÕ¼ÓÃ£©
+ * Ô­±¾Îª 4 ¸ö¶ÀÁ¢¾²Ì¬±äÁ¿£¨Ô¼ 24~32 ×Ö½Ú£©£¬ºÏ²¢Îª 1 ¸ö½á¹¹Ìå£¨16 ×Ö½Ú£©¡£
+ * - defaultNetif: Ö¸Õë²»¿ÉÊ¹ÓÃÎ»Óò£¬µ¥¶ÀÕ¼ 8 ×Ö½Ú
+ * - lastError:    ´íÎóÂë·¶Î§ -15~0£¬8 Î»ÓĞ·ûºÅ×ã¹»
+ * - ref:          ÒıÓÃ¼ÆÊıÍ¨³£ 1~5£¬7 Î»£¨×î´ó 127£©×ã¹»
+ * - inited:       ³õÊ¼»¯±êÖ¾£¬1 Î»×ã¹» */
 static struct {
-    struct netif* defaultNetif;  /* é»˜è®¤ç½‘ç»œæ¥å£ */
-    int      lastError : 8;      /* æœ€åä¸€æ¬¡é”™è¯¯ç  (-15~0) */
-    unsigned ref       : 7;      /* lwIP å¼•ç”¨è®¡æ•° (max 127) */
-    unsigned inited    : 1;      /* æ˜¯å¦å·²åˆå§‹åŒ– */
+    struct netif* defaultNetif;  /* Ä¬ÈÏÍøÂç½Ó¿Ú */
+    int      lastError : 8;      /* ×îºóÒ»´Î´íÎóÂë (-15~0) */
+    unsigned ref       : 7;      /* lwIP ÒıÓÃ¼ÆÊı (max 127) */
+    unsigned inited    : 1;      /* ÊÇ·ñÒÑ³õÊ¼»¯ */
 } g_state;
 
 
 /* ================================================================
- * Socket ç§æœ‰æ•°æ®ç»“æ„
+ * Socket Ë½ÓĞÊı¾İ½á¹¹
  *
- * å°è£… lwIP çš„ TCP/UDP PCB æŒ‡é’ˆå’ŒçŠ¶æ€ä¿¡æ¯ã€‚
- * æ¯ä¸ª XAbstractSocket å¯¹åº”ä¸€ä¸ªæ­¤ç»“æ„ä½“å®ä¾‹ã€‚
+ * ·â×° lwIP µÄ TCP/UDP PCB Ö¸ÕëºÍ×´Ì¬ĞÅÏ¢¡£
+ * Ã¿¸ö XAbstractSocket ¶ÔÓ¦Ò»¸ö´Ë½á¹¹ÌåÊµÀı¡£
  * ================================================================ */
 typedef struct XNetworkSocketPrivateLwip {
-    XNetworkSocketPrivate base;    /* åŸºç±»ï¼šowner + notifiers (16 å­—èŠ‚) */
-    XFd fd;                       /* ç¼“å­˜çš„æ–‡ä»¶æè¿°ç¬¦ï¼ˆé¿å…å›è°ƒä¸­ vtable æŸ¥æ‰¾ï¼‰ */
-    struct tcp_pcb* tpcb;          /* TCP åè®®æ§åˆ¶å— */
-    struct udp_pcb* upcb;          /* UDP åè®®æ§åˆ¶å— */
-    char* rxBuf;                   /* æ¥æ”¶ç¼“å†²åŒº */
-    void* pendingAccept;           /* å¾…é¢†å–çš„å®¢æˆ·ç«¯è¿æ¥ */
-    size_t writeFinished;          /* å·²å‘é€å¹¶ç¡®è®¤çš„ç´¯è®¡å­—èŠ‚æ•°ï¼ˆé€šçŸ¥æ¶ˆè´¹è€…ï¼‰ */
-    size_t lastWriteFinished;      /* ä¸Šæ¬¡é€šçŸ¥æ¶ˆè´¹è€…çš„å·²å‘é€å­—èŠ‚æ•° */
-    /* ä»¥ä¸ŠæŒ‡é’ˆ/size_t åœ¨ 64 ä½ä¸‹å…± 72 å­—èŠ‚ï¼ˆå« XFd fd å­—æ®µï¼‰ */
-    int rxPos;                     /* æ¥æ”¶ç¼“å†²åŒºå½“å‰å†™å…¥ä½ç½® */
-    int rxTotal;                   /* ä¸Šä¸€æ¬¡æ¥æ”¶çš„å­—èŠ‚æ•° */
-    ip_addr_t fromAddr;            /* UDP æ•°æ®æŠ¥æ¥æºåœ°å€ (IPv4=4 å­—èŠ‚) */
-    uint16_t fromPort;             /* UDP æ•°æ®æŠ¥æ¥æºç«¯å£ */
-    /* ä½åŸŸå‹ç¼©ï¼š8 ä¸ªå¸ƒå°”(8ä½) + sockType(2ä½) + lastErr(8ä½) = 18 ä½ï¼Œåˆå¹¶åˆ° 4 å­—èŠ‚
-     * åŸæœ¬ 8 ä¸ª bool(8å­—èŠ‚) + sockType(4å­—èŠ‚) + lastErr(4å­—èŠ‚) + å¯¹é½å¡«å……
-     * ç°å‹ç¼©ä¸º 4 å­—èŠ‚ï¼Œç»“æ„ä½“ä» ~104 å­—èŠ‚å‡è‡³ 88 å­—èŠ‚ */
-    unsigned connected   : 1;      /* æ˜¯å¦å·²è¿æ¥ */
-    unsigned isServer    : 1;      /* æ˜¯å¦ä¸ºæœåŠ¡ç«¯ */
-    unsigned closing     : 1;      /* æ˜¯å¦æ­£åœ¨å…³é—­ */
-    unsigned connectDone : 1;      /* è¿æ¥å®Œæˆæ ‡è®° */
-    unsigned hasReadData : 1;      /* æœ‰å¯è¯»æ•°æ®æ ‡è®° */
-    unsigned hasWriteDone: 1;      /* å†™å…¥å®Œæˆæ ‡è®° */
-    unsigned hasAccept   : 1;      /* æœ‰æ–°å®¢æˆ·ç«¯è¿æ¥æ ‡è®° */
-    unsigned hasError    : 1;      /* æœ‰é”™è¯¯å‘ç”Ÿæ ‡è®° */
-    unsigned sockType    : 2;      /* Socket ç±»å‹ (0=TCP, 1=UDP) */
-    int      lastErr     : 8;      /* æœ€åä¸€æ¬¡ lwIP é”™è¯¯ç  (err_t, -16~0) */
+    XNetworkSocketPrivate base;    /* »ùÀà£ºowner + notifiers (16 ×Ö½Ú) */
+    XFd fd;                       /* »º´æµÄÎÄ¼şÃèÊö·û£¨±ÜÃâ»Øµ÷ÖĞ vtable ²éÕÒ£© */
+    struct tcp_pcb* tpcb;          /* TCP Ğ­Òé¿ØÖÆ¿é */
+    struct udp_pcb* upcb;          /* UDP Ğ­Òé¿ØÖÆ¿é */
+    char* rxBuf;                   /* ½ÓÊÕ»º³åÇø */
+    void* pendingAccept;           /* ´ıÁìÈ¡µÄ¿Í»§¶ËÁ¬½Ó */
+    size_t writeFinished;          /* ÒÑ·¢ËÍ²¢È·ÈÏµÄÀÛ¼Æ×Ö½ÚÊı£¨Í¨ÖªÏû·ÑÕß£© */
+    size_t lastWriteFinished;      /* ÉÏ´ÎÍ¨ÖªÏû·ÑÕßµÄÒÑ·¢ËÍ×Ö½ÚÊı */
+    /* ÒÔÉÏÖ¸Õë/size_t ÔÚ 64 Î»ÏÂ¹² 72 ×Ö½Ú£¨º¬ XFd fd ×Ö¶Î£© */
+    int rxPos;                     /* ½ÓÊÕ»º³åÇøµ±Ç°Ğ´ÈëÎ»ÖÃ */
+    int rxTotal;                   /* ÉÏÒ»´Î½ÓÊÕµÄ×Ö½ÚÊı */
+    ip_addr_t fromAddr;            /* UDP Êı¾İ±¨À´Ô´µØÖ· (IPv4=4 ×Ö½Ú) */
+    uint16_t fromPort;             /* UDP Êı¾İ±¨À´Ô´¶Ë¿Ú */
+    /* Î»ÓòÑ¹Ëõ£º8 ¸ö²¼¶û(8Î») + sockType(2Î») + lastErr(8Î») = 18 Î»£¬ºÏ²¢µ½ 4 ×Ö½Ú
+     * Ô­±¾ 8 ¸ö bool(8×Ö½Ú) + sockType(4×Ö½Ú) + lastErr(4×Ö½Ú) + ¶ÔÆëÌî³ä
+     * ÏÖÑ¹ËõÎª 4 ×Ö½Ú£¬½á¹¹Ìå´Ó ~104 ×Ö½Ú¼õÖÁ 88 ×Ö½Ú */
+    unsigned connected   : 1;      /* ÊÇ·ñÒÑÁ¬½Ó */
+    unsigned isServer    : 1;      /* ÊÇ·ñÎª·şÎñ¶Ë */
+    unsigned closing     : 1;      /* ÊÇ·ñÕıÔÚ¹Ø±Õ */
+    unsigned connectDone : 1;      /* Á¬½ÓÍê³É±ê¼Ç */
+    unsigned hasReadData : 1;      /* ÓĞ¿É¶ÁÊı¾İ±ê¼Ç */
+    unsigned hasWriteDone: 1;      /* Ğ´ÈëÍê³É±ê¼Ç */
+    unsigned hasAccept   : 1;      /* ÓĞĞÂ¿Í»§¶ËÁ¬½Ó±ê¼Ç */
+    unsigned hasError    : 1;      /* ÓĞ´íÎó·¢Éú±ê¼Ç */
+    unsigned sockType    : 2;      /* Socket ÀàĞÍ (0=TCP, 1=UDP) */
+    int      lastErr     : 8;      /* ×îºóÒ»´Î lwIP ´íÎóÂë (err_t, -16~0) */
 } XNetworkSocketPrivateLwip;
 
 /* ================================================================
- * Socket äº‹ä»¶ç›´æ¥æŠ•é€’ï¼ˆå›è°ƒé©±åŠ¨ï¼Œæ›¿ä»£è½®è¯¢ï¼‰
+ * Socket ÊÂ¼şÖ±½ÓÍ¶µİ£¨»Øµ÷Çı¶¯£¬Ìæ´úÂÖÑ¯£©
  *
- * ç”± lwIP Raw API å›è°ƒå‡½æ•°è°ƒç”¨ï¼Œå°†æŒ‡å®šç±»å‹çš„äº‹ä»¶ CQ æ¡ç›®
- * æ¨å…¥å…¨å±€ IoRingã€‚æ¯ä¸ªå›è°ƒæ¨é€è‡ªå·±çš„äº‹ä»¶ç±»å‹ï¼Œæ— éœ€åˆå¹¶æ ‡å¿—ï¼Œ
- * æ—  eventPending é˜²é‡å¤æœºåˆ¶--é‡å¤ CQ æ¡ç›®åœ¨åº”ç”¨å±‚å¤„ç†æ—¶
- * å› æ ‡å¿—å·²æ¸…é™¤è€Œæˆä¸ºç©ºæ“ä½œï¼ˆno-opï¼‰ï¼Œä¸ä¼šé€ æˆæ•°æ®é‡å¤ã€‚
+ * ÓÉ lwIP Raw API »Øµ÷º¯Êıµ÷ÓÃ£¬½«Ö¸¶¨ÀàĞÍµÄÊÂ¼ş CQ ÌõÄ¿
+ * ÍÆÈëÈ«¾Ö IoRing¡£Ã¿¸ö»Øµ÷ÍÆËÍ×Ô¼ºµÄÊÂ¼şÀàĞÍ£¬ÎŞĞèºÏ²¢±êÖ¾£¬
+ * ÎŞ eventPending ·ÀÖØ¸´»úÖÆ--ÖØ¸´ CQ ÌõÄ¿ÔÚÓ¦ÓÃ²ã´¦ÀíÊ±
+ * Òò±êÖ¾ÒÑÇå³ı¶ø³ÉÎª¿Õ²Ù×÷£¨no-op£©£¬²»»áÔì³ÉÊı¾İÖØ¸´¡£
  * ================================================================ */
 
 /**
- * @brief ä» lwIP å›è°ƒä¸­æŠ•é€’æŒ‡å®šç±»å‹çš„ Socket äº‹ä»¶åˆ° IoRing CQ
- * @param s       Socket ç§æœ‰æ•°æ®æŒ‡é’ˆ
- * @param actType äº‹ä»¶ç±»å‹æ©ç ï¼ˆXSocketActType ä½æ©ç ï¼‰
+ * @brief ´Ó lwIP »Øµ÷ÖĞÍ¶µİÖ¸¶¨ÀàĞÍµÄ Socket ÊÂ¼şµ½ IoRing CQ
+ * @param s       Socket Ë½ÓĞÊı¾İÖ¸Õë
+ * @param actType ÊÂ¼şÀàĞÍÑÚÂë£¨XSocketActType Î»ÑÚÂë£©
  *
- * è°ƒç”¨æ—¶æœºï¼šlwIP å›è°ƒå‡½æ•°è®¾ç½®æ ‡å¿—ä½ä¹‹åã€è¿”å›ä¹‹å‰ã€‚
- * å·²åœ¨æ ¸å¿ƒé”ä¿æŠ¤ä¸‹æ‰§è¡Œï¼ˆå›è°ƒç”± lwIP æ ¸å¿ƒåœ¨é”å†…è°ƒç”¨ï¼‰ã€‚
+ * µ÷ÓÃÊ±»ú£ºlwIP »Øµ÷º¯ÊıÉèÖÃ±êÖ¾Î»Ö®ºó¡¢·µ»ØÖ®Ç°¡£
+ * ÒÑÔÚºËĞÄËø±£»¤ÏÂÖ´ĞĞ£¨»Øµ÷ÓÉ lwIP ºËĞÄÔÚËøÄÚµ÷ÓÃ£©¡£
  */
 static void push_socket_cq(XNetworkSocketPrivateLwip* s, uint32_t actType) {
 #if XAbstractNetIoRing_ON
@@ -177,7 +177,7 @@ static void push_socket_cq(XNetworkSocketPrivateLwip* s, uint32_t actType) {
 
     XFd fd = s->fd;
     if (fd == XFD_INVALID) {
-        /* å›è°ƒåœ¨ ensure_xfd ä¹‹å‰è§¦å‘ï¼ˆæå°‘ï¼‰ï¼šç›´æ¥ä»è®¾å¤‡è·å–å¹¶ç¼“å­˜ */
+        /* »Øµ÷ÔÚ ensure_xfd Ö®Ç°´¥·¢£¨¼«ÉÙ£©£ºÖ±½Ó´ÓÉè±¸»ñÈ¡²¢»º´æ */
         fd = XIODevice_fd((XIODevice*)s->base.owner);
         s->fd = fd;
     }
@@ -197,7 +197,7 @@ static void push_socket_cq(XNetworkSocketPrivateLwip* s, uint32_t actType) {
 
 
 /* ================================================================
- * åœ°å€è½¬æ¢å·¥å…·å‡½æ•°
+ * µØÖ·×ª»»¹¤¾ßº¯Êı
  * ================================================================ */
 
 /* XHostAddress -> lwIP ip_addr_t */
@@ -226,7 +226,7 @@ static void ip_to_addr(const ip_addr_t* ip, XHostAddress* a) {
         XHostAddress_setAddressIPv4(a, lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(ip))));
 }
 
-/* ç¡®ä¿ Socket å·²åˆ†é…æ–‡ä»¶æè¿°ç¬¦ï¼Œä¾›äº‹ä»¶ç³»ç»Ÿåœ°å€æŸ¥æ‰¾ */
+/* È·±£ Socket ÒÑ·ÖÅäÎÄ¼şÃèÊö·û£¬¹©ÊÂ¼şÏµÍ³µØÖ·²éÕÒ */
 static void ensure_xfd(XNetworkSocketPrivate* priv) {
     if (!priv || !priv->owner) return;
     XNetworkSocketPrivateLwip* s = L4P(priv);
@@ -237,7 +237,7 @@ static void ensure_xfd(XNetworkSocketPrivate* priv) {
 
 
 /* ================================================================
- * é”™è¯¯ç è½¬æ¢ï¼šlwIP err_t -> ç±» POSIX errno
+ * ´íÎóÂë×ª»»£ºlwIP err_t -> Àà POSIX errno
  * ================================================================ */
 int XNetworkLwip_err_to_errno(int e) {
     switch (e) {
@@ -263,13 +263,13 @@ int XNetworkLwip_err_to_errno(int e) {
 }
 
 /* ================================================================
- * TCP å›è°ƒå‡½æ•°
+ * TCP »Øµ÷º¯Êı
  *
- * è¿™äº›å›è°ƒåœ¨ lwIP æ ¸å¿ƒçº¿ç¨‹æˆ–è¶…æ—¶å¤„ç†ä¸­æ‰§è¡Œï¼Œç”± sys_arch_protect ä¿æŠ¤ã€‚
- * å›è°ƒä¸­åªè®¾ç½®æ ‡å¿—ä½ï¼Œå®é™…äº‹ä»¶é€šçŸ¥ç”±åº”ç”¨çº¿ç¨‹å®Œæˆã€‚
+ * ÕâĞ©»Øµ÷ÔÚ lwIP ºËĞÄÏß³Ì»ò³¬Ê±´¦ÀíÖĞÖ´ĞĞ£¬ÓÉ sys_arch_protect ±£»¤¡£
+ * »Øµ÷ÖĞÖ»ÉèÖÃ±êÖ¾Î»£¬Êµ¼ÊÊÂ¼şÍ¨ÖªÓÉÓ¦ÓÃÏß³ÌÍê³É¡£
  * ================================================================ */
 
-/* TCP æ•°æ®æ¥æ”¶å›è°ƒ */
+/* TCP Êı¾İ½ÓÊÕ»Øµ÷ */
 static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err) {
     (void)err;
     XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
@@ -288,14 +288,14 @@ static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err
             s->hasReadData = true;
             push_socket_cq(s, XSocketAct_Read);
         }
-        acked = copy;  /* åªç¡®è®¤å·²ç¼“å†²çš„å­—èŠ‚æ•°ï¼Œæœªç¼“å†²çš„ç”± lwIP é‡ä¼  */
+        acked = copy;  /* Ö»È·ÈÏÒÑ»º³åµÄ×Ö½ÚÊı£¬Î´»º³åµÄÓÉ lwIP ÖØ´« */
     }
-    if (acked > 0) tcp_recved(pcb, (u16_t)acked);
     pbuf_free(p);
+    /* tcp_recved ÑÓ³Ùµ½ XNetwork_socketContinueRead ÖĞµ÷ÓÃ£¬±ÜÃâ´°¿Ú¹ÜÀí¹ıÔç */
     return ERR_OK;
 }
 
-/* TCP å‘é€å®Œæˆå›è°ƒ */
+/* TCP ·¢ËÍÍê³É»Øµ÷ */
 static err_t tcpSentCb(void* arg, struct tcp_pcb* pcb, u16_t len) {
     (void)pcb;
     XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
@@ -304,50 +304,50 @@ static err_t tcpSentCb(void* arg, struct tcp_pcb* pcb, u16_t len) {
     return ERR_OK;
 }
 
-/* TCP é”™è¯¯å›è°ƒ */
+/* TCP ´íÎó»Øµ÷ */
 static void tcpErrCb(void* arg, err_t err) {
     XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
     if (s) {
         s->closing = true; s->hasError = true;
         s->lastErr = err; g_state.lastError = XNetworkLwip_err_to_errno(err);
         s->tpcb = NULL;
-        s->connected = false;  /* æ ‡è®°ä¸ºæœªè¿æ¥ï¼Œç¡®ä¿ Connect é€šçŸ¥èµ°å¤±è´¥åˆ†æ”¯ */
+        s->connected = false;  /* ±ê¼ÇÎªÎ´Á¬½Ó£¬È·±£ Connect Í¨Öª×ßÊ§°Ü·ÖÖ§ */
         push_socket_cq(s, XSocketAct_Connect);
     }
 }
 
-/* TCP è½®è¯¢å›è°ƒï¼ˆä¿æŒè¿æ¥ï¼Œé˜²è¶…æ—¶æ–­å¼€ï¼‰
- * å‚æ•° interval ä¸º tcp_poll çš„è°ƒç”¨é—´éš”ï¼Œå•ä½ 0.5 ç§’ã€‚
- * interval=2 è¡¨ç¤º 1 ç§’é—´éš”ï¼ˆæ¯ç§’è½®è¯¢ä¸€æ¬¡ï¼‰ */
+/* TCP ÂÖÑ¯»Øµ÷£¨±£³ÖÁ¬½Ó£¬·À³¬Ê±¶Ï¿ª£©
+ * ²ÎÊı interval Îª tcp_poll µÄµ÷ÓÃ¼ä¸ô£¬µ¥Î» 0.5 Ãë¡£
+ * interval=2 ±íÊ¾ 1 Ãë¼ä¸ô£¨Ã¿ÃëÂÖÑ¯Ò»´Î£© */
 static err_t tcpPollCb(void* arg, struct tcp_pcb* pcb) {
     (void)arg; (void)pcb; return ERR_OK;
 }
 
-/* TCP è¿æ¥å®Œæˆå›è°ƒ */
+/* TCP Á¬½ÓÍê³É»Øµ÷ */
 static err_t tcpConnectedCb(void* arg, struct tcp_pcb* pcb, err_t err) {
     (void)pcb;
     XNetworkSocketPrivateLwip* s = (XNetworkSocketPrivateLwip*)arg;
     if (!s) return ERR_ABRT;
     if (err == ERR_OK) {
         s->connected = true; s->connectDone = true;
-        LWIP_DBG("[TCPè¿æ¥] è¿æ¥æˆåŠŸ\n");
+        LWIP_DBG("[TCPÁ¬½Ó] Á¬½Ó³É¹¦\n");
     } else {
         s->hasError = true; s->lastErr = err;
         g_state.lastError = XNetworkLwip_err_to_errno(err);
-        LWIP_DBG("[TCPè¿æ¥] è¿æ¥å¤±è´¥, err=%d\n", (int)err);
+        LWIP_DBG("[TCPÁ¬½Ó] Á¬½ÓÊ§°Ü, err=%d\n", (int)err);
     }
     push_socket_cq(s, XSocketAct_Connect);
     return ERR_OK;
 }
 
-/* TCP æ¥å—æ–°è¿æ¥å›è°ƒï¼ˆæœåŠ¡ç«¯ï¼‰
- * ä¸ºå®¢æˆ·ç«¯ Socket åˆ†é…ç§æœ‰æ•°æ®ï¼Œå­˜å…¥æœåŠ¡ç«¯ pendingAccept å­—æ®µ */
+/* TCP ½ÓÊÜĞÂÁ¬½Ó»Øµ÷£¨·şÎñ¶Ë£©
+ * Îª¿Í»§¶Ë Socket ·ÖÅäË½ÓĞÊı¾İ£¬´æÈë·şÎñ¶Ë pendingAccept ×Ö¶Î */
 static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err) {
     (void)err;
     XNetworkSocketPrivateLwip* ss = (XNetworkSocketPrivateLwip*)arg;
     if (!ss || !newPcb) return ERR_ABRT;
 
-    /* ä¸ºæ–°å®¢æˆ·ç«¯åˆ†é… Socket ç§æœ‰æ•°æ®ç»“æ„ */
+    /* ÎªĞÂ¿Í»§¶Ë·ÖÅä Socket Ë½ÓĞÊı¾İ½á¹¹ */
     XNetworkSocketPrivateLwip* cs = (XNetworkSocketPrivateLwip*)XMalloc_System(sizeof(*cs));
     if (!cs) return ERR_MEM;
     memset(cs, 0, sizeof(*cs));
@@ -358,22 +358,22 @@ static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err) {
     cs->rxBuf = (char*)XMalloc_System(XNETWORK_LWIP_RECV_BUFFER_SIZE);
     if (!cs->rxBuf) { XFree_System(cs); return ERR_MEM; }
 
-    /* æ³¨å†Œ TCP å›è°ƒ */
+    /* ×¢²á TCP »Øµ÷ */
     tcp_arg(newPcb, cs);
     tcp_recv(newPcb, tcpRecvCb);
     tcp_sent(newPcb, tcpSentCb);
     tcp_err(newPcb, tcpErrCb);
-    tcp_poll(newPcb, tcpPollCb, 2);  /* æ¯ 1 ç§’è½®è¯¢ä¸€æ¬¡ */
+    tcp_poll(newPcb, tcpPollCb, 2);  /* Ã¿ 1 ÃëÂÖÑ¯Ò»´Î */
 
-    /* å­˜å…¥æœåŠ¡ç«¯çš„å¾…é¢†å–é˜Ÿåˆ— */
+    /* ´æÈë·şÎñ¶ËµÄ´ıÁìÈ¡¶ÓÁĞ */
     ss->pendingAccept = cs;
     ss->hasAccept = true;
     push_socket_cq(ss, XSocketAct_Accept);
-    LWIP_DBG("[TCPæœåŠ¡] æ–°å®¢æˆ·ç«¯è¿æ¥\n");
+    LWIP_DBG("[TCP·şÎñ] ĞÂ¿Í»§¶ËÁ¬½Ó\n");
     return ERR_OK;
 }
 
-/* UDP æ•°æ®æ¥æ”¶å›è°ƒ */
+/* UDP Êı¾İ½ÓÊÕ»Øµ÷ */
 static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
                       const ip_addr_t* addr, u16_t port) {
     (void)pcb;
@@ -397,14 +397,14 @@ static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
 
 
 /* ================================================================
- * å¹³å°åˆå§‹åŒ–/æ¸…ç†
+ * Æ½Ì¨³õÊ¼»¯/ÇåÀí
  * ================================================================ */
 
 void XNetwork_ensureInit(void) {
     if (g_state.inited) { g_state.ref++; return; }
-    LWIP_DBG("[lwIPåˆå§‹åŒ–] å¼€å§‹åˆå§‹åŒ– lwIP åè®®æ ˆ...\n");
+    LWIP_DBG("[lwIP³õÊ¼»¯] ¿ªÊ¼³õÊ¼»¯ lwIP Ğ­ÒéÕ»...\n");
 
-    /* åˆå§‹åŒ– lwIP åè®®æ ˆï¼šå†…å­˜æ± ã€pbufã€TCP/UDP/IP/ARP ç­‰ */
+    /* ³õÊ¼»¯ lwIP Ğ­ÒéÕ»£ºÄÚ´æ³Ø¡¢pbuf¡¢TCP/UDP/IP/ARP µÈ */
     /* Initialize sys_arch layer (create core recursive mutex g_coreLock).
      * NO_SYS=1: lwip_init() does NOT call sys_init(), so we must call it here.
      * NO_SYS=0: lwip_init() also calls it, but sys_init() is idempotent (safe). */
@@ -415,18 +415,18 @@ void XNetwork_ensureInit(void) {
     tcpip_init(NULL, NULL);
 #endif
 
-    /* å¹³å°ç½‘å¡åˆå§‹åŒ–ï¼šNpcap / TAP / ç¡¬ä»¶ MAC */
+    /* Æ½Ì¨Íø¿¨³õÊ¼»¯£ºNpcap / TAP / Ó²¼ş MAC */
     struct netif* nif = XNetworkLwip_platform_init();
     if (nif) {
         g_state.defaultNetif = nif;
-        LWIP_DBG("[lwIPåˆå§‹åŒ–] å¹³å°ç½‘å¡åˆå§‹åŒ–æˆåŠŸ\n");
+        LWIP_DBG("[lwIP³õÊ¼»¯] Æ½Ì¨Íø¿¨³õÊ¼»¯³É¹¦\n");
     } else {
-        LWIP_DBG("[lwIPåˆå§‹åŒ–] è­¦å‘Šï¼šå¹³å°ç½‘å¡åˆå§‹åŒ–å¤±è´¥ï¼Œå¯èƒ½æ— æ³•é€šä¿¡\n");
+        LWIP_DBG("[lwIP³õÊ¼»¯] ¾¯¸æ£ºÆ½Ì¨Íø¿¨³õÊ¼»¯Ê§°Ü£¬¿ÉÄÜÎŞ·¨Í¨ĞÅ\n");
     }
 
     g_state.inited = 1;
     g_state.ref = 1;
-    LWIP_DBG("[lwIPåˆå§‹åŒ–] å®Œæˆï¼Œå¼•ç”¨è®¡æ•°=%d\n", g_state.ref);
+    LWIP_DBG("[lwIP³õÊ¼»¯] Íê³É£¬ÒıÓÃ¼ÆÊı=%d\n", g_state.ref);
 }
 
 void XNetwork_cleanup(void) {
@@ -434,17 +434,17 @@ void XNetwork_cleanup(void) {
     g_state.ref--;
     if (g_state.ref > 0) return;
 
-    LWIP_DBG("[lwIPæ¸…ç†] å¼€å§‹æ¸…ç†...\n");
+    LWIP_DBG("[lwIPÇåÀí] ¿ªÊ¼ÇåÀí...\n");
 
-    /* å¹³å°ç½‘å¡æ¸…ç† */
+    /* Æ½Ì¨Íø¿¨ÇåÀí */
     XNetworkLwip_platform_deinit();
 
     g_state.inited = 0;
     g_state.defaultNetif = NULL;
-    LWIP_DBG("[lwIPæ¸…ç†] å®Œæˆ\n");
+    LWIP_DBG("[lwIPÇåÀí] Íê³É\n");
 }
 
-/* é”™è¯¯ä¿¡æ¯ */
+/* ´íÎóĞÅÏ¢ */
 int XNetwork_lastError(void) { return g_state.lastError; }
 char* XNetwork_errorString(int errorCode) {
     char* s = (char*)XMalloc_System(64);
@@ -453,7 +453,7 @@ char* XNetwork_errorString(int errorCode) {
 }
 
 /* ================================================================
- * Socket åˆ›å»º/é”€æ¯
+ * Socket ´´½¨/Ïú»Ù
  * ================================================================ */
 
 XNetworkSocketPrivate* XNetwork_createSocketPrivate(void* owner) {
@@ -472,7 +472,7 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
     if (!priv) return;
     XNetworkSocketPrivateLwip* s = L4P(priv);
 
-    /* å…³é—­ lwIP PCBï¼Œéœ€è¦æŒæœ‰æ ¸å¿ƒé” */
+    /* ¹Ø±Õ lwIP PCB£¬ĞèÒª³ÖÓĞºËĞÄËø */
     if (s->tpcb || s->upcb) {
         XNetLwipCoreLock prot = XNET_LWIP_LOCK();
         if (s->tpcb) { tcp_close(s->tpcb); s->tpcb = NULL; }
@@ -480,11 +480,11 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
         XNET_LWIP_UNLOCK(prot);
     }
 
-    /* é‡Šæ”¾èµ„æº */
+    /* ÊÍ·Å×ÊÔ´ */
     if (s->rxBuf) XFree_System(s->rxBuf);
     if (s->base.notifiers) XVector_delete_base(s->base.notifiers);
 
-    /* æ¸…ç†æœªé¢†å–çš„ Accept è¿æ¥ */
+    /* ÇåÀíÎ´ÁìÈ¡µÄ Accept Á¬½Ó */
     if (s->pendingAccept) {
         XNetworkSocketPrivateLwip* cs = (XNetworkSocketPrivateLwip*)s->pendingAccept;
         if (cs->rxBuf) XFree_System(cs->rxBuf);
@@ -505,25 +505,25 @@ bool XNetwork_socketIsConnected(const XNetworkSocketPrivate* priv) {
 /* ================================================================
  * Socket ??
  *
- * åŸºäº lwIP Raw API å›è°ƒçš„ TCP æœåŠ¡ç«¯ç»‘å®šï¼ˆéé˜»å¡æ¨¡å¼ï¼‰ã€‚
- * å›è°ƒæ¨¡å¼ä¸­ XNetwork_socketBind åˆ†é… TCP PCB å¹¶ç«‹åˆ»è¿”å›ã€‚
+ * »ùÓÚ lwIP Raw API »Øµ÷µÄ TCP ·şÎñ¶Ë°ó¶¨£¨·Ç×èÈûÄ£Ê½£©¡£
+ * »Øµ÷Ä£Ê½ÖĞ XNetwork_socketBind ·ÖÅä TCP PCB ²¢Á¢¿Ì·µ»Ø¡£
  * ================================================================ */
 uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* address,
                               uint16_t port, bool reuseAddr, bool shareAddr,
                               XNetworkSocketType sockType) {
-    (void)reuseAddr; (void)shareAddr;  /* lwIP Raw API ä¸æ”¯æŒ SO_REUSEADDR */
+    (void)reuseAddr; (void)shareAddr;  /* lwIP Raw API ²»Ö§³Ö SO_REUSEADDR */
     if (!priv) return 0;
     XNetwork_ensureInit();
     XNetworkSocketPrivateLwip* s = L4P(priv);
     s->sockType = (int)sockType;
 
-    /* åœ°å€è½¬æ¢ */
+    /* µØÖ·×ª»» */
     ip_addr_t bindAddr;
     if (address) addr_to_ip(address, &bindAddr); else bindAddr = *IP_ADDR_ANY;
 
     err_t err;
     if (sockType == XNetwork_Tcp) {
-        /* TCP æœåŠ¡ç«¯ï¼šåˆ›å»º PCB å¹¶å¼€å§‹ç›‘å¬ */
+        /* TCP ·şÎñ¶Ë£º´´½¨ PCB ²¢¿ªÊ¼¼àÌı */
         s->tpcb = tcp_new();
         if (!s->tpcb) return 0;
         if (tcp_bind(s->tpcb, &bindAddr, port) != ERR_OK) {
@@ -537,9 +537,9 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
         s->isServer = true;
         tcp_arg(s->tpcb, s);
         tcp_accept(s->tpcb, tcpAcceptCb);
-            LWIP_DBG("[ç»‘å®š] TCPæœåŠ¡ç«¯ port=%d backlog=%d\n", (int)port, XNETWORK_LWIP_MAX_LISTEN_BACKLOG);
+            LWIP_DBG("[°ó¶¨] TCP·şÎñ¶Ë port=%d backlog=%d\n", (int)port, XNETWORK_LWIP_MAX_LISTEN_BACKLOG);
     } else {
-        /* UDPï¼šåˆ›å»º PCB å¹¶ç»‘å®š */
+        /* UDP£º´´½¨ PCB ²¢°ó¶¨ */
         s->upcb = udp_new();
         if (!s->upcb) return 0;
         if (udp_bind(s->upcb, &bindAddr, port) != ERR_OK) {
@@ -547,7 +547,7 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
         }
         udp_recv(s->upcb, udpRecvCb, s);
         s->connected = true;
-        LWIP_DBG("[ç»‘å®š] UDP port=%d\n", (int)port);
+        LWIP_DBG("[°ó¶¨] UDP port=%d\n", (int)port);
     }
     ensure_xfd(priv);
     return port;
@@ -555,37 +555,37 @@ uint16_t XNetwork_socketBind(XNetworkSocketPrivate* priv, const XHostAddress* ad
 
 
 /* ================================================================
- * ç½‘ç»œå°±ç»ªä¿éšœ + å¼‚æ­¥ DNS è§£æ
+ * ÍøÂç¾ÍĞ÷±£ÕÏ + Òì²½ DNS ½âÎö
  *
- * é—®é¢˜èƒŒæ™¯ï¼š
- *   1. dns_gethostbyname ä¼  NULL å›è°ƒæ—¶ï¼Œåªèƒ½è§£æå·²ç¼“å­˜æˆ– IP å­—ç¬¦ä¸²ï¼Œ
- *      å¯¹æœªç¼“å­˜åŸŸåè¿”å› ERR_INPROGRESS åæ°¸è¿œä¸ä¼šé€šçŸ¥å®Œæˆã€‚
- *   2. Windows ä¸Š DHCP é€šå¸¸æ— æ³•å®Œæˆï¼ˆå®¿ä¸»æœºå·²æŒæœ‰ IP ç§Ÿçº¦ï¼‰ï¼Œ
- *      netif ä»ä¸º 0.0.0.0ï¼ŒDNS æŸ¥è¯¢æ— æº IPï¼›ä¸”æ—  DNS æœåŠ¡å™¨ã€‚
+ * ÎÊÌâ±³¾°£º
+ *   1. dns_gethostbyname ´« NULL »Øµ÷Ê±£¬Ö»ÄÜ½âÎöÒÑ»º´æ»ò IP ×Ö·û´®£¬
+ *      ¶ÔÎ´»º´æÓòÃû·µ»Ø ERR_INPROGRESS ºóÓÀÔ¶²»»áÍ¨ÖªÍê³É¡£
+ *   2. Windows ÉÏ DHCP Í¨³£ÎŞ·¨Íê³É£¨ËŞÖ÷»úÒÑ³ÖÓĞ IP ×âÔ¼£©£¬
+ *      netif ÈÔÎª 0.0.0.0£¬DNS ²éÑ¯ÎŞÔ´ IP£»ÇÒÎŞ DNS ·şÎñÆ÷¡£
  *
- * è§£å†³æ–¹æ¡ˆï¼š
- *   ensure_network_ready(): ç­‰å¾…/å¼ºåˆ¶ç½‘å¡è·å– IP + è®¾ç½® fallback DNS æœåŠ¡å™¨
- *   lwip_resolve_name():    dns_gethostbyname + å›è°ƒ + è½®è¯¢ç­‰å¾…ç»“æœ
+ * ½â¾ö·½°¸£º
+ *   ensure_network_ready(): µÈ´ı/Ç¿ÖÆÍø¿¨»ñÈ¡ IP + ÉèÖÃ fallback DNS ·şÎñÆ÷
+ *   lwip_resolve_name():    dns_gethostbyname + »Øµ÷ + ÂÖÑ¯µÈ´ı½á¹û
  * ================================================================ */
 
-/* åˆ¤æ–­ netif æ˜¯å¦æ‹¥æœ‰æœ‰æ•ˆçš„éå›ç¯ IPv4 åœ°å€ */
+/* ÅĞ¶Ï netif ÊÇ·ñÓµÓĞÓĞĞ§µÄ·Ç»Ø»· IPv4 µØÖ· */
 static bool netif_has_valid_ipv4(struct netif* n) {
     if (!n || ip_addr_isany(&n->ip_addr) || !(n->flags & NETIF_FLAG_UP)) return false;
     uint32_t hip = lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(&n->ip_addr)));
-    /* è·³è¿‡ 127.x.x.x (å›ç¯) å’Œ 169.254.x.x (APIPA) */
+    /* Ìø¹ı 127.x.x.x (»Ø»·) ºÍ 169.254.x.x (APIPA) */
     if ((hip >> 24) == 127 || (hip >> 16) == 0xA9FE) return false;
     return true;
 }
 
-/* ç¡®ä¿ç½‘ç»œå°±ç»ªï¼š
- *   1. ç­‰å¾…ç½‘å¡é€šè¿‡ DHCP è·å–æœ‰æ•ˆ IPï¼ˆDHCP å®Œæˆæ—¶ lwIP è‡ªåŠ¨è®¾ç½® IP/ç½‘å…³/DNSï¼‰
- *   2. ç¡®ä¿æœ‰é»˜è®¤è·¯ç”± */
+/* È·±£ÍøÂç¾ÍĞ÷£º
+ *   1. µÈ´ıÍø¿¨Í¨¹ı DHCP »ñÈ¡ÓĞĞ§ IP£¨DHCP Íê³ÉÊ± lwIP ×Ô¶¯ÉèÖÃ IP/Íø¹Ø/DNS£©
+ *   2. È·±£ÓĞÄ¬ÈÏÂ·ÓÉ */
 static void ensure_network_ready(uint32_t timeoutMs) {
     struct netif* n;
     bool hasIp = false;
     uint32_t start = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF);
 
-    /* ç­‰å¾…è‡³å°‘ä¸€ä¸ªç½‘å¡é€šè¿‡ DHCP è·å–æœ‰æ•ˆ IP */
+    /* µÈ´ıÖÁÉÙÒ»¸öÍø¿¨Í¨¹ı DHCP »ñÈ¡ÓĞĞ§ IP */
     while (!hasIp) {
         uint32_t elapsed = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF) - start;
         if (elapsed >= timeoutMs) break;
@@ -606,31 +606,31 @@ static void ensure_network_ready(uint32_t timeoutMs) {
     }
 
     if (hasIp) {
-        LWIP_DBG("[ç½‘ç»œå°±ç»ª] DHCPå·²å®Œæˆï¼Œç½‘å¡å·²è·å–IP\n");
+        LWIP_DBG("[ÍøÂç¾ÍĞ÷] DHCPÒÑÍê³É£¬Íø¿¨ÒÑ»ñÈ¡IP\n");
     } else {
-        LWIP_DBG("[ç½‘ç»œå°±ç»ª] ç­‰å¾…DHCPè¶…æ—¶(%dms)ï¼Œæ— å¯ç”¨IP\n", (int)timeoutMs);
+        LWIP_DBG("[ÍøÂç¾ÍĞ÷] µÈ´ıDHCP³¬Ê±(%dms)£¬ÎŞ¿ÉÓÃIP\n", (int)timeoutMs);
     }
 
-    /* ç¡®ä¿æœ‰é»˜è®¤è·¯ç”± */
+    /* È·±£ÓĞÄ¬ÈÏÂ·ÓÉ */
     if (!netif_default) {
         for (n = netif_list; n; n = n->next) {
             if (netif_has_valid_ipv4(n)) {
                 netif_set_default(n);
-                LWIP_DBG("[ç½‘ç»œå°±ç»ª] è®¾ç½®é»˜è®¤ç½‘å¡: %s\n", ip4addr_ntoa(ip_2_ip4(&n->ip_addr)));
+                LWIP_DBG("[ÍøÂç¾ÍĞ÷] ÉèÖÃÄ¬ÈÏÍø¿¨: %s\n", ip4addr_ntoa(ip_2_ip4(&n->ip_addr)));
                 break;
             }
         }
     }
 }
 
-/* DNS å¼‚æ­¥è§£æå›è°ƒä¸Šä¸‹æ–‡ */
+/* DNS Òì²½½âÎö»Øµ÷ÉÏÏÂÎÄ */
 typedef struct {
     ip_addr_t ip;
     volatile bool done;
     volatile bool found;
 } DnsResolveCtx;
 
-/* dns_gethostbyname å®Œæˆå›è°ƒ */
+/* dns_gethostbyname Íê³É»Øµ÷ */
 static void dns_found_cb(const char* name, const ip_addr_t* ipaddr, void* arg) {
     (void)name;
     DnsResolveCtx* ctx = (DnsResolveCtx*)arg;
@@ -643,11 +643,11 @@ static void dns_found_cb(const char* name, const ip_addr_t* ipaddr, void* arg) {
     ctx->done = true;
 }
 
-/* å¼‚æ­¥è§£æåŸŸåï¼šdns_gethostbyname + å›è°ƒ + è½®è¯¢ç­‰å¾…
- * @param name       åŸŸåæˆ– IP å­—ç¬¦ä¸²
- * @param outIp      è¾“å‡ºè§£æç»“æœ
- * @param timeoutMs  è¶…æ—¶æ—¶é—´
- * @return true=è§£ææˆåŠŸ */
+/* Òì²½½âÎöÓòÃû£ºdns_gethostbyname + »Øµ÷ + ÂÖÑ¯µÈ´ı
+ * @param name       ÓòÃû»ò IP ×Ö·û´®
+ * @param outIp      Êä³ö½âÎö½á¹û
+ * @param timeoutMs  ³¬Ê±Ê±¼ä
+ * @return true=½âÎö³É¹¦ */
 static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeoutMs) {
     ip_addr_t ip;
     DnsResolveCtx ctx;
@@ -669,17 +669,17 @@ static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeo
 #endif
 
     if (e == ERR_OK) {
-        /* å·²ç¼“å­˜æˆ–ä¸º IP å­—ç¬¦ä¸²ï¼Œç›´æ¥è¿”å› */
+        /* ÒÑ»º´æ»òÎª IP ×Ö·û´®£¬Ö±½Ó·µ»Ø */
         *outIp = ip;
         return true;
     }
     if (e == ERR_INPROGRESS) {
-        /* å¼‚æ­¥æŸ¥è¯¢ä¸­ï¼Œè½®è¯¢ pcap + è¶…æ—¶å¤„ç†ï¼Œç­‰å¾…å›è°ƒé€šçŸ¥ */
+        /* Òì²½²éÑ¯ÖĞ£¬ÂÖÑ¯ pcap + ³¬Ê±´¦Àí£¬µÈ´ı»Øµ÷Í¨Öª */
         uint32_t start = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF);
         while (!ctx.done) {
             uint32_t elapsed = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF) - start;
             if (elapsed >= timeoutMs) {
-                LWIP_DBG("[DNS] è§£æè¶…æ—¶(%dms): %s\n", (int)timeoutMs, name);
+                LWIP_DBG("[DNS] ½âÎö³¬Ê±(%dms): %s\n", (int)timeoutMs, name);
                 return false;
             }
 #if NO_SYS
@@ -695,24 +695,24 @@ static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeo
         }
         if (ctx.found) {
             *outIp = ctx.ip;
-            LWIP_DBG("[DNS] è§£ææˆåŠŸ: %s -> %s\n", name, ipaddr_ntoa(outIp));
+            LWIP_DBG("[DNS] ½âÎö³É¹¦: %s -> %s\n", name, ipaddr_ntoa(outIp));
             return true;
         }
-        LWIP_DBG("[DNS] è§£æå¤±è´¥(åŸŸåä¸å­˜åœ¨): %s\n", name);
+        LWIP_DBG("[DNS] ½âÎöÊ§°Ü(ÓòÃû²»´æÔÚ): %s\n", name);
         return false;
     }
 
-    /* ERR_ARG æˆ–å…¶ä»–é”™è¯¯ï¼šå°è¯•ç›´æ¥å½“ IP åœ°å€è§£æ */
+    /* ERR_ARG »òÆäËû´íÎó£º³¢ÊÔÖ±½Óµ± IP µØÖ·½âÎö */
     if (ipaddr_aton(name, &ip)) {
         *outIp = ip;
         return true;
     }
-    LWIP_DBG("[DNS] dns_gethostbynameé”™è¯¯=%d: %s\n", (int)e, name);
+    LWIP_DBG("[DNS] dns_gethostbyname´íÎó=%d: %s\n", (int)e, name);
     return false;
 }
 
 /* ================================================================
- * Socket è¿æ¥
+ * Socket Á¬½Ó
  * ================================================================ */
 bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName,
                             uint16_t port, XNetworkProtocol protocol,
@@ -725,35 +725,35 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
     XNetwork_ensureInit();
     s->sockType = (int)sockType;
 
-    /* ç¡®ä¿ç½‘å¡æœ‰ IP + DNS æœåŠ¡å™¨å°±ç»ªï¼ˆç­‰å¾… DHCP æˆ–å¼ºåˆ¶ fallbackï¼‰ */
+    /* È·±£Íø¿¨ÓĞ IP + DNS ·şÎñÆ÷¾ÍĞ÷£¨µÈ´ı DHCP »òÇ¿ÖÆ fallback£© */
     ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS);
 
-    /* å¼‚æ­¥ DNS è§£æï¼ˆå¸¦å›è°ƒ + è½®è¯¢ç­‰å¾…ï¼‰ */
+    /* Òì²½ DNS ½âÎö£¨´ø»Øµ÷ + ÂÖÑ¯µÈ´ı£© */
     ip_addr_t ip;
     if (!lwip_resolve_name(hostStr, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) {
-        LWIP_DBG("[è¿æ¥] DNSå’ŒIPè§£æå‡å¤±è´¥\n");
+        LWIP_DBG("[Á¬½Ó] DNSºÍIP½âÎö¾ùÊ§°Ü\n");
         return false;
     }
-    LWIP_DBG("[è¿æ¥] ç›®æ ‡IPè§£ææˆåŠŸ\n");
-    LWIP_DBG("[è¿æ¥] é»˜è®¤ç½‘å¡=%s\n",
+    LWIP_DBG("[Á¬½Ó] Ä¿±êIP½âÎö³É¹¦\n");
+    LWIP_DBG("[Á¬½Ó] Ä¬ÈÏÍø¿¨=%s\n",
              netif_default ? ip4addr_ntoa(ip_2_ip4(&netif_default->ip_addr)) : "NULL");
 
     err_t err;
     if (sockType == XNetwork_Tcp) {
-        /* TCP å®¢æˆ·ç«¯è¿æ¥ */
+        /* TCP ¿Í»§¶ËÁ¬½Ó */
         s->tpcb = tcp_new();
-        LWIP_DBG("[è¿æ¥] tcp_new=%p\n", (void*)s->tpcb);
+        LWIP_DBG("[Á¬½Ó] tcp_new=%p\n", (void*)s->tpcb);
         if (!s->tpcb) return false;
         tcp_arg(s->tpcb, s);
         tcp_recv(s->tpcb, tcpRecvCb);
         tcp_sent(s->tpcb, tcpSentCb);
         tcp_err(s->tpcb, tcpErrCb);
-        tcp_poll(s->tpcb, tcpPollCb, 2);  /* æ¯ 1 ç§’è½®è¯¢ */
+        tcp_poll(s->tpcb, tcpPollCb, 2);  /* Ã¿ 1 ÃëÂÖÑ¯ */
         err = tcp_connect(s->tpcb, &ip, port, tcpConnectedCb);
-        LWIP_DBG("[è¿æ¥] tcp_connectç»“æœ=%d\n", (int)err);
+        LWIP_DBG("[Á¬½Ó] tcp_connect½á¹û=%d\n", (int)err);
         if (err != ERR_OK) { tcp_close(s->tpcb); s->tpcb = NULL; return false; }
     } else {
-        /* UDPï¼šåˆ›å»º PCB å¹¶ç›´æ¥è®¾ç½®ç›®æ ‡åœ°å€ */
+        /* UDP£º´´½¨ PCB ²¢Ö±½ÓÉèÖÃÄ¿±êµØÖ· */
         s->upcb = udp_new();
         if (!s->upcb) return false;
         udp_recv(s->upcb, udpRecvCb, s);
@@ -765,7 +765,7 @@ bool XNetwork_socketConnect(XNetworkSocketPrivate* priv, const XString* hostName
     return true;
 }
 
-/* æ–­å¼€è¿æ¥ */
+/* ¶Ï¿ªÁ¬½Ó */
 void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv) {
     if (!priv) return;
     XNetworkSocketPrivateLwip* s = L4P(priv);
@@ -778,10 +778,10 @@ void XNetwork_socketDisconnect(XNetworkSocketPrivate* priv) {
 
 
 /* ================================================================
- * æ•°æ®è¯»å†™
+ * Êı¾İ¶ÁĞ´
  * ================================================================ */
 
-/* ä» Socket è¯»å–æ•°æ®åˆ°ç”¨æˆ·ç¼“å†²åŒº */
+/* ´Ó Socket ¶ÁÈ¡Êı¾İµ½ÓÃ»§»º³åÇø */
 int64_t XNetwork_socketRead(XNetworkSocketPrivate* priv, void* buf, int64_t len,
                             XNetworkSocketType sockType, void* ringBuffer) {
     (void)sockType; (void)ringBuffer;
@@ -795,7 +795,7 @@ int64_t XNetwork_socketRead(XNetworkSocketPrivate* priv, void* buf, int64_t len,
     return copy;
 }
 
-/* å‘ Socket å†™å…¥æ•°æ® */
+/* Ïò Socket Ğ´ÈëÊı¾İ */
 int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64_t len,
                              XNetworkSocketType sockType, const XHostAddress* destAddr,
                              uint16_t destPort, void* ringBuffer) {
@@ -833,10 +833,10 @@ int64_t XNetwork_socketWrite(XNetworkSocketPrivate* priv, const void* buf, int64
 }
 
 /* ================================================================
- * äº‹ä»¶å¤„ç†
+ * ÊÂ¼ş´¦Àí
  * ================================================================ */
 
-/* å¤„ç† Socket äº‹ä»¶ï¼šæ¸…é™¤æ ‡å¿—ä½å¹¶è¿”å›æ˜¯å¦æœ‰äº‹ä»¶ */
+/* ´¦Àí Socket ÊÂ¼ş£ºÇå³ı±êÖ¾Î»²¢·µ»ØÊÇ·ñÓĞÊÂ¼ş */
 bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
     if (!priv || !event) return false;
     XEvent* e = (XEvent*)event;
@@ -847,27 +847,27 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
     bool hasEvent = false;
 
-    /* ä»…æ¸…é™¤ä¸å½“å‰äº‹ä»¶ç±»å‹åŒ¹é…çš„æ ‡å¿—ä½ï¼Œé¿å…ä¸¢å¤±å…¶ä»–ç±»å‹çš„äº‹ä»¶ã€‚
-     * ä¾‹å¦‚ï¼šConnect äº‹ä»¶åˆ°è¾¾æ—¶åªæ¸…é™¤ connectDone/hasErrorï¼Œ
-     * ä¸æ¸…é™¤ hasReadData--åè€…ç”±åç»­ Read äº‹ä»¶å¤„ç†ã€‚ */
+    /* ½öÇå³ıÓëµ±Ç°ÊÂ¼şÀàĞÍÆ¥ÅäµÄ±êÖ¾Î»£¬±ÜÃâ¶ªÊ§ÆäËûÀàĞÍµÄÊÂ¼ş¡£
+     * ÀıÈç£ºConnect ÊÂ¼şµ½´ïÊ±Ö»Çå³ı connectDone/hasError£¬
+     * ²»Çå³ı hasReadData--ºóÕßÓÉºóĞø Read ÊÂ¼ş´¦Àí¡£ */
     if ((sockAct->actType & XSocketAct_Connect) &&
         (s->connectDone || s->hasError)) {
         s->connectDone = false;
         s->hasError = false;
-        s->closing = false;  /* è¿æ¥é”™è¯¯/å®Œæˆæ—¶ä¸€å¹¶æ¸…é™¤å…³é—­æ ‡å¿— */
+        s->closing = false;  /* Á¬½Ó´íÎó/Íê³ÉÊ±Ò»²¢Çå³ı¹Ø±Õ±êÖ¾ */
         hasEvent = true;
     }
     if ((sockAct->actType & XSocketAct_Read) &&
         (s->hasReadData || s->closing)) {
         s->hasReadData = false;
         s->closing = false;
-        s->rxTotal = s->rxPos;  /* æ›´æ–°å·²è¯»å­—èŠ‚æ•°ï¼Œä¾›ä¸Šå±‚è·å– */
+        s->rxTotal = s->rxPos;  /* ¸üĞÂÒÑ¶Á×Ö½ÚÊı£¬¹©ÉÏ²ã»ñÈ¡ */
         hasEvent = true;
     }
     if ((sockAct->actType & XSocketAct_Write) && s->hasWriteDone) {
         s->hasWriteDone = false;
-        s->lastWriteFinished = s->writeFinished;  /* è®°å½•å·²ç¡®è®¤å­—èŠ‚æ•° */
-        s->writeFinished = 0;                      /* é‡ç½®è®¡æ•°å™¨ */
+        s->lastWriteFinished = s->writeFinished;  /* ¼ÇÂ¼ÒÑÈ·ÈÏ×Ö½ÚÊı */
+        s->writeFinished = 0;                      /* ÖØÖÃ¼ÆÊıÆ÷ */
         hasEvent = true;
     }
     if ((sockAct->actType & XSocketAct_Accept) && s->hasAccept) {
@@ -915,19 +915,21 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp) {
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
     size_t consumed = (size_t)s->rxTotal;
     if (s->rxPos > (int)consumed) {
-        /* å¦‚æœè¿˜æœ‰æœªæ¶ˆè´¹çš„æ•°æ®ï¼Œç´§å‡‘ç§»åŠ¨åˆ°ç¼“å†²åŒºå¤´éƒ¨ */
+        /* Èç¹û»¹ÓĞÎ´Ïû·ÑµÄÊı¾İ£¬½ô´ÕÒÆ¶¯µ½»º³åÇøÍ·²¿ */
         size_t remaining = (size_t)s->rxPos - consumed;
         memmove(s->rxBuf, s->rxBuf + consumed, remaining);
         s->rxPos = (int)remaining;
         s->rxTotal = 0;
-        s->hasReadData = true;  /* ä»æœ‰å‰©ä½™æ•°æ®å¯è¯» */
-        push_socket_cq(s, XSocketAct_Read);  /* æŠ•é€’ Read äº‹ä»¶é€šçŸ¥ä¸Šå±‚ */
-    } else {
-        /* å…¨éƒ¨å·²æ¶ˆè´¹ï¼Œæ¸…ç©ºç¼“å†²åŒº */
+        s->hasReadData = true;  /* ÈÔÓĞÊ£ÓàÊı¾İ¿É¶Á */
+        push_socket_cq(s, XSocketAct_Read);  /* Í¶µİ Read ÊÂ¼şÍ¨ÖªÉÏ²ã */
+    }
+    else {
+        /* È«²¿ÒÑÏû·Ñ£¬Çå¿Õ»º³åÇø */
         s->rxPos = 0;
         s->rxTotal = 0;
-        s->hasReadData = false;
     }
+    /* Í¨Öª lwIP Êı¾İÒÑÏû·Ñ£¬ÖØĞÂ´ò¿ª TCP ½ÓÊÕ´°¿Ú */
+    if (consumed > 0 && s->tpcb) tcp_recved(s->tpcb, (u16_t)consumed);
     XNET_LWIP_UNLOCK(prot);
 }
 
@@ -941,7 +943,7 @@ XServerHandle XNetwork_serverCreate(XNetworkSocketPrivate* priv, const XHostAddr
 }
 
 bool XNetwork_serverAccept(XNetworkSocketPrivate* priv) {
-    /* lwIP é€šè¿‡ tcp_accept å›è°ƒæ¥å—è¿æ¥ï¼ˆåœ¨ socketBind ä¸­å·²è®¾ç½®ï¼‰ï¼Œæ­¤å¤„æ— éœ€æ“ä½œ */
+    /* lwIP Í¨¹ı tcp_accept »Øµ÷½ÓÊÜÁ¬½Ó£¨ÔÚ socketBind ÖĞÒÑÉèÖÃ£©£¬´Ë´¦ÎŞĞè²Ù×÷ */
     (void)priv;
     return true;
 }
@@ -972,7 +974,7 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv,
     s->pendingAccept = NULL;
     if (clientAddr && cs->tpcb) ip_to_addr(&cs->tpcb->remote_ip, clientAddr);
     if (clientPort && cs->tpcb) *clientPort = cs->tpcb->remote_port;
-    LWIP_DBG("[TCPæœåŠ¡] é¢†å–å®¢æˆ·ç«¯Socket=%p\n", (void*)cs);
+    LWIP_DBG("[TCP·şÎñ] ÁìÈ¡¿Í»§¶ËSocket=%p\n", (void*)cs);
     return (XSocketHandle)(intptr_t)cs;
 }
 
@@ -982,10 +984,10 @@ XVector* XNetwork_lookupName(const XString* name) {
     if (!nameStr) return NULL;
     XNetwork_ensureInit();
 
-    /* ç¡®ä¿ç½‘å¡æœ‰ IP + DNS æœåŠ¡å™¨å°±ç»ª */
+    /* È·±£Íø¿¨ÓĞ IP + DNS ·şÎñÆ÷¾ÍĞ÷ */
     ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS);
 
-    /* å¼‚æ­¥ DNS è§£æï¼ˆå¸¦å›è°ƒ + è½®è¯¢ç­‰å¾…ï¼‰ */
+    /* Òì²½ DNS ½âÎö£¨´ø»Øµ÷ + ÂÖÑ¯µÈ´ı£© */
     ip_addr_t ip;
     if (!lwip_resolve_name(nameStr, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) return NULL;
 
@@ -1095,5 +1097,16 @@ int XNetwork_gssapiAuth(const XString* name, const XByteArray* in, XByteArray* o
 
 struct netif* XNetworkLwip_defaultNetif(void) { return g_state.defaultNetif; }
 void XNetworkLwip_setDefaultNetif(struct netif* n) { g_state.defaultNetif = n; }
-
+/* ================================================================
+ * Ğ´ÈëÑÓĞø - lwIP Ä£Ê½ÏÂĞ´ÈëÒÑÍ¨¹ı tcp_write/tcp_output Í¬²½Íê³É£¬
+ * »·ĞÎ»º³åÇøÖĞ´ı·¢ËÍµÄÃ÷ÎÄÒÑÔÚ xssl_v_writeData -> BIO -> parent writeData
+ * Â·¾¶ÖĞÍê³É¼ÓÃÜ²¢·¢ËÍ£¬ÎŞĞè¶îÍâ²Ù×÷¡£
+ * ================================================================ */
+void XNetwork_socketContinueWrite(XNetworkSocketPrivate* priv, XRingBuffer* ringBuffer, bool isUdp)
+{
+    if (!priv || !ringBuffer) return;
+    (void)isUdp;
+    /* lwIP: Ğ´ÈëÍ¨¹ı tcp_write/tcp_output Í¬²½Íê³É£¬
+     * »·ĞÎ»º³åÇøÊı¾İÒÑÔÚ XNetwork_socketWrite Â·¾¶ÖĞ´¦ÀíÍê±Ï¡£ */
+}
 #endif /* XNETWORK_USE_LWIP */

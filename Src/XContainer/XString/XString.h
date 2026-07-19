@@ -935,7 +935,7 @@ void XString_squeeze(XString* str);
  * @brief 释放多余容量（对齐Qt QString::shrink_to_fit()，等价于squeeze）
  * @param str XString对象指针
  */
-#define XString_shrink_to_fit XString_squeeze
+#define XString_shrink_to_fit   XString_squeeze
 
 /**
  * @brief 原地切片：从pos开始到末尾（对齐Qt6.8 QString::slice(pos)）
