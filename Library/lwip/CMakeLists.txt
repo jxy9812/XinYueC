@@ -14,6 +14,7 @@ file(GLOB_RECURSE LWIP_SRCS "*.c")
 
 # 创建静态库
 add_library(lwip STATIC ${LWIP_SRCS})
+set_target_properties(lwip PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # 传播头文件路径
 target_include_directories(lwip PUBLIC ${LWIP_PUBLIC_INCS})

@@ -12,6 +12,8 @@ file(GLOB ZLIB_SRCS "*.c")
 
 # 创建静态库
 add_library(zlib STATIC ${ZLIB_SRCS})
+set_target_properties(zlib PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # 传播头文件路径
-target_include_directories(zlib PUBLIC ${ZLIB_PUBLIC_INCS})
+target_include_directories(zlib PUBLIC ${ZLIB_PUBLIC_INCS})
+

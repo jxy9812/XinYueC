@@ -12,6 +12,7 @@ file(GLOB FATFS_SRCS "*.c")
 
 # 创建静态库
 add_library(fatfs STATIC ${FATFS_SRCS})
+set_target_properties(fatfs PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # 传播头文件路径
 target_include_directories(fatfs PUBLIC ${FATFS_PUBLIC_INCS})

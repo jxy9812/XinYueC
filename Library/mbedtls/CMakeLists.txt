@@ -54,6 +54,7 @@ add_library(mbedtls STATIC
     ${MBEDTLS_TLS_SRCS}
     ${MBEDTLS_PQCP_SRCS}
 )
+set_target_properties(mbedtls PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # 传播头文件路径
 target_include_directories(mbedtls PUBLIC ${MBEDTLS_PUBLIC_INCS})
