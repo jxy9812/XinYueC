@@ -366,6 +366,9 @@ static void xssl_drain_encrypted(XSslSocket* self) {
         (void)xssl_pump_handshake(self);
     }
     if (!self->encrypted || !self->session) return;
+    /* 连接已断开：不再尝试解密，防止将关闭后残留的垃圾数据当作 TLS 记录 */
+    if (((XAbstractSocket*)self)->state != XAbstractSocket_ConnectedState)
+        return;
     XIODevice* io = (XIODevice*)self;
     if (!io->m_d) return;
     int ch = XIODevice_currentReadChannel(io);
@@ -373,10 +376,18 @@ static void xssl_drain_encrypted(XSslSocket* self) {
     if (!rb) return;
     uint8_t buf[4096];
     bool any = false;
+    bool session_closed = false;
     for (;;) {
         int n = XSsl_sessionRead(self->session, buf, sizeof(buf));
         if (n > 0) { XRingBuffer_write(rb, (const char*)buf, (size_t)n); any = true; continue; }
+        if (n == XSSL_S_CLOSED || n == XSSL_S_ERROR) session_closed = true;
         break;
+    }
+    if (session_closed) {
+        self->encrypted = false;
+        self->handshakePending = false;
+        /* 清空密文缓冲，防止后续残留数据被 mbedTLS 当作有效 TLS 记录尝试解密 */
+        if (self->encRxBuf) XRingBuffer_reset(self->encRxBuf);
     }
     if (any) XIODevice_readyRead_signal(io);
 }
@@ -414,16 +425,20 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
 
     /* Read：把底层刚读到的密文塞进 encRxBuf；不写 IODevice 读缓冲 */
     if (sa->actType & XSocketAct_Read) {
-        size_t bytesTransferred = XNetwork_socketReadFinishedBytes(priv);
-        if (bytesTransferred > 0 && self->encRxBuf) {
-            const char* readBuf = XNetwork_socketReadBuffer(priv);
-            if (readBuf) {
-                XRingBuffer_write(self->encRxBuf, readBuf, bytesTransferred);
+        /* 连接已断开：跳过密文写入和解密，防止将关闭后残留的垃圾数据
+           写入 encRxBuf 并被 mbedTLS 尝试解密 */
+        if (sock->state == XAbstractSocket_ConnectedState) {
+            size_t bytesTransferred = XNetwork_socketReadFinishedBytes(priv);
+            if (bytesTransferred > 0 && self->encRxBuf) {
+                const char* readBuf = XNetwork_socketReadBuffer(priv);
+                if (readBuf) {
+                    XRingBuffer_write(self->encRxBuf, readBuf, bytesTransferred);
+                }
             }
+            /* 解密：mbedTLS 从 encRxBuf 读取密文，明文写入 IODevice 读缓冲并 emit readyRead */
+            xssl_drain_encrypted(self);
         }
-        /* 解密：mbedTLS 从 encRxBuf 读取密文，明文写入 IODevice 读缓冲并 emit readyRead */
-        xssl_drain_encrypted(self);
-        /* 继续投递下一次异步读 */
+        /* 继续投递下一次异步读（排空事件队列） */
         XNetwork_socketContinueRead(priv, sock->socketType == XAbstractSocket_UdpSocket);
     }
 

@@ -632,7 +632,7 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event)
         getsockopt(p->socket, SOL_SOCKET, SO_ERROR, &soError, &soLen);
         if (soError == 0) {
             p->connected = true;
-            startAsyncRead(priv, false);
+            /* first read started by XNetwork_socketContinueRead in event handler */
         } else {
             p->connected = false;
         }
