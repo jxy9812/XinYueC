@@ -27,7 +27,7 @@
 #include "XPrintf.h"
 #include "XVector.h"
 
-/* ---- 闂傚倸鍊风粈渚€骞夐敓鐘茬闁哄洢鍨圭粻鐘虫叏濡炶浜鹃悗瑙勬礃濞叉粓鍩€椤掍胶鈯曢柨姘亜閺囷繝鍝洪柟渚垮妼铻ｉ柧蹇曟缁辩偛鈹戦埥鍡楃仩闁绘绻掑Σ鎰板箻鐎涙ê顎撻柣鐔哥懃鐎氼剟妫勫澶嬧拺?----------------------------------------------------- */
+ /* ---- 闂傚倸鍊风粈渚€骞夐敓鐘茬闁哄洢鍨圭粻鐘虫叏濡炶浜鹃悗瑙勬礃濞叉粓鍩€椤掍胶鈯曢柨姘亜閺囷繝鍝洪柟渚垮妼铻ｉ柧蹇曟缁辩偛鈹戦埥鍡楃仩闁绘绻掑Σ鎰板箻鐎涙ê顎撻柣鐔哥懃鐎氼剟妫勫澶嬧拺?----------------------------------------------------- */
 struct XSslSession {
     mbedtls_ssl_context     ssl;
     mbedtls_ssl_config      conf;
@@ -35,7 +35,7 @@ struct XSslSession {
     bool                    ca_inited;
 
     /* BIO */
-    void*                   bio_user;
+    void* bio_user;
     XSslBioSend             bio_send;
     XSslBioRecv             bio_recv;
 
@@ -46,8 +46,8 @@ struct XSslSession {
     bool                    setup_done;
 
     /* 闂備浇顕х€涒晠顢欓弽顓炵獥闁哄诞鍛濡炪倖甯掗崐褰掞綖閺囥垺鐓冮柛婵嗗閸ｆ椽鏌涚€ｃ劌濮傞柡灞炬礃缁绘盯宕归鐓幮ゆ繝纰樻閸ㄦ澘螞濠靛棭娼栨繛宸憾閺佸﹪鏌涘┑鍡楊仼妞ゎ剙鐗嗛—鍐Χ閸℃ê顦╅梺鍝ュУ瀹€鎼佺嵁閹版澘绠虫俊銈傚亾闁绘搫绻濋弻娑樷槈閸楃偟浠銈忚吂閺呮粎鎹㈠☉銏犵闁绘劖娼欑喊宥囩磽娴ｅ壊妲洪柡浣规倐閸┾偓妞ゆ帊绀侀幖鎼佹煕閵娿劍顥夋い鏇秮瀹曞綊顢曢姀銏㈢嵁闂佽鍑界紞鍡樼閸洖姹查柨鐔哄У閳锋垿鏌涘┑鍡楊伀濠⒀勬礃閵囧嫰鏁傞懞銉у嚒濡炪値鍘煎ú顓炵暦婵傜唯闁挎棁濮ら悵顐︽⒑鐠囪尙绠抽柛瀣█瀹曟垿骞囬悧鍫濆壒闁诲繒鍋涢～鏇㈠焵?mbedtls 濠电姷鏁搁崑鐘诲箵椤忓棛绀婇柍褜鍓氱换娑欏緞鐎ｎ偆顦伴悗娈垮櫘閸嬪﹥淇婇懜闈涚窞濠电姴瀚峰Σ顖炴⒑閼姐倕孝闁圭⒈鍋婇獮鏍敃閿曗偓閺嬩線鏌涢锝嗙闁抽攱鍨堕妵鍕棘閹稿孩鍎撴繝纰樷偓鐐藉仮闁哄矉缍侀崺濠傗枎韫囨挻娈滈梺鍝勵儐濮婂鎯€椤忓牆绾ф繛鍡欏亾妤旂紓鍌欒閸?*/
-    XSslCertificate*        own_cert;
-    XSslKey*                own_key;
+    XSslCertificate* own_cert;
+    XSslKey* own_key;
 
     /* 闂傚倸鍊风粈渚€骞栭锔藉亱闁告劦鍠栫壕濠氭煙閹规劦鍤欑紒鐙欏洦鐓冮柛婵嗗閳ь剚鎮傞幃姗€鏁愰崶鈺冿紲闂佸搫鍟犻崑鎾寸箾閸忚偐鎳囬柛鈹垮灪閹棃濡搁敂鑺ヮ仧闂備胶绮…鍫濃枍閺囩偐鏋嶉柟鍓х帛閻撶喖鏌ｅΟ鍝勭骇缂佷讲鏅犻弻娑㈠Ω閵夈儲姣愰梺宕囩帛閹瑰洭鐛€ｎ喗鏅濋柍褜鍓熼幆灞轿旀担鍏哥盎闂佸搫绉查崝搴ｇ不閵夆晜鐓曢柕鍫濆暙閻忔煡鏌″畝瀣瘈鐎规洘甯掗～婵嬵敇閻戝棙袩濠电姷鏁告慨顓㈠磻?*/
     char                    err_buf[128];
@@ -109,7 +109,7 @@ XSslSession* XSsl_sessionCreate(XSslProtocol protocol, bool isServer) {
     int transport = MBEDTLS_SSL_TRANSPORT_STREAM; /* DTLS 闂傚倸鍊风粈渚€骞夐敓鐘冲殞闁诡垼鐏愯ぐ鎺撳€婚柤鎭掑劚娴犵儤绻濋悽闈浶ｉ柤鐟板⒔缁濡烽埡鍌滃帗闁哄鍋炴刊浠嬪礂鐏炲墽绠?*/
 
     if (mbedtls_ssl_config_defaults(&s->conf, endpoint, transport,
-                                    MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
+        MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
         goto fail;
     }
     /* TLS 闂傚倸鍊烽懗鍓佸垝椤栫偑鈧啴宕ㄧ€涙ê浜辨繝鐢靛Т閸嬪﹪鎳?*/
@@ -119,21 +119,22 @@ XSslSession* XSsl_sessionCreate(XSslProtocol protocol, bool isServer) {
     int vmax = MBEDTLS_SSL_VERSION_TLS1_2;
     bool has_max = true;
     switch (protocol) {
-        case XSSL_TlsV1_2:        vmin = vmax = MBEDTLS_SSL_VERSION_TLS1_2; has_max = true;  break;
-        case XSSL_TlsV1_3:        vmin = vmax = MBEDTLS_SSL_VERSION_TLS1_3; has_max = true;  break;
-        case XSSL_TlsV1_2OrLater: vmin = MBEDTLS_SSL_VERSION_TLS1_2;        has_max = false; break;
-        case XSSL_TlsV1_3OrLater: vmin = MBEDTLS_SSL_VERSION_TLS1_3;        has_max = false; break;
-        case XSSL_AnyProtocol:
-        case XSSL_SecureProtocols:
+    case XSSL_TlsV1_2:        vmin = vmax = MBEDTLS_SSL_VERSION_TLS1_2; has_max = true;  break;
+    case XSSL_TlsV1_3:        vmin = vmax = MBEDTLS_SSL_VERSION_TLS1_3; has_max = true;  break;
+    case XSSL_TlsV1_2OrLater: vmin = MBEDTLS_SSL_VERSION_TLS1_2;        has_max = false; break;
+    case XSSL_TlsV1_3OrLater: vmin = MBEDTLS_SSL_VERSION_TLS1_3;        has_max = false; break;
+    case XSSL_AnyProtocol:
+    case XSSL_SecureProtocols:
         /* TODO(mbedtls 4.x): TLS1.3 ClientHello triggers -0x6600 on some servers (e.g. baidu). Cap at 1.2 until upstream fix. */
-        default:                  vmin = MBEDTLS_SSL_VERSION_TLS1_2; vmax = MBEDTLS_SSL_VERSION_TLS1_2; has_max = true; break;
+    default:                  vmin = MBEDTLS_SSL_VERSION_TLS1_2; vmax = MBEDTLS_SSL_VERSION_TLS1_2; has_max = true; break;
     }
     mbedtls_ssl_conf_min_tls_version(&s->conf, vmin);
     if (has_max) mbedtls_ssl_conf_max_tls_version(&s->conf, vmax);
     /* AutoVerify: client REQUIRED, server NONE */
     if (isServer) {
         mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_NONE);
-    } else {
+    }
+    else {
         mbedtls_ssl_conf_authmode(&s->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
     }
     (void)s_proto_of;
@@ -182,7 +183,7 @@ bool XSsl_sessionSetHostname(XSslSession* s, const char* hostname) {
 bool XSsl_sessionSetCertificate(XSslSession* s, XSslCertificate* cert, XSslKey* key) {
     if (!s || !cert || !key) return false;
     s->own_cert = cert;
-    s->own_key  = key;
+    s->own_key = key;
     return mbedtls_ssl_conf_own_cert(&s->conf, &cert->crt, &key->pk) == 0;
 }
 
@@ -199,11 +200,11 @@ void XSsl_sessionSetPeerVerify(XSslSession* s, XSslPeerVerifyMode mode) {
     s->verify_mode = mode;
     int m = MBEDTLS_SSL_VERIFY_REQUIRED;
     switch (mode) {
-        case XSSL_VerifyNone:     m = MBEDTLS_SSL_VERIFY_NONE;     break;
-        case XSSL_QueryPeer:      m = MBEDTLS_SSL_VERIFY_OPTIONAL; break;
-        case XSSL_VerifyPeer:     m = MBEDTLS_SSL_VERIFY_REQUIRED; break;
-        case XSSL_AutoVerifyPeer: m = s->is_server ? MBEDTLS_SSL_VERIFY_NONE
-                                                   : MBEDTLS_SSL_VERIFY_REQUIRED; break;
+    case XSSL_VerifyNone:     m = MBEDTLS_SSL_VERIFY_NONE;     break;
+    case XSSL_QueryPeer:      m = MBEDTLS_SSL_VERIFY_OPTIONAL; break;
+    case XSSL_VerifyPeer:     m = MBEDTLS_SSL_VERIFY_REQUIRED; break;
+    case XSSL_AutoVerifyPeer: m = s->is_server ? MBEDTLS_SSL_VERIFY_NONE
+        : MBEDTLS_SSL_VERIFY_REQUIRED; break;
     }
     mbedtls_ssl_conf_authmode(&s->conf, m);
 }

@@ -1,12 +1,12 @@
-ï»¿file(GLOB_RECURSE PUBLIC_HDRS  "Src/*.h" "Src/*.hpp" )
+file(GLOB_RECURSE PUBLIC_HDRS  "Src/*.h" "Src/*.hpp" )
 file(GLOB_RECURSE TEST_HDRS  "Test/*.h" "Test/*.hpp" )
-#å®‰è£…åº“å¤´æ–‡ä»¶
+#°²×°¿âÍ·ÎÄ¼ş
 install(FILES ${PUBLIC_HDRS} DESTINATION "Src/include")
-#å®‰è£…åº“æºæ–‡ä»¶
+#°²×°¿âÔ´ÎÄ¼ş
 install(FILES ${SRC_FILE} DESTINATION "Src")
-#å®‰è£…æµ‹è¯•å¤´æ–‡ä»¶
+#°²×°²âÊÔÍ·ÎÄ¼ş
 install(FILES ${TEST_HDRS} DESTINATION "XCXinYueTest/include")
-#å®‰è£…æµ‹è¯•æºæ–‡ä»¶
+#°²×°²âÊÔÔ´ÎÄ¼ş
 install(FILES ${TEST_FILE} DESTINATION "XCXinYueTest")
 
 set_target_properties(${EXPORT_NAME} PROPERTIES
@@ -16,37 +16,45 @@ set_target_properties(${EXPORT_NAME} PROPERTIES
     PUBLIC_HEADER "${PUBLIC_HDRS}"
 )
 
-#å®‰è£…åº“åŠ¨é™æ€åº“
- install(TARGETS ${EXPORT_NAME} ${EXPORT_NAME}S
-        EXPORT ${EXPORT_NAME}Targets # å¯¼å‡º
+#°²×°¿â¶¯¾²Ì¬¿â
+ install(TARGETS ${EXPORT_NAME}
+        EXPORT ${EXPORT_NAME}Targets # µ¼³ö
         RUNTIME DESTINATION bin
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
  )
 
-# ç”Ÿæˆ xxxTargets.cmakeæ–‡ä»¶
+
+# °²×°¾²Ì¬¿â£¨½ö°²×°£¬²»µ¼³ö£©
+install(TARGETS ${EXPORT_NAME}S
+        RUNTIME DESTINATION bin
+        ARCHIVE DESTINATION lib
+        LIBRARY DESTINATION lib
+ )
+
+# Éú³É xxxTargets.cmakeÎÄ¼ş
 install(
 	EXPORT ${EXPORT_NAME}Targets
 	DESTINATION lib/cmake/${EXPORT_NAME}
     FILE ${EXPORT_NAME}Targets.cmake
     #NAMESPACE ${EXPORT_NAME}::
 )
-#======================ç”Ÿæˆ xxxConfig.cmake===============================
-# è¯¥å˜é‡ä¼šé€šè¿‡xxxConfig.cmake.inç”¨äºåœ¨ç”Ÿæˆçš„xxxConfig.cmakeä¸­
+#======================Éú³É xxxConfig.cmake===============================
+# ¸Ã±äÁ¿»áÍ¨¹ıxxxConfig.cmake.inÓÃÓÚÔÚÉú³ÉµÄxxxConfig.cmakeÖĞ
 set(INCLUDE_DIRS Src/include)
 set(LIBRARIES ${EXPORT_NAME})
 set(LIB_DIR lib)
 
-# ç”±cmakeæä¾›
+# ÓÉcmakeÌá¹©
 include(CMakePackageConfigHelpers)
 
-# ç”Ÿæˆ xxxConfigVersion.cmakeæ–‡ä»¶
+# Éú³É xxxConfigVersion.cmakeÎÄ¼ş
 write_basic_package_version_file(
 	${PROJECT_BINARY_DIR}/${EXPORT_NAME}ConfigVersion.cmake
 	VERSION ${VERSION}
 	COMPATIBILITY SameMajorVersion
 )
-# ç”¨äºç”Ÿæˆ xxxConfig.cmakeæ–‡ä»¶
+# ÓÃÓÚÉú³É xxxConfig.cmakeÎÄ¼ş
 configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/${EXPORT_NAME}Config.cmake.in
                               "${CMAKE_CURRENT_BINARY_DIR}/${EXPORT_NAME}Config.cmake"
                               INSTALL_DESTINATION lib/cmake/${EXPORT_NAME}
