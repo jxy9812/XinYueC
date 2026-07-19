@@ -105,4 +105,32 @@ int64_t XDateTime_currentNSecsSinceEpoch(void) {
     return (int64_t)ts.tv_sec * 1000000000 + (int64_t)ts.tv_nsec;
 }
 
+XDateTime XDateTime_currentDateTimeUtc(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+        return XDateTime_create();
+    }
+
+    struct tm utc_time;
+    if (gmtime_r(&ts.tv_sec, &utc_time) == NULL) {
+        return XDateTime_create();
+    }
+
+    XDate date = XDate_create_date(
+        utc_time.tm_year + 1900,
+        utc_time.tm_mon + 1,
+        utc_time.tm_mday
+    );
+
+    int msec = (int)(ts.tv_nsec / 1000000);
+    XTime time = XTime_create_time(
+        utc_time.tm_hour,
+        utc_time.tm_min,
+        utc_time.tm_sec,
+        msec
+    );
+
+    return XDateTime_create_datetime(date, time);
+}
+
 #endif

@@ -679,19 +679,19 @@ bool XSerialPort_clear(XSerialPort* port, XSerialPort_Direction dir) {
     return tcflush(priv->fd, queue) == 0;
 }
 
-uint32_t XSerialPort_pinoutSignals(const XSerialPort* port) {
-    if (!port || !port->isOpen) return 0;
+XSerialPort_PinoutSignal XSerialPort_pinoutSignals(const XSerialPort* port) {
+    if (!port || !port->isOpen) return XSerialPort_NoSignal;
     XSerialPortPrivate* priv = SPP(port);
-    if (!priv || priv->fd < 0) return 0;
+    if (!priv || priv->fd < 0) return XSerialPort_NoSignal;
     int status = 0;
-    if (ioctl(priv->fd, TIOCMGET, &status) != 0) return 0;
-    uint32_t signals = 0;
-    if (status & TIOCM_DTR) signals |= 0x04;
-    if (status & TIOCM_RTS) signals |= 0x40;
-    if (status & TIOCM_CTS) signals |= 0x80;
-    if (status & TIOCM_DSR) signals |= 0x10;
-    if (status & TIOCM_RI)  signals |= 0x20;
-    if (status & TIOCM_CD)  signals |= 0x08;
+    if (ioctl(priv->fd, TIOCMGET, &status) != 0) return XSerialPort_NoSignal;
+    XSerialPort_PinoutSignal signals = XSerialPort_NoSignal;
+    if (status & TIOCM_DTR) signals |= XSerialPort_DataTerminalReadySignal;
+    if (status & TIOCM_RTS) signals |= XSerialPort_RequestToSendSignal;
+    if (status & TIOCM_CTS) signals |= XSerialPort_ClearToSendSignal;
+    if (status & TIOCM_DSR) signals |= XSerialPort_DataSetReadySignal;
+    if (status & TIOCM_RI)  signals |= XSerialPort_RingIndicatorSignal;
+    if (status & TIOCM_CD)  signals |= XSerialPort_DataCarrierDetectSignal;
     return signals;
 }
 

@@ -45,8 +45,13 @@
 #include <poll.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+#include <sys/ioctl.h>
 #ifdef __linux__
 #include <linux/io_uring.h>
+#endif
+#ifdef HAVE_GSSAPI
+#include <gssapi/gssapi.h>
+#include <gssapi/gssapi_krb5.h>
 #endif
 
 /* =========================================================================
@@ -894,9 +899,187 @@ XSocketHandle XNetwork_serverGetAcceptedSocket(XNetworkSocketPrivate* priv, XHos
  * 网络接口
  * ========================================================================= */
 
-XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void) { return NULL; }
-struct XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter) { (void)iter; return NULL; }
-void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter) { (void)iter; }
+/* =========================================================================
+ * 网络接口枚举 - 内部迭代器状态
+ * ========================================================================= */
+static struct ifaddrs* g_ifaddrsList = NULL;
+static struct ifaddrs* g_ifaddrsCurrent = NULL;
+static char g_ifaddrsCurrentName[IFNAMSIZ] = "";
+
+XNetworkInterfaceIterator XNetwork_enumInterfacesBegin(void)
+{
+    if (g_ifaddrsList) {
+        freeifaddrs(g_ifaddrsList);
+        g_ifaddrsList = NULL;
+        g_ifaddrsCurrent = NULL;
+        g_ifaddrsCurrentName[0] = '\0';
+    }
+
+    if (getifaddrs(&g_ifaddrsList) != 0) return NULL;
+    g_ifaddrsCurrent = g_ifaddrsList;
+    g_ifaddrsCurrentName[0] = '\0';
+    return (XNetworkInterfaceIterator)1; /* 非空标记 */
+}
+
+struct XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter)
+{
+    (void)iter;
+    if (!g_ifaddrsList) return NULL;
+
+    /* 跳过重复的接口名称，每个接口只创建一个 XNetworkInterface */
+    while (g_ifaddrsCurrent) {
+        if (strcmp(g_ifaddrsCurrent->ifa_name, g_ifaddrsCurrentName) != 0) {
+            strncpy(g_ifaddrsCurrentName, g_ifaddrsCurrent->ifa_name, IFNAMSIZ - 1);
+            g_ifaddrsCurrentName[IFNAMSIZ - 1] = '\0';
+            break;
+        }
+        g_ifaddrsCurrent = g_ifaddrsCurrent->ifa_next;
+    }
+    if (!g_ifaddrsCurrent) return NULL;
+
+    /* 创建 XNetworkInterface 对象 */
+    XNetworkInterface* iface = XNetworkInterface_create();
+    if (!iface) return NULL;
+
+    /* 名称 */
+    if (iface->name)
+        XString_assign_utf8(iface->name, g_ifaddrsCurrent->ifa_name);
+    else
+        iface->name = XString_create_utf8(g_ifaddrsCurrent->ifa_name);
+
+    /* 接口索引 */
+    iface->index = if_nametoindex(g_ifaddrsCurrent->ifa_name);
+
+    /* 标志 */
+    iface->flags = 0;
+    if (g_ifaddrsCurrent->ifa_flags & IFF_UP)
+        iface->flags |= XNetworkInterface_IsUp;
+    if (g_ifaddrsCurrent->ifa_flags & IFF_RUNNING)
+        iface->flags |= XNetworkInterface_IsRunning;
+    if (g_ifaddrsCurrent->ifa_flags & IFF_LOOPBACK)
+        iface->flags |= XNetworkInterface_IsLoopBack;
+    if (g_ifaddrsCurrent->ifa_flags & IFF_BROADCAST)
+        iface->flags |= XNetworkInterface_CanBroadcast;
+    if (g_ifaddrsCurrent->ifa_flags & IFF_MULTICAST)
+        iface->flags |= XNetworkInterface_CanMulticast;
+
+    /* 类型 */
+    if (g_ifaddrsCurrent->ifa_flags & IFF_LOOPBACK)
+        iface->type = XNetworkInterface_Loopback;
+    else if (g_ifaddrsCurrent->ifa_flags & IFF_POINTOPOINT)
+        iface->type = XNetworkInterface_Ppp;
+    else
+        iface->type = XNetworkInterface_Ethernet;
+
+    /* 硬件地址 (MAC) - 通过 ioctl SIOCGIFHWADDR 获取 */
+    {
+        int fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (fd >= 0) {
+            struct ifreq ifr;
+            memset(&ifr, 0, sizeof(ifr));
+            strncpy(ifr.ifr_name, g_ifaddrsCurrent->ifa_name, IFNAMSIZ - 1);
+            if (ioctl(fd, SIOCGIFHWADDR, &ifr) == 0) {
+                unsigned char* mac = (unsigned char*)ifr.ifr_hwaddr.sa_data;
+                if (mac[0] || mac[1] || mac[2] || mac[3] || mac[4] || mac[5]) {
+                    char macStr[64];
+                    snprintf(macStr, sizeof(macStr),
+                             "%02X:%02X:%02X:%02X:%02X:%02X",
+                             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+                    if (iface->hardwareAddress)
+                        XString_assign_utf8(iface->hardwareAddress, macStr);
+                    else
+                        iface->hardwareAddress = XString_create_utf8(macStr);
+                }
+            }
+            close(fd);
+        }
+    }
+
+    /* MTU - 通过 ioctl SIOCGIFMTU 获取 */
+    {
+        int fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (fd >= 0) {
+            struct ifreq ifr;
+            memset(&ifr, 0, sizeof(ifr));
+            strncpy(ifr.ifr_name, g_ifaddrsCurrent->ifa_name, IFNAMSIZ - 1);
+            if (ioctl(fd, SIOCGIFMTU, &ifr) == 0) {
+                iface->mtu = ifr.ifr_mtu;
+            }
+            close(fd);
+        }
+    }
+
+    /* 收集该接口的所有地址条目 */
+    struct ifaddrs* cur = g_ifaddrsCurrent;
+    while (cur && strcmp(cur->ifa_name, g_ifaddrsCurrentName) == 0) {
+        if (cur->ifa_addr && (cur->ifa_addr->sa_family == AF_INET ||
+                              cur->ifa_addr->sa_family == AF_INET6)) {
+            XNetworkAddressEntry entry;
+            XNetworkAddressEntry_init(&entry);
+
+            XHostAddress addr;
+            XHostAddress_init(&addr);
+
+            if (cur->ifa_addr->sa_family == AF_INET) {
+                struct sockaddr_in* sin = (struct sockaddr_in*)cur->ifa_addr;
+                XHostAddress_setAddressIPv4(&addr, ntohl(sin->sin_addr.s_addr));
+            } else {
+                struct sockaddr_in6* sin6 = (struct sockaddr_in6*)cur->ifa_addr;
+                XHostAddress_setAddressIPv6(&addr, (const uint8_t*)&sin6->sin6_addr);
+            }
+            XNetworkAddressEntry_setIp(&entry, &addr);
+
+            /* 子网掩码 */
+            if (cur->ifa_netmask) {
+                XHostAddress mask;
+                XHostAddress_init(&mask);
+                if (cur->ifa_netmask->sa_family == AF_INET) {
+                    struct sockaddr_in* sin = (struct sockaddr_in*)cur->ifa_netmask;
+                    XHostAddress_setAddressIPv4(&mask, ntohl(sin->sin_addr.s_addr));
+                } else {
+                    struct sockaddr_in6* sin6 = (struct sockaddr_in6*)cur->ifa_netmask;
+                    XHostAddress_setAddressIPv6(&mask, (const uint8_t*)&sin6->sin6_addr);
+                }
+                XNetworkAddressEntry_setNetmask(&entry, &mask);
+                XHostAddress_deinit_base(&mask);
+            }
+
+            /* 广播地址 */
+            if (cur->ifa_broadaddr && (cur->ifa_flags & IFF_BROADCAST)) {
+                XHostAddress bcast;
+                XHostAddress_init(&bcast);
+                if (cur->ifa_broadaddr->sa_family == AF_INET) {
+                    struct sockaddr_in* sin = (struct sockaddr_in*)cur->ifa_broadaddr;
+                    XHostAddress_setAddressIPv4(&bcast, ntohl(sin->sin_addr.s_addr));
+                }
+                XNetworkAddressEntry_setBroadcast(&entry, &bcast);
+                XHostAddress_deinit_base(&bcast);
+            }
+
+            XVector_push_back_move_1_base(iface->addressEntries, &entry);
+            XNetworkAddressEntry_deinit_base(&entry);
+            XHostAddress_deinit_base(&addr);
+        }
+        cur = cur->ifa_next;
+    }
+
+    /* 将 g_ifaddrsCurrent 移到下一个接口的起始位置 */
+    g_ifaddrsCurrent = cur;
+
+    iface->isValid = true;
+    return iface;
+}
+
+void XNetwork_enumInterfacesEnd(XNetworkInterfaceIterator iter)
+{
+    (void)iter;
+    if (g_ifaddrsList) {
+        freeifaddrs(g_ifaddrsList);
+        g_ifaddrsList = NULL;
+        g_ifaddrsCurrent = NULL;
+    }
+    g_ifaddrsCurrentName[0] = '\0';
+}
 
 /* =========================================================================
  * 多播
@@ -917,8 +1100,66 @@ bool XNetwork_multicastGroup(XSocketHandle sock, bool join,
 
 int XNetwork_multicastOp(XSocketHandle sock, XMulticastOp op, void* arg)
 {
-    (void)sock; (void)op; (void)arg;
-    return -1;
+    if (sock == (XSocketHandle)-1 || !arg) return -1;
+    int fd = (int)sock;
+
+    switch (op) {
+    case XMC_SetIf: {
+        uint32_t ifIndex = *(uint32_t*)arg;
+        struct ifreq ifr;
+        memset(&ifr, 0, sizeof(ifr));
+        if (if_indextoname(ifIndex, ifr.ifr_name) == NULL) return -1;
+        if (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &ifr, sizeof(ifr)) != 0)
+            return -1;
+        return 0;
+    }
+    case XMC_GetIf: {
+        struct ifreq ifr;
+        memset(&ifr, 0, sizeof(ifr));
+        if (getsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &ifr, &(socklen_t){sizeof(ifr)}) != 0)
+            return -1;
+        unsigned int idx = if_nametoindex(ifr.ifr_name);
+        if (idx == 0) return -1;
+        *(uint32_t*)arg = idx;
+        return 0;
+    }
+    case XMC_SetTtl: {
+        int ttl = *(int*)arg;
+        /* IPv4 */
+        if (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl)) != 0)
+            return -1;
+        /* IPv6 */
+        setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &ttl, sizeof(ttl));
+        return 0;
+    }
+    case XMC_GetTtl: {
+        int ttl = 0;
+        socklen_t len = sizeof(ttl);
+        if (getsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, &len) != 0)
+            return -1;
+        *(int*)arg = ttl;
+        return 0;
+    }
+    case XMC_SetLoop: {
+        int loop = *(bool*)arg ? 1 : 0;
+        /* IPv4 */
+        if (setsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop)) != 0)
+            return -1;
+        /* IPv6 */
+        setsockopt(fd, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, &loop, sizeof(loop));
+        return 0;
+    }
+    case XMC_GetLoop: {
+        int loop = 0;
+        socklen_t len = sizeof(loop);
+        if (getsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, &len) != 0)
+            return -1;
+        *(bool*)arg = (loop != 0);
+        return 0;
+    }
+    default:
+        return -1;
+    }
 }
 
 /* =========================================================================
@@ -954,17 +1195,182 @@ int64_t XNetwork_sendDatagram(XSocketHandle sock, const void* data, int64_t size
 bool XNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outProxy)
 {
     (void)queryUrl;
+    if (!outProxy) return false;
     XNetworkProxy_setType(outProxy, XNetworkProxy_NoProxy);
+
+    /* 读取环境变量获取系统代理配置
+     * 优先级: HTTPS_PROXY > https_proxy > HTTP_PROXY > http_proxy */
+    const char* proxyStr = NULL;
+    const char* noProxyStr = getenv("no_proxy");
+    if (!noProxyStr) noProxyStr = getenv("NO_PROXY");
+
+    /* 检查是否在 no_proxy 列表中 */
+    if (noProxyStr && queryUrl) {
+        /* 此处简化处理：不对 URL 进行精确匹配，依赖于调用侧的代理绕过逻辑 */
+    }
+
+    /* 优先尝试 HTTPS 代理 */
+    proxyStr = getenv("HTTPS_PROXY");
+    if (!proxyStr) proxyStr = getenv("https_proxy");
+    if (!proxyStr) proxyStr = getenv("HTTP_PROXY");
+    if (!proxyStr) proxyStr = getenv("http_proxy");
+
+    if (proxyStr && proxyStr[0]) {
+        char proxyHost[256] = "";
+        uint16_t proxyPort = 0;
+        const char* p = proxyStr;
+
+        /* 跳过协议前缀 */
+        if (strncmp(p, "http://", 7) == 0) p += 7;
+        else if (strncmp(p, "https://", 8) == 0) p += 8;
+        else if (strncmp(p, "socks5://", 9) == 0) {
+            p += 9;
+            XNetworkProxy_setType(outProxy, XNetworkProxy_Socks5Proxy);
+        } else if (strncmp(p, "socks4://", 9) == 0) {
+            p += 9;
+            XNetworkProxy_setType(outProxy, XNetworkProxy_Socks5Proxy);
+        }
+
+        /* 解析 host:port */
+        const char* colon = strchr(p, ':');
+        if (colon) {
+            size_t hostLen = (size_t)(colon - p);
+            if (hostLen < sizeof(proxyHost)) {
+                strncpy(proxyHost, p, hostLen);
+                proxyHost[hostLen] = '\0';
+            }
+            proxyPort = (uint16_t)atoi(colon + 1);
+        } else {
+            strncpy(proxyHost, p, sizeof(proxyHost) - 1);
+            proxyHost[sizeof(proxyHost) - 1] = '\0';
+            proxyPort = 80;
+        }
+
+        if (proxyHost[0]) {
+            XString* host = XString_create_utf8(proxyHost);
+            XNetworkProxy_setHostName(outProxy, host);
+            XNetworkProxy_setPort(outProxy, proxyPort);
+            XString_delete_base(host);
+            return true;
+        }
+    }
+
     return false;
 }
+
+/* GSSAPI 上下文结构 */
+typedef struct {
+    const char* targetName;
+    int initialized;
+} PosixGssapiContext;
 
 int XNetwork_gssapiAuth(const XString* serviceName,
                          const XByteArray* inputToken,
                          XByteArray* outputToken,
                          void** context)
 {
-    (void)serviceName; (void)inputToken; (void)outputToken; (void)context;
+    if (!outputToken) return -1;
+
+#ifdef HAVE_GSSAPI
+    /* GSSAPI 实现 */
+    PosixGssapiContext* ctx = (PosixGssapiContext*)*context;
+
+    if (!ctx) {
+        ctx = (PosixGssapiContext*)XCalloc_System(1, sizeof(PosixGssapiContext));
+        if (!ctx) return -1;
+        if (serviceName) {
+            const char* svc = XString_toUtf8(serviceName);
+            if (svc) ctx->targetName = strdup(svc);
+        }
+        *context = ctx;
+    }
+
+    /* GSSAPI 初始化 */
+    gss_ctx_id_t gssCtx = GSS_C_NO_CONTEXT;
+    gss_cred_id_t gssCred = GSS_C_NO_CREDENTIAL;
+    gss_buffer_desc inputBuf = GSS_C_EMPTY_BUFFER;
+    gss_buffer_desc outputBuf = GSS_C_EMPTY_BUFFER;
+    OM_uint32 major, minor, retFlags;
+
+    /* 获取默认凭据 */
+    major = gss_acquire_cred(&minor, GSS_C_NO_NAME, GSS_C_INDEFINITE,
+                             GSS_C_NO_OID_SET, GSS_C_INITIATE,
+                             &gssCred, NULL, NULL);
+    if (GSS_ERROR(major)) {
+        if (ctx->targetName) free((void*)ctx->targetName);
+        XFree_System(ctx);
+        *context = NULL;
+        return -1;
+    }
+
+    /* 准备输入令牌 */
+    if (inputToken && XByteArray_size_base(inputToken) > 0) {
+        inputBuf.value = XByteArray_data(inputToken);
+        inputBuf.length = (size_t)XByteArray_size_base(inputToken);
+    }
+
+    /* 准备服务名称 */
+    gss_buffer_desc nameBuf;
+    OM_uint32 nameMinor;
+    gss_name_t targetName = GSS_C_NO_NAME;
+    if (ctx->targetName) {
+        nameBuf.value = (void*)ctx->targetName;
+        nameBuf.length = strlen(ctx->targetName);
+        major = gss_import_name(&nameMinor, &nameBuf,
+                                (gss_OID)GSS_C_NULL_OID, &targetName);
+        if (GSS_ERROR(major)) {
+            gss_release_cred(&minor, &gssCred);
+            if (ctx->targetName) free((void*)ctx->targetName);
+            XFree_System(ctx);
+            *context = NULL;
+            return -1;
+        }
+    }
+
+    /* 执行 GSSAPI 初始化安全上下文 */
+    major = gss_init_sec_context(&minor, gssCred, &gssCtx,
+                                  targetName, GSS_C_NO_OID,
+                                  GSS_C_MUTUAL_FLAG | GSS_C_REPLAY_FLAG,
+                                  GSS_C_INDEFINITE, GSS_C_NO_CHANNEL_BINDINGS,
+                                  &inputBuf, NULL, &outputBuf, &retFlags, NULL);
+
+    /* 释放凭据 */
+    gss_release_cred(&minor, &gssCred);
+    if (targetName != GSS_C_NO_NAME)
+        gss_release_name(&nameMinor, &targetName);
+
+    if (GSS_ERROR(major)) {
+        if (gssCtx != GSS_C_NO_CONTEXT)
+            gss_delete_sec_context(&minor, &gssCtx, GSS_C_NO_BUFFER);
+        if (ctx->targetName) free((void*)ctx->targetName);
+        XFree_System(ctx);
+        *context = NULL;
+        return -1;
+    }
+
+    /* 复制输出令牌 */
+    if (outputBuf.length > 0) {
+        XByteArray_resize_base(outputToken, (int64_t)outputBuf.length);
+        memcpy(XByteArray_data(outputToken), outputBuf.value, outputBuf.length);
+        gss_release_buffer(&minor, &outputBuf);
+    }
+
+    if (major == GSS_S_COMPLETE) {
+        /* 认证完成 */
+        if (ctx->targetName) free((void*)ctx->targetName);
+        XFree_System(ctx);
+        *context = NULL;
+        return 0;
+    }
+
+    /* 需要继续 (GSS_S_CONTINUE_NEEDED) */
+    return 1;
+
+#else
+    /* 无 GSSAPI 库支持，返回失败 */
+    (void)serviceName; (void)inputToken; (void)context;
     return -1;
+#endif
 }
 
 /* =========================================================================

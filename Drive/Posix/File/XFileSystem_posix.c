@@ -31,6 +31,7 @@
 #include <utime.h>
 #include <limits.h>
 #include <pwd.h>
+#include <sys/statvfs.h>
 #ifdef __linux__
 #include <linux/io_uring.h>
 #include <sys/syscall.h>
@@ -549,6 +550,71 @@ bool XFileSystem_drives_at(int index, XString* path) {
 bool XFileSystem_getStorageInfo(const XString* path, XStorageInfoData* info) {
     if (!path || !info) return false;
     memset(info, 0, sizeof(*info));
+
+    const char* p = XString_toUtf8(path);
+    if (!p) return false;
+
+    /* 使用 statvfs 获取文件系统信息 */
+    struct statvfs vfs;
+    if (statvfs(p, &vfs) != 0) return false;
+
+    info->bytesTotal   = (int64_t)vfs.f_frsize * (int64_t)vfs.f_blocks;
+    info->bytesFree    = (int64_t)vfs.f_frsize * (int64_t)vfs.f_bfree;
+    info->bytesAvailable = (int64_t)vfs.f_frsize * (int64_t)vfs.f_bavail;
+    info->blockSize    = (int)vfs.f_frsize;
+
+    info->isValid = true;
+    info->isReady = true;
+    info->isReadOnly = (vfs.f_flag & ST_RDONLY) != 0;
+
+    /* 获取设备路径 - 通过读取 /proc/self/mounts 匹配挂载点 */
+    if (info->device) {
+        FILE* fp = fopen("/proc/self/mounts", "r");
+        if (fp) {
+            char line[512];
+            size_t bestLen = 0;
+            char bestDevice[256] = "";
+            while (fgets(line, sizeof(line), fp)) {
+                char dev[256] = "", mnt[256] = "", fstype[64] = "", opts[64] = "";
+                int n = sscanf(line, "%255s %255s %63s %63s", dev, mnt, fstype, opts);
+                if (n >= 2) {
+                    size_t mntLen = strlen(mnt);
+                    if (mntLen <= strlen(p) && strncmp(p, mnt, mntLen) == 0) {
+                        /* 检查是否匹配挂载点边界 */
+                        if ((p[mntLen] == '/' || p[mntLen] == 0) && mntLen > bestLen) {
+                            bestLen = mntLen;
+                            strncpy(bestDevice, dev, sizeof(bestDevice) - 1);
+                            bestDevice[sizeof(bestDevice) - 1] = '\0';
+                            /* 设置文件系统类型 */
+                            if (info->fileSystemType && n >= 3) {
+                                XString_assign_utf8(info->fileSystemType, fstype);
+                            }
+                        }
+                    }
+                }
+            }
+            fclose(fp);
+            if (bestLen > 0) {
+                XString_assign_utf8(info->device, bestDevice);
+            } else {
+                XString_assign_utf8(info->device, "");
+            }
+        } else {
+            XString_assign_utf8(info->device, "");
+        }
+    }
+
+    /* 卷标名称 - POSIX 无标准卷标概念，使用设备名或空字符串 */
+    if (info->volumeName) {
+        XString_assign_utf8(info->volumeName, "");
+    }
+
+    /* 子卷名称 - Linux 可通过 Btrfs 的 ioctl 获取，暂不实现 */
+    if (info->subvolume) {
+        XString_assign_utf8(info->subvolume, "");
+    }
+
+    info->isRoot = (strcmp(p, "/") == 0);
     return true;
 }
 

@@ -104,12 +104,11 @@ typedef struct XNetworkSocketPrivateLwip XNetworkSocketPrivateLwip;
  * ================================================================ */
 /* lwIP 全局状态（位域压缩，减少内存占用）
  * 原本为 4 个独立静态变量（约 24~32 字节），合并为 1 个结构体（16 字节）。
- * - defaultNetif: 指针不可使用位域，单独占 8 字节
+ * 原本为 4 个独立静态变量（约 24~32 字节），合并为 1 个结构体（8 字节）。
  * - lastError:    错误码范围 -15~0，8 位有符号足够
  * - ref:          引用计数通常 1~5，7 位（最大 127）足够
  * - inited:       初始化标志，1 位足够 */
 static struct {
-    struct netif* defaultNetif;  /* 默认网络接口 */
     int      lastError : 8;      /* 最后一次错误码 (-15~0) */
     unsigned ref       : 7;      /* lwIP 引用计数 (max 127) */
     unsigned inited    : 1;      /* 是否已初始化 */
@@ -418,7 +417,6 @@ void XNetwork_ensureInit(void) {
     /* 平台网卡初始化：Npcap / TAP / 硬件 MAC */
     struct netif* nif = XNetworkLwip_platform_init();
     if (nif) {
-        g_state.defaultNetif = nif;
         LWIP_DBG("[lwIP初始化] 平台网卡初始化成功\n");
     } else {
         LWIP_DBG("[lwIP初始化] 警告：平台网卡初始化失败，可能无法通信\n");
@@ -440,7 +438,6 @@ void XNetwork_cleanup(void) {
     XNetworkLwip_platform_deinit();
 
     g_state.inited = 0;
-    g_state.defaultNetif = NULL;
     LWIP_DBG("[lwIP清理] 完成\n");
 }
 
@@ -482,7 +479,7 @@ void XNetwork_deleteSocketPrivate(XNetworkSocketPrivate* priv) {
 
     /* 释放资源 */
     if (s->rxBuf) XFree_System(s->rxBuf);
-    if (s->base.notifiers) XVector_delete_base(s->base.notifiers);
+    if (s->base.notifiers) XVector_delete_base((XClass*)s->base.notifiers);
 
     /* 清理未领取的 Accept 连接 */
     if (s->pendingAccept) {
@@ -878,8 +875,9 @@ bool XNetwork_socketHandleEvent(XNetworkSocketPrivate* priv, void* event) {
     return hasEvent;
 }
 
-void XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, int state, int openMode) {
-    (void)priv; (void)fd; (void)state; (void)openMode;
+bool XNetwork_socketSetDescriptor(XNetworkSocketPrivate* priv, intptr_t fd, int state, int openMode) {
+        (void)priv; (void)fd; (void)state; (void)openMode;
+    return false;
 }
 
 bool XNetwork_socketSetOption(XNetworkSocketPrivate* priv, int option, const void* value) {
@@ -1050,7 +1048,7 @@ XNetworkInterface* XNetwork_enumInterfacesNext(XNetworkInterfaceIterator iter) {
             entry.broadcastIsValid = true;
         }
         XVector_push_back_move_1_base(iface->addressEntries, &entry);
-        XNetworkAddressEntry_deinit_base(&entry);
+        XClass_deinit_base((XClass*)&entry);
     }
     iface->isValid = true; it->idx++;
     return iface;
@@ -1095,8 +1093,6 @@ int XNetwork_gssapiAuth(const XString* name, const XByteArray* in, XByteArray* o
     (void)name; (void)in; (void)out; (void)ctx; return -1;
 }
 
-struct netif* XNetworkLwip_defaultNetif(void) { return g_state.defaultNetif; }
-void XNetworkLwip_setDefaultNetif(struct netif* n) { g_state.defaultNetif = n; }
 /* ================================================================
  * 写入延续 - lwIP 模式下写入已通过 tcp_write/tcp_output 同步完成，
  * 环形缓冲区中待发送的明文已在 xssl_v_writeData -> BIO -> parent writeData

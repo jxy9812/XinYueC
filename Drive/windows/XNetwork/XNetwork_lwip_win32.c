@@ -924,5 +924,23 @@ void XNetworkLwip_platform_deinit(void) {
     unload_npcap();
     LWIP_DBG("[平台清理] 完成\n");
 }
+
+
+/* ================================================================
+ * 默认 netif 管理
+ * ================================================================ */
+
+static struct netif* g_defaultLwipNetif = NULL;
+
+struct netif* XNetworkLwip_defaultNetif(void)
+{
+    return g_defaultLwipNetif;
+}
+
+void XNetworkLwip_setDefaultNetif(struct netif* netif)
+{
+    g_defaultLwipNetif = netif;
+}
+
 #endif /* XNETWORK_USE_LWIP */
 #endif /* _WIN32 */

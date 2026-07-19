@@ -88,7 +88,7 @@ set_target_properties(${EXPORT_NAME}_Static PROPERTIES
 # Unix(Linux/macOS/BSD): 需链接数学库 m 与线程库 pthread（对应 Drive/Posix 实现，源码已用
 #                         __linux__/__APPLE__/__BSD__ 宏守护，仅在这些平台编译）
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S m pthread mbedtls lwip zlib fatfs)
+    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S m pthread pcap mbedtls lwip zlib fatfs)
 else()
     target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S mbedtls lwip zlib fatfs)
 endif()
@@ -103,7 +103,7 @@ set_target_properties(${EXPORT_NAME}_Dynamic PROPERTIES
     OUTPUT_NAME "${EXPORT_NAME}_Dynamic"
 )
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} m pthread mbedtls lwip zlib fatfs)
+    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} m pthread pcap mbedtls lwip zlib fatfs)
 else()
     target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs)
 endif()
