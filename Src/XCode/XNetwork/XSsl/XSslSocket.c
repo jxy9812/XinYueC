@@ -420,6 +420,7 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
     if (sa->actType & XSocketAct_Connect) {
         if (XNetwork_socketIsConnected(priv)) {
             XAbstractSocket_setSocketState(sock, XAbstractSocket_ConnectedState);
+            XNetwork_socketContinueRead(priv, sock->socketType == XAbstractSocket_UdpSocket);
         } else {
             XAbstractSocket_setSocketError(sock, XAbstractSocket_ConnectionRefusedError, "Connection failed");
             XAbstractSocket_setSocketState(sock, XAbstractSocket_UnconnectedState);
