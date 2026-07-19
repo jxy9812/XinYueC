@@ -12,623 +12,623 @@ extern "C" {
 
 /**
  * @file XModbusPdu.h
- * @brief ModbusĞ­ÒéÊı¾İµ¥Ôª£¨¶ÔÆëQt6 QModbusPdu£©
- * @details ÊµÏÖModbus PDUµÄºËĞÄ¹¦ÄÜ£¬°üÀ¨¹¦ÄÜÂë¡¢Òì³£ÂëºÍÊı¾İ¹ÜÀí
+ * @brief Modbusåè®®æ•°æ®å•å…ƒï¼ˆå¯¹é½Qt6 QModbusPduï¼‰
+ * @details å®ç°Modbus PDUçš„æ ¸å¿ƒåŠŸèƒ½ï¼ŒåŒ…æ‹¬åŠŸèƒ½ç ã€å¼‚å¸¸ç å’Œæ•°æ®ç®¡ç†
  *
- * @par ¹¦ÄÜÌØĞÔ
- * - Ö§³ÖËùÓĞ±ê×¼Modbus¹¦ÄÜÂë
- * - Ö§³ÖÒì³£ÏìÓ¦´¦Àí
- * - PDUÊı¾İ×Ô¶¯¹ÜÀí
- * - Ö§³Ö¼Ì³ĞÀ©Õ¹£¨Request/Response£©
+ * @par åŠŸèƒ½ç‰¹æ€§
+ * - æ”¯æŒæ‰€æœ‰æ ‡å‡†ModbusåŠŸèƒ½ç 
+ * - æ”¯æŒå¼‚å¸¸å“åº”å¤„ç†
+ * - PDUæ•°æ®è‡ªåŠ¨ç®¡ç†
+ * - æ”¯æŒç»§æ‰¿æ‰©å±•ï¼ˆRequest/Responseï¼‰
  *
- * @par Àà²ã´Î½á¹¹
+ * @par ç±»å±‚æ¬¡ç»“æ„
  * @code
- * XClass (»ùÀà)
- *   ©¸©¤©¤ XModbusPdu (Modbus PDU»ùÀà)
- *         ©À©¤©¤ XModbusRequest (ÇëÇóPDU)
- *         ©¸©¤©¤ XModbusResponse (ÏìÓ¦PDU)
- *               ©¸©¤©¤ XModbusExceptionResponse (Òì³£ÏìÓ¦PDU)
+ * XClass (åŸºç±»)
+ *   â””â”€â”€ XModbusPdu (Modbus PDUåŸºç±»)
+ *         â”œâ”€â”€ XModbusRequest (è¯·æ±‚PDU)
+ *         â””â”€â”€ XModbusResponse (å“åº”PDU)
+ *               â””â”€â”€ XModbusExceptionResponse (å¼‚å¸¸å“åº”PDU)
  * @endcode
  *
- * @par Ê¹ÓÃÊ¾Àı
+ * @par ä½¿ç”¨ç¤ºä¾‹
  * @code
- * // ´´½¨ÇëÇóPDU
+ * // åˆ›å»ºè¯·æ±‚PDU
  * XModbusRequest* request = XModbusRequest_create_with_code(XModbusPdu_ReadHoldingRegisters);
- * uint8_t data[] = {0x00, 0x01, 0x00, 0x0A}; // ÆğÊ¼µØÖ·1£¬ÊıÁ¿10
+ * uint8_t data[] = {0x00, 0x01, 0x00, 0x0A}; // èµ·å§‹åœ°å€1ï¼Œæ•°é‡10
  * XModbusPdu_setData((XModbusPdu*)request, data, 4);
  *
- * // ¼ì²éÓĞĞ§ĞÔ
+ * // æ£€æŸ¥æœ‰æ•ˆæ€§
  * if (XModbusPdu_isValid((XModbusPdu*)request)) {
- *     // ·¢ËÍÇëÇó...
+ *     // å‘é€è¯·æ±‚...
  * }
  *
- * // ÇåÀí
+ * // æ¸…ç†
  * XModbusRequest_delete_base(request);
  * @endcode
  */
 
 /******************************************************************************************
-* ³£Á¿¶¨Òå
+* å¸¸é‡å®šä¹‰
 ******************************************************************************************/
 
 /**
- * @brief ModbusÒì³£ÏìÓ¦±êÖ¾Î»
- * @details µ±ÏìÓ¦¹¦ÄÜÂëµÄ×î¸ßÎ»±»ÉèÖÃÊ±£¬±íÊ¾ÕâÊÇÒ»¸öÒì³£ÏìÓ¦
+ * @brief Modbuså¼‚å¸¸å“åº”æ ‡å¿—ä½
+ * @details å½“å“åº”åŠŸèƒ½ç çš„æœ€é«˜ä½è¢«è®¾ç½®æ—¶ï¼Œè¡¨ç¤ºè¿™æ˜¯ä¸€ä¸ªå¼‚å¸¸å“åº”
  */
 #define XMODBUS_PDU_EXCEPTION_BYTE 0x80
 
 /******************************************************************************************
-* Ã¶¾ÙÀàĞÍ¶¨Òå
+* æšä¸¾ç±»å‹å®šä¹‰
 ******************************************************************************************/
 
 /**
- * @brief ModbusÒì³£ÂëÃ¶¾Ù
- * @details ¶ÔÆëQt6 QModbusPdu::ExceptionCode
- * @par Òì³£ÂëËµÃ÷
- * | Òì³£Âë | Ãû³Æ | ËµÃ÷ |
+ * @brief Modbuså¼‚å¸¸ç æšä¸¾
+ * @details å¯¹é½Qt6 QModbusPdu::ExceptionCode
+ * @par å¼‚å¸¸ç è¯´æ˜
+ * | å¼‚å¸¸ç  | åç§° | è¯´æ˜ |
  * |--------|------|------|
- * | 0x01 | IllegalFunction | Éè±¸²»Ö§³Ö¸Ã¹¦ÄÜÂë |
- * | 0x02 | IllegalDataAddress | Êı¾İµØÖ·ÎŞĞ§ |
- * | 0x03 | IllegalDataValue | Êı¾İÖµÎŞĞ§ |
- * | 0x04 | ServerDeviceFailure | ·şÎñÆ÷Éè±¸¹ÊÕÏ |
- * | 0x05 | Acknowledge | ÒÑ½ÓÊÜ£¬ÕıÔÚ´¦Àí |
- * | 0x06 | ServerDeviceBusy | ·şÎñÆ÷Éè±¸Ã¦ |
- * | 0x08 | MemoryParityError | ÄÚ´æÆæÅ¼Ğ£Ñé´íÎó |
- * | 0x0A | GatewayPathUnavailable | Íø¹ØÂ·¾¶²»¿ÉÓÃ |
- * | 0x0B | GatewayTargetDeviceFailedToRespond | Íø¹ØÄ¿±êÉè±¸ÎŞÏìÓ¦ |
+ * | 0x01 | IllegalFunction | è®¾å¤‡ä¸æ”¯æŒè¯¥åŠŸèƒ½ç  |
+ * | 0x02 | IllegalDataAddress | æ•°æ®åœ°å€æ— æ•ˆ |
+ * | 0x03 | IllegalDataValue | æ•°æ®å€¼æ— æ•ˆ |
+ * | 0x04 | ServerDeviceFailure | æœåŠ¡å™¨è®¾å¤‡æ•…éšœ |
+ * | 0x05 | Acknowledge | å·²æ¥å—ï¼Œæ­£åœ¨å¤„ç† |
+ * | 0x06 | ServerDeviceBusy | æœåŠ¡å™¨è®¾å¤‡å¿™ |
+ * | 0x08 | MemoryParityError | å†…å­˜å¥‡å¶æ ¡éªŒé”™è¯¯ |
+ * | 0x0A | GatewayPathUnavailable | ç½‘å…³è·¯å¾„ä¸å¯ç”¨ |
+ * | 0x0B | GatewayTargetDeviceFailedToRespond | ç½‘å…³ç›®æ ‡è®¾å¤‡æ— å“åº” |
  */
 typedef enum {
-    XModbusPdu_IllegalFunction = 0x01,                          ///< ·Ç·¨¹¦ÄÜÂë
-    XModbusPdu_IllegalDataAddress = 0x02,                       ///< ·Ç·¨Êı¾İµØÖ·
-    XModbusPdu_IllegalDataValue = 0x03,                         ///< ·Ç·¨Êı¾İÖµ
-    XModbusPdu_ServerDeviceFailure = 0x04,                      ///< ·şÎñÆ÷Éè±¸¹ÊÕÏ
-    XModbusPdu_Acknowledge = 0x05,                              ///< È·ÈÏ
-    XModbusPdu_ServerDeviceBusy = 0x06,                         ///< ·şÎñÆ÷Éè±¸Ã¦
-    XModbusPdu_NegativeAcknowledge = 0x07,                      ///< ·ñ¶¨È·ÈÏ
-    XModbusPdu_MemoryParityError = 0x08,                        ///< ÄÚ´æÆæÅ¼Ğ£Ñé´íÎó
-    XModbusPdu_GatewayPathUnavailable = 0x0A,                   ///< Íø¹ØÂ·¾¶²»¿ÉÓÃ
-    XModbusPdu_GatewayTargetDeviceFailedToRespond = 0x0B,       ///< Íø¹ØÄ¿±êÉè±¸ÎŞÏìÓ¦
-    XModbusPdu_ExtendedException = 0xFF                         ///< À©Õ¹Òì³£Âë
+    XModbusPdu_IllegalFunction = 0x01,                          ///< éæ³•åŠŸèƒ½ç 
+    XModbusPdu_IllegalDataAddress = 0x02,                       ///< éæ³•æ•°æ®åœ°å€
+    XModbusPdu_IllegalDataValue = 0x03,                         ///< éæ³•æ•°æ®å€¼
+    XModbusPdu_ServerDeviceFailure = 0x04,                      ///< æœåŠ¡å™¨è®¾å¤‡æ•…éšœ
+    XModbusPdu_Acknowledge = 0x05,                              ///< ç¡®è®¤
+    XModbusPdu_ServerDeviceBusy = 0x06,                         ///< æœåŠ¡å™¨è®¾å¤‡å¿™
+    XModbusPdu_NegativeAcknowledge = 0x07,                      ///< å¦å®šç¡®è®¤
+    XModbusPdu_MemoryParityError = 0x08,                        ///< å†…å­˜å¥‡å¶æ ¡éªŒé”™è¯¯
+    XModbusPdu_GatewayPathUnavailable = 0x0A,                   ///< ç½‘å…³è·¯å¾„ä¸å¯ç”¨
+    XModbusPdu_GatewayTargetDeviceFailedToRespond = 0x0B,       ///< ç½‘å…³ç›®æ ‡è®¾å¤‡æ— å“åº”
+    XModbusPdu_ExtendedException = 0xFF                         ///< æ‰©å±•å¼‚å¸¸ç 
 } XModbusPdu_ExceptionCode;
 
 /**
- * @brief Modbus¹¦ÄÜÂëÃ¶¾Ù
- * @details ¶ÔÆëQt6 QModbusPdu::FunctionCode
- * @par ¹¦ÄÜÂë·ÖÀà
- * | ·¶Î§ | ÀàĞÍ | ËµÃ÷ |
+ * @brief ModbusåŠŸèƒ½ç æšä¸¾
+ * @details å¯¹é½Qt6 QModbusPdu::FunctionCode
+ * @par åŠŸèƒ½ç åˆ†ç±»
+ * | èŒƒå›´ | ç±»å‹ | è¯´æ˜ |
  * |------|------|------|
- * | 0x01-0x06 | Î»/¼Ä´æÆ÷·ÃÎÊ | ¶ÁĞ´ÏßÈ¦ºÍ¼Ä´æÆ÷ |
- * | 0x07-0x0B | Õï¶Ï | Õï¶ÏºÍ×´Ì¬²éÑ¯ |
- * | 0x0F-0x10 | ÅúÁ¿Ğ´Èë | ¶àÏßÈ¦/¼Ä´æÆ÷Ğ´Èë |
- * | 0x14-0x18 | ÎÄ¼ş/¶ÓÁĞ | ÎÄ¼ş¼ÇÂ¼ºÍFIFO |
- * | 0x2B | ÆäËû | ·â×°½Ó¿Ú´«Êä |
+ * | 0x01-0x06 | ä½/å¯„å­˜å™¨è®¿é—® | è¯»å†™çº¿åœˆå’Œå¯„å­˜å™¨ |
+ * | 0x07-0x0B | è¯Šæ–­ | è¯Šæ–­å’ŒçŠ¶æ€æŸ¥è¯¢ |
+ * | 0x0F-0x10 | æ‰¹é‡å†™å…¥ | å¤šçº¿åœˆ/å¯„å­˜å™¨å†™å…¥ |
+ * | 0x14-0x18 | æ–‡ä»¶/é˜Ÿåˆ— | æ–‡ä»¶è®°å½•å’ŒFIFO |
+ * | 0x2B | å…¶ä»– | å°è£…æ¥å£ä¼ è¾“ |
  */
 typedef enum {
-    XModbusPdu_Invalid = 0x00,                                  ///< ÎŞĞ§¹¦ÄÜÂë
-    XModbusPdu_ReadCoils = 0x01,                                ///< ¶ÁÏßÈ¦(FC01)
-    XModbusPdu_ReadDiscreteInputs = 0x02,                      ///< ¶ÁÀëÉ¢ÊäÈë(FC02)
-    XModbusPdu_ReadHoldingRegisters = 0x03,                    ///< ¶Á±£³Ö¼Ä´æÆ÷(FC03)
-    XModbusPdu_ReadInputRegisters = 0x04,                      ///< ¶ÁÊäÈë¼Ä´æÆ÷(FC04)
-    XModbusPdu_WriteSingleCoil = 0x05,                          ///< Ğ´µ¥¸öÏßÈ¦(FC05)
-    XModbusPdu_WriteSingleRegister = 0x06,                      ///< Ğ´µ¥¸ö¼Ä´æÆ÷(FC06)
-    XModbusPdu_ReadExceptionStatus = 0x07,                      ///< ¶ÁÒì³£×´Ì¬(FC07)
-    XModbusPdu_Diagnostics = 0x08,                              ///< Õï¶Ï(FC08)
-    XModbusPdu_GetCommEventCounter = 0x0B,                      ///< »ñÈ¡Í¨ĞÅÊÂ¼ş¼ÆÊı(FC11)
-    XModbusPdu_GetCommEventLog = 0x0C,                          ///< »ñÈ¡Í¨ĞÅÊÂ¼şÈÕÖ¾(FC12)
-    XModbusPdu_WriteMultipleCoils = 0x0F,                       ///< Ğ´¶à¸öÏßÈ¦(FC15)
-    XModbusPdu_WriteMultipleRegisters = 0x10,                   ///< Ğ´¶à¸ö¼Ä´æÆ÷(FC16)
-    XModbusPdu_ReportServerId = 0x11,                           ///< ±¨¸æ·şÎñÆ÷ID(FC17)
-    XModbusPdu_ReadFileRecord = 0x14,                           ///< ¶ÁÎÄ¼ş¼ÇÂ¼(FC20)
-    XModbusPdu_WriteFileRecord = 0x15,                          ///< Ğ´ÎÄ¼ş¼ÇÂ¼(FC21)
-    XModbusPdu_MaskWriteRegister = 0x16,                        ///< ÑÚÂëĞ´¼Ä´æÆ÷(FC22)
-    XModbusPdu_ReadWriteMultipleRegisters = 0x17,               ///< ¶ÁĞ´¶à¸ö¼Ä´æÆ÷(FC23)
-    XModbusPdu_ReadFifoQueue = 0x18,                            ///< ¶ÁFIFO¶ÓÁĞ(FC24)
-    XModbusPdu_EncapsulatedInterfaceTransport = 0x2B,           ///< ·â×°½Ó¿Ú´«Êä(FC43)
-    XModbusPdu_UndefinedFunctionCode = 0x100                    ///< Î´¶¨Òå¹¦ÄÜÂë
+    XModbusPdu_Invalid = 0x00,                                  ///< æ— æ•ˆåŠŸèƒ½ç 
+    XModbusPdu_ReadCoils = 0x01,                                ///< è¯»çº¿åœˆ(FC01)
+    XModbusPdu_ReadDiscreteInputs = 0x02,                      ///< è¯»ç¦»æ•£è¾“å…¥(FC02)
+    XModbusPdu_ReadHoldingRegisters = 0x03,                    ///< è¯»ä¿æŒå¯„å­˜å™¨(FC03)
+    XModbusPdu_ReadInputRegisters = 0x04,                      ///< è¯»è¾“å…¥å¯„å­˜å™¨(FC04)
+    XModbusPdu_WriteSingleCoil = 0x05,                          ///< å†™å•ä¸ªçº¿åœˆ(FC05)
+    XModbusPdu_WriteSingleRegister = 0x06,                      ///< å†™å•ä¸ªå¯„å­˜å™¨(FC06)
+    XModbusPdu_ReadExceptionStatus = 0x07,                      ///< è¯»å¼‚å¸¸çŠ¶æ€(FC07)
+    XModbusPdu_Diagnostics = 0x08,                              ///< è¯Šæ–­(FC08)
+    XModbusPdu_GetCommEventCounter = 0x0B,                      ///< è·å–é€šä¿¡äº‹ä»¶è®¡æ•°(FC11)
+    XModbusPdu_GetCommEventLog = 0x0C,                          ///< è·å–é€šä¿¡äº‹ä»¶æ—¥å¿—(FC12)
+    XModbusPdu_WriteMultipleCoils = 0x0F,                       ///< å†™å¤šä¸ªçº¿åœˆ(FC15)
+    XModbusPdu_WriteMultipleRegisters = 0x10,                   ///< å†™å¤šä¸ªå¯„å­˜å™¨(FC16)
+    XModbusPdu_ReportServerId = 0x11,                           ///< æŠ¥å‘ŠæœåŠ¡å™¨ID(FC17)
+    XModbusPdu_ReadFileRecord = 0x14,                           ///< è¯»æ–‡ä»¶è®°å½•(FC20)
+    XModbusPdu_WriteFileRecord = 0x15,                          ///< å†™æ–‡ä»¶è®°å½•(FC21)
+    XModbusPdu_MaskWriteRegister = 0x16,                        ///< æ©ç å†™å¯„å­˜å™¨(FC22)
+    XModbusPdu_ReadWriteMultipleRegisters = 0x17,               ///< è¯»å†™å¤šä¸ªå¯„å­˜å™¨(FC23)
+    XModbusPdu_ReadFifoQueue = 0x18,                            ///< è¯»FIFOé˜Ÿåˆ—(FC24)
+    XModbusPdu_EncapsulatedInterfaceTransport = 0x2B,           ///< å°è£…æ¥å£ä¼ è¾“(FC43)
+    XModbusPdu_UndefinedFunctionCode = 0x100                    ///< æœªå®šä¹‰åŠŸèƒ½ç 
 } XModbusPdu_FunctionCode;
 
 /******************************************************************************************
- * ½á¹¹Ìå¶¨Òå
+ * ç»“æ„ä½“å®šä¹‰
  ******************************************************************************************/
 
  /**
-  * @brief Modbus PDU»ùÀà½á¹¹Ìå
-  * @details ¼Ì³Ğ×ÔXClass£¬·â×°¹¦ÄÜÂëºÍÊı¾İ
+  * @brief Modbus PDUåŸºç±»ç»“æ„ä½“
+  * @details ç»§æ‰¿è‡ªXClassï¼Œå°è£…åŠŸèƒ½ç å’Œæ•°æ®
   *
-  * @par ³ÉÔ±ËµÃ÷
-  * | ³ÉÔ± | ÀàĞÍ | ËµÃ÷ |
+  * @par æˆå‘˜è¯´æ˜
+  * | æˆå‘˜ | ç±»å‹ | è¯´æ˜ |
   * |------|------|------|
-  * | m_class | XClass | »ùÀà |
-  * | m_code | XModbusPdu_FunctionCode | ¹¦ÄÜÂë£¨¿ÉÄÜ°üº¬Òì³£±êÖ¾£© |
-  * | m_data | XByteArray* | PDUÊı¾İ²¿·Ö |
+  * | m_class | XClass | åŸºç±» |
+  * | m_code | XModbusPdu_FunctionCode | åŠŸèƒ½ç ï¼ˆå¯èƒ½åŒ…å«å¼‚å¸¸æ ‡å¿—ï¼‰ |
+  * | m_data | XByteArray* | PDUæ•°æ®éƒ¨åˆ† |
   *
-  * @par PDU½á¹¹
+  * @par PDUç»“æ„
   * @code
   * +----------+------------------+
-  * | ¹¦ÄÜÂë   | Êı¾İ             |
-  * | 1×Ö½Ú    | 0-252×Ö½Ú        |
+  * | åŠŸèƒ½ç    | æ•°æ®             |
+  * | 1å­—èŠ‚    | 0-252å­—èŠ‚        |
   * +----------+------------------+
   * @endcode
   */
 typedef struct XModbusPdu {
-    XClass m_class;                             ///< ¼Ì³Ğ×ÔXClass
-    XModbusPdu_FunctionCode m_code;             ///< ¹¦ÄÜÂë£¨¿ÉÄÜ°üº¬Òì³£±êÖ¾£©
-    XByteArray* m_data;                         ///< PDUÊı¾İ²¿·Ö£¨²»°üº¬¹¦ÄÜÂë£©
+    XClass m_class;                             ///< ç»§æ‰¿è‡ªXClass
+    XModbusPdu_FunctionCode m_code;             ///< åŠŸèƒ½ç ï¼ˆå¯èƒ½åŒ…å«å¼‚å¸¸æ ‡å¿—ï¼‰
+    XByteArray* m_data;                         ///< PDUæ•°æ®éƒ¨åˆ†ï¼ˆä¸åŒ…å«åŠŸèƒ½ç ï¼‰
 } XModbusPdu;
 
 /**
- * @brief ModbusÇëÇóPDU½á¹¹Ìå
- * @details ¼Ì³Ğ×ÔXModbusPdu£¬ÓÃÓÚ·â×°ModbusÇëÇó
+ * @brief Modbusè¯·æ±‚PDUç»“æ„ä½“
+ * @details ç»§æ‰¿è‡ªXModbusPduï¼Œç”¨äºå°è£…Modbusè¯·æ±‚
  *
- * @par Ê¹ÓÃÊ¾Àı
+ * @par ä½¿ç”¨ç¤ºä¾‹
  * @code
- * // ´´½¨¶Á±£³Ö¼Ä´æÆ÷ÇëÇó
+ * // åˆ›å»ºè¯»ä¿æŒå¯„å­˜å™¨è¯·æ±‚
  * XModbusRequest* req = XModbusRequest_create_with_code(XModbusPdu_ReadHoldingRegisters);
- * uint8_t data[] = {0x00, 0x00, 0x00, 0x0A}; // µØÖ·0£¬ÊıÁ¿10
+ * uint8_t data[] = {0x00, 0x00, 0x00, 0x0A}; // åœ°å€0ï¼Œæ•°é‡10
  * XModbusPdu_setData((XModbusPdu*)req, data, 4);
  * @endcode
  */
 typedef struct XModbusRequest {
-    XModbusPdu m_base;                          ///< ¼Ì³Ğ×ÔXModbusPdu£¨±ØĞëÊÇµÚÒ»¸ö³ÉÔ±£©
+    XModbusPdu m_base;                          ///< ç»§æ‰¿è‡ªXModbusPduï¼ˆå¿…é¡»æ˜¯ç¬¬ä¸€ä¸ªæˆå‘˜ï¼‰
 } XModbusRequest;
 
 /**
- * @brief ModbusÏìÓ¦PDU½á¹¹Ìå
- * @details ¼Ì³Ğ×ÔXModbusPdu£¬ÓÃÓÚ·â×°ModbusÏìÓ¦
+ * @brief Modbuså“åº”PDUç»“æ„ä½“
+ * @details ç»§æ‰¿è‡ªXModbusPduï¼Œç”¨äºå°è£…Modbuså“åº”
  */
 typedef struct XModbusResponse {
-    XModbusPdu m_base;                          ///< ¼Ì³Ğ×ÔXModbusPdu£¨±ØĞëÊÇµÚÒ»¸ö³ÉÔ±£©
+    XModbusPdu m_base;                          ///< ç»§æ‰¿è‡ªXModbusPduï¼ˆå¿…é¡»æ˜¯ç¬¬ä¸€ä¸ªæˆå‘˜ï¼‰
 } XModbusResponse;
 
 /**
- * @brief ModbusÒì³£ÏìÓ¦PDU½á¹¹Ìå
- * @details ¼Ì³Ğ×ÔXModbusResponse£¬ÓÃÓÚ·â×°ModbusÒì³£ÏìÓ¦
+ * @brief Modbuså¼‚å¸¸å“åº”PDUç»“æ„ä½“
+ * @details ç»§æ‰¿è‡ªXModbusResponseï¼Œç”¨äºå°è£…Modbuså¼‚å¸¸å“åº”
  *
- * @par Òì³£ÏìÓ¦¸ñÊ½
+ * @par å¼‚å¸¸å“åº”æ ¼å¼
  * @code
  * +----------+----------+
- * | ¹¦ÄÜÂë   | Òì³£Âë   |
- * | 1×Ö½Ú    | 1×Ö½Ú    |
+ * | åŠŸèƒ½ç    | å¼‚å¸¸ç    |
+ * | 1å­—èŠ‚    | 1å­—èŠ‚    |
  * +----------+----------+
- * ×¢£º¹¦ÄÜÂë×î¸ßÎ»±»ÉèÖÃ(OR 0x80)
+ * æ³¨ï¼šåŠŸèƒ½ç æœ€é«˜ä½è¢«è®¾ç½®(OR 0x80)
  * @endcode
  */
 typedef struct XModbusExceptionResponse {
-    XModbusResponse m_base;                     ///< ¼Ì³Ğ×ÔXModbusResponse£¨±ØĞëÊÇµÚÒ»¸ö³ÉÔ±£©
+    XModbusResponse m_base;                     ///< ç»§æ‰¿è‡ªXModbusResponseï¼ˆå¿…é¡»æ˜¯ç¬¬ä¸€ä¸ªæˆå‘˜ï¼‰
 } XModbusExceptionResponse;
 
 /******************************************************************************************
- * Àà³õÊ¼»¯½Ó¿Ú
+ * ç±»åˆå§‹åŒ–æ¥å£
  ******************************************************************************************/
 
  /**
-  * @brief ³õÊ¼»¯XModbusPduµÄĞéº¯Êı±í
-  * @return ³õÊ¼»¯Íê³ÉµÄĞéº¯Êı±íÖ¸Õë
+  * @brief åˆå§‹åŒ–XModbusPduçš„è™šå‡½æ•°è¡¨
+  * @return åˆå§‹åŒ–å®Œæˆçš„è™šå‡½æ•°è¡¨æŒ‡é’ˆ
   */
 XVtable* XModbusPdu_class_init(void);
 
 /**
- * @brief ³õÊ¼»¯XModbusRequestµÄĞéº¯Êı±í
- * @return ³õÊ¼»¯Íê³ÉµÄĞéº¯Êı±íÖ¸Õë
+ * @brief åˆå§‹åŒ–XModbusRequestçš„è™šå‡½æ•°è¡¨
+ * @return åˆå§‹åŒ–å®Œæˆçš„è™šå‡½æ•°è¡¨æŒ‡é’ˆ
  */
 XVtable* XModbusRequest_class_init(void);
 
 /**
- * @brief ³õÊ¼»¯XModbusResponseµÄĞéº¯Êı±í
- * @return ³õÊ¼»¯Íê³ÉµÄĞéº¯Êı±íÖ¸Õë
+ * @brief åˆå§‹åŒ–XModbusResponseçš„è™šå‡½æ•°è¡¨
+ * @return åˆå§‹åŒ–å®Œæˆçš„è™šå‡½æ•°è¡¨æŒ‡é’ˆ
  */
 XVtable* XModbusResponse_class_init(void);
 
 /**
- * @brief ³õÊ¼»¯XModbusExceptionResponseµÄĞéº¯Êı±í
- * @return ³õÊ¼»¯Íê³ÉµÄĞéº¯Êı±íÖ¸Õë
+ * @brief åˆå§‹åŒ–XModbusExceptionResponseçš„è™šå‡½æ•°è¡¨
+ * @return åˆå§‹åŒ–å®Œæˆçš„è™šå‡½æ•°è¡¨æŒ‡é’ˆ
  */
 XVtable* XModbusExceptionResponse_class_init(void);
 
 /******************************************************************************************
- * XModbusPdu ´´½¨/³õÊ¼»¯½Ó¿Ú
+ * XModbusPdu åˆ›å»º/åˆå§‹åŒ–æ¥å£
  ******************************************************************************************/
 
  /**
-  * @brief ÔÚ¶ÑÉÏ´´½¨²¢³õÊ¼»¯Ò»¸öXModbusPduÊµÀı
-  * @return ³É¹¦·µ»ØXModbusPduÖ¸Õë£¬Ê§°Ü·µ»ØNULL
+  * @brief åœ¨å †ä¸Šåˆ›å»ºå¹¶åˆå§‹åŒ–ä¸€ä¸ªXModbusPduå®ä¾‹
+  * @return æˆåŠŸè¿”å›XModbusPduæŒ‡é’ˆï¼Œå¤±è´¥è¿”å›NULL
   */
 XModbusPdu* XModbusPdu_create(void);
 
 /**
- * @brief ´´½¨XModbusPduµÄÉî¿½±´
- * @param pdu Ô´XModbusPduÖ¸Õë
- * @return ³É¹¦·µ»ØĞÂXModbusPduÖ¸Õë£¬Ê§°Ü·µ»ØNULL
+ * @brief åˆ›å»ºXModbusPduçš„æ·±æ‹·è´
+ * @param pdu æºXModbusPduæŒ‡é’ˆ
+ * @return æˆåŠŸè¿”å›æ–°XModbusPduæŒ‡é’ˆï¼Œå¤±è´¥è¿”å›NULL
  */
 XModbusPdu* XModbusPdu_create_copy(const XModbusPdu* pdu);
 XModbusPdu* XModbusPdu_create_move(XModbusPdu* pdu);
 /**
- * @brief ´´½¨´ø¹¦ÄÜÂëµÄXModbusPdu
- * @param code ¹¦ÄÜÂë
- * @return ³É¹¦·µ»ØXModbusPduÖ¸Õë£¬Ê§°Ü·µ»ØNULL
+ * @brief åˆ›å»ºå¸¦åŠŸèƒ½ç çš„XModbusPdu
+ * @param code åŠŸèƒ½ç 
+ * @return æˆåŠŸè¿”å›XModbusPduæŒ‡é’ˆï¼Œå¤±è´¥è¿”å›NULL
  */
 XModbusPdu* XModbusPdu_create_with_code(XModbusPdu_FunctionCode code);
 
 /**
- * @brief ³õÊ¼»¯ÒÑ·ÖÅäµÄXModbusPduÊµÀı
- * @param pdu XModbusPduÖ¸Õë£¨·ÇNULL£©
+ * @brief åˆå§‹åŒ–å·²åˆ†é…çš„XModbusPduå®ä¾‹
+ * @param pdu XModbusPduæŒ‡é’ˆï¼ˆéNULLï¼‰
  */
 void XModbusPdu_init(XModbusPdu* pdu);
 
 /**
- * @brief ³õÊ¼»¯ÒÑ·ÖÅäµÄXModbusPduÊµÀı£¨´ø¹¦ÄÜÂë£©
- * @param pdu XModbusPduÖ¸Õë£¨·ÇNULL£©
- * @param code ¹¦ÄÜÂë
+ * @brief åˆå§‹åŒ–å·²åˆ†é…çš„XModbusPduå®ä¾‹ï¼ˆå¸¦åŠŸèƒ½ç ï¼‰
+ * @param pdu XModbusPduæŒ‡é’ˆï¼ˆéNULLï¼‰
+ * @param code åŠŸèƒ½ç 
  */
 void XModbusPdu_init_with_code(XModbusPdu* pdu, XModbusPdu_FunctionCode code);
 
 /******************************************************************************************
- * XModbusRequest ´´½¨/³õÊ¼»¯½Ó¿Ú
+ * XModbusRequest åˆ›å»º/åˆå§‹åŒ–æ¥å£
  ******************************************************************************************/
 
  /**
-  * @brief ÔÚ¶ÑÉÏ´´½¨²¢³õÊ¼»¯Ò»¸öXModbusRequestÊµÀı
-  * @return ³É¹¦·µ»ØXModbusRequestÖ¸Õë£¬Ê§°Ü·µ»ØNULL
+  * @brief åœ¨å †ä¸Šåˆ›å»ºå¹¶åˆå§‹åŒ–ä¸€ä¸ªXModbusRequestå®ä¾‹
+  * @return æˆåŠŸè¿”å›XModbusRequestæŒ‡é’ˆï¼Œå¤±è´¥è¿”å›NULL
   */
 XModbusRequest* XModbusRequest_create(void);
 XModbusRequest* XModbusRequest_create_copy(const XModbusRequest* req);
 XModbusRequest* XModbusRequest_create_move(XModbusRequest* req);
 /**
- * @brief ´´½¨´ø¹¦ÄÜÂëµÄXModbusRequest
- * @param code ¹¦ÄÜÂë
- * @return ³É¹¦·µ»ØXModbusRequestÖ¸Õë£¬Ê§°Ü·µ»ØNULL
+ * @brief åˆ›å»ºå¸¦åŠŸèƒ½ç çš„XModbusRequest
+ * @param code åŠŸèƒ½ç 
+ * @return æˆåŠŸè¿”å›XModbusRequestæŒ‡é’ˆï¼Œå¤±è´¥è¿”å›NULL
  */
 XModbusRequest* XModbusRequest_create_with_code(XModbusPdu_FunctionCode code);
 
 /**
- * @brief ³õÊ¼»¯ÒÑ·ÖÅäµÄXModbusRequestÊµÀı
- * @param req XModbusRequestÖ¸Õë£¨·ÇNULL£©
+ * @brief åˆå§‹åŒ–å·²åˆ†é…çš„XModbusRequestå®ä¾‹
+ * @param req XModbusRequestæŒ‡é’ˆï¼ˆéNULLï¼‰
  */
 void XModbusRequest_init(XModbusRequest* req);
 
 /**
- * @brief ³õÊ¼»¯ÒÑ·ÖÅäµÄXModbusRequestÊµÀı£¨´ø¹¦ÄÜÂë£©
- * @param req XModbusRequestÖ¸Õë£¨·ÇNULL£©
- * @param code ¹¦ÄÜÂë
+ * @brief åˆå§‹åŒ–å·²åˆ†é…çš„XModbusRequestå®ä¾‹ï¼ˆå¸¦åŠŸèƒ½ç ï¼‰
+ * @param req XModbusRequestæŒ‡é’ˆï¼ˆéNULLï¼‰
+ * @param code åŠŸèƒ½ç 
  */
 void XModbusRequest_init_with_code(XModbusRequest* req, XModbusPdu_FunctionCode code);
 
 /******************************************************************************************
- * XModbusResponse ´´½¨/³õÊ¼»¯½Ó¿Ú
+ * XModbusResponse åˆ›å»º/åˆå§‹åŒ–æ¥å£
  ******************************************************************************************/
 
  /**
-  * @brief ÔÚ¶ÑÉÏ´´½¨²¢³õÊ¼»¯Ò»¸öXModbusResponseÊµÀı
-  * @return ³É¹¦·µ»ØXModbusResponseÖ¸Õë£¬Ê§°Ü·µ»ØNULL
+  * @brief åœ¨å †ä¸Šåˆ›å»ºå¹¶åˆå§‹åŒ–ä¸€ä¸ªXModbusResponseå®ä¾‹
+  * @return æˆåŠŸè¿”å›XModbusResponseæŒ‡é’ˆï¼Œå¤±è´¥è¿”å›NULL
   */
 XModbusResponse* XModbusResponse_create(void);
 XModbusResponse* XModbusResponse_create_copy(XModbusResponse* response);
 XModbusResponse* XModbusResponse_create_move(XModbusResponse* response);
 /**
- * @brief ´´½¨´ø¹¦ÄÜÂëµÄXModbusResponse
- * @param code ¹¦ÄÜÂë
- * @return ³É¹¦·µ»ØXModbusResponseÖ¸Õë£¬Ê§°Ü·µ»ØNULL
+ * @brief åˆ›å»ºå¸¦åŠŸèƒ½ç çš„XModbusResponse
+ * @param code åŠŸèƒ½ç 
+ * @return æˆåŠŸè¿”å›XModbusResponseæŒ‡é’ˆï¼Œå¤±è´¥è¿”å›NULL
  */
 XModbusResponse* XModbusResponse_create_with_code(XModbusPdu_FunctionCode code);
 
 /**
- * @brief ³õÊ¼»¯ÒÑ·ÖÅäµÄXModbusResponseÊµÀı
- * @param resp XModbusResponseÖ¸Õë£¨·ÇNULL£©
+ * @brief åˆå§‹åŒ–å·²åˆ†é…çš„XModbusResponseå®ä¾‹
+ * @param resp XModbusResponseæŒ‡é’ˆï¼ˆéNULLï¼‰
  */
 void XModbusResponse_init(XModbusResponse* resp);
 
 /**
- * @brief ³õÊ¼»¯ÒÑ·ÖÅäµÄXModbusResponseÊµÀı£¨´ø¹¦ÄÜÂë£©
- * @param resp XModbusResponseÖ¸Õë£¨·ÇNULL£©
- * @param code ¹¦ÄÜÂë
+ * @brief åˆå§‹åŒ–å·²åˆ†é…çš„XModbusResponseå®ä¾‹ï¼ˆå¸¦åŠŸèƒ½ç ï¼‰
+ * @param resp XModbusResponseæŒ‡é’ˆï¼ˆéNULLï¼‰
+ * @param code åŠŸèƒ½ç 
  */
 void XModbusResponse_init_with_code(XModbusResponse* resp, XModbusPdu_FunctionCode code);
 
 
 /******************************************************************************************
- * XModbusExceptionResponse ´´½¨/³õÊ¼»¯½Ó¿Ú
+ * XModbusExceptionResponse åˆ›å»º/åˆå§‹åŒ–æ¥å£
  ******************************************************************************************/
 
  /**
-  * @brief ÔÚ¶ÑÉÏ´´½¨²¢³õÊ¼»¯Ò»¸öXModbusExceptionResponseÊµÀı
-  * @return ³É¹¦·µ»ØXModbusExceptionResponseÖ¸Õë£¬Ê§°Ü·µ»ØNULL
+  * @brief åœ¨å †ä¸Šåˆ›å»ºå¹¶åˆå§‹åŒ–ä¸€ä¸ªXModbusExceptionResponseå®ä¾‹
+  * @return æˆåŠŸè¿”å›XModbusExceptionResponseæŒ‡é’ˆï¼Œå¤±è´¥è¿”å›NULL
   */
 XModbusExceptionResponse* XModbusExceptionResponse_create(void);
 XModbusExceptionResponse* XModbusExceptionResponse_create_copy(const XModbusExceptionResponse* res);
 XModbusExceptionResponse* XModbusExceptionResponse_create_move(XModbusExceptionResponse* res);
 /**
- * @brief ´´½¨´ø¹¦ÄÜÂëºÍÒì³£ÂëµÄXModbusExceptionResponse
- * @param functionCode ¹¦ÄÜÂë
- * @param exceptionCode Òì³£Âë
- * @return ³É¹¦·µ»ØXModbusExceptionResponseÖ¸Õë£¬Ê§°Ü·µ»ØNULL
+ * @brief åˆ›å»ºå¸¦åŠŸèƒ½ç å’Œå¼‚å¸¸ç çš„XModbusExceptionResponse
+ * @param functionCode åŠŸèƒ½ç 
+ * @param exceptionCode å¼‚å¸¸ç 
+ * @return æˆåŠŸè¿”å›XModbusExceptionResponseæŒ‡é’ˆï¼Œå¤±è´¥è¿”å›NULL
  */
 XModbusExceptionResponse* XModbusExceptionResponse_create_with_function_and_exception(
     XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode);
 
 /**
- * @brief ³õÊ¼»¯ÒÑ·ÖÅäµÄXModbusExceptionResponseÊµÀı
- * @param exc XModbusExceptionResponseÖ¸Õë£¨·ÇNULL£©
+ * @brief åˆå§‹åŒ–å·²åˆ†é…çš„XModbusExceptionResponseå®ä¾‹
+ * @param exc XModbusExceptionResponseæŒ‡é’ˆï¼ˆéNULLï¼‰
  */
 void XModbusExceptionResponse_init(XModbusExceptionResponse* exc);
 
 /**
-brief ³õÊ¼»¯ÒÑ·ÖÅäµÄXModbusExceptionResponseÊµÀı£¨´ø¹¦ÄÜÂëºÍÒì³£Âë£©
-param exc XModbusExceptionResponseÖ¸Õë£¨·ÇNULL£©
-param functionCode ¹¦ÄÜÂë
-param exceptionCode Òì³£Âë
+brief åˆå§‹åŒ–å·²åˆ†é…çš„XModbusExceptionResponseå®ä¾‹ï¼ˆå¸¦åŠŸèƒ½ç å’Œå¼‚å¸¸ç ï¼‰
+param exc XModbusExceptionResponseæŒ‡é’ˆï¼ˆéNULLï¼‰
+param functionCode åŠŸèƒ½ç 
+param exceptionCode å¼‚å¸¸ç 
 */
 void XModbusExceptionResponse_init_with_function_and_exception(
     XModbusExceptionResponse* exc, XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode);
 
 /**
- * @brief ÉèÖÃÒì³£ÏìÓ¦µÄÒì³£Âë
- * @param exc XModbusExceptionResponseÖ¸Õë£¨·ÇNULL£©
- * @param ec Òì³£Âë
+ * @brief è®¾ç½®å¼‚å¸¸å“åº”çš„å¼‚å¸¸ç 
+ * @param exc XModbusExceptionResponseæŒ‡é’ˆï¼ˆéNULLï¼‰
+ * @param ec å¼‚å¸¸ç 
  */
 void XModbusExceptionResponse_setExceptionCode(XModbusExceptionResponse* exc, XModbusPdu_ExceptionCode ec);
 
 /******************************************************************************************
- * ºËĞÄ²éÑ¯Óë²Ù×÷½Ó¿Ú (¶ÔÆë QModbusPdu)
+ * æ ¸å¿ƒæŸ¥è¯¢ä¸æ“ä½œæ¥å£ (å¯¹é½ QModbusPdu)
  ******************************************************************************************/
 
 /**
- * @brief ¼ì²éPDUÊÇ·ñÓĞĞ§
- * @param pdu XModbusPduÖ¸Õë
- * @return ÓĞĞ§·µ»Øtrue£¬ÎŞĞ§·µ»Øfalse
- * @par ÓĞĞ§ĞÔÅĞ¶Ï
- * - ¹¦ÄÜÂëÔÚÓĞĞ§·¶Î§ÄÚ
- * - Êı¾İ³¤¶ÈĞ¡ÓÚ253×Ö½Ú£¨Modbus PDU×î´óÊı¾İ³¤¶È£©
+ * @brief æ£€æŸ¥PDUæ˜¯å¦æœ‰æ•ˆ
+ * @param pdu XModbusPduæŒ‡é’ˆ
+ * @return æœ‰æ•ˆè¿”å›trueï¼Œæ— æ•ˆè¿”å›false
+ * @par æœ‰æ•ˆæ€§åˆ¤æ–­
+ * - åŠŸèƒ½ç åœ¨æœ‰æ•ˆèŒƒå›´å†…
+ * - æ•°æ®é•¿åº¦å°äº253å­—èŠ‚ï¼ˆModbus PDUæœ€å¤§æ•°æ®é•¿åº¦ï¼‰
  */
 bool XModbusPdu_isValid(const XModbusPdu* pdu);
 
 /**
- * @brief ¼ì²éÊÇ·ñÎªÒì³£ÏìÓ¦
- * @param pdu XModbusPduÖ¸Õë
- * @return ÊÇÒì³£ÏìÓ¦·µ»Øtrue£¬·ñÔò·µ»Øfalse
- * @note ¹¦ÄÜÂë×î¸ßÎ»±»ÉèÖÃ(0x80)Ê±ÎªÒì³£ÏìÓ¦
+ * @brief æ£€æŸ¥æ˜¯å¦ä¸ºå¼‚å¸¸å“åº”
+ * @param pdu XModbusPduæŒ‡é’ˆ
+ * @return æ˜¯å¼‚å¸¸å“åº”è¿”å›trueï¼Œå¦åˆ™è¿”å›false
+ * @note åŠŸèƒ½ç æœ€é«˜ä½è¢«è®¾ç½®(0x80)æ—¶ä¸ºå¼‚å¸¸å“åº”
  */
 bool XModbusPdu_isException(const XModbusPdu* pdu);
 
 /**
- * @brief »ñÈ¡Òì³£Âë
- * @param pdu XModbusPduÖ¸Õë
- * @return Òì³£Âë£¬Èç¹û²»ÊÇÒì³£ÏìÓ¦·µ»Ø0
+ * @brief è·å–å¼‚å¸¸ç 
+ * @param pdu XModbusPduæŒ‡é’ˆ
+ * @return å¼‚å¸¸ç ï¼Œå¦‚æœä¸æ˜¯å¼‚å¸¸å“åº”è¿”å›0
  */
 XModbusPdu_ExceptionCode XModbusPdu_exceptionCode(const XModbusPdu* pdu);
 
 /**
- * @brief »ñÈ¡PDU×Ü´óĞ¡
- * @param pdu XModbusPduÖ¸Õë
- * @return PDU×Ü´óĞ¡£¨¹¦ÄÜÂë + Êı¾İ£©£¬µ¥Î»×Ö½Ú
+ * @brief è·å–PDUæ€»å¤§å°
+ * @param pdu XModbusPduæŒ‡é’ˆ
+ * @return PDUæ€»å¤§å°ï¼ˆåŠŸèƒ½ç  + æ•°æ®ï¼‰ï¼Œå•ä½å­—èŠ‚
  */
 int16_t XModbusPdu_size(const XModbusPdu* pdu);
 
 /**
- * @brief »ñÈ¡PDUÊı¾İ²¿·Ö´óĞ¡
- * @param pdu XModbusPduÖ¸Õë
- * @return Êı¾İ²¿·Ö´óĞ¡£¬µ¥Î»×Ö½Ú
+ * @brief è·å–PDUæ•°æ®éƒ¨åˆ†å¤§å°
+ * @param pdu XModbusPduæŒ‡é’ˆ
+ * @return æ•°æ®éƒ¨åˆ†å¤§å°ï¼Œå•ä½å­—èŠ‚
  */
 int16_t XModbusPdu_dataSize(const XModbusPdu* pdu);
 
 /**
- * @brief »ñÈ¡Ô­Ê¼¹¦ÄÜÂë£¨°üº¬Òì³£Î»£©
- * @param pdu XModbusPduÖ¸Õë
- * @return Ô­Ê¼¹¦ÄÜÂë
+ * @brief è·å–åŸå§‹åŠŸèƒ½ç ï¼ˆåŒ…å«å¼‚å¸¸ä½ï¼‰
+ * @param pdu XModbusPduæŒ‡é’ˆ
+ * @return åŸå§‹åŠŸèƒ½ç 
  */
 XModbusPdu_FunctionCode XModbusPdu_functionCodeRaw(const XModbusPdu* pdu);
 
 /**
- * @brief »ñÈ¡Êµ¼Ê¹¦ÄÜÂë£¨°şÀëÒì³£Î»£©
- * @param pdu XModbusPduÖ¸Õë
- * @return Êµ¼Ê¹¦ÄÜÂë
- * @note ×Ô¶¯Çå³ı×î¸ßÎ»µÄÒì³£±êÖ¾
+ * @brief è·å–å®é™…åŠŸèƒ½ç ï¼ˆå‰¥ç¦»å¼‚å¸¸ä½ï¼‰
+ * @param pdu XModbusPduæŒ‡é’ˆ
+ * @return å®é™…åŠŸèƒ½ç 
+ * @note è‡ªåŠ¨æ¸…é™¤æœ€é«˜ä½çš„å¼‚å¸¸æ ‡å¿—
  */
 XModbusPdu_FunctionCode XModbusPdu_functionCode(const XModbusPdu* pdu);
 
 /**
- * @brief ÉèÖÃ¹¦ÄÜÂë
- * @param pdu XModbusPduÖ¸Õë£¨·ÇNULL£©
- * @param code ¹¦ÄÜÂë
+ * @brief è®¾ç½®åŠŸèƒ½ç 
+ * @param pdu XModbusPduæŒ‡é’ˆï¼ˆéNULLï¼‰
+ * @param code åŠŸèƒ½ç 
  */
 void XModbusPdu_setFunctionCode(XModbusPdu* pdu, XModbusPdu_FunctionCode code);
 
 /**
- * @brief »ñÈ¡Êı¾İµÄ¿½±´
- * @param pdu XModbusPduÖ¸Õë
- * @return Êı¾İµÄXByteArray¸±±¾£¬µ÷ÓÃÕß¸ºÔğÊÍ·Å
- * @note ·µ»ØNULL±íÊ¾ÎŞÊı¾İ
+ * @brief è·å–æ•°æ®çš„æ‹·è´
+ * @param pdu XModbusPduæŒ‡é’ˆ
+ * @return æ•°æ®çš„XByteArrayå‰¯æœ¬ï¼Œè°ƒç”¨è€…è´Ÿè´£é‡Šæ”¾
+ * @note è¿”å›NULLè¡¨ç¤ºæ— æ•°æ®
  */
 XByteArray* XModbusPdu_data(const XModbusPdu* pdu);
 
 /**
- * @brief ÉèÖÃÊı¾İ£¨Éî¿½±´£©
- * @param pdu XModbusPduÖ¸Õë£¨·ÇNULL£©
- * @param newData Êı¾İÖ¸Õë
- * @param size Êı¾İ´óĞ¡
- * @note Êı¾İ»á±»ÄÚ²¿¸´ÖÆ
+ * @brief è®¾ç½®æ•°æ®ï¼ˆæ·±æ‹·è´ï¼‰
+ * @param pdu XModbusPduæŒ‡é’ˆï¼ˆéNULLï¼‰
+ * @param newData æ•°æ®æŒ‡é’ˆ
+ * @param size æ•°æ®å¤§å°
+ * @note æ•°æ®ä¼šè¢«å†…éƒ¨å¤åˆ¶
  */
 void XModbusPdu_setData(XModbusPdu* pdu, const uint8_t* newData, size_t size);
 
 /******************************************************************************************
- * Êı¾İ´óĞ¡¼ÆËãÆ÷£¨¶ÔÆëQt6 QModbusRequest/QModbusResponse£©
- * @details ÓÃÓÚ×¢²áºÍ²éÑ¯ÌØ¶¨¹¦ÄÜÂëµÄPDU×îĞ¡Êı¾İ´óĞ¡ºÍÊµ¼ÊÊı¾İ´óĞ¡¼ÆËã·½·¨¡£
- *          Ö§³Ö±ê×¼Modbus¹¦ÄÜÂëµÄÄ¬ÈÏÊµÏÖ£¬Ò²ÔÊĞíÓÃ»§×¢²á×Ô¶¨Òå¼ÆËãÆ÷¡£
+ * æ•°æ®å¤§å°è®¡ç®—å™¨ï¼ˆå¯¹é½Qt6 QModbusRequest/QModbusResponseï¼‰
+ * @details ç”¨äºæ³¨å†Œå’ŒæŸ¥è¯¢ç‰¹å®šåŠŸèƒ½ç çš„PDUæœ€å°æ•°æ®å¤§å°å’Œå®é™…æ•°æ®å¤§å°è®¡ç®—æ–¹æ³•ã€‚
+ *          æ”¯æŒæ ‡å‡†ModbusåŠŸèƒ½ç çš„é»˜è®¤å®ç°ï¼Œä¹Ÿå…è®¸ç”¨æˆ·æ³¨å†Œè‡ªå®šä¹‰è®¡ç®—å™¨ã€‚
  */
 
 /**
- * @brief ÇëÇóÊı¾İ´óĞ¡¼ÆËãº¯ÊıÖ¸ÕëÀàĞÍ
- * @param pdu ÇëÇóPDUÖ¸Õë
- * @return ¼ÆËã³öµÄÊı¾İ´óĞ¡£¬-1±íÊ¾Î´Öª
+ * @brief è¯·æ±‚æ•°æ®å¤§å°è®¡ç®—å‡½æ•°æŒ‡é’ˆç±»å‹
+ * @param pdu è¯·æ±‚PDUæŒ‡é’ˆ
+ * @return è®¡ç®—å‡ºçš„æ•°æ®å¤§å°ï¼Œ-1è¡¨ç¤ºæœªçŸ¥
  */
 typedef int16_t (*XModbusRequest_CalcFuncPtr)(const XModbusRequest* pdu);
 
 /**
- * @brief ÏìÓ¦Êı¾İ´óĞ¡¼ÆËãº¯ÊıÖ¸ÕëÀàĞÍ
- * @param pdu ÏìÓ¦PDUÖ¸Õë
- * @return ¼ÆËã³öµÄÊı¾İ´óĞ¡£¬-1±íÊ¾Î´Öª
+ * @brief å“åº”æ•°æ®å¤§å°è®¡ç®—å‡½æ•°æŒ‡é’ˆç±»å‹
+ * @param pdu å“åº”PDUæŒ‡é’ˆ
+ * @return è®¡ç®—å‡ºçš„æ•°æ®å¤§å°ï¼Œ-1è¡¨ç¤ºæœªçŸ¥
  */
 typedef int16_t (*XModbusResponse_CalcFuncPtr)(const XModbusResponse* pdu);
 
 /**
- * @brief »ñÈ¡ÇëÇóPDUµÄ×îĞ¡Êı¾İ´óĞ¡£¨²»º¬¹¦ÄÜÂë×Ö½Ú£©
- * @param pdu ÇëÇóPDUÖ¸Õë
- * @return ×îĞ¡Êı¾İ´óĞ¡£¨×Ö½Ú£©£¬-1±íÊ¾Î´Öª¹¦ÄÜÂë
+ * @brief è·å–è¯·æ±‚PDUçš„æœ€å°æ•°æ®å¤§å°ï¼ˆä¸å«åŠŸèƒ½ç å­—èŠ‚ï¼‰
+ * @param pdu è¯·æ±‚PDUæŒ‡é’ˆ
+ * @return æœ€å°æ•°æ®å¤§å°ï¼ˆå­—èŠ‚ï¼‰ï¼Œ-1è¡¨ç¤ºæœªçŸ¥åŠŸèƒ½ç 
  */
 int16_t XModbusRequest_minimumDataSize(const XModbusRequest* pdu);
 
 /**
- * @brief ¼ÆËãÇëÇóPDUµÄÊµ¼ÊÊı¾İ´óĞ¡£¨²»º¬¹¦ÄÜÂë×Ö½Ú£©
- * @param pdu ÇëÇóPDUÖ¸Õë
- * @return Êµ¼ÊÊı¾İ´óĞ¡£¨×Ö½Ú£©£¬-1±íÊ¾ÎŞ·¨È·¶¨
+ * @brief è®¡ç®—è¯·æ±‚PDUçš„å®é™…æ•°æ®å¤§å°ï¼ˆä¸å«åŠŸèƒ½ç å­—èŠ‚ï¼‰
+ * @param pdu è¯·æ±‚PDUæŒ‡é’ˆ
+ * @return å®é™…æ•°æ®å¤§å°ï¼ˆå­—èŠ‚ï¼‰ï¼Œ-1è¡¨ç¤ºæ— æ³•ç¡®å®š
  */
 int16_t XModbusRequest_calculateDataSize(const XModbusRequest* pdu);
 
 /**
- * @brief ×¢²áÇëÇóPDUÊı¾İ´óĞ¡¼ÆËãÆ÷
- * @param fc ¹¦ÄÜÂë
- * @param func ¼ÆËãº¯ÊıÖ¸Õë£¬´«ÈëNULL»Ö¸´Ä¬ÈÏÊµÏÖ
+ * @brief æ³¨å†Œè¯·æ±‚PDUæ•°æ®å¤§å°è®¡ç®—å™¨
+ * @param fc åŠŸèƒ½ç 
+ * @param func è®¡ç®—å‡½æ•°æŒ‡é’ˆï¼Œä¼ å…¥NULLæ¢å¤é»˜è®¤å®ç°
  */
 void XModbusRequest_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XModbusRequest_CalcFuncPtr func);
 
 /**
- * @brief »ñÈ¡ÏìÓ¦PDUµÄ×îĞ¡Êı¾İ´óĞ¡£¨²»º¬¹¦ÄÜÂë×Ö½Ú£©
- * @param pdu ÏìÓ¦PDUÖ¸Õë
- * @return ×îĞ¡Êı¾İ´óĞ¡£¨×Ö½Ú£©£¬-1±íÊ¾Î´Öª¹¦ÄÜÂë
+ * @brief è·å–å“åº”PDUçš„æœ€å°æ•°æ®å¤§å°ï¼ˆä¸å«åŠŸèƒ½ç å­—èŠ‚ï¼‰
+ * @param pdu å“åº”PDUæŒ‡é’ˆ
+ * @return æœ€å°æ•°æ®å¤§å°ï¼ˆå­—èŠ‚ï¼‰ï¼Œ-1è¡¨ç¤ºæœªçŸ¥åŠŸèƒ½ç 
  */
 int16_t XModbusResponse_minimumDataSize(const XModbusResponse* pdu);
 
 /**
- * @brief ¼ÆËãÏìÓ¦PDUµÄÊµ¼ÊÊı¾İ´óĞ¡£¨²»º¬¹¦ÄÜÂë×Ö½Ú£©
- * @param pdu ÏìÓ¦PDUÖ¸Õë
- * @return Êµ¼ÊÊı¾İ´óĞ¡£¨×Ö½Ú£©£¬-1±íÊ¾ÎŞ·¨È·¶¨
+ * @brief è®¡ç®—å“åº”PDUçš„å®é™…æ•°æ®å¤§å°ï¼ˆä¸å«åŠŸèƒ½ç å­—èŠ‚ï¼‰
+ * @param pdu å“åº”PDUæŒ‡é’ˆ
+ * @return å®é™…æ•°æ®å¤§å°ï¼ˆå­—èŠ‚ï¼‰ï¼Œ-1è¡¨ç¤ºæ— æ³•ç¡®å®š
  */
 int16_t XModbusResponse_calculateDataSize(const XModbusResponse* pdu);
 
 /**
- * @brief ×¢²áÏìÓ¦PDUÊı¾İ´óĞ¡¼ÆËãÆ÷
- * @param fc ¹¦ÄÜÂë
- * @param func ¼ÆËãº¯ÊıÖ¸Õë£¬´«ÈëNULL»Ö¸´Ä¬ÈÏÊµÏÖ
+ * @brief æ³¨å†Œå“åº”PDUæ•°æ®å¤§å°è®¡ç®—å™¨
+ * @param fc åŠŸèƒ½ç 
+ * @param func è®¡ç®—å‡½æ•°æŒ‡é’ˆï¼Œä¼ å…¥NULLæ¢å¤é»˜è®¤å®ç°
  */
 void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XModbusResponse_CalcFuncPtr func);
 
 
 /******************************************************************************************
- * ÄÚ´æ¹ÜÀíºê - XModbusPdu
+ * å†…å­˜ç®¡ç†å® - XModbusPdu
  ******************************************************************************************/
 
 /**
- * @brief ¸´ÖÆPDU
- * @param dest Ä¿±êPDU
- * @param src Ô´PDU
+ * @brief å¤åˆ¶PDU
+ * @param dest ç›®æ ‡PDU
+ * @param src æºPDU
  */
 #define XModbusPdu_copy_base        XClass_copy_base
 
 /**
- * @brief ÒÆ¶¯PDU
- * @param dest Ä¿±êPDU
- * @param src Ô´PDU
+ * @brief ç§»åŠ¨PDU
+ * @param dest ç›®æ ‡PDU
+ * @param src æºPDU
  */
 #define XModbusPdu_move_base        XClass_move_base
 
 /**
- * @brief Îö¹¹PDU
- * @param pdu PDUÖ¸Õë
+ * @brief ææ„PDU
+ * @param pdu PDUæŒ‡é’ˆ
  */
 #define XModbusPdu_deinit_base      XClass_deinit_base
 
 /**
- * @brief É¾³ıPDU£¨Á¢¼´ÊÍ·Å£©
- * @param pdu PDUÖ¸Õë
+ * @brief åˆ é™¤PDUï¼ˆç«‹å³é‡Šæ”¾ï¼‰
+ * @param pdu PDUæŒ‡é’ˆ
  */
 #define XModbusPdu_delete_base      XClass_delete_base
 
 /******************************************************************************************
-* ÄÚ´æ¹ÜÀíºê - XModbusRequest
+* å†…å­˜ç®¡ç†å® - XModbusRequest
 ******************************************************************************************/
 
 /**
- * @brief ¸´ÖÆÇëÇó
- * @param dest Ä¿±êÇëÇó
- * @param src Ô´ÇëÇó
+ * @brief å¤åˆ¶è¯·æ±‚
+ * @param dest ç›®æ ‡è¯·æ±‚
+ * @param src æºè¯·æ±‚
  */
 #define XModbusRequest_copy_base        XModbusPdu_copy_base
 
 /**
- * @brief ÒÆ¶¯ÇëÇó
- * @param dest Ä¿±êÇëÇó
- * @param src Ô´ÇëÇó
+ * @brief ç§»åŠ¨è¯·æ±‚
+ * @param dest ç›®æ ‡è¯·æ±‚
+ * @param src æºè¯·æ±‚
  */
 #define XModbusRequest_move_base        XModbusPdu_move_base
 
 /**
- * @brief Îö¹¹ÇëÇó
- * @param req ÇëÇóÖ¸Õë
+ * @brief ææ„è¯·æ±‚
+ * @param req è¯·æ±‚æŒ‡é’ˆ
  */
 #define XModbusRequest_deinit_base      XModbusPdu_deinit_base
 
 /**
- * @brief É¾³ıÇëÇó£¨Á¢¼´ÊÍ·Å£©
- * @param req ÇëÇóÖ¸Õë
+ * @brief åˆ é™¤è¯·æ±‚ï¼ˆç«‹å³é‡Šæ”¾ï¼‰
+ * @param req è¯·æ±‚æŒ‡é’ˆ
  */
 #define XModbusRequest_delete_base      XModbusPdu_delete_base
 
 /******************************************************************************************
-* ÄÚ´æ¹ÜÀíºê - XModbusResponse
+* å†…å­˜ç®¡ç†å® - XModbusResponse
 ******************************************************************************************/
 
 /**
- * @brief ¸´ÖÆÏìÓ¦
- * @param dest Ä¿±êÏìÓ¦
- * @param src Ô´ÏìÓ¦
+ * @brief å¤åˆ¶å“åº”
+ * @param dest ç›®æ ‡å“åº”
+ * @param src æºå“åº”
  */
 #define XModbusResponse_copy_base       XModbusPdu_copy_base
 
 /**
-* @brief ÒÆ¶¯ÏìÓ¦
-* @param dest Ä¿±êÏìÓ¦
-* @param src Ô´ÏìÓ¦
+* @brief ç§»åŠ¨å“åº”
+* @param dest ç›®æ ‡å“åº”
+* @param src æºå“åº”
 */
 #define XModbusResponse_move_base       XModbusPdu_move_base
 
 /**
-* @brief Îö¹¹ÏìÓ¦
-* @param resp ÏìÓ¦Ö¸Õë
+* @brief ææ„å“åº”
+* @param resp å“åº”æŒ‡é’ˆ
 */
 #define XModbusResponse_deinit_base     XModbusPdu_deinit_base
 
 /**
-* @brief É¾³ıÏìÓ¦£¨Á¢¼´ÊÍ·Å£©
-* @param resp ÏìÓ¦Ö¸Õë
+* @brief åˆ é™¤å“åº”ï¼ˆç«‹å³é‡Šæ”¾ï¼‰
+* @param resp å“åº”æŒ‡é’ˆ
 */
 #define XModbusResponse_delete_base     XModbusPdu_delete_base
 
 /******************************************************************************************
-* ÄÚ´æ¹ÜÀíºê - XModbusExceptionResponse
+* å†…å­˜ç®¡ç†å® - XModbusExceptionResponse
 ******************************************************************************************/
 
 /**
- * @brief ¸´ÖÆÒì³£ÏìÓ¦
- * @param dest Ä¿±êÒì³£ÏìÓ¦
- * @param src Ô´Òì³£ÏìÓ¦
+ * @brief å¤åˆ¶å¼‚å¸¸å“åº”
+ * @param dest ç›®æ ‡å¼‚å¸¸å“åº”
+ * @param src æºå¼‚å¸¸å“åº”
  */
 #define XModbusExceptionResponse_copy_base      XModbusResponse_copy_base
 
 /**
-* @brief ÒÆ¶¯Òì³£ÏìÓ¦
-* @param dest Ä¿±êÒì³£ÏìÓ¦
-* @param src Ô´Òì³£ÏìÓ¦
+* @brief ç§»åŠ¨å¼‚å¸¸å“åº”
+* @param dest ç›®æ ‡å¼‚å¸¸å“åº”
+* @param src æºå¼‚å¸¸å“åº”
 */
 #define XModbusExceptionResponse_move_base      XModbusResponse_move_base
 
 /**
-* @brief Îö¹¹Òì³£ÏìÓ¦
-* @param exc Òì³£ÏìÓ¦Ö¸Õë
+* @brief ææ„å¼‚å¸¸å“åº”
+* @param exc å¼‚å¸¸å“åº”æŒ‡é’ˆ
 */
 #define XModbusExceptionResponse_deinit_base    XModbusResponse_deinit_base
 
 /**
-* @brief É¾³ıÒì³£ÏìÓ¦£¨Á¢¼´ÊÍ·Å£©
-* @param exc Òì³£ÏìÓ¦Ö¸Õë
+* @brief åˆ é™¤å¼‚å¸¸å“åº”ï¼ˆç«‹å³é‡Šæ”¾ï¼‰
+* @param exc å¼‚å¸¸å“åº”æŒ‡é’ˆ
 */
 #define XModbusExceptionResponse_delete_base    XModbusResponse_delete_base
 
