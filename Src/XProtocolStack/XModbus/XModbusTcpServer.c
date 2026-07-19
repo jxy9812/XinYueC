@@ -1,4 +1,4 @@
-#include "XModbusTcpServer.h"
+ï»¿#include "XModbusTcpServer.h"
 #include "XModbusServer_Protected.h"
 #include "XModbusDevice_Protected.h"
 #include "XMemory.h"
@@ -9,18 +9,18 @@
 #include "XString.h"
 #include <string.h>
 
-// =============== Ğéº¯ÊıÇ°ÖÃÉùÃ÷ ================
+// =============== è™šå‡½æ•°å‰ç½®å£°æ˜ ================
 static bool VXModbusTcpServer_open(XModbusDevice* device);
 static void VXModbusTcpServer_close(XModbusDevice* device);
 static void VXModbusTcpServer_deinit(XModbusTcpServer* server);
 static XModbusResponse* VXModbusTcpServer_processRequest(XModbusServer* server, const XModbusRequest* request);
 
-// =============== ²Ûº¯ÊıÇ°ÖÃÉùÃ÷ ================
+// =============== æ§½å‡½æ•°å‰ç½®å£°æ˜ ================
 static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args);
 static void XModbusTcpServer_onClientDisconnected(XObject* receiver, XVarList* args);
 static void XModbusTcpServer_onClientReadyRead(XObject* receiver, XVarList* args);
 
-// =============== ×Ö½ÚĞò¸¨Öúº¯Êı ================
+// =============== å­—èŠ‚åºè¾…åŠ©å‡½æ•° ================
 static inline uint16_t readUint16BE(const uint8_t* data, size_t offset)
 {
     uint16_t value;
@@ -33,9 +33,9 @@ static inline void writeUint16BE(uint8_t* data, size_t offset, uint16_t value)
     XMemory_write_data(data + offset, XBYTE_ORDER_BIG_ENDIAN, (const uint8_t*)&value, sizeof(uint16_t));
 }
 
-// =============== MBAPÍ·²¿´¦Àí ================
+// =============== MBAPå¤´éƒ¨å¤„ç† ================
 /**
- * @brief ½âÎöMBAPÍ·²¿
+ * @brief è§£æMBAPå¤´éƒ¨
  */
 static inline void parseMbapHeader(const uint8_t* buffer,
     uint16_t* transactionId, uint16_t* protocolId,
@@ -48,7 +48,7 @@ static inline void parseMbapHeader(const uint8_t* buffer,
 }
 
 /**
- * @brief ¹¹½¨MBAPÍ·²¿
+ * @brief æ„å»ºMBAPå¤´éƒ¨
  */
 static inline void buildMbapHeader(uint8_t* buffer, uint16_t transactionId,
     uint16_t length, uint8_t unitId)
@@ -59,27 +59,27 @@ static inline void buildMbapHeader(uint8_t* buffer, uint16_t transactionId,
     buffer[6] = unitId;
 }
 
-// =============== ¸¨Öúº¯Êı ================
+// =============== è¾…åŠ©å‡½æ•° ================
 /**
- * @brief ´¦Àí½ÓÊÕµ½µÄÍêÕûTCP ADUÖ¡
+ * @brief å¤„ç†æ¥æ”¶åˆ°çš„å®Œæ•´TCP ADUå¸§
  */
 static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const uint8_t* frame, size_t frameLen)
 {
     if (!server || !client || !frame || frameLen < 8) return;
 
-    // ½âÎöMBAPÍ·²¿
+    // è§£æMBAPå¤´éƒ¨
     uint16_t transactionId, protocolId, length;
     uint8_t unitId;
     parseMbapHeader(frame, &transactionId, &protocolId, &length, &unitId);
 
-    // ¼ì²éĞ­Òé±êÊ¶·û£¨±ØĞëÊÇModbus£©
+    // æ£€æŸ¥åè®®æ ‡è¯†ç¬¦ï¼ˆå¿…é¡»æ˜¯Modbusï¼‰
     if (protocolId != 0x0000) return;
 
-    // ÌáÈ¡PDU£¨´ÓÆ«ÒÆ7¿ªÊ¼£©
+    // æå–PDUï¼ˆä»åç§»7å¼€å§‹ï¼‰
     size_t pduLen = frameLen - 7;
     if (pduLen < 1) return;
 
-    // ´´½¨ÇëÇóPDU
+    // åˆ›å»ºè¯·æ±‚PDU
     XModbusRequest* request = XModbusRequest_create();
     if (!request) return;
 
@@ -88,12 +88,12 @@ static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const 
         XModbusPdu_setData(request, frame + 8, pduLen - 1);
     }
 
-    // Í¨¹ıĞéº¯Êıµ÷ÓÃprocessRequest
+    // é€šè¿‡è™šå‡½æ•°è°ƒç”¨processRequest
     XModbusResponse* response = XModbusServer_processRequest_base((XModbusServer*)server, request);
 
-    // Èç¹ûÓĞÏìÓ¦£¬·¢ËÍ»Ø¿Í»§¶Ë
+    // å¦‚æœæœ‰å“åº”ï¼Œå‘é€å›å®¢æˆ·ç«¯
     if (response) {
-        // ¹¹½¨ÏìÓ¦Ö¡£ºMBAPÍ·²¿ + PDU
+        // æ„å»ºå“åº”å¸§ï¼šMBAPå¤´éƒ¨ + PDU
         XByteArray* respPdu = ((XModbusPdu*)response)->m_data;
         size_t respPduSize = XByteArray_size_base(respPdu);
         size_t respFrameSize = 7 + 1 + respPduSize; // MBAP(7) + FC(1) + data
@@ -106,7 +106,7 @@ static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const 
                 memcpy(respFrame + 8, XContainerDataAddr(respPdu), respPduSize);
             }
 
-            // ·¢ËÍÏìÓ¦
+            // å‘é€å“åº”
             XTcpSocket_write_1((XTcpSocket*)client, (const char*)respFrame, respFrameSize);
             XFree_System(respFrame);
         }
@@ -117,7 +117,7 @@ static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const 
     XModbusRequest_delete_base(request);
 }
 
-// =============== Àà³õÊ¼»¯ ================
+// =============== ç±»åˆå§‹åŒ– ================
 XVtable* XModbusTcpServer_class_init(void)
 {
     XVTABLE_CREAT_DEFAULT
@@ -126,10 +126,10 @@ XVtable* XModbusTcpServer_class_init(void)
 #else
         XVTABLE_HEAP_INIT_DEFAULT
 #endif
-    // ¼Ì³Ğ XModbusServer
+    // ç»§æ‰¿ XModbusServer
     XVTABLE_INHERIT_XCLASS(XModbusServer);
 
-    // ÖØÔØĞéº¯Êı
+    // é‡è½½è™šå‡½æ•°
     XVTABLE_OVERLOAD_DEFAULT(EXModbusDevice_Open, VXModbusTcpServer_open);
     XVTABLE_OVERLOAD_DEFAULT(EXModbusDevice_Close, VXModbusTcpServer_close);
     XVTABLE_OVERLOAD_DEFAULT(EXModbusServer_ProcessRequest, VXModbusTcpServer_processRequest);
@@ -141,7 +141,7 @@ XVtable* XModbusTcpServer_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-// =============== ´´½¨/³õÊ¼»¯ ================
+// =============== åˆ›å»º/åˆå§‹åŒ– ================
 XModbusTcpServer* XModbusTcpServer_create(void)
 {
     XModbusTcpServer* server = (XModbusTcpServer*)XMalloc_System(sizeof(XModbusTcpServer));
@@ -155,14 +155,14 @@ void XModbusTcpServer_init(XModbusTcpServer* server)
 {
     if (!server) return;
 
-    // ³õÊ¼»¯»ùÀà
+    // åˆå§‹åŒ–åŸºç±»
     XModbusServer_init((XModbusServer*)server);
     XClassGetVtable(server) = XModbusTcpServer_class_init();
 
-    // ´´½¨TCP·şÎñÆ÷
+    // åˆ›å»ºTCPæœåŠ¡å™¨
     server->m_tcpServer = XTcpServer_create();
     if (server->m_tcpServer) {
-        // Á¬½Ó newConnection ĞÅºÅ
+        // è¿æ¥ newConnection ä¿¡å·
         XObject_connect_1((XObject*)server->m_tcpServer,
             XSignal(XTcpServer_newConnection_signal),
         (XObject*)server,
@@ -170,7 +170,7 @@ void XModbusTcpServer_init(XModbusTcpServer* server)
         XConnectionType_Auto);
     }
 
-    // ´´½¨¿Í»§¶ËÓ³Éä
+    // åˆ›å»ºå®¢æˆ·ç«¯æ˜ å°„
     server->m_connectedClients = XMap_Create(XTcpSocket*, XByteArray*, uintptr_t_compare);
     if (server->m_connectedClients) {
         XContainerSetDataDeinitMethod(server->m_connectedClients, XByteArray_deinit_base);
@@ -179,21 +179,21 @@ void XModbusTcpServer_init(XModbusTcpServer* server)
     server->m_observer = NULL;
 }
 
-// =============== Îö¹¹º¯Êı ================
+// =============== ææ„å‡½æ•° ================
 static void VXModbusTcpServer_deinit(XModbusTcpServer* server)
 {
     if (!server) return;
 
-    // ¹Ø±ÕTCP·şÎñÆ÷
+    // å…³é—­TCPæœåŠ¡å™¨
     if (server->m_tcpServer) {
         XTcpServer_close(server->m_tcpServer);
         XTcpServer_deleteLater(server->m_tcpServer);
         server->m_tcpServer = NULL;
     }
 
-    // ÊÍ·Å¿Í»§¶ËÓ³Éä
+    // é‡Šæ”¾å®¢æˆ·ç«¯æ˜ å°„
     if (server->m_connectedClients) {
-        // ¶Ï¿ªËùÓĞ¿Í»§¶ËÁ¬½Ó
+        // æ–­å¼€æ‰€æœ‰å®¢æˆ·ç«¯è¿æ¥
         for_each_iterator(server->m_connectedClients, XMap, it)
         {
             XPair* pair = XMap_iterator_data(&it);
@@ -216,13 +216,13 @@ static bool VXModbusTcpServer_open(XModbusDevice* device)
     XModbusTcpServer* server = (XModbusTcpServer*)device;
     if (!server || !server->m_tcpServer) return false;
 
-    // ´ÓÁ¬½Ó²ÎÊıÖĞ»ñÈ¡¶Ë¿ÚºÍµØÖ·
+    // ä»è¿æ¥å‚æ•°ä¸­è·å–ç«¯å£å’Œåœ°å€
     const XVariant* portVar = XModbusDevice_connectionParameter_const(device,
         XModbusDevice_NetworkPortParameter);
     const XVariant* addrVar = XModbusDevice_connectionParameter_const(device,
         XModbusDevice_NetworkAddressParameter);
 
-    uint16_t port = 502; // Ä¬ÈÏModbus TCP¶Ë¿Ú
+    uint16_t port = 502; // é»˜è®¤Modbus TCPç«¯å£
     XHostAddress* addr = NULL;
     if (portVar) {
         port = (uint16_t)XVariant_toInt(portVar);
@@ -235,7 +235,7 @@ static bool VXModbusTcpServer_open(XModbusDevice* device)
         }
     }
 
-    // ¿ªÊ¼¼àÌı
+    // å¼€å§‹ç›‘å¬
     bool result = XTcpServer_listen(server->m_tcpServer, addr, port);
     if (result) {
         XModbusDevice_setState(device, XModbusDevice_ConnectedState);
@@ -253,7 +253,7 @@ static void VXModbusTcpServer_close(XModbusDevice* device)
     XModbusTcpServer* server = (XModbusTcpServer*)device;
     if (!server) return;
 
-    // ¶Ï¿ªËùÓĞ¿Í»§¶Ë
+    // æ–­å¼€æ‰€æœ‰å®¢æˆ·ç«¯
     if (server->m_connectedClients) {
         for_each_iterator(server->m_connectedClients, XMap, it)
         {
@@ -267,7 +267,7 @@ static void VXModbusTcpServer_close(XModbusDevice* device)
         XMap_clear_base(server->m_connectedClients);
     }
 
-    // ¹Ø±ÕTCP·şÎñÆ÷
+    // å…³é—­TCPæœåŠ¡å™¨
     if (server->m_tcpServer) {
         XTcpServer_close(server->m_tcpServer);
     }
@@ -275,15 +275,15 @@ static void VXModbusTcpServer_close(XModbusDevice* device)
     XModbusDevice_setState(device, XModbusDevice_UnconnectedState);
 }
 
-// =============== ´¦ÀíÇëÇó ================
+// =============== å¤„ç†è¯·æ±‚ ================
 static XModbusResponse* VXModbusTcpServer_processRequest(XModbusServer* base, const XModbusRequest* request)
 {
-    // TCP·şÎñÆ÷Ä¬ÈÏÎ¯ÍĞ¸ø»ùÀà´¦Àí
-    // ×ÓÀà¿ÉÒÔÖØĞ´´Ëº¯ÊıÊµÏÖ×Ô¶¨ÒåÂß¼­
+    // TCPæœåŠ¡å™¨é»˜è®¤å§”æ‰˜ç»™åŸºç±»å¤„ç†
+    // å­ç±»å¯ä»¥é‡å†™æ­¤å‡½æ•°å®ç°è‡ªå®šä¹‰é€»è¾‘
     return XModbusServer_processRequest_base(base, request);
 }
 
-// =============== Á¬½Ó¹Û²ìÆ÷ ================
+// =============== è¿æ¥è§‚å¯Ÿå™¨ ================
 void XModbusTcpServer_installConnectionObserver(XModbusTcpServer* server,
     XModbusTcpConnectionObserver* observer)
 {
@@ -291,10 +291,10 @@ void XModbusTcpServer_installConnectionObserver(XModbusTcpServer* server,
     server->m_observer = observer;
 }
 
-// =============== ²Ûº¯Êı ================
+// =============== æ§½å‡½æ•° ================
 
 /**
- * @brief ´¦ÀíĞÂÁ¬½Ó
+ * @brief å¤„ç†æ–°è¿æ¥
  */
 static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args)
 {
@@ -302,12 +302,12 @@ static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args)
     XModbusTcpServer* server = (XModbusTcpServer*)receiver;
     if (!server || !server->m_tcpServer) return;
 
-    // »ñÈ¡ËùÓĞ´ı´¦ÀíÁ¬½Ó
+    // è·å–æ‰€æœ‰å¾…å¤„ç†è¿æ¥
     while (XTcpServer_hasPendingConnections_base(server->m_tcpServer)) {
         XTcpSocket* client = XTcpServer_nextPendingConnection_base(server->m_tcpServer);
         if (!client) continue;
 
-        // ¼ì²é¹Û²ìÆ÷ÊÇ·ñÔÊĞíÁ¬½Ó
+        // æ£€æŸ¥è§‚å¯Ÿå™¨æ˜¯å¦å…è®¸è¿æ¥
         if (server->m_observer && server->m_observer->acceptNewConnection) {
             if (!server->m_observer->acceptNewConnection(server->m_observer->context, client)) {
                 XTcpSocket_close_base(client);
@@ -315,18 +315,18 @@ static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args)
             }
         }
 
-        // ´´½¨½ÓÊÕ»º³åÇø
+        // åˆ›å»ºæ¥æ”¶ç¼“å†²åŒº
         XByteArray* buffer = XByteArray_create();
         if (!buffer) {
             XTcpSocket_close_base(client);
             continue;
         }
 
-        // ±£´æµ½¿Í»§¶ËÓ³Éä
+        // ä¿å­˜åˆ°å®¢æˆ·ç«¯æ˜ å°„
         XMap_insert_valueMove_base(server->m_connectedClients, &client, buffer);
         if (buffer)
             XByteArray_delete_base(buffer);
-        // Á¬½ÓĞÅºÅ
+        // è¿æ¥ä¿¡å·
         XObject_connect_1((XObject*)client,
             XSignal(XTcpSocket_readyRead_signal),
         (XObject*)server,
@@ -342,7 +342,7 @@ static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args)
 }
 
 /**
- * @brief ´¦Àí¿Í»§¶ËÊı¾İµ½´ï
+ * @brief å¤„ç†å®¢æˆ·ç«¯æ•°æ®åˆ°è¾¾
  */
 static void XModbusTcpServer_onClientReadyRead(XObject* receiver, XVarList* args)
 {
@@ -350,16 +350,16 @@ static void XModbusTcpServer_onClientReadyRead(XObject* receiver, XVarList* args
     XModbusTcpServer* server = (XModbusTcpServer*)receiver;
     if (!server || !server->m_connectedClients) return;
 
-    // »ñÈ¡¿Í»§¶Ësocket£¨´ÓĞÅºÅ·¢ËÍÕß»ñÈ¡£©
-    XObject* sender = XVarList_get_sender(args);
+    // è·å–å®¢æˆ·ç«¯socketï¼ˆä»ä¿¡å·å‘é€è€…è·å–ï¼‰
+    XObject* sender = XObject_sender(args);
     XTcpSocket* client = (XTcpSocket*)sender;
     if (!client) return;
 
-    // »ñÈ¡¶ÔÓ¦µÄ½ÓÊÕ»º³åÇø
+    // è·å–å¯¹åº”çš„æ¥æ”¶ç¼“å†²åŒº
     XByteArray* buffer = (XByteArray*)XMapBase_value_base(server->m_connectedClients, &client);
     if (!buffer) return;
 
-    // ¶ÁÈ¡Êı¾İ
+    // è¯»å–æ•°æ®
     char tempBuf[4096];
     int64_t bytesRead = XTcpSocket_read_1(client, tempBuf, sizeof(tempBuf));
     while (bytesRead > 0) {
@@ -367,24 +367,24 @@ static void XModbusTcpServer_onClientReadyRead(XObject* receiver, XVarList* args
         bytesRead = XTcpSocket_read_1(client, tempBuf, sizeof(tempBuf));
     }
 
-    // ´¦ÀíÍêÕûÖ¡
-    // Modbus TCP×îĞ¡Ö¡³¤¶È£ºMBAPÍ·²¿(7) + PDU(ÖÁÉÙ1×Ö½Ú¹¦ÄÜÂë)
+    // å¤„ç†å®Œæ•´å¸§
+    // Modbus TCPæœ€å°å¸§é•¿åº¦ï¼šMBAPå¤´éƒ¨(7) + PDU(è‡³å°‘1å­—èŠ‚åŠŸèƒ½ç )
     const uint8_t* data = XContainerDataAddr(buffer);
     size_t dataSize = XByteArray_size_base(buffer);
 
     while (dataSize >= 8) {
-        // ½âÎöMBAPÍ·²¿»ñÈ¡³¤¶È
+        // è§£æMBAPå¤´éƒ¨è·å–é•¿åº¦
         uint16_t length = readUint16BE(data, 4);
-        size_t totalFrameSize = 6 + length; // MBAP(6) + length×Ö¶ÎÖ¸¶¨µÄ×Ö½ÚÊı
+        size_t totalFrameSize = 6 + length; // MBAP(6) + lengthå­—æ®µæŒ‡å®šçš„å­—èŠ‚æ•°
 
         if (dataSize < totalFrameSize) {
-            break; // Êı¾İ²»ÍêÕû£¬µÈ´ı¸ü¶àÊı¾İ
+            break; // æ•°æ®ä¸å®Œæ•´ï¼Œç­‰å¾…æ›´å¤šæ•°æ®
         }
 
-        // Èç¹ûÓĞ¹Û²ìÆ÷£¬Í¨¹ı¹Û²ìÆ÷¼ì²é
+        // å¦‚æœæœ‰è§‚å¯Ÿå™¨ï¼Œé€šè¿‡è§‚å¯Ÿå™¨æ£€æŸ¥
         if (server->m_observer && server->m_observer->acceptNewConnection) {
             if (!server->m_observer->acceptNewConnection(server->m_observer->context, client)) {
-                // ¹Û²ìÆ÷¾Ü¾ø´¦Àí£¬Ìø¹ı
+                // è§‚å¯Ÿå™¨æ‹’ç»å¤„ç†ï¼Œè·³è¿‡
                 XByteArray_remove_base(buffer, 0, totalFrameSize);
                 data = XContainerDataAddr(buffer);
                 dataSize = XByteArray_size_base(buffer);
@@ -392,10 +392,10 @@ static void XModbusTcpServer_onClientReadyRead(XObject* receiver, XVarList* args
             }
         }
 
-        // ´¦ÀíÍêÕûÖ¡
+        // å¤„ç†å®Œæ•´å¸§
         processTcpFrame(server, client, data, totalFrameSize);
 
-        // ÒÆ³ıÒÑ´¦ÀíµÄÊı¾İ
+        // ç§»é™¤å·²å¤„ç†çš„æ•°æ®
         XByteArray_remove_base(buffer, 0, totalFrameSize);
         data = XContainerDataAddr(buffer);
         dataSize = XByteArray_size_base(buffer);
@@ -403,7 +403,7 @@ static void XModbusTcpServer_onClientReadyRead(XObject* receiver, XVarList* args
 }
 
 /**
- * @brief ´¦Àí¿Í»§¶Ë¶Ï¿ªÁ¬½Ó
+ * @brief å¤„ç†å®¢æˆ·ç«¯æ–­å¼€è¿æ¥
  */
 static void XModbusTcpServer_onClientDisconnected(XObject* receiver, XVarList* args)
 {
@@ -411,25 +411,25 @@ static void XModbusTcpServer_onClientDisconnected(XObject* receiver, XVarList* a
     XModbusTcpServer* server = (XModbusTcpServer*)receiver;
     if (!server || !server->m_connectedClients) return;
 
-    // »ñÈ¡¶Ï¿ªµÄ¿Í»§¶Ësocket
-    XObject* sender = XVarList_get_sender(args);
+    // è·å–æ–­å¼€çš„å®¢æˆ·ç«¯socket
+    XObject* sender = XObject_sender(args);
     XTcpSocket* client = (XTcpSocket*)sender;
     if (!client) return;
 
-    // ´ÓÓ³ÉäÖĞÒÆ³ı
+    // ä»æ˜ å°„ä¸­ç§»é™¤
     XByteArray* buffer = (XByteArray*)XMapBase_remove_base(server->m_connectedClients, &client);
     if (buffer) {
         XByteArray_delete_base(buffer);
     }
 
-    // ¶Ï¿ªĞÅºÅÁ¬½Ó
+    // æ–­å¼€ä¿¡å·è¿æ¥
     XObject_disconnect_1((XObject*)client, 0, (XObject*)server, NULL);
 
-    // ·¢Éä¶Ï¿ªĞÅºÅ
+    // å‘å°„æ–­å¼€ä¿¡å·
     XModbusTcpServer_modbusClientDisconnected_signal(server, client);
 }
 
-// =============== ĞÅºÅ ================
+// =============== ä¿¡å· ================
 void* XModbusTcpServer_modbusClientDisconnected_signal(XModbusTcpServer* server, XTcpSocket* modbusClient)
 {
     XEmitSignal(server, XModbusTcpServer_modbusClientDisconnected_signal,
