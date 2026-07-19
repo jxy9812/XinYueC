@@ -184,6 +184,10 @@ XModbusDevice* XModbusDevice_create(void);
  * - 参数：全部为NULL
  * - IO设备：NULL
  */
+/**
+ * @brief 初始化设备实例
+ * @param dev 待初始化的设备指针（非NULL）
+ */
 void XModbusDevice_init(XModbusDevice* dev);
 
 /******************************************************************************************
@@ -223,8 +227,26 @@ const XVariant* XModbusDevice_connectionParameter_const(const XModbusDevice* dev
  *     XModbusDevice_SerialBaudRateParameter, XVariant_create_int(9600));
  * @endcode
  */
+/**
+ * @brief 设置连接参数（深拷贝）
+ * @param dev 设备指针（非NULL）
+ * @param parameter 参数类型
+ * @param value 参数值（深拷贝）
+ */
 void XModbusDevice_setConnectionParameter(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value);
+/**
+ * @brief 设置连接参数（移动语义）
+ * @param dev 设备指针（非NULL）
+ * @param parameter 参数类型
+ * @param value 参数值（移动，函数内释放原指针）
+ */
 void XModbusDevice_setConnectionParameter_move(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value);
+/**
+ * @brief 设置连接参数（引用语义）
+ * @param dev 设备指针（非NULL）
+ * @param parameter 参数类型
+ * @param value 参数值（引用，函数内不释放）
+ */
 void XModbusDevice_setConnectionParameter_ref(XModbusDevice* dev, XModbusDevice_ConnectionParameter parameter, XVariant* value);
 /******************************************************************************************
  * 连接管理接口
@@ -241,6 +263,12 @@ void XModbusDevice_setConnectionParameter_ref(XModbusDevice* dev, XModbusDevice_
   * 3. 调用子类的open()实现
   * 4. 成功则状态变为XModbusDevice_ConnectedState
   */
+/**
+ * @brief 连接设备
+ * @param dev 设备指针（非NULL）
+ * @return 连接成功返回true，失败返回false
+ * @note 内部调用open虚函数，设置设备状态为ConnectedState
+ */
 bool XModbusDevice_connectDevice(XModbusDevice* dev);
 
 /**
@@ -330,3 +358,4 @@ void* XModbusDevice_stateChanged_signal(XModbusDevice* dev, XModbusDevice_State 
 #endif
 
 #endif // XMODBUSDEVICE_H
+

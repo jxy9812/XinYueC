@@ -1,4 +1,4 @@
-#ifndef XMODBUSPDU_H
+﻿#ifndef XMODBUSPDU_H
 #define XMODBUSPDU_H
 
 #include <stdint.h>
@@ -357,6 +357,12 @@ param exc XModbusExceptionResponse指针（非NULL）
 param functionCode 功能码
 param exceptionCode 异常码
 */
+/**
+ * @brief 初始化异常响应（带功能码和异常码）
+ * @param exc 异常响应指针（非NULL）
+ * @param functionCode 原始请求的功能码
+ * @param exceptionCode 异常码
+ */
 void XModbusExceptionResponse_init_with_function_and_exception(
     XModbusExceptionResponse* exc, XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode);
 
@@ -637,3 +643,5 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
 #endif
 
 #endif // XMODBUSPDU_H
+
+

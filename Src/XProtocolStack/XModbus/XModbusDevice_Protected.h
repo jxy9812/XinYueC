@@ -1,4 +1,4 @@
-#ifndef XMODBUSDEVICE_PROTECTED_H
+﻿#ifndef XMODBUSDEVICE_PROTECTED_H
 #define XMODBUSDEVICE_PROTECTED_H
 
 #ifdef __cplusplus
@@ -47,4 +47,4 @@ void XModbusDevice_close_base(XModbusDevice* dev);
 }
 #endif
 
-#endif // XIODEVICEPRIVATE_H
+#endif // XMODBUSDEVICE_PROTECTED_H

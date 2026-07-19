@@ -1,4 +1,4 @@
-#ifndef XMODBUSTCPCLIENT_H
+﻿#ifndef XMODBUSTCPCLIENT_H
 #define XMODBUSTCPCLIENT_H
 
 #include "XModbusClient.h"
@@ -109,6 +109,10 @@ XModbusTcpClient* XModbusTcpClient_create(void);
  * - 重试次数：3次（继承自基类）
  * - 事务标识符：从1开始
  */
+/**
+ * @brief 初始化TCP客户端实例
+ * @param client 待初始化的客户端指针（非NULL）
+ */
 void XModbusTcpClient_init(XModbusTcpClient* client);
 
 /******************************************************************************************
@@ -194,3 +198,4 @@ void XModbusTcpClient_init(XModbusTcpClient* client);
 #endif
 
 #endif // XMODBUSTCPCLIENT_H
+

@@ -1,4 +1,4 @@
-#ifndef XMODBUSREPLY_PROTECTED_H
+﻿#ifndef XMODBUSREPLY_PROTECTED_H
 #define XMODBUSREPLY_PROTECTED_H
 
 #ifdef __cplusplus
@@ -88,4 +88,5 @@ void XModbusReply_clearIntermediateError(XModbusReply* reply);
 }
 #endif
 
-#endif // XIODEVICEPRIVATE_H
+#endif // XMODBUSREPLY_PROTECTED_H
+

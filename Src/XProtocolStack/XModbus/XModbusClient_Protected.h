@@ -1,4 +1,4 @@
-#ifndef XMODBUSCLIENT_PROTECTED_H
+﻿#ifndef XMODBUSCLIENT_PROTECTED_H
 #define XMODBUSCLIENT_PROTECTED_H
 
 #ifdef __cplusplus
@@ -25,6 +25,14 @@ bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResp
  * @param data 用于存储解析结果的数据单元
  * @return 成功返回true，失败返回false
  * @note 子类可重载此虚函数实现自定义功能码处理
+ */
+/**
+ * @brief 处理私有响应（虚函数）
+ * @param client XModbusClient实例指针（非NULL）
+ * @param response 接收到的响应PDU
+ * @param data 输出参数，用于接收解析后的数据单元
+ * @return 处理成功返回true，失败返回false
+ * @note 通过虚函数表调用，由子类实现具体响应处理逻辑
  */
 bool XModbusClient_processPrivateResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 
@@ -88,4 +96,7 @@ void XModbusClient_reconnectTimerStart(XModbusClient* client);
 }
 #endif
 
-#endif // XIODEVICEPRIVATE_H
+#endif // XMODBUSCLIENT_PROTECTED_H
+
+
+

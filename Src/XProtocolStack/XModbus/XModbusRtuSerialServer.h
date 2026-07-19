@@ -90,6 +90,10 @@ XModbusRtuSerialServer* XModbusRtuSerialServer_create(void);
  * - 响应延迟：100毫秒
  * - 服务器地址：1
  */
+/**
+ * @brief 初始化RTU串行从站实例
+ * @param server 待初始化的从站指针（非NULL）
+ */
 void XModbusRtuSerialServer_init(XModbusRtuSerialServer* server);
 
 /******************************************************************************************
@@ -131,6 +135,12 @@ int XModbusRtuSerialServer_interFrameDelay(const XModbusRtuSerialServer* server)
  * @note 自动计算规则：基于波特率的3.5个字符传输时间
  *       波特率 <= 19200: 固定1750微秒
  *       波特率 > 19200: 按3.5个字符时间计算
+ */
+/**
+ * @brief 设置帧间延迟（微秒）
+ * @param server 从站指针（非NULL）
+ * @param microseconds 帧间延迟（微秒），-1或小于自动计算值时使用自动计算值
+ * @note 自动计算值基于波特率：38500000/baudRate，最小1750微秒
  */
 void XModbusRtuSerialServer_setInterFrameDelay(XModbusRtuSerialServer* server, int microseconds);
 
@@ -189,3 +199,5 @@ void XModbusRtuSerialServer_setInterFrameDelay(XModbusRtuSerialServer* server, i
 #endif
 
 #endif // XMODBUSRTUSERIALSERVER_H
+
+

@@ -67,7 +67,18 @@ XModbusDataUnit* XModbusDataUnit_create();
 XModbusDataUnit* XModbusDataUnit_create_ex(XModbusRegisterType type, uint16_t startAddress, size_t valueCount);
 XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit);
 XModbusDataUnit* XModbusDataUnit_create_move(const XModbusDataUnit* unit);
+/**
+ * @brief 初始化数据单元
+ * @param unit 待初始化的数据单元指针（非NULL）
+ */
 void XModbusDataUnit_init(XModbusDataUnit* unit);
+/**
+ * @brief 初始化数据单元（带参数）
+ * @param unit 待初始化的数据单元指针（非NULL）
+ * @param type 寄存器类型
+ * @param startAddress 起始地址
+ * @param valueCount 值数量
+ */
 void XModbusDataUnit_init_ex(XModbusDataUnit* unit, XModbusRegisterType type, uint16_t startAddress, size_t valueCount);
 
 /**
@@ -97,6 +108,13 @@ void XModbusDataUnit_setStartAddress(XModbusDataUnit* unit, uint16_t startAddres
 *          3. index超出有效范围（index >= m_valueCount）
 *          4. 数值类型与寄存器类型不匹配
 */
+/**
+ * @brief 设置指定索引的值
+ * @param unit 数据单元指针（非NULL）
+ * @param index 值索引
+ * @param value 要设置的值
+ * @return 设置成功返回true，索引越界返回false
+ */
 bool XModbusDataUnit_setValue(XModbusDataUnit* unit, size_t index, uint16_t value);
 
 /**
@@ -116,6 +134,12 @@ void XModbusDataUnit_setValueCount(XModbusDataUnit* unit, size_t newCount);
 *          1. unit或values为NULL
 *          2. values的数据类型与寄存器类型不匹配
 */
+/**
+ * @brief 批量设置值
+ * @param unit 数据单元指针（非NULL）
+ * @param values 值列表（XVector<uint16_t>）
+ * @return 设置成功返回true，失败返回false
+ */
 bool XModbusDataUnit_setValues(XModbusDataUnit* unit, XVector* values);
 
 /**
@@ -127,6 +151,11 @@ bool XModbusDataUnit_setValues(XModbusDataUnit* unit, XVector* values);
 *           2. 寄存器类型非XModbusInvalid
 *           3. 起始地址非0xFFFF（无效地址）
 */
+/**
+ * @brief 判断数据单元是否有效
+ * @param unit 数据单元指针
+ * @return 有效返回true，无效返回false
+ */
 bool XModbusDataUnit_isValid(const XModbusDataUnit* unit);
 
 /**
@@ -152,6 +181,12 @@ int XModbusDataUnit_startAddress(const XModbusDataUnit* unit);
 *          1. unit或m_values为NULL
 *          2. index超出有效范围
 */
+/**
+ * @brief 获取指定索引的值
+ * @param unit 数据单元指针
+ * @param index 值索引
+ * @return 指定索引的值，索引越界返回0
+ */
 uint16_t XModbusDataUnit_value(const XModbusDataUnit* unit, size_t index);
 
 /**
@@ -212,3 +247,4 @@ typedef XMap XModbusDataUnitMap;
 XModbusDataUnitMap* XModbusDataUnitMap_create();
 #define XModbusDataUnitMap_delete_base XMapBase_delete_base
 #endif // XMODBUSDATAUNIT_H
+
