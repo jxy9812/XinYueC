@@ -213,30 +213,53 @@ static void xssl_v_connectToHost(XAbstractSocket* sock,
                                  XIODeviceBaseMode mode,
                                  XAbstractSocket_NetworkLayerProtocol proto) {
     XSslSocket* self = (XSslSocket*)sock;
-    if (self->mode == XSslSocket_SslClientMode && !self->peerVerifyName && hostName) {
+    if (self->mode == XSslSocket_SslClientMode && hostName) {
+        if (self->peerVerifyName) XString_delete_base(self->peerVerifyName);
         self->peerVerifyName = XString_create_utf8(hostName);
     }
     PARENT_SOCK(EXAbstractSocket_ConnectToHost, Fn_connectToHost)
         (sock, hostName, port, mode, proto);
 }
 
-/* disconnectFromHost：先发 close_notify，再走父类断开 */
+/* disconnectFromHost：先发 close_notify，销毁会话，清理缓存，再走父类断开 */
 static void xssl_v_disconnectFromHost(XAbstractSocket* sock) {
     XSslSocket* self = (XSslSocket*)sock;
-    if (self->session && self->encrypted) {
-        XSsl_sessionShutdown(self->session);
-        self->encrypted = false;
+    if (self->session) {
+        if (self->encrypted) {
+            XSsl_sessionShutdown(self->session);
+            self->encrypted = false;
+        }
+        XSsl_sessionDestroy(self->session);
+        self->session = NULL;
     }
+    self->handshakePending = false;
+    /* 清空密文接收缓冲，防止重连时残留数据被误作为新连接密文 */
+    if (self->encRxBuf) { XRingBuffer_reset(self->encRxBuf); }
+    /* 释放前一次连接的对端证书链缓存 */
+    if (self->peerCertChain) { XVector_delete_base((XContainer*)self->peerCertChain); self->peerCertChain = NULL; }
+    /* 释放前一次连接的握手错误缓存 */
+    if (self->handshakeErrors) { XVector_delete_base((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
     PARENT_SOCK(EXAbstractSocket_DisconnectFromHost, Fn_disconnectFromHost)(sock);
 }
 
-/* close：与 disconnect 类似，再走父类 XIODevice.close */
+/* close：与 disconnect 类似，销毁会话，清理缓存，再走父类 XIODevice.close */
 static void xssl_v_close(XIODevice* io) {
     XSslSocket* self = (XSslSocket*)io;
-    if (self->session && self->encrypted) {
-        XSsl_sessionShutdown(self->session);
-        self->encrypted = false;
+    if (self->session) {
+        if (self->encrypted) {
+            XSsl_sessionShutdown(self->session);
+            self->encrypted = false;
+        }
+        XSsl_sessionDestroy(self->session);
+        self->session = NULL;
     }
+    self->handshakePending = false;
+    /* 清空密文接收缓冲，防止重连时残留数据被误作为新连接密文 */
+    if (self->encRxBuf) { XRingBuffer_reset(self->encRxBuf); }
+    /* 释放前一次连接的对端证书链缓存 */
+    if (self->peerCertChain) { XVector_delete_base((XContainer*)self->peerCertChain); self->peerCertChain = NULL; }
+    /* 释放前一次连接的握手错误缓存 */
+    if (self->handshakeErrors) { XVector_delete_base((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
     PARENT_IO(EXIODevice_Close, Fn_close)(io);
 }
 
@@ -550,7 +573,8 @@ void XSslSocket_connectToHostEncrypted(XSslSocket* self, const XString* hostName
 {
     if (!self) return;
     self->mode = XSslSocket_SslClientMode;
-    if (hostName && !self->peerVerifyName) {
+    if (hostName) {
+        if (self->peerVerifyName) XString_delete_base(self->peerVerifyName);
         self->peerVerifyName = XString_create_copy(hostName);
     }
     const char* hostNameUtf8 = XString_toUtf8(hostName);
@@ -564,6 +588,10 @@ void XSslSocket_connectToHostEncrypted_2(XSslSocket* self,
 {
     if (!self) return;
     self->mode = XSslSocket_SslClientMode;
+        if (hostName) {
+            if (self->peerVerifyName) XString_delete_base(self->peerVerifyName);
+            self->peerVerifyName = XString_create_copy(hostName);
+        }
     const char* hostNameUtf8 = XString_toUtf8(hostName);
     XAbstractSocket_connectToHost_base((XAbstractSocket*)self, hostNameUtf8, port, mode, proto);
 }
@@ -1097,6 +1125,7 @@ XVtable* XSslSocket_class_init(void) {
 
     return XVTABLE_DEFAULT;
 }
+
 
 
 

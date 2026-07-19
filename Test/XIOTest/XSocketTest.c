@@ -33,7 +33,13 @@ static void readDataBaidu(XObject* sender, XVarList* args)
 		putchar(XByteArray_iterator_data(&it));
 	}
 	XByteArray_delete_base(data);
-	XPrintf_3("[百度] 连接关闭\n");
+}
+
+static void onBaiduDisconnected(XObject* sender, XVarList* args)
+{
+	(void)sender; (void)args;
+	XPrintf_3("[百度] 连接已断开，退出事件循环\n");
+	XCoreApplication_quit();
 }
 
 void XSocketTest_Baidu()
@@ -62,6 +68,7 @@ void XSocketTest_Baidu()
 	/* 发起 HTTP GET 请求 */
 	XSocket* socket = XTcpSocket_create();
 	XObject_connect_2(socket, XSignal(XIODevice_readyRead_signal), readDataBaidu);
+	XObject_connect_2(socket, XSignal(XAbstractSocket_disconnected_signal), onBaiduDisconnected);
 	XAbstractSocket_connectToHost_base(socket, "www.baidu.com", 80, XIODevice_ReadWrite, XHostAddress_AnyIPProtocol);
 	bool connected = XTcpSocket_waitForConnected_base(socket, 5000);
 	if (connected) {
@@ -71,8 +78,12 @@ void XSocketTest_Baidu()
 		XPrintf("[百度] 已发送HTTP请求，等待响应...\n");
 	} else {
 		XPrintf("[百度] TCP连接超时(5s)\n");
+		XClass_delete_base((XClass*)socket);
+		return;
 	}
 	XCoreApplication_exec();
+	/* 事件循环退出后清理 socket */
+	XClass_delete_base((XClass*)socket);
 }
 
 /* ===================================================================
@@ -122,12 +133,14 @@ void XSocketTest_BaiduHttps()
 
 	if (!XSslSocket_waitForConnected_base(ssl, 10000)) {
 		XPrintf("[百度HTTPS] TCP 连接超时(10s)\n");
+		XClass_delete_base((XClass*)ssl);
 		return;
 	}
 	XPrintf("[百度HTTPS] TCP 连接成功，等待 TLS 握手...\n");
 
 	if (!XSslSocket_waitForEncrypted(ssl, 15000)) {
 		XPrintf("[百度HTTPS] TLS 握手失败/超时(15s)\n");
+		XClass_delete_base((XClass*)ssl);
 		return;
 	}
 	XString* proto = XSslSocket_sessionProtocol((const XSslSocket*)ssl);
@@ -163,6 +176,7 @@ void XSocketTest_BaiduHttps()
 
 	XSslSocket_disconnectFromHost_base(ssl);
 	XPrintf("[百度HTTPS] 连接已关闭\n");
+	XClass_delete_base((XClass*)ssl);
 }
 
 void XSocketTest()
@@ -197,3 +211,4 @@ void XMenu_XSocketTest(XMenu* root)
 		XAction_setAction(action, XSocketTest_BaiduHttps);
 	}
 }
+
