@@ -737,6 +737,23 @@ void XNetwork_socketContinueRead(XNetworkSocketPrivate* priv, bool isUdp)
     if (p->autoRead && p->connected) startAsyncRead(priv, isUdp);
 }
 
+void XNetwork_socketContinueWrite(XNetworkSocketPrivate* priv, XRingBuffer* ringBuffer, bool isUdp)
+{
+    if (!priv || !ringBuffer) return;
+    XNetworkSocketPrivatePosix* p = P32(priv);
+    if (p->writePending || p->socket < 0) return;
+    struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
+    size_t pending = XRingBuffer_available(rb);
+    if (pending == 0) return;
+    size_t chunk = pending;
+    if (chunk > XNETWORK_WRITE_BUFFER_SIZE) chunk = XNETWORK_WRITE_BUFFER_SIZE;
+    char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
+    size_t got = XRingBuffer_read(rb, tempBuf, chunk);
+    if (got > 0) {
+        startAsyncWrite(priv, tempBuf, (int64_t)got, NULL, 0, isUdp);
+    }
+}
+
 /* =========================================================================
  * 异步 Accept（公开 API：启动首次异步接受）
  * ========================================================================= */

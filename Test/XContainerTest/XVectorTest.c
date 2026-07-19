@@ -139,8 +139,8 @@ static void XVectorAccessTest(void)
 		*(int*)XVector_constFirst(v),
 		*(int*)XVector_constLast(v));
 	XPrintf("front别名=%d, back别名=%d\n",
-		*(int*)XVector_front(v),
-		*(int*)XVector_back(v));
+		*(int*)XVector_front_base(v),
+		*(int*)XVector_back_base(v));
 	int def = -1;
 	XPrintf("value(2)=%d, value(99,默认-1)=%d\n",
 		*(int*)XVector_value(v, 2, NULL),

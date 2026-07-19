@@ -36,7 +36,7 @@
 #include "XTypes.h"
 #include <stdlib.h>
 
-#define DEFAULT_CHUNK_SIZE 4096
+#define DEFAULT_CHUNK_SIZE 16384
 /* = 内部结构体 = */
 
 struct XSslSocket {
@@ -369,6 +369,11 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
     }
     /* 非 SOCK_ACT 事件：透传父类（如 SOCK_CLOSE 等） */
     if (e->type != XEVENT_TYPE_SOCK_ACT) {
+        /* SOCK_CLOSE 前先排空 encRxBuf 中残留的密文，防止最后一批
+           加密数据因 close 事件跳过解密 */
+        if (e->type == XEVENT_TYPE_SOCK_CLOSE) {
+            xssl_drain_encrypted(self);
+        }
         return PARENT_SOCK(EXObject_Event, Fn_event)(sock, e);
     }
     /* 存在代理握手上下文时，走父类兼容路径（不常见） */
@@ -415,7 +420,6 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
     if (sa->actType & XSocketAct_Connect) {
         if (XNetwork_socketIsConnected(priv)) {
             XAbstractSocket_setSocketState(sock, XAbstractSocket_ConnectedState);
-            XNetwork_socketContinueRead(priv, sock->socketType == XAbstractSocket_UdpSocket);
         } else {
             XAbstractSocket_setSocketError(sock, XAbstractSocket_ConnectionRefusedError, "Connection failed");
             XAbstractSocket_setSocketState(sock, XAbstractSocket_UnconnectedState);
@@ -647,7 +651,7 @@ XString* XSslSocket_sessionCipher(const XSslSocket* self)
 
 /* =============== 证书管理 =============== */
 
-void XSslSocket_setLocalCertificate(XSslSocket* self, const XSslCertificate* cert)
+void XSslSocket_setLocalCertificate(XSslSocket* self, XSslCertificate* cert)
 {
     if (!self) return;
     self->localCert = (XSslCertificate*)cert;
@@ -951,7 +955,7 @@ XVector* XSslSocket_ocspResponses(const XSslSocket* self)
 void* XSslSocket_modeChanged_signal(XSslSocket* self, XSslSocket_SslMode newMode)
 {
     XEmitSignal(self, XSslSocket_modeChanged_signal,
-                XVarList_Create(XVar(int, (int)newMode)),
+                XVarList_Create(XVar(int, newMode)),
                 NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
