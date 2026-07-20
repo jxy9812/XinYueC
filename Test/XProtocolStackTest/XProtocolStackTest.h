@@ -15,6 +15,7 @@ extern "C" {
 	void XModbusRtuSerialClientTest();
 	void XModbusTcpClientTest();
 	void XModbusCommEventTest();
+void XModbusAduTest();
 	void XDataFrameCommTest();
 	void TJCHMICommTest();
 #endif // DEMOTEST

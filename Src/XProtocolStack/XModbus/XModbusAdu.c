@@ -1,63 +1,31 @@
-ï»¿#include "XModbusAdu.h"
+#include "XModbusAdu.h"
 #include "XMemory.h"
 #include "XCrc.h"
 #include <string.h>
 
-// =============== ADUå¸§åˆ›å»º ===============
+// =============== ÄÚ²¿¸¨Öú ===============
 
-XByteArray* XModbusAdu_createRtuFrame(int serverAddress, const XModbusPdu* pdu)
+/** Ğ£ÑéÂë×Ö½ÚÊı£ºASCII=1(LRC), RTU=2(CRC) */
+static inline int checksumBytes(const XModbusAdu* adu)
 {
-    if (!pdu) return NULL;
-
-    // è·å–PDUæ•°æ®
-    XByteArray* pduData = XModbusPdu_data(pdu);
-    XModbusPdu_FunctionCode fc = XModbusPdu_functionCodeRaw(pdu);
-
-    // è®¡ç®—å¸§å¤§å°: åœ°å€(1) + åŠŸèƒ½ç (1) + PDUæ•°æ® + CRC(2)
-    size_t pduDataSize = pduData ? XByteArray_size_base(pduData) : 0;
-    size_t frameSize = 1 + 1 + pduDataSize + 2;
-    uint8_t* frame = (uint8_t*)XMalloc_System(frameSize);
-    if (!frame) {
-        if (pduData) XByteArray_delete_base(pduData);
-        return NULL;
-    }
-
-    // ç»„è£…å¸§: åœ°å€ + åŠŸèƒ½ç  + PDUæ•°æ®
-    frame[0] = (uint8_t)(serverAddress & 0xFF);
-    frame[1] = (uint8_t)fc;
-    if (pduData && pduDataSize > 0) {
-        XMemory_read_data(XByteArray_data(pduData), XBYTE_ORDER_NATIVE, frame + 2, pduDataSize);
-    }
-
-    // è®¡ç®—CRCå¹¶é™„åŠ ï¼ˆå°ç«¯åºï¼‰
-    uint16_t crc = XCrc_get16(frame, (uint16_t)(frameSize - 2));
-    XCrc_set16Data(frame + frameSize - 2, crc, XCRC_BYTE_ORDER_LITTLE_ENDIAN);
-
-    // åˆ›å»ºXByteArrayè¿”å›
-    XByteArray* result = XByteArray_create();
-    if (result) {
-        XByteArray_push_back_2(result, frame, frameSize);
-    }
-    XFree_System(frame);
-    if (pduData) XByteArray_delete_base(pduData);
-
-    return result;
+    return (adu->m_type == XModbusAdu_Ascii) ? 1 : 2;
 }
 
-XByteArray* XModbusAdu_createAsciiFrame(int serverAddress, const XModbusPdu* pdu, char delimiter)
+/**
+ * @brief ¹¹½¨¶ş½øÖÆÔØºÉ£¨µØÖ· + ¹¦ÄÜÂë + PDUÊı¾İ£©
+ * @param serverAddress ´ÓÕ¾µØÖ·
+ * @param pdu Modbus PDU
+ * @param[out] outSize Êä³öÔØºÉ´óĞ¡
+ * @return ¶Ñ·ÖÅäµÄ¶ş½øÖÆÔØºÉ£¬µ÷ÓÃÕß¸ºÔğ XFree_System ÊÍ·Å
+ */
+static uint8_t* buildBinaryPayload(int serverAddress, const XModbusPdu* pdu, size_t* outSize)
 {
-    if (!pdu) return NULL;
-
-    if (delimiter == 0) delimiter = '\n';
-
-    // è·å–PDUæ•°æ®
     XByteArray* pduData = XModbusPdu_data(pdu);
     XModbusPdu_FunctionCode fc = XModbusPdu_functionCodeRaw(pdu);
 
     size_t pduDataSize = pduData ? XByteArray_size_base(pduData) : 0;
+    size_t binSize = 1 + 1 + pduDataSize; // µØÖ· + ¹¦ÄÜÂë + PDUÊı¾İ
 
-    // è®¡ç®—äºŒè¿›åˆ¶æ•°æ®ï¼ˆåœ°å€ + åŠŸèƒ½ç  + PDUæ•°æ®ï¼‰
-    size_t binSize = 1 + 1 + pduDataSize;
     uint8_t* binData = (uint8_t*)XMalloc_System(binSize);
     if (!binData) {
         if (pduData) XByteArray_delete_base(pduData);
@@ -70,101 +38,133 @@ XByteArray* XModbusAdu_createAsciiFrame(int serverAddress, const XModbusPdu* pdu
         XMemory_read_data(XByteArray_data(pduData), XBYTE_ORDER_NATIVE, binData + 2, pduDataSize);
     }
 
-    // è®¡ç®—LRC
-    uint8_t lrc = XModbusAdu_calculateLRC(binData, (int)binSize);
-
-    // æ„å»ºASCIIå¸§: ":" + hex(åœ°å€ + åŠŸèƒ½ç  + PDUæ•°æ® + LRC) + "\r" + delimiter
-    // æ¯ä¸ªå­—èŠ‚è½¬ä¸º2ä¸ªåå…­è¿›åˆ¶å­—ç¬¦ï¼Œæ‰€ä»¥hexé•¿åº¦ä¸º (binSize + 1) * 2
-    size_t hexLen = (binSize + 1) * 2;
-    // å¸§: ":" (1) + hex (hexLen) + "\r" (1) + delimiter (1)
-    size_t frameSize = 1 + hexLen + 1 + 1;
-    uint8_t* frame = (uint8_t*)XMalloc_System(frameSize + 1); // +1 for null terminator
-    if (!frame) {
-        XFree_System(binData);
-        if (pduData) XByteArray_delete_base(pduData);
-        return NULL;
-    }
-
-    frame[0] = ':';
-    // å°†äºŒè¿›åˆ¶æ•°æ®è½¬ä¸ºåå…­è¿›åˆ¶
-    const char hexChars[] = "0123456789ABCDEF";
-    size_t pos = 1;
-    for (size_t i = 0; i < binSize; i++) {
-        frame[pos++] = hexChars[(binData[i] >> 4) & 0x0F];
-        frame[pos++] = hexChars[binData[i] & 0x0F];
-    }
-    // é™„åŠ LRC
-    frame[pos++] = hexChars[(lrc >> 4) & 0x0F];
-    frame[pos++] = hexChars[lrc & 0x0F];
-    frame[pos++] = '\r';
-    frame[pos++] = delimiter;
-    frame[pos] = '\0';
-
-    XByteArray* result = XByteArray_create();
-    if (result) {
-        XByteArray_push_back_2(result, frame, frameSize);
-    }
-
-    XFree_System(frame);
-    XFree_System(binData);
     if (pduData) XByteArray_delete_base(pduData);
-
-    return result;
+    *outSize = binSize;
+    return binData;
 }
 
-// =============== ADUè§£æ ===============
+// =============== ÉúÃüÖÜÆÚ¹ÜÀí ===============
 
-XModbusAdu* XModbusAdu_create(void)
-{
-    XModbusAdu* adu = (XModbusAdu*)XMalloc_System(sizeof(XModbusAdu));
-    if (!adu) return NULL;
-    memset(adu, 0, sizeof(XModbusAdu));
-    adu->m_serverAddress = -1;
-    return adu;
-}
-
-void XModbusAdu_free(XModbusAdu* adu)
+void XModbusAdu_init(XModbusAdu* adu)
 {
     if (!adu) return;
-    if (adu->m_rawData) XByteArray_delete_base(adu->m_rawData);
-    if (adu->m_data) XByteArray_delete_base(adu->m_data);
-    if (adu->m_pdu) XModbusPdu_delete_base(adu->m_pdu);
+    memset(adu, 0, sizeof(XModbusAdu));
+    adu->m_serverAddress = 0xFF; // 0xFF±íÊ¾ÎŞĞ§
+}
+
+void XModbusAdu_delete(XModbusAdu* adu)
+{
+    if (!adu) return;
+    XModbusAdu_deinit(adu);
     XFree_System(adu);
 }
 
+void XModbusAdu_deinit(XModbusAdu* adu)
+{
+    if (!adu) return;
+    if (adu->m_rawData) {
+        XByteArray_delete_base(adu->m_rawData);
+        adu->m_rawData = NULL;
+    }
+    if (adu->m_data) {
+        XByteArray_delete_base(adu->m_data);
+        adu->m_data = NULL;
+    }
+}
+
+// =============== ADUÖ¡´´½¨ ===============
+
+XByteArray* XModbusAdu_createRtuFrame(int serverAddress, const XModbusPdu* pdu)
+{
+    if (!pdu) return NULL;
+
+    size_t binSize = 0;
+    uint8_t* binData = buildBinaryPayload(serverAddress, pdu, &binSize);
+    if (!binData) return NULL;
+
+    size_t frameSize = binSize + 2; // + CRC16
+    uint8_t* frame = (uint8_t*)XMalloc_System(frameSize);
+    if (!frame) {
+        XFree_System(binData);
+        return NULL;
+    }
+    memcpy(frame, binData, binSize);
+    XFree_System(binData);
+
+    uint16_t crc = XCrc_get16(frame, (uint16_t)(frameSize - 2));
+    XCrc_set16Data(frame + frameSize - 2, crc, XCRC_BYTE_ORDER_LITTLE_ENDIAN);
+
+    XByteArray* result = XByteArray_create();
+    if (result)
+        XByteArray_push_back_2(result, frame, frameSize);
+    XFree_System(frame);
+    return result;
+}
+
+XByteArray* XModbusAdu_createAsciiFrame(int serverAddress, const XModbusPdu* pdu, char delimiter)
+{
+    if (!pdu) return NULL;
+    if (delimiter == 0) delimiter = '\n';
+
+    size_t binSize = 0;
+    uint8_t* binData = buildBinaryPayload(serverAddress, pdu, &binSize);
+    if (!binData) return NULL;
+
+    uint8_t lrc = XModbusAdu_calculateLRC(binData, (int)binSize);
+
+    // Ê®Áù½øÖÆ±àÂë£ºÃ¿¸ö×Ö½Ú2×Ö·û + LRC + ":" + "\r" + delimiter
+    size_t hexLen = binSize * 2;
+    size_t frameSize = 1 + hexLen + 2 + 1 + 1; // ':' + hex + LRC_hex + '\r' + delimiter
+    uint8_t* frame = (uint8_t*)XMalloc_System(frameSize + 1); // +1 for null terminator
+    if (!frame) {
+        XFree_System(binData);
+        return NULL;
+    }
+
+    const char hexChars[] = "0123456789ABCDEF";
+    size_t pos = 0;
+    frame[pos++] = ':';
+    for (size_t i = 0; i < binSize; i++) {
+        frame[pos++] = (uint8_t)hexChars[(binData[i] >> 4) & 0x0F];
+        frame[pos++] = (uint8_t)hexChars[binData[i] & 0x0F];
+    }
+    frame[pos++] = (uint8_t)hexChars[(lrc >> 4) & 0x0F];
+    frame[pos++] = (uint8_t)hexChars[lrc & 0x0F];
+    frame[pos++] = '\r';
+    frame[pos++] = (uint8_t)delimiter;
+    frame[pos] = '\0';
+
+    XByteArray* result = XByteArray_create();
+    if (result)
+        XByteArray_push_back_2(result, frame, frameSize);
+
+    XFree_System(frame);
+    XFree_System(binData);
+    return result;
+}
+
+// =============== ADU½âÎö ===============
+
 XModbusAdu* XModbusAdu_parseRtu(const uint8_t* data, size_t size)
 {
-    if (!data || size < 4) return NULL; // æœ€å°: åœ°å€(1) + åŠŸèƒ½ç (1) + CRC(2)
+    if (!data || size < 4) return NULL;
 
-    XModbusAdu* adu = XModbusAdu_create();
+    XModbusAdu* adu = (XModbusAdu*)XMalloc_System(sizeof(XModbusAdu));
     if (!adu) return NULL;
-
+    XModbusAdu_init(adu);
     adu->m_type = XModbusAdu_Rtu;
+
     adu->m_rawData = XByteArray_create();
-    if (adu->m_rawData) {
+    if (adu->m_rawData)
         XByteArray_push_back_2(adu->m_rawData, data, size);
-    }
 
-    // å¤åˆ¶æ•°æ®éƒ¨åˆ†ï¼ˆä¸å«CRCï¼‰
-    size_t dataSize = size - 2;
     adu->m_data = XByteArray_create();
-    if (adu->m_data) {
-        XByteArray_push_back_2(adu->m_data, data, dataSize);
-    }
+    if (adu->m_data)
+        XByteArray_push_back_2(adu->m_data, data, size);
 
-    // æå–åœ°å€
     adu->m_serverAddress = data[0];
 
-    // æå–PDUï¼ˆåŠŸèƒ½ç  + æ•°æ®ï¼‰
-    size_t pduDataSize = dataSize - 1 - 1; // å‡å»åœ°å€(1)å’ŒåŠŸèƒ½ç (1)
-    XModbusPdu_FunctionCode fc = (XModbusPdu_FunctionCode)data[1];
-
-    adu->m_pdu = XModbusResponse_create_with_code(fc);
-    if (adu->m_pdu && pduDataSize > 0) {
-        XModbusPdu_setData(adu->m_pdu, data + 2, pduDataSize);
-    }
-
-    // æ ¡éªŒCRC
+    size_t dataSize = size - 2;
     uint16_t calcCrc = XCrc_get16((uint8_t*)data, (uint16_t)dataSize);
     uint16_t rcvCrc;
     XMemory_read_data(data + dataSize, XBYTE_ORDER_LITTLE_ENDIAN, (uint8_t*)&rcvCrc, sizeof(uint16_t));
@@ -175,12 +175,10 @@ XModbusAdu* XModbusAdu_parseRtu(const uint8_t* data, size_t size)
 
 XModbusAdu* XModbusAdu_parseAscii(const uint8_t* data, size_t size)
 {
-    if (!data || size < 9) return NULL; // æœ€å°: ":" + 2å­—èŠ‚hex(åœ°å€) + 2å­—èŠ‚hex(åŠŸèƒ½ç ) + 2å­—èŠ‚hex(LRC) + "\r\n"
-
-    // æ£€æŸ¥èµ·å§‹å­—ç¬¦
+    if (!data || size < 9) return NULL;
     if (data[0] != ':') return NULL;
 
-    // æŸ¥æ‰¾ç»“æŸç¬¦
+    // ²éÕÒ½áÊøÎ»ÖÃ£¨\r »ò \n£©
     size_t endPos = 0;
     for (size_t i = 1; i < size; i++) {
         if (data[i] == '\r' || data[i] == '\n') {
@@ -190,57 +188,46 @@ XModbusAdu* XModbusAdu_parseAscii(const uint8_t* data, size_t size)
     }
     if (endPos == 0) endPos = size;
 
-    // åå…­è¿›åˆ¶å­—ç¬¦ä¸²é•¿åº¦ï¼ˆä»ä½ç½®1åˆ°endPosï¼‰
     size_t hexLen = endPos - 1;
-    if (hexLen < 4 || (hexLen % 2) != 0) return NULL; // è‡³å°‘2å­—èŠ‚ï¼Œä¸”ä¸ºå¶æ•°
+    if (hexLen < 4 || (hexLen % 2) != 0) return NULL;
 
-    // å°†åå…­è¿›åˆ¶å­—ç¬¦ä¸²è½¬ä¸ºäºŒè¿›åˆ¶
     size_t binLen = hexLen / 2;
     uint8_t* binData = (uint8_t*)XMalloc_System(binLen);
     if (!binData) return NULL;
 
     for (size_t i = 0; i < binLen; i++) {
         char high = (char)data[1 + i * 2];
-        char low = (char)data[1 + i * 2 + 1];
-        uint8_t h = (high >= 'a') ? (high - 'a' + 10) : (high >= 'A') ? (high - 'A' + 10) : (high - '0');
-        uint8_t l = (low >= 'a') ? (low - 'a' + 10) : (low >= 'A') ? (low - 'A' + 10) : (low - '0');
-        binData[i] = (h << 4) | l;
+        char low  = (char)data[1 + i * 2 + 1];
+        uint8_t h = (high >= 'a') ? (uint8_t)(high - 'a' + 10) :
+                    (high >= 'A') ? (uint8_t)(high - 'A' + 10) :
+                    (uint8_t)(high - '0');
+        uint8_t l = (low >= 'a') ? (uint8_t)(low - 'a' + 10) :
+                    (low >= 'A') ? (uint8_t)(low - 'A' + 10) :
+                    (uint8_t)(low - '0');
+        binData[i] = (uint8_t)((h << 4) | l);
     }
 
-    // åˆ›å»ºADUå¯¹è±¡
-    XModbusAdu* adu = XModbusAdu_create();
+    XModbusAdu* adu = (XModbusAdu*)XMalloc_System(sizeof(XModbusAdu));
     if (!adu) {
         XFree_System(binData);
         return NULL;
     }
-
+    XModbusAdu_init(adu);
     adu->m_type = XModbusAdu_Ascii;
 
-    // åŸå§‹æ•°æ®ï¼ˆåŒ…å«:å’Œ\r\nï¼‰
     adu->m_rawData = XByteArray_create();
     if (adu->m_rawData) {
-        XByteArray_push_back_2(adu->m_rawData, data, endPos + 1 < size ? endPos + 1 : endPos);
+        size_t rawLen = (endPos + 1 < size) ? (endPos + 1) : endPos;
+        XByteArray_push_back_2(adu->m_rawData, data, rawLen);
     }
 
-    // æ•°æ®éƒ¨åˆ†ï¼ˆä¸å«LRCï¼‰
-    size_t dataSize = binLen - 1; // å‡å»LRC
     adu->m_data = XByteArray_create();
-    if (adu->m_data) {
-        XByteArray_push_back_2(adu->m_data, binData, dataSize);
-    }
+    if (adu->m_data)
+        XByteArray_push_back_2(adu->m_data, binData, binLen);
 
-    // æå–åœ°å€
     adu->m_serverAddress = binData[0];
 
-    // æå–PDU
-    XModbusPdu_FunctionCode fc = (XModbusPdu_FunctionCode)binData[1];
-    size_t pduDataSize = dataSize - 1 - 1; // å‡å»åœ°å€å’ŒåŠŸèƒ½ç 
-    adu->m_pdu = XModbusResponse_create_with_code(fc);
-    if (adu->m_pdu && pduDataSize > 0) {
-        XModbusPdu_setData(adu->m_pdu, binData + 2, pduDataSize);
-    }
-
-    // æ ¡éªŒLRC
+    size_t dataSize = binLen - 1;
     uint8_t calcLrc = XModbusAdu_calculateLRC(binData, (int)dataSize);
     uint8_t rcvLrc = binData[binLen - 1];
     adu->m_checksumValid = (calcLrc == rcvLrc);
@@ -249,12 +236,21 @@ XModbusAdu* XModbusAdu_parseAscii(const uint8_t* data, size_t size)
     return adu;
 }
 
-// =============== æŸ¥è¯¢æ¥å£ ===============
+// =============== ²éÑ¯½Ó¿Ú£¨¶ÔÆëQt£© ===============
 
 int XModbusAdu_size(const XModbusAdu* adu)
 {
     if (!adu || !adu->m_data) return -1;
-    return (int)XByteArray_size_base(adu->m_data);
+    int sz = (int)XByteArray_size_base(adu->m_data);
+    return sz - checksumBytes(adu);
+}
+
+XByteArray* XModbusAdu_data(const XModbusAdu* adu)
+{
+    if (!adu || !adu->m_data) return NULL;
+    int sz = XModbusAdu_size(adu);
+    if (sz <= 0) return NULL;
+    return XByteArray_left(adu->m_data, sz);
 }
 
 int XModbusAdu_rawSize(const XModbusAdu* adu)
@@ -275,10 +271,30 @@ int XModbusAdu_serverAddress(const XModbusAdu* adu)
     return adu->m_serverAddress;
 }
 
-XModbusPdu* XModbusAdu_pdu(const XModbusAdu* adu)
+bool XModbusAdu_pdu(const XModbusAdu* adu, XModbusPdu* out)
 {
-    if (!adu || !adu->m_pdu) return NULL;
-    return XModbusPdu_create_copy(adu->m_pdu);
+    if (!adu || !adu->m_data || !out) return false;
+
+    // ¶ÔÆëQt: QModbusPdu(FunctionCode(m_data.at(1)), m_data.mid(2, size() - 2))
+    XByteArray* d = XModbusAdu_data(adu);
+    if (!d) return false;
+
+    size_t dSize = XByteArray_size_base(d);
+    if (dSize < 2) {
+        XByteArray_delete_base(d);
+        return false;
+    }
+
+    uint8_t* raw = XByteArray_data(d);
+    XModbusPdu_FunctionCode fc = (XModbusPdu_FunctionCode)raw[1];
+
+    // ³õÊ¼»¯Êä³öPDU£¨¶ÔÆëQt£º·µ»ØQModbusPdu»ùÀà£©
+    XModbusPdu_init_with_code(out, fc);
+    if (dSize > 2)
+        XModbusPdu_setData(out, raw + 2, dSize - 2);
+
+    XByteArray_delete_base(d);
+    return true;
 }
 
 bool XModbusAdu_matchingChecksum(const XModbusAdu* adu)
@@ -286,14 +302,13 @@ bool XModbusAdu_matchingChecksum(const XModbusAdu* adu)
     return adu && adu->m_checksumValid;
 }
 
-// =============== æ ¡éªŒå’Œè®¡ç®— ===============
+// =============== Ğ£ÑéºÍ¼ÆËã ===============
 
 uint8_t XModbusAdu_calculateLRC(const uint8_t* data, int len)
 {
     uint32_t lrc = 0;
-    for (int i = 0; i < len; i++) {
+    for (int i = 0; i < len; i++)
         lrc += data[i];
-    }
     return (uint8_t)(-(int32_t)(lrc & 0xFF));
 }
 

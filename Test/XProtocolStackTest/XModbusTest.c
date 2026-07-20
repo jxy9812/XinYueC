@@ -1,5 +1,6 @@
 ﻿#include"XProtocolStackTest.h"
 #include"XModbusRtuSerialClient.h"
+#include"XModbusAdu.h"
 #include"XModbusTcpClient.h"
 #include"XSerialPort.h"
 #include"XMemory.h"
@@ -350,12 +351,401 @@ void XModbusCommEventTest()
     XPrintf("========== XModbusCommEvent 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);
 }
 
+
+// =============== XModbusAdu 单元测试 ===============
+
+void XModbusAduTest(void)
+{
+    int pass = 0, fail = 0;
+    XPrintf_3("========== XModbusAdu 单元测试开始 ==========\n");
+
+    // ========== 1. 测试 init/deinit ==========
+    {
+        XModbusAdu adu;
+        XModbusAdu_init(&adu);
+        if (adu.m_rawData == NULL && adu.m_data == NULL && adu.m_serverAddress == 0xFF) {
+            XPrintf_3("  [PASS] init 初始化正确\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] init 初始化失败\n");
+            fail++;
+        }
+        XModbusAdu_deinit(&adu);
+        if (adu.m_rawData == NULL && adu.m_data == NULL) {
+            XPrintf_3("  [PASS] deinit 释放正确\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] deinit 释放失败\n");
+            fail++;
+        }
+    }
+
+    // ========== 2. 测试 delete ==========
+    {
+        XModbusAdu* adu = (XModbusAdu*)XMalloc_System(sizeof(XModbusAdu));
+        XModbusAdu_init(adu);
+        XModbusAdu_delete(adu);
+        XPrintf_3("  [PASS] delete 删除正确\n");
+        pass++;
+    }
+
+    // ========== 3. NULL 指针测试 ==========
+    {
+        bool ok = true;
+        XModbusAdu_init(NULL);
+        XModbusAdu_deinit(NULL);
+        XModbusAdu_delete(NULL);
+        if (XModbusAdu_size(NULL) != -1) ok = false;
+        if (XModbusAdu_data(NULL) != NULL) ok = false;
+        if (XModbusAdu_rawSize(NULL) != -1) ok = false;
+        if (XModbusAdu_rawData(NULL) != NULL) ok = false;
+        if (XModbusAdu_serverAddress(NULL) != -1) ok = false;
+        if (XModbusAdu_matchingChecksum(NULL) != false) ok = false;
+        {
+            XModbusPdu pdu;
+            if (XModbusAdu_pdu(NULL, &pdu) != false) ok = false;
+        }
+        if (ok) {
+            XPrintf_3("  [PASS] NULL 指针保护正确\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] NULL 指针保护异常\n");
+            fail++;
+        }
+    }
+
+    // ========== 4. 测试 RTU 帧格式 ==========
+    {
+        XModbusPdu pdu;
+        XModbusPdu_init_with_code(&pdu, XModbusPdu_ReadHoldingRegisters);
+        uint8_t pduData[] = {0x00, 0x00, 0x00, 0x0A};
+        XModbusPdu_setData(&pdu, pduData, 4);
+
+        XByteArray* frame = XModbusAdu_createRtuFrame(1, &pdu);
+        if (!frame) {
+            XPrintf_3("  [FAIL] createRtuFrame 返回 NULL\n");
+            fail++;
+        } else {
+            size_t frameSize = XByteArray_size_base(frame);
+            uint8_t* raw = XByteArray_data(frame);
+
+            if (frameSize == 8 && raw[0] == 0x01 && raw[1] == 0x03 &&
+                raw[2] == 0x00 && raw[3] == 0x00 && raw[4] == 0x00 && raw[5] == 0x0A) {
+                XPrintf_3("  [PASS] createRtuFrame 格式正确\n");
+                pass++;
+            } else {
+                XPrintf("  [FAIL] createRtuFrame 格式错误: size=%zu, [0]=0x%02X, [1]=0x%02X\n",
+                        frameSize, raw[0], raw[1]);
+                fail++;
+            }
+
+            XModbusAdu* adu = XModbusAdu_parseRtu(raw, frameSize);
+            if (!adu) {
+                XPrintf_3("  [FAIL] parseRtu 返回 NULL\n");
+                fail++;
+            } else {
+                bool ok = true;
+                if (XModbusAdu_serverAddress(adu) != 1) ok = false;
+                if (adu->m_type != XModbusAdu_Rtu) ok = false;
+                if (XModbusAdu_size(adu) != 6) ok = false;
+
+                XByteArray* d = XModbusAdu_data(adu);
+                if (!d || XByteArray_size_base(d) != 6) ok = false;
+                if (d) {
+                    uint8_t* dRaw = XByteArray_data(d);
+                    if (dRaw[0] != 0x01 || dRaw[1] != 0x03 ||
+                        dRaw[2] != 0x00 || dRaw[3] != 0x00 ||
+                        dRaw[4] != 0x00 || dRaw[5] != 0x0A) ok = false;
+                    XByteArray_delete_base(d);
+                }
+
+                if (XModbusAdu_rawSize(adu) != (int)frameSize) ok = false;
+
+                XByteArray* rd = XModbusAdu_rawData(adu);
+                if (!rd || XByteArray_size_base(rd) != frameSize) ok = false;
+                if (rd) XByteArray_delete_base(rd);
+
+                if (!XModbusAdu_matchingChecksum(adu)) ok = false;
+
+                XModbusPdu outPdu;
+                if (!XModbusAdu_pdu(adu, &outPdu)) ok = false;
+                else {
+                    if (XModbusPdu_functionCodeRaw(&outPdu) != XModbusPdu_ReadHoldingRegisters) ok = false;
+                    XByteArray* outData = XModbusPdu_data(&outPdu);
+                    if (!outData || XByteArray_size_base(outData) != 4) ok = false;
+                    if (outData) {
+                        uint8_t* oRaw = XByteArray_data(outData);
+                        if (oRaw[0] != 0x00 || oRaw[1] != 0x00 ||
+                            oRaw[2] != 0x00 || oRaw[3] != 0x0A) ok = false;
+                        XByteArray_delete_base(outData);
+                    }
+                    XModbusPdu_deinit_base(&outPdu);
+                }
+
+                if (ok) {
+                    XPrintf_3("  [PASS] createRtuFrame + parseRtu 完整正确\n");
+                    pass++;
+                } else {
+                    XPrintf_3("  [FAIL] createRtuFrame + parseRtu 结果异常\n");
+                    fail++;
+                }
+                XModbusAdu_delete(adu);
+            }
+            XByteArray_delete_base(frame);
+        }
+        XModbusPdu_deinit_base(&pdu);
+    }
+
+    // ========== 5. 测试 ASCII 帧格式 ==========
+    {
+        XModbusPdu pdu;
+        XModbusPdu_init_with_code(&pdu, XModbusPdu_ReadHoldingRegisters);
+        uint8_t pduData[] = {0x00, 0x00, 0x00, 0x0A};
+        XModbusPdu_setData(&pdu, pduData, 4);
+
+        XByteArray* frame = XModbusAdu_createAsciiFrame(1, &pdu, '\n');
+        if (!frame) {
+            XPrintf_3("  [FAIL] createAsciiFrame 返回 NULL\n");
+            fail++;
+        } else {
+            size_t frameSize = XByteArray_size_base(frame);
+            uint8_t* raw = XByteArray_data(frame);
+
+            if (frameSize >= 5 && raw[0] == ':' && raw[frameSize - 2] == '\r' && raw[frameSize - 1] == '\n') {
+                XPrintf_3("  [PASS] createAsciiFrame 格式正确\n");
+                pass++;
+            } else {
+                XPrintf("  [FAIL] createAsciiFrame 格式错误: size=%zu, [0]=0x%02X\n", frameSize, raw[0]);
+                fail++;
+            }
+
+            XModbusAdu* adu = XModbusAdu_parseAscii(raw, frameSize);
+            if (!adu) {
+                XPrintf_3("  [FAIL] parseAscii 返回 NULL\n");
+                fail++;
+            } else {
+                bool ok = true;
+                if (XModbusAdu_serverAddress(adu) != 1) ok = false;
+                if (adu->m_type != XModbusAdu_Ascii) ok = false;
+                if (XModbusAdu_size(adu) != 6) ok = false;
+
+                XByteArray* d = XModbusAdu_data(adu);
+                if (!d || XByteArray_size_base(d) != 6) ok = false;
+                if (d) {
+                    uint8_t* dRaw = XByteArray_data(d);
+                    if (dRaw[0] != 0x01 || dRaw[1] != 0x03 ||
+                        dRaw[2] != 0x00 || dRaw[3] != 0x00 ||
+                        dRaw[4] != 0x00 || dRaw[5] != 0x0A) ok = false;
+                    XByteArray_delete_base(d);
+                }
+
+                if (!XModbusAdu_matchingChecksum(adu)) ok = false;
+
+                if (ok) {
+                    XPrintf_3("  [PASS] createAsciiFrame + parseAscii 完整正确\n");
+                    pass++;
+                } else {
+                    XPrintf_3("  [FAIL] createAsciiFrame + parseAscii 结果异常\n");
+                    fail++;
+                }
+                XModbusAdu_delete(adu);
+            }
+            XByteArray_delete_base(frame);
+        }
+        XModbusPdu_deinit_base(&pdu);
+    }
+
+    // ========== 6. parseRtu 边界测试 ==========
+    {
+        uint8_t shortData[] = {0x01, 0x03, 0x00};
+        XModbusAdu* adu = XModbusAdu_parseRtu(shortData, 3);
+        if (adu == NULL) {
+            XPrintf_3("  [PASS] parseRtu 短数据返回 NULL\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] parseRtu 短数据未返回 NULL\n");
+            fail++;
+            XModbusAdu_delete(adu);
+        }
+
+        adu = XModbusAdu_parseRtu(NULL, 10);
+        if (adu == NULL) {
+            XPrintf_3("  [PASS] parseRtu NULL 输入返回 NULL\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] parseRtu NULL 输入未返回 NULL\n");
+            fail++;
+            XModbusAdu_delete(adu);
+        }
+    }
+
+    // ========== 7. parseAscii 边界测试 ==========
+    {
+        uint8_t badStart[] = "01030000000A";
+        XModbusAdu* adu = XModbusAdu_parseAscii(badStart, sizeof(badStart) - 1);
+        if (adu == NULL) {
+            XPrintf_3("  [PASS] parseAscii 无':'前缀返回 NULL\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] parseAscii 无':'前缀未返回 NULL\n");
+            fail++;
+            XModbusAdu_delete(adu);
+        }
+
+        uint8_t shortData2[] = ":0103";
+        adu = XModbusAdu_parseAscii(shortData2, 5);
+        if (adu == NULL) {
+            XPrintf_3("  [PASS] parseAscii 短数据返回 NULL\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] parseAscii 短数据未返回 NULL\n");
+            fail++;
+            XModbusAdu_delete(adu);
+        }
+
+        adu = XModbusAdu_parseAscii(NULL, 10);
+        if (adu == NULL) {
+            XPrintf_3("  [PASS] parseAscii NULL 输入返回 NULL\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] parseAscii NULL 输入未返回 NULL\n");
+            fail++;
+            XModbusAdu_delete(adu);
+        }
+    }
+
+    // ========== 8. 校验和测试 ==========
+    {
+        uint8_t testData[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A};
+        uint8_t lrc = XModbusAdu_calculateLRC(testData, 6);
+        if (lrc == 0xF2) {
+            XPrintf_3("  [PASS] calculateLRC 正确\n");
+            pass++;
+        } else {
+            XPrintf("  [FAIL] calculateLRC = 0x%02X, expected 0xF2\n", lrc);
+            fail++;
+        }
+
+        uint16_t crc = XModbusAdu_calculateCRC(testData, 6);
+        uint16_t expectedCrc = XCrc_get16(testData, 6);
+        if (crc == expectedCrc) {
+            XPrintf_3("  [PASS] calculateCRC 正确\n");
+            pass++;
+        } else {
+            XPrintf("  [FAIL] calculateCRC = 0x%04X, expected 0x%04X\n", crc, expectedCrc);
+            fail++;
+        }
+    }
+
+    // ========== 9. 错误校验测试 ==========
+    {
+        uint8_t badFrame[] = {0x01, 0x03, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00};
+        XModbusAdu* adu = XModbusAdu_parseRtu(badFrame, 8);
+        if (adu && !XModbusAdu_matchingChecksum(adu)) {
+            XPrintf_3("  [PASS] 错误CRC校验正确检测\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] 错误CRC校验未检测\n");
+            fail++;
+        }
+        if (adu) XModbusAdu_delete(adu);
+    }
+
+    // ========== 10. pdu() 提取测试 ==========
+    {
+        XModbusPdu pdu;
+        XModbusPdu_init_with_code(&pdu, XModbusPdu_ReadCoils);
+        uint8_t pduData2[] = {0x00, 0x00, 0x00, 0x01};
+        XModbusPdu_setData(&pdu, pduData2, 4);
+
+        XByteArray* frame2 = XModbusAdu_createRtuFrame(1, &pdu);
+        if (frame2) {
+            uint8_t* raw2 = XByteArray_data(frame2);
+            XModbusAdu* adu2 = XModbusAdu_parseRtu(raw2, XByteArray_size_base(frame2));
+            if (adu2) {
+                XModbusPdu outPdu;
+                XModbusAdu_pdu(adu2, &outPdu);
+                if (!XModbusPdu_isException(&outPdu) &&
+                    XModbusPdu_functionCodeRaw(&outPdu) == XModbusPdu_ReadCoils) {
+                    XPrintf_3("  [PASS] pdu() 提取 XModbusPdu 正确\n");
+                    pass++;
+                } else {
+                    XPrintf_3("  [FAIL] pdu() 提取失败\n");
+                    fail++;
+                }
+                XModbusPdu_deinit_base(&outPdu);
+                XModbusAdu_delete(adu2);
+            }
+            XByteArray_delete_base(frame2);
+        }
+        XModbusPdu_deinit_base(&pdu);
+    }
+
+    // ========== 11. createRtuFrame NULL PDU 测试 ==========
+    {
+        XByteArray* frame3 = XModbusAdu_createRtuFrame(1, NULL);
+        if (frame3 == NULL) {
+            XPrintf_3("  [PASS] createRtuFrame(NULL PDU) 返回 NULL\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] createRtuFrame(NULL PDU) 未返回 NULL\n");
+            fail++;
+            XByteArray_delete_base(frame3);
+        }
+    }
+
+    // ========== 12. createAsciiFrame NULL PDU 测试 ==========
+    {
+        XByteArray* frame4 = XModbusAdu_createAsciiFrame(1, NULL, '\n');
+        if (frame4 == NULL) {
+            XPrintf_3("  [PASS] createAsciiFrame(NULL PDU) 返回 NULL\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] createAsciiFrame(NULL PDU) 未返回 NULL\n");
+            fail++;
+            XByteArray_delete_base(frame4);
+        }
+    }
+
+    // ========== 13. 多地址循环测试 ==========
+    {
+        XModbusPdu pdu3;
+        XModbusPdu_init_with_code(&pdu3, XModbusPdu_WriteSingleRegister);
+        uint8_t pduData3[] = {0x00, 0x01, 0x00, 0x0A};
+        XModbusPdu_setData(&pdu3, pduData3, 4);
+
+        bool ok = true;
+        for (int i = 0; i < 100; i++) {
+            XByteArray* rtuFrame = XModbusAdu_createRtuFrame(i & 0xFF, &pdu3);
+            XByteArray* asciiFrame = XModbusAdu_createAsciiFrame(i & 0xFF, &pdu3, '\n');
+            if (!rtuFrame || !asciiFrame) ok = false;
+            if (rtuFrame) XByteArray_delete_base(rtuFrame);
+            if (asciiFrame) XByteArray_delete_base(asciiFrame);
+        }
+
+        if (ok) {
+            XPrintf_3("  [PASS] 100次循环RTU/ASCII均成功\n");
+            pass++;
+        } else {
+            XPrintf_3("  [FAIL] 循环RTU/ASCII失败\n");
+            fail++;
+        }
+        XModbusPdu_deinit_base(&pdu3);
+    }
+
+    XPrintf("========== XModbusAdu 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);
+}
+
 void XMenu_XModbusTest(XMenu* root)
 {
     XMenu* menu = XMenu_create("XModbus(modbus)");
     {
         XAction* action = XMenu_addAction(menu, "CommEvent单元测试");
         XAction_setAction(action, XModbusCommEventTest);
+    }
+    {
+        XAction* action = XMenu_addAction(menu, "Adu单元测试");
+        XAction_setAction(action, XModbusAduTest);
     }
     XMenu_addMenu(root, menu);
     {
